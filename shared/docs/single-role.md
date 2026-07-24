@@ -114,40 +114,58 @@ Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
 
 ## Blueprints and a crew CLI (operator direction, 2026-07-24)
 
-The end state the operator has named: crew-member **blueprints** — "a kimi
-reviewer", "a claude builder" — and a **crew CLI** running on a server with
-`box` installed that spawns the whole fleet from configuration files, and
-can spawn *another* claude builder on demand.
+The end state the operator has named: `crew new --role builder --agent
+claude` — a **crew CLI** running on a server with `box` installed that
+composes a box from two orthogonal profiles and bakes the result:
 
-The engine is one refactor away from that shape. Today's
-`conf/bots/<login>.conf` fuses two things that a blueprint world separates:
+- **Role profile** — owns the *shape of the work*, agent-agnostic:
+  - box resources: builders want disk (persistent worktrees, full clones)
+    and the longest session budgets; reviewers run throwaway detached
+    worktrees and shorter sessions on less of everything; triage is light
+    but carries the notify credentials.
+  - cadence and timeout budgets (today's `TIMEOUT_*` in fleet.conf are
+    per-duty; in this model they move into the role profile).
+  - loadout: which duty modules ship (`BOT_ROLES` today), which skills and
+    tools the sessions need installed on the box (linters and test runners
+    for reviewers, language toolchains for builders — the fleet already
+    learned that undeclared toolchain gaps become "could not verify"
+    verdicts), which prompt templates apply.
+  - repos.txt semantics (registry / pickup list / backstop).
+- **Agent profile** — owns the *runtime*: CLI install steps, `BOT_CLI_CMD`,
+  auth probe, PATH prepend, model selection. Doctrine already wants
+  builder and reviewer models to differ, which falls out naturally when
+  the role picks the model *tier* and the agent supplies the vendor.
 
-- **Blueprint** = vendor × role: the CLI command, auth probe, PATH prepend,
-  and `BOT_ROLES`. Five archetypes cover the current fleet
-  (`claude-triage`, `claude-builder`, `codex-builder`, `grok-reviewer`,
-  `kimi-reviewer`), and nothing in one is instance-specific.
-- **Instance** = blueprint + GitHub identity (+ box name). Identity already
-  comes from the gh token at runtime, so an instance file is literally
-  `blueprint=claude-builder` — everything else is derived.
+`crew new` composes role × agent into a box spec — resource flags to `box`
+plus bake steps (CLI install, engine deploy at a crew pin, crontab, role
+loadout) — then the interactive part stays with the operator: create the
+GitHub identity, `gh auth login`, vendor `/login`. The agent itself helps
+narrow the config at spawn time (which model, which toolchain versions,
+which repos) — an interview the CLI can run against the freshly booted
+box's own agent before arming cron.
 
-So the migration is: `conf/blueprints/*.conf` + a fleet manifest
-(`fleet.conf` gains an instance table, or a `fleet.yaml` the CLI owns), and
-`install.sh` resolves login → instance → blueprint instead of login →
-bot file.
+Today's `conf/bots/<login>.conf` is exactly this composition, pre-fused by
+hand for five instances. The migration is mechanical: split it into
+`conf/roles/*.conf` + `conf/agents/*.conf`, keep a fleet manifest mapping
+identity → (role, agent), and have `install.sh` resolve login → manifest →
+two profiles instead of login → one bot file.
 
-**The crew CLI** then composes what already exists, on a box host:
+**Gold snapshots fit as the cache layer**: a (role, agent) pair that has
+been baked once can be snapshotted pre-`/login` — machinery and loadout,
+zero secrets — and `crew new` restores the gold instead of re-baking when
+one exists. The lifecycle:
 
-1. `crew spawn claude-builder` → instantiate the blueprint's box template
-   (or restore its gold snapshot — cut pre-`/login`, so it carries
-   machinery and zero secrets), which boots with the engine installed and
-   the boot gate loudly reporting dead auth.
-2. The operator runs the two logins interactively (creds-free-by-default is
-   a box property worth keeping — the CLI should *wait* for auth, never
-   hold credentials itself).
-3. The box's first authenticated tick self-identifies, resolves its
-   instance from the manifest, and goes on duty. `crew status` reads each
-   box's `~/duty/VERSION` + duty.log evidence lines; `crew upgrade` is
-   `git pull && shared/install.sh` fleet-wide.
+1. `crew new --role builder --agent claude` → restore gold or bake fresh;
+   the box boots with the engine installed and the boot gate loudly
+   reporting dead auth. That is the correct state, not an error.
+2. The operator runs the logins interactively (creds-free-by-default is a
+   box property worth keeping — the CLI *waits* for auth, never holds
+   credentials itself).
+3. The box's first authenticated tick self-identifies from its token,
+   resolves its profiles from the manifest, and goes on duty.
+   `crew status` reads each box's `~/duty/VERSION` + duty.log evidence
+   lines; `crew upgrade` is `git pull && shared/install.sh` fleet-wide,
+   then re-cut golds.
 
 **What scaling N instances of a blueprint touches:**
 
