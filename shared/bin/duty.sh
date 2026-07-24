@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# duty.sh — the duty engine. One tick: boot gate, then every duty the box's
+# roles enable, in fleet-standard priority order:
+#
+#   attention (all roles) → triage signals → review queue → resume → build →
+#   handoff → rebase → worktree hygiene → backlog hygiene (hourly)
+#
+# All DETECTION happens here in plain bash against GitHub's object APIs; the
+# model is spawned only when a duty exists, with a role prompt rendered from
+# prompts/. The scripts never write to the board themselves — with one
+# operator-ruled exception (the re-request auto-approve, which goes through
+# the submit gate like any verdict). Detection here, judgment in sessions.
+set -euo pipefail
+
+DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
+
+# Manual invocations take the same lock the cron tick uses. The old scripts
+# locked only in the crontab line, so a debugging run raced the tick.
+if [ -z "${DUTY_LOCKED:-}" ]; then
+  exec env DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 99 "$DUTY_DIR/.duty.lock" "$0" "$@"
+fi
+
+# Re-exec from a private snapshot: bash reads scripts lazily, and an
+# in-place edit under a running tick corrupts the reader's byte offset
+# (claude-bot, 2026-07-22). The snapshot dies with the run.
+if [ -z "${DUTY_SNAPSHOT:-}" ]; then
+  snap="$(mktemp "${TMPDIR:-/tmp}/duty-snapshot.XXXXXX.sh")"
+  cp "$0" "$snap"
+  DUTY_SNAPSHOT="$snap" exec bash "$snap"
+fi
+trap 'rm -f "$DUTY_SNAPSHOT" "$DUTY_DIR/.duty.lock.since"' EXIT
+date +%s >"$DUTY_DIR/.duty.lock.since"
+
+# shellcheck source=../lib/common.sh disable=SC1091
+source "$DUTY_DIR/lib/common.sh"
+load_conf
+rotate_log "$DUTY_DIR/duty.log"
+mkdir -p "$WORK_DIR" "$TREES_DIR" "$LOG_DIR"
+
+log "duty run start"
+
+# --- Once-per-boot sanity gate. The kernel boot id changes on every reboot;
+# the first tick after a restart probes auth and disk and prunes worktrees
+# left by the crash. The marker is written ONLY when gh and the box CLI both
+# authenticate — a box with dead credentials re-checks (loudly) every tick
+# instead of silently playing with them. On failure the operator is alerted
+# once per boot: the boot gate that only ever wrote to a quieter log was the
+# fleet's silent-starvation mode (the triage box is the minting SPOF). ---
+boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
+if [ "$(cat "$DUTY_DIR/.boot-id" 2>/dev/null)" != "$boot_id" ]; then
+  {
+    echo "== boot check $(date -Is) =="
+    gh auth status || true
+    df -h / | tail -1
+    bot_cli_probe && echo "cli probe: ok" || echo "cli probe: FAILED"
+    for d in "$WORK_DIR"/*/; do
+      { [ -d "$d/.git" ] && git -C "$d" worktree prune -v; } || true
+    done
+  } >>"$DUTY_DIR/boot-check.log" 2>&1
+  if gh auth status >/dev/null 2>&1 && bot_cli_probe; then
+    echo "$boot_id" >"$DUTY_DIR/.boot-id"
+  else
+    warn "boot gate: auth probe failed — duty continues degraded, re-checking every tick"
+    if [ "$(cat "$DUTY_DIR/.boot-alerted" 2>/dev/null)" != "$boot_id" ]; then
+      alert "⚠️ $(hostname): boot gate failed (gh or CLI auth dead) — box is degraded"
+      echo "$boot_id" >"$DUTY_DIR/.boot-alerted"
+    fi
+  fi
+fi
+
+# Identity comes from the token, not a hardcoded string: two of five boxes
+# had both, used inconsistently. Resolved AFTER the boot gate so dead
+# credentials hit the diagnostics above, not an opaque set -e death here.
+ME="$(gh api user --jq .login 2>/dev/null || true)"
+if [ -z "$ME" ]; then
+  warn "cannot resolve own login (gh auth dead?) — nothing to do this tick"
+  log "duty run end"
+  exit 0
+fi
+
+# shellcheck source=../lib/duty-attention.sh disable=SC1091
+source "$DUTY_DIR/lib/duty-attention.sh"
+# shellcheck source=../lib/duty-review.sh disable=SC1091
+source "$DUTY_DIR/lib/duty-review.sh"
+# shellcheck source=../lib/duty-builder.sh disable=SC1091
+source "$DUTY_DIR/lib/duty-builder.sh"
+# shellcheck source=../lib/duty-triage.sh disable=SC1091
+source "$DUTY_DIR/lib/duty-triage.sh"
+
+# ATTENTION is role-independent and runs FIRST, per FLEET.md: a parked
+# demand outranks every queue.
+duty_attention
+
+if has_role triage; then
+  duty_triage
+fi
+
+if has_role reviewer; then
+  duty_review
+fi
+
+if has_role builder; then
+  duty_builder
+fi
+
+# Backlog hygiene: triage-only, self-scheduling (runs when HYGIENE_INTERVAL
+# has elapsed, whatever tick that lands on — a skipped top-of-hour tick
+# delays it instead of losing the hour). Shares this tick's lock, so it can
+# never race the triage sweep over the same checkouts (the old separate
+# hygiene cron could, and did share ~/duty/work with duty.sh unlocked).
+if has_role triage; then
+  now="$(date +%s)"
+  last="$(cat "$DUTY_DIR/.hygiene-last" 2>/dev/null || echo 0)"
+  if [ $((now - last)) -ge "$HYGIENE_INTERVAL" ]; then
+    # shellcheck source=../lib/duty-hygiene.sh disable=SC1091
+    source "$DUTY_DIR/lib/duty-hygiene.sh"
+    duty_hygiene && echo "$now" >"$DUTY_DIR/.hygiene-last"
+  fi
+fi
+
+log "duty run end"

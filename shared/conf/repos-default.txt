@@ -1,0 +1,18 @@
+# repos.txt — this box's repo registry. One owner/repo per line; # and blank
+# lines are ignored.
+#
+# What this list MEANS depends on role (FLEET.md):
+#   triage   — the authoritative registry: these boards get the triage sweep
+#              and the hourly hygiene pass.
+#   builder  — where ready issues are picked up. Author-side duties
+#              (resume/handoff/rebase) additionally cover every repo where
+#              the bot authors an open PR, org-wide, automatically.
+#   reviewer — a BACKSTOP only. The review queue is the org-wide
+#              requested_reviewers sweep; a review request anywhere IS the
+#              authorization. This list cannot scope it.
+#
+# Before adding a repo for triage: check Discussions are enabled there, and
+# probe what the triage permission actually allows on that repo.
+heavy-duty/ceremony
+heavy-duty/incubator
+heavy-duty/rig

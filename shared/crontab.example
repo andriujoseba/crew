@@ -1,0 +1,14 @@
+# The whole fleet crontab: ONE line per box (two on the triage box). All
+# locking, logging and evidence lines live inside tick.sh — the cron line
+# carries no flock and no redirect, so it can never drift per box again
+# (five hand-edited variants did).
+#
+# Every box:
+*/5 * * * * $HOME/duty/bin/tick.sh
+#
+# Triage box only — the operator notifier is a fleet singleton:
+#*/5 * * * * $HOME/duty/bin/tick.sh notify
+#
+# Hygiene has NO cron line: it self-schedules hourly inside the duty tick,
+# under the same lock, so it can never race the triage sweep over shared
+# checkouts (the old separate hygiene cron could, and did).
