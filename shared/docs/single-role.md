@@ -112,6 +112,59 @@ Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
    the crash-only session design together make an upgrade under a live
    cron safe; the conservative move is still to upgrade between ticks.
 
+## Blueprints and a crew CLI (operator direction, 2026-07-24)
+
+The end state the operator has named: crew-member **blueprints** — "a kimi
+reviewer", "a claude builder" — and a **crew CLI** running on a server with
+`box` installed that spawns the whole fleet from configuration files, and
+can spawn *another* claude builder on demand.
+
+The engine is one refactor away from that shape. Today's
+`conf/bots/<login>.conf` fuses two things that a blueprint world separates:
+
+- **Blueprint** = vendor × role: the CLI command, auth probe, PATH prepend,
+  and `BOT_ROLES`. Five archetypes cover the current fleet
+  (`claude-triage`, `claude-builder`, `codex-builder`, `grok-reviewer`,
+  `kimi-reviewer`), and nothing in one is instance-specific.
+- **Instance** = blueprint + GitHub identity (+ box name). Identity already
+  comes from the gh token at runtime, so an instance file is literally
+  `blueprint=claude-builder` — everything else is derived.
+
+So the migration is: `conf/blueprints/*.conf` + a fleet manifest
+(`fleet.conf` gains an instance table, or a `fleet.yaml` the CLI owns), and
+`install.sh` resolves login → instance → blueprint instead of login →
+bot file.
+
+**The crew CLI** then composes what already exists, on a box host:
+
+1. `crew spawn claude-builder` → instantiate the blueprint's box template
+   (or restore its gold snapshot — cut pre-`/login`, so it carries
+   machinery and zero secrets), which boots with the engine installed and
+   the boot gate loudly reporting dead auth.
+2. The operator runs the two logins interactively (creds-free-by-default is
+   a box property worth keeping — the CLI should *wait* for auth, never
+   hold credentials itself).
+3. The box's first authenticated tick self-identifies, resolves its
+   instance from the manifest, and goes on duty. `crew status` reads each
+   box's `~/duty/VERSION` + duty.log evidence lines; `crew upgrade` is
+   `git pull && shared/install.sh` fleet-wide.
+
+**What scaling N instances of a blueprint touches:**
+
+- *Builders scale trivially.* One box per identity stays the invariant, so
+  "another claude builder" = a new GitHub identity + a manifest line. The
+  board already serializes claims (`ready`→`claimed` + self-assign), and
+  one-build-in-flight is per-builder, so N builders = N parallel builds
+  with no new machinery. Naming wants a convention the manifest owns
+  (e.g. `claude-builder-2`).
+- *Reviewers scale with semantics.* Adding a reviewer changes convergence:
+  today panel = roster, convergence = all approve. Either new reviewers
+  join every `panel=` line (stronger, slower), or panels become a quorum /
+  subset assignment — that is a doctrine decision to make BEFORE spawning
+  reviewer #5, not a config detail.
+- *Triage stays a singleton* (sole issue-minter, notify owner). The CLI
+  should refuse `crew spawn claude-triage` when one exists.
+
 ## Suggested migration order
 
 1. Adopt this shared engine on all five boxes as-is (roles unchanged) —
