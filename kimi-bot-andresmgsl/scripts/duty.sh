@@ -1,4 +1,4 @@
-# duty.sh — the review duty loop: request-check sweep, dedup, review rounds. Fires every 5 min via system cron.
+# duty.sh — the review duty loop: attention wake, request-check sweep, dedup, review rounds. Fires every 5 min via system cron.
 
 #!/usr/bin/env bash
 set -euo pipefail
