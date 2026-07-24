@@ -57,14 +57,24 @@ _builder_repo() {
   # branch exists on my fork with no open PR (died between first push and
   # `gh pr create`). I hold the duty lock, so nothing else of mine can be
   # mid-flight — that lock is what makes resume detection sound. ---
-  local draft_nums orphan_nums="" claimed_nums open_heads N branch
+  local draft_nums orphan_nums="" claimed_nums open_heads merged_heads N branch
   draft_nums="$(gh pr list -R "$R" --state open --author "$ME" --draft \
     --json number --jq '.[].number' 2>/dev/null | tr '\n' ' ' || echo err)"
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
   open_heads="$(gh pr list -R "$R" --state open --author "$ME" \
     --json headRefName --jq '.[].headRefName' 2>/dev/null || echo err)"
-  if [ "$draft_nums" = "err" ] || [ "$claimed_nums" = "err" ] || [ "$open_heads" = "err" ]; then
+  # A merged build/* branch is NOT interrupted work: its PR landed, and the
+  # claim lingers only until triage moves the issue to its post-merge state
+  # (heavy-duty/ceremony#172 — the PR carried Refs #N, not Closes, because the
+  # remaining ACs are post-merge and triage-owned). Treating it as an orphan
+  # phantom-rebuilds merged code every tick and holds the build slot against
+  # ready work (incubator#55/#64). Gather merged heads and exclude them below,
+  # so every box gets this in the shared engine instead of re-deriving it by
+  # hand per box (codex's per-box bridge, heavy-duty/crew#19).
+  merged_heads="$(gh pr list -R "$R" --state merged --author "$ME" \
+    --json headRefName --jq '.[].headRefName' 2>/dev/null || echo err)"
+  if [ "$draft_nums" = "err" ] || [ "$claimed_nums" = "err" ] || [ "$open_heads" = "err" ] || [ "$merged_heads" = "err" ]; then
     warn "$R: resume detection failed (a listing errored); skipping resume this tick"
     draft_nums=""
   else
@@ -72,6 +82,10 @@ _builder_repo() {
       branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
         --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
       [ -z "$branch" ] && continue
+      # Post-merge wait, not an orphan: the branch already merged. Never resume
+      # it — re-entry for any residue is a fresh branch off current main, by
+      # a builder claiming the re-readied issue normally (#172), not this one.
+      if printf '%s\n' "$merged_heads" | grep -qx "$branch"; then continue; fi
       if ! printf '%s\n' "$open_heads" | grep -qx "$branch"; then
         orphan_nums="$orphan_nums $N"
       fi
