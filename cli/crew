@@ -80,6 +80,14 @@ create_box() {
 # hired_at NAME — the crew@<sha> the box's engine was installed from, if any.
 hired_at() { bxn "$1" 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r\n'; }
 
+# vendor_probe NAME AGENT — run the agent profile's bot_cli_probe inside the
+# box, shipping the profile over stdin (works on unhired boxes too).
+vendor_probe() {
+  box exec "$1" -- bash -lc \
+    'cat >/tmp/.crew-agent-probe.conf; source /tmp/.crew-agent-probe.conf; bot_cli_probe' \
+    <"$AGENTS_DIR/$2.conf" >/dev/null 2>&1
+}
+
 # hire_box NAME AGENT ROLE REF FORCE — bake + arm; skip when already at REF.
 hire_box() {
   local name="$1" agent="$2" role="$3" ref="$4" force="$5"
@@ -251,11 +259,7 @@ cmd_auth() {
   # not be hired yet, so nothing on it can be assumed.
   local hint
   hint="$(sed -n 's/^AGENT_LOGIN_HINT=//p' "$AGENTS_DIR/$agent.conf" | tr -d '"')"
-  vendor_ok() {
-    box exec "$name" -- bash -lc \
-      'cat >/tmp/.crew-agent-probe.conf; source /tmp/.crew-agent-probe.conf; bot_cli_probe' \
-      <"$AGENTS_DIR/$agent.conf" >/dev/null 2>&1
-  }
+  vendor_ok() { vendor_probe "$name" "$agent"; }
   if vendor_ok; then
     echo "$agent CLI: already authenticated"
   else
@@ -327,18 +331,53 @@ cmd_down() {
   done < <(read_roster)
 }
 
+# crew status — no argument: the whole crew as a table, one roster member
+# per row, with auth problems FLAGGED (an unauthenticated member fails
+# loudly in its own duty.log every tick; this is the host-side view of the
+# same fact). With a box name: the detailed view.
 cmd_status() {
   need_box
-  local targets="${1:-}"
-  [ -n "$targets" ] || targets="$(box_names)"
-  local b
-  for b in $targets; do
+  if [ -n "${1:-}" ]; then
+    local b="$1"
     echo "== $b"
     box exec "$b" -- bash -lc '
       cat ~/duty/VERSION 2>/dev/null || echo "not hired (no engine)"
-      tail -n 3 ~/duty/duty.log 2>/dev/null
+      tail -n 5 ~/duty/duty.log 2>/dev/null
     ' 2>/dev/null || echo "  (unreachable)"
-  done
+    return 0
+  fi
+
+  local fmt='%-18s %-9s %-15s %-8s %-8s %s\n'
+  # shellcheck disable=SC2059
+  printf "$fmt" MEMBER STATE HIRED GH VENDOR NOTE
+  local name agent role _from state hired ghs vs note last
+  while read -r name agent role _from; do
+    if ! box_exists "$name"; then
+      # shellcheck disable=SC2059
+      printf "$fmt" "$name" - - - - "NOT CREATED — crew new $name"
+      continue
+    fi
+    state="$(box info "$name" --json 2>/dev/null \
+      | jq -r '.state // .status // "?"' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    if [ "$state" = "stopped" ]; then
+      # shellcheck disable=SC2059
+      printf "$fmt" "$name" stopped - - - "crew up starts it"
+      continue
+    fi
+    hired="$(hired_at "$name")"
+    if bxn "$name" 'gh auth status >/dev/null 2>&1' >/dev/null 2>&1; then ghs=ok; else ghs=MISSING; fi
+    if vendor_probe "$name" "$agent"; then vs=ok; else vs=MISSING; fi
+    note=""
+    [ -z "$hired" ] && { hired="not hired"; note="crew hire $name"; }
+    if [ "$ghs" = MISSING ] || [ "$vs" = MISSING ]; then
+      note="⚠ crew auth $name${note:+; $note}"
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
+      last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"
+      note="${last:-no ticks yet}"
+    fi
+    # shellcheck disable=SC2059
+    printf "$fmt" "$name" "$state" "$hired" "$ghs" "$vs" "$note"
+  done < <(read_roster)
 }
 
 cmd_upgrade() {
