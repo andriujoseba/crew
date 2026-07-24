@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Live duty poller: every five minutes it resumes builds, reviews requested PRs, and advances owned work.
 set -euo pipefail
 
 export PATH="/usr/local/bin:/usr/bin:/bin"
@@ -177,7 +176,7 @@ run_attention_queue() {
     fi
     echo "$(timestamp) ATTENTION duty detected for $a_repo#$a_num — launching pickup session"
     codex exec --dangerously-bypass-approvals-and-sandbox --cd "$a_dir" \
-      "You are $me and issue $a_repo#$a_num is assigned to you carrying the attention label: a demand was parked there for you. FIRST, the ack — post one short comment (📌 picked up) on the issue unless an unanswered 📌 of yours already sits at the bottom of the thread, then REMOVE the label with: gh api -X DELETE repos/$a_repo/issues/$a_num/labels/attention. The removal re-arms the wake for the next demand. THEN read the full thread and everything it links, work out what is being demanded of you, and do it whole per your role. Read AGENTS.md at the repo root and follow where it routes you: BUILDER.md for your claims (build in a worktree, never in this main clone), REVIEWER.md for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention." \
+      "You are $me and issue $a_repo#$a_num is assigned to you carrying the attention label: a demand was parked there for you. FIRST, the ack — post one short comment (📌 picked up) on the issue unless an unanswered 📌 of yours already sits at the bottom of the thread, then REMOVE the label with: gh api -X DELETE repos/$a_repo/issues/$a_num/labels/attention. The removal re-arms the wake for the next demand. THEN read the full thread and everything it links, work out what is being demanded of you, and do it whole per your role. Read AGENTS.md at the repo root and follow where it routes you: BUILDER.md for your claims (build in a worktree, never in this main clone), REVIEWER.md for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now. A post-merge verification finding does not give the original builder special standing: triage moves the issue back to ready or mints a fresh issue, and a builder claims it normally on a fresh branch from current main. Never reopen or reuse a merged branch. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention." \
       || echo "$(timestamp) ERROR: attention session failed for $a_repo#$a_num (status $?)"
   done <<< "$attn_rows"
 }
@@ -222,6 +221,7 @@ while IFS= read -r repo || [[ -n "$repo" ]]; do
     --author "$identity" --draft --json number,headRefName,headRefOid \
     --jq '.[] | [.number, .headRefName, .headRefOid] | @tsv')
   issue_resume=""
+  post_merge_issues=()
   if (( ${#draft_resumes[@]} == 0 )); then
     mapfile -t claimed_issues < <(gh issue list --repo "$repo" --state open \
       --assignee "$identity" --label claimed --json number --jq '.[].number')
@@ -233,13 +233,29 @@ while IFS= read -r repo || [[ -n "$repo" ]]; do
         IFS=$'\t' read -r ref_name head_sha <<<"$build_ref"
         branch_name="${ref_name#refs/heads/}"
         [[ "$branch_name" == "build/$issue_number-"* ]] || continue
-        open_pr_count="$(gh api "repos/$repo/pulls?state=open&head=$identity:$branch_name" --jq 'length')"
-        if (( open_pr_count == 0 )); then
+        mapfile -t branch_prs < <(gh api \
+          "repos/$repo/pulls?state=all&head=$identity:$branch_name&per_page=100" \
+          --jq '.[] | [.state, (.merged_at // "")] | @tsv')
+        if (( ${#branch_prs[@]} == 0 )); then
           issue_resume="$issue_number"$'\t'"$branch_name"$'\t'"$head_sha"
           break 2
         fi
+        branch_has_open=0
+        branch_has_merged=0
+        for branch_pr in "${branch_prs[@]}"; do
+          IFS=$'\t' read -r branch_pr_state branch_pr_merged_at <<<"$branch_pr"
+          [[ "$branch_pr_state" == open ]] && branch_has_open=1
+          [[ -n "$branch_pr_merged_at" ]] && branch_has_merged=1
+        done
+        if (( branch_has_open == 0 && branch_has_merged == 1 )); then
+          post_merge_issues+=("$issue_number")
+        fi
       done
     done
+  fi
+  if (( ${#post_merge_issues[@]} > 0 )); then
+    mapfile -t post_merge_issues < <(printf '%s\n' "${post_merge_issues[@]}" | sort -nu)
+    echo "$(timestamp) POST-MERGE wait detected for $repo issue(s) #$(IFS=,; echo "${post_merge_issues[*]}") — merged builder PR exists; slot remains free"
   fi
   if (( ${#draft_resumes[@]} > 0 )); then
     IFS=$'\t' read -r resume_pr resume_branch resume_sha <<<"${draft_resumes[0]}"
@@ -268,7 +284,7 @@ while IFS= read -r repo || [[ -n "$repo" ]]; do
   if (( ready_count > 0 || changes_requested_count > 0 )); then
     echo "$(timestamp) BUILD duty detected for $repo ($ready_count ready issue(s), $changes_requested_count changes-requested PR(s))"
     codex exec --dangerously-bypass-approvals-and-sandbox --cd "$repo_dir" \
-      "You are the builder $identity in $repo. This directory is the clean main clone; fetch and inspect here but never build here. Read AGENTS.md, then act per BUILDER.md. The review bench is claude-bot-andresmgsl, codex-bot-andresmgsl, grok-bot-andresmgsl, and kimi-bot-andresmgsl, minus the PR author; dan-claude-bot is triage-only and is never a reviewer. First answer any round your open PRs owe, but only when no bench review requests remain outstanding — an early changes-request means keep waiting for every panel verdict on the current head. The instant you pick up a completed round, before touching code post one PR comment beginning exactly: 🔧 addressing round on head <sha>. In that same comment analyze every blocking and non-blocking point from every reviewer, label each agree, disagree, or needs-ruling, and state concretely how you will address it. This is the round plan of record. Add that round's fix steps as checkboxes under ## Worklog in the PR body. For any owned PR, find and reuse its worktree with git worktree list; if absent, attach the existing branch under $trees_dir/${repo##*/}. Never add a second worktree or build in this main clone. During a fix round, never allow more than 15 minutes of silence: push a WIP or completed commit at least every 15 minutes and never rewrite pushed history; if the tree is genuinely untouched while reading, thinking, or blocked, update the round worklog comment within 15 minutes with what you are doing and why there is no commit. Check off Worklog fixes and push as each completes, then answer the round whole and re-request every non-approver. Otherwise pick ONE ready unclaimed issue, claim it, slug it, then create branch and worktree in one step: git fetch origin; git worktree add $trees_dir/${repo##*/}/build-N-slug -b build/N-slug origin/$default_branch. If that reports already checked out, fix the holder; never fall back to the main clone. Perform every edit, commit, test, and rebase inside the PR worktree. As soon as the branch has its first commit, push it to fork and open the PR as a draft with a ## Worklog checkbox plan. Check off items and push each checkpoint. When blocked or unsure, comment on the issue and @-mention dan-claude-bot. Never guess past a spec gap."
+      "You are the builder $identity in $repo. This directory is the clean main clone; fetch and inspect here but never build here. Read AGENTS.md, then act per BUILDER.md. The review bench is claude-bot-andresmgsl, codex-bot-andresmgsl, grok-bot-andresmgsl, and kimi-bot-andresmgsl, minus the PR author; dan-claude-bot is triage-only and is never a reviewer. First answer any round your open PRs owe, but only when no bench review requests remain outstanding — an early changes-request means keep waiting for every panel verdict on the current head. Claimed issue(s) classified as post-merge waits this tick: $(IFS=,; echo "${post_merge_issues[*]:-none}"). A post-merge wait has a merged builder PR and only verification/closure left; it does NOT consume your one active-build slot. Never reopen its merged branch or create a duplicate PR. Triage owns the next verification/closure move. If post-merge evidence later proves a corrective PR is required, triage moves the issue back to ready or mints a fresh ready issue; any builder claims it normally and starts a fresh branch from current origin/$default_branch. The original builder has no special standing. The instant you pick up a completed round, before touching code post one PR comment beginning exactly: 🔧 addressing round on head <sha>. In that same comment analyze every blocking and non-blocking point from every reviewer, label each agree, disagree, or needs-ruling, and state concretely how you will address it. This is the round plan of record. Add that round's fix steps as checkboxes under ## Worklog in the PR body. For any owned PR, find and reuse its worktree with git worktree list; if absent, attach the existing branch under $trees_dir/${repo##*/}. Never add a second worktree or build in this main clone. During a fix round, never allow more than 15 minutes of silence: push a WIP or completed commit at least every 15 minutes and never rewrite pushed history; if the tree is genuinely untouched while reading, thinking, or blocked, update the round worklog comment within 15 minutes with what you are doing and why there is no commit. Check off Worklog fixes and push as each completes, then answer the round whole and re-request every non-approver. Otherwise pick ONE ready unclaimed issue, claim it, slug it, then create branch and worktree in one step: git fetch origin; git worktree add $trees_dir/${repo##*/}/build-N-slug -b build/N-slug origin/$default_branch. If that reports already checked out, fix the holder; never fall back to the main clone. Perform every edit, commit, test, and rebase inside the PR worktree. As soon as the branch has its first commit, push it to fork and open the PR as a draft with a ## Worklog checkbox plan. Check off items and push each checkpoint. When blocked or unsure, comment on the issue and @-mention dan-claude-bot. Never guess past a spec gap."
   fi
 
   conflict_count="$(gh pr list --repo "$repo" --state open \

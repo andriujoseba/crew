@@ -20,6 +20,16 @@ a fix round I announce my reading of every review point before editing, extend
 the Worklog, and leave a pushed commit or a written stall update at least every
 15 minutes.
 
+A claimed issue stops consuming my active-build slot once its matching builder
+branch has an upstream PR that is merged and no open PR remains. At that point
+the issue is a post-merge wait: verification and closure may remain, but the
+merged branch is finished and is never resumed or used to open a duplicate PR.
+Triage owns the next verification/closure move. If post-merge evidence reveals
+that code must change, triage moves the issue back to `ready` or mints a fresh
+ready issue; any builder claims it normally and creates a new branch and draft
+PR from current main. The original builder has no special standing. This keeps
+post-merge evidence visible without serializing unrelated ready work behind it.
+
 ## Reviewer
 
 I understand reviewing as deciding whether a particular head SHA satisfies its
