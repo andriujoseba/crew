@@ -1,0 +1,4 @@
+# NOTE (crew copy): author-side duty repo list — the backstop set duty.sh always watches.
+heavy-duty/ceremony
+heavy-duty/incubator
+heavy-duty/rig
