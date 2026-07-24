@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# CREW NOTE: fast conditional triage poll. Fires every 5m via cron (flock-guarded). Wakes a one-shot triage session per repo only when a signal exists.
+# duty.sh — the fast, conditional poll (every 5m via cron).
+# For each repo in repos.txt, detect triage signals and launch a one-shot
+# triage session only when at least one exists:
+#   (a) open issues labeled needs-triage
+#   (b) open issues carrying NONE of ready/claimed/blocked/epic/needs-triage
+#       (queue-unlabeled = stray by definition, per LABELS.md invariant)
+#   (c) open discussions with no comment from dan-claude-bot yet
+#   (d) unread mentions of me (gh api notifications) — handled by a dedicated
+#       session that answers each thread, then marks it read; mark-as-read is
+#       what makes this poll idempotent (unhandled mentions stay unread and
+#       are retried next tick)
+#   (e) blocked issues whose named blockers have all landed. hygiene.sh already
+#       flips blocked->ready, but it runs hourly, so an unblock could sit up to
+#       58 minutes behind the merge that earned it. This is the fast path: the
+#       merge that unblocks the dogfood release is the highest-value event on
+#       the board and was the one thing the 5-minute poll could not see.
+# Telegram notification used to live here as side-effect (f). It moved to
+# notify.sh on 2026-07-23 (own */5 cron, own lock, own state) because tracking
+# a PR to merge and editing its message in place needs state, and because its
+# repo scope has to be the whole org while this loop's is deliberately
+# ceremony. This loop no longer notifies anyone.
+set -euo pipefail
+
+# cron ships PATH=/usr/bin:/bin — claude lives in ~/.local/bin (the classic
+# cron failure; verified by hand-running under env -i).
+export PATH="/home/claude/.local/bin:/usr/local/bin:/usr/bin:/bin"
+export HOME="/home/claude"
+
+# Once-per-boot sanity gate. This box is the fleet's single point of failure:
+# dead credentials here mean no issues get minted and every other box starves
+# silently. The marker is written ONLY when both gh and claude auth work — if
+# either credential is dead, the checks re-run (and re-log) every tick instead
+# of silently skipping duty.
+boot_id=$(cat /proc/sys/kernel/random/boot_id)
+if [ "$(cat "$HOME/duty/.boot-id" 2>/dev/null)" != "$boot_id" ]; then
+  { echo "== boot check $(date -Is) =="
+    gh auth status || true
+    df -h / | tail -1
+    claude auth status || true
+  } >> "$HOME/duty/boot-check.log" 2>&1
+  if gh auth status >/dev/null 2>&1 \
+    && claude auth status 2>/dev/null | grep -q '"loggedIn": true'; then
+    echo "$boot_id" > "$HOME/duty/.boot-id"
+  fi
+fi
+
+ME="dan-claude-bot"
+DUTY_DIR="$HOME/duty"
+REPOS_FILE="$DUTY_DIR/repos.txt"
+WORK_DIR="$DUTY_DIR/work"
+NOTIFIED_FILE="$DUTY_DIR/.notified"
+
+log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+
+# Telegram. Unused since the notifier moved to notify.sh — kept because the
+# boot gate and future triage-side alerts are the obvious next callers, and a
+# correct non-fatal sender is worth more than the six lines it costs.
+# Never fatal: a dead notification path must not stop triage from running.
+tg_send() {
+  local text="$1" tok chat
+  if [ ! -r "$HOME/.tg_bot_token" ] || [ ! -r "$HOME/.tg_chat_id" ]; then
+    log "tg: credentials missing — notification skipped"
+    return 0
+  fi
+  tok=$(cat "$HOME/.tg_bot_token")
+  chat=$(cat "$HOME/.tg_chat_id")
+  if curl -sS -m 15 -o /dev/null \
+      -X POST "https://api.telegram.org/bot${tok}/sendMessage" \
+      --data-urlencode "chat_id=${chat}" \
+      --data-urlencode "text=${text}" \
+      --data-urlencode "disable_web_page_preview=true"; then
+    return 0
+  fi
+  log "tg: send failed (non-fatal)"
+  return 0
+}
+
+# Fresh local checkout so the session's "read AGENTS.md at the repo root"
+# is literally true from its cwd.
+checkout() {
+  local repo="$1" dir="$WORK_DIR/${1//\//__}"
+  if [ -d "$dir/.git" ]; then
+    git -C "$dir" pull --quiet >/dev/null 2>&1 || true
+  else
+    git clone --quiet "https://github.com/$repo" "$dir"
+  fi
+  printf '%s\n' "$dir"
+}
+
+touch "$NOTIFIED_FILE"
+
+while IFS= read -r R; do
+  [ -z "$R" ] && continue
+  case "$R" in \#*) continue ;; esac
+
+  signals=""
+
+  # (a) needs-triage
+  nt=$(gh issue list -R "$R" --state open --label needs-triage \
+        --json number --jq 'length')
+  [ "$nt" -gt 0 ] && signals="$signals ${nt}x needs-triage;"
+
+  # (b) queue-unlabeled strays
+  stray=$(gh issue list -R "$R" --state open --limit 200 --json number,labels \
+    --jq '[ .[] | select( ([.labels[].name]
+            | map(. == "ready" or . == "claimed" or . == "blocked"
+                  or . == "epic" or . == "needs-triage") | any) | not ) ]
+          | length')
+  [ "$stray" -gt 0 ] && signals="$signals ${stray}x queue-unlabeled;"
+
+  # (c) open discussions without my comment (top-level or reply)
+  owner="${R%%/*}" name="${R##*/}"
+  undisc=$(gh api graphql -f owner="$owner" -f name="$name" -f query='
+    query($owner:String!,$name:String!){
+      repository(owner:$owner,name:$name){
+        discussions(first:50,states:OPEN){
+          nodes{ number
+            comments(first:50){ nodes{ author{ login }
+              replies(first:20){ nodes{ author{ login } } } } } }
+        }
+      }
+    }' --jq "[.data.repository.discussions.nodes[]
+              | select( [ .comments.nodes[] | .author.login,
+                          .replies.nodes[].author.login ]
+                        | index(\"$ME\") | not ) ] | length")
+  [ "$undisc" -gt 0 ] && signals="$signals ${undisc}x uncommented discussions;"
+
+  # (e) blocked issues whose named blockers have all landed.
+  #
+  # Parsing is deliberately narrow. Issue bodies open with a line like
+  #   "Part of #1. Blocked by #5, #6, #7, #9 (and #10 for the label bootstrap).
+  #    Blocks #13 (the pilot needs a tag to pin)."
+  # so three things must hold: read only the "Blocked by" clause (never
+  # "Blocks", the inverse relation, which lives in the same line); stop at that
+  # clause's first sentence end; and pick up #N inside its parentheses, which
+  # are real blockers. Hence match up to the first "." and scan that span only.
+  #
+  # Fail-safe by construction: an unknown number counts as still-open, so a
+  # parse miss leaves the issue blocked and hygiene.sh catches it on the hour.
+  # And this only ever *wakes a session* — the script never edits a label
+  # itself. Detection here, judgment there, exactly as (a)-(d) already work.
+  #
+  # Issue and PR numbering is shared, so a blocker may be either; the state map
+  # needs both lists or a PR blocker looks like a missing number forever.
+  unblockable=""
+  blocked_json=$(gh issue list -R "$R" --state open --label blocked --limit 200 \
+                   --json number,body)
+  if [ "$(jq 'length' <<<"$blocked_json")" -gt 0 ]; then
+    numstates=$( { gh issue list -R "$R" --state all --limit 500 --json number,state
+                   gh pr    list -R "$R" --state all --limit 500 --json number,state; } \
+                 | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries')
+    unblockable=$(jq -r --argjson S "$numstates" '
+      def blockers:
+        [ match("[Bb]locked by([^.]*)"; "g").captures[0].string ] | join(" ")
+        | [ scan("#([0-9]+)") | .[0] ];
+      [ .[]
+        | . as $i
+        | (($i.body // "") | blockers) as $b
+        | select(($b | length) > 0)
+        | select(all($b[]; ($S[.] // "OPEN") | . == "CLOSED" or . == "MERGED"))
+        | $i.number ]
+      | join(",")' <<<"$blocked_json")
+  fi
+  [ -n "$unblockable" ] && signals="$signals unblockable:${unblockable};"
+
+  # (f) Telegram — MOVED OUT on 2026-07-23 to notify.sh, its own */5 cron.
+  # It fired and forgot, deduped on repo#PR@head, and swept repos.txt — which
+  # is ceremony alone, so rig#112 sat state:needs-human for nine hours without
+  # ever reaching the operator. The replacement tracks each PR to merge and
+  # edits its message in place, which needs state this loop has no business
+  # carrying. Do not re-add a send here: two notifiers means two pings.
+
+  # (d) unread mentions — a separate wake with its own session, so a builder
+  # blocked on a question is answered even when the board itself is clean.
+  # --paginate emits one JSON array per page; jq -s + add flattens them
+  # (gh 2.46 here predates --slurp, which landed in 2.47).
+  mentions=$(gh api notifications --paginate | jq -c -s --arg repo "$R" 'add
+    | [ .[] | select(.repository.full_name == $repo
+                and (.reason == "mention" or .reason == "team_mention"))
+      | {thread: .id, title: .subject.title, subject: .subject.url} ]')
+  mcount=$(jq 'length' <<<"$mentions")
+  if [ "$mcount" -gt 0 ]; then
+    log "$R: ${mcount} unread mention(s) — launching mention session"
+    dir=$(checkout "$R")
+    mprompt="You are the triage agent dan-claude-bot in $R. You've been mentioned — read each thread, answer per TRIAGE.md (a builder question is a spec gap: answer it on the issue and amend the issue if the contract was incomplete), then mark the notifications read.
+
+Unread mention threads (JSON): $mentions
+
+Mark a thread read with: gh api --method PATCH /notifications/threads/<thread>. Marking read is what makes this poll idempotent — mark a thread read only once you have actually handled it, so anything unhandled is retried on the next tick."
+    if (cd "$dir" && timeout 1500 claude -p --dangerously-skip-permissions "$mprompt"); then
+      log "$R: mention session completed"
+    else
+      log "$R: mention session FAILED or timed out (exit $?)"
+    fi
+  fi
+
+  if [ -z "$signals" ]; then
+    if [ "$mcount" -eq 0 ]; then
+      log "$R: quiet — no mentions, no triage signals, no session launched"
+    else
+      log "$R: no triage signals — mention session was the only wake"
+    fi
+    continue
+  fi
+
+  log "$R: signals:$signals launching triage session"
+  dir=$(checkout "$R")
+  prompt="You are the triage agent dan-claude-bot in $R. Read AGENTS.md at the repo root, then act per TRIAGE.md. For stray issues — anything not minted by you — either normalize them to the issue contract or close them politely, pointing the filer at Discussions: their idea is welcome, the door is over there. For discussions, converge each unresolved one to exactly one outcome — answer, ask, escalate, decline, or accept — and every issue you mint meets the contract."
+  if [ -n "$unblockable" ]; then
+    prompt="$prompt
+
+The poll also flagged these blocked issues as possibly unblockable — every issue or PR named in their \"Blocked by\" clause now reads CLOSED or MERGED: ${unblockable}. Treat that as a lead, not a verdict: re-read each body yourself, confirm the blockers really are the ones named and really did land, then flip to ready per TRIAGE.md. If the flag is wrong, leave the label alone and say why in your summary — a false lead here is a parser bug worth knowing about."
+  fi
+  if (cd "$dir" && timeout 1500 claude -p --dangerously-skip-permissions "$prompt"); then
+    log "$R: triage session completed"
+  else
+    log "$R: triage session FAILED or timed out (exit $?)"
+  fi
+done < "$REPOS_FILE"

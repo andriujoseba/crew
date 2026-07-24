@@ -1,0 +1,16 @@
+# Repos notify.sh watches for state:needs-human handoffs.
+#
+# Explicit, not discovered. Org-wide discovery was 34 `gh pr list` calls every
+# 5 minutes to catch an event that happens a few times a day, across repos the
+# fleet has never touched. Deriving the list from issue bodies instead was the
+# other option and it is worse: parsing prose for repo names is exactly the
+# trick that produced four false `blocked-unparseable` comments on 2026-07-22.
+#
+# Add a line when a ceremony issue sends a builder somewhere new. That is a
+# one-line edit at the moment the issue is minted, and a stale entry costs one
+# API call per sweep.
+heavy-duty/ceremony
+heavy-duty/rig
+heavy-duty/box
+heavy-duty/cast
+heavy-duty/incubator
