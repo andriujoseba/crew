@@ -144,8 +144,8 @@ Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
 
 1. **Box templates carry the agent, roles carry the size** — box already
    ships `<agent>-box` templates that rig converges (vendor CLI,
-   toolchain); `crew new` layers the role on top: resources from the role
-   profile, engine baked from a crew checkout at a pin, crontab armed.
+   toolchain); `crew new` layers the role's resources on top at create
+   time, and `crew hire` bakes the engine at a crew pin and arms cron.
 2. **Gold snapshots as the deployment artifact.** Once a box runs a stable
    engine version, `box snapshot` freezes it. Because boxes are creds-free
    by default, the right moment to cut gold is *before* `/login` — the
@@ -186,22 +186,29 @@ composes a box from two orthogonal profiles and bakes the result:
   builder and reviewer models to differ, which falls out naturally when
   the role picks the model *tier* and the agent supplies the vendor.
 
-`crew new` composes role × agent into a box spec — resource flags to `box`
-plus bake steps (CLI install, engine deploy at a crew pin, crontab, role
-loadout) — then the interactive part stays with the operator: create the
-GitHub identity, `gh auth login`, vendor `/login`. The agent itself helps
-narrow the config at spawn time (which model, which toolchain versions,
-which repos) — an interview the CLI can run against the freshly booted
-box's own agent before arming cron.
+`crew new` composes role × agent into a box spec (resource flags to `box`,
+the agent's template); `crew auth` owns the interactive part — the GitHub
+identity automated where a token is provided, the vendor login guided —
+and `crew hire` finishes the job (engine at a crew pin, crontab, role
+loadout). The agent itself can help narrow the config at spawn time
+(which model, which toolchain versions, which repos) — an interview the
+CLI can run against the created box's own agent before hiring it.
 
 The whole fleet is likewise a file: `fleet.roster` at the repo root lists
 `<box> <agent> <role> [<gold>/<snap>]` one per line — the committed target
-environment (the dual-role boxes split). `crew up` converges a box host to
-it, compose-style: existing boxes started, missing ones minted (from gold
-when named) + baked + armed, nothing ever deleted, and a closing report of
-which boxes still await their interactive logins. `crew down` stops the
-roster. Standing up the whole working environment is one command plus the
-logins only the operator can perform.
+environment (the dual-role boxes split). The lifecycle separates the human
+step from the machine steps (operator design, 2026-07-24): **create**
+(infrastructure only — `crew new <name>` / `crew create-all`; the box does
+nothing yet), **auth** (once per box, ever, at creation time — vendor
+logins are flaky and change often, so they are done interactively while
+you are there; `crew auth` automates the GitHub half via `CREW_GH_TOKEN`
+or the device flow, halving the pain), **hire** (`crew hire <name>` /
+`crew hire-all` — the box joins the crew: engine + cron, idempotent
+upsert that skips boxes already hired at the current pin). `crew up`
+converges a host to the roster: creates missing, starts stopped, hires,
+reports who awaits auth; nothing is ever deleted. Fleet-from-scratch on a
+new server: install box + crew, `crew create-all`, auth each box,
+`crew hire-all` — and steady state afterwards is just `crew up`.
 
 This split is now implemented: `conf/roles/*.conf` × `conf/agents/*.conf`,
 composed per box by the `FLEET_MANIFEST` table in fleet.conf (or by

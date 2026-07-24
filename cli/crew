@@ -1,190 +1,233 @@
 #!/usr/bin/env bash
 # crew — spawn and tend the agent fleet, on a host with `box` installed.
 #
-#   crew up [--roster <file>] [--dry-run]     converge the host to a fleet roster
-#   crew down [--roster <file>]               stop every roster box
-#   crew new --role builder --agent claude    mint + bake + arm one crew box
-#   crew adopt <box> --role <r> --agent <a>   bake + arm an EXISTING box
-#   crew auth <box>                           log a box in (token env or guided)
+#   crew new <name> | --role <r> --agent <a>  CREATE one box (fleet.roster by name, or ad-hoc)
+#   crew create-all                           create every missing roster box
+#   crew auth <box>                           log a box in (token env for gh; guided for the vendor)
+#   crew hire <box> [--force]                 the box JOINS the crew: engine + cron (idempotent)
+#   crew hire-all                             hire every created roster box (skips already-hired)
+#   crew up [--dry-run]                       converge: create missing, start stopped, hire, report
+#   crew down                                 stop every roster box
 #   crew status [<box>]                       engine version + duty evidence
 #   crew upgrade <box> | --all                pull crew + re-install in place
 #   crew gold <box>                           snapshot a box as a gold image
 #   crew profiles                             list role and agent profiles
 #
-# Auth: CREW_GH_TOKEN in the host environment is piped into the box's
-# `gh auth login --with-token` (never written to disk by crew); without it,
-# `crew auth` runs GitHub's device login in-box and then walks you through
-# the vendor CLI's login in a box shell, verifying with the agent's probe.
-# Vendor token injection gets the same treatment once each vendor profile
-# grows an agent_auth_with_env hook.
+# The lifecycle is three verbs because the middle one is human:
 #
-# Composition, not enumeration: a crew member is a ROLE profile (resources,
-# cadence, session budgets, loadout — shared/conf/roles/) × an AGENT profile
-# (CLI runtime, auth probe — shared/conf/agents/). `crew new` sizes the box
-# from the role, mints it from the agent's box template (<agent>-box, which
-# rig converges: vendor CLI, toolchain), bakes the duty engine from this
-# checkout's pin, and arms cron. The box comes up with the boot gate loudly
-# reporting dead auth — that is the CORRECT state, not an error: boxes are
-# creds-free by default and this CLI never touches credentials. The operator
-# logs the box in interactively; the first authenticated tick goes on duty.
+#   create  — infrastructure only: mint from the agent's box template (rig
+#             converges the vendor CLI), sized by the role profile. The box
+#             does NOTHING yet — no engine, no cron.
+#   auth    — once per box, at creation time. Vendor logins are flaky and
+#             change often, so they are done interactively while you are
+#             already there; the GitHub half is automated (CREW_GH_TOKEN in
+#             the host env is piped into `gh auth login --with-token` —
+#             crew never writes it to disk — else the device flow runs
+#             in-box). Do it once and never again.
+#   hire    — the box joins the crew: engine baked at this checkout's pin,
+#             cron armed, on duty at the next 5-minute boundary. Idempotent
+#             upsert: already hired at this pin → skip (--force re-bakes).
 #
-# One role per box. The engine still runs the legacy dual-role instances
-# (the manifest maps them), but this CLI only spawns single-role members —
-# the fleet's target shape.
+# Fleet from scratch on a new server: install box + crew, `crew create-all`,
+# log each box in (`crew auth` per box halves the pain), `crew hire-all`.
+# Steady state afterwards is just `crew up`.
 set -euo pipefail
 
 CREW_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROLES_DIR="$CREW_ROOT/shared/conf/roles"
 AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
+ROSTER="$CREW_ROOT/fleet.roster"
 CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 
 die() { echo "crew: $*" >&2; exit 1; }
-
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
-
 bxn() { box exec "$1" -- bash -lc "$2"; }
 
 box_names() {
   box list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null \
     || box list 2>/dev/null | awk 'NR>1 {print $1}'
 }
+box_exists() { box_names | grep -qx "$1"; }
 
-# The engine deploy + cron arm, run inside a box as its tenant user.
-bake() {  # bake NAME AGENT ROLE REF
-  local name="$1" agent="$2" role="$3" ref="$4"
-  box exec "$name" -- bash -lc "
-    set -euo pipefail
-    if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/$CREW_REPO ~/crew; fi
-    git -C ~/crew fetch --quiet origin
-    git -C ~/crew checkout --quiet '$ref'
-    ~/crew/shared/install.sh --agent '$agent' --role '$role' --arm-cron
-  "
+# Roster reader: <name> <agent> <role> [<from-box>/<snap>]; comments/blanks
+# skipped. roster_line prints "agent role from" for one name.
+read_roster() { grep -vE '^[[:space:]]*(#|$)' "$ROSTER"; }
+roster_line() { read_roster | awk -v n="$1" '$1 == n {print $2, $3, $4; exit}'; }
+
+validate_profiles() {  # agent role
+  [ -f "$AGENTS_DIR/$1.conf" ] || die "unknown agent '$1' — see: crew profiles"
+  [ -f "$ROLES_DIR/$2.conf" ]  || die "unknown role '$2' — see: crew profiles"
 }
 
-cmd_new() {
-  need_box
-  local role="" agent="" name="" ref="" from="" force=0 login=0
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --role)  role="$2";  shift 2 ;;
-      --agent) agent="$2"; shift 2 ;;
-      --name)  name="$2";  shift 2 ;;
-      --ref)   ref="$2";   shift 2 ;;
-      --from)  from="$2";  shift 2 ;;
-      --force) force=1;    shift ;;
-      --login) login=1;    shift ;;
-      *) die "unknown argument '$1' (usage: crew new --role <r> --agent <a> [--name <n>] [--ref <git-ref>] [--from <box>/<snapshot>] [--login] [--force])" ;;
-    esac
-  done
-  if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew new --role <r> --agent <a>"; fi
-  [ -f "$ROLES_DIR/$role.conf" ]   || die "unknown role '$role' — see: crew profiles"
-  [ -f "$AGENTS_DIR/$agent.conf" ] || die "unknown agent '$agent' — see: crew profiles"
-  [ -z "$ref" ] && ref="$(git -C "$CREW_ROOT" rev-parse HEAD)"
-
-  # Triage is a fleet singleton (sole issue-minter, notify owner).
-  if [ "$role" = "triage" ] && [ "$force" -eq 0 ]; then
-    if box_names | grep -q 'triage'; then
-      die "a triage box already exists — triage is a singleton (--force to override)"
-    fi
-  fi
-
-  # Resources come from the role profile.
+# create_box NAME AGENT ROLE [FROM] — infrastructure only, no engine.
+create_box() {
+  local name="$1" agent="$2" role="$3" from="${4:-}"
   local BOX_CPU="" BOX_MEMORY="" BOX_DISK=""
   # shellcheck disable=SC1090
   source "$ROLES_DIR/$role.conf"
   if [ -z "$BOX_CPU" ] || [ -z "$BOX_MEMORY" ] || [ -z "$BOX_DISK" ]; then
     die "role '$role' declares no BOX_CPU/BOX_MEMORY/BOX_DISK"
   fi
+  if [ -n "$from" ]; then
+    echo "creating $name  (role=$role agent=$agent from=$from)"
+    box new --name "$name" --from "$from" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+  else
+    echo "creating $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box)"
+    box new --name "$name" --template "$agent-box" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+  fi
+}
 
-  # Name: <agent>-<role>, first free ordinal suffix.
+# hired_at NAME — the crew@<sha> the box's engine was installed from, if any.
+hired_at() { bxn "$1" 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r\n'; }
+
+# hire_box NAME AGENT ROLE REF FORCE — bake + arm; skip when already at REF.
+hire_box() {
+  local name="$1" agent="$2" role="$3" ref="$4" force="$5"
+  local want have
+  want="$(git -C "$CREW_ROOT" rev-parse --short "$ref" 2>/dev/null || echo "$ref")"
+  have="$(hired_at "$name")"
+  if [ "$force" -eq 0 ] && [ "$have" = "crew@$want" ]; then
+    echo "$name: already hired at $have — skipping"
+    return 0
+  fi
+  echo "hiring $name  (role=$role agent=$agent crew@$want)"
+  bxn "$name" "
+    set -euo pipefail
+    if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/$CREW_REPO ~/crew; fi
+    git -C ~/crew fetch --quiet origin
+    git -C ~/crew checkout --quiet '$ref'
+    git -C ~/crew pull --quiet --ff-only origin '$ref' 2>/dev/null || true
+    ~/crew/shared/install.sh --agent '$agent' --role '$role' --arm-cron
+  "
+  if bxn "$name" 'gh auth status >/dev/null 2>&1'; then
+    echo "$name: hired — on duty at the next 5-minute boundary"
+  else
+    echo "$name: hired but NOT authenticated — it idles loudly until: crew auth $name"
+  fi
+}
+
+cmd_new() {
+  need_box
+  local role="" agent="" name="" from="" login=0
+  # Positional first argument = a roster name.
+  if [ $# -gt 0 ]; then
+    case "$1" in --*) : ;; *) name="$1"; shift ;; esac
+  fi
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role)  role="$2";  shift 2 ;;
+      --agent) agent="$2"; shift 2 ;;
+      --name)  name="$2";  shift 2 ;;
+      --from)  from="$2";  shift 2 ;;
+      --login) login=1;    shift ;;
+      *) die "unknown argument '$1' (usage: crew new <roster-name> | crew new --role <r> --agent <a> [--name <n>] [--from <box>/<snap>] [--login])" ;;
+    esac
+  done
+  if [ -n "$name" ] && [ -z "$role$agent" ]; then
+    local line
+    line="$(roster_line "$name")"
+    [ -n "$line" ] || die "'$name' is not in $ROSTER (or pass --role/--agent for an ad-hoc box)"
+    read -r agent role from <<<"$line"
+  fi
+  if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew new <roster-name> | crew new --role <r> --agent <a>"; fi
+  validate_profiles "$agent" "$role"
   if [ -z "$name" ]; then
     name="$agent-$role"
-    local i=2 existing
-    existing="$(box_names)"
-    while printf '%s\n' "$existing" | grep -qx "$name"; do
-      name="$agent-$role-$i"; i=$((i + 1))
-    done
+    local i=2
+    while box_exists "$name"; do name="$agent-$role-$i"; i=$((i + 1)); done
   fi
+  box_exists "$name" && die "'$name' already exists (crew hire $name to put it on duty)"
 
-  if [ -n "$from" ]; then
-    # Mint from a gold snapshot — the bake below still runs, so the engine
-    # converges to this checkout's pin even off an older gold.
-    echo "minting $name  (role=$role agent=$agent from=$from crew@${ref:0:12})"
-    box new --name "$name" --from "$from" \
-      --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
-  else
-    echo "minting $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box crew@${ref:0:12})"
-    box new --name "$name" --template "$agent-box" \
-      --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
-  fi
-
-  echo "baking the duty engine…"
-  bake "$name" "$agent" "$role" "$ref"
-
+  create_box "$name" "$agent" "$role" "$from"
   cat <<EOF
 
-$name is up, baked, and ARMED — cron fires at the next 5-minute wall-clock
-boundary and every one after. Until you log it in, each tick idles LOUDLY
-by design (boot check, dead-auth warning, clean exit — three log lines,
-zero sessions, zero board activity). Your only manual work:
+$name is created — vendor CLI converging via the $agent-box template; no
+engine, no cron: it does nothing until hired. Next, once per box, ever:
 
-  box shell $name
-    gh auth login          # a NEW GitHub identity: one box per identity
-    <$agent login>         # the vendor CLI's interactive login
+  crew auth $name        # GitHub automated (CREW_GH_TOKEN or device flow),
+                         # vendor login guided in a box shell
+  crew hire $name        # joins the crew; on duty at the next 5-min boundary
 
-Nothing to restart: the first 5-minute boundary after both logins passes
-the boot gate and goes on duty (worst case: 5 minutes of latency).
-
-Then: add the identity to FLEET_MANIFEST in shared/conf/fleet.conf (one
-line) so re-installs resolve it — and if this is a reviewer, decide how the
-governed repos' panel= rosters change BEFORE its first verdict is expected.
-Consider 'crew gold $name' BEFORE logging in to cache this bake.
+(a NEW GitHub identity per box; add it to FLEET_MANIFEST in
+shared/conf/fleet.conf, and for a reviewer decide the panel= changes first)
 EOF
   [ "$login" -eq 1 ] && cmd_auth "$name"
   return 0
 }
 
-cmd_adopt() {
+cmd_create_all() {
+  need_box
+  local name agent role from made=0
+  while read -r name agent role from; do
+    validate_profiles "$agent" "$role"
+    if box_exists "$name"; then
+      echo "$name: exists"
+    else
+      create_box "$name" "$agent" "$role" "$from"
+      made=$((made + 1))
+    fi
+  done < <(read_roster)
+  echo
+  echo "$made created. Next: 'crew auth <box>' for each new box (the worst part,"
+  echo "halved: GitHub is automated), then 'crew hire-all'."
+}
+
+cmd_hire() {
   need_box
   local name="${1:-}"; shift || true
-  case "$name" in ""|--*) die "usage: crew adopt <box> --role <r> --agent <a> [--ref <git-ref>] [--login]" ;; esac
-  local role="" agent="" ref="" login=0
+  case "$name" in ""|--*) die "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--login]" ;; esac
+  local role="" agent="" ref="HEAD" force=0 login=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --role)  role="$2";  shift 2 ;;
       --agent) agent="$2"; shift 2 ;;
       --ref)   ref="$2";   shift 2 ;;
+      --force) force=1;    shift ;;
       --login) login=1;    shift ;;
-      *) die "unknown argument '$1' (usage: crew adopt <box> --role <r> --agent <a> [--ref <git-ref>] [--login])" ;;
+      *) die "unknown argument '$1'" ;;
     esac
   done
-  if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew adopt <box> --role <r> --agent <a>"; fi
-  [ -f "$ROLES_DIR/$role.conf" ]   || die "unknown role '$role' — see: crew profiles"
-  [ -f "$AGENTS_DIR/$agent.conf" ] || die "unknown agent '$agent' — see: crew profiles"
-  box_names | grep -qx "$name" || die "no box named '$name' on this host"
-  [ -z "$ref" ] && ref="$(git -C "$CREW_ROOT" rev-parse HEAD)"
-
-  echo "adopting $name  (role=$role agent=$agent crew@${ref:0:12})"
-  bake "$name" "$agent" "$role" "$ref"
-  echo
-  echo "$name is baked and ARMED — cron fires at the next 5-minute boundary."
-  echo "install.sh has disarmed any old-engine entrypoints into ~/duty/legacy/"
-  echo "inside the box; check its output above for stale cron lines to delete."
-  if [ "$login" -eq 1 ]; then
-    cmd_auth "$name"
-  elif ! bxn "$name" 'gh auth status >/dev/null 2>&1'; then
-    echo "Not logged in yet — it idles loudly until: crew auth $name"
+  box_exists "$name" || die "no box named '$name' — crew new $name first"
+  if [ -z "$role$agent" ]; then
+    local line
+    line="$(roster_line "$name")"
+    [ -n "$line" ] || die "'$name' is not in $ROSTER — pass --role and --agent"
+    read -r agent role _ <<<"$line"
   fi
+  if [ -z "$role" ] || [ -z "$agent" ]; then die "--role and --agent go together"; fi
+  validate_profiles "$agent" "$role"
+  [ "$login" -eq 1 ] && cmd_auth "$name"
+  hire_box "$name" "$agent" "$role" "$ref" "$force"
+}
+
+cmd_hire_all() {
+  need_box
+  local ref="HEAD"
+  [ "${1:-}" = "--ref" ] && ref="$2"
+  local name agent role _from
+  while read -r name agent role _from; do
+    validate_profiles "$agent" "$role"
+    if ! box_exists "$name"; then
+      echo "$name: not created — crew new $name first"
+      continue
+    fi
+    hire_box "$name" "$agent" "$role" "$ref" 0
+  done < <(read_roster)
 }
 
 cmd_auth() {
   need_box
   local name="${1:-}"
   [ -n "$name" ] || die "usage: crew auth <box>   (CREW_GH_TOKEN in the env skips the GitHub prompt)"
-  box_names | grep -qx "$name" || die "no box named '$name' on this host"
-  local agent
-  agent="$(bxn "$name" "sed -n 's/^BOT_AGENT=//p' ~/duty/conf/instance.conf 2>/dev/null" | tr -d '\r\n')"
-  [ -n "$agent" ] || die "$name has no engine installed (no instance.conf) — crew adopt it first"
+  box_exists "$name" || die "no box named '$name' on this host"
+
+  # Which agent? From the roster if listed, else from an installed engine.
+  local agent=""
+  local line
+  line="$(roster_line "$name")"
+  [ -n "$line" ] && agent="${line%% *}"
+  [ -n "$agent" ] || agent="$(bxn "$name" "sed -n 's/^BOT_AGENT=//p' ~/duty/conf/instance.conf 2>/dev/null" | tr -d '\r\n')"
+  [ -n "$agent" ] || die "cannot tell which agent '$name' runs — not in the roster and no engine installed"
 
   # GitHub: token from the host environment when provided (piped, never
   # written to disk by crew), device login in-box otherwise.
@@ -203,110 +246,85 @@ cmd_auth() {
   fi
   echo "github identity: $(bxn "$name" 'gh api user --jq .login' | tr -d '\r\n')"
 
-  # Vendor CLI: probe first; guided shell if it fails. Token injection per
-  # vendor lands here once the agent profile grows agent_auth_with_env.
-  local hint=""
+  # Vendor CLI: probe first; guided shell if it fails. The probe comes from
+  # the agent profile in THIS checkout, shipped over stdin — the box may
+  # not be hired yet, so nothing on it can be assumed.
+  local hint
   hint="$(sed -n 's/^AGENT_LOGIN_HINT=//p' "$AGENTS_DIR/$agent.conf" | tr -d '"')"
-  if bxn "$name" "source ~/duty/conf/agents/$agent.conf 2>/dev/null && bot_cli_probe"; then
+  vendor_ok() {
+    box exec "$name" -- bash -lc \
+      'cat >/tmp/.crew-agent-probe.conf; source /tmp/.crew-agent-probe.conf; bot_cli_probe' \
+      <"$AGENTS_DIR/$agent.conf" >/dev/null 2>&1
+  }
+  if vendor_ok; then
     echo "$agent CLI: already authenticated"
   else
     [ -n "$hint" ] || hint="run the vendor CLI login"
     echo "== $agent CLI login — dropping you into the box shell; $hint; exit when done"
     box shell "$name" || true
-    if bxn "$name" "source ~/duty/conf/agents/$agent.conf 2>/dev/null && bot_cli_probe"; then
+    if vendor_ok; then
       echo "$agent CLI: authenticated"
     else
-      die "$agent CLI probe still failing — the box stays in loud-idle until it passes"
+      die "$agent CLI probe still failing — re-run 'crew auth $name' after fixing it"
     fi
   fi
   echo
-  echo "Fully authenticated. Nothing to restart: the next 5-minute boundary goes on duty."
-}
-
-# Roster reader: <name> <agent> <role> [<from-box>/<snap>], comments/blanks
-# skipped. Every roster consumer goes through here.
-read_roster() {
-  grep -vE '^[[:space:]]*(#|$)' "$1"
+  echo "Authenticated, once and for all. Hire it when ready: crew hire $name"
 }
 
 cmd_up() {
   need_box
-  local roster="$CREW_ROOT/fleet.roster" dry=0
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --roster)  roster="$2"; shift 2 ;;
-      --dry-run) dry=1; shift ;;
-      *) die "unknown argument '$1' (usage: crew up [--roster <file>] [--dry-run])" ;;
-    esac
-  done
-  [ -f "$roster" ] || die "no roster at $roster"
+  local dry=0
+  [ "${1:-}" = "--dry-run" ] && dry=1
+  [ -f "$ROSTER" ] || die "no roster at $ROSTER"
 
-  local existing name agent role from state summary=""
-  existing="$(box_names)"
+  local name agent role from state
   while read -r name agent role from; do
-    [ -n "${role:-}" ] || die "roster line for '${name:-?}' needs: <name> <agent> <role>"
-    [ -f "$ROLES_DIR/$role.conf" ]   || die "roster: unknown role '$role' for $name"
-    [ -f "$AGENTS_DIR/$agent.conf" ] || die "roster: unknown agent '$agent' for $name"
-    if printf '%s\n' "$existing" | grep -qx "$name"; then
+    validate_profiles "$agent" "$role"
+    if ! box_exists "$name"; then
+      if [ "$dry" -eq 1 ]; then echo "$name: WOULD create ($agent/$role${from:+ from $from})"; continue; fi
+      create_box "$name" "$agent" "$role" "$from"
+    else
       state="$(box info "$name" --json 2>/dev/null \
         | jq -r '.state // .status // "unknown"' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
       if [ "$state" = "stopped" ]; then
-        [ "$dry" -eq 1 ] || box start "$name"
-        summary="$summary$name: started
-"
-      else
-        summary="$summary$name: already running ($state)
-"
+        if [ "$dry" -eq 1 ]; then echo "$name: WOULD start"; else box start "$name"; echo "$name: started"; fi
       fi
-    elif [ "$dry" -eq 1 ]; then
-      summary="$summary$name: WOULD mint ($agent/$role${from:+ from $from})
-"
-    else
-      # --force: the roster is the singleton authority here — it names
-      # exactly one triage box, so cmd_new's name-based triage guard would
-      # only misfire (e.g. on a re-run racing box list).
-      cmd_new --role "$role" --agent "$agent" --name "$name" --force ${from:+--from "$from"}
-      summary="$summary$name: minted ($agent/$role)
-"
     fi
-  done < <(read_roster "$roster")
+    if [ "$dry" -eq 0 ]; then
+      hire_box "$name" "$agent" "$role" HEAD 0
+    else
+      echo "$name: WOULD hire (currently: $(hired_at "$name"))" 2>/dev/null || echo "$name: WOULD hire"
+    fi
+  done < <(read_roster)
 
-  echo
-  echo "== crew up: $roster"
-  printf '%s' "$summary"
-
-  # Rosters converge machines; identities stay the operator's. Say who is
-  # still waiting for a login rather than making anyone go look.
   if [ "$dry" -eq 0 ]; then
     echo
     echo "auth:"
     while read -r name _agent _role _from; do
-      if box exec "$name" -- bash -lc 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
+      if bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
         echo "  $name: logged in"
       else
-        echo "  $name: AWAITING LOGIN  (box shell $name → gh auth login + vendor login)"
+        echo "  $name: AWAITING LOGIN  (crew auth $name)"
       fi
-    done < <(read_roster "$roster")
+    done < <(read_roster)
     echo
     echo "boxes on this host but not in the roster (left alone):"
-    comm -23 <(box_names | sort) <(read_roster "$roster" | awk '{print $1}' | sort) | sed 's/^/  /' || true
+    comm -23 <(box_names | sort) <(read_roster | awk '{print $1}' | sort) | sed 's/^/  /' || true
   fi
 }
 
 cmd_down() {
   need_box
-  local roster="$CREW_ROOT/fleet.roster"
-  [ "${1:-}" = "--roster" ] && roster="$2"
-  [ -f "$roster" ] || die "no roster at $roster"
-  local existing name _rest
-  existing="$(box_names)"
+  [ -f "$ROSTER" ] || die "no roster at $ROSTER"
+  local name _rest
   while read -r name _rest; do
-    if printf '%s\n' "$existing" | grep -qx "$name"; then
+    if box_exists "$name"; then
       box down "$name" || echo "  down FAILED on $name"
     else
       echo "  $name: not present, skipping"
     fi
-  done < <(read_roster "$roster")
+  done < <(read_roster)
 }
 
 cmd_status() {
@@ -317,7 +335,7 @@ cmd_status() {
   for b in $targets; do
     echo "== $b"
     box exec "$b" -- bash -lc '
-      cat ~/duty/VERSION 2>/dev/null || echo "no engine installed"
+      cat ~/duty/VERSION 2>/dev/null || echo "not hired (no engine)"
       tail -n 3 ~/duty/duty.log 2>/dev/null
     ' 2>/dev/null || echo "  (unreachable)"
   done
@@ -349,12 +367,12 @@ cmd_gold() {
   local name="${1:-}" force="${2:-}"
   [ -n "$name" ] || die "usage: crew gold <box> [--force]"
   # Gold images are the bake cache and must carry ZERO credentials — cut
-  # them pre-login. A logged-in box is refused.
-  if box exec "$name" -- bash -lc 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
+  # them pre-auth. A logged-in box is refused.
+  if bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
     [ "$force" = "--force" ] || die "$name has live gh credentials — golds are cut PRE-login (--force to override)"
   fi
   local ver
-  ver="$(box exec "$name" -- bash -lc 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r' || true)"
+  ver="$(hired_at "$name")"
   ver="${ver:-crew@unknown}"
   box snapshot "$name" "gold-${ver//[^A-Za-z0-9_.-]/-}"
   echo "gold cut: $name @ $ver"
@@ -373,15 +391,18 @@ cmd_profiles() {
 }
 
 case "${1:-}" in
-  up)       shift; cmd_up "$@" ;;
-  down)     shift; cmd_down "$@" ;;
-  new)      shift; cmd_new "$@" ;;
-  adopt)    shift; cmd_adopt "$@" ;;
-  auth)     shift; cmd_auth "$@" ;;
-  status)   shift; cmd_status "$@" ;;
-  upgrade)  shift; cmd_upgrade "$@" ;;
-  gold)     shift; cmd_gold "$@" ;;
-  profiles) cmd_profiles ;;
-  ""|help|-h|--help) sed -n '2,20s/^# \{0,1\}//p' "$0" ;;
+  new)        shift; cmd_new "$@" ;;
+  create-all) shift; cmd_create_all "$@" ;;
+  auth)       shift; cmd_auth "$@" ;;
+  hire)       shift; cmd_hire "$@" ;;
+  adopt)      shift; echo "crew: 'adopt' is now 'hire'" >&2; cmd_hire "$@" ;;
+  hire-all)   shift; cmd_hire_all "$@" ;;
+  up)         shift; cmd_up "$@" ;;
+  down)       shift; cmd_down "$@" ;;
+  status)     shift; cmd_status "$@" ;;
+  upgrade)    shift; cmd_upgrade "$@" ;;
+  gold)       shift; cmd_gold "$@" ;;
+  profiles)   cmd_profiles ;;
+  ""|help|-h|--help) sed -n '2,34s/^# \{0,1\}//p' "$0" ;;
   *) die "unknown command '${1}' — try: crew help" ;;
 esac
