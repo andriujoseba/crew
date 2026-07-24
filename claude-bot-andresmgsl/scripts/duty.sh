@@ -255,7 +255,18 @@ while IFS= read -r R; do
         --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")
       [ -z "$branch" ] && continue
       if ! printf '%s\n' "$open_heads" | grep -qx "$branch"; then
-        orphan_nums="$orphan_nums $N"
+        # No OPEN PR is not enough: a MERGED PR on this branch means the
+        # claim is post-merge parked (an open issue holding post-merge
+        # ACs — incubator#55's shape, 2026-07-24), not an interrupted
+        # build. Resuming it would spawn a phantom session every tick;
+        # #55 dodged that only because the merge deleted the fork branch.
+        b_states=$(gh pr list -R "$R" --author "$ME" --head "$branch" \
+          --state all --json state --jq '[.[].state] | join(" ")' || echo err)
+        case "$b_states" in
+          *MERGED*) : ;;
+          err) log "WARN: $R#$N orphan-check PR lookup failed; not resuming it this tick" ;;
+          *) orphan_nums="$orphan_nums $N" ;;
+        esac
       fi
     done
   fi
