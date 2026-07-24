@@ -131,6 +131,35 @@ if [ "$(cat "$HOME/duty/.boot-id" 2>/dev/null)" != "$boot_id" ]; then
   fi
 fi
 
+# --- ATTENTION duty (role-independent, ahead of the review queue) ---
+# An open issue assigned to me carrying the `attention` label is a demand
+# parked for me: triage, the operator, or a sibling agent decided a thread
+# needs my hands and set it. Exactly one wake per demand; the pickup session
+# acks by REMOVING the label (that re-arms the wake), then does the demanded
+# work per role. Runs before the candidate sweep so it fires even when no
+# verdict is owed (the sweep exits quiet below). A session that dies before
+# acking is relaunched next tick — idempotent, the flag is still up.
+# (ceremony#83; the wake is spec'd in FLEET.md. An @-mention is an FYI that
+# demands nothing; only `attention` wakes a session.)
+attn_rows="$(gh api "/issues?filter=assigned&state=open&labels=attention&per_page=100" \
+  --jq '.[] | "\(.repository.full_name) \(.number)"' 2>/dev/null)" \
+  || { attn_rows=""; echo "$(ts) WARN: attention fetch failed this tick"; }
+if [[ -z "${attn_rows}" ]]; then
+  echo "$(ts) attention: none"
+else
+  while read -r a_repo a_num; do
+    [[ -n "${a_num:-}" ]] || continue
+    echo "$(ts) attention: ${a_repo}#${a_num} — launching pickup session"
+    ensure_clone "${a_repo}" || continue
+    a_clone="${DUTY_DIR}/$(basename "${a_repo}")"
+    grok -p "You are ${ME}. Issue ${a_repo}#${a_num} is assigned to you and carries the attention label: a demand was parked there for you. FIRST, the ack — post one short comment (📌 picked up) unless an unanswered 📌 of yours already sits at the bottom of the thread, then REMOVE the label: gh api -X DELETE repos/${a_repo}/issues/${a_num}/labels/attention — the removal re-arms the wake for the next demand. THEN read the full thread plus whatever it links, work out what is being demanded of you, and do it whole per your role. Read AGENTS.md at the repo root and follow where it routes you (REVIEWER.md for a verdict, BUILDER.md for a claim). An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention." \
+      --permission-mode bypassPermissions \
+      --always-approve \
+      --cwd "${a_clone}" \
+      || echo "$(ts) attention: ${a_repo}#${a_num} pickup exited non-zero ($?)"
+  done <<< "${attn_rows}"
+fi
+
 # =====================================================================
 # ONE candidate set: merge API request-check + repos.txt search, then
 # dedupe by (repo, PR number) before any launch.

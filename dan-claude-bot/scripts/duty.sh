@@ -91,6 +91,36 @@ checkout() {
 
 touch "$NOTIFIED_FILE"
 
+# --- ATTENTION duty (role-independent, once per tick, ahead of the per-repo
+# triage sweep): an open issue assigned to me carrying the `attention` label
+# is a demand parked for me — the operator or a sibling agent decided a thread
+# needs my hands and set it. It is cross-repo (assigned to me anywhere), so it
+# runs once here, not inside the repos.txt loop below. Exactly one wake per
+# demand; the pickup session acks by REMOVING the label (that re-arms the
+# wake), then does the demanded work per TRIAGE.md. A session that dies before
+# acking is relaunched next tick — idempotent, the flag is still up.
+# (ceremony#83; the wake is spec'd in FLEET.md.) This is the assignee demand —
+# distinct from an @-mention (d), which stays an FYI, and from needs-ruling,
+# which is a human's decision, not mine.
+attn_rows=$(gh api "/issues?filter=assigned&state=open&labels=attention&per_page=100" \
+  --jq '.[] | "\(.repository.full_name) \(.number)"' 2>/dev/null) \
+  || { attn_rows=""; log "WARN: attention fetch failed this tick"; }
+if [ -z "$attn_rows" ]; then
+  log "attention: none"
+else
+  while read -r a_repo a_num; do
+    [ -z "${a_num:-}" ] && continue
+    log "attention: $a_repo#$a_num — launching pickup session"
+    a_dir=$(checkout "$a_repo")
+    aprompt="You are the triage agent dan-claude-bot. Issue $a_repo#$a_num is assigned to you and carries the attention label: a demand was parked there for you. FIRST, the ack — post one short comment (📌 picked up) unless an unanswered 📌 of yours already sits at the bottom of the thread, then REMOVE the label: gh api -X DELETE repos/$a_repo/issues/$a_num/labels/attention — the removal re-arms the wake for the next demand. THEN read the full thread plus whatever it links, work out what is being demanded of you, and do it whole. Read AGENTS.md at the repo root and act per TRIAGE.md. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."
+    if (cd "$a_dir" && timeout 1500 claude -p --dangerously-skip-permissions "$aprompt"); then
+      log "attention: $a_repo#$a_num pickup completed"
+    else
+      log "attention: $a_repo#$a_num pickup FAILED or timed out (exit $?)"
+    fi
+  done <<< "$attn_rows"
+fi
+
 while IFS= read -r R; do
   [ -z "$R" ] && continue
   case "$R" in \#*) continue ;; esac
