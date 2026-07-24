@@ -246,6 +246,30 @@ one exists. The lifecycle:
 - *Triage stays a singleton* (sole issue-minter, notify owner). The CLI
   should refuse `crew spawn claude-triage` when one exists.
 
+## Fixed crew now, flexible crews as the north star (operator, 2026-07-24)
+
+What `crew up` cannot conjure is identity: every new member needs a GitHub
+account + PAT and a vendor seat/token — credentials that grant access to
+real things, which is why this design keeps them interactive and
+operator-owned (boxes are creds-free; the CLI waits, never holds). The
+consequence is deliberate:
+
+- **Now — fixed crew.** The fleet is defined once in `fleet.roster`,
+  `crew up` converges the machines, the operator performs the logins, and
+  the crew then just works. Membership changes are ceremonies, not
+  commands — and that is acceptable because they are rare.
+- **North star — flexible crews.** "Spawn a second claude builder" as a
+  pure command requires an identity pool: pre-provisioned GitHub machine
+  accounts and vendor seats whose credentials live sealed in something the
+  CLI can check out at spawn time and revoke at teardown (a broker/vault,
+  never files in the repo, never baked into golds). That is a credential-
+  lifecycle project more than a CLI feature: creation, scoping (each
+  identity gets the least the role needs), rotation, revocation, and the
+  board-side effects (manifest line, panel decision) done as reviewable
+  changes. Nothing in the current design blocks it — the roster, the
+  profiles, and the pre-auth bake are all the same machinery flexible
+  crews would drive; only the login step changes owner.
+
 ## Suggested migration order
 
 1. Adopt this shared engine on all five boxes as-is (roles unchanged) —
