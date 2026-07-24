@@ -1,0 +1,3 @@
+*/5 * * * * flock -n /home/claude/duty/duty.lock /home/claude/duty/duty.sh >> /home/claude/duty/duty.log 2>&1
+0 * * * * flock -n /home/claude/duty/hygiene.lock /home/claude/duty/hygiene.sh >> /home/claude/duty/hygiene.log 2>&1
+*/5 * * * * flock -n /home/claude/duty/notify.lock /home/claude/duty/notify.sh >> /home/claude/duty/notify.log 2>&1
