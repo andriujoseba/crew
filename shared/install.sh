@@ -30,12 +30,56 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 command -v gh >/dev/null || { echo "gh not found — install and authenticate it first"; exit 1; }
 command -v jq >/dev/null || { echo "jq not found — the duty engine requires it"; exit 1; }
 
-ME="$(gh api user --jq .login)" || { echo "gh is not authenticated"; exit 1; }
-BOT_CONF="$HERE/conf/bots/$ME.conf"
-[ -f "$BOT_CONF" ] || { echo "no bot config for '$ME' at $BOT_CONF — add one first"; exit 1; }
-FLEET_TRIAGE="$(bash -c "source '$HERE/conf/fleet.conf'; echo \"\$FLEET_TRIAGE\"")"
+# shellcheck disable=SC1091
+source "$HERE/lib/common.sh"
+# shellcheck disable=SC1091
+source "$HERE/conf/fleet.conf"
 
-mkdir -p "$DUTY_DIR/bin" "$DUTY_DIR/lib/jq" "$DUTY_DIR/conf" "$DUTY_DIR/prompts" \
+# --- Resolve this box's configuration, one of three ways ---
+#  explicit  --agent X --role Y   pre-auth bake (crew new): no gh identity
+#                                 needed — the boot gate screams until the
+#                                 operator logs in, which is correct.
+#  manifest  gh token → FLEET_MANIFEST line (the standing fleet).
+#  keep      existing conf/instance.conf (re-install/upgrade on a box whose
+#            identity isn't in the manifest, or whose auth is down).
+AGENT_ARG="" ROLE_ARG="" ARM_CRON=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) AGENT_ARG="$2"; shift 2 ;;
+    --role)  ROLE_ARG="$2";  shift 2 ;;
+    --arm-cron) ARM_CRON=1; shift ;;
+    *) echo "unknown argument '$1' (usage: install.sh [--agent <a> --role <r>] [--arm-cron])"; exit 1 ;;
+  esac
+done
+
+ME="$(gh api user --jq .login 2>/dev/null || true)"
+if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
+  if [ -z "$AGENT_ARG" ] || [ -z "$ROLE_ARG" ]; then
+    echo "--agent and --role go together"; exit 1
+  fi
+  BOT_AGENT="$AGENT_ARG"
+  BOT_ROLE_LIST="$(printf '%s' "$ROLE_ARG" | tr ',' ' ')"
+elif [ -n "$ME" ] && resolved="$(manifest_lookup "$ME")"; then
+  read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
+elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
+  # shellcheck disable=SC1091
+  source "$DUTY_DIR/conf/instance.conf"
+  BOT_ROLE_LIST="$BOT_ROLES"
+  echo "keeping existing instance config (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)${ME:+ — $ME is not in FLEET_MANIFEST}"
+else
+  echo "cannot resolve this box's configuration: no --agent/--role flags,"
+  echo "no manifest entry${ME:+ for $ME}${ME:-" (gh not authenticated)"}, and no existing instance.conf"
+  exit 1
+fi
+[ -f "$HERE/conf/agents/$BOT_AGENT.conf" ] || { echo "unknown agent profile '$BOT_AGENT'"; exit 1; }
+for role in $BOT_ROLE_LIST; do
+  [ -f "$HERE/conf/roles/$role.conf" ] || { echo "unknown role profile '$role'"; exit 1; }
+done
+IS_TRIAGE=0
+case " $BOT_ROLE_LIST " in *" triage "*) IS_TRIAGE=1 ;; esac
+
+mkdir -p "$DUTY_DIR/bin" "$DUTY_DIR/lib/jq" "$DUTY_DIR/conf/agents" \
+         "$DUTY_DIR/conf/roles" "$DUTY_DIR/prompts" \
          "$DUTY_DIR/work" "$DUTY_DIR/trees" "$DUTY_DIR/logs"
 
 # Atomic per-file install: new inode, then rename over the old name.
@@ -51,8 +95,23 @@ for f in "$HERE"/bin/*.sh; do put "$f" "$DUTY_DIR/bin"; chmod +x "$DUTY_DIR/bin/
 for f in "$HERE"/lib/*.sh; do put "$f" "$DUTY_DIR/lib"; done
 for f in "$HERE"/lib/jq/*.jq; do put "$f" "$DUTY_DIR/lib/jq"; done
 for f in "$HERE"/prompts/*.txt; do put "$f" "$DUTY_DIR/prompts"; done
+for f in "$HERE"/conf/agents/*.conf; do put "$f" "$DUTY_DIR/conf/agents"; done
+for f in "$HERE"/conf/roles/*.conf; do put "$f" "$DUTY_DIR/conf/roles"; done
 put "$HERE/conf/fleet.conf" "$DUTY_DIR/conf"
-tmp="$(mktemp "$DUTY_DIR/conf/.install.XXXXXX")"; cp "$BOT_CONF" "$tmp"; mv "$tmp" "$DUTY_DIR/conf/bot.conf"
+
+# The instance resolution, re-derived every install (it is a pure function
+# of the token and the manifest — never edited by hand).
+tmp="$(mktemp "$DUTY_DIR/conf/.install.XXXXXX")"
+{
+  echo "# instance.conf — WRITTEN BY install.sh; derived from the fleet"
+  echo "# manifest and this box's gh token. Do not edit; edit the manifest."
+  echo "# shellcheck shell=bash disable=SC2034"
+  echo "BOT_AGENT=$BOT_AGENT"
+  echo "BOT_ROLES=\"$BOT_ROLE_LIST\""
+} >"$tmp"
+mv "$tmp" "$DUTY_DIR/conf/instance.conf"
+# Remove the pre-profile fused config so nothing can source it stale.
+rm -f "$DUTY_DIR/conf/bot.conf"
 
 # Disarm the old hand-rolled layout: anything executable at ~/duty top level
 # or old helper names in bin/ moves to legacy/. Old cron lines pointing at
@@ -81,7 +140,7 @@ if [ ! -f "$DUTY_DIR/repos.txt" ]; then
   cp "$HERE/conf/repos-default.txt" "$DUTY_DIR/repos.txt"
   echo "seeded $DUTY_DIR/repos.txt (edit it: it is the box's registry, not the job definition)"
 fi
-if [ "$ME" = "$FLEET_TRIAGE" ] && [ ! -f "$DUTY_DIR/notify-repos.txt" ]; then
+if [ "$IS_TRIAGE" -eq 1 ] && [ ! -f "$DUTY_DIR/notify-repos.txt" ]; then
   cp "$HERE/conf/notify-repos-default.txt" "$DUTY_DIR/notify-repos.txt"
   echo "seeded $DUTY_DIR/notify-repos.txt (the notifier's scope must stay WIDER than triage's — rig#112)"
 fi
@@ -95,18 +154,30 @@ rm -f "$DUTY_DIR/.boot-id"
 # Version stamp: FLEET.md reconciles the deployed fleet against crew@SHA.
 {
   echo "crew@$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') as $ME"
+  echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') as ${ME:-<pre-auth>}"
 } >"$DUTY_DIR/VERSION"
 
-echo "installed for $ME (roles: $(bash -c "source '$DUTY_DIR/conf/bot.conf'; echo \"\$BOT_ROLES\""))"
-echo
-echo "REPLACE the crontab (crontab -e) with exactly this — DELETE every old"
-echo "duty/tick/hygiene/notify line; the old and new engines do not share"
-echo "locks, and a surviving old line runs both in parallel:"
-echo "  */5 * * * * $DUTY_DIR/bin/tick.sh"
-if [ "$ME" = "$FLEET_TRIAGE" ]; then
-  echo "  */5 * * * * $DUTY_DIR/bin/tick.sh notify"
-  echo "(hygiene needs no cron line — it self-schedules inside the duty tick)"
+echo "installed for ${ME:-<pre-auth box>} (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
+
+if [ "$ARM_CRON" -eq 1 ]; then
+  # Replace any previous tick lines with the canonical one(s); everything
+  # else in the crontab is preserved.
+  {
+    crontab -l 2>/dev/null | grep -vF "$DUTY_DIR/bin/tick.sh" || true
+    echo "*/5 * * * * $DUTY_DIR/bin/tick.sh"
+    [ "$IS_TRIAGE" -eq 1 ] && echo "*/5 * * * * $DUTY_DIR/bin/tick.sh notify"
+  } | crontab -
+  echo "crontab armed"
+else
+  echo
+  echo "REPLACE the crontab (crontab -e) with exactly this — DELETE every old"
+  echo "duty/tick/hygiene/notify line; the old and new engines do not share"
+  echo "locks, and a surviving old line runs both in parallel:"
+  echo "  */5 * * * * $DUTY_DIR/bin/tick.sh"
+  if [ "$IS_TRIAGE" -eq 1 ]; then
+    echo "  */5 * * * * $DUTY_DIR/bin/tick.sh notify"
+    echo "(hygiene needs no cron line — it self-schedules inside the duty tick)"
+  fi
 fi
 stale="$(crontab -l 2>/dev/null | grep -E 'duty|tick|hygiene|notify' | grep -vF "$DUTY_DIR/bin/tick.sh" || true)"
 if [ -n "$stale" ]; then

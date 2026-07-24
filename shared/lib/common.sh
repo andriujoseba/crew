@@ -1,8 +1,9 @@
 # common.sh — shared plumbing for the duty engine. Sourced, never executed.
 #
-# Everything here is fleet-invariant. Per-bot facts (CLI command, auth probe,
-# roles) come from conf/bot.conf; org-level facts (bench, labels, markers)
-# from conf/fleet.conf. Both are sourced by load_conf below.
+# Everything here is fleet-invariant. The box's runtime comes from its agent
+# profile (conf/agents/), the shape of its work from its role profile(s)
+# (conf/roles/), the pairing from conf/instance.conf (written by install.sh),
+# and org-level facts from conf/fleet.conf. All sourced by load_conf below.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # path constants are consumed by the sourcing scripts
@@ -21,13 +22,34 @@ REPOS_FILE="$DUTY_DIR/repos.txt"
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 warn() { log "WARN: $*"; }
 
-# load_conf — source fleet + bot config. bot.conf is installed per box by
-# install.sh; fleet.conf is identical on every box.
+# load_conf — source the box's configuration: fleet facts, then the
+# instance resolution install.sh wrote (BOT_AGENT + BOT_ROLES, derived from
+# the fleet manifest and the box's gh token), then the agent profile (the
+# runtime) and one role profile per role (the shape of the work).
 # shellcheck disable=SC1091
 load_conf() {
   source "$CONF_DIR/fleet.conf"
-  source "$CONF_DIR/bot.conf"
+  source "$CONF_DIR/instance.conf"
+  # shellcheck disable=SC1090
+  source "$CONF_DIR/agents/$BOT_AGENT.conf"
+  local role
+  for role in $BOT_ROLES; do
+    # shellcheck disable=SC1090
+    source "$CONF_DIR/roles/$role.conf"
+  done
   export PATH="${BOT_PATH_PREPEND:+$BOT_PATH_PREPEND:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+# manifest_lookup LOGIN — resolve a login against FLEET_MANIFEST
+# (<login>=<agent>:<role>[,<role>] per line). Prints "agent role [role…]";
+# returns 1 for an unlisted login.
+manifest_lookup() {
+  local entry
+  # shellcheck disable=SC2086  # manifest entries contain no spaces
+  entry="$(printf '%s\n' $FLEET_MANIFEST | grep -m1 "^$1=" || true)"
+  [ -n "$entry" ] || return 1
+  entry="${entry#*=}"
+  printf '%s %s\n' "${entry%%:*}" "$(printf '%s' "${entry#*:}" | tr ',' ' ')"
 }
 
 has_role() {

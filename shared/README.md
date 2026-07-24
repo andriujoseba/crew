@@ -19,8 +19,10 @@ shared/
   lib/common.sh          config, logging, checkouts, session runner, panel resolution
   lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
-  conf/fleet.conf        org-level facts: bench, triage, human, labels, markers, timeouts
-  conf/bots/<login>.conf per-bot facts: roles, CLI command, auth probe, PATH
+  conf/fleet.conf        org facts: manifest, bench, triage, human, labels, markers
+  conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
+  conf/roles/<r>.conf    role profile — the work: session budgets, box resources
+  ../cli/crew            fleet CLI on a box host: new / status / upgrade / gold
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
   test/run.sh            fixture tests (bash+jq only, no network) — run by shared-ci
   install.sh             deploy to ~/duty; identity comes from the gh token

@@ -8,12 +8,14 @@ artifact.
 
 ## Why the engine is already shaped for it
 
-`BOT_ROLES` in `conf/bots/<login>.conf` is the only place a box's role
-lives. The engine gates every duty call on `has_role` — a reviewer-only box
-sources the builder module (definition-only) but never executes any of it.
-Migrating a box to a single role is a one-line config change plus a rerun
-of `install.sh` — no code changes. Grok and kimi are, in effect, already
-single-role agents running this exact configuration.
+A box's roles live in one place: `conf/instance.conf`, written by
+`install.sh` from the fleet manifest (or from `--role/--agent` flags at
+bake time). The engine gates every duty call on `has_role` — a
+reviewer-only box sources the builder module (definition-only) but never
+executes any of it. Migrating a box to a single role is a one-line
+manifest change plus a rerun of `install.sh` — no code changes. Grok and
+kimi are, in effect, already single-role agents running this exact
+configuration, and `cli/crew` only spawns single-role members.
 
 ## What single-role buys
 
@@ -89,13 +91,10 @@ single-role agents running this exact configuration.
 
 Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
 
-1. **Box template per role** (templates-registry): a template bakes the
-   invariants — CLI installed, `shared/` engine deployed by `install.sh`,
-   crontab line present, `~/duty` skeleton created. Bringing up a new
-   reviewer = instantiate the reviewer template, `gh auth login`, done. The
-   per-role template is exactly `conf/bots/<login>.conf` + this tree, so
-   the template definition should *vendor a crew checkout at a pin*, the
-   same way governed repos vendor `.ceremony/`.
+1. **Box templates carry the agent, roles carry the size** — box already
+   ships `<agent>-box` templates that rig converges (vendor CLI,
+   toolchain); `crew new` layers the role on top: resources from the role
+   profile, engine baked from a crew checkout at a pin, crontab armed.
 2. **Gold snapshots as the deployment artifact.** Once a box runs a stable
    engine version, `box snapshot` freezes it. Because boxes are creds-free
    by default, the right moment to cut gold is *before* `/login` — the
@@ -144,11 +143,15 @@ narrow the config at spawn time (which model, which toolchain versions,
 which repos) — an interview the CLI can run against the freshly booted
 box's own agent before arming cron.
 
-Today's `conf/bots/<login>.conf` is exactly this composition, pre-fused by
-hand for five instances. The migration is mechanical: split it into
-`conf/roles/*.conf` + `conf/agents/*.conf`, keep a fleet manifest mapping
-identity → (role, agent), and have `install.sh` resolve login → manifest →
-two profiles instead of login → one bot file.
+This split is now implemented: `conf/roles/*.conf` × `conf/agents/*.conf`,
+composed per box by the `FLEET_MANIFEST` table in fleet.conf (or by
+explicit `--role/--agent` flags at bake time), resolved into
+`conf/instance.conf` by install.sh. `cli/crew` is the CLI: `crew new
+--role builder --agent claude` sizes the box from the role profile, mints
+it from the agent's box template (`<agent>-box`, which rig converges),
+bakes the engine at this checkout's pin, arms cron, and hands the operator
+the interactive-login steps. `crew gold` snapshots a pre-login box as the
+bake cache; `crew status` / `crew upgrade` tend the fleet.
 
 **Gold snapshots fit as the cache layer**: a (role, agent) pair that has
 been baked once can be snapshotted pre-`/login` — machinery and loadout,

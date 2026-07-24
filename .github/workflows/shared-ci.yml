@@ -1,10 +1,10 @@
 name: shared-ci
 on:
   pull_request:
-    paths: ['shared/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', '.github/workflows/shared-ci.yml']
   push:
     branches: [main]
-    paths: ['shared/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', '.github/workflows/shared-ci.yml']
 
 jobs:
   check:
@@ -14,12 +14,12 @@ jobs:
       - name: bash -n (syntax)
         run: |
           set -e
-          for f in shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh; do
+          for f in shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew; do
             bash -n "$f"
           done
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/conf/fleet.conf shared/conf/bots/*.conf
+          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew shared/conf/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
       - name: fixture tests
         run: shared/test/run.sh

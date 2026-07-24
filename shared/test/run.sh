@@ -52,6 +52,17 @@ has_role triage && r2=yes || r2=no
 t has-role-yes yes "$r1"
 t has-role-no no "$r2"
 
+# --- manifest_lookup: agent + roles resolution
+# shellcheck disable=SC2034  # consumed inside sourced common.sh
+FLEET_MANIFEST="
+dan-claude-bot=claude:triage
+claude-bot-andresmgsl=claude:builder,reviewer
+"
+t manifest-single "claude triage" "$(manifest_lookup dan-claude-bot)"
+t manifest-multi "claude builder reviewer" "$(manifest_lookup claude-bot-andresmgsl)"
+manifest_lookup nobody-bot >/dev/null && r1=found || r1=absent
+t manifest-missing absent "$r1"
+
 # --- validate_sha
 validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad
 validate_sha "0123456" && r2=ok || r2=bad

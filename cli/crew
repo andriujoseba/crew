@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# crew — spawn and tend the agent fleet, on a host with `box` installed.
+#
+#   crew new --role builder --agent claude    mint + bake + arm a crew box
+#   crew status [<box>]                       engine version + duty evidence
+#   crew upgrade <box> | --all                pull crew + re-install in place
+#   crew gold <box>                           snapshot a box as a gold image
+#   crew profiles                             list role and agent profiles
+#
+# Composition, not enumeration: a crew member is a ROLE profile (resources,
+# cadence, session budgets, loadout — shared/conf/roles/) × an AGENT profile
+# (CLI runtime, auth probe — shared/conf/agents/). `crew new` sizes the box
+# from the role, mints it from the agent's box template (<agent>-box, which
+# rig converges: vendor CLI, toolchain), bakes the duty engine from this
+# checkout's pin, and arms cron. The box comes up with the boot gate loudly
+# reporting dead auth — that is the CORRECT state, not an error: boxes are
+# creds-free by default and this CLI never touches credentials. The operator
+# logs the box in interactively; the first authenticated tick goes on duty.
+#
+# One role per box. The engine still runs the legacy dual-role instances
+# (the manifest maps them), but this CLI only spawns single-role members —
+# the fleet's target shape.
+set -euo pipefail
+
+CREW_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROLES_DIR="$CREW_ROOT/shared/conf/roles"
+AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
+CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
+
+die() { echo "crew: $*" >&2; exit 1; }
+
+need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
+
+box_names() {
+  box list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null \
+    || box list 2>/dev/null | awk 'NR>1 {print $1}'
+}
+
+# The engine deploy + cron arm, run inside a box as its tenant user.
+bake() {  # bake NAME AGENT ROLE REF
+  local name="$1" agent="$2" role="$3" ref="$4"
+  box exec "$name" -- bash -lc "
+    set -euo pipefail
+    if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/$CREW_REPO ~/crew; fi
+    git -C ~/crew fetch --quiet origin
+    git -C ~/crew checkout --quiet '$ref'
+    ~/crew/shared/install.sh --agent '$agent' --role '$role' --arm-cron
+  "
+}
+
+cmd_new() {
+  need_box
+  local role="" agent="" name="" ref="" force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role)  role="$2";  shift 2 ;;
+      --agent) agent="$2"; shift 2 ;;
+      --name)  name="$2";  shift 2 ;;
+      --ref)   ref="$2";   shift 2 ;;
+      --force) force=1;    shift ;;
+      *) die "unknown argument '$1' (usage: crew new --role <r> --agent <a> [--name <n>] [--ref <git-ref>] [--force])" ;;
+    esac
+  done
+  if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew new --role <r> --agent <a>"; fi
+  [ -f "$ROLES_DIR/$role.conf" ]   || die "unknown role '$role' — see: crew profiles"
+  [ -f "$AGENTS_DIR/$agent.conf" ] || die "unknown agent '$agent' — see: crew profiles"
+  [ -z "$ref" ] && ref="$(git -C "$CREW_ROOT" rev-parse HEAD)"
+
+  # Triage is a fleet singleton (sole issue-minter, notify owner).
+  if [ "$role" = "triage" ] && [ "$force" -eq 0 ]; then
+    if box_names | grep -q 'triage'; then
+      die "a triage box already exists — triage is a singleton (--force to override)"
+    fi
+  fi
+
+  # Resources come from the role profile.
+  local BOX_CPU="" BOX_MEMORY="" BOX_DISK=""
+  # shellcheck disable=SC1090
+  source "$ROLES_DIR/$role.conf"
+  if [ -z "$BOX_CPU" ] || [ -z "$BOX_MEMORY" ] || [ -z "$BOX_DISK" ]; then
+    die "role '$role' declares no BOX_CPU/BOX_MEMORY/BOX_DISK"
+  fi
+
+  # Name: <agent>-<role>, first free ordinal suffix.
+  if [ -z "$name" ]; then
+    name="$agent-$role"
+    local i=2 existing
+    existing="$(box_names)"
+    while printf '%s\n' "$existing" | grep -qx "$name"; do
+      name="$agent-$role-$i"; i=$((i + 1))
+    done
+  fi
+
+  echo "minting $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box crew@${ref:0:12})"
+  box new --name "$name" --template "$agent-box" \
+    --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+
+  echo "baking the duty engine…"
+  bake "$name" "$agent" "$role" "$ref"
+
+  cat <<EOF
+
+$name is up, baked, and armed. It is CREDS-FREE — the boot gate will report
+dead auth every tick until you log it in (that is by design):
+
+  box shell $name
+    gh auth login          # a NEW GitHub identity: one box per identity
+    <$agent login>         # the vendor CLI's interactive login
+
+Then: add the identity to FLEET_MANIFEST in shared/conf/fleet.conf (one
+line) so re-installs resolve it — and if this is a reviewer, decide how the
+governed repos' panel= rosters change BEFORE its first verdict is expected.
+Consider 'crew gold $name' BEFORE logging in to cache this bake.
+EOF
+}
+
+cmd_status() {
+  need_box
+  local targets="${1:-}"
+  [ -n "$targets" ] || targets="$(box_names)"
+  local b
+  for b in $targets; do
+    echo "== $b"
+    box exec "$b" -- bash -lc '
+      cat ~/duty/VERSION 2>/dev/null || echo "no engine installed"
+      tail -n 3 ~/duty/duty.log 2>/dev/null
+    ' 2>/dev/null || echo "  (unreachable)"
+  done
+}
+
+cmd_upgrade() {
+  need_box
+  local targets=""
+  case "${1:-}" in
+    --all) targets="$(box_names)" ;;
+    "")    die "usage: crew upgrade <box> | --all" ;;
+    *)     targets="$1" ;;
+  esac
+  local b
+  for b in $targets; do
+    echo "== upgrading $b"
+    # No flags: install.sh resolves from the manifest, or keeps the box's
+    # existing instance.conf. Pre-auth boxes keep theirs too.
+    box exec "$b" -- bash -lc '
+      set -euo pipefail
+      git -C ~/crew pull --ff-only --quiet
+      ~/crew/shared/install.sh --arm-cron
+    ' || echo "  upgrade FAILED on $b"
+  done
+}
+
+cmd_gold() {
+  need_box
+  local name="${1:-}" force="${2:-}"
+  [ -n "$name" ] || die "usage: crew gold <box> [--force]"
+  # Gold images are the bake cache and must carry ZERO credentials — cut
+  # them pre-login. A logged-in box is refused.
+  if box exec "$name" -- bash -lc 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
+    [ "$force" = "--force" ] || die "$name has live gh credentials — golds are cut PRE-login (--force to override)"
+  fi
+  local ver
+  ver="$(box exec "$name" -- bash -lc 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r' || true)"
+  ver="${ver:-crew@unknown}"
+  box snapshot "$name" "gold-${ver//[^A-Za-z0-9_.-]/-}"
+  echo "gold cut: $name @ $ver"
+}
+
+cmd_profiles() {
+  local f
+  echo "roles:"
+  for f in "$ROLES_DIR"/*.conf; do
+    echo "  $(basename "$f" .conf) — $(sed -n '1s/^# *//p' "$f")"
+  done
+  echo "agents:"
+  for f in "$AGENTS_DIR"/*.conf; do
+    echo "  $(basename "$f" .conf) — $(sed -n '1s/^# *//p' "$f")"
+  done
+}
+
+case "${1:-}" in
+  new)      shift; cmd_new "$@" ;;
+  status)   shift; cmd_status "$@" ;;
+  upgrade)  shift; cmd_upgrade "$@" ;;
+  gold)     shift; cmd_gold "$@" ;;
+  profiles) cmd_profiles ;;
+  ""|help|-h|--help) sed -n '2,20s/^# \{0,1\}//p' "$0" ;;
+  *) die "unknown command '${1}' — try: crew help" ;;
+esac
