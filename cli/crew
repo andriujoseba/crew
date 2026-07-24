@@ -111,12 +111,17 @@ cmd_new() {
 
   cat <<EOF
 
-$name is up, baked, and armed. It is CREDS-FREE — the boot gate will report
-dead auth every tick until you log it in (that is by design):
+$name is up, baked, and ARMED — cron fires at the next 5-minute wall-clock
+boundary and every one after. Until you log it in, each tick idles LOUDLY
+by design (boot check, dead-auth warning, clean exit — three log lines,
+zero sessions, zero board activity). Your only manual work:
 
   box shell $name
     gh auth login          # a NEW GitHub identity: one box per identity
     <$agent login>         # the vendor CLI's interactive login
+
+Nothing to restart: the first 5-minute boundary after both logins passes
+the boot gate and goes on duty (worst case: 5 minutes of latency).
 
 Then: add the identity to FLEET_MANIFEST in shared/conf/fleet.conf (one
 line) so re-installs resolve it — and if this is a reviewer, decide how the
