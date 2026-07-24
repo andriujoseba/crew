@@ -1,0 +1,2 @@
+# CREW: live `crontab -l` on this box as of self-report write-up.
+*/5 * * * * flock -n $HOME/duty/.lock $HOME/duty/duty.sh >> $HOME/duty/duty.log 2>&1

@@ -1,0 +1,4 @@
+# CREW: poll-list backstop for duty.sh search path — not the definition of the job; API requested_reviewers sweep is primary.
+heavy-duty/ceremony
+heavy-duty/incubator
+heavy-duty/rig
