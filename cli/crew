@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # crew — spawn and tend the agent fleet, on a host with `box` installed.
 #
-#   crew new --role builder --agent claude    mint + bake + arm a crew box
+#   crew up [--roster <file>] [--dry-run]     converge the host to a fleet roster
+#   crew down [--roster <file>]               stop every roster box
+#   crew new --role builder --agent claude    mint + bake + arm one crew box
 #   crew status [<box>]                       engine version + duty evidence
 #   crew upgrade <box> | --all                pull crew + re-install in place
 #   crew gold <box>                           snapshot a box as a gold image
@@ -50,15 +52,16 @@ bake() {  # bake NAME AGENT ROLE REF
 
 cmd_new() {
   need_box
-  local role="" agent="" name="" ref="" force=0
+  local role="" agent="" name="" ref="" from="" force=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --role)  role="$2";  shift 2 ;;
       --agent) agent="$2"; shift 2 ;;
       --name)  name="$2";  shift 2 ;;
       --ref)   ref="$2";   shift 2 ;;
+      --from)  from="$2";  shift 2 ;;
       --force) force=1;    shift ;;
-      *) die "unknown argument '$1' (usage: crew new --role <r> --agent <a> [--name <n>] [--ref <git-ref>] [--force])" ;;
+      *) die "unknown argument '$1' (usage: crew new --role <r> --agent <a> [--name <n>] [--ref <git-ref>] [--from <box>/<snapshot>] [--force])" ;;
     esac
   done
   if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew new --role <r> --agent <a>"; fi
@@ -91,9 +94,17 @@ cmd_new() {
     done
   fi
 
-  echo "minting $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box crew@${ref:0:12})"
-  box new --name "$name" --template "$agent-box" \
-    --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+  if [ -n "$from" ]; then
+    # Mint from a gold snapshot — the bake below still runs, so the engine
+    # converges to this checkout's pin even off an older gold.
+    echo "minting $name  (role=$role agent=$agent from=$from crew@${ref:0:12})"
+    box new --name "$name" --from "$from" \
+      --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+  else
+    echo "minting $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box crew@${ref:0:12})"
+    box new --name "$name" --template "$agent-box" \
+      --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+  fi
 
   echo "baking the duty engine…"
   bake "$name" "$agent" "$role" "$ref"
@@ -112,6 +123,92 @@ line) so re-installs resolve it — and if this is a reviewer, decide how the
 governed repos' panel= rosters change BEFORE its first verdict is expected.
 Consider 'crew gold $name' BEFORE logging in to cache this bake.
 EOF
+}
+
+# Roster reader: <name> <agent> <role> [<from-box>/<snap>], comments/blanks
+# skipped. Every roster consumer goes through here.
+read_roster() {
+  grep -vE '^[[:space:]]*(#|$)' "$1"
+}
+
+cmd_up() {
+  need_box
+  local roster="$CREW_ROOT/fleet.roster" dry=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --roster)  roster="$2"; shift 2 ;;
+      --dry-run) dry=1; shift ;;
+      *) die "unknown argument '$1' (usage: crew up [--roster <file>] [--dry-run])" ;;
+    esac
+  done
+  [ -f "$roster" ] || die "no roster at $roster"
+
+  local existing name agent role from state summary=""
+  existing="$(box_names)"
+  while read -r name agent role from; do
+    [ -n "${role:-}" ] || die "roster line for '${name:-?}' needs: <name> <agent> <role>"
+    [ -f "$ROLES_DIR/$role.conf" ]   || die "roster: unknown role '$role' for $name"
+    [ -f "$AGENTS_DIR/$agent.conf" ] || die "roster: unknown agent '$agent' for $name"
+    if printf '%s\n' "$existing" | grep -qx "$name"; then
+      state="$(box info "$name" --json 2>/dev/null \
+        | jq -r '.state // .status // "unknown"' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+      if [ "$state" = "stopped" ]; then
+        [ "$dry" -eq 1 ] || box start "$name"
+        summary="$summary$name: started
+"
+      else
+        summary="$summary$name: already running ($state)
+"
+      fi
+    elif [ "$dry" -eq 1 ]; then
+      summary="$summary$name: WOULD mint ($agent/$role${from:+ from $from})
+"
+    else
+      # --force: the roster is the singleton authority here — it names
+      # exactly one triage box, so cmd_new's name-based triage guard would
+      # only misfire (e.g. on a re-run racing box list).
+      cmd_new --role "$role" --agent "$agent" --name "$name" --force ${from:+--from "$from"}
+      summary="$summary$name: minted ($agent/$role)
+"
+    fi
+  done < <(read_roster "$roster")
+
+  echo
+  echo "== crew up: $roster"
+  printf '%s' "$summary"
+
+  # Rosters converge machines; identities stay the operator's. Say who is
+  # still waiting for a login rather than making anyone go look.
+  if [ "$dry" -eq 0 ]; then
+    echo
+    echo "auth:"
+    while read -r name _agent _role _from; do
+      if box exec "$name" -- bash -lc 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
+        echo "  $name: logged in"
+      else
+        echo "  $name: AWAITING LOGIN  (box shell $name → gh auth login + vendor login)"
+      fi
+    done < <(read_roster "$roster")
+    echo
+    echo "boxes on this host but not in the roster (left alone):"
+    comm -23 <(box_names | sort) <(read_roster "$roster" | awk '{print $1}' | sort) | sed 's/^/  /' || true
+  fi
+}
+
+cmd_down() {
+  need_box
+  local roster="$CREW_ROOT/fleet.roster"
+  [ "${1:-}" = "--roster" ] && roster="$2"
+  [ -f "$roster" ] || die "no roster at $roster"
+  local existing name _rest
+  existing="$(box_names)"
+  while read -r name _rest; do
+    if printf '%s\n' "$existing" | grep -qx "$name"; then
+      box down "$name" || echo "  down FAILED on $name"
+    else
+      echo "  $name: not present, skipping"
+    fi
+  done < <(read_roster "$roster")
 }
 
 cmd_status() {
@@ -178,6 +275,8 @@ cmd_profiles() {
 }
 
 case "${1:-}" in
+  up)       shift; cmd_up "$@" ;;
+  down)     shift; cmd_down "$@" ;;
   new)      shift; cmd_new "$@" ;;
   status)   shift; cmd_status "$@" ;;
   upgrade)  shift; cmd_upgrade "$@" ;;

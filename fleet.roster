@@ -1,0 +1,22 @@
+# fleet.roster — the fleet as boxes, one line each:
+#   <box-name> <agent> <role> [<from-box>/<snapshot>]
+#
+# `crew up` converges a box host to this file: existing boxes are started,
+# missing ones are minted (from the optional 4th column's gold snapshot when
+# given, else the <agent>-box template), baked with the engine at the
+# checkout's pin, and armed. It never deletes: a box on the host that is
+# not in the roster is left alone and reported.
+#
+# This is the TARGET environment — the current dual-role claude and codex
+# boxes split into single-role members. Each line still needs its own
+# GitHub identity at login time (one box per identity), and each new
+# identity needs a FLEET_MANIFEST line in shared/conf/fleet.conf plus a
+# decision on the governed repos' panel= rosters BEFORE the new reviewers'
+# first verdicts are expected.
+claude-triage    claude  triage
+claude-builder   claude  builder
+claude-reviewer  claude  reviewer
+codex-builder    codex   builder
+codex-reviewer   codex   reviewer
+grok-reviewer    grok    reviewer
+kimi-reviewer    kimi    reviewer

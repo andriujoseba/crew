@@ -143,6 +143,15 @@ narrow the config at spawn time (which model, which toolchain versions,
 which repos) — an interview the CLI can run against the freshly booted
 box's own agent before arming cron.
 
+The whole fleet is likewise a file: `fleet.roster` at the repo root lists
+`<box> <agent> <role> [<gold>/<snap>]` one per line — the committed target
+environment (the dual-role boxes split). `crew up` converges a box host to
+it, compose-style: existing boxes started, missing ones minted (from gold
+when named) + baked + armed, nothing ever deleted, and a closing report of
+which boxes still await their interactive logins. `crew down` stops the
+roster. Standing up the whole working environment is one command plus the
+logins only the operator can perform.
+
 This split is now implemented: `conf/roles/*.conf` × `conf/agents/*.conf`,
 composed per box by the `FLEET_MANIFEST` table in fleet.conf (or by
 explicit `--role/--agent` flags at bake time), resolved into

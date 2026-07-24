@@ -22,7 +22,8 @@ shared/
   conf/fleet.conf        org facts: manifest, bench, triage, human, labels, markers
   conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
   conf/roles/<r>.conf    role profile — the work: session budgets, box resources
-  ../cli/crew            fleet CLI on a box host: new / status / upgrade / gold
+  ../cli/crew            fleet CLI on a box host: up / new / status / upgrade / gold
+  ../fleet.roster        the fleet as a file — `crew up` converges the host to it
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
   test/run.sh            fixture tests (bash+jq only, no network) — run by shared-ci
   install.sh             deploy to ~/duty; identity comes from the gh token
