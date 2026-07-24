@@ -1,5 +1,11 @@
 # Duty-engine rehearsal — runbook for a fresh box and a fresh session
 
+> Automated form: `drill/rehearsal.sh` (run on the box HOST from a crew
+> checkout) executes everything below mechanically — phase 1 always,
+> phase 2 automatically once the operator has logged the drill box in —
+> printing ok/FAIL per check. This document remains the explainer for what
+> each check means, and the manual path when no host is at hand.
+
 You are validating the shared duty engine (crew PR #16) on a box that has
 never run it. You have no context beyond this repo: read `shared/README.md`
 first (architecture + provenance), then run the phases below IN ORDER.
