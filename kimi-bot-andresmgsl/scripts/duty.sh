@@ -37,6 +37,40 @@ done
 
 mkdir -p "$REPOS_DIR"
 
+# --- ATTENTION duty (role-independent, ahead of the review queue) ---
+# An open issue assigned to me carrying the `attention` label is a demand
+# parked for me: triage, the operator, or a sibling agent decided a thread
+# needs my hands and set it. Exactly one wake per demand; the pickup session
+# acks by REMOVING the label (that re-arms the wake), then does the demanded
+# work per role. This runs BEFORE the review candidate set so it fires even
+# on an empty review queue (which exits early below). A session that dies
+# before acking is relaunched next tick — idempotent, the flag is still up.
+# (ceremony#83; the wake is spec'd in FLEET.md. An @-mention is an FYI that
+# demands nothing; only `attention` wakes a session.)
+attn_rows=$(gh api "/issues?filter=assigned&state=open&labels=attention&per_page=100" \
+  --jq '.[] | "\(.repository.full_name) \(.number)"' 2>/dev/null) \
+  || { attn_rows=""; echo "$(date -Iseconds) WARN: attention fetch failed this tick"; }
+if [ -z "$attn_rows" ]; then
+  echo "$(date -Iseconds) attention: none"
+else
+  while read -r a_repo a_num; do
+    [ -z "${a_num:-}" ] && continue
+    echo "$(date -Iseconds) attention: $a_repo#$a_num — launching pickup session"
+    a_checkout="$REPOS_DIR/$a_repo"
+    if [[ ! -d "$a_checkout/.git" ]]; then
+      mkdir -p "$(dirname "$a_checkout")"
+      gh repo clone "$a_repo" "$a_checkout"
+    else
+      git -C "$a_checkout" fetch --quiet origin || true
+    fi
+    if ( cd "$a_checkout" && kimi -p "You are $ME. Issue $a_repo#$a_num is assigned to you and carries the attention label: a demand was parked there for you. FIRST, the ack — post one short comment (📌 picked up) unless an unanswered 📌 of yours already sits at the bottom of the thread, then REMOVE the label: gh api -X DELETE repos/$a_repo/issues/$a_num/labels/attention — the removal re-arms the wake for the next demand. THEN read the full thread plus whatever it links, work out what is being demanded of you, and do it whole per your role. Read AGENTS.md at the repo root and follow where it routes you (REVIEWER.md for a verdict, BUILDER.md for a claim). An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."); then
+      echo "$(date -Iseconds) attention: $a_repo#$a_num pickup returned"
+    else
+      echo "$(date -Iseconds) attention: $a_repo#$a_num pickup FAILED"
+    fi
+  done <<< "$attn_rows"
+fi
+
 # THE CANDIDATE SET — one set, two sources, deduped by (repo, PR).
 #
 # Source 1 (FIRST, authoritative): the request check. Any open PR anywhere in

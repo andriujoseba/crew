@@ -150,6 +150,38 @@ run_review_queue() {
   )
 }
 
+# ATTENTION duty (role-independent, ahead of every per-role queue): an open
+# issue assigned to me carrying the `attention` label is a demand parked for
+# me — triage, the operator, or a sibling agent decided a thread needs my
+# hands and set it. Exactly one wake per demand; the pickup session acks by
+# REMOVING the label (that re-arms the wake), then does the demanded work per
+# role. It is cross-repo (assigned to me anywhere), so it runs once here, not
+# inside the repos.txt loop. A session that dies before acking is relaunched
+# next tick — idempotent, the flag is still up. (ceremony#83; FLEET.md wake.
+# An @-mention is an FYI that demands nothing; only `attention` wakes work.)
+run_attention_queue() {
+  local me="$1" a_repo a_num a_dir attn_rows
+  attn_rows="$(gh api "/issues?filter=assigned&state=open&labels=attention&per_page=100" \
+    --jq '.[] | "\(.repository.full_name) \(.number)"' 2>/dev/null)" \
+    || { echo "$(timestamp) WARN: attention fetch failed this tick"; return 0; }
+  if [[ -z "$attn_rows" ]]; then
+    echo "$(timestamp) attention: none"
+    return 0
+  fi
+  while read -r a_repo a_num; do
+    [[ -n "$a_num" ]] || continue
+    a_dir="$projects_dir/${a_repo##*/}"
+    if [[ ! -d "$a_dir/.git" ]]; then
+      echo "$(timestamp) cloning $a_repo into $a_dir"
+      gh repo clone "$a_repo" "$a_dir"
+    fi
+    echo "$(timestamp) ATTENTION duty detected for $a_repo#$a_num — launching pickup session"
+    codex exec --dangerously-bypass-approvals-and-sandbox --cd "$a_dir" \
+      "You are $me and issue $a_repo#$a_num is assigned to you carrying the attention label: a demand was parked there for you. FIRST, the ack — post one short comment (📌 picked up) on the issue unless an unanswered 📌 of yours already sits at the bottom of the thread, then REMOVE the label with: gh api -X DELETE repos/$a_repo/issues/$a_num/labels/attention. The removal re-arms the wake for the next demand. THEN read the full thread and everything it links, work out what is being demanded of you, and do it whole per your role. Read AGENTS.md at the repo root and follow where it routes you: BUILDER.md for your claims (build in a worktree, never in this main clone), REVIEWER.md for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention." \
+      || echo "$(timestamp) ERROR: attention session failed for $a_repo#$a_num (status $?)"
+  done <<< "$attn_rows"
+}
+
 echo "$(timestamp) duty poll started"
 
 for command_name in gh codex; do
@@ -160,6 +192,7 @@ for command_name in gh codex; do
 done
 
 ME="$(gh api user --jq .login)"
+run_attention_queue "$ME"
 run_review_queue "$ME"
 
 while IFS= read -r repo || [[ -n "$repo" ]]; do
