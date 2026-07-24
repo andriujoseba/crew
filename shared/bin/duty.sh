@@ -17,7 +17,10 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 # Manual invocations take the same lock the cron tick uses. The old scripts
 # locked only in the crontab line, so a debugging run raced the tick.
 if [ -z "${DUTY_LOCKED:-}" ]; then
-  exec env DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 99 "$DUTY_DIR/.duty.lock" "$0" "$@"
+  env DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$DUTY_DIR/.duty.lock" "$0" "$@"
+  rc=$?
+  [ "$rc" -eq 199 ] && echo "duty.sh: a tick already holds $DUTY_DIR/.duty.lock — nothing run" >&2
+  exit "$rc"
 fi
 
 # Re-exec from a private snapshot: bash reads scripts lazily, and an
@@ -34,7 +37,6 @@ date +%s >"$DUTY_DIR/.duty.lock.since"
 # shellcheck source=../lib/common.sh disable=SC1091
 source "$DUTY_DIR/lib/common.sh"
 load_conf
-rotate_log "$DUTY_DIR/duty.log"
 mkdir -p "$WORK_DIR" "$TREES_DIR" "$LOG_DIR"
 
 log "duty run start"

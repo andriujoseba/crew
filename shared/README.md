@@ -118,13 +118,36 @@ fleet's real protocol existed only inside five diverging scripts.
   truncate on very busy boards; every truncation fails in the safe direction
   (re-wake or stay-blocked) and the hourly hygiene sweep is the backstop.
 
-## Deploy
+## Sanctioned behavior deltas vs the old scripts
+
+Beyond bug fixes, four behaviors change on purpose — flag any of these to
+the operator if they surprise:
+
+- **The re-request auto-approve runs on every reviewer box**, not just
+  kimi's where the ruling was issued. It goes through the submit gate in
+  supersede mode. `AUTO_APPROVE_REREQUEST=0` in fleet.conf disables it.
+- **Draft PRs never wake reviewers** (three boxes used to review a
+  deliberately-requested draft; doctrine says drafts are panel-invisible).
+- **Ready issues with an assignee don't wake builders** (they're mid-claim
+  or a board anomaly; anomalies get a NOTE log line for hygiene).
+- **Gate exit codes are unified**: 0 = present (now or already), 1 = hard
+  fail, 2 = head moved. Grok's old gate used 2 for "already present" and
+  kimi's taught the session to retry on 1 — the shared prompts teach the
+  new contract; the archived knowledge.md files describe the old one.
+
+## Deploy / migrate
 
 ```sh
 gh repo clone heavy-duty/crew && crew/shared/install.sh
 ```
 
-Then install the printed crontab line(s). State (`repos.txt`, logs, clones,
-`.notify-state`) survives redeploys; `bin/lib/conf/prompts` are replaced.
-See `docs/single-role.md` for where this design goes next (single-role
-boxes, box templates, gold snapshots).
+Then **replace** the crontab with the printed line(s) — every old
+duty/tick/hygiene/notify line must be DELETED: the old engine's locks are
+disjoint from this one's, so a surviving old cron line runs two engines in
+parallel (install.sh moves the old entrypoints to `~/duty/legacy/` to
+disarm exactly that, and prints any suspicious crontab lines it finds).
+State (`repos.txt`, `notify-repos.txt`, logs, clones, `.notify-state`)
+survives redeploys; `bin/lib/conf/prompts` are replaced atomically.
+`.boot-id` is cleared so the first new tick re-runs the boot gate with the
+new CLI probe. See `docs/single-role.md` for where this design goes next
+(single-role boxes, box templates, gold snapshots).

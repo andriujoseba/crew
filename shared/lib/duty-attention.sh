@@ -39,7 +39,7 @@ duty_attention() {
     dir="$WORK_DIR/$slug"
     if has_role builder; then
       ensure_main_clone "$repo" "$dir" || continue
-      extra="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name") $(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH") $(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
+      extra="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name") $(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING") $(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
     else
       ensure_checkout "$repo" "$dir" || continue
       extra=""

@@ -19,7 +19,10 @@
 | ($pr.latestOpinionatedReviews.nodes
    | map(select(.state == "APPROVED" and .commit.oid == $pr.headRefOid)
          | .author.login)) as $head_approvers
-| (($panel - $head_approvers) | length == 0) as $panel_approves
+# An EMPTY panel must never converge vacuously — a bare panel= line (or a
+# panel that named only the author) would otherwise hand off every open PR
+# with zero reviews.
+| (($panel | length > 0) and (($panel - $head_approvers) | length == 0)) as $panel_approves
 | if ($no_panel_reqs and $not_handed and $panel_approves)
   then (if $pr.mergeable == "MERGEABLE" then "true"
         elif $pr.mergeable == "UNKNOWN" then "defer-unknown"

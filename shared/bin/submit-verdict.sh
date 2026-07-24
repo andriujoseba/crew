@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # submit-verdict.sh — the ONLY sanctioned path to a PR review verdict.
 #
-#   submit-verdict.sh <owner/repo> <pr-number> <head-sha> <approve|request-changes> <body-file>
+#   submit-verdict.sh <owner/repo> <pr-number> <head-sha> <approve|request-changes> <body-file> [--supersede-own]
 #
 # Idempotent per (identity, PR, head): live pre-check → pinned submit →
 # verify → at most ONE retry with the identical body. Exit codes:
@@ -9,6 +9,13 @@
 #   1  hard failure (nothing landed after the retry; do NOT resubmit)
 #   2  refused — the PR head moved away from <head-sha>; a real review of
 #      the new head is owed, not this body
+#
+# --supersede-own (engine-only; sessions never pass it): submit even though
+# a verdict of mine already sits at this head — the re-request auto-approve
+# must REPLACE a stale verdict at an unchanged head, which the normal
+# already-present check would refuse. Success is then verified as the
+# verdict COUNT at head increasing, and idempotency across ticks comes from
+# the caller's request-newer-than-my-latest-review condition.
 #
 # Why each piece exists (all incident-bought, 2026-07-22..24):
 #  - The gate sits IMMEDIATELY around the mutation: session-start dedup
@@ -32,13 +39,20 @@ set -euo pipefail
 
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 LOG="$DUTY_DIR/duty.log"
-glog() { printf '%s submit-verdict: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" | tee -a "$LOG" >&2; }
+# stderr always; the duty log only when writable — a hand-run from an odd
+# HOME must never turn a landed verdict into a nonzero exit over logging.
+glog() {
+  printf '%s submit-verdict: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
+  printf '%s submit-verdict: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG" 2>/dev/null || true
+}
 
-if [ $# -ne 5 ]; then
-  glog "usage: submit-verdict.sh <owner/repo> <pr-number> <head-sha> <approve|request-changes> <body-file>"
+if [ $# -lt 5 ] || [ $# -gt 6 ]; then
+  glog "usage: submit-verdict.sh <owner/repo> <pr-number> <head-sha> <approve|request-changes> <body-file> [--supersede-own]"
   exit 1
 fi
 REPO="$1" NUM="$2" HEAD_SHA="$3" VERDICT="$4" BODY_FILE="$5"
+SUPERSEDE=0
+[ "${6:-}" = "--supersede-own" ] && SUPERSEDE=1
 
 case "$VERDICT" in
   approve)          EVENT="APPROVE" ;;
@@ -63,11 +77,15 @@ cp "$BODY_FILE" "$FROZEN"
 ME="$(gh api user --jq .login)"
 
 # My opinionated reviews at exactly this head. Never the search index.
+# Pagination is slurped OUTSIDE gh: `--paginate --jq length` emits one
+# count PER PAGE, and a multiline count made both dedup gates read
+# "absent" past 100 reviews — the double-submit class this gate prevents.
 mine_at_head() {
-  SV_ME="$ME" SV_HEAD="$HEAD_SHA" gh api "repos/$REPO/pulls/$NUM/reviews" --paginate \
-    --jq '[.[] | select(.user.login == env.SV_ME)
-               | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
-               | select(.commit_id == env.SV_HEAD)] | length'
+  gh api "repos/$REPO/pulls/$NUM/reviews" --paginate \
+    | jq -s --arg me "$ME" --arg head "$HEAD_SHA" \
+      '[add[] | select(.user.login == $me)
+              | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
+              | select(.commit_id == $head)] | length'
 }
 
 attempt=0
@@ -83,7 +101,8 @@ while :; do
 
   count="$(mine_at_head)" \
     || { glog "pre-check failed for $REPO#$NUM; not submitting (fail closed)"; exit 1; }
-  if [ "$count" -gt 0 ]; then
+  pre_count="$count"
+  if [ "$count" -gt 0 ] && [ "$SUPERSEDE" -eq 0 ]; then
     [ "$count" -gt 1 ] && glog "PROTOCOL NOTE: $count of my verdicts already at head ${HEAD_SHA:0:12} — leaving them; never post a third"
     glog "already present: my verdict at head ${HEAD_SHA:0:12} on $REPO#$NUM"
     exit 0
@@ -94,10 +113,10 @@ while :; do
   gh api "repos/$REPO/pulls/$NUM/reviews" -X POST \
     -f commit_id="$HEAD_SHA" -f event="$EVENT" -F body="@$FROZEN" >/dev/null 2>&1 || rc=$?
 
-  count="$(mine_at_head || echo 0)"
-  if [ "$count" -gt 0 ]; then
+  count="$(mine_at_head || echo "$pre_count")"
+  if [ "$count" -gt "$pre_count" ] || { [ "$SUPERSEDE" -eq 0 ] && [ "$count" -gt 0 ]; }; then
     [ "$rc" -ne 0 ] && glog "submit rc=$rc but the endpoint shows the verdict landed — success, not retrying"
-    [ "$count" -gt 1 ] && glog "PROTOCOL VIOLATION: $count verdicts at head ${HEAD_SHA:0:12} — a concurrent submit slipped past; leaving them"
+    [ "$SUPERSEDE" -eq 0 ] && [ "$count" -gt 1 ] && glog "PROTOCOL VIOLATION: $count verdicts at head ${HEAD_SHA:0:12} — a concurrent submit slipped past; leaving them"
     glog "verified: $VERDICT landed on $REPO#$NUM at head ${HEAD_SHA:0:12}"
     exit 0
   fi

@@ -30,8 +30,9 @@ export HOME="${HOME:-$TMP}"
 # shellcheck disable=SC1091
 source "$SHARED/lib/common.sh"
 
-# --- read_repo_list: comments, blanks, whitespace, missing trailing newline
-printf '# a comment\nheavy-duty/ceremony\n\n  heavy-duty/rig  \n# tail\nheavy-duty/incubator' >"$TMP/repos.txt"
+# --- read_repo_list: comments (incl. inline), blanks, whitespace, missing
+# trailing newline
+printf '# a comment\nheavy-duty/ceremony\n\n  heavy-duty/rig  # inline note\n# tail\nheavy-duty/incubator' >"$TMP/repos.txt"
 t repo-list "heavy-duty/ceremony
 heavy-duty/rig
 heavy-duty/incubator" "$(read_repo_list "$TMP/repos.txt")"
@@ -44,6 +45,7 @@ t render "You are bot in o/r; bot again; {{UNSET}} stays." \
   "$(render_prompt x.txt ME=bot REPO=o/r)"
 
 # --- has_role
+# shellcheck disable=SC2034  # consumed by has_role inside sourced common.sh
 BOT_ROLES="builder reviewer"
 has_role builder && r1=yes || r1=no
 has_role triage && r2=yes || r2=no
@@ -124,6 +126,9 @@ t converged-unknown-mergeable defer-unknown \
   "$(mk_pr "$H" UNKNOWN '[]' '[]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
 t converged-conflicting false \
   "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+# An empty panel must never converge vacuously (bare panel= line).
+t converged-empty-panel false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | jq -r --argjson panel '[]' --arg needs_human state:needs-human -f "$CJQ")"
 
 # --- rotate_log
 printf 'x' >"$TMP/small.log"

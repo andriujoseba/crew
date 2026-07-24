@@ -20,7 +20,10 @@ _discover_my_pr_repos() {
     return 0
   fi
   local org_repos SR
-  org_repos="$(gh api "/orgs/$FLEET_ORG/repos" --paginate --jq '.[].full_name' 2>/dev/null || true)"
+  if ! org_repos="$(gh api "/orgs/$FLEET_ORG/repos" --paginate --jq '.[].full_name' 2>/dev/null)"; then
+    warn "builder: org repo enumeration failed; author-side coverage limited to repos.txt this tick"
+    org_repos=""
+  fi
   # shellcheck disable=SC2086
   for SR in $org_repos $FLEET_SWEEP_EXTRA_REPOS; do
     if gh api "repos/$SR/pulls?state=open&per_page=100" --paginate 2>/dev/null \
@@ -46,7 +49,7 @@ _builder_repo() {
   local dir="$WORK_DIR/$slug"
   local wt_rules round_rules oneshot_rules panel_json
   wt_rules="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name")"
-  round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH")"
+  round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING")"
   oneshot_rules="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
 
   # --- RESUME: interrupted work of mine, checked FIRST. Two shapes: an open
@@ -93,9 +96,20 @@ _builder_repo() {
   # only when no panel review request is still outstanding. Ready issues
   # with an assignee are mid-claim, not pickable — counting them launched
   # sessions with nothing to do (codex's 69% busy-tick rate). ---
-  local ready_count cr_count
-  ready_count="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
-    --json number,assignees --jq '[.[] | select((.assignees | length) == 0)] | length' 2>/dev/null || echo err)"
+  local ready_counts ready_count ready_assigned cr_count
+  ready_counts="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
+    --json number,assignees \
+    --jq '"\([.[] | select((.assignees | length) == 0)] | length) \([.[] | select((.assignees | length) > 0)] | length)"' \
+    2>/dev/null || echo err)"
+  if [ "$ready_counts" = "err" ]; then
+    ready_count=err
+  else
+    read -r ready_count ready_assigned <<<"$ready_counts"
+    # ready+assigned is a board anomaly (a claim swaps ready→claimed); it
+    # doesn't wake a builder, but it must not be invisible either — only
+    # the triage box's hygiene can fix it.
+    [ "$ready_assigned" -gt 0 ] && log "NOTE: $R has $ready_assigned ready issue(s) WITH an assignee (board anomaly; hygiene's to fix)"
+  fi
   cr_count="$(gh pr list -R "$R" --state open --author "$ME" \
     --json isDraft,latestReviews,reviewRequests 2>/dev/null \
     | jq --argjson panel "$panel_json" \
@@ -212,6 +226,6 @@ _builder_repo() {
           ;;
       esac
     done < <(git -C "$dir" worktree list --porcelain \
-      | awk '/^worktree /{p=$2} /^branch refs\/heads\/build\//{b=$2; sub("refs/heads/","",b); print b, p}')
+      | awk '/^worktree /{p=substr($0,10)} /^branch refs\/heads\/build\//{b=$2; sub("refs/heads/","",b); print b, p}')
   fi
 }

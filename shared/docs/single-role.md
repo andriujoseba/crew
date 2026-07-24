@@ -9,11 +9,11 @@ artifact.
 ## Why the engine is already shaped for it
 
 `BOT_ROLES` in `conf/bots/<login>.conf` is the only place a box's role
-lives. The engine sources one module per role family; a reviewer-only box
-never loads the builder module at all. Migrating a box to a single role is a
-one-line config change plus a rerun of `install.sh` — no code changes. Grok
-and kimi are, in effect, already single-role agents running this exact
-configuration.
+lives. The engine gates every duty call on `has_role` — a reviewer-only box
+sources the builder module (definition-only) but never executes any of it.
+Migrating a box to a single role is a one-line config change plus a rerun
+of `install.sh` — no code changes. Grok and kimi are, in effect, already
+single-role agents running this exact configuration.
 
 ## What single-role buys
 
@@ -108,8 +108,9 @@ Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
    in-band, and FLEET.md's reconciliation stamp can name both the crew pin
    and the snapshot id. Rollback = restore the previous gold; upgrade =
    `git pull && shared/install.sh` then cut a new gold. The engine's
-   snapshot re-exec and crash-only session design mean an upgrade mid-tick
-   is already safe.
+   snapshot re-exec, install.sh's atomic write-then-rename per file, and
+   the crash-only session design together make an upgrade under a live
+   cron safe; the conservative move is still to upgrade between ticks.
 
 ## Suggested migration order
 

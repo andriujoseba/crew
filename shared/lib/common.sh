@@ -40,7 +40,9 @@ has_role() {
 # comment prose to `gh pr list -R` (dan-claude-bot's crew report, BAD #10).
 read_repo_list() {
   [ -f "$1" ] || return 0
-  sed -e 's/[[:space:]]//g' -e '/^#/d' -e '/^$/d' "$1"
+  # Comments stripped BEFORE whitespace: "o/r  # note" must yield "o/r",
+  # not "o/r#note".
+  sed -e 's/#.*$//' -e 's/[[:space:]]//g' -e '/^$/d' "$1"
 }
 
 # rotate_log FILE — keep one 5 MB generation. Logs previously grew unbounded
@@ -66,14 +68,23 @@ render_prompt() {
   printf '%s' "$out"
 }
 
-# ensure_checkout REPO DIR — clone if missing, fetch if present. Never resets
-# branches: a session owns its own git state.
+# ensure_checkout REPO DIR — clone if missing, fetch if present, and
+# fast-forward a CLEAN parked default branch so sessions read current
+# doctrine (a frozen clone serves last month's AGENTS.md forever). Never
+# force-updates: a dirty or diverged tree gets a warning, not a reset — a
+# session owns its own git state.
 ensure_checkout() {
   local repo="$1" dir="$2"
   if [ ! -d "$dir/.git" ]; then
     gh repo clone "$repo" "$dir" -- --quiet || { warn "clone of $repo failed"; return 1; }
   else
     git -C "$dir" fetch --quiet --all --prune || warn "fetch failed in $dir"
+    local br
+    br="$(git -C "$dir" symbolic-ref --short -q HEAD || true)"
+    if [ -n "$br" ] && [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+      git -C "$dir" merge --ff-only --quiet "origin/$br" 2>/dev/null \
+        || warn "cannot fast-forward $dir (diverged?) — sessions may read stale doctrine"
+    fi
   fi
 }
 
@@ -100,7 +111,14 @@ run_session() {
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
   log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog"
   start=$SECONDS
-  ( cd "$dir" && timeout "$tmo" "${BOT_CLI_CMD[@]}" "$prompt" ) >"$slog" 2>&1 || rc=$?
+  # </dev/null: the CLI reads piped stdin to EOF as context, and stdin here
+  # is the caller's while-read work list — without this, the first session
+  # of a sweep swallowed every remaining repo (one-iteration loops).
+  # env -u: sessions must not inherit the lock/snapshot guards, or a
+  # duty.sh/notify.sh invocation from inside a session bypasses the flock.
+  # timeout -k: a CLI that ignores TERM still dies 60s later.
+  ( cd "$dir" && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
+      timeout -k 60 "$tmo" "${BOT_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 || rc=$?
   local dur=$((SECONDS - start)) verdict=ok
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
@@ -126,14 +144,20 @@ alert() {
 # logins, author NOT yet subtracted. Doctrine (BUILDER.md): the `panel=` line
 # in the repo's own .github/labels.conf governs over any prose or hardcoded
 # list — rig#120 shipped a kimi-less panel from a stale hardcoded roster.
-# Falls back to FLEET_BENCH when the repo has no panel= line.
+# Resolution order: local clone (any default branch name), then the contents
+# API (covers repos not yet cloned — the first tick must not run on the
+# fallback bench when a panel= line exists), then FLEET_BENCH.
 panel_for_repo() {
-  local dir="$2" line=""
+  local repo="$1" dir="$2" line=""
   if [ -d "$dir/.git" ]; then
     line="$(git -C "$dir" show 'origin/HEAD:.github/labels.conf' 2>/dev/null \
       | grep -m1 '^panel=' || true)"
     [ -n "$line" ] || line="$(git -C "$dir" show 'origin/main:.github/labels.conf' 2>/dev/null \
       | grep -m1 '^panel=' || true)"
+  fi
+  if [ -z "$line" ]; then
+    line="$(gh api "repos/$repo/contents/.github/labels.conf" --jq .content 2>/dev/null \
+      | base64 -d 2>/dev/null | grep -m1 '^panel=' || true)"
   fi
   if [ -n "$line" ]; then
     printf '%s' "${line#panel=}" | tr ', ' '\n' | sed '/^$/d' | jq -R . | jq -cs .

@@ -18,7 +18,11 @@ set -euo pipefail
 
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 LOG="$DUTY_DIR/duty.log"
-glog() { printf '%s post-once: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" | tee -a "$LOG" >&2; }
+# stderr always; the duty log only when writable (see submit-verdict.sh).
+glog() {
+  printf '%s post-once: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
+  printf '%s post-once: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG" 2>/dev/null || true
+}
 
 if [ $# -ne 3 ]; then
   glog "usage: post-once.sh <owner/repo> <number> <exact-body>"
@@ -29,9 +33,12 @@ REPO="$1" NUM="$2" BODY="$3"
 
 ME="$(gh api user --jq .login)"
 
+# Pagination slurped outside gh: `--paginate --jq length` counts PER PAGE
+# and lies past 100 comments (see submit-verdict.sh).
 mine_matching() {
-  PO_ME="$ME" PO_BODY="$BODY" gh api "repos/$REPO/issues/$NUM/comments" --paginate \
-    --jq '[.[] | select(.user.login == env.PO_ME) | select(.body == env.PO_BODY)] | length'
+  gh api "repos/$REPO/issues/$NUM/comments" --paginate \
+    | jq -s --arg me "$ME" --arg body "$BODY" \
+      '[add[] | select(.user.login == $me) | select(.body == $body)] | length'
 }
 
 attempt=0

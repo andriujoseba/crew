@@ -20,14 +20,29 @@
 REVIEW_MY_PR_REPOS=""
 
 duty_review() {
-  local candidates="" org_repos page SR
-  org_repos="$(gh api "/orgs/$FLEET_ORG/repos" --paginate --jq '.[].full_name' 2>/dev/null || echo err)"
-  if [ "$org_repos" = "err" ]; then
+  local candidates="" org_repos fork_repos="" page SR u
+  # rc captured separately: `|| echo err` after a partial page dump would
+  # bury the sentinel under real output and treat a silently partial
+  # enumeration as authoritative.
+  if ! org_repos="$(gh api "/orgs/$FLEET_ORG/repos" --paginate --jq '.[].full_name' 2>/dev/null)"; then
     warn "review: org repo enumeration failed this tick; the repos.txt backstop still collects"
     org_repos=""
   fi
+  # Fleet-member forks: doctrine says a request on ANY fleet member's fork
+  # is authorization (REVIEWER.md) — codex swept all five accounts' forks;
+  # a static extra-repos list missed new forks by construction.
+  local u_forks
   # shellcheck disable=SC2086
-  for SR in $org_repos $FLEET_SWEEP_EXTRA_REPOS; do
+  for u in $FLEET_BENCH $FLEET_TRIAGE; do
+    if u_forks="$(gh api "/users/$u/repos?per_page=100" --paginate \
+      --jq '.[] | select(.fork) | .full_name' 2>/dev/null)"; then
+      fork_repos="$fork_repos $(printf '%s' "$u_forks" | tr '\n' ' ')"
+    else
+      warn "review: fork enumeration failed for $u this tick"
+    fi
+  done
+  # shellcheck disable=SC2086
+  for SR in $(printf '%s\n' $org_repos $fork_repos $FLEET_SWEEP_EXTRA_REPOS | awk 'NF && !seen[$0]++'); do
     page="$(gh api "repos/$SR/pulls?state=open&per_page=100" --paginate 2>/dev/null | jq -cs 'add // []')" \
       || { warn "review: pulls fetch failed for $SR; skipping repo this tick"; continue; }
     candidates="$candidates
@@ -97,12 +112,16 @@ $(gh pr list -R "$BR" --state open --search "review-requested:$ME" \
     # stale verdict must not sit as a blocker. Head re-verified immediately
     # before submitting; the submit goes through the one-shot gate like any
     # verdict.
-    if [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
+    if [ "${AUTO_APPROVE_REREQUEST:-1}" = "1" ] && [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
       head_now="$(gh api "repos/$SR/pulls/$N" --jq .head.sha 2>/dev/null || echo err)"
       if [ "$head_now" = "$head" ]; then
         body="$(mktemp)"
         printf 'Re-requested at unchanged head %s — my latest review already covers this tree; approving per the re-request rule.\n' "$head" >"$body"
-        if "$BIN_DIR/submit-verdict.sh" "$SR" "$N" "$head" approve "$body"; then
+        # --supersede-own: the approval must REPLACE my stale verdict at this
+        # same head; the gate's normal already-present check would refuse it
+        # and the wake would refire forever. Idempotent across ticks because
+        # the new approval makes mine_at newer than req_at.
+        if "$BIN_DIR/submit-verdict.sh" "$SR" "$N" "$head" approve "$body" --supersede-own; then
           log "review: $SR#$N auto-approved re-request at unchanged head ${head:0:12}"
         else
           warn "review: $SR#$N auto-approve did not land (will retry next tick)"

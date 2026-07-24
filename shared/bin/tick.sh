@@ -25,13 +25,25 @@ TARGET="$DUTY_DIR/bin/$JOB.sh"
 
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
-# Sentinel 99 distinguishes lock-busy from a real failure.
-DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 99 "$LOCK" "$TARGET" >>"$LOG" 2>&1
+# Rotation happens HERE, before the append redirect below opens the file —
+# rotating inside the job would move the inode the shared fd points at, and
+# that tick's evidence lines (including "run start") would land in the old
+# generation, which reads exactly like "cron is dead".
+if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 5242880 ]; then
+  mv "$LOG" "$LOG.1"
+fi
+
+# Sentinel 199 distinguishes lock-busy from a real failure (99 was too
+# plausible as a genuine tool exit under duty.sh's set -e). Each job gets
+# its own guard variable so a leaked guard can never bypass the OTHER
+# job's lock.
+LOCKVAR="$(printf '%s' "$JOB" | tr '[:lower:]' '[:upper:]')_LOCKED"
+env "$LOCKVAR=1" DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$LOCK" "$TARGET" >>"$LOG" 2>&1
 # rc read on its own line, never inside an `if` compound — the first draft of
 # this file shipped with rc reading the if's status (claude-bot knowledge.md).
 rc=$?
 
-if [ "$rc" -eq 99 ]; then
+if [ "$rc" -eq 199 ]; then
   since="unknown"
   if [ -f "$LOCK.since" ]; then
     since="$(( $(date +%s) - $(cat "$LOCK.since" 2>/dev/null || echo 0) ))s"

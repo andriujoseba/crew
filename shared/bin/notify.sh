@@ -24,9 +24,14 @@ set -euo pipefail
 
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 
-# Manual runs take the same lock the cron tick uses (tick.sh notify).
-if [ -z "${DUTY_LOCKED:-}" ]; then
-  exec env DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 99 "$DUTY_DIR/.notify.lock" "$0" "$@"
+# Manual runs take the same lock the cron tick uses (tick.sh notify). Own
+# guard variable: a leaked DUTY_LOCKED from a duty session must not bypass
+# the notify lock.
+if [ -z "${NOTIFY_LOCKED:-}" ]; then
+  env NOTIFY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$DUTY_DIR/.notify.lock" "$0" "$@"
+  rc=$?
+  [ "$rc" -eq 199 ] && echo "notify.sh: a tick already holds $DUTY_DIR/.notify.lock — nothing run" >&2
+  exit "$rc"
 fi
 trap 'rm -f "$DUTY_DIR/.notify.lock.since"' EXIT
 date +%s >"$DUTY_DIR/.notify.lock.since"
@@ -34,7 +39,6 @@ date +%s >"$DUTY_DIR/.notify.lock.since"
 # shellcheck source=../lib/common.sh disable=SC1091
 source "$DUTY_DIR/lib/common.sh"
 load_conf
-rotate_log "$DUTY_DIR/notify.log"
 
 STATE="$DUTY_DIR/.notify-state"          # repo \t pr \t head \t message_id \t status
 NOTIFY_REPOS="$DUTY_DIR/notify-repos.txt"
