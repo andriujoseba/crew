@@ -258,6 +258,17 @@ consequence is deliberate:
   `crew up` converges the machines, the operator performs the logins, and
   the crew then just works. Membership changes are ceremonies, not
   commands — and that is acceptable because they are rare.
+- **The bridge — token-based auth (operator direction, 2026-07-24).** The
+  operator keeps identities' tokens in the host environment and `crew`
+  passes them down at spawn: `CREW_GH_TOKEN` already works today
+  (`crew auth` pipes it into the box's `gh auth login --with-token`;
+  crew never writes it to disk). Vendor CLIs get the same treatment as
+  each agent profile grows an `agent_auth_with_env` hook mapping a vendor
+  token env var to that CLI's non-interactive auth; until a vendor has
+  one, `crew auth` guides the interactive login (GitHub device flow
+  in-box, then a box shell with the agent's `AGENT_LOGIN_HINT`, verified
+  by the agent's probe). Boxes stay creds-free at REST — golds carry
+  nothing — with credentials injected at up/spawn time instead of typed.
 - **North star — flexible crews.** "Spawn a second claude builder" as a
   pure command requires an identity pool: pre-provisioned GitHub machine
   accounts and vendor seats whose credentials live sealed in something the

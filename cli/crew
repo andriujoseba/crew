@@ -4,10 +4,19 @@
 #   crew up [--roster <file>] [--dry-run]     converge the host to a fleet roster
 #   crew down [--roster <file>]               stop every roster box
 #   crew new --role builder --agent claude    mint + bake + arm one crew box
+#   crew adopt <box> --role <r> --agent <a>   bake + arm an EXISTING box
+#   crew auth <box>                           log a box in (token env or guided)
 #   crew status [<box>]                       engine version + duty evidence
 #   crew upgrade <box> | --all                pull crew + re-install in place
 #   crew gold <box>                           snapshot a box as a gold image
 #   crew profiles                             list role and agent profiles
+#
+# Auth: CREW_GH_TOKEN in the host environment is piped into the box's
+# `gh auth login --with-token` (never written to disk by crew); without it,
+# `crew auth` runs GitHub's device login in-box and then walks you through
+# the vendor CLI's login in a box shell, verifying with the agent's probe.
+# Vendor token injection gets the same treatment once each vendor profile
+# grows an agent_auth_with_env hook.
 #
 # Composition, not enumeration: a crew member is a ROLE profile (resources,
 # cadence, session budgets, loadout — shared/conf/roles/) × an AGENT profile
@@ -32,6 +41,8 @@ CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 die() { echo "crew: $*" >&2; exit 1; }
 
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
+
+bxn() { box exec "$1" -- bash -lc "$2"; }
 
 box_names() {
   box list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null \
@@ -128,6 +139,85 @@ line) so re-installs resolve it — and if this is a reviewer, decide how the
 governed repos' panel= rosters change BEFORE its first verdict is expected.
 Consider 'crew gold $name' BEFORE logging in to cache this bake.
 EOF
+}
+
+cmd_adopt() {
+  need_box
+  local name="${1:-}"; shift || true
+  case "$name" in ""|--*) die "usage: crew adopt <box> --role <r> --agent <a> [--ref <git-ref>] [--login]" ;; esac
+  local role="" agent="" ref="" login=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --role)  role="$2";  shift 2 ;;
+      --agent) agent="$2"; shift 2 ;;
+      --ref)   ref="$2";   shift 2 ;;
+      --login) login=1;    shift ;;
+      *) die "unknown argument '$1' (usage: crew adopt <box> --role <r> --agent <a> [--ref <git-ref>] [--login])" ;;
+    esac
+  done
+  if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew adopt <box> --role <r> --agent <a>"; fi
+  [ -f "$ROLES_DIR/$role.conf" ]   || die "unknown role '$role' — see: crew profiles"
+  [ -f "$AGENTS_DIR/$agent.conf" ] || die "unknown agent '$agent' — see: crew profiles"
+  box_names | grep -qx "$name" || die "no box named '$name' on this host"
+  [ -z "$ref" ] && ref="$(git -C "$CREW_ROOT" rev-parse HEAD)"
+
+  echo "adopting $name  (role=$role agent=$agent crew@${ref:0:12})"
+  bake "$name" "$agent" "$role" "$ref"
+  echo
+  echo "$name is baked and ARMED — cron fires at the next 5-minute boundary."
+  echo "install.sh has disarmed any old-engine entrypoints into ~/duty/legacy/"
+  echo "inside the box; check its output above for stale cron lines to delete."
+  if [ "$login" -eq 1 ]; then
+    cmd_auth "$name"
+  elif ! bxn "$name" 'gh auth status >/dev/null 2>&1'; then
+    echo "Not logged in yet — it idles loudly until: crew auth $name"
+  fi
+}
+
+cmd_auth() {
+  need_box
+  local name="${1:-}"
+  [ -n "$name" ] || die "usage: crew auth <box>   (CREW_GH_TOKEN in the env skips the GitHub prompt)"
+  box_names | grep -qx "$name" || die "no box named '$name' on this host"
+  local agent
+  agent="$(bxn "$name" "sed -n 's/^BOT_AGENT=//p' ~/duty/conf/instance.conf 2>/dev/null" | tr -d '\r\n')"
+  [ -n "$agent" ] || die "$name has no engine installed (no instance.conf) — crew adopt it first"
+
+  # GitHub: token from the host environment when provided (piped, never
+  # written to disk by crew), device login in-box otherwise.
+  if bxn "$name" 'gh auth status >/dev/null 2>&1'; then
+    echo "github: already authenticated"
+  elif [ -n "${CREW_GH_TOKEN:-}" ]; then
+    if printf '%s' "$CREW_GH_TOKEN" | box exec "$name" -- bash -lc 'gh auth login --with-token'; then
+      echo "github: token accepted"
+    else
+      die "github token login failed"
+    fi
+  else
+    echo "== GitHub device login, running inside $name (a NEW identity: one box per identity):"
+    box exec "$name" -- bash -lc 'gh auth login --hostname github.com --git-protocol https' || true
+    bxn "$name" 'gh auth status >/dev/null 2>&1' || die "github login did not complete"
+  fi
+  echo "github identity: $(bxn "$name" 'gh api user --jq .login' | tr -d '\r\n')"
+
+  # Vendor CLI: probe first; guided shell if it fails. Token injection per
+  # vendor lands here once the agent profile grows agent_auth_with_env.
+  local hint=""
+  hint="$(sed -n 's/^AGENT_LOGIN_HINT=//p' "$AGENTS_DIR/$agent.conf" | tr -d '"')"
+  if bxn "$name" "source ~/duty/conf/agents/$agent.conf 2>/dev/null && bot_cli_probe"; then
+    echo "$agent CLI: already authenticated"
+  else
+    [ -n "$hint" ] || hint="run the vendor CLI login"
+    echo "== $agent CLI login — dropping you into the box shell; $hint; exit when done"
+    box shell "$name" || true
+    if bxn "$name" "source ~/duty/conf/agents/$agent.conf 2>/dev/null && bot_cli_probe"; then
+      echo "$agent CLI: authenticated"
+    else
+      die "$agent CLI probe still failing — the box stays in loud-idle until it passes"
+    fi
+  fi
+  echo
+  echo "Fully authenticated. Nothing to restart: the next 5-minute boundary goes on duty."
 }
 
 # Roster reader: <name> <agent> <role> [<from-box>/<snap>], comments/blanks
@@ -283,6 +373,8 @@ case "${1:-}" in
   up)       shift; cmd_up "$@" ;;
   down)     shift; cmd_down "$@" ;;
   new)      shift; cmd_new "$@" ;;
+  adopt)    shift; cmd_adopt "$@" ;;
+  auth)     shift; cmd_auth "$@" ;;
   status)   shift; cmd_status "$@" ;;
   upgrade)  shift; cmd_upgrade "$@" ;;
   gold)     shift; cmd_gold "$@" ;;
