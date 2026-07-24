@@ -125,6 +125,19 @@ third profile:
   agent is the right author for its vendor's adapter (the same empiric
   loop that produced the duty scripts, this time landing in shared code).
 
+**Specializations** (operator direction, 2026-07-24) then fall out of the
+same seam: a specialization is a role that extends a base — e.g.
+`frontend-builder.conf` declares `ROLE_BASE=builder` plus extra
+`ROLE_LOADOUT` intents (skills, MCP configs) and any resource overrides.
+The ENGINE keeps gating duties on the base role (`has_role builder` — a
+frontend builder still picks issues, claims, builds, hands off exactly
+like the stock builder; the board cannot tell them apart, on purpose);
+only the loadout chain and `crew new` see the specialized name. So the
+roster can say `claude-frontend-builder claude frontend-builder` and the
+duty machinery needs zero changes — install.sh resolves the base chain
+into instance.conf (`BOT_ROLES` = base roles for gating,
+`BOT_ROLE_VARIANT` = the specialization for provisioning).
+
 ## Boxes, templates, and gold snapshots
 
 Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
