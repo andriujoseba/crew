@@ -87,6 +87,44 @@ configuration, and `cli/crew` only spawns single-role members.
   only, so each handoff costs up to one tick of the other box. Cheap at
   */5, cheaper if per-role cadences are tuned.
 
+## Loadout: role intents × agent adapters (open seam)
+
+The two profiles as shipped cover the shell-visible surface: command,
+probe, budgets, resources, duty modules. They do NOT yet cover
+vendor-specific *loadout* — a "skill" is a `~/.claude/skills/<x>/SKILL.md`
+on a claude box, a `~/.codex/AGENTS.md` section on a codex box, and may
+have no native mechanism at all on another vendor. So "the claude builder"
+and "the grok builder" are the same role but not the same box, and a bare
+role×agent matrix cannot express that difference.
+
+Two things keep this from being a crisis today:
+
+1. **The fleet's protocol deliberately does not live in vendor config.**
+   Board doctrine rides the governed repos (AGENTS.md → role files, read
+   at session start from the checkout) and the engine's prompt templates —
+   both vendor-neutral. That is *why* four vendors could share one board.
+   Most things one would reach for a "skill" for belong there instead.
+2. Nothing in the current fleet ships vendor skills yet, so there is no
+   content the missing mechanism is failing to deliver.
+
+The design for when that changes — a third piece on the agent axis, not a
+third profile:
+
+- A role profile declares **intents**: `ROLE_LOADOUT="changelog-fragments
+  verify-at-pin …"`, each intent's content living once, vendor-neutrally,
+  in `shared/loadout/<intent>/` (markdown + optional assets).
+- Each agent profile implements an **adapter**: `agent_provision <intent>
+  <content-dir>`, translating intent → vendor mechanism (claude: install
+  as a skill; codex: fold into the global AGENTS.md; a vendor with no
+  mechanism: declared fallback — inject into the engine's prompt template,
+  or warn-and-skip). install.sh runs the adapter chain at bake/upgrade,
+  so `crew upgrade` re-converges loadout the same way it re-converges the
+  engine.
+- Deliberately not built yet: hooks with no content are scaffolding that
+  rots. The first real loadout item should drive it — and each box's own
+  agent is the right author for its vendor's adapter (the same empiric
+  loop that produced the duty scripts, this time landing in shared code).
+
 ## Boxes, templates, and gold snapshots
 
 Each agent runs as a heavy-duty/box guest, which makes deployment layerable:
