@@ -63,7 +63,7 @@ bake() {  # bake NAME AGENT ROLE REF
 
 cmd_new() {
   need_box
-  local role="" agent="" name="" ref="" from="" force=0
+  local role="" agent="" name="" ref="" from="" force=0 login=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --role)  role="$2";  shift 2 ;;
@@ -72,7 +72,8 @@ cmd_new() {
       --ref)   ref="$2";   shift 2 ;;
       --from)  from="$2";  shift 2 ;;
       --force) force=1;    shift ;;
-      *) die "unknown argument '$1' (usage: crew new --role <r> --agent <a> [--name <n>] [--ref <git-ref>] [--from <box>/<snapshot>] [--force])" ;;
+      --login) login=1;    shift ;;
+      *) die "unknown argument '$1' (usage: crew new --role <r> --agent <a> [--name <n>] [--ref <git-ref>] [--from <box>/<snapshot>] [--login] [--force])" ;;
     esac
   done
   if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew new --role <r> --agent <a>"; fi
@@ -139,6 +140,8 @@ line) so re-installs resolve it — and if this is a reviewer, decide how the
 governed repos' panel= rosters change BEFORE its first verdict is expected.
 Consider 'crew gold $name' BEFORE logging in to cache this bake.
 EOF
+  [ "$login" -eq 1 ] && cmd_auth "$name"
+  return 0
 }
 
 cmd_adopt() {
