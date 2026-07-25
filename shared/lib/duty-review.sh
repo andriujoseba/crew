@@ -1,9 +1,19 @@
 # duty-review.sh — the reviewer wake: outstanding review requests, one
 # merged candidate set, verdict dedup by head SHA, re-request auto-approve.
 #
-# Doctrine (REVIEWER.md / FLEET.md):
-#  - A review request IS authorization, anywhere in the org or a fleet fork.
-#    No repo list scopes it; repos.txt is only a backstop.
+# Doctrine (REVIEWER.md / FLEET.md), as amended by danmt 2026-07-25:
+#  - repos.txt IS the scope. A review request authorizes a review only in a
+#    repo this box carries. The previous rule ("a request anywhere in the org
+#    or a fleet fork is authorization; no repo list scopes it") made every
+#    box's write surface the entire org, which no registry could bound: the
+#    #26 interlock narrows repos.txt and so confined attention, triage and
+#    hygiene, but NOT this module. Scope is now the registry.
+#  - Awareness is still org-wide, but it never acts. One search query per
+#    tick reports requests outside the registry, so the failure mode the old
+#    rule existed to prevent (cast#143: a converged round sat unowed for 40
+#    minutes) surfaces as a logged line instead of silence. If one of those
+#    matters, the repo belongs in repos.txt — that is an operator decision,
+#    not something a sweep should make by writing to a repo nobody listed.
 #  - Truth comes from object endpoints (pulls API, pulls/N/reviews). The
 #    SEARCH index lags — it caused missed wakes (cast#143, box#164, rig#112,
 #    nine hours) and double reviews (#26, #29). Search only ADDS candidates.
@@ -20,29 +30,11 @@
 REVIEW_MY_PR_REPOS=""
 
 duty_review() {
-  local candidates="" org_repos fork_repos="" page SR u
-  # rc captured separately: `|| echo err` after a partial page dump would
-  # bury the sentinel under real output and treat a silently partial
-  # enumeration as authoritative.
-  if ! org_repos="$(gh api "/orgs/$FLEET_ORG/repos" --paginate --jq '.[].full_name' 2>/dev/null)"; then
-    warn "review: org repo enumeration failed this tick; the repos.txt backstop still collects"
-    org_repos=""
-  fi
-  # Fleet-member forks: doctrine says a request on ANY fleet member's fork
-  # is authorization (REVIEWER.md) — codex swept all five accounts' forks;
-  # a static extra-repos list missed new forks by construction.
-  local u_forks
-  # shellcheck disable=SC2086
-  for u in $FLEET_BENCH $FLEET_TRIAGE; do
-    if u_forks="$(gh api "/users/$u/repos?per_page=100" --paginate \
-      --jq '.[] | select(.fork) | .full_name' 2>/dev/null)"; then
-      fork_repos="$fork_repos $(printf '%s' "$u_forks" | tr '\n' ' ')"
-    else
-      warn "review: fork enumeration failed for $u this tick"
-    fi
-  done
-  # shellcheck disable=SC2086
-  for SR in $(printf '%s\n' $org_repos $fork_repos $FLEET_SWEEP_EXTRA_REPOS | awk 'NF && !seen[$0]++'); do
+  local candidates="" page SR
+  # The registry is the scope. Object endpoints only — one authoritative
+  # pulls page per carried repo, never the lagging search index.
+  while IFS= read -r SR; do
+    [ -n "$SR" ] || continue
     page="$(gh api "repos/$SR/pulls?state=open&per_page=100" --paginate 2>/dev/null | jq -cs 'add // []')" \
       || { warn "review: pulls fetch failed for $SR; skipping repo this tick"; continue; }
     candidates="$candidates
@@ -51,17 +43,24 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     if printf '%s' "$page" | jq -e --arg me "$ME" '[.[] | select(.user.login == $me)] | length > 0' >/dev/null; then
       REVIEW_MY_PR_REPOS="$REVIEW_MY_PR_REPOS $SR"
     fi
-  done
-
-  # Backstop: repos.txt via the search index. Only ADDS candidates (e.g.
-  # after an org-enumeration failure); never evidence of no duty.
-  local BR
-  while IFS= read -r BR; do
-    candidates="$candidates
-$(gh pr list -R "$BR" --state open --search "review-requested:$ME" \
-      --json number,createdAt,isDraft \
-      --jq '.[] | select(.isDraft | not) | "\(.createdAt) '"$BR"' \(.number)"' 2>/dev/null || true)"
   done < <(read_repo_list "$REPOS_FILE")
+
+  # Awareness pass — reports, never acts. A request outside the registry is
+  # an operator signal ("should this box carry that repo?"), not a licence to
+  # write to it. Cheap by construction: one search call, and the index's lag
+  # is acceptable for a hint in a way it never was for the queue itself.
+  local outside cand unscoped=""
+  outside="$(gh search prs --review-requested="$ME" --state open --limit 50 \
+    --json repository,number --jq '.[] | "\(.repository.nameWithOwner)#\(.number)"' 2>/dev/null || true)"
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    if ! read_repo_list "$REPOS_FILE" | grep -qxF "${cand%%#*}"; then
+      unscoped="$unscoped $cand"
+    fi
+  done <<<"$outside"
+  if [ -n "$unscoped" ]; then
+    warn "review: request(s) outside repos.txt, NOT acted on:$unscoped — add the repo to repos.txt if this box should carry it"
+  fi
 
   # One candidate per (repo, PR) — first mention wins (the authoritative
   # sweep precedes the backstop), then oldest-first for the acting order.

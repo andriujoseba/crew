@@ -170,6 +170,29 @@ t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROL
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 chmod +x "$ISHIM/gh"
 
+# --- duty.sh lock sentinel: 199 AND the message --------------------------
+# A bare non-zero `flock` under `set -euo pipefail` exited duty.sh AT the
+# flock line, so the 199 branch never ran and a contended manual invocation
+# printed nothing at all. Both halves are asserted: the exit code alone was
+# always correct, which is why this survived unnoticed — only the drill's
+# "lock contention -> 199 + message" check saw the silence.
+LHOME="$TMP/lock-home"
+mkdir -p "$LHOME"
+env HOME="$LHOME" DUTY_DIR="$LHOME/duty" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+  /bin/bash "$SHARED/install.sh" --agent claude --role reviewer >/dev/null 2>&1
+flock -n "$LHOME/duty/.duty.lock" -c 'sleep 3' >/dev/null 2>&1 &
+lock_bg=$!
+sleep 1
+if lock_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" /bin/bash "$LHOME/duty/bin/duty.sh" 2>&1)"; then
+  lock_rc=0
+else
+  lock_rc=$?
+fi
+wait "$lock_bg" 2>/dev/null || true
+t duty-lock-sentinel-rc 199 "$lock_rc"
+case "$lock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
+t duty-lock-sentinel-message message "$r1"
+
 # --- attention label predicate: never let a null reach the shell ---------
 # `gh api --jq` prints NOTHING for a null result (real jq prints "null"), so
 # `index("attention") | grep -q null` matched in NEITHER state: present
