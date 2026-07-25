@@ -170,6 +170,15 @@ t ledger-monotonic 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG
 printf '' | ledger_commit "$LG"
 t ledger-empty-safe 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG" | n)"
 
+# cross-repo collision: discussion numbers are PER-REPO but the ledger is one
+# file across every repo in repos.txt, so keys must be repo-qualified. After
+# committing ceremony#1, an unchanged/older rig#1 must still wake — a bare "1"
+# key would shadow it and triage would never see rig's discussion (codex, #16).
+LG2="$TMP/ledger-disc"
+printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_commit "$LG2"
+t ledger-crossrepo-distinct 1 "$(printf 'heavy-duty/rig#1 2026-07-20T00:00:00Z\n' | ledger_filter "$LG2" | n)"
+t ledger-crossrepo-samekey  0 "$(printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_filter "$LG2" | n)"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

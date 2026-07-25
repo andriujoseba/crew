@@ -195,7 +195,7 @@ while IFS= read -r R; do
               | select( [ .comments.nodes[] | .author.login,
                           .replies.nodes[].author.login ]
                         | index(\"$ME\") | not )
-              | \"\(.number) \(.updatedAt)\"] | .[]" 2>/dev/null || echo "")
+              | \"${R}#\(.number) \(.updatedAt)\"] | .[]" 2>/dev/null || echo "")
   undisc=$(printf '%s\n' "$uncommented_disc" \
     | ledger_filter "$SEEN_DISCUSSIONS" | awk 'NF{c++} END{print c+0}')
   [ "$undisc" -gt 0 ] && signals="$signals ${undisc}x uncommented discussions;"
@@ -262,7 +262,7 @@ while IFS= read -r R; do
     | jq -r '.[] | "\(.thread) \(.updated)"' \
     | ledger_filter "$SEEN_MENTIONS" | awk '{print $1}')
   if [ -n "$keep_threads" ]; then
-    keep_json=$(printf '%s\n' $keep_threads | jq -R . | jq -cs .)
+    keep_json=$(printf '%s\n' "$keep_threads" | jq -R . | jq -cs .)
     mentions=$(jq -c --argjson keep "$keep_json" \
       '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")
   else

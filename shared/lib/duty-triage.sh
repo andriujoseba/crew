@@ -57,12 +57,15 @@ _triage_repo() {
   # held for a human ruling (needs-ruling) carries no comment of mine by
   # design; keying on that alone re-fired a full triage session every tick
   # forever (the overnight burn). updatedAt now travels too; `uncommented_disc`
-  # holds every currently-uncommented one as "number updatedAt" lines and is
-  # committed after the triage session, so a held one is marked seen at its
-  # current state. Limits (50/50/20) truncate very busy threads — safe
-  # direction (re-wake), hygiene is the backstop.
+  # holds every currently-uncommented one as "REPO#number updatedAt" lines and
+  # is committed after the triage session, so a held one is marked seen at its
+  # current state. The key is REPO-qualified: discussion numbers are
+  # per-repository but this ledger is one file across every repo in repos.txt,
+  # so a bare number let rig#1 shadow ceremony#1 (codex, #16 review). Limits
+  # (50/50/20) truncate very busy threads — safe direction (re-wake), hygiene
+  # is the backstop.
   local uncommented_disc
-  uncommented_disc="$(TR_ME="$ME" gh api graphql -f owner="$owner" -f name="$name" -f query='
+  uncommented_disc="$(TR_ME="$ME" TR_R="$R" gh api graphql -f owner="$owner" -f name="$name" -f query='
     query($owner:String!,$name:String!){
       repository(owner:$owner,name:$name){
         discussions(first:50,states:OPEN){
@@ -75,7 +78,7 @@ _triage_repo() {
               | select( [ .comments.nodes[] | .author.login,
                           .replies.nodes[].author.login ]
                         | index(env.TR_ME) | not )
-              | "\(.number) \(.updatedAt)"] | .[]' 2>/dev/null || echo err)"
+              | "\(env.TR_R)#\(.number) \(.updatedAt)"] | .[]' 2>/dev/null || echo err)"
   if [ "$uncommented_disc" = err ]; then
     warn "$R: discussion probe failed (discussions disabled?)"
     uncommented_disc=""
@@ -118,7 +121,7 @@ _triage_repo() {
     | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
     | ledger_filter "$DUTY_DIR/.seen-mentions" | awk '{print $1}')"
   if [ -n "$keep_threads" ]; then
-    keep_json="$(printf '%s\n' $keep_threads | jq -R . | jq -cs .)"
+    keep_json="$(printf '%s\n' "$keep_threads" | jq -R . | jq -cs .)"
     mentions="$(jq -c --argjson keep "$keep_json" \
       '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")"
   else
