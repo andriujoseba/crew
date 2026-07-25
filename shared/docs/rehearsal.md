@@ -7,6 +7,20 @@
 > each check means, and the manual path when no host is at hand.
 > It accepts `--agent <name>` and defaults to `claude`; available agents are
 > the profiles under `shared/conf/agents/`.
+>
+> **One box, one role.** `--role triage|builder|reviewer` (default
+> `reviewer`) selects both the installed role and the box
+> (`crew-drill-<role>`). `drill/rehearsal-all.sh` runs all three in
+> sequence. The fleet deploys single-role boxes (`fleet.roster`) and
+> `duty.sh` gates every module on `has_role`, so a single box carrying all
+> three would exercise a composite path nobody runs — and would hide the
+> class of defect that let a reviewer box quietly run triage sweeps for an
+> entire rehearsal (`heavy-duty/crew#28`).
+>
+> The three boxes may share ONE GitHub identity. That is safe **only**
+> because `repos.txt` is now the scope for every module and each role gets
+> its own sandbox: disjoint registries, disjoint work. Under the previous
+> org-wide review sweep all three would have raced for the same verdicts.
 
 You are validating the shared duty engine (crew PR #16) on a box that has
 never run it. You have no context beyond this repo: read `shared/README.md`
@@ -68,8 +82,8 @@ agent, assertions, auth probe, and login hint from the grok profile.
 Verify, and record the output of each check:
 
 1. `cat ~/duty/VERSION` — `crew@<sha>` matching `git rev-parse --short HEAD`.
-2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=claude`,
-   `BOT_ROLES="reviewer"` (or the agent selected with `--agent`).
+2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=claude`, and `BOT_ROLES`
+   equal to the `--role` under test (or the agent selected with `--agent`).
 3. `crontab -l` — no duty tick line. The rehearsal never arms cron.
 4. After each explicit `~/duty/bin/tick.sh`, `~/duty/duty.log` gains evidence:
    `duty run start` → a WARN that the login cannot be resolved →
@@ -81,9 +95,19 @@ Verify, and record the output of each check:
 6. Lock behavior: run `~/duty/bin/duty.sh` by hand twice —
    idle: it runs; concurrently with itself or a tick: the second prints
    "a tick already holds …" and exits 199.
-7. Idempotence: rerun `shared/install.sh` (no flags) — it must
-   keep the instance config and remain disarmed.
-   `shared/install.sh --agent claude --role nosuchrole` must refuse.
+7. Idempotence: rerun `shared/install.sh` **with the same
+   `--agent`/`--role`** — it must keep the instance config and remain
+   disarmed. `shared/install.sh --agent claude --role nosuchrole` must
+   refuse.
+
+   > A **flagless** rerun does NOT keep the instance config when the box's
+   > gh login has a `FLEET_MANIFEST` entry: it re-resolves agent and role
+   > from the manifest. That is correct convergence for a standing fleet
+   > box and a trap for any box deliberately installed off its manifest
+   > role — the drill borrows a fleet identity, so a flagless rerun used to
+   > convert the reviewer box under test into a triage box, silently, two
+   > checks after the role was asserted (`heavy-duty/crew#28`). Assert the
+   > role again after any reinstall; never infer it.
 
 Repeat an explicit tick if needed. Expected steady state: three evidence lines
 per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
@@ -119,6 +143,23 @@ any duty tick left by an older run and restores the registry. If the shell or
 box is in doubt, `box down <box>` is the reliable stop: `pkill` routed through
 `box exec` is unprivileged and may be unable to signal an already-running
 session.
+
+The loops below are gated on `has_role`, so each box proves only its own.
+`drill/rehearsal-all.sh` covers all three; a single `--role` run leaves the
+other two loops **unproven, not passing** — read the per-role summaries, not
+just the driver's final line.
+
+| role | fixture the drill creates | what must happen |
+|---|---|---|
+| triage | an open issue carrying **no** queue label (a "stray") | a ruling comment, and the issue lands in exactly one of ready/claimed/blocked/epic; a re-tick adds no second ruling |
+| builder | an issue labelled `ready` and **unassigned** | a `build/*` PR authored by the identity, referencing the issue; the issue leaves `ready`; a re-tick opens no duplicate |
+| reviewer | a PR with the identity as requested reviewer | `🔎 reviewing head <sha>`, a verdict pinned to that head, dedup on re-tick, re-request auto-approve, and the one-shot gates |
+
+> The builder fixture must be **unassigned**. `ready` + assigned is
+> deliberately not pickable — an assignee means mid-claim, and counting
+> those launched sessions with nothing to do. An assigned fixture makes the
+> builder correctly ignore it, and the drill would then blame the engine
+> for the fixture's mistake.
 
 1. First authenticated tick: boot gate passes, `~/duty/.boot-id` appears,
    the login-resolution WARN disappears, review sweep logs
