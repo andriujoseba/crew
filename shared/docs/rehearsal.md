@@ -80,6 +80,22 @@ agent. A throwaway test identity instead needs a `FLEET_MANIFEST` line in
 survives re-installs). The operator performs `gh auth login` and the selected
 agent profile's `AGENT_LOGIN_HINT`; you never handle credentials.
 
+Authentication creates two independent hazards. First, another live box must
+not run the same identity. Second, a normal engine registry points at production
+repositories, so a drill tick can make legitimate-looking production writes.
+The automated rehearsal therefore saves `repos.txt`, points it at nothing
+before the first authenticated tick, replaces it with the sandbox alone before
+phase 2, verifies that narrowing fail-closed, and restores the original on exit
+or interruption.
+
+The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
+the old scheduled-boundary check was not worth creating an autonomous agent
+that could outlive the invoking shell. On every exit the cleanup path removes
+any duty tick left by an older run and restores the registry. If the shell or
+box is in doubt, `box down <box>` is the reliable stop: `pkill` routed through
+`box exec` is unprivileged and may be unable to signal an already-running
+session.
+
 1. First authenticated tick: boot gate passes, `~/duty/.boot-id` appears,
    the login-resolution WARN disappears, review sweep logs
    `review: no outstanding review requests anywhere` (if true).
@@ -101,6 +117,8 @@ agent profile's `AGENT_LOGIN_HINT`; you never handle credentials.
    second review appearing on the PR. A short SHA must be refused.
 6. Timeout: nothing to force here, but confirm every SESSION END line
    carries rc= and dur=.
+7. Teardown: `repos.txt` is restored to its pre-drill contents and
+   `crontab -l` contains no duty tick.
 
 ## Phase 3 — report
 
