@@ -143,6 +143,40 @@ t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 install_fixture --arm-cron >/dev/null 2>&1
 t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 
+# --- install.sh: explicit role vs FLEET_MANIFEST -------------------------
+# A flagless rerun re-resolves agent/role from FLEET_MANIFEST whenever the
+# box's gh login has an entry there, overwriting a role installed explicitly.
+# That is correct convergence for a standing fleet box and a trap for any box
+# deliberately installed OFF its manifest role: the drill installed reviewer
+# under a fleet identity whose manifest entry is triage, and its own
+# idempotence check converted the box to triage mid-run.
+MHOME="$TMP/manifest-home"
+MDUTY="$MHOME/duty"
+mkdir -p "$MHOME"
+# shellcheck disable=SC2016  # fixture script expands these at execution time
+printf '#!/usr/bin/env bash\n[ "$1 $2" = "api user" ] && { printf "dan-claude-bot\\n"; exit 0; }\nexit 1\n' >"$ISHIM/gh"
+chmod +x "$ISHIM/gh"
+manifest_install() {
+  env HOME="$MHOME" DUTY_DIR="$MDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" "$@"
+}
+manifest_install --agent claude --role reviewer >/dev/null 2>&1
+t install-explicit-role-set 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+manifest_install >/dev/null 2>&1
+t install-flagless-reresolves-from-manifest 'BOT_ROLES="triage"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+manifest_install --agent claude --role reviewer >/dev/null 2>&1
+t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+# restore the non-authenticating gh shim for anything downstream
+printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
+chmod +x "$ISHIM/gh"
+
+# --- attention label predicate: never let a null reach the shell ---------
+# `gh api --jq` prints NOTHING for a null result (real jq prints "null"), so
+# `index("attention") | grep -q null` matched in NEITHER state: present
+# emitted "0", absent emitted "". The predicate must emit a token both ways.
+t label-predicate-gone    true  "$(printf '{"labels":[]}\n' | jq -r '[.labels[].name] | index("attention") == null')"
+t label-predicate-present false "$(printf '{"labels":[{"name":"attention"}]}\n' | jq -r '[.labels[].name] | index("attention") == null')"
+
 # --- rehearsal safety: isolate, fail closed, restore, disarm (#26) -------
 RHOME="$TMP/rehearsal-home"
 RDUTY="$RHOME/duty"

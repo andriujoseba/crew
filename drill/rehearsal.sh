@@ -164,7 +164,14 @@ sha="$(bx "git -C ~/crew rev-parse --short HEAD" | tr -d '\r\n')"
 check "VERSION stamps crew@$sha"   bx "head -1 ~/duty/VERSION | grep -q 'crew@$sha'"
 check "instance.conf $AGENT/reviewer" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
 check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
-check "reinstall stays disarmed"   bx "~/crew/shared/install.sh && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+# A FLAGLESS reinstall re-resolves agent/role from FLEET_MANIFEST whenever the
+# box's gh login has an entry. The drill borrows a fleet identity, so the
+# flagless form silently replaced the reviewer role under test with that
+# identity's manifest role — gating duty_review off for the rest of the run
+# while every review check timed out. Reinstall with the same flags, and
+# assert the role survived rather than trusting it.
+check "reinstall stays disarmed"   bx "~/crew/shared/install.sh --agent '$AGENT' --role reviewer && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "reinstall keeps role"       bx "grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
 check "bad role refused"           bx "! ~/crew/shared/install.sh --agent '$AGENT' --role nosuchrole"
 
 GH_AUTHED=0
@@ -241,8 +248,12 @@ else
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
     "gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qv '^0$'"
+  # `gh api --jq` prints NOTHING when the filter yields null (real jq prints
+  # "null"), so testing for the literal string could never match: label
+  # present emitted "0", label absent emitted "". The check failed in BOTH
+  # states. Compare inside the filter so a token reaches the shell either way.
   wait_for 300 "attention: label removed (ack re-arms)" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\")' | grep -q null"
+    "gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null' | grep -qx true"
 
   # -- review round through the gates --
   main_sha="$(gh api "repos/$SANDBOX/git/ref/heads/main" --jq .object.sha)"
