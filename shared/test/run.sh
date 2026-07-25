@@ -193,6 +193,25 @@ t duty-lock-sentinel-rc 199 "$lock_rc"
 case "$lock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
 t duty-lock-sentinel-message message "$r1"
 
+# --- count predicates must fail CLOSED on empty and on error output ------
+# `grep -qv '^0$'` reads as "the count is not zero", but -v selects lines
+# that do NOT match, so it returns 0 for EMPTY input and for gh's error JSON
+# — the check went green when the API call failed. Same defect class as the
+# null check in #29: a predicate whose failure mode looks like success.
+for _in in '' '0' '{"message":"Not Found","status":"404"}'; do
+  if printf '%s' "$_in" | grep -qE '^[1-9][0-9]*$'; then r1=passed; else r1=refused; fi
+  t "count-predicate-refuses-${_in:-empty}" refused "$r1"
+done
+if printf '3' | grep -qE '^[1-9][0-9]*$'; then r1=passed; else r1=refused; fi
+t count-predicate-accepts-real-count passed "$r1"
+# The shape it replaced, pinned so nobody reintroduces it. Uses gh's error
+# JSON, not empty input: -v on an empty stream is shell/grep dependent, but
+# ANY non-"0" line — which is what a failed gh call prints to stdout — makes
+# the old predicate return 0. That is the realistic failure and it is
+# deterministic everywhere.
+if printf '%s' '{"message":"Not Found","status":"404"}' | grep -qv '^0$'; then r1=fail-open; else r1=fail-closed; fi
+t count-predicate-old-shape-was-fail-open fail-open "$r1"
+
 # --- notify.sh lock sentinel: same set -e trap as duty.sh (#30) ----------
 # duty.sh was fixed for this; notify.sh has the identical preamble and was
 # missed. Asserted the same way: the exit code alone was always right, so
