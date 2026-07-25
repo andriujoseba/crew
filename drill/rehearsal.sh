@@ -287,7 +287,7 @@ else
     -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qv '^0$'"
+    "gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qE '^[1-9][0-9]*$'"
   # `gh api --jq` prints NOTHING when the filter yields null (real jq prints
   # "null"), so testing for the literal string could never match: label
   # present emitted "0", label absent emitted "". The check failed in BOTH
@@ -313,7 +313,7 @@ else
     --jq .number)"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "triage: stray drew a ruling comment" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qv '^0$'"
+    "gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qE '^[1-9][0-9]*$'"
   # The board invariant: no open issue may remain queue-unlabelled.
   wait_for 300 "triage: stray left the unlabelled queue" bash -c \
     "gh api 'repos/$SANDBOX/issues/$tnum' --jq '[.labels[].name] | any(. == \"ready\" or . == \"claimed\" or . == \"blocked\" or . == \"epic\" or . == \"needs-triage\")' | grep -qx true"
@@ -337,7 +337,7 @@ else
     "gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length' | grep -qx 0"
   bx "~/duty/bin/tick.sh" || true
   wait_for 1800 "builder: opened a PR for the ready issue" bash -c \
-    "gh pr list -R '$SANDBOX' --state open --author '$ME2' --json number --jq 'length' | grep -qv '^0\$'"
+    "gh pr list -R '$SANDBOX' --state open --author '$ME2' --json number --jq 'length' | grep -qE '^[1-9][0-9]*\$'"
   bpr="$(gh pr list -R "$SANDBOX" --state open --author "$ME2" --json number --jq '.[0].number' 2>/dev/null || echo '')"
   if [ -n "$bpr" ]; then
     ok "builder: PR #$bpr authored by $ME2"
