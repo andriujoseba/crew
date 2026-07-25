@@ -1,3 +1,0 @@
-# crontab -l — the system crontab driving the duty loop.
-
-*/5 * * * * flock -n $HOME/duty/.lock $HOME/duty/duty.sh >> $HOME/duty/duty.log 2>&1

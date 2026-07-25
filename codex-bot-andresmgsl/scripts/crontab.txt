@@ -1,1 +1,0 @@
-*/5 * * * * $HOME/duty/duty.sh >> $HOME/duty/duty.log 2>&1

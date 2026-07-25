@@ -1,5 +1,0 @@
-# repos.txt — backstop poll list read by duty.sh each run (the request-check, not this file, defines the job).
-
-heavy-duty/ceremony
-heavy-duty/incubator
-heavy-duty/rig
