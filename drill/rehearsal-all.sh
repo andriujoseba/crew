@@ -48,12 +48,16 @@ for role in $ROLES; do
   echo "############################################################"
   echo "## $role — box crew-drill-$role"
   echo "############################################################"
-  if "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"; then
-    SUMMARY+=("ok   $role")
-  else
-    SUMMARY+=("FAIL $role")
-    overall=1
-  fi
+  "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
+  rc=$?
+  # 2 is "nothing failed, but phase 2 never ran". It is NOT a pass: the role
+  # loop is unproven, and collapsing it into ok is how a rehearsal that
+  # tested nothing gets reported as clearing the rollout.
+  case "$rc" in
+    0) SUMMARY+=("ok         $role  (phase 2 ran)") ;;
+    2) SUMMARY+=("INCOMPLETE $role  (phase 2 skipped — loop UNPROVEN)"); overall=2 ;;
+    *) SUMMARY+=("FAIL       $role"); overall=1 ;;
+  esac
 done
 
 echo
@@ -61,6 +65,8 @@ echo "############################################################"
 echo "## fleet rehearsal summary ($AGENT)"
 printf '##   %s\n' "${SUMMARY[@]}"
 echo "############################################################"
-# A role that never reached phase 2 reports ok for phase 0/1 alone — read
-# the per-role summaries above, not just this line.
+if [ "$overall" -eq 2 ]; then
+  echo "## NOT a pass: at least one role never reached phase 2. Log those boxes"
+  echo "## in and re-run before reporting anything on crew PR #16."
+fi
 exit "$overall"

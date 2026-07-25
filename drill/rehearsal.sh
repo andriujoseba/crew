@@ -94,6 +94,10 @@ LOGIN_HINT="$AGENT_LOGIN_HINT"
 
 PASS=0
 SKIP=0
+# Phase 2 is where every role loop lives. A run that never reaches it has
+# proved acquisition and install and NOTHING about duty, so it must never
+# be reportable as a pass — see the summary at the bottom.
+PHASE2_RAN=0
 declare -a FAILS=()
 ok()   { echo "ok   $1"; PASS=$((PASS + 1)); }
 skip() { echo "skip $1"; SKIP=$((SKIP + 1)); }
@@ -235,9 +239,15 @@ fi
 if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/crew/shared/conf/agents/$AGENT.conf; bot_cli_probe"; then
   echo
   echo "== phase 2 SKIPPED: box not fully authenticated."
-  echo "   Log it in (box shell $BOX_NAME → gh auth login; $LOGIN_HINT),"
-  echo "   ensure no OTHER box runs the same identity, then re-run this script."
+  echo "   The $ROLE loop is therefore UNPROVEN — phase 1 says the engine"
+  echo "   installs, not that it works. Log the box in and re-run:"
+  echo "     box shell $BOX_NAME"
+  echo "     gh auth login"
+  echo "     $LOGIN_HINT"
+  echo "   Another box may share this identity, but only while its repos.txt"
+  echo "   does not name this box's sandbox."
 else
+  PHASE2_RAN=1
   ME2="$(bx "gh api user --jq .login" | tr -d '\r\n')"
   HOST_ME="$(gh api user --jq .login)"
   # One sandbox PER ROLE. The three drill boxes may share one identity, but
@@ -393,11 +403,19 @@ fi
 
 check "teardown: drill remains disarmed" bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 echo
-echo "== rehearsal summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
+echo "== rehearsal summary [$ROLE]: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
 if [ "${#FAILS[@]}" -gt 0 ]; then
   printf '  FAIL %s\n' "${FAILS[@]}"
   echo "Fixtures and box are left in place. Report findings on crew PR #16 with"
   echo "~/duty/duty.log and ~/duty/logs/* excerpts from: box shell $BOX_NAME"
   exit 1
 fi
-echo "All green. Report the pass on crew PR #16 — this clears the staged rollout."
+# Exit 2, not 0: nothing failed, but the $ROLE loop never ran. Reporting this
+# as a pass is how a rehearsal that proved nothing clears a rollout.
+if [ "$PHASE2_RAN" -eq 0 ]; then
+  echo "INCOMPLETE — phase 2 never ran, so the $ROLE loop is UNPROVEN."
+  echo "Everything above is acquisition and install only. This is NOT a pass"
+  echo "and must not be reported as one on crew PR #16."
+  exit 2
+fi
+echo "All green, phase 2 included — the $ROLE loop ran. Report the pass on crew PR #16."
