@@ -27,26 +27,47 @@
 # login shell, which is exactly where those paths live
 set -uo pipefail
 
-BOX_NAME="crew-drill"
+BOX_NAME=""
 REF="crew/shared-duty"
 REMOTE="https://github.com/dan-claude-bot/crew.git"
 TREE=""
 SANDBOX=""
 QUICK=0
 AGENT="claude"
+# One box, one role — the fleet runs single-role boxes (fleet.roster), and
+# a multi-role drill box would exercise a composite path nobody deploys.
+# drill/rehearsal-all.sh runs the three in sequence.
+ROLE="reviewer"
+
+usage() {
+  echo "usage: drill/rehearsal.sh [--agent <name>] [--role triage|builder|reviewer]"
+  echo "         [--box <name>] [--tree <path>] [--remote <url>] [--ref <git-ref>]"
+  echo "         [--sandbox <owner/repo>] [--quick]"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent)   AGENT="$2"; shift 2 ;;
+    --role)    ROLE="$2"; shift 2 ;;
     --box)     BOX_NAME="$2"; shift 2 ;;
     --tree)    TREE="$2"; shift 2 ;;
     --remote)  REMOTE="$2"; shift 2 ;;
     --ref)     REF="$2"; shift 2 ;;
     --sandbox) SANDBOX="$2"; shift 2 ;;
     --quick)   QUICK=1; shift ;;
-    *) echo "usage: drill/rehearsal.sh [--agent <name>] [--box <name>] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]"; exit 1 ;;
+    *) usage; exit 1 ;;
   esac
 done
+
+case "$ROLE" in
+  triage|builder|reviewer) ;;
+  *) echo "unknown --role '$ROLE' (triage, builder or reviewer)"; usage; exit 1 ;;
+esac
+# Per-role box and sandbox. Three boxes may share ONE gh identity without
+# colliding *because* repos.txt is now the scope for every module: disjoint
+# registries mean disjoint work. Under the old org-wide review sweep they
+# would all have seen each other's PRs and raced.
+[ -n "$BOX_NAME" ] || BOX_NAME="crew-drill-$ROLE"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AGENT_CONF="$ROOT/shared/conf/agents/$AGENT.conf"
@@ -155,23 +176,23 @@ RESOLVED_SHA="$(bx "git -C ~/crew rev-parse HEAD" | tr -d '\r\n')"
 echo "== phase 0: resolved $RESOLVED_SHA from $SOURCE_DESC (creds-free inside box)"
 check "fixture tests green" bx "~/crew/shared/test/run.sh | grep -q 'failed 0'"
 
-echo "== phase 1: pre-auth engine install ($AGENT reviewer)"
+echo "== phase 1: pre-auth engine install ($AGENT $ROLE)"
 # Every drill tick is explicit. Arming cron here created an autonomous
 # production bot merely to observe one scheduled boundary (#26).
-bx "~/crew/shared/install.sh --agent '$AGENT' --role reviewer" || fail "install"
+bx "~/crew/shared/install.sh --agent '$AGENT' --role '$ROLE'" || fail "install"
 rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
 sha="$(bx "git -C ~/crew rev-parse --short HEAD" | tr -d '\r\n')"
 check "VERSION stamps crew@$sha"   bx "head -1 ~/duty/VERSION | grep -q 'crew@$sha'"
-check "instance.conf $AGENT/reviewer" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
+check "instance.conf $AGENT/$ROLE" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
 check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 # A FLAGLESS reinstall re-resolves agent/role from FLEET_MANIFEST whenever the
 # box's gh login has an entry. The drill borrows a fleet identity, so the
-# flagless form silently replaced the reviewer role under test with that
+# flagless form silently replaced the role under test with that
 # identity's manifest role — gating duty_review off for the rest of the run
 # while every review check timed out. Reinstall with the same flags, and
 # assert the role survived rather than trusting it.
-check "reinstall stays disarmed"   bx "~/crew/shared/install.sh --agent '$AGENT' --role reviewer && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
-check "reinstall keeps role"       bx "grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
+check "reinstall stays disarmed"   bx "~/crew/shared/install.sh --agent '$AGENT' --role '$ROLE' && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "reinstall keeps role"       bx "grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
 check "bad role refused"           bx "! ~/crew/shared/install.sh --agent '$AGENT' --role nosuchrole"
 
 GH_AUTHED=0
@@ -219,16 +240,25 @@ if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/crew/shared/conf/agents/$AGENT.co
 else
   ME2="$(bx "gh api user --jq .login" | tr -d '\r\n')"
   HOST_ME="$(gh api user --jq .login)"
-  [ -n "$SANDBOX" ] || SANDBOX="$HOST_ME/crew-drill-sandbox"
+  # One sandbox PER ROLE. The three drill boxes may share one identity, but
+  # never a registry: repos.txt is the scope for every module now, so
+  # disjoint sandboxes are what keeps three concurrent drills from racing.
+  [ -n "$SANDBOX" ] || SANDBOX="$HOST_ME/crew-drill-$ROLE"
   echo
-  echo "== phase 2: authenticated drills (box identity: $ME2, sandbox: $SANDBOX)"
-  echo "   REMINDER: one box per identity — if another box also runs $ME2, disarm its cron first."
+  echo "== phase 2: authenticated $ROLE drills (box identity: $ME2, sandbox: $SANDBOX)"
+  echo "   REMINDER: one box per identity PER SANDBOX — another box on $ME2 is safe"
+  echo "   only while its repos.txt does not name $SANDBOX."
 
   # Sandbox repo + collaborator (invited by host, accepted by the box).
   if ! gh repo view "$SANDBOX" >/dev/null 2>&1; then
     gh repo create "$SANDBOX" --public --add-readme >/dev/null || fail "sandbox create"
   fi
-  gh api "repos/$SANDBOX/labels" -f name=attention -f color=d93f0b >/dev/null 2>&1 || true
+  # The whole board vocabulary: triage keys on needs-triage and on strays
+  # carrying none of ready/claimed/blocked/epic, and the builder keys on
+  # ready. A missing label makes a fixture silently unbuildable.
+  for _lbl in attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 epic:5319e7; do
+    gh api "repos/$SANDBOX/labels" -f name="${_lbl%%:*}" -f color="${_lbl##*:}" >/dev/null 2>&1 || true
+  done
   if ! gh api "repos/$SANDBOX/collaborators/$ME2" >/dev/null 2>&1; then
     gh api -X PUT "repos/$SANDBOX/collaborators/$ME2" -f permission=push >/dev/null 2>&1 || true
     bx "gh api /user/repository_invitations --jq '.[] | select(.repository.full_name == \"$SANDBOX\") | .id' \
@@ -255,6 +285,70 @@ else
   wait_for 300 "attention: label removed (ack re-arms)" bash -c \
     "gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null' | grep -qx true"
 
+  # ---- role-specific loops ---------------------------------------------
+  # duty_attention above is role-independent and already ran. What follows
+  # is gated on has_role in duty.sh, so each block only means anything on
+  # the box that carries that role — which is why the drill is one box per
+  # role rather than one box carrying all three.
+
+  if [ "$ROLE" = "triage" ]; then
+  # -- triage: a stray (no queue label) must draw a ruling --
+  # duty-triage.sh detects two signals; the STRAY is the one a fixture can
+  # create without presupposing triage's own vocabulary: an open issue
+  # carrying none of ready/claimed/blocked/epic/needs-triage. The module
+  # only DETECTS — the session does the labelling — so the assertion is on
+  # what the session leaves behind, not on the signal.
+  tnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage stray $(date -u +%H%M%S)" \
+    -f body="Drill fixture: an unlabelled open issue. Rule on it — leave one short ruling comment and put it in exactly one of ready/claimed/blocked (or epic). Do not open PRs." \
+    --jq .number)"
+  bx "~/duty/bin/tick.sh" || true
+  wait_for 900 "triage: stray drew a ruling comment" bash -c \
+    "gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qv '^0$'"
+  # The board invariant: no open issue may remain queue-unlabelled.
+  wait_for 300 "triage: stray left the unlabelled queue" bash -c \
+    "gh api 'repos/$SANDBOX/issues/$tnum' --jq '[.labels[].name] | any(. == \"ready\" or . == \"claimed\" or . == \"blocked\" or . == \"epic\" or . == \"needs-triage\")' | grep -qx true"
+  # Same tick, second time: triage must not re-rule a settled issue.
+  TCOMMENTS="$(gh api "repos/$SANDBOX/issues/$tnum/comments" --jq 'length')"
+  bx "~/duty/bin/tick.sh" || true
+  sleep 20
+  check "triage: no second ruling on re-tick" bash -c \
+    "[ \"\$(gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq 'length')\" = '$TCOMMENTS' ]"
+
+  elif [ "$ROLE" = "builder" ]; then
+  # -- builder: an unassigned `ready` issue must become a PR --
+  # ready+ASSIGNED is deliberately NOT pickable (an assignee means mid-claim;
+  # counting those launched sessions with nothing to do). The fixture must
+  # therefore leave the issue unassigned, or the builder correctly ignores it
+  # and the drill would blame the engine for its own bad fixture.
+  bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
+    -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
+    -f "labels[]=ready" --jq .number)"
+  check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
+    "gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length' | grep -qx 0"
+  bx "~/duty/bin/tick.sh" || true
+  wait_for 1800 "builder: opened a PR for the ready issue" bash -c \
+    "gh pr list -R '$SANDBOX' --state open --author '$ME2' --json number --jq 'length' | grep -qv '^0\$'"
+  bpr="$(gh pr list -R "$SANDBOX" --state open --author "$ME2" --json number --jq '.[0].number' 2>/dev/null || echo '')"
+  if [ -n "$bpr" ]; then
+    ok "builder: PR #$bpr authored by $ME2"
+    check "builder: PR branch is build/*" bash -c \
+      "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .head.ref | grep -q '^build/'"
+    check "builder: PR references the issue" bash -c \
+      "gh api 'repos/$SANDBOX/pulls/$bpr' --jq '.body // \"\"' | grep -q '#$bnum'"
+  else
+    fail "builder: PR authored by $ME2"
+  fi
+  # The claim must be visible on the board, not just in the PR.
+  wait_for 300 "builder: issue moved off ready (claimed)" bash -c \
+    "gh api 'repos/$SANDBOX/issues/$bnum' --jq '[.labels[].name] | index(\"ready\") == null' | grep -qx true"
+  # Re-tick must not phantom-rebuild: one PR, not two.
+  BPRS="$(gh pr list -R "$SANDBOX" --state open --author "$ME2" --json number --jq 'length')"
+  bx "~/duty/bin/tick.sh" || true
+  sleep 20
+  check "builder: no duplicate PR on re-tick" bash -c \
+    "[ \"\$(gh pr list -R '$SANDBOX' --state open --author '$ME2' --json number --jq 'length')\" = '$BPRS' ]"
+
+  else
   # -- review round through the gates --
   main_sha="$(gh api "repos/$SANDBOX/git/ref/heads/main" --jq .object.sha)"
   br="drill-$(date -u +%H%M%S)"
@@ -294,6 +388,7 @@ else
     ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' '$head_sha' approve /tmp/drill-body 2>&1 | grep -q 'already present'"
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
+  fi
 fi
 
 check "teardown: drill remains disarmed" bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
