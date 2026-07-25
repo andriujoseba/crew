@@ -19,11 +19,32 @@ three adversarial reviews) but before this rehearsal it has NEVER executed
 a real tick. Assume bugs. Anything you find goes to the PR (Phase 3), with
 logs, as a finding — never silently worked around.
 
-## Phase 0 — orientation and static checks
+## Phase 0 — acquire the exact tree, then run static checks
 
 ```sh
-git clone https://github.com/heavy-duty/crew ~/crew && cd ~/crew
-git checkout crew/shared-duty        # skip if the PR has merged
+git clone https://github.com/dan-claude-bot/crew ~/crew-host
+cd ~/crew-host
+git checkout crew/shared-duty
+drill/rehearsal.sh
+```
+
+The default invocation fetches `crew/shared-duty` from
+`https://github.com/dan-claude-bot/crew.git` on the host, creates a Git bundle,
+and streams that bundle into the box. The box needs no GitHub credentials and
+receives a real `.git` tree at the exact reported SHA. Override acquisition
+explicitly when needed:
+
+```sh
+drill/rehearsal.sh --remote <git-url> --ref <git-ref>
+drill/rehearsal.sh --tree "$PWD"     # bundle this checkout's exact HEAD
+```
+
+Phase 0 aborts before any fixture or installer check if the remote/ref cannot
+resolve, if a supplied tree is not a Git checkout, or if `shared/install.sh`
+or `shared/test/run.sh` is absent. It never continues from a stale `~/crew`.
+Once acquired, these are the static checks run inside the box:
+
+```sh
 shared/test/run.sh                   # must end: failed 0
 command -v shellcheck && shellcheck -x shared/bin/*.sh shared/lib/*.sh \
   shared/install.sh cli/crew shared/conf/fleet.conf \
@@ -37,7 +58,7 @@ phase: its profile's auth probe then returns non-zero, which is the expected
 unauthenticated result, and no session can launch:
 
 ```sh
-shared/install.sh --agent claude --role reviewer --arm-cron
+shared/install.sh --agent claude --role reviewer
 ```
 
 To rehearse another supported runtime, pass the same agent consistently:
@@ -49,25 +70,29 @@ Verify, and record the output of each check:
 1. `cat ~/duty/VERSION` — `crew@<sha>` matching `git rev-parse --short HEAD`.
 2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=claude`,
    `BOT_ROLES="reviewer"` (or the agent selected with `--agent`).
-3. `crontab -l` — exactly one line: `*/5 * * * * $HOME/duty/bin/tick.sh`
-   (no notify line: this is not the triage role).
-4. Within ~5 minutes, `~/duty/duty.log` gains per-tick evidence:
+3. `crontab -l` — no duty tick line. The rehearsal never arms cron.
+4. After each explicit `~/duty/bin/tick.sh`, `~/duty/duty.log` gains evidence:
    `duty run start` → a WARN that the login cannot be resolved →
    `duty run end`. EVERY 5-minute boundary must produce lines; silence at
-   a boundary is a finding (that is the tick evidence contract).
+   an invoked tick is a finding (that is the tick evidence contract).
 5. `~/duty/boot-check.log` — one boot block; `cli probe: FAILED` is
    CORRECT here; `~/duty/.boot-id` must NOT exist (marker only on
    verified auth).
 6. Lock behavior: run `~/duty/bin/duty.sh` by hand twice —
    idle: it runs; concurrently with itself or a tick: the second prints
    "a tick already holds …" and exits 199.
-7. Idempotence: rerun `shared/install.sh --arm-cron` (no flags) — it must
-   keep the instance config and not duplicate the cron line.
+7. Idempotence: rerun `shared/install.sh` (no flags) — it must
+   keep the instance config and remain disarmed.
    `shared/install.sh --agent claude --role nosuchrole` must refuse.
 
-Let it tick for at least 30 minutes. Expected steady state: three evidence
-lines per tick, no growth in error variety, no session logs in
-`~/duty/logs/`, no board writes anywhere.
+Repeat an explicit tick if needed. Expected steady state: three evidence lines
+per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
+no board writes anywhere.
+
+If the box is already authenticated when phase 1 begins, the rehearsal prints
+three explicit `skip` rows for the unauthenticated WARN, boot-marker, and
+no-session assertions. The summary counts those skips. A shorter authenticated
+run is therefore visible as reduced coverage, never silently greener.
 
 ## Phase 2 — authenticated ticks (operator required)
 

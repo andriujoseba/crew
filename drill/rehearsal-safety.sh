@@ -27,7 +27,7 @@ rehearsal_narrow_to_sandbox() {
 }
 
 rehearsal_cleanup() {
-  local rc=$?
+  local rc="${1:-$?}"
   if [ -n "${REPOS_BACKUP:-}" ]; then
     bx "if [ -f $REPOS_BACKUP ]; then mv $REPOS_BACKUP ~/duty/repos.txt; fi" \
       || echo "WARNING: could not restore the pre-drill repos.txt; stop the box: box down $BOX_NAME" >&2
