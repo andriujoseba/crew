@@ -73,8 +73,8 @@ Verify, and record the output of each check:
 3. `crontab -l` — no duty tick line. The rehearsal never arms cron.
 4. After each explicit `~/duty/bin/tick.sh`, `~/duty/duty.log` gains evidence:
    `duty run start` → a WARN that the login cannot be resolved →
-   `duty run end`. EVERY 5-minute boundary must produce lines; silence at
-   an invoked tick is a finding (that is the tick evidence contract).
+   `duty run end`. EVERY invoked tick must produce lines; silence after
+   invocation is a finding (that is the tick evidence contract).
 5. `~/duty/boot-check.log` — one boot block; `cli probe: FAILED` is
    CORRECT here; `~/duty/.boot-id` must NOT exist (marker only on
    verified auth).
@@ -88,7 +88,6 @@ Verify, and record the output of each check:
 Repeat an explicit tick if needed. Expected steady state: three evidence lines
 per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
 no board writes anywhere.
-
 If the box is already authenticated when phase 1 begins, the rehearsal prints
 three explicit `skip` rows for the unauthenticated WARN, boot-marker, and
 no-session assertions. The summary counts those skips. A shorter authenticated
