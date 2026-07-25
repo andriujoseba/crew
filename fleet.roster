@@ -3,8 +3,9 @@
 #
 # The lifecycle per box: `crew new <name>` / `crew create-all` CREATE the
 # infrastructure (from the optional 4th column's gold snapshot when given,
-# else the <agent>-box template, sized by the role); `crew auth <name>`
-# logs it in ONCE (GitHub automated, vendor guided); `crew hire <name>` /
+# else the <agent>-box template, sized by the role); you log it in ONCE
+# BY HAND (`box shell <name>` → `gh auth login` → the agent's login hint —
+# `crew auth` was removed until the fleet is proven); `crew hire <name>` /
 # `crew hire-all` put it on duty (engine + cron, idempotent upsert —
 # skips boxes already hired at the current pin). `crew up` converges:
 # creates missing, starts stopped, hires, and reports who still awaits
