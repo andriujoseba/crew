@@ -382,7 +382,31 @@ else
   bx "~/duty/bin/tick.sh" || true
   sleep 20
   check "dedup: no second verdict on re-tick" verdicts_unchanged
-  check "dedup: skip logged" bx "grep -q 'already covers head' ~/duty/duty.log"
+  # The announce is the other half of dedup and the half a user would see.
+  # (The old check here grepped duty.log for the "already covers head" skip.
+  # That line is unreachable at this point now: requested_reviewers
+  # self-clears on submit, so under the object-endpoint queue a reviewed PR
+  # is no longer a candidate at all and there is nothing to skip. It WAS
+  # reachable when repos.txt fed the queue through the lagging search index
+  # — the branch's own comment says "stale search". Asserting it here tested
+  # the search lag, not the guard.)
+  check "dedup: no second announce on re-tick" bash -c \
+    "[ \"\$(gh api 'repos/$SANDBOX/issues/$pr/comments' --paginate --jq '[.[] | select(.user.login == \"$ME2\") | .body | select(startswith(\"🔎 reviewing head\"))] | length')\" = 1 ]"
+
+  # -- the dedup guard itself, reached deliberately --
+  # With the re-request rule OFF, a re-request at an unchanged head falls to
+  # the skip branch instead of auto-approving. instance.conf is sourced after
+  # fleet.conf, so appending the flag overrides it for this box. This is the
+  # only deterministic way left to exercise that branch; without it the guard
+  # would carry no coverage at all.
+  bx "printf 'AUTO_APPROVE_REREQUEST=0\n' >> ~/duty/conf/instance.conf"
+  gh api "repos/$SANDBOX/pulls/$pr/requested_reviewers" -f "reviewers[]=$ME2" >/dev/null
+  bx "~/duty/bin/tick.sh" || true
+  sleep 20
+  check "dedup: covered head takes the skip branch" bx "grep -q 'already covers head' ~/duty/duty.log"
+  check "dedup: skip submitted no verdict" verdicts_unchanged
+  bx "sed -i '/^AUTO_APPROVE_REREQUEST=0$/d' ~/duty/conf/instance.conf"
+  check "dedup: re-request rule restored" bx "! grep -q '^AUTO_APPROVE_REREQUEST=0$' ~/duty/conf/instance.conf"
 
   # -- re-request at unchanged head -> auto-approve through the gate --
   gh api "repos/$SANDBOX/pulls/$pr/requested_reviewers" -f "reviewers[]=$ME2" >/dev/null
