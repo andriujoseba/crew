@@ -11,6 +11,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SHARED="$(dirname "$HERE")"
+ROOT="$(dirname "$SHARED")"
 PASS=0 FAIL=0
 
 t() {  # t <name> <expected> <actual>
@@ -62,6 +63,29 @@ t manifest-single "claude triage" "$(manifest_lookup dan-claude-bot)"
 t manifest-multi "claude builder reviewer" "$(manifest_lookup claude-bot-andresmgsl)"
 manifest_lookup nobody-bot >/dev/null && r1=found || r1=absent
 t manifest-missing absent "$r1"
+
+# --- agent profiles and rehearsal selection -----------------------------
+for profile in "$SHARED"/conf/agents/*.conf; do
+  agent="$(basename "$profile" .conf)"
+  if bash -c '. "$1"; type bot_cli_probe >/dev/null; test -n "$AGENT_LOGIN_HINT"' _ "$profile"; then
+    r1=sourceable
+  else
+    r1=broken
+  fi
+  t "agent-conf-$agent-standalone" sourceable "$r1"
+done
+
+if unknown_out="$(bash "$ROOT/drill/rehearsal.sh" --agent nosuchagent 2>&1)"; then
+  unknown_rc=0
+else
+  unknown_rc=$?
+fi
+t rehearsal-unknown-agent-rc 1 "$unknown_rc"
+case "$unknown_out" in
+  *"unknown agent 'nosuchagent'"*"claude"*"codex"*"grok"*"kimi"*) r1=listed ;;
+  *) r1=missing ;;
+esac
+t rehearsal-unknown-agent-list listed "$r1"
 
 # --- validate_sha
 validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad

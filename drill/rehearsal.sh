@@ -3,11 +3,12 @@
 #
 # Run on a box HOST (box + rig installed), from a crew checkout:
 #
-#   drill/rehearsal.sh [--box <name>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]
+#   drill/rehearsal.sh [--agent <name>] [--box <name>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]
 #
 # Phase 1 (pre-auth) runs unconditionally: install the engine in the drill
-# box as a grok reviewer and verify every creds-free behavior. Phase 2 runs
-# automatically IF the box's gh and grok CLIs are authenticated (the
+# box as the selected agent (claude by default) in the reviewer role and
+# verify every creds-free behavior. Phase 2 runs automatically IF the box's
+# gh and selected-agent CLIs are authenticated (the
 # operator logs the box in between runs; the script never touches
 # credentials): it mints its own GitHub fixtures — a sandbox repo under the
 # HOST's gh identity, a collaborator invite the box accepts itself, an
@@ -28,16 +29,41 @@ BOX_NAME="crew-drill"
 REF="crew/shared-duty"
 SANDBOX=""
 QUICK=0
+AGENT="claude"
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --agent)   AGENT="$2"; shift 2 ;;
     --box)     BOX_NAME="$2"; shift 2 ;;
     --ref)     REF="$2"; shift 2 ;;
     --sandbox) SANDBOX="$2"; shift 2 ;;
     --quick)   QUICK=1; shift ;;
-    *) echo "usage: drill/rehearsal.sh [--box <name>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]"; exit 1 ;;
+    *) echo "usage: drill/rehearsal.sh [--agent <name>] [--box <name>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]"; exit 1 ;;
   esac
 done
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AGENT_CONF="$ROOT/shared/conf/agents/$AGENT.conf"
+available_agents() {
+  local f
+  for f in "$ROOT"/shared/conf/agents/*.conf; do
+    [ -f "$f" ] && basename "$f" .conf
+  done | sort | paste -sd, -
+}
+case "$AGENT" in
+  ''|*[!A-Za-z0-9_-]*)
+    echo "unknown agent '$AGENT' — available agents: $(available_agents)" >&2
+    exit 1 ;;
+esac
+if [ ! -f "$AGENT_CONF" ]; then
+  echo "unknown agent '$AGENT' — available agents: $(available_agents)" >&2
+  exit 1
+fi
+# The host needs only the human-facing hint. The authentication probe itself
+# is sourced again and executed inside the box, against the box's filesystem.
+# shellcheck source=/dev/null
+. "$AGENT_CONF"
+LOGIN_HINT="$AGENT_LOGIN_HINT"
 
 PASS=0
 declare -a FAILS=()
@@ -62,8 +88,8 @@ command -v jq  >/dev/null || { echo "jq not found on the host"; exit 1; }
 
 # --- the drill box -------------------------------------------------------
 if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
-  echo "== minting $BOX_NAME from the grok-box template"
-  box new --name "$BOX_NAME" --template grok-box --cpu 2 --memory 4GiB --disk 20GiB || exit 1
+  echo "== minting $BOX_NAME from the $AGENT-box template"
+  box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
 fi
 check "box reachable" bx "true"
 
@@ -73,14 +99,14 @@ bx "if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/heavy-dut
     && git -C ~/crew pull --quiet --ff-only origin '$REF' 2>/dev/null || true"
 check "fixture tests green" bx "~/crew/shared/test/run.sh | grep -q 'failed 0'"
 
-echo "== phase 1: pre-auth engine install (grok reviewer)"
-bx "~/crew/shared/install.sh --agent grok --role reviewer --arm-cron" || fail "install"
+echo "== phase 1: pre-auth engine install ($AGENT reviewer)"
+bx "~/crew/shared/install.sh --agent '$AGENT' --role reviewer --arm-cron" || fail "install"
 sha="$(bx "git -C ~/crew rev-parse --short HEAD" | tr -d '\r\n')"
 check "VERSION stamps crew@$sha"   bx "head -1 ~/duty/VERSION | grep -q 'crew@$sha'"
-check "instance.conf grok/reviewer" bx "grep -q 'BOT_AGENT=grok' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
+check "instance.conf $AGENT/reviewer" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
 check "exactly one cron line"      bx "[ \"\$(crontab -l | grep -c bin/tick.sh)\" = 1 ]"
 check "reinstall idempotent"       bx "~/crew/shared/install.sh --arm-cron && [ \"\$(crontab -l | grep -c bin/tick.sh)\" = 1 ]"
-check "bad role refused"           bx "! ~/crew/shared/install.sh --agent grok --role nosuchrole"
+check "bad role refused"           bx "! ~/crew/shared/install.sh --agent '$AGENT' --role nosuchrole"
 
 GH_AUTHED=0
 bx "gh auth status >/dev/null 2>&1" && GH_AUTHED=1
@@ -109,10 +135,10 @@ if [ "$QUICK" -eq 0 ]; then
 fi
 
 # --- phase 2 -------------------------------------------------------------
-if [ "$GH_AUTHED" -eq 0 ] || ! bx "[ -s ~/.grok/auth.json ]"; then
+if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/crew/shared/conf/agents/$AGENT.conf; bot_cli_probe"; then
   echo
   echo "== phase 2 SKIPPED: box not fully authenticated."
-  echo "   Log it in (box shell $BOX_NAME → gh auth login; grok login),"
+  echo "   Log it in (box shell $BOX_NAME → gh auth login; $LOGIN_HINT),"
   echo "   ensure no OTHER box runs the same identity, then re-run this script."
 else
   ME2="$(bx "gh api user --jq .login" | tr -d '\r\n')"

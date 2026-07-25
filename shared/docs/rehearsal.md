@@ -5,6 +5,8 @@
 > phase 2 automatically once the operator has logged the drill box in —
 > printing ok/FAIL per check. This document remains the explainer for what
 > each check means, and the manual path when no host is at hand.
+> It accepts `--agent <name>` and defaults to `claude`; available agents are
+> the profiles under `shared/conf/agents/`.
 
 You are validating the shared duty engine (crew PR #16) on a box that has
 never run it. You have no context beyond this repo: read `shared/README.md`
@@ -30,17 +32,23 @@ command -v shellcheck && shellcheck -x shared/bin/*.sh shared/lib/*.sh \
 
 ## Phase 1 — pre-auth engine validation (no logins anywhere)
 
-Install as a grok reviewer (the simplest role; the grok CLI need not even
-be installed for this phase — no session can launch without auth):
+Install as the default claude reviewer. The agent CLI may be absent in this
+phase: its profile's auth probe then returns non-zero, which is the expected
+unauthenticated result, and no session can launch:
 
 ```sh
-shared/install.sh --agent grok --role reviewer --arm-cron
+shared/install.sh --agent claude --role reviewer --arm-cron
 ```
+
+To rehearse another supported runtime, pass the same agent consistently:
+`drill/rehearsal.sh --agent grok` derives the `grok-box` template, installer
+agent, assertions, auth probe, and login hint from the grok profile.
 
 Verify, and record the output of each check:
 
 1. `cat ~/duty/VERSION` — `crew@<sha>` matching `git rev-parse --short HEAD`.
-2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=grok`, `BOT_ROLES="reviewer"`.
+2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=claude`,
+   `BOT_ROLES="reviewer"` (or the agent selected with `--agent`).
 3. `crontab -l` — exactly one line: `*/5 * * * * $HOME/duty/bin/tick.sh`
    (no notify line: this is not the triage role).
 4. Within ~5 minutes, `~/duty/duty.log` gains per-tick evidence:
@@ -55,7 +63,7 @@ Verify, and record the output of each check:
    "a tick already holds …" and exits 199.
 7. Idempotence: rerun `shared/install.sh --arm-cron` (no flags) — it must
    keep the instance config and not duplicate the cron line.
-   `shared/install.sh --agent grok --role nosuchrole` must refuse.
+   `shared/install.sh --agent claude --role nosuchrole` must refuse.
 
 Let it tick for at least 30 minutes. Expected steady state: three evidence
 lines per tick, no growth in error variety, no session logs in
@@ -64,12 +72,13 @@ lines per tick, no growth in error variety, no session logs in
 ## Phase 2 — authenticated ticks (operator required)
 
 STOP until the operator has decided the identity (one box per identity is
-a fleet invariant): either the legacy grok box's cron is DISARMED and this
-box borrows `grok-bot-andresmgsl`, or a throwaway test identity is used —
-which then needs a `FLEET_MANIFEST` line in `shared/conf/fleet.conf` (or
-reuse Phase 1's explicit instance.conf, which survives re-installs).
-The operator performs `gh auth login` and the vendor CLI login; you never
-handle credentials.
+a fleet invariant). For the default claude runtime this includes the singleton
+triage identity as well as builder/reviewer identities: never borrow any live
+identity until its other box's cron is DISARMED. The same rule applies to every
+agent. A throwaway test identity instead needs a `FLEET_MANIFEST` line in
+`shared/conf/fleet.conf` (or reuse Phase 1's explicit instance.conf, which
+survives re-installs). The operator performs `gh auth login` and the selected
+agent profile's `AGENT_LOGIN_HINT`; you never handle credentials.
 
 1. First authenticated tick: boot gate passes, `~/duty/.boot-id` appears,
    the login-resolution WARN disappears, review sweep logs
