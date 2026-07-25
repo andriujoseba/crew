@@ -1,18 +1,31 @@
 # repos.txt — this box's repo registry. One owner/repo per line; # and blank
 # lines are ignored.
 #
-# What this list MEANS depends on role (FLEET.md):
-#   triage   — the authoritative registry: these boards get the triage sweep
-#              and the hourly hygiene pass.
-#   builder  — where ready issues are picked up. Author-side duties
-#              (resume/handoff/rebase) additionally cover every repo where
-#              the bot authors an open PR, org-wide, automatically.
-#   reviewer — a BACKSTOP only. The review queue is the org-wide
-#              requested_reviewers sweep; a review request anywhere IS the
-#              authorization. This list cannot scope it.
+# THIS LIST IS THE SCOPE. Every duty module works the repos named here and
+# only those. What the list MEANS still varies by role (FLEET.md):
+#   triage   — these boards get the triage sweep and the hourly hygiene pass.
+#   builder  — where ready issues are picked up, and the bound on author-side
+#              duties (resume/handoff/rebase).
+#   reviewer — the review queue. A review request IS the authorization, but
+#              only in a repo named here.
+#
+# Work found OUTSIDE this list is LOGGED, never acted on — a review request
+# or an authored PR in an unlisted repo produces a WARN naming it, and
+# nothing else. The repair is to add the repo, which is an operator
+# decision, not something a sweep makes by writing where nobody listed.
+#
+# (Until 2026-07-25 the reviewer queue was an org-wide requested_reviewers
+# sweep that no list could scope, and the builder's author-side duties were
+# org-wide too. Both are registry-scoped now: an unbounded write surface is
+# not something a per-box registry can contain, and the drill's own safety
+# interlock depended on containment this list could not actually provide.)
 #
 # Before adding a repo for triage: check Discussions are enabled there, and
 # probe what the triage permission actually allows on that repo.
+#
+# A future release may derive candidates from the `agents` team behind an
+# explicit approval step, making this file the approved set rather than a
+# hand-maintained one — see heavy-duty/crew#31.
 heavy-duty/ceremony
 heavy-duty/incubator
 heavy-duty/rig
