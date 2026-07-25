@@ -160,12 +160,27 @@ rm -f "$DUTY_DIR/.boot-id"
 echo "installed for ${ME:-<pre-auth box>} (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
 
 if [ "$ARM_CRON" -eq 1 ]; then
+  # Deliberately check after the atomic file install: a missing host package
+  # must not discard a valid engine deployment, and install.sh is idempotent.
+  # The resulting state is explicit and recoverable — installed, not armed —
+  # while installing OS packages remains an administrator's responsibility.
+  if ! command -v crontab >/dev/null 2>&1; then
+    echo "crew: engine installed, but cron is not armed: the 'crontab' command is missing." >&2
+    echo "crew: an administrator must install Debian/Ubuntu's cron package:" >&2
+    echo "  sudo apt-get install cron" >&2
+    echo "crew: this unprivileged installer will not perform that admin step." >&2
+    echo "crew: then converge the installed engine by re-running:" >&2
+    echo "  $HERE/install.sh --arm-cron" >&2
+    exit 1
+  fi
   # Replace any previous tick lines with the canonical one(s); everything
   # else in the crontab is preserved.
   {
     crontab -l 2>/dev/null | grep -vF "$DUTY_DIR/bin/tick.sh" || true
     echo "*/5 * * * * $DUTY_DIR/bin/tick.sh"
-    [ "$IS_TRIAGE" -eq 1 ] && echo "*/5 * * * * $DUTY_DIR/bin/tick.sh notify"
+    if [ "$IS_TRIAGE" -eq 1 ]; then
+      echo "*/5 * * * * $DUTY_DIR/bin/tick.sh notify"
+    fi
   } | crontab -
   echo "crontab armed"
 else
@@ -179,7 +194,10 @@ else
     echo "(hygiene needs no cron line — it self-schedules inside the duty tick)"
   fi
 fi
-stale="$(crontab -l 2>/dev/null | grep -E 'duty|tick|hygiene|notify' | grep -vF "$DUTY_DIR/bin/tick.sh" || true)"
+stale=""
+if command -v crontab >/dev/null 2>&1; then
+  stale="$(crontab -l 2>/dev/null | grep -E 'duty|tick|hygiene|notify' | grep -vF "$DUTY_DIR/bin/tick.sh" || true)"
+fi
 if [ -n "$stale" ]; then
   echo
   echo "WARNING — stale-looking cron lines found; delete these:"

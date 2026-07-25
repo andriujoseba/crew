@@ -87,6 +87,62 @@ case "$unknown_out" in
 esac
 t rehearsal-unknown-agent-list listed "$r1"
 
+# --- install.sh: crontab preflight and convergence (#25) ----------------
+# A curated PATH makes "crontab absent" deterministic even on a workstation
+# that happens to have cron installed. Everything install.sh legitimately
+# needs is linked in; gh and git are fixture shims.
+ISHIM="$TMP/install-bin"
+IHOME="$TMP/install-home"
+IDUTY="$IHOME/duty"
+CRON_STATE="$TMP/crontab"
+mkdir -p "$ISHIM" "$IHOME"
+for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr; do
+  ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
+done
+ln -s "$(command -v jq)" "$ISHIM/jq"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
+printf '#!/usr/bin/env bash\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
+chmod +x "$ISHIM/gh" "$ISHIM/git"
+
+install_fixture() {
+  env HOME="$IHOME" DUTY_DIR="$IDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" --agent claude --role reviewer "$@"
+}
+
+if install_out="$(install_fixture 2>&1)"; then r1=0; else r1=$?; fi
+t install-no-cron-no-arm-rc 0 "$r1"
+case "$install_out" in *"REPLACE the crontab"*) r1=manual ;; *) r1=missing ;; esac
+t install-no-cron-no-arm-instructions manual "$r1"
+case "$install_out" in *"command not found"*) r1=leaked ;; *) r1=clean ;; esac
+t install-no-cron-no-arm-clean clean "$r1"
+
+printf '15 3 * * * unrelated-job\n' >"$CRON_STATE"
+before_cron="$(cat "$CRON_STATE")"
+if install_out="$(install_fixture --arm-cron 2>&1)"; then r1=0; else r1=$?; fi
+t install-no-cron-arm-rc 1 "$r1"
+case "$install_out" in
+  *"engine installed, but cron is not armed"*"administrator"*"sudo apt-get install cron"*"install.sh --arm-cron"*) r1=actionable ;;
+  *) r1=missing ;;
+esac
+t install-no-cron-arm-message actionable "$r1"
+case "$install_out" in *"command not found"*) r1=leaked ;; *) r1=clean ;; esac
+t install-no-cron-arm-attributed clean "$r1"
+t install-no-cron-arm-untouched "$before_cron" "$(cat "$CRON_STATE")"
+[ -f "$IDUTY/VERSION" ] && r1=installed || r1=missing
+t install-no-cron-arm-files-remain installed "$r1"
+
+# shellcheck disable=SC2016  # fixture script expands these at execution time
+printf '#!/usr/bin/env bash\ncase "${1:-}" in\n  -l) [ ! -f "$CRON_STATE" ] || cat "$CRON_STATE" ;;\n  -) tmp="$CRON_STATE.new"; cat >"$tmp"; mv "$tmp" "$CRON_STATE" ;;\n  *) exit 2 ;;\nesac\n' >"$ISHIM/crontab"
+chmod +x "$ISHIM/crontab"
+if install_out="$(install_fixture --arm-cron 2>&1)"; then r1=0; else r1=$?; fi
+t install-with-cron-arm-rc 0 "$r1"
+case "$install_out" in *"crontab armed"*) r1=armed ;; *) r1=missing ;; esac
+t install-with-cron-arm-output armed "$r1"
+t install-with-cron-preserves-existing 1 "$(grep -cF 'unrelated-job' "$CRON_STATE")"
+t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
+install_fixture --arm-cron >/dev/null 2>&1
+t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
+
 # --- validate_sha
 validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad
 validate_sha "0123456" && r2=ok || r2=bad
