@@ -193,6 +193,23 @@ t duty-lock-sentinel-rc 199 "$lock_rc"
 case "$lock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
 t duty-lock-sentinel-message message "$r1"
 
+# --- notify.sh lock sentinel: same set -e trap as duty.sh (#30) ----------
+# duty.sh was fixed for this; notify.sh has the identical preamble and was
+# missed. Asserted the same way: the exit code alone was always right, so
+# only the message distinguishes fixed from broken.
+flock -n "$LHOME/duty/.notify.lock" -c 'sleep 3' >/dev/null 2>&1 &
+nlock_bg=$!
+sleep 1
+if nlock_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" /bin/bash "$LHOME/duty/bin/notify.sh" 2>&1)"; then
+  nlock_rc=0
+else
+  nlock_rc=$?
+fi
+wait "$nlock_bg" 2>/dev/null || true
+t notify-lock-sentinel-rc 199 "$nlock_rc"
+case "$nlock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
+t notify-lock-sentinel-message message "$r1"
+
 # --- attention label predicate: never let a null reach the shell ---------
 # `gh api --jq` prints NOTHING for a null result (real jq prints "null"), so
 # `index("attention") | grep -q null` matched in NEITHER state: present

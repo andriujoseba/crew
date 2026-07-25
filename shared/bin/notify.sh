@@ -28,9 +28,18 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 # guard variable: a leaked DUTY_LOCKED from a duty session must not bypass
 # the notify lock.
 if [ -z "${NOTIFY_LOCKED:-}" ]; then
-  env NOTIFY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$DUTY_DIR/.notify.lock" "$0" "$@"
-  rc=$?
-  [ "$rc" -eq 199 ] && echo "notify.sh: a tick already holds $DUTY_DIR/.notify.lock — nothing run" >&2
+  # `|| rc=$?` is load-bearing under `set -e`: a bare non-zero flock exits the
+  # shell HERE, so the sentinel message below never ran and a contended run
+  # printed nothing at all. Identical to the duty.sh defect (#30); this file
+  # was missed by that fix and found by its own audit task.
+  rc=0
+  env NOTIFY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$DUTY_DIR/.notify.lock" "$0" "$@" || rc=$?
+  # An `if` block, not `[ … ] && echo …`: that form returns 1 on a non-199
+  # exit and, as the last command before `exit`, would take `set -e` with it
+  # — the same shape as the install.sh bug behind #25.
+  if [ "$rc" -eq 199 ]; then
+    echo "notify.sh: a tick already holds $DUTY_DIR/.notify.lock — nothing run" >&2
+  fi
   exit "$rc"
 fi
 trap 'rm -f "$DUTY_DIR/.notify.lock.since"' EXIT

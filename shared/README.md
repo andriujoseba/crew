@@ -66,6 +66,10 @@ fleet's real protocol existed only inside five diverging scripts.
 | Snapshot re-exec before running | claude-bot | lazy-read corruption 2026-07-22 |
 | Boot gate: marker only on verified auth | all five (converged) | post-crash silent dead-creds risk |
 | Object endpoints only; search only ADDS candidates | all five (converged) | cast#143, box#164, rig#112 (9 h) |
+| `repos.txt` IS the scope; out-of-scope work is logged, never acted on | operator ruling 2026-07-25 | drill box wrote to production (#26) — the interlock could not bound an org-wide sweep |
+| Never test for the string `null` through `gh --jq` — it prints NOTHING (real `jq` prints `null`) | drill 2026-07-25 | #29: the label check failed in BOTH states, present and absent |
+| Under `set -e`, capture an expected-non-zero exit with `\|\| rc=$?`; branch with `if`, never trailing `[ … ] && cmd` | drill 2026-07-25 | #30/#25: exit 199 with total silence; install.sh exiting 1 after succeeding |
+| A skipped phase is INCOMPLETE, never a pass | drill 2026-07-25 | rehearsal reported "All green" on boxes that never authenticated |
 | ONE merged candidate set, deduped by (repo, PR) before acting | grok/kimi/claude | ceremony#32 double-announce |
 | Verdict dedup: my latest review's SHA vs live head, via GraphQL | claude-bot | double reviews #26, #29 |
 | One-shot gate immediately around the mutation, verify over exit code, one identical retry, never a third | codex/grok/kimi/claude (each re-derived it) | #26/#29/#39 double-verdicts |
