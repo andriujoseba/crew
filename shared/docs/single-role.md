@@ -187,9 +187,9 @@ composes a box from two orthogonal profiles and bakes the result:
   the role picks the model *tier* and the agent supplies the vendor.
 
 `crew new` composes role × agent into a box spec (resource flags to `box`,
-the agent's template); `crew auth` owns the interactive part — the GitHub
-identity automated where a token is provided, the vendor login guided —
-and `crew hire` finishes the job (engine at a crew pin, crontab, role
+the agent's template); the operator owns the interactive part — the
+GitHub identity and the vendor login, both by hand in a box shell — and
+`crew hire` finishes the job (engine at a crew pin, crontab, role
 loadout). The agent itself can help narrow the config at spawn time
 (which model, which toolchain versions, which repos) — an interview the
 CLI can run against the created box's own agent before hiring it.
@@ -199,10 +199,11 @@ The whole fleet is likewise a file: `fleet.roster` at the repo root lists
 environment (the dual-role boxes split). The lifecycle separates the human
 step from the machine steps (operator design, 2026-07-24): **create**
 (infrastructure only — `crew new <name>` / `crew create-all`; the box does
-nothing yet), **auth** (once per box, ever, at creation time — vendor
+nothing yet), **login** (once per box, ever, at creation time — vendor
 logins are flaky and change often, so they are done interactively while
-you are there; `crew auth` automates the GitHub half via `CREW_GH_TOKEN`
-or the device flow, halving the pain), **hire** (`crew hire <name>` /
+you are there; by hand in a box shell, since `crew auth` was removed
+2026-07-25 until the fleet is proven — re-automating it is a post-#16
+enhancement), **hire** (`crew hire <name>` /
 `crew hire-all` — the box joins the crew: engine + cron, idempotent
 upsert that skips boxes already hired at the current pin). `crew up`
 converges a host to the roster: creates missing, starts stopped, hires,
