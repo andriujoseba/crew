@@ -1,0 +1,69 @@
+
+<div id="stage">
+  <canvas id="scene"></canvas>
+  <div class="hud">
+    <button id="back">◀ Fleet Floor</button>
+    <div class="title"><b>CREW</b> · AGENT CONSOLE
+      <span class="sub" id="sub">claude · builder quarters</span></div>
+    <span class="demo-badge" title="Roster is real (crew fleet.roster). Vitals, queue, sessions & metrics are placeholder data until the live telemetry feed lands.">◈ DEMO DATA</span>
+  </div>
+  <div class="foot">
+    <span id="fl">claude-builder · sector-7</span>
+    <span class="r" id="modelabel">WORKING</span>
+  </div>
+
+  <!-- fleet command bar (floor view) -->
+  <div class="fleetbar">
+    <div class="brand"><b>◆</b> FLEET FLOOR<span class="rp">heavy-duty/crew</span></div>
+    <span class="clock" id="clock">--:--:--</span>
+    <span class="demo-badge" title="Roster is real (crew fleet.roster). States, active ops, metrics & activity are placeholder data until the live telemetry feed lands.">◈ DEMO DATA</span>
+    <div class="sp"></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="filters" id="filters">
+      <span class="flabel">state</span>
+      <button class="fchip on" data-f="state" data-v="all">All</button>
+      <button class="fchip" data-f="state" data-v="working">Working</button>
+      <button class="fchip" data-f="state" data-v="idle">Idle</button>
+      <button class="fchip" data-f="state" data-v="offline">Silent</button>
+      <span class="flabel">role</span>
+      <button class="fchip on" data-f="role" data-v="all">All</button>
+      <button class="fchip" data-f="role" data-v="builder">Build</button>
+      <button class="fchip" data-f="role" data-v="reviewer">Review</button>
+      <button class="fchip" data-f="role" data-v="triage">Triage</button>
+    </div>
+  </div>
+
+  <!-- agent console (zoom view) -->
+  <div class="rail rail-l">
+    <div class="wpanel" id="w-id"></div>
+    <div class="wpanel" id="w-vitals"></div>
+    <div class="wpanel" id="w-queue" style="flex:1;min-height:0;overflow:auto"></div>
+  </div>
+  <div class="rail rail-r">
+    <div class="wpanel" id="w-current"></div>
+    <div class="wpanel" id="w-metrics"></div>
+    <div class="wpanel" id="w-sessions" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+  </div>
+  <div class="console2">
+    <div class="cl" id="c-target">▸ MESSAGE UNIT</div>
+    <div class="crow"><input id="c-in" placeholder="Send a prompt to the agent…" autocomplete="off"><button class="abtn" id="c-send">Send</button>
+      <button class="act2" id="a-pause">⏸ Pause</button><button class="act2" id="a-restart">↻ Restart</button><button class="act2" id="a-logs">▤ Logs</button></div>
+  </div>
+
+  <!-- fleet operations bar (floor view) -->
+  <div class="opsbar">
+    <div class="obox ops">
+      <div class="oh"><span>ACTIVE OPERATIONS <b id="ops-count"></b></span><span class="gacts"><button class="gbtn" id="g-start">▶ Start all</button><button class="gbtn" id="g-stop">⏸ Stop all</button><button class="gbtn" id="g-wake">◈ Wake silent</button></span></div>
+      <div class="olist" id="opslist"></div>
+    </div>
+    <div class="obox met">
+      <div class="oh"><span>◷ TIME METRICS</span></div>
+      <div class="mrows" id="metrows"></div>
+    </div>
+    <div class="obox actp">
+      <div class="oh"><span class="live">● LIVE</span> FLEET ACTIVITY</div>
+      <div class="stream" id="stream"></div>
+    </div>
+  </div>
+</div>
+
