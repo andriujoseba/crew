@@ -170,6 +170,30 @@ t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROL
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 chmod +x "$ISHIM/gh"
 
+# --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
+# `--all` used to mean box_names(): every box on the host, each installed
+# with --arm-cron. That reached off-roster boxes -- a drill box between runs
+# carries a real identity and a production registry and is deliberately
+# disarmed -- and armed them by routine maintenance.
+UROSTER="$TMP/upgrade-roster"
+printf '# comment\nclaude-triage    claude  triage\nclaude-builder   claude  builder\n\n' >"$UROSTER"
+roster_names_fixture() { grep -vE '^[[:space:]]*(#|$)' "$UROSTER" | awk '{print $1}'; }
+host_boxes_fixture() { printf 'claude-triage\ncrew-drill-reviewer\nclaude-builder\nsome-other-box\n'; }
+t upgrade-roster-names "claude-triage
+claude-builder" "$(roster_names_fixture)"
+t upgrade-targets-are-roster-and-host "claude-builder
+claude-triage" \
+  "$(comm -12 <(roster_names_fixture | sort) <(host_boxes_fixture | sort))"
+t upgrade-skips-off-roster "crew-drill-reviewer
+some-other-box" \
+  "$(comm -23 <(host_boxes_fixture | sort) <(roster_names_fixture | sort))"
+# The drill box is the case that matters: present on the host, absent from
+# the roster, and therefore never touched by --all.
+case "$(comm -12 <(roster_names_fixture | sort) <(host_boxes_fixture | sort))" in
+  *crew-drill*) r1=reached ;; *) r1=untouched ;;
+esac
+t upgrade-never-reaches-drill-box untouched "$r1"
+
 # --- duty.sh lock sentinel: 199 AND the message --------------------------
 # A bare non-zero `flock` under `set -euo pipefail` exited duty.sh AT the
 # flock line, so the 199 branch never ran and a contended manual invocation
