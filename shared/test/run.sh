@@ -174,12 +174,52 @@ BX_FAIL_WRITE=1
 rehearsal_narrow_to_sandbox owner/other && r1=continued || r1=refused
 t rehearsal-narrow-fails-closed refused "$r1"
 BX_FAIL_WRITE=0
-rehearsal_cleanup
+rehearsal_cleanup 0
 t rehearsal-restores-registry "heavy-duty/ceremony
 heavy-duty/incubator
 heavy-duty/rig" "$(cat "$RDUTY/repos.txt")"
 t rehearsal-disarms-tick 0 "$(grep -cF "$RDUTY/bin/tick.sh" "$RCRON")"
 t rehearsal-preserves-unrelated-cron 1 "$(grep -cF unrelated-job "$RCRON")"
+
+# --- rehearsal phase 0: acquisition failures abort before checks (#27) --
+P0SHIM="$TMP/phase0-bin"
+P0HOME="$TMP/phase0-home"
+P0LOG="$TMP/phase0-box.log"
+mkdir -p "$P0SHIM" "$P0HOME"
+# shellcheck disable=SC2016  # fixture expands state at execution time
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0LOG"\ncase "$1" in\n  list) printf "[]\\n" ;;\n  new|exec) exit 0 ;;\n  *) exit 2 ;;\nesac\n' >"$P0SHIM/box"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$P0SHIM/gh"
+chmod +x "$P0SHIM/box" "$P0SHIM/gh"
+
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --remote "$TMP/no-such-remote" \
+    --ref nosuchbranch --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+t rehearsal-bad-ref-rc 1 "$r1"
+case "$p0out" in *"remote '$TMP/no-such-remote'"*"ref 'nosuchbranch'"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
+t rehearsal-bad-ref-attributed attributed "$r1"
+t rehearsal-bad-ref-no-tick 0 "$(grep -cF 'exec crew-drill -- bash -lc ~/duty/bin/tick.sh' "$P0LOG" || true)"
+case "$p0out" in *"fixture tests green"*|*"FAIL install"*) r1=cascaded ;; *) r1=stopped ;; esac
+t rehearsal-bad-ref-no-cascade stopped "$r1"
+
+BADTREE="$TMP/bad-tree"
+mkdir -p "$BADTREE"
+git -C "$BADTREE" init -q
+printf 'not the engine\n' >"$BADTREE/README.md"
+git -C "$BADTREE" add README.md
+git -C "$BADTREE" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$BADTREE" --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+t rehearsal-invalid-tree-rc 1 "$r1"
+case "$p0out" in *"shared/install.sh"*"missing"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
+t rehearsal-invalid-tree-attributed attributed "$r1"
 
 # --- validate_sha
 validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad

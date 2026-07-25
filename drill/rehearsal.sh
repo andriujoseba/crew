@@ -3,7 +3,8 @@
 #
 # Run on a box HOST (box + rig installed), from a crew checkout:
 #
-#   drill/rehearsal.sh [--agent <name>] [--box <name>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]
+#   drill/rehearsal.sh [--agent <name>] [--box <name>] [--tree <path>]
+#     [--remote <url>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]
 #
 # Phase 1 (pre-auth) runs unconditionally: install the engine in the drill
 # box as the selected agent (claude by default) in the reviewer role and
@@ -28,6 +29,8 @@ set -uo pipefail
 
 BOX_NAME="crew-drill"
 REF="crew/shared-duty"
+REMOTE="https://github.com/dan-claude-bot/crew.git"
+TREE=""
 SANDBOX=""
 QUICK=0
 AGENT="claude"
@@ -36,10 +39,12 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --agent)   AGENT="$2"; shift 2 ;;
     --box)     BOX_NAME="$2"; shift 2 ;;
+    --tree)    TREE="$2"; shift 2 ;;
+    --remote)  REMOTE="$2"; shift 2 ;;
     --ref)     REF="$2"; shift 2 ;;
     --sandbox) SANDBOX="$2"; shift 2 ;;
     --quick)   QUICK=1; shift ;;
-    *) echo "usage: drill/rehearsal.sh [--agent <name>] [--box <name>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]"; exit 1 ;;
+    *) echo "usage: drill/rehearsal.sh [--agent <name>] [--box <name>] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]"; exit 1 ;;
   esac
 done
 
@@ -67,8 +72,10 @@ fi
 LOGIN_HINT="$AGENT_LOGIN_HINT"
 
 PASS=0
+SKIP=0
 declare -a FAILS=()
 ok()   { echo "ok   $1"; PASS=$((PASS + 1)); }
+skip() { echo "skip $1"; SKIP=$((SKIP + 1)); }
 fail() { echo "FAIL $1"; FAILS+=("$1"); }
 check() { local name="$1"; shift; if "$@" >/dev/null 2>&1; then ok "$name"; else fail "$name"; fi; }
 wait_for() {  # wait_for <seconds> <name> <cmd...>
@@ -84,8 +91,17 @@ wait_for() {  # wait_for <seconds> <name> <cmd...>
 bx() { box exec "$BOX_NAME" -- bash -lc "$1"; }
 # shellcheck disable=SC2034  # read and updated by rehearsal-safety.sh
 REPOS_BACKUP=""
+ACQUIRE_TMP=""
 # shellcheck source=drill/rehearsal-safety.sh
 . "$ROOT/drill/rehearsal-safety.sh"
+cleanup_all() {
+  local rc=$?
+  rehearsal_cleanup "$rc"
+  if [ -n "$ACQUIRE_TMP" ] && [ -d "$ACQUIRE_TMP" ]; then
+    rm -rf -- "$ACQUIRE_TMP"
+  fi
+  return "$rc"
+}
 
 command -v box >/dev/null || { echo "box CLI not found — this runs on a box host"; exit 1; }
 command -v gh  >/dev/null || { echo "gh not found on the host (phase 2 needs it)"; exit 1; }
@@ -97,14 +113,46 @@ if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name
   box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
 fi
 check "box reachable" bx "true"
-trap rehearsal_cleanup EXIT
+trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
 echo "== phase 0: crew at $REF, static checks"
-bx "if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/heavy-duty/crew ~/crew; fi
-    git -C ~/crew fetch --quiet origin && git -C ~/crew checkout --quiet '$REF' \
-    && git -C ~/crew pull --quiet --ff-only origin '$REF' 2>/dev/null || true"
+ACQUIRE_TMP="$(mktemp -d)"
+if [ -n "$TREE" ]; then
+  SOURCE_TREE="$(cd "$TREE" 2>/dev/null && pwd)" \
+    || { echo "phase 0: --tree '$TREE' is not a readable directory"; exit 1; }
+  SOURCE_DESC="tree $SOURCE_TREE"
+else
+  SOURCE_TREE="$ACQUIRE_TMP/source"
+  SOURCE_DESC="remote $REMOTE ref $REF"
+  if ! GIT_TERMINAL_PROMPT=0 git clone --quiet --branch "$REF" --single-branch "$REMOTE" "$SOURCE_TREE"; then
+    echo "phase 0: cannot resolve remote '$REMOTE' ref '$REF'; acquisition aborted before checks" >&2
+    exit 1
+  fi
+fi
+for required in shared/install.sh shared/test/run.sh; do
+  [ -f "$SOURCE_TREE/$required" ] \
+    || { echo "phase 0: $SOURCE_DESC resolved, but '$required' is missing; acquisition aborted before checks" >&2; exit 1; }
+done
+SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
+  || { echo "phase 0: $SOURCE_DESC is not a resolved git tree"; exit 1; }
+BUNDLE="$ACQUIRE_TMP/crew.bundle"
+git -C "$SOURCE_TREE" bundle create "$BUNDLE" HEAD \
+  || { echo "phase 0: could not bundle $SOURCE_DESC at $SOURCE_SHA"; exit 1; }
+box exec "$BOX_NAME" -- bash -lc 'cat > /tmp/crew-rehearsal.bundle' <"$BUNDLE" \
+  || { echo "phase 0: could not transfer the creds-free bundle into $BOX_NAME"; exit 1; }
+bx "rm -rf ~/crew.rehearsal-new
+    git clone --quiet /tmp/crew-rehearsal.bundle ~/crew.rehearsal-new
+    test -f ~/crew.rehearsal-new/shared/install.sh
+    test -f ~/crew.rehearsal-new/shared/test/run.sh
+    rm -rf ~/crew
+    mv ~/crew.rehearsal-new ~/crew" \
+  || { echo "phase 0: transferred tree failed verification inside $BOX_NAME"; exit 1; }
+RESOLVED_SHA="$(bx "git -C ~/crew rev-parse HEAD" | tr -d '\r\n')"
+[ "$RESOLVED_SHA" = "$SOURCE_SHA" ] \
+  || { echo "phase 0: transferred sha '$RESOLVED_SHA' does not match source '$SOURCE_SHA'"; exit 1; }
+echo "== phase 0: resolved $RESOLVED_SHA from $SOURCE_DESC (creds-free inside box)"
 check "fixture tests green" bx "~/crew/shared/test/run.sh | grep -q 'failed 0'"
 
 echo "== phase 1: pre-auth engine install ($AGENT reviewer)"
@@ -139,6 +187,9 @@ if [ "$GH_AUTHED" -eq 0 ]; then
   check "pre-auth: no .boot-id marker"  bx "! test -f ~/duty/.boot-id"
   check "pre-auth: no sessions spawned" bx "! ls ~/duty/logs/*.log 2>/dev/null | grep -q ."
 else
+  skip "pre-auth: login WARN check (box was already gh-authenticated)"
+  skip "pre-auth: no .boot-id marker check (box was already gh-authenticated)"
+  skip "pre-auth: no sessions spawned check (box was already gh-authenticated)"
   check "authed: .boot-id written"      bx "test -f ~/duty/.boot-id"
 fi
 check "lock contention -> 199 + message" bx "
@@ -236,7 +287,7 @@ fi
 
 check "teardown: drill remains disarmed" bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 echo
-echo "== rehearsal summary: $PASS ok, ${#FAILS[@]} failed"
+echo "== rehearsal summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
 if [ "${#FAILS[@]}" -gt 0 ]; then
   printf '  FAIL %s\n' "${FAILS[@]}"
   echo "Fixtures and box are left in place. Report findings on crew PR #16 with"
