@@ -6,11 +6,14 @@
 #   (a) open issues labeled needs-triage
 #   (b) open issues carrying NONE of ready/claimed/blocked/epic/needs-triage
 #       (queue-unlabeled = stray by definition, per LABELS.md invariant)
-#   (c) open discussions with no comment from dan-claude-bot yet
-#   (d) unread mentions of me (gh api notifications) — handled by a dedicated
-#       session that answers each thread, then marks it read; mark-as-read is
-#       what makes this poll idempotent (unhandled mentions stay unread and
-#       are retried next tick)
+#   (c) open discussions with no comment from dan-claude-bot yet — but only
+#       ones whose activity ADVANCED since I last looked (a seen-ledger; a
+#       held needs-ruling discussion no longer re-wakes a session every tick)
+#   (d) unread mentions of me (gh api notifications) — a dedicated session
+#       answers each thread, marks it read, AND records its updated_at in a
+#       seen-ledger; a mention the session correctly declines to act on no
+#       longer re-fires a full session every tick (the overnight quota burn,
+#       2026-07-25)
 #   (e) blocked issues whose named blockers have all landed. hygiene.sh already
 #       flips blocked->ready, but it runs hourly, so an unblock could sit up to
 #       58 minutes behind the merge that earned it. This is the fast path: the
@@ -53,6 +56,37 @@ WORK_DIR="$DUTY_DIR/work"
 NOTIFIED_FILE="$DUTY_DIR/.notified"
 
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+
+# --- Seen-ledgers: turn "signal is present" into "signal CHANGED since I last
+# looked". A wake whose only clearing action is one the session may correctly
+# DECLINE (mark a mention read, comment on a held discussion) re-fired every
+# tick forever, spawning a full model session each time — the fleet's overnight
+# Fable burn (2026-07-25: 147 mention + 61 triage sessions in 3 days, board
+# unchanged). Each ledger records, per thread/discussion id, the activity
+# timestamp last handled; a session is launched only for entries that are new
+# or whose timestamp advanced, and the ledger is committed ONLY after a session
+# completes rc 0 — a crashed session leaves its ids uncommitted, preserving the
+# crash-only retry the old design relied on. Timestamps are ISO 8601, so a
+# lexical compare is a chronological one. ---
+ledger_filter() { # $1=ledger; stdin "id ts" lines; stdout new-or-advanced ones
+  local ledger="$1"
+  awk -v L="$ledger" '
+    BEGIN { while ((getline line < L) > 0) { n=split(line,a," "); if (n>=2) seen[a[1]]=a[2] } close(L) }
+    NF>=2 { if (!($1 in seen) || seen[$1] < $2) print }
+  '
+}
+ledger_commit() { # $1=ledger; stdin "id ts" lines; merge keeping max ts, atomically
+  local ledger="$1" tmp
+  tmp="$(mktemp "${ledger}.XXXXXX")"
+  awk -v L="$ledger" '
+    BEGIN { while ((getline line < L) > 0) { n=split(line,a," "); if (n>=2) seen[a[1]]=a[2] } close(L) }
+    NF>=2 { if (!($1 in seen) || seen[$1] < $2) seen[$1]=$2 }
+    END { for (k in seen) print k, seen[k] }
+  ' > "$tmp"
+  mv -f "$tmp" "$ledger"
+}
+SEEN_MENTIONS="$DUTY_DIR/.seen-mentions"
+SEEN_DISCUSSIONS="$DUTY_DIR/.seen-discussions"
 
 # Telegram. Unused since the notifier moved to notify.sh — kept because the
 # boot gate and future triage-side alerts are the obvious next callers, and a
@@ -140,13 +174,20 @@ while IFS= read -r R; do
           | length')
   [ "$stray" -gt 0 ] && signals="$signals ${stray}x queue-unlabeled;"
 
-  # (c) open discussions without my comment (top-level or reply)
+  # (c) open discussions without my comment (top-level or reply) — but wake
+  # only for ones whose activity ADVANCED since I last handled this repo. A
+  # discussion I am deliberately holding (needs-ruling is a human's call, not
+  # mine) carries no comment of mine by design; without the ledger it re-fired
+  # a full triage session every 5 minutes forever. GraphQL also returns
+  # updatedAt now; `uncommented_disc` holds every currently-uncommented one as
+  # "number updatedAt" lines and is committed after the triage session, so a
+  # held discussion is marked seen at its current state.
   owner="${R%%/*}" name="${R##*/}"
-  undisc=$(gh api graphql -f owner="$owner" -f name="$name" -f query='
+  uncommented_disc=$(gh api graphql -f owner="$owner" -f name="$name" -f query='
     query($owner:String!,$name:String!){
       repository(owner:$owner,name:$name){
         discussions(first:50,states:OPEN){
-          nodes{ number
+          nodes{ number updatedAt
             comments(first:50){ nodes{ author{ login }
               replies(first:20){ nodes{ author{ login } } } } } }
         }
@@ -154,7 +195,10 @@ while IFS= read -r R; do
     }' --jq "[.data.repository.discussions.nodes[]
               | select( [ .comments.nodes[] | .author.login,
                           .replies.nodes[].author.login ]
-                        | index(\"$ME\") | not ) ] | length")
+                        | index(\"$ME\") | not )
+              | \"\(.number) \(.updatedAt)\"] | .[]" 2>/dev/null || echo "")
+  undisc=$(printf '%s\n' "$uncommented_disc" \
+    | ledger_filter "$SEEN_DISCUSSIONS" | awk 'NF{c++} END{print c+0}')
   [ "$undisc" -gt 0 ] && signals="$signals ${undisc}x uncommented discussions;"
 
   # (e) blocked issues whose named blockers have all landed.
@@ -206,10 +250,25 @@ while IFS= read -r R; do
   # blocked on a question is answered even when the board itself is clean.
   # --paginate emits one JSON array per page; jq -s + add flattens them
   # (gh 2.46 here predates --slurp, which landed in 2.47).
-  mentions=$(gh api notifications --paginate | jq -c -s --arg repo "$R" 'add
+  # Idempotency is now the seen-ledger, not mark-read alone: a mention the
+  # session reads but correctly does NOT act on (an FYI, an already-answered
+  # thread, a PR I don't own) used to stay unread and re-fire a full session
+  # every tick. Now a thread only re-wakes when its notification updated_at
+  # advances. mark-read still runs in-session, for inbox hygiene.
+  all_mentions=$(gh api notifications --paginate | jq -c -s --arg repo "$R" 'add
     | [ .[] | select(.repository.full_name == $repo
                 and (.reason == "mention" or .reason == "team_mention"))
-      | {thread: .id, title: .subject.title, subject: .subject.url} ]')
+      | {thread: .id, title: .subject.title, subject: .subject.url, updated: .updated_at} ]')
+  keep_threads=$(printf '%s\n' "$all_mentions" \
+    | jq -r '.[] | "\(.thread) \(.updated)"' \
+    | ledger_filter "$SEEN_MENTIONS" | awk '{print $1}')
+  if [ -n "$keep_threads" ]; then
+    keep_json=$(printf '%s\n' $keep_threads | jq -R . | jq -cs .)
+    mentions=$(jq -c --argjson keep "$keep_json" \
+      '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")
+  else
+    mentions='[]'
+  fi
   mcount=$(jq 'length' <<<"$mentions")
   if [ "$mcount" -gt 0 ]; then
     log "$R: ${mcount} unread mention(s) — launching mention session"
@@ -218,9 +277,13 @@ while IFS= read -r R; do
 
 Unread mention threads (JSON): $mentions
 
-Mark a thread read with: gh api --method PATCH /notifications/threads/<thread>. Marking read is what makes this poll idempotent — mark a thread read only once you have actually handled it, so anything unhandled is retried on the next tick."
+Mark a thread read with: gh api --method PATCH /notifications/threads/<thread>. Marking read keeps your inbox clean; the poll no longer relies on it for idempotency, so if a thread genuinely needs no action from you, just leave it — it will not re-wake unless it gets new activity."
     if (cd "$dir" && timeout 1500 claude -p --dangerously-skip-permissions "$mprompt"); then
       log "$R: mention session completed"
+      # Commit only after success: a crashed session leaves these uncommitted
+      # and retries next tick (crash-only), exactly as before.
+      printf '%s\n' "$all_mentions" | jq -r '.[] | "\(.thread) \(.updated)"' \
+        | ledger_commit "$SEEN_MENTIONS"
     else
       log "$R: mention session FAILED or timed out (exit $?)"
     fi
@@ -245,6 +308,9 @@ The poll also flagged these blocked issues as possibly unblockable — every iss
   fi
   if (cd "$dir" && timeout 1500 claude -p --dangerously-skip-permissions "$prompt"); then
     log "$R: triage session completed"
+    # Mark every currently-uncommented discussion seen at its present state, so
+    # a held/needs-ruling one does not re-wake until it actually changes.
+    printf '%s\n' "$uncommented_disc" | ledger_commit "$SEEN_DISCUSSIONS"
   else
     log "$R: triage session FAILED or timed out (exit $?)"
   fi
