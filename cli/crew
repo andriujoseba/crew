@@ -56,6 +56,7 @@ box_exists() { box_names | grep -qx "$1"; }
 # skipped. roster_line prints "agent role from" for one name.
 read_roster() { grep -vE '^[[:space:]]*(#|$)' "$ROSTER"; }
 roster_line() { read_roster | awk -v n="$1" '$1 == n {print $2, $3, $4; exit}'; }
+roster_names() { read_roster | awk '{print $1}'; }
 # The vendor's own login instruction, for the by-hand step that replaced
 # `crew auth`. Falls back to something honest rather than printing nothing.
 login_hint() {
@@ -268,7 +269,7 @@ cmd_up() {
     done < <(read_roster)
     echo
     echo "boxes on this host but not in the roster (left alone):"
-    comm -23 <(box_names | sort) <(read_roster | awk '{print $1}' | sort) | sed 's/^/  /' || true
+    comm -23 <(box_names | sort) <(roster_names | sort) | sed 's/^/  /' || true
   fi
 }
 
@@ -336,23 +337,52 @@ cmd_status() {
 
 cmd_upgrade() {
   need_box
-  local targets=""
+  local targets="" skipped=""
   case "${1:-}" in
-    --all) targets="$(box_names)" ;;
+    --all)
+      # The ROSTER, not every box on the host. `crew up` already leaves
+      # off-roster boxes alone and says so; this verb reaching them meant a
+      # disarmed box carrying a real identity and a production registry --
+      # a drill box between runs, say -- could be armed by routine
+      # maintenance (#37). Naming a box explicitly is still allowed: that is
+      # a deliberate act on a known target, which `--all` is not.
+      targets="$(comm -12 <(roster_names | sort) <(box_names | sort))"
+      skipped="$(comm -23 <(box_names | sort) <(roster_names | sort))"
+      ;;
     "")    die "usage: crew upgrade <box> | --all" ;;
     *)     targets="$1" ;;
   esac
-  local b
+  local b armed flags
   for b in $targets; do
     echo "== upgrading $b"
-    # No flags: install.sh resolves from the manifest, or keeps the box's
-    # existing instance.conf. Pre-auth boxes keep theirs too.
-    box exec "$b" -- bash -lc '
+    # Preserve the box's armed state instead of asserting one. An upgrade
+    # that arms a box nobody armed is a behaviour change wearing the
+    # clothes of a version bump.
+    if bxn "$b" 'crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh' 2>/dev/null; then
+      armed=1; flags="--arm-cron"
+    else
+      armed=0; flags=""
+    fi
+    # No agent/role flags: install.sh resolves from the manifest, or keeps
+    # the box's existing instance.conf. Pre-auth boxes keep theirs too.
+    box exec "$b" -- bash -lc "
       set -euo pipefail
       git -C ~/crew pull --ff-only --quiet
-      ~/crew/shared/install.sh --arm-cron
-    ' || echo "  upgrade FAILED on $b"
+      ~/crew/shared/install.sh $flags
+    " || echo "  upgrade FAILED on $b"
+    # An `if`, not `[ … ] && echo`: as the loop body's last statement that
+    # form returns 1 whenever the box WAS armed, and `set -e` would end the
+    # loop after one box. Same shape as #25/#30.
+    if [ "$armed" -eq 0 ]; then
+      echo "  note: $b was NOT cron-armed; left disarmed (arm it with: crew hire $b)"
+    fi
   done
+  if [ -n "$skipped" ]; then
+    echo
+    echo "boxes on this host but not in the roster (left alone):"
+    # shellcheck disable=SC2086  # splitting the name list is the point
+    printf '  %s\n' $skipped
+  fi
 }
 
 cmd_gold() {
