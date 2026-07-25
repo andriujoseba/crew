@@ -179,8 +179,10 @@ while IFS= read -r R; do
   # mine) carries no comment of mine by design; without the ledger it re-fired
   # a full triage session every 5 minutes forever. GraphQL also returns
   # updatedAt now; `uncommented_disc` holds every currently-uncommented one as
-  # "number updatedAt" lines and is committed after the triage session, so a
-  # held discussion is marked seen at its current state.
+  # "REPO#number updatedAt" lines and is committed after the triage session, so
+  # a held discussion is marked seen at its current state. The key is REPO-
+  # qualified: discussion numbers are per-repo but this ledger spans repos.txt,
+  # so a bare number let rig#1 shadow ceremony#1 (codex, #16 review).
   owner="${R%%/*}" name="${R##*/}"
   uncommented_disc=$(gh api graphql -f owner="$owner" -f name="$name" -f query='
     query($owner:String!,$name:String!){
