@@ -147,6 +147,29 @@ rotate_log "$TMP/small.log"
 [ -f "$TMP/small.log" ] && r1=kept || r1=gone
 t rotate-small kept "$r1"
 
+# --- seen-ledgers: ledger_filter / ledger_commit (the refire fix) ---------
+# A wake whose signal is present but UNCHANGED must not re-launch a session;
+# it may only wake on new-or-advanced activity. This is what stops the mention
+# and held-discussion refire that burned the triage box's Fable quota.
+LG="$TMP/ledger"
+n() { awk 'NF{c++} END{print c+0}'; }
+# cold ledger (first look): everything is new
+t ledger-cold 2 "$(printf '111 2026-07-24T19:00:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_filter "$LG" | n)"
+printf '111 2026-07-24T19:00:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_commit "$LG"
+# same state again: SUPPRESSED (the burn fix)
+t ledger-suppress 0 "$(printf '111 2026-07-24T19:00:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_filter "$LG" | n)"
+# one timestamp advanced: only that id re-wakes
+t ledger-advance "111 2026-07-24T20:30:00Z" "$(printf '111 2026-07-24T20:30:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_filter "$LG")"
+# brand-new id wakes
+t ledger-newid 1 "$(printf '333 2026-07-25T01:00:00Z\n' | ledger_filter "$LG" | n)"
+# commit is monotonic: a stale (older) commit must not lower the mark
+printf '111 2026-07-24T20:30:00Z\n' | ledger_commit "$LG"
+printf '111 2026-07-01T00:00:00Z\n' | ledger_commit "$LG"
+t ledger-monotonic 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG" | n)"
+# empty input is safe and preserves the ledger (no session -> nothing to commit)
+printf '' | ledger_commit "$LG"
+t ledger-empty-safe 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG" | n)"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -145,7 +145,39 @@ run_session() {
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
   log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict"
+  # Outcome exposed for callers that gate follow-up state on success (the seen-
+  # ledger commits in duty-triage.sh) WITHOUT reintroducing the set -e abort a
+  # failed session must never cause — return stays 0.
+  RUN_SESSION_RC="$rc"
   return 0
+}
+
+# --- Seen-ledgers: turn "signal is present" into "signal CHANGED since I last
+# looked". A wake whose only clearing action is one the session may correctly
+# DECLINE — mark a mention read, comment on a held discussion — re-fired every
+# tick forever, spawning a full model session each time (the triage box's
+# overnight Fable burn, 2026-07-25: 147 mention + 61 triage sessions in 3 days,
+# board unchanged). Each ledger records, per thread/discussion id, the activity
+# timestamp last handled; a session launches only for entries new or advanced,
+# and the ledger is committed ONLY after run_session reports rc 0 — a crashed
+# session leaves its ids uncommitted, preserving crash-only retry. ISO-8601
+# timestamps, so a lexical compare is a chronological one.
+ledger_filter() { # $1=ledger; stdin "id ts" lines; stdout new-or-advanced ones
+  local ledger="$1"
+  awk -v L="$ledger" '
+    BEGIN { while ((getline line < L) > 0) { n=split(line,a," "); if (n>=2) seen[a[1]]=a[2] } close(L) }
+    NF>=2 { if (!($1 in seen) || seen[$1] < $2) print }
+  '
+}
+ledger_commit() { # $1=ledger; stdin "id ts" lines; merge keeping max ts, atomically
+  local ledger="$1" tmp
+  tmp="$(mktemp "${ledger}.XXXXXX")"
+  awk -v L="$ledger" '
+    BEGIN { while ((getline line < L) > 0) { n=split(line,a," "); if (n>=2) seen[a[1]]=a[2] } close(L) }
+    NF>=2 { if (!($1 in seen) || seen[$1] < $2) seen[$1]=$2 }
+    END { for (k in seen) print k, seen[k] }
+  ' > "$tmp"
+  mv -f "$tmp" "$ledger"
 }
 
 # alert MESSAGE — best-effort operator ping over Telegram. Non-fatal by

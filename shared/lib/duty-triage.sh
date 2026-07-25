@@ -52,14 +52,21 @@ _triage_repo() {
     *) signals="$signals ${stray}x queue-unlabeled;" ;;
   esac
 
-  # (c) open discussions with no comment or reply by me. Limits (50/50/20)
-  # silently truncate very busy threads — the safe direction (re-wake), and
-  # hygiene is the backstop.
-  undisc="$(TR_ME="$ME" gh api graphql -f owner="$owner" -f name="$name" -f query='
+  # (c) open discussions with no comment or reply by me — but wake only for
+  # ones whose activity ADVANCED since I last handled this repo. A discussion
+  # held for a human ruling (needs-ruling) carries no comment of mine by
+  # design; keying on that alone re-fired a full triage session every tick
+  # forever (the overnight burn). updatedAt now travels too; `uncommented_disc`
+  # holds every currently-uncommented one as "number updatedAt" lines and is
+  # committed after the triage session, so a held one is marked seen at its
+  # current state. Limits (50/50/20) truncate very busy threads — safe
+  # direction (re-wake), hygiene is the backstop.
+  local uncommented_disc
+  uncommented_disc="$(TR_ME="$ME" gh api graphql -f owner="$owner" -f name="$name" -f query='
     query($owner:String!,$name:String!){
       repository(owner:$owner,name:$name){
         discussions(first:50,states:OPEN){
-          nodes{ number
+          nodes{ number updatedAt
             comments(first:50){ nodes{ author{ login }
               replies(first:20){ nodes{ author{ login } } } } } }
         }
@@ -67,12 +74,16 @@ _triage_repo() {
     }' --jq '[.data.repository.discussions.nodes[]
               | select( [ .comments.nodes[] | .author.login,
                           .replies.nodes[].author.login ]
-                        | index(env.TR_ME) | not ) ] | length' 2>/dev/null || echo err)"
-  case "$undisc" in
-    err) warn "$R: discussion probe failed (discussions disabled?)" ;;
-    0) : ;;
-    *) signals="$signals ${undisc}x uncommented discussions;" ;;
-  esac
+                        | index(env.TR_ME) | not )
+              | "\(.number) \(.updatedAt)"] | .[]' 2>/dev/null || echo err)"
+  if [ "$uncommented_disc" = err ]; then
+    warn "$R: discussion probe failed (discussions disabled?)"
+    uncommented_disc=""
+  else
+    undisc="$(printf '%s\n' "$uncommented_disc" \
+      | ledger_filter "$DUTY_DIR/.seen-discussions" | awk 'NF{c++} END{print c+0}')"
+    [ "$undisc" -gt 0 ] && signals="$signals ${undisc}x uncommented discussions;"
+  fi
 
   # (e) blocked issues whose named blockers all landed. The parser is
   # deliberately narrow (see lib/jq/blockers.jq — corpus-tested); issue and
@@ -94,19 +105,39 @@ _triage_repo() {
   # blocked on a question is answered even when the board is clean. Only the
   # thread ids and API subject URLs travel in the prompt (never titles —
   # anyone on GitHub writes those, and this is a permissionless session).
-  # Idempotency is mark-read-AFTER-handling: anything unhandled is retried.
-  local mentions mcount
-  mentions="$(gh api notifications --paginate 2>/dev/null | jq -c -s --arg repo "$R" 'add
+  # Idempotency is the seen-ledger, NOT mark-read alone: a mention the session
+  # reads but correctly does not act on (an FYI, an already-answered thread, a
+  # PR I don't own) used to stay unread and re-fire a full session every tick.
+  # A thread now re-wakes only when its notification updated_at advances.
+  local all_mentions keep_threads keep_json mentions mcount
+  all_mentions="$(gh api notifications --paginate 2>/dev/null | jq -c -s --arg repo "$R" 'add
     | [ .[] | select(.repository.full_name == $repo
                 and (.reason == "mention" or .reason == "team_mention"))
-      | {thread: .id, subject: .subject.url} ]' 2>/dev/null || echo '[]')"
+      | {thread: .id, subject: .subject.url, updated: .updated_at} ]' 2>/dev/null || echo '[]')"
+  keep_threads="$(printf '%s\n' "$all_mentions" \
+    | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
+    | ledger_filter "$DUTY_DIR/.seen-mentions" | awk '{print $1}')"
+  if [ -n "$keep_threads" ]; then
+    keep_json="$(printf '%s\n' $keep_threads | jq -R . | jq -cs .)"
+    mentions="$(jq -c --argjson keep "$keep_json" \
+      '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")"
+  else
+    mentions='[]'
+  fi
   mcount="$(jq 'length' <<<"$mentions" 2>/dev/null || echo 0)"
   if [ "$mcount" -gt 0 ]; then
     log "$R: ${mcount} unread mention(s) — launching mention session"
     dir="$WORK_DIR/${R//\//__}"
     if ensure_checkout "$R" "$dir"; then
+      RUN_SESSION_RC=1
       run_session mention "$R" "$dir" "$TIMEOUT_MENTION" \
         "$(render_prompt mention.txt ME="$ME" REPO="$R" MENTIONS="$mentions")"
+      # Commit only on success: a crashed/timed-out session leaves these
+      # uncommitted and retries next tick (crash-only), as before.
+      if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+        printf '%s\n' "$all_mentions" | jq -r '.[] | "\(.thread) \(.updated)"' \
+          | ledger_commit "$DUTY_DIR/.seen-mentions"
+      fi
     fi
   fi
 
@@ -127,5 +158,11 @@ _triage_repo() {
     unblock_note="$(render_prompt fragment-unblockable.txt NUMS="$unblockable")"
   fi
   prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" UNBLOCKABLE_NOTE="$unblock_note")"
+  RUN_SESSION_RC=1
   run_session triage "$R" "$dir" "$TIMEOUT_TRIAGE" "$prompt"
+  # Mark every currently-uncommented discussion seen at its present state, so a
+  # held/needs-ruling one does not re-wake until it actually changes.
+  if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+    printf '%s\n' "$uncommented_disc" | ledger_commit "$DUTY_DIR/.seen-discussions"
+  fi
 }
