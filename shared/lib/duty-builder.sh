@@ -8,34 +8,51 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
 
-# Author-side duty repos must be org-wide, not repos.txt-scoped: cast#143's
-# converged round sat unowed 40 minutes while every tick looked only at
-# ceremony. When the review sweep ran this tick, its pulls pages already
-# yielded the answer (REVIEW_MY_PR_REPOS); a builder-only box does its own
-# sweep here.
+# Author-side duty repos are repos.txt-scoped, like every other module
+# (danmt 2026-07-25). This previously swept the org, on the rationale that
+# cast#143's converged round sat unowed 40 minutes while every tick looked
+# only at ceremony — but an org-wide author sweep also lets a builder box
+# act on repos nobody put in its registry, which is the same unbounded write
+# surface the reviewer sweep had. The miss cast#143 describes is now a
+# logged line (below) rather than silence, and the repair is to add the repo.
 _discover_my_pr_repos() {
   if [ -n "$REVIEW_MY_PR_REPOS" ] || has_role reviewer; then
     # shellcheck disable=SC2086  # splitting the space-joined list is the point
     printf '%s\n' $REVIEW_MY_PR_REPOS
     return 0
   fi
-  local org_repos SR
-  if ! org_repos="$(gh api "/orgs/$FLEET_ORG/repos" --paginate --jq '.[].full_name' 2>/dev/null)"; then
-    warn "builder: org repo enumeration failed; author-side coverage limited to repos.txt this tick"
-    org_repos=""
-  fi
-  # shellcheck disable=SC2086
-  for SR in $org_repos $FLEET_SWEEP_EXTRA_REPOS; do
+  local SR
+  while IFS= read -r SR; do
+    [ -n "$SR" ] || continue
     if gh api "repos/$SR/pulls?state=open&per_page=100" --paginate 2>/dev/null \
       | jq -se --arg me "$ME" '[add[] | select(.user.login == $me)] | length > 0' >/dev/null; then
       printf '%s\n' "$SR"
     fi
-  done
+  done < <(read_repo_list "$REPOS_FILE")
+}
+
+# Awareness pass — reports, never acts. Mirrors the reviewer sweep: an open
+# PR I authored in a repo outside the registry is an operator signal, not
+# licence to work it.
+_warn_unscoped_authored() {
+  local mine cand unscoped=""
+  mine="$(gh search prs --author="$ME" --state open --limit 50 \
+    --json repository,number --jq '.[] | "\(.repository.nameWithOwner)#\(.number)"' 2>/dev/null || true)"
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    if ! read_repo_list "$REPOS_FILE" | grep -qxF "${cand%%#*}"; then
+      unscoped="$unscoped $cand"
+    fi
+  done <<<"$mine"
+  if [ -n "$unscoped" ]; then
+    warn "builder: authored PR(s) outside repos.txt, NOT acted on:$unscoped — add the repo to repos.txt if this box should carry it"
+  fi
 }
 
 duty_builder() {
   local duty_repos R
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
+  _warn_unscoped_authored
 
   while IFS= read -r R; do
     [ -z "$R" ] && continue

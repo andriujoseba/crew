@@ -17,9 +17,19 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 # Manual invocations take the same lock the cron tick uses. The old scripts
 # locked only in the crontab line, so a debugging run raced the tick.
 if [ -z "${DUTY_LOCKED:-}" ]; then
-  env DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$DUTY_DIR/.duty.lock" "$0" "$@"
-  rc=$?
-  [ "$rc" -eq 199 ] && echo "duty.sh: a tick already holds $DUTY_DIR/.duty.lock — nothing run" >&2
+  # `|| rc=$?` is load-bearing under `set -e`: a bare non-zero flock exits
+  # the shell HERE, so the sentinel message below never ran and a contended
+  # manual run printed nothing at all — exit 199 with total silence, which
+  # is the failure this message exists to prevent. tick.sh avoids the same
+  # trap by not using `set -e` at all.
+  rc=0
+  env DUTY_LOCKED=1 DUTY_DIR="$DUTY_DIR" flock -n -E 199 "$DUTY_DIR/.duty.lock" "$0" "$@" || rc=$?
+  # An `if` block, not `[ … ] && echo …`: that form returns 1 on a non-199
+  # exit and, as the last command before `exit`, would take `set -e` with it
+  # — the same shape as the install.sh bug behind #25.
+  if [ "$rc" -eq 199 ]; then
+    echo "duty.sh: a tick already holds $DUTY_DIR/.duty.lock — nothing run" >&2
+  fi
   exit "$rc"
 fi
 
