@@ -37,7 +37,7 @@ phase: its profile's auth probe then returns non-zero, which is the expected
 unauthenticated result, and no session can launch:
 
 ```sh
-shared/install.sh --agent claude --role reviewer --arm-cron
+shared/install.sh --agent claude --role reviewer
 ```
 
 To rehearse another supported runtime, pass the same agent consistently:
@@ -49,25 +49,24 @@ Verify, and record the output of each check:
 1. `cat ~/duty/VERSION` — `crew@<sha>` matching `git rev-parse --short HEAD`.
 2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=claude`,
    `BOT_ROLES="reviewer"` (or the agent selected with `--agent`).
-3. `crontab -l` — exactly one line: `*/5 * * * * $HOME/duty/bin/tick.sh`
-   (no notify line: this is not the triage role).
-4. Within ~5 minutes, `~/duty/duty.log` gains per-tick evidence:
+3. `crontab -l` — no duty tick line. The rehearsal never arms cron.
+4. After each explicit `~/duty/bin/tick.sh`, `~/duty/duty.log` gains evidence:
    `duty run start` → a WARN that the login cannot be resolved →
    `duty run end`. EVERY 5-minute boundary must produce lines; silence at
-   a boundary is a finding (that is the tick evidence contract).
+   an invoked tick is a finding (that is the tick evidence contract).
 5. `~/duty/boot-check.log` — one boot block; `cli probe: FAILED` is
    CORRECT here; `~/duty/.boot-id` must NOT exist (marker only on
    verified auth).
 6. Lock behavior: run `~/duty/bin/duty.sh` by hand twice —
    idle: it runs; concurrently with itself or a tick: the second prints
    "a tick already holds …" and exits 199.
-7. Idempotence: rerun `shared/install.sh --arm-cron` (no flags) — it must
-   keep the instance config and not duplicate the cron line.
+7. Idempotence: rerun `shared/install.sh` (no flags) — it must
+   keep the instance config and remain disarmed.
    `shared/install.sh --agent claude --role nosuchrole` must refuse.
 
-Let it tick for at least 30 minutes. Expected steady state: three evidence
-lines per tick, no growth in error variety, no session logs in
-`~/duty/logs/`, no board writes anywhere.
+Repeat an explicit tick if needed. Expected steady state: three evidence lines
+per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
+no board writes anywhere.
 
 ## Phase 2 — authenticated ticks (operator required)
 
