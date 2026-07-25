@@ -18,7 +18,8 @@
 #
 # Every check prints `ok <name>` or `FAIL <name>`; the script exits
 # non-zero if anything failed. Fixtures and the drill box are LEFT IN
-# PLACE for inspection (re-runs reuse them).
+# PLACE for inspection (re-runs reuse them), but the box is always left
+# disarmed and its pre-drill repo registry is restored.
 #
 # Companion prose: shared/docs/rehearsal.md (what each check means and why).
 # shellcheck disable=SC2088  # tildes in bx "…" strings expand in the BOX's
@@ -81,6 +82,10 @@ wait_for() {  # wait_for <seconds> <name> <cmd...>
   return 1
 }
 bx() { box exec "$BOX_NAME" -- bash -lc "$1"; }
+# shellcheck disable=SC2034  # read and updated by rehearsal-safety.sh
+REPOS_BACKUP=""
+# shellcheck source=drill/rehearsal-safety.sh
+. "$ROOT/drill/rehearsal-safety.sh"
 
 command -v box >/dev/null || { echo "box CLI not found — this runs on a box host"; exit 1; }
 command -v gh  >/dev/null || { echo "gh not found on the host (phase 2 needs it)"; exit 1; }
@@ -92,6 +97,9 @@ if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name
   box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
 fi
 check "box reachable" bx "true"
+trap rehearsal_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "== phase 0: crew at $REF, static checks"
 bx "if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/heavy-duty/crew ~/crew; fi
@@ -100,16 +108,27 @@ bx "if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/heavy-dut
 check "fixture tests green" bx "~/crew/shared/test/run.sh | grep -q 'failed 0'"
 
 echo "== phase 1: pre-auth engine install ($AGENT reviewer)"
-bx "~/crew/shared/install.sh --agent '$AGENT' --role reviewer --arm-cron" || fail "install"
+# Every drill tick is explicit. Arming cron here created an autonomous
+# production bot merely to observe one scheduled boundary (#26).
+bx "~/crew/shared/install.sh --agent '$AGENT' --role reviewer" || fail "install"
+rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
 sha="$(bx "git -C ~/crew rev-parse --short HEAD" | tr -d '\r\n')"
 check "VERSION stamps crew@$sha"   bx "head -1 ~/duty/VERSION | grep -q 'crew@$sha'"
 check "instance.conf $AGENT/reviewer" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"reviewer\"' ~/duty/conf/instance.conf"
-check "exactly one cron line"      bx "[ \"\$(crontab -l | grep -c bin/tick.sh)\" = 1 ]"
-check "reinstall idempotent"       bx "~/crew/shared/install.sh --arm-cron && [ \"\$(crontab -l | grep -c bin/tick.sh)\" = 1 ]"
+check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "reinstall stays disarmed"   bx "~/crew/shared/install.sh && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 check "bad role refused"           bx "! ~/crew/shared/install.sh --agent '$AGENT' --role nosuchrole"
 
 GH_AUTHED=0
 bx "gh auth status >/dev/null 2>&1" && GH_AUTHED=1
+
+# An authenticated engine can act on its first explicit tick. Preserve the
+# operator's registry, then point the drill at nothing until its sandbox
+# exists. EXIT/INT/TERM restore it and leave no cron behind.
+if [ "$GH_AUTHED" -eq 1 ]; then
+  rehearsal_begin_isolation \
+    || { echo "cannot isolate repos.txt — refusing before any authenticated tick"; exit 1; }
+fi
 
 bx "~/duty/bin/tick.sh" || true
 check "tick evidence: run start"   bx "grep -q 'duty run start' ~/duty/duty.log"
@@ -130,8 +149,7 @@ check "lock contention -> 199 + message" bx "
   [ \$rc -eq 199 ] && echo \"\$out\" | grep -q 'already holds'"
 
 if [ "$QUICK" -eq 0 ]; then
-  n0="$(bx "grep -c 'duty run start' ~/duty/duty.log" | tr -d '\r\n')"
-  wait_for 420 "real cron boundary fired" bx "[ \"\$(grep -c 'duty run start' ~/duty/duty.log)\" -gt $n0 ]"
+  echo "== scheduled-boundary check omitted: rehearsal ticks are explicit and cron stays disarmed (#26)"
 fi
 
 # --- phase 2 -------------------------------------------------------------
@@ -159,7 +177,11 @@ else
         | while read -r i; do gh api -X PATCH /user/repository_invitations/\$i >/dev/null; done"
   fi
   wait_for 60 "box is a sandbox collaborator" gh api "repos/$SANDBOX/collaborators/$ME2"
-  bx "grep -qxF '$SANDBOX' ~/duty/repos.txt 2>/dev/null || echo '$SANDBOX' >> ~/duty/repos.txt"
+  if ! rehearsal_narrow_to_sandbox "$SANDBOX"; then
+    echo "repos.txt contains something other than '$SANDBOX' — refusing before a phase 2 tick"
+    exit 1
+  fi
+  ok "safety interlock: repos.txt contains only the sandbox"
 
   # -- attention wake --
   inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
@@ -212,6 +234,7 @@ else
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
 fi
 
+check "teardown: drill remains disarmed" bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 echo
 echo "== rehearsal summary: $PASS ok, ${#FAILS[@]} failed"
 if [ "${#FAILS[@]}" -gt 0 ]; then

@@ -96,7 +96,7 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr; do
+for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 ln -s "$(command -v jq)" "$ISHIM/jq"
@@ -132,7 +132,7 @@ t install-no-cron-arm-untouched "$before_cron" "$(cat "$CRON_STATE")"
 t install-no-cron-arm-files-remain installed "$r1"
 
 # shellcheck disable=SC2016  # fixture script expands these at execution time
-printf '#!/usr/bin/env bash\ncase "${1:-}" in\n  -l) [ ! -f "$CRON_STATE" ] || cat "$CRON_STATE" ;;\n  -) tmp="$CRON_STATE.new"; cat >"$tmp"; mv "$tmp" "$CRON_STATE" ;;\n  *) exit 2 ;;\nesac\n' >"$ISHIM/crontab"
+printf '#!/usr/bin/env bash\ncase "${1:-}" in\n  -l) [ ! -f "$CRON_STATE" ] || cat "$CRON_STATE" ;;\n  -) tmp="$CRON_STATE.new"; cat >"$tmp"; mv "$tmp" "$CRON_STATE" ;;\n  *) tmp="$CRON_STATE.new"; cat "$1" >"$tmp"; mv "$tmp" "$CRON_STATE" ;;\nesac\n' >"$ISHIM/crontab"
 chmod +x "$ISHIM/crontab"
 if install_out="$(install_fixture --arm-cron 2>&1)"; then r1=0; else r1=$?; fi
 t install-with-cron-arm-rc 0 "$r1"
@@ -142,6 +142,44 @@ t install-with-cron-preserves-existing 1 "$(grep -cF 'unrelated-job' "$CRON_STAT
 t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 install_fixture --arm-cron >/dev/null 2>&1
 t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
+
+# --- rehearsal safety: isolate, fail closed, restore, disarm (#26) -------
+RHOME="$TMP/rehearsal-home"
+RDUTY="$RHOME/duty"
+RCRON="$TMP/rehearsal-crontab"
+mkdir -p "$RDUTY"
+printf 'heavy-duty/ceremony\nheavy-duty/incubator\nheavy-duty/rig\n' >"$RDUTY/repos.txt"
+printf '*/5 * * * * %s/bin/tick.sh\n17 2 * * * unrelated-job\n' "$RDUTY" >"$RCRON"
+# shellcheck disable=SC2034  # consumed by sourced rehearsal safety functions
+BOX_NAME=fixture
+# shellcheck disable=SC2034  # consumed by sourced rehearsal safety functions
+REPOS_BACKUP=""
+BX_FAIL_WRITE=0
+bx() {
+  case "$1" in
+    "printf "*" > ~/duty/repos.txt") [ "$BX_FAIL_WRITE" -eq 0 ] || return 1 ;;
+  esac
+  HOME="$RHOME" PATH="$ISHIM" CRON_STATE="$RCRON" bash -c "$1"
+}
+# shellcheck source=drill/rehearsal-safety.sh
+source "$ROOT/drill/rehearsal-safety.sh"
+
+rehearsal_begin_isolation && r1=isolated || r1=failed
+t rehearsal-isolates-before-tick isolated "$r1"
+t rehearsal-isolation-empty 0 "$(wc -l <"$RDUTY/repos.txt")"
+rehearsal_narrow_to_sandbox owner/sandbox && r1=narrowed || r1=failed
+t rehearsal-narrow-success narrowed "$r1"
+t rehearsal-narrow-exact owner/sandbox "$(cat "$RDUTY/repos.txt")"
+BX_FAIL_WRITE=1
+rehearsal_narrow_to_sandbox owner/other && r1=continued || r1=refused
+t rehearsal-narrow-fails-closed refused "$r1"
+BX_FAIL_WRITE=0
+rehearsal_cleanup
+t rehearsal-restores-registry "heavy-duty/ceremony
+heavy-duty/incubator
+heavy-duty/rig" "$(cat "$RDUTY/repos.txt")"
+t rehearsal-disarms-tick 0 "$(grep -cF "$RDUTY/bin/tick.sh" "$RCRON")"
+t rehearsal-preserves-unrelated-cron 1 "$(grep -cF unrelated-job "$RCRON")"
 
 # --- validate_sha
 validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad

@@ -37,7 +37,7 @@ phase: its profile's auth probe then returns non-zero, which is the expected
 unauthenticated result, and no session can launch:
 
 ```sh
-shared/install.sh --agent claude --role reviewer --arm-cron
+shared/install.sh --agent claude --role reviewer
 ```
 
 To rehearse another supported runtime, pass the same agent consistently:
@@ -49,25 +49,24 @@ Verify, and record the output of each check:
 1. `cat ~/duty/VERSION` — `crew@<sha>` matching `git rev-parse --short HEAD`.
 2. `cat ~/duty/conf/instance.conf` — `BOT_AGENT=claude`,
    `BOT_ROLES="reviewer"` (or the agent selected with `--agent`).
-3. `crontab -l` — exactly one line: `*/5 * * * * $HOME/duty/bin/tick.sh`
-   (no notify line: this is not the triage role).
-4. Within ~5 minutes, `~/duty/duty.log` gains per-tick evidence:
+3. `crontab -l` — no duty tick line. The rehearsal never arms cron.
+4. After each explicit `~/duty/bin/tick.sh`, `~/duty/duty.log` gains evidence:
    `duty run start` → a WARN that the login cannot be resolved →
    `duty run end`. EVERY 5-minute boundary must produce lines; silence at
-   a boundary is a finding (that is the tick evidence contract).
+   an invoked tick is a finding (that is the tick evidence contract).
 5. `~/duty/boot-check.log` — one boot block; `cli probe: FAILED` is
    CORRECT here; `~/duty/.boot-id` must NOT exist (marker only on
    verified auth).
 6. Lock behavior: run `~/duty/bin/duty.sh` by hand twice —
    idle: it runs; concurrently with itself or a tick: the second prints
    "a tick already holds …" and exits 199.
-7. Idempotence: rerun `shared/install.sh --arm-cron` (no flags) — it must
-   keep the instance config and not duplicate the cron line.
+7. Idempotence: rerun `shared/install.sh` (no flags) — it must
+   keep the instance config and remain disarmed.
    `shared/install.sh --agent claude --role nosuchrole` must refuse.
 
-Let it tick for at least 30 minutes. Expected steady state: three evidence
-lines per tick, no growth in error variety, no session logs in
-`~/duty/logs/`, no board writes anywhere.
+Repeat an explicit tick if needed. Expected steady state: three evidence lines
+per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
+no board writes anywhere.
 
 ## Phase 2 — authenticated ticks (operator required)
 
@@ -79,6 +78,22 @@ agent. A throwaway test identity instead needs a `FLEET_MANIFEST` line in
 `shared/conf/fleet.conf` (or reuse Phase 1's explicit instance.conf, which
 survives re-installs). The operator performs `gh auth login` and the selected
 agent profile's `AGENT_LOGIN_HINT`; you never handle credentials.
+
+Authentication creates two independent hazards. First, another live box must
+not run the same identity. Second, a normal engine registry points at production
+repositories, so a drill tick can make legitimate-looking production writes.
+The automated rehearsal therefore saves `repos.txt`, points it at nothing
+before the first authenticated tick, replaces it with the sandbox alone before
+phase 2, verifies that narrowing fail-closed, and restores the original on exit
+or interruption.
+
+The rehearsal deliberately does **not** arm cron. Every drill tick is explicit;
+the old scheduled-boundary check was not worth creating an autonomous agent
+that could outlive the invoking shell. On every exit the cleanup path removes
+any duty tick left by an older run and restores the registry. If the shell or
+box is in doubt, `box down <box>` is the reliable stop: `pkill` routed through
+`box exec` is unprivileged and may be unable to signal an already-running
+session.
 
 1. First authenticated tick: boot gate passes, `~/duty/.boot-id` appears,
    the login-resolution WARN disappears, review sweep logs
@@ -101,6 +116,8 @@ agent profile's `AGENT_LOGIN_HINT`; you never handle credentials.
    second review appearing on the PR. A short SHA must be refused.
 6. Timeout: nothing to force here, but confirm every SESSION END line
    carries rc= and dur=.
+7. Teardown: `repos.txt` is restored to its pre-drill contents and
+   `crontab -l` contains no duty tick.
 
 ## Phase 3 — report
 
