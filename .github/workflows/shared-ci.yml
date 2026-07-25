@@ -1,0 +1,25 @@
+name: shared-ci
+on:
+  pull_request:
+    paths: ['shared/**', 'cli/**', 'drill/**', '.github/workflows/shared-ci.yml']
+  push:
+    branches: [main]
+    paths: ['shared/**', 'cli/**', 'drill/**', '.github/workflows/shared-ci.yml']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n (syntax)
+        run: |
+          set -e
+          for f in shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh; do
+            bash -n "$f"
+          done
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y shellcheck >/dev/null
+          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh shared/conf/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+      - name: fixture tests
+        run: shared/test/run.sh
