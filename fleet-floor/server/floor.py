@@ -33,6 +33,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -542,33 +543,45 @@ crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh'
 # every other session logs so it shows up in the console's history.
 MESSAGE_SH = r"""
 set -u
-conf=/tmp/.crew-floor-agent.conf
+# Every path here is per-invocation. They used to be fixed names, and the
+# server is threaded: two rapid messages to one box interleaved as
+#   write prompt A -> launch A -> write prompt B -> A reads .floor-prompt
+# and session A ran prompt B. An operator's instruction executed with someone
+# else's text, on a real box. Same-second sessions also collided on the log
+# name. __TOK__ is a uuid4 hex minted per request by the collector.
+tok="__TOK__"
+conf="/tmp/.crew-floor-agent.$tok.conf"
+pf="${DUTY_DIR:-$HOME/duty}/.floor-prompt.$tok"
 cat >"$conf"
 # shellcheck disable=SC1090
 source "$conf"
 export PATH="${BOT_PATH_PREPEND:-$HOME/.local/bin}:$PATH"
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 mkdir -p "$DUTY_DIR/logs"
-prompt="$(cat "$DUTY_DIR/.floor-prompt")"
-[ -n "$prompt" ] || { echo "empty prompt"; exit 2; }
+# Read ONCE, here, and hand the bytes to the detached shell as an argument.
+# The re-read inside that shell was the race: it resolved the path long after
+# this request had returned.
+prompt="$(cat "$pf")"
+rm -f "$pf"
+[ -n "$prompt" ] || { echo "empty prompt"; rm -f "$conf"; exit 2; }
 ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-slog="$DUTY_DIR/logs/$(date -u '+%Y%m%dT%H%M%SZ')-operator-floor.log"
+slog="$DUTY_DIR/logs/$(date -u '+%Y%m%dT%H%M%SZ')-operator-floor-$tok.log"
 # One O_APPEND write under 4K is atomic, so this cannot interleave with a
 # tick's own line even though the operator session runs outside the duty flock.
 printf '%s SESSION START kind=operator key=floor timeout=1800s log=%s\n' "$ts" "$slog" >>"$DUTY_DIR/duty.log"
 nohup setsid bash -c '
-  DUTY_DIR="'"$DUTY_DIR"'"; slog="'"$slog"'"; start=$SECONDS; rc=0
-  source "'"$conf"'"
+  DUTY_DIR="'"$DUTY_DIR"'"; slog="'"$slog"'"; conf="'"$conf"'"
+  start=$SECONDS; rc=0
+  source "$conf"; rm -f "$conf"
   export PATH="${BOT_PATH_PREPEND:-$HOME/.local/bin}:$PATH"
   cd "$HOME"
-  timeout -k 60 1800 "${BOT_CLI_CMD[@]}" "$(cat "$DUTY_DIR/.floor-prompt")" \
-    </dev/null >"$slog" 2>&1 || rc=$?
+  timeout -k 60 1800 "${BOT_CLI_CMD[@]}" "$1" </dev/null >"$slog" 2>&1 || rc=$?
   dur=$((SECONDS - start)); v=ok
   [ "$rc" -eq 124 ] && v=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && v=FAILED
   printf "%s SESSION END kind=operator key=floor rc=%s dur=%ss outcome=%s\n" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$dur" "$v" >>"$DUTY_DIR/duty.log"
-' </dev/null >/dev/null 2>&1 &
+' _ "$prompt" </dev/null >/dev/null 2>&1 &
 echo "session started; log $slog"
 """
 
@@ -608,13 +621,18 @@ def do_command(fleet, body):
             return 400, {"ok": False, "error": "prompt too long"}
         # Two hops so the prompt is never interpolated into a shell string:
         # it travels as stdin bytes, and the session reads it from a file.
+        # The filename carries a per-request token: with one fixed name, two
+        # rapid messages to the same box raced and a session could run the
+        # OTHER request's prompt.
+        token = uuid.uuid4().hex
         w = one(box, ["box", "exec", box, "--", "bash", "-lc",
-                      'mkdir -p "$HOME/duty" && cat > "$HOME/duty/.floor-prompt"'],
+                      'mkdir -p "$HOME/duty" && cat > "$HOME/duty/.floor-prompt.%s"' % token],
                 stdin_data=prompt)
         if not w["ok"]:
             results.append(w)
         else:
-            results.append(in_box(box, MESSAGE_SH, stdin_data=agent_conf_for(box)))
+            results.append(in_box(box, MESSAGE_SH.replace("__TOK__", token),
+                                  stdin_data=agent_conf_for(box)))
 
     elif action == "pause":
         results.append(in_box(box, PAUSE_SH))

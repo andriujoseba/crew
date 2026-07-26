@@ -113,14 +113,17 @@ chmod +x "$BS_M/bin/fake-cli"
 # here — expanding it would make the test send something tamer than it claims.
 # shellcheck disable=SC2016
 BS_PROMPT='check PR #40 "now"; rm -rf /tmp/floor-boxside-pwned; $(id) `whoami` & | ; é'
-printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt"
+# The prompt path carries the collector's per-request token now, so the
+# standalone run has to mint one the same way and write to the matching name.
+BS_TOK="boxsidetest$$"
+printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
 
 BS_SH="$BS_TMP/message.sh"
-BS_SERVER="$BS_FLOOR/server" python3 - "$BS_SH" <<'PY'
+BS_SERVER="$BS_FLOOR/server" BS_TOK="$BS_TOK" python3 - "$BS_SH" <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
-open(sys.argv[1], "w").write(floor.MESSAGE_SH)
+open(sys.argv[1], "w").write(floor.MESSAGE_SH.replace("__TOK__", os.environ["BS_TOK"]))
 PY
 
 HOME="$BS_M" PATH="$BS_M/bin:$PATH" bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
@@ -140,7 +143,9 @@ else
   ok "message: prompt cannot execute"
 fi
 
-BS_LOG="$(cat "$BS_M"/duty/logs/*operator-floor.log 2>/dev/null)"
+# The log name carries the per-request token now (…-operator-floor-<tok>.log),
+# which is what stops two same-second sessions overwriting each other.
+BS_LOG="$(cat "$BS_M"/duty/logs/*operator-floor*.log 2>/dev/null)"
 t "message: prompt arrives as ONE argv element" "ARGC=3" "$(printf '%s\n' "$BS_LOG" | sed -n 's/^\(ARGC=[0-9]*\)$/\1/p')"
 t "message: prompt arrives byte-identical" "$BS_PROMPT" "$(printf '%s\n' "$BS_LOG" | sed -n 's/^LAST=//p')"
 
@@ -176,6 +181,9 @@ echo boom >&2; exit 3
 EOF
 chmod +x "$BS_M/bin/fake-cli"
 : > "$BS_M/duty/duty.log"
+# MESSAGE_SH consumes the prompt file (rm after read), so the second run needs
+# its own — which is the point of the per-request path.
+printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" PATH="$BS_M/bin:$PATH" bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
   grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break

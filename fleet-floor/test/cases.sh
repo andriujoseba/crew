@@ -258,3 +258,53 @@ if [ "$WS_CODE" = "200" ] || printf '%s' "$WS_BODY" | grep -q '"results"'; then
 else
   fail "wake-silent always reports per-box results" "$WS_CODE $WS_BODY"
 fi
+
+# ===========================================================================
+# ROUND 11 — codex-bot: two rapid messages to ONE box could interleave, and a
+# session would run the OTHER request's prompt. Production bug, not a test
+# one. The earlier concurrency case sent only `pause`, and the box-side test
+# sent one message at a time, so neither could reach it.
+# ===========================================================================
+echo "== concurrent messages keep their own bytes"
+CM_OUT="$(python3 - <<'PY_CM'
+import base64, json, os, threading, urllib.request, urllib.error
+port, user, pw = os.environ["PORT"], os.environ["USER"], os.environ["PASSWD"]
+auth = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+# Distinct, individually identifiable payloads to the SAME box at once.
+prompts = [f"PROMPT-{i}-" + ("x" * (20 + i)) for i in range(5)]
+codes = []
+lock = threading.Lock()
+
+def hit(p):
+    body = json.dumps({"action": "message", "box": "ff-working", "prompt": p}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/command", data=body, method="POST")
+    req.add_header("Authorization", auth)
+    req.add_header("Content-Type", "application/json")
+    try:
+        c = urllib.request.urlopen(req, timeout=60).status
+    except urllib.error.HTTPError as e:
+        c = e.code
+    except Exception:
+        c = 0
+    with lock:
+        codes.append(c)
+
+ts = [threading.Thread(target=hit, args=(p,)) for p in prompts]
+[t.start() for t in ts]
+[t.join(90) for t in ts]
+print(sum(1 for c in codes if c == 200))
+PY_CM
+)"
+t "5 concurrent messages all accepted" 5 "$CM_OUT"
+# Each request must have landed under its own token, with its own bytes: one
+# shared filename is exactly what let a session read another request's prompt.
+# Only THIS test's payloads: an earlier message case also wrote a tokened file.
+CM_FILES=0
+for f in "$FLOOR_STATE"/ff-working.prompt.*; do
+  case "$f" in *'*'|*.notoken) continue ;; esac
+  [ -f "$f" ] && grep -q '^PROMPT-' "$f" && CM_FILES=$((CM_FILES + 1))
+done
+t "each message got its own prompt file" 5 "${CM_FILES:-0}"
+CM_UNIQ=$(cat "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null | grep -c '^PROMPT-' || true)
+CM_DISTINCT=$(cat "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null | grep '^PROMPT-' | sort -u | wc -l)
+t "no two messages share bytes" "${CM_UNIQ:-0}" "$CM_DISTINCT"

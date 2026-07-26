@@ -162,7 +162,13 @@ case "${1:-}" in
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
       *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
-      *'cat > "$HOME/duty/.floor-prompt"'*)     cp "$stdin_copy" "$STATEDIR/$name.prompt" ;;
+      *'cat > "$HOME/duty/.floor-prompt'*)
+        # Keyed by the request's own token, so concurrent messages to one box
+        # can be told apart — a single $name.prompt could not show whether each
+        # session received its own bytes.
+        _tok="$(printf '%s' "$script" | sed -n 's/.*\.floor-prompt\.\([a-f0-9]*\)".*/\1/p')"
+        cp "$stdin_copy" "$STATEDIR/$name.prompt.${_tok:-notoken}"
+        cp "$stdin_copy" "$STATEDIR/$name.prompt" ;;
       *BOT_CLI_CMD*)                            echo "session started; log /h/duty/logs/op.log" ;;
       *tail*)                                   echo "$(now) duty run start"; echo "stub log for $name" ;;
       *) echo "stub-box: unmatched exec script for $name" >&2; exit 3 ;;
