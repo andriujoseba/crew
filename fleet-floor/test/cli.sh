@@ -191,6 +191,40 @@ else
   fail "browser.js: control blocks are behind a READONLY guard" "only ${CL_GUARDS:-0} guards found; expected the pause, paused-box and fleet-wide blocks"
 fi
 
+# The walk demands fixture-only states (a hostile-log box, a first-session box,
+# offline boxes) and must demand them ONLY of the fixture. kimi-bot found the
+# drill running the same walk against a real fleet, where those boxes do not
+# exist and a healthy fleet has nothing offline: two unconditional hard-fails,
+# so "browser walk against the real fleet" could never pass on any host.
+#
+# Both halves are asserted, because either one alone silently breaks the split:
+# run.sh not setting it loses the loud coverage the fixture exists to provide,
+# and the drill setting it puts the always-red walk straight back.
+if grep -qE '^export FLOOR_TEST_FIXTURE=1' "$CL_HERE/run.sh"; then
+  ok "fixture gate: run.sh claims the fixture fleet"
+else
+  fail "fixture gate: run.sh claims the fixture fleet" \
+       "without it the hostile/first-run/offline guards go quiet in the suite"
+fi
+# Comments stripped first. The drill EXPLAINS why it withholds this flag, and a
+# bare `grep FLOOR_TEST_FIXTURE` matched that explanation -- a detector tripping
+# on its own documentation, which is the same bug as the read-only detector that
+# once matched a string probe.sh itself contained.
+if grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'FLOOR_TEST_FIXTURE='; then
+  fail "fixture gate: the drill does NOT claim the fixture fleet" \
+       "the drill sets FLOOR_TEST_FIXTURE; the walk will demand boxes a real fleet has no reason to have"
+else
+  ok "fixture gate: the drill does NOT claim the fixture fleet"
+fi
+# ...and the walk must actually consult it, rather than the flag being inert.
+CL_GATED="$(grep -cE 'FIXTURE &&|if \(FIXTURE\)' "$CL_BJS" || true)"
+if [ "${CL_GATED:-0}" -ge 3 ]; then
+  ok "fixture gate: the walk gates its fixture-only demands (${CL_GATED})"
+else
+  fail "fixture gate: the walk gates its fixture-only demands" \
+       "only ${CL_GATED:-0} gated sites; expected the hostile, first-run and offline demands"
+fi
+
 # The read-only receipt check MOVED here from run.sh; it did not evaporate.
 # CI cannot make it honestly (no real fleet), the drill can (real boxes, and a
 # logging wrapper ahead of the real `box` on PATH). A check that leaves CI and

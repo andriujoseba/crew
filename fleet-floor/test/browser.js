@@ -26,6 +26,19 @@ const [, , URL_ARG, OUT_ARG, USER, PASS] = process.argv;
    box and start stopped ones, so the drill runs us in this mode unless the
    operator explicitly opted into control. */
 const READONLY = process.env.FLOOR_TEST_READONLY === '1';
+/* Whether the fleet under the page is the STUB fixture or a real one.
+   test/run.sh drives fixtures/roster.txt, whose contents are guaranteed: there
+   IS a box with hostile log text, one inside its first session, and several
+   offline. Those are the states the page's worst bugs lived in, so "that box
+   was not reachable" must be a loud failure there -- otherwise the checks that
+   depend on it silently do not run and the suite stays green.
+
+   The drill points the same walk at a REAL fleet, which has no box named
+   hostile or firstrun, and when healthy has nothing offline at all. Asserting
+   the fixture's contents there fails on every host, forever -- for the good
+   reason that the fleet is fine. kimi-bot caught this: the guard is right for
+   the suite and wrong unconditionally, so it is gated rather than removed. */
+const FIXTURE = process.env.FLOOR_TEST_FIXTURE === '1';
 const url = URL_ARG || 'http://127.0.0.1:8791/';
 const out = OUT_ARG || 'shots';
 
@@ -340,10 +353,18 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     await leave();
   }
   const down = byState.OFFLINE || [];
-  ok('render: at least one down box in view', down.length > 0, Object.keys(byState).join(','));
-  ok('render: down boxes state a reason',
-     down.length > 0 && down.every((u) => /unreachable|stopped|SILENT|paused|not hired|not created|cron/i.test(u.current)),
-     down.map((u) => u.box + ': ' + u.current.slice(0, 50)).join(' | '));
+  // The fixture guarantees offline boxes; a healthy real fleet guarantees the
+  // opposite, and "everything is up" must not read as a test failure.
+  if (FIXTURE) {
+    ok('render: at least one down box in view', down.length > 0, Object.keys(byState).join(','));
+  }
+  if (down.length > 0) {
+    ok('render: down boxes state a reason',
+       down.every((u) => /unreachable|stopped|SILENT|paused|not hired|not created|cron/i.test(u.current)),
+       down.map((u) => u.box + ': ' + u.current.slice(0, 50)).join(' | '));
+  } else {
+    console.log('  --   no offline box in this fleet; nothing to state a reason for');
+  }
   if (LIVE) {
     // Self-consistency within one render: the vitals say whether the box is
     // paused, so the button must name the action that follows from it.
@@ -411,9 +432,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
 
   // ---- hostile log content must stay text ---------------------------------
   const hostile = visible.find((v) => /hostile/.test(v.got));
-  if (LIVE && !hostile) {
+  if (FIXTURE && LIVE && !hostile) {
     // Silent coverage loss is worse than a loud failure: without this, the XSS
     // checks below simply would not run and the suite would still be green.
+    // FIXTURE-gated -- a real fleet has no such box, and should not.
     ok('xss: the hostile-log box was reachable', false,
        `no unit matching /hostile/ among ${visible.length} reached boxes`);
   }
@@ -443,7 +465,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      room threw inside the render loop, every frame. Three reviewers found it;
      136 checks did not, because no fixture could reach the state. */
   const firstRun = visible.find((v) => /firstrun/.test(v.got));
-  if (LIVE && !firstRun) {
+  if (FIXTURE && LIVE && !firstRun) {
     ok('first-run: the first-session box was reachable', false,
        `no unit matching /firstrun/ among ${visible.length} reached boxes`);
   }

@@ -298,11 +298,28 @@ if [ "$BROWSER" -eq 1 ]; then
     # Slice the receipt from here, so the drill's own control block above is not
     # counted against the walk.
     RO_FROM=$(( $(wc -l < "$BOX_CALLS") + 1 ))
+    # NOT FLOOR_TEST_FIXTURE: this is a real fleet. The walk's fixture-only
+    # demands (a hostile-log box, a box in its first session, something offline)
+    # are guarantees of test/fixtures/roster.txt, not of a healthy host.
     if FLOOR_TEST_READONLY=1 \
-       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"; then
+       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD" \
+       2>&1 | tee "$TMP/walk.out"; then
       ok "browser walk against the real fleet (read-only)"
     else
       fail "browser walk against the real fleet (read-only)" "see output above"
+    fi
+    # A walk that exits 0 must have asserted something. Deliberately NOT a
+    # numeric floor like the stub suite's: how many checks a real fleet reaches
+    # depends on that fleet (a repo link needs a box with a repo, a reason
+    # string needs something offline), and inventing a number for a host I
+    # cannot measure is how the walk came to be unpassable here in the first
+    # place. Assert only what is certain -- it reported a count -- and print it,
+    # so an operator watching the drill can see coverage drop over time.
+    WALK_N="$(sed -n 's/.*-- browser: \([0-9]*\) ok.*/\1/p' "$TMP/walk.out" | tail -1)"
+    if [ -n "$WALK_N" ]; then
+      ok "browser walk reported its assertion count (${WALK_N} checks on this fleet)"
+    else
+      fail "browser walk reported its assertion count" "no '-- browser: N ok' line — it exited without a summary"
     fi
 
     # ---- the read-only walk must have touched NOTHING --------------------

@@ -52,6 +52,12 @@ USER=operator
 PASSWD="test-$$"
 
 export FLOOR_FIXTURE="$HERE/fixtures/fleet.txt"
+# The fleet under the page is the fixture, so the walk may demand the states
+# only the fixture guarantees: a hostile-log box, a first-session box, several
+# offline. The drill deliberately does NOT set this -- a real fleet has no such
+# boxes, and a healthy one has nothing offline, so those demands would fail on
+# every host forever. cli.sh asserts both halves of that split.
+export FLOOR_TEST_FIXTURE=1
 export FLOOR_CALLS="$TMP/box-calls.log"
 export FLOOR_STATE="$TMP/state"
 export PATH="$TMP/bin:$PATH"

@@ -151,6 +151,16 @@ silently-skipped UI test reads exactly like a passing one — and in CI they do
 not skip at all: `FLOOR_TEST_REQUIRE_BROWSER=1` makes a missing browser a
 failure, because on the merge gate a skip and a pass are indistinguishable.
 
+The walk runs against two very different fleets, so it is told which it is
+looking at. `FLOOR_TEST_FIXTURE=1` (set by `test/run.sh`, **never** by the
+drill) says the fleet is `fixtures/roster.txt`, whose contents are guaranteed:
+a box with hostile log text, a box inside its first session, several offline.
+There the walk *demands* those boxes and fails loudly if it cannot reach one,
+because the checks that depend on them would otherwise vanish in silence. A
+real fleet has no such boxes and, when healthy, nothing offline at all — so
+without the flag the walk asserts only what any fleet must satisfy. `cli.sh`
+asserts both halves: `run.sh` sets it, the drill does not.
+
 ## Files
 
 ```
