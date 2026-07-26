@@ -298,10 +298,19 @@ function drawMini(t,mx,my,mw,mh){
 
 /* ===================== GOD-VIEW FLOOR (scrollable fleet of cells) ===================== */
 var VIEW="floor";
-/* Roster embedded from crew's fleet.roster (the 7 target boxes). The per-unit
-   STATE and all telemetry below are DEMO placeholders — crew does not yet emit a
-   status feed the (offline, no-network) page can read. Live wiring tracked in the
-   issues linked from README.md. LIVE=false disables the operator control actions. */
+/* The page has two modes and decides between them at load, by asking the
+   collector for a snapshot:
+
+     served by `crew floor`  → /api/fleet answers → LIVE, real telemetry, real
+                               operator controls (crew reads and drives every
+                               box from the host over `box exec`)
+     opened as a local file  → the fetch fails → DEMO, the placeholder fleet
+                               below, controls shown but disabled
+
+   That keeps the property the prototype was built on — one self-contained
+   index.html you can just open — while making the served copy a real console.
+   Nothing below is a fallback for missing live fields: a served page renders
+   only what the boxes actually reported. */
 var LIVE=false;
 var ROSTER=[
   {agent:"claude",room:"triage",  state:"working"},
@@ -378,8 +387,136 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
   var nowS=Math.floor(Date.now()/1000),cur={key:(kind==="triage"?"board":REPONAMES[ri2(0,5)]+"#"+ri2(11,148)),start:nowS-ri2(20,Math.min(cap,5200))};
   return {kind:kind,queue:q,sessions:sess,up:{h:ri2(1,71),m:ri2(0,59)},repo:q[0]?q[0].repo:"crew",spark:spark,
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
-function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(u.agent,u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:Math.round(all.reduce(function(a,b){return a+b;},0)/all.length)};}
-function dataOf(agent,room){var id=agent+"-"+room;if(!dataCache[id])dataCache[id]=genData(room);return dataCache[id];}
+function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(u.agent,u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
+function dataOf(agent,room){var id=agent+"-"+room;if(!dataCache[id])dataCache[id]=LIVE?emptyData(room):genData(room);return dataCache[id];}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,box:"",logs:[]};}
+
+/* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
+   The collector polls every box from the operator host over `box exec` and
+   serves the result here; operator actions POST back and are applied the same
+   way. The boxes still initiate nothing and run nothing extra — the host's
+   existing control channel does both halves. */
+var LIVEMETA=null, POLL_MS=15000, seenSess={};
+/* Absolute, credential-free. An operator who bookmarks the page as
+   http://user:pass@host:port/ leaves credentials in the document URL, and a
+   relative fetch inherits them — which the browser then refuses to construct a
+   Request from, silently stranding the page in DEMO. location.origin drops
+   them. */
+function apiURL(path){return (location.origin&&location.origin!=="null"?location.origin:"")+path;}
+function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
+  if(r.status===401){throw new Error("unauthorized");}
+  if(!r.ok)throw new Error("HTTP "+r.status);
+  return r.json();});}
+/* Server unit -> the record every panel already reads, so nothing downstream
+   has to know which mode it is in. */
+function liveData(u){
+  var d=emptyData(u.room);
+  d.box=u.box;d.queue=u.queue||[];d.sessions=u.sessions||[];d.up=u.up||{h:0,m:0};
+  d.repo=u.repo||"";d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
+  d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
+  d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
+  d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
+  if(d.cur&&d.cur.kind)d.kind=d.cur.kind;
+  return d;
+}
+function applyFleet(snap){
+  if(!snap||!snap.units||!snap.units.length)return;
+  LIVEMETA=snap;
+  var first=!LIVE;LIVE=true;
+  var roster=[],cache={};
+  snap.units.forEach(function(u){
+    /* working means "a session is open"; without one the cell has nothing to
+       count up from, so it is standby however the probe was labelled. */
+    var st=(u.state==="working"&&!u.cur)?"idle":u.state;
+    roster.push({agent:u.agent,room:u.room,state:st,box:u.box,note:u.note||""});
+    cache[u.agent+"-"+u.room]=liveData(u);
+  });
+  ROSTER=roster;dataCache=cache;
+  if(first)goLive();
+  /* Keep the operator's current focus pinned across polls rather than snapping
+     the view back to the floor every 15 seconds. */
+  var me=ROSTER.filter(function(u){return u.agent===AGENT&&u.room===ROOM;})[0];
+  if(me)STATE=me.state;
+  buildTiles();buildOps();syncToggles();refreshChrome();
+  if(VIEW==="room")populateDash();
+  liveTicker(snap);
+}
+function boxOf(agent,room){var d=dataOf(agent,room);return d.box||(agent+"-"+room);}
+/* Real duty.log events only: each poll emits the SESSION lines that are new
+   since the last one, so the ticker is evidence rather than atmosphere. */
+function liveTicker(snap){
+  var s=document.getElementById("stream");if(!s)return;
+  var fresh=[],next={},primed=seenSess.__primed;
+  snap.units.forEach(function(u){
+    (u.sessions||[]).slice(0,6).forEach(function(x){
+      var id=u.box+"|"+x.kind+"|"+x.key+"|"+x.dur+"|"+x.out;
+      next[id]=1;
+      if(seenSess[id]||!primed)return;
+      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+x.rc+" outcome="+x.out,rc:x.rc,ago:x.ago});
+    });
+    if(u.cur){
+      var cid=u.box+"|open|"+u.cur.kind+"|"+u.cur.key+"|"+u.cur.start;
+      next[cid]=1;
+      if(!seenSess[cid]&&primed)fresh.push({u:u,msg:"SESSION START kind="+u.cur.kind+" key="+u.cur.key,rc:0});
+    }
+  });
+  /* Carry only the ids still in this snapshot. duty.log is append-only, so an
+     id that has aged out of the window cannot come back and be re-emitted —
+     which keeps the dedup set bounded on a page left open for days. */
+  next.__primed=1;seenSess=next;
+  fresh.sort(function(a,b){return (b.ago||0)-(a.ago||0);});
+  fresh.forEach(function(f){
+    var el=document.createElement("div");el.className="l";
+    var m=esc(f.msg);
+    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>');
+    el.innerHTML='<span class="tt">'+clockStr()+'</span><span class="u" style="color:'+VENDORCOL(f.u.agent)+'">'+esc(f.u.box)+'</span><span class="m">'+m+'</span>';
+    s.appendChild(el);
+  });
+  while(s.childNodes.length>30)s.removeChild(s.firstChild);
+  if(fresh.length)s.scrollTop=s.scrollHeight;
+}
+function pollFleet(){
+  /* Opened from disk there is nothing to poll, and asking anyway just prints a
+     CORS failure in the console of a page that is working exactly as intended. */
+  if(location.protocol==="file:")return;
+  api("/api/fleet").then(applyFleet).catch(function(e){
+    /* file:// or no collector — stay in DEMO. Only an auth failure is worth
+       shouting about, because it means a collector IS there. */
+    if(String(e.message)==="unauthorized")setStatus("unauthorized — reload and sign in",true);
+  });
+}
+function setStatus(msg,bad){
+  var el=document.getElementById("livestat");if(!el)return;
+  el.textContent=msg;el.style.color=bad?"#ff5147":"#5fce9b";
+}
+/* One-time flip of everything the DEMO build deliberately nailed shut. */
+function goLive(){
+  [].forEach.call(document.querySelectorAll(".demo-badge"),function(b){
+    b.textContent="◈ LIVE";b.classList.add("live");
+    b.title="Live telemetry — every box polled from the operator host over 'box exec'.";
+  });
+  ["g-start","g-stop","g-wake","a-pause","a-restart","c-send"].forEach(function(id){
+    var e=document.getElementById(id);if(e){e.classList.remove("woff");e.title="";}
+  });
+  var cin=document.getElementById("c-in");
+  if(cin){cin.disabled=false;cin.classList.remove("woff");cin.placeholder="Send a prompt to the agent…";}
+  var s=document.getElementById("stream");if(s)s.innerHTML="";
+}
+/* Operator actions (#39). Every one is applied by the host with `box exec`,
+   `box down` or `box start`; the reply carries per-box rc so a refused or
+   failed action is reported instead of being animated as success. */
+function cmd(action,extra){
+  var body=Object.assign({action:action},extra||{});
+  setStatus(action+"…",false);
+  return api("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){
+      var bad=(r.results||[]).filter(function(x){return !x.ok;});
+      setStatus(r.ok?action+" ok":action+" FAILED: "+((bad[0]||{}).out||r.error||"?"),!r.ok);
+      pollFleet();
+      return r;
+    })
+    .catch(function(e){setStatus(action+" failed: "+e.message,true);});
+}
 function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;";});}
 function clockStr(){var d=new Date();return pad2(d.getUTCHours())+":"+pad2(d.getUTCMinutes())+":"+pad2(d.getUTCSeconds());}
 function buildTiles(){var w=0,idl=0,o=0,q=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")o++;else idl++;q+=dataOf(u.agent,u.room).queue.length;});
@@ -387,24 +524,38 @@ function buildTiles(){var w=0,idl=0,o=0,q=0;ROSTER.forEach(function(u){if(u.stat
   var el=document.getElementById("tiles");if(el)el.innerHTML=tl(ROSTER.length,"units","#c7d4e4")+tl(w,"working","#f7bd4e")+tl(idl,"idle","#5fce9b")+tl(o,"silent","#ff5147",o>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
-  var d=dataOf(AGENT,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",work=STATE==="working";
+  /* The art-preview toggles can set any STATE; live data may disagree. Only
+     claim a session is running when there is one to count. */
+  var d=dataOf(AGENT,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",work=STATE==="working"&&!!(d.cur||!LIVE);
   var sc=off?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=off?"SILENT":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY";
   document.getElementById("w-id").innerHTML='<div class="idc"><div class="av" style="background:'+hexA(vc,0.16)+';box-shadow:inset 0 0 0 1px '+hexA(vc,0.5)+';color:'+vc+'">'+AGENT[0].toUpperCase()+'</div><div><div class="nm">'+id+'</div><div class="rl">'+AGENT+' · '+ROOM+'</div><span class="pill" style="color:'+sc+';background:'+hexA(sc,0.14)+';box-shadow:inset 0 0 0 1px '+hexA(sc,0.4)+'">● '+sl+'</span></div></div><div class="spark" title="24h activity">'+(off?"":d.spark.map(function(v,i){return '<span style="height:'+Math.round(v*100)+'%;background:'+hexA(vc,i>=d.spark.length-4?0.95:0.42)+'"></span>';}).join(''))+'</div>';
+  /* In LIVE mode every value here is what the box reported this poll; the
+     DEMO strings it replaces were the placeholders #38 was filed about. */
+  var vBox=off?"unreachable":"gh ✓ · box ✓", vCron=off?"SILENT":"≤2m ago", vRc=(off||!d.sessions.length)?"—":d.sessions[0].rc;
+  if(LIVE){
+    vBox=(d.gh==="ok"?"gh ✓":"gh ✗")+" · "+(d.vendor==="ok"?AGENT+" ✓":AGENT+" ✗");
+    vCron=d.paused?"PAUSED":(d.cron.age===null||d.cron.age===undefined)?"no ticks yet":(d.cron.ok?fmtDur(d.cron.age)+" ago":"SILENT · "+fmtDur(d.cron.age));
+    if(d.note&&!d.engine)vBox=esc(d.note);
+  }
   document.getElementById("w-vitals").innerHTML='<div class="wt"><span class="dot"></span>VITALS</div><div class="kv">'
-    +'<span class="k">Box</span><span class="v" style="color:'+(off?"#ff5147":"#5fce9b")+'">'+(off?"unreachable":"gh ✓ · box ✓")+'</span>'
-    +'<span class="k">Uptime</span><span class="v">'+(off?"—":d.up.h+"h "+pad2(d.up.m)+"m")+'</span>'
-    +'<span class="k">Cron</span><span class="v" style="color:'+(off?"#ff5147":"#c7d4e4")+'">'+(off?"SILENT":"≤2m ago")+'</span>'
-    +'<span class="k">Repo</span><span class="v">'+d.repo+'</span>'
+    +'<span class="k">Box</span><span class="v" style="color:'+(off?"#ff5147":"#5fce9b")+'">'+vBox+'</span>'
+    +'<span class="k">Uptime</span><span class="v">'+(off&&!LIVE?"—":(d.up.h+"h "+pad2(d.up.m)+"m"))+'</span>'
+    +'<span class="k">Cron</span><span class="v" style="color:'+((off||d.paused)?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
+    +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'
     +'<span class="k">Sessions today</span><span class="v">'+d.today+'</span>'
-    +'<span class="k">Last rc</span><span class="v">'+(off?"—":d.sessions[0].rc)+'</span></div>';
+    +'<span class="k">Last rc</span><span class="v">'+vRc+'</span></div>';
   document.getElementById("w-queue").innerHTML='<div class="wt"><span class="dot"></span>WORK QUEUE · q'+d.queue.length+'</div><div class="qchips">'
-    +(d.queue.length?d.queue.map(function(q){return '<span class="qc" style="border-color:'+REPOC[q.repo]+'">'+q.repo+' #'+q.key+'</span>';}).join(''):'<span style="color:#46566a;font-family:var(--mono);font-size:10px">— empty —</span>')+'</div>'
+    /* Live keys are whatever the duty modules logged — an issue number, but
+       also "ready 2", "resume", "3 mention". Only number them when they are
+       numbers. */
+    +(d.queue.length?d.queue.map(function(q){return '<span class="qc" style="border-color:'+(REPOC[q.repo]||"#3a4a60")+'">'+esc(q.repo)+' '+(/^\d+$/.test(q.key)?"#":"")+esc(q.key)+'</span>';}).join(''):'<span style="color:#46566a;font-family:var(--mono);font-size:10px">— empty —</span>')+'</div>'
     +'<div class="wt" style="margin-top:16px"><span class="dot"></span>ACCESS</div><div class="access">'
-    +'<button class="lbtn'+(LIVE?'':' woff')+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>⎇ &nbsp;Open repo · '+d.repo+'</button><button class="lbtn'+(LIVE?'':' woff')+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>◱ &nbsp;Open box terminal</button><button class="lbtn'+(LIVE?'':' woff')+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>▤ &nbsp;Raw session logs</button><button class="lbtn'+(LIVE?'':' woff')+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>↻ &nbsp;Restart box</button>'
+    +ab("ac-repo","⎇ &nbsp;Open repo · "+esc(d.repo||"—"))+ab("ac-term","◱ &nbsp;Copy box shell command")
+    +ab("ac-logs","▤ &nbsp;Raw session logs")+ab("ac-restart","↻ &nbsp;Restart box")
     +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div></div>';
   var cs='<div class="wt"><span class="dot"></span>CURRENT SESSION</div><div class="cursess">';
-  if(off)cs+='<div class="big" style="color:#ff5147">— SILENT —</div><div class="task">no active session · cron missed</div>';
-  else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+d.kind+' · '+d.cur.key+'</div><div class="pbar"><i></i></div>';
+  if(off)cs+='<div class="big" style="color:#ff5147">— SILENT —</div><div class="task">'+esc(LIVE&&d.note?d.note:"no active session · cron missed")+'</div>';
+  else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+esc(d.kind)+' · '+esc(d.cur.key)+'</div><div class="pbar"><i></i></div>';
   else cs+='<div class="big" style="color:#5fce9b">STANDBY</div><div class="task">idle · awaiting next tick</div>';
   document.getElementById("w-current").innerHTML=cs+'</div>';
   var mk=d.kind==="build"?"Build":d.kind==="review"?"Review":"Triage";
@@ -420,16 +571,21 @@ function populateDash(){
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
   document.getElementById("a-pause").textContent=work?"⏸ Pause":"▶ Resume";
 }
-function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var el=document.getElementById("cur-el");if(el)el.textContent=fmtDur(Math.floor(Date.now()/1000)-dataOf(AGENT,ROOM).cur.start);}
+function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf(AGENT,ROOM);if(!d.cur)return;var el=document.getElementById("cur-el");if(el)el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
 function mrow(k,v){return '<div class="mrow"><span class="mk">'+k+'</span><span class="mvv">'+v+'</span></div>';}
-function buildOps(){var list=document.getElementById("opslist");if(!list)return;var working=ROSTER.filter(function(u){return u.state==="working";});
+/* Access-panel button: live ones are real, demo ones keep the .woff tooltip
+   that says why they do nothing. */
+function ab(id,label){return '<button class="lbtn'+(LIVE?'':' woff')+'" id="'+id+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>'+label+'</button>';}
+function buildOps(){var list=document.getElementById("opslist");if(!list)return;var working=ROSTER.filter(function(u){return u.state==="working"&&dataOf(u.agent,u.room).cur;});
   var cc=document.getElementById("ops-count");if(cc)cc.textContent="· "+working.length;
   list.innerHTML=working.length?working.map(function(u){var d=dataOf(u.agent,u.room),vc=VENDORCOL(u.agent),kc=u.room==="builder"?"#f7bd4e":u.room==="reviewer"?"#5cb4ff":"#c98bff";
-    return '<div class="op"><span class="u" style="color:'+vc+'">'+u.agent+'-'+u.room+'</span><span class="kd" style="color:'+kc+';background:'+hexA(kc,0.13)+'">'+d.kind+'</span><span class="tk">'+d.cur.key+'</span><span class="el" data-s="'+d.cur.start+'">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</span></div>';}).join(''):'<div style="color:#46566a;font-family:var(--mono);font-size:11px;padding:4px 0">— no active sessions —</div>';
+    return '<div class="op"><span class="u" style="color:'+vc+'">'+esc(u.box||(u.agent+"-"+u.room))+'</span><span class="kd" style="color:'+kc+';background:'+hexA(kc,0.13)+'">'+esc(d.kind)+'</span><span class="tk">'+esc(d.cur.key)+'</span><span class="el" data-s="'+d.cur.start+'">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</span></div>';}).join(''):'<div style="color:#46566a;font-family:var(--mono);font-size:11px;padding:4px 0">— no active sessions —</div>';
   var fm=fleetMetric(),mr=document.getElementById("metrows");if(mr)mr.innerHTML=mrow("Longest build",fmtDur(fm.build))+mrow("Longest review",fmtDur(fm.review))+mrow("Longest triage",fmtDur(fm.triage))+mrow("Avg session",fmtDur(fm.avg));}
 function tickOps(){if(VIEW!=="floor")return;var now=Math.floor(Date.now()/1000);[].forEach.call(document.querySelectorAll("#opslist .el"),function(e){e.textContent=fmtDur(now-(+e.dataset.s));});}
-function setAll(mode){ROSTER.forEach(function(u){if(mode==="wake"){if(u.state==="offline")u.state="idle";}else u.state=mode;});buildTiles();buildOps();}
-function tickerEvent(){if(VIEW!=="floor")return;var alive=ROSTER.filter(function(u){return u.state!=="offline";});if(!alive.length)return;var u=alive[ri2(0,alive.length-1)],kind=kindOf(u.room),start=Math.random()<0.5,msg,cls="";
+/* DEMO ticker: synthetic duty.log traffic so the floor reads as a live system
+   when there is no collector. In LIVE mode liveTicker() replaces it with the
+   real SESSION lines each poll brings back. */
+function tickerEvent(){if(VIEW!=="floor"||LIVE)return;var alive=ROSTER.filter(function(u){return u.state!=="offline";});if(!alive.length)return;var u=alive[ri2(0,alive.length-1)],kind=kindOf(u.room),start=Math.random()<0.5,msg,cls="";
   if(start){var key=kind==="triage"?"board":REPONAMES[ri2(0,5)]+"#"+ri2(11,148);msg="SESSION START kind="+kind+" key="+key;}
   else{var rc=Math.random()<0.12?1:0,out=rc?"aborted (budget)":outcomeFor(kind);msg="SESSION END kind="+kind+" rc="+rc+" outcome="+out;cls=rc?"cr":"ok";}
   var s=document.getElementById("stream");if(!s)return;var el=document.createElement("div");el.className="l";var m=msg;if(cls==="ok")m=msg.replace(/(outcome=[^\s]+.*)$/,'<span class="ok">$1</span>');if(cls==="cr")m=msg.replace(/rc=1/,'<span class="cr">rc=1</span>');
@@ -1033,20 +1189,85 @@ var _rm=document.getElementById("rm");if(_rm)_rm.addEventListener("click",functi
 /* ---- command-center wiring ---- */
 buildTiles();buildOps();
 for(var _sd=0;_sd<6;_sd++)tickerEvent();
-/* Operator control actions can't reach the boxes yet (no inbound path / control
-   channel). While LIVE=false they are shown but disabled — see README issues. */
-var CTL_TIP="Requires the operator control channel — not wired yet (see README).";
-if(!LIVE){["g-start","g-stop","g-wake","a-pause","a-restart","c-send"].forEach(function(id){var e=document.getElementById(id);if(e){e.classList.add("woff");e.title=CTL_TIP;}});var cin=document.getElementById("c-in");if(cin){cin.disabled=true;cin.classList.add("woff");cin.placeholder="Messaging pending live control channel…";}}
-document.getElementById("g-start").addEventListener("click",function(){if(!LIVE)return;setAll("working");});
-document.getElementById("g-stop").addEventListener("click",function(){if(!LIVE)return;setAll("idle");});
-document.getElementById("g-wake").addEventListener("click",function(){if(!LIVE)return;setAll("wake");});
+/* Opened as a file there is no collector to act through, so the operator
+   controls stay shown-but-disabled. Serving the page with `crew floor` is what
+   turns them on — goLive() clears every .woff below. */
+var CTL_TIP="Open this page with `crew floor` — a served page drives the boxes from the host.";
+if(!LIVE){["g-start","g-stop","g-wake","a-pause","a-restart","c-send"].forEach(function(id){var e=document.getElementById(id);if(e){e.classList.add("woff");e.title=CTL_TIP;}});var cin=document.getElementById("c-in");if(cin){cin.disabled=true;cin.classList.add("woff");cin.placeholder="Messaging needs a served page — run: crew floor";}}
+/* Fleet-wide actions. "Start/Stop all" are box lifecycle, not a mood: they
+   power the roster's boxes up and down. "Wake silent" resumes a paused crontab
+   and starts a stopped box — it does NOT start a model session, because a box
+   whose cron is dead has no evidence anyone asked for one. */
+document.getElementById("g-start").addEventListener("click",function(){if(!LIVE)return;if(confirm("Start every roster box?"))cmd("start-all");});
+document.getElementById("g-stop").addEventListener("click",function(){if(!LIVE)return;if(confirm("Stop every roster box? Running sessions are lost."))cmd("stop-all");});
+document.getElementById("g-wake").addEventListener("click",function(){if(!LIVE)return;cmd("wake-silent");});
 setInterval(tickOps,1000);setInterval(updateCurrent,1000);
-var _railL=document.querySelector(".rail-l");if(_railL)_railL.addEventListener("click",function(e){var b=e.target.closest(".pw");if(!b||!LIVE)return;STATE=b.dataset.pw==="off"?"offline":"working";refreshChrome();syncToggles();populateDash();});
+/* The access panel is re-rendered on every poll, so its buttons are handled by
+   delegation on the rail rather than bound per render. */
+var _railL=document.querySelector(".rail-l");
+if(_railL)_railL.addEventListener("click",function(e){
+  if(!LIVE)return;
+  var box=boxOf(AGENT,ROOM),d=dataOf(AGENT,ROOM);
+  var pw=e.target.closest(".pw");
+  if(pw){
+    var on=pw.dataset.pw==="on";
+    if(!on&&!confirm("Power off "+box+"? Any running session is lost."))return;
+    cmd(on?"power-on":"power-off",{box:box});return;
+  }
+  var b=e.target.closest(".lbtn");if(!b)return;
+  if(b.id==="ac-restart"){if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});}
+  else if(b.id==="ac-repo"){if(d.repo)window.open("https://github.com/heavy-duty/"+encodeURIComponent(d.repo),"_blank","noopener");}
+  else if(b.id==="ac-term"){
+    /* A browser cannot open a shell into a box. Hand over the command the
+       operator would type instead of pretending otherwise. */
+    var c="box shell "+box;
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(c).then(function(){setStatus("copied: "+c,false);},function(){setStatus(c,false);});
+    else setStatus(c,false);
+  }
+  else if(b.id==="ac-logs")openLogs(box,"");
+});
+/* Raw logs come back as text/plain from the collector, which tails them in the
+   box — the page never gets shell access to a path. */
+function openLogs(box,file){
+  setStatus("fetching logs…",false);
+  fetch(apiURL("/api/logs?box="+encodeURIComponent(box)+(file?"&file="+encodeURIComponent(file):"")))
+    .then(function(r){return r.text();})
+    .then(function(txt){
+      var w=window.open("","_blank","noopener");
+      if(!w){setStatus("popup blocked — allow popups to read logs",true);return;}
+      w.document.write('<title>'+esc(box)+(file?" · "+esc(file):" · duty.log")+'</title><body style="margin:0;background:#0a0f18;color:#c7d4e4"><pre style="white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,monospace;padding:16px">'+esc(txt)+'</pre>');
+      w.document.close();setStatus("logs opened",false);
+    })
+    .catch(function(e){setStatus("logs failed: "+e.message,true);});
+}
 document.getElementById("filters").addEventListener("click",function(e){var b=e.target.closest(".fchip");if(!b)return;var f=b.dataset.f;floorFilter[f]=b.dataset.v;[].forEach.call(this.querySelectorAll('.fchip[data-f="'+f+'"]'),function(x){x.classList.toggle("on",x===b);});});
-document.getElementById("a-pause").addEventListener("click",function(){if(!LIVE)return;STATE=(STATE==="working"?"idle":"working");syncToggles();refreshChrome();populateDash();});
-document.getElementById("a-restart").addEventListener("click",function(){if(!LIVE)return;STATE="working";syncToggles();refreshChrome();populateDash();});
-document.getElementById("a-logs").addEventListener("click",function(){var f=document.getElementById("dfeed");if(f)f.scrollTop=f.scrollHeight;});
-function sendMsg(){if(!LIVE)return;var inp=document.getElementById("c-in"),v=inp.value.trim();if(!v)return;inp.value="";var f=document.getElementById("dfeed");if(f){var el=document.createElement("div");el.className="fev";el.innerHTML='<span class="ago">now</span><span style="color:#5fd6ff">📨 prompt</span><span style="color:#c7d4e4">'+esc(v.slice(0,42))+'</span>';f.insertBefore(el,f.firstChild);}}
+/* Pause/Resume is the box's crontab, not its power: the engine stops being
+   woken, the box stays up and reachable. That is the reversible control an
+   operator actually wants mid-incident. */
+document.getElementById("a-pause").addEventListener("click",function(){
+  if(!LIVE)return;var d=dataOf(AGENT,ROOM);cmd(d.paused?"resume":"pause",{box:boxOf(AGENT,ROOM)});
+});
+document.getElementById("a-restart").addEventListener("click",function(){
+  if(!LIVE)return;var box=boxOf(AGENT,ROOM);
+  if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});
+});
+document.getElementById("a-logs").addEventListener("click",function(){
+  if(LIVE)return openLogs(boxOf(AGENT,ROOM),"");
+  var f=document.getElementById("dfeed");if(f)f.scrollTop=f.scrollHeight;
+});
+/* A message starts a real one-shot session of the box's own vendor CLI, fired
+   from the host. It is refused for an unreachable box — there is nothing to
+   run it. */
+function sendMsg(){
+  if(!LIVE)return;
+  var inp=document.getElementById("c-in"),v=inp.value.trim();if(!v)return;
+  var box=boxOf(AGENT,ROOM);
+  if(STATE==="offline"){setStatus("cannot message "+box+" — it is not running",true);return;}
+  inp.value="";
+  var f=document.getElementById("dfeed");
+  if(f){var el=document.createElement("div");el.className="fev";el.innerHTML='<span class="ago">now</span><span style="color:#5fd6ff">📨 prompt</span><span style="color:#c7d4e4">'+esc(v.slice(0,42))+'</span>';f.insertBefore(el,f.firstChild);}
+  cmd("message",{box:box,prompt:v});
+}
 document.getElementById("c-send").addEventListener("click",sendMsg);
 document.getElementById("c-in").addEventListener("keydown",function(e){if(e.key==="Enter")sendMsg();e.stopPropagation();});
 setInterval(function(){var c=document.getElementById("clock");if(c)c.textContent=clockStr();},1000);
@@ -1064,4 +1285,7 @@ cv.addEventListener("wheel",function(e){if(VIEW!=="floor")return;e.preventDefaul
 document.addEventListener("keydown",function(e){if(e.key==="Escape"&&VIEW==="room")toFloor();});
 document.body.className="floor";
 resize();requestAnimationFrame(frame);
+/* Ask for a snapshot immediately, then keep asking. A failure here is the
+   normal case for `open index.html` and leaves the page in DEMO mode. */
+pollFleet();setInterval(pollFleet,POLL_MS);
 })();

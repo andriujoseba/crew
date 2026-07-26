@@ -117,5 +117,8 @@ body.floor .fleetbar,body.floor .opsbar{display:flex}
 body.room .rail,body.room .console2{display:flex}
 /* ported: demo-data marker + disabled (not-yet-wired) controls */
 .demo-badge{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c79a3a;background:rgba(199,154,58,.1);border:1px solid rgba(199,154,58,.35);border-radius:6px;padding:4px 8px;align-self:center;pointer-events:auto;white-space:nowrap}
+/* Served by `crew floor`: the amber DEMO warning becomes a green LIVE mark. */
+.demo-badge.live{color:#5fce9b;background:rgba(95,206,155,.1);border-color:rgba(95,206,155,.35)}
+.livestat{font-family:var(--mono);font-size:10px;color:#5fce9b;align-self:center;white-space:nowrap;max-width:38vw;overflow:hidden;text-overflow:ellipsis}
 .woff{opacity:.4;cursor:not-allowed}
 input.woff{color:#5a6a80}

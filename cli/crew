@@ -8,6 +8,7 @@
 #   crew up [--dry-run]                       converge: create missing, start stopped, hire, report
 #   crew down                                 stop every roster box
 #   crew status [<box>]                       engine version + duty evidence
+#   crew floor [--port <n>] [--bind <a>]      serve the fleet-floor web console on IP:PORT
 #   crew upgrade <box> | --all                pull crew + re-install in place
 #   crew gold <box>                           snapshot a box as a gold image
 #   crew profiles                             list role and agent profiles
@@ -371,6 +372,76 @@ cmd_gold() {
   echo "gold cut: $name @ $ver"
 }
 
+# crew floor — serve the fleet-floor console from THIS host, on IP:PORT.
+#
+# The floor reads every box over `box exec` and fires operator actions the same
+# way (#38/#39). That is the whole point: the boxes have no inbound network
+# path, but the host they run on has always had a control channel into them —
+# the one `crew status` and `crew hire` already use. Nothing is installed in a
+# box and no box has to reach out.
+#
+# It binds 0.0.0.0 by default because being reachable at IP:PORT is the job, so
+# HTTP Basic auth is NOT optional: a page that can power-cycle boxes and start
+# model sessions is not a page to leave open on a LAN. Without --pass or
+# CREW_FLOOR_PASS one is generated and printed here, once.
+cmd_floor() {
+  need_box
+  local port="${CREW_FLOOR_PORT:-8420}" bind="${CREW_FLOOR_BIND:-0.0.0.0}"
+  local user="${CREW_FLOOR_USER:-operator}" pass="${CREW_FLOOR_PASS:-}"
+  local interval="${CREW_FLOOR_INTERVAL:-60}" gen=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port)     port="${2:?--port needs a number}"; shift 2 ;;
+      --bind)     bind="${2:?--bind needs an address}"; shift 2 ;;
+      --user)     user="${2:?--user needs a name}"; shift 2 ;;
+      --pass)     pass="${2:?--pass needs a value}"; shift 2 ;;
+      --interval) interval="${2:?--interval needs seconds}"; shift 2 ;;
+      --local)    bind=127.0.0.1; shift ;;
+      -h|--help)
+        sed -n '/^# crew floor —/,/^cmd_floor/s/^# \{0,1\}//p' "$0"
+        return 0 ;;
+      *) die "crew floor: unknown option '$1'" ;;
+    esac
+  done
+
+  command -v python3 >/dev/null \
+    || die "python3 is required for 'crew floor' (stdlib only, nothing to install)"
+  [ -f "$CREW_ROOT/fleet-floor/index.html" ] \
+    || die "fleet-floor/index.html is missing — run fleet-floor/build.sh"
+
+  if [ -z "$pass" ]; then
+    pass="$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | cut -c1-20)"
+    gen=1
+  fi
+
+  # The address an operator actually types. A host with several NICs gets them
+  # all rather than a guess.
+  local ips
+  ips="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]' || true)"
+  [ -z "$ips" ] && ips="127.0.0.1"
+
+  echo "crew floor — fleet console"
+  if [ "$bind" = "127.0.0.1" ]; then
+    echo "  url       http://127.0.0.1:$port/   (loopback only)"
+  else
+    while read -r ip; do [ -n "$ip" ] && echo "  url       http://$ip:$port/"; done <<<"$ips"
+  fi
+  echo "  user      $user"
+  if [ "$gen" -eq 1 ]; then
+    echo "  password  $pass   (generated — pass --pass or CREW_FLOOR_PASS to fix it)"
+  else
+    echo "  password  (from --pass/CREW_FLOOR_PASS)"
+  fi
+  echo "  polling   every ${interval}s over 'box exec' — nothing runs inside the boxes"
+  [ "$bind" = "127.0.0.1" ] \
+    || echo "  NOTE      plain HTTP: the password crosses the network in the clear."
+  echo
+
+  CREW_FLOOR_PORT="$port" CREW_FLOOR_BIND="$bind" CREW_FLOOR_USER="$user" \
+  CREW_FLOOR_PASS="$pass" CREW_FLOOR_INTERVAL="$interval" \
+    exec python3 "$CREW_ROOT/fleet-floor/server/floor.py"
+}
+
 cmd_profiles() {
   local f
   echo "roles:"
@@ -395,6 +466,7 @@ case "${1:-}" in
   upgrade)    shift; cmd_upgrade "$@" ;;
   gold)       shift; cmd_gold "$@" ;;
   profiles)   cmd_profiles ;;
-  ""|help|-h|--help) sed -n '2,34s/^# \{0,1\}//p' "$0" ;;
+  floor)      shift; cmd_floor "$@" ;;
+  ""|help|-h|--help) sed -n '2,37s/^# \{0,1\}//p' "$0" ;;
   *) die "unknown command '${1}' — try: crew help" ;;
 esac
