@@ -2,7 +2,8 @@
 # drill/rehearsal-app.sh — rehearse the fleet app (`crew floor`) against the
 # REAL boxes on this host.
 #
-#   drill/rehearsal-app.sh [--boxes "a b c"] [--port <n>] [--allow-control]
+#   drill/rehearsal-app.sh [--boxes "a b c"] [--port <n>] [--no-browser]
+#                          [--allow-control]
 #
 # The other half of this coverage lives in fleet-floor/test/run.sh, which
 # drives the same collector against a stub `box` CLI and can therefore reach
@@ -11,17 +12,17 @@
 # `box exec` into an actual box yields the duty evidence the floor claims to
 # read, and that a control really moves the box.
 #
-# READ-ONLY BY DEFAULT. The control half runs only with --allow-control, and
-# even then only against boxes named with --boxes: every name validated against
-# fleet.roster, reversible verbs only (pause/resume, never power), and repaired
-# on teardown via PAUSED_BY_DRILL on every exit path.
-#
+# READ-ONLY BY DEFAULT, and the browser walk is read-only ALWAYS — even under
+# --allow-control. test/browser.js clicks Pause and Wake for real and picks its
+# targets by screen position, so it can never be bound to --boxes; its
+# `wake-silent` click is fleet-wide and cannot be narrowed at all. Gating it on
+# --allow-control merely moved the hazard onto the opt-in path, where this
+# file's own guarantee — opt-in controls touch ONLY named boxes — was still
+# broken. Controls are exercised solely by the narrowed block below: every name
+# validated against fleet.roster, reversible verbs only, repaired on teardown.
 # A drill that silently power-cycles a working fleet member is worse than no
 # drill (heavy-duty/crew#26: a drill that wrote to real repos because nothing
-# narrowed it). This file previously drove the page-level browser walk by
-# default, which clicked Pause and Wake for real on live members — that walk
-# now lives in its own change, and fleet-floor/test/cli.sh asserts this script
-# drives no browser at all.
+# narrowed it).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +30,7 @@ ROOT="$(dirname "$HERE")"
 
 BOXES=""
 PORT=8792
+BROWSER=1
 ALLOW_CONTROL=0
 USER=drill
 PASSWD="drill-$$-$RANDOM"
@@ -37,8 +39,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --boxes)         BOXES="$2"; shift 2 ;;
     --port)          PORT="$2"; shift 2 ;;
+    --no-browser)    BROWSER=0; shift ;;
     --allow-control) ALLOW_CONTROL=1; shift ;;
-    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--allow-control]"; exit 1 ;;
+    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--no-browser] [--allow-control]"; exit 1 ;;
   esac
 done
 
@@ -249,6 +252,35 @@ else
       ok "teardown $b: left armed"
     fi
   done
+fi
+
+# ---- page ----------------------------------------------------------------
+if [ "$BROWSER" -eq 1 ]; then
+  echo
+  echo "== page"
+  if node -e "require('playwright-core')" >/dev/null 2>&1; then
+    # ALWAYS read-only — including under --allow-control. Gating it on that
+    # flag only moved the hazard: --allow-control without --boxes skips the
+    # narrowed control block below, yet the walk would still pause whichever
+    # unit is on screen, and its `wake-silent` click is FLEET-WIDE, which
+    # --boxes cannot constrain even in principle. So the opt-in path broke this
+    # file's own guarantee that controls touch only named boxes.
+    #
+    # browser.js picks its targets by screen position, not by name; there is no
+    # honest way to bind that to an allowlist. Controls on a real host are
+    # covered by the narrowed block below, which validates each name against
+    # fleet.roster, uses the reversible verbs only, and repairs on teardown.
+    # The browser walk's job here is to prove the page renders REAL data.
+    echo "   (browser walk: read-only — controls are covered by the narrowed block)"
+    if FLOOR_TEST_READONLY=1 \
+       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"; then
+      ok "browser walk against the real fleet (read-only)"
+    else
+      fail "browser walk against the real fleet (read-only)" "see output above"
+    fi
+  else
+    skip "browser walk" "playwright-core not installed (npm i playwright-core)"
+  fi
 fi
 
 echo
