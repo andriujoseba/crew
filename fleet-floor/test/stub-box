@@ -163,13 +163,39 @@ case "${1:-}" in
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
       *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
       *'cat > "$HOME/duty/.floor-prompt'*)
-        # Keyed by the request's own token, so concurrent messages to one box
-        # can be told apart — a single $name.prompt could not show whether each
-        # session received its own bytes.
+        # Hop 1 of a message. Staged into a per-box SANDBOX HOME, not just
+        # recorded: hop 2 below runs the real MESSAGE_SH against that sandbox,
+        # so the prompt has to be where the script will actually look for it.
         _tok="$(printf '%s' "$script" | sed -n 's/.*\.floor-prompt\.\([a-f0-9]*\)".*/\1/p')"
+        _home="$STATEDIR/$name.home"
+        mkdir -p "$_home/duty/logs" "$_home/.local/bin"
+        cp "$stdin_copy" "$_home/duty/.floor-prompt.${_tok:-notoken}"
+        # Kept for the assertions that only care about hop 1.
         cp "$stdin_copy" "$STATEDIR/$name.prompt.${_tok:-notoken}"
         cp "$stdin_copy" "$STATEDIR/$name.prompt" ;;
-      *BOT_CLI_CMD*)                            echo "session started; log /h/duty/logs/op.log" ;;
+      *BOT_CLI_CMD*)
+        # Hop 2: EXECUTE the real MESSAGE_SH rather than pretending to. Echoing
+        # "session started" made the concurrency test vacuous — it proved five
+        # files were staged, and would have passed just as happily if every
+        # detached session then read the wrong one (codex-bot, eaaff99).
+        _home="$STATEDIR/$name.home"
+        mkdir -p "$_home/duty/logs" "$_home/.local/bin"
+        # A stand-in for each vendor CLI, on the PATH the agent profile
+        # prepends. It echoes the prompt it was handed; MESSAGE_SH redirects
+        # that into the per-request log, which is what makes the one-to-one
+        # mapping observable.
+        # Written once, atomically. Truncating these in place raced the
+        # concurrent sessions: one was rewritten WHILE another was executing
+        # it, and that session produced no output at all.
+        for _cli in claude codex grok kimi; do
+          if [ ! -x "$_home/.local/bin/$_cli" ]; then
+            printf '#!/usr/bin/env bash\nprintf "PROMPT=[%%s]\\n" "${*: -1}"\n' > "$_home/.local/bin/.$_cli.$$"
+            chmod +x "$_home/.local/bin/.$_cli.$$"
+            mv -f "$_home/.local/bin/.$_cli.$$" "$_home/.local/bin/$_cli"
+          fi
+        done
+        HOME="$_home" bash -c "$script" < "$stdin_copy"
+        ;;
       *tail*)                                   echo "$(now) duty run start"; echo "stub log for $name" ;;
       *) echo "stub-box: unmatched exec script for $name" >&2; exit 3 ;;
     esac

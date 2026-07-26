@@ -305,6 +305,34 @@ for f in "$FLOOR_STATE"/ff-working.prompt.*; do
   [ -f "$f" ] && grep -q '^PROMPT-' "$f" && CM_FILES=$((CM_FILES + 1))
 done
 t "each message got its own prompt file" 5 "${CM_FILES:-0}"
-CM_UNIQ=$(cat "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null | grep -c '^PROMPT-' || true)
-CM_DISTINCT=$(cat "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null | grep '^PROMPT-' | sort -u | wc -l)
-t "no two messages share bytes" "${CM_UNIQ:-0}" "$CM_DISTINCT"
+
+# The staging check above only proves hop 1 wrote five files. It would pass
+# even if every detached session then read the WRONG one — which is the bug
+# this whole case exists for. So follow it through the REAL MESSAGE_SH, which
+# stub-box now executes against a sandbox HOME with a stand-in vendor CLI, and
+# assert the mapping end to end: five sessions, five logs, each carrying
+# exactly the bytes its own request supplied. (codex-bot, eaaff99.)
+CM_HOME="$FLOOR_STATE/ff-working.home"
+for _ in $(seq 1 40); do
+  [ "$(find "$CM_HOME/duty/logs" -name '*operator-floor*' 2>/dev/null | wc -l)" -ge 5 ] && break
+  sleep 0.5
+done
+CM_LOGS=$(find "$CM_HOME/duty/logs" -name '*operator-floor*' 2>/dev/null | wc -l)
+if [ "$CM_LOGS" -ge 5 ]; then ok "each session wrote its own log ($CM_LOGS)"
+else fail "each session wrote its own log" "found $CM_LOGS, expected >= 5"; fi
+
+# One prompt per log, and the set of prompts delivered must equal the set sent.
+CM_DELIVERED=$(cat "$CM_HOME"/duty/logs/*operator-floor* 2>/dev/null | grep -o 'PROMPT-[0-9]*' | sort -u | wc -l)
+t "five distinct prompts reached the vendor CLI" 5 "$CM_DELIVERED"
+
+# The decisive one: every prompt STAGED is a prompt DELIVERED, and vice versa.
+# If a session read another request's file, these sets diverge.
+# NOT ^-anchored: the staged files have no trailing newline, so `cat` joins
+# them into one line and an anchored match would see only the first.
+CM_SENT=$(cat "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null | grep -o 'PROMPT-[0-9]*' | sort -u)
+CM_GOT=$(cat "$CM_HOME"/duty/logs/*operator-floor* 2>/dev/null | grep -ho 'PROMPT-[0-9]*' | sort -u)
+if [ "$CM_SENT" = "$CM_GOT" ] && [ -n "$CM_GOT" ]; then
+  ok "every session ran exactly its own prompt"
+else
+  fail "every session ran exactly its own prompt" "staged [$(echo "$CM_SENT" | tr '\n' ' ')] delivered [$(echo "$CM_GOT" | tr '\n' ' ')]"
+fi
