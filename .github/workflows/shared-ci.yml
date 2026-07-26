@@ -1,10 +1,10 @@
 name: shared-ci
 on:
   pull_request:
-    paths: ['shared/**', 'cli/**', 'drill/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', '.github/workflows/shared-ci.yml']
   push:
     branches: [main]
-    paths: ['shared/**', 'cli/**', 'drill/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', '.github/workflows/shared-ci.yml']
 
 jobs:
   check:
@@ -14,12 +14,31 @@ jobs:
       - name: bash -n (syntax)
         run: |
           set -e
-          for f in shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh; do
+          for f in shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
+                   fleet-floor/test/run.sh fleet-floor/test/stub-box; do
             bash -n "$f"
           done
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh shared/conf/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
       - name: fixture tests
         run: shared/test/run.sh
+      # The collector is the only Python in the repo, and the only thing that
+      # can power-cycle a box — it does not get to skip the syntax gate.
+      - name: python syntax (collector)
+        run: python3 -m py_compile fleet-floor/server/floor.py
+      # The collector, the box-side scripts (probe.sh and the operator-message
+      # script, executed for real) and the `crew floor` CLI, all against a stub
+      # `box` CLI — no Incus, no fleet, no browser, no wall-clock waits on
+      # rendering. The page-level walk lives in its own PR.
+      - name: fleet-floor tests (collector + box-side + CLI)
+        run: fleet-floor/test/run.sh
+
+      # index.html is committed pre-built; a PR that edits src/ and forgets to
+      # run build.sh would ship a page that does not match its source.
+      - name: index.html is up to date
+        run: |
+          fleet-floor/build.sh
+          git diff --exit-code -- fleet-floor/index.html \
+            || { echo "::error::fleet-floor/index.html is stale — run fleet-floor/build.sh"; exit 1; }

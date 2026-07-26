@@ -1,0 +1,6 @@
+# playwright-core is installed locally to run the page half; it is a developer
+# dependency of the tests, never part of the repo. CI installs it fresh.
+node_modules/
+node_modules
+package-lock.json
+shots/

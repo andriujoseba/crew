@@ -1,0 +1,17 @@
+# Test roster — mirrors fixtures/fleet.txt. Swapped in for fleet.roster while
+# test/run.sh runs, so these tests do not drift when the real roster changes.
+ff-working    claude  builder
+ff-idle       claude  reviewer
+ff-silent     codex   builder
+ff-paused     codex   reviewer
+ff-fresh      grok    reviewer
+ff-failing    kimi    reviewer
+ff-stopped    claude  triage
+ff-unreach    grok    builder
+ff-nothired   kimi    builder
+ff-noauth     codex   triage
+ff-hostile    claude  reviewer
+ff-garbage    grok    triage
+ff-absent     kimi    triage
+ff-wedged     codex   builder
+ff-firstrun   claude  builder

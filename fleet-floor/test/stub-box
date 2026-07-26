@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# stub-box — a fake `box` CLI, so the collector and the page can be tested on
+# any machine, with no Incus, no VMs and no real fleet.
+#
+# The fleet it presents is driven by a fixture file ($FLOOR_FIXTURE), one line
+# per box:
+#
+#     <box-name> <incus-state> <scenario>
+#
+# incus-state is what `box list --json` reports (running / stopped / absent).
+# scenario selects the duty evidence `box exec` answers with — see emit_probe.
+# That is the whole point of the file: a test needs to say "this box is
+# wedged" or "this box was hired 30 seconds ago and has no sessions yet"
+# without owning a box in that state.
+#
+# Every invocation is appended to $FLOOR_CALLS, and lifecycle verbs mutate
+# per-box state under $FLOOR_STATE, so a test can assert what the host
+# actually DID — not merely that a request returned 200.
+set -u
+
+FIXTURE="${FLOOR_FIXTURE:?stub-box needs FLOOR_FIXTURE}"
+CALLS="${FLOOR_CALLS:-/dev/null}"
+STATEDIR="${FLOOR_STATE:-${TMPDIR:-/tmp}/floor-stub-state}"
+mkdir -p "$STATEDIR"
+
+printf '%s\n' "$*" >> "$CALLS"
+
+now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+ago() { date -u -d "@$(( $(date +%s) - ${1:-0} ))" '+%Y-%m-%dT%H:%M:%SZ'; }
+
+rows()         { grep -vE '^[[:space:]]*(#|$)' "$FIXTURE"; }
+fixture_line() { rows | awk -v n="$1" '$1==n {print; exit}'; }
+scenario_of()  { fixture_line "$1" | awk '{print $3}'; }
+# Lifecycle verbs write an override so `box down` is visible to a later
+# `box list`. A control whose effect cannot be observed proves nothing.
+state_of() {
+  local n="$1"
+  if [ -f "$STATEDIR/$n.state" ]; then cat "$STATEDIR/$n.state"
+  else fixture_line "$n" | awk '{print $2}'; fi
+}
+cron_of() {
+  local n="$1"
+  if [ -f "$STATEDIR/$n.cron" ]; then cat "$STATEDIR/$n.cron"
+  elif [ "$(scenario_of "$n")" = "paused" ]; then echo paused
+  else echo running; fi
+}
+
+# emit_probe NAME SCENARIO — the `::key value` record probe.sh would produce.
+emit_probe() {
+  local n="$1" sc="$2" paused=0 cron=1
+  [ "$(cron_of "$n")" = "paused" ] && paused=1
+  [ "$sc" = "nocron" ] && cron=0
+
+  case "$sc" in
+    nothired) printf '::engine \n' ;;
+    *)        printf '::engine 0.4.1\n' ;;
+  esac
+  printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
+  printf '::now %s\n' "$(now)"
+  printf '::gh %s\n'     "$([ "$sc" = noauth ] && echo missing || echo ok)"
+  printf '::vendor %s\n' "$([ "$sc" = noauth ] && echo missing || echo ok)"
+  printf '::cron %s\n'   "$cron"
+  printf '::paused %s\n' "$paused"
+  # Full owner/repo, exactly as repos.txt holds them. Bare names here are
+  # what let a broken repo-link URL pass review-clean for two rounds.
+  printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
+  printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
+  echo '::logstart'
+  case "$sc" in
+    working|paused|noauth)
+      # a closed session, then an open one: state must read WORKING
+      echo "$(ago 900) duty run start"
+      echo "$(ago 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
+      echo "$(ago 890) SESSION START kind=build key=crew#40 timeout=7200s log=/h/duty/logs/a.log"
+      echo "$(ago 600) SESSION END kind=build key=crew#40 rc=0 dur=290s outcome=ok"
+      echo "$(ago 600) duty run end"
+      echo "$(ago 120) duty run start"
+      echo "$(ago 120) attention: heavy-duty/ceremony#12 — launching pickup session"
+      echo "$(ago 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"
+      ;;
+    idle)
+      echo "$(ago 200) duty run start"
+      echo "$(ago 200) heavy-duty/crew: no build duty"
+      echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved"
+      echo "$(ago 190) duty run end"
+      ;;
+    silent)   # cron dead: newest line is older than two tick boundaries
+      echo "$(ago 3000) duty run start"
+      echo "$(ago 2990) duty run end"
+      ;;
+    firstrun)  # its very first session: an open START, no END anywhere yet
+      echo "$(ago 200) duty run start"
+      echo "$(ago 200) heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 190) SESSION START kind=build key=heavy-duty/rig#3 timeout=7200s log=/h/duty/logs/f.log"
+      ;;
+    fresh|nothired|nocron) : ;;              # hired seconds ago: no evidence yet
+    failing)
+      echo "$(ago 300) duty run start"
+      echo "$(ago 295) SESSION END kind=build key=crew#41 rc=1 dur=12s outcome=FAILED"
+      echo "$(ago 290) SESSION END kind=build key=crew#42 rc=124 dur=7200s outcome=TIMEOUT"
+      echo "$(ago 280) duty run end"
+      ;;
+    hostile)  # log content that must never be interpreted as markup
+      echo "$(ago 120) duty run start"
+      echo "$(ago 120) attention: <img src=x onerror=alert(1)>#7 — launching pickup session"
+      echo "$(ago 110) SESSION START kind=build key=<script>alert(2)</script> timeout=60s log=/h/x.log"
+      ;;
+    garbage)  # a truncated / interleaved log the parser must survive
+      echo "not a timestamped line at all"
+      echo "$(ago 100) SESSION END kind=build key=crew#9 rc=notanumber dur=xx outcome="
+      echo "$(ago 90) SESSION START kind= key="
+      printf '\x00\xff binary junk\n'
+      ;;
+    *) echo "$(now) duty run start" ;;
+  esac
+  echo '::logend'
+}
+
+case "${1:-}" in
+  list)
+    printf '['
+    first=1
+    while read -r name _st _sc; do
+      st="$(state_of "$name")"
+      [ "$st" = "absent" ] && continue
+      [ "$first" -eq 1 ] || printf ','
+      first=0
+      printf '{"name":"%s","state":"%s"}' "$name" "$(printf '%s' "$st" | tr '[:lower:]' '[:upper:]')"
+    done < <(rows)
+    printf ']\n'
+    ;;
+
+  exec)
+    name="$2"
+    # The real `box exec` forwards stdin; drain it the same way so a caller
+    # writing a prompt or an agent profile never blocks on a full pipe.
+    #
+    # PER-INVOCATION, not one file per box: the collector probes concurrently,
+    # so a probe (stdin = agent profile) could land between the message hop's
+    # write and its read, and the profile ended up saved as the prompt. That
+    # made `message: prompt delivered via stdin` fail intermittently — a flaky
+    # test in the suite CI gates on.
+    stdin_copy="$STATEDIR/$name.stdin.$$"
+    cat > "$stdin_copy" 2>/dev/null || true
+    trap 'rm -f "$stdin_copy"' EXIT
+    script="${*: -1}"
+    st="$(state_of "$name")"
+    sc="$(scenario_of "$name")"
+
+    [ "$st" = "stopped" ] && { echo "Error: instance is not running" >&2; exit 1; }
+    [ "$sc" = "unreachable" ] && { echo "Error: instance is not running" >&2; exit 1; }
+    [ "$sc" = "wedged" ] && { sleep 120; exit 1; }   # never answers — probe must time out
+
+    # Order is load-bearing; these scripts share substrings:
+    #  - probe.sh also mentions CREW-FLOOR-PAUSED (it counts paused lines)
+    #  - resume's sed and pause's sed both contain "CREW-FLOOR-PAUSED "
+    #  - the message session also reads ".floor-prompt", like the write hop
+    # Each pattern is therefore the narrowest string unique to one of them.
+    # shellcheck disable=SC2016  # the patterns are LITERAL fragments of the
+    # scripts being matched, not strings to expand: $HOME is the box's.
+    case "$script" in
+      *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
+      *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
+      *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
+      *'cat > "$HOME/duty/.floor-prompt'*)
+        # Hop 1 of a message. Staged into a per-box SANDBOX HOME, not just
+        # recorded: hop 2 below runs the real MESSAGE_SH against that sandbox,
+        # so the prompt has to be where the script will actually look for it.
+        _tok="$(printf '%s' "$script" | sed -n 's/.*\.floor-prompt\.\([a-f0-9]*\)".*/\1/p')"
+        _home="$STATEDIR/$name.home"
+        mkdir -p "$_home/duty/logs" "$_home/.local/bin"
+        cp "$stdin_copy" "$_home/duty/.floor-prompt.${_tok:-notoken}"
+        # Kept for the assertions that only care about hop 1.
+        cp "$stdin_copy" "$STATEDIR/$name.prompt.${_tok:-notoken}"
+        cp "$stdin_copy" "$STATEDIR/$name.prompt" ;;
+      *BOT_CLI_CMD*)
+        # Hop 2: EXECUTE the real MESSAGE_SH rather than pretending to. Echoing
+        # "session started" made the concurrency test vacuous — it proved five
+        # files were staged, and would have passed just as happily if every
+        # detached session then read the wrong one (codex-bot, eaaff99).
+        _home="$STATEDIR/$name.home"
+        mkdir -p "$_home/duty/logs" "$_home/.local/bin"
+        # A stand-in for each vendor CLI, on the PATH the agent profile
+        # prepends. It echoes the prompt it was handed; MESSAGE_SH redirects
+        # that into the per-request log, which is what makes the one-to-one
+        # mapping observable.
+        # Written once, atomically. Truncating these in place raced the
+        # concurrent sessions: one was rewritten WHILE another was executing
+        # it, and that session produced no output at all.
+        for _cli in claude codex grok kimi; do
+          if [ ! -x "$_home/.local/bin/$_cli" ]; then
+            printf '#!/usr/bin/env bash\nprintf "PROMPT=[%%s]\\n" "${*: -1}"\n' > "$_home/.local/bin/.$_cli.$$"
+            chmod +x "$_home/.local/bin/.$_cli.$$"
+            mv -f "$_home/.local/bin/.$_cli.$$" "$_home/.local/bin/$_cli"
+          fi
+        done
+        HOME="$_home" bash -c "$script" < "$stdin_copy"
+        ;;
+      *tail*)                                   echo "$(now) duty run start"; echo "stub log for $name" ;;
+      *) echo "stub-box: unmatched exec script for $name" >&2; exit 3 ;;
+    esac
+    ;;
+
+  down)  echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
+  start) echo running > "$STATEDIR/$2.state"; echo "started $2" ;;
+  *) echo "stub-box: unhandled '$*'" >&2; exit 2 ;;
+esac

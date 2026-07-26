@@ -1,0 +1,3 @@
+# py_compile / imports leave these behind; the collector ships as source only.
+__pycache__/
+*.pyc
