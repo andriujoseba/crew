@@ -185,7 +185,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // ---- per-state rendering ------------------------------------------------
   const byState = {};
   for (const v of visible) {
-    if (v.cam) await scrollTo(v.cam);
+    await scrollTo(v.cam);
     await enter(v.i, v.cam);
     const st = (await page.locator('#modelabel').textContent()).trim();
     (byState[st] = byState[st] || []).push({
@@ -211,16 +211,66 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('render: the Pause label names the action the click sends',
        inconsistent.length === 0,
        inconsistent.map((u) => `${u.box} cron=${u.cron} label=${u.pauseLabel}`).join('; '));
-    const pausedOnes = all.filter((u) => /PAUSED/i.test(u.cron));
-    ok('render: a paused box offers Resume',
-       pausedOnes.length > 0 && pausedOnes.every((u) => /Resume/.test(u.pauseLabel)),
-       pausedOnes.map((u) => u.box + '=' + u.pauseLabel).join(',') || 'no paused box in view');
+  }
+
+  /* Pause a box HERE rather than relying on one being paused in the fixture:
+     the collector-side tests run `wake-silent`, which resumes every offline
+     box — including the fixture's paused one — so "is something paused right
+     now" depends on what ran before this. Make the state, assert it, undo it.
+
+     Truth comes from the API (u.paused), not from scraping Cron text out of a
+     CSS grid's textContent — that scrape was brittle and is what put CI red.
+     Both are re-read together each iteration, so there is no window where a
+     label captured earlier is compared against a flag fetched later. */
+  if (LIVE && visible.length) {
+    const victim = visible.find((v) => !/unreach|wedged|absent|stopped/.test(v.got)) || visible[0];
+    const cmd = (action, box) => page.evaluate(async ([a, b]) => {
+      const r = await fetch(location.origin + '/api/command', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: a, box: b }),
+      });
+      return r.status;
+    }, [action, box]);
+
+    const pauseStatus = await cmd('pause', victim.got);
+    ok('ctl: pause command accepted', pauseStatus === 200, `HTTP ${pauseStatus}`);
+
+    let checked = false;
+    for (let i = 0; i < 14; i++) {
+      await page.waitForTimeout(2500);
+      const apiPaused = await page.evaluate(async (b) => {
+        const r = await fetch(location.origin + '/api/fleet');
+        const u = (await r.json()).units.find((x) => x.box === b);
+        return u ? !!u.paused : null;
+      }, victim.got);
+      if (!apiPaused) continue;               // collector has not re-polled yet
+      await scrollTo(victim.cam);
+      const opened = await enter(victim.i, victim.cam);
+      if (opened !== victim.got) {           // clicked the wrong cell — retry
+        if (opened !== null) await leave();
+        continue;
+      }
+      const label = (await page.locator('#a-pause').textContent()).trim();
+      await leave();
+      // The page can lag the collector by one poll; only assert once it agrees.
+      if (/Resume/.test(label)) {
+        ok('render: a paused box offers Resume', true, `${victim.got} label=${label}`);
+        checked = true;
+        break;
+      }
+    }
+    if (!checked) {
+      ok('render: a paused box offers Resume', false,
+         `${victim.got}: page never showed Resume while the API reported paused`);
+    }
+    await cmd('resume', victim.got);
+    await page.waitForTimeout(500);
   }
 
   // ---- hostile log content must stay text ---------------------------------
   const hostile = visible.find((v) => /hostile/.test(v.got));
   if (hostile) {
-    if (hostile.cam) await scrollTo(hostile.cam);
+    await scrollTo(hostile.cam);
     await enter(hostile.i, hostile.cam);
     const injected = await page.evaluate(() => ({
       imgs: document.querySelectorAll('.rail-l img, .rail-r img').length,
@@ -245,7 +295,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const firstRun = visible.find((v) => /firstrun/.test(v.got));
   if (LIVE && firstRun) {
     const before = consoleErrors.length;
-    if (firstRun.cam) await scrollTo(firstRun.cam);
+    await scrollTo(firstRun.cam);
     await enter(firstRun.i, firstRun.cam);
     await page.waitForTimeout(2500);          // let the render loop run frames
     ok('first-run room renders without throwing',
@@ -265,7 +315,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   if (LIVE && visible.length) {
     const withRepo = [];
     for (const v of visible) {
-      if (v.cam) await scrollTo(v.cam);
+      await scrollTo(v.cam);
       await enter(v.i, v.cam);
       // From the button's own text node: scraping the whole panel ran the
       // repo name into the next button's icon and produced "…crew◱".
