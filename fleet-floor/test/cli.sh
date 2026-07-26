@@ -191,6 +191,35 @@ else
   fail "browser.js: control blocks are behind a READONLY guard" "only ${CL_GUARDS:-0} guards found; expected the pause, paused-box and fleet-wide blocks"
 fi
 
+# The read-only receipt check MOVED here from run.sh; it did not evaporate.
+# CI cannot make it honestly (no real fleet), the drill can (real boxes, and a
+# logging wrapper ahead of the real `box` on PATH). A check that leaves CI and
+# lands nowhere is indistinguishable from one that was deleted, so this suite
+# holds the drill to it by name.
+if grep -q 'read-only walk issued no control command' "$CL_DRILL"; then
+  ok "drill: still asserts the read-only walk touched nothing"
+else
+  fail "drill: still asserts the read-only walk touched nothing" \
+       "the check moved out of run.sh and is not in the drill either"
+fi
+# ...and it must be checking CALLS, not the flag it set itself. Without the
+# wrapper on PATH there is no receipt to read, and the assertion above would
+# pass against an empty file forever.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q 'exec "\$REAL_BOX"' "$CL_DRILL" && grep -q 'PATH="\$TMP/bin:\$PATH"' "$CL_DRILL"; then
+  ok "drill: reads the real box calls, not just its own flag"
+else
+  fail "drill: reads the real box calls, not just its own flag" \
+       "no logging wrapper ahead of the real box on PATH"
+fi
+# The companion no-vacuity check goes with it: a read-only mode that did
+# NOTHING would satisfy "issued no control command" perfectly.
+if grep -q 'read-only walk still exercised the real fleet' "$CL_DRILL"; then
+  ok "drill: proves the read-only walk still did something"
+else
+  fail "drill: proves the read-only walk still did something" "the probe-count check is gone"
+fi
+
 # The two invariants below are about the NARROWED control block, not the walk;
 # they hold whether or not this file drives a browser. #40 gained them while the
 # walk was out of tree, so they are carried forward here rather than reverted --

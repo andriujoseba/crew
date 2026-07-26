@@ -122,7 +122,12 @@ Two halves, because neither can do the other's job:
   sources, so a disagreement means one is lying to an operator), and — with
   `--allow-control --boxes <name>` — that pause/resume really moves the box's
   crontab. It is **read-only by default**; a drill that quietly power-cycles a
-  working fleet member is worse than no drill.
+  working fleet member is worse than no drill. It also runs the page walk in
+  read-only mode and **proves** it stayed read-only, by putting a logging
+  wrapper ahead of the real `box` on `PATH` and checking that not one mutating
+  call was made. That assertion lives here rather than in CI because it is
+  about not mutating a *real* fleet, and this is the only place there is one —
+  in CI it cost a second full walk to make a weaker claim.
 
 `test/boxside.sh` is what stops the rest being circular: every other collector
 assertion runs against `stub-box`, which *imitates* what `probe.sh` emits, so a
@@ -141,9 +146,10 @@ the collector under a live page and checks the page admits it rather than
 serving a frozen fleet that looks calm; `test/churn.js` and
 `test/transition.js` cover the other two ways what is on screen stops being
 true — the box leaves the roster, or goes down — while someone is standing in
-its console. When the driver or browser is missing
-these **skip loudly** — a silently-skipped UI test reads exactly like a
-passing one.
+its console. When the driver or browser is missing these **skip loudly** — a
+silently-skipped UI test reads exactly like a passing one — and in CI they do
+not skip at all: `FLOOR_TEST_REQUIRE_BROWSER=1` makes a missing browser a
+failure, because on the merge gate a skip and a pass are indistinguishable.
 
 ## Files
 

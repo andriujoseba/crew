@@ -102,6 +102,29 @@ jqf()    { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/
 echo "== app rehearsal (real boxes, host $(hostname))"
 echo
 
+# ---- a `box` that keeps a receipt ----------------------------------------
+# The collector shells out to `box` by NAME, so putting a logging wrapper ahead
+# of it on PATH records every call it makes without changing a line of the
+# collector. This is what lets the read-only assertion below be made about the
+# REAL fleet rather than about a stub's imitation of one: a flag that suppresses
+# controls is only worth what the calls actually show.
+#
+# Resolve the real binary BEFORE the PATH change, or the wrapper execs itself.
+REAL_BOX="$(command -v box)"
+mkdir -p "$TMP/bin"
+BOX_CALLS="$TMP/box-calls.log"
+: > "$BOX_CALLS"
+# Same one-line-per-invocation shape as the stub's log, so the same patterns
+# read both. The wrapper must be transparent: it logs, then hands over with
+# exec, preserving argv, stdin, stdout and the exit status exactly.
+cat > "$TMP/bin/box" <<SHIM
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BOX_CALLS"
+exec "$REAL_BOX" "\$@"
+SHIM
+chmod +x "$TMP/bin/box"
+export PATH="$TMP/bin:$PATH"
+
 # ---- collector -----------------------------------------------------------
 CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$PORT" \
 CREW_FLOOR_BIND=127.0.0.1 CREW_FLOOR_INTERVAL=3600 \
@@ -272,11 +295,44 @@ if [ "$BROWSER" -eq 1 ]; then
     # fleet.roster, uses the reversible verbs only, and repairs on teardown.
     # The browser walk's job here is to prove the page renders REAL data.
     echo "   (browser walk: read-only — controls are covered by the narrowed block)"
+    # Slice the receipt from here, so the drill's own control block above is not
+    # counted against the walk.
+    RO_FROM=$(( $(wc -l < "$BOX_CALLS") + 1 ))
     if FLOOR_TEST_READONLY=1 \
        node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"; then
       ok "browser walk against the real fleet (read-only)"
     else
       fail "browser walk against the real fleet (read-only)" "see output above"
+    fi
+
+    # ---- the read-only walk must have touched NOTHING --------------------
+    # This assertion used to live in fleet-floor/test/run.sh, where it cost CI
+    # a second full walk (~3 min) to prove a property about a fleet CI does not
+    # have. It belongs here: the invariant is "the drill does not mutate a real
+    # fleet", and this is the only place there is a real fleet to not mutate.
+    #
+    # kimi-bot found that this script once ran the walk unguarded, so a
+    # "read-only" drill was pausing live members and starting stopped ones. The
+    # mode exists now; what makes it trustworthy is reading the calls, not the
+    # flag. A flag I merely believe in is exactly how that bug shipped.
+    RO_NEW="$TMP/ro-calls.log"
+    tail -n "+$RO_FROM" "$BOX_CALLS" > "$RO_NEW" 2>/dev/null || : > "$RO_NEW"
+    # Nothing that changes a box may appear: no lifecycle verb, no crontab edit,
+    # no session launch. `grep -c` PRINTS 0 and EXITS 1 on no match, so `|| echo
+    # 0` would append a second line and break the compare; `|| true` is correct.
+    RO_PAT='^(down|start) |\| crontab -|BOT_CLI_CMD|floor-prompt'
+    RO_BAD=$(grep -cE "$RO_PAT" "$RO_NEW" || true)
+    t "read-only walk issued no control command to a real box" 0 "${RO_BAD:-0}"
+    if [ "${RO_BAD:-0}" -ne 0 ]; then
+      echo "  offending calls:"; grep -nE "$RO_PAT" "$RO_NEW" | head -5
+    fi
+    # ...and it must still have done its job. Without this, a read-only mode
+    # that silently did NOTHING would pass the check above perfectly.
+    RO_PROBES=$(grep -c 'logstart' "$RO_NEW" || true)
+    if [ "${RO_PROBES:-0}" -gt 0 ]; then
+      ok "read-only walk still exercised the real fleet (${RO_PROBES} probes)"
+    else
+      fail "read-only walk still exercised the real fleet" "no probes seen — the walk did nothing"
     fi
   else
     skip "browser walk" "playwright-core not installed (npm i playwright-core)"

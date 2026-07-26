@@ -234,42 +234,17 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
       fail "roster churn" "see output above"
     fi
 
-    # The drill's DEFAULT path against a real fleet. kimi-bot found that
-    # rehearsal-app.sh ran this walk unguarded, so a "read-only" drill was
-    # pausing live fleet members and starting stopped ones. The mode exists
-    # now; this proves it by watching what the stub `box` was actually asked
-    # to do — a flag I merely believe in is how that bug shipped.
-    echo
-    echo "== read-only browser walk touches nothing"
-    # The stub is invoked by the COLLECTOR, not by node, so it logs to the
-    # collector's $FLOOR_CALLS — setting that on the node command would do
-    # nothing. Watch the existing log across the walk instead.
-    RO_FROM=$(( $(wc -l < "$FLOOR_CALLS") + 1 ))
-    if FLOOR_TEST_READONLY=1 \
-       node "$HERE/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots-ro" "$USER" "$PASSWD" > "$TMP/ro.out" 2>&1; then
-      ok "read-only walk completes"
-    else
-      fail "read-only walk completes" "$(grep -m2 FAIL "$TMP/ro.out" | tr '\n' ' ')"
-    fi
-    RO_NEW="$TMP/ro-calls.log"
-    tail -n "+$RO_FROM" "$FLOOR_CALLS" > "$RO_NEW" 2>/dev/null || : > "$RO_NEW"
-    # Nothing that changes a box may appear: no lifecycle verb, no crontab
-    # edit, no session launch. `grep -c` PRINTS 0 and EXITS 1 on no match, so
-    # `|| echo 0` would append a second line and break the compare.
-    RO_PAT='^(down|start) |\| crontab -|BOT_CLI_CMD|floor-prompt'
-    RO_BAD=$(grep -cE "$RO_PAT" "$RO_NEW" || true)
-    t "read-only walk issues no control commands" 0 "${RO_BAD:-0}"
-    if [ "${RO_BAD:-0}" -ne 0 ]; then
-      echo "  offending calls:"; grep -nE "$RO_PAT" "$RO_NEW" | head -5
-    fi
-    # ...and it must still have done its job. Without this, a read-only mode
-    # that silently did NOTHING would pass the check above perfectly.
-    RO_PROBES=$(grep -c 'logstart' "$RO_NEW" || true)
-    if [ "${RO_PROBES:-0}" -gt 0 ]; then
-      ok "read-only walk still exercised the fleet (${RO_PROBES} probes)"
-    else
-      fail "read-only walk still exercised the fleet" "no probes seen — the walk did nothing"
-    fi
+    # The read-only walk is NOT here. It used to be: a second full walk with
+    # FLOOR_TEST_READONLY=1, watching the stub's call log to prove no control
+    # command was issued. It cost ~3 minutes of a 10-minute CI to assert a
+    # property about a fleet CI does not have, re-checking navigation, identity
+    # and XSS that the walk above checked two minutes earlier.
+    #
+    # It moved to drill/rehearsal-app.sh, which has real boxes and wraps the
+    # real `box` CLI to read the calls. CI tests the plumbing; the drill is what
+    # gets to the metal. cli.sh asserts the drill still carries it, so this is a
+    # move and not a deletion — a check that leaves CI and lands nowhere is the
+    # same as a check that was deleted, and reads better in a commit message.
 
     # A box changing STATE under an open console. Shares the fast-polling
     # collector above: every other page test enters a console and leaves within
