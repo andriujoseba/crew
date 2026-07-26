@@ -12,6 +12,10 @@
 #
 # The browser half needs playwright-core; it is SKIPPED, loudly, when absent,
 # because a silently-skipped UI test reads exactly like a passing one.
+# The directive below makes `source "$HERE/cases.sh"` resolve for shellcheck,
+# so it can see that the helpers defined here ARE called (from cases.sh) and
+# stops reporting every one of them as unreachable.
+# shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -48,6 +52,8 @@ ln -sf "$HERE/stub-box" "$TMP/bin/box"
 # real roster clobbered in the working tree, one `git add -A` away from being
 # committed.
 export CREW_FLOOR_ROSTER="$HERE/fixtures/roster.txt"
+# shellcheck disable=SC2317  # invoked by the traps below, which shellcheck
+# does not treat as a call site.
 cleanup() {
   [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null
   [ -n "${SRV2:-}" ] && kill "$SRV2" 2>/dev/null
@@ -94,7 +100,7 @@ for _ in $(seq 1 80); do
 done
 
 export PORT USER PASSWD TMP
-# shellcheck source=/dev/null
+# shellcheck source=cases.sh
 source "$HERE/cases.sh"
 
 # ---- browser -------------------------------------------------------------

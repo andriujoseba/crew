@@ -51,8 +51,19 @@ command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
 
 TMP="$(mktemp -d)"
 SRV=""
-cleanup() { [ -n "$SRV" ] && kill "$SRV" 2>/dev/null; rm -rf "$TMP"; }
-trap cleanup EXIT INT TERM
+# shellcheck disable=SC2317  # invoked by the traps below, which shellcheck
+# does not treat as a call site.
+cleanup() {
+  local rc=$?
+  if [ -n "$SRV" ]; then
+    kill "$SRV" 2>/dev/null
+  fi
+  rm -rf -- "$TMP"
+  return "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Two branches, not an unquoted ${3:+...} expansion — that would split the
 # header on spaces and send garbage.
