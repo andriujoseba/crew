@@ -129,6 +129,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     };
   };
   const onScreen = (i, cam) => { const { x } = cellXY(i, cam); return x > 10 && x < geom.vw - 10; };
+  // Slot geometry, shared by the scan and by re-entry's search.
+  const slotX = (col) => geom.MARGINL + col * (geom.CELLW + geom.GAPX) + geom.CELLW / 2;
+  const maxColIdx = Math.max(0, Math.floor((geom.vw - geom.MARGINL) / (geom.CELLW + geom.GAPX)));
+  const stepPx = Math.max(200, geom.vw - geom.CELLW - 40);
   // The camera eases toward its target, so scrolling needs a settle wait.
   // Absolute positioning: rewind to 0 first, then wheel forward by `cam`, so
   // the camera lands somewhere known rather than "as far as it got".
@@ -158,18 +162,43 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     return false;
   };
   // Re-open a unit recorded by the scan, by the position it was found at.
-  const enterAt = async (v) => {
-    await scrollTo(v.cam);
-    await page.mouse.click(v.x, v.y);
+  /* Re-entry SEARCHES for the box; it does not replay a position.
+     Saved (x, y, cam) cannot reliably reproduce a unit: scrollTo eases and
+     clamps, so the same coordinates under a slightly different camera open a
+     neighbour. Verifying that (the previous fix) correctly turned a silent
+     mis-assertion into an honest failure — `expected ff-firstrun, got null` —
+     but the replay itself is the unsound part. Try the saved spot first as a
+     fast path, then fall back to scanning slots until the wanted box opens. */
+  const openHere = async (x, y) => {
+    await page.mouse.click(x, y);
     const opened = await settle(async () =>
       (await page.locator('body.room').count()) === 1
-      && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), 5000);
+      && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), 4000);
     if (!opened) return null;
     return (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
   };
-  const leave = async () => {
-    await page.keyboard.press('Escape');
-    await settle(async () => (await page.locator('body.floor').count()) === 1, 4000);
+  const enterAt = async (v) => {
+    // fast path: where we found it last time
+    await scrollTo(v.cam);
+    let got = await openHere(v.x, v.y);
+    if (got === v.got) return got;
+    if (got !== null) await leave();
+    // search: every slot at every camera step until the wanted box appears
+    for (let cam = 0; ; cam = Math.min(cam + stepPx, camMax)) {
+      await scrollTo(cam);
+      for (let col = 0; col <= maxColIdx; col++) {
+        const x = slotX(col);
+        if (x < 10 || x > geom.vw - 10) continue;
+        for (let row = 0; row < 2; row++) {
+          const y = geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2;
+          got = await openHere(x, y);
+          if (got === v.got) { v.x = x; v.y = y; v.cam = cam; return got; }
+          if (got !== null) await leave();
+        }
+      }
+      if (cam >= camMax) break;
+    }
+    return null;
   };
 
   // ---- identity: cell i must open box i, and its controls must target it ---
@@ -195,14 +224,12 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const visible = [];
   const seenBox = new Map();          // box -> first {i-ish slot} we saw it at
   const orderViolations = [];
-  const slotX = (col) => geom.MARGINL + col * (geom.CELLW + geom.GAPX) + geom.CELLW / 2;
-  const maxCol = Math.max(0, Math.floor((geom.vw - geom.MARGINL) / (geom.CELLW + geom.GAPX)));
-  const step = Math.max(200, geom.vw - geom.CELLW - 40);
 
-  for (let cam = 0; ; cam = Math.min(cam + step, camMax)) {
+
+  for (let cam = 0; ; cam = Math.min(cam + stepPx, camMax)) {
     await scrollTo(cam);
     const readHere = [];              // boxes read at this scroll position, in layout order
-    for (let col = 0; col <= maxCol; col++) {
+    for (let col = 0; col <= maxColIdx; col++) {
       const x = slotX(col);
       if (x < 10 || x > geom.vw - 10) continue;
       for (let row = 0; row < 2; row++) {
@@ -239,7 +266,6 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
 
   ok('nav: layout order follows roster order', orderViolations.length === 0,
      orderViolations.slice(0, 3).join('; '));
-  ok('nav: no slot resolved to two different boxes', true, `${seenBox.size} distinct boxes read`);
 
   ok('nav: cells open', visible.length > 0, visible.length + ' distinct boxes entered');
   // Scrolling is what makes this meaningful: without it the tail of the fleet
@@ -362,7 +388,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       await leave();
       // The page can lag the collector by one poll; only assert once it agrees.
       if (/Resume/.test(label)) {
-        ok('render: a paused box offers Resume', true, `${victim.got} label=${label}`);
+        ok('render: a paused box offers Resume', /Resume/.test(label),
+           `${victim.got} label=${label}`);
         checked = true;
         break;
       }
@@ -377,8 +404,16 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
 
   // ---- hostile log content must stay text ---------------------------------
   const hostile = visible.find((v) => /hostile/.test(v.got));
+  if (LIVE && !hostile) {
+    // Silent coverage loss is worse than a loud failure: without this, the XSS
+    // checks below simply would not run and the suite would still be green.
+    ok('xss: the hostile-log box was reachable', false,
+       `no unit matching /hostile/ among ${visible.length} reached boxes`);
+  }
   if (hostile) {
-    await enterAt(hostile);
+    if ((await enterAt(hostile)) !== hostile.got) {
+      ok('xss: hostile console re-opened', false, `could not re-open ${hostile.got}`);
+    } else {
     const injected = await page.evaluate(() => ({
       imgs: document.querySelectorAll('.rail-l img, .rail-r img').length,
       scripts: document.querySelectorAll('.rail-l script, .rail-r script').length,
@@ -392,6 +427,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        (injected.queueText + ' | ' + injected.curText).slice(0, 120));
     await shot('06-hostile-escaped');
     await leave();
+    }
   }
 
   /* A box inside its FIRST session — cur set, sessions empty — is ordinary
@@ -400,9 +436,17 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      room threw inside the render loop, every frame. Three reviewers found it;
      136 checks did not, because no fixture could reach the state. */
   const firstRun = visible.find((v) => /firstrun/.test(v.got));
+  if (LIVE && !firstRun) {
+    ok('first-run: the first-session box was reachable', false,
+       `no unit matching /firstrun/ among ${visible.length} reached boxes`);
+  }
   if (LIVE && firstRun) {
     const before = consoleErrors.length;
-    await enterAt(firstRun);
+    const frOpened = await enterAt(firstRun);
+    ok('first-run console re-opened', frOpened === firstRun.got,
+       `expected ${firstRun.got}, got ${frOpened}`);
+    if (frOpened !== firstRun.got) { await leave(); }
+    else {
     await page.waitForTimeout(2500);          // let the render loop run frames
     ok('first-run room renders without throwing',
        consoleErrors.length === before,
@@ -412,6 +456,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        (await page.locator('#w-current').textContent()).replace(/\s+/g, ' ').slice(0, 60));
     await shot('07-first-run-room');
     await leave();
+    }
   }
 
   /* Live repo strings are full owner/repo. The link used to prefix the org
@@ -421,8 +466,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   if (LIVE && visible.length) {
     const withRepo = [];
     for (const v of visible) {
-      await scrollTo(v.cam);
-      await enterAt(v);
+      // Skip a unit we could not re-open rather than reading whichever console
+      // happened to be on screen — that is exactly how the wrong repo string
+      // would get asserted as correct.
+      if ((await enterAt(v)) !== v.got) continue;
       // From the button's own text node: scraping the whole panel ran the
       // repo name into the next button's icon and produced "…crew◱".
       const repo = (await page.locator('#ac-repo').textContent()).match(/Open repo · (.+)$/);
@@ -448,8 +495,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
 
   // ---- log overlay / demo lockout -----------------------------------------
   if (visible.length) {
-    await enterAt(visible[0]);
-    if (LIVE) {
+    const l0 = await enterAt(visible[0]);
+    ok('logs: console re-opened for the overlay check', l0 === visible[0].got,
+       `expected ${visible[0].got}, got ${l0}`);
+    if (LIVE && l0 === visible[0].got) {
       await page.click('#ac-logs');
       await settle(async () => await page.locator('#logov').isVisible().catch(() => false), 8000);
       const shown = await page.locator('#logov').isVisible().catch(() => false);
