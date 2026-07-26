@@ -655,7 +655,10 @@ def do_command(fleet, body):
     else:
         return 400, {"ok": False, "error": "unknown action %r" % action}
 
-    ok = all(r["ok"] for r in results) if results else False
+    # An action with nothing to do is not a failure: `wake-silent` on a fleet
+    # with no silent boxes had `results == []`, which read as ok=False and 500.
+    # Only `message`-class actions, which must produce a result, stay strict.
+    ok = all(r["ok"] for r in results)
     # A control action changes exactly what the page is displaying, so refresh
     # rather than leaving the operator to guess whether it took. Coalesced, so
     # a burst of clicks cannot become a burst of fleet-wide probe storms.

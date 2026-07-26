@@ -14,3 +14,4 @@ ff-hostile    claude  reviewer
 ff-garbage    grok    triage
 ff-absent     kimi    triage
 ff-wedged     codex   builder
+ff-firstrun   claude  builder

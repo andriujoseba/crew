@@ -627,6 +627,16 @@ var LIVEMETA=null, POLL_MS=15000, seenSess={};
    relative fetch inherits them — which the browser then refuses to construct a
    Request from, silently stranding the page in DEMO. location.origin drops
    them. */
+/* Live repo strings are FULL owner/repo names — repos.txt holds
+   "heavy-duty/ceremony", and the duty log's `attention: $repo#$num` carries the
+   owner too. Prefixing the org unconditionally produced
+   github.com/heavy-duty/heavy-duty%2Fcrew on every live unit. Encode per path
+   segment so a slash stays a slash. */
+function repoURL(repo){
+  var parts=String(repo).split("/").filter(Boolean).map(encodeURIComponent);
+  if(parts.length<2)parts=["heavy-duty"].concat(parts);
+  return "https://github.com/"+parts.join("/");
+}
 function apiURL(path){return (location.origin&&location.origin!=="null"?location.origin:"")+path;}
 function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
   if(r.status===401){throw new Error("unauthorized");}
@@ -843,7 +853,9 @@ function populateDash(){
   document.getElementById("w-sessions").innerHTML=sh+'</div>';
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
-  document.getElementById("a-pause").textContent=work?"⏸ Pause":"▶ Resume";
+  /* Follows d.paused, not the working state: an idle but unpaused box was
+     offering "Resume" while its click correctly sent `pause`. */
+  document.getElementById("a-pause").textContent=(LIVE&&d.paused)||(!LIVE&&!work)?"▶ Resume":"⏸ Pause";
 }
 function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf(BOX,ROOM);if(!d.cur)return;var el=document.getElementById("cur-el");if(el)el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
 function mrow(k,v){return '<div class="mrow"><span class="mk">'+k+'</span><span class="mvv">'+v+'</span></div>';}
@@ -1411,7 +1423,7 @@ function drawHolo(t,st){
     c.font="12px ui-monospace,monospace";
     var dd=dataOf(BOX,ROOM),up=dd.up.h+"h "+(dd.up.m<10?"0":"")+dd.up.m+"m",ql="q"+dd.queue.length+" · "+dd.repo;
     var rows=offl?[["LINK","— — —","#ff6a62"],["CRON","SILENT","#ff6a62"],["LAST","tick missed",""],["SINCE","00:04:12",""]]
-      :st==="working"?[["STATE",ROOM==="builder"?"BUILDING":ROOM==="reviewer"?"REVIEWING":"DISPATCHING","#f7bd4e"],["UPTIME",up,""],["QUEUE",ql,""],["LAST",dd.sessions[0].out,""]]
+      :st==="working"?[["STATE",ROOM==="builder"?"BUILDING":ROOM==="reviewer"?"REVIEWING":"DISPATCHING","#f7bd4e"],["UPTIME",up,""],["QUEUE",ql,""],["LAST",(dd.sessions.length?dd.sessions[0].out:(dd.cur?dd.cur.key:"—")),""]]
       :[["STATE","STANDBY","#5fce9b"],["UPTIME",up,""],["QUEUE",ql,""],["LAST","idle · awaiting",""]];
     rows.forEach(function(rw,i){var ry=y+70+i*24;c.fillStyle=rgba(C0[0],C0[1],C0[2],0.45);c.fillText(rw[0],x+14,ry);c.fillStyle=rw[2]||rgba(C0[0],C0[1],C0[2],0.9);c.fillText(rw[1],x+96,ry);});
     c.strokeStyle=rgba(C0[0],C0[1],C0[2],0.8);c.lineWidth=1.4;c.beginPath();
@@ -1490,7 +1502,7 @@ if(_railL)_railL.addEventListener("click",function(e){
   }
   var b=e.target.closest(".lbtn");if(!b)return;
   if(b.id==="ac-restart"){if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});}
-  else if(b.id==="ac-repo"){if(d.repo)window.open("https://github.com/heavy-duty/"+encodeURIComponent(d.repo),"_blank","noopener");}
+  else if(b.id==="ac-repo"){if(d.repo)window.open(repoURL(d.repo),"_blank","noopener");}
   else if(b.id==="ac-term"){
     /* A browser cannot open a shell into a box. Hand over the command the
        operator would type instead of pretending otherwise. */

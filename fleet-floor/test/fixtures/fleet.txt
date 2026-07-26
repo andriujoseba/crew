@@ -17,3 +17,4 @@ ff-hostile     running  hostile
 ff-garbage     running  garbage
 ff-absent      absent   working
 ff-wedged      running  wedged
+ff-firstrun    running  firstrun

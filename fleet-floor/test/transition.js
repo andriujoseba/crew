@@ -134,8 +134,18 @@ const ok = (name, cond, detail = '') => {
      `state=${after.state} current=${after.current}`);
   ok('transition: it says WHY', /stopped|unreachable|crew up|paused|cron/i.test(after.current + ' ' + after.vitals),
      after.current);
-  // Pause is meaningless on a box that is off; the control must flip with it.
-  ok('transition: the Pause control flips to Resume', /Resume/.test(after.pause), after.pause);
+  /* The Pause label names the ACTION the click will send, not the box's
+     liveness: a powered-off box is not paused, so the click still sends
+     `pause` and the label stays "Pause". Asserting "Resume" here was encoding
+     the very bug the review panel flagged. */
+  const isPaused = await page.evaluate(async (name) => {
+    const r = await fetch(location.origin + '/api/fleet');
+    const u = (await r.json()).units.find((x) => x.box === name);
+    return u ? !!u.paused : null;
+  }, target);
+  ok('transition: the Pause label still names its action',
+     /Resume/.test(after.pause) === !!isPaused,
+     `paused=${isPaused} label=${after.pause}`);
   ok('transition: no page errors during the transition', pageErrors.length === 0,
      pageErrors.slice(0, 2).join(' | '));
 

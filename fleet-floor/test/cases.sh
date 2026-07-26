@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  14 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  15 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -45,7 +45,7 @@ t "sessions: rc carried"      0    "$(uf ff-working "u['sessions'][0]['rc']")"
 t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
-t "queue: repo parsed"        ceremony "$(uf ff-working "u['queue'][0]['repo']")"
+t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"
 t "metrics: success%"         100  "$(uf ff-working "u['success']")"
 t "metrics: failing box"      0    "$(uf ff-failing "u['success']")"
 t "spark: always 22 buckets"  22   "$(uf ff-working "len(u['spark'])")"
@@ -130,7 +130,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 14 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 15 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -204,7 +204,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 14 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 15 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -228,3 +228,33 @@ all(set(('box','agent','room','state','engine','gh','vendor','queue','sessions',
          'today','paused','cron','note')) <= set(u) for u in d['units'])")"
 t "fleet: cron sub-shape complete" True "$(body GET /api/fleet | jqf "
 all(set(('ok','last','age')) <= set(u['cron']) for u in d['units'])")"
+
+# ===========================================================================
+# ROUND 10 — the two bugs the review panel found that 136 checks did not, and
+# the fixture flaw that let them through. Both trace to ONE root cause: the
+# stub emitted BARE repo names ("ceremony") where repos.txt and duty.log both
+# carry a full owner/repo ("heavy-duty/ceremony"), so the assertions were
+# written against data production never produces.
+# ===========================================================================
+echo "== real data shapes"
+t "repos are full owner/repo" True "$(uf ff-working "all('/' in r for r in u['repos'])")"
+t "queue repo is a full owner/repo" True "$(uf ff-working "'/' in u['queue'][0]['repo']")"
+t "unit repo is a full owner/repo"  True "$(uf ff-working "'/' in u['repo']")"
+
+# A box inside its FIRST session: cur is set, sessions is empty. floor.py sets
+# state=working whenever cur exists, so this is ordinary live telemetry — and
+# it is the state that crashed the room's diagnostic hologram.
+t "first-run box: is working"        working "$(uf ff-firstrun "u['state']")"
+t "first-run box: has an open session" True  "$(uf ff-firstrun "u['cur'] is not None")"
+t "first-run box: has NO history"       0    "$(uf ff-firstrun "len(u['sessions'])")"
+
+# `wake-silent` on a fleet with nothing silent must not read as a failure.
+# Wake everything first, so the second call genuinely has nothing to do.
+status POST /api/command '{"action":"start-all"}' >/dev/null
+WS_BODY="$(body POST /api/command '{"action":"wake-silent"}')"
+WS_CODE="$(status POST /api/command '{"action":"wake-silent"}')"
+if [ "$WS_CODE" = "200" ] || printf '%s' "$WS_BODY" | grep -q '"results"'; then
+  ok "wake-silent always reports per-box results"
+else
+  fail "wake-silent always reports per-box results" "$WS_CODE $WS_BODY"
+fi

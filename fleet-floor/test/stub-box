@@ -61,30 +61,37 @@ emit_probe() {
   printf '::vendor %s\n' "$([ "$sc" = noauth ] && echo missing || echo ok)"
   printf '::cron %s\n'   "$cron"
   printf '::paused %s\n' "$paused"
-  printf '::repos crew box ceremony\n'
+  # Full owner/repo, exactly as repos.txt holds them. Bare names here are
+  # what let a broken repo-link URL pass review-clean for two rounds.
+  printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
   printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
   echo '::logstart'
   case "$sc" in
     working|paused|noauth)
       # a closed session, then an open one: state must read WORKING
       echo "$(ago 900) duty run start"
-      echo "$(ago 900) crew: build duty (ready unclaimed=2, whole rounds owed=0)"
+      echo "$(ago 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
       echo "$(ago 890) SESSION START kind=build key=crew#40 timeout=7200s log=/h/duty/logs/a.log"
       echo "$(ago 600) SESSION END kind=build key=crew#40 rc=0 dur=290s outcome=ok"
       echo "$(ago 600) duty run end"
       echo "$(ago 120) duty run start"
-      echo "$(ago 120) attention: ceremony#12 — launching pickup session"
+      echo "$(ago 120) attention: heavy-duty/ceremony#12 — launching pickup session"
       echo "$(ago 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"
       ;;
     idle)
       echo "$(ago 200) duty run start"
-      echo "$(ago 200) crew: no build duty"
+      echo "$(ago 200) heavy-duty/crew: no build duty"
       echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved"
       echo "$(ago 190) duty run end"
       ;;
     silent)   # cron dead: newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"
+      ;;
+    firstrun)  # its very first session: an open START, no END anywhere yet
+      echo "$(ago 200) duty run start"
+      echo "$(ago 200) heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 190) SESSION START kind=build key=heavy-duty/rig#3 timeout=7200s log=/h/duty/logs/f.log"
       ;;
     fresh|nothired|nocron) : ;;              # hired seconds ago: no evidence yet
     failing)

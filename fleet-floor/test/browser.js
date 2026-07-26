@@ -63,6 +63,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // control actually addressed.
   await page.evaluate(() => {
     window.__sent = [];
+    window.__opened = [];
+    const _open = window.open;
+    window.open = function (u) { window.__opened.push(u); return null; };
     const f = window.fetch;
     window.fetch = function (u, o) {
       if (o && o.method === 'POST') { try { window.__sent.push(JSON.parse(o.body)); } catch (e) {} }
@@ -165,6 +168,17 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const s = await lastSent();
     eq('identity: pause targets the open box', target.expect, s.box);
     ok('ctl: pause posts pause/resume', /^(pause|resume)$/.test(s.action || ''), s.action);
+    // Undo it: this is a real pause on a real box, and leaving it paused
+    // changes the fleet the later tests in this suite walk into.
+    if (s.action === 'pause') {
+      await page.evaluate(async (b) => {
+        await fetch(location.origin + '/api/command', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'resume', box: b }),
+        });
+      }, target.expect);
+      await page.waitForTimeout(500);
+    }
     await leave();
   }
 
@@ -179,6 +193,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       current: (await page.locator('#w-current').textContent()).replace(/\s+/g, ' '),
       vitals: (await page.locator('#w-vitals').textContent()).replace(/\s+/g, ' '),
       pauseLabel: (await page.locator('#a-pause').textContent()).trim(),
+      cron: ((await page.locator('#w-vitals').textContent()).match(/Cron\s*(\S+)/) || [])[1] || '',
     });
     await leave();
   }
@@ -187,9 +202,20 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   ok('render: down boxes state a reason',
      down.length > 0 && down.every((u) => /unreachable|stopped|SILENT|paused|not hired|not created|cron/i.test(u.current)),
      down.map((u) => u.box + ': ' + u.current.slice(0, 50)).join(' | '));
-  ok('render: down boxes offer Resume',
-     down.length > 0 && down.every((u) => /Resume/.test(u.pauseLabel)),
-     down.map((u) => u.box + '=' + u.pauseLabel).join(','));
+  if (LIVE) {
+    // Self-consistency within one render: the vitals say whether the box is
+    // paused, so the button must name the action that follows from it.
+    const all = Object.values(byState).flat();
+    const inconsistent = all.filter((u) =>
+      /PAUSED/i.test(u.cron) !== /Resume/.test(u.pauseLabel));
+    ok('render: the Pause label names the action the click sends',
+       inconsistent.length === 0,
+       inconsistent.map((u) => `${u.box} cron=${u.cron} label=${u.pauseLabel}`).join('; '));
+    const pausedOnes = all.filter((u) => /PAUSED/i.test(u.cron));
+    ok('render: a paused box offers Resume',
+       pausedOnes.length > 0 && pausedOnes.every((u) => /Resume/.test(u.pauseLabel)),
+       pausedOnes.map((u) => u.box + '=' + u.pauseLabel).join(',') || 'no paused box in view');
+  }
 
   // ---- hostile log content must stay text ---------------------------------
   const hostile = visible.find((v) => /hostile/.test(v.got));
@@ -209,6 +235,59 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        (injected.queueText + ' | ' + injected.curText).slice(0, 120));
     await shot('06-hostile-escaped');
     await leave();
+  }
+
+  /* A box inside its FIRST session — cur set, sessions empty — is ordinary
+     live telemetry (floor.py sets working whenever cur exists). The room's
+     diagnostic hologram dereferenced sessions[0] unguarded, so opening this
+     room threw inside the render loop, every frame. Three reviewers found it;
+     136 checks did not, because no fixture could reach the state. */
+  const firstRun = visible.find((v) => /firstrun/.test(v.got));
+  if (LIVE && firstRun) {
+    const before = consoleErrors.length;
+    if (firstRun.cam) await scrollTo(firstRun.cam);
+    await enter(firstRun.i, firstRun.cam);
+    await page.waitForTimeout(2500);          // let the render loop run frames
+    ok('first-run room renders without throwing',
+       consoleErrors.length === before,
+       consoleErrors.slice(before).slice(0, 2).join(' | '));
+    ok('first-run room still shows its open session',
+       /\d/.test(await page.locator('#w-current').textContent()),
+       (await page.locator('#w-current').textContent()).replace(/\s+/g, ' ').slice(0, 60));
+    await shot('07-first-run-room');
+    await leave();
+  }
+
+  /* Live repo strings are full owner/repo. The link used to prefix the org
+     unconditionally, yielding github.com/heavy-duty/heavy-duty%2Fcrew — and
+     the old assertion only checked for the "heavy-duty/" prefix, which the
+     BROKEN url also satisfied. Assert the whole URL. */
+  if (LIVE && visible.length) {
+    const withRepo = [];
+    for (const v of visible) {
+      if (v.cam) await scrollTo(v.cam);
+      await enter(v.i, v.cam);
+      // From the button's own text node: scraping the whole panel ran the
+      // repo name into the next button's icon and produced "…crew◱".
+      const repo = (await page.locator('#ac-repo').textContent()).match(/Open repo · (.+)$/);
+      if (repo && repo[1].trim() !== '—') {
+        await page.click('#ac-repo');
+        await page.waitForTimeout(250);
+        withRepo.push({ box: v.got, repo: repo[1].trim(), url: (await page.evaluate(() => window.__opened)).slice(-1)[0] });
+        await leave();
+        break;
+      }
+      await leave();
+    }
+    if (withRepo.length) {
+      const { repo, url } = withRepo[0];
+      ok('repo link is not double-prefixed', !/heavy-duty\/heavy-duty/.test(url || ''), url);
+      ok('repo link does not escape the slash', !/%2F/i.test(url || ''), url);
+      ok('repo link points at the actual repo',
+         url === 'https://github.com/' + repo, `${url} for repo ${repo}`);
+    } else {
+      ok('repo link points at the actual repo', false, 'no unit exposed a repo');
+    }
   }
 
   // ---- log overlay / demo lockout -----------------------------------------
