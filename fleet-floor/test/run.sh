@@ -34,6 +34,18 @@ t() { if [ "$2" = "$3" ]; then ok "$1"; else fail "$1" "expected [$2] got [$3]";
 
 command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
 
+# A busy port surfaced as a python traceback from deep inside socketserver,
+# which reads like the collector is broken rather than like another copy of
+# this suite is already running. Say so plainly, and name the way out.
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3<&- 3>&-; return 0; }; return 1; }
+for _p in "${FLOOR_TEST_PORT:-8791}" $(( ${FLOOR_TEST_PORT:-8791} + 1 )) $(( ${FLOOR_TEST_PORT:-8791} + 2 )); do
+  if port_busy "$_p"; then
+    echo "port $_p is already in use — another run of this suite is probably still going." >&2
+    echo "  re-run with a different base:  FLOOR_TEST_PORT=8891 $0 $*" >&2
+    exit 1
+  fi
+done
+
 TMP="$(mktemp -d)"
 PORT="${FLOOR_TEST_PORT:-8791}"
 USER=operator

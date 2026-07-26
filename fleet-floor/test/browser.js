@@ -93,7 +93,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       })
     : Array.from({ length: 7 }, (_, i) => ({ box: null, agent: null, room: null, state: null }));
   ok('floor: roster rendered', roster.length > 0, roster.length + ' units');
-  ok('floor: tiles populated', /units/.test(await page.locator('#tiles').textContent()));
+  /* Not just "the word units appears": that is true of an empty fleet too,
+     because the tiles always render. Assert the count matches the roster. */
+  const tilesText = (await page.locator('#tiles').textContent()).replace(/\s+/g, '');
+  const tileUnits = (tilesText.match(/(\d+)units/) || [])[1];
+  ok('floor: the unit tile matches the fleet size',
+     LIVE ? String(roster.length) === tileUnits : /^[1-9]/.test(tileUnits || ''),
+     `tile says ${tileUnits}, roster has ${roster.length}`);
   await shot('01-floor');
 
   // Cell geometry mirrors app.js drawFloor().

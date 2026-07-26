@@ -67,8 +67,13 @@ const ok = (name, cond, detail = '') => {
     }
     ok('churn: collector drops the removed box', gone, 'still present after 40s');
 
-    // Give the page a poll to react to it.
-    await page.waitForTimeout(18000);
+    /* Poll until the page reacts rather than sleeping past one poll interval:
+       an 18s wait against a 15s poll is a margin that a slow CI runner eats. */
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(2000);
+      const v = await page.evaluate(() => document.body.className);
+      if (v === 'floor') break;                 // bounced — the reaction we expect
+    }
 
     const state = await page.evaluate(() => ({
       view: document.body.className,

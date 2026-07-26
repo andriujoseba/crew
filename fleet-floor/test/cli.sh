@@ -143,6 +143,54 @@ else
   fail "collector: a missing index.html is named at startup" "rc=$CL_RC3 $(cat "$CL_TMP/noindex.out")"
 fi
 
+
+# ---------------------------------------------------------------------------
+# The drill must never run the browser walk in a mutating mode.
+#
+# codex-bot's finding: gating that on --allow-control only moved the hazard.
+# `--allow-control` without `--boxes` skips the narrowed control block, yet the
+# browser walk would still pause whichever unit was on screen; and its
+# `wake-silent` click is FLEET-WIDE, which --boxes cannot constrain even in
+# principle. So the opt-in path broke the script's own guarantee.
+#
+# Asserted as an INVARIANT over the source rather than by running two argument
+# combinations: the property wanted is "for ANY arguments, the walk is
+# read-only", and two sampled invocations cannot show that. This can.
+# ---------------------------------------------------------------------------
+echo
+echo "== drill: the browser walk cannot mutate a real fleet"
+
+CL_DRILL="$CL_ROOT/drill/rehearsal-app.sh"
+CL_INVOKES="$(grep -cE 'node .*fleet-floor/test/browser\.js' "$CL_DRILL" || true)"
+t "drill: exactly one browser.js invocation" 1 "${CL_INVOKES:-0}"
+
+# Every invocation must carry the read-only env on the SAME line.
+CL_RO="$(grep -B1 -E 'node .*fleet-floor/test/browser\.js' "$CL_DRILL" | grep -cE 'FLOOR_TEST_READONLY=1' || true)"
+t "drill: that invocation is read-only" 1 "${CL_RO:-0}"
+
+# And no branch may hand it an empty/!=1 value, which is how the first fix
+# reintroduced the mutating path under --allow-control.
+CL_BAD="$(grep -cE 'FLOOR_TEST_READONLY="?\$|FLOOR_TEST_READONLY=""|FLOOR_TEST_READONLY=$' "$CL_DRILL" || true)"
+t "drill: read-only is not computed from a variable" 0 "${CL_BAD:-0}"
+
+# The narrowed control block still refuses to act without an explicit allowlist.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -qE 'elif \[ -z "\$BOXES" \]; then' "$CL_DRILL"; then
+  ok "drill: --allow-control still requires --boxes"
+else
+  fail "drill: --allow-control still requires --boxes" "the allowlist guard is gone"
+fi
+
+# browser.js must actually honour the flag: no control click outside a
+# !READONLY guard. Counted, so a new control added without the guard trips it.
+CL_BJS="$CL_HERE/browser.js"
+CL_GUARDS="$(grep -cE '!READONLY' "$CL_BJS" || true)"
+if [ "${CL_GUARDS:-0}" -ge 3 ]; then
+  ok "browser.js: control blocks are behind a READONLY guard (${CL_GUARDS})"
+else
+  fail "browser.js: control blocks are behind a READONLY guard" "only ${CL_GUARDS:-0} guards found; expected the pause, paused-box and fleet-wide blocks"
+fi
+
 rm -rf "$CL_TMP"
 
 if [ -n "${CL_STANDALONE:-}" ]; then

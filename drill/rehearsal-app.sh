@@ -12,14 +12,17 @@
 # `box exec` into an actual box yields the duty evidence the floor claims to
 # read, and that a control really moves the box.
 #
-# READ-ONLY BY DEFAULT — and that now includes the browser walk, which is the
-# part that quietly broke the promise: test/browser.js clicks Pause and Wake
-# for real, so a default run was pausing live fleet members. Without
-# --allow-control the page is rendered and asserted but no control is touched
-# (FLOOR_TEST_READONLY=1); the control half runs only with --allow-control, and
-# even then only against boxes named with --boxes. A drill that silently
-# power-cycles a working fleet member is worse than no drill (heavy-duty/crew#26
-# is the precedent: a drill that wrote to real repos because nothing narrowed it).
+# READ-ONLY BY DEFAULT, and the browser walk is read-only ALWAYS — even under
+# --allow-control. test/browser.js clicks Pause and Wake for real and picks its
+# targets by screen position, so it can never be bound to --boxes; its
+# `wake-silent` click is fleet-wide and cannot be narrowed at all. Gating it on
+# --allow-control merely moved the hazard onto the opt-in path, where this
+# file's own guarantee — opt-in controls touch ONLY named boxes — was still
+# broken. Controls are exercised solely by the narrowed block below: every name
+# validated against fleet.roster, reversible verbs only, repaired on teardown.
+# A drill that silently power-cycles a working fleet member is worse than no
+# drill (heavy-duty/crew#26: a drill that wrote to real repos because nothing
+# narrowed it).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -256,26 +259,24 @@ if [ "$BROWSER" -eq 1 ]; then
   echo
   echo "== page"
   if node -e "require('playwright-core')" >/dev/null 2>&1; then
-    # READ-ONLY unless the operator opted in. test/browser.js is written for
-    # the stub fleet, where clicking Pause costs nothing; against REAL boxes
-    # the same walk pauses a live member and `wake-silent` starts stopped ones,
-    # none of it narrowed by --boxes. Worse, its undo only fires for a pause IT
-    # caused — on a box an operator had deliberately parked, the click sends
-    # `resume` and silently un-parks it with no undo. That is crew#26's shape,
-    # in the very file whose header warns about it.
-    if [ "$ALLOW_CONTROL" -eq 1 ]; then
-      BROWSER_MODE="controls exercised"
-      BROWSER_ENV=""
-    else
-      BROWSER_MODE="read-only"
-      BROWSER_ENV="1"
-    fi
-    echo "   (browser walk: $BROWSER_MODE)"
-    if FLOOR_TEST_READONLY="$BROWSER_ENV" \
+    # ALWAYS read-only — including under --allow-control. Gating it on that
+    # flag only moved the hazard: --allow-control without --boxes skips the
+    # narrowed control block below, yet the walk would still pause whichever
+    # unit is on screen, and its `wake-silent` click is FLEET-WIDE, which
+    # --boxes cannot constrain even in principle. So the opt-in path broke this
+    # file's own guarantee that controls touch only named boxes.
+    #
+    # browser.js picks its targets by screen position, not by name; there is no
+    # honest way to bind that to an allowlist. Controls on a real host are
+    # covered by the narrowed block below, which validates each name against
+    # fleet.roster, uses the reversible verbs only, and repairs on teardown.
+    # The browser walk's job here is to prove the page renders REAL data.
+    echo "   (browser walk: read-only — controls are covered by the narrowed block)"
+    if FLOOR_TEST_READONLY=1 \
        node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"; then
-      ok "browser walk against the real fleet ($BROWSER_MODE)"
+      ok "browser walk against the real fleet (read-only)"
     else
-      fail "browser walk against the real fleet ($BROWSER_MODE)" "see output above"
+      fail "browser walk against the real fleet (read-only)" "see output above"
     fi
   else
     skip "browser walk" "playwright-core not installed (npm i playwright-core)"

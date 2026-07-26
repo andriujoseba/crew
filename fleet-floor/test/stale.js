@@ -32,6 +32,11 @@ const ok = (name, cond, detail = '') => {
     httpCredentials: { username: USER, password: PASS },
   });
   const page = await ctx.newPage();
+  /* Without this, a render that THREW while the collector was dying would
+     surface only as "the badge never appeared" — the right failure, reported
+     as the wrong cause. */
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForTimeout(3500);
 
@@ -55,6 +60,9 @@ const ok = (name, cond, detail = '') => {
     ok('stale: says the collector is unreachable', /collector unreachable/i.test(status), status);
     ok('stale: names the snapshot it is frozen at', /\d{4}-\d{2}-\d{2}T/.test(status), status);
   }
+
+  ok('stale: no page errors while the collector died', pageErrors.length === 0,
+     pageErrors.slice(0, 2).join(' | '));
 
   await browser.close();
   console.log(`  -- stale: ${failed ? failed + ' failed' : 'all ok'}`);
