@@ -97,6 +97,43 @@ no build step, no dependencies.
 <name>` for you — a browser cannot attach a shell. And a box that is not running
 cannot be messaged; the request is refused rather than queued.
 
+## Tests
+
+```sh
+fleet-floor/test/run.sh                 # collector + page, no fleet needed
+fleet-floor/test/run.sh --no-browser    # collector only
+drill/rehearsal-app.sh                  # the same, against this host's REAL boxes
+drill/rehearsal-all.sh                  # three roles, then the app
+```
+
+Two halves, because neither can do the other's job:
+
+- **`fleet-floor/test/run.sh`** drives the collector against a stub `box` CLI
+  (`test/stub-box`, shaped by `test/fixtures/fleet.txt`). That is the only way
+  to reach the states that matter and that no real host has on demand: a
+  **wedged** box whose `box exec` never returns, an **unreachable** one, one
+  whose cron went **silent**, one **paused**, one **hired seconds ago with no
+  sessions**, one **not created at all**, and one whose `duty.log` is
+  **corrupt** or contains **markup**. A fleet of healthy boxes would pass a
+  badly broken renderer.
+- **`drill/rehearsal-app.sh`** proves what the stub cannot fake: that `box
+  exec` into a real box yields the evidence the floor claims to read, that the
+  floor and `crew status` **agree** about every box (they share `probe.sh`'s
+  sources, so a disagreement means one is lying to an operator), and — with
+  `--allow-control --boxes <name>` — that pause/resume really moves the box's
+  crontab. It is **read-only by default**; a drill that quietly power-cycles a
+  working fleet member is worse than no drill.
+
+The page half (`test/browser.js`) needs `playwright-core` and a Chrome —
+`npm i playwright-core`, and `PW_CHROME` to point at one. It asserts the
+things a screenshot cannot: that a control targeted the box the operator was
+looking at, that hostile log text stayed text, that a down box states its
+reason, that the log viewer is not a blockable popup. `test/stale.js` kills
+the collector under a live page and checks the page admits it rather than
+serving a frozen fleet that looks calm. When the driver or browser is missing
+these **skip loudly** — a silently-skipped UI test reads exactly like a
+passing one.
+
 ## Files
 
 ```
@@ -109,4 +146,9 @@ fleet-floor/
                     #   the live/demo switch, and the demo feed
   server/floor.py   # the collector: serves the page, polls the fleet, applies actions
   server/probe.sh   # read-only duty evidence reader, run inside a box via box exec
+  test/run.sh       # collector + page suite, against a stub box CLI
+  test/cases.sh     # the assertions, grouped by the round that found them
+  test/stub-box     # fake `box`, driven by test/fixtures/fleet.txt
+  test/browser.js   # playwright-core walk of the real page
+  test/stale.js     # kills the collector, checks the page says so
 ```

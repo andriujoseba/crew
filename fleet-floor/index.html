@@ -126,6 +126,9 @@ body.room .rail,body.room .console2{display:flex}
 .demo-badge{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c79a3a;background:rgba(199,154,58,.1);border:1px solid rgba(199,154,58,.35);border-radius:6px;padding:4px 8px;align-self:center;pointer-events:auto;white-space:nowrap}
 /* Served by `crew floor`: the amber DEMO warning becomes a green LIVE mark. */
 .demo-badge.live{color:#5fce9b;background:rgba(95,206,155,.1);border-color:rgba(95,206,155,.35)}
+/* Collector stopped answering: what is on screen is the last snapshot, not the
+   fleet. Red, because a frozen console that looks calm is the dangerous one. */
+.demo-badge.stale,.demo-badge.live.stale{color:#ff5147;background:rgba(255,81,71,.12);border-color:rgba(255,81,71,.45)}
 .livestat{font-family:var(--mono);font-size:10px;color:#5fce9b;align-self:center;white-space:nowrap;max-width:38vw;overflow:hidden;text-overflow:ellipsis}
 /* Raw session logs, in-page (a popup would be blocked — it opens after a fetch). */
 #logov{display:none;position:fixed;inset:0;z-index:60;background:rgba(2,5,10,.82);align-items:center;justify-content:center;padding:5vh 5vw}
@@ -217,7 +220,14 @@ input.woff{color:#5a6a80}
 (function(){
 var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 var DW=1280, DH=720, MODE="target", STATE="working", ROOM="builder", AGENT="claude";
-function UNIT(){return AGENT+"-"+ROOM;}
+/* BOX is the identity — the roster's box NAME, not a label derived from
+   agent+role. Those coincide in the current fleet (claude-builder is both),
+   which is exactly why deriving it survived this long: nothing in the roster
+   format requires it, and when they diverge the console labels one box while
+   its controls drive another. Set by drawCell (per cell) and focusUnit. */
+var BOX="claude-builder";
+function UNITID(u){return u.box||(u.agent+"-"+u.room);}
+function UNIT(){return BOX;}
 function ROLEWORD(){return ROOM;}
 var lastHand={x:260,y:400};
 
@@ -502,7 +512,7 @@ function drawMini(t,mx,my,mw,mh){
   X.fillStyle="rgba("+cs+",0.9)";X.font="700 8px ui-monospace,monospace";X.fillText(off?"◇ SIGNAL LOST":"◆ DIAGNOSTIC",hx+7,hy+13);
   X.font="8px ui-monospace,monospace";X.fillStyle="rgba("+cs+",0.62)";
   X.fillText(off?"CRON  SILENT":(work?(ROOM==="builder"?"STATE BUILD":ROOM==="reviewer"?"STATE REVIEW":"STATE TRIAGE"):"STATE STANDBY"),hx+7,hy+29);
-  X.fillText(off?"LINK  ———":"QUEUE q"+dataOf(AGENT,ROOM).queue.length,hx+7,hy+42);
+  X.fillText(off?"LINK  ———":"QUEUE q"+dataOf(BOX,ROOM).queue.length,hx+7,hy+42);
   X.strokeStyle="rgba("+cs+",0.8)";X.lineWidth=1;X.beginPath();for(var wxp=0;wxp<hw-14;wxp+=2){var amp=off?1.5:(work?4:2),wyp=hy+hh-8+Math.sin(wxp*0.4+t*(work?6:2.5))*amp;if(wxp===0)X.moveTo(hx+7+wxp,wyp);else X.lineTo(hx+7+wxp,wyp);}X.stroke();
   X.restore();
   // screen feel: faint scanlines + inner vignette
@@ -539,7 +549,7 @@ var ROSTER=[
 var CELLW=336, CELLH=252, GAPX=28, GAPY=26, MARGINL=44;
 var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragX=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
 function floorTotalW(){var cols=Math.ceil(ROSTER.length/2);return MARGINL*2+cols*CELLW+(cols-1)*GAPX;}
-function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sl=lastHand;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;var info=buildRobo(t,unit.state);lastHand=info.hand;drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;lastHand=sl;}
+function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sl=lastHand,sb=BOX;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;BOX=UNITID(unit);var info=buildRobo(t,unit.state);lastHand=info.hand;drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;lastHand=sl;BOX=sb;}
 function drawFloor(t){
   X.setTransform(dpr,0,0,dpr,0,0);X.imageSmoothingEnabled=true;X.textAlign="left";X.globalAlpha=1;X.globalCompositeOperation="source-over";
   X.fillStyle="#03060d";X.fillRect(0,0,VW,VH);
@@ -580,7 +590,7 @@ function syncToggles(){
   [].forEach.call(document.getElementById("rm").querySelectorAll("button"),function(b){b.classList.toggle("on",b.dataset.r===ROOM);});
   [].forEach.call(document.getElementById("stg").querySelectorAll("button"),function(b){b.className=(b.dataset.s===STATE?"on "+(STATE==="working"?"w":STATE==="offline"?"o":""):"");});
 }
-function focusUnit(i){var u=ROSTER[i];AGENT=u.agent;ROOM=u.room;STATE=u.state;VIEW="room";syncToggles();refreshChrome();document.body.className="room";populateDash();}
+function focusUnit(i){var u=ROSTER[i];AGENT=u.agent;ROOM=u.room;STATE=u.state;BOX=UNITID(u);VIEW="room";syncToggles();refreshChrome();document.body.className="room";populateDash();}
 function toFloor(){VIEW="floor";document.body.className="floor";buildOps();}
 
 /* ---- fleet data + command-center HUD ---- */
@@ -602,8 +612,8 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
   var nowS=Math.floor(Date.now()/1000),cur={key:(kind==="triage"?"board":REPONAMES[ri2(0,5)]+"#"+ri2(11,148)),start:nowS-ri2(20,Math.min(cap,5200))};
   return {kind:kind,queue:q,sessions:sess,up:{h:ri2(1,71),m:ri2(0,59)},repo:q[0]?q[0].repo:"crew",spark:spark,
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
-function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(u.agent,u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
-function dataOf(agent,room){var id=agent+"-"+room;if(!dataCache[id])dataCache[id]=LIVE?emptyData(room):genData(room);return dataCache[id];}
+function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
+function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
 function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,box:"",logs:[]};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
@@ -640,7 +650,18 @@ function liveData(u){
   return d;
 }
 function applyFleet(snap){
-  if(!snap||!snap.units||!snap.units.length)return;
+  if(!snap||!snap.units)return;
+  if(!snap.units.length){
+    /* A well-formed answer with no boxes is a FACT, not a failed poll. Falling
+       back to DEMO here would show an operator a floor full of plausible
+       placeholder boxes while a real collector sat behind it reporting an
+       empty roster. Once live, though, an empty poll keeps the last snapshot
+       rather than blanking a fleet that was there a second ago. */
+    if(!LIVE){LIVE=true;LIVEMETA=snap;ROSTER=[];dataCache={};goLive();
+      buildTiles();buildOps();
+      setStatus("collector reports an empty fleet — check fleet.roster",true);}
+    return;
+  }
   LIVEMETA=snap;
   var first=!LIVE;LIVE=true;
   var roster=[],cache={};
@@ -649,19 +670,19 @@ function applyFleet(snap){
        count up from, so it is standby however the probe was labelled. */
     var st=(u.state==="working"&&!u.cur)?"idle":u.state;
     roster.push({agent:u.agent,room:u.room,state:st,box:u.box,note:u.note||""});
-    cache[u.agent+"-"+u.room]=liveData(u);
+    cache[u.box]=liveData(u);
   });
   ROSTER=roster;dataCache=cache;
   if(first)goLive();
   /* Keep the operator's current focus pinned across polls rather than snapping
      the view back to the floor every 15 seconds. */
-  var me=ROSTER.filter(function(u){return u.agent===AGENT&&u.room===ROOM;})[0];
-  if(me)STATE=me.state;
+  var me=ROSTER.filter(function(u){return UNITID(u)===BOX;})[0];
+  if(me){STATE=me.state;AGENT=me.agent;ROOM=me.room;}
   buildTiles();buildOps();syncToggles();refreshChrome();
   if(VIEW==="room")populateDash();
   liveTicker(snap);
 }
-function boxOf(agent,room){var d=dataOf(agent,room);return d.box||(agent+"-"+room);}
+
 /* Real duty.log events only: each poll emits the SESSION lines that are new
    since the last one, so the ticker is evidence rather than atmosphere. */
 function liveTicker(snap){
@@ -695,15 +716,33 @@ function liveTicker(snap){
   while(s.childNodes.length>30)s.removeChild(s.firstChild);
   if(fresh.length)s.scrollTop=s.scrollHeight;
 }
+/* A live page whose collector has died keeps rendering the last snapshot, and
+   a frozen fleet looks exactly like a calm one — the same trap the engine's
+   own "silence = dead" rule exists to close, one level up. After two missed
+   polls the page says so instead of quietly showing yesterday's news. */
+var pollFails=0, STALE_AFTER=2;
 function pollFleet(){
   /* Opened from disk there is nothing to poll, and asking anyway just prints a
      CORS failure in the console of a page that is working exactly as intended. */
   if(location.protocol==="file:")return;
-  api("/api/fleet").then(applyFleet).catch(function(e){
-    /* file:// or no collector — stay in DEMO. Only an auth failure is worth
-       shouting about, because it means a collector IS there. */
-    if(String(e.message)==="unauthorized")setStatus("unauthorized — reload and sign in",true);
+  api("/api/fleet").then(function(snap){
+    pollFails=0;setStale(false);applyFleet(snap);
+  }).catch(function(e){
+    if(String(e.message)==="unauthorized")return setStatus("unauthorized — reload and sign in",true);
+    /* Never went live at all: no collector, so DEMO is the honest state and
+       there is nothing stale about it. */
+    if(!LIVE)return;
+    if(++pollFails>=STALE_AFTER)setStale(true,e.message);
   });
+}
+function setStale(on,why){
+  var badges=document.querySelectorAll(".demo-badge");
+  [].forEach.call(badges,function(b){
+    b.classList.toggle("stale",!!on);
+    if(on){b.textContent="◈ STALE";b.title="The collector stopped answering — this is the last snapshot, not the current fleet.";}
+    else if(LIVE){b.textContent="◈ LIVE";b.title="Live telemetry — every box polled from the operator host over 'box exec'.";}
+  });
+  if(on)setStatus("collector unreachable — frozen at "+((LIVEMETA&&LIVEMETA.generated)||"?")+(why?" ("+why+")":""),true);
 }
 function setStatus(msg,bad){
   var el=document.getElementById("livestat");if(!el)return;
@@ -742,14 +781,14 @@ function cmd(action,extra){
 }
 function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;";});}
 function clockStr(){var d=new Date();return pad2(d.getUTCHours())+":"+pad2(d.getUTCMinutes())+":"+pad2(d.getUTCSeconds());}
-function buildTiles(){var w=0,idl=0,o=0,q=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")o++;else idl++;q+=dataOf(u.agent,u.room).queue.length;});
+function buildTiles(){var w=0,idl=0,o=0,q=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")o++;else idl++;q+=dataOf(UNITID(u),u.room).queue.length;});
   function tl(n,l,c,al){return '<div class="tile'+(al?' alert':'')+'"><span class="n" style="color:'+c+'">'+n+'</span><span class="l">'+l+'</span></div>';}
   var el=document.getElementById("tiles");if(el)el.innerHTML=tl(ROSTER.length,"units","#c7d4e4")+tl(w,"working","#f7bd4e")+tl(idl,"idle","#5fce9b")+tl(o,"silent","#ff5147",o>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
      claim a session is running when there is one to count. */
-  var d=dataOf(AGENT,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",work=STATE==="working"&&!!(d.cur||!LIVE);
+  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",work=STATE==="working"&&!!(d.cur||!LIVE);
   var sc=off?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=off?"SILENT":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY";
   document.getElementById("w-id").innerHTML='<div class="idc"><div class="av" style="background:'+hexA(vc,0.16)+';box-shadow:inset 0 0 0 1px '+hexA(vc,0.5)+';color:'+vc+'">'+AGENT[0].toUpperCase()+'</div><div><div class="nm">'+id+'</div><div class="rl">'+AGENT+' · '+ROOM+'</div><span class="pill" style="color:'+sc+';background:'+hexA(sc,0.14)+';box-shadow:inset 0 0 0 1px '+hexA(sc,0.4)+'">● '+sl+'</span></div></div><div class="spark" title="24h activity">'+(off?"":d.spark.map(function(v,i){return '<span style="height:'+Math.round(v*100)+'%;background:'+hexA(vc,i>=d.spark.length-4?0.95:0.42)+'"></span>';}).join(''))+'</div>';
   /* In LIVE mode every value here is what the box reported this poll; the
@@ -794,14 +833,14 @@ function populateDash(){
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
   document.getElementById("a-pause").textContent=work?"⏸ Pause":"▶ Resume";
 }
-function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf(AGENT,ROOM);if(!d.cur)return;var el=document.getElementById("cur-el");if(el)el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
+function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf(BOX,ROOM);if(!d.cur)return;var el=document.getElementById("cur-el");if(el)el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
 function mrow(k,v){return '<div class="mrow"><span class="mk">'+k+'</span><span class="mvv">'+v+'</span></div>';}
 /* Access-panel button: live ones are real, demo ones keep the .woff tooltip
    that says why they do nothing. */
 function ab(id,label){return '<button class="lbtn'+(LIVE?'':' woff')+'" id="'+id+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>'+label+'</button>';}
-function buildOps(){var list=document.getElementById("opslist");if(!list)return;var working=ROSTER.filter(function(u){return u.state==="working"&&dataOf(u.agent,u.room).cur;});
+function buildOps(){var list=document.getElementById("opslist");if(!list)return;var working=ROSTER.filter(function(u){return u.state==="working"&&dataOf(UNITID(u),u.room).cur;});
   var cc=document.getElementById("ops-count");if(cc)cc.textContent="· "+working.length;
-  list.innerHTML=working.length?working.map(function(u){var d=dataOf(u.agent,u.room),vc=VENDORCOL(u.agent),kc=u.room==="builder"?"#f7bd4e":u.room==="reviewer"?"#5cb4ff":"#c98bff";
+  list.innerHTML=working.length?working.map(function(u){var d=dataOf(UNITID(u),u.room),vc=VENDORCOL(u.agent),kc=u.room==="builder"?"#f7bd4e":u.room==="reviewer"?"#5cb4ff":"#c98bff";
     return '<div class="op"><span class="u" style="color:'+vc+'">'+esc(u.box||(u.agent+"-"+u.room))+'</span><span class="kd" style="color:'+kc+';background:'+hexA(kc,0.13)+'">'+esc(d.kind)+'</span><span class="tk">'+esc(d.cur.key)+'</span><span class="el" data-s="'+d.cur.start+'">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</span></div>';}).join(''):'<div style="color:#46566a;font-family:var(--mono);font-size:11px;padding:4px 0">— no active sessions —</div>';
   var fm=fleetMetric(),mr=document.getElementById("metrows");if(mr)mr.innerHTML=mrow("Longest build",fmtDur(fm.build))+mrow("Longest review",fmtDur(fm.review))+mrow("Longest triage",fmtDur(fm.triage))+mrow("Avg session",fmtDur(fm.avg));}
 function tickOps(){if(VIEW!=="floor")return;var now=Math.floor(Date.now()/1000);[].forEach.call(document.querySelectorAll("#opslist .el"),function(e){e.textContent=fmtDur(now-(+e.dataset.s));});}
@@ -1358,7 +1397,7 @@ function drawHolo(t,st){
     c.fillText(offl?"◇ SIGNAL LOST":"◆ UNIT DIAGNOSTIC",x+14,y+24);
     c.fillStyle=rgba(C0[0],C0[1],C0[2],0.5);c.fillText(UNIT(),x+14,y+42);
     c.font="12px ui-monospace,monospace";
-    var dd=dataOf(AGENT,ROOM),up=dd.up.h+"h "+(dd.up.m<10?"0":"")+dd.up.m+"m",ql="q"+dd.queue.length+" · "+dd.repo;
+    var dd=dataOf(BOX,ROOM),up=dd.up.h+"h "+(dd.up.m<10?"0":"")+dd.up.m+"m",ql="q"+dd.queue.length+" · "+dd.repo;
     var rows=offl?[["LINK","— — —","#ff6a62"],["CRON","SILENT","#ff6a62"],["LAST","tick missed",""],["SINCE","00:04:12",""]]
       :st==="working"?[["STATE",ROOM==="builder"?"BUILDING":ROOM==="reviewer"?"REVIEWING":"DISPATCHING","#f7bd4e"],["UPTIME",up,""],["QUEUE",ql,""],["LAST",dd.sessions[0].out,""]]
       :[["STATE","STANDBY","#5fce9b"],["UPTIME",up,""],["QUEUE",ql,""],["LAST","idle · awaiting",""]];
@@ -1430,7 +1469,7 @@ setInterval(tickOps,1000);setInterval(updateCurrent,1000);
 var _railL=document.querySelector(".rail-l");
 if(_railL)_railL.addEventListener("click",function(e){
   if(!LIVE)return;
-  var box=boxOf(AGENT,ROOM),d=dataOf(AGENT,ROOM);
+  var box=BOX,d=dataOf(BOX,ROOM);
   var pw=e.target.closest(".pw");
   if(pw){
     var on=pw.dataset.pw==="on";
@@ -1481,14 +1520,14 @@ document.getElementById("filters").addEventListener("click",function(e){var b=e.
    woken, the box stays up and reachable. That is the reversible control an
    operator actually wants mid-incident. */
 document.getElementById("a-pause").addEventListener("click",function(){
-  if(!LIVE)return;var d=dataOf(AGENT,ROOM);cmd(d.paused?"resume":"pause",{box:boxOf(AGENT,ROOM)});
+  if(!LIVE)return;var d=dataOf(BOX,ROOM);cmd(d.paused?"resume":"pause",{box:BOX});
 });
 document.getElementById("a-restart").addEventListener("click",function(){
-  if(!LIVE)return;var box=boxOf(AGENT,ROOM);
+  if(!LIVE)return;var box=BOX;
   if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});
 });
 document.getElementById("a-logs").addEventListener("click",function(){
-  if(LIVE)return openLogs(boxOf(AGENT,ROOM),"");
+  if(LIVE)return openLogs(BOX,"");
   var f=document.getElementById("dfeed");if(f)f.scrollTop=f.scrollHeight;
 });
 /* A message starts a real one-shot session of the box's own vendor CLI, fired
@@ -1497,7 +1536,7 @@ document.getElementById("a-logs").addEventListener("click",function(){
 function sendMsg(){
   if(!LIVE)return;
   var inp=document.getElementById("c-in"),v=inp.value.trim();if(!v)return;
-  var box=boxOf(AGENT,ROOM);
+  var box=BOX;
   if(STATE==="offline"){setStatus("cannot message "+box+" — it is not running",true);return;}
   inp.value="";
   var f=document.getElementById("dfeed");

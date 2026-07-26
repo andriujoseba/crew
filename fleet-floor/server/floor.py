@@ -28,6 +28,7 @@ import hmac
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -41,7 +42,11 @@ CREW_ROOT = os.path.dirname(os.path.dirname(HERE))
 INDEX = os.path.join(CREW_ROOT, "fleet-floor", "index.html")
 PROBE = os.path.join(HERE, "probe.sh")
 AGENTS_DIR = os.path.join(CREW_ROOT, "shared", "conf", "agents")
-ROSTER = os.path.join(CREW_ROOT, "fleet.roster")
+# Overridable so a test (or an operator running a floor over an alternate
+# fleet) never has to mutate the tracked roster in place. The suite used to
+# swap this file and restore it on exit, which meant any killed run left the
+# real fleet.roster clobbered in the working tree.
+ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CREW_ROOT, "fleet.roster")
 
 # A tick is 5 minutes; the engine's own death rule is "no evidence for two tick
 # boundaries", so the floor uses the same number rather than inventing one.
@@ -49,9 +54,10 @@ TICK_S = 300
 SILENT_AFTER_S = 2 * TICK_S
 
 # box exec into a wedged box can block forever; every probe is capped so one
-# sick box cannot stall the whole poll.
-PROBE_TIMEOUT_S = 45
-ACTION_TIMEOUT_S = 120
+# sick box cannot stall the whole poll. Overridable so the test suite can
+# exercise a wedged box without waiting the production timeout for it.
+PROBE_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_PROBE_TIMEOUT", "45"))
+ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
 
 
 def log(msg):
@@ -60,19 +66,49 @@ def log(msg):
 
 
 def run(argv, timeout, stdin_data=None):
-    """Run a host command. Returns (rc, stdout, stderr) and never raises."""
+    """Run a host command. Returns (rc, stdout, stderr) and never raises.
+
+    The timeout is enforced against the whole PROCESS GROUP, not just the
+    child. `box exec` runs a shell inside the box; if anything it spawned
+    outlives the kill while still holding the stdout pipe, communicate() waits
+    for EOF on that pipe and blocks long past the deadline — which is exactly
+    the hang the timeout exists to prevent, and it only shows up against the
+    kind of wedged box the timeout was written for. start_new_session puts the
+    child in its own group so killpg can take the whole tree down.
+    """
     try:
-        p = subprocess.run(
+        p = subprocess.Popen(
             argv,
-            input=stdin_data.encode() if stdin_data is not None else None,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+            stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
         )
-        return p.returncode, p.stdout.decode("utf-8", "replace"), p.stderr.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired:
-        return 124, "", "timed out after %ss" % timeout
     except FileNotFoundError as e:
         return 127, "", str(e)
     except Exception as e:                                  # noqa: BLE001
+        return 1, "", str(e)
+
+    try:
+        out, err = p.communicate(
+            stdin_data.encode() if stdin_data is not None else None, timeout=timeout)
+        return (p.returncode,
+                out.decode("utf-8", "replace"),
+                err.decode("utf-8", "replace"))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            p.kill()
+        try:
+            p.communicate(timeout=5)
+        except Exception:                                   # noqa: BLE001
+            pass
+        return 124, "", "timed out after %ss" % timeout
+    except Exception as e:                                  # noqa: BLE001
+        try:
+            p.kill()
+        except Exception:                                   # noqa: BLE001
+            pass
         return 1, "", str(e)
 
 
@@ -375,6 +411,14 @@ class Fleet:
         self.lock = threading.Lock()
         self.snapshot = {"live": True, "generated": None, "units": [], "polling": True}
         self._confs = {}
+        # A poll is N concurrent `box exec` calls across the whole fleet. Every
+        # control action wants a refresh afterwards, so without single-flight a
+        # burst of clicks becomes a burst of full-fleet probe storms — and if
+        # one box is wedged, each of those storms lasts the full timeout.
+        self._poll_lock = threading.Lock()   # one poll at a time, ever
+        self._flag_lock = threading.Lock()
+        self._refreshing = False             # a refresh chain is running
+        self._pending = False                # ...and another was asked for
 
     def agent_conf(self, agent):
         if agent not in self._confs:
@@ -385,7 +429,39 @@ class Fleet:
                 self._confs[agent] = ""
         return self._confs[agent]
 
+    def request_refresh(self):
+        """Refresh after a control action, coalescing a burst into one poll.
+
+        At most one poll runs and at most one more is queued: an operator who
+        clicks five things gets the fleet re-read once after the last of them,
+        not five overlapping fleet-wide probe storms.
+        """
+        def chain():
+            while True:
+                try:
+                    self.poll_once()
+                except Exception as e:                  # noqa: BLE001
+                    log("refresh failed: %s" % e)
+                with self._flag_lock:
+                    if not self._pending:
+                        self._refreshing = False
+                        return
+                    self._pending = False
+
+        with self._flag_lock:
+            if self._refreshing:
+                self._pending = True
+                return
+            self._refreshing = True
+        threading.Thread(target=chain, daemon=True).start()
+
     def poll_once(self):
+        # Serialised against every other poll: the periodic loop and a
+        # post-action refresh must never probe the fleet at the same time.
+        with self._poll_lock:
+            return self._poll_once_locked()
+
+    def _poll_once_locked(self):
         roster = read_roster()
         states = box_states()
         now = time.time()
@@ -581,8 +657,9 @@ def do_command(fleet, body):
 
     ok = all(r["ok"] for r in results) if results else False
     # A control action changes exactly what the page is displaying, so refresh
-    # rather than leaving the operator to guess whether it took.
-    threading.Thread(target=fleet.poll_once, daemon=True).start()
+    # rather than leaving the operator to guess whether it took. Coalesced, so
+    # a burst of clicks cannot become a burst of fleet-wide probe storms.
+    fleet.request_refresh()
     return (200 if ok else 500), {"ok": ok, "action": action, "results": results}
 
 
@@ -686,6 +763,23 @@ class Handler(BaseHTTPRequestHandler):
         payload = out if rc == 0 else "unreadable: %s" % (err.strip() or "rc %d" % rc)
         return self.send_bytes(200, "text/plain; charset=utf-8",
                                payload.encode("utf-8", "replace"))
+
+    # Without these, BaseHTTPRequestHandler answers 501 from inside its own
+    # request loop — before do_*() and therefore before any auth check. An
+    # unauthenticated caller should learn nothing but "authenticate", so every
+    # method this server does not implement is routed through the same gate.
+    def do_PUT(self):
+        return self.deny() if not self.authed() else self.send_bytes(
+            405, "text/plain; charset=utf-8", b"method not allowed\n")
+
+    do_DELETE = do_PUT
+    do_PATCH = do_PUT
+    do_OPTIONS = do_PUT
+
+    def do_HEAD(self):
+        if not self.authed():
+            return self.deny()
+        self.send_bytes(405, "text/plain; charset=utf-8", b"")
 
     def do_POST(self):
         if not self.authed():

@@ -119,6 +119,9 @@ body.room .rail,body.room .console2{display:flex}
 .demo-badge{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c79a3a;background:rgba(199,154,58,.1);border:1px solid rgba(199,154,58,.35);border-radius:6px;padding:4px 8px;align-self:center;pointer-events:auto;white-space:nowrap}
 /* Served by `crew floor`: the amber DEMO warning becomes a green LIVE mark. */
 .demo-badge.live{color:#5fce9b;background:rgba(95,206,155,.1);border-color:rgba(95,206,155,.35)}
+/* Collector stopped answering: what is on screen is the last snapshot, not the
+   fleet. Red, because a frozen console that looks calm is the dangerous one. */
+.demo-badge.stale,.demo-badge.live.stale{color:#ff5147;background:rgba(255,81,71,.12);border-color:rgba(255,81,71,.45)}
 .livestat{font-family:var(--mono);font-size:10px;color:#5fce9b;align-self:center;white-space:nowrap;max-width:38vw;overflow:hidden;text-overflow:ellipsis}
 /* Raw session logs, in-page (a popup would be blocked — it opens after a fetch). */
 #logov{display:none;position:fixed;inset:0;z-index:60;background:rgba(2,5,10,.82);align-items:center;justify-content:center;padding:5vh 5vw}

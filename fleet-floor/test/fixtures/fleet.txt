@@ -1,0 +1,19 @@
+# <box-name> <incus-state> <scenario>   — see test/stub-box
+#
+# Every state the floor must render correctly, including the ones that only
+# ever appear when something is wrong. A fleet of healthy boxes tests nothing
+# that matters.
+ff-working     running  working
+ff-idle        running  idle
+ff-silent      running  silent
+ff-paused      running  paused
+ff-fresh       running  fresh
+ff-failing     running  failing
+ff-stopped     stopped  working
+ff-unreach     running  unreachable
+ff-nothired    running  nothired
+ff-noauth      running  noauth
+ff-hostile     running  hostile
+ff-garbage     running  garbage
+ff-absent      absent   working
+ff-wedged      running  wedged

@@ -27,6 +27,18 @@ jobs:
       # can power-cycle a box — it does not get to skip the syntax gate.
       - name: python syntax (collector)
         run: python3 -m py_compile fleet-floor/server/floor.py
+      # The collector and the page, against a stub `box` CLI — no Incus, no
+      # fleet. playwright-core drives the runner's preinstalled Chrome, so this
+      # costs one small npm package and no browser download; without it the
+      # page half would skip and a skipped UI test reads like a passing one.
+      - name: fleet-floor tests (collector + page)
+        run: |
+          npm install --no-save playwright-core >/dev/null 2>&1 || true
+          for c in "$CHROME_PATH" /usr/bin/google-chrome /usr/bin/google-chrome-stable /usr/bin/chromium-browser /usr/bin/chromium; do
+            [ -x "$c" ] && { export PW_CHROME="$c"; break; }
+          done
+          echo "browser: ${PW_CHROME:-<none found>}"
+          fleet-floor/test/run.sh
       # index.html is committed pre-built; a PR that edits src/ and forgets to
       # run build.sh would ship a page that does not match its source.
       - name: index.html is up to date

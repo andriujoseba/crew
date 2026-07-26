@@ -24,6 +24,13 @@ set -uo pipefail
 ROLES="triage builder reviewer"
 PASSTHRU=()
 AGENT="claude"
+# The fleet app is part of the rehearsal, not a separate errand: it is the
+# thing an operator will be looking at when they decide whether the fleet is
+# healthy, so a drill that proves the roles but never the console has only
+# proved half of what gets trusted. Read-only by default — see
+# drill/rehearsal-app.sh for why the control verbs are opt-in.
+APP=1
+APP_ARGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -31,7 +38,11 @@ while [ $# -gt 0 ]; do
     --agent) AGENT="$2"; PASSTHRU+=(--agent "$2"); shift 2 ;;
     --tree|--remote|--ref) PASSTHRU+=("$1" "$2"); shift 2 ;;
     --quick) PASSTHRU+=(--quick); shift ;;
-    *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"; exit 1 ;;
+    --no-app) APP=0; shift ;;
+    --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
+    --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
+    *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
+       echo "         [--no-app] [--app-boxes \"a b\"] [--app-allow-control]"; exit 1 ;;
   esac
 done
 
@@ -59,6 +70,21 @@ for role in $ROLES; do
     *) SUMMARY+=("FAIL       $role"); overall=1 ;;
   esac
 done
+
+if [ "$APP" -eq 1 ]; then
+  echo
+  echo "############################################################"
+  echo "## fleet app — crew floor against this host's boxes"
+  echo "############################################################"
+  "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
+  # rc on its own line, like the role loop above — this file's own history is
+  # why (crew#30: a bare status read inside a compound).
+  rc=$?
+  case "$rc" in
+    0) SUMMARY+=("ok         app  (collector + page)") ;;
+    *) SUMMARY+=("FAIL       app"); overall=1 ;;
+  esac
+fi
 
 echo
 echo "############################################################"
