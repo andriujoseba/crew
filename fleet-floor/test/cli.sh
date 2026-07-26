@@ -145,24 +145,33 @@ fi
 
 
 # ---------------------------------------------------------------------------
-# The drill must not mutate a real fleet except through the narrowed block.
+# The drill must never run the browser walk in a mutating mode.
 #
-# codex-bot found (on the head that carried the page-level walk) that gating
-# that walk on --allow-control only MOVED the hazard: --allow-control without
-# --boxes skipped the narrowed block, yet the walk still paused whichever unit
-# was on screen, and its fleet-wide `wake-silent` could not be bound to --boxes
-# at all. The walk now lives in its own change, so what this suite must hold is
-# the property that made it safe to remove: the drill drives NO browser, and
-# every control it does apply is gated on an explicit allowlist.
+# codex-bot's finding: gating that on --allow-control only moved the hazard.
+# `--allow-control` without `--boxes` skips the narrowed control block, yet the
+# browser walk would still pause whichever unit was on screen; and its
+# `wake-silent` click is FLEET-WIDE, which --boxes cannot constrain even in
+# principle. So the opt-in path broke the script's own guarantee.
+#
+# Asserted as an INVARIANT over the source rather than by running two argument
+# combinations: the property wanted is "for ANY arguments, the walk is
+# read-only", and two sampled invocations cannot show that. This can.
 # ---------------------------------------------------------------------------
 echo
-echo "== drill: no unnarrowed path to a real fleet"
+echo "== drill: the browser walk cannot mutate a real fleet"
 
 CL_DRILL="$CL_ROOT/drill/rehearsal-app.sh"
+CL_INVOKES="$(grep -cE 'node .*fleet-floor/test/browser\.js' "$CL_DRILL" || true)"
+t "drill: exactly one browser.js invocation" 1 "${CL_INVOKES:-0}"
 
-# No browser walk at all — nothing that clicks a live console.
-CL_BROWSER="$(grep -cE 'browser\.js|playwright' "$CL_DRILL" || true)"
-t "drill: drives no browser" 0 "${CL_BROWSER:-0}"
+# Every invocation must carry the read-only env on the SAME line.
+CL_RO="$(grep -B1 -E 'node .*fleet-floor/test/browser\.js' "$CL_DRILL" | grep -cE 'FLOOR_TEST_READONLY=1' || true)"
+t "drill: that invocation is read-only" 1 "${CL_RO:-0}"
+
+# And no branch may hand it an empty/!=1 value, which is how the first fix
+# reintroduced the mutating path under --allow-control.
+CL_BAD="$(grep -cE 'FLOOR_TEST_READONLY="?\$|FLOOR_TEST_READONLY=""|FLOOR_TEST_READONLY=$' "$CL_DRILL" || true)"
+t "drill: read-only is not computed from a variable" 0 "${CL_BAD:-0}"
 
 # The narrowed control block still refuses to act without an explicit allowlist.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
@@ -171,6 +180,84 @@ if grep -qE 'elif \[ -z "\$BOXES" \]; then' "$CL_DRILL"; then
 else
   fail "drill: --allow-control still requires --boxes" "the allowlist guard is gone"
 fi
+
+# browser.js must actually honour the flag: no control click outside a
+# !READONLY guard. Counted, so a new control added without the guard trips it.
+CL_BJS="$CL_HERE/browser.js"
+CL_GUARDS="$(grep -cE '!READONLY' "$CL_BJS" || true)"
+if [ "${CL_GUARDS:-0}" -ge 3 ]; then
+  ok "browser.js: control blocks are behind a READONLY guard (${CL_GUARDS})"
+else
+  fail "browser.js: control blocks are behind a READONLY guard" "only ${CL_GUARDS:-0} guards found; expected the pause, paused-box and fleet-wide blocks"
+fi
+
+# The walk demands fixture-only states (a hostile-log box, a first-session box,
+# offline boxes) and must demand them ONLY of the fixture. kimi-bot found the
+# drill running the same walk against a real fleet, where those boxes do not
+# exist and a healthy fleet has nothing offline: two unconditional hard-fails,
+# so "browser walk against the real fleet" could never pass on any host.
+#
+# Both halves are asserted, because either one alone silently breaks the split:
+# run.sh not setting it loses the loud coverage the fixture exists to provide,
+# and the drill setting it puts the always-red walk straight back.
+if grep -qE '^export FLOOR_TEST_FIXTURE=1' "$CL_HERE/run.sh"; then
+  ok "fixture gate: run.sh claims the fixture fleet"
+else
+  fail "fixture gate: run.sh claims the fixture fleet" \
+       "without it the hostile/first-run/offline guards go quiet in the suite"
+fi
+# Comments stripped first. The drill EXPLAINS why it withholds this flag, and a
+# bare `grep FLOOR_TEST_FIXTURE` matched that explanation -- a detector tripping
+# on its own documentation, which is the same bug as the read-only detector that
+# once matched a string probe.sh itself contained.
+if grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'FLOOR_TEST_FIXTURE='; then
+  fail "fixture gate: the drill does NOT claim the fixture fleet" \
+       "the drill sets FLOOR_TEST_FIXTURE; the walk will demand boxes a real fleet has no reason to have"
+else
+  ok "fixture gate: the drill does NOT claim the fixture fleet"
+fi
+# ...and the walk must actually consult it, rather than the flag being inert.
+CL_GATED="$(grep -cE 'FIXTURE &&|if \(FIXTURE\)' "$CL_BJS" || true)"
+if [ "${CL_GATED:-0}" -ge 3 ]; then
+  ok "fixture gate: the walk gates its fixture-only demands (${CL_GATED})"
+else
+  fail "fixture gate: the walk gates its fixture-only demands" \
+       "only ${CL_GATED:-0} gated sites; expected the hostile, first-run and offline demands"
+fi
+
+# The read-only receipt check MOVED here from run.sh; it did not evaporate.
+# CI cannot make it honestly (no real fleet), the drill can (real boxes, and a
+# logging wrapper ahead of the real `box` on PATH). A check that leaves CI and
+# lands nowhere is indistinguishable from one that was deleted, so this suite
+# holds the drill to it by name.
+if grep -q 'read-only walk issued no control command' "$CL_DRILL"; then
+  ok "drill: still asserts the read-only walk touched nothing"
+else
+  fail "drill: still asserts the read-only walk touched nothing" \
+       "the check moved out of run.sh and is not in the drill either"
+fi
+# ...and it must be checking CALLS, not the flag it set itself. Without the
+# wrapper on PATH there is no receipt to read, and the assertion above would
+# pass against an empty file forever.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q 'exec "\$REAL_BOX"' "$CL_DRILL" && grep -q 'PATH="\$TMP/bin:\$PATH"' "$CL_DRILL"; then
+  ok "drill: reads the real box calls, not just its own flag"
+else
+  fail "drill: reads the real box calls, not just its own flag" \
+       "no logging wrapper ahead of the real box on PATH"
+fi
+# The companion no-vacuity check goes with it: a read-only mode that did
+# NOTHING would satisfy "issued no control command" perfectly.
+if grep -q 'read-only walk still exercised the real fleet' "$CL_DRILL"; then
+  ok "drill: proves the read-only walk still did something"
+else
+  fail "drill: proves the read-only walk still did something" "the probe-count check is gone"
+fi
+
+# The two invariants below are about the NARROWED control block, not the walk;
+# they hold whether or not this file drives a browser. #40 gained them while the
+# walk was out of tree, so they are carried forward here rather than reverted --
+# re-adding the browser must not quietly drop coverage that outlived it.
 
 # Read-only by default: no control verb may run without ALLOW_CONTROL.
 # shellcheck disable=SC2016  # matching the literal source text
@@ -185,6 +272,59 @@ if grep -q 'PAUSED_BY_DRILL' "$CL_DRILL" && grep -q 'trap cleanup EXIT' "$CL_DRI
   ok "drill: pauses are repaired on teardown"
 else
   fail "drill: pauses are repaired on teardown" "no PAUSED_BY_DRILL/trap pairing"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Nothing may point at a test file that is not there.
+#
+# kimi-bot caught this on #40 by hand: after the page walk was lifted out,
+# cases.sh still called test/stale.js "the browser side of this" and the test
+# .gitignore still explained a playwright-core install, both describing files
+# that had just left the tree. Nobody was wrong -- there was simply no check,
+# so a reader had to notice. This PR puts those files back, which makes both
+# comments true again, and asserts it so the next move re-breaks the build
+# instead of shipping directions to a file that is gone.
+#
+# Same failure mode, in the same directory, as the "read-only" drill header
+# that outlived the browser walk it described.
+# ---------------------------------------------------------------------------
+echo
+echo "== docs point at files that exist"
+
+CL_REFS="$(grep -rhoE 'test/[a-z][a-z-]*\.js' \
+             "$CL_HERE"/*.sh "$CL_FLOOR/README.md" "$CL_ROOT/drill"/*.sh \
+             "$CL_ROOT/.github/workflows"/*.yml 2>/dev/null | sort -u)"
+
+# A grep that finds nothing would make every assertion below vacuous.
+CL_NREFS="$(printf '%s' "$CL_REFS" | grep -c . || true)"
+if [ "${CL_NREFS:-0}" -ge 4 ]; then
+  ok "docs: found the js references to check (${CL_NREFS})"
+else
+  fail "docs: found the js references to check" "only ${CL_NREFS:-0}; the grep stopped matching, so the check below proves nothing"
+fi
+
+CL_DANGLING=""
+for CL_REF in $CL_REFS; do
+  [ -f "$CL_FLOOR/$CL_REF" ] || CL_DANGLING="$CL_DANGLING $CL_REF"
+done
+if [ -z "$CL_DANGLING" ]; then
+  ok "docs: every referenced test file exists"
+else
+  fail "docs: every referenced test file exists" "dangling:$CL_DANGLING"
+fi
+
+# The .gitignore explains WHY node_modules is ignored. If the page half ever
+# leaves again, that explanation goes with it.
+if grep -q 'playwright-core' "$CL_HERE/.gitignore"; then
+  if [ -f "$CL_HERE/browser.js" ]; then
+    ok "docs: .gitignore explains playwright only while the page half is here"
+  else
+    fail "docs: .gitignore explains playwright only while the page half is here" \
+         "no browser.js, but .gitignore still describes installing playwright-core"
+  fi
+else
+  ok "docs: .gitignore makes no claim about playwright"
 fi
 
 rm -rf "$CL_TMP"

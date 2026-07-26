@@ -100,9 +100,10 @@ cannot be messaged; the request is refused rather than queued.
 ## Tests
 
 ```sh
-fleet-floor/test/run.sh      # collector + box-side scripts + CLI, no fleet needed
-drill/rehearsal-app.sh       # the same, against this host's REAL boxes
-drill/rehearsal-all.sh       # three roles, then the app
+fleet-floor/test/run.sh                 # collector + box-side + CLI + page, no fleet needed
+fleet-floor/test/run.sh --no-browser    # everything except the page
+drill/rehearsal-app.sh                  # the same, against this host's REAL boxes
+drill/rehearsal-all.sh                  # three roles, then the app
 ```
 
 Two halves, because neither can do the other's job:
@@ -121,7 +122,12 @@ Two halves, because neither can do the other's job:
   sources, so a disagreement means one is lying to an operator), and — with
   `--allow-control --boxes <name>` — that pause/resume really moves the box's
   crontab. It is **read-only by default**; a drill that quietly power-cycles a
-  working fleet member is worse than no drill.
+  working fleet member is worse than no drill. It also runs the page walk in
+  read-only mode and **proves** it stayed read-only, by putting a logging
+  wrapper ahead of the real `box` on `PATH` and checking that not one mutating
+  call was made. That assertion lives here rather than in CI because it is
+  about not mutating a *real* fleet, and this is the only place there is one —
+  in CI it cost a second full walk to make a weaker claim.
 
 `test/boxside.sh` is what stops the rest being circular: every other collector
 assertion runs against `stub-box`, which *imitates* what `probe.sh` emits, so a
@@ -131,11 +137,29 @@ output fed to the actual parser — including the message script's quoting, whic
 must deliver an operator's prompt as **one argv element, byte-identical**,
 metacharacters and all.
 
-**The page-level walk is not in this change.** Driving the rendered console —
-that a control targeted the box the operator was looking at, that hostile log
-text stayed text, that the page admits a dead collector — needs a real browser,
-and its assertions turn on canvas timing. That made it the wrong thing to gate
-this on, so it ships as its own change.
+The page half (`test/browser.js`) needs `playwright-core` and a Chrome —
+`npm i playwright-core`, and `PW_CHROME` to point at one. It asserts the
+things a screenshot cannot: that a control targeted the box the operator was
+looking at, that hostile log text stayed text, that a down box states its
+reason, that the log viewer is not a blockable popup. `test/stale.js` kills
+the collector under a live page and checks the page admits it rather than
+serving a frozen fleet that looks calm; `test/churn.js` and
+`test/transition.js` cover the other two ways what is on screen stops being
+true — the box leaves the roster, or goes down — while someone is standing in
+its console. When the driver or browser is missing these **skip loudly** — a
+silently-skipped UI test reads exactly like a passing one — and in CI they do
+not skip at all: `FLOOR_TEST_REQUIRE_BROWSER=1` makes a missing browser a
+failure, because on the merge gate a skip and a pass are indistinguishable.
+
+The walk runs against two very different fleets, so it is told which it is
+looking at. `FLOOR_TEST_FIXTURE=1` (set by `test/run.sh`, **never** by the
+drill) says the fleet is `fixtures/roster.txt`, whose contents are guaranteed:
+a box with hostile log text, a box inside its first session, several offline.
+There the walk *demands* those boxes and fails loudly if it cannot reach one,
+because the checks that depend on them would otherwise vanish in silence. A
+real fleet has no such boxes and, when healthy, nothing offline at all — so
+without the flag the walk asserts only what any fleet must satisfy. `cli.sh`
+asserts both halves: `run.sh` sets it, the drill does not.
 
 ## Files
 
@@ -149,9 +173,13 @@ fleet-floor/
                     #   the live/demo switch, and the demo feed
   server/floor.py   # the collector: serves the page, polls the fleet, applies actions
   server/probe.sh   # read-only duty evidence reader, run inside a box via box exec
-  test/run.sh       # collector + box-side + CLI suite, against a stub box CLI
+  test/run.sh       # collector + box-side + CLI + page, against a stub box CLI
   test/cases.sh     # collector assertions, grouped by the round that found them
   test/boxside.sh   # runs probe.sh and the message script FOR REAL
   test/cli.sh       # `crew floor` argument handling and the auth decision
   test/stub-box     # fake `box`, driven by test/fixtures/fleet.txt
+  test/browser.js   # playwright-core walk of the real page
+  test/stale.js     # kills the collector, checks the page says so
+  test/churn.js     # removes a box from the roster under an open console
+  test/transition.js# takes a box down under an open console
 ```

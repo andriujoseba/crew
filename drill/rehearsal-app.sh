@@ -2,7 +2,8 @@
 # drill/rehearsal-app.sh — rehearse the fleet app (`crew floor`) against the
 # REAL boxes on this host.
 #
-#   drill/rehearsal-app.sh [--boxes "a b c"] [--port <n>] [--allow-control]
+#   drill/rehearsal-app.sh [--boxes "a b c"] [--port <n>] [--no-browser]
+#                          [--allow-control]
 #
 # The other half of this coverage lives in fleet-floor/test/run.sh, which
 # drives the same collector against a stub `box` CLI and can therefore reach
@@ -11,17 +12,17 @@
 # `box exec` into an actual box yields the duty evidence the floor claims to
 # read, and that a control really moves the box.
 #
-# READ-ONLY BY DEFAULT. The control half runs only with --allow-control, and
-# even then only against boxes named with --boxes: every name validated against
-# fleet.roster, reversible verbs only (pause/resume, never power), and repaired
-# on teardown via PAUSED_BY_DRILL on every exit path.
-#
+# READ-ONLY BY DEFAULT, and the browser walk is read-only ALWAYS — even under
+# --allow-control. test/browser.js clicks Pause and Wake for real and picks its
+# targets by screen position, so it can never be bound to --boxes; its
+# `wake-silent` click is fleet-wide and cannot be narrowed at all. Gating it on
+# --allow-control merely moved the hazard onto the opt-in path, where this
+# file's own guarantee — opt-in controls touch ONLY named boxes — was still
+# broken. Controls are exercised solely by the narrowed block below: every name
+# validated against fleet.roster, reversible verbs only, repaired on teardown.
 # A drill that silently power-cycles a working fleet member is worse than no
 # drill (heavy-duty/crew#26: a drill that wrote to real repos because nothing
-# narrowed it). This file previously drove the page-level browser walk by
-# default, which clicked Pause and Wake for real on live members — that walk
-# now lives in its own change, and fleet-floor/test/cli.sh asserts this script
-# drives no browser at all.
+# narrowed it).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +30,7 @@ ROOT="$(dirname "$HERE")"
 
 BOXES=""
 PORT=8792
+BROWSER=1
 ALLOW_CONTROL=0
 USER=drill
 PASSWD="drill-$$-$RANDOM"
@@ -37,8 +39,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --boxes)         BOXES="$2"; shift 2 ;;
     --port)          PORT="$2"; shift 2 ;;
+    --no-browser)    BROWSER=0; shift ;;
     --allow-control) ALLOW_CONTROL=1; shift ;;
-    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--allow-control]"; exit 1 ;;
+    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--no-browser] [--allow-control]"; exit 1 ;;
   esac
 done
 
@@ -98,6 +101,29 @@ jqf()    { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/
 
 echo "== app rehearsal (real boxes, host $(hostname))"
 echo
+
+# ---- a `box` that keeps a receipt ----------------------------------------
+# The collector shells out to `box` by NAME, so putting a logging wrapper ahead
+# of it on PATH records every call it makes without changing a line of the
+# collector. This is what lets the read-only assertion below be made about the
+# REAL fleet rather than about a stub's imitation of one: a flag that suppresses
+# controls is only worth what the calls actually show.
+#
+# Resolve the real binary BEFORE the PATH change, or the wrapper execs itself.
+REAL_BOX="$(command -v box)"
+mkdir -p "$TMP/bin"
+BOX_CALLS="$TMP/box-calls.log"
+: > "$BOX_CALLS"
+# Same one-line-per-invocation shape as the stub's log, so the same patterns
+# read both. The wrapper must be transparent: it logs, then hands over with
+# exec, preserving argv, stdin, stdout and the exit status exactly.
+cat > "$TMP/bin/box" <<SHIM
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BOX_CALLS"
+exec "$REAL_BOX" "\$@"
+SHIM
+chmod +x "$TMP/bin/box"
+export PATH="$TMP/bin:$PATH"
 
 # ---- collector -----------------------------------------------------------
 CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$PORT" \
@@ -249,6 +275,85 @@ else
       ok "teardown $b: left armed"
     fi
   done
+fi
+
+# ---- page ----------------------------------------------------------------
+if [ "$BROWSER" -eq 1 ]; then
+  echo
+  echo "== page"
+  if node -e "require('playwright-core')" >/dev/null 2>&1; then
+    # ALWAYS read-only — including under --allow-control. Gating it on that
+    # flag only moved the hazard: --allow-control without --boxes skips the
+    # narrowed control block below, yet the walk would still pause whichever
+    # unit is on screen, and its `wake-silent` click is FLEET-WIDE, which
+    # --boxes cannot constrain even in principle. So the opt-in path broke this
+    # file's own guarantee that controls touch only named boxes.
+    #
+    # browser.js picks its targets by screen position, not by name; there is no
+    # honest way to bind that to an allowlist. Controls on a real host are
+    # covered by the narrowed block below, which validates each name against
+    # fleet.roster, uses the reversible verbs only, and repairs on teardown.
+    # The browser walk's job here is to prove the page renders REAL data.
+    echo "   (browser walk: read-only — controls are covered by the narrowed block)"
+    # Slice the receipt from here, so the drill's own control block above is not
+    # counted against the walk.
+    RO_FROM=$(( $(wc -l < "$BOX_CALLS") + 1 ))
+    # NOT FLOOR_TEST_FIXTURE: this is a real fleet. The walk's fixture-only
+    # demands (a hostile-log box, a box in its first session, something offline)
+    # are guarantees of test/fixtures/roster.txt, not of a healthy host.
+    if FLOOR_TEST_READONLY=1 \
+       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD" \
+       2>&1 | tee "$TMP/walk.out"; then
+      ok "browser walk against the real fleet (read-only)"
+    else
+      fail "browser walk against the real fleet (read-only)" "see output above"
+    fi
+    # A walk that exits 0 must have asserted something. Deliberately NOT a
+    # numeric floor like the stub suite's: how many checks a real fleet reaches
+    # depends on that fleet (a repo link needs a box with a repo, a reason
+    # string needs something offline), and inventing a number for a host I
+    # cannot measure is how the walk came to be unpassable here in the first
+    # place. Assert only what is certain -- it reported a count -- and print it,
+    # so an operator watching the drill can see coverage drop over time.
+    WALK_N="$(sed -n 's/.*-- browser: \([0-9]*\) ok.*/\1/p' "$TMP/walk.out" | tail -1)"
+    if [ -n "$WALK_N" ]; then
+      ok "browser walk reported its assertion count (${WALK_N} checks on this fleet)"
+    else
+      fail "browser walk reported its assertion count" "no '-- browser: N ok' line — it exited without a summary"
+    fi
+
+    # ---- the read-only walk must have touched NOTHING --------------------
+    # This assertion used to live in fleet-floor/test/run.sh, where it cost CI
+    # a second full walk (~3 min) to prove a property about a fleet CI does not
+    # have. It belongs here: the invariant is "the drill does not mutate a real
+    # fleet", and this is the only place there is a real fleet to not mutate.
+    #
+    # kimi-bot found that this script once ran the walk unguarded, so a
+    # "read-only" drill was pausing live members and starting stopped ones. The
+    # mode exists now; what makes it trustworthy is reading the calls, not the
+    # flag. A flag I merely believe in is exactly how that bug shipped.
+    RO_NEW="$TMP/ro-calls.log"
+    tail -n "+$RO_FROM" "$BOX_CALLS" > "$RO_NEW" 2>/dev/null || : > "$RO_NEW"
+    # Nothing that changes a box may appear: no lifecycle verb, no crontab edit,
+    # no session launch. `grep -c` PRINTS 0 and EXITS 1 on no match, so `|| echo
+    # 0` would append a second line and break the compare; `|| true` is correct.
+    RO_PAT='^(down|start) |\| crontab -|BOT_CLI_CMD|floor-prompt'
+    RO_BAD=$(grep -cE "$RO_PAT" "$RO_NEW" || true)
+    t "read-only walk issued no control command to a real box" 0 "${RO_BAD:-0}"
+    if [ "${RO_BAD:-0}" -ne 0 ]; then
+      echo "  offending calls:"; grep -nE "$RO_PAT" "$RO_NEW" | head -5
+    fi
+    # ...and it must still have done its job. Without this, a read-only mode
+    # that silently did NOTHING would pass the check above perfectly.
+    RO_PROBES=$(grep -c 'logstart' "$RO_NEW" || true)
+    if [ "${RO_PROBES:-0}" -gt 0 ]; then
+      ok "read-only walk still exercised the real fleet (${RO_PROBES} probes)"
+    else
+      fail "read-only walk still exercised the real fleet" "no probes seen — the walk did nothing"
+    fi
+  else
+    skip "browser walk" "playwright-core not installed (npm i playwright-core)"
+  fi
 fi
 
 echo
