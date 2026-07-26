@@ -517,8 +517,21 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       ok('repo link does not escape the slash', !/%2F/i.test(url || ''), url);
       ok('repo link points at the actual repo',
          url === 'https://github.com/' + repo, `${url} for repo ${repo}`);
-    } else {
+    } else if (FIXTURE) {
+      // Fixture-gated for the same reason as the offline-box demand above: the
+      // fixture guarantees a unit with a repo, a real fleet does not. A host
+      // whose boxes are all idle with no history and no repos.txt would fail
+      // here for a reason that says nothing about the page.
+      //
+      // Unlike the hostile/first-run cases this one is DEFENSIVE, not
+      // demonstrated: I could not drive a stub fleet into it, because the repo
+      // string comes from session and queue lines rather than from `::repos`,
+      // so every box with any history still exposes one. Gated on the argument,
+      // not on a reproduction -- worth stating plainly rather than implying the
+      // same evidence as the other two.
       ok('repo link points at the actual repo', false, 'no unit exposed a repo');
+    } else {
+      console.log('  --   no unit exposed a repo; nothing to check a repo link against');
     }
   }
 
