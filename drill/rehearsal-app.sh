@@ -12,11 +12,14 @@
 # `box exec` into an actual box yields the duty evidence the floor claims to
 # read, and that a control really moves the box.
 #
-# READ-ONLY BY DEFAULT. The app can power-cycle boxes and start model
-# sessions, so the control half runs only with --allow-control, and even then
-# only against boxes named with --boxes. A drill that silently power-cycles a
-# working fleet member is worse than no drill (heavy-duty/crew#26 is the
-# precedent: a drill that wrote to real repos because nothing narrowed it).
+# READ-ONLY BY DEFAULT — and that now includes the browser walk, which is the
+# part that quietly broke the promise: test/browser.js clicks Pause and Wake
+# for real, so a default run was pausing live fleet members. Without
+# --allow-control the page is rendered and asserted but no control is touched
+# (FLOOR_TEST_READONLY=1); the control half runs only with --allow-control, and
+# even then only against boxes named with --boxes. A drill that silently
+# power-cycles a working fleet member is worse than no drill (heavy-duty/crew#26
+# is the precedent: a drill that wrote to real repos because nothing narrowed it).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,8 +56,22 @@ TMP="$(mktemp -d)"
 SRV=""
 # shellcheck disable=SC2317  # invoked by the traps below, which shellcheck
 # does not treat as a call site.
+# Boxes this run paused, so teardown can put them back even on a failure path.
+PAUSED_BY_DRILL=""
+# shellcheck disable=SC2317  # invoked by the traps below, which shellcheck
+# does not treat as a call site.
 cleanup() {
-  local rc=$?
+  local rc=$? b
+  # Best-effort repair FIRST, while the collector is still up: bailing out
+  # with a real fleet member's crontab left commented takes it off duty
+  # silently, which is worse than the failure that caused the bail.
+  for b in $PAUSED_BY_DRILL; do
+    if [ "$(status POST /api/command "{\"action\":\"resume\",\"box\":\"$b\"}" 2>/dev/null)" = "200" ]; then
+      echo "teardown: resumed $b"
+    else
+      echo "teardown: WARNING — could not resume $b; run: box exec $b -- bash -lc \"crontab -l | sed -E 's|^#CREW-FLOOR-PAUSED ||' | crontab -\"" >&2
+    fi
+  done
   if [ -n "$SRV" ]; then
     kill "$SRV" 2>/dev/null
   fi
@@ -130,6 +147,12 @@ print(u[0]['state'] if u else 'MISSING')")"
     fail "floor reports $name" "not in /api/fleet"
     continue
   fi
+  # An unusable answer is never a pass: an empty floor_state from a transient
+  # API hiccup used to fall through to the "is up" branch and be recorded ok.
+  case "$floor_state" in
+    working|idle|offline) ;;
+    *) fail "agree: $name" "floor returned no usable state (got '$floor_state')"; continue ;;
+  esac
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
   case "$cli_line" in
     *stopped*|*"NOT CREATED"*)
@@ -137,11 +160,25 @@ print(u[0]['state'] if u else 'MISSING')")"
     "")
       skip "agree: $name" "crew status printed no row" ;;
     *)
-      # The CLI shows it up; the floor may legitimately call it working or
-      # idle, but must not call it offline.
-      if [ "$floor_state" = "offline" ]; then
-        fail "agree: $name is up" "crew status shows it up, floor says offline"
-      else ok "agree: $name is up"; fi ;;
+      # The CLI showing a box up does NOT mean the floor must call it up: a
+      # paused box and a cron-silent one are offline on the floor BY DESIGN,
+      # and both are ordinary states on a real fleet. Only disagree when the
+      # floor reports offline with no reason for it.
+      if [ "$floor_state" != "offline" ]; then
+        ok "agree: $name is up"
+      else
+        note="$(body GET /api/fleet | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+u=[x for x in d['units'] if x['box']=='$name']
+print((u[0].get('note') or '') if u else '')")"
+        case "$note" in
+          *paused*|*SILENT*|*"not hired"*|*"no cron"*)
+            skip "agree: $name" "crew status shows it up; floor says offline because: $note" ;;
+          *)
+            fail "agree: $name is up" "crew status shows it up, floor says offline with no reason (note: '${note:-none}')" ;;
+        esac
+      fi ;;
   esac
 done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
 
@@ -183,6 +220,7 @@ else
     # pause/resume is the reversible one, so it is what the drill uses. The
     # assertion is the EFFECT: the box's own crontab, read back over box exec.
     if [ "$(status POST /api/command "{\"action\":\"pause\",\"box\":\"$b\"}")" = "200" ]; then
+      PAUSED_BY_DRILL="$PAUSED_BY_DRILL $b"
       if box exec "$b" -- bash -lc "crontab -l 2>/dev/null | grep -q '^#CREW-FLOOR-PAUSED'" >/dev/null 2>&1; then
         ok "pause $b: crontab line is commented"
       else
@@ -218,10 +256,26 @@ if [ "$BROWSER" -eq 1 ]; then
   echo
   echo "== page"
   if node -e "require('playwright-core')" >/dev/null 2>&1; then
-    if node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"; then
-      ok "browser walk against the real fleet"
+    # READ-ONLY unless the operator opted in. test/browser.js is written for
+    # the stub fleet, where clicking Pause costs nothing; against REAL boxes
+    # the same walk pauses a live member and `wake-silent` starts stopped ones,
+    # none of it narrowed by --boxes. Worse, its undo only fires for a pause IT
+    # caused — on a box an operator had deliberately parked, the click sends
+    # `resume` and silently un-parks it with no undo. That is crew#26's shape,
+    # in the very file whose header warns about it.
+    if [ "$ALLOW_CONTROL" -eq 1 ]; then
+      BROWSER_MODE="controls exercised"
+      BROWSER_ENV=""
     else
-      fail "browser walk against the real fleet" "see output above"
+      BROWSER_MODE="read-only"
+      BROWSER_ENV="1"
+    fi
+    echo "   (browser walk: $BROWSER_MODE)"
+    if FLOOR_TEST_READONLY="$BROWSER_ENV" \
+       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"; then
+      ok "browser walk against the real fleet ($BROWSER_MODE)"
+    else
+      fail "browser walk against the real fleet ($BROWSER_MODE)" "see output above"
     fi
   else
     skip "browser walk" "playwright-core not installed (npm i playwright-core)"

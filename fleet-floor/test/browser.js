@@ -20,6 +20,12 @@ const path = require('path');
 const CHROME = process.env.PW_CHROME
   || process.env.HOME + '/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
 const [, , URL_ARG, OUT_ARG, USER, PASS] = process.argv;
+/* FLOOR_TEST_READONLY=1 — render and navigate, but never touch a control.
+   This walk is written for the stub fleet, where clicking Pause costs nothing.
+   Against a REAL fleet (drill/rehearsal-app.sh) the same clicks pause a live
+   box and start stopped ones, so the drill runs us in this mode unless the
+   operator explicitly opted into control. */
+const READONLY = process.env.FLOOR_TEST_READONLY === '1';
 const url = URL_ARG || 'http://127.0.0.1:8791/';
 const out = OUT_ARG || 'shots';
 
@@ -57,7 +63,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
 
   // There are two badges (floor bar + room HUD); goLive() marks both.
   const LIVE = (await page.locator('.demo-badge.live').count()) > 0;
-  console.log(`  mode: ${LIVE ? 'LIVE' : 'DEMO'}`);
+  console.log(`  mode: ${LIVE ? 'LIVE' : 'DEMO'}${READONLY ? ' (read-only: controls not exercised)' : ''}`);
 
   // Record every command the page posts, so an assertion can name the box a
   // control actually addressed.
@@ -158,7 +164,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        `${visible.length} cells resolved to ${distinct.size} distinct boxes`);
   }
 
-  if (LIVE && visible.length) {
+  if (LIVE && visible.length && !READONLY) {
     // The control must address the box on screen, not a lookalike.
     const target = visible[0];
     await scrollTo(target.cam);
@@ -170,7 +176,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('ctl: pause posts pause/resume', /^(pause|resume)$/.test(s.action || ''), s.action);
     // Undo it: this is a real pause on a real box, and leaving it paused
     // changes the fleet the later tests in this suite walk into.
-    if (s.action === 'pause') {
+    if (s.action === 'pause') {          // never send a bare resume: on a box an
+                                         // operator had parked, that un-parks it
       await page.evaluate(async (b) => {
         await fetch(location.origin + '/api/command', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -186,7 +193,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const byState = {};
   for (const v of visible) {
     await scrollTo(v.cam);
-    await enter(v.i, v.cam);
+    const opened = await enter(v.i, v.cam);
+    // A missed click would otherwise attribute the PREVIOUS console's readings
+    // to this box, and every per-state assertion below would be about the
+    // wrong unit.
+    if (opened !== v.got) { if (opened !== null) await leave(); continue; }
     const st = (await page.locator('#modelabel').textContent()).trim();
     (byState[st] = byState[st] || []).push({
       box: v.got,
@@ -222,7 +233,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      CSS grid's textContent — that scrape was brittle and is what put CI red.
      Both are re-read together each iteration, so there is no window where a
      label captured earlier is compared against a flag fetched later. */
-  if (LIVE && visible.length) {
+  if (LIVE && visible.length && !READONLY) {
     const victim = visible.find((v) => !/unreach|wedged|absent|stopped/.test(v.got)) || visible[0];
     const cmd = (action, box) => page.evaluate(async ([a, b]) => {
       const r = await fetch(location.origin + '/api/command', {
@@ -375,10 +386,19 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const beforeFleet = consoleErrors.length;
 
   // ---- fleet-wide ---------------------------------------------------------
-  if (LIVE) {
+  if (LIVE && !READONLY) {
     await page.click('#g-wake');
-    await page.waitForTimeout(2500);
-    const msg = (await page.locator('#livestat').textContent()).trim();
+    /* Poll until the status is TERMINAL. Reading it a fixed 2.5s after the
+       click asserted the optimistic "wake-silent…" in-flight message, while
+       the action itself takes >=8s against the wedged fixture — three
+       assertions that could not fail. */
+    let msg = '';
+    for (let i = 0; i < 30; i++) {
+      await page.waitForTimeout(1000);
+      msg = (await page.locator('#livestat').textContent()).trim();
+      if (/ok$|FAILED|failed/.test(msg)) break;
+    }
+    ok('fleet: wake-silent reaches a terminal status', /ok$|FAILED|failed/.test(msg), msg);
     ok('fleet: wake-silent reports a result', /wake-silent/.test(msg), msg);
     // The partial failure must reach the operator as a named box, not a code.
     ok('fleet: a partial failure names the box', !/HTTP \d+$/.test(msg), msg);

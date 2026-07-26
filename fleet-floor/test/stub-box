@@ -134,8 +134,15 @@ case "${1:-}" in
     name="$2"
     # The real `box exec` forwards stdin; drain it the same way so a caller
     # writing a prompt or an agent profile never blocks on a full pipe.
-    stdin_copy="$STATEDIR/$name.last-stdin"
+    #
+    # PER-INVOCATION, not one file per box: the collector probes concurrently,
+    # so a probe (stdin = agent profile) could land between the message hop's
+    # write and its read, and the profile ended up saved as the prompt. That
+    # made `message: prompt delivered via stdin` fail intermittently — a flaky
+    # test in the suite CI gates on.
+    stdin_copy="$STATEDIR/$name.stdin.$$"
     cat > "$stdin_copy" 2>/dev/null || true
+    trap 'rm -f "$stdin_copy"' EXIT
     script="${*: -1}"
     st="$(state_of "$name")"
     sc="$(scenario_of "$name")"
