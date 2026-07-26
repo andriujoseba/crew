@@ -145,33 +145,24 @@ fi
 
 
 # ---------------------------------------------------------------------------
-# The drill must never run the browser walk in a mutating mode.
+# The drill must not mutate a real fleet except through the narrowed block.
 #
-# codex-bot's finding: gating that on --allow-control only moved the hazard.
-# `--allow-control` without `--boxes` skips the narrowed control block, yet the
-# browser walk would still pause whichever unit was on screen; and its
-# `wake-silent` click is FLEET-WIDE, which --boxes cannot constrain even in
-# principle. So the opt-in path broke the script's own guarantee.
-#
-# Asserted as an INVARIANT over the source rather than by running two argument
-# combinations: the property wanted is "for ANY arguments, the walk is
-# read-only", and two sampled invocations cannot show that. This can.
+# codex-bot found (on the head that carried the page-level walk) that gating
+# that walk on --allow-control only MOVED the hazard: --allow-control without
+# --boxes skipped the narrowed block, yet the walk still paused whichever unit
+# was on screen, and its fleet-wide `wake-silent` could not be bound to --boxes
+# at all. The walk now lives in its own change, so what this suite must hold is
+# the property that made it safe to remove: the drill drives NO browser, and
+# every control it does apply is gated on an explicit allowlist.
 # ---------------------------------------------------------------------------
 echo
-echo "== drill: the browser walk cannot mutate a real fleet"
+echo "== drill: no unnarrowed path to a real fleet"
 
 CL_DRILL="$CL_ROOT/drill/rehearsal-app.sh"
-CL_INVOKES="$(grep -cE 'node .*fleet-floor/test/browser\.js' "$CL_DRILL" || true)"
-t "drill: exactly one browser.js invocation" 1 "${CL_INVOKES:-0}"
 
-# Every invocation must carry the read-only env on the SAME line.
-CL_RO="$(grep -B1 -E 'node .*fleet-floor/test/browser\.js' "$CL_DRILL" | grep -cE 'FLOOR_TEST_READONLY=1' || true)"
-t "drill: that invocation is read-only" 1 "${CL_RO:-0}"
-
-# And no branch may hand it an empty/!=1 value, which is how the first fix
-# reintroduced the mutating path under --allow-control.
-CL_BAD="$(grep -cE 'FLOOR_TEST_READONLY="?\$|FLOOR_TEST_READONLY=""|FLOOR_TEST_READONLY=$' "$CL_DRILL" || true)"
-t "drill: read-only is not computed from a variable" 0 "${CL_BAD:-0}"
+# No browser walk at all — nothing that clicks a live console.
+CL_BROWSER="$(grep -cE 'browser\.js|playwright' "$CL_DRILL" || true)"
+t "drill: drives no browser" 0 "${CL_BROWSER:-0}"
 
 # The narrowed control block still refuses to act without an explicit allowlist.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
@@ -181,14 +172,19 @@ else
   fail "drill: --allow-control still requires --boxes" "the allowlist guard is gone"
 fi
 
-# browser.js must actually honour the flag: no control click outside a
-# !READONLY guard. Counted, so a new control added without the guard trips it.
-CL_BJS="$CL_HERE/browser.js"
-CL_GUARDS="$(grep -cE '!READONLY' "$CL_BJS" || true)"
-if [ "${CL_GUARDS:-0}" -ge 3 ]; then
-  ok "browser.js: control blocks are behind a READONLY guard (${CL_GUARDS})"
+# Read-only by default: no control verb may run without ALLOW_CONTROL.
+# shellcheck disable=SC2016  # matching the literal source text
+if grep -qE 'if \[ "\$ALLOW_CONTROL" -ne 1 \]; then' "$CL_DRILL"; then
+  ok "drill: control verbs are opt-in"
 else
-  fail "browser.js: control blocks are behind a READONLY guard" "only ${CL_GUARDS:-0} guards found; expected the pause, paused-box and fleet-wide blocks"
+  fail "drill: control verbs are opt-in" "the ALLOW_CONTROL gate is gone"
+fi
+
+# Anything it does pause must be repaired on the way out, on every exit path.
+if grep -q 'PAUSED_BY_DRILL' "$CL_DRILL" && grep -q 'trap cleanup EXIT' "$CL_DRILL"; then
+  ok "drill: pauses are repaired on teardown"
+else
+  fail "drill: pauses are repaired on teardown" "no PAUSED_BY_DRILL/trap pairing"
 fi
 
 rm -rf "$CL_TMP"
