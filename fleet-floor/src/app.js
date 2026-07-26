@@ -405,8 +405,13 @@ var LIVEMETA=null, POLL_MS=15000, seenSess={};
 function apiURL(path){return (location.origin&&location.origin!=="null"?location.origin:"")+path;}
 function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
   if(r.status===401){throw new Error("unauthorized");}
-  if(!r.ok)throw new Error("HTTP "+r.status);
-  return r.json();});}
+  /* A partly-failed fleet action answers 500 with the per-box detail in the
+     body. Throwing on !ok would discard exactly the part worth showing and
+     leave the operator with a bare status code. */
+  return r.json().then(function(j){
+    if(!r.ok&&!(j&&j.results))throw new Error((j&&j.error)||("HTTP "+r.status));
+    return j;
+  },function(){throw new Error("HTTP "+r.status);});});}
 /* Server unit -> the record every panel already reads, so nothing downstream
    has to know which mode it is in. */
 function liveData(u){
@@ -511,7 +516,10 @@ function cmd(action,extra){
   return api("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
     .then(function(r){
       var bad=(r.results||[]).filter(function(x){return !x.ok;});
-      setStatus(r.ok?action+" ok":action+" FAILED: "+((bad[0]||{}).out||r.error||"?"),!r.ok);
+      /* Name the box that refused. On a fleet-wide action "start-all FAILED"
+         alone tells the operator nothing about which box needs a look. */
+      var why=bad.length?(bad[0].box+": "+bad[0].out+(bad.length>1?" (+"+(bad.length-1)+" more)":"")):(r.error||"?");
+      setStatus(r.ok?action+" ok":action+" FAILED — "+why,!r.ok);
       pollFleet();
       return r;
     })
@@ -1227,19 +1235,32 @@ if(_railL)_railL.addEventListener("click",function(e){
   else if(b.id==="ac-logs")openLogs(box,"");
 });
 /* Raw logs come back as text/plain from the collector, which tails them in the
-   box — the page never gets shell access to a path. */
+   box — the page never gets shell access to a path.
+
+   Shown in an in-page overlay, NOT window.open: the window would be opened in
+   the fetch's .then(), which browsers no longer treat as user-initiated, so a
+   default popup blocker eats it and the button appears to do nothing. */
 function openLogs(box,file){
   setStatus("fetching logs…",false);
   fetch(apiURL("/api/logs?box="+encodeURIComponent(box)+(file?"&file="+encodeURIComponent(file):"")))
     .then(function(r){return r.text();})
     .then(function(txt){
-      var w=window.open("","_blank","noopener");
-      if(!w){setStatus("popup blocked — allow popups to read logs",true);return;}
-      w.document.write('<title>'+esc(box)+(file?" · "+esc(file):" · duty.log")+'</title><body style="margin:0;background:#0a0f18;color:#c7d4e4"><pre style="white-space:pre-wrap;word-break:break-word;font:12px ui-monospace,monospace;padding:16px">'+esc(txt)+'</pre>');
-      w.document.close();setStatus("logs opened",false);
+      var ov=document.getElementById("logov");
+      if(!ov){
+        ov=document.createElement("div");ov.id="logov";
+        ov.innerHTML='<div class="logbox"><div class="loghd"><span id="logttl"></span><button id="logx">✕ close</button></div><pre id="logtx"></pre></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener("click",function(e){if(e.target===ov||e.target.id==="logx")closeLogs();});
+      }
+      document.getElementById("logttl").textContent=box+" · "+(file||"duty.log");
+      document.getElementById("logtx").textContent=txt||"(empty)";
+      ov.style.display="flex";
+      var tx=document.getElementById("logtx");tx.scrollTop=tx.scrollHeight;
+      setStatus("logs: "+box,false);
     })
     .catch(function(e){setStatus("logs failed: "+e.message,true);});
 }
+function closeLogs(){var ov=document.getElementById("logov");if(ov)ov.style.display="none";}
 document.getElementById("filters").addEventListener("click",function(e){var b=e.target.closest(".fchip");if(!b)return;var f=b.dataset.f;floorFilter[f]=b.dataset.v;[].forEach.call(this.querySelectorAll('.fchip[data-f="'+f+'"]'),function(x){x.classList.toggle("on",x===b);});});
 /* Pause/Resume is the box's crontab, not its power: the engine stops being
    woken, the box stays up and reachable. That is the reversible control an
@@ -1282,7 +1303,14 @@ cv.addEventListener("mousemove",function(e){var r=cv.getBoundingClientRect();flo
   if(VIEW==="floor"){var over=false;for(var k=0;k<floorHits.length;k++){var c=floorHits[k];if(floorMouse.x>=c.x&&floorMouse.x<=c.x+CELLW&&floorMouse.y>=c.y&&floorMouse.y<=c.y+CELLH){over=true;break;}}cv.style.cursor=floorDrag?"grabbing":(over?"pointer":"grab");}else cv.style.cursor="default";});
 cv.addEventListener("click",function(e){if(VIEW!=="floor"||floorMoved)return;var r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;for(var k=0;k<floorHits.length;k++){var c=floorHits[k];if(mx>=c.x&&mx<=c.x+CELLW&&my>=c.y&&my<=c.y+CELLH){focusUnit(c.i);return;}}});
 cv.addEventListener("wheel",function(e){if(VIEW!=="floor")return;e.preventDefault();floorCamTarget+=(e.deltaX||e.deltaY);},{passive:false});
-document.addEventListener("keydown",function(e){if(e.key==="Escape"&&VIEW==="room")toFloor();});
+document.addEventListener("keydown",function(e){
+  if(e.key!=="Escape")return;
+  /* Esc closes the log overlay first — otherwise it dismisses the room behind
+     it and leaves the logs floating over the wrong view. */
+  var ov=document.getElementById("logov");
+  if(ov&&ov.style.display==="flex")return closeLogs();
+  if(VIEW==="room")toFloor();
+});
 document.body.className="floor";
 resize();requestAnimationFrame(frame);
 /* Ask for a snapshot immediately, then keep asking. A failure here is the
