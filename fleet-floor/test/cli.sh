@@ -1,0 +1,153 @@
+# shellcheck shell=bash  # sourced by run.sh, so it has no shebang of its own
+# fleet-floor/test/cli.sh — `crew floor` argument handling and preflight.
+#
+# Sourced by test/run.sh (which provides ok/fail/t/skip); runnable standalone.
+#
+# The CLI is the only part an operator actually types, and it is where the
+# auth decision is made: a page that can power-cycle boxes must never come up
+# without a password. None of that was covered by the collector or page tests,
+# which start floor.py directly and hand it an env.
+set -uo pipefail
+
+CL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CL_FLOOR="$(dirname "$CL_HERE")"
+CL_ROOT="$(dirname "$CL_FLOOR")"
+
+if ! declare -F ok >/dev/null; then
+  PASS=0 SKIP=0
+  declare -a FAILS=()
+  ok()   { echo "ok   $1"; PASS=$((PASS + 1)); }
+  fail() { echo "FAIL $1${2:+  — $2}"; FAILS+=("$1"); }
+  skip() { echo "skip $1${2:+  — $2}"; SKIP=$((SKIP + 1)); }
+  t()    { if [ "$2" = "$3" ]; then ok "$1"; else fail "$1" "expected [$2] got [$3]"; fi; }
+  CL_STANDALONE=1
+fi
+
+CL_RC=0
+CL_TMP="$(mktemp -d)"
+mkdir -p "$CL_TMP/bin"
+# `crew floor` calls need_box first, so a `box` must exist on PATH; it is never
+# actually invoked by the paths under test here.
+ln -sf "$CL_HERE/stub-box" "$CL_TMP/bin/box"
+export FLOOR_FIXTURE="$CL_HERE/fixtures/fleet.txt"
+export FLOOR_STATE="$CL_TMP/state"
+export CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt"
+
+echo
+echo "== crew floor CLI"
+
+# crew_floor ARGS... — runs a short-lived `crew floor`, leaving its combined
+# output in $CL_TMP/out and its exit status in $CL_RC.
+#
+# Deliberately NOT `CL_OUT="$(crew_floor ...)"`: command substitution runs the
+# function in a subshell, so a CL_RC assigned inside it never reaches the
+# caller and every exit-status assertion silently reads 0. That cost a round.
+crew_floor() {
+  CL_RC=0
+  PATH="$CL_TMP/bin:$PATH" timeout 4 "$CL_ROOT/cli/crew" floor "$@" \
+    > "$CL_TMP/out" 2>&1 || CL_RC=$?
+}
+cl_out() { cat "$CL_TMP/out"; }
+
+# --- argument errors must be refused, loudly and before anything starts -----
+crew_floor --bogus; CL_OUT="$(cl_out)"
+if [ "$CL_RC" -ne 0 ] && printf '%s' "$CL_OUT" | grep -q "unknown option"; then
+  ok "cli: unknown option refused"
+else
+  fail "cli: unknown option refused" "rc=$CL_RC out=$CL_OUT"
+fi
+
+crew_floor --port; CL_OUT="$(cl_out)"
+if [ "$CL_RC" -ne 0 ]; then ok "cli: --port with no value refused"
+else fail "cli: --port with no value refused" "rc=0, out=$CL_OUT"; fi
+
+crew_floor --pass; CL_OUT="$(cl_out)"
+if [ "$CL_RC" -ne 0 ]; then ok "cli: --pass with no value refused"
+else fail "cli: --pass with no value refused" "rc=0, out=$CL_OUT"; fi
+
+# --- help ------------------------------------------------------------------
+crew_floor --help; CL_OUT="$(cl_out)"
+t "cli: --help exits 0" 0 "$CL_RC"
+if printf '%s' "$CL_OUT" | grep -q "IP:PORT"; then ok "cli: --help explains what it serves"
+else fail "cli: --help explains what it serves" "$CL_OUT"; fi
+# The help must not stop mid-sentence — this block is extracted by a sed range,
+# which is exactly the kind of thing that silently truncates when edited.
+if printf '%s' "$CL_OUT" | tail -1 | grep -q '\.$'; then ok "cli: --help is not truncated"
+else fail "cli: --help is not truncated" "last line: $(printf '%s' "$CL_OUT" | tail -1)"; fi
+if printf '%s' "$CL_OUT" | grep -q "^cmd_floor"; then
+  fail "cli: --help stops before the code" "the function body leaked into help"
+else ok "cli: --help stops before the code"; fi
+
+# --- the banner an operator reads -----------------------------------------
+crew_floor --local --port 8899; CL_OUT="$(cl_out)"
+if printf '%s' "$CL_OUT" | grep -q "http://127.0.0.1:8899/"; then ok "cli: --local prints a loopback URL"
+else fail "cli: --local prints a loopback URL" "$CL_OUT"; fi
+if printf '%s' "$CL_OUT" | grep -qi "loopback only"; then ok "cli: --local says it is loopback only"
+else fail "cli: --local says it is loopback only" "$CL_OUT"; fi
+if printf '%s' "$CL_OUT" | grep -q "plain HTTP"; then
+  fail "cli: no cleartext warning on loopback" "warned about the network for a loopback bind"
+else ok "cli: no cleartext warning on loopback"; fi
+
+crew_floor --port 8898; CL_OUT="$(cl_out)"
+if printf '%s' "$CL_OUT" | grep -q "plain HTTP"; then ok "cli: warns that a bound port sends the password in clear"
+else fail "cli: warns that a bound port sends the password in clear" "$CL_OUT"; fi
+
+# --- the auth decision -----------------------------------------------------
+# A generated password must be generated, not a constant: two runs, two values.
+crew_floor --local --port 8897
+CL_P1="$(cl_out | sed -n 's/^  password  \([^ ]*\) .*/\1/p')"
+crew_floor --local --port 8896
+CL_P2="$(cl_out | sed -n 's/^  password  \([^ ]*\) .*/\1/p')"
+if [ -n "$CL_P1" ] && [ -n "$CL_P2" ] && [ "$CL_P1" != "$CL_P2" ]; then
+  ok "cli: generated passwords differ between runs"
+else
+  fail "cli: generated passwords differ between runs" "[$CL_P1] vs [$CL_P2]"
+fi
+if [ "${#CL_P1}" -ge 16 ]; then ok "cli: generated password is long enough (${#CL_P1})"
+else fail "cli: generated password is long enough" "${#CL_P1} chars"; fi
+
+crew_floor --local --port 8895 --pass hunter2; CL_OUT="$(cl_out)"
+if printf '%s' "$CL_OUT" | grep -q "hunter2"; then
+  fail "cli: an explicit password is not echoed" "the password was printed back"
+else ok "cli: an explicit password is not echoed"; fi
+
+# The collector itself must refuse to serve without one, whatever starts it.
+CL_RC2=0
+CREW_FLOOR_PASS="" CREW_FLOOR_PORT=8894 timeout 5 python3 "$CL_FLOOR/server/floor.py" \
+  > "$CL_TMP/nopass.out" 2>&1 || CL_RC2=$?
+if [ "$CL_RC2" -ne 0 ] && grep -q "refusing to serve" "$CL_TMP/nopass.out"; then
+  ok "collector: refuses to serve with no password"
+else
+  fail "collector: refuses to serve with no password" "rc=$CL_RC2 $(cat "$CL_TMP/nopass.out")"
+fi
+
+# --- preflight -------------------------------------------------------------
+# A missing index.html must be named, not surfaced as a stack trace or a 500
+# on first request.
+CL_RC3=0
+CREW_FLOOR_PASS=x CREW_FLOOR_PORT=8893 CREW_FLOOR_INDEX=/nonexistent/index.html \
+  timeout 5 python3 -c "
+import os, sys
+sys.argv = ['floor.py']
+sys.path.insert(0, '$CL_FLOOR/server')
+import floor
+floor.INDEX = '/nonexistent/index.html'
+try:
+    floor.main()
+except SystemExit as e:
+    print(e); sys.exit(1)
+" > "$CL_TMP/noindex.out" 2>&1 || CL_RC3=$?
+if [ "$CL_RC3" -ne 0 ] && grep -qi "missing" "$CL_TMP/noindex.out"; then
+  ok "collector: a missing index.html is named at startup"
+else
+  fail "collector: a missing index.html is named at startup" "rc=$CL_RC3 $(cat "$CL_TMP/noindex.out")"
+fi
+
+rm -rf "$CL_TMP"
+
+if [ -n "${CL_STANDALONE:-}" ]; then
+  echo
+  echo "== cli summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
+  [ "${#FAILS[@]}" -gt 0 ] && exit 1
+  exit 0
+fi

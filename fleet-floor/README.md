@@ -124,13 +124,24 @@ Two halves, because neither can do the other's job:
   crontab. It is **read-only by default**; a drill that quietly power-cycles a
   working fleet member is worse than no drill.
 
+`test/boxside.sh` is what stops the rest being circular: every other collector
+assertion runs against `stub-box`, which *imitates* what `probe.sh` emits, so a
+real bug in `probe.sh` or in the operator-message script would sail straight
+through. Neither needs a box to run, so both are executed for real and their
+output fed to the actual parser — including the message script's quoting, which
+must deliver an operator's prompt as **one argv element, byte-identical**,
+metacharacters and all.
+
 The page half (`test/browser.js`) needs `playwright-core` and a Chrome —
 `npm i playwright-core`, and `PW_CHROME` to point at one. It asserts the
 things a screenshot cannot: that a control targeted the box the operator was
 looking at, that hostile log text stayed text, that a down box states its
 reason, that the log viewer is not a blockable popup. `test/stale.js` kills
 the collector under a live page and checks the page admits it rather than
-serving a frozen fleet that looks calm. When the driver or browser is missing
+serving a frozen fleet that looks calm; `test/churn.js` and
+`test/transition.js` cover the other two ways what is on screen stops being
+true — the box leaves the roster, or goes down — while someone is standing in
+its console. When the driver or browser is missing
 these **skip loudly** — a silently-skipped UI test reads exactly like a
 passing one.
 
@@ -147,8 +158,12 @@ fleet-floor/
   server/floor.py   # the collector: serves the page, polls the fleet, applies actions
   server/probe.sh   # read-only duty evidence reader, run inside a box via box exec
   test/run.sh       # collector + page suite, against a stub box CLI
-  test/cases.sh     # the assertions, grouped by the round that found them
+  test/cases.sh     # collector assertions, grouped by the round that found them
+  test/boxside.sh   # runs probe.sh and the message script FOR REAL
+  test/cli.sh       # `crew floor` argument handling and the auth decision
   test/stub-box     # fake `box`, driven by test/fixtures/fleet.txt
   test/browser.js   # playwright-core walk of the real page
   test/stale.js     # kills the collector, checks the page says so
+  test/churn.js     # removes a box from the roster under an open console
+  test/transition.js# takes a box down under an open console
 ```

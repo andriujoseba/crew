@@ -57,6 +57,7 @@ export CREW_FLOOR_ROSTER="$HERE/fixtures/roster.txt"
 cleanup() {
   [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null
   [ -n "${SRV2:-}" ] && kill "$SRV2" 2>/dev/null
+  [ -n "${SRV3:-}" ] && kill "$SRV3" 2>/dev/null
   rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
@@ -102,6 +103,15 @@ done
 export PORT USER PASSWD TMP
 # shellcheck source=cases.sh
 source "$HERE/cases.sh"
+# The two scripts that normally only run inside a box, executed for real —
+# without this the collector assertions above are circular (they validate the
+# parser against stub-box's imitation of probe.sh, not against probe.sh).
+# shellcheck source=boxside.sh
+source "$HERE/boxside.sh"
+# `crew floor` itself: the only part an operator types, and where the auth
+# decision is made.
+# shellcheck source=cli.sh
+source "$HERE/cli.sh"
 
 # ---- browser -------------------------------------------------------------
 if [ "$BROWSER" -eq 1 ]; then
@@ -156,6 +166,42 @@ if [ "$BROWSER" -eq 1 ]; then
       fail "page reports a dead collector" "see output above"
     fi
     kill "$SRV2" 2>/dev/null
+
+    # The roster changing under an open console. Its own collector: this one
+    # polls fast and owns a scratch roster the test is allowed to edit.
+    echo
+    echo "== roster churn"
+    CPORT=$((PORT + 2))
+    cp "$HERE/fixtures/roster.txt" "$TMP/churn-roster.txt"
+    CREW_FLOOR_ROSTER="$TMP/churn-roster.txt" \
+    CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$CPORT" \
+    CREW_FLOOR_BIND=127.0.0.1 CREW_FLOOR_INTERVAL=6 \
+    CREW_FLOOR_PROBE_TIMEOUT="${FLOOR_TEST_PROBE_TIMEOUT:-6}" \
+      python3 "$FLOOR/server/floor.py" >"$TMP/server3.log" 2>&1 &
+    SRV3=$!
+    for _ in $(seq 1 120); do
+      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null \
+        | grep -q '"box"' && break
+      sleep 0.5
+    done
+    if SHOT_DIR="$TMP" node "$HERE/churn.js" "http://127.0.0.1:$CPORT/" \
+         "$TMP/churn-roster.txt" "$USER" "$PASSWD"; then
+      ok "roster churn"
+    else
+      fail "roster churn" "see output above"
+    fi
+
+    # A box changing STATE under an open console. Shares the fast-polling
+    # collector above: every other page test enters a console and leaves within
+    # one poll, so the live-update path is otherwise untested.
+    echo
+    echo "== state transition"
+    if SHOT_DIR="$TMP" node "$HERE/transition.js" "http://127.0.0.1:$CPORT/" "$USER" "$PASSWD"; then
+      ok "state transition under an open console"
+    else
+      fail "state transition under an open console" "see output above"
+    fi
+    kill "$SRV3" 2>/dev/null
   fi
 fi
 

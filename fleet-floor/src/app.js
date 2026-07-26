@@ -460,6 +460,18 @@ function applyFleet(snap){
      the view back to the floor every 15 seconds. */
   var me=ROSTER.filter(function(u){return UNITID(u)===BOX;})[0];
   if(me){STATE=me.state;AGENT=me.agent;ROOM=me.room;}
+  else if(VIEW==="room"){
+    /* The roster is re-read every poll, so the box an operator is standing in
+       can be removed, renamed, or `crew new`-ed away underneath them. Pinning
+       the focus across polls is deliberate, but pinning it to something that
+       no longer exists renders a plausible, quiet, entirely fictional console
+       — the phantom-box twin of a frozen fleet that looks calm. Say so and go
+       back to the floor, which is the only view that is still true. */
+    var gone=BOX;
+    toFloor();
+    setStatus(gone+" is no longer in the fleet — returned to the floor",true);
+    return;
+  }
   buildTiles();buildOps();syncToggles();refreshChrome();
   if(VIEW==="room")populateDash();
   liveTicker(snap);

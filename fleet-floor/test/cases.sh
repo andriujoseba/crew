@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by run.sh, so it has no shebang of its own
 # fleet-floor/test/cases.sh — sourced by run.sh, which provides ok/fail/t/api/
 # body/status/unit/uf and a running collector on $PORT backed by stub-box.
 #
@@ -84,7 +85,11 @@ t "cmd: restart ends running" running "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev
 # double-quoted bash string: interpolating it would let bash expand $(id) and
 # the backticks here, and the test would then be sending something tamer than
 # it claims to.
+# The quotes and backticks are the POINT: this must stay a literal payload all
+# the way into the box, so bash must not expand or re-quote any of it here.
+# shellcheck disable=SC2016,SC2089,SC2090
 INJECT='hi"; touch /tmp/floor-pwned; echo "$(id)`whoami`'
+# shellcheck disable=SC2090
 export INJECT
 status POST /api/command "$(python3 -c 'import json,os
 print(json.dumps({"action":"message","box":"ff-working","prompt":os.environ["INJECT"]}))')" >/dev/null
