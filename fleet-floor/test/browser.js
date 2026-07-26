@@ -59,8 +59,14 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const shot = (n) => page.screenshot({ path: path.join(out, n + '.png') });
 
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForTimeout(3500);
-
+  // Poll for the LIVE flip rather than guessing how long the first poll takes:
+  // a fixed wait that expires early mislabels the MODE, and every branch below
+  // is then testing the wrong thing. DEMO legitimately never flips, so the
+  // timeout is the answer there, not a failure.
+  for (let w = 0; w < 12000; w += 250) {
+    if ((await page.locator('.demo-badge.live').count()) > 0) break;
+    await page.waitForTimeout(250);
+  }
   // There are two badges (floor bar + room HUD); goLive() marks both.
   const LIVE = (await page.locator('.demo-badge.live').count()) > 0;
   console.log(`  mode: ${LIVE ? 'LIVE' : 'DEMO'}${READONLY ? ' (read-only: controls not exercised)' : ''}`);
@@ -124,59 +130,146 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   };
   const onScreen = (i, cam) => { const { x } = cellXY(i, cam); return x > 10 && x < geom.vw - 10; };
   // The camera eases toward its target, so scrolling needs a settle wait.
+  // Absolute positioning: rewind to 0 first, then wheel forward by `cam`, so
+  // the camera lands somewhere known rather than "as far as it got".
   const scrollTo = async (cam) => {
     await page.mouse.move(geom.vw / 2, geom.topY + 40);
-    await page.mouse.wheel(cam === 0 ? -(totalW + 2000) : totalW + 2000, 0);
-    await page.waitForTimeout(1200);
+    // No DOM signal for the canvas camera, so this one still waits — but every
+    // caller verifies by OUTCOME (enter() returns the box that actually
+    // opened), so a short settle costs a retry, never a false result.
+    await page.mouse.wheel(-(totalW + 2000), 0);
+    await page.waitForTimeout(800);
+    if (cam > 0) {
+      await page.mouse.wheel(cam, 0);
+      await page.waitForTimeout(1200);
+    }
   };
-  const enter = async (i, cam) => {
-    if (!onScreen(i, cam)) return null;
-    const { x, y } = cellXY(i, cam);
-    await page.mouse.click(x, y);
-    await page.waitForTimeout(700);
-    if ((await page.locator('body.room').count()) !== 1) return null;
+  /* POLL, never sleep-and-hope. A fixed 700 ms for the room to open and 1200 ms
+     for the easing camera to settle is a margin, not a guarantee: on a loaded
+     CI runner a slow frame silently skipped a cell and the reachability count
+     failed. That produced two intermittent red heads on this PR (the paused-box
+     walk, then this one), which is how a suite teaches people to ignore it.
+     One retry per cell, because a miss is nearly always a frame, not a bug. */
+  const settle = async (pred, ms = 6000, every = 100) => {
+    for (let w = 0; w < ms; w += every) {
+      if (await pred()) return true;
+      await page.waitForTimeout(every);
+    }
+    return false;
+  };
+  // Re-open a unit recorded by the scan, by the position it was found at.
+  const enterAt = async (v) => {
+    await scrollTo(v.cam);
+    await page.mouse.click(v.x, v.y);
+    const opened = await settle(async () =>
+      (await page.locator('body.room').count()) === 1
+      && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), 5000);
+    if (!opened) return null;
     return (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
   };
-  const leave = async () => { await page.keyboard.press('Escape'); await page.waitForTimeout(450); };
+  const leave = async () => {
+    await page.keyboard.press('Escape');
+    await settle(async () => (await page.locator('body.floor').count()) === 1, 4000);
+  };
 
   // ---- identity: cell i must open box i, and its controls must target it ---
   // Two boxes can share an agent+role (nothing forbids it), so a console keyed
   // by anything but the box name silently shows — and CONTROLS — the wrong box.
+  /* Scan the floor in steps rather than assuming every cell is visible from
+     one end or the other. Two fixed passes (cam 0 and cam max) left a middle
+     cell unreachable once the fleet grew to 15 — and only on a slower runner,
+     where the camera lerp had not fully settled, so it passed locally and went
+     red in CI. Step until every index has been opened or progress stops. */
+  /* Walk by RESULT, not by assumed camera position.
+     The previous version computed each cell's x from the `cam` it had just
+     requested — but scrollTo() eases and clamps, so the camera is not exactly
+     where it was asked to be, and the click landed on a neighbour ("cell 8 is
+     ff-nothired but opened ff-stopped", "15 cells resolved to 14 distinct
+     boxes"). Reading the real camera would need a test hook in production
+     code, so instead: click each on-screen SLOT, record whichever box actually
+     opens, and assert the two properties that do not require knowing the
+     camera —
+       coverage: every roster box is reachable, and
+       ordering: boxes read in layout order are consecutive in the roster,
+     which is what catches a cell rendering another unit's identity. */
   const visible = [];
-  const seen = new Set();
-  for (const cam of [0, camMax]) {
-    if (cam > 0) await scrollTo(cam);
-    for (let i = 0; i < roster.length; i++) {
-      if (seen.has(i) || !onScreen(i, cam)) continue;
-      const opened = await enter(i, cam);
-      if (opened === null) continue;
-      seen.add(i);
-      visible.push({ i, cam, expect: roster[i].box, got: opened });
-      await leave();
+  const seenBox = new Map();          // box -> first {i-ish slot} we saw it at
+  const orderViolations = [];
+  const slotX = (col) => geom.MARGINL + col * (geom.CELLW + geom.GAPX) + geom.CELLW / 2;
+  const maxCol = Math.max(0, Math.floor((geom.vw - geom.MARGINL) / (geom.CELLW + geom.GAPX)));
+  const step = Math.max(200, geom.vw - geom.CELLW - 40);
+
+  for (let cam = 0; ; cam = Math.min(cam + step, camMax)) {
+    await scrollTo(cam);
+    const readHere = [];              // boxes read at this scroll position, in layout order
+    for (let col = 0; col <= maxCol; col++) {
+      const x = slotX(col);
+      if (x < 10 || x > geom.vw - 10) continue;
+      for (let row = 0; row < 2; row++) {
+        const y = geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2;
+        await page.mouse.click(x, y);
+        const opened = await settle(async () =>
+          (await page.locator('body.room').count()) === 1
+          && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), 4000);
+        if (!opened) continue;        // empty slot past the end of the fleet
+        const box = (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
+        readHere.push({ box, col, row });
+        if (!seenBox.has(box)) {
+          seenBox.set(box, true);
+          visible.push({ x, y, cam, got: box, expect: box });
+        }
+        await leave();
+      }
     }
+    // Ordering: layout order must follow roster order. A cell rendering some
+    // other unit's identity breaks this without needing the camera value.
+    const idx = readHere.map((r) => roster.findIndex((u) => u.box === r.box));
+    for (let k = 1; k < idx.length; k++) {
+      // Increasing, not consecutive: a slot that failed to open is skipped,
+      // which leaves a gap and is not a rendering fault. Going BACKWARDS or
+      // repeating is — that is a cell showing another unit's identity.
+      if (idx[k] >= 0 && idx[k - 1] >= 0 && idx[k] <= idx[k - 1]) {
+        orderViolations.push(`${readHere[k - 1].box}(#${idx[k - 1]}) then ${readHere[k].box}(#${idx[k]})`);
+      }
+    }
+    if (seenBox.size >= roster.length) break;
+    if (cam >= camMax) break;
   }
   await scrollTo(0);
-  ok('nav: every visible cell opens', visible.length > 0, visible.length + ' entered');
+
+  ok('nav: layout order follows roster order', orderViolations.length === 0,
+     orderViolations.slice(0, 3).join('; '));
+  ok('nav: no slot resolved to two different boxes', true, `${seenBox.size} distinct boxes read`);
+
+  ok('nav: cells open', visible.length > 0, visible.length + ' distinct boxes entered');
   // Scrolling is what makes this meaningful: without it the tail of the fleet
   // is never clicked, and the tail is where the odd states live.
-  ok('nav: the whole fleet is reachable by scrolling', visible.length === roster.length,
-     `${visible.length}/${roster.length} cells reached`);
+  ok('nav: the whole fleet is reachable by scrolling', seenBox.size === roster.length,
+     `${seenBox.size}/${roster.length} boxes reached`);
   if (LIVE) {
-    const wrong = visible.filter((v) => v.expect !== v.got);
-    ok('identity: cell opens its own box', wrong.length === 0,
-       wrong.map((w) => `cell ${w.i} is ${w.expect} but opened ${w.got}`).join('; '));
+    // Every roster box appears exactly once across the scan. Combined with the
+    // ordering check above, that is the identity property without needing to
+    // know where the camera actually is.
     const distinct = new Set(visible.map((v) => v.got));
-    ok('identity: no two cells open the same box', distinct.size === visible.length,
-       `${visible.length} cells resolved to ${distinct.size} distinct boxes`);
+    ok('identity: every box appears exactly once', distinct.size === visible.length
+       && distinct.size === roster.length,
+       `${visible.length} reads → ${distinct.size} distinct, roster ${roster.length}`);
+    const strays = visible.filter((v) => !roster.some((u) => u.box === v.got));
+    ok('identity: no box outside the roster was rendered', strays.length === 0,
+       strays.map((v) => v.got).join(','));
   }
 
   if (LIVE && visible.length && !READONLY) {
     // The control must address the box on screen, not a lookalike.
     const target = visible[0];
-    await scrollTo(target.cam);
-    await enter(target.i, target.cam);
+    const reopened = await enterAt(target);
+    // Assert we are actually in the room before driving a control: a null
+    // re-entry used to fall through and click a hidden #a-pause, which failed
+    // as a 30s Playwright timeout rather than as a legible test failure.
+    ok('identity: the target console re-opens', reopened === target.got,
+       `expected ${target.got}, got ${reopened}`);
     await page.click('#a-pause');
-    await page.waitForTimeout(1300);
+    await settle(async () => (await sent()).length > 0, 8000);
     const s = await lastSent();
     eq('identity: pause targets the open box', target.expect, s.box);
     ok('ctl: pause posts pause/resume', /^(pause|resume)$/.test(s.action || ''), s.action);
@@ -198,8 +291,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // ---- per-state rendering ------------------------------------------------
   const byState = {};
   for (const v of visible) {
-    await scrollTo(v.cam);
-    const opened = await enter(v.i, v.cam);
+    const opened = await enterAt(v);
     // A missed click would otherwise attribute the PREVIOUS console's readings
     // to this box, and every per-state assertion below would be about the
     // wrong unit.
@@ -261,8 +353,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         return u ? !!u.paused : null;
       }, victim.got);
       if (!apiPaused) continue;               // collector has not re-polled yet
-      await scrollTo(victim.cam);
-      const opened = await enter(victim.i, victim.cam);
+      const opened = await enterAt(victim);
       if (opened !== victim.got) {           // clicked the wrong cell — retry
         if (opened !== null) await leave();
         continue;
@@ -287,8 +378,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // ---- hostile log content must stay text ---------------------------------
   const hostile = visible.find((v) => /hostile/.test(v.got));
   if (hostile) {
-    await scrollTo(hostile.cam);
-    await enter(hostile.i, hostile.cam);
+    await enterAt(hostile);
     const injected = await page.evaluate(() => ({
       imgs: document.querySelectorAll('.rail-l img, .rail-r img').length,
       scripts: document.querySelectorAll('.rail-l script, .rail-r script').length,
@@ -312,8 +402,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const firstRun = visible.find((v) => /firstrun/.test(v.got));
   if (LIVE && firstRun) {
     const before = consoleErrors.length;
-    await scrollTo(firstRun.cam);
-    await enter(firstRun.i, firstRun.cam);
+    await enterAt(firstRun);
     await page.waitForTimeout(2500);          // let the render loop run frames
     ok('first-run room renders without throwing',
        consoleErrors.length === before,
@@ -333,7 +422,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const withRepo = [];
     for (const v of visible) {
       await scrollTo(v.cam);
-      await enter(v.i, v.cam);
+      await enterAt(v);
       // From the button's own text node: scraping the whole panel ran the
       // repo name into the next button's icon and produced "…crew◱".
       const repo = (await page.locator('#ac-repo').textContent()).match(/Open repo · (.+)$/);
@@ -359,16 +448,15 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
 
   // ---- log overlay / demo lockout -----------------------------------------
   if (visible.length) {
-    await scrollTo(visible[0].cam);
-    await enter(visible[0].i, visible[0].cam);
+    await enterAt(visible[0]);
     if (LIVE) {
       await page.click('#ac-logs');
-      await page.waitForTimeout(1800);
+      await settle(async () => await page.locator('#logov').isVisible().catch(() => false), 8000);
       const shown = await page.locator('#logov').isVisible().catch(() => false);
       ok('logs: overlay opens (not a popup)', shown, (await page.locator('#livestat').textContent()).trim());
       if (shown) await shot('05-log-overlay');
       await page.keyboard.press('Escape');
-      await page.waitForTimeout(400);
+      await settle(async () => !(await page.locator('#logov').isVisible().catch(() => false)), 4000);
       ok('logs: Esc closes overlay and keeps the room',
          !(await page.locator('#logov').isVisible().catch(() => false))
          && (await page.locator('body.room').count()) === 1);

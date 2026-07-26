@@ -266,6 +266,12 @@ fi
 # sent one message at a time, so neither could reach it.
 # ===========================================================================
 echo "== concurrent messages keep their own bytes"
+# Isolate this round: an earlier sequential message test left its own prompt
+# file and log behind, which is why an aggregate count once read 6-for-5.
+CM_HOME="$FLOOR_STATE/ff-working.home"
+rm -f "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null
+rm -f "$CM_HOME"/duty/logs/*operator-floor* 2>/dev/null
+
 CM_OUT="$(python3 - <<'PY_CM'
 import base64, json, os, threading, urllib.request, urllib.error
 port, user, pw = os.environ["PORT"], os.environ["USER"], os.environ["PASSWD"]
@@ -296,43 +302,48 @@ print(sum(1 for c in codes if c == 200))
 PY_CM
 )"
 t "5 concurrent messages all accepted" 5 "$CM_OUT"
-# Each request must have landed under its own token, with its own bytes: one
-# shared filename is exactly what let a session read another request's prompt.
-# Only THIS test's payloads: an earlier message case also wrote a tokened file.
-CM_FILES=0
-for f in "$FLOOR_STATE"/ff-working.prompt.*; do
-  case "$f" in *'*'|*.notoken) continue ;; esac
-  [ -f "$f" ] && grep -q '^PROMPT-' "$f" && CM_FILES=$((CM_FILES + 1))
-done
-t "each message got its own prompt file" 5 "${CM_FILES:-0}"
 
-# The staging check above only proves hop 1 wrote five files. It would pass
-# even if every detached session then read the WRONG one — which is the bug
-# this whole case exists for. So follow it through the REAL MESSAGE_SH, which
-# stub-box now executes against a sandbox HOME with a stand-in vendor CLI, and
-# assert the mapping end to end: five sessions, five logs, each carrying
-# exactly the bytes its own request supplied. (codex-bot, eaaff99.)
-CM_HOME="$FLOOR_STATE/ff-working.home"
+# Wait for the detached sessions to land their logs.
 for _ in $(seq 1 40); do
   [ "$(find "$CM_HOME/duty/logs" -name '*operator-floor*' 2>/dev/null | wc -l)" -ge 5 ] && break
   sleep 0.5
 done
+
+# EXACTLY five, not "at least": a stray log means the population under test is
+# not the one this case created.
 CM_LOGS=$(find "$CM_HOME/duty/logs" -name '*operator-floor*' 2>/dev/null | wc -l)
-if [ "$CM_LOGS" -ge 5 ]; then ok "each session wrote its own log ($CM_LOGS)"
-else fail "each session wrote its own log" "found $CM_LOGS, expected >= 5"; fi
+t "exactly five session logs" 5 "$CM_LOGS"
 
-# One prompt per log, and the set of prompts delivered must equal the set sent.
-CM_DELIVERED=$(cat "$CM_HOME"/duty/logs/*operator-floor* 2>/dev/null | grep -o 'PROMPT-[0-9]*' | sort -u | wc -l)
-t "five distinct prompts reached the vendor CLI" 5 "$CM_DELIVERED"
+CM_STAGED=0
+for f in "$FLOOR_STATE"/ff-working.prompt.*; do
+  case "$f" in *'*') continue ;; esac
+  [ -f "$f" ] && CM_STAGED=$((CM_STAGED + 1))
+done
+t "each message staged its own prompt file" 5 "$CM_STAGED"
 
-# The decisive one: every prompt STAGED is a prompt DELIVERED, and vice versa.
-# If a session read another request's file, these sets diverge.
-# NOT ^-anchored: the staged files have no trailing newline, so `cat` joins
-# them into one line and an anchored match would see only the first.
-CM_SENT=$(cat "$FLOOR_STATE"/ff-working.prompt.* 2>/dev/null | grep -o 'PROMPT-[0-9]*' | sort -u)
-CM_GOT=$(cat "$CM_HOME"/duty/logs/*operator-floor* 2>/dev/null | grep -ho 'PROMPT-[0-9]*' | sort -u)
-if [ "$CM_SENT" = "$CM_GOT" ] && [ -n "$CM_GOT" ]; then
-  ok "every session ran exactly its own prompt"
+# The decisive check, PER TOKEN. Comparing the SET of prompts staged against
+# the SET delivered is not the property claimed: if session A runs B's prompt
+# and B runs A's — the exact cross-request swap this case exists for — the two
+# sets are identical and every aggregate assertion passes. Correlate instead:
+# each staged token must have exactly one log bearing THAT token, carrying
+# THAT token's bytes.
+CM_BAD=""
+for f in "$FLOOR_STATE"/ff-working.prompt.*; do
+  case "$f" in *'*') continue ;; esac
+  [ -f "$f" ] || continue
+  _tok="${f##*.}"
+  _staged="$(cat "$f")"
+  _n=$(find "$CM_HOME/duty/logs" -name "*operator-floor-$_tok.log" 2>/dev/null | wc -l)
+  if [ "$_n" -ne 1 ]; then
+    CM_BAD="$CM_BAD token=$_tok:logs=$_n"
+    continue
+  fi
+  _log=$(find "$CM_HOME/duty/logs" -name "*operator-floor-$_tok.log" 2>/dev/null | head -1)
+  _got="$(sed -n 's/^PROMPT=\[\(.*\)\]$/\1/p' "$_log")"
+  [ "$_got" = "$_staged" ] || CM_BAD="$CM_BAD token=$_tok:staged[$_staged]!=delivered[$_got]"
+done
+if [ -z "$CM_BAD" ] && [ "$CM_STAGED" -eq 5 ]; then
+  ok "each token's session ran exactly that token's prompt (1:1)"
 else
-  fail "every session ran exactly its own prompt" "staged [$(echo "$CM_SENT" | tr '\n' ' ')] delivered [$(echo "$CM_GOT" | tr '\n' ' ')]"
+  fail "each token's session ran exactly that token's prompt (1:1)" "${CM_BAD:-no tokens staged}"
 fi
