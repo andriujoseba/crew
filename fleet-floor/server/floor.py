@@ -41,14 +41,77 @@ from urllib.parse import urlparse, parse_qs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CREW_ROOT = os.path.dirname(os.path.dirname(HERE))
+# INDEX is the app, not the fleet: it keeps resolving from the checkout even
+# though the fleet definition below no longer does (#75).
 INDEX = os.path.join(CREW_ROOT, "fleet-floor", "index.html")
 PROBE = os.path.join(HERE, "probe.sh")
 AGENTS_DIR = os.path.join(CREW_ROOT, "shared", "conf", "agents")
-# Overridable so a test (or an operator running a floor over an alternate
-# fleet) never has to mutate the tracked roster in place. The suite used to
-# swap this file and restore it on exit, which meant any killed run left the
-# shipped example roster clobbered in the working tree.
-ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CREW_ROOT, "examples", "fleet.roster")
+
+
+def fleet_config_dir():
+    """The same directory-atomic fleet selection cli/crew makes (#74/#75).
+
+    One config dir serves both readers: the fleet the CLI drives and the
+    fleet this console renders must be the same fleet, resolved the same
+    way, or the two lie to the operator in different directions.
+    CREW_CONFIG_DIR selects explicitly and an invalid or incomplete one is
+    an error, exactly as the CLI refuses it; otherwise the first of the XDG
+    config dir, the working directory and the shipped examples/ carrying
+    fleet.roster wins. Returns (dir, is_operator) — examples/ is the
+    compatibility fallback, not an operator definition.
+    """
+    examples = os.path.join(CREW_ROOT, "examples")
+
+    def is_fleet(d):
+        return os.path.isfile(os.path.join(d, "fleet.roster"))
+
+    explicit = os.environ.get("CREW_CONFIG_DIR")
+    if explicit is not None:
+        if not explicit or not os.path.isdir(explicit) or not is_fleet(explicit):
+            sys.exit("crew floor: CREW_CONFIG_DIR '%s' is not a fleet definition "
+                     "(fleet.roster is required)" % explicit)
+        chosen, operator = os.path.abspath(explicit), True
+    else:
+        xdg = os.environ.get("XDG_CONFIG_HOME")
+        xdg_dir = (os.path.join(xdg, "crew") if xdg
+                   else os.path.join(os.path.expanduser("~"), ".config", "crew"))
+        chosen, operator = None, False
+        for candidate in (xdg_dir, os.getcwd(), examples):
+            if os.path.isdir(candidate) and is_fleet(candidate):
+                chosen = os.path.abspath(candidate)
+                operator = chosen != os.path.abspath(examples)
+                break
+        if chosen is None:
+            sys.exit("crew floor: no fleet definition found (fleet.roster is required)")
+    if operator:
+        missing = [f for f in ("fleet.conf", "repos.txt")
+                   if not os.path.isfile(os.path.join(chosen, f))]
+        if missing:
+            sys.exit("crew floor: fleet definition '%s' is incomplete; missing: %s"
+                     % (chosen, " ".join(missing)))
+    return chosen, operator
+
+
+CONFIG_DIR, CONFIG_IS_OPERATOR = fleet_config_dir()
+
+
+def agent_conf_path(agent):
+    """The resolved profile path — the same answer cli/crew's agent_conf
+    gives: an operator agents/ file wins over the same-named shipped
+    profile, the shipped set is the fallback (#75)."""
+    if CONFIG_IS_OPERATOR:
+        op = os.path.join(CONFIG_DIR, "agents", "%s.conf" % agent)
+        if os.path.isfile(op):
+            return op
+    return os.path.join(AGENTS_DIR, "%s.conf" % agent)
+
+
+# CREW_FLOOR_ROSTER stays the explicit override AHEAD of the config-dir
+# search, so a test (or an operator running a floor over an alternate fleet)
+# never has to mutate a tracked roster in place. The suite used to swap the
+# file and restore it on exit, which meant any killed run left the shipped
+# example roster clobbered in the working tree.
+ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CONFIG_DIR, "fleet.roster")
 
 # A tick is 5 minutes; the engine's own death rule is "no evidence for two tick
 # boundaries", so the floor uses the same number rather than inventing one.
@@ -638,7 +701,7 @@ class Fleet:
     def agent_conf(self, agent):
         if agent not in self._confs:
             try:
-                with open(os.path.join(AGENTS_DIR, "%s.conf" % agent)) as f:
+                with open(agent_conf_path(agent)) as f:
                     self._confs[agent] = f.read()
             except OSError:
                 self._confs[agent] = ""
