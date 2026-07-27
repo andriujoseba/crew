@@ -59,26 +59,26 @@ emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # talks to GitHub every tick (duty_attention runs first, for every role), so
 # it is the thing that finds out first and for free:
 #
-#   .gh-token-expiry  — the Github-Authentication-Token-Expiration header,
-#                       returned on every authenticated call. Recorded by the
-#                       engine; an absent file means a token that never
-#                       expires (classic PAT) or one not yet observed.
-#   .auth-fail        — written at the moment a call fails to authenticate,
-#                       cleared on the next success. `<iso8601> <what failed>`.
+#   .auth-fail.<svc>  — written at the moment a credential is rejected or found
+#                       expired, cleared on the next success.
+#                       `<iso8601> <what failed>`.
 #
-# That is strictly more informative than the probe it replaces: the expiry is
-# known WEEKS ahead instead of at the moment of death, and a failure means the
-# token could not do the WORK, not merely that it authenticates against `GET
-# /` — which a token with the wrong scopes does happily.
-# The wire keys stay `gh` and `vendor` so the page contract does not move, but
-# `ok` is gone: absence of a failure is not proof of a credential, and a value
-# that cannot tell those apart is how a logged-out box renders green. `flowing`
-# says exactly what is known — the engine has been talking to this service and
-# has not reported a rejection.
+# One boolean per service, and no expiry date: providers express expiry four
+# different ways and two of the four agent CLIs cannot answer locally at all,
+# so the countdown was the flaky half. What survives is the stable half, and
+# it is a stronger claim than the probe it replaces — a rejection means the
+# credential could not do the WORK, not merely that it authenticates against
+# `GET /`, which a token with the wrong scopes does happily.
+#
+# The wire keys stay `gh` and `vendor`, but `ok` is gone: absence of a failure
+# is not proof of a credential, and a value that cannot tell those apart is how
+# a logged-out box renders green. `flowing` says exactly what is known — the
+# engine has been talking to this service and has not reported a rejection.
+#
 # One marker file PER SERVICE. The first cut used a single .auth-fail and
-# decided which service was broken by substring-matching the reason text —
-# so a gh error mentioning the word "vendor" condemned the agent CLI too, and
-# sent the operator to re-login the wrong thing.
+# decided which service was broken by substring-matching the reason text — so a
+# gh error mentioning the word "vendor" condemned the agent CLI too, and sent
+# the operator to re-login the wrong thing.
 for svc in gh vendor; do
   fail=""
   [ -f "$DUTY_DIR/.auth-fail.$svc" ] \
@@ -93,13 +93,6 @@ for svc in gh vendor; do
     # never `flowing`, which on a box that has never ticked would be a guess
     # dressed as a fact.
     emit "$svc" unknown
-  fi
-
-  # Weeks of warning instead of an outage. Absent means the engine has not
-  # observed an expiry yet, or the credential has none (a classic PAT; three
-  # of the four agent profiles) — reported as unknown, never as fine.
-  if [ -f "$DUTY_DIR/.$svc-token-expiry" ]; then
-    emit "${svc}expiry" "$(head -1 "$DUTY_DIR/.$svc-token-expiry" 2>/dev/null | tr -d '\r')"
   fi
 done
 

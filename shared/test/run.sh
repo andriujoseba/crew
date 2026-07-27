@@ -556,13 +556,6 @@ note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
 t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
 clear_auth_failure vendor
 
-record_token_expiry gh "2026-08-17T14:29:14Z"
-t expiry-recorded "2026-08-17T14:29:14Z" "$(cat "$AUTHDIR/.gh-token-expiry")"
-record_token_expiry gh ""       # nothing known -> must not blank the file
-t expiry-empty-is-a-noop "2026-08-17T14:29:14Z" "$(cat "$AUTHDIR/.gh-token-expiry")"
-t expiry-no-temp-files-left 0 \
-  "$(find "$AUTHDIR" -name '.gh-token-expiry.*' | wc -l)"
-
 # check_vendor_credential's tri-state. 2 means "this profile cannot tell from
 # local state" and MUST change nothing: neither raise an alarm nor clear a
 # real failure someone still has to fix.
@@ -570,10 +563,7 @@ t expiry-no-temp-files-left 0 \
 AGENT_LOGIN_HINT="run the thing"
 # shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
 bot_cli_present() { return 0; }
-# shellcheck disable=SC2317
-bot_cli_expiry()  { echo "2026-09-01T00:00:00Z"; }
 check_vendor_credential
-t vendor-present-records-expiry "2026-09-01T00:00:00Z" "$(cat "$AUTHDIR/.vendor-token-expiry")"
 t vendor-present-no-failure absent \
   "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
 
@@ -592,7 +582,7 @@ rm -f "$AUTHDIR/.auth-fail.vendor"
 check_vendor_credential
 t vendor-unknown-does-not-raise absent \
   "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
-unset -f bot_cli_present bot_cli_expiry
+unset -f bot_cli_present
 
 # An older agent profile with neither function must be a no-op, not a failure:
 # install.sh does not upgrade confs in place, so mid-rollout boxes will have
@@ -618,13 +608,6 @@ cred_rc() {  # cred_rc <agent> <home> -> rc of bot_cli_present
     source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
   echo "$rc"
 }
-cred_exp() {  # cred_exp <agent> <home> -> bot_cli_expiry output
-  # shellcheck disable=SC2034  # consumed inside the conf sourced below
-  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" XAI_API_KEY=""
-    # shellcheck disable=SC1090
-    source "$SHARED/conf/agents/$1.conf"
-    command -v bot_cli_expiry >/dev/null 2>&1 && bot_cli_expiry ) 2>/dev/null
-}
 # base64url with the padding stripped, the way a JWT actually arrives.
 b64url() { base64 -w0 | tr '/+' '_-' | tr -d '='; }
 
@@ -635,12 +618,17 @@ jq -n --argjson r "$CLAUDE_EXP_MS" \
   '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
   > "$CH/.claude/.credentials.json"
 t cred-claude-present 0 "$(cred_rc claude "$CH")"
-t cred-claude-expiry "$(date -u -d "@$(( CLAUDE_EXP_MS / 1000 ))" '+%Y-%m-%dT%H:%M:%SZ')" "$(cred_exp claude "$CH")"
-# THE trap: expiresAt is ~8h out and auto-refreshed. A profile reading it
-# would report an expiry today and page the operator three times a day.
-CLAUDE_SOON="$(date -u -d '@'"$(( $(date +%s) + 8 * 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')"
-t cred-claude-ignores-access-token "" "$(cred_exp claude "$CH" | grep -F "$CLAUDE_SOON" || true)"
-# An expired REFRESH token is a real logout.
+
+# THE trap, and the reason this profile reads refreshTokenExpiresAt: an access
+# token that lapsed hours ago while the refresh token is still good is the
+# ordinary steady state, refreshed silently on next use. A profile testing
+# `expiresAt` would call a perfectly healthy box logged out three times a day.
+jq -n --argjson r "$CLAUDE_EXP_MS" --argjson a "$(( ($(date +%s) - 3600) * 1000 ))" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:$a,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-stale-access-token-is-fine 0 "$(cred_rc claude "$CH")"
+
+# An expired REFRESH token is the real logout: nothing can renew it but a human.
 jq -n --argjson r "$(( ($(date +%s) - 86400) * 1000 ))" \
   '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
   > "$CH/.claude/.credentials.json"
@@ -657,8 +645,12 @@ jq -n --arg rt "$KJWT" \
   '{access_token:"a",refresh_token:$rt,expires_at:1,token_type:"Bearer"}' \
   > "$KH/.kimi-code/credentials/kimi-code.json"
 t cred-kimi-present 0 "$(cred_rc kimi "$KH")"
-t cred-kimi-expiry "$(date -u -d "@$KIMI_EXP" '+%Y-%m-%dT%H:%M:%SZ')" "$(cred_exp kimi "$KH")"
 t cred-kimi-no-file 1 "$(cred_rc kimi "$CREDH/nothing")"
+# An expired refresh JWT is a logout, not merely "cannot tell".
+KJWT_OLD="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code"}' "$(( $(date +%s) - 86400 ))" | b64url).sig"
+jq -n --arg rt "$KJWT_OLD" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-expired-refresh 1 "$(cred_rc kimi "$KH")"
 # Garbage in the JWT slot must be "cannot tell" (2), never a confident logout.
 jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
   > "$KH/.kimi-code/credentials/kimi-code.json"
@@ -674,9 +666,6 @@ t cred-codex-no-file-is-logout 1 "$(cred_rc codex "$CREDH/nothing")"
 KB="$CREDH/codexkeyring"; mkdir -p "$KB/.codex"
 echo 'cli_auth_credentials_store = "keyring"' > "$KB/.codex/config.toml"
 t cred-codex-keyring-is-unknown 2 "$(cred_rc codex "$KB")"
-# codex's refresh token is opaque, so there is NO local relogin date. Emitting
-# the access token's exp would warn every few minutes on a healthy box.
-t cred-codex-reports-no-expiry "" "$(cred_exp codex "$DH")"
 
 # -- grok: its probe was already a local file test, so it is authoritative
 # -- grok: a MAP of "<issuer>::<client_id>" slots, refresh token opaque
@@ -690,12 +679,13 @@ t cred-grok-no-file 1 "$(cred_rc grok "$CREDH/nothing")"
 echo '{}' > "$GH_/.grok/auth.json"
 t cred-grok-empty-map-is-unknown 2 "$(cred_rc grok "$GH_")"
 
-# No profile may report an expiry it cannot actually know.
+# No profile may define bot_cli_expiry: the floor tracks no expiry dates, and
+# a profile still exporting one would be dead code drifting out of sync.
 for agent in claude codex grok kimi; do
-  case "$agent" in
-    claude|kimi) continue ;;   # verified above to produce a real date
-  esac
-  t "cred-$agent-claims-no-false-expiry" "" "$(cred_exp "$agent" "$CREDH/nothing")"
+  r1=absent
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$agent.conf"; command -v bot_cli_expiry >/dev/null ) 2>/dev/null && r1=DEFINED
+  t "cred-$agent-defines-no-expiry" absent "$r1"
 done
 
 # --- the per-tick path must not have reacquired a network auth probe -------
@@ -714,8 +704,11 @@ t tick-does-not-poll-gh-auth clean "$r1"
 # ...and the identity call must be the one that harvests the expiry header.
 if grep -q 'gh_identity' "$SHARED/bin/duty.sh"; then r1=wired; else r1=MISSING; fi
 t tick-uses-gh-identity wired "$r1"
-if grep -q 'gh api -i user' "$SHARED/lib/common.sh"; then r1=headers; else r1=BODYONLY; fi
-t gh-identity-reads-headers headers "$r1"
+# No expiry date is tracked anywhere any more: four providers express it four
+# ways and two cannot answer locally at all, so the countdown was the flaky
+# half of the idea. A reintroduced record_token_expiry would put it back.
+if grep -q 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh"; then r1=TRACKED; else r1=clean; fi
+t no-expiry-date-tracked clean "$r1"
 
 # Every agent profile must define bot_cli_present, or its box silently never
 # reports vendor credential state at all.

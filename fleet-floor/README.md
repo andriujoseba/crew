@@ -89,43 +89,42 @@ misses declare a box unreachable; one dropped ping is scheduler noise.
 on every poll was ~7,000 api.github.com requests a day to re-derive a fact
 that changes when a token expires, and at ~450ms it was the slowest thing in a
 probe whose every other read is local. The duty engine already calls GitHub
-every tick, so it learns for free: `gh_identity` harvests
-`Github-Authentication-Token-Expiration` from the `gh api user` call the tick
-was making anyway, and records a rejection when one actually happens — which
-is a stronger claim than `gh auth status`, since that only proves the token
-authenticates against `GET /`. Vendor credentials are read from the local
-store by the agent profile's `bot_cli_present`, which returns **three** values
-— 0 logged in, 1 definitely not, 2 cannot tell locally — and only 1 raises an
-alert, because a false "your token is dead" at 3am costs more than a missed
-one. Each vendor is a different problem:
+every tick, so it learns for free: `gh_identity` is the same `gh api user` the
+tick was making to resolve `$ME`, but its rejection is now recorded instead of
+swallowed by `|| true`. That is a stronger claim than `gh auth status`, which
+only proves the token authenticates against `GET /` — a token with the wrong
+scopes passes it happily.
 
-| agent | credential store | relogin date knowable locally? |
+Vendor credentials are read from the local store by the agent profile's
+`bot_cli_present`, which answers **one boolean**: can this box work, or not.
+It returns three values — 0 yes, 1 definitely not, 2 cannot tell locally — and
+only 1 raises an alert, because a false "your token is dead" at 3am costs more
+than a missed one.
+
+| agent | credential store | boolean derived from |
 |---|---|---|
-| claude | `~/.claude/.credentials.json` | **yes** — `refreshTokenExpiresAt` |
-| kimi | `$KIMI_CODE_HOME/credentials/kimi-code.json` | **yes** — the `exp` claim of the refresh JWT |
-| codex | `${CODEX_HOME}/auth.json`, *or the desktop keyring* | no — refresh token is opaque |
-| grok | `$GROK_HOME/auth.json` (a map of issuer::client slots) | no — refresh token is opaque |
+| claude | `~/.claude/.credentials.json` | `refreshTokenExpiresAt` vs now |
+| kimi | `$KIMI_CODE_HOME/credentials/kimi-code.json` | `exp` of the refresh JWT vs now |
+| codex | `${CODEX_HOME}/auth.json`, *or the desktop keyring* | presence — refresh token is opaque |
+| grok | `$GROK_HOME/auth.json` (a map of issuer::client slots) | presence — refresh token is opaque |
 
-The recurring trap is reading the wrong expiry. Every one of these files
-carries a short-lived ACCESS token expiry — `expiresAt`, `expires_at` — that
-the CLI refreshes silently, on the order of hours. A countdown to any of them
-would fire several times a day on a box that is working perfectly. Only the
-refresh credential answers "when must a human log in again", and two of the
-four vendors do not expose it locally at all. Those two report **no expiry**
-rather than a wrong one.
+**No expiry date is tracked anywhere.** An earlier cut counted down to the day
+each credential died, and it was the flaky half of an otherwise stable idea:
+four providers express expiry four different ways — epoch millis, a JWT claim,
+an ISO string, a response header — and two of the four cannot answer locally
+at all. Finding the credential is comparatively stable, so what survives is
+the boolean every provider agrees on.
 
-The third state earns its keep in the same place: codex can hold its
-credential in the desktop keyring and grok can authenticate from
-`XAI_API_KEY`, so on those boxes a missing `auth.json` is normal and is
-reported as `2` — never as a logout. `bot_cli_probe`, which may use the
-network, stays for the boot gate and `crew hire`, where a human is present and
-one round-trip buys certainty.
-
-`::gh`/`::vendor` therefore have no `ok` value. They are `flowing` (the engine
-is talking to the service and has not been rejected), `missing`, or `unknown`
-(no engine has run, so nothing is known). `crew status` reads the same
-markers — `rehearsal-app.sh` asserts the two agree, and that only holds while
-neither has a private source.
+The trap that remains is *which* credential is tested. Every one of these
+files also carries a short-lived ACCESS token expiry the CLI refreshes
+silently, on the order of hours; testing that would report a working box as
+logged out several times a day. Only the refresh credential answers "must a
+human log in again", and where it is opaque the profile falls back to presence
+and says so with `2` — codex can hold its credential in the desktop keyring
+and grok can authenticate from `XAI_API_KEY`, so a missing `auth.json` there
+is not a logout. `bot_cli_probe`, which may use the network, stays for the
+boot gate and `crew hire`, where a human is present and one round-trip buys
+certainty.
 
 **The stuck lock.** `duty.sh` has always written `.duty.lock.since` and nothing
 ever read it. A session hung on a vendor call keeps cron ticking, so duty.log

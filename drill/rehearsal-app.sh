@@ -411,14 +411,11 @@ fi
 # `ok` was the value that meant "just verified". Nothing may report it again.
 OKS="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['gh']=='ok' or u['vendor']=='ok')")"
 t "no box reports the retired 'ok' credential state" "" "$OKS"
-# Expiry is the reason this is an improvement rather than a cost saving: on a
-# real fleet with real tokens, at least one box should know when it must renew.
-EXPS="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if u.get('expiry'))")"
-if [ "$EXPS" -gt 0 ]; then
-  ok "at least one box knows when its credential expires ($EXPS)"
-else
-  skip "credential expiry recorded" "no box has ticked since this engine was installed"
-fi
+# Every box must answer the boolean. `unknown` on a hired box means the engine
+# has run without ever recording a credential state, which is the one outcome
+# that would leave an operator with nothing to act on.
+BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','missing'))")"
+t "every hired box reports a gh credential state" "" "$BLANK"
 
 # Auth is not optional on a page that can power-cycle boxes.
 echo

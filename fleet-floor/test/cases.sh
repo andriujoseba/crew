@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  17 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  16 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -130,7 +130,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 16 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -204,7 +204,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 16 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -395,9 +395,3 @@ t "creds: no box ever reports ok"         True    "$(uf ff-working 'u["gh"] != "
 t "creds: a rejection is reported missing" missing "$(uf ff-noauth 'u["gh"]')"
 t "creds: the rejection carries its reason" True  "$(uf ff-noauth 'any("gh:" in a for a in u["authfail"])')"
 t "creds: an unhired box knows nothing"   unknown "$(uf ff-nothired 'u["gh"]')"
-
-# Expiry counts DOWN, per service, and only warns inside the window.
-t "expiry: gh is carried with a day count"     True "$(uf ff-expiring '"gh" in u["expiry"] and isinstance(u["expiry"]["gh"]["days"], int)')"
-t "expiry: the vendor is carried separately"   True "$(uf ff-expiring '"vendor" in u["expiry"]')"
-t "expiry: the note tells the operator to renew" True "$(uf ff-expiring '"expires in" in u["note"] or "EXPIRED" in u["note"]')"
-t "expiry: a box with no expiry says nothing"  True "$(uf ff-working 'u["expiry"] == {}')"

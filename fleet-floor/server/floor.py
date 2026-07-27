@@ -81,12 +81,6 @@ PING_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_PING_TIMEOUT", "5"))
 # misses (~30s) is a box that has stopped answering.
 PING_FAILS_TO_WEDGE = int(os.environ.get("CREW_FLOOR_PING_FAILS", "3"))
 
-# Warn this far ahead of a credential expiring. Two weeks is a working figure
-# for a token an operator has to renew by hand on five boxes: long enough that
-# it is never urgent, short enough that it is not background noise for the
-# other eleven months.
-EXPIRY_WARN_DAYS = int(os.environ.get("CREW_FLOOR_EXPIRY_WARN_DAYS", "14"))
-
 # A duty run holding its lock this long is reported as stuck. Two tick
 # boundaries, the same number the SILENT rule uses — past it, tick.sh is
 # logging "previous run still holds the lock" every 5 minutes and the box looks
@@ -363,7 +357,7 @@ def build_unit(unit, state, agent_conf, now):
         "longest": 0, "avg": 0, "success": 0, "today": 0,
         "paused": False, "cron": {"ok": False, "last": None, "age": None},
         "lock": {"held": None, "stuck": False},
-        "authfail": [], "expiry": {}, "ping": None,
+        "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
     })
 
@@ -391,13 +385,6 @@ def build_unit(unit, state, agent_conf, now):
         fail = meta.get("authfail-%s" % svc, "")
         if fail:
             u["authfail"].append("%s: %s" % (svc, fail))
-        exp = meta.get("%sexpiry" % svc, "")
-        if exp:
-            ts = parse_ts(exp)
-            if ts:
-                # The point of carrying this is that it counts DOWN, well
-                # before anything breaks: a renewal reminder, not a post-mortem.
-                u["expiry"][svc] = {"at": exp, "days": int((ts - now) / 86400)}
 
     # A duty run is in flight and has held the lock this long. Absent means no
     # run is in flight — the common case between ticks, and not a fault.
@@ -499,15 +486,6 @@ def build_unit(unit, state, agent_conf, now):
     else:
         u["state"] = "idle"
 
-    # Renewal warning, appended rather than substituted: an expiring token is
-    # the operator's next chore, not this box's current condition, and it must
-    # not displace whatever the box is actually doing or failing at.
-    for svc, e in sorted(u["expiry"].items()):
-        if e["days"] > EXPIRY_WARN_DAYS:
-            continue
-        warn = ("%s login EXPIRED %dd ago" % (svc, -e["days"]) if e["days"] < 0
-                else "%s login expires in %dd" % (svc, e["days"]))
-        u["note"] = "%s \u00b7 %s" % (u["note"], warn) if u["note"] else warn
     return u
 
 
@@ -608,7 +586,7 @@ class Fleet:
                           "success": 0, "today": 0, "paused": False,
                           "cron": {"ok": False, "last": None, "age": None},
                           "lock": {"held": None, "stuck": False},
-                          "authfail": [], "expiry": {}, "ping": None,
+                          "authfail": [], "ping": None,
                           "engine": "", "gh": "unknown", "vendor": "unknown",
                           "repo": ""})
                 units[i] = u

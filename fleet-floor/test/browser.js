@@ -407,23 +407,6 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       ok('render: the stuck panel names how long the lock has been held',
          /lock held/.test(stuck.current), stuck.current.slice(0, 90));
     }
-    const exp = allSeen.find((u) => /ff-expiring/.test(u.box));
-    ok('render: the expiring box was reachable', !!exp,
-       'no ff-expiring among ' + allSeen.length + ' consoles');
-    if (exp) {
-      ok('render: a credential inside the window shows a Renew countdown',
-         /Renew/.test(exp.vitals), exp.vitals.slice(0, 120));
-      ok('render: the countdown names both services',
-         /gh/.test(exp.vitals) && /vendor|kimi/.test(exp.vitals), exp.vitals.slice(0, 120));
-    }
-    // ...and a box with nothing expiring must NOT carry the row: a permanent
-    // "Renew —" is furniture, and this is the line that must be noticed the
-    // one month it matters.
-    const healthy = allSeen.find((u) => /ff-working/.test(u.box));
-    if (healthy) {
-      ok('render: a box with no expiry has no Renew row',
-         !/Renew/.test(healthy.vitals), healthy.vitals.slice(0, 120));
-    }
   }
 
   const down = byState.OFFLINE || [];

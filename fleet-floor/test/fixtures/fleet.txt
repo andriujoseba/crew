@@ -22,5 +22,3 @@ ff-firstrun    running  firstrun
 # and doing nothing. The floor calls this STUCK, and it is the state a healthy
 # fleet never produces on demand.
 ff-stuck       running  stuck
-# Credentials inside the renewal window — the countdown, before it is an outage.
-ff-expiring    running  expiring

@@ -295,15 +295,6 @@ else fail "flow: gh rejection -> reason carried to the operator" "empty"; fi
 t "flow: a gh rejection does not mark the vendor missing" flowing "$(bs_key vendor)"
 rm -f "$BS_FLOW/duty/.auth-fail.gh"
 
-# Token expiry, and the two ways the file is not a timestamp.
-echo "2026-08-17T14:29:14Z" > "$BS_FLOW/duty/.gh-token-expiry"
-bs_probe "$BS_FLOW" >/dev/null
-t "flow: token expiry is carried verbatim" "2026-08-17T14:29:14Z" "$(bs_key ghexpiry)"
-rm -f "$BS_FLOW/duty/.gh-token-expiry"
-bs_probe "$BS_FLOW" >/dev/null
-if bs_has ghexpiry; then fail "flow: absent expiry file emits nothing" "$(bs_key ghexpiry)"
-else ok "flow: absent expiry file emits nothing"; fi
-
 # lockheld: a duty run in flight, and the half-written file that a probe
 # landing mid-`date +%s >` will read. A bogus age here would render as a
 # 56-year-old session and read as a catastrophic wedge.

@@ -184,9 +184,9 @@ vendor_probe() {
 }
 
 # auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
-# observed it, in one exec of pure local file reads. Echoes three fields:
+# observed it, in one exec of pure local file reads. Echoes two fields:
 #
-#     <gh-state> <vendor-state> <soonest-expiry-or-->
+#     <gh-state> <vendor-state>
 #
 # where a state is flowing | missing | unknown, the same vocabulary
 # fleet-floor's probe.sh emits.
@@ -211,14 +211,7 @@ auth_from_flow() {
       elif [ -s "$HOME/duty/VERSION" ]; then printf "flowing "
       else printf "unknown "; fi
     done
-    exp=""
-    for f in "$HOME"/duty/.gh-token-expiry "$HOME"/duty/.vendor-token-expiry; do
-      [ -s "$f" ] || continue
-      v="$(head -1 "$f" | tr -d "\r")"
-      # ISO-8601, so the lexically smaller string IS the earlier date.
-      if [ -z "$exp" ] || [ "$v" \< "$exp" ]; then exp="$v"; fi
-    done
-    printf "%s\n" "${exp:--}"
+    printf "\n"
   ' 2>/dev/null | tr -d '\r'
 }
 
@@ -532,7 +525,7 @@ cmd_status() {
   local fmt='%-20s %-9s %-15s %-8s %-8s %s\n'
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HIRED GH VENDOR NOTE
-  local name agent role _from state hired ghs vs ghs_d vs_d note last expiry days
+  local name agent role _from state hired ghs vs ghs_d vs_d note last
   while read -r name agent role _from; do
     if ! box_exists "$name"; then
       # shellcheck disable=SC2059
@@ -547,8 +540,8 @@ cmd_status() {
     fi
     hired="$(hired_at "$name")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
-    read -r ghs vs expiry <<<"$(auth_from_flow "$name")"
-    ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; expiry="${expiry:--}"
+    read -r ghs vs <<<"$(auth_from_flow "$name")"
+    ghs="${ghs:-unknown}"; vs="${vs:-unknown}"
     # The wire vocabulary is lowercase and shared with the floor; the TABLE
     # shouts. A dead login is the one row an operator must not skim past, and
     # it earned its capitals long before this column changed source.
@@ -579,12 +572,6 @@ cmd_status() {
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
       last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"
       note="${last:-no ticks yet}"
-    fi
-    # A credential nobody has renewed is the fleet's next outage, and it is
-    # invisible in a column that only ever says flowing-or-missing.
-    if [ "$expiry" != "-" ]; then
-      days="$(( ( $(date -u -d "$expiry" +%s 2>/dev/null || echo 0) - $(date -u +%s) ) / 86400 ))"
-      [ "$days" -le 14 ] && note="renew in ${days}d${note:+ · $note}"
     fi
     # shellcheck disable=SC2059
     printf "$fmt" "$name" "$state" "$hired" "$ghs_d" "$vs_d" "$note"

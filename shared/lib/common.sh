@@ -250,7 +250,9 @@ validate_sha() {
 # condemn the vendor CLI too, and the operator would go re-login the wrong
 # thing.
 #   .auth-fail.<svc>       "<iso8601> <reason>"  — present only while broken
-#   .<svc>-token-expiry    "<iso8601>"           — when a HUMAN must re-login
+#
+# One file, one boolean: present means broken, absent means working. No expiry
+# date is recorded — see gh_identity for why a countdown was dropped.
 # --------------------------------------------------------------------------
 
 # note_auth_failure SVC REASON — record that SVC rejected us, once. Rewriting
@@ -290,58 +292,31 @@ clear_auth_failure() {
   return 0
 }
 
-# record_token_expiry SVC ISO8601 — when a human must next log in. Written
-# atomically: probe.sh reads this file from another process on every poll, and
-# a torn read is a bogus date rendered as an expiry alarm.
-record_token_expiry() {
-  local svc="$1" iso="$2"
-  local f="$DUTY_DIR/.$svc-token-expiry"
-  [ -n "$iso" ] || return 0
-  local tmp="$f.$$"
-  printf '%s\n' "$iso" >"$tmp" && mv -f "$tmp" "$f"
-  return 0
-}
-
-# gh_identity — the box's own login, and every credential fact that the same
-# call already paid for. Echoes the login, or nothing if gh is not working.
+# gh_identity — the box's own login, and whether gh still works. Echoes the
+# login, or nothing if the credential was rejected.
 #
-# This REPLACES a bare `gh api user`. `-i` returns the response headers with
-# the body at no extra cost, and one of them is
-# Github-Authentication-Token-Expiration — which is how the fleet learns its
-# token dies in three weeks instead of learning it the morning it stops.
-# Fine-grained and app tokens carry it; a classic PAT with no expiry does not,
-# and its absence is correctly recorded as "no expiry known" rather than as a
-# problem.
+# This REPLACES a bare `gh api user`: same single call the tick was already
+# making to resolve $ME, but its failure is now recorded rather than swallowed
+# by `|| true`. That is the whole credential signal — a rejection at the
+# moment a real request is rejected, which is a stronger claim than
+# `gh auth status`, since that only proves the token authenticates against
+# `GET /` and a token with the wrong scopes passes it happily.
+#
+# No expiry DATE is tracked, here or anywhere. Every provider expresses it
+# differently — epoch millis, a JWT claim, an ISO string, or not at all — and
+# two of the four agent CLIs cannot answer locally, so a countdown was the
+# flaky part of an otherwise stable idea. Whether the credential works right
+# now is the boolean that matters, and it is the one every provider agrees on.
 gh_identity() {
-  local out rc=0 login exp
-  out="$(gh api -i user 2>&1)" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    note_auth_failure gh "$(printf '%s' "$out" | grep -iE 'message|401|403|error' | head -1 || printf 'gh api user exited %s' "$rc")"
+  local login rc=0 err
+  err="$(mktemp)"
+  login="$(gh api user --jq .login 2>"$err")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$login" ]; then
+    note_auth_failure gh "$(grep -iE 'message|401|403|error' "$err" | head -1 || printf 'gh api user exited %s' "$rc")"
+    rm -f "$err"
     return 0
   fi
-
-  # Header names are case-insensitive per RFC 9110 and gh does not normalise
-  # them; matching the literal capitalisation is how this silently returns
-  # nothing the day the casing changes.
-  exp="$(printf '%s' "$out" \
-    | grep -iE '^Github-Authentication-Token-Expiration:' \
-    | head -1 | cut -d: -f2- | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  if [ -n "$exp" ]; then
-    # GitHub sends "2026-08-17 14:29:14 UTC"; everything downstream — the
-    # floor's parse_ts, crew status, the log — speaks ISO8601. Normalise HERE,
-    # at the single point the format enters the system.
-    local iso
-    iso="$(date -u -d "$exp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
-    [ -n "$iso" ] && record_token_expiry gh "$iso"
-  fi
-
-  # The body follows the headers after a blank line. Parsed with jq rather
-  # than --jq because -i puts headers on stdout too.
-  login="$(printf '%s' "$out" | sed -n '/^[[:space:]]*{/,$p' | jq -r '.login // empty' 2>/dev/null || true)"
-  if [ -z "$login" ]; then
-    note_auth_failure gh "authenticated but no login in the response body"
-    return 0
-  fi
+  rm -f "$err"
   clear_auth_failure gh
   printf '%s' "$login"
 }
@@ -349,10 +324,11 @@ gh_identity() {
 # check_vendor_credential — the agent CLI's login state, WITHOUT a network
 # call, once per tick.
 #
-# Every vendor stores its credential in a local file; bot_cli_present reads
-# it, bot_cli_expiry reports when the part a human must renew runs out. Both
-# live in the agent profile because only it knows its vendor's layout — the
-# same reason bot_cli_probe does.
+# The agent profile's bot_cli_present reads its own vendor's credential store
+# and answers one boolean: usable, or not. Where a vendor records the expiry
+# of the credential a HUMAN must renew (claude, kimi) the profile compares it
+# against now; where the refresh token is opaque (codex, grok) presence is the
+# best local answer and the profile says so by returning 2.
 #
 # bot_cli_probe (which may hit the network) is deliberately NOT called here.
 # It stays for `crew hire` and the boot gate, where paying for certainty once
@@ -369,15 +345,8 @@ check_vendor_credential() {
   local rc=0
   bot_cli_present || rc=$?
   case "$rc" in
-    0)
-      clear_auth_failure vendor
-      if command -v bot_cli_expiry >/dev/null 2>&1; then
-        record_token_expiry vendor "$(bot_cli_expiry 2>/dev/null || true)"
-      fi
-      ;;
-    1)
-      note_auth_failure vendor "${AGENT_LOGIN_HINT:-the agent CLI is not logged in}"
-      ;;
+    0) clear_auth_failure vendor ;;
+    1) note_auth_failure vendor "${AGENT_LOGIN_HINT:-the agent CLI is not logged in}" ;;
     *) : ;;
   esac
   return 0
