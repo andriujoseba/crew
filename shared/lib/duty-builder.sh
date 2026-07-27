@@ -247,43 +247,52 @@ _builder_repo() {
   # a red head has already woken the ci-red block above, which is the work that
   # has to happen first regardless.
   #
-  # RED IS THE GATE; PENDING AND NONE ARE ADMITTED, DELIBERATELY (codex, #64).
+  # ADMIT `green` OR `none`; HOLD `red` AND `pending` (danmt's ruling, #64).
   #
-  # The exclusion is `red`, not "everything but green", and that is a decision
-  # rather than a fallthrough — the same shape as the CANCELLED bug codex found
-  # in the classifier, so it is written down here instead of being inferred.
+  # The gate is a whitelist for the same reason `is_green` is: "everything but
+  # red" is a fallthrough, and a fallthrough is what the CANCELLED bug was.
+  # The three states are three different facts and get three behaviours.
   #
-  #   none    A repo with no CI configured is `none` FOREVER. Selecting only
-  #           green retires its owed rounds permanently — a strict regression
-  #           against the engine before this change, which read no checks at
-  #           all and woke every owed round. The escape ("an explicitly
-  #           evidenced manual path") runs inside a session, and the session
-  #           is what the gate would be suppressing.
-  #   pending Excluding it stalls an owed round behind runner queue time and
-  #           closes nothing: this gate spawns the AUTHOR's fix session, while
-  #           #45's cost is a PANEL round, and a head green at wake time can
-  #           still be red by the time the session re-requests. #45 item (2)
-  #           asks the engine to "refuse to re-request while it is FAILURE" —
-  #           FAILURE, and the re-request is an act of the session, which is
-  #           why the enforceable half landed here as a wake gate.
+  #   red      HELD, and it is the author's own work. Wakes ci-red above.
+  #   pending  HELD, and it is NOT the author's work — it is a check that has
+  #            not answered yet. Opening the round now spends the panel on a
+  #            head that may go red, which is exactly what #45 measured on
+  #            crew#40. Transient by definition: the item re-evaluates next
+  #            tick (5 minutes) and admits itself once the check settles
+  #            green. Must NOT wake ci-red — nothing has failed.
+  #   none     ADMITTED. Terminal, not transient: a repo with no CI configured
+  #            is `none` FOREVER, so holding on it means the engine can never
+  #            open a review round in that repo at all. head-checks.jq already
+  #            rules this a state of its own rather than a not-green one — "a
+  #            repo with no CI configured and a repo whose checks all passed
+  #            are different facts, and only one of them is evidence."
   #
-  # What the gate owes instead is the DATUM: a non-green head admitted here
-  # travels into the build prompt, so the session applying the doctrine has
-  # the check state in hand rather than being assumed to go look for it.
-  local blocked_rounds
+  # Two holds, two messages. A pending hold that borrowed the red wording
+  # ("CI first") would tell the operator the author owes work when the author
+  # owes nothing but a wait, and that misreading is the whole distinction the
+  # ruling draws.
+  #
+  # An admitted `none` head still travels into the build prompt: the session is
+  # bound by the same green-at-the-head rule, and `none` is the one state where
+  # there is no check coming to wait for. Telling it so beats it inferring so.
+  local blocked_rounds held_rounds
   if [ "$mine_rows" = "err" ]; then
     cr_items=""
     cr_count=err
     head_checks="-"
   else
-    cr_items="$(awk -F'\t' '$5 == "owed" && $4 != "red" { print $1, $2 }' <<<"$mine_rows")"
+    cr_items="$(awk -F'\t' '$5 == "owed" && ($4 == "green" || $4 == "none") { print $1, $2 }' <<<"$mine_rows")"
     blocked_rounds="$(awk -F'\t' '$5 == "owed" && $4 == "red" { print $1 }' <<<"$mine_rows")"
     for N in $blocked_rounds; do
       log "$N: round owed, but the check at its head is RED — CI first, no panel round (#45)"
     done
-    # Admitted, but not silently: named in the log AND handed to the session.
-    head_checks="$(awk -F'\t' '$5 == "owed" && $4 != "red" && $4 != "green" { s = s (s ? "; " : "") $1 " (" $4 ")" } END { print s }' <<<"$mine_rows")"
-    [ -n "$head_checks" ] && log "$R: round(s) admitted on a non-green head — $head_checks (#45: red is the gate, but the re-request still needs green)"
+    held_rounds="$(awk -F'\t' '$5 == "owed" && $4 == "pending" { print $1 }' <<<"$mine_rows")"
+    for N in $held_rounds; do
+      log "$N: round owed, but the check at its head has not finished — waiting for it to settle, no panel round yet (#45)"
+    done
+    # Admitted on no evidence rather than on green: named, and handed on.
+    head_checks="$(awk -F'\t' '$5 == "owed" && $4 == "none" { s = s (s ? "; " : "") $1 " (no checks configured)" } END { print s }' <<<"$mine_rows")"
+    [ -n "$head_checks" ] && log "$R: round(s) admitted with no check at the head — $head_checks"
     head_checks="${head_checks:--}"
     cr_count="$(printf '%s\n' "$cr_items" \
       | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"

@@ -1007,12 +1007,14 @@ t ci-red-same-head-reported "o/r#7@fff0000" \
 # the behaviour is still checked; edit the module alone and the grep fails.
 BMOD="$SHARED/lib/duty-builder.sh"
 # shellcheck disable=SC2016  # awk field refs, quoted exactly as the module has them
-AWK_ROUNDS='$5 == "owed" && $4 != "red" { print $1, $2 }'
+AWK_ROUNDS='$5 == "owed" && ($4 == "green" || $4 == "none") { print $1, $2 }'
 # shellcheck disable=SC2016
 AWK_BLOCKED='$5 == "owed" && $4 == "red" { print $1 }'
 # shellcheck disable=SC2016
+AWK_HELD='$5 == "owed" && $4 == "pending" { print $1 }'
+# shellcheck disable=SC2016
 AWK_RED='$4 == "red" { print $1 "@" $3 "\thead\t" $6 }'
-for pair in "rounds:$AWK_ROUNDS" "blocked:$AWK_BLOCKED" "red:$AWK_RED"; do
+for pair in "rounds:$AWK_ROUNDS" "blocked:$AWK_BLOCKED" "held:$AWK_HELD" "red:$AWK_RED"; do
   if grep -Fq "${pair#*:}" "$BMOD"; then r1=present; else r1=MISSING; fi
   t "ci-red-awk-in-module-${pair%%:*}" present "$r1"
 done
@@ -1021,11 +1023,26 @@ ROWS="$(printf '%s\n' \
   "$(printf 'o/r#2\tT2\tbbb\tgreen\towed\t-')" \
   "$(printf 'o/r#3\tT3\tccc\tred\t-\tcheck (FAILURE)')" \
   "$(printf 'o/r#4\tT4\tddd\tpending\towed\t-')")"
-# #45: the red-headed round is NOT a build wake...
-t ci-red-rounds-exclude-red "$(printf 'o/r#2 T2\no/r#4 T4')" \
+# #45: the red-headed round is NOT a build wake — and neither is the pending
+# one (danmt's ruling, #64). Opening a round while the check is still running
+# spends the panel on a head that may go red, which is what #45 measured on
+# crew#40. Only o/r#2 (green) survives; o/r#4 (pending) is now held.
+t ci-red-rounds-exclude-red "$(printf 'o/r#2 T2')" \
   "$(awk -F'\t' "$AWK_ROUNDS" <<<"$ROWS")"
-# ...but it is never silent — the operator is told which round is held and why.
+# ...but neither hold is silent — the operator is told which round is held and
+# why, and the two reasons are NOT interchangeable: red is the author's own
+# work, pending is a wait that nobody owes anything for.
 t ci-red-blocked-round-named "o/r#1" "$(awk -F'\t' "$AWK_BLOCKED" <<<"$ROWS")"
+t ci-red-held-round-named "o/r#4" "$(awk -F'\t' "$AWK_HELD" <<<"$ROWS")"
+# A pending head must NOT wake ci-red: nothing has failed, so there is no
+# investigation to launch and no rerun to cap.
+t pending-head-does-not-wake-ci-red "" \
+  "$(awk -F'\t' "$AWK_RED" <<<"$(printf 'o/r#4\tT4\tddd\tpending\towed\t-')")"
+# The two hold messages must not be the same string, or the pending hold reads
+# as "CI first, fix it" and tells the operator the author owes work.
+RED_MSG="$(grep -c 'the check at its head is RED' "$BMOD")"
+HELD_MSG="$(grep -c 'has not finished' "$BMOD")"
+t hold-messages-are-distinct "1 1" "$RED_MSG $HELD_MSG"
 # #17: every red head wakes, round owed or not.
 t ci-red-items-both-heads "$(printf 'o/r#1@aaa\thead\tcheck (FAILURE)\no/r#3@ccc\thead\tcheck (FAILURE)')" \
   "$(awk -F'\t' "$AWK_RED" <<<"$ROWS")"
@@ -1168,39 +1185,45 @@ done
 if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.conf"; then r1=present; else r1=GONE; fi
 t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 
-# --- red is the gate; pending and none are admitted (codex, #64 round 2) -----
-# The exclusion is `red`, not "everything but green". Codex asked for
-# `$4 == "green"`; these tests pin why it is not that, so the next reader sees
-# a decision rather than the fallthrough that the CANCELLED bug actually was.
+# --- the gate is a whitelist: green or none (danmt's ruling, #64) ------------
+# Codex asked for `$4 == "green"`. The ruling took the pending half of that and
+# refused the `none` half, because the two are not the same fact: pending is
+# transient and resolves itself, `none` is terminal. These tests pin BOTH
+# halves, so neither can be reintroduced by someone who reads only one of them.
 GATE_ROWS="$(printf '%s\n' \
   "$(printf 'o/noci#1\tT1\taaa\tnone\towed\t-')" \
   "$(printf 'o/q#2\tT2\tbbb\tpending\towed\t-')" \
   "$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')" \
   "$(printf 'o/x#4\tT4\tddd\tred\towed\tcheck (FAILURE)')")"
-# A repo with no CI configured is `none` FOREVER. Selecting only green retires
-# its owed rounds permanently — strictly worse than the pre-change engine,
-# which read no checks at all and woke all three. This is the negative control
-# for the rule that was asked for: run it, and the regression is visible.
-t gate-green-only-drops-none-and-pending "o/g#3 T3" \
-  "$(awk -F'\t' '$5 == "owed" && $4 == "green" { print $1, $2 }' <<<"$GATE_ROWS")"
-t gate-shipped-rule-admits-none-and-pending \
-  "$(printf 'o/noci#1 T1\no/q#2 T2\no/g#3 T3')" \
+t gate-admits-green-and-none "$(printf 'o/noci#1 T1\no/g#3 T3')" \
   "$(awk -F'\t' "$AWK_ROUNDS" <<<"$GATE_ROWS")"
-# ...and red is still excluded, which is the half #45 actually asks for.
-t gate-red-still-excluded "o/x#4" "$(awk -F'\t' "$AWK_BLOCKED" <<<"$GATE_ROWS")"
+t gate-holds-red "o/x#4" "$(awk -F'\t' "$AWK_BLOCKED" <<<"$GATE_ROWS")"
+t gate-holds-pending "o/q#2" "$(awk -F'\t' "$AWK_HELD" <<<"$GATE_ROWS")"
+# The `none` half, as a standing negative control. A repo with no CI configured
+# is `none` FOREVER, so a gate of `$4 == "green"` does not delay its owed
+# rounds — it retires them, and the engine can never open a review round in
+# that repo again. head-checks.jq rules `none` a state of its own for exactly
+# this reason; the gate has to agree with the classifier.
+t gate-green-only-would-strand-the-ci-less-repo "o/g#3 T3" \
+  "$(awk -F'\t' '$5 == "owed" && $4 == "green" { print $1, $2 }' <<<"$GATE_ROWS")"
+# Every owed round is accounted for — admitted, held-red or held-pending. A
+# state that falls out of all three is a round nobody wakes for and nobody
+# reports, which is the silent-stall shape this whole PR is against.
+t gate-partitions-every-owed-round 4 \
+  "$(awk -F'\t' '$5 == "owed" && ($4 == "green" || $4 == "none" || $4 == "red" || $4 == "pending") { c++ } END { print c+0 }' <<<"$GATE_ROWS")"
 
-# What the gate owes for admitting a non-green head: the datum, named. Same
+# What the gate owes for admitting a head with NO evidence: name it. Same
 # assert-the-literal-AND-run-it discipline as the row slicing above.
 # shellcheck disable=SC2016  # awk field refs, quoted exactly as the module has them
-AWK_NONGREEN='$5 == "owed" && $4 != "red" && $4 != "green" { s = s (s ? "; " : "") $1 " (" $4 ")" } END { print s }'
-if grep -Fq "$AWK_NONGREEN" "$BMOD"; then r1=present; else r1=MISSING; fi
-t nongreen-awk-in-module present "$r1"
-t nongreen-heads-named "o/noci#1 (none); o/q#2 (pending)" \
-  "$(awk -F'\t' "$AWK_NONGREEN" <<<"$GATE_ROWS")"
-# An all-green set must produce the empty string, which is what the module
+AWK_NOCHECK='$5 == "owed" && $4 == "none" { s = s (s ? "; " : "") $1 " (no checks configured)" } END { print s }'
+if grep -Fq "$AWK_NOCHECK" "$BMOD"; then r1=present; else r1=MISSING; fi
+t nocheck-awk-in-module present "$r1"
+t nocheck-heads-named "o/noci#1 (no checks configured)" \
+  "$(awk -F'\t' "$AWK_NOCHECK" <<<"$GATE_ROWS")"
+# A green-only set must produce the empty string, which is what the module
 # turns into "-" — a literal "" reaching the prompt would read as a bug.
-t nongreen-empty-when-all-green "" \
-  "$(awk -F'\t' "$AWK_NONGREEN" <<<"$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')")"
+t nocheck-empty-when-all-green "" \
+  "$(awk -F'\t' "$AWK_NOCHECK" <<<"$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')")"
 # The datum has to REACH the session, or naming it in the log helps nobody:
 # the slot exists in the prompt and the module fills it.
 if grep -q '{{HEAD_CHECKS}}' "$SHARED/prompts/build.txt"; then r1=slotted; else r1=MISSING; fi
