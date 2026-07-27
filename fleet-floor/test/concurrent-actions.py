@@ -12,6 +12,7 @@ FLOOR_PATH = os.path.join(os.path.dirname(HERE), "server", "floor.py")
 SPEC = importlib.util.spec_from_file_location("crew_floor", FLOOR_PATH)
 floor = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(floor)
+REAL_LOG = floor.log
 floor.log = lambda _message: None
 
 BOXES = ["box-a", "box-b", "box-c"]
@@ -88,4 +89,77 @@ assert [result["ok"] for result in payload["results"]] == [False, True, True], p
 assert [result["out"] for result in payload["results"]] == [
     "not created", "already running", "started"
 ], payload
+
+
+# A growing roster must not create one host subprocess per member. Results
+# remain in roster order even though only eight calls may run at once.
+MANY_BOXES = ["box-%02d" % n for n in range(19)]
+floor.read_roster = lambda: [
+    {"box": name, "agent": "claude", "room": "builder"} for name in MANY_BOXES
+]
+floor.box_states = lambda: {name: "stopped" for name in MANY_BOXES}
+many_active = 0
+many_peak = 0
+many_lock = threading.Lock()
+
+
+def bounded_run(argv, _timeout, _stdin_data=None):
+    global many_active, many_peak
+    with many_lock:
+        many_active += 1
+        many_peak = max(many_peak, many_active)
+    time.sleep(0.03)
+    with many_lock:
+        many_active -= 1
+    return 0, argv[2], ""
+
+
+floor.run = bounded_run
+many_fleet = Fleet()
+status, payload = floor.do_command(many_fleet, {"action": "start-all"})
+assert status == 200, (status, payload)
+assert many_peak == floor.ACTION_WORKERS == 8, ("action worker peak", many_peak)
+assert [result["box"] for result in payload["results"]] == MANY_BOXES, payload
+
+
+# log() is called by those workers. A deliberately slow stream makes
+# overlapping writes deterministic: the old print(message, flush=True) path
+# enters write concurrently and emits the newline as a second write.
+class SlowStream:
+    def __init__(self):
+        self.active = 0
+        self.peak = 0
+        self.writes = []
+        self.lock = threading.Lock()
+
+    def write(self, text):
+        with self.lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        time.sleep(0.003)
+        self.writes.append(text)
+        with self.lock:
+            self.active -= 1
+
+    def flush(self):
+        return None
+
+
+stream = SlowStream()
+real_stdout = floor.sys.stdout
+floor.sys.stdout = stream
+floor.log = REAL_LOG
+threads = [
+    threading.Thread(target=floor.log, args=("box-%02d complete" % n,))
+    for n in range(24)
+]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+floor.sys.stdout = real_stdout
+assert stream.peak == 1, ("overlapping log writes", stream.peak)
+assert len(stream.writes) == len(threads), ("torn log writes", stream.writes)
+assert all(line.endswith(" complete\n") for line in stream.writes), stream.writes
+
 print("concurrent fleet actions: ok")
