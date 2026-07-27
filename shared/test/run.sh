@@ -454,6 +454,67 @@ printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_commit "$LG2"
 t ledger-crossrepo-distinct 1 "$(printf 'heavy-duty/rig#1 2026-07-20T00:00:00Z\n' | ledger_filter "$LG2" | n)"
 t ledger-crossrepo-samekey  0 "$(printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_filter "$LG2" | n)"
 
+# --- ledger_suppressed: the exact inverse of ledger_filter (#59) ------------
+# The two must partition the input between them. If they can ever disagree, the
+# engine either pays for work it meant to suppress or goes quiet about work it
+# meant to report — and the second is the dangerous one.
+LG3="$TMP/ledger-inv"
+printf 'o/r#1 2026-07-27T10:00:00Z\no/r#2 2026-07-27T10:00:00Z\n' | ledger_commit "$LG3"
+IN3="$(printf 'o/r#1 2026-07-27T10:00:00Z\no/r#2 2026-07-27T11:00:00Z\no/r#3 2026-07-27T09:00:00Z\n')"
+# #1 unchanged -> suppressed; #2 advanced -> fresh; #3 unseen -> fresh
+t suppressed-unchanged "o/r#1 2026-07-27T10:00:00Z" "$(printf '%s\n' "$IN3" | ledger_suppressed "$LG3")"
+t suppressed-fresh-count 2 "$(printf '%s\n' "$IN3" | ledger_filter "$LG3" | n)"
+# Partition: filter + suppressed together account for every input line, exactly
+# once. Asserted rather than assumed — the set-arithmetic version of this that
+# I wrote first reported NOTHING suppressed whenever the fresh list was empty.
+t suppressed-partitions 3 "$(printf '%s\n' "$IN3" | { ledger_filter "$LG3"; printf '%s\n' "$IN3" | ledger_suppressed "$LG3"; } | n)"
+t suppressed-disjoint 0 "$(comm -12 \
+  <(printf '%s\n' "$IN3" | ledger_filter "$LG3" | sort) \
+  <(printf '%s\n' "$IN3" | ledger_suppressed "$LG3" | sort) | n)"
+# A cold ledger hides nothing.
+t suppressed-cold 0 "$(printf 'o/r#9 2026-07-27T10:00:00Z\n' | ledger_suppressed "$TMP/nope" | n)"
+
+# --- report_suppressed: stop paying, do NOT stop saying (#59) ---------------
+# A ledger converts a burn into silence. An unactioned item is still a live
+# board-invariant violation, so the suppressed set has to surface — but at one
+# tick per five minutes, a line every tick would bury the log it informs. So:
+# warn when the SET CHANGES, and again from scratch after it clears.
+ST="$TMP/suppressed-state"
+r1="$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
+case "$r1" in *"1 item(s)"*"o/r#1"*) r2=warned ;; *) r2="$r1" ;; esac
+t report-first warned "$r2"
+# Same set again: silent.
+t report-repeat "" "$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
+# Set grows: speaks again.
+r3="$(printf 'o/r#1 2026-07-27T10:00:00Z\no/r#2 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
+case "$r3" in *"2 item(s)"*) r4=warned ;; *) r4="$r3" ;; esac
+t report-grew warned "$r4"
+# Emptied: silent, and the state file goes, so a recurrence is reported afresh
+# rather than being swallowed as "same as last time".
+t report-cleared "" "$(printf '' | report_suppressed "$ST" "o/r: board")"
+if [ -f "$ST" ]; then r5=kept; else r5=removed; fi
+t report-state-removed removed "$r5"
+r6="$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
+case "$r6" in *"1 item(s)"*) r7=warned ;; *) r7="$r6" ;; esac
+t report-recurrence-speaks warned "$r7"
+
+# --- every state signal is ledgered (#59) -----------------------------------
+# The engine had TWO ledgers, both in triage, while builder and reviewer had
+# none — so any signal cleared by an in-session action the agent may DECLINE
+# re-fired a model session every tick forever. These pin the wiring: a new
+# signal site added without a ledger is the regression.
+for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build"; do
+  mod="${pair%%:*}"; led="${pair##*:}"
+  if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
+  t "signal-ledgered-$mod" ledgered "$r1"
+  # ...and committed only after a session that actually completed.
+  if grep -q 'RUN_SESSION_RC:-1}" -eq 0' "$SHARED/lib/$mod"; then r1=gated; else r1=UNGATED; fi
+  t "ledger-commit-gated-$mod" gated "$r1"
+  # ...and what it hides must be reported.
+  if grep -q 'report_suppressed' "$SHARED/lib/$mod"; then r1=reported; else r1=SILENT; fi
+  t "suppression-reported-$mod" reported "$r1"
+done
+
 # --- what the drill's isolation interlock does and does not cover (#52) ---
 # drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to
 # tick if it cannot. That is containment only for modules which actually

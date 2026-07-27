@@ -127,29 +127,60 @@ _builder_repo() {
   # only when no panel review request is still outstanding. Ready issues
   # with an assignee are mid-claim, not pickable — counting them launched
   # sessions with nothing to do (codex's 69% busy-tick rate). ---
-  local ready_counts ready_count ready_assigned cr_count
-  ready_counts="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
-    --json number,assignees \
-    --jq '"\([.[] | select((.assignees | length) == 0)] | length) \([.[] | select((.assignees | length) > 0)] | length)"' \
-    2>/dev/null || echo err)"
-  if [ "$ready_counts" = "err" ]; then
+  #
+  # Enumerated, not counted, and filtered through a seen-ledger — the same fix
+  # (c)/(d) got on 2026-07-25 and (a)/(b) got in #59. A `ready` issue clears
+  # this signal only when the session CLAIMS it, which is an action the session
+  # may correctly decline (out of scope, unbuildable, needs a ruling). Declined
+  # once, a bare count re-fires a build session every tick forever — and build
+  # carries TIMEOUT_BUILD=3600, four times triage's ceiling, over a repo set
+  # WIDER than repos.txt (_discover_my_pr_repos above). This was the most
+  # expensive instance of the defect and the last one anybody looked at.
+  # ONE issue listing, two derived facts. Two calls could disagree about the
+  # board between them, and the assigned-count is only meaningful relative to
+  # the same snapshot the pickable set came from.
+  local ready_json ready_count ready_assigned cr_count
+  local ready_items="" cr_items=""
+  ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
+    --json number,assignees,updatedAt 2>/dev/null || echo err)"
+  if [ "$ready_json" = "err" ]; then
     ready_count=err
   else
-    read -r ready_count ready_assigned <<<"$ready_counts"
+    ready_items="$(printf '%s' "$ready_json" | jq -r --arg repo "$R" \
+      '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null || true)"
+    ready_assigned="$(printf '%s' "$ready_json" \
+      | jq '[.[] | select((.assignees | length) > 0)] | length' 2>/dev/null || echo 0)"
+    ready_count="$(printf '%s\n' "$ready_items" \
+      | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
     # ready+assigned is a board anomaly (a claim swaps ready→claimed); it
     # doesn't wake a builder, but it must not be invisible either — only
     # the triage box's hygiene can fix it.
     [ "$ready_assigned" -gt 0 ] && log "NOTE: $R has $ready_assigned ready issue(s) WITH an assignee (board anomaly; hygiene's to fix)"
   fi
-  cr_count="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json isDraft,latestReviews,reviewRequests 2>/dev/null \
-    | jq --argjson panel "$panel_json" \
-      '[.[] | select(.isDraft | not)
+  # Same treatment for the owed-round signal: a round the session declines to
+  # answer is a permanent wake otherwise. number+updatedAt travel so the ledger
+  # re-wakes on a push or a new review, which is exactly when it should.
+  cr_items="$(gh pr list -R "$R" --state open --author "$ME" \
+    --json number,isDraft,latestReviews,reviewRequests,updatedAt 2>/dev/null \
+    | jq -r --argjson panel "$panel_json" --arg repo "$R" \
+      '.[] | select(.isDraft | not)
         | select([.latestReviews[]? | select(.state == "CHANGES_REQUESTED")
                   | .author.login | select(. as $l | ($panel | index($l)) != null)] | length > 0)
         | select(([.reviewRequests[]? | .login // empty
-                   | select(. as $l | ($panel | index($l)) != null)] | length) == 0)] | length' \
+                   | select(. as $l | ($panel | index($l)) != null)] | length) == 0)
+        | "\($repo)#\(.number) \(.updatedAt)"' \
       2>/dev/null || echo err)"
+  if [ "$cr_items" = "err" ]; then
+    cr_count=err
+  else
+    cr_count="$(printf '%s\n' "$cr_items" \
+      | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
+  fi
+  # Whatever the ledger hid is still real work that nobody has done — the
+  # engine stops paying for it, and says so once per change to the set.
+  printf '%s\n%s\n' "$ready_items" "$cr_items" \
+    | ledger_suppressed "$DUTY_DIR/.seen-build" \
+    | report_suppressed "$DUTY_DIR/.suppressed-build" "$R: build"
   if [ "$ready_count" = "err" ] && [ "$cr_count" != "err" ]; then
     # Issue listing fails where issues are disabled (forks); that must not
     # blind the PR-based round detection.
@@ -161,9 +192,17 @@ _builder_repo() {
   elif [ "$ready_count" -gt 0 ] || [ "$cr_count" -gt 0 ]; then
     log "$R: build duty (ready unclaimed=$ready_count, whole rounds owed=$cr_count)"
     ensure_main_clone "$R" "$dir" || return 0
+    RUN_SESSION_RC=1
     run_session build "$R" "$dir" "$TIMEOUT_BUILD" \
       "$(render_prompt build.txt ME="$ME" REPO="$R" TRIAGE="$FLEET_TRIAGE" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules" ONESHOT_RULES="$oneshot_rules")"
+    # Record what this session SAW, at the state it saw it in — but only if the
+    # session actually ran to completion. A crash or timeout leaves the ids
+    # uncommitted so the next tick retries: declined and never-got-there must
+    # not look the same to the ledger.
+    if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+      printf '%s\n%s\n' "$ready_items" "$cr_items" | ledger_commit "$DUTY_DIR/.seen-build"
+    fi
   else
     log "$R: no build duty"
   fi

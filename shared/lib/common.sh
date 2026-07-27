@@ -169,6 +169,41 @@ ledger_filter() { # $1=ledger; stdin "id ts" lines; stdout new-or-advanced ones
     NF>=2 { if (!($1 in seen) || seen[$1] < $2) print }
   '
 }
+ledger_suppressed() { # $1=ledger; stdin "id ts" lines; stdout the ones it HIDES
+  # The exact inverse of ledger_filter, so the two can never disagree about
+  # what was withheld. Set arithmetic on the two outputs cannot do this safely:
+  # an empty "fresh" list makes `grep -vxF -f` match every line and report
+  # nothing suppressed, which is the reading that matters most.
+  local ledger="$1"
+  awk -v L="$ledger" '
+    BEGIN { while ((getline line < L) > 0) { n=split(line,a," "); if (n>=2) seen[a[1]]=a[2] } close(L) }
+    NF>=2 { if (($1 in seen) && !(seen[$1] < $2)) print }
+  '
+}
+
+# report_suppressed STATEFILE LABEL — stdin: the "id ts" lines a ledger hid.
+#
+# A ledger trades a burn for SILENCE, and silence is how the fleet starves. An
+# issue still carrying no label is a live violation of the board invariant; the
+# engine must stop PAYING for it, not stop SAYING it. Without this, #59's fix
+# would convert a loud expensive bug into a quiet cheap one and the invariant
+# would rot unobserved — the same shape as #52 (an interlock that reads like
+# coverage) and #50 (skip lines nobody reads).
+#
+# Warns when the suppressed SET CHANGES, not every tick: at one tick per five
+# minutes a standing violation would otherwise write 288 identical lines a day
+# and bury the log it is trying to inform. Removing the state file when the set
+# empties means the next occurrence speaks up again.
+report_suppressed() {
+  local state="$1" label="$2" items n
+  items="$(sort)"
+  if [ -z "$items" ]; then rm -f "$state"; return 0; fi
+  if [ "$items" = "$(cat "$state" 2>/dev/null)" ]; then return 0; fi
+  n="$(printf '%s\n' "$items" | awk 'NF{c++} END{print c+0}')"
+  warn "$label: $n item(s) unactioned since a previous session and now suppressed — $(printf '%s\n' "$items" | awk '{printf "%s(%s) ", $1, $2}')"
+  printf '%s\n' "$items" >"$state"
+}
+
 ledger_commit() { # $1=ledger; stdin "id ts" lines; merge keeping max ts, atomically
   local ledger="$1" tmp
   tmp="$(mktemp "${ledger}.XXXXXX")"
