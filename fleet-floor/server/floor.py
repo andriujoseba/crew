@@ -1004,7 +1004,7 @@ def do_command(fleet, body):
         return fleet.agent_conf(roster[name]["agent"])
 
     def concurrently(tasks):
-        """Run per-box calls together and return results in roster order."""
+        """Run per-box calls together and return results in submission order."""
         if not tasks:
             return []
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
