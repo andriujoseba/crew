@@ -1037,6 +1037,129 @@ CL_SHARED_AFTER="$(
 )"
 t "crew init: writes nothing under shared" "$CL_SHARED_BEFORE" "$CL_SHARED_AFTER"
 
+# --- operator agent profiles: one config dir, one answer (#75) --------------
+# A vendor CLI is configuration, so an operator adds one beside the fleet
+# definition — and every reader (`crew profiles`, `crew new`, the hire
+# transport, the console) must resolve it to the SAME file, operator winning
+# a name clash. The must-fail #75 names: a profile resolvable by cli/crew but
+# not the console (or vice versa), and a profile that lists but dies at hire.
+echo
+echo "== operator agent profiles (one config dir, one answer)"
+
+CL_OPCONF="$CL_TMP/opconf"
+mkdir -p "$CL_OPCONF/agents"
+cp "$CL_CREW_ROSTER" "$CL_OPCONF/fleet.roster"
+printf 'FLEET_HUMAN=fixture\n' >"$CL_OPCONF/fleet.conf"
+printf 'heavy-duty/crew\n' >"$CL_OPCONF/repos.txt"
+printf '# vendorx — operator-only fixture vendor\nAGENT_LOGIN_HINT="vendorx auth login"\nbot_cli_probe() { return 0; }\nbot_cli_present() { return 0; }\n' \
+  >"$CL_OPCONF/agents/vendorx.conf"
+printf '# claude — operator override of a shipped name\nAGENT_LOGIN_HINT="operator claude hint"\nbot_cli_probe() { return 0; }\nbot_cli_present() { return 0; }\n' \
+  >"$CL_OPCONF/agents/claude.conf"
+
+CL_RC=0
+CREW_CONFIG_DIR="$CL_OPCONF" "$CL_ROOT/cli/crew" profiles >"$CL_TMP/prof-out" 2>&1 || CL_RC=$?
+t "crew profiles: exits 0 with an operator config dir" 0 "$CL_RC"
+if grep -qE '^  vendorx .*\[operator\]' "$CL_TMP/prof-out"; then
+  ok "crew profiles: an operator-only vendor lists, marked operator"
+else
+  fail "crew profiles: an operator-only vendor lists, marked operator" "$(cat "$CL_TMP/prof-out")"
+fi
+if grep -qE '^  claude .*operator override.*\[operator\]' "$CL_TMP/prof-out"; then
+  ok "crew profiles: a same-name clash shows the operator's line"
+else
+  fail "crew profiles: a same-name clash shows the operator's line" "$(grep '^  claude' "$CL_TMP/prof-out")"
+fi
+if grep -E '^  grok ' "$CL_TMP/prof-out" | grep -qv '\[operator\]'; then
+  ok "crew profiles: a shipped-only name still resolves shipped"
+else
+  fail "crew profiles: a shipped-only name still resolves shipped" "$(grep '^  grok' "$CL_TMP/prof-out")"
+fi
+
+# Fallback: with no operator config dir, the listing is byte-for-byte
+# today's — no fixture vendor, no [operator] marker anywhere.
+CL_RC=0
+(cd "$CL_TMP" && XDG_CONFIG_HOME="$CL_TMP/no-such-xdg" "$CL_ROOT/cli/crew" profiles) \
+  >"$CL_TMP/prof-none" 2>&1 || CL_RC=$?
+t "crew profiles: fallback exits 0 with no operator config dir" 0 "$CL_RC"
+if grep -qE 'vendorx|\[operator\]' "$CL_TMP/prof-none"; then
+  fail "crew profiles: fallback output is unchanged from today" "$(cat "$CL_TMP/prof-none")"
+else
+  ok "crew profiles: fallback output is unchanged from today"
+fi
+
+# crew new sizes a box with an operator-only vendor, and the login hint it
+# prints is the operator profile's — resolution, not the shipped set.
+printf 'cli-vendorx vendorx builder\n' >>"$CL_OPCONF/fleet.roster"
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+CREW_CONFIG_DIR="$CL_OPCONF" \
+  env -u CREW_ROSTER timeout 60 "$CL_ROOT/cli/crew" new cli-vendorx \
+  </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+t "crew new: an operator-only vendor passes profile validation" 0 "$CL_RC"
+if grep -q 'vendorx auth login' "$CL_TMP/crew-out"; then
+  ok "crew new: login hint comes from the operator profile"
+else
+  fail "crew new: login hint comes from the operator profile" "$(cat "$CL_TMP/crew-out")"
+fi
+
+# The transport at hire: stub-box records every invocation, so the calls file
+# is the staging order — the seed reset must precede the profile put, and the
+# put must land in the seed dir install.sh validates against.
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+FLOOR_CALLS="$CL_TMP/hire-calls" CREW_CONFIG_DIR="$CL_OPCONF" \
+  env -u CREW_ROSTER timeout 60 "$CL_ROOT/cli/crew" hire cli-hired --force \
+  </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+t "crew hire: succeeds with an operator config dir carrying profiles" 0 "$CL_RC"
+if grep -q 'duty/.crew-seed-agents/vendorx.conf' "$CL_TMP/hire-calls" 2>/dev/null; then
+  ok "crew hire: operator profiles ride the pre-install transport"
+else
+  fail "crew hire: operator profiles ride the pre-install transport" \
+       "no seed-dir put in the box calls"
+fi
+if awk '/rm -rf ~\/duty\/.crew-seed-agents/{r=NR} /duty\/.crew-seed-agents\/vendorx.conf/{p=NR} END{exit !(r && p && r<p)}' \
+     "$CL_TMP/hire-calls" 2>/dev/null; then
+  ok "crew hire: the seed reset precedes the profile staging"
+else
+  fail "crew hire: the seed reset precedes the profile staging" \
+       "a stale seed could resurrect a deleted profile"
+fi
+
+# The console's reading must be the SAME answer. runpy executes floor.py's
+# module level without starting the server (run_name is not __main__), so
+# the resolved values themselves are asserted — not a grep for wiring.
+CL_FLOOR_ANS="$(cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_OPCONF" \
+  env -u CREW_FLOOR_ROSTER python3 - <<'PY' 2>&1
+import runpy
+ns = runpy.run_path("floor.py", run_name="floor")
+print(ns["ROSTER"])
+print(ns["agent_conf_path"]("vendorx"))
+print(ns["agent_conf_path"]("claude"))
+print(ns["agent_conf_path"]("grok"))
+PY
+)"
+t "floor: roster resolves from the config dir" \
+  "$CL_OPCONF/fleet.roster" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 1p)"
+t "floor: an operator-only vendor resolves to the operator file" \
+  "$CL_OPCONF/agents/vendorx.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 2p)"
+t "floor: a same-name clash resolves to the operator copy" \
+  "$CL_OPCONF/agents/claude.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 3p)"
+t "floor: a shipped-only name falls back to the shipped set" \
+  "$CL_ROOT/shared/conf/agents/grok.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 4p)"
+
+# Refusal parity: an explicit but invalid CREW_CONFIG_DIR is an error for the
+# console exactly as it is for the CLI — serving a fleet the CLI refuses is
+# the split-brain this suite already guards against for the roster.
+CL_RC=0
+(cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_TMP/nonexistent-config" \
+  env -u CREW_FLOOR_ROSTER python3 floor.py) >"$CL_TMP/floor-bad" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'fleet.roster is required' "$CL_TMP/floor-bad"; then
+  ok "floor: an invalid CREW_CONFIG_DIR is refused like the CLI refuses it"
+else
+  fail "floor: an invalid CREW_CONFIG_DIR is refused like the CLI refuses it" \
+       "rc=$CL_RC $(cat "$CL_TMP/floor-bad")"
+fi
+
 rm -rf "$CL_TMP"
 
 if [ -n "${CL_STANDALONE:-}" ]; then

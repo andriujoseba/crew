@@ -1497,6 +1497,87 @@ fi
 t doctrine-templates-have-no-hardcoded-paths slotted "$r1"
 PROMPTS_DIR="$saved_prompts_dir"
 
+# --- install.sh: the operator agent-profile transport contract (#75) --------
+# The ordering is the whole difficulty (codex Blocking 4 on #73): install.sh
+# refuses an unknown agent BEFORE it creates conf/agents, so a profile that
+# arrived only with the conf copy would fail its own validation — a vendor
+# that lists in `crew profiles` and dies at `crew hire`. The host stages
+# operator profiles into ~/duty/.crew-seed-agents ahead of the run; these
+# fixtures assert every clause: a seeded profile passes validation, the
+# operator copy is what conf/agents carries (same-name wins where load_conf
+# reads), the seed is consumed on success AND failure, and an unseeded
+# unknown agent still dies.
+PHOME="$TMP/profile-home"
+PDUTY="$PHOME/duty"
+mkdir -p "$PDUTY/.crew-seed-agents"
+cat >"$PDUTY/.crew-seed-agents/vendorx.conf" <<'EOF'
+# vendorx — operator-supplied fixture vendor (never shipped)
+# shellcheck shell=bash disable=SC2034
+BOT_PATH_PREPEND=""
+BOT_CLI_CMD="vendorx"
+AGENT_LOGIN_HINT="vendorx auth login"
+bot_cli_probe() { return 0; }
+bot_cli_present() { command -v vendorx >/dev/null 2>&1; }
+EOF
+profile_install() {
+  env HOME="$PHOME" DUTY_DIR="$PDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" "$@"
+}
+if profile_install --agent vendorx --role reviewer >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t operator-profile-validates-before-conf-exists 0 "$r1"
+[ -f "$PDUTY/conf/agents/vendorx.conf" ] && r1=installed || r1=missing
+t operator-profile-lands-in-conf-agents installed "$r1"
+if grep -q 'operator-supplied fixture vendor' "$PDUTY/conf/agents/vendorx.conf" 2>/dev/null; then
+  r1=operator
+else
+  r1=other
+fi
+t operator-profile-is-the-operator-copy operator "$r1"
+[ -d "$PDUTY/.crew-seed-agents" ] && r1=lingers || r1=consumed
+t operator-profile-seed-consumed consumed "$r1"
+# The shipped set still installs whole beside the operator's addition.
+[ -f "$PDUTY/conf/agents/claude.conf" ] && r1=present || r1=missing
+t operator-profile-shipped-set-intact present "$r1"
+
+# Same-name precedence: an operator claude.conf beats the shipped one — and
+# the win must hold at RUNTIME, where load_conf sources whatever
+# conf/agents carries (common.sh:34); settled in the copy, not by a reader.
+mkdir -p "$PDUTY/.crew-seed-agents"
+cat >"$PDUTY/.crew-seed-agents/claude.conf" <<'EOF'
+# claude — operator override fixture
+# shellcheck shell=bash disable=SC2034
+BOT_PATH_PREPEND=""
+BOT_CLI_CMD="claude"
+AGENT_LOGIN_HINT="operator override wins"
+bot_cli_probe() { return 0; }
+bot_cli_present() { return 0; }
+EOF
+profile_install --agent claude --role reviewer >/dev/null 2>&1
+if grep -q 'operator override fixture' "$PDUTY/conf/agents/claude.conf" 2>/dev/null; then
+  r1=operator
+else
+  r1=shipped
+fi
+t operator-profile-same-name-wins operator "$r1"
+# shellcheck disable=SC2016  # $DUTY_DIR and $AGENT_LOGIN_HINT expand in the child shell
+runtime_hint="$(env DUTY_DIR="$PDUTY" HOME="$PHOME" bash -c \
+  '. "$DUTY_DIR/lib/common.sh"; load_conf; printf %s "$AGENT_LOGIN_HINT"')"
+t operator-profile-wins-at-load_conf "operator override wins" "$runtime_hint"
+
+# The gap the contract closes, inverted: an agent nobody transported and
+# nobody ships must still die at validation, not at first duty tick.
+if profile_install --agent vendory --role reviewer >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t operator-profile-unknown-still-refused 1 "$r1"
+
+# A one-install transport on FAILURE too: a failing install (here: a role
+# that does not exist, checked after the agent) must not leave seeds behind
+# for a later bare run to resurrect.
+mkdir -p "$PDUTY/.crew-seed-agents"
+printf '# vendorz — fixture\n' >"$PDUTY/.crew-seed-agents/vendorz.conf"
+profile_install --agent vendorz --role nosuchrole >/dev/null 2>&1 || true
+[ -d "$PDUTY/.crew-seed-agents" ] && r1=lingers || r1=consumed
+t operator-profile-seed-consumed-on-failure consumed "$r1"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

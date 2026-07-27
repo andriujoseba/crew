@@ -357,5 +357,8 @@ case "${1:-}" in
 
   down)  echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
   start) echo running > "$STATEDIR/$2.state"; echo "started $2" ;;
+  # `crew new` mints infrastructure only; the stub records the mint so a test
+  # can assert the sizing/template arguments without owning an Incus (#75).
+  new)   echo "created" ;;
   *) echo "stub-box: unhandled '$*'" >&2; exit 2 ;;
 esac
