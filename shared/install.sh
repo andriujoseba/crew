@@ -3,11 +3,10 @@
 #
 # Run from the repo root on the target box:   shared/install.sh
 #
-# The box's identity is read from its gh token (never a flag — the token IS
-# the identity, and one box per identity is the fleet invariant). The crew
-# checkout becomes the single source both the archive and the deployment
-# come from: the per-bot script archives drifted from what actually ran (a
-# header comment above kimi's shebang existed only in the archive).
+# A standing box resolves its agent and role by BOX NAME from fleet.roster.
+# The crew checkout becomes the single source both the fleet declaration and
+# the deployment come from: no second registry can disagree with the roster
+# about which duty loops an upgrade should install.
 #
 # Idempotent and state-preserving: repos.txt, notify-repos.txt, logs, state
 # files and clones are never touched; bin/lib/conf/prompts are replaced
@@ -53,24 +52,22 @@ source "$HERE/conf/fleet.conf"
 #  explicit  --agent X --role Y   pre-auth bake (crew new): no gh identity
 #                                 needed — the boot gate screams until the
 #                                 operator logs in, which is correct.
-#  manifest  gh token → FLEET_MANIFEST line (the standing fleet).
+#  roster    --box NAME → fleet.roster (standing fleet).
 #  keep      existing conf/instance.conf (re-install/upgrade on a box whose
-#            identity isn't in the manifest, or whose auth is down).
-AGENT_ARG="" ROLE_ARG="" ARM_CRON=0
+#            name is not in the roster).
+AGENT_ARG="" ROLE_ARG="" BOX_ARG="" ARM_CRON=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent) AGENT_ARG="$2"; shift 2 ;;
     --role)  ROLE_ARG="$2";  shift 2 ;;
+    --box)   BOX_ARG="$2";   shift 2 ;;
     --arm-cron) ARM_CRON=1; shift ;;
-    *) echo "unknown argument '$1' (usage: install.sh [--agent <a> --role <r>] [--arm-cron])"; exit 1 ;;
+    *) echo "unknown argument '$1' (usage: install.sh [--box <name> | --agent <a> --role <r>] [--arm-cron])"; exit 1 ;;
   esac
 done
 
-# What this box was configured as BEFORE this run, captured before anything
-# below can overwrite it. Parsed rather than sourced, deliberately: the keep-
-# existing branch below SOURCES instance.conf, which sets BOT_AGENT/BOT_ROLES
-# in this shell — sourcing here would make the "prior" and the "resolved"
-# values the same variables and the comparison vacuous.
+# Capture the pre-install profile without sourcing it, so the resolved values
+# below cannot overwrite the evidence used to report a change (#36).
 PRIOR_EXISTS=0 PRIOR_AGENT="" PRIOR_ROLES=""
 if [ -f "$DUTY_DIR/conf/instance.conf" ]; then
   PRIOR_EXISTS=1
@@ -78,52 +75,41 @@ if [ -f "$DUTY_DIR/conf/instance.conf" ]; then
   PRIOR_ROLES="$(sed -n 's/^BOT_ROLES=//p' "$DUTY_DIR/conf/instance.conf" | head -1 | tr -d '"'\''\r')"
 fi
 
-ME="$(gh api user --jq .login 2>/dev/null || true)"
 if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
+  [ -z "$BOX_ARG" ] || { echo "--box and --agent/--role are alternatives"; exit 1; }
   if [ -z "$AGENT_ARG" ] || [ -z "$ROLE_ARG" ]; then
     echo "--agent and --role go together"; exit 1
   fi
   BOT_AGENT="$AGENT_ARG"
   BOT_ROLE_LIST="$(printf '%s' "$ROLE_ARG" | tr ',' ' ')"
   RESOLVED_FROM="the --agent/--role flags"
-elif [ -n "$ME" ] && resolved="$(manifest_lookup "$ME")"; then
+elif [ -n "$BOX_ARG" ]; then
+  resolved="$(awk -v box="$BOX_ARG" '$1 == box {print $2, $3; exit}' "$HERE/../fleet.roster")"
+  if [ -z "$resolved" ]; then
+    echo "cannot resolve box '$BOX_ARG': no fleet.roster entry"
+    exit 1
+  fi
   read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
-  RESOLVED_FROM="FLEET_MANIFEST (login $ME)"
+  RESOLVED_FROM="fleet.roster (box $BOX_ARG)"
 elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
   # shellcheck disable=SC1091
   source "$DUTY_DIR/conf/instance.conf"
   BOT_ROLE_LIST="$BOT_ROLES"
-  RESOLVED_FROM="the existing instance.conf${ME:+ — $ME is not in FLEET_MANIFEST}"
+  RESOLVED_FROM="the existing instance.conf"
 else
-  echo "cannot resolve this box's configuration: no --agent/--role flags,"
-  echo "no manifest entry${ME:+ for $ME}${ME:-" (gh not authenticated)"}, and no existing instance.conf"
+  echo "cannot resolve this box's configuration: pass --box <fleet-name>"
+  echo "or --agent <agent> --role <role>; no existing instance.conf to keep"
   exit 1
 fi
 [ -f "$HERE/conf/agents/$BOT_AGENT.conf" ] || { echo "unknown agent profile '$BOT_AGENT'"; exit 1; }
 for role in $BOT_ROLE_LIST; do
   [ -f "$HERE/conf/roles/$role.conf" ] || { echo "unknown role profile '$role'"; exit 1; }
 done
-# --- Say what this install CHANGED, before it changes it (#36) --------------
-#
-# A role change is not cosmetic. duty.sh gates every module on has_role, so
-# BOT_ROLES decides which duty loops exist on this box — a flagless install can
-# start triage sweeps or stop reviews on the strength of a line that used to
-# read exactly like a no-op. That silence cost a whole rehearsal (#28: the drill
-# asserted BOT_ROLES="reviewer", reran install two checks later, the box became
-# triage, and every downstream review check failed for a reason nothing in the
-# output pointed at), and it is what lets #35 bite in production, where `crew
-# upgrade` runs flagless against every box on the roster.
-#
-# Reported, never refused. Convergence is the point of a fleet installer — the
-# ruling on #35 is that the declaration wins and explicit flags are not sticky —
-# so a change here is usually correct. It just must never be invisible.
-#
-# The change lines go to stderr and the resolution line to stdout, because they
-# answer different questions: "what did this do to my box" has to survive being
-# piped somewhere, and it is the one an operator must not miss.
+
+# A changed role adds or removes whole duty loops. Convergence is intentional,
+# but it must never read like a no-op (#36). Changes survive stdout redirection.
 CHANGE_NOTE="unchanged"
 if [ "$PRIOR_EXISTS" -eq 0 ]; then
-  # A first install is an install, not a diff against nothing.
   CHANGE_NOTE="first install"
 else
   changed=0
@@ -137,7 +123,7 @@ else
     changed=1
   fi
   if [ "$changed" -eq 1 ]; then
-    echo "crew: resolved from $RESOLVED_FROM; pass --agent/--role to override" >&2
+    echo "crew: resolved from $RESOLVED_FROM" >&2
     CHANGE_NOTE="CHANGED — see the lines above"
   fi
 fi
@@ -167,11 +153,11 @@ for f in "$HERE"/conf/roles/*.conf; do put "$f" "$DUTY_DIR/conf/roles"; done
 put "$HERE/conf/fleet.conf" "$DUTY_DIR/conf"
 
 # The instance resolution, re-derived every install (it is a pure function
-# of the token and the manifest — never edited by hand).
+# of the box name and fleet.roster — never edited by hand).
 tmp="$(mktemp "$DUTY_DIR/conf/.install.XXXXXX")"
 {
   echo "# instance.conf — WRITTEN BY install.sh; derived from the fleet"
-  echo "# manifest and this box's gh token. Do not edit; edit the manifest."
+  echo "# roster and this box's name. Do not edit; edit fleet.roster."
   echo "# shellcheck shell=bash disable=SC2034"
   echo "BOT_AGENT=$BOT_AGENT"
   echo "BOT_ROLES=\"$BOT_ROLE_LIST\""
@@ -236,13 +222,10 @@ rm -f "$DUTY_DIR/.boot-id"
 # Version stamp: FLEET.md reconciles the deployed fleet against crew@SHA.
 {
   echo "crew@$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') as ${ME:-<pre-auth>}"
+  echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') (agent=$BOT_AGENT roles=$BOT_ROLE_LIST)"
 } >"$DUTY_DIR/VERSION"
 
-echo "installed for ${ME:-<pre-auth box>} (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
-# Always named, even when nothing moved: "resolved from FLEET_MANIFEST" and
-# "kept the existing config" are different facts, and an operator reading this
-# log months later cannot reconstruct which one happened from the values alone.
+echo "installed (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
 echo "  agent/role resolved from $RESOLVED_FROM — $CHANGE_NOTE"
 
 if [ "$ARM_CRON" -eq 1 ]; then

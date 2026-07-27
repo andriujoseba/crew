@@ -53,17 +53,6 @@ has_role triage && r2=yes || r2=no
 t has-role-yes yes "$r1"
 t has-role-no no "$r2"
 
-# --- manifest_lookup: agent + roles resolution
-# shellcheck disable=SC2034  # consumed inside sourced common.sh
-FLEET_MANIFEST="
-dan-claude-bot=claude:triage
-claude-bot-andresmgsl=claude:builder,reviewer
-"
-t manifest-single "claude triage" "$(manifest_lookup dan-claude-bot)"
-t manifest-multi "claude builder reviewer" "$(manifest_lookup claude-bot-andresmgsl)"
-manifest_lookup nobody-bot >/dev/null && r1=found || r1=absent
-t manifest-missing absent "$r1"
-
 # --- agent profiles and rehearsal selection -----------------------------
 for profile in "$SHARED"/conf/agents/*.conf; do
   agent="$(basename "$profile" .conf)"
@@ -96,9 +85,13 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed tr wc; do
+for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
+# If install.sh ever infers from hostname again, make the regression reproduce
+# the dangerous case deterministically rather than depend on this test host.
+printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
+chmod +x "$ISHIM/hostname"
 ln -s "$(command -v jq)" "$ISHIM/jq"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 printf '#!/usr/bin/env bash\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
@@ -143,36 +136,58 @@ t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 install_fixture --arm-cron >/dev/null 2>&1
 t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 
-# --- install.sh: explicit role vs FLEET_MANIFEST -------------------------
-# A flagless rerun re-resolves agent/role from FLEET_MANIFEST whenever the
-# box's gh login has an entry there, overwriting a role installed explicitly.
-# That is correct convergence for a standing fleet box and a trap for any box
-# deliberately installed OFF its manifest role: the drill installed reviewer
-# under a fleet identity whose manifest entry is triage, and its own
-# idempotence check converted the box to triage mid-run.
-MHOME="$TMP/manifest-home"
-MDUTY="$MHOME/duty"
-mkdir -p "$MHOME"
-# shellcheck disable=SC2016  # fixture script expands these at execution time
-printf '#!/usr/bin/env bash\n[ "$1 $2" = "api user" ] && { printf "dan-claude-bot\\n"; exit 0; }\nexit 1\n' >"$ISHIM/gh"
-chmod +x "$ISHIM/gh"
-manifest_install() {
-  env HOME="$MHOME" DUTY_DIR="$MDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+# --- install.sh: fleet.roster is the one agent/role declaration (#35) ----
+# The real divergence was claude-builder=builder in fleet.roster while the
+# old login-keyed registry said builder,reviewer. Hire followed the first and a
+# routine upgrade followed the second, so whichever command ran last silently
+# decided the duty loops. Both now resolve the same BOX key from one file.
+RHOME="$TMP/roster-home"
+RDUTY="$RHOME/duty"
+mkdir -p "$RHOME"
+roster_install() {
+  env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
     /bin/bash "$SHARED/install.sh" "$@"
 }
-manifest_install --agent claude --role reviewer >/dev/null 2>&1
-t install-explicit-role-set 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-manifest_install >/dev/null 2>&1
-t install-flagless-reresolves-from-manifest 'BOT_ROLES="triage"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-manifest_install --agent claude --role reviewer >/dev/null 2>&1
-t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-hire-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-upgrade-keeps-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+t install-roster-agent 'BOT_AGENT=claude' "$(grep '^BOT_AGENT=' "$RDUTY/conf/instance.conf")"
+# Flagless means preserve, never infer. The hostname shim above deliberately
+# names a production builder; a fallback would silently turn this reviewer
+# into a builder and fail the assertion.
+roster_install --agent claude --role reviewer >/dev/null 2>&1
+roster_install >/dev/null 2>&1
+t install-flagless-keeps-explicit-role 'BOT_ROLES="reviewer"' \
+  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+# Every committed member, not just the historical claude-builder divergence:
+# the install shape used by hire and upgrade resolves the identical row twice.
+while read -r roster_box roster_agent roster_role _roster_from; do
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  hire_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  upgrade_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  t "install-hire-upgrade-stable-$roster_box" "$hire_conf" "$upgrade_conf"
+  t "install-roster-declares-$roster_box" \
+    "BOT_AGENT=$roster_agent
+BOT_ROLES=\"$roster_role\"" "$upgrade_conf"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
+if grep -Rsiqw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
+    "$SHARED/lib" "$SHARED/install.sh" "$ROOT/fleet.roster" "$ROOT/cli/crew" \
+    "$ROOT/drill"; then
+  r1=DUPLICATED
+else
+  r1=single-source
+fi
+t install-no-second-role-registry single-source "$r1"
+if grep -q -- "--box '\$b'" "$ROOT/cli/crew" || grep -q "install_identity_args.*\\\$b" "$ROOT/cli/crew"; then
+  r1=box-keyed
+else
+  r1=UNKEYED
+fi
+t upgrade-passes-roster-box-key box-keyed "$r1"
 
-# --- install.sh: a change must not read like a no-op (#36) ---------------
-# duty.sh gates every module on has_role, so a changed BOT_ROLES adds or
-# removes whole duty loops. Until now every resolution path printed the same
-# "installed for X (agent: ..., roles: ...)" line, so the install that
-# converted the drill's reviewer box to triage (#28) was indistinguishable
-# from one that did nothing.
+# --- install.sh: identity changes are impossible to mistake for no-ops (#36)
 CHOME="$TMP/change-home"
 CDUTY="$CHOME/duty"
 mkdir -p "$CHOME"
@@ -180,58 +195,49 @@ change_install() {
   env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
     /bin/bash "$SHARED/install.sh" "$@" 2>&1
 }
-# 1. First install: an install, not a diff against nothing.
 first_out="$(change_install --agent claude --role reviewer)"
-case "$first_out" in *CHANGED*) r1=SPURIOUS ;; *) r1=clean ;; esac
-t install-first-reports-no-change clean "$r1"
-case "$first_out" in *"first install"*) r1=named ;; *) r1=SILENT ;; esac
-t install-first-says-so named "$r1"
+case "$first_out" in *"first install"*) r1=clear ;; *) r1=missing ;; esac
+t install-first-install-labelled clear "$r1"
+case "$first_out" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
+t install-first-install-not-changed clean "$r1"
 
-# 2. Same flags again: nothing changed, and it still says where it resolved from.
 noop_out="$(change_install --agent claude --role reviewer)"
-case "$noop_out" in *CHANGED*) r1=SPURIOUS ;; *) r1=clean ;; esac
-t install-noop-reports-no-change clean "$r1"
-case "$noop_out" in *"resolved from the --agent/--role flags"*) r1=named ;; *) r1=SILENT ;; esac
-t install-noop-names-source named "$r1"
+case "$noop_out" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
+t install-noop-not-changed clean "$r1"
+case "$noop_out" in *"resolved from the --agent/--role flags"*) r1=sourced ;; *) r1=missing ;; esac
+t install-noop-source-visible sourced "$r1"
 
-# 3. The #28 conditions exactly: a box deliberately installed as reviewer,
-#    reinstalled flagless under a login whose manifest entry is triage.
-change_out="$(change_install)"
-case "$change_out" in *'ROLES CHANGED on this box: "reviewer" -> "triage"'*) r1=named ;; *) r1=SILENT ;; esac
-t install-change-names-both-sides named "$r1"
-case "$change_out" in *"FLEET_MANIFEST (login dan-claude-bot)"*) r1=named ;; *) r1=SILENT ;; esac
-t install-change-names-source named "$r1"
-case "$change_out" in *"duty loops"*) r1=explained ;; *) r1=BARE ;; esac
-t install-change-explains-consequence explained "$r1"
+change_out="$(change_install --box claude-builder)"
+case "$change_out" in
+  *'ROLES CHANGED on this box: "reviewer" -> "builder"'*) r1=loud ;;
+  *) r1=missing ;;
+esac
+t install-role-change-loud loud "$r1"
+case "$change_out" in
+  *"resolved from fleet.roster (box claude-builder)"*) r1=sourced ;;
+  *) r1=missing ;;
+esac
+t install-role-change-source-visible sourced "$r1"
+case "$change_out" in *"adds or removes whole duty loops"*) r1=warned ;; *) r1=missing ;; esac
+t install-role-change-impact-visible warned "$r1"
 
-# 4. THE negative control, and the whole point of the issue: a change and a
-#    no-op must not produce the same output.
-#
-#    Both runs resolve from the SAME source, so the report is the only thing
-#    that can differ. Comparing the flagless run against the explicit one would
-#    also come out "distinct" — but only because the two name different
-#    resolution sources, which is a pass for a reason unrelated to the claim.
-#    Written that way first, it survived reintroducing the bug.
-samesrc_change="$(change_install --agent claude --role builder)"   # triage -> builder
-samesrc_noop="$(change_install --agent claude --role builder)"     # builder -> builder
-[ "$samesrc_change" != "$samesrc_noop" ] && r1=distinct || r1=IDENTICAL
-t install-change-differs-from-noop-same-source distinct "$r1"
-case "$samesrc_change" in *'"triage" -> "builder"'*) r1=named ;; *) r1=SILENT ;; esac
-t install-change-names-the-transition named "$r1"
-# ...and the no-op must not name one, which is the other half of "distinct".
-case "$samesrc_noop" in *CHANGED*) r1=SPURIOUS ;; *) r1=clean ;; esac
-t install-noop-names-no-transition clean "$r1"
+same_source_change="$(change_install --agent claude --role reviewer)"
+same_source_noop="$(change_install --agent claude --role reviewer)"
+case "$same_source_change" in
+  *'ROLES CHANGED on this box: "builder" -> "reviewer"'*) r1=loud ;;
+  *) r1=missing ;;
+esac
+t install-same-source-change-loud loud "$r1"
+case "$same_source_noop" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
+t install-same-source-noop-clean clean "$r1"
+t install-change-and-noop-distinct no "$([ "$same_source_change" = "$same_source_noop" ] && printf yes || printf no)"
 
-# 5. The change must survive stdout being discarded — `crew hire`/`crew upgrade`
-#    run this over box exec, and the operator sees whatever is left.
-change_stderr="$(env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
-  /bin/bash "$SHARED/install.sh" --agent claude --role reviewer 2>&1 >/dev/null)"
-case "$change_stderr" in *'ROLES CHANGED'*) r1=on-stderr ;; *) r1=LOST ;; esac
-t install-change-on-stderr on-stderr "$r1"
-
-# restore the non-authenticating gh shim for anything downstream
-printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
-chmod +x "$ISHIM/gh"
+change_stderr="$(
+  env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" --agent claude --role builder 2>&1 >/dev/null
+)"
+case "$change_stderr" in *"ROLES CHANGED"*) r1=stderr ;; *) r1=missing ;; esac
+t install-change-warning-on-stderr stderr "$r1"
 
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed
@@ -738,237 +744,6 @@ t duty-end-on-every-exit "" "$(awk '
 # boxes reported armed and one ticked.
 if grep -q 'cron_daemon_running' "$SHARED/install.sh"; then r1=checked; else r1=ASSUMED; fi
 t install-verifies-cron-daemon checked "$r1"
-
-# --- credential state reported by the flow (replaces the polled probes) ----
-# These run against the REAL common.sh sourced above, with DUTY_DIR pointed at
-# a scratch dir, so the marker contract the floor reads is asserted here and
-# not merely described in a comment.
-
-# alert() would try to curl Telegram from a unit test; the token files do not
-# exist so it returns early, but stub it anyway — a test that depends on the
-# absence of a file in $HOME is a test that fails on somebody's laptop.
-alert() { :; }
-
-AUTHDIR="$TMP/authstate"; mkdir -p "$AUTHDIR"
-DUTY_DIR="$AUTHDIR"
-
-note_auth_failure gh "401 Bad credentials"
-t authfail-file-per-service present "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo present || echo MISSING)"
-t authfail-does-not-touch-other-service absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo LEAKED || echo absent)"
-t authfail-records-reason found \
-  "$(grep -q '401 Bad credentials' "$AUTHDIR/.auth-fail.gh" && echo found || echo MISSING)"
-
-# The first failure must win. Rewriting every tick resets mtime, so a
-# credential that died on Monday reads as having died just now — and "when did
-# this break" is the only question the file exists to answer.
-FIRST="$(cat "$AUTHDIR/.auth-fail.gh")"
-sleep 1
-note_auth_failure gh "403 something else entirely"
-t authfail-first-failure-wins "$FIRST" "$(cat "$AUTHDIR/.auth-fail.gh")"
-
-clear_auth_failure gh
-t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
-clear_auth_failure gh   # must be idempotent, not an error under set -e
-t authfail-clear-idempotent 0 "$?"
-
-# Multi-line reasons: gh's errors routinely are, and one record must stay one
-# line or probe.sh's ::key contract silently gains phantom keys.
-note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
-t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
-clear_auth_failure vendor
-
-# check_vendor_credential's tri-state. 2 means "this profile cannot tell from
-# local state" and MUST change nothing: neither raise an alarm nor clear a
-# real failure someone still has to fix.
-# shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
-AGENT_LOGIN_HINT="run the thing"
-# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
-bot_cli_present() { return 0; }
-check_vendor_credential
-t vendor-present-no-failure absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
-
-# shellcheck disable=SC2317
-bot_cli_present() { return 1; }
-check_vendor_credential
-t vendor-absent-raises present \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
-
-# shellcheck disable=SC2317
-bot_cli_present() { return 2; }
-check_vendor_credential
-t vendor-unknown-does-not-clear present \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo CLEARED)"
-rm -f "$AUTHDIR/.auth-fail.vendor"
-check_vendor_credential
-t vendor-unknown-does-not-raise absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
-unset -f bot_cli_present
-
-# An older agent profile with neither function must be a no-op, not a failure:
-# install.sh does not upgrade confs in place, so mid-rollout boxes will have
-# exactly this shape.
-check_vendor_credential
-t vendor-legacy-profile-silent absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
-
-# --- each agent profile reads its OWN credential store, locally -------------
-# Driven against the real conf files with a fabricated HOME, because the whole
-# claim of bot_cli_present is that it needs nothing but local disk.
-
-CREDH="$TMP/credhome"; mkdir -p "$CREDH"
-cred_rc() {  # cred_rc <agent> <home> -> rc of bot_cli_present
-  local rc=0
-  # Every vendor env override is cleared, not just the one under test: these
-  # are read by the sourced profile, and inheriting the RUNNER's credentials
-  # would make the result depend on whose machine ran the suite.
-  # shellcheck disable=SC2034  # consumed inside the conf sourced below
-  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" \
-    ANTHROPIC_API_KEY="" XAI_API_KEY=""
-    # shellcheck disable=SC1090
-    source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
-  echo "$rc"
-}
-# base64url with the padding stripped, the way a JWT actually arrives.
-b64url() { base64 -w0 | tr '/+' '_-' | tr -d '='; }
-
-# -- claude: refreshTokenExpiresAt, in MILLISECONDS
-CH="$CREDH/claude"; mkdir -p "$CH/.claude"
-CLAUDE_EXP_MS=$(( ($(date +%s) + 20 * 86400) * 1000 ))
-jq -n --argjson r "$CLAUDE_EXP_MS" \
-  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
-  > "$CH/.claude/.credentials.json"
-t cred-claude-present 0 "$(cred_rc claude "$CH")"
-
-# THE trap, and the reason this profile reads refreshTokenExpiresAt: an access
-# token that lapsed hours ago while the refresh token is still good is the
-# ordinary steady state, refreshed silently on next use. A profile testing
-# `expiresAt` would call a perfectly healthy box logged out three times a day.
-jq -n --argjson r "$CLAUDE_EXP_MS" --argjson a "$(( ($(date +%s) - 3600) * 1000 ))" \
-  '{claudeAiOauth:{accessToken:"a",expiresAt:$a,refreshTokenExpiresAt:$r}}' \
-  > "$CH/.claude/.credentials.json"
-t cred-claude-stale-access-token-is-fine 0 "$(cred_rc claude "$CH")"
-
-# An expired REFRESH token is the real logout: nothing can renew it but a human.
-jq -n --argjson r "$(( ($(date +%s) - 86400) * 1000 ))" \
-  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
-  > "$CH/.claude/.credentials.json"
-t cred-claude-expired-refresh 1 "$(cred_rc claude "$CH")"
-t cred-claude-no-file 1 "$(cred_rc claude "$CREDH/nothing")"
-
-# -- kimi: the refresh token is a JWT; its exp claim is the relogin deadline
-KH="$CREDH/kimi"; mkdir -p "$KH/.kimi-code/credentials"
-KIMI_EXP=$(( $(date +%s) + 30 * 86400 ))
-# A payload sized so base64url PADDING is required — the case a naive decoder
-# silently fails on.
-KJWT="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code","sub":"u"}' "$KIMI_EXP" | b64url).sig"
-jq -n --arg rt "$KJWT" \
-  '{access_token:"a",refresh_token:$rt,expires_at:1,token_type:"Bearer"}' \
-  > "$KH/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-present 0 "$(cred_rc kimi "$KH")"
-t cred-kimi-no-file 1 "$(cred_rc kimi "$CREDH/nothing")"
-# An expired refresh JWT is a logout, not merely "cannot tell".
-KJWT_OLD="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code"}' "$(( $(date +%s) - 86400 ))" | b64url).sig"
-jq -n --arg rt "$KJWT_OLD" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
-  > "$KH/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-expired-refresh 1 "$(cred_rc kimi "$KH")"
-# Garbage in the JWT slot must be "cannot tell" (2), never a confident logout.
-jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
-  > "$KH/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-unparseable-is-unknown 2 "$(cred_rc kimi "$KH")"
-
-# -- codex: file-backed vs keyring-backed, and NO expiry at all
-DH="$CREDH/codex"; mkdir -p "$DH/.codex"
-jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
-t cred-codex-present 0 "$(cred_rc codex "$DH")"
-t cred-codex-no-file-is-logout 1 "$(cred_rc codex "$CREDH/nothing")"
-# ...unless the box keeps its credential in the desktop keyring, where a
-# missing auth.json is normal and must not be reported as a logout.
-KB="$CREDH/codexkeyring"; mkdir -p "$KB/.codex"
-echo 'cli_auth_credentials_store = "keyring"' > "$KB/.codex/config.toml"
-t cred-codex-keyring-is-unknown 2 "$(cred_rc codex "$KB")"
-
-# -- grok: its probe was already a local file test, so it is authoritative
-# -- grok: a MAP of "<issuer>::<client_id>" slots, refresh token opaque
-GH_="$CREDH/grok"; mkdir -p "$GH_/.grok"
-jq -n '{"https://auth.x.ai::abc":{key:"j.w.t",refresh_token:"opaque",expires_at:"2026-07-27T19:54:18Z"}}' \
-  > "$GH_/.grok/auth.json"
-t cred-grok-present 0 "$(cred_rc grok "$GH_")"
-t cred-grok-no-file 1 "$(cred_rc grok "$CREDH/nothing")"
-# An empty map is a non-empty FILE. The old `[ -s ]` test called this logged
-# in; it is a failed login, and the honest answer is "cannot tell".
-echo '{}' > "$GH_/.grok/auth.json"
-t cred-grok-empty-map-is-unknown 2 "$(cred_rc grok "$GH_")"
-
-# No profile may define bot_cli_expiry: the floor tracks no expiry dates, and
-# a profile still exporting one would be dead code drifting out of sync.
-for agent in claude codex grok kimi; do
-  r1=absent
-  # shellcheck disable=SC1090
-  ( source "$SHARED/conf/agents/$agent.conf"; command -v bot_cli_expiry >/dev/null ) 2>/dev/null && r1=DEFINED
-  t "cred-$agent-defines-no-expiry" absent "$r1"
-done
-
-# --- the per-tick path must not have reacquired a network auth probe -------
-# `gh auth status` in the tick is the exact cost this change removed; it would
-# pass every assertion above while restoring 7k requests/day.
-# The boot gate ABOVE the identity call may still pay for a real probe once
-# per boot — certainty is worth one round-trip there. What must never come
-# back is a probe in the per-tick path, so the assertion is positional:
-# nothing after `ME="$(gh_identity)"` may call it.
-r1="$(awk '
-  /ME="\$\(gh_identity\)"/ { after = 1 }
-  after && /^[^#]*gh auth status/ { print "POLLED"; exit }
-' "$SHARED/bin/duty.sh")"
-r1="${r1:-clean}"
-t tick-does-not-poll-gh-auth clean "$r1"
-# ...and the identity call must be the one that harvests the expiry header.
-if grep -q 'gh_identity' "$SHARED/bin/duty.sh"; then r1=wired; else r1=MISSING; fi
-t tick-uses-gh-identity wired "$r1"
-# No expiry date is tracked anywhere any more: four providers express it four
-# ways and two cannot answer locally at all, so the countdown was the flaky
-# half of the idea. A reintroduced record_token_expiry would put it back.
-if grep -q 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh"; then r1=TRACKED; else r1=clean; fi
-t no-expiry-date-tracked clean "$r1"
-
-# Every agent profile must define bot_cli_present, or its box silently never
-# reports vendor credential state at all.
-missing=""
-for agent in claude codex grok kimi; do
-  grep -q 'bot_cli_present()' "$SHARED/conf/agents/$agent.conf" || missing="$missing $agent"
-done
-t agent-profiles-define-present "" "$missing"
-
-# --- the two-boundary rule must exist once, not once per reader -----------
-# floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
-# hold it at all: the box ships ::tickage and the HOST decides. A third copy
-# inside the box, in a second language, meant changing TICK_S would leave the
-# floor calling a box SILENT while both credential readers still said flowing
-# — and rehearsal-app.sh asserts those two readers agree, so the drill would
-# fail for a reason nobody would trace to a constant.
-CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
-FLOOR_PY="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/floor.py"
-
-FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
-FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
-# shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
-CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
-t silent-rule-floor-derived 600 "$FL_SILENT"
-t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
-
-# ...and the box must hold no threshold of its own. Comments and the log-tail
-# line count are stripped before looking, so only real code counts.
-PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
-if sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH" | grep -qE '\b(600|SILENT_AFTER)\b'; then
-  r1=BAKED
-else
-  r1=clean
-fi
-t probe-holds-no-threshold clean "$r1"
-# The datum it ships instead:
-if grep -q 'emit tickage' "$PROBE_SH"; then r1=emitted; else r1=MISSING; fi
-t probe-emits-tickage emitted "$r1"
 
 echo
 echo "passed $PASS, failed $FAIL"
