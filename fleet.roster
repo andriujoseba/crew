@@ -11,11 +11,12 @@
 # creates missing, starts stopped, hires, and reports who still awaits
 # auth. Nothing is ever deleted: off-roster boxes are reported, left alone.
 #
-# This is the TARGET environment and the ONLY agent/role declaration. The
-# current dual-role claude and codex boxes split into single-role members.
-# Each line still needs its own GitHub identity at login time (one box per
-# identity); reviewer additions also need the governed repos' panel= decision
-# before their first verdicts are expected.
+# This is the TARGET environment — the current dual-role claude and codex
+# boxes split into single-role members. Each line still needs its own
+# GitHub identity at login time (one box per identity), and each new
+# identity needs a FLEET_MANIFEST line in shared/conf/fleet.conf plus a
+# decision on the governed repos' panel= rosters BEFORE the new reviewers'
+# first verdicts are expected.
 claude-triage    claude  triage
 claude-builder   claude  builder
 claude-reviewer  claude  reviewer

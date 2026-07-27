@@ -122,6 +122,74 @@ _builder_repo() {
 
   panel_json="$(panel_for_repo "$R" "$dir" | jq -c --arg me "$ME" '. - [$me]')"
 
+  # --- One listing of my open PRs, several facts. The state of the check at
+  # the head was never read by this engine at all: `statusCheckRollup` appeared
+  # nowhere in it. That single omission is both #45 (a fix round opened on a red
+  # head spends a full panel round relaying a failure the author already had)
+  # and #17 (a red head with no round owed and no conflict woke nothing, so an
+  # approved, mergeable PR stranded on a transient CI failure). One datum, two
+  # bugs — and the round-owed signal was already fetching this exact listing, so
+  # headRefOid and statusCheckRollup ride along for no additional call.
+  local mine_json mine_rows
+  mine_json="$(gh pr list -R "$R" --state open --author "$ME" \
+    --json number,isDraft,latestReviews,reviewRequests,updatedAt,headRefOid,statusCheckRollup \
+    2>/dev/null || echo err)"
+  if [ "$mine_json" = "err" ]; then
+    mine_rows=err
+  else
+    mine_rows="$(printf '%s' "$mine_json" \
+      | jq -r --argjson panel "$panel_json" --arg repo "$R" \
+        -f "$DUTY_DIR/lib/jq/head-checks.jq" 2>/dev/null || echo err)"
+  fi
+
+  # --- CI-RED: a PR of mine whose check FAILED at the current head. Placed
+  # before BUILD on purpose — a builder repairs its own red PR before claiming
+  # another issue (ceremony#163: full-panel approvals at the head, mergeable,
+  # and stranded on an HTTP 429 while a job downloaded actions/checkout. No PR
+  # code ever ran. No wake condition covered it, because CI-red is actionable
+  # authored work even when there is no requested change and no conflict).
+  #
+  # THE LEDGER ID CARRIES THE HEAD, AND ITS VALUE IS A FIXED SENTINEL. Both
+  # halves are deliberate. ledger_filter re-fires when the value sorts GREATER,
+  # and a SHA has no order — keyed the usual way, a corrective push whose oid
+  # happened to sort below the previous one would be SUPPRESSED, killing
+  # exactly the wake this block exists to deliver. So the head goes in the id,
+  # where a new head is an id never seen and always fires; and the value cannot
+  # advance within one head, which is "never blind-rerun a deterministic
+  # failure" (#17's fifth bullet) expressed as data rather than as an
+  # instruction a session may forget. updatedAt is wrong here for the same
+  # reason from the other side: a comment on the PR would advance it and buy
+  # another rerun of an unchanged tree.
+  local red_items red_fresh red_key red_checks red_num
+  if [ "$mine_rows" = "err" ]; then
+    warn "$R: CI-red detection failed; skipping"
+  else
+    red_items="$(awk -F'\t' '$4 == "red" { print $1 "@" $3 "\thead\t" $6 }' <<<"$mine_rows")"
+    red_fresh="$(printf '%s\n' "$red_items" | ledger_filter "$DUTY_DIR/.seen-ci-red")"
+    # A red head we have already spent a session on is still red. Stop paying
+    # for it; do not stop saying it (#59).
+    printf '%s\n' "$red_items" \
+      | ledger_suppressed "$DUTY_DIR/.seen-ci-red" \
+      | report_suppressed "$DUTY_DIR/.suppressed-ci-red.$slug" "$R: ci-red"
+    if [ -z "${red_fresh//[[:space:]]/}" ]; then
+      log "$R: no ci-red duty"
+    else
+      while IFS=$'\t' read -r red_key _ red_checks; do
+        [ -n "$red_key" ] || continue
+        red_num="${red_key#*#}"; red_num="${red_num%@*}"
+        log "$R#$red_num: check RED at head — launching ci-red session (${red_checks:-unknown})"
+        ensure_main_clone "$R" "$dir" || continue
+        RUN_SESSION_RC=1
+        run_session ci-red "$R#$red_num" "$dir" "$TIMEOUT_CIRED" \
+          "$(render_prompt ci-red.txt ME="$ME" REPO="$R" NUM="$red_num" \
+            CHECKS="${red_checks:-unknown}" WT_RULES="$wt_rules")"
+        if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+          printf '%s\thead\n' "$red_key" | ledger_commit "$DUTY_DIR/.seen-ci-red"
+        fi
+      done <<<"$red_fresh"
+    fi
+  fi
+
   # --- BUILD: ready unclaimed issues, or my PRs whose round is WHOLE.
   # Rounds are answered whole (BUILDER.md): a changes-request is actionable
   # only when no panel review request is still outstanding. Ready issues
@@ -160,19 +228,31 @@ _builder_repo() {
   # Same treatment for the owed-round signal: a round the session declines to
   # answer is a permanent wake otherwise. number+updatedAt travel so the ledger
   # re-wakes on a push or a new review, which is exactly when it should.
-  cr_items="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft,latestReviews,reviewRequests,updatedAt 2>/dev/null \
-    | jq -r --argjson panel "$panel_json" --arg repo "$R" \
-      '.[] | select(.isDraft | not)
-        | select([.latestReviews[]? | select(.state == "CHANGES_REQUESTED")
-                  | .author.login | select(. as $l | ($panel | index($l)) != null)] | length > 0)
-        | select(([.reviewRequests[]? | .login // empty
-                   | select(. as $l | ($panel | index($l)) != null)] | length) == 0)
-        | "\($repo)#\(.number) \(.updatedAt)"' \
-      2>/dev/null || echo err)"
-  if [ "$cr_items" = "err" ]; then
+  #
+  # A RED HEAD IS NOT A ROUND (#45). The rule is the author's: a review request
+  # requires a green check at the head, because a red check is the author's own
+  # signal and not the panel's work. Measured on crew#40 — two consecutive
+  # heads, four reviewer-rounds, every one relaying a CI failure already visible
+  # in the job log. The most expensive of the four opened with "CI is red at
+  # this head … that gates my approval" and stopped looking, so the cost is not
+  # the wasted round, it is the findings that round did not make.
+  #
+  # Enforced here rather than left to the prompt. The doctrine belongs in
+  # fragment-round-rules.txt as well, and is there — but a rule only a model can
+  # apply is a rule that gets dropped under a long context, and this one has to
+  # hold for every round of every builder. Nothing is stranded by the exclusion:
+  # a red head has already woken the ci-red block above, which is the work that
+  # has to happen first regardless.
+  local blocked_rounds
+  if [ "$mine_rows" = "err" ]; then
+    cr_items=""
     cr_count=err
   else
+    cr_items="$(awk -F'\t' '$5 == "owed" && $4 != "red" { print $1, $2 }' <<<"$mine_rows")"
+    blocked_rounds="$(awk -F'\t' '$5 == "owed" && $4 == "red" { print $1 }' <<<"$mine_rows")"
+    for N in $blocked_rounds; do
+      log "$N: round owed, but the check at its head is RED — CI first, no panel round (#45)"
+    done
     cr_count="$(printf '%s\n' "$cr_items" \
       | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
   fi

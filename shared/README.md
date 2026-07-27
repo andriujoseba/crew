@@ -19,7 +19,7 @@ shared/
   lib/common.sh          config, logging, checkouts, session runner, panel resolution
   lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
-  conf/fleet.conf        org facts: bench, triage, human, labels, markers
+  conf/fleet.conf        org facts: manifest, bench, triage, human, labels, markers
   conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
   conf/roles/<r>.conf    role profile — the work: session budgets, box resources
   ../cli/crew            fleet CLI on a box host: new/create-all → auth → hire/hire-all; up converges

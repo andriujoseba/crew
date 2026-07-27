@@ -127,9 +127,14 @@ Verify, and record the output of each check:
    disarmed. `shared/install.sh --agent claude --role nosuchrole` must
    refuse.
 
-   > Standing fleet installs resolve agent/role from `fleet.roster` by box
-   > name. This drill box is off-roster and is therefore reinstalled with its
-   > explicit `--agent`/`--role`; a borrowed gh login cannot widen its role.
+   > A **flagless** rerun does NOT keep the instance config when the box's
+   > gh login has a `FLEET_MANIFEST` entry: it re-resolves agent and role
+   > from the manifest. That is correct convergence for a standing fleet
+   > box and a trap for any box deliberately installed off its manifest
+   > role — the drill borrows a fleet identity, so a flagless rerun used to
+   > convert the reviewer box under test into a triage box, silently, two
+   > checks after the role was asserted (`heavy-duty/crew#28`). Assert the
+   > role again after any reinstall; never infer it.
 
 Repeat an explicit tick if needed. Expected steady state: three evidence lines
 per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
@@ -145,8 +150,9 @@ STOP until the operator has decided the identity (one box per identity is
 a fleet invariant). For the default claude runtime this includes the singleton
 triage identity as well as builder/reviewer identities: never borrow any live
 identity until its other box's cron is DISARMED. The same rule applies to every
-agent. A throwaway test identity reuses Phase 1's explicit instance.conf;
-login no longer selects a role. The operator performs `gh auth login` and the selected
+agent. A throwaway test identity instead needs a `FLEET_MANIFEST` line in
+`shared/conf/fleet.conf` (or reuse Phase 1's explicit instance.conf, which
+survives re-installs). The operator performs `gh auth login` and the selected
 agent profile's `AGENT_LOGIN_HINT`; you never handle credentials.
 
 Authentication creates two independent hazards. First, another live box must
