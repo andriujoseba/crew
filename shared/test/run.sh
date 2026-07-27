@@ -676,6 +676,237 @@ t duty-end-on-every-exit "" "$(awk '
 if grep -q 'cron_daemon_running' "$SHARED/install.sh"; then r1=checked; else r1=ASSUMED; fi
 t install-verifies-cron-daemon checked "$r1"
 
+# --- credential state reported by the flow (replaces the polled probes) ----
+# These run against the REAL common.sh sourced above, with DUTY_DIR pointed at
+# a scratch dir, so the marker contract the floor reads is asserted here and
+# not merely described in a comment.
+
+# alert() would try to curl Telegram from a unit test; the token files do not
+# exist so it returns early, but stub it anyway — a test that depends on the
+# absence of a file in $HOME is a test that fails on somebody's laptop.
+alert() { :; }
+
+AUTHDIR="$TMP/authstate"; mkdir -p "$AUTHDIR"
+DUTY_DIR="$AUTHDIR"
+
+note_auth_failure gh "401 Bad credentials"
+t authfail-file-per-service present "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo present || echo MISSING)"
+t authfail-does-not-touch-other-service absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo LEAKED || echo absent)"
+t authfail-records-reason found \
+  "$(grep -q '401 Bad credentials' "$AUTHDIR/.auth-fail.gh" && echo found || echo MISSING)"
+
+# The first failure must win. Rewriting every tick resets mtime, so a
+# credential that died on Monday reads as having died just now — and "when did
+# this break" is the only question the file exists to answer.
+FIRST="$(cat "$AUTHDIR/.auth-fail.gh")"
+sleep 1
+note_auth_failure gh "403 something else entirely"
+t authfail-first-failure-wins "$FIRST" "$(cat "$AUTHDIR/.auth-fail.gh")"
+
+clear_auth_failure gh
+t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
+clear_auth_failure gh   # must be idempotent, not an error under set -e
+t authfail-clear-idempotent 0 "$?"
+
+# Multi-line reasons: gh's errors routinely are, and one record must stay one
+# line or probe.sh's ::key contract silently gains phantom keys.
+note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
+t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
+clear_auth_failure vendor
+
+# check_vendor_credential's tri-state. 2 means "this profile cannot tell from
+# local state" and MUST change nothing: neither raise an alarm nor clear a
+# real failure someone still has to fix.
+# shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
+AGENT_LOGIN_HINT="run the thing"
+# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
+bot_cli_present() { return 0; }
+check_vendor_credential
+t vendor-present-no-failure absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
+
+# shellcheck disable=SC2317
+bot_cli_present() { return 1; }
+check_vendor_credential
+t vendor-absent-raises present \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
+
+# shellcheck disable=SC2317
+bot_cli_present() { return 2; }
+check_vendor_credential
+t vendor-unknown-does-not-clear present \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo CLEARED)"
+rm -f "$AUTHDIR/.auth-fail.vendor"
+check_vendor_credential
+t vendor-unknown-does-not-raise absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
+unset -f bot_cli_present
+
+# An older agent profile with neither function must be a no-op, not a failure:
+# install.sh does not upgrade confs in place, so mid-rollout boxes will have
+# exactly this shape.
+check_vendor_credential
+t vendor-legacy-profile-silent absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
+
+# --- each agent profile reads its OWN credential store, locally -------------
+# Driven against the real conf files with a fabricated HOME, because the whole
+# claim of bot_cli_present is that it needs nothing but local disk.
+
+CREDH="$TMP/credhome"; mkdir -p "$CREDH"
+cred_rc() {  # cred_rc <agent> <home> -> rc of bot_cli_present
+  local rc=0
+  # Every vendor env override is cleared, not just the one under test: these
+  # are read by the sourced profile, and inheriting the RUNNER's credentials
+  # would make the result depend on whose machine ran the suite.
+  # shellcheck disable=SC2034  # consumed inside the conf sourced below
+  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" \
+    ANTHROPIC_API_KEY="" XAI_API_KEY=""
+    # shellcheck disable=SC1090
+    source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+# base64url with the padding stripped, the way a JWT actually arrives.
+b64url() { base64 -w0 | tr '/+' '_-' | tr -d '='; }
+
+# -- claude: refreshTokenExpiresAt, in MILLISECONDS
+CH="$CREDH/claude"; mkdir -p "$CH/.claude"
+CLAUDE_EXP_MS=$(( ($(date +%s) + 20 * 86400) * 1000 ))
+jq -n --argjson r "$CLAUDE_EXP_MS" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-present 0 "$(cred_rc claude "$CH")"
+
+# THE trap, and the reason this profile reads refreshTokenExpiresAt: an access
+# token that lapsed hours ago while the refresh token is still good is the
+# ordinary steady state, refreshed silently on next use. A profile testing
+# `expiresAt` would call a perfectly healthy box logged out three times a day.
+jq -n --argjson r "$CLAUDE_EXP_MS" --argjson a "$(( ($(date +%s) - 3600) * 1000 ))" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:$a,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-stale-access-token-is-fine 0 "$(cred_rc claude "$CH")"
+
+# An expired REFRESH token is the real logout: nothing can renew it but a human.
+jq -n --argjson r "$(( ($(date +%s) - 86400) * 1000 ))" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-expired-refresh 1 "$(cred_rc claude "$CH")"
+t cred-claude-no-file 1 "$(cred_rc claude "$CREDH/nothing")"
+
+# -- kimi: the refresh token is a JWT; its exp claim is the relogin deadline
+KH="$CREDH/kimi"; mkdir -p "$KH/.kimi-code/credentials"
+KIMI_EXP=$(( $(date +%s) + 30 * 86400 ))
+# A payload sized so base64url PADDING is required — the case a naive decoder
+# silently fails on.
+KJWT="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code","sub":"u"}' "$KIMI_EXP" | b64url).sig"
+jq -n --arg rt "$KJWT" \
+  '{access_token:"a",refresh_token:$rt,expires_at:1,token_type:"Bearer"}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-present 0 "$(cred_rc kimi "$KH")"
+t cred-kimi-no-file 1 "$(cred_rc kimi "$CREDH/nothing")"
+# An expired refresh JWT is a logout, not merely "cannot tell".
+KJWT_OLD="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code"}' "$(( $(date +%s) - 86400 ))" | b64url).sig"
+jq -n --arg rt "$KJWT_OLD" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-expired-refresh 1 "$(cred_rc kimi "$KH")"
+# Garbage in the JWT slot must be "cannot tell" (2), never a confident logout.
+jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-unparseable-is-unknown 2 "$(cred_rc kimi "$KH")"
+
+# -- codex: file-backed vs keyring-backed, and NO expiry at all
+DH="$CREDH/codex"; mkdir -p "$DH/.codex"
+jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
+t cred-codex-present 0 "$(cred_rc codex "$DH")"
+t cred-codex-no-file-is-logout 1 "$(cred_rc codex "$CREDH/nothing")"
+# ...unless the box keeps its credential in the desktop keyring, where a
+# missing auth.json is normal and must not be reported as a logout.
+KB="$CREDH/codexkeyring"; mkdir -p "$KB/.codex"
+echo 'cli_auth_credentials_store = "keyring"' > "$KB/.codex/config.toml"
+t cred-codex-keyring-is-unknown 2 "$(cred_rc codex "$KB")"
+
+# -- grok: its probe was already a local file test, so it is authoritative
+# -- grok: a MAP of "<issuer>::<client_id>" slots, refresh token opaque
+GH_="$CREDH/grok"; mkdir -p "$GH_/.grok"
+jq -n '{"https://auth.x.ai::abc":{key:"j.w.t",refresh_token:"opaque",expires_at:"2026-07-27T19:54:18Z"}}' \
+  > "$GH_/.grok/auth.json"
+t cred-grok-present 0 "$(cred_rc grok "$GH_")"
+t cred-grok-no-file 1 "$(cred_rc grok "$CREDH/nothing")"
+# An empty map is a non-empty FILE. The old `[ -s ]` test called this logged
+# in; it is a failed login, and the honest answer is "cannot tell".
+echo '{}' > "$GH_/.grok/auth.json"
+t cred-grok-empty-map-is-unknown 2 "$(cred_rc grok "$GH_")"
+
+# No profile may define bot_cli_expiry: the floor tracks no expiry dates, and
+# a profile still exporting one would be dead code drifting out of sync.
+for agent in claude codex grok kimi; do
+  r1=absent
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$agent.conf"; command -v bot_cli_expiry >/dev/null ) 2>/dev/null && r1=DEFINED
+  t "cred-$agent-defines-no-expiry" absent "$r1"
+done
+
+# --- the per-tick path must not have reacquired a network auth probe -------
+# `gh auth status` in the tick is the exact cost this change removed; it would
+# pass every assertion above while restoring 7k requests/day.
+# The boot gate ABOVE the identity call may still pay for a real probe once
+# per boot — certainty is worth one round-trip there. What must never come
+# back is a probe in the per-tick path, so the assertion is positional:
+# nothing after `ME="$(gh_identity)"` may call it.
+r1="$(awk '
+  /ME="\$\(gh_identity\)"/ { after = 1 }
+  after && /^[^#]*gh auth status/ { print "POLLED"; exit }
+' "$SHARED/bin/duty.sh")"
+r1="${r1:-clean}"
+t tick-does-not-poll-gh-auth clean "$r1"
+# ...and the identity call must be the one that harvests the expiry header.
+if grep -q 'gh_identity' "$SHARED/bin/duty.sh"; then r1=wired; else r1=MISSING; fi
+t tick-uses-gh-identity wired "$r1"
+# No expiry date is tracked anywhere any more: four providers express it four
+# ways and two cannot answer locally at all, so the countdown was the flaky
+# half of the idea. A reintroduced record_token_expiry would put it back.
+if grep -q 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh"; then r1=TRACKED; else r1=clean; fi
+t no-expiry-date-tracked clean "$r1"
+
+# Every agent profile must define bot_cli_present, or its box silently never
+# reports vendor credential state at all.
+missing=""
+for agent in claude codex grok kimi; do
+  grep -q 'bot_cli_present()' "$SHARED/conf/agents/$agent.conf" || missing="$missing $agent"
+done
+t agent-profiles-define-present "" "$missing"
+
+# --- the two-boundary rule must exist once, not once per reader -----------
+# floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
+# hold it at all: the box ships ::tickage and the HOST decides. A third copy
+# inside the box, in a second language, meant changing TICK_S would leave the
+# floor calling a box SILENT while both credential readers still said flowing
+# — and rehearsal-app.sh asserts those two readers agree, so the drill would
+# fail for a reason nobody would trace to a constant.
+CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
+FLOOR_PY="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/floor.py"
+
+FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
+FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
+# shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
+CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
+t silent-rule-floor-derived 600 "$FL_SILENT"
+t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
+
+# ...and the box must hold no threshold of its own. Comments and the log-tail
+# line count are stripped before looking, so only real code counts.
+PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
+if sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH" | grep -qE '\b(600|SILENT_AFTER)\b'; then
+  r1=BAKED
+else
+  r1=clean
+fi
+t probe-holds-no-threshold clean "$r1"
+# The datum it ships instead:
+if grep -q 'emit tickage' "$PROBE_SH"; then r1=emitted; else r1=MISSING; fi
+t probe-emits-tickage emitted "$r1"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

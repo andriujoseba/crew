@@ -65,6 +65,73 @@ host  --box exec-->  box     read duty evidence      (#38 telemetry)
 host  --box exec-->  box     fire operator action    (#39 control)
 ```
 
+### Three tiers, not one poll
+
+The evidence poll used to answer every health question at one cadence, and one
+of them over the network. They are now separated by what they cost:
+
+| tier | how | network | cadence |
+|---|---|---|---|
+| **ping** | `box exec <box> -- true` | none | 10s |
+| **evidence** | `probe.sh` — duty.log, cron, uptime, repos, lock age | none | 60s |
+| **credentials** | markers the duty engine writes | **none** | read with evidence |
+
+**The ping is an exec, not a socket.** A listening port is answered by the
+guest *kernel*, so it stays green through a userspace that can no longer fork;
+an exec needs the incus agent, a fork, an exec and a disk read, and fails
+exactly when the box is wedged. It runs on its own thread with its own lock —
+sharing the poll lock would queue every ping behind a 45s probe and the fast
+tier would run at the slow tier's cadence — and is overlaid onto the snapshot
+at read time, so it is never served up to a minute stale. Three consecutive
+misses declare a box unreachable; one dropped ping is scheduler noise.
+
+**Credentials are reported, never polled.** `gh auth status` inside every box
+on every poll was ~7,000 api.github.com requests a day to re-derive a fact
+that changes when a token expires, and at ~450ms it was the slowest thing in a
+probe whose every other read is local. The duty engine already calls GitHub
+every tick, so it learns for free: `gh_identity` is the same `gh api user` the
+tick was making to resolve `$ME`, but its rejection is now recorded instead of
+swallowed by `|| true`. That is a stronger claim than `gh auth status`, which
+only proves the token authenticates against `GET /` — a token with the wrong
+scopes passes it happily.
+
+Vendor credentials are read from the local store by the agent profile's
+`bot_cli_present`, which answers **one boolean**: can this box work, or not.
+It returns three values — 0 yes, 1 definitely not, 2 cannot tell locally — and
+only 1 raises an alert, because a false "your token is dead" at 3am costs more
+than a missed one.
+
+| agent | credential store | boolean derived from |
+|---|---|---|
+| claude | `~/.claude/.credentials.json` | `refreshTokenExpiresAt` vs now |
+| kimi | `$KIMI_CODE_HOME/credentials/kimi-code.json` | `exp` of the refresh JWT vs now |
+| codex | `${CODEX_HOME}/auth.json`, *or the desktop keyring* | presence — refresh token is opaque |
+| grok | `$GROK_HOME/auth.json` (a map of issuer::client slots) | presence — refresh token is opaque |
+
+**No expiry date is tracked anywhere.** An earlier cut counted down to the day
+each credential died, and it was the flaky half of an otherwise stable idea:
+four providers express expiry four different ways — epoch millis, a JWT claim,
+an ISO string, a response header — and two of the four cannot answer locally
+at all. Finding the credential is comparatively stable, so what survives is
+the boolean every provider agrees on.
+
+The trap that remains is *which* credential is tested. Every one of these
+files also carries a short-lived ACCESS token expiry the CLI refreshes
+silently, on the order of hours; testing that would report a working box as
+logged out several times a day. Only the refresh credential answers "must a
+human log in again", and where it is opaque the profile falls back to presence
+and says so with `2` — codex can hold its credential in the desktop keyring
+and grok can authenticate from `XAI_API_KEY`, so a missing `auth.json` there
+is not a logout. `bot_cli_probe`, which may use the network, stays for the
+boot gate and `crew hire`, where a human is present and one round-trip buys
+certainty.
+
+**The stuck lock.** `duty.sh` has always written `.duty.lock.since` and nothing
+ever read it. A session hung on a vendor call keeps cron ticking, so duty.log
+stays fresh, SILENT is satisfied, and the box renders green while doing
+nothing. It is now reported as **STUCK** past two tick boundaries — roughly 20
+minutes before `run_session`'s own timeout resolves it.
+
 - **Telemetry** — [`server/probe.sh`](server/probe.sh) is piped into each box and
   reads what the duty engine already writes: `duty/VERSION`, `duty.log` (the
   `SESSION START/END` lines and each tick's wake reasons), `repos.txt`, cron,

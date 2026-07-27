@@ -367,6 +367,78 @@ else
   skip "engine version reported" "no box on this host is hired"
 fi
 
+# ---- the ping tier, against boxes that really answer ----------------------
+# stub-box can fake a probe's OUTPUT; it cannot demonstrate that `box exec
+# <box> -- true` is a real round-trip into a running guest, which is the whole
+# claim the heartbeat rests on. Only a real host has one.
+echo
+echo "== heartbeat"
+PINGED="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if u.get('ping') and u['ping']['ok'])")"
+RUNNING="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if not (u['note'] or '').startswith(('stopped','not created')))")"
+if [ "$RUNNING" -gt 0 ]; then
+  t "every running box answers its heartbeat" "$RUNNING" "$PINGED"
+  # A real exec round-trip is milliseconds. A plausible-looking 0 would mean
+  # the field is being defaulted rather than measured.
+  SLOWEST="$(body GET /api/fleet | jqf "max([u['ping']['ms'] for u in d['units'] if u.get('ping') and u['ping']['ok']] or [0])")"
+  if [ "$SLOWEST" -gt 0 ] && [ "$SLOWEST" -lt 5000 ]; then
+    ok "heartbeat round-trips are real and fast (slowest ${SLOWEST}ms)"
+  else
+    fail "heartbeat round-trips are real and fast" "slowest=${SLOWEST}ms"
+  fi
+  # The point of the tier: it must beat the evidence poll, not merely exist.
+  # A ping older than the evidence snapshot means the thread is not running.
+  STALE="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u.get('ping') and u['ping']['age'] > d['interval'])")"
+  t "heartbeats are fresher than the evidence poll" "" "$STALE"
+else
+  skip "heartbeat" "no running box on this host"
+fi
+
+# The ping carries a passenger — /proc/uptime and .duty.lock.since — read by a
+# NON-LOGIN `sh -c` inside the guest. probe.sh runs under `bash -lc`, so it has
+# never depended on what a non-login exec puts in the environment, and $HOME is
+# exactly what `${DUTY_DIR:-$HOME/duty}` needs. If a real box does not set it
+# the way this assumes, the passenger silently reads nothing forever and STUCK
+# quietly reverts to the 60s tier — a feature that no-ops in production while
+# every stub test passes. Only a real guest can settle it.
+UPS="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if u.get('ping') and u['ping']['ok'] and u['ping'].get('uptime'))")"
+if [ "$PINGED" -gt 0 ]; then
+  t "the ping's passenger reads the real guest" "$PINGED" "$UPS"
+else
+  skip "the ping's passenger reads the real guest" "no box answered a ping"
+fi
+# And the two tiers must not disagree about the same file. A box with a run in
+# flight is reported by BOTH probe.sh (::lockheld, bash -lc) and the ping
+# (non-login sh) — if $HOME differs between them, this is where it shows.
+DISAGREE="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u.get('ping') and u['ping']['ok'] and u['lock']['held'] and u['ping'].get('lockheld') is None)")"
+t "ping and probe agree about the duty lock" "" "$DISAGREE"
+
+# ---- credentials are READ, never probed -----------------------------------
+# The drill is the only place a real `gh` and a real vendor CLI exist, so it is
+# the only place that can prove the probe stopped calling them. A reintroduced
+# `gh auth status` would cost ~450ms per box per poll and pass every stub test.
+echo
+echo "== credentials come from the flow"
+PROBE_MS="$( { TIMEFORMAT=%R; time box exec "$(body GET /api/fleet | jqf "d['units'][0]['box']")" -- \
+  bash -lc "$(cat "$ROOT/fleet-floor/server/probe.sh")" >/dev/null 2>&1; } 2>&1 )"
+PROBE_MS="${PROBE_MS%.*}"
+if [ -n "$PROBE_MS" ] && [ "$PROBE_MS" -le 3 ]; then
+  ok "a real probe costs ${PROBE_MS}s — no network auth call in it"
+else
+  fail "a real probe makes no network auth call" \
+       "took ${PROBE_MS}s; gh auth status alone is ~0.45s per box"
+fi
+# `ok` was the value that meant "just verified". Nothing may report it again.
+OKS="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['gh']=='ok' or u['vendor']=='ok')")"
+t "no box reports the retired 'ok' credential state" "" "$OKS"
+# Every box must answer the boolean. `unknown` on a hired box means the engine
+# has run without ever recording a credential state, which is the one outcome
+# that would leave an operator with nothing to act on.
+# `stale` counts: a paused or disarmed box genuinely cannot know, and saying so
+# is the actionable answer, not the blank one. Only `unknown` on a box that HAS
+# an engine would be the nothing-to-act-on outcome this is guarding against.
+BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','stale','missing'))")"
+t "every hired box reports a gh credential state" "" "$BLANK"
+
 # Auth is not optional on a page that can power-cycle boxes.
 echo
 echo "== auth"

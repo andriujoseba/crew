@@ -52,6 +52,11 @@ AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
 # floor.py's CREW_FLOOR_ROSTER, which exists for the same reason.
 ROSTER="${CREW_ROSTER:-$CREW_ROOT/fleet.roster}"
 CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
+# Two tick boundaries — the fleet's death rule. MUST equal fleet-floor's
+# SILENT_AFTER_S (floor.py: 2 * TICK_S); shared/test/run.sh fails if it does
+# not. Kept here rather than in the in-box script so the number lives on the
+# host, once per reader, and never inside a box that cannot see either.
+SILENT_AFTER_S="${CREW_SILENT_AFTER:-600}"
 
 die() { echo "crew: $*" >&2; exit 1; }
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
@@ -181,6 +186,53 @@ vendor_probe() {
   box exec "$1" -- bash -lc \
     'cat >/tmp/.crew-agent-probe.conf; source /tmp/.crew-agent-probe.conf; bot_cli_probe' \
     <"$AGENTS_DIR/$2.conf" >/dev/null 2>&1
+}
+
+# auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
+# observed it, in one exec of pure local file reads. Echoes two fields:
+#
+#     <gh-state> <vendor-state> <tick-age-seconds-or--1>
+#
+# where a state is flowing | stale | missing | unknown, the same vocabulary
+# fleet-floor's probe.sh emits — including `stale`, which is the difference
+# between an engine that is INSTALLED and one that is RUNNING. VERSION alone
+# proves only the first, so a disarmed box with a dead token reported
+# `flowing` until this required a recent tick too.
+#
+# The box reports the tick AGE and this host applies the rule, exactly as the
+# floor does with probe.sh's ::tickage. A threshold baked into the in-box
+# script would be a third copy of a number floor.py derives from TICK_S, and
+# the drill asserts these two readers agree — so a drift here fails it for a
+# reason nobody would connect to a constant.
+#
+# This deliberately does NOT call `gh auth status` or bot_cli_probe. Those
+# reach the network, and — more importantly — they are a SECOND source of
+# truth. `rehearsal-app.sh` asserts the floor and this CLI agree about every
+# box, on the grounds that a disagreement means one of them is lying to an
+# operator; that only holds while both read the same evidence. When the floor
+# stopped polling credentials and started reading what the engine records,
+# leaving `crew status` probing live would have manufactured exactly the
+# disagreement the drill exists to catch — a box whose token died four
+# minutes ago reading MISSING here and `flowing` there.
+#
+# Live probing survives where it belongs: `crew hire` and the boot gate pay
+# for certainty once, at the moment someone is standing there to fix it.
+auth_from_flow() {
+  # shellcheck disable=SC2016  # $HOME and $svc must expand INSIDE the box
+  bxn "$1" '
+    for svc in gh vendor; do
+      if [ -s "$HOME/duty/.auth-fail.$svc" ]; then printf "missing "
+      elif [ ! -s "$HOME/duty/VERSION" ]; then printf "unknown "
+      else printf "nofail "; fi
+    done
+    age=-1
+    if [ -r "$HOME/duty/duty.log" ]; then
+      ts="$(grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" "$HOME/duty/duty.log" | tail -1)"
+      [ -n "$ts" ] && age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
+    fi
+    printf "%s\n" "$age"
+    printf "\n"
+  ' 2>/dev/null | tr -d '\r'
 }
 
 # production_registry — the repo list THIS checkout would seed into a box.
@@ -493,7 +545,7 @@ cmd_status() {
   local fmt='%-20s %-9s %-15s %-8s %-8s %s\n'
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HIRED GH VENDOR NOTE
-  local name agent role _from state hired ghs vs note last
+  local name agent role _from state hired ghs vs ghs_d vs_d note last
   while read -r name agent role _from; do
     if ! box_exists "$name"; then
       # shellcheck disable=SC2059
@@ -507,11 +559,31 @@ cmd_status() {
       continue
     fi
     hired="$(hired_at "$name")"
-    if bxn "$name" 'gh auth status >/dev/null 2>&1' >/dev/null 2>&1; then ghs=ok; else ghs=MISSING; fi
-    if vendor_probe "$name" "$agent"; then vs=ok; else vs=MISSING; fi
+    # One exec, no network, same evidence the floor reads — see auth_from_flow.
+    read -r ghs vs tickage <<<"$(auth_from_flow "$name")"
+    ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
+    # `nofail` aged into a verdict HERE, on the host, with the same rule the
+    # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
+    # it, because two readers with private thresholds is the defect this whole
+    # helper exists to remove.
+    for _v in ghs vs; do
+      if [ "${!_v}" = nofail ]; then
+        if [ "$tickage" -ge 0 ] && [ "$tickage" -lt "$SILENT_AFTER_S" ]; then
+          printf -v "$_v" flowing
+        else
+          printf -v "$_v" stale
+        fi
+      fi
+    done
+    # The wire vocabulary is lowercase and shared with the floor; the TABLE
+    # shouts. A dead login is the one row an operator must not skim past, and
+    # it earned its capitals long before this column changed source.
+    ghs_d="$ghs"; vs_d="$vs"
+    [ "$ghs" = missing ] && ghs_d=MISSING
+    [ "$vs"  = missing ] && vs_d=MISSING
     note=""
     [ -z "$hired" ] && { hired="not hired"; note="crew hire $name"; }
-    if [ "$ghs" = MISSING ] || [ "$vs" = MISSING ]; then
+    if [ "$ghs" = missing ] || [ "$vs" = missing ]; then
       note="⚠ log in: box shell $name${note:+; $note}"
       # A failing vendor probe has two very different causes, and they were
       # indistinguishable: the box is genuinely logged out, OR the ROSTER named
@@ -535,7 +607,7 @@ cmd_status() {
       note="${last:-no ticks yet}"
     fi
     # shellcheck disable=SC2059
-    printf "$fmt" "$name" "$state" "$hired" "$ghs" "$vs" "$note"
+    printf "$fmt" "$name" "$state" "$hired" "$ghs_d" "$vs_d" "$note"
   done < <(read_roster)
 }
 

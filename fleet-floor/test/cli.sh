@@ -205,6 +205,43 @@ if grep -qE '^cli-noauth .*MISSING' "$CL_TMP/crew-out"; then
 else
   fail "crew status: dead logins are FLAGGED, not blank" "$(grep '^cli-noauth' "$CL_TMP/crew-out")"
 fi
+# The floor and this CLI must derive credential state from the SAME evidence.
+# `rehearsal-app.sh` asserts they agree about every box on a real host, and
+# that assertion only means anything while neither has a private source: when
+# the floor stopped polling and started reading the engine's markers, a
+# `crew status` still running `gh auth status` would have disagreed with it
+# for real, on a real fleet, with nothing in CI able to see it.
+CL_CLI="$CL_ROOT/cli/crew"
+if grep -q 'auth_from_flow' "$CL_CLI"; then
+  ok "crew status reads the flow markers, not a second source"
+else
+  fail "crew status reads the flow markers, not a second source" \
+       "cmd_status does not call auth_from_flow"
+fi
+# Anchored INSIDE cmd_status: the live probes are still correct in `crew hire`,
+# where a human is standing there to fix what they find. It is the per-box
+# status loop that must not reintroduce them.
+CL_STATUS_PROBE="$(awk '
+  /^cmd_status\(\)/ { inf = 1; next }
+  inf && /^}/         { inf = 0 }
+  inf && /gh auth status|vendor_probe/ { print "PROBES"; exit }
+' "$CL_CLI")"
+if [ -z "$CL_STATUS_PROBE" ]; then
+  ok "crew status makes no network auth probe of its own"
+else
+  fail "crew status makes no network auth probe of its own" \
+       "cmd_status still calls gh auth status or vendor_probe"
+fi
+# Both readers must speak one vocabulary, or "they agree" is a string compare
+# between two dialects.
+for cl_word in nofail stale missing unknown; do
+  if grep -q "$cl_word" "$CL_CLI" && grep -q "$cl_word" "$CL_FLOOR/server/probe.sh"; then
+    ok "vocabulary '$cl_word' is shared by crew and probe.sh"
+  else
+    fail "vocabulary '$cl_word' is shared by crew and probe.sh" "only one side emits it"
+  fi
+done
+
 if grep -qE '^cli-nothired .*not hired' "$CL_TMP/crew-out"; then
   ok "crew status: an unhired box says so"
 else
