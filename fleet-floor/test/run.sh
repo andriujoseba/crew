@@ -80,6 +80,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+if python3 "$HERE/concurrent-actions.py"; then
+  ok "fleet-wide actions run concurrently in stable order"
+else
+  fail "fleet-wide actions run concurrently in stable order" "see output above"
+fi
+
 api() {  # api METHOD PATH [BODY] -> "<status>\n<body>"
   local m="$1" p="$2" b="${3:-}"
   if [ -n "$b" ]; then
