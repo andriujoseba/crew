@@ -536,7 +536,7 @@ done
 # none — so any signal cleared by an in-session action the agent may DECLINE
 # re-fired a model session every tick forever. These pin the wiring: a new
 # signal site added without a ledger is the regression.
-for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build"; do
+for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" "duty-review.sh:.seen-review"; do
   mod="${pair%%:*}"; led="${pair##*:}"
   if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
   t "signal-ledgered-$mod" ledgered "$r1"
@@ -547,6 +547,23 @@ for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build"; d
   if grep -q 'report_suppressed' "$SHARED/lib/$mod"; then r1=reported; else r1=SILENT; fi
   t "suppression-reported-$mod" reported "$r1"
 done
+
+# The reviewer must carry updated_at from the existing pulls page, filter each
+# PR before assembling the per-repo prompt, and commit that repo's exact set.
+# This protects the mixed case: suppressed #5 must not ride into a session
+# launched for fresh #6, and #6's success must not accidentally commit #5.
+REVIEW_MOD="$SHARED/lib/duty-review.sh"
+if grep -Fq "\\(.updated_at) \\(\$sr) \\(.number)" "$REVIEW_MOD"; then r1=carried; else r1=MISSING; fi
+t review-carries-updated-at carried "$r1"
+if grep -q 'fresh=.*ledger_filter.*seen-review' "$REVIEW_MOD"; then r1=per-pr; else r1=REPO_WIDE; fi
+t review-filters-per-pr per-pr "$r1"
+if grep -Fq "repo_items[\$SR]" "$REVIEW_MOD" &&
+   grep -Fq "ledger_commit \"\$DUTY_DIR/.seen-review\"" "$REVIEW_MOD"; then
+  r1=exact
+else
+  r1=MISMATCH
+fi
+t review-commits-prompted-set exact "$r1"
 
 # --- what the drill's isolation interlock does and does not cover (#52) ---
 # drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to

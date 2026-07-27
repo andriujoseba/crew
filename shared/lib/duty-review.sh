@@ -26,8 +26,10 @@
 #    nine hours) and double reviews (#26, #29). Search only ADDS candidates.
 #  - ONE candidate set, merged and deduped by (repo, PR) BEFORE acting —
 #    sequential source passes double-announced on ceremony#32 (grok + kimi).
-#  - requested_reviewers self-clears on submit, so the queue needs no
-#    remembered state.
+#  - requested_reviewers self-clears on submit, but only when a verdict lands.
+#    A completed session may correctly decline or fail its one-shot submit, so
+#    unchanged requests also pass through a seen-ledger (#61). A changed PR
+#    advances updated_at and wakes again.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
@@ -46,7 +48,7 @@ duty_review() {
       || { warn "review: pulls fetch failed for $SR; skipping repo this tick"; continue; }
     candidates="$candidates
 $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
-      '.[] | select(.draft | not) | select([.requested_reviewers[].login] | index($me)) | "\(.created_at) \($sr) \(.number)"')"
+      '.[] | select(.draft | not) | select([.requested_reviewers[].login] | index($me)) | "\(.created_at) \(.updated_at) \($sr) \(.number)"')"
     if printf '%s' "$page" | jq -e --arg me "$ME" '[.[] | select(.user.login == $me)] | length > 0' >/dev/null; then
       REVIEW_MY_PR_REPOS="$REVIEW_MY_PR_REPOS $SR"
     fi
@@ -71,16 +73,20 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
 
   # One candidate per (repo, PR) — first mention wins (the authoritative
   # sweep precedes the backstop), then oldest-first for the acting order.
-  candidates="$(printf '%s\n' "$candidates" | awk 'NF==3 && !seen[$2"#"$3]++' | sort)"
+  candidates="$(printf '%s\n' "$candidates" | awk 'NF==4 && !seen[$3"#"$4]++' | sort)"
   if [ -z "$candidates" ]; then
+    # Clear change-detection state so a later recurrence is reported afresh.
+    printf '' | report_suppressed "$DUTY_DIR/.suppressed-review" "review"
     log "review: no outstanding review requests anywhere"
     return 0
   fi
 
-  local -A repo_prs=()
-  local repo_order=() _created N owner name fields head mine_oid mine_at req_at head_now body
-  while read -r _created SR N; do
+  local -A repo_prs=() repo_items=()
+  local repo_order=() _created updated N owner name fields head mine_oid mine_at req_at head_now body
+  local queue item fresh suppressed=""
+  while read -r _created updated SR N; do
     [ -z "${N:-}" ] && continue
+    queue=0
     owner="${SR%%/*}"; name="${SR##*/}"
     # Per-PR dedup guard: my own latest VERDICT's commit oid vs the live
     # head — one GraphQL call fetches both plus what the re-request rule
@@ -106,44 +112,59 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     read -r head mine_oid mine_at req_at <<<"$fields"
 
     if [ "$mine_oid" != "$head" ]; then
-      if [ -z "${repo_prs[$SR]:-}" ]; then repo_order+=("$SR"); fi
-      repo_prs[$SR]="${repo_prs[$SR]:-}$N "
-      continue
+      queue=1
+    else
+      # My latest verdict already covers the head. The re-request rule
+      # (operator ruling 2026-07-23, ceremony#94): a review-requested event
+      # NEWER than my review at this unchanged head is answered with an
+      # auto-approve, not silence — a re-request at the same tree means the
+      # stale verdict must not sit as a blocker. Head re-verified immediately
+      # before submitting; the submit goes through the one-shot gate like any
+      # verdict. This path never enters the queue-side ledger.
+      if [ "${AUTO_APPROVE_REREQUEST:-1}" = "1" ] && [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
+        head_now="$(gh api "repos/$SR/pulls/$N" --jq .head.sha 2>/dev/null || echo err)"
+        if [ "$head_now" = "$head" ]; then
+          body="$(mktemp)"
+          printf 'Re-requested at unchanged head %s — my latest review already covers this tree; approving per the re-request rule.\n' "$head" >"$body"
+          # --supersede-own: the approval must REPLACE my stale verdict at this
+          # same head; the gate's normal already-present check would refuse it
+          # and the wake would refire forever. Idempotent across ticks because
+          # the new approval makes mine_at newer than req_at.
+          if "$BIN_DIR/submit-verdict.sh" "$SR" "$N" "$head" approve "$body" --supersede-own; then
+            log "review: $SR#$N auto-approved re-request at unchanged head ${head:0:12}"
+          else
+            warn "review: $SR#$N auto-approve did not land (will retry next tick)"
+          fi
+          rm -f "$body"
+        elif [ "$head_now" = "err" ]; then
+          warn "review: $SR#$N head re-verify failed; deferring"
+        else
+          log "review: $SR#$N head moved during dedup — queued for a real review"
+          queue=1
+        fi
+      else
+        log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
+      fi
     fi
 
-    # My latest verdict already covers the head. The re-request rule
-    # (operator ruling 2026-07-23, ceremony#94): a review-requested event
-    # NEWER than my review at this unchanged head is answered with an
-    # auto-approve, not silence — a re-request at the same tree means the
-    # stale verdict must not sit as a blocker. Head re-verified immediately
-    # before submitting; the submit goes through the one-shot gate like any
-    # verdict.
-    if [ "${AUTO_APPROVE_REREQUEST:-1}" = "1" ] && [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
-      head_now="$(gh api "repos/$SR/pulls/$N" --jq .head.sha 2>/dev/null || echo err)"
-      if [ "$head_now" = "$head" ]; then
-        body="$(mktemp)"
-        printf 'Re-requested at unchanged head %s — my latest review already covers this tree; approving per the re-request rule.\n' "$head" >"$body"
-        # --supersede-own: the approval must REPLACE my stale verdict at this
-        # same head; the gate's normal already-present check would refuse it
-        # and the wake would refire forever. Idempotent across ticks because
-        # the new approval makes mine_at newer than req_at.
-        if "$BIN_DIR/submit-verdict.sh" "$SR" "$N" "$head" approve "$body" --supersede-own; then
-          log "review: $SR#$N auto-approved re-request at unchanged head ${head:0:12}"
-        else
-          warn "review: $SR#$N auto-approve did not land (will retry next tick)"
-        fi
-        rm -f "$body"
-      elif [ "$head_now" = "err" ]; then
-        warn "review: $SR#$N head re-verify failed; deferring"
-      else
-        log "review: $SR#$N head moved during dedup — queued for a real review"
-        if [ -z "${repo_prs[$SR]:-}" ]; then repo_order+=("$SR"); fi
-        repo_prs[$SR]="${repo_prs[$SR]:-}$N "
-      fi
-    else
-      log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
+    [ "$queue" -eq 1 ] || continue
+    item="$SR#$N $updated"
+    fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-review")"
+    if [ -z "$fresh" ]; then
+      suppressed="$suppressed
+$item"
+      continue
     fi
+    if [ -z "${repo_prs[$SR]:-}" ]; then repo_order+=("$SR"); fi
+    repo_prs[$SR]="${repo_prs[$SR]:-}$N "
+    repo_items[$SR]="${repo_items[$SR]:-}
+$item"
   done <<<"$candidates"
+
+  # An outstanding request that a previous successful session left unactioned
+  # is still real work. Report set changes without paying for another session.
+  printf '%s\n' "$suppressed" \
+    | report_suppressed "$DUTY_DIR/.suppressed-review" "review"
 
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
@@ -158,6 +179,13 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
       BIN="$BIN_DIR" WT_DIR="$TREES_DIR/$slug" \
       MARK_REVIEWING="$MARK_REVIEWING" \
       ONESHOT_RULES="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")")"
+    RUN_SESSION_RC=1
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
+    # Commit exactly the PRs named in this repo's prompt, and only when the
+    # session completed. A crash or timeout must retry; a completed session
+    # that declined or could not submit must settle until the PR changes.
+    if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+      printf '%s\n' "${repo_items[$SR]}" | ledger_commit "$DUTY_DIR/.seen-review"
+    fi
   done
 }
