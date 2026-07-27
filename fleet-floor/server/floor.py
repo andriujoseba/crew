@@ -47,8 +47,8 @@ AGENTS_DIR = os.path.join(CREW_ROOT, "shared", "conf", "agents")
 # Overridable so a test (or an operator running a floor over an alternate
 # fleet) never has to mutate the tracked roster in place. The suite used to
 # swap this file and restore it on exit, which meant any killed run left the
-# real fleet.roster clobbered in the working tree.
-ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CREW_ROOT, "fleet.roster")
+# shipped example roster clobbered in the working tree.
+ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CREW_ROOT, "examples", "fleet.roster")
 
 # A tick is 5 minutes; the engine's own death rule is "no evidence for two tick
 # boundaries", so the floor uses the same number rather than inventing one.

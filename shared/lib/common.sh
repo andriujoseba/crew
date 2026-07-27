@@ -3,7 +3,7 @@
 # Everything here is fleet-invariant. The box's runtime comes from its agent
 # profile (conf/agents/), the shape of its work from its role profile(s)
 # (conf/roles/), the pairing from conf/instance.conf (written by install.sh),
-# and org-level facts from conf/fleet.conf. All sourced by load_conf below.
+# and fleet facts from conf/fleet.defaults.conf + conf/fleet.conf.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # path constants are consumed by the sourcing scripts
@@ -22,13 +22,27 @@ REPOS_FILE="$DUTY_DIR/repos.txt"
 log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 warn() { log "WARN: $*"; }
 
+# load_fleet_conf — shipped defaults first, operator values second. The board
+# marks are a wire protocol and cannot be changed by an operator file.
+# shellcheck disable=SC1091
+load_fleet_conf() {
+  source "$CONF_DIR/fleet.defaults.conf"
+  local wire_reviewing="$MARK_REVIEWING" wire_pickup="$MARK_PICKUP"
+  local wire_resume="$MARK_RESUME" wire_addressing="$MARK_ADDRESSING"
+  [ ! -f "$CONF_DIR/fleet.conf" ] || source "$CONF_DIR/fleet.conf"
+  MARK_REVIEWING="$wire_reviewing"
+  MARK_PICKUP="$wire_pickup"
+  MARK_RESUME="$wire_resume"
+  MARK_ADDRESSING="$wire_addressing"
+}
+
 # load_conf — source the box's configuration: fleet facts, then the
 # instance resolution install.sh wrote (BOT_AGENT + BOT_ROLES, derived from
 # the fleet manifest and the box's gh token), then the agent profile (the
 # runtime) and one role profile per role (the shape of the work).
 # shellcheck disable=SC1091
 load_conf() {
-  source "$CONF_DIR/fleet.conf"
+  load_fleet_conf
   source "$CONF_DIR/instance.conf"
   # shellcheck disable=SC1090
   source "$CONF_DIR/agents/$BOT_AGENT.conf"

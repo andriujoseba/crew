@@ -19,11 +19,11 @@ shared/
   lib/common.sh          config, logging, checkouts, session runner, panel resolution
   lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
-  conf/fleet.conf        org facts: manifest, bench, triage, human, labels, markers
+  conf/fleet.defaults.conf shipped label vocabulary, wire marks and defaults
   conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
   conf/roles/<r>.conf    role profile — the work: session budgets, box resources
   ../cli/crew            fleet CLI on a box host: new/create-all → auth → hire/hire-all; up converges
-  ../fleet.roster        the fleet as a file — `crew up` converges the host to it
+  ../examples/           fallback roster, operator config and registry seeds
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
   test/run.sh            fixture tests (bash+jq only, no network) — run by shared-ci
   install.sh             deploy to ~/duty; identity comes from the gh token
@@ -49,16 +49,10 @@ which goes through the same one-shot gate as every verdict.
 
 ## Duty order (FLEET.md)
 
-attention → triage signals → review queue → resume → ci-red → build →
-handoff → rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling
-inside the tick — same lock, so it can never race the triage sweep over shared
+attention → triage signals → review queue → resume → build → handoff →
+rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling inside
+the tick — same lock, so it can never race the triage sweep over shared
 checkouts the way the old separate hygiene cron could).
-
-ci-red runs before build: a failing check at the head of a PR you authored is
-picked up before claiming another issue (crew#17 — ceremony#163 sat with
-full-panel approvals, mergeable, stranded on an HTTP 429 in a job that never
-ran the PR's code, because no wake covered a red head owing no round and
-carrying no conflict).
 
 ## What was adopted, and from whom
 
@@ -111,7 +105,7 @@ fleet's real protocol existed only inside five diverging scripts.
 - **Interleaved session stdout in duty.log** — it corrupted two boxes'
   line-oriented metrics. Session output goes to `logs/`, duty.log carries
   markers only. The marker vocabulary is a versioned metrics contract; the
-  emoji markers in `fleet.conf` are wire protocol, exact-matched by sibling
+  emoji markers in `fleet.defaults.conf` are wire protocol, exact-matched by sibling
   agents — change them fleet-wide or not at all.
 - **Untracked deployment** — `install.sh` stamps `~/duty/VERSION` with
   `crew@<sha>`, so FLEET.md's reconciliation stamp has something real to

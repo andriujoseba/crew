@@ -52,7 +52,7 @@ BROWSER=1
 ALLOW_CONTROL=0
 USER=drill
 PASSWD="drill-$$-$RANDOM"
-ROSTER="$ROOT/fleet.roster"
+ROSTER="$ROOT/examples/fleet.roster"
 # Whether --roster was NAMED, rather than comparing against the default path:
 # the default must appear exactly once in this file (asserted in CI), and
 # `--roster <the default>` is a legitimate thing to type.

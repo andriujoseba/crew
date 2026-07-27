@@ -233,6 +233,10 @@ case "${1:-}" in
     # shellcheck disable=SC2016  # the patterns are LITERAL fragments of the
     # scripts being matched, not strings to expand: $HOME is the box's.
     case "$script" in
+      *'.crew-stage.XXXXXX'*)                  # crew's fleet-definition transport
+        : ;;
+      *'git -C ~/crew checkout'*)              # crew's checkout convergence
+        : ;;
       # The ping tier: `box exec <box> -- true`, the whole heartbeat. It needs
       # no case of its own to FAIL correctly — stopped, unreachable and wedged
       # are all handled above, and they are the states a ping exists to catch.

@@ -150,7 +150,7 @@ input.woff{color:#5a6a80}
     <button id="back">◀ Fleet Floor</button>
     <div class="title"><b>CREW</b> · AGENT CONSOLE
       <span class="sub" id="sub">claude · builder quarters</span></div>
-    <span class="demo-badge" title="Roster is real (crew fleet.roster). Vitals, queue, sessions &amp; metrics are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
+    <span class="demo-badge" title="Roster is real (crew examples/fleet.roster). Vitals, queue, sessions &amp; metrics are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
   </div>
   <div class="foot">
     <span id="fl">claude-builder · sector-7</span>
@@ -161,7 +161,7 @@ input.woff{color:#5a6a80}
   <div class="fleetbar">
     <div class="brand"><b>◆</b> FLEET FLOOR<span class="rp">heavy-duty/crew</span></div>
     <span class="clock" id="clock">--:--:--</span>
-    <span class="demo-badge" title="Roster is real (crew fleet.roster). States, active ops, metrics &amp; activity are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
+    <span class="demo-badge" title="Roster is real (crew examples/fleet.roster). States, active ops, metrics &amp; activity are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
     <!-- Result of the last operator action, and the reason a live page stopped
          being live. Empty in DEMO mode. -->
     <span class="livestat" id="livestat"></span>
@@ -723,7 +723,7 @@ function applyFleet(snap){
        rather than blanking a fleet that was there a second ago. */
     if(!LIVE){LIVE=true;LIVEMETA=snap;ROSTER=[];dataCache={};goLive();
       buildTiles();buildOps();
-      setStatus("collector reports an empty fleet — check fleet.roster",true);}
+      setStatus("collector reports an empty fleet — check the resolved fleet roster",true);}
     return;
   }
   LIVEMETA=snap;
