@@ -1168,6 +1168,96 @@ done
 if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.conf"; then r1=present; else r1=GONE; fi
 t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 
+# --- red is the gate; pending and none are admitted (codex, #64 round 2) -----
+# The exclusion is `red`, not "everything but green". Codex asked for
+# `$4 == "green"`; these tests pin why it is not that, so the next reader sees
+# a decision rather than the fallthrough that the CANCELLED bug actually was.
+GATE_ROWS="$(printf '%s\n' \
+  "$(printf 'o/noci#1\tT1\taaa\tnone\towed\t-')" \
+  "$(printf 'o/q#2\tT2\tbbb\tpending\towed\t-')" \
+  "$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')" \
+  "$(printf 'o/x#4\tT4\tddd\tred\towed\tcheck (FAILURE)')")"
+# A repo with no CI configured is `none` FOREVER. Selecting only green retires
+# its owed rounds permanently — strictly worse than the pre-change engine,
+# which read no checks at all and woke all three. This is the negative control
+# for the rule that was asked for: run it, and the regression is visible.
+t gate-green-only-drops-none-and-pending "o/g#3 T3" \
+  "$(awk -F'\t' '$5 == "owed" && $4 == "green" { print $1, $2 }' <<<"$GATE_ROWS")"
+t gate-shipped-rule-admits-none-and-pending \
+  "$(printf 'o/noci#1 T1\no/q#2 T2\no/g#3 T3')" \
+  "$(awk -F'\t' "$AWK_ROUNDS" <<<"$GATE_ROWS")"
+# ...and red is still excluded, which is the half #45 actually asks for.
+t gate-red-still-excluded "o/x#4" "$(awk -F'\t' "$AWK_BLOCKED" <<<"$GATE_ROWS")"
+
+# What the gate owes for admitting a non-green head: the datum, named. Same
+# assert-the-literal-AND-run-it discipline as the row slicing above.
+# shellcheck disable=SC2016  # awk field refs, quoted exactly as the module has them
+AWK_NONGREEN='$5 == "owed" && $4 != "red" && $4 != "green" { s = s (s ? "; " : "") $1 " (" $4 ")" } END { print s }'
+if grep -Fq "$AWK_NONGREEN" "$BMOD"; then r1=present; else r1=MISSING; fi
+t nongreen-awk-in-module present "$r1"
+t nongreen-heads-named "o/noci#1 (none); o/q#2 (pending)" \
+  "$(awk -F'\t' "$AWK_NONGREEN" <<<"$GATE_ROWS")"
+# An all-green set must produce the empty string, which is what the module
+# turns into "-" — a literal "" reaching the prompt would read as a bug.
+t nongreen-empty-when-all-green "" \
+  "$(awk -F'\t' "$AWK_NONGREEN" <<<"$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')")"
+# The datum has to REACH the session, or naming it in the log helps nobody:
+# the slot exists in the prompt and the module fills it.
+if grep -q '{{HEAD_CHECKS}}' "$SHARED/prompts/build.txt"; then r1=slotted; else r1=MISSING; fi
+t build-prompt-has-head-checks-slot slotted "$r1"
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
+if grep -q 'HEAD_CHECKS="\$head_checks"' "$BMOD"; then r1=rendered; else r1=MISSING; fi
+t build-prompt-head-checks-rendered rendered "$r1"
+# render_prompt leaves an unfilled slot in place verbatim, so a slot nobody
+# fills would ship "{{HEAD_CHECKS}}" to the model as if it were prose.
+printf 'checks: {{HEAD_CHECKS}}' >"$TMP/prompts/hc.txt"
+t head-checks-slot-substitutes "checks: o/q#2 (pending)" \
+  "$(render_prompt hc.txt HEAD_CHECKS="o/q#2 (pending)")"
+
+# The request-side rule is where codex's scenario actually pays: a round
+# answered with argument and NO push, re-requested under a still-running
+# check that then fails. Nothing re-runs, because the head never moved.
+if grep -qi 'NOT-YET-FINISHED IS NOT GREEN' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=ruled
+else
+  r1=SILENT
+fi
+t round-rules-rule-pending ruled "$r1"
+# ...with the one carve-out that keeps a CI-less repo from waiting forever for
+# a check that is never coming — the same `none` case as the gate above.
+if grep -qi 'NO checks configured' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=carved
+else
+  r1=MISSING
+fi
+t round-rules-carve-out-no-checks carved "$r1"
+# The ruled classification is ceremony's (BUILDER.md, operator 2026-07-27) and
+# the classifier already implements it; the prompt must not disagree with
+# either. cancelled/stale not green, skipped/neutral green.
+for term in 'cancelled or stale' 'skipped or neutral'; do
+  if grep -qi "$term" "$SHARED/prompts/fragment-round-rules.txt"; then r1=stated; else r1=SILENT; fi
+  t "round-rules-ruled-classification-${term// /-}" stated "$r1"
+done
+
+# --- the duty order on paper matches the duty order in the code -------------
+# FLEET.md states the fleet-standard order and points at these files as the
+# mechanism; ceremony#190 merged that order with ci-red in it. A header that
+# lags the module order is how the #149 drift went unnoticed, so it is
+# asserted rather than remembered (grok, #64).
+for f in bin/duty.sh lib/duty-builder.sh README.md; do
+  if grep -q 'resume → ci-red' "$SHARED/$f"; then r1=named; else r1=STALE; fi
+  t "duty-order-names-ci-red-${f//\//-}" named "$r1"
+done
+# Handoff is deliberately NOT gated on a green head, and the reason has to sit
+# where the "obvious improvement" would be typed (grok, #64): ci-red fires once
+# per head, so a green-gated handoff strands exactly ceremony#163 again.
+if awk '/--- HANDOFF/,/--- REBASE/' "$BMOD" | grep -q 'NOT GATED ON A GREEN HEAD'; then
+  r1=called-out
+else
+  r1=SILENT
+fi
+t handoff-green-gating-called-out called-out "$r1"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

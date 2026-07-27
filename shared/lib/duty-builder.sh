@@ -1,6 +1,9 @@
 # duty-builder.sh — builder wakes, in doctrine priority order (FLEET.md):
-# resume → build (ready issues / completed rounds) → handoff → rebase, plus
-# worktree hygiene. All predicates are computed from latestReviews /
+# resume → ci-red → build (ready issues / completed rounds) → handoff →
+# rebase, plus worktree hygiene. ci-red precedes build because your own red
+# head outranks a new claim (ceremony BUILDER.md); the block order in this
+# file IS the tick order, and this header is what FLEET.md is reconciled
+# against. All predicates are computed from latestReviews /
 # latestOpinionatedReviews, NEVER reviewDecision: reviewDecision exists only
 # under branch protection and stays "" here — keying on it silently stalled
 # rounds for a day (ceremony#26, #39).
@@ -207,7 +210,7 @@ _builder_repo() {
   # ONE issue listing, two derived facts. Two calls could disagree about the
   # board between them, and the assigned-count is only meaningful relative to
   # the same snapshot the pickable set came from.
-  local ready_json ready_count ready_assigned cr_count
+  local ready_json ready_count ready_assigned cr_count head_checks="-"
   local ready_items="" cr_items=""
   ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
     --json number,assignees,updatedAt 2>/dev/null || echo err)"
@@ -243,16 +246,45 @@ _builder_repo() {
   # hold for every round of every builder. Nothing is stranded by the exclusion:
   # a red head has already woken the ci-red block above, which is the work that
   # has to happen first regardless.
+  #
+  # RED IS THE GATE; PENDING AND NONE ARE ADMITTED, DELIBERATELY (codex, #64).
+  #
+  # The exclusion is `red`, not "everything but green", and that is a decision
+  # rather than a fallthrough — the same shape as the CANCELLED bug codex found
+  # in the classifier, so it is written down here instead of being inferred.
+  #
+  #   none    A repo with no CI configured is `none` FOREVER. Selecting only
+  #           green retires its owed rounds permanently — a strict regression
+  #           against the engine before this change, which read no checks at
+  #           all and woke every owed round. The escape ("an explicitly
+  #           evidenced manual path") runs inside a session, and the session
+  #           is what the gate would be suppressing.
+  #   pending Excluding it stalls an owed round behind runner queue time and
+  #           closes nothing: this gate spawns the AUTHOR's fix session, while
+  #           #45's cost is a PANEL round, and a head green at wake time can
+  #           still be red by the time the session re-requests. #45 item (2)
+  #           asks the engine to "refuse to re-request while it is FAILURE" —
+  #           FAILURE, and the re-request is an act of the session, which is
+  #           why the enforceable half landed here as a wake gate.
+  #
+  # What the gate owes instead is the DATUM: a non-green head admitted here
+  # travels into the build prompt, so the session applying the doctrine has
+  # the check state in hand rather than being assumed to go look for it.
   local blocked_rounds
   if [ "$mine_rows" = "err" ]; then
     cr_items=""
     cr_count=err
+    head_checks="-"
   else
     cr_items="$(awk -F'\t' '$5 == "owed" && $4 != "red" { print $1, $2 }' <<<"$mine_rows")"
     blocked_rounds="$(awk -F'\t' '$5 == "owed" && $4 == "red" { print $1 }' <<<"$mine_rows")"
     for N in $blocked_rounds; do
       log "$N: round owed, but the check at its head is RED — CI first, no panel round (#45)"
     done
+    # Admitted, but not silently: named in the log AND handed to the session.
+    head_checks="$(awk -F'\t' '$5 == "owed" && $4 != "red" && $4 != "green" { s = s (s ? "; " : "") $1 " (" $4 ")" } END { print s }' <<<"$mine_rows")"
+    [ -n "$head_checks" ] && log "$R: round(s) admitted on a non-green head — $head_checks (#45: red is the gate, but the re-request still needs green)"
+    head_checks="${head_checks:--}"
     cr_count="$(printf '%s\n' "$cr_items" \
       | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
   fi
@@ -277,6 +309,7 @@ _builder_repo() {
     RUN_SESSION_RC=1
     run_session build "$R" "$dir" "$TIMEOUT_BUILD" \
       "$(render_prompt build.txt ME="$ME" REPO="$R" TRIAGE="$FLEET_TRIAGE" \
+        HEAD_CHECKS="$head_checks" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules" ONESHOT_RULES="$oneshot_rules")"
     # Record what this session SAW, at the state it saw it in — but only if the
     # session actually ran to completion. A crash or timeout leaves the ids
@@ -293,7 +326,19 @@ _builder_repo() {
   # computed directly: every panelist's latest opinionated review APPROVES
   # the CURRENT head, no panel request outstanding, PR mergeable RIGHT NOW,
   # and state:needs-human not already set (the human is off-panel — without
-  # the refire guard this wake fires forever after a successful handoff). ---
+  # the refire guard this wake fires forever after a successful handoff).
+  #
+  # HANDOFF IS DELIBERATELY NOT GATED ON A GREEN HEAD, and the obvious
+  # improvement is the bug (grok, #64). Adding `&& check_state == "green"`
+  # here reads as symmetry with the round gate above, but the two wakes have
+  # opposite failure modes: ci-red fires at most ONCE PER HEAD by design (the
+  # ledger id carries the oid), so under a red that no push can clear — a
+  # runner outage, a failure already on main — ci-red goes quiet after its one
+  # session and a green-gated handoff would then wake nothing at all. That is
+  # ceremony#163 exactly: full-panel approvals, mergeable, and stranded, which
+  # is the incident #17 was filed from. A converged PR reaching the human with
+  # a red check is a human's call to make; a converged PR reaching nobody is
+  # the failure this module exists to end. ---
   local my_open converged handoff_prs=""
   my_open="$(gh pr list -R "$R" --state open --author "$ME" \
     --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"

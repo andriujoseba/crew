@@ -2,8 +2,14 @@
 # duty.sh — the duty engine. One tick: boot gate, then every duty the box's
 # roles enable, in fleet-standard priority order:
 #
-#   attention (all roles) → triage signals → review queue → resume → build →
-#   handoff → rebase → worktree hygiene → backlog hygiene (hourly)
+#   attention (all roles) → triage signals → review queue → resume → ci-red →
+#   build → handoff → rebase → worktree hygiene → backlog hygiene (hourly)
+#
+# ci-red sits between resume and build because a builder repairs its own red
+# PR before claiming another issue (ceremony BUILDER.md, "Your own red head
+# outranks a new claim"). This header is what FLEET.md's duty order is
+# reconciled against, so it is not decoration: a header that lags the module
+# order is how the #149 drift went unnoticed.
 #
 # All DETECTION happens here in plain bash against GitHub's object APIs; the
 # model is spawned only when a duty exists, with a role prompt rendered from
