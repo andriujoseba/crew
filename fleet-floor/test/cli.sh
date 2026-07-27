@@ -475,6 +475,157 @@ else
 fi
 
 
+# --- the drill's own harness -----------------------------------------------
+# Every check below is a bug that cost a live session on a real host. They are
+# all the same shape: a precondition or a premise that does not hold, reported
+# as a verdict about the thing under test.
+echo
+echo "== drill harness (preconditions, artifacts, defaults)"
+
+CL_APP="$CL_ROOT/drill/rehearsal-app.sh"
+
+# --drill-roles generates the roster from the crew-drill-<role> convention, so
+# nobody hand-maintains a second copy of a naming rule rehearsal.sh owns.
+# Deliberately run WITHOUT a `box` on PATH, so the drill stops at the host check
+# — the first thing after roster generation. Reaching that message proves the
+# flag parsed and the generated roster passed the `[ -f ]` guard, without
+# starting a collector. Standalone this happens for free; sourced from run.sh
+# the stub-box is on PATH, which is why the path is stripped explicitly rather
+# than assumed (this assertion failed exactly that way once).
+CL_NOBOX_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$CL_TMP/bin" | paste -sd: -)"
+if PATH="$CL_NOBOX_PATH" command -v box >/dev/null 2>&1; then
+  skip "drill: --drill-roles parses and reaches the host check" "a real box CLI is on PATH"
+else
+  CL_RC=0
+  PATH="$CL_NOBOX_PATH" "$CL_APP" --drill-roles "triage builder" >"$CL_TMP/app.out" 2>&1 || CL_RC=$?
+  if grep -q "no 'box' on PATH" "$CL_TMP/app.out"; then
+    ok "drill: --drill-roles parses and reaches the host check"
+  else
+    fail "drill: --drill-roles parses and reaches the host check" "$(head -3 "$CL_TMP/app.out")"
+  fi
+fi
+CL_RC=0; "$CL_APP" --drill-roles triage --roster /tmp/x >"$CL_TMP/app.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'alternatives, not both' "$CL_TMP/app.out"; then
+  ok "drill: --roster and --drill-roles are mutually exclusive"
+else
+  fail "drill: --roster and --drill-roles are mutually exclusive" "rc=$CL_RC $(cat "$CL_TMP/app.out")"
+fi
+CL_RC=0; "$CL_APP" --drill-roles nosuchrole >"$CL_TMP/app.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q "unknown role" "$CL_TMP/app.out"; then
+  ok "drill: --drill-roles refuses a role that is not a role"
+else
+  fail "drill: --drill-roles refuses a role that is not a role" "rc=$CL_RC $(cat "$CL_TMP/app.out")"
+fi
+CL_RC=0; "$CL_APP" --roster /nonexistent/r.txt >"$CL_TMP/app.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'no roster at' "$CL_TMP/app.out"; then
+  ok "drill: a missing --roster is named before anything starts"
+else
+  fail "drill: a missing --roster is named before anything starts" "rc=$CL_RC $(cat "$CL_TMP/app.out")"
+fi
+
+# The browser precondition must check for a BROWSER, not only the module.
+# playwright-core ships without browsers on purpose, so `npm i playwright-core`
+# flipped this from a clean skip to a run that died on a missing binary — and
+# emitted three failures, one of which blamed the read-only walk. A missing
+# dependency must never read as a broken floor.
+if grep -q 'PW_CHROME' "$CL_APP" && grep -q 'no browser found' "$CL_APP"; then
+  ok "drill: a missing browser is its own named skip, not a walk failure"
+else
+  fail "drill: a missing browser is its own named skip, not a walk failure" \
+       "the precondition still checks only that playwright-core is installed"
+fi
+# ...and it must find a system Chrome itself, the same probe CI does.
+CL_PROBE="$(grep -cE '/usr/bin/google-chrome|/opt/google/chrome' "$CL_APP" || true)"
+if [ "${CL_PROBE:-0}" -ge 1 ]; then
+  ok "drill: probes the usual browser paths so PW_CHROME is an override"
+else
+  fail "drill: probes the usual browser paths so PW_CHROME is an override" \
+       "PW_CHROME is required knowledge again"
+fi
+
+# The no-vacuity check must not count something structurally impossible. The
+# collector runs at CREW_FLOOR_INTERVAL=3600, so it polls ONCE at startup; the
+# walk reads its cached answer over HTTP and never touches the box layer. The
+# old check counted probes inside the walk's window and therefore failed every
+# run, including one that had just made 15 assertions on a live fleet.
+# Comments stripped: the drill EXPLAINS why the old check was removed, and a
+# bare grep matched that explanation — a detector tripping on its own
+# documentation, which this file has now been caught by three times.
+if grep -vE '^[[:space:]]*#' "$CL_APP" | grep -q "read-only walk still exercised the real fleet"; then
+  fail "drill: no-vacuity check does not count probes that cannot happen" \
+       "the probe-window check is back; it cannot pass at CREW_FLOOR_INTERVAL=3600"
+else
+  ok "drill: no-vacuity check does not count probes that cannot happen"
+fi
+# What replaced it must still guard the real risk: an EMPTY receipt would make
+# "issued no control command" pass forever.
+if grep -q 'the box-call receipt is real' "$CL_APP"; then
+  ok "drill: still proves the box-call receipt is not empty"
+else
+  fail "drill: still proves the box-call receipt is not empty" \
+       "nothing checks the wrapper recorded anything, so the no-control assertion is vacuous"
+fi
+
+# Screenshots are described in browser.js as "for humans" — they must survive
+# teardown. They were written into $TMP and rm -rf'd on exit, every run.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q 'node .*browser\.js.*"\$SHOTS"' "$CL_APP"; then
+  ok "drill: screenshots go to a directory that outlives the run"
+else
+  fail "drill: screenshots go to a directory that outlives the run" \
+       "the walk still writes into \$TMP, which teardown deletes"
+fi
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -qE 'rm -rf -- "\$TMP"' "$CL_APP" && ! grep -qE 'rm -rf.*\$SHOTS' "$CL_APP"; then
+  ok "drill: teardown does not delete the screenshots"
+else
+  fail "drill: teardown does not delete the screenshots" "the shots directory is removed on exit"
+fi
+
+# Watching the walk drive: headless must be a choice, not a hardcode.
+CL_BJS2="$CL_HERE/browser.js"
+if grep -q 'FLOOR_TEST_HEADED' "$CL_BJS2" && grep -q 'headless: !HEADED' "$CL_BJS2"; then
+  ok "browser.js: headed mode is available for watching a walk"
+else
+  fail "browser.js: headed mode is available for watching a walk" "headless is not overridable"
+fi
+if grep -q 'FLOOR_TEST_SLOWMO' "$CL_BJS2" && grep -q 'slowMo' "$CL_BJS2"; then
+  ok "browser.js: slowMo is available"
+else
+  fail "browser.js: slowMo is available" "no pacing control"
+fi
+# CI must never turn them on — headed needs a display, and a slowed walk in CI
+# is a timeout waiting to happen.
+if grep -qE 'FLOOR_TEST_(HEADED|SLOWMO)' "$CL_ROOT/.github/workflows/shared-ci.yml"; then
+  fail "CI does not enable headed/slowMo" "CI has no display and no time for it"
+else
+  ok "CI does not enable headed/slowMo"
+fi
+
+# The drill's default source must be the tracked mainline. It defaulted to
+# dan-claude-bot/crew @ crew/shared-duty — a fork branch from the #16 era — so
+# a flagless drill rehearsed code the fleet does not deploy, long after that
+# branch merged.
+CL_DRILL_SH="$CL_ROOT/drill/rehearsal.sh"
+if grep -qE '^REF=.*main' "$CL_DRILL_SH" && grep -qE '^REMOTE=.*heavy-duty/crew' "$CL_DRILL_SH"; then
+  ok "drill: defaults to the tracked mainline, not a fork branch"
+else
+  fail "drill: defaults to the tracked mainline, not a fork branch" \
+       "$(grep -E '^(REF|REMOTE)=' "$CL_DRILL_SH" | tr '\n' ' ')"
+fi
+
+# rehearsal-all must point the app drill at the boxes it just drilled. Falling
+# through to fleet.roster meant comparing the real fleet's members, which do not
+# exist on a drill host: three "NOT CREATED vs offline" agreements about nothing.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q -- '--drill-roles "\$ROLES"' "$CL_ROOT/drill/rehearsal-all.sh"; then
+  ok "rehearsal-all: the app drill sees the boxes this run built"
+else
+  fail "rehearsal-all: the app drill sees the boxes this run built" \
+       "it falls back to fleet.roster, whose boxes are not on a drill host"
+fi
+
+
 # ---------------------------------------------------------------------------
 # The drill must never run the browser walk in a mutating mode.
 #
@@ -578,11 +729,16 @@ else
        "no logging wrapper ahead of the real box on PATH"
 fi
 # The companion no-vacuity check goes with it: a read-only mode that did
-# NOTHING would satisfy "issued no control command" perfectly.
-if grep -q 'read-only walk still exercised the real fleet' "$CL_DRILL"; then
-  ok "drill: proves the read-only walk still did something"
+# NOTHING would satisfy "issued no control command" perfectly. Two halves, and
+# they guard different things — the walk's own assertion count proves the WALK
+# did something, and a non-empty receipt proves the RECEIPT is real (without the
+# wrapper on PATH, "issued no control command" passes against an empty file
+# forever). This used to be a single probe-count check that guarded neither and
+# could never pass; see the drill-harness section above.
+if grep -q 'browser walk reported its assertion count' "$CL_DRILL"; then
+  ok "drill: proves the walk itself did something"
 else
-  fail "drill: proves the read-only walk still did something" "the probe-count check is gone"
+  fail "drill: proves the walk itself did something" "the assertion-count check is gone"
 fi
 
 # The two invariants below are about the NARROWED control block, not the walk;

@@ -28,8 +28,14 @@
 set -uo pipefail
 
 BOX_NAME=""
-REF="crew/shared-duty"
-REMOTE="https://github.com/dan-claude-bot/crew.git"
+# The tracked mainline, not a fork branch. These defaulted to
+# dan-claude-bot/crew @ crew/shared-duty — the #16 development branch — so long
+# after that work merged the drill still rehearsed a fork's stale branch by
+# default, and an operator running `drill/rehearsal.sh` with no flags tested
+# code that was not what the fleet deploys. Pass --tree/--remote/--ref to
+# override; --tree is what you want when drilling a working checkout.
+REF="${CREW_DRILL_REF:-main}"
+REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 TREE=""
 SANDBOX=""
 QUICK=0

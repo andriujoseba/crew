@@ -21,6 +21,33 @@
 > because `repos.txt` is now the scope for every module and each role gets
 > its own sandbox: disjoint registries, disjoint work. Under the previous
 > org-wide review sweep all three would have raced for the same verdicts.
+>
+> **Which boxes a drill looks at — never `fleet.roster`.** `crew hire`'s
+> registry guard keys on roster *membership*, so a drill box listed in the
+> tracked `fleet.roster` counts as a fleet member to every safety check —
+> which is how three leftover drill boxes came to be armed against the
+> production registry (`heavy-duty/crew#51`). So `drill/rehearsal-app.sh`
+> takes its own:
+>
+> ```sh
+> drill/rehearsal-app.sh --drill-roles "triage builder reviewer"  # generated
+> drill/rehearsal-app.sh --roster ~/mine.roster.local             # hand-written
+> ```
+>
+> `--drill-roles` builds the list from the `crew-drill-<role>` convention
+> `rehearsal.sh` already owns, so it cannot drift from the boxes the drill
+> actually uses; prefer it. `--roster` is for anything else, and
+> `*.roster.local` is gitignored so such a file has a home. Both feed the
+> SAME path to all three readers — the collector (`CREW_FLOOR_ROSTER`), the
+> `crew status` it compares against (`CREW_ROSTER`), and its own counts.
+> `rehearsal-all.sh` passes `--drill-roles` for the roles it just ran.
+>
+> **The browser walk** needs `playwright-core` *and* a browser —
+> `playwright-core` deliberately ships without one. The drill probes the
+> usual Chrome/Chromium paths and skips with a named reason if it finds
+> none; `PW_CHROME=/path/to/chrome` overrides. Screenshots land in
+> `.drill-shots/` (`--shots <dir>`) and outlive the run. To watch it drive:
+> `FLOOR_TEST_HEADED=1`, optionally with `FLOOR_TEST_SLOWMO=250`.
 
 You are validating the shared duty engine (crew PR #16) on a box that has
 never run it. You have no context beyond this repo: read `shared/README.md`

@@ -41,8 +41,10 @@ while [ $# -gt 0 ]; do
     --no-app) APP=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
+    --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
+    --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--no-app] [--app-boxes \"a b\"] [--app-allow-control]"; exit 1 ;;
+       echo "         [--no-app] [--app-boxes \"a b\"] [--app-allow-control] [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
 
@@ -76,6 +78,16 @@ if [ "$APP" -eq 1 ]; then
   echo "############################################################"
   echo "## fleet app — crew floor against this host's boxes"
   echo "############################################################"
+  # Point the app drill at the boxes THIS run just drilled, unless the operator
+  # named a roster. Without this it fell through to fleet.roster, which on a
+  # drill host names the real fleet's members — boxes that do not exist here —
+  # so every comparison was "NOT CREATED vs offline": three assertions that
+  # agree about nothing being there. The drill roles are the ones we know are
+  # present, because we just built them.
+  case " ${APP_ARGS[*]-} " in
+    *" --roster "*) : ;;
+    *) APP_ARGS+=(--drill-roles "$ROLES") ;;
+  esac
   "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
   # rc on its own line, like the role loop above — this file's own history is
   # why (crew#30: a bare status read inside a compound).

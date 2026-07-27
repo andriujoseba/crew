@@ -51,11 +51,28 @@ const ok = (name, cond, detail = '') => {
 const eq = (name, want, got) => ok(name, String(want) === String(got), `expected [${want}] got [${got}]`);
 
 (async () => {
-  if (!fs.existsSync(CHROME)) { console.error('no chromium at ' + CHROME); process.exit(2); }
+  /* Actionable, because the old message ("no chromium at <playwright cache>")
+     named a path that playwright-core NEVER populates — it ships without
+     browsers on purpose — and said nothing about the variable that fixes it.
+     A system Chrome is invisible here unless PW_CHROME points at it. */
+  if (!fs.existsSync(CHROME)) {
+    console.error('no browser at ' + CHROME);
+    console.error('playwright-core ships without browsers; point PW_CHROME at an installed one, e.g.');
+    console.error('  PW_CHROME=/usr/bin/google-chrome-stable   (or /opt/google/chrome/chrome, /usr/bin/chromium)');
+    process.exit(2);
+  }
   fs.mkdirSync(out, { recursive: true });
 
+  /* FLOOR_TEST_HEADED=1 shows the browser, FLOOR_TEST_SLOWMO=<ms> paces it.
+     Both exist so a human can WATCH the walk drive the page — there was no way
+     to, and the screenshots are a poor substitute for seeing a control land.
+     Headed mode needs a display, so it stays opt-in and CI never sets it. */
+  const HEADED = process.env.FLOOR_TEST_HEADED === '1';
+  const SLOWMO = Number(process.env.FLOOR_TEST_SLOWMO || 0) || 0;
   const browser = await chromium.launch({
     executablePath: CHROME,
+    headless: !HEADED,
+    slowMo: SLOWMO,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
   });
   const ctx = await browser.newContext({
