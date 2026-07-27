@@ -14,7 +14,7 @@
 # see, and this module used to launch a session on all of them — for a builder,
 # after ensure_main_clone and with the full worktree/round rule set attached.
 # That is write authority on a repo no operator listed, and it was the one hole
-# left in the containment story `repos-default.txt` asserts without exception:
+# left in the containment story `examples/repos.txt` asserts without exception:
 # narrowing repos.txt confined every other module and not this one, which is
 # the same shape as the reviewer gap the drill found (#52).
 #

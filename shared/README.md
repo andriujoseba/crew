@@ -26,7 +26,7 @@ shared/
   ../examples/           fallback roster, operator config and registry seeds
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
   test/run.sh            fixture tests (bash+jq only, no network) — run by shared-ci
-  install.sh             deploy to ~/duty; identity comes from the gh token
+  install.sh             deploy to ~/duty; identity comes from the box's fleet.roster row
   crontab.example        one line per box
 ```
 
@@ -49,10 +49,16 @@ which goes through the same one-shot gate as every verdict.
 
 ## Duty order (FLEET.md)
 
-attention → triage signals → review queue → resume → build → handoff →
-rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling inside
-the tick — same lock, so it can never race the triage sweep over shared
+attention → triage signals → review queue → resume → ci-red → build →
+handoff → rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling
+inside the tick — same lock, so it can never race the triage sweep over shared
 checkouts the way the old separate hygiene cron could).
+
+ci-red runs before build: a failing check at the head of a PR you authored is
+picked up before claiming another issue (crew#17 — ceremony#163 sat with
+full-panel approvals, mergeable, stranded on an HTTP 429 in a job that never
+ran the PR's code, because no wake covered a red head owing no round and
+carrying no conflict).
 
 ## What was adopted, and from whom
 
@@ -90,8 +96,8 @@ fleet's real protocol existed only inside five diverging scripts.
 
 ## What was deliberately dropped
 
-- **Hardcoded identities and rosters** — identity comes from the gh token;
-  the bench lives in one file; the panel comes from the target repo at
+- **Hardcoded identities and rosters** — identity comes from the box-keyed
+  fleet roster; the bench lives in operator config; the panel comes from the target repo at
   runtime. (Two boxes had *both* a hardcoded `ME` and a runtime lookup, used
   inconsistently.)
 - **`gh search` / `reviewDecision` / notification-mention wakes** as truth.

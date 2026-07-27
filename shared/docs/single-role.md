@@ -49,7 +49,7 @@ configuration, and `cli/crew` only spawns single-role members.
   claude and reviewer claude become two identities (e.g.
   `claude-builder-*`, `claude-reviewer-*`). That touches: org membership,
   the `panel=` lines in every governed repo's labels.conf, the fleet bench
-  in `conf/fleet.conf`, and CONTRIBUTING rosters. The panel-from-repo-config
+  in the operator `fleet.conf`, and CONTRIBUTING rosters. The panel-from-repo-config
   rule (already in this engine) is what makes that rollout safe — no
   hardcoded roster to chase.
 - **The bench grows or splits.** Convergence = every panelist approves. If

@@ -7,8 +7,10 @@
 # the host staged in ~/duty. The shipped example is the compatibility fallback
 # for a direct install from a checkout.
 #
-# Idempotent and state-preserving: repos.txt, notify-repos.txt, logs, state
-# files and clones are never touched; bin/lib/conf/prompts are replaced
+# Idempotent and state-preserving: logs, state, and clones are never touched.
+# Operator registry payloads converge only while the local registry remains
+# untouched (or is made byte-identical to the incoming payload); all other
+# bin/lib/conf/prompts files are replaced
 # ATOMICALLY (write-then-rename — a model session can be mid-flight calling
 # bin/submit-verdict.sh, and it must see the old file or the new one, never
 # a half-written inode).
@@ -103,6 +105,7 @@ elif [ -n "$BOX_ARG" ]; then
     exit 1
   fi
   read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
+  BOT_ROLE_LIST="$(printf '%s' "$BOT_ROLE_LIST" | tr ',' ' ')"
   RESOLVED_FROM="fleet.roster (box $BOX_ARG)"
 elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
   # shellcheck disable=SC1091
@@ -238,9 +241,13 @@ apply_registry() { # PAYLOAD DESTINATION SHIPPED_EXAMPLE PROVENANCE LABEL
   current_hash="$(sha256sum "$dest" | awk '{print $1}')"
   if [ -f "$provenance" ]; then
     recorded_hash="$(head -1 "$provenance")"
-    if [ "$current_hash" = "$recorded_hash" ]; then
+    if [ "$current_hash" = "$recorded_hash" ] || [ "$current_hash" = "$incoming_hash" ]; then
       replace_registry "$payload" "$dest" "$provenance"
-      echo "converged $dest from the operator fleet definition"
+      if [ "$current_hash" = "$incoming_hash" ] && [ "$current_hash" != "$recorded_hash" ]; then
+        echo "adopted and converged $dest from the operator fleet definition"
+      else
+        echo "converged $dest from the operator fleet definition"
+      fi
       return
     fi
   else
