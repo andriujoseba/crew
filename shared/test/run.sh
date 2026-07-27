@@ -454,6 +454,69 @@ printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_commit "$LG2"
 t ledger-crossrepo-distinct 1 "$(printf 'heavy-duty/rig#1 2026-07-20T00:00:00Z\n' | ledger_filter "$LG2" | n)"
 t ledger-crossrepo-samekey  0 "$(printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_filter "$LG2" | n)"
 
+# --- what the drill's isolation interlock does and does not cover (#52) ---
+# drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to
+# tick if it cannot. That is containment only for modules which actually
+# consult the file, so the split has to be asserted rather than believed:
+#
+#   scoped     review, builder, triage, hygiene — every module reading
+#              REPOS_FILE. The reviewer was the exception until 2026-07-25
+#              (an org-wide requested_reviewers sweep no registry could
+#              bound); it is scoped now, which is what #52 was filed doubting.
+#   NOT scoped attention. duty-attention.sh reads the authenticated-user
+#              issues endpoint ON PURPOSE — cross-repo, reaching repos not in
+#              repos.txt — and it runs first, for every role.
+#
+# Both halves matter. Losing the first silently un-scopes a write surface the
+# interlock claims to bound. Losing the second is worse: it would make the
+# interlock read like total containment, which is the exact complaint #52
+# raised, and the reason rehearsal.sh checks the attention queue separately
+# instead of assuming repos.txt bounds it.
+for mod in review builder triage hygiene; do
+  if grep -q 'REPOS_FILE' "$SHARED/lib/duty-$mod.sh"; then r1=scoped; else r1=UNSCOPED; fi
+  t "registry-scoped-$mod" scoped "$r1"
+done
+if grep -q 'REPOS_FILE' "$SHARED/lib/duty-attention.sh"; then r1=scoped; else r1=unscoped; fi
+t "attention-is-not-registry-scoped" unscoped "$r1"
+# ...and it must SAY so, where a reader deciding whether the drill contains it
+# will actually look.
+# Unwrapped first: the sentence spans two comment lines, and a per-line grep
+# would report the documentation missing while it was sitting right there.
+if sed 's/^[[:space:]]*#[[:space:]]*//' "$SHARED/lib/duty-attention.sh" | tr '\n' ' ' \
+     | grep -q 'reaches repos not in repos.txt'; then r1=documented; else r1=SILENT; fi
+t "attention-documents-its-reach" documented "$r1"
+# The interlock that covers it is a CHECK, not a claim: refuse the tick when a
+# demand is parked outside the sandbox.
+if grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal-safety.sh" &&
+   grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
+t "drill-checks-attention-outside-sandbox" checked "$r1"
+
+# --- an idle tick is not a silent one (#53) -------------------------------
+# The floor's SILENT rule is "no duty.log line for two tick boundaries", which
+# is sound only if a tick that finds no work still writes. duty.sh logs
+# `duty run start` before any role dispatch and `duty run end` on every exit
+# path, and tick.sh covers the rest (skipped, FAILED) — so a duty.log with
+# nothing new means no tick RAN, which is a cron problem, never a healthy idle
+# box. That is the diagnosis #53 needed, and this keeps it true: an early
+# `exit` added between the two lines would turn an idle box into an offline one
+# on the console, and a silent box into an ambiguous one.
+t duty-start-unconditional 1 "$(grep -c '^log "duty run start"' "$SHARED/bin/duty.sh")"
+# Every exit path after the start line must have logged the end line first.
+# A linear scan, deliberately: it is an approximation of control flow, but it
+# catches the shape that actually regresses — a new early `exit` on a branch
+# that forgot the evidence line.
+t duty-end-on-every-exit "" "$(awk '
+  /^log "duty run start"/ { started = 1; next }
+  !started { next }
+  /log "duty run end"/    { ended = 1 }
+  /^[[:space:]]*exit / && !ended { print "line " NR; exit }
+' "$SHARED/bin/duty.sh")"
+# `crontab armed` must not be the last word: the crontab holding a line says
+# nothing about a cron daemon existing to run it, and that gap is why three
+# boxes reported armed and one ticked.
+if grep -q 'cron_daemon_running' "$SHARED/install.sh"; then r1=checked; else r1=ASSUMED; fi
+t install-verifies-cron-daemon checked "$r1"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

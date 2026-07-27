@@ -130,6 +130,28 @@ case "${1:-}" in
     printf ']\n'
     ;;
 
+  # The shape that made #47 possible, and the gap that let it ship: `crew
+  # status` and `crew up` both read `box info --json`, the stub had no `info`
+  # subcommand at all, and no test in this repo invoked cli/crew — so CI could
+  # not see either call site.
+  #
+  # The real payload is an ARRAY whose element carries a capitalised `status`
+  # STRING and a `state` OBJECT. Filtering it as an object (`.state //
+  # .status`) asks jq to index an array with a string; jq exits 5, and under
+  # `set -euo pipefail` in a command substitution that killed the whole
+  # command. Reproduced faithfully here, because a stub that returned a
+  # convenient bare object would have let the bug through again.
+  info)
+    name="$2"
+    st="$(state_of "$name")"
+    if [ -z "$st" ] || [ "$st" = "absent" ]; then
+      echo "Error: instance \"$name\" not found" >&2; exit 1
+    fi
+    ST_UP="$(printf '%s' "$st" | tr '[:lower:]' '[:upper:]')"
+    printf '[{"name":"%s","status":"%s","state":{"status":"%s","network":{}}}]\n' \
+      "$name" "$ST_UP" "$ST_UP"
+    ;;
+
   exec)
     name="$2"
     # The real `box exec` forwards stdin; drain it the same way so a caller
@@ -196,6 +218,22 @@ case "${1:-}" in
         done
         HOME="$_home" bash -c "$script" < "$stdin_copy"
         ;;
+      # --- the scripts cli/crew runs, so `crew status` and `crew up` can be
+      # driven here. Every one of these substrings ALSO appears in probe.sh,
+      # which is why they sit below its `::logstart` case — the order comment
+      # above applies to them exactly as it does to the rest.
+      *'duty/VERSION'*)                         # crew's hired_at
+        [ "$sc" = "nothired" ] || echo "crew@0.4.1" ;;
+      *'gh auth status'*)                       # crew status / crew hire
+        [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
+      *bot_cli_probe*)                          # crew's vendor_probe
+        [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
+      *'shared/install.sh'*)                    # crew's hire bake
+        echo "installed for stub-bot (agent: stub, roles: stub)"
+        echo "crontab armed" ;;
+      *'duty/repos.txt'*)                       # crew's box_registry (#51)
+        cat "$STATEDIR/$name.repos" 2>/dev/null || {
+          echo heavy-duty/ceremony; echo heavy-duty/incubator; echo heavy-duty/rig; } ;;
       *tail*)                                   echo "$(now) duty run start"; echo "stub log for $name" ;;
       *) echo "stub-box: unmatched exec script for $name" >&2; exit 3 ;;
     esac

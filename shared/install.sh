@@ -30,6 +30,20 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 command -v gh >/dev/null || { echo "gh not found — install and authenticate it first"; exit 1; }
 command -v jq >/dev/null || { echo "jq not found — the duty engine requires it"; exit 1; }
 
+# cron_daemon_running — is there a cron daemon to run the armed crontab at all?
+# `crontab -l` proving a line exists says nothing about that (#53). pgrep is
+# not guaranteed on a minimal box image, so fall back to a ps scan; the caller
+# only ever uses this to choose between two messages.
+cron_daemon_running() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1
+  else
+    # shellcheck disable=SC2009  # the pgrep branch above is preferred; this is
+    # the fallback for an image that has no pgrep, so it cannot use pgrep
+    ps -e 2>/dev/null | grep -qE '[[:space:]](cron|crond)$'
+  fi
+}
+
 # shellcheck disable=SC1091
 source "$HERE/lib/common.sh"
 # shellcheck disable=SC1091
@@ -144,6 +158,21 @@ if [ "$IS_TRIAGE" -eq 1 ] && [ ! -f "$DUTY_DIR/notify-repos.txt" ]; then
   cp "$HERE/conf/notify-repos-default.txt" "$DUTY_DIR/notify-repos.txt"
   echo "seeded $DUTY_DIR/notify-repos.txt (the notifier's scope must stay WIDER than triage's — rig#112)"
 fi
+# A registry seeded before 2026-07-25 carries the SUPERSEDED header, which told
+# its reader the reviewer queue was an org-wide requested_reviewers sweep that
+# "this list cannot scope". duty-review.sh and duty-builder.sh are both
+# registry-scoped now, so that paragraph denies containment the engine actually
+# provides — and an operator reading it concludes the drill's isolation
+# interlock cannot cover the reviewer, which is how #52 came to be filed
+# against an engine that had already been fixed. The repo LINES are box-local
+# operator state and are never rewritten; the false claim is flagged.
+if grep -q 'cannot scope it' "$DUTY_DIR/repos.txt" 2>/dev/null; then
+  echo
+  echo "NOTE — $DUTY_DIR/repos.txt carries the pre-2026-07-25 header, which says the"
+  echo "reviewer queue is org-wide and that no list can scope it. That is no longer true:"
+  echo "repos.txt is the scope for review, build, triage and hygiene alike. Refresh the"
+  echo "comment block from $HERE/conf/repos-default.txt — your repo lines are yours to keep."
+fi
 
 # Force one full boot-gate pass on the first new tick: the freshly installed
 # bot.conf's CLI probe has never run on this box, and waiting for the next
@@ -183,6 +212,25 @@ if [ "$ARM_CRON" -eq 1 ]; then
     fi
   } | crontab -
   echo "crontab armed"
+  # "armed" has only ever meant "the line is in the table". A box whose cron
+  # DAEMON is not running reported `crontab armed` from `crew hire` and then
+  # never ticked: three boxes armed the same way, one producing duty.log
+  # output, and nothing in any output said which (#53).
+  #
+  # Worth stating plainly because it is the diagnosis the observation needed:
+  # duty.sh logs `duty run start` before any role dispatch and `duty run end`
+  # on every exit path, and tick.sh covers the rest (skipped, FAILED). An idle
+  # tick is therefore NOT silent — a duty.log with nothing new means no tick
+  # RAN, never a tick that ran and found no work. So a silent box is a cron
+  # problem, and this is the moment to catch it.
+  if cron_daemon_running; then
+    echo "cron daemon running — first tick at the next 5-minute boundary"
+  else
+    echo "crew: WARNING — the crontab is armed, but NO cron daemon is running:" >&2
+    echo "crew: this box will never tick, and its duty.log will stay silent." >&2
+    echo "crew: an administrator must start it:  sudo service cron start" >&2
+    echo "crew: then confirm a tick lands:       tail -f $DUTY_DIR/duty.log" >&2
+  fi
 else
   echo
   echo "REPLACE the crontab (crontab -e) with exactly this — DELETE every old"

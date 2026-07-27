@@ -1,0 +1,16 @@
+# <box-name> <incus-state> <scenario>   — see test/stub-box
+#
+# A SMALL fleet for the cli/crew roster-loop tests, deliberately separate from
+# fixtures/fleet.txt: that one contains `ff-wedged`, whose exec never answers
+# (the collector must time out on it), and cli/crew has no probe timeout — one
+# wedged box would hang the suite for two minutes per call.
+#
+# What is here is what the roster loops must survive: a hired box, a stopped
+# one, one never hired, one whose logins are dead, and one that is not on the
+# host at all. Every row exercises a different branch of `crew status`.
+cli-hired      running  working
+cli-idle       running  idle
+cli-stopped    stopped  working
+cli-nothired   running  nothired
+cli-noauth     running  noauth
+cli-absent     absent   working

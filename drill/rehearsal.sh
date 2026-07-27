@@ -279,7 +279,25 @@ else
     echo "repos.txt contains something other than '$SANDBOX' — refusing before a phase 2 tick"
     exit 1
   fi
-  ok "safety interlock: repos.txt contains only the sandbox"
+  # Worded to say what it covers. "repos.txt contains only the sandbox" was
+  # true and read as containment of the whole box, which it is not: it bounds
+  # every module that consults REPOS_FILE — review, build, triage, hygiene —
+  # and attention is not one of them (#52).
+  ok "safety interlock: repos.txt narrows review/build/triage/hygiene to the sandbox"
+
+  # The surface repos.txt cannot bound, checked rather than assumed.
+  STRAY_ATTENTION="$(rehearsal_attention_is_clear "$SANDBOX" | grep -v '^$' | sort -u | head -5)"
+  if [ -n "$STRAY_ATTENTION" ]; then
+    echo
+    echo "REFUSING before a phase 2 tick: attention is role-independent and reaches repos"
+    echo "OUTSIDE repos.txt by design, so the interlock above cannot contain it. This box's"
+    echo "identity ($ME2) has parked attention demands here:"
+    printf '  %s\n' "$STRAY_ATTENTION"
+    echo "The drill's first tick would pick them up as real work. Clear the label, or"
+    echo "re-run on a box whose identity carries no parked demand outside $SANDBOX."
+    exit 1
+  fi
+  ok "safety interlock: no attention demand parked outside the sandbox"
 
   # -- attention wake --
   inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
