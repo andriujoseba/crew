@@ -263,3 +263,124 @@ validate_sha() {
     *) [ "${#1}" -eq 40 ] ;;
   esac
 }
+
+# --------------------------------------------------------------------------
+# Credential state, REPORTED BY THE FLOW rather than polled.
+#
+# The floor used to answer "is this box authenticated?" by running `gh auth
+# status` and the agent's bot_cli_probe inside every box on every 60s poll.
+# Both touch the network — `gh auth status` is a real api.github.com
+# round-trip — so the fleet spent ~7,000 requests a day re-deriving a fact
+# that changes when a token expires, i.e. about monthly, and the probe's
+# latency became a function of GitHub's.
+#
+# Nothing needs to ask. The engine already talks to GitHub every tick and is
+# therefore the first thing to find out, for free, when a credential stops
+# working. These helpers record what it learns; probe.sh only reads the files.
+#
+# One file PER SERVICE, never one shared file matched by substring: a gh
+# failure whose message happens to contain the word "vendor" would otherwise
+# condemn the vendor CLI too, and the operator would go re-login the wrong
+# thing.
+#   .auth-fail.<svc>       "<iso8601> <reason>"  — present only while broken
+#
+# One file, one boolean: present means broken, absent means working. No expiry
+# date is recorded — see gh_identity for why a countdown was dropped.
+# --------------------------------------------------------------------------
+
+# note_auth_failure SVC REASON — record that SVC rejected us, once. Rewriting
+# the file every tick would reset its mtime and make a credential that broke
+# three days ago look like it broke just now, which is the one thing an
+# operator reads a marker file for. First failure wins until it is cleared.
+note_auth_failure() {
+  # Two `local`s, not one: in `local a=$1 b=${a}` the b assignment runs before
+  # a is in scope, so every service would have shared one `.auth-fail.` file.
+  local svc="$1" reason="$2"
+  local f="$DUTY_DIR/.auth-fail.$svc"
+  [ -s "$f" ] && return 0
+  # Newlines would turn one record into several and break the ::key contract
+  # probe.sh emits it under; gh's errors are routinely multi-line. Flattened
+  # ONCE and reused, so the log line and the Telegram alert cannot disagree
+  # with the file about what went wrong.
+  local flat
+  flat="$(printf '%s' "$reason" | tr '\n\r' '  ' | cut -c1-200)"
+  printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$flat" >"$f"
+  warn "auth: $svc rejected us — $flat"
+  # An operator who is not watching the floor still needs to know: a box with
+  # a dead credential does no work at all, and says so nowhere else until
+  # someone looks. alert() is best-effort and never fails a tick.
+  alert "🔑 $(hostname): $svc auth failed — $flat"
+  return 0
+}
+
+# clear_auth_failure SVC — the credential works again. Logged, because a
+# marker vanishing silently is indistinguishable from one never written.
+clear_auth_failure() {
+  local svc="$1"
+  local f="$DUTY_DIR/.auth-fail.$svc"
+  [ -f "$f" ] || return 0
+  rm -f "$f"
+  log "auth: $svc is working again"
+  alert "✅ $(hostname): $svc auth restored"
+  return 0
+}
+
+# gh_identity — the box's own login, and whether gh still works. Echoes the
+# login, or nothing if the credential was rejected.
+#
+# This REPLACES a bare `gh api user`: same single call the tick was already
+# making to resolve $ME, but its failure is now recorded rather than swallowed
+# by `|| true`. That is the whole credential signal — a rejection at the
+# moment a real request is rejected, which is a stronger claim than
+# `gh auth status`, since that only proves the token authenticates against
+# `GET /` and a token with the wrong scopes passes it happily.
+#
+# No expiry DATE is tracked, here or anywhere. Every provider expresses it
+# differently — epoch millis, a JWT claim, an ISO string, or not at all — and
+# two of the four agent CLIs cannot answer locally, so a countdown was the
+# flaky part of an otherwise stable idea. Whether the credential works right
+# now is the boolean that matters, and it is the one every provider agrees on.
+gh_identity() {
+  local login rc=0 err
+  err="$(mktemp)"
+  login="$(gh api user --jq .login 2>"$err")" || rc=$?
+  if [ "$rc" -ne 0 ] || [ -z "$login" ]; then
+    note_auth_failure gh "$(grep -iE 'message|401|403|error' "$err" | head -1 || printf 'gh api user exited %s' "$rc")"
+    rm -f "$err"
+    return 0
+  fi
+  rm -f "$err"
+  clear_auth_failure gh
+  printf '%s' "$login"
+}
+
+# check_vendor_credential — the agent CLI's login state, WITHOUT a network
+# call, once per tick.
+#
+# The agent profile's bot_cli_present reads its own vendor's credential store
+# and answers one boolean: usable, or not. Where a vendor records the expiry
+# of the credential a HUMAN must renew (claude, kimi) the profile compares it
+# against now; where the refresh token is opaque (codex, grok) presence is the
+# best local answer and the profile says so by returning 2.
+#
+# bot_cli_probe (which may hit the network) is deliberately NOT called here.
+# It stays for `crew hire` and the boot gate, where paying for certainty once
+# is right; a per-tick check must be free.
+check_vendor_credential() {
+  if ! command -v bot_cli_present >/dev/null 2>&1; then
+    return 0        # an older agent profile: report nothing, claim nothing
+  fi
+  # Three outcomes, not two. `|| rc=$?` rather than an if: the whole point is
+  # the exact code, and under `set -e` a bare call returning 1 would kill the
+  # tick. 2 means the profile cannot tell from local state — it must change
+  # nothing, so a box whose vendor layout is unknown neither alerts falsely
+  # nor has a stale failure silently cleared out from under it.
+  local rc=0
+  bot_cli_present || rc=$?
+  case "$rc" in
+    0) clear_auth_failure vendor ;;
+    1) note_auth_failure vendor "${AGENT_LOGIN_HINT:-the agent CLI is not logged in}" ;;
+    *) : ;;
+  esac
+  return 0
+}

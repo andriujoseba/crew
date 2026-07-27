@@ -85,7 +85,7 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in awk bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
+for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 # If install.sh ever infers from hostname again, make the regression reproduce
@@ -186,6 +186,58 @@ else
   r1=UNKEYED
 fi
 t upgrade-passes-roster-box-key box-keyed "$r1"
+
+# --- install.sh: identity changes are impossible to mistake for no-ops (#36)
+CHOME="$TMP/change-home"
+CDUTY="$CHOME/duty"
+mkdir -p "$CHOME"
+change_install() {
+  env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" "$@" 2>&1
+}
+first_out="$(change_install --agent claude --role reviewer)"
+case "$first_out" in *"first install"*) r1=clear ;; *) r1=missing ;; esac
+t install-first-install-labelled clear "$r1"
+case "$first_out" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
+t install-first-install-not-changed clean "$r1"
+
+noop_out="$(change_install --agent claude --role reviewer)"
+case "$noop_out" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
+t install-noop-not-changed clean "$r1"
+case "$noop_out" in *"resolved from the --agent/--role flags"*) r1=sourced ;; *) r1=missing ;; esac
+t install-noop-source-visible sourced "$r1"
+
+change_out="$(change_install --box claude-builder)"
+case "$change_out" in
+  *'ROLES CHANGED on this box: "reviewer" -> "builder"'*) r1=loud ;;
+  *) r1=missing ;;
+esac
+t install-role-change-loud loud "$r1"
+case "$change_out" in
+  *"resolved from fleet.roster (box claude-builder)"*) r1=sourced ;;
+  *) r1=missing ;;
+esac
+t install-role-change-source-visible sourced "$r1"
+case "$change_out" in *"adds or removes whole duty loops"*) r1=warned ;; *) r1=missing ;; esac
+t install-role-change-impact-visible warned "$r1"
+
+same_source_change="$(change_install --agent claude --role reviewer)"
+same_source_noop="$(change_install --agent claude --role reviewer)"
+case "$same_source_change" in
+  *'ROLES CHANGED on this box: "builder" -> "reviewer"'*) r1=loud ;;
+  *) r1=missing ;;
+esac
+t install-same-source-change-loud loud "$r1"
+case "$same_source_noop" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
+t install-same-source-noop-clean clean "$r1"
+t install-change-and-noop-distinct no "$([ "$same_source_change" = "$same_source_noop" ] && printf yes || printf no)"
+
+change_stderr="$(
+  env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" --agent claude --role builder 2>&1 >/dev/null
+)"
+case "$change_stderr" in *"ROLES CHANGED"*) r1=stderr ;; *) r1=missing ;; esac
+t install-change-warning-on-stderr stderr "$r1"
 
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed

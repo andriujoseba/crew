@@ -104,6 +104,9 @@ CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$PORT" \
 CREW_FLOOR_BIND=127.0.0.1 CREW_FLOOR_INTERVAL=3600 \
 CREW_FLOOR_PROBE_TIMEOUT="${FLOOR_TEST_PROBE_TIMEOUT:-6}" \
 CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
+CREW_FLOOR_PING_INTERVAL="${FLOOR_TEST_PING_INTERVAL:-2}" \
+CREW_FLOOR_PING_TIMEOUT="${FLOOR_TEST_PING_TIMEOUT:-4}" \
+CREW_FLOOR_PING_FAILS="${FLOOR_TEST_PING_FAILS:-2}" \
   python3 "$FLOOR/server/floor.py" >"$TMP/server.log" 2>&1 &
 SRV=$!
 
@@ -184,7 +187,11 @@ if [ "$BROWSER" -eq 1 ]; then
         ok "$label: asserted $n checks (>= $floor)"
       fi
     }
-    walk "browser walk" 30 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # 30 -> 40 with the heartbeat/stuck/renew assertions, then -> 38 when the
+    # renewal countdown was dropped and its four checks went with it. Moved
+    # deliberately both times: the floor exists so a walk that silently stops
+    # asserting cannot still exit 0, and it caught that removal.
+    walk "browser walk" 38 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"

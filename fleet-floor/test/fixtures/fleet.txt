@@ -18,3 +18,7 @@ ff-garbage     running  garbage
 ff-absent      absent   working
 ff-wedged      running  wedged
 ff-firstrun    running  firstrun
+# A duty run that has held the lock past two tick boundaries: alive, ticking,
+# and doing nothing. The floor calls this STUCK, and it is the state a healthy
+# fleet never produces on demand.
+ff-stuck       running  stuck

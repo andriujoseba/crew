@@ -83,7 +83,15 @@ fi
 # Identity comes from the token, not a hardcoded string: two of five boxes
 # had both, used inconsistently. Resolved AFTER the boot gate so dead
 # credentials hit the diagnostics above, not an opaque set -e death here.
-ME="$(gh api user --jq .login 2>/dev/null || true)"
+# gh_identity, not a bare `gh api user`: the SAME single call also carries the
+# token's expiry header and tells us whether the credential was rejected, so
+# the floor learns both from the request the tick was making anyway. Nothing
+# polls `gh auth status` any more — see common.sh.
+ME="$(gh_identity)"
+# Free, local, and every tick: reads the vendor's credential file rather than
+# asking the vendor. The boot gate above still pays for one real bot_cli_probe
+# per boot, which is where certainty is worth a round-trip.
+check_vendor_credential
 if [ -z "$ME" ]; then
   warn "cannot resolve own login (gh auth dead?) — nothing to do this tick"
   log "duty run end"

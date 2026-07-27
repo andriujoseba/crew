@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  15 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  16 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -130,7 +130,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 15 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 16 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -204,7 +204,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 15 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 16 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -346,4 +346,152 @@ if [ -z "$CM_BAD" ] && [ "$CM_STAGED" -eq 5 ]; then
   ok "each token's session ran exactly that token's prompt (1:1)"
 else
   fail "each token's session ran exactly that token's prompt (1:1)" "${CM_BAD:-no tokens staged}"
+fi
+
+# --- the ping tier, the stuck lock, and flow-reported credentials ----------
+# Round: the 60s evidence poll answered three questions at one cadence, one of
+# them over the network. These assert the three now arrive separately.
+
+# The ping tier runs on its own thread and overlays the snapshot at read time,
+# so a healthy box reports a round-trip without the evidence poll re-running.
+# A wedged box fails BOTH tiers, and the two facts must not overwrite each
+# other. The probe's "timed out after Ns" is the diagnostic one; the ping count
+# is the timely one. Replacing the first with the second made the note depend
+# on how many misses had accumulated, so CI and a laptop disagreed about the
+# same fleet.
+CS_WDL=$(( $(date +%s) + 40 ))
+while [ "$(uf ff-wedged 'u["ping"] is not None and not u["ping"]["ok"]')" != "True" ] \
+      && [ "$(date +%s)" -lt "$CS_WDL" ]; do sleep 1; done
+t "wedged: the probe's reason survives the ping overlay" True \
+  "$(uf ff-wedged '"timed out" in u["note"] or "unreachable" in u["note"].lower()')"
+t "wedged: the ping fact is added too" True \
+  "$(uf ff-wedged '"UNREACHABLE" in u["note"] or "timed out" in u["note"]')"
+
+t "ping: a healthy box reports a round-trip" True "$(uf ff-working 'u["ping"] is not None and u["ping"]["ok"]')"
+
+# THE sharp edge of carrying a passenger. `.duty.lock.since` is absent whenever
+# no duty run is in flight — the normal state of a healthy idle box — and `cat`
+# on a missing file exits 1. Without the explicit `exit 0`, every healthy box
+# would fail three pings and render UNREACHABLE. This is the assertion that
+# would have caught it, so it is checked across the WHOLE fleet rather than on
+# one box.
+t "ping: boxes with no lock file still ping ok" "" \
+  "$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u.get('ping') and not u['ping']['ok'] and u['box'] not in ('ff-unreach','ff-wedged'))")"
+
+# The passenger's payoff: STUCK is now seen on the 10s ping clock instead of
+# waiting up to a full 60s evidence poll.
+t "ping: a stuck lock is caught by the heartbeat" True "$(uf ff-stuck 'u["lock"]["stuck"]')"
+
+# The last hop: collected -> used server-side -> SERVED. The passenger drove
+# the STUCK escalation while never reaching the wire, so rehearsal-app.sh read
+# ping.uptime/ping.lockheld and got None on every real host. boxside proves the
+# script emits it and that parse_ping reads it; only this proves an operator
+# (or the drill) can see it.
+t "ping: the passenger is served, not just used" True \
+  "$(uf ff-working 'u["ping"] is not None and "uptime" in u["ping"] and "lockheld" in u["ping"]')"
+t "ping: the served uptime is real"   True "$(uf ff-working 'isinstance(u["ping"]["uptime"], int)')"
+t "ping: the served lock age is real" 2820 "$(uf ff-stuck 'u["ping"]["lockheld"]')"
+# A run that started moments ago must be served as a small age and NOT stuck —
+# the raw-timestamp bug marked exactly this case STUCK for 495881h.
+t "ping: a fresh run is served as a small age" 12 "$(uf ff-working 'u["ping"]["lockheld"]')"
+t "ping: ...and is not escalated"          False "$(uf ff-working 'u["lock"]["stuck"]')"
+# ...and it only ever escalates. A ping that read nothing must not clear or
+# contradict what the evidence tier concluded.
+t "ping: a healthy box is not marked stuck by its passenger" False "$(uf ff-working 'u["lock"]["stuck"]')"
+t "ping: the round-trip is measured, not asserted" True "$(uf ff-working 'isinstance(u["ping"]["ms"], int)')"
+
+# The state a ping exists to catch. `unreachable` fails its exec, so after
+# FLOOR_TEST_PING_FAILS consecutive misses the overlay must override whatever
+# the last evidence poll concluded — a session that was running cannot be
+# progressing inside a guest that no longer answers.
+CS_DEADLINE=$(( $(date +%s) + 30 ))
+while [ "$(uf ff-unreach 'u["ping"] is not None and not u["ping"]["ok"]')" != "True" ] \
+      && [ "$(date +%s)" -lt "$CS_DEADLINE" ]; do sleep 1; done
+t "ping: an unreachable box is caught by the heartbeat" True \
+  "$(uf ff-unreach 'u["ping"] is not None and not u["ping"]["ok"]')"
+t "ping: consecutive misses are counted, not just the last one" True \
+  "$(uf ff-unreach 'u["ping"]["fails"] >= 1')"
+
+# A box that is stopped or was never created must NOT be pinged: `box exec`
+# into it fails for a reason the operator already knows, and counting that as
+# a wedge paints every deliberately-down box red.
+#
+# Asserted over whatever the fleet looks like RIGHT NOW rather than against
+# ff-stopped by name: the control cases above run start-all, so by this point
+# the fixture's stopped box is running, and a by-name check here passed or
+# failed on test ordering rather than on behaviour.
+t "ping: stopped and absent boxes are skipped, not counted as wedged" "" \
+  "$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if (u['note'].startswith('stopped') or u['note'].startswith('not created')) and u['ping'] is not None)")"
+
+# The wedge the SILENT rule cannot see: cron ticking, duty.log fresh, lock held
+# for 47 minutes. It stays `working` — it genuinely is — and says so loudly.
+t "stuck: a long-held lock is flagged"        True    "$(uf ff-stuck 'u["lock"]["stuck"]')"
+t "stuck: the box is still reported working"  working "$(uf ff-stuck 'u["state"]')"
+t "stuck: the note names the duration"        True    "$(uf ff-stuck '"STUCK" in u["note"]')"
+t "stuck: a healthy box is not stuck"         False   "$(uf ff-working 'u["lock"]["stuck"]')"
+
+# Credentials are read, never tested. `flowing` is a third value: it means the
+# engine has been talking to the service and has not been rejected — NOT that
+# anything just verified a token.
+t "creds: a healthy box reports flowing"  flowing "$(uf ff-working 'u["gh"]')"
+t "creds: no box ever reports ok"         True    "$(uf ff-working 'u["gh"] != "ok"')"
+t "creds: a rejection is reported missing" missing "$(uf ff-noauth 'u["gh"]')"
+t "creds: the rejection carries its reason" True  "$(uf ff-noauth 'any("gh:" in a for a in u["authfail"])')"
+t "creds: an unhired box knows nothing"   unknown "$(uf ff-nothired 'u["gh"]')"
+# The fourth state: installed, not ticking, therefore nothing established.
+# Reporting `flowing` here would call a disarmed box with a dead token healthy.
+t "creds: a box that stopped ticking is stale, not flowing" stale "$(uf ff-silent 'u["gh"]')"
+# The flowing-requires-a-recent-tick COUPLING is asserted in boxside.sh, where
+# the real probe.sh runs against a duty.log this suite controls. It cannot be
+# asserted here: stub-box picks its credential value from the scenario name,
+# independently of the log it emits, so a fleet-wide check would be measuring
+# the stub's internal consistency rather than the probe's rule. (`ff-fresh`
+# has no timestamped line at all, and a PAUSED box legitimately reports
+# flowing — its engine ran recently, an operator then stopped it.)
+
+# --- source invariants for the two fail-open paths ------------------------
+# Both are conditions a stub fleet cannot stage — a `box list` that fails only
+# sometimes, and a ping thread that outlives its join — so they are pinned at
+# the source, the way this repo already pins `box exec`'s stdin redirect.
+
+# The ping tier must ask box_states whether it could ANSWER, not merely what it
+# returned: an empty dict means both "no boxes" and "could not ask", and
+# treating the second as the first empties the roster, issues zero pings, and
+# clears every consecutive-miss counter — fail-open, on the signal whose job is
+# noticing that something stopped answering.
+CS_SRC="$FLOOR/server/floor.py"
+if grep -q 'box_states(strict=True)' "$CS_SRC"; then
+  ok "ping: distinguishes a failed box list from an empty fleet"
+else
+  fail "ping: distinguishes a failed box list from an empty fleet" \
+       "ping_once does not use box_states(strict=True)"
+fi
+
+# The published snapshot must be a COPY. join() with a timeout returns whether
+# or not the thread finished, and these are daemons, so a ping still blocked in
+# communicate() against a wedged box will later write into whatever dict the
+# closure holds. If that dict is the live one, the late writer sets fails back
+# to 0 from a stale prev and masks the wedge that made it late.
+if awk '/def ping_once/,/return published/' "$CS_SRC" | grep -q 'published = dict(results)'; then
+  ok "ping: publishes a copy, so a late thread lands on an orphan"
+else
+  fail "ping: publishes a copy, so a late thread lands on an orphan" \
+       "ping_once publishes the same dict its threads still hold"
+fi
+
+# `flowing` must never be derivable from VERSION alone — VERSION records that
+# the engine was installed, not that it has run. The rule now lives on the
+# HOST: probe.sh reports `nofail` plus ::tickage and floor.py ages the pair,
+# so the threshold is not copied into the box in a second language.
+if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'flowing\|stale'; then
+  fail "creds: the box reports a fact, not a verdict" \
+       "probe.sh decides flowing/stale itself — that is a third copy of SILENT_AFTER_S"
+else
+  ok "creds: the box reports a fact, not a verdict"
+fi
+if grep -q 'fresh = 0 <= tick_age < SILENT_AFTER_S' "$FLOOR/server/floor.py"; then
+  ok "creds: the host ages nofail with the same rule it calls SILENT"
+else
+  fail "creds: the host ages nofail with the same rule it calls SILENT" \
+       "floor.py does not derive freshness from SILENT_AFTER_S"
 fi

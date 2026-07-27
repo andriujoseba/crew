@@ -258,9 +258,205 @@ BS_LINES="$(sed -n '/^::logstart$/,/^::logend$/p' "$BS_TMP/deg.out" | sed '1d;$d
 if [ "$BS_LINES" -le 600 ]; then ok "degraded: big duty.log is capped at 600 lines ($BS_LINES)"
 else fail "degraded: big duty.log is capped at 600 lines" "shipped $BS_LINES"; fi
 
+# --------------------------------------------------------------------------
+# The flow-reported signals. These exist BECAUSE the probe no longer tests a
+# credential or shells out to anything: every one is a file the duty engine
+# writes and probe.sh only reads. stub-box imitates all four, so without these
+# assertions the collector would be verified entirely against the imitation —
+# and `emit_probe` claiming `::gh flowing` proves nothing about whether the
+# real script ever emits it.
+# --------------------------------------------------------------------------
+
+# The healthy shape: engine present, no failure recorded.
+BS_FLOW="$BS_TMP/flow"; mkdir -p "$BS_FLOW/duty"
+echo "crew@0.4.1" > "$BS_FLOW/duty/VERSION"
+echo "$BS_NOW duty run start" > "$BS_FLOW/duty/duty.log"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: no failure recorded -> gh nofail"     nofail "$(bs_key gh)"
+t "flow: no failure recorded -> vendor nofail" nofail "$(bs_key vendor)"
+# The box reports the AGE and the host applies the rule — so the threshold
+# lives once, in floor.py, instead of a third time inside the box in bash.
+BS_AGE="$(bs_key tickage)"
+if [ -n "$BS_AGE" ] && [ "$BS_AGE" -ge 0 ] && [ "$BS_AGE" -lt 120 ]; then
+  ok "flow: a fresh tick is reported as an age ($BS_AGE s)"
+else fail "flow: a fresh tick is reported as an age" "got '$BS_AGE'"; fi
+
+# THE finding this state exists for. VERSION is written once by install.sh and
+# never touched again, so it proves the engine was INSTALLED, not that it has
+# RUN. A box hired last month, cron since disarmed, token expired last week
+# records no rejection because nothing runs to be rejected — and reported
+# `flowing`, the exact "logged-out box renders green" failure the value was
+# introduced to prevent.
+printf '%s duty run start\n' "$(date -u -d '@'"$(( $(date +%s) - 4000 ))" '+%Y-%m-%dT%H:%M:%SZ')" \
+  > "$BS_FLOW/duty/duty.log"
+bs_probe "$BS_FLOW" >/dev/null
+BS_OLD="$(bs_key tickage)"
+if [ -n "$BS_OLD" ] && [ "$BS_OLD" -gt 600 ]; then
+  ok "flow: a long-dead engine reports an age past the death rule ($BS_OLD s)"
+else fail "flow: a long-dead engine reports an age past the death rule" "got '$BS_OLD'"; fi
+# The BOX still says nofail — it does not decide. floor.py ages this into
+# `stale`, and cases.sh asserts that it does.
+t "flow: the box reports a fact, not a verdict" nofail "$(bs_key gh)"
+# A recorded rejection still outranks staleness: it is a fact, not an absence.
+echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: a rejection outranks everything" missing "$(bs_key gh)"
+rm -f "$BS_FLOW/duty/.auth-fail.gh"
+printf '%s duty run start\n' "$BS_NOW" > "$BS_FLOW/duty/duty.log"
+bs_probe "$BS_FLOW" >/dev/null
+if bs_has authfail; then fail "flow: healthy box emits no authfail" "$(bs_key authfail-gh)"
+else ok "flow: healthy box emits no authfail"; fi
+
+# No engine: nothing has run, so nothing is KNOWN. The distinction from
+# `flowing` is the whole point — a box that has never ticked cannot have a
+# working credential inferred from the absence of a failure.
+BS_NOENG="$BS_TMP/noeng"; mkdir -p "$BS_NOENG/duty"
+bs_probe "$BS_NOENG" >/dev/null
+t "flow: no engine -> gh unknown, never flowing"     unknown "$(bs_key gh)"
+t "flow: no engine -> vendor unknown, never flowing" unknown "$(bs_key vendor)"
+
+# A recorded gh rejection.
+echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: gh rejection -> gh missing" missing "$(bs_key gh)"
+if [ -n "$(bs_key authfail-gh)" ]; then ok "flow: gh rejection -> reason carried to the operator"
+else fail "flow: gh rejection -> reason carried to the operator" "empty"; fi
+# The marker names ONE service; the other must not be condemned with it.
+t "flow: a gh rejection does not mark the vendor missing" nofail "$(bs_key vendor)"
+rm -f "$BS_FLOW/duty/.auth-fail.gh"
+
+# lockheld: a duty run in flight, and the half-written file that a probe
+# landing mid-`date +%s >` will read. A bogus age here would render as a
+# 56-year-old session and read as a catastrophic wedge.
+printf '%s' "$(( $(date +%s) - 2820 ))" > "$BS_FLOW/duty/.duty.lock.since"
+bs_probe "$BS_FLOW" >/dev/null
+BS_HELD="$(bs_key lockheld)"
+if [ "${BS_HELD:-0}" -ge 2815 ] && [ "${BS_HELD:-0}" -le 2830 ]; then
+  ok "flow: lockheld is the age of the run in flight ($BS_HELD s)"
+else fail "flow: lockheld is the age of the run in flight" "got '$BS_HELD'"; fi
+echo "not-a-number" > "$BS_FLOW/duty/.duty.lock.since"
+bs_probe "$BS_FLOW" >/dev/null
+if bs_has lockheld; then fail "flow: a corrupt lock stamp emits nothing" "$(bs_key lockheld)"
+else ok "flow: a corrupt lock stamp emits nothing"; fi
+: > "$BS_FLOW/duty/.duty.lock.since"
+bs_probe "$BS_FLOW" >/dev/null
+if bs_has lockheld; then fail "flow: an empty lock stamp emits nothing" "$(bs_key lockheld)"
+else ok "flow: an empty lock stamp emits nothing"; fi
+rm -f "$BS_FLOW/duty/.duty.lock.since"
+
+# The probe must not have reacquired a network dependency. `gh` and the vendor
+# CLIs are on the box's PATH, so a future edit calling either would pass every
+# assertion above and quietly cost 450ms per box per poll again.
+# Anchored to COMMAND POSITION, not to the word appearing anywhere: `gh` and
+# `vendor` are also legitimate wire-key names in this file, and a bare word
+# match condemned `for svc in gh vendor`. Comments are stripped first so the
+# rationale above each check cannot trip the check.
+BS_NETRE='(^|[;&|(]|\bif |\bthen |\belse )[[:space:]]*(gh|bot_cli_probe|claude|codex|kimi)([[:space:]]|$)'
+if sed 's/#.*//' "$BS_FLOOR/server/probe.sh" | grep -qE "$BS_NETRE"; then
+  fail "flow: probe.sh invokes no network command" \
+       "$(sed 's/#.*//' "$BS_FLOOR/server/probe.sh" | grep -nE "$BS_NETRE")"
+else ok "flow: probe.sh invokes no network command"; fi
+# ...and the guard is worth nothing if it cannot see the thing it forbids.
+if printf 'if gh auth status; then :; fi\n' | grep -qE "$BS_NETRE"; then
+  ok "flow: the no-network guard detects a reintroduced gh call"
+else fail "flow: the no-network guard detects a reintroduced gh call" "guard is blind"; fi
+
 if [ -n "${BS_STANDALONE:-}" ]; then
   echo
   echo "== box-side summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
   [ "${#FAILS[@]}" -gt 0 ] && exit 1
   exit 0
 fi
+
+# --------------------------------------------------------------------------
+# The PING script, EXECUTED FOR REAL.
+#
+# stub-box answers the ping by pattern-matching the command and always exits
+# 0, so every collector assertion about it is circular: removing the `exit 0`
+# from the real script changes nothing the stub can see. This is the only
+# place the actual shell runs, and the case it must survive is the ORDINARY
+# one — a healthy idle box has no .duty.lock.since, `cat` on a missing file
+# exits 1, and a non-zero rc is what the ping tier reads as "this guest is
+# dead". Get it wrong and a healthy fleet renders UNREACHABLE.
+# --------------------------------------------------------------------------
+BS_PING="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; sys.stdout.write(floor.PING_SH)')"
+if [ -n "$BS_PING" ]; then ok "ping: the script could be extracted from floor.py"
+else fail "ping: the script could be extracted from floor.py" "PING_SH is empty"; fi
+
+bs_ping() {  # bs_ping <home> -> writes $BS_TMP/ping.out, echoes rc
+  local rc=0
+  HOME="$1" DUTY_DIR="$1/duty" sh -c "$BS_PING" \
+    > "$BS_TMP/ping.out" 2>"$BS_TMP/ping.err" || rc=$?
+  echo "$rc"
+}
+bs_ping_key() { sed -n "s/^$1 //p" "$BS_TMP/ping.out" | head -1; }
+
+# The normal state of a healthy idle box: engine present, nothing in flight.
+BS_PH="$BS_TMP/pinghome"; mkdir -p "$BS_PH/duty"
+t "ping: an idle box with NO lock file exits 0" 0 "$(bs_ping "$BS_PH")"
+t "ping: ...and reports an empty lock field"    "" "$(bs_ping_key l)"
+if [ -n "$(bs_ping_key u)" ]; then ok "ping: uptime rides along"
+else fail "ping: uptime rides along" "no u line: $(cat "$BS_TMP/ping.out")"; fi
+
+# A run in flight. duty.sh writes an ABSOLUTE stamp (`date +%s`) and every
+# consumer wants the AGE — asserting only that the field is non-empty is what
+# let the raw stamp through, and ~1.7e9 compared against STUCK_AFTER_S marked
+# every live duty run STUCK with a multi-year duration.
+printf '%s' "$(( $(date +%s) - 2820 ))" > "$BS_PH/duty/.duty.lock.since"
+t "ping: a run in flight exits 0" 0 "$(bs_ping "$BS_PH")"
+BS_L="$(bs_ping_key l)"
+if [ -n "$BS_L" ] && [ "$BS_L" -ge 2815 ] && [ "$BS_L" -le 2830 ]; then
+  ok "ping: the lock rides along as an AGE, not a timestamp ($BS_L s)"
+else
+  fail "ping: the lock rides along as an AGE, not a timestamp" \
+       "got '$BS_L' — a raw stamp is ~1.7e9 and marks every live run STUCK"
+fi
+
+# THE regression. A run that started THIS SECOND must be unremarkable: age ~0,
+# far below STUCK_AFTER_S. Asserted against floor.py's real threshold rather
+# than a number written here, so the two cannot drift apart.
+date +%s > "$BS_PH/duty/.duty.lock.since"
+bs_ping "$BS_PH" >/dev/null
+BS_FRESH="$(bs_ping_key l)"
+BS_STUCK_AT="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; print(floor.STUCK_AFTER_S)')"
+if [ -n "$BS_FRESH" ] && [ "$BS_FRESH" -ge 0 ] && [ "$BS_FRESH" -lt "$BS_STUCK_AT" ]; then
+  ok "ping: a run that just started is NOT stuck ($BS_FRESH s < $BS_STUCK_AT)"
+else
+  fail "ping: a run that just started is NOT stuck" \
+       "got '$BS_FRESH' against a $BS_STUCK_AT s threshold"
+fi
+# ...and an old one still escalates, or the guard above could pass by never
+# reporting anything at all.
+printf '%s' "$(( $(date +%s) - 4000 ))" > "$BS_PH/duty/.duty.lock.since"
+bs_ping "$BS_PH" >/dev/null
+BS_OLDL="$(bs_ping_key l)"
+if [ -n "$BS_OLDL" ] && [ "$BS_OLDL" -gt "$BS_STUCK_AT" ]; then
+  ok "ping: a genuinely old lock still crosses the threshold ($BS_OLDL s)"
+else
+  fail "ping: a genuinely old lock still crosses the threshold" "got '$BS_OLDL'"
+fi
+
+# A torn or skewed stamp must report NOTHING rather than a bogus age — duty.sh
+# rewrites this file at the top of every run, so a probe can land mid-write.
+echo "not-a-number" > "$BS_PH/duty/.duty.lock.since"
+t "ping: a corrupt lock stamp exits 0" 0 "$(bs_ping "$BS_PH")"
+t "ping: ...and reports no age"        "" "$(bs_ping_key l)"
+printf '%s' "$(( $(date +%s) + 5000 ))" > "$BS_PH/duty/.duty.lock.since"
+bs_ping "$BS_PH" >/dev/null
+t "ping: a future stamp (clock skew) reports no age" "" "$(bs_ping_key l)"
+
+# An unreadable lock file must not fail the ping: the passenger is optional,
+# the liveness claim is not.
+chmod 000 "$BS_PH/duty/.duty.lock.since"
+t "ping: an unreadable lock file still exits 0" 0 "$(bs_ping "$BS_PH")"
+chmod 644 "$BS_PH/duty/.duty.lock.since"
+rm -f "$BS_PH/duty/.duty.lock.since"
+
+# A created-but-never-hired box has no duty dir at all.
+t "ping: a box with no duty dir exits 0" 0 "$(bs_ping "$BS_TMP/nosuchhome")"
+
+# ...and floor.py must parse what the script REALLY emits, not what it is
+# believed to emit — the circularity this file exists to break.
+bs_ping "$BS_PH" >/dev/null
+BS_PARSED="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; f = floor.parse_ping(open(sys.argv[1]).read()); print("uptime=%s lockheld=%s" % (f["uptime"] is not None, f["lockheld"]))' "$BS_TMP/ping.out")"
+t "ping: floor.py parses the real script's output" "uptime=True lockheld=None" "$BS_PARSED"

@@ -66,6 +66,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Capture the pre-install profile without sourcing it, so the resolved values
+# below cannot overwrite the evidence used to report a change (#36).
+PRIOR_EXISTS=0 PRIOR_AGENT="" PRIOR_ROLES=""
+if [ -f "$DUTY_DIR/conf/instance.conf" ]; then
+  PRIOR_EXISTS=1
+  PRIOR_AGENT="$(sed -n 's/^BOT_AGENT=//p' "$DUTY_DIR/conf/instance.conf" | head -1 | tr -d '"'\''\r')"
+  PRIOR_ROLES="$(sed -n 's/^BOT_ROLES=//p' "$DUTY_DIR/conf/instance.conf" | head -1 | tr -d '"'\''\r')"
+fi
+
 if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
   [ -z "$BOX_ARG" ] || { echo "--box and --agent/--role are alternatives"; exit 1; }
   if [ -z "$AGENT_ARG" ] || [ -z "$ROLE_ARG" ]; then
@@ -73,6 +82,7 @@ if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
   fi
   BOT_AGENT="$AGENT_ARG"
   BOT_ROLE_LIST="$(printf '%s' "$ROLE_ARG" | tr ',' ' ')"
+  RESOLVED_FROM="the --agent/--role flags"
 elif [ -n "$BOX_ARG" ]; then
   resolved="$(awk -v box="$BOX_ARG" '$1 == box {print $2, $3; exit}' "$HERE/../fleet.roster")"
   if [ -z "$resolved" ]; then
@@ -80,11 +90,12 @@ elif [ -n "$BOX_ARG" ]; then
     exit 1
   fi
   read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
+  RESOLVED_FROM="fleet.roster (box $BOX_ARG)"
 elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
   # shellcheck disable=SC1091
   source "$DUTY_DIR/conf/instance.conf"
   BOT_ROLE_LIST="$BOT_ROLES"
-  echo "keeping existing instance config (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
+  RESOLVED_FROM="the existing instance.conf"
 else
   echo "cannot resolve this box's configuration: pass --box <fleet-name>"
   echo "or --agent <agent> --role <role>; no existing instance.conf to keep"
@@ -94,6 +105,29 @@ fi
 for role in $BOT_ROLE_LIST; do
   [ -f "$HERE/conf/roles/$role.conf" ] || { echo "unknown role profile '$role'"; exit 1; }
 done
+
+# A changed role adds or removes whole duty loops. Convergence is intentional,
+# but it must never read like a no-op (#36). Changes survive stdout redirection.
+CHANGE_NOTE="unchanged"
+if [ "$PRIOR_EXISTS" -eq 0 ]; then
+  CHANGE_NOTE="first install"
+else
+  changed=0
+  if [ "$PRIOR_AGENT" != "$BOT_AGENT" ]; then
+    echo "crew: AGENT CHANGED on this box: \"$PRIOR_AGENT\" -> \"$BOT_AGENT\"" >&2
+    changed=1
+  fi
+  if [ "$PRIOR_ROLES" != "$BOT_ROLE_LIST" ]; then
+    echo "crew: ROLES CHANGED on this box: \"$PRIOR_ROLES\" -> \"$BOT_ROLE_LIST\"" >&2
+    echo "crew: this adds or removes whole duty loops — duty.sh gates every module on has_role" >&2
+    changed=1
+  fi
+  if [ "$changed" -eq 1 ]; then
+    echo "crew: resolved from $RESOLVED_FROM" >&2
+    CHANGE_NOTE="CHANGED — see the lines above"
+  fi
+fi
+
 IS_TRIAGE=0
 case " $BOT_ROLE_LIST " in *" triage "*) IS_TRIAGE=1 ;; esac
 
@@ -192,6 +226,7 @@ rm -f "$DUTY_DIR/.boot-id"
 } >"$DUTY_DIR/VERSION"
 
 echo "installed (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
+echo "  agent/role resolved from $RESOLVED_FROM — $CHANGE_NOTE"
 
 if [ "$ARM_CRON" -eq 1 ]; then
   # Deliberately check after the atomic file install: a missing host package

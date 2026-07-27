@@ -77,8 +77,40 @@ emit_probe() {
   esac
   printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
   printf '::now %s\n' "$(now)"
-  printf '::gh %s\n'     "$([ "$sc" = noauth ] && echo missing || echo ok)"
-  printf '::vendor %s\n' "$([ "$sc" = noauth ] && echo missing || echo ok)"
+  # `flowing`, not `ok`: the probe no longer TESTS a credential, it reports
+  # what the duty flow last observed. Keeping `ok` here would have let the
+  # collector be written against a vocabulary probe.sh does not emit — the
+  # exact circularity this stub exists to avoid, and the reason boxside.sh
+  # re-checks these keys against the real script.
+  # Mirrors probe.sh exactly: a rejection is `missing`, a box with no engine
+  # has never had a flow to report anything so it is `unknown`, and only a
+  # hired box with no recorded failure is `flowing`. A stub that said
+  # `flowing` for an unhired box would have let the collector treat "nobody
+  # has complained yet" as a working credential.
+  # The box reports a FACT (`nofail` + ::tickage); the host ages it into
+  # flowing-or-stale. Emitting a verdict here would let the collector be
+  # written against a vocabulary probe.sh no longer speaks.
+  _cred=nofail
+  case "$sc" in
+    nothired) _cred=unknown ;;
+    noauth)   _cred=missing ;;
+  esac
+  # Tick age drives the host's verdict: fresh for a healthy box, long past two
+  # boundaries for the ones that have stopped ticking — which is what makes
+  # `stale` reachable at all.
+  case "$sc" in
+    silent|nocron) _tickage=4000 ;;
+    nothired)      _tickage=-1 ;;
+    *)             _tickage=30 ;;
+  esac
+  printf '::tickage %s\n' "$_tickage"
+  printf '::gh %s\n'     "$_cred"
+  printf '::vendor %s\n' "$_cred"
+  [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
+  # A duty run that started 47 minutes ago and never let go: alive, ticking,
+  # and doing nothing. There is no other way to reach the STUCK branch — a
+  # real fleet produces this state only by breaking.
+  [ "$sc" = stuck ] && printf '::lockheld 2820\n'
   printf '::cron %s\n'   "$cron"
   printf '::paused %s\n' "$paused"
   # Full owner/repo, exactly as repos.txt holds them. Bare names here are
@@ -201,6 +233,41 @@ case "${1:-}" in
     # shellcheck disable=SC2016  # the patterns are LITERAL fragments of the
     # scripts being matched, not strings to expand: $HOME is the box's.
     case "$script" in
+      # The ping tier: `box exec <box> -- true`, the whole heartbeat. It needs
+      # no case of its own to FAIL correctly — stopped, unreachable and wedged
+      # are all handled above, and they are the states a ping exists to catch.
+      # It needs this one to SUCCEED, and without it every ping fell through
+      # to the unmatched-script exit 3 below, so a healthy fleet read as
+      # totally unreachable after three rounds. Deliberately first: `true` is
+      # a substring of nothing else here, but the ping is also the only script
+      # that must stay this cheap, and matching it last would mean walking
+      # every other pattern 6 times a minute per box.
+      *'printf "u %s'*)
+        # The ping. Matched on its own printf format, NOT on /proc/uptime —
+        # probe.sh reads that file too, and this case sits above probe.sh's,
+        # so the looser pattern hijacked every probe in the suite. Narrowest
+        # string unique to one script, exactly like every other pattern here.
+        #
+        # Answers the way a real guest would: a healthy IDLE box has
+        # NO .duty.lock.since — that is the normal state — so it prints an
+        # empty lock field and still exits 0. A stub that always printed a
+        # number would hide this change's sharp edge, which is that `cat` on a
+        # missing file exits 1 and would have rendered every healthy box
+        # UNREACHABLE.
+        echo "u $([ "$sc" = fresh ] && echo 61 || echo 91820)"
+        # An AGE, because that is what the real script emits after converting
+        # .duty.lock.since (an absolute `date +%s` stamp). Emitting a
+        # pre-computed 2820 here while the real script shipped the raw stamp is
+        # how a unit mismatch stayed green: the collector was only ever tested
+        # against the stub's arithmetic. boxside.sh now runs the real script
+        # and asserts the conversion; this stays an age so the two agree.
+        case "$sc" in
+          stuck)  echo "l 2820" ;;
+          # A run that started moments ago — the case that was marked STUCK
+          # with a multi-year duration. It must stay unremarkable.
+          working) echo "l 12" ;;
+          *)      echo "l" ;;
+        esac ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
       *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
@@ -242,14 +309,31 @@ case "${1:-}" in
       # driven here. Every one of these substrings ALSO appears in probe.sh,
       # which is why they sit below its `::logstart` case — the order comment
       # above applies to them exactly as it does to the rest.
+      *'duty/.auth-fail.'*)                     # crew's auth_from_flow
+        # Matched on `duty/.auth-fail.` — probe.sh reads the same markers, but
+        # via "$DUTY_DIR/.auth-fail.$svc", so this substring belongs to the
+        # CLI's script alone. It sits ABOVE the hired_at case because the script
+        # also reads duty/VERSION (to tell 'never ticked' from 'no failure
+        # recorded'), and hired_at's pattern would otherwise answer it with a
+        # version string — which crew then parsed as the gh column.
+        # Like every pattern here it is the narrowest
+        # string unique to one script; the two are otherwise near-identical and
+        # a looser match would answer the probe in the CLI's format.
+        case "$sc" in
+          noauth)        echo "missing missing 30" ;;
+          nothired)      echo "unknown unknown -1" ;;
+          silent|nocron) echo "nofail nofail 4000" ;;
+          *)             echo "nofail nofail 30" ;;
+        esac ;;
       *'duty/VERSION'*)                         # crew's hired_at
         [ "$sc" = "nothired" ] || echo "crew@0.4.1" ;;
-      *'gh auth status'*)                       # crew status / crew hire
+      *'gh auth status'*)                       # crew hire / boot gate
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *bot_cli_probe*)                          # crew's vendor_probe
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *'shared/install.sh'*)                    # crew's hire bake
         echo "installed for stub-bot (agent: stub, roles: stub)"
+        echo "  agent/role resolved from the --agent/--role flags — unchanged"
         echo "crontab armed" ;;
       *'instance.conf'*)                        # crew's box_agent
         # AFTER the ::logstart case: probe.sh reads instance.conf too, now that
