@@ -255,9 +255,18 @@ case "${1:-}" in
         # missing file exits 1 and would have rendered every healthy box
         # UNREACHABLE.
         echo "u $([ "$sc" = fresh ] && echo 61 || echo 91820)"
+        # An AGE, because that is what the real script emits after converting
+        # .duty.lock.since (an absolute `date +%s` stamp). Emitting a
+        # pre-computed 2820 here while the real script shipped the raw stamp is
+        # how a unit mismatch stayed green: the collector was only ever tested
+        # against the stub's arithmetic. boxside.sh now runs the real script
+        # and asserts the conversion; this stays an age so the two agree.
         case "$sc" in
-          stuck) echo "l 2820" ;;
-          *)     echo "l" ;;
+          stuck)  echo "l 2820" ;;
+          # A run that started moments ago — the case that was marked STUCK
+          # with a multi-year duration. It must stay unremarkable.
+          working) echo "l 12" ;;
+          *)      echo "l" ;;
         esac ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;

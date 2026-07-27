@@ -398,11 +398,52 @@ t "ping: ...and reports an empty lock field"    "" "$(bs_ping_key l)"
 if [ -n "$(bs_ping_key u)" ]; then ok "ping: uptime rides along"
 else fail "ping: uptime rides along" "no u line: $(cat "$BS_TMP/ping.out")"; fi
 
-# A run in flight.
+# A run in flight. duty.sh writes an ABSOLUTE stamp (`date +%s`) and every
+# consumer wants the AGE — asserting only that the field is non-empty is what
+# let the raw stamp through, and ~1.7e9 compared against STUCK_AFTER_S marked
+# every live duty run STUCK with a multi-year duration.
 printf '%s' "$(( $(date +%s) - 2820 ))" > "$BS_PH/duty/.duty.lock.since"
 t "ping: a run in flight exits 0" 0 "$(bs_ping "$BS_PH")"
-if [ -n "$(bs_ping_key l)" ]; then ok "ping: the lock stamp rides along"
-else fail "ping: the lock stamp rides along" "empty l line"; fi
+BS_L="$(bs_ping_key l)"
+if [ -n "$BS_L" ] && [ "$BS_L" -ge 2815 ] && [ "$BS_L" -le 2830 ]; then
+  ok "ping: the lock rides along as an AGE, not a timestamp ($BS_L s)"
+else
+  fail "ping: the lock rides along as an AGE, not a timestamp" \
+       "got '$BS_L' — a raw stamp is ~1.7e9 and marks every live run STUCK"
+fi
+
+# THE regression. A run that started THIS SECOND must be unremarkable: age ~0,
+# far below STUCK_AFTER_S. Asserted against floor.py's real threshold rather
+# than a number written here, so the two cannot drift apart.
+date +%s > "$BS_PH/duty/.duty.lock.since"
+bs_ping "$BS_PH" >/dev/null
+BS_FRESH="$(bs_ping_key l)"
+BS_STUCK_AT="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; print(floor.STUCK_AFTER_S)')"
+if [ -n "$BS_FRESH" ] && [ "$BS_FRESH" -ge 0 ] && [ "$BS_FRESH" -lt "$BS_STUCK_AT" ]; then
+  ok "ping: a run that just started is NOT stuck ($BS_FRESH s < $BS_STUCK_AT)"
+else
+  fail "ping: a run that just started is NOT stuck" \
+       "got '$BS_FRESH' against a $BS_STUCK_AT s threshold"
+fi
+# ...and an old one still escalates, or the guard above could pass by never
+# reporting anything at all.
+printf '%s' "$(( $(date +%s) - 4000 ))" > "$BS_PH/duty/.duty.lock.since"
+bs_ping "$BS_PH" >/dev/null
+BS_OLDL="$(bs_ping_key l)"
+if [ -n "$BS_OLDL" ] && [ "$BS_OLDL" -gt "$BS_STUCK_AT" ]; then
+  ok "ping: a genuinely old lock still crosses the threshold ($BS_OLDL s)"
+else
+  fail "ping: a genuinely old lock still crosses the threshold" "got '$BS_OLDL'"
+fi
+
+# A torn or skewed stamp must report NOTHING rather than a bogus age — duty.sh
+# rewrites this file at the top of every run, so a probe can land mid-write.
+echo "not-a-number" > "$BS_PH/duty/.duty.lock.since"
+t "ping: a corrupt lock stamp exits 0" 0 "$(bs_ping "$BS_PH")"
+t "ping: ...and reports no age"        "" "$(bs_ping_key l)"
+printf '%s' "$(( $(date +%s) + 5000 ))" > "$BS_PH/duty/.duty.lock.since"
+bs_ping "$BS_PH" >/dev/null
+t "ping: a future stamp (clock skew) reports no age" "" "$(bs_ping_key l)"
 
 # An unreadable lock file must not fail the ping: the passenger is optional,
 # the liveness claim is not.

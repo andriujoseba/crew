@@ -433,7 +433,10 @@ t "no box reports the retired 'ok' credential state" "" "$OKS"
 # Every box must answer the boolean. `unknown` on a hired box means the engine
 # has run without ever recording a credential state, which is the one outcome
 # that would leave an operator with nothing to act on.
-BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','missing'))")"
+# `stale` counts: a paused or disarmed box genuinely cannot know, and saying so
+# is the actionable answer, not the blank one. Only `unknown` on a box that HAS
+# an engine would be the nothing-to-act-on outcome this is guarding against.
+BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','stale','missing'))")"
 t "every hired box reports a gh credential state" "" "$BLANK"
 
 # Auth is not optional on a page that can power-cycle boxes.

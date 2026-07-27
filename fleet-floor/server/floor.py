@@ -357,6 +357,19 @@ def spark_24h(sessions, now):
 # files on the way past, and STUCK detection moves from the 60s evidence tier
 # to this one — a hung duty session is now seen ~6x sooner, for no extra cost.
 #
+# It emits the lock's AGE, never its raw contents. duty.sh writes an ABSOLUTE
+# unix stamp (`date +%s`), and every consumer wants elapsed seconds — probe.sh
+# has always converted. The first cut of this passenger shipped the stamp raw,
+# so the overlay compared ~1.7e9 against STUCK_AFTER_S and a duty run that had
+# started THAT SECOND rendered "STUCK — held the lock for 495881h". A false
+# positive on every live tick, and the tests missed it twice over: stub-box
+# answered with an already-computed age, and the real-shell test only asserted
+# the field was non-empty. Both now assert it is an AGE.
+#
+# A non-numeric or future stamp emits nothing rather than a bogus number: a
+# torn read (duty.sh writes this file at the top of every run) must never
+# manufacture a wedge.
+#
 # `exit 0` is load-bearing and is this change's sharp edge. `.duty.lock.since`
 # is ABSENT whenever no duty run is in flight, which is the normal state of a
 # healthy idle box; `cat` on a missing file exits 1, so without the explicit
@@ -372,7 +385,11 @@ def spark_24h(sessions, now):
 PING_SH = (
     'printf "u %s\n" "$(cut -d. -f1 /proc/uptime 2>/dev/null)"; '
     's=""; d="${DUTY_DIR:-$HOME/duty}"; '
-    '[ -r "$d/.duty.lock.since" ] && s="$(cat "$d/.duty.lock.since" 2>/dev/null)"; '
+    'if [ -r "$d/.duty.lock.since" ]; then '
+    'v="$(cat "$d/.duty.lock.since" 2>/dev/null)"; '
+    'case "$v" in \'\'|*[!0-9]*) : ;; '
+    '*) a=$(( $(date +%s) - v )); [ "$a" -ge 0 ] && s="$a" ;; '
+    'esac; fi; '
     'printf "l %s\n" "$s"; '
     'exit 0'
 )
@@ -821,8 +838,15 @@ class Fleet:
             # `stale` is a THIRD answer, never folded into ok/not-ok: the tier
             # has not run recently enough for either to be a claim about now.
             stale = age > PING_STALE_AFTER_S
+            # SERVED, not merely used server-side. These drove the STUCK
+            # escalation while never reaching the wire, so the drill this PR
+            # adds read ping.uptime / ping.lockheld and got None on every real
+            # host — an assertion that could only fail, for a reason nobody
+            # would trace to a missing dict key. Publishing them also makes the
+            # fast tier's own reading visible to an operator.
             u["ping"] = {"ok": p["ok"], "ms": p["ms"], "age": age,
-                         "fails": p["fails"], "stale": stale}
+                         "fails": p["fails"], "stale": stale,
+                         "lockheld": p.get("lockheld"), "uptime": p.get("uptime")}
             # The passenger: a lock age read on the ping's own 10s clock,
             # rather than waiting up to 60s for the next evidence poll. This
             # is the wedge the SILENT rule cannot see — cron ticking, duty.log
@@ -839,8 +863,13 @@ class Fleet:
                 if not u["lock"]["stuck"]:
                     u["lock"] = {"held": held, "stuck": True}
                     u["state"] = "working"
-                    u["note"] = ("STUCK — duty run has held the lock for %s"
-                                 % fmt_dur(held))
+                    stuck_note = ("STUCK — duty run has held the lock for %s"
+                                  % fmt_dur(held))
+                    # Composed when a credential is already broken: both are
+                    # true, they need different fixes, and replacing the note
+                    # would hide which login to redo.
+                    u["note"] = ("%s · %s" % (stuck_note, u["note"])
+                                 if u["authfail"] and u["note"] else stuck_note)
             if stale:
                 # Say so rather than rendering an old green as current. Not
                 # `offline`: an unmeasurable box is not a dead one, and

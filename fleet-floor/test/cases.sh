@@ -381,6 +381,20 @@ t "ping: boxes with no lock file still ping ok" "" \
 # The passenger's payoff: STUCK is now seen on the 10s ping clock instead of
 # waiting up to a full 60s evidence poll.
 t "ping: a stuck lock is caught by the heartbeat" True "$(uf ff-stuck 'u["lock"]["stuck"]')"
+
+# The last hop: collected -> used server-side -> SERVED. The passenger drove
+# the STUCK escalation while never reaching the wire, so rehearsal-app.sh read
+# ping.uptime/ping.lockheld and got None on every real host. boxside proves the
+# script emits it and that parse_ping reads it; only this proves an operator
+# (or the drill) can see it.
+t "ping: the passenger is served, not just used" True \
+  "$(uf ff-working 'u["ping"] is not None and "uptime" in u["ping"] and "lockheld" in u["ping"]')"
+t "ping: the served uptime is real"   True "$(uf ff-working 'isinstance(u["ping"]["uptime"], int)')"
+t "ping: the served lock age is real" 2820 "$(uf ff-stuck 'u["ping"]["lockheld"]')"
+# A run that started moments ago must be served as a small age and NOT stuck —
+# the raw-timestamp bug marked exactly this case STUCK for 495881h.
+t "ping: a fresh run is served as a small age" 12 "$(uf ff-working 'u["ping"]["lockheld"]')"
+t "ping: ...and is not escalated"          False "$(uf ff-working 'u["lock"]["stuck"]')"
 # ...and it only ever escalates. A ping that read nothing must not clear or
 # contradict what the evidence tier concluded.
 t "ping: a healthy box is not marked stuck by its passenger" False "$(uf ff-working 'u["lock"]["stuck"]')"
