@@ -178,9 +178,11 @@ _builder_repo() {
   fi
   # Whatever the ledger hid is still real work that nobody has done — the
   # engine stops paying for it, and says so once per change to the set.
+  # Per repo, for the reason spelled out in duty-triage.sh: _builder_repo runs
+  # once per repo, and one shared state file makes every repo clobber the last.
   printf '%s\n%s\n' "$ready_items" "$cr_items" \
     | ledger_suppressed "$DUTY_DIR/.seen-build" \
-    | report_suppressed "$DUTY_DIR/.suppressed-build" "$R: build"
+    | report_suppressed "$DUTY_DIR/.suppressed-build.$slug" "$R: build"
   if [ "$ready_count" = "err" ] && [ "$cr_count" != "err" ]; then
     # Issue listing fails where issues are disabled (forks); that must not
     # blind the PR-based round detection.

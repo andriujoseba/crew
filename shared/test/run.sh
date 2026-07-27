@@ -498,6 +498,39 @@ r6="$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: boar
 case "$r6" in *"1 item(s)"*) r7=warned ;; *) r7="$r6" ;; esac
 t report-recurrence-speaks warned "$r7"
 
+# --- suppression state must be PER REPO (#60 review) ------------------------
+# Both duty modules call report_suppressed inside a per-repo loop. With ONE
+# shared state file, repo B's set replaces repo A's, and a repo with nothing
+# suppressed rm -f's the file outright — so A's unchanged set looks new on the
+# next tick and warns again, every tick, on exactly the 3-repo production box
+# this was written to protect. codex-bot and grok-bot both caught it; grok-bot
+# reproduced the flip-flop with these helpers.
+sup_says() { if grep -q 'item(s)'; then echo warned; else echo silent; fi; }
+SUP_A='o/a#1 2026-07-27T10:00:00Z'
+SUP_B='o/b#1 2026-07-27T10:00:00Z'
+
+# Per-repo files: each repo settles independently and stays quiet.
+STA="$TMP/sup.o_a"; STB="$TMP/sup.o_b"
+printf '%s\n' "$SUP_A" | report_suppressed "$STA" "o/a: board" >/dev/null
+printf '%s\n' "$SUP_B" | report_suppressed "$STB" "o/b: board" >/dev/null
+t report-perrepo-a-settles silent "$(printf '%s\n' "$SUP_A" | report_suppressed "$STA" "o/a: board" | sup_says)"
+t report-perrepo-b-settles silent "$(printf '%s\n' "$SUP_B" | report_suppressed "$STB" "o/b: board" | sup_says)"
+
+# The shape that was wrong, kept as a negative control: sharing one file makes
+# A speak again after B has been through it. If this ever reads `silent` the
+# helper has changed and the per-repo keying above may no longer be load-bearing.
+SUP_SHARED="$TMP/sup.shared"
+printf '%s\n' "$SUP_A" | report_suppressed "$SUP_SHARED" "o/a: board" >/dev/null
+printf '%s\n' "$SUP_B" | report_suppressed "$SUP_SHARED" "o/b: board" >/dev/null
+t report-shared-state-refires warned "$(printf '%s\n' "$SUP_A" | report_suppressed "$SUP_SHARED" "o/a: board" | sup_says)"
+
+# ...and the modules must actually key by repo, not just be capable of it.
+for pair in "duty-triage.sh:suppressed-triage-board" "duty-builder.sh:suppressed-build"; do
+  mod="${pair%%:*}"; sfile="${pair##*:}"
+  if grep -qE "$sfile\.\\\$\{?(R|slug)" "$SHARED/lib/$mod"; then r1=perrepo; else r1=SHARED; fi
+  t "suppression-state-perrepo-$mod" perrepo "$r1"
+done
+
 # --- every state signal is ledgered (#59) -----------------------------------
 # The engine had TWO ledgers, both in triage, while builder and reviewer had
 # none — so any signal cleared by an in-session action the agent may DECLINE

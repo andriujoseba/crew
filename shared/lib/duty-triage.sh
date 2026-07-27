@@ -43,12 +43,22 @@ _triage_repo() {
   # labels, so it can never also be needs-triage. Keys are REPO-qualified for
   # the reason (c) records: one ledger spans every repo in repos.txt, and a
   # bare number let rig#1 shadow ceremony#1.
-  local nt_items stray_items
-  nt_items="$(gh issue list -R "$R" --state open --label "$LABEL_NEEDS_TRIAGE" \
-    --json number,updatedAt 2>/dev/null \
-    | jq -r --arg r "$R" '.[] | "\($r)#\(.number) \(.updatedAt)"' 2>/dev/null || echo err)"
-  if [ "$nt_items" = err ]; then
+  #
+  # Fetch and parse are SEPARATE steps, matching the builder's shape below
+  # (kimi-bot, #60 review). Piped together, a jq that fails after gh succeeded
+  # appends `err` to whatever it had already emitted, so the `= err` test misses
+  # and a PARTIAL list is processed as a complete one — with the probe-failed
+  # warn swallowed. The list being short is harmless (absent items re-appear
+  # next tick, the safe direction); losing the warn is not, because a probe that
+  # cannot tell must say so. That is this whole issue's argument.
+  local nt_items="" stray_items="" nt_json stray_json
+  nt_json="$(gh issue list -R "$R" --state open --label "$LABEL_NEEDS_TRIAGE" \
+    --json number,updatedAt 2>/dev/null || echo err)"
+  if [ "$nt_json" = err ]; then
     warn "$R: needs-triage probe failed"
+  elif ! nt_items="$(printf '%s' "$nt_json" \
+      | jq -r --arg r "$R" '.[] | "\($r)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
+    warn "$R: needs-triage parse failed"
     nt_items=""
   else
     nt="$(printf '%s\n' "$nt_items" \
@@ -58,14 +68,17 @@ _triage_repo() {
 
   # (b) queue-unlabeled strays: the board invariant says every open issue
   # carries needs-triage, epic, or exactly one of ready/claimed/blocked.
-  stray_items="$(gh issue list -R "$R" --state open --limit 200 --json number,labels,updatedAt \
-    | jq -r --arg repo "$R" --arg r "$LABEL_READY" --arg c "$LABEL_CLAIMED" --arg b "$LABEL_BLOCKED" \
-         --arg e "$LABEL_EPIC" --arg n "$LABEL_NEEDS_TRIAGE" \
-      '.[] | select( ([.labels[].name]
-          | map(. == $r or . == $c or . == $b or . == $e or . == $n) | any) | not )
-        | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null || echo err)"
-  if [ "$stray_items" = err ]; then
+  stray_json="$(gh issue list -R "$R" --state open --limit 200 \
+    --json number,labels,updatedAt 2>/dev/null || echo err)"
+  if [ "$stray_json" = err ]; then
     warn "$R: stray probe failed"
+  elif ! stray_items="$(printf '%s' "$stray_json" \
+      | jq -r --arg repo "$R" --arg r "$LABEL_READY" --arg c "$LABEL_CLAIMED" --arg b "$LABEL_BLOCKED" \
+           --arg e "$LABEL_EPIC" --arg n "$LABEL_NEEDS_TRIAGE" \
+        '.[] | select( ([.labels[].name]
+            | map(. == $r or . == $c or . == $b or . == $e or . == $n) | any) | not )
+          | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
+    warn "$R: stray parse failed"
     stray_items=""
   else
     stray="$(printf '%s\n' "$stray_items" \
@@ -75,9 +88,15 @@ _triage_repo() {
 
   # Everything the ledger just hid is still a live board-invariant violation.
   # Stop paying for it; do NOT stop saying it.
+  # State file PER REPO. _triage_repo runs once per repos.txt entry, so a single
+  # shared file has repo B overwrite repo A's saved set — and a repo with
+  # nothing suppressed rm -f's it outright. Next tick A's unchanged set looks
+  # new and warns again, which is precisely the every-tick spam the change
+  # detection exists to prevent, on precisely the multi-repo box #59 is about
+  # (codex-bot and grok-bot both caught this; grok-bot reproduced the flip-flop).
   printf '%s\n%s\n' "$nt_items" "$stray_items" \
     | ledger_suppressed "$DUTY_DIR/.seen-triage-board" \
-    | report_suppressed "$DUTY_DIR/.suppressed-triage-board" "$R: board"
+    | report_suppressed "$DUTY_DIR/.suppressed-triage-board.${R//\//_}" "$R: board"
 
   # (c) open discussions with no comment or reply by me — but wake only for
   # ones whose activity ADVANCED since I last handled this repo. A discussion
