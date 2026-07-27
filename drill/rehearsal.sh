@@ -292,12 +292,15 @@ else
   STRAY_ATTENTION="$(rehearsal_attention_is_clear "$SANDBOX" | grep -v '^$' | sort -u | head -5)"
   if [ -n "$STRAY_ATTENTION" ]; then
     echo
-    echo "REFUSING before a phase 2 tick: attention is role-independent and reaches repos"
-    echo "OUTSIDE repos.txt by design, so the interlock above cannot contain it. This box's"
-    echo "identity ($ME2) has parked attention demands here:"
+    echo "REFUSING before a phase 2 tick: this box's identity ($ME2) has attention demands"
+    echo "parked outside $SANDBOX:"
     printf '  %s\n' "$STRAY_ATTENTION"
-    echo "The drill's first tick would pick them up as real work. Clear the label, or"
-    echo "re-run on a box whose identity carries no parked demand outside $SANDBOX."
+    echo "Since crew#66 the engine should IGNORE these — the registry bounds the attention"
+    echo "wake like every other module — so this check is now the independent verification"
+    echo "that the filter holds, not the only thing containing it. It stays a refusal on"
+    echo "purpose: a drill is the wrong place to discover the filter regressed, and the"
+    echo "cost of being wrong is a real session on a real repo. Clear the label, or re-run"
+    echo "on a box whose identity carries no parked demand outside $SANDBOX."
     exit 1
   fi
   ok "safety interlock: no attention demand parked outside the sandbox"

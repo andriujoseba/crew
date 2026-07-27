@@ -182,13 +182,21 @@ ledger_suppressed() { # $1=ledger; stdin "id ts" lines; stdout the ones it HIDES
 # minutes a standing violation would otherwise write 288 identical lines a day
 # and bury the log it is trying to inform. Removing the state file when the set
 # empties means the next occurrence speaks up again.
+# $3 overrides the reason phrase. The default describes a LEDGER suppression —
+# a session saw the item and declined to clear it. Not every withheld set has
+# that history: the attention wake reports demands in repos this box does not
+# carry, which no session ever saw and which were never actionable here. Both
+# lines land in the same duty.log, and with one phrasing they read as the same
+# event (grok, #67).
 report_suppressed() {
-  local state="$1" label="$2" items n
+  local state="$1" label="$2"
+  local why="${3:-unactioned since a previous session and now suppressed}"
+  local items n
   items="$(sort)"
   if [ -z "$items" ]; then rm -f "$state"; return 0; fi
   if [ "$items" = "$(cat "$state" 2>/dev/null)" ]; then return 0; fi
   n="$(printf '%s\n' "$items" | awk 'NF{c++} END{print c+0}')"
-  warn "$label: $n item(s) unactioned since a previous session and now suppressed — $(printf '%s\n' "$items" | awk 'NF>=2{printf "%s(%s) ", $1, $2}')"
+  warn "$label: $n item(s) $why — $(printf '%s\n' "$items" | awk 'NF>=2{printf "%s(%s) ", $1, $2}')"
   printf '%s\n' "$items" >"$state"
 }
 

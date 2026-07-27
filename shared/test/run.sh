@@ -624,7 +624,8 @@ done
 # none — so any signal cleared by an in-session action the agent may DECLINE
 # re-fired a model session every tick forever. These pin the wiring: a new
 # signal site added without a ledger is the regression.
-for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" "duty-review.sh:.seen-review"; do
+for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" \
+            "duty-review.sh:.seen-review" "duty-attention.sh:.seen-attention"; do
   mod="${pair%%:*}"; led="${pair##*:}"
   if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
   t "signal-ledgered-$mod" ledgered "$r1"
@@ -682,39 +683,140 @@ t review-mixed-commit-settles-both 0 "$(printf '%s\n' "$RQ" | ledger_filter "$RL
 t review-advanced-suppressed-rewakes "o/r#5 T2" \
   "$(printf 'o/r#5 T2\n' | ledger_filter "$RLG")"
 
-# --- what the drill's isolation interlock does and does not cover (#52) ---
+# --- the registry bounds EVERY module, attention included (#52, #66) ------
 # drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to
 # tick if it cannot. That is containment only for modules which actually
-# consult the file, so the split has to be asserted rather than believed:
+# consult the file, so it is asserted rather than believed.
 #
-#   scoped     review, builder, triage, hygiene — every module reading
-#              REPOS_FILE. The reviewer was the exception until 2026-07-25
-#              (an org-wide requested_reviewers sweep no registry could
-#              bound); it is scoped now, which is what #52 was filed doubting.
-#   NOT scoped attention. duty-attention.sh reads the authenticated-user
-#              issues endpoint ON PURPOSE — cross-repo, reaching repos not in
-#              repos.txt — and it runs first, for every role.
-#
-# Both halves matter. Losing the first silently un-scopes a write surface the
-# interlock claims to bound. Losing the second is worse: it would make the
-# interlock read like total containment, which is the exact complaint #52
-# raised, and the reason rehearsal.sh checks the attention queue separately
-# instead of assuming repos.txt bounds it.
-for mod in review builder triage hygiene; do
+# The list was review, builder, triage, hygiene. The reviewer was the exception
+# until 2026-07-25 (an org-wide requested_reviewers sweep no registry could
+# bound) — which is what #52 was filed doubting — and the attention wake was
+# the exception until 2026-07-27, when danmt ruled on #66 that the registry
+# bounds it too. `repos-default.txt` asserted the universal for two days longer
+# than the engine honoured it, and that header is what an operator reads when
+# deciding whether narrowing the file contains a box.
+for mod in review builder triage hygiene attention; do
   if grep -q 'REPOS_FILE' "$SHARED/lib/duty-$mod.sh"; then r1=scoped; else r1=UNSCOPED; fi
   t "registry-scoped-$mod" scoped "$r1"
 done
-if grep -q 'REPOS_FILE' "$SHARED/lib/duty-attention.sh"; then r1=scoped; else r1=unscoped; fi
-t "attention-is-not-registry-scoped" unscoped "$r1"
-# ...and it must SAY so, where a reader deciding whether the drill contains it
-# will actually look.
-# Unwrapped first: the sentence spans two comment lines, and a per-line grep
-# would report the documentation missing while it was sitting right there.
-if sed 's/^[[:space:]]*#[[:space:]]*//' "$SHARED/lib/duty-attention.sh" | tr '\n' ' ' \
-     | grep -q 'reaches repos not in repos.txt'; then r1=documented; else r1=SILENT; fi
-t "attention-documents-its-reach" documented "$r1"
-# The interlock that covers it is a CHECK, not a claim: refuse the tick when a
-# demand is parked outside the sandbox.
+
+# ...and scoped BEHAVIOURALLY, not just by mentioning the file. The partition
+# is the ruling, so it is exercised directly: a grep for REPOS_FILE would pass
+# against a module that read the registry and then ignored it.
+# Definition-only at the top level, so sourcing costs nothing and runs nothing.
+# shellcheck disable=SC1091
+source "$SHARED/lib/duty-attention.sh"
+ATT_REG="$(printf 'heavy-duty/ceremony\nheavy-duty/rig\n')"
+ATT_ROWS="$(printf 'heavy-duty/ceremony 12 T1\nouter/thing 7 T2\nheavy-duty/rig 3 T3\n')"
+ATT_OUT="$(printf '%s\n' "$ATT_ROWS" | _attention_partition "$ATT_REG")"
+t attention-in-registry-acted "IN heavy-duty/ceremony 12 T1
+IN heavy-duty/rig 3 T3" "$(printf '%s\n' "$ATT_OUT" | grep '^IN ')"
+t attention-outside-registry-not-acted "OUT outer/thing 7 T2" \
+  "$(printf '%s\n' "$ATT_OUT" | grep '^OUT ')"
+# A prefix must not count as membership: `heavy-duty/rig` in the registry must
+# not authorize `heavy-duty/rig-fork`. grep -qxF, never a substring match.
+t attention-prefix-is-not-membership "OUT heavy-duty/rig-fork 9 T4" \
+  "$(printf 'heavy-duty/rig-fork 9 T4\n' | _attention_partition "$ATT_REG" | grep '^OUT ')"
+# An empty registry authorizes nothing — it must not read as "no filter".
+t attention-empty-registry-acts-on-nothing "" \
+  "$(printf '%s\n' "$ATT_ROWS" | _attention_partition "" | grep '^IN ' || true)"
+
+# --- the attention wake is ledgered too (#59's last site) --------------------
+# It looked exempt: the pickup session acks by REMOVING the label, so the
+# signal self-clears, and the module documents a deliberate crash-only retry.
+# Both true, and neither covers a session that COMPLETES and correctly declines
+# to ack — needs a ruling, not this box's to answer, already handled. Nothing
+# removes the label and the wake re-fires every tick.
+#
+# It is the worst place in the engine for that: TIMEOUT_ATTENTION is 1800s,
+# duty_attention runs FIRST, and it runs for EVERY role on EVERY box, where
+# every other signal site is confined to one role.
+ALG="$TMP/attention-ledger"
+ATT_IN="$(printf 'o/r#4 T1\no/r#9 T1\n')"
+t attention-first-tick-both-fire 2 "$(printf '%s\n' "$ATT_IN" | ledger_filter "$ALG" | n)"
+# #4's session completed and acked (the row is gone from the query next tick);
+# #9's completed and declined, so only #9's id was committed.
+printf 'o/r#9 T1\n' | ledger_commit "$ALG"
+t attention-declined-does-not-refire 0 "$(printf 'o/r#9 T1\n' | ledger_filter "$ALG" | n)"
+# ...but it is still SAID, once per change to the set.
+t attention-declined-is-reported "o/r#9" \
+  "$(printf 'o/r#9 T1\n' | ledger_suppressed "$ALG" | cut -d' ' -f1)"
+# A comment, an edit or a re-label advances updated_at — look again, which is
+# exactly when the box should.
+t attention-touched-demand-rewakes 1 "$(printf 'o/r#9 T2\n' | ledger_filter "$ALG" | n)"
+# A CRASHED session commits nothing, so the same id is still fresh next tick:
+# the module's documented crash-only retry has to survive the ledger.
+t attention-crashed-session-retries 1 "$(printf 'o/r#4 T1\n' | ledger_filter "$ALG" | n)"
+# The commit is gated on the session's own rc, per demand — a sibling that
+# succeeded must not settle one that died.
+if grep -q 'RUN_SESSION_RC:-1}" -eq 0' "$SHARED/lib/duty-attention.sh"; then r1=gated; else r1=UNGATED; fi
+t attention-ledger-commit-gated gated "$r1"
+# ...and the WAKE PATH must be the filtered set, which everything above this
+# line fails to prove: the assertions exercise ledger_filter, and the module
+# would still mention .seen-attention (in the suppression report) with the
+# filter deleted from the wake. Ripping `ledger_filter` out of the assignment
+# left all of them green. So the structure is pinned too — the same shape
+# duty-review.sh's `review-partitions-before-prompt` pins, and for the same
+# reason.
+ATT_MOD="$SHARED/lib/duty-attention.sh"
+# The SAME hole, one level up, and this one shipped to review: the behavioural
+# assertions call _attention_partition directly, so they cannot see a wake path
+# that computes the partition and then ignores it. kimi ran exactly that
+# mutation against d849f16 —
+#
+#   inside="$(printf '%s\n' "$rows" | awk '{ print $1 "#" $2, $3 }')"
+#
+# keeping the registry read and the partition function intact, and the suite
+# stayed 185 ok / 0 failed. So the wiring is pinned too: the acted set and the
+# reported set must both come from $partitioned, and $outside must be what
+# feeds the suppression report the operator alert keys on.
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+if grep -q 'inside=.*\$partitioned' "$ATT_MOD" &&
+   grep -q 'outside=.*\$partitioned' "$ATT_MOD" &&
+   grep -q 'printf .* "\$outside" *\\*$' "$ATT_MOD"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t attention-acted-set-comes-from-the-partition wired "$r1"
+
+# The two withheld sets are different events and must not read alike in
+# duty.log: a ledger suppression is an item a session SAW and declined; an
+# out-of-scope demand was never actionable by this box and no session ever saw
+# it. The default phrase stays for the three ledger callers.
+RSW="$TMP/rsw-state"
+t report-suppressed-default-phrase reported \
+  "$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" 2>&1 \
+     | grep -q 'unactioned since a previous session' && echo reported || echo MISSING)"
+rm -f "$RSW"
+t report-suppressed-custom-phrase reported \
+  "$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" "never actionable here" 2>&1 \
+     | grep -q 'never actionable here' && echo reported || echo MISSING)"
+rm -f "$RSW"
+if grep -q 'report_suppressed .*sc_state.*\\$' "$ATT_MOD" &&
+   grep -q 'this box does not carry' "$ATT_MOD"; then r1=distinct; else r1=BORROWED; fi
+t attention-scope-report-has-its-own-phrase distinct "$r1"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -q 'fresh=.*ledger_filter.*\.seen-attention' "$ATT_MOD" &&
+   grep -q 'rows="\$fresh"' "$ATT_MOD"; then
+  r1=filtered
+else
+  r1=UNFILTERED
+fi
+t attention-wake-set-is-the-filtered-set filtered "$r1"
+
+# The bound must not be silent, and for THIS module not only in duty.log: an
+# attention demand is somebody deliberately handing this box work, so a bound
+# that only logged would read to them as the box ignoring them.
+if grep -q 'report_suppressed' "$SHARED/lib/duty-attention.sh"; then r1=reported; else r1=SILENT; fi
+t attention-out-of-scope-reported reported "$r1"
+if grep -q 'alert ' "$SHARED/lib/duty-attention.sh"; then r1=pinged; else r1=LOG-ONLY; fi
+t attention-out-of-scope-pings-operator pinged "$r1"
+
+# The drill's separate check survives the ruling, with a changed job: it used
+# to be the ONLY containment for this module, and is now an independent
+# verification that the filter above actually holds. Keeping it is the
+# difference between testing the invariant and trusting it.
 if grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal-safety.sh" &&
    grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
 t "drill-checks-attention-outside-sandbox" checked "$r1"
