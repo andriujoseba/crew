@@ -613,39 +613,56 @@ t review-mixed-commit-settles-both 0 "$(printf '%s\n' "$RQ" | ledger_filter "$RL
 t review-advanced-suppressed-rewakes "o/r#5 T2" \
   "$(printf 'o/r#5 T2\n' | ledger_filter "$RLG")"
 
-# --- what the drill's isolation interlock does and does not cover (#52) ---
+# --- the registry bounds EVERY module, attention included (#52, #66) ------
 # drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to
 # tick if it cannot. That is containment only for modules which actually
-# consult the file, so the split has to be asserted rather than believed:
+# consult the file, so it is asserted rather than believed.
 #
-#   scoped     review, builder, triage, hygiene — every module reading
-#              REPOS_FILE. The reviewer was the exception until 2026-07-25
-#              (an org-wide requested_reviewers sweep no registry could
-#              bound); it is scoped now, which is what #52 was filed doubting.
-#   NOT scoped attention. duty-attention.sh reads the authenticated-user
-#              issues endpoint ON PURPOSE — cross-repo, reaching repos not in
-#              repos.txt — and it runs first, for every role.
-#
-# Both halves matter. Losing the first silently un-scopes a write surface the
-# interlock claims to bound. Losing the second is worse: it would make the
-# interlock read like total containment, which is the exact complaint #52
-# raised, and the reason rehearsal.sh checks the attention queue separately
-# instead of assuming repos.txt bounds it.
-for mod in review builder triage hygiene; do
+# The list was review, builder, triage, hygiene. The reviewer was the exception
+# until 2026-07-25 (an org-wide requested_reviewers sweep no registry could
+# bound) — which is what #52 was filed doubting — and the attention wake was
+# the exception until 2026-07-27, when danmt ruled on #66 that the registry
+# bounds it too. `repos-default.txt` asserted the universal for two days longer
+# than the engine honoured it, and that header is what an operator reads when
+# deciding whether narrowing the file contains a box.
+for mod in review builder triage hygiene attention; do
   if grep -q 'REPOS_FILE' "$SHARED/lib/duty-$mod.sh"; then r1=scoped; else r1=UNSCOPED; fi
   t "registry-scoped-$mod" scoped "$r1"
 done
-if grep -q 'REPOS_FILE' "$SHARED/lib/duty-attention.sh"; then r1=scoped; else r1=unscoped; fi
-t "attention-is-not-registry-scoped" unscoped "$r1"
-# ...and it must SAY so, where a reader deciding whether the drill contains it
-# will actually look.
-# Unwrapped first: the sentence spans two comment lines, and a per-line grep
-# would report the documentation missing while it was sitting right there.
-if sed 's/^[[:space:]]*#[[:space:]]*//' "$SHARED/lib/duty-attention.sh" | tr '\n' ' ' \
-     | grep -q 'reaches repos not in repos.txt'; then r1=documented; else r1=SILENT; fi
-t "attention-documents-its-reach" documented "$r1"
-# The interlock that covers it is a CHECK, not a claim: refuse the tick when a
-# demand is parked outside the sandbox.
+
+# ...and scoped BEHAVIOURALLY, not just by mentioning the file. The partition
+# is the ruling, so it is exercised directly: a grep for REPOS_FILE would pass
+# against a module that read the registry and then ignored it.
+# Definition-only at the top level, so sourcing costs nothing and runs nothing.
+# shellcheck disable=SC1091
+source "$SHARED/lib/duty-attention.sh"
+ATT_REG="$(printf 'heavy-duty/ceremony\nheavy-duty/rig\n')"
+ATT_ROWS="$(printf 'heavy-duty/ceremony 12 T1\nouter/thing 7 T2\nheavy-duty/rig 3 T3\n')"
+ATT_OUT="$(printf '%s\n' "$ATT_ROWS" | _attention_partition "$ATT_REG")"
+t attention-in-registry-acted "IN heavy-duty/ceremony 12 T1
+IN heavy-duty/rig 3 T3" "$(printf '%s\n' "$ATT_OUT" | grep '^IN ')"
+t attention-outside-registry-not-acted "OUT outer/thing 7 T2" \
+  "$(printf '%s\n' "$ATT_OUT" | grep '^OUT ')"
+# A prefix must not count as membership: `heavy-duty/rig` in the registry must
+# not authorize `heavy-duty/rig-fork`. grep -qxF, never a substring match.
+t attention-prefix-is-not-membership "OUT heavy-duty/rig-fork 9 T4" \
+  "$(printf 'heavy-duty/rig-fork 9 T4\n' | _attention_partition "$ATT_REG" | grep '^OUT ')"
+# An empty registry authorizes nothing — it must not read as "no filter".
+t attention-empty-registry-acts-on-nothing "" \
+  "$(printf '%s\n' "$ATT_ROWS" | _attention_partition "" | grep '^IN ' || true)"
+
+# The bound must not be silent, and for THIS module not only in duty.log: an
+# attention demand is somebody deliberately handing this box work, so a bound
+# that only logged would read to them as the box ignoring them.
+if grep -q 'report_suppressed' "$SHARED/lib/duty-attention.sh"; then r1=reported; else r1=SILENT; fi
+t attention-out-of-scope-reported reported "$r1"
+if grep -q 'alert ' "$SHARED/lib/duty-attention.sh"; then r1=pinged; else r1=LOG-ONLY; fi
+t attention-out-of-scope-pings-operator pinged "$r1"
+
+# The drill's separate check survives the ruling, with a changed job: it used
+# to be the ONLY containment for this module, and is now an independent
+# verification that the filter above actually holds. Keeping it is the
+# difference between testing the invariant and trusting it.
 if grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal-safety.sh" &&
    grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
 t "drill-checks-attention-outside-sandbox" checked "$r1"

@@ -8,17 +8,32 @@
 #              duties (resume/handoff/rebase).
 #   reviewer — the review queue. A review request IS the authorization, but
 #              only in a repo named here.
+#   any role — the attention wake (an open issue assigned to this box
+#              carrying the `attention` label). The query behind it is
+#              cross-repo by construction; the ACTION is bounded by this
+#              list.
 #
-# Work found OUTSIDE this list is LOGGED, never acted on — a review request
-# or an authored PR in an unlisted repo produces a WARN naming it, and
-# nothing else. The repair is to add the repo, which is an operator
-# decision, not something a sweep makes by writing where nobody listed.
+# Work found OUTSIDE this list is LOGGED, never acted on — a review request,
+# an authored PR, or an attention demand in an unlisted repo produces a WARN
+# naming it, and nothing else. The repair is to add the repo, which is an
+# operator decision, not something a sweep makes by writing where nobody
+# listed.
+#
+# An out-of-scope ATTENTION demand additionally pings the operator over the
+# same Telegram channel the boot gate uses. The other two are things someone
+# else did that this box merely noticed; an attention demand is somebody
+# deliberately handing this box work, so a bound that only wrote to duty.log
+# would read to them as the box ignoring them (crew#66).
 #
 # (Until 2026-07-25 the reviewer queue was an org-wide requested_reviewers
 # sweep that no list could scope, and the builder's author-side duties were
-# org-wide too. Both are registry-scoped now: an unbounded write surface is
-# not something a per-box registry can contain, and the drill's own safety
-# interlock depended on containment this list could not actually provide.)
+# org-wide too. The attention wake stayed unbounded until 2026-07-27. All
+# three are registry-scoped now: an unbounded write surface is not something
+# a per-box registry can contain, and the drill's own safety interlock
+# depended on containment this list could not actually provide. The header
+# claimed the universal for two days longer than the engine honoured it —
+# crew#66 — which mattered because this header is what an operator reads
+# when deciding whether narrowing the file contains a box.)
 #
 # Before adding a repo for triage: check Discussions are enabled there, and
 # probe what the triage permission actually allows on that repo.
