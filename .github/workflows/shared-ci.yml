@@ -1,10 +1,10 @@
 name: shared-ci
 on:
   pull_request:
-    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', '.github/workflows/shared-ci.yml']
   push:
     branches: [main]
-    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', '.github/workflows/shared-ci.yml']
 
 jobs:
   check:
@@ -21,7 +21,7 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+          shellcheck -x shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
       - name: fixture tests
         run: shared/test/run.sh
       # The collector is the only Python in the repo, and the only thing that
