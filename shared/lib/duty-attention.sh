@@ -135,11 +135,11 @@ duty_attention() {
   # build work, done in the pickup session.
   local route
   if has_role triage; then
-    route="Act per TRIAGE.md. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."
+    route="Act per $DOCTRINE_TRIAGE. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."
   elif has_role builder; then
-    route="Read AGENTS.md at the repo root and follow where it routes you: BUILDER.md for your claims (build in a worktree, never in the main clone), REVIEWER.md for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now."
+    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now."
   else
-    route="Read AGENTS.md at the repo root and follow where it routes you (REVIEWER.md for a verdict). Never spawn work off a bare @-mention."
+    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you ($DOCTRINE_REVIEWER for a verdict). Never spawn work off a bare @-mention."
   fi
 
   local id upd repo num dir slug name extra prompt

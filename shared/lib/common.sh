@@ -84,7 +84,12 @@ render_prompt() {
   local file="$1" out pair name value
   shift
   out="$(cat "$PROMPTS_DIR/$file")"
-  for pair in "$@"; do
+  for pair in \
+    "DOCTRINE_ENTRYPOINT=${DOCTRINE_ENTRYPOINT:-AGENTS.md}" \
+    "DOCTRINE_TRIAGE=${DOCTRINE_TRIAGE:-TRIAGE.md}" \
+    "DOCTRINE_BUILDER=${DOCTRINE_BUILDER:-BUILDER.md}" \
+    "DOCTRINE_REVIEWER=${DOCTRINE_REVIEWER:-REVIEWER.md}" \
+    "$@"; do
     name="${pair%%=*}"
     value="${pair#*=}"
     out="${out//"{{$name}}"/"$value"}"
