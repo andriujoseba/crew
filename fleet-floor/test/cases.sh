@@ -354,6 +354,19 @@ fi
 
 # The ping tier runs on its own thread and overlays the snapshot at read time,
 # so a healthy box reports a round-trip without the evidence poll re-running.
+# A wedged box fails BOTH tiers, and the two facts must not overwrite each
+# other. The probe's "timed out after Ns" is the diagnostic one; the ping count
+# is the timely one. Replacing the first with the second made the note depend
+# on how many misses had accumulated, so CI and a laptop disagreed about the
+# same fleet.
+CS_WDL=$(( $(date +%s) + 40 ))
+while [ "$(uf ff-wedged 'u["ping"] is not None and not u["ping"]["ok"]')" != "True" ] \
+      && [ "$(date +%s)" -lt "$CS_WDL" ]; do sleep 1; done
+t "wedged: the probe's reason survives the ping overlay" True \
+  "$(uf ff-wedged '"timed out" in u["note"] or "unreachable" in u["note"].lower()')"
+t "wedged: the ping fact is added too" True \
+  "$(uf ff-wedged '"UNREACHABLE" in u["note"] or "timed out" in u["note"]')"
+
 t "ping: a healthy box reports a round-trip" True "$(uf ff-working 'u["ping"] is not None and u["ping"]["ok"]')"
 t "ping: the round-trip is measured, not asserted" True "$(uf ff-working 'isinstance(u["ping"]["ms"], int)')"
 
@@ -395,3 +408,52 @@ t "creds: no box ever reports ok"         True    "$(uf ff-working 'u["gh"] != "
 t "creds: a rejection is reported missing" missing "$(uf ff-noauth 'u["gh"]')"
 t "creds: the rejection carries its reason" True  "$(uf ff-noauth 'any("gh:" in a for a in u["authfail"])')"
 t "creds: an unhired box knows nothing"   unknown "$(uf ff-nothired 'u["gh"]')"
+# The fourth state: installed, not ticking, therefore nothing established.
+# Reporting `flowing` here would call a disarmed box with a dead token healthy.
+t "creds: a box that stopped ticking is stale, not flowing" stale "$(uf ff-silent 'u["gh"]')"
+# The flowing-requires-a-recent-tick COUPLING is asserted in boxside.sh, where
+# the real probe.sh runs against a duty.log this suite controls. It cannot be
+# asserted here: stub-box picks its credential value from the scenario name,
+# independently of the log it emits, so a fleet-wide check would be measuring
+# the stub's internal consistency rather than the probe's rule. (`ff-fresh`
+# has no timestamped line at all, and a PAUSED box legitimately reports
+# flowing — its engine ran recently, an operator then stopped it.)
+
+# --- source invariants for the two fail-open paths ------------------------
+# Both are conditions a stub fleet cannot stage — a `box list` that fails only
+# sometimes, and a ping thread that outlives its join — so they are pinned at
+# the source, the way this repo already pins `box exec`'s stdin redirect.
+
+# The ping tier must ask box_states whether it could ANSWER, not merely what it
+# returned: an empty dict means both "no boxes" and "could not ask", and
+# treating the second as the first empties the roster, issues zero pings, and
+# clears every consecutive-miss counter — fail-open, on the signal whose job is
+# noticing that something stopped answering.
+CS_SRC="$FLOOR/server/floor.py"
+if grep -q 'box_states(strict=True)' "$CS_SRC"; then
+  ok "ping: distinguishes a failed box list from an empty fleet"
+else
+  fail "ping: distinguishes a failed box list from an empty fleet" \
+       "ping_once does not use box_states(strict=True)"
+fi
+
+# The published snapshot must be a COPY. join() with a timeout returns whether
+# or not the thread finished, and these are daemons, so a ping still blocked in
+# communicate() against a wedged box will later write into whatever dict the
+# closure holds. If that dict is the live one, the late writer sets fails back
+# to 0 from a stale prev and masks the wedge that made it late.
+if awk '/def ping_once/,/return published/' "$CS_SRC" | grep -q 'published = dict(results)'; then
+  ok "ping: publishes a copy, so a late thread lands on an orphan"
+else
+  fail "ping: publishes a copy, so a late thread lands on an orphan" \
+       "ping_once publishes the same dict its threads still hold"
+fi
+
+# `flowing` must never be derivable from VERSION alone — VERSION records that
+# the engine was installed, not that it has run.
+if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'tick_age'; then
+  ok "creds: flowing requires a recent tick, not just an installed engine"
+else
+  fail "creds: flowing requires a recent tick, not just an installed engine" \
+       "probe.sh derives flowing without consulting the tick age"
+fi

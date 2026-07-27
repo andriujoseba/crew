@@ -72,13 +72,50 @@ emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 #
 # The wire keys stay `gh` and `vendor`, but `ok` is gone: absence of a failure
 # is not proof of a credential, and a value that cannot tell those apart is how
-# a logged-out box renders green. `flowing` says exactly what is known — the
-# engine has been talking to this service and has not reported a rejection.
+# a logged-out box renders green.
+#
+# FOUR values, because three were one short. `flowing` claims the engine has
+# been talking to this service and has not been rejected — but the first cut
+# derived it from `VERSION` existing, and VERSION is written once by
+# install.sh and never touched again. It records that the engine was
+# INSTALLED, not that it has RUN. So a box hired last month with its cron
+# since disarmed and its token expired last week records no rejection (nothing
+# runs to be rejected), has a VERSION, and rendered `flowing` — exactly the
+# "a logged-out box renders green" failure this value exists to prevent, with
+# a comment above it reassuring the reader otherwise.
+#
+# `flowing` therefore requires a RECENT TICK as well: the engine must have
+# logged something within two tick boundaries, the same death rule the floor
+# and tick.sh already use. Installed-but-not-running is `stale` — not a
+# failure, not a claim, just the honest fourth state.
+#
+#   unknown  no engine: nothing has ever run, so nothing is known
+#   stale    engine installed but not ticking: cannot know, and says so
+#   flowing  ticking, and no rejection recorded
+#   missing  a rejection was recorded
 #
 # One marker file PER SERVICE. The first cut used a single .auth-fail and
 # decided which service was broken by substring-matching the reason text — so a
 # gh error mentioning the word "vendor" condemned the agent CLI too, and sent
 # the operator to re-login the wrong thing.
+
+# Age of the newest timestamped duty.log line, in seconds; empty if there is
+# none. Computed here rather than left to the collector because the credential
+# values are emitted here and must not disagree with themselves.
+tick_age=""
+if [ -r "$DUTY_DIR/duty.log" ]; then
+  last_ts="$(grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' \
+    "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
+  if [ -n "$last_ts" ]; then
+    last_epoch="$(date -u -d "$last_ts" +%s 2>/dev/null || echo)"
+    case "$last_epoch" in
+      ''|*[!0-9]*) : ;;
+      *) tick_age=$(( $(date -u +%s) - last_epoch )) ;;
+    esac
+  fi
+fi
+emit tickage "$tick_age"
+
 for svc in gh vendor; do
   fail=""
   [ -f "$DUTY_DIR/.auth-fail.$svc" ] \
@@ -86,13 +123,12 @@ for svc in gh vendor; do
   if [ -n "$fail" ]; then
     emit "$svc" missing
     emit "authfail-$svc" "$fail"
-  elif [ -s "$DUTY_DIR/VERSION" ]; then
+  elif [ ! -s "$DUTY_DIR/VERSION" ]; then
+    emit "$svc" unknown
+  elif [ -n "$tick_age" ] && [ "$tick_age" -lt 600 ]; then
     emit "$svc" flowing
   else
-    # No engine means no flow to have reported anything, so nothing is known —
-    # never `flowing`, which on a box that has never ticked would be a guess
-    # dressed as a fact.
-    emit "$svc" unknown
+    emit "$svc" stale
   fi
 done
 

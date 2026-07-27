@@ -188,8 +188,11 @@ vendor_probe() {
 #
 #     <gh-state> <vendor-state>
 #
-# where a state is flowing | missing | unknown, the same vocabulary
-# fleet-floor's probe.sh emits.
+# where a state is flowing | stale | missing | unknown, the same vocabulary
+# fleet-floor's probe.sh emits — including `stale`, which is the difference
+# between an engine that is INSTALLED and one that is RUNNING. VERSION alone
+# proves only the first, so a disarmed box with a dead token reported
+# `flowing` until this required a recent tick too.
 #
 # This deliberately does NOT call `gh auth status` or bot_cli_probe. Those
 # reach the network, and — more importantly — they are a SECOND source of
@@ -206,10 +209,16 @@ vendor_probe() {
 auth_from_flow() {
   # shellcheck disable=SC2016  # $HOME and $svc must expand INSIDE the box
   bxn "$1" '
+    age=""
+    if [ -r "$HOME/duty/duty.log" ]; then
+      ts="$(grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" "$HOME/duty/duty.log" | tail -1)"
+      [ -n "$ts" ] && age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
+    fi
     for svc in gh vendor; do
       if [ -s "$HOME/duty/.auth-fail.$svc" ]; then printf "missing "
-      elif [ -s "$HOME/duty/VERSION" ]; then printf "flowing "
-      else printf "unknown "; fi
+      elif [ ! -s "$HOME/duty/VERSION" ]; then printf "unknown "
+      elif [ -n "$age" ] && [ "$age" -lt 600 ]; then printf "flowing "
+      else printf "stale "; fi
     done
     printf "\n"
   ' 2>/dev/null | tr -d '\r'

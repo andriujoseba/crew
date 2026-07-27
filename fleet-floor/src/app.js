@@ -723,12 +723,17 @@ function mrow(k,v){return '<div class="mrow"><span class="mk">'+k+'</span><span 
 function credGlyph(label,v){
   if(v==="flowing")return label+" ✓";
   if(v==="missing")return label+" ✗";
+  /* stale: the engine is installed but not ticking, so nothing has been able
+     to find out. Distinct from unknown (never installed) and emphatically
+     distinct from ✓ — a disarmed box with a dead token used to render a tick
+     here, which is the single most misleading thing this panel could say. */
+  if(v==="stale")return label+" ~";
   return label+" ?";               /* unknown: no engine has run, so nothing is known */
 }
 function credColour(d){
   if(d.gh==="missing"||d.vendor==="missing")return "#ff5147";
-  if(d.gh==="unknown"||d.vendor==="unknown")return "#f7bd4e";
-  return "#5fce9b";
+  if(d.gh==="flowing"&&d.vendor==="flowing")return "#5fce9b";
+  return "#f7bd4e";                /* stale or unknown: not established, not green */
 }
 /* The ping tier. `null` means this collector never reported one — an older
    floor.py, or a box it skipped because it is stopped — and must read as "—",

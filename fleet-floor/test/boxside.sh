@@ -272,8 +272,27 @@ BS_FLOW="$BS_TMP/flow"; mkdir -p "$BS_FLOW/duty"
 echo "crew@0.4.1" > "$BS_FLOW/duty/VERSION"
 echo "$BS_NOW duty run start" > "$BS_FLOW/duty/duty.log"
 bs_probe "$BS_FLOW" >/dev/null
-t "flow: no failure recorded -> gh flowing"     flowing "$(bs_key gh)"
-t "flow: no failure recorded -> vendor flowing" flowing "$(bs_key vendor)"
+t "flow: ticking, no failure recorded -> gh flowing"     flowing "$(bs_key gh)"
+t "flow: ticking, no failure recorded -> vendor flowing" flowing "$(bs_key vendor)"
+
+# THE finding this state exists for. VERSION is written once by install.sh and
+# never touched again, so it proves the engine was INSTALLED, not that it has
+# RUN. A box hired last month, cron since disarmed, token expired last week
+# records no rejection because nothing runs to be rejected — and reported
+# `flowing`, the exact "logged-out box renders green" failure the value was
+# introduced to prevent.
+printf '%s duty run start\n' "$(date -u -d '@'"$(( $(date +%s) - 4000 ))" '+%Y-%m-%dT%H:%M:%SZ')" \
+  > "$BS_FLOW/duty/duty.log"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: installed but not ticking is stale, NOT flowing" stale "$(bs_key gh)"
+t "flow: ...and the vendor too"                           stale "$(bs_key vendor)"
+# A recorded rejection still outranks staleness: it is a fact, not an absence.
+echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: a rejection outranks stale" missing "$(bs_key gh)"
+rm -f "$BS_FLOW/duty/.auth-fail.gh"
+printf '%s duty run start\n' "$BS_NOW" > "$BS_FLOW/duty/duty.log"
+bs_probe "$BS_FLOW" >/dev/null
 if bs_has authfail; then fail "flow: healthy box emits no authfail" "$(bs_key authfail-gh)"
 else ok "flow: healthy box emits no authfail"; fi
 

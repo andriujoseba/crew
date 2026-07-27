@@ -88,8 +88,15 @@ emit_probe() {
   # `flowing` for an unhired box would have let the collector treat "nobody
   # has complained yet" as a working credential.
   _cred=flowing
-  [ "$sc" = nothired ] && _cred=unknown
-  [ "$sc" = noauth ]   && _cred=missing
+  # `stale` is what an installed-but-not-ticking box reports. The silent and
+  # nocron scenarios are exactly that, and without them nothing would ever
+  # exercise the state that exists because VERSION proves installation, not
+  # execution.
+  case "$sc" in
+    nothired)       _cred=unknown ;;
+    noauth)         _cred=missing ;;
+    silent|nocron)  _cred=stale ;;
+  esac
   printf '::gh %s\n'     "$_cred"
   printf '::vendor %s\n' "$_cred"
   [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
@@ -281,9 +288,10 @@ case "${1:-}" in
         # string unique to one script; the two are otherwise near-identical and
         # a looser match would answer the probe in the CLI's format.
         case "$sc" in
-          noauth)   echo "missing missing" ;;
-          nothired) echo "unknown unknown" ;;
-          *)        echo "flowing flowing" ;;
+          noauth)        echo "missing missing" ;;
+          nothired)      echo "unknown unknown" ;;
+          silent|nocron) echo "stale stale" ;;
+          *)             echo "flowing flowing" ;;
         esac ;;
       *'duty/VERSION'*)                         # crew's hired_at
         [ "$sc" = "nothired" ] || echo "crew@0.4.1" ;;
