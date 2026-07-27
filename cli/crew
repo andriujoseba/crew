@@ -82,6 +82,32 @@ if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then
     { echo "crew: fleet definition '$CONFIG_DIR' is incomplete; missing:$missing" >&2; exit 1; }
 fi
 config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
+# agent_conf NAME — the one resolved profile path every reader uses: an
+# operator `agents/NAME.conf` beside the fleet definition wins over the
+# same-named shipped profile; the shipped set is the fallback (#75). Adding a
+# vendor is configuration, so it must not require editing the tracked tree —
+# and a name clash resolves to the operator, or a fleet could never adjust a
+# vendor it did not invent.
+agent_conf() {
+  if [ "$CONFIG_IS_OPERATOR" -eq 1 ] && [ -f "$CONFIG_DIR/agents/$1.conf" ]; then
+    printf '%s\n' "$CONFIG_DIR/agents/$1.conf"
+  else
+    printf '%s\n' "$AGENTS_DIR/$1.conf"
+  fi
+}
+# agent_names — every profile name agent_conf can resolve, shipped and
+# operator, unsorted and possibly repeated; callers `sort -u`.
+agent_names() {
+  local f
+  for f in "$AGENTS_DIR"/*.conf; do
+    if [ -f "$f" ]; then basename "$f" .conf; fi
+  done
+  if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then
+    for f in "$CONFIG_DIR"/agents/*.conf; do
+      if [ -f "$f" ]; then basename "$f" .conf; fi
+    done
+  fi
+}
 ROSTER="${CREW_ROSTER:-$CONFIG_DIR/fleet.roster}"
 FLEET_CONF="$(config_file fleet.conf)"
 REPOS_SEED="$(config_file repos.txt)"
@@ -108,7 +134,7 @@ need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — 
 #
 # Safe at every call site: all of them pass the script as an ARGUMENT.
 # vendor_probe is the one helper that legitimately ships data over stdin, and
-# it has its own `<"$AGENTS_DIR/$2.conf"` redirect — which is exactly why it
+# it has its own `<"$(agent_conf "$2")"` redirect — which is exactly why it
 # never broke.
 #
 # Those two are the ONLY places `box exec` appears in this file, and the test
@@ -133,6 +159,28 @@ bxput() { # BOX SOURCE DESTINATION
   box exec "$box_name" -- bash -lc "$remote_script" <"$source_file"
 }
 
+# stage_agent_profiles BOX — every operator agents/*.conf into the seed dir
+# install.sh reads. The seed dir is emptied FIRST even when the operator has
+# no agents/ at all: a profile staged by a previous install and since deleted
+# from the fleet definition must not resurrect from a stale seed.
+#
+# The timing is the contract (#75): install.sh refuses an unknown agent
+# profile BEFORE it creates conf/agents, so a profile that only arrived with
+# the conf copy would fail its own validation — the seed has to be on the box
+# before install.sh runs, which is exactly when this stage runs.
+stage_agent_profiles() { # BOX
+  local box_name="$1" profile
+  bxn "$box_name" 'rm -rf ~/duty/.crew-seed-agents' || return 1
+  if [ "$CONFIG_IS_OPERATOR" -eq 1 ] && [ -d "$CONFIG_DIR/agents" ]; then
+    for profile in "$CONFIG_DIR"/agents/*.conf; do
+      if [ -f "$profile" ]; then
+        bxput "$box_name" "$profile" "duty/.crew-seed-agents/$(basename "$profile")" || return 1
+      fi
+    done
+  fi
+  return 0
+}
+
 stage_fleet_definition() { # BOX
   local box_name="$1" runtime_conf
   runtime_conf="$(mktemp)"
@@ -144,12 +192,13 @@ stage_fleet_definition() { # BOX
   if bxput "$box_name" "$ROSTER" 'duty/fleet.roster' &&
      bxput "$box_name" "$runtime_conf" 'duty/conf/fleet.conf' &&
      bxput "$box_name" "$REPOS_SEED" 'duty/.crew-seed-repos.txt' &&
-     bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt'; then
+     bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt' &&
+     stage_agent_profiles "$box_name"; then
     rm -f "$runtime_conf"
     return 0
   fi
   rm -f "$runtime_conf"
-  bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt' || true
+  bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt; rm -rf ~/duty/.crew-seed-agents' || true
   return 1
 }
 
@@ -203,12 +252,12 @@ install_identity_args() { # NAME AGENT ROLE — shell words for remote install.s
 # `crew auth`. Falls back to something honest rather than printing nothing.
 login_hint() {
   local h
-  h="$(sed -n 's/^AGENT_LOGIN_HINT=//p' "$AGENTS_DIR/$1.conf" 2>/dev/null | tr -d '"')"
+  h="$(sed -n 's/^AGENT_LOGIN_HINT=//p' "$(agent_conf "$1")" 2>/dev/null | tr -d '"')"
   printf '%s\n' "${h:-run the $1 CLI login}"
 }
 
 validate_profiles() {  # agent role
-  [ -f "$AGENTS_DIR/$1.conf" ] || die "unknown agent '$1' — see: crew profiles"
+  [ -f "$(agent_conf "$1")" ] || die "unknown agent '$1' — see: crew profiles"
   [ -f "$ROLES_DIR/$2.conf" ]  || die "unknown role '$2' — see: crew profiles"
 }
 
@@ -267,7 +316,7 @@ hired_at() { bxn "$1" 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '
 vendor_probe() {
   box exec "$1" -- bash -lc \
     'cat >/tmp/.crew-agent-probe.conf; source /tmp/.crew-agent-probe.conf; bot_cli_probe' \
-    <"$AGENTS_DIR/$2.conf" >/dev/null 2>&1
+    <"$(agent_conf "$2")" >/dev/null 2>&1
 }
 
 # auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
@@ -880,14 +929,22 @@ cmd_init() {
 }
 
 cmd_profiles() {
-  local f
+  local f name
   echo "roles:"
   for f in "$ROLES_DIR"/*.conf; do
     echo "  $(basename "$f" .conf) — $(sed -n '1s/^# *//p' "$f")"
   done
   echo "agents:"
-  for f in "$AGENTS_DIR"/*.conf; do
-    echo "  $(basename "$f" .conf) — $(sed -n '1s/^# *//p' "$f")"
+  # The union of shipped and operator names, each resolved through agent_conf
+  # so the line shown describes the file that will actually run; a profile the
+  # operator supplied (or overrode) says so, because "listed here" must mean
+  # "hireable" and an operator debugging a clash needs to see who won (#75).
+  for name in $(agent_names | sort -u); do
+    f="$(agent_conf "$name")"
+    case "$f" in
+      "$AGENTS_DIR"/*) echo "  $name — $(sed -n '1s/^# *//p' "$f")" ;;
+      *)               echo "  $name — $(sed -n '1s/^# *//p' "$f")  [operator]" ;;
+    esac
   done
 }
 

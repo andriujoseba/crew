@@ -235,6 +235,8 @@ case "${1:-}" in
     case "$script" in
       *'.crew-stage.XXXXXX'*)                  # crew's fleet-definition transport
         : ;;
+      *'rm -rf ~/duty/.crew-seed-agents'*)     # agent-profile seed reset (#75)
+        : ;;
       *'git -C ~/crew checkout'*)              # crew's checkout convergence
         : ;;
       # The ping tier: `box exec <box> -- true`, the whole heartbeat. It needs
