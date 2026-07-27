@@ -72,6 +72,21 @@ ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
 # through a userspace that can no longer fork. This round-trip needs the incus
 # agent alive, a fork, an exec and a binary read off disk — it fails when the
 # box is wedged, which is the entire point.
+# Measured on the drill host: ~97ms wall, ~47ms host CPU per ping, and that
+# 47ms is a FLOOR — `time` accounts only for children of the calling shell, so
+# it excludes incusd's handling and the in-guest fork. At 10s across 7 boxes
+# that is ~3% of a core. 1s would be ~33% for detection nothing downstream can
+# act on.
+#
+# Two things this knob does NOT do, both of which make a smaller number a lie:
+#   · values below 2 are silently ignored — ping_loop's sleep has a max(2, ...)
+#     floor, so setting 1 buys nothing
+#   · one wedged box paces the whole fleet — ping_once blocks until every
+#     thread joins, up to PING_TIMEOUT_S + 5, so the configured interval is a
+#     BEST case that degrades exactly when something is unhealthy
+#
+# The 97ms-normal against a 5000ms timeout is a 50x margin, and that is what
+# makes PING_FAILS_TO_WEDGE=3 a wedge detector rather than a jitter detector.
 PING_INTERVAL_S = int(os.environ.get("CREW_FLOOR_PING_INTERVAL", "10"))
 # Tight on purpose. A healthy round-trip is ~100ms; anything past a couple of
 # seconds is already the pathology, and a long timeout here would just
@@ -337,21 +352,69 @@ def spark_24h(sessions, now):
     return [round(0.06 + 0.94 * (b / peak), 3) for b in buckets]
 
 
-def ping_box(name):
-    """Is this box answering? Returns (ok, milliseconds, error).
+# The ping already pays for a host-side process start (~47ms of the ~97ms);
+# what runs INSIDE the guest is nearly free by comparison. So it reads two
+# files on the way past, and STUCK detection moves from the 60s evidence tier
+# to this one — a hung duty session is now seen ~6x sooner, for no extra cost.
+#
+# `exit 0` is load-bearing and is this change's sharp edge. `.duty.lock.since`
+# is ABSENT whenever no duty run is in flight, which is the normal state of a
+# healthy idle box; `cat` on a missing file exits 1, so without the explicit
+# exit every healthy box would fail three pings and render UNREACHABLE. The
+# `[ -r ]` guard makes that impossible independently, and a test asserts a box
+# with no lock file still pings ok.
+#
+# rc semantics are unchanged, and that is the point: a non-zero rc still means
+# "could not run anything in the guest", which is the entire liveness claim.
+# The parsed output is a PASSENGER — malformed, empty or absent output never
+# turns into a failed ping, because the one tier that must never lie now has a
+# parser attached to it. Everything it reads degrades to None.
+PING_SH = (
+    'printf "u %s\n" "$(cut -d. -f1 /proc/uptime 2>/dev/null)"; '
+    's=""; d="${DUTY_DIR:-$HOME/duty}"; '
+    '[ -r "$d/.duty.lock.since" ] && s="$(cat "$d/.duty.lock.since" 2>/dev/null)"; '
+    'printf "l %s\n" "$s"; '
+    'exit 0'
+)
 
-    The cheapest possible `box exec`: no script piped in, no stdin, no output
-    to parse. Never raises — an unreachable box is a datum, like everywhere
-    else in this file.
+
+def parse_ping(out):
+    """The passenger facts, or None each. NEVER raises and never signals."""
+    facts = {"uptime": None, "lockheld": None}
+    for line in (out or "").splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        key, val = parts
+        if key not in ("u", "l"):
+            continue
+        try:
+            n = int(val.strip())
+        except (TypeError, ValueError):
+            continue
+        if key == "u":
+            facts["uptime"] = n
+        elif n >= 0:
+            facts["lockheld"] = n
+    return facts
+
+
+def ping_box(name):
+    """Is this box answering? Returns (ok, milliseconds, error, facts).
+
+    The cheapest `box exec` that still proves a fork: no stdin, no script piped
+    in, one tiny shell in the guest. Never raises — an unreachable box is a
+    datum, like everywhere else in this file.
     """
     t0 = time.time()
-    rc, _, err = run(["box", "exec", name, "--", "true"], PING_TIMEOUT_S)
+    rc, out, err = run(["box", "exec", name, "--", "sh", "-c", PING_SH],
+                       PING_TIMEOUT_S)
     ms = int((time.time() - t0) * 1000)
     if rc == 0:
-        return True, ms, ""
+        return True, ms, "", parse_ping(out)
     if rc == 124:
-        return False, ms, "no answer in %ss" % PING_TIMEOUT_S
-    return False, ms, (err.strip().splitlines() or ["box exec rc %d" % rc])[-1]
+        return False, ms, "no answer in %ss" % PING_TIMEOUT_S, {}
+    return False, ms, (err.strip().splitlines() or ["box exec rc %d" % rc])[-1], {}
 
 
 def probe_box(unit, agent_conf):
@@ -674,10 +737,11 @@ class Fleet:
             prev_round = dict(self.pings)
 
         def work(name):
-            ok, ms, err = ping_box(name)
+            ok, ms, err, facts = ping_box(name)
             prev = prev_round.get(name) or {}
             results[name] = {
                 "ok": ok, "ms": ms, "ts": now, "err": err,
+                "lockheld": facts.get("lockheld"), "uptime": facts.get("uptime"),
                 # Consecutive misses, not a rate: one dropped ping is noise,
                 # a run of them is a wedge. Reset on any success.
                 "fails": 0 if ok else int(prev.get("fails", 0)) + 1,
@@ -759,6 +823,24 @@ class Fleet:
             stale = age > PING_STALE_AFTER_S
             u["ping"] = {"ok": p["ok"], "ms": p["ms"], "age": age,
                          "fails": p["fails"], "stale": stale}
+            # The passenger: a lock age read on the ping's own 10s clock,
+            # rather than waiting up to 60s for the next evidence poll. This
+            # is the wedge the SILENT rule cannot see — cron ticking, duty.log
+            # fresh, nothing moving — and it was the slowest thing on the
+            # console to notice.
+            #
+            # Only ever ESCALATES. A ping that read nothing (no lock file, an
+            # unparseable line, a guest where $HOME is not what we assumed)
+            # leaves whatever the evidence poll concluded untouched: the
+            # passenger may report a wedge sooner, never clear one, and never
+            # contradict the tier that reads the file properly.
+            held = p.get("lockheld")
+            if not stale and p["ok"] and isinstance(held, int) and held > STUCK_AFTER_S:
+                if not u["lock"]["stuck"]:
+                    u["lock"] = {"held": held, "stuck": True}
+                    u["state"] = "working"
+                    u["note"] = ("STUCK — duty run has held the lock for %s"
+                                 % fmt_dur(held))
             if stale:
                 # Say so rather than rendering an old green as current. Not
                 # `offline`: an unmeasurable box is not a dead one, and

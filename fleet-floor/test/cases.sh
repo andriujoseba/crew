@@ -368,6 +368,22 @@ t "wedged: the ping fact is added too" True \
   "$(uf ff-wedged '"UNREACHABLE" in u["note"] or "timed out" in u["note"]')"
 
 t "ping: a healthy box reports a round-trip" True "$(uf ff-working 'u["ping"] is not None and u["ping"]["ok"]')"
+
+# THE sharp edge of carrying a passenger. `.duty.lock.since` is absent whenever
+# no duty run is in flight — the normal state of a healthy idle box — and `cat`
+# on a missing file exits 1. Without the explicit `exit 0`, every healthy box
+# would fail three pings and render UNREACHABLE. This is the assertion that
+# would have caught it, so it is checked across the WHOLE fleet rather than on
+# one box.
+t "ping: boxes with no lock file still ping ok" "" \
+  "$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u.get('ping') and not u['ping']['ok'] and u['box'] not in ('ff-unreach','ff-wedged'))")"
+
+# The passenger's payoff: STUCK is now seen on the 10s ping clock instead of
+# waiting up to a full 60s evidence poll.
+t "ping: a stuck lock is caught by the heartbeat" True "$(uf ff-stuck 'u["lock"]["stuck"]')"
+# ...and it only ever escalates. A ping that read nothing must not clear or
+# contradict what the evidence tier concluded.
+t "ping: a healthy box is not marked stuck by its passenger" False "$(uf ff-working 'u["lock"]["stuck"]')"
 t "ping: the round-trip is measured, not asserted" True "$(uf ff-working 'isinstance(u["ping"]["ms"], int)')"
 
 # The state a ping exists to catch. `unreachable` fails its exec, so after

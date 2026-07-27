@@ -393,6 +393,25 @@ else
   skip "heartbeat" "no running box on this host"
 fi
 
+# The ping carries a passenger — /proc/uptime and .duty.lock.since — read by a
+# NON-LOGIN `sh -c` inside the guest. probe.sh runs under `bash -lc`, so it has
+# never depended on what a non-login exec puts in the environment, and $HOME is
+# exactly what `${DUTY_DIR:-$HOME/duty}` needs. If a real box does not set it
+# the way this assumes, the passenger silently reads nothing forever and STUCK
+# quietly reverts to the 60s tier — a feature that no-ops in production while
+# every stub test passes. Only a real guest can settle it.
+UPS="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if u.get('ping') and u['ping']['ok'] and u['ping'].get('uptime'))")"
+if [ "$PINGED" -gt 0 ]; then
+  t "the ping's passenger reads the real guest" "$PINGED" "$UPS"
+else
+  skip "the ping's passenger reads the real guest" "no box answered a ping"
+fi
+# And the two tiers must not disagree about the same file. A box with a run in
+# flight is reported by BOTH probe.sh (::lockheld, bash -lc) and the ping
+# (non-login sh) — if $HOME differs between them, this is where it shows.
+DISAGREE="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u.get('ping') and u['ping']['ok'] and u['lock']['held'] and u['ping'].get('lockheld') is None)")"
+t "ping and probe agree about the duty lock" "" "$DISAGREE"
+
 # ---- credentials are READ, never probed -----------------------------------
 # The drill is the only place a real `gh` and a real vendor CLI exist, so it is
 # the only place that can prove the probe stopped calling them. A reintroduced

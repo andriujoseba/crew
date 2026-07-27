@@ -242,7 +242,23 @@ case "${1:-}" in
       # a substring of nothing else here, but the ping is also the only script
       # that must stay this cheap, and matching it last would mean walking
       # every other pattern 6 times a minute per box.
-      true)                                     : ;;
+      *'printf "u %s'*)
+        # The ping. Matched on its own printf format, NOT on /proc/uptime —
+        # probe.sh reads that file too, and this case sits above probe.sh's,
+        # so the looser pattern hijacked every probe in the suite. Narrowest
+        # string unique to one script, exactly like every other pattern here.
+        #
+        # Answers the way a real guest would: a healthy IDLE box has
+        # NO .duty.lock.since — that is the normal state — so it prints an
+        # empty lock field and still exits 0. A stub that always printed a
+        # number would hide this change's sharp edge, which is that `cat` on a
+        # missing file exits 1 and would have rendered every healthy box
+        # UNREACHABLE.
+        echo "u $([ "$sc" = fresh ] && echo 61 || echo 91820)"
+        case "$sc" in
+          stuck) echo "l 2820" ;;
+          *)     echo "l" ;;
+        esac ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
       *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;

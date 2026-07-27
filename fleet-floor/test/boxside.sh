@@ -367,3 +367,55 @@ if [ -n "${BS_STANDALONE:-}" ]; then
   [ "${#FAILS[@]}" -gt 0 ] && exit 1
   exit 0
 fi
+
+# --------------------------------------------------------------------------
+# The PING script, EXECUTED FOR REAL.
+#
+# stub-box answers the ping by pattern-matching the command and always exits
+# 0, so every collector assertion about it is circular: removing the `exit 0`
+# from the real script changes nothing the stub can see. This is the only
+# place the actual shell runs, and the case it must survive is the ORDINARY
+# one — a healthy idle box has no .duty.lock.since, `cat` on a missing file
+# exits 1, and a non-zero rc is what the ping tier reads as "this guest is
+# dead". Get it wrong and a healthy fleet renders UNREACHABLE.
+# --------------------------------------------------------------------------
+BS_PING="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; sys.stdout.write(floor.PING_SH)')"
+if [ -n "$BS_PING" ]; then ok "ping: the script could be extracted from floor.py"
+else fail "ping: the script could be extracted from floor.py" "PING_SH is empty"; fi
+
+bs_ping() {  # bs_ping <home> -> writes $BS_TMP/ping.out, echoes rc
+  local rc=0
+  HOME="$1" DUTY_DIR="$1/duty" sh -c "$BS_PING" \
+    > "$BS_TMP/ping.out" 2>"$BS_TMP/ping.err" || rc=$?
+  echo "$rc"
+}
+bs_ping_key() { sed -n "s/^$1 //p" "$BS_TMP/ping.out" | head -1; }
+
+# The normal state of a healthy idle box: engine present, nothing in flight.
+BS_PH="$BS_TMP/pinghome"; mkdir -p "$BS_PH/duty"
+t "ping: an idle box with NO lock file exits 0" 0 "$(bs_ping "$BS_PH")"
+t "ping: ...and reports an empty lock field"    "" "$(bs_ping_key l)"
+if [ -n "$(bs_ping_key u)" ]; then ok "ping: uptime rides along"
+else fail "ping: uptime rides along" "no u line: $(cat "$BS_TMP/ping.out")"; fi
+
+# A run in flight.
+printf '%s' "$(( $(date +%s) - 2820 ))" > "$BS_PH/duty/.duty.lock.since"
+t "ping: a run in flight exits 0" 0 "$(bs_ping "$BS_PH")"
+if [ -n "$(bs_ping_key l)" ]; then ok "ping: the lock stamp rides along"
+else fail "ping: the lock stamp rides along" "empty l line"; fi
+
+# An unreadable lock file must not fail the ping: the passenger is optional,
+# the liveness claim is not.
+chmod 000 "$BS_PH/duty/.duty.lock.since"
+t "ping: an unreadable lock file still exits 0" 0 "$(bs_ping "$BS_PH")"
+chmod 644 "$BS_PH/duty/.duty.lock.since"
+rm -f "$BS_PH/duty/.duty.lock.since"
+
+# A created-but-never-hired box has no duty dir at all.
+t "ping: a box with no duty dir exits 0" 0 "$(bs_ping "$BS_TMP/nosuchhome")"
+
+# ...and floor.py must parse what the script REALLY emits, not what it is
+# believed to emit — the circularity this file exists to break.
+bs_ping "$BS_PH" >/dev/null
+BS_PARSED="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; f = floor.parse_ping(open(sys.argv[1]).read()); print("uptime=%s lockheld=%s" % (f["uptime"] is not None, f["lockheld"]))' "$BS_TMP/ping.out")"
+t "ping: floor.py parses the real script's output" "uptime=True lockheld=None" "$BS_PARSED"
