@@ -13,6 +13,7 @@
 #              [--roster <path>]              …watching a roster other than the resolved default
 #   crew upgrade <box> | --all                pull crew + re-install in place
 #   crew gold <box>                           snapshot a box as a gold image
+#   crew init [config-dir]                    scaffold a new operator fleet definition
 #   crew profiles                             list role and agent profiles
 #
 # The lifecycle is two verbs around one human step in the middle:
@@ -85,6 +86,7 @@ ROSTER="${CREW_ROSTER:-$CONFIG_DIR/fleet.roster}"
 FLEET_CONF="$(config_file fleet.conf)"
 REPOS_SEED="$(config_file repos.txt)"
 NOTIFY_REPOS_SEED="$(config_file notify-repos.txt)"
+DOCTRINE_CONF="$(config_file doctrine.conf)"
 CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 # Two tick boundaries — the fleet's death rule. MUST equal fleet-floor's
 # SILENT_AFTER_S (floor.py: 2 * TICK_S); shared/test/run.sh fails if it does
@@ -132,13 +134,21 @@ bxput() { # BOX SOURCE DESTINATION
 }
 
 stage_fleet_definition() { # BOX
-  local box_name="$1"
+  local box_name="$1" runtime_conf
+  runtime_conf="$(mktemp)"
+  {
+    cat "$FLEET_CONF"
+    printf '\n# Resolved from the selected fleet directory doctrine.conf.\n'
+    cat "$DOCTRINE_CONF"
+  } >"$runtime_conf"
   if bxput "$box_name" "$ROSTER" 'duty/fleet.roster' &&
-     bxput "$box_name" "$FLEET_CONF" 'duty/conf/fleet.conf' &&
+     bxput "$box_name" "$runtime_conf" 'duty/conf/fleet.conf' &&
      bxput "$box_name" "$REPOS_SEED" 'duty/.crew-seed-repos.txt' &&
      bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt'; then
+    rm -f "$runtime_conf"
     return 0
   fi
+  rm -f "$runtime_conf"
   bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt' || true
   return 1
 }
@@ -845,6 +855,30 @@ cmd_floor() {
     exec python3 "$CREW_ROOT/fleet-floor/server/floor.py"
 }
 
+cmd_init() {
+  [ "$#" -le 1 ] || die "usage: crew init [config-dir]"
+  local target="${1:-}" file name _agent _role _from
+  if [ -z "$target" ]; then
+    if [ -n "${XDG_CONFIG_HOME:-}" ]; then target="$XDG_CONFIG_HOME/crew"
+    else target="$HOME/.config/crew"; fi
+  fi
+  [ ! -e "$target" ] ||
+    die "refusing to overwrite existing operator config '$target'"
+
+  mkdir -p "$target/agents"
+  for file in fleet.roster fleet.conf repos.txt notify-repos.txt doctrine.conf; do
+    cp "$CREW_ROOT/examples/$file" "$target/$file"
+  done
+
+  echo "initialized operator config: $target"
+  echo "edit the generated files, then run: CREW_CONFIG_DIR='$target' crew up"
+  echo
+  echo "static login obligations from fleet.roster (definition only; not a live auth check):"
+  while read -r name _agent _role _from; do
+    echo "  $name — by hand: box shell $name; gh auth login; then the agent login"
+  done < <(grep -vE '^[[:space:]]*(#|$)' "$target/fleet.roster")
+}
+
 cmd_profiles() {
   local f
   echo "roles:"
@@ -868,6 +902,7 @@ case "${1:-}" in
   status)     shift; cmd_status "$@" ;;
   upgrade)    shift; cmd_upgrade "$@" ;;
   gold)       shift; cmd_gold "$@" ;;
+  init)       shift; cmd_init "$@" ;;
   profiles)   cmd_profiles ;;
   floor)      shift; cmd_floor "$@" ;;
   # The leading comment block, stopping at the first line that is not a

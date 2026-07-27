@@ -18,13 +18,18 @@ fleet.roster       box name, agent and role
 fleet.conf         operator fleet values
 repos.txt          seed for a new box's work registry
 notify-repos.txt   seed for a new triage box's wider notification registry
-agents/*.conf      optional operator agent profiles (reserved)
-doctrine.conf      optional doctrine paths (reserved)
+agents/*.conf      optional operator agent profiles (reserved until #75)
+doctrine.conf      optional doctrine paths named in rendered prompts
 ```
 
 The host atomically replaces `fleet.roster` and `fleet.conf` in a box on every
 hire or upgrade. Registries follow the host only while their box copy remains
 untouched. A divergent registry vetoes replacement and is named loudly.
+
+`doctrine.conf` is resolved on the host and rides inside the staged runtime
+`fleet.conf`; it does not require another box-side configuration file. Its
+values are repository-relative paths used in prompts. Omitting it preserves
+the shipped `AGENTS.md`, `TRIAGE.md`, `BUILDER.md`, and `REVIEWER.md` names.
 
 `CREW_ROSTER` remains a roster-only override for drills and fixtures. It takes
 precedence over the selected directory's roster but does not select a different
