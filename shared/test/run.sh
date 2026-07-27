@@ -53,17 +53,6 @@ has_role triage && r2=yes || r2=no
 t has-role-yes yes "$r1"
 t has-role-no no "$r2"
 
-# --- manifest_lookup: agent + roles resolution
-# shellcheck disable=SC2034  # consumed inside sourced common.sh
-FLEET_MANIFEST="
-dan-claude-bot=claude:triage
-claude-bot-andresmgsl=claude:builder,reviewer
-"
-t manifest-single "claude triage" "$(manifest_lookup dan-claude-bot)"
-t manifest-multi "claude builder reviewer" "$(manifest_lookup claude-bot-andresmgsl)"
-manifest_lookup nobody-bot >/dev/null && r1=found || r1=absent
-t manifest-missing absent "$r1"
-
 # --- agent profiles and rehearsal selection -----------------------------
 for profile in "$SHARED"/conf/agents/*.conf; do
   agent="$(basename "$profile" .conf)"
@@ -96,9 +85,13 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
+for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed sha256sum tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
+# If install.sh ever infers from hostname again, make the regression reproduce
+# the dangerous case deterministically rather than depend on this test host.
+printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
+chmod +x "$ISHIM/hostname"
 ln -s "$(command -v jq)" "$ISHIM/jq"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 printf '#!/usr/bin/env bash\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
@@ -143,32 +136,111 @@ t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 install_fixture --arm-cron >/dev/null 2>&1
 t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 
-# --- install.sh: explicit role vs FLEET_MANIFEST -------------------------
-# A flagless rerun re-resolves agent/role from FLEET_MANIFEST whenever the
-# box's gh login has an entry there, overwriting a role installed explicitly.
-# That is correct convergence for a standing fleet box and a trap for any box
-# deliberately installed OFF its manifest role: the drill installed reviewer
-# under a fleet identity whose manifest entry is triage, and its own
-# idempotence check converted the box to triage mid-run.
-MHOME="$TMP/manifest-home"
-MDUTY="$MHOME/duty"
-mkdir -p "$MHOME"
-# shellcheck disable=SC2016  # fixture script expands these at execution time
-printf '#!/usr/bin/env bash\n[ "$1 $2" = "api user" ] && { printf "dan-claude-bot\\n"; exit 0; }\nexit 1\n' >"$ISHIM/gh"
-chmod +x "$ISHIM/gh"
-manifest_install() {
-  env HOME="$MHOME" DUTY_DIR="$MDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+# --- install.sh: fleet.roster is the one agent/role declaration (#35) ----
+RHOME="$TMP/roster-home"
+RDUTY="$RHOME/duty"
+mkdir -p "$RHOME"
+roster_install() {
+  env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
     /bin/bash "$SHARED/install.sh" "$@"
 }
-manifest_install --agent claude --role reviewer >/dev/null 2>&1
-t install-explicit-role-set 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-manifest_install >/dev/null 2>&1
-t install-flagless-reresolves-from-manifest 'BOT_ROLES="triage"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-manifest_install --agent claude --role reviewer >/dev/null 2>&1
-t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-# restore the non-authenticating gh shim for anything downstream
-printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
-chmod +x "$ISHIM/gh"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-hire-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-upgrade-keeps-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+t install-roster-agent 'BOT_AGENT=claude' "$(grep '^BOT_AGENT=' "$RDUTY/conf/instance.conf")"
+
+# Flagless means preserve, never infer from a production-looking hostname.
+roster_install --agent claude --role reviewer >/dev/null 2>&1
+roster_install >/dev/null 2>&1
+t install-flagless-keeps-explicit-role 'BOT_ROLES="reviewer"' \
+  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+
+while read -r roster_box roster_agent roster_role _roster_from; do
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  hire_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  upgrade_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  t "install-hire-upgrade-stable-$roster_box" "$hire_conf" "$upgrade_conf"
+  t "install-roster-declares-$roster_box" \
+    "BOT_AGENT=$roster_agent
+BOT_ROLES=\"$roster_role\"" "$upgrade_conf"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/examples/fleet.roster")
+
+# A roster staged by the host beats the shipped fallback.
+printf 'claude-builder claude reviewer\n' >"$RDUTY/fleet.roster"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-staged-roster-wins 'BOT_ROLES="reviewer"' \
+  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+
+# Operator config and untouched registries converge; local divergence vetoes.
+printf 'FLEET_HUMAN="fixture-human"\nMARK_PICKUP="not-the-protocol"\n' >"$RDUTY/conf/fleet.conf"
+rm -f "$RDUTY/repos.txt" "$RDUTY/notify-repos.txt"
+printf 'fixture/first\n' >"$RDUTY/.crew-seed-repos.txt"
+printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-operator-conf-transport 'FLEET_HUMAN="fixture-human"' \
+  "$(grep '^FLEET_HUMAN=' "$RDUTY/conf/fleet.conf")"
+t install-registry-first-convergence fixture/first "$(cat "$RDUTY/repos.txt")"
+t install-builder-notify-triage-only absent \
+  "$([ -f "$RDUTY/notify-repos.txt" ] && printf present || printf absent)"
+t install-seed-payload-discarded absent \
+  "$([ -e "$RDUTY/.crew-seed-repos.txt" ] || [ -e "$RDUTY/.crew-seed-notify-repos.txt" ] && printf present || printf absent)"
+
+printf 'fixture/second\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-converges-untouched fixture/second "$(cat "$RDUTY/repos.txt")"
+printf 'fixture/contained\n' >"$RDUTY/repos.txt"
+printf 'fixture/third\n' >"$RDUTY/.crew-seed-repos.txt"
+veto_out="$(roster_install --box claude-builder --converge-registries 2>&1)"
+t install-registry-vetoes-divergence fixture/contained "$(cat "$RDUTY/repos.txt")"
+case "$veto_out" in *"claude-builder: repos.txt diverged"*"LEFT UNCHANGED"*) r1=named ;; *) r1=silent ;; esac
+t install-registry-veto-is-loud named "$r1"
+
+# The documented adoption path must work even when provenance records the
+# older transported value: manually matching the incoming bytes adopts it.
+printf 'fixture/third\n' >"$RDUTY/repos.txt"
+printf 'fixture/third\n' >"$RDUTY/.crew-seed-repos.txt"
+adopt_out="$(roster_install --box claude-builder --converge-registries 2>&1)"
+t install-registry-adopts-manual-match fixture/third "$(cat "$RDUTY/repos.txt")"
+case "$adopt_out" in *"adopted and converged"*) r1=adopted ;; *) r1=missing ;; esac
+t install-registry-adoption-is-visible adopted "$r1"
+
+# A current-fleet copy matching the shipped example can be adopted without
+# provenance; an unknown local copy cannot.
+rm -f "$RDUTY/.repos.txt.crew-provenance"
+cp "$ROOT/examples/repos.txt" "$RDUTY/repos.txt"
+printf 'fixture/migrated\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-migration-adopts-example fixture/migrated "$(cat "$RDUTY/repos.txt")"
+rm -f "$RDUTY/.repos.txt.crew-provenance"
+printf 'fixture/unknown-local\n' >"$RDUTY/repos.txt"
+printf 'fixture/incoming\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-migration-vetoes-unknown fixture/unknown-local "$(cat "$RDUTY/repos.txt")"
+
+runtime_fleet="$(DUTY_DIR="$RDUTY" bash -c \
+  '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s|%s" "$FLEET_HUMAN" "$MARK_PICKUP"')"
+t install-loads-defaults-then-operator 'fixture-human|📌 picked up' "$runtime_fleet"
+printf 'claude-builder claude triage\n' >"$RDUTY/fleet.roster"
+printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-triage-notify-seed fixture/wide "$(cat "$RDUTY/notify-repos.txt")"
+
+if grep -Rsiqw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
+    "$SHARED/lib" "$SHARED/install.sh" "$ROOT/examples/fleet.roster" "$ROOT/cli/crew" \
+    "$ROOT/drill"; then
+  r1=DUPLICATED
+else
+  r1=single-source
+fi
+t install-no-second-role-registry single-source "$r1"
+if grep -q -- "--box '\$b'" "$ROOT/cli/crew" || grep -q "install_identity_args.*\\\$b" "$ROOT/cli/crew"; then
+  r1=box-keyed
+else
+  r1=UNKEYED
+fi
+t upgrade-passes-roster-box-key box-keyed "$r1"
 
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed
@@ -623,7 +695,7 @@ t review-advanced-suppressed-rewakes "o/r#5 T2" \
 # until 2026-07-25 (an org-wide requested_reviewers sweep no registry could
 # bound) — which is what #52 was filed doubting — and the attention wake was
 # the exception until 2026-07-27, when danmt ruled on #66 that the registry
-# bounds it too. `repos-default.txt` asserted the universal for two days longer
+# bounds it too. `examples/repos.txt` asserted the universal for two days longer
 # than the engine honoured it, and that header is what an operator reads when
 # deciding whether narrowing the file contains a box.
 for mod in review builder triage hygiene attention; do
@@ -1284,7 +1356,7 @@ for p in build.txt fragment-round-rules.txt; do
   if grep -qi 'head did not move' "$SHARED/prompts/$p"; then r1=carved; else r1=MISSING; fi
   t "rerequest-unchanged-head-carveout-$p" carved "$r1"
 done
-if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.conf"; then r1=present; else r1=GONE; fi
+if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.defaults.conf"; then r1=present; else r1=GONE; fi
 t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 
 # --- the gate is a whitelist: green or none (danmt's ruling, #64) ------------

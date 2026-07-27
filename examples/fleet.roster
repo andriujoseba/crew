@@ -13,10 +13,9 @@
 #
 # This is the TARGET environment — the current dual-role claude and codex
 # boxes split into single-role members. Each line still needs its own
-# GitHub identity at login time (one box per identity), and each new
-# identity needs a FLEET_MANIFEST line in shared/conf/fleet.conf plus a
-# decision on the governed repos' panel= rosters BEFORE the new reviewers'
-# first verdicts are expected.
+# GitHub identity at login time (one box per identity), plus a decision on
+# the governed repos' panel= rosters BEFORE the new reviewers' first verdicts
+# are expected.
 claude-triage    claude  triage
 claude-builder   claude  builder
 claude-reviewer  claude  reviewer

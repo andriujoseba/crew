@@ -19,14 +19,14 @@ shared/
   lib/common.sh          config, logging, checkouts, session runner, panel resolution
   lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
-  conf/fleet.conf        org facts: manifest, bench, triage, human, labels, markers
+  conf/fleet.defaults.conf shipped label vocabulary, wire marks and defaults
   conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
   conf/roles/<r>.conf    role profile — the work: session budgets, box resources
   ../cli/crew            fleet CLI on a box host: new/create-all → auth → hire/hire-all; up converges
-  ../fleet.roster        the fleet as a file — `crew up` converges the host to it
+  ../examples/           fallback roster, operator config and registry seeds
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
   test/run.sh            fixture tests (bash+jq only, no network) — run by shared-ci
-  install.sh             deploy to ~/duty; identity comes from the gh token
+  install.sh             deploy to ~/duty; identity comes from the box's fleet.roster row
   crontab.example        one line per box
 ```
 
@@ -96,8 +96,8 @@ fleet's real protocol existed only inside five diverging scripts.
 
 ## What was deliberately dropped
 
-- **Hardcoded identities and rosters** — identity comes from the gh token;
-  the bench lives in one file; the panel comes from the target repo at
+- **Hardcoded identities and rosters** — identity comes from the box-keyed
+  fleet roster; the bench lives in operator config; the panel comes from the target repo at
   runtime. (Two boxes had *both* a hardcoded `ME` and a runtime lookup, used
   inconsistently.)
 - **`gh search` / `reviewDecision` / notification-mention wakes** as truth.
@@ -111,7 +111,7 @@ fleet's real protocol existed only inside five diverging scripts.
 - **Interleaved session stdout in duty.log** — it corrupted two boxes'
   line-oriented metrics. Session output goes to `logs/`, duty.log carries
   markers only. The marker vocabulary is a versioned metrics contract; the
-  emoji markers in `fleet.conf` are wire protocol, exact-matched by sibling
+  emoji markers in `fleet.defaults.conf` are wire protocol, exact-matched by sibling
   agents — change them fleet-wide or not at all.
 - **Untracked deployment** — `install.sh` stamps `~/duty/VERSION` with
   `crew@<sha>`, so FLEET.md's reconciliation stamp has something real to

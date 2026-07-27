@@ -505,7 +505,7 @@ function applyFleet(snap){
        rather than blanking a fleet that was there a second ago. */
     if(!LIVE){LIVE=true;LIVEMETA=snap;ROSTER=[];dataCache={};goLive();
       buildTiles();buildOps();
-      setStatus("collector reports an empty fleet — check fleet.roster",true);}
+      setStatus("collector reports an empty fleet — check the resolved fleet roster",true);}
     return;
   }
   LIVEMETA=snap;

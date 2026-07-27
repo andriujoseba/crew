@@ -164,6 +164,44 @@ CL_CREW_FLEET="$CL_HERE/fixtures/cli-fleet.txt"
 CL_CREW_ROSTER="$CL_HERE/fixtures/cli-roster.txt"
 CL_CREW_N="$(grep -cvE '^[[:space:]]*(#|$)' "$CL_CREW_ROSTER")"
 
+# Fleet selection is directory-atomic. An explicit directory without its proof
+# file is an error; a complete out-of-tree definition drives the normal loops.
+CL_BAD_CONFIG="$CL_TMP/bad-config"
+mkdir -p "$CL_BAD_CONFIG"
+printf 'FLEET_HUMAN=wrong\n' >"$CL_BAD_CONFIG/fleet.conf"
+CL_RC=0
+CREW_CONFIG_DIR="$CL_BAD_CONFIG" "$CL_ROOT/cli/crew" profiles \
+  >"$CL_TMP/config-out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'fleet.roster is required' "$CL_TMP/config-out"; then
+  ok "crew config: explicit split-brain directory is refused"
+else
+  fail "crew config: explicit split-brain directory is refused" \
+    "rc=$CL_RC $(cat "$CL_TMP/config-out")"
+fi
+CL_INCOMPLETE="$CL_TMP/incomplete-config"
+mkdir -p "$CL_INCOMPLETE"
+printf 'fixture claude builder\n' >"$CL_INCOMPLETE/fleet.roster"
+CL_RC=0
+CREW_CONFIG_DIR="$CL_INCOMPLETE" "$CL_ROOT/cli/crew" profiles \
+  >"$CL_TMP/config-out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'missing: fleet.conf repos.txt' "$CL_TMP/config-out"; then
+  ok "crew config: selected directory requires the identity trio"
+else
+  fail "crew config: selected directory requires the identity trio" \
+    "rc=$CL_RC $(cat "$CL_TMP/config-out")"
+fi
+CL_CONFIG="$CL_TMP/operator-config"
+mkdir -p "$CL_CONFIG"
+cp "$CL_CREW_ROSTER" "$CL_CONFIG/fleet.roster"
+printf 'FLEET_HUMAN=fixture\n' >"$CL_CONFIG/fleet.conf"
+printf 'heavy-duty/crew\n' >"$CL_CONFIG/repos.txt"
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" FLOOR_FIXTURE="$CL_CREW_FLEET" \
+FLOOR_STATE="$CL_TMP/crew-state" CREW_CONFIG_DIR="$CL_CONFIG" \
+  env -u CREW_ROSTER timeout 60 "$CL_ROOT/cli/crew" status \
+  </dev/null >"$CL_TMP/config-out" 2>&1 || CL_RC=$?
+t "crew config: out-of-tree fleet drives roster loops" 0 "$CL_RC"
+
 # crew_cmd ARGS... — cli/crew against the stub fleet, output in $CL_TMP/crew-out.
 crew_cmd() {
   CL_RC=0
@@ -290,21 +328,20 @@ cl_box_execs() { cl_code | grep -E 'box exec "'; }
 
 # `box exec` forwards stdin like ssh, so ONE unredirected call inside a
 # `while read … done < <(read_roster)` drains the roster: the loop ends after a
-# single box, quietly, rc=0. Two call sites are legitimate — bxn pins
-# /dev/null, vendor_probe pins the agent profile it deliberately ships — and
-# everything else must go through bxn.
+# single box, quietly, rc=0. Three call sites are legitimate — bxn pins
+# /dev/null, while bxput and vendor_probe deliberately ship a named file.
 CL_EXECS="$(cl_box_execs | grep -c . || true)"
-t "crew: box exec appears only in bxn and vendor_probe" 2 "${CL_EXECS:-0}"
-if [ "${CL_EXECS:-0}" -ne 2 ]; then
+t "crew: box exec appears only in bxn, bxput and vendor_probe" 3 "${CL_EXECS:-0}"
+if [ "${CL_EXECS:-0}" -ne 3 ]; then
   echo "  call sites:"; cl_box_execs | sed 's/^/    /'
 fi
 # shellcheck disable=SC2016  # matching the literal redirect text in the source
-CL_BARE="$(cl_box_execs | grep -vcE '</dev/null|<"\$AGENTS_DIR' || true)"
-t "crew: both box exec call sites pin stdin" 0 "${CL_BARE:-0}"
+CL_BARE="$(cl_box_execs | grep -vcE '</dev/null|<"\$AGENTS_DIR|<"\$source_file' || true)"
+t "crew: every box exec call site pins stdin" 0 "${CL_BARE:-0}"
 if [ "${CL_BARE:-0}" -ne 0 ]; then
   echo "  unpinned:"
   # shellcheck disable=SC2016  # matching the literal redirect text in the source
-  cl_box_execs | grep -vE '</dev/null|<"\$AGENTS_DIR' | sed 's/^/    /'
+  cl_box_execs | grep -vE '</dev/null|<"\$AGENTS_DIR|<"\$source_file' | sed 's/^/    /'
 fi
 
 # `box info --json` returns an array; the filter that read it as an object
@@ -342,6 +379,26 @@ fi
 mkdir -p "$CL_TMP/crew-state"
 crew_cmd hire cli-hired
 t "crew hire: an on-roster box is hired without a flag" 0 "$CL_RC"
+
+# The production roster is authoritative. Explicit profile flags on one of its
+# members used to be accepted, echoed as fact, then silently discarded in
+# favour of the roster row by install_identity_args (#35 review).
+CL_PROD_FLEET="$CL_TMP/prod-fleet.txt"
+printf 'claude-builder running idle\n' >"$CL_PROD_FLEET"
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" \
+FLOOR_FIXTURE="$CL_PROD_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+  env -u CREW_ROSTER timeout 60 "$CL_ROOT/cli/crew" \
+    hire claude-builder --agent claude --role reviewer \
+    </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] &&
+   grep -q 'claude-builder is declared as agent=claude role=builder' "$CL_TMP/crew-out" &&
+   grep -q 'roster in force is authoritative' "$CL_TMP/crew-out"; then
+  ok "crew hire: explicit profile for a production member is REFUSED"
+else
+  fail "crew hire: explicit profile for a production member is REFUSED" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
 
 # Same box, off the roster: production registry, so it must be refused.
 CL_OFFROSTER="$CL_TMP/offroster.txt"
@@ -462,11 +519,11 @@ done
 # ...and nothing may still read fleet.roster directly, which would silently
 # reintroduce exactly that split.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
-CL_DIRECT="$(grep -vE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -cE '\$ROOT/fleet\.roster' || true)"
-t "drill: fleet.roster is read only as the --roster default" 1 "${CL_DIRECT:-0}"
+CL_DIRECT="$(grep -vE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -cE '\$ROOT/examples/fleet\.roster' || true)"
+t "drill: examples/fleet.roster is read only as the --roster default" 1 "${CL_DIRECT:-0}"
 if [ "${CL_DIRECT:-0}" -ne 1 ]; then
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
-  grep -nvE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -E '\$ROOT/fleet\.roster' | sed 's/^/    /'
+  grep -nvE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -E '\$ROOT/examples/fleet\.roster' | sed 's/^/    /'
 fi
 
 # --- a clone must not be handed the sizing flags (box refuses them) --------
@@ -500,7 +557,7 @@ CL_LONGEST=0
 while read -r cl_name _cl_rest; do
   [ -z "$cl_name" ] && continue
   [ "${#cl_name}" -gt "$CL_LONGEST" ] && CL_LONGEST="${#cl_name}"
-done < <(cat "$CL_ROOT/fleet.roster" "$CL_HERE/fixtures/roster.txt" \
+done < <(cat "$CL_ROOT/examples/fleet.roster" "$CL_HERE/fixtures/roster.txt" \
               "$CL_HERE/fixtures/cli-roster.txt" 2>/dev/null | grep -vE '^[[:space:]]*(#|$)')
 # Drill boxes are crew-drill-<role>; the longest role is 'reviewer'.
 [ "$CL_LONGEST" -lt 19 ] && CL_LONGEST=19
