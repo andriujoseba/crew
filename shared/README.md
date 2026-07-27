@@ -19,7 +19,7 @@ shared/
   lib/common.sh          config, logging, checkouts, session runner, panel resolution
   lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
-  conf/fleet.conf        org facts: bench, triage, human, labels, markers
+  conf/fleet.conf        org facts: manifest, bench, triage, human, labels, markers
   conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
   conf/roles/<r>.conf    role profile — the work: session budgets, box resources
   ../cli/crew            fleet CLI on a box host: new/create-all → auth → hire/hire-all; up converges
@@ -49,10 +49,16 @@ which goes through the same one-shot gate as every verdict.
 
 ## Duty order (FLEET.md)
 
-attention → triage signals → review queue → resume → build → handoff →
-rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling inside
-the tick — same lock, so it can never race the triage sweep over shared
+attention → triage signals → review queue → resume → ci-red → build →
+handoff → rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling
+inside the tick — same lock, so it can never race the triage sweep over shared
 checkouts the way the old separate hygiene cron could).
+
+ci-red runs before build: a failing check at the head of a PR you authored is
+picked up before claiming another issue (crew#17 — ceremony#163 sat with
+full-panel approvals, mergeable, stranded on an HTTP 429 in a job that never
+ran the PR's code, because no wake covered a red head owing no round and
+carrying no conflict).
 
 ## What was adopted, and from whom
 

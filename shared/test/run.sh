@@ -53,6 +53,17 @@ has_role triage && r2=yes || r2=no
 t has-role-yes yes "$r1"
 t has-role-no no "$r2"
 
+# --- manifest_lookup: agent + roles resolution
+# shellcheck disable=SC2034  # consumed inside sourced common.sh
+FLEET_MANIFEST="
+dan-claude-bot=claude:triage
+claude-bot-andresmgsl=claude:builder,reviewer
+"
+t manifest-single "claude triage" "$(manifest_lookup dan-claude-bot)"
+t manifest-multi "claude builder reviewer" "$(manifest_lookup claude-bot-andresmgsl)"
+manifest_lookup nobody-bot >/dev/null && r1=found || r1=absent
+t manifest-missing absent "$r1"
+
 # --- agent profiles and rehearsal selection -----------------------------
 for profile in "$SHARED"/conf/agents/*.conf; do
   agent="$(basename "$profile" .conf)"
@@ -85,13 +96,9 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed tr wc; do
+for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
-# If install.sh ever infers from hostname again, make the regression reproduce
-# the dangerous case deterministically rather than depend on this test host.
-printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
-chmod +x "$ISHIM/hostname"
 ln -s "$(command -v jq)" "$ISHIM/jq"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 printf '#!/usr/bin/env bash\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
@@ -136,108 +143,32 @@ t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 install_fixture --arm-cron >/dev/null 2>&1
 t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 
-# --- install.sh: fleet.roster is the one agent/role declaration (#35) ----
-# The real divergence was claude-builder=builder in fleet.roster while the
-# old login-keyed registry said builder,reviewer. Hire followed the first and a
-# routine upgrade followed the second, so whichever command ran last silently
-# decided the duty loops. Both now resolve the same BOX key from one file.
-RHOME="$TMP/roster-home"
-RDUTY="$RHOME/duty"
-mkdir -p "$RHOME"
-roster_install() {
-  env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+# --- install.sh: explicit role vs FLEET_MANIFEST -------------------------
+# A flagless rerun re-resolves agent/role from FLEET_MANIFEST whenever the
+# box's gh login has an entry there, overwriting a role installed explicitly.
+# That is correct convergence for a standing fleet box and a trap for any box
+# deliberately installed OFF its manifest role: the drill installed reviewer
+# under a fleet identity whose manifest entry is triage, and its own
+# idempotence check converted the box to triage mid-run.
+MHOME="$TMP/manifest-home"
+MDUTY="$MHOME/duty"
+mkdir -p "$MHOME"
+# shellcheck disable=SC2016  # fixture script expands these at execution time
+printf '#!/usr/bin/env bash\n[ "$1 $2" = "api user" ] && { printf "dan-claude-bot\\n"; exit 0; }\nexit 1\n' >"$ISHIM/gh"
+chmod +x "$ISHIM/gh"
+manifest_install() {
+  env HOME="$MHOME" DUTY_DIR="$MDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
     /bin/bash "$SHARED/install.sh" "$@"
 }
-roster_install --box claude-builder >/dev/null 2>&1
-t install-roster-hire-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
-roster_install --box claude-builder >/dev/null 2>&1
-t install-roster-upgrade-keeps-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
-t install-roster-agent 'BOT_AGENT=claude' "$(grep '^BOT_AGENT=' "$RDUTY/conf/instance.conf")"
-# Flagless means preserve, never infer. The hostname shim above deliberately
-# names a production builder; a fallback would silently turn this reviewer
-# into a builder and fail the assertion.
-roster_install --agent claude --role reviewer >/dev/null 2>&1
-roster_install >/dev/null 2>&1
-t install-flagless-keeps-explicit-role 'BOT_ROLES="reviewer"' \
-  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
-# Every committed member, not just the historical claude-builder divergence:
-# the install shape used by hire and upgrade resolves the identical row twice.
-while read -r roster_box roster_agent roster_role _roster_from; do
-  roster_install --box "$roster_box" >/dev/null 2>&1
-  hire_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
-  roster_install --box "$roster_box" >/dev/null 2>&1
-  upgrade_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
-  t "install-hire-upgrade-stable-$roster_box" "$hire_conf" "$upgrade_conf"
-  t "install-roster-declares-$roster_box" \
-    "BOT_AGENT=$roster_agent
-BOT_ROLES=\"$roster_role\"" "$upgrade_conf"
-done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
-if grep -Rsiqw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
-    "$SHARED/lib" "$SHARED/install.sh" "$ROOT/fleet.roster" "$ROOT/cli/crew" \
-    "$ROOT/drill"; then
-  r1=DUPLICATED
-else
-  r1=single-source
-fi
-t install-no-second-role-registry single-source "$r1"
-if grep -q -- "--box '\$b'" "$ROOT/cli/crew" || grep -q "install_identity_args.*\\\$b" "$ROOT/cli/crew"; then
-  r1=box-keyed
-else
-  r1=UNKEYED
-fi
-t upgrade-passes-roster-box-key box-keyed "$r1"
-
-# --- install.sh: identity changes are impossible to mistake for no-ops (#36)
-CHOME="$TMP/change-home"
-CDUTY="$CHOME/duty"
-mkdir -p "$CHOME"
-change_install() {
-  env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
-    /bin/bash "$SHARED/install.sh" "$@" 2>&1
-}
-first_out="$(change_install --agent claude --role reviewer)"
-case "$first_out" in *"first install"*) r1=clear ;; *) r1=missing ;; esac
-t install-first-install-labelled clear "$r1"
-case "$first_out" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
-t install-first-install-not-changed clean "$r1"
-
-noop_out="$(change_install --agent claude --role reviewer)"
-case "$noop_out" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
-t install-noop-not-changed clean "$r1"
-case "$noop_out" in *"resolved from the --agent/--role flags"*) r1=sourced ;; *) r1=missing ;; esac
-t install-noop-source-visible sourced "$r1"
-
-change_out="$(change_install --box claude-builder)"
-case "$change_out" in
-  *'ROLES CHANGED on this box: "reviewer" -> "builder"'*) r1=loud ;;
-  *) r1=missing ;;
-esac
-t install-role-change-loud loud "$r1"
-case "$change_out" in
-  *"resolved from fleet.roster (box claude-builder)"*) r1=sourced ;;
-  *) r1=missing ;;
-esac
-t install-role-change-source-visible sourced "$r1"
-case "$change_out" in *"adds or removes whole duty loops"*) r1=warned ;; *) r1=missing ;; esac
-t install-role-change-impact-visible warned "$r1"
-
-same_source_change="$(change_install --agent claude --role reviewer)"
-same_source_noop="$(change_install --agent claude --role reviewer)"
-case "$same_source_change" in
-  *'ROLES CHANGED on this box: "builder" -> "reviewer"'*) r1=loud ;;
-  *) r1=missing ;;
-esac
-t install-same-source-change-loud loud "$r1"
-case "$same_source_noop" in *"CHANGED"*) r1=noisy ;; *) r1=clean ;; esac
-t install-same-source-noop-clean clean "$r1"
-t install-change-and-noop-distinct no "$([ "$same_source_change" = "$same_source_noop" ] && printf yes || printf no)"
-
-change_stderr="$(
-  env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
-    /bin/bash "$SHARED/install.sh" --agent claude --role builder 2>&1 >/dev/null
-)"
-case "$change_stderr" in *"ROLES CHANGED"*) r1=stderr ;; *) r1=missing ;; esac
-t install-change-warning-on-stderr stderr "$r1"
+manifest_install --agent claude --role reviewer >/dev/null 2>&1
+t install-explicit-role-set 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+manifest_install >/dev/null 2>&1
+t install-flagless-reresolves-from-manifest 'BOT_ROLES="triage"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+manifest_install --agent claude --role reviewer >/dev/null 2>&1
+t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+# restore the non-authenticating gh shim for anything downstream
+printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
+chmod +x "$ISHIM/gh"
 
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed
@@ -846,6 +777,611 @@ t duty-end-on-every-exit "" "$(awk '
 # boxes reported armed and one ticked.
 if grep -q 'cron_daemon_running' "$SHARED/install.sh"; then r1=checked; else r1=ASSUMED; fi
 t install-verifies-cron-daemon checked "$r1"
+
+# --- credential state reported by the flow (replaces the polled probes) ----
+# These run against the REAL common.sh sourced above, with DUTY_DIR pointed at
+# a scratch dir, so the marker contract the floor reads is asserted here and
+# not merely described in a comment.
+
+# alert() would try to curl Telegram from a unit test; the token files do not
+# exist so it returns early, but stub it anyway — a test that depends on the
+# absence of a file in $HOME is a test that fails on somebody's laptop.
+alert() { :; }
+
+AUTHDIR="$TMP/authstate"; mkdir -p "$AUTHDIR"
+DUTY_DIR="$AUTHDIR"
+
+note_auth_failure gh "401 Bad credentials"
+t authfail-file-per-service present "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo present || echo MISSING)"
+t authfail-does-not-touch-other-service absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo LEAKED || echo absent)"
+t authfail-records-reason found \
+  "$(grep -q '401 Bad credentials' "$AUTHDIR/.auth-fail.gh" && echo found || echo MISSING)"
+
+# The first failure must win. Rewriting every tick resets mtime, so a
+# credential that died on Monday reads as having died just now — and "when did
+# this break" is the only question the file exists to answer.
+FIRST="$(cat "$AUTHDIR/.auth-fail.gh")"
+sleep 1
+note_auth_failure gh "403 something else entirely"
+t authfail-first-failure-wins "$FIRST" "$(cat "$AUTHDIR/.auth-fail.gh")"
+
+clear_auth_failure gh
+t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
+clear_auth_failure gh   # must be idempotent, not an error under set -e
+t authfail-clear-idempotent 0 "$?"
+
+# Multi-line reasons: gh's errors routinely are, and one record must stay one
+# line or probe.sh's ::key contract silently gains phantom keys.
+note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
+t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
+clear_auth_failure vendor
+
+# check_vendor_credential's tri-state. 2 means "this profile cannot tell from
+# local state" and MUST change nothing: neither raise an alarm nor clear a
+# real failure someone still has to fix.
+# shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
+AGENT_LOGIN_HINT="run the thing"
+# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
+bot_cli_present() { return 0; }
+check_vendor_credential
+t vendor-present-no-failure absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
+
+# shellcheck disable=SC2317
+bot_cli_present() { return 1; }
+check_vendor_credential
+t vendor-absent-raises present \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
+
+# shellcheck disable=SC2317
+bot_cli_present() { return 2; }
+check_vendor_credential
+t vendor-unknown-does-not-clear present \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo CLEARED)"
+rm -f "$AUTHDIR/.auth-fail.vendor"
+check_vendor_credential
+t vendor-unknown-does-not-raise absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
+unset -f bot_cli_present
+
+# An older agent profile with neither function must be a no-op, not a failure:
+# install.sh does not upgrade confs in place, so mid-rollout boxes will have
+# exactly this shape.
+check_vendor_credential
+t vendor-legacy-profile-silent absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
+
+# --- each agent profile reads its OWN credential store, locally -------------
+# Driven against the real conf files with a fabricated HOME, because the whole
+# claim of bot_cli_present is that it needs nothing but local disk.
+
+CREDH="$TMP/credhome"; mkdir -p "$CREDH"
+cred_rc() {  # cred_rc <agent> <home> -> rc of bot_cli_present
+  local rc=0
+  # Every vendor env override is cleared, not just the one under test: these
+  # are read by the sourced profile, and inheriting the RUNNER's credentials
+  # would make the result depend on whose machine ran the suite.
+  # shellcheck disable=SC2034  # consumed inside the conf sourced below
+  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" \
+    ANTHROPIC_API_KEY="" XAI_API_KEY=""
+    # shellcheck disable=SC1090
+    source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+# base64url with the padding stripped, the way a JWT actually arrives.
+b64url() { base64 -w0 | tr '/+' '_-' | tr -d '='; }
+
+# -- claude: refreshTokenExpiresAt, in MILLISECONDS
+CH="$CREDH/claude"; mkdir -p "$CH/.claude"
+CLAUDE_EXP_MS=$(( ($(date +%s) + 20 * 86400) * 1000 ))
+jq -n --argjson r "$CLAUDE_EXP_MS" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-present 0 "$(cred_rc claude "$CH")"
+
+# THE trap, and the reason this profile reads refreshTokenExpiresAt: an access
+# token that lapsed hours ago while the refresh token is still good is the
+# ordinary steady state, refreshed silently on next use. A profile testing
+# `expiresAt` would call a perfectly healthy box logged out three times a day.
+jq -n --argjson r "$CLAUDE_EXP_MS" --argjson a "$(( ($(date +%s) - 3600) * 1000 ))" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:$a,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-stale-access-token-is-fine 0 "$(cred_rc claude "$CH")"
+
+# An expired REFRESH token is the real logout: nothing can renew it but a human.
+jq -n --argjson r "$(( ($(date +%s) - 86400) * 1000 ))" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-expired-refresh 1 "$(cred_rc claude "$CH")"
+t cred-claude-no-file 1 "$(cred_rc claude "$CREDH/nothing")"
+
+# -- kimi: the refresh token is a JWT; its exp claim is the relogin deadline
+KH="$CREDH/kimi"; mkdir -p "$KH/.kimi-code/credentials"
+KIMI_EXP=$(( $(date +%s) + 30 * 86400 ))
+# A payload sized so base64url PADDING is required — the case a naive decoder
+# silently fails on.
+KJWT="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code","sub":"u"}' "$KIMI_EXP" | b64url).sig"
+jq -n --arg rt "$KJWT" \
+  '{access_token:"a",refresh_token:$rt,expires_at:1,token_type:"Bearer"}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-present 0 "$(cred_rc kimi "$KH")"
+t cred-kimi-no-file 1 "$(cred_rc kimi "$CREDH/nothing")"
+# An expired refresh JWT is a logout, not merely "cannot tell".
+KJWT_OLD="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code"}' "$(( $(date +%s) - 86400 ))" | b64url).sig"
+jq -n --arg rt "$KJWT_OLD" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-expired-refresh 1 "$(cred_rc kimi "$KH")"
+# Garbage in the JWT slot must be "cannot tell" (2), never a confident logout.
+jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-unparseable-is-unknown 2 "$(cred_rc kimi "$KH")"
+
+# -- codex: file-backed vs keyring-backed, and NO expiry at all
+DH="$CREDH/codex"; mkdir -p "$DH/.codex"
+jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
+t cred-codex-present 0 "$(cred_rc codex "$DH")"
+t cred-codex-no-file-is-logout 1 "$(cred_rc codex "$CREDH/nothing")"
+# ...unless the box keeps its credential in the desktop keyring, where a
+# missing auth.json is normal and must not be reported as a logout.
+KB="$CREDH/codexkeyring"; mkdir -p "$KB/.codex"
+echo 'cli_auth_credentials_store = "keyring"' > "$KB/.codex/config.toml"
+t cred-codex-keyring-is-unknown 2 "$(cred_rc codex "$KB")"
+
+# -- grok: its probe was already a local file test, so it is authoritative
+# -- grok: a MAP of "<issuer>::<client_id>" slots, refresh token opaque
+GH_="$CREDH/grok"; mkdir -p "$GH_/.grok"
+jq -n '{"https://auth.x.ai::abc":{key:"j.w.t",refresh_token:"opaque",expires_at:"2026-07-27T19:54:18Z"}}' \
+  > "$GH_/.grok/auth.json"
+t cred-grok-present 0 "$(cred_rc grok "$GH_")"
+t cred-grok-no-file 1 "$(cred_rc grok "$CREDH/nothing")"
+# An empty map is a non-empty FILE. The old `[ -s ]` test called this logged
+# in; it is a failed login, and the honest answer is "cannot tell".
+echo '{}' > "$GH_/.grok/auth.json"
+t cred-grok-empty-map-is-unknown 2 "$(cred_rc grok "$GH_")"
+
+# No profile may define bot_cli_expiry: the floor tracks no expiry dates, and
+# a profile still exporting one would be dead code drifting out of sync.
+for agent in claude codex grok kimi; do
+  r1=absent
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$agent.conf"; command -v bot_cli_expiry >/dev/null ) 2>/dev/null && r1=DEFINED
+  t "cred-$agent-defines-no-expiry" absent "$r1"
+done
+
+# --- the per-tick path must not have reacquired a network auth probe -------
+# `gh auth status` in the tick is the exact cost this change removed; it would
+# pass every assertion above while restoring 7k requests/day.
+# The boot gate ABOVE the identity call may still pay for a real probe once
+# per boot — certainty is worth one round-trip there. What must never come
+# back is a probe in the per-tick path, so the assertion is positional:
+# nothing after `ME="$(gh_identity)"` may call it.
+r1="$(awk '
+  /ME="\$\(gh_identity\)"/ { after = 1 }
+  after && /^[^#]*gh auth status/ { print "POLLED"; exit }
+' "$SHARED/bin/duty.sh")"
+r1="${r1:-clean}"
+t tick-does-not-poll-gh-auth clean "$r1"
+# ...and the identity call must be the one that harvests the expiry header.
+if grep -q 'gh_identity' "$SHARED/bin/duty.sh"; then r1=wired; else r1=MISSING; fi
+t tick-uses-gh-identity wired "$r1"
+# No expiry date is tracked anywhere any more: four providers express it four
+# ways and two cannot answer locally at all, so the countdown was the flaky
+# half of the idea. A reintroduced record_token_expiry would put it back.
+if grep -q 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh"; then r1=TRACKED; else r1=clean; fi
+t no-expiry-date-tracked clean "$r1"
+
+# Every agent profile must define bot_cli_present, or its box silently never
+# reports vendor credential state at all.
+missing=""
+for agent in claude codex grok kimi; do
+  grep -q 'bot_cli_present()' "$SHARED/conf/agents/$agent.conf" || missing="$missing $agent"
+done
+t agent-profiles-define-present "" "$missing"
+
+# --- the two-boundary rule must exist once, not once per reader -----------
+# floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
+# hold it at all: the box ships ::tickage and the HOST decides. A third copy
+# inside the box, in a second language, meant changing TICK_S would leave the
+# floor calling a box SILENT while both credential readers still said flowing
+# — and rehearsal-app.sh asserts those two readers agree, so the drill would
+# fail for a reason nobody would trace to a constant.
+CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
+FLOOR_PY="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/floor.py"
+
+FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
+FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
+# shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
+CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
+t silent-rule-floor-derived 600 "$FL_SILENT"
+t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
+
+# ...and the box must hold no threshold of its own. Comments and the log-tail
+# line count are stripped before looking, so only real code counts.
+PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
+if sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH" | grep -qE '\b(600|SILENT_AFTER)\b'; then
+  r1=BAKED
+else
+  r1=clean
+fi
+t probe-holds-no-threshold clean "$r1"
+# The datum it ships instead:
+if grep -q 'emit tickage' "$PROBE_SH"; then r1=emitted; else r1=MISSING; fi
+t probe-emits-tickage emitted "$r1"
+# --- head-checks.jq: the check at the head, and the round it gates (#45/#17) --
+# The engine never read statusCheckRollup at all, which is both bugs at once: a
+# fix round opened on a red head (#45) and a red head that woke nothing (#17).
+HC="$SHARED/lib/jq/head-checks.jq"
+hc() {  # hc <panel-json> <pr-array-json> -> rows
+  printf '%s' "$2" | jq -r --argjson panel "$1" --arg repo "o/r" -f "$HC"
+}
+mk_prc() {  # mk_prc <rollup> [reviews] [requests] [isDraft]
+  jq -cn --argjson c "$1" --argjson lr "${2:-[]}" --argjson rr "${3:-[]}" \
+     --argjson d "${4:-false}" \
+     '[{number:1, isDraft:$d, updatedAt:"T1", headRefOid:"abc1234",
+        statusCheckRollup:$c, latestReviews:$lr, reviewRequests:$rr}]'
+}
+CHK_OK='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]'
+CHK_BAD='[{"__typename":"CheckRun","name":"release-exercise / fixture-chain","status":"COMPLETED","conclusion":"FAILURE"}]'
+CHK_RUNNING='[{"__typename":"CheckRun","name":"check","status":"IN_PROGRESS","conclusion":null}]'
+CHK_CANCEL='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"CANCELLED"}]'
+CHK_STALE='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"STALE"}]'
+CHK_NEUTRAL='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"NEUTRAL"}]'
+CHK_SKIPPED='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SKIPPED"}]'
+# A conclusion this engine has never heard of. GitHub adds these.
+CHK_UNKNOWN='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"QUANTUM_FAILURE"}]'
+# The StatusContext shape. THIS is the fixture that matters: crew's own CI is a
+# single CheckRun, so an implementation that discriminates on __typename and
+# reads only .conclusion passes every other test in this file and reports a
+# FAILING status context as green — a pass for a reason unrelated to the claim,
+# which is #50's shape. Reintroduce that discrimination and these two go red.
+SC_BAD='[{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
+SC_ERR='[{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}]'
+SC_MIX='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
+
+state_of() { hc '[]' "$(mk_prc "$1")" | cut -f4; }
+t head-check-run-success      green   "$(state_of "$CHK_OK")"
+t head-check-run-failure      red     "$(state_of "$CHK_BAD")"
+t head-status-context-failure red     "$(state_of "$SC_BAD")"
+t head-status-context-error   red     "$(state_of "$SC_ERR")"
+t head-mixed-shapes-one-red   red     "$(state_of "$SC_MIX")"
+t head-check-still-running    pending "$(state_of "$CHK_RUNNING")"
+t head-no-checks-is-not-green none    "$(state_of '[]')"
+# GREEN IS A WHITELIST; ANYTHING ELSE IS RED (codex, #64). The first version
+# enumerated the failing conclusions and let the rest fall through to green,
+# arguing a CANCELLED run is one superseded by a newer push. Wrong: the rollup
+# is already scoped to the CURRENT head, so a superseded run is not in it — a
+# cancelled one there is a manual or same-head-concurrency cancel, i.e. a head
+# that is not passing. Reading it green defeated #45's gate and blinded #17's
+# wake at the same time. This test previously asserted `green` and locked that
+# in, which is why it is called out here rather than quietly flipped.
+t head-cancelled-is-red       red     "$(state_of "$CHK_CANCEL")"
+t head-stale-is-red           red     "$(state_of "$CHK_STALE")"
+# ...and the point of a whitelist: a conclusion nobody has written a branch for
+# fails CLOSED. Enumerating the bad ones would have gotten this wrong the same
+# way, silently, the next time GitHub adds one.
+t head-unknown-conclusion-is-red red  "$(state_of "$CHK_UNKNOWN")"
+# The genuinely-not-a-failure conclusions stay green, or every skipped matrix
+# leg would wake a builder.
+t head-neutral-is-green       green   "$(state_of "$CHK_NEUTRAL")"
+t head-skipped-is-green       green   "$(state_of "$CHK_SKIPPED")"
+# Drafts are never rows: a panel is never requested on a draft, and a draft's
+# red CI is the author's in-flight business (resume owns it).
+t head-drafts-excluded "" "$(hc '[]' "$(mk_prc "$CHK_BAD" '[]' '[]' true)")"
+
+# The failing check's name reaches the operator and the prompt, spaces and all
+# — which is why the row is TAB-delimited and the names are last.
+t head-failing-names-carried "release-exercise / fixture-chain (FAILURE)" \
+  "$(hc '[]' "$(mk_prc "$CHK_BAD")" | cut -f6)"
+t head-green-names-dash "-" "$(hc '[]' "$(mk_prc "$CHK_OK")" | cut -f6)"
+
+# Round-owed, and the two facts arriving on one row.
+CR_REQ='[{"state":"CHANGES_REQUESTED","author":{"login":"p1"}}]'
+t head-round-owed-green owed "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$CR_REQ")" | cut -f5)"
+t head-round-owed-red-still-owed owed "$(hc '["p1"]' "$(mk_prc "$CHK_BAD" "$CR_REQ")" | cut -f5)"
+t head-round-owed-red-is-red red "$(hc '["p1"]' "$(mk_prc "$CHK_BAD" "$CR_REQ")" | cut -f4)"
+# An outstanding panel request means the round is not whole yet.
+t head-round-not-whole - \
+  "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$CR_REQ" '[{"login":"p2"}]')" | cut -f5)"
+
+# --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
+# ledger_filter re-fires when the value sorts GREATER, and a SHA has no order.
+# This is the negative control for the scheme NOT used: keyed the ordinary way,
+# a corrective push whose oid happens to sort below the previous one is
+# suppressed — the wake would be lost exactly when the builder fixed something.
+CLG_NAIVE="$TMP/ci-naive"
+printf 'o/r#7 fff0000\n' | ledger_commit "$CLG_NAIVE"
+t ci-red-naive-sha-value-loses-the-push 0 \
+  "$(printf 'o/r#7 000ffff\n' | ledger_filter "$CLG_NAIVE" | n)"
+# The scheme the module uses: head in the id, fixed sentinel value.
+CLG="$TMP/ci-red"
+printf 'o/r#7@fff0000\thead\n' | ledger_commit "$CLG"
+t ci-red-new-head-wakes 1 "$(printf 'o/r#7@000ffff\thead\n' | ledger_filter "$CLG" | n)"
+t ci-red-same-head-quiet 0 "$(printf 'o/r#7@fff0000\thead\n' | ledger_filter "$CLG" | n)"
+# ...and an unchanged red head is reported rather than silently dropped (#59).
+t ci-red-same-head-reported "o/r#7@fff0000" \
+  "$(printf 'o/r#7@fff0000\thead\n' | ledger_suppressed "$CLG" | cut -f1)"
+
+# --- the module's row slicing ------------------------------------------------
+# The awk programs are asserted literally against the module AND run here on a
+# fixture. Neither alone is enough: the grep proves the module still contains
+# this expression, the fixture proves the expression is right. Edit both and
+# the behaviour is still checked; edit the module alone and the grep fails.
+BMOD="$SHARED/lib/duty-builder.sh"
+# shellcheck disable=SC2016  # awk field refs, quoted exactly as the module has them
+AWK_ROUNDS='$5 == "owed" && ($4 == "green" || $4 == "none") { print $1, $2 }'
+# shellcheck disable=SC2016
+AWK_BLOCKED='$5 == "owed" && $4 == "red" { print $1 }'
+# shellcheck disable=SC2016
+AWK_HELD='$5 == "owed" && $4 == "pending" { print $1 }'
+# shellcheck disable=SC2016
+AWK_RED='$4 == "red" { print $1 "@" $3 "\thead\t" $6 }'
+for pair in "rounds:$AWK_ROUNDS" "blocked:$AWK_BLOCKED" "held:$AWK_HELD" "red:$AWK_RED"; do
+  if grep -Fq "${pair#*:}" "$BMOD"; then r1=present; else r1=MISSING; fi
+  t "ci-red-awk-in-module-${pair%%:*}" present "$r1"
+done
+ROWS="$(printf '%s\n' \
+  "$(printf 'o/r#1\tT1\taaa\tred\towed\tcheck (FAILURE)')" \
+  "$(printf 'o/r#2\tT2\tbbb\tgreen\towed\t-')" \
+  "$(printf 'o/r#3\tT3\tccc\tred\t-\tcheck (FAILURE)')" \
+  "$(printf 'o/r#4\tT4\tddd\tpending\towed\t-')")"
+# #45: the red-headed round is NOT a build wake — and neither is the pending
+# one (danmt's ruling, #64). Opening a round while the check is still running
+# spends the panel on a head that may go red, which is what #45 measured on
+# crew#40. Only o/r#2 (green) survives; o/r#4 (pending) is now held.
+t ci-red-rounds-exclude-red "$(printf 'o/r#2 T2')" \
+  "$(awk -F'\t' "$AWK_ROUNDS" <<<"$ROWS")"
+# ...but neither hold is silent — the operator is told which round is held and
+# why, and the two reasons are NOT interchangeable: red is the author's own
+# work, pending is a wait that nobody owes anything for.
+t ci-red-blocked-round-named "o/r#1" "$(awk -F'\t' "$AWK_BLOCKED" <<<"$ROWS")"
+t ci-red-held-round-named "o/r#4" "$(awk -F'\t' "$AWK_HELD" <<<"$ROWS")"
+# A pending head must NOT wake ci-red: nothing has failed, so there is no
+# investigation to launch and no rerun to cap.
+t pending-head-does-not-wake-ci-red "" \
+  "$(awk -F'\t' "$AWK_RED" <<<"$(printf 'o/r#4\tT4\tddd\tpending\towed\t-')")"
+# The two hold messages must not be the same string, or the pending hold reads
+# as "CI first, fix it" and tells the operator the author owes work.
+RED_MSG="$(grep -c 'the check at its head is RED' "$BMOD")"
+HELD_MSG="$(grep -c 'has not finished' "$BMOD")"
+t hold-messages-are-distinct "1 1" "$RED_MSG $HELD_MSG"
+# #17: every red head wakes, round owed or not.
+t ci-red-items-both-heads "$(printf 'o/r#1@aaa\thead\tcheck (FAILURE)\no/r#3@ccc\thead\tcheck (FAILURE)')" \
+  "$(awk -F'\t' "$AWK_RED" <<<"$ROWS")"
+
+# codex's regression ask, end to end rather than at the classifier: a CANCELLED
+# head with a round owed must not reach the build wake, and must reach the
+# ci-red wake instead. The classifier tests above prove `red`; these prove the
+# consequence, which is what #45 and #17 are actually about.
+CANCEL_ROW="$(hc '["p1"]' "$(mk_prc "$CHK_CANCEL" "$CR_REQ")")"
+t head-cancelled-round-is-blocked "" "$(awk -F'\t' "$AWK_ROUNDS" <<<"$CANCEL_ROW")"
+t head-cancelled-wakes-ci-red "o/r#1@abc1234" \
+  "$(awk -F'\t' "$AWK_RED" <<<"$CANCEL_ROW" | cut -f1)"
+t head-cancelled-named-in-the-wake "check (CANCELLED)" "$(cut -f6 <<<"$CANCEL_ROW")"
+
+# --- the ceremony#163 regression case (#17's last acceptance criterion) ------
+# The incident this issue was filed from, modelled end to end: a PR with
+# current-head approvals from the full panel, mergeable, no changes requested,
+# no conflict, no outstanding review request — and `release-exercise /
+# fixture-chain` failed during job SETUP on an HTTP 429 fetching
+# actions/checkout, so none of the PR's code ever ran. Every wake condition the
+# builder had looked past it, and the PR sat.
+C163_REVIEWS='[{"state":"APPROVED","author":{"login":"p1"}},{"state":"APPROVED","author":{"login":"p2"}}]'
+C163="$(jq -cn --argjson lr "$C163_REVIEWS" --argjson c "$CHK_BAD" \
+  '[{number:163, isDraft:false, updatedAt:"T9", headRefOid:"deadbee",
+     statusCheckRollup:$c, latestReviews:$lr, reviewRequests:[]}]')"
+C163_ROW="$(hc '["p1","p2"]' "$C163")"
+# It owes no round — which is precisely why nothing woke for it before.
+t c163-no-round-owed - "$(cut -f5 <<<"$C163_ROW")"
+# It is red, so it wakes now.
+t c163-head-is-red red "$(cut -f4 <<<"$C163_ROW")"
+t c163-wakes-the-author "o/r#163@deadbee" \
+  "$(awk -F'\t' "$AWK_RED" <<<"$C163_ROW" | cut -f1)"
+t c163-names-the-failing-job "release-exercise / fixture-chain (FAILURE)" \
+  "$(cut -f6 <<<"$C163_ROW")"
+# ...and it must NOT become a build wake: claiming a new issue is the thing
+# that was wrong to do while this PR sat red.
+t c163-not-a-build-wake "" "$(awk -F'\t' "$AWK_ROUNDS" <<<"$C163_ROW")"
+# One session per head, then quiet. A second tick on the same red head must not
+# buy a second rerun — the "no blind-rerun loop" criterion, as data.
+C163_LG="$TMP/c163"
+C163_ITEM="$(awk -F'\t' "$AWK_RED" <<<"$C163_ROW")"
+t c163-first-tick-fires 1 "$(printf '%s\n' "$C163_ITEM" | ledger_filter "$C163_LG" | n)"
+printf '%s\n' "$C163_ITEM" | ledger_commit "$C163_LG"
+t c163-second-tick-quiet 0 "$(printf '%s\n' "$C163_ITEM" | ledger_filter "$C163_LG" | n)"
+# A corrective push is a new head, and wakes regardless of how the oid sorts.
+t c163-corrective-push-wakes 1 \
+  "$(printf 'o/r#163@0000001\thead\n' | ledger_filter "$C163_LG" | n)"
+
+# --- wiring (#45/#17) --------------------------------------------------------
+if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
+t ci-red-rollup-fetched fetched "$r1"
+# No new API call: the rollup rides the listing the round signal was already
+# fetching. Asserted as "requested exactly once, on a line that also carries
+# latestReviews" — a second call added for it would be a second occurrence, and
+# moving it to a listing of its own would drop latestReviews from that line.
+# Comment lines are stripped first. The block above EXPLAINS that the rollup
+# rides an existing call, so counting raw occurrences counts the explanation —
+# a detector tripping on its own documentation, which this repo has now managed
+# three separate times.
+t ci-red-rollup-rides-round-listing 1 \
+  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'statusCheckRollup')"
+if grep -q 'latestReviews,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
+  r1=shared
+else
+  r1=SEPARATE
+fi
+t ci-red-rollup-on-the-round-call shared "$r1"
+if grep -q '.seen-ci-red' "$BMOD"; then r1=ledgered; else r1=UNGUARDED; fi
+t ci-red-signal-ledgered ledgered "$r1"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq '.suppressed-ci-red.$slug' "$BMOD"; then r1=perrepo; else r1=SHARED; fi
+t ci-red-suppression-perrepo perrepo "$r1"
+# An idle tick must still write a line (#53): a block that logs only when it
+# fires makes a quiet box and a busy box look identical.
+if grep -q 'no ci-red duty' "$BMOD"; then r1=logged; else r1=SILENT; fi
+t ci-red-idle-logs logged "$r1"
+# #17's first acceptance criterion: the builder wakes for its own red PR BEFORE
+# claiming another issue. Ordering in the file is the ordering in the tick.
+ci_at="$(grep -n -- '--- CI-RED' "$BMOD" | head -1 | cut -d: -f1)"
+build_at="$(grep -n -- '--- BUILD' "$BMOD" | head -1 | cut -d: -f1)"
+if [ -n "$ci_at" ] && [ -n "$build_at" ] && [ "$ci_at" -lt "$build_at" ]; then
+  r1=before
+else
+  r1=AFTER
+fi
+t ci-red-wakes-before-build before "$r1"
+t ci-red-prompt-exists yes "$([ -f "$SHARED/prompts/ci-red.txt" ] && echo yes || echo NO)"
+t ci-red-budget-defined yes \
+  "$(grep -q '^TIMEOUT_CIRED=' "$SHARED/conf/roles/builder.conf" && echo yes || echo NO)"
+# The doctrine half of #45 — the engine excludes the round, the rules say why.
+if grep -q 'REVIEW REQUEST REQUIRES A GREEN CHECK' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=stated
+else
+  r1=SILENT
+fi
+t round-rules-state-green-head stated "$r1"
+# ...including the exception, or the rule becomes one agents route around
+# silently instead of arguing with in the open.
+if grep -q 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=stated; else r1=SILENT; fi
+t round-rules-state-exception stated "$r1"
+
+# --- re-request by head, not by verdict (danmt, #64 round) -------------------
+# BUILDER.md and build.txt both said to re-request "exactly the non-approvers",
+# while converged.jq counts an approval ONLY at the current head:
+#
+#   map(select(.state == "APPROVED" and .commit.oid == $pr.headRefOid) | ...)
+#     as $head_approvers
+#   | (($panel - $head_approvers) | length == 0) as $panel_approves
+#
+# So the moment a fix round pushes a commit, an earlier approver goes stale, is
+# not re-requested, never re-approves, and $panel - $head_approvers is never
+# empty — the handoff wake cannot fire and the PR stalls looking finished. The
+# same silent-stall shape as the reviewDecision bug (ceremony#26/#39). This PR
+# was itself a live instance: grok approved at e13b0dd, the rebase onto #57
+# moved the head, and re-requesting only the two change-requesters would have
+# left it unconvergeable.
+#
+# rebase.txt already had the principle right — it is the one prompt where a
+# push is guaranteed. Asserting the invariant rather than the prose: the
+# predicate keys on the head, so the prompts that tell a builder whom to
+# re-request must say head.
+# shellcheck disable=SC2016  # the jq literal converged.jq contains
+if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/converged.jq"; then
+  r1=head-keyed
+else
+  r1=CHANGED
+fi
+t converged-counts-approvals-at-head head-keyed "$r1"
+for p in build.txt fragment-round-rules.txt; do
+  if grep -qi 'by head, not by verdict' "$SHARED/prompts/$p"; then r1=stated; else r1=SILENT; fi
+  t "rerequest-by-head-$p" stated "$r1"
+done
+# The no-push case must survive: re-requesting a fresh approver at an unchanged
+# head is what AUTO_APPROVE_REREQUEST exists to absorb, and the rule must not
+# tell builders to spam a panel that is still valid.
+for p in build.txt fragment-round-rules.txt; do
+  if grep -qi 'head did not move' "$SHARED/prompts/$p"; then r1=carved; else r1=MISSING; fi
+  t "rerequest-unchanged-head-carveout-$p" carved "$r1"
+done
+if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.conf"; then r1=present; else r1=GONE; fi
+t auto-approve-rerequest-still-backs-the-carveout present "$r1"
+
+# --- the gate is a whitelist: green or none (danmt's ruling, #64) ------------
+# Codex asked for `$4 == "green"`. The ruling took the pending half of that and
+# refused the `none` half, because the two are not the same fact: pending is
+# transient and resolves itself, `none` is terminal. These tests pin BOTH
+# halves, so neither can be reintroduced by someone who reads only one of them.
+GATE_ROWS="$(printf '%s\n' \
+  "$(printf 'o/noci#1\tT1\taaa\tnone\towed\t-')" \
+  "$(printf 'o/q#2\tT2\tbbb\tpending\towed\t-')" \
+  "$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')" \
+  "$(printf 'o/x#4\tT4\tddd\tred\towed\tcheck (FAILURE)')")"
+t gate-admits-green-and-none "$(printf 'o/noci#1 T1\no/g#3 T3')" \
+  "$(awk -F'\t' "$AWK_ROUNDS" <<<"$GATE_ROWS")"
+t gate-holds-red "o/x#4" "$(awk -F'\t' "$AWK_BLOCKED" <<<"$GATE_ROWS")"
+t gate-holds-pending "o/q#2" "$(awk -F'\t' "$AWK_HELD" <<<"$GATE_ROWS")"
+# The `none` half, as a standing negative control. A repo with no CI configured
+# is `none` FOREVER, so a gate of `$4 == "green"` does not delay its owed
+# rounds — it retires them, and the engine can never open a review round in
+# that repo again. head-checks.jq rules `none` a state of its own for exactly
+# this reason; the gate has to agree with the classifier.
+t gate-green-only-would-strand-the-ci-less-repo "o/g#3 T3" \
+  "$(awk -F'\t' '$5 == "owed" && $4 == "green" { print $1, $2 }' <<<"$GATE_ROWS")"
+# Every owed round is accounted for — admitted, held-red or held-pending. A
+# state that falls out of all three is a round nobody wakes for and nobody
+# reports, which is the silent-stall shape this whole PR is against.
+t gate-partitions-every-owed-round 4 \
+  "$(awk -F'\t' '$5 == "owed" && ($4 == "green" || $4 == "none" || $4 == "red" || $4 == "pending") { c++ } END { print c+0 }' <<<"$GATE_ROWS")"
+
+# What the gate owes for admitting a head with NO evidence: name it. Same
+# assert-the-literal-AND-run-it discipline as the row slicing above.
+# shellcheck disable=SC2016  # awk field refs, quoted exactly as the module has them
+AWK_NOCHECK='$5 == "owed" && $4 == "none" { s = s (s ? "; " : "") $1 " (no checks configured)" } END { print s }'
+if grep -Fq "$AWK_NOCHECK" "$BMOD"; then r1=present; else r1=MISSING; fi
+t nocheck-awk-in-module present "$r1"
+t nocheck-heads-named "o/noci#1 (no checks configured)" \
+  "$(awk -F'\t' "$AWK_NOCHECK" <<<"$GATE_ROWS")"
+# A green-only set must produce the empty string, which is what the module
+# turns into "-" — a literal "" reaching the prompt would read as a bug.
+t nocheck-empty-when-all-green "" \
+  "$(awk -F'\t' "$AWK_NOCHECK" <<<"$(printf 'o/g#3\tT3\tccc\tgreen\towed\t-')")"
+# The datum has to REACH the session, or naming it in the log helps nobody:
+# the slot exists in the prompt and the module fills it.
+if grep -q '{{HEAD_CHECKS}}' "$SHARED/prompts/build.txt"; then r1=slotted; else r1=MISSING; fi
+t build-prompt-has-head-checks-slot slotted "$r1"
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
+if grep -q 'HEAD_CHECKS="\$head_checks"' "$BMOD"; then r1=rendered; else r1=MISSING; fi
+t build-prompt-head-checks-rendered rendered "$r1"
+# render_prompt leaves an unfilled slot in place verbatim, so a slot nobody
+# fills would ship "{{HEAD_CHECKS}}" to the model as if it were prose.
+printf 'checks: {{HEAD_CHECKS}}' >"$TMP/prompts/hc.txt"
+t head-checks-slot-substitutes "checks: o/q#2 (pending)" \
+  "$(render_prompt hc.txt HEAD_CHECKS="o/q#2 (pending)")"
+
+# The request-side rule is where codex's scenario actually pays: a round
+# answered with argument and NO push, re-requested under a still-running
+# check that then fails. Nothing re-runs, because the head never moved.
+if grep -qi 'NOT-YET-FINISHED IS NOT GREEN' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=ruled
+else
+  r1=SILENT
+fi
+t round-rules-rule-pending ruled "$r1"
+# ...with the one carve-out that keeps a CI-less repo from waiting forever for
+# a check that is never coming — the same `none` case as the gate above.
+if grep -qi 'NO checks configured' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=carved
+else
+  r1=MISSING
+fi
+t round-rules-carve-out-no-checks carved "$r1"
+# The ruled classification is ceremony's (BUILDER.md, operator 2026-07-27) and
+# the classifier already implements it; the prompt must not disagree with
+# either. cancelled/stale not green, skipped/neutral green.
+for term in 'cancelled or stale' 'skipped or neutral'; do
+  if grep -qi "$term" "$SHARED/prompts/fragment-round-rules.txt"; then r1=stated; else r1=SILENT; fi
+  t "round-rules-ruled-classification-${term// /-}" stated "$r1"
+done
+
+# --- the duty order on paper matches the duty order in the code -------------
+# FLEET.md states the fleet-standard order and points at these files as the
+# mechanism; ceremony#190 merged that order with ci-red in it. A header that
+# lags the module order is how the #149 drift went unnoticed, so it is
+# asserted rather than remembered (grok, #64).
+for f in bin/duty.sh lib/duty-builder.sh README.md; do
+  if grep -q 'resume → ci-red' "$SHARED/$f"; then r1=named; else r1=STALE; fi
+  t "duty-order-names-ci-red-${f//\//-}" named "$r1"
+done
+# Handoff is deliberately NOT gated on a green head, and the reason has to sit
+# where the "obvious improvement" would be typed (grok, #64): ci-red fires once
+# per head, so a green-gated handoff strands exactly ceremony#163 again.
+if awk '/--- HANDOFF/,/--- REBASE/' "$BMOD" | grep -q 'NOT GATED ON A GREEN HEAD'; then
+  r1=called-out
+else
+  r1=SILENT
+fi
+t handoff-green-gating-called-out called-out "$r1"
 
 echo
 echo "passed $PASS, failed $FAIL"

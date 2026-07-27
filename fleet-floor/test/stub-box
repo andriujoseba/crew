@@ -333,7 +333,6 @@ case "${1:-}" in
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *'shared/install.sh'*)                    # crew's hire bake
         echo "installed for stub-bot (agent: stub, roles: stub)"
-        echo "  agent/role resolved from the --agent/--role flags — unchanged"
         echo "crontab armed" ;;
       *'instance.conf'*)                        # crew's box_agent
         # AFTER the ::logstart case: probe.sh reads instance.conf too, now that

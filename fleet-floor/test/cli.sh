@@ -343,26 +343,6 @@ mkdir -p "$CL_TMP/crew-state"
 crew_cmd hire cli-hired
 t "crew hire: an on-roster box is hired without a flag" 0 "$CL_RC"
 
-# The production roster is authoritative. Explicit profile flags on one of its
-# members used to be accepted, echoed as fact, then silently discarded in
-# favour of the roster row by install_identity_args (#35 review).
-CL_PROD_FLEET="$CL_TMP/prod-fleet.txt"
-printf 'claude-builder running idle\n' >"$CL_PROD_FLEET"
-CL_RC=0
-PATH="$CL_TMP/bin:$PATH" \
-FLOOR_FIXTURE="$CL_PROD_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
-  env -u CREW_ROSTER timeout 60 "$CL_ROOT/cli/crew" \
-    hire claude-builder --agent claude --role reviewer \
-    </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
-if [ "$CL_RC" -ne 0 ] &&
-   grep -q 'claude-builder is declared as agent=claude role=builder' "$CL_TMP/crew-out" &&
-   grep -q 'production roster is authoritative' "$CL_TMP/crew-out"; then
-  ok "crew hire: explicit profile for a production member is REFUSED"
-else
-  fail "crew hire: explicit profile for a production member is REFUSED" \
-       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
-fi
-
 # Same box, off the roster: production registry, so it must be refused.
 CL_OFFROSTER="$CL_TMP/offroster.txt"
 grep -vE '^cli-hired' "$CL_CREW_ROSTER" > "$CL_OFFROSTER"

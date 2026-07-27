@@ -1,6 +1,9 @@
 # duty-builder.sh — builder wakes, in doctrine priority order (FLEET.md):
-# resume → build (ready issues / completed rounds) → handoff → rebase, plus
-# worktree hygiene. All predicates are computed from latestReviews /
+# resume → ci-red → build (ready issues / completed rounds) → handoff →
+# rebase, plus worktree hygiene. ci-red precedes build because your own red
+# head outranks a new claim (ceremony BUILDER.md); the block order in this
+# file IS the tick order, and this header is what FLEET.md is reconciled
+# against. All predicates are computed from latestReviews /
 # latestOpinionatedReviews, NEVER reviewDecision: reviewDecision exists only
 # under branch protection and stays "" here — keying on it silently stalled
 # rounds for a day (ceremony#26, #39).
@@ -122,6 +125,74 @@ _builder_repo() {
 
   panel_json="$(panel_for_repo "$R" "$dir" | jq -c --arg me "$ME" '. - [$me]')"
 
+  # --- One listing of my open PRs, several facts. The state of the check at
+  # the head was never read by this engine at all: `statusCheckRollup` appeared
+  # nowhere in it. That single omission is both #45 (a fix round opened on a red
+  # head spends a full panel round relaying a failure the author already had)
+  # and #17 (a red head with no round owed and no conflict woke nothing, so an
+  # approved, mergeable PR stranded on a transient CI failure). One datum, two
+  # bugs — and the round-owed signal was already fetching this exact listing, so
+  # headRefOid and statusCheckRollup ride along for no additional call.
+  local mine_json mine_rows
+  mine_json="$(gh pr list -R "$R" --state open --author "$ME" \
+    --json number,isDraft,latestReviews,reviewRequests,updatedAt,headRefOid,statusCheckRollup \
+    2>/dev/null || echo err)"
+  if [ "$mine_json" = "err" ]; then
+    mine_rows=err
+  else
+    mine_rows="$(printf '%s' "$mine_json" \
+      | jq -r --argjson panel "$panel_json" --arg repo "$R" \
+        -f "$DUTY_DIR/lib/jq/head-checks.jq" 2>/dev/null || echo err)"
+  fi
+
+  # --- CI-RED: a PR of mine whose check FAILED at the current head. Placed
+  # before BUILD on purpose — a builder repairs its own red PR before claiming
+  # another issue (ceremony#163: full-panel approvals at the head, mergeable,
+  # and stranded on an HTTP 429 while a job downloaded actions/checkout. No PR
+  # code ever ran. No wake condition covered it, because CI-red is actionable
+  # authored work even when there is no requested change and no conflict).
+  #
+  # THE LEDGER ID CARRIES THE HEAD, AND ITS VALUE IS A FIXED SENTINEL. Both
+  # halves are deliberate. ledger_filter re-fires when the value sorts GREATER,
+  # and a SHA has no order — keyed the usual way, a corrective push whose oid
+  # happened to sort below the previous one would be SUPPRESSED, killing
+  # exactly the wake this block exists to deliver. So the head goes in the id,
+  # where a new head is an id never seen and always fires; and the value cannot
+  # advance within one head, which is "never blind-rerun a deterministic
+  # failure" (#17's fifth bullet) expressed as data rather than as an
+  # instruction a session may forget. updatedAt is wrong here for the same
+  # reason from the other side: a comment on the PR would advance it and buy
+  # another rerun of an unchanged tree.
+  local red_items red_fresh red_key red_checks red_num
+  if [ "$mine_rows" = "err" ]; then
+    warn "$R: CI-red detection failed; skipping"
+  else
+    red_items="$(awk -F'\t' '$4 == "red" { print $1 "@" $3 "\thead\t" $6 }' <<<"$mine_rows")"
+    red_fresh="$(printf '%s\n' "$red_items" | ledger_filter "$DUTY_DIR/.seen-ci-red")"
+    # A red head we have already spent a session on is still red. Stop paying
+    # for it; do not stop saying it (#59).
+    printf '%s\n' "$red_items" \
+      | ledger_suppressed "$DUTY_DIR/.seen-ci-red" \
+      | report_suppressed "$DUTY_DIR/.suppressed-ci-red.$slug" "$R: ci-red"
+    if [ -z "${red_fresh//[[:space:]]/}" ]; then
+      log "$R: no ci-red duty"
+    else
+      while IFS=$'\t' read -r red_key _ red_checks; do
+        [ -n "$red_key" ] || continue
+        red_num="${red_key#*#}"; red_num="${red_num%@*}"
+        log "$R#$red_num: check RED at head — launching ci-red session (${red_checks:-unknown})"
+        ensure_main_clone "$R" "$dir" || continue
+        RUN_SESSION_RC=1
+        run_session ci-red "$R#$red_num" "$dir" "$TIMEOUT_CIRED" \
+          "$(render_prompt ci-red.txt ME="$ME" REPO="$R" NUM="$red_num" \
+            CHECKS="${red_checks:-unknown}" WT_RULES="$wt_rules")"
+        if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+          printf '%s\thead\n' "$red_key" | ledger_commit "$DUTY_DIR/.seen-ci-red"
+        fi
+      done <<<"$red_fresh"
+    fi
+  fi
+
   # --- BUILD: ready unclaimed issues, or my PRs whose round is WHOLE.
   # Rounds are answered whole (BUILDER.md): a changes-request is actionable
   # only when no panel review request is still outstanding. Ready issues
@@ -139,7 +210,7 @@ _builder_repo() {
   # ONE issue listing, two derived facts. Two calls could disagree about the
   # board between them, and the assigned-count is only meaningful relative to
   # the same snapshot the pickable set came from.
-  local ready_json ready_count ready_assigned cr_count
+  local ready_json ready_count ready_assigned cr_count head_checks="-"
   local ready_items="" cr_items=""
   ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
     --json number,assignees,updatedAt 2>/dev/null || echo err)"
@@ -160,19 +231,69 @@ _builder_repo() {
   # Same treatment for the owed-round signal: a round the session declines to
   # answer is a permanent wake otherwise. number+updatedAt travel so the ledger
   # re-wakes on a push or a new review, which is exactly when it should.
-  cr_items="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft,latestReviews,reviewRequests,updatedAt 2>/dev/null \
-    | jq -r --argjson panel "$panel_json" --arg repo "$R" \
-      '.[] | select(.isDraft | not)
-        | select([.latestReviews[]? | select(.state == "CHANGES_REQUESTED")
-                  | .author.login | select(. as $l | ($panel | index($l)) != null)] | length > 0)
-        | select(([.reviewRequests[]? | .login // empty
-                   | select(. as $l | ($panel | index($l)) != null)] | length) == 0)
-        | "\($repo)#\(.number) \(.updatedAt)"' \
-      2>/dev/null || echo err)"
-  if [ "$cr_items" = "err" ]; then
+  #
+  # A RED HEAD IS NOT A ROUND (#45). The rule is the author's: a review request
+  # requires a green check at the head, because a red check is the author's own
+  # signal and not the panel's work. Measured on crew#40 — two consecutive
+  # heads, four reviewer-rounds, every one relaying a CI failure already visible
+  # in the job log. The most expensive of the four opened with "CI is red at
+  # this head … that gates my approval" and stopped looking, so the cost is not
+  # the wasted round, it is the findings that round did not make.
+  #
+  # Enforced here rather than left to the prompt. The doctrine belongs in
+  # fragment-round-rules.txt as well, and is there — but a rule only a model can
+  # apply is a rule that gets dropped under a long context, and this one has to
+  # hold for every round of every builder. Nothing is stranded by the exclusion:
+  # a red head has already woken the ci-red block above, which is the work that
+  # has to happen first regardless.
+  #
+  # ADMIT `green` OR `none`; HOLD `red` AND `pending` (danmt's ruling, #64).
+  #
+  # The gate is a whitelist for the same reason `is_green` is: "everything but
+  # red" is a fallthrough, and a fallthrough is what the CANCELLED bug was.
+  # The three states are three different facts and get three behaviours.
+  #
+  #   red      HELD, and it is the author's own work. Wakes ci-red above.
+  #   pending  HELD, and it is NOT the author's work — it is a check that has
+  #            not answered yet. Opening the round now spends the panel on a
+  #            head that may go red, which is exactly what #45 measured on
+  #            crew#40. Transient by definition: the item re-evaluates next
+  #            tick (5 minutes) and admits itself once the check settles
+  #            green. Must NOT wake ci-red — nothing has failed.
+  #   none     ADMITTED. Terminal, not transient: a repo with no CI configured
+  #            is `none` FOREVER, so holding on it means the engine can never
+  #            open a review round in that repo at all. head-checks.jq already
+  #            rules this a state of its own rather than a not-green one — "a
+  #            repo with no CI configured and a repo whose checks all passed
+  #            are different facts, and only one of them is evidence."
+  #
+  # Two holds, two messages. A pending hold that borrowed the red wording
+  # ("CI first") would tell the operator the author owes work when the author
+  # owes nothing but a wait, and that misreading is the whole distinction the
+  # ruling draws.
+  #
+  # An admitted `none` head still travels into the build prompt: the session is
+  # bound by the same green-at-the-head rule, and `none` is the one state where
+  # there is no check coming to wait for. Telling it so beats it inferring so.
+  local blocked_rounds held_rounds
+  if [ "$mine_rows" = "err" ]; then
+    cr_items=""
     cr_count=err
+    head_checks="-"
   else
+    cr_items="$(awk -F'\t' '$5 == "owed" && ($4 == "green" || $4 == "none") { print $1, $2 }' <<<"$mine_rows")"
+    blocked_rounds="$(awk -F'\t' '$5 == "owed" && $4 == "red" { print $1 }' <<<"$mine_rows")"
+    for N in $blocked_rounds; do
+      log "$N: round owed, but the check at its head is RED — CI first, no panel round (#45)"
+    done
+    held_rounds="$(awk -F'\t' '$5 == "owed" && $4 == "pending" { print $1 }' <<<"$mine_rows")"
+    for N in $held_rounds; do
+      log "$N: round owed, but the check at its head has not finished — waiting for it to settle, no panel round yet (#45)"
+    done
+    # Admitted on no evidence rather than on green: named, and handed on.
+    head_checks="$(awk -F'\t' '$5 == "owed" && $4 == "none" { s = s (s ? "; " : "") $1 " (no checks configured)" } END { print s }' <<<"$mine_rows")"
+    [ -n "$head_checks" ] && log "$R: round(s) admitted with no check at the head — $head_checks"
+    head_checks="${head_checks:--}"
     cr_count="$(printf '%s\n' "$cr_items" \
       | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
   fi
@@ -197,6 +318,7 @@ _builder_repo() {
     RUN_SESSION_RC=1
     run_session build "$R" "$dir" "$TIMEOUT_BUILD" \
       "$(render_prompt build.txt ME="$ME" REPO="$R" TRIAGE="$FLEET_TRIAGE" \
+        HEAD_CHECKS="$head_checks" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules" ONESHOT_RULES="$oneshot_rules")"
     # Record what this session SAW, at the state it saw it in — but only if the
     # session actually ran to completion. A crash or timeout leaves the ids
@@ -213,7 +335,19 @@ _builder_repo() {
   # computed directly: every panelist's latest opinionated review APPROVES
   # the CURRENT head, no panel request outstanding, PR mergeable RIGHT NOW,
   # and state:needs-human not already set (the human is off-panel — without
-  # the refire guard this wake fires forever after a successful handoff). ---
+  # the refire guard this wake fires forever after a successful handoff).
+  #
+  # HANDOFF IS DELIBERATELY NOT GATED ON A GREEN HEAD, and the obvious
+  # improvement is the bug (grok, #64). Adding `&& check_state == "green"`
+  # here reads as symmetry with the round gate above, but the two wakes have
+  # opposite failure modes: ci-red fires at most ONCE PER HEAD by design (the
+  # ledger id carries the oid), so under a red that no push can clear — a
+  # runner outage, a failure already on main — ci-red goes quiet after its one
+  # session and a green-gated handoff would then wake nothing at all. That is
+  # ceremony#163 exactly: full-panel approvals, mergeable, and stranded, which
+  # is the incident #17 was filed from. A converged PR reaching the human with
+  # a red check is a human's call to make; a converged PR reaching nobody is
+  # the failure this module exists to end. ---
   local my_open converged handoff_prs=""
   my_open="$(gh pr list -R "$R" --state open --author "$ME" \
     --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"
