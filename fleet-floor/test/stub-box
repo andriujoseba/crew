@@ -77,8 +77,25 @@ emit_probe() {
   esac
   printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
   printf '::now %s\n' "$(now)"
-  printf '::gh %s\n'     "$([ "$sc" = noauth ] && echo missing || echo ok)"
-  printf '::vendor %s\n' "$([ "$sc" = noauth ] && echo missing || echo ok)"
+  # `flowing`, not `ok`: the probe no longer TESTS a credential, it reports
+  # what the duty flow last observed. Keeping `ok` here would have let the
+  # collector be written against a vocabulary probe.sh does not emit — the
+  # exact circularity this stub exists to avoid, and the reason boxside.sh
+  # re-checks these keys against the real script.
+  printf '::gh %s\n'     "$([ "$sc" = noauth ] && echo missing || echo flowing)"
+  printf '::vendor %s\n' "$([ "$sc" = noauth ] && echo missing || echo flowing)"
+  [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
+  # An expiry inside the warning window, so the countdown is rendered by
+  # something rather than being dead code no fixture reaches.
+  # Both services expire, independently and for different reasons — gh when
+  # the PAT lapses, vendor when the refresh token does. A fixture carrying
+  # only one would leave the other's rendering untested.
+  [ "$sc" = expiring ] && printf '::ghexpiry 2026-08-03T14:29:14Z\n'
+  [ "$sc" = expiring ] && printf '::vendorexpiry 2026-08-01T05:33:35Z\n'
+  # A duty run that started 47 minutes ago and never let go: alive, ticking,
+  # and doing nothing. There is no other way to reach the STUCK branch — a
+  # real fleet produces this state only by breaking.
+  [ "$sc" = stuck ] && printf '::lockheld 2820\n'
   printf '::cron %s\n'   "$cron"
   printf '::paused %s\n' "$paused"
   # Full owner/repo, exactly as repos.txt holds them. Bare names here are
@@ -201,6 +218,16 @@ case "${1:-}" in
     # shellcheck disable=SC2016  # the patterns are LITERAL fragments of the
     # scripts being matched, not strings to expand: $HOME is the box's.
     case "$script" in
+      # The ping tier: `box exec <box> -- true`, the whole heartbeat. It needs
+      # no case of its own to FAIL correctly — stopped, unreachable and wedged
+      # are all handled above, and they are the states a ping exists to catch.
+      # It needs this one to SUCCEED, and without it every ping fell through
+      # to the unmatched-script exit 3 below, so a healthy fleet read as
+      # totally unreachable after three rounds. Deliberately first: `true` is
+      # a substring of nothing else here, but the ping is also the only script
+      # that must stay this cheap, and matching it last would mean walking
+      # every other pattern 6 times a minute per box.
+      true)                                     : ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
       *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
@@ -242,9 +269,27 @@ case "${1:-}" in
       # driven here. Every one of these substrings ALSO appears in probe.sh,
       # which is why they sit below its `::logstart` case — the order comment
       # above applies to them exactly as it does to the rest.
+      *'duty/.auth-fail.'*)                     # crew's auth_from_flow
+        # Matched on `duty/.auth-fail.` — probe.sh reads the same markers, but
+        # via "$DUTY_DIR/.auth-fail.$svc", so this substring belongs to the
+        # CLI's script alone. It sits ABOVE the hired_at case because the script
+        # also reads duty/VERSION (to tell 'never ticked' from 'no failure
+        # recorded'), and hired_at's pattern would otherwise answer it with a
+        # version string — which crew then parsed as the gh column.
+        # Like every pattern here it is the narrowest
+        # string unique to one script; the two are otherwise near-identical and
+        # a looser match would answer the probe in the CLI's format.
+        case "$sc" in
+          noauth)   echo "missing missing -" ;;
+          nothired) echo "unknown unknown -" ;;
+          # A credential inside the renewal window, so crew status's countdown
+          # is exercised by something rather than never running at all.
+          expiring) echo "flowing flowing 2026-08-03T14:29:14Z" ;;
+          *)        echo "flowing flowing -" ;;
+        esac ;;
       *'duty/VERSION'*)                         # crew's hired_at
         [ "$sc" = "nothired" ] || echo "crew@0.4.1" ;;
-      *'gh auth status'*)                       # crew status / crew hire
+      *'gh auth status'*)                       # crew hire / boot gate
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *bot_cli_probe*)                          # crew's vendor_probe
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;

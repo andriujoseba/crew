@@ -183,6 +183,44 @@ vendor_probe() {
     <"$AGENTS_DIR/$2.conf" >/dev/null 2>&1
 }
 
+# auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
+# observed it, in one exec of pure local file reads. Echoes three fields:
+#
+#     <gh-state> <vendor-state> <soonest-expiry-or-->
+#
+# where a state is flowing | missing | unknown, the same vocabulary
+# fleet-floor's probe.sh emits.
+#
+# This deliberately does NOT call `gh auth status` or bot_cli_probe. Those
+# reach the network, and — more importantly — they are a SECOND source of
+# truth. `rehearsal-app.sh` asserts the floor and this CLI agree about every
+# box, on the grounds that a disagreement means one of them is lying to an
+# operator; that only holds while both read the same evidence. When the floor
+# stopped polling credentials and started reading what the engine records,
+# leaving `crew status` probing live would have manufactured exactly the
+# disagreement the drill exists to catch — a box whose token died four
+# minutes ago reading MISSING here and `flowing` there.
+#
+# Live probing survives where it belongs: `crew hire` and the boot gate pay
+# for certainty once, at the moment someone is standing there to fix it.
+auth_from_flow() {
+  bxn "$1" '
+    for svc in gh vendor; do
+      if [ -s "$HOME/duty/.auth-fail.$svc" ]; then printf "missing "
+      elif [ -s "$HOME/duty/VERSION" ]; then printf "flowing "
+      else printf "unknown "; fi
+    done
+    exp=""
+    for f in "$HOME"/duty/.gh-token-expiry "$HOME"/duty/.vendor-token-expiry; do
+      [ -s "$f" ] || continue
+      v="$(head -1 "$f" | tr -d "\r")"
+      # ISO-8601, so the lexically smaller string IS the earlier date.
+      if [ -z "$exp" ] || [ "$v" \< "$exp" ]; then exp="$v"; fi
+    done
+    printf "%s\n" "${exp:--}"
+  ' 2>/dev/null | tr -d '\r'
+}
+
 # production_registry — the repo list THIS checkout would seed into a box.
 production_registry() {
   grep -vE '^[[:space:]]*(#|$)' "$CREW_ROOT/shared/conf/repos-default.txt" | sort
@@ -493,7 +531,7 @@ cmd_status() {
   local fmt='%-20s %-9s %-15s %-8s %-8s %s\n'
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HIRED GH VENDOR NOTE
-  local name agent role _from state hired ghs vs note last
+  local name agent role _from state hired ghs vs ghs_d vs_d note last expiry days
   while read -r name agent role _from; do
     if ! box_exists "$name"; then
       # shellcheck disable=SC2059
@@ -507,11 +545,18 @@ cmd_status() {
       continue
     fi
     hired="$(hired_at "$name")"
-    if bxn "$name" 'gh auth status >/dev/null 2>&1' >/dev/null 2>&1; then ghs=ok; else ghs=MISSING; fi
-    if vendor_probe "$name" "$agent"; then vs=ok; else vs=MISSING; fi
+    # One exec, no network, same evidence the floor reads — see auth_from_flow.
+    read -r ghs vs expiry <<<"$(auth_from_flow "$name")"
+    ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; expiry="${expiry:--}"
+    # The wire vocabulary is lowercase and shared with the floor; the TABLE
+    # shouts. A dead login is the one row an operator must not skim past, and
+    # it earned its capitals long before this column changed source.
+    ghs_d="$ghs"; vs_d="$vs"
+    [ "$ghs" = missing ] && ghs_d=MISSING
+    [ "$vs"  = missing ] && vs_d=MISSING
     note=""
     [ -z "$hired" ] && { hired="not hired"; note="crew hire $name"; }
-    if [ "$ghs" = MISSING ] || [ "$vs" = MISSING ]; then
+    if [ "$ghs" = missing ] || [ "$vs" = missing ]; then
       note="⚠ log in: box shell $name${note:+; $note}"
       # A failing vendor probe has two very different causes, and they were
       # indistinguishable: the box is genuinely logged out, OR the ROSTER named
@@ -534,8 +579,14 @@ cmd_status() {
       last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"
       note="${last:-no ticks yet}"
     fi
+    # A credential nobody has renewed is the fleet's next outage, and it is
+    # invisible in a column that only ever says flowing-or-missing.
+    if [ "$expiry" != "-" ]; then
+      days="$(( ( $(date -u -d "$expiry" +%s 2>/dev/null || echo 0) - $(date -u +%s) ) / 86400 ))"
+      [ "$days" -le 14 ] && note="renew in ${days}d${note:+ · $note}"
+    fi
     # shellcheck disable=SC2059
-    printf "$fmt" "$name" "$state" "$hired" "$ghs" "$vs" "$note"
+    printf "$fmt" "$name" "$state" "$hired" "$ghs_d" "$vs_d" "$note"
   done < <(read_roster)
 }
 

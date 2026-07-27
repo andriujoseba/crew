@@ -46,20 +46,79 @@ emit agent "$(sed -n 's/^BOT_AGENT=//p' "$DUTY_DIR/conf/instance.conf" 2>/dev/nu
 emit uptime "$(cut -d. -f1 /proc/uptime 2>/dev/null)"
 emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
-if gh auth status >/dev/null 2>&1; then emit gh ok; else emit gh missing; fi
-
-# bot_cli_probe is the agent profile's own liveness check — the same one
-# `crew status` uses, so the floor and the CLI can never disagree about
-# whether a vendor CLI is logged in.
-if [ -s "$conf" ]; then
-  # shellcheck disable=SC1090
-  if ( source "$conf" && bot_cli_probe ) >/dev/null 2>&1; then
-    emit vendor ok
+# --- credentials: read, never tested ---------------------------------------
+#
+# This probe used to run `gh auth status` and the agent profile's
+# bot_cli_probe on every poll. Both touch the network — `gh auth status` is a
+# real api.github.com round-trip (~450ms, and the single slowest thing in this
+# file; everything else is a local read) — to re-answer a question whose
+# answer changes when a token expires, i.e. about monthly. At a 60s poll that
+# was ~7,000 GitHub requests a day per fleet to re-learn a constant.
+#
+# Both are now REPORTED BY THE FLOW instead of polled. The duty engine already
+# talks to GitHub every tick (duty_attention runs first, for every role), so
+# it is the thing that finds out first and for free:
+#
+#   .gh-token-expiry  — the Github-Authentication-Token-Expiration header,
+#                       returned on every authenticated call. Recorded by the
+#                       engine; an absent file means a token that never
+#                       expires (classic PAT) or one not yet observed.
+#   .auth-fail        — written at the moment a call fails to authenticate,
+#                       cleared on the next success. `<iso8601> <what failed>`.
+#
+# That is strictly more informative than the probe it replaces: the expiry is
+# known WEEKS ahead instead of at the moment of death, and a failure means the
+# token could not do the WORK, not merely that it authenticates against `GET
+# /` — which a token with the wrong scopes does happily.
+# The wire keys stay `gh` and `vendor` so the page contract does not move, but
+# `ok` is gone: absence of a failure is not proof of a credential, and a value
+# that cannot tell those apart is how a logged-out box renders green. `flowing`
+# says exactly what is known — the engine has been talking to this service and
+# has not reported a rejection.
+# One marker file PER SERVICE. The first cut used a single .auth-fail and
+# decided which service was broken by substring-matching the reason text —
+# so a gh error mentioning the word "vendor" condemned the agent CLI too, and
+# sent the operator to re-login the wrong thing.
+for svc in gh vendor; do
+  fail=""
+  [ -f "$DUTY_DIR/.auth-fail.$svc" ] \
+    && fail="$(head -1 "$DUTY_DIR/.auth-fail.$svc" 2>/dev/null | tr -d '\r')"
+  if [ -n "$fail" ]; then
+    emit "$svc" missing
+    emit "authfail-$svc" "$fail"
+  elif [ -s "$DUTY_DIR/VERSION" ]; then
+    emit "$svc" flowing
   else
-    emit vendor missing
+    # No engine means no flow to have reported anything, so nothing is known —
+    # never `flowing`, which on a box that has never ticked would be a guess
+    # dressed as a fact.
+    emit "$svc" unknown
   fi
-else
-  emit vendor unknown
+
+  # Weeks of warning instead of an outage. Absent means the engine has not
+  # observed an expiry yet, or the credential has none (a classic PAT; three
+  # of the four agent profiles) — reported as unknown, never as fine.
+  if [ -f "$DUTY_DIR/.$svc-token-expiry" ]; then
+    emit "${svc}expiry" "$(head -1 "$DUTY_DIR/.$svc-token-expiry" 2>/dev/null | tr -d '\r')"
+  fi
+done
+
+# How long the current duty run has held the lock, in seconds — duty.sh writes
+# .duty.lock.since on entry and clears it on EXIT, so a value here means a run
+# is in flight RIGHT NOW, and its age is that run's age.
+#
+# This is the wedge the SILENT rule cannot see. A duty session hung on a vendor
+# CLI network call keeps ticking (tick.sh logs "tick skipped: previous run
+# still holds the lock"), so duty.log stays fresh, cron reads healthy, and the
+# floor renders a green box that has done nothing for 40 minutes — until the
+# 1800s session timeout fires. tick.sh already computes this age for its log
+# line; nothing had ever surfaced it to an operator.
+if [ -f "$DUTY_DIR/.duty.lock.since" ]; then
+  since="$(cat "$DUTY_DIR/.duty.lock.since" 2>/dev/null || echo)"
+  case "$since" in
+    ''|*[!0-9]*) : ;;   # absent or truncated mid-write — report nothing, not a bogus age
+    *) emit lockheld "$(( $(date +%s) - since ))" ;;
+  esac
 fi
 
 # Cron is the liveness contract: tick.sh guarantees one duty.log line per

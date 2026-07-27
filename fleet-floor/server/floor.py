@@ -60,6 +60,40 @@ SILENT_AFTER_S = 2 * TICK_S
 PROBE_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_PROBE_TIMEOUT", "45"))
 ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
 
+# --- the ping tier ---------------------------------------------------------
+#
+# The evidence probe answers "what has this box been doing"; it reads ~600 log
+# lines and cannot run often. "Is this box still answering" is a different and
+# much cheaper question, and tying it to the evidence poll meant the fastest
+# possible detection of a wedged guest was one full probe interval.
+#
+# `box exec <box> -- true` is the whole ping. Deliberately an EXEC and not a
+# socket: a listening port is answered by the guest kernel, so it stays green
+# through a userspace that can no longer fork. This round-trip needs the incus
+# agent alive, a fork, an exec and a binary read off disk — it fails when the
+# box is wedged, which is the entire point.
+PING_INTERVAL_S = int(os.environ.get("CREW_FLOOR_PING_INTERVAL", "10"))
+# Tight on purpose. A healthy round-trip is ~100ms; anything past a couple of
+# seconds is already the pathology, and a long timeout here would just
+# reintroduce the interval it was meant to beat.
+PING_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_PING_TIMEOUT", "5"))
+# One dropped ping is a scheduler hiccup, not a wedge. Three consecutive
+# misses (~30s) is a box that has stopped answering.
+PING_FAILS_TO_WEDGE = int(os.environ.get("CREW_FLOOR_PING_FAILS", "3"))
+
+# Warn this far ahead of a credential expiring. Two weeks is a working figure
+# for a token an operator has to renew by hand on five boxes: long enough that
+# it is never urgent, short enough that it is not background noise for the
+# other eleven months.
+EXPIRY_WARN_DAYS = int(os.environ.get("CREW_FLOOR_EXPIRY_WARN_DAYS", "14"))
+
+# A duty run holding its lock this long is reported as stuck. Two tick
+# boundaries, the same number the SILENT rule uses — past it, tick.sh is
+# logging "previous run still holds the lock" every 5 minutes and the box looks
+# perfectly healthy while doing nothing. run_session's own ceiling is 1800s, so
+# this surfaces the wedge ~20 minutes before the timeout resolves it.
+STUCK_AFTER_S = int(os.environ.get("CREW_FLOOR_STUCK_AFTER", str(SILENT_AFTER_S)))
+
 
 def log(msg):
     print("%s floor: %s" % (datetime.now(timezone.utc).strftime("%H:%M:%S"), msg),
@@ -291,6 +325,23 @@ def spark_24h(sessions, now):
     return [round(0.06 + 0.94 * (b / peak), 3) for b in buckets]
 
 
+def ping_box(name):
+    """Is this box answering? Returns (ok, milliseconds, error).
+
+    The cheapest possible `box exec`: no script piped in, no stdin, no output
+    to parse. Never raises — an unreachable box is a datum, like everywhere
+    else in this file.
+    """
+    t0 = time.time()
+    rc, _, err = run(["box", "exec", name, "--", "true"], PING_TIMEOUT_S)
+    ms = int((time.time() - t0) * 1000)
+    if rc == 0:
+        return True, ms, ""
+    if rc == 124:
+        return False, ms, "no answer in %ss" % PING_TIMEOUT_S
+    return False, ms, (err.strip().splitlines() or ["box exec rc %d" % rc])[-1]
+
+
 def probe_box(unit, agent_conf):
     """One box's evidence, via `box exec`. Never raises — failure is a datum."""
     with open(PROBE) as f:
@@ -311,6 +362,8 @@ def build_unit(unit, state, agent_conf, now):
         "up": {"h": 0, "m": 0}, "repo": "", "repos": [], "logs": [],
         "longest": 0, "avg": 0, "success": 0, "today": 0,
         "paused": False, "cron": {"ok": False, "last": None, "age": None},
+        "lock": {"held": None, "stuck": False},
+        "authfail": [], "expiry": {}, "ping": None,
         "note": "", "agent_actual": "",
     })
 
@@ -331,6 +384,29 @@ def build_unit(unit, state, agent_conf, now):
     u["gh"] = meta.get("gh", "unknown")
     u["vendor"] = meta.get("vendor", "unknown")
     u["paused"] = meta.get("paused", "0") != "0"
+    # Both services, same shape. gh and the agent CLI fail independently and
+    # are fixed by different commands, so they are never merged into one
+    # "auth is bad" flag — the operator needs to know WHICH login to redo.
+    for svc in ("gh", "vendor"):
+        fail = meta.get("authfail-%s" % svc, "")
+        if fail:
+            u["authfail"].append("%s: %s" % (svc, fail))
+        exp = meta.get("%sexpiry" % svc, "")
+        if exp:
+            ts = parse_ts(exp)
+            if ts:
+                # The point of carrying this is that it counts DOWN, well
+                # before anything breaks: a renewal reminder, not a post-mortem.
+                u["expiry"][svc] = {"at": exp, "days": int((ts - now) / 86400)}
+
+    # A duty run is in flight and has held the lock this long. Absent means no
+    # run is in flight — the common case between ticks, and not a fault.
+    try:
+        held = int(meta["lockheld"])
+    except (KeyError, ValueError, TypeError):
+        held = None
+    if held is not None and held >= 0:
+        u["lock"] = {"held": held, "stuck": held > STUCK_AFTER_S}
     u["repos"] = [r for r in meta.get("repos", "").split() if r]
     u["logs"] = [f for f in meta.get("sessionlogs", "").split() if f]
     try:
@@ -403,10 +479,35 @@ def build_unit(unit, state, agent_conf, now):
     elif last_ts and not u["cron"]["ok"]:
         u["state"] = "offline"
         u["note"] = u["note"] or "SILENT — no tick for %s" % fmt_dur(u["cron"]["age"])
+    elif u["authfail"]:
+        # Ticking, answering, and unable to do any work — the engine tried and
+        # was rejected. Not "offline": the box is fine and every control still
+        # works, which is exactly why this needs saying out loud rather than
+        # being inferred from a queue that quietly stopped moving.
+        u["state"] = "idle"
+        u["note"] = "AUTH BLOCKED — %s" % "; ".join(u["authfail"])
+    elif u["lock"]["stuck"]:
+        # Still "working": the box is alive, cron is ticking, and a session
+        # genuinely is running — every one of those is true and none of them is
+        # the point. The note OVERRIDES rather than defers, because a run stuck
+        # past two tick boundaries is the most important thing about this box,
+        # and the notes it would defer to describe a healthy one.
+        u["state"] = "working"
+        u["note"] = "STUCK — duty run has held the lock for %s" % fmt_dur(u["lock"]["held"])
     elif cur:
         u["state"] = "working"
     else:
         u["state"] = "idle"
+
+    # Renewal warning, appended rather than substituted: an expiring token is
+    # the operator's next chore, not this box's current condition, and it must
+    # not displace whatever the box is actually doing or failing at.
+    for svc, e in sorted(u["expiry"].items()):
+        if e["days"] > EXPIRY_WARN_DAYS:
+            continue
+        warn = ("%s login EXPIRED %dd ago" % (svc, -e["days"]) if e["days"] < 0
+                else "%s login expires in %dd" % (svc, e["days"]))
+        u["note"] = "%s \u00b7 %s" % (u["note"], warn) if u["note"] else warn
     return u
 
 
@@ -437,6 +538,13 @@ class Fleet:
         self._flag_lock = threading.Lock()
         self._refreshing = False             # a refresh chain is running
         self._pending = False                # ...and another was asked for
+        # The ping tier keeps its OWN lock. Sharing _poll_lock would queue
+        # every ping behind a 45s evidence probe, so the fast signal would run
+        # at the slow tier's cadence — precisely the coupling it exists to
+        # break. The two tiers touch no shared mutable state but self.pings.
+        self._ping_lock = threading.Lock()
+        self.pings = {}                      # box -> {ok, ms, ts, fails, err}
+        self._last_fails = {}                # previous round, for transition logging
 
     def agent_conf(self, agent):
         if agent not in self._confs:
@@ -499,6 +607,8 @@ class Fleet:
                           "repos": [], "logs": [], "longest": 0, "avg": 0,
                           "success": 0, "today": 0, "paused": False,
                           "cron": {"ok": False, "last": None, "age": None},
+                          "lock": {"held": None, "stuck": False},
+                          "authfail": [], "expiry": {}, "ping": None,
                           "engine": "", "gh": "unknown", "vendor": "unknown",
                           "repo": ""})
                 units[i] = u
@@ -516,6 +626,7 @@ class Fleet:
             "live": True,
             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "interval": self.interval,
+            "ping_interval": PING_INTERVAL_S,
             "units": [u for u in units if u],
             "polling": True,
         }
@@ -523,9 +634,100 @@ class Fleet:
             self.snapshot = snap
         return snap
 
+    # --- the ping tier -----------------------------------------------------
+
+    def ping_once(self):
+        """One `box exec -- true` per running roster box, concurrently.
+
+        Boxes that are stopped or absent are skipped, not pinged: `box exec`
+        into a stopped box fails for a reason the operator already knows, and
+        counting that as a wedge would make every deliberately-down box red.
+        """
+        states = box_states()
+        roster = [u for u in read_roster()
+                  if states.get(u["box"]) not in (None, "stopped")]
+        now = time.time()
+        results = {}
+
+        def work(name):
+            ok, ms, err = ping_box(name)
+            prev = self.pings.get(name) or {}
+            results[name] = {
+                "ok": ok, "ms": ms, "ts": now, "err": err,
+                # Consecutive misses, not a rate: one dropped ping is noise,
+                # a run of them is a wedge. Reset on any success.
+                "fails": 0 if ok else int(prev.get("fails", 0)) + 1,
+            }
+
+        threads = [threading.Thread(target=work, args=(u["box"],), daemon=True)
+                   for u in roster]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(PING_TIMEOUT_S + 5)
+
+        with self._ping_lock:
+            # Replace wholesale rather than update(): a box that left the
+            # roster (or went down) must lose its stale ping, not keep the
+            # last one it ever answered forever.
+            self.pings = results
+        return results
+
+    def ping_loop(self):
+        while True:
+            t0 = time.time()
+            try:
+                res = self.ping_once()
+                # Only log transitions. At a 10s cadence a line per round is
+                # 8,640 lines a day of "everything is fine", which is how an
+                # operator learns to stop reading the log.
+                for name, p in sorted(res.items()):
+                    if not p["ok"] and p["fails"] == PING_FAILS_TO_WEDGE:
+                        log("ping: %s stopped answering (%s)" % (name, p["err"]))
+                    elif p["ok"] and (self._last_fails.get(name, 0)
+                                      >= PING_FAILS_TO_WEDGE):
+                        log("ping: %s is answering again (%dms)" % (name, p["ms"]))
+                self._last_fails = {n: p["fails"] for n, p in res.items()}
+            except Exception as e:                          # noqa: BLE001
+                log("ping round failed: %s" % e)
+            time.sleep(max(2, PING_INTERVAL_S - (time.time() - t0)))
+
     def get(self):
+        """The evidence snapshot, with the fresher ping tier laid over it.
+
+        The overlay happens at read time, not at poll time: pings land every
+        ~10s and the evidence snapshot is rebuilt every ~60s, so merging at
+        poll time would serve ping data up to a minute stale — which is the
+        whole thing this tier exists to avoid.
+        """
         with self.lock:
-            return self.snapshot
+            snap = self.snapshot
+        with self._ping_lock:
+            pings = self.pings
+        if not pings:
+            return snap
+
+        now = time.time()
+        units = []
+        for u in snap.get("units", []):
+            p = pings.get(u["box"])
+            if p is None:
+                units.append(u)
+                continue
+            u = dict(u)
+            u["ping"] = {"ok": p["ok"], "ms": p["ms"],
+                         "age": int(now - p["ts"]), "fails": p["fails"]}
+            # A box that has missed PING_FAILS_TO_WEDGE pings in a row is
+            # unreachable NOW, whatever the last evidence probe concluded up
+            # to a minute ago. This overrides "working" on purpose: a session
+            # that was running when we last looked cannot be progressing
+            # inside a guest that no longer answers an exec.
+            if not p["ok"] and p["fails"] >= PING_FAILS_TO_WEDGE:
+                u["state"] = "offline"
+                u["note"] = "UNREACHABLE — %d pings unanswered (%s)" % (
+                    p["fails"], p["err"])
+            units.append(u)
+        return dict(snap, units=units)
 
     def loop(self):
         while True:
@@ -845,10 +1047,13 @@ def serve(bind, port, user, password, interval):
     Handler.auth_token = base64.b64encode(("%s:%s" % (user, password)).encode()).decode()
 
     threading.Thread(target=fleet.loop, daemon=True).start()
+    if PING_INTERVAL_S > 0:
+        threading.Thread(target=fleet.ping_loop, daemon=True).start()
 
     httpd = ThreadingHTTPServer((bind, port), Handler)
     httpd.daemon_threads = True
-    log("serving fleet-floor on http://%s:%d/ (poll every %ds)" % (bind, port, interval))
+    log("serving fleet-floor on http://%s:%d/ (evidence every %ds, ping every %ds)"
+        % (bind, port, interval, PING_INTERVAL_S))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

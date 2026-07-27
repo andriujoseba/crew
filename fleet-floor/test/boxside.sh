@@ -258,6 +258,88 @@ BS_LINES="$(sed -n '/^::logstart$/,/^::logend$/p' "$BS_TMP/deg.out" | sed '1d;$d
 if [ "$BS_LINES" -le 600 ]; then ok "degraded: big duty.log is capped at 600 lines ($BS_LINES)"
 else fail "degraded: big duty.log is capped at 600 lines" "shipped $BS_LINES"; fi
 
+# --------------------------------------------------------------------------
+# The flow-reported signals. These exist BECAUSE the probe no longer tests a
+# credential or shells out to anything: every one is a file the duty engine
+# writes and probe.sh only reads. stub-box imitates all four, so without these
+# assertions the collector would be verified entirely against the imitation —
+# and `emit_probe` claiming `::gh flowing` proves nothing about whether the
+# real script ever emits it.
+# --------------------------------------------------------------------------
+
+# The healthy shape: engine present, no failure recorded.
+BS_FLOW="$BS_TMP/flow"; mkdir -p "$BS_FLOW/duty"
+echo "crew@0.4.1" > "$BS_FLOW/duty/VERSION"
+echo "$BS_NOW duty run start" > "$BS_FLOW/duty/duty.log"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: no failure recorded -> gh flowing"     flowing "$(bs_key gh)"
+t "flow: no failure recorded -> vendor flowing" flowing "$(bs_key vendor)"
+if bs_has authfail; then fail "flow: healthy box emits no authfail" "$(bs_key authfail-gh)"
+else ok "flow: healthy box emits no authfail"; fi
+
+# No engine: nothing has run, so nothing is KNOWN. The distinction from
+# `flowing` is the whole point — a box that has never ticked cannot have a
+# working credential inferred from the absence of a failure.
+BS_NOENG="$BS_TMP/noeng"; mkdir -p "$BS_NOENG/duty"
+bs_probe "$BS_NOENG" >/dev/null
+t "flow: no engine -> gh unknown, never flowing"     unknown "$(bs_key gh)"
+t "flow: no engine -> vendor unknown, never flowing" unknown "$(bs_key vendor)"
+
+# A recorded gh rejection.
+echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: gh rejection -> gh missing" missing "$(bs_key gh)"
+if [ -n "$(bs_key authfail-gh)" ]; then ok "flow: gh rejection -> reason carried to the operator"
+else fail "flow: gh rejection -> reason carried to the operator" "empty"; fi
+# The marker names ONE service; the other must not be condemned with it.
+t "flow: a gh rejection does not mark the vendor missing" flowing "$(bs_key vendor)"
+rm -f "$BS_FLOW/duty/.auth-fail.gh"
+
+# Token expiry, and the two ways the file is not a timestamp.
+echo "2026-08-17T14:29:14Z" > "$BS_FLOW/duty/.gh-token-expiry"
+bs_probe "$BS_FLOW" >/dev/null
+t "flow: token expiry is carried verbatim" "2026-08-17T14:29:14Z" "$(bs_key ghexpiry)"
+rm -f "$BS_FLOW/duty/.gh-token-expiry"
+bs_probe "$BS_FLOW" >/dev/null
+if bs_has ghexpiry; then fail "flow: absent expiry file emits nothing" "$(bs_key ghexpiry)"
+else ok "flow: absent expiry file emits nothing"; fi
+
+# lockheld: a duty run in flight, and the half-written file that a probe
+# landing mid-`date +%s >` will read. A bogus age here would render as a
+# 56-year-old session and read as a catastrophic wedge.
+printf '%s' "$(( $(date +%s) - 2820 ))" > "$BS_FLOW/duty/.duty.lock.since"
+bs_probe "$BS_FLOW" >/dev/null
+BS_HELD="$(bs_key lockheld)"
+if [ "${BS_HELD:-0}" -ge 2815 ] && [ "${BS_HELD:-0}" -le 2830 ]; then
+  ok "flow: lockheld is the age of the run in flight ($BS_HELD s)"
+else fail "flow: lockheld is the age of the run in flight" "got '$BS_HELD'"; fi
+echo "not-a-number" > "$BS_FLOW/duty/.duty.lock.since"
+bs_probe "$BS_FLOW" >/dev/null
+if bs_has lockheld; then fail "flow: a corrupt lock stamp emits nothing" "$(bs_key lockheld)"
+else ok "flow: a corrupt lock stamp emits nothing"; fi
+: > "$BS_FLOW/duty/.duty.lock.since"
+bs_probe "$BS_FLOW" >/dev/null
+if bs_has lockheld; then fail "flow: an empty lock stamp emits nothing" "$(bs_key lockheld)"
+else ok "flow: an empty lock stamp emits nothing"; fi
+rm -f "$BS_FLOW/duty/.duty.lock.since"
+
+# The probe must not have reacquired a network dependency. `gh` and the vendor
+# CLIs are on the box's PATH, so a future edit calling either would pass every
+# assertion above and quietly cost 450ms per box per poll again.
+# Anchored to COMMAND POSITION, not to the word appearing anywhere: `gh` and
+# `vendor` are also legitimate wire-key names in this file, and a bare word
+# match condemned `for svc in gh vendor`. Comments are stripped first so the
+# rationale above each check cannot trip the check.
+BS_NETRE='(^|[;&|(]|\bif |\bthen |\belse )[[:space:]]*(gh|bot_cli_probe|claude|codex|kimi)([[:space:]]|$)'
+if sed 's/#.*//' "$BS_FLOOR/server/probe.sh" | grep -qE "$BS_NETRE"; then
+  fail "flow: probe.sh invokes no network command" \
+       "$(sed 's/#.*//' "$BS_FLOOR/server/probe.sh" | grep -nE "$BS_NETRE")"
+else ok "flow: probe.sh invokes no network command"; fi
+# ...and the guard is worth nothing if it cannot see the thing it forbids.
+if printf 'if gh auth status; then :; fi\n' | grep -qE "$BS_NETRE"; then
+  ok "flow: the no-network guard detects a reintroduced gh call"
+else fail "flow: the no-network guard detects a reintroduced gh call" "guard is blind"; fi
+
 if [ -n "${BS_STANDALONE:-}" ]; then
   echo
   echo "== box-side summary: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
