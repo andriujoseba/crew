@@ -1455,6 +1455,50 @@ else
 fi
 t handoff-green-gating-called-out called-out "$r1"
 
+# --- configurable doctrine keeps the shipped prompts byte-identical (#76) ---
+saved_prompts_dir="$PROMPTS_DIR"
+PROMPTS_DIR="$SHARED/prompts"
+DOCTRINE_ENTRYPOINT=AGENTS.md
+DOCTRINE_TRIAGE=TRIAGE.md
+DOCTRINE_BUILDER=BUILDER.md
+DOCTRINE_REVIEWER=REVIEWER.md
+for prompt_path in "$SHARED"/prompts/*.txt; do
+  prompt_name="$(basename "$prompt_path")"
+  expected="$(sed \
+    -e 's/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g' \
+    -e 's/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g' \
+    -e 's/{{DOCTRINE_BUILDER}}/BUILDER.md/g' \
+    -e 's/{{DOCTRINE_REVIEWER}}/REVIEWER.md/g' "$prompt_path")"
+  t "doctrine-default-byte-identical-$prompt_name" "$expected" \
+    "$(render_prompt "$prompt_name")"
+done
+
+DOCTRINE_ENTRYPOINT=GUIDE.md
+DOCTRINE_TRIAGE=OPERATE.md
+DOCTRINE_BUILDER=CREATE.md
+DOCTRINE_REVIEWER=VERIFY.md
+doctrine_leaks=""
+doctrine_unresolved=""
+for prompt_path in "$SHARED"/prompts/*.txt; do
+  prompt_name="$(basename "$prompt_path")"
+  rendered="$(render_prompt "$prompt_name")"
+  if printf '%s' "$rendered" | grep -Eq 'AGENTS\.md|TRIAGE\.md|BUILDER\.md|REVIEWER\.md'; then
+    doctrine_leaks="$doctrine_leaks $prompt_name"
+  fi
+  if printf '%s' "$rendered" | grep -q '{{DOCTRINE_'; then
+    doctrine_unresolved="$doctrine_unresolved $prompt_name"
+  fi
+done
+t doctrine-custom-no-shipped-name-leaks "" "$doctrine_leaks"
+t doctrine-custom-no-unresolved-slots "" "$doctrine_unresolved"
+if grep -REq 'AGENTS\.md|TRIAGE\.md|BUILDER\.md|REVIEWER\.md' "$SHARED/prompts"; then
+  r1=HARDCODED
+else
+  r1=slotted
+fi
+t doctrine-templates-have-no-hardcoded-paths slotted "$r1"
+PROMPTS_DIR="$saved_prompts_dir"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

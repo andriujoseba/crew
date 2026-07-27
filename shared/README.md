@@ -7,6 +7,11 @@ what a box actually deploys. The postmortem called the drift out directly:
 *"five hand-applied duty.sh variants (different probes, prune placement,
 prompt wording)"* — this is the convergence.
 
+Crew itself is general: this tree is the shipped engine, while the selected
+operator config directory owns fleet membership, participants, repository
+scope, and doctrine paths. Agent profiles extend configuration; adding a role
+changes the engine's duty lifecycle.
+
 ## Layout
 
 ```
