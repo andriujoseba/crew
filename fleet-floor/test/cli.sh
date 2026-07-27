@@ -168,7 +168,7 @@ CL_CREW_N="$(grep -cvE '^[[:space:]]*(#|$)' "$CL_CREW_ROSTER")"
 # file is an error; a complete out-of-tree definition drives the normal loops.
 CL_BAD_CONFIG="$CL_TMP/bad-config"
 mkdir -p "$CL_BAD_CONFIG"
-printf 'FLEET_ORG=wrong\n' >"$CL_BAD_CONFIG/fleet.conf"
+printf 'FLEET_HUMAN=wrong\n' >"$CL_BAD_CONFIG/fleet.conf"
 CL_RC=0
 CREW_CONFIG_DIR="$CL_BAD_CONFIG" "$CL_ROOT/cli/crew" profiles \
   >"$CL_TMP/config-out" 2>&1 || CL_RC=$?
@@ -178,10 +178,23 @@ else
   fail "crew config: explicit split-brain directory is refused" \
     "rc=$CL_RC $(cat "$CL_TMP/config-out")"
 fi
+CL_INCOMPLETE="$CL_TMP/incomplete-config"
+mkdir -p "$CL_INCOMPLETE"
+printf 'fixture claude builder\n' >"$CL_INCOMPLETE/fleet.roster"
+CL_RC=0
+CREW_CONFIG_DIR="$CL_INCOMPLETE" "$CL_ROOT/cli/crew" profiles \
+  >"$CL_TMP/config-out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'missing: fleet.conf repos.txt' "$CL_TMP/config-out"; then
+  ok "crew config: selected directory requires the identity trio"
+else
+  fail "crew config: selected directory requires the identity trio" \
+    "rc=$CL_RC $(cat "$CL_TMP/config-out")"
+fi
 CL_CONFIG="$CL_TMP/operator-config"
 mkdir -p "$CL_CONFIG"
 cp "$CL_CREW_ROSTER" "$CL_CONFIG/fleet.roster"
-printf 'FLEET_ORG=fixture\n' >"$CL_CONFIG/fleet.conf"
+printf 'FLEET_HUMAN=fixture\n' >"$CL_CONFIG/fleet.conf"
+printf 'heavy-duty/crew\n' >"$CL_CONFIG/repos.txt"
 CL_RC=0
 PATH="$CL_TMP/bin:$PATH" FLOOR_FIXTURE="$CL_CREW_FLEET" \
 FLOOR_STATE="$CL_TMP/crew-state" CREW_CONFIG_DIR="$CL_CONFIG" \

@@ -85,7 +85,7 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed tr wc; do
+for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed sha256sum tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 # If install.sh ever infers from hostname again, make the regression reproduce
@@ -180,29 +180,47 @@ roster_install --box claude-builder >/dev/null 2>&1
 t install-staged-roster-wins 'BOT_ROLES="reviewer"' \
   "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
 
-# Operator config converges, while registry payloads are seed-once and leave no
-# hidden second source behind. A wire mark in the operator file is ignored.
-printf 'FLEET_ORG="fixture-org"\nMARK_PICKUP="not-the-protocol"\n' >"$RDUTY/conf/fleet.conf"
+# Operator config and untouched registries converge, while a divergent registry
+# vetoes replacement. A wire mark in the operator file is ignored.
+printf 'FLEET_HUMAN="fixture-human"\nMARK_PICKUP="not-the-protocol"\n' >"$RDUTY/conf/fleet.conf"
 rm -f "$RDUTY/repos.txt" "$RDUTY/notify-repos.txt"
 printf 'fixture/first\n' >"$RDUTY/.crew-seed-repos.txt"
 printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
-roster_install --box claude-builder >/dev/null 2>&1
-t install-operator-conf-transport 'FLEET_ORG="fixture-org"' \
-  "$(grep '^FLEET_ORG=' "$RDUTY/conf/fleet.conf")"
-t install-registry-seed-once fixture/first "$(cat "$RDUTY/repos.txt")"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-operator-conf-transport 'FLEET_HUMAN="fixture-human"' \
+  "$(grep '^FLEET_HUMAN=' "$RDUTY/conf/fleet.conf")"
+t install-registry-first-convergence fixture/first "$(cat "$RDUTY/repos.txt")"
 t install-builder-notify-triage-only absent \
   "$([ -f "$RDUTY/notify-repos.txt" ] && printf present || printf absent)"
 t install-seed-payload-discarded absent \
   "$([ -e "$RDUTY/.crew-seed-repos.txt" ] || [ -e "$RDUTY/.crew-seed-notify-repos.txt" ] && printf present || printf absent)"
 printf 'fixture/second\n' >"$RDUTY/.crew-seed-repos.txt"
-roster_install --box claude-builder >/dev/null 2>&1
-t install-registry-not-converged fixture/first "$(cat "$RDUTY/repos.txt")"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-converges-untouched fixture/second "$(cat "$RDUTY/repos.txt")"
+printf 'fixture/contained\n' >"$RDUTY/repos.txt"
+printf 'fixture/third\n' >"$RDUTY/.crew-seed-repos.txt"
+veto_out="$(roster_install --box claude-builder --converge-registries 2>&1)"
+t install-registry-vetoes-divergence fixture/contained "$(cat "$RDUTY/repos.txt")"
+case "$veto_out" in *"claude-builder: repos.txt diverged"*"LEFT UNCHANGED"*) r1=named ;; *) r1=silent ;; esac
+t install-registry-veto-is-loud named "$r1"
+# Current-fleet migration: a box matching the shipped example has no local
+# intent, so it is safely adopted. A different no-provenance copy vetoes.
+rm -f "$RDUTY/.repos.txt.crew-provenance"
+cp "$ROOT/examples/repos.txt" "$RDUTY/repos.txt"
+printf 'fixture/migrated\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-migration-adopts-example fixture/migrated "$(cat "$RDUTY/repos.txt")"
+rm -f "$RDUTY/.repos.txt.crew-provenance"
+printf 'fixture/unknown-local\n' >"$RDUTY/repos.txt"
+printf 'fixture/incoming\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-migration-vetoes-unknown fixture/unknown-local "$(cat "$RDUTY/repos.txt")"
 runtime_fleet="$(DUTY_DIR="$RDUTY" bash -c \
-  '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s|%s" "$FLEET_ORG" "$MARK_PICKUP"')"
-t install-loads-defaults-then-operator 'fixture-org|📌 picked up' "$runtime_fleet"
+  '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s|%s" "$FLEET_HUMAN" "$MARK_PICKUP"')"
+t install-loads-defaults-then-operator 'fixture-human|📌 picked up' "$runtime_fleet"
 printf 'claude-builder claude triage\n' >"$RDUTY/fleet.roster"
 printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
-roster_install --box claude-builder >/dev/null 2>&1
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
 t install-triage-notify-seed fixture/wide "$(cat "$RDUTY/notify-repos.txt")"
 
 if grep -Rsiqw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \

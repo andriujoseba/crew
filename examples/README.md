@@ -8,9 +8,10 @@ directories. Search order is:
 3. the directory where `crew` was invoked
 4. this shipped example directory
 
-`fleet.roster` is the proof file and is required. The other files are optional;
-when absent, the matching file in this directory supplies the compatibility
-default.
+`fleet.roster` is the proof file. In an operator-selected directory,
+`fleet.roster`, `fleet.conf`, and `repos.txt` are required together; crew never
+borrows another fleet's participants or repository scope. Optional behaviour
+files fall back to the matching file in this directory.
 
 ```text
 fleet.roster       box name, agent and role
@@ -22,8 +23,8 @@ doctrine.conf      optional doctrine paths (reserved)
 ```
 
 The host atomically replaces `fleet.roster` and `fleet.conf` in a box on every
-hire or upgrade. Registry files seed a missing box-local file once and are
-never used to overwrite it.
+hire or upgrade. Registries follow the host only while their box copy remains
+untouched. A divergent registry vetoes replacement and is named loudly.
 
 `CREW_ROSTER` remains a roster-only override for drills and fixtures. It takes
 precedence over the selected directory's roster but does not select a different

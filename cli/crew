@@ -57,17 +57,28 @@ if [ "${CREW_CONFIG_DIR+x}" = x ]; then
     exit 1
   fi
   CONFIG_DIR="$(cd "$CREW_CONFIG_DIR" && pwd)"
+  CONFIG_IS_OPERATOR=1
 else
   CONFIG_DIR=""
+  CONFIG_IS_OPERATOR=0
   if [ -n "${XDG_CONFIG_HOME:-}" ]; then CONFIG_CANDIDATE="$XDG_CONFIG_HOME/crew"
   else CONFIG_CANDIDATE="$HOME/.config/crew"; fi
   for candidate in "$CONFIG_CANDIDATE" "$PWD" "$CREW_ROOT/examples"; do
     if [ -d "$candidate" ] && [ -f "$candidate/fleet.roster" ]; then
       CONFIG_DIR="$(cd "$candidate" && pwd)"
+      [ "$CONFIG_DIR" = "$CREW_ROOT/examples" ] || CONFIG_IS_OPERATOR=1
       break
     fi
   done
   [ -n "$CONFIG_DIR" ] || { echo "crew: no fleet definition found (fleet.roster is required)" >&2; exit 1; }
+fi
+if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then
+  missing=""
+  for required in fleet.conf repos.txt; do
+    [ -f "$CONFIG_DIR/$required" ] || missing="$missing $required"
+  done
+  [ -z "$missing" ] ||
+    { echo "crew: fleet definition '$CONFIG_DIR' is incomplete; missing:$missing" >&2; exit 1; }
 fi
 config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
 ROSTER="${CREW_ROSTER:-$CONFIG_DIR/fleet.roster}"
@@ -130,6 +141,10 @@ stage_fleet_definition() { # BOX
   fi
   bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt' || true
   return 1
+}
+
+registry_install_arg() {
+  if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then printf '%s' '--converge-registries'; fi
 }
 
 box_names() {
@@ -349,8 +364,9 @@ hire_guard() {
 # already at REF. Returns non-zero if the box could not be hired.
 hire_box() {
   local name="$1" agent="$2" role="$3" ref="$4" force="$5" allow="${6:-0}"
-  local want have origin="https://github.com/$CREW_REPO" identity_args
+  local want have origin="https://github.com/$CREW_REPO" identity_args registry_arg
   identity_args="$(install_identity_args "$name" "$agent" "$role")"
+  registry_arg="$(registry_install_arg)"
   want="$(git -C "$CREW_ROOT" rev-parse --short "$ref" 2>/dev/null || echo "$ref")"
   # The guard runs BEFORE the already-hired shortcut: a box that is already
   # armed against the wrong registry is precisely the state an operator needs
@@ -382,7 +398,7 @@ hire_box() {
     git -C ~/crew checkout --quiet '$ref'
     git -C ~/crew pull --quiet --ff-only origin '$ref' 2>/dev/null || true
   " || ! stage_fleet_definition "$name" || ! bxn "$name" \
-    "\$HOME/crew/shared/install.sh $identity_args --arm-cron"; then
+    "\$HOME/crew/shared/install.sh $identity_args $registry_arg --arm-cron"; then
     echo "$name: hire FAILED — the engine is NOT installed and cron is NOT armed (output above)"
     return 1
   fi
@@ -689,7 +705,8 @@ cmd_upgrade() {
     "")    die "usage: crew upgrade <box> | --all" ;;
     *)     targets="$1" ;;
   esac
-  local b armed flags line agent role identity_args
+  local b armed flags line agent role identity_args registry_arg
+  registry_arg="$(registry_install_arg)"
   for b in $targets; do
     echo "== upgrading $b"
     # Preserve the box's armed state instead of asserting one. An upgrade
@@ -712,7 +729,7 @@ cmd_upgrade() {
       set -euo pipefail
       git -C ~/crew pull --ff-only --quiet
     " && stage_fleet_definition "$b" &&
-       bxn "$b" "\$HOME/crew/shared/install.sh $identity_args $flags"; then
+       bxn "$b" "\$HOME/crew/shared/install.sh $identity_args $registry_arg $flags"; then
       :
     else
       echo "  upgrade FAILED on $b"

@@ -65,12 +65,13 @@ source "$OPERATOR_CONF"
 #  roster    --box NAME → fleet.roster (standing fleet).
 #  keep      existing conf/instance.conf (re-install/upgrade on a box whose
 #            name is not in the roster).
-AGENT_ARG="" ROLE_ARG="" BOX_ARG="" ARM_CRON=0
+AGENT_ARG="" ROLE_ARG="" BOX_ARG="" ARM_CRON=0 CONVERGE_REGISTRIES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent) AGENT_ARG="$2"; shift 2 ;;
     --role)  ROLE_ARG="$2";  shift 2 ;;
     --box)   BOX_ARG="$2";   shift 2 ;;
+    --converge-registries) CONVERGE_REGISTRIES=1; shift ;;
     --arm-cron) ARM_CRON=1; shift ;;
     *) echo "unknown argument '$1' (usage: install.sh [--box <name> | --agent <a> --role <r>] [--arm-cron])"; exit 1 ;;
   esac
@@ -202,19 +203,63 @@ for old in announce-review.sh announce-reviewing.sh submit-review.sh review-subm
 done
 [ -n "$LEGACY_MOVED" ] && echo "moved old entrypoints to $DUTY_DIR/legacy/:$LEGACY_MOVED"
 
-# Seed registries only if absent — their contents (and the reasoning in
-# their comments) are box-local operator state.
+# Registry convergence carries a per-box veto. An untouched copy follows the
+# host; a locally changed copy is containment state and is never widened.
 REPOS_SEED="$DUTY_DIR/.crew-seed-repos.txt"
 NOTIFY_REPOS_SEED="$DUTY_DIR/.crew-seed-notify-repos.txt"
 if [ ! -f "$REPOS_SEED" ]; then REPOS_SEED="$HERE/../examples/repos.txt"; fi
 if [ ! -f "$NOTIFY_REPOS_SEED" ]; then NOTIFY_REPOS_SEED="$HERE/../examples/notify-repos.txt"; fi
-if [ ! -f "$DUTY_DIR/repos.txt" ]; then
-  cp "$REPOS_SEED" "$DUTY_DIR/repos.txt"
-  echo "seeded $DUTY_DIR/repos.txt (edit it: it is the box's registry, not the job definition)"
-fi
-if [ "$IS_TRIAGE" -eq 1 ] && [ ! -f "$DUTY_DIR/notify-repos.txt" ]; then
-  cp "$NOTIFY_REPOS_SEED" "$DUTY_DIR/notify-repos.txt"
-  echo "seeded $DUTY_DIR/notify-repos.txt (the notifier's scope must stay WIDER than triage's — rig#112)"
+
+replace_registry() { # SOURCE DESTINATION PROVENANCE
+  local src="$1" dest="$2" provenance="$3" tmp hash_tmp incoming_hash
+  incoming_hash="$(sha256sum "$src" | awk '{print $1}')"
+  tmp="$(mktemp "$DUTY_DIR/.registry.XXXXXX")"
+  cp "$src" "$tmp"
+  mv "$tmp" "$dest"
+  hash_tmp="$(mktemp "$DUTY_DIR/.registry-hash.XXXXXX")"
+  printf '%s\n' "$incoming_hash" >"$hash_tmp"
+  mv "$hash_tmp" "$provenance"
+}
+
+apply_registry() { # PAYLOAD DESTINATION SHIPPED_EXAMPLE PROVENANCE LABEL
+  local payload="$1" dest="$2" example="$3" provenance="$4" label="$5"
+  local current_hash incoming_hash recorded_hash example_hash
+  if [ "$CONVERGE_REGISTRIES" -eq 0 ]; then
+    if [ ! -f "$dest" ]; then cp "$payload" "$dest"; echo "seeded $dest"; fi
+    return
+  fi
+  command -v sha256sum >/dev/null || { echo "sha256sum not found — registry provenance requires it"; exit 1; }
+  incoming_hash="$(sha256sum "$payload" | awk '{print $1}')"
+  if [ ! -f "$dest" ]; then
+    replace_registry "$payload" "$dest" "$provenance"
+    echo "converged $dest from the operator fleet definition"
+    return
+  fi
+  current_hash="$(sha256sum "$dest" | awk '{print $1}')"
+  if [ -f "$provenance" ]; then
+    recorded_hash="$(head -1 "$provenance")"
+    if [ "$current_hash" = "$recorded_hash" ]; then
+      replace_registry "$payload" "$dest" "$provenance"
+      echo "converged $dest from the operator fleet definition"
+      return
+    fi
+  else
+    example_hash="$(sha256sum "$example" | awk '{print $1}')"
+    if [ "$current_hash" = "$example_hash" ] || [ "$current_hash" = "$incoming_hash" ]; then
+      replace_registry "$payload" "$dest" "$provenance"
+      echo "adopted and converged $dest from the operator fleet definition"
+      return
+    fi
+  fi
+  echo "crew: ${BOX_ARG:-this box}: $label diverged from its last transported value — LEFT UNCHANGED" >&2
+  echo "crew: to adopt it, make $dest byte-identical to the host's $label and run crew upgrade again" >&2
+}
+
+apply_registry "$REPOS_SEED" "$DUTY_DIR/repos.txt" "$HERE/../examples/repos.txt" \
+  "$DUTY_DIR/.repos.txt.crew-provenance" repos.txt
+if [ "$IS_TRIAGE" -eq 1 ]; then
+  apply_registry "$NOTIFY_REPOS_SEED" "$DUTY_DIR/notify-repos.txt" \
+    "$HERE/../examples/notify-repos.txt" "$DUTY_DIR/.notify-repos.txt.crew-provenance" notify-repos.txt
 fi
 rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt"
 # A registry seeded before 2026-07-25 carries the SUPERSEDED header, which told
@@ -223,8 +268,8 @@ rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt"
 # registry-scoped now, so that paragraph denies containment the engine actually
 # provides — and an operator reading it concludes the drill's isolation
 # interlock cannot cover the reviewer, which is how #52 came to be filed
-# against an engine that had already been fixed. The repo LINES are box-local
-# operator state and are never rewritten; the false claim is flagged.
+# against an engine that had already been fixed. A divergent registry remains
+# box-local containment state; the false claim is flagged without rewriting it.
 if grep -q 'cannot scope it' "$DUTY_DIR/repos.txt" 2>/dev/null; then
   echo
   echo "NOTE — $DUTY_DIR/repos.txt carries the pre-2026-07-25 header, which says the"
