@@ -31,6 +31,7 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 # Register cleanup before any validation or sourced operator file can fail.
 cleanup_seed_payloads() {
   rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt"
+  rm -rf "$DUTY_DIR/.crew-seed-agents"
 }
 trap cleanup_seed_payloads EXIT
 
@@ -117,7 +118,14 @@ else
   echo "or --agent <agent> --role <role>; no existing instance.conf to keep"
   exit 1
 fi
-[ -f "$HERE/conf/agents/$BOT_AGENT.conf" ] || { echo "unknown agent profile '$BOT_AGENT'"; exit 1; }
+# An operator-transported profile satisfies the unknown-agent check: the host
+# stages it into the seed dir BEFORE running this script (#75), precisely
+# because this validation runs before conf/agents exists below — a profile
+# that arrived only with that copy would fail its own validation, and the
+# vendor would list in `crew profiles` yet die at `crew hire`.
+AGENT_SEED_DIR="$DUTY_DIR/.crew-seed-agents"
+[ -f "$AGENT_SEED_DIR/$BOT_AGENT.conf" ] || [ -f "$HERE/conf/agents/$BOT_AGENT.conf" ] ||
+  { echo "unknown agent profile '$BOT_AGENT'"; exit 1; }
 for role in $BOT_ROLE_LIST; do
   [ -f "$HERE/conf/roles/$role.conf" ] || { echo "unknown role profile '$role'"; exit 1; }
 done
@@ -165,6 +173,15 @@ for f in "$HERE"/lib/*.sh; do put "$f" "$DUTY_DIR/lib"; done
 for f in "$HERE"/lib/jq/*.jq; do put "$f" "$DUTY_DIR/lib/jq"; done
 for f in "$HERE"/prompts/*.txt; do put "$f" "$DUTY_DIR/prompts"; done
 for f in "$HERE"/conf/agents/*.conf; do put "$f" "$DUTY_DIR/conf/agents"; done
+# Operator profiles land AFTER the shipped set so a same-named operator
+# profile wins: load_conf sources whatever sits in conf/agents at runtime, so
+# the precedence must be settled here, in the copy, not left to a reader.
+# Absent seeds mean a direct-checkout install; the shipped set alone is the
+# compatibility fallback, same as the roster above.
+for f in "$AGENT_SEED_DIR"/*.conf; do
+  [ -f "$f" ] || continue
+  put "$f" "$DUTY_DIR/conf/agents"
+done
 for f in "$HERE"/conf/roles/*.conf; do put "$f" "$DUTY_DIR/conf/roles"; done
 put "$HERE/conf/fleet.defaults.conf" "$DUTY_DIR/conf"
 if [ "$OPERATOR_CONF" != "$DUTY_DIR/conf/fleet.conf" ]; then
@@ -269,6 +286,7 @@ if [ "$IS_TRIAGE" -eq 1 ]; then
     "$HERE/../examples/notify-repos.txt" "$DUTY_DIR/.notify-repos.txt.crew-provenance" notify-repos.txt
 fi
 rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt"
+rm -rf "$DUTY_DIR/.crew-seed-agents"
 # A registry seeded before 2026-07-25 carries the SUPERSEDED header, which told
 # its reader the reviewer queue was an org-wide requested_reviewers sweep that
 # "this list cannot scope". duty-review.sh and duty-builder.sh are both

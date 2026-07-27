@@ -235,6 +235,8 @@ case "${1:-}" in
     case "$script" in
       *'.crew-stage.XXXXXX'*)                  # crew's fleet-definition transport
         : ;;
+      *'rm -rf ~/duty/.crew-seed-agents'*)     # agent-profile seed reset (#75)
+        : ;;
       *'git -C ~/crew checkout'*)              # crew's checkout convergence
         : ;;
       # The ping tier: `box exec <box> -- true`, the whole heartbeat. It needs
@@ -355,5 +357,8 @@ case "${1:-}" in
 
   down)  echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
   start) echo running > "$STATEDIR/$2.state"; echo "started $2" ;;
+  # `crew new` mints infrastructure only; the stub records the mint so a test
+  # can assert the sizing/template arguments without owning an Incus (#75).
+  new)   echo "created" ;;
   *) echo "stub-box: unhandled '$*'" >&2; exit 2 ;;
 esac
