@@ -31,6 +31,8 @@ AGENT="claude"
 # drill/rehearsal-app.sh for why the control verbs are opt-in.
 APP=1
 APP_ARGS=()
+# Roles whose drill actually reached a box, for the app phase.
+DRILLED=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,8 +43,10 @@ while [ $# -gt 0 ]; do
     --no-app) APP=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
+    --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
+    --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--no-app] [--app-boxes \"a b\"] [--app-allow-control]"; exit 1 ;;
+       echo "         [--no-app] [--app-boxes \"a b\"] [--app-allow-control] [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
 
@@ -61,6 +65,15 @@ for role in $ROLES; do
   echo "############################################################"
   "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
+  # Roles whose box the drill actually REACHED, for the app phase below. rc=0
+  # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
+  # not "no box"); rc=1 can be a failure from before the box existed at all.
+  # Handing the app drill a box that is not there recreates, in miniature, the
+  # "NOT CREATED vs offline" non-comparisons this wiring exists to remove — and
+  # they would now count as real comparisons under #50's floor.
+  case "$rc" in
+    0|2) DRILLED="$DRILLED $role" ;;
+  esac
   # 2 is "nothing failed, but phase 2 never ran". It is NOT a pass: the role
   # loop is unproven, and collapsing it into ok is how a rehearsal that
   # tested nothing gets reported as clearing the rollout.
@@ -76,6 +89,37 @@ if [ "$APP" -eq 1 ]; then
   echo "############################################################"
   echo "## fleet app — crew floor against this host's boxes"
   echo "############################################################"
+  # Point the app drill at the boxes THIS run just drilled, unless the operator
+  # named a roster. Without this it fell through to fleet.roster, which on a
+  # drill host names the real fleet's members — boxes that do not exist here —
+  # so every comparison was "NOT CREATED vs offline": three assertions that
+  # agree about nothing being there.
+  #
+  # --agent goes WITH the roles, and that pairing is the whole point. The agent
+  # column selects the vendor profile both the floor and `crew status` probe
+  # with, so generating the roles correctly while defaulting the agent to
+  # `claude` mislabels every non-default rehearsal — and both readers then share
+  # the one wrong file, so their agreement still passes. A generated fact is
+  # only safer than a hand-written one if ALL of it is generated from something
+  # true; the role came from the drill, the agent silently did not.
+  case " ${APP_ARGS[*]-} " in
+    *" --roster "*) : ;;
+    *)
+      if [ -n "${DRILLED// /}" ]; then
+        APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
+      else
+        echo "## (app phase: no role reached a box this run — nothing to compare against)"
+        APP=0
+      fi ;;
+  esac
+  # Say what was left out rather than quietly narrowing: a shorter roster that
+  # nobody announced reads as full coverage.
+  if [ "$APP" -eq 1 ] && [ "${DRILLED# }" != "$ROLES" ]; then
+    echo "## (app phase covers ${DRILLED# } — roles whose drill never reached a box are excluded)"
+  fi
+fi
+
+if [ "$APP" -eq 1 ]; then
   "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
   # rc on its own line, like the role loop above — this file's own history is
   # why (crew#30: a bare status read inside a compound).

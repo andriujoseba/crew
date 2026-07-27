@@ -1,0 +1,9 @@
+# Screenshots from the browser walk (drill/rehearsal-app.sh --shots). Artifacts
+# of a run, kept for a human to look at, never committed.
+.drill-shots/
+
+# A hand-written roster for pointing a drill at a subset of boxes, when
+# --drill-roles will not do. NEVER edit the tracked fleet.roster for this: the
+# hire registry guard keys on roster membership, so a drill box listed there is
+# a fleet member as far as every safety check is concerned (#51).
+*.roster.local

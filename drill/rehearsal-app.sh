@@ -3,7 +3,13 @@
 # REAL boxes on this host.
 #
 #   drill/rehearsal-app.sh [--boxes "a b c"] [--port <n>] [--no-browser]
-#                          [--allow-control] [--roster <path>]
+#                          [--allow-control] [--shots <dir>]
+#                          [--roster <path> | --drill-roles "triage builder ..."]
+#
+# --drill-roles builds the roster from the `crew-drill-<role>` convention that
+# rehearsal.sh already owns, so it cannot drift from the boxes a drill actually
+# uses; prefer it. --roster is for anything else (`*.roster.local` is
+# gitignored, so such a file has a home next to the drill).
 #
 # --roster points the drill at a roster other than fleet.roster, and feeds the
 # SAME file to all three readers: the collector it starts (CREW_FLOOR_ROSTER),
@@ -47,17 +53,61 @@ ALLOW_CONTROL=0
 USER=drill
 PASSWD="drill-$$-$RANDOM"
 ROSTER="$ROOT/fleet.roster"
+# Whether --roster was NAMED, rather than comparing against the default path:
+# the default must appear exactly once in this file (asserted in CI), and
+# `--roster <the default>` is a legitimate thing to type.
+ROSTER_EXPLICIT=0
+DRILL_ROLES=""
+DRILL_AGENT="${DRILL_AGENT:-claude}"
+GENERATED_ROSTER=""
+# Screenshots outlive the run by default. browser.js's own header calls them
+# "for humans", and the drill used to write them into $TMP and then `rm -rf` it
+# on teardown — so every one was destroyed at exit, which makes taking them
+# pointless. Override with --shots.
+SHOTS="${SHOTS:-$ROOT/.drill-shots}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --boxes)         BOXES="$2"; shift 2 ;;
     --port)          PORT="$2"; shift 2 ;;
-    --roster)        ROSTER="$2"; shift 2 ;;
+    --roster)        ROSTER="$2"; ROSTER_EXPLICIT=1; shift 2 ;;
+    --drill-roles)   DRILL_ROLES="$2"; shift 2 ;;
+    --agent)         DRILL_AGENT="$2"; shift 2 ;;
+    --shots)         SHOTS="$2"; shift 2 ;;
     --no-browser)    BROWSER=0; shift ;;
     --allow-control) ALLOW_CONTROL=1; shift ;;
-    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--roster <path>] [--no-browser] [--allow-control]"; exit 1 ;;
+    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--no-browser] [--allow-control]"
+       echo "         [--roster <path> | --drill-roles \"triage builder reviewer\"] [--shots <dir>]"; exit 1 ;;
   esac
 done
+
+# --drill-roles generates the roster from the convention rehearsal.sh ALREADY
+# owns (BOX_NAME="crew-drill-$ROLE"). Hand-maintaining a file that restates that
+# convention is #35's complaint in miniature — one fact under two keys — and a
+# drill roster naming a box the drill does not actually use is exactly the
+# silent mismatch #50 exists to catch. Generated, it cannot drift.
+if [ -n "$DRILL_ROLES" ]; then
+  [ "$ROSTER_EXPLICIT" -eq 0 ] \
+    || { echo "drill/rehearsal-app.sh: --roster and --drill-roles are alternatives, not both"; exit 1; }
+  # The agent column is LOAD-BEARING, not a label: floor.py hands it to
+  # probe.sh to choose shared/conf/agents/<agent>.conf, and `crew status` hands
+  # it to vendor_probe. Generating it wrong means probing every drill box with
+  # the wrong vendor profile — and because both readers share the one wrong
+  # file, their agreement assertions still pass. Consistent, wrong data.
+  #
+  # So it is validated here rather than trusted: a roster naming an agent with
+  # no profile would fail as "vendor missing" on every box, which is the same
+  # symptom as a logged-out fleet and nothing like the same cause.
+  [ -f "$ROOT/shared/conf/agents/$DRILL_AGENT.conf" ] \
+    || { echo "drill/rehearsal-app.sh: unknown agent '$DRILL_AGENT' — see shared/conf/agents/"; exit 1; }
+  ROSTER="$(mktemp)"; GENERATED_ROSTER="$ROSTER"
+  for _role in $DRILL_ROLES; do
+    case "$_role" in
+      triage|builder|reviewer) printf '%s %s %s\n' "crew-drill-$_role" "$DRILL_AGENT" "$_role" >>"$ROSTER" ;;
+      *) echo "drill/rehearsal-app.sh: unknown role '$_role' (triage, builder or reviewer)"; exit 1 ;;
+    esac
+  done
+fi
 
 # Named before anything starts. A missing roster otherwise surfaces as a
 # collector with zero units and a drill that skips every comparison — which is
@@ -103,6 +153,9 @@ cleanup() {
     kill "$SRV" 2>/dev/null
   fi
   rm -rf -- "$TMP"
+  # The GENERATED roster only — never a roster the operator named. $SHOTS is
+  # deliberately kept: it is the run's only human-readable artifact.
+  [ -n "$GENERATED_ROSTER" ] && rm -f -- "$GENERATED_ROSTER"
   return "$rc"
 }
 trap cleanup EXIT
@@ -370,7 +423,33 @@ fi
 if [ "$BROWSER" -eq 1 ]; then
   echo
   echo "== page"
-  if node -e "require('playwright-core')" >/dev/null 2>&1; then
+  # TWO preconditions, not one. The module check alone was wrong in a way that
+  # cost a real session: playwright-core deliberately ships WITHOUT browsers, so
+  # `npm i playwright-core` flipped this branch from a clean skip to a run that
+  # died on `no chromium at ~/.cache/ms-playwright/...` — and produced THREE
+  # failures, one of which ("read-only walk still exercised the real fleet")
+  # points at the wrong subsystem entirely. One missing dependency should not
+  # read as a broken floor.
+  #
+  # And the browser was sitting right there: browser.js only consults PW_CHROME,
+  # so a system Chrome is invisible to it unless the operator happens to know
+  # that variable. The CI workflow already does this exact probe six lines of
+  # shell away; doing it here too makes PW_CHROME an override rather than
+  # required knowledge. Google Chrome is preferred over Chromium, same order
+  # as CI.
+  if [ -z "${PW_CHROME:-}" ]; then
+    for _cand in /usr/bin/google-chrome /usr/bin/google-chrome-stable \
+                 /opt/google/chrome/chrome /usr/bin/chromium-browser /usr/bin/chromium; do
+      if [ -x "$_cand" ]; then PW_CHROME="$_cand"; export PW_CHROME; break; fi
+    done
+  fi
+  if ! node -e "require('playwright-core')" >/dev/null 2>&1; then
+    skip "browser walk" "playwright-core not installed (npm i --no-save playwright-core)"
+  elif [ -z "${PW_CHROME:-}" ] || [ ! -x "${PW_CHROME:-}" ]; then
+    # Named as its own skip: a missing BROWSER is a different repair from a
+    # missing module, and the message has to say which one is missing.
+    skip "browser walk" "no browser found — install Chrome/Chromium, or set PW_CHROME=/path/to/chrome"
+  else
     # ALWAYS read-only — including under --allow-control. Gating it on that
     # flag only moved the hazard: --allow-control without --boxes skips the
     # narrowed control block below, yet the walk would still pause whichever
@@ -384,6 +463,8 @@ if [ "$BROWSER" -eq 1 ]; then
     # fleet.roster, uses the reversible verbs only, and repairs on teardown.
     # The browser walk's job here is to prove the page renders REAL data.
     echo "   (browser walk: read-only — controls are covered by the narrowed block)"
+    echo "   browser: $PW_CHROME"
+    echo "   shots:   $SHOTS"
     # Slice the receipt from here, so the drill's own control block above is not
     # counted against the walk.
     RO_FROM=$(( $(wc -l < "$BOX_CALLS") + 1 ))
@@ -391,7 +472,7 @@ if [ "$BROWSER" -eq 1 ]; then
     # demands (a hostile-log box, a box in its first session, something offline)
     # are guarantees of test/fixtures/roster.txt, not of a healthy host.
     if FLOOR_TEST_READONLY=1 \
-       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD" \
+       node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$SHOTS" "$USER" "$PASSWD" \
        2>&1 | tee "$TMP/walk.out"; then
       ok "browser walk against the real fleet (read-only)"
     else
@@ -432,16 +513,29 @@ if [ "$BROWSER" -eq 1 ]; then
     if [ "${RO_BAD:-0}" -ne 0 ]; then
       echo "  offending calls:"; grep -nE "$RO_PAT" "$RO_NEW" | head -5
     fi
-    # ...and it must still have done its job. Without this, a read-only mode
-    # that silently did NOTHING would pass the check above perfectly.
-    RO_PROBES=$(grep -c 'logstart' "$RO_NEW" || true)
-    if [ "${RO_PROBES:-0}" -gt 0 ]; then
-      ok "read-only walk still exercised the real fleet (${RO_PROBES} probes)"
+    # ...and the receipt it read must be a REAL one. Without the wrapper on
+    # PATH there is nothing recorded, and "issued no control command" would
+    # pass against an empty file forever. THAT is the vacuity worth guarding.
+    #
+    # This used to count `logstart` probes inside the walk's slice of the
+    # receipt, which could never be greater than zero: the collector runs at
+    # CREW_FLOOR_INTERVAL=3600 here, so it polls the boxes ONCE, at startup,
+    # long before RO_FROM is taken — and the walk reads its cached answer over
+    # HTTP without touching the box layer at all. So the check measured
+    # something structurally impossible and failed a walk that had just made 15
+    # assertions against a live fleet. Same defect as #50, inverted: a premise
+    # that does not hold, stated as a verdict.
+    #
+    # The walk's own non-vacuity is already asserted, correctly, by WALK_N
+    # above — its reported assertion count is evidence the drill can actually
+    # observe. This checks the other half: that the receipt mechanism is live.
+    ALL_CALLS=$(grep -c . "$BOX_CALLS" || true)
+    if [ "${ALL_CALLS:-0}" -gt 0 ]; then
+      ok "the box-call receipt is real (${ALL_CALLS} calls recorded this run)"
     else
-      fail "read-only walk still exercised the real fleet" "no probes seen — the walk did nothing"
+      fail "the box-call receipt is real" \
+           "nothing recorded — the logging wrapper is not on PATH, so the no-control check above proves nothing"
     fi
-  else
-    skip "browser walk" "playwright-core not installed (npm i playwright-core)"
   fi
 fi
 

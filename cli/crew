@@ -159,6 +159,19 @@ create_box() {
   fi
 }
 
+# box_agent NAME — the agent the box was ACTUALLY installed as, per the
+# instance.conf install.sh wrote. Empty on an unhired box. Parsed rather than
+# sourced: one string is not worth executing a config for.
+#
+# `|| true` is load-bearing, exactly as it is in box_state: under `set -o
+# pipefail` this pipeline takes bxn's status, so an unreachable box made
+# `actual="$(box_agent …)"` fail and `set -e` killed the whole status loop —
+# after four of six rows, which is the same silent-truncation shape as #48.
+box_agent() {
+  bxn "$1" 'sed -n "s/^BOT_AGENT=//p" ~/duty/conf/instance.conf 2>/dev/null | head -1' 2>/dev/null \
+    | tr -d '"'\''\r\n' || true
+}
+
 # hired_at NAME — the crew@<sha> the box's engine was installed from, if any.
 hired_at() { bxn "$1" 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r\n'; }
 
@@ -500,6 +513,23 @@ cmd_status() {
     [ -z "$hired" ] && { hired="not hired"; note="crew hire $name"; }
     if [ "$ghs" = MISSING ] || [ "$vs" = MISSING ]; then
       note="⚠ log in: box shell $name${note:+; $note}"
+      # A failing vendor probe has two very different causes, and they were
+      # indistinguishable: the box is genuinely logged out, OR the ROSTER named
+      # the wrong agent and we just probed with the wrong vendor profile. The
+      # second reads as the first forever, because nothing compared the
+      # roster's claim against what the box was actually installed as.
+      #
+      # Only asked when the probe already failed: on a healthy fleet this costs
+      # nothing, and this is exactly the moment an operator is staring at
+      # MISSING wondering why. (A mismatch where BOTH vendor CLIs happen to be
+      # installed stays invisible here; the floor reports it unconditionally,
+      # since probe.sh is one round trip either way.)
+      if [ "$vs" = MISSING ]; then
+        actual="$(box_agent "$name")"
+        if [ -n "$actual" ] && [ "$actual" != "$agent" ]; then
+          note="⚠ $ROSTER says '$agent', box installed as '$actual' — probing the WRONG vendor"
+        fi
+      fi
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
       last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"
       note="${last:-no ticks yet}"

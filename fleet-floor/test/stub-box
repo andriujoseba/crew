@@ -31,6 +31,17 @@ ago() { date -u -d "@$(( $(date +%s) - ${1:-0} ))" '+%Y-%m-%dT%H:%M:%SZ'; }
 rows()         { grep -vE '^[[:space:]]*(#|$)' "$FIXTURE"; }
 fixture_line() { rows | awk -v n="$1" '$1==n {print; exit}'; }
 scenario_of()  { fixture_line "$1" | awk '{print $3}'; }
+# The agent the ROSTER claims for this box, so a healthy stub box agrees with
+# its own roster row and only the 'wrongagent' scenario disagrees. The floor
+# now compares the two, and a stub that always said "claude" would have made
+# every non-claude fixture row look like a mismatch.
+roster_agent_of() {
+  local r="${CREW_FLOOR_ROSTER:-}" a=""
+  if [ -n "$r" ] && [ -f "$r" ]; then
+    a="$(grep -vE '^[[:space:]]*(#|$)' "$r" | awk -v n="$1" '$1==n {print $2; exit}')"
+  fi
+  printf '%s\n' "${a:-claude}"
+}
 # Lifecycle verbs write an override so `box down` is visible to a later
 # `box list`. A control whose effect cannot be observed proves nothing.
 state_of() {
@@ -54,6 +65,15 @@ emit_probe() {
   case "$sc" in
     nothired) printf '::engine \n' ;;
     *)        printf '::engine 0.4.1\n' ;;
+  esac
+  # The agent the box was ACTUALLY installed as. The roster may claim another,
+  # and that disagreement is the thing the floor now reports — so the stub has
+  # to be able to produce it. 'wrongagent' is a box installed as codex while
+  # the roster says otherwise.
+  case "$sc" in
+    nothired)   printf '::agent \n' ;;
+    wrongagent) printf '::agent codex\n' ;;
+    *)          printf '::agent %s\n' "$(roster_agent_of "$n")" ;;
   esac
   printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
   printf '::now %s\n' "$(now)"
@@ -231,6 +251,13 @@ case "${1:-}" in
       *'shared/install.sh'*)                    # crew's hire bake
         echo "installed for stub-bot (agent: stub, roles: stub)"
         echo "crontab armed" ;;
+      *'instance.conf'*)                        # crew's box_agent
+        # AFTER the ::logstart case: probe.sh reads instance.conf too, now that
+        # it reports the box's own agent. Same ordering rule as the rest.
+        case "$sc" in
+          nothired) : ;;
+          *) printf 'BOT_AGENT=%s\n' "$(roster_agent_of "$name")" ;;
+        esac ;;
       *'duty/repos.txt'*)                       # crew's box_registry (#51)
         cat "$STATEDIR/$name.repos" 2>/dev/null || {
           echo heavy-duty/ceremony; echo heavy-duty/incubator; echo heavy-duty/rig; } ;;
