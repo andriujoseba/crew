@@ -85,9 +85,13 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in awk bash basename cat chmod cp date dirname grep hostname mkdir mktemp mv rm sed tr wc; do
+for cmd in awk bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
+# If install.sh ever infers from hostname again, make the regression reproduce
+# the dangerous case deterministically rather than depend on this test host.
+printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
+chmod +x "$ISHIM/hostname"
 ln -s "$(command -v jq)" "$ISHIM/jq"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 printf '#!/usr/bin/env bash\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
@@ -134,7 +138,7 @@ t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STA
 
 # --- install.sh: fleet.roster is the one agent/role declaration (#35) ----
 # The real divergence was claude-builder=builder in fleet.roster while the
-# login-keyed manifest said builder,reviewer. Hire followed the first and a
+# old login-keyed registry said builder,reviewer. Hire followed the first and a
 # routine upgrade followed the second, so whichever command ran last silently
 # decided the duty loops. Both now resolve the same BOX key from one file.
 RHOME="$TMP/roster-home"
@@ -149,6 +153,13 @@ t install-roster-hire-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/c
 roster_install --box claude-builder >/dev/null 2>&1
 t install-roster-upgrade-keeps-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
 t install-roster-agent 'BOT_AGENT=claude' "$(grep '^BOT_AGENT=' "$RDUTY/conf/instance.conf")"
+# Flagless means preserve, never infer. The hostname shim above deliberately
+# names a production builder; a fallback would silently turn this reviewer
+# into a builder and fail the assertion.
+roster_install --agent claude --role reviewer >/dev/null 2>&1
+roster_install >/dev/null 2>&1
+t install-flagless-keeps-explicit-role 'BOT_ROLES="reviewer"' \
+  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
 # Every committed member, not just the historical claude-builder divergence:
 # the install shape used by hire and upgrade resolves the identical row twice.
 while read -r roster_box roster_agent roster_role _roster_from; do
@@ -161,13 +172,14 @@ while read -r roster_box roster_agent roster_role _roster_from; do
     "BOT_AGENT=$roster_agent
 BOT_ROLES=\"$roster_role\"" "$upgrade_conf"
 done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
-if grep -Rqs 'FLEET_MANIFEST' "$SHARED/conf" "$SHARED/lib" "$SHARED/install.sh" \
-    "$ROOT/fleet.roster" "$ROOT/cli/crew"; then
+if grep -Rsiqw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
+    "$SHARED/lib" "$SHARED/install.sh" "$ROOT/fleet.roster" "$ROOT/cli/crew" \
+    "$ROOT/drill"; then
   r1=DUPLICATED
 else
   r1=single-source
 fi
-t install-no-second-manifest single-source "$r1"
+t install-no-second-role-registry single-source "$r1"
 if grep -q -- "--box '\$b'" "$ROOT/cli/crew" || grep -q "install_identity_args.*\\\$b" "$ROOT/cli/crew"; then
   r1=box-keyed
 else

@@ -13,7 +13,7 @@ A box's roles live in one place: `conf/instance.conf`, written by
 flags for an off-roster bake). The engine gates every duty call on `has_role` — a
 reviewer-only box sources the builder module (definition-only) but never
 executes any of it. Migrating a box to a single role is a one-line
-manifest change plus a rerun of `install.sh` — no code changes. Grok and
+roster change plus a rerun of `install.sh` — no code changes. Grok and
 kimi are, in effect, already single-role agents running this exact
 configuration, and `cli/crew` only spawns single-role members.
 

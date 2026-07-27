@@ -5,8 +5,8 @@
 #
 # A standing box resolves its agent and role by BOX NAME from fleet.roster.
 # The crew checkout becomes the single source both the fleet declaration and
-# the deployment come from: no second login-keyed manifest can disagree with
-# the roster about which duty loops an upgrade should install.
+# the deployment come from: no second registry can disagree with the roster
+# about which duty loops an upgrade should install.
 #
 # Idempotent and state-preserving: repos.txt, notify-repos.txt, logs, state
 # files and clones are never touched; bin/lib/conf/prompts are replaced
@@ -52,7 +52,7 @@ source "$HERE/conf/fleet.conf"
 #  explicit  --agent X --role Y   pre-auth bake (crew new): no gh identity
 #                                 needed — the boot gate screams until the
 #                                 operator logs in, which is correct.
-#  roster    --box NAME (or this hostname) → fleet.roster (standing fleet).
+#  roster    --box NAME → fleet.roster (standing fleet).
 #  keep      existing conf/instance.conf (re-install/upgrade on a box whose
 #            name is not in the roster).
 AGENT_ARG="" ROLE_ARG="" BOX_ARG="" ARM_CRON=0
@@ -66,7 +66,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-ME="$(gh api user --jq .login 2>/dev/null || true)"
 if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
   [ -z "$BOX_ARG" ] || { echo "--box and --agent/--role are alternatives"; exit 1; }
   if [ -z "$AGENT_ARG" ] || [ -z "$ROLE_ARG" ]; then
@@ -74,31 +73,22 @@ if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
   fi
   BOT_AGENT="$AGENT_ARG"
   BOT_ROLE_LIST="$(printf '%s' "$ROLE_ARG" | tr ',' ' ')"
-else
-  [ -n "$BOX_ARG" ] || BOX_ARG="$(hostname 2>/dev/null || true)"
-  if [ -n "$BOX_ARG" ]; then
-    resolved="$(awk -v box="$BOX_ARG" '$1 == box {print $2, $3; exit}' "$HERE/../fleet.roster")"
-    if [ -n "$resolved" ]; then
-      read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
-    elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
-      # shellcheck disable=SC1091
-      source "$DUTY_DIR/conf/instance.conf"
-      BOT_ROLE_LIST="$BOT_ROLES"
-      echo "keeping existing instance config (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST) — box '$BOX_ARG' is not in fleet.roster"
-    else
-      echo "cannot resolve box '$BOX_ARG': no fleet.roster entry and no existing instance.conf"
-      exit 1
-    fi
-  elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
-    # shellcheck disable=SC1091
-    source "$DUTY_DIR/conf/instance.conf"
-    BOT_ROLE_LIST="$BOT_ROLES"
-    echo "keeping existing instance config (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
-  else
-    echo "cannot resolve this box's configuration: no --agent/--role flags,"
-    echo "no fleet.roster entry for hostname '<unknown>', and no existing instance.conf"
+elif [ -n "$BOX_ARG" ]; then
+  resolved="$(awk -v box="$BOX_ARG" '$1 == box {print $2, $3; exit}' "$HERE/../fleet.roster")"
+  if [ -z "$resolved" ]; then
+    echo "cannot resolve box '$BOX_ARG': no fleet.roster entry"
     exit 1
   fi
+  read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
+elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
+  # shellcheck disable=SC1091
+  source "$DUTY_DIR/conf/instance.conf"
+  BOT_ROLE_LIST="$BOT_ROLES"
+  echo "keeping existing instance config (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
+else
+  echo "cannot resolve this box's configuration: pass --box <fleet-name>"
+  echo "or --agent <agent> --role <role>; no existing instance.conf to keep"
+  exit 1
 fi
 [ -f "$HERE/conf/agents/$BOT_AGENT.conf" ] || { echo "unknown agent profile '$BOT_AGENT'"; exit 1; }
 for role in $BOT_ROLE_LIST; do
@@ -198,10 +188,10 @@ rm -f "$DUTY_DIR/.boot-id"
 # Version stamp: FLEET.md reconciles the deployed fleet against crew@SHA.
 {
   echo "crew@$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') as ${ME:-<pre-auth>}"
+  echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') (agent=$BOT_AGENT roles=$BOT_ROLE_LIST)"
 } >"$DUTY_DIR/VERSION"
 
-echo "installed for ${ME:-<pre-auth box>} (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
+echo "installed (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
 
 if [ "$ARM_CRON" -eq 1 ]; then
   # Deliberately check after the atomic file install: a missing host package

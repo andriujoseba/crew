@@ -197,7 +197,7 @@ check "instance.conf $AGENT/$ROLE" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/in
 check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 # A drill box is deliberately off the production roster, so it keeps using the
 # explicit agent/role pair. Standing fleet installs use --box instead; there is
-# no login-keyed manifest left to widen this drill's role behind its back.
+# no login-keyed role registry left to widen this drill behind its back.
 check "reinstall stays disarmed"   bx "~/crew/shared/install.sh --agent '$AGENT' --role '$ROLE' && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 check "reinstall keeps role"       bx "grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
 check "bad role refused"           bx "! ~/crew/shared/install.sh --agent '$AGENT' --role nosuchrole"

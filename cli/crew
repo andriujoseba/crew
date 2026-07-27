@@ -360,11 +360,12 @@ cmd_hire() {
   need_box
   local name="${1:-}"; shift || true
   case "$name" in ""|--*) die "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]" ;; esac
-  local role="" agent="" ref="HEAD" force=0 allow=0
+  local role="" agent="" ref="HEAD" force=0 allow=0 explicit_profile=0 line=""
+  local roster_agent="" roster_role=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --role)  role="$2";  shift 2 ;;
-      --agent) agent="$2"; shift 2 ;;
+      --role)  role="$2";  explicit_profile=1; shift 2 ;;
+      --agent) agent="$2"; explicit_profile=1; shift 2 ;;
       --ref)   ref="$2";   shift 2 ;;
       --force) force=1;    shift ;;
       # Deliberately NOT --force: that means "re-bake an already-hired box",
@@ -375,9 +376,13 @@ cmd_hire() {
     esac
   done
   box_exists "$name" || die "no box named '$name' — crew new $name first"
+  line="$(roster_line "$name")"
+  if [ "$ROSTER" = "$PRODUCTION_ROSTER" ] && [ -n "$line" ] &&
+     [ "$explicit_profile" -eq 1 ]; then
+    read -r roster_agent roster_role _ <<<"$line"
+    die "$name is declared as agent=$roster_agent role=$roster_role in $ROSTER; remove --agent/--role (the production roster is authoritative)"
+  fi
   if [ -z "$role$agent" ]; then
-    local line
-    line="$(roster_line "$name")"
     [ -n "$line" ] || die "'$name' is not in $ROSTER — pass --role and --agent"
     read -r agent role _ <<<"$line"
   fi

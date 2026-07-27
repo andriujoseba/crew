@@ -23,8 +23,8 @@ log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 warn() { log "WARN: $*"; }
 
 # load_conf — source the box's configuration: fleet facts, then the
-  # instance resolution install.sh wrote (BOT_AGENT + BOT_ROLES, derived from
-  # fleet.roster and the box name), then the agent profile (the
+# instance resolution install.sh wrote (BOT_AGENT + BOT_ROLES, derived from
+# fleet.roster and the box name), then the agent profile (the
 # runtime) and one role profile per role (the shape of the work).
 # shellcheck disable=SC1091
 load_conf() {
