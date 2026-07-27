@@ -51,6 +51,7 @@ AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
 # absence of any such test is why #47 and #48 both reached a real host. Mirrors
 # floor.py's CREW_FLOOR_ROSTER, which exists for the same reason.
 ROSTER="${CREW_ROSTER:-$CREW_ROOT/fleet.roster}"
+PRODUCTION_ROSTER="$CREW_ROOT/fleet.roster"
 CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 
 die() { echo "crew: $*" >&2; exit 1; }
@@ -112,6 +113,13 @@ box_state() {
 read_roster() { grep -vE '^[[:space:]]*(#|$)' "$ROSTER"; }
 roster_line() { read_roster | awk -v n="$1" '$1 == n {print $2, $3, $4; exit}'; }
 roster_names() { read_roster | awk '{print $1}'; }
+install_identity_args() { # NAME AGENT ROLE — shell words for remote install.sh
+  if [ "$ROSTER" = "$PRODUCTION_ROSTER" ] && roster_names | grep -qx "$1"; then
+    printf "%s" "--box '$1'"
+  else
+    printf "%s" "--agent '$2' --role '$3'"
+  fi
+}
 # The vendor's own login instruction, for the by-hand step that replaced
 # `crew auth`. Falls back to something honest rather than printing nothing.
 login_hint() {
@@ -240,7 +248,8 @@ hire_guard() {
 # already at REF. Returns non-zero if the box could not be hired.
 hire_box() {
   local name="$1" agent="$2" role="$3" ref="$4" force="$5" allow="${6:-0}"
-  local want have origin="https://github.com/$CREW_REPO"
+  local want have origin="https://github.com/$CREW_REPO" identity_args
+  identity_args="$(install_identity_args "$name" "$agent" "$role")"
   want="$(git -C "$CREW_ROOT" rev-parse --short "$ref" 2>/dev/null || echo "$ref")"
   # The guard runs BEFORE the already-hired shortcut: a box that is already
   # armed against the wrong registry is precisely the state an operator needs
@@ -271,7 +280,7 @@ hire_box() {
     git -C ~/crew fetch --quiet origin
     git -C ~/crew checkout --quiet '$ref'
     git -C ~/crew pull --quiet --ff-only origin '$ref' 2>/dev/null || true
-    ~/crew/shared/install.sh --agent '$agent' --role '$role' --arm-cron
+    ~/crew/shared/install.sh $identity_args --arm-cron
   "; then
     echo "$name: hire FAILED — the engine is NOT installed and cron is NOT armed (output above)"
     return 1
@@ -325,8 +334,7 @@ engine, no cron: it does nothing until hired. Next, once per box, ever:
                          #   $(login_hint "$agent")
   crew hire $name        # joins the crew; on duty at the next 5-min boundary
 
-(a NEW GitHub identity per box; add it to FLEET_MANIFEST in
-shared/conf/fleet.conf, and for a reviewer decide the panel= changes first)
+(a NEW GitHub identity per box; for a reviewer decide the panel= changes first)
 EOF
   return 0
 }
@@ -556,7 +564,7 @@ cmd_upgrade() {
     "")    die "usage: crew upgrade <box> | --all" ;;
     *)     targets="$1" ;;
   esac
-  local b armed flags
+  local b armed flags line agent role identity_args
   for b in $targets; do
     echo "== upgrading $b"
     # Preserve the box's armed state instead of asserting one. An upgrade
@@ -567,12 +575,18 @@ cmd_upgrade() {
     else
       armed=0; flags=""
     fi
-    # No agent/role flags: install.sh resolves from the manifest, or keeps
-    # the box's existing instance.conf. Pre-auth boxes keep theirs too.
+    line="$(roster_line "$b")"
+    if [ -n "$line" ]; then
+      read -r agent role _ <<<"$line"
+      identity_args="$(install_identity_args "$b" "$agent" "$role")"
+    else
+      # An explicitly named off-roster box keeps its existing instance config.
+      identity_args=""
+    fi
     bxn "$b" "
       set -euo pipefail
       git -C ~/crew pull --ff-only --quiet
-      ~/crew/shared/install.sh $flags
+      ~/crew/shared/install.sh $identity_args $flags
     " || echo "  upgrade FAILED on $b"
     # An `if`, not `[ … ] && echo`: as the loop body's last statement that
     # form returns 1 whenever the box WAS armed, and `set -e` would end the

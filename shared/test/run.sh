@@ -53,17 +53,6 @@ has_role triage && r2=yes || r2=no
 t has-role-yes yes "$r1"
 t has-role-no no "$r2"
 
-# --- manifest_lookup: agent + roles resolution
-# shellcheck disable=SC2034  # consumed inside sourced common.sh
-FLEET_MANIFEST="
-dan-claude-bot=claude:triage
-claude-bot-andresmgsl=claude:builder,reviewer
-"
-t manifest-single "claude triage" "$(manifest_lookup dan-claude-bot)"
-t manifest-multi "claude builder reviewer" "$(manifest_lookup claude-bot-andresmgsl)"
-manifest_lookup nobody-bot >/dev/null && r1=found || r1=absent
-t manifest-missing absent "$r1"
-
 # --- agent profiles and rehearsal selection -----------------------------
 for profile in "$SHARED"/conf/agents/*.conf; do
   agent="$(basename "$profile" .conf)"
@@ -96,7 +85,7 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
+for cmd in awk bash basename cat chmod cp date dirname grep hostname mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 ln -s "$(command -v jq)" "$ISHIM/jq"
@@ -143,32 +132,48 @@ t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 install_fixture --arm-cron >/dev/null 2>&1
 t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
 
-# --- install.sh: explicit role vs FLEET_MANIFEST -------------------------
-# A flagless rerun re-resolves agent/role from FLEET_MANIFEST whenever the
-# box's gh login has an entry there, overwriting a role installed explicitly.
-# That is correct convergence for a standing fleet box and a trap for any box
-# deliberately installed OFF its manifest role: the drill installed reviewer
-# under a fleet identity whose manifest entry is triage, and its own
-# idempotence check converted the box to triage mid-run.
-MHOME="$TMP/manifest-home"
-MDUTY="$MHOME/duty"
-mkdir -p "$MHOME"
-# shellcheck disable=SC2016  # fixture script expands these at execution time
-printf '#!/usr/bin/env bash\n[ "$1 $2" = "api user" ] && { printf "dan-claude-bot\\n"; exit 0; }\nexit 1\n' >"$ISHIM/gh"
-chmod +x "$ISHIM/gh"
-manifest_install() {
-  env HOME="$MHOME" DUTY_DIR="$MDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+# --- install.sh: fleet.roster is the one agent/role declaration (#35) ----
+# The real divergence was claude-builder=builder in fleet.roster while the
+# login-keyed manifest said builder,reviewer. Hire followed the first and a
+# routine upgrade followed the second, so whichever command ran last silently
+# decided the duty loops. Both now resolve the same BOX key from one file.
+RHOME="$TMP/roster-home"
+RDUTY="$RHOME/duty"
+mkdir -p "$RHOME"
+roster_install() {
+  env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
     /bin/bash "$SHARED/install.sh" "$@"
 }
-manifest_install --agent claude --role reviewer >/dev/null 2>&1
-t install-explicit-role-set 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-manifest_install >/dev/null 2>&1
-t install-flagless-reresolves-from-manifest 'BOT_ROLES="triage"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-manifest_install --agent claude --role reviewer >/dev/null 2>&1
-t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
-# restore the non-authenticating gh shim for anything downstream
-printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
-chmod +x "$ISHIM/gh"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-hire-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-upgrade-keeps-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+t install-roster-agent 'BOT_AGENT=claude' "$(grep '^BOT_AGENT=' "$RDUTY/conf/instance.conf")"
+# Every committed member, not just the historical claude-builder divergence:
+# the install shape used by hire and upgrade resolves the identical row twice.
+while read -r roster_box roster_agent roster_role _roster_from; do
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  hire_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  upgrade_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  t "install-hire-upgrade-stable-$roster_box" "$hire_conf" "$upgrade_conf"
+  t "install-roster-declares-$roster_box" \
+    "BOT_AGENT=$roster_agent
+BOT_ROLES=\"$roster_role\"" "$upgrade_conf"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
+if grep -Rqs 'FLEET_MANIFEST' "$SHARED/conf" "$SHARED/lib" "$SHARED/install.sh" \
+    "$ROOT/fleet.roster" "$ROOT/cli/crew"; then
+  r1=DUPLICATED
+else
+  r1=single-source
+fi
+t install-no-second-manifest single-source "$r1"
+if grep -q -- "--box '\$b'" "$ROOT/cli/crew" || grep -q "install_identity_args.*\\\$b" "$ROOT/cli/crew"; then
+  r1=box-keyed
+else
+  r1=UNKEYED
+fi
+t upgrade-passes-roster-box-key box-keyed "$r1"
 
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed
