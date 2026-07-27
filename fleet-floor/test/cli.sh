@@ -45,7 +45,7 @@ echo "== crew floor CLI"
 crew_floor() {
   CL_RC=0
   PATH="$CL_TMP/bin:$PATH" timeout 4 "$CL_ROOT/cli/crew" floor "$@" \
-    > "$CL_TMP/out" 2>&1 || CL_RC=$?
+    </dev/null > "$CL_TMP/out" 2>&1 || CL_RC=$?
 }
 cl_out() { cat "$CL_TMP/out"; }
 
@@ -141,6 +141,239 @@ if [ "$CL_RC3" -ne 0 ] && grep -qi "missing" "$CL_TMP/noindex.out"; then
   ok "collector: a missing index.html is named at startup"
 else
   fail "collector: a missing index.html is named at startup" "rc=$CL_RC3 $(cat "$CL_TMP/noindex.out")"
+fi
+
+
+# ---------------------------------------------------------------------------
+# The roster loops, against a stub fleet.
+#
+# Nothing in this repo invoked cli/crew until now, and that is the whole reason
+# #47 and #48 both reached a real host: `crew status` had NEVER worked on a
+# populated fleet, and `crew up` — the steady-state convergence verb — had the
+# same two defects. Both failed silently. The jq one printed a header and quit
+# (rc=5, jq's runtime-error code, hidden by a `2>/dev/null` on jq itself); the
+# stdin one exited 0 with N-1 boxes missing.
+#
+# The assertion that catches both is the same one, and it is a COUNT: a roster
+# of six must produce six rows. #47 yields zero rows, #48 yields one.
+# ---------------------------------------------------------------------------
+echo
+echo "== crew roster loops (stub fleet)"
+
+CL_CREW_FLEET="$CL_HERE/fixtures/cli-fleet.txt"
+CL_CREW_ROSTER="$CL_HERE/fixtures/cli-roster.txt"
+CL_CREW_N="$(grep -cvE '^[[:space:]]*(#|$)' "$CL_CREW_ROSTER")"
+
+# crew_cmd ARGS... — cli/crew against the stub fleet, output in $CL_TMP/crew-out.
+crew_cmd() {
+  CL_RC=0
+  PATH="$CL_TMP/bin:$PATH" \
+  FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+  CREW_ROSTER="$CL_CREW_ROSTER" \
+    timeout 60 "$CL_ROOT/cli/crew" "$@" </dev/null > "$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+}
+
+crew_cmd status
+t "crew status: exits 0 on a populated fleet" 0 "$CL_RC"
+
+# One row per roster member. Counted by NAME rather than by line, so a banner
+# or a note that wraps cannot inflate it.
+CL_ROWS=0
+while read -r cl_name _cl_rest; do
+  [ -z "$cl_name" ] && continue
+  grep -qE "^$cl_name " "$CL_TMP/crew-out" && CL_ROWS=$((CL_ROWS + 1))
+done < <(grep -vE '^[[:space:]]*(#|$)' "$CL_CREW_ROSTER")
+t "crew status: one row per roster box" "$CL_CREW_N" "$CL_ROWS"
+if [ "$CL_ROWS" -ne "$CL_CREW_N" ]; then
+  echo "  crew status said:"; sed 's/^/    /' "$CL_TMP/crew-out"
+fi
+
+# The per-branch facts the table is supposed to carry. Without these the count
+# above could be satisfied by six rows that all say the same wrong thing.
+if grep -qE '^cli-stopped +stopped' "$CL_TMP/crew-out"; then
+  ok "crew status: a stopped box reads stopped"
+else
+  fail "crew status: a stopped box reads stopped" "$(grep '^cli-stopped' "$CL_TMP/crew-out")"
+fi
+if grep -qE '^cli-absent .*NOT CREATED' "$CL_TMP/crew-out"; then
+  ok "crew status: an absent box says NOT CREATED"
+else
+  fail "crew status: an absent box says NOT CREATED" "$(grep '^cli-absent' "$CL_TMP/crew-out")"
+fi
+if grep -qE '^cli-noauth .*MISSING' "$CL_TMP/crew-out"; then
+  ok "crew status: dead logins are FLAGGED, not blank"
+else
+  fail "crew status: dead logins are FLAGGED, not blank" "$(grep '^cli-noauth' "$CL_TMP/crew-out")"
+fi
+if grep -qE '^cli-nothired .*not hired' "$CL_TMP/crew-out"; then
+  ok "crew status: an unhired box says so"
+else
+  fail "crew status: an unhired box says so" "$(grep '^cli-nothired' "$CL_TMP/crew-out")"
+fi
+
+# `crew up` reads box info at its OWN call site and runs its own roster loop,
+# so it needs its own coverage: #47 and #48 were each present twice, and
+# fixing one copy would have left the convergence verb broken. --dry-run
+# reaches both the info read and the loop while creating and hiring nothing.
+crew_cmd up --dry-run
+t "crew up --dry-run: exits 0" 0 "$CL_RC"
+CL_SEEN=0
+while read -r cl_name _cl_rest; do
+  [ -z "$cl_name" ] && continue
+  grep -qE "(^|[[:space:]])$cl_name:" "$CL_TMP/crew-out" && CL_SEEN=$((CL_SEEN + 1))
+done < <(grep -vE '^[[:space:]]*(#|$)' "$CL_CREW_ROSTER")
+t "crew up --dry-run: reaches every roster box" "$CL_CREW_N" "$CL_SEEN"
+if [ "$CL_SEEN" -ne "$CL_CREW_N" ]; then
+  echo "  crew up said:"; sed 's/^/    /' "$CL_TMP/crew-out"
+fi
+
+# --- stdin and box info are each read in exactly ONE place -----------------
+# The counts above catch the two bugs as they manifested. These catch the
+# DEFECTS, for any call site added later.
+#
+# Both #47 and #48 were present TWICE — once in `crew status`, once in
+# `crew up` — because each call site carried its own copy of the tricky part:
+# the jq filter, and the stdin redirect. Fixing one copy would have left the
+# convergence verb broken. So the invariant is the funnel itself: one helper
+# each, asserted by COUNT over the code with comments stripped (a bare grep
+# matches this file's own explanations — a detector tripping on its own
+# documentation, the same trap as the read-only detector that once matched a
+# string probe.sh contained).
+# Comment lines stripped, and backslash continuations JOINED: vendor_probe puts
+# its stdin redirect two lines below the `box exec`, so a per-line grep would
+# report the one call site that has always been correct.
+cl_code() {
+  grep -vE '^[[:space:]]*#' "$CL_ROOT/cli/crew" | sed -e :a -e '/\\$/N; s/\\\n//; ta'
+}
+# `box exec "` — an actual invocation, always `box exec "$name"`. Deliberately
+# not a bare `box exec`: cmd_floor's banner says "polling … over 'box exec'" in
+# prose, and a detector that trips on its own documentation is the trap this
+# suite has already been caught by twice.
+cl_box_execs() { cl_code | grep -E 'box exec "'; }
+
+# `box exec` forwards stdin like ssh, so ONE unredirected call inside a
+# `while read … done < <(read_roster)` drains the roster: the loop ends after a
+# single box, quietly, rc=0. Two call sites are legitimate — bxn pins
+# /dev/null, vendor_probe pins the agent profile it deliberately ships — and
+# everything else must go through bxn.
+CL_EXECS="$(cl_box_execs | grep -c . || true)"
+t "crew: box exec appears only in bxn and vendor_probe" 2 "${CL_EXECS:-0}"
+if [ "${CL_EXECS:-0}" -ne 2 ]; then
+  echo "  call sites:"; cl_box_execs | sed 's/^/    /'
+fi
+# shellcheck disable=SC2016  # matching the literal redirect text in the source
+CL_BARE="$(cl_box_execs | grep -vcE '</dev/null|<"\$AGENTS_DIR' || true)"
+t "crew: both box exec call sites pin stdin" 0 "${CL_BARE:-0}"
+if [ "${CL_BARE:-0}" -ne 0 ]; then
+  echo "  unpinned:"
+  # shellcheck disable=SC2016  # matching the literal redirect text in the source
+  cl_box_execs | grep -vE '</dev/null|<"\$AGENTS_DIR' | sed 's/^/    /'
+fi
+
+# `box info --json` returns an array; the filter that read it as an object
+# exited 5 and took the command with it. One helper, one filter to be right.
+CL_RAWINFO="$(cl_code | grep -cE 'box info' || true)"
+t "crew: box info is read only inside box_state" 1 "${CL_RAWINFO:-0}"
+
+# ...and that helper must DEGRADE rather than die. `set -euo pipefail` plus a
+# command substitution is what turned a jq error into a dead command, so the
+# fallback is the load-bearing half of the fix, not decoration.
+CL_BS="$(sed -n '/^box_state()/,/^}/p' "$CL_ROOT/cli/crew")"
+if printf '%s' "$CL_BS" | grep -q '|| true' && printf '%s' "$CL_BS" | grep -q '{s:-?}'; then
+  ok "crew: box_state degrades to '?' instead of killing the command"
+else
+  fail "crew: box_state degrades to '?' instead of killing the command" \
+       "no '|| true' + '\${s:-?}' pair — the next payload shape change exits 5 again"
+fi
+
+# The stub must keep presenting the shape that made #47 possible. A stub
+# "corrected" to a convenient bare object would let the bug straight back in,
+# and every assertion above would still pass.
+if grep -q '"state":{"status"' "$CL_HERE/stub-box" && grep -qE "^ +printf '\[\{" "$CL_HERE/stub-box"; then
+  ok "stub-box: box info still returns an ARRAY with a state OBJECT"
+else
+  fail "stub-box: box info still returns an ARRAY with a state OBJECT" \
+       "the fixture no longer reproduces the payload #47 died on"
+fi
+
+# --- hiring an off-roster box against production is refused (#51) ----------
+# A leftover crew-drill-* box, hand-hired to re-arm it, became a second
+# production agent racing the real fleet within one tick. The guard is
+# structural — roster membership plus the registry the box would actually work
+# — so it reaches an ad-hoc box named anything, and it lets a drill box be
+# hired as soon as its registry is a sandbox.
+mkdir -p "$CL_TMP/crew-state"
+crew_cmd hire cli-hired
+t "crew hire: an on-roster box is hired without a flag" 0 "$CL_RC"
+
+# Same box, off the roster: production registry, so it must be refused.
+CL_OFFROSTER="$CL_TMP/offroster.txt"
+grep -vE '^cli-hired' "$CL_CREW_ROSTER" > "$CL_OFFROSTER"
+crew_off() {
+  CL_RC=0
+  PATH="$CL_TMP/bin:$PATH" \
+  FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+  CREW_ROSTER="$CL_OFFROSTER" \
+    timeout 60 "$CL_ROOT/cli/crew" "$@" </dev/null > "$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+}
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -ne 0 ] && grep -q 'PRODUCTION registry' "$CL_TMP/crew-out"; then
+  ok "crew hire: off-roster + production registry is REFUSED"
+else
+  fail "crew hire: off-roster + production registry is REFUSED" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# The refusal must be overridable, or an operator who means it has no way
+# through and will reach for something worse.
+crew_off hire cli-hired --role builder --agent claude --allow-offroster
+if [ "$CL_RC" -eq 0 ] && grep -q 'allow-offroster' "$CL_TMP/crew-out"; then
+  ok "crew hire: --allow-offroster arms it, and says that is what happened"
+else
+  fail "crew hire: --allow-offroster arms it, and says that is what happened" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# A narrowed registry is not production, so the same off-roster box is fine —
+# which is the state drill/rehearsal.sh leaves a drill box in while it runs.
+echo "drill-host/crew-drill-sandbox" > "$CL_TMP/crew-state/cli-hired.repos"
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -eq 0 ]; then
+  ok "crew hire: off-roster with a NARROWED registry is allowed"
+else
+  fail "crew hire: off-roster with a narrowed registry is allowed" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+rm -f "$CL_TMP/crew-state/cli-hired.repos"
+
+# The registry must be PRINTED either way: #51's second bullet. A guard that
+# only speaks up when it refuses leaves the normal path as silent as before.
+crew_cmd hire cli-hired --force
+if grep -q '  registry:' "$CL_TMP/crew-out"; then
+  ok "crew hire: prints the registry it is arming against"
+else
+  fail "crew hire: prints the registry it is arming against" "$(cat "$CL_TMP/crew-out")"
+fi
+
+# --- one bad box must not abort the fleet (#49) ----------------------------
+# crew's top-level `set -e` killed hire-all on the first failure, so a single
+# box with an unusable ~/crew blocked every box after it. Asserted over the
+# source: the fixture fleet has no way to make a hire fail part-way.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q 'if hire_box "\$name" "\$agent" "\$role" "\$ref" 0; then' "$CL_ROOT/cli/crew"; then
+  ok "crew hire-all: a failing box is caught, not fatal"
+else
+  fail "crew hire-all: a failing box is caught, not fatal" "the bare hire_box call is back — set -e will abort the fleet"
+fi
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q 'hire-all: \$hired hired, \$failed failed' "$CL_ROOT/cli/crew"; then
+  ok "crew hire-all: summarises what it could not do"
+else
+  fail "crew hire-all: summarises what it could not do" "no failure summary — a partial fleet reads as a whole one"
+fi
+# ...and the repair the bug actually needed: verify where ~/crew's origin
+# POINTS, not just that the directory exists.
+if grep -q 'remote get-url origin' "$CL_ROOT/cli/crew" &&
+   grep -q 'remote set-url origin' "$CL_ROOT/cli/crew"; then
+  ok "crew hire: repoints a ~/crew whose origin has vanished"
+else
+  fail "crew hire: repoints a ~/crew whose origin has vanished" \
+       "hire still guards only on the directory; a stale bundle remote will fatal again"
 fi
 
 

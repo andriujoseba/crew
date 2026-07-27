@@ -26,6 +26,30 @@ rehearsal_narrow_to_sandbox() {
     bx "[ \"\$(wc -l < ~/duty/repos.txt)\" -eq 1 ] && grep -qxF '$sandbox' ~/duty/repos.txt"
 }
 
+# rehearsal_attention_is_clear SANDBOX — print any parked attention demand this
+# box would pick up from OUTSIDE the sandbox. Empty output means clear.
+#
+# Narrowing repos.txt scopes review, build, triage and hygiene — every module
+# that reads REPOS_FILE. It does NOT scope ATTENTION, which runs first and for
+# every role: duty-attention.sh reads the authenticated-user issues endpoint on
+# purpose ("cross-repo, no search index, reaches repos not in repos.txt"), so
+# an open issue assigned to this box's identity and carrying the `attention`
+# label is a demand it will act on wherever it lives. The drill box borrows a
+# fleet identity, so a real parked demand for that identity is exactly the
+# thing at risk.
+#
+# So the interlock asserting "repos.txt contains only the sandbox" is TRUE and,
+# for this surface, not sufficient — which is the worst combination, because it
+# reads like coverage (#52). repos.txt cannot be made to scope attention; the
+# honest containment is to check there is nothing outside the sandbox to pick
+# up, and refuse the tick if there is. That is a check, not a claim.
+rehearsal_attention_is_clear() {
+  local sandbox="$1"
+  bx "gh api '/issues?filter=assigned&state=open&labels=attention&per_page=100' \
+        --jq '.[].repository.full_name' 2>/dev/null \
+      | grep -vxF '$sandbox' || true"
+}
+
 rehearsal_cleanup() {
   local rc="${1:-$?}"
   if [ -n "${REPOS_BACKUP:-}" ]; then

@@ -159,9 +159,58 @@ t "fleet: every roster box reported" "$ROSTER_N" "$UNITS"
 # same boxes must not disagree. `crew status` and the floor share probe.sh's
 # source of truth (VERSION, duty.log, the agent profile's bot_cli_probe), so
 # if they diverge, one of them is lying to an operator.
+#
+# On the first real-host run this block never executed its assertion ONCE, in
+# three runs for three different reasons, and reported `0 failed` every time
+# (#50). Two real `crew` bugs were sitting directly underneath it; neither was
+# found by an assertion — both were found by a human reading the skip lines and
+# asking why. An assertion that only checks what it looked at cannot see what
+# it never looked at, so the four guards below check the block itself:
+#
+#   1. the CLI's exit code, which was `|| true`d away (it was 5 — jq's
+#      runtime-error code, and the whole diagnosis)
+#   2. zero rows from a NON-EMPTY roster, which was scored as N per-box skips.
+#      One box missing from the output is an absent box; EVERY box missing is a
+#      broken CLI, and only the second must fail loudly, once.
+#   3. a row count that disagrees with the roster count — the one-row-rc=0
+#      state would otherwise still pass as "one comparison, two skips"
+#   4. that at least one REAL comparison happened. The per-box skip branches
+#      are individually correct (a cron-silent box genuinely differs from what
+#      the CLI reports), so all three runs landed every box in some correct
+#      branch and the block as a whole still proved nothing.
+#
+# run.sh's browser walk already has floor (4): a walk exiting 0 must report a
+# count above a threshold. The agreement check is the more important assertion
+# and had no equivalent.
 echo
 echo "== floor vs crew status"
-"$ROOT/cli/crew" status > "$TMP/status.txt" 2>&1 || true
+CLI_RC=0
+"$ROOT/cli/crew" status > "$TMP/status.txt" 2>&1 || CLI_RC=$?
+if [ "$CLI_RC" -eq 0 ]; then
+  ok "crew status exits 0"
+else
+  fail "crew status exits 0" "rc=$CLI_RC — $(head -3 "$TMP/status.txt" | tr '\n' ' ')"
+fi
+
+# Rows the CLI actually printed for roster members, counted the same way the
+# loop below reads them.
+CLI_ROWS=0
+while read -r name _agent _role _from; do
+  [ -z "$name" ] && continue
+  grep -qE "^$name " "$TMP/status.txt" && CLI_ROWS=$((CLI_ROWS + 1))
+done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
+
+AGREE_N=0
+if [ "$ROSTER_N" -gt 0 ] && [ "$CLI_ROWS" -eq 0 ]; then
+  # ONE failure, not one per box: the roster is not empty, so this is the CLI
+  # being broken, and saying it N times as "skip" is how it stayed invisible.
+  fail "crew status produced no rows" \
+       "the agreement check did not run — $ROSTER_N boxes on the roster, 0 rows printed"
+elif [ "$CLI_ROWS" -ne "$ROSTER_N" ]; then
+  fail "crew status prints one row per roster box" \
+       "roster has $ROSTER_N, crew status printed $CLI_ROWS — the agreement check is only partial"
+fi
+
 while read -r name _agent _role _from; do
   [ -z "$name" ] && continue
   floor_state="$(body GET /api/fleet | python3 -c "
@@ -182,8 +231,11 @@ print(u[0]['state'] if u else 'MISSING')")"
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
   case "$cli_line" in
     *stopped*|*"NOT CREATED"*)
+      AGREE_N=$((AGREE_N + 1))
       t "agree: $name is down" offline "$floor_state" ;;
     "")
+      # Still a skip: ONE box absent from the output is an absent box. The
+      # every-box case is caught once, above, before this loop runs.
       skip "agree: $name" "crew status printed no row" ;;
     *)
       # The CLI showing a box up does NOT mean the floor must call it up: a
@@ -191,6 +243,7 @@ print(u[0]['state'] if u else 'MISSING')")"
       # and both are ordinary states on a real fleet. Only disagree when the
       # floor reports offline with no reason for it.
       if [ "$floor_state" != "offline" ]; then
+        AGREE_N=$((AGREE_N + 1))
         ok "agree: $name is up"
       else
         note="$(body GET /api/fleet | python3 -c "
@@ -202,11 +255,22 @@ print((u[0].get('note') or '') if u else '')")"
           *paused*|*SILENT*|*"not hired"*|*"no cron"*)
             skip "agree: $name" "crew status shows it up; floor says offline because: $note" ;;
           *)
+            AGREE_N=$((AGREE_N + 1))
             fail "agree: $name is up" "crew status shows it up, floor says offline with no reason (note: '${note:-none}')" ;;
         esac
       fi ;;
   esac
 done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
+
+# The block as a whole must have DONE something. Every per-box branch above is
+# individually correct, which is exactly why all three of the first real-host
+# runs landed every box in one of them and still compared nothing.
+if [ "$AGREE_N" -gt 0 ]; then
+  ok "the agreement check ran ($AGREE_N of $ROSTER_N boxes yielded a floor-vs-CLI comparison)"
+else
+  fail "the agreement check ran" \
+       "0 of $ROSTER_N boxes yielded a floor-vs-CLI comparison — this block asserted nothing"
+fi
 
 # ---- evidence actually came from the boxes -------------------------------
 echo

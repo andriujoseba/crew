@@ -1,0 +1,13 @@
+# Test roster for cli/crew — mirrors fixtures/cli-fleet.txt, swapped in via
+# CREW_ROSTER so these tests do not drift when the real fleet.roster changes.
+#
+# SIX entries, and the count is the assertion: `crew status` printing fewer
+# rows than there are lines here is what #47 (jq killed the command on the
+# first existing box) and #48 (box exec drained the roster FIFO after one
+# iteration) each looked like from the outside.
+cli-hired      claude  builder
+cli-idle       claude  reviewer
+cli-stopped    codex   builder
+cli-nothired   grok    reviewer
+cli-noauth     kimi    reviewer
+cli-absent     claude  triage

@@ -6,8 +6,15 @@
 #    repo this box carries. The previous rule ("a request anywhere in the org
 #    or a fleet fork is authorization; no repo list scopes it") made every
 #    box's write surface the entire org, which no registry could bound: the
-#    #26 interlock narrows repos.txt and so confined attention, triage and
-#    hygiene, but NOT this module. Scope is now the registry.
+#    #26 interlock narrows repos.txt and so confined triage and hygiene, but
+#    NOT this module. Scope is now the registry.
+#    Corrected 2026-07-27 (#52): this note used to claim the interlock also
+#    confined ATTENTION. It does not, and never did — duty-attention.sh reads
+#    the authenticated-user issues endpoint on purpose, cross-repo, and
+#    reaches repos not in repos.txt. That inaccuracy mattered: it is the kind
+#    of claim that reads like coverage, which is the whole complaint #52 was
+#    filed about. drill/rehearsal-safety.sh now checks attention separately
+#    rather than assuming repos.txt bounds it.
 #  - Awareness is still org-wide, but it never acts. One search query per
 #    tick reports requests outside the registry, so the failure mode the old
 #    rule existed to prevent (cast#143: a converged round sat unowed for 40

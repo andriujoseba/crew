@@ -4,6 +4,7 @@
 #   crew new <name> | --role <r> --agent <a>  CREATE one box (fleet.roster by name, or ad-hoc)
 #   crew create-all                           create every missing roster box
 #   crew hire <box> [--force]                 the box JOINS the crew: engine + cron (idempotent)
+#            [--allow-offroster]              …arm an off-roster box against the production registry
 #   crew hire-all                             hire every created roster box (skips already-hired)
 #   crew up [--dry-run]                       converge: create missing, start stopped, hire, report
 #   crew down                                 stop every roster box
@@ -40,18 +41,65 @@ set -euo pipefail
 CREW_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROLES_DIR="$CREW_ROOT/shared/conf/roles"
 AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
-ROSTER="$CREW_ROOT/fleet.roster"
+# Overridable so the roster loops can be driven against a fixture fleet — the
+# absence of any such test is why #47 and #48 both reached a real host. Mirrors
+# floor.py's CREW_FLOOR_ROSTER, which exists for the same reason.
+ROSTER="${CREW_ROSTER:-$CREW_ROOT/fleet.roster}"
 CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 
 die() { echo "crew: $*" >&2; exit 1; }
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
-bxn() { box exec "$1" -- bash -lc "$2"; }
+
+# EVERY `box exec` in this file takes stdin from /dev/null.
+#
+# `box exec` forwards stdin the way ssh does, so inside a
+# `while read … done < <(read_roster)` the FIRST iteration drained the roster
+# FIFO: `read` then hit EOF and the loop exited cleanly, rc=0, with N-1 boxes
+# silently missing. `crew status` reported one of three boxes and `crew up`
+# converged one box and called it success (#48) — no error either time, which
+# is what made it survive a real-host run.
+#
+# Safe at every call site: all of them pass the script as an ARGUMENT.
+# vendor_probe is the one helper that legitimately ships data over stdin, and
+# it has its own `<"$AGENTS_DIR/$2.conf"` redirect — which is exactly why it
+# never broke.
+#
+# Those two are the ONLY places `box exec` appears in this file, and the test
+# suite asserts that count. Routing every caller through a helper is what makes
+# "stdin is always pinned" checkable at all: before, the redirect was a thing
+# each call site had to remember, and the two that forgot were the two in
+# roster loops.
+bxn() { box exec "$1" -- bash -lc "$2" </dev/null; }
 
 box_names() {
   box list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null \
     || box list 2>/dev/null | awk 'NR>1 {print $1}'
 }
 box_exists() { box_names | grep -qx "$1"; }
+
+# box_state NAME — the box's lifecycle state, lowercased; "?" when the payload
+# cannot be read.
+#
+# `box info --json` returns an ARRAY. Two call sites filtered it as an object
+# (`.state // .status`), so jq died with `Cannot index array with string
+# "state"` — and because both were command substitutions under `set -euo
+# pipefail`, jq's rc=5 killed the whole command (#47). `crew status` printed
+# its header and stopped, which reads like an empty roster rather than a
+# crash; `crew up` did the same on the first EXISTING box, and that is the
+# steady-state convergence verb. Neither had ever worked on a populated fleet.
+#
+# `.state` is an object in the real payload, so `.[0].status` must come first.
+# The `|| true` and the `${s:-?}` are the parts that matter long-term: a future
+# shape change must degrade to "?", not kill the command. box_names makes the
+# identical call and survived only because it had a fallback.
+box_state() {
+  local s
+  s="$(box info "$1" --json 2>/dev/null \
+    | jq -r 'if type == "array" then (.[0] // {}) else . end
+             | .status // (.state | if type == "object" then .status else . end) // "?"' 2>/dev/null \
+    | head -1 | tr -d '\r' | tr '[:upper:]' '[:lower:]' || true)"
+  printf '%s\n' "${s:-?}"
+}
 
 # Roster reader: <name> <agent> <role> [<from-box>/<snap>]; comments/blanks
 # skipped. roster_line prints "agent role from" for one name.
@@ -80,12 +128,15 @@ create_box() {
   if [ -z "$BOX_CPU" ] || [ -z "$BOX_MEMORY" ] || [ -z "$BOX_DISK" ]; then
     die "role '$role' declares no BOX_CPU/BOX_MEMORY/BOX_DISK"
   fi
+  # </dev/null on both: create_box runs inside the create-all and up roster
+  # loops, which read from a FIFO any stdin-inheriting `box` call would drain
+  # (#48). Neither form takes input — every argument is on the command line.
   if [ -n "$from" ]; then
     echo "creating $name  (role=$role agent=$agent from=$from)"
-    box new --name "$name" --from "$from" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+    box new --name "$name" --from "$from" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null
   else
     echo "creating $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box)"
-    box new --name "$name" --template "$agent-box" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK"
+    box new --name "$name" --template "$agent-box" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null
   fi
 }
 
@@ -100,25 +151,99 @@ vendor_probe() {
     <"$AGENTS_DIR/$2.conf" >/dev/null 2>&1
 }
 
-# hire_box NAME AGENT ROLE REF FORCE — bake + arm; skip when already at REF.
+# production_registry — the repo list THIS checkout would seed into a box.
+production_registry() {
+  grep -vE '^[[:space:]]*(#|$)' "$CREW_ROOT/shared/conf/repos-default.txt" | sort
+}
+# box_registry NAME — the repos.txt the box actually carries, or empty when it
+# has none yet (install.sh seeds the production default in that case).
+box_registry() {
+  bxn "$1" 'grep -vE "^[[:space:]]*(#|\$)" ~/duty/repos.txt 2>/dev/null' 2>/dev/null \
+    | tr -d '\r' | sort
+}
+
+# hire_guard NAME ALLOW_OFFROSTER — refuse to arm an OFF-ROSTER box against the
+# production registry. Always prints the registry it is about to arm against.
+#
+# `crew hire` on a leftover crew-drill-* box turned it into a SECOND production
+# agent, with nothing in the path saying so (#51). The drill's teardown had
+# worked correctly — it restored the pre-drill repos.txt, and "pre-drill" IS
+# shared/conf/repos-default.txt — and install.sh correctly left that registry
+# alone, because seeding only happens when the file is absent. So a hand-hire
+# to re-arm the box armed cron against production, and within one tick a drill
+# box was doing author-side duty on a real repo under the same identity as the
+# real fleet, racing it for the same work. That tick was benign. The next need
+# not be.
+#
+# The test is STRUCTURAL rather than a name convention (#51's third bullet):
+# roster membership, plus the registry the box will actually work. That reaches
+# an ad-hoc box called anything at all, and it lets a genuine drill box be
+# hired the moment its registry is a sandbox — which is the state
+# drill/rehearsal.sh leaves it in while it runs. `crew upgrade --all` already
+# draws this same line for the same reason (#37).
+hire_guard() {
+  local name="$1" allow="$2" reg prod
+  prod="$(production_registry)"
+  reg="$(box_registry "$name")"
+  if [ -z "$reg" ]; then
+    echo "  registry: none yet — install.sh will seed the production default"
+    reg="$prod"
+  else
+    echo "  registry: $(printf '%s' "$reg" | tr '\n' ' ')"
+  fi
+  if roster_names | grep -qx "$name"; then return 0; fi
+  if [ "$reg" != "$prod" ]; then return 0; fi
+  if [ "$allow" -eq 1 ]; then
+    echo "  NOTE: $name is off-roster and carries the PRODUCTION registry — arming anyway (--allow-offroster)"
+    return 0
+  fi
+  die "$name is not in $ROSTER, and hiring it would arm it against the PRODUCTION registry:
+    $(printf '%s' "$prod" | tr '\n' ' ')
+  That makes it a second production agent racing the fleet for the same work (#51).
+  Narrow its registry first (for a drill box, drill/rehearsal.sh does exactly that),
+  add it to the roster, or pass --allow-offroster if arming production is what you mean."
+}
+
+# hire_box NAME AGENT ROLE REF FORCE [ALLOW_OFFROSTER] — bake + arm; skip when
+# already at REF. Returns non-zero if the box could not be hired.
 hire_box() {
-  local name="$1" agent="$2" role="$3" ref="$4" force="$5"
-  local want have
+  local name="$1" agent="$2" role="$3" ref="$4" force="$5" allow="${6:-0}"
+  local want have origin="https://github.com/$CREW_REPO"
   want="$(git -C "$CREW_ROOT" rev-parse --short "$ref" 2>/dev/null || echo "$ref")"
+  # The guard runs BEFORE the already-hired shortcut: a box that is already
+  # armed against the wrong registry is precisely the state an operator needs
+  # told about, and "skipping" would hide it.
+  hire_guard "$name" "$allow"
   have="$(hired_at "$name")"
   if [ "$force" -eq 0 ] && [ "$have" = "crew@$want" ]; then
     echo "$name: already hired at $have — skipping"
     return 0
   fi
   echo "hiring $name  (role=$role agent=$agent crew@$want)"
-  bxn "$name" "
+  # Verify where ~/crew's origin POINTS, rather than only that ~/crew exists.
+  # drill/rehearsal.sh seeds a box by cloning a bundle under /tmp; /tmp is
+  # cleared when the VM restarts, the clone here is skipped because
+  # ~/crew/.git is present, and `fetch` then fatals with a bare git error
+  # naming a path no operator recognises. Under the remote script's `set -euo
+  # pipefail` that means install.sh --arm-cron never runs: the box stays
+  # DISARMED, and nothing says "this box's ~/crew points somewhere unusable"
+  # (#49). Repoint and report it in crew's own voice instead of fatalling.
+  if ! bxn "$name" "
     set -euo pipefail
-    if [ ! -d ~/crew/.git ]; then git clone --quiet https://github.com/$CREW_REPO ~/crew; fi
+    if [ ! -d ~/crew/.git ]; then git clone --quiet '$origin' ~/crew; fi
+    have=\"\$(git -C ~/crew remote get-url origin 2>/dev/null || true)\"
+    if [ \"\$have\" != '$origin' ]; then
+      echo \"crew: ~/crew origin was '\${have:-<unset>}', not $origin — repointing it\"
+      git -C ~/crew remote set-url origin '$origin' 2>/dev/null || git -C ~/crew remote add origin '$origin'
+    fi
     git -C ~/crew fetch --quiet origin
     git -C ~/crew checkout --quiet '$ref'
     git -C ~/crew pull --quiet --ff-only origin '$ref' 2>/dev/null || true
     ~/crew/shared/install.sh --agent '$agent' --role '$role' --arm-cron
-  "
+  "; then
+    echo "$name: hire FAILED — the engine is NOT installed and cron is NOT armed (output above)"
+    return 1
+  fi
   if bxn "$name" 'gh auth status >/dev/null 2>&1'; then
     echo "$name: hired — on duty at the next 5-minute boundary"
   else
@@ -194,14 +319,18 @@ cmd_create_all() {
 cmd_hire() {
   need_box
   local name="${1:-}"; shift || true
-  case "$name" in ""|--*) die "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force]" ;; esac
-  local role="" agent="" ref="HEAD" force=0
+  case "$name" in ""|--*) die "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]" ;; esac
+  local role="" agent="" ref="HEAD" force=0 allow=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --role)  role="$2";  shift 2 ;;
       --agent) agent="$2"; shift 2 ;;
       --ref)   ref="$2";   shift 2 ;;
       --force) force=1;    shift ;;
+      # Deliberately NOT --force: that means "re-bake an already-hired box",
+      # and overloading it would let a routine re-bake wave the registry check
+      # through as a side effect (#51).
+      --allow-offroster) allow=1; shift ;;
       *) die "unknown argument '$1'" ;;
     esac
   done
@@ -214,22 +343,33 @@ cmd_hire() {
   fi
   if [ -z "$role" ] || [ -z "$agent" ]; then die "--role and --agent go together"; fi
   validate_profiles "$agent" "$role"
-  hire_box "$name" "$agent" "$role" "$ref" "$force"
+  hire_box "$name" "$agent" "$role" "$ref" "$force" "$allow"
 }
 
 cmd_hire_all() {
   need_box
   local ref="HEAD"
   [ "${1:-}" = "--ref" ] && ref="$2"
-  local name agent role _from
+  local name agent role _from hired=0 failed=0
   while read -r name agent role _from; do
     validate_profiles "$agent" "$role"
     if ! box_exists "$name"; then
       echo "$name: not created — crew new $name first"
       continue
     fi
-    hire_box "$name" "$agent" "$role" "$ref" 0
+    # An `if`, not a bare call: crew's top-level `set -e` used to kill
+    # hire-all on the first failing box, so one box with an unusable ~/crew
+    # blocked the ENTIRE fleet (#49). A fleet verb reports what it could not
+    # do and carries on; the summary below is what makes the failure loud.
+    if hire_box "$name" "$agent" "$role" "$ref" 0; then
+      hired=$((hired + 1))
+    else
+      failed=$((failed + 1))
+    fi
   done < <(read_roster)
+  echo
+  echo "hire-all: $hired hired, $failed failed"
+  if [ "$failed" -ne 0 ]; then return 1; fi
 }
 
 cmd_up() {
@@ -238,25 +378,33 @@ cmd_up() {
   [ "${1:-}" = "--dry-run" ] && dry=1
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
 
-  local name agent role from state
+  local name agent role from state failed=0
   while read -r name agent role from; do
     validate_profiles "$agent" "$role"
     if ! box_exists "$name"; then
       if [ "$dry" -eq 1 ]; then echo "$name: WOULD create ($agent/$role${from:+ from $from})"; continue; fi
       create_box "$name" "$agent" "$role" "$from"
     else
-      state="$(box info "$name" --json 2>/dev/null \
-        | jq -r '.state // .status // "unknown"' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+      state="$(box_state "$name")"
       if [ "$state" = "stopped" ]; then
-        if [ "$dry" -eq 1 ]; then echo "$name: WOULD start"; else box start "$name"; echo "$name: started"; fi
+        # `box start` in a roster loop gets the same /dev/null as bxn: any
+        # `box` subcommand that inherits stdin can drain the FIFO this loop is
+        # reading from (#48).
+        if [ "$dry" -eq 1 ]; then echo "$name: WOULD start"; else box start "$name" </dev/null; echo "$name: started"; fi
       fi
     fi
     if [ "$dry" -eq 0 ]; then
-      hire_box "$name" "$agent" "$role" HEAD 0
+      # Same reasoning as hire-all: one box must not abort the convergence.
+      if ! hire_box "$name" "$agent" "$role" HEAD 0; then failed=$((failed + 1)); fi
     else
       echo "$name: WOULD hire (currently: $(hired_at "$name"))" 2>/dev/null || echo "$name: WOULD hire"
     fi
   done < <(read_roster)
+
+  if [ "$dry" -eq 0 ] && [ "$failed" -ne 0 ]; then
+    echo
+    echo "up: $failed box(es) could NOT be hired — see the errors above"
+  fi
 
   if [ "$dry" -eq 0 ]; then
     echo
@@ -272,6 +420,9 @@ cmd_up() {
     echo "boxes on this host but not in the roster (left alone):"
     comm -23 <(box_names | sort) <(roster_names | sort) | sed 's/^/  /' || true
   fi
+  # Convergence that could not converge must not exit 0: `crew up` is what
+  # automation runs, and a success rc is the only thing most callers read.
+  if [ "$dry" -eq 0 ] && [ "$failed" -ne 0 ]; then return 1; fi
 }
 
 cmd_down() {
@@ -280,7 +431,9 @@ cmd_down() {
   local name _rest
   while read -r name _rest; do
     if box_exists "$name"; then
-      box down "$name" || echo "  down FAILED on $name"
+      # </dev/null for the same reason as bxn: this loop reads from a FIFO
+      # a stdin-inheriting `box` subcommand would drain (#48).
+      box down "$name" </dev/null || echo "  down FAILED on $name"
     else
       echo "  $name: not present, skipping"
     fi
@@ -296,7 +449,7 @@ cmd_status() {
   if [ -n "${1:-}" ]; then
     local b="$1"
     echo "== $b"
-    box exec "$b" -- bash -lc '
+    bxn "$b" '
       cat ~/duty/VERSION 2>/dev/null || echo "not hired (no engine)"
       tail -n 5 ~/duty/duty.log 2>/dev/null
     ' 2>/dev/null || echo "  (unreachable)"
@@ -313,8 +466,7 @@ cmd_status() {
       printf "$fmt" "$name" - - - - "NOT CREATED — crew new $name"
       continue
     fi
-    state="$(box info "$name" --json 2>/dev/null \
-      | jq -r '.state // .status // "?"' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    state="$(box_state "$name")"
     if [ "$state" = "stopped" ]; then
       # shellcheck disable=SC2059
       printf "$fmt" "$name" stopped - - - "crew up starts it"
@@ -366,7 +518,7 @@ cmd_upgrade() {
     fi
     # No agent/role flags: install.sh resolves from the manifest, or keeps
     # the box's existing instance.conf. Pre-auth boxes keep theirs too.
-    box exec "$b" -- bash -lc "
+    bxn "$b" "
       set -euo pipefail
       git -C ~/crew pull --ff-only --quiet
       ~/crew/shared/install.sh $flags
@@ -497,6 +649,10 @@ case "${1:-}" in
   gold)       shift; cmd_gold "$@" ;;
   profiles)   cmd_profiles ;;
   floor)      shift; cmd_floor "$@" ;;
-  ""|help|-h|--help) sed -n '2,37s/^# \{0,1\}//p' "$0" ;;
+  # The leading comment block, stopping at the first line that is not a
+  # comment. This was a hardcoded `2,37` range, which silently dropped the
+  # last line the moment the header grew by one — the same truncation
+  # `crew floor --help` is already tested against.
+  ""|help|-h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0" ;;
   *) die "unknown command '${1}' — try: crew help" ;;
 esac
