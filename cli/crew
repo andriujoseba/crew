@@ -15,6 +15,7 @@
 #   crew gold <box>                           snapshot a box as a gold image
 #   crew init [config-dir]                    scaffold a new operator fleet definition
 #   crew profiles                             list role and agent profiles
+#                                             …an operator agents/ dir overlays the shipped set
 #
 # The lifecycle is two verbs around one human step in the middle:
 #
