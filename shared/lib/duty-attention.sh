@@ -71,7 +71,8 @@ duty_attention() {
   local sc_state="$DUTY_DIR/.suppressed-attention-scope" sc_prev sc_now
   sc_prev="$(cat "$sc_state" 2>/dev/null || true)"
   printf '%s\n' "$outside" \
-    | report_suppressed "$sc_state" "attention: outside repos.txt, NOT picked up"
+    | report_suppressed "$sc_state" "attention: outside repos.txt" \
+        "in repos this box does not carry, never picked up"
   sc_now="$(cat "$sc_state" 2>/dev/null || true)"
   # ...and it reaches the OPERATOR, not just duty.log. An attention demand is
   # the human's channel to this box; bounding it without telling anyone would

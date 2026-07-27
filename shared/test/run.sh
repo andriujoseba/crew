@@ -690,6 +690,43 @@ t attention-ledger-commit-gated gated "$r1"
 # duty-review.sh's `review-partitions-before-prompt` pins, and for the same
 # reason.
 ATT_MOD="$SHARED/lib/duty-attention.sh"
+# The SAME hole, one level up, and this one shipped to review: the behavioural
+# assertions call _attention_partition directly, so they cannot see a wake path
+# that computes the partition and then ignores it. kimi ran exactly that
+# mutation against d849f16 —
+#
+#   inside="$(printf '%s\n' "$rows" | awk '{ print $1 "#" $2, $3 }')"
+#
+# keeping the registry read and the partition function intact, and the suite
+# stayed 185 ok / 0 failed. So the wiring is pinned too: the acted set and the
+# reported set must both come from $partitioned, and $outside must be what
+# feeds the suppression report the operator alert keys on.
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+if grep -q 'inside=.*\$partitioned' "$ATT_MOD" &&
+   grep -q 'outside=.*\$partitioned' "$ATT_MOD" &&
+   grep -q 'printf .* "\$outside" *\\*$' "$ATT_MOD"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t attention-acted-set-comes-from-the-partition wired "$r1"
+
+# The two withheld sets are different events and must not read alike in
+# duty.log: a ledger suppression is an item a session SAW and declined; an
+# out-of-scope demand was never actionable by this box and no session ever saw
+# it. The default phrase stays for the three ledger callers.
+RSW="$TMP/rsw-state"
+t report-suppressed-default-phrase reported \
+  "$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" 2>&1 \
+     | grep -q 'unactioned since a previous session' && echo reported || echo MISSING)"
+rm -f "$RSW"
+t report-suppressed-custom-phrase reported \
+  "$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" "never actionable here" 2>&1 \
+     | grep -q 'never actionable here' && echo reported || echo MISSING)"
+rm -f "$RSW"
+if grep -q 'report_suppressed .*sc_state.*\\$' "$ATT_MOD" &&
+   grep -q 'this box does not carry' "$ATT_MOD"; then r1=distinct; else r1=BORROWED; fi
+t attention-scope-report-has-its-own-phrase distinct "$r1"
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
 if grep -q 'fresh=.*ledger_filter.*\.seen-attention' "$ATT_MOD" &&
    grep -q 'rows="\$fresh"' "$ATT_MOD"; then
