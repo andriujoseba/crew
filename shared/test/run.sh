@@ -497,6 +497,25 @@ t report-state-removed removed "$r5"
 r6="$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
 case "$r6" in *"1 item(s)"*) r7=warned ;; *) r7="$r6" ;; esac
 t report-recurrence-speaks warned "$r7"
+# Blank lines are not items and must not render as the malformed `()`.
+r8="$(printf '\no/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$TMP/sup-blank" "review")"
+case "$r8" in *'()'*) r9=MALFORMED ;; *) r9=clean ;; esac
+t report-blank-line-format clean "$r9"
+
+# An incomplete sweep cannot compare its partial set with the previous complete
+# set. Preserve the state byte-for-byte; otherwise one flaky repo makes every
+# healthy repo's standing suppression look changed twice (drop + return).
+ST_PART="$TMP/sup-partial"
+printf 'o/a#1 T1\no/b#1 T1\n' | report_suppressed "$ST_PART" "review" >/dev/null
+before_part="$(cat "$ST_PART")"
+printf 'o/a#1 T1\n' \
+  | report_suppressed_if_complete 0 "$ST_PART" "review" >/dev/null
+t report-partial-preserves-state "$before_part" "$(cat "$ST_PART")"
+# The next complete steady set remains silent, proving the partial tick did not
+# replace the state and manufacture a second warning when repo B returns.
+t report-after-partial-still-settled "" \
+  "$(printf 'o/a#1 T1\no/b#1 T1\n' \
+      | report_suppressed_if_complete 1 "$ST_PART" "review")"
 
 # --- suppression state must be PER REPO (#60 review) ------------------------
 # Both duty modules call report_suppressed inside a per-repo loop. With ONE
@@ -536,7 +555,7 @@ done
 # none — so any signal cleared by an in-session action the agent may DECLINE
 # re-fired a model session every tick forever. These pin the wiring: a new
 # signal site added without a ledger is the regression.
-for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build"; do
+for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" "duty-review.sh:.seen-review"; do
   mod="${pair%%:*}"; led="${pair##*:}"
   if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
   t "signal-ledgered-$mod" ledgered "$r1"
@@ -547,6 +566,52 @@ for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build"; d
   if grep -q 'report_suppressed' "$SHARED/lib/$mod"; then r1=reported; else r1=SILENT; fi
   t "suppression-reported-$mod" reported "$r1"
 done
+
+# The reviewer must carry updated_at from the existing pulls page, partition
+# before assembling per-repo prompts, and commit that repo's exact fresh set.
+REVIEW_MOD="$SHARED/lib/duty-review.sh"
+if grep -Fq "\\(.updated_at) \\(\$sr) \\(.number)" "$REVIEW_MOD"; then r1=carried; else r1=MISSING; fi
+t review-carries-updated-at carried "$r1"
+if grep -q 'fresh_items=.*ledger_filter.*seen-review' "$REVIEW_MOD" &&
+   grep -q 'suppressed=.*ledger_suppressed.*seen-review' "$REVIEW_MOD"; then
+  r1=partitioned
+else
+  r1=UNPARTITIONED
+fi
+t review-partitions-before-prompt partitioned "$r1"
+commit_block="$(awk '
+  /if \[ "\$\{RUN_SESSION_RC:-1\}" -eq 0 \]; then/ { inside=1 }
+  inside { print }
+  inside && /^[[:space:]]*fi$/ { exit }
+' "$REVIEW_MOD")"
+if grep -Fq "\${repo_items[\$SR]}" <<<"$commit_block" &&
+   grep -Fq "ledger_commit \"\$DUTY_DIR/.seen-review\"" <<<"$commit_block"; then
+  r1=exact
+else
+  r1=MISMATCH
+fi
+t review-commits-prompted-set exact "$r1"
+if grep -q 'report_suppressed_if_complete.*sweep_complete' "$REVIEW_MOD"; then
+  r1=guarded
+else
+  r1=UNGUARDED
+fi
+t review-partial-sweep-preserves-report-state guarded "$r1"
+
+# Behavioral mixed case: #5 is unchanged and suppressed; #6 in the same repo
+# is fresh. Only #6 enters the prompted/committed set. After that successful
+# commit both are settled; advancing #5's updated_at wakes it again.
+RLG="$TMP/review-ledger"
+printf 'o/r#5 T1\n' | ledger_commit "$RLG"
+RQ="$(printf 'o/r#5 T1\no/r#6 T1\n')"
+RP="$(printf '%s\n' "$RQ" | ledger_filter "$RLG")"
+RS="$(printf '%s\n' "$RQ" | ledger_suppressed "$RLG")"
+t review-mixed-prompt-only-fresh "o/r#6 T1" "$RP"
+t review-mixed-report-only-suppressed "o/r#5 T1" "$RS"
+printf '%s\n' "$RP" | ledger_commit "$RLG"
+t review-mixed-commit-settles-both 0 "$(printf '%s\n' "$RQ" | ledger_filter "$RLG" | n)"
+t review-advanced-suppressed-rewakes "o/r#5 T2" \
+  "$(printf 'o/r#5 T2\n' | ledger_filter "$RLG")"
 
 # --- what the drill's isolation interlock does and does not cover (#52) ---
 # drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to

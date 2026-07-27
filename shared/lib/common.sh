@@ -200,8 +200,18 @@ report_suppressed() {
   if [ -z "$items" ]; then rm -f "$state"; return 0; fi
   if [ "$items" = "$(cat "$state" 2>/dev/null)" ]; then return 0; fi
   n="$(printf '%s\n' "$items" | awk 'NF{c++} END{print c+0}')"
-  warn "$label: $n item(s) unactioned since a previous session and now suppressed — $(printf '%s\n' "$items" | awk '{printf "%s(%s) ", $1, $2}')"
+  warn "$label: $n item(s) unactioned since a previous session and now suppressed — $(printf '%s\n' "$items" | awk 'NF>=2{printf "%s(%s) ", $1, $2}')"
   printf '%s\n' "$items" >"$state"
+}
+
+report_suppressed_if_complete() { # $1=0|1 $2=state $3=label; stdin items
+  local complete="$1" state="$2" label="$3" items
+  items="$(cat)"
+  if [ "$complete" -eq 1 ]; then
+    printf '%s\n' "$items" | report_suppressed "$state" "$label"
+  else
+    log "$label: suppression report state unchanged after partial sweep"
+  fi
 }
 
 ledger_commit() { # $1=ledger; stdin "id ts" lines; merge keeping max ts, atomically
