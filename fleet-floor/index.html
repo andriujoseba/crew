@@ -959,11 +959,17 @@ function credColour(d){
 function pingText(d){
   if(!LIVE)return "—";
   if(!d.ping)return "—";
+  /* Stale outranks ok: the tier has not run recently enough for its last
+     answer to be a claim about now, and showing "8ms · ok" from an arbitrarily
+     old round is stale green on a liveness widget — the exact thing this tier
+     was added to prevent. */
+  if(d.ping.stale)return "stale · "+fmtDur(d.ping.age)+" old";
   if(d.ping.ok)return d.ping.ms+"ms · "+d.ping.age+"s ago";
   return "no answer · "+d.ping.fails+" missed";
 }
 function pingColour(d){
   if(!LIVE||!d.ping)return "#46566a";
+  if(d.ping.stale)return "#f7bd4e";   /* amber: unknown, not green and not red */
   return d.ping.ok?"#5fce9b":"#ff5147";
 }
 /* Access-panel button: live ones are real, demo ones keep the .woff tooltip

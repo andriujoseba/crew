@@ -84,14 +84,22 @@ emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # "a logged-out box renders green" failure this value exists to prevent, with
 # a comment above it reassuring the reader otherwise.
 #
-# `flowing` therefore requires a RECENT TICK as well: the engine must have
-# logged something within two tick boundaries, the same death rule the floor
-# and tick.sh already use. Installed-but-not-running is `stale` — not a
-# failure, not a claim, just the honest fourth state.
+# `flowing` therefore requires a RECENT TICK as well. But the BOX does not
+# decide that: it emits `nofail` — "an engine is installed and nothing has
+# recorded a rejection" — alongside `::tickage`, and the host turns the pair
+# into flowing-or-stale.
+#
+# That split is deliberate. The threshold is two tick boundaries, which
+# floor.py already derives from TICK_S as SILENT_AFTER_S. Baking `600` in here
+# made a THIRD copy of that rule, in a second language, inside the box — so
+# changing TICK_S would leave the floor calling a box SILENT while the
+# credential readers still called it flowing. This PR exists because a CLI and
+# a floor holding private sources of truth disagree in front of an operator; a
+# private *threshold* is the same defect wearing a smaller hat.
 #
 #   unknown  no engine: nothing has ever run, so nothing is known
-#   stale    engine installed but not ticking: cannot know, and says so
-#   flowing  ticking, and no rejection recorded
+#   nofail   engine installed, no rejection recorded — the host ages this
+#            into `flowing` (ticking) or `stale` (installed but not running)
 #   missing  a rejection was recorded
 #
 # One marker file PER SERVICE. The first cut used a single .auth-fail and
@@ -125,10 +133,9 @@ for svc in gh vendor; do
     emit "authfail-$svc" "$fail"
   elif [ ! -s "$DUTY_DIR/VERSION" ]; then
     emit "$svc" unknown
-  elif [ -n "$tick_age" ] && [ "$tick_age" -lt 600 ]; then
-    emit "$svc" flowing
   else
-    emit "$svc" stale
+    # No verdict here — see above. ::tickage carries what the host needs.
+    emit "$svc" nofail
   fi
 done
 

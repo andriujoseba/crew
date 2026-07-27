@@ -718,6 +718,36 @@ for agent in claude codex grok kimi; do
 done
 t agent-profiles-define-present "" "$missing"
 
+# --- the two-boundary rule must exist once, not once per reader -----------
+# floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
+# hold it at all: the box ships ::tickage and the HOST decides. A third copy
+# inside the box, in a second language, meant changing TICK_S would leave the
+# floor calling a box SILENT while both credential readers still said flowing
+# — and rehearsal-app.sh asserts those two readers agree, so the drill would
+# fail for a reason nobody would trace to a constant.
+CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
+FLOOR_PY="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/floor.py"
+
+FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
+FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
+# shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
+CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
+t silent-rule-floor-derived 600 "$FL_SILENT"
+t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
+
+# ...and the box must hold no threshold of its own. Comments and the log-tail
+# line count are stripped before looking, so only real code counts.
+PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
+if sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH" | grep -qE '\b(600|SILENT_AFTER)\b'; then
+  r1=BAKED
+else
+  r1=clean
+fi
+t probe-holds-no-threshold clean "$r1"
+# The datum it ships instead:
+if grep -q 'emit tickage' "$PROBE_SH"; then r1=emitted; else r1=MISSING; fi
+t probe-emits-tickage emitted "$r1"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

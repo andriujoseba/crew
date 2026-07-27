@@ -87,16 +87,23 @@ emit_probe() {
   # hired box with no recorded failure is `flowing`. A stub that said
   # `flowing` for an unhired box would have let the collector treat "nobody
   # has complained yet" as a working credential.
-  _cred=flowing
-  # `stale` is what an installed-but-not-ticking box reports. The silent and
-  # nocron scenarios are exactly that, and without them nothing would ever
-  # exercise the state that exists because VERSION proves installation, not
-  # execution.
+  # The box reports a FACT (`nofail` + ::tickage); the host ages it into
+  # flowing-or-stale. Emitting a verdict here would let the collector be
+  # written against a vocabulary probe.sh no longer speaks.
+  _cred=nofail
   case "$sc" in
-    nothired)       _cred=unknown ;;
-    noauth)         _cred=missing ;;
-    silent|nocron)  _cred=stale ;;
+    nothired) _cred=unknown ;;
+    noauth)   _cred=missing ;;
   esac
+  # Tick age drives the host's verdict: fresh for a healthy box, long past two
+  # boundaries for the ones that have stopped ticking — which is what makes
+  # `stale` reachable at all.
+  case "$sc" in
+    silent|nocron) _tickage=4000 ;;
+    nothired)      _tickage=-1 ;;
+    *)             _tickage=30 ;;
+  esac
+  printf '::tickage %s\n' "$_tickage"
   printf '::gh %s\n'     "$_cred"
   printf '::vendor %s\n' "$_cred"
   [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
@@ -288,10 +295,10 @@ case "${1:-}" in
         # string unique to one script; the two are otherwise near-identical and
         # a looser match would answer the probe in the CLI's format.
         case "$sc" in
-          noauth)        echo "missing missing" ;;
-          nothired)      echo "unknown unknown" ;;
-          silent|nocron) echo "stale stale" ;;
-          *)             echo "flowing flowing" ;;
+          noauth)        echo "missing missing 30" ;;
+          nothired)      echo "unknown unknown -1" ;;
+          silent|nocron) echo "nofail nofail 4000" ;;
+          *)             echo "nofail nofail 30" ;;
         esac ;;
       *'duty/VERSION'*)                         # crew's hired_at
         [ "$sc" = "nothired" ] || echo "crew@0.4.1" ;;

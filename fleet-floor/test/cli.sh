@@ -234,7 +234,7 @@ else
 fi
 # Both readers must speak one vocabulary, or "they agree" is a string compare
 # between two dialects.
-for cl_word in flowing stale missing unknown; do
+for cl_word in nofail stale missing unknown; do
   if grep -q "$cl_word" "$CL_CLI" && grep -q "$cl_word" "$CL_FLOOR/server/probe.sh"; then
     ok "vocabulary '$cl_word' is shared by crew and probe.sh"
   else

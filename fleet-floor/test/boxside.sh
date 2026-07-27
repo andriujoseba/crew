@@ -272,8 +272,14 @@ BS_FLOW="$BS_TMP/flow"; mkdir -p "$BS_FLOW/duty"
 echo "crew@0.4.1" > "$BS_FLOW/duty/VERSION"
 echo "$BS_NOW duty run start" > "$BS_FLOW/duty/duty.log"
 bs_probe "$BS_FLOW" >/dev/null
-t "flow: ticking, no failure recorded -> gh flowing"     flowing "$(bs_key gh)"
-t "flow: ticking, no failure recorded -> vendor flowing" flowing "$(bs_key vendor)"
+t "flow: no failure recorded -> gh nofail"     nofail "$(bs_key gh)"
+t "flow: no failure recorded -> vendor nofail" nofail "$(bs_key vendor)"
+# The box reports the AGE and the host applies the rule — so the threshold
+# lives once, in floor.py, instead of a third time inside the box in bash.
+BS_AGE="$(bs_key tickage)"
+if [ -n "$BS_AGE" ] && [ "$BS_AGE" -ge 0 ] && [ "$BS_AGE" -lt 120 ]; then
+  ok "flow: a fresh tick is reported as an age ($BS_AGE s)"
+else fail "flow: a fresh tick is reported as an age" "got '$BS_AGE'"; fi
 
 # THE finding this state exists for. VERSION is written once by install.sh and
 # never touched again, so it proves the engine was INSTALLED, not that it has
@@ -284,12 +290,17 @@ t "flow: ticking, no failure recorded -> vendor flowing" flowing "$(bs_key vendo
 printf '%s duty run start\n' "$(date -u -d '@'"$(( $(date +%s) - 4000 ))" '+%Y-%m-%dT%H:%M:%SZ')" \
   > "$BS_FLOW/duty/duty.log"
 bs_probe "$BS_FLOW" >/dev/null
-t "flow: installed but not ticking is stale, NOT flowing" stale "$(bs_key gh)"
-t "flow: ...and the vendor too"                           stale "$(bs_key vendor)"
+BS_OLD="$(bs_key tickage)"
+if [ -n "$BS_OLD" ] && [ "$BS_OLD" -gt 600 ]; then
+  ok "flow: a long-dead engine reports an age past the death rule ($BS_OLD s)"
+else fail "flow: a long-dead engine reports an age past the death rule" "got '$BS_OLD'"; fi
+# The BOX still says nofail — it does not decide. floor.py ages this into
+# `stale`, and cases.sh asserts that it does.
+t "flow: the box reports a fact, not a verdict" nofail "$(bs_key gh)"
 # A recorded rejection still outranks staleness: it is a fact, not an absence.
 echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"
 bs_probe "$BS_FLOW" >/dev/null
-t "flow: a rejection outranks stale" missing "$(bs_key gh)"
+t "flow: a rejection outranks everything" missing "$(bs_key gh)"
 rm -f "$BS_FLOW/duty/.auth-fail.gh"
 printf '%s duty run start\n' "$BS_NOW" > "$BS_FLOW/duty/duty.log"
 bs_probe "$BS_FLOW" >/dev/null
@@ -311,7 +322,7 @@ t "flow: gh rejection -> gh missing" missing "$(bs_key gh)"
 if [ -n "$(bs_key authfail-gh)" ]; then ok "flow: gh rejection -> reason carried to the operator"
 else fail "flow: gh rejection -> reason carried to the operator" "empty"; fi
 # The marker names ONE service; the other must not be condemned with it.
-t "flow: a gh rejection does not mark the vendor missing" flowing "$(bs_key vendor)"
+t "flow: a gh rejection does not mark the vendor missing" nofail "$(bs_key vendor)"
 rm -f "$BS_FLOW/duty/.auth-fail.gh"
 
 # lockheld: a duty run in flight, and the half-written file that a probe

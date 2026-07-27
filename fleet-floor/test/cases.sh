@@ -450,10 +450,18 @@ else
 fi
 
 # `flowing` must never be derivable from VERSION alone — VERSION records that
-# the engine was installed, not that it has run.
-if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'tick_age'; then
-  ok "creds: flowing requires a recent tick, not just an installed engine"
+# the engine was installed, not that it has run. The rule now lives on the
+# HOST: probe.sh reports `nofail` plus ::tickage and floor.py ages the pair,
+# so the threshold is not copied into the box in a second language.
+if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'flowing\|stale'; then
+  fail "creds: the box reports a fact, not a verdict" \
+       "probe.sh decides flowing/stale itself — that is a third copy of SILENT_AFTER_S"
 else
-  fail "creds: flowing requires a recent tick, not just an installed engine" \
-       "probe.sh derives flowing without consulting the tick age"
+  ok "creds: the box reports a fact, not a verdict"
+fi
+if grep -q 'fresh = 0 <= tick_age < SILENT_AFTER_S' "$FLOOR/server/floor.py"; then
+  ok "creds: the host ages nofail with the same rule it calls SILENT"
+else
+  fail "creds: the host ages nofail with the same rule it calls SILENT" \
+       "floor.py does not derive freshness from SILENT_AFTER_S"
 fi

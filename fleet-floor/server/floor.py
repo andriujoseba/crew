@@ -80,6 +80,15 @@ PING_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_PING_TIMEOUT", "5"))
 # One dropped ping is a scheduler hiccup, not a wedge. Three consecutive
 # misses (~30s) is a box that has stopped answering.
 PING_FAILS_TO_WEDGE = int(os.environ.get("CREW_FLOOR_PING_FAILS", "3"))
+# A round that cannot run (a failed `box list`) leaves the previous heartbeats
+# published rather than wiping their miss counters. That is right, but a
+# SUSTAINED host-level failure then leaves the last round's `ok: True` on
+# screen forever — trading "counters reset" for "stale green", and stale green
+# on a liveness widget is the failure this tier was added to prevent. Past this
+# age a heartbeat is reported as unknown rather than believed. Generous enough
+# that ordinary jitter never trips it: several rounds AND the wedge threshold.
+PING_STALE_AFTER_S = int(os.environ.get(
+    "CREW_FLOOR_PING_STALE_AFTER", str(PING_INTERVAL_S * (PING_FAILS_TO_WEDGE + 2))))
 
 # A duty run holding its lock this long is reported as stuck. Two tick
 # boundaries, the same number the SILENT rule uses — past it, tick.sh is
@@ -390,10 +399,22 @@ def build_unit(unit, state, agent_conf, now):
     # Both services, same shape. gh and the agent CLI fail independently and
     # are fixed by different commands, so they are never merged into one
     # "auth is bad" flag — the operator needs to know WHICH login to redo.
+    # `nofail` means the box found no rejection; whether that amounts to
+    # `flowing` depends on the engine having actually RUN recently, and that
+    # threshold is SILENT_AFTER_S — the same one the SILENT rule uses, derived
+    # once from TICK_S. The box deliberately ships ::tickage rather than a
+    # verdict so this number exists in exactly one place.
+    try:
+        tick_age = int(meta.get("tickage") or -1)
+    except (TypeError, ValueError):
+        tick_age = -1
+    fresh = 0 <= tick_age < SILENT_AFTER_S
     for svc in ("gh", "vendor"):
         fail = meta.get("authfail-%s" % svc, "")
         if fail:
             u["authfail"].append("%s: %s" % (svc, fail))
+        if u[svc] == "nofail":
+            u[svc] = "flowing" if fresh else "stale"
 
     # A duty run is in flight and has held the lock this long. Absent means no
     # run is in flight — the common case between ticks, and not a fault.
@@ -732,8 +753,22 @@ class Fleet:
                 units.append(u)
                 continue
             u = dict(u)
-            u["ping"] = {"ok": p["ok"], "ms": p["ms"],
-                         "age": int(now - p["ts"]), "fails": p["fails"]}
+            age = int(now - p["ts"])
+            # `stale` is a THIRD answer, never folded into ok/not-ok: the tier
+            # has not run recently enough for either to be a claim about now.
+            stale = age > PING_STALE_AFTER_S
+            u["ping"] = {"ok": p["ok"], "ms": p["ms"], "age": age,
+                         "fails": p["fails"], "stale": stale}
+            if stale:
+                # Say so rather than rendering an old green as current. Not
+                # `offline`: an unmeasurable box is not a dead one, and
+                # claiming otherwise is the same overreach in the other
+                # direction.
+                u["note"] = u["note"] or (
+                    "heartbeat has not run for %s — the collector cannot reach "
+                    "`box list`" % fmt_dur(age))
+                units.append(u)
+                continue
             # A box that has missed PING_FAILS_TO_WEDGE pings in a row is
             # unreachable NOW, whatever the last evidence probe concluded up
             # to a minute ago. This overrides "working" on purpose: a session
