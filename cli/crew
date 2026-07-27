@@ -204,6 +204,7 @@ vendor_probe() {
 # Live probing survives where it belongs: `crew hire` and the boot gate pay
 # for certainty once, at the moment someone is standing there to fix it.
 auth_from_flow() {
+  # shellcheck disable=SC2016  # $HOME and $svc must expand INSIDE the box
   bxn "$1" '
     for svc in gh vendor; do
       if [ -s "$HOME/duty/.auth-fail.$svc" ]; then printf "missing "

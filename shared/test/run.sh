@@ -568,18 +568,22 @@ t expiry-no-temp-files-left 0 \
 # real failure someone still has to fix.
 # shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
 AGENT_LOGIN_HINT="run the thing"
+# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
 bot_cli_present() { return 0; }
+# shellcheck disable=SC2317
 bot_cli_expiry()  { echo "2026-09-01T00:00:00Z"; }
 check_vendor_credential
 t vendor-present-records-expiry "2026-09-01T00:00:00Z" "$(cat "$AUTHDIR/.vendor-token-expiry")"
 t vendor-present-no-failure absent \
   "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
 
+# shellcheck disable=SC2317
 bot_cli_present() { return 1; }
 check_vendor_credential
 t vendor-absent-raises present \
   "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
 
+# shellcheck disable=SC2317
 bot_cli_present() { return 2; }
 check_vendor_credential
 t vendor-unknown-does-not-clear present \
