@@ -96,7 +96,7 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in bash basename cat chmod cp date dirname grep mkdir mktemp mv rm sed tr wc; do
+for cmd in bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed tr wc; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 ln -s "$(command -v jq)" "$ISHIM/jq"
@@ -166,6 +166,69 @@ manifest_install >/dev/null 2>&1
 t install-flagless-reresolves-from-manifest 'BOT_ROLES="triage"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
 manifest_install --agent claude --role reviewer >/dev/null 2>&1
 t install-explicit-reinstall-keeps-role 'BOT_ROLES="reviewer"' "$(grep '^BOT_ROLES=' "$MDUTY/conf/instance.conf")"
+
+# --- install.sh: a change must not read like a no-op (#36) ---------------
+# duty.sh gates every module on has_role, so a changed BOT_ROLES adds or
+# removes whole duty loops. Until now every resolution path printed the same
+# "installed for X (agent: ..., roles: ...)" line, so the install that
+# converted the drill's reviewer box to triage (#28) was indistinguishable
+# from one that did nothing.
+CHOME="$TMP/change-home"
+CDUTY="$CHOME/duty"
+mkdir -p "$CHOME"
+change_install() {
+  env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" "$@" 2>&1
+}
+# 1. First install: an install, not a diff against nothing.
+first_out="$(change_install --agent claude --role reviewer)"
+case "$first_out" in *CHANGED*) r1=SPURIOUS ;; *) r1=clean ;; esac
+t install-first-reports-no-change clean "$r1"
+case "$first_out" in *"first install"*) r1=named ;; *) r1=SILENT ;; esac
+t install-first-says-so named "$r1"
+
+# 2. Same flags again: nothing changed, and it still says where it resolved from.
+noop_out="$(change_install --agent claude --role reviewer)"
+case "$noop_out" in *CHANGED*) r1=SPURIOUS ;; *) r1=clean ;; esac
+t install-noop-reports-no-change clean "$r1"
+case "$noop_out" in *"resolved from the --agent/--role flags"*) r1=named ;; *) r1=SILENT ;; esac
+t install-noop-names-source named "$r1"
+
+# 3. The #28 conditions exactly: a box deliberately installed as reviewer,
+#    reinstalled flagless under a login whose manifest entry is triage.
+change_out="$(change_install)"
+case "$change_out" in *'ROLES CHANGED on this box: "reviewer" -> "triage"'*) r1=named ;; *) r1=SILENT ;; esac
+t install-change-names-both-sides named "$r1"
+case "$change_out" in *"FLEET_MANIFEST (login dan-claude-bot)"*) r1=named ;; *) r1=SILENT ;; esac
+t install-change-names-source named "$r1"
+case "$change_out" in *"duty loops"*) r1=explained ;; *) r1=BARE ;; esac
+t install-change-explains-consequence explained "$r1"
+
+# 4. THE negative control, and the whole point of the issue: a change and a
+#    no-op must not produce the same output.
+#
+#    Both runs resolve from the SAME source, so the report is the only thing
+#    that can differ. Comparing the flagless run against the explicit one would
+#    also come out "distinct" — but only because the two name different
+#    resolution sources, which is a pass for a reason unrelated to the claim.
+#    Written that way first, it survived reintroducing the bug.
+samesrc_change="$(change_install --agent claude --role builder)"   # triage -> builder
+samesrc_noop="$(change_install --agent claude --role builder)"     # builder -> builder
+[ "$samesrc_change" != "$samesrc_noop" ] && r1=distinct || r1=IDENTICAL
+t install-change-differs-from-noop-same-source distinct "$r1"
+case "$samesrc_change" in *'"triage" -> "builder"'*) r1=named ;; *) r1=SILENT ;; esac
+t install-change-names-the-transition named "$r1"
+# ...and the no-op must not name one, which is the other half of "distinct".
+case "$samesrc_noop" in *CHANGED*) r1=SPURIOUS ;; *) r1=clean ;; esac
+t install-noop-names-no-transition clean "$r1"
+
+# 5. The change must survive stdout being discarded — `crew hire`/`crew upgrade`
+#    run this over box exec, and the operator sees whatever is left.
+change_stderr="$(env HOME="$CHOME" DUTY_DIR="$CDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+  /bin/bash "$SHARED/install.sh" --agent claude --role reviewer 2>&1 >/dev/null)"
+case "$change_stderr" in *'ROLES CHANGED'*) r1=on-stderr ;; *) r1=LOST ;; esac
+t install-change-on-stderr on-stderr "$r1"
+
 # restore the non-authenticating gh shim for anything downstream
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
 chmod +x "$ISHIM/gh"

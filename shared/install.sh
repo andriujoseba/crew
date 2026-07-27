@@ -66,6 +66,18 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# What this box was configured as BEFORE this run, captured before anything
+# below can overwrite it. Parsed rather than sourced, deliberately: the keep-
+# existing branch below SOURCES instance.conf, which sets BOT_AGENT/BOT_ROLES
+# in this shell — sourcing here would make the "prior" and the "resolved"
+# values the same variables and the comparison vacuous.
+PRIOR_EXISTS=0 PRIOR_AGENT="" PRIOR_ROLES=""
+if [ -f "$DUTY_DIR/conf/instance.conf" ]; then
+  PRIOR_EXISTS=1
+  PRIOR_AGENT="$(sed -n 's/^BOT_AGENT=//p' "$DUTY_DIR/conf/instance.conf" | head -1 | tr -d '"'\''\r')"
+  PRIOR_ROLES="$(sed -n 's/^BOT_ROLES=//p' "$DUTY_DIR/conf/instance.conf" | head -1 | tr -d '"'\''\r')"
+fi
+
 ME="$(gh api user --jq .login 2>/dev/null || true)"
 if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
   if [ -z "$AGENT_ARG" ] || [ -z "$ROLE_ARG" ]; then
@@ -73,13 +85,15 @@ if [ -n "$AGENT_ARG" ] || [ -n "$ROLE_ARG" ]; then
   fi
   BOT_AGENT="$AGENT_ARG"
   BOT_ROLE_LIST="$(printf '%s' "$ROLE_ARG" | tr ',' ' ')"
+  RESOLVED_FROM="the --agent/--role flags"
 elif [ -n "$ME" ] && resolved="$(manifest_lookup "$ME")"; then
   read -r BOT_AGENT BOT_ROLE_LIST <<<"$resolved"
+  RESOLVED_FROM="FLEET_MANIFEST (login $ME)"
 elif [ -f "$DUTY_DIR/conf/instance.conf" ]; then
   # shellcheck disable=SC1091
   source "$DUTY_DIR/conf/instance.conf"
   BOT_ROLE_LIST="$BOT_ROLES"
-  echo "keeping existing instance config (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)${ME:+ — $ME is not in FLEET_MANIFEST}"
+  RESOLVED_FROM="the existing instance.conf${ME:+ — $ME is not in FLEET_MANIFEST}"
 else
   echo "cannot resolve this box's configuration: no --agent/--role flags,"
   echo "no manifest entry${ME:+ for $ME}${ME:-" (gh not authenticated)"}, and no existing instance.conf"
@@ -89,6 +103,45 @@ fi
 for role in $BOT_ROLE_LIST; do
   [ -f "$HERE/conf/roles/$role.conf" ] || { echo "unknown role profile '$role'"; exit 1; }
 done
+# --- Say what this install CHANGED, before it changes it (#36) --------------
+#
+# A role change is not cosmetic. duty.sh gates every module on has_role, so
+# BOT_ROLES decides which duty loops exist on this box — a flagless install can
+# start triage sweeps or stop reviews on the strength of a line that used to
+# read exactly like a no-op. That silence cost a whole rehearsal (#28: the drill
+# asserted BOT_ROLES="reviewer", reran install two checks later, the box became
+# triage, and every downstream review check failed for a reason nothing in the
+# output pointed at), and it is what lets #35 bite in production, where `crew
+# upgrade` runs flagless against every box on the roster.
+#
+# Reported, never refused. Convergence is the point of a fleet installer — the
+# ruling on #35 is that the declaration wins and explicit flags are not sticky —
+# so a change here is usually correct. It just must never be invisible.
+#
+# The change lines go to stderr and the resolution line to stdout, because they
+# answer different questions: "what did this do to my box" has to survive being
+# piped somewhere, and it is the one an operator must not miss.
+CHANGE_NOTE="unchanged"
+if [ "$PRIOR_EXISTS" -eq 0 ]; then
+  # A first install is an install, not a diff against nothing.
+  CHANGE_NOTE="first install"
+else
+  changed=0
+  if [ "$PRIOR_AGENT" != "$BOT_AGENT" ]; then
+    echo "crew: AGENT CHANGED on this box: \"$PRIOR_AGENT\" -> \"$BOT_AGENT\"" >&2
+    changed=1
+  fi
+  if [ "$PRIOR_ROLES" != "$BOT_ROLE_LIST" ]; then
+    echo "crew: ROLES CHANGED on this box: \"$PRIOR_ROLES\" -> \"$BOT_ROLE_LIST\"" >&2
+    echo "crew: this adds or removes whole duty loops — duty.sh gates every module on has_role" >&2
+    changed=1
+  fi
+  if [ "$changed" -eq 1 ]; then
+    echo "crew: resolved from $RESOLVED_FROM; pass --agent/--role to override" >&2
+    CHANGE_NOTE="CHANGED — see the lines above"
+  fi
+fi
+
 IS_TRIAGE=0
 case " $BOT_ROLE_LIST " in *" triage "*) IS_TRIAGE=1 ;; esac
 
@@ -187,6 +240,10 @@ rm -f "$DUTY_DIR/.boot-id"
 } >"$DUTY_DIR/VERSION"
 
 echo "installed for ${ME:-<pre-auth box>} (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
+# Always named, even when nothing moved: "resolved from FLEET_MANIFEST" and
+# "kept the existing config" are different facts, and an operator reading this
+# log months later cannot reconstruct which one happened from the values alone.
+echo "  agent/role resolved from $RESOLVED_FROM — $CHANGE_NOTE"
 
 if [ "$ARM_CRON" -eq 1 ]; then
   # Deliberately check after the atomic file install: a missing host package

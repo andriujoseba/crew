@@ -132,9 +132,12 @@ Verify, and record the output of each check:
    > from the manifest. That is correct convergence for a standing fleet
    > box and a trap for any box deliberately installed off its manifest
    > role — the drill borrows a fleet identity, so a flagless rerun used to
-   > convert the reviewer box under test into a triage box, silently, two
-   > checks after the role was asserted (`heavy-duty/crew#28`). Assert the
-   > role again after any reinstall; never infer it.
+   > convert the reviewer box under test into a triage box, two checks after
+   > the role was asserted (`heavy-duty/crew#28`). It is no longer *silent* —
+   > install.sh prints `ROLES CHANGED on this box: "old" -> "new"` on stderr,
+   > with the source that decided it (`heavy-duty/crew#36`) — but it is still
+   > not refused, because convergence is what a flagless install is for.
+   > Assert the role again after any reinstall; never infer it.
 
 Repeat an explicit tick if needed. Expected steady state: three evidence lines
 per tick, no growth in error variety, no session logs in `~/duty/logs/`, and
