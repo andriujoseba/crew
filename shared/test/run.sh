@@ -555,7 +555,8 @@ done
 # none — so any signal cleared by an in-session action the agent may DECLINE
 # re-fired a model session every tick forever. These pin the wiring: a new
 # signal site added without a ledger is the regression.
-for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" "duty-review.sh:.seen-review"; do
+for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" \
+            "duty-review.sh:.seen-review" "duty-attention.sh:.seen-attention"; do
   mod="${pair%%:*}"; led="${pair##*:}"
   if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
   t "signal-ledgered-$mod" ledgered "$r1"
@@ -650,6 +651,53 @@ t attention-prefix-is-not-membership "OUT heavy-duty/rig-fork 9 T4" \
 # An empty registry authorizes nothing — it must not read as "no filter".
 t attention-empty-registry-acts-on-nothing "" \
   "$(printf '%s\n' "$ATT_ROWS" | _attention_partition "" | grep '^IN ' || true)"
+
+# --- the attention wake is ledgered too (#59's last site) --------------------
+# It looked exempt: the pickup session acks by REMOVING the label, so the
+# signal self-clears, and the module documents a deliberate crash-only retry.
+# Both true, and neither covers a session that COMPLETES and correctly declines
+# to ack — needs a ruling, not this box's to answer, already handled. Nothing
+# removes the label and the wake re-fires every tick.
+#
+# It is the worst place in the engine for that: TIMEOUT_ATTENTION is 1800s,
+# duty_attention runs FIRST, and it runs for EVERY role on EVERY box, where
+# every other signal site is confined to one role.
+ALG="$TMP/attention-ledger"
+ATT_IN="$(printf 'o/r#4 T1\no/r#9 T1\n')"
+t attention-first-tick-both-fire 2 "$(printf '%s\n' "$ATT_IN" | ledger_filter "$ALG" | n)"
+# #4's session completed and acked (the row is gone from the query next tick);
+# #9's completed and declined, so only #9's id was committed.
+printf 'o/r#9 T1\n' | ledger_commit "$ALG"
+t attention-declined-does-not-refire 0 "$(printf 'o/r#9 T1\n' | ledger_filter "$ALG" | n)"
+# ...but it is still SAID, once per change to the set.
+t attention-declined-is-reported "o/r#9" \
+  "$(printf 'o/r#9 T1\n' | ledger_suppressed "$ALG" | cut -d' ' -f1)"
+# A comment, an edit or a re-label advances updated_at — look again, which is
+# exactly when the box should.
+t attention-touched-demand-rewakes 1 "$(printf 'o/r#9 T2\n' | ledger_filter "$ALG" | n)"
+# A CRASHED session commits nothing, so the same id is still fresh next tick:
+# the module's documented crash-only retry has to survive the ledger.
+t attention-crashed-session-retries 1 "$(printf 'o/r#4 T1\n' | ledger_filter "$ALG" | n)"
+# The commit is gated on the session's own rc, per demand — a sibling that
+# succeeded must not settle one that died.
+if grep -q 'RUN_SESSION_RC:-1}" -eq 0' "$SHARED/lib/duty-attention.sh"; then r1=gated; else r1=UNGATED; fi
+t attention-ledger-commit-gated gated "$r1"
+# ...and the WAKE PATH must be the filtered set, which everything above this
+# line fails to prove: the assertions exercise ledger_filter, and the module
+# would still mention .seen-attention (in the suppression report) with the
+# filter deleted from the wake. Ripping `ledger_filter` out of the assignment
+# left all of them green. So the structure is pinned too — the same shape
+# duty-review.sh's `review-partitions-before-prompt` pins, and for the same
+# reason.
+ATT_MOD="$SHARED/lib/duty-attention.sh"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -q 'fresh=.*ledger_filter.*\.seen-attention' "$ATT_MOD" &&
+   grep -q 'rows="\$fresh"' "$ATT_MOD"; then
+  r1=filtered
+else
+  r1=UNFILTERED
+fi
+t attention-wake-set-is-the-filtered-set filtered "$r1"
 
 # The bound must not be silent, and for THIS module not only in duty.log: an
 # attention demand is somebody deliberately handing this box work, so a bound

@@ -2,8 +2,11 @@
 # ceremony#83). An open issue assigned to me carrying the `attention` label
 # is a demand parked for me. Exactly one wake per demand; the pickup session
 # acks by REMOVING the label (that re-arms the wake), then does the work per
-# role. A session that dies before acking is relaunched next tick — the flag
-# is still up, so the path is crash-only by construction. One API call, the
+# role. A session that DIES before acking is relaunched next tick — the flag is
+# still up and its id is uncommitted, so the crash-only path is preserved. A
+# session that COMPLETES without acking is a decline, and the seen-ledger stops
+# it re-firing until the issue moves (#59, and see the ledger block below —
+# this was the last unledgered signal site in the engine). One API call, the
 # authenticated-user issues endpoint: cross-repo and without a search index.
 #
 # THE QUERY IS CROSS-REPO; THE ACTION IS NOT (crew#66, danmt's ruling
@@ -59,7 +62,7 @@ duty_attention() {
   local registry partitioned inside outside
   registry="$(read_repo_list "$REPOS_FILE")"
   partitioned="$(printf '%s\n' "$rows" | _attention_partition "$registry")"
-  inside="$(printf '%s\n' "$partitioned" | awk '$1 == "IN" { print $2, $3 }')"
+  inside="$(printf '%s\n' "$partitioned" | awk '$1 == "IN" { print $2 "#" $3, $4 }')"
   outside="$(printf '%s\n' "$partitioned" | awk '$1 == "OUT" { print $2 "#" $3, $4 }')"
 
   # Reported on every tick's worth of state CHANGE, not every tick: a standing
@@ -86,7 +89,45 @@ duty_attention() {
     log "attention: none in registry"
     return 0
   fi
-  rows="$inside"
+
+  # --- The seen-ledger. This was the LAST unledgered signal site in the engine
+  # (#59 fixed triage (a)-(d), the builder and the reviewer; attention was never
+  # examined, and hygiene launches no session).
+  #
+  # The module's own contract made it look safe: "the pickup session acks by
+  # REMOVING the label", so the signal is self-clearing, and "a session that
+  # dies before acking is relaunched next tick — crash-only by construction".
+  # Both true. Neither covers the case #59 is about: a session that runs to
+  # completion and correctly does NOT ack — the demand needs a ruling, is not
+  # this box's to answer, or the agent judges it already handled. Nothing
+  # removes the label, the row comes back next tick, and the wake re-fires
+  # forever.
+  #
+  # This is the most expensive place in the engine for that to happen.
+  # TIMEOUT_ATTENTION is 1800s, duty_attention runs FIRST, and it runs for
+  # EVERY role on EVERY box — the other sites are at least confined to one
+  # role. A single declined demand is a 30-minute-budget model session every
+  # five minutes, on every box the demand is visible to, indefinitely.
+  #
+  # id is repo#num, value is updated_at: a comment, an edit or a re-label
+  # advances it and the demand is looked at again, which is exactly when it
+  # should be. Committed only on RUN_SESSION_RC 0, so the documented crash-only
+  # retry survives untouched — a died session leaves its id uncommitted and the
+  # next tick picks it up, while a completed-and-declined one settles.
+  local fresh
+  fresh="$(printf '%s\n' "$inside" | ledger_filter "$DUTY_DIR/.seen-attention")"
+  # One API call, so the set is either complete or we returned above — no
+  # partial-sweep ambiguity here, and therefore no need for the
+  # report_suppressed_if_complete guard the reviewer needs (#62).
+  printf '%s\n' "$inside" \
+    | ledger_suppressed "$DUTY_DIR/.seen-attention" \
+    | report_suppressed "$DUTY_DIR/.suppressed-attention" \
+        "attention: demand(s) unacked by a completed session, now suppressed"
+  if [ -z "${fresh//[[:space:]]/}" ]; then
+    log "attention: none new in registry"
+    return 0
+  fi
+  rows="$fresh"
 
   # Route the demand by role. Builders get the full build machinery rules:
   # an authorization that unblocks a claimed issue's acceptance criterion IS
@@ -100,9 +141,12 @@ duty_attention() {
     route="Read AGENTS.md at the repo root and follow where it routes you (REVIEWER.md for a verdict). Never spawn work off a bare @-mention."
   fi
 
-  local repo num dir slug name extra prompt
-  while read -r repo num; do
-    [ -z "${num:-}" ] && continue
+  local id upd repo num dir slug name extra prompt
+  while read -r id upd; do
+    [ -n "${id:-}" ] || continue
+    # id is "<owner>/<repo>#<num>" — a repo name cannot contain '#', so the
+    # last one splits it unambiguously.
+    repo="${id%#*}"; num="${id##*#}"
     slug="${repo//\//__}"; name="${repo##*/}"
     log "attention: $repo#$num — launching pickup session"
     dir="$WORK_DIR/$slug"
@@ -116,6 +160,12 @@ duty_attention() {
     prompt="$(render_prompt attention.txt ME="$ME" REPO="$repo" NUM="$num" \
       MARK_PICKUP="$MARK_PICKUP" LABEL_ATTENTION="$LABEL_ATTENTION" \
       ROLE_ROUTE="$route" EXTRA_RULES="$extra")"
+    RUN_SESSION_RC=1
     run_session attention "$repo#$num" "$dir" "$TIMEOUT_ATTENTION" "$prompt"
+    # Per demand, not per sweep: each row is its own session, and one that
+    # crashed must not be settled by a sibling that succeeded.
+    if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+      printf '%s %s\n' "$id" "$upd" | ledger_commit "$DUTY_DIR/.seen-attention"
+    fi
   done <<<"$rows"
 }
