@@ -1458,10 +1458,9 @@ t handoff-green-gating-called-out called-out "$r1"
 # --- configurable doctrine keeps the shipped prompts byte-identical (#76) ---
 saved_prompts_dir="$PROMPTS_DIR"
 PROMPTS_DIR="$SHARED/prompts"
-DOCTRINE_ENTRYPOINT=AGENTS.md
-DOCTRINE_TRIAGE=TRIAGE.md
-DOCTRINE_BUILDER=BUILDER.md
-DOCTRINE_REVIEWER=REVIEWER.md
+# shellcheck disable=SC2034  # consumed indirectly by sourced render_prompt
+DOCTRINE_ENTRYPOINT=AGENTS.md DOCTRINE_TRIAGE=TRIAGE.md \
+  DOCTRINE_BUILDER=BUILDER.md DOCTRINE_REVIEWER=REVIEWER.md
 for prompt_path in "$SHARED"/prompts/*.txt; do
   prompt_name="$(basename "$prompt_path")"
   expected="$(sed \
@@ -1473,10 +1472,9 @@ for prompt_path in "$SHARED"/prompts/*.txt; do
     "$(render_prompt "$prompt_name")"
 done
 
-DOCTRINE_ENTRYPOINT=GUIDE.md
-DOCTRINE_TRIAGE=OPERATE.md
-DOCTRINE_BUILDER=CREATE.md
-DOCTRINE_REVIEWER=VERIFY.md
+# shellcheck disable=SC2034  # consumed indirectly by sourced render_prompt
+DOCTRINE_ENTRYPOINT=GUIDE.md DOCTRINE_TRIAGE=OPERATE.md \
+  DOCTRINE_BUILDER=CREATE.md DOCTRINE_REVIEWER=VERIFY.md
 doctrine_leaks=""
 doctrine_unresolved=""
 for prompt_path in "$SHARED"/prompts/*.txt; do
