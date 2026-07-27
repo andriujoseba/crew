@@ -9,11 +9,11 @@ artifact.
 ## Why the engine is already shaped for it
 
 A box's roles live in one place: `conf/instance.conf`, written by
-`install.sh` from the fleet manifest (or from `--role/--agent` flags at
+`install.sh` from the fleet roster (or from `--role/--agent` flags at
 bake time). The engine gates every duty call on `has_role` — a
 reviewer-only box sources the builder module (definition-only) but never
 executes any of it. Migrating a box to a single role is a one-line
-manifest change plus a rerun of `install.sh` — no code changes. Grok and
+roster change plus a rerun of `install.sh` — no code changes. Grok and
 kimi are, in effect, already single-role agents running this exact
 configuration, and `cli/crew` only spawns single-role members.
 
@@ -212,8 +212,8 @@ new server: install box + crew, `crew create-all`, auth each box,
 `crew hire-all` — and steady state afterwards is just `crew up`.
 
 This split is now implemented: `conf/roles/*.conf` × `conf/agents/*.conf`,
-composed per box by the `FLEET_MANIFEST` table in fleet.conf (or by
-explicit `--role/--agent` flags at bake time), resolved into
+composed per box by its `fleet.roster` row (or by explicit
+`--role/--agent` flags at bake time), resolved into
 `conf/instance.conf` by install.sh. `cli/crew` is the CLI: `crew new
 --role builder --agent claude` sizes the box from the role profile, mints
 it from the agent's box template (`<agent>-box`, which rig converges),
@@ -232,8 +232,8 @@ one exists. The lifecycle:
 2. The operator runs the logins interactively (creds-free-by-default is a
    box property worth keeping — the CLI *waits* for auth, never holds
    credentials itself).
-3. The box's first authenticated tick self-identifies from its token,
-   resolves its profiles from the manifest, and goes on duty.
+3. The install resolves the box's profiles from its roster row; its first
+   authenticated tick then goes on duty.
    `crew status` reads each box's `~/duty/VERSION` + duty.log evidence
    lines; `crew upgrade` is `git pull && shared/install.sh` fleet-wide,
    then re-cut golds.
@@ -241,10 +241,10 @@ one exists. The lifecycle:
 **What scaling N instances of a blueprint touches:**
 
 - *Builders scale trivially.* One box per identity stays the invariant, so
-  "another claude builder" = a new GitHub identity + a manifest line. The
+  "another claude builder" = a new GitHub identity + a roster line. The
   board already serializes claims (`ready`→`claimed` + self-assign), and
   one-build-in-flight is per-builder, so N builders = N parallel builds
-  with no new machinery. Naming wants a convention the manifest owns
+  with no new machinery. Naming wants a convention the roster owns
   (e.g. `claude-builder-2`).
 - *Reviewers scale with semantics.* Adding a reviewer changes convergence:
   today panel = roster, convergence = all approve. Either new reviewers
@@ -284,7 +284,7 @@ consequence is deliberate:
   never files in the repo, never baked into golds). That is a credential-
   lifecycle project more than a CLI feature: creation, scoping (each
   identity gets the least the role needs), rotation, revocation, and the
-  board-side effects (manifest line, panel decision) done as reviewable
+  board-side effects (roster line, panel decision) done as reviewable
   changes. Nothing in the current design blocks it — the roster, the
   profiles, and the pre-auth bake are all the same machinery flexible
   crews would drive; only the login step changes owner.
