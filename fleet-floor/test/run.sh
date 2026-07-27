@@ -33,6 +33,7 @@ skip() { echo "skip $1${2:+  — $2}"; SKIP=$((SKIP + 1)); }
 t() { if [ "$2" = "$3" ]; then ok "$1"; else fail "$1" "expected [$2] got [$3]"; fi; }
 
 command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
+python3 "$HERE/concurrent-actions.py" || exit 1
 
 # A busy port surfaced as a python traceback from deep inside socketserver,
 # which reads like the collector is broken rather than like another copy of

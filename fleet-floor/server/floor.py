@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -1002,6 +1003,18 @@ def do_command(fleet, body):
     def agent_conf_for(name):
         return fleet.agent_conf(roster[name]["agent"])
 
+    def concurrently(tasks):
+        """Run per-box calls together and return results in roster order."""
+        if not tasks:
+            return []
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            futures = [pool.submit(fn, *args) for fn, args in tasks]
+            return [future.result() for future in futures]
+
+    def done(result):
+        """Make an already-known per-box result fit a concurrent task list."""
+        return result
+
     results = []
 
     if action == "message":
@@ -1040,27 +1053,32 @@ def do_command(fleet, body):
     elif action in ("start-all", "stop-all"):
         verb = "start" if action == "start-all" else "down"
         states = box_states()
+        tasks = []
         for name in roster:
             st = states.get(name)
             if st is None:
-                results.append({"box": name, "ok": False, "out": "not created"})
+                tasks.append((done, ({"box": name, "ok": False, "out": "not created"},)))
                 continue
             if (verb == "start") == (st == "stopped"):
-                results.append(one(name, ["box", verb, name]))
+                tasks.append((one, (name, ["box", verb, name])))
             else:
-                results.append({"box": name, "ok": True, "out": "already %s" % st})
+                tasks.append((done, ({"box": name, "ok": True,
+                                      "out": "already %s" % st},)))
+        results = concurrently(tasks)
     elif action == "wake-silent":
         # A silent box is one cron is not ticking for. Waking it means resuming
         # the crontab and, if it is stopped, starting it — not a model session.
         states = box_states()
+        tasks = []
         for u in fleet.get()["units"]:
             if u["state"] != "offline":
                 continue
             name = u["box"]
             if states.get(name) == "stopped":
-                results.append(one(name, ["box", "start", name]))
+                tasks.append((one, (name, ["box", "start", name])))
             elif states.get(name) is not None:
-                results.append(in_box(name, RESUME_SH))
+                tasks.append((in_box, (name, RESUME_SH)))
+        results = concurrently(tasks)
     else:
         return 400, {"ok": False, "error": "unknown action %r" % action}
 
