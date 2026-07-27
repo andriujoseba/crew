@@ -377,6 +377,104 @@ else
 fi
 
 
+# --- a drill must never need to edit the tracked roster --------------------
+# Editing fleet.roster to point a drill at a subset is not a tidiness point: the
+# #51 registry guard keys on ROSTER MEMBERSHIP, so a drill box listed in
+# fleet.roster is a fleet member as far as every safety check is concerned.
+# That is how three leftover drill boxes came to be armed against production.
+#
+# So both readers take an override, and the drill feeds ONE file to all three
+# consumers — the collector, the `crew status` it compares against, and its own
+# counts. An agreement assertion across two different rosters is worse than no
+# assertion, because it looks like one.
+echo
+echo "== roster overrides (drilling without touching fleet.roster)"
+
+crew_floor --local --port 8892 --roster "$CL_CREW_ROSTER"; CL_OUT="$(cl_out)"
+if printf '%s' "$CL_OUT" | grep -qF "$CL_CREW_ROSTER"; then
+  ok "cli: crew floor --roster is echoed in the banner"
+else
+  fail "cli: crew floor --roster is echoed in the banner" "$CL_OUT"
+fi
+crew_floor --local --port 8891 --roster /nonexistent/roster.txt; CL_OUT="$(cl_out)"
+if [ "$CL_RC" -ne 0 ] && printf '%s' "$CL_OUT" | grep -q "no roster at"; then
+  ok "cli: a missing --roster is named at startup"
+else
+  fail "cli: a missing --roster is named at startup" "rc=$CL_RC out=$CL_OUT"
+fi
+crew_floor --local --port 8890; CL_OUT="$(cl_out)"
+if printf '%s' "$CL_OUT" | grep -q '^  roster '; then
+  ok "cli: crew floor always prints the roster it watches"
+else
+  fail "cli: crew floor always prints the roster it watches" "$CL_OUT"
+fi
+
+# The drill must hand the SAME path to every reader. Asserted over the source:
+# a real run needs a host with boxes, and the property wanted is "one list",
+# which no single invocation demonstrates.
+CL_DRILL_APP="$CL_ROOT/drill/rehearsal-app.sh"
+for CL_V in CREW_FLOOR_ROSTER CREW_ROSTER; do
+  # shellcheck disable=SC2016  # matching the literal source assignment
+  if grep -qE "^export $CL_V=\"\\\$ROSTER\"" "$CL_DRILL_APP"; then
+    ok "drill: $CL_V comes from --roster"
+  else
+    fail "drill: $CL_V comes from --roster" \
+         "the collector and the CLI can now be compared across two different rosters"
+  fi
+done
+# ...and nothing may still read fleet.roster directly, which would silently
+# reintroduce exactly that split.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+CL_DIRECT="$(grep -vE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -cE '\$ROOT/fleet\.roster' || true)"
+t "drill: fleet.roster is read only as the --roster default" 1 "${CL_DIRECT:-0}"
+if [ "${CL_DIRECT:-0}" -ne 1 ]; then
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+  grep -nvE '^[[:space:]]*#' "$CL_DRILL_APP" | grep -E '\$ROOT/fleet\.roster' | sed 's/^/    /'
+fi
+
+# --- a clone must not be handed the sizing flags (box refuses them) --------
+# `box new --from` rejects --cpu/--memory/--disk outright: "a clone carries its
+# source's resources". crew passed them anyway, so every roster line with a
+# 4th-column gold snapshot died at create. Never caught because no roster line
+# has ever had one — the same never-exercised path as #47 and #48.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+CL_FROM="$(sed -n '/if \[ -n "\$from" \]; then/,/^  else/p' "$CL_ROOT/cli/crew")"
+if printf '%s' "$CL_FROM" | grep -q 'box new --name' &&
+   ! printf '%s' "$CL_FROM" | grep -q -- '--cpu'; then
+  ok "crew: a --from clone is created without the sizing flags"
+else
+  fail "crew: a --from clone is created without the sizing flags" \
+       "box new --from refuses --cpu/--memory/--disk; every gold-snapshot roster line would fail"
+fi
+# The role profile's sizing does not apply to a clone, and that must be SAID —
+# a builder minted from a reviewer-sized gold comes up undersized either way,
+# but silently is how it gets discovered under load.
+if printf '%s' "$CL_FROM" | grep -qi 'inherits'; then
+  ok "crew: a clone says its resources are inherited, not from the role profile"
+else
+  fail "crew: a clone says its resources are inherited, not from the role profile" \
+       "no note about the role profile's sizing being ignored"
+fi
+
+# The status table must fit the names it prints. `crew-drill-reviewer` is 19
+# characters and overflowed an 18-wide column, shifting every field after it.
+CL_W="$(sed -n "s/^  local fmt='%-\([0-9]*\)s .*/\1/p" "$CL_ROOT/cli/crew")"
+CL_LONGEST=0
+while read -r cl_name _cl_rest; do
+  [ -z "$cl_name" ] && continue
+  [ "${#cl_name}" -gt "$CL_LONGEST" ] && CL_LONGEST="${#cl_name}"
+done < <(cat "$CL_ROOT/fleet.roster" "$CL_HERE/fixtures/roster.txt" \
+              "$CL_HERE/fixtures/cli-roster.txt" 2>/dev/null | grep -vE '^[[:space:]]*(#|$)')
+# Drill boxes are crew-drill-<role>; the longest role is 'reviewer'.
+[ "$CL_LONGEST" -lt 19 ] && CL_LONGEST=19
+if [ -n "$CL_W" ] && [ "$CL_W" -gt "$CL_LONGEST" ]; then
+  ok "crew status: MEMBER column ($CL_W) is wider than the longest box name ($CL_LONGEST)"
+else
+  fail "crew status: MEMBER column is wider than the longest box name" \
+       "column=${CL_W:-?} longest=$CL_LONGEST — the row's remaining fields shift right"
+fi
+
+
 # ---------------------------------------------------------------------------
 # The drill must never run the browser walk in a mutating mode.
 #
