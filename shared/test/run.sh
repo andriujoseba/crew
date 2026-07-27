@@ -601,6 +601,103 @@ check_vendor_credential
 t vendor-legacy-profile-silent absent \
   "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
 
+# --- each agent profile reads its OWN credential store, locally -------------
+# Driven against the real conf files with a fabricated HOME, because the whole
+# claim of bot_cli_present is that it needs nothing but local disk.
+
+CREDH="$TMP/credhome"; mkdir -p "$CREDH"
+cred_rc() {  # cred_rc <agent> <home> -> rc of bot_cli_present
+  local rc=0
+  # Every vendor env override is cleared, not just the one under test: these
+  # are read by the sourced profile, and inheriting the RUNNER's credentials
+  # would make the result depend on whose machine ran the suite.
+  # shellcheck disable=SC2034  # consumed inside the conf sourced below
+  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" \
+    ANTHROPIC_API_KEY="" XAI_API_KEY=""
+    # shellcheck disable=SC1090
+    source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+cred_exp() {  # cred_exp <agent> <home> -> bot_cli_expiry output
+  # shellcheck disable=SC2034  # consumed inside the conf sourced below
+  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" XAI_API_KEY=""
+    # shellcheck disable=SC1090
+    source "$SHARED/conf/agents/$1.conf"
+    command -v bot_cli_expiry >/dev/null 2>&1 && bot_cli_expiry ) 2>/dev/null
+}
+# base64url with the padding stripped, the way a JWT actually arrives.
+b64url() { base64 -w0 | tr '/+' '_-' | tr -d '='; }
+
+# -- claude: refreshTokenExpiresAt, in MILLISECONDS
+CH="$CREDH/claude"; mkdir -p "$CH/.claude"
+CLAUDE_EXP_MS=$(( ($(date +%s) + 20 * 86400) * 1000 ))
+jq -n --argjson r "$CLAUDE_EXP_MS" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-present 0 "$(cred_rc claude "$CH")"
+t cred-claude-expiry "$(date -u -d "@$(( CLAUDE_EXP_MS / 1000 ))" '+%Y-%m-%dT%H:%M:%SZ')" "$(cred_exp claude "$CH")"
+# THE trap: expiresAt is ~8h out and auto-refreshed. A profile reading it
+# would report an expiry today and page the operator three times a day.
+CLAUDE_SOON="$(date -u -d '@'"$(( $(date +%s) + 8 * 3600 ))" '+%Y-%m-%dT%H:%M:%SZ')"
+t cred-claude-ignores-access-token "" "$(cred_exp claude "$CH" | grep -F "$CLAUDE_SOON" || true)"
+# An expired REFRESH token is a real logout.
+jq -n --argjson r "$(( ($(date +%s) - 86400) * 1000 ))" \
+  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
+  > "$CH/.claude/.credentials.json"
+t cred-claude-expired-refresh 1 "$(cred_rc claude "$CH")"
+t cred-claude-no-file 1 "$(cred_rc claude "$CREDH/nothing")"
+
+# -- kimi: the refresh token is a JWT; its exp claim is the relogin deadline
+KH="$CREDH/kimi"; mkdir -p "$KH/.kimi-code/credentials"
+KIMI_EXP=$(( $(date +%s) + 30 * 86400 ))
+# A payload sized so base64url PADDING is required — the case a naive decoder
+# silently fails on.
+KJWT="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code","sub":"u"}' "$KIMI_EXP" | b64url).sig"
+jq -n --arg rt "$KJWT" \
+  '{access_token:"a",refresh_token:$rt,expires_at:1,token_type:"Bearer"}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-present 0 "$(cred_rc kimi "$KH")"
+t cred-kimi-expiry "$(date -u -d "@$KIMI_EXP" '+%Y-%m-%dT%H:%M:%SZ')" "$(cred_exp kimi "$KH")"
+t cred-kimi-no-file 1 "$(cred_rc kimi "$CREDH/nothing")"
+# Garbage in the JWT slot must be "cannot tell" (2), never a confident logout.
+jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
+  > "$KH/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-unparseable-is-unknown 2 "$(cred_rc kimi "$KH")"
+
+# -- codex: file-backed vs keyring-backed, and NO expiry at all
+DH="$CREDH/codex"; mkdir -p "$DH/.codex"
+jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
+t cred-codex-present 0 "$(cred_rc codex "$DH")"
+t cred-codex-no-file-is-logout 1 "$(cred_rc codex "$CREDH/nothing")"
+# ...unless the box keeps its credential in the desktop keyring, where a
+# missing auth.json is normal and must not be reported as a logout.
+KB="$CREDH/codexkeyring"; mkdir -p "$KB/.codex"
+echo 'cli_auth_credentials_store = "keyring"' > "$KB/.codex/config.toml"
+t cred-codex-keyring-is-unknown 2 "$(cred_rc codex "$KB")"
+# codex's refresh token is opaque, so there is NO local relogin date. Emitting
+# the access token's exp would warn every few minutes on a healthy box.
+t cred-codex-reports-no-expiry "" "$(cred_exp codex "$DH")"
+
+# -- grok: its probe was already a local file test, so it is authoritative
+# -- grok: a MAP of "<issuer>::<client_id>" slots, refresh token opaque
+GH_="$CREDH/grok"; mkdir -p "$GH_/.grok"
+jq -n '{"https://auth.x.ai::abc":{key:"j.w.t",refresh_token:"opaque",expires_at:"2026-07-27T19:54:18Z"}}' \
+  > "$GH_/.grok/auth.json"
+t cred-grok-present 0 "$(cred_rc grok "$GH_")"
+t cred-grok-no-file 1 "$(cred_rc grok "$CREDH/nothing")"
+# An empty map is a non-empty FILE. The old `[ -s ]` test called this logged
+# in; it is a failed login, and the honest answer is "cannot tell".
+echo '{}' > "$GH_/.grok/auth.json"
+t cred-grok-empty-map-is-unknown 2 "$(cred_rc grok "$GH_")"
+
+# No profile may report an expiry it cannot actually know.
+for agent in claude codex grok kimi; do
+  case "$agent" in
+    claude|kimi) continue ;;   # verified above to produce a real date
+  esac
+  t "cred-$agent-claims-no-false-expiry" "" "$(cred_exp "$agent" "$CREDH/nothing")"
+done
+
 # --- the per-tick path must not have reacquired a network auth probe -------
 # `gh auth status` in the tick is the exact cost this change removed; it would
 # pass every assertion above while restoring 7k requests/day.

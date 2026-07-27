@@ -367,6 +367,59 @@ else
   skip "engine version reported" "no box on this host is hired"
 fi
 
+# ---- the ping tier, against boxes that really answer ----------------------
+# stub-box can fake a probe's OUTPUT; it cannot demonstrate that `box exec
+# <box> -- true` is a real round-trip into a running guest, which is the whole
+# claim the heartbeat rests on. Only a real host has one.
+echo
+echo "== heartbeat"
+PINGED="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if u.get('ping') and u['ping']['ok'])")"
+RUNNING="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if not (u['note'] or '').startswith(('stopped','not created')))")"
+if [ "$RUNNING" -gt 0 ]; then
+  t "every running box answers its heartbeat" "$RUNNING" "$PINGED"
+  # A real exec round-trip is milliseconds. A plausible-looking 0 would mean
+  # the field is being defaulted rather than measured.
+  SLOWEST="$(body GET /api/fleet | jqf "max([u['ping']['ms'] for u in d['units'] if u.get('ping') and u['ping']['ok']] or [0])")"
+  if [ "$SLOWEST" -gt 0 ] && [ "$SLOWEST" -lt 5000 ]; then
+    ok "heartbeat round-trips are real and fast (slowest ${SLOWEST}ms)"
+  else
+    fail "heartbeat round-trips are real and fast" "slowest=${SLOWEST}ms"
+  fi
+  # The point of the tier: it must beat the evidence poll, not merely exist.
+  # A ping older than the evidence snapshot means the thread is not running.
+  STALE="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u.get('ping') and u['ping']['age'] > d['interval'])")"
+  t "heartbeats are fresher than the evidence poll" "" "$STALE"
+else
+  skip "heartbeat" "no running box on this host"
+fi
+
+# ---- credentials are READ, never probed -----------------------------------
+# The drill is the only place a real `gh` and a real vendor CLI exist, so it is
+# the only place that can prove the probe stopped calling them. A reintroduced
+# `gh auth status` would cost ~450ms per box per poll and pass every stub test.
+echo
+echo "== credentials come from the flow"
+PROBE_MS="$( { TIMEFORMAT=%R; time box exec "$(body GET /api/fleet | jqf "d['units'][0]['box']")" -- \
+  bash -lc "$(cat "$ROOT/fleet-floor/server/probe.sh")" >/dev/null 2>&1; } 2>&1 )"
+PROBE_MS="${PROBE_MS%.*}"
+if [ -n "$PROBE_MS" ] && [ "$PROBE_MS" -le 3 ]; then
+  ok "a real probe costs ${PROBE_MS}s — no network auth call in it"
+else
+  fail "a real probe makes no network auth call" \
+       "took ${PROBE_MS}s; gh auth status alone is ~0.45s per box"
+fi
+# `ok` was the value that meant "just verified". Nothing may report it again.
+OKS="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['gh']=='ok' or u['vendor']=='ok')")"
+t "no box reports the retired 'ok' credential state" "" "$OKS"
+# Expiry is the reason this is an improvement rather than a cost saving: on a
+# real fleet with real tokens, at least one box should know when it must renew.
+EXPS="$(body GET /api/fleet | jqf "sum(1 for u in d['units'] if u.get('expiry'))")"
+if [ "$EXPS" -gt 0 ]; then
+  ok "at least one box knows when its credential expires ($EXPS)"
+else
+  skip "credential expiry recorded" "no box has ticked since this engine was installed"
+fi
+
 # Auth is not optional on a page that can power-cycle boxes.
 echo
 echo "== auth"

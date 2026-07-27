@@ -369,6 +369,63 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     });
     await leave();
   }
+  // ---- the three tiers must be VISIBLE, not merely served ----------------
+  // Every field below is in /api/fleet and asserted in cases.sh. That proves
+  // the collector computed it; it says nothing about whether an operator can
+  // see it. The gh column regressed exactly this way — probe.sh stopped
+  // emitting "ok", the page still tested for it, and every healthy box
+  // rendered "gh ✗" while every collector assertion stayed green.
+  const allSeen = Object.keys(byState).reduce((a, k) => a.concat(byState[k]), []);
+  if (LIVE && allSeen.length) {
+    ok('render: the heartbeat is on screen',
+       allSeen.every((u) => /Heartbeat/.test(u.vitals)),
+       allSeen.filter((u) => !/Heartbeat/.test(u.vitals)).map((u) => u.box).join(','));
+    // A live round-trip renders as "12ms · 4s ago". Asserting the ms shape
+    // rather than the label proves a real value reached the DOM.
+    const pinged = allSeen.filter((u) => /Heartbeat\s*\d+ms/.test(u.vitals));
+    ok('render: at least one box shows a measured round-trip',
+       pinged.length > 0,
+       allSeen.map((u) => u.box + ': ' + (u.vitals.match(/Heartbeat\s*(\S+)/) || [])[1]).join(' | '));
+    // The regression guard. "gh ?" is legitimate (an unhired box), "gh ✗" is
+    // legitimate (a real rejection) — but not for every box at once, which is
+    // what a vocabulary mismatch produces.
+    const ticked = allSeen.filter((u) => /gh ✓/.test(u.vitals));
+    ok('render: healthy boxes show gh ✓, not a blanket ✗',
+       ticked.length > 0,
+       allSeen.map((u) => u.box + ': ' + (u.vitals.match(/Box\s*(\S+ \S+)/) || [])[1]).join(' | '));
+  }
+  if (LIVE && FIXTURE) {
+    // FIXTURE-gated: a real fleet has no box wedged on purpose, and should not.
+    const stuck = allSeen.find((u) => /ff-stuck/.test(u.box));
+    ok('render: the stuck box was reachable', !!stuck,
+       'no ff-stuck among ' + allSeen.length + ' consoles');
+    if (stuck) {
+      // It is STATE=working with a live session, so without this the panel
+      // showed an ordinary elapsed timer and the box read as healthy.
+      ok('render: a stuck lock says STUCK in the session panel',
+         /STUCK/.test(stuck.current), stuck.current.slice(0, 90));
+      ok('render: the stuck panel names how long the lock has been held',
+         /lock held/.test(stuck.current), stuck.current.slice(0, 90));
+    }
+    const exp = allSeen.find((u) => /ff-expiring/.test(u.box));
+    ok('render: the expiring box was reachable', !!exp,
+       'no ff-expiring among ' + allSeen.length + ' consoles');
+    if (exp) {
+      ok('render: a credential inside the window shows a Renew countdown',
+         /Renew/.test(exp.vitals), exp.vitals.slice(0, 120));
+      ok('render: the countdown names both services',
+         /gh/.test(exp.vitals) && /vendor|kimi/.test(exp.vitals), exp.vitals.slice(0, 120));
+    }
+    // ...and a box with nothing expiring must NOT carry the row: a permanent
+    // "Renew —" is furniture, and this is the line that must be noticed the
+    // one month it matters.
+    const healthy = allSeen.find((u) => /ff-working/.test(u.box));
+    if (healthy) {
+      ok('render: a box with no expiry has no Renew row',
+         !/Renew/.test(healthy.vitals), healthy.vitals.slice(0, 120));
+    }
+  }
+
   const down = byState.OFFLINE || [];
   // The fixture guarantees offline boxes; a healthy real fleet guarantees the
   // opposite, and "everything is up" must not read as a test failure.

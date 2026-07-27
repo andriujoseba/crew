@@ -565,6 +565,13 @@ function drawFloor(t){
       var u=ROSTER[i],match=(floorFilter.state==="all"||u.state===floorFilter.state)&&(floorFilter.role==="all"||u.room===floorFilter.role);
       drawCell(t,cx,cy,CELLW,CELLH,u);
       if(!match){X.fillStyle="rgba(3,6,13,0.76)";rr(X,cx,cy,CELLW,CELLH,11);X.fill();}
+      /* A STUCK or UNREACHABLE unit must be visible from the god-view. Both
+         wear an ordinary state otherwise — stuck reads "working", and a box
+         that fails its ping keeps whatever the last evidence poll concluded —
+         so the grid showed a calm fleet in exactly the two situations an
+         operator is scanning it for. Drawn after the filter scrim, so a
+         filtered-out unit does not shout through it. */
+      if(match)drawAlertBadge(cx,cy,u);
       var hov=(floorMouse.x>=cx&&floorMouse.x<=cx+CELLW&&floorMouse.y>=cy&&floorMouse.y<=cy+CELLH);
       if(hov&&match){X.save();X.strokeStyle="rgba(120,205,255,0.85)";X.lineWidth=2;rr(X,cx-2,cy-2,CELLW+4,CELLH+4,13);X.stroke();X.restore();}
       floorHits.push({x:cx,y:cy,i:i,match:match});
@@ -572,6 +579,35 @@ function drawFloor(t){
   if(camMax>0){var tw=Math.max(40,VW*(VW/floorTotalW())),tx=(floorCam/camMax)*(VW-tw),sby=VH-162;X.fillStyle="rgba(255,255,255,0.05)";X.fillRect(0,sby,VW,3);X.fillStyle="rgba(120,200,255,0.5)";X.fillRect(tx,sby,tw,3);}
   var vg2=X.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(1,"rgba(0,0,0,0.5)");X.fillStyle=vg2;X.fillRect(0,0,VW,VH);
 }
+/* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
+   Order is severity, not alphabetical: a box that has stopped answering pings
+   is a worse fact than a stuck lock, and a stuck lock is worse than a dead
+   credential, because each one makes the next impossible to act on. */
+function alertOf(u){
+  if(!LIVE)return "";
+  var d=dataOf(UNITID(u),u.room);
+  if(d.ping&&!d.ping.ok&&d.ping.fails>=PING_FAILS_SHOWN)return "UNREACHABLE";
+  if(d.lock&&d.lock.stuck)return "STUCK";
+  if(d.authfail&&d.authfail.length)return "AUTH";
+  return "";
+}
+var PING_FAILS_SHOWN=3;
+function drawAlertBadge(cx,cy,u){
+  var a=alertOf(u);if(!a)return;
+  X.save();
+  X.font="700 9px ui-monospace,monospace";
+  var w=X.measureText(a).width+12,h=15,bx=cx+CELLW-w-9,by=cy+9;
+  X.fillStyle="rgba(255,81,71,0.92)";rr(X,bx,by,w,h,4);X.fill();
+  /* Pulse, because these two states are otherwise indistinguishable from a
+     calm cell at a glance across a wide grid. */
+  X.globalAlpha=0.35+0.35*Math.sin(t2()/260);
+  X.strokeStyle="#ff5147";X.lineWidth=2;rr(X,bx-2,by-2,w+4,h+4,6);X.stroke();
+  X.globalAlpha=1;
+  X.fillStyle="#0b0f16";X.textAlign="center";X.textBaseline="middle";
+  X.fillText(a,bx+w/2,by+h/2+0.5);
+  X.restore();X.textAlign="left";X.textBaseline="alphabetic";
+}
+function t2(){return Date.now();}
 function drawFloorHeader(t){
   X.textBaseline="alphabetic";X.textAlign="left";
   X.font="700 15px ui-monospace,monospace";X.fillStyle="#c7d4e4";X.fillText("FLEET FLOOR",26,36);
@@ -579,6 +615,13 @@ function drawFloorHeader(t){
   X.font="10px ui-monospace,monospace";X.fillStyle="#46566a";X.fillText("scroll horizontally · click a unit to zoom in",26,54);
   var w=0,idl=0,offc=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")offc++;else idl++;});
   var stat=[[offc+" SILENT","#ff5147"],[idl+" IDLE","#5fce9b"],[w+" WORKING","#f7bd4e"]];
+  /* Prepended so it reads leftmost, ahead of the ordinary counts, and only
+     when non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
+     counted as working or idle above — that is correct, they are, and the
+     point of this counter is that the state they are in is not the whole
+     story. */
+  var alerts=LIVE?ROSTER.filter(function(u){return alertOf(u)!=="";}).length:0;
+  if(alerts)stat.unshift([alerts+" ALERT","#ff5147"]);
   X.textAlign="right";X.font="700 11px ui-monospace,monospace";var sxp=VW-26;
   stat.forEach(function(s){X.fillStyle=s[1];X.fillText("● "+s[0],sxp,36);sxp-=X.measureText("● "+s[0]).width+20;});
   X.fillStyle="#46566a";X.font="10px ui-monospace,monospace";X.fillText(ROSTER.length+" UNITS",VW-26,54);
@@ -614,7 +657,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,box:"",logs:[]};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},expiry:{},authfail:[]};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -622,6 +665,11 @@ function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,
    way. The boxes still initiate nothing and run nothing extra — the host's
    existing control channel does both halves. */
 var LIVEMETA=null, POLL_MS=15000, seenSess={};
+/* When the snapshot on screen was received. The stuck timer counts from the
+   lock age the box reported PLUS the time since we heard it, so the readout
+   keeps advancing between polls instead of freezing at a stale number and
+   then jumping a minute. */
+var LASTPOLL=Date.now();
 /* Absolute, credential-free. An operator who bookmarks the page as
    http://user:pass@host:port/ leaves credentials in the document URL, and a
    relative fetch inherits them — which the browser then refuses to construct a
@@ -655,6 +703,12 @@ function liveData(u){
   d.repo=u.repo||"";d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
   d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
   d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
+  /* The ping tier and the flow-reported credential state. Defaulted rather
+     than assigned straight through: a collector older than these fields, or a
+     unit built from the error path, must render as "not known" and never as a
+     missing-property crash mid-draw. */
+  d.ping=u.ping||null;d.lock=u.lock||{held:null,stuck:false};
+  d.expiry=u.expiry||{};d.authfail=u.authfail||[];
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
   if(d.cur&&d.cur.kind)d.kind=d.cur.kind;
   return d;
@@ -673,7 +727,7 @@ function applyFleet(snap){
     return;
   }
   LIVEMETA=snap;
-  var first=!LIVE;LIVE=true;
+  var first=!LIVE;LIVE=true;LASTPOLL=Date.now();
   var roster=[],cache={};
   snap.units.forEach(function(u){
     /* working means "a session is open"; without one the cell has nothing to
@@ -817,14 +871,19 @@ function populateDash(){
      DEMO strings it replaces were the placeholders #38 was filed about. */
   var vBox=off?"unreachable":"gh ✓ · box ✓", vCron=off?"SILENT":"≤2m ago", vRc=(off||!d.sessions.length)?"—":d.sessions[0].rc;
   if(LIVE){
-    vBox=(d.gh==="ok"?"gh ✓":"gh ✗")+" · "+(d.vendor==="ok"?AGENT+" ✓":AGENT+" ✗");
+    vBox=credGlyph("gh",d.gh)+" · "+credGlyph(AGENT,d.vendor);
     vCron=d.paused?"PAUSED":(d.cron.age===null||d.cron.age===undefined)?"no ticks yet":(d.cron.ok?fmtDur(d.cron.age)+" ago":"SILENT · "+fmtDur(d.cron.age));
     if(d.note&&!d.engine)vBox=esc(d.note);
   }
   document.getElementById("w-vitals").innerHTML='<div class="wt"><span class="dot"></span>VITALS</div><div class="kv">'
-    +'<span class="k">Box</span><span class="v" style="color:'+(off?"#ff5147":"#5fce9b")+'">'+vBox+'</span>'
+    +'<span class="k">Box</span><span class="v" style="color:'+(off?"#ff5147":credColour(d))+'">'+vBox+'</span>'
+    /* Directly under Box, because it answers the same question on a much
+       shorter clock: Box is what the last evidence poll concluded up to a
+       minute ago, Heartbeat is whether the guest answered seconds ago. */
+    +'<span class="k">Heartbeat</span><span class="v" id="v-ping" style="color:'+pingColour(d)+'">'+pingText(d)+'</span>'
     +'<span class="k">Uptime</span><span class="v">'+(off&&!LIVE?"—":(d.up.h+"h "+pad2(d.up.m)+"m"))+'</span>'
     +'<span class="k">Cron</span><span class="v" style="color:'+((off||d.paused)?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
+    +renewRow(d)
     +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'
     +'<span class="k">Sessions today</span><span class="v">'+d.today+'</span>'
     +'<span class="k">Last rc</span><span class="v">'+vRc+'</span></div>';
@@ -839,6 +898,12 @@ function populateDash(){
     +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div></div>';
   var cs='<div class="wt"><span class="dot"></span>CURRENT SESSION</div><div class="cursess">';
   if(off)cs+='<div class="big" style="color:#ff5147">— SILENT —</div><div class="task">'+esc(LIVE&&d.note?d.note:"no active session · cron missed")+'</div>';
+  /* STUCK outranks the running-session view even though a session IS running.
+     That is the whole point: cron is ticking, duty.log is fresh, the box looks
+     busy — and it has been holding the same lock for longer than two tick
+     boundaries. Showing the elapsed timer alone reads as healthy progress.
+     No progress bar here either; there is no progress to draw. */
+  else if(LIVE&&d.lock&&d.lock.stuck)cs+='<div class="big" id="cur-el" style="color:#ff5147">'+fmtDur(d.lock.held)+'</div><div class="task" id="cur-stuck" style="color:#ff8a7c">STUCK · lock held '+fmtDur(d.lock.held)+(d.cur?' · '+esc(d.kind)+' '+esc(d.cur.key):'')+'</div>';
   else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+esc(d.kind)+' · '+esc(d.cur.key)+'</div><div class="pbar"><i></i></div>';
   else cs+='<div class="big" style="color:#5fce9b">STANDBY</div><div class="task">idle · awaiting next tick</div>';
   document.getElementById("w-current").innerHTML=cs+'</div>';
@@ -857,8 +922,61 @@ function populateDash(){
      offering "Resume" while its click correctly sent `pause`. */
   document.getElementById("a-pause").textContent=(LIVE&&d.paused)||(!LIVE&&!work)?"▶ Resume":"⏸ Pause";
 }
-function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf(BOX,ROOM);if(!d.cur)return;var el=document.getElementById("cur-el");if(el)el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
+function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf(BOX,ROOM);var el=document.getElementById("cur-el");if(!el)return;
+  /* A stuck box is still STATE==="working" and may still have a d.cur, so
+     without this branch the per-second tick overwrote the red held-duration
+     with the session's own elapsed time — quietly restoring the healthy-
+     looking readout the STUCK panel exists to replace. Keep counting, but
+     count the thing that is wrong. */
+  if(LIVE&&d.lock&&d.lock.stuck){el.textContent=fmtDur(d.lock.held+Math.floor((Date.now()-LASTPOLL)/1000));return;}
+  if(!d.cur)return;el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
 function mrow(k,v){return '<div class="mrow"><span class="mk">'+k+'</span><span class="mvv">'+v+'</span></div>';}
+/* --- credential + heartbeat rendering -----------------------------------
+   THREE credential states, not two. The probe stopped answering `ok` when it
+   stopped testing credentials: it now reports what the duty engine last
+   observed, and "no failure has been reported" is not the same claim as "I
+   just checked and it works". Collapsing them back into a tick/cross here
+   would put the lie straight back on screen — and rendering anything that is
+   not the string "ok" as a cross (which this did) marked every healthy box
+   as logged out the moment the vocabulary changed. */
+function credGlyph(label,v){
+  if(v==="flowing")return label+" ✓";
+  if(v==="missing")return label+" ✗";
+  return label+" ?";               /* unknown: no engine has run, so nothing is known */
+}
+function credColour(d){
+  if(d.gh==="missing"||d.vendor==="missing")return "#ff5147";
+  if(d.gh==="unknown"||d.vendor==="unknown")return "#f7bd4e";
+  return "#5fce9b";
+}
+/* The ping tier. `null` means this collector never reported one — an older
+   floor.py, or a box it skipped because it is stopped — and must read as "—",
+   never as a failure. */
+function pingText(d){
+  if(!LIVE)return "—";
+  if(!d.ping)return "—";
+  if(d.ping.ok)return d.ping.ms+"ms · "+d.ping.age+"s ago";
+  return "no answer · "+d.ping.fails+" missed";
+}
+function pingColour(d){
+  if(!LIVE||!d.ping)return "#46566a";
+  return d.ping.ok?"#5fce9b":"#ff5147";
+}
+/* Renewal is a row that only exists when there is something to say. A
+   permanent "Renew: —" trains the eye to skip the line, and this is precisely
+   the line that must be noticed the one month it matters. */
+function renewRow(d){
+  if(!LIVE||!d.expiry)return "";
+  var parts=[],worst=1e9;
+  Object.keys(d.expiry).sort().forEach(function(k){
+    var e=d.expiry[k];if(!e||typeof e.days!=="number")return;
+    if(e.days<worst)worst=e.days;
+    parts.push(k+" "+(e.days<0?"EXPIRED":e.days+"d"));
+  });
+  if(!parts.length)return "";
+  return '<span class="k">Renew</span><span class="v" id="v-renew" style="color:'
+    +(worst<0?"#ff5147":worst<=7?"#f7bd4e":"#c7d4e4")+'">'+esc(parts.join(" · "))+'</span>';
+}
 /* Access-panel button: live ones are real, demo ones keep the .woff tooltip
    that says why they do nothing. */
 function ab(id,label){return '<button class="lbtn'+(LIVE?'':' woff')+'" id="'+id+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>'+label+'</button>';}

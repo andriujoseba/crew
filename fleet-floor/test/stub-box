@@ -82,8 +82,16 @@ emit_probe() {
   # collector be written against a vocabulary probe.sh does not emit — the
   # exact circularity this stub exists to avoid, and the reason boxside.sh
   # re-checks these keys against the real script.
-  printf '::gh %s\n'     "$([ "$sc" = noauth ] && echo missing || echo flowing)"
-  printf '::vendor %s\n' "$([ "$sc" = noauth ] && echo missing || echo flowing)"
+  # Mirrors probe.sh exactly: a rejection is `missing`, a box with no engine
+  # has never had a flow to report anything so it is `unknown`, and only a
+  # hired box with no recorded failure is `flowing`. A stub that said
+  # `flowing` for an unhired box would have let the collector treat "nobody
+  # has complained yet" as a working credential.
+  _cred=flowing
+  [ "$sc" = nothired ] && _cred=unknown
+  [ "$sc" = noauth ]   && _cred=missing
+  printf '::gh %s\n'     "$_cred"
+  printf '::vendor %s\n' "$_cred"
   [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
   # An expiry inside the warning window, so the countdown is rendered by
   # something rather than being dead code no fixture reaches.

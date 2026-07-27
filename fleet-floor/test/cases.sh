@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  15 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  17 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -130,7 +130,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 15 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -204,7 +204,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 15 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -347,3 +347,57 @@ if [ -z "$CM_BAD" ] && [ "$CM_STAGED" -eq 5 ]; then
 else
   fail "each token's session ran exactly that token's prompt (1:1)" "${CM_BAD:-no tokens staged}"
 fi
+
+# --- the ping tier, the stuck lock, and flow-reported credentials ----------
+# Round: the 60s evidence poll answered three questions at one cadence, one of
+# them over the network. These assert the three now arrive separately.
+
+# The ping tier runs on its own thread and overlays the snapshot at read time,
+# so a healthy box reports a round-trip without the evidence poll re-running.
+t "ping: a healthy box reports a round-trip" True "$(uf ff-working 'u["ping"] is not None and u["ping"]["ok"]')"
+t "ping: the round-trip is measured, not asserted" True "$(uf ff-working 'isinstance(u["ping"]["ms"], int)')"
+
+# The state a ping exists to catch. `unreachable` fails its exec, so after
+# FLOOR_TEST_PING_FAILS consecutive misses the overlay must override whatever
+# the last evidence poll concluded — a session that was running cannot be
+# progressing inside a guest that no longer answers.
+CS_DEADLINE=$(( $(date +%s) + 30 ))
+while [ "$(uf ff-unreach 'u["ping"] is not None and not u["ping"]["ok"]')" != "True" ] \
+      && [ "$(date +%s)" -lt "$CS_DEADLINE" ]; do sleep 1; done
+t "ping: an unreachable box is caught by the heartbeat" True \
+  "$(uf ff-unreach 'u["ping"] is not None and not u["ping"]["ok"]')"
+t "ping: consecutive misses are counted, not just the last one" True \
+  "$(uf ff-unreach 'u["ping"]["fails"] >= 1')"
+
+# A box that is stopped or was never created must NOT be pinged: `box exec`
+# into it fails for a reason the operator already knows, and counting that as
+# a wedge paints every deliberately-down box red.
+#
+# Asserted over whatever the fleet looks like RIGHT NOW rather than against
+# ff-stopped by name: the control cases above run start-all, so by this point
+# the fixture's stopped box is running, and a by-name check here passed or
+# failed on test ordering rather than on behaviour.
+t "ping: stopped and absent boxes are skipped, not counted as wedged" "" \
+  "$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if (u['note'].startswith('stopped') or u['note'].startswith('not created')) and u['ping'] is not None)")"
+
+# The wedge the SILENT rule cannot see: cron ticking, duty.log fresh, lock held
+# for 47 minutes. It stays `working` — it genuinely is — and says so loudly.
+t "stuck: a long-held lock is flagged"        True    "$(uf ff-stuck 'u["lock"]["stuck"]')"
+t "stuck: the box is still reported working"  working "$(uf ff-stuck 'u["state"]')"
+t "stuck: the note names the duration"        True    "$(uf ff-stuck '"STUCK" in u["note"]')"
+t "stuck: a healthy box is not stuck"         False   "$(uf ff-working 'u["lock"]["stuck"]')"
+
+# Credentials are read, never tested. `flowing` is a third value: it means the
+# engine has been talking to the service and has not been rejected — NOT that
+# anything just verified a token.
+t "creds: a healthy box reports flowing"  flowing "$(uf ff-working 'u["gh"]')"
+t "creds: no box ever reports ok"         True    "$(uf ff-working 'u["gh"] != "ok"')"
+t "creds: a rejection is reported missing" missing "$(uf ff-noauth 'u["gh"]')"
+t "creds: the rejection carries its reason" True  "$(uf ff-noauth 'any("gh:" in a for a in u["authfail"])')"
+t "creds: an unhired box knows nothing"   unknown "$(uf ff-nothired 'u["gh"]')"
+
+# Expiry counts DOWN, per service, and only warns inside the window.
+t "expiry: gh is carried with a day count"     True "$(uf ff-expiring '"gh" in u["expiry"] and isinstance(u["expiry"]["gh"]["days"], int)')"
+t "expiry: the vendor is carried separately"   True "$(uf ff-expiring '"vendor" in u["expiry"]')"
+t "expiry: the note tells the operator to renew" True "$(uf ff-expiring '"expires in" in u["note"] or "EXPIRED" in u["note"]')"
+t "expiry: a box with no expiry says nothing"  True "$(uf ff-working 'u["expiry"] == {}')"
