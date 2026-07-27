@@ -39,13 +39,13 @@
 REVIEW_MY_PR_REPOS=""
 
 duty_review() {
-  local candidates="" page SR
+  local candidates="" page SR sweep_complete=1
   # The registry is the scope. Object endpoints only — one authoritative
   # pulls page per carried repo, never the lagging search index.
   while IFS= read -r SR; do
     [ -n "$SR" ] || continue
     page="$(gh api "repos/$SR/pulls?state=open&per_page=100" --paginate 2>/dev/null | jq -cs 'add // []')" \
-      || { warn "review: pulls fetch failed for $SR; skipping repo this tick"; continue; }
+      || { warn "review: pulls fetch failed for $SR; skipping repo this tick"; sweep_complete=0; continue; }
     candidates="$candidates
 $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
       '.[] | select(.draft | not) | select([.requested_reviewers[].login] | index($me)) | "\(.created_at) \(.updated_at) \($sr) \(.number)"')"
@@ -75,15 +75,16 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
   # sweep precedes the backstop), then oldest-first for the acting order.
   candidates="$(printf '%s\n' "$candidates" | awk 'NF==4 && !seen[$3"#"$4]++' | sort)"
   if [ -z "$candidates" ]; then
-    # Clear change-detection state so a later recurrence is reported afresh.
-    printf '' | report_suppressed "$DUTY_DIR/.suppressed-review" "review"
+    # Only a complete empty sweep proves the suppressed set cleared. A failed
+    # repo page makes the set unknown, so preserve its prior report state.
+    printf '' | report_suppressed_if_complete "$sweep_complete" \
+      "$DUTY_DIR/.suppressed-review" "review"
     log "review: no outstanding review requests anywhere"
     return 0
   fi
 
-  local -A repo_prs=() repo_items=()
-  local repo_order=() _created updated N owner name fields head mine_oid mine_at req_at head_now body
-  local queue item fresh suppressed=""
+  local _created updated N owner name fields head mine_oid mine_at req_at head_now body
+  local queue item queue_items=""
   while read -r _created updated SR N; do
     [ -z "${N:-}" ] && continue
     queue=0
@@ -107,6 +108,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
       2>/dev/null || echo err)"
     if [ "$fields" = "err" ]; then
       warn "review: $SR#$N state fetch failed; skipping this tick"
+      sweep_complete=0
       continue
     fi
     read -r head mine_oid mine_at req_at <<<"$fields"
@@ -138,6 +140,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
           rm -f "$body"
         elif [ "$head_now" = "err" ]; then
           warn "review: $SR#$N head re-verify failed; deferring"
+          sweep_complete=0
         else
           log "review: $SR#$N head moved during dedup — queued for a real review"
           queue=1
@@ -149,22 +152,33 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
 
     [ "$queue" -eq 1 ] || continue
     item="$SR#$N $updated"
-    fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-review")"
-    if [ -z "$fresh" ]; then
-      suppressed="$suppressed
-$item"
-      continue
-    fi
-    if [ -z "${repo_prs[$SR]:-}" ]; then repo_order+=("$SR"); fi
-    repo_prs[$SR]="${repo_prs[$SR]:-}$N "
-    repo_items[$SR]="${repo_items[$SR]:-}
+    queue_items="$queue_items
 $item"
   done <<<"$candidates"
 
-  # An outstanding request that a previous successful session left unactioned
-  # is still real work. Report set changes without paying for another session.
+  # Partition the whole queue once. Besides avoiding one ledger read per PR,
+  # using the exact inverse helpers guarantees every queued item is either
+  # prompted or reported as suppressed, never both and never neither.
+  local fresh_items suppressed
+  fresh_items="$(printf '%s\n' "$queue_items" | ledger_filter "$DUTY_DIR/.seen-review")"
+  suppressed="$(printf '%s\n' "$queue_items" | ledger_suppressed "$DUTY_DIR/.seen-review")"
   printf '%s\n' "$suppressed" \
-    | report_suppressed "$DUTY_DIR/.suppressed-review" "review"
+    | report_suppressed_if_complete "$sweep_complete" \
+        "$DUTY_DIR/.suppressed-review" "review"
+
+  # Assemble prompts only from the fresh partition. Its input follows the
+  # oldest-first candidate order, so repo and PR ordering remain unchanged.
+  local -A repo_prs=() repo_items=()
+  local repo_order=() key
+  while read -r key updated; do
+    [ -n "${updated:-}" ] || continue
+    SR="${key%#*}"
+    N="${key##*#}"
+    if [ -z "${repo_prs[$SR]:-}" ]; then repo_order+=("$SR"); fi
+    repo_prs[$SR]="${repo_prs[$SR]:-}$N "
+    repo_items[$SR]="${repo_items[$SR]:-}
+$key $updated"
+  done <<<"$fresh_items"
 
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
