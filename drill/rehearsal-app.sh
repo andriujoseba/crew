@@ -72,6 +72,7 @@ while [ $# -gt 0 ]; do
     --port)          PORT="$2"; shift 2 ;;
     --roster)        ROSTER="$2"; ROSTER_EXPLICIT=1; shift 2 ;;
     --drill-roles)   DRILL_ROLES="$2"; shift 2 ;;
+    --agent)         DRILL_AGENT="$2"; shift 2 ;;
     --shots)         SHOTS="$2"; shift 2 ;;
     --no-browser)    BROWSER=0; shift ;;
     --allow-control) ALLOW_CONTROL=1; shift ;;
@@ -88,6 +89,17 @@ done
 if [ -n "$DRILL_ROLES" ]; then
   [ "$ROSTER_EXPLICIT" -eq 0 ] \
     || { echo "drill/rehearsal-app.sh: --roster and --drill-roles are alternatives, not both"; exit 1; }
+  # The agent column is LOAD-BEARING, not a label: floor.py hands it to
+  # probe.sh to choose shared/conf/agents/<agent>.conf, and `crew status` hands
+  # it to vendor_probe. Generating it wrong means probing every drill box with
+  # the wrong vendor profile — and because both readers share the one wrong
+  # file, their agreement assertions still pass. Consistent, wrong data.
+  #
+  # So it is validated here rather than trusted: a roster naming an agent with
+  # no profile would fail as "vendor missing" on every box, which is the same
+  # symptom as a logged-out fleet and nothing like the same cause.
+  [ -f "$ROOT/shared/conf/agents/$DRILL_AGENT.conf" ] \
+    || { echo "drill/rehearsal-app.sh: unknown agent '$DRILL_AGENT' — see shared/conf/agents/"; exit 1; }
   ROSTER="$(mktemp)"; GENERATED_ROSTER="$ROSTER"
   for _role in $DRILL_ROLES; do
     case "$_role" in

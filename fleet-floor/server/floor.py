@@ -311,7 +311,7 @@ def build_unit(unit, state, agent_conf, now):
         "up": {"h": 0, "m": 0}, "repo": "", "repos": [], "logs": [],
         "longest": 0, "avg": 0, "success": 0, "today": 0,
         "paused": False, "cron": {"ok": False, "last": None, "age": None},
-        "note": "",
+        "note": "", "agent_actual": "",
     })
 
     if state is None:
@@ -341,6 +341,23 @@ def build_unit(unit, state, agent_conf, now):
 
     if not u["engine"]:
         u["note"] = "not hired — crew hire %s" % unit["box"]
+
+    # The roster DECLARES an agent; the box knows what it actually is. Those are
+    # two different facts and were never compared, so a roster that named the
+    # wrong agent made this page probe with the wrong vendor profile and report
+    # the box auth-unhealthy — while every cross-reader assertion stayed green,
+    # because `crew status` reads the same wrong column. Consistent, wrong data
+    # is worse than an obvious error, and it is what let a generated drill
+    # roster pin every box to "claude" without anything noticing.
+    #
+    # Ranked below "not hired" (no engine means no instance.conf to disagree
+    # with) and above cron/paused/SILENT: a wrong profile invalidates the vendor
+    # reading itself, so it is the thing to say first.
+    u["agent_actual"] = meta.get("agent", "")
+    if u["agent_actual"] and u["agent_actual"] != unit.get("agent"):
+        u["note"] = u["note"] or (
+            "roster says %s, box is installed as %s — the vendor probe is running "
+            "the wrong profile" % (unit.get("agent"), u["agent_actual"]))
 
     # Cron liveness: tick.sh guarantees a line per boundary, so the newest
     # timestamped line IS the heartbeat.

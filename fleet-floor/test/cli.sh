@@ -618,11 +618,78 @@ fi
 # through to fleet.roster meant comparing the real fleet's members, which do not
 # exist on a drill host: three "NOT CREATED vs offline" agreements about nothing.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
-if grep -q -- '--drill-roles "\$ROLES"' "$CL_ROOT/drill/rehearsal-all.sh"; then
-  ok "rehearsal-all: the app drill sees the boxes this run built"
+if grep -q -- '--drill-roles "\${DRILLED# }" --agent "\$AGENT"' "$CL_ROOT/drill/rehearsal-all.sh"; then
+  ok "rehearsal-all: the app drill sees the boxes this run built, with their agent"
 else
-  fail "rehearsal-all: the app drill sees the boxes this run built" \
-       "it falls back to fleet.roster, whose boxes are not on a drill host"
+  fail "rehearsal-all: the app drill sees the boxes this run built, with their agent" \
+       "roles and agent must travel together — a correct role list with a defaulted agent probes the wrong vendor"
+fi
+
+# --- the agent column is generated from something TRUE (all three reviewers) --
+# `rehearsal-all.sh --agent codex` drilled codex boxes and then generated an app
+# roster claiming `claude`, because --agent reached rehearsal.sh but never the
+# app phase. The column is load-bearing: floor.py feeds it to probe.sh to pick
+# agents/<agent>.conf, and crew status feeds it to vendor_probe. So every
+# non-default rehearsal probed the wrong vendor and reported the fleet
+# auth-unhealthy — while the agreement assertions stayed GREEN, because both
+# readers share the one wrong file. Consistent, wrong data.
+#
+# That is this PR's own defect class one layer up: "generated, it cannot drift"
+# only holds if ALL of it is generated from something true. The role came from
+# the drill; the agent silently did not.
+if grep -q -- '--agent)         DRILL_AGENT=' "$CL_APP"; then
+  ok "drill: rehearsal-app takes an explicit --agent"
+else
+  fail "drill: rehearsal-app takes an explicit --agent" \
+       "the agent is settable only through an undiscoverable env var"
+fi
+CL_RC=0; "$CL_APP" --drill-roles triage --agent nosuchagent >"$CL_TMP/app.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q "unknown agent" "$CL_TMP/app.out"; then
+  ok "drill: an agent with no profile is refused, not written into the roster"
+else
+  fail "drill: an agent with no profile is refused, not written into the roster" \
+       "rc=$CL_RC $(cat "$CL_TMP/app.out")"
+fi
+# Only roles whose drill reached a box; and the narrowing must be announced.
+# shellcheck disable=SC2016  # matching the literal source text, not expanding it
+if grep -q 'DRILLED="\$DRILLED \$role"' "$CL_ROOT/drill/rehearsal-all.sh" &&
+   grep -q 'roles whose drill never reached a box are excluded' "$CL_ROOT/drill/rehearsal-all.sh"; then
+  ok "rehearsal-all: excludes roles that never reached a box, and says so"
+else
+  fail "rehearsal-all: excludes roles that never reached a box, and says so" \
+       "a failed role's absent box becomes a NOT-CREATED-vs-offline non-comparison, silently"
+fi
+
+# --- a declaration must be checkable against ground truth -------------------
+# The reason the bug above was SILENT: nothing ever compared the roster's agent
+# claim with what the box was actually installed as. Both readers took the
+# claim on faith and handed it to the vendor probe, so a misdeclared agent is
+# indistinguishable from a logged-out box — forever, on the real fleet too.
+# Run probe.sh for real against a scratch DUTY_DIR, rather than grepping for
+# the line: what matters is that it PARSES instance.conf correctly, and a
+# source-grep would pass just as happily on a filter that emits nothing.
+# Deliberately not added to fixtures/fleet.txt — three assertions in cases.sh
+# hardcode a 15-box fleet and browser.js's scroll walk has been destabilised by
+# fleet size before (browser.js:246). A 16th row is not worth that risk.
+CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
+printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
+CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"
+t "probe: reports the agent the box was actually installed as" codex "$CL_PA"
+# An unhired box has no instance.conf: the key must still be emitted, empty, so
+# the floor can tell "no claim to check" from "claim disagrees".
+CL_PD2="$CL_TMP/probe-duty-bare"; mkdir -p "$CL_PD2"
+CL_PA2="$(DUTY_DIR="$CL_PD2" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | grep -c '^::agent' || true)"
+t "probe: an unhired box still emits the key, empty" 1 "${CL_PA2:-0}"
+if grep -q 'agent_actual' "$CL_FLOOR/server/floor.py"; then
+  ok "floor: compares the roster's agent claim against the box"
+else
+  fail "floor: compares the roster's agent claim against the box" "the claim is still taken on faith"
+fi
+if grep -q 'box_agent' "$CL_ROOT/cli/crew"; then
+  ok "crew status: a failing vendor probe distinguishes logged-out from mislabelled"
+else
+  fail "crew status: a failing vendor probe distinguishes logged-out from mislabelled" \
+       "MISSING still has two causes and names neither"
 fi
 
 

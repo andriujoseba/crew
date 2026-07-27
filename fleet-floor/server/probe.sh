@@ -28,6 +28,21 @@ conf=/tmp/.crew-floor-probe.conf
 if [ ! -t 0 ]; then cat >"$conf" 2>/dev/null; fi
 
 emit engine "$(head -1 "$DUTY_DIR/VERSION" 2>/dev/null | tr -d '\r')"
+# The agent the box was ACTUALLY installed as, from the instance.conf
+# install.sh wrote — not what a roster claims about it.
+#
+# Nothing used to read this, and that is what made a whole class of bug silent:
+# both readers (the floor here, and `crew status`) take the roster's agent
+# column on faith and hand it straight to the vendor probe, so a roster that
+# misdeclares an agent produces a permanently red vendor column with nothing
+# saying the ROSTER is what is wrong. Reported so a declaration can be checked
+# against ground truth instead of assumed.
+#
+# Parsed, not sourced: this file is read on every poll of every box, and
+# sourcing a config to learn one string is a much bigger blast radius than
+# reading it.
+emit agent "$(sed -n 's/^BOT_AGENT=//p' "$DUTY_DIR/conf/instance.conf" 2>/dev/null \
+  | head -1 | tr -d '"'\''\r')"
 emit uptime "$(cut -d. -f1 /proc/uptime 2>/dev/null)"
 emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
