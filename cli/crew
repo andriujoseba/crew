@@ -10,6 +10,7 @@
 #   crew down                                 stop every roster box
 #   crew status [<box>]                       engine version + duty evidence
 #   crew floor [--port <n>] [--bind <a>]      serve the fleet-floor web console on IP:PORT
+#              [--roster <path>]              …watching a roster other than fleet.roster
 #   crew upgrade <box> | --all                pull crew + re-install in place
 #   crew gold <box>                           snapshot a box as a gold image
 #   crew profiles                             list role and agent profiles
@@ -36,6 +37,11 @@
 # Fleet from scratch on a new server: install box + crew, `crew create-all`,
 # log each box in by hand (see `login` above), `crew hire-all`.
 # Steady state afterwards is just `crew up`.
+#
+# CREW_ROSTER points every verb at a roster other than fleet.roster, and
+# `crew floor --roster` (CREW_FLOOR_ROSTER) does the same for the console. Use
+# them to drill against a subset — editing the tracked fleet.roster to test is
+# how a leftover drill box came to count as a fleet member (#51).
 set -euo pipefail
 
 CREW_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -131,9 +137,22 @@ create_box() {
   # </dev/null on both: create_box runs inside the create-all and up roster
   # loops, which read from a FIFO any stdin-inheriting `box` call would drain
   # (#48). Neither form takes input — every argument is on the command line.
+  # A CLONE carries its source's resources, and `box new --from` REFUSES the
+  # sizing flags outright: "--cpu/--memory/--disk shape a fresh mint; a clone
+  # carries its source's resources ('box incus' can change them afterwards)".
+  # Passing them here meant every roster line with a 4th-column gold snapshot
+  # died at `crew new`/`crew create-all`. Never noticed because no roster line
+  # has ever carried one — the same never-exercised-path shape as #47 and #48.
+  #
+  # The role profile's sizing therefore does NOT apply to a cloned box, which
+  # is a real semantic and not a detail to swallow: a builder minted from a
+  # reviewer-sized gold comes up with the reviewer's 2 CPU / 4GiB. Said out
+  # loud here so an operator can resize rather than discover it under load.
   if [ -n "$from" ]; then
     echo "creating $name  (role=$role agent=$agent from=$from)"
-    box new --name "$name" --from "$from" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null
+    echo "  note: a clone inherits $from's cpu/memory/disk — the $role profile's"
+    echo "        $BOX_CPU cpu / $BOX_MEMORY / $BOX_DISK does NOT apply (resize with: box incus)"
+    box new --name "$name" --from "$from" </dev/null
   else
     echo "creating $name  (role=$role agent=$agent cpu=$BOX_CPU mem=$BOX_MEMORY disk=$BOX_DISK template=$agent-box)"
     box new --name "$name" --template "$agent-box" --cpu "$BOX_CPU" --memory "$BOX_MEMORY" --disk "$BOX_DISK" </dev/null
@@ -456,7 +475,9 @@ cmd_status() {
     return 0
   fi
 
-  local fmt='%-18s %-9s %-15s %-8s %-8s %s\n'
+  # 20, not 18: `crew-drill-reviewer` is 19 characters, so an 18-wide column
+  # overflowed and shifted every field after it one place right on that row.
+  local fmt='%-20s %-9s %-15s %-8s %-8s %s\n'
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HIRED GH VENDOR NOTE
   local name agent role _from state hired ghs vs note last
@@ -571,6 +592,7 @@ cmd_floor() {
   local port="${CREW_FLOOR_PORT:-8420}" bind="${CREW_FLOOR_BIND:-0.0.0.0}"
   local user="${CREW_FLOOR_USER:-operator}" pass="${CREW_FLOOR_PASS:-}"
   local interval="${CREW_FLOOR_INTERVAL:-60}" gen=0
+  local roster="${CREW_FLOOR_ROSTER:-$ROSTER}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --port)     port="${2:?--port needs a number}"; shift 2 ;;
@@ -578,6 +600,7 @@ cmd_floor() {
       --user)     user="${2:?--user needs a name}"; shift 2 ;;
       --pass)     pass="${2:?--pass needs a value}"; shift 2 ;;
       --interval) interval="${2:?--interval needs seconds}"; shift 2 ;;
+      --roster)   roster="${2:?--roster needs a path}"; shift 2 ;;
       --local)    bind=127.0.0.1; shift ;;
       -h|--help)
         sed -n '/^# crew floor —/,/^cmd_floor/s/^# \{0,1\}//p' "$0"
@@ -590,6 +613,10 @@ cmd_floor() {
     || die "python3 is required for 'crew floor' (stdlib only, nothing to install)"
   [ -f "$CREW_ROOT/fleet-floor/index.html" ] \
     || die "fleet-floor/index.html is missing — run fleet-floor/build.sh"
+  # Named at startup rather than surfaced as an empty fleet on first poll: a
+  # typo'd --roster otherwise renders a console with nothing on it, which reads
+  # exactly like a dead host.
+  [ -f "$roster" ] || die "no roster at '$roster' (--roster / CREW_FLOOR_ROSTER)"
 
   if [ -z "$pass" ]; then
     pass="$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | cut -c1-20)"
@@ -615,12 +642,16 @@ cmd_floor() {
     echo "  password  (from --pass/CREW_FLOOR_PASS)"
   fi
   echo "  polling   every ${interval}s over 'box exec' — nothing runs inside the boxes"
+  # Always printed, not only when overridden: which boxes the console is
+  # watching is the first thing to check when it shows something surprising.
+  echo "  roster    $roster"
   [ "$bind" = "127.0.0.1" ] \
     || echo "  NOTE      plain HTTP: the password crosses the network in the clear."
   echo
 
   CREW_FLOOR_PORT="$port" CREW_FLOOR_BIND="$bind" CREW_FLOOR_USER="$user" \
   CREW_FLOOR_PASS="$pass" CREW_FLOOR_INTERVAL="$interval" \
+  CREW_FLOOR_ROSTER="$roster" \
     exec python3 "$CREW_ROOT/fleet-floor/server/floor.py"
 }
 

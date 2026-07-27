@@ -3,7 +3,18 @@
 # REAL boxes on this host.
 #
 #   drill/rehearsal-app.sh [--boxes "a b c"] [--port <n>] [--no-browser]
-#                          [--allow-control]
+#                          [--allow-control] [--roster <path>]
+#
+# --roster points the drill at a roster other than fleet.roster, and feeds the
+# SAME file to all three readers: the collector it starts (CREW_FLOOR_ROSTER),
+# the `crew status` it compares against (CREW_ROSTER), and its own counts. The
+# agreement assertion is meaningless unless all three read one list.
+#
+# It exists because the alternative is editing the tracked fleet.roster to run
+# a drill, and that is not a hygiene point: `crew hire`'s registry guard keys
+# on roster membership, so a drill box listed in fleet.roster is a fleet member
+# as far as every safety check is concerned — which is how a leftover drill box
+# came to be armed against the production registry (#51).
 #
 # The other half of this coverage lives in fleet-floor/test/run.sh, which
 # drives the same collector against a stub `box` CLI and can therefore reach
@@ -19,7 +30,8 @@
 # --allow-control merely moved the hazard onto the opt-in path, where this
 # file's own guarantee — opt-in controls touch ONLY named boxes — was still
 # broken. Controls are exercised solely by the narrowed block below: every name
-# validated against fleet.roster, reversible verbs only, repaired on teardown.
+# validated against the roster in use, reversible verbs only, repaired on
+# teardown.
 # A drill that silently power-cycles a working fleet member is worse than no
 # drill (heavy-duty/crew#26: a drill that wrote to real repos because nothing
 # narrowed it).
@@ -34,16 +46,28 @@ BROWSER=1
 ALLOW_CONTROL=0
 USER=drill
 PASSWD="drill-$$-$RANDOM"
+ROSTER="$ROOT/fleet.roster"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --boxes)         BOXES="$2"; shift 2 ;;
     --port)          PORT="$2"; shift 2 ;;
+    --roster)        ROSTER="$2"; shift 2 ;;
     --no-browser)    BROWSER=0; shift ;;
     --allow-control) ALLOW_CONTROL=1; shift ;;
-    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--no-browser] [--allow-control]"; exit 1 ;;
+    *) echo "usage: drill/rehearsal-app.sh [--boxes \"a b c\"] [--port <n>] [--roster <path>] [--no-browser] [--allow-control]"; exit 1 ;;
   esac
 done
+
+# Named before anything starts. A missing roster otherwise surfaces as a
+# collector with zero units and a drill that skips every comparison — which is
+# the failure mode #50 exists to stop being invisible.
+[ -f "$ROSTER" ] || { echo "drill/rehearsal-app.sh: no roster at '$ROSTER'"; exit 1; }
+# One reader for the roster, used by the counts, the agreement loop and the
+# control allowlist alike.
+roster_rows() { grep -vE '^[[:space:]]*(#|$)' "$ROSTER"; }
+export CREW_FLOOR_ROSTER="$ROSTER"
+export CREW_ROSTER="$ROSTER"
 
 PASS=0 SKIP=0
 declare -a FAILS=()
@@ -100,6 +124,7 @@ body()   { api "$@" | sed '$d'; }
 jqf()    { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
 
 echo "== app rehearsal (real boxes, host $(hostname))"
+echo "   roster: $ROSTER ($(roster_rows | grep -c . || true) boxes)"
 echo
 
 # ---- a `box` that keeps a receipt ----------------------------------------
@@ -151,7 +176,7 @@ for _ in $(seq 1 120); do
 done
 
 UNITS="$(body GET /api/fleet | jqf "len(d['units'])")"
-ROSTER_N="$(grep -cvE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")"
+ROSTER_N="$(roster_rows | grep -c . || true)"
 t "fleet: every roster box reported" "$ROSTER_N" "$UNITS"
 
 # ---- the floor must agree with the CLI -----------------------------------
@@ -198,7 +223,7 @@ CLI_ROWS=0
 while read -r name _agent _role _from; do
   [ -z "$name" ] && continue
   grep -qE "^$name " "$TMP/status.txt" && CLI_ROWS=$((CLI_ROWS + 1))
-done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
+done < <(roster_rows)
 
 AGREE_N=0
 if [ "$ROSTER_N" -gt 0 ] && [ "$CLI_ROWS" -eq 0 ]; then
@@ -260,7 +285,7 @@ print((u[0].get('note') or '') if u else '')")"
         esac
       fi ;;
   esac
-done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/fleet.roster")
+done < <(roster_rows)
 
 # The block as a whole must have DONE something. Every per-box branch above is
 # individually correct, which is exactly why all three of the first real-host
@@ -305,7 +330,7 @@ elif [ -z "$BOXES" ]; then
   skip "control verbs" "--allow-control needs --boxes to name what may be touched"
 else
   for b in $BOXES; do
-    grep -qE "^$b " "$ROOT/fleet.roster" || { fail "control $b" "not in fleet.roster"; continue; }
+    roster_rows | grep -qE "^$b " || { fail "control $b" "not in $ROSTER"; continue; }
 
     # pause/resume is the reversible one, so it is what the drill uses. The
     # assertion is the EFFECT: the box's own crontab, read back over box exec.
