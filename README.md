@@ -26,9 +26,13 @@ never overwrites an existing path. Its login list is a static reading of every
 roster row; live authentication remains a manual, per-box step reported by
 `crew up`.
 
-Operator agent-profile overrides are scaffolded for forward compatibility.
-Their runtime resolution is tracked separately in
-[#75](https://github.com/heavy-duty/crew/issues/75).
+Operator agent profiles resolve today: a profile in the config dir's
+`agents/` is found by every reader (`crew profiles`, `crew new`, the console),
+wins over a same-named shipped profile, and is transported to the box before
+`install.sh` validates it — so a box can be hired with a vendor CLI crew has
+never shipped, without forking the tree. The precedence is the point: an
+operator `claude.conf` beats the shipped one, or a fleet could never adjust a
+vendor it did not invent.
 
 See [examples/README.md](examples/README.md) for configuration discovery and
 file ownership, and [shared/README.md](shared/README.md) for engine internals.

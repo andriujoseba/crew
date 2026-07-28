@@ -15,9 +15,16 @@
 #
 # Work found OUTSIDE this list is LOGGED, never acted on — a review request,
 # an authored PR, or an attention demand in an unlisted repo produces a WARN
-# naming it, and nothing else. The repair is to add the repo, which is an
-# operator decision, not something a sweep makes by writing where nobody
-# listed.
+# naming it, and nothing else. The repair is to add the repo — an operator
+# decision, not something a sweep makes by writing where nobody listed — and
+# it is made in the OPERATOR FLEET DEFINITION's repos.txt, followed by
+# `crew upgrade`: the registry is transported from the host and converges
+# only while the box copy matches its recorded provenance. Editing this file
+# ON THE BOX is therefore not a repair but a deliberate, permanent divergence
+# veto: that box stops following the host, is named loudly on every later
+# upgrade, and a widening the operator ships never reaches it. Divergence is
+# containment state — narrow a compromised box on purpose; widen from the
+# host or not at all.
 #
 # An out-of-scope ATTENTION demand additionally pings the operator over the
 # same Telegram channel the boot gate uses. The other two are things someone
