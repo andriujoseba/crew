@@ -846,7 +846,8 @@ cmd_status() {
 
 cmd_upgrade() {
   need_box
-  local targets="" skipped=""
+  local targets="" skipped="" want
+  want="$(head -1 "$CREW_ROOT/VERSION" | tr -d '\r\n')"
   case "${1:-}" in
     --all)
       # The ROSTER, not every box on the host. `crew up` already leaves
@@ -865,6 +866,9 @@ cmd_upgrade() {
   registry_arg="$(registry_install_arg)"
   for b in $targets; do
     echo "== upgrading $b"
+    if [[ "$want" == *-dev* ]]; then
+      echo "$b: crew@$want is a development tree — upgrade re-bakes unconditionally"
+    fi
     # Preserve the box's armed state instead of asserting one. An upgrade
     # that arms a box nobody armed is a behaviour change wearing the
     # clothes of a version bump.

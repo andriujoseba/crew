@@ -444,6 +444,13 @@ else
   fail "crew hire: a matching -dev version re-bakes loudly" \
        "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
 fi
+crew_release upgrade cli-hired
+if grep -q 'development tree — upgrade re-bakes unconditionally' "$CL_TMP/crew-out"; then
+  ok "crew upgrade: a -dev tree explains its unconditional re-bake"
+else
+  fail "crew upgrade: a -dev tree explains its unconditional re-bake" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
 
 printf '0.2.0\n' > "$CL_RELEASE_ROOT/VERSION"
 printf 'crew@0.2.0 (goldsha)\n' > "$CL_TMP/crew-state/cli-hired.version"
