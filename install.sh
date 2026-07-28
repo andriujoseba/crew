@@ -55,6 +55,8 @@ BINDIR="${CREW_BIN:-$HOME/.local/bin}"
 log() { printf 'crew-install: %s\n' "$*"; }
 warn() { printf 'crew-install: WARNING: %s\n' "$*" >&2; }
 die() { printf 'crew-install: ERROR: %s\n' "$*" >&2; exit 1; }
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/shared/lib/version-skew.sh"
 
 # Ask a yes/no question. Under a piped invocation THIS SCRIPT may be stdin, so
 # prompts read /dev/tty directly. No terminal (CI, a pipe with no tty) → there
@@ -241,17 +243,10 @@ else
   old_ver="$(basename "$cur")"
   flip_current "$new_ver"
   log "default version switched: $old_ver -> $new_ver ('crew use $old_ver' switches back)"
-  # Report the skew the flip just created — never refuse it. Bounded, and
-  # best-effort: this counts boxes (a fast, timeout-guarded incus list), not
-  # each box's engine version, which would need a per-box exec that a wedged
-  # box can hang (heavy-duty/crew#79). The engine axis is converged by its own
-  # command, named here.
-  if names="$(existing_boxes)"; then
-    n="$(printf '%s\n' "$names" | grep -c .)"
-    warn "the CLI default is now $new_ver, but $n hired box(es) still run the engine they were last hired with:"
-    while IFS= read -r nm; do warn "  · $nm"; done <<<"$names"
-    log "converge them to this CLI's engine when you are ready:  crew upgrade --all"
-  fi
+  # Report the skew the flip just created — never refuse it. The shared
+  # reporter is also what `crew use` calls, so installation and a deliberate
+  # switch cannot disagree about which hired engines were left behind.
+  report_engine_skew "$new_ver"
 fi
 
 # --- put crew on PATH ------------------------------------------------------
