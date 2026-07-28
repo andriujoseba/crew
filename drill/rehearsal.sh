@@ -191,8 +191,8 @@ echo "== phase 1: pre-auth engine install ($AGENT $ROLE)"
 # production bot merely to observe one scheduled boundary (#26).
 bx "~/crew/shared/install.sh --agent '$AGENT' --role '$ROLE'" || fail "install"
 rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
-sha="$(bx "git -C ~/crew rev-parse --short HEAD" | tr -d '\r\n')"
-check "VERSION stamps crew@$sha"   bx "head -1 ~/duty/VERSION | grep -q 'crew@$sha'"
+version="$(bx "head -1 ~/crew/VERSION" | tr -d '\r\n')"
+check "VERSION stamps crew@$version" bx "head -1 ~/duty/VERSION | grep -q '^crew@$version\\( \\|$\\)'"
 check "instance.conf $AGENT/$ROLE" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
 check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 # Reinstall with the same explicit drill identity and assert the role survived
