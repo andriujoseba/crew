@@ -52,6 +52,87 @@ _warn_unscoped_authored() {
   fi
 }
 
+# _mirror_rounds REPO NUM — mirror each whole-round reply into the PR body's
+# `## Round log` (#91, ceremony#196 option B). The builder owes the reply and
+# nothing else; the engine copies it into the body where the merging human
+# looks. round-log.jq picks the author's comments after each round's newest
+# verdict, keys each by `<!-- round:<head-sha> -->`, and returns the whole new
+# body only when something is un-recorded — so an already-mirrored round makes
+# a retry a no-op. Body writes go through REST: `gh pr edit --body-file` dies
+# on crew's projects-classic GraphQL and writes nothing. This is best-effort
+# and the handoff NEVER blocks on it (the same rule as the label write).
+_mirror_rounds() {
+  local repo="$1" num="$2" owner name payload newbody
+  owner="${repo%%/*}"; name="${repo##*/}"
+  payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+    repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      body
+      reviews(first:100){nodes{author{login} state commit{oid} submittedAt}}
+      comments(first:100){nodes{author{login} body createdAt}}
+    } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
+    || { warn "$repo#$num: round-log fetch failed; body left as-is (handoff continues)"; return 0; }
+  newbody="$(printf '%s' "$payload" \
+    | jq -r --arg me "$ME" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
+    || { warn "$repo#$num: round-log render failed; body left as-is"; return 0; }
+  [ -n "$newbody" ] || return 0   # every round already recorded — write nothing
+  printf '%s' "$newbody" | jq -Rs '{body:.}' \
+    | gh api -X PATCH "repos/$repo/pulls/$num" --input - >/dev/null 2>&1 \
+    || warn "$repo#$num: round-log body write failed (handoff continues)"
+}
+
+# _handoff_comment REPO NUM — echo the engine-rendered handoff comment: the
+# terminal facts and nothing composed. First line is MARK_HANDOFF + the head
+# SHA so post-once.sh's exact-body dedup is stable across a retried tick.
+# Echoes empty on a fetch failure (the caller then skips only the comment).
+_handoff_comment() {
+  local repo="$1" num="$2" owner name
+  owner="${repo%%/*}"; name="${repo##*/}"
+  gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+    repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      headRefOid
+      latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+    } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null \
+  | jq -r --arg mark "$MARK_HANDOFF" '
+      .data.repository.pullRequest as $pr
+      | ( $pr.latestOpinionatedReviews.nodes
+          | map(select(.state == "APPROVED" and .commit.oid == $pr.headRefOid)
+                | .author.login) | unique ) as $approvers
+      | $mark + " " + $pr.headRefOid + "\n\n"
+        + "Every panel verdict approves the current head `" + $pr.headRefOid + "`"
+        + (if ($approvers | length) > 0
+           then " — " + ($approvers | map("@" + .) | join(", ")) else "" end)
+        + ".\n\nThe round-by-round record is in the PR body **Round log**, above."
+    ' 2>/dev/null
+}
+
+# _handoff_finalize REPO NUM — the whole handoff, engine-side, no session and
+# no clone (#91). Every step is idempotent and NONE gates the next: the label
+# is what notify.sh polls, and making it contingent on a comment or a request
+# that can fail is the invisible-escalation class the notifier exists to
+# prevent. Order is chosen for crash-safety, not priority — state:needs-human
+# is written LAST because it is the convergence refire guard (converged.jq's
+# $not_handed): a box that dies before it refires next tick, and every write
+# above is a no-op on the retry (post-once dedup, an already-requested
+# reviewer, an already-present round marker). Requesting the human does not
+# suppress the refire — converged.jq counts only PANEL requests, and the human
+# is off-panel.
+_handoff_finalize() {
+  local repo="$1" num="$2" comment
+  _mirror_rounds "$repo" "$num"
+  comment="$(_handoff_comment "$repo" "$num")"
+  if [ -n "$comment" ]; then
+    "$BIN_DIR/post-once.sh" "$repo" "$num" "$comment" \
+      || warn "$repo#$num: handoff comment did not post (best-effort; label still set)"
+  else
+    warn "$repo#$num: could not render the handoff comment this tick (best-effort)"
+  fi
+  gh api "repos/$repo/pulls/$num/requested_reviewers" \
+    -f "reviewers[]=$FLEET_HUMAN" >/dev/null 2>&1 \
+    || warn "$repo#$num: review request for @$FLEET_HUMAN failed (already requested?)"
+  gh issue edit "$num" -R "$repo" --add-label "$LABEL_NEEDS_HUMAN" >/dev/null 2>&1 \
+    || warn "$repo#$num: could not set $LABEL_NEEDS_HUMAN"
+}
+
 duty_builder() {
   local duty_repos R
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
@@ -375,12 +456,14 @@ _builder_repo() {
         *)     warn "$R#$N: handoff-state fetch failed; skipping" ;;
       esac
     done
+    # Option B (#91, ceremony#196): handoff is fully mechanical — no session,
+    # no clone. The engine mirrors any un-recorded rounds into the body's Round
+    # log, posts the factual handoff comment, requests the human, and sets
+    # state:needs-human. No prose is composed here, so no model is spent; the
+    # authored record already lives in the Round log, written per round.
     for N in $handoff_prs; do
-      log "$R#$N: round converged — launching handoff session"
-      ensure_main_clone "$R" "$dir" || continue
-      run_session handoff "$R#$N" "$dir" "$TIMEOUT_HANDOFF" \
-        "$(render_prompt handoff.txt ME="$ME" REPO="$R" NUM="$N" \
-          HUMAN="$FLEET_HUMAN" LABEL_NEEDS_HUMAN="$LABEL_NEEDS_HUMAN")"
+      log "$R#$N: round converged — handing off (no session, no clone)"
+      _handoff_finalize "$R" "$N"
     done
     [ -z "$handoff_prs" ] && log "$R: no handoff duty"
   fi
