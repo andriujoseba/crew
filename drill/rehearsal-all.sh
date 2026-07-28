@@ -31,6 +31,12 @@ AGENT="claude"
 # drill/rehearsal-app.sh for why the control verbs are opt-in.
 APP=1
 APP_ARGS=()
+# Operator-config convergence is a real-host rehearsal too. One installed box
+# is enough to exercise the registry contract; running the destructive/restore
+# cycle once per role adds risk without adding a distinct code path.
+CONFIG_DRILL=1
+CONFIG_BOX=""
+CONFIG_ROLE=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
 
@@ -41,12 +47,14 @@ while [ $# -gt 0 ]; do
     --tree|--remote|--ref) PASSTHRU+=("$1" "$2"); shift 2 ;;
     --quick) PASSTHRU+=(--quick); shift ;;
     --no-app) APP=0; shift ;;
+    --no-config-drill) CONFIG_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--no-app] [--app-boxes \"a b\"] [--app-allow-control] [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
+       echo "         [--no-app] [--no-config-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
 
@@ -72,7 +80,13 @@ for role in $ROLES; do
   # "NOT CREATED vs offline" non-comparisons this wiring exists to remove — and
   # they would now count as real comparisons under #50's floor.
   case "$rc" in
-    0|2) DRILLED="$DRILLED $role" ;;
+    0|2)
+      DRILLED="$DRILLED $role"
+      if [ -z "$CONFIG_BOX" ]; then
+        CONFIG_BOX="crew-drill-$role"
+        CONFIG_ROLE="$role"
+      fi
+      ;;
   esac
   # 2 is "nothing failed, but phase 2 never ran". It is NOT a pass: the role
   # loop is unproven, and collapsing it into ok is how a rehearsal that
@@ -83,6 +97,25 @@ for role in $ROLES; do
     *) SUMMARY+=("FAIL       $role"); overall=1 ;;
   esac
 done
+
+if [ "$CONFIG_DRILL" -eq 1 ]; then
+  echo
+  echo "############################################################"
+  echo "## operator config — registry convergence on a real box"
+  echo "############################################################"
+  if [ -z "$CONFIG_BOX" ]; then
+    echo "## (config phase: no role reached a box this run — nothing safe to mutate)"
+    SUMMARY+=("FAIL       config  (no installed drill box)")
+    overall=1
+  else
+    "$HERE/rehearsal-config.sh" --box "$CONFIG_BOX" --agent "$AGENT" --role "$CONFIG_ROLE"
+    rc=$?
+    case "$rc" in
+      0) SUMMARY+=("ok         config  (operator mode + registry contract)") ;;
+      *) SUMMARY+=("FAIL       config"); overall=1 ;;
+    esac
+  fi
+fi
 
 if [ "$APP" -eq 1 ]; then
   echo
