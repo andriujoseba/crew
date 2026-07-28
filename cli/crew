@@ -156,6 +156,17 @@ need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — 
 # refused too, matching what the `${2:?}` sites already did.
 need_value() { { [ "$#" -ge 2 ] && [ -n "$2" ]; } || usage_error "$1 needs a value"; }
 
+# ...and the mirror of that: an argument BEYOND the synopsis was silently
+# ignored. `crew help hire unexpected` printed hire's help and exited 0
+# (codex, round 2 of #106), and `crew profiles junk` / `crew down junk` did
+# the same. A verb whose parser is a while-loop already refuses these; the
+# ones that read "${1:-}" positionally never looked. The table declares each
+# synopsis, so the count comes from there rather than from a second opinion.
+max_args() {  # $1 = verb, $2 = how many it accepts, then "$@" as given
+  local verb="$1" max="$2"; shift 2
+  [ "$#" -le "$max" ] || usage_error "too many arguments (usage: $(synopsis_of "$verb"))"
+}
+
 
 # The tree's own version, read in ONE place — `crew --version` says it out
 # loud, and hire/upgrade stamp it onto a box (#94), so a box can name the
@@ -447,7 +458,7 @@ show_help() {   # "" → general help
   esac
 }
 
-cmd_help() { show_help "$(normalize_verb "${1:-}")"; }
+cmd_help() { max_args help 1 "$@"; show_help "$(normalize_verb "${1:-}")"; }
 
 # EVERY `box exec` in this file takes stdin from /dev/null.
 #
@@ -1019,6 +1030,7 @@ EOF
 }
 
 cmd_create_all() {
+  max_args create-all 0 "$@"
   need_box
   local name agent role from made=0
   while read -r name agent role from; do
@@ -1171,6 +1183,7 @@ cmd_up() {
 }
 
 cmd_down() {
+  max_args down 0 "$@"
   need_box
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
   local name _rest
@@ -1190,6 +1203,7 @@ cmd_down() {
 # loudly in its own duty.log every tick; this is the host-side view of the
 # same fact). With a box name: the detailed view.
 cmd_status() {
+  max_args status 1 "$@"
   need_box
   if [ -n "${1:-}" ]; then
     local b="$1"
@@ -1360,6 +1374,7 @@ cmd_upgrade() {
 }
 
 cmd_gold() {
+  max_args gold 2 "$@"
   need_box
   local name="${1:-}" force="${2:-}"
   [ -n "$name" ] || usage_error "usage: crew gold <box> [--force]"
@@ -1480,6 +1495,7 @@ cmd_init() {
 }
 
 cmd_profiles() {
+  max_args profiles 0 "$@"
   local f name
   echo "roles:"
   for f in "$ROLES_DIR"/*.conf; do

@@ -1760,6 +1760,22 @@ t cli-up-dry-run-still-works     0 "$(crewrc up --dry-run)"
 # "upgrade FAILED on --bogus" and exiting 0 — a report, not a verdict (kimi).
 t cli-upgrade-unknown-flag-is-2  2 "$(crewrc upgrade --bogus)"
 
+# The mirror of the missing-value case: an argument BEYOND the synopsis was
+# silently ignored. `crew help hire unexpected` printed hire's help and exited
+# 0 (codex, round 2). The verbs with while-loop parsers already refused these;
+# the ones reading "${1:-}" positionally never looked.
+overrun=""
+for spec in "help hire junk" "status a b" "profiles junk" "down junk" \
+            "create-all junk" "gold a b c"; do
+  # shellcheck disable=SC2086  # splitting the spec into argv is the point
+  rc="$(crewrc $spec)"
+  [ "$rc" = 2 ] || overrun="$overrun [$spec->$rc]"
+done
+t cli-excess-arguments-are-2 "" "$overrun"
+# ...and the accepted forms still work, so the guard cannot over-reach.
+t cli-help-one-arg-still-ok  0 "$(crewrc help hire)"
+t cli-help-no-arg-still-ok   0 "$(crewrc help)"
+
 # A typo points somewhere rather than only failing.
 case "$(crewcli hier 2>&1)" in *"did you mean 'hire'"*) r1=suggested ;; *) r1=SILENT ;; esac
 t cli-typo-suggests suggested "$r1"
