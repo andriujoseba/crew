@@ -7,7 +7,7 @@
       - any-glob-to-any-file: ["cli/crew"]
 "scope:duty":
   - changed-files:
-      - any-glob-to-any-file: ["shared/bin/**", "shared/lib/**"]
+      - any-glob-to-any-file: ["shared/bin/**", "shared/lib/**", "shared/test/**"]
 "scope:prompts":
   - changed-files:
       - any-glob-to-any-file: ["shared/prompts/**"]
@@ -33,6 +33,7 @@
   - changed-files:
       - any-glob-to-any-file:
           - "README.md"
+          - "CONTRIBUTING.md"
           - "shared/README.md"
           - "shared/docs/**"
           - "fleet-floor/README.md"
