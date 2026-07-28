@@ -144,6 +144,19 @@ die() { echo "crew: $*" >&2; exit 1; }         # 1 = it went wrong
 usage_error() { echo "crew: $*" >&2; echo "try 'crew help'." >&2; exit 2; }  # 2 = you asked wrong
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
 
+# `--flag` with no value is a malformed invocation and must exit 2 like every
+# other one. Reading "$2" directly under `set -u` makes BASH kill the process
+# with its own "unbound variable" and exit 1 — so `crew new --agent` reported
+# "the fleet is broken" for a typo, which is the exact confusion the split
+# above exists to end. `${2:?...}` has the same defect: it is bash's error and
+# bash's exit code, not ours (codex, review of #106).
+#
+# Called as `need_value "$@"` from inside the option's case branch, where "$1"
+# is the flag and "$2" is its value if one was given. An EMPTY value is
+# refused too, matching what the `${2:?}` sites already did.
+need_value() { { [ "$#" -ge 2 ] && [ -n "$2" ]; } || usage_error "$1 needs a value"; }
+
+
 # The tree's own version, read in ONE place — `crew --version` says it out
 # loud, and hire/upgrade stamp it onto a box (#94), so a box can name the
 # release that put its engine there. crew_version is deliberately STRICT: a
@@ -965,10 +978,10 @@ cmd_new() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --role)  role="$2";  shift 2 ;;
-      --agent) agent="$2"; shift 2 ;;
-      --name)  name="$2";  shift 2 ;;
-      --from)  from="$2";  shift 2 ;;
+      --role)  need_value "$@"; role="$2";  shift 2 ;;
+      --agent) need_value "$@"; agent="$2"; shift 2 ;;
+      --name)  need_value "$@"; name="$2";  shift 2 ;;
+      --from)  need_value "$@"; from="$2";  shift 2 ;;
       *) usage_error "unknown argument '$1' (usage: crew new <roster-name> | crew new --role <r> --agent <a> [--name <n>] [--from <box>/<snap>])" ;;
     esac
   done
@@ -1028,9 +1041,9 @@ cmd_hire() {
   local roster_agent="" roster_role=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --role)  role="$2";  explicit_profile=1; shift 2 ;;
-      --agent) agent="$2"; explicit_profile=1; shift 2 ;;
-      --ref)   ref="$2";   shift 2 ;;
+      --role)  need_value "$@"; role="$2";  explicit_profile=1; shift 2 ;;
+      --agent) need_value "$@"; agent="$2"; explicit_profile=1; shift 2 ;;
+      --ref)   need_value "$@"; ref="$2";   shift 2 ;;
       --force) force=1;    shift ;;
       # Deliberately NOT --force: that means "re-bake an already-hired box",
       # and overloading it would let a routine re-bake wave the registry check
@@ -1057,8 +1070,18 @@ cmd_hire() {
 
 cmd_hire_all() {
   need_box
+  # Beyond codex's list, same class and one step worse: an unknown flag was
+  # SILENTLY IGNORED here, so `crew hire-all --dry-run` hired the whole fleet
+  # while reading like a rehearsal. The table now declares this verb's
+  # synopsis, so anything else is malformed and says so.
   local ref="HEAD"
-  [ "${1:-}" = "--ref" ] && ref="$2"
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      --ref) need_value "$@"; ref="$2"; shift 2 ;;
+      *) usage_error "unknown argument '$1' (usage: $(synopsis_of hire-all))" ;;
+    esac
+    [ "$#" -eq 0 ] || usage_error "usage: $(synopsis_of hire-all)"
+  fi
   local name agent role _from hired=0 failed=0
   foreign_actor_check
   while read -r name agent role _from; do
@@ -1084,8 +1107,17 @@ cmd_hire_all() {
 
 cmd_up() {
   need_box
+  # Same silently-ignored-flag defect as hire-all above: `crew up --dry-run`
+  # is the ONLY accepted form, and anything else used to converge the fleet
+  # without a word.
   local dry=0
-  [ "${1:-}" = "--dry-run" ] && dry=1
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      --dry-run) dry=1; shift ;;
+      *) usage_error "unknown argument '$1' (usage: $(synopsis_of up))" ;;
+    esac
+    [ "$#" -eq 0 ] || usage_error "usage: $(synopsis_of up)"
+  fi
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
 
   local name agent role from state failed=0
@@ -1276,7 +1308,7 @@ cmd_upgrade() {
       targets="$(comm -12 <(roster_names | sort) <(box_names | sort))"
       skipped="$(comm -23 <(box_names | sort) <(roster_names | sort))"
       ;;
-    "")    usage_error "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]" ;;
+    "")    usage_error "usage: $(synopsis_of upgrade)" ;;
     *)     targets="$target" ;;
   esac
   local b armed flags line agent role identity_args registry_arg
@@ -1363,12 +1395,12 @@ cmd_floor() {
   local roster="${CREW_FLOOR_ROSTER:-$ROSTER}"
   while [ $# -gt 0 ]; do
     case "$1" in
-      --port)     port="${2:?--port needs a number}"; shift 2 ;;
-      --bind)     bind="${2:?--bind needs an address}"; shift 2 ;;
-      --user)     user="${2:?--user needs a name}"; shift 2 ;;
-      --pass)     pass="${2:?--pass needs a value}"; shift 2 ;;
-      --interval) interval="${2:?--interval needs seconds}"; shift 2 ;;
-      --roster)   roster="${2:?--roster needs a path}"; shift 2 ;;
+      --port)     need_value "$@"; port="$2";     shift 2 ;;
+      --bind)     need_value "$@"; bind="$2";     shift 2 ;;
+      --user)     need_value "$@"; user="$2";     shift 2 ;;
+      --pass)     need_value "$@"; pass="$2";     shift 2 ;;
+      --interval) need_value "$@"; interval="$2"; shift 2 ;;
+      --roster)   need_value "$@"; roster="$2";   shift 2 ;;
       --local)    bind=127.0.0.1; shift ;;
       -h|--help) show_help floor; return 0 ;;
       *) usage_error "crew floor: unknown option '$1'" ;;

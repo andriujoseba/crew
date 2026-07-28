@@ -1730,6 +1730,36 @@ t cli-absent-box-is-1        1 "$(crewrc status nosuchbox)"
 t cli-help-is-0              0 "$(crewrc help)"
 t cli-version-is-0           0 "$(crewrc --version)"
 
+# A value-taking flag with NO value is a malformed invocation, so it must exit
+# 2 like every other one — not die through bash's own `set -u` unbound-variable
+# handler at exit 1, which is what `$2` and `${2:?...}` both did (codex, review
+# of #106). Every value-taking option on every verb, because the defect was
+# per-site and so is the fix.
+badval=""
+for spec in "new --role" "new --agent" "new --name" "new --from" \
+            "hire b --role" "hire b --agent" "hire b --ref" "hire-all --ref" \
+            "floor --port" "floor --bind" "floor --user" "floor --pass" \
+            "floor --interval" "floor --roster"; do
+  # shellcheck disable=SC2086  # splitting the spec into argv is the point
+  rc="$(crewrc $spec)"
+  [ "$rc" = 2 ] || badval="$badval [$spec->$rc]"
+done
+t cli-missing-option-value-is-2 "" "$badval"
+
+# ...and an EMPTY value is refused the same way, which is what the `${2:?}`
+# sites already did and what the plain `$2` sites silently accepted.
+t cli-empty-option-value-is-2 2 "$(crewrc new --agent "")"
+
+# An unknown flag on the two one-liner parsers was SILENTLY IGNORED — worse
+# than the wrong exit code, because `crew hire-all --dry-run` hired the whole
+# fleet while reading like a rehearsal.
+t cli-hire-all-unknown-flag-is-2 2 "$(crewrc hire-all --dry-run)"
+t cli-up-unknown-flag-is-2       2 "$(crewrc up --bogus)"
+t cli-up-dry-run-still-works     0 "$(crewrc up --dry-run)"
+# ...and `crew upgrade --bogus` took the flag as a BOX NAME, printing
+# "upgrade FAILED on --bogus" and exiting 0 — a report, not a verdict (kimi).
+t cli-upgrade-unknown-flag-is-2  2 "$(crewrc upgrade --bogus)"
+
 # A typo points somewhere rather than only failing.
 case "$(crewcli hier 2>&1)" in *"did you mean 'hire'"*) r1=suggested ;; *) r1=SILENT ;; esac
 t cli-typo-suggests suggested "$r1"
