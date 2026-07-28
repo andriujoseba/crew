@@ -37,6 +37,12 @@ APP_ARGS=()
 CONFIG_DRILL=1
 CONFIG_BOX=""
 CONFIG_ROLE=""
+# Section A's installer driver runs once, against the first role box this
+# session actually reached. It acquires the same tree/ref as the role drills.
+INSTALL_DRILL=1
+INSTALL_TREE=""
+INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
+INSTALL_REF="${CREW_DRILL_REF:-main}"
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
 
@@ -44,16 +50,22 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --roles) ROLES="$2"; shift 2 ;;
     --agent) AGENT="$2"; PASSTHRU+=(--agent "$2"); shift 2 ;;
-    --tree|--remote|--ref) PASSTHRU+=("$1" "$2"); shift 2 ;;
+    --tree)
+      INSTALL_TREE="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
+    --remote)
+      INSTALL_REMOTE="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
+    --ref)
+      INSTALL_REF="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
     --quick) PASSTHRU+=(--quick); shift ;;
     --no-app) APP=0; shift ;;
     --no-config-drill) CONFIG_DRILL=0; shift ;;
+    --no-install-drill) INSTALL_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--no-app] [--no-config-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--no-app] [--no-config-drill] [--no-install-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -97,6 +109,31 @@ for role in $ROLES; do
     *) SUMMARY+=("FAIL       $role"); overall=1 ;;
   esac
 done
+
+if [ "$INSTALL_DRILL" -eq 1 ]; then
+  echo
+  echo "############################################################"
+  echo "## Section A — versioned install and distribution"
+  echo "############################################################"
+  if [ -z "$CONFIG_BOX" ]; then
+    echo "## (installer phase: no role reached a box this run — nothing safe to inspect)"
+    SUMMARY+=("FAIL       installer  (no installed drill box)")
+    overall=1
+  else
+    INSTALL_ARGS=(--box "$CONFIG_BOX")
+    if [ -n "$INSTALL_TREE" ]; then
+      INSTALL_ARGS+=(--tree "$INSTALL_TREE")
+    else
+      INSTALL_ARGS+=(--remote "$INSTALL_REMOTE" --ref "$INSTALL_REF")
+    fi
+    "$HERE/install-drill.sh" "${INSTALL_ARGS[@]}"
+    rc=$?
+    case "$rc" in
+      0) SUMMARY+=("ok         installer  (Section A record emitted)") ;;
+      *) SUMMARY+=("FAIL       installer"); overall=1 ;;
+    esac
+  fi
+fi
 
 if [ "$CONFIG_DRILL" -eq 1 ]; then
   echo
