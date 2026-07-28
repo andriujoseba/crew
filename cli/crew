@@ -32,6 +32,8 @@ set -euo pipefail
 # readlink -f follows the whole chain; on a plain checkout it is a no-op
 # (the installer that creates that layout is install.sh, heavy-duty/crew#95).
 CREW_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$CREW_ROOT/shared/lib/version-skew.sh"
 ROLES_DIR="$CREW_ROOT/shared/conf/roles"
 AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
 
@@ -203,6 +205,9 @@ CMDS=(
   "up^[--dry-run]^Converge the fleet: create missing, start stopped, hire, report^cmd_up"
   "down^^Stop every roster box^cmd_down"
   "status^[<box>]^Engine version and duty evidence, per box^cmd_status"
+  "versions^^List installed host versions and mark the current and running trees^cmd_versions"
+  "use^<version>^Switch the default host version; report box engines left behind^cmd_use"
+  "uninstall^[<version>] [--all] [--force]^Remove one host version or the whole console, with fleet guards^cmd_uninstall"
   "upgrade^<box> | --all [--ref <version-or-git-ref>]^Ship the engine from this host and re-install it in place^cmd_upgrade"
   "gold^<box> [--force]^Snapshot a box as a gold image — cut PRE-login, credential-free^cmd_gold"
   "floor^[--port <n>] [--bind <a>] [--local] [--user <u>] [--pass <p>] [--roster <path>] [--interval <s>]^Serve the fleet-floor console on IP:PORT^cmd_floor"
@@ -462,6 +467,179 @@ show_help() {   # "" → general help
 }
 
 cmd_help() { max_args help 1 "$@"; show_help "$(normalize_verb "${1:-}")"; }
+
+# --- versioned host install -------------------------------------------------
+install_root() {
+  local versions_dir; versions_dir="$(dirname "$CREW_ROOT")"
+  [ "$(basename "$versions_dir")" = versions ] || return 1
+  dirname "$versions_dir"
+}
+
+crew_bin_links() {
+  [ -L "${BASH_SOURCE[0]}" ] && printf '%s\n' "${BASH_SOURCE[0]}"
+  [ -n "${CREW_BIN:-}" ] && printf '%s\n' "$CREW_BIN/crew"
+  printf '%s\n' "$HOME/.local/bin/crew"
+}
+
+link_target() {
+  readlink -f "$1" 2>/dev/null ||
+    readlink -m "$(dirname "$1")/$(readlink "$1" 2>/dev/null)" 2>/dev/null ||
+    true
+}
+
+converge_crew_bin_links() {
+  local install="$1" link target
+  while IFS= read -r link; do
+    [ -L "$link" ] || continue
+    target="$(link_target "$link")"
+    case "$target" in
+      "$install"/*) ln -sfn "$install/current/cli/crew" "$link" ;;
+    esac
+  done < <(crew_bin_links | awk '!seen[$0]++')
+}
+
+cmd_versions() {
+  max_args versions 0 "$@"
+  local install current dir version_name marks
+  install="$(install_root)" ||
+    die "this crew runs from a working tree ($CREW_ROOT), not a versioned install — nothing to list."
+  current="$(readlink -f "$install/current" 2>/dev/null || true)"
+  echo "VERSIONS  ($install)"
+  for dir in "$install"/versions/*/; do
+    [ -d "$dir" ] || continue
+    version_name="$(basename "$dir")"; marks=""
+    [ "$(readlink -f "$dir")" = "$current" ] && marks=" (current)"
+    [ "$(readlink -f "$dir")" = "$CREW_ROOT" ] && marks="$marks (running)"
+    printf '  %s%s\n' "$version_name" "$marks"
+  done
+  echo
+  echo "switch the default:  crew use <version>"
+  echo "install another:     re-run install.sh (versions land side by side)"
+}
+
+cmd_use() {
+  max_args use 1 "$@"
+  [ "$#" -eq 1 ] || usage_error "usage: $(synopsis_of use)"
+  local version_name="$1" install effective answer
+  install="$(install_root)" ||
+    die "this crew runs from a working tree ($CREW_ROOT), not a versioned install — nothing to switch."
+  valid_version "$version_name" ||
+    usage_error "not a sane version name: '$version_name' (see 'crew versions')"
+  [ -d "$install/versions/$version_name" ] ||
+    die "no such version: $version_name (see 'crew versions')"
+
+  ln -sfn "versions/$version_name" "$install/current.new.$$"
+  mv -Tf "$install/current.new.$$" "$install/current"
+  converge_crew_bin_links "$install"
+
+  effective="$(basename "$(readlink -f "$install/current" 2>/dev/null || true)")"
+  [ "$effective" = "$version_name" ] ||
+    die "the switch did not take — current resolves to '${effective:-nothing}', not $version_name"
+  answer="$("$install/current/cli/crew" --version 2>&1 || true)"
+  case "$answer" in
+    "crew $version_name ("*) : ;;
+    *) die "current/cli/crew answers '$answer', not version $version_name — the symlink chain is broken" ;;
+  esac
+
+  echo "crew: switched to $version_name (current -> versions/$version_name)"
+  report_engine_skew "$version_name"
+}
+
+uninstall_confirm() {
+  local question="$1" forced="$2" reply
+  [ "$forced" -eq 1 ] && return 0
+  [ -n "${CREW_YES:-}" ] && return 0
+  [ -t 0 ] ||
+    die "refusing to $question without --force (no terminal to confirm on; CREW_YES=1 also means yes)"
+  printf 'crew: %s? [y/N] ' "$question"
+  read -r reply || die "aborted."
+  case "$reply" in y|Y|yes|YES|Yes) return 0 ;; *) die "aborted." ;; esac
+}
+
+live_floor_pids() {
+  local floor="$1/fleet-floor/server/floor.py"
+  ps -eo pid=,args= 2>/dev/null |
+    awk -v needle="$floor" 'index($0, needle) {print $1}' || true
+}
+
+cmd_uninstall() {
+  local version_name="" all=0 force=0 arg install current link target leftover=""
+  local hired="" floor_pids="" box_name engine
+  local targets=()
+  for arg in "$@"; do
+    case "$arg" in
+      --all) all=1 ;;
+      --force) force=1 ;;
+      -*) usage_error "unknown option '$arg' (usage: $(synopsis_of uninstall))" ;;
+      *) [ -z "$version_name" ] ||
+           usage_error "usage: $(synopsis_of uninstall)"
+         version_name="$arg" ;;
+    esac
+  done
+  install="$(install_root)" ||
+    die "this crew runs from a working tree ($CREW_ROOT), not a versioned install — nothing to uninstall."
+  [ -w "$install" ] || die "cannot write install root $install"
+
+  if [ -n "$version_name" ] && [ "$all" -eq 0 ]; then
+    valid_version "$version_name" ||
+      usage_error "not a sane version name: '$version_name' (see 'crew versions')"
+    [ -d "$install/versions/$version_name" ] ||
+      die "no such version: $version_name (see 'crew versions')"
+    current="$(basename "$(readlink -f "$install/current" 2>/dev/null || true)")"
+    { [ -n "$current" ] && [ -d "$install/versions/$current" ]; } ||
+      die "current is dangling — 'crew use <version>' to repair it before removing anything"
+    [ "$version_name" != "$current" ] ||
+      die "$version_name is the CURRENT version — 'crew use <other>' first"
+    floor_pids="$(live_floor_pids "$install/versions/$version_name")"
+    [ -z "$floor_pids" ] ||
+      die "version $version_name has a live crew floor (PID(s): $(tr '\n' ' ' <<<"$floor_pids")) — stop that console before uninstalling its tree"
+    uninstall_confirm "remove crew version $version_name from $install" "$force"
+    rm -rf "$install/versions/$version_name" || true
+    if [ -e "$install/versions/$version_name" ] || [ -L "$install/versions/$version_name" ]; then
+      echo "crew: uninstall INCOMPLETE — still present: $install/versions/$version_name" >&2
+      return 1
+    fi
+    echo "crew: removed version $version_name (the default stays $current)"
+    return 0
+  fi
+  [ -z "$version_name" ] || usage_error "a version and --all together is ambiguous"
+  [ "$all" -eq 1 ] || usage_error "usage: $(synopsis_of uninstall)"
+
+  hired="$(hired_engine_versions)"
+  if [ -n "$hired" ] && [ "$force" -eq 0 ] && [ -z "${CREW_YES:-}" ]; then
+    {
+      echo "crew: refusing to remove the console while hired boxes are running:"
+      while IFS=$'\t' read -r box_name engine; do
+        echo "crew:   · $box_name ($engine)"
+      done <<<"$hired"
+      echo "crew: cron is armed inside each box; the fleet keeps running autonomously,"
+      echo "crew: unattended, while nothing remains to see, converge, or stop it."
+      echo "crew: stop the fleet first with 'crew down', or use --force/CREW_YES=1"
+      echo "crew: only if leaving it running unattended is deliberate."
+      echo "crew: this removes the console only — box engines are untouched, and"
+      echo "crew: 'crew status' is the visibility you are about to lose."
+    } >&2
+    return 1
+  fi
+  uninstall_confirm "remove the ENTIRE crew console at $install (every host version)" "$force"
+
+  targets+=("$install")
+  while IFS= read -r link; do
+    [ -L "$link" ] || continue
+    target="$(link_target "$link")"
+    case "$target" in "$install"/*) targets+=("$link") ;; esac
+  done < <(crew_bin_links | awk '!seen[$0]++')
+  mapfile -t targets < <(printf '%s\n' "${targets[@]}" | awk '!seen[$0]++')
+  for target in "${targets[@]}"; do rm -rf "$target" || true; done
+  for target in "${targets[@]}"; do
+    if [ -e "$target" ] || [ -L "$target" ]; then leftover="$leftover $target"; fi
+  done
+  if [ -n "$leftover" ]; then
+    echo "crew: uninstall INCOMPLETE — still present:$leftover" >&2
+    return 1
+  fi
+  echo "crew: uninstalled the host console; box engines were untouched."
+}
 
 # EVERY `box exec` in this file takes stdin from /dev/null.
 #
@@ -1228,7 +1406,7 @@ cmd_status() {
   max_args status 1 "$@"
   need_box
   if [ -n "${1:-}" ]; then
-    local b="$1"
+    local b="$1" engine
     # A box that does not exist is a FAILURE, not an empty report (#97). The
     # old form printed "(unreachable)" and returned 0, so `crew status x ||
     # alert` could never fire and a typo'd box name read exactly like a box
@@ -1240,29 +1418,31 @@ cmd_status() {
     # state that `crew status` with no argument reports without complaint.
     box_exists "$b" || die "no box named '$b' — 'crew status' lists the roster"
     echo "== $b"
-    bxn "$b" '
-      cat ~/duty/VERSION 2>/dev/null || echo "not hired (no engine)"
-      tail -n 5 ~/duty/duty.log 2>/dev/null
-    ' 2>/dev/null || echo "  (unreachable)"
+    echo "host: $(crew_version)"
+    engine="$(hired_at "$b")"
+    echo "engine: ${engine:-not hired (no engine)}"
+    bxn "$b" 'tail -n 5 ~/duty/duty.log 2>/dev/null' 2>/dev/null ||
+      echo "  (unreachable)"
     return 0
   fi
 
   # 20, not 18: `crew-drill-reviewer` is 19 characters, so an 18-wide column
   # overflowed and shifted every field after it one place right on that row.
-  local fmt='%-20s %-9s %-15s %-8s %-8s %s\n'
+  local fmt='%-20s %-9s %-12s %-15s %-8s %-8s %s\n'
+  local host; host="$(crew_version)"
   # shellcheck disable=SC2059
-  printf "$fmt" MEMBER STATE HIRED GH VENDOR NOTE
+  printf "$fmt" MEMBER STATE HOST ENGINE GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
   while read -r name agent role _from; do
     if ! box_exists "$name"; then
       # shellcheck disable=SC2059
-      printf "$fmt" "$name" - - - - "NOT CREATED — crew new $name"
+      printf "$fmt" "$name" - "$host" - - - "NOT CREATED — crew new $name"
       continue
     fi
     state="$(box_state "$name")"
     if [ "$state" = "stopped" ]; then
       # shellcheck disable=SC2059
-      printf "$fmt" "$name" stopped - - - "crew up starts it"
+      printf "$fmt" "$name" stopped "$host" - - - "crew up starts it"
       continue
     fi
     hired="$(hired_at "$name")"
@@ -1314,7 +1494,7 @@ cmd_status() {
       note="${last:-no ticks yet}"
     fi
     # shellcheck disable=SC2059
-    printf "$fmt" "$name" "$state" "$hired" "$ghs_d" "$vs_d" "$note"
+    printf "$fmt" "$name" "$state" "$host" "$hired" "$ghs_d" "$vs_d" "$note"
   done < <(read_roster)
 }
 
