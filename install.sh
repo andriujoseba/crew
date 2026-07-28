@@ -121,7 +121,12 @@ cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT
 
 # --- acquire the tree ------------------------------------------------------
-INSTALLED_FROM="local:$SRC"
+# INSTALLED_FROM records provenance in the version dir so a caller can assert
+# what it got. A local install names its source path; the scp-able artifact
+# (heavy-duty/crew#98) unpacks to a throwaway temp dir, so it sets
+# CREW_INSTALLED_FROM to name ITSELF instead — a dead temp path is useless
+# provenance, and the artifact knows its own name and checksum.
+INSTALLED_FROM="${CREW_INSTALLED_FROM:-local:$SRC}"
 if [ -d "$SRC" ]; then
   log "copying local tree $SRC"
   mkdir -p "$TMPDIR/tree"
