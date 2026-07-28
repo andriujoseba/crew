@@ -14,40 +14,23 @@ jobs:
       - name: bash -n (syntax)
         run: |
           set -e
-          for f in install.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
+          for f in install.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/install-lifecycle.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
                    fleet-floor/test/run.sh fleet-floor/test/stub-box; do
             bash -n "$f"
           done
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x install.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+          shellcheck -x install.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/install-lifecycle.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
       - name: fixture tests
         run: shared/test/run.sh
-      # The installer, driven OFFLINE through CREW_INSTALL_SOURCE against the
-      # tree under review — not a cp -r imitation of it (box's ci.yml installs
-      # this same way). Assert the versioned chain: the PATH link resolves under
-      # versions/, and the installed crew runs THROUGH the current symlink,
-      # which is what proves cli/crew resolves $CREW_ROOT into the versioned
-      # tree and not $BINDIR. The fuller `crew --version` / `crew versions`
-      # assertions box's CI makes need those verbs, which arrive with
-      # heavy-duty/crew#97 and #96; this asserts the layout and root-resolution
-      # the installer itself is responsible for.
-      - name: install lifecycle (offline, versioned layout)
-        run: |
-          set -e
-          home="$(mktemp -d)"; bin="$(mktemp -d)"
-          CREW_YES=1 CREW_HOME="$home" CREW_BIN="$bin" \
-            CREW_INSTALL_SOURCE="$GITHUB_WORKSPACE" bash install.sh
-          link="$(readlink -f "$bin/crew")"
-          echo "$link" | grep -q '/versions/.*/cli/crew$' \
-            || { echo "::error::PATH link does not resolve under versions/: $link"; exit 1; }
-          # From a neutral dir so only the install's own examples/ can answer
-          # config resolution — a wrong $CREW_ROOT (pointing at $bin) would find
-          # no fleet.roster and the CLI would refuse before help.
-          ( cd "$home" && "$bin/crew" help >/dev/null ) \
-            || { echo "::error::installed crew failed to run through the current symlink"; exit 1; }
-          echo "install lifecycle OK: $link"
+      # The installer, driven OFFLINE against the tree under review (box's
+      # ci.yml installs this same way). Asserts the versioned layout,
+      # root-resolution through the current symlink, coexistence/flip, the
+      # converging re-run, and — the must-fail case in #95's test plan — that an
+      # interrupted CREW_REINSTALL never leaves `current` resolving to nothing.
+      - name: install lifecycle (offline — layout, root-resolution, interrupt-safe reinstall)
+        run: shared/test/install-lifecycle.sh
       # The collector is the only Python in the repo, and the only thing that
       # can power-cycle a box — it does not get to skip the syntax gate.
       - name: python syntax (collector)
