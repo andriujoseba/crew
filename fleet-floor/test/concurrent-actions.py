@@ -146,6 +146,118 @@ assert status == 200, (status, payload)
 assert many_peak == floor.ACTION_WORKERS == 8, ("action worker peak", many_peak)
 assert [result["box"] for result in payload["results"]] == MANY_BOXES, payload
 
+# --- #44's actual scenario: a wedged box must not cost the fleet N timeouts --
+#
+# #68 made the per-box work concurrent and the fixture above proves the
+# concurrency — but every stub up to here DISCARDS the timeout it is handed,
+# so nothing asserted the property #44 was filed about: a box that never
+# answers is capped at ACTION_TIMEOUT_S, and its healthy siblings return on
+# time regardless. On incus 6.0.4 the hang is the COMMON case, not the rare
+# one — danmt's real-host probe measured rc=124 after the full 150s, refuting
+# "a dead agent makes box exec fail fast".
+#
+# What is under test is that the FAN-OUT preserves the per-box cap, not that
+# subprocess honours timeouts. So the stub simulates run()'s timeout contract
+# — sleep to the deadline, then (124, "", "timed out after Ns") — and the real
+# run() is not involved. Injecting a small ACTION_TIMEOUT_S keeps it fast:
+# one() binds its default from the module global each time do_command runs, so
+# setting it here is what the fan-out actually uses.
+TIMEOUT_S = 0.3
+REAL_ACTION_TIMEOUT_S = floor.ACTION_TIMEOUT_S
+floor.ACTION_TIMEOUT_S = TIMEOUT_S
+
+seen_timeouts = []
+wedged_boxes = set()
+
+
+def wedging_run(argv, timeout, _stdin_data=None):
+    seen_timeouts.append(timeout)
+    name = argv[2]
+    if name in wedged_boxes:
+        # Sleep the INJECTED deadline, never the one passed in. If the cap
+        # regresses, `timeout` is the fleet's real 120s and sleeping it would
+        # HANG this suite instead of failing it — and a hanging test is worse
+        # than a failing one: it burns the job's whole timeout and reports
+        # nothing useful. Measured while writing this, on the exact regression
+        # below (one() defaulted to 999): sleeping the passed timeout hung past
+        # two minutes; sleeping the injected one fails in 0.3s, on the `out`
+        # text, before the seen_timeouts assertion is even reached.
+        time.sleep(TIMEOUT_S)               # it never answers
+        return 124, "", "timed out after %ss" % timeout
+    return 0, "started", ""
+
+
+def timed_action(boxes, wedged, states):
+    """Run start-all over `boxes` with `wedged` hung, returning (elapsed, payload)."""
+    global wedged_boxes
+    wedged_boxes = set(wedged)
+    del seen_timeouts[:]
+    floor.read_roster = lambda: [
+        {"box": name, "agent": "claude", "room": "builder"} for name in boxes
+    ]
+    floor.box_states = lambda: states
+    floor.run = wedging_run
+    started = time.monotonic()
+    status, payload = floor.do_command(Fleet(), {"action": "start-all"})
+    return time.monotonic() - started, status, payload
+
+
+# The whole roster wedged — the #44 shape exactly. Serialized this costs
+# len(BOXES) timeouts; concurrent it costs one. The roster is sized to
+# ACTION_WORKERS so the bound also pins the POOL: a max_workers lowered below
+# the roster puts a wedged box in a later batch and the action is back to
+# N/pool timeouts, which is regression path 1 in #79 and leaves every other
+# assertion in this file green.
+ALL_WEDGED = ["wedge-%d" % n for n in range(floor.ACTION_WORKERS)]
+elapsed, status, payload = timed_action(
+    ALL_WEDGED, ALL_WEDGED, {name: "stopped" for name in ALL_WEDGED})
+assert status == 500, (status, payload)
+assert [result["box"] for result in payload["results"]] == ALL_WEDGED, payload
+assert all(result["ok"] is False for result in payload["results"]), payload
+assert all(
+    result["out"] == "timed out after %ss" % TIMEOUT_S
+    for result in payload["results"]
+), payload
+# Generously bounded: serialized would be 8 x 0.3 = 2.4s, so 3x one timeout
+# discriminates by a factor of 2.6 while tolerating a slow, loaded runner.
+assert elapsed < TIMEOUT_S * 3, ("wedged fleet paid more than one timeout", elapsed)
+
+# One wedged box among healthy ones: the timeout is attributed to THAT box and
+# the others still carry their real results.
+MIXED = ["fast-a", "hung-b", "fast-c"]
+elapsed, status, payload = timed_action(
+    MIXED, ["hung-b"], {name: "stopped" for name in MIXED})
+assert status == 500, (status, payload)
+assert [result["box"] for result in payload["results"]] == MIXED, payload
+assert [result["ok"] for result in payload["results"]] == [True, False, True], payload
+assert [result["out"] for result in payload["results"]] == [
+    "started", "timed out after %ss" % TIMEOUT_S, "started"
+], payload
+assert elapsed < TIMEOUT_S * 3, ("one wedged box serialized the fleet", elapsed)
+
+# Every call got the fleet's cap. This is regression path 2 in #79: someone
+# changes one()'s default, or a future caller passes a per-action timeout, and
+# the cap silently stops applying to the fan-out — with every assertion above
+# still green, because they only observe the CONTRACT the stub honours.
+assert set(seen_timeouts) == {TIMEOUT_S}, ("uncapped call", seen_timeouts)
+
+# The mixed done/one path WITH concurrency in play — precomputed results and
+# real work in one ordered list, one of the real ones wedged. It was exercised
+# once above with an instant stub, so the interleaving was covered for ordering
+# and never with a box that does not answer.
+DRIFT = ["absent-a", "running-b", "hung-c", "fast-d"]
+elapsed, status, payload = timed_action(
+    DRIFT, ["hung-c"],
+    {"absent-a": None, "running-b": "running", "hung-c": "stopped", "fast-d": "stopped"})
+assert status == 500, (status, payload)
+assert [result["box"] for result in payload["results"]] == DRIFT, payload
+assert [result["ok"] for result in payload["results"]] == [None, True, False, True], payload
+assert [result["out"] for result in payload["results"]] == [
+    "not created", "already running", "timed out after %ss" % TIMEOUT_S, "started"
+], payload
+assert elapsed < TIMEOUT_S * 3, ("precomputed results serialized behind a hang", elapsed)
+
+floor.ACTION_TIMEOUT_S = REAL_ACTION_TIMEOUT_S
 
 # log() is called by those workers. A deliberately slow stream makes
 # overlapping writes deterministic: the old print(message, flush=True) path
