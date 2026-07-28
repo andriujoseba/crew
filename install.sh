@@ -224,10 +224,11 @@ ln -sfn "$DEST/current/cli/crew" "$BINDIR/crew"
 log "linked $BINDIR/crew -> $DEST/current/cli/crew"
 
 # --- name an existing ~/crew checkout --------------------------------------
-# Do NOT migrate or delete it (#95): it is the operator's working tree, it may
-# hold uncommitted work, and until heavy-duty/crew#99 lands it is also what
-# `crew upgrade` pulls into on the boxes. Naming beats a clever migration —
-# PATH order now decides which `crew` runs, so say so.
+# Do NOT migrate or delete it (#95): it is the operator's working tree and may
+# hold uncommitted work. Since #99 the host ships shared/+VERSION to the boxes,
+# so ~/crew is no longer what `crew upgrade` pulls into — but it still shadows
+# this installed crew on PATH. Naming beats a clever migration: PATH order
+# decides which `crew` runs, so say so.
 if [ -f "$HOME/crew/cli/crew" ] && [ -d "$HOME/crew/.git" ]; then
   warn "a crew git checkout also exists at $HOME/crew — its cli/crew and this installed one both answer to the name 'crew'."
   warn "  PATH order decides which runs (check: command -v crew). This installer left the checkout untouched."
