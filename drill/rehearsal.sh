@@ -128,6 +128,9 @@ ACQUIRE_TMP=""
 cleanup_all() {
   local rc=$?
   rehearsal_cleanup "$rc"
+  if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
+    bx "rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz" >/dev/null 2>&1 || true
+  fi
   if [ -n "$ACQUIRE_TMP" ] && [ -d "$ACQUIRE_TMP" ]; then
     rm -rf -- "$ACQUIRE_TMP"
   fi
@@ -162,44 +165,59 @@ else
     exit 1
   fi
 fi
-for required in shared/install.sh shared/test/run.sh; do
+for required in shared/install.sh shared/test/run.sh VERSION; do
   [ -f "$SOURCE_TREE/$required" ] \
     || { echo "phase 0: $SOURCE_DESC resolved, but '$required' is missing; acquisition aborted before checks" >&2; exit 1; }
 done
 SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
   || { echo "phase 0: $SOURCE_DESC is not a resolved git tree"; exit 1; }
-BUNDLE="$ACQUIRE_TMP/crew.bundle"
-git -C "$SOURCE_TREE" bundle create "$BUNDLE" HEAD \
-  || { echo "phase 0: could not bundle $SOURCE_DESC at $SOURCE_SHA"; exit 1; }
-box exec "$BOX_NAME" -- bash -lc 'cat > /tmp/crew-rehearsal.bundle' <"$BUNDLE" \
-  || { echo "phase 0: could not transfer the creds-free bundle into $BOX_NAME"; exit 1; }
-bx "rm -rf ~/crew.rehearsal-new
-    git clone --quiet /tmp/crew-rehearsal.bundle ~/crew.rehearsal-new
-    test -f ~/crew.rehearsal-new/shared/install.sh
-    test -f ~/crew.rehearsal-new/shared/test/run.sh
-    rm -rf ~/crew
-    mv ~/crew.rehearsal-new ~/crew" \
-  || { echo "phase 0: transferred tree failed verification inside $BOX_NAME"; exit 1; }
-RESOLVED_SHA="$(bx "git -C ~/crew rev-parse HEAD" | tr -d '\r\n')"
-[ "$RESOLVED_SHA" = "$SOURCE_SHA" ] \
-  || { echo "phase 0: transferred sha '$RESOLVED_SHA' does not match source '$SOURCE_SHA'"; exit 1; }
-echo "== phase 0: resolved $RESOLVED_SHA from $SOURCE_DESC (creds-free inside box)"
-check "fixture tests green" bx "~/crew/shared/test/run.sh | grep -q 'failed 0'"
+ENGINE_ARCHIVE="$ACQUIRE_TMP/crew-engine.tgz"
+tar czf "$ENGINE_ARCHIVE" -C "$SOURCE_TREE" shared VERSION \
+  || { echo "phase 0: could not archive the engine from $SOURCE_DESC at $SOURCE_SHA"; exit 1; }
+# shellcheck disable=SC2016  # expanded by bash inside the box
+box exec "$BOX_NAME" -- bash -lc '
+  set -euo pipefail
+  archive="$HOME/.crew-engine.tgz"
+  tmp="$(mktemp "$HOME/.crew-engine.XXXXXX")"
+  cat >"$tmp"
+  mv "$tmp" "$archive"
+' <"$ENGINE_ARCHIVE" \
+  || { echo "phase 0: could not transfer the engine into $BOX_NAME"; exit 1; }
+# shellcheck disable=SC2016  # expanded by bash inside the box
+bx '
+  set -euo pipefail
+  stage="$HOME/.crew-engine-stage"
+  archive="$HOME/.crew-engine.tgz"
+  cleanup_failed() {
+    rc=$?
+    if [ "$rc" -ne 0 ]; then rm -rf "$stage" "$archive"; fi
+    return "$rc"
+  }
+  trap cleanup_failed EXIT
+  rm -rf "$stage"
+  mkdir -p "$stage"
+  tar xzf "$archive" -C "$stage"
+  test -f "$stage/shared/install.sh"
+  test -f "$stage/shared/test/run.sh"
+  test -f "$stage/VERSION"
+' || { echo "phase 0: transferred engine failed verification inside $BOX_NAME"; exit 1; }
+echo "== phase 0: shipped $SOURCE_SHA from $SOURCE_DESC (creds-free inside box)"
+check "fixture tests green" bx "~/.crew-engine-stage/shared/test/run.sh | grep -q 'failed 0'"
 
 echo "== phase 1: pre-auth engine install ($AGENT $ROLE)"
 # Every drill tick is explicit. Arming cron here created an autonomous
 # production bot merely to observe one scheduled boundary (#26).
-bx "~/crew/shared/install.sh --agent '$AGENT' --role '$ROLE'" || fail "install"
+bx "~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role '$ROLE'" || fail "install"
 rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
-version="$(bx "head -1 ~/crew/VERSION" | tr -d '\r\n')"
+version="$(bx "head -1 ~/.crew-engine-stage/VERSION" | tr -d '\r\n')"
 check "VERSION stamps crew@$version" bx "head -1 ~/duty/VERSION | grep -q '^crew@$version\\( \\|$\\)'"
 check "instance.conf $AGENT/$ROLE" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
 check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 # Reinstall with the same explicit drill identity and assert the role survived
 # rather than trusting it.
-check "reinstall stays disarmed"   bx "~/crew/shared/install.sh --agent '$AGENT' --role '$ROLE' && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "reinstall stays disarmed"   bx "~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role '$ROLE' && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 check "reinstall keeps role"       bx "grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
-check "bad role refused"           bx "! ~/crew/shared/install.sh --agent '$AGENT' --role nosuchrole"
+check "bad role refused"           bx "! ~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role nosuchrole"
 
 GH_AUTHED=0
 bx "gh auth status >/dev/null 2>&1" && GH_AUTHED=1
@@ -238,7 +256,7 @@ if [ "$QUICK" -eq 0 ]; then
 fi
 
 # --- phase 2 -------------------------------------------------------------
-if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/crew/shared/conf/agents/$AGENT.conf; bot_cli_probe"; then
+if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/.crew-engine-stage/shared/conf/agents/$AGENT.conf; bot_cli_probe"; then
   echo
   echo "== phase 2 SKIPPED: box not fully authenticated."
   echo "   The $ROLE loop is therefore UNPROVEN — phase 1 says the engine"

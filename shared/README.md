@@ -139,10 +139,9 @@ fleet's real protocol existed only inside five diverging scripts.
   markers only. The marker vocabulary is a versioned metrics contract; the
   emoji markers in `fleet.defaults.conf` are wire protocol, exact-matched by sibling
   agents — change them fleet-wide or not at all.
-- **Untracked deployment** — `install.sh` stamps `~/duty/VERSION` with
-  `crew@<sha>`, so FLEET.md's reconciliation stamp has something real to
-  reconcile against. The archive-vs-deployed drift this kills was real: the
-  kimi archive's shebang wasn't even on line 1.
+- **Versioned deployment** — `install.sh` stamps `~/duty/VERSION` with
+  `crew@<version>` and optional Git provenance. Hire compares the version
+  field; provenance never causes a re-bake.
 
 ## Known accepted risks
 
@@ -176,10 +175,12 @@ the operator if they surprise:
 
 ## Deploy / migrate
 
-```sh
-gh repo clone heavy-duty/crew && crew/shared/install.sh
-```
+From the box host, `crew hire <box>` and `crew upgrade <box>` archive the
+resolved `shared/` tree plus `VERSION`, stream it over `box exec`, and run the
+staged installer. Boxes do not clone crew or reach its repository. A legacy
+`~/crew` is moved aside on first contact and is never used as an engine source.
 
+For a direct development install from a checkout, run `shared/install.sh`.
 Then **replace** the crontab with the printed line(s) — every old
 duty/tick/hygiene/notify line must be DELETED: the old engine's locks are
 disjoint from this one's, so a surviving old cron line runs two engines in

@@ -11,7 +11,7 @@
 #   crew status [<box>]                       engine version + duty evidence
 #   crew floor [--port <n>] [--bind <a>]      serve the fleet-floor web console on IP:PORT
 #              [--roster <path>]              …watching a roster other than the resolved default
-#   crew upgrade <box> | --all                pull crew + re-install in place
+#   crew upgrade <box> | --all [--ref <ref>]   ship + re-install from the host
 #   crew gold <box>                           snapshot a box as a gold image
 #   crew init [config-dir]                    scaffold a new operator fleet definition
 #   crew profiles                             list role and agent profiles
@@ -166,6 +166,114 @@ bxput() { # BOX SOURCE DESTINATION
     mv \"\$tmp\" \"\$destination\"
   "
   box exec "$box_name" -- bash -lc "$remote_script" <"$source_file"
+}
+
+# resolve_engine REF — select one host-side engine source and set the
+# ENGINE_* globals consumed by stage_engine. A checkout resolves Git refs;
+# an installed tree resolves its current engine or versions/<version>.
+resolve_engine() {
+  local ref="${1:-HEAD}" version_root
+  case "$ref" in -*) die "engine ref must not begin with '-': '$ref'" ;; esac
+  ENGINE_GIT_REF=""
+  if git -C "$CREW_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$CREW_ROOT" rev-parse --verify "$ref^{commit}" >/dev/null 2>&1 \
+      || die "working-tree mode cannot resolve git ref '$ref'"
+    ENGINE_VERSION="$(git -C "$CREW_ROOT" show "$ref:VERSION" 2>/dev/null | head -1 | tr -d '\r\n')"
+    [ -n "$ENGINE_VERSION" ] || die "working-tree git ref '$ref' has no VERSION"
+    ENGINE_MODE="working-tree git ref $ref"
+    ENGINE_ROOT="$CREW_ROOT"
+    ENGINE_GIT_REF="$ref"
+  else
+    if [ "$ref" = HEAD ]; then
+      version_root="$CREW_ROOT"
+      ENGINE_MODE="installed current engine"
+    else
+      if [[ ! "$ref" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
+        die "installed-tree mode expects --ref <installed-version>, not '$ref'"
+      fi
+      version_root="$CREW_ROOT/versions/$ref"
+      ENGINE_MODE="installed version $ref"
+    fi
+    if [ ! -f "$version_root/VERSION" ] || [ ! -d "$version_root/shared" ]; then
+      die "$ENGINE_MODE is unavailable under $version_root"
+    fi
+    ENGINE_VERSION="$(head -1 "$version_root/VERSION" | tr -d '\r\n')"
+    [ "$ref" = HEAD ] || [ "$ENGINE_VERSION" = "$ref" ] \
+      || die "installed version directory '$ref' contains VERSION '$ENGINE_VERSION'"
+    ENGINE_ROOT="$version_root"
+  fi
+  echo "  engine source: $ENGINE_MODE → crew@$ENGINE_VERSION"
+}
+
+# cleanup_staged_engine BOX — best-effort rollback for a failure between the
+# engine upload and the install wrapper that normally owns this cleanup.
+cleanup_staged_engine() {
+  bxn "$1" 'rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz' >/dev/null 2>&1 || true
+}
+
+# stage_engine BOX — archive the resolved host engine, atomically upload it,
+# and extract it into a disposable box-side staging directory.
+stage_engine() {
+  local box_name="$1" archive
+  archive="$(mktemp)"
+  if [ -n "$ENGINE_GIT_REF" ]; then
+    if ! git -C "$CREW_ROOT" archive --format=tar.gz \
+      --output="$archive" "$ENGINE_GIT_REF" shared VERSION; then
+      rm -f "$archive"
+      return 1
+    fi
+  elif ! tar czf "$archive" -C "$ENGINE_ROOT" shared VERSION; then
+    rm -f "$archive"
+    return 1
+  fi
+  if ! bxput "$box_name" "$archive" '.crew-engine.tgz'; then
+    rm -f "$archive"
+    cleanup_staged_engine "$box_name"
+    return 1
+  fi
+  rm -f "$archive"
+  # shellcheck disable=SC2016  # expanded by bash inside the box
+  if ! bxn "$box_name" '
+    set -euo pipefail
+    stage="$HOME/.crew-engine-stage"
+    archive="$HOME/.crew-engine.tgz"
+    cleanup_failed() {
+      rc=$?
+      if [ "$rc" -ne 0 ]; then rm -rf "$stage" "$archive"; fi
+      return "$rc"
+    }
+    trap cleanup_failed EXIT
+    rm -rf "$stage"
+    mkdir -p "$stage"
+    tar xzf "$archive" -C "$stage"
+    test -f "$stage/shared/install.sh"
+    test -f "$stage/VERSION"
+  '; then
+    cleanup_staged_engine "$box_name"
+    return 1
+  fi
+}
+
+# install_staged_engine BOX ARGS — retire the obsolete box-side checkout,
+# run the selected host engine, and remove staging on every exit path.
+install_staged_engine() {
+  local box_name="$1" install_args="$2"
+  bxn "$box_name" "
+    set -euo pipefail
+    stage=\"\$HOME/.crew-engine-stage\"
+    archive=\"\$HOME/.crew-engine.tgz\"
+    cleanup() { rm -rf \"\$stage\" \"\$archive\"; }
+    trap cleanup EXIT
+    if [ -e \"\$HOME/crew\" ]; then
+      retired=\"\$HOME/crew.retired\"
+      if [ -e \"\$retired\" ]; then
+        retired=\"\$HOME/crew.retired.\$(date -u '+%Y%m%dT%H%M%SZ')\"
+      fi
+      mv \"\$HOME/crew\" \"\$retired\"
+      echo \"crew: retired obsolete box-side engine source ~/crew to \${retired#\$HOME/}\"
+    fi
+    \"\$stage/shared/install.sh\" $install_args
+  "
 }
 
 # stage_agent_profiles BOX — every operator agents/*.conf into the seed dir
@@ -510,14 +618,15 @@ hire_guard() {
   add it to the roster, or pass --allow-offroster if arming production is what you mean."
 }
 
-# hire_box NAME AGENT ROLE REF FORCE [ALLOW_OFFROSTER] — bake + arm; skip when
-# already at REF. Returns non-zero if the box could not be hired.
+# hire_box NAME AGENT ROLE REF FORCE [ALLOW_OFFROSTER] — bake + arm; release
+# versions skip when already installed, while development versions re-bake.
 hire_box() {
   local name="$1" agent="$2" role="$3" ref="$4" force="$5" allow="${6:-0}"
-  local want have have_version origin="https://github.com/$CREW_REPO" identity_args registry_arg
+  local want have have_version identity_args registry_arg
   identity_args="$(install_identity_args "$name" "$agent" "$role")"
   registry_arg="$(registry_install_arg)"
-  want="$(head -1 "$CREW_ROOT/VERSION" | tr -d '\r\n')"
+  resolve_engine "$ref"
+  want="$ENGINE_VERSION"
   # The guard runs BEFORE the already-hired shortcut: a box that is already
   # armed against the wrong registry is precisely the state an operator needs
   # told about, and "skipping" would hide it.
@@ -531,27 +640,10 @@ hire_box() {
       return 0
   fi
   echo "hiring $name  (role=$role agent=$agent crew@$want)"
-  # Verify where ~/crew's origin POINTS, rather than only that ~/crew exists.
-  # drill/rehearsal.sh seeds a box by cloning a bundle under /tmp; /tmp is
-  # cleared when the VM restarts, the clone here is skipped because
-  # ~/crew/.git is present, and `fetch` then fatals with a bare git error
-  # naming a path no operator recognises. Under the remote script's `set -euo
-  # pipefail` that means install.sh --arm-cron never runs: the box stays
-  # DISARMED, and nothing says "this box's ~/crew points somewhere unusable"
-  # (#49). Repoint and report it in crew's own voice instead of fatalling.
-  if ! bxn "$name" "
-    set -euo pipefail
-    if [ ! -d ~/crew/.git ]; then git clone --quiet '$origin' ~/crew; fi
-    have=\"\$(git -C ~/crew remote get-url origin 2>/dev/null || true)\"
-    if [ \"\$have\" != '$origin' ]; then
-      echo \"crew: ~/crew origin was '\${have:-<unset>}', not $origin — repointing it\"
-      git -C ~/crew remote set-url origin '$origin' 2>/dev/null || git -C ~/crew remote add origin '$origin'
-    fi
-    git -C ~/crew fetch --quiet origin
-    git -C ~/crew checkout --quiet '$ref'
-    git -C ~/crew pull --quiet --ff-only origin '$ref' 2>/dev/null || true
-  " || ! stage_fleet_definition "$name" || ! bxn "$name" \
-    "\$HOME/crew/shared/install.sh $identity_args $registry_arg --arm-cron"; then
+  if ! stage_engine "$name" ||
+     ! stage_fleet_definition "$name" ||
+     ! install_staged_engine "$name" "$identity_args $registry_arg --arm-cron"; then
+    cleanup_staged_engine "$name"
     echo "$name: hire FAILED — the engine is NOT installed and cron is NOT armed (output above)"
     return 1
   fi
@@ -674,7 +766,7 @@ cmd_hire_all() {
       continue
     fi
     # An `if`, not a bare call: crew's top-level `set -e` used to kill
-    # hire-all on the first failing box, so one box with an unusable ~/crew
+    # hire-all on the first failing box, so one failed engine convergence
     # blocked the ENTIRE fleet (#49). A fleet verb reports what it could not
     # do and carries on; the summary below is what makes the failure loud.
     if hire_box "$name" "$agent" "$role" "$ref" 0; then
@@ -846,9 +938,22 @@ cmd_status() {
 
 cmd_upgrade() {
   need_box
-  local targets="" skipped="" want
-  want="$(head -1 "$CREW_ROOT/VERSION" | tr -d '\r\n')"
-  case "${1:-}" in
+  local targets="" skipped="" target="" ref="HEAD" want
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all)
+        [ -z "$target" ] || die "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]"
+        target="--all"; shift ;;
+      --ref) ref="${2:-}"; [ -n "$ref" ] || die "--ref requires a value"; shift 2 ;;
+      --*) die "unknown argument '$1' (usage: crew upgrade <box> | --all [--ref <version-or-git-ref>])" ;;
+      *)
+        [ -z "$target" ] || die "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]"
+        target="$1"; shift ;;
+    esac
+  done
+  resolve_engine "$ref"
+  want="$ENGINE_VERSION"
+  case "$target" in
     --all)
       # The ROSTER, not every box on the host. `crew up` already leaves
       # off-roster boxes alone and says so; this verb reaching them meant a
@@ -859,8 +964,8 @@ cmd_upgrade() {
       targets="$(comm -12 <(roster_names | sort) <(box_names | sort))"
       skipped="$(comm -23 <(box_names | sort) <(roster_names | sort))"
       ;;
-    "")    die "usage: crew upgrade <box> | --all" ;;
-    *)     targets="$1" ;;
+    "")    die "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]" ;;
+    *)     targets="$target" ;;
   esac
   local b armed flags line agent role identity_args registry_arg
   registry_arg="$(registry_install_arg)"
@@ -885,13 +990,12 @@ cmd_upgrade() {
       # An explicitly named off-roster box keeps its existing instance config.
       identity_args=""
     fi
-    if bxn "$b" "
-      set -euo pipefail
-      git -C ~/crew pull --ff-only --quiet
-    " && stage_fleet_definition "$b" &&
-       bxn "$b" "\$HOME/crew/shared/install.sh $identity_args $registry_arg $flags"; then
+    if stage_engine "$b" &&
+       stage_fleet_definition "$b" &&
+       install_staged_engine "$b" "$identity_args $registry_arg $flags"; then
       :
     else
+      cleanup_staged_engine "$b"
       echo "  upgrade FAILED on $b"
     fi
     # An `if`, not `[ … ] && echo`: as the loop body's last statement that
