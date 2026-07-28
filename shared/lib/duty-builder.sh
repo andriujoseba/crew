@@ -62,7 +62,10 @@ _warn_unscoped_authored() {
 # on crew's projects-classic GraphQL and writes nothing. This is best-effort
 # and the handoff NEVER blocks on it (the same rule as the label write).
 _mirror_rounds() {
-  local repo="$1" num="$2" owner name payload newbody
+  # FINAL (default false) is true only at the handoff straggler: it finalizes
+  # the live last round too. Per-tick mirroring leaves the live round deferred
+  # so a still-arriving round is never stamped "no written reply" (round-log.jq).
+  local repo="$1" num="$2" final="${3:-false}" owner name payload newbody
   owner="${repo%%/*}"; name="${repo##*/}"
   payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
@@ -72,7 +75,7 @@ _mirror_rounds() {
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
     || { warn "$repo#$num: round-log fetch failed; body left as-is (handoff continues)"; return 0; }
   newbody="$(printf '%s' "$payload" \
-    | jq -r --arg me "$ME" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
+    | jq -r --arg me "$ME" --argjson final "$final" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
     || { warn "$repo#$num: round-log render failed; body left as-is"; return 0; }
   [ -n "$newbody" ] || return 0   # every round already recorded — write nothing
   printf '%s' "$newbody" | jq -Rs '{body:.}' \
@@ -119,7 +122,7 @@ _handoff_comment() {
 # is off-panel.
 _handoff_finalize() {
   local repo="$1" num="$2" comment
-  _mirror_rounds "$repo" "$num"
+  _mirror_rounds "$repo" "$num" true   # finalize the live round: the PR is converging
   comment="$(_handoff_comment "$repo" "$num")"
   if [ -n "$comment" ]; then
     "$BIN_DIR/post-once.sh" "$repo" "$num" "$comment" \
@@ -444,7 +447,10 @@ _builder_repo() {
       # re-request hook; its per-tick builder sweep IS that hook — the tick after
       # a round is answered appends it. Marker-keyed and idempotent, so a re-tick
       # writes nothing. Best-effort: never blocks the handoff detection below.
-      _mirror_rounds "$R" "$N"
+      # final=false: per-tick mirroring records only superseded rounds and
+      # defers the live one, so a round mid-flight is never stamped as answered
+      # before its whole-round reply lands (round-log.jq live-round note).
+      _mirror_rounds "$R" "$N" false
       converged="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable

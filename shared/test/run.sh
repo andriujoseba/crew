@@ -536,7 +536,11 @@ mk_rl() {  # <body> <reviews-json> <comments-json>
 RL_REVS="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T03:00:00Z"}]' "$RL_O1" "$RL_O2")"
 RL_REVS1="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]' "$RL_O1")"
 RL_COMS='[{"author":{"login":"me-bot"},"body":"answering round one","createdAt":"2026-01-01T02:00:00Z"},{"author":{"login":"me-bot"},"body":"answering round two","createdAt":"2026-01-01T04:00:00Z"}]'
-rl() { jq -r --arg me "$RL_ME" -f "$RLJQ"; }
+# rl = handoff/record-all mode ($final=true): finalize every round including the
+# live last one — the record-all semantics these fixtures assert. rl_live =
+# per-tick mode ($final=false): defer the live round, record only superseded ones.
+rl() { jq -r --arg me "$RL_ME" --argjson final true -f "$RLJQ"; }
+rl_live() { jq -r --arg me "$RL_ME" --argjson final false -f "$RLJQ"; }
 
 # Two rounds, both answered, no markers in body → both mirrored, oldest first.
 RL_OUT="$(mk_rl "Body preamble." "$RL_REVS" "$RL_COMS" | rl)"
@@ -572,6 +576,53 @@ case "$RL_OUT5" in *"round:$RL_O2"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-partial-appends-missing yes "$r1"
 case "$RL_OUT5" in *"answering round one"*) r1=DUP ;; *) r1=clean ;; esac
 t roundlog-partial-skips-recorded clean "$r1"
+
+# --- Live-round deferral (per-tick, $final=false): the regression codex found
+# on the mirror-every-tick change. Because the mirror now runs every tick, a
+# round's FIRST verdict would otherwise stamp `<!-- round:<head> -->` with "no
+# written reply" while the round is still live — and the already-recorded skip
+# then locks the real reply out forever. Per-tick records only SUPERSEDED
+# rounds; the live last round is deferred to a later tick or to the handoff.
+
+# Tick 1: the live round has one verdict and no reply yet → deferred → nothing
+# written. Crucially, NO `<!-- round:O1 -->` marker to lock the reply out.
+RL_LIVE1="$(mk_rl "Body." "$RL_REVS1" '[]' | rl_live)"
+t roundlog-live-round-no-premature-marker "" "$RL_LIVE1"
+
+# Same live round, now WITH the whole-round reply, still the last round →
+# still deferred per-tick (no next round has closed its window yet).
+RL_ONECOM='[{"author":{"login":"me-bot"},"body":"the whole-round reply","createdAt":"2026-01-01T02:00:00Z"}]'
+RL_LIVE2="$(mk_rl "Body." "$RL_REVS1" "$RL_ONECOM" | rl_live)"
+t roundlog-live-round-with-reply-still-deferred "" "$RL_LIVE2"
+
+# Once a NEWER round supersedes it (a verdict on O2), the closed round O1 is
+# recorded per-tick WITH its real reply — not "no written reply" — while the
+# new live round O2 stays deferred. Proves the reply is never lost, only timed.
+RL_SUP="$(mk_rl "Body." "$RL_REVS" "$RL_COMS" | rl_live)"
+case "$RL_SUP" in *"round:$RL_O1"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-superseded-round-recorded-per-tick yes "$r1"
+case "$RL_SUP" in *"answering round one"*) r1=real ;; *) r1=no ;; esac
+t roundlog-superseded-round-keeps-real-reply real "$r1"
+case "$RL_SUP" in *"round:$RL_O2"*) r1=LEAKED ;; *) r1=deferred ;; esac
+t roundlog-live-round-deferred-when-superseded deferred "$r1"
+case "$RL_SUP" in *"no written reply"*) r1=PREMATURE ;; *) r1=clean ;; esac
+t roundlog-superseded-no-premature-noreply clean "$r1"
+
+# The sequential two-tick regression codex reproduced: after tick 1 defers the
+# live round (writing NO marker, above), the round completes and the builder
+# replies; the handoff straggler ($final=true) then records the REAL reply —
+# not the premature "no written reply" the old code locked in.
+RL_HANDOFF="$(mk_rl "Body." "$RL_REVS1" "$RL_ONECOM" | rl)"
+case "$RL_HANDOFF" in *"the whole-round reply"*) r1=real ;; *) r1=no ;; esac
+t roundlog-handoff-finalizes-real-reply real "$r1"
+case "$RL_HANDOFF" in *"no written reply"*) r1=PREMATURE ;; *) r1=clean ;; esac
+t roundlog-handoff-not-premature-noreply clean "$r1"
+
+# The terminal no-comment case survives the deferral: a round that genuinely
+# passed with no reply is still recorded at handoff ($final=true).
+RL_TERM="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
+case "$RL_TERM" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-terminal-no-comment-at-handoff yes "$r1"
 
 # B1 (#91): mirroring must be wired into the per-tick `my_open` builder sweep,
 # not only into `_handoff_finalize` — else the Round log fills only at
