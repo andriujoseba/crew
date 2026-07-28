@@ -398,13 +398,6 @@ fleet_static_identities() (
   printf '%s\n' "$FLEET_BENCH" "$FLEET_TRIAGE" "$FLEET_HUMAN" | tr ' ' '\n'
 )
 
-fleet_operator() (
-  FLEET_HUMAN=""
-  # shellcheck disable=SC1090  # selected operator/shipped config, resolved above
-  source "$FLEET_CONF"
-  printf '%s\n' "${FLEET_HUMAN:-unknown-operator}"
-)
-
 # fleet_identities — configured participants plus authenticated roster boxes.
 # A newly-created or logged-out box contributes nothing; the static bench and
 # triage declarations still make detection useful before the whole fleet is up.
@@ -424,9 +417,8 @@ fleet_identities() {
 # only operators decide which fleet keeps a repo, and this path never writes a
 # registry (crew#70, option 2).
 foreign_actor_check() {
-  local allowed operator repo events finding action actor
+  local allowed repo events finding action actor
   allowed="$(fleet_identities | sed '/^$/d' | sort -u)"
-  operator="$(fleet_operator)"
 
   while read -r repo; do
     if ! events="$(gh api -X GET "repos/$repo/events?per_page=100" 2>/dev/null)"; then
@@ -454,7 +446,7 @@ foreign_actor_check() {
     done)"
     [ -n "$finding" ] || continue
     IFS=$'\t' read -r action actor <<<"$finding"
-    echo "crew: WARN one-repo-one-fleet: $repo belongs to @$operator's fleet here, but a recent $action by @$actor indicates @$actor's fleet may also govern it." >&2
+    echo "crew: WARN one-repo-one-fleet: foreign $action by @$actor in registered repo $repo indicates another fleet may also govern it." >&2
     echo "crew: WARN registries LEFT UNCHANGED — the operators must decide which fleet keeps $repo." >&2
   done < <(production_registry)
 }
