@@ -82,6 +82,14 @@ if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then
   [ -z "$missing" ] ||
     { echo "crew: fleet definition '$CONFIG_DIR' is incomplete; missing:$missing" >&2; exit 1; }
 fi
+# Rehearsals that claim to exercise operator-owned configuration set this
+# assertion. Keep it beside resolution so a missing CREW_CONFIG_DIR cannot
+# silently fall through to examples/ and turn a real-host drill into coverage
+# of the wrong mode (#82).
+if [ "${CREW_EXPECT_OPERATOR_CONFIG:-0}" = 1 ] && [ "$CONFIG_IS_OPERATOR" -ne 1 ]; then
+  echo "crew: operator-config mode required, but resolution selected '$CONFIG_DIR' (CONFIG_IS_OPERATOR=0)" >&2
+  exit 1
+fi
 config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
 # agent_conf NAME — the one resolved profile path every reader uses: an
 # operator `agents/NAME.conf` beside the fleet definition wins over the

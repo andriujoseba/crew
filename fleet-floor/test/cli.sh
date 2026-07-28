@@ -1160,6 +1160,59 @@ else
        "rc=$CL_RC $(cat "$CL_TMP/floor-bad")"
 fi
 
+# --- operator-config real-host rehearsal contract (#82) -------------------
+# CI has no real boxes, so it cannot honestly run the drill's hardware cases.
+# It can and must keep the harness from becoming vacuous: operator mode is an
+# executable assertion, crew init owns fixture construction, every case uses
+# crew upgrade, the default all-roles rehearsal invokes it, and teardown names
+# the state it restored.
+CL_CONFIG_DRILL="$CL_ROOT/drill/rehearsal-config.sh"
+CL_RC=0
+(
+  cd "$CL_ROOT/examples"
+  env -u CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG=1 "$CL_ROOT/cli/crew" profiles
+) >"$CL_TMP/operator-mode.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] &&
+   grep -q 'CONFIG_IS_OPERATOR=0' "$CL_TMP/operator-mode.out"; then
+  ok "config drill: operator-mode assertion fails against examples fallback"
+else
+  fail "config drill: operator-mode assertion fails against examples fallback" \
+       "rc=$CL_RC $(cat "$CL_TMP/operator-mode.out")"
+fi
+
+# shellcheck disable=SC2016  # matching literal variables in the drill source
+if grep -q '"\$CREW" init "\$CONFIG"' "$CL_CONFIG_DRILL"; then
+  ok "config drill: fixture is built by crew init"
+else
+  fail "config drill: fixture is built by crew init" "fixture construction bypasses crew init"
+fi
+
+CL_UPGRADES="$(grep -c 'upgrade_operator' "$CL_CONFIG_DRILL" || true)"
+if [ "${CL_UPGRADES:-0}" -ge 7 ]; then
+  ok "config drill: registry cases run through crew upgrade (${CL_UPGRADES})"
+else
+  fail "config drill: registry cases run through crew upgrade" \
+       "only ${CL_UPGRADES:-0} upgrade paths found"
+fi
+
+# shellcheck disable=SC2016  # matching the literal handoff in the source
+if grep -q 'rehearsal-config.sh.*--box "\$CONFIG_BOX"' "$CL_ROOT/drill/rehearsal-all.sh"; then
+  ok "rehearsal-all: operator-config drill runs by default on an installed box"
+else
+  fail "rehearsal-all: operator-config drill runs by default on an installed box" \
+       "the hardware rehearsal is still a separate, easy-to-skip errand"
+fi
+
+# shellcheck disable=SC2016  # the backup variables expand in the drill, not here
+if grep -q 'restored .* repos.txt and registry provenance to their pre-drill state' "$CL_CONFIG_DRILL" &&
+   grep -q 'mv ~/\$BACKUP_TAG.repos ~/duty/repos.txt' "$CL_CONFIG_DRILL" &&
+   grep -q 'mv ~/\$BACKUP_TAG.provenance ~/duty/.repos.txt.crew-provenance' "$CL_CONFIG_DRILL"; then
+  ok "config drill: teardown restores both registry bytes and provenance and says so"
+else
+  fail "config drill: teardown restores both registry bytes and provenance and says so" \
+       "a real box can leave the drill with altered containment state"
+fi
+
 rm -rf "$CL_TMP"
 
 if [ -n "${CL_STANDALONE:-}" ]; then

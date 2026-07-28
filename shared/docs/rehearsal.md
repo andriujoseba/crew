@@ -42,6 +42,17 @@
 > `crew status` it compares against (`CREW_ROSTER`), and its own counts.
 > `rehearsal-all.sh` passes `--drill-roles` for the roles it just ran.
 >
+> **Operator-config registry drill.** `rehearsal-all.sh` also runs
+> `drill/rehearsal-config.sh` once against the first drill box it installed.
+> The script builds a temporary fleet definition with `crew init`, asserts
+> `CONFIG_IS_OPERATOR=1`, and drives real `crew upgrade` calls through the
+> divergence veto, both no-provenance migration outcomes, ordinary
+> convergence, examples-fallback non-convergence, and incomplete-trio
+> refusal. It backs up both `repos.txt` and its provenance record before the
+> first mutation, restores both on EXIT/INT/TERM, and prints the restoration
+> receipt. `--no-config-drill` is an explicit escape hatch for a role-only
+> run; such a run does not cover the operator registry contract.
+>
 > **The browser walk** needs `playwright-core` *and* a browser —
 > `playwright-core` deliberately ships without one. The drill probes the
 > usual Chrome/Chromium paths and skips with a named reason if it finds
