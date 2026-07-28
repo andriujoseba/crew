@@ -565,7 +565,7 @@ live_floor_pids() {
 cmd_uninstall() {
   local version_name="" all=0 force=0 arg install current link target leftover=""
   local hired="" floor_pids="" box_name engine
-  local targets=()
+  local removal_targets=()
   for arg in "$@"; do
     case "$arg" in
       --all) all=1 ;;
@@ -623,15 +623,15 @@ cmd_uninstall() {
   fi
   uninstall_confirm "remove the ENTIRE crew console at $install (every host version)" "$force"
 
-  targets+=("$install")
+  removal_targets+=("$install")
   while IFS= read -r link; do
     [ -L "$link" ] || continue
     target="$(link_target "$link")"
-    case "$target" in "$install"/*) targets+=("$link") ;; esac
+    case "$target" in "$install"/*) removal_targets+=("$link") ;; esac
   done < <(crew_bin_links | awk '!seen[$0]++')
-  mapfile -t targets < <(printf '%s\n' "${targets[@]}" | awk '!seen[$0]++')
-  for target in "${targets[@]}"; do rm -rf "$target" || true; done
-  for target in "${targets[@]}"; do
+  mapfile -t removal_targets < <(printf '%s\n' "${removal_targets[@]}" | awk '!seen[$0]++')
+  for target in "${removal_targets[@]}"; do rm -rf "$target" || true; done
+  for target in "${removal_targets[@]}"; do
     if [ -e "$target" ] || [ -L "$target" ]; then leftover="$leftover $target"; fi
   done
   if [ -n "$leftover" ]; then
