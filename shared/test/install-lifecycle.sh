@@ -100,6 +100,16 @@ else
   bad "interrupted-reinstall-keeps-current-resolvable (current -> '$(readlink "$CREW_HOME/current" 2>/dev/null || echo '<none>')' dangles)"
 fi
 
+# 7. recovery: a normal install after the interrupted reinstall heals `current`
+#    back onto the canonical version and reaps the orphaned old-tree scratch.
+install_from "$SB"
+same "post-interrupt-heals-to-canonical" "versions/$VB" "$(readlink "$CREW_HOME/current")"
+if ( cd "$WORK" && "$CREW_BIN/crew" help >/dev/null 2>&1 ); then
+  ok "post-interrupt-crew-runs"
+else
+  bad "post-interrupt-crew-runs"
+fi
+
 echo
 echo "install-lifecycle: passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

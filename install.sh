@@ -146,6 +146,21 @@ new_ver="$(cat "$EXTRACTED/VERSION" 2>/dev/null || true)"
 valid_version "$new_ver" || die "the source's VERSION is not a sane directory name: '$new_ver'"
 
 # --- install into $DEST/versions/<version> ---------------------------------
+# Reap swap scratch from an interrupted prior run before installing:
+# versions/*.new.<pid> and versions/*.old.<pid> are only ever transient (this
+# run makes its own below). A kill leaves them behind, and #96's `crew versions`
+# would otherwise list them (kimi-bot, #95). Remove them — but never the one
+# `current` resolves to: an interrupted reinstall legitimately left a `.new.*`
+# as the live tree, and removing it would dangle `current` (the next flip
+# retires it). The trailing [0-9] keeps this to the pid-suffixed scratch, not a
+# version whose name merely ends in something else.
+cur_now="$(readlink -f "$DEST/current" 2>/dev/null || true)"
+for d in "$DEST"/versions/*.new.[0-9]* "$DEST"/versions/*.old.[0-9]*; do
+  [ -d "$d" ] || continue
+  [ -n "$cur_now" ] && [ "$(readlink -f "$d")" = "$cur_now" ] && continue
+  rm -rf "$d"
+done
+
 VDIR="$DEST/versions/$new_ver"
 newly_installed=0
 if [ -d "$VDIR" ]; then
