@@ -1,0 +1,76 @@
+# Copied from heavy-duty/ceremony@0.3.0 .github/ISSUE_TEMPLATE/work-order.yml (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
+# The issue contract (.ceremony/TRIAGE.md "The issue contract") as a form, so every
+# minted issue lands with the same bones and a later parser (heavy-duty/ceremony#18) can key on
+# stable section headings. Consistency, not a gate: the form applies no
+# labels — queue labels are triage's explicit act (.ceremony/LABELS.md), and heavy-duty/ceremony#18's
+# sweep is what catches non-triage authors, so the form must not pre-judge
+# that (heavy-duty/ceremony#24, decision 2).
+name: Work order (triage only)
+description: >-
+  The issue contract (.ceremony/TRIAGE.md) as a form. Only triage mints issues —
+  everyone else starts a Discussion. Triage may still compose by hand when
+  the form fights it: `gh issue create --body-file` bypasses forms and stays
+  legitimate for the triage identity.
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **The title names the deliverable** — "lib/version.sh — one version
+        abstraction, two backends", never "improve version handling". The
+        bar for everything below, stated once: a competent builder who has
+        read only this issue and the repo can succeed (.ceremony/TRIAGE.md). Labels
+        (type, `scope:*`, `ready`/`blocked`) are your explicit act after
+        minting — this form applies none.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >-
+        Why this exists, with links — the discussion it came from, the code
+        it touches (permalinks at a pinned SHA, so line references cannot
+        rot), prior art in sibling repos.
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec
+      description: >-
+        Decisions made, not options listed. If the spec still has an open
+        question, the issue is not ready to exist.
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Tasks
+      description: The steps, checkboxed, in order.
+      placeholder: "- [ ] the first step"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: >-
+        Checkboxed, verifiable, and honest — these become the builder's
+        definition of done and the reviewer's review spec, verbatim.
+      placeholder: "- [ ] a verifiable outcome"
+    validations:
+      required: true
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: Test plan
+      description: What proves it, including the cases that must fail.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: >-
+        `Blocked by #N` / `Blocks #N`, and `Part of #E` when an epic
+        organizes it — or state "None".
+    validations:
+      required: true

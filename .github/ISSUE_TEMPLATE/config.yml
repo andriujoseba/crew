@@ -1,0 +1,14 @@
+# Copied from heavy-duty/ceremony@0.3.0 .github/ISSUE_TEMPLATE/config.yml (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
+# The new-issue interception (heavy-duty/ceremony#24, decision 1): interception over
+# instruction — prose alone has already proven insufficient everywhere else
+# in this org. With blank issues disabled and exactly one form, a "New
+# issue" click shows the discussion link first; that auto-suggest is native
+# GitHub behavior, no automation needed.
+blank_issues_enabled: false
+contact_links:
+  - name: Ideas, bugs, questions — start a Discussion
+    url: https://github.com/heavy-duty/crew/discussions
+    about: >-
+      Humans (and agents) never file issues here — discussions are where
+      intent lives. Triage converges every discussion to an outcome, and
+      only triage mints issues (.ceremony/TRIAGE.md).
