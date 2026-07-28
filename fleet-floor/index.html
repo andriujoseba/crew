@@ -855,6 +855,7 @@ function cmd(action,extra){
     .catch(function(e){setStatus(action+" failed: "+e.message,true);});
 }
 function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;";});}
+function stampVersion(s){var m=String(s||"").match(/^crew@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?)(?:\s|$)/);return m?m[1]:"unknown";}
 function clockStr(){var d=new Date();return pad2(d.getUTCHours())+":"+pad2(d.getUTCMinutes())+":"+pad2(d.getUTCSeconds());}
 function buildTiles(){var w=0,idl=0,o=0,q=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")o++;else idl++;q+=dataOf(UNITID(u),u.room).queue.length;});
   function tl(n,l,c,al){return '<div class="tile'+(al?' alert':'')+'"><span class="n" style="color:'+c+'">'+n+'</span><span class="l">'+l+'</span></div>';}
@@ -880,6 +881,7 @@ function populateDash(){
        shorter clock: Box is what the last evidence poll concluded up to a
        minute ago, Heartbeat is whether the guest answered seconds ago. */
     +'<span class="k">Heartbeat</span><span class="v" id="v-ping" style="color:'+pingColour(d)+'">'+pingText(d)+'</span>'
+    +'<span class="k">Engine</span><span class="v">'+(d.engine?esc(stampVersion(d.engine)):"—")+'</span>'
     +'<span class="k">Uptime</span><span class="v">'+(off&&!LIVE?"—":(d.up.h+"h "+pad2(d.up.m)+"m"))+'</span>'
     +'<span class="k">Cron</span><span class="v" style="color:'+((off||d.paused)?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
     +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'

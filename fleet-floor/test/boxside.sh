@@ -46,7 +46,7 @@ echo "== box-side scripts, executed for real"
 # --------------------------------------------------------------------------
 BS_H="$BS_TMP/probehome"
 mkdir -p "$BS_H/duty/logs"
-echo "crew@deadbee" > "$BS_H/duty/VERSION"
+echo "crew@0.2.0 (deadbee)" > "$BS_H/duty/VERSION"
 printf '# comment\nheavy-duty/ceremony\nheavy-duty/rig\n' > "$BS_H/duty/repos.txt"
 BS_NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 {
@@ -83,7 +83,7 @@ print("QUEUE=%d" % len(floor.derive_queue(lines)))
 PY
 bs_get() { sed -n "s/^$1=//p" "$BS_TMP/probe.parsed"; }
 t "probe.sh: parser gets every key it reads" "" "$(bs_get MISSING)"
-t "probe.sh: engine version read"  "crew@deadbee" "$(bs_get ENGINE)"
+t "probe.sh: full engine stamp carried through" "crew@0.2.0 (deadbee)" "$(bs_get ENGINE)"
 t "probe.sh: uptime is a number"   True "$(bs_get UPTIME_OK)"
 t "probe.sh: repos.txt comments stripped" 2 "$(bs_get REPOS)"
 t "probe.sh: log section delimited" 4 "$(bs_get LOGLINES)"
@@ -269,7 +269,7 @@ else fail "degraded: big duty.log is capped at 600 lines" "shipped $BS_LINES"; f
 
 # The healthy shape: engine present, no failure recorded.
 BS_FLOW="$BS_TMP/flow"; mkdir -p "$BS_FLOW/duty"
-echo "crew@0.4.1" > "$BS_FLOW/duty/VERSION"
+echo "crew@0.4.1 (feedbee)" > "$BS_FLOW/duty/VERSION"
 echo "$BS_NOW duty run start" > "$BS_FLOW/duty/duty.log"
 bs_probe "$BS_FLOW" >/dev/null
 t "flow: no failure recorded -> gh nofail"     nofail "$(bs_key gh)"

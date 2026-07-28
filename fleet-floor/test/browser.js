@@ -377,6 +377,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // rendered "gh ✗" while every collector assertion stayed green.
   const allSeen = Object.keys(byState).reduce((a, k) => a.concat(byState[k]), []);
   if (LIVE && allSeen.length) {
+    ok('render: engine shows the version without provenance',
+       allSeen.every((u) => /Engine\s*0\.4\.1/.test(u.vitals) && !/deadbee/.test(u.vitals)),
+       allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     ok('render: the heartbeat is on screen',
        allSeen.every((u) => /Heartbeat/.test(u.vitals)),
        allSeen.filter((u) => !/Heartbeat/.test(u.vitals)).map((u) => u.box).join(','));
