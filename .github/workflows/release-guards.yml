@@ -1,0 +1,53 @@
+name: release-guards
+# The ceremony's release gates, run on EVERY PR — deliberately a workflow of
+# its own, not folded into shared-ci.yml (crew#84's CI decision).
+#
+# shared-ci.yml carries a paths filter (shared/**, cli/**, drill/**,
+# fleet-floor/**, examples/**) so a docs-only PR skips crew's expensive engine
+# suite — the browser-driven fleet-floor tests, the fixture run. None of the
+# release furniture this repo now carries — CHANGELOG.md, changelog.d/,
+# VERSION, drills/, the .ceremony/ mirror, these callers — matches that filter.
+# Widening it would drag every doc PR through the engine suite, and folding the
+# gates behind it would leave them silent on exactly the trees they must guard.
+# So the gates live here, with NO paths filter: they run on every PR, and the
+# head carries a real green check instead of merely no check. They are cheap —
+# each reads the tree and returns.
+#
+# The pins below and the two workflow callers must always name the SAME
+# ceremony tag. Each guard's war story — why it exists, what it refuses — lives
+# with its implementation upstream (heavy-duty/ceremony).
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # changelog-monotonic and changelog-assembled compare HEAD against
+          # the merge base; a checkout that cannot resolve it is a hard failure
+          # in CI, not a skip (a guard that can quietly stop guarding is the
+          # failure shape these checks exist to refuse).
+          fetch-depth: 0
+      # changelog-armed: the version-keyed arming rule — a -dev tree keeps its
+      # fragments in changelog.d/, a release tree has consumed them into a
+      # stamped section.
+      - uses: heavy-duty/ceremony/actions/changelog-armed@0.3.0
+      # changelog-monotonic: no shipped release heading deleted or duplicated.
+      # Strict by default: an unresolvable base ref is red, never a quiet skip —
+      # hence fetch-depth: 0 above.
+      - uses: heavy-duty/ceremony/actions/changelog-monotonic@0.3.0
+      # changelog-assembled: a release's stamped section must exactly match the
+      # fragments it consumed. Vacuous on non-release PRs.
+      - uses: heavy-duty/ceremony/actions/changelog-assembled@0.3.0
+      # drill-recorded: a release version carries drills/<version>.md (crew's
+      # drill meaning: drills/README.md). Vacuous on -dev trees.
+      - uses: heavy-duty/ceremony/actions/drill-recorded@0.3.0
+      # runner-isolated: no pull_request-triggered workflow runs unreviewed
+      # branch code on a self-hosted runner. crew runs only ubuntu-latest.
+      - uses: heavy-duty/ceremony/actions/runner-isolated@0.3.0
+      # docs-sync: the .ceremony/ doctrine mirror is byte-identical to the pin
+      # read from release.yml — a hand edit or a half-done pin bump goes red.
+      - uses: heavy-duty/ceremony/actions/docs-sync@0.3.0
