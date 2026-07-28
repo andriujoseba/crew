@@ -573,6 +573,16 @@ t roundlog-partial-appends-missing yes "$r1"
 case "$RL_OUT5" in *"answering round one"*) r1=DUP ;; *) r1=clean ;; esac
 t roundlog-partial-skips-recorded clean "$r1"
 
+# B1 (#91): mirroring must be wired into the per-tick `my_open` builder sweep,
+# not only into `_handoff_finalize` — else the Round log fills only at
+# convergence and a never-converging PR never mirrors. The sweep call is
+# `_mirror_rounds "$R" "$N"` (the handoff call uses the function's own
+# repo/num locals), so its presence pins the timing fix against a regression to
+# handoff-only. shellcheck-disable: matching the literal call, not expanding it.
+# shellcheck disable=SC2016
+if grep -q '_mirror_rounds "\$R" "\$N"' "$SHARED/lib/duty-builder.sh"; then r1=per-tick; else r1=handoff-only; fi
+t roundlog-mirrored-in-per-tick-sweep per-tick "$r1"
+
 # --- _handoff_finalize under a gh shim: one comment, one request, one label,
 # ZERO sessions/clones (#91). The stateful shim answers the two GraphQL reads
 # (round-log payload and handoff-comment payload), records the REST writes, and
