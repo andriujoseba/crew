@@ -146,7 +146,25 @@ CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 # host, once per reader, and never inside a box that cannot see either.
 SILENT_AFTER_S="${CREW_SILENT_AFTER:-600}"
 
-die() { echo "crew: $*" >&2; exit 1; }
+# Two failures, two exit codes — because crew is called from scripts and from
+# `crew up` loops, and "the fleet is broken" and "you typo'd" used to return
+# the same 1. The line between them (#97):
+#
+#   2  the fault is in the INVOCATION — an unknown command, a missing,
+#      unknown or conflicting flag, or an argument naming something the
+#      CONFIGURATION does not define (an agent or role with no profile, a
+#      box with no roster row). Nothing was attempted.
+#   1  the fault is in the WORLD — the box CLI is absent, no roster file,
+#      the box already exists, incus said no, a guard refused. You asked
+#      correctly and the answer was no.
+#
+# The rule that decides the near-misses: the roster and the profiles are
+# CONFIGURATION, so naming something absent from them is 2; boxes and the
+# daemon are STATE, so their absence is 1. `crew hire nosuchbox` is 1 (the
+# box is not there yet), `crew new --agent nosuchvendor` is 2 (no such
+# profile is defined anywhere).
+die() { echo "crew: $*" >&2; exit 1; }         # 1 = it went wrong
+usage_error() { echo "crew: $*" >&2; echo "try 'crew help'." >&2; exit 2; }  # 2 = you asked wrong
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
 
 # EVERY `box exec` in this file takes stdin from /dev/null.
@@ -391,8 +409,8 @@ login_hint() {
 }
 
 validate_profiles() {  # agent role
-  [ -f "$(agent_conf "$1")" ] || die "unknown agent '$1' — see: crew profiles"
-  [ -f "$ROLES_DIR/$2.conf" ]  || die "unknown role '$2' — see: crew profiles"
+  [ -f "$(agent_conf "$1")" ] || usage_error "unknown agent '$1' — see: crew profiles"
+  [ -f "$ROLES_DIR/$2.conf" ]  || usage_error "unknown role '$2' — see: crew profiles"
 }
 
 # create_box NAME AGENT ROLE [FROM] — infrastructure only, no engine.
@@ -684,16 +702,16 @@ cmd_new() {
       --agent) agent="$2"; shift 2 ;;
       --name)  name="$2";  shift 2 ;;
       --from)  from="$2";  shift 2 ;;
-      *) die "unknown argument '$1' (usage: crew new <roster-name> | crew new --role <r> --agent <a> [--name <n>] [--from <box>/<snap>])" ;;
+      *) usage_error "unknown argument '$1' (usage: crew new <roster-name> | crew new --role <r> --agent <a> [--name <n>] [--from <box>/<snap>])" ;;
     esac
   done
   if [ -n "$name" ] && [ -z "$role$agent" ]; then
     local line
     line="$(roster_line "$name")"
-    [ -n "$line" ] || die "'$name' is not in $ROSTER (or pass --role/--agent for an ad-hoc box)"
+    [ -n "$line" ] || usage_error "'$name' is not in $ROSTER (or pass --role/--agent for an ad-hoc box)"
     read -r agent role from <<<"$line"
   fi
-  if [ -z "$role" ] || [ -z "$agent" ]; then die "usage: crew new <roster-name> | crew new --role <r> --agent <a>"; fi
+  if [ -z "$role" ] || [ -z "$agent" ]; then usage_error "usage: crew new <roster-name> | crew new --role <r> --agent <a>"; fi
   validate_profiles "$agent" "$role"
   if [ -z "$name" ]; then
     name="$agent-$role"
@@ -738,7 +756,7 @@ cmd_create_all() {
 cmd_hire() {
   need_box
   local name="${1:-}"; shift || true
-  case "$name" in ""|--*) die "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]" ;; esac
+  case "$name" in ""|--*) usage_error "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]" ;; esac
   local role="" agent="" ref="HEAD" force=0 allow=0 explicit_profile=0 line=""
   local roster_agent="" roster_role=""
   while [ $# -gt 0 ]; do
@@ -751,20 +769,20 @@ cmd_hire() {
       # and overloading it would let a routine re-bake wave the registry check
       # through as a side effect (#51).
       --allow-offroster) allow=1; shift ;;
-      *) die "unknown argument '$1'" ;;
+      *) usage_error "unknown argument '$1'" ;;
     esac
   done
   box_exists "$name" || die "no box named '$name' — crew new $name first"
   line="$(roster_line "$name")"
   if [ -n "$line" ] && [ "$explicit_profile" -eq 1 ]; then
     read -r roster_agent roster_role _ <<<"$line"
-    die "$name is declared as agent=$roster_agent role=$roster_role in $ROSTER; remove --agent/--role (the roster in force is authoritative)"
+    usage_error "$name is declared as agent=$roster_agent role=$roster_role in $ROSTER; remove --agent/--role (the roster in force is authoritative)"
   fi
   if [ -z "$role$agent" ]; then
-    [ -n "$line" ] || die "'$name' is not in $ROSTER — pass --role and --agent"
+    [ -n "$line" ] || usage_error "'$name' is not in $ROSTER — pass --role and --agent"
     read -r agent role _ <<<"$line"
   fi
-  if [ -z "$role" ] || [ -z "$agent" ]; then die "--role and --agent go together"; fi
+  if [ -z "$role" ] || [ -z "$agent" ]; then usage_error "--role and --agent go together"; fi
   validate_profiles "$agent" "$role"
   foreign_actor_check
   hire_box "$name" "$agent" "$role" "$ref" "$force" "$allow"
@@ -981,7 +999,7 @@ cmd_upgrade() {
       targets="$(comm -12 <(roster_names | sort) <(box_names | sort))"
       skipped="$(comm -23 <(box_names | sort) <(roster_names | sort))"
       ;;
-    "")    die "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]" ;;
+    "")    usage_error "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]" ;;
     *)     targets="$target" ;;
   esac
   local b armed flags line agent role identity_args registry_arg
@@ -1033,7 +1051,7 @@ cmd_upgrade() {
 cmd_gold() {
   need_box
   local name="${1:-}" force="${2:-}"
-  [ -n "$name" ] || die "usage: crew gold <box> [--force]"
+  [ -n "$name" ] || usage_error "usage: crew gold <box> [--force]"
   # Gold images are the bake cache and must carry ZERO credentials — cut
   # them pre-auth. A logged-in box is refused.
   if bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
@@ -1078,7 +1096,7 @@ cmd_floor() {
       -h|--help)
         sed -n '/^# crew floor —/,/^cmd_floor/s/^# \{0,1\}//p' "$0"
         return 0 ;;
-      *) die "crew floor: unknown option '$1'" ;;
+      *) usage_error "crew floor: unknown option '$1'" ;;
     esac
   done
 
@@ -1129,7 +1147,7 @@ cmd_floor() {
 }
 
 cmd_init() {
-  [ "$#" -le 1 ] || die "usage: crew init [config-dir]"
+  [ "$#" -le 1 ] || usage_error "usage: crew init [config-dir]"
   local target="${1:-}" file name _agent _role _from
   if [ -z "$target" ]; then
     if [ -n "${XDG_CONFIG_HOME:-}" ]; then target="$XDG_CONFIG_HOME/crew"
