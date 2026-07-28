@@ -317,8 +317,25 @@ box_agent() {
     | tr -d '"'\''\r\n' || true
 }
 
-# hired_at NAME — the crew@<sha> the box's engine was installed from, if any.
+# hired_at NAME — the raw first-line engine stamp, if any. Keep this raw for
+# status and provenance; comparisons go through stamp_version below.
 hired_at() { bxn "$1" 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r\n'; }
+
+# stamp_version STAMP — print the version from a current-format stamp.
+# SHA-only legacy stamps deliberately fail to parse: they still prove the box
+# is hired, but cannot compare equal to a version and therefore re-bake once.
+stamp_version() {
+  local stamp="${1:-}" version
+  case "$stamp" in
+    crew@*) version="${stamp#crew@}"; version="${version%% *}" ;;
+    *) return 1 ;;
+  esac
+  if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
+    printf '%s\n' "$version"
+  else
+    return 1
+  fi
+}
 
 # vendor_probe NAME AGENT — run the agent profile's bot_cli_probe inside the
 # box, shipping the profile over stdin (works on unhired boxes too).
@@ -497,18 +514,21 @@ hire_guard() {
 # already at REF. Returns non-zero if the box could not be hired.
 hire_box() {
   local name="$1" agent="$2" role="$3" ref="$4" force="$5" allow="${6:-0}"
-  local want have origin="https://github.com/$CREW_REPO" identity_args registry_arg
+  local want have have_version origin="https://github.com/$CREW_REPO" identity_args registry_arg
   identity_args="$(install_identity_args "$name" "$agent" "$role")"
   registry_arg="$(registry_install_arg)"
-  want="$(git -C "$CREW_ROOT" rev-parse --short "$ref" 2>/dev/null || echo "$ref")"
+  want="$(head -1 "$CREW_ROOT/VERSION" | tr -d '\r\n')"
   # The guard runs BEFORE the already-hired shortcut: a box that is already
   # armed against the wrong registry is precisely the state an operator needs
   # told about, and "skipping" would hide it.
   hire_guard "$name" "$allow"
   have="$(hired_at "$name")"
-  if [ "$force" -eq 0 ] && [ "$have" = "crew@$want" ]; then
-    echo "$name: already hired at $have — skipping"
-    return 0
+  have_version="$(stamp_version "$have" 2>/dev/null || true)"
+  if [[ "$want" == *-dev* ]]; then
+    echo "$name: crew@$want is a development tree — re-baking even when the installed version matches"
+  elif [ "$force" -eq 0 ] && [ "$have_version" = "$want" ]; then
+      echo "$name: already hired at $have — version $want matches, skipping"
+      return 0
   fi
   echo "hiring $name  (role=$role agent=$agent crew@$want)"
   # Verify where ~/crew's origin POINTS, rather than only that ~/crew exists.
@@ -826,7 +846,8 @@ cmd_status() {
 
 cmd_upgrade() {
   need_box
-  local targets="" skipped=""
+  local targets="" skipped="" want
+  want="$(head -1 "$CREW_ROOT/VERSION" | tr -d '\r\n')"
   case "${1:-}" in
     --all)
       # The ROSTER, not every box on the host. `crew up` already leaves
@@ -845,6 +866,9 @@ cmd_upgrade() {
   registry_arg="$(registry_install_arg)"
   for b in $targets; do
     echo "== upgrading $b"
+    if [[ "$want" == *-dev* ]]; then
+      echo "$b: crew@$want is a development tree — upgrade re-bakes unconditionally"
+    fi
     # Preserve the box's armed state instead of asserting one. An upgrade
     # that arms a box nobody armed is a behaviour change wearing the
     # clothes of a version bump.
@@ -894,11 +918,13 @@ cmd_gold() {
   if bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
     [ "$force" = "--force" ] || die "$name has live gh credentials — golds are cut PRE-login (--force to override)"
   fi
-  local ver
-  ver="$(hired_at "$name")"
-  ver="${ver:-crew@unknown}"
-  box snapshot "$name" "gold-${ver//[^A-Za-z0-9_.-]/-}"
-  echo "gold cut: $name @ $ver"
+  local stamp ver
+  stamp="$(hired_at "$name")"
+  stamp="${stamp:-crew@unknown}"
+  ver="$(stamp_version "$stamp" 2>/dev/null || echo unknown)"
+  ver="${ver//[^A-Za-z0-9_.-]/-}"
+  box snapshot "$name" "gold-crew-$ver"
+  echo "gold cut: $name @ $stamp"
 }
 
 # crew floor — serve the fleet-floor console from THIS host, on IP:PORT.

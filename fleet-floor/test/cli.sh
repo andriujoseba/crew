@@ -382,6 +382,88 @@ mkdir -p "$CL_TMP/crew-state"
 crew_cmd hire cli-hired
 t "crew hire: an on-roster box is hired without a flag" 0 "$CL_RC"
 
+# A release tree compares the version field, never the whole stamp. Use a
+# scratch root because this checkout correctly carries a -dev VERSION, whose
+# contract is to re-bake every time.
+CL_RELEASE_ROOT="$CL_TMP/release-root"
+mkdir -p "$CL_RELEASE_ROOT/cli"
+cp "$CL_ROOT/cli/crew" "$CL_RELEASE_ROOT/cli/crew"
+ln -s "$CL_ROOT/shared" "$CL_RELEASE_ROOT/shared"
+ln -s "$CL_ROOT/examples" "$CL_RELEASE_ROOT/examples"
+ln -s "$CL_ROOT/fleet-floor" "$CL_RELEASE_ROOT/fleet-floor"
+printf '0.2.0\n' > "$CL_RELEASE_ROOT/VERSION"
+crew_release() {
+  CL_RC=0
+  PATH="$CL_TMP/bin:$PATH" \
+  FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+  CREW_ROSTER="$CL_CREW_ROSTER" STUB_INSTALL_VERSION="${STUB_INSTALL_VERSION:-0.2.0}" \
+    timeout 60 "$CL_RELEASE_ROOT/cli/crew" "$@" \
+    </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+}
+
+printf 'crew@0.2.0 (aaa)\n' > "$CL_TMP/crew-state/cli-hired.version"
+crew_release hire cli-hired
+if [ "$CL_RC" -eq 0 ] && grep -q 'version 0.2.0 matches, skipping' "$CL_TMP/crew-out"; then
+  ok "crew hire: equal versions skip despite different provenance"
+else
+  fail "crew hire: equal versions skip despite different provenance" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+
+printf 'crew@deadbee\n' > "$CL_TMP/crew-state/cli-hired.version"
+crew_release status
+if grep -qE '^cli-hired .*crew@deadbee' "$CL_TMP/crew-out" &&
+   ! grep -qE '^cli-hired .*not hired' "$CL_TMP/crew-out"; then
+  ok "crew status: a legacy SHA stamp is hired at an unknown version"
+else
+  fail "crew status: a legacy SHA stamp is hired at an unknown version" \
+       "$(grep '^cli-hired' "$CL_TMP/crew-out")"
+fi
+crew_release hire cli-hired
+if [ "$CL_RC" -eq 0 ] && grep -q '^crew@0.2.0 (fixture)$' "$CL_TMP/crew-state/cli-hired.version"; then
+  ok "crew hire: a legacy stamp re-bakes to the release version"
+else
+  fail "crew hire: a legacy stamp re-bakes to the release version" \
+       "rc=$CL_RC stamp=$(cat "$CL_TMP/crew-state/cli-hired.version")"
+fi
+crew_release hire cli-hired
+if [ "$CL_RC" -eq 0 ] && grep -q 'version 0.2.0 matches, skipping' "$CL_TMP/crew-out"; then
+  ok "crew hire: a migrated legacy stamp re-bakes only once"
+else
+  fail "crew hire: a migrated legacy stamp re-bakes only once" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+
+printf '0.2.0-dev\n' > "$CL_RELEASE_ROOT/VERSION"
+printf 'crew@0.2.0-dev (aaa)\n' > "$CL_TMP/crew-state/cli-hired.version"
+STUB_INSTALL_VERSION=0.2.0-dev crew_release hire cli-hired
+if [ "$CL_RC" -eq 0 ] &&
+   grep -q 'development tree — re-baking even when the installed version matches' "$CL_TMP/crew-out"; then
+  ok "crew hire: a matching -dev version re-bakes loudly"
+else
+  fail "crew hire: a matching -dev version re-bakes loudly" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+crew_release upgrade cli-hired
+if grep -q 'development tree — upgrade re-bakes unconditionally' "$CL_TMP/crew-out"; then
+  ok "crew upgrade: a -dev tree explains its unconditional re-bake"
+else
+  fail "crew upgrade: a -dev tree explains its unconditional re-bake" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+
+printf '0.2.0\n' > "$CL_RELEASE_ROOT/VERSION"
+printf 'crew@0.2.0 (goldsha)\n' > "$CL_TMP/crew-state/cli-hired.version"
+: > "$CL_TMP/gold-calls"
+FLOOR_CALLS="$CL_TMP/gold-calls" crew_release gold cli-hired --force
+if grep -q 'snapshot cli-hired gold-crew-0.2.0' "$CL_TMP/gold-calls" &&
+   grep -q 'gold cut: cli-hired @ crew@0.2.0 (goldsha)' "$CL_TMP/crew-out"; then
+  ok "crew gold: label uses version and message keeps full provenance"
+else
+  fail "crew gold: label uses version and message keeps full provenance" \
+       "calls=$(cat "$CL_TMP/gold-calls") out=$(cat "$CL_TMP/crew-out")"
+fi
+
 # The production roster is authoritative. Explicit profile flags on one of its
 # members used to be accepted, echoed as fact, then silently discarded in
 # favour of the roster row by install_identity_args (#35 review).

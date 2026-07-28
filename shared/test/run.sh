@@ -94,7 +94,8 @@ printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
 chmod +x "$ISHIM/hostname"
 ln -s "$(command -v jq)" "$ISHIM/jq"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
-printf '#!/usr/bin/env bash\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
+# shellcheck disable=SC2016  # expanded when the fixture shim runs
+printf '#!/usr/bin/env bash\n[ "${FIXTURE_GITLESS:-0}" != 1 ] || exit 1\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
 chmod +x "$ISHIM/gh" "$ISHIM/git"
 
 install_fixture() {
@@ -108,6 +109,29 @@ case "$install_out" in *"REPLACE the crontab"*) r1=manual ;; *) r1=missing ;; es
 t install-no-cron-no-arm-instructions manual "$r1"
 case "$install_out" in *"command not found"*) r1=leaked ;; *) r1=clean ;; esac
 t install-no-cron-no-arm-clean clean "$r1"
+t install-version-with-provenance \
+  "crew@$(head -1 "$ROOT/VERSION") (fixture-sha)" "$(head -1 "$IDUTY/VERSION")"
+
+# The installed package shape has no .git. Run that actual shape, rather than
+# trusting the Git shim used by the rest of the installer fixtures.
+GITLESS_ROOT="$TMP/gitless-crew"
+GITLESS_HOME="$TMP/gitless-home"
+mkdir -p "$GITLESS_ROOT" "$GITLESS_HOME"
+cp -R "$SHARED" "$GITLESS_ROOT/shared"
+cp -R "$ROOT/examples" "$GITLESS_ROOT/examples"
+cp "$ROOT/VERSION" "$GITLESS_ROOT/VERSION"
+if FIXTURE_GITLESS=1 HOME="$GITLESS_HOME" DUTY_DIR="$GITLESS_HOME/duty" \
+  PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+  /bin/bash "$GITLESS_ROOT/shared/install.sh" --agent claude --role reviewer \
+  >"$TMP/gitless-install.out" 2>&1; then r1=0; else r1=$?; fi
+t install-gitless-rc 0 "$r1"
+t install-gitless-stamps-version \
+  "crew@$(head -1 "$ROOT/VERSION")" "$(head -1 "$GITLESS_HOME/duty/VERSION")"
+case "$(head -1 "$GITLESS_HOME/duty/VERSION")" in
+  *unknown*) r1=unknown ;;
+  *) r1=versioned ;;
+esac
+t install-gitless-never-unknown versioned "$r1"
 
 printf '15 3 * * * unrelated-job\n' >"$CRON_STATE"
 before_cron="$(cat "$CRON_STATE")"
