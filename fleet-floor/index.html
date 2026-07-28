@@ -844,7 +844,10 @@ function cmd(action,extra){
   setStatus(action+"…",false);
   return api("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
     .then(function(r){
-      var bad=(r.results||[]).filter(function(x){return !x.ok;});
+      /* Strict false, not falsy: a not-created roster box reports ok:null
+         (inventory drift, not a refusal, #77) and must not read as a box that
+         needs a look. Only ok===false is a box that was there and refused. */
+      var bad=(r.results||[]).filter(function(x){return x.ok===false;});
       /* Name the box that refused. On a fleet-wide action "start-all FAILED"
          alone tells the operator nothing about which box needs a look. */
       var why=bad.length?(bad[0].box+": "+bad[0].out+(bad.length>1?" (+"+(bad.length-1)+" more)":"")):(r.error||"?");

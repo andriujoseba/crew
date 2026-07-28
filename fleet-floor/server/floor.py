@@ -1132,7 +1132,12 @@ def do_command(fleet, body):
         for name in roster:
             st = states.get(name)
             if st is None:
-                tasks.append((done, ({"box": name, "ok": False, "out": "not created"},)))
+                # A roster line with no box yet is inventory drift, not a refusal:
+                # `fleet.roster` is the TARGET fleet and deliberately names boxes
+                # `crew up` has not created. `ok: None` keeps the box named in the
+                # per-box detail while excluding it from the pass/fail verdict, so
+                # the whole action does not read failed mid-migration (#77).
+                tasks.append((done, ({"box": name, "ok": None, "out": "not created"},)))
                 continue
             if (verb == "start") == (st == "stopped"):
                 tasks.append((one, (name, ["box", verb, name])))
@@ -1160,7 +1165,11 @@ def do_command(fleet, body):
     # An action with nothing to do is not a failure: `wake-silent` on a fleet
     # with no silent boxes had `results == []`, which read as ok=False and 500.
     # Only `message`-class actions, which must produce a result, stay strict.
-    ok = all(r["ok"] for r in results)
+    # An action that did everything it COULD is not a failure either: a row with
+    # `ok is None` (a not-yet-created box) is inventory drift, not a refusal, so
+    # it is excluded from the verdict — 500 is reserved for a box that was there
+    # and refused. All rows still travel in `results`, absent ones included.
+    ok = all(r["ok"] for r in results if r["ok"] is not None)
     # A control action changes exactly what the page is displaying, so refresh
     # rather than leaving the operator to guess whether it took. Coalesced, so
     # a burst of clicks cannot become a burst of fleet-wide probe storms.
