@@ -4,3 +4,10 @@ node_modules/
 node_modules
 package-lock.json
 shots/
+
+# py_compile and importlib leave these behind; the fixtures ship as source
+# only. Same rule as ../server/.gitignore — a stale __pycache__ here made a
+# clean tree report a FALSE failure while the regressions above were being
+# verified, which is a bad half-hour to hand the next person.
+__pycache__/
+*.pyc
