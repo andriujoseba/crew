@@ -1,10 +1,10 @@
 name: shared-ci
 on:
   pull_request:
-    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.github/workflows/shared-ci.yml']
   push:
     branches: [main]
-    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.github/workflows/shared-ci.yml']
 
 jobs:
   check:
@@ -14,14 +14,14 @@ jobs:
       - name: bash -n (syntax)
         run: |
           set -e
-          for f in install.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/install-lifecycle.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
+          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/install-lifecycle.sh shared/test/artifact.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
                    fleet-floor/test/run.sh fleet-floor/test/stub-box; do
             bash -n "$f"
           done
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x install.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/install-lifecycle.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+          shellcheck -x install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/install-lifecycle.sh shared/test/artifact.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
       - name: fixture tests
         run: shared/test/run.sh
       # The installer, driven OFFLINE against the tree under review (box's
@@ -31,6 +31,12 @@ jobs:
       # interrupted CREW_REINSTALL never leaves `current` resolving to nothing.
       - name: install lifecycle (offline — layout, root-resolution, interrupt-safe reinstall)
         run: shared/test/install-lifecycle.sh
+      # The self-contained scp-able artifact (crew#98), built and installed
+      # OFFLINE: checksum-verified before unpack, a truncated copy refuses
+      # without touching $DEST, artifact and CREW_INSTALL_SOURCE install
+      # identical trees, and the builder is generic (a non-crew tree builds too).
+      - name: installer artifact (offline — checksum-before-unpack, byte-identical, generic)
+        run: shared/test/artifact.sh
       # The collector is the only Python in the repo, and the only thing that
       # can power-cycle a box — it does not get to skip the syntax gate.
       - name: python syntax (collector)
