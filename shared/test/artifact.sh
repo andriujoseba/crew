@@ -2,8 +2,11 @@
 # shared/test/artifact.sh — crew#98's distribution channels, exercised OFFLINE
 # against the tree under test. The scp-able artifact (dist/make-installer.sh):
 # checksum-verified BEFORE unpack, a damaged copy refuses without touching
-# $DEST, artifact and CREW_INSTALL_SOURCE install byte-identical trees (bar
-# provenance), --version/--check identify a file without installing it, and the
+# $DEST, a successful install leaves no temp dir behind (the entrypoint runs as
+# a child, not `exec`, so the stub's EXIT trap fires), artifact and
+# CREW_INSTALL_SOURCE install byte-identical trees (bar the source-naming
+# INSTALLED_FROM stamp, pinned on both sides), --version/--check identify a file
+# without installing it, and the
 # builder is generic (a differently-named tree builds and installs, with no
 # 'crew' string in its stub). Then the gh-authenticated channel (dist/fetch.sh)
 # against a stub `gh`. No network, no real gh, no root.
@@ -61,6 +64,21 @@ else
   bad "artifact-installed-crew-runs"
 fi
 
+# 3b. the success path cleans its temp dir. `exec`-ing the entrypoint would drop
+#     the stub's `trap … EXIT` and orphan the unpacked tree under $tmp; a child
+#     call lets the trap fire. Point TMPDIR at an empty sandbox so both the
+#     stub's and install.sh's mktemp land there, and assert no dir survives a
+#     clean install (grok + codex, round 1).
+SB="$WORK/tmpbox"; mkdir -p "$SB"
+DLA="$WORK/homeLeakA"
+TMPDIR="$SB" HOME="$DLA" CREW_HOME="$DLA/share" CREW_BIN="$DLA/bin" bash "$ART" >/dev/null 2>&1
+leftA="$(find "$SB" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)"
+if [ -d "$DLA/share/versions/$V" ] && [ -z "$leftA" ]; then
+  ok "artifact-success-cleans-temp-dir"
+else
+  bad "artifact-success-cleans-temp-dir (installed=$([ -d "$DLA/share/versions/$V" ] && echo y || echo n) leftovers='$leftA')"
+fi
+
 # 4. byte-identical (bar provenance) to a CREW_INSTALL_SOURCE install of the
 #    same tree; provenance names the artifact, not a dead temp path.
 DB="$WORK/homeB"
@@ -70,10 +88,17 @@ if diff -r --exclude=INSTALLED_FROM "$DA/share/versions/$V" "$DB/share/versions/
 else
   bad "artifact-and-source-trees-identical"; diff -rq --exclude=INSTALLED_FROM "$DA/share/versions/$V" "$DB/share/versions/$V" | head
 fi
+# Pin BOTH sides of the one excluded file, so the exclusion characterizes the
+# difference rather than hiding it: the artifact names ITSELF (a dead temp path
+# would be useless provenance), the source install names its source path. This
+# is the #95-established INSTALLED_FROM contract — provenance is source-dependent
+# by construction, which is why the trees above compare bar this file.
 case "$(cat "$DA/share/versions/$V/INSTALLED_FROM" 2>/dev/null)" in
   "artifact:crew-$V.sh sha256:"*) ok "artifact-records-itself-as-provenance" ;;
   *) bad "artifact-records-itself-as-provenance (got '$(cat "$DA/share/versions/$V/INSTALLED_FROM" 2>/dev/null)')" ;;
 esac
+same "source-install-records-its-source-path" "local:$SRC" \
+  "$(cat "$DB/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
 
 # 5. re-running the artifact on the already-installed version is a no-op.
 before="$(readlink "$DA/share/current")"
@@ -177,7 +202,8 @@ esac
 GH
 chmod +x "$GHBIN/gh"
 DG="$WORK/homeG"
-if GH_SRC_PARENT="$GHP" GH_TOPDIR="crew-ghsha" PATH="$GHBIN:$PATH" \
+SBG="$WORK/tmpboxG"; mkdir -p "$SBG"
+if GH_SRC_PARENT="$GHP" GH_TOPDIR="crew-ghsha" PATH="$GHBIN:$PATH" TMPDIR="$SBG" \
      HOME="$DG" CREW_HOME="$DG/share" CREW_BIN="$DG/bin" \
      bash "$ROOT/dist/fetch.sh" --repo test/crew --ref latest -- >/dev/null 2>&1 \
    && [ -d "$DG/share/versions/$V" ]; then
@@ -187,6 +213,11 @@ else
 fi
 same "gh-channel-records-ref-provenance" "gh:test/crew tag:0.0.0-ghtag" \
   "$(cat "$DG/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+# fetch.sh downloaded the tarball into its own temp dir; `exec`-ing install.sh
+# would drop its `trap … EXIT` and orphan that tarball. Assert the sandbox is
+# empty after a clean fetch-install (round 1).
+leftG="$(find "$SBG" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)"
+if [ -z "$leftG" ]; then ok "gh-channel-success-cleans-temp-dir"; else bad "gh-channel-success-cleans-temp-dir (leftovers='$leftG')"; fi
 
 echo
 echo "artifact: passed $PASS, failed $FAIL"

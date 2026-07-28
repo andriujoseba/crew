@@ -91,6 +91,14 @@ stub="$(cat <<'STUB'
 # marker line. It verifies the payload's sha256 BEFORE unpacking, unpacks to a
 # temp dir, and hands that dir to the tree's own installer. No network, no gh,
 # no curl — only bash, tar, gzip and coreutils.
+#
+# Note on text-mode transfer: a channel that rewrites newlines (CRLF, a chat
+# paste) corrupts this file's OWN bytes, so bash fails parsing the stub before
+# the checksum below can refuse it — the error is a bash syntax complaint, not
+# the re-copy message. The protection #98 asks for still holds (it fails loudly,
+# before $DEST is touched, never half-extracts); base64 mode (--base64) survives
+# such a channel. Truncated/partial copies, the common damage, DO reach the
+# checksum and get the re-copy refusal.
 set -euo pipefail
 
 NAME='@@NAME@@'
@@ -171,7 +179,12 @@ export "${SRCVAR}=$tmp/tree"
 # otherwise name (it is deleted the moment we exit). The installer honours the
 # provenance env var only when set, so a plain source install is unaffected.
 export "${PROVVAR}=artifact:$(basename "$self") sha256:$EXPECT_SHA"
-exec bash "$tmp/tree/$ENTRYPOINT" "$@"
+# Run the installer as a CHILD, not `exec` — a successful `exec` replaces this
+# shell and its EXIT trap never fires, orphaning the unpacked tree under $tmp.
+# Hand back the installer's exit status so the trap can clean up on every path.
+rc=0
+bash "$tmp/tree/$ENTRYPOINT" "$@" || rc=$?
+exit "$rc"
 STUB
 )"
 stub="${stub//@@NAME@@/$name}"

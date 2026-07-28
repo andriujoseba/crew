@@ -53,5 +53,10 @@ gh api "repos/$REPO/tarball/$REF" > "$tarball" \
 # install.sh's tarball path takes the single top-level directory of the archive,
 # whatever gh named it (owner-repo-<sha>/). Name the provenance for the version
 # dir so an installed tree records the ref it came from.
+# Run install.sh as a CHILD, not `exec`: a successful `exec` replaces this shell
+# and its EXIT trap never fires, orphaning the downloaded tarball under $tmp.
+# Capture the installer's status and exit with it so the trap cleans up.
+rc=0
 CREW_INSTALL_SOURCE="$tarball" CREW_INSTALLED_FROM="gh:$REPO tag:$REF" \
-  exec bash "$INSTALL" "${install_args[@]}"
+  bash "$INSTALL" "${install_args[@]}" || rc=$?
+exit "$rc"
