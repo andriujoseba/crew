@@ -11,3 +11,5 @@ a stock Debian box); shellcheck is optional but used by CI.
   ask for or wait on credentials to start it.
 - `cli/crew` needs a box HOST — it does not run inside a box (except
   `crew profiles` and `--dry-run` paths).
+- Hire and upgrade ship `shared/` plus `VERSION` from that host. A box does
+  not clone crew or need repository access; `~/duty` is its only live engine.
