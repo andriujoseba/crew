@@ -521,7 +521,7 @@ t converged-empty-panel false \
 # --- addressing.jq: round-close predicate, the MIRROR of converged.jq (#130) --
 # Same payload builder (mk_pr), same panel, same head-scoping — the point is
 # that the two predicates agree on every input and differ only in the
-# conclusion. Reuses H / REVS_OK / REVS_STALE from the converged block above.
+# conclusion. Reuses H / REVS_OK from the converged block above.
 AJQ="$SHARED/lib/jq/addressing.jq"
 OLDH="cccccccccccccccccccccccccccccccccccccccc"
 # A closed round without full approval: rev-a requests changes AT the head,
@@ -555,31 +555,25 @@ t addressing-empty-panel-false false \
 # Mergeability is irrelevant to addressing: a conflicting PR can still owe a fix.
 t addressing-conflicting-still-addresses true "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_ADDR" | addr)"
 
-# --- request-panel.jq: whom the engine (re-)requests on this head (#130) ------
-# Output is newline-joined logins; tests compare the space-joined form.
-RPJQ="$SHARED/lib/jq/request-panel.jq"
-rp() { jq -r --argjson panel "$PANEL" -f "$RPJQ" | tr '\n' ' ' | sed 's/ $//'; }
-# Fresh ready PR, nobody reviewed, nobody requested → request the whole panel.
-t requestpanel-fresh-requests-all "rev-a rev-b" "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | rp)"
-# A push moved the head: both prior reviews are now stale (at OLD head) → both
-# re-requested, approvers included. This is "re-request by head, not by verdict".
-REVS_STALE_BOTH='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$OLDH'"}},{"author":{"login":"rev-b"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$OLDH'"}}]'
-t requestpanel-moved-head-rerequests-all "rev-a rev-b" "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_STALE_BOTH" | rp)"
-# A change-request AT the current head is a round owed to the BUILDER, not a
-# re-request: nobody is returned until a fix push moves the head.
-t requestpanel-cr-at-head-requests-none "" "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_ADDR" | rp)"
-# All approved at head → converged, nothing to request.
-t requestpanel-converged-requests-none "" "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_OK" | rp)"
-# Stale reviews but already requested → idempotent no-op (re-tick writes nothing).
-t requestpanel-already-requested-none "" "$(mk_pr "$H" MERGEABLE '[]' '["rev-a","rev-b"]' "$REVS_STALE_BOTH" | rp)"
-# One stale-and-unrequested, one already-requested → only the unrequested one.
-t requestpanel-partial-requests-remainder "rev-b" "$(mk_pr "$H" MERGEABLE '[]' '["rev-a"]' "$REVS_STALE_BOTH" | rp)"
-# Never triage: the request derives only from $panel, so an identity off the
-# panel (dan-claude-bot) cannot be returned even if it left a review or a
-# request on the PR. Test plan: "the engine's request never targets triage."
-REVS_WITH_TRIAGE='[{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$OLDH'"}}]'
-t requestpanel-never-targets-triage "rev-a rev-b" \
-  "$(mk_pr "$H" MERGEABLE '[]' '["dan-claude-bot"]' "$REVS_WITH_TRIAGE" | rp)"
+# --- #130 must-fail guards (the issue's test plan, addressing-scoped) ---------
+# The engine write is optimistic, the reconciler authoritative: nothing in the
+# addressing path may gate a verdict or write a state it does not own.
+# state:addressing must never be written before the verdict lands, and the write
+# is best-effort — the marker is the `|| warn` trailing the add-label.
+if grep -q '_mark_addressing' "$SHARED/lib/duty-review.sh"; then r1=wired; else r1=MISSING; fi
+t addressing-wired-after-verdict wired "$r1"
+# shellcheck disable=SC2016  # the grep literal contains $LABEL_ADDRESSING on purpose
+if grep -q 'could not set \$LABEL_ADDRESSING' "$SHARED/lib/duty-review.sh"; then r1=best-effort; else r1=GATING; fi
+t addressing-write-is-best-effort best-effort "$r1"
+# The addressing writer never touches state:building (out of scope) or
+# state:needs-human (the handoff's, not the reviewer's).
+if grep -RIn 'state:building' "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then r1=WRITES-IT; else r1=absent; fi
+t addressing-never-writes-state-building absent "$r1"
+# The predicate keys approvals/reviews on the head, same as converged.jq — a
+# stale verdict at an old head is not a closed round.
+# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
+t addressing-keys-on-head head-keyed "$r1"
 
 # --- round-log.jq: mirror each whole round into the PR body (#91) ------------
 # Input is the GraphQL pullRequest payload; output is the NEW body when a round
@@ -1597,13 +1591,8 @@ t ci-red-wakes-before-build before "$r1"
 t ci-red-prompt-exists yes "$([ -f "$SHARED/prompts/ci-red.txt" ] && echo yes || echo NO)"
 t ci-red-budget-defined yes \
   "$(grep -q '^TIMEOUT_CIRED=' "$SHARED/conf/roles/builder.conf" && echo yes || echo NO)"
-# The doctrine half of #45, now also the request half of #130: the green-check
-# precondition is enforced by the ENGINE — _request_panel requests only on a
-# green or absent head — and the prompt keeps green as a ruled term for the one
-# judgement left to the session (the argued exception on a red outside the PR).
-# shellcheck disable=SC2016  # the shell literal contains $check_state
-if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'GREEN IS A RULED TERM' "$SHARED/prompts/fragment-round-rules.txt"; then
+# The doctrine half of #45 — the engine excludes the round, the rules say why.
+if grep -q 'REVIEW REQUEST REQUIRES A GREEN CHECK' "$SHARED/prompts/fragment-round-rules.txt"; then
   r1=stated
 else
   r1=SILENT
@@ -1630,76 +1619,30 @@ t round-rules-state-exception stated "$r1"
 # moved the head, and re-requesting only the two change-requesters would have
 # left it unconvergeable.
 #
-# The invariant is unchanged; #130 MOVED the actor. The re-request is now the
-# engine's, and "by head, not by verdict" lives in request-panel.jq, which
-# returns every panelist not covering the current head (approvers included after
-# a push) — so the head-keying that used to have to survive in the prompt prose
-# now survives as code. Both predicates must key on the head.
-# shellcheck disable=SC2016  # the jq literals contain the $pr.headRefOid text
+# rebase.txt already had the principle right — it is the one prompt where a
+# push is guaranteed. Asserting the invariant rather than the prose: the
+# predicate keys on the head, so the prompts that tell a builder whom to
+# re-request must say head.
+# shellcheck disable=SC2016  # the jq literal converged.jq contains
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/converged.jq"; then
   r1=head-keyed
 else
   r1=CHANGED
 fi
 t converged-counts-approvals-at-head head-keyed "$r1"
-# shellcheck disable=SC2016
-if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/request-panel.jq"; then
-  r1=head-keyed
-else
-  r1=CHANGED
-fi
-t requestpanel-keys-on-head head-keyed "$r1"
-# The prompts must now tell the builder the ENGINE requests — a builder still
-# told to re-request would race the engine's write. Both build.txt and
-# fragment-round-rules.txt must say the builder does not request in the normal
-# case (#130).
 for p in build.txt fragment-round-rules.txt; do
-  if grep -qi 'engine' "$SHARED/prompts/$p" && grep -qiE 'do not request|not request the panel|engine (does|requests)' "$SHARED/prompts/$p"; then
-    r1=stated
-  else
-    r1=SILENT
-  fi
-  t "rerequest-moved-to-engine-$p" stated "$r1"
+  if grep -qi 'by head, not by verdict' "$SHARED/prompts/$p"; then r1=stated; else r1=SILENT; fi
+  t "rerequest-by-head-$p" stated "$r1"
 done
-# But the green-head EXCEPTION stays a session judgement — the engine will not
-# request on a red head, so the argued-exception path must remain in the prompt.
-if grep -qi 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=kept; else r1=LOST; fi
-t green-head-exception-stays-session kept "$r1"
-# AUTO_APPROVE_REREQUEST still backs the auto-approve of a stale verdict at an
-# unchanged head (ceremony#94) — untouched by #130.
+# The no-push case must survive: re-requesting a fresh approver at an unchanged
+# head is what AUTO_APPROVE_REREQUEST exists to absorb, and the rule must not
+# tell builders to spam a panel that is still valid.
+for p in build.txt fragment-round-rules.txt; do
+  if grep -qi 'head did not move' "$SHARED/prompts/$p"; then r1=carved; else r1=MISSING; fi
+  t "rerequest-unchanged-head-carveout-$p" carved "$r1"
+done
 if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.defaults.conf"; then r1=present; else r1=GONE; fi
 t auto-approve-rerequest-still-backs-the-carveout present "$r1"
-
-# --- #130 must-fail guards: the invariants the issue's test plan names --------
-# state:building is DELIBERATELY out of scope — it is derived from draft status
-# and event-carried in seconds, so the engine must never write it. A grep guard,
-# because the failure is a line that should not exist.
-if grep -RIn 'state:building' "$SHARED/lib/duty-builder.sh" "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then
-  r1=WRITES-IT
-else
-  r1=absent
-fi
-t engine-never-writes-state-building absent "$r1"
-# The engine must never request a panel on a draft: the request rides the
-# my_open list, which is built with select(.isDraft | not).
-# shellcheck disable=SC2016
-if grep -q 'select(.isDraft | not)' "$SHARED/lib/duty-builder.sh"; then r1=draft-excluded; else r1=EXPOSED; fi
-t engine-request-excludes-drafts draft-excluded "$r1"
-# No label write may gate a verdict, a push, or the handoff. The two new label
-# writes both trail `|| warn` (best-effort, non-fatal) rather than `&&`-gating a
-# following act — the same crash-safety rule _handoff_finalize states.
-# shellcheck disable=SC2016  # the grep literals contain $LABEL_* on purpose
-if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'could not set \$LABEL_ADDRESSING' "$SHARED/lib/duty-review.sh"; then
-  r1=best-effort
-else
-  r1=GATING
-fi
-t engine-label-writes-are-best-effort best-effort "$r1"
-# state:addressing is set only AFTER a verdict lands: the write lives past the
-# submit-verdict call / the auto-approve success branch, never before it.
-if grep -q '_mark_addressing' "$SHARED/lib/duty-review.sh"; then r1=wired; else r1=MISSING; fi
-t addressing-wired-after-verdict wired "$r1"
 
 # --- #114: the auto-approve must read the verdict's STATE, not just its head -
 # The re-request rule (ceremony#94) existed to stop a STALE verdict blocking a
@@ -1852,22 +1795,18 @@ printf 'checks: {{HEAD_CHECKS}}' >"$TMP/prompts/hc.txt"
 t head-checks-slot-substitutes "checks: o/q#2 (pending)" \
   "$(render_prompt hc.txt HEAD_CHECKS="o/q#2 (pending)")"
 
-# Pending-is-not-green is now the ENGINE's gate (head-checks.jq is_pending; the
-# request holds on anything but green/none), and the prompt still says a queued
-# or running check is not green so the session's argued-exception path agrees
-# with the engine that holds it.
-if grep -q 'def is_pending' "$SHARED/lib/jq/head-checks.jq" \
-  && grep -qi 'queued or running check is NOT green' "$SHARED/prompts/fragment-round-rules.txt"; then
+# The request-side rule is where codex's scenario actually pays: a round
+# answered with argument and NO push, re-requested under a still-running
+# check that then fails. Nothing re-runs, because the head never moved.
+if grep -qi 'NOT-YET-FINISHED IS NOT GREEN' "$SHARED/prompts/fragment-round-rules.txt"; then
   r1=ruled
 else
   r1=SILENT
 fi
 t round-rules-rule-pending ruled "$r1"
-# ...with the one carve-out that keeps a CI-less repo from waiting forever for a
-# check that is never coming: `none` is admitted alongside `green`, now by the
-# engine's request gate rather than by a builder instruction (#130).
-# shellcheck disable=SC2016  # the shell literal contains $check_state
-if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh"; then
+# ...with the one carve-out that keeps a CI-less repo from waiting forever for
+# a check that is never coming — the same `none` case as the gate above.
+if grep -qi 'NO checks configured' "$SHARED/prompts/fragment-round-rules.txt"; then
   r1=carved
 else
   r1=MISSING
