@@ -309,9 +309,17 @@ fi
 # failed session instead of the gate's loud degraded-mode alert.
 rm -f "$DUTY_DIR/.boot-id"
 
-# Version stamp: FLEET.md reconciles the deployed fleet against crew@SHA.
+# The release version is identity; Git is optional provenance. Installed
+# source trees deliberately have no .git, so a SHA can never be the stable
+# value hire idempotency depends on.
+CREW_VERSION="$(head -1 "$HERE/../VERSION" | tr -d '\r\n')"
+CREW_SHA="$(git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null || true)"
 {
-  echo "crew@$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  if [ -n "$CREW_SHA" ]; then
+    echo "crew@$CREW_VERSION ($CREW_SHA)"
+  else
+    echo "crew@$CREW_VERSION"
+  fi
   echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') (agent=$BOT_AGENT roles=$BOT_ROLE_LIST)"
 } >"$DUTY_DIR/VERSION"
 
