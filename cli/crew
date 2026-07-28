@@ -557,9 +557,14 @@ uninstall_confirm() {
 }
 
 live_floor_pids() {
-  local floor="$1/fleet-floor/server/floor.py"
-  ps -eo pid=,args= 2>/dev/null |
-    awk -v needle="$floor" 'index($0, needle) {print $1}' || true
+  local floor="$1/fleet-floor/server/floor.py" cmdline argv
+  for cmdline in /proc/[0-9]*/cmdline; do
+    [ -r "$cmdline" ] || continue
+    argv="$(tr '\0' ' ' <"$cmdline" 2>/dev/null || true)"
+    case "$argv" in
+      *"$floor"*) basename "$(dirname "$cmdline")" ;;
+    esac
+  done
 }
 
 cmd_uninstall() {
