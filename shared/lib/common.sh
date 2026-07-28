@@ -29,11 +29,13 @@ load_fleet_conf() {
   source "$CONF_DIR/fleet.defaults.conf"
   local wire_reviewing="$MARK_REVIEWING" wire_pickup="$MARK_PICKUP"
   local wire_resume="$MARK_RESUME" wire_addressing="$MARK_ADDRESSING"
+  local wire_handoff="$MARK_HANDOFF"
   [ ! -f "$CONF_DIR/fleet.conf" ] || source "$CONF_DIR/fleet.conf"
   MARK_REVIEWING="$wire_reviewing"
   MARK_PICKUP="$wire_pickup"
   MARK_RESUME="$wire_resume"
   MARK_ADDRESSING="$wire_addressing"
+  MARK_HANDOFF="$wire_handoff"
 }
 
 # load_conf — source the box's configuration: fleet facts, then the
