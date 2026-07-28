@@ -1788,6 +1788,19 @@ t cli-excess-arguments-are-2 "" "$overrun"
 t cli-help-one-arg-still-ok  0 "$(crewrc help hire)"
 t cli-help-no-arg-still-ok   0 "$(crewrc help)"
 
+# resolve_engine's ref failures split the same way (codex, round 3). Three are
+# invocation faults — a shape that can never be valid, a ref resolving to
+# nothing, a ref in the wrong form for the mode — and exit 2. Shared by
+# `hire --ref`, `hire-all --ref` and `upgrade --ref`, so assert it on each.
+badref=""
+for spec in "upgrade --all --ref -bad" "hire somebox --ref -bad" "hire-all --ref -bad" \
+            "upgrade --all --ref nosuchref-xyz"; do
+  # shellcheck disable=SC2086  # splitting the spec into argv is the point
+  rc="$(crewrc $spec)"
+  [ "$rc" = 2 ] || badref="$badref [$spec->$rc]"
+done
+t cli-malformed-ref-is-2 "" "$badref"
+
 # A typo points somewhere rather than only failing.
 case "$(crewcli hier 2>&1)" in *"did you mean 'hire'"*) r1=suggested ;; *) r1=SILENT ;; esac
 t cli-typo-suggests suggested "$r1"

@@ -502,13 +502,20 @@ bxput() { # BOX SOURCE DESTINATION
 # resolve_engine REF — select one host-side engine source and set the
 # ENGINE_* globals consumed by stage_engine. A checkout resolves Git refs;
 # an installed tree resolves its current engine or versions/<version>.
+# The six failures below split along the same line as the rest of the file
+# (codex, round 3 of #106): three are INVOCATION faults and exit 2 — a ref
+# whose SHAPE can never be valid, a ref that resolves to nothing, and a ref in
+# the wrong form for the mode. Nothing is attempted in any of them. The other
+# three exit 1 because the world is wrong rather than the asking: the ref is
+# real but its tree has no VERSION, the version directory is missing, or the
+# directory's VERSION contradicts its own name.
 resolve_engine() {
   local ref="${1:-HEAD}" version_root
-  case "$ref" in -*) die "engine ref must not begin with '-': '$ref'" ;; esac
+  case "$ref" in -*) usage_error "engine ref must not begin with '-': '$ref'" ;; esac
   ENGINE_GIT_REF=""
   if git -C "$CREW_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git -C "$CREW_ROOT" rev-parse --verify "$ref^{commit}" >/dev/null 2>&1 \
-      || die "working-tree mode cannot resolve git ref '$ref'"
+      || usage_error "working-tree mode cannot resolve git ref '$ref'"
     ENGINE_VERSION="$(git -C "$CREW_ROOT" show "$ref:VERSION" 2>/dev/null | head -1 | tr -d '\r\n')"
     [ -n "$ENGINE_VERSION" ] || die "working-tree git ref '$ref' has no VERSION"
     ENGINE_MODE="working-tree git ref $ref"
@@ -520,7 +527,7 @@ resolve_engine() {
       ENGINE_MODE="installed current engine"
     else
       if [[ ! "$ref" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
-        die "installed-tree mode expects --ref <installed-version>, not '$ref'"
+        usage_error "installed-tree mode expects --ref <installed-version>, not '$ref'"
       fi
       version_root="$CREW_ROOT/versions/$ref"
       ENGINE_MODE="installed version $ref"
@@ -956,7 +963,13 @@ hire_box() {
   local want have have_version identity_args registry_arg
   identity_args="$(install_identity_args "$name" "$agent" "$role")"
   registry_arg="$(registry_install_arg)"
-  resolve_engine "$ref"
+  # The engine is resolved ONCE by the calling verb, at parse time, not here
+  # per box. Resolving inside this loop meant a malformed --ref was validated
+  # LAZILY: `crew hire-all --ref -bad` against an empty roster never reached
+  # this line and exited 0, and `crew hire nosuchbox --ref -bad` died on the
+  # missing box first. A malformed invocation must be refused before any state
+  # is consulted (found by this PR's own regression assertion, round 3). It
+  # also stops re-running `git rev-parse` once per box.
   want="$ENGINE_VERSION"
   # The guard runs BEFORE the already-hired shortcut: a box that is already
   # armed against the wrong registry is precisely the state an operator needs
@@ -1069,6 +1082,7 @@ cmd_hire() {
       *) usage_error "unknown argument '$1'" ;;
     esac
   done
+  resolve_engine "$ref"
   box_exists "$name" || die "no box named '$name' — crew new $name first"
   line="$(roster_line "$name")"
   if [ -n "$line" ] && [ "$explicit_profile" -eq 1 ]; then
@@ -1099,6 +1113,7 @@ cmd_hire_all() {
     esac
     [ "$#" -eq 0 ] || usage_error "usage: $(synopsis_of hire-all)"
   fi
+  resolve_engine "$ref"
   local name agent role _from hired=0 failed=0
   foreign_actor_check
   while read -r name agent role _from; do
@@ -1137,6 +1152,10 @@ cmd_up() {
   fi
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
 
+  # `up` takes no --ref, but hire_box now consumes the globals the caller
+  # resolves — so it resolves HEAD once here, for the same reason and with the
+  # same "once, not per box" property.
+  resolve_engine HEAD
   local name agent role from state failed=0
   foreign_actor_check
   while read -r name agent role from; do
