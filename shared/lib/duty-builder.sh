@@ -102,6 +102,7 @@ _handoff_comment() {
         + (if ($approvers | length) > 0
            then " — " + ($approvers | map("@" + .) | join(", ")) else "" end)
         + ".\n\nThe round-by-round record is in the PR body **Round log**, above."
+        + "\n\n_Rendered by the engine from the review state — no prose composed at handoff._"
     ' 2>/dev/null
 }
 
@@ -436,6 +437,14 @@ _builder_repo() {
     warn "$R: handoff detection failed; skipping"
   else
     for N in $my_open; do
+      # Round-log mirroring runs EVERY tick over my open PRs — not only at
+      # handoff — so the body's Round log tracks each round as it is answered
+      # (#91 / ceremony#196: "at re-request time"). crew's re-request is done by
+      # the builder session, not the engine, so the engine has no synchronous
+      # re-request hook; its per-tick builder sweep IS that hook — the tick after
+      # a round is answered appends it. Marker-keyed and idempotent, so a re-tick
+      # writes nothing. Best-effort: never blocks the handoff detection below.
+      _mirror_rounds "$R" "$N"
       converged="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable

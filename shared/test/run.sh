@@ -246,6 +246,12 @@ t install-registry-migration-vetoes-unknown fixture/unknown-local "$(cat "$RDUTY
 runtime_fleet="$(DUTY_DIR="$RDUTY" bash -c \
   '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s|%s" "$FLEET_HUMAN" "$MARK_PICKUP"')"
 t install-loads-defaults-then-operator 'fixture-human|📌 picked up' "$runtime_fleet"
+# MARK_HANDOFF is a protocol mark like the others: an operator fleet.conf must
+# not be able to override it (post-once.sh's dedup keys on the first line, so a
+# drifted mark would silently double-post the handoff). Same wire-pin (#91).
+printf 'MARK_HANDOFF="not-the-protocol"\n' >>"$RDUTY/conf/fleet.conf"
+t handoff-mark-wire-pinned '🤝 handed off at head' \
+  "$(DUTY_DIR="$RDUTY" bash -c '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s" "$MARK_HANDOFF"')"
 printf 'claude-builder claude triage\n' >"$RDUTY/fleet.roster"
 printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
 roster_install --box claude-builder --converge-registries >/dev/null 2>&1
