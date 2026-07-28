@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# shared/test/artifact.sh — the self-contained scp-able installer (crew#98),
-# exercised OFFLINE against the tree under test. Builds an artifact with
-# dist/make-installer.sh and asserts the properties the artifact exists for:
+# shared/test/artifact.sh — crew#98's distribution channels, exercised OFFLINE
+# against the tree under test. The scp-able artifact (dist/make-installer.sh):
 # checksum-verified BEFORE unpack, a damaged copy refuses without touching
-# $DEST, the artifact and CREW_INSTALL_SOURCE install byte-identical trees (bar
+# $DEST, artifact and CREW_INSTALL_SOURCE install byte-identical trees (bar
 # provenance), --version/--check identify a file without installing it, and the
 # builder is generic (a differently-named tree builds and installs, with no
-# 'crew' string in its stub). No network, no gh, no root.
+# 'crew' string in its stub). Then the gh-authenticated channel (dist/fetch.sh)
+# against a stub `gh`. No network, no real gh, no root.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -159,6 +159,34 @@ if sed '/^__SELF_INSTALLER_PAYLOAD__$/q' "$WART" | grep -qi crew; then
 else
   ok "widget-stub-has-no-crew-string"
 fi
+
+# 10. THE gh-AUTHENTICATED CHANNEL (dist/fetch.sh): against a stub `gh` that
+#     resolves a tag and streams a source tarball (top dir owner-repo-<sha>/),
+#     fetch.sh installs through install.sh and records the ref as provenance. No
+#     anonymous URL is ever touched — the stub only answers gh api calls.
+GHP="$WORK/ghsrc"; mkdir -p "$GHP/crew-ghsha"
+cp -a "$SRC/." "$GHP/crew-ghsha/"
+GHBIN="$WORK/ghbin"; mkdir -p "$GHBIN"
+cat > "$GHBIN/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  *releases/latest*) echo "0.0.0-ghtag" ;;
+  *tarball/*)        tar -C "$GH_SRC_PARENT" -czf - "$GH_TOPDIR" ;;
+  *) echo "gh-stub: unexpected call: $*" >&2; exit 2 ;;
+esac
+GH
+chmod +x "$GHBIN/gh"
+DG="$WORK/homeG"
+if GH_SRC_PARENT="$GHP" GH_TOPDIR="crew-ghsha" PATH="$GHBIN:$PATH" \
+     HOME="$DG" CREW_HOME="$DG/share" CREW_BIN="$DG/bin" \
+     bash "$ROOT/dist/fetch.sh" --repo test/crew --ref latest -- >/dev/null 2>&1 \
+   && [ -d "$DG/share/versions/$V" ]; then
+  ok "gh-channel-installs-through-install-sh"
+else
+  bad "gh-channel-installs-through-install-sh"
+fi
+same "gh-channel-records-ref-provenance" "gh:test/crew tag:0.0.0-ghtag" \
+  "$(cat "$DG/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
 
 echo
 echo "artifact: passed $PASS, failed $FAIL"
