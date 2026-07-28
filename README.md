@@ -52,8 +52,9 @@ Two ways to run `crew`, both on the same upstream engine:
   It installs **per user** — a root install is refused, because crew acts on
   the operator's own boxes and box's restricted tier makes that a real
   boundary. Re-running the same version changes nothing; a new version becomes
-  the default and reports any hired boxes still on an older engine
-  (`crew upgrade --all` converges them). `CREW_HOME` / `CREW_BIN` relocate the
+  the default and names the hired boxes to converge onto it with
+  `crew upgrade --all` (it names them; it does not inspect each box's engine
+  version). `CREW_HOME` / `CREW_BIN` relocate the
   layout; `CREW_YES=1` drives it non-interactively. crew is private, so there
   is no public `curl | bash`: distribution is a self-contained, scp-able
   installer per version ([#98](https://github.com/heavy-duty/crew/issues/98)),
