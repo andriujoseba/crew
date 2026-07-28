@@ -167,6 +167,296 @@ die() { echo "crew: $*" >&2; exit 1; }         # 1 = it went wrong
 usage_error() { echo "crew: $*" >&2; echo "try 'crew help'." >&2; exit 2; }  # 2 = you asked wrong
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
 
+# The tree's own version, read in ONE place — `crew --version` says it out
+# loud, and hire/upgrade stamp it onto a box (#94), so a box can name the
+# release that put its engine there. crew_version is deliberately STRICT: a
+# missing VERSION must fail the stamp loudly rather than write "unknown" onto
+# a box. Only the display wrapper tolerates its absence.
+crew_version() { head -1 "$CREW_ROOT/VERSION" | tr -d '\r\n'; }
+version() { echo "crew $(crew_version 2>/dev/null || echo unknown) ($CREW_ROOT)"; }
+
+# ---------------------------------------------------------------------------
+# The command table.
+#
+#   verb ^ synopsis ^ one-line summary ^ function
+#
+# It is the single source of truth for what exists, what it looks like, what
+# the help says, and what runs. The help cannot drift from the code because it
+# is rendered from the rows that dispatch. Before this, the command list lived
+# THREE times — the header comment printed as help, a hand-written dispatch
+# `case`, and each verb's own usage string — and they had already diverged:
+# the header advertised `crew hire <box> [--force]` while the verb had grown
+# --role, --agent and --ref.
+#
+# Fields are ^-separated because a synopsis contains '|' and '[]' freely.
+#
+# crew's table is four fields, not box's seven: every crew verb is a shell
+# function with its own argument parsing, so there is no precondition engine
+# or thin-wrapper action to encode. Copying box's shape here would have been
+# five empty columns.
+CMDS=(
+  "new^<roster-name> | --role <r> --agent <a> [--name <n>] [--from <box>[/<snap>]]^Create one box — infrastructure only; it does nothing until hired^cmd_new"
+  "create-all^^Create every roster box that does not exist yet^cmd_create_all"
+  "hire^<box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]^Put a box on duty: engine installed, cron armed. Idempotent^cmd_hire"
+  "hire-all^[--ref <git-ref>]^Hire every created roster box; skips those already at this version^cmd_hire_all"
+  "up^[--dry-run]^Converge the fleet: create missing, start stopped, hire, report^cmd_up"
+  "down^^Stop every roster box^cmd_down"
+  "status^[<box>]^Engine version and duty evidence, per box^cmd_status"
+  "upgrade^<box> | --all^Re-install the engine in place at this crew's version^cmd_upgrade"
+  "gold^<box> [--force]^Snapshot a box as a gold image — cut PRE-login, credential-free^cmd_gold"
+  "floor^[--port <n>] [--bind <a>] [--local] [--user <u>] [--pass <p>] [--roster <path>] [--interval <s>]^Serve the fleet-floor console on IP:PORT^cmd_floor"
+  "init^[config-dir]^Scaffold a new operator fleet definition^cmd_init"
+  "profiles^^List the role and agent profiles this crew resolves^cmd_profiles"
+  "help^[<command>]^This help, or 'crew help <command>' for one command^cmd_help"
+)
+
+cmd_row() { local r; for r in "${CMDS[@]}"; do case "$r" in "$1^"*) echo "$r"; return 0 ;; esac; done; return 1; }
+verbs()   { local r; for r in "${CMDS[@]}"; do echo "${r%%^*}"; done; }
+is_command() { cmd_row "$1" >/dev/null 2>&1; }
+# locals matter: field() is called from inside dispatch, which holds its own
+# row — a global read would clobber the row being dispatched.
+field() {
+  local r f_syn f_sum f_fn
+  r="$(cmd_row "$1")" || return 1
+  IFS='^' read -r _ f_syn f_sum f_fn <<<"$r"
+  case "$2" in syn) echo "$f_syn" ;; sum) echo "$f_sum" ;; fn) echo "$f_fn" ;; esac
+}
+synopsis_of() { local s; s="$(field "$1" syn)"; echo "crew $1${s:+ $s}"; }
+
+# `adopt` was renamed to `hire`. It stays dispatchable so an old script does
+# not break, and it stays OUT of the table so the help does not advertise a
+# retired name. Normalizing here rather than in the dispatch `case` means
+# `crew help adopt` lands on hire's help too, instead of "unknown command".
+normalize_verb() {
+  case "$1" in
+    adopt) echo "crew: 'adopt' is now 'hire'" >&2; printf 'hire\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# Nearest verb by edit distance — a typo should point somewhere, not just fail.
+suggest() {
+  verbs | awk -v w="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" '
+    function dist(a, b,   la, lb, i, j, c, prev, cur) {
+      la = length(a); lb = length(b)
+      for (j = 0; j <= lb; j++) prev[j] = j
+      for (i = 1; i <= la; i++) {
+        cur[0] = i
+        for (j = 1; j <= lb; j++) {
+          c = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+          cur[j] = prev[j] + 1
+          if (cur[j - 1] + 1 < cur[j]) cur[j] = cur[j - 1] + 1
+          if (prev[j - 1] + c < cur[j]) cur[j] = prev[j - 1] + c
+        }
+        for (j = 0; j <= lb; j++) prev[j] = cur[j]
+      }
+      return prev[lb]
+    }
+    BEGIN { best = 99 }
+    { d = dist(w, $0); if (d < best) { best = d; hit = $0 } }
+    END { if (best <= 2) print hit }'
+}
+
+unknown_command() {
+  local hint; hint="$(suggest "$1")"
+  if [ -n "$hint" ]; then
+    echo "crew: unknown command: $1 — did you mean '$hint'?" >&2
+  else
+    echo "crew: unknown command: $1" >&2
+  fi
+  echo "try 'crew help' for the command list." >&2
+  exit 2
+}
+
+usage() {
+  cat <<'EOF'
+crew — spawn and tend a fleet of role-focused coding agents, on a box host.
+
+USAGE
+  crew <command> [<args>] [options]
+
+COMMANDS
+EOF
+  local r v sum
+  for r in "${CMDS[@]}"; do
+    IFS='^' read -r v _ sum _ <<<"$r"
+    printf '  %-11s %s\n' "$v" "$sum"
+  done
+  cat <<'EOF'
+
+THE LIFECYCLE — two verbs around one human step in the middle
+
+  create  crew new / crew create-all — infrastructure only. The box is minted
+          from its agent's box template (rig converges the vendor CLI) and
+          sized by the role profile. It has no engine and no cron: it does
+          nothing at all until it is hired.
+  login   BY HAND, once per box, ever. 'crew auth' was removed until the
+          fleet is proven — vendor logins are flaky and half-automating a
+          step you still babysit buys a second thing to debug:
+              box shell <box>      # then, inside the box:
+              gh auth login        # a NEW identity — one box per identity
+              <the agent profile's login hint — see 'crew profiles'>
+          'crew status' and 'crew up' report who still owes this.
+  hire    crew hire / crew hire-all — the box joins the crew: engine
+          installed at this tree's version, cron armed, on duty at the next
+          five-minute boundary. An idempotent upsert.
+
+  A fleet from scratch: install box and crew, 'crew create-all', log each box
+  in by hand, 'crew hire-all'. Steady state afterwards is just 'crew up'.
+
+ENVIRONMENT
+  CREW_CONFIG_DIR   Select one fleet definition directory. An invalid value
+                    is an error, never a silent fall-through to the examples.
+  CREW_ROSTER       Roster-only override, for drills and fixtures. It does
+                    NOT select a fleet context.
+  CREW_FLOOR_*      PORT, BIND, USER, PASS, INTERVAL, ROSTER — the console's
+                    settings, each overridden by the matching flag.
+  CREW_SILENT_AFTER Seconds before a box with no tick reads as silent (600).
+
+EXIT STATUS
+  0  ok
+  1  it went wrong (no box CLI, no roster, incus said no, a guard refused)
+  2  you asked wrong (unknown command, bad or missing flag, unknown profile)
+
+EXAMPLES
+  # the whole fleet, converged — the verb you run most
+  crew up
+  crew status
+
+  # one new member, end to end
+  crew new claude-builder
+  box shell claude-builder          # gh auth login, then the agent login
+  crew hire claude-builder
+
+  # a god-view of the fleet, reachable from the LAN
+  crew floor --port 8420
+
+  # your own fleet definition, outside the checkout
+  crew init
+  $EDITOR ~/.config/crew/fleet.roster
+
+  Docs: https://github.com/heavy-duty/crew
+EOF
+}
+
+# The synopsis and the summary come from the table; only prose lives here, and
+# only where a verb has something to say beyond its summary.
+help_cmd() {
+  echo "usage: $(synopsis_of "$1")"
+  echo
+  echo "$(field "$1" sum)."
+  case "$1" in
+    new) cat <<'EOF'
+
+A roster name takes everything from the roster row. --role and --agent make
+an ad-hoc box instead, named <agent>-<role> unless --name says otherwise.
+--from clones an existing box or one of its snapshots — that is how a gold
+image becomes a new member without a second vendor install.
+
+The box is created and nothing else. Log it in by hand, then hire it.
+EOF
+      ;;
+    hire) cat <<'EOF'
+
+Idempotent: a box already carrying this crew's version is skipped, so
+hire is safe to re-run and is what 'crew up' calls. --force re-bakes anyway;
+a development tree (a -dev version) always re-bakes, because two dev trees
+at the same version are not the same code.
+
+--ref installs a different crew ref than this tree's.
+
+The guard: hiring an OFF-ROSTER box against the production registry is
+refused, because that arms a second production agent racing the fleet for
+the same work. Narrow its registry first, add it to the roster, or pass
+--allow-offroster if arming production is genuinely what you mean.
+
+'adopt' was this verb's old name and still works.
+EOF
+      ;;
+    up) cat <<'EOF'
+
+The steady-state verb: it creates what is missing, starts what is stopped,
+hires what is unhired, and reports who still owes a login. Nothing is ever
+deleted — a box on the host but not in the roster is reported and left
+alone. --dry-run says what it would do and touches nothing.
+EOF
+      ;;
+    upgrade) cat <<'EOF'
+
+--all means the ROSTER, not every box on the host: a disarmed box carrying a
+real identity and a production registry must not be armed by routine
+maintenance. Naming a box explicitly still reaches it — that is a deliberate
+act on a known target, which --all is not.
+
+A box's armed state is preserved rather than asserted: an upgrade that arms
+a box nobody armed is a behaviour change wearing a version bump's clothes.
+EOF
+      ;;
+    gold) cat <<'EOF'
+
+Gold images are the bake cache and must carry ZERO credentials, so they are
+cut BEFORE the box is logged in. A box with live gh credentials is refused
+unless you pass --force, and if you do, treat the result like a credential.
+EOF
+      ;;
+    floor) cat <<'EOF'
+
+The console reads every box over 'box exec' from THIS host and fires operator
+actions the same way. Nothing is installed inside a box and no box has to
+reach out — the boxes have no inbound path, but the host that runs them has
+always had a control channel into them.
+
+It binds 0.0.0.0 by default, because being reachable at IP:PORT is the job.
+That makes HTTP Basic auth non-optional: a page that can power-cycle boxes
+and start model sessions is not one to leave open on a LAN. Without --pass a
+password is generated and printed once, at startup. --local binds loopback
+instead, and over plain HTTP on a LAN the password crosses in the clear.
+EOF
+      ;;
+    init) cat <<'EOF'
+
+Copies the shipped examples into a fleet definition you own — roster, fleet
+config, the two registries, and doctrine paths — and never overwrites an
+existing path. Edit them outside the checkout; crew resolves them by
+CREW_CONFIG_DIR, then $XDG_CONFIG_HOME/crew, then the working directory,
+then the shipped examples.
+
+The login list it prints is a static reading of the roster, not a live
+auth check.
+EOF
+      ;;
+    status) cat <<'EOF'
+
+With no box: one row per roster member — state, the engine version it was
+hired at, its gh and vendor credential health, and its last duty line. With
+a box: that box's engine version and the tail of its duty log.
+
+A box whose duty log has not moved in two tick boundaries reads as stale
+rather than flowing. An idle tick is not silent — the engine logs every run
+— so silence means no tick RAN, which is a cron problem.
+EOF
+      ;;
+    profiles) cat <<'EOF'
+
+Roles change the engine's duty lifecycle; agent profiles are configuration.
+An operator agents/ directory beside the fleet definition overlays the
+shipped set, and a same-named profile wins — a profile listed here is
+hireable, and one marked [operator] is the operator's copy, not the
+shipped one.
+EOF
+      ;;
+  esac
+}
+
+show_help() {   # "" → general help
+  case "${1:-}" in
+    ""|help) usage ;;
+    *) is_command "$1" || unknown_command "$1"; help_cmd "$1" ;;
+  esac
+}
+
+cmd_help() { show_help "$(normalize_verb "${1:-}")"; }
+
 # EVERY `box exec` in this file takes stdin from /dev/null.
 #
 # `box exec` forwards stdin the way ssh does, so inside a
@@ -977,12 +1267,12 @@ cmd_upgrade() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --all)
-        [ -z "$target" ] || die "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]"
+        [ -z "$target" ] || usage_error "usage: $(synopsis_of upgrade)"
         target="--all"; shift ;;
-      --ref) ref="${2:-}"; [ -n "$ref" ] || die "--ref requires a value"; shift 2 ;;
-      --*) die "unknown argument '$1' (usage: crew upgrade <box> | --all [--ref <version-or-git-ref>])" ;;
+      --ref) need_value "$@"; ref="$2"; shift 2 ;;
+      --*) usage_error "unknown argument '$1' (usage: $(synopsis_of upgrade))" ;;
       *)
-        [ -z "$target" ] || die "usage: crew upgrade <box> | --all [--ref <version-or-git-ref>]"
+        [ -z "$target" ] || usage_error "usage: $(synopsis_of upgrade)"
         target="$1"; shift ;;
     esac
   done
