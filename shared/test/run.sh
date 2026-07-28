@@ -1383,6 +1383,105 @@ done
 if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.defaults.conf"; then r1=present; else r1=GONE; fi
 t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 
+# --- #114: the auto-approve must read the verdict's STATE, not just its head -
+# The re-request rule (ceremony#94) existed to stop a STALE verdict blocking a
+# tree that has not changed. It never consulted the verdict's state, so a
+# re-request over a standing CHANGES_REQUESTED at an unchanged head was answered
+# with a boilerplate approval — 3 of its 4 recorded fires rubber-stamped a live
+# block. rereq_decision is that policy as a pure function; pin every transition.
+# A live block (CHANGES_REQUESTED / DISMISSED) queues a real review; only a
+# standing APPROVED still auto-approves. Definition-only at the top level, so
+# sourcing costs nothing and runs nothing.
+# shellcheck disable=SC1091
+source "$SHARED/lib/duty-review.sh"
+RR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+RR_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+RR_T1="2026-07-28T10:00:00Z"; RR_T2="2026-07-28T11:00:00Z"
+t rereq-approved-rerequest-auto-approves auto-approve "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 1)"
+t rereq-changes-requested-queues         queue        "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T1" "$RR_T2" 1)"
+t rereq-dismissed-queues                 queue        "$(rereq_decision "$RR_H" "$RR_H" DISMISSED "$RR_T1" "$RR_T2" 1)"
+t rereq-moved-head-queues                queue        "$(rereq_decision "$RR_OLD" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 1)"
+t rereq-covered-no-newer-request-skips   skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T2" "$RR_T1" 1)"
+t rereq-covered-no-request-at-all-skips  skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" - 1)"
+t rereq-auto-off-never-approves          skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 0)"
+
+# --- #114: submit-verdict admits the queued round's verdict, still refuses a
+# bare re-post. The compounding half of the bug: once duty-review routes a
+# post-CHANGES_REQUESTED re-request to a real review session, that session's
+# considered verdict is at the SAME head my old verdict already covers, so the
+# (me, PR, head) coverage gate refused it — a WRONG approval became a SILENTLY
+# dropped verdict. The gate is now keyed (me, PR, head, round). A stateful gh
+# shim exercises the real gate end-to-end: GET reviews cats a JSON array, POST
+# appends to it so mine_at_head's post-count rises, graphql returns the round's
+# "<mine_at> <req_at>", the head is fixed. This block is ALSO the regression
+# guard the issue names as "must fail": revert submit-verdict's re-key and
+# Scenario 1 refuses the verdict (count stays 1) and goes red.
+SV="$SHARED/bin/submit-verdict.sh"
+SVSHIM="$TMP/sv-shim"; mkdir -p "$SVSHIM"
+cat >"$SVSHIM/gh" <<'SHIM'
+#!/usr/bin/env bash
+set -eu
+[ "$1" = api ] || exit 3
+sub="$2"
+case "$sub" in
+  user)    printf '%s\n' "$SVSHIM_ME";    exit 0 ;;
+  graphql) printf '%s\n' "$SVSHIM_ROUND"; exit 0 ;;
+esac
+is_post=0; cid=""; event=""
+for a in "$@"; do
+  [ "$a" = POST ] && is_post=1
+  case "$a" in commit_id=*) cid="${a#commit_id=}" ;; event=*) event="${a#event=}" ;; esac
+done
+case "$sub" in
+  */reviews)
+    if [ "$is_post" = 1 ]; then
+      case "$event" in APPROVE) st=APPROVED ;; REQUEST_CHANGES) st=CHANGES_REQUESTED ;; *) st="$event" ;; esac
+      tmp="$(mktemp)"
+      jq --arg me "$SVSHIM_ME" --arg st "$st" --arg cid "$cid" \
+        '. + [{user:{login:$me},state:$st,commit_id:$cid}]' "$SVSHIM_REVIEWS" >"$tmp"
+      mv "$tmp" "$SVSHIM_REVIEWS"
+      printf '{}\n'; exit 0
+    fi
+    cat "$SVSHIM_REVIEWS"; exit 0 ;;
+  repos/*/pulls/*) printf '%s\n' "$SVSHIM_HEAD"; exit 0 ;;
+esac
+exit 3
+SHIM
+chmod +x "$SVSHIM/gh"
+SV_H="cccccccccccccccccccccccccccccccccccccccc"
+SV_BODY="$TMP/sv-body.txt"; printf 'considered verdict\n' >"$SV_BODY"
+sv_reviews() { printf '%s' "$1" >"$TMP/sv-reviews.json"; }
+sv_count()   { jq 'length' "$TMP/sv-reviews.json"; }
+sv_run() {  # <round-ts "mine req"> <verdict> [--supersede-own]
+  local round="$1" verdict="$2"; shift 2
+  SVSHIM_ME=kimi-bot SVSHIM_HEAD="$SV_H" SVSHIM_ROUND="$round" \
+  SVSHIM_REVIEWS="$TMP/sv-reviews.json" PATH="$SVSHIM:$PATH" DUTY_DIR="$TMP" \
+    bash "$SV" o/r 1 "$SV_H" "$verdict" "$SV_BODY" "$@" >/dev/null 2>&1
+}
+SV_CR="[{\"user\":{\"login\":\"kimi-bot\"},\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"$SV_H\"}]"
+SV_AP="[{\"user\":{\"login\":\"kimi-bot\"},\"state\":\"APPROVED\",\"commit_id\":\"$SV_H\"}]"
+
+# Scenario 1 (AC3): a standing CR at head + a re-request NEWER than it → the
+# queued round's verdict is ADMITTED and lands (count 1 → 2), exit 0.
+sv_reviews "$SV_CR"
+if sv_run "2026-07-28T10:00:00Z 2026-07-28T11:00:00Z" request-changes; then r1=0; else r1=$?; fi
+t submit-newround-admitted-rc 0 "$r1"
+t submit-newround-verdict-landed 2 "$(sv_count)"
+
+# Scenario 2 (AC4): a standing CR at head + NO newer re-request (my review is
+# newer than the last request) → refused as already-present, no post (count 1).
+sv_reviews "$SV_CR"
+if sv_run "2026-07-28T11:00:00Z 2026-07-28T10:00:00Z" request-changes; then r1=0; else r1=$?; fi
+t submit-bare-repost-rc 0 "$r1"
+t submit-bare-repost-no-verdict 1 "$(sv_count)"
+
+# Scenario 3: --supersede-own (the auto-approve path) never reaches the new
+# gate — it still supersedes and lands regardless of round state (count 1 → 2).
+sv_reviews "$SV_AP"
+if sv_run "2026-07-28T11:00:00Z 2026-07-28T10:00:00Z" approve --supersede-own; then r1=0; else r1=$?; fi
+t submit-supersede-still-lands-rc 0 "$r1"
+t submit-supersede-still-lands 2 "$(sv_count)"
+
 # --- the gate is a whitelist: green or none (danmt's ruling, #64) ------------
 # Codex asked for `$4 == "green"`. The ruling took the pending half of that and
 # refused the `none` half, because the two are not the same fact: pending is
