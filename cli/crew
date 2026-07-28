@@ -386,6 +386,71 @@ box_registry() {
     | tr -d '\r' | sort
 }
 
+# fleet_static_identities — GitHub logins declared by the selected fleet.
+# The roster names boxes and vendor profiles, not GitHub accounts, so its live
+# identities are added separately below. Keep the source in a subshell: an
+# operator fleet.conf is trusted configuration, but it must not overwrite this
+# host CLI's state while we read three values from it.
+fleet_static_identities() (
+  FLEET_BENCH="" FLEET_TRIAGE="" FLEET_HUMAN=""
+  # shellcheck disable=SC1090  # selected operator/shipped config, resolved above
+  source "$FLEET_CONF"
+  printf '%s\n' "$FLEET_BENCH" "$FLEET_TRIAGE" "$FLEET_HUMAN" | tr ' ' '\n'
+)
+
+# fleet_identities — configured participants plus authenticated roster boxes.
+# A newly-created or logged-out box contributes nothing; the static bench and
+# triage declarations still make detection useful before the whole fleet is up.
+fleet_identities() {
+  local name
+  fleet_static_identities
+  while read -r name; do
+    if box_exists "$name"; then
+      bxn "$name" 'gh api user --jq .login 2>/dev/null' 2>/dev/null | tr -d '\r' || true
+    fi
+  done < <(roster_names)
+}
+
+# foreign_actor_check — notice a likely second fleet on one of our boards.
+# GitHub's repository event feed is shared board state, not a connection to
+# another fleet. This deliberately warns after the fact and returns success:
+# only operators decide which fleet keeps a repo, and this path never writes a
+# registry (crew#70, option 2).
+foreign_actor_check() {
+  local allowed repo events finding action actor
+  allowed="$(fleet_identities | sed '/^$/d' | sort -u)"
+
+  while read -r repo; do
+    if ! events="$(gh api -X GET "repos/$repo/events?per_page=100" 2>/dev/null)"; then
+      echo "crew: NOTE one-repo-one-fleet: could not inspect recent board activity for $repo; overlap detection skipped" >&2
+      continue
+    fi
+    finding="$(printf '%s' "$events" | jq -r '
+      .[] |
+      if .type == "IssuesEvent" and .payload.action == "assigned" then
+        ["claim", (.payload.assignee.login // .actor.login)]
+      elif .type == "IssuesEvent" and .payload.action == "opened" then
+        ["mint", .actor.login]
+      elif .type == "PullRequestReviewEvent"
+           and ((.payload.review.state // "") | ascii_downcase)
+               as $state
+           | ($state == "approved" or $state == "changes_requested") then
+        ["verdict", .actor.login]
+      else empty end |
+      select(.[1] != null) | @tsv
+    ' 2>/dev/null | while IFS=$'\t' read -r action actor; do
+      if ! grep -Fxq "$actor" <<<"$allowed"; then
+        printf '%s\t%s\n' "$action" "$actor"
+        break
+      fi
+    done)"
+    [ -n "$finding" ] || continue
+    IFS=$'\t' read -r action actor <<<"$finding"
+    echo "crew: WARN one-repo-one-fleet: foreign $action by @$actor in registered repo $repo indicates another fleet may also govern it." >&2
+    echo "crew: WARN registries LEFT UNCHANGED — the operators must decide which fleet keeps $repo." >&2
+  done < <(production_registry)
+}
+
 # hire_guard NAME ALLOW_OFFROSTER — refuse to arm an OFF-ROSTER box against the
 # production registry. Always prints the registry it is about to arm against.
 #
@@ -572,6 +637,7 @@ cmd_hire() {
   fi
   if [ -z "$role" ] || [ -z "$agent" ]; then die "--role and --agent go together"; fi
   validate_profiles "$agent" "$role"
+  foreign_actor_check
   hire_box "$name" "$agent" "$role" "$ref" "$force" "$allow"
 }
 
@@ -580,6 +646,7 @@ cmd_hire_all() {
   local ref="HEAD"
   [ "${1:-}" = "--ref" ] && ref="$2"
   local name agent role _from hired=0 failed=0
+  foreign_actor_check
   while read -r name agent role _from; do
     validate_profiles "$agent" "$role"
     if ! box_exists "$name"; then
@@ -608,6 +675,7 @@ cmd_up() {
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
 
   local name agent role from state failed=0
+  foreign_actor_check
   while read -r name agent role from; do
     validate_profiles "$agent" "$role"
     if ! box_exists "$name"; then

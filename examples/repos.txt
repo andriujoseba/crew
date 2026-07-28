@@ -13,6 +13,17 @@
 #              cross-repo by construction; the ACTION is bounded by this
 #              list.
 #
+# ONE REPO, ONE FLEET. No repository in this registry may appear in another
+# fleet's registry. Disjoint registries are the cross-fleet safety boundary:
+# the claim-race tie-break assumes every claimant runs a compatible protocol,
+# which independently upgraded fleets cannot promise. `crew hire` / `crew up`
+# warn when recent board activity names a foreign actor, but never rewrite
+# either registry. If warned, the operators decide which fleet keeps the repo,
+# then change their operator fleet definitions explicitly. This detection
+# notices overlap now; after crew#72 gives fleets names, a repo-side marker file
+# naming the owner will prevent it by failing closed. That later stage is gated
+# on #72 alone, not on `.github/labels.conf` or crew#84.
+#
 # Work found OUTSIDE this list is LOGGED, never acted on — a review request,
 # an authored PR, or an attention demand in an unlisted repo produces a WARN
 # naming it, and nothing else. The repair is to add the repo — an operator

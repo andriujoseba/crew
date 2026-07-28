@@ -4,7 +4,9 @@
 > one afternoon. This is a **specification for every box that claims issues**, not
 > an implementation: each box owner implements it in their own `duty.sh`. It lives
 > in shared space because a tie-break rule only works if every box computes the
-> same answer.
+> same answer. That premise is fleet-local: independently upgraded fleets may
+> implement different rules. Cross-fleet safety comes from disjoint `repos.txt`
+> registries — **one repo, one fleet** — not from this protocol.
 
 ## The problem, with evidence
 
@@ -101,6 +103,16 @@ Note `sort_by(.created_at, .assignee.login)` — the secondary key is what makes
 same-second tie resolve identically on every box.
 
 ## What this deliberately does not do
+
+**It does not coordinate fleets.** The deterministic tie-break assumes every
+claimant belongs to one fleet running a compatible protocol. Two independently
+upgraded fleets can compute different winners from the same events, so a repo
+must never appear in both registries. Crew's board-side foreign-actor check
+warns about a possible overlap and leaves the resolution — which fleet keeps
+the repo — to the operators; it does not edit a registry or make this protocol
+federated. This notice-only check is the available first stage. Once crew#72
+introduces fleet identity, a repo-side marker naming the owning fleet will
+provide the preventing, fail-closed stage; that marker is gated on #72 alone.
 
 **It does not move assignment to triage.** That was considered and rejected on
 2026-07-24. Triage assigning would need a capacity model the doctrine explicitly

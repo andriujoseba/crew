@@ -52,6 +52,27 @@ from `prompts/`, under a `timeout`, with its output in its own file under
 in sessions — with one operator-ruled exception (the re-request auto-approve),
 which goes through the same one-shot gate as every verdict.
 
+## One repo, one fleet
+
+Each repository belongs to exactly one fleet: the `repos.txt` registries of
+independently operated fleets must be disjoint. This is the boundary that lets
+fleets use different crew pins and upgrade on different schedules without a
+federation or cross-fleet lock.
+
+The claim-race tie-break works only when every claimant runs a compatible
+version of the protocol. If two fleets govern the same repository, their
+builders can choose different winners, their reviewers can race verdicts, and
+their triage identities can both mint work. `crew hire` and `crew up` therefore
+inspect recent board activity for an actor outside the selected fleet and warn
+about a possible overlap. The warning never edits either registry: deciding
+which fleet keeps the repository is an operator action.
+
+That detection is the first half of a decided two-stage plan. It **notices**
+overlap today without a fleet identity or federation. Once crew#72 gives fleets
+names, a repo-side marker file will name the owning fleet and crew will fail
+closed on a mismatch; that second half **prevents** overlap. The marker is gated
+on #72 alone, not on `.github/labels.conf` or crew#84.
+
 ## Duty order (FLEET.md)
 
 attention → triage signals → review queue → resume → ci-red → build →

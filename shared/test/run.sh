@@ -1497,6 +1497,55 @@ fi
 t doctrine-templates-have-no-hardcoded-paths slotted "$r1"
 PROMPTS_DIR="$saved_prompts_dir"
 
+# --- crew host: one repo belongs to one fleet (#70) ----------------------
+# The check consumes GitHub's shared board state, never another fleet's
+# machine. Exercise it through `up --dry-run`: no box or registry mutation is
+# needed to notice a foreign claim, and the same checkpoint runs for hire.
+OFROOT="$TMP/overlap-fleet"
+OFSHIM="$TMP/overlap-bin"
+mkdir -p "$OFROOT" "$OFSHIM"
+printf 'fixture-box claude builder\n' >"$OFROOT/fleet.roster"
+printf 'fixture/overlap\n' >"$OFROOT/repos.txt"
+printf 'FLEET_BENCH="local-reviewer"\nFLEET_TRIAGE="local-triage"\nFLEET_HUMAN="local-operator"\n' \
+  >"$OFROOT/fleet.conf"
+cat >"$OFSHIM/box" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf '[]\n' ;;
+  *) exit 2 ;;
+esac
+EOF
+cat >"$OFSHIM/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_CALLS"
+case "${FOREIGN_ACTOR:-}" in
+  "") printf '[{"type":"IssuesEvent","actor":{"login":"local-triage"},"payload":{"action":"opened"}}]\n' ;;
+  *)  printf '[{"type":"IssuesEvent","actor":{"login":"%s"},"payload":{"action":"assigned","assignee":{"login":"%s"}}}]\n' \
+        "$FOREIGN_ACTOR" "$FOREIGN_ACTOR" ;;
+esac
+EOF
+chmod +x "$OFSHIM/box" "$OFSHIM/gh"
+before_registry="$(cat "$OFROOT/repos.txt")"
+GH_CALLS="$TMP/overlap-gh-calls"
+overlap_out="$(env CREW_CONFIG_DIR="$OFROOT" FOREIGN_ACTOR=other-builder GH_CALLS="$GH_CALLS" \
+  PATH="$OFSHIM:$PATH" bash "$ROOT/cli/crew" up --dry-run 2>&1)"
+case "$overlap_out" in
+  *"WARN one-repo-one-fleet: foreign claim by @other-builder in registered repo fixture/overlap"*) r1=named ;;
+  *) r1=SILENT ;;
+esac
+t fleet-overlap-names-repo-and-foreign-actor named "$r1"
+case "$overlap_out" in *"registries LEFT UNCHANGED"*"operators must decide"*) r1=operator ;; *) r1=actioned ;; esac
+t fleet-overlap-resolution-is-operator operator "$r1"
+t fleet-overlap-does-not-edit-registry "$before_registry" "$(cat "$OFROOT/repos.txt")"
+
+disjoint_out="$(env CREW_CONFIG_DIR="$OFROOT" GH_CALLS="$GH_CALLS" PATH="$OFSHIM:$PATH" \
+  bash "$ROOT/cli/crew" up --dry-run 2>&1)"
+case "$disjoint_out" in *"WARN one-repo-one-fleet"*) r1=NOISY ;; *) r1=silent ;; esac
+t fleet-disjoint-is-silent silent "$r1"
+t fleet-disjoint-does-not-edit-registry "$before_registry" "$(cat "$OFROOT/repos.txt")"
+if grep -q 'repos/fixture/outside/events' "$GH_CALLS"; then r1=QUERIED; else r1=silent; fi
+t fleet-out-of-scope-activity-is-not-queried silent "$r1"
+
 # --- install.sh: the operator agent-profile transport contract (#75) --------
 # The ordering is the whole difficulty (codex Blocking 4 on #73): install.sh
 # refuses an unknown agent BEFORE it creates conf/agents, so a profile that
