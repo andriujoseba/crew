@@ -1651,6 +1651,25 @@ profile_install --agent vendorz --role nosuchrole >/dev/null 2>&1 || true
 [ -d "$PDUTY/.crew-seed-agents" ] && r1=lingers || r1=consumed
 t operator-profile-seed-consumed-on-failure consumed "$r1"
 
+# --- valid_version: ONE gate, in install.sh and cli/crew, must not drift.
+# The installer builds versions/<v> paths from a version, and cli/crew builds
+# them for `crew use`/`uninstall` (heavy-duty/crew#96); a divergence is how a
+# crafted version slips past one gate and into an rm/ln behind the other. box's
+# test/cli.sh diffs its pair the same way. Assert the two copies are
+# byte-identical, then drive the gate against the path-escaping shapes it exists
+# to refuse.
+vv_extract() { awk '/^valid_version\(\) \{/{p=1} p{print} p&&/^\}/{exit}' "$1"; }
+t valid_version-parity "$(vv_extract "$ROOT/install.sh")" "$(vv_extract "$ROOT/cli/crew")"
+eval "$(vv_extract "$ROOT/cli/crew")"
+for bad in "" "." ".hidden" "-rf" "../evil" "a/b" "a b" "a;b"; do
+  if valid_version "$bad"; then got=accept; else got=reject; fi
+  t "valid_version-refuses[$bad]" reject "$got"
+done
+for ok in "0.1.0" "0.1.0-dev" "0.1.0-rc1" "1.2.3+meta"; do
+  if valid_version "$ok"; then got=accept; else got=reject; fi
+  t "valid_version-accepts[$ok]" accept "$got"
+done
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
