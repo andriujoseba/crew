@@ -29,6 +29,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$BOX_NAME" ] || { usage; exit 1; }
+case "$BOX_NAME" in
+  crew-drill-*) ;;
+  *)
+    echo "refusing non-drill box '$BOX_NAME' — operator-config rehearsal targets crew-drill-* boxes only" >&2
+    exit 1 ;;
+esac
 case "$ROLE" in
   triage|builder|reviewer) ;;
   *) echo "unknown role '$ROLE' (triage, builder or reviewer)" >&2; exit 1 ;;
@@ -52,7 +58,7 @@ REPOS_WAS=""
 PROVENANCE_WAS=""
 
 cleanup() {
-  local rc=$? restore_rc=0
+  local rc=$? restore_rc=0 final_rc
   if [ -n "$REPOS_WAS" ]; then
     if bx "
       set -e
@@ -74,8 +80,13 @@ cleanup() {
     fi
   fi
   rm -rf -- "$TMP"
-  [ "$restore_rc" -eq 0 ] || return 1
-  return "$rc"
+  final_rc="$rc"
+  if [ "$restore_rc" -ne 0 ] && [ "$final_rc" -eq 0 ]; then final_rc=1; fi
+  # `return` from an EXIT-trap function cannot change the shell's status.
+  # Exit explicitly so a green case body plus a failed registry restore is a
+  # failed drill, never an "ok config" summary over changed containment.
+  trap - EXIT
+  exit "$final_rc"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -102,17 +113,23 @@ else
   exit 1
 fi
 
-REPOS_WAS="$(bx "if [ -f ~/duty/repos.txt ]; then cp ~/duty/repos.txt ~/$BACKUP_TAG.repos; echo present; else echo absent; fi" | tr -d '\r\n')" \
+REPOS_RAW="$(bx "if [ -f ~/duty/repos.txt ]; then cp ~/duty/repos.txt ~/$BACKUP_TAG.repos; echo present; else echo absent; fi" | tr -d '\r\n')" \
   || { echo "cannot back up $BOX_NAME repos.txt — refusing before mutation" >&2; exit 1; }
-PROVENANCE_WAS="$(bx "if [ -f ~/duty/.repos.txt.crew-provenance ]; then cp ~/duty/.repos.txt.crew-provenance ~/$BACKUP_TAG.provenance; echo present; else echo absent; fi" | tr -d '\r\n')" \
+PROVENANCE_RAW="$(bx "if [ -f ~/duty/.repos.txt.crew-provenance ]; then cp ~/duty/.repos.txt.crew-provenance ~/$BACKUP_TAG.provenance; echo present; else echo absent; fi" | tr -d '\r\n')" \
   || { echo "cannot back up $BOX_NAME registry provenance — refusing before mutation" >&2; exit 1; }
-case "$REPOS_WAS:$PROVENANCE_WAS" in
+case "$REPOS_RAW:$PROVENANCE_RAW" in
   present:present|present:absent|absent:present|absent:absent) ;;
   *) echo "registry backup returned an unknown state — refusing before mutation" >&2; exit 1 ;;
 esac
+# Arm cleanup only after BOTH receipts are complete and validated. Before this
+# assignment, every refusal path leaves the box untouched; an empty or noisy
+# receipt can never be interpreted as "the file was absent, delete it".
+REPOS_WAS="$REPOS_RAW"
+PROVENANCE_WAS="$PROVENANCE_RAW"
 
 upgrade_operator() {
-  "$CREW" upgrade "$BOX_NAME" >"$TMP/upgrade.out" 2>&1
+  if ! "$CREW" upgrade "$BOX_NAME" >"$TMP/upgrade.out" 2>&1; then return 1; fi
+  ! grep -qF "upgrade FAILED" "$TMP/upgrade.out"
 }
 registry_is() {
   local expected="$1" actual
@@ -166,7 +183,8 @@ printf 'drill/converge-before\n' >"$CONFIG/repos.txt"
 upgrade_operator || true
 printf 'drill/converge-before\ndrill/converge-added\n' >"$CONFIG/repos.txt"
 upgrade_operator || true
-if registry_is $'drill/converge-before\ndrill/converge-added'; then
+if registry_is $'drill/converge-before\ndrill/converge-added' &&
+   grep -qF "converged " "$TMP/upgrade.out"; then
   ok "untouched registry converges an added repo through crew upgrade"
 else
   fail "untouched registry converges an added repo through crew upgrade" "$(tail -8 "$TMP/upgrade.out")"
@@ -176,7 +194,8 @@ fi
 bx "printf '%s\n' drill/fallback-contained > ~/duty/repos.txt; rm -f ~/duty/.repos.txt.crew-provenance"
 (
   cd "$ROOT/examples"
-  env -u CREW_CONFIG_DIR -u CREW_EXPECT_OPERATOR_CONFIG "$CREW" upgrade "$BOX_NAME"
+  XDG_CONFIG_HOME="$TMP/no-such-xdg" \
+    env -u CREW_CONFIG_DIR -u CREW_EXPECT_OPERATOR_CONFIG "$CREW" upgrade "$BOX_NAME"
 ) >"$TMP/fallback.out" 2>&1 || true
 if registry_is drill/fallback-contained; then
   ok "examples fallback does not converge an existing registry"
@@ -198,4 +217,8 @@ fi
 
 echo
 echo "== operator-config rehearsal summary: $PASS ok, ${#FAILS[@]} failed"
+# fleet.roster and fleet.conf intentionally remain drill fixture state: this
+# script now refuses non-drill targets, and rehearsal.sh installed this box in
+# the same run. Registry bytes and provenance are different — they are the
+# containment boundary and therefore always return to their pre-drill state.
 [ "${#FAILS[@]}" -eq 0 ]
