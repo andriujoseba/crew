@@ -13,3 +13,8 @@ a stock Debian box); shellcheck is optional but used by CI.
   `crew profiles` and `--dry-run` paths).
 - Hire and upgrade ship `shared/` plus `VERSION` from that host. A box does
   not clone crew or need repository access; `~/duty` is its only live engine.
+- Two ways to run `crew` on the HOST now: from this checkout (`cli/crew`), or
+  from a versioned install (`install.sh` → `~/.local/share/crew/versions/<v>`,
+  `crew` on `PATH`). Working ON the repo you run the checkout; the installer is
+  what a release ships. Both still need a box host to do anything beyond the
+  paths above.
