@@ -49,9 +49,26 @@
 # how a leftover drill box came to count as a fleet member (#51).
 set -euo pipefail
 
-CREW_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve THIS script's real path before deriving the root. Installed, `crew`
+# on PATH is a symlink ($BINDIR/crew -> …/current/cli/crew), so a plain
+# $0/dirname would put CREW_ROOT in $BINDIR instead of the versioned tree.
+# readlink -f follows the whole chain; on a plain checkout it is a no-op
+# (the installer that creates that layout is install.sh, heavy-duty/crew#95).
+CREW_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 ROLES_DIR="$CREW_ROOT/shared/conf/roles"
 AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
+
+# A version is a DIRECTORY NAME under the installer's versions/ — nothing else.
+# Byte-identical to install.sh's copy; shared/test/run.sh diffs the two so the
+# gate the installer trusts and the gate the CLI trusts (crew use / uninstall,
+# heavy-duty/crew#96) cannot drift.
+valid_version() {
+  case "$1" in
+    ''|.*|-*) return 1 ;;
+    *[!A-Za-z0-9._+-]*) return 1 ;;
+  esac
+  return 0
+}
 if [ "${CREW_CONFIG_DIR+x}" = x ]; then
   if [ -z "$CREW_CONFIG_DIR" ] || [ ! -d "$CREW_CONFIG_DIR" ] ||
      [ ! -f "$CREW_CONFIG_DIR/fleet.roster" ]; then
