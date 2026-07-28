@@ -38,6 +38,29 @@
 # zero extra API cost (claude-bot's cast#143 fix). Consumed by duty-builder.
 REVIEW_MY_PR_REPOS=""
 
+# rereq_decision <mine_oid> <head> <mine_state> <mine_at> <req_at> [auto_on]
+# The re-request policy as a PURE function, so every transition is fixture-
+# testable (#114). Emits exactly one of:
+#   queue        — the head moved past my verdict, OR (the #114 fix) a
+#                  re-request arrived over a STANDING non-approval
+#                  (CHANGES_REQUESTED / DISMISSED) at an unchanged head. A live
+#                  block is not a stale verdict: only a real re-review can judge
+#                  whether it was resolved in-thread, so never auto-approve it.
+#   auto-approve — my standing APPROVED covers this head and a newer re-request
+#                  arrived. ceremony#94's operator ruling: a stale approval must
+#                  not sit as a blocker. This narrowing SERVES that intent.
+#   skip         — my verdict covers this head and no newer re-request exists
+#                  (request mid-clear or stale search index).
+rereq_decision() {
+  local mine_oid="$1" head="$2" mine_state="$3" mine_at="$4" req_at="$5" auto="${6:-1}"
+  if [ "$mine_oid" != "$head" ]; then echo queue; return 0; fi
+  if [ "$auto" = "1" ] && [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
+    if [ "$mine_state" = "APPROVED" ]; then echo auto-approve; else echo queue; fi
+  else
+    echo skip
+  fi
+}
+
 duty_review() {
   local candidates="" page SR sweep_complete=1
   # The registry is the scope. Object endpoints only — one authoritative
@@ -83,7 +106,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     return 0
   fi
 
-  local _created updated N owner name fields head mine_oid mine_at req_at head_now body
+  local _created updated N owner name fields head mine_oid mine_at mine_state req_at head_now body decision
   local queue item queue_items=""
   while read -r _created updated SR N; do
     [ -z "${N:-}" ] && continue
@@ -96,7 +119,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
       -f query='query($owner:String!,$name:String!,$num:Int!,$me:String!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid
-          reviews(author:$me,last:1,states:[APPROVED,CHANGES_REQUESTED]){nodes{commit{oid} submittedAt}}
+          reviews(author:$me,last:1,states:[APPROVED,CHANGES_REQUESTED,DISMISSED]){nodes{commit{oid} submittedAt state}}
           timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],last:20){
             nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{... on User{login}}}}}
         } } }' \
@@ -104,26 +127,25 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
       --jq '.data.repository.pullRequest as $pr
         | ($pr.reviews.nodes[0] // {}) as $mine
         | ([$pr.timelineItems.nodes[] | select((.requestedReviewer.login // "") == env.RV_ME) | .createdAt] | max // "-") as $req
-        | "\($pr.headRefOid) \($mine.commit.oid // "-") \($mine.submittedAt // "-") \($req)"' \
+        | "\($pr.headRefOid) \($mine.commit.oid // "-") \($mine.submittedAt // "-") \($mine.state // "-") \($req)"' \
       2>/dev/null || echo err)"
     if [ "$fields" = "err" ]; then
       warn "review: $SR#$N state fetch failed; skipping this tick"
       sweep_complete=0
       continue
     fi
-    read -r head mine_oid mine_at req_at <<<"$fields"
+    # DISMISSED is now in the states filter and $mine_state carries the verdict:
+    # a re-request over my STANDING verdict must branch on whether that verdict
+    # is an APPROVED (auto-approvable) or a live block (a real re-review is owed).
+    read -r head mine_oid mine_at mine_state req_at <<<"$fields"
 
-    if [ "$mine_oid" != "$head" ]; then
-      queue=1
-    else
-      # My latest verdict already covers the head. The re-request rule
-      # (operator ruling 2026-07-23, ceremony#94): a review-requested event
-      # NEWER than my review at this unchanged head is answered with an
-      # auto-approve, not silence — a re-request at the same tree means the
-      # stale verdict must not sit as a blocker. Head re-verified immediately
-      # before submitting; the submit goes through the one-shot gate like any
-      # verdict. This path never enters the queue-side ledger.
-      if [ "${AUTO_APPROVE_REREQUEST:-1}" = "1" ] && [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
+    decision="$(rereq_decision "$mine_oid" "$head" "$mine_state" "$mine_at" "$req_at" "${AUTO_APPROVE_REREQUEST:-1}")"
+    case "$decision" in
+      auto-approve)
+        # My standing APPROVED covers this head and a newer re-request arrived
+        # (ceremony#94). Head re-verified live immediately before submitting;
+        # the submit goes through the one-shot gate like any verdict. This path
+        # never enters the queue-side ledger.
         head_now="$(gh api "repos/$SR/pulls/$N" --jq .head.sha 2>/dev/null || echo err)"
         if [ "$head_now" = "$head" ]; then
           body="$(mktemp)"
@@ -145,10 +167,22 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
           log "review: $SR#$N head moved during dedup — queued for a real review"
           queue=1
         fi
-      else
+        ;;
+      queue)
+        # Either the head moved past my verdict, or (#114) a re-request landed
+        # over a STANDING request-changes / dismissed verdict at an unchanged
+        # head. Route it to a real review round; never rubber-stamp a live block.
+        # The queued session's verdict is admitted at this same head by
+        # submit-verdict.sh's (me, PR, head, round) coverage key.
+        if [ "$mine_oid" = "$head" ]; then
+          log "review: $SR#$N re-requested at unchanged head ${head:0:12} over a standing ${mine_state} — queuing a real review, not auto-approving (#114)"
+        fi
+        queue=1
+        ;;
+      skip)
         log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
-      fi
-    fi
+        ;;
+    esac
 
     [ "$queue" -eq 1 ] || continue
     item="$SR#$N $updated"

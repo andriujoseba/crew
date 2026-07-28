@@ -76,6 +76,43 @@ cp "$BODY_FILE" "$FROZEN"
 
 ME="$(gh api user --jq .login)"
 
+# (me, PR, head, round) coverage (#114). A verdict of mine may already sit at
+# this head, yet a review_requested for me that is NEWER than my latest review
+# at this head opens a FRESH round — the considered verdict of that round is
+# admissible, and refusing it as already-present silently drops it. A bare
+# re-post with no intervening re-request stays refused. Pure so the transition
+# is fixture-pinned; --supersede-own keeps its own (auto-approve) meaning and
+# never reaches this gate.
+round_decision() {  # <my-latest-review-at-head-at> <latest-req-for-me-at>
+  local mine_at="$1" req_at="$2"
+  if [ "$req_at" != "-" ] && { [ "$mine_at" = "-" ] || [[ "$req_at" > "$mine_at" ]]; }; then
+    echo new-round
+  else
+    echo covered
+  fi
+}
+
+# The two timestamps round_decision needs, from object endpoints only (never
+# the lagging search index): my latest APPROVED/CHANGES_REQUESTED review AT
+# this head, and my most recent review-request. Prints "<mine_at> <req_at>",
+# each "-" when absent. Empty output (non-zero) means the lookup failed.
+round_timestamps() {
+  local owner="${REPO%%/*}" name="${REPO##*/}"
+  # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
+  SV_ME="$ME" SV_HEAD="$HEAD_SHA" gh api graphql \
+    -f query='query($owner:String!,$name:String!,$num:Int!,$me:String!){
+      repository(owner:$owner,name:$name){ pullRequest(number:$num){
+        reviews(author:$me,last:20,states:[APPROVED,CHANGES_REQUESTED]){nodes{commit{oid} submittedAt}}
+        timelineItems(itemTypes:[REVIEW_REQUESTED_EVENT],last:20){
+          nodes{... on ReviewRequestedEvent{createdAt requestedReviewer{... on User{login}}}}}
+      } } }' \
+    -f owner="$owner" -f name="$name" -F num="$NUM" -f me="$ME" \
+    --jq '.data.repository.pullRequest as $pr
+      | ([$pr.reviews.nodes[] | select(.commit.oid == env.SV_HEAD) | .submittedAt] | max // "-") as $mine
+      | ([$pr.timelineItems.nodes[] | select((.requestedReviewer.login // "") == env.SV_ME) | .createdAt] | max // "-") as $req
+      | "\($mine) \($req)"'
+}
+
 # My opinionated reviews at exactly this head. Never the search index.
 # Pagination is slurped OUTSIDE gh: `--paginate --jq length` emits one
 # count PER PAGE, and a multiline count made both dedup gates read
@@ -89,6 +126,7 @@ mine_at_head() {
 }
 
 attempt=0
+NEW_ROUND=0
 while :; do
   attempt=$((attempt + 1))
 
@@ -103,9 +141,22 @@ while :; do
     || { glog "pre-check failed for $REPO#$NUM; not submitting (fail closed)"; exit 1; }
   pre_count="$count"
   if [ "$count" -gt 0 ] && [ "$SUPERSEDE" -eq 0 ]; then
-    [ "$count" -gt 1 ] && glog "PROTOCOL NOTE: $count of my verdicts already at head ${HEAD_SHA:0:12} — leaving them; never post a third"
-    glog "already present: my verdict at head ${HEAD_SHA:0:12} on $REPO#$NUM"
-    exit 0
+    # A verdict already sits at this head. Admit it only if a re-request opened
+    # a new round (#114); otherwise it is a bare double-post and stays refused.
+    round_ts="$(round_timestamps 2>/dev/null || true)"
+    if [ -z "$round_ts" ]; then
+      glog "cannot determine round state for $REPO#$NUM (graphql lookup failed) — not submitting (fail closed); next tick re-detects"
+      exit 1
+    fi
+    read -r mine_at req_at <<<"$round_ts"
+    if [ "$(round_decision "$mine_at" "$req_at")" = "new-round" ]; then
+      NEW_ROUND=1
+      glog "new round: a re-request for me is newer than my latest review at head ${HEAD_SHA:0:12} on $REPO#$NUM — admitting this considered verdict (#114)"
+    else
+      [ "$count" -gt 1 ] && glog "PROTOCOL NOTE: $count of my verdicts already at head ${HEAD_SHA:0:12} — leaving them; never post a third"
+      glog "already present: my verdict at head ${HEAD_SHA:0:12} on $REPO#$NUM"
+      exit 0
+    fi
   fi
 
   # Pinned REST submit. Its outcome is advisory; the endpoint decides.
@@ -114,9 +165,13 @@ while :; do
     -f commit_id="$HEAD_SHA" -f event="$EVENT" -F body="@$FROZEN" >/dev/null 2>&1 || rc=$?
 
   count="$(mine_at_head || echo "$pre_count")"
-  if [ "$count" -gt "$pre_count" ] || { [ "$SUPERSEDE" -eq 0 ] && [ "$count" -gt 0 ]; }; then
+  # Landed iff my verdict count at this head strictly increased. Before #114 the
+  # SUPERSEDE=0 path only ran with pre_count==0, so an "|| count>0" shortcut was
+  # equivalent; a new-round submit now runs with pre_count>0, where only a
+  # strict increase proves THIS verdict landed rather than the pre-existing one.
+  if [ "$count" -gt "$pre_count" ]; then
     [ "$rc" -ne 0 ] && glog "submit rc=$rc but the endpoint shows the verdict landed — success, not retrying"
-    [ "$SUPERSEDE" -eq 0 ] && [ "$count" -gt 1 ] && glog "PROTOCOL VIOLATION: $count verdicts at head ${HEAD_SHA:0:12} — a concurrent submit slipped past; leaving them"
+    [ "$SUPERSEDE" -eq 0 ] && [ "$NEW_ROUND" -eq 0 ] && [ "$count" -gt 1 ] && glog "PROTOCOL VIOLATION: $count verdicts at head ${HEAD_SHA:0:12} — a concurrent submit slipped past; leaving them"
     glog "verified: $VERDICT landed on $REPO#$NUM at head ${HEAD_SHA:0:12}"
     exit 0
   fi
