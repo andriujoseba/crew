@@ -187,12 +187,12 @@ version() { echo "crew $(crew_version 2>/dev/null || echo unknown) ($CREW_ROOT)"
 CMDS=(
   "new^<roster-name> | --role <r> --agent <a> [--name <n>] [--from <box>[/<snap>]]^Create one box — infrastructure only; it does nothing until hired^cmd_new"
   "create-all^^Create every roster box that does not exist yet^cmd_create_all"
-  "hire^<box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]^Put a box on duty: engine installed, cron armed. Idempotent^cmd_hire"
-  "hire-all^[--ref <git-ref>]^Hire every created roster box; skips those already at this version^cmd_hire_all"
+  "hire^<box> [--role <r> --agent <a>] [--ref <version-or-git-ref>] [--force] [--allow-offroster]^Put a box on duty: engine installed, cron armed. Idempotent^cmd_hire"
+  "hire-all^[--ref <version-or-git-ref>]^Hire every created roster box; skips those already at this version^cmd_hire_all"
   "up^[--dry-run]^Converge the fleet: create missing, start stopped, hire, report^cmd_up"
   "down^^Stop every roster box^cmd_down"
   "status^[<box>]^Engine version and duty evidence, per box^cmd_status"
-  "upgrade^<box> | --all^Re-install the engine in place at this crew's version^cmd_upgrade"
+  "upgrade^<box> | --all [--ref <version-or-git-ref>]^Ship the engine from this host and re-install it in place^cmd_upgrade"
   "gold^<box> [--force]^Snapshot a box as a gold image — cut PRE-login, credential-free^cmd_gold"
   "floor^[--port <n>] [--bind <a>] [--local] [--user <u>] [--pass <p>] [--roster <path>] [--interval <s>]^Serve the fleet-floor console on IP:PORT^cmd_floor"
   "init^[config-dir]^Scaffold a new operator fleet definition^cmd_init"
@@ -353,7 +353,9 @@ hire is safe to re-run and is what 'crew up' calls. --force re-bakes anyway;
 a development tree (a -dev version) always re-bakes, because two dev trees
 at the same version are not the same code.
 
---ref installs a different crew ref than this tree's.
+--ref names a DIFFERENT engine source, resolved on the host (#99): from a
+working tree it is a git ref, and from an installed tree it is one of the
+versions under versions/. The box never fetches anything itself.
 
 The guard: hiring an OFF-ROSTER box against the production registry is
 refused, because that arms a second production agent racing the fleet for
@@ -1036,7 +1038,7 @@ cmd_create_all() {
 cmd_hire() {
   need_box
   local name="${1:-}"; shift || true
-  case "$name" in ""|--*) usage_error "usage: crew hire <box> [--role <r> --agent <a>] [--ref <git-ref>] [--force] [--allow-offroster]" ;; esac
+  case "$name" in ""|--*) usage_error "usage: $(synopsis_of hire)" ;; esac
   local role="" agent="" ref="HEAD" force=0 allow=0 explicit_profile=0 line=""
   local roster_agent="" roster_role=""
   while [ $# -gt 0 ]; do
