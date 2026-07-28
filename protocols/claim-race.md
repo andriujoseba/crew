@@ -110,7 +110,9 @@ upgraded fleets can compute different winners from the same events, so a repo
 must never appear in both registries. Crew's board-side foreign-actor check
 warns about a possible overlap and leaves the resolution — which fleet keeps
 the repo — to the operators; it does not edit a registry or make this protocol
-federated.
+federated. This notice-only check is the available first stage. Once crew#72
+introduces fleet identity, a repo-side marker naming the owning fleet will
+provide the preventing, fail-closed stage; that marker is gated on #72 alone.
 
 **It does not move assignment to triage.** That was considered and rejected on
 2026-07-24. Triage assigning would need a capacity model the doctrine explicitly

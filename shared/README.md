@@ -67,6 +67,12 @@ inspect recent board activity for an actor outside the selected fleet and warn
 about a possible overlap. The warning never edits either registry: deciding
 which fleet keeps the repository is an operator action.
 
+That detection is the first half of a decided two-stage plan. It **notices**
+overlap today without a fleet identity or federation. Once crew#72 gives fleets
+names, a repo-side marker file will name the owning fleet and crew will fail
+closed on a mismatch; that second half **prevents** overlap. The marker is gated
+on #72 alone, not on `.github/labels.conf` or crew#84.
+
 ## Duty order (FLEET.md)
 
 attention → triage signals → review queue → resume → ci-red → build →
