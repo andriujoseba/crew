@@ -1,52 +1,29 @@
 #!/usr/bin/env bash
-# crew — spawn and tend the agent fleet, on a host with `box` installed.
+# crew — spawn and tend a fleet of role-focused coding agents, on a host with
+# `box` installed.
 #
-#   crew new <name> | --role <r> --agent <a>  CREATE one box (the resolved fleet roster, or ad-hoc)
-#   crew create-all                           create every missing roster box
-#   crew hire <box> [--force]                 the box JOINS the crew: engine + cron (idempotent)
-#            [--allow-offroster]              …arm an off-roster box against the production registry
-#   crew hire-all                             hire every created roster box (skips already-hired)
-#   crew up [--dry-run]                       converge: create missing, start stopped, hire, report
-#   crew down                                 stop every roster box
-#   crew status [<box>]                       engine version + duty evidence
-#   crew floor [--port <n>] [--bind <a>]      serve the fleet-floor web console on IP:PORT
-#              [--roster <path>]              …watching a roster other than the resolved default
-#   crew upgrade <box> | --all [--ref <ref>]   ship + re-install from the host
-#   crew gold <box>                           snapshot a box as a gold image
-#   crew init [config-dir]                    scaffold a new operator fleet definition
-#   crew profiles                             list role and agent profiles
-#                                             …an operator agents/ dir overlays the shipped set
+# The command surface is the CMDS table below: it is the single source of truth
+# for what exists, what it looks like, what the help says, and what runs. This
+# comment deliberately does NOT list the commands — it used to, it was printed
+# verbatim as `crew help`, and it drifted: it advertised `crew hire <box>
+# [--force]` long after the verb grew --role, --agent and --ref. `crew help`
+# renders from the table now, so it cannot say something the code does not do.
 #
-# The lifecycle is two verbs around one human step in the middle:
+# What a reader of this file needs that the help does not carry:
 #
-#   create  — infrastructure only: mint from the agent's box template (rig
-#             converges the vendor CLI), sized by the role profile. The box
-#             does NOTHING yet — no engine, no cron.
-#   login   — once per box, at creation time, BY HAND. `crew auth` used to
-#             automate this and has been REMOVED (danmt 2026-07-25) until
-#             the rest of the fleet is proven: vendor logins are flaky and
-#             change often, and half-automating a step you still have to
-#             babysit buys nothing but a second thing to debug. Per box:
-#                 box shell <name>      # then, inside the box:
-#                 gh auth login         # a NEW identity — one box per identity
-#                 <the agent profile's AGENT_LOGIN_HINT>
-#             `crew status` and `crew up` report who still needs it.
-#             Re-automating this is an enhancement for after #16 lands.
-#   hire    — the box joins the crew: engine baked at this checkout's pin,
-#             cron armed, on duty at the next 5-minute boundary. Idempotent
-#             upsert: already hired at this pin → skip (--force re-bakes).
+#   CREW_CONFIG_DIR selects one fleet definition directory. CREW_ROSTER is the
+#   exceptional roster-only fixture override; it does not select a fleet
+#   context. `fleet.roster` is the proof file: directories without one are
+#   skipped, while an explicitly invalid CREW_CONFIG_DIR is an error. `crew
+#   floor --roster` (CREW_FLOOR_ROSTER) does the same for the console. Use
+#   these to drill against a subset — editing examples/fleet.roster to test is
+#   how a leftover drill box came to count as a fleet member (#51).
 #
-# Fleet from scratch on a new server: install box + crew, `crew create-all`,
-# log each box in by hand (see `login` above), `crew hire-all`.
-# Steady state afterwards is just `crew up`.
-#
-# CREW_CONFIG_DIR selects one fleet definition directory. CREW_ROSTER is the
-# exceptional roster-only fixture override; it does not select a fleet context.
-# `fleet.roster` is the proof file: directories without one are skipped, while
-# an explicitly invalid CREW_CONFIG_DIR is an error. `crew floor --roster`
-# (CREW_FLOOR_ROSTER) does the same for the console. Use
-# these to drill against a subset — editing examples/fleet.roster to test is
-# how a leftover drill box came to count as a fleet member (#51).
+#   The lifecycle is create → login → hire, and the middle step is a HUMAN one:
+#   `crew auth` automated it and was REMOVED (danmt, 2026-07-25) until the rest
+#   of the fleet is proven — vendor logins are flaky and change often, and
+#   half-automating a step you still have to babysit buys nothing but a second
+#   thing to debug. `crew help` carries the operator-facing version of this.
 set -euo pipefail
 
 # Resolve THIS script's real path before deriving the root. Installed, `crew`
@@ -1383,9 +1360,7 @@ cmd_floor() {
       --interval) interval="${2:?--interval needs seconds}"; shift 2 ;;
       --roster)   roster="${2:?--roster needs a path}"; shift 2 ;;
       --local)    bind=127.0.0.1; shift ;;
-      -h|--help)
-        sed -n '/^# crew floor —/,/^cmd_floor/s/^# \{0,1\}//p' "$0"
-        return 0 ;;
+      -h|--help) show_help floor; return 0 ;;
       *) usage_error "crew floor: unknown option '$1'" ;;
     esac
   done
@@ -1480,24 +1455,15 @@ cmd_profiles() {
   done
 }
 
-case "${1:-}" in
-  new)        shift; cmd_new "$@" ;;
-  create-all) shift; cmd_create_all "$@" ;;
-  hire)       shift; cmd_hire "$@" ;;
-  adopt)      shift; echo "crew: 'adopt' is now 'hire'" >&2; cmd_hire "$@" ;;
-  hire-all)   shift; cmd_hire_all "$@" ;;
-  up)         shift; cmd_up "$@" ;;
-  down)       shift; cmd_down "$@" ;;
-  status)     shift; cmd_status "$@" ;;
-  upgrade)    shift; cmd_upgrade "$@" ;;
-  gold)       shift; cmd_gold "$@" ;;
-  init)       shift; cmd_init "$@" ;;
-  profiles)   cmd_profiles ;;
-  floor)      shift; cmd_floor "$@" ;;
-  # The leading comment block, stopping at the first line that is not a
-  # comment. This was a hardcoded `2,37` range, which silently dropped the
-  # last line the moment the header grew by one — the same truncation
-  # `crew floor --help` is already tested against.
-  ""|help|-h|--help) awk 'NR > 1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0" ;;
-  *) die "unknown command '${1}' — try: crew help" ;;
+# --- dispatch: driven by the table, not by a hand-written case --------------
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  -h|--help)    usage; exit 0 ;;
+  -V|--version) version; exit 0 ;;
+  -*)           usage_error "options come after the command — try 'crew <command> $cmd ...'" ;;
 esac
+
+cmd="$(normalize_verb "$cmd")"
+fn="$(field "$cmd" fn)" || unknown_command "$cmd"
+"$fn" "$@"
