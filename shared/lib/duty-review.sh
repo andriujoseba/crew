@@ -61,8 +61,52 @@ rereq_decision() {
   fi
 }
 
+# _mark_addressing REPO NUM ROSTER_JSON — after MY verdict lands, evaluate the
+# round and, if it closed WITHOUT full approval, set state:addressing (#130).
+#
+# The reviewer that lands the last verdict does this, not the author's next
+# builder tick: it is already here, it already computed the round to decide its
+# own action, and it does the right thing even when the author's box is the one
+# that is down — the case the board most needs to survive. addressing.jq is the
+# deliberate mirror of converged.jq; ROSTER_JSON is the PR repo's full panel and
+# the PR AUTHOR (not $ME the reviewer) is subtracted here, since the required
+# verdicts are the panel minus the author.
+#
+# Best-effort and gating NOTHING: this runs AFTER the verdict has already
+# landed, so a failed label write costs a stale board the reconciler corrects
+# on its next sweep, never a lost or blocked verdict. The engine write is
+# optimistic; the reconciler stays authoritative.
+_mark_addressing() {
+  local repo="$1" num="$2" roster_json="$3" owner name payload author eff_panel verdict
+  owner="${repo%%/*}"; name="${repo##*/}"
+  payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+    repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      headRefOid
+      author{login}
+      labels(first:50){nodes{name}}
+      reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
+      latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+    } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null || echo '')"
+  [ -n "$payload" ] || { warn "review: $repo#$num addressing eval fetch failed; skipping (best-effort)"; return 0; }
+  author="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.author.login // ""' 2>/dev/null)"
+  eff_panel="$(printf '%s' "$roster_json" | jq -c --arg a "$author" '. - [$a]' 2>/dev/null || echo '[]')"
+  verdict="$(printf '%s' "$payload" \
+    | jq -r --argjson panel "$eff_panel" --arg addressing "$LABEL_ADDRESSING" \
+        -f "$DUTY_DIR/lib/jq/addressing.jq" 2>/dev/null || echo err)"
+  case "$verdict" in
+    true)
+      log "review: $repo#$num round closed without full approval — setting $LABEL_ADDRESSING"
+      gh issue edit "$num" -R "$repo" --add-label "$LABEL_ADDRESSING" >/dev/null 2>&1 \
+        || warn "review: $repo#$num could not set $LABEL_ADDRESSING (reconciler will)"
+      ;;
+    false) : ;;
+    *) warn "review: $repo#$num addressing eval failed; skipping (best-effort)" ;;
+  esac
+  return 0
+}
+
 duty_review() {
-  local candidates="" page SR sweep_complete=1
+  local candidates="" page SR sweep_complete=1 acted_prs=""
   # The registry is the scope. Object endpoints only — one authoritative
   # pulls page per carried repo, never the lagging search index.
   while IFS= read -r SR; do
@@ -156,6 +200,8 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
           # the new approval makes mine_at newer than req_at.
           if "$BIN_DIR/submit-verdict.sh" "$SR" "$N" "$head" approve "$body" --supersede-own; then
             log "review: $SR#$N auto-approved re-request at unchanged head ${head:0:12}"
+            # A verdict landed — evaluate the round for state:addressing (#130).
+            acted_prs="$acted_prs $SR#$N"
           else
             warn "review: $SR#$N auto-approve did not land (will retry next tick)"
           fi
@@ -235,5 +281,28 @@ $key $updated"
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
       printf '%s\n' "${repo_items[$SR]}" | ledger_commit "$DUTY_DIR/.seen-review"
     fi
+    # These PRs may now carry a verdict this session landed — evaluate each for
+    # state:addressing (#130), regardless of rc: a session that submitted a
+    # verdict and then timed out on later work still closed a round, and
+    # addressing.jq is a no-op when it did not.
+    local _rn
+    for _rn in $prs; do acted_prs="$acted_prs $SR#$_rn"; done
+  done
+
+  # --- state:addressing, engine-side (#130): the reviewer that landed the last
+  # verdict this tick marks the round without waiting for the scheduled
+  # reconciler. Bounded to the PRs this box actually acted on — an auto-approve
+  # or a review session — never a whole-board sweep. addressing.jq no-ops unless
+  # the round closed without full approval and the label is not already set, so
+  # a re-tick writes nothing. Roster resolved once per repo.
+  local ap SRa Na
+  local -A roster_cache=()
+  for ap in $acted_prs; do
+    [ -n "$ap" ] || continue
+    SRa="${ap%#*}"; Na="${ap##*#}"
+    if [ -z "${roster_cache[$SRa]:-}" ]; then
+      roster_cache[$SRa]="$(panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review")"
+    fi
+    _mark_addressing "$SRa" "$Na" "${roster_cache[$SRa]}"
   done
 }

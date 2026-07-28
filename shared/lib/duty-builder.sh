@@ -137,6 +137,66 @@ _handoff_finalize() {
     || warn "$repo#$num: could not set $LABEL_NEEDS_HUMAN"
 }
 
+# _request_panel REPO NUM PAYLOAD PANEL_JSON CHECK_STATE HC_HEAD — engine-side
+# panel (re-)request, and state:bots-reviewing beside it (#130, danmt's "ideally
+# the engine adds them as reviewers too"). This moves the request off the
+# builder SESSION, where a session that died between its last push and its
+# re-request left a PR that looked finished and was waiting for nobody — the
+# blocker:unrequested shape. PAYLOAD is the same GraphQL pullRequest object the
+# handoff loop already fetched, so this costs no extra call; request-panel.jq
+# returns the panelists whose latest opinionated review is not at the head and
+# who are not already requested (the whole of "re-request by head, not by
+# verdict"). Every write is best-effort and gates nothing — the same rule as
+# _handoff_finalize.
+_request_panel() {
+  local repo="$1" num="$2" payload="$3" panel_json="$4" check_state="$5" hc_head="$6"
+  local gql_head to_request rvr requested_any=0
+  gql_head="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null)"
+  [ -n "$gql_head" ] || { warn "$repo#$num: no head in payload; not requesting"; return 0; }
+  # The MECHANICAL half of the green-head precondition — the only half the
+  # engine makes. Request only on a head whose check is green or absent; red and
+  # pending both hold. A red head is the author's own work (it wakes ci-red, not
+  # the panel), and a pending one has not answered the question the panel will
+  # ask (#45). The other half — arguing a red is genuinely outside the PR and
+  # requesting anyway — is a session judgement the engine must not make; it
+  # stays in fragment-round-rules.txt (#130).
+  case "$check_state" in
+    green|none) : ;;
+    *) log "$repo#$num: panel request held — check at head is ${check_state:-unknown} (#45/#130)"; return 0 ;;
+  esac
+  # The green verdict must be ABOUT the head we would request on. head-checks.jq
+  # read one gh-pr-list snapshot and this loop read a later GraphQL one; if a
+  # push landed between them the check state is stale, so defer one tick rather
+  # than request on a head whose check nobody has seen settle.
+  [ "$hc_head" = "$gql_head" ] || { log "$repo#$num: head moved mid-tick — deferring panel request"; return 0; }
+  to_request="$(printf '%s' "$payload" \
+    | jq -r --argjson panel "$panel_json" -f "$DUTY_DIR/lib/jq/request-panel.jq" 2>/dev/null)"
+  [ -n "${to_request//[[:space:]]/}" ] || return 0
+  # One reviewer per call, not a batched reviewers[] array: a single 422 (an
+  # already-pending request that raced the predicate) must not drop the others.
+  # request-panel.jq already excludes the requested, so each of these is fresh.
+  for rvr in $to_request; do
+    [ -n "$rvr" ] || continue
+    if gh api "repos/$repo/pulls/$num/requested_reviewers" -f "reviewers[]=$rvr" >/dev/null 2>&1; then
+      requested_any=1
+    else
+      warn "$repo#$num: panel request for @$rvr did not land (already requested?)"
+    fi
+  done
+  # state:bots-reviewing rides along in the SAME act. It buys no latency —
+  # review_requested already carries it in seconds — it is here so the write is
+  # atomic with the request that causes it, exactly as _handoff_finalize sets
+  # state:needs-human beside its human request, and the reconciler confirms it
+  # seconds later. Set only when a request actually landed, so a re-tick that
+  # finds everyone already requested writes nothing.
+  if [ "$requested_any" -eq 1 ]; then
+    log "$repo#$num: engine requested panel ($(printf '%s' "$to_request" | tr '\n' ' ')) at ${gql_head:0:12}"
+    gh issue edit "$num" -R "$repo" --add-label "$LABEL_BOTS_REVIEWING" >/dev/null 2>&1 \
+      || warn "$repo#$num: could not set $LABEL_BOTS_REVIEWING (reconciler will)"
+  fi
+  return 0
+}
+
 duty_builder() {
   local duty_repos R
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
@@ -228,6 +288,23 @@ _builder_repo() {
     mine_rows="$(printf '%s' "$mine_json" \
       | jq -r --argjson panel "$panel_json" --arg repo "$R" \
         -f "$DUTY_DIR/lib/jq/head-checks.jq" 2>/dev/null || echo err)"
+  fi
+
+  # The check state and head SHA per PR, indexed by number — the green-head
+  # precondition the engine's panel request is gated on (#130). Read off the
+  # same head-checks rows the round gate already computed, so the request rides
+  # the one gh-pr-list snapshot and adds no call. head_by_num pins which head
+  # that check state describes, so a push landing after this snapshot defers the
+  # request rather than requesting on a head nobody has seen settle.
+  local -A check_by_num=() head_by_num=()
+  local _hc_key _hc_upd _hc_head _hc_state _hc_rest _hc_num
+  if [ "$mine_rows" != "err" ]; then
+    while IFS=$'\t' read -r _hc_key _hc_upd _hc_head _hc_state _hc_rest; do
+      [ -n "$_hc_key" ] || continue
+      _hc_num="${_hc_key##*#}"
+      check_by_num[$_hc_num]="$_hc_state"
+      head_by_num[$_hc_num]="$_hc_head"
+    done <<<"$mine_rows"
   fi
 
   # --- CI-RED: a PR of mine whose check FAILED at the current head. Placed
@@ -433,7 +510,7 @@ _builder_repo() {
   # is the incident #17 was filed from. A converged PR reaching the human with
   # a red check is a human's call to make; a converged PR reaching nobody is
   # the failure this module exists to end. ---
-  local my_open converged handoff_prs=""
+  local my_open converged handoff_prs="" pr_payload
   my_open="$(gh pr list -R "$R" --state open --author "$ME" \
     --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"
   if [ "$my_open" = "err" ]; then
@@ -442,25 +519,40 @@ _builder_repo() {
     for N in $my_open; do
       # Round-log mirroring runs EVERY tick over my open PRs — not only at
       # handoff — so the body's Round log tracks each round as it is answered
-      # (#91 / ceremony#196: "at re-request time"). crew's re-request is done by
-      # the builder session, not the engine, so the engine has no synchronous
-      # re-request hook; its per-tick builder sweep IS that hook — the tick after
-      # a round is answered appends it. Marker-keyed and idempotent, so a re-tick
-      # writes nothing. Best-effort: never blocks the handoff detection below.
+      # (#91 / ceremony#196: "at re-request time"). Since #130 the re-request is
+      # the engine's own act (_request_panel, just below), so this sweep and the
+      # re-request now share the tick — mirror first, then request. Marker-keyed
+      # and idempotent, so a re-tick writes nothing. Best-effort: never blocks
+      # the request or the handoff detection below.
       # final=false: per-tick mirroring records only superseded rounds and
       # defers the live one, so a round mid-flight is never stamped as answered
       # before its whole-round reply lands (round-log.jq live-round note).
       _mirror_rounds "$R" "$N" false
-      converged="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+      # One GraphQL read of the PR's review state drives BOTH the panel request
+      # (#130) and the convergence check below — the request-panel and converged
+      # predicates share this exact payload, so folding the request here costs no
+      # extra call. A fetch failure skips both for this PR this tick.
+      pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable
           labels(first:50){nodes{name}}
           reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
           latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
-        } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null \
+        } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
+      if [ -z "$pr_payload" ]; then
+        warn "$R#$N: PR state fetch failed; skipping request and handoff this tick"
+        continue
+      fi
+      # Open or continue the round, engine-side: request any panelist not
+      # covering the current head, gated on a green head, and set
+      # state:bots-reviewing beside the request. When it requests, converged.jq
+      # below returns false on the same payload (not every panelist approves the
+      # head), so the two never both fire — no continue is needed.
+      _request_panel "$R" "$N" "$pr_payload" "$panel_json" \
+        "${check_by_num[$N]:-}" "${head_by_num[$N]:-}"
+      converged="$(printf '%s' "$pr_payload" \
         | jq -r --argjson panel "$panel_json" --arg needs_human "$LABEL_NEEDS_HUMAN" \
-            -f "$DUTY_DIR/lib/jq/converged.jq" \
-        || echo err)"
+            -f "$DUTY_DIR/lib/jq/converged.jq" 2>/dev/null || echo err)"
       case "$converged" in
         true)  handoff_prs="$handoff_prs $N" ;;
         false) : ;;
