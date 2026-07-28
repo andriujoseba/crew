@@ -150,17 +150,32 @@ VDIR="$DEST/versions/$new_ver"
 newly_installed=0
 if [ -d "$VDIR" ]; then
   if [ -n "${CREW_REINSTALL:-}" ]; then
-    # Replace THIS version's tree, as atomically as two renames allow — never a
-    # partial overlay of new files onto an old tree.
+    # Replace THIS version's tree while keeping `current` resolvable at EVERY
+    # interruption point. The naive swap — mv the live $VDIR aside, mv the
+    # staged tree in — dangles `current` between the two renames when it points
+    # at the version being replaced (the usual case: reinstalling the active
+    # default). A kill in that window leaves `current` dangling until the next
+    # install heals it (codex-bot and grok-bot both reproduced this on #95).
+    #
+    # The fix: when this version IS the active default, flip `current` onto the
+    # fully-staged NEW tree FIRST — an atomic mv -Tf — so across both directory
+    # renames `current` resolves to the new tree; flip it back to the canonical
+    # path once that path holds the new tree. A non-default reinstall skips the
+    # flips (nothing points here). Even a residual crash self-heals: the
+    # default-version block below repoints a dangling `current` on the next run.
     log "CREW_REINSTALL=1 — replacing the installed $new_ver tree"
     stage="$VDIR.new.$$"; old="$VDIR.old.$$"
     rm -rf "$stage" "$old"
     chmod +x "$EXTRACTED/cli/crew"
     mv "$EXTRACTED" "$stage"
+    active=0
+    [ "$(readlink -f "$DEST/current" 2>/dev/null || true)" = "$(readlink -f "$VDIR" 2>/dev/null || true)" ] && active=1
+    [ "$active" -eq 1 ] && flip_current "$new_ver.new.$$"   # current -> staged NEW tree
     # Swap by renames, delete LAST: rm-then-move leaves a hole the whole length
-    # of the delete where current -> this version resolves to nothing.
+    # of the delete where a name resolves to nothing.
     mv "$VDIR" "$old"
     mv "$stage" "$VDIR"
+    [ "$active" -eq 1 ] && flip_current "$new_ver"          # current -> canonical (now the NEW tree)
     rm -rf "$old"
     printf '%s\n' "$INSTALLED_FROM" > "$VDIR/INSTALLED_FROM"
     log "reinstalled $new_ver"
