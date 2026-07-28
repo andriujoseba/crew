@@ -30,7 +30,7 @@ USAGE
 }
 die() { printf 'make-installer: ERROR: %s\n' "$*" >&2; exit 1; }
 
-name= version= root= out= entrypoint=install.sh srcvar= encoding=raw
+name='' version='' root='' out='' srcvar='' entrypoint='install.sh' encoding='raw'
 while [ $# -gt 0 ]; do
   case "$1" in
     --name)       name="${2:?--name needs a value}"; shift 2 ;;
