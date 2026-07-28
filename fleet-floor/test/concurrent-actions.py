@@ -59,7 +59,9 @@ def exercise(action, states, failures=()):
     fleet = Fleet()
     status, payload = floor.do_command(fleet, {"action": action})
 
-    expected_status = 500 if failures or None in states.values() else 200
+    # A not-created box (state None) is inventory drift, excluded from the
+    # verdict — only a box that was there and refused makes the action 500 (#77).
+    expected_status = 500 if failures else 200
     assert status == expected_status, (action, status, payload)
     assert peak == len(BOXES), (action, "peak concurrency", peak)
     assert [result["box"] for result in payload["results"]] == BOXES, payload
@@ -75,7 +77,8 @@ exercise("wake-silent", "running")
 
 
 # Precomputed and real results share one ordered list. Only box-c needs work,
-# while box-a is absent and box-b is already running.
+# while box-a is absent and box-b is already running. Nothing refused, so the
+# absent box does not make the action fail: 200, box-a carries ok:None (#77).
 floor.read_roster = lambda: [
     {"box": name, "agent": "claude", "room": "builder"} for name in BOXES
 ]
@@ -83,11 +86,31 @@ floor.box_states = lambda: {"box-a": None, "box-b": "running", "box-c": "stopped
 floor.run = lambda _argv, _timeout, _stdin_data=None: (0, "started", "")
 mixed_fleet = Fleet()
 status, payload = floor.do_command(mixed_fleet, {"action": "start-all"})
-assert status == 500, (status, payload)
+assert status == 200, (status, payload)
 assert [result["box"] for result in payload["results"]] == BOXES, payload
-assert [result["ok"] for result in payload["results"]] == [False, True, True], payload
+assert [result["ok"] for result in payload["results"]] == [None, True, True], payload
 assert [result["out"] for result in payload["results"]] == [
     "not created", "already running", "started"
+], payload
+
+
+# An absent box must not MASK a real refusal: box-a is not created, box-b was
+# there and refused, box-c started. The action is 500 (a box refused), box-a
+# still travels as ok:None and box-b as the named failure (#77).
+floor.read_roster = lambda: [
+    {"box": name, "agent": "claude", "room": "builder"} for name in BOXES
+]
+floor.box_states = lambda: {"box-a": None, "box-b": "stopped", "box-c": "stopped"}
+floor.run = lambda argv, _timeout, _stdin_data=None: (
+    (1, "", "refused") if argv[2] == "box-b" else (0, "started", "")
+)
+drift_and_refusal = Fleet()
+status, payload = floor.do_command(drift_and_refusal, {"action": "start-all"})
+assert status == 500, (status, payload)
+assert [result["box"] for result in payload["results"]] == BOXES, payload
+assert [result["ok"] for result in payload["results"]] == [None, False, True], payload
+assert [result["out"] for result in payload["results"]] == [
+    "not created", "refused", "started"
 ], payload
 
 
