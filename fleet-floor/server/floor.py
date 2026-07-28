@@ -123,6 +123,10 @@ SILENT_AFTER_S = 2 * TICK_S
 # exercise a wedged box without waiting the production timeout for it.
 PROBE_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_PROBE_TIMEOUT", "45"))
 ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
+# Fleet-wide controls share the host with evidence and heartbeat fan-outs.
+# Eight is a no-op for today's seven-member roster and a hard ceiling as the
+# single-role fleet grows.
+ACTION_WORKERS = 8
 
 # --- the ping tier ---------------------------------------------------------
 #
@@ -177,9 +181,17 @@ PING_STALE_AFTER_S = int(os.environ.get(
 STUCK_AFTER_S = int(os.environ.get("CREW_FLOOR_STUCK_AFTER", str(SILENT_AFTER_S)))
 
 
+LOG_LOCK = threading.Lock()
+
+
 def log(msg):
-    print("%s floor: %s" % (datetime.now(timezone.utc).strftime("%H:%M:%S"), msg),
-          flush=True)
+    line = "%s floor: %s\n" % (
+        datetime.now(timezone.utc).strftime("%H:%M:%S"), msg)
+    # Fleet-wide actions finish on worker threads. Keep the complete human
+    # evidence line together even when several boxes return simultaneously.
+    with LOG_LOCK:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def run(argv, timeout, stdin_data=None):
@@ -1070,7 +1082,7 @@ def do_command(fleet, body):
         """Run per-box calls together and return results in submission order."""
         if not tasks:
             return []
-        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(tasks), ACTION_WORKERS)) as pool:
             futures = [pool.submit(fn, *args) for fn, args in tasks]
             return [future.result() for future in futures]
 
