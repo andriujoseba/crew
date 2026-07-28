@@ -1,0 +1,23 @@
+name: labels
+# The board automation crew never had, implemented upstream
+# (heavy-duty/ceremony, adopted in crew#84): additive scope labeling and the
+# state reconciler live in the reusable workflow this caller pins. crew keeps
+# the triggers and permissions (a called workflow cannot define them), its
+# path map in .github/labeler.yml, and its panel + scope taxonomy in
+# .github/labels.conf.
+on:
+  schedule: [{cron: "*/15 * * * *"}] # advisory; the handoff label is the real wake
+  workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, synchronize, labeled, unlabeled, review_requested, review_request_removed]
+  issues:
+    types: [opened, edited, assigned, unassigned, labeled, unlabeled, closed, reopened]
+permissions:
+  contents: read
+  checks: read
+  statuses: read
+  issues: write
+  pull-requests: write
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.3.0

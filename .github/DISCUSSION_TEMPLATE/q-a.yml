@@ -1,0 +1,16 @@
+# Copied from heavy-duty/ceremony@0.3.0 .github/DISCUSSION_TEMPLATE/q-a.yml (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
+# Light on purpose — same reasoning as ideas.yml (heavy-duty/ceremony#24, decision 4):
+# optional prompts only, delete before hardening.
+body:
+  - type: textarea
+    attributes:
+      label: What's the question?
+      description: Ask it plainly — context and links help, none are required.
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: What have you tried or read already?
+      description: Optional — saves the answerer a lap.
+    validations:
+      required: false

@@ -1,0 +1,60 @@
+# path → scope:* map in actions/labeler config format, consumed by ceremony's
+# pinned labels-scope job — the PR half of the scope story (issues are
+# hand-scoped at triage; paths only exist on PRs). Additive only: sync-labels
+# stays off in the reusable labels workflow, so a hand-applied scope survives
+# a later push.
+"scope:cli":
+  - changed-files:
+      - any-glob-to-any-file: ["cli/crew"]
+"scope:duty":
+  - changed-files:
+      - any-glob-to-any-file: ["shared/bin/**", "shared/lib/**", "shared/test/**"]
+"scope:prompts":
+  - changed-files:
+      - any-glob-to-any-file: ["shared/prompts/**"]
+"scope:conf":
+  - changed-files:
+      - any-glob-to-any-file: ["shared/conf/**"]
+"scope:installer":
+  - changed-files:
+      - any-glob-to-any-file: ["shared/install.sh"]
+"scope:fleet-floor":
+  - changed-files:
+      - any-glob-to-any-file: ["fleet-floor/**"]
+"scope:drill":
+  - changed-files:
+      - any-glob-to-any-file: ["drill/**"]
+"scope:protocols":
+  - changed-files:
+      - any-glob-to-any-file: ["protocols/**"]
+"scope:examples":
+  - changed-files:
+      - any-glob-to-any-file: ["examples/**"]
+"scope:docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "README.md"
+          - "CONTRIBUTING.md"
+          - "AGENTS.md"
+          - "shared/README.md"
+          - "shared/docs/**"
+          - "fleet-floor/README.md"
+          - ".github/ISSUE_TEMPLATE/**"
+          - ".github/DISCUSSION_TEMPLATE/**"
+          - ".github/pull_request_template.md"
+"scope:labels":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/labels.conf"
+          - ".github/labeler.yml"
+          - ".github/workflows/labels.yml"
+"scope:release":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/release.yml"
+          - ".github/workflows/release-guards.yml"
+          - "CHANGELOG.md"
+          - "changelog.d/**"
+          - "VERSION"
+          - "drills/**"
+          - ".ceremony/**"

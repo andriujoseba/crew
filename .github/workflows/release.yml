@@ -1,0 +1,23 @@
+name: release
+# The release ceremony lives upstream (heavy-duty/ceremony — the doctrine is
+# its README; this adoption is crew#84). Both doors — merging the
+# release-labeled ceremony PR, and pushing a bare X.Y.Z tag — live in the
+# reusable workflow this caller pins; crew keeps only what a called workflow
+# cannot define: triggers and permissions.
+# Triggers and permissions MUST live here (a called workflow cannot define them):
+on:
+  # ONE push key, both filters — YAML maps are last-key-wins; a second sibling
+  # `push:` silently replaces the first and kills a door (rig's review catch).
+  push:
+    tags: ["**"]      # every tag — a wrong tag must FAIL the assert loudly,
+                      # never be skipped by a shape filter that didn't match
+    branches: [main]
+permissions:
+  contents: write       # tag ref create + release create + the bump push
+  pull-requests: write  # decide's label read; the bump-fallback `gh pr create`
+  issues: write         # --label on that fallback PR rides the issues API
+jobs:
+  release:
+    uses: heavy-duty/ceremony/.github/workflows/release.yml@0.3.0
+    with:
+      version-source: file
