@@ -518,6 +518,143 @@ t converged-conflicting false \
 t converged-empty-panel false \
   "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | jq -r --argjson panel '[]' --arg needs_human state:needs-human -f "$CJQ")"
 
+# --- round-log.jq: mirror each whole round into the PR body (#91) ------------
+# Input is the GraphQL pullRequest payload; output is the NEW body when a round
+# is un-recorded, or "" when every round is already marked (the crash-retry
+# no-op). A round is a head SHA with an opinionated verdict; its reply is the
+# author's comments after that round's newest verdict and before the next
+# round's first. Each entry is keyed `<!-- round:<sha> -->` for idempotency.
+RLJQ="$SHARED/lib/jq/round-log.jq"
+RL_ME="me-bot"
+RL_O1="1111111111111111111111111111111111111111"
+RL_O2="2222222222222222222222222222222222222222"
+mk_rl() {  # <body> <reviews-json> <comments-json>
+  jq -n --arg body "$1" --argjson reviews "$2" --argjson comments "$3" \
+    '{data:{repository:{pullRequest:{
+      body:$body, reviews:{nodes:$reviews}, comments:{nodes:$comments}}}}}'
+}
+RL_REVS="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T03:00:00Z"}]' "$RL_O1" "$RL_O2")"
+RL_REVS1="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]' "$RL_O1")"
+RL_COMS='[{"author":{"login":"me-bot"},"body":"answering round one","createdAt":"2026-01-01T02:00:00Z"},{"author":{"login":"me-bot"},"body":"answering round two","createdAt":"2026-01-01T04:00:00Z"}]'
+rl() { jq -r --arg me "$RL_ME" -f "$RLJQ"; }
+
+# Two rounds, both answered, no markers in body → both mirrored, oldest first.
+RL_OUT="$(mk_rl "Body preamble." "$RL_REVS" "$RL_COMS" | rl)"
+case "$RL_OUT" in *"## Round log"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-appends-section yes "$r1"
+case "$RL_OUT" in *"round:$RL_O1"*"round:$RL_O2"*) r1=ordered ;; *) r1=no ;; esac
+t roundlog-markers-oldest-first ordered "$r1"
+case "$RL_OUT" in *"answering round one"*"answering round two"*) r1=both ;; *) r1=no ;; esac
+t roundlog-both-replies-present both "$r1"
+case "$RL_OUT" in *"Round at 11111111"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-short-sha-heading yes "$r1"
+
+# Both markers already in the body → nothing to add (the retried-tick no-op).
+RL_OUT2="$(mk_rl "preamble <!-- round:$RL_O1 --> and <!-- round:$RL_O2 -->" "$RL_REVS" "$RL_COMS" | rl)"
+t roundlog-idempotent-empty "" "$RL_OUT2"
+
+# A round with a verdict but no author reply is recorded, not skipped.
+RL_OUT3="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
+case "$RL_OUT3" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-no-reply-recorded yes "$r1"
+
+# An existing `## Round log` section is extended; sibling sections are kept.
+RL_BODY_SEC="$(printf 'Intro.\n\n## Round log\n\nolder entry\n\n## Worklog\n\n- [x] a')"
+RL_OUT4="$(mk_rl "$RL_BODY_SEC" "$RL_REVS1" "$RL_COMS" | rl)"
+case "$RL_OUT4" in *"## Worklog"*"- [x] a"*) r1=kept ;; *) r1=LOST ;; esac
+t roundlog-preserves-sibling-sections kept "$r1"
+case "$RL_OUT4" in *"older entry"*"round:$RL_O1"*"## Worklog"*) r1=in-section ;; *) r1=no ;; esac
+t roundlog-inserts-into-existing-section in-section "$r1"
+
+# Round 1 already recorded, round 2 not → only round 2 appended (no dup).
+RL_OUT5="$(mk_rl "has <!-- round:$RL_O1 --> already" "$RL_REVS" "$RL_COMS" | rl)"
+case "$RL_OUT5" in *"round:$RL_O2"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-partial-appends-missing yes "$r1"
+case "$RL_OUT5" in *"answering round one"*) r1=DUP ;; *) r1=clean ;; esac
+t roundlog-partial-skips-recorded clean "$r1"
+
+# --- _handoff_finalize under a gh shim: one comment, one request, one label,
+# ZERO sessions/clones (#91). The stateful shim answers the two GraphQL reads
+# (round-log payload and handoff-comment payload), records the REST writes, and
+# a post-once.sh stub records the comment. run_session / ensure_main_clone are
+# overridden to tripwire the log — if the handoff ever spends a session or a
+# clone the test goes red. This is the issue's must-fail floor: the session/
+# clone controls, and the label-not-gated-on-a-failing-request control below.
+# post-once.sh lives at $DUTY_DIR/bin — common.sh derives BIN_DIR from DUTY_DIR
+# at source time, so an env BIN_DIR would be clobbered; place the stub where the
+# engine will look.
+HFSHIM="$TMP/hf-shim"; HFDUTY="$TMP/hf-duty"
+mkdir -p "$HFSHIM" "$HFDUTY/bin" "$HFDUTY/lib/jq"
+cp "$SHARED/lib/jq/round-log.jq" "$HFDUTY/lib/jq/"
+HF_CALLS="$TMP/hf-calls.log"
+HFP_RL="$TMP/hf-rl-payload.json"; HFP_HC="$TMP/hf-hc-payload.json"
+# Round-log payload: a body with no marker and one answered round → non-empty
+# newbody → the body PATCH fires (exercises _mirror_rounds end to end).
+printf '{"data":{"repository":{"pullRequest":{"body":"Body.","reviews":{"nodes":[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]},"comments":{"nodes":[{"author":{"login":"me-bot"},"body":"my round reply","createdAt":"2026-01-01T02:00:00Z"}]}}}}}' "$RL_O1" >"$HFP_RL"
+# Handoff-comment payload: both panelists approve the current head.
+printf '{"data":{"repository":{"pullRequest":{"headRefOid":"%s","latestOpinionatedReviews":{"nodes":[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"%s"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"%s"}}]}}}}}' "$RL_O2" "$RL_O2" "$RL_O2" >"$HFP_HC"
+cat >"$HFSHIM/gh" <<'HFGH'
+#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" = api ] && [ "${2:-}" = graphql ]; then
+  case "$*" in
+    *latestOpinionatedReviews*) cat "$HF_HCPAYLOAD" ;;
+    *) cat "$HF_RLPAYLOAD" ;;
+  esac
+  exit 0
+fi
+is_patch=0 is_reqrev=0 is_label=0
+for a in "$@"; do
+  [ "$a" = PATCH ] && is_patch=1
+  [ "$a" = --add-label ] && is_label=1
+  case "$a" in */requested_reviewers) is_reqrev=1 ;; esac
+done
+if [ "$is_patch" = 1 ]; then cat >/dev/null; printf 'PATCH\n' >>"$HF_CALLS"; exit 0; fi
+if [ "$is_reqrev" = 1 ]; then printf 'REQUEST\n' >>"$HF_CALLS"; [ "${HF_REQ_FAIL:-0}" = 1 ] && exit 1; exit 0; fi
+if [ "$is_label" = 1 ]; then printf 'LABEL\n' >>"$HF_CALLS"; exit 0; fi
+exit 0
+HFGH
+cat >"$HFDUTY/bin/post-once.sh" <<'HFPO'
+#!/usr/bin/env bash
+printf 'COMMENT\n' >>"$HF_CALLS"
+exit 0
+HFPO
+cat >"$TMP/hf-run.sh" <<'HFRUN'
+#!/usr/bin/env bash
+set -uo pipefail
+# shellcheck disable=SC1091
+. "$SHARED_DIR/lib/common.sh"
+# shellcheck disable=SC1091
+. "$SHARED_DIR/lib/duty-builder.sh"
+run_session(){ printf 'SESSION\n' >>"$HF_CALLS"; }
+ensure_main_clone(){ printf 'CLONE\n' >>"$HF_CALLS"; }
+_handoff_finalize "$1" "$2"
+HFRUN
+chmod +x "$HFSHIM/gh" "$HFDUTY/bin/post-once.sh"
+hf_run() {  # <req-fail 0|1>
+  : >"$HF_CALLS"
+  SHARED_DIR="$SHARED" HF_CALLS="$HF_CALLS" HF_RLPAYLOAD="$HFP_RL" HF_HCPAYLOAD="$HFP_HC" \
+  HF_REQ_FAIL="$1" DUTY_DIR="$HFDUTY" ME=me-bot FLEET_HUMAN=the-human \
+  LABEL_NEEDS_HUMAN=state:needs-human MARK_HANDOFF='🤝 handed off at head' \
+  PATH="$HFSHIM:$PATH" bash "$TMP/hf-run.sh" the/repo 7 >/dev/null 2>&1
+}
+hfc() { grep -c "^$1\$" "$HF_CALLS"; }
+
+hf_run 0
+t handoff-posts-one-comment 1 "$(hfc COMMENT)"
+t handoff-requests-human-once 1 "$(hfc REQUEST)"
+t handoff-sets-label-once 1 "$(hfc LABEL)"
+t handoff-writes-body-once 1 "$(hfc PATCH)"
+t handoff-spends-no-session 0 "$(hfc SESSION)"
+t handoff-spends-no-clone 0 "$(hfc CLONE)"
+
+# The label is notify.sh's poll signal, so it must NOT be gated on a review
+# request that can fail — a failed request with the label set still pings the
+# human. Must-fail: gate the label on the request and this goes red.
+hf_run 1
+t handoff-request-attempted-on-fail 1 "$(hfc REQUEST)"
+t handoff-label-set-even-if-request-fails 1 "$(hfc LABEL)"
+
 # --- rotate_log
 printf 'x' >"$TMP/small.log"
 rotate_log "$TMP/small.log"
