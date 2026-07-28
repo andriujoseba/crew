@@ -134,6 +134,135 @@ else
   bad "scratch-lookalike-version-survives-reaper (tree/sentinel reaped)"
 fi
 
+# 9. #96's three operator verbs, still fully offline. A stub box CLI makes
+# hired engines drivable without a fleet; `exec` prints the requested box's
+# stamp from a fixture file, while `list --json` supplies the names.
+vshim="$WORK/version-shim"; mkdir -p "$vshim"
+BOX_ENGINES="$WORK/box-engines"; export BOX_ENGINES
+cat >"$vshim/box" <<'SHIM'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list)
+    if [ "${2:-}" = --json ]; then
+      awk '{printf "%s{\"name\":\"%s\"}", sep, $1; sep=","} BEGIN{printf "["} END{print "]"}' "$BOX_ENGINES"
+    fi
+    ;;
+  exec)
+    name="${2:-}"
+    awk -v name="$name" '$1 == name {$1=""; sub(/^ /, ""); print; exit}' "$BOX_ENGINES"
+    ;;
+esac
+SHIM
+chmod +x "$vshim/box"
+export PATH="$vshim:$CREW_BIN:$PATH"
+: >"$BOX_ENGINES"
+
+versions_out="$("$CREW_HOME/versions/$VA/cli/crew" versions 2>&1)"
+case "$versions_out" in
+  *"$VA"*"(running)"*"$VC"*"(current)"*) ok "versions-marks-running-and-current" ;;
+  *) bad "versions-marks-running-and-current (got '$versions_out')" ;;
+esac
+case "$versions_out" in
+  *"crew use <version>"*"re-run install.sh"*) ok "versions-names-switch-and-install-hints" ;;
+  *) bad "versions-names-switch-and-install-hints" ;;
+esac
+
+# Existing hired boxes MUST NOT block a host switch. They are independent
+# engines; the switch succeeds and reports exactly who was left behind.
+printf 'claude-builder crew@%s (aaa)\nkimi-reviewer crew@%s (bbb)\n' "$VB" "$VC" >"$BOX_ENGINES"
+if use_out="$("$CREW_BIN/crew" use "$VA" 2>&1)"; then
+  ok "use-under-hired-boxes-flips"
+else
+  bad "use-under-hired-boxes-flips (got '$use_out')"
+fi
+case "$use_out" in
+  *"switched to $VA"*claude-builder*"$VB"*kimi-reviewer*"$VC"*"crew upgrade --all"*)
+    ok "use-names-skewed-boxes-and-remedy" ;;
+  *) bad "use-names-skewed-boxes-and-remedy (got '$use_out')" ;;
+esac
+same "use-effective-same-shell" "crew $VA ($CREW_HOME/versions/$VA)" \
+  "$("$CREW_BIN/crew" --version)"
+same "use-effective-new-shell" "crew $VA ($CREW_HOME/versions/$VA)" \
+  "$(HOME="$HOME" PATH="$PATH" bash -c 'crew --version')"
+
+if current_out="$("$CREW_BIN/crew" uninstall "$VA" --force 2>&1)"; then
+  bad "uninstall-current-refuses"
+else
+  case "$current_out" in *CURRENT*) ok "uninstall-current-refuses" ;; *) bad "uninstall-current-refuses (got '$current_out')" ;; esac
+fi
+
+# A process whose argv holds this version's floor path is a live-console
+# interlock. The test process does not open a socket; only the held tree path
+# matters to the uninstall guard.
+floor_path="$CREW_HOME/versions/$VB/fleet-floor/server/floor.py"
+bash -c 'exec -a "$1" sleep 60' _ "$floor_path" &
+floor_pid=$!
+if floor_out="$("$CREW_BIN/crew" uninstall "$VB" --force 2>&1)"; then
+  bad "uninstall-live-floor-refuses"
+else
+  case "$floor_out" in *"live crew floor"*"$floor_pid"*) ok "uninstall-live-floor-refuses" ;; *) bad "uninstall-live-floor-refuses (got '$floor_out')" ;; esac
+fi
+kill "$floor_pid" 2>/dev/null || true
+wait "$floor_pid" 2>/dev/null || true
+
+# rm's rc is never the verdict. Make versions/ non-writable so rm can empty
+# the target but cannot remove its name; the explicit absence re-check must
+# say INCOMPLETE and return 1.
+chmod 555 "$CREW_HOME/versions"
+if incomplete_out="$("$CREW_BIN/crew" uninstall "$VB" --force 2>&1)"; then
+  bad "uninstall-survivor-is-incomplete"
+else
+  case "$incomplete_out" in *INCOMPLETE*"$VB"*) ok "uninstall-survivor-is-incomplete" ;; *) bad "uninstall-survivor-is-incomplete (got '$incomplete_out')" ;; esac
+fi
+chmod 755 "$CREW_HOME/versions"
+CREW_REINSTALL=1 install_from "$SB"
+"$CREW_BIN/crew" use "$VA" >/dev/null 2>&1
+if "$CREW_BIN/crew" uninstall "$VB" --force >/dev/null 2>&1 &&
+   [ ! -e "$CREW_HOME/versions/$VB" ]; then
+  ok "uninstall-other-removes-and-proves"
+else
+  bad "uninstall-other-removes-and-proves"
+fi
+
+ln -sfn versions/gone "$CREW_HOME/current"
+if dangling_out="$("$CREW_HOME/versions/$VA/cli/crew" uninstall "$VC" --force 2>&1)"; then
+  bad "uninstall-dangling-current-refuses"
+else
+  case "$dangling_out" in *"current is dangling"*) ok "uninstall-dangling-current-refuses" ;; *) bad "uninstall-dangling-current-refuses (got '$dangling_out')" ;; esac
+fi
+"$CREW_HOME/versions/$VA/cli/crew" use "$VA" >/dev/null 2>&1
+
+# The installer suite exports CREW_YES=1 globally; clear it here because this
+# assertion drives the default refusal, then prove the explicit force path.
+if all_out="$(CREW_YES='' "$CREW_BIN/crew" uninstall --all 2>&1)"; then
+  bad "uninstall-all-hired-refuses"
+else
+  case "$all_out" in
+    *claude-builder*kimi-reviewer*"keeps running autonomously"*unattended*"crew down"*--force*CREW_YES*"console only"*"'crew status'"*)
+      ok "uninstall-all-hired-refuses-and-explains" ;;
+    *) bad "uninstall-all-hired-refuses-and-explains (got '$all_out')" ;;
+  esac
+fi
+: >"$BOX_ENGINES"
+if "$CREW_BIN/crew" uninstall --all --force >/dev/null 2>&1 &&
+   [ ! -e "$CREW_HOME" ] && [ ! -L "$CREW_BIN/crew" ]; then
+  ok "uninstall-all-removes-console-and-path-link"
+else
+  bad "uninstall-all-removes-console-and-path-link"
+fi
+
+# All three verbs distinguish a checkout from disposable install data.
+for verb in versions use uninstall; do
+  args=()
+  [ "$verb" = use ] && args=("$VA")
+  [ "$verb" = uninstall ] && args=(--all --force)
+  if worktree_out="$("$ROOT/cli/crew" "$verb" "${args[@]}" 2>&1)"; then
+    bad "$verb-working-tree-refuses"
+  else
+    case "$worktree_out" in *"working tree"*"$ROOT"*) ok "$verb-working-tree-refuses" ;; *) bad "$verb-working-tree-refuses (got '$worktree_out')" ;; esac
+  fi
+done
+
 echo
 echo "install-lifecycle: passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
