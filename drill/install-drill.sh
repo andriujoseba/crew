@@ -133,7 +133,8 @@ printf '%s\n' "$VB" >"$SB/VERSION"
 DRILL_HOME="$WORK/home"
 OPERATOR_HOME="$HOME"
 export CREW_HOME="$DRILL_HOME/share" CREW_BIN="$DRILL_HOME/bin" CREW_YES=1
-mkdir -p "$DRILL_HOME/crew/.git"
+mkdir -p "$DRILL_HOME/crew/.git" "$DRILL_HOME/crew/cli"
+cp "$TREE/cli/crew" "$DRILL_HOME/crew/cli/crew"
 install_a_out="$(HOME="$DRILL_HOME" CREW_INSTALL_SOURCE="$SA" bash "$TREE/install.sh" 2>&1)" ||
   { fail "install first synthetic version" "$(tail -3 <<<"$install_a_out")"; exit 1; }
 case "$install_a_out" in
