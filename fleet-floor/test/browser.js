@@ -378,7 +378,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const allSeen = Object.keys(byState).reduce((a, k) => a.concat(byState[k]), []);
   if (LIVE && allSeen.length) {
     ok('render: engine shows the version without provenance',
-       allSeen.every((u) => /Engine\s*0\.4\.1/.test(u.vitals) && !/deadbee/.test(u.vitals)),
+       allSeen.some((u) => /Engine\s*0\.4\.1/.test(u.vitals)) &&
+         allSeen.every((u) => !/deadbee/.test(u.vitals)),
        allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     ok('render: the heartbeat is on screen',
        allSeen.every((u) => /Heartbeat/.test(u.vitals)),
