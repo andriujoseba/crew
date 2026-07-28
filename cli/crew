@@ -211,14 +211,17 @@ CMDS=(
   "help^[<command>]^This help, or 'crew help <command>' for one command^cmd_help"
 )
 
-cmd_row() { local r; for r in "${CMDS[@]}"; do case "$r" in "$1^"*) echo "$r"; return 0 ;; esac; done; return 1; }
+# Named verb_row, not cmd_row: the `cmd_` prefix marks a VERB IMPLEMENTATION
+# and nothing else, so "every cmd_* has a table row" is checkable without an
+# exclusion list. An exclusion list is the thing that rots.
+verb_row() { local r; for r in "${CMDS[@]}"; do case "$r" in "$1^"*) echo "$r"; return 0 ;; esac; done; return 1; }
 verbs()   { local r; for r in "${CMDS[@]}"; do echo "${r%%^*}"; done; }
-is_command() { cmd_row "$1" >/dev/null 2>&1; }
+is_command() { verb_row "$1" >/dev/null 2>&1; }
 # locals matter: field() is called from inside dispatch, which holds its own
 # row — a global read would clobber the row being dispatched.
 field() {
   local r f_syn f_sum f_fn
-  r="$(cmd_row "$1")" || return 1
+  r="$(verb_row "$1")" || return 1
   IFS='^' read -r _ f_syn f_sum f_fn <<<"$r"
   case "$2" in syn) echo "$f_syn" ;; sum) echo "$f_sum" ;; fn) echo "$f_fn" ;; esac
 }

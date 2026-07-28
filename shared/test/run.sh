@@ -1709,6 +1709,18 @@ while IFS='^' read -r verb _ sum _; do
 done < <(sed -n '/^CMDS=(/,/^)/p' "$CLIBIN" | sed -n 's/^  "\(.*\)"$/\1/p')
 t cli-table-summaries-present "" "$empty_sum"
 
+# ...and the REVERSE, which is the direction that actually rots: a verb
+# implemented but never added to the table. The first version of this suite
+# only checked table -> function, so a `cmd_usage` added by a later PR would
+# have been dispatchable-by-nobody and invisible in `crew help` with every
+# assertion green. Found while rebasing onto #95, which is exactly when a
+# sibling PR could have introduced one.
+orphan=""
+while read -r fn; do
+  grep -qF "^$fn\"" "$CLIBIN" || orphan="$orphan $fn"
+done < <(grep -oE '^cmd_[a-z_]+\(\)' "$CLIBIN" | sed 's/()//')
+t cli-every-verb-has-a-table-row "" "$orphan"
+
 # Every verb appears in `crew help`, and `crew help <verb>` works for each.
 help_all="$(crewcli help 2>&1)"
 absent="" helpfail=""
