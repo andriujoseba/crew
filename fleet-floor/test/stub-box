@@ -233,11 +233,45 @@ case "${1:-}" in
     # shellcheck disable=SC2016  # the patterns are LITERAL fragments of the
     # scripts being matched, not strings to expand: $HOME is the box's.
     case "$script" in
+      *'destination="$HOME/.crew-engine.tgz"'*) # crew's engine archive upload
+        if [ "${STUB_ENGINE_UPLOAD_FAIL:-0}" = 1 ]; then
+          exit 1
+        fi
+        cp "$stdin_copy" "$STATEDIR/$name.engine.tgz"
+        ;;
+      *'tar xzf "$archive" -C "$stage"'*)       # engine staging extraction
+        rm -rf "$STATEDIR/$name.engine-stage" "$STATEDIR/$name.engine-received"
+        mkdir -p "$STATEDIR/$name.engine-stage"
+        if [ "${STUB_ENGINE_EXTRACT_FAIL:-0}" = 1 ] ||
+           ! tar xzf "$STATEDIR/$name.engine.tgz" -C "$STATEDIR/$name.engine-stage"; then
+          rm -rf "$STATEDIR/$name.engine-stage" "$STATEDIR/$name.engine.tgz"
+          exit 1
+        fi
+        cp -R "$STATEDIR/$name.engine-stage" "$STATEDIR/$name.engine-received"
+        ;;
+      *'"$stage/shared/install.sh"'*)            # staged host engine install
+        if [ -e "$STATEDIR/$name.has-crew" ]; then
+          rm -f "$STATEDIR/$name.has-crew"
+          : >"$STATEDIR/$name.crew-retired"
+          echo "crew: retired obsolete box-side engine source ~/crew to crew.retired"
+        fi
+        if [ "${STUB_INSTALL_FAIL:-0}" = 1 ]; then
+          rm -rf "$STATEDIR/$name.engine-stage" "$STATEDIR/$name.engine.tgz"
+          echo "forced staged install failure" >&2
+          exit 1
+        fi
+        version="$(head -1 "$STATEDIR/$name.engine-stage/VERSION")"
+        printf 'crew@%s (fixture)\n' "$version" >"$STATEDIR/$name.version"
+        rm -rf "$STATEDIR/$name.engine-stage" "$STATEDIR/$name.engine.tgz"
+        echo "installed for stub-bot (agent: stub, roles: stub)"
+        echo "crontab armed"
+        ;;
+      *'rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz'*)
+        rm -rf "$STATEDIR/$name.engine-stage" "$STATEDIR/$name.engine.tgz"
+        ;;
       *'.crew-stage.XXXXXX'*)                  # crew's fleet-definition transport
         : ;;
       *'rm -rf ~/duty/.crew-seed-agents'*)     # agent-profile seed reset (#75)
-        : ;;
-      *'git -C ~/crew checkout'*)              # crew's checkout convergence
         : ;;
       # The ping tier: `box exec <box> -- true`, the whole heartbeat. It needs
       # no case of its own to FAIL correctly — stopped, unreachable and wedged
@@ -337,10 +371,6 @@ case "${1:-}" in
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *bot_cli_probe*)                          # crew's vendor_probe
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
-      *'shared/install.sh'*)                    # crew's hire bake
-        printf 'crew@%s (fixture)\n' "${STUB_INSTALL_VERSION:-0.4.1}" > "$STATEDIR/$name.version"
-        echo "installed for stub-bot (agent: stub, roles: stub)"
-        echo "crontab armed" ;;
       *'instance.conf'*)                        # crew's box_agent
         # AFTER the ::logstart case: probe.sh reads instance.conf too, now that
         # it reports the box's own agent. Same ordering rule as the rest.

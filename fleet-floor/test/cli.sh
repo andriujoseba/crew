@@ -388,7 +388,7 @@ t "crew hire: an on-roster box is hired without a flag" 0 "$CL_RC"
 CL_RELEASE_ROOT="$CL_TMP/release-root"
 mkdir -p "$CL_RELEASE_ROOT/cli"
 cp "$CL_ROOT/cli/crew" "$CL_RELEASE_ROOT/cli/crew"
-ln -s "$CL_ROOT/shared" "$CL_RELEASE_ROOT/shared"
+cp -R "$CL_ROOT/shared" "$CL_RELEASE_ROOT/shared"
 ln -s "$CL_ROOT/examples" "$CL_RELEASE_ROOT/examples"
 ln -s "$CL_ROOT/fleet-floor" "$CL_RELEASE_ROOT/fleet-floor"
 printf '0.2.0\n' > "$CL_RELEASE_ROOT/VERSION"
@@ -462,6 +462,134 @@ if grep -q 'snapshot cli-hired gold-crew-0.2.0' "$CL_TMP/gold-calls" &&
 else
   fail "crew gold: label uses version and message keeps full provenance" \
        "calls=$(cat "$CL_TMP/gold-calls") out=$(cat "$CL_TMP/crew-out")"
+fi
+
+# --- the host ships the engine; boxes never clone crew (#99) ---------------
+CL_ENGINE_STATE="$CL_TMP/crew-state"
+mkdir -p "$CL_RELEASE_ROOT/versions/0.2.0"
+cp -R "$CL_ROOT/shared" "$CL_RELEASE_ROOT/versions/0.2.0/shared"
+printf '0.2.0\n' >"$CL_RELEASE_ROOT/versions/0.2.0/VERSION"
+printf '0.3.0\n' >"$CL_RELEASE_ROOT/VERSION"
+printf 'crew@0.1.0 (legacy)\n' >"$CL_ENGINE_STATE/cli-hired.version"
+: >"$CL_TMP/engine-calls"
+FLOOR_CALLS="$CL_TMP/engine-calls" crew_release hire cli-hired --ref 0.2.0 --force
+if [ "$CL_RC" -eq 0 ] &&
+   grep -q 'engine source: installed version 0.2.0' "$CL_TMP/crew-out" &&
+   grep -q '^crew@0.2.0 (fixture)$' "$CL_ENGINE_STATE/cli-hired.version"; then
+  ok "crew hire: an installed --ref is resolved and stamped on the host"
+else
+  fail "crew hire: an installed --ref is resolved and stamped on the host" \
+       "rc=$CL_RC stamp=$(cat "$CL_ENGINE_STATE/cli-hired.version") out=$(cat "$CL_TMP/crew-out")"
+fi
+if ! grep -qE 'git (clone|fetch|pull)|git -C ~/crew|github.com/.*/crew' "$CL_TMP/engine-calls"; then
+  ok "crew hire: the box makes no crew repository request"
+else
+  fail "crew hire: the box makes no crew repository request" \
+       "$(grep -E 'git (clone|fetch|pull)|git -C ~/crew|github.com/.*/crew' "$CL_TMP/engine-calls")"
+fi
+# shellcheck disable=SC2016  # matching the remote script's literal $HOME
+t "crew hire: exactly one engine archive payload is added" 1 \
+  "$(grep -cF 'destination="$HOME/.crew-engine.tgz"' "$CL_TMP/engine-calls")"
+if diff -qr "$CL_RELEASE_ROOT/versions/0.2.0/shared" \
+  "$CL_ENGINE_STATE/cli-hired.engine-received/shared" >/dev/null &&
+   cmp -s "$CL_RELEASE_ROOT/versions/0.2.0/VERSION" \
+     "$CL_ENGINE_STATE/cli-hired.engine-received/VERSION"; then
+  ok "crew hire: extracted engine bytes match the selected host version"
+else
+  fail "crew hire: extracted engine bytes match the selected host version"
+fi
+if [ ! -e "$CL_ENGINE_STATE/cli-hired.engine-stage" ] &&
+   [ ! -e "$CL_ENGINE_STATE/cli-hired.engine.tgz" ]; then
+  ok "crew hire: success removes the box-side stage and archive"
+else
+  fail "crew hire: success removes the box-side stage and archive"
+fi
+
+: >"$CL_TMP/engine-calls"
+FLOOR_CALLS="$CL_TMP/engine-calls" crew_release hire cli-hired --ref 0.2.0
+if [ "$CL_RC" -eq 0 ] &&
+   grep -q 'version 0.2.0 matches, skipping' "$CL_TMP/crew-out" &&
+   ! grep -q '.crew-engine.tgz' "$CL_TMP/engine-calls"; then
+  ok "crew hire: same release version skips before any transport"
+else
+  fail "crew hire: same release version skips before any transport" \
+       "rc=$CL_RC calls=$(cat "$CL_TMP/engine-calls") out=$(cat "$CL_TMP/crew-out")"
+fi
+
+: >"$CL_ENGINE_STATE/cli-hired.has-crew"
+crew_release hire cli-hired --ref 0.2.0 --force
+if [ "$CL_RC" -eq 0 ] &&
+   grep -q 'retired obsolete box-side engine source ~/crew to crew.retired' "$CL_TMP/crew-out" &&
+   [ -e "$CL_ENGINE_STATE/cli-hired.crew-retired" ] &&
+   [ ! -e "$CL_ENGINE_STATE/cli-hired.has-crew" ]; then
+  ok "crew hire: a legacy box-side checkout is retired and named"
+else
+  fail "crew hire: a legacy box-side checkout is retired and named" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+crew_release hire cli-hired --ref 0.2.0 --force
+if ! grep -q 'retired obsolete box-side engine source' "$CL_TMP/crew-out"; then
+  ok "crew hire: legacy checkout retirement happens only once"
+else
+  fail "crew hire: legacy checkout retirement happens only once" "$(cat "$CL_TMP/crew-out")"
+fi
+
+before_stamp="$(cat "$CL_ENGINE_STATE/cli-hired.version")"
+STUB_INSTALL_FAIL=1 crew_release hire cli-hired --ref 0.2.0 --force
+if [ "$CL_RC" -ne 0 ] &&
+   grep -q 'engine is NOT installed and cron is NOT armed' "$CL_TMP/crew-out" &&
+   [ "$before_stamp" = "$(cat "$CL_ENGINE_STATE/cli-hired.version")" ] &&
+   [ ! -e "$CL_ENGINE_STATE/cli-hired.engine-stage" ] &&
+   [ ! -e "$CL_ENGINE_STATE/cli-hired.engine.tgz" ]; then
+  ok "crew hire: failed install preserves the engine and cleans staging"
+else
+  fail "crew hire: failed install preserves the engine and cleans staging" \
+       "rc=$CL_RC before=$before_stamp after=$(cat "$CL_ENGINE_STATE/cli-hired.version") out=$(cat "$CL_TMP/crew-out")"
+fi
+
+STUB_ENGINE_UPLOAD_FAIL=1 crew_release hire cli-hired --ref 0.2.0 --force
+if [ "$CL_RC" -ne 0 ] &&
+   [ "$before_stamp" = "$(cat "$CL_ENGINE_STATE/cli-hired.version")" ] &&
+   [ ! -e "$CL_ENGINE_STATE/cli-hired.engine-stage" ] &&
+   [ ! -e "$CL_ENGINE_STATE/cli-hired.engine.tgz" ]; then
+  ok "crew hire: failed transport preserves the engine and cleans staging"
+else
+  fail "crew hire: failed transport preserves the engine and cleans staging" \
+       "rc=$CL_RC before=$before_stamp after=$(cat "$CL_ENGINE_STATE/cli-hired.version")"
+fi
+
+mkdir -p "$CL_RELEASE_ROOT/versions/0.2.1/shared"
+cp "$CL_ROOT/shared/install.sh" "$CL_RELEASE_ROOT/versions/0.2.1/shared/install.sh"
+crew_release hire cli-hired --ref 0.2.1 --force
+if [ "$CL_RC" -ne 0 ] && grep -q 'installed version 0.2.1 is unavailable' "$CL_TMP/crew-out"; then
+  ok "crew hire: an installed version without VERSION cannot be shipped"
+else
+  fail "crew hire: an installed version without VERSION cannot be shipped" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+
+: >"$CL_TMP/engine-calls"
+FLOOR_CALLS="$CL_TMP/engine-calls" crew_release upgrade cli-hired --ref 0.2.0
+# shellcheck disable=SC2016  # matching the remote script's literal $HOME
+if grep -q 'engine source: installed version 0.2.0' "$CL_TMP/crew-out" &&
+   grep -qF 'destination="$HOME/.crew-engine.tgz"' "$CL_TMP/engine-calls" &&
+   ! grep -qE 'git (clone|fetch|pull)|git -C ~/crew' "$CL_TMP/engine-calls"; then
+  ok "crew upgrade: uses the same host engine transport as hire"
+else
+  fail "crew upgrade: uses the same host engine transport as hire" \
+       "calls=$(cat "$CL_TMP/engine-calls") out=$(cat "$CL_TMP/crew-out")"
+fi
+
+: >"$CL_TMP/engine-calls"
+FLOOR_CALLS="$CL_TMP/engine-calls" crew_release hire cli-noauth --force
+# shellcheck disable=SC2016  # matching the remote script's literal $HOME
+if [ "$CL_RC" -eq 0 ] &&
+   grep -q 'hired but NOT authenticated' "$CL_TMP/crew-out" &&
+   grep -qF 'destination="$HOME/.crew-engine.tgz"' "$CL_TMP/engine-calls"; then
+  ok "crew hire: GitHub login is not an installation prerequisite"
+else
+  fail "crew hire: GitHub login is not an installation prerequisite" \
+       "rc=$CL_RC calls=$(cat "$CL_TMP/engine-calls") out=$(cat "$CL_TMP/crew-out")"
 fi
 
 # The production roster is authoritative. Explicit profile flags on one of its
@@ -544,14 +672,12 @@ if grep -q 'hire-all: \$hired hired, \$failed failed' "$CL_ROOT/cli/crew"; then
 else
   fail "crew hire-all: summarises what it could not do" "no failure summary — a partial fleet reads as a whole one"
 fi
-# ...and the repair the bug actually needed: verify where ~/crew's origin
-# POINTS, not just that the directory exists.
-if grep -q 'remote get-url origin' "$CL_ROOT/cli/crew" &&
-   grep -q 'remote set-url origin' "$CL_ROOT/cli/crew"; then
-  ok "crew hire: repoints a ~/crew whose origin has vanished"
+# The old #49 origin-repair surface disappears with the box-side checkout.
+if ! grep -qE 'git clone|remote get-url origin|git -C ~/crew (fetch|pull|checkout)' "$CL_ROOT/cli/crew"; then
+  ok "crew hire: no box-side checkout or origin repair remains"
 else
-  fail "crew hire: repoints a ~/crew whose origin has vanished" \
-       "hire still guards only on the directory; a stale bundle remote will fatal again"
+  fail "crew hire: no box-side checkout or origin repair remains" \
+       "a box-side crew repository command is still present"
 fi
 
 
