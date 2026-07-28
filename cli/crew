@@ -1159,6 +1159,16 @@ cmd_status() {
   need_box
   if [ -n "${1:-}" ]; then
     local b="$1"
+    # A box that does not exist is a FAILURE, not an empty report (#97). The
+    # old form printed "(unreachable)" and returned 0, so `crew status x ||
+    # alert` could never fire and a typo'd box name read exactly like a box
+    # that was merely down. Same shape as cmd_hire's existing check, and the
+    # same exit code: the world is not ready, so 1 rather than 2.
+    #
+    # Deliberately narrow: a box that EXISTS but does not answer keeps
+    # printing "(unreachable)" and returning 0, because stopped is a normal
+    # state that `crew status` with no argument reports without complaint.
+    box_exists "$b" || die "no box named '$b' — 'crew status' lists the roster"
     echo "== $b"
     bxn "$b" '
       cat ~/duty/VERSION 2>/dev/null || echo "not hired (no engine)"

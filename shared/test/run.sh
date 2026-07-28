@@ -1670,6 +1670,92 @@ for ok in "0.1.0" "0.1.0-dev" "0.1.0-rc1" "1.2.3+meta"; do
   t "valid_version-accepts[$ok]" accept "$got"
 done
 
+# --- cli/crew's self-description: the table is the source of truth (#97) ----
+# The property under test is ANTI-DRIFT, not cosmetics. Before #97 the command
+# list lived three times — the header comment printed as help, a hand-written
+# dispatch case, and each verb's usage string — and it had already diverged.
+# These assertions are what make "the help cannot drift from the code" a fact
+# rather than a comment.
+CLIBIN="$ROOT/cli/crew"
+CLISHIM="$TMP/cli-bin"
+mkdir -p "$CLISHIM"
+cat >"$CLISHIM/box" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf '[]\n' ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$CLISHIM/box"
+crewcli() { PATH="$CLISHIM:$PATH" bash "$CLIBIN" "$@"; }
+crewrc()  { PATH="$CLISHIM:$PATH" bash "$CLIBIN" "$@" >/dev/null 2>&1; echo $?; }
+
+# Every row's function EXISTS. This is the assertion that makes the table safe
+# to dispatch from: a row naming a function nobody wrote is a runtime
+# "command not found" on a verb the help advertises.
+missing_fn=""
+while IFS='^' read -r verb _ _ fn; do
+  [ -n "$verb" ] || continue
+  grep -q "^$fn()" "$CLIBIN" || missing_fn="$missing_fn $verb->$fn"
+done < <(sed -n '/^CMDS=(/,/^)/p' "$CLIBIN" | sed -n 's/^  "\(.*\)"$/\1/p')
+t cli-table-functions-exist "" "$missing_fn"
+
+# Every row has a summary — an empty one renders a blank line in `crew help`,
+# which is how a verb becomes invisible while still being dispatchable.
+empty_sum=""
+while IFS='^' read -r verb _ sum _; do
+  [ -n "$verb" ] || continue
+  [ -n "$sum" ] || empty_sum="$empty_sum $verb"
+done < <(sed -n '/^CMDS=(/,/^)/p' "$CLIBIN" | sed -n 's/^  "\(.*\)"$/\1/p')
+t cli-table-summaries-present "" "$empty_sum"
+
+# Every verb appears in `crew help`, and `crew help <verb>` works for each.
+help_all="$(crewcli help 2>&1)"
+absent="" helpfail=""
+while IFS='^' read -r verb _ _ _; do
+  [ -n "$verb" ] || continue
+  case "$help_all" in *"  $verb "*) : ;; *) absent="$absent $verb" ;; esac
+  [ "$(crewrc help "$verb")" = 0 ] || helpfail="$helpfail $verb"
+done < <(sed -n '/^CMDS=(/,/^)/p' "$CLIBIN" | sed -n 's/^  "\(.*\)"$/\1/p')
+t cli-help-lists-every-verb "" "$absent"
+t cli-help-per-command-works "" "$helpfail"
+
+# The two exit codes, which is the whole reason for the split: a caller must
+# be able to tell "you typo'd" from "the fleet is broken".
+t cli-unknown-command-is-2   2 "$(crewrc nonsensecommand)"
+t cli-missing-arg-is-2       2 "$(crewrc hire)"
+t cli-unknown-flag-is-2      2 "$(crewrc floor --bogus)"
+t cli-flag-before-verb-is-2  2 "$(crewrc --dry-run up)"
+t cli-absent-box-is-1        1 "$(crewrc status nosuchbox)"
+t cli-help-is-0              0 "$(crewrc help)"
+t cli-version-is-0           0 "$(crewrc --version)"
+
+# A typo points somewhere rather than only failing.
+case "$(crewcli hier 2>&1)" in *"did you mean 'hire'"*) r1=suggested ;; *) r1=SILENT ;; esac
+t cli-typo-suggests suggested "$r1"
+
+# --version names the version AND the root: with two installs on PATH, the
+# root is how you settle which crew you just ran.
+ver_out="$(crewcli --version 2>&1)"
+case "$ver_out" in "crew $(head -1 "$ROOT/VERSION" | tr -d '\r\n') ("*")") r1=named ;; *) r1="$ver_out" ;; esac
+t cli-version-names-version-and-root named "$r1"
+
+# `adopt` is retired but must not break a caller — and must not be advertised.
+case "$(crewcli adopt 2>&1)" in *"'adopt' is now 'hire'"*) r1=warned ;; *) r1=SILENT ;; esac
+t cli-adopt-alias-warns warned "$r1"
+case "$help_all" in *adopt*) r1=ADVERTISED ;; *) r1=hidden ;; esac
+t cli-adopt-not-in-help hidden "$r1"
+
+# The header comment is no longer a second command list. It used to BE the
+# help output, and it drifted; a reader who re-adds a verb table there
+# re-creates the defect #97 closed.
+# The shape being forbidden is a LISTING — an indented comment line that
+# begins with `crew <verb>`, which is exactly how the old table was written
+# and how it drifted. Prose that quotes a command mid-sentence is fine and is
+# not what re-creates the defect; matching on that would forbid explaining it.
+relisted="$(sed -n '2,/^set -euo pipefail/p' "$CLIBIN" | grep -cE '^#[[:space:]]+crew [a-z-]+' || true)"
+t cli-header-is-not-a-command-list 0 "$relisted"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
