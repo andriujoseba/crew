@@ -64,7 +64,7 @@ emit_probe() {
 
   case "$sc" in
     nothired) printf '::engine \n' ;;
-    *)        printf '::engine 0.4.1\n' ;;
+    *)        printf '::engine crew@0.4.1 (deadbee)\n' ;;
   esac
   # The agent the box was ACTUALLY installed as. The roster may claim another,
   # and that disagreement is the thing the floor now reports — so the stub has
@@ -332,12 +332,13 @@ case "${1:-}" in
           *)             echo "nofail nofail 30" ;;
         esac ;;
       *'duty/VERSION'*)                         # crew's hired_at
-        [ "$sc" = "nothired" ] || echo "crew@0.4.1" ;;
+        [ "$sc" = "nothired" ] || cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)" ;;
       *'gh auth status'*)                       # crew hire / boot gate
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *bot_cli_probe*)                          # crew's vendor_probe
         [ "$sc" = "noauth" ] && exit 1; exit 0 ;;
       *'shared/install.sh'*)                    # crew's hire bake
+        printf 'crew@%s (fixture)\n' "${STUB_INSTALL_VERSION:-0.4.1}" > "$STATEDIR/$name.version"
         echo "installed for stub-bot (agent: stub, roles: stub)"
         echo "crontab armed" ;;
       *'instance.conf'*)                        # crew's box_agent
@@ -357,6 +358,7 @@ case "${1:-}" in
 
   down)  echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
   start) echo running > "$STATEDIR/$2.state"; echo "started $2" ;;
+  snapshot) echo "snapshotted $2 as $3" ;;
   # `crew new` mints infrastructure only; the stub records the mint so a test
   # can assert the sizing/template arguments without owning an Incus (#75).
   new)   echo "created" ;;
