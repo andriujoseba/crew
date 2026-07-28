@@ -65,9 +65,11 @@ def exercise(action, states, failures=()):
     assert status == expected_status, (action, status, payload)
     assert peak == len(BOXES), (action, "peak concurrency", peak)
     assert [result["box"] for result in payload["results"]] == BOXES, payload
-    assert [result["box"] for result in payload["results"] if not result["ok"]] == (
-        list(failures)
-    ), payload
+    # `is False` (a refusal), not falsy — an absent box carries `ok:None` and
+    # must not be counted a failure here, matching the strict client filter.
+    assert [
+        result["box"] for result in payload["results"] if result["ok"] is False
+    ] == list(failures), payload
     assert fleet.refreshes == 1, (action, "refreshes", fleet.refreshes)
 
 
