@@ -110,6 +110,30 @@ else
   bad "post-interrupt-crew-runs"
 fi
 
+# 8. A legitimate version whose name RESEMBLES swap scratch (valid_version
+#    accepts dots + digits, so `1.0.new.999` is a sane version name) must
+#    survive a later normal install — the scratch reaper keys on identity
+#    (VERSION == basename), not on the name shape (codex-bot, #95).
+#    The reaper reads `current` at entry, so it also spares whatever `current`
+#    resolves to; to prove guard 2 (VERSION==basename) and not merely guard 1
+#    (is-current), `current` must have moved OFF the lookalike before the
+#    reaping install: install it, flip past it with a fresh version, then let a
+#    no-op re-run's reaper fire while `current` points elsewhere.
+VS=1.0.new.999 VC=0.0.0-lifecycle-c
+SS="$WORK/src-scratchlike"; SC="$WORK/src-c"
+mk_src "$SS" "$VS"; mk_src "$SC" "$VC"
+install_from "$SS"                       # current -> VS
+sentinel="$CREW_HOME/versions/$VS/SENTINEL"
+: > "$sentinel"
+install_from "$SC"                       # fresh install flips current -> VC
+same "flip-off-scratch-lookalike" "versions/$VC" "$(readlink "$CREW_HOME/current")"
+install_from "$SA"                       # no-op re-run; its reaper fires, current=VC
+if [ -d "$CREW_HOME/versions/$VS" ] && [ -e "$sentinel" ]; then
+  ok "scratch-lookalike-version-survives-reaper"
+else
+  bad "scratch-lookalike-version-survives-reaper (tree/sentinel reaped)"
+fi
+
 echo
 echo "install-lifecycle: passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]

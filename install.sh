@@ -149,15 +149,24 @@ valid_version "$new_ver" || die "the source's VERSION is not a sane directory na
 # Reap swap scratch from an interrupted prior run before installing:
 # versions/*.new.<pid> and versions/*.old.<pid> are only ever transient (this
 # run makes its own below). A kill leaves them behind, and #96's `crew versions`
-# would otherwise list them (kimi-bot, #95). Remove them — but never the one
-# `current` resolves to: an interrupted reinstall legitimately left a `.new.*`
-# as the live tree, and removing it would dangle `current` (the next flip
-# retires it). The trailing [0-9] keeps this to the pid-suffixed scratch, not a
-# version whose name merely ends in something else.
+# would otherwise list them (kimi-bot, #95). Remove them — but with two guards,
+# because valid_version() accepts dots and digits, so a legitimate version can
+# be *named* `1.0.new.123` and match the scratch glob (codex-bot, #95):
+#   1. never the tree `current` resolves to — an interrupted reinstall
+#      legitimately left a `.new.*` as the live tree, and removing it would
+#      dangle `current` (the next flip retires it);
+#   2. never a real installed version that merely LOOKS like scratch. Identity,
+#      not name: a version dir is `versions/<v>` iff its own VERSION file reads
+#      `<v>` (that is the only way it got its name). Swap scratch instead
+#      carries the BASE version's VERSION (`.new.<pid>` is the staged source,
+#      `.old.<pid>` the retired tree), so its basename never equals its VERSION.
+#      So spare any dir whose VERSION equals its basename; reap the rest
+#      (missing/mismatched VERSION == genuine scratch).
 cur_now="$(readlink -f "$DEST/current" 2>/dev/null || true)"
 for d in "$DEST"/versions/*.new.[0-9]* "$DEST"/versions/*.old.[0-9]*; do
   [ -d "$d" ] || continue
   [ -n "$cur_now" ] && [ "$(readlink -f "$d")" = "$cur_now" ] && continue
+  [ "$(cat "$d/VERSION" 2>/dev/null || true)" = "${d##*/}" ] && continue
   rm -rf "$d"
 done
 
