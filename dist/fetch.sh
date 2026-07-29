@@ -3,9 +3,9 @@ set -euo pipefail
 # dist/fetch.sh — the gh-authenticated install channel (heavy-duty/crew#98,
 # channel 3). For a machine that ALREADY holds an authenticated `gh` (danmt's
 # own): resolve a release tag, fetch that ref's source tarball THROUGH gh — which
-# works against a PRIVATE repo, with no anonymous URL and no `raw.githubusercontent`
-# — and hand it to install.sh via CREW_INSTALL_SOURCE. It fetches; install.sh
-# installs. The scp-able artifact remains the primary, credential-free channel;
+# uses the caller's existing credentials, with no anonymous URL and no
+# `raw.githubusercontent` — and hand it to install.sh via CREW_INSTALL_SOURCE.
+# It fetches; install.sh installs. The scp-able artifact remains the primary, credential-free channel;
 # this one is a convenience where `gh` is already present.
 #
 #   dist/fetch.sh [--repo OWNER/REPO] [--ref latest|TAG] [-- <install.sh args>]
