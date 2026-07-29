@@ -97,6 +97,17 @@ function fabBay(t,lit,st){
     S.strokeStyle="#2a3444";S.lineWidth=1;S.strokeRect(cxa,cya,cw,ch);
     S.fillStyle="rgba(255,70,58,0.30)";S.fillRect(cxa+cw/2-9,cya+ch/2-2,18,4);}
   emit(function(c){c.fillStyle=on?rgba(95,206,155,0.9):rgba(255,60,50,0.8);c.beginPath();c.arc(x+w-12,yt+22,3,0,7);c.fill();});
+  /* The furnace throws light on the floor in front of it. It was the brightest
+     thing in the bay and the concrete two feet away was as dark as the corner
+     of the room — the one change that stops the fabricator reading as a
+     picture of a fire hung on the wall. */
+  if(on){S.save();S.globalCompositeOperation="lighter";
+    var spill=S.createRadialGradient(x+w/2,FLOORY,4,x+w/2,FLOORY,190);
+    var sk=(st==="working"?1:0.5);
+    spill.addColorStop(0,"rgba(255,150,60,"+(0.20*sk)+")");
+    spill.addColorStop(0.45,"rgba(230,110,40,"+(0.08*sk)+")");
+    spill.addColorStop(1,"rgba(200,90,30,0)");
+    S.fillStyle=spill;S.beginPath();S.ellipse(x+w/2,FLOORY+8,190,34,0,0,7);S.fill();S.restore();}
   rivet(S,x+6,yt+3,"#3d4c63");rivet(S,x+w-6,yt+3,"#3d4c63");
   // barrels beside the bay
   [[x+w+6,"#c9a227"],[x+w+18,"#4f9e5a"]].forEach(function(k){var bx=k[0];plate(S,[[bx,566],[bx+11,566],[bx+11,612],[bx,612]],k[1],"#0c1119","#0a0e16");S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(bx,576,11,1);S.fillRect(bx,596,11,1);});
@@ -153,6 +164,15 @@ function diffWall(t,st){
     if(!off){var gg=S.createRadialGradient(mx+mw/2,y+mh/2,4,mx+mw/2,y+mh/2,mw*0.9);gg.addColorStop(0,"rgba(90,160,220,0.09)");gg.addColorStop(1,"rgba(90,160,220,0)");S.fillStyle=gg;S.fillRect(mx-8,y-8,mw+16,mh+16);}
     S.fillStyle=off?"#3a1518":"#1a3a2a";S.fillRect(mx+mw-11,y+mh-6,6,3);
   }
+  /* Four lit monitors light the wall they are bolted to. The panel behind them
+     was the same near-black as the unlit half of the room, which is what made
+     this wall read as a poster of monitors rather than monitors in a room. */
+  if(!off){S.save();S.globalCompositeOperation="lighter";
+    var ww2=x+3*(mw+gap)+mw, wash=S.createLinearGradient(0,y-30,0,y+mh+120);
+    wash.addColorStop(0,"rgba(90,160,230,0)");
+    wash.addColorStop(0.3,"rgba(90,160,230,"+(st==="working"?0.075:0.045)+")");
+    wash.addColorStop(1,"rgba(90,160,230,0)");
+    S.fillStyle=wash;S.fillRect(x-40,y-30,(ww2-x)+80,mh+150);S.restore();}
 }
 function checklistBoard(){
   var x=566,y=252,w=88,h=76;plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#0f1620","#0a0f16","#22304a");S.fillStyle="#131c26";S.fillRect(x+5,y+5,w-10,h-10);
@@ -198,6 +218,15 @@ function kanban(t,st){
     var n=off?2:(st==="working"?(2+((c+Math.floor(t))%3)):(c===0?5:1));
     for(var k=0;k<n;k++){var cc=cols[(c+k)%4];S.fillStyle="rgba("+cc+","+(off?0.18:0.48)+")";S.fillRect(cx2+6,y+22+k*15,colw-14,11);S.fillStyle="rgba(0,0,0,0.3)";S.fillRect(cx2+6,y+22+k*15,colw-14,1);}
   }
+  /* The board is a metre-wide lit panel and the wall under it was black. It
+     spills a cool wash downward — and unlike the other two rooms this one is
+     colourless on purpose: the board's own colours are its data, and tinting
+     the room with them would make the wall look like it meant something. */
+  if(!off){S.save();S.globalCompositeOperation="lighter";
+    var kw=S.createLinearGradient(0,y+h,0,y+h+150);
+    kw.addColorStop(0,"rgba(150,175,205,"+(st==="working"?0.07:0.05)+")");
+    kw.addColorStop(1,"rgba(150,175,205,0)");
+    S.fillStyle=kw;S.fillRect(x-30,y+h,w+60,150);S.restore();}
 }
 function radar(t,st){
   var cx2=690,cy2=248,r=34,off=st==="offline";
@@ -891,6 +920,17 @@ function buildClaude(t,st){
   [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,9,0,7);c.fill();return;}
     var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,20);cg.addColorStop(0,rgba(255,225,160,corePulse));cg.addColorStop(0.4,rgba(255,150,60,0.7*corePulse));cg.addColorStop(1,"rgba(255,120,40,0)");c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,20,0,7);c.fill();
     c.fillStyle=rgba(255,240,210,corePulse);c.beginPath();c.arc(cx,coreY,5,0,7);c.fill(); });
+  /* The core lights the chest it is set into. Every emissive on this model
+     glowed into the bloom buffer and then lit nothing — a reactor bright
+     enough to read across a room, sitting in plate armour that stayed the
+     same colour as the shins. Additive on the BODY layer, not the emissive
+     one: this is the light arriving on the plates, not more glow leaving. */
+  if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    var bounce=RB.createRadialGradient(cx,coreY,4,cx,coreY,86);
+    bounce.addColorStop(0,rgba(255,150,60,0.30*corePulse));
+    bounce.addColorStop(0.5,rgba(220,110,40,0.11*corePulse));
+    bounce.addColorStop(1,"rgba(200,90,30,0)");
+    RB.fillStyle=bounce;RB.beginPath();RB.arc(cx,coreY,86,0,7);RB.fill();RB.restore();}
 
   // ---------- COLLAR / NECK ----------
   plate(g,[[cx-30,214+breath],[cx+30,214+breath],[cx+22,226+breath],[cx-22,226+breath]],sT,sM,ed);
@@ -1067,6 +1107,11 @@ function buildCodex(t,st){
   RB.strokeStyle=ed;RB.lineWidth=2;RB.beginPath();RB.arc(cx,coreY,19,0,7);RB.stroke();
   for(var b2=-1;b2<=1;b2++){RB.strokeStyle="#0a0f18";RB.lineWidth=2;RB.beginPath();RB.moveTo(cx-17,coreY+b2*7);RB.lineTo(cx+17,coreY+b2*7);RB.stroke();}
   [RB,RE].forEach(function(c){if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,8,0,7);c.fill();return;}var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,19);cg.addColorStop(0,teh(pulse));cg.addColorStop(0.4,te(0.75*pulse));cg.addColorStop(1,te(0));c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,19,0,7);c.fill();c.fillStyle=teh(pulse);c.beginPath();c.arc(cx,coreY,4.5,0,7);c.fill();});
+  // the core lights the carapace above it and the head plate below — see claude
+  if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    var tb=RB.createRadialGradient(cx,coreY,4,cx,coreY,96);
+    tb.addColorStop(0,te(0.26*pulse));tb.addColorStop(0.5,te(0.09*pulse));tb.addColorStop(1,te(0));
+    RB.fillStyle=tb;RB.beginPath();RB.arc(cx,coreY,96,0,7);RB.fill();RB.restore();}
 
   // ---- cephalothorax (front hull) + eye cluster ----
   var hxx=cx, hy2=BY+22;
@@ -1173,6 +1218,14 @@ function buildGrok(t,st){
   pl(g,cx,BY-18,cx,BY+22,rc,1);
   RB.fillStyle="#05080e";RB.fillRect(cx-10,BY-6,20,16);
   [RB,RE].forEach(function(c){if(!offl){c.fillStyle=pu(0.55+0.3*pulse);c.fillRect(cx-8,BY-4,16,12);c.fillStyle=puh(pulse);c.fillRect(cx-6,BY-2,5,3);c.fillStyle=puh(0.7*pulse);c.fillRect(cx+1,BY+3,4,2);}else{c.fillStyle="#1a2028";c.fillRect(cx-8,BY-4,16,12);}});
+  /* The chest readout lights the suit around it. Grok's one bright panel sat
+     on a torso that never acknowledged it — and with the arms now folded
+     directly in front of it when idle, they are exactly the surface it should
+     be falling on. */
+  if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    var pb=RB.createRadialGradient(cx,BY+2,3,cx,BY+2,64);
+    pb.addColorStop(0,pu(0.26*(0.6+0.4*pulse)));pb.addColorStop(0.5,pu(0.09));pb.addColorStop(1,pu(0));
+    RB.fillStyle=pb;RB.beginPath();RB.arc(cx,BY+2,64,0,7);RB.fill();RB.restore();}
   plate(g,[[cx-34,BY-28],[cx-18,BY-30],[cx-16,BY-14],[cx-32,BY-12]],sT,sB,ed);
   plate(g,[[cx+18,BY-30],[cx+34,BY-28],[cx+32,BY-12],[cx+16,BY-14]],sT,sB,ed);
   /* Life-support hose (pod → chest). Under power it is pressurised and holds a
@@ -1320,6 +1373,14 @@ function buildKimi(t,st){
   g.restore();
   // bezel catching the room, so the casing has a lit edge like everything else
   g.strokeStyle="rgba(180,205,245,"+(offl?0.06:0.16)+")";g.lineWidth=1;rr(g,sx-1,sy-1,sw+2,sh+2,10);g.stroke();
+  /* A screen this size is the brightest thing in kimi's frame and it was
+     lighting nothing — the casing around it, the ear stalks and the skirt all
+     stayed the same grey they are in the dark. Screens light the room; this
+     one now at least lights its own housing. */
+  if(!offl){g.save();g.globalCompositeOperation="lighter";
+    var sb2=g.createRadialGradient(cx,by0+bh*0.5,6,cx,by0+bh*0.5,84);
+    sb2.addColorStop(0,pk(0.20));sb2.addColorStop(0.45,pk(0.08));sb2.addColorStop(1,pk(0));
+    g.fillStyle=sb2;g.beginPath();g.arc(cx,by0+bh*0.5,84,0,7);g.fill();g.restore();}
 
   // ---- face (per state) ----
   var e1=cx-13,e2=cx+13,ey2=by0+bh*0.44;
@@ -1419,6 +1480,17 @@ function drawRobot(t){
     if(ROOM==="builder"){ // weld arc + spark shower
       var flick=0.4+0.42*Math.sin(t*40)+ (Math.random()<0.15?0.35:0);
       emit(function(c){c.save();c.globalCompositeOperation="lighter";var ag=c.createRadialGradient(hx,hyy,1,hx,hyy,20);ag.addColorStop(0,rgba(210,232,255,Math.min(0.9,flick)));ag.addColorStop(0.35,rgba(120,190,255,0.42*flick));ag.addColorStop(1,"rgba(90,160,255,0)");c.fillStyle=ag;c.beginPath();c.arc(hx,hyy,20,0,7);c.fill();c.fillStyle=rgba(255,255,255,Math.min(0.9,flick));c.beginPath();c.arc(hx,hyy,2.4,0,7);c.fill();c.restore();});
+      /* A welding arc is the brightest thing in the building. It was lighting
+         a 20px bubble and nothing else — not the plates it is held against,
+         not the deck under it. Now it throws a hard, flickering pool on the
+         floor, which is also what sells the sparks as hot rather than as
+         orange confetti. */
+      emit(function(c){c.save();c.globalCompositeOperation="lighter";
+        var fp=c.createRadialGradient(hx,FLOORY,3,hx,FLOORY,150);
+        fp.addColorStop(0,rgba(190,220,255,0.22*flick));
+        fp.addColorStop(0.4,rgba(120,175,255,0.09*flick));
+        fp.addColorStop(1,"rgba(90,150,255,0)");
+        c.fillStyle=fp;c.beginPath();c.ellipse(hx,FLOORY+6,150,26,0,0,7);c.fill();c.restore();});
       if(!reduced&&Math.random()<0.55)for(var s=0;s<3;s++)sparks.push({x:hx,y:hyy,vx:(Math.random()-0.5)*1.5,vy:1.6+Math.random()*2.6,life:0.3+Math.random()*0.35});
     } else if(ROOM==="reviewer"){ // floating diff-scan hologram + sweep + beam
       var pw=66,ph=48,pxp=hx-6,pyp=hyy-ph-8;

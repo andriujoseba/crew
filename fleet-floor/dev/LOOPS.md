@@ -272,3 +272,52 @@ deep in intake and the other three run to one each. The board is the only thing
 in this room that can show a queue.
 
 ![triage](shots/loop-04/room-triage.webp)
+
+---
+
+## Loop 5 — light that lands
+
+Every emissive in this scene glowed into the bloom buffer and then **lit
+nothing**. A reactor bright enough to read across a room, set in plate armour
+that stayed the same colour as the shins. A welding arc — the brightest thing
+in the building — illuminating a 20px bubble and not the deck under it. Four lit
+monitors bolted to a wall as black as the unlit half of the room.
+
+One rule, applied seven times: **a light source has to land on a surface.**
+
+The washes are additive on the *body* layer, not the emissive one — this is
+light arriving on the plates, not more glow leaving them.
+
+### claude — the core lights its own chest
+![claude](shots/loop-05/robot-claude.webp)
+
+### codex — teal falls on the carapace above and the head plate below
+![codex](shots/loop-05/robot-codex.webp)
+
+### grok — the chest readout lights the suit, and now the folded arms in front of it
+![grok](shots/loop-05/robot-grok.webp)
+
+### kimi — the screen lights its own housing
+The brightest thing in kimi's frame, and the casing, the ear stalks and the
+skirt all stayed the same grey they are in the dark.
+
+![kimi](shots/loop-05/robot-kimi.webp)
+
+### builder — the furnace throws on the floor, and the weld arc throws harder
+The bay's brightest object with concrete two feet away as dark as the far
+corner. The arc's flickering floor pool is also what sells the sparks as hot
+rather than as orange confetti.
+
+![builder](shots/loop-05/room-builder.webp)
+
+### reviewer — the diff wall lights the wall it is bolted to
+This is what stopped it reading as a poster of monitors.
+
+![reviewer](shots/loop-05/room-reviewer.webp)
+
+### triage — the board spills downward, colourless on purpose
+The other two rooms take their light source's hue. This one does not: the
+board's colours are its *data*, and tinting the room with them would make the
+wall look like it meant something.
+
+![triage](shots/loop-05/room-triage.webp)
