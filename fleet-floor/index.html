@@ -2752,6 +2752,22 @@ function deckBody(o){
   S.fillStyle=kg;poly(S,[[bx0,ty],[bx1,ty],[ax1,tf],[ax0,tf]]);S.fill();
   // the rim on the back arris — the whole reason a backlit object reads
   S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.16+0.26*o.lit);S.fillRect(bx0,ty,d.bw,1.6);
+  /* L7 — the other thing behind the station is the UNIT, and the unit has a
+     lit core in its chest. The lamp's rim is even and pale; the unit's is a
+     second, vendor-coloured swell in the middle of the back edge, strongest
+     when the unit is working and gone when it is offline. Four vendors, four
+     colours, one line — and the bench finally knows who is standing at it. */
+  var us=STATE==="working"?1:STATE==="idle"?0.45:0;
+  if(us>0){var uc=VENDORCOL(AGENT),uw=130;
+    var ug=S.createLinearGradient(d.cx-uw/2,0,d.cx+uw/2,0);
+    ug.addColorStop(0,hexA(uc,0));ug.addColorStop(0.5,hexA(uc,0.30*us));ug.addColorStop(1,hexA(uc,0));
+    S.fillStyle=ug;S.fillRect(d.cx-uw/2,ty,uw,2);
+    var ug2=S.createLinearGradient(d.cx-uw/2,0,d.cx+uw/2,0);
+    ug2.addColorStop(0,hexA(uc,0));ug2.addColorStop(0.5,hexA(uc,0.08*us));ug2.addColorStop(1,hexA(uc,0));
+    S.fillStyle=ug2;S.fillRect(d.cx-uw/2,ty+2,uw,6);
+    emit(function(c){var eg=c.createLinearGradient(d.cx-uw/2,0,d.cx+uw/2,0);
+      eg.addColorStop(0,hexA(uc,0));eg.addColorStop(0.5,hexA(uc,0.18*us));eg.addColorStop(1,hexA(uc,0));
+      c.fillStyle=eg;c.fillRect(d.cx-uw/2,ty-1,uw,3);});}
   // the apron: end grain of the slab, catching bounce off the deck
   var ag=S.createLinearGradient(0,tf,0,ab);
   ag.addColorStop(0,o.topFront);ag.addColorStop(1,o.foot);
