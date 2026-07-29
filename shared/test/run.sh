@@ -1790,7 +1790,24 @@ t rereq-dismissed-queues                 queue        "$(rereq_decision "$RR_H" 
 t rereq-moved-head-queues                queue        "$(rereq_decision "$RR_OLD" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 1)"
 t rereq-covered-no-newer-request-skips   skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T2" "$RR_T1" 1)"
 t rereq-covered-no-request-at-all-skips  skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" - 1)"
-t rereq-auto-off-never-approves          skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 0)"
+
+# --- #151: AUTO_APPROVE_REREQUEST gates the APPROVE, never the re-request -----
+# The flag sat in front of the whole timestamp comparison, so auto=0 collapsed
+# both branches to skip: a standing block plus a newer re-request at an
+# unchanged head was answered `skip` every tick, forever, and the round could
+# not converge (ceremony#207, 37 minutes, cleared by hand). The suite had the
+# hole too — five transitions pinned at auto=1 and exactly one at auto=0, and
+# that one was the APPROVED case, so nothing asked what a live block did with
+# the flag off. The flag now decides one thing only: approve, or queue a real
+# review. Whether a newer re-request is consulted at all is not its business.
+t rereq-auto-off-block-queues-not-skips  queue        "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T1" "$RR_T2" 0)"
+t rereq-auto-off-dismissed-queues        queue        "$(rereq_decision "$RR_H" "$RR_H" DISMISSED "$RR_T1" "$RR_T2" 0)"
+t rereq-auto-off-never-approves          queue        "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 0)"
+# Double-submit protection is untouched at BOTH flag values (#26/#29/#39): a
+# request no newer than my verdict is the genuine mid-clear/stale-index case.
+t rereq-auto-off-no-newer-request-skips  skip         "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T2" "$RR_T1" 0)"
+t rereq-auto-off-no-request-at-all-skips skip         "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T1" - 0)"
+t rereq-auto-off-moved-head-queues       queue        "$(rereq_decision "$RR_OLD" "$RR_H" CHANGES_REQUESTED "$RR_T1" "$RR_T2" 0)"
 
 # --- #114: submit-verdict admits the queued round's verdict, still refuses a
 # bare re-post. The compounding half of the bug: once duty-review routes a
