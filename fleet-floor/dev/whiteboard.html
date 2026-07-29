@@ -254,6 +254,54 @@ body { margin: 0; background: #05080f; color: #cfe0f2; font-family: var(--mono);
 </div>
 <div id="wb"></div>
 <script>
+/* fleet-floor/dev/seed.js — deterministic Math.random, installed BEFORE app.js.
+ *
+ * This has to run first, and that is the whole point of it being its own file.
+ * app.js builds four things at module load, off Math.random, before any render
+ * happens:
+ *
+ *   noise      a 220x220 film-grain texture, composited into EVERY frame
+ *   motes      90 dust particles
+ *   steam      26 vent puffs
+ *   floorHaze  5 drifting fog bodies
+ *
+ * whiteboard.js used to install the PRNG itself, but it is a separate <script>
+ * that necessarily runs after app.js — so all four were already fixed, from the
+ * real Math.random, and differed on every page load. The per-tile seeding
+ * underneath was working perfectly and hiding behind a grain texture that was
+ * never the same twice: two renders of one commit differed by ~1.8% of pixels,
+ * uniformly, across all 36 tiles.
+ *
+ * That is below the change a real edit makes, so it never produced a wrong
+ * conclusion — but it is exactly the noise floor that would swallow the small
+ * ones, and "the same commit renders the same image twice" has to be true or
+ * the whole before/after method is decoration.
+ *
+ * Shipped only in dev/whiteboard.html. index.html keeps the real Math.random.
+ */
+(function () {
+  var seed = 0x9e3779b9;
+  function rnd() {
+    seed = (seed + 0x6D2B79F5) >>> 0;
+    var t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  Math.random = rnd;
+  /* Re-seed from a string, so a tile's seed comes from WHAT IT IS rather than
+     from how many tiles preceded it — slicing the grid with ?agents= then does
+     not disturb the tiles that remain. */
+  window.__wbseed = function (s) {
+    var h = 2166136261;
+    s = String(s);
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    seed = h >>> 0;
+  };
+})();
+
+</script>
+<script>
 "use strict";
 (function(){
 var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -268,6 +316,10 @@ function UNITID(u){return u.box||(u.agent+"-"+u.room);}
 function UNIT(){return BOX;}
 function ROLEWORD(){return ROOM;}
 var lastHand={x:260,y:400};
+/* The footprints the last-built robot reported, in robo-canvas space. The full
+   room reads them straight off buildRobo's return; the grid cell renders on a
+   different pass and needs them carried across, which is what this is. */
+var lastFeet=null;
 
 function oc(w,h){var c=document.createElement("canvas");c.width=w;c.height=h;return c;}
 var scene=oc(DW,DH), S=scene.getContext("2d");
@@ -553,7 +605,34 @@ function drawMini(t,mx,my,mw,mh){
   var dx0=mx+10,dy0=my+40,dW=mw-20,dH=mh-72,fY=dy0+dH*0.84;
   X.save();rr(X,dx0,dy0,dW,dH,6);X.clip();
   var wg=X.createLinearGradient(0,dy0,0,dy0+dH);wg.addColorStop(0,"#0a1019");wg.addColorStop(0.8,"#070c14");wg.addColorStop(1,"#03060c");X.fillStyle=wg;X.fillRect(dx0,dy0,dW,dH);
-  X.fillStyle="#04070d";X.fillRect(dx0,fY,dW,dy0+dH-fY);X.fillStyle="rgba(0,0,0,0.5)";X.fillRect(dx0,fY,dW,2);
+  /* The cell floor. This is the view an operator actually scans — the god-view
+     is the default — and it was a flat #04070d rectangle with a black bar,
+     which is exactly what the full room's floor was before it got one. The
+     room treatments are the same three ideas at cell scale: stained concrete,
+     a reflective sealed floor, a painted dispatch lane. */
+  var fH=dy0+dH-fY, mwarm=ROOM==="builder", mcool=ROOM==="reviewer";
+  var mb=mwarm?[46,38,28]:mcool?[31,42,56]:[37,40,47], mk=off?0.45:1;
+  var mfg=X.createLinearGradient(0,fY,0,dy0+dH);
+  mfg.addColorStop(0,rgba(mb[0]*mk,mb[1]*mk,mb[2]*mk,1));
+  mfg.addColorStop(1,"#03060c");
+  X.fillStyle=mfg;X.fillRect(dx0,fY,dW,fH);
+  X.fillStyle="rgba(0,0,0,0.5)";X.fillRect(dx0,fY-2,dW,2);
+  X.fillStyle=rgba(150,180,215,0.13*mk);X.fillRect(dx0,fY,dW,1);
+  if(mwarm){[[0.28,0.30],[0.62,0.22],[0.86,0.26]].forEach(function(o){
+      var ox=dx0+dW*o[0],oy=fY+fH*0.34,orad=dW*0.10;
+      var og=X.createRadialGradient(ox,oy,1,ox,oy,orad);
+      og.addColorStop(0,"rgba(6,5,4,"+(o[1]*mk)+")");og.addColorStop(1,"rgba(6,5,4,0)");
+      X.fillStyle=og;X.beginPath();X.ellipse(ox,oy,orad,orad*0.34,0,0,7);X.fill();});
+  } else if(mcool){X.save();X.globalCompositeOperation="lighter";
+      var mrf=X.createLinearGradient(0,fY,0,fY+fH*0.7);
+      mrf.addColorStop(0,"rgba(120,180,240,"+(0.09*mk)+")");mrf.addColorStop(1,"rgba(120,180,240,0)");
+      X.fillStyle=mrf;X.fillRect(dx0,fY,dW,fH*0.7);X.restore();
+  } else {X.save();X.globalAlpha=off?0.25:0.55;X.strokeStyle="rgba(201,162,39,0.34)";X.lineWidth=1;
+      X.beginPath();X.moveTo(dx0,fY+fH*0.22);X.lineTo(dx0+dW,fY+fH*0.22);
+      X.moveTo(dx0,fY+fH*0.68);X.lineTo(dx0+dW,fY+fH*0.68);X.stroke();
+      for(var mcx=dx0+8;mcx<dx0+dW;mcx+=26){X.lineWidth=1.6;X.beginPath();
+        X.moveTo(mcx,fY+fH*0.34);X.lineTo(mcx+5,fY+fH*0.45);X.lineTo(mcx,fY+fH*0.56);X.stroke();}
+      X.restore();}
   // — curated, spacious: robot hero + one motivated light + role prop + separated holo —
   var warm=ROOM==="builder", LB=warm?"255,204,138":ROOM==="reviewer"?"150,196,245":"176,150,240", LH=warm?"255,214,150":ROOM==="reviewer"?"200,230,255":"214,196,255";
   var mrs=0.27,rcx=dx0+dW*0.36,rpx=rcx-260*mrs,rpy=fY-560*mrs;
@@ -591,6 +670,27 @@ function drawMini(t,mx,my,mw,mh){
   } else {
     X.globalCompositeOperation="lighter";var rp=0.15+0.12*Math.abs(Math.sin(t*4));var rw2=X.createRadialGradient(lampx,dy0+dH*0.34,3,lampx,dy0+dH*0.34,dW*0.5);rw2.addColorStop(0,"rgba(255,60,50,"+rp+")");rw2.addColorStop(1,"rgba(255,60,50,0)");X.fillStyle=rw2;X.fillRect(dx0,dy0,dW,dH);X.globalCompositeOperation="source-over";
   }
+  /* Contact shadows in the cell. The grid drew every unit with NONE — all four
+     floated, in the one view an operator actually scans. Same footprints and
+     the same height rule the full room uses, read off lastFeet, so claude and
+     codex plant and grok and kimi hover here too rather than all four being
+     equally weightless. */
+  var mfeet=lastFeet||[{x:260,y:560,w:90}];
+  var mfloat=(AGENT==="grok"||AGENT==="kimi");
+  X.save();
+  mfeet.forEach(function(f){
+    var mfx=rpx+f.x*mrs, mfy=rpy+f.y*mrs, mfw=Math.max(2.4,f.w*mrs);
+    var mlift=Math.max(0,fY-mfy), msp=1+Math.min(2.6,mlift/13);
+    var ma=(mfloat?0.42:0.62)/Math.pow(msp,1.25)*(off?0.5:1);
+    var mw2=mfw*msp;
+    var msh=X.createRadialGradient(mfx,fY+2,0.5,mfx,fY+2,mw2);
+    msh.addColorStop(0,"rgba(0,0,0,"+ma.toFixed(3)+")");
+    msh.addColorStop(0.55,"rgba(0,0,0,"+(ma*0.45).toFixed(3)+")");
+    msh.addColorStop(1,"rgba(0,0,0,0)");
+    X.fillStyle=msh;X.beginPath();X.ellipse(mfx,fY+2,mw2,Math.max(1.2,mfw*0.34*msp),0,0,7);X.fill();
+    if(mlift<3&&!mfloat){X.fillStyle="rgba(0,0,0,0.5)";X.beginPath();X.ellipse(mfx,fY+1,mfw*0.62,Math.max(0.9,mfw*0.2),0,0,7);X.fill();}
+  });
+  X.restore();
   // ROBOT hero
   X.imageSmoothingEnabled=true;
   X.drawImage(robo,rpx,rpy,RW*mrs,RH*mrs);
@@ -657,7 +757,7 @@ var ROSTER=[
 var CELLW=336, CELLH=252, GAPX=28, GAPY=26, MARGINL=44;
 var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragX=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
 function floorTotalW(){var cols=Math.ceil(ROSTER.length/2);return MARGINL*2+cols*CELLW+(cols-1)*GAPX;}
-function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sl=lastHand,sb=BOX;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;BOX=UNITID(unit);var info=buildRobo(t,unit.state);lastHand=info.hand;drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;lastHand=sl;BOX=sb;}
+function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sl=lastHand,sb=BOX,sf=lastFeet;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;BOX=UNITID(unit);var info=buildRobo(t,unit.state);lastHand=info.hand;lastFeet=info.feet;drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;lastHand=sl;lastFeet=sf;BOX=sb;}
 function drawFloor(t){
   X.setTransform(dpr,0,0,dpr,0,0);X.imageSmoothingEnabled=true;X.textAlign="left";X.globalAlpha=1;X.globalCompositeOperation="source-over";
   X.fillStyle="#03060d";X.fillRect(0,0,VW,VH);
@@ -2416,18 +2516,13 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   var T = q.get('t') === null ? 8 : Number(q.get('t'));
   var FLAT = q.get('flat') === '1';
 
-  /* Seeded PRNG. Every tile starts from a seed derived from WHAT it is, not
-     from how many tiles came before it, so slicing the grid with ?agents= does
-     not change the tiles that remain. */
-  var seed = 1;
-  Math.random = function () {
-    seed = (seed + 0x6D2B79F5) >>> 0;
-    var t = seed;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  var seedFor = function (s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  /* The PRNG itself lives in dev/seed.js and is installed BEFORE app.js — it
+     has to be, because app.js fixes the film grain, the motes, the steam and
+     the floor haze at module load. Installing it here, from a script that by
+     definition runs after app.js, left those four unseeded and differing on
+     every page load. See seed.js. */
+  var seedFor = window.__wbseed;
+  if (!seedFor) { document.body.innerHTML = '<p style="color:#f66;font:14px monospace;padding:24px">dev/seed.js did not run before app.js — rebuild with build.sh</p>'; return; }
 
   var root = document.getElementById('wb');
   var head = document.createElement('div');
@@ -2472,7 +2567,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   var done = 0;
   var step = function () {
     var j = jobs[done];
-    seed = seedFor(j.agent + '|' + j.room + '|' + j.state);
+    seedFor(j.agent + '|' + j.room + '|' + j.state);
     D.render(j.cv, { agent: j.agent, room: j.room, state: j.state, t: T, flat: FLAT });
     done++;
     if (done < jobs.length) requestAnimationFrame(step);

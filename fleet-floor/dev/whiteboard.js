@@ -34,18 +34,13 @@
   var T = q.get('t') === null ? 8 : Number(q.get('t'));
   var FLAT = q.get('flat') === '1';
 
-  /* Seeded PRNG. Every tile starts from a seed derived from WHAT it is, not
-     from how many tiles came before it, so slicing the grid with ?agents= does
-     not change the tiles that remain. */
-  var seed = 1;
-  Math.random = function () {
-    seed = (seed + 0x6D2B79F5) >>> 0;
-    var t = seed;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  var seedFor = function (s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+  /* The PRNG itself lives in dev/seed.js and is installed BEFORE app.js — it
+     has to be, because app.js fixes the film grain, the motes, the steam and
+     the floor haze at module load. Installing it here, from a script that by
+     definition runs after app.js, left those four unseeded and differing on
+     every page load. See seed.js. */
+  var seedFor = window.__wbseed;
+  if (!seedFor) { document.body.innerHTML = '<p style="color:#f66;font:14px monospace;padding:24px">dev/seed.js did not run before app.js — rebuild with build.sh</p>'; return; }
 
   var root = document.getElementById('wb');
   var head = document.createElement('div');
@@ -90,7 +85,7 @@
   var done = 0;
   var step = function () {
     var j = jobs[done];
-    seed = seedFor(j.agent + '|' + j.room + '|' + j.state);
+    seedFor(j.agent + '|' + j.room + '|' + j.state);
     D.render(j.cv, { agent: j.agent, room: j.room, state: j.state, t: T, flat: FLAT });
     done++;
     if (done < jobs.length) requestAnimationFrame(step);

@@ -431,3 +431,75 @@ The camera is looking *through* something. Right for the room that is sealed.
 The way a dispatch room is actually wired.
 
 ![triage](shots/loop-07/room-triage.webp)
+
+---
+
+## Loop 8 — the grid cell catches up
+
+Seven loops of work had gone into the **room** view. The **god-view cell** had
+received none of it — and the god-view is the default view, the one an operator
+actually scans.
+
+`drawMini` is a deliberate LOD: its own simplified diorama, not a scaled copy of
+the room. That is the right call, and it is also how it drifted seven loops
+behind without anyone noticing.
+
+Two things it was missing, both from loop 1:
+
+**No contact shadows at all.** Not a wrong shadow — *none*. All four units
+floated in every cell. They now use the same footprints and the same
+height-based softening rule the room uses, read off `lastFeet`, so claude and
+codex plant and grok and kimi hover here too, instead of all four being equally
+weightless.
+
+**A flat black floor**, `#04070d` with a black bar — exactly what the room had
+before loop 1 gave it a surface. The three room treatments now exist at cell
+scale: stained concrete, a reflective sealed floor, a painted dispatch lane.
+
+![the grid](shots/grid-L08.webp)
+
+### claude · codex — planted, with dark cores at the contact points
+![claude](shots/loop-08/robot-claude.webp)
+![codex](shots/loop-08/robot-codex.webp)
+
+### grok · kimi — wide, soft, coreless: airborne
+![grok](shots/loop-08/robot-grok.webp)
+![kimi](shots/loop-08/robot-kimi.webp)
+
+### builder · reviewer · triage — the floor treatments, at cell scale
+![builder](shots/loop-08/room-builder.webp)
+![reviewer](shots/loop-08/room-reviewer.webp)
+![triage](shots/loop-08/room-triage.webp)
+
+### And a real bug, found by this loop
+
+Loop 8 should not have been able to change the **room** renderer at all — it only
+touched `drawMini`. The asset map disagreed: all 36 tiles moved by ~1.8%,
+uniformly.
+
+They were right and I was wrong about what "deterministic" covered.
+`whiteboard.js` installed its seeded PRNG itself — but it is a separate
+`<script>`, so it necessarily ran **after** `app.js`, and `app.js` fixes four
+things at module load:
+
+| built at load | used |
+|---|---|
+| `noise` | a 220×220 film-grain texture composited into **every** frame |
+| `motes` | 90 dust particles |
+| `steam` | 26 vent puffs |
+| `floorHaze` | 5 drifting fog bodies |
+
+All four came from the real `Math.random` and differed on every page load. The
+per-tile seeding underneath was working perfectly, behind a grain texture that
+was never the same twice.
+
+The PRNG now lives in [`dev/seed.js`](seed.js) and `build.sh` inlines it
+**before** `app.js`. Two renders of one commit are now byte-identical: **0 of 37
+images differ**, where it had been 37 of 37.
+
+The ~1.8% noise floor never produced a wrong conclusion here — every loop's real
+change came in between 2.4% and 31% — but it is exactly the floor that would
+have swallowed a small one, and the claim has to be true or the method is
+decoration. `floorshot.js`, which drives the grid, injects its PRNG through
+`addInitScript` and so runs before any page script: it was correct from the
+start, and is verified so.

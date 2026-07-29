@@ -33,7 +33,12 @@ echo "built index.html ($(wc -c < index.html) bytes)"
   printf '\n</style>\n</head>\n<body>\n'
   cat src/body.html
   printf '<div id="wb"></div>\n'
+  # BEFORE app.js, and it must stay that way: app.js builds the film-grain
+  # texture, the motes, the steam and the floor haze at module load, so a PRNG
+  # installed after it is already too late for all four.
   printf '<script>\n'
+  cat dev/seed.js
+  printf '\n</script>\n<script>\n'
   cat src/app.js
   printf '\n</script>\n<script>\n'
   cat dev/whiteboard.js
