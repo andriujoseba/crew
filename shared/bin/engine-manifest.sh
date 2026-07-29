@@ -151,6 +151,7 @@ manifest_body() (
   # $DUTY_DIR itself is deliberately NOT among them. `~/duty` on another volume
   # is a location the operator chose, not content crew shipped, and the manifest
   # is relative to it by construction.
+  #
   # Only when the component IS a link. A bare directory name hands `find` a root
   # it descends, which would duplicate every file under an ordinary bin/ and drag
   # the whole of an ordinary conf/ — instance.conf, fleet.conf, the registries,
