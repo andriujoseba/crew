@@ -3051,6 +3051,9 @@ status_out="$(crewstatus)"
 case "$status_out" in *unverified*) r1=unverified ;; *MODIFIED*) r1=MODIFIED ;; *) r1=OTHER ;; esac
 t status-pre-existing-box-reads-unverified unverified "$r1"
 
+if "$SHARED/test/claim.test.sh"; then r1=0; else r1=$?; fi
+t claim-regression-suite 0 "$r1"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
