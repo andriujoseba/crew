@@ -2737,6 +2737,99 @@ t install-second-park-keeps-the-first "$added_before" \
 case "$force_out" in *"kept as bin/$parked_link"*) r1=named ;; *) r1=SILENT ;; esac
 t install-collided-park-names-where-it-went named "$r1"
 
+# The same hole one component UP, and the reason the sweep alone cannot close
+# it: the sweep descends a symlinked root but never sweeps the root entry, so an
+# operator's `ln -s elsewhere ~/duty/bin` was detected, refused — and then
+# survived --force, was written into the record, and the box read `current` with
+# its engine executing out of a directory this version never shipped. Detection
+# already names the redirect, so blessing it is worse than never having looked.
+REDIR="$TMP/manifest-redirect-target"
+mkdir -p "$REDIR"
+mv "$MDUTY/bin" "$REDIR/bin"
+ln -s "$REDIR/bin" "$MDUTY/bin"
+t install-redirected-root-reads-modified modified "$(mstate)"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-redirected-root 1 "$r1"
+case "$refuse_out" in *"added bin"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-redirected-root named "$r1"
+# ...and the refusal changed nothing: the redirect is still exactly as it was.
+if [ -L "$MDUTY/bin" ]; then r1=intact; else r1=DISTURBED; fi
+t install-refusal-leaves-the-redirect-alone intact "$r1"
+
+if force_out="$(minstall --force 2>&1)"; then r1=0; else r1=$?; fi
+t install-force-over-redirected-root-rc 0 "$r1"
+# The convergence: a real directory where the link was, not a link crew ships.
+if [ -d "$MDUTY/bin" ] && [ ! -L "$MDUTY/bin" ]; then r1=real; else r1=STILL-A-LINK; fi
+t install-force-replaces-the-redirect-with-a-real-dir real "$r1"
+# Moved, not deleted — and parked as a LINK, so the target it pointed at is the
+# evidence, sitting outside the engine surface.
+redir_park=""
+for p in "$MDUTY"/legacy/bin "$MDUTY"/legacy/bin.*; do
+  if [ -L "$p" ]; then redir_park="$p"; break; fi
+done
+if [ -n "$redir_park" ]; then r1=link; else r1=NOT-PARKED-AS-LINK; fi
+t install-force-parks-the-redirect-as-a-link link "$r1"
+t install-force-parks-the-redirect-target "$REDIR/bin" \
+  "$(readlink "$redir_park" 2>/dev/null)"
+case "$force_out" in
+  *"replaced redirected engine directory with a real one: bin"*) r1=named ;;
+  *) r1=SILENT ;;
+esac
+t install-force-names-the-redirect-it-replaced named "$r1"
+# The record must not carry the redirect: `bin` as an entry is the blessing.
+case "$(sed -n 's/.*  \(bin\)$/\1/p' "$MDUTY/.engine-manifest")" in
+  bin) r1=BLESSED ;; *) r1=absent ;;
+esac
+t install-force-does-not-record-the-redirect absent "$r1"
+t install-force-over-redirected-root-is-current current "$(mstate)"
+if [ -x "$MDUTY/bin/duty.sh" ]; then r1=installed; else r1=MISSING; fi
+t install-force-through-redirect-leaves-the-engine installed "$r1"
+
+# One level FURTHER up, where it was not even detected: conf/ carries
+# conf/roles, conf/agents and conf/fleet.defaults.conf without being a manifest
+# root itself, so a redirect there resolved, hashed clean, and never refused —
+# the whole role and agent set read from wherever an operator pointed it while
+# the instrument said `current`.
+#
+# This is also why the contents are copied back through the link rather than the
+# root simply emptied: OPERATOR_CONF falls back to the shipped example only when
+# the box has no conf/fleet.conf of its own, so a normalization that dropped the
+# redirect's contents would destroy a transported one.
+printf 'FLEET_KEEPME=1\n' >>"$MDUTY/conf/fleet.conf"
+minstall --force >/dev/null 2>&1   # re-record with the marker in place
+mv "$MDUTY/conf" "$REDIR/conf"
+ln -s "$REDIR/conf" "$MDUTY/conf"
+t install-redirected-ancestor-reads-modified modified "$(mstate)"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-redirected-ancestor 1 "$r1"
+case "$refuse_out" in *"added conf"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-redirected-ancestor named "$r1"
+minstall --force >/dev/null 2>&1
+if [ -d "$MDUTY/conf" ] && [ ! -L "$MDUTY/conf" ]; then r1=real; else r1=STILL-A-LINK; fi
+t install-force-replaces-the-redirected-ancestor real "$r1"
+# The per-box configuration behind the redirect came back with it.
+case "$(cat "$MDUTY/conf/fleet.conf" 2>/dev/null)" in
+  *FLEET_KEEPME*) r1=kept ;; *) r1=LOST ;;
+esac
+t install-redirect-normalization-keeps-the-operator-fleet-conf kept "$r1"
+if [ -f "$MDUTY/conf/instance.conf" ]; then r1=present; else r1=MISSING; fi
+t install-redirect-normalization-keeps-instance-conf present "$r1"
+t install-force-over-redirected-ancestor-is-current current "$(mstate)"
+
+# A DANGLING root redirect must not take the install down with it: there is no
+# content to restore, so the right answer is an empty real directory the install
+# then fills, not a crash under `set -e`.
+rm -rf "$MDUTY/prompts"
+ln -s "$TMP/manifest-redirect-nowhere" "$MDUTY/prompts"
+t install-dangling-root-redirect-reads-modified modified "$(mstate)"
+if minstall --force >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-force-over-dangling-root-redirect-rc 0 "$r1"
+if [ -d "$MDUTY/prompts" ] && [ ! -L "$MDUTY/prompts" ]; then r1=real; else r1=STILL-A-LINK; fi
+t install-force-replaces-the-dangling-redirect real "$r1"
+if [ -n "$(ls -A "$MDUTY/prompts" 2>/dev/null)" ]; then r1=filled; else r1=EMPTY; fi
+t install-force-refills-the-dangling-redirect filled "$r1"
+t install-force-over-dangling-redirect-is-current current "$(mstate)"
+
 # A converging re-install sweeps NOTHING. Every install parking files in
 # legacy/ would make the mechanism noise, and noise is how the one real one
 # gets missed.

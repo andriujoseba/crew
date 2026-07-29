@@ -203,7 +203,7 @@ case " $BOT_ROLE_LIST " in *" triage "*) IS_TRIAGE=1 ;; esac
 # never having looked.
 #
 # Every directory COMPONENT of the engine surface, parents first. `conf` is in
-# the list without being a manifest root of its own: it carries conf/roles,
+# the list without being an engine-manifest root of its own: it carries conf/roles,
 # conf/agents and conf/fleet.defaults.conf, so a redirect there moves the whole
 # role and agent set off the shipped tree. Parents first matters — normalizing
 # `conf` materializes conf/roles behind it, and the child pass then sees whatever
