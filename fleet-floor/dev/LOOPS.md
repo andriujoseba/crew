@@ -85,3 +85,73 @@ toward the console the triage unit works at.
 > the floor lives in the top 40px of it.
 
 **The map after loop 1:** [`ASSETMAP.md`](ASSETMAP.md)
+
+---
+
+## Loop 2 — identity: faces for the robots, walls for the rooms
+
+Two things were making the fleet look like one thing rendered four ways.
+
+**The robots had no faces.** Each unit's head is the only part of it an operator
+looks at, and at grid-cell size it is under 20px tall — it gets exactly one
+shape to make an impression with, and all four were spending it on a flat fill.
+
+**The rooms shared a wall.** Three rooms, one wall, one different word painted
+on it. The wall is the largest object on screen, and it was saying nothing —
+which is most of why the three read as the same room three times. Everything
+added here lives right of `x=660`, the dead zone every room had between its
+props and the tower.
+
+### claude — depth in the visor
+A two-stop gradient across a slit reads as an orange sticker. It now has a brow
+shadow casting into the socket (the cheapest depth cue on the model), a hot
+core that falls off toward *both* corners instead of sliding left-to-right, a
+specular streak that says there is glass in front of it, a dome highlight keyed
+to the lamp, and a jaw grille so the lower helmet is not a blank plate.
+
+![claude](shots/loop-02/robot-claude.webp)
+
+### codex — two eyes that are looking at you
+Six equal dots on a flat black rectangle read as a speaker grille, and at cell
+size as nothing at all: codex was identified by its silhouette and the reactor
+glow, never by a face. A spider that hunts has two dominant forward eyes and a
+spread of small ones, so the hierarchy is now explicit — the pair is larger,
+recessed into a bevelled socket, and has an iris ring, a dark pupil and a
+catchlight. Working, a scan bar crosses each, phase-offset so they feel driven.
+
+![codex](shots/loop-02/robot-codex.webp)
+
+### grok — the dome is a visor, not a hole
+A black circle with a starfield and one thin arc. A helmet's job is to show you
+the room instead of a face, so it now carries three reflections: a gold flash
+coating across the lower dome the way a real EVA visor is coated, the overhead
+lamp as a bright cap, and the floor as a dim band along the bottom edge.
+
+![grok](shots/loop-02/robot-grok.webp)
+
+### kimi — glass with a picture behind it
+The screen was a flat black rect with a triangular gloss wedge, which reads as
+a sticker. It now says the two things that make it a display: the glass is
+curved (corners fall off, centre stays open, gloss sweeps instead of wedging),
+and the picture is emitted from inside — a pink wash rising up the *inside* of
+the glass rather than printed on the front.
+
+![kimi](shots/loop-02/robot-kimi.webp)
+
+### builder — bolted steel
+Horizontal plate seams with rivet rows, a hazard placard, and a conduit run
+dropping from the ceiling to the bay.
+
+![builder](shots/loop-02/room-builder.webp)
+
+### reviewer — clean-room panels
+A fine seam grid, tighter and cooler than the bay's, and a rack of certification
+plates: this lab signs what leaves it. Two green stamps and one amber.
+
+![reviewer](shots/loop-02/room-reviewer.webp)
+
+### triage — a board of pinned work orders
+A cork strip of pinned slips at slightly different angles, and three zone
+clocks — dispatch is about *when*, not only where.
+
+![triage](shots/loop-02/room-triage.webp)

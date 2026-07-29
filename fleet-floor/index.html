@@ -1136,11 +1136,33 @@ function buildClaude(t,st){
   pl(g,hcx,hy-10,hcx,hy+2,rc,1);
   // side vents / breather
   [[-1],[1]].forEach(function(k){var s=k[0];RB.fillStyle=rc;for(var v=0;v<3;v++)RB.fillRect(hcx+s*16-(s<0?4:0),hy+16+v*6,4,3);});
-  // visor slit (glow, horizontal, angled down = menacing)
+  /* Visor. It was a flat two-stop gradient across a slit, which at this size
+     reads as an orange sticker — the head is ~50px tall in the room view and
+     under 20 in a grid cell, so it gets exactly one shape to make an
+     impression with. What it needed was depth: a brow casting into the recess,
+     a hot core that falls off to the sides rather than sliding left-to-right,
+     and a lens highlight to say there is glass in front of it. */
   RB.fillStyle="#03060d";poly(RB,[[hcx-20,hy+14],[hcx+20,hy+14],[hcx+18,hy+26],[hcx-18,hy+26]]);RB.fill();
+  // brow shadow into the socket — the cheapest depth cue on the whole model
+  var bs=RB.createLinearGradient(0,hy+12,0,hy+22);bs.addColorStop(0,"rgba(0,0,0,0.75)");bs.addColorStop(1,"rgba(0,0,0,0)");
+  RB.fillStyle=bs;poly(RB,[[hcx-20,hy+13],[hcx+20,hy+13],[hcx+19,hy+22],[hcx-19,hy+22]]);RB.fill();
   [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#20262e";c.fillRect(hcx-16,hy+18,32,3);return;}
-    var vg=c.createLinearGradient(hcx-18,0,hcx+18,0);vg.addColorStop(0,rgba(255,170,80,corePulse));vg.addColorStop(1,rgba(255,120,50,corePulse));c.fillStyle=vg;poly(c,[[hcx-17,hy+16],[hcx+17,hy+16],[hcx+15,hy+24],[hcx-15,hy+24]]);c.fill();
-    c.fillStyle=rgba(255,240,210,corePulse);c.fillRect(hcx-14,hy+18,7,2); });
+    // hot at the middle, cooling toward both corners
+    var vg=c.createLinearGradient(hcx-18,0,hcx+18,0);
+    vg.addColorStop(0,rgba(190,70,20,0.75*corePulse));
+    vg.addColorStop(0.34,rgba(255,170,80,corePulse));
+    vg.addColorStop(0.5,rgba(255,226,180,corePulse));
+    vg.addColorStop(0.66,rgba(255,150,60,corePulse));
+    vg.addColorStop(1,rgba(190,70,20,0.75*corePulse));
+    c.fillStyle=vg;poly(c,[[hcx-17,hy+16],[hcx+17,hy+16],[hcx+15,hy+24],[hcx-15,hy+24]]);c.fill();
+    c.fillStyle=rgba(255,244,222,corePulse);c.fillRect(hcx-6,hy+18,12,2); });
+  // glass: a specular streak across the top of the slit, not part of the emission
+  RB.fillStyle="rgba(255,236,214,"+(offl?0.05:0.3)+")";poly(RB,[[hcx-15,hy+16],[hcx+4,hy+16],[hcx+1,hy+18.5],[hcx-15,hy+18.5]]);RB.fill();
+  // dome specular, keyed to the lamp above and left
+  if(!offl){RB.strokeStyle="rgba(150,178,214,0.22)";RB.lineWidth=2.4;RB.beginPath();RB.moveTo(hcx-19,hy+8);RB.quadraticCurveTo(hcx-13,hy-5,hcx-1,hy-6);RB.stroke();}
+  // jaw grille, so the lower half of the helmet is not a blank plate
+  RB.fillStyle=rc;for(var jw=0;jw<3;jw++)RB.fillRect(hcx-9+jw*7,hy+30,5,9);
+  RB.fillStyle="rgba(90,110,140,0.3)";RB.fillRect(hcx-11,hy+28,24,1.5);
   // antenna
   pl(g,hcx+18,hy-4,hcx+24,hy-18,eH,1.6);
   [RB,RE].forEach(function(c){if(!offl){c.fillStyle="rgba(255,80,70,0.9)";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();}});
@@ -1210,9 +1232,37 @@ function buildCodex(t,st){
   plate(g,[[hxx-40,hy2-24],[hxx+40,hy2-24],[hxx+36,hy2-14],[hxx-36,hy2-14]],"#2c3849","#1a2331",null);
   plate(g,[[hxx-14,hy2+22],[hxx-4,hy2+22],[hxx-6,hy2+34],[hxx-16,hy2+32]],sM,sB,ed);
   plate(g,[[hxx+4,hy2+22],[hxx+14,hy2+22],[hxx+16,hy2+32],[hxx+6,hy2+34]],sM,sB,ed);
-  RB.fillStyle="#04070d";RB.fillRect(hxx-26,hy2-10,52,22);
-  var eyes=[[hxx-12,hy2+2,3.2],[hxx+12,hy2+2,3.2],[hxx-20,hy2-6,1.8],[hxx+20,hy2-6,1.8],[hxx-7,hy2+12,1.6],[hxx+7,hy2+12,1.6]];
-  eyes.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}var eg=c.createRadialGradient(e[0],e[1],0.4,e[0],e[1],e[2]*2.4);eg.addColorStop(0,te(0.55*pulse));eg.addColorStop(1,te(0));c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.4,0,7);c.fill();c.fillStyle=teh(0.75+0.25*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
+  /* Eye cluster. Six equal dots on a flat black rectangle read as a speaker
+     grille, and at grid-cell size as nothing at all — codex was identified by
+     its silhouette and by the reactor glow above, never by a face. A spider
+     that hunts has two dominant forward eyes and a spread of smaller ones, so
+     the hierarchy is now explicit: the pair is bigger, has an iris ring and a
+     dark pupil, and the four secondaries stay small and dim. */
+  RB.fillStyle="#04070d";rr(RB,hxx-27,hy2-11,54,24,4);RB.fill();
+  RB.strokeStyle=rc;RB.lineWidth=1.4;rr(RB,hxx-27,hy2-11,54,24,4);RB.stroke();
+  // recessed socket: a top-down gradient inside the plate
+  var sg2=RB.createLinearGradient(0,hy2-11,0,hy2+13);sg2.addColorStop(0,"rgba(0,0,0,0.7)");sg2.addColorStop(1,"rgba(0,0,0,0)");
+  RB.fillStyle=sg2;rr(RB,hxx-27,hy2-11,54,24,4);RB.fill();
+  var primary=[[hxx-12,hy2+1,4.6],[hxx+12,hy2+1,4.6]];
+  var minor=[[hxx-21,hy2-6,1.7],[hxx+21,hy2-6,1.7],[hxx-6,hy2+9,1.5],[hxx+6,hy2+9,1.5]];
+  minor.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}
+    var eg=c.createRadialGradient(e[0],e[1],0.3,e[0],e[1],e[2]*2.4);eg.addColorStop(0,te(0.4*pulse));eg.addColorStop(1,te(0));
+    c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.4,0,7);c.fill();
+    c.fillStyle=teh(0.6+0.2*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
+  primary.forEach(function(e,pi){[RB,RE].forEach(function(c){
+    if(offl){c.fillStyle="#252c34";c.beginPath();c.arc(e[0],e[1],e[2]*0.8,0,7);c.fill();
+             c.fillStyle="#12161c";c.beginPath();c.arc(e[0],e[1],e[2]*0.4,0,7);c.fill();return;}
+    var eg=c.createRadialGradient(e[0],e[1],0.5,e[0],e[1],e[2]*3);eg.addColorStop(0,te(0.7*pulse));eg.addColorStop(1,te(0));
+    c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*3,0,7);c.fill();
+    c.fillStyle=teh(0.85+0.15*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();
+    // iris ring + pupil: what turns a lit dot into an eye that is looking at you
+    c.fillStyle=te(0.95);c.beginPath();c.arc(e[0],e[1],e[2]*0.62,0,7);c.fill();
+    c.fillStyle="rgba(2,10,9,0.85)";c.beginPath();c.arc(e[0],e[1],e[2]*0.3,0,7);c.fill();});
+    // catchlight, offset the same way on both so they track together
+    RB.fillStyle="rgba(255,255,255,"+(offl?0:0.8)+")";RB.beginPath();RB.arc(e[0]-1.5,e[1]-1.6,0.9,0,7);RB.fill();
+    // working: a scan bar crossing the socket, phase-offset per eye
+    if(work&&!offl){var sy3=hy2-8+((t*26+pi*11)%20);[RB,RE].forEach(function(c){c.fillStyle=teh(0.22);c.fillRect(e[0]-e[2],sy3,e[2]*2,1);});}
+  });
 
   // ---- front manipulators ----
   var handR;
@@ -1304,7 +1354,25 @@ function buildGrok(t,st){
   g.fillStyle="#070a14";g.beginPath();g.arc(cx,HY,hr,0,7);g.fill();
   if(!offl){var stars=[[-8,-6],[4,-9],[10,-2],[-4,4],[7,6],[-10,2],[1,-3]];stars.forEach(function(sp,si){RB.fillStyle="rgba(220,210,255,"+(0.35+0.4*Math.sin(t*2+si*1.3))+")";RB.fillRect(cx+sp[0],HY+sp[1],1,1);});}
   [RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.fillRect(cx-3,HY-1,6,3);return;}var eg=c.createRadialGradient(cx,HY,1,cx,HY,11);eg.addColorStop(0,puh(0.8+0.2*pulse));eg.addColorStop(0.5,pu(0.5*pulse));eg.addColorStop(1,pu(0));c.fillStyle=eg;c.beginPath();c.arc(cx,HY,11,0,7);c.fill();c.fillStyle=puh(0.9);c.beginPath();c.arc(cx,HY,2.4,0,7);c.fill();});
+  /* The dome is grok's whole face, and it was a black circle with a starfield
+     and one thin white arc — no glass, no gold, nothing to say it is a visor
+     rather than a hole. Three additions, all reflections, because that is what
+     a helmet does: it shows you the room instead of a face. */
+  // gold flash coating across the lower dome, the way a real EVA visor is coated
+  g.save();g.beginPath();g.arc(cx,HY,hr,0,7);g.clip();
+  var gold=g.createLinearGradient(0,HY-hr*0.2,0,HY+hr);
+  gold.addColorStop(0,"rgba(214,168,88,0)");gold.addColorStop(1,"rgba(214,168,88,"+(offl?0.06:0.17)+")");
+  g.fillStyle=gold;g.fillRect(cx-hr,HY-hr,hr*2,hr*2);
+  // the lamp overhead, reflected as a bright cap
+  var lampref=g.createRadialGradient(cx-5,HY-hr*0.72,0.5,cx-5,HY-hr*0.72,hr*0.62);
+  lampref.addColorStop(0,"rgba(226,240,255,"+(offl?0.07:0.26)+")");lampref.addColorStop(1,"rgba(226,240,255,0)");
+  g.fillStyle=lampref;g.fillRect(cx-hr,HY-hr,hr*2,hr*2);
+  // the floor, reflected as a dim band along the bottom edge
+  g.fillStyle="rgba(120,150,190,"+(offl?0.03:0.08)+")";g.fillRect(cx-hr,HY+hr*0.55,hr*2,hr*0.45);
+  g.restore();
+  // hard glass edge highlight, and the rim of the neck ring catching light
   g.strokeStyle="rgba(180,200,240,0.4)";g.lineWidth=2;g.beginPath();g.arc(cx-3,HY-3,hr-5,Math.PI*1.05,Math.PI*1.55);g.stroke();
+  g.strokeStyle="rgba(226,240,255,"+(offl?0.1:0.3)+")";g.lineWidth=1.2;g.beginPath();g.arc(cx,HY,hr+2,Math.PI*1.12,Math.PI*1.48);g.stroke();
   pl(g,cx+hr-4,HY-hr+6,cx+hr+4,HY-hr-6,eH,1.6);
   if(!offl){RB.fillStyle="rgba(255,80,70,0.9)";RB.beginPath();RB.arc(cx+hr+4,HY-hr-6,2,0,7);RB.fill();RE.fillStyle="rgba(255,80,70,0.8)";RE.beginPath();RE.arc(cx+hr+4,HY-hr-6,2,0,7);RE.fill();}
 
@@ -1363,8 +1431,25 @@ function buildKimi(t,st){
   // screen
   var sx=bx+8,sy=by0+8,sw=bw-16,sh=bh-16;rr(g,sx,sy,sw,sh,9);g.fillStyle="#05080e";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
   if(!offl){RB.fillStyle=pk(0.05);for(var sl=sy+3;sl<sy+sh;sl+=3)RB.fillRect(sx+2,sl,sw-4,1);}
-  // glossy glass highlight (top-left)
-  g.save();rr(g,sx,sy,sw,sh,9);g.clip();g.fillStyle="rgba(184,206,246,0.07)";g.beginPath();g.moveTo(sx,sy);g.lineTo(sx+sw*0.55,sy);g.lineTo(sx,sy+sh*0.62);g.closePath();g.fill();g.restore();
+  /* The screen is kimi's face, and it was a flat black rounded rect with one
+     triangular gloss wedge — which reads as a sticker, not as glass with a
+     display behind it. A CRT-ish face wants two things the flat version had
+     no way to say: that the glass is curved, and that the picture is being
+     emitted from inside rather than printed on the front. */
+  g.save();rr(g,sx,sy,sw,sh,9);g.clip();
+  // curvature: corners fall off, centre stays open
+  var curve=g.createRadialGradient(sx+sw*0.5,sy+sh*0.46,sw*0.14,sx+sw*0.5,sy+sh*0.5,sw*0.72);
+  curve.addColorStop(0,"rgba(0,0,0,0)");curve.addColorStop(1,"rgba(0,0,0,0.6)");
+  g.fillStyle=curve;g.fillRect(sx,sy,sw,sh);
+  // the emitted picture washing the inside of the glass
+  if(!offl){var wash=g.createLinearGradient(0,sy+sh,0,sy);wash.addColorStop(0,pk(0.16));wash.addColorStop(1,pk(0));
+    g.fillStyle=wash;g.fillRect(sx,sy,sw,sh);}
+  // gloss, now a curved sweep instead of a straight wedge
+  g.fillStyle="rgba(184,206,246,0.085)";
+  g.beginPath();g.moveTo(sx,sy+sh*0.66);g.quadraticCurveTo(sx+sw*0.30,sy-sh*0.06,sx+sw*0.62,sy);g.lineTo(sx,sy);g.closePath();g.fill();
+  g.restore();
+  // bezel catching the room, so the casing has a lit edge like everything else
+  g.strokeStyle="rgba(180,205,245,"+(offl?0.06:0.16)+")";g.lineWidth=1;rr(g,sx-1,sy-1,sw+2,sh+2,10);g.stroke();
 
   // ---- face (per state) ----
   var e1=cx-13,e2=cx+13,ey2=by0+bh*0.44;
@@ -1537,6 +1622,57 @@ function drawBackWall(t,lit){
   var wallg=S.createLinearGradient(0,wy,0,FLOORY);wallg.addColorStop(0,"#0a1019");wallg.addColorStop(1,"#05080e");S.fillStyle=wallg;S.fillRect(wx,wy,ww,wh);
   S.strokeStyle="rgba(30,44,64,0.25)";S.lineWidth=1;for(var px=wx+80;px<wx+ww;px+=120){S.beginPath();S.moveTo(px,wy);S.lineTo(px,FLOORY);S.stroke();}
   S.beginPath();S.moveTo(wx,wy+150);S.lineTo(wx+ww,wy+150);S.stroke();
+  /* Per-room wall surface. The three rooms shared one wall with a different
+     word painted on it, which is most of why they read as the same room three
+     times: the wall is the largest object on screen and it was saying nothing.
+     All of it lives right of x=660, the dead zone every room had between its
+     props and the tower. */
+  S.save();
+  if(ROOM==="builder"){
+    // bolted steel plate: horizontal seams, rivet rows, and a warning placard
+    for(var py2=wy+52;py2<FLOORY-24;py2+=76){
+      S.strokeStyle="rgba(44,58,80,0.4)";S.lineWidth=1;S.beginPath();S.moveTo(wx,py2);S.lineTo(wx+ww,py2);S.stroke();
+      S.fillStyle="rgba(84,104,136,0.2)";for(var rx2=wx+18;rx2<wx+ww;rx2+=54)S.fillRect(rx2,py2-3,2,2);
+    }
+    var bpx=812,bpy=318;                                     // hazard placard
+    plate(S,[[bpx,bpy],[bpx+96,bpy],[bpx+96,bpy+64],[bpx,bpy+64]],"#2b2411","#12100a","#4a3f1c");
+    S.save();S.globalAlpha=0.5;for(var hs=0;hs<96;hs+=16){S.fillStyle=hs%32<16?"#c9a227":"#12100a";S.beginPath();S.moveTo(bpx+hs,bpy+4);S.lineTo(bpx+hs+8,bpy+4);S.lineTo(bpx+hs+16,bpy+16);S.lineTo(bpx+hs+8,bpy+16);S.closePath();S.fill();}S.restore();
+    S.fillStyle="rgba(201,162,39,0.30)";S.fillRect(bpx+12,bpy+28,72,4);S.fillRect(bpx+12,bpy+38,54,4);S.fillRect(bpx+12,bpy+48,64,4);
+    // conduit run dropping to the bay
+    S.strokeStyle="rgba(30,42,58,0.75)";S.lineWidth=6;S.beginPath();S.moveTo(700,wy+30);S.lineTo(700,FLOORY-40);S.stroke();
+    S.strokeStyle="rgba(74,92,120,0.22)";S.lineWidth=1.5;S.beginPath();S.moveTo(698,wy+30);S.lineTo(698,FLOORY-40);S.stroke();
+    for(var cl=wy+70;cl<FLOORY-40;cl+=88){S.fillStyle="rgba(52,66,88,0.7)";S.fillRect(694,cl,12,7);}
+  } else if(ROOM==="reviewer"){
+    // modular clean-room panels: a fine seam grid, cooler and tighter than the bay
+    S.strokeStyle="rgba(52,78,110,0.3)";S.lineWidth=1;
+    for(var gy2=wy+46;gy2<FLOORY-16;gy2+=58){S.beginPath();S.moveTo(wx,gy2);S.lineTo(wx+ww,gy2);S.stroke();}
+    for(var gx3=wx+60;gx3<wx+ww;gx3+=60){S.beginPath();S.moveTo(gx3,wy);S.lineTo(gx3,FLOORY);S.stroke();}
+    S.fillStyle="rgba(120,170,220,0.05)";S.fillRect(wx,wy,ww,FLOORY-wy);
+    // certification plates — this lab signs what leaves it
+    for(var cp=0;cp<3;cp++){var cxp2=792+cp*66,cyp2=336;
+      plate(S,[[cxp2,cyp2],[cxp2+52,cyp2],[cxp2+52,cyp2+70],[cxp2,cyp2+70]],"#101a26","#0a1018","#22364e");
+      S.fillStyle="rgba(120,190,250,0.16)";S.fillRect(cxp2+7,cyp2+9,38,3);
+      for(var cl2=0;cl2<5;cl2++){S.fillStyle="rgba(150,180,210,0.10)";S.fillRect(cxp2+7,cyp2+20+cl2*8,38-(cl2%2)*12,2);}
+      S.fillStyle=cp<2?"rgba(79,208,122,0.4)":"rgba(247,189,78,0.4)";S.beginPath();S.arc(cxp2+42,cyp2+60,4,0,7);S.fill();}
+  } else {
+    // dispatch: a cork strip of pinned work orders, and a wall clock bank
+    var nb=760,nby=320,nbw=232,nbh=92;
+    plate(S,[[nb,nby],[nb+nbw,nby],[nb+nbw,nby+nbh],[nb,nby+nbh]],"#2a2018","#150f0a","#3d2e1f");
+    for(var no=0;no<9;no++){var nox=nb+10+(no%5)*44,noy=nby+10+Math.floor(no/5)*40;
+      S.save();S.translate(nox+16,noy+14);S.rotate(((no*37)%9-4)*0.014);
+      S.fillStyle=["rgba(214,222,232,0.34)","rgba(232,214,180,0.32)","rgba(200,220,236,0.30)"][no%3];S.fillRect(-16,-14,32,28);
+      S.fillStyle="rgba(0,0,0,0.35)";for(var nl=0;nl<3;nl++)S.fillRect(-11,-8+nl*7,22-(nl%2)*8,2);
+      S.fillStyle=["#c9a227","#4f9e5a","#b0563a","#5a86c9"][no%4];S.beginPath();S.arc(0,-11,2.2,0,7);S.fill();S.restore();}
+    // three zone clocks — dispatch is about when, not only where
+    [0,1,2].forEach(function(ci){var ccx2=690,ccy=326+ci*46;
+      S.fillStyle="#0b111a";S.beginPath();S.arc(ccx2,ccy,15,0,7);S.fill();
+      S.strokeStyle="rgba(70,92,120,0.5)";S.lineWidth=1.4;S.beginPath();S.arc(ccx2,ccy,15,0,7);S.stroke();
+      var ang=[1.1,3.0,5.2][ci];S.strokeStyle="rgba(160,190,220,0.42)";S.lineWidth=1.4;
+      S.beginPath();S.moveTo(ccx2,ccy);S.lineTo(ccx2+Math.cos(ang)*9,ccy+Math.sin(ang)*9);S.stroke();
+      S.beginPath();S.moveTo(ccx2,ccy);S.lineTo(ccx2+Math.cos(ang*2.3)*6,ccy+Math.sin(ang*2.3)*6);S.stroke();});
+  }
+  S.restore();
+
   S.save();S.globalAlpha=0.09+0.05*lit;S.fillStyle="#d9b23a";S.font="700 34px ui-monospace,monospace";S.fillText("SECTOR-7",672,wy+70);S.font="700 15px ui-monospace,monospace";S.fillText(ROOM==="builder"?"BUILDER QUARTERS":ROOM==="reviewer"?"REVIEW LAB":"DISPATCH",674,wy+92);S.restore();
   S.save();S.globalAlpha=0.14;for(var sx=wx;sx<wx+ww;sx+=18){S.fillStyle=sx%36<18?"#c9a227":"#0a0a0a";S.beginPath();S.moveTo(sx,FLOORY-8);S.lineTo(sx+9,FLOORY-8);S.lineTo(sx+18,FLOORY);S.lineTo(sx+9,FLOORY);S.closePath();S.fill();}S.restore();
   /* The floor used to be painted here, by the function that draws the WALL —
