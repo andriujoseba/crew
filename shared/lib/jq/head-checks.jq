@@ -59,11 +59,21 @@ def is_pending:
 # Neither passing nor still running: the head is not green, whatever the reason.
 def is_blocking: (is_green or is_pending) | not;
 
+# A workflow can start several runs with the same check name at one head.
+# GitHub keeps every run in statusCheckRollup, including concurrency-cancelled
+# runs superseded by a later run. Only that later run is evidence about the
+# check. startedAt identifies the run generation; completedAt is a defensive
+# fallback for rollup shapes that omit it.
+def latest_checks:
+  (.statusCheckRollup // [])
+  | group_by(.name // .context // "?")
+  | map(max_by(.startedAt // .completedAt // ""));
+
 # "none" is its own state, never green: a repo with no CI configured and a
 # repo whose checks all passed are different facts, and only one of them is
 # evidence.
 def check_state:
-  (.statusCheckRollup // []) as $c
+  latest_checks as $c
   | if   ($c | length) == 0             then "none"
     elif ($c | map(is_blocking) | any)  then "red"
     elif ($c | map(is_pending) | any)   then "pending"
@@ -80,7 +90,7 @@ def round_owed:
          | select(. as $l | ($panel | index($l)) != null)] | length) == 0);
 
 def failing_names:
-  [(.statusCheckRollup // [])[] | select(is_blocking)
+  [latest_checks[] | select(is_blocking)
    | "\(.name // .context // "?") (\(.conclusion // .state // "?"))"]
   | if length == 0 then "-" else join(", ") end;
 

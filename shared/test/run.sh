@@ -1496,6 +1496,21 @@ CHK_NEUTRAL='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conc
 CHK_SKIPPED='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SKIPPED"}]'
 # A conclusion this engine has never heard of. GitHub adds these.
 CHK_UNKNOWN='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"QUANTUM_FAILURE"}]'
+# Same-head reruns are all present in the rollup. The latest run of each check
+# name is the check's answer; older runs are not independent evidence.
+CHK_CANCEL_THEN_OK='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"}]'
+CHK_OK_THEN_CANCEL='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:08Z"}]'
+CHK_SUPERSEDED_CANCEL_AND_FAILURE='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
+  {"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-07-29T10:58:47Z","completedAt":"2026-07-29T10:59:22Z"}]'
+CHK_FAILURE_THEN_RUNNING='[
+  {"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-07-29T10:58:47Z","completedAt":"2026-07-29T10:59:22Z"},
+  {"__typename":"CheckRun","name":"test","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-07-29T11:02:00Z","completedAt":null}]'
 # The StatusContext shape. THIS is the fixture that matters: crew's own CI is a
 # single CheckRun, so an implementation that discriminates on __typename and
 # reads only .conclusion passes every other test in this file and reports a
@@ -1527,6 +1542,19 @@ t head-stale-is-red           red     "$(state_of "$CHK_STALE")"
 # fails CLOSED. Enumerating the bad ones would have gotten this wrong the same
 # way, silently, the next time GitHub adds one.
 t head-unknown-conclusion-is-red red  "$(state_of "$CHK_UNKNOWN")"
+# #146: a concurrency cancellation superseded by a later same-name success is
+# not evidence; a cancellation that remains the latest run is still fail-closed.
+t head-cancelled-then-succeeded-is-green green "$(state_of "$CHK_CANCEL_THEN_OK")"
+t head-cancelled-as-last-word-is-red red "$(state_of "$CHK_OK_THEN_CANCEL")"
+# Reduction is keyed by the check name, not workflow or run id: an unrelated
+# failure survives even while the superseded same-name cancellation disappears.
+t head-unrelated-failure-survives-superseded-cancel red \
+  "$(state_of "$CHK_SUPERSEDED_CANCEL_AND_FAILURE")"
+t head-unrelated-failure-is-named "test (FAILURE)" \
+  "$(hc '[]' "$(mk_prc "$CHK_SUPERSEDED_CANCEL_AND_FAILURE")" | cut -f6)"
+# A rerun in progress is the latest word and therefore pending, not the stale
+# failure from the earlier run.
+t head-running-rerun-supersedes-failure pending "$(state_of "$CHK_FAILURE_THEN_RUNNING")"
 # The genuinely-not-a-failure conclusions stay green, or every skipped matrix
 # leg would wake a builder.
 t head-neutral-is-green       green   "$(state_of "$CHK_NEUTRAL")"
