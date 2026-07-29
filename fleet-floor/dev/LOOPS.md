@@ -503,3 +503,60 @@ have swallowed a small one, and the claim has to be true or the method is
 decoration. `floorshot.js`, which drives the grid, injects its PRNG through
 `addInitScript` and so runs before any page script: it was correct from the
 start, and is verified so.
+
+---
+
+## Loop 9 — vendor colour as structure, and a grade per room
+
+Two places where four things and three things were sharing one thing.
+
+### The rim light was one gradient for all four units
+
+The rim — the bright hairline down each unit's edges — is the single biggest
+thing separating a robot from the room behind it, and it was **warm on the
+left, cyan on the right, for everybody**. Which meant the fleet's four vendor
+colours lived only in lights and screens: swap a claude for a kimi and the
+outline of the thing was identical.
+
+The key side now carries the vendor's own colour and the fill side keeps the
+room's cool bounce. Each unit is identifiable from its edge alone — which is
+the only part of it that survives at grid-cell size.
+
+| | key-side rim |
+|---|---|
+| claude | `255,170,90` orange |
+| codex | `55,212,166` teal |
+| grok | `176,124,255` violet |
+| kimi | `255,114,182` pink |
+
+Offline desaturates the rim too, rather than switching it off: a dead unit
+still has edges.
+
+![claude](shots/loop-09/robot-claude.webp)
+![codex](shots/loop-09/robot-codex.webp)
+![grok](shots/loop-09/robot-grok.webp)
+![kimi](shots/loop-09/robot-kimi.webp)
+
+### The three rooms came out of the compositor the same colour
+
+Every prop, wall and floor had been tinted one at a time, by hand, across eight
+loops — and all three rooms still photographed as the same neutral blue-black,
+because **a grade is a property of the whole frame** and nothing was applying
+one. Three rooms lit by the same lamp should still not photograph identically.
+
+Two passes: a lift into the shadows, which is what actually carries the colour
+of a dark scene, and a screen over the highlights so the key light picks up
+temperature. Deliberately small — this is a grade, not a filter, and it has to
+survive being looked at 36 times on one page.
+
+- **builder** — `255,176,96`, tungsten
+- **reviewer** — `122,196,255`, daylight-balanced
+- **triage** — `186,150,255`, cold violet
+
+![builder](shots/loop-09/room-builder.webp)
+![reviewer](shots/loop-09/room-reviewer.webp)
+![triage](shots/loop-09/room-triage.webp)
+
+> A grade touches every pixel, so the changed-pixel share for this loop is
+> ~97–99% everywhere. That number stops being informative here; the images are
+> the evidence.

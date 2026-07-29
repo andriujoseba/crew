@@ -59,6 +59,15 @@ tile is* — not from how many tiles came before it, so slicing the grid does no
 change the tiles that remain. The lamp and the weld sparks are the only state
 that survives a frame, and both are reset and warmed a fixed number of frames.
 
+**The PRNG is [`seed.js`](seed.js), and `build.sh` inlines it before `app.js`.
+That order is load-bearing.** `app.js` fixes the film-grain texture, the motes,
+the steam and the floor haze at module *load*, so a PRNG installed by
+`whiteboard.js` — a separate `<script>`, necessarily running after `app.js` —
+is already too late for all four. It was, and two renders of one commit
+differed by ~1.8% of pixels, uniformly, across all 36 tiles: the per-tile
+seeding worked perfectly and hid behind a grain texture that was never the same
+twice. Verified after the fix at 0 of 37 images differing.
+
 The same commit therefore renders the same PNG twice, and a pixel that moved
 between two runs moved because the code moved. That is what makes a before/after
 of these rooms worth looking at.

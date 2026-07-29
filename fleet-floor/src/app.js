@@ -902,11 +902,25 @@ function tickerEvent(){if(VIEW!=="floor"||LIVE)return;var alive=ROSTER.filter(fu
 
 /* ===================== HERO ROBOT (heavy armored builder) ===================== */
 function buildRobo(t,st){ return AGENT==="codex"?buildCodex(t,st):AGENT==="grok"?buildGrok(t,st):AGENT==="kimi"?buildKimi(t,st):buildClaude(t,st); }
-function buildRim(){
+/* The rim light — the bright hairline down each unit's edges, and the single
+   biggest thing separating it from the room behind it.
+   It was ONE gradient, warm on the left and cyan on the right, for all four
+   units. Which meant the fleet's four vendor colours existed only in lights
+   and screens: switch a claude for a kimi and the outline of the thing was
+   identical. The rim is a large, always-visible surface and it was saying
+   nothing about who this was.
+   Now the KEY side carries the vendor's own colour and the fill side keeps the
+   room's cool bounce, so each unit is identifiable from its edge alone — which
+   is the only part of it that survives at grid-cell size. */
+function buildRim(vend){
+  var V=vend||[255,170,90];
   RR.globalCompositeOperation="source-over";RR.drawImage(robo,0,0);
   RR.globalCompositeOperation="destination-out";RR.drawImage(robo,-2.4,1.8);RR.drawImage(robo,-1.6,-2.6);
   RR.globalCompositeOperation="source-in";
-  var rg=RR.createLinearGradient(70,0,450,0);rg.addColorStop(0,rgba(255,170,90,0.95));rg.addColorStop(0.5,rgba(150,175,205,0.4));rg.addColorStop(1,rgba(95,214,255,1));
+  var rg=RR.createLinearGradient(70,0,450,0);
+  rg.addColorStop(0,rgba(V[0],V[1],V[2],0.95));
+  rg.addColorStop(0.42,rgba((V[0]+150)/2,(V[1]+175)/2,(V[2]+205)/2,0.45));
+  rg.addColorStop(1,rgba(95,214,255,1));
   RR.fillStyle=rg;RR.fillRect(0,0,RW,RH);RR.globalCompositeOperation="source-over";
 }
 function buildClaude(t,st){
@@ -1118,7 +1132,7 @@ function buildClaude(t,st){
   pl(g,hcx+18,hy-4,hcx+24,hy-18,eH,1.6);
   [RB,RE].forEach(function(c){if(!offl){c.fillStyle="rgba(255,80,70,0.9)";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();}});
 
-  buildRim();
+  buildRim(offl?[92,86,80]:[255,170,90]);       // claude: its own orange on the key side
   // two boots, flat on the deck — see FEET in drawRobot
   return {hand:handR||{x:cx,y:400},coreY:262+breath,hy:hy,offl:offl,work:work,
           feet:[{x:cx-32,y:560,w:30},{x:cx+28,y:560,w:30}]};
@@ -1255,7 +1269,7 @@ function buildCodex(t,st){
     else{plate(g,[[h.x-2,h.y-11],[h.x+9,h.y-13],[h.x+12,h.y+4],[h.x+1,h.y+6]],"#241a30","#140e1c","#4a3a5e");if(!offl){RB.fillStyle="rgba(201,139,255,0.75)";RB.fillRect(h.x+2,h.y-9,4,5);RE.fillStyle="rgba(201,139,255,0.7)";RE.fillRect(h.x+2,h.y-9,4,5);}}
   }
 
-  buildRim();
+  buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
   /* Six tarsus tips, not one blob under the body: the whole point of the
      spider is the stance, and the stance is where the feet are. */
   var CFEET=[];[-1,1].forEach(function(sg){for(var fi=0;fi<3;fi++)CFEET.push({x:cx+sg*footX[fi],y:footY[fi],w:13});});
@@ -1394,7 +1408,7 @@ function buildGrok(t,st){
   if(!offl){RB.fillStyle="rgba(255,80,70,0.9)";RB.beginPath();RB.arc(cx+hr+4,HY-hr-6,2,0,7);RB.fill();RE.fillStyle="rgba(255,80,70,0.8)";RE.beginPath();RE.arc(cx+hr+4,HY-hr-6,2,0,7);RE.fill();}
 
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
-  buildRim();
+  buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet
   var hh=handR||{x:cx+30,y:BY+26};
   /* Grok's boots dangle — they are NOT on the floor, and saying so is the
      whole reason the shadow softens with height in drawRobot. When the
@@ -1531,7 +1545,7 @@ function buildKimi(t,st){
   }
 
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
-  buildRim();
+  buildRim(offl?[94,84,90]:[255,114,182]);      // kimi: pink
   var hh=handR||{x:cx+30,y:BY+28};
   /* Kimi has no feet — the skirt is what faces the floor, so it casts one
      wide soft pool rather than two prints. Powered down it settles, and the
@@ -1714,6 +1728,26 @@ function drawTarget(t,dt){
   for(var gx=nx;gx<DW;gx+=220)for(var gy=ny;gy<DH;gy+=220)C.drawImage(noise,gx,gy);
   C.globalCompositeOperation="source-over";C.globalAlpha=0.05;C.fillStyle="#000";for(var sl=0;sl<DH;sl+=3)C.fillRect(0,sl,DW,1);C.globalAlpha=1;
   var vg=C.createRadialGradient(DW*0.46,DH*0.46,DH*0.30,DW*0.5,DH*0.52,DH*0.92);vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.80)");C.fillStyle=vg;C.fillRect(0,0,DW,DH);
+  /* Room grade. Every prop, wall and floor in all three rooms was tinted one
+     at a time, by hand, and they still came out of the compositor sharing the
+     same neutral blue-black — because a grade is a property of the WHOLE
+     frame, and nothing was applying one. Three rooms lit by the same lamp
+     should still not photograph the same.
+     Two passes: a lift into the shadows, which is what actually carries the
+     colour of a dark scene, and a screen over the highlights so the key light
+     picks up temperature. Deliberately small — this is a grade, not a filter,
+     and it has to survive being looked at 36 times on one page. */
+  var GR=ROOM==="builder"?[255,176,96]:ROOM==="reviewer"?[122,196,255]:[186,150,255];
+  C.save();
+  C.globalCompositeOperation="lighter";C.globalAlpha=0.030;
+  C.fillStyle=rgba(GR[0],GR[1],GR[2],1);C.fillRect(0,0,DW,DH);
+  C.globalCompositeOperation="overlay";C.globalAlpha=0.055;
+  var lift=C.createLinearGradient(0,0,0,DH);
+  lift.addColorStop(0,rgba(GR[0],GR[1],GR[2],1));
+  lift.addColorStop(0.62,rgba(GR[0]*0.55,GR[1]*0.55,GR[2]*0.62,1));
+  lift.addColorStop(1,rgba(GR[0]*0.3,GR[1]*0.3,GR[2]*0.4,1));
+  C.fillStyle=lift;C.fillRect(0,0,DW,DH);
+  C.restore();
 }
 function drawDeepRacks(t){
   var defs=[[120,.34,.72],[250,.5,.5],[1060,.32,.75],[1160,.55,.42],[985,.42,.6]];
