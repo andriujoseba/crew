@@ -384,3 +384,50 @@ pulled. It was rendering as factory-fresh extruded aluminium. The paint goes at
 the corners and along the bottom rail where hands rest.
 
 ![triage](shots/loop-06/room-triage.webp)
+
+---
+
+## Loop 7 — atmosphere
+
+Two things were missing, and both are about the unit and the room occupying the
+same space rather than being stacked as layers.
+
+**Nothing touched the air.** All four of these move a lot of energy, and the
+room already had drifting fog and rising steam of its own — the robot simply
+stood in front of it as a cut-out.
+
+**Nothing was in front of the camera.** Wall, props, robot: one focal distance,
+so the frame had depth behind the subject and none ahead of it. One blurred
+object close to the lens does more for the sense of a real space than anything
+that can be added at the back.
+
+### claude — heat shimmer off the exhaust stacks
+![claude](shots/loop-07/robot-claude.webp)
+
+### codex — dust standing at all six feet
+A heavy thing that has just settled. It reads off the same footprints the
+contact shadows use, so the dust is always where the feet are.
+
+![codex](shots/loop-07/robot-codex.webp)
+
+### grok — thrust hitting the deck and spilling sideways
+![grok](shots/loop-07/robot-grok.webp)
+
+### kimi — the hover skirt rings the floor
+Rings travel outward and fade. Kimi is the only unit with no contact at all, so
+it gets the only disturbance that is purely downward pressure.
+
+![kimi](shots/loop-07/robot-kimi.webp)
+
+### builder — a chain hoist off-camera-left, a girder crossing top-right
+![builder](shots/loop-07/room-builder.webp)
+
+### reviewer — the edge of a glass partition
+The camera is looking *through* something. Right for the room that is sealed.
+
+![reviewer](shots/loop-07/room-reviewer.webp)
+
+### triage — a cable bundle dropping past the lens
+The way a dispatch room is actually wired.
+
+![triage](shots/loop-07/room-triage.webp)

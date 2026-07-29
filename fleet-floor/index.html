@@ -1748,6 +1748,44 @@ function drawRobot(t){
   S.save();S.globalCompositeOperation="lighter";S.globalAlpha=info.offl?0.5:0.95;S.drawImage(rrim,px,py,RW*sc,RH*sc);S.restore();
   // emissive -> glow buffer (scaled)
   G.save();G.globalCompositeOperation="lighter";G.drawImage(remit,px,py,RW*sc,RH*sc);G.restore();
+  /* What the unit does to the air around it.
+     Every one of these four moves a lot of energy and none of them touched the
+     atmosphere they were standing in — the room had drifting fog and rising
+     steam of its own, and the robot was a cut-out pasted in front of it. This
+     is per-agent because it is the physics of each body: exhaust rises, feet
+     raise dust, thrust pushes down and out, a hover skirt rings the floor.
+     Cheap, and it is what stops the unit reading as a sticker. */
+  if(!info.offl&&!reduced){
+    var fy0=FLOORY;
+    S.save();S.globalCompositeOperation="lighter";
+    if(AGENT==="claude"){
+      // heat shimmer off the twin exhaust stacks
+      [-52,52].forEach(function(sxo,si2){var ex4=px+(260+sxo)*sc, ey4=py+200*sc;
+        for(var p2=0;p2<3;p2++){var ph=((t*0.35+p2*0.33+si2*0.17)%1), yy=ey4-ph*86, rad=9+ph*26;
+          var hg=S.createRadialGradient(ex4+Math.sin(t*1.6+p2+si2)*7*ph,yy,1,ex4,yy,rad);
+          hg.addColorStop(0,rgba(255,168,96,0.10*(1-ph)*(info.work?1:0.45)));hg.addColorStop(1,"rgba(255,168,96,0)");
+          S.fillStyle=hg;S.beginPath();S.arc(ex4,yy,rad,0,7);S.fill();}});
+    } else if(AGENT==="codex"){
+      // dust standing at the six feet — a heavy thing that has just settled
+      (info.feet||[]).forEach(function(f,fi){var fx3=px+f.x*sc;
+        var dph=((t*0.4+fi*0.19)%1), dr=7+dph*18;
+        var dg=S.createRadialGradient(fx3,fy0-dph*13,1,fx3,fy0-dph*13,dr);
+        dg.addColorStop(0,"rgba(96,140,130,"+(0.055*(1-dph))+")");dg.addColorStop(1,"rgba(96,140,130,0)");
+        S.fillStyle=dg;S.beginPath();S.ellipse(fx3,fy0-dph*13,dr,dr*0.5,0,0,7);S.fill();});
+    } else if(AGENT==="grok"){
+      // thrust hitting the deck and spilling sideways
+      [-1,1].forEach(function(sg2){var tx3=ROBOX+sg2*24*sc;
+        var tg=S.createRadialGradient(tx3,fy0,2,tx3,fy0,86);
+        tg.addColorStop(0,"rgba(176,124,255,"+(info.work?0.14:0.09)+")");tg.addColorStop(1,"rgba(176,124,255,0)");
+        S.fillStyle=tg;S.beginPath();S.ellipse(tx3+sg2*26,fy0+2,86,13,0,0,7);S.fill();});
+    } else {
+      // a hover skirt rings the floor; the ring travels outward and fades
+      for(var rg3=0;rg3<2;rg3++){var rp=((t*0.5+rg3*0.5)%1), rr3=26+rp*104;
+        S.strokeStyle="rgba(255,114,182,"+(0.16*(1-rp))+")";S.lineWidth=1.6;
+        S.beginPath();S.ellipse(ROBOX,fy0+3,rr3,rr3*0.19,0,0,7);S.stroke();}
+    }
+    S.restore();
+  }
   // working effect at the hand — role-specific
   var hx=px+info.hand.x*sc, hyy=py+info.hand.y*sc, visor={x:ROBOX,y:py+(info.hy+20)*sc};
   if(info.work){
@@ -1827,6 +1865,7 @@ function drawTarget(t,dt){
   drawSparks();
   drawFloorFog(t);
   drawSteam(t);
+  roomForeground(t,STATE);
   drawForeground();
 
   C.setTransform(1,0,0,1,0,0);C.globalAlpha=1;C.globalCompositeOperation="source-over";C.filter="none";C.clearRect(0,0,DW,DH);
@@ -2064,6 +2103,40 @@ function floorPlane(t,lit,st){
 }
 function drawFloorFog(t){S.save();S.globalCompositeOperation="lighter";floorHaze.forEach(function(f){var x=((f.x+t*f.sp)%1.2-0.1)*DW;var y=FLOORY+(f.y-0.8)*DH*0.4;var gr=S.createRadialGradient(x,y,10,x,y,260);gr.addColorStop(0,rgba(90,120,150,f.a));gr.addColorStop(1,"rgba(90,120,150,0)");S.fillStyle=gr;S.beginPath();S.ellipse(x,y,260,50,0,0,7);S.fill();});S.restore();}
 function drawSteam(t){if(reduced)return;S.save();S.globalCompositeOperation="lighter";var vx=1010,vy=FLOORY-30;S.fillStyle="#0c1219";rr(S,vx,vy,40,26,3);S.fill();steam.forEach(function(s){var p=(s.p+t*0.06)%1;var yy=vy-p*180;var xx=vx+20+Math.sin(t*0.8+s.sway)*24*p;var a=(1-p)*0.10;var rad=8+p*46;var gr=S.createRadialGradient(xx,yy,2,xx,yy,rad);gr.addColorStop(0,rgba(120,150,175,a));gr.addColorStop(1,"rgba(120,150,175,0)");S.fillStyle=gr;S.beginPath();S.arc(xx,yy,rad,0,7);S.fill();});S.restore();}
+/* A near-foreground layer, per room.
+   Every room was wall / props / robot, all at one focal distance, so the frame
+   had no depth in front of the subject — only behind it. One blurred object
+   close to camera does more for the sense of a real space than anything that
+   could be added at the back, and it costs a shape and a blur. Drawn before
+   drawForeground so the floor lip still closes the frame. */
+function roomForeground(t,st){
+  S.save();S.filter="blur(4px)";
+  if(ROOM==="builder"){
+    // a chain hoist hanging just off-camera-left, and a girder crossing top-right
+    S.strokeStyle="rgba(9,13,20,0.95)";S.lineWidth=9;
+    S.beginPath();S.moveTo(96,0);S.lineTo(112,470);S.stroke();
+    S.strokeStyle="rgba(40,52,70,0.5)";S.lineWidth=2;
+    S.beginPath();S.moveTo(92,0);S.lineTo(108,470);S.stroke();
+    S.fillStyle="rgba(9,13,20,0.95)";S.fillRect(84,470,40,54);
+    S.save();S.globalAlpha=0.9;S.fillStyle="#080c13";
+    S.beginPath();S.moveTo(DW,0);S.lineTo(DW,86);S.lineTo(1004,26);S.lineTo(1004,0);S.closePath();S.fill();S.restore();
+  } else if(ROOM==="reviewer"){
+    // the edge of a glass partition the camera is looking through
+    var gp=S.createLinearGradient(0,0,150,0);
+    gp.addColorStop(0,"rgba(150,190,235,0.10)");gp.addColorStop(1,"rgba(150,190,235,0)");
+    S.fillStyle=gp;S.fillRect(0,0,150,DH);
+    S.fillStyle="rgba(10,16,24,0.9)";S.fillRect(120,0,13,DH);
+    S.fillStyle="rgba(150,190,235,0.12)";S.fillRect(120,0,2,DH);
+  } else {
+    // a bundle of cable dropping past the lens, the way a dispatch room is wired
+    [[168,-14],[186,8],[204,-6]].forEach(function(cb,ci2){
+      S.strokeStyle=ci2===1?"rgba(12,17,25,0.95)":"rgba(9,13,20,0.9)";S.lineWidth=ci2===1?11:7;
+      S.beginPath();S.moveTo(cb[0],0);S.quadraticCurveTo(cb[0]+cb[1],250,cb[0]+cb[1]*2.2,520);S.stroke();});
+    S.strokeStyle="rgba(52,66,88,0.35)";S.lineWidth=2;
+    S.beginPath();S.moveTo(186,0);S.quadraticCurveTo(194,250,203,520);S.stroke();
+  }
+  S.restore();
+}
 function drawForeground(){S.save();S.filter="blur(3px)";S.fillStyle="#010307";S.beginPath();S.moveTo(0,DH);S.lineTo(0,DH-54);S.quadraticCurveTo(DW*0.5,DH-96,DW,DH-40);S.lineTo(DW,DH);S.closePath();S.fill();S.strokeStyle="rgba(30,44,62,0.4)";S.lineWidth=2;S.beginPath();S.moveTo(0,DH-52);S.quadraticCurveTo(DW*0.5,DH-94,DW,DH-38);S.stroke();S.restore();}
 
 /* ===================== CURRENT (flat) ===================== */
