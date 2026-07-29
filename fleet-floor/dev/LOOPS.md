@@ -811,3 +811,108 @@ printed.
 > 11–18% everywhere: a light that reaches a surface changes every pixel of it.
 > The residual spread between tiles is the damped lamp flicker described above,
 > and it is now smaller than the difference between the three rooms' grades.
+
+---
+
+## Loop 13 — furnish the bays
+
+Loop 11 reserved one rectangle and that was enough to stop props landing on the
+room's name. It left every *other* placement still being decided by eye, one
+prop at a time — which is the habit that put them on the sign in the first
+place. So before anything new went up, the whole wall got stated.
+
+**`BAYS`** names what is free in each room, and what bounds it:
+
+|  | x | y | w | h | bounded below by |
+|---|---|---|---|---|---|
+| builder `L` | 250 | 188 | 126 | 216 | the fab bay (y=430) |
+| builder `R` | 726 | 404 | 270 | 148 | the deck |
+| reviewer `L` | 262 | 336 | 164 | 170 | the inspection desk (x=372) |
+| reviewer `R` | 690 | 428 | 300 | 124 | the deck |
+| triage `L` | 262 | 330 | 160 | 196 | the map console (x=372) |
+| triage `R` | 836 | 424 | 160 | 128 | the deck |
+
+Two constraints did most of the work. The unit stands at `ROBOX=470` and is
+about 220 wide, so the centre column is not wall you can hang anything on — it
+is wall you look at the robot *against*, and the lamp cone runs down it. And
+every room already has floor-standing furniture backed against the wall, so a
+bay stops where that starts. Each of the six was verified empty against the
+loop 12 renders, and each is quoted by name in the prop that fills it.
+
+### builder — gas, and something to put the fire out with
+
+The fabricator has been throwing a furnace flame since loop 3 and **nothing in
+the room has ever supplied it.** Two cylinders strapped to the wall directly
+above the bay, with regulators and a hose dropping toward it, is what makes the
+fire an installation rather than an effect. (They are drawn with a *horizontal*
+gradient, which is the whole difference between a cylinder and a rectangle —
+every other prop in the fleet is lit top-to-bottom because every other prop is
+flat.)
+
+And the wall carried a hazard placard warning about a danger with no answer to
+it anywhere in the room. The fire point goes directly underneath it, which is
+what turns two props into one piece of signage.
+
+> The first cut of the fire point used workshop-red at full saturation and
+> immediately became the brightest object in the bay. A fire point should be
+> *findable*, not the thing you look at instead of the unit under the lamp.
+
+![builder](shots/loop-13/room-builder.webp)
+
+### reviewer — a chart to check the instruments, and somewhere for the work to go
+
+A lab whose entire job is looking closely at things had nothing on its wall for
+checking that it can still see. The calibration chart is the only prop in the
+fleet whose content is a *measurement* rather than a readout — greyscale wedge,
+converging resolution wedges, registration crosses — and it is the one prop
+that deliberately does not animate, because a test target that moved would be
+useless. Its wedge tops out at 60%, not white: printed paper in a room lit to
+12% is not paper-white, and the first cut read as a lightbox.
+
+Everything this room does ends with something being filed — loop 10 gave the
+lens a specimen, loop 8 gave the wall plates to sign — and there was nowhere
+for any of it to go afterwards. The sample archive is twenty-one drawers, three
+of them pulled, one lit from inside.
+
+![reviewer](shots/loop-13/room-reviewer.webp)
+
+### triage — a tube, and the names of the people on shift
+
+Dispatch is the room that moves things to people, and it did it entirely
+through screens. A pneumatic tube is the one piece of dispatch furniture that
+is physically about transit: you can *see* the thing being sent. A carrier
+rises through the run while the box is working and the head lamp answers when
+it arrives.
+
+> Its first cut had a collar every 44px and read as a ladder — the prop said
+> "climb me" in a room with nothing to climb to. A tube has a joint where it
+> passes each floor and nowhere else, so it has two.
+
+And the room that routes work to people named nobody. The duty board is six
+slots in a rail with a shift lamp each: on duty, on call, off. It is the only
+prop in the fleet that is about *who* rather than *what*, which is most of the
+difference between a dispatch desk and a status screen.
+
+![triage](shots/loop-13/room-triage.webp)
+
+### Every unit: it has been used
+
+The four units left the factory in loop 1 and have been perfectly clean through
+twelve loops of lighting them better. Wear is not decoration here — it is the
+only thing on any of them that says what the unit has been *doing*.
+
+| unit | what it does, showing |
+|---|---|
+| **claude** | soot around both exhaust stacks, heaviest at the lip and fading up. They have been venting since loop 3 onto plate that stayed factory-clean |
+| **codex** | a hazard stripe on the leading tergite. It carries a heavy shell through a workshop at head height and nothing said so — a marking the *other* units need |
+| **grok** | knee scuffs and dirt up the lower legs. It is the only unit whose surface is soft, so it should be showing *more* wear than the armoured ones, not less |
+| **kimi** | scuffed corner bumpers, and an asset tag with the bottom corner lifting. Loop 11 put those guards on because a machine that floats face-first through a workshop protects its corners; leaving them pristine quietly contradicted the reason they exist |
+
+![claude](shots/loop-13/robot-claude.webp)
+![codex](shots/loop-13/robot-codex.webp)
+![grok](shots/loop-13/robot-grok.webp)
+![kimi](shots/loop-13/robot-kimi.webp)
+
+> 3.1–4.1%, evenly. Six new props and four wear passes, and not one pixel of
+> it lands anywhere another object already was — which is what having the
+> bay table was for.

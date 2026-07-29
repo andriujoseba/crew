@@ -276,6 +276,32 @@ var HOLOX=800,HOLOY=250,HOLOW=250,HOLOH=196;
    light the rest of the wall takes. */
 var SIGN={x:676,y:182,w:308,h:88};
 var WALL={x:250,y:150,w:760};
+/* The rest of the wall, as named bays.
+   Loop 11 reserved one rectangle and that was enough to stop props landing on
+   the room's name — but it left every OTHER placement still being decided by
+   eye, one prop at a time, which is the habit that put them there in the first
+   place. So before anything new goes up, the whole wall gets stated: what is
+   free, and what each free area is bounded by.
+   Two constraints do most of the work. The unit stands at ROBOX=470 and is
+   about 220 wide, so the centre column is not wall you can hang anything on —
+   it is wall you look at the robot against, and the lamp cone runs down it.
+   And each room already has floor-standing furniture backed up against the
+   wall, so a bay has to stop where that starts.
+                      x    y    w    h     bounded below by
+   builder  left    250  188  126  216     the fab bay (y=430)
+            right   726  404  270  148     the deck
+   reviewer left    262  336  164  170     the inspection desk (x=372)
+            right   690  428  300  124     the deck
+   triage   left    262  330  160  196     the map console (x=372)
+            right   836  424  160  128     the deck
+   Every one of these was verified empty against the loop 12 renders, and each
+   is quoted in the prop that fills it. If a later prop wants one of them, it
+   has to say which. */
+var BAYS={
+  builder :{L:[250,188,126,216], R:[726,404,270,148]},
+  reviewer:{L:[262,336,164,170], R:[690,428,300,124]},
+  triage  :{L:[262,330,160,196], R:[836,424,160,128]}
+};
 /* Everything bolted to the wall stands a few centimetres off it, and until now
    not one of them said so. `plate()` gives a prop its own internal shading and
    stops at its outline, so a monitor bank, a kanban board and a hazard placard
@@ -374,6 +400,84 @@ function fabBay(t,lit,st){
   // barrels beside the bay
   [[x+w+6,"#c9a227"],[x+w+18,"#4f9e5a"]].forEach(function(k){var bx=k[0];plate(S,[[bx,566],[bx+11,566],[bx+11,612],[bx,612]],k[1],"#0c1119","#0a0e16");S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(bx,576,11,1);S.fillRect(bx,596,11,1);});
 }
+/* BAYS.builder.L — gas bottles.
+   The fabricator has been throwing a furnace flame since loop 3 and nothing in
+   the room has ever supplied it. Two cylinders strapped to the wall directly
+   above the bay, with regulators and a hose dropping toward it, is the prop
+   that makes the fire an installation rather than an effect. */
+function gasRack(t,lit,st){
+  var x=272,y=214,off=st==="offline";
+  wallShadow(x-6,y-8,104,180);
+  // backboard + two strap rails
+  plate(S,[[x-6,y-8],[x+98,y-8],[x+98,y+172],[x-6,y+172]],"#1a212c","#0c111a","#28313f");
+  [[y+26],[y+118]].forEach(function(r){S.fillStyle="#39455a";S.fillRect(x-4,r[0],100,5);
+    S.fillStyle="rgba(190,214,246,"+(0.10*lit)+")";S.fillRect(x-4,r[0],100,1);});
+  [[x+8,"#4a5a3c","#7f9a5e"],[x+52,"#4a2f2c","#9a5f4e"]].forEach(function(k){
+    var bx=k[0];
+    // body: a cylinder, so a horizontal gradient not a vertical one
+    var cyl=S.createLinearGradient(bx,0,bx+38,0);
+    cyl.addColorStop(0,"#0d1219");cyl.addColorStop(0.34,k[1]);cyl.addColorStop(0.52,k[2]);
+    cyl.addColorStop(0.72,k[1]);cyl.addColorStop(1,"#0a0e14");
+    rr(S,bx,y+8,38,156,7);S.fillStyle=cyl;S.fill();
+    S.strokeStyle="#0a0e14";S.lineWidth=1.2;rr(S,bx,y+8,38,156,7);S.stroke();
+    S.fillStyle="rgba(210,228,255,"+(0.13*lit)+")";S.fillRect(bx+11,y+14,3,144);   // specular strip
+    // shoulder, valve, regulator dial
+    plate(S,[[bx+9,y+8],[bx+29,y+8],[bx+26,y-6],[bx+12,y-6]],"#2a3242","#141a24","#3c4658");
+    S.fillStyle="#39455a";S.fillRect(bx+16,y-14,6,9);
+    S.fillStyle="#0c121a";S.beginPath();S.arc(bx+19,y-20,7,0,7);S.fill();
+    S.strokeStyle="#46536a";S.lineWidth=1.2;S.beginPath();S.arc(bx+19,y-20,7,0,7);S.stroke();
+    if(!off){emit(function(c){c.strokeStyle="rgba(120,220,170,0.6)";c.lineWidth=1.4;
+      c.beginPath();c.moveTo(bx+19,y-20);c.lineTo(bx+19+4,y-25);c.stroke();});}
+    // strap over each rail
+    S.fillStyle="rgba(20,26,36,0.9)";S.fillRect(bx-2,y+24,42,9);S.fillRect(bx-2,y+116,42,9);
+    S.fillStyle="rgba(140,160,190,0.12)";S.fillRect(bx-2,y+24,42,1);S.fillRect(bx-2,y+116,42,1);});
+  // the hose, running down out of the bay toward the fabricator
+  S.strokeStyle="#0c1119";S.lineWidth=5;
+  S.beginPath();S.moveTo(x+71,y-16);S.bezierCurveTo(x+104,y+30,x+58,y+152,x+66,y+206);S.stroke();
+  S.strokeStyle="rgba(78,92,116,0.45)";S.lineWidth=1.4;
+  S.beginPath();S.moveTo(x+71,y-16);S.bezierCurveTo(x+104,y+30,x+58,y+152,x+66,y+206);S.stroke();
+  // a chained-up spare, empty, tipped against the board
+  S.strokeStyle="rgba(96,112,138,0.5)";S.lineWidth=1;
+  S.beginPath();S.moveTo(x-4,y+150);S.lineTo(x+98,y+156);S.stroke();
+}
+/* BAYS.builder.R — the fire point.
+   A bay that welds, throws sparks onto a deck and stores gas has an
+   extinguisher on the wall, and this one had a hazard placard warning about a
+   danger with no answer to it anywhere in the room. It goes directly under the
+   placard, which is what turns two props into one piece of signage. */
+function firePoint(t,lit,st){
+  var x=812,y=428,off=st==="offline";
+  wallShadow(x,y,118,110);
+  /* Muted, deliberately. The first cut used workshop-red at full saturation
+     and became the brightest object in the bay — a fire point should be
+     findable, not the thing you look at instead of the unit under the lamp.
+     Enough red to read as safety equipment from across the room, and no more. */
+  plate(S,[[x,y],[x+118,y],[x+118,y+110],[x,y+110]],"#201214","#12090b","#38191c");
+  S.fillStyle="rgba(196,72,58,"+(off?0.07:0.15)+")";S.fillRect(x+6,y+6,106,4);
+  // extinguisher
+  var ex=x+16;
+  var eg2=S.createLinearGradient(ex,0,ex+26,0);
+  eg2.addColorStop(0,"#2c0d0f");eg2.addColorStop(0.36,"#6d1e19");eg2.addColorStop(0.54,"#95352c");
+  eg2.addColorStop(0.76,"#5d1a15");eg2.addColorStop(1,"#220a0c");
+  rr(S,ex,y+34,26,62,5);S.fillStyle=eg2;S.fill();
+  S.fillStyle="rgba(255,222,206,"+(0.11*lit)+")";S.fillRect(ex+8,y+38,3,54);
+  plate(S,[[ex+7,y+34],[ex+19,y+34],[ex+17,y+24],[ex+9,y+24]],"#2a3242","#141a24","#3c4658");
+  S.strokeStyle="#39455a";S.lineWidth=2.4;S.beginPath();S.moveTo(ex+13,y+24);S.lineTo(ex+30,y+30);S.stroke();
+  S.fillStyle="rgba(236,224,200,0.5)";S.fillRect(ex+4,y+56,18,10);
+  S.fillStyle="rgba(0,0,0,0.4)";for(var fl=0;fl<3;fl++)S.fillRect(ex+6,y+59+fl*3,14-(fl%2)*5,1.4);
+  // hose reel
+  var rx=x+66,ry=y+58;
+  S.fillStyle="#151b25";S.beginPath();S.arc(rx,ry,25,0,7);S.fill();
+  S.strokeStyle="#39455a";S.lineWidth=2;S.beginPath();S.arc(rx,ry,25,0,7);S.stroke();
+  S.strokeStyle="rgba(66,78,98,0.85)";S.lineWidth=3;
+  for(var hr=0;hr<4;hr++){S.beginPath();S.arc(rx,ry,7+hr*4.5,0,7);S.stroke();}
+  S.fillStyle="rgba(190,214,246,"+(0.11*lit)+")";S.beginPath();S.arc(rx-8,ry-9,4,0,7);S.fill();
+  S.fillStyle="#0e131b";S.beginPath();S.arc(rx,ry,5,0,7);S.fill();
+  // call point, live only when the box is
+  emit(function(c){c.fillStyle=off?"rgba(90,26,22,0.7)":"rgba(255,74,58,"+(0.35+0.45*Math.pow(Math.max(0,Math.sin(t*1.1)),4))+")";
+    c.fillRect(x+96,y+34,12,12);});
+  S.strokeStyle="rgba(120,60,52,0.6)";S.lineWidth=1;S.strokeRect(x+95,y+33,14,14);
+}
 function pegboard(t,lit){
   var x=560,y=250,w=94,h=70;
   wallShadow(x,y,w,h);
@@ -445,6 +549,66 @@ function diffWall(t,st){
 function checklistBoard(){
   var x=676,y=290,w=88,h=76;wallShadow(x,y,w,h);plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#0f1620","#0a0f16","#22304a");S.fillStyle="#131c26";S.fillRect(x+5,y+5,w-10,h-10);
   for(var i=0;i<6;i++){S.fillStyle=i<4?"#4a8a5e":"#38424e";S.fillRect(x+9,y+11+i*11,4,4);S.fillStyle="#39434f";S.fillRect(x+17,y+12+i*11,w-28,2);}
+}
+/* BAYS.reviewer.L — the calibration chart.
+   A lab whose whole job is looking closely at things had nothing on its wall
+   for checking that it can still see. A test card is the one object that says
+   "the instruments here are trusted because they are verified" — and it is
+   also the only prop in the fleet whose content is a measurement rather than a
+   readout: greyscale wedge, resolution wedges, registration crosses. It does
+   not animate, because a calibration target that moved would be useless. */
+function calChart(t,lit,st){
+  var x=272,y=352,w=142,h=136,off=st==="offline";
+  wallShadow(x,y,w,h);
+  plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1c242e","#0d131a","#2c3948");
+  S.fillStyle="#c9d3df";S.fillRect(x+7,y+7,w-14,h-14);
+  S.fillStyle="rgba(20,30,42,0.86)";S.fillRect(x+7,y+7,w-14,h-14);
+  // greyscale wedge — eleven steps, the classic
+  /* The wedge tops out at 60% rather than at white. A calibration target is
+     printed, and a printed white in a room lit to 12% is not paper-white — it
+     was reading as a lightbox and taking the eye off the unit. */
+  for(var g4=0;g4<11;g4++){var v=Math.round(14+g4*13.4);
+    S.fillStyle="rgb("+v+","+(v+3)+","+(v+8)+")";S.fillRect(x+12+g4*10.8,y+13,10.2,20);}
+  // resolution wedges: two blocks of converging bars
+  [[x+13,y+41],[x+78,y+41]].forEach(function(b,bi){
+    for(var l3=0;l3<9;l3++){var lw3=(bi?0.9:1.5)+l3*0.34;
+      S.fillStyle="rgba(206,220,236,0.42)";S.fillRect(b[0]+l3*6.4,b[1],lw3,26);}});
+  // registration crosses at the corners of the field
+  [[x+16,y+80],[x+w-16,y+80],[x+16,y+h-16],[x+w-16,y+h-16]].forEach(function(c4){
+    S.strokeStyle="rgba(206,220,236,0.5)";S.lineWidth=1;
+    S.beginPath();S.moveTo(c4[0]-6,c4[1]);S.lineTo(c4[0]+6,c4[1]);
+    S.moveTo(c4[0],c4[1]-6);S.lineTo(c4[0],c4[1]+6);S.stroke();});
+  // a colour patch row and the plate's serial
+  ["#b0563a","#4f9e5a","#4a7cc9","#c9a227"].forEach(function(cc,ci){
+    S.fillStyle=cc;S.globalAlpha=0.38;S.fillRect(x+34+ci*20,y+96,17,17);S.globalAlpha=1;});
+  S.fillStyle="rgba(150,175,205,0.24)";S.fillRect(x+34,y+120,74,2);
+  // and the desk lamp finds it, faintly, from the right
+  if(!off){S.save();S.globalCompositeOperation="lighter";
+    var cw2=S.createLinearGradient(x+w,0,x,0);
+    cw2.addColorStop(0,"rgba(150,196,245,0.055)");cw2.addColorStop(1,"rgba(150,196,245,0)");
+    S.fillStyle=cw2;S.fillRect(x,y,w,h);S.restore();}
+}
+/* BAYS.reviewer.R — the sample archive.
+   Everything this room does ends with something being filed: loop 10 gave the
+   lens a specimen to look at, loop 8 gave the wall plates to sign, and there
+   was nowhere for any of it to go afterwards. Small labelled drawers, three of
+   them pulled, one lit from inside. */
+function sampleArchive(t,lit,st){
+  var x=700,y=440,off=st==="offline";
+  wallShadow(x,y,280,104);
+  plate(S,[[x,y],[x+280,y],[x+280,y+104],[x,y+104]],"#151d28","#0a0f16","#25313f");
+  for(var r4=0;r4<3;r4++)for(var c5=0;c5<7;c5++){
+    var dx2=x+8+c5*39, dy2=y+8+r4*31, pull=(r4*7+c5)%11===3;
+    plate(S,[[dx2,dy2],[dx2+35,dy2],[dx2+35,dy2+27],[dx2,dy2+27]],
+      pull?"#22303f":"#131b25","#080d14","#22303f");
+    if(pull){                                     // pulled out: a lit slot behind
+      S.fillStyle="rgba(2,5,10,0.8)";S.fillRect(dx2-3,dy2+2,4,23);
+      if(!off)emit(function(c){c.fillStyle="rgba(130,190,250,0.20)";c.fillRect(dx2-3,dy2+2,3,23);});}
+    S.fillStyle="rgba(160,186,214,"+(0.16*lit)+")";S.fillRect(dx2+1,dy2+1,33,1);
+    S.fillStyle="#39455a";S.fillRect(dx2+13,dy2+12,9,3);               // handle
+    S.fillStyle="rgba(206,220,236,0.20)";S.fillRect(dx2+4,dy2+5,16,3); // label
+    if((r4+c5)%4===0&&!off)emit(function(c){
+      c.fillStyle="rgba(79,208,122,0.55)";c.fillRect(dx2+29,dy2+20,3,3);});}
 }
 function inspectDesk(t,st){
   var x=372,y=566,w=204,off=st==="offline";
@@ -521,6 +685,67 @@ function kanban(t,st){
    and under the work-order board: instruments together, paper together. It
    used to sit at (690,248) — dead centre of the room's own name, with the
    sweep passing over the letters. */
+/* BAYS.triage.L — the pneumatic tube.
+   Dispatch is the room that moves things to people, and it did it entirely
+   through screens: a kanban board, a radar, a phone. A tube station is the one
+   piece of dispatch furniture that is physically about transit — you can see
+   the thing being sent. A carrier rises through the run while the box is
+   working, arrives at the head, and the head lamp answers. */
+function tubeStation(t,lit,st){
+  var x=286,off=st==="offline",work=st==="working";
+  var yt=330,yb=524;
+  wallShadow(x-4,yt,52,yb-yt);
+  // the run: a glass column in a steel frame
+  plate(S,[[x-4,yt],[x+48,yt],[x+48,yb],[x-4,yb]],"#1a212c","#0c111a","#2a3444");
+  S.fillStyle="#050a10";S.fillRect(x+6,yt+8,32,yb-yt-16);
+  var tg=S.createLinearGradient(x+6,0,x+38,0);
+  tg.addColorStop(0,"rgba(150,180,220,0.10)");tg.addColorStop(0.3,"rgba(150,180,220,0.02)");
+  tg.addColorStop(0.62,"rgba(190,214,246,"+(0.20*lit)+")");tg.addColorStop(1,"rgba(150,180,220,0.05)");
+  S.fillStyle=tg;S.fillRect(x+6,yt+8,32,yb-yt-16);
+  /* Two collars, not five. At 44px spacing they read as ladder rungs — the
+     prop said "climb me" in a room with nothing to climb to. A tube has a
+     joint where it passes each floor and nowhere else. */
+  [yt+58,yb-74].forEach(function(cl3){
+    S.fillStyle="#2c3646";S.fillRect(x-1,cl3,46,9);
+    S.fillStyle="rgba(190,214,246,"+(0.14*lit)+")";S.fillRect(x-1,cl3,46,1.4);
+    S.fillStyle="rgba(2,5,10,0.5)";S.fillRect(x-1,cl3+7.6,46,1.6);});
+  // the carrier, in transit while there is work moving
+  if(!off){var ph2=work?((t*0.42)%1):0.86, cy4=yb-24-ph2*(yb-yt-56);
+    plate(S,[[x+11,cy4],[x+33,cy4],[x+33,cy4+26],[x+11,cy4+26]],"#3b4658","#1d2532","#556277");
+    S.fillStyle="rgba(201,162,39,0.7)";S.fillRect(x+13,cy4+6,18,4);
+    S.fillStyle="rgba(220,236,255,0.16)";S.fillRect(x+14,cy4+2,16,1.6);
+    if(work)emit(function(c){var bg3=c.createLinearGradient(0,cy4+26,0,cy4+58);
+      bg3.addColorStop(0,"rgba(186,150,255,0.16)");bg3.addColorStop(1,"rgba(186,150,255,0)");
+      c.fillStyle=bg3;c.fillRect(x+8,cy4+26,28,32);});}
+  // send/receive head at the top, with its own lamp
+  plate(S,[[x-10,yt-34],[x+54,yt-34],[x+50,yt],[x-6,yt]],"#232c39","#101720","#37445a");
+  S.fillStyle="#0a0f16";S.fillRect(x+4,yt-26,36,14);
+  emit(function(c){var on3=!off&&(work?(Math.sin(t*3.4)>-0.2):(Math.sin(t*0.9)>0.6));
+    c.fillStyle="rgba(186,150,255,"+(on3?0.8:0.14)+")";c.fillRect(x+7,yt-23,30,8);});
+  S.fillStyle="rgba(190,214,246,"+(0.12*lit)+")";S.fillRect(x-10,yt-34,64,1.6);
+  // and the floor flange it lands on
+  plate(S,[[x-10,yb],[x+54,yb],[x+50,yb+14],[x-6,yb+14]],"#222b37","#0e141c","#33404f");
+}
+/* BAYS.triage.R — the duty roster.
+   The room routes work to people and named nobody. Six slots, each a plate in
+   a rail with a shift lamp: on duty, on call, off. It is the only prop in the
+   fleet that is about who rather than what, which is the whole difference
+   between a dispatch desk and a status screen. */
+function dutyBoard(t,lit,st){
+  var x=846,y=436,w=140,h=104,off=st==="offline";
+  wallShadow(x,y,w,h);
+  plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1d2029","#0d1014","#333846");
+  S.fillStyle="rgba(190,214,246,"+(0.10*lit)+")";S.fillRect(x,y,w,1.4);
+  for(var d3=0;d3<6;d3++){
+    var ry2=y+9+d3*15.5, on4=off?0:[1,1,2,0,1,2][d3];
+    S.fillStyle="#0f131a";S.fillRect(x+7,ry2,w-14,12);
+    S.fillStyle="rgba(198,212,232,0.20)";S.fillRect(x+11,ry2+3,44+((d3*13)%22),3);   // the name
+    S.fillStyle="rgba(150,170,196,0.12)";S.fillRect(x+11,ry2+8,26,1.4);
+    var col2=on4===1?"79,208,122":on4===2?"247,189,78":"70,80,96";
+    emit(function(c){c.fillStyle="rgba("+col2+","+(on4?0.75:0.3)+")";
+      c.fillRect(x+w-18,ry2+4,6,5);});}
+  S.fillStyle="rgba(186,150,255,"+(off?0.06:0.16)+")";S.fillRect(x+7,y+h-8,w-14,2.4);
+}
 function radar(t,st){
   var cx2=706,cy2=478,r=34,off=st==="offline";
   wallShadow(cx2-r*0.82,cy2-r*0.82,r*1.64,r*1.64);
@@ -1507,6 +1732,15 @@ function buildClaude(t,st){
   /* What the chest is standing in front of. The chest plate overhangs the
      abdomen, the pelvis overhangs the thighs and the collar overhangs the
      sternum housing loop 11 added — three joins that were open seams. */
+  /* Soot. Both stacks have been venting since loop 3 and the plate around
+     them was factory-clean — the one place on this unit where you can see what
+     it has been doing, and it looked unused. Heaviest at the lip, fading up
+     the stack the way a deposit actually builds. */
+  [[-52],[52]].forEach(function(k){var bx3=cx+k[0];
+    var so=g.createRadialGradient(bx3,200+breath,2,bx3,200+breath,26);
+    so.addColorStop(0,"rgba(10,8,7,0.42)");so.addColorStop(0.55,"rgba(14,11,9,0.18)");
+    so.addColorStop(1,"rgba(14,11,9,0)");
+    g.fillStyle=so;g.fillRect(bx3-26,178+breath,52,52);});
   cavity(g,cx-31,297+breath,62,34,0.44);
   cavity(g,cx-40,375+breath*0.8,80,28,0.34);
   cavity(g,cx-25,225+breath,50,17,0.30);
@@ -1672,6 +1906,16 @@ function buildCodex(t,st){
   /* The dome hangs over the head plate. It is the deepest overhang on any of
      the four — the whole abdomen is in front of and above the cephalothorax —
      and the two were meeting at a clean line. */
+  /* A hazard stripe on the leading tergite, and worn tips.
+     codex carries a heavy shell over six legs through a workshop, and nothing
+     on it said "this edge is at head height" — a marking the OTHER units would
+     need. The tarsus tips take the wear, because they are what touches the
+     deck: bare metal through the coating, and only at the very ends. */
+  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  g.globalAlpha=offl?0.16:0.36;
+  for(var hz=-3;hz<=3;hz++){g.fillStyle=hz%2?"#c9a227":"#141a12";
+    g.save();g.translate(ax+hz*15,ay-ah*0.34);g.rotate(0.5);g.fillRect(-5,-8,10,16);g.restore();}
+  g.restore();
   cavity(g,hxx-43,hy2-25,86,26,0.5);
   buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
   /* Six tarsus tips, not one blob under the body: the whole point of the
@@ -1847,6 +2091,19 @@ function buildGrok(t,st){
      grok's threw nothing onto them. The shadow also lands across the top of
      the chest quilting, which is what tells you the suit is cloth under a
      hard part rather than painted to look like it. */
+  /* Knee scuffs, and dirt up the lower legs.
+     A suit is fabric, and the two places fabric goes first are the knees and
+     everything below them. grok was the only unit whose whole surface was one
+     age — and the one whose surface is soft, so it should be showing more wear
+     than the armoured units, not less. */
+  g.save();g.globalAlpha=offl?0.4:0.85;
+  [-1,1].forEach(function(sg4){var kx2=cx+sg4*15;
+    var dg4=g.createLinearGradient(0,BY+64,0,BY+128);
+    dg4.addColorStop(0,"rgba(38,32,44,0)");dg4.addColorStop(1,"rgba(34,28,38,0.34)");
+    g.fillStyle=dg4;g.fillRect(kx2-13,BY+64,26,64);
+    g.fillStyle="rgba(196,206,226,0.13)";
+    g.fillRect(kx2-8,BY+70,15,2.4);g.fillRect(kx2-6,BY+75,10,1.6);});
+  g.restore();
   cavity(g,cx-36,BY-31,72,22,0.42);
   buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet
   var hh=handR||{x:cx+30,y:BY+26};
@@ -1932,6 +2189,25 @@ function buildKimi(t,st){
       "#3b4356","#1b2130",ed);
     g.fillStyle="rgba(198,216,246,"+(offl?0.07:0.17)+")";
     g.fillRect(kx+sxk*(syk>0?11:11)-(sxk<0?5:0),ky+syk*2-(syk<0?1.4:0),5,1.4);});
+  /* Scuffed bumpers and an asset tag with a corner lifting.
+     Loop 11 put corner guards on this unit on the argument that a machine
+     which floats face-first through a workshop protects its corners. If that
+     argument is right then the guards are the part with paint missing, and
+     leaving them pristine quietly contradicts the reason they exist. The tag
+     is kimi's marking — the other three carry stencils, and a screen-faced
+     service unit would carry a printed label instead, with the bottom corner
+     already peeling off. */
+  g.save();g.globalAlpha=offl?0.35:0.8;
+  [[bx+9,by0+3],[bx+bw-14,by0+3],[bx+8,by0+bh-5],[bx+bw-13,by0+bh-5]].forEach(function(sc4,si4){
+    g.fillStyle="rgba(206,220,242,"+(0.14+0.05*(si4%2))+")";
+    g.fillRect(sc4[0],sc4[1],5+((si4*3)%4),1.6);});
+  g.restore();
+  g.fillStyle="rgba(196,206,222,"+(offl?0.14:0.30)+")";
+  g.fillRect(bx+bw-27,by0+bh-19,20,11);
+  g.fillStyle="rgba(20,26,36,0.55)";
+  g.fillRect(bx+bw-25,by0+bh-17,16,2);g.fillRect(bx+bw-25,by0+bh-13,11,1.6);
+  g.fillStyle="rgba(168,180,198,"+(offl?0.10:0.22)+")";      // the lifted corner
+  poly(g,[[bx+bw-13,by0+bh-11],[bx+bw-7,by0+bh-8],[bx+bw-13,by0+bh-8]]);g.fill();
   g.strokeStyle="rgba(3,7,13,0.5)";g.lineWidth=1.6;
   g.beginPath();g.moveTo(bx+1,by0+bh*0.54);g.lineTo(bx+bw-1,by0+bh*0.54);g.stroke();
   g.strokeStyle="rgba(186,208,242,"+(offl?0.05:0.13)+")";g.lineWidth=1;
@@ -2174,9 +2450,16 @@ function drawTarget(t,dt){
   rightTower(t);
   drawRedBeacon(t,offl?1:0.14);
   // wall attachments FIRST, so the volumetric light reads in front of them
-  if(ROOM==="builder"){ floorHazard(); crane(t); fabBay(t,lit,STATE); pegboard(t,lit); }
-  else if(ROOM==="reviewer"){ diffWall(t,STATE); checklistBoard(); }
-  else { kanban(t,STATE); radar(t,STATE); switchboard(t,STATE); }
+  /* Wall attachments, each one filling a bay named in BAYS. The six added in
+     loop 13 are listed second in each room so the older props keep their
+     stacking order — none of the new ones overlaps anything, so the order is
+     bookkeeping rather than occlusion. */
+  if(ROOM==="builder"){ floorHazard(); crane(t); fabBay(t,lit,STATE); pegboard(t,lit);
+    gasRack(t,lit,STATE); firePoint(t,lit,STATE); }
+  else if(ROOM==="reviewer"){ diffWall(t,STATE); checklistBoard();
+    calChart(t,lit,STATE); sampleArchive(t,lit,STATE); }
+  else { kanban(t,STATE); radar(t,STATE); switchboard(t,STATE);
+    tubeStation(t,lit,STATE); dutyBoard(t,lit,STATE); }
   wallKey(lit,ROOM);                // the lamp reaching the wall AND what is bolted to it
   drawLampCone(t,lit,!offl,ROOM);   // light between wall attachments and robot
   stepSparks(dt);
