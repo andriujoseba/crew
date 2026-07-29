@@ -3,8 +3,9 @@
 # rebase, plus worktree hygiene. ci-red precedes build because your own red
 # head outranks a new claim (ceremony BUILDER.md); the block order in this
 # file IS the tick order, and this header is what FLEET.md is reconciled
-# against. All predicates are computed from latestReviews /
-# latestOpinionatedReviews, NEVER reviewDecision: reviewDecision exists only
+# against. All review predicates use latestOpinionatedReviews, NEVER
+# latestReviews or reviewDecision: COMMENTED can mask a standing opinion in
+# latestReviews, while reviewDecision exists only
 # under branch protection and stays "" here — keying on it silently stalled
 # rounds for a day (ceremony#26, #39).
 #
@@ -293,13 +294,34 @@ _builder_repo() {
   # approved, mergeable PR stranded on a transient CI failure). One datum, two
   # bugs — and the round-owed signal was already fetching this exact listing, so
   # headRefOid and statusCheckRollup ride along for no additional call.
-  local mine_json mine_rows
+  local mine_json mine_rows pr_payload N
   mine_json="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft,latestReviews,reviewRequests,updatedAt,headRefOid,statusCheckRollup \
+    --json number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup \
     2>/dev/null || echo err)"
   if [ "$mine_json" = "err" ]; then
     mine_rows=err
   else
+    # Fetch the head-carrying opinionated verdicts before any session so they
+    # can drive round_owed. The gh-pr-list latestReviews field cannot
+    # substitute: COMMENTED masks a standing blocker there, and its commit.oid
+    # is empty (#147). Handoff deliberately fetches again after the sessions:
+    # this early snapshot can be an hour old by then.
+    for N in $(printf '%s' "$mine_json" \
+      | jq -r '.[] | select(.isDraft | not) | .number'); do
+      pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+        repository(owner:$owner,name:$name){ pullRequest(number:$num){
+          latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+        } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
+      if [ -z "$pr_payload" ]; then
+        warn "$R#$N: review fetch failed; round reads not-owed this tick (request and handoff fetch later)"
+        continue
+      fi
+      mine_json="$(printf '%s' "$mine_json" | jq -c \
+        --argjson num "$N" \
+        --argjson reviews "$(printf '%s' "$pr_payload" \
+          | jq -c '.data.repository.pullRequest.latestOpinionatedReviews.nodes')" \
+        'map(if .number == $num then . + {latestOpinionatedReviews:$reviews} else . end)')"
+    done
     mine_rows="$(printf '%s' "$mine_json" \
       | jq -r --argjson panel "$panel_json" --arg repo "$R" \
         -f "$DUTY_DIR/lib/jq/head-checks.jq" 2>/dev/null || echo err)"
@@ -525,12 +547,15 @@ _builder_repo() {
   # is the incident #17 was filed from. A converged PR reaching the human with
   # a red check is a human's call to make; a converged PR reaching nobody is
   # the failure this module exists to end. ---
-  local my_open converged handoff_prs="" pr_payload
-  my_open="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"
-  if [ "$my_open" = "err" ]; then
+  local my_open converged handoff_prs=""
+  if [ "$mine_json" = "err" ]; then
     warn "$R: handoff detection failed; skipping"
   else
+    # Stay on the same authored-PR snapshot used above. A second listing could
+    # add a PR for which this tick has no cached review payload, or drop one
+    # whose round was just evaluated.
+    my_open="$(printf '%s' "$mine_json" \
+      | jq -r '.[] | select(.isDraft | not) | .number')"
     for N in $my_open; do
       # Round-log mirroring runs EVERY tick over my open PRs — not only at
       # handoff — so the body's Round log tracks each round as it is answered
@@ -543,15 +568,14 @@ _builder_repo() {
       # defers the live one, so a round mid-flight is never stamped as answered
       # before its whole-round reply lands (round-log.jq live-round note).
       _mirror_rounds "$R" "$N" false
-      # One GraphQL read of the PR's review state drives the panel request (#133)
-      # AND the convergence check below — request-panel and converged share this
-      # payload, so folding the request here costs no extra call. comments carry
-      # the round-answered signal (#133); a fetch failure skips both this tick.
+      # Sessions above can run for up to an hour and can push a new head while
+      # reviewers also act. Fetch again here so request-panel and convergence
+      # never act on the early round-detection snapshot (#147).
       pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable
           labels(first:50){nodes{name}}
-          comments(last:200){nodes{author{login} body}}
+          comments(last:100){nodes{author{login} body}}
           reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
           latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
         } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
