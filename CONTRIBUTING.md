@@ -24,7 +24,10 @@ genuinely crew's.
    - `shared-ci.yml` — crew's engine suite (`shellcheck`, `shared/test/run.sh`,
      the fleet-floor collector + page tests, the built-page freshness check).
      It carries a paths filter, so a PR touching only release furniture skips
-     it.
+     it, and it **does not run while the PR is a draft** — your WIP saves are
+     free. Marking the PR ready for review runs it at that head, with no
+     further push needed, so the round's green-check precondition is met by the
+     act of marking ready (#136).
    - `release-guards.yml` — the ceremony guards (`changelog-armed`,
      `changelog-monotonic`, `changelog-assembled`, `drill-recorded`,
      `runner-isolated`, `docs-sync`), run as ceremony's pinned actions on
