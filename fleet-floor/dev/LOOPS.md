@@ -321,3 +321,66 @@ board's colours are its *data*, and tinting the room with them would make the
 wall look like it meant something.
 
 ![triage](shots/loop-05/room-triage.webp)
+
+---
+
+## Loop 6 — materials, and a marking on every unit
+
+Every plate in the fleet was a two-stop vertical gradient meeting its neighbour
+at a perfectly clean line. Four units built from four different materials —
+armour, machined shell, pressure fabric, moulded plastic — all rendering with
+identical bevels, and none of them carrying so much as a serial.
+
+**Markings are geometric, not text.** At grid-cell size claude's chest is about
+12px across; a glyph is mush, but a stencil *block* still reads as a marking.
+
+### claude — stencil and worn edges
+A fleet vehicle carries its designation. The paint also goes first along the
+top lip of each big plate, which is what stops a heavy mech reading as a
+rendered solid rather than something assembled out of parts that get knocked
+about.
+
+![claude](shots/loop-06/robot-claude.webp)
+
+### codex — brushed metal
+The carapace is the largest single shape codex has and it was perfectly smooth,
+which is the one surface quality a machined shell never has. Anisotropic
+streaks following the curve give it a grain, and the grain is what says *metal*
+rather than plastic or paint.
+
+![codex](shots/loop-06/robot-codex.webp)
+
+### grok — fabric, and a mission patch
+A pressure suit should be the one soft-looking unit in the fleet and it was
+rendering with the mech's hard bevels. Quilted seams give the torso cloth's
+structure; the shoulder patch is grok's marking, and the only round shape on a
+body otherwise made of boxes.
+
+![grok](shots/loop-06/robot-grok.webp)
+
+### kimi — moulded plastic
+A broad soft specular across the top of the casing — what plastic does and
+brushed steel does not — plus a decal band on the skirt, the counterpart to
+claude's stencil and grok's patch.
+
+![kimi](shots/loop-06/robot-kimi.webp)
+
+### builder — grime under every fixture
+A workshop wall stains beneath whatever is bolted to it. A perfectly clean one
+is the giveaway that this is geometry rather than a place where work happens.
+
+![builder](shots/loop-06/room-builder.webp)
+
+### reviewer — coved skirting and a cable tray
+The room whose surfaces have to read as *finished*. A curved wall-to-floor cove
+— no corner to trap contamination — and a high-level tray carrying the monitor
+runs, rather than four screens fed by nothing.
+
+![reviewer](shots/loop-06/room-reviewer.webp)
+
+### triage — chipped frame
+The one object in the fleet touched by hand all day: cards pinned, moved,
+pulled. It was rendering as factory-fresh extruded aluminium. The paint goes at
+the corners and along the bottom rail where hands rest.
+
+![triage](shots/loop-06/room-triage.webp)

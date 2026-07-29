@@ -425,6 +425,15 @@ function kanban(t,st){
   var x=268,y=178,w=344,h=128,off=st==="offline",colw=(w-24)/4;
   plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#20262e","#0e1216","#3a4048");
   S.fillStyle="#2f353c";S.fillRect(x+6,y+6,w-12,h-12);S.fillStyle="#3a4149";S.fillRect(x+6,y+6,w-12,1);
+  /* Chipped frame. This board is the one object in the fleet that gets touched
+     by hand all day — cards pinned, moved, pulled — and it was rendering as
+     factory-fresh extruded aluminium. The paint goes first at the corners and
+     along the bottom rail where hands rest. */
+  S.save();S.globalAlpha=off?0.3:0.75;
+  [[x+3,y+3,9,3],[x+w-13,y+3,10,3],[x+3,y+h-6,7,3],[x+w-11,y+h-6,8,3],
+   [x+w*0.34,y+h-5,22,2],[x+w*0.58,y+h-5,15,2],[x+2,y+h*0.4,3,14]].forEach(function(ch){
+    S.fillStyle="rgba(126,136,148,0.5)";S.fillRect(ch[0],ch[1],ch[2],ch[3]);});
+  S.restore();
   var cols=["247,189,78","92,180,255","201,139,255","95,206,155"];
   for(var c=0;c<4;c++){var cx2=x+12+c*colw;S.fillStyle="#242a30";S.fillRect(cx2,y+10,1,h-20);
     S.fillStyle="rgba("+cols[c]+","+(off?0.3:0.6)+")";S.fillRect(cx2+6,y+13,colw-14,3);
@@ -1128,6 +1137,22 @@ function buildClaude(t,st){
   rivet(g,cx-52,246+breath,eH);rivet(g,cx+52,246+breath,eH);rivet(g,cx-48,292+breath,eH);rivet(g,cx+48,292+breath,eH);
   // scratches (battle wear)
   if(!offl){g.strokeStyle="rgba(120,140,170,0.25)";g.lineWidth=1;g.beginPath();g.moveTo(cx+14,244+breath);g.lineTo(cx+30,258+breath);g.moveTo(cx-24,270+breath);g.lineTo(cx-12,282+breath);g.stroke();}
+  /* Stencilled unit marking, and paint worn off the plate edges.
+     A fleet vehicle carries its designation, and every plate on this model met
+     its neighbour at a perfectly clean line — which is what made a heavy mech
+     read as a rendered solid rather than as something assembled out of parts
+     that have been knocked about. Geometric, not text: at grid-cell size the
+     chest is 12px across, so a glyph would be mush, but a stencil BLOCK still
+     reads as a marking. */
+  g.save();g.globalAlpha=offl?0.25:0.5;
+  g.fillStyle="#c9a227";g.fillRect(cx-46,272+breath,3,12);g.fillRect(cx-40,272+breath,3,12);
+  g.fillStyle="rgba(201,162,39,0.6)";g.fillRect(cx-46,286+breath,9,2);
+  g.restore();
+  // worn edges: a bright hairline along the top lip of each big plate
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.22)+")";g.lineWidth=1;
+  g.beginPath();g.moveTo(cx-32,220+breath);g.lineTo(cx+32,220+breath);
+  g.moveTo(cx-28,306+breath);g.lineTo(cx+28,306+breath);
+  g.moveTo(cx-30,344+breath);g.lineTo(cx+30,344+breath);g.stroke();
   // ---- REACTOR CORE (recessed, glowing) ----
   var coreY=262+breath;
   RB.fillStyle="#03060c";RB.beginPath();RB.arc(cx,coreY,22,0,7);RB.fill();
@@ -1314,6 +1339,16 @@ function buildCodex(t,st){
   g.strokeStyle="#2c3849";g.lineWidth=1.4;for(var cvr=0;cvr<3;cvr++){var rr2=0.5+cvr*0.17;g.beginPath();g.moveTo(ax-aw*rr2,ay-ah*0.12);g.quadraticCurveTo(ax,ay-ah*(0.66+cvr*0.09),ax+aw*rr2,ay-ah*0.12);g.stroke();}
   g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.ellipse(ax-6,ay-8,aw-16,ah-16,0,Math.PI*1.02,Math.PI*1.62);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(ax-aw+10,ay+2);g.lineTo(ax+aw-10,ay+2);g.stroke();
+  /* Brushed metal. The carapace is the single largest shape codex has and it
+     was a vertical two-stop gradient — perfectly smooth, which is the one
+     surface quality a machined shell does not have. Anisotropic streaks
+     following the curve give it a grain, and the grain is what tells you the
+     dome is metal rather than plastic or paint. */
+  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  for(var br=0;br<26;br++){var byv=ay-ah+br*(ah*2/26);
+    g.strokeStyle="rgba(150,175,205,"+(0.014+0.02*Math.abs(Math.sin(br*2.7)))+")";
+    g.lineWidth=1;g.beginPath();g.moveTo(ax-aw,byv);g.bezierCurveTo(ax-aw*0.3,byv-3,ax+aw*0.3,byv+3,ax+aw,byv);g.stroke();}
+  g.restore();
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
   // spinneret nozzles (rear-top)
   for(var n=-1;n<=1;n++){var nx2=ax+n*12;plate(g,[[nx2-4,ay-ah+2],[nx2+4,ay-ah+2],[nx2+3,ay-ah-12],[nx2-3,ay-ah-12]],sM,sB,ed);if(!offl){RB.fillStyle=te(0.55);RB.fillRect(nx2-2,ay-ah-12,4,3);RE.fillStyle=te(0.6);RE.fillRect(nx2-2,ay-ah-12,4,3);}}
@@ -1453,6 +1488,18 @@ function buildGrok(t,st){
   g.strokeStyle="#0d1219";g.lineWidth=4;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(hoseCx,hoseCy,cx-11,BY-3);g.stroke();
   g.strokeStyle="rgba(84,96,116,0.5)";g.lineWidth=1;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(hoseCx,hoseCy,cx-11,BY-3);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(cx-22,BY+2);g.lineTo(cx+22,BY+2);g.moveTo(cx-20,BY+14);g.lineTo(cx+20,BY+14);g.stroke();
+  /* A pressure suit is fabric, not plate — it should be the one soft-looking
+     unit in the fleet, and it was rendering with the same hard bevels as the
+     mech. Quilted seams give the torso cloth's structure, and the shoulder
+     patch is grok's marking: a mission crew wears one, and it is the only
+     round shape on a body otherwise made of boxes. */
+  g.strokeStyle="rgba(84,96,116,0.28)";g.lineWidth=0.8;
+  for(var qs=-2;qs<=2;qs++){g.beginPath();g.moveTo(cx+qs*10,BY-14);g.lineTo(cx+qs*10,BY+22);g.stroke();}
+  for(var qh=-1;qh<=2;qh++){g.beginPath();g.moveTo(cx-22,BY-8+qh*10);g.lineTo(cx+22,BY-8+qh*10);g.stroke();}
+  var pxq=cx-26,pyq=BY-21;
+  g.fillStyle="#1d2536";g.beginPath();g.arc(pxq,pyq,7,0,7);g.fill();
+  g.strokeStyle=puh(offl?0.16:0.5);g.lineWidth=1.2;g.beginPath();g.arc(pxq,pyq,7,0,7);g.stroke();
+  g.fillStyle=pu(offl?0.2:0.6);g.beginPath();g.moveTo(pxq,pyq-4);g.lineTo(pxq+4,pyq+3);g.lineTo(pxq-4,pyq+3);g.closePath();g.fill();
 
   // ---- arms ----
   var handR;
@@ -1561,6 +1608,16 @@ function buildKimi(t,st){
 
   // ---- hover skirt casing ----
   plate(g,[[cx-34,BY+20],[cx+34,BY+20],[cx+28,BY+34],[cx-28,BY+34]],sM,sB,ed);
+  /* Kimi is moulded plastic where the others are metal, and nothing said so —
+     same bevels, same edge treatment. A broad soft specular across the top of
+     the casing is what plastic does and brushed steel does not, and the decal
+     band on the skirt is kimi's marking, the counterpart to claude's stencil
+     and grok's patch. */
+  var kspec=g.createLinearGradient(0,BY+20,0,BY+27);
+  kspec.addColorStop(0,"rgba(214,228,250,"+(offl?0.05:0.13)+")");kspec.addColorStop(1,"rgba(214,228,250,0)");
+  g.fillStyle=kspec;g.fillRect(cx-32,BY+20,64,7);
+  g.fillStyle=pk(offl?0.16:0.42);g.fillRect(cx-18,BY+24,36,2);
+  g.fillStyle=pk(offl?0.10:0.28);g.fillRect(cx-12,BY+28,10,2);g.fillStyle=pk(offl?0.10:0.28);g.fillRect(cx+4,BY+28,8,2);
   if(!offl){RB.fillStyle=pk(0.5*hov);RB.fillRect(cx-26,BY+31,52,2);RE.fillStyle=pk(0.5*hov);RE.fillRect(cx-26,BY+31,52,2);}
 
   // ---- body (rounded screen-face casing) ----
@@ -1816,6 +1873,16 @@ function drawBackWall(t,lit){
     plate(S,[[bpx,bpy],[bpx+96,bpy],[bpx+96,bpy+64],[bpx,bpy+64]],"#2b2411","#12100a","#4a3f1c");
     S.save();S.globalAlpha=0.5;for(var hs=0;hs<96;hs+=16){S.fillStyle=hs%32<16?"#c9a227":"#12100a";S.beginPath();S.moveTo(bpx+hs,bpy+4);S.lineTo(bpx+hs+8,bpy+4);S.lineTo(bpx+hs+16,bpy+16);S.lineTo(bpx+hs+8,bpy+16);S.closePath();S.fill();}S.restore();
     S.fillStyle="rgba(201,162,39,0.30)";S.fillRect(bpx+12,bpy+28,72,4);S.fillRect(bpx+12,bpy+38,54,4);S.fillRect(bpx+12,bpy+48,64,4);
+    /* Grime, running down from every fixture. A workshop wall stains under
+        whatever is bolted to it — the plate seams, the placard, the conduit
+        brackets — and a perfectly clean one is the giveaway that this is
+        geometry rather than a place where work happens. */
+    S.save();
+    [[818,382,54,120],[706,208,16,300],[560,254,40,70],[318,220,30,180]].forEach(function(st2){
+      var sg3=S.createLinearGradient(0,st2[1],0,st2[1]+st2[3]);
+      sg3.addColorStop(0,"rgba(24,18,10,0.34)");sg3.addColorStop(1,"rgba(24,18,10,0)");
+      S.fillStyle=sg3;S.fillRect(st2[0],st2[1],st2[2],st2[3]);});
+    S.restore();
     // conduit run dropping to the bay
     S.strokeStyle="rgba(30,42,58,0.75)";S.lineWidth=6;S.beginPath();S.moveTo(700,wy+30);S.lineTo(700,FLOORY-40);S.stroke();
     S.strokeStyle="rgba(74,92,120,0.22)";S.lineWidth=1.5;S.beginPath();S.moveTo(698,wy+30);S.lineTo(698,FLOORY-40);S.stroke();
@@ -1826,6 +1893,18 @@ function drawBackWall(t,lit){
     for(var gy2=wy+46;gy2<FLOORY-16;gy2+=58){S.beginPath();S.moveTo(wx,gy2);S.lineTo(wx+ww,gy2);S.stroke();}
     for(var gx3=wx+60;gx3<wx+ww;gx3+=60){S.beginPath();S.moveTo(gx3,wy);S.lineTo(gx3,FLOORY);S.stroke();}
     S.fillStyle="rgba(120,170,220,0.05)";S.fillRect(wx,wy,ww,FLOORY-wy);
+    /* Coved skirting and a cable tray. This is the room whose surfaces have to
+       read as *finished* — the bay gets grime, the lab gets the detailing that
+       says someone specified it: a curved wall-to-floor cove (so there is no
+       corner to trap contamination) and a tray carrying the monitor runs at
+       high level, rather than four screens fed by nothing. */
+    var cov=S.createLinearGradient(0,FLOORY-14,0,FLOORY);
+    cov.addColorStop(0,"rgba(150,185,225,0.03)");cov.addColorStop(1,"rgba(150,185,225,0.11)");
+    S.fillStyle=cov;S.fillRect(wx,FLOORY-14,ww,14);
+    S.fillStyle="rgba(150,185,225,0.10)";S.fillRect(wx,FLOORY-15,ww,1);
+    S.fillStyle="rgba(22,32,46,0.9)";S.fillRect(wx,wy+22,ww,9);
+    S.fillStyle="rgba(120,160,205,0.10)";S.fillRect(wx,wy+22,ww,1.5);
+    for(var tb2=wx+30;tb2<wx+ww;tb2+=76){S.fillStyle="rgba(16,24,34,0.9)";S.fillRect(tb2,wy+31,5,12);}
     // certification plates — this lab signs what leaves it
     for(var cp=0;cp<3;cp++){var cxp2=792+cp*66,cyp2=336;
       plate(S,[[cxp2,cyp2],[cxp2+52,cyp2],[cxp2+52,cyp2+70],[cxp2,cyp2+70]],"#101a26","#0a1018","#22364e");
