@@ -1,4 +1,4 @@
-<!-- Copied from heavy-duty/ceremony@0.3.0 .github/pull_request_template.md (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
+<!-- Copied from heavy-duty/ceremony@0.4.0 .github/pull_request_template.md (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
 Short on purpose: a template longer than a small PR gets deleted by
 reflex, not read (heavy-duty/ceremony#24). One issue, one PR — draft while building. -->
 
@@ -12,10 +12,10 @@ to the issue for triage to amend, not silently unshipped. -->
 
 ## Changelog
 
-- [ ] One `changelog.d/<issue>.md` fragment containing the exact publishable
-      prose — or no behavior change, stated here.
+- [ ] One fragment, `changelog.d/<issue>.md` — the exact prose to publish,
+      never an edit to `CHANGELOG.md` — or no behavior change, stated here.
 
 ## Round log
 
-<!-- Append each round's summary here: what changed, what was verified.
-Rounds are answered whole — one reply covering every point. -->
+<!-- The engine appends each whole-round reply here, newest last: what
+changed and what was verified. Builders write the reply, not this section. -->

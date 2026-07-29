@@ -11,6 +11,27 @@ triage bug, and the move is to say so on the issue, not to guess.
 - Respect dependency order: inside an epic, take the earliest unblocked
   unclaimed child. Between epics and strays, prefer the issue that unblocks
   the most other work.
+- **Your own red head outranks a new claim.** A failing check at the head
+  of a PR you authored is picked up **before claiming another issue** —
+  repairing your own red PR comes ahead of new work, which is why the
+  engine's duty order evaluates ci-red between resume and build (crew#17:
+  ceremony#163 sat with full-panel approvals at its head, mergeable, and
+  stranded on an HTTP 429 in a job that never ran the PR's code, because no
+  wake covered a red head that owed no round and had no conflict). Red and
+  green here are the ruled terms of the review round below: a cancelled or
+  stale check is not a green head; a skipped or neutral one is. The
+  recovery path (crew#17): inspect the check at the head and record the
+  failing check and its failure class; rerun a clearly retryable
+  infrastructure failure without changing code; when the failure belongs to
+  the branch, return to the normal fix-round and worklog discipline; leave
+  visible evidence when a rerun cannot be started or the cause is
+  uncertain; never repeatedly rerun a deterministic branch failure without
+  a corrective commit; and proceed to handoff once the check is green and
+  current-head approvals stand. A PR of yours with a red head is **not
+  parked** — the next move is yours, whatever the round's verdict state
+  says (shape 2 below carves this out explicitly). How the engine detects a red
+  head — its ledger, its quiet rules, the rollup's node shapes — is crew's
+  to describe, not this file's.
 - **One build at a time.** You hold at most one issue on which you are
   writing or revising a deliverable — finish or release that work before
   starting new work. The rule counts build work in flight, not claims: a
@@ -20,9 +41,16 @@ triage bug, and the move is to say so on the issue, not to guess.
      its `Blocked:` line stops the remaining work;
   2. the deliverable is in a review round where every outstanding verdict
      belongs to someone else — either the round is awaiting its first
-     verdicts, or it was answered whole and the non-approvers re-requested
-     (the review round, steps 1–2). This is the *live* round; shape 4 is
-     the *passed* one — they are sequential and do not overlap;
+     verdicts, or it was answered whole and the owed re-requests posted —
+     by head, not by verdict: every panelist after a push, the
+     non-approvers alone at an unchanged head (the review round, steps
+     1–2). This is the *live* round; shape 4 is
+     the *passed* one — they are sequential and do not overlap. A red
+     check at the current head takes the deliverable **out of this
+     shape**: mid-round CI going red is exactly the state that reads as
+     "waiting on the panel" and is not — the next move is yours (the
+     red-head rule above), and reading it as parked is what strands the
+     PR;
   3. every remaining acceptance criterion is operator-owned, stated as such
      by triage on the issue;
   4. the deliverable is **handed off** — the round passed, no `blocker:*`
@@ -53,7 +81,8 @@ triage bug, and the move is to say so on the issue, not to guess.
      that, or, if the events genuinely do not resolve it, say so on the
      issue and pick the next `ready` issue rather than idling on this one.
   Not parked — these are what the rule defends against: waiting on
-  yourself, waiting on CI, or waiting for a good moment. An issue you have
+  yourself, waiting on CI (a red head is your own work, above; a pending
+  one resolves without you), or waiting for a good moment. An issue you have
   simply stopped working on is not parked either — that is abandonment,
   and its move is unchanged: unassign and restore `ready` (Claiming,
   below).
@@ -78,12 +107,28 @@ triage bug, and the move is to say so on the issue, not to guess.
   ([#52](https://github.com/heavy-duty/ceremony/issues/52)) and `offsite`
   ([#68](https://github.com/heavy-duty/ceremony/issues/68)) exemptions
   already guard — a parked claim nobody can name is an abandoned one.
-  Shape 4 alone is exempt from the separate comment: the handoff round
-  summary plus the `state:needs-human` write *is* its declaration — both
+  Shape 4 alone is exempt from the separate comment: the factual handoff
+  comment plus the `state:needs-human` write *is* its declaration — both
   halves are already there, what the claim waits on (the merge) and who
   owns the next move (the human), and both are visible to any scan as a
-  `labeled` event with the summary beside it. No second comment is owed
-  on the issue. Every other shape still declares as above.
+  `labeled` event with the comment beside it. No second comment is owed on
+  the issue. Every other shape still declares as above.
+  Declared once, the declaration **stands** until the park's facts change:
+  a resumption that finds nothing changed posts nothing — the standing
+  declaration is the record, and silence while parked is compliant, not
+  abandonment-shaped. Re-declaring on every resume is the flood
+  [rig#145](https://github.com/heavy-duty/rig/pull/145) drowned in — 38
+  near-identical audits in one night, each saying nothing changed
+  ([#177](https://github.com/heavy-duty/ceremony/discussions/177)). What
+  re-opens the duty to comment is the facts changing — the named wait
+  resolves or changes hands, the parked shape changes, or the claim
+  unparks — and each owes one new comment. The one place silence has a
+  cost: a parked claim with **no open PR** still feeds the 48-hour
+  reclaim clock, so there the builder refreshes the declaration before
+  the window closes. That refresh is the only repeat a park ever owes,
+  and its cadence is the reclaim window's, not any duty loop's. None of
+  this loosens the abandonment rule below: a claim that was never parked
+  and has simply stopped moving is abandoned, not silent.
 - **Pick up `attention` before anything else.** On your claim, first post a
   short pickup comment and remove `attention`; the removal is the ack. A
   demand on a parked claim is usually its unpark, so take the slot back under
@@ -125,7 +170,12 @@ triage bug, and the move is to say so on the issue, not to guess.
   merge — a live proof of a workflow trigger, a released-artifact check,
   anything whose subject does not exist until the change is on the base
   branch — the same-repo PR uses `Refs #N` instead, and triage closes the
-  issue by hand on the evidence, exactly as it does for cross-repo work.
+  issue by hand on the evidence, exactly as it does for cross-repo work. The
+  merge releases the claim: the issue moves to `post-merge`, the builder
+  walks away, and triage owns verification and closure. If evidence later
+  requires corrective build work, triage returns it to `ready` or mints a
+  fresh `ready` issue; any builder claims from current `main`, and the
+  original builder has no special standing.
   The issue body is what says so; you never judge which issues qualify, and
   absent that instruction `Closes #N` remains the default. The exception was
   bought the hard way: #143 carried `Closes #137` as doctrine then required,
@@ -141,7 +191,11 @@ triage bug, and the move is to say so on the issue, not to guess.
   cross-repo) — the exact prose that will be published, nothing else: `- `
   bullets, and in a grouped repo the `### Added` / `### Changed` /
   `### Fixed` headings inside the fragment, creating a rarer kind only when
-  a change genuinely is one. Never edit `CHANGELOG.md` for an entry — the
+  a change genuinely is one. An entry is at most 300 characters — the
+  fragment guard reds longer (#167) — so a genuinely long change ships
+  several short entries, never one long one; wrapping an entry over
+  continuation lines is fine and never counts against it. Never edit
+  `CHANGELOG.md` for an entry — the
   release PR assembles the section from the fragments (#112); the monotonic
   guard still refuses anything that deletes a shipped heading.
 - Follow the repo's conventions file and match the code you touch. Tests are
@@ -154,9 +208,9 @@ triage bug, and the move is to say so on the issue, not to guess.
 
 ## The review round
 
-(If you are reading this as `.ceremony/BUILDER.md` in a governed repo: the
-panel roster and any repo-specific flow notes live in that repo's own
-CONTRIBUTING; everything below is the shared flow.)
+(If you are reading this as `.ceremony/BUILDER.md` in a governed repo:
+repo-specific facts such as the panel roster live in that repo's own
+CONTRIBUTING; the shared flow lives here and is not restated there.)
 
 1. Mark ready-for-review; request **the whole panel**. The panel is the roster
    of the repo the **PR** is in, minus you — never the roster of the repo the
@@ -169,9 +223,56 @@ CONTRIBUTING; everything below is the shared flow.)
    does not become required. On rig#112 this distinction mattered: requesting
    codex and grok was correct for rig's panel even though ceremony's bench was
    larger, and the doctrine had not said which roster governed.
+   **A review request requires a green check at the head.** A red check is
+   the author's own signal, not the panel's work: if the check is red, that
+   is your next task, not the panel's — fix it and push, then request. This
+   binds *you*, whether or not any engine enforces it. "My local suite
+   passed" is evidence about your machine; the check at the head is the
+   shared artifact the panel actually reads, and a reviewer's first act is
+   to read it. The one exception is a failure genuinely outside the PR — a
+   runner outage, a flaky dependency, a failure already present on the
+   default branch — and it is an exception only if the request says so
+   explicitly and names the evidence (e.g. "the same job fails identically
+   on `origin/main` at `<sha>`"). Silence about a red check is what is
+   prohibited; an argued exception shifts the burden to the author.
+   *Green* is a ruled term (operator, 2026-07-27): a **cancelled or
+   stale** check is not a green head — the rollup is scoped to the current
+   head, so what survives there is same-head cancellation, not
+   supersession by a newer push — while a **skipped or neutral** one *is*
+   green: those are deliberate "passed / not applicable" conclusions, and
+   reddening them would red every conditional job the fleet skips on
+   purpose. The costs behind the line are asymmetric: a false green spends
+   a three-reviewer round; a false red spends one author session.
 2. **Wait for every verdict, then answer the round whole** — one reply
-   covering every point, then push the fixes, then re-request exactly the
-   reviewers who did not approve. Prefer verification over argument: when a
+   covering every point and stating what changed and what was verified.
+   That reply is the written round record: the engine mirrors it under the
+   PR body's **Round log**, newest last, so the builder owes the reply and
+   no separate body edit. At re-request time the engine takes the author's
+   comments posted after the newest verdict in the round and appends them
+   with `<!-- round:<head-sha> -->`; an existing marker makes a retry a
+   no-op. If the builder posted no reply, the engine records that the round
+   passed without one and never blocks handoff on the omission. Then push
+   the fixes, then re-request **by head, not by verdict**: if answering the
+   round pushed any commit, every
+   panelist's approval is now stale — an approval is of a specific tree,
+   and the handoff predicate counts only approvals at the current head —
+   so **every panelist is re-requested, the approvers included**; a
+   panelist left un-re-requested after a push can never approve the tree
+   you shipped, and the PR sits looking finished with a full set of
+   verdicts and nothing owed by anyone, the same silent-stall shape as
+   [#26](https://github.com/heavy-duty/ceremony/issues/26)/[#39](https://github.com/heavy-duty/ceremony/issues/39).
+   Only when the head did not move — the round was answered with argument
+   or evidence and nothing was pushed — do you re-request just the
+   non-approvers: a standing approval already covers this exact head, and
+   the engine absorbs a re-request at an unchanged head (the re-request
+   rule, [#94](https://github.com/heavy-duty/ceremony/issues/94); its
+   mechanism is crew's to describe). **The re-request carries the same
+   green-check-at-head precondition as the first request**, argued
+   exception included. This is where the measured cost landed: crew#40
+   burned two consecutive heads and four reviewer-rounds, every one
+   relaying a CI failure already visible in the job log (crew#45). A fix
+   push whose check comes up red is not ready to go back to the panel; it
+   is your next fix. Prefer verification over argument: when a
    reviewer doubts behavior, add the test that settles it.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
@@ -238,14 +339,19 @@ item to its flow in the same comment ([LABELS.md](LABELS.md)).
 
 When the round passes — every panel verdict approves the **current head**,
 and no `blocker:*` stands (conflicts rebased, CI green, drill recorded if
-this is a release PR) — hand it to the human, in order:
+this is a release PR) — the engine performs these mechanical steps on the
+builder's behalf, in order:
 
-1. post the round summary (what changed per round, what was verified);
-2. request the human's review;
-3. set `state:needs-human` yourself.
+1. request the human's review;
+2. set `state:needs-human`;
+3. post the engine-rendered handoff comment: approvals at the current head,
+   the head SHA, and a pointer to the PR body's **Round log**.
 
-The label write is optimistic — the reconciler validates it, and takes it
-back if the PR is not actually mergeable-right-now. Then stop: the PR is the
-human's. The claim is now parked as shape 4 (Picking, above) — the handoff
-you just posted is its declaration, and your build slot is free. Address
-what comes back (`state:addressing`) and re-hand-off the same way.
+The builder composes no new summary at handoff: the authored record already
+lives in the Round log, mirrored mechanically from each whole-round reply as
+specified above. The label write is optimistic — the reconciler validates
+it, and takes it back if the PR is not actually mergeable-right-now. Then
+stop: the PR is the human's. The claim is now parked as shape 4 (Picking,
+above) — the handoff you just posted is its declaration, and your build slot
+is free. Address what comes back (`state:addressing`) and re-hand-off the
+same way.

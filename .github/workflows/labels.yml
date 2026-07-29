@@ -37,4 +37,4 @@ permissions:
   pull-requests: write
 jobs:
   labels:
-    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.3.0
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.4.0

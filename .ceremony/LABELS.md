@@ -3,7 +3,8 @@
 The taxonomy shared across the heavy-duty repos. Only the `scope:` set
 differs per repo (each repo's `.github/labels.conf` names its actual
 surfaces); everything else below is core and identical everywhere, created by
-the labels workflow's bootstrap dispatch (issue #10).
+the labels workflow's dispatch (which is also the operator's manual
+full-board reconcile sweep; issue #10).
 
 Two state machines share the taxonomy: the **PR machine** (proven in
 box/rig/cast, reconciled by machinery) and the **issue flow** (the
@@ -52,20 +53,38 @@ strips it on sight).
 | `ready` | `#0E8A16` | triaged, spec complete, unblocked — a builder can start now and succeed | triage |
 | `claimed` | `#1D76DB` | a builder owns it: assignee set, a draft PR expected shortly | the claiming builder |
 | `blocked` | `#6A737D` | waiting on another issue or PR (`Blocked by #N` in the body names it) | triage; anyone may correct it |
+| `post-merge` | `#006B75` | the Refs-linked PR merged; post-merge acceptance criteria remain; the claim is released — nothing here is buildable and nobody owes a draft | the sweep or triage |
 | `epic` | `#5319E7` | organizes other issues via a dependency-ordered task list; **builders never pick an epic** | triage |
 
 The work-queue sweep enforces the invariant a board scan relies on: every open issue is either
 `needs-triage`, `epic`, or carries exactly one of `ready` / `claimed` /
-`blocked`. It flags conflicts rather than guessing intent. A `claimed` issue
+`blocked` / `post-merge`. It flags conflicts rather than guessing intent. A `claimed` issue
 with no open PR and no activity for 48 hours is reclaimed by the sweep: it
 comments, unassigns the stale owner, and restores `ready`.
+
+When a merged PR references a `claimed` issue with `Refs #N` and unchecked
+criteria remain, the sweep moves the issue to `post-merge`, clears the
+assignee, and comments with the remaining criteria verbatim. The comment says
+that the claim is released and that triage owes a follow-up naming the owner
+and wake condition for completion. Triage writes that full transition comment
+in the same tick when it or the operator makes the move by hand. The sweep
+never reclaims `post-merge`: weeks of quiet can be the state working.
+
+`post-merge` never composes with `blocked`; the transition comment carries the
+wait. It never composes with `attention`, because releasing the claim clears
+the assignee and leaves nobody parked-for. An assigned `post-merge` issue is
+flagged rather than repaired: a hand-assignment is intent. `needs-ruling`
+still composes. When the remainder becomes buildable, triage moves
+`post-merge` to `ready` or mints a fresh `ready` issue. Any builder may claim
+that work from current `main`; the original builder has no special standing,
+and re-entry does not set `attention`.
 
 ## Cross-cutting (PRs and issues)
 
 | Label | Color | Meaning |
 |---|---|---|
 | `stale` | `#B60205` | no activity for 48h — sweep-managed, never hand-applied |
-| `blocked` | `#6A737D` | (see above — same label serves PRs waiting on another PR/issue; legitimately quiet, the staleness sweep skips it) |
+| `blocked` | `#6A737D` | (see above — same label serves PRs waiting on another PR/issue; legitimately quiet, the staleness sweep skips it). The reconciler refuses `state:needs-human` while `blocked` stands — the PR falls to `state:addressing` (#180) |
 | `offsite` | `#CFD3D7` | issue deliverable is a PR in another repository; set by the builder with the draft link and cleared by the builder at handoff |
 | `needs-ruling` | `#D4C5F9` | a human-owned decision is required; use BUILDER.md's ruling template and ladder. Set by triage or the builder; a state, not a signal — it clears on agreement, not on a reply |
 | `attention` | `#D93F0B` | issue-only demand parked for the assignee; hand-set, and never written by the machine |
@@ -155,7 +174,12 @@ unanswered `attention` is exactly the silence the 48-hour reclaim should
 take. It is hand-set doctrine only: nothing in `actions/` sets, clears,
 reads, or validates it, and no reconciler enforces the assignee requirement.
 An `attention` issue without an assignee is therefore a board bug, not a
-demand; anyone may assign it or remove the flag.
+demand; anyone may assign it or remove the flag. It never composes with
+`post-merge`, whose released claim has no assignee to answer the demand. The
+one machine-clear exception is the derived `claimed` → `post-merge`
+transition: releasing the assignee clears a carried `attention` in the same
+edit. A hand-created `post-merge` + `attention` composition is flagged, not
+rewritten.
 
 The three signals are mutually distinct: `attention` means an assignee owes
 a move; `needs-ruling` means a human owes a decision under
@@ -188,10 +212,13 @@ on a PR would say the same thing twice and drift.
 
 ## Maintenance
 
-The labels workflow (issue #10) recomputes PR state statelessly on PR events
-plus a 15-minute advisory cron, and bootstraps this taxonomy idempotently on
-manual dispatch. The sweep warns when the core taxonomy declares a label the
-repository lacks. The same workflow reconciles issue-flow labels on issue
+The labels workflow (issue #10) recomputes PR state statelessly on subscribed
+events plus a consumer-owned scheduled discovery sweep. Hourly is the
+recommended default when no other engine drives board state; relax it only as
+the transition classes with no other writer shrink. Manual dispatch both
+bootstraps this taxonomy idempotently and runs the operator's on-demand
+full-board reconcile. The sweep warns when the core taxonomy declares a label
+the repository lacks. The same workflow reconciles issue-flow labels on issue
 events and during the scheduled sweep. Default GitHub labels (`duplicate`,
 `invalid`, `question`, `wontfix`, `help wanted`, `good first issue`) are
 deleted at bootstrap — a `question` is a discussion, not an issue.
