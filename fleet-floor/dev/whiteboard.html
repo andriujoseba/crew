@@ -2959,6 +2959,18 @@ function fabTable(t,lit,st){
     topBack:"#2d353f",topFront:"#222932",face:"#12171f",foot:"#090d13",side:"#0c1116"});
   brushed(g.bx0,g.ty+1,DECK.bw,DECK.td-2,0.05);
   wornEdge(g.fx0,g.tf-2,DECK.fw,"rgba(214,196,168,0.20)",11.3);
+  /* L5 — the top is a MATERIAL again. Going dark (right) and tilting into
+     perspective (also right) left all three tops the same anonymous gradient;
+     what says "steel plate" at this size is the seams between the plates and
+     the bolts that hold them down, each drawn in the surface's own
+     perspective so they recede with it. */
+  [0.34,0.67].forEach(function(su){var sa=deckAt(g,su,0),sb=deckAt(g,su,1);
+    S.strokeStyle="rgba(0,0,0,0.4)";S.lineWidth=1.2;
+    S.beginPath();S.moveTo(sa.x,sa.y+1);S.lineTo(sb.x,sb.y-1);S.stroke();
+    S.strokeStyle="rgba(214,196,168,0.10)";S.lineWidth=1;
+    S.beginPath();S.moveTo(sa.x+1.4,sa.y+1);S.lineTo(sb.x+1.4,sb.y-1);S.stroke();});
+  [[0.05,0.22],[0.30,0.8],[0.63,0.8],[0.96,0.22],[0.05,0.8],[0.96,0.8]].forEach(function(bp){
+    var p2=deckAt(g,bp[0],bp[1]);rivet(S,p2.x,p2.y,"rgba(214,196,168,0.30)");});
 
   // front face: a bank of drawers, hazard tape along the toe, asset plate
   var fw=DECK.fw,fy=g.tf+8;
@@ -3065,6 +3077,18 @@ function inspectBench(t,lit,st){
   gs.addColorStop(1,"rgba(210,238,255,0)");
   S.fillStyle=gs;poly(S,[[g.bx0,g.ty],[g.bx1,g.ty],[g.fx1,g.tf],[g.fx0,g.tf]]);S.fill();
   wornEdge(g.fx0,g.tf-2,DECK.fw,"rgba(200,224,248,0.15)",5.7);
+  /* L5 — the top is a MATERIAL again: this one is edge-lit glass. What says
+     glass is not the streak (a polished steel top would streak too) but the
+     EDGE — light piped through the slab escapes at the perimeter, so a thin
+     cool line runs round the inset rim and glows faintly, held down by four
+     corner clips. */
+  emit(function(c){c.strokeStyle="rgba(170,224,255,"+(0.10+0.10*lit)+")";c.lineWidth=1.4;
+    var e0=deckAt(g,0.015,0.08),e1=deckAt(g,0.985,0.08),e2=deckAt(g,0.985,0.94),e3=deckAt(g,0.015,0.94);
+    c.beginPath();c.moveTo(e0.x,e0.y);c.lineTo(e1.x,e1.y);c.lineTo(e2.x,e2.y);c.lineTo(e3.x,e3.y);c.closePath();c.stroke();});
+  [[0.015,0.08],[0.985,0.08],[0.015,0.94],[0.985,0.94]].forEach(function(cp){
+    var p3=deckAt(g,cp[0],cp[1]);
+    S.fillStyle="#2b3746";S.fillRect(p3.x-3,p3.y-2,6,4);
+    S.fillStyle="rgba(200,230,255,0.35)";S.fillRect(p3.x-3,p3.y-2,6,1);});
 
   // front face: drawer bank right, open shelf left — the void
   var fy=g.tf+8;
@@ -3189,7 +3213,16 @@ function plotTable(t,lit,st){
   ac.addColorStop(1,"rgba(214,224,255,0)");
   S.fillStyle=ac;S.fillRect(g.fx0,g.ty,DECK.fw,DECK.td+4);
   S.restore();
-  if(!off)spill(DECK.cx,g.tf+10,104,18,[150,170,255],0.06);
+  /* L5 — the top is a MATERIAL again: an acrylic sheet over the plot, and a
+     sheet is HELD — four corner brackets pinch it to the table, each an L in
+     the surface's perspective with one lit edge. Without them the chart is a
+     texture; with them it is a thing lying on a thing. */
+  [[0.03,0.10,1],[0.97,0.10,-1],[0.03,0.90,1],[0.97,0.90,-1]].forEach(function(br){
+    var p4=deckAt(g,br[0],br[1]),dx=br[2];
+    S.strokeStyle="#3a4468";S.lineWidth=2.6;
+    S.beginPath();S.moveTo(p4.x+dx*9,p4.y);S.lineTo(p4.x,p4.y);S.lineTo(p4.x,p4.y+(br[1]<0.5?5:-5));S.stroke();
+    S.strokeStyle="rgba(190,180,255,0.30)";S.lineWidth=1;
+    S.beginPath();S.moveTo(p4.x+dx*9,p4.y-1);S.lineTo(p4.x-dx,p4.y-1);S.stroke();});
 
   // the leaning fascia: three switches in housings, a readout, an asset plate
   var fy=g.tf+14;
