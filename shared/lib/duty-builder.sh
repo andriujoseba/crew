@@ -295,32 +295,27 @@ _builder_repo() {
   # bugs — and the round-owed signal was already fetching this exact listing, so
   # headRefOid and statusCheckRollup ride along for no additional call.
   local mine_json mine_rows pr_payload N
-  local -A pr_payload_by_num=()
   mine_json="$(gh pr list -R "$R" --state open --author "$ME" \
     --json number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup \
     2>/dev/null || echo err)"
   if [ "$mine_json" = "err" ]; then
     mine_rows=err
   else
-    # Hoist the one per-PR GraphQL read: its head-carrying opinionated verdicts
-    # drive round_owed here, then the panel request and convergence below. The
-    # gh-pr-list latestReviews field cannot substitute: COMMENTED masks a
-    # standing blocker there, and its commit.oid is empty (#147).
+    # Fetch the head-carrying opinionated verdicts before any session so they
+    # can drive round_owed. The gh-pr-list latestReviews field cannot
+    # substitute: COMMENTED masks a standing blocker there, and its commit.oid
+    # is empty (#147). Handoff deliberately fetches again after the sessions:
+    # this early snapshot can be an hour old by then.
     for N in $(printf '%s' "$mine_json" \
       | jq -r '.[] | select(.isDraft | not) | .number'); do
       pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
-          headRefOid mergeable
-          labels(first:50){nodes{name}}
-          comments(last:200){nodes{author{login} body}}
-          reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
           latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
         } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
       if [ -z "$pr_payload" ]; then
-        warn "$R#$N: PR state fetch failed; round detection, request, and handoff will skip this tick"
+        warn "$R#$N: review fetch failed; round reads not-owed this tick (request and handoff fetch later)"
         continue
       fi
-      pr_payload_by_num[$N]="$pr_payload"
       mine_json="$(printf '%s' "$mine_json" | jq -c \
         --argjson num "$N" \
         --argjson reviews "$(printf '%s' "$pr_payload" \
@@ -573,9 +568,17 @@ _builder_repo() {
       # defers the live one, so a round mid-flight is never stamped as answered
       # before its whole-round reply lands (round-log.jq live-round note).
       _mirror_rounds "$R" "$N" false
-      # Reuse the GraphQL payload hoisted above: one read drives round_owed,
-      # the panel request, and convergence (#147).
-      pr_payload="${pr_payload_by_num[$N]:-}"
+      # Sessions above can run for up to an hour and can push a new head while
+      # reviewers also act. Fetch again here so request-panel and convergence
+      # never act on the early round-detection snapshot (#147).
+      pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+        repository(owner:$owner,name:$name){ pullRequest(number:$num){
+          headRefOid mergeable
+          labels(first:50){nodes{name}}
+          comments(last:100){nodes{author{login} body}}
+          reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
+          latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+        } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
       if [ -z "$pr_payload" ]; then
         warn "$R#$N: PR state fetch failed; skipping request and handoff this tick"
         continue
