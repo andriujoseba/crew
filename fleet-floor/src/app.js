@@ -12,6 +12,16 @@ function UNITID(u){return u.box||(u.agent+"-"+u.room);}
 function UNIT(){return BOX;}
 function ROLEWORD(){return ROOM;}
 var lastHand={x:260,y:400};
+/* The footprints the last-built robot reported, in robo-canvas space. The full
+   room reads them straight off buildRobo's return; the grid cell renders on a
+   different pass and needs them carried across, which is what this is. */
+var lastFeet=null;
+/* Where the last unit rendered actually IS, in ROOM coordinates: the point its
+   hand works at, the top of its head, and each footprint. drawRobot is the one
+   place that knows the sprite's scale and offset, so it is the one place that
+   should be converting them — everything downstream that needs to put a mark
+   on a unit reads these instead of guessing at the sprite's bounding box. */
+var lastAnchors=null;
 
 function oc(w,h){var c=document.createElement("canvas");c.width=w;c.height=h;return c;}
 var scene=oc(DW,DH), S=scene.getContext("2d");
@@ -32,6 +42,11 @@ function pl(c,x0,y0,x1,y1,col,w){c.strokeStyle=col;c.lineWidth=w||1;c.beginPath(
 function rivet(c,x,y,col){c.fillStyle=col;c.beginPath();c.arc(x,y,1.5,0,7);c.fill();}
 function makeNoise(n){var c=oc(n,n),x=c.getContext("2d"),d=x.createImageData(n,n),p=d.data;for(var i=0;i<p.length;i+=4){var v=Math.random()*255;p[i]=p[i+1]=p[i+2]=v;p[i+3]=255;}x.putImageData(d,0,0);return c;}
 function fnoise(t){return Math.sin(t*11.3)*0.5+Math.sin(t*23.7+1.3)*0.3+Math.sin(t*57.1+0.7)*0.2;}
+/* A phase angle derived from a string, so a per-unit animation can be offset
+   by WHICH UNIT IT IS rather than by Math.random. Two boxes side by side then
+   never blink in step, and the same box blinks the same way in two renders of
+   the same commit — which is the property an asset map is made of. */
+function strPhase(s){var h=2166136261;s=String(s);for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return (h>>>0)/4294967296*6.283;}
 
 var motes=[];for(var i=0;i<90;i++)motes.push({x:Math.random(),y:Math.random(),z:.3+Math.random()*.9,s:Math.random()*6.28});
 var steam=[];for(var i=0;i<26;i++)steam.push({p:Math.random(),x:.72+Math.random()*.12,sway:Math.random()*6.28});
@@ -40,6 +55,120 @@ var sparks=[];
 
 var LAMPX=470,LAMPY=70,FLOORY=612,ROBOX=470,ROBOY=FLOORY;
 var HOLOX=800,HOLOY=250,HOLOW=250,HOLOH=196;
+/* The signage bay — a rectangle of back wall reserved for the room's name.
+   The wall text was not an object. It was two fillText calls with no extent
+   and no owner, so every prop bolted to the wall since has been placed as if
+   that space were empty, and three of them ended up on top of it: the
+   builder's conduit ran vertically through "SECTOR-7", and dispatch parked a
+   radar dish over the S and a relay panel across the rest, burying the word
+   "DISPATCH" completely. Individually each prop is fine. Together they read
+   as three rooms nobody composed.
+   Naming the rectangle is the structural half of the fix — a prop that lands
+   here is now a visible mistake against a stated rule instead of a thing that
+   looked free. Making the sign an opaque bolted plate is the other half: it
+   has a silhouette, it occludes what passes behind it, and it can take the
+   light the rest of the wall takes. */
+var SIGN={x:676,y:182,w:308,h:88};
+var WALL={x:250,y:150,w:760};
+/* The rest of the wall, as named bays.
+   Loop 11 reserved one rectangle and that was enough to stop props landing on
+   the room's name — but it left every OTHER placement still being decided by
+   eye, one prop at a time, which is the habit that put them there in the first
+   place. So before anything new goes up, the whole wall gets stated: what is
+   free, and what each free area is bounded by.
+   Two constraints do most of the work. The unit stands at ROBOX=470 and is
+   about 220 wide, so the centre column is not wall you can hang anything on —
+   it is wall you look at the robot against, and the lamp cone runs down it.
+   And each room already has floor-standing furniture backed up against the
+   wall, so a bay has to stop where that starts.
+                      x    y    w    h     bounded below by
+   builder  left    250  188  126  216     the fab bay (y=430)
+            right   726  404  270  148     the deck
+   reviewer left    262  336  164  170     the inspection desk (x=372)
+            right   690  428  300  124     the deck
+   triage   left    262  330  160  196     the map console (x=372)
+            right   836  424  160  128     the deck
+   Every one of these was verified empty against the loop 12 renders, and each
+   is quoted in the prop that fills it. If a later prop wants one of them, it
+   has to say which. */
+var BAYS={
+  builder :{L:[250,188,126,216], R:[726,404,270,148]},
+  reviewer:{L:[262,336,164,170], R:[690,428,300,124]},
+  triage  :{L:[262,330,160,196], R:[836,424,160,128]}
+};
+/* And the rest of it, because seven rectangles out of a room is not a layout.
+   Loop 11 named the sign's rectangle, loop 13 named six wall bays, and its own
+   note says what was left: "every other placement still being decided by eye,
+   one prop at a time" — which is the habit that put a conduit through SECTOR-7
+   in the first place, still running, just further down the wall. Naming six
+   free areas does not fix it while the deck, the keep-clear column and the
+   fixed structure stay unstated, because a prop is placed against what is
+   ALREADY THERE at least as often as against what is free.
+
+   So: what the deck already carries, room by room, and what nothing may be
+   placed on in any room. Numbers are read off the props themselves, not
+   estimated — each row is the extent the function actually draws, and
+   FLOORDEV.guides draws these over a rendered tile so the claim is checkable
+   by looking rather than by trusting this comment.
+
+   Declaring it found one collision immediately, which is the argument for
+   declaring it: the builder's workbench ends at x=576 and its conveyor began
+   at x=566, so ten pixels of belt ran through the bench top. Both are dark and
+   the overlap is four pixels tall, which is exactly why eyes had not caught it
+   in fifteen loops. The conveyor now starts at 580. */
+var LAYOUT={
+  /* Where a unit can be. Not a guess: the union of FLOORDEV.unitBox over all
+     36 agent x room x state combinations, which is the alpha extent of the
+     sprite the renderer actually draws, mapped into room coordinates. Re-derive
+     it by running that hook; do not adjust it by eye.
+
+     The first hand-written version of this rectangle was 360..580 and wrong in
+     both directions at once — narrower than codex, whose six legs splay to
+     333..606, and wide enough to swallow the pegboard's left edge, so a rule
+     invented to stop collisions was itself colliding with two things. Measuring
+     it also settled a question nobody had asked: the inner edge of every room's
+     LEFT bay is inside codex's reach (bay L starts at 250-262 and codex reaches
+     333), so a prop in the inner ~40px of a left bay can be stood in front of.
+     Nothing there today needs to stay readable, and now that is a decision
+     rather than an accident. */
+  unit:["unit envelope",333,286,273,327],
+  /* Nothing goes here, in any room. The ceiling is deliberately not on this
+     list: the crane rail and the roof truss cross the lamp on purpose. */
+  keep:[
+    ["deck line",   250,596,760, 26]    // where every contact shadow lands
+  ],
+  /* What the floor already carries. x,y,w,h — including the parts that stand
+     proud of the bench top, because that is what a new prop would hit. */
+  deck:{
+    builder :[["crates",182,558,66,72],["workbench",372,536,204,76],["conveyor",580,558,222,54]],
+    reviewer:[["inspect desk",372,533,204,79],["verdict tower",632,496,14,116],
+              ["doc stacks",690,586,56,26],["file cabinets",1040,554,72,58]],
+    triage  :[["map console",372,536,204,76],["doc stack",700,586,26,26],
+              ["phone bank",1042,582,40,30],["file cabinet",1086,554,34,58]]
+  },
+  /* Structure. `all` is every room; the rest are the room's own. */
+  fixed:{
+    all     :[["right tower",1150,372,66,240]],
+    builder :[["crane rail",250,120,440,10]],
+    reviewer:[],
+    triage  :[]
+  }
+};
+/* Everything bolted to the wall stands a few centimetres off it, and until now
+   not one of them said so. `plate()` gives a prop its own internal shading and
+   stops at its outline, so a monitor bank, a kanban board and a hazard placard
+   all met the wall at a clean cut — which is the single clearest tell that
+   this is a picture of props rather than props in a room. One soft offset
+   shadow, down and away from the lamp, called at the top of each prop so it
+   lands underneath. The offset grows with distance from the lamp, because the
+   light is a point above LAMPX and not a studio softbox. */
+function wallShadow(x,y,w,h,depth){
+  var d=depth||1, dir=(x+w/2)<LAMPX?-1:1;
+  var off=Math.min(11,3+Math.abs((x+w/2)-LAMPX)/95)*d;
+  S.save();S.globalAlpha=0.34;S.filter="blur(3px)";
+  S.fillStyle="#010307";S.fillRect(x+off*dir,y+3.5*d+off*0.55,w,h);
+  S.restore();
+}
 var lamp={lit:1,drop:0};
 function stepLamp(t,dt,on){ if(reduced){lamp.lit=on?1:0;return;} if(!on){lamp.lit=0;return;} var base=0.86+0.14*fnoise(t*0.9); if(lamp.drop>0){lamp.drop-=dt;lamp.lit=0.12+0.08*Math.random();} else{lamp.lit=base;if(Math.random()<0.012)lamp.drop=0.04+Math.random()*0.12;} }
 function emit(fn){fn(S);fn(G);}
@@ -60,6 +189,17 @@ function crane(t){
   emit(function(c){var p=0.35+0.65*Math.pow(Math.max(0,Math.sin(t*2)),2);c.fillStyle=rgba(255,60,50,0.9*p);c.beginPath();c.arc(tx,railY+80,2.5,0,7);c.fill();var g7=c.createRadialGradient(tx,railY+80,1,tx,railY+80,10);g7.addColorStop(0,rgba(255,60,50,0.5*p));g7.addColorStop(1,"rgba(255,60,50,0)");c.fillStyle=g7;c.beginPath();c.arc(tx,railY+80,10,0,7);c.fill();});
   var gy=railY+92;for(var s=tx-56;s<tx+56;s+=14){S.fillStyle=((s-tx+56)%28<14)?"#c9a227":"#0f1420";S.fillRect(s,gy,14,12);}
   S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(tx-60,gy+12,120,3);
+  /* The crane was carrying nothing. A gantry with an empty hook, parked dead
+     centre over the work, is set dressing; a slung girder on two slings is the
+     bay telling you what it is for. Static and integer-aligned for the same
+     reason the trolley is — a striped mass that drifts aliases its own edges. */
+  var slY=gy+15;
+  S.strokeStyle="#1b2432";S.lineWidth=2;
+  S.beginPath();S.moveTo(tx-40,slY);S.lineTo(tx-52,slY+30);S.moveTo(tx+40,slY);S.lineTo(tx+52,slY+30);S.stroke();
+  plate(S,[[tx-58,slY+30],[tx+58,slY+30],[tx+58,slY+41],[tx-58,slY+41]],"#2b3444","#141b26","#3b4a60");
+  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(tx-58,slY+35,116,2);
+  S.fillStyle="rgba(150,175,210,0.14)";S.fillRect(tx-58,slY+30,116,1.5);
+  S.fillStyle="rgba(201,162,39,0.35)";S.fillRect(tx-26,slY+33,20,4);
 }
 function rightTower(t){
   var x=1150,w=66,yb=612,yt=372,seg=(yb-yt-26)/9;
@@ -88,13 +228,111 @@ function fabBay(t,lit,st){
     var ig=c.createRadialGradient(cxa+cw/2,cya+ch-22,2,cxa+cw/2,cya+ch-22,cw*0.7);ig.addColorStop(0,rgba(255,160,70,0.28*(st==="working"?1:0.45)));ig.addColorStop(1,"rgba(255,160,70,0)");c.fillStyle=ig;c.fillRect(cxa,cya,cw,ch);});
   S.strokeStyle="#3a465e";S.lineWidth=1;S.beginPath();S.moveTo(cxa+4,cya+16);S.lineTo(cxa+cw-4,cya+16);S.stroke();
   S.fillStyle="#28303c";S.fillRect(px-1,cya+14,5,5);
+  /* Bay shutter. With the box silent the furnace is not merely unlit — the bay
+     is closed. Slats over the chamber turn "this prop is dark" into "this prop
+     is shut", which is a different and more useful thing to read from across
+     a grid of thumbnails. */
+  if(!on){S.fillStyle="#0b1017";S.fillRect(cxa,cya,cw,ch);
+    for(var sl3=0;sl3<ch;sl3+=7){S.fillStyle="#161d27";S.fillRect(cxa+1,cya+sl3,cw-2,5);S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(cxa+1,cya+sl3+5,cw-2,2);}
+    S.strokeStyle="#2a3444";S.lineWidth=1;S.strokeRect(cxa,cya,cw,ch);
+    S.fillStyle="rgba(255,70,58,0.30)";S.fillRect(cxa+cw/2-9,cya+ch/2-2,18,4);}
   emit(function(c){c.fillStyle=on?rgba(95,206,155,0.9):rgba(255,60,50,0.8);c.beginPath();c.arc(x+w-12,yt+22,3,0,7);c.fill();});
+  /* The furnace throws light on the floor in front of it. It was the brightest
+     thing in the bay and the concrete two feet away was as dark as the corner
+     of the room — the one change that stops the fabricator reading as a
+     picture of a fire hung on the wall. */
+  if(on){S.save();S.globalCompositeOperation="lighter";
+    var spill=S.createRadialGradient(x+w/2,FLOORY,4,x+w/2,FLOORY,190);
+    var sk=(st==="working"?1:0.5);
+    spill.addColorStop(0,"rgba(255,150,60,"+(0.20*sk)+")");
+    spill.addColorStop(0.45,"rgba(230,110,40,"+(0.08*sk)+")");
+    spill.addColorStop(1,"rgba(200,90,30,0)");
+    S.fillStyle=spill;S.beginPath();S.ellipse(x+w/2,FLOORY+8,190,34,0,0,7);S.fill();S.restore();}
   rivet(S,x+6,yt+3,"#3d4c63");rivet(S,x+w-6,yt+3,"#3d4c63");
   // barrels beside the bay
   [[x+w+6,"#c9a227"],[x+w+18,"#4f9e5a"]].forEach(function(k){var bx=k[0];plate(S,[[bx,566],[bx+11,566],[bx+11,612],[bx,612]],k[1],"#0c1119","#0a0e16");S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(bx,576,11,1);S.fillRect(bx,596,11,1);});
 }
+/* BAYS.builder.L — gas bottles.
+   The fabricator has been throwing a furnace flame since loop 3 and nothing in
+   the room has ever supplied it. Two cylinders strapped to the wall directly
+   above the bay, with regulators and a hose dropping toward it, is the prop
+   that makes the fire an installation rather than an effect. */
+function gasRack(t,lit,st){
+  var x=272,y=214,off=st==="offline";
+  wallShadow(x-6,y-8,104,180);
+  // backboard + two strap rails
+  plate(S,[[x-6,y-8],[x+98,y-8],[x+98,y+172],[x-6,y+172]],"#1a212c","#0c111a","#28313f");
+  [[y+26],[y+118]].forEach(function(r){S.fillStyle="#39455a";S.fillRect(x-4,r[0],100,5);
+    S.fillStyle="rgba(190,214,246,"+(0.10*lit)+")";S.fillRect(x-4,r[0],100,1);});
+  [[x+8,"#4a5a3c","#7f9a5e"],[x+52,"#4a2f2c","#9a5f4e"]].forEach(function(k){
+    var bx=k[0];
+    // body: a cylinder, so a horizontal gradient not a vertical one
+    var cyl=S.createLinearGradient(bx,0,bx+38,0);
+    cyl.addColorStop(0,"#0d1219");cyl.addColorStop(0.34,k[1]);cyl.addColorStop(0.52,k[2]);
+    cyl.addColorStop(0.72,k[1]);cyl.addColorStop(1,"#0a0e14");
+    rr(S,bx,y+8,38,156,7);S.fillStyle=cyl;S.fill();
+    S.strokeStyle="#0a0e14";S.lineWidth=1.2;rr(S,bx,y+8,38,156,7);S.stroke();
+    S.fillStyle="rgba(210,228,255,"+(0.13*lit)+")";S.fillRect(bx+11,y+14,3,144);   // specular strip
+    // shoulder, valve, regulator dial
+    plate(S,[[bx+9,y+8],[bx+29,y+8],[bx+26,y-6],[bx+12,y-6]],"#2a3242","#141a24","#3c4658");
+    S.fillStyle="#39455a";S.fillRect(bx+16,y-14,6,9);
+    S.fillStyle="#0c121a";S.beginPath();S.arc(bx+19,y-20,7,0,7);S.fill();
+    S.strokeStyle="#46536a";S.lineWidth=1.2;S.beginPath();S.arc(bx+19,y-20,7,0,7);S.stroke();
+    if(!off){emit(function(c){c.strokeStyle="rgba(120,220,170,0.6)";c.lineWidth=1.4;
+      c.beginPath();c.moveTo(bx+19,y-20);c.lineTo(bx+19+4,y-25);c.stroke();});}
+    // strap over each rail
+    S.fillStyle="rgba(20,26,36,0.9)";S.fillRect(bx-2,y+24,42,9);S.fillRect(bx-2,y+116,42,9);
+    S.fillStyle="rgba(140,160,190,0.12)";S.fillRect(bx-2,y+24,42,1);S.fillRect(bx-2,y+116,42,1);});
+  // the hose, running down out of the bay toward the fabricator
+  S.strokeStyle="#0c1119";S.lineWidth=5;
+  S.beginPath();S.moveTo(x+71,y-16);S.bezierCurveTo(x+104,y+30,x+58,y+152,x+66,y+206);S.stroke();
+  S.strokeStyle="rgba(78,92,116,0.45)";S.lineWidth=1.4;
+  S.beginPath();S.moveTo(x+71,y-16);S.bezierCurveTo(x+104,y+30,x+58,y+152,x+66,y+206);S.stroke();
+  // a chained-up spare, empty, tipped against the board
+  S.strokeStyle="rgba(96,112,138,0.5)";S.lineWidth=1;
+  S.beginPath();S.moveTo(x-4,y+150);S.lineTo(x+98,y+156);S.stroke();
+}
+/* BAYS.builder.R — the fire point.
+   A bay that welds, throws sparks onto a deck and stores gas has an
+   extinguisher on the wall, and this one had a hazard placard warning about a
+   danger with no answer to it anywhere in the room. It goes directly under the
+   placard, which is what turns two props into one piece of signage. */
+function firePoint(t,lit,st){
+  var x=812,y=428,off=st==="offline";
+  wallShadow(x,y,118,110);
+  /* Muted, deliberately. The first cut used workshop-red at full saturation
+     and became the brightest object in the bay — a fire point should be
+     findable, not the thing you look at instead of the unit under the lamp.
+     Enough red to read as safety equipment from across the room, and no more. */
+  plate(S,[[x,y],[x+118,y],[x+118,y+110],[x,y+110]],"#201214","#12090b","#38191c");
+  S.fillStyle="rgba(196,72,58,"+(off?0.07:0.15)+")";S.fillRect(x+6,y+6,106,4);
+  // extinguisher
+  var ex=x+16;
+  var eg2=S.createLinearGradient(ex,0,ex+26,0);
+  eg2.addColorStop(0,"#2c0d0f");eg2.addColorStop(0.36,"#6d1e19");eg2.addColorStop(0.54,"#95352c");
+  eg2.addColorStop(0.76,"#5d1a15");eg2.addColorStop(1,"#220a0c");
+  rr(S,ex,y+34,26,62,5);S.fillStyle=eg2;S.fill();
+  S.fillStyle="rgba(255,222,206,"+(0.11*lit)+")";S.fillRect(ex+8,y+38,3,54);
+  plate(S,[[ex+7,y+34],[ex+19,y+34],[ex+17,y+24],[ex+9,y+24]],"#2a3242","#141a24","#3c4658");
+  S.strokeStyle="#39455a";S.lineWidth=2.4;S.beginPath();S.moveTo(ex+13,y+24);S.lineTo(ex+30,y+30);S.stroke();
+  S.fillStyle="rgba(236,224,200,0.5)";S.fillRect(ex+4,y+56,18,10);
+  S.fillStyle="rgba(0,0,0,0.4)";for(var fl=0;fl<3;fl++)S.fillRect(ex+6,y+59+fl*3,14-(fl%2)*5,1.4);
+  // hose reel
+  var rx=x+66,ry=y+58;
+  S.fillStyle="#151b25";S.beginPath();S.arc(rx,ry,25,0,7);S.fill();
+  S.strokeStyle="#39455a";S.lineWidth=2;S.beginPath();S.arc(rx,ry,25,0,7);S.stroke();
+  S.strokeStyle="rgba(66,78,98,0.85)";S.lineWidth=3;
+  for(var hr=0;hr<4;hr++){S.beginPath();S.arc(rx,ry,7+hr*4.5,0,7);S.stroke();}
+  S.fillStyle="rgba(190,214,246,"+(0.11*lit)+")";S.beginPath();S.arc(rx-8,ry-9,4,0,7);S.fill();
+  S.fillStyle="#0e131b";S.beginPath();S.arc(rx,ry,5,0,7);S.fill();
+  // call point, live only when the box is
+  emit(function(c){c.fillStyle=off?"rgba(90,26,22,0.7)":"rgba(255,74,58,"+(0.35+0.45*Math.pow(Math.max(0,Math.sin(t*1.1)),4))+")";
+    c.fillRect(x+96,y+34,12,12);});
+  S.strokeStyle="rgba(120,60,52,0.6)";S.lineWidth=1;S.strokeRect(x+95,y+33,14,14);
+}
 function pegboard(t,lit){
   var x=560,y=250,w=94,h=70;
+  wallShadow(x,y,w,h);
   plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#2a1f12","#160f08","#3a2c1a");
   S.fillStyle="rgba(0,0,0,0.4)";for(var i=0;i<7;i++)for(var j=0;j<4;j++)S.fillRect(x+10+i*11,y+9+j*14,2,2);
   var tc=["#8a939e","#c9a227","#b0563a","#5a9e6a"];
@@ -102,12 +340,20 @@ function pegboard(t,lit){
   S.fillStyle="rgba(255,200,140,"+(0.06*lit)+")";S.fillRect(x,y,w,2);
 }
 function conveyor(t,st){
-  var x=566,y=558,w=236,run=st==="working";
+  /* x was 566, which put ten pixels of belt through the workbench top at
+     x=372..576. Four pixels tall, both surfaces dark, invisible for fifteen
+     loops and found the moment the deck was written down. See LAYOUT. */
+  var x=580,y=558,w=222,run=st==="working";
   S.fillStyle="#0f1520";S.fillRect(x+12,y+12,8,42);S.fillRect(x+w-20,y+12,8,42);
   plate(S,[[x,y],[x+w,y],[x+w,y+12],[x,y+12]],"#202836","#0d131e","#2a3444");
   var off=run?(t*40)%16:0;S.fillStyle="#0a0f16";S.fillRect(x+2,y+3,w-4,7);
   S.fillStyle="#161d29";for(var i=x+2-16+off;i<x+w;i+=16)S.fillRect(i,y+3,8,7);
-  var coff=run?(t*40)%80:20;for(var c=0;c<3;c++){var cx2=x+10+((c*80+coff)%(w-26));crate(S,cx2,y-14);}
+  /* Running, the crates are spread evenly along the belt. Stopped, they bunch
+     against the head of the line — which is what a halted conveyor looks like,
+     and what makes a stopped bay read as *backed up* rather than merely quiet.
+     Idle here means work is waiting, and the belt should say so. */
+  if(run){var coff=(t*40)%80;for(var c=0;c<3;c++){var cx2=x+10+((c*80+coff)%(w-26));crate(S,cx2,y-14);}}
+  else{for(var c2=0;c2<4;c2++)crate(S,x+w-34-c2*19,y-14);}
   emit(function(cc){cc.fillStyle=run?rgba(95,206,155,0.9):rgba(120,130,140,0.35);cc.beginPath();cc.arc(x+6,y+6,2.5,0,7);cc.fill();});
 }
 function workbench(t,lit,st){
@@ -126,16 +372,98 @@ function workbench(t,lit,st){
 function diffWall(t,st){
   var x=262,y=176,mw=80,gap=12,mh=132,off=st==="offline",scroll=off?0:(t*(st==="working"?20:6));
   for(var i=0;i<4;i++){var mx=x+i*(mw+gap);
+    wallShadow(mx,y,mw,mh,1.2);
     plate(S,[[mx,y],[mx+mw,y],[mx+mw,y+mh],[mx,y+mh]],"#0c1220","#060a12","#22304a");
     S.fillStyle="#07121e";S.fillRect(mx+4,y+4,mw-8,mh-8);
-    for(var l=0;l<17;l++){var ly=y+8+((l*9+scroll)%(mh-14));var k=(i+l)%4;var cr=k===0?90:k===1?210:70,cg=k===0?200:k===1?90:110,cb=k===0?120:k===1?90:150;var lw=Math.min(14+((i*7+l*13)%48),mw-14);S.fillStyle=rgba(cr,cg,cb,off?0.12:0.5);S.fillRect(mx+7,ly,lw,2);G.fillStyle=rgba(cr,cg,cb,off?0.05:0.34);G.fillRect(mx+7,ly,lw,2);}
+    if(off){
+      /* Standby, not "the same diff but dimmer". A review station whose box
+         has gone silent is showing no signal — a centre bar and a lone standby
+         LED — and dimming the code instead said the review was still running,
+         quietly, which is the opposite of true. */
+      S.fillStyle="rgba(120,140,170,0.16)";S.fillRect(mx+10,y+mh/2-1,mw-20,2);
+      S.fillStyle="rgba(120,140,170,0.06)";S.fillRect(mx+18,y+mh/2+7,mw-36,1);
+    } else
+    for(var l=0;l<17;l++){var ly=y+8+((l*9+scroll)%(mh-14));var k=(i+l)%4;var cr=k===0?90:k===1?210:70,cg=k===0?200:k===1?90:110,cb=k===0?120:k===1?90:150;var lw=Math.min(14+((i*7+l*13)%48),mw-14);S.fillStyle=rgba(cr,cg,cb,0.5);S.fillRect(mx+7,ly,lw,2);G.fillStyle=rgba(cr,cg,cb,0.34);G.fillRect(mx+7,ly,lw,2);}
     if(!off){var gg=S.createRadialGradient(mx+mw/2,y+mh/2,4,mx+mw/2,y+mh/2,mw*0.9);gg.addColorStop(0,"rgba(90,160,220,0.09)");gg.addColorStop(1,"rgba(90,160,220,0)");S.fillStyle=gg;S.fillRect(mx-8,y-8,mw+16,mh+16);}
     S.fillStyle=off?"#3a1518":"#1a3a2a";S.fillRect(mx+mw-11,y+mh-6,6,3);
   }
+  /* Four lit monitors light the wall they are bolted to. The panel behind them
+     was the same near-black as the unlit half of the room, which is what made
+     this wall read as a poster of monitors rather than monitors in a room. */
+  if(!off){S.save();S.globalCompositeOperation="lighter";
+    var ww2=x+3*(mw+gap)+mw, wash=S.createLinearGradient(0,y-30,0,y+mh+120);
+    wash.addColorStop(0,"rgba(90,160,230,0)");
+    wash.addColorStop(0.3,"rgba(90,160,230,"+(st==="working"?0.075:0.045)+")");
+    wash.addColorStop(1,"rgba(90,160,230,0)");
+    S.fillStyle=wash;S.fillRect(x-40,y-30,(ww2-x)+80,mh+150);S.restore();}
 }
+/* It was at (566,252), which put its top-left quarter over the fourth diff
+   monitor — a clipboard hung on a screen. Moved right, into the gap between
+   the monitor bank and the certification plates, where it reads as the step
+   between the two: what was checked, then what was signed. */
 function checklistBoard(){
-  var x=566,y=252,w=88,h=76;plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#0f1620","#0a0f16","#22304a");S.fillStyle="#131c26";S.fillRect(x+5,y+5,w-10,h-10);
+  var x=676,y=290,w=88,h=76;wallShadow(x,y,w,h);plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#0f1620","#0a0f16","#22304a");S.fillStyle="#131c26";S.fillRect(x+5,y+5,w-10,h-10);
   for(var i=0;i<6;i++){S.fillStyle=i<4?"#4a8a5e":"#38424e";S.fillRect(x+9,y+11+i*11,4,4);S.fillStyle="#39434f";S.fillRect(x+17,y+12+i*11,w-28,2);}
+}
+/* BAYS.reviewer.L — the calibration chart.
+   A lab whose whole job is looking closely at things had nothing on its wall
+   for checking that it can still see. A test card is the one object that says
+   "the instruments here are trusted because they are verified" — and it is
+   also the only prop in the fleet whose content is a measurement rather than a
+   readout: greyscale wedge, resolution wedges, registration crosses. It does
+   not animate, because a calibration target that moved would be useless. */
+function calChart(t,lit,st){
+  var x=272,y=352,w=142,h=136,off=st==="offline";
+  wallShadow(x,y,w,h);
+  plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1c242e","#0d131a","#2c3948");
+  S.fillStyle="#c9d3df";S.fillRect(x+7,y+7,w-14,h-14);
+  S.fillStyle="rgba(20,30,42,0.86)";S.fillRect(x+7,y+7,w-14,h-14);
+  // greyscale wedge — eleven steps, the classic
+  /* The wedge tops out at 60% rather than at white. A calibration target is
+     printed, and a printed white in a room lit to 12% is not paper-white — it
+     was reading as a lightbox and taking the eye off the unit. */
+  for(var g4=0;g4<11;g4++){var v=Math.round(14+g4*13.4);
+    S.fillStyle="rgb("+v+","+(v+3)+","+(v+8)+")";S.fillRect(x+12+g4*10.8,y+13,10.2,20);}
+  // resolution wedges: two blocks of converging bars
+  [[x+13,y+41],[x+78,y+41]].forEach(function(b,bi){
+    for(var l3=0;l3<9;l3++){var lw3=(bi?0.9:1.5)+l3*0.34;
+      S.fillStyle="rgba(206,220,236,0.42)";S.fillRect(b[0]+l3*6.4,b[1],lw3,26);}});
+  // registration crosses at the corners of the field
+  [[x+16,y+80],[x+w-16,y+80],[x+16,y+h-16],[x+w-16,y+h-16]].forEach(function(c4){
+    S.strokeStyle="rgba(206,220,236,0.5)";S.lineWidth=1;
+    S.beginPath();S.moveTo(c4[0]-6,c4[1]);S.lineTo(c4[0]+6,c4[1]);
+    S.moveTo(c4[0],c4[1]-6);S.lineTo(c4[0],c4[1]+6);S.stroke();});
+  // a colour patch row and the plate's serial
+  ["#b0563a","#4f9e5a","#4a7cc9","#c9a227"].forEach(function(cc,ci){
+    S.fillStyle=cc;S.globalAlpha=0.38;S.fillRect(x+34+ci*20,y+96,17,17);S.globalAlpha=1;});
+  S.fillStyle="rgba(150,175,205,0.24)";S.fillRect(x+34,y+120,74,2);
+  // and the desk lamp finds it, faintly, from the right
+  if(!off){S.save();S.globalCompositeOperation="lighter";
+    var cw2=S.createLinearGradient(x+w,0,x,0);
+    cw2.addColorStop(0,"rgba(150,196,245,0.055)");cw2.addColorStop(1,"rgba(150,196,245,0)");
+    S.fillStyle=cw2;S.fillRect(x,y,w,h);S.restore();}
+}
+/* BAYS.reviewer.R — the sample archive.
+   Everything this room does ends with something being filed: loop 10 gave the
+   lens a specimen to look at, loop 8 gave the wall plates to sign, and there
+   was nowhere for any of it to go afterwards. Small labelled drawers, three of
+   them pulled, one lit from inside. */
+function sampleArchive(t,lit,st){
+  var x=700,y=440,off=st==="offline";
+  wallShadow(x,y,280,104);
+  plate(S,[[x,y],[x+280,y],[x+280,y+104],[x,y+104]],"#151d28","#0a0f16","#25313f");
+  for(var r4=0;r4<3;r4++)for(var c5=0;c5<7;c5++){
+    var dx2=x+8+c5*39, dy2=y+8+r4*31, pull=(r4*7+c5)%11===3;
+    plate(S,[[dx2,dy2],[dx2+35,dy2],[dx2+35,dy2+27],[dx2,dy2+27]],
+      pull?"#22303f":"#131b25","#080d14","#22303f");
+    if(pull){                                     // pulled out: a lit slot behind
+      S.fillStyle="rgba(2,5,10,0.8)";S.fillRect(dx2-3,dy2+2,4,23);
+      if(!off)emit(function(c){c.fillStyle="rgba(130,190,250,0.20)";c.fillRect(dx2-3,dy2+2,3,23);});}
+    S.fillStyle="rgba(160,186,214,"+(0.16*lit)+")";S.fillRect(dx2+1,dy2+1,33,1);
+    S.fillStyle="#39455a";S.fillRect(dx2+13,dy2+12,9,3);               // handle
+    S.fillStyle="rgba(206,220,236,0.20)";S.fillRect(dx2+4,dy2+5,16,3); // label
+    if((r4+c5)%4===0&&!off)emit(function(c){
+      c.fillStyle="rgba(79,208,122,0.55)";c.fillRect(dx2+29,dy2+20,3,3);});}
 }
 function inspectDesk(t,st){
   var x=372,y=566,w=204,off=st==="offline";
@@ -147,6 +475,17 @@ function inspectDesk(t,st){
   S.fillStyle="#1a2230";S.beginPath();S.arc(ax+31,yl-33,9,0,7);S.fill();
   if(!off)emit(function(c){var g3=c.createRadialGradient(ax+31,yl-33,1,ax+31,yl-33,17);g3.addColorStop(0,"rgba(196,232,255,0.55)");g3.addColorStop(1,"rgba(196,232,255,0)");c.fillStyle=g3;c.beginPath();c.arc(ax+31,yl-33,17,0,7);c.fill();});
   S.strokeStyle="rgba(196,232,255,0.5)";S.lineWidth=1;S.beginPath();S.arc(ax+31,yl-33,7,0,7);S.stroke();
+  /* Something under the lamp. The inspection desk had a light, an arm and a
+     bare worktop — a review station with nothing being reviewed on it. A
+     specimen plate directly beneath the lens, lit from above and casting on
+     the desk, is what the whole prop exists to point at. */
+  var spx=ax+31,spy=y-3;
+  S.fillStyle="rgba(0,0,0,0.4)";S.beginPath();S.ellipse(spx,spy+2,17,3.5,0,0,7);S.fill();
+  plate(S,[[spx-15,spy-4],[spx+15,spy-4],[spx+13,spy+2],[spx-13,spy+2]],"#1b2634","#0d141d","#31415a");
+  if(!off){emit(function(c){
+    c.fillStyle="rgba(150,214,255,0.5)";c.fillRect(spx-10,spy-2.5,20,2);
+    c.fillStyle="rgba(90,210,130,0.7)";c.fillRect(spx-9,spy-2.5,6,2);
+    c.fillStyle="rgba(230,100,100,0.7)";c.fillRect(spx+2,spy-2.5,4,2);});}
 }
 function verdictTower(t,st){
   var x=632,pt=496,baseY=612;
@@ -165,17 +504,106 @@ function docStack(x){for(var i=0;i<5;i++){S.fillStyle=i%2?"#cbd4e0":"#adb8c6";S.
 /* ===================== TRIAGE PROPS (dispatch room) ===================== */
 function kanban(t,st){
   var x=268,y=178,w=344,h=128,off=st==="offline",colw=(w-24)/4;
+  wallShadow(x,y,w,h,1.25);
   plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#20262e","#0e1216","#3a4048");
   S.fillStyle="#2f353c";S.fillRect(x+6,y+6,w-12,h-12);S.fillStyle="#3a4149";S.fillRect(x+6,y+6,w-12,1);
+  /* Chipped frame. This board is the one object in the fleet that gets touched
+     by hand all day — cards pinned, moved, pulled — and it was rendering as
+     factory-fresh extruded aluminium. The paint goes first at the corners and
+     along the bottom rail where hands rest. */
+  S.save();S.globalAlpha=off?0.3:0.75;
+  [[x+3,y+3,9,3],[x+w-13,y+3,10,3],[x+3,y+h-6,7,3],[x+w-11,y+h-6,8,3],
+   [x+w*0.34,y+h-5,22,2],[x+w*0.58,y+h-5,15,2],[x+2,y+h*0.4,3,14]].forEach(function(ch){
+    S.fillStyle="rgba(126,136,148,0.5)";S.fillRect(ch[0],ch[1],ch[2],ch[3]);});
+  S.restore();
   var cols=["247,189,78","92,180,255","201,139,255","95,206,155"];
   for(var c=0;c<4;c++){var cx2=x+12+c*colw;S.fillStyle="#242a30";S.fillRect(cx2,y+10,1,h-20);
     S.fillStyle="rgba("+cols[c]+","+(off?0.3:0.6)+")";S.fillRect(cx2+6,y+13,colw-14,3);
-    var n=off?2:(2+((c+(st==="working"?Math.floor(t):0))%3));
+    /* Idle triage is not an empty board — it is an unworked one. Working, the
+       cards are spread across all four columns and move; idle, they pile up in
+       the intake column and the other three run nearly dry. The board is the
+       only thing in this room that can show a backlog, so it should. */
+    var n=off?2:(st==="working"?(2+((c+Math.floor(t))%3)):(c===0?5:1));
     for(var k=0;k<n;k++){var cc=cols[(c+k)%4];S.fillStyle="rgba("+cc+","+(off?0.18:0.48)+")";S.fillRect(cx2+6,y+22+k*15,colw-14,11);S.fillStyle="rgba(0,0,0,0.3)";S.fillRect(cx2+6,y+22+k*15,colw-14,1);}
   }
+  /* The board is a metre-wide lit panel and the wall under it was black. It
+     spills a cool wash downward — and unlike the other two rooms this one is
+     colourless on purpose: the board's own colours are its data, and tinting
+     the room with them would make the wall look like it meant something. */
+  if(!off){S.save();S.globalCompositeOperation="lighter";
+    var kw=S.createLinearGradient(0,y+h,0,y+h+150);
+    kw.addColorStop(0,"rgba(150,175,205,"+(st==="working"?0.07:0.05)+")");
+    kw.addColorStop(1,"rgba(150,175,205,0)");
+    S.fillStyle=kw;S.fillRect(x-30,y+h,w+60,150);S.restore();}
+}
+/* Moved out of the signage bay, and down into a column with the zone clocks
+   and under the work-order board: instruments together, paper together. It
+   used to sit at (690,248) — dead centre of the room's own name, with the
+   sweep passing over the letters. */
+/* BAYS.triage.L — the pneumatic tube.
+   Dispatch is the room that moves things to people, and it did it entirely
+   through screens: a kanban board, a radar, a phone. A tube station is the one
+   piece of dispatch furniture that is physically about transit — you can see
+   the thing being sent. A carrier rises through the run while the box is
+   working, arrives at the head, and the head lamp answers. */
+function tubeStation(t,lit,st){
+  var x=286,off=st==="offline",work=st==="working";
+  var yt=330,yb=524;
+  wallShadow(x-4,yt,52,yb-yt);
+  // the run: a glass column in a steel frame
+  plate(S,[[x-4,yt],[x+48,yt],[x+48,yb],[x-4,yb]],"#1a212c","#0c111a","#2a3444");
+  S.fillStyle="#050a10";S.fillRect(x+6,yt+8,32,yb-yt-16);
+  var tg=S.createLinearGradient(x+6,0,x+38,0);
+  tg.addColorStop(0,"rgba(150,180,220,0.10)");tg.addColorStop(0.3,"rgba(150,180,220,0.02)");
+  tg.addColorStop(0.62,"rgba(190,214,246,"+(0.20*lit)+")");tg.addColorStop(1,"rgba(150,180,220,0.05)");
+  S.fillStyle=tg;S.fillRect(x+6,yt+8,32,yb-yt-16);
+  /* Two collars, not five. At 44px spacing they read as ladder rungs — the
+     prop said "climb me" in a room with nothing to climb to. A tube has a
+     joint where it passes each floor and nowhere else. */
+  [yt+58,yb-74].forEach(function(cl3){
+    S.fillStyle="#2c3646";S.fillRect(x-1,cl3,46,9);
+    S.fillStyle="rgba(190,214,246,"+(0.14*lit)+")";S.fillRect(x-1,cl3,46,1.4);
+    S.fillStyle="rgba(2,5,10,0.5)";S.fillRect(x-1,cl3+7.6,46,1.6);});
+  // the carrier, in transit while there is work moving
+  if(!off){var ph2=work?((t*0.42)%1):0.86, cy4=yb-24-ph2*(yb-yt-56);
+    plate(S,[[x+11,cy4],[x+33,cy4],[x+33,cy4+26],[x+11,cy4+26]],"#3b4658","#1d2532","#556277");
+    S.fillStyle="rgba(201,162,39,0.7)";S.fillRect(x+13,cy4+6,18,4);
+    S.fillStyle="rgba(220,236,255,0.16)";S.fillRect(x+14,cy4+2,16,1.6);
+    if(work)emit(function(c){var bg3=c.createLinearGradient(0,cy4+26,0,cy4+58);
+      bg3.addColorStop(0,"rgba(186,150,255,0.16)");bg3.addColorStop(1,"rgba(186,150,255,0)");
+      c.fillStyle=bg3;c.fillRect(x+8,cy4+26,28,32);});}
+  // send/receive head at the top, with its own lamp
+  plate(S,[[x-10,yt-34],[x+54,yt-34],[x+50,yt],[x-6,yt]],"#232c39","#101720","#37445a");
+  S.fillStyle="#0a0f16";S.fillRect(x+4,yt-26,36,14);
+  emit(function(c){var on3=!off&&(work?(Math.sin(t*3.4)>-0.2):(Math.sin(t*0.9)>0.6));
+    c.fillStyle="rgba(186,150,255,"+(on3?0.8:0.14)+")";c.fillRect(x+7,yt-23,30,8);});
+  S.fillStyle="rgba(190,214,246,"+(0.12*lit)+")";S.fillRect(x-10,yt-34,64,1.6);
+  // and the floor flange it lands on
+  plate(S,[[x-10,yb],[x+54,yb],[x+50,yb+14],[x-6,yb+14]],"#222b37","#0e141c","#33404f");
+}
+/* BAYS.triage.R — the duty roster.
+   The room routes work to people and named nobody. Six slots, each a plate in
+   a rail with a shift lamp: on duty, on call, off. It is the only prop in the
+   fleet that is about who rather than what, which is the whole difference
+   between a dispatch desk and a status screen. */
+function dutyBoard(t,lit,st){
+  var x=846,y=436,w=140,h=104,off=st==="offline";
+  wallShadow(x,y,w,h);
+  plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1d2029","#0d1014","#333846");
+  S.fillStyle="rgba(190,214,246,"+(0.10*lit)+")";S.fillRect(x,y,w,1.4);
+  for(var d3=0;d3<6;d3++){
+    var ry2=y+9+d3*15.5, on4=off?0:[1,1,2,0,1,2][d3];
+    S.fillStyle="#0f131a";S.fillRect(x+7,ry2,w-14,12);
+    S.fillStyle="rgba(198,212,232,0.20)";S.fillRect(x+11,ry2+3,44+((d3*13)%22),3);   // the name
+    S.fillStyle="rgba(150,170,196,0.12)";S.fillRect(x+11,ry2+8,26,1.4);
+    var col2=on4===1?"79,208,122":on4===2?"247,189,78":"70,80,96";
+    emit(function(c){c.fillStyle="rgba("+col2+","+(on4?0.75:0.3)+")";
+      c.fillRect(x+w-18,ry2+4,6,5);});}
+  S.fillStyle="rgba(186,150,255,"+(off?0.06:0.16)+")";S.fillRect(x+7,y+h-8,w-14,2.4);
 }
 function radar(t,st){
-  var cx2=690,cy2=248,r=34,off=st==="offline";
+  var cx2=706,cy2=478,r=34,off=st==="offline";
+  wallShadow(cx2-r*0.82,cy2-r*0.82,r*1.64,r*1.64);
   S.fillStyle="#0a1016";S.beginPath();S.arc(cx2,cy2,r,0,7);S.fill();
   S.strokeStyle="rgba(95,206,155,0.25)";S.lineWidth=1;for(var i=1;i<=3;i++){S.beginPath();S.arc(cx2,cy2,r*i/3,0,7);S.stroke();}
   S.beginPath();S.moveTo(cx2-r,cy2);S.lineTo(cx2+r,cy2);S.moveTo(cx2,cy2-r);S.lineTo(cx2,cy2+r);S.stroke();
@@ -183,10 +611,19 @@ function radar(t,st){
     c.fillStyle="rgba(95,206,155,0.18)";c.beginPath();c.moveTo(cx2,cy2);c.arc(cx2,cy2,r,a-0.5,a);c.closePath();c.fill();
     c.strokeStyle="rgba(120,240,180,0.7)";c.lineWidth=1.5;c.beginPath();c.moveTo(cx2,cy2);c.lineTo(cx2+Math.cos(a)*r,cy2+Math.sin(a)*r);c.stroke();
     [[0.5,1.2],[0.72,2.8],[0.4,4.6]].forEach(function(b){var bx=cx2+Math.cos(b[1])*r*b[0],by=cy2+Math.sin(b[1])*r*b[0];c.fillStyle="rgba(120,240,180,"+(0.35+0.4*Math.sin(t*3+b[1]))+")";c.fillRect(bx-1,by-1,2,2);});c.restore();});}
+  /* No sweep, no contacts, and a red cross where the trace should be. A radar
+     that is simply not animating looks like a radar with nothing on it, which
+     is a calm reading of a dead room; the cross is the difference between "no
+     traffic" and "no link". */
+  if(off){S.strokeStyle="rgba(255,70,58,0.45)";S.lineWidth=2;
+    S.beginPath();S.moveTo(cx2-r*0.5,cy2-r*0.5);S.lineTo(cx2+r*0.5,cy2+r*0.5);
+    S.moveTo(cx2+r*0.5,cy2-r*0.5);S.lineTo(cx2-r*0.5,cy2+r*0.5);S.stroke();}
   S.strokeStyle="#2a3038";S.lineWidth=2;S.beginPath();S.arc(cx2,cy2,r,0,7);S.stroke();
 }
+// Follows the radar down; the two of them are one instrument bank now.
 function switchboard(t,st){
-  var x=740,y=222,w=54,h=42,off=st==="offline";
+  var x=756,y=448,w=54,h=42,off=st==="offline";
+  wallShadow(x,y,w,h);
   plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1a2230","#0c1018","#2a3648");
   for(var r=0;r<3;r++)for(var c=0;c<5;c++){var on=!off&&((r*5+c+Math.floor(t*2))%3===0);S.fillStyle=on?"rgba(95,206,155,0.9)":"#22303e";S.fillRect(x+6+c*9,y+7+r*11,5,5);if(on){G.fillStyle="rgba(95,206,155,0.7)";G.fillRect(x+6+c*9,y+7+r*11,5,5);}}
 }
@@ -199,10 +636,118 @@ function mapConsole(t,st){
   if(!off)emit(function(c){c.save();c.globalCompositeOperation="lighter";var g6=c.createRadialGradient(x+w/2,y+1,2,x+w/2,y+1,70);g6.addColorStop(0,"rgba(90,150,220,0.15)");g6.addColorStop(1,"rgba(90,150,220,0)");c.fillStyle=g6;c.fillRect(x,y-14,w,30);
     for(var b=0;b<5;b++){var bx=x+26+b*((w-52)/4);c.fillStyle="rgba(120,190,255,"+(0.4+0.4*Math.sin(t*3+b))+")";c.fillRect(bx,y-2+((b%2)*4),2,2);}c.restore();});
 }
-function phoneBank(x){var y=612-30;plate(S,[[x,y],[x+40,y],[x+40,y+30],[x,y+30]],"#1a2230","#0c1018","#2a3648");for(var i=0;i<2;i++){S.fillStyle="#0e1620";S.fillRect(x+5+i*20,y+5,14,10);S.fillStyle="#3a4656";S.fillRect(x+7+i*20,y+7,10,2);}contactShadow(x+20,612,40);}
+/* A live call. The phone bank was two dark handsets in a box — furniture in the
+   one room whose entire job is routing things to people. One line now rings:
+   a lit lamp on the left handset with an expanding ring, which is the only
+   event-shaped thing in the dispatch room and reads instantly as "someone is
+   trying to reach this desk". Silent when the box is. */
+function phoneBank(x,t,st){var y=612-30,live=st&&st!=="offline";
+  plate(S,[[x,y],[x+40,y],[x+40,y+30],[x,y+30]],"#1a2230","#0c1018","#2a3648");
+  for(var i=0;i<2;i++){S.fillStyle="#0e1620";S.fillRect(x+5+i*20,y+5,14,10);S.fillStyle="#3a4656";S.fillRect(x+7+i*20,y+7,10,2);}
+  if(live){var rp2=(t*1.4)%1, on2=rp2<0.5?1:0.15;
+    emit(function(c){c.fillStyle="rgba(247,189,78,"+(0.85*on2)+")";c.fillRect(x+9,y+18,6,3);
+      c.save();c.globalCompositeOperation="lighter";
+      c.strokeStyle="rgba(247,189,78,"+(0.4*(1-rp2))+")";c.lineWidth=1.4;
+      c.beginPath();c.arc(x+12,y+19,4+16*rp2,0,7);c.stroke();c.restore();});}
+  contactShadow(x+20,612,40);}
 
-/* ===================== GRID-CELL MINIATURE (god-view LOD, hi-detail) ===================== */
-var REPOCOL=["#e0913d","#e6c34a","#a884ff","#3fb0e6","#7bc86a","#e0664a"];
+/* ===================== GRID-CELL MINIATURE (god-view LOD) =====================
+   The cell used to be a SECOND room. It had its own wall, its own floor, its
+   own overhead lamp, its own role prop and its own signage, and it shared
+   nothing with the room view but the robot sprite. That is the whole reason
+   fifteen loops of art landed in the console and exactly one of them reached
+   the view an operator actually scans: two functions drawing one subject drift
+   the moment either is edited, and nothing ever makes them meet again. The
+   ghost "SECTOR-7" the room lost in loop 11, the desk through everybody's
+   shins, the role props too small to read — all of it was this.
+
+   So the cell no longer draws a room. It renders the REAL one — the same
+   drawTarget, borrowed through the same seam the asset map uses — once per
+   unit into an offscreen still, blits that still every frame, and composites
+   over it only what has to keep moving. The god-view is a camera pointed at
+   the console now instead of a drawing of it, and the defects above are gone
+   because the code that drew them is gone.
+
+   The still is what makes it affordable. One full room costs roughly 2.5x the
+   seven miniatures it replaced, so a room per cell per frame would not
+   survive; miniStill owns the budget that keeps it to one render a frame. */
+
+/* The cell's camera: which rectangle OF the room a cell is a picture of.
+   The room and the cell are within 1% of the same aspect (1280x720 against
+   316x180), so fitting the whole frame is possible and was the first thing
+   tried — and it hands back a unit three-quarters the height it had when the
+   cell drew its own, in a view whose whole job is telling four vendors apart
+   at a glance. So the cell is framed rather than fitted: a rectangle wide
+   enough to keep the bay, the sign and the lit props, cropped off the deep
+   racks at either end, and pushed down so the floor line lands where the
+   miniature always had it. The unit comes back to roughly the size it was, and
+   now it is standing in the real room. */
+var MINI_ZOOM=0.78, MINI_CX=620, MINI_FLOOR=0.88;
+/* A fleet is a few dozen units and a window is one size, so the cache is small
+   by construction — but a roster that churns or a window dragged between two
+   displays would grow it forever, and each entry holds a canvas. Oldest out,
+   well above any real fleet. */
+var MINI_KEEP=64;
+function miniPrune(){
+  var ks=Object.keys(miniStills);if(ks.length<MINI_KEEP)return;
+  ks.sort(function(a,b){return miniStills[a].at-miniStills[b].at;});
+  for(var i=0;i<ks.length-MINI_KEEP+1;i++)delete miniStills[ks[i]];
+}
+function miniCrop(dW,dH){
+  var sw=Math.min(DW,DH*(dW/dH)*MINI_ZOOM), sh=sw*(dH/dW);
+  var sx=Math.max(0,Math.min(DW-sw,MINI_CX-sw/2));
+  var sy=Math.max(0,Math.min(DH-sh,FLOORY-MINI_FLOOR*sh));
+  return {sx:sx,sw:sw,sy:sy,sh:sh};
+}
+/* A point the room reported, in cell coordinates. */
+function miniAt(a,dx0,dy0,dW,dH){var cr=miniCrop(dW,dH);return {x:dx0+(a.x-cr.sx)*(dW/cr.sw),y:dy0+(a.y-cr.sy)*(dH/cr.sh)};}
+function mnow(){return (window.performance&&performance.now)?performance.now():0;}
+
+var miniStills={};      // key -> {cv,at,jit,anchors}
+var miniFills=0;        // stills rendered THIS frame — drawFloor resets it
+var miniCost=0;         // what a still last cost, in ms, smoothed
+var MINI_WARM=0;        // settle frames before the still is taken
+var MINI_BUDGET=1;      // stills per frame, at most
+var MINI_TTL=4;         // seconds a still stays fresh
+var MINI_TTL_SLOW=24;   // ... on a machine where a room costs real time
+var MINI_SLOW_MS=40;    // ... which is this
+/* The still for the unit the globals currently name, re-rendering it when the
+   one we hold is missing, the wrong size or stale — but never more than
+   MINI_BUDGET of them in a frame, and never on a cadence the machine cannot
+   afford. A cell whose turn has not come blits the still it already had, which
+   is a picture of the same unit a few seconds ago; a cell that has never had
+   one gets a placeholder for a frame or two. Refresh times are jittered by a
+   phase off the unit's own name so that seven cells never all come due
+   together, and the cadence itself backs off if a room turns out to be
+   expensive here — which is what a software renderer or a loaded machine looks
+   like from inside the page. */
+function miniStill(t,dW,dH){
+  /* Keyed by size as well as by unit: the app and the asset map ask for the
+     same units at different scales, and a still that has to be resized is a
+     still that has to be re-rendered anyway. */
+  var pw=Math.max(1,Math.round(dW*dpr)),ph=Math.max(1,Math.round(dH*dpr));
+  var key=BOX+"|"+AGENT+"|"+ROOM+"|"+STATE+"|"+pw+"x"+ph;
+  var e=miniStills[key],ttl=(miniCost>MINI_SLOW_MS?MINI_TTL_SLOW:MINI_TTL);
+  if(e&&(t-e.at)<ttl*e.jit)return e;
+  if(miniFills>=MINI_BUDGET)return e||null;
+  miniFills++;
+  if(!e){miniPrune();e=miniStills[key]={cv:oc(pw,ph),at:0,jit:0.7+0.6*(strPhase(key)/6.283),anchors:null};}
+  var cr=miniCrop(dW,dH),t0=mnow();
+  borrowRoom({agent:AGENT,room:ROOM,state:STATE,box:BOX,t:t,warm:MINI_WARM},function(){
+    var c=e.cv.getContext("2d");
+    c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+    c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
+    c.clearRect(0,0,pw,ph);
+    /* comp, not the chromatic split blit(): a 1.1px fringe scaled by 0.25 is
+       not visible at cell size and costs three full-frame tint passes. */
+    c.drawImage(comp,cr.sx,cr.sy,cr.sw,cr.sh,0,0,pw,ph);
+    e.anchors=lastAnchors;
+  });
+  e.at=t;
+  var d=mnow()-t0;miniCost=miniCost?miniCost*0.6+d*0.4:d;
+  return e;
+}
+
 function drawMini(t,mx,my,mw,mh){
   if(mx===undefined){mw=336;mh=252;mx=22;my=VH-mh-40;}
   var off=STATE==="offline",work=STATE==="working";
@@ -222,84 +767,78 @@ function drawMini(t,mx,my,mw,mh){
   var chip=work?[(ROOM==="builder"?"● BUILDING":ROOM==="reviewer"?"● REVIEWING":"● DISPATCH"),"#f7bd4e"]:off?["▲ SILENT","#ff5147"]:["● IDLE","#5fce9b"];
   X.font="700 10px ui-monospace,monospace";var cwd=X.measureText(chip[0]).width;
   X.fillStyle="rgba(0,0,0,0.5)";rr(X,mx+mw-cwd-26,my+11,cwd+16,18,5);X.fill();X.fillStyle=chip[1];X.fillText(chip[0],mx+mw-cwd-18,my+21);
+  /* Queue depth, promoted out of the diorama and into the chrome. It used to
+     be a line of 8px text on the miniature's own holo panel — the one prop
+     here that carried a fact rather than a mood. The room has a holo of its
+     own, but it is composed to be read at 1280 wide and says nothing legible
+     at a quarter of that, so the number moves to where a number can be read.
+     Everything left inside the viewport is now picture. */
+  var qt=off?"q—":"q"+dataOf(BOX,ROOM).queue.length;
+  X.font="700 10px ui-monospace,monospace";X.fillStyle="rgba(160,190,220,0.55)";
+  X.fillText(qt,mx+mw-cwd-32-X.measureText(qt).width,my+21);
   X.textBaseline="alphabetic";
-  // ---- diorama viewport ----
-  var dx0=mx+10,dy0=my+40,dW=mw-20,dH=mh-72,fY=dy0+dH*0.84;
+  // ---- diorama viewport: the room itself ----
+  var dx0=mx+10,dy0=my+40,dW=mw-20,dH=mh-72;
   X.save();rr(X,dx0,dy0,dW,dH,6);X.clip();
-  var wg=X.createLinearGradient(0,dy0,0,dy0+dH);wg.addColorStop(0,"#0a1019");wg.addColorStop(0.8,"#070c14");wg.addColorStop(1,"#03060c");X.fillStyle=wg;X.fillRect(dx0,dy0,dW,dH);
-  X.fillStyle="#04070d";X.fillRect(dx0,fY,dW,dy0+dH-fY);X.fillStyle="rgba(0,0,0,0.5)";X.fillRect(dx0,fY,dW,2);
-  // — curated, spacious: robot hero + one motivated light + role prop + separated holo —
-  var warm=ROOM==="builder", LB=warm?"255,204,138":ROOM==="reviewer"?"150,196,245":"176,150,240", LH=warm?"255,214,150":ROOM==="reviewer"?"200,230,255":"214,196,255";
-  var mrs=0.27,rcx=dx0+dW*0.36,rpx=rcx-260*mrs,rpy=fY-560*mrs;
-  X.strokeStyle="rgba(30,44,64,0.22)";X.lineWidth=1;X.beginPath();X.moveTo(dx0,dy0+dH*0.46);X.lineTo(dx0+dW,dy0+dH*0.46);X.stroke();
-  X.save();X.globalAlpha=0.07;X.fillStyle="#d9b23a";X.font="700 9px ui-monospace,monospace";X.fillText("SECTOR-7",dx0+dW*0.5,dy0+16);X.restore();
-  // role prop (far left): fabricator / diff-screen / kanban
-  if(ROOM==="builder"){
-    var fx=dx0+12,fw=26,ft=fY-82,fgr=X.createLinearGradient(0,ft,0,fY);fgr.addColorStop(0,"#161d29");fgr.addColorStop(1,"#0a0f16");X.fillStyle=fgr;X.fillRect(fx,ft,fw,fY-ft);
-    X.fillStyle="rgba(201,162,39,0.42)";X.fillRect(fx+3,ft+3,fw-6,3);
-    X.fillStyle="#04070c";X.fillRect(fx+4,ft+10,fw-8,52);
-    if(!off){X.globalCompositeOperation="lighter";var fg=X.createRadialGradient(fx+fw/2,fY-26,2,fx+fw/2,fY-26,22);fg.addColorStop(0,"rgba(255,160,70,"+(work?0.42:0.22)+")");fg.addColorStop(1,"rgba(255,160,70,0)");X.fillStyle=fg;X.fillRect(fx-6,ft,fw+12,fY-ft);X.globalCompositeOperation="source-over";X.fillStyle=work?"rgba(255,180,90,0.8)":"rgba(255,150,60,0.4)";X.fillRect(fx+fw/2-4,fY-38,8,24);}
-    X.fillStyle=off?"#ff5147":"#5fce9b";X.fillRect(fx+fw-6,ft+6,3,3);
-  } else if(ROOM==="reviewer"){
-    var sx=dx0+11,sy=fY-80,sw=30,sh=66,scr=off?0:t*(work?18:6);
-    X.fillStyle="#0c1220";X.fillRect(sx,sy,sw,sh);X.fillStyle="#07121e";X.fillRect(sx+3,sy+3,sw-6,sh-6);
-    for(var l=0;l<11;l++){var ly2=sy+5+((l*7+scr)%(sh-9));var kk=l%3,c2=kk===0?"90,200,120":kk===1?"210,90,90":"70,110,150";X.fillStyle="rgba("+c2+","+(off?0.12:0.52)+")";X.fillRect(sx+5,ly2,4+((l*13)%18),1.5);}
-    if(!off){X.globalCompositeOperation="lighter";var sg=X.createRadialGradient(sx+sw/2,sy+sh/2,2,sx+sw/2,sy+sh/2,28);sg.addColorStop(0,"rgba(90,160,220,0.14)");sg.addColorStop(1,"rgba(90,160,220,0)");X.fillStyle=sg;X.fillRect(sx-8,sy-8,sw+16,sh+16);X.globalCompositeOperation="source-over";}
-    X.fillStyle=off?"#ff5147":"#5fce9b";X.fillRect(sx+sw-6,sy+sh-6,3,3);
-  } else {
-    var bx=dx0+11,by=fY-78,bw=32,bh=64;X.fillStyle="#20262e";X.fillRect(bx,by,bw,bh);X.fillStyle="#2b3138";X.fillRect(bx+2,by+2,bw-4,bh-4);
-    var kc=["247,189,78","92,180,255","201,139,255"];
-    for(var cc3=0;cc3<3;cc3++){var kx=bx+3+cc3*10;X.fillStyle="rgba("+kc[cc3]+","+(off?0.3:0.6)+")";X.fillRect(kx,by+4,8,2);for(var kk3=0;kk3<3;kk3++){X.fillStyle="rgba("+kc[(cc3+kk3)%3]+","+(off?0.2:0.55)+")";X.fillRect(kx,by+9+kk3*13,8,9);}}
-    if(!off){X.globalCompositeOperation="lighter";var kg=X.createRadialGradient(bx+bw/2,by+bh/2,2,bx+bw/2,by+bh/2,28);kg.addColorStop(0,"rgba(150,120,220,0.12)");kg.addColorStop(1,"rgba(150,120,220,0)");X.fillStyle=kg;X.fillRect(bx-8,by-8,bw+16,bh+16);X.globalCompositeOperation="source-over";}
+  var still=miniStill(t,dW,dH);
+  if(still&&still.at){X.drawImage(still.cv,dx0,dy0,dW,dH);}
+  else{
+    /* No still yet — one frame, maybe two, while the budget comes round. The
+       room's own grade rather than a hole, so a cold grid reads as a room with
+       the lights coming up and not as a rendering failure. */
+    var PG=ROOM==="builder"?[38,28,18]:ROOM==="reviewer"?[22,32,46]:[32,26,48];
+    var pg=X.createLinearGradient(0,dy0,0,dy0+dH);
+    pg.addColorStop(0,rgba(PG[0],PG[1],PG[2],1));pg.addColorStop(1,"#03060c");
+    X.fillStyle=pg;X.fillRect(dx0,dy0,dW,dH);
   }
-  // overhead lamp (warm builder / cool reviewer) — wide soft apex for headroom
-  var lampx=rcx;
-  X.fillStyle="#141a24";X.fillRect(lampx-9,dy0+2,18,5);X.fillStyle="#20293a";X.fillRect(lampx-9,dy0+2,18,1);
-  if(!off){
-    X.globalCompositeOperation="lighter";
-    X.fillStyle="rgba("+LH+",0.85)";X.fillRect(lampx-3,dy0+7,6,2);
-    var cone=X.createLinearGradient(0,dy0+8,0,fY);cone.addColorStop(0,"rgba("+LB+","+(0.12*(work?1:0.82))+")");cone.addColorStop(1,"rgba("+LB+",0)");X.fillStyle=cone;X.beginPath();X.moveTo(lampx-12,dy0+8);X.lineTo(lampx+12,dy0+8);X.lineTo(lampx+54,fY);X.lineTo(lampx-54,fY);X.closePath();X.fill();
-    var hb=X.createRadialGradient(lampx,dy0+9,1,lampx,dy0+9,26);hb.addColorStop(0,"rgba("+LH+",0.26)");hb.addColorStop(1,"rgba("+LH+",0)");X.fillStyle=hb;X.beginPath();X.arc(lampx,dy0+9,26,0,7);X.fill();
-    var pool=X.createRadialGradient(lampx,fY,2,lampx,fY,48);pool.addColorStop(0,"rgba("+LB+",0.4)");pool.addColorStop(1,"rgba("+LB+",0)");X.fillStyle=pool;X.beginPath();X.ellipse(lampx,fY+2,48,8,0,0,7);X.fill();
-    X.globalCompositeOperation="source-over";
-  } else {
-    X.globalCompositeOperation="lighter";var rp=0.15+0.12*Math.abs(Math.sin(t*4));var rw2=X.createRadialGradient(lampx,dy0+dH*0.34,3,lampx,dy0+dH*0.34,dW*0.5);rw2.addColorStop(0,"rgba(255,60,50,"+rp+")");rw2.addColorStop(1,"rgba(255,60,50,0)");X.fillStyle=rw2;X.fillRect(dx0,dy0,dW,dH);X.globalCompositeOperation="source-over";
+  /* ---- the live layer -----------------------------------------------------
+     Everything above is a photograph a few seconds old, which is right for a
+     wall, a floor and a bench and wrong for the three things that ARE the
+     unit's state. These composite over the still every frame, off the anchors
+     the room reported for this exact picture, so they land on the unit rather
+     than near it. */
+  var an=still&&still.anchors;
+  if(work&&an){
+    var A0=ROOM==="builder"?"214,234,255":ROOM==="reviewer"?"180,224,255":"226,190,255",
+        A1=ROOM==="builder"?"120,190,255":ROOM==="reviewer"?"90,180,255":"180,120,255";
+    var hd2=miniAt(an.hand,dx0,dy0,dW,dH),mhx=hd2.x,mhy=hd2.y,fk=0.5+0.5*Math.sin(t*30);
+    X.save();X.globalCompositeOperation="lighter";
+    var ag=X.createRadialGradient(mhx,mhy,0.5,mhx,mhy,8);
+    ag.addColorStop(0,"rgba("+A0+","+(0.7*fk+0.25)+")");ag.addColorStop(0.4,"rgba("+A1+","+(0.4*fk)+")");ag.addColorStop(1,"rgba("+A1+",0)");
+    X.fillStyle=ag;X.beginPath();X.arc(mhx,mhy,8,0,7);X.fill();
+    X.fillStyle="rgba(255,255,255,"+(0.6*fk+0.2)+")";X.fillRect(mhx-0.8,mhy-0.8,1.7,1.7);
+    if(ROOM==="builder")for(var sp=0;sp<3;sp++){var sa2=(Math.sin(t*22+sp*2.1)+1)/2;X.fillStyle="rgba(255,200,120,"+(0.5*sa2)+")";X.fillRect(mhx+(sp-1)*1.6,mhy+2+sa2*6,1,1);}
+    X.restore();
   }
-  // ROBOT hero
-  X.imageSmoothingEnabled=true;
-  X.drawImage(robo,rpx,rpy,RW*mrs,RH*mrs);
-  X.globalCompositeOperation="lighter";X.globalAlpha=off?0.5:0.9;X.drawImage(rrim,rpx,rpy,RW*mrs,RH*mrs);
-  X.globalAlpha=0.5;X.filter="blur(2px)";X.drawImage(remit,rpx,rpy,RW*mrs,RH*mrs);X.filter="none";X.globalAlpha=1;X.globalCompositeOperation="source-over";
-  // working weld arc at the hand (was missing → looked broken)
-  if(work){var A0=ROOM==="builder"?"214,234,255":ROOM==="reviewer"?"180,224,255":"226,190,255",A1=ROOM==="builder"?"120,190,255":ROOM==="reviewer"?"90,180,255":"180,120,255";
-    var mhx=rpx+lastHand.x*mrs,mhy=rpy+lastHand.y*mrs,fk=0.5+0.5*Math.sin(t*30);X.save();X.globalCompositeOperation="lighter";var ag=X.createRadialGradient(mhx,mhy,0.5,mhx,mhy,8);ag.addColorStop(0,"rgba("+A0+","+(0.7*fk+0.25)+")");ag.addColorStop(0.4,"rgba("+A1+","+(0.4*fk)+")");ag.addColorStop(1,"rgba("+A1+",0)");X.fillStyle=ag;X.beginPath();X.arc(mhx,mhy,8,0,7);X.fill();X.fillStyle="rgba(255,255,255,"+(0.6*fk+0.2)+")";X.fillRect(mhx-0.8,mhy-0.8,1.7,1.7);
-    if(ROOM==="builder")for(var sp=0;sp<3;sp++){var sa=(Math.sin(t*22+sp*2.1)+1)/2;X.fillStyle="rgba(255,200,120,"+(0.5*sa)+")";X.fillRect(mhx+(sp-1)*1.6,mhy+2+sa*6,1,1);}
-    if(ROOM!=="builder"){ // tiny working screen (a smaller, simpler version of the big holo)
-      X.globalCompositeOperation="source-over";var C=ROOM==="reviewer"?"120,205,255":"201,139,255",pw=19,ph=14,pxp=mhx-2,pyp=mhy-ph-3;
-      X.fillStyle="rgba("+C+",0.10)";rr(X,pxp,pyp,pw,ph,2);X.fill();X.strokeStyle="rgba("+C+",0.85)";X.lineWidth=1;rr(X,pxp,pyp,pw,ph,2);X.stroke();
-      if(ROOM==="reviewer"){for(var l3=0;l3<3;l3++){var dc=l3===0?"90,210,130":l3===1?"230,100,100":"90,150,210";X.fillStyle="rgba("+dc+",0.85)";X.fillRect(pxp+3,pyp+3+l3*3,6+l3*3,1);}X.fillStyle="rgba(200,240,255,0.6)";X.fillRect(pxp+2,pyp+2+((t*20)%(ph-3)),pw-4,1);}
-      else{for(var b3=0;b3<3;b3++){X.fillStyle="rgba(201,139,255,0.75)";X.fillRect(pxp+4+b3*5,pyp+3,2,ph-6);if((b3+Math.floor(t*2))%2===0){X.fillStyle="rgba(247,189,78,0.9)";X.fillRect(pxp+3+b3*5,pyp+3+((t*15+b3*3)%(ph-7)),4,2);}}}
-    }
-    X.restore();}
-  if(off){X.fillStyle="rgba(255,60,50,"+(0.6+0.4*Math.abs(Math.sin(t*4)))+")";X.font="700 12px ui-monospace,monospace";X.textAlign="center";X.fillText("!",rcx,rpy+34);X.textAlign="left";}
-  // thin desk in front
-  X.fillStyle="#1a2230";X.fillRect(rcx-22,fY-6,50,6);X.fillStyle="#0d1119";X.fillRect(rcx-18,fY,4,7);X.fillRect(rcx+20,fY,4,7);
-  // compact holo panel (right, well separated) — state + queue
-  var hx=dx0+dW*0.60,hy=dy0+dH*0.28,hw=dW*0.33,hh=dH*0.40,C0=off?[255,74,66]:[95,214,255],fl=off?(Math.random()<0.2?0.4:0.9):0.95,cs=C0[0]+","+C0[1]+","+C0[2];
-  X.save();X.globalCompositeOperation="lighter";X.strokeStyle="rgba("+cs+",0.13)";X.lineWidth=1;X.beginPath();X.moveTo(rcx+14,fY-16);X.lineTo(hx+8,hy+hh);X.stroke();X.restore();
-  X.save();X.globalAlpha=fl;
-  X.fillStyle="rgba("+cs+",0.05)";rr(X,hx,hy,hw,hh,4);X.fill();
-  X.strokeStyle="rgba("+cs+",0.75)";X.lineWidth=1;rr(X,hx,hy,hw,hh,4);X.stroke();
-  X.lineWidth=1.5;[[hx,hy,1,1],[hx+hw,hy,-1,1],[hx,hy+hh,1,-1],[hx+hw,hy+hh,-1,-1]].forEach(function(k){X.beginPath();X.moveTo(k[0],k[1]+7*k[3]);X.lineTo(k[0],k[1]);X.lineTo(k[0]+7*k[2],k[1]);X.stroke();});
-  X.fillStyle="rgba("+cs+",0.9)";X.font="700 8px ui-monospace,monospace";X.fillText(off?"◇ SIGNAL LOST":"◆ DIAGNOSTIC",hx+7,hy+13);
-  X.font="8px ui-monospace,monospace";X.fillStyle="rgba("+cs+",0.62)";
-  X.fillText(off?"CRON  SILENT":(work?(ROOM==="builder"?"STATE BUILD":ROOM==="reviewer"?"STATE REVIEW":"STATE TRIAGE"):"STATE STANDBY"),hx+7,hy+29);
-  X.fillText(off?"LINK  ———":"QUEUE q"+dataOf(BOX,ROOM).queue.length,hx+7,hy+42);
-  X.strokeStyle="rgba("+cs+",0.8)";X.lineWidth=1;X.beginPath();for(var wxp=0;wxp<hw-14;wxp+=2){var amp=off?1.5:(work?4:2),wyp=hy+hh-8+Math.sin(wxp*0.4+t*(work?6:2.5))*amp;if(wxp===0)X.moveTo(hx+7+wxp,wyp);else X.lineTo(hx+7+wxp,wyp);}X.stroke();
-  X.restore();
-  // screen feel: faint scanlines + inner vignette
-  X.globalAlpha=0.045;X.fillStyle="#000";for(var sl=dy0;sl<dy0+dH;sl+=3)X.fillRect(dx0,sl,dW,1);X.globalAlpha=1;
-  var iv=X.createRadialGradient(dx0+dW/2,dy0+dH/2,dH*0.2,dx0+dW/2,dy0+dH/2,dH*0.78);iv.addColorStop(0,"rgba(0,0,0,0)");iv.addColorStop(1,"rgba(0,0,0,0.5)");X.fillStyle=iv;X.fillRect(dx0,dy0,dW,dH);
+  if(off){
+    /* A pulse, not a colour cast. The room already grades itself for offline —
+       the beacon comes up, the lamp goes out — so this only has to carry the
+       one thing a still cannot: that the fault is live and now. */
+    X.save();X.globalCompositeOperation="lighter";
+    var rp=0.05+0.06*Math.abs(Math.sin(t*4));
+    var rw2=X.createRadialGradient(dx0+dW*0.5,dy0+dH*0.34,3,dx0+dW*0.5,dy0+dH*0.34,dW*0.5);
+    rw2.addColorStop(0,"rgba(255,60,50,"+rp+")");rw2.addColorStop(1,"rgba(255,60,50,0)");
+    X.fillStyle=rw2;X.fillRect(dx0,dy0,dW,dH);X.restore();
+    /* The alert marker, over the unit's HEAD. It was pinned to rpy+34 — the top
+       of the sprite's bounding box plus a guess — which is the head for claude
+       and grok, who fill their box, and empty air well above codex, whose body
+       hangs low between six legs, and kimi, who is a wide drone low in frame.
+       The contact shadows already read a real anchor off the unit; there was no
+       reason this did not.
+       It is a badge rather than a bare glyph because a red "!" dropped on a
+       red-lit unit lands on whatever that unit's own warning lights are doing —
+       codex wears a red core exactly where the mark goes. A disc gives it a
+       silhouette that survives any body under it. */
+    var hd=an?miniAt(an.head,dx0,dy0,dW,dH):{x:dx0+dW*0.36,y:dy0+dH*0.34};
+    var by=Math.max(dy0+11,hd.y-11),pu=0.6+0.4*Math.abs(Math.sin(t*4));
+    X.save();
+    X.fillStyle="rgba(10,4,4,0.85)";X.beginPath();X.arc(hd.x,by,7.5,0,7);X.fill();
+    X.strokeStyle="rgba(255,70,58,"+pu+")";X.lineWidth=1.4;X.beginPath();X.arc(hd.x,by,7.5,0,7);X.stroke();
+    X.fillStyle="rgba(255,120,110,"+(0.75+0.25*pu)+")";
+    X.font="700 11px ui-monospace,monospace";X.textAlign="center";X.textBaseline="middle";
+    X.fillText("!",hd.x,by+0.5);X.textAlign="left";X.textBaseline="alphabetic";
+    X.restore();
+  }
   X.restore();X.restore();
 }
 
@@ -331,8 +870,13 @@ var ROSTER=[
 var CELLW=336, CELLH=252, GAPX=28, GAPY=26, MARGINL=44;
 var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragX=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
 function floorTotalW(){var cols=Math.ceil(ROSTER.length/2);return MARGINL*2+cols*CELLW+(cols-1)*GAPX;}
-function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sl=lastHand,sb=BOX;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;BOX=UNITID(unit);var info=buildRobo(t,unit.state);lastHand=info.hand;drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;lastHand=sl;BOX=sb;}
+/* One cell. It used to build the robot itself and hand drawMini the hand and
+   the footprints; the cell renders a whole room now and borrowRoom carries
+   every one of those globals across, so all that is left here is saying which
+   unit this cell is. */
+function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;BOX=UNITID(unit);drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;}
 function drawFloor(t){
+  miniFills=0;   // one room render per frame, spent by whichever cell asks first
   X.setTransform(dpr,0,0,dpr,0,0);X.imageSmoothingEnabled=true;X.textAlign="left";X.globalAlpha=1;X.globalCompositeOperation="source-over";
   X.fillStyle="#03060d";X.fillRect(0,0,VW,VH);
   var vg=X.createRadialGradient(VW/2,VH*0.36,VH*0.15,VW/2,VH*0.5,VH);vg.addColorStop(0,"rgba(20,32,52,0.22)");vg.addColorStop(1,"rgba(0,0,0,0)");X.fillStyle=vg;X.fillRect(0,0,VW,VH);
@@ -779,12 +1323,77 @@ function tickerEvent(){if(VIEW!=="floor"||LIVE)return;var alive=ROSTER.filter(fu
   s.appendChild(el);while(s.childNodes.length>30)s.removeChild(s.firstChild);s.scrollTop=s.scrollHeight;}
 
 /* ===================== HERO ROBOT (heavy armored builder) ===================== */
-function buildRobo(t,st){ return AGENT==="codex"?buildCodex(t,st):AGENT==="grok"?buildGrok(t,st):AGENT==="kimi"?buildKimi(t,st):buildClaude(t,st); }
-function buildRim(){
+/* Modelling light — the one pass that makes these read as volumes.
+   Every unit is assembled out of plate() calls, and plate() is a two-stop
+   vertical gradient fitted to each polygon's own bounding box. So a pauldron
+   and a boot were lit identically: each got its own private little sky. The
+   result is a body where no surface is brighter for being higher or nearer the
+   lamp, which is exactly the recipe for a flat cut-out — and it is why the rim
+   light has been carrying all of the separation on its own since loop 6.
+   One pass in body space, source-atop so it lands only on the silhouette:
+   the lamp is directly overhead (LAMPX === ROBOX), so upper surfaces gain, the
+   recess under the chest and between the legs loses, and the deck throws a
+   cool bounce back onto the lowest quarter. Deliberately not per-agent — this
+   is the ROOM's light, and it has no opinion about who is standing in it. */
+function modelLight(offl){
+  var k=offl?0.4:1;
+  RB.save();RB.globalCompositeOperation="source-atop";
+  var key=RB.createLinearGradient(0,150,0,470);
+  key.addColorStop(0,"rgba(206,226,255,"+(0.125*k)+")");
+  key.addColorStop(0.30,"rgba(186,206,238,"+(0.045*k)+")");
+  key.addColorStop(0.68,"rgba(2,6,14,0.10)");
+  key.addColorStop(1,"rgba(2,6,14,"+(0.20+0.06*(1-k))+")");
+  RB.fillStyle=key;RB.fillRect(0,0,RW,RH);
+  // deck bounce: cool, weak, and only on what is close enough to the floor
+  var bnc=RB.createLinearGradient(0,RH-142,0,RH-12);
+  bnc.addColorStop(0,"rgba(104,146,196,0)");
+  bnc.addColorStop(1,"rgba(104,146,196,"+(0.105*k)+")");
+  RB.fillStyle=bnc;RB.fillRect(0,0,RW,RH);
+  RB.restore();
+}
+/* Cavity occlusion. modelLight (loop 11) is a sky: it knows how high a surface
+   sits and nothing about what is directly above it. So a chest plate that
+   overhangs an abdomen by 8cm, a helmet sitting on a collar, a bezel standing
+   proud of the glass it surrounds — every one of those joins stayed open, and
+   an overhang that casts nothing reads as a decal on a flat panel rather than
+   as a part in front of another part. This is the short-range half of the same
+   light: a hard falloff a few pixels deep, immediately under whatever is in
+   front. It is the cheapest possible ambient occlusion and it is what makes
+   the difference between layered and printed. */
+function cavity(c,x,y,w,h,a){
+  var cg3=c.createLinearGradient(0,y,0,y+h);
+  cg3.addColorStop(0,"rgba(2,5,10,"+a+")");
+  cg3.addColorStop(0.55,"rgba(2,5,10,"+(a*0.34)+")");
+  cg3.addColorStop(1,"rgba(2,5,10,0)");
+  c.fillStyle=cg3;c.fillRect(x,y,w,h);
+}
+function buildRobo(t,st){
+  var info=AGENT==="codex"?buildCodex(t,st):AGENT==="grok"?buildGrok(t,st):AGENT==="kimi"?buildKimi(t,st):buildClaude(t,st);
+  /* Here rather than in drawRobot, because drawMini renders the god-view
+     thumbnails through this same function and would otherwise show four units
+     lit differently from the four in the console. */
+  modelLight(st==="offline");
+  return info;
+}
+/* The rim light — the bright hairline down each unit's edges, and the single
+   biggest thing separating it from the room behind it.
+   It was ONE gradient, warm on the left and cyan on the right, for all four
+   units. Which meant the fleet's four vendor colours existed only in lights
+   and screens: switch a claude for a kimi and the outline of the thing was
+   identical. The rim is a large, always-visible surface and it was saying
+   nothing about who this was.
+   Now the KEY side carries the vendor's own colour and the fill side keeps the
+   room's cool bounce, so each unit is identifiable from its edge alone — which
+   is the only part of it that survives at grid-cell size. */
+function buildRim(vend){
+  var V=vend||[255,170,90];
   RR.globalCompositeOperation="source-over";RR.drawImage(robo,0,0);
   RR.globalCompositeOperation="destination-out";RR.drawImage(robo,-2.4,1.8);RR.drawImage(robo,-1.6,-2.6);
   RR.globalCompositeOperation="source-in";
-  var rg=RR.createLinearGradient(70,0,450,0);rg.addColorStop(0,rgba(255,170,90,0.95));rg.addColorStop(0.5,rgba(150,175,205,0.4));rg.addColorStop(1,rgba(95,214,255,1));
+  var rg=RR.createLinearGradient(70,0,450,0);
+  rg.addColorStop(0,rgba(V[0],V[1],V[2],0.95));
+  rg.addColorStop(0.42,rgba((V[0]+150)/2,(V[1]+175)/2,(V[2]+205)/2,0.45));
+  rg.addColorStop(1,rgba(95,214,255,1));
   RR.fillStyle=rg;RR.fillRect(0,0,RW,RH);RR.globalCompositeOperation="source-over";
 }
 function buildClaude(t,st){
@@ -850,6 +1459,39 @@ function buildClaude(t,st){
   rivet(g,cx-52,246+breath,eH);rivet(g,cx+52,246+breath,eH);rivet(g,cx-48,292+breath,eH);rivet(g,cx+48,292+breath,eH);
   // scratches (battle wear)
   if(!offl){g.strokeStyle="rgba(120,140,170,0.25)";g.lineWidth=1;g.beginPath();g.moveTo(cx+14,244+breath);g.lineTo(cx+30,258+breath);g.moveTo(cx-24,270+breath);g.lineTo(cx-12,282+breath);g.stroke();}
+  /* Stencilled unit marking, and paint worn off the plate edges.
+     A fleet vehicle carries its designation, and every plate on this model met
+     its neighbour at a perfectly clean line — which is what made a heavy mech
+     read as a rendered solid rather than as something assembled out of parts
+     that have been knocked about. Geometric, not text: at grid-cell size the
+     chest is 12px across, so a glyph would be mush, but a stencil BLOCK still
+     reads as a marking. */
+  g.save();g.globalAlpha=offl?0.25:0.5;
+  g.fillStyle="#c9a227";g.fillRect(cx-46,272+breath,3,12);g.fillRect(cx-40,272+breath,3,12);
+  g.fillStyle="rgba(201,162,39,0.6)";g.fillRect(cx-46,286+breath,9,2);
+  g.restore();
+  // worn edges: a bright hairline along the top lip of each big plate
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.22)+")";g.lineWidth=1;
+  g.beginPath();g.moveTo(cx-32,220+breath);g.lineTo(cx+32,220+breath);
+  g.moveTo(cx-28,306+breath);g.lineTo(cx+28,306+breath);
+  g.moveTo(cx-30,344+breath);g.lineTo(cx+30,344+breath);g.stroke();
+  /* Sternum housing and collarbone struts.
+     The reactor was a lit circle cut into a flat slab: the single largest
+     surface on the unit was one polygon, and the brightest thing on it had no
+     mounting. Once the modelling light landed, that slab was the flattest
+     region on any of the four. A raised centre housing gives the torso a third
+     dimension — the chest now steps forward toward the viewer — and two struts
+     from the collar to the shoulder joints explain how the arms are carried.
+     Drawn before the core, so the core is set INTO this rather than onto it. */
+  var stY=234+breath;
+  plate(g,[[cx-30,stY+2],[cx-22,stY-10],[cx+22,stY-10],[cx+30,stY+2],[cx+27,stY+62],[cx-27,stY+62]],"#2b3648","#171f2c",ed);
+  g.fillStyle="rgba(168,192,226,"+(offl?0.08:0.20)+")";
+  poly(g,[[cx-22,stY-10],[cx+22,stY-10],[cx+30,stY+2],[cx-30,stY+2]]);g.fill();
+  g.strokeStyle="rgba(4,8,14,0.55)";g.lineWidth=1.4;
+  g.beginPath();g.moveTo(cx-30,stY+2);g.lineTo(cx-27,stY+62);g.moveTo(cx+30,stY+2);g.lineTo(cx+27,stY+62);g.stroke();
+  [-1,1].forEach(function(sg3){                       // collarbone struts to the shoulders
+    plate(g,[[cx+sg3*20,stY-8],[cx+sg3*30,stY-12],[cx+sg3*56,stY+6],[cx+sg3*50,stY+14]],sM,sB,ed);
+    rivet(g,cx+sg3*48,stY+8,eH);});
   // ---- REACTOR CORE (recessed, glowing) ----
   var coreY=262+breath;
   RB.fillStyle="#03060c";RB.beginPath();RB.arc(cx,coreY,22,0,7);RB.fill();
@@ -859,6 +1501,17 @@ function buildClaude(t,st){
   [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,9,0,7);c.fill();return;}
     var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,20);cg.addColorStop(0,rgba(255,225,160,corePulse));cg.addColorStop(0.4,rgba(255,150,60,0.7*corePulse));cg.addColorStop(1,"rgba(255,120,40,0)");c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,20,0,7);c.fill();
     c.fillStyle=rgba(255,240,210,corePulse);c.beginPath();c.arc(cx,coreY,5,0,7);c.fill(); });
+  /* The core lights the chest it is set into. Every emissive on this model
+     glowed into the bloom buffer and then lit nothing — a reactor bright
+     enough to read across a room, sitting in plate armour that stayed the
+     same colour as the shins. Additive on the BODY layer, not the emissive
+     one: this is the light arriving on the plates, not more glow leaving. */
+  if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    var bounce=RB.createRadialGradient(cx,coreY,4,cx,coreY,86);
+    bounce.addColorStop(0,rgba(255,150,60,0.30*corePulse));
+    bounce.addColorStop(0.5,rgba(220,110,40,0.11*corePulse));
+    bounce.addColorStop(1,"rgba(200,90,30,0)");
+    RB.fillStyle=bounce;RB.beginPath();RB.arc(cx,coreY,86,0,7);RB.fill();RB.restore();}
 
   // ---------- COLLAR / NECK ----------
   plate(g,[[cx-30,214+breath],[cx+30,214+breath],[cx+22,226+breath],[cx-22,226+breath]],sT,sM,ed);
@@ -908,8 +1561,13 @@ function buildClaude(t,st){
       [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(201,139,255,0.75);c.fillRect(h.x+2,h.y-9,4,5);}}); }
   }
 
-  // ---------- HEAD (small, menacing helmet) ----------
-  var hy=150+breath, hcx=cx;
+  /* ---------- HEAD (small, menacing helmet) ----------
+     Powered down, the head drops and pitches forward. Offline claude was
+     previously the working model with the lights switched off and every joint
+     still holding a parade stance, which is the one thing a dead machine does
+     not do — and on the god-view grid "dark" alone is not a shape, it is just
+     a dimmer version of the same shape. */
+  var hy=150+breath+(offl?13:0), hcx=cx+(offl?5:0);
   // neck
   plate(g,[[hcx-9,206+breath],[hcx+9,206+breath],[hcx+7,196+breath],[hcx-7,196+breath]],sM,sB,null);
   // helmet dome + jaw (angular)
@@ -919,17 +1577,109 @@ function buildClaude(t,st){
   pl(g,hcx,hy-10,hcx,hy+2,rc,1);
   // side vents / breather
   [[-1],[1]].forEach(function(k){var s=k[0];RB.fillStyle=rc;for(var v=0;v<3;v++)RB.fillRect(hcx+s*16-(s<0?4:0),hy+16+v*6,4,3);});
-  // visor slit (glow, horizontal, angled down = menacing)
+  /* Visor. It was a flat two-stop gradient across a slit, which at this size
+     reads as an orange sticker — the head is ~50px tall in the room view and
+     under 20 in a grid cell, so it gets exactly one shape to make an
+     impression with. What it needed was depth: a brow casting into the recess,
+     a hot core that falls off to the sides rather than sliding left-to-right,
+     and a lens highlight to say there is glass in front of it. */
   RB.fillStyle="#03060d";poly(RB,[[hcx-20,hy+14],[hcx+20,hy+14],[hcx+18,hy+26],[hcx-18,hy+26]]);RB.fill();
-  [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#20262e";c.fillRect(hcx-16,hy+18,32,3);return;}
-    var vg=c.createLinearGradient(hcx-18,0,hcx+18,0);vg.addColorStop(0,rgba(255,170,80,corePulse));vg.addColorStop(1,rgba(255,120,50,corePulse));c.fillStyle=vg;poly(c,[[hcx-17,hy+16],[hcx+17,hy+16],[hcx+15,hy+24],[hcx-15,hy+24]]);c.fill();
-    c.fillStyle=rgba(255,240,210,corePulse);c.fillRect(hcx-14,hy+18,7,2); });
-  // antenna
+  // brow shadow into the socket — the cheapest depth cue on the whole model
+  var bs=RB.createLinearGradient(0,hy+12,0,hy+22);bs.addColorStop(0,"rgba(0,0,0,0.75)");bs.addColorStop(1,"rgba(0,0,0,0)");
+  RB.fillStyle=bs;poly(RB,[[hcx-20,hy+13],[hcx+20,hy+13],[hcx+19,hy+22],[hcx-19,hy+22]]);RB.fill();
+  [RB,RE].forEach(function(c){ if(offl){
+      /* Not a flat grey bar. A visor that has just lost power holds a last
+         ember at one end — it reads as "died" rather than "was drawn dark",
+         and it is the only warm pixel left on the unit, so the eye finds it. */
+      c.fillStyle="#20262e";c.fillRect(hcx-16,hy+18,32,3);
+      var em=c.createLinearGradient(hcx-16,0,hcx+16,0);
+      em.addColorStop(0,"rgba(120,44,18,0.5)");em.addColorStop(0.42,"rgba(60,24,12,0.2)");em.addColorStop(1,"rgba(30,14,10,0)");
+      c.fillStyle=em;c.fillRect(hcx-16,hy+18,32,3);return;}
+    // hot at the middle, cooling toward both corners
+    var vg=c.createLinearGradient(hcx-18,0,hcx+18,0);
+    vg.addColorStop(0,rgba(190,70,20,0.75*corePulse));
+    vg.addColorStop(0.34,rgba(255,170,80,corePulse));
+    vg.addColorStop(0.5,rgba(255,226,180,corePulse));
+    vg.addColorStop(0.66,rgba(255,150,60,corePulse));
+    vg.addColorStop(1,rgba(190,70,20,0.75*corePulse));
+    c.fillStyle=vg;poly(c,[[hcx-17,hy+16],[hcx+17,hy+16],[hcx+15,hy+24],[hcx-15,hy+24]]);c.fill();
+    c.fillStyle=rgba(255,244,222,corePulse);c.fillRect(hcx-6,hy+18,12,2); });
+  /* Standby sweep. Idle claude was the working model with the effects turned
+     off — identical pixels, so on the grid "waiting for work" and "doing work"
+     were the same picture. A slow bright cell tracking across the visor is the
+     unit saying it is powered and scanning, and it only runs when idle, so the
+     two states can never be confused again. */
+  if(!offl&&!work){var sw3=hcx-15+((t*11)%30);
+    [RB,RE].forEach(function(c){c.fillStyle=rgba(255,236,206,0.5);c.fillRect(sw3,hy+18,4,2);});}
+  // glass: a specular streak across the top of the slit, not part of the emission
+  RB.fillStyle="rgba(255,236,214,"+(offl?0.05:0.3)+")";poly(RB,[[hcx-15,hy+16],[hcx+4,hy+16],[hcx+1,hy+18.5],[hcx-15,hy+18.5]]);RB.fill();
+  // dome specular, keyed to the lamp above and left
+  if(!offl){RB.strokeStyle="rgba(150,178,214,0.22)";RB.lineWidth=2.4;RB.beginPath();RB.moveTo(hcx-19,hy+8);RB.quadraticCurveTo(hcx-13,hy-5,hcx-1,hy-6);RB.stroke();}
+  // jaw grille, so the lower half of the helmet is not a blank plate
+  RB.fillStyle=rc;for(var jw=0;jw<3;jw++)RB.fillRect(hcx-9+jw*7,hy+30,5,9);
+  RB.fillStyle="rgba(90,110,140,0.3)";RB.fillRect(hcx-11,hy+28,24,1.5);
+  /* Antenna beacon. It was a constant red dot — an aircraft warning light that
+     never blinks, which is the one thing they all do. Now it strobes on a
+     double-flash and throws a short halo, so the highest point on the unit has
+     the only hard rhythm in the frame. */
   pl(g,hcx+18,hy-4,hcx+24,hy-18,eH,1.6);
-  [RB,RE].forEach(function(c){if(!offl){c.fillStyle="rgba(255,80,70,0.9)";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();}});
+  if(!offl){var bt=(t*0.9)%1, bl=(bt<0.08||(bt>0.16&&bt<0.24))?1:0.12;
+    [RB,RE].forEach(function(c){
+      var bg2=c.createRadialGradient(hcx+24,hy-18,0.5,hcx+24,hy-18,11);
+      bg2.addColorStop(0,"rgba(255,110,96,"+(0.7*bl)+")");bg2.addColorStop(1,"rgba(255,80,70,0)");
+      c.fillStyle=bg2;c.beginPath();c.arc(hcx+24,hy-18,11,0,7);c.fill();
+      c.fillStyle="rgba(255,"+(80+120*bl)+",70,"+(0.35+0.6*bl)+")";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();});}
 
-  buildRim();
-  return {hand:handR||{x:cx,y:400},coreY:262+breath,hy:hy,offl:offl,work:work};
+  /* What the chest is standing in front of. The chest plate overhangs the
+     abdomen, the pelvis overhangs the thighs and the collar overhangs the
+     sternum housing loop 11 added — three joins that were open seams. */
+  /* Soot. Both stacks have been venting since loop 3 and the plate around
+     them was factory-clean — the one place on this unit where you can see what
+     it has been doing, and it looked unused. Heaviest at the lip, fading up
+     the stack the way a deposit actually builds. */
+  [[-52],[52]].forEach(function(k){var bx3=cx+k[0];
+    var so=g.createRadialGradient(bx3,200+breath,2,bx3,200+breath,26);
+    so.addColorStop(0,"rgba(10,8,7,0.42)");so.addColorStop(0.55,"rgba(14,11,9,0.18)");
+    so.addColorStop(1,"rgba(14,11,9,0)");
+    g.fillStyle=so;g.fillRect(bx3-26,178+breath,52,52);});
+  /* Hips and knee pivots. Every limb on this unit met its body at a straight
+     edge — the arms come off a pauldron, the legs come out of a tasset, and
+     nothing anywhere said which way any of it is allowed to move. A ball in a
+     socket is the whole vocabulary: one dark sphere, one lit crescent on the
+     lamp side, one bolt at the knee. It costs four shapes per joint and it is
+     the difference between a figure and a mechanism. */
+  /* Speculars. modelLight is diffuse — it says how much light a surface
+     receives and nothing about how sharply it gives it back, so every plate on
+     every unit has had the reflectivity of matte paint. A specular is the
+     small hard hit where a curved surface aims the lamp straight at you, and
+     it is the last thing separating painted metal from metal. Two per unit,
+     on the surfaces that are actually facing up: the pauldron crowns. */
+  [-1,1].forEach(function(sg8){var px4=cx+sg8*66;
+    g.save();g.globalAlpha=offl?0.14:0.55;
+    var spg=g.createLinearGradient(0,222+breath,0,240+breath);
+    spg.addColorStop(0,"rgba(226,238,255,0.75)");spg.addColorStop(1,"rgba(226,238,255,0)");
+    g.fillStyle=spg;
+    poly(g,[[px4-sg8*30,224+breath],[px4+sg8*2,220+breath],[px4+sg8*4,229+breath],[px4-sg8*28,233+breath]]);g.fill();
+    g.restore();});
+  [-1,1].forEach(function(sg5){
+    var hx2=cx+sg5*31, hy3=357+breath*0.85;
+    g.fillStyle="#04070d";g.beginPath();g.arc(hx2,hy3,11,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.6;g.beginPath();g.arc(hx2,hy3,11,0,7);g.stroke();
+    var hb=g.createRadialGradient(hx2-3,hy3-4,1,hx2,hy3,11);
+    hb.addColorStop(0,"rgba(148,172,206,"+(offl?0.20:0.46)+")");
+    hb.addColorStop(0.55,"rgba(56,68,88,0.5)");hb.addColorStop(1,"rgba(4,7,13,0.7)");
+    g.fillStyle=hb;g.beginPath();g.arc(hx2,hy3,8.4,0,7);g.fill();
+    var kx3=cx+sg5*30;
+    g.fillStyle="#05080e";g.beginPath();g.arc(kx3+sg5*17,449,6,0,7);g.fill();
+    g.fillStyle="rgba(150,174,208,"+(offl?0.12:0.30)+")";g.beginPath();g.arc(kx3+sg5*17-1,447.6,3,0,7);g.fill();
+    rivet(g,kx3+sg5*17,449,eH);});
+  cavity(g,cx-31,297+breath,62,34,0.44);
+  cavity(g,cx-40,375+breath*0.8,80,28,0.34);
+  cavity(g,cx-25,225+breath,50,17,0.30);
+  buildRim(offl?[92,86,80]:[255,170,90]);       // claude: its own orange on the key side
+  // two boots, flat on the deck — see FEET in drawRobot
+  return {hand:handR||{x:cx,y:400},coreY:262+breath,hy:hy,offl:offl,work:work,
+          feet:[{x:cx-32,y:560,w:30},{x:cx+28,y:560,w:30}]};
 }
 
 /* ===================== CODEX — heavy armored 8-legged spider (teal) ===================== */
@@ -949,18 +1699,45 @@ function buildCodex(t,st){
   function joint(c,x,y,r){c.fillStyle=sT;c.beginPath();c.arc(x,y,r,0,7);c.fill();c.fillStyle=eH;c.beginPath();c.arc(x-1,y-1,1.2,0,7);c.fill();}
 
   // ---- 8 legs (behind body) ----
-  var rootY=[-4,6,16], footX=[150,106,60], footY=[550,558,552], kneeH=[74,92,78]; // 6 legs, wider stance
+  /* Stance. A spider that is hunting braces wide; a spider that is waiting
+     draws its legs in and settles. Idle codex used to hold the full hunting
+     stance with the effects switched off, so the two states were the same
+     picture — now the footprint narrows by a fifth and the knees ride lower,
+     which also pulls the six contact shadows in with it for free. */
+  var rest=(!work&&!offl)?1:0;
+  var rootY=[-4,6,16], footY=[550,558,552];
+  var footX=[150,106,60].map(function(v){return Math.round(v*(rest?0.79:1));});
+  var kneeH=[74,92,78].map(function(v){return v*(rest?0.72:1);});
   function drawLeg(sgn,i){
     var rx=cx+sgn*24, ry=BY+rootY[i], fx=cx+sgn*footX[i], fy=footY[i];
     var k1h=Math.max(12,kneeH[i]-slump*1.3);
     var k1x=cx+sgn*(footX[i]*0.64+16), k1y=BY-k1h;                    // knee: high → steep femur
     var k2x=cx+sgn*(footX[i]+30), k2y=BY+(fy-BY)*(0.56+(offl?0.16:0)); // ankle: low + well beyond foot → sharp flex
-    g.fillStyle=sM;g.beginPath();g.arc(rx,ry,5.5,0,7);g.fill();  // coxa stub
+    /* Coxa socket. The knee and the ankle have had proper joints since loop
+       2 and the place each leg meets the BODY was a 5.5px dot — so eight legs
+       appeared to emerge from the hull rather than to be mounted on it. An
+       armoured collar with a lit rim, and the hull side of the joint darker
+       than the leg side, which is what says one goes inside the other. */
+    g.fillStyle="#04080c";g.beginPath();g.arc(rx,ry,9,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(rx,ry,9,0,7);g.stroke();
+    var cxg=g.createRadialGradient(rx-sgn*3,ry-3,1,rx,ry,9);
+    cxg.addColorStop(0,"rgba(150,182,196,"+(offl?0.16:0.38)+")");
+    cxg.addColorStop(0.6,"rgba(48,62,72,0.45)");cxg.addColorStop(1,"rgba(3,7,11,0.75)");
+    g.fillStyle=cxg;g.beginPath();g.arc(rx,ry,6.6,0,7);g.fill();
+    g.fillStyle=sM;g.beginPath();g.arc(rx+sgn*3,ry,4.4,0,7);g.fill();  // coxa stub
     limbSeg(g,rx,ry,k1x,k1y,7.5,5.5,sM,sB);   // femur: up + out
     limbSeg(g,k1x,k1y,k2x,k2y,5.5,4,sT,sB);   // tibia: down + out past the foot
     limbSeg(g,k2x,k2y,fx,fy,4.5,2.6,sM,sB);   // tarsus: down + in to the foot (the flex)
     joint(g,k1x,k1y,5.5); joint(g,k2x,k2y,4.5);
+    /* Claws. Each leg ended in a small triangle — a point, with nothing that
+       explains how six of these hold a heavy shell steady. Two hooked tips
+       splayed against the direction of load is what an insect foot actually
+       does, and it gives the contact shadows something to be cast BY. */
     g.fillStyle=sB;g.beginPath();g.moveTo(fx-3,fy-3);g.lineTo(fx+3,fy-3);g.lineTo(fx+sgn*2,fy+5);g.closePath();g.fill();
+    g.strokeStyle=sT;g.lineWidth=1.6;g.lineCap="round";
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx-sgn*4,fy+4,fx-sgn*6,fy+1);g.stroke();
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx+sgn*4,fy+5,fx+sgn*7,fy+2);g.stroke();
+    g.lineCap="butt";
     if(!offl){RB.fillStyle=te(0.85);RB.fillRect(fx-1,fy-4,2,2);RE.fillStyle=te(0.9);RE.fillRect(fx-1,fy-4,2,2);}
   }
   for(var i=0;i<3;i++){drawLeg(-1,i);drawLeg(1,i);}
@@ -974,6 +1751,30 @@ function buildCodex(t,st){
   g.strokeStyle="#2c3849";g.lineWidth=1.4;for(var cvr=0;cvr<3;cvr++){var rr2=0.5+cvr*0.17;g.beginPath();g.moveTo(ax-aw*rr2,ay-ah*0.12);g.quadraticCurveTo(ax,ay-ah*(0.66+cvr*0.09),ax+aw*rr2,ay-ah*0.12);g.stroke();}
   g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.ellipse(ax-6,ay-8,aw-16,ah-16,0,Math.PI*1.02,Math.PI*1.62);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(ax-aw+10,ay+2);g.lineTo(ax+aw-10,ay+2);g.stroke();
+  /* Brushed metal. The carapace is the single largest shape codex has and it
+     was a vertical two-stop gradient — perfectly smooth, which is the one
+     surface quality a machined shell does not have. Anisotropic streaks
+     following the curve give it a grain, and the grain is what tells you the
+     dome is metal rather than plastic or paint. */
+  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  for(var br=0;br<26;br++){var byv=ay-ah+br*(ah*2/26);
+    g.strokeStyle="rgba(150,175,205,"+(0.014+0.02*Math.abs(Math.sin(br*2.7)))+")";
+    g.lineWidth=1;g.beginPath();g.moveTo(ax-aw,byv);g.bezierCurveTo(ax-aw*0.3,byv-3,ax+aw*0.3,byv+3,ax+aw,byv);g.stroke();}
+  /* Carapace segments. The abdomen was one ellipse — grained, riveted, and
+     still a single closed curve, which is why it read as an inflated shape
+     rather than as armour. An arthropod's dorsal shell is tergites: plates
+     that overlap back-to-front, each casting a hard line onto the one behind
+     and catching light on its own leading edge. Three of them turn the same
+     silhouette into something built, and cost two strokes each.
+     Still inside the dome clip the grain opened above, so the plates end at
+     the shell edge instead of running out into the room. */
+  [-0.34,0.06,0.46].forEach(function(f){var sy=ay+ah*f;
+    g.strokeStyle="rgba(3,7,12,0.62)";g.lineWidth=3;
+    g.beginPath();g.moveTo(ax-aw,sy-4);g.bezierCurveTo(ax-aw*0.35,sy+7,ax+aw*0.35,sy+7,ax+aw,sy-4);g.stroke();
+    g.strokeStyle="rgba(168,200,226,"+(offl?0.07:0.17)+")";g.lineWidth=1.4;
+    g.beginPath();g.moveTo(ax-aw,sy-6.4);g.bezierCurveTo(ax-aw*0.35,sy+4.6,ax+aw*0.35,sy+4.6,ax+aw,sy-6.4);g.stroke();});
+  g.restore();
+  g.restore();
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
   // spinneret nozzles (rear-top)
   for(var n=-1;n<=1;n++){var nx2=ax+n*12;plate(g,[[nx2-4,ay-ah+2],[nx2+4,ay-ah+2],[nx2+3,ay-ah-12],[nx2-3,ay-ah-12]],sM,sB,ed);if(!offl){RB.fillStyle=te(0.55);RB.fillRect(nx2-2,ay-ah-12,4,3);RE.fillStyle=te(0.6);RE.fillRect(nx2-2,ay-ah-12,4,3);}}
@@ -984,6 +1785,11 @@ function buildCodex(t,st){
   RB.strokeStyle=ed;RB.lineWidth=2;RB.beginPath();RB.arc(cx,coreY,19,0,7);RB.stroke();
   for(var b2=-1;b2<=1;b2++){RB.strokeStyle="#0a0f18";RB.lineWidth=2;RB.beginPath();RB.moveTo(cx-17,coreY+b2*7);RB.lineTo(cx+17,coreY+b2*7);RB.stroke();}
   [RB,RE].forEach(function(c){if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,8,0,7);c.fill();return;}var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,19);cg.addColorStop(0,teh(pulse));cg.addColorStop(0.4,te(0.75*pulse));cg.addColorStop(1,te(0));c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,19,0,7);c.fill();c.fillStyle=teh(pulse);c.beginPath();c.arc(cx,coreY,4.5,0,7);c.fill();});
+  // the core lights the carapace above it and the head plate below — see claude
+  if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    var tb=RB.createRadialGradient(cx,coreY,4,cx,coreY,96);
+    tb.addColorStop(0,te(0.26*pulse));tb.addColorStop(0.5,te(0.09*pulse));tb.addColorStop(1,te(0));
+    RB.fillStyle=tb;RB.beginPath();RB.arc(cx,coreY,96,0,7);RB.fill();RB.restore();}
 
   // ---- cephalothorax (front hull) + eye cluster ----
   var hxx=cx, hy2=BY+22;
@@ -991,9 +1797,41 @@ function buildCodex(t,st){
   plate(g,[[hxx-40,hy2-24],[hxx+40,hy2-24],[hxx+36,hy2-14],[hxx-36,hy2-14]],"#2c3849","#1a2331",null);
   plate(g,[[hxx-14,hy2+22],[hxx-4,hy2+22],[hxx-6,hy2+34],[hxx-16,hy2+32]],sM,sB,ed);
   plate(g,[[hxx+4,hy2+22],[hxx+14,hy2+22],[hxx+16,hy2+32],[hxx+6,hy2+34]],sM,sB,ed);
-  RB.fillStyle="#04070d";RB.fillRect(hxx-26,hy2-10,52,22);
-  var eyes=[[hxx-12,hy2+2,3.2],[hxx+12,hy2+2,3.2],[hxx-20,hy2-6,1.8],[hxx+20,hy2-6,1.8],[hxx-7,hy2+12,1.6],[hxx+7,hy2+12,1.6]];
-  eyes.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}var eg=c.createRadialGradient(e[0],e[1],0.4,e[0],e[1],e[2]*2.4);eg.addColorStop(0,te(0.55*pulse));eg.addColorStop(1,te(0));c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.4,0,7);c.fill();c.fillStyle=teh(0.75+0.25*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
+  /* Eye cluster. Six equal dots on a flat black rectangle read as a speaker
+     grille, and at grid-cell size as nothing at all — codex was identified by
+     its silhouette and by the reactor glow above, never by a face. A spider
+     that hunts has two dominant forward eyes and a spread of smaller ones, so
+     the hierarchy is now explicit: the pair is bigger, has an iris ring and a
+     dark pupil, and the four secondaries stay small and dim. */
+  RB.fillStyle="#04070d";rr(RB,hxx-27,hy2-11,54,24,4);RB.fill();
+  RB.strokeStyle=rc;RB.lineWidth=1.4;rr(RB,hxx-27,hy2-11,54,24,4);RB.stroke();
+  // recessed socket: a top-down gradient inside the plate
+  var sg2=RB.createLinearGradient(0,hy2-11,0,hy2+13);sg2.addColorStop(0,"rgba(0,0,0,0.7)");sg2.addColorStop(1,"rgba(0,0,0,0)");
+  RB.fillStyle=sg2;rr(RB,hxx-27,hy2-11,54,24,4);RB.fill();
+  var primary=[[hxx-12,hy2+1,4.6],[hxx+12,hy2+1,4.6]];
+  var minor=[[hxx-21,hy2-6,1.7],[hxx+21,hy2-6,1.7],[hxx-6,hy2+9,1.5],[hxx+6,hy2+9,1.5]];
+  minor.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}
+    var eg=c.createRadialGradient(e[0],e[1],0.3,e[0],e[1],e[2]*2.4);eg.addColorStop(0,te(0.4*pulse));eg.addColorStop(1,te(0));
+    c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.4,0,7);c.fill();
+    c.fillStyle=teh(0.6+0.2*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
+  primary.forEach(function(e,pi){[RB,RE].forEach(function(c){
+    if(offl){c.fillStyle="#252c34";c.beginPath();c.arc(e[0],e[1],e[2]*0.8,0,7);c.fill();
+             c.fillStyle="#12161c";c.beginPath();c.arc(e[0],e[1],e[2]*0.4,0,7);c.fill();
+             /* A dead lens is still a lens: it catches the room's emergency
+                beacon. Two red pinpricks in an otherwise black socket is what
+                makes offline codex read as switched off rather than absent. */
+             c.fillStyle="rgba(255,70,58,0.5)";c.beginPath();c.arc(e[0]+1.4,e[1]-1.2,0.9,0,7);c.fill();return;}
+    var eg=c.createRadialGradient(e[0],e[1],0.5,e[0],e[1],e[2]*3);eg.addColorStop(0,te(0.7*pulse));eg.addColorStop(1,te(0));
+    c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*3,0,7);c.fill();
+    c.fillStyle=teh(0.85+0.15*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();
+    // iris ring + pupil: what turns a lit dot into an eye that is looking at you
+    c.fillStyle=te(0.95);c.beginPath();c.arc(e[0],e[1],e[2]*0.62,0,7);c.fill();
+    c.fillStyle="rgba(2,10,9,0.85)";c.beginPath();c.arc(e[0],e[1],e[2]*0.3,0,7);c.fill();});
+    // catchlight, offset the same way on both so they track together
+    RB.fillStyle="rgba(255,255,255,"+(offl?0:0.8)+")";RB.beginPath();RB.arc(e[0]-1.5,e[1]-1.6,0.9,0,7);RB.fill();
+    // working: a scan bar crossing the socket, phase-offset per eye
+    if(work&&!offl){var sy3=hy2-8+((t*26+pi*11)%20);[RB,RE].forEach(function(c){c.fillStyle=teh(0.22);c.fillRect(e[0]-e[2],sy3,e[2]*2,1);});}
+  });
 
   // ---- front manipulators ----
   var handR;
@@ -1008,8 +1846,39 @@ function buildCodex(t,st){
     else{plate(g,[[h.x-2,h.y-11],[h.x+9,h.y-13],[h.x+12,h.y+4],[h.x+1,h.y+6]],"#241a30","#140e1c","#4a3a5e");if(!offl){RB.fillStyle="rgba(201,139,255,0.75)";RB.fillRect(h.x+2,h.y-9,4,5);RE.fillStyle="rgba(201,139,255,0.7)";RE.fillRect(h.x+2,h.y-9,4,5);}}
   }
 
-  buildRim();
-  return {hand:handR||{x:cx+18,y:BY+42},coreY:coreY,hy:hy2-10,offl:offl,work:work};
+  /* The dome hangs over the head plate. It is the deepest overhang on any of
+     the four — the whole abdomen is in front of and above the cephalothorax —
+     and the two were meeting at a clean line. */
+  /* A hazard stripe on the leading tergite, and worn tips.
+     codex carries a heavy shell over six legs through a workshop, and nothing
+     on it said "this edge is at head height" — a marking the OTHER units would
+     need. The tarsus tips take the wear, because they are what touches the
+     deck: bare metal through the coating, and only at the very ends. */
+  /* The dome specular. This is the largest curved surface in the fleet — it
+     has had a grain since loop 6 and tergites since loop 11, and never once a
+     highlight, which is why it kept reading as a matte shell no matter how
+     much structure went onto it. One tight hot spot up and left, where the
+     lamp is, plus the wide soft return underneath it. */
+  if(!offl){g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+    var dsp=g.createRadialGradient(ax-aw*0.34,ay-ah*0.52,1,ax-aw*0.3,ay-ah*0.42,aw*0.34);
+    dsp.addColorStop(0,"rgba(228,244,255,0.42)");dsp.addColorStop(0.4,"rgba(196,226,240,0.11)");
+    dsp.addColorStop(1,"rgba(196,226,240,0)");
+    g.fillStyle=dsp;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
+    var dsp2=g.createRadialGradient(ax+aw*0.2,ay+ah*0.5,2,ax+aw*0.2,ay+ah*0.45,aw*0.5);
+    dsp2.addColorStop(0,"rgba(120,168,190,0.10)");dsp2.addColorStop(1,"rgba(120,168,190,0)");
+    g.fillStyle=dsp2;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
+    g.restore();}
+  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  g.globalAlpha=offl?0.16:0.36;
+  for(var hz=-3;hz<=3;hz++){g.fillStyle=hz%2?"#c9a227":"#141a12";
+    g.save();g.translate(ax+hz*15,ay-ah*0.34);g.rotate(0.5);g.fillRect(-5,-8,10,16);g.restore();}
+  g.restore();
+  cavity(g,hxx-43,hy2-25,86,26,0.5);
+  buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
+  /* Six tarsus tips, not one blob under the body: the whole point of the
+     spider is the stance, and the stance is where the feet are. */
+  var CFEET=[];[-1,1].forEach(function(sg){for(var fi=0;fi<3;fi++)CFEET.push({x:cx+sg*footX[fi],y:footY[fi],w:13});});
+  return {hand:handR||{x:cx+18,y:BY+42},coreY:coreY,hy:hy2-10,offl:offl,work:work,feet:CFEET};
 }
 
 /* ===================== GROK — floating astronaut w/ jetpack (purple) ===================== */
@@ -1055,18 +1924,67 @@ function buildGrok(t,st){
   pl(g,cx,BY-18,cx,BY+22,rc,1);
   RB.fillStyle="#05080e";RB.fillRect(cx-10,BY-6,20,16);
   [RB,RE].forEach(function(c){if(!offl){c.fillStyle=pu(0.55+0.3*pulse);c.fillRect(cx-8,BY-4,16,12);c.fillStyle=puh(pulse);c.fillRect(cx-6,BY-2,5,3);c.fillStyle=puh(0.7*pulse);c.fillRect(cx+1,BY+3,4,2);}else{c.fillStyle="#1a2028";c.fillRect(cx-8,BY-4,16,12);}});
+  /* The chest readout lights the suit around it. Grok's one bright panel sat
+     on a torso that never acknowledged it — and with the arms now folded
+     directly in front of it when idle, they are exactly the surface it should
+     be falling on. */
+  if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    var pb=RB.createRadialGradient(cx,BY+2,3,cx,BY+2,64);
+    pb.addColorStop(0,pu(0.26*(0.6+0.4*pulse)));pb.addColorStop(0.5,pu(0.09));pb.addColorStop(1,pu(0));
+    RB.fillStyle=pb;RB.beginPath();RB.arc(cx,BY+2,64,0,7);RB.fill();RB.restore();}
   plate(g,[[cx-34,BY-28],[cx-18,BY-30],[cx-16,BY-14],[cx-32,BY-12]],sT,sB,ed);
   plate(g,[[cx+18,BY-30],[cx+34,BY-28],[cx+32,BY-12],[cx+16,BY-14]],sT,sB,ed);
-  // life-support hose (pod → chest) + a couple of suit ribs
-  g.strokeStyle="#0d1219";g.lineWidth=4;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(cx-27,BY-4,cx-11,BY-3);g.stroke();
-  g.strokeStyle="rgba(84,96,116,0.5)";g.lineWidth=1;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(cx-27,BY-4,cx-11,BY-3);g.stroke();
+  /* Life-support hose (pod → chest). Under power it is pressurised and holds a
+     tight arc; with the thrusters dead it goes slack and hangs. A limp hose is
+     the clearest "this suit is not running" tell grok has, and it costs one
+     control point. */
+  var hoseCx=offl?cx-40:cx-27, hoseCy=offl?BY+30:BY-4;
+  g.strokeStyle="#0d1219";g.lineWidth=4;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(hoseCx,hoseCy,cx-11,BY-3);g.stroke();
+  g.strokeStyle="rgba(84,96,116,0.5)";g.lineWidth=1;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(hoseCx,hoseCy,cx-11,BY-3);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(cx-22,BY+2);g.lineTo(cx+22,BY+2);g.moveTo(cx-20,BY+14);g.lineTo(cx+20,BY+14);g.stroke();
+  /* A pressure suit is fabric, not plate — it should be the one soft-looking
+     unit in the fleet, and it was rendering with the same hard bevels as the
+     mech. Quilted seams give the torso cloth's structure, and the shoulder
+     patch is grok's marking: a mission crew wears one, and it is the only
+     round shape on a body otherwise made of boxes. */
+  g.strokeStyle="rgba(84,96,116,0.28)";g.lineWidth=0.8;
+  for(var qs=-2;qs<=2;qs++){g.beginPath();g.moveTo(cx+qs*10,BY-14);g.lineTo(cx+qs*10,BY+22);g.stroke();}
+  for(var qh=-1;qh<=2;qh++){g.beginPath();g.moveTo(cx-22,BY-8+qh*10);g.lineTo(cx+22,BY-8+qh*10);g.stroke();}
+  /* Hard waist bearing and a tool harness.
+     Grok already had a neck ring — the hard component a soft suit needs so the
+     helmet can turn against pressure — and then the torso ran uninterrupted
+     from collar to legs, which is the one thing a real suit cannot do. The
+     lower body has to rotate against the upper, and that join is always a
+     machined ring. It also splits the flattest surface on the unit into two
+     halves the modelling light can treat differently, and gives the dangling
+     legs a visible point of attachment instead of emerging from cloth. */
+  var wy2=BY+22;
+  plate(g,[[cx-29,wy2],[cx+29,wy2],[cx+27,wy2+11],[cx-27,wy2+11]],"#39435a","#1d2433",eH);
+  g.fillStyle="rgba(196,214,244,"+(offl?0.10:0.26)+")";g.fillRect(cx-29,wy2,58,1.6);
+  g.fillStyle="rgba(3,6,12,0.5)";g.fillRect(cx-27,wy2+9.5,54,2);
+  for(var lg2=-2;lg2<=2;lg2++)rivet(g,cx+lg2*12,wy2+5.5,eH);
+  // harness webbing over the ring, with one clipped-on pouch riding the hip
+  g.strokeStyle="rgba(60,70,90,0.75)";g.lineWidth=3.4;
+  g.beginPath();g.moveTo(cx-27,wy2-3);g.lineTo(cx+27,wy2-1);g.stroke();
+  plate(g,[[cx+18,wy2-2],[cx+31,wy2-1],[cx+30,wy2+14],[cx+17,wy2+13]],sM,sB,ed);
+  var pxq=cx-26,pyq=BY-21;
+  g.fillStyle="#1d2536";g.beginPath();g.arc(pxq,pyq,7,0,7);g.fill();
+  g.strokeStyle=puh(offl?0.16:0.5);g.lineWidth=1.2;g.beginPath();g.arc(pxq,pyq,7,0,7);g.stroke();
+  g.fillStyle=pu(offl?0.2:0.6);g.beginPath();g.moveTo(pxq,pyq-4);g.lineTo(pxq+4,pyq+3);g.lineTo(pxq-4,pyq+3);g.closePath();g.fill();
 
   // ---- arms ----
   var handR;
-  (function(){var sx=cx-30,sy=BY-16,ex=cx-34,ey=BY+6,gx2=cx-30,gy=BY+26;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy+2,4,0,7);g.fill();})();
+  /* Idle folds its arms. Hanging arms are what a suit does when it is
+     unconscious, which is offline's job, and grok was using the same pose for
+     both — so idle and offline differed only by how bright the chest readout
+     was. Folded across the chest is unmistakably "awake and waiting". */
+  var fold=(!work&&!offl);
+  (function(){var sx=cx-30,sy=BY-16;
+    if(fold){var ex=cx-32,ey=BY+2,gx2=cx+8,gy=BY+8;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4.5,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy,4,0,7);g.fill();}
+    else{var ex=cx-34,ey=BY+6,gx2=cx-30,gy=BY+26;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy+2,4,0,7);g.fill();}})();
   (function(){var sx=cx+30,sy=BY-16;
     if(work){var ex=cx+38,ey=BY-14,gx2=cx+30,gy=BY-40;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy,4,0,7);g.fill();handR={x:gx2+2,y:gy};}
+    else if(fold){var ex=cx+32,ey=BY+10,gx2=cx-8,gy=BY+2;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4.5,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy,4,0,7);g.fill();handR={x:gx2,y:gy};}
     else{var ex=cx+34,ey=BY+6,gx2=cx+30,gy=BY+26;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy+2,4,0,7);g.fill();handR={x:gx2,y:gy};}
   })();
   if(work&&handR){var h=handR;
@@ -1080,16 +1998,101 @@ function buildGrok(t,st){
   var HY=BY-52, hr=20;
   g.fillStyle=sM;g.beginPath();g.arc(cx,HY,hr+2,0,7);g.fill();g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(cx,HY,hr+2,0,7);g.stroke();
   g.fillStyle="#070a14";g.beginPath();g.arc(cx,HY,hr,0,7);g.fill();
+  /* Powered down, the visor fogs from the inside — heaviest at the bottom
+     where the cold settles. The starfield is suppressed below, so the dome
+     goes from "a window onto space" to "a window nobody is behind". */
+  if(offl){g.save();g.beginPath();g.arc(cx,HY,hr,0,7);g.clip();
+    var fog2=g.createLinearGradient(0,HY-hr*0.3,0,HY+hr);
+    fog2.addColorStop(0,"rgba(176,196,224,0)");fog2.addColorStop(1,"rgba(176,196,224,0.2)");
+    g.fillStyle=fog2;g.fillRect(cx-hr,HY-hr,hr*2,hr*2);g.restore();}
   if(!offl){var stars=[[-8,-6],[4,-9],[10,-2],[-4,4],[7,6],[-10,2],[1,-3]];stars.forEach(function(sp,si){RB.fillStyle="rgba(220,210,255,"+(0.35+0.4*Math.sin(t*2+si*1.3))+")";RB.fillRect(cx+sp[0],HY+sp[1],1,1);});}
   [RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.fillRect(cx-3,HY-1,6,3);return;}var eg=c.createRadialGradient(cx,HY,1,cx,HY,11);eg.addColorStop(0,puh(0.8+0.2*pulse));eg.addColorStop(0.5,pu(0.5*pulse));eg.addColorStop(1,pu(0));c.fillStyle=eg;c.beginPath();c.arc(cx,HY,11,0,7);c.fill();c.fillStyle=puh(0.9);c.beginPath();c.arc(cx,HY,2.4,0,7);c.fill();});
+  /* The dome is grok's whole face, and it was a black circle with a starfield
+     and one thin white arc — no glass, no gold, nothing to say it is a visor
+     rather than a hole. Three additions, all reflections, because that is what
+     a helmet does: it shows you the room instead of a face. */
+  // gold flash coating across the lower dome, the way a real EVA visor is coated
+  g.save();g.beginPath();g.arc(cx,HY,hr,0,7);g.clip();
+  var gold=g.createLinearGradient(0,HY-hr*0.2,0,HY+hr);
+  gold.addColorStop(0,"rgba(214,168,88,0)");gold.addColorStop(1,"rgba(214,168,88,"+(offl?0.06:0.17)+")");
+  g.fillStyle=gold;g.fillRect(cx-hr,HY-hr,hr*2,hr*2);
+  // the lamp overhead, reflected as a bright cap
+  var lampref=g.createRadialGradient(cx-5,HY-hr*0.72,0.5,cx-5,HY-hr*0.72,hr*0.62);
+  lampref.addColorStop(0,"rgba(226,240,255,"+(offl?0.07:0.26)+")");lampref.addColorStop(1,"rgba(226,240,255,0)");
+  g.fillStyle=lampref;g.fillRect(cx-hr,HY-hr,hr*2,hr*2);
+  // the floor, reflected as a dim band along the bottom edge
+  g.fillStyle="rgba(120,150,190,"+(offl?0.03:0.08)+")";g.fillRect(cx-hr,HY+hr*0.55,hr*2,hr*0.45);
+  g.restore();
+  // hard glass edge highlight, and the rim of the neck ring catching light
   g.strokeStyle="rgba(180,200,240,0.4)";g.lineWidth=2;g.beginPath();g.arc(cx-3,HY-3,hr-5,Math.PI*1.05,Math.PI*1.55);g.stroke();
+  g.strokeStyle="rgba(226,240,255,"+(offl?0.1:0.3)+")";g.lineWidth=1.2;g.beginPath();g.arc(cx,HY,hr+2,Math.PI*1.12,Math.PI*1.48);g.stroke();
+  /* Helmet lamp. An EVA suit carries one, it is the reason the visor can be
+     dark and the wearer can still see, and grok did not have it — so the only
+     unit whose face is a mirror also had no light of its own. Mounted left,
+     it throws a short forward cone while working. */
+  if(!offl){var hlx=cx-hr+3,hly=HY-hr*0.42;
+    g.fillStyle=sT;rr(g,hlx-5,hly-4,10,8,2);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1;rr(g,hlx-5,hly-4,10,8,2);g.stroke();
+    [RB,RE].forEach(function(c){
+      c.fillStyle="rgba(236,246,255,"+(work?0.85:0.4)+")";c.fillRect(hlx-3,hly-2,4,4);
+      if(work){c.save();c.globalCompositeOperation="lighter";
+        var hc=c.createLinearGradient(hlx,hly,hlx-58,hly+16);
+        hc.addColorStop(0,"rgba(214,234,255,0.22)");hc.addColorStop(1,"rgba(214,234,255,0)");
+        c.fillStyle=hc;c.beginPath();c.moveTo(hlx-2,hly-4);c.lineTo(hlx-2,hly+4);
+        c.lineTo(hlx-58,hly+26);c.lineTo(hlx-58,hly-2);c.closePath();c.fill();c.restore();}});}
   pl(g,cx+hr-4,HY-hr+6,cx+hr+4,HY-hr-6,eH,1.6);
   if(!offl){RB.fillStyle="rgba(255,80,70,0.9)";RB.beginPath();RB.arc(cx+hr+4,HY-hr-6,2,0,7);RB.fill();RE.fillStyle="rgba(255,80,70,0.8)";RE.beginPath();RE.arc(cx+hr+4,HY-hr-6,2,0,7);RE.fill();}
 
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
-  buildRim();
+  /* A helmet on a neck ring sits proud of the shoulders it turns above, and
+     grok's threw nothing onto them. The shadow also lands across the top of
+     the chest quilting, which is what tells you the suit is cloth under a
+     hard part rather than painted to look like it. */
+  /* Knee scuffs, and dirt up the lower legs.
+     A suit is fabric, and the two places fabric goes first are the knees and
+     everything below them. grok was the only unit whose whole surface was one
+     age — and the one whose surface is soft, so it should be showing more wear
+     than the armoured units, not less. */
+  g.save();g.globalAlpha=offl?0.4:0.85;
+  [-1,1].forEach(function(sg4){var kx2=cx+sg4*15;
+    var dg4=g.createLinearGradient(0,BY+64,0,BY+128);
+    dg4.addColorStop(0,"rgba(38,32,44,0)");dg4.addColorStop(1,"rgba(34,28,38,0.34)");
+    g.fillStyle=dg4;g.fillRect(kx2-13,BY+64,26,64);
+    g.fillStyle="rgba(196,206,226,0.13)";
+    g.fillRect(kx2-8,BY+70,15,2.4);g.fillRect(kx2-6,BY+75,10,1.6);});
+  g.restore();
+  /* Convolutes. A pressure suit bends where it is built to bend and nowhere
+     else — the joints are corrugated so the fabric can fold without the
+     internal volume changing. grok's legs were smooth tapers from hip to boot,
+     which is a drawing of a leg rather than a suit. Three ribs at each knee,
+     brightest on the fold that faces the lamp. */
+  /* The one hard part on a soft unit. grok is deliberately the matte one —
+     it is fabric — which makes the two machined components it does carry, the
+     neck ring and the waist bearing loop 11 added, the only places a specular
+     belongs. Putting it exactly there is what tells you the rest is cloth. */
+  if(!offl){g.save();
+    var wsp=g.createLinearGradient(cx-29,0,cx+29,0);
+    wsp.addColorStop(0,"rgba(224,236,255,0)");wsp.addColorStop(0.3,"rgba(224,236,255,0.34)");
+    wsp.addColorStop(0.46,"rgba(255,255,255,0.5)");wsp.addColorStop(0.68,"rgba(224,236,255,0.16)");
+    wsp.addColorStop(1,"rgba(224,236,255,0)");
+    g.fillStyle=wsp;g.fillRect(cx-29,BY+22,58,3.4);
+    g.fillStyle=wsp;g.fillRect(cx-21,BY-46,42,2.6);
+    g.restore();}
+  [-1,1].forEach(function(sg6){var bx4=cx+sg6*15;
+    for(var rb=0;rb<3;rb++){var ry4=BY+72+rb*7;
+      g.strokeStyle="rgba(3,6,12,0.55)";g.lineWidth=3.4;
+      g.beginPath();g.moveTo(bx4-12,ry4+1.6);g.quadraticCurveTo(bx4,ry4+4.6,bx4+12,ry4+1.6);g.stroke();
+      g.strokeStyle="rgba(196,206,232,"+(offl?0.06:0.15)+")";g.lineWidth=1.2;
+      g.beginPath();g.moveTo(bx4-12,ry4);g.quadraticCurveTo(bx4,ry4+3,bx4+12,ry4);g.stroke();}});
+  cavity(g,cx-36,BY-31,72,22,0.42);
+  buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet
   var hh=handR||{x:cx+30,y:BY+26};
-  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(HY-20),offl:offl,work:work};
+  /* Grok's boots dangle — they are NOT on the floor, and saying so is the
+     whole reason the shadow softens with height in drawRobot. When the
+     thrusters are out (offline) it hangs lower and the shadow tightens. */
+  var GFY=BY+26+(offl?90:78);
+  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(HY-20),offl:offl,work:work,
+          feet:[{x:TX(cx-14),y:TY(GFY),w:F*9},{x:TX(cx+14),y:TY(GFY),w:F*9}]};
 }
 
 /* ===================== KIMI — hovering companion drone, screen-face (pink) ===================== */
@@ -1118,14 +2121,43 @@ function buildKimi(t,st){
     var dw=c.createLinearGradient(0,sky,0,sky+54);dw.addColorStop(0,pk(0.2*hov));dw.addColorStop(1,pk(0));c.fillStyle=dw;c.beginPath();c.moveTo(cx-30,sky);c.lineTo(cx+30,sky);c.lineTo(cx+42,sky+54);c.lineTo(cx-42,sky+54);c.closePath();c.fill();c.restore();});}
 
   // ---- ear antennae (behind body) ----
-  [-1,1].forEach(function(sg){var ex=cx+sg*22, ey=BY-30;pl(g,ex,ey,ex+sg*10,ey-26,eH,3);g.fillStyle=sM;g.beginPath();g.arc(ex+sg*10,ey-26,5,0,7);g.fill();
-    if(!offl){RB.fillStyle=pkh(0.7+0.3*pulse);RB.beginPath();RB.arc(ex+sg*10,ey-26,2.5,0,7);RB.fill();RE.fillStyle=pk(0.8);RE.beginPath();RE.arc(ex+sg*10,ey-26,2.5,0,7);RE.fill();}});
+  /* Antennae. Held up under power; drooped outward and down when there is
+     nothing holding them up. Ears are how a face this simple shows mood, and
+     offline kimi needs a posture, not only darker pixels. */
+  [-1,1].forEach(function(sg){var ex=cx+sg*22, ey=BY-30;
+    var tipx=ex+sg*(offl?17:10), tipy=ey-(offl?4:26);
+    pl(g,ex,ey,tipx,tipy,eH,3);g.fillStyle=sM;g.beginPath();g.arc(tipx,tipy,5,0,7);g.fill();
+    if(!offl){RB.fillStyle=pkh(0.7+0.3*pulse);RB.beginPath();RB.arc(tipx,tipy,2.5,0,7);RB.fill();RE.fillStyle=pk(0.8);RE.beginPath();RE.arc(tipx,tipy,2.5,0,7);RE.fill();}});
 
   // ---- side thruster pods ----
   [-1,1].forEach(function(sg){plate(g,[[cx+sg*34,BY-8],[cx+sg*46,BY-4],[cx+sg*46,BY+14],[cx+sg*34,BY+12]],sM,sB,ed);if(!offl){RB.fillStyle=pk(0.6*hov);RB.fillRect(cx+sg*40,BY+9,5,3);RE.fillStyle=pk(0.6*hov);RE.fillRect(cx+sg*40,BY+9,5,3);}});
 
   // ---- hover skirt casing ----
   plate(g,[[cx-34,BY+20],[cx+34,BY+20],[cx+28,BY+34],[cx-28,BY+34]],sM,sB,ed);
+  /* Kimi is moulded plastic where the others are metal, and nothing said so —
+     same bevels, same edge treatment. A broad soft specular across the top of
+     the casing is what plastic does and brushed steel does not, and the decal
+     band on the skirt is kimi's marking, the counterpart to claude's stencil
+     and grok's patch. */
+  var kspec=g.createLinearGradient(0,BY+20,0,BY+27);
+  kspec.addColorStop(0,"rgba(214,228,250,"+(offl?0.05:0.13)+")");kspec.addColorStop(1,"rgba(214,228,250,0)");
+  /* The gimbal the casing hangs in.
+     kimi has no legs, no arms at rest and one visible joint in the whole unit
+     — so the one place it CAN articulate is the mount between the body and the
+     skirt, and the body was simply sitting on the skirt with a gap. A yoke and
+     a trunnion is what holds a camera head, a searchlight or anything else
+     that has to stay level while the thing under it moves; it is also the
+     mechanical reason kimi can face you while drifting sideways. */
+  [-1,1].forEach(function(sg7){var yx=cx+sg7*26;
+    plate(g,[[yx-4,BY+2],[yx+4,BY+2],[yx+5,BY+22],[yx-5,BY+22]],sT,sB,ed);
+    g.fillStyle="#05080e";g.beginPath();g.arc(yx,BY+13,5.4,0,7);g.fill();
+    var tg2=g.createRadialGradient(yx-1.6,BY+11,0.5,yx,BY+13,5.4);
+    tg2.addColorStop(0,"rgba(196,208,232,"+(offl?0.16:0.40)+")");
+    tg2.addColorStop(1,"rgba(4,8,14,0.7)");
+    g.fillStyle=tg2;g.beginPath();g.arc(yx,BY+13,3.6,0,7);g.fill();});
+  g.fillStyle=kspec;g.fillRect(cx-32,BY+20,64,7);
+  g.fillStyle=pk(offl?0.16:0.42);g.fillRect(cx-18,BY+24,36,2);
+  g.fillStyle=pk(offl?0.10:0.28);g.fillRect(cx-12,BY+28,10,2);g.fillStyle=pk(offl?0.10:0.28);g.fillRect(cx+4,BY+28,8,2);
   if(!offl){RB.fillStyle=pk(0.5*hov);RB.fillRect(cx-26,BY+31,52,2);RE.fillStyle=pk(0.5*hov);RE.fillRect(cx-26,BY+31,52,2);}
 
   // ---- body (rounded screen-face casing) ----
@@ -1133,19 +2165,127 @@ function buildKimi(t,st){
   var bgr=g.createLinearGradient(0,by0,0,by0+bh);bgr.addColorStop(0,sT);bgr.addColorStop(1,sB);
   rr(g,bx,by0,bw,bh,br);g.fillStyle=bgr;g.fill();g.strokeStyle=ed;g.lineWidth=1.4;g.stroke();
   g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.moveTo(bx+8,by0+3);g.lineTo(bx+bw-8,by0+3);g.stroke();
+  /* Corner bumpers and a shell parting line.
+     Kimi's whole body was one rounded rectangle with a screen cut out of it —
+     the only unit in the fleet whose silhouette is a single primitive, and the
+     one the eye reads as drawn rather than assembled. A machine that floats
+     face-first through a workshop gets its corners protected, so four bumpers
+     go on the corners: they break the outline at exactly the four points that
+     were most obviously a computed radius, and they are the first thing on
+     this unit that is not concentric with the screen.
+     The parting line is the other half — the seam where the front shell meets
+     the back one, running around the casing at mid-height, with the front
+     shell's lip catching the lamp. */
+  [[bx,by0,1,1],[bx+bw,by0,-1,1],[bx,by0+bh,1,-1],[bx+bw,by0+bh,-1,-1]].forEach(function(k){
+    var kx=k[0],ky=k[1],sxk=k[2],syk=k[3];
+    plate(g,[[kx+sxk*3,ky+syk*15],[kx+sxk*5,ky+syk*6],[kx+sxk*11,ky+syk*2],[kx+sxk*17,ky+syk*1.5],
+             [kx+sxk*17,ky+syk*6],[kx+sxk*11,ky+syk*7],[kx+sxk*8,ky+syk*10],[kx+sxk*7,ky+syk*15]],
+      "#3b4356","#1b2130",ed);
+    g.fillStyle="rgba(198,216,246,"+(offl?0.07:0.17)+")";
+    g.fillRect(kx+sxk*(syk>0?11:11)-(sxk<0?5:0),ky+syk*2-(syk<0?1.4:0),5,1.4);});
+  /* Scuffed bumpers and an asset tag with a corner lifting.
+     Loop 11 put corner guards on this unit on the argument that a machine
+     which floats face-first through a workshop protects its corners. If that
+     argument is right then the guards are the part with paint missing, and
+     leaving them pristine quietly contradicts the reason they exist. The tag
+     is kimi's marking — the other three carry stencils, and a screen-faced
+     service unit would carry a printed label instead, with the bottom corner
+     already peeling off. */
+  g.save();g.globalAlpha=offl?0.35:0.8;
+  [[bx+9,by0+3],[bx+bw-14,by0+3],[bx+8,by0+bh-5],[bx+bw-13,by0+bh-5]].forEach(function(sc4,si4){
+    g.fillStyle="rgba(206,220,242,"+(0.14+0.05*(si4%2))+")";
+    g.fillRect(sc4[0],sc4[1],5+((si4*3)%4),1.6);});
+  g.restore();
+  g.fillStyle="rgba(196,206,222,"+(offl?0.14:0.30)+")";
+  g.fillRect(bx+bw-27,by0+bh-19,20,11);
+  g.fillStyle="rgba(20,26,36,0.55)";
+  g.fillRect(bx+bw-25,by0+bh-17,16,2);g.fillRect(bx+bw-25,by0+bh-13,11,1.6);
+  g.fillStyle="rgba(168,180,198,"+(offl?0.10:0.22)+")";      // the lifted corner
+  poly(g,[[bx+bw-13,by0+bh-11],[bx+bw-7,by0+bh-8],[bx+bw-13,by0+bh-8]]);g.fill();
+  /* The casing is moulded, not machined — so its specular is a long soft band
+     along the crown rather than a hot point, and it wraps the corner radius
+     that loop 11's bumpers interrupt. kimi has had a gloss sweep on the GLASS
+     since loop 8, which is why the screen has always looked like glass sitting
+     in a body that looked like a flat fill: the shell itself reflected nothing
+     at all. */
+  if(!offl){g.save();
+    var ksp=g.createLinearGradient(0,by0,0,by0+22);
+    ksp.addColorStop(0,"rgba(230,242,255,0.30)");ksp.addColorStop(0.5,"rgba(230,242,255,0.07)");
+    ksp.addColorStop(1,"rgba(230,242,255,0)");
+    g.fillStyle=ksp;rr(g,bx+3,by0+1,bw-6,22,13);g.fill();
+    g.fillStyle="rgba(255,255,255,0.20)";g.fillRect(bx+22,by0+2.4,bw-46,1.6);
+    g.restore();}
+  g.strokeStyle="rgba(3,7,13,0.5)";g.lineWidth=1.6;
+  g.beginPath();g.moveTo(bx+1,by0+bh*0.54);g.lineTo(bx+bw-1,by0+bh*0.54);g.stroke();
+  g.strokeStyle="rgba(186,208,242,"+(offl?0.05:0.13)+")";g.lineWidth=1;
+  g.beginPath();g.moveTo(bx+2,by0+bh*0.54-1.6);g.lineTo(bx+bw-2,by0+bh*0.54-1.6);g.stroke();
+  /* Status strip along the top of the casing. Kimi is the only unit with no
+     hard readout anywhere — claude has a core, codex a reactor, grok a chest
+     panel — so its state lived entirely in a face, which is expressive and
+     says nothing precise. Five cells that fill left-to-right while working and
+     hold a slow single pulse while idle. */
+  if(!offl){var cells=5;for(var lc=0;lc<cells;lc++){
+    var lit2=work?((Math.floor(t*3)%cells)>=lc?1:0.16):((Math.sin(t*1.6)>0.3&&lc===0)?1:0.16);
+    [RB,RE].forEach(function(c){c.fillStyle=pkh(0.75*lit2);c.fillRect(bx+11+lc*(bw-22)/cells,by0+5.5,(bw-22)/cells-2.5,2);});}}
   // screen
   var sx=bx+8,sy=by0+8,sw=bw-16,sh=bh-16;rr(g,sx,sy,sw,sh,9);g.fillStyle="#05080e";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
   if(!offl){RB.fillStyle=pk(0.05);for(var sl=sy+3;sl<sy+sh;sl+=3)RB.fillRect(sx+2,sl,sw-4,1);}
-  // glossy glass highlight (top-left)
-  g.save();rr(g,sx,sy,sw,sh,9);g.clip();g.fillStyle="rgba(184,206,246,0.07)";g.beginPath();g.moveTo(sx,sy);g.lineTo(sx+sw*0.55,sy);g.lineTo(sx,sy+sh*0.62);g.closePath();g.fill();g.restore();
+  /* The screen is kimi's face, and it was a flat black rounded rect with one
+     triangular gloss wedge — which reads as a sticker, not as glass with a
+     display behind it. A CRT-ish face wants two things the flat version had
+     no way to say: that the glass is curved, and that the picture is being
+     emitted from inside rather than printed on the front. */
+  g.save();rr(g,sx,sy,sw,sh,9);g.clip();
+  /* The bezel stands proud of the glass, and threw nothing onto it. Kimi's
+     screen is the single largest flat area in the fleet and the one surface
+     the eye actually goes to, so the join that was open was also the most
+     expensive one: without it the glass sits flush with the casing and reads
+     as a printed panel. Deepest at the top, because the lamp is above. */
+  cavity(g,sx,sy,sw,13,0.62);
+  cavity(g,sx,sy+sh-7,sw,7,0.26);
+  // curvature: corners fall off, centre stays open
+  var curve=g.createRadialGradient(sx+sw*0.5,sy+sh*0.46,sw*0.14,sx+sw*0.5,sy+sh*0.5,sw*0.72);
+  curve.addColorStop(0,"rgba(0,0,0,0)");curve.addColorStop(1,"rgba(0,0,0,0.6)");
+  g.fillStyle=curve;g.fillRect(sx,sy,sw,sh);
+  // the emitted picture washing the inside of the glass
+  if(!offl){var wash=g.createLinearGradient(0,sy+sh,0,sy);wash.addColorStop(0,pk(0.16));wash.addColorStop(1,pk(0));
+    g.fillStyle=wash;g.fillRect(sx,sy,sw,sh);}
+  // gloss, now a curved sweep instead of a straight wedge
+  g.fillStyle="rgba(184,206,246,0.085)";
+  g.beginPath();g.moveTo(sx,sy+sh*0.66);g.quadraticCurveTo(sx+sw*0.30,sy-sh*0.06,sx+sw*0.62,sy);g.lineTo(sx,sy);g.closePath();g.fill();
+  g.restore();
+  // bezel catching the room, so the casing has a lit edge like everything else
+  g.strokeStyle="rgba(180,205,245,"+(offl?0.06:0.16)+")";g.lineWidth=1;rr(g,sx-1,sy-1,sw+2,sh+2,10);g.stroke();
+  /* A screen this size is the brightest thing in kimi's frame and it was
+     lighting nothing — the casing around it, the ear stalks and the skirt all
+     stayed the same grey they are in the dark. Screens light the room; this
+     one now at least lights its own housing. */
+  if(!offl){g.save();g.globalCompositeOperation="lighter";
+    var sb2=g.createRadialGradient(cx,by0+bh*0.5,6,cx,by0+bh*0.5,84);
+    sb2.addColorStop(0,pk(0.20));sb2.addColorStop(0.45,pk(0.08));sb2.addColorStop(1,pk(0));
+    g.fillStyle=sb2;g.beginPath();g.arc(cx,by0+bh*0.5,84,0,7);g.fill();g.restore();}
 
   // ---- face (per state) ----
   var e1=cx-13,e2=cx+13,ey2=by0+bh*0.44;
-  if(offl){RB.fillStyle="#20262e";RB.fillRect(e1-4,ey2,8,2);RB.fillRect(e2-4,ey2,8,2);}
+  if(offl){
+    /* A display that has lost signal does not go evenly black — it collapses
+       to one bright horizontal line and a faint residual raster. That single
+       line is worth more than any amount of extra darkness: it says the panel
+       is powered enough to be wrong, which is exactly what SILENT means. */
+    RB.fillStyle="#20262e";RB.fillRect(e1-4,ey2,8,2);RB.fillRect(e2-4,ey2,8,2);
+    var deadY=by0+bh*0.52;
+    RB.fillStyle="rgba(150,168,190,0.30)";RB.fillRect(sx+3,deadY,sw-6,1.4);
+    RB.fillStyle="rgba(150,168,190,0.10)";RB.fillRect(sx+3,deadY-2,sw-6,1);RB.fillRect(sx+3,deadY+3,sw-6,1);
+    RE.fillStyle="rgba(150,168,190,0.16)";RE.fillRect(sx+3,deadY,sw-6,1.4);
+  }
   else{
     [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){var eg=c.createRadialGradient(exx,ey2,0.5,exx,ey2,10);eg.addColorStop(0,pkh(0.8+0.2*pulse));eg.addColorStop(0.5,pk(0.5*pulse));eg.addColorStop(1,pk(0));c.fillStyle=eg;c.beginPath();c.arc(exx,ey2,10,0,7);c.fill();});});
-    var eh=blink?1:(work?4:7), ew=6;
-    [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){c.fillStyle=pkh(0.92);rr(c,exx-ew/2,ey2-eh/2,ew,eh,2);c.fill();});RB.fillStyle="rgba(255,255,255,0.85)";RB.fillRect(exx-1,ey2-eh/2+1,2,2);});
+    /* Idle eyes wander. Working, they lock forward on the task; waiting, they
+       drift left and right on a slow cycle. Kimi has no body language to speak
+       of — the whole character is two shapes on a screen — so where those two
+       shapes point is the only way it can look busy or look bored. */
+    var eh=blink?1:(work?4:7), ew=6, gaze=work?0:Math.round(Math.sin(t*0.55)*2.2);
+    [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){c.fillStyle=pkh(0.92);rr(c,exx-ew/2+gaze,ey2-eh/2,ew,eh,2);c.fill();});RB.fillStyle="rgba(255,255,255,0.85)";RB.fillRect(exx-1+gaze,ey2-eh/2+1,2,2);});
     RB.strokeStyle=pk(0.6);RB.lineWidth=1.4;RB.beginPath();
     if(work){RB.moveTo(cx-5,by0+bh*0.72);RB.lineTo(cx+5,by0+bh*0.72);}
     else{RB.arc(cx,by0+bh*0.64,5,0.12*Math.PI,0.88*Math.PI);}
@@ -1165,18 +2305,80 @@ function buildKimi(t,st){
   }
 
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
-  buildRim();
+  buildRim(offl?[94,84,90]:[255,114,182]);      // kimi: pink
   var hh=handR||{x:cx+30,y:BY+28};
-  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(BY-24),offl:offl,work:work};
+  /* Kimi has no feet — the skirt is what faces the floor, so it casts one
+     wide soft pool rather than two prints. Powered down it settles, and the
+     pool tightens on its own through the height rule. */
+  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(BY-24),offl:offl,work:work,
+          feet:[{x:TX(cx),y:TY(BY+34),w:F*30}]};
 }
 
+/* The top of the unit, measured off the sprite the renderer just built, cached
+   per agent and state — twelve scans over the life of the page, once each.
+   Everything that puts a mark ABOVE a unit was using `hy` for this, and hy is
+   the visor: the point a holo tether leaves from. Those are the same place on
+   claude and grok, who wear their heads on top, and they are 93px apart on
+   codex, whose body hangs low inside an arch of six legs, and 62px apart on
+   kimi, whose rotors stand over its shell. So the room's offline diamond sat
+   among codex's legs instead of over it, in every room, for every state — the
+   full-size twin of the misplaced "!" the god-view cell had.
+   Measured rather than tabulated because a table of four numbers goes stale the
+   first time a robot changes shape, silently, and this cannot. */
+var unitTops={};
+function unitTop(){
+  var k=AGENT+"|"+STATE;
+  if(unitTops[k]!==undefined)return unitTops[k];
+  var d=RB.getImageData(0,0,RW,RH).data;
+  for(var y=0;y<RH;y++)for(var x=0;x<RW;x++)if(d[(y*RW+x)*4+3]>24)return (unitTops[k]=y);
+  return (unitTops[k]=0);
+}
 function drawRobot(t){
   var info=buildRobo(t,STATE);lastHand=info.hand;
   var sc=0.74, px=ROBOX-260*sc, py=FLOORY-560*sc;
-  if(AGENT==="kimi"&&!info.offl)py-=48;   // kimi hovers higher in the full room (mini already sits ideally)
-  // cast shadow
-  var floating=(AGENT==="grok"||AGENT==="kimi"), shcx=floating?ROBOX:ROBOX+54, shW=floating?86:182, shH=floating?16:26, shA=floating?0.4:0.72;
-  S.save();var sh=S.createRadialGradient(shcx,FLOORY+8,4,shcx,FLOORY+8,shW+8);sh.addColorStop(0,"rgba(0,0,0,"+shA+")");sh.addColorStop(1,"rgba(0,0,0,0)");S.fillStyle=sh;S.beginPath();S.ellipse(shcx,FLOORY+8,shW,shH,0,0,7);S.fill();S.restore();
+  if(AGENT==="kimi"&&!info.offl)py-=48;   // kimi hovers higher in the full room
+  /* Publish where this unit landed, once, in room coordinates. buildRobo
+     reports the hand, the head and the footprints in its own canvas space and
+     drawRobot is what maps that space onto the floor — so anything else that
+     wants to mark a unit (the god-view cell's alert glyph, its weld arc) reads
+     the result rather than re-deriving it and getting it wrong for two of the
+     four vendors. */
+  lastFeet=info.feet;
+  lastAnchors={sprite:{x:px,y:py,s:sc},
+               hand:{x:px+info.hand.x*sc,y:py+info.hand.y*sc},
+               head:{x:px+260*sc,y:py+unitTop()*sc},
+               feet:(info.feet||[]).map(function(f){return {x:px+f.x*sc,y:py+f.y*sc,w:f.w*sc};})};
+  /* Contact shadows, one per footprint the unit reported.
+     This used to be a single soft ellipse pinned at ROBOX+54 for every walker
+     and ROBOX for every floater. It sat under nothing in particular — 54px to
+     the right of claude, nowhere near any of codex's six feet — and it was the
+     same blob whether a unit was planted on the deck or hanging 60px off it.
+     So nothing in the room read as touching the floor, which is the one job a
+     contact shadow has.
+     The rule is the physical one: the further a foot is above the surface, the
+     wider, softer and fainter its shadow. That single line is what makes
+     claude and codex read as heavy and grok and kimi read as airborne, without
+     either of them being special-cased. */
+  var floating=(AGENT==="grok"||AGENT==="kimi");
+  var feet=info.feet||[{x:260,y:560,w:90}];
+  S.save();
+  feet.forEach(function(f){
+    var fx2=px+f.x*sc, fy2=py+f.y*sc, fw=Math.max(6,f.w*sc);
+    var lift=Math.max(0,FLOORY-fy2);              // how high off the deck this foot is
+    var spread=1+Math.min(2.6,lift/34);           // soft-shadow growth with distance
+    var a=(floating?0.44:0.66)/Math.pow(spread,1.25);
+    var w2=fw*spread, h2=Math.max(3,fw*0.34*spread);
+    var sh=S.createRadialGradient(fx2,FLOORY+6,1,fx2,FLOORY+6,w2);
+    sh.addColorStop(0,"rgba(0,0,0,"+a.toFixed(3)+")");
+    sh.addColorStop(0.55,"rgba(0,0,0,"+(a*0.45).toFixed(3)+")");
+    sh.addColorStop(1,"rgba(0,0,0,0)");
+    S.fillStyle=sh;S.beginPath();S.ellipse(fx2,FLOORY+6,w2,h2,0,0,7);S.fill();
+    /* The dark core right at the contact point. Only for a foot that is
+       actually down — it is the thing that says "touching", so a hovering
+       unit must not get one. */
+    if(lift<7&&!floating){S.fillStyle="rgba(0,0,0,0.5)";S.beginPath();S.ellipse(fx2,FLOORY+4,fw*0.62,Math.max(2,fw*0.2),0,0,7);S.fill();}
+  });
+  S.restore();
   if(!info.offl&&AGENT!=="claude"){var vc=AGENT==="codex"?"55,212,166":AGENT==="grok"?"176,124,255":"255,114,182",vr=floating?122:150;S.save();S.globalCompositeOperation="lighter";var tgl=S.createRadialGradient(ROBOX,FLOORY,2,ROBOX,FLOORY,vr);tgl.addColorStop(0,"rgba("+vc+",0.14)");tgl.addColorStop(1,"rgba("+vc+",0)");S.fillStyle=tgl;S.beginPath();S.ellipse(ROBOX,FLOORY+4,vr,18,0,0,7);S.fill();S.restore();}
   // body
   S.imageSmoothingEnabled=true;
@@ -1185,12 +2387,61 @@ function drawRobot(t){
   S.save();S.globalCompositeOperation="lighter";S.globalAlpha=info.offl?0.5:0.95;S.drawImage(rrim,px,py,RW*sc,RH*sc);S.restore();
   // emissive -> glow buffer (scaled)
   G.save();G.globalCompositeOperation="lighter";G.drawImage(remit,px,py,RW*sc,RH*sc);G.restore();
+  /* What the unit does to the air around it.
+     Every one of these four moves a lot of energy and none of them touched the
+     atmosphere they were standing in — the room had drifting fog and rising
+     steam of its own, and the robot was a cut-out pasted in front of it. This
+     is per-agent because it is the physics of each body: exhaust rises, feet
+     raise dust, thrust pushes down and out, a hover skirt rings the floor.
+     Cheap, and it is what stops the unit reading as a sticker. */
+  if(!info.offl&&!reduced){
+    var fy0=FLOORY;
+    S.save();S.globalCompositeOperation="lighter";
+    if(AGENT==="claude"){
+      // heat shimmer off the twin exhaust stacks
+      [-52,52].forEach(function(sxo,si2){var ex4=px+(260+sxo)*sc, ey4=py+200*sc;
+        for(var p2=0;p2<3;p2++){var ph=((t*0.35+p2*0.33+si2*0.17)%1), yy=ey4-ph*86, rad=9+ph*26;
+          var hg=S.createRadialGradient(ex4+Math.sin(t*1.6+p2+si2)*7*ph,yy,1,ex4,yy,rad);
+          hg.addColorStop(0,rgba(255,168,96,0.10*(1-ph)*(info.work?1:0.45)));hg.addColorStop(1,"rgba(255,168,96,0)");
+          S.fillStyle=hg;S.beginPath();S.arc(ex4,yy,rad,0,7);S.fill();}});
+    } else if(AGENT==="codex"){
+      // dust standing at the six feet — a heavy thing that has just settled
+      (info.feet||[]).forEach(function(f,fi){var fx3=px+f.x*sc;
+        var dph=((t*0.4+fi*0.19)%1), dr=7+dph*18;
+        var dg=S.createRadialGradient(fx3,fy0-dph*13,1,fx3,fy0-dph*13,dr);
+        dg.addColorStop(0,"rgba(96,140,130,"+(0.055*(1-dph))+")");dg.addColorStop(1,"rgba(96,140,130,0)");
+        S.fillStyle=dg;S.beginPath();S.ellipse(fx3,fy0-dph*13,dr,dr*0.5,0,0,7);S.fill();});
+    } else if(AGENT==="grok"){
+      // thrust hitting the deck and spilling sideways
+      [-1,1].forEach(function(sg2){var tx3=ROBOX+sg2*24*sc;
+        var tg=S.createRadialGradient(tx3,fy0,2,tx3,fy0,86);
+        tg.addColorStop(0,"rgba(176,124,255,"+(info.work?0.14:0.09)+")");tg.addColorStop(1,"rgba(176,124,255,0)");
+        S.fillStyle=tg;S.beginPath();S.ellipse(tx3+sg2*26,fy0+2,86,13,0,0,7);S.fill();});
+    } else {
+      // a hover skirt rings the floor; the ring travels outward and fades
+      for(var rg3=0;rg3<2;rg3++){var rp=((t*0.5+rg3*0.5)%1), rr3=26+rp*104;
+        S.strokeStyle="rgba(255,114,182,"+(0.16*(1-rp))+")";S.lineWidth=1.6;
+        S.beginPath();S.ellipse(ROBOX,fy0+3,rr3,rr3*0.19,0,0,7);S.stroke();}
+    }
+    S.restore();
+  }
   // working effect at the hand — role-specific
   var hx=px+info.hand.x*sc, hyy=py+info.hand.y*sc, visor={x:ROBOX,y:py+(info.hy+20)*sc};
   if(info.work){
     if(ROOM==="builder"){ // weld arc + spark shower
       var flick=0.4+0.42*Math.sin(t*40)+ (Math.random()<0.15?0.35:0);
       emit(function(c){c.save();c.globalCompositeOperation="lighter";var ag=c.createRadialGradient(hx,hyy,1,hx,hyy,20);ag.addColorStop(0,rgba(210,232,255,Math.min(0.9,flick)));ag.addColorStop(0.35,rgba(120,190,255,0.42*flick));ag.addColorStop(1,"rgba(90,160,255,0)");c.fillStyle=ag;c.beginPath();c.arc(hx,hyy,20,0,7);c.fill();c.fillStyle=rgba(255,255,255,Math.min(0.9,flick));c.beginPath();c.arc(hx,hyy,2.4,0,7);c.fill();c.restore();});
+      /* A welding arc is the brightest thing in the building. It was lighting
+         a 20px bubble and nothing else — not the plates it is held against,
+         not the deck under it. Now it throws a hard, flickering pool on the
+         floor, which is also what sells the sparks as hot rather than as
+         orange confetti. */
+      emit(function(c){c.save();c.globalCompositeOperation="lighter";
+        var fp=c.createRadialGradient(hx,FLOORY,3,hx,FLOORY,150);
+        fp.addColorStop(0,rgba(190,220,255,0.22*flick));
+        fp.addColorStop(0.4,rgba(120,175,255,0.09*flick));
+        fp.addColorStop(1,"rgba(90,150,255,0)");
+        c.fillStyle=fp;c.beginPath();c.ellipse(hx,FLOORY+6,150,26,0,0,7);c.fill();c.restore();});
       if(!reduced&&Math.random()<0.55)for(var s=0;s<3;s++)sparks.push({x:hx,y:hyy,vx:(Math.random()-0.5)*1.5,vy:1.6+Math.random()*2.6,life:0.3+Math.random()*0.35});
     } else if(ROOM==="reviewer"){ // floating diff-scan hologram + sweep + beam
       var pw=66,ph=48,pxp=hx-6,pyp=hyy-ph-8;
@@ -1209,7 +2460,8 @@ function drawRobot(t){
   }
   // offline: "!" alarm diamond above head
   if(info.offl){
-    var ax=px+260*sc, ay=py+(info.hy-42)*sc + Math.sin(t*3)*3;
+    /* Above the UNIT, not above its visor — see unitTop. */
+    var ax=px+260*sc, ay=py+unitTop()*sc-26 + Math.sin(t*3)*3;
     S.save();S.translate(ax,ay);S.rotate(Math.PI/4);
     S.fillStyle="#1a0d0f";S.fillRect(-11,-11,22,22);
     var p=0.5+0.5*Math.sin(t*6);S.fillStyle=rgba(255,60,50,0.5+0.5*p);S.fillRect(-8,-8,16,16);S.restore();
@@ -1232,21 +2484,54 @@ function drawTarget(t,dt){
 
   drawDeepRacks(t);
   drawBackWall(t,lit);
+  floorPlane(t,lit,STATE);   // owns everything below FLOORY; must run after the wall
   rightTower(t);
   drawRedBeacon(t,offl?1:0.14);
   // wall attachments FIRST, so the volumetric light reads in front of them
-  if(ROOM==="builder"){ floorHazard(); crane(t); fabBay(t,lit,STATE); pegboard(t,lit); }
-  else if(ROOM==="reviewer"){ diffWall(t,STATE); checklistBoard(); }
-  else { kanban(t,STATE); radar(t,STATE); switchboard(t,STATE); }
+  /* Wall attachments, each one filling a bay named in BAYS. The six added in
+     loop 13 are listed second in each room so the older props keep their
+     stacking order — none of the new ones overlaps anything, so the order is
+     bookkeeping rather than occlusion. */
+  if(ROOM==="builder"){ floorHazard(); crane(t); fabBay(t,lit,STATE); pegboard(t,lit);
+    gasRack(t,lit,STATE); firePoint(t,lit,STATE); }
+  else if(ROOM==="reviewer"){ diffWall(t,STATE); checklistBoard();
+    calChart(t,lit,STATE); sampleArchive(t,lit,STATE); }
+  else { kanban(t,STATE); radar(t,STATE); switchboard(t,STATE);
+    tubeStation(t,lit,STATE); dutyBoard(t,lit,STATE); }
+  wallKey(lit,ROOM);                // the lamp reaching the wall AND what is bolted to it
+  pilasters(t,lit);                 // where the wall stops, and why
+  roofTruss(t,lit);                 // mid plane: in front of the wall, behind the unit
+  cableSwag(lit);                   // hangs from the truss; the room's only diagonal
   drawLampCone(t,lit,!offl,ROOM);   // light between wall attachments and robot
   stepSparks(dt);
-  drawRobot(t);
+  /* Depth, and the one unit it is not the same question for. Every room stands
+     its bench, desk or console at y=536..612 in FRONT of the unit, which is
+     right for three vendors: they are tall, the furniture crosses their shins,
+     and being partly behind it is what puts them in the room rather than on it.
+     kimi is a wide drone that hovers 48px up while powered and settles when it
+     is not — and a settled drone is 122px tall, so the desk top cut it in half
+     and the console showed a dark lump lying on the bench. All three rooms, and
+     only findable at full size: at thumbnail scale it reads as a dark shape,
+     which is what a powered-down drone reads as anyway.
+     A drone that has set itself down does not do it INSIDE the bench, so this
+     is a placement fact and not a drawing-order trick: it lands on the open
+     deck, nearer the camera than the furniture. */
+  var landed=(AGENT==="kimi"&&offl);
+  if(!landed)drawRobot(t);
   if(ROOM==="builder"){ conveyor(t,STATE); workbench(t,lit,STATE); crateBig(206,558);crateBig(182,588); }
-  else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720); }
-  else { mapConsole(t,STATE); phoneBank(1042); fileCabinet(1086); docStack(700); }
+  /* The in-tray. A review lab that is idle is a review lab with a queue on the
+     desk — two flat stacks said the same thing whether anything was pending or
+     not, so a third, visibly taller pile only appears when nothing is being
+     reviewed. It is the room's own version of "work is waiting". */
+  else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
+    if(STATE==="idle")for(var ip=0;ip<11;ip++){S.fillStyle=ip%2?"#c3cdda":"#a6b1c0";S.fillRect(752-(ip%2),FLOORY-6-ip*4,26,4);} }
+  else { mapConsole(t,STATE); phoneBank(1042,t,STATE); fileCabinet(1086); docStack(700); }
+  if(landed)drawRobot(t);           // ... and this is where the deck is
   drawSparks();
   drawFloorFog(t);
   drawSteam(t);
+  roomForeground(t,STATE);
+  nearEdge();                       // near plane, out of focus
   drawForeground();
 
   C.setTransform(1,0,0,1,0,0);C.globalAlpha=1;C.globalCompositeOperation="source-over";C.filter="none";C.clearRect(0,0,DW,DH);
@@ -1259,8 +2544,67 @@ function drawTarget(t,dt){
   C.globalCompositeOperation="overlay";C.globalAlpha=0.05;var nx=-Math.random()*40,ny=-Math.random()*40;
   for(var gx=nx;gx<DW;gx+=220)for(var gy=ny;gy<DH;gy+=220)C.drawImage(noise,gx,gy);
   C.globalCompositeOperation="source-over";C.globalAlpha=0.05;C.fillStyle="#000";for(var sl=0;sl<DH;sl+=3)C.fillRect(0,sl,DW,1);C.globalAlpha=1;
-  var vg=C.createRadialGradient(DW*0.46,DH*0.46,DH*0.30,DW*0.5,DH*0.52,DH*0.92);vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.80)");C.fillStyle=vg;C.fillRect(0,0,DW,DH);
+  /* The vignette was centred at 0.46 of the frame — nearer the geometric
+     centre of the canvas than to the thing the picture is of. The unit stands
+     at ROBOX/DW = 0.367, and a vignette's whole job is to say where to look.
+     Moved onto the subject, which costs the right-hand props a little falloff
+     and is the correct trade: they are context, and the unit is not. */
+  var vg=C.createRadialGradient(DW*0.40,DH*0.46,DH*0.30,DW*0.44,DH*0.52,DH*0.92);vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.80)");C.fillStyle=vg;C.fillRect(0,0,DW,DH);
+  /* Room grade. Every prop, wall and floor in all three rooms was tinted one
+     at a time, by hand, and they still came out of the compositor sharing the
+     same neutral blue-black — because a grade is a property of the WHOLE
+     frame, and nothing was applying one. Three rooms lit by the same lamp
+     should still not photograph the same.
+     Two passes: a lift into the shadows, which is what actually carries the
+     colour of a dark scene, and a screen over the highlights so the key light
+     picks up temperature. Deliberately small — this is a grade, not a filter,
+     and it has to survive being looked at 36 times on one page. */
+  var GR=ROOM==="builder"?[255,176,96]:ROOM==="reviewer"?[122,196,255]:[186,150,255];
+  C.save();
+  C.globalCompositeOperation="lighter";C.globalAlpha=0.030;
+  C.fillStyle=rgba(GR[0],GR[1],GR[2],1);C.fillRect(0,0,DW,DH);
+  C.globalCompositeOperation="overlay";C.globalAlpha=0.055;
+  var lift=C.createLinearGradient(0,0,0,DH);
+  lift.addColorStop(0,rgba(GR[0],GR[1],GR[2],1));
+  lift.addColorStop(0.62,rgba(GR[0]*0.55,GR[1]*0.55,GR[2]*0.62,1));
+  lift.addColorStop(1,rgba(GR[0]*0.3,GR[1]*0.3,GR[2]*0.4,1));
+  C.fillStyle=lift;C.fillRect(0,0,DW,DH);
+  C.restore();
 }
+/* ---- borrowing the room renderer -------------------------------------------
+   drawTarget draws whatever the globals currently name, and writes module
+   state on the way through: the lamp's flicker, the weld spark pool, and the
+   anchors the unit reported. Two callers now render rooms out of band — the
+   god-view cell, every few seconds per unit, and the asset map, 36 times on
+   one page — and both need the same two guarantees. A tile must not depend on
+   how many frames the previous caller happened to run, or the grid stops being
+   comparable and a diff stops meaning anything. And the caller's own animation
+   has to be exactly where it left it afterwards, or one view's frame leaks
+   into another's.
+
+   The dev hook used to do the first and only half of the second: it reset the
+   lamp and the sparks and left them reset, and never saved the footprints at
+   all. That was invisible while the whiteboard was the only caller — which is
+   exactly the kind of thing that stops being invisible the day a second one
+   arrives. Both halves live here now, so the two callers cannot disagree about
+   the contract by drifting apart. */
+function borrowRoom(o,fn){
+  var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX,sl=lastHand,sf=lastFeet,san=lastAnchors,
+      sll=lamp.lit,sld=lamp.drop,ssp=sparks.slice();
+  AGENT=o.agent;ROOM=o.room;STATE=o.state;BOX=o.box||(o.agent+"-"+o.room);
+  /* The lamp and the sparks are the only two things that carry across frames,
+     so both are reset and then warmed a FIXED number of frames. */
+  lamp.lit=1;lamp.drop=0;sparks.length=0;
+  var t=o.t||0,dt=1/60,warm=o.warm===undefined?12:o.warm;
+  for(var w=warm;w>0;w--)drawTarget(t-w*dt,dt);
+  drawTarget(t,dt);
+  var out=fn?fn():null;
+  AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;lastHand=sl;lastFeet=sf;lastAnchors=san;
+  lamp.lit=sll;lamp.drop=sld;sparks.length=0;
+  for(var i=0;i<ssp.length;i++)sparks.push(ssp[i]);
+  return out;
+}
+
 function drawDeepRacks(t){
   var defs=[[120,.34,.72],[250,.5,.5],[1060,.32,.75],[1160,.55,.42],[985,.42,.6]];
   defs.forEach(function(d,k){var x=d[0],sc=d[1],fog=d[2],w=120*sc,h=420*sc,y=FLOORY-h+40;
@@ -1277,10 +2621,298 @@ function drawBackWall(t,lit){
   var wallg=S.createLinearGradient(0,wy,0,FLOORY);wallg.addColorStop(0,"#0a1019");wallg.addColorStop(1,"#05080e");S.fillStyle=wallg;S.fillRect(wx,wy,ww,wh);
   S.strokeStyle="rgba(30,44,64,0.25)";S.lineWidth=1;for(var px=wx+80;px<wx+ww;px+=120){S.beginPath();S.moveTo(px,wy);S.lineTo(px,FLOORY);S.stroke();}
   S.beginPath();S.moveTo(wx,wy+150);S.lineTo(wx+ww,wy+150);S.stroke();
-  S.save();S.globalAlpha=0.09+0.05*lit;S.fillStyle="#d9b23a";S.font="700 34px ui-monospace,monospace";S.fillText("SECTOR-7",672,wy+70);S.font="700 15px ui-monospace,monospace";S.fillText(ROOM==="builder"?"BUILDER QUARTERS":ROOM==="reviewer"?"REVIEW LAB":"DISPATCH",674,wy+92);S.restore();
+  /* Per-room wall surface. The three rooms shared one wall with a different
+     word painted on it, which is most of why they read as the same room three
+     times: the wall is the largest object on screen and it was saying nothing.
+     All of it lives right of x=660, the dead zone every room had between its
+     props and the tower. */
+  S.save();
+  if(ROOM==="builder"){
+    // bolted steel plate: horizontal seams, rivet rows, and a warning placard
+    for(var py2=wy+52;py2<FLOORY-24;py2+=76){
+      S.strokeStyle="rgba(44,58,80,0.4)";S.lineWidth=1;S.beginPath();S.moveTo(wx,py2);S.lineTo(wx+ww,py2);S.stroke();
+      S.fillStyle="rgba(84,104,136,0.2)";for(var rx2=wx+18;rx2<wx+ww;rx2+=54)S.fillRect(rx2,py2-3,2,2);
+    }
+    var bpx=812,bpy=318;                                     // hazard placard
+    wallShadow(bpx,bpy,96,64);
+    plate(S,[[bpx,bpy],[bpx+96,bpy],[bpx+96,bpy+64],[bpx,bpy+64]],"#2b2411","#12100a","#4a3f1c");
+    S.save();S.globalAlpha=0.5;for(var hs=0;hs<96;hs+=16){S.fillStyle=hs%32<16?"#c9a227":"#12100a";S.beginPath();S.moveTo(bpx+hs,bpy+4);S.lineTo(bpx+hs+8,bpy+4);S.lineTo(bpx+hs+16,bpy+16);S.lineTo(bpx+hs+8,bpy+16);S.closePath();S.fill();}S.restore();
+    S.fillStyle="rgba(201,162,39,0.30)";S.fillRect(bpx+12,bpy+28,72,4);S.fillRect(bpx+12,bpy+38,54,4);S.fillRect(bpx+12,bpy+48,64,4);
+    /* Grime, running down from every fixture. A workshop wall stains under
+        whatever is bolted to it — the plate seams, the placard, the conduit
+        brackets — and a perfectly clean one is the giveaway that this is
+        geometry rather than a place where work happens. */
+    S.save();
+    [[818,382,54,120],[706,272,16,236],[560,254,40,70],[318,220,30,180]].forEach(function(st2){
+      var sg3=S.createLinearGradient(0,st2[1],0,st2[1]+st2[3]);
+      sg3.addColorStop(0,"rgba(24,18,10,0.34)");sg3.addColorStop(1,"rgba(24,18,10,0)");
+      S.fillStyle=sg3;S.fillRect(st2[0],st2[1],st2[2],st2[3]);});
+    S.restore();
+    /* Conduit run dropping to the bay. It stays exactly where it was — x=700,
+       ceiling to floor — because the prop was never the problem; it was the
+       only thing on this wall with any verticality. What was wrong is that it
+       crossed the room's name at full contrast. It now passes BEHIND the sign
+       plate, which is drawn opaque at the end of this function, and comes out
+       underneath with a stain weeping from the joint. */
+    S.strokeStyle="rgba(30,42,58,0.75)";S.lineWidth=6;S.beginPath();S.moveTo(700,wy+30);S.lineTo(700,FLOORY-40);S.stroke();
+    S.strokeStyle="rgba(74,92,120,0.22)";S.lineWidth=1.5;S.beginPath();S.moveTo(698,wy+30);S.lineTo(698,FLOORY-40);S.stroke();
+    for(var cl=wy+70;cl<FLOORY-40;cl+=88){S.fillStyle="rgba(52,66,88,0.7)";S.fillRect(694,cl,12,7);}
+  } else if(ROOM==="reviewer"){
+    // modular clean-room panels: a fine seam grid, cooler and tighter than the bay
+    S.strokeStyle="rgba(52,78,110,0.3)";S.lineWidth=1;
+    for(var gy2=wy+46;gy2<FLOORY-16;gy2+=58){S.beginPath();S.moveTo(wx,gy2);S.lineTo(wx+ww,gy2);S.stroke();}
+    for(var gx3=wx+60;gx3<wx+ww;gx3+=60){S.beginPath();S.moveTo(gx3,wy);S.lineTo(gx3,FLOORY);S.stroke();}
+    S.fillStyle="rgba(120,170,220,0.05)";S.fillRect(wx,wy,ww,FLOORY-wy);
+    /* Coved skirting and a cable tray. This is the room whose surfaces have to
+       read as *finished* — the bay gets grime, the lab gets the detailing that
+       says someone specified it: a curved wall-to-floor cove (so there is no
+       corner to trap contamination) and a tray carrying the monitor runs at
+       high level, rather than four screens fed by nothing. */
+    var cov=S.createLinearGradient(0,FLOORY-14,0,FLOORY);
+    cov.addColorStop(0,"rgba(150,185,225,0.03)");cov.addColorStop(1,"rgba(150,185,225,0.11)");
+    S.fillStyle=cov;S.fillRect(wx,FLOORY-14,ww,14);
+    S.fillStyle="rgba(150,185,225,0.10)";S.fillRect(wx,FLOORY-15,ww,1);
+    S.fillStyle="rgba(22,32,46,0.9)";S.fillRect(wx,wy+22,ww,9);
+    S.fillStyle="rgba(120,160,205,0.10)";S.fillRect(wx,wy+22,ww,1.5);
+    for(var tb2=wx+30;tb2<wx+ww;tb2+=76){S.fillStyle="rgba(16,24,34,0.9)";S.fillRect(tb2,wy+31,5,12);}
+    // certification plates — this lab signs what leaves it
+    for(var cp=0;cp<3;cp++){var cxp2=792+cp*66,cyp2=336;
+      wallShadow(cxp2,cyp2,52,70);
+      plate(S,[[cxp2,cyp2],[cxp2+52,cyp2],[cxp2+52,cyp2+70],[cxp2,cyp2+70]],"#101a26","#0a1018","#22364e");
+      S.fillStyle="rgba(120,190,250,0.16)";S.fillRect(cxp2+7,cyp2+9,38,3);
+      for(var cl2=0;cl2<5;cl2++){S.fillStyle="rgba(150,180,210,0.10)";S.fillRect(cxp2+7,cyp2+20+cl2*8,38-(cl2%2)*12,2);}
+      S.fillStyle=cp<2?"rgba(79,208,122,0.4)":"rgba(247,189,78,0.4)";S.beginPath();S.arc(cxp2+42,cyp2+60,4,0,7);S.fill();}
+  } else {
+    // dispatch: a cork strip of pinned work orders, and a wall clock bank
+    var nb=760,nby=320,nbw=232,nbh=92;
+    wallShadow(nb,nby,nbw,nbh);
+    plate(S,[[nb,nby],[nb+nbw,nby],[nb+nbw,nby+nbh],[nb,nby+nbh]],"#2a2018","#150f0a","#3d2e1f");
+    for(var no=0;no<9;no++){var nox=nb+10+(no%5)*44,noy=nby+10+Math.floor(no/5)*40;
+      S.save();S.translate(nox+16,noy+14);S.rotate(((no*37)%9-4)*0.014);
+      S.fillStyle=["rgba(214,222,232,0.34)","rgba(232,214,180,0.32)","rgba(200,220,236,0.30)"][no%3];S.fillRect(-16,-14,32,28);
+      S.fillStyle="rgba(0,0,0,0.35)";for(var nl=0;nl<3;nl++)S.fillRect(-11,-8+nl*7,22-(nl%2)*8,2);
+      S.fillStyle=["#c9a227","#4f9e5a","#b0563a","#5a86c9"][no%4];S.beginPath();S.arc(0,-11,2.2,0,7);S.fill();S.restore();}
+    // three zone clocks — dispatch is about when, not only where
+    [0,1,2].forEach(function(ci){var ccx2=690,ccy=326+ci*46;
+      wallShadow(ccx2-12,ccy-12,24,24,0.8);
+      S.fillStyle="#0b111a";S.beginPath();S.arc(ccx2,ccy,15,0,7);S.fill();
+      S.strokeStyle="rgba(70,92,120,0.5)";S.lineWidth=1.4;S.beginPath();S.arc(ccx2,ccy,15,0,7);S.stroke();
+      var ang=[1.1,3.0,5.2][ci];S.strokeStyle="rgba(160,190,220,0.42)";S.lineWidth=1.4;
+      S.beginPath();S.moveTo(ccx2,ccy);S.lineTo(ccx2+Math.cos(ang)*9,ccy+Math.sin(ang)*9);S.stroke();
+      S.beginPath();S.moveTo(ccx2,ccy);S.lineTo(ccx2+Math.cos(ang*2.3)*6,ccy+Math.sin(ang*2.3)*6);S.stroke();});
+  }
+  S.restore();
+
+  wallSign(lit);
   S.save();S.globalAlpha=0.14;for(var sx=wx;sx<wx+ww;sx+=18){S.fillStyle=sx%36<18?"#c9a227":"#0a0a0a";S.beginPath();S.moveTo(sx,FLOORY-8);S.lineTo(sx+9,FLOORY-8);S.lineTo(sx+18,FLOORY);S.lineTo(sx+9,FLOORY);S.closePath();S.fill();}S.restore();
-  var flg=S.createLinearGradient(0,FLOORY,0,DH);flg.addColorStop(0,"#060a12");flg.addColorStop(1,"#010307");S.fillStyle=flg;S.fillRect(0,FLOORY,DW,DH-FLOORY);
-  S.fillStyle="rgba(0,0,0,0.6)";S.fillRect(0,FLOORY,DW,3);
+  /* The floor used to be painted here, by the function that draws the WALL —
+     a flat gradient plus a black seam bar, filling everything below FLOORY.
+     It has moved to floorPlane(), which runs immediately after this and owns
+     that band alone. Leaving it here meant anything drawn on the floor before
+     the wall was silently erased, which is exactly what happened to the first
+     cut of floorPlane. */
+}
+/* The room's name, as a thing bolted to the wall rather than as text floating
+   in front of it. Drawn last inside drawBackWall so it occludes the conduit,
+   the plate seams and the grime that run behind it — which is the whole reason
+   the builder's tube is now allowed to stay exactly where it was. */
+function wallSign(lit){
+  var x=SIGN.x,y=SIGN.y,w=SIGN.w,h=SIGN.h;
+  S.save();
+  // the panel stands off the wall, so it drops a shadow onto it — loop 11 did
+  // this by hand at a fixed offset; it now uses the same rule as every other
+  // bolted prop, which is what makes the whole wall agree about where the lamp
+  // is instead of each object having a private opinion
+  wallShadow(x,y,w,h,1.2);
+  plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1b2330","#0b101a","#2b3646");
+  // rolled top edge catching the lamp, and the panel's own vertical falloff
+  var sh=S.createLinearGradient(0,y,0,y+h);
+  sh.addColorStop(0,"rgba(190,214,246,"+(0.05+0.05*lit)+")");
+  sh.addColorStop(0.35,"rgba(190,214,246,0)");
+  sh.addColorStop(1,"rgba(0,0,0,0.30)");
+  S.fillStyle=sh;S.fillRect(x,y,w,h);
+  S.fillStyle="rgba(176,200,236,"+(0.10+0.10*lit)+")";S.fillRect(x,y,w,1.5);
+  // four bolts, and the rust weeping from the lower pair
+  [[x+11,y+11],[x+w-11,y+11],[x+11,y+h-11],[x+w-11,y+h-11]].forEach(function(b,i){
+    S.fillStyle="#0a0e15";S.beginPath();S.arc(b[0],b[1],4,0,7);S.fill();
+    S.fillStyle="#39465c";S.beginPath();S.arc(b[0],b[1],2.6,0,7);S.fill();
+    S.fillStyle="rgba(196,220,255,"+(0.16*lit)+")";S.beginPath();S.arc(b[0]-0.7,b[1]-0.8,1.3,0,7);S.fill();
+    if(i>1){var rg2=S.createLinearGradient(0,b[1],0,b[1]+13);
+      rg2.addColorStop(0,"rgba(74,44,20,0.30)");rg2.addColorStop(1,"rgba(74,44,20,0)");
+      S.fillStyle=rg2;S.fillRect(b[0]-2.5,b[1],5,13);}});
+  /* Stencilled, not printed: a hard-edged glyph with a dark bite below and left
+     of it, which is what paint sprayed through a mask onto rolled steel looks
+     like once the room's only lamp is off to one side. The old text was a flat
+     8%-alpha fill — legible as a caption, invisible as a surface. */
+  var alpha=0.30+0.34*lit;
+  S.font="700 34px ui-monospace,monospace";
+  S.fillStyle="rgba(0,0,0,0.55)";S.fillText("SECTOR-7",x+25,y+50);
+  S.fillStyle=rgba(217,178,58,alpha);S.fillText("SECTOR-7",x+24,y+48.6);
+  S.fillStyle="rgba(255,236,180,"+(0.10*lit)+")";S.fillText("SECTOR-7",x+23.4,y+48);
+  var word=ROOM==="builder"?"BUILDER QUARTERS":ROOM==="reviewer"?"REVIEW LAB":"DISPATCH";
+  S.font="700 15px ui-monospace,monospace";
+  S.fillStyle="rgba(0,0,0,0.5)";S.fillText(word,x+26,y+73);
+  S.fillStyle=rgba(196,214,238,alpha*0.78);S.fillText(word,x+25,y+72);
+  // a stencil worn through where the wall is rubbed, and the panel's grade tag
+  S.fillStyle="rgba(27,35,48,"+(0.35+0.2*(1-lit))+")";
+  S.fillRect(x+96,y+28,7,16);S.fillRect(x+188,y+22,5,11);
+  S.fillStyle="rgba(150,175,205,0.18)";S.fillRect(x+w-64,y+h-24,40,2);
+  S.fillStyle="rgba(150,175,205,0.10)";S.fillRect(x+w-64,y+h-19,26,2);
+  S.restore();
+}
+/* The lamp lands on the wall.
+   The one light in this room throws a volumetric cone through the air and a
+   pool onto the deck, and then the 760 x 462 surface directly behind all of it
+   received nothing at all: the far corner of the wall was exactly as bright as
+   the patch two metres under the bulb. That is why the rooms have always read
+   as a lit robot standing in front of a flat backdrop — the backdrop was not
+   in the same lighting model as anything else.
+   Runs after the wall attachments and before the volumetric cone, so the props
+   bolted to the wall take the same falloff the wall does. Clipped to the wall
+   rect, additive, in the room's own light colour: this is one lamp, and the
+   room is graded to it.
+   The second pass is the opposite — contact darkening where the wall meets the
+   floor and where it runs out at either end. A wall that is uniformly lit to
+   its own edges has no corners, and every one of these rooms had four. */
+function wallKey(lit,room){
+  var K=room==="builder"?[255,201,135]:room==="reviewer"?[150,196,245]:[176,150,240];
+  /* Damped, not driven directly by `lit`.
+     The lamp drops out for a few frames at random — a detail worth 190px of
+     cone and a floor pool. Wired straight to the wall it is worth 760 x 462,
+     and the first render of this pass proved it: two tiles of the same room in
+     the same state came out with the wall 9 luminance steps apart, purely
+     because one of them sampled a dropout frame. At that scale a strobe stops
+     reading as a failing tube and starts reading as a rendering fault. The
+     wall keeps a third of the swing, which is enough to tie it to the lamp. */
+  lit=0.62+0.38*lit;
+  S.save();
+  S.beginPath();S.rect(WALL.x,WALL.y,WALL.w,FLOORY-WALL.y);S.clip();
+  S.globalCompositeOperation="lighter";
+  var kg=S.createRadialGradient(LAMPX,LAMPY+60,30,LAMPX,LAMPY+60,560);
+  kg.addColorStop(0,rgba(K[0],K[1],K[2],0.115*lit));
+  kg.addColorStop(0.42,rgba(K[0],K[1],K[2],0.048*lit));
+  kg.addColorStop(1,rgba(K[0],K[1],K[2],0));
+  S.fillStyle=kg;S.fillRect(WALL.x,WALL.y,WALL.w,FLOORY-WALL.y);
+  S.globalCompositeOperation="source-over";
+  // floor contact
+  var ao=S.createLinearGradient(0,FLOORY-52,0,FLOORY);
+  ao.addColorStop(0,"rgba(1,3,7,0)");ao.addColorStop(1,"rgba(1,3,7,0.42)");
+  S.fillStyle=ao;S.fillRect(WALL.x,FLOORY-52,WALL.w,52);
+  // the two ends, where the wall turns away
+  [[WALL.x,1],[WALL.x+WALL.w,-1]].forEach(function(e){
+    var eg=S.createLinearGradient(e[0],0,e[0]+e[1]*104,0);
+    eg.addColorStop(0,"rgba(1,3,7,0.46)");eg.addColorStop(1,"rgba(1,3,7,0)");
+    S.fillStyle=eg;S.fillRect(Math.min(e[0],e[0]+e[1]*104),WALL.y,104,FLOORY-WALL.y);});
+  // and the ceiling it disappears into
+  var cg2=S.createLinearGradient(0,WALL.y,0,WALL.y+72);
+  cg2.addColorStop(0,"rgba(1,3,7,0.40)");cg2.addColorStop(1,"rgba(1,3,7,0)");
+  S.fillStyle=cg2;S.fillRect(WALL.x,WALL.y,WALL.w,72);
+  /* Aerial perspective. The wall is metres behind the unit and every prop on
+     it was rendering at exactly the unit's contrast — black blacks, hard
+     edges — which is what has been making the robot look pasted on rather than
+     standing in front of something. Air between two things lifts the far one's
+     shadows and pulls it toward the colour of the light. It is a very small
+     number and it is doing more for depth than anything else in this loop. */
+  S.globalAlpha=0.055;S.fillStyle=rgba(K[0],K[1],K[2],1);
+  S.fillRect(WALL.x,WALL.y,WALL.w,FLOORY-WALL.y);
+  S.restore();
+}
+/* The roof, and the near edge of the room.
+   The frame had two planes: a wall with everything on it, and a unit in front
+   of the wall. Above the unit was 150px of flat black doing nothing, and the
+   lamp — the only light in the room — hung out of it on a stalk attached to
+   the top of the canvas.
+   The truss is the mid plane. It crosses in FRONT of the wall and behind the
+   unit, it is what the lamp hangs from, and it closes the top of the frame:
+   the rooms now have a ceiling the way they got a floor in loop 1. Kept dark
+   and low-contrast on purpose — a silhouette is the correct amount of detail
+   for something between the viewer and the light. */
+function roofTruss(t,lit){
+  var y0=26,y1=64;
+  S.save();
+  S.fillStyle="#080d14";S.fillRect(0,y0,DW,7);S.fillRect(0,y1,DW,7);
+  S.fillStyle="rgba(120,150,190,0.07)";S.fillRect(0,y0,DW,1.4);
+  S.strokeStyle="#0b111a";S.lineWidth=3.4;
+  for(var w2=-30;w2<DW+40;w2+=58){                      // the lattice web
+    S.beginPath();S.moveTo(w2,y1+4);S.lineTo(w2+29,y0+4);S.lineTo(w2+58,y1+4);S.stroke();}
+  S.fillStyle="#0a1017";
+  for(var pn=64;pn<DW;pn+=196){S.fillRect(pn,y0,10,y1-y0+7);}   // purlins crossing it
+  // hangers, and the cable tray they carry
+  S.fillStyle="#070c12";
+  [188,372,760,948].forEach(function(hx){S.fillRect(hx,y1+7,4,26);});
+  S.fillStyle="#0a1017";S.fillRect(150,y1+30,850,7);
+  S.fillStyle="rgba(120,150,190,0.05)";S.fillRect(150,y1+30,850,1);
+  for(var cb=160;cb<996;cb+=13){S.fillStyle="rgba(4,8,13,0.8)";S.fillRect(cb,y1+35,7,4);}
+  // the lamp's own stalk, now bolted to something
+  S.fillStyle="#101720";S.fillRect(LAMPX-9,y1+4,18,10);
+  S.fillStyle="rgba(150,180,220,"+(0.10*lit)+")";S.fillRect(LAMPX-9,y1+4,18,1.4);
+  S.restore();
+}
+/* Corner pilasters — where the wall stops.
+   Pull the exposure up on any of these rooms and the same thing is wrong in
+   all three: the back wall is a large lit rectangle that simply ENDS, on a
+   hard vertical cut, with black on the other side of it. Loop 12 put a
+   darkening gradient at each end, which softened the cut without explaining
+   it. Nothing explains a wall ending except a corner.
+   So each end gets the structural column the wall is built against: a face
+   turned slightly away from the room, a bright arris where the two planes
+   meet, and a shadow thrown back onto the wall it stands in front of. The
+   arris is the point — a hard bright vertical line at each end of the frame is
+   what makes the wall read as one face of a box rather than as a backdrop
+   hung behind the set. */
+function pilasters(t,lit){
+  [[WALL.x,-1],[WALL.x+WALL.w,1]].forEach(function(e){
+    var x=e[0],sg=e[1],w=26,y0=WALL.y-18;
+    S.save();
+    // shadow onto the wall, thrown inward because the lamp is between them
+    var sw3=S.createLinearGradient(x-sg*w*0.5,0,x-sg*(w*0.5+46),0);
+    sw3.addColorStop(0,"rgba(1,3,7,0.5)");sw3.addColorStop(1,"rgba(1,3,7,0)");
+    S.fillStyle=sw3;S.fillRect(Math.min(x-sg*w*0.5,x-sg*(w*0.5+46)),WALL.y,46,FLOORY-WALL.y);
+    // the returning face: darker, because it turns away from the lamp
+    plate(S,[[x-sg*2,y0],[x+sg*w,y0+10],[x+sg*w,FLOORY],[x-sg*2,FLOORY]],"#101722","#070b12","#1a2432");
+    // the arris
+    S.fillStyle="rgba(186,212,246,"+(0.10+0.17*lit)+")";S.fillRect(x-sg*2.4,y0,2.4,FLOORY-y0);
+    S.fillStyle="rgba(2,5,10,0.55)";S.fillRect(x-sg*(w*0.62),y0+8,3,FLOORY-y0-8);
+    // capital and base, and a bolt line up the face
+    S.fillStyle="#161e2a";S.fillRect(Math.min(x-sg*6,x+sg*w),y0,w+6,9);
+    S.fillStyle="rgba(186,212,246,"+(0.07+0.08*lit)+")";S.fillRect(Math.min(x-sg*6,x+sg*w),y0,w+6,1.4);
+    S.fillStyle="#131b26";S.fillRect(Math.min(x-sg*6,x+sg*w),FLOORY-16,w+6,16);
+    for(var bt=y0+34;bt<FLOORY-24;bt+=54)rivet(S,x+sg*9,bt,"#33415a");
+    S.restore();});
+}
+/* One diagonal.
+   Every edge in these rooms is horizontal or vertical. The wall grid, the
+   props, the bays, the truss, the tray — all of it is axis-aligned, and the
+   only exceptions in fourteen loops have been the lamp cone and the builder's
+   hose. A grid with no diagonal in it reads as a diagram.
+   A cable hanging from the tray is the cheapest true curve there is: it is a
+   catenary, it belongs on a ceiling that now exists to hang things from, and
+   it crosses in front of the wall and behind the unit, which puts a line
+   through the mid plane loop 14 opened up. */
+function cableSwag(lit){
+  [[132,470,168,0.85],[556,1006,156,0.6],[262,742,132,0.4]].forEach(function(c6){
+    var x0=c6[0],x1=c6[1],dip=c6[2],a=c6[3];
+    S.strokeStyle="rgba(3,6,12,"+(0.85*a)+")";S.lineWidth=3.4;
+    S.beginPath();S.moveTo(x0,101);S.quadraticCurveTo((x0+x1)/2,dip*2-40,x1,101);S.stroke();
+    S.strokeStyle="rgba(150,180,220,"+(0.09*a*lit)+")";S.lineWidth=1;
+    S.beginPath();S.moveTo(x0,99.6);S.quadraticCurveTo((x0+x1)/2,dip*2-42,x1,99.6);S.stroke();
+    S.fillStyle="#0a1017";S.fillRect(x0-3,97,6,7);S.fillRect(x1-3,97,6,7);});
+}
+/* The near plane. drawForeground already lays a blurred lip across the bottom
+   of the frame; this is the same idea turned vertical, at the left edge, well
+   out of focus. Two planes make a picture; three make a room — and an
+   out-of-focus object between the viewer and the subject is the single
+   cheapest way to say the camera is inside the space rather than looking
+   through a window at it. Left only: the right side already has the tower, the
+   steam vent and the file cabinets doing that job with real geometry. */
+function nearEdge(){
+  S.save();S.filter="blur(7px)";
+  var ng=S.createLinearGradient(0,0,58,0);
+  ng.addColorStop(0,"rgba(1,3,7,0.97)");ng.addColorStop(0.72,"rgba(1,3,7,0.86)");
+  ng.addColorStop(1,"rgba(1,3,7,0)");
+  S.fillStyle=ng;S.fillRect(-10,0,58,DH);
+  S.fillStyle="rgba(34,48,68,0.20)";S.fillRect(40,0,5,DH);
+  S.restore();
 }
 function drawRedBeacon(t,intensity){
   var bx=300,by=200,pulse=reduced?0.6:(0.35+0.65*Math.pow(Math.max(0,Math.sin(t*1.6)),3));
@@ -1333,8 +2965,114 @@ function drawHolo(t,st){
     c.restore();}
   panel(S,0.9);panel(G,0.7);
 }
+/* The floor the whole room stands on. There wasn't one: below FLOORY the scene
+   was the same flat #02040a as the void above the wall, so every unit and every
+   prop was pasted onto a hole rather than standing in a room, and the contact
+   shadows had no surface to land on. One receding plane, tinted per room —
+   which is also the cheapest way to make three rooms that share a wall, a
+   ceiling and a lamp stop reading as the same room with different posters. */
+function floorPlane(t,lit,st){
+  var off=st==="offline", VPX=DW*0.5, H=DH-FLOORY;
+  var warm=ROOM==="builder", cool=ROOM==="reviewer";
+  /* These read brighter than they look on paper only because everything below
+     FLOORY is then hit twice — by drawForeground's blurred lip and by the
+     final vignette, which is at its strongest in exactly this band. Tuned
+     against the composite, not against this fill. */
+  var base=warm?[62,51,38]:cool?[42,57,76]:[50,54,63];
+  var k=off?0.42:1;
+  S.save();
+  // the wall's own contact shadow, where it meets the floor
+  S.fillStyle="rgba(0,0,0,0.6)";S.fillRect(0,FLOORY-3,DW,3);
+  var fg=S.createLinearGradient(0,FLOORY,0,DH);
+  fg.addColorStop(0,rgba(base[0]*k,base[1]*k,base[2]*k,1));
+  fg.addColorStop(0.35,rgba(base[0]*0.62*k,base[1]*0.62*k,base[2]*0.62*k,1));
+  fg.addColorStop(1,"#01030700");
+  S.fillStyle=fg;S.fillRect(0,FLOORY,DW,H);
+  /* Seams converge on the same vanishing point the wall grid implies, so the
+     floor agrees with the perspective already on screen instead of announcing
+     a second one. */
+  S.strokeStyle=rgba(120,150,190,0.05*k);S.lineWidth=1;
+  for(var sx2=-720;sx2<DW+720;sx2+=150){S.beginPath();S.moveTo(VPX+(sx2-VPX)*0.16,FLOORY);S.lineTo(sx2,DH);S.stroke();}
+  [7,18,34,56,86].forEach(function(dy,i){S.strokeStyle=rgba(120,150,190,(0.055-i*0.008)*k);S.beginPath();S.moveTo(0,FLOORY+dy);S.lineTo(DW,FLOORY+dy);S.stroke();});
+  /* The lip where floor meets wall. A hard bright edge here is what stops the
+     two planes from reading as one dark field — it is doing more work than the
+     whole gradient above it. */
+  S.fillStyle=rgba(150,180,215,0.13*lit*k);S.fillRect(0,FLOORY,DW,1);
+  S.fillStyle=rgba(150,180,215,0.05*lit*k);S.fillRect(0,FLOORY+1,DW,2);
+
+  if(warm){
+    /* Oil and scorch. A fabrication bay floor that is evenly clean is a
+       rendering, not a workshop — and the stains sell scale, because they are
+       the only thing down here with a size the eye already knows. */
+    /* Kept inside FLOORY..FLOORY+40. drawForeground's blurred lip rises to
+       about DH-96 at mid-screen and the vignette piles on below that, so
+       anything painted lower than ~+40 is painted where nobody can see it. */
+    [[300,13,80,0.62],[566,24,120,0.5],[858,10,64,0.56],[190,30,58,0.44]].forEach(function(o){
+      var og=S.createRadialGradient(o[0],FLOORY+o[1],2,o[0],FLOORY+o[1],o[2]);
+      og.addColorStop(0,rgba(6,5,4,o[3]*k));og.addColorStop(1,"rgba(6,5,4,0)");
+      S.fillStyle=og;S.beginPath();S.ellipse(o[0],FLOORY+o[1],o[2],o[2]*0.32,0,0,7);S.fill();});
+  } else if(cool){
+    /* Sealed lab floor: it reflects. A smeared, vertically-squashed echo of
+       the diff wall is enough — a real mirror would double the noise and read
+       as a bug. */
+    S.save();S.globalCompositeOperation="lighter";
+    var rf=S.createLinearGradient(0,FLOORY,0,FLOORY+70);
+    rf.addColorStop(0,rgba(120,180,240,0.085*k));rf.addColorStop(1,"rgba(120,180,240,0)");
+    S.fillStyle=rf;S.fillRect(250,FLOORY,420,70);
+    // specular pool directly under the lamp
+    var sp=S.createRadialGradient(ROBOX,FLOORY+16,3,ROBOX,FLOORY+16,210);
+    sp.addColorStop(0,rgba(180,215,255,0.10*lit*k));sp.addColorStop(1,"rgba(180,215,255,0)");
+    S.fillStyle=sp;S.beginPath();S.ellipse(ROBOX,FLOORY+16,210,26,0,0,7);S.fill();S.restore();
+  } else {
+    /* Dispatch floors are painted, because dispatch is about where a thing
+       goes next. The lane runs toward the console the triage unit works at. */
+    /* Same band constraint as the builder's stains: the lane has to live in
+       FLOORY..FLOORY+40 or the foreground lip swallows it. */
+    S.save();S.globalAlpha=(off?0.22:0.62);
+    S.strokeStyle="rgba(201,162,39,0.30)";S.lineWidth=2;
+    S.beginPath();S.moveTo(0,FLOORY+9);S.lineTo(DW,FLOORY+9);S.moveTo(0,FLOORY+39);S.lineTo(DW,FLOORY+39);S.stroke();
+    for(var cxp=48;cxp<DW;cxp+=124){S.strokeStyle="rgba(201,162,39,0.30)";S.lineWidth=3.5;S.beginPath();
+      S.moveTo(cxp,FLOORY+16);S.lineTo(cxp+22,FLOORY+24);S.lineTo(cxp,FLOORY+32);S.stroke();}
+    S.restore();
+  }
+  S.restore();
+}
 function drawFloorFog(t){S.save();S.globalCompositeOperation="lighter";floorHaze.forEach(function(f){var x=((f.x+t*f.sp)%1.2-0.1)*DW;var y=FLOORY+(f.y-0.8)*DH*0.4;var gr=S.createRadialGradient(x,y,10,x,y,260);gr.addColorStop(0,rgba(90,120,150,f.a));gr.addColorStop(1,"rgba(90,120,150,0)");S.fillStyle=gr;S.beginPath();S.ellipse(x,y,260,50,0,0,7);S.fill();});S.restore();}
 function drawSteam(t){if(reduced)return;S.save();S.globalCompositeOperation="lighter";var vx=1010,vy=FLOORY-30;S.fillStyle="#0c1219";rr(S,vx,vy,40,26,3);S.fill();steam.forEach(function(s){var p=(s.p+t*0.06)%1;var yy=vy-p*180;var xx=vx+20+Math.sin(t*0.8+s.sway)*24*p;var a=(1-p)*0.10;var rad=8+p*46;var gr=S.createRadialGradient(xx,yy,2,xx,yy,rad);gr.addColorStop(0,rgba(120,150,175,a));gr.addColorStop(1,"rgba(120,150,175,0)");S.fillStyle=gr;S.beginPath();S.arc(xx,yy,rad,0,7);S.fill();});S.restore();}
+/* A near-foreground layer, per room.
+   Every room was wall / props / robot, all at one focal distance, so the frame
+   had no depth in front of the subject — only behind it. One blurred object
+   close to camera does more for the sense of a real space than anything that
+   could be added at the back, and it costs a shape and a blur. Drawn before
+   drawForeground so the floor lip still closes the frame. */
+function roomForeground(t,st){
+  S.save();S.filter="blur(4px)";
+  if(ROOM==="builder"){
+    // a chain hoist hanging just off-camera-left, and a girder crossing top-right
+    S.strokeStyle="rgba(9,13,20,0.95)";S.lineWidth=9;
+    S.beginPath();S.moveTo(96,0);S.lineTo(112,470);S.stroke();
+    S.strokeStyle="rgba(40,52,70,0.5)";S.lineWidth=2;
+    S.beginPath();S.moveTo(92,0);S.lineTo(108,470);S.stroke();
+    S.fillStyle="rgba(9,13,20,0.95)";S.fillRect(84,470,40,54);
+    S.save();S.globalAlpha=0.9;S.fillStyle="#080c13";
+    S.beginPath();S.moveTo(DW,0);S.lineTo(DW,86);S.lineTo(1004,26);S.lineTo(1004,0);S.closePath();S.fill();S.restore();
+  } else if(ROOM==="reviewer"){
+    // the edge of a glass partition the camera is looking through
+    var gp=S.createLinearGradient(0,0,150,0);
+    gp.addColorStop(0,"rgba(150,190,235,0.10)");gp.addColorStop(1,"rgba(150,190,235,0)");
+    S.fillStyle=gp;S.fillRect(0,0,150,DH);
+    S.fillStyle="rgba(10,16,24,0.9)";S.fillRect(120,0,13,DH);
+    S.fillStyle="rgba(150,190,235,0.12)";S.fillRect(120,0,2,DH);
+  } else {
+    // a bundle of cable dropping past the lens, the way a dispatch room is wired
+    [[168,-14],[186,8],[204,-6]].forEach(function(cb,ci2){
+      S.strokeStyle=ci2===1?"rgba(12,17,25,0.95)":"rgba(9,13,20,0.9)";S.lineWidth=ci2===1?11:7;
+      S.beginPath();S.moveTo(cb[0],0);S.quadraticCurveTo(cb[0]+cb[1],250,cb[0]+cb[1]*2.2,520);S.stroke();});
+    S.strokeStyle="rgba(52,66,88,0.35)";S.lineWidth=2;
+    S.beginPath();S.moveTo(186,0);S.quadraticCurveTo(194,250,203,520);S.stroke();
+  }
+  S.restore();
+}
 function drawForeground(){S.save();S.filter="blur(3px)";S.fillStyle="#010307";S.beginPath();S.moveTo(0,DH);S.lineTo(0,DH-54);S.quadraticCurveTo(DW*0.5,DH-96,DW,DH-40);S.lineTo(DW,DH);S.closePath();S.fill();S.strokeStyle="rgba(30,44,62,0.4)";S.lineWidth=2;S.beginPath();S.moveTo(0,DH-52);S.quadraticCurveTo(DW*0.5,DH-94,DW,DH-38);S.stroke();S.restore();}
 
 /* ===================== CURRENT (flat) ===================== */
@@ -1362,7 +3100,14 @@ function blit(){X.imageSmoothingEnabled=true;X.fillStyle="#000";X.fillRect(0,0,V
   if(MODE==="target"){var dx=1.1;tintTo(tintR,comp,255,0,0);tintTo(tintG,comp,0,255,0);tintTo(tintB,comp,0,0,255);X.globalCompositeOperation="lighter";X.drawImage(tintG,dstX,dstY,dstW,dstH);X.drawImage(tintR,dstX+dx,dstY,dstW,dstH);X.drawImage(tintB,dstX-dx,dstY,dstW,dstH);X.globalCompositeOperation="source-over";}
   else{X.drawImage(comp,dstX,dstY,dstW,dstH);}}
 var lastT=0;
-function frame(ms){var t=ms/1000,dt=Math.min(0.05,(ms-lastT)/1000)||0.016;lastT=ms;if(VIEW==="floor"){drawFloor(t);}else{drawTarget(t,dt);blit();}requestAnimationFrame(frame);}
+/* dev/whiteboard.html boots the whole app — that is the point of it, the
+   renderer has to be the shipped one — and then hides the stage and draws its
+   own grid. The loop underneath was still painting a full fleet into a hidden
+   canvas every frame, which is merely wasteful while a cell is cheap and is
+   not once a cell renders rooms: the map's tiles would queue behind the hidden
+   view's. FLOORDEV.pause stops the painting, not the page. */
+var devPaused=false;
+function frame(ms){var t=ms/1000,dt=Math.min(0.05,(ms-lastT)/1000)||0.016;lastT=ms;if(!devPaused){if(VIEW==="floor"){drawFloor(t);}else{drawTarget(t,dt);blit();}}requestAnimationFrame(frame);}
 
 function refreshChrome(){
   document.getElementById("modelabel").textContent=STATE.toUpperCase();
@@ -1494,4 +3239,115 @@ resize();requestAnimationFrame(frame);
 /* Ask for a snapshot immediately, then keep asking. A failure here is the
    normal case for `open index.html` and leaves the page in DEMO mode. */
 pollFleet();setInterval(pollFleet,POLL_MS);
+
+/* ---- dev hook: the room renderer, addressable one unit at a time ----------
+   dev/whiteboard.html lays every agent x room x state out as a single image so
+   the art can be diffed tile-for-tile between commits. It needs the RENDERER,
+   not the app, and it must not own a second copy of it — a whiteboard drawing
+   its own robots would drift from the shipped ones the first time either
+   changed, and then agree with a screenshot of nothing. So this draws with the
+   same drawTarget the room view uses, into a canvas the caller owns, through
+   borrowRoom — which is where "puts back every global it borrowed" actually
+   lives, and is now shared with the god-view cell rather than being this
+   hook's private habit. VIEW, the roster and the live poll never see it.
+   Unused by index.html — it costs one property on window. */
+window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
+  ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
+  /* render(dst,{agent,room,state,t,warm,flat}) */
+  render:function(dst,o){
+    borrowRoom(o,function(){
+    var c=dst.getContext("2d"),W=dst.width,H=dst.height;
+    c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+    c.clearRect(0,0,W,H);c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
+    if(o.flat){c.drawImage(comp,0,0,DW,DH,0,0,W,H);}
+    else{ /* the same chromatic split blit() ships, scaled — a tile has to be
+             what an operator actually sees, fringing included */
+      var dx=1.1*(W/DW);
+      tintTo(tintR,comp,255,0,0);tintTo(tintG,comp,0,255,0);tintTo(tintB,comp,0,0,255);
+      c.fillStyle="#000";c.fillRect(0,0,W,H);
+      c.globalCompositeOperation="lighter";
+      c.drawImage(tintG,0,0,DW,DH,0,0,W,H);
+      c.drawImage(tintR,0,0,DW,DH,dx,0,W,H);
+      c.drawImage(tintB,0,0,DW,DH,-dx,0,W,H);
+      c.globalCompositeOperation="source-over";
+    }
+    });
+  },
+  /* renderMini(dst,{agent,room,state,box,t}) — the GOD-VIEW CELL, whole card
+     and all, into a canvas the caller owns.
+     The room view had a map and the cell had none, which is how a cell could
+     carry a ghost sign, a colliding desk and a misplaced alert glyph through
+     fifteen loops of polish: the roster only ever exercises seven of its
+     thirty-six combinations, the other twenty-nine are unreachable in a
+     healthy fleet, and reviewing them meant patching ROSTER by hand. So the
+     cell is addressable too, by the same rule as the room — this draws with
+     drawMini, the shipped one, and owns no art of its own.
+     dst decides the scale: the cell is laid out at CELLW x CELLH and scaled to
+     the canvas it is given, exactly as a device pixel ratio would. */
+  MINI:{W:CELLW,H:CELLH},
+  renderMini:function(dst,o){
+    var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX,sX=X,sdpr=dpr,sfl=miniFills;
+    AGENT=o.agent;ROOM=o.room;STATE=o.state;BOX=o.box||(o.agent+"-"+o.room);
+    var k=dst.width/CELLW;
+    X=dst.getContext("2d");dpr=k;miniFills=0;
+    X.setTransform(k,0,0,k,0,0);X.globalAlpha=1;X.globalCompositeOperation="source-over";
+    X.filter="none";X.textAlign="left";X.imageSmoothingEnabled=true;
+    X.fillStyle="#03060d";X.fillRect(0,0,CELLW,dst.height/k);
+    drawMini(o.t||0,5,5,CELLW-10,CELLH-10);
+    X=sX;dpr=sdpr;miniFills=sfl;AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;
+  },
+  /* guides(dst,{room}) — the declared layout, drawn over a tile this hook has
+     already rendered. SIGN and BAYS were rules you had to hold in your head
+     while looking at a picture; this is the picture with the rules on it, which
+     is the difference between a stated layout and a documented intention. */
+  guides:function(dst,o){
+    var c=dst.getContext("2d"),k=dst.width/DW;
+    c.save();c.setTransform(k,0,0,k,0,0);
+    c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+    c.font="700 13px ui-monospace,monospace";c.textBaseline="top";c.textAlign="left";
+    var box=function(x,y,w,h,col,lab){
+      c.strokeStyle=col;c.lineWidth=2;c.setLineDash([7,5]);c.strokeRect(x,y,w,h);c.setLineDash([]);
+      var tw=c.measureText(lab).width;
+      c.fillStyle="rgba(0,0,0,0.65)";c.fillRect(x+3,y+3,tw+8,17);
+      c.fillStyle=col;c.fillText(lab,x+7,y+5);
+    };
+    box(SIGN.x,SIGN.y,SIGN.w,SIGN.h,"rgba(247,189,78,0.95)","sign");
+    var B=BAYS[o.room];
+    if(B){box(B.L[0],B.L[1],B.L[2],B.L[3],"rgba(120,205,255,0.95)","bay L");
+          box(B.R[0],B.R[1],B.R[2],B.R[3],"rgba(120,205,255,0.95)","bay R");}
+    var U=LAYOUT.unit;box(U[1],U[2],U[3],U[4],"rgba(255,140,60,0.95)",U[0]);
+    LAYOUT.keep.forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(255,90,80,0.9)",z[0]);});
+    (LAYOUT.deck[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(110,240,170,0.9)",z[0]);});
+    LAYOUT.fixed.all.concat(LAYOUT.fixed[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(180,160,255,0.9)",z[0]);});
+    c.restore();
+  },
+  /* unitBox({agent,state}) — where a unit actually reaches, in room
+     coordinates, measured off the drawn sprite rather than estimated from it.
+     LAYOUT's keep-clear column is the union of these across every vendor and
+     state, and this is how it is re-derived when a robot changes shape. The
+     first hand-written version of that rectangle was 220 wide and wrong twice
+     over: it crossed into the builder's left bay AND under the pegboard, so a
+     rule invented to stop collisions was itself colliding. */
+  unitBox:function(o){
+    return borrowRoom({agent:o.agent,room:o.room||"builder",state:o.state||"working",t:o.t||0,warm:0},function(){
+      var sp=lastAnchors&&lastAnchors.sprite;if(!sp)return null;
+      var d=RB.getImageData(0,0,RW,RH).data,x0=RW,y0=RH,x1=0,y1=0,hit=false;
+      for(var y=0;y<RH;y++)for(var x=0;x<RW;x++){
+        if(d[(y*RW+x)*4+3]>24){hit=true;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
+      }
+      if(!hit)return null;
+      return {x:sp.x+x0*sp.s,y:sp.y+y0*sp.s,w:(x1-x0)*sp.s,h:(y1-y0)*sp.s,
+              head:lastAnchors.head,hand:lastAnchors.hand,feet:lastAnchors.feet};
+    });
+  },
+  /* layout() — the declared rectangles, for a tool that wants to test them
+     rather than draw them. Bays come out named so a report can say which. */
+  layout:function(){
+    var bay=function(k,r){return [k+" bay",BAYS[r][k==="L"?"L":"R"][0],BAYS[r][k][1],BAYS[r][k][2],BAYS[r][k][3]];};
+    return {unit:LAYOUT.unit,keep:LAYOUT.keep,deck:LAYOUT.deck,fixed:LAYOUT.fixed,sign:["sign",SIGN.x,SIGN.y,SIGN.w,SIGN.h],
+            bayL:{builder:bay("L","builder"),reviewer:bay("L","reviewer"),triage:bay("L","triage")},
+            bayR:{builder:bay("R","builder"),reviewer:bay("R","reviewer"),triage:bay("R","triage")}};
+  },
+  /* Stop the hidden app loop painting behind a map. */
+  pause:function(){devPaused=true;}};
 })();

@@ -1,0 +1,28 @@
+# Asset map
+
+Every robot × every room × every state, twice: once as the console renders it
+(`FLOORDEV.render` → `drawTarget`) and once as the god-view grid renders it
+(`FLOORDEV.renderMini` → `drawMini`). Regenerate by opening
+[`whiteboard.html`](whiteboard.html); see [README](README.md).
+
+Columns are the four units. Rows are grouped by room, then by state.
+
+## Current — after loop 15
+
+![asset map, loop 15](shots/asset-map-L15.webp)
+
+*4 agents × 3 rooms × 3 states = 36 tiles, t=8s.*
+
+The per-loop before/afters are in [`LOOPS.md`](LOOPS.md).
+
+## Baseline — before the polish loops
+
+![asset map, baseline](shots/asset-map-L00.webp)
+
+## The god-view cell
+
+The cell's own 36. This map did not exist for the first fifteen loops, which is
+why the cell was still drawing a ghost sign and a colliding desk while the room
+next to it had been fixed.
+
+![the cell asset map](shots/cell-map.webp)
