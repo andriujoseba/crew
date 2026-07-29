@@ -458,7 +458,7 @@ var LAYOUT={
      between the unit's feet and the camera, so it is not deck furniture and
      does not compete for deck space with it. One rectangle, all three rooms —
      the room decides what the object is, not where it stands. */
-  near:["deck station",320,512,300,156],
+  near:["deck station",320,490,300,178],
   /* Structure. `all` is every room; the rest are the room's own. */
   fixed:{
     all     :[["right tower",1150,372,66,240]],
@@ -2757,14 +2757,16 @@ function drawSparks(){S.save();S.globalCompositeOperation="lighter";sparks.forEa
    The room has 108 pixels of deck between FLOORY and the bottom of the frame,
    and until now nothing has ever stood on them. That is the near plane, and it
    is where a foreground object belongs: base at y=668, well in front of the
-   unit's feet, and therefore BIGGER — 268 wide against the old 204, 156 tall
-   against the old 46.
+   unit's feet, and therefore BIGGER — 268 wide against the old 204, 178 tall
+   against the old 46. (It went out at 156 first, and read as a coffee table:
+   a worktop at this depth has to reach the unit's waist-line on screen before
+   the eye accepts it as something to stand at.)
 
    Three things follow from moving it, and they are what make it read as depth
    rather than as a bigger stool:
 
      1. We see its TOP. The camera sits around the unit's chest; anything whose
-        surface is below that shows the surface. A worktop 156px up at this
+        surface is below that shows the surface. A worktop 178px up at this
         depth is below it, so the top face is a trapezoid — wider at the front,
         narrower at the back — and that single piece of perspective does more
         for depth than every edge highlight in the last five loops.
@@ -2777,7 +2779,7 @@ function drawSparks(){S.save();S.globalCompositeOperation="lighter";sparks.forEa
         something at the same depth cannot get in front of anything.
 
    The station is drawn after the fog and the steam for the same reason. */
-var DECK={cx:470, bw:268, fw:300, top:512, td:17, base:668};
+var DECK={cx:470, bw:268, fw:300, top:490, td:17, base:668};
 
 /* The floor the station stands on, and the pool it now hides. Losing the warm
    puddle at the unit's feet would be a real loss, so it is not lost: it reads
