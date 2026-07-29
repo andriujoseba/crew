@@ -280,6 +280,14 @@ REDIR_NONE="https://github.com/heavy-duty/crew/releases"
 # 11a. the default: resolve the latest release off the redirect and install it.
 run_curl_channel latest CREW_YES=1 STUB_REDIRECT="$REDIR_TAG"
 same "curl-channel-installs-latest-release" "$V" "$(installed_version "$CURL_HOME")"
+# ...and the installed crew ANSWERS, through the PATH link — the offline half of
+# #171's "installs the latest release and `crew --version` answers". The other
+# half (the real one-liner on a clean machine) needs this file on `main` and a
+# tagged release, and belongs to the drill.
+case "$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )" in
+  "crew $V ("*) ok "curl-installed-crew-answers-version" ;;
+  *) bad "curl-installed-crew-answers-version (got '$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )')" ;;
+esac
 same "curl-channel-records-resolved-tag-provenance" "curl:heavy-duty/crew ref:$CTAG" \
   "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
 # The resolution is GitHub's own redirect, taken with a HEAD — never the API,
@@ -385,8 +393,10 @@ if command -v script >/dev/null 2>&1; then
   if [ "$PIPE_RC" -ne 0 ] && [ -z "$(installed_version "$PIPE_HOME")" ]; then
     ok "piped-prompt-answered-no-cancels"
   else
-    bad "piped-prompt-answered-no-cancels (rc=$PIPE_RC)"
+    bad "piped-prompt-answered-no-cancels (rc=$PIPE_RC out='$PIPE_OUT')"
   fi
+  case "$PIPE_OUT" in *cancelled*"nothing was downloaded"*) ok "piped-prompt-answered-no-says-so" ;;
+    *) bad "piped-prompt-answered-no-says-so (got '$PIPE_OUT')" ;; esac
 elif [ -n "${CI:-}" ]; then
   bad "piped-prompt-needs-script(1) — install util-linux; a skip here reads like a pass"
 else
