@@ -1981,7 +1981,13 @@ function buildCodex(t,st){
   function teh(a){return "rgba("+TEALH[0]+","+TEALH[1]+","+TEALH[2]+","+a+")";}
   var pulse=offl?0:(work?(0.6+0.28*Math.sin(t*6)):(0.34+0.16*Math.sin(t*2)));
   var bob=(offl||reduced)?0:Math.round(Math.sin(t*1.5)*1.4);
-  var slump=offl?18:0, BY=356+bob+slump;
+  /* L11 — the body rides higher in the arch. 356 was set when the deck
+     station was a 46px plank; against a waist-height worktop the ball sat
+     with the desk edge at its chin, a spider peering over a counter it could
+     barely reach. The feet do not move — footY is absolute — so the same six
+     prints hold the floor and the femurs simply stand steeper, which is what
+     a spider that means to USE the bench does with its legs. */
+  var slump=offl?18:0, BY=332+bob+slump;
   function limbSeg(c,x0,y0,x1,y1,w0,w1,top,bot){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;plate(c,[[x0+nx*w0,y0+ny*w0],[x1+nx*w1,y1+ny*w1],[x1-nx*w1,y1-ny*w1],[x0-nx*w0,y0-ny*w0]],top,bot,ed);}
   function joint(c,x,y,r){c.fillStyle=sT;c.beginPath();c.arc(x,y,r,0,7);c.fill();c.fillStyle=eH;c.beginPath();c.arc(x-1,y-1,1.2,0,7);c.fill();}
 
