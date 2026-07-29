@@ -417,6 +417,7 @@ else
     '[add[] | select(.user.login == $m and .commit_id == $h and (.state == "APPROVED" or .state == "CHANGES_REQUESTED"))] | length'; }
   have_verdict()      { [ "$(verdicts)" -ge 1 ]; }
   verdicts_unchanged() { [ "$(verdicts)" = "$VREF" ]; }
+  verdicts_grew()      { [ "$(verdicts)" -gt "$VREF" ]; }
   wait_for 1200 "review: verdict pinned to head" have_verdict
 
   VREF="$(verdicts)"
@@ -434,20 +435,39 @@ else
   check "dedup: no second announce on re-tick" bash -c \
     "[ \"\$(gh api 'repos/$SANDBOX/issues/$pr/comments' --paginate --jq '[.[] | select(.user.login == \"$ME2\") | .body | select(startswith(\"🔎 reviewing head\"))] | length')\" = 1 ]"
 
-  # -- the dedup guard itself, reached deliberately --
-  # With the re-request rule OFF, a re-request at an unchanged head falls to
-  # the skip branch instead of auto-approving. instance.conf is sourced after
-  # fleet.conf, so appending the flag overrides it for this box. This is the
-  # only deterministic way left to exercise that branch; without it the guard
-  # would carry no coverage at all.
+  # -- what the flag actually gates, reached deliberately --
+  # AUTO_APPROVE_REREQUEST=0 disables the auto-APPROVAL and nothing else
+  # (#151): a re-request newer than my standing verdict still queues a REAL
+  # re-review at an unchanged head. instance.conf is sourced after fleet.conf,
+  # so appending the flag overrides it for this box.
+  #
+  # This probe used to assert the opposite — that auto=0 fell to the skip
+  # branch — and grepped duty.log for "already covers head". That was never a
+  # guarantee, it was the bug: the flag sat in front of rereq_decision's whole
+  # timestamp comparison, so a standing block plus a newer re-request answered
+  # `skip` every tick and the round could not converge (ceremony#207, 37
+  # minutes, cleared by hand). Post-fix the branch is unreachable from here for
+  # the same reason the announce half above stopped grepping for it: `skip`
+  # needs NO re-request newer than my verdict, and requested_reviewers
+  # self-clears on submit, so a covered PR becomes a candidate again only BY a
+  # re-request, which is newer by construction.
+  #
+  # The queue holds for APPROVED, CHANGES_REQUESTED and DISMISSED alike, so the
+  # probe stays deterministic without staging a particular verdict first — the
+  # reviewer's own considered verdict above is whatever it is.
   bx "printf 'AUTO_APPROVE_REREQUEST=0\n' >> ~/duty/conf/instance.conf"
+  VREF="$(verdicts)"
   gh api "repos/$SANDBOX/pulls/$pr/requested_reviewers" -f "reviewers[]=$ME2" >/dev/null
   bx "~/duty/bin/tick.sh" || true
-  sleep 20
-  check "dedup: covered head takes the skip branch" bx "grep -q 'already covers head' ~/duty/duty.log"
-  check "dedup: skip submitted no verdict" verdicts_unchanged
+  wait_for 1200 "re-request rule: auto off queues a real re-review" verdicts_grew
+  # ...and it is a considered verdict, not the auto-approval under another
+  # name: the supersede path stamps "re-request rule" into its body. This is
+  # the one edge the flag still governs, and nothing asserted it before.
+  check "re-request rule: auto off did not auto-approve" bash -c \
+    "! gh api 'repos/$SANDBOX/pulls/$pr/reviews' --paginate | jq -se --arg m '$ME2' \
+       '[add[] | select(.user.login == \$m) | .body] | any(contains(\"re-request rule\"))'"
   bx "sed -i '/^AUTO_APPROVE_REREQUEST=0$/d' ~/duty/conf/instance.conf"
-  check "dedup: re-request rule restored" bx "! grep -q '^AUTO_APPROVE_REREQUEST=0$' ~/duty/conf/instance.conf"
+  check "re-request rule: flag restored" bx "! grep -q '^AUTO_APPROVE_REREQUEST=0$' ~/duty/conf/instance.conf"
 
   # -- re-request at unchanged head -> auto-approve through the gate --
   gh api "repos/$SANDBOX/pulls/$pr/requested_reviewers" -f "reviewers[]=$ME2" >/dev/null
