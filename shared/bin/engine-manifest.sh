@@ -115,22 +115,58 @@ manifest_line() { # DIGEST RELPATH
 manifest_body() (
   # A subshell, so the cd cannot leak into a caller that hashes and then keeps
   # working from relative paths.
-  local roots=() r
+  local roots=() r c
+  local -A seen_dir=()
   cd "$DUTY_DIR" 2>/dev/null || return 0
   for r in $MANIFEST_ROOTS; do
     [ -d "$r" ] || continue
     # The trailing slash is what makes find descend a root that is itself a
     # symlink; without it `find bin` on a redirected bin/ prints the link and
-    # stops, and every file the engine actually executes goes unmeasured. The
-    # bare name goes in too when the root IS a link, so the redirect is named
-    # rather than merely walked through. For an ordinary directory the two
-    # spellings produce exactly the paths the bare name always did.
+    # stops, and every file the engine actually executes goes unmeasured. For an
+    # ordinary directory the two spellings produce exactly the paths the bare
+    # name always did.
     roots+=("$r/")
-    if [ -L "$r" ]; then roots+=("$r"); fi
   done
   # -e OR -L: a dangling symlink at a manifest file's path is present and wrong,
   # not absent, and dropping the root would report it as `removed`.
-  for r in $MANIFEST_FILES; do if [ -e "$r" ] || [ -L "$r" ]; then roots+=("$r"); fi; done
+  for r in $MANIFEST_FILES; do
+    # Marked seen so the component walk below cannot add the same path twice: a
+    # manifest file that is itself a link is already covered right here.
+    seen_dir[$r]=1
+    if [ -e "$r" ] || [ -L "$r" ]; then roots+=("$r"); fi
+  done
+  # Every DIRECTORY COMPONENT of the surface, named in its own right whenever it
+  # is a symlink. Descending through a redirect measures the content behind it
+  # but says nothing about the redirect, and the redirect is itself a hand on the
+  # box: nothing crew ships makes bin/ or conf/ a link, so one that IS a link is
+  # an operator's, and the engine is executing out of a directory the version
+  # never shipped.
+  #
+  # COMPONENTS, not just the roots — `conf` carries conf/roles, conf/agents and
+  # conf/fleet.defaults.conf without being a root itself, so a `conf` redirect
+  # was invisible here in every spelling: the roots below it still resolved,
+  # still hashed, and the box read `current` while its whole role and agent set
+  # came from wherever an operator pointed it.
+  #
+  # $DUTY_DIR itself is deliberately NOT among them. `~/duty` on another volume
+  # is a location the operator chose, not content crew shipped, and the manifest
+  # is relative to it by construction.
+  # Only when the component IS a link. A bare directory name hands `find` a root
+  # it descends, which would duplicate every file under an ordinary bin/ and drag
+  # the whole of an ordinary conf/ — instance.conf, fleet.conf, the registries,
+  # every one excluded above on purpose — into the manifest. `find` does not
+  # follow a symlink given as a bare operand, so on a redirect it prints the one
+  # entry and stops, which is exactly the line wanted.
+  for r in $MANIFEST_ROOTS $MANIFEST_FILES; do
+    c="$r"
+    while :; do
+      if [ -z "${seen_dir[$c]:-}" ]; then
+        seen_dir[$c]=1
+        if [ -L "$c" ]; then roots+=("$c"); fi
+      fi
+      case "$c" in */*) c="${c%/*}" ;; *) break ;; esac
+    done
+  done
   [ "${#roots[@]}" -gt 0 ] || return 0
   {
     # Regular files stay one batched exec: the per-box cost of the whole

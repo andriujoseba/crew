@@ -193,6 +193,93 @@ fi
 IS_TRIAGE=0
 case " $BOT_ROLE_LIST " in *" triage "*) IS_TRIAGE=1 ;; esac
 
+# A file the tree does not ship must not survive an install (see the sweep
+# below), and neither must a DIRECTORY the tree does not ship. Nothing crew
+# installs makes bin/ or conf/ a symlink, so one that is a link is an operator's
+# redirect: the engine executes out of a directory this version never shipped,
+# and the record written at the end would certify it as `current`. That is the
+# sweep's laundering hole one component up — detection already names the
+# redirect (`added bin`), and detecting it and then blessing it is worse than
+# never having looked.
+#
+# Every directory COMPONENT of the engine surface, parents first. `conf` is in
+# the list without being a manifest root of its own: it carries conf/roles,
+# conf/agents and conf/fleet.defaults.conf, so a redirect there moves the whole
+# role and agent set off the shipped tree. Parents first matters — normalizing
+# `conf` materializes conf/roles behind it, and the child pass then sees whatever
+# that restored, link or not.
+#
+# $DUTY_DIR itself is NOT in the list: `~/duty` pointed at another volume is a
+# location the operator chose, not content crew shipped.
+#
+# This runs BEFORE anything is written. That ordering is the whole trick: the
+# sweep at the end deliberately cannot touch a root, because by then the install
+# has written the fresh engine THROUGH the redirect and moving the link would
+# carry the engine off with it. Here nothing has been written yet, so the root
+# can be replaced outright.
+#
+# The contents are copied out THROUGH the link, never through its resolved
+# target, so a relative target needs no resolution and a dangling one is simply
+# an empty restore. Then the link itself is parked in legacy/ — as a link, so
+# its target string survives as the evidence, outside the engine surface — and
+# the restored contents take its place as a real directory. The install writes
+# into that, and the ordinary sweep parks whatever this version does not ship,
+# naming each file. So a redirected root converges by exactly the path and the
+# messages an ordinary one does, with no second mechanism to keep in step.
+REDIRECT_PATHS="bin lib prompts conf conf/roles conf/agents"
+# Set here rather than at the sweep: a normalization that could not complete
+# withholds the record for the same reason an unswept file does.
+SWEEP_FAILED=0
+
+# park_dest — a free name under legacy/ for REL, creating its parent.
+#
+# A second --force over the same name must not overwrite the first park.
+# Parking rather than deleting is an evidence argument, and evidence that the
+# next run silently replaces is not evidence. Named like the engine source crew
+# retires: the original name, then when it is taken, the time.
+park_dest() { # RELPATH  → prints the destination path
+  local dest="$DUTY_DIR/legacy/$1" base n
+  mkdir -p "$(dirname "$dest")"
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    base="$dest.$(date -u '+%Y%m%dT%H%M%SZ')"
+    dest="$base"; n=1
+    while [ -e "$dest" ] || [ -L "$dest" ]; do dest="$base.$n"; n=$((n + 1)); done
+  fi
+  printf '%s\n' "$dest"
+}
+
+normalize_redirects() {
+  local p dest tmp tgt
+  for p in $REDIRECT_PATHS; do
+    [ -L "$DUTY_DIR/$p" ] || continue
+    tgt="$(readlink -- "$DUTY_DIR/$p" 2>/dev/null || true)"
+    tmp="$(mktemp -d "$DUTY_DIR/.redirect.XXXXXX")" || { SWEEP_FAILED=1; continue; }
+    # Through the link. A dangling or non-directory target copies nothing, which
+    # is the right restore: there was never any content to keep.
+    if [ -d "$DUTY_DIR/$p/" ]; then
+      cp -a "$DUTY_DIR/$p/." "$tmp/" 2>/dev/null || true
+    fi
+    dest="$(park_dest "$p")"
+    if ! mv "$DUTY_DIR/$p" "$dest"; then
+      echo "crew: WARNING — could not move the redirect at $p out of the engine tree" >&2
+      SWEEP_FAILED=1
+      rm -rf "$tmp"
+      continue
+    fi
+    if ! mv "$tmp" "$DUTY_DIR/$p"; then
+      # The link is already parked, so restore it rather than leave a gap where
+      # an engine root belongs.
+      mv "$dest" "$DUTY_DIR/$p" 2>/dev/null || true
+      echo "crew: WARNING — could not replace the redirect at $p with a real directory" >&2
+      SWEEP_FAILED=1
+      rm -rf "$tmp"
+      continue
+    fi
+    echo "crew: replaced redirected engine directory with a real one: $p (was a symlink to ${tgt:-?}; the link is parked as ${dest#"$DUTY_DIR"/})"
+  done
+}
+normalize_redirects
+
 mkdir -p "$DUTY_DIR/bin" "$DUTY_DIR/lib/jq" "$DUTY_DIR/conf/agents" \
          "$DUTY_DIR/conf/roles" "$DUTY_DIR/prompts" \
          "$DUTY_DIR/work" "$DUTY_DIR/trees" "$DUTY_DIR/logs"
@@ -298,29 +385,25 @@ done
 # straight past a symlink, so before this `ln -s /anything ~/duty/bin/hotfix.sh`
 # survived --force and was then certified `current` — the regular-file hole this
 # sweep exists to close, one character away. `mv` moves a link as itself, so the
-# bytes-preserving park needs nothing else. The trailing slash on the root makes
-# find descend a root that is itself a symlink; the root entry is never swept,
-# because the install has already written the engine through it and moving the
-# link would carry the fresh engine off with it.
+# bytes-preserving park needs nothing else.
+#
+# The root entry itself is not swept here, and does not need to be:
+# normalize_redirects (above) already ran, before anything was written, and a
+# redirected root is by now a real directory holding what was behind the link.
+# Sweeping a root HERE is what cannot work — the install has written the fresh
+# engine through it, so moving the link would carry the engine off with it. The
+# trailing slash stays for the case this cannot see: a redirect normalization
+# warned about and could not clear. Then the record is withheld anyway, and
+# descending is still the honest read of what is installed.
 SWEEP_ROOTS="bin lib prompts conf/roles conf/agents"
-SWEEP_FAILED=0
 sweep_unshipped() {
-  local root rel dest plain base n
+  local root rel dest plain
   for root in $SWEEP_ROOTS; do
     [ -d "$DUTY_DIR/$root" ] || continue
     while IFS= read -r -d '' rel; do
       if [ -n "${INSTALLED_PATHS["$rel"]:-}" ]; then continue; fi
-      dest="$DUTY_DIR/legacy/$rel"; plain="$dest"
-      mkdir -p "$(dirname "$dest")"
-      # A second --force over the same name must not overwrite the first park.
-      # Parking rather than deleting is an evidence argument, and evidence that
-      # the next run silently replaces is not evidence. Named like the engine
-      # source crew retires: the original name, then when it is taken, the time.
-      if [ -e "$dest" ] || [ -L "$dest" ]; then
-        base="$dest.$(date -u '+%Y%m%dT%H%M%SZ')"
-        dest="$base"; n=1
-        while [ -e "$dest" ] || [ -L "$dest" ]; do dest="$base.$n"; n=$((n + 1)); done
-      fi
+      plain="$DUTY_DIR/legacy/$rel"
+      dest="$(park_dest "$rel")"
       if ! mv "$DUTY_DIR/$rel" "$dest"; then
         # Warn rather than abort: the engine is already installed and correct,
         # and losing a good deployment over one stubborn file is the wrong
