@@ -1,6 +1,14 @@
 name: shared-ci
 on:
   pull_request:
+    # `ready_for_review` is what makes the draft gate below safe rather than a
+    # trap: without it the builder marks the PR ready, no event fires, and the
+    # head carries no check for the round to be requested against. The other
+    # three are GitHub's default set, written out because naming `types:` at
+    # all replaces that default — dropping `reopened` would leave a reopened
+    # non-draft PR in exactly the checkless state this trigger exists to
+    # prevent.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.github/workflows/shared-ci.yml']
   push:
     branches: [main]
@@ -8,6 +16,24 @@ on:
 
 jobs:
   check:
+    # A draft is the builder's own statement that the tree is not a proposal
+    # yet — CONTRIBUTING opens PRs as drafts while building, and the round
+    # protocol requires a push every 15 minutes with WIP commits explicitly
+    # fine, so those pushes are saves, not proposals. Half of this suite's runs
+    # were on trees nobody had asked anyone to read (#136).
+    #
+    # Gate on the EVENT PAYLOAD, never on a label. `state:building` is derived
+    # from this same draft bit by ceremony's reconciler, so a label gate reads
+    # a shadow of a fact already in the payload and inherits the reconciler's
+    # timing. Worse, a label write can fail — and a failed write here means no
+    # check at a ready head, which is indistinguishable from an unfinished one
+    # and sits in the merge path. The payload cannot be missing. Do not "fix"
+    # this into a label.
+    #
+    # The `event_name` disjunct keeps push-to-main exactly as it was: a push
+    # carries no pull_request object, and saying so out loud beats leaning on
+    # GitHub's null-to-false coercion on the branch that gates main.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

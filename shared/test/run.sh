@@ -2315,6 +2315,50 @@ t cli-adopt-not-in-help hidden "$r1"
 relisted="$(sed -n '2,/^set -euo pipefail/p' "$CLIBIN" | grep -cE '^#[[:space:]]+crew [a-z-]+' || true)"
 t cli-header-is-not-a-command-list 0 "$relisted"
 
+# --- shared-ci's draft gate: the suite does not run on unfinished trees (#136)
+# Repo furniture, in the same family as valid_version-parity above: assertions
+# about a file the engine never executes, kept here because the property is
+# anti-drift and every way of losing it is silent. A reverted gate just starts
+# costing the fleet 51% of its Actions minutes again; a gate that loses
+# `ready_for_review` is worse, because it leaves a PR marked ready with no
+# check at its head, which the round protocol cannot tell apart from a tree
+# that failed.
+CI_YML="$ROOT/.github/workflows/shared-ci.yml"
+
+# The trigger must fire when the PR stops being a draft. Naming `types:` at all
+# replaces GitHub's default set, so the default three are asserted alongside it
+# — dropping `reopened` reintroduces the checkless-head case by omission.
+ci_types=",$(sed -n 's/^ *types: *\[\(.*\)\].*$/\1/p' "$CI_YML" | tr -d ' '),"
+for ev in opened synchronize reopened ready_for_review; do
+  case "$ci_types" in *",$ev,"*) r1=present ;; *) r1=MISSING ;; esac
+  t "shared-ci-trigger-fires-on[$ev]" present "$r1"
+done
+
+# The gate itself: the first `if:` under the `check` job.
+ci_if="$(awk '/^  check:/{p=1} p && /^    if:/{print; exit}' "$CI_YML")"
+case "$ci_if" in *github.event.pull_request.draft*) r1=payload ;; *) r1=MISSING ;; esac
+t shared-ci-gates-on-the-draft-payload payload "$r1"
+
+# MUST FAIL: a label gate. `state:building` is derived from this same draft bit
+# by ceremony's reconciler, so gating on it would read a shadow of a fact
+# already in the payload and inherit the reconciler's timing — and a label
+# write that fails leaves a ready head with no check, in the merge path.
+case "$ci_if" in *state:*|*label*) r1=LABEL ;; *) r1=payload-only ;; esac
+t shared-ci-gate-is-not-a-label payload-only "$r1"
+
+# The push-to-main path has no draft concept, and stays exempt in the
+# expression rather than through GitHub's null-to-false coercion — which is
+# correct but invisible in the source, on the branch that gates main.
+case "$ci_if" in *github.event_name*) r1=explicit ;; *) r1=COERCION ;; esac
+t shared-ci-push-exemption-is-explicit explicit "$r1"
+t shared-ci-still-triggers-on-push-to-main 1 "$(grep -c '^    branches: \[main\]$' "$CI_YML")"
+
+# Both triggers keep the SAME path filter. #136 touched the trigger types and
+# added a job gate and must not have touched these; a list that drifts between
+# the two means a file is guarded on main but not on PRs, or the reverse.
+t shared-ci-has-two-path-filters 2 "$(grep -c '^    paths: ' "$CI_YML")"
+t shared-ci-path-filters-agree   1 "$(grep '^    paths: ' "$CI_YML" | sort -u | wc -l | tr -d ' ')"
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
