@@ -6,9 +6,9 @@ same `drawTarget` the app draws its room view with. Regenerate by opening
 
 Columns are the four units. Rows are grouped by room, then by state.
 
-## Current — after loop 10
+## Current — after loop 11
 
-![asset map, loop 10](shots/asset-map-L10.webp)
+![asset map, loop 11](shots/asset-map-L11.webp)
 
 *4 agents × 3 rooms × 3 states = 36 tiles, t=8s.*
 

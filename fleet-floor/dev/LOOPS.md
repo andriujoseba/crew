@@ -630,3 +630,108 @@ when the box is.
 
 Every robot and every room, baseline → loop 10, as one animation each:
 **[`GIFS.md`](GIFS.md)**.
+
+---
+
+## Loop 11 — the sign gets a wall to hang on
+
+Ten loops added things to the back wall. None of them ever asked what was
+already there, because **the wall text was not an object**: two `fillText`
+calls at 8% alpha, with no extent, no owner and nothing to collide with. So
+each new prop was placed as though that space were free, and three of them
+ended up on top of it.
+
+| room | what was on the sign |
+|---|---|
+| **builder** | the conduit run — a full-height vertical pipe straight through `SECTOR-7`, and "BUILDER QUARTERS" behind its brackets |
+| **triage** | the radar dish over the `S`, the relay panel across the rest, and "DISPATCH" buried completely |
+| **reviewer** | clear of the sign, but the checklist board was hung *on* the fourth diff monitor |
+
+Individually every one of those props is fine. Together they read as three
+rooms nobody composed.
+
+**A named rectangle, and a sign that is a thing.** `SIGN` reserves
+`676,182 → 984,270` of back wall. Nothing may be drawn into it but the room's
+name — so a prop that lands there is now a visible mistake against a stated
+rule, instead of a thing that looked free. And the sign itself became an
+opaque bolted plate: a panel with a rolled top edge that takes the lamp, four
+bolts with rust weeping from the lower pair, and stencilled type with a dark
+bite below and left of each glyph, which is what paint sprayed through a mask
+onto rolled steel does under a light that is off to one side.
+
+> **The builder's conduit did not move.** It is the only vertical on that wall
+> and the bay needs it. It now passes *behind* the plate — drawn opaque, last —
+> and comes out underneath with a stain weeping from the joint. The prop was
+> never the problem; crossing the room's name at full contrast was.
+
+Two props did move, and both moved into a composition rather than out of the
+way: dispatch's radar and relay panel dropped into a column with the zone
+clocks and under the work-order board — instruments together, paper together —
+and the lab's checklist board moved into the gap between the monitor bank and
+the certification plates, where it reads as the step between them: what was
+checked, then what was signed.
+
+![builder](shots/loop-11/room-builder.webp)
+![reviewer](shots/loop-11/room-reviewer.webp)
+![triage](shots/loop-11/room-triage.webp)
+
+### Every unit: a modelling light
+
+`plate()` is a two-stop vertical gradient fitted to each polygon's own bounding
+box. Which means a pauldron and a boot were lit identically — every panel on
+every unit got its own private little sky, and none of them was brighter for
+being higher, nearer the lamp, or facing it. That is the recipe for a flat
+cut-out, and it is why the rim light has been carrying all of the separation on
+its own since loop 6.
+
+`modelLight()` is one pass in body space, `source-atop` so it lands only on the
+silhouette: upper surfaces gain, the recess under the chest and between the
+legs loses, and the deck throws a cool bounce onto the lowest quarter. It is
+deliberately **not** per-agent — it is the room's light, and it has no opinion
+about who is standing in it. It runs inside `buildRobo`, so the god-view
+thumbnails get it too; putting it in `drawRobot` would have lit the console's
+four units differently from the floor's.
+
+Then one structural fix each, on whatever the new light exposed as flattest.
+
+### claude — a sternum, so the chest is not a slab with a circle on it
+The reactor was a lit disc cut into a single polygon: the largest surface on
+the unit, with the brightest thing on it having no mounting. A raised centre
+housing steps the chest forward, and two collarbone struts from the collar to
+the shoulder joints explain how the arms are carried.
+
+![claude](shots/loop-11/robot-claude.webp)
+
+### codex — tergites, so the shell is armour and not a balloon
+The abdomen was one ellipse: grained and riveted since loop 6, and still a
+single closed curve. An arthropod's dorsal shell is overlapping plates, each
+casting a hard line onto the one behind and catching light on its leading edge.
+Three of them, clipped to the dome, at two strokes apiece.
+
+![codex](shots/loop-11/robot-codex.webp)
+
+### grok — the hard waist bearing a pressure suit cannot do without
+Grok has had a neck ring since loop 2 — the hard component a soft suit needs so
+the helmet can turn against pressure — and then ran uninterrupted from collar
+to legs, which is the one thing a real suit cannot do. The lower body rotates
+against the upper, and that join is always a machined ring. It splits the
+flattest surface on the unit in two, and gives the dangling legs a visible
+point of attachment instead of emerging from cloth. A harness and a hip pouch
+ride on it.
+
+![grok](shots/loop-11/robot-grok.webp)
+
+### kimi — corners, so the silhouette is not one primitive
+Kimi's body was a rounded rectangle with a screen cut out of it: the only unit
+in the fleet whose outline is a single primitive, and the one the eye reads as
+*drawn* rather than assembled. Four corner bumpers — what a machine that floats
+face-first through a workshop would actually have — break the outline at
+exactly the four points that were most obviously a computed radius, and are the
+first thing on this unit not concentric with the screen. A shell parting line
+runs the casing at mid-height with the front lip catching the lamp.
+
+![kimi](shots/loop-11/robot-kimi.webp)
+
+> 3.8–5.4% changed across all seven. A modelling light touches every lit pixel
+> of every unit, so the robot numbers are a floor, not a measure of the
+> structural work on top of them.
