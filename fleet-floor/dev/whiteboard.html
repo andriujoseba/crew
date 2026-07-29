@@ -494,6 +494,7 @@ function wallShadow(x,y,w,h,depth){
   S.restore();
 }
 var lamp={lit:1,drop:0};
+var beaconPulse=0;   // set by drawRedBeacon each frame; read by the near plane
 function stepLamp(t,dt,on){ if(reduced){lamp.lit=on?1:0;return;} if(!on){lamp.lit=0;return;} var base=0.86+0.14*fnoise(t*0.9); if(lamp.drop>0){lamp.drop-=dt;lamp.lit=0.12+0.08*Math.random();} else{lamp.lit=base;if(Math.random()<0.012)lamp.drop=0.04+Math.random()*0.12;} }
 function emit(fn){fn(S);fn(G);}
 
@@ -2867,6 +2868,21 @@ function deckBody(o){
   S.fillStyle="rgba(0,0,0,0.35)";S.fillRect(ax0,tf,2,ab-tf);S.fillRect(ax1-2,tf,2,ab-tf);
   S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(ax0,ab-1.5,aw,1.5);
   S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(fx0,ab,d.fw,3);
+  /* L8 — offline is a LIGHTING state, and the near plane was opting out of
+     it. When the lamp is dead the beacon is the only thing burning, it is up
+     and to the LEFT, and it pulses — so the station's left edges catch a red
+     that breathes: the left half of the back arris, the left end of the
+     apron, the left side sliver. The right stays black, which is what makes
+     the red read as a direction instead of a tint. */
+  if(STATE==="offline"&&beaconPulse>0){var bp=beaconPulse;
+    var rg2=S.createLinearGradient(bx0,0,bx0+d.bw*0.6,0);
+    rg2.addColorStop(0,"rgba(255,64,52,"+(0.16+0.16*bp)+")");rg2.addColorStop(1,"rgba(255,64,52,0)");
+    S.fillStyle=rg2;S.fillRect(bx0,ty,d.bw*0.6,1.6);
+    S.fillStyle="rgba(255,64,52,"+(0.07+0.08*bp)+")";S.fillRect(ax0,tf,26,1.6);
+    S.fillStyle="rgba(255,64,52,"+(0.04+0.05*bp)+")";S.fillRect(ax0,tf,2,ab-tf);
+    var rg3=S.createLinearGradient(0,ty,0,by);
+    rg3.addColorStop(0,"rgba(255,64,52,"+(0.05+0.05*bp)+")");rg3.addColorStop(1,"rgba(255,64,52,0)");
+    S.fillStyle=rg3;poly(S,[[bx0,ty],[fx0,tf],[fx0+lean,by],[bx0,by-6]]);S.fill();}
   /* R1 — the toe, and the floor it stands on. Without a plinth the body just
      faded into the dark deck and the station had no bottom; a near-plane
      object that does not touch the floor floats exactly as badly as one drawn
@@ -3814,6 +3830,7 @@ function nearEdge(){
 }
 function drawRedBeacon(t,intensity){
   var bx=300,by=200,pulse=reduced?0.6:(0.35+0.65*Math.pow(Math.max(0,Math.sin(t*1.6)),3));
+  beaconPulse=pulse*intensity;   // L8 — what the near plane catches of it
   S.fillStyle="#0f1116";rr(S,bx-2,by+12,30,6,2);S.fill();                 // mount base
   S.fillStyle="#1a1e26";rr(S,bx+2,by+1,22,13,3);S.fill();                 // cage housing
   emit(function(cx){var g2=cx.createRadialGradient(bx+13,by+8,1,bx+13,by+8,10);g2.addColorStop(0,rgba(255,140,130,Math.min(1,0.5+intensity)));g2.addColorStop(0.5,rgba(255,50,44,(0.4+0.6*pulse)*Math.min(1,0.4+intensity)));g2.addColorStop(1,"rgba(255,50,44,0)");cx.fillStyle=g2;cx.beginPath();cx.arc(bx+13,by+8,10,0,7);cx.fill();});
