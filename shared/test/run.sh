@@ -575,6 +575,115 @@ t addressing-never-writes-state-building absent "$r1"
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t addressing-keys-on-head head-keyed "$r1"
 
+# --- #133: engine (re-)requests the panel, keyed off the session's SIGNAL -----
+# Two fixtures + the structural gates. request-panel.jq answers "whom, given the
+# engine already holds the licence"; answered-head.jq is that licence — the head
+# the session last signalled — and the engine acts only when it equals the
+# current head, never on commit activity (#133's hardest must-fail).
+RPJQ="$SHARED/lib/jq/request-panel.jq"
+AHJQ="$SHARED/lib/jq/answered-head.jq"
+RP_OLD="dddddddddddddddddddddddddddddddddddddddd"
+RP_MARK="📣 round answered at head"
+# payload builder carrying comments (the signal lives there), reviewRequests and
+# latestOpinionatedReviews. Reuses H from the converged block.
+mk_rp() {  # <head> <reqs-json> <revs-json> <comments-json>
+  jq -n --arg head "$1" --argjson reqs "$2" --argjson revs "$3" --argjson coms "$4" \
+    '{data:{repository:{pullRequest:{
+      headRefOid:$head,
+      reviewRequests:{nodes:($reqs|map({requestedReviewer:{login:.}}))},
+      latestOpinionatedReviews:{nodes:$revs},
+      comments:{nodes:$coms}}}}}'
+}
+rp() { jq -r --argjson panel "$PANEL" -f "$RPJQ" | tr '\n' ' ' | sed 's/ $//'; }
+ah() { jq -r --arg me me-bot --arg mark "$RP_MARK" -f "$AHJQ"; }
+RP_CR_AT_HEAD='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
+RP_STALE_BOTH='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$RP_OLD'"}},{"author":{"login":"rev-b"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$RP_OLD'"}}]'
+
+# request-panel.jq — whom to request once licensed.
+t rp-first-round-requests-all "rev-a rev-b" "$(mk_rp "$H" '[]' '[]' '[]' | rp)"
+# The no-push half #133 exists for: a change-request AT the current head is
+# re-requested (the builder answered with argument), the head approver is not.
+t rp-no-push-cr-at-head-requests-cr-er "rev-a" "$(mk_rp "$H" '[]' "$RP_CR_AT_HEAD" '[]' | rp)"
+t rp-converged-requests-none "" "$(mk_rp "$H" '[]' "$REVS_OK" '[]' | rp)"
+# Head moved: every prior review is stale → all re-requested, approvers included.
+t rp-head-moved-requests-all "rev-a rev-b" "$(mk_rp "$H" '[]' "$RP_STALE_BOTH" '[]' | rp)"
+t rp-already-requested-none "" "$(mk_rp "$H" '["rev-a","rev-b"]' "$RP_STALE_BOTH" '[]' | rp)"
+# Never triage: the request derives only from $panel, so an off-panel identity
+# (dan-claude-bot) that left a review or a request cannot be returned.
+RP_TRIAGE_REV='[{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$RP_OLD'"}}]'
+t rp-never-targets-triage "rev-a rev-b" "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_TRIAGE_REV" '[]' | rp)"
+
+# answered-head.jq — the signal. This is the WIP-safety property: a mid-fix push
+# moves the head away from the last signalled one, so the engine holds.
+RP_SIG_H='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
+RP_SIG_OLD='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"}]'
+RP_SIG_TWO='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"},{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
+t ah-signal-at-head "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_H" | ah)"
+t ah-no-signal-empty "" "$(mk_rp "$H" '[]' '[]' '[]' | ah)"
+t ah-latest-signal-wins "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO" | ah)"
+# The must-fail made concrete: a WIP push after the last signal (signal at OLD,
+# head now H) yields a signalled head != current head, so the engine's
+# `answered_head = gql_head` gate is false — it does NOT request. No commit
+# inference.
+t ah-wip-push-stales-signal "$RP_OLD" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OLD" | ah)"
+# Another user's MARK_ANSWERED is not my signal.
+RP_SIG_OTHER='[{"author":{"login":"someone"},"body":"'"$RP_MARK"' '"$H"'"}]'
+t ah-other-user-signal-ignored "" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OTHER" | ah)"
+
+# Structural gates (#133 test plan, must-fails).
+# The engine acts on the signal, not commits: _request_panel gates on
+# answered-head == current head before requesting.
+# shellcheck disable=SC2016  # the grep literal contains $gql_head on purpose
+if grep -q 'answered-head.jq' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'answered_head" != "\$gql_head"' "$SHARED/lib/duty-builder.sh"; then r1=signal-gated; else r1=UNGATED; fi
+t engine-request-requires-signal signal-gated "$r1"
+# Green-head precondition, mechanical half only: request on green|none, hold else.
+# shellcheck disable=SC2016  # the shell literal contains $check_state
+if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh"; then r1=green-gated; else r1=UNGATED; fi
+t engine-request-green-gated green-gated "$r1"
+# Drafts excluded: the request rides the my_open list, built non-draft.
+# shellcheck disable=SC2016
+if grep -q 'select(.isDraft | not)' "$SHARED/lib/duty-builder.sh"; then r1=draft-excluded; else r1=EXPOSED; fi
+t engine-request-excludes-drafts draft-excluded "$r1"
+# bots-reviewing is best-effort (|| warn), never gating.
+# shellcheck disable=SC2016
+if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh"; then r1=best-effort; else r1=GATING; fi
+t engine-bots-reviewing-best-effort best-effort "$r1"
+# MARK_ANSWERED is defined and wire-protected against operator override.
+if grep -q '^MARK_ANSWERED=' "$SHARED/conf/fleet.defaults.conf" \
+  && grep -q 'wire_answered' "$SHARED/lib/common.sh"; then r1=wire; else r1=UNPROTECTED; fi
+t mark-answered-is-wire-protocol wire "$r1"
+# The session posts the signal and no longer requests; the argued-exception and
+# the resume re-signal survive.
+if grep -q 'MARK_ANSWERED' "$SHARED/prompts/fragment-round-rules.txt" \
+  && grep -qi 'YOU DO NOT REQUEST' "$SHARED/prompts/fragment-round-rules.txt"; then r1=signals; else r1=STILL-REQUESTS; fi
+t round-rules-session-signals signals "$r1"
+if grep -qi 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=kept; else r1=LOST; fi
+t round-rules-argued-exception-kept kept "$r1"
+if grep -qi 'round-answered signal' "$SHARED/prompts/resume.txt"; then r1=resignals; else r1=MISSING; fi
+t resume-re-signals-after-death resignals "$r1"
+
+# THE ROUND-1 FIX (codex/grok/kimi): the ready→signal death window. The cure is
+# ordering — SIGNAL THEN READY, with the signal posted while the PR is still a
+# DRAFT (harmless, the engine ignores drafts), so every death lands where resume
+# recovers it. Pinned structurally, not by prose grep, in both prompts that flip
+# a draft to ready.
+for p in build.txt resume.txt; do
+  if grep -qiE 'signal[^.]*then[^.]*mark the PR ready-for-review' "$SHARED/prompts/$p"; then r1=signal-first; else r1=WRONG-ORDER; fi
+  t "signal-before-ready-$p" signal-first "$r1"
+done
+# End-to-end of the covered transition: a PR flipped ready with the signal
+# already at its head → the engine requests (die-after-ready is safe). The
+# die-before-ready arm is a still-draft PR, excluded by my_open
+# (engine-request-excludes-drafts) and recovered by resume — proven above.
+RP_READY_SIGNALLED="$(mk_rp "$H" '[]' '[]' "$RP_SIG_H")"
+t strand-fix-ready-with-signal-requests "rev-a rev-b" "$(printf '%s' "$RP_READY_SIGNALLED" | rp)"
+t strand-fix-ready-with-signal-has-signal "$H" "$(printf '%s' "$RP_READY_SIGNALLED" | ah)"
+# rebase.txt aligns with the engine: it posts the signal, it does not re-request.
+if grep -qi 'MARK_ANSWERED' "$SHARED/prompts/rebase.txt" \
+  && ! grep -qi 're-request every panel reviewer' "$SHARED/prompts/rebase.txt"; then r1=aligned; else r1=RACES; fi
+t rebase-posts-signal-not-request aligned "$r1"
+
 # --- round-log.jq: mirror each whole round into the PR body (#91) ------------
 # Input is the GraphQL pullRequest payload; output is the NEW body when a round
 # is un-recorded, or "" when every round is already marked (the crash-retry
@@ -1591,8 +1700,13 @@ t ci-red-wakes-before-build before "$r1"
 t ci-red-prompt-exists yes "$([ -f "$SHARED/prompts/ci-red.txt" ] && echo yes || echo NO)"
 t ci-red-budget-defined yes \
   "$(grep -q '^TIMEOUT_CIRED=' "$SHARED/conf/roles/builder.conf" && echo yes || echo NO)"
-# The doctrine half of #45 — the engine excludes the round, the rules say why.
-if grep -q 'REVIEW REQUEST REQUIRES A GREEN CHECK' "$SHARED/prompts/fragment-round-rules.txt"; then
+# The doctrine half of #45, now the request half of #133: the green-check
+# precondition is enforced by the ENGINE (_request_panel requests only on a
+# green or absent head) and the prompt keeps green as a ruled term for the
+# argued-exception the session still owns.
+# shellcheck disable=SC2016  # the shell literal contains $check_state
+if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'GREEN IS A RULED TERM' "$SHARED/prompts/fragment-round-rules.txt"; then
   r1=stated
 else
   r1=SILENT
@@ -1630,17 +1744,29 @@ else
   r1=CHANGED
 fi
 t converged-counts-approvals-at-head head-keyed "$r1"
+# The invariant is unchanged; #133 MOVED the actor. "Re-request by head, not by
+# verdict" now lives in request-panel.jq, which returns every panelist not
+# approving the CURRENT head (approvers included after a push) — so the
+# head-keying that used to have to survive in prompt prose survives as code.
+# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/request-panel.jq"; then r1=head-keyed; else r1=CHANGED; fi
+t requestpanel-keys-on-head head-keyed "$r1"
+# The prompts must tell the builder the ENGINE requests — a builder still told to
+# re-request would race the engine and the reconciler.
 for p in build.txt fragment-round-rules.txt; do
-  if grep -qi 'by head, not by verdict' "$SHARED/prompts/$p"; then r1=stated; else r1=SILENT; fi
-  t "rerequest-by-head-$p" stated "$r1"
+  if grep -qi 'engine' "$SHARED/prompts/$p" && grep -qiE 'do not request|engine requests|engine (does|then requests)' "$SHARED/prompts/$p"; then
+    r1=stated
+  else
+    r1=SILENT
+  fi
+  t "rerequest-moved-to-engine-$p" stated "$r1"
 done
-# The no-push case must survive: re-requesting a fresh approver at an unchanged
-# head is what AUTO_APPROVE_REREQUEST exists to absorb, and the rule must not
-# tell builders to spam a panel that is still valid.
-for p in build.txt fragment-round-rules.txt; do
-  if grep -qi 'head did not move' "$SHARED/prompts/$p"; then r1=carved; else r1=MISSING; fi
-  t "rerequest-unchanged-head-carveout-$p" carved "$r1"
-done
+# The no-push half survives, now engine-side: request-panel.jq re-requests a
+# change-requester still AT the current head once the round is signalled answered
+# (proved by rp-no-push-cr-at-head-requests-cr-er above), and the prompt names
+# that case so the builder knows an argument-only answer still reaches the panel.
+if grep -qi 'pushed nothing' "$SHARED/prompts/fragment-round-rules.txt"; then r1=carved; else r1=MISSING; fi
+t rerequest-no-push-half-engine-side carved "$r1"
 if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.defaults.conf"; then r1=present; else r1=GONE; fi
 t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 
@@ -1795,10 +1921,12 @@ printf 'checks: {{HEAD_CHECKS}}' >"$TMP/prompts/hc.txt"
 t head-checks-slot-substitutes "checks: o/q#2 (pending)" \
   "$(render_prompt hc.txt HEAD_CHECKS="o/q#2 (pending)")"
 
-# The request-side rule is where codex's scenario actually pays: a round
-# answered with argument and NO push, re-requested under a still-running
-# check that then fails. Nothing re-runs, because the head never moved.
-if grep -qi 'NOT-YET-FINISHED IS NOT GREEN' "$SHARED/prompts/fragment-round-rules.txt"; then
+# Pending-is-not-green is now the ENGINE's gate (head-checks.jq is_pending; the
+# request holds on anything but green/none — wait, do not abandon), and the
+# prompt still says a queued or running check has not answered, so the session
+# waits to signal until the check settles.
+if grep -q 'def is_pending' "$SHARED/lib/jq/head-checks.jq" \
+  && grep -qi 'queued or running check has not answered' "$SHARED/prompts/fragment-round-rules.txt"; then
   r1=ruled
 else
   r1=SILENT
