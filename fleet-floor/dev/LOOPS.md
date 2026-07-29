@@ -1,6 +1,8 @@
 # Polish loops
 
-Ten passes over the art. Each pass finds and fixes at least one concrete detail
+Fifteen passes over the art. Loops 1–10 built the rooms and the robots; loops
+11–15 were about the picture they are in, after the wall's props were found to
+be sitting on top of the wall's own signage. Each pass finds and fixes at least one concrete detail
 on **every** robot and **every** room, and every change is rendered before and
 after through [the whiteboard](README.md) — same commit, same seed, so the only
 thing that moved is the code.
