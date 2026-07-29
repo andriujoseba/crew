@@ -365,6 +365,24 @@ case "${1:-}" in
           silent|nocron) echo "nofail nofail 4000" ;;
           *)             echo "nofail nofail 30" ;;
         esac ;;
+      *'engine-manifest.sh'*)                   # crew's engine_report (#159)
+        # ABOVE the hired_at case, by the same ordering rule as auth_from_flow:
+        # this script names duty/VERSION in its own pre-#159 fallback branch,
+        # and the looser pattern below would answer the report with a bare
+        # version string — which the CLI then reads as an EMPTY stamp, i.e. a
+        # hired box reporting "not hired". `engine-manifest.sh` is the
+        # narrowest string unique to this one script.
+        #
+        # A stub box is a clean install by construction: there is no tree here
+        # to diverge from. `modified` and `unverified` are asserted end to end
+        # in shared/test/run.sh, against a REAL installed tree, which is the
+        # only place the hash can prove anything at all.
+        if [ "$sc" = "nothired" ]; then
+          printf 'state=absent\nstamp=\nrecorded=\n'
+        else
+          _ver="$(cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)")"
+          printf 'state=current\nstamp=%s\nrecorded=%s\n' "$_ver" "$_ver"
+        fi ;;
       *'duty/VERSION'*)                         # crew's hired_at
         [ "$sc" = "nothired" ] || cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)" ;;
       *'gh auth status'*)                       # crew hire / boot gate
