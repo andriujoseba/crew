@@ -2521,6 +2521,29 @@ function buildKimi(t,st){
     g.fillStyle=ksp;rr(g,bx+3,by0+1,bw-6,22,13);g.fill();
     g.fillStyle="rgba(255,255,255,0.20)";g.fillRect(bx+22,by0+2.4,bw-46,1.6);
     g.restore();}
+  /* L15 — offline kimi catches the beacon. The sag (L12) made the unit
+     visible; this is what makes it READ as a thing in the room rather than a
+     hole in it. The beacon is up and to the left and it is the only light an
+     offline room has, so the moulded shell answers with one red arris — left
+     edge, a little of the crown — plus the skirt's left corner and the left
+     antenna ball. The same beaconPulse the station's L8 rim breathes with,
+     so the whole plane throbs together. */
+  if(offl){var bp2=0.35+0.65*beaconPulse;
+    var rg4=g.createLinearGradient(bx,0,bx+18,0);
+    rg4.addColorStop(0,"rgba(255,64,52,"+(0.16*bp2)+")");rg4.addColorStop(1,"rgba(255,64,52,0)");
+    g.fillStyle=rg4;rr(g,bx,by0,20,bh,br);g.fill();
+    g.strokeStyle="rgba(255,64,52,"+(0.34*bp2)+")";g.lineWidth=1.6;
+    g.beginPath();g.moveTo(bx+br+9,by0+0.9);g.lineTo(bx+br,by0+0.9);
+    g.arc(bx+br,by0+br,br-0.9,-Math.PI/2,Math.PI,true);
+    g.lineTo(bx+0.9,by0+bh-br);g.stroke();
+    g.strokeStyle="rgba(255,64,52,"+(0.22*bp2)+")";g.lineWidth=1.4;
+    g.beginPath();g.moveTo(cx-34,BY+20.7);g.lineTo(cx-20,BY+20.7);g.stroke();
+    g.fillStyle="rgba(255,64,52,"+(0.30*bp2)+")";
+    g.beginPath();g.arc(cx-39,BY-34,2.4,0,7);g.fill();
+    RE.strokeStyle="rgba(255,64,52,"+(0.18*bp2)+")";RE.lineWidth=2;
+    RE.beginPath();RE.moveTo(bx+br+9,by0+1);RE.lineTo(bx+br,by0+1);
+    RE.arc(bx+br,by0+br,br-1,-Math.PI/2,Math.PI,true);
+    RE.lineTo(bx+1,by0+bh-br);RE.stroke();}
   g.strokeStyle="rgba(3,7,13,0.5)";g.lineWidth=1.6;
   g.beginPath();g.moveTo(bx+1,by0+bh*0.54);g.lineTo(bx+bw-1,by0+bh*0.54);g.stroke();
   g.strokeStyle="rgba(186,208,242,"+(offl?0.05:0.13)+")";g.lineWidth=1;
