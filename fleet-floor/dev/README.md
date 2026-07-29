@@ -75,3 +75,5 @@ of these rooms worth looking at.
 ## The map
 
 [`ASSETMAP.md`](ASSETMAP.md) — the current 36 tiles, as one image.
+[`LOOPS.md`](LOOPS.md) — the ten polish loops, each with before/after stills.
+[`GIFS.md`](GIFS.md) — baseline to loop 10 as one animation per robot and room.

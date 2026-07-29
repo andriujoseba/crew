@@ -623,3 +623,10 @@ when the box is.
 > earlier loop. That is what a detail pass should look like — and it is only a
 > readable number because loop 8 removed the ~1.8% grain floor that would have
 > buried all seven of these.
+
+---
+
+## End to end
+
+Every robot and every room, baseline → loop 10, as one animation each:
+**[`GIFS.md`](GIFS.md)**.
