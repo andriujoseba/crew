@@ -29,12 +29,13 @@ load_fleet_conf() {
   source "$CONF_DIR/fleet.defaults.conf"
   local wire_reviewing="$MARK_REVIEWING" wire_pickup="$MARK_PICKUP"
   local wire_resume="$MARK_RESUME" wire_addressing="$MARK_ADDRESSING"
-  local wire_handoff="$MARK_HANDOFF"
+  local wire_answered="$MARK_ANSWERED" wire_handoff="$MARK_HANDOFF"
   [ ! -f "$CONF_DIR/fleet.conf" ] || source "$CONF_DIR/fleet.conf"
   MARK_REVIEWING="$wire_reviewing"
   MARK_PICKUP="$wire_pickup"
   MARK_RESUME="$wire_resume"
   MARK_ADDRESSING="$wire_addressing"
+  MARK_ANSWERED="$wire_answered"
   MARK_HANDOFF="$wire_handoff"
 }
 
