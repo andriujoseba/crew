@@ -58,17 +58,90 @@ command -v sha256sum >/dev/null || die "sha256sum not found — content stamping
 # same-size edit must not read clean. Names as well as content, because the
 # hashes alone cannot tell an added file from a deleted one — and both are
 # somebody's hand on the box.
+#
+# EVERY non-directory entry, not only `-type f`: `find` does not follow
+# symlinks, so a symlink is neither `f` nor `d` and a `-type f` sweep walks
+# straight past it. One `ln -s /anything ~/duty/bin/hotfix.sh` was invisible
+# here and to install.sh's sweep alike — an executable path that read `current`,
+# was never named, and survived every upgrade certified clean. A fifo or a
+# device node under bin/ is not executable code, but it is equally a hand on a
+# box the record calls untouched, so the rule is the simple one: under an engine
+# root, anything that is not a directory is engine surface.
+
+# entry_kind — what a non-regular entry IS, in one word.
+entry_kind() {
+  if   [ -L "$1" ]; then echo symlink
+  elif [ -p "$1" ]; then echo fifo
+  elif [ -S "$1" ]; then echo socket
+  elif [ -b "$1" ]; then echo block
+  elif [ -c "$1" ]; then echo chardev
+  else echo unknown
+  fi
+}
+
+# entry_digest — the hash of a non-regular entry, standing in for the content
+# hash a regular file gets.
+#
+# A symlink hashes its TARGET STRING, never the referent's bytes, and both
+# halves of that are load-bearing. `sha256sum` on a symlink silently hashes what
+# it points at, so a shipped bin/duty.sh replaced by a link to a byte-identical
+# copy elsewhere would read `current` — the file the engine executes would not
+# be the file the record measured. And a *dangling* link makes sha256sum fail,
+# which under `pipefail` would take `state()` down with it: the instrument would
+# go silent on exactly the box that needs it.
+entry_digest() { # RELPATH
+  local kind desc
+  kind="$(entry_kind "$1")"
+  if [ "$kind" = symlink ]; then
+    desc="$kind $(readlink -- "$1" 2>/dev/null || true)"
+  else
+    desc="$kind"
+  fi
+  printf '%s' "$desc" | sha256sum | awk '{print $1}'
+}
+
+# manifest_line — sha256sum's own line shape, escaping included, so a manifest
+# is one format whichever half of manifest_body wrote the line.
+manifest_line() { # DIGEST RELPATH
+  local digest="$1" p="$2"
+  case "$p" in
+    *\\*|*$'\n'*)
+      p="${p//\\/\\\\}"; p="${p//$'\n'/\\n}"
+      printf '\\%s  %s\n' "$digest" "$p" ;;
+    *) printf '%s  %s\n' "$digest" "$p" ;;
+  esac
+}
+
 manifest_body() (
   # A subshell, so the cd cannot leak into a caller that hashes and then keeps
   # working from relative paths.
   local roots=() r
   cd "$DUTY_DIR" 2>/dev/null || return 0
-  for r in $MANIFEST_ROOTS; do if [ -d "$r" ]; then roots+=("$r"); fi; done
-  for r in $MANIFEST_FILES; do if [ -f "$r" ]; then roots+=("$r"); fi; done
+  for r in $MANIFEST_ROOTS; do
+    [ -d "$r" ] || continue
+    # The trailing slash is what makes find descend a root that is itself a
+    # symlink; without it `find bin` on a redirected bin/ prints the link and
+    # stops, and every file the engine actually executes goes unmeasured. The
+    # bare name goes in too when the root IS a link, so the redirect is named
+    # rather than merely walked through. For an ordinary directory the two
+    # spellings produce exactly the paths the bare name always did.
+    roots+=("$r/")
+    if [ -L "$r" ]; then roots+=("$r"); fi
+  done
+  # -e OR -L: a dangling symlink at a manifest file's path is present and wrong,
+  # not absent, and dropping the root would report it as `removed`.
+  for r in $MANIFEST_FILES; do if [ -e "$r" ] || [ -L "$r" ]; then roots+=("$r"); fi; done
   [ "${#roots[@]}" -gt 0 ] || return 0
-  find "${roots[@]}" -type f -print0 2>/dev/null \
-    | LC_ALL=C sort -z \
-    | xargs -0 -r sha256sum --
+  {
+    # Regular files stay one batched exec: the per-box cost of the whole
+    # instrument is what makes it affordable to run on every status.
+    find "${roots[@]}" -type f -print0 2>/dev/null | xargs -0 -r sha256sum --
+    # Everything else that is not a directory, one at a time — there are
+    # normally none of these at all, so the loop costs a clean box nothing.
+    while IFS= read -r -d '' r; do
+      manifest_line "$(entry_digest "$r")" "$r"
+    done < <(find "${roots[@]}" ! -type d ! -type f -print0 2>/dev/null)
+  } | LC_ALL=C sort -k2
 )
 
 stamp() { head -1 "$DUTY_DIR/VERSION" 2>/dev/null | tr -d '\r\n'; }

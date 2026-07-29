@@ -293,16 +293,34 @@ done
 # is its only other entry and is put on every install, so it needs no sweep;
 # conf/instance.conf, conf/fleet.conf, the registries, work/, trees/ and logs/
 # are outside the engine surface by the same reasoning documented there.
+#
+# The sweep enumerates every non-directory entry, not `-type f`: `find` walks
+# straight past a symlink, so before this `ln -s /anything ~/duty/bin/hotfix.sh`
+# survived --force and was then certified `current` — the regular-file hole this
+# sweep exists to close, one character away. `mv` moves a link as itself, so the
+# bytes-preserving park needs nothing else. The trailing slash on the root makes
+# find descend a root that is itself a symlink; the root entry is never swept,
+# because the install has already written the engine through it and moving the
+# link would carry the fresh engine off with it.
 SWEEP_ROOTS="bin lib prompts conf/roles conf/agents"
 SWEEP_FAILED=0
 sweep_unshipped() {
-  local root rel dest
+  local root rel dest plain base n
   for root in $SWEEP_ROOTS; do
     [ -d "$DUTY_DIR/$root" ] || continue
     while IFS= read -r -d '' rel; do
       if [ -n "${INSTALLED_PATHS["$rel"]:-}" ]; then continue; fi
-      dest="$DUTY_DIR/legacy/$rel"
+      dest="$DUTY_DIR/legacy/$rel"; plain="$dest"
       mkdir -p "$(dirname "$dest")"
+      # A second --force over the same name must not overwrite the first park.
+      # Parking rather than deleting is an evidence argument, and evidence that
+      # the next run silently replaces is not evidence. Named like the engine
+      # source crew retires: the original name, then when it is taken, the time.
+      if [ -e "$dest" ] || [ -L "$dest" ]; then
+        base="$dest.$(date -u '+%Y%m%dT%H%M%SZ')"
+        dest="$base"; n=1
+        while [ -e "$dest" ] || [ -L "$dest" ]; do dest="$base.$n"; n=$((n + 1)); done
+      fi
       if ! mv "$DUTY_DIR/$rel" "$dest"; then
         # Warn rather than abort: the engine is already installed and correct,
         # and losing a good deployment over one stubborn file is the wrong
@@ -312,8 +330,12 @@ sweep_unshipped() {
         SWEEP_FAILED=1
         continue
       fi
-      echo "crew: moved unshipped engine file to legacy/: $rel"
-    done < <(cd "$DUTY_DIR" && find "$root" -type f -print0 | LC_ALL=C sort -z)
+      if [ "$dest" = "$plain" ]; then
+        echo "crew: moved unshipped engine file to legacy/: $rel"
+      else
+        echo "crew: moved unshipped engine file to legacy/: $rel (kept as ${dest#"$DUTY_DIR"/legacy/}, an earlier park holds the plain name)"
+      fi
+    done < <(cd "$DUTY_DIR" && find "$root/" ! -type d -print0 | LC_ALL=C sort -z)
   done
 }
 sweep_unshipped

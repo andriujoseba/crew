@@ -89,7 +89,7 @@ mkdir -p "$ISHIM" "$IHOME"
 # PATH is the box's whole world here, and a tool missing from it degrades the
 # install to `unverified` instead of failing, which would hide the very thing
 # these fixtures assert.
-for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv rm sed sha256sum sort tail tr wc xargs; do
+for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 # If install.sh ever infers from hostname again, make the regression reproduce
@@ -2525,6 +2525,63 @@ rm -f "$EMDUTY/bin/hotfix.sh" "$EMDUTY/lib/jq/x.jq"
 t manifest-deleted-file-is-named "path=removed lib/jq/x.jq" "$(em --report --paths | grep '^path=')"
 printf '.a\n' >"$EMDUTY/lib/jq/x.jq"
 
+# MUST FAIL: enumerating `-type f`. find does not follow symlinks, so a symlink
+# is neither `f` nor `d` and a -type f walk goes straight past it — one
+# `ln -s /anything ~/duty/bin/hotfix.sh` was an executable path the record
+# never named and every upgrade certified clean.
+ln -s /bin/sh "$EMDUTY/bin/hotfix.sh"
+t manifest-added-symlink-is-detected modified "$(em_field state)"
+t manifest-added-symlink-is-named "path=added bin/hotfix.sh" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/bin/hotfix.sh"
+t manifest-after-symlink-removed-is-current current "$(em_field state)"
+
+# A symlink is hashed by what it IS, never by what it points at. sha256sum on a
+# link silently hashes the referent, so a shipped file replaced by a link to a
+# byte-identical copy elsewhere would read `current` while the engine executes
+# a file the record never measured.
+cp "$EMDUTY/bin/duty.sh" "$TMP/manifest-duty-elsewhere.sh"
+rm -f "$EMDUTY/bin/duty.sh"
+ln -s "$TMP/manifest-duty-elsewhere.sh" "$EMDUTY/bin/duty.sh"
+t manifest-file-swapped-for-link-is-modified modified "$(em_field state)"
+t manifest-file-swapped-for-link-is-named "path=modified bin/duty.sh" \
+  "$(em --report --paths | grep '^path=')"
+
+# ...and the same link DANGLING must still be a verdict, not a crash: sha256sum
+# on a broken link fails, and under `pipefail` that would take state() down with
+# it — the instrument going silent on the one box that needs it.
+rm -f "$EMDUTY/bin/duty.sh"
+ln -s "$TMP/no-such-file-anywhere" "$EMDUTY/bin/duty.sh"
+if em --state >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t manifest-dangling-link-does-not-crash 0 "$r1"
+t manifest-dangling-link-is-modified modified "$(em_field state)"
+rm -f "$EMDUTY/bin/duty.sh"
+printf 'echo duty\n' >"$EMDUTY/bin/duty.sh"
+
+# Nor is a symlink the only entry a -type f walk misses; the rule that survives
+# review is the simple one — under an engine root, anything that is not a
+# directory is engine surface.
+mkfifo "$EMDUTY/lib/pipe"
+t manifest-added-fifo-is-detected modified "$(em_field state)"
+t manifest-added-fifo-is-named "path=added lib/pipe" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/lib/pipe"
+
+# An engine ROOT replaced by a symlink is the same hole one level up: the link
+# must be named AND the tree behind it still measured, or an operator redirects
+# bin/ and every file the engine runs goes unread.
+mkdir -p "$TMP/manifest-elsewhere-bin"
+mv "$EMDUTY/bin/duty.sh" "$TMP/manifest-elsewhere-bin/duty.sh"
+rmdir "$EMDUTY/bin"
+ln -s "$TMP/manifest-elsewhere-bin" "$EMDUTY/bin"
+t manifest-redirected-root-is-named "path=added bin" "$(em --report --paths | grep '^path=')"
+printf 'echo TAMPERED\n' >"$TMP/manifest-elsewhere-bin/duty.sh"
+t manifest-redirected-root-still-measures-content \
+  "path=added bin
+path=modified bin/duty.sh" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/bin"
+mkdir -p "$EMDUTY/bin"
+printf 'echo duty\n' >"$EMDUTY/bin/duty.sh"
+t manifest-after-root-restored-is-current current "$(em_field state)"
+
 # Every root install.sh writes into is covered — a gap here is a file an
 # operator can edit invisibly, and the list is easy to under-fill by hand.
 for f in bin/duty.sh lib/common.sh lib/jq/x.jq prompts/p.txt \
@@ -2644,6 +2701,37 @@ t install-force-over-added-file-is-current current "$(mstate)"
 # ...and the engine that was installed around it is intact.
 if [ -x "$MDUTY/bin/duty.sh" ]; then r1=installed; else r1=MISSING; fi
 t install-force-sweep-leaves-the-engine installed "$r1"
+
+# The sweep enumerates the same surface the manifest does, or the hole above
+# reopens in the installer: `find -type f` walks past a symlink, so an added
+# LINK was refused, survived --force, and was then recorded as shipped. This
+# also lands on the plain legacy/ name the added FILE above already took, so it
+# is the collision case too: the first park must survive, because parking
+# instead of deleting is an evidence argument and evidence the next run
+# silently replaces is not evidence.
+ln -s /bin/sh "$MDUTY/bin/hotfix.sh"
+t install-added-symlink-reads-modified modified "$(mstate)"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-added-symlink 1 "$r1"
+case "$refuse_out" in *"added bin/hotfix.sh"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-symlink named "$r1"
+if force_out="$(minstall --force 2>&1)"; then r1=0; else r1=$?; fi
+t install-force-over-added-symlink-rc 0 "$r1"
+if [ -e "$MDUTY/bin/hotfix.sh" ] || [ -L "$MDUTY/bin/hotfix.sh" ]; then r1=SURVIVED; else r1=gone; fi
+t install-force-removes-the-added-symlink gone "$r1"
+case "$(cat "$MDUTY/.engine-manifest")" in *hotfix*) r1=BLESSED ;; *) r1=absent ;; esac
+t install-force-does-not-record-the-added-symlink absent "$r1"
+t install-force-over-added-symlink-is-current current "$(mstate)"
+# Parked as the link it was — not as a copy of whatever it pointed at.
+parked_link="$(cd "$MDUTY/legacy/bin" && ls -1 | grep '^hotfix\.sh\.' | head -1)"
+if [ -L "$MDUTY/legacy/bin/$parked_link" ]; then r1=link; else r1=NOT-A-LINK; fi
+t install-force-parks-the-symlink-as-a-link link "$r1"
+t install-force-parks-the-symlink-target /bin/sh \
+  "$(readlink "$MDUTY/legacy/bin/$parked_link" 2>/dev/null)"
+t install-second-park-keeps-the-first "$added_before" \
+  "$(cat "$MDUTY/legacy/bin/hotfix.sh" 2>/dev/null)"
+case "$force_out" in *"kept as bin/$parked_link"*) r1=named ;; *) r1=SILENT ;; esac
+t install-collided-park-names-where-it-went named "$r1"
 
 # A converging re-install sweeps NOTHING. Every install parking files in
 # legacy/ would make the mechanism noise, and noise is how the one real one
