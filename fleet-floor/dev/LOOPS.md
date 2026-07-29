@@ -214,3 +214,61 @@ The radar sweep stopping just looks like a radar with nothing on it, which is a
 calm reading of a dead room. A red cross through the trace fixes that.
 
 ![triage](shots/loop-03/room-triage.webp)
+
+---
+
+## Loop 4 — the idle state
+
+Idle was **working minus the effects**: identical geometry, identical pose, one
+fewer hologram. On the grid, "waiting for work" and "doing work" were the same
+picture, and for grok idle and *offline* were the same pose too — both hung
+their arms, which is what a suit does when nobody is in it.
+
+Idle now means one specific thing everywhere: **awake, and there is work
+queued.**
+
+### claude — a standby sweep
+A slow bright cell tracks across the visor. Powered, scanning, not engaged —
+and it only runs when idle, so the two states can never be confused again.
+
+![claude](shots/loop-04/robot-claude.webp)
+
+### codex — it settles
+A spider that hunts braces wide; a spider that waits draws in. The footprint
+narrows by a fifth and the knees ride lower, which pulls all six contact
+shadows in with it for free.
+
+![codex](shots/loop-04/robot-codex.webp)
+
+### grok — arms folded
+Hanging arms belong to offline. Folded across the chest is unmistakably awake
+and waiting, and it separates the two states that used to share a pose.
+
+![grok](shots/loop-04/robot-grok.webp)
+
+### kimi — the eyes wander
+Working, they lock forward. Waiting, they drift on a slow cycle. Kimi's whole
+character is two shapes on a screen, so where those shapes point is the only
+way it can look busy or look bored.
+
+![kimi](shots/loop-04/robot-kimi.webp)
+
+### builder — the belt is backed up
+A stopped conveyor is not an empty one. The crates bunch against the head of
+the line instead of sitting evenly spaced, so a halted bay reads as *backed up*
+rather than merely quiet.
+
+![builder](shots/loop-04/room-builder.webp)
+
+### reviewer — an in-tray appears
+Two flat doc stacks said the same thing whether anything was pending or not. A
+third, visibly taller pile appears only when nothing is being reviewed.
+
+![reviewer](shots/loop-04/room-reviewer.webp)
+
+### triage — a backlog, not an empty board
+Working, cards spread across all four columns and move. Idle, they pile up five
+deep in intake and the other three run to one each. The board is the only thing
+in this room that can show a queue.
+
+![triage](shots/loop-04/room-triage.webp)

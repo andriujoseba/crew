@@ -371,7 +371,12 @@ function conveyor(t,st){
   plate(S,[[x,y],[x+w,y],[x+w,y+12],[x,y+12]],"#202836","#0d131e","#2a3444");
   var off=run?(t*40)%16:0;S.fillStyle="#0a0f16";S.fillRect(x+2,y+3,w-4,7);
   S.fillStyle="#161d29";for(var i=x+2-16+off;i<x+w;i+=16)S.fillRect(i,y+3,8,7);
-  var coff=run?(t*40)%80:20;for(var c=0;c<3;c++){var cx2=x+10+((c*80+coff)%(w-26));crate(S,cx2,y-14);}
+  /* Running, the crates are spread evenly along the belt. Stopped, they bunch
+     against the head of the line — which is what a halted conveyor looks like,
+     and what makes a stopped bay read as *backed up* rather than merely quiet.
+     Idle here means work is waiting, and the belt should say so. */
+  if(run){var coff=(t*40)%80;for(var c=0;c<3;c++){var cx2=x+10+((c*80+coff)%(w-26));crate(S,cx2,y-14);}}
+  else{for(var c2=0;c2<4;c2++)crate(S,x+w-34-c2*19,y-14);}
   emit(function(cc){cc.fillStyle=run?rgba(95,206,155,0.9):rgba(120,130,140,0.35);cc.beginPath();cc.arc(x+6,y+6,2.5,0,7);cc.fill();});
 }
 function workbench(t,lit,st){
@@ -442,7 +447,11 @@ function kanban(t,st){
   var cols=["247,189,78","92,180,255","201,139,255","95,206,155"];
   for(var c=0;c<4;c++){var cx2=x+12+c*colw;S.fillStyle="#242a30";S.fillRect(cx2,y+10,1,h-20);
     S.fillStyle="rgba("+cols[c]+","+(off?0.3:0.6)+")";S.fillRect(cx2+6,y+13,colw-14,3);
-    var n=off?2:(2+((c+(st==="working"?Math.floor(t):0))%3));
+    /* Idle triage is not an empty board — it is an unworked one. Working, the
+       cards are spread across all four columns and move; idle, they pile up in
+       the intake column and the other three run nearly dry. The board is the
+       only thing in this room that can show a backlog, so it should. */
+    var n=off?2:(st==="working"?(2+((c+Math.floor(t))%3)):(c===0?5:1));
     for(var k=0;k<n;k++){var cc=cols[(c+k)%4];S.fillStyle="rgba("+cc+","+(off?0.18:0.48)+")";S.fillRect(cx2+6,y+22+k*15,colw-14,11);S.fillStyle="rgba(0,0,0,0.3)";S.fillRect(cx2+6,y+22+k*15,colw-14,1);}
   }
 }
@@ -1230,6 +1239,13 @@ function buildClaude(t,st){
     vg.addColorStop(1,rgba(190,70,20,0.75*corePulse));
     c.fillStyle=vg;poly(c,[[hcx-17,hy+16],[hcx+17,hy+16],[hcx+15,hy+24],[hcx-15,hy+24]]);c.fill();
     c.fillStyle=rgba(255,244,222,corePulse);c.fillRect(hcx-6,hy+18,12,2); });
+  /* Standby sweep. Idle claude was the working model with the effects turned
+     off — identical pixels, so on the grid "waiting for work" and "doing work"
+     were the same picture. A slow bright cell tracking across the visor is the
+     unit saying it is powered and scanning, and it only runs when idle, so the
+     two states can never be confused again. */
+  if(!offl&&!work){var sw3=hcx-15+((t*11)%30);
+    [RB,RE].forEach(function(c){c.fillStyle=rgba(255,236,206,0.5);c.fillRect(sw3,hy+18,4,2);});}
   // glass: a specular streak across the top of the slit, not part of the emission
   RB.fillStyle="rgba(255,236,214,"+(offl?0.05:0.3)+")";poly(RB,[[hcx-15,hy+16],[hcx+4,hy+16],[hcx+1,hy+18.5],[hcx-15,hy+18.5]]);RB.fill();
   // dome specular, keyed to the lamp above and left
@@ -1264,7 +1280,15 @@ function buildCodex(t,st){
   function joint(c,x,y,r){c.fillStyle=sT;c.beginPath();c.arc(x,y,r,0,7);c.fill();c.fillStyle=eH;c.beginPath();c.arc(x-1,y-1,1.2,0,7);c.fill();}
 
   // ---- 8 legs (behind body) ----
-  var rootY=[-4,6,16], footX=[150,106,60], footY=[550,558,552], kneeH=[74,92,78]; // 6 legs, wider stance
+  /* Stance. A spider that is hunting braces wide; a spider that is waiting
+     draws its legs in and settles. Idle codex used to hold the full hunting
+     stance with the effects switched off, so the two states were the same
+     picture — now the footprint narrows by a fifth and the knees ride lower,
+     which also pulls the six contact shadows in with it for free. */
+  var rest=(!work&&!offl)?1:0;
+  var rootY=[-4,6,16], footY=[550,558,552];
+  var footX=[150,106,60].map(function(v){return Math.round(v*(rest?0.79:1));});
+  var kneeH=[74,92,78].map(function(v){return v*(rest?0.72:1);});
   function drawLeg(sgn,i){
     var rx=cx+sgn*24, ry=BY+rootY[i], fx=cx+sgn*footX[i], fy=footY[i];
     var k1h=Math.max(12,kneeH[i]-slump*1.3);
@@ -1418,9 +1442,17 @@ function buildGrok(t,st){
 
   // ---- arms ----
   var handR;
-  (function(){var sx=cx-30,sy=BY-16,ex=cx-34,ey=BY+6,gx2=cx-30,gy=BY+26;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy+2,4,0,7);g.fill();})();
+  /* Idle folds its arms. Hanging arms are what a suit does when it is
+     unconscious, which is offline's job, and grok was using the same pose for
+     both — so idle and offline differed only by how bright the chest readout
+     was. Folded across the chest is unmistakably "awake and waiting". */
+  var fold=(!work&&!offl);
+  (function(){var sx=cx-30,sy=BY-16;
+    if(fold){var ex=cx-32,ey=BY+2,gx2=cx+8,gy=BY+8;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4.5,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy,4,0,7);g.fill();}
+    else{var ex=cx-34,ey=BY+6,gx2=cx-30,gy=BY+26;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy+2,4,0,7);g.fill();}})();
   (function(){var sx=cx+30,sy=BY-16;
     if(work){var ex=cx+38,ey=BY-14,gx2=cx+30,gy=BY-40;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy,4,0,7);g.fill();handR={x:gx2+2,y:gy};}
+    else if(fold){var ex=cx+32,ey=BY+10,gx2=cx-8,gy=BY+2;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4.5,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy,4,0,7);g.fill();handR={x:gx2,y:gy};}
     else{var ex=cx+34,ey=BY+6,gx2=cx+30,gy=BY+26;limbSeg(g,sx,sy,ex,ey,6,5,sM,sB);limbSeg(g,ex,ey,gx2,gy,5,4,sT,sB);g.fillStyle="#cfd6e2";g.beginPath();g.arc(gx2,gy+2,4,0,7);g.fill();handR={x:gx2,y:gy};}
   })();
   if(work&&handR){var h=handR;
@@ -1560,8 +1592,12 @@ function buildKimi(t,st){
   }
   else{
     [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){var eg=c.createRadialGradient(exx,ey2,0.5,exx,ey2,10);eg.addColorStop(0,pkh(0.8+0.2*pulse));eg.addColorStop(0.5,pk(0.5*pulse));eg.addColorStop(1,pk(0));c.fillStyle=eg;c.beginPath();c.arc(exx,ey2,10,0,7);c.fill();});});
-    var eh=blink?1:(work?4:7), ew=6;
-    [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){c.fillStyle=pkh(0.92);rr(c,exx-ew/2,ey2-eh/2,ew,eh,2);c.fill();});RB.fillStyle="rgba(255,255,255,0.85)";RB.fillRect(exx-1,ey2-eh/2+1,2,2);});
+    /* Idle eyes wander. Working, they lock forward on the task; waiting, they
+       drift left and right on a slow cycle. Kimi has no body language to speak
+       of — the whole character is two shapes on a screen — so where those two
+       shapes point is the only way it can look busy or look bored. */
+    var eh=blink?1:(work?4:7), ew=6, gaze=work?0:Math.round(Math.sin(t*0.55)*2.2);
+    [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){c.fillStyle=pkh(0.92);rr(c,exx-ew/2+gaze,ey2-eh/2,ew,eh,2);c.fill();});RB.fillStyle="rgba(255,255,255,0.85)";RB.fillRect(exx-1+gaze,ey2-eh/2+1,2,2);});
     RB.strokeStyle=pk(0.6);RB.lineWidth=1.4;RB.beginPath();
     if(work){RB.moveTo(cx-5,by0+bh*0.72);RB.lineTo(cx+5,by0+bh*0.72);}
     else{RB.arc(cx,by0+bh*0.64,5,0.12*Math.PI,0.88*Math.PI);}
@@ -1691,7 +1727,12 @@ function drawTarget(t,dt){
   stepSparks(dt);
   drawRobot(t);
   if(ROOM==="builder"){ conveyor(t,STATE); workbench(t,lit,STATE); crateBig(206,558);crateBig(182,588); }
-  else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720); }
+  /* The in-tray. A review lab that is idle is a review lab with a queue on the
+     desk — two flat stacks said the same thing whether anything was pending or
+     not, so a third, visibly taller pile only appears when nothing is being
+     reviewed. It is the room's own version of "work is waiting". */
+  else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
+    if(STATE==="idle")for(var ip=0;ip<11;ip++){S.fillStyle=ip%2?"#c3cdda":"#a6b1c0";S.fillRect(752-(ip%2),FLOORY-6-ip*4,26,4);} }
   else { mapConsole(t,STATE); phoneBank(1042); fileCabinet(1086); docStack(700); }
   drawSparks();
   drawFloorFog(t);
