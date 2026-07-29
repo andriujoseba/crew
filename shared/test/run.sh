@@ -2767,7 +2767,7 @@ redir_park=""
 for p in "$MDUTY"/legacy/bin "$MDUTY"/legacy/bin.*; do
   if [ -L "$p" ]; then redir_park="$p"; break; fi
 done
-if [ -n "$redir_park" ]; then r1=link; else r1=NOT-PARKED-AS-LINK; fi
+if [ -n "$redir_park" ]; then r1='link'; else r1=NOT-PARKED-AS-LINK; fi
 t install-force-parks-the-redirect-as-a-link link "$r1"
 t install-force-parks-the-redirect-target "$REDIR/bin" \
   "$(readlink "$redir_park" 2>/dev/null)"
