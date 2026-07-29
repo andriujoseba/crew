@@ -518,6 +518,63 @@ t converged-conflicting false \
 t converged-empty-panel false \
   "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | jq -r --argjson panel '[]' --arg needs_human state:needs-human -f "$CJQ")"
 
+# --- addressing.jq: round-close predicate, the MIRROR of converged.jq (#130) --
+# Same payload builder (mk_pr), same panel, same head-scoping — the point is
+# that the two predicates agree on every input and differ only in the
+# conclusion. Reuses H / REVS_OK from the converged block above.
+AJQ="$SHARED/lib/jq/addressing.jq"
+OLDH="cccccccccccccccccccccccccccccccccccccccc"
+# A closed round without full approval: rev-a requests changes AT the head,
+# rev-b approves AT the head. Every panelist opinionated, one is not an approval.
+REVS_ADDR='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
+# The ceremony#136 mixed round: one approval staled by a push (rev-a at an OLD
+# head), the other panelist yet to review at all. NOT closed — still awaiting.
+REVS_MIXED_OPEN='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$OLDH'"}}]'
+addr() { jq -r --argjson panel "$PANEL" --arg addressing state:addressing -f "$AJQ"; }
+
+# The core: a landed non-approving verdict with the whole panel opinionated at
+# the head → state:addressing. This is the exact inverse of converged-true.
+t addressing-closed-without-approval true "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_ADDR" | addr)"
+# All approved at head → converged, NOT addressing (the two never both fire).
+t addressing-all-approved-is-false false "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_OK" | addr)"
+# The #136 mixed round: a stale approval + an unreviewed panelist is a round
+# still OPEN (bots-reviewing), not a closed one — addressing must not fire.
+t addressing-mixed-open-round-false false "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_MIXED_OPEN" | addr)"
+# A stale approval + a head change-request (rev-a CR@head, rev-b approved OLD
+# head) is not all-reviewed-at-head → not closed yet.
+REVS_ADDR_STALE='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$OLDH'"}}]'
+t addressing-not-all-at-head-false false "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_ADDR_STALE" | addr)"
+# Idempotent: the label already stands → writes nothing (re-tick no-op).
+t addressing-already-set-false false "$(mk_pr "$H" MERGEABLE '["state:addressing"]' '[]' "$REVS_ADDR" | addr)"
+# A live panel request means the round is still open — do not stamp addressing
+# over a head that was just (re-)requested; the reconciler would flip it back.
+t addressing-live-request-false false "$(mk_pr "$H" MERGEABLE '[]' '["rev-a"]' "$REVS_ADDR" | addr)"
+# An empty panel never closes a round vacuously (mirror of converged-empty-panel).
+t addressing-empty-panel-false false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | jq -r --argjson panel '[]' --arg addressing state:addressing -f "$AJQ")"
+# Mergeability is irrelevant to addressing: a conflicting PR can still owe a fix.
+t addressing-conflicting-still-addresses true "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_ADDR" | addr)"
+
+# --- #130 must-fail guards (the issue's test plan, addressing-scoped) ---------
+# The engine write is optimistic, the reconciler authoritative: nothing in the
+# addressing path may gate a verdict or write a state it does not own.
+# state:addressing must never be written before the verdict lands, and the write
+# is best-effort — the marker is the `|| warn` trailing the add-label.
+if grep -q '_mark_addressing' "$SHARED/lib/duty-review.sh"; then r1=wired; else r1=MISSING; fi
+t addressing-wired-after-verdict wired "$r1"
+# shellcheck disable=SC2016  # the grep literal contains $LABEL_ADDRESSING on purpose
+if grep -q 'could not set \$LABEL_ADDRESSING' "$SHARED/lib/duty-review.sh"; then r1=best-effort; else r1=GATING; fi
+t addressing-write-is-best-effort best-effort "$r1"
+# The addressing writer never touches state:building (out of scope) or
+# state:needs-human (the handoff's, not the reviewer's).
+if grep -RIn 'state:building' "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then r1=WRITES-IT; else r1=absent; fi
+t addressing-never-writes-state-building absent "$r1"
+# The predicate keys approvals/reviews on the head, same as converged.jq — a
+# stale verdict at an old head is not a closed round.
+# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
+t addressing-keys-on-head head-keyed "$r1"
+
 # --- round-log.jq: mirror each whole round into the PR body (#91) ------------
 # Input is the GraphQL pullRequest payload; output is the NEW body when a round
 # is un-recorded, or "" when every round is already marked (the crash-retry
