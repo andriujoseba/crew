@@ -2912,6 +2912,18 @@ function spill(cx,cy,rx,ry,col,a){
 }
 
 function deckStation(t,lit,st){
+  /* L2 — the near plane occludes LIGHT, not just paint. The glow buffer is
+     composited over the scene with three blurred passes, so every emissive
+     behind the station — above all the lamp's floor pool at FLOORY — bloomed
+     straight through the carcass and lay on its front face as a bright fog,
+     which un-did the occlusion the move to the near plane bought. Punch the
+     station's silhouette out of the glow buffer first; the station's own
+     fixtures emit after this, so they still bloom, and the blur still wraps
+     the pool's light around the edges the way real bloom hugs a silhouette. */
+  var dd=DECK,ln=ROOM==="triage"?26:0,nx0=dd.cx-dd.fw/2,nx1=dd.cx+dd.fw/2;
+  G.save();G.globalCompositeOperation="destination-out";G.fillStyle="#000";
+  poly(G,[[dd.cx-dd.bw/2,dd.top],[dd.cx+dd.bw/2,dd.top],[nx1,dd.top+dd.td],
+    [nx1-ln,dd.base],[nx0+ln,dd.base],[nx0,dd.top+dd.td]]);G.fill();G.restore();
   if(ROOM==="builder")fabTable(t,lit,st);
   else if(ROOM==="reviewer")inspectBench(t,lit,st);
   else plotTable(t,lit,st);
