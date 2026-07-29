@@ -1507,6 +1507,10 @@ CHK_OK_THEN_CANCEL='[
 CHK_SAME_SECOND_CANCEL_LAST='[
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:17Z"},
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"}]'
+CHK_WORKFLOW_COLLISION_FAILURE_FIRST='[
+  {"__typename":"CheckRun","name":"test","workflowName":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-07-29T10:00:00Z","completedAt":"2026-07-29T10:01:00Z"},
+  {"__typename":"CheckRun","name":"test","workflowName":"nightly","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T10:05:00Z","completedAt":"2026-07-29T10:06:00Z"}]'
+CHK_WORKFLOW_COLLISION_FAILURE_LAST="$(printf '%s' "$CHK_WORKFLOW_COLLISION_FAILURE_FIRST" | jq 'reverse')"
 CHK_SUPERSEDED_CANCEL_AND_FAILURE='[
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
@@ -1556,8 +1560,14 @@ t head-unknown-conclusion-is-red red  "$(state_of "$CHK_UNKNOWN")"
 t head-cancelled-then-succeeded-is-green green "$(state_of "$CHK_CANCEL_THEN_OK")"
 t head-cancelled-as-last-word-is-red red "$(state_of "$CHK_OK_THEN_CANCEL")"
 t head-same-second-cancel-last-is-green green "$(state_of "$CHK_SAME_SECOND_CANCEL_LAST")"
-# Reduction is keyed by the check name, not workflow or run id: an unrelated
-# failure survives even while the superseded same-name cancellation disappears.
+# Same-named jobs in different workflows are independent evidence. Neither
+# rollup order may let one workflow's success discard another one's failure.
+t head-workflow-collision-failure-first-is-red red \
+  "$(state_of "$CHK_WORKFLOW_COLLISION_FAILURE_FIRST")"
+t head-workflow-collision-failure-last-is-red red \
+  "$(state_of "$CHK_WORKFLOW_COLLISION_FAILURE_LAST")"
+# An unrelated failure survives even while the superseded cancellation from
+# another check identity disappears.
 t head-unrelated-failure-survives-superseded-cancel red \
   "$(state_of "$CHK_SUPERSEDED_CANCEL_AND_FAILURE")"
 t head-unrelated-failure-is-named "test (FAILURE)" \
