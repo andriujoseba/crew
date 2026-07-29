@@ -1711,6 +1711,47 @@ resize();requestAnimationFrame(frame);
 /* Ask for a snapshot immediately, then keep asking. A failure here is the
    normal case for `open index.html` and leaves the page in DEMO mode. */
 pollFleet();setInterval(pollFleet,POLL_MS);
+
+/* ---- dev hook: the room renderer, addressable one unit at a time ----------
+   dev/whiteboard.html lays every agent x room x state out as a single image so
+   the art can be diffed tile-for-tile between commits. It needs the RENDERER,
+   not the app, and it must not own a second copy of it — a whiteboard drawing
+   its own robots would drift from the shipped ones the first time either
+   changed, and then agree with a screenshot of nothing. So this draws with the
+   same drawTarget the room view uses, into a canvas the caller owns, and puts
+   back every global it borrowed: VIEW, the roster and the live poll never see
+   it. Unused by index.html — it costs one property on window. */
+window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
+  ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
+  /* render(dst,{agent,room,state,t,warm,flat}) */
+  render:function(dst,o){
+    var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX,sl=lastHand;
+    AGENT=o.agent;ROOM=o.room;STATE=o.state;BOX=o.agent+"-"+o.room;
+    /* The lamp flicker and the weld sparks are the only two things that carry
+       state across frames, so both are reset and then warmed a FIXED number of
+       frames — otherwise a tile inherits however many frames the previous
+       caller happened to run, and the grid stops being comparable. */
+    lamp.lit=1;lamp.drop=0;sparks.length=0;
+    var t=o.t||0,dt=1/60,warm=o.warm===undefined?12:o.warm;
+    for(var w=warm;w>0;w--)drawTarget(t-w*dt,dt);
+    drawTarget(t,dt);
+    var c=dst.getContext("2d"),W=dst.width,H=dst.height;
+    c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+    c.clearRect(0,0,W,H);c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
+    if(o.flat){c.drawImage(comp,0,0,DW,DH,0,0,W,H);}
+    else{ /* the same chromatic split blit() ships, scaled — a tile has to be
+             what an operator actually sees, fringing included */
+      var dx=1.1*(W/DW);
+      tintTo(tintR,comp,255,0,0);tintTo(tintG,comp,0,255,0);tintTo(tintB,comp,0,0,255);
+      c.fillStyle="#000";c.fillRect(0,0,W,H);
+      c.globalCompositeOperation="lighter";
+      c.drawImage(tintG,0,0,DW,DH,0,0,W,H);
+      c.drawImage(tintR,0,0,DW,DH,dx,0,W,H);
+      c.drawImage(tintB,0,0,DW,DH,-dx,0,W,H);
+      c.globalCompositeOperation="source-over";
+    }
+    AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;lastHand=sl;
+  }};
 })();
 
 </script>

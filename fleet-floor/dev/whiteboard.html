@@ -1,3 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fleet Floor · asset map</title>
+<style>
+:root{ --mono:ui-monospace,"SFMono-Regular","JetBrains Mono",Menlo,Consolas,monospace; --cyan:#5fd6ff; }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:#000}
+body{overflow:hidden;color:#c7d4e4;font-family:var(--mono)}
+#stage{position:fixed;inset:0;background:#000}
+#scene{position:absolute;inset:0;width:100%;height:100%;display:block}
+.hud{position:fixed;top:0;left:0;right:0;display:flex;align-items:flex-start;gap:16px;padding:12px 18px;z-index:10;pointer-events:none}
+.title{font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#8aa0b8;text-shadow:0 1px 6px #000}
+.title b{color:var(--cyan)}
+.title .sub{display:block;font-size:10px;letter-spacing:.14em;color:#556;margin-top:3px}
+.sp{flex:1}
+.grp{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.glab{font-size:9px;letter-spacing:.18em;color:#46566a;text-transform:uppercase;pointer-events:none}
+.toggle{pointer-events:auto;display:flex;border:1px solid #16202c;border-radius:9px;overflow:hidden;background:#04070c99;backdrop-filter:blur(3px)}
+.toggle button{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:8px 13px;background:transparent;border:0;color:#65788c;cursor:pointer;transition:.15s}
+.toggle button:hover{color:#c7d4e4}
+.toggle button.on{background:linear-gradient(180deg,#0e2c3f,#08202e);color:var(--cyan);box-shadow:inset 0 0 0 1px #1d5772,0 0 20px #5fd6ff22}
+.toggle button.on.w{background:linear-gradient(180deg,#3a2a0e,#241a08);color:#ffbf5a;box-shadow:inset 0 0 0 1px #6a4a1c,0 0 20px #ffb24a22}
+.toggle button.on.o{background:linear-gradient(180deg,#3a1013,#240a0c);color:#ff6a62;box-shadow:inset 0 0 0 1px #6a2020,0 0 20px #ff4d4d22}
+.foot{position:fixed;left:0;right:0;bottom:0;padding:10px 18px;z-index:10;pointer-events:none;display:flex;justify-content:space-between;font-size:10px;letter-spacing:.1em;color:#3f4c5c;text-transform:uppercase;text-shadow:0 1px 4px #000}
+.foot .r{color:var(--cyan);opacity:.8}
+#back{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#8aa0b8;background:#04070ccc;border:1px solid #16202c;border-radius:8px;padding:8px 12px;cursor:pointer;pointer-events:auto;align-self:center}
+#back:hover{color:var(--cyan);border-color:#1d5772}
+body.floor .hud{display:none}
+.foot{display:none}
+/* ===== command-center HUD ===== */
+.fleetbar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;gap:18px;padding:12px 20px;z-index:8;pointer-events:none}
+.fleetbar .brand{font-family:var(--mono);font-weight:700;font-size:14px;letter-spacing:.2em;text-transform:uppercase;color:#c7d4e4;white-space:nowrap}
+.fleetbar .brand b{color:var(--cyan)}
+.fleetbar .brand .rp{color:#5fd6ff;font-weight:400;font-size:11px;letter-spacing:.1em;margin-left:8px}
+.fleetbar .clock{font-family:var(--mono);font-size:12px;color:#8aa0b8;font-variant-numeric:tabular-nums}
+.fleetbar .sp{flex:1}
+.tiles{display:flex;gap:8px;pointer-events:auto}
+.tile{display:flex;flex-direction:column;align-items:center;min-width:62px;padding:6px 12px;border-radius:8px;background:#070c14bb;border:1px solid #16202c}
+.tile .n{font-family:var(--mono);font-weight:700;font-size:17px;line-height:1;font-variant-numeric:tabular-nums}
+.tile .l{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;color:#5a6a80;margin-top:3px}
+.tile.alert{border-color:#5a2222;animation:tilepulse 1.7s infinite}
+@keyframes tilepulse{0%,100%{box-shadow:0 0 0 0 rgba(255,81,71,0)}50%{box-shadow:0 0 0 3px rgba(255,81,71,.22)}}
+.spark{display:flex;align-items:flex-end;gap:2px;height:22px;margin-top:11px}
+.spark span{flex:1;border-radius:1px;min-height:2px}
+.filters{display:flex;gap:6px;pointer-events:auto;align-items:center}
+.fchip{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;border-radius:7px;border:1px solid #16202c;background:#070c14bb;color:#65788c;cursor:pointer;transition:.14s}
+.fchip:hover{color:#c7d4e4}
+.fchip.on{color:var(--cyan);border-color:#1d5772;background:#0e2c3f}
+.flabel{font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:#3f4c5c;text-transform:uppercase;margin:0 2px 0 6px}
+.ticker{position:fixed;left:0;right:0;bottom:0;height:98px;z-index:8;flex-direction:column;background:linear-gradient(180deg,#04070c00,#04070cf2);pointer-events:none}
+.ticker .th{display:flex;align-items:center;gap:8px;padding:7px 20px;font-family:var(--mono);font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:#46566a}
+.ticker .th .live{color:#5fce9b}
+.stream{flex:1;overflow:hidden;padding:0 20px 8px;font-family:var(--mono);font-size:11px;line-height:1.55}
+.stream .l{display:flex;gap:10px;white-space:nowrap;color:#6a7d92}
+.stream .l .tt{color:#46566a}.stream .l .u{min-width:130px}.stream .l .m{color:#7d8ba0;overflow:hidden;text-overflow:ellipsis}
+.stream .l .ok{color:#5fce9b}.stream .l .cr{color:#f7bd4e}
+.rail{position:fixed;bottom:14px;z-index:7;flex-direction:column;gap:12px;pointer-events:none}
+.rail-l{left:16px;top:58px;width:298px}
+.rail-r{right:16px;top:14px;width:376px}
+.wpanel{pointer-events:auto;background:linear-gradient(180deg,#070c14e0,#04070ce0);backdrop-filter:blur(4px);border:1px solid #17313f;border-radius:10px;padding:12px 13px;box-shadow:inset 0 0 0 1px #0a1a24,0 0 24px #4fd8ff10}
+.wpanel .wt{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#4fb3d6;margin-bottom:9px;display:flex;align-items:center;gap:6px}
+.wpanel .wt .dot{width:5px;height:5px;border-radius:50%;background:currentColor;box-shadow:0 0 6px currentColor}
+.idc{display:flex;align-items:center;gap:11px}
+.idc .av{width:42px;height:42px;border-radius:9px;flex:none;display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:18px}
+.idc .nm{font-family:var(--mono);font-size:14px;color:#dbe6f2}
+.idc .rl{font-family:var(--mono);font-size:10px;color:#5a6a80;text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:20px;margin-top:6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-family:var(--mono);font-size:11px}
+.kv .k{color:#5a6a80;text-transform:uppercase;font-size:9.5px;letter-spacing:.05em;align-self:center}
+.kv .v{color:#c7d4e4;text-align:right;font-variant-numeric:tabular-nums}
+.feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
+.fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
+.fev .ago{color:#46566a;flex:none;min-width:34px}
+.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .kd{flex:none}
+.fev.k-build .kd{color:#f7bd4e}.fev.k-review .kd{color:#5cb4ff}.fev.k-triage .kd{color:#c98bff}
+.qchips{display:flex;flex-wrap:wrap;gap:5px}
+.qc{font-family:var(--mono);font-size:9.5px;padding:3px 7px;border-radius:5px;border-left:2px solid;background:#0c1420;color:#9fb2c6}
+.console2{position:fixed;left:330px;right:408px;bottom:14px;z-index:7;pointer-events:auto;flex-direction:column;gap:8px;background:linear-gradient(180deg,#070c14e6,#04070ce6);backdrop-filter:blur(4px);border:1px solid #17313f;border-radius:10px;padding:10px 13px;box-shadow:0 0 26px #4fd8ff10}
+.console2 .cl{font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:#4fb3d6}
+.crow{display:flex;gap:8px;align-items:stretch}
+.crow input{flex:1;height:34px;background:#05080e;border:1px solid #16202c;border-radius:7px;color:#c7d4e4;font-family:var(--mono);font-size:12px;padding:0 11px}
+.crow input:focus{outline:none;border-color:var(--cyan)}
+.abtn{font-family:var(--mono);font-size:11px;background:var(--cyan);color:#062033;border:none;border-radius:7px;padding:0 16px;cursor:pointer;font-weight:700}
+.abtn:hover{filter:brightness(1.08)}
+.act2{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:#8aa0b8;background:#0c1420;border:1px solid #17313f;border-radius:7px;padding:0 13px;cursor:pointer}
+.act2:hover{color:var(--cyan);border-color:#1d5772}
+/* current session + metrics widgets */
+.cursess .big{font-family:var(--mono);font-size:23px;color:#c7d4e4;font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.cursess .task{font-family:var(--mono);font-size:11px;color:#8aa0b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pbar{height:4px;border-radius:2px;background:#0c1420;overflow:hidden;margin-top:10px;position:relative}
+.pbar i{position:absolute;top:0;height:100%;width:40%;border-radius:2px;background:linear-gradient(90deg,rgba(79,216,255,0),var(--cyan),rgba(79,216,255,0));animation:pbarrun 1.5s linear infinite}
+@keyframes pbarrun{0%{left:-42%}100%{left:100%}}
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mcell{background:#0a1017;border:1px solid #142230;border-radius:7px;padding:8px 9px}
+.mcell .mv{font-family:var(--mono);font-size:15px;color:#c7d4e4;font-variant-numeric:tabular-nums}
+.mcell .ml{font-family:var(--mono);font-size:8.5px;letter-spacing:.07em;text-transform:uppercase;color:#5a6a80;margin-top:3px}
+/* fleet ops bar */
+.opsbar{position:fixed;left:0;right:0;bottom:0;height:152px;z-index:8;gap:12px;padding:0 16px 12px;pointer-events:none}
+.obox{pointer-events:auto;background:linear-gradient(180deg,#070c14d9,#04070cf2);backdrop-filter:blur(3px);border:1px solid #142230;border-radius:10px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.obox.ops{flex:1.15}.obox.met{flex:0.78}.obox.actp{flex:1.35}
+.oh{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 13px;font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:#46566a;border-bottom:1px solid #101a24}
+.oh .live{color:#5fce9b}.oh b{color:#5fd6ff;font-weight:700}
+.gacts{display:flex;gap:6px}
+.gbtn{font-family:var(--mono);font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:#8aa0b8;background:#0c1420;border:1px solid #17313f;border-radius:6px;padding:4px 9px;cursor:pointer}
+.gbtn:hover{color:var(--cyan);border-color:#1d5772}
+.olist{flex:1;overflow-y:auto;padding:6px 13px 8px}
+.op{display:flex;align-items:center;gap:10px;padding:4px 0;font-family:var(--mono);font-size:11px;white-space:nowrap}
+.op .u{min-width:118px;overflow:hidden;text-overflow:ellipsis}
+.op .kd{padding:1px 6px;border-radius:4px;font-size:9px;letter-spacing:.04em}
+.op .tk{color:#7d8ba0;flex:1;overflow:hidden;text-overflow:ellipsis}
+.op .el{color:#5fd6ff;font-variant-numeric:tabular-nums}
+.mrows{padding:8px 13px;display:flex;flex-direction:column;gap:8px}
+.mrow{display:flex;align-items:baseline;justify-content:space-between;font-family:var(--mono)}
+.mrow .mk{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:#5a6a80}
+.mrow .mvv{font-size:14px;color:#c7d4e4;font-variant-numeric:tabular-nums}
+.access{display:flex;flex-direction:column;gap:6px}
+.lbtn{font-family:var(--mono);font-size:10.5px;text-align:left;color:#8aa0b8;background:#0a1017;border:1px solid #142230;border-radius:7px;padding:8px 10px;cursor:pointer}
+.lbtn:hover{color:var(--cyan);border-color:#1d5772}
+.fleetbar,.opsbar,.rail,.console2{display:none}
+body.floor .fleetbar,body.floor .opsbar{display:flex}
+body.room .rail,body.room .console2{display:flex}
+/* ported: demo-data marker + disabled (not-yet-wired) controls */
+.demo-badge{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#c79a3a;background:rgba(199,154,58,.1);border:1px solid rgba(199,154,58,.35);border-radius:6px;padding:4px 8px;align-self:center;pointer-events:auto;white-space:nowrap}
+/* Served by `crew floor`: the amber DEMO warning becomes a green LIVE mark. */
+.demo-badge.live{color:#5fce9b;background:rgba(95,206,155,.1);border-color:rgba(95,206,155,.35)}
+/* Collector stopped answering: what is on screen is the last snapshot, not the
+   fleet. Red, because a frozen console that looks calm is the dangerous one. */
+.demo-badge.stale,.demo-badge.live.stale{color:#ff5147;background:rgba(255,81,71,.12);border-color:rgba(255,81,71,.45)}
+.livestat{font-family:var(--mono);font-size:10px;color:#5fce9b;align-self:center;white-space:nowrap;max-width:38vw;overflow:hidden;text-overflow:ellipsis}
+/* Raw session logs, in-page (a popup would be blocked — it opens after a fetch). */
+#logov{display:none;position:fixed;inset:0;z-index:60;background:rgba(2,5,10,.82);align-items:center;justify-content:center;padding:5vh 5vw}
+#logov .logbox{display:flex;flex-direction:column;width:min(1100px,92vw);height:min(760px,86vh);background:#080d16;border:1px solid #223148;border-radius:10px;overflow:hidden}
+#logov .loghd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 13px;border-bottom:1px solid #1a2537;font-family:var(--mono);font-size:11px;color:#8aa0b8;letter-spacing:.06em}
+#logov .loghd button{font-family:var(--mono);font-size:10px;color:#c7d4e4;background:#111b2a;border:1px solid #2a3a52;border-radius:5px;padding:4px 9px;cursor:pointer}
+#logov .loghd button:hover{border-color:#4a6488}
+#logov pre{margin:0;flex:1;overflow:auto;padding:14px;white-space:pre-wrap;word-break:break-word;font:11px/1.5 var(--mono);color:#b9c8dc}
+.woff{opacity:.4;cursor:not-allowed}
+input.woff{color:#5a6a80}
+/* fleet-floor/dev/whiteboard.css — chrome for the asset map.
+   Layout only. Nothing here touches how a robot or a room is drawn; that is
+   src/app.js, and it stays the single copy. */
+:root { --rowlab: 132px; --mono: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* The app's own #stage is still in the document — whiteboard.html is the app
+   plus a grid, so the renderer boots exactly as it does in production — but it
+   must not be on screen or it paints a full-window room behind the map. */
+#stage { display: none !important; }
+
+body { margin: 0; background: #05080f; color: #cfe0f2; font-family: var(--mono); }
+#wb { padding: 26px 30px 60px; }
+
+.wb-head h1 { font-size: 15px; letter-spacing: 0.18em; margin: 0 0 6px; color: #eaf3ff; }
+.wb-head p { font-size: 11.5px; line-height: 1.7; margin: 0 0 22px; color: #6b7f96; }
+.wb-head b { color: #9fd2ff; }
+.wb-head code { color: #f7bd4e; }
+
+.wb-grid { display: grid; gap: 10px; align-items: start; width: max-content; }
+
+.wb-colhead {
+  font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 8px 0 10px; text-align: center; border-bottom: 2px solid currentColor;
+}
+.wb-claude { color: #ff9a3c; } .wb-codex { color: #37d4a6; }
+.wb-grok   { color: #b07cff; } .wb-kimi  { color: #ff72b6; }
+
+.wb-rowhead {
+  font-size: 11px; text-align: right; padding: 8px 12px 0 0; line-height: 1.5;
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: flex-start;
+}
+.wb-rowhead b { color: #eaf3ff; letter-spacing: 0.12em; text-transform: uppercase; font-size: 11.5px; }
+.wb-rowhead span { color: #5d7085; }
+/* A rule above the first state of each room, so the three blocks read as
+   blocks and not as nine equal rows. */
+.wb-roomtop { border-top: 1px solid #1c2a3c; margin-top: 10px; padding-top: 12px; }
+
+.wb-tile canvas { display: block; border-radius: 5px; background: #000; }
+.wb-cap { font-size: 9.5px; color: #445468; padding: 4px 0 0 2px; letter-spacing: 0.05em; }
+
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="scene"></canvas>
+  <div class="hud">
+    <button id="back">◀ Fleet Floor</button>
+    <div class="title"><b>CREW</b> · AGENT CONSOLE
+      <span class="sub" id="sub">claude · builder quarters</span></div>
+    <span class="demo-badge" title="Roster is real (crew examples/fleet.roster). Vitals, queue, sessions &amp; metrics are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
+  </div>
+  <div class="foot">
+    <span id="fl">claude-builder · sector-7</span>
+    <span class="r" id="modelabel">WORKING</span>
+  </div>
+
+  <!-- fleet command bar (floor view) -->
+  <div class="fleetbar">
+    <div class="brand"><b>◆</b> FLEET FLOOR<span class="rp">heavy-duty/crew</span></div>
+    <span class="clock" id="clock">--:--:--</span>
+    <span class="demo-badge" title="Roster is real (crew examples/fleet.roster). States, active ops, metrics &amp; activity are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
+    <!-- Result of the last operator action, and the reason a live page stopped
+         being live. Empty in DEMO mode. -->
+    <span class="livestat" id="livestat"></span>
+    <div class="sp"></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="filters" id="filters">
+      <span class="flabel">state</span>
+      <button class="fchip on" data-f="state" data-v="all">All</button>
+      <button class="fchip" data-f="state" data-v="working">Working</button>
+      <button class="fchip" data-f="state" data-v="idle">Idle</button>
+      <button class="fchip" data-f="state" data-v="offline">Silent</button>
+      <span class="flabel">role</span>
+      <button class="fchip on" data-f="role" data-v="all">All</button>
+      <button class="fchip" data-f="role" data-v="builder">Build</button>
+      <button class="fchip" data-f="role" data-v="reviewer">Review</button>
+      <button class="fchip" data-f="role" data-v="triage">Triage</button>
+    </div>
+  </div>
+
+  <!-- agent console (zoom view) -->
+  <div class="rail rail-l">
+    <div class="wpanel" id="w-id"></div>
+    <div class="wpanel" id="w-vitals"></div>
+    <div class="wpanel" id="w-queue" style="flex:1;min-height:0;overflow:auto"></div>
+  </div>
+  <div class="rail rail-r">
+    <div class="wpanel" id="w-current"></div>
+    <div class="wpanel" id="w-metrics"></div>
+    <div class="wpanel" id="w-sessions" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+  </div>
+  <div class="console2">
+    <div class="cl" id="c-target">▸ MESSAGE UNIT</div>
+    <div class="crow"><input id="c-in" placeholder="Send a prompt to the agent…" autocomplete="off"><button class="abtn" id="c-send">Send</button>
+      <button class="act2" id="a-pause">⏸ Pause</button><button class="act2" id="a-restart">↻ Restart</button><button class="act2" id="a-logs">▤ Logs</button></div>
+  </div>
+
+  <!-- fleet operations bar (floor view) -->
+  <div class="opsbar">
+    <div class="obox ops">
+      <div class="oh"><span>ACTIVE OPERATIONS <b id="ops-count"></b></span><span class="gacts"><button class="gbtn" id="g-start">▶ Start all</button><button class="gbtn" id="g-stop">⏸ Stop all</button><button class="gbtn" id="g-wake">◈ Wake silent</button></span></div>
+      <div class="olist" id="opslist"></div>
+    </div>
+    <div class="obox met">
+      <div class="oh"><span>◷ TIME METRICS</span></div>
+      <div class="mrows" id="metrows"></div>
+    </div>
+    <div class="obox actp">
+      <div class="oh"><span class="live">● LIVE</span> FLEET ACTIVITY</div>
+      <div class="stream" id="stream"></div>
+    </div>
+  </div>
+</div>
+<div id="wb"></div>
+<script>
 "use strict";
 (function(){
 var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1536,3 +1792,110 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
     AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;lastHand=sl;
   }};
 })();
+
+</script>
+<script>
+/* fleet-floor/dev/whiteboard.js — the asset map.
+ *
+ * Every agent x room x state the renderer can produce, laid out as one grid:
+ * agents across, room-and-state down. Nothing here draws a robot or a room —
+ * it calls window.FLOORDEV.render, which is the same drawTarget the shipped
+ * room view calls. That is the whole point. An asset map with its own copy of
+ * the art agrees with the app only until one of them is edited, and then it
+ * quietly certifies the wrong picture.
+ *
+ * Deterministic on purpose: the flicker, the rack LEDs and the film grain all
+ * pull Math.random, so it is replaced with a seeded PRNG and re-seeded per
+ * tile. The same commit renders the same PNG twice, and a pixel that moved
+ * between two runs moved because the code moved.
+ *
+ * Query params (all optional):
+ *   ?agents=claude,codex  ?rooms=builder  ?states=working  — slice the grid
+ *   ?w=640                                                 — tile width
+ *   ?t=8                                                   — animation time, seconds
+ *   ?flat=1                                                — skip the chromatic split
+ */
+(function () {
+  var D = window.FLOORDEV;
+  if (!D) { document.body.innerHTML = '<p style="color:#f66;font:14px monospace;padding:24px">FLOORDEV missing — build from src/ with build.sh</p>'; return; }
+
+  var q = new URLSearchParams(location.search);
+  var list = function (k, all) {
+    var v = q.get(k); if (!v) return all;
+    var want = v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    return all.filter(function (x) { return want.indexOf(x) >= 0; });
+  };
+  var AGENTS = list('agents', D.AGENTS), ROOMS = list('rooms', D.ROOMS), STATES = list('states', D.STATES);
+  var TW = Math.max(160, Number(q.get('w')) || 640);
+  var TH = Math.round(TW * D.H / D.W);
+  var T = q.get('t') === null ? 8 : Number(q.get('t'));
+  var FLAT = q.get('flat') === '1';
+
+  /* Seeded PRNG. Every tile starts from a seed derived from WHAT it is, not
+     from how many tiles came before it, so slicing the grid with ?agents= does
+     not change the tiles that remain. */
+  var seed = 1;
+  Math.random = function () {
+    seed = (seed + 0x6D2B79F5) >>> 0;
+    var t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  var seedFor = function (s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+
+  var root = document.getElementById('wb');
+  var head = document.createElement('div');
+  head.className = 'wb-head';
+  head.innerHTML = '<h1>FLEET FLOOR · ASSET MAP</h1><p>' +
+    AGENTS.length + ' agents × ' + ROOMS.length + ' rooms × ' + STATES.length + ' states = <b>' +
+    (AGENTS.length * ROOMS.length * STATES.length) + '</b> tiles · rendered by <code>FLOORDEV.render</code> — the same <code>drawTarget</code> the app uses · t=' + T + 's</p>';
+  root.appendChild(head);
+
+  var grid = document.createElement('div');
+  grid.className = 'wb-grid';
+  grid.style.gridTemplateColumns = 'var(--rowlab) repeat(' + AGENTS.length + ', ' + TW + 'px)';
+  root.appendChild(grid);
+
+  var cell = function (cls, html) { var d = document.createElement('div'); d.className = cls; if (html) d.innerHTML = html; return d; };
+
+  // column header: one per agent
+  grid.appendChild(cell('wb-corner'));
+  AGENTS.forEach(function (a) { grid.appendChild(cell('wb-colhead wb-' + a, a)); });
+
+  var jobs = [];
+  ROOMS.forEach(function (room) {
+    STATES.forEach(function (state, si) {
+      grid.appendChild(cell('wb-rowhead' + (si === 0 ? ' wb-roomtop' : ''),
+        (si === 0 ? '<b>' + room + '</b>' : '') + '<span>' + state + '</span>'));
+      AGENTS.forEach(function (agent) {
+        var wrap = cell('wb-tile');
+        var cv = document.createElement('canvas');
+        cv.width = TW; cv.height = TH;
+        cv.id = 'tile-' + agent + '-' + room + '-' + state;
+        wrap.appendChild(cv);
+        wrap.appendChild(cell('wb-cap', agent + ' · ' + room + ' · ' + state));
+        grid.appendChild(wrap);
+        jobs.push({ cv: cv, agent: agent, room: room, state: state });
+      });
+    });
+  });
+
+  /* Render one tile per animation frame rather than all of them in one go:
+     36 full room renders is several seconds of blocked main thread, and a
+     screenshot tool that waits for load gets a page of blank canvases. */
+  var done = 0;
+  var step = function () {
+    var j = jobs[done];
+    seed = seedFor(j.agent + '|' + j.room + '|' + j.state);
+    D.render(j.cv, { agent: j.agent, room: j.room, state: j.state, t: T, flat: FLAT });
+    done++;
+    if (done < jobs.length) requestAnimationFrame(step);
+    else { document.body.dataset.wbDone = '1'; }
+  };
+  if (jobs.length) requestAnimationFrame(step); else document.body.dataset.wbDone = '1';
+})();
+
+</script>
+</body>
+</html>
