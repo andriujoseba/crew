@@ -1325,3 +1325,81 @@ and its absence is a large part of what makes props look like props.
 The builder's bench in all three, at the end of the five:
 
 ![the bench in three states](shots/gifs/deck-states.gif)
+
+
+---
+
+## The re-think — the station leaves the unit's plane
+
+Three designed objects and five polish loops, and it still read as a stool at
+the unit's ankles. Height was the symptom. Here is the error:
+
+**The station's base sat at `FLOORY=612`, and `FLOORY` is where the unit's feet
+are.** So it was never in front of the robot — it stood beside it, at the same
+depth, and nothing you do to an object in the wrong place in the room will fix
+it. A bench at a person's depth, drawn at a third of their height, *is* a
+stool. The eye read it correctly every time.
+
+The room has 108px of deck between `FLOORY` and the bottom of the frame, and
+until now nothing had ever stood on them. That is the near plane.
+
+![before and after the re-think](shots/gifs/deck-rethink.gif)
+
+Base at `y=668`, well in front of the unit's feet, and therefore bigger: 268
+wide against 204, 156 tall against 46. Three things follow from the move, and
+they are what make it read as depth rather than as a bigger stool:
+
+1. **We see its top.** The camera sits around the unit's chest, so a surface
+   below that shows itself — the top face is a trapezoid, wider at the front
+   than the back, and that single piece of perspective does more than every
+   edge highlight in the previous five loops. Everything standing on the
+   station is placed through `deckAt`, in the surface's own perspective.
+2. **It is backlit.** The lamp and the floor pool are behind it, so the front
+   face is the dark side and the back arris carries the rim. A near-plane
+   object is a silhouette with a lit edge, not a lit box.
+3. **It occludes.** It crosses the unit's legs and hides the pool at its feet —
+   the cue the old one could never give, because something at the same depth
+   cannot get in front of anything. The lost pool is not lost: it reads as a
+   halo spilling over the back edge, which is what a bright floor behind a dark
+   object looks like.
+
+It is drawn after the fog and the steam for the same reason.
+
+### The three polish passes
+
+![the whole re-think, five frames](shots/gifs/deck-rethink-all.gif)
+
+**R1 — the near plane is the dark plane.** Moving it exposed how bright it was:
+three stations washed out by their own spill, tops catching more key than the
+subject, and bottoms dissolving into a dark deck with nothing to stand on.
+Bodies darkened, key alpha cut, every fixture's spill radius roughly halved, a
+toe and a plinth so the thing touches the floor, and a graded wash over the
+whole station that puts it a stop under the mid-plane — because everything this
+close to camera is on the near side of the room's air.
+
+![R1](shots/gifs/deck-R1.gif)
+
+**R2 — the front face gets built.** At the new size the front face is the
+biggest surface in the frame, and on all three it was a flat rectangle.
+Louvred vents, a cabinet door with a frame and a handle that casts, the welding
+lead hung in two catenaries down to the deck, a divider in the reviewer's void
+and a label holder on its drawer, a keypad block and a vented bay on the triage
+fascia. Also the vise, which the hot stock had been washing out: the heat is in
+the metal now, only the top of the piece glows, and it goes to the emissive
+buffer alone so the bloom happens *around* the silhouette instead of erasing
+it.
+
+![R2](shots/gifs/deck-R2.gif)
+
+**R3 — the surface gets used.** A worktop this size has to look worked at. A
+parts tray with fasteners, offcuts, and the scorch ring where hot stock has
+been set down; a slide tray and two markers on the reviewer's glass; and on the
+triage chart a lit route running end to end with the blips travelling down it,
+plus sector ticks to give the grid a scale. The vise went dark — cast iron is
+nearly black and reads by its arris, one bright line per facet.
+
+![R3](shots/gifs/deck-R3.gif)
+
+### The states, at the new scale
+
+![three states](shots/gifs/deck-states.gif)
