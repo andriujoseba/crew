@@ -735,3 +735,79 @@ runs the casing at mid-height with the front lip catching the lamp.
 > 3.8–5.4% changed across all seven. A modelling light touches every lit pixel
 > of every unit, so the robot numbers are a floor, not a measure of the
 > structural work on top of them.
+
+---
+
+## Loop 12 — the light lands on the wall
+
+There is one lamp in these rooms. It throws a volumetric cone through the air
+(loop 5), a pool onto the deck (loop 5), and a bounce off every emissive onto
+the plates around it (loop 5 again). And then the 760 × 462 surface directly
+behind all of that received **nothing at all**: the far corner of the back wall
+was exactly as bright as the patch two metres under the bulb.
+
+That is why these rooms have always read as a lit robot standing in front of a
+flat backdrop. The backdrop was not in the same lighting model as anything
+else in the frame.
+
+**`wallKey()`** runs after the wall attachments and before the cone, clipped to
+the wall rect, additive, in the room's own light colour. Because it runs after
+the props, the monitor bank, the kanban board and the certification plates take
+the same falloff the wall behind them does — one lamp, one grade.
+
+Its second half is the opposite: contact darkening where the wall meets the
+floor, where it runs out at either end, and where it disappears into the
+ceiling. A wall lit uniformly to its own edges has no corners, and each of
+these rooms has four.
+
+> **A finding the pass produced, and then had to fix.** The first render came
+> back with two tiles of the *same room in the same state* showing the wall 9
+> luminance steps apart. The wall itself was identical before the change
+> (25.6 vs 25.8) — the only per-tile variable feeding `wallKey` is `lit`, and
+> `stepLamp` drops the lamp out for a few frames at random. Wired straight to a
+> 190px cone that reads as a failing tube. Wired to 760 × 462 of wall it reads
+> as a rendering fault. The wall now keeps a third of the swing, which still
+> ties it to the lamp: tile spread went from 8.1 luminance steps to 3.5.
+
+**Every bolted prop now stands off the wall.** `plate()` gives a prop internal
+shading and stops at its outline, so a monitor bank, a kanban board and a
+hazard placard all met the wall at a clean cut — the clearest possible tell
+that these are props *drawn on* a room rather than *in* one. `wallShadow()` is
+one soft offset shadow whose direction and distance come from where the prop
+sits relative to `LAMPX`, so the whole wall agrees about where the light is
+instead of each object holding a private opinion. Nine call sites: the sign,
+the pegboard, the hazard placard, the diff monitors, the checklist board, the
+kanban board, the certification plates, the work-order board, the zone clocks,
+the radar and the relay panel.
+
+![builder](shots/loop-12/room-builder.webp)
+![reviewer](shots/loop-12/room-reviewer.webp)
+![triage](shots/loop-12/room-triage.webp)
+
+### Every unit: cavity occlusion
+
+`modelLight` from loop 11 is a sky. It knows how high a surface sits and
+nothing whatever about what is directly above it — so every overhang on every
+unit cast nothing onto the part beneath it, and an overhang that casts nothing
+reads as a decal on a flat panel rather than as one part in front of another.
+
+`cavity()` is the short-range half of the same light: a hard falloff a few
+pixels deep, immediately under whatever is in front. It is the cheapest
+possible ambient occlusion and it is the whole difference between layered and
+printed.
+
+| unit | the join that was open |
+|---|---|
+| **claude** | chest over abdomen, pelvis over thighs, collar over the sternum housing loop 11 added — three seams |
+| **codex** | the deepest overhang on any of the four: the entire abdomen sits in front of and above the cephalothorax, and the two met at a clean line |
+| **grok** | a helmet on a neck ring sits proud of the shoulders it turns above. The shadow also lands across the chest quilting, which is what says the suit is cloth under a hard part |
+| **kimi** | the bezel stood proud of the glass and threw nothing onto it — on the largest flat area in the fleet, and the one surface the eye actually goes to |
+
+![claude](shots/loop-12/robot-claude.webp)
+![codex](shots/loop-12/robot-codex.webp)
+![grok](shots/loop-12/robot-grok.webp)
+![kimi](shots/loop-12/robot-kimi.webp)
+
+> 11–18% everywhere: a light that reaches a surface changes every pixel of it.
+> The residual spread between tiles is the damped lamp flicker described above,
+> and it is now smaller than the difference between the three rooms' grades.
