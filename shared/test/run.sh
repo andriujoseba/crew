@@ -2614,6 +2614,47 @@ case "$(cat "$MDUTY/bin/duty.sh")" in *"hotfix by hand"*) r1=SURVIVED ;; *) r1=o
 t install-force-overwrites overwritten "$r1"
 t install-force-re-records-current current "$(mstate)"
 
+# The other half of --force, and the reason it is an escape hatch rather than a
+# laundering step: a file the incoming tree does not ship must not RIDE THROUGH
+# it. Copying over matching names converges every file the tree has and says
+# nothing about one it does not, so before this an added ~/duty/bin/hotfix.sh
+# was refused, then survived --force, then got hashed into the new record — the
+# box read `current` with unshipped executable code in it, certified by the
+# instrument built to catch exactly that.
+printf '#!/bin/sh\necho hotfix\n' >"$MDUTY/bin/hotfix.sh"
+chmod +x "$MDUTY/bin/hotfix.sh"
+added_before="$(cat "$MDUTY/bin/hotfix.sh")"
+t install-added-file-reads-modified modified "$(mstate)"
+if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-refuses-added-file 1 "$r1"
+if force_out="$(minstall --force 2>&1)"; then r1=0; else r1=$?; fi
+t install-force-over-added-file-rc 0 "$r1"
+if [ -e "$MDUTY/bin/hotfix.sh" ]; then r1=SURVIVED; else r1=gone; fi
+t install-force-removes-the-added-file gone "$r1"
+# Moved, not deleted: the hotfix nobody told the fleet about is evidence.
+t install-force-parks-it-in-legacy "$added_before" "$(cat "$MDUTY/legacy/bin/hotfix.sh" 2>/dev/null)"
+case "$force_out" in
+  *"moved unshipped engine file to legacy/: bin/hotfix.sh"*) r1=named ;;
+  *) r1=SILENT ;;
+esac
+t install-force-names-what-it-moved named "$r1"
+case "$(cat "$MDUTY/.engine-manifest")" in *hotfix*) r1=BLESSED ;; *) r1=absent ;; esac
+t install-force-does-not-record-the-added-file absent "$r1"
+t install-force-over-added-file-is-current current "$(mstate)"
+# ...and the engine that was installed around it is intact.
+if [ -x "$MDUTY/bin/duty.sh" ]; then r1=installed; else r1=MISSING; fi
+t install-force-sweep-leaves-the-engine installed "$r1"
+
+# A converging re-install sweeps NOTHING. Every install parking files in
+# legacy/ would make the mechanism noise, and noise is how the one real one
+# gets missed.
+legacy_before="$(cd "$MDUTY/legacy" && find . -type f | LC_ALL=C sort)"
+reship_out="$(minstall 2>&1)"
+t install-clean-reship-sweeps-nothing "$legacy_before" \
+  "$(cd "$MDUTY/legacy" && find . -type f | LC_ALL=C sort)"
+case "$reship_out" in *"moved unshipped engine file"*) r1=NOISY ;; *) r1=quiet ;; esac
+t install-clean-reship-is-quiet quiet "$r1"
+
 # The migration: a box hired before content stamping has no record. It must
 # read unverified, must NOT be refused, and one install must cure it.
 rm -f "$MDUTY/.engine-manifest"
@@ -2621,6 +2662,22 @@ t install-pre-existing-box-is-unverified unverified "$(mstate)"
 if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
 t install-pre-existing-box-is-not-refused 0 "$r1"
 t install-pre-existing-box-is-cured current "$(mstate)"
+
+# The obsolete half, on the box where it actually happens: an `unverified` box
+# is deliberately NOT refused, so nothing else would ever notice the module it
+# has been carrying since two versions ago. The install that cures it sweeps it
+# — at depth, and without --force — instead of recording it as shipped.
+rm -f "$MDUTY/.engine-manifest"
+printf 'dead\n' >"$MDUTY/lib/jq/obsolete.jq"
+t install-obsolete-file-box-is-unverified unverified "$(mstate)"
+if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-unforced-sweep-rc 0 "$r1"
+if [ -e "$MDUTY/lib/jq/obsolete.jq" ]; then r1=SURVIVED; else r1=gone; fi
+t install-unforced-sweeps-the-obsolete-file gone "$r1"
+t install-unforced-sweep-parks-it dead "$(cat "$MDUTY/legacy/lib/jq/obsolete.jq" 2>/dev/null)"
+case "$(cat "$MDUTY/.engine-manifest")" in *obsolete*) r1=BLESSED ;; *) r1=absent ;; esac
+t install-unforced-sweep-does-not-record-it absent "$r1"
+t install-unforced-sweep-is-current current "$(mstate)"
 
 # --- crew status: what the operator reads ---------------------------------
 # A box is a directory here: the stub runs `box exec` bodies with HOME pointed

@@ -109,7 +109,10 @@ if [ "$FORCE" -eq 0 ] && [ -x "$MANIFEST_TOOL" ]; then
     echo "crew: REFUSING to overwrite a MODIFIED engine in $DUTY_DIR" >&2
     echo "crew: these files are not what ${DIVERGED_FROM:-its recorded install} shipped:" >&2
     printf '%s\n' "$ENGINE_REPORT" | sed -n 's/^path=/crew:   · /p' >&2
-    echo "crew: save anything you need from them — a re-install replaces every one." >&2
+    echo "crew: a re-install overwrites every 'modified' file with the shipped bytes," >&2
+    echo "crew: and moves every 'added' one aside into $DUTY_DIR/legacy/, because the" >&2
+    echo "crew: installed engine has to be exactly what the version ships." >&2
+    echo "crew: save anything you need out of a modified file first." >&2
     echo "crew: then run the same command again with --force." >&2
     exit 1
   fi
@@ -194,6 +197,10 @@ mkdir -p "$DUTY_DIR/bin" "$DUTY_DIR/lib/jq" "$DUTY_DIR/conf/agents" \
          "$DUTY_DIR/conf/roles" "$DUTY_DIR/prompts" \
          "$DUTY_DIR/work" "$DUTY_DIR/trees" "$DUTY_DIR/logs"
 
+# Every path this install writes, relative to DUTY_DIR. The sweep below is the
+# only reader: what the incoming tree put stays, and nothing else does (#159).
+declare -A INSTALLED_PATHS=()
+
 # Atomic per-file install: new inode, then rename over the old name.
 put() {  # put SRC DESTDIR
   local src="$1" destdir="$2" tmp
@@ -201,6 +208,7 @@ put() {  # put SRC DESTDIR
   cp "$src" "$tmp"
   chmod --reference="$src" "$tmp" 2>/dev/null || chmod 644 "$tmp"
   mv "$tmp" "$destdir/$(basename "$src")"
+  INSTALLED_PATHS["${destdir#"$DUTY_DIR"/}/$(basename "$src")"]=1
 }
 
 for f in "$HERE"/bin/*.sh; do put "$f" "$DUTY_DIR/bin"; chmod +x "$DUTY_DIR/bin/$(basename "$f")"; done
@@ -257,6 +265,58 @@ for old in announce-review.sh announce-reviewing.sh submit-review.sh review-subm
   fi
 done
 [ -n "$LEGACY_MOVED" ] && echo "moved old entrypoints to $DUTY_DIR/legacy/:$LEGACY_MOVED"
+
+# --- The installed engine IS the shipped engine (#159) -----------------------
+# Copying over matching names converges every file the incoming tree HAS. It
+# says nothing about a file the incoming tree does NOT have: an operator's
+# ~/duty/bin/hotfix.sh, or a lib/ module three versions dead. Left where it is,
+# that file survives the install and is then hashed into the new record — the
+# box reads `current` with unshipped executable code in it, and --force stops
+# being an escape hatch and becomes a laundering step. An instrument that
+# certifies exactly what it was built to catch is worse than no instrument.
+#
+# So the engine roots converge in both directions. What this install did not
+# put here MOVES — it does not vanish. Preserving the bytes is the argument of
+# #159 itself: the hotfix nobody told the fleet about is evidence, and legacy/
+# is already where this installer parks files it must not leave in place. It
+# sits outside the engine-manifest roots, so the record at the end describes
+# shipped content and nothing else.
+#
+# conf/agents is swept like the rest, though operator profiles are transported
+# rather than shipped. A direct-checkout install stages no seed dir and so
+# parks them, which costs this box nothing: the resolution above refuses to
+# install at all unless THIS box's agent profile resolves, no code on a box
+# ever reads another agent's profile, and the next host-driven install
+# transports the whole set back.
+#
+# These roots are engine-manifest.sh's MANIFEST_ROOTS. conf/fleet.defaults.conf
+# is its only other entry and is put on every install, so it needs no sweep;
+# conf/instance.conf, conf/fleet.conf, the registries, work/, trees/ and logs/
+# are outside the engine surface by the same reasoning documented there.
+SWEEP_ROOTS="bin lib prompts conf/roles conf/agents"
+SWEEP_FAILED=0
+sweep_unshipped() {
+  local root rel dest
+  for root in $SWEEP_ROOTS; do
+    [ -d "$DUTY_DIR/$root" ] || continue
+    while IFS= read -r -d '' rel; do
+      if [ -n "${INSTALLED_PATHS["$rel"]:-}" ]; then continue; fi
+      dest="$DUTY_DIR/legacy/$rel"
+      mkdir -p "$(dirname "$dest")"
+      if ! mv "$DUTY_DIR/$rel" "$dest"; then
+        # Warn rather than abort: the engine is already installed and correct,
+        # and losing a good deployment over one stubborn file is the wrong
+        # trade. But the record is then withheld (see below) — a file that
+        # could not be swept must keep reading `modified`, never get blessed.
+        echo "crew: WARNING — could not move unshipped $rel out of the engine tree" >&2
+        SWEEP_FAILED=1
+        continue
+      fi
+      echo "crew: moved unshipped engine file to legacy/: $rel"
+    done < <(cd "$DUTY_DIR" && find "$root" -type f -print0 | LC_ALL=C sort -z)
+  done
+}
+sweep_unshipped
 
 # Registry convergence carries a per-box veto. An untouched copy follows the
 # host; a locally changed copy is containment state and is never widened.
@@ -367,7 +427,14 @@ CREW_SHA="$(git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null || true)"
 # A failure here does NOT fail the install: the box reads `unverified`, which is
 # honest, and losing a working engine deployment over its instrument would be
 # the wrong trade in both directions.
-if ! env DUTY_DIR="$DUTY_DIR" "$DUTY_DIR/bin/engine-manifest.sh" --record 2>/dev/null; then
+#
+# Withheld outright when the sweep could not clear an unshipped file: recording
+# over a tree that still carries one is precisely the blessing this guards
+# against, so the old record stands and the box keeps reading `modified`.
+if [ "$SWEEP_FAILED" -eq 1 ]; then
+  echo "crew: NOT recording the engine manifest — an unshipped file is still in the tree" >&2
+  echo "crew: this box keeps reading 'modified' until it is removed by hand." >&2
+elif ! env DUTY_DIR="$DUTY_DIR" "$DUTY_DIR/bin/engine-manifest.sh" --record 2>/dev/null; then
   echo "crew: WARNING — could not record the engine manifest; this box will read 'unverified'" >&2
 fi
 
