@@ -2643,18 +2643,29 @@ function fabTable(t,lit,st){
   // front face: a bank of drawers, hazard tape along the toe, asset plate
   var fw=DECK.fw,fy=g.tf+8;
   for(var d=0;d<3;d++)drawerFace(g.fx0+16,fy+d*26,132,24,"#2a2016","#4a3722","rgba(200,150,90,0.6)");
+  /* L3 — the face re-cut for the height. The drawer bank and the door were
+     composed for the 156px body; at 178 both stopped 60px short of the toe
+     and the bottom of the face was a void. Real benches keep the shallow
+     drawers at hand height and one DEEP drawer at the bottom, so that is
+     what the height buys: a fourth, taller drawer, and the door runs on to
+     the plinth. */
+  drawerFace(g.fx0+16,fy+78,132,40,"#251c13","#42311e","rgba(200,150,90,0.5)");
   S.fillStyle="rgba(255,190,130,0.05)";S.fillRect(g.fx0+16,fy,132,1);
   hazard(g.fx0+170,g.by-16,110,5,0.4);
-  assetPlate(g.fx0+176,fy+6,34,"#3a2c1c","rgba(214,190,150,0.75)");
   /* The cabinet door: a frame, a louvred vent, a handle with a shadow, and a
      corner where the paint has gone. A flat panel is a hole in the picture. */
-  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(g.fx0+164,fy,120,70);
-  S.fillStyle="#221a10";S.fillRect(g.fx0+166,fy+2,116,66);
+  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(g.fx0+164,fy,120,118);
+  S.fillStyle="#221a10";S.fillRect(g.fx0+166,fy+2,116,114);
   S.fillStyle="rgba(190,150,100,0.14)";S.fillRect(g.fx0+166,fy+2,116,1);
   louvres(g.fx0+176,fy+10,96,30,5,"rgba(0,0,0,0.55)","rgba(190,150,100,0.16)");
-  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(g.fx0+264,fy+30,7,20);
-  S.fillStyle="rgba(200,158,104,0.55)";S.fillRect(g.fx0+266,fy+28,4,20);
-  S.fillStyle="rgba(120,96,70,0.45)";S.fillRect(g.fx0+166,fy+58,7,10);S.fillRect(g.fx0+166,fy+50,4,6);
+  louvres(g.fx0+176,fy+78,96,26,4,"rgba(0,0,0,0.55)","rgba(190,150,100,0.12)");
+  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(g.fx0+264,fy+52,7,20);
+  S.fillStyle="rgba(200,158,104,0.55)";S.fillRect(g.fx0+266,fy+50,4,20);
+  S.fillStyle="rgba(120,96,70,0.45)";S.fillRect(g.fx0+166,fy+104,7,10);S.fillRect(g.fx0+166,fy+96,4,6);
+  /* The asset plate was riveted at fy+6 and then painted over by the door
+     drawn two calls later — it had never been visible. On the door, where a
+     shop actually rivets it. */
+  assetPlate(g.fx0+230,fy+46,34,"#3a2c1c","rgba(214,190,150,0.75)");
   // and the welding lead, coiled on a hook and dropped to the deck
   cableHang(g.fx0+150,fy+6,g.fx0+128,fy+40,26,"rgba(10,8,6,0.9)",4);
   cableHang(g.fx0+128,fy+40,g.fx0+150,g.by-8,34,"rgba(10,8,6,0.9)",4);
@@ -2744,6 +2755,19 @@ function inspectBench(t,lit,st){
     S.fillStyle="rgba(226,236,248,0.5)";S.fillRect(g.fx0+34+p,py,84,1);}
   S.fillStyle="#1a2430";S.fillRect(g.fx0+14,fy+62,128,7);
   S.fillStyle="rgba(160,190,225,0.10)";S.fillRect(g.fx0+14,fy+62,128,1);
+  /* L3 — the face re-cut for the height. The shelf and the drawer bank both
+     stopped 60px above the toe. The lab keeps its archive low: a second bay
+     under the paper shelf, box files stood in it shoulder to shoulder, the
+     spine labels catching what light reaches down there. */
+  S.fillStyle="rgba(0,0,0,0.62)";S.fillRect(g.fx0+16,fy+72,124,40);
+  for(var bf=0;bf<6;bf++){var bx2=g.fx0+22+bf*19,bh2=[33,36,31,35,32,34][bf];
+    S.fillStyle=["#232f3d","#1e2937","#26313f","#202b39","#242e3c","#1f2a38"][bf];
+    S.fillRect(bx2,fy+112-bh2,16,bh2);
+    S.fillStyle="rgba(150,180,215,0.16)";S.fillRect(bx2,fy+112-bh2,16,1);
+    S.fillStyle=bf===2?"rgba(95,206,155,0.4)":bf===4?"rgba(230,180,100,0.35)":"rgba(170,200,235,0.28)";
+    S.fillRect(bx2+3,fy+112-bh2+5,10,2);}
+  S.fillStyle="#1a2430";S.fillRect(g.fx0+14,fy+112,128,6);
+  S.fillStyle="rgba(160,190,225,0.08)";S.fillRect(g.fx0+14,fy+112,128,1);
   // a divider in the void, and a label holder on the top drawer
   S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(g.fx0+92,fy+6,3,54);
   S.fillStyle="rgba(150,180,215,0.10)";S.fillRect(g.fx0+95,fy+6,1,54);
@@ -2752,7 +2776,9 @@ function inspectBench(t,lit,st){
   // the lamp's flex, run down the back corner of the carcass
   cableHang(g.fx1-26,g.tf+4,g.fx1-14,g.by-14,30,"rgba(8,12,18,0.9)",3);
   for(var d=0;d<3;d++)drawerFace(g.fx0+164,fy+d*24,122,22,"#1c2532","#3b4a5e","rgba(180,205,235,0.5)");
-  assetPlate(g.fx0+176,fy+76,34,"#20293a","rgba(190,214,240,0.75)");
+  // and one deep file drawer at the bottom, where the weight belongs
+  drawerFace(g.fx0+164,fy+72,122,38,"#182130","#33415a","rgba(180,205,235,0.45)");
+  assetPlate(g.fx0+176,fy+114,34,"#20293a","rgba(190,214,240,0.75)");
 
   // the lens arm, clamped to the back right of the surface
   var lp=deckStand(g,0.78,0.30,0), ls=lp.s;
@@ -2865,6 +2891,21 @@ function plotTable(t,lit,st){
     for(var l=0;l<3;l++){c.fillStyle=rgba(col[0],col[1],col[2],off?0.22:0.5);
       c.fillRect(g.fx1-110,fy+5+l*7,[46,30,38][l],2);}});
   assetPlate(g.fx1-104,fy+34,34,"#232c3d","rgba(198,190,255,0.75)");
+  /* L3 — the face re-cut for the height. Below the keypad row the fascia ran
+     out of console 60px early. A console's lower third is service access: one
+     wide panel on quarter-turn latches, a vent to let whatever is routing in
+     there breathe, and the loom dropping out of the readout into the floor. */
+  var ax0=g.fx0+44,ax1=g.fx1-44,ay=fy+56,ah=52;
+  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(ax0-2,ay-2,ax1-ax0+4,ah+4);
+  S.fillStyle="#131a2a";S.fillRect(ax0,ay,ax1-ax0,ah);
+  S.fillStyle="rgba(150,175,235,0.10)";S.fillRect(ax0,ay,ax1-ax0,1);
+  louvres(ax0+14,ay+14,ax1-ax0-98,24,4,"rgba(0,0,0,0.5)","rgba(150,175,235,0.08)");
+  [[ax0+7,ay+7],[ax1-7,ay+7],[ax0+7,ay+ah-7],[ax1-7,ay+ah-7]].forEach(function(lt){
+    S.fillStyle="#0b1119";S.beginPath();S.arc(lt[0],lt[1],3.4,0,7);S.fill();
+    S.strokeStyle="rgba(170,190,240,0.35)";S.lineWidth=1.2;
+    S.beginPath();S.moveTo(lt[0]-2.4,lt[1]);S.lineTo(lt[0]+2.4,lt[1]);S.stroke();});
+  S.fillStyle="rgba(150,175,235,0.14)";S.fillRect(ax1-72,ay+16,52,2);S.fillRect(ax1-72,ay+26,38,2);
+  cableHang(g.fx1-78,fy+28,g.fx1-96,g.by-10,24,"rgba(8,10,18,0.9)",3.5);
   hazard(g.fx0+22,g.by-14,86,4,0.3);
 }
 
