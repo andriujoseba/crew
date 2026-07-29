@@ -2722,21 +2722,33 @@ function deckBody(o){
   var g=S.createLinearGradient(0,tf,0,by);
   g.addColorStop(0,o.face);g.addColorStop(1,o.foot);
   S.fillStyle=g;poly(S,[[fx0,tf],[fx1,tf],[fx1-lean,by],[fx0+lean,by]]);S.fill();
-  // the top face, in perspective
+  /* L4 — the worktop OVERHANGS the carcass. A slab that stops flush with the
+     cabinet under it reads as a lid; every real bench top runs a few pixels
+     proud and drops an apron edge, and that one strip of geometry is what
+     separates "top of a box" from "surface you work at". The top face flares
+     to the overhang at the front, the apron takes the leading light, and the
+     face below starts in its shadow. */
+  var ov=6,ax0=fx0-ov,ax1=fx1+ov,aw=d.fw+ov*2,ab=tf+8;
+  // the top face, in perspective, out to the overhang
   var tg=S.createLinearGradient(0,ty,0,tf);
   tg.addColorStop(0,o.topBack);tg.addColorStop(1,o.topFront);
-  S.fillStyle=tg;poly(S,[[bx0,ty],[bx1,ty],[fx1,tf],[fx0,tf]]);S.fill();
+  S.fillStyle=tg;poly(S,[[bx0,ty],[bx1,ty],[ax1,tf],[ax0,tf]]);S.fill();
   // the key, falling off from under the lamp, on the top face only
   var kg=S.createLinearGradient(bx0,0,bx1,0),mid=Math.max(0.1,Math.min(0.9,(LAMPX-bx0)/d.bw));
   kg.addColorStop(0,rgba(o.key[0],o.key[1],o.key[2],0));
   kg.addColorStop(mid,rgba(o.key[0],o.key[1],o.key[2],0.05+0.08*o.lit));
   kg.addColorStop(1,rgba(o.key[0],o.key[1],o.key[2],0));
-  S.fillStyle=kg;poly(S,[[bx0,ty],[bx1,ty],[fx1,tf],[fx0,tf]]);S.fill();
+  S.fillStyle=kg;poly(S,[[bx0,ty],[bx1,ty],[ax1,tf],[ax0,tf]]);S.fill();
   // the rim on the back arris — the whole reason a backlit object reads
   S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.16+0.26*o.lit);S.fillRect(bx0,ty,d.bw,1.6);
-  // the leading edge, catching bounce off the deck
-  S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.07+0.07*o.lit);S.fillRect(fx0,tf-1.4,d.fw,1.4);
-  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(fx0,tf,d.fw,2.5);
+  // the apron: end grain of the slab, catching bounce off the deck
+  var ag=S.createLinearGradient(0,tf,0,ab);
+  ag.addColorStop(0,o.topFront);ag.addColorStop(1,o.foot);
+  S.fillStyle=ag;S.fillRect(ax0,tf,aw,ab-tf);
+  S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.10+0.09*o.lit);S.fillRect(ax0,tf,aw,1.6);
+  S.fillStyle="rgba(0,0,0,0.35)";S.fillRect(ax0,tf,2,ab-tf);S.fillRect(ax1-2,tf,2,ab-tf);
+  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(ax0,ab-1.5,aw,1.5);
+  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(fx0,ab,d.fw,3);
   /* R1 — the toe, and the floor it stands on. Without a plinth the body just
      faded into the dark deck and the station had no bottom; a near-plane
      object that does not touch the floor floats exactly as badly as one drawn
@@ -2831,8 +2843,8 @@ function deckStation(t,lit,st){
      the pool's light around the edges the way real bloom hugs a silhouette. */
   var dd=DECK,ln=ROOM==="triage"?26:0,nx0=dd.cx-dd.fw/2,nx1=dd.cx+dd.fw/2;
   G.save();G.globalCompositeOperation="destination-out";G.fillStyle="#000";
-  poly(G,[[dd.cx-dd.bw/2,dd.top],[dd.cx+dd.bw/2,dd.top],[nx1,dd.top+dd.td],
-    [nx1-ln,dd.base],[nx0+ln,dd.base],[nx0,dd.top+dd.td]]);G.fill();G.restore();
+  poly(G,[[dd.cx-dd.bw/2,dd.top],[dd.cx+dd.bw/2,dd.top],[nx1+6,dd.top+dd.td],
+    [nx1-ln,dd.base],[nx0+ln,dd.base],[nx0-6,dd.top+dd.td]]);G.fill();G.restore();
   if(ROOM==="builder")fabTable(t,lit,st);
   else if(ROOM==="reviewer")inspectBench(t,lit,st);
   else plotTable(t,lit,st);
