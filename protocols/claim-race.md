@@ -58,12 +58,16 @@ observed spread is 8–14s), then re-read the issue's assignees. This step must
 complete *before* any branch, worktree, PR, drill, or scratch repo is created.
 This single rule is what would have prevented #160's duplicate drill.
 
-**3. Deterministic tie-break — the earliest `assigned` event wins.** Both sides
-compute the same winner independently from data both can see, so no negotiation
-and no messaging is needed:
+**3. Deterministic tie-break — the earliest currently assigned claimant
+wins.** Both sides compute the same winner independently from data both can
+see, so no negotiation and no messaging is needed. Historical assignment
+events for logins absent from the settled assignee snapshot are not candidates:
+an `unassigned` event does not remove its preceding `assigned` event from the
+append-only timeline.
 
 ```
-winner = the login of the earliest `assigned` timeline event on the issue
+winner = among logins in the settled assignee snapshot, the login of the
+         earliest `assigned` timeline event on the issue
          (ties within the same second → lowest login, lexicographic)
 ```
 
@@ -84,10 +88,17 @@ sleep $((RANDOM % 45))
 
 # rule 2 — settle, then confirm BEFORE any work
 sleep 30
-winner="$(gh api "repos/$REPO/issues/$N/timeline" --paginate \
-  --jq '[.[] | select(.event=="assigned")]
-        | sort_by(.created_at, .assignee.login)
-        | .[0].assignee.login')"
+current="$(gh issue view "$N" -R "$REPO" --json assignees \
+  --jq '[.assignees[].login]')"
+timeline="$(gh api "repos/$REPO/issues/$N/timeline?per_page=100" --paginate)"
+winner="$(printf '%s' "$timeline" | jq -r -s --argjson current "$current" '
+  add
+  | [ .[]
+      | select(.event == "assigned" and .assignee.login != null)
+      | .assignee.login as $login
+      | select(($current | index($login)) != null) ]
+  | sort_by(.created_at, .assignee.login)
+  | .[0].assignee.login // empty')"
 
 # rules 3+4 — deterministic loser withdraws
 if [ "$winner" != "$ME" ]; then
@@ -99,8 +110,11 @@ fi
 # only past this line may a branch, worktree, PR, or drill exist
 ```
 
-Note `sort_by(.created_at, .assignee.login)` — the secondary key is what makes a
-same-second tie resolve identically on every box.
+Capture the API response before piping so an API failure remains distinguishable
+from an empty timeline. `gh api --paginate --jq` applies jq once per page, so
+slurp and `add` the raw page arrays before sorting. The current-assignee window
+prevents an old assignment from winning a later claim episode. The secondary
+sort key is what makes a same-second tie resolve identically on every box.
 
 ## What this deliberately does not do
 

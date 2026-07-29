@@ -33,15 +33,15 @@ if [ "$1 $2" = "issue view" ]; then
   n=$((n + 1))
   echo "$n" >"$calls"
   case "${CLAIM_MODE:?}:$n" in
-    success:1|cross-winner:1|cross-loser:1|orphan-loser:1|verify-fail:1|mutation-fail:1)
+    success:1|historical:1|timeline-fail:1|cross-winner:1|cross-loser:1|orphan-loser:1|verify-fail:1|mutation-fail:1)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"ready"}],"assignees":[]}' ;;
-    success:2)
+    success:2|historical:2|timeline-fail:2)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-a"}]}' ;;
     cross-winner:2|cross-loser:2|orphan-loser:2)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-a"},{"login":"bot-b"}]}' ;;
     cross-loser:3)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-b"}]}' ;;
-    orphan-loser:3|verify-fail:3|mutation-fail:2)
+    orphan-loser:3|timeline-fail:3|verify-fail:3|mutation-fail:2)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[]}' ;;
     verify-fail:2) exit 1 ;;
     lost:1)
@@ -59,10 +59,19 @@ elif [ "$1 $2" = "issue edit" ]; then
   fi
 elif [ "$1" = api ]; then
   case "${CLAIM_MODE:?}" in
-    success|cross-winner)
-      printf '%s\n' bot-a ;;
+    success)
+      printf '%s\n' '[{"event":"assigned","created_at":"2026-07-29T10:00:00Z","assignee":{"login":"bot-a"}}]' ;;
+    historical)
+      printf '%s\n' '[{"event":"assigned","created_at":"2026-07-20T10:00:00Z","assignee":{"login":"ghost"}},{"event":"unassigned","created_at":"2026-07-20T11:00:00Z","assignee":{"login":"ghost"}},{"event":"assigned","created_at":"2026-07-29T10:00:00Z","assignee":{"login":"bot-a"}}]' ;;
+    cross-winner)
+      # Two raw API pages: the stale ghost is earliest overall, but bot-a is
+      # the earliest live claimant and must win after the pages are slurped.
+      printf '%s\n' '[{"event":"assigned","created_at":"2026-07-20T10:00:00Z","assignee":{"login":"ghost"}}]'
+      printf '%s\n' '[{"event":"assigned","created_at":"2026-07-29T10:00:00Z","assignee":{"login":"bot-a"}},{"event":"assigned","created_at":"2026-07-29T10:00:01Z","assignee":{"login":"bot-b"}}]' ;;
     cross-loser|orphan-loser)
-      printf '%s\n' bot-b ;;
+      printf '%s\n' '[{"event":"assigned","created_at":"2026-07-20T10:00:00Z","assignee":{"login":"ghost"}},{"event":"assigned","created_at":"2026-07-29T10:00:00Z","assignee":{"login":"bot-b"}},{"event":"assigned","created_at":"2026-07-29T10:00:01Z","assignee":{"login":"bot-a"}}]' ;;
+    timeline-fail)
+      exit 1 ;;
     *) exit 1 ;;
   esac
 elif [ "$1 $2" = "issue comment" ]; then
@@ -88,6 +97,11 @@ t success-two-reads 2 "$(cat "$TMP/calls")"
 t success-one-mutation 1 "$(wc -l <"$TMP/log" | tr -d ' ')"
 t success-adds-self 1 "$(grep -c -- '--add-assignee bot-a' "$TMP/log")"
 t success-swaps-labels 1 "$(grep -c -- '--remove-label ready --add-label claimed' "$TMP/log")"
+
+run_claim historical; rc=$?
+t historical-assignee-ignored-rc 0 "$rc"
+t historical-assignee-keeps-current 1 "$(grep -c -- '--add-assignee bot-a' "$TMP/log")"
+t historical-assignee-no-withdrawal 0 "$(grep -c -- '--remove-assignee bot-a' "$TMP/log")"
 
 run_claim lost; rc=$?
 t selected-loser-rc 1 "$rc"
@@ -119,6 +133,11 @@ run_claim verify-fail; rc=$?
 t verify-failure-rc 1 "$rc"
 t verify-failure-cleans-self 1 "$(grep -c -- '--remove-assignee bot-a' "$TMP/log")"
 t verify-failure-restores-ready 1 "$(grep -c -- '--remove-label claimed --add-label ready' "$TMP/log")"
+
+run_claim timeline-fail; rc=$?
+t timeline-failure-rc 1 "$rc"
+t timeline-failure-cleans-self 1 "$(grep -c -- '--remove-assignee bot-a' "$TMP/log")"
+t timeline-failure-restores-ready 1 "$(grep -c -- '--remove-label claimed --add-label ready' "$TMP/log")"
 
 run_claim mutation-fail; rc=$?
 t mutation-failure-rc 1 "$rc"

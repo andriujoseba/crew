@@ -90,10 +90,21 @@ if ! jq -e --arg me "$ME" '
   exit 1
 fi
 
-winner="$(gh api --paginate "repos/$REPO/issues/$NUM/timeline" \
-  --jq '[.[] | select(.event == "assigned" and .assignee.login != null)]
-        | sort_by(.created_at, .assignee.login)
-        | .[0].assignee.login // empty')" || {
+current="$(jq -c '[.assignees[].login]' <<<"$after")"
+timeline="$(gh api --paginate "repos/$REPO/issues/$NUM/timeline?per_page=100")" || {
+  lose_claim
+  echo "$REPO#$NUM: cannot read claim timeline; withdrew @$ME" >&2
+  exit 1
+}
+winner="$(jq -r -s --argjson current "$current" '
+  add
+  | [ .[]
+      | select(.event == "assigned" and .assignee.login != null)
+      | .assignee.login as $login
+      | select(($current | index($login)) != null) ]
+  | sort_by(.created_at, .assignee.login)
+  | .[0].assignee.login // empty
+' <<<"$timeline")" || {
   lose_claim
   echo "$REPO#$NUM: cannot determine claim winner; withdrew @$ME" >&2
   exit 1
