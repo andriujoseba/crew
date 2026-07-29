@@ -36,8 +36,7 @@ vendor it did not invent.
 
 ## Install
 
-crew is private: there is no public `curl | bash`. Every channel runs the same
-`install.sh`, which lays `crew` out under
+Every channel runs the same `install.sh`, which lays `crew` out under
 `~/.local/share/crew/versions/<version>/`, points `current` at one, and links
 `~/.local/bin/crew` through it, so releases coexist and `crew use` switches
 between them.
@@ -72,7 +71,8 @@ between them.
 
 - **Via `gh`** — a convenience where an authenticated `gh` is already present:
   `dist/fetch.sh [--ref latest|TAG]` resolves a release and fetches its source
-  tarball through `gh` (private-repo safe, no anonymous URL), then installs it.
+  tarball through `gh` (uses the caller's existing credentials, no anonymous
+  URL), then installs it.
 
 `install.sh` installs **per user** — a root install is refused, because crew
 acts on the operator's own boxes and box's restricted tier makes that a real

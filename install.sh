@@ -35,8 +35,7 @@ set -euo pipefail
 #     cli/. The PATH link points there; cli/crew resolves its own real path
 #     (readlink -f) so $CREW_ROOT lands in the versioned tree, not $BINDIR.
 #
-# CREW IS PRIVATE (heavy-duty/crew#98): there is no public `curl | bash`
-# channel to port. The source is a LOCAL tree — CREW_INSTALL_SOURCE, defaulting
+# THE INSTALL SOURCE IS A LOCAL TREE (heavy-duty/crew#98) — CREW_INSTALL_SOURCE, defaulting
 # to the tree this script lives in — so a checkout installs itself, CI installs
 # the code under review, and heavy-duty/crew#98's self-contained scp-able
 # artifact installs by unpacking and pointing CREW_INSTALL_SOURCE at the
