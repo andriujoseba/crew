@@ -1403,3 +1403,74 @@ nearly black and reads by its arris, one bright line per facet.
 ### The states, at the new scale
 
 ![three states](shots/gifs/deck-states.gif)
+
+## Ten loops on the near plane
+
+The re-think put the station in the right place; these ten loops made the
+place real. Same discipline as every run before them: one concrete change per
+loop, rendered in all three rooms before it lands, and everything through the
+one renderer so the four units, the console and the god-view cell inherit each
+change together.
+
+![before and after the ten loops](shots/deck-ten-loops.webp)
+
+**Loop 1 — the worktop rises to 178px.** It went out at 156 and read as a
+coffee table. A worktop at near-plane depth has to reach the unit's waist-line
+on screen before the eye accepts it as something to stand at: top moves
+512 → 490, and `LAYOUT.near` moves with it.
+
+**Loop 2 — the near plane occludes light.** The glow buffer composites over
+the scene in three blurred passes, so the lamp's floor pool bloomed straight
+*through* the carcass and lay on the front face as bright fog — in every room,
+worst where the face was darkest, quietly un-doing the occlusion the re-think
+bought. The station punches its silhouette out of the glow buffer before it
+draws; its own fixtures emit afterwards and still bloom, and the pool's light
+wraps the edges the way bloom hugs a real silhouette.
+
+**Loop 3 — the faces re-cut for the height.** Loop 1's 22px left the bottom
+60px of the biggest surface in the frame a void. Each room spends the height
+its own way: a fourth, deep drawer and a floor-length locker door (behind
+which the asset plate had been riveted, invisibly, since it was born); a low
+archive bay of box files and a deep file drawer; a service panel on
+quarter-turn latches with a vent and the loom dropping into the floor.
+
+**Loop 4 — the worktop overhangs the carcass.** A slab flush with the cabinet
+under it reads as a lid. The top runs 6px proud, the apron takes the leading
+bounce as one lit arris with shadowed end grain, and the face below starts in
+its shadow. One `deckBody` change; loop 2's silhouette moves with it.
+
+**Loop 5 — the tops are materials again.** Dark and in perspective had
+flattened all three tops into one gradient. The builder's steel gets plate
+seams and hold-down bolts; the reviewer's glass gets an edge-lit perimeter and
+corner clips; the triage acrylic gets the corner brackets that pinch it to the
+table. All through `deckAt`, so they recede with the surface.
+
+**Loop 6 — the plane gets a second citizen.** One plane with one object in it
+reads as an object with a trick. A second, humbler thing on the far side of
+frame — a spent-stock drum, the archive cart the low bay feeds, the
+half-unwound cable reel dispatch runs on — makes the depth a fact about the
+room. Each obeys the station's rules: silhouette first, one keyed rim, glow
+buffer punched out behind it, the same grade. Declared in `LAYOUT.nearSide`,
+drawn by `?guides=1`, reported by `layout()`.
+
+**Loop 7 — the bench knows who is standing at it.** The other thing behind
+the station is the unit, and the unit has a lit core in its chest: a
+vendor-coloured swell in the middle of the back edge — claude amber, codex
+green, grok violet, kimi pink — strongest working, gone offline.
+
+**Loop 8 — offline reaches the near plane.** When the lamp dies the beacon is
+the only thing burning, and it is up and to the LEFT: the station's left edges
+catch a red that breathes with `drawRedBeacon`'s own pulse. The right stays
+black — the asymmetry is what makes it a direction instead of a tint.
+
+**Loop 9 — the working station moves.** Flecks arc off the builder's hot
+stock and die on the steel; the reviewer's lens breathes, and a read-head
+sliver walks the glass while a specimen is under it; the triage readout's bars
+step while work is being dispatched. Pinned under reduced motion, dead when
+offline.
+
+**Loop 10 — the near plane at cell scale.** `MINI_FLOOR` predates anything
+living below `FLOORY`, so the taller station's plinth landed exactly on the
+cell's bottom edge — reframed to 0.865. And the back-arris rim was 1.6px,
+which rounds to nothing at the cell's ~0.26 scale: 2.2px survives it, and at
+full size the difference reads as edge wear.
