@@ -74,6 +74,25 @@ between them.
   tarball through `gh` (uses the caller's existing credentials, no anonymous
   URL), then installs it.
 
+<!-- BEGIN github-hosted channel (#171) — delete this block when crew moves off GitHub -->
+- **Via `curl | bash`** — anonymous, no `gh` and no token. **This channel exists
+  only while crew is hosted on GitHub**, and is removed when crew moves off it
+  after `0.1.0`:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/heavy-duty/crew/main/dist/curl-install.sh | bash
+  CREW_REF=0.1.0 curl -fsSL … | bash   # that release, instead of the latest
+  CREW_REF=main  curl -fsSL … | bash   # the development tip, a -dev version
+  ```
+
+  Unset, `CREW_REF` means the latest published release, resolved off GitHub's
+  own `releases/latest` redirect — so the same command installs the same crew
+  for everyone. If it cannot resolve one it refuses and says so; it never falls
+  back to `main` behind your back. It asks before downloading anything, and
+  `CREW_INSTALL_SOURCE` still short-circuits the network entirely.
+<!-- END github-hosted channel (#171) -->
+
+
 `install.sh` installs **per user** — a root install is refused, because crew
 acts on the operator's own boxes and box's restricted tier makes that a real
 boundary. Re-running the same version changes nothing; a new version becomes the
