@@ -2723,8 +2723,12 @@ case "$(cat "$MDUTY/.engine-manifest")" in *hotfix*) r1=BLESSED ;; *) r1=absent 
 t install-force-does-not-record-the-added-symlink absent "$r1"
 t install-force-over-added-symlink-is-current current "$(mstate)"
 # Parked as the link it was — not as a copy of whatever it pointed at.
-parked_link="$(cd "$MDUTY/legacy/bin" && ls -1 | grep '^hotfix\.sh\.' | head -1)"
-if [ -L "$MDUTY/legacy/bin/$parked_link" ]; then r1=link; else r1=NOT-A-LINK; fi
+parked_link=""
+for p in "$MDUTY"/legacy/bin/hotfix.sh.*; do
+  [ -e "$p" ] || [ -L "$p" ] || continue
+  parked_link="${p##*/}"; break
+done
+if [ -L "$MDUTY/legacy/bin/$parked_link" ]; then r1='link'; else r1=NOT-A-LINK; fi
 t install-force-parks-the-symlink-as-a-link link "$r1"
 t install-force-parks-the-symlink-target /bin/sh \
   "$(readlink "$MDUTY/legacy/bin/$parked_link" 2>/dev/null)"
