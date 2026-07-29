@@ -465,10 +465,15 @@ var LAYOUT={
      Same depth, same grade, same glow-occlusion — the room decides what it
      is: spent stock by the fabricator, the archive going out, the slack the
      dispatch floor runs on. */
+  /* L13 — plural now. One companion made the plane a fact; the left side of
+     the frame was still empty floor, so the plane read as "station plus
+     accessory" instead of as a layer the room actually lives in. The left
+     props sit lower and humbler than the right ones — the frame needs a
+     minor chord there, not a second drum. */
   nearSide:{
-    builder :["drum",938,560,64,116],
-    reviewer:["archive cart",930,556,74,120],
-    triage  :["cable reel",934,566,72,110]
+    builder :[["drum",938,560,64,116],["stock pallet",150,606,96,74]],
+    reviewer:[["archive cart",930,556,74,120],["lab stool",168,586,64,94]],
+    triage  :[["cable reel",934,566,72,110],["queue stanchions",148,592,110,88]]
   },
   /* Structure. `all` is every room; the rest are the room's own. */
   fixed:{
@@ -3024,16 +3029,64 @@ function deckStation(t,lit,st){
    near-plane grade laid over it — because an object at this depth that broke
    any of those rules would pop back to the mid plane. */
 function nearSideProp(t,lit,st){
-  var z=LAYOUT.nearSide[ROOM],x=z[1],w=z[3],by=z[2]+z[4],off=st==="offline";
+  var off=st==="offline";
   var key=ROOM==="builder"?[255,214,170]:ROOM==="reviewer"?[196,232,255]:[190,180,255];
   var ka=(0.14+0.20*lit)*(off?0.35:1);
+  LAYOUT.nearSide[ROOM].forEach(function(z,zi){
+  var x=z[1],w=z[3],by=z[2]+z[4];
   G.save();G.globalCompositeOperation="destination-out";G.fillStyle="#000";
   G.fillRect(x-2,z[2]-2,w+4,z[4]+4);G.restore();
   // floor contact first, so the body stands on something
   var cs=S.createRadialGradient(x+w/2,by+2,3,x+w/2,by+2,w*0.72);
   cs.addColorStop(0,"rgba(0,0,0,0.58)");cs.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=cs;S.beginPath();S.ellipse(x+w/2,by+2,w*0.72,10,0,0,7);S.fill();
-  if(ROOM==="builder"){
+  if(zi===1){
+    /* the left props (L13), one per room */
+    if(ROOM==="builder"){
+      // a pallet of stock billets, layered crosswise the way stock is racked
+      S.fillStyle="#0e0a07";[x+6,x+w/2-6,x+w-18].forEach(function(bx3){S.fillRect(bx3,by-8,12,8);});
+      S.fillStyle="#1a140d";S.fillRect(x,by-13,w,5);
+      S.fillStyle=rgba(key[0],key[1],key[2],ka*0.4);S.fillRect(x,by-13,w,1);
+      [[x+6,by-22,w-12,9,"#171310"],[x+10,by-31,w-24,9,"#1c1712"],[x+16,by-40,52,9,"#181209"]].forEach(function(b4){
+        S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(b4[0],b4[1]+b4[3]-2,b4[2],2);
+        S.fillStyle=b4[4];S.fillRect(b4[0],b4[1],b4[2],b4[3]);
+        S.fillStyle=rgba(key[0],key[1],key[2],ka*0.55);S.fillRect(b4[0],b4[1],b4[2],1.2);});
+      S.strokeStyle="#241c12";S.lineWidth=3;
+      S.beginPath();S.moveTo(x+w-4,by-2);S.lineTo(x+w-26,by-64);S.stroke();
+    } else if(ROOM==="reviewer"){
+      // the lab stool nobody is sitting on — a review lab at 2am
+      var scx=x+w/2,seatY=z[2]+10;
+      S.fillStyle="#10161f";S.fillRect(scx-2.5,seatY,5,by-8-seatY);
+      S.strokeStyle="#0e141d";S.lineWidth=3.5;
+      [[-20,0],[20,0]].forEach(function(lg){S.beginPath();S.moveTo(scx,by-26);S.lineTo(scx+lg[0],by-5);S.stroke();
+        S.fillStyle="#0a0e15";S.beginPath();S.arc(scx+lg[0],by-4,3.4,0,7);S.fill();});
+      S.strokeStyle="rgba(150,180,215,0.14)";S.lineWidth=1.4;
+      S.beginPath();S.ellipse(scx,by-30,13,3.6,0,0,7);S.stroke();
+      S.fillStyle="rgba(0,0,0,0.5)";S.beginPath();S.ellipse(scx,seatY+3,23,6,0,0,7);S.fill();
+      S.fillStyle="#1b2530";S.beginPath();S.ellipse(scx,seatY,22,5.5,0,0,7);S.fill();
+      S.fillStyle=rgba(key[0],key[1],key[2],ka*0.9);S.beginPath();S.ellipse(scx,seatY-1,22,5.5,0,3.4,6.0);S.stroke();
+      // clipboard left against the post, mid-review
+      S.save();S.translate(scx-14,by-3);S.rotate(-0.22);
+      S.fillStyle="#141b26";S.fillRect(-9,-30,18,30);
+      S.fillStyle="rgba(200,224,248,0.22)";S.fillRect(-6,-26,12,1.6);S.fillRect(-6,-21,9,1.6);
+      S.fillStyle="#2a3442";S.fillRect(-4,-32,8,4);S.restore();
+    } else {
+      // queue stanchions with sagging tape: dispatch's own crowd control
+      var p0=x+10,p1=x+w-10,pty=z[2]+10;
+      [p0,p1].forEach(function(px3){
+        S.fillStyle="#0a0e18";S.beginPath();S.ellipse(px3,by-2,10,3.4,0,0,7);S.fill();
+        S.fillStyle="#10162a";S.fillRect(px3-2,pty,4,by-4-pty);
+        S.fillStyle="#1e2740";S.beginPath();S.arc(px3,pty,4.5,0,7);S.fill();
+        S.strokeStyle=rgba(key[0],key[1],key[2],ka*0.9);S.lineWidth=1.2;
+        S.beginPath();S.arc(px3,pty,4.5,3.6,5.6);S.stroke();});
+      S.strokeStyle="rgba(201,162,39,"+(off?0.14:0.30)+")";S.lineWidth=3;
+      S.beginPath();S.moveTo(p0+3,pty+6);S.quadraticCurveTo((p0+p1)/2,pty+22,p1-3,pty+6);S.stroke();
+      S.strokeStyle="rgba(0,0,0,0.4)";S.lineWidth=1;
+      S.beginPath();S.moveTo(p0+3,pty+8);S.quadraticCurveTo((p0+p1)/2,pty+24,p1-3,pty+8);S.stroke();
+      S.fillStyle="#141a2c";S.fillRect((p0+p1)/2-4,pty+20,8,10);
+      if(!off){S.fillStyle="rgba(247,189,78,0.65)";S.fillRect((p0+p1)/2-1.5,pty+23,3,3);}
+    }
+  } else if(ROOM==="builder"){
     // a spent-stock drum, lid askew, offcuts leaning on its shoulder
     var dx=x+4,dw=w-14,ty2=z[2]+14;
     S.fillStyle="#0d0a07";S.beginPath();S.ellipse(dx+dw/2,by-3,dw/2,6,0,0,7);S.fill();
@@ -3089,6 +3142,7 @@ function nearSideProp(t,lit,st){
   var ng2=S.createLinearGradient(0,z[2],0,by+6);
   ng2.addColorStop(0,"rgba(3,6,12,0.10)");ng2.addColorStop(1,"rgba(3,6,12,0.40)");
   S.fillStyle=ng2;S.fillRect(x-4,z[2],w+8,z[4]+8);
+  });
 }
 
 /* BUILDER — a welding bench, straight-sided and heavy. */
@@ -4274,7 +4328,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
           box(B.R[0],B.R[1],B.R[2],B.R[3],"rgba(120,205,255,0.95)","bay R");}
     var U=LAYOUT.unit;box(U[1],U[2],U[3],U[4],"rgba(255,140,60,0.95)",U[0]);
     var N=LAYOUT.near;box(N[1],N[2],N[3],N[4],"rgba(255,120,190,0.95)",N[0]);
-    var NS=LAYOUT.nearSide[o.room];box(NS[1],NS[2],NS[3],NS[4],"rgba(255,120,190,0.95)",NS[0]);
+    (LAYOUT.nearSide[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(255,120,190,0.95)",z[0]);});
     LAYOUT.keep.forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(255,90,80,0.9)",z[0]);});
     (LAYOUT.deck[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(110,240,170,0.9)",z[0]);});
     LAYOUT.fixed.all.concat(LAYOUT.fixed[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(180,160,255,0.9)",z[0]);});
