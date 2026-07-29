@@ -916,3 +916,67 @@ only thing on any of them that says what the unit has been *doing*.
 > 3.1–4.1%, evenly. Six new props and four wear passes, and not one pixel of
 > it lands anywhere another object already was — which is what having the
 > bay table was for.
+
+---
+
+## Loop 14 — three planes instead of two
+
+The frame had a wall with everything on it, and a unit in front of the wall.
+That is two planes, and two planes is a picture. It is not a room.
+
+Three things were wrong with it, and each is a different distance from the
+viewer.
+
+**Far — the wall was rendering at the unit's contrast.** Black blacks, hard
+edges, full saturation, on a surface that is metres further away than anything
+else in the frame. Air between two objects lifts the far one's shadows and
+pulls it toward the colour of the light, and there was no air in these rooms
+at all. `wallKey` now finishes with a 5.5% veil of the room's own light colour
+across the whole wall plane. It is the smallest number in this loop and it is
+doing more for depth than the other two changes together.
+
+**Middle — there was nothing there.** Above the unit sat 150px of flat black
+doing no work, and the only light in the room hung out of it on a stalk
+attached to the top of the canvas. `roofTruss` crosses in front of the wall and
+behind the unit: a lattice beam, purlins, four hangers and the cable tray they
+carry, and the lamp now bolted to the underside of it. The rooms have a ceiling
+the way loop 1 gave them a floor. It is kept dark and low-contrast on purpose —
+a silhouette is the right amount of detail for something between the viewer and
+the light, and on the far left and right, where the lamp does not reach it, it
+correctly disappears.
+
+**Near — the camera was outside the room.** `drawForeground` has laid a blurred
+lip across the bottom of the frame since loop 7; `nearEdge` is the same idea
+turned vertical at the left margin, well out of focus. An out-of-focus object
+between the viewer and the subject is the cheapest possible way to say the
+camera is *inside* the space rather than looking through a window at it. Left
+only — the right side already has the tower, the steam vent and the file
+cabinets doing that job with real geometry.
+
+![builder](shots/loop-14/room-builder.webp)
+![reviewer](shots/loop-14/room-reviewer.webp)
+![triage](shots/loop-14/room-triage.webp)
+
+### Every unit: which way does it bend
+
+Thirteen loops of surface, and on three of the four units you still could not
+tell where a limb was allowed to move. A joint is not decoration — it is the
+difference between a figure and a mechanism, and it is the one piece of
+information a machine's silhouette owes you.
+
+| unit | the joint that wasn't there |
+|---|---|
+| **claude** | every limb met the body at a straight edge — arms off a pauldron, legs out of a tasset, nothing saying which way any of it goes. Ball-and-socket hips with a lit crescent on the lamp side, and a pivot bolt at each knee |
+| **codex** | the knee and ankle have had proper joints since loop 2; the place each leg meets the **hull** was a 5.5px dot, so eight legs appeared to emerge from the body rather than be mounted on it. Armoured coxa sockets, hull side darker than leg side — which is what says one goes inside the other |
+| **grok** | smooth tapers from hip to boot, which is a drawing of a leg rather than a suit. A pressure suit bends where it is corrugated to bend and nowhere else: three convolutes at each knee, brightest on the fold facing the lamp |
+| **kimi** | no legs, no arms at rest, and the one place it *can* articulate — the mount between body and skirt — was a gap. A yoke and trunnion, which is what holds anything that must stay level while what is under it moves, and the mechanical reason kimi can face you while drifting sideways |
+
+![claude](shots/loop-14/robot-claude.webp)
+![codex](shots/loop-14/robot-codex.webp)
+![grok](shots/loop-14/robot-grok.webp)
+![kimi](shots/loop-14/robot-kimi.webp)
+
+> ~35% everywhere, and for once the number is honest about what happened: a
+> plane-wide veil plus a new object crossing the top of every frame touches
+> a third of the pixels in all 36 tiles. Same class of change as the loop 9
+> grade — the images are the evidence, not the percentage.
