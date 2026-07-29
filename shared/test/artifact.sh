@@ -219,6 +219,209 @@ same "gh-channel-records-ref-provenance" "gh:test/crew tag:0.0.0-ghtag" \
 leftG="$(find "$SBG" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)"
 if [ -z "$leftG" ]; then ok "gh-channel-success-cleans-temp-dir"; else bad "gh-channel-success-cleans-temp-dir (leftovers='$leftG')"; fi
 
+# 11. THE ANONYMOUS curl CHANNEL (dist/curl-install.sh, crew#171): against a stub
+#     `curl` that answers exactly two requests from canned state — the
+#     /releases/latest HEAD (a redirect string, as `-w '%{redirect_url}'` would
+#     print it) and the codeload tarball GET — and REFUSES everything else, so a
+#     test that reaches for the network fails loudly instead of quietly working.
+#     No API, no token, no network, and no tty is assumed.
+CURLSH="$ROOT/dist/curl-install.sh"
+CTAG=0.0.0-curltag
+VDEV=0.0.0-dev
+# The two trees a caller can ask for, packed the way GitHub's archive endpoint
+# packs them: one top-level directory, named for the ref.
+TARS="$WORK/tars"; mkdir -p "$TARS"
+CPK="$WORK/curlpack"; mkdir -p "$CPK/crew-$CTAG" "$CPK/crew-main"
+cp -a "$SRC/." "$CPK/crew-$CTAG/"
+cp -a "$SRC/." "$CPK/crew-main/"
+printf '%s\n' "$VDEV" > "$CPK/crew-main/VERSION"     # the tip carries a -dev VERSION
+tar -C "$CPK" -czf "$TARS/$CTAG.tar.gz" "crew-$CTAG"
+tar -C "$CPK" -czf "$TARS/main.tar.gz"  "crew-main"
+
+CURLBIN="$WORK/curlbin"; mkdir -p "$CURLBIN"
+cat > "$CURLBIN/curl" <<'CURLSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CURL_LOG"
+out=""; url=""; argv=("$@"); i=0
+while [ "$i" -lt "${#argv[@]}" ]; do
+  case "${argv[$i]}" in
+    -o)    i=$((i+1)); out="${argv[$i]}" ;;
+    http*) url="${argv[$i]}" ;;
+  esac
+  i=$((i+1))
+done
+case "$url" in
+  # -I -w '%{redirect_url}': the redirect target on stdout, no body.
+  */releases/latest) printf '%s' "${STUB_REDIRECT:-}" ;;
+  https://codeload.github.com/*/tar.gz/*)
+    ref="${url##*/tar.gz/}"
+    [ -f "$STUB_TARS/$ref.tar.gz" ] || { printf 'stub-curl: 404 %s\n' "$url" >&2; exit 22; }
+    cat "$STUB_TARS/$ref.tar.gz" > "$out" ;;
+  *) printf 'stub-curl: REFUSED unexpected url: %s\n' "$url" >&2; exit 22 ;;
+esac
+CURLSTUB
+chmod +x "$CURLBIN/curl"
+
+# One runner for every case below: a fresh $HOME, a fresh curl log, the stub
+# first on PATH. Sets CURL_RC / CURL_OUT / CURL_HOME / CURL_LOG for the caller.
+run_curl_channel() {  # <case-name> [VAR=VAL ...]
+  CURL_HOME="$WORK/curl-$1"; CURL_LOG="$WORK/curl-$1.log"; shift
+  : > "$CURL_LOG"
+  CURL_OUT="$(env -u CREW_REF -u CREW_INSTALL_SOURCE \
+    "$@" PATH="$CURLBIN:$PATH" CURL_LOG="$CURL_LOG" STUB_TARS="$TARS" \
+    HOME="$CURL_HOME" CREW_HOME="$CURL_HOME/share" CREW_BIN="$CURL_HOME/bin" \
+    bash "$CURLSH" 2>&1)" && CURL_RC=0 || CURL_RC=$?
+}
+installed_version() { readlink "$1/share/current" 2>/dev/null | sed 's|^versions/||'; }
+
+REDIR_TAG="https://github.com/heavy-duty/crew/releases/tag/$CTAG"
+REDIR_NONE="https://github.com/heavy-duty/crew/releases"
+
+# 11a. the default: resolve the latest release off the redirect and install it.
+run_curl_channel latest CREW_YES=1 STUB_REDIRECT="$REDIR_TAG"
+same "curl-channel-installs-latest-release" "$V" "$(installed_version "$CURL_HOME")"
+same "curl-channel-records-resolved-tag-provenance" "curl:heavy-duty/crew ref:$CTAG" \
+  "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+# The resolution is GitHub's own redirect, taken with a HEAD — never the API,
+# never a token. Both halves matter: the API needs auth this channel must not have.
+case "$(cat "$CURL_LOG")" in
+  *"-fsSI"*"https://github.com/heavy-duty/crew/releases/latest"*) ok "curl-channel-resolves-by-head-redirect" ;;
+  *) bad "curl-channel-resolves-by-head-redirect (log: $(tr '\n' '|' < "$CURL_LOG"))" ;;
+esac
+if grep -q 'api\.github\.com\|Authorization\|GITHUB_TOKEN' "$CURL_LOG"; then
+  bad "curl-channel-uses-no-api-and-no-token"
+else
+  ok "curl-channel-uses-no-api-and-no-token"
+fi
+# It fetches, install.sh installs: the download is handed over as a local tree.
+case "$CURL_OUT" in *"copying local tree"*) ok "curl-channel-hands-tree-to-install-sh" ;;
+  *) bad "curl-channel-hands-tree-to-install-sh (got '$CURL_OUT')" ;; esac
+
+# 11b. CREW_REF pins a tag — and does NOT resolve anything, so a pinned install
+#      is one request and cannot be moved by whatever 'latest' points at today.
+run_curl_channel pin CREW_YES=1 CREW_REF="$CTAG" STUB_REDIRECT="$REDIR_NONE"
+same "curl-channel-pinned-tag-installs" "$V" "$(installed_version "$CURL_HOME")"
+same "curl-channel-pinned-tag-provenance" "curl:heavy-duty/crew ref:$CTAG" \
+  "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+if grep -q 'releases/latest' "$CURL_LOG"; then
+  bad "curl-channel-pinned-tag-skips-resolution"
+else
+  ok "curl-channel-pinned-tag-skips-resolution"
+fi
+
+# 11c. CREW_REF=main takes the tip, and the tree it installs is identifiable as
+#      a dev tree — the version dir IS the tip's -dev VERSION, and provenance
+#      names the branch rather than a tag.
+run_curl_channel main CREW_YES=1 CREW_REF=main STUB_REDIRECT="$REDIR_NONE"
+same "curl-channel-main-installs-tip" "$VDEV" "$(installed_version "$CURL_HOME")"
+same "curl-channel-main-provenance-names-branch" "curl:heavy-duty/crew ref:main" \
+  "$(cat "$CURL_HOME/share/versions/$VDEV/INSTALLED_FROM" 2>/dev/null)"
+case "$(installed_version "$CURL_HOME")" in *-dev) ok "curl-channel-main-is-identifiably-a-dev-tree" ;;
+  *) bad "curl-channel-main-is-identifiably-a-dev-tree" ;; esac
+
+# 11d. THE MUST-FAIL CASE (#171 test plan): with no release published, GitHub
+#      sends /releases/latest to the releases index. Falling back to the tip here
+#      would hand two operators different trees from the same command, silently.
+#      It must REFUSE, say why, install nothing — and never even reach for a
+#      tarball.
+run_curl_channel norelease CREW_YES=1 STUB_REDIRECT="$REDIR_NONE"
+if [ "$CURL_RC" -ne 0 ]; then ok "no-release-refuses-nonzero"; else bad "no-release-refuses-nonzero (exit 0)"; fi
+case "$CURL_OUT" in *"no published release"*) ok "no-release-says-why" ;;
+  *) bad "no-release-says-why (got '$CURL_OUT')" ;; esac
+same "no-release-installs-nothing" "" "$(installed_version "$CURL_HOME")"
+if grep -q 'codeload' "$CURL_LOG"; then
+  bad "no-release-downloads-nothing"
+else
+  ok "no-release-downloads-nothing"
+fi
+# The same refusal for a redirect that resolves to nothing at all.
+run_curl_channel noredirect CREW_YES=1 STUB_REDIRECT=""
+if [ "$CURL_RC" -ne 0 ] && [ -z "$(installed_version "$CURL_HOME")" ]; then
+  ok "unresolvable-redirect-refuses"
+else
+  bad "unresolvable-redirect-refuses (rc=$CURL_RC)"
+fi
+
+# 11e. THE OTHER MUST-FAIL: the prompt must read /dev/tty, never stdin. Under
+#      `curl … | bash` the script IS stdin, so a bare `read` eats the rest of the
+#      script — and passes every other way it is tested. Two assertions, because
+#      neither alone is decisive:
+#      structurally, no `read` in the file is left on stdin...
+curl_reads="$(grep -n '^[^#]*\bread\b' "$CURLSH" | grep -v '</dev/tty' || true)"
+same "curl-channel-no-read-off-stdin" "" "$curl_reads"
+#      ...and behaviourally, with NO terminal and a canned "y" waiting on stdin.
+#      A stdin-reading prompt consumes that "y" and installs; a /dev/tty prompt
+#      has nobody to ask and must refuse. setsid detaches the controlling
+#      terminal so the case is the same on a workstation as in CI.
+NOTTY="$WORK/curl-notty"; NOTTY_LOG="$WORK/curl-notty.log"; : > "$NOTTY_LOG"
+notty_runner=(); command -v setsid >/dev/null 2>&1 && notty_runner=(setsid)
+notty_out="$(printf 'y\n' | env -u CREW_YES -u CREW_REF -u CREW_INSTALL_SOURCE \
+  PATH="$CURLBIN:$PATH" CURL_LOG="$NOTTY_LOG" STUB_TARS="$TARS" STUB_REDIRECT="$REDIR_TAG" \
+  HOME="$NOTTY" CREW_HOME="$NOTTY/share" CREW_BIN="$NOTTY/bin" \
+  "${notty_runner[@]}" bash "$CURLSH" 2>&1)" && notty_rc=0 || notty_rc=$?
+if [ "$notty_rc" -ne 0 ]; then ok "no-tty-prompt-refuses"; else bad "no-tty-prompt-refuses (exit 0 — it read the answer off stdin)"; fi
+case "$notty_out" in *"no terminal to confirm on"*) ok "no-tty-prompt-says-why" ;;
+  *) bad "no-tty-prompt-says-why (got '$notty_out')" ;; esac
+same "no-tty-prompt-installs-nothing" "" "$(installed_version "$NOTTY")"
+if grep -q 'codeload' "$NOTTY_LOG"; then bad "no-tty-prompt-downloads-nothing"; else ok "no-tty-prompt-downloads-nothing"; fi
+
+# 11f. ...and the positive half the two above cannot show: a human ANSWERING the
+#      prompt under a real piped invocation. script(1) gives the session a pty,
+#      so /dev/tty exists and carries the answer while the script itself arrives
+#      on stdin through a pipe — the exact shape of `curl … | bash`.
+run_piped_answer() {  # <case-name> <answer>
+  PIPE_HOME="$WORK/curl-pipe-$1"; PIPE_LOG="$WORK/curl-pipe-$1.log"; : > "$PIPE_LOG"
+  # `sleep 1` keeps the pty's input side open past the answer: script(1) tears
+  # the session down at EOF on its own stdin, which would race the install.
+  PIPE_OUT="$( { printf '%s\n' "$2"; sleep 1; } | env -u CREW_YES -u CREW_REF -u CREW_INSTALL_SOURCE \
+    PATH="$CURLBIN:$PATH" CURL_LOG="$PIPE_LOG" STUB_TARS="$TARS" STUB_REDIRECT="$REDIR_TAG" \
+    HOME="$PIPE_HOME" CREW_HOME="$PIPE_HOME/share" CREW_BIN="$PIPE_HOME/bin" \
+    script -qec "cat '$CURLSH' | bash -s" /dev/null 2>&1 )" && PIPE_RC=0 || PIPE_RC=$?
+}
+if command -v script >/dev/null 2>&1; then
+  run_piped_answer yes y
+  same "piped-prompt-answered-yes-installs" "$V" "$(installed_version "$PIPE_HOME")"
+  run_piped_answer no n
+  if [ "$PIPE_RC" -ne 0 ] && [ -z "$(installed_version "$PIPE_HOME")" ]; then
+    ok "piped-prompt-answered-no-cancels"
+  else
+    bad "piped-prompt-answered-no-cancels (rc=$PIPE_RC)"
+  fi
+elif [ -n "${CI:-}" ]; then
+  bad "piped-prompt-needs-script(1) — install util-linux; a skip here reads like a pass"
+else
+  printf 'SKIP piped-prompt (no script(1); CI runs it — install util-linux to run it here)\n'
+fi
+
+# 11g. CREW_INSTALL_SOURCE still wins, and short-circuits the network ENTIRELY:
+#      no resolution, no download, not one request. The empty curl log is the
+#      assertion — this channel only ever adds a way to GET a tree.
+run_curl_channel local CREW_YES=1 CREW_INSTALL_SOURCE="$SRC"
+same "curl-channel-local-source-installs" "$V" "$(installed_version "$CURL_HOME")"
+same "curl-channel-local-source-provenance" "local:$SRC" \
+  "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+same "curl-channel-local-source-touches-no-network" "" "$(cat "$CURL_LOG")"
+
+# 11h. the download lands in the channel's own temp dir; `exec`-ing install.sh
+#      would drop its `trap … EXIT` and orphan it (the lesson dist/fetch.sh
+#      already carries). Same sandbox assertion as 3b and 10.
+SBC="$WORK/tmpboxC"; mkdir -p "$SBC"
+run_curl_channel leak CREW_YES=1 TMPDIR="$SBC" STUB_REDIRECT="$REDIR_TAG"
+leftC="$(find "$SBC" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)"
+if [ -n "$(installed_version "$CURL_HOME")" ] && [ -z "$leftC" ]; then
+  ok "curl-channel-success-cleans-temp-dir"
+else
+  bad "curl-channel-success-cleans-temp-dir (leftovers='$leftC')"
+fi
+
+# 11i. install.sh is not this channel's business: the script never writes to it,
+#      and the gh channel's own installer path is untouched by construction.
+if grep -qE '>[[:space:]]*"?\$?\{?[A-Za-z_]*[Ii]nstall\.sh' "$CURLSH"; then
+  bad "curl-channel-never-writes-install-sh"
+else
+  ok "curl-channel-never-writes-install-sh"
+fi
+
 echo
 echo "artifact: passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
