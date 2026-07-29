@@ -88,6 +88,14 @@ function fabBay(t,lit,st){
     var ig=c.createRadialGradient(cxa+cw/2,cya+ch-22,2,cxa+cw/2,cya+ch-22,cw*0.7);ig.addColorStop(0,rgba(255,160,70,0.28*(st==="working"?1:0.45)));ig.addColorStop(1,"rgba(255,160,70,0)");c.fillStyle=ig;c.fillRect(cxa,cya,cw,ch);});
   S.strokeStyle="#3a465e";S.lineWidth=1;S.beginPath();S.moveTo(cxa+4,cya+16);S.lineTo(cxa+cw-4,cya+16);S.stroke();
   S.fillStyle="#28303c";S.fillRect(px-1,cya+14,5,5);
+  /* Bay shutter. With the box silent the furnace is not merely unlit — the bay
+     is closed. Slats over the chamber turn "this prop is dark" into "this prop
+     is shut", which is a different and more useful thing to read from across
+     a grid of thumbnails. */
+  if(!on){S.fillStyle="#0b1017";S.fillRect(cxa,cya,cw,ch);
+    for(var sl3=0;sl3<ch;sl3+=7){S.fillStyle="#161d27";S.fillRect(cxa+1,cya+sl3,cw-2,5);S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(cxa+1,cya+sl3+5,cw-2,2);}
+    S.strokeStyle="#2a3444";S.lineWidth=1;S.strokeRect(cxa,cya,cw,ch);
+    S.fillStyle="rgba(255,70,58,0.30)";S.fillRect(cxa+cw/2-9,cya+ch/2-2,18,4);}
   emit(function(c){c.fillStyle=on?rgba(95,206,155,0.9):rgba(255,60,50,0.8);c.beginPath();c.arc(x+w-12,yt+22,3,0,7);c.fill();});
   rivet(S,x+6,yt+3,"#3d4c63");rivet(S,x+w-6,yt+3,"#3d4c63");
   // barrels beside the bay
@@ -128,7 +136,15 @@ function diffWall(t,st){
   for(var i=0;i<4;i++){var mx=x+i*(mw+gap);
     plate(S,[[mx,y],[mx+mw,y],[mx+mw,y+mh],[mx,y+mh]],"#0c1220","#060a12","#22304a");
     S.fillStyle="#07121e";S.fillRect(mx+4,y+4,mw-8,mh-8);
-    for(var l=0;l<17;l++){var ly=y+8+((l*9+scroll)%(mh-14));var k=(i+l)%4;var cr=k===0?90:k===1?210:70,cg=k===0?200:k===1?90:110,cb=k===0?120:k===1?90:150;var lw=Math.min(14+((i*7+l*13)%48),mw-14);S.fillStyle=rgba(cr,cg,cb,off?0.12:0.5);S.fillRect(mx+7,ly,lw,2);G.fillStyle=rgba(cr,cg,cb,off?0.05:0.34);G.fillRect(mx+7,ly,lw,2);}
+    if(off){
+      /* Standby, not "the same diff but dimmer". A review station whose box
+         has gone silent is showing no signal — a centre bar and a lone standby
+         LED — and dimming the code instead said the review was still running,
+         quietly, which is the opposite of true. */
+      S.fillStyle="rgba(120,140,170,0.16)";S.fillRect(mx+10,y+mh/2-1,mw-20,2);
+      S.fillStyle="rgba(120,140,170,0.06)";S.fillRect(mx+18,y+mh/2+7,mw-36,1);
+    } else
+    for(var l=0;l<17;l++){var ly=y+8+((l*9+scroll)%(mh-14));var k=(i+l)%4;var cr=k===0?90:k===1?210:70,cg=k===0?200:k===1?90:110,cb=k===0?120:k===1?90:150;var lw=Math.min(14+((i*7+l*13)%48),mw-14);S.fillStyle=rgba(cr,cg,cb,0.5);S.fillRect(mx+7,ly,lw,2);G.fillStyle=rgba(cr,cg,cb,0.34);G.fillRect(mx+7,ly,lw,2);}
     if(!off){var gg=S.createRadialGradient(mx+mw/2,y+mh/2,4,mx+mw/2,y+mh/2,mw*0.9);gg.addColorStop(0,"rgba(90,160,220,0.09)");gg.addColorStop(1,"rgba(90,160,220,0)");S.fillStyle=gg;S.fillRect(mx-8,y-8,mw+16,mh+16);}
     S.fillStyle=off?"#3a1518":"#1a3a2a";S.fillRect(mx+mw-11,y+mh-6,6,3);
   }
@@ -183,6 +199,13 @@ function radar(t,st){
     c.fillStyle="rgba(95,206,155,0.18)";c.beginPath();c.moveTo(cx2,cy2);c.arc(cx2,cy2,r,a-0.5,a);c.closePath();c.fill();
     c.strokeStyle="rgba(120,240,180,0.7)";c.lineWidth=1.5;c.beginPath();c.moveTo(cx2,cy2);c.lineTo(cx2+Math.cos(a)*r,cy2+Math.sin(a)*r);c.stroke();
     [[0.5,1.2],[0.72,2.8],[0.4,4.6]].forEach(function(b){var bx=cx2+Math.cos(b[1])*r*b[0],by=cy2+Math.sin(b[1])*r*b[0];c.fillStyle="rgba(120,240,180,"+(0.35+0.4*Math.sin(t*3+b[1]))+")";c.fillRect(bx-1,by-1,2,2);});c.restore();});}
+  /* No sweep, no contacts, and a red cross where the trace should be. A radar
+     that is simply not animating looks like a radar with nothing on it, which
+     is a calm reading of a dead room; the cross is the difference between "no
+     traffic" and "no link". */
+  if(off){S.strokeStyle="rgba(255,70,58,0.45)";S.lineWidth=2;
+    S.beginPath();S.moveTo(cx2-r*0.5,cy2-r*0.5);S.lineTo(cx2+r*0.5,cy2+r*0.5);
+    S.moveTo(cx2+r*0.5,cy2-r*0.5);S.lineTo(cx2-r*0.5,cy2+r*0.5);S.stroke();}
   S.strokeStyle="#2a3038";S.lineWidth=2;S.beginPath();S.arc(cx2,cy2,r,0,7);S.stroke();
 }
 function switchboard(t,st){
@@ -908,8 +931,13 @@ function buildClaude(t,st){
       [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(201,139,255,0.75);c.fillRect(h.x+2,h.y-9,4,5);}}); }
   }
 
-  // ---------- HEAD (small, menacing helmet) ----------
-  var hy=150+breath, hcx=cx;
+  /* ---------- HEAD (small, menacing helmet) ----------
+     Powered down, the head drops and pitches forward. Offline claude was
+     previously the working model with the lights switched off and every joint
+     still holding a parade stance, which is the one thing a dead machine does
+     not do — and on the god-view grid "dark" alone is not a shape, it is just
+     a dimmer version of the same shape. */
+  var hy=150+breath+(offl?13:0), hcx=cx+(offl?5:0);
   // neck
   plate(g,[[hcx-9,206+breath],[hcx+9,206+breath],[hcx+7,196+breath],[hcx-7,196+breath]],sM,sB,null);
   // helmet dome + jaw (angular)
@@ -929,7 +957,14 @@ function buildClaude(t,st){
   // brow shadow into the socket — the cheapest depth cue on the whole model
   var bs=RB.createLinearGradient(0,hy+12,0,hy+22);bs.addColorStop(0,"rgba(0,0,0,0.75)");bs.addColorStop(1,"rgba(0,0,0,0)");
   RB.fillStyle=bs;poly(RB,[[hcx-20,hy+13],[hcx+20,hy+13],[hcx+19,hy+22],[hcx-19,hy+22]]);RB.fill();
-  [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#20262e";c.fillRect(hcx-16,hy+18,32,3);return;}
+  [RB,RE].forEach(function(c){ if(offl){
+      /* Not a flat grey bar. A visor that has just lost power holds a last
+         ember at one end — it reads as "died" rather than "was drawn dark",
+         and it is the only warm pixel left on the unit, so the eye finds it. */
+      c.fillStyle="#20262e";c.fillRect(hcx-16,hy+18,32,3);
+      var em=c.createLinearGradient(hcx-16,0,hcx+16,0);
+      em.addColorStop(0,"rgba(120,44,18,0.5)");em.addColorStop(0.42,"rgba(60,24,12,0.2)");em.addColorStop(1,"rgba(30,14,10,0)");
+      c.fillStyle=em;c.fillRect(hcx-16,hy+18,32,3);return;}
     // hot at the middle, cooling toward both corners
     var vg=c.createLinearGradient(hcx-18,0,hcx+18,0);
     vg.addColorStop(0,rgba(190,70,20,0.75*corePulse));
@@ -1034,7 +1069,11 @@ function buildCodex(t,st){
     c.fillStyle=teh(0.6+0.2*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
   primary.forEach(function(e,pi){[RB,RE].forEach(function(c){
     if(offl){c.fillStyle="#252c34";c.beginPath();c.arc(e[0],e[1],e[2]*0.8,0,7);c.fill();
-             c.fillStyle="#12161c";c.beginPath();c.arc(e[0],e[1],e[2]*0.4,0,7);c.fill();return;}
+             c.fillStyle="#12161c";c.beginPath();c.arc(e[0],e[1],e[2]*0.4,0,7);c.fill();
+             /* A dead lens is still a lens: it catches the room's emergency
+                beacon. Two red pinpricks in an otherwise black socket is what
+                makes offline codex read as switched off rather than absent. */
+             c.fillStyle="rgba(255,70,58,0.5)";c.beginPath();c.arc(e[0]+1.4,e[1]-1.2,0.9,0,7);c.fill();return;}
     var eg=c.createRadialGradient(e[0],e[1],0.5,e[0],e[1],e[2]*3);eg.addColorStop(0,te(0.7*pulse));eg.addColorStop(1,te(0));
     c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*3,0,7);c.fill();
     c.fillStyle=teh(0.85+0.15*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();
@@ -1112,9 +1151,13 @@ function buildGrok(t,st){
   [RB,RE].forEach(function(c){if(!offl){c.fillStyle=pu(0.55+0.3*pulse);c.fillRect(cx-8,BY-4,16,12);c.fillStyle=puh(pulse);c.fillRect(cx-6,BY-2,5,3);c.fillStyle=puh(0.7*pulse);c.fillRect(cx+1,BY+3,4,2);}else{c.fillStyle="#1a2028";c.fillRect(cx-8,BY-4,16,12);}});
   plate(g,[[cx-34,BY-28],[cx-18,BY-30],[cx-16,BY-14],[cx-32,BY-12]],sT,sB,ed);
   plate(g,[[cx+18,BY-30],[cx+34,BY-28],[cx+32,BY-12],[cx+16,BY-14]],sT,sB,ed);
-  // life-support hose (pod → chest) + a couple of suit ribs
-  g.strokeStyle="#0d1219";g.lineWidth=4;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(cx-27,BY-4,cx-11,BY-3);g.stroke();
-  g.strokeStyle="rgba(84,96,116,0.5)";g.lineWidth=1;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(cx-27,BY-4,cx-11,BY-3);g.stroke();
+  /* Life-support hose (pod → chest). Under power it is pressurised and holds a
+     tight arc; with the thrusters dead it goes slack and hangs. A limp hose is
+     the clearest "this suit is not running" tell grok has, and it costs one
+     control point. */
+  var hoseCx=offl?cx-40:cx-27, hoseCy=offl?BY+30:BY-4;
+  g.strokeStyle="#0d1219";g.lineWidth=4;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(hoseCx,hoseCy,cx-11,BY-3);g.stroke();
+  g.strokeStyle="rgba(84,96,116,0.5)";g.lineWidth=1;g.beginPath();g.moveTo(cx-24,BY+12);g.quadraticCurveTo(hoseCx,hoseCy,cx-11,BY-3);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(cx-22,BY+2);g.lineTo(cx+22,BY+2);g.moveTo(cx-20,BY+14);g.lineTo(cx+20,BY+14);g.stroke();
 
   // ---- arms ----
@@ -1135,6 +1178,13 @@ function buildGrok(t,st){
   var HY=BY-52, hr=20;
   g.fillStyle=sM;g.beginPath();g.arc(cx,HY,hr+2,0,7);g.fill();g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(cx,HY,hr+2,0,7);g.stroke();
   g.fillStyle="#070a14";g.beginPath();g.arc(cx,HY,hr,0,7);g.fill();
+  /* Powered down, the visor fogs from the inside — heaviest at the bottom
+     where the cold settles. The starfield is suppressed below, so the dome
+     goes from "a window onto space" to "a window nobody is behind". */
+  if(offl){g.save();g.beginPath();g.arc(cx,HY,hr,0,7);g.clip();
+    var fog2=g.createLinearGradient(0,HY-hr*0.3,0,HY+hr);
+    fog2.addColorStop(0,"rgba(176,196,224,0)");fog2.addColorStop(1,"rgba(176,196,224,0.2)");
+    g.fillStyle=fog2;g.fillRect(cx-hr,HY-hr,hr*2,hr*2);g.restore();}
   if(!offl){var stars=[[-8,-6],[4,-9],[10,-2],[-4,4],[7,6],[-10,2],[1,-3]];stars.forEach(function(sp,si){RB.fillStyle="rgba(220,210,255,"+(0.35+0.4*Math.sin(t*2+si*1.3))+")";RB.fillRect(cx+sp[0],HY+sp[1],1,1);});}
   [RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.fillRect(cx-3,HY-1,6,3);return;}var eg=c.createRadialGradient(cx,HY,1,cx,HY,11);eg.addColorStop(0,puh(0.8+0.2*pulse));eg.addColorStop(0.5,pu(0.5*pulse));eg.addColorStop(1,pu(0));c.fillStyle=eg;c.beginPath();c.arc(cx,HY,11,0,7);c.fill();c.fillStyle=puh(0.9);c.beginPath();c.arc(cx,HY,2.4,0,7);c.fill();});
   /* The dome is grok's whole face, and it was a black circle with a starfield
@@ -1196,8 +1246,13 @@ function buildKimi(t,st){
     var dw=c.createLinearGradient(0,sky,0,sky+54);dw.addColorStop(0,pk(0.2*hov));dw.addColorStop(1,pk(0));c.fillStyle=dw;c.beginPath();c.moveTo(cx-30,sky);c.lineTo(cx+30,sky);c.lineTo(cx+42,sky+54);c.lineTo(cx-42,sky+54);c.closePath();c.fill();c.restore();});}
 
   // ---- ear antennae (behind body) ----
-  [-1,1].forEach(function(sg){var ex=cx+sg*22, ey=BY-30;pl(g,ex,ey,ex+sg*10,ey-26,eH,3);g.fillStyle=sM;g.beginPath();g.arc(ex+sg*10,ey-26,5,0,7);g.fill();
-    if(!offl){RB.fillStyle=pkh(0.7+0.3*pulse);RB.beginPath();RB.arc(ex+sg*10,ey-26,2.5,0,7);RB.fill();RE.fillStyle=pk(0.8);RE.beginPath();RE.arc(ex+sg*10,ey-26,2.5,0,7);RE.fill();}});
+  /* Antennae. Held up under power; drooped outward and down when there is
+     nothing holding them up. Ears are how a face this simple shows mood, and
+     offline kimi needs a posture, not only darker pixels. */
+  [-1,1].forEach(function(sg){var ex=cx+sg*22, ey=BY-30;
+    var tipx=ex+sg*(offl?17:10), tipy=ey-(offl?4:26);
+    pl(g,ex,ey,tipx,tipy,eH,3);g.fillStyle=sM;g.beginPath();g.arc(tipx,tipy,5,0,7);g.fill();
+    if(!offl){RB.fillStyle=pkh(0.7+0.3*pulse);RB.beginPath();RB.arc(tipx,tipy,2.5,0,7);RB.fill();RE.fillStyle=pk(0.8);RE.beginPath();RE.arc(tipx,tipy,2.5,0,7);RE.fill();}});
 
   // ---- side thruster pods ----
   [-1,1].forEach(function(sg){plate(g,[[cx+sg*34,BY-8],[cx+sg*46,BY-4],[cx+sg*46,BY+14],[cx+sg*34,BY+12]],sM,sB,ed);if(!offl){RB.fillStyle=pk(0.6*hov);RB.fillRect(cx+sg*40,BY+9,5,3);RE.fillStyle=pk(0.6*hov);RE.fillRect(cx+sg*40,BY+9,5,3);}});
@@ -1236,7 +1291,17 @@ function buildKimi(t,st){
 
   // ---- face (per state) ----
   var e1=cx-13,e2=cx+13,ey2=by0+bh*0.44;
-  if(offl){RB.fillStyle="#20262e";RB.fillRect(e1-4,ey2,8,2);RB.fillRect(e2-4,ey2,8,2);}
+  if(offl){
+    /* A display that has lost signal does not go evenly black — it collapses
+       to one bright horizontal line and a faint residual raster. That single
+       line is worth more than any amount of extra darkness: it says the panel
+       is powered enough to be wrong, which is exactly what SILENT means. */
+    RB.fillStyle="#20262e";RB.fillRect(e1-4,ey2,8,2);RB.fillRect(e2-4,ey2,8,2);
+    var deadY=by0+bh*0.52;
+    RB.fillStyle="rgba(150,168,190,0.30)";RB.fillRect(sx+3,deadY,sw-6,1.4);
+    RB.fillStyle="rgba(150,168,190,0.10)";RB.fillRect(sx+3,deadY-2,sw-6,1);RB.fillRect(sx+3,deadY+3,sw-6,1);
+    RE.fillStyle="rgba(150,168,190,0.16)";RE.fillRect(sx+3,deadY,sw-6,1.4);
+  }
   else{
     [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){var eg=c.createRadialGradient(exx,ey2,0.5,exx,ey2,10);eg.addColorStop(0,pkh(0.8+0.2*pulse));eg.addColorStop(0.5,pk(0.5*pulse));eg.addColorStop(1,pk(0));c.fillStyle=eg;c.beginPath();c.arc(exx,ey2,10,0,7);c.fill();});});
     var eh=blink?1:(work?4:7), ew=6;

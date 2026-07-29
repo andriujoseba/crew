@@ -155,3 +155,62 @@ A cork strip of pinned slips at slightly different angles, and three zone
 clocks — dispatch is about *when*, not only where.
 
 ![triage](shots/loop-02/room-triage.webp)
+
+---
+
+## Loop 3 — the offline state
+
+SILENT is the state an operator is scanning the grid *for*, and it was the
+least legible thing on the page: every unit was the working model with the
+lights switched off, still holding a parade stance, and every room was itself
+at lower alpha. Dark is not a shape. On a wall of 36 thumbnails a dimmer copy
+of "fine" reads as "fine".
+
+Each unit now has a **posture** and each room a **failure**, not an opacity.
+
+### claude — it drops
+The head falls 13px and pitches forward, and the visor keeps one ember at the
+left end instead of going flat grey. It is the only warm pixel left on the
+unit, so the eye finds it.
+
+![claude](shots/loop-03/robot-claude.webp)
+
+### codex — dead lenses still catch the room
+Two red pinpricks in an otherwise black socket, from the room's emergency
+beacon. The difference between switched off and simply absent.
+
+![codex](shots/loop-03/robot-codex.webp)
+
+### grok — the hose goes slack
+Under power the life-support line is pressurised and holds a tight arc; with
+the thrusters dead it hangs. One control point, and it is the clearest "this
+suit is not running" tell grok has. The visor also fogs from the inside,
+heaviest at the bottom — a window nobody is behind.
+
+![grok](shots/loop-03/robot-grok.webp)
+
+### kimi — no signal, not no power
+The ears droop outward and down, and the screen collapses to one bright
+horizontal line with a faint residual raster. That line says the panel is
+powered enough to be *wrong*, which is exactly what SILENT means.
+
+![kimi](shots/loop-03/robot-kimi.webp)
+
+### builder — the bay is shut
+A slatted shutter drops over the furnace chamber with a red standby bar. "This
+prop is closed" is a different and more useful reading than "this prop is dark".
+
+![builder](shots/loop-03/room-builder.webp)
+
+### reviewer — standby, not a quieter review
+The diff monitors were showing the same scrolling code at 0.12 alpha, which
+said the review was still running quietly — the opposite of true. They now show
+no signal: a centre bar and a lone standby LED.
+
+![reviewer](shots/loop-03/room-reviewer.webp)
+
+### triage — no link, not no traffic
+The radar sweep stopping just looks like a radar with nothing on it, which is a
+calm reading of a dead room. A red cross through the trace fixes that.
+
+![triage](shots/loop-03/room-triage.webp)
