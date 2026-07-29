@@ -151,6 +151,17 @@ var LAYOUT={
      does not compete for deck space with it. One rectangle, all three rooms —
      the room decides what the object is, not where it stands. */
   near:["deck station",320,490,300,178],
+  /* L6 — the station's company. One plane with one object in it reads as an
+     object with a trick, not a plane; a second, humbler thing standing in it
+     on the other side of frame is what makes the depth a fact about the room.
+     Same depth, same grade, same glow-occlusion — the room decides what it
+     is: spent stock by the fabricator, the archive going out, the slack the
+     dispatch floor runs on. */
+  nearSide:{
+    builder :["drum",938,560,64,116],
+    reviewer:["archive cart",930,556,74,120],
+    triage  :["cable reel",934,566,72,110]
+  },
   /* Structure. `all` is every room; the rest are the room's own. */
   fixed:{
     all     :[["right tower",1150,372,66,240]],
@@ -2643,6 +2654,79 @@ function deckStation(t,lit,st){
   S.fillStyle=g2;S.fillRect(d.cx-d.fw/2-6,d.top,d.fw+12,d.base-d.top+8);
 }
 
+/* L6 — the companion prop, per room: the near plane's second citizen. Drawn
+   with the station's rules — silhouette first, one rim where the room's light
+   catches the top edge, glow buffer punched out behind it (L2), the same
+   near-plane grade laid over it — because an object at this depth that broke
+   any of those rules would pop back to the mid plane. */
+function nearSideProp(t,lit,st){
+  var z=LAYOUT.nearSide[ROOM],x=z[1],w=z[3],by=z[2]+z[4],off=st==="offline";
+  var key=ROOM==="builder"?[255,214,170]:ROOM==="reviewer"?[196,232,255]:[190,180,255];
+  var ka=(0.14+0.20*lit)*(off?0.35:1);
+  G.save();G.globalCompositeOperation="destination-out";G.fillStyle="#000";
+  G.fillRect(x-2,z[2]-2,w+4,z[4]+4);G.restore();
+  // floor contact first, so the body stands on something
+  var cs=S.createRadialGradient(x+w/2,by+2,3,x+w/2,by+2,w*0.72);
+  cs.addColorStop(0,"rgba(0,0,0,0.58)");cs.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=cs;S.beginPath();S.ellipse(x+w/2,by+2,w*0.72,10,0,0,7);S.fill();
+  if(ROOM==="builder"){
+    // a spent-stock drum, lid askew, offcuts leaning on its shoulder
+    var dx=x+4,dw=w-14,ty2=z[2]+14;
+    S.fillStyle="#0d0a07";S.beginPath();S.ellipse(dx+dw/2,by-3,dw/2,6,0,0,7);S.fill();
+    var bg=S.createLinearGradient(dx,0,dx+dw,0);
+    bg.addColorStop(0,"#1c1610");bg.addColorStop(0.42,"#12100b");bg.addColorStop(1,"#0a0906");
+    S.fillStyle=bg;S.fillRect(dx,ty2,dw,by-3-ty2);
+    S.fillStyle="#181310";S.beginPath();S.ellipse(dx+dw/2,ty2,dw/2,5.5,0,0,7);S.fill();
+    S.strokeStyle=rgba(key[0],key[1],key[2],ka);S.lineWidth=1.4;
+    S.beginPath();S.ellipse(dx+dw/2,ty2,dw/2,5.5,0,3.3,6.1);S.stroke();
+    [0.3,0.62].forEach(function(rv){var ry=ty2+(by-3-ty2)*rv;
+      S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(dx,ry,dw,2.5);
+      S.fillStyle=rgba(key[0],key[1],key[2],ka*0.4);S.fillRect(dx,ry-1,dw,1);});
+    scorch(dx+dw/2,ty2+2,16,4,0.5);
+    for(var rd=0;rd<3;rd++){S.strokeStyle=["#241c12","#1a150e","#2a2014"][rd];S.lineWidth=2.6;
+      S.beginPath();S.moveTo(x+w-4-rd*5,by);S.lineTo(dx+dw-8-rd*4,ty2-26+rd*5);S.stroke();}
+  } else if(ROOM==="reviewer"){
+    // the archive cart: what the low bay in the bench is FOR, on its way out
+    var px0=x+5,px1=x+w-5,sh1=z[2]+30,sh2=z[2]+78;
+    S.strokeStyle="#141c28";S.lineWidth=4;
+    [[px0,sh1],[px1,sh1]].forEach(function(pp){S.beginPath();S.moveTo(pp[0],pp[1]-16);S.lineTo(pp[0],by-6);S.stroke();});
+    [sh1,sh2].forEach(function(sy){
+      S.fillStyle="#0e1520";S.fillRect(px0-3,sy,px1-px0+6,7);
+      S.fillStyle=rgba(key[0],key[1],key[2],ka*1.1);S.fillRect(px0-3,sy,px1-px0+6,1.4);});
+    [[px0+2,0],[px1-10,0]].forEach(function(cw){
+      S.fillStyle="#0a0e15";S.beginPath();S.arc(cw[0]+4,by-4,4.5,0,7);S.fill();
+      S.fillStyle="rgba(150,180,215,0.18)";S.beginPath();S.arc(cw[0]+3,by-5.5,1.6,0,7);S.fill();});
+    // two box files on top, one slumped open on the lower shelf
+    S.fillStyle="#1d2735";S.fillRect(px0+4,sh1-24,26,24);
+    S.fillStyle="#232f3f";S.fillRect(px0+34,sh1-20,24,20);
+    S.fillStyle=rgba(key[0],key[1],key[2],ka*0.7);S.fillRect(px0+4,sh1-24,26,1.2);S.fillRect(px0+34,sh1-20,24,1.2);
+    S.fillStyle="rgba(170,200,235,0.25)";S.fillRect(px0+9,sh1-16,16,2);
+    S.fillStyle="#182230";S.fillRect(px0+8,sh2-14,34,14);
+    S.fillStyle="rgba(200,224,248,0.30)";for(var pg=0;pg<3;pg++)S.fillRect(px0+10+pg,sh2-14-pg*2.5,30-pg*2,2);
+  } else {
+    // the cable reel dispatch runs on, half unwound toward the tube station
+    var cx2=x+w/2,cy2=by-40,R=34;
+    S.fillStyle="#0c1018";S.beginPath();S.arc(cx2,cy2,R,0,7);S.fill();
+    S.fillStyle="#131a2c";S.beginPath();S.arc(cx2,cy2,R-5,0,7);S.fill();
+    S.fillStyle="#0a0d16";S.beginPath();S.arc(cx2,cy2,R-14,0,7);S.fill();
+    for(var wr=0;wr<3;wr++){S.strokeStyle="rgba(30,38,60,0.9)";S.lineWidth=2;
+      S.beginPath();S.arc(cx2,cy2,R-16-wr*4,0,7);S.stroke();}
+    S.fillStyle="#1e2740";S.beginPath();S.arc(cx2,cy2,5,0,7);S.fill();
+    S.strokeStyle=rgba(key[0],key[1],key[2],ka);S.lineWidth=1.6;
+    S.beginPath();S.arc(cx2,cy2,R,3.6,5.4);S.stroke();
+    S.strokeStyle="#141a2c";S.lineWidth=5;
+    S.beginPath();S.moveTo(cx2-R+4,by-4);S.lineTo(cx2+R-4,by-4);S.stroke();
+    S.strokeStyle="#10162a";S.lineWidth=3.5;
+    S.beginPath();S.moveTo(cx2+R-10,cy2+R-14);S.quadraticCurveTo(cx2+R+26,by+2,cx2+R+52,by-2);S.stroke();
+    if(!off){S.fillStyle="rgba(247,189,78,0.7)";S.fillRect(cx2-3,cy2-R-7,6,4);
+      spill(cx2,cy2-R-5,10,6,[247,189,78],0.10);}
+  }
+  // the near-plane grade — same stop under the mid-plane the station sits
+  var ng2=S.createLinearGradient(0,z[2],0,by+6);
+  ng2.addColorStop(0,"rgba(3,6,12,0.10)");ng2.addColorStop(1,"rgba(3,6,12,0.40)");
+  S.fillStyle=ng2;S.fillRect(x-4,z[2],w+8,z[4]+8);
+}
+
 /* BUILDER — a welding bench, straight-sided and heavy. */
 function fabTable(t,lit,st){
   var on=st!=="offline";
@@ -3019,6 +3103,7 @@ function drawTarget(t,dt){
      was the bug: props in that list share the unit's depth, and something at
      the unit's depth cannot get in front of it. */
   deckStation(t,lit,STATE);
+  nearSideProp(t,lit,STATE);        // L6 — the plane's second citizen
   roomForeground(t,STATE);
   nearEdge();                       // near plane, out of focus
   drawForeground();
@@ -3806,6 +3891,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
           box(B.R[0],B.R[1],B.R[2],B.R[3],"rgba(120,205,255,0.95)","bay R");}
     var U=LAYOUT.unit;box(U[1],U[2],U[3],U[4],"rgba(255,140,60,0.95)",U[0]);
     var N=LAYOUT.near;box(N[1],N[2],N[3],N[4],"rgba(255,120,190,0.95)",N[0]);
+    var NS=LAYOUT.nearSide[o.room];box(NS[1],NS[2],NS[3],NS[4],"rgba(255,120,190,0.95)",NS[0]);
     LAYOUT.keep.forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(255,90,80,0.9)",z[0]);});
     (LAYOUT.deck[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(110,240,170,0.9)",z[0]);});
     LAYOUT.fixed.all.concat(LAYOUT.fixed[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(180,160,255,0.9)",z[0]);});
@@ -3834,7 +3920,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      rather than draw them. Bays come out named so a report can say which. */
   layout:function(){
     var bay=function(k,r){return [k+" bay",BAYS[r][k==="L"?"L":"R"][0],BAYS[r][k][1],BAYS[r][k][2],BAYS[r][k][3]];};
-    return {unit:LAYOUT.unit,near:LAYOUT.near,keep:LAYOUT.keep,deck:LAYOUT.deck,fixed:LAYOUT.fixed,sign:["sign",SIGN.x,SIGN.y,SIGN.w,SIGN.h],
+    return {unit:LAYOUT.unit,near:LAYOUT.near,nearSide:LAYOUT.nearSide,keep:LAYOUT.keep,deck:LAYOUT.deck,fixed:LAYOUT.fixed,sign:["sign",SIGN.x,SIGN.y,SIGN.w,SIGN.h],
             bayL:{builder:bay("L","builder"),reviewer:bay("L","reviewer"),triage:bay("L","triage")},
             bayR:{builder:bay("R","builder"),reviewer:bay("R","reviewer"),triage:bay("R","triage")}};
   },
