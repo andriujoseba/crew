@@ -2664,13 +2664,138 @@ function drawSparks(){S.save();S.globalCompositeOperation="lighter";sparks.forEa
    toppings on one plank. */
 var DECK={x:372,w:204,top:566,floor:612};
 
-/* Shared, because all three stand on the same floor under the same lamp: the
-   dark line where the body meets the deck, and the sliver of key light that
-   lands along the top edge. */
+/* Shared, because all three stand on the same floor under the same lamp. */
 function deckBase(x,w,ty,fy,lit){
   contactShadow(x+w/2,fy,w*0.86);
-  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(x+3,fy-3,w-6,3);
-  return function topSheen(col){S.fillStyle=rgba(col[0],col[1],col[2],0.10+0.16*lit);S.fillRect(x-3,ty,w+6,1.5);};
+  /* Where the carcass meets the deck. Two lines, not one: the dark seam the
+     body sits in, and a hair of bounce off the lit floor just under it, which
+     is what stops a dark body from dissolving into a dark floor. */
+  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(x+3,fy-3,w-6,3);
+  S.fillStyle="rgba(150,170,200,0.05)";S.fillRect(x+8,fy-4,w-16,1);
+}
+/* LOOP 5 — a station that knows what the unit is doing.
+   The three of them were identical in all three states, which is the last
+   thing that gives away set dressing: the room around them changes — the lamp
+   drops, the beacon comes up, the in-tray grows — and the object the unit
+   actually works AT did not. A welding bench with the same cold bar clamped in
+   it whether the unit is welding, standing by, or dead is a photograph of a
+   bench, not a bench.
+   Also here: the labels. Every piece of equipment in a real bay carries an
+   asset plate, and it is the cheapest professional cue there is — at this size
+   it is four pixels of pale on dark, and its absence is what makes props look
+   like props. */
+function assetPlate(x,y,w,tone,ink){
+  S.fillStyle=tone;S.fillRect(x,y,w,7);
+  S.fillStyle="rgba(0,0,0,0.35)";S.fillRect(x,y+7,w,1);
+  S.fillStyle=ink;S.fillRect(x+2,y+2,w*0.42,1.5);S.fillRect(x+2,y+4.5,w*0.66,1.5);
+}
+/* Hazard tape, on the one station that needs it. */
+function hazard(x,y,w,h,a){
+  S.save();S.globalAlpha=a;
+  for(var i=0;i<w;i+=10){S.fillStyle=(i/10)%2?"#0d1017":"#c9a227";S.fillRect(x+i,y,10,h);}
+  S.restore();
+}
+
+/* LOOP 4 — the station in the room's light, instead of next to it.
+   Three things were missing, and they are the three halves of lighting an
+   object: the key did not FALL OFF (a 1.2px line at one alpha ran the whole
+   length of a bench standing under a point source), nothing bounced back up
+   off the lit floor into the shadow side, and every light the stations
+   themselves carry — a task monitor, an inspection lamp, a lit chart — stopped
+   dead at its own bezel. A screen that does not spill is a sticker. */
+function keyFallOff(x,w,y,h,col,peak){
+  var g=S.createLinearGradient(x,0,x+w,0),d=Math.abs(LAMPX-(x+w/2))/w;
+  var mid=Math.max(0.08,Math.min(0.92,(LAMPX-x)/w));
+  g.addColorStop(0,rgba(col[0],col[1],col[2],0));
+  g.addColorStop(mid,rgba(col[0],col[1],col[2],peak*(1-d*0.5)));
+  g.addColorStop(1,rgba(col[0],col[1],col[2],0));
+  S.fillStyle=g;S.fillRect(x,y,w,h);
+}
+function bounceUp(x,w,fy,h,col,a){
+  var g=S.createLinearGradient(0,fy,0,fy-h);
+  g.addColorStop(0,rgba(col[0],col[1],col[2],a));g.addColorStop(1,rgba(col[0],col[1],col[2],0));
+  S.fillStyle=g;S.fillRect(x,fy-h,w,h);
+}
+/* A fixture's own light landing on what is around it. Both buffers, so the
+   compositor blooms it — which is what makes a small screen read as lit. */
+function spill(cx,cy,rx,ry,col,a){
+  emit(function(c){c.save();c.globalCompositeOperation="lighter";
+    var g=c.createRadialGradient(cx,cy,0.5,cx,cy,rx);
+    g.addColorStop(0,rgba(col[0],col[1],col[2],a));g.addColorStop(1,rgba(col[0],col[1],col[2],0));
+    c.fillStyle=g;c.beginPath();c.ellipse(cx,cy,rx,ry,0,0,7);c.fill();c.restore();});
+}
+
+/* LOOP 3 — what the thing is made of, and what has happened to it.
+   After loop 2 all three stations were correctly built and identically
+   surfaced: one flat tone per panel, edges perfectly intact, nothing that had
+   ever been used. A bench in a welding bay does not have a pristine top, and
+   the difference between a rendered box and a photographed object is mostly
+   in the two things below — a material that varies across its own surface,
+   and damage that concentrates where hands and work actually land. */
+function wornEdge(x,y,w,col,seed){
+  /* A highlight along an arris, broken where the paint has gone. Deterministic
+     off the position so it does not crawl between frames. */
+  S.fillStyle=col;
+  for(var i=0;i<w;i+=3){var h=(Math.sin((x+i)*12.9898+seed)*43758.5453)%1;
+    if(h<0)h+=1; if(h>0.34)S.fillRect(x+i,y,2,1);}
+}
+function scorch(cx,cy,rx,ry,a){
+  var g=S.createRadialGradient(cx,cy,0.5,cx,cy,rx);
+  g.addColorStop(0,"rgba(18,12,8,"+a+")");g.addColorStop(0.6,"rgba(24,16,10,"+(a*0.5)+")");
+  g.addColorStop(1,"rgba(24,16,10,0)");
+  S.fillStyle=g;S.beginPath();S.ellipse(cx,cy,rx,ry,0,0,7);S.fill();
+}
+/* A vertical brush on a metal face: the reason a steel panel is not one tone. */
+function brushed(x,y,w,h,a){
+  S.save();S.globalAlpha=a;
+  for(var i=0;i<w;i+=2){var v=(Math.sin((x+i)*7.13)*0.5+0.5);
+    S.fillStyle=v>0.5?"rgba(255,255,255,0.5)":"rgba(0,0,0,0.5)";S.fillRect(x+i,y,1,h);}
+  S.restore();
+}
+
+/* LOOP 2 — the parts a made object has and a drawn one does not.
+   A carcass with three slots cut in it is a box with slots cut in it. What
+   makes furniture read as furniture at any size is the joinery: it stands on
+   a recessed plinth so the bottom edge is a shadow rather than a cut, its
+   panels meet in seams, its drawers have faces that sit proud of the frame,
+   and everything that is attached to something else is attached with
+   something you can see. */
+function kickPlate(x,w,fy,tone){
+  S.fillStyle="rgba(0,0,0,0.55)";S.fillRect(x+5,fy-9,w-10,9);      // recess
+  S.fillStyle=tone;S.fillRect(x+5,fy-9,w-10,2);                     // toe strip
+}
+function drawerFace(x,y,w,h,face,edge,pull){
+  S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(x,y,w,h);                // gap
+  S.fillStyle=face;S.fillRect(x+1,y+1,w-2,h-2);
+  S.fillStyle=edge;S.fillRect(x+1,y+1,w-2,1);                       // top arris
+  S.fillStyle="rgba(0,0,0,0.35)";S.fillRect(x+1,y+h-2,w-2,1);       // under-shadow
+  S.fillStyle=pull;S.fillRect(x+w/2-11,y+h/2-1,22,2);               // recessed pull
+  S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(x+w/2-11,y+h/2+1,22,1);
+}
+/* A seam between two panels, and the bolts that close it. */
+function seam(x,y,h,col){S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(x,y,1,h);S.fillStyle=col;S.fillRect(x+1,y,1,h);}
+
+/* LOOP 1 — the top, as three things instead of one.
+   Every station had a single light-grey bar for a worktop, and at any size it
+   read as a length of pipe: same value top and front, soft ends, and a lip
+   hanging past the carcass on both sides over nothing. A worktop is a top
+   FACE you see in perspective, a front EDGE that catches the key, and the
+   shadow the overhang throws on whatever is under it. Drawing those three
+   separately is most of the difference between a shape and a bench.
+   `over` is the overhang, and it is small on purpose: the old +/-5 lip is
+   what made the ends look soft. */
+function deckTop(x,w,ty,over,body,face,edge,key){
+  // 1. the shadow the overhang throws down the carcass
+  S.fillStyle="rgba(0,0,0,0.42)";S.fillRect(x-over+2,ty+11,w+over*2-4,5);
+  // 2. the top face, seen at a shallow angle: darker at the back
+  var g=S.createLinearGradient(0,ty,0,ty+8);
+  g.addColorStop(0,body);g.addColorStop(1,face);
+  S.fillStyle=g;S.fillRect(x-over,ty,w+over*2,8);
+  // 3. the front edge, and the key light along its top arris
+  S.fillStyle=edge;S.fillRect(x-over,ty+8,w+over*2,4);
+  S.fillStyle=rgba(key[0],key[1],key[2],key[3]);S.fillRect(x-over,ty,w+over*2,1.2);
+  // and the corners squared off, so the ends do not read as soft
+  S.fillStyle="rgba(0,0,0,0.55)";S.fillRect(x-over,ty,1.5,12);S.fillRect(x+w+over-1.5,ty,1.5,12);
 }
 
 /* BUILDER — a welding bench. Chest of drawers under the left half so it has a
@@ -2678,16 +2803,30 @@ function deckBase(x,w,ty,fy,lit){
    the vise the room's whole job needs, and the task monitor on a post. */
 function fabTable(t,lit,st){
   var x=DECK.x,w=DECK.w,ty=DECK.top,fy=DECK.floor,on=st!=="offline";
-  var sheen=deckBase(x,w,ty,fy,lit);
+  deckBase(x,w,ty,fy,lit);
   // drawer chest, left
-  plate(S,[[x+2,ty+12],[x+104,ty+12],[x+104,fy],[x+2,fy]],"#2b2119","#150f0a","#3d2d1d");
-  for(var d=0;d<3;d++){var dy=ty+18+d*12;
-    S.fillStyle="#170f0a";S.fillRect(x+8,dy,90,10);
-    S.fillStyle="rgba(190,140,80,0.55)";S.fillRect(x+40,dy+4,26,2);}
+  plate(S,[[x+2,ty+12],[x+104,ty+12],[x+104,fy-8],[x+2,fy-8]],"#241b14","#100b07","#33261a");
+  kickPlate(x+2,102,fy,"#3a2a1c");
+  hazard(x+6,fy-8,98,2,0.42);
+  assetPlate(x+72,ty+50,26,"#3a2c1c","rgba(214,190,150,0.7)");
+  // paint chipped off the carcass corner, and the grime that collects below
+  S.fillStyle="rgba(120,96,70,0.5)";S.fillRect(x+2,ty+12,3,7);S.fillRect(x+2,ty+21,2,4);
+  S.fillStyle="rgba(0,0,0,0.22)";S.fillRect(x+4,fy-16,98,7);
+  // oil, on the deck under the frame, where a bench drips
+  scorch(x+w-32,fy+2,26,5,0.45);
+  for(var d=0;d<3;d++)drawerFace(x+8,ty+17+d*12,90,11,"#2a2016","#4a3722","rgba(200,150,90,0.6)");
+  seam(x+104,ty+12,fy-ty-20,"rgba(150,110,70,0.18)");
   S.fillStyle="rgba(255,205,150,"+(0.05+0.07*lit)+")";S.fillRect(x+2,ty+12,102,1.5);
-  // open frame, right: two uprights and a diagonal brace
-  S.fillStyle="#141b26";S.fillRect(x+w-56,ty+12,10,fy-ty-12);S.fillRect(x+w-14,ty+12,10,fy-ty-12);
-  S.strokeStyle="#1f2937";S.lineWidth=4;S.beginPath();S.moveTo(x+w-48,fy-8);S.lineTo(x+w-8,ty+24);S.stroke();
+  // bolts where the top is fixed down to the carcass
+  rivet(S,x+9,ty+15,"rgba(190,150,110,0.5)");rivet(S,x+97,ty+15,"rgba(190,150,110,0.5)");
+  // open frame, right: two uprights, a cross rail, a diagonal brace, feet
+  S.fillStyle="#141b26";S.fillRect(x+w-56,ty+12,10,fy-ty-16);S.fillRect(x+w-14,ty+12,10,fy-ty-16);
+  S.fillStyle="#1c2634";S.fillRect(x+w-56,ty+12,10,1.5);S.fillRect(x+w-14,ty+12,10,1.5);
+  S.fillStyle="#1a2330";S.fillRect(x+w-58,ty+44,54,6);                       // cross rail
+  S.fillStyle="rgba(150,175,210,0.10)";S.fillRect(x+w-58,ty+44,54,1);
+  S.strokeStyle="#1f2937";S.lineWidth=4;S.beginPath();S.moveTo(x+w-48,fy-12);S.lineTo(x+w-8,ty+24);S.stroke();
+  S.fillStyle="#0d131c";S.fillRect(x+w-58,fy-4,14,4);S.fillRect(x+w-16,fy-4,14,4);   // feet
+  rivet(S,x+w-51,ty+16,"rgba(140,165,200,0.4)");rivet(S,x+w-9,ty+16,"rgba(140,165,200,0.4)");
   // cable spool on the frame — a drum with a hub, not a scribble
   var spx2=x+w-33,spy2=ty+36;
   S.fillStyle="#1a1410";S.beginPath();S.arc(spx2,spy2,13,0,7);S.fill();
@@ -2697,37 +2836,61 @@ function fabTable(t,lit,st){
   // and the lead running off it to the floor
   S.strokeStyle="#171310";S.lineWidth=2.5;S.beginPath();
   S.moveTo(spx2+12,spy2+3);S.bezierCurveTo(spx2+26,spy2+16,spx2+16,fy-8,spx2+30,fy-2);S.stroke();
-  /* Top slab. The first pass made it the brightest thing in the room, which is
-     the plank's mistake with better geometry — a horizontal surface under a
-     lamp catches light, but it is not the subject. Dark body, and the light
-     lands on the leading edge only. */
-  plate(S,[[x-5,ty],[x+w+5,ty],[x+w+5,ty+9],[x-5,ty+9]],"#2c343e","#1a212a","#3d4854");
-  plate(S,[[x-5,ty+9],[x+w+5,ty+9],[x+w+2,ty+14],[x-2,ty+14]],"#1a212a","#0f141b","#26303b");
-  sheen([255,214,170]);
+  deckTop(x,w,ty,3,"#2f3843","#242c36","#171d25",[255,214,170,0.13+0.17*lit]);
+  /* The top face, as steel: brushed along its length, scorched where the vise
+     is (which is where the work is held and therefore where the sparks land),
+     and with the paint gone off the front arris where a bench gets leaned on. */
+  brushed(x-3,ty+1,w+6,7,0.05);
+  scorch(x+52,ty+5,34,6,0.55);scorch(x+34,ty+6,16,4,0.4);
+  keyFallOff(x-3,w+6,ty,6,[255,214,170],0.10+0.13*lit);
+  wornEdge(x-3,ty+8,w+6,"rgba(214,196,168,0.22)",11.3);
+  bounceUp(x+2,102,fy-9,16,[255,196,140],0.05+0.05*lit);
   /* The vise, and the piece in it. Read it left to right: a base bolted to the
      bench, a fixed jaw, the stock standing in the jaws, the sliding jaw, then
      the screw and its handle. The first pass stacked three grey boxes and it
      came out as a staircase. */
   var vx=x+22, vt=ty-4;
+  S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(vx-6,vt-1,54,3);                                 // it sits ON the top
   plate(S,[[vx-4,vt-7],[vx+46,vt-7],[vx+46,vt],[vx-4,vt]],"#333c48","#1b222b","#47525f");   // base
+  rivet(S,vx-1,vt-3,"rgba(160,180,210,0.45)");rivet(S,vx+43,vt-3,"rgba(160,180,210,0.45)");
   plate(S,[[vx,vt-22],[vx+9,vt-22],[vx+9,vt-7],[vx,vt-7]],"#414b58","#232b35","#5a6674"); // fixed jaw
   plate(S,[[vx+22,vt-22],[vx+31,vt-22],[vx+31,vt-7],[vx+22,vt-7]],"#3a4450","#1f2731","#515d6b");  // sliding jaw
-  plate(S,[[vx+9,vt-30],[vx+22,vt-30],[vx+22,vt-7],[vx+9,vt-7]],"#4d5866","#2c343f","#6a7787");   // stock
+  /* What is in the jaws is the state. Working: a piece is clamped and its top
+     end is hot where the unit has been on it. Idle: the piece is out and the
+     jaws are closed on nothing. Offline: the same, cold. */
+  if(st==="working"){
+    plate(S,[[vx+9,vt-30],[vx+22,vt-30],[vx+22,vt-7],[vx+9,vt-7]],"#4d5866","#2c343f","#6a7787");
+    var hot=0.55+0.45*Math.abs(Math.sin(t*2.3));
+    emit(function(c){var hg=c.createLinearGradient(0,vt-30,0,vt-18);
+      hg.addColorStop(0,"rgba(255,150,60,"+(0.75*hot)+")");hg.addColorStop(1,"rgba(255,110,40,0)");
+      c.fillStyle=hg;c.fillRect(vx+9,vt-30,13,12);});
+    spill(vx+15,vt-27,26,14,[255,150,60],0.14*hot);
+    scorch(vx+15,vt-5,20,4,0.5);
+  }
   S.strokeStyle="#5a6674";S.lineWidth=3;S.beginPath();S.moveTo(vx+31,vt-15);S.lineTo(vx+44,vt-15);S.stroke();
   S.fillStyle="#6b7788";S.beginPath();S.arc(vx+45,vt-15,3.2,0,7);S.fill();
-  // stock leaning against the chest, where offcuts actually end up
-  S.strokeStyle="#39434f";S.lineWidth=4;
-  S.beginPath();S.moveTo(x+118,fy-2);S.lineTo(x+128,ty+2);S.stroke();
-  S.strokeStyle="#2e3742";S.lineWidth=3;
-  S.beginPath();S.moveTo(x+126,fy-2);S.lineTo(x+134,ty+6);S.stroke();
+  /* Stock, leaning in the frame bay. Two bright diagonals across the carcass
+     read as scratches on the render rather than as bar stock, so they moved
+     into the bay where a leaning thing has something to lean ON, and lost the
+     highlight that made them look like scratches. */
+  S.strokeStyle="#2b333d";S.lineWidth=4;
+  S.beginPath();S.moveTo(x+w-44,fy-3);S.lineTo(x+w-30,ty+18);S.stroke();
+  S.strokeStyle="#232a33";S.lineWidth=3;
+  S.beginPath();S.moveTo(x+w-38,fy-3);S.lineTo(x+w-26,ty+20);S.stroke();
   // task monitor on a post
   var mx=x+w-64,my=ty-42;
   S.fillStyle="#161d29";S.fillRect(mx+17,my+28,5,ty-my-28);
+  S.fillStyle="#1e2836";S.fillRect(mx+13,ty-4,13,4);                                        // the post's foot plate
+  rivet(S,mx+16,ty-2,"rgba(150,175,210,0.4)");rivet(S,mx+23,ty-2,"rgba(150,175,210,0.4)");
   plate(S,[[mx,my],[mx+42,my],[mx+42,my+28],[mx,my+28]],"#12202e","#0a1420","#22304a");
-  emit(function(c){var col=st==="working"?[247,189,78]:st==="offline"?[120,60,60]:[90,150,210];
-    c.fillStyle=rgba(col[0],col[1],col[2],on?0.42:0.26);c.fillRect(mx+4,my+4,34,20);
-    c.fillStyle=rgba(col[0],col[1],col[2],on?0.62:0.3);
+  S.fillStyle="rgba(120,150,190,0.16)";S.fillRect(mx,my,42,1);                              // bezel arris
+  var mcol=st==="working"?[247,189,78]:st==="offline"?[120,60,60]:[90,150,210];
+  emit(function(c){
+    c.fillStyle=rgba(mcol[0],mcol[1],mcol[2],on?0.42:0.26);c.fillRect(mx+4,my+4,34,20);
+    c.fillStyle=rgba(mcol[0],mcol[1],mcol[2],on?0.62:0.3);
     var sw2=[24,15,19];for(var l=0;l<3;l++)c.fillRect(mx+6,my+7+l*5,sw2[l],1.5);});
+  // the screen's own light, on the bench top below it and the wall behind
+  if(on){spill(mx+21,ty+2,44,10,mcol,0.10);spill(mx+21,my+14,40,26,mcol,0.05);}
   /* The toolbox that used to sit here is gone: it stood at x=574 and the
      conveyor starts at 580, so it was overlapping the belt's leg — the same
      class of collision the declared deck caught last time. The chest of
@@ -2739,39 +2902,77 @@ function fabTable(t,lit,st){
    and the specimen it is pointed at. */
 function inspectBench(t,lit,st){
   var x=DECK.x,w=DECK.w,ty=DECK.top,fy=DECK.floor,off=st==="offline";
-  var sheen=deckBase(x,w,ty,fy,lit);
+  deckBase(x,w,ty,fy,lit);
   // drawer bank, right; open shelf with paper, left
-  plate(S,[[x+w-96,ty+12],[x+w-2,ty+12],[x+w-2,fy],[x+w-96,fy]],"#26303e","#121a24","#33404f");
-  for(var d=0;d<3;d++){var dy=ty+18+d*12;
-    S.fillStyle="#111823";S.fillRect(x+w-90,dy,82,10);
-    S.fillStyle="rgba(170,196,224,0.45)";S.fillRect(x+w-58,dy+4,20,2);}
-  S.fillStyle="#141d28";S.fillRect(x+4,ty+12,10,fy-ty-12);S.fillRect(x+w-104,ty+12,10,fy-ty-12);
+  plate(S,[[x+w-96,ty+12],[x+w-2,ty+12],[x+w-2,fy-8],[x+w-96,fy-8]],"#26303e","#121a24","#33404f");
+  kickPlate(x+w-96,94,fy,"#3d4a5c");
+  for(var d=0;d<3;d++)drawerFace(x+w-90,ty+17+d*12,82,11,"#1c2532","#3b4a5e","rgba(180,205,235,0.5)");
+  seam(x+w-96,ty+12,fy-ty-20,"rgba(150,180,215,0.14)");
+  rivet(S,x+w-89,ty+15,"rgba(170,196,224,0.45)");rivet(S,x+w-9,ty+15,"rgba(170,196,224,0.45)");
+  S.fillStyle="#141d28";S.fillRect(x+4,ty+12,10,fy-ty-20);S.fillRect(x+w-104,ty+12,10,fy-ty-20);
+  S.fillStyle="#0d131c";S.fillRect(x+3,fy-4,13,4);S.fillRect(x+w-105,fy-4,13,4);
   S.fillStyle="#1a2430";S.fillRect(x+4,ty+34,w-100,7);
-  for(var p=0;p<4;p++){S.fillStyle=p%2?"#8b96a6":"#7a8695";S.fillRect(x+20+p,ty+30-p*3,44,3);}
-  // glass top: a pale slab with a bright leading edge
-  plate(S,[[x-5,ty],[x+w+5,ty],[x+w+5,ty+8],[x-5,ty+8]],"#43505f","#27313d","#5c6c7e");
-  S.fillStyle="rgba(190,225,255,0.10)";S.fillRect(x-5,ty+1,w+10,3);
-  plate(S,[[x-5,ty+8],[x+w+5,ty+8],[x+w+2,ty+13],[x-2,ty+13]],"#222b36","#141a22","#2e3846");
-  sheen([196,232,255]);
+  S.fillStyle="rgba(160,190,225,0.10)";S.fillRect(x+4,ty+34,w-100,1);
+  /* Paper. Four flat bars were a white blob at any size; a stack is made of
+     sheets, and what you see of a sheet from here is its EDGE — a bright line
+     over a thin shadow, repeated. */
+  for(var p=0;p<5;p++){var py2=ty+31-p*3;
+    S.fillStyle="rgba(0,0,0,0.35)";S.fillRect(x+20+p,py2+2,44,1);
+    S.fillStyle=p%2?"#9aa5b4":"#8a95a4";S.fillRect(x+20+p,py2,44,2);
+    S.fillStyle="rgba(226,236,248,0.5)";S.fillRect(x+20+p,py2,44,0.8);}
+  deckTop(x,w,ty,3,"#39434f","#2b343f","#1b222b",[196,232,255,0.16+0.18*lit]);
+  /* Glass, the one material here that is not steel: a single soft specular
+     streak across the top face at the lamp's angle. One streak, not a sheen
+     over the whole surface — a glossy surface reflects the light SOURCE, and
+     the source is a strip lamp above and to the left. */
+  var gs=S.createLinearGradient(x+30,ty,x+150,ty+8);
+  gs.addColorStop(0,"rgba(210,238,255,0)");gs.addColorStop(0.5,"rgba(210,238,255,"+(0.09+0.09*lit)+")");
+  gs.addColorStop(1,"rgba(210,238,255,0)");
+  S.fillStyle=gs;S.fillRect(x+24,ty+1,140,6);
+  wornEdge(x-3,ty+8,w+6,"rgba(200,224,248,0.16)",5.7);
+  keyFallOff(x-3,w+6,ty,6,[196,232,255],0.11+0.14*lit);
+  bounceUp(x+w-96,94,fy-9,16,[150,190,240],0.05+0.05*lit);
   // lens arm and the specimen under it
   var ax=x+w-58,yl=ty-2;
-  S.strokeStyle="#3a465e";S.lineWidth=2;S.beginPath();S.moveTo(ax,ty);S.lineTo(ax+4,yl-26);S.lineTo(ax+26,yl-35);S.stroke();
-  S.fillStyle="#1a2230";S.beginPath();S.arc(ax+31,yl-35,9,0,7);S.fill();
+  // the clamp the arm is bolted to the bench with — an arm that grows out of a
+  // worktop is a line; an arm that is clamped to one is a lamp
+  plate(S,[[ax-7,ty-9],[ax+8,ty-9],[ax+8,ty],[ax-7,ty]],"#2b3746","#161e28","#3d4c5f");
+  rivet(S,ax-3,ty-5,"rgba(180,205,235,0.5)");rivet(S,ax+4,ty-5,"rgba(180,205,235,0.5)");
+  S.strokeStyle="#3a465e";S.lineWidth=2.5;S.beginPath();S.moveTo(ax,ty-8);S.lineTo(ax+4,yl-26);S.lineTo(ax+26,yl-35);S.stroke();
+  S.fillStyle="#4a5a70";S.beginPath();S.arc(ax+4,yl-26,2.6,0,7);S.fill();   // elbow joint
+  /* The lamp head was a white ball with a ring round it — a blob, at any
+     size. A short cylinder seen end-on, dark on top where nothing lights it
+     and bright underneath where the bulb is, is a lamp. */
+  S.fillStyle="#141b26";S.beginPath();S.ellipse(ax+31,yl-37,10,6,0,0,7);S.fill();
+  S.fillStyle="#1e2836";S.fillRect(ax+21,yl-38,20,5);
+  S.fillStyle="#0c1119";S.beginPath();S.ellipse(ax+31,yl-33,10,4.5,0,0,7);S.fill();
   if(!off)emit(function(c){var g3=c.createRadialGradient(ax+31,yl-35,1,ax+31,yl-35,17);
     g3.addColorStop(0,"rgba(196,232,255,0.38)");g3.addColorStop(1,"rgba(196,232,255,0)");
     c.fillStyle=g3;c.beginPath();c.arc(ax+31,yl-35,17,0,7);c.fill();});
-  S.strokeStyle="rgba(196,232,255,0.5)";S.lineWidth=1;S.beginPath();S.arc(ax+31,yl-35,7,0,7);S.stroke();
+  S.fillStyle="rgba(224,244,255,0.85)";S.beginPath();S.ellipse(ax+31,yl-33,6.5,2.8,0,0,7);S.fill();
+  /* The lamp lights the BENCH, not just itself: a pool on the worktop under
+     the head, and a soft cone in the air between. */
+  if(!off){spill(ax+31,ty+3,40,9,[196,232,255],0.12);spill(ax+31,yl-22,18,18,[196,232,255],0.05);}
+  /* The specimen is only under the lamp when there is something to look at.
+     Idle, the plate is empty and pushed to the back of the bench; that is the
+     same fact the in-tray on the floor states, said by the object that would
+     actually say it. */
   var spx=ax+31,spy=ty-3;
   S.fillStyle="rgba(0,0,0,0.4)";S.beginPath();S.ellipse(spx,spy+2,17,3.5,0,0,7);S.fill();
   plate(S,[[spx-15,spy-4],[spx+15,spy-4],[spx+13,spy+2],[spx-13,spy+2]],"#1b2634","#0d141d","#31415a");
-  if(!off)emit(function(c){
+  if(st==="working")emit(function(c){
     c.fillStyle="rgba(150,214,255,0.5)";c.fillRect(spx-10,spy-2.5,20,2);
     c.fillStyle="rgba(90,210,130,0.7)";c.fillRect(spx-9,spy-2.5,6,2);
     c.fillStyle="rgba(230,100,100,0.7)";c.fillRect(spx+2,spy-2.5,4,2);});
   // the verdict stamp block, left of the lens: the other half of what a review is
+  /* The stamp block, and what it last stamped: green when a verdict has been
+     reached and the bench is quiet, amber while one is being worked out, dark
+     when nobody is here. */
   plate(S,[[x+26,ty-13],[x+52,ty-13],[x+52,ty],[x+26,ty]],"#2a3442","#151d26","#3a4759");
-  S.fillStyle=off?"#4a2a2a":"#5fce9b";S.fillRect(x+31,ty-9,16,4);
+  S.fillStyle=off?"#3a2424":(st==="working"?"#f7bd4e":"#5fce9b");S.fillRect(x+31,ty-9,16,4);
+  if(!off)spill(x+39,ty-7,16,7,st==="working"?[247,189,78]:[95,206,155],0.10);
   S.fillStyle="#151d26";S.fillRect(x+36,ty-19,6,6);
+  assetPlate(x+w-74,ty+50,26,"#20293a","rgba(190,214,240,0.7)");
 }
 
 /* TRIAGE — a plotting table. A single pedestal instead of legs, and a top that
@@ -2779,7 +2980,7 @@ function inspectBench(t,lit,st){
    at a glance as the one with a chart you stand over. */
 function plotTable(t,lit,st){
   var x=DECK.x,w=DECK.w,ty=DECK.top,fy=DECK.floor,off=st==="offline";
-  var sheen=deckBase(x,w,ty,fy,lit);
+  deckBase(x,w,ty,fy,lit);
   /* Pedestal. The first pass left the top apparently hovering: a dark column
      against a dark floor, at the one place in the frame the lamp does not
      reach. Wider, with a lit inner edge and a foot that reads as metal. */
@@ -2787,12 +2988,40 @@ function plotTable(t,lit,st){
   S.fillStyle="rgba(0,0,0,0.45)";S.beginPath();S.ellipse(cx3,fy-3,58,9,0,0,7);S.fill();
   plate(S,[[cx3-44,fy-14],[cx3+44,fy-14],[cx3+52,fy-3],[cx3-52,fy-3]],"#2b3644","#121924","#3e4c5e");
   S.fillStyle="rgba(170,190,230,0.10)";S.fillRect(cx3-44,fy-14,88,1.5);
+  // bolts through the base plate, four across
+  for(var bl=0;bl<4;bl++)rivet(S,cx3-30+bl*20,fy-9,"rgba(170,195,235,0.45)");
   plate(S,[[cx3-22,ty+14],[cx3+22,ty+14],[cx3+17,fy-12],[cx3-17,fy-12]],"#2b3644","#141c27","#41506a");
+  brushed(cx3-19,ty+18,38,fy-ty-32,0.045);
   S.fillStyle="rgba(150,175,220,0.09)";S.fillRect(cx3-20,ty+16,6,fy-ty-30);
-  // the tilted chart surface
+  S.fillStyle="rgba(0,0,0,0.25)";S.fillRect(cx3-40,fy-6,80,3);   // boot scuff at the base
+  // the collar where the column takes the top, and the seam down the column
+  plate(S,[[cx3-27,ty+12],[cx3+27,ty+12],[cx3+27,ty+20],[cx3-27,ty+20]],"#354154","#1a222e","#4a5a72");
+  rivet(S,cx3-21,ty+16,"rgba(180,200,240,0.5)");rivet(S,cx3+19,ty+16,"rgba(180,200,240,0.5)");
+  seam(cx3,ty+22,fy-ty-36,"rgba(150,175,220,0.10)");
+  /* LOOP 1 — the top had no thickness. A single tilted plate with a bright
+     outline reads as a sheet of glass hovering over the room, and that is
+     exactly what it looked like: the pedestal was behind it, the floor was
+     behind that, and nothing said which was in front. A tilted top seen from
+     here shows its FRONT EDGE as a band, and throws a shadow down the
+     pedestal. */
   var fb=ty+14, bk=ty-10;
-  plate(S,[[x-4,fb],[x+w+4,fb],[x+w-14,bk],[x+14,bk]],"#141d29","#080e16","#2c3b50");
+  S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(x+14,fb+4,w-28,7);              // shadow on the pedestal
+  plate(S,[[x-4,fb],[x+w+4,fb],[x+w-14,bk],[x+14,bk]],"#111a25","#070d14","#243044");
   S.fillStyle="#060c15";poly(S,[[x+2,fb-4],[x+w-2,fb-4],[x+w-19,bk+5],[x+19,bk+5]]);S.fill();
+  // the front edge of the slab, and the key along its arris
+  plate(S,[[x-4,fb],[x+w+4,fb],[x+w+4,fb+6],[x-4,fb+6]],"#1c2532","#0d131c","#2b3849");
+  S.fillStyle=rgba(190,180,255,0.12+0.16*lit);S.fillRect(x-4,fb-1,w+8,1.2);
+  /* The chart is under acrylic, and acrylic at this angle catches the room in
+     one long shallow band rather than glowing evenly. */
+  var ac=S.createLinearGradient(x+40,bk,x+150,fb);
+  ac.addColorStop(0,"rgba(214,224,255,0)");ac.addColorStop(0.45,"rgba(214,224,255,"+(0.07+0.06*lit)+")");
+  ac.addColorStop(1,"rgba(214,224,255,0)");
+  S.fillStyle=ac;poly(S,[[x+22,fb-5],[x+w-40,fb-5],[x+w-52,bk+6],[x+34,bk+6]]);S.fill();
+  wornEdge(x-4,fb+5,w+8,"rgba(198,190,255,0.14)",3.1);
+  keyFallOff(x-4,w+8,fb-1,4,[190,180,255],0.10+0.13*lit);
+  /* The chart is a light source and was lighting nothing — not the rail under
+     it, not the pedestal, not the deck it stands on. */
+  if(!off){spill(x+w/2,fb+8,120,16,[150,170,255],0.09);spill(x+w/2,fy-6,90,12,[130,150,240],0.06);}
   // chart grid, drawn in the plane of the top so it reads as tilted
   S.strokeStyle="rgba(70,110,150,0.30)";S.lineWidth=1;
   for(var g=0;g<7;g++){var f=g/6;
@@ -2806,15 +3035,23 @@ function plotTable(t,lit,st){
     c.fillStyle=g6;c.fillRect(x-10,bk-12,w+20,fb-bk+26);
     /* Routing blips crossing the chart — the room's only moving parts at deck
        level, and the reason the table is lit at all. */
-    for(var b=0;b<5;b++){var ph=(t*0.35+b*0.2)%1, bx=x+18+ph*(w-36), by=bk+8+(fb-14-bk)*((b%3)/2.6);
-      c.fillStyle="rgba(150,200,255,"+(0.35+0.45*Math.sin(t*3+b))+")";c.fillRect(bx,by,2.5,2.5);}
+    /* Blips are traffic. Dispatching, they run; standing by, they crawl and
+       dim — the table is still on, there is just nothing moving through it. */
+    var sp3=st==="working"?0.35:0.09, amp=st==="working"?0.45:0.18, base=st==="working"?0.35:0.16;
+    for(var b=0;b<5;b++){var ph=(t*sp3+b*0.2)%1, bx=x+18+ph*(w-36), by=bk+8+(fb-14-bk)*((b%3)/2.6);
+      c.fillStyle="rgba(150,200,255,"+(base+amp*Math.sin(t*3+b))+")";c.fillRect(bx,by,2.5,2.5);
+      if(st==="working"){c.fillStyle="rgba(150,200,255,0.14)";c.fillRect(bx-9,by+0.6,9,1.3);}}
     c.restore();});
   // front rail with three toggles — a table you operate, not a shelf
   plate(S,[[x+10,fb+2],[x+w-10,fb+2],[x+w-10,fb+8],[x+10,fb+8]],"#2b3542","#161e28","#3b4757");
+  assetPlate(x+w/2-13,fy-26,26,"#232c3d","rgba(198,190,255,0.7)");
   for(var s2=0;s2<3;s2++){var sx=x+38+s2*58;
-    S.fillStyle="#0e151e";S.fillRect(sx,fb+3,12,4);
-    S.fillStyle=off?"#4a2a2a":(s2===1?"#f7bd4e":"#5fce9b");S.fillRect(sx+(s2===1?6:1),fb+4,5,2);}
-  sheen([190,180,255]);
+    // each toggle in a housing, with its own bezel — three loose chips on a
+    // rail is a decal, three switches in housings is a panel
+    plate(S,[[sx-3,fb+1],[sx+15,fb+1],[sx+15,fb+9],[sx-3,fb+9]],"#2f3947","#171f29","#435264");
+    S.fillStyle="#0b1119";S.fillRect(sx,fb+3,12,4);
+    S.fillStyle=off?"#4a2a2a":(s2===1?"#f7bd4e":"#5fce9b");S.fillRect(sx+(s2===1?6:1),fb+4,5,2);
+    rivet(S,sx-1,fb+2.5,"rgba(160,185,225,0.4)");}
 }
 
 /* ===================== SCENE ENV ===================== */

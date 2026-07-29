@@ -1212,3 +1212,116 @@ starting at 580, the same class of collision the declared deck caught last
 time.
 
 Both views change together, because there is one renderer.
+
+
+---
+
+## Five loops on the deck stations
+
+The stations landed as three designed objects, which is not the same as three
+finished ones. Five passes, each one opened by looking at the last one
+adversarially and writing down what a professional would say about it. Every
+loop touches all three rooms, and every loop has a GIF: the same crop of the
+same three benches, before and after, so what changed is the only thing that
+moves.
+
+All six frames at once — the whole arc:
+
+![the deck stations, L0 to L5](shots/gifs/deck-all.gif)
+
+### Loop 1 — silhouette and value
+
+**The complaint.** Each station had one light-grey bar for a worktop, and at
+any size it read as a length of pipe: the same value on the top and the front,
+soft ends, and a lip hanging past the carcass on both sides over nothing. The
+triage table was worse — a single tilted plate with a bright outline, hovering,
+because nothing said which of the plate, the pedestal and the floor was in
+front.
+
+**What a worktop actually is:** a top FACE seen at a shallow angle, a front
+EDGE that catches the key, and the shadow the overhang throws on whatever is
+under it. Three things, drawn separately. The overhang came down from ±5 to
+±3 — the old lip is what made the ends look soft — and the corners got a hard
+dark return. The triage top got a front edge band with real thickness and a
+shadow cast down its pedestal.
+
+![loop 1](shots/gifs/deck-L1.gif)
+
+### Loop 2 — construction
+
+**The complaint.** Three carcasses that are boxes with slots cut in them. No
+plinth, so the bottom edge is a cut rather than a shadow; no panel seams; no
+fasteners anywhere; drawers that are dark rectangles rather than faces sitting
+proud of a frame; a lamp arm growing out of a worktop with no clamp; a
+pedestal meeting a table top with no collar.
+
+**What was added:** recessed kick plates, drawer faces with their own arris,
+under-shadow and recessed pull, panel seams, bolts where the top is fixed down
+and where the vise, the lamp clamp, the monitor post and the pedestal base
+plate are attached, a cross rail for the builder's spool to sit on, feet under
+the open frames, and housings around the triage toggles — three loose chips on
+a rail is a decal; three switches in housings is a panel.
+
+![loop 2](shots/gifs/deck-L2.gif)
+
+### Loop 3 — material and wear
+
+**The complaint.** Correctly built and identically surfaced: one flat tone per
+panel, every edge perfectly intact, nothing that had ever been used. A bench in
+a welding bay does not have a pristine top.
+
+**What was added:** brushed steel across the builder's top (a metal panel is
+not one tone), scorch where the vise is — which is where the work is held and
+therefore where the sparks land — paint gone off the front arris in broken
+patches where a bench gets leaned on, a chipped carcass corner, grime under the
+drawers, oil on the deck under the frame. The reviewer's glass got one soft
+specular streak at the lamp's angle rather than an even sheen, because a glossy
+surface reflects the light SOURCE. Its paper stack became sheets: what you see
+of a sheet from here is its edge, a bright line over a thin shadow, repeated.
+The triage chart went under acrylic, which catches the room in one shallow
+band.
+
+![loop 3](shots/gifs/deck-L3.gif)
+
+### Loop 4 — light
+
+**The complaint.** The stations were lit *next to* the room rather than *in*
+it. Three things were missing, and they are the three halves of lighting an
+object: the key did not fall off — a 1.2px line at one alpha ran the whole
+length of a bench standing under a point source — nothing bounced back up off
+the lit floor into the shadow side, and every light the stations carry stopped
+dead at its own bezel. A screen that does not spill is a sticker.
+
+**What was added:** `keyFallOff`, brightest under `LAMPX` and gone by the ends;
+`bounceUp`, the floor pool coming back into the underside of each carcass; and
+`spill`, which puts a fixture's own light on what is around it, into both
+buffers so the compositor blooms it. The task monitor now lights the bench top
+and the wall behind it, the inspection lamp pools on the worktop under its
+head, and the chart lights its own rail, its pedestal and the deck.
+
+![loop 4](shots/gifs/deck-L4.gif)
+
+### Loop 5 — state and story
+
+**The complaint.** All three were identical in all three states. The room
+changes — the lamp drops, the beacon comes up, the in-tray grows — and the
+object the unit actually works AT did not. A welding bench with the same cold
+bar clamped in it whether the unit is welding, standing by or dead is a
+photograph of a bench.
+
+**What was added:** the piece in the vise is the state — clamped and glowing
+hot at the end the unit has been working on, or out of the jaws entirely when
+there is nothing to hold. The reviewer's specimen is only under the lamp when
+there is something to look at, and the stamp block reads amber while a verdict
+is being worked out and green when one has been reached. The triage blips run
+when work is being dispatched and crawl when it is not. And every station got
+an asset plate, because equipment carries one — four pixels of pale on dark,
+and its absence is a large part of what makes props look like props.
+
+![loop 5](shots/gifs/deck-L5.gif)
+
+### The states, side by side
+
+The builder's bench in all three, at the end of the five:
+
+![the bench in three states](shots/gifs/deck-states.gif)
