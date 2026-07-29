@@ -2097,7 +2097,15 @@ function buildKimi(t,st){
   var pulse=offl?0:(work?(0.6+0.28*Math.sin(t*6)):(0.36+0.16*Math.sin(t*2)));
   var hov=offl?0:(0.8+0.2*Math.sin(t*10));
   var bob=(offl||reduced)?0:Math.round(Math.sin(t*1.7)*3);
-  var BY=offl?404:360+bob;
+  /* L12 — offline kimi SAGS instead of landing. 404 put the shell on the
+     floor, which was right when the floor was visible and is invisible now:
+     the near-plane station hid the whole unit and the room's offline diamond
+     floated over an apparently empty desk. A drone that loses its duty cycle
+     does not fall out of the sky — the skirt holds a dead-man's cushion and
+     the unit sags to parking altitude and drifts. 384 keeps the droop in the
+     posture; the rest of the sag lives in drawRobot, where the hover offset
+     halves instead of vanishing. */
+  var BY=offl?384:360+bob;
   var blink=(!offl&&!reduced&&Math.sin(t*0.7)>0.986)?1:0;
 
   // ---- hover skirt glow + downward wash ----
@@ -2321,7 +2329,10 @@ function unitTop(){
 function drawRobot(t){
   var info=buildRobo(t,STATE);lastHand=info.hand;
   var sc=0.74, px=ROBOX-260*sc, py=FLOORY-560*sc;
-  if(AGENT==="kimi"&&!info.offl)py-=48;   // kimi hovers higher in the full room
+  /* kimi hovers higher in the full room; offline it keeps roughly half the
+     lift — parking altitude, not the floor (L12). The floor put the whole
+     unit behind the near-plane station. */
+  if(AGENT==="kimi")py-=(info.offl?26:48);
   /* Publish where this unit landed, once, in room coordinates. buildRobo
      reports the hand, the head and the footprints in its own canvas space and
      drawRobot is what maps that space onto the floor — so anything else that
@@ -3139,20 +3150,15 @@ function drawTarget(t,dt){
   cableSwag(lit);                   // hangs from the truss; the room's only diagonal
   drawLampCone(t,lit,!offl,ROOM);   // light between wall attachments and robot
   stepSparks(dt);
-  /* Depth, and the one unit it is not the same question for. Every room stands
-     its bench, desk or console at y=536..612 in FRONT of the unit, which is
-     right for three vendors: they are tall, the furniture crosses their shins,
-     and being partly behind it is what puts them in the room rather than on it.
-     kimi is a wide drone that hovers 48px up while powered and settles when it
-     is not — and a settled drone is 122px tall, so the desk top cut it in half
-     and the console showed a dark lump lying on the bench. All three rooms, and
-     only findable at full size: at thumbnail scale it reads as a dark shape,
-     which is what a powered-down drone reads as anyway.
-     A drone that has set itself down does not do it INSIDE the bench, so this
-     is a placement fact and not a drawing-order trick: it lands on the open
-     deck, nearer the camera than the furniture. */
-  var landed=(AGENT==="kimi"&&offl);
-  if(!landed)drawRobot(t);
+  /* Depth. Every unit hangs or stands behind the near-plane station, which
+     crosses its shins — or, for kimi, its skirt. The special case this slot
+     used to carry is gone: offline kimi settled to the FLOOR, and once the
+     station moved into the near plane the floor meant "hidden" — a dark lump
+     that the taller worktop then swallowed whole, leaving the offline
+     diamond floating over an apparently empty desk. Offline kimi sags to
+     parking altitude now (L12), clearly above the worktop line, so it draws
+     where every other unit draws. */
+  drawRobot(t);
   if(ROOM==="builder"){ conveyor(t,STATE); crateBig(206,558);crateBig(182,588); }
   /* The in-tray. A review lab that is idle is a review lab with a queue on the
      desk — two flat stacks said the same thing whether anything was pending or
@@ -3161,7 +3167,6 @@ function drawTarget(t,dt){
   else if(ROOM==="reviewer"){ verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
     if(STATE==="idle")for(var ip=0;ip<11;ip++){S.fillStyle=ip%2?"#c3cdda":"#a6b1c0";S.fillRect(752-(ip%2),FLOORY-6-ip*4,26,4);} }
   else { phoneBank(1042,t,STATE); fileCabinet(1086); docStack(700); }
-  if(landed)drawRobot(t);           // ... and this is where the deck is
   drawSparks();
   drawFloorFog(t);
   drawSteam(t);
