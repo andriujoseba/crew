@@ -2784,6 +2784,16 @@ t install-force-does-not-record-the-redirect absent "$r1"
 t install-force-over-redirected-root-is-current current "$(mstate)"
 if [ -x "$MDUTY/bin/duty.sh" ]; then r1=installed; else r1=MISSING; fi
 t install-force-through-redirect-leaves-the-engine installed "$r1"
+# The park above collided by construction: the added-file fixtures further up
+# already left legacy/bin as a DIRECTORY holding hotfix.sh, so parking a link
+# called `bin` had to take the timestamped name instead of replacing it. Evidence
+# the next run overwrites is not evidence, and a redirect park is no exception.
+t install-redirect-park-keeps-the-earlier-evidence "$added_before" \
+  "$(cat "$MDUTY/legacy/bin/hotfix.sh" 2>/dev/null)"
+case "$redir_park" in
+  *"/legacy/bin."*) r1=timestamped ;; *) r1=CLOBBERED-THE-DIRECTORY ;;
+esac
+t install-redirect-park-takes-a-free-name timestamped "$r1"
 
 # One level FURTHER up, where it was not even detected: conf/ carries
 # conf/roles, conf/agents and conf/fleet.defaults.conf without being a manifest
