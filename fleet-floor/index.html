@@ -839,6 +839,16 @@ function phoneBank(x,t,st){var y=612-30,live=st&&st!=="offline";
    miniature always had it. The unit comes back to roughly the size it was, and
    now it is standing in the real room. */
 var MINI_ZOOM=0.78, MINI_CX=620, MINI_FLOOR=0.88;
+/* A fleet is a few dozen units and a window is one size, so the cache is small
+   by construction — but a roster that churns or a window dragged between two
+   displays would grow it forever, and each entry holds a canvas. Oldest out,
+   well above any real fleet. */
+var MINI_KEEP=64;
+function miniPrune(){
+  var ks=Object.keys(miniStills);if(ks.length<MINI_KEEP)return;
+  ks.sort(function(a,b){return miniStills[a].at-miniStills[b].at;});
+  for(var i=0;i<ks.length-MINI_KEEP+1;i++)delete miniStills[ks[i]];
+}
 function miniCrop(dW,dH){
   var sw=Math.min(DW,DH*(dW/dH)*MINI_ZOOM), sh=sw*(dH/dW);
   var sx=Math.max(0,Math.min(DW-sw,MINI_CX-sw/2));
@@ -868,15 +878,16 @@ var MINI_SLOW_MS=40;    // ... which is this
    expensive here — which is what a software renderer or a loaded machine looks
    like from inside the page. */
 function miniStill(t,dW,dH){
-  var key=BOX+"|"+AGENT+"|"+ROOM+"|"+STATE;
+  /* Keyed by size as well as by unit: the app and the asset map ask for the
+     same units at different scales, and a still that has to be resized is a
+     still that has to be re-rendered anyway. */
   var pw=Math.max(1,Math.round(dW*dpr)),ph=Math.max(1,Math.round(dH*dpr));
+  var key=BOX+"|"+AGENT+"|"+ROOM+"|"+STATE+"|"+pw+"x"+ph;
   var e=miniStills[key],ttl=(miniCost>MINI_SLOW_MS?MINI_TTL_SLOW:MINI_TTL);
-  var sized=e&&e.cv.width===pw&&e.cv.height===ph;
-  if(sized&&(t-e.at)<ttl*e.jit)return e;
-  if(miniFills>=MINI_BUDGET)return sized?e:null;
+  if(e&&(t-e.at)<ttl*e.jit)return e;
+  if(miniFills>=MINI_BUDGET)return e||null;
   miniFills++;
-  if(!e)e=miniStills[key]={cv:oc(pw,ph),at:0,jit:0.7+0.6*(strPhase(key)/6.283),anchors:null};
-  if(e.cv.width!==pw||e.cv.height!==ph){e.cv.width=pw;e.cv.height=ph;}
+  if(!e){miniPrune();e=miniStills[key]={cv:oc(pw,ph),at:0,jit:0.7+0.6*(strPhase(key)/6.283),anchors:null};}
   var cr=miniCrop(dW,dH),t0=mnow();
   borrowRoom({agent:AGENT,room:ROOM,state:STATE,box:BOX,t:t,warm:MINI_WARM},function(){
     var c=e.cv.getContext("2d");
@@ -3210,7 +3221,14 @@ function blit(){X.imageSmoothingEnabled=true;X.fillStyle="#000";X.fillRect(0,0,V
   if(MODE==="target"){var dx=1.1;tintTo(tintR,comp,255,0,0);tintTo(tintG,comp,0,255,0);tintTo(tintB,comp,0,0,255);X.globalCompositeOperation="lighter";X.drawImage(tintG,dstX,dstY,dstW,dstH);X.drawImage(tintR,dstX+dx,dstY,dstW,dstH);X.drawImage(tintB,dstX-dx,dstY,dstW,dstH);X.globalCompositeOperation="source-over";}
   else{X.drawImage(comp,dstX,dstY,dstW,dstH);}}
 var lastT=0;
-function frame(ms){var t=ms/1000,dt=Math.min(0.05,(ms-lastT)/1000)||0.016;lastT=ms;if(VIEW==="floor"){drawFloor(t);}else{drawTarget(t,dt);blit();}requestAnimationFrame(frame);}
+/* dev/whiteboard.html boots the whole app — that is the point of it, the
+   renderer has to be the shipped one — and then hides the stage and draws its
+   own grid. The loop underneath was still painting a full fleet into a hidden
+   canvas every frame, which is merely wasteful while a cell is cheap and is
+   not once a cell renders rooms: the map's tiles would queue behind the hidden
+   view's. FLOORDEV.pause stops the painting, not the page. */
+var devPaused=false;
+function frame(ms){var t=ms/1000,dt=Math.min(0.05,(ms-lastT)/1000)||0.016;lastT=ms;if(!devPaused){if(VIEW==="floor"){drawFloor(t);}else{drawTarget(t,dt);blit();}}requestAnimationFrame(frame);}
 
 function refreshChrome(){
   document.getElementById("modelabel").textContent=STATE.toUpperCase();
@@ -3375,7 +3393,32 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
       c.globalCompositeOperation="source-over";
     }
     });
-  }};
+  },
+  /* renderMini(dst,{agent,room,state,box,t}) — the GOD-VIEW CELL, whole card
+     and all, into a canvas the caller owns.
+     The room view had a map and the cell had none, which is how a cell could
+     carry a ghost sign, a colliding desk and a misplaced alert glyph through
+     fifteen loops of polish: the roster only ever exercises seven of its
+     thirty-six combinations, the other twenty-nine are unreachable in a
+     healthy fleet, and reviewing them meant patching ROSTER by hand. So the
+     cell is addressable too, by the same rule as the room — this draws with
+     drawMini, the shipped one, and owns no art of its own.
+     dst decides the scale: the cell is laid out at CELLW x CELLH and scaled to
+     the canvas it is given, exactly as a device pixel ratio would. */
+  MINI:{W:CELLW,H:CELLH},
+  renderMini:function(dst,o){
+    var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX,sX=X,sdpr=dpr,sfl=miniFills;
+    AGENT=o.agent;ROOM=o.room;STATE=o.state;BOX=o.box||(o.agent+"-"+o.room);
+    var k=dst.width/CELLW;
+    X=dst.getContext("2d");dpr=k;miniFills=0;
+    X.setTransform(k,0,0,k,0,0);X.globalAlpha=1;X.globalCompositeOperation="source-over";
+    X.filter="none";X.textAlign="left";X.imageSmoothingEnabled=true;
+    X.fillStyle="#03060d";X.fillRect(0,0,CELLW,dst.height/k);
+    drawMini(o.t||0,5,5,CELLW-10,CELLH-10);
+    X=sX;dpr=sdpr;miniFills=sfl;AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;
+  },
+  /* Stop the hidden app loop painting behind a map. */
+  pause:function(){devPaused=true;}};
 })();
 
 </script>
