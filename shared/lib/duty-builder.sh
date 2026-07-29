@@ -551,7 +551,7 @@ _builder_repo() {
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable
           labels(first:50){nodes{name}}
-          comments(last:100){nodes{author{login} body}}
+          comments(last:200){nodes{author{login} body}}
           reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
           latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
         } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
@@ -604,7 +604,7 @@ _builder_repo() {
       log "$R#$N: conflicting — launching rebase session"
       ensure_main_clone "$R" "$dir" || continue
       run_session rebase "$R#$N" "$dir" "$TIMEOUT_REBASE" \
-        "$(render_prompt rebase.txt ME="$ME" REPO="$R" NUM="$N" WT_RULES="$wt_rules")"
+        "$(render_prompt rebase.txt ME="$ME" REPO="$R" NUM="$N" MARK_ANSWERED="$MARK_ANSWERED" WT_RULES="$wt_rules")"
     done
   else
     log "$R: no rebase duty"

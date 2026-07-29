@@ -663,6 +663,27 @@ t round-rules-argued-exception-kept kept "$r1"
 if grep -qi 'round-answered signal' "$SHARED/prompts/resume.txt"; then r1=resignals; else r1=MISSING; fi
 t resume-re-signals-after-death resignals "$r1"
 
+# THE ROUND-1 FIX (codex/grok/kimi): the ready→signal death window. The cure is
+# ordering — SIGNAL THEN READY, with the signal posted while the PR is still a
+# DRAFT (harmless, the engine ignores drafts), so every death lands where resume
+# recovers it. Pinned structurally, not by prose grep, in both prompts that flip
+# a draft to ready.
+for p in build.txt resume.txt; do
+  if grep -qiE 'signal[^.]*then[^.]*mark the PR ready-for-review' "$SHARED/prompts/$p"; then r1=signal-first; else r1=WRONG-ORDER; fi
+  t "signal-before-ready-$p" signal-first "$r1"
+done
+# End-to-end of the covered transition: a PR flipped ready with the signal
+# already at its head → the engine requests (die-after-ready is safe). The
+# die-before-ready arm is a still-draft PR, excluded by my_open
+# (engine-request-excludes-drafts) and recovered by resume — proven above.
+RP_READY_SIGNALLED="$(mk_rp "$H" '[]' '[]' "$RP_SIG_H")"
+t strand-fix-ready-with-signal-requests "rev-a rev-b" "$(printf '%s' "$RP_READY_SIGNALLED" | rp)"
+t strand-fix-ready-with-signal-has-signal "$H" "$(printf '%s' "$RP_READY_SIGNALLED" | ah)"
+# rebase.txt aligns with the engine: it posts the signal, it does not re-request.
+if grep -qi 'MARK_ANSWERED' "$SHARED/prompts/rebase.txt" \
+  && ! grep -qi 're-request every panel reviewer' "$SHARED/prompts/rebase.txt"; then r1=aligned; else r1=RACES; fi
+t rebase-posts-signal-not-request aligned "$r1"
+
 # --- round-log.jq: mirror each whole round into the PR body (#91) ------------
 # Input is the GraphQL pullRequest payload; output is the NEW body when a round
 # is un-recorded, or "" when every round is already marked (the crash-retry
