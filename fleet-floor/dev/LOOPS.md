@@ -1170,3 +1170,45 @@ second copy of anything.
 
 Determinism holds across the pair: two browser launches, **72 of 72 tiles
 identical**, full-page PNGs sharing a sha256.
+
+
+---
+
+## The deck station
+
+The last thing in the room that had never been designed. All three rooms put
+the same object in front of the unit — a 204×12 plank on two 8px legs at
+x=372, with different things resting on it: a vise and a monitor, a lens and a
+specimen, a lit chart. Fifteen loops went round it, and it survived them
+because at a glance it reads as "a table" and the eye moves on. Look at it and
+you can see the unit's legs through the gap under the top.
+
+The footprint stays — it is a fact about the floor, not about the prop: the
+deck has room for exactly one object between the fabricator and the conveyor,
+and the other two rooms mirror that composition. Everything else is now per
+room.
+
+![the deck, before and after](shots/deck-before-after.webp)
+
+- **builder — a welding bench.** A chest of drawers under the left half so it
+  has mass, an open frame with a cable spool under the right so it is not a
+  solid block, a vise you can read left to right (base, fixed jaw, the stock
+  standing in the jaws, sliding jaw, screw, handle), stock leaning against the
+  chest, and the task monitor on a post.
+- **reviewer — an inspection bench.** A pale worktop over a slim drawer bank,
+  an open shelf with paper on it, the lens arm the room is named for with a
+  specimen under it, and the verdict stamp block: the other half of what a
+  review is.
+- **triage — a plotting table.** A single pedestal instead of legs and a top
+  **tilted towards the camera**, so the room that sorts and routes work reads
+  at a glance as the one with a chart you stand over. Routing blips cross it;
+  three toggles sit on the front rail.
+
+Two things fell out of doing it. The tops came back too bright on the first
+pass — a horizontal surface under a lamp does catch light, but it is not the
+subject, so the body went dark and the light now lands on the leading edge
+only. And the builder's toolbox is gone: it stood at x=574 with the conveyor
+starting at 580, the same class of collision the declared deck caught last
+time.
+
+Both views change together, because there is one renderer.

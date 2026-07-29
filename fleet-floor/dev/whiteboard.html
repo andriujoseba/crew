@@ -448,10 +448,10 @@ var LAYOUT={
   /* What the floor already carries. x,y,w,h — including the parts that stand
      proud of the bench top, because that is what a new prop would hit. */
   deck:{
-    builder :[["crates",182,558,66,72],["workbench",372,536,204,76],["conveyor",580,558,222,54]],
-    reviewer:[["inspect desk",372,533,204,79],["verdict tower",632,496,14,116],
+    builder :[["crates",182,558,66,72],["welding bench",372,524,204,88],["conveyor",580,558,222,54]],
+    reviewer:[["inspection bench",372,520,204,92],["verdict tower",632,496,14,116],
               ["doc stacks",690,586,56,26],["file cabinets",1040,554,72,58]],
-    triage  :[["map console",372,536,204,76],["doc stack",700,586,26,26],
+    triage  :[["plotting table",372,556,204,56],["doc stack",700,586,26,26],
               ["phone bank",1042,582,40,30],["file cabinet",1086,554,34,58]]
   },
   /* Structure. `all` is every room; the rest are the room's own. */
@@ -664,17 +664,6 @@ function conveyor(t,st){
   else{for(var c2=0;c2<4;c2++)crate(S,x+w-34-c2*19,y-14);}
   emit(function(cc){cc.fillStyle=run?rgba(95,206,155,0.9):rgba(120,130,140,0.35);cc.beginPath();cc.arc(x+6,y+6,2.5,0,7);cc.fill();});
 }
-function workbench(t,lit,st){
-  var x=372,y=566,w=204;
-  S.fillStyle="#0d1119";S.fillRect(x+10,y+12,8,34);S.fillStyle="#0d1119";S.fillRect(x+w-18,y+12,8,34);
-  plate(S,[[x,y],[x+w,y],[x+w,y+12],[x,y+12]],"#252d3a","#111823","#313c4e");
-  S.fillStyle="#28303c";S.fillRect(x+34,y-8,14,10);       // vise
-  plate(S,[[x+w-52,y-30],[x+w-14,y-30],[x+w-14,y-4],[x+w-52,y-4]],"#12202e","#0a1420","#22304a"); // task monitor
-  emit(function(c){var on=st!=="offline";var col=st==="working"?[247,189,78]:st==="offline"?[120,60,60]:[90,150,210];c.fillStyle=rgba(col[0],col[1],col[2],on?0.42:0.28);c.fillRect(x+w-48,y-26,30,18);c.fillStyle=rgba(col[0],col[1],col[2],on?0.6:0.3);var sw2=[22,14,18];for(var sl2=0;sl2<3;sl2++)c.fillRect(x+w-46,y-24+sl2*5,sw2[sl2],1);});
-  S.fillStyle="rgba(200,210,225,"+(0.12*lit)+")";S.fillRect(x+74,y-3,20,2);
-  // toolbox on the floor by the bench
-  var tb=x+w-6,ty=592;plate(S,[[tb,ty],[tb+34,ty],[tb+34,ty+18],[tb,ty+18]],"#7a2c1e","#3a1710","#a8402a");S.fillStyle="#1a0a06";S.fillRect(tb+2,ty+6,30,2);
-}
 
 /* ===================== REVIEWER PROPS (clinical lab) ===================== */
 function diffWall(t,st){
@@ -772,28 +761,6 @@ function sampleArchive(t,lit,st){
     S.fillStyle="rgba(206,220,236,0.20)";S.fillRect(dx2+4,dy2+5,16,3); // label
     if((r4+c5)%4===0&&!off)emit(function(c){
       c.fillStyle="rgba(79,208,122,0.55)";c.fillRect(dx2+29,dy2+20,3,3);});}
-}
-function inspectDesk(t,st){
-  var x=372,y=566,w=204,off=st==="offline";
-  plate(S,[[x,y],[x+w,y],[x+w,y+12],[x,y+12]],"#26303e","#121a24","#33404f");
-  S.fillStyle="#0d1119";S.fillRect(x+10,y+12,8,34);S.fillRect(x+w-18,y+12,8,34);
-  S.fillStyle="rgba(202,212,226,0.5)";S.fillRect(x+36,y-5,30,5);S.fillStyle="rgba(150,166,186,0.42)";S.fillRect(x+40,y-9,22,4);
-  var ax=x+w-48,yl=y-2;
-  S.strokeStyle="#3a465e";S.lineWidth=2;S.beginPath();S.moveTo(ax,y);S.lineTo(ax+4,yl-24);S.lineTo(ax+26,yl-33);S.stroke();
-  S.fillStyle="#1a2230";S.beginPath();S.arc(ax+31,yl-33,9,0,7);S.fill();
-  if(!off)emit(function(c){var g3=c.createRadialGradient(ax+31,yl-33,1,ax+31,yl-33,17);g3.addColorStop(0,"rgba(196,232,255,0.55)");g3.addColorStop(1,"rgba(196,232,255,0)");c.fillStyle=g3;c.beginPath();c.arc(ax+31,yl-33,17,0,7);c.fill();});
-  S.strokeStyle="rgba(196,232,255,0.5)";S.lineWidth=1;S.beginPath();S.arc(ax+31,yl-33,7,0,7);S.stroke();
-  /* Something under the lamp. The inspection desk had a light, an arm and a
-     bare worktop — a review station with nothing being reviewed on it. A
-     specimen plate directly beneath the lens, lit from above and casting on
-     the desk, is what the whole prop exists to point at. */
-  var spx=ax+31,spy=y-3;
-  S.fillStyle="rgba(0,0,0,0.4)";S.beginPath();S.ellipse(spx,spy+2,17,3.5,0,0,7);S.fill();
-  plate(S,[[spx-15,spy-4],[spx+15,spy-4],[spx+13,spy+2],[spx-13,spy+2]],"#1b2634","#0d141d","#31415a");
-  if(!off){emit(function(c){
-    c.fillStyle="rgba(150,214,255,0.5)";c.fillRect(spx-10,spy-2.5,20,2);
-    c.fillStyle="rgba(90,210,130,0.7)";c.fillRect(spx-9,spy-2.5,6,2);
-    c.fillStyle="rgba(230,100,100,0.7)";c.fillRect(spx+2,spy-2.5,4,2);});}
 }
 function verdictTower(t,st){
   var x=632,pt=496,baseY=612;
@@ -934,15 +901,6 @@ function switchboard(t,st){
   wallShadow(x,y,w,h);
   plate(S,[[x,y],[x+w,y],[x+w,y+h],[x,y+h]],"#1a2230","#0c1018","#2a3648");
   for(var r=0;r<3;r++)for(var c=0;c<5;c++){var on=!off&&((r*5+c+Math.floor(t*2))%3===0);S.fillStyle=on?"rgba(95,206,155,0.9)":"#22303e";S.fillRect(x+6+c*9,y+7+r*11,5,5);if(on){G.fillStyle="rgba(95,206,155,0.7)";G.fillRect(x+6+c*9,y+7+r*11,5,5);}}
-}
-function mapConsole(t,st){
-  var x=372,y=560,w=204,off=st==="offline";
-  plate(S,[[x,y+6],[x+w,y+6],[x+w,y+18],[x,y+18]],"#26303e","#121a24","#33404f");
-  S.fillStyle="#0d1119";S.fillRect(x+12,y+18,8,28);S.fillRect(x+w-20,y+18,8,28);
-  S.fillStyle="#0a1622";S.fillRect(x+16,y-6,w-32,14);
-  S.strokeStyle="rgba(70,110,150,0.3)";S.lineWidth=1;for(var gx=x+20;gx<x+w-16;gx+=16){S.beginPath();S.moveTo(gx,y-6);S.lineTo(gx,y+8);S.stroke();}
-  if(!off)emit(function(c){c.save();c.globalCompositeOperation="lighter";var g6=c.createRadialGradient(x+w/2,y+1,2,x+w/2,y+1,70);g6.addColorStop(0,"rgba(90,150,220,0.15)");g6.addColorStop(1,"rgba(90,150,220,0)");c.fillStyle=g6;c.fillRect(x,y-14,w,30);
-    for(var b=0;b<5;b++){var bx=x+26+b*((w-52)/4);c.fillStyle="rgba(120,190,255,"+(0.4+0.4*Math.sin(t*3+b))+")";c.fillRect(bx,y-2+((b%2)*4),2,2);}c.restore();});
 }
 /* A live call. The phone bank was two dark handsets in a box — furniture in the
    one room whose entire job is routing things to people. One line now rings:
@@ -2780,6 +2738,176 @@ function drawRobot(t){
 function stepSparks(dt){for(var i=sparks.length-1;i>=0;i--){var s=sparks[i];s.x+=s.vx;s.y+=s.vy;s.vy+=0.12;s.life-=dt;if(s.life<=0||s.y>FLOORY+6)sparks.splice(i,1);}}
 function drawSparks(){S.save();S.globalCompositeOperation="lighter";sparks.forEach(function(s){var a=Math.min(1,s.life*2);S.fillStyle=rgba(255,200,120,a);S.fillRect(s.x,s.y,2,2);G.fillStyle=rgba(255,180,90,a*0.8);G.fillRect(s.x,s.y,2,2);});S.restore();}
 
+/* ===================== THE DECK STATION =====================
+   All three rooms used to put the SAME object in front of the unit: a 204x12
+   plank on two 8px legs at x=372, with different things resting on it. A
+   generic table, dead centre, with a gap under the top you could see the
+   unit's legs through — the oldest prop in the room and the only one that had
+   never actually been designed. Fifteen loops of polish went round it.
+
+   The footprint stays, because it is a fact about the floor rather than about
+   the prop: the deck has room for exactly one object in front of the unit,
+   between the fabricator and the conveyor in the builder, and the other two
+   rooms mirror that composition. Everything else is now per room — silhouette,
+   mass, materials, and what the thing is FOR. A welding bench with a vise and
+   a chest of drawers, an inspection bench with a glass top and a lens, and a
+   plotting table on a pedestal are three different objects; they were three
+   toppings on one plank. */
+var DECK={x:372,w:204,top:566,floor:612};
+
+/* Shared, because all three stand on the same floor under the same lamp: the
+   dark line where the body meets the deck, and the sliver of key light that
+   lands along the top edge. */
+function deckBase(x,w,ty,fy,lit){
+  contactShadow(x+w/2,fy,w*0.86);
+  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(x+3,fy-3,w-6,3);
+  return function topSheen(col){S.fillStyle=rgba(col[0],col[1],col[2],0.10+0.16*lit);S.fillRect(x-3,ty,w+6,1.5);};
+}
+
+/* BUILDER — a welding bench. Chest of drawers under the left half so it has a
+   mass, an open frame under the right so it does not read as a solid block,
+   the vise the room's whole job needs, and the task monitor on a post. */
+function fabTable(t,lit,st){
+  var x=DECK.x,w=DECK.w,ty=DECK.top,fy=DECK.floor,on=st!=="offline";
+  var sheen=deckBase(x,w,ty,fy,lit);
+  // drawer chest, left
+  plate(S,[[x+2,ty+12],[x+104,ty+12],[x+104,fy],[x+2,fy]],"#2b2119","#150f0a","#3d2d1d");
+  for(var d=0;d<3;d++){var dy=ty+18+d*12;
+    S.fillStyle="#170f0a";S.fillRect(x+8,dy,90,10);
+    S.fillStyle="rgba(190,140,80,0.55)";S.fillRect(x+40,dy+4,26,2);}
+  S.fillStyle="rgba(255,205,150,"+(0.05+0.07*lit)+")";S.fillRect(x+2,ty+12,102,1.5);
+  // open frame, right: two uprights and a diagonal brace
+  S.fillStyle="#141b26";S.fillRect(x+w-56,ty+12,10,fy-ty-12);S.fillRect(x+w-14,ty+12,10,fy-ty-12);
+  S.strokeStyle="#1f2937";S.lineWidth=4;S.beginPath();S.moveTo(x+w-48,fy-8);S.lineTo(x+w-8,ty+24);S.stroke();
+  // cable spool on the frame — a drum with a hub, not a scribble
+  var spx2=x+w-33,spy2=ty+36;
+  S.fillStyle="#1a1410";S.beginPath();S.arc(spx2,spy2,13,0,7);S.fill();
+  S.strokeStyle="#2b241a";S.lineWidth=2;S.beginPath();S.arc(spx2,spy2,13,0,7);S.stroke();
+  S.fillStyle="#0f0c09";S.beginPath();S.arc(spx2,spy2,5,0,7);S.fill();
+  S.strokeStyle="#241d15";S.lineWidth=1.5;S.beginPath();S.arc(spx2,spy2,9,0,7);S.stroke();
+  // and the lead running off it to the floor
+  S.strokeStyle="#171310";S.lineWidth=2.5;S.beginPath();
+  S.moveTo(spx2+12,spy2+3);S.bezierCurveTo(spx2+26,spy2+16,spx2+16,fy-8,spx2+30,fy-2);S.stroke();
+  /* Top slab. The first pass made it the brightest thing in the room, which is
+     the plank's mistake with better geometry — a horizontal surface under a
+     lamp catches light, but it is not the subject. Dark body, and the light
+     lands on the leading edge only. */
+  plate(S,[[x-5,ty],[x+w+5,ty],[x+w+5,ty+9],[x-5,ty+9]],"#2c343e","#1a212a","#3d4854");
+  plate(S,[[x-5,ty+9],[x+w+5,ty+9],[x+w+2,ty+14],[x-2,ty+14]],"#1a212a","#0f141b","#26303b");
+  sheen([255,214,170]);
+  /* The vise, and the piece in it. Read it left to right: a base bolted to the
+     bench, a fixed jaw, the stock standing in the jaws, the sliding jaw, then
+     the screw and its handle. The first pass stacked three grey boxes and it
+     came out as a staircase. */
+  var vx=x+22, vt=ty-4;
+  plate(S,[[vx-4,vt-7],[vx+46,vt-7],[vx+46,vt],[vx-4,vt]],"#333c48","#1b222b","#47525f");   // base
+  plate(S,[[vx,vt-22],[vx+9,vt-22],[vx+9,vt-7],[vx,vt-7]],"#414b58","#232b35","#5a6674"); // fixed jaw
+  plate(S,[[vx+22,vt-22],[vx+31,vt-22],[vx+31,vt-7],[vx+22,vt-7]],"#3a4450","#1f2731","#515d6b");  // sliding jaw
+  plate(S,[[vx+9,vt-30],[vx+22,vt-30],[vx+22,vt-7],[vx+9,vt-7]],"#4d5866","#2c343f","#6a7787");   // stock
+  S.strokeStyle="#5a6674";S.lineWidth=3;S.beginPath();S.moveTo(vx+31,vt-15);S.lineTo(vx+44,vt-15);S.stroke();
+  S.fillStyle="#6b7788";S.beginPath();S.arc(vx+45,vt-15,3.2,0,7);S.fill();
+  // stock leaning against the chest, where offcuts actually end up
+  S.strokeStyle="#39434f";S.lineWidth=4;
+  S.beginPath();S.moveTo(x+118,fy-2);S.lineTo(x+128,ty+2);S.stroke();
+  S.strokeStyle="#2e3742";S.lineWidth=3;
+  S.beginPath();S.moveTo(x+126,fy-2);S.lineTo(x+134,ty+6);S.stroke();
+  // task monitor on a post
+  var mx=x+w-64,my=ty-42;
+  S.fillStyle="#161d29";S.fillRect(mx+17,my+28,5,ty-my-28);
+  plate(S,[[mx,my],[mx+42,my],[mx+42,my+28],[mx,my+28]],"#12202e","#0a1420","#22304a");
+  emit(function(c){var col=st==="working"?[247,189,78]:st==="offline"?[120,60,60]:[90,150,210];
+    c.fillStyle=rgba(col[0],col[1],col[2],on?0.42:0.26);c.fillRect(mx+4,my+4,34,20);
+    c.fillStyle=rgba(col[0],col[1],col[2],on?0.62:0.3);
+    var sw2=[24,15,19];for(var l=0;l<3;l++)c.fillRect(mx+6,my+7+l*5,sw2[l],1.5);});
+  /* The toolbox that used to sit here is gone: it stood at x=574 and the
+     conveyor starts at 580, so it was overlapping the belt's leg — the same
+     class of collision the declared deck caught last time. The chest of
+     drawers says "the tools live here" better than a box on the floor did. */
+}
+
+/* REVIEWER — an inspection bench. Pale, clean, and lit from its own lamp: a
+   glass worktop over a slim drawer bank, the lens arm the room is named for,
+   and the specimen it is pointed at. */
+function inspectBench(t,lit,st){
+  var x=DECK.x,w=DECK.w,ty=DECK.top,fy=DECK.floor,off=st==="offline";
+  var sheen=deckBase(x,w,ty,fy,lit);
+  // drawer bank, right; open shelf with paper, left
+  plate(S,[[x+w-96,ty+12],[x+w-2,ty+12],[x+w-2,fy],[x+w-96,fy]],"#26303e","#121a24","#33404f");
+  for(var d=0;d<3;d++){var dy=ty+18+d*12;
+    S.fillStyle="#111823";S.fillRect(x+w-90,dy,82,10);
+    S.fillStyle="rgba(170,196,224,0.45)";S.fillRect(x+w-58,dy+4,20,2);}
+  S.fillStyle="#141d28";S.fillRect(x+4,ty+12,10,fy-ty-12);S.fillRect(x+w-104,ty+12,10,fy-ty-12);
+  S.fillStyle="#1a2430";S.fillRect(x+4,ty+34,w-100,7);
+  for(var p=0;p<4;p++){S.fillStyle=p%2?"#8b96a6":"#7a8695";S.fillRect(x+20+p,ty+30-p*3,44,3);}
+  // glass top: a pale slab with a bright leading edge
+  plate(S,[[x-5,ty],[x+w+5,ty],[x+w+5,ty+8],[x-5,ty+8]],"#43505f","#27313d","#5c6c7e");
+  S.fillStyle="rgba(190,225,255,0.10)";S.fillRect(x-5,ty+1,w+10,3);
+  plate(S,[[x-5,ty+8],[x+w+5,ty+8],[x+w+2,ty+13],[x-2,ty+13]],"#222b36","#141a22","#2e3846");
+  sheen([196,232,255]);
+  // lens arm and the specimen under it
+  var ax=x+w-58,yl=ty-2;
+  S.strokeStyle="#3a465e";S.lineWidth=2;S.beginPath();S.moveTo(ax,ty);S.lineTo(ax+4,yl-26);S.lineTo(ax+26,yl-35);S.stroke();
+  S.fillStyle="#1a2230";S.beginPath();S.arc(ax+31,yl-35,9,0,7);S.fill();
+  if(!off)emit(function(c){var g3=c.createRadialGradient(ax+31,yl-35,1,ax+31,yl-35,17);
+    g3.addColorStop(0,"rgba(196,232,255,0.38)");g3.addColorStop(1,"rgba(196,232,255,0)");
+    c.fillStyle=g3;c.beginPath();c.arc(ax+31,yl-35,17,0,7);c.fill();});
+  S.strokeStyle="rgba(196,232,255,0.5)";S.lineWidth=1;S.beginPath();S.arc(ax+31,yl-35,7,0,7);S.stroke();
+  var spx=ax+31,spy=ty-3;
+  S.fillStyle="rgba(0,0,0,0.4)";S.beginPath();S.ellipse(spx,spy+2,17,3.5,0,0,7);S.fill();
+  plate(S,[[spx-15,spy-4],[spx+15,spy-4],[spx+13,spy+2],[spx-13,spy+2]],"#1b2634","#0d141d","#31415a");
+  if(!off)emit(function(c){
+    c.fillStyle="rgba(150,214,255,0.5)";c.fillRect(spx-10,spy-2.5,20,2);
+    c.fillStyle="rgba(90,210,130,0.7)";c.fillRect(spx-9,spy-2.5,6,2);
+    c.fillStyle="rgba(230,100,100,0.7)";c.fillRect(spx+2,spy-2.5,4,2);});
+  // the verdict stamp block, left of the lens: the other half of what a review is
+  plate(S,[[x+26,ty-13],[x+52,ty-13],[x+52,ty],[x+26,ty]],"#2a3442","#151d26","#3a4759");
+  S.fillStyle=off?"#4a2a2a":"#5fce9b";S.fillRect(x+31,ty-9,16,4);
+  S.fillStyle="#151d26";S.fillRect(x+36,ty-19,6,6);
+}
+
+/* TRIAGE — a plotting table. A single pedestal instead of legs, and a top that
+   is TILTED towards the camera, so the room that sorts and routes work reads
+   at a glance as the one with a chart you stand over. */
+function plotTable(t,lit,st){
+  var x=DECK.x,w=DECK.w,ty=DECK.top,fy=DECK.floor,off=st==="offline";
+  var sheen=deckBase(x,w,ty,fy,lit);
+  /* Pedestal. The first pass left the top apparently hovering: a dark column
+     against a dark floor, at the one place in the frame the lamp does not
+     reach. Wider, with a lit inner edge and a foot that reads as metal. */
+  var cx3=x+w/2;
+  S.fillStyle="rgba(0,0,0,0.45)";S.beginPath();S.ellipse(cx3,fy-3,58,9,0,0,7);S.fill();
+  plate(S,[[cx3-44,fy-14],[cx3+44,fy-14],[cx3+52,fy-3],[cx3-52,fy-3]],"#2b3644","#121924","#3e4c5e");
+  S.fillStyle="rgba(170,190,230,0.10)";S.fillRect(cx3-44,fy-14,88,1.5);
+  plate(S,[[cx3-22,ty+14],[cx3+22,ty+14],[cx3+17,fy-12],[cx3-17,fy-12]],"#2b3644","#141c27","#41506a");
+  S.fillStyle="rgba(150,175,220,0.09)";S.fillRect(cx3-20,ty+16,6,fy-ty-30);
+  // the tilted chart surface
+  var fb=ty+14, bk=ty-10;
+  plate(S,[[x-4,fb],[x+w+4,fb],[x+w-14,bk],[x+14,bk]],"#141d29","#080e16","#2c3b50");
+  S.fillStyle="#060c15";poly(S,[[x+2,fb-4],[x+w-2,fb-4],[x+w-19,bk+5],[x+19,bk+5]]);S.fill();
+  // chart grid, drawn in the plane of the top so it reads as tilted
+  S.strokeStyle="rgba(70,110,150,0.30)";S.lineWidth=1;
+  for(var g=0;g<7;g++){var f=g/6;
+    S.beginPath();S.moveTo(x+6+f*(w-12),fb-5);S.lineTo(x+22+f*(w-44),bk+6);S.stroke();}
+  for(var h=0;h<3;h++){var fy2=bk+6+(fb-11-bk)*(h/2);
+    var inset=17*(1-(h/2));
+    S.beginPath();S.moveTo(x+5+inset,fy2);S.lineTo(x+w-5-inset,fy2);S.stroke();}
+  if(!off)emit(function(c){c.save();c.globalCompositeOperation="lighter";
+    var g6=c.createRadialGradient(x+w/2,ty+2,2,x+w/2,ty+2,86);
+    g6.addColorStop(0,"rgba(120,150,235,0.16)");g6.addColorStop(1,"rgba(120,150,235,0)");
+    c.fillStyle=g6;c.fillRect(x-10,bk-12,w+20,fb-bk+26);
+    /* Routing blips crossing the chart — the room's only moving parts at deck
+       level, and the reason the table is lit at all. */
+    for(var b=0;b<5;b++){var ph=(t*0.35+b*0.2)%1, bx=x+18+ph*(w-36), by=bk+8+(fb-14-bk)*((b%3)/2.6);
+      c.fillStyle="rgba(150,200,255,"+(0.35+0.45*Math.sin(t*3+b))+")";c.fillRect(bx,by,2.5,2.5);}
+    c.restore();});
+  // front rail with three toggles — a table you operate, not a shelf
+  plate(S,[[x+10,fb+2],[x+w-10,fb+2],[x+w-10,fb+8],[x+10,fb+8]],"#2b3542","#161e28","#3b4757");
+  for(var s2=0;s2<3;s2++){var sx=x+38+s2*58;
+    S.fillStyle="#0e151e";S.fillRect(sx,fb+3,12,4);
+    S.fillStyle=off?"#4a2a2a":(s2===1?"#f7bd4e":"#5fce9b");S.fillRect(sx+(s2===1?6:1),fb+4,5,2);}
+  sheen([190,180,255]);
+}
+
 /* ===================== SCENE ENV ===================== */
 function drawTarget(t,dt){
   var offl=STATE==="offline", work=STATE==="working";
@@ -2826,14 +2954,14 @@ function drawTarget(t,dt){
      deck, nearer the camera than the furniture. */
   var landed=(AGENT==="kimi"&&offl);
   if(!landed)drawRobot(t);
-  if(ROOM==="builder"){ conveyor(t,STATE); workbench(t,lit,STATE); crateBig(206,558);crateBig(182,588); }
+  if(ROOM==="builder"){ conveyor(t,STATE); fabTable(t,lit,STATE); crateBig(206,558);crateBig(182,588); }
   /* The in-tray. A review lab that is idle is a review lab with a queue on the
      desk — two flat stacks said the same thing whether anything was pending or
      not, so a third, visibly taller pile only appears when nothing is being
      reviewed. It is the room's own version of "work is waiting". */
-  else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
+  else if(ROOM==="reviewer"){ inspectBench(t,lit,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
     if(STATE==="idle")for(var ip=0;ip<11;ip++){S.fillStyle=ip%2?"#c3cdda":"#a6b1c0";S.fillRect(752-(ip%2),FLOORY-6-ip*4,26,4);} }
-  else { mapConsole(t,STATE); phoneBank(1042,t,STATE); fileCabinet(1086); docStack(700); }
+  else { plotTable(t,lit,STATE); phoneBank(1042,t,STATE); fileCabinet(1086); docStack(700); }
   if(landed)drawRobot(t);           // ... and this is where the deck is
   drawSparks();
   drawFloorFog(t);
