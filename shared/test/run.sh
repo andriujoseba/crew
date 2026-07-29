@@ -85,7 +85,11 @@ IHOME="$TMP/install-home"
 IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
-for cmd in awk bash basename cat chmod cp date dirname grep head mkdir mktemp mv rm sed sha256sum tr wc; do
+# find/sort/tail/xargs joined the list with #159's engine manifest: the curated
+# PATH is the box's whole world here, and a tool missing from it degrades the
+# install to `unverified` instead of failing, which would hide the very thing
+# these fixtures assert.
+for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
 # If install.sh ever infers from hostname again, make the regression reproduce
@@ -257,10 +261,17 @@ printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
 roster_install --box claude-builder --converge-registries >/dev/null 2>&1
 t install-triage-notify-seed fixture/wide "$(cat "$RDUTY/notify-repos.txt")"
 
-if grep -Rsiqw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
+# The role registry is conf/roles/*.conf and nothing else; a second list — a
+# "role manifest" — is what this refuses. #159 introduced an unrelated manifest,
+# the content hash of the installed ENGINE tree, so rather than delete the guard
+# it now subtracts exactly that one use: a `manifest` that is not the ENGINE's
+# is still a duplicated registry, and the subtraction is per LINE, so the phrase
+# has to be written out every time it appears in these files.
+manifest_hits="$(grep -Rsinw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
     "$SHARED/lib" "$SHARED/install.sh" "$ROOT/examples/fleet.roster" "$ROOT/cli/crew" \
-    "$ROOT/drill"; then
-  r1=DUPLICATED
+    "$ROOT/drill" 2>/dev/null | grep -vi 'engine[ ._-]manifest' || true)"
+if [ -n "$manifest_hits" ]; then
+  r1="DUPLICATED: $manifest_hits"
 else
   r1=single-source
 fi
@@ -2536,6 +2547,509 @@ t shared-ci-still-triggers-on-push-to-main 1 "$(grep -c '^    branches: \[main\]
 # the two means a file is guarded on main but not on PRs, or the reverse.
 t shared-ci-has-two-path-filters 2 "$(grep -c '^    paths: ' "$CI_YML")"
 t shared-ci-path-filters-agree   1 "$(grep '^    paths: ' "$CI_YML" | sort -u | wc -l | tr -d ' ')"
+
+# --- #159: the stamp is a claim, the manifest is the evidence ---------------
+# ~/duty/VERSION said what was SHIPPED and nothing ever looked at what was
+# THERE, so a hand-edited engine reported as in-sync and the next upgrade
+# deleted the edit in silence. Three surfaces, asserted in order: the
+# instrument, the installer that records and refuses, and the status the
+# operator reads.
+
+# --- the instrument, against a scratch tree -------------------------------
+EM="$SHARED/bin/engine-manifest.sh"
+EMDUTY="$TMP/manifest-duty"
+mkdir -p "$EMDUTY/bin" "$EMDUTY/lib/jq" "$EMDUTY/prompts" "$EMDUTY/conf/roles" "$EMDUTY/conf/agents"
+printf 'echo duty\n'    >"$EMDUTY/bin/duty.sh"
+printf 'common\n'       >"$EMDUTY/lib/common.sh"
+printf '.a\n'           >"$EMDUTY/lib/jq/x.jq"
+printf 'prompt\n'       >"$EMDUTY/prompts/p.txt"
+printf 'role\n'         >"$EMDUTY/conf/roles/reviewer.conf"
+printf 'agent\n'        >"$EMDUTY/conf/agents/claude.conf"
+printf 'defaults\n'     >"$EMDUTY/conf/fleet.defaults.conf"
+printf 'crew@9.9.9 (deadbee)\ninstalled 2026-07-29T00:00:00Z\n' >"$EMDUTY/VERSION"
+em() { env DUTY_DIR="$EMDUTY" bash "$EM" "$@"; }
+em_field() { em --report | sed -n "s/^$1=//p" | head -1; }
+
+# A box with an engine and no record is UNVERIFIED, never modified: on the day
+# this ships every box in the fleet is in exactly this state, and a fleet-wide
+# false alarm is how an instrument gets ignored forever.
+t manifest-no-record-is-unverified unverified "$(em_field state)"
+t manifest-no-record-has-no-recorded-version "" "$(em_field recorded)"
+em --record
+t manifest-after-record-is-current current "$(em_field state)"
+t manifest-records-the-stamp "crew@9.9.9 (deadbee)" "$(em_field recorded)"
+
+# MUST FAIL: a hash over names and mtimes. touch moves every mtime and no
+# content, and a same-size edit moves content and no size.
+touch "$EMDUTY/bin/duty.sh" "$EMDUTY/lib/common.sh"
+t manifest-touch-is-not-modification current "$(em_field state)"
+printf 'echo DUTY\n' >"$EMDUTY/bin/duty.sh"   # same byte count, different bytes
+t manifest-same-size-edit-is-modified modified "$(em_field state)"
+t manifest-edit-names-the-path "path=modified bin/duty.sh" \
+  "$(em --report --paths | grep '^path=')"
+t manifest-modified-still-names-its-version "crew@9.9.9 (deadbee)" "$(em_field recorded)"
+
+# Re-shipping identical bytes converges: the same content hashes the same, so a
+# converging re-run stays converging and still says so.
+printf 'echo duty\n' >"$EMDUTY/bin/duty.sh"
+t manifest-identical-bytes-converge current "$(em_field state)"
+
+# An added file and a deleted one are somebody's hand on the box too, and the
+# hashes alone cannot tell them apart from each other — the names must be in
+# the manifest, which is why it is a listing and not one digest.
+printf 'hotfix\n' >"$EMDUTY/bin/hotfix.sh"
+t manifest-added-file-is-detected modified "$(em_field state)"
+t manifest-added-file-is-named "path=added bin/hotfix.sh" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/bin/hotfix.sh" "$EMDUTY/lib/jq/x.jq"
+t manifest-deleted-file-is-named "path=removed lib/jq/x.jq" "$(em --report --paths | grep '^path=')"
+printf '.a\n' >"$EMDUTY/lib/jq/x.jq"
+
+# MUST FAIL: enumerating `-type f`. find does not follow symlinks, so a symlink
+# is neither `f` nor `d` and a -type f walk goes straight past it — one
+# `ln -s /anything ~/duty/bin/hotfix.sh` was an executable path the record
+# never named and every upgrade certified clean.
+ln -s /bin/sh "$EMDUTY/bin/hotfix.sh"
+t manifest-added-symlink-is-detected modified "$(em_field state)"
+t manifest-added-symlink-is-named "path=added bin/hotfix.sh" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/bin/hotfix.sh"
+t manifest-after-symlink-removed-is-current current "$(em_field state)"
+
+# A symlink is hashed by what it IS, never by what it points at. sha256sum on a
+# link silently hashes the referent, so a shipped file replaced by a link to a
+# byte-identical copy elsewhere would read `current` while the engine executes
+# a file the record never measured.
+cp "$EMDUTY/bin/duty.sh" "$TMP/manifest-duty-elsewhere.sh"
+rm -f "$EMDUTY/bin/duty.sh"
+ln -s "$TMP/manifest-duty-elsewhere.sh" "$EMDUTY/bin/duty.sh"
+t manifest-file-swapped-for-link-is-modified modified "$(em_field state)"
+t manifest-file-swapped-for-link-is-named "path=modified bin/duty.sh" \
+  "$(em --report --paths | grep '^path=')"
+
+# ...and the same link DANGLING must still be a verdict, not a crash: sha256sum
+# on a broken link fails, and under `pipefail` that would take state() down with
+# it — the instrument going silent on the one box that needs it.
+rm -f "$EMDUTY/bin/duty.sh"
+ln -s "$TMP/no-such-file-anywhere" "$EMDUTY/bin/duty.sh"
+if em --state >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t manifest-dangling-link-does-not-crash 0 "$r1"
+t manifest-dangling-link-is-modified modified "$(em_field state)"
+rm -f "$EMDUTY/bin/duty.sh"
+printf 'echo duty\n' >"$EMDUTY/bin/duty.sh"
+
+# Nor is a symlink the only entry a -type f walk misses; the rule that survives
+# review is the simple one — under an engine root, anything that is not a
+# directory is engine surface.
+mkfifo "$EMDUTY/lib/pipe"
+t manifest-added-fifo-is-detected modified "$(em_field state)"
+t manifest-added-fifo-is-named "path=added lib/pipe" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/lib/pipe"
+
+# An engine ROOT replaced by a symlink is the same hole one level up: the link
+# must be named AND the tree behind it still measured, or an operator redirects
+# bin/ and every file the engine runs goes unread.
+mkdir -p "$TMP/manifest-elsewhere-bin"
+mv "$EMDUTY/bin/duty.sh" "$TMP/manifest-elsewhere-bin/duty.sh"
+rmdir "$EMDUTY/bin"
+ln -s "$TMP/manifest-elsewhere-bin" "$EMDUTY/bin"
+t manifest-redirected-root-is-named "path=added bin" "$(em --report --paths | grep '^path=')"
+printf 'echo TAMPERED\n' >"$TMP/manifest-elsewhere-bin/duty.sh"
+t manifest-redirected-root-still-measures-content \
+  "path=added bin
+path=modified bin/duty.sh" "$(em --report --paths | grep '^path=')"
+rm -f "$EMDUTY/bin"
+mkdir -p "$EMDUTY/bin"
+printf 'echo duty\n' >"$EMDUTY/bin/duty.sh"
+t manifest-after-root-restored-is-current current "$(em_field state)"
+
+# Every root install.sh writes into is covered — a gap here is a file an
+# operator can edit invisibly, and the list is easy to under-fill by hand.
+for f in bin/duty.sh lib/common.sh lib/jq/x.jq prompts/p.txt \
+         conf/roles/reviewer.conf conf/agents/claude.conf conf/fleet.defaults.conf; do
+  printf 'tampered\n' >>"$EMDUTY/$f"
+  t "manifest-covers[$f]" modified "$(em_field state)"
+  case "$f" in
+    bin/duty.sh)              printf 'echo duty\n' >"$EMDUTY/$f" ;;
+    lib/common.sh)            printf 'common\n'    >"$EMDUTY/$f" ;;
+    lib/jq/x.jq)              printf '.a\n'        >"$EMDUTY/$f" ;;
+    prompts/p.txt)            printf 'prompt\n'    >"$EMDUTY/$f" ;;
+    conf/roles/reviewer.conf) printf 'role\n'      >"$EMDUTY/$f" ;;
+    conf/agents/claude.conf)  printf 'agent\n'     >"$EMDUTY/$f" ;;
+    *)                        printf 'defaults\n'  >"$EMDUTY/$f" ;;
+  esac
+done
+t manifest-restored-tree-is-current current "$(em_field state)"
+
+# Per-box state and configuration are OUT of the manifest, each for its own
+# reason: duty.log and the work trees change on every tick; instance.conf is
+# machine-derived and the drill itself appends to it (rehearsal.sh's
+# AUTO_APPROVE_REREQUEST fixture); fleet.conf is transported on every install;
+# the registries carry their own divergence provenance in apply_registry.
+# Any of these inside the manifest reports a healthy fleet as modified.
+mkdir -p "$EMDUTY/work" "$EMDUTY/trees" "$EMDUTY/logs"
+printf 'tick\n'                     >"$EMDUTY/duty.log"
+printf 'AUTO_APPROVE_REREQUEST=0\n' >"$EMDUTY/conf/instance.conf"
+printf 'FLEET_BENCH="x"\n'          >"$EMDUTY/conf/fleet.conf"
+printf 'owner/repo\n'               >"$EMDUTY/repos.txt"
+printf 'scratch\n'                  >"$EMDUTY/work/session.json"
+t manifest-ignores-per-box-state current "$(em_field state)"
+
+# A record this shape cannot read is unverified, not modified: the algorithm
+# ships WITH the engine, so a record from another format version must never
+# read as somebody's edit.
+cp "$EMDUTY/.engine-manifest" "$TMP/manifest-v1-backup"
+sed -i '1s/.*/# crew-engine-manifest v99 crew@9.9.9/' "$EMDUTY/.engine-manifest"
+t manifest-foreign-format-is-unverified unverified "$(em_field state)"
+cp "$TMP/manifest-v1-backup" "$EMDUTY/.engine-manifest"
+
+# No engine at all is `absent`, which is not a fault to report — it is `crew
+# hire`, and the status table already says so.
+mv "$EMDUTY/VERSION" "$TMP/manifest-version-backup"
+t manifest-no-engine-is-absent absent "$(em_field state)"
+mv "$TMP/manifest-version-backup" "$EMDUTY/VERSION"
+
+# --- the installer: records, then refuses ---------------------------------
+# Real installs into a scratch DUTY_DIR, through the same curated PATH the
+# other installer fixtures use.
+MHOME="$TMP/manifest-install-home"
+MDUTY="$MHOME/duty"
+mkdir -p "$MHOME"
+minstall() {
+  env HOME="$MHOME" DUTY_DIR="$MDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" --agent claude --role reviewer "$@"
+}
+mstate() { env DUTY_DIR="$MDUTY" bash "$EM" --state; }
+minstall >/dev/null 2>&1
+t install-records-a-manifest current "$(mstate)"
+t install-manifest-names-the-version "crew@$(head -1 "$ROOT/VERSION") (fixture-sha)" \
+  "$(env DUTY_DIR="$MDUTY" bash "$EM" --report | sed -n 's/^recorded=//p')"
+
+# The converging re-run: identical bytes, so the box is still current and the
+# installer does not refuse itself.
+if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-reship-identical-rc 0 "$r1"
+t install-reship-identical-stays-current current "$(mstate)"
+
+# The half of this issue that loses work: a modified tree is REFUSED, and
+# nothing is written.
+printf '# hotfix by hand\n' >>"$MDUTY/bin/duty.sh"
+hotfix_before="$(cat "$MDUTY/bin/duty.sh")"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-modified-rc 1 "$r1"
+case "$refuse_out" in *"REFUSING to overwrite a MODIFIED engine"*) r1=refused ;; *) r1=SILENT ;; esac
+t install-refusal-is-loud refused "$r1"
+case "$refuse_out" in *"modified bin/duty.sh"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-path named "$r1"
+case "$refuse_out" in *"crew@$(head -1 "$ROOT/VERSION")"*) r1=versioned ;; *) r1=BARE ;; esac
+t install-refusal-names-the-version versioned "$r1"
+t install-refusal-changes-nothing "$hotfix_before" "$(cat "$MDUTY/bin/duty.sh")"
+
+# --force is the whole escape hatch, and it must actually proceed.
+if minstall --force >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-force-proceeds-rc 0 "$r1"
+case "$(cat "$MDUTY/bin/duty.sh")" in *"hotfix by hand"*) r1=SURVIVED ;; *) r1=overwritten ;; esac
+t install-force-overwrites overwritten "$r1"
+t install-force-re-records-current current "$(mstate)"
+
+# The other half of --force, and the reason it is an escape hatch rather than a
+# laundering step: a file the incoming tree does not ship must not RIDE THROUGH
+# it. Copying over matching names converges every file the tree has and says
+# nothing about one it does not, so before this an added ~/duty/bin/hotfix.sh
+# was refused, then survived --force, then got hashed into the new record — the
+# box read `current` with unshipped executable code in it, certified by the
+# instrument built to catch exactly that.
+printf '#!/bin/sh\necho hotfix\n' >"$MDUTY/bin/hotfix.sh"
+chmod +x "$MDUTY/bin/hotfix.sh"
+added_before="$(cat "$MDUTY/bin/hotfix.sh")"
+t install-added-file-reads-modified modified "$(mstate)"
+if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-refuses-added-file 1 "$r1"
+if force_out="$(minstall --force 2>&1)"; then r1=0; else r1=$?; fi
+t install-force-over-added-file-rc 0 "$r1"
+if [ -e "$MDUTY/bin/hotfix.sh" ]; then r1=SURVIVED; else r1=gone; fi
+t install-force-removes-the-added-file gone "$r1"
+# Moved, not deleted: the hotfix nobody told the fleet about is evidence.
+t install-force-parks-it-in-legacy "$added_before" "$(cat "$MDUTY/legacy/bin/hotfix.sh" 2>/dev/null)"
+case "$force_out" in
+  *"moved unshipped engine file to legacy/: bin/hotfix.sh"*) r1=named ;;
+  *) r1=SILENT ;;
+esac
+t install-force-names-what-it-moved named "$r1"
+case "$(cat "$MDUTY/.engine-manifest")" in *hotfix*) r1=BLESSED ;; *) r1=absent ;; esac
+t install-force-does-not-record-the-added-file absent "$r1"
+t install-force-over-added-file-is-current current "$(mstate)"
+# ...and the engine that was installed around it is intact.
+if [ -x "$MDUTY/bin/duty.sh" ]; then r1=installed; else r1=MISSING; fi
+t install-force-sweep-leaves-the-engine installed "$r1"
+
+# The sweep enumerates the same surface the manifest does, or the hole above
+# reopens in the installer: `find -type f` walks past a symlink, so an added
+# LINK was refused, survived --force, and was then recorded as shipped. This
+# also lands on the plain legacy/ name the added FILE above already took, so it
+# is the collision case too: the first park must survive, because parking
+# instead of deleting is an evidence argument and evidence the next run
+# silently replaces is not evidence.
+ln -s /bin/sh "$MDUTY/bin/hotfix.sh"
+t install-added-symlink-reads-modified modified "$(mstate)"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-added-symlink 1 "$r1"
+case "$refuse_out" in *"added bin/hotfix.sh"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-symlink named "$r1"
+if force_out="$(minstall --force 2>&1)"; then r1=0; else r1=$?; fi
+t install-force-over-added-symlink-rc 0 "$r1"
+if [ -e "$MDUTY/bin/hotfix.sh" ] || [ -L "$MDUTY/bin/hotfix.sh" ]; then r1=SURVIVED; else r1=gone; fi
+t install-force-removes-the-added-symlink gone "$r1"
+case "$(cat "$MDUTY/.engine-manifest")" in *hotfix*) r1=BLESSED ;; *) r1=absent ;; esac
+t install-force-does-not-record-the-added-symlink absent "$r1"
+t install-force-over-added-symlink-is-current current "$(mstate)"
+# Parked as the link it was — not as a copy of whatever it pointed at.
+parked_link=""
+for p in "$MDUTY"/legacy/bin/hotfix.sh.*; do
+  [ -e "$p" ] || [ -L "$p" ] || continue
+  parked_link="${p##*/}"; break
+done
+if [ -L "$MDUTY/legacy/bin/$parked_link" ]; then r1='link'; else r1=NOT-A-LINK; fi
+t install-force-parks-the-symlink-as-a-link link "$r1"
+t install-force-parks-the-symlink-target /bin/sh \
+  "$(readlink "$MDUTY/legacy/bin/$parked_link" 2>/dev/null)"
+t install-second-park-keeps-the-first "$added_before" \
+  "$(cat "$MDUTY/legacy/bin/hotfix.sh" 2>/dev/null)"
+case "$force_out" in *"kept as bin/$parked_link"*) r1=named ;; *) r1=SILENT ;; esac
+t install-collided-park-names-where-it-went named "$r1"
+
+# The same hole one component UP, and the reason the sweep alone cannot close
+# it: the sweep descends a symlinked root but never sweeps the root entry, so an
+# operator's `ln -s elsewhere ~/duty/bin` was detected, refused — and then
+# survived --force, was written into the record, and the box read `current` with
+# its engine executing out of a directory this version never shipped. Detection
+# already names the redirect, so blessing it is worse than never having looked.
+REDIR="$TMP/manifest-redirect-target"
+mkdir -p "$REDIR"
+mv "$MDUTY/bin" "$REDIR/bin"
+ln -s "$REDIR/bin" "$MDUTY/bin"
+t install-redirected-root-reads-modified modified "$(mstate)"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-redirected-root 1 "$r1"
+case "$refuse_out" in *"added bin"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-redirected-root named "$r1"
+# ...and the refusal changed nothing: the redirect is still exactly as it was.
+if [ -L "$MDUTY/bin" ]; then r1=intact; else r1=DISTURBED; fi
+t install-refusal-leaves-the-redirect-alone intact "$r1"
+
+if force_out="$(minstall --force 2>&1)"; then r1=0; else r1=$?; fi
+t install-force-over-redirected-root-rc 0 "$r1"
+# The convergence: a real directory where the link was, not a link crew ships.
+if [ -d "$MDUTY/bin" ] && [ ! -L "$MDUTY/bin" ]; then r1=real; else r1=STILL-A-LINK; fi
+t install-force-replaces-the-redirect-with-a-real-dir real "$r1"
+# Moved, not deleted — and parked as a LINK, so the target it pointed at is the
+# evidence, sitting outside the engine surface.
+redir_park=""
+for p in "$MDUTY"/legacy/bin "$MDUTY"/legacy/bin.*; do
+  if [ -L "$p" ]; then redir_park="$p"; break; fi
+done
+if [ -n "$redir_park" ]; then r1='link'; else r1=NOT-PARKED-AS-LINK; fi
+t install-force-parks-the-redirect-as-a-link link "$r1"
+t install-force-parks-the-redirect-target "$REDIR/bin" \
+  "$(readlink "$redir_park" 2>/dev/null)"
+case "$force_out" in
+  *"replaced redirected engine directory with a real one: bin"*) r1=named ;;
+  *) r1=SILENT ;;
+esac
+t install-force-names-the-redirect-it-replaced named "$r1"
+# The record must not carry the redirect: `bin` as an entry is the blessing.
+case "$(sed -n 's/.*  \(bin\)$/\1/p' "$MDUTY/.engine-manifest")" in
+  bin) r1=BLESSED ;; *) r1=absent ;;
+esac
+t install-force-does-not-record-the-redirect absent "$r1"
+t install-force-over-redirected-root-is-current current "$(mstate)"
+if [ -x "$MDUTY/bin/duty.sh" ]; then r1=installed; else r1=MISSING; fi
+t install-force-through-redirect-leaves-the-engine installed "$r1"
+# The park above collided by construction: the added-file fixtures further up
+# already left legacy/bin as a DIRECTORY holding hotfix.sh, so parking a link
+# called `bin` had to take the timestamped name instead of replacing it. Evidence
+# the next run overwrites is not evidence, and a redirect park is no exception.
+t install-redirect-park-keeps-the-earlier-evidence "$added_before" \
+  "$(cat "$MDUTY/legacy/bin/hotfix.sh" 2>/dev/null)"
+case "$redir_park" in
+  *"/legacy/bin."*) r1=timestamped ;; *) r1=CLOBBERED-THE-DIRECTORY ;;
+esac
+t install-redirect-park-takes-a-free-name timestamped "$r1"
+
+# One level FURTHER up, where it was not even detected: conf/ carries
+# conf/roles, conf/agents and conf/fleet.defaults.conf without being a manifest
+# root itself, so a redirect there resolved, hashed clean, and never refused —
+# the whole role and agent set read from wherever an operator pointed it while
+# the instrument said `current`.
+#
+# This is also why the contents are copied back through the link rather than the
+# root simply emptied: OPERATOR_CONF falls back to the shipped example only when
+# the box has no conf/fleet.conf of its own, so a normalization that dropped the
+# redirect's contents would destroy a transported one.
+printf 'FLEET_KEEPME=1\n' >>"$MDUTY/conf/fleet.conf"
+minstall --force >/dev/null 2>&1   # re-record with the marker in place
+mv "$MDUTY/conf" "$REDIR/conf"
+ln -s "$REDIR/conf" "$MDUTY/conf"
+t install-redirected-ancestor-reads-modified modified "$(mstate)"
+if refuse_out="$(minstall 2>&1)"; then r1=0; else r1=$?; fi
+t install-refuses-redirected-ancestor 1 "$r1"
+case "$refuse_out" in *"added conf"*) r1=named ;; *) r1=UNNAMED ;; esac
+t install-refusal-names-the-redirected-ancestor named "$r1"
+minstall --force >/dev/null 2>&1
+if [ -d "$MDUTY/conf" ] && [ ! -L "$MDUTY/conf" ]; then r1=real; else r1=STILL-A-LINK; fi
+t install-force-replaces-the-redirected-ancestor real "$r1"
+# The per-box configuration behind the redirect came back with it.
+case "$(cat "$MDUTY/conf/fleet.conf" 2>/dev/null)" in
+  *FLEET_KEEPME*) r1=kept ;; *) r1=LOST ;;
+esac
+t install-redirect-normalization-keeps-the-operator-fleet-conf kept "$r1"
+if [ -f "$MDUTY/conf/instance.conf" ]; then r1=present; else r1=MISSING; fi
+t install-redirect-normalization-keeps-instance-conf present "$r1"
+t install-force-over-redirected-ancestor-is-current current "$(mstate)"
+
+# A DANGLING root redirect must not take the install down with it: there is no
+# content to restore, so the right answer is an empty real directory the install
+# then fills, not a crash under `set -e`.
+rm -rf "$MDUTY/prompts"
+ln -s "$TMP/manifest-redirect-nowhere" "$MDUTY/prompts"
+t install-dangling-root-redirect-reads-modified modified "$(mstate)"
+if minstall --force >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-force-over-dangling-root-redirect-rc 0 "$r1"
+if [ -d "$MDUTY/prompts" ] && [ ! -L "$MDUTY/prompts" ]; then r1=real; else r1=STILL-A-LINK; fi
+t install-force-replaces-the-dangling-redirect real "$r1"
+if [ -n "$(ls -A "$MDUTY/prompts" 2>/dev/null)" ]; then r1=filled; else r1=EMPTY; fi
+t install-force-refills-the-dangling-redirect filled "$r1"
+t install-force-over-dangling-redirect-is-current current "$(mstate)"
+
+# A converging re-install sweeps NOTHING. Every install parking files in
+# legacy/ would make the mechanism noise, and noise is how the one real one
+# gets missed.
+legacy_before="$(cd "$MDUTY/legacy" && find . -type f | LC_ALL=C sort)"
+reship_out="$(minstall 2>&1)"
+t install-clean-reship-sweeps-nothing "$legacy_before" \
+  "$(cd "$MDUTY/legacy" && find . -type f | LC_ALL=C sort)"
+case "$reship_out" in *"moved unshipped engine file"*) r1=NOISY ;; *) r1=quiet ;; esac
+t install-clean-reship-is-quiet quiet "$r1"
+
+# The migration: a box hired before content stamping has no record. It must
+# read unverified, must NOT be refused, and one install must cure it.
+rm -f "$MDUTY/.engine-manifest"
+t install-pre-existing-box-is-unverified unverified "$(mstate)"
+if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-pre-existing-box-is-not-refused 0 "$r1"
+t install-pre-existing-box-is-cured current "$(mstate)"
+
+# The obsolete half, on the box where it actually happens: an `unverified` box
+# is deliberately NOT refused, so nothing else would ever notice the module it
+# has been carrying since two versions ago. The install that cures it sweeps it
+# — at depth, and without --force — instead of recording it as shipped.
+rm -f "$MDUTY/.engine-manifest"
+printf 'dead\n' >"$MDUTY/lib/jq/obsolete.jq"
+t install-obsolete-file-box-is-unverified unverified "$(mstate)"
+if minstall >/dev/null 2>&1; then r1=0; else r1=$?; fi
+t install-unforced-sweep-rc 0 "$r1"
+if [ -e "$MDUTY/lib/jq/obsolete.jq" ]; then r1=SURVIVED; else r1=gone; fi
+t install-unforced-sweeps-the-obsolete-file gone "$r1"
+t install-unforced-sweep-parks-it dead "$(cat "$MDUTY/legacy/lib/jq/obsolete.jq" 2>/dev/null)"
+case "$(cat "$MDUTY/.engine-manifest")" in *obsolete*) r1=BLESSED ;; *) r1=absent ;; esac
+t install-unforced-sweep-does-not-record-it absent "$r1"
+t install-unforced-sweep-is-current current "$(mstate)"
+
+# --- crew status: what the operator reads ---------------------------------
+# A box is a directory here: the stub runs `box exec` bodies with HOME pointed
+# into it, so the REAL engine-manifest.sh runs against a REAL installed tree
+# and the column is asserted end to end rather than against a mocked verdict.
+MSROOT="$TMP/status-boxes"
+MSSHIM="$TMP/status-bin"
+MSCONF="$TMP/status-fleet"
+MSCALLS="$TMP/status-box-calls"
+mkdir -p "$MSSHIM" "$MSCONF" "$MSROOT"
+printf 'fixture-box claude reviewer\n' >"$MSCONF/fleet.roster"
+printf 'FLEET_BENCH="b"\nFLEET_TRIAGE="t"\nFLEET_HUMAN="h"\n' >"$MSCONF/fleet.conf"
+printf 'owner/repo\n' >"$MSCONF/repos.txt"
+cat >"$MSSHIM/box" <<'EOF'
+#!/usr/bin/env bash
+# box list/info/exec against $MSROOT/<name>, one directory per box.
+case "$1" in
+  list) printf '[{"name":"fixture-box"}]\n' ;;
+  info) printf '[{"status":"running"}]\n' ;;
+  exec)
+    name="$2"
+    printf '%s\n' "$name" >>"$MSCALLS"
+    shift 3                      # past: exec <name> --
+    # what is left is `bash -lc <script>`. Run the script with -c rather than
+    # -lc: a login shell would source this workstation's profile, and the box
+    # under test is meant to be the directory and nothing else. DUTY_DIR is
+    # unset because a real box has none — it resolves from HOME, which is the
+    # resolution under test.
+    env -u DUTY_DIR HOME="$MSROOT/$name" bash -c "$3"
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$MSSHIM/box"
+ln -sf "$(command -v jq)" "$MSSHIM/jq"
+crewstatus() {
+  env CREW_CONFIG_DIR="$MSCONF" MSROOT="$MSROOT" MSCALLS="$MSCALLS" \
+    PATH="$MSSHIM:$PATH" bash "$ROOT/cli/crew" status "$@" 2>&1
+}
+# The fixture box IS the installed tree from the installer fixtures above.
+mkdir -p "$MSROOT/fixture-box"
+cp -R "$MDUTY" "$MSROOT/fixture-box/duty"
+# ...and it has ticked once. Not decoration: with no duty.log at all, the row's
+# `tail -n 1` exits 1, and under `set -o pipefail` that kills cmd_status's loop
+# after the header — which is why its own `no ticks yet` fallback is
+# unreachable today. That is a pre-existing defect, reported separately rather
+# than fixed here, and a box that has never ticked is not the state #159 is
+# about.
+printf '2026-07-29T00:00:00Z duty run start\n' >"$MSROOT/fixture-box/duty/duty.log"
+
+status_out="$(crewstatus)"
+case "$status_out" in *INTEGRITY*) r1=present ;; *) r1=MISSING ;; esac
+t status-has-an-integrity-column present "$r1"
+case "$status_out" in *"fixture-box"*current*) r1=current ;; *) r1=OTHER ;; esac
+t status-clean-box-reads-current current "$r1"
+
+# The round-trip budget (#159 acceptance): reading integrity must ride the exec
+# `crew status` already made. Three per box — the engine report, the auth/tick
+# read, and the last log line — which is exactly what it cost before this
+# existed, when the first of the three was a bare `head -1 ~/duty/VERSION`.
+: >"$MSCALLS"
+crewstatus >/dev/null
+t status-round-trips-per-box 3 "$(grep -c . "$MSCALLS")"
+
+# A modified box, end to end.
+printf '# hotfix by hand\n' >>"$MSROOT/fixture-box/duty/bin/duty.sh"
+status_out="$(crewstatus)"
+case "$status_out" in *MODIFIED*) r1=shouts ;; *) r1=SILENT ;; esac
+t status-modified-box-shouts shouts "$r1"
+case "$status_out" in *"MODIFIED since crew@$(head -1 "$ROOT/VERSION")"*) r1=named ;; *) r1=UNNAMED ;; esac
+t status-modified-names-the-version named "$r1"
+
+# MUST FAIL: modified and skew collapsing into one state. They ask for
+# different actions — skew says "ship the engine", modified says "find out
+# what someone did here" — so the HOST/ENGINE pair and the INTEGRITY column
+# have to disagree independently. Here the box is at the host's own version
+# and still modified: nothing about skew can be producing this word.
+host_v="$(head -1 "$ROOT/VERSION")"
+ms_row="$(printf '%s\n' "$status_out" | grep '^fixture-box' || true)"
+case "$ms_row" in
+  *"$host_v"*"crew@$host_v"*MODIFIED*) r1=same-version-and-modified ;;
+  *) r1=COLLAPSED ;;
+esac
+t status-modified-is-not-skew same-version-and-modified "$r1"
+
+# The per-box view lists the files, on the same single exec.
+detail_out="$(crewstatus fixture-box)"
+case "$detail_out" in *"integrity: MODIFIED"*"modified bin/duty.sh"*) r1=listed ;; *) r1=MISSING ;; esac
+t status-detail-lists-the-files listed "$r1"
+case "$detail_out" in *"--force"*) r1=told ;; *) r1=SILENT ;; esac
+t status-detail-names-the-override told "$r1"
+
+# A box hired before content stamping: no record AND no tool to compute one.
+# It reads unverified in the table, never modified.
+rm -f "$MSROOT/fixture-box/duty/.engine-manifest" "$MSROOT/fixture-box/duty/bin/engine-manifest.sh"
+status_out="$(crewstatus)"
+case "$status_out" in *unverified*) r1=unverified ;; *MODIFIED*) r1=MODIFIED ;; *) r1=OTHER ;; esac
+t status-pre-existing-box-reads-unverified unverified "$r1"
 
 echo
 echo "passed $PASS, failed $FAIL"

@@ -208,7 +208,7 @@ CMDS=(
   "versions^^List installed host versions and mark the current and running trees^cmd_versions"
   "use^<version>^Switch the default host version; report box engines left behind^cmd_use"
   "uninstall^[<version>] [--all] [--force]^Remove one host version or the whole console, with fleet guards^cmd_uninstall"
-  "upgrade^<box> | --all [--ref <version-or-git-ref>]^Ship the engine from this host and re-install it in place^cmd_upgrade"
+  "upgrade^<box> | --all [--ref <version-or-git-ref>] [--force]^Ship the engine from this host and re-install it in place^cmd_upgrade"
   "gold^<box> [--force]^Snapshot a box as a gold image — cut PRE-login, credential-free^cmd_gold"
   "floor^[--port <n>] [--bind <a>] [--local] [--user <u>] [--pass <p>] [--roster <path>] [--interval <s>]^Serve the fleet-floor console on IP:PORT^cmd_floor"
   "init^[config-dir]^Scaffold a new operator fleet definition^cmd_init"
@@ -368,9 +368,11 @@ EOF
     hire) cat <<'EOF'
 
 Idempotent: a box already carrying this crew's version is skipped, so
-hire is safe to re-run and is what 'crew up' calls. --force re-bakes anyway;
-a development tree (a -dev version) always re-bakes, because two dev trees
-at the same version are not the same code.
+hire is safe to re-run and is what 'crew up' calls. --force re-bakes anyway,
+and overwrites a box whose engine files were modified by hand (which hire
+otherwise refuses, same as upgrade); a development tree (a -dev version)
+always re-bakes, because two dev trees at the same version are not the same
+code.
 
 --ref names a DIFFERENT engine source, resolved on the host (#99): from a
 working tree it is a git ref, and from an installed tree it is one of the
@@ -401,6 +403,11 @@ act on a known target, which --all is not.
 
 A box's armed state is preserved rather than asserted: an upgrade that arms
 a box nobody armed is a behaviour change wearing a version bump's clothes.
+
+A box whose engine files no longer match the version they were installed at
+is REFUSED, naming what differs, and nothing is written. Somebody patched
+that box; this is the last moment anyone can be told before the patch is
+overwritten. 'crew status <box>' lists the files. --force overwrites them.
 EOF
       ;;
     gold) cat <<'EOF'
@@ -946,9 +953,48 @@ box_agent() {
     | tr -d '"'\''\r\n' || true
 }
 
+# engine_report NAME [--paths] — ONE exec: which engine this box carries, and
+# whether its files are still that engine (#159).
+#
+# Both facts on the same round trip because `crew status` needs both on every
+# row and the budget was explicit: no additional round trip per box. This
+# replaces the bare `head -1 ~/duty/VERSION` that hired_at used to make, so the
+# fleet table costs exactly what it cost before.
+#
+# Emits key=value lines:
+#     state=current|modified|unverified|absent
+#     stamp=<the ~/duty/VERSION first line>
+#     recorded=<the stamp the engine manifest was recorded at>
+#     path=<modified|added|removed> <relpath>     (--paths, when modified)
+#
+# key=value rather than one delimited record on purpose: a TAB-joined line read
+# back with `read -r a b c` collapses an empty field into the next one, and the
+# empty field here — `recorded=` on an unverified box — is the common case
+# until the fleet has upgraded once.
+engine_report() {
+  local name="$1" paths="${2:-}"
+  # shellcheck disable=SC2016  # $HOME must expand INSIDE the box
+  bxn "$name" '
+    if [ -x "$HOME/duty/bin/engine-manifest.sh" ]; then
+      "$HOME/duty/bin/engine-manifest.sh" --report '"$paths"'
+    else
+      # An engine installed before content stamping ships no tool to compute
+      # an engine manifest and recorded none. That is UNVERIFIED, never
+      # modified: a fleet that reads modified everywhere on the day this lands
+      # has learned that the word means nothing. One upgrade cures it.
+      if [ -s "$HOME/duty/VERSION" ]; then echo state=unverified; else echo state=absent; fi
+      echo "stamp=$(head -1 "$HOME/duty/VERSION" 2>/dev/null)"
+      echo recorded=
+    fi
+  ' 2>/dev/null | tr -d '\r' || true
+}
+
+# report_field KEY REPORT — one value out of an engine_report capture.
+report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
+
 # hired_at NAME — the raw first-line engine stamp, if any. Keep this raw for
 # status and provenance; comparisons go through stamp_version below.
-hired_at() { bxn "$1" 'head -1 ~/duty/VERSION 2>/dev/null' 2>/dev/null | tr -d '\r\n'; }
+hired_at() { report_field stamp "$(engine_report "$1")"; }
 
 # stamp_version STAMP — print the version from a current-format stamp.
 # SHA-only legacy stamps deliberately fail to parse: they still prove the box
@@ -1167,9 +1213,16 @@ hire_box() {
       return 0
   fi
   echo "hiring $name  (role=$role agent=$agent crew@$want)"
+  # --force already meant "re-install even when the version matches"; it now
+  # also carries through install.sh's refusal to overwrite a MODIFIED engine
+  # (#159). One flag, one meaning: install over what is there regardless.
+  # An `if`, not `[ … ] && …`: under set -e that form kills the function
+  # whenever force is 0, the same shape as the note in cmd_upgrade's loop.
+  local force_arg=""
+  if [ "$force" -eq 1 ]; then force_arg="--force"; fi
   if ! stage_engine "$name" ||
      ! stage_fleet_definition "$name" ||
-     ! install_staged_engine "$name" "$identity_args $registry_arg --arm-cron"; then
+     ! install_staged_engine "$name" "$identity_args $registry_arg --arm-cron $force_arg"; then
     cleanup_staged_engine "$name"
     echo "$name: hire FAILED — the engine is NOT installed and cron is NOT armed (output above)"
     return 1
@@ -1424,8 +1477,28 @@ cmd_status() {
     box_exists "$b" || die "no box named '$b' — 'crew status' lists the roster"
     echo "== $b"
     echo "host: $(crew_version)"
-    engine="$(hired_at "$b")"
+    # The same single exec the table makes, asked for its paths as well: this
+    # is the view an operator opens after the table shouted MODIFIED, so it is
+    # where the file list belongs. Still one round trip, not two.
+    local report state recorded
+    report="$(engine_report "$b" --paths)"
+    engine="$(report_field stamp "$report")"
+    state="$(report_field state "$report")"
+    recorded="$(report_field recorded "$report")"
     echo "engine: ${engine:-not hired (no engine)}"
+    case "$state" in
+      current)
+        echo "integrity: current — every engine file is what ${recorded:-this install} shipped" ;;
+      modified)
+        # Named separately from skew, and worded differently, because they ask
+        # for different actions: skew says "ship the engine", MODIFIED says
+        # "find out what someone did here, and why".
+        echo "integrity: MODIFIED — diverged from ${recorded:-its recorded install}:"
+        printf '%s\n' "$report" | sed -n 's/^path=/  /p'
+        echo "  crew upgrade $b --force overwrites all of these — save what you need first" ;;
+      unverified)
+        echo "integrity: unverified — hired before content stamping; the next crew upgrade records one" ;;
+    esac
     bxn "$b" 'tail -n 5 ~/duty/duty.log 2>/dev/null' 2>/dev/null ||
       echo "  (unreachable)"
     return 0
@@ -1433,24 +1506,33 @@ cmd_status() {
 
   # 20, not 18: `crew-drill-reviewer` is 19 characters, so an 18-wide column
   # overflowed and shifted every field after it one place right on that row.
-  local fmt='%-20s %-9s %-12s %-15s %-8s %-8s %s\n'
+  #
+  # INTEGRITY is its OWN column and not a decoration on ENGINE (#159): HOST vs
+  # ENGINE is skew, INTEGRITY is whether the box is even running the engine it
+  # names, and collapsing the two loses the only question `crew status` could
+  # not answer before. 10 wide for `unverified`.
+  local fmt='%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n'
   local host; host="$(crew_version)"
   # shellcheck disable=SC2059
-  printf "$fmt" MEMBER STATE HOST ENGINE GH VENDOR NOTE
+  printf "$fmt" MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
+  local report estate erecorded edisplay
   while read -r name agent role _from; do
     if ! box_exists "$name"; then
       # shellcheck disable=SC2059
-      printf "$fmt" "$name" - "$host" - - - "NOT CREATED — crew new $name"
+      printf "$fmt" "$name" - "$host" - - - - "NOT CREATED — crew new $name"
       continue
     fi
     state="$(box_state "$name")"
     if [ "$state" = "stopped" ]; then
       # shellcheck disable=SC2059
-      printf "$fmt" "$name" stopped "$host" - - - "crew up starts it"
+      printf "$fmt" "$name" stopped "$host" - - - - "crew up starts it"
       continue
     fi
-    hired="$(hired_at "$name")"
+    report="$(engine_report "$name")"
+    hired="$(report_field stamp "$report")"
+    estate="$(report_field state "$report")"
+    erecorded="$(report_field recorded "$report")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
     read -r ghs vs tickage <<<"$(auth_from_flow "$name")"
     ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
@@ -1498,20 +1580,34 @@ cmd_status() {
       last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"
       note="${last:-no ticks yet}"
     fi
+    # The wire vocabulary is lowercase; MODIFIED shouts for the same reason
+    # MISSING does — it is the one row an operator must not skim past, and the
+    # note names the version it diverged from so the column stays one word.
+    case "$estate" in
+      modified)
+        edisplay=MODIFIED
+        note="⚠ engine MODIFIED since ${erecorded:-its install} — crew status $name lists the files${note:+; $note}" ;;
+      absent) edisplay=- ;;
+      *)      edisplay="${estate:--}" ;;
+    esac
     # shellcheck disable=SC2059
-    printf "$fmt" "$name" "$state" "$host" "$hired" "$ghs_d" "$vs_d" "$note"
+    printf "$fmt" "$name" "$state" "$host" "$hired" "$edisplay" "$ghs_d" "$vs_d" "$note"
   done < <(read_roster)
 }
 
 cmd_upgrade() {
   need_box
-  local targets="" skipped="" target="" ref="HEAD" want
+  local targets="" skipped="" target="" ref="HEAD" want force_arg=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --all)
         [ -z "$target" ] || usage_error "usage: $(synopsis_of upgrade)"
         target="--all"; shift ;;
       --ref) need_value "$@"; ref="$2"; shift 2 ;;
+      # The override for install.sh's refusal to overwrite a MODIFIED engine
+      # (#159). Nothing else consults it: the check is in the installer, where
+      # the overwrite happens, so this only has to reach it.
+      --force) force_arg="--force"; shift ;;
       --*) usage_error "unknown argument '$1' (usage: $(synopsis_of upgrade))" ;;
       *)
         [ -z "$target" ] || usage_error "usage: $(synopsis_of upgrade)"
@@ -1559,7 +1655,7 @@ cmd_upgrade() {
     fi
     if stage_engine "$b" &&
        stage_fleet_definition "$b" &&
-       install_staged_engine "$b" "$identity_args $registry_arg $flags"; then
+       install_staged_engine "$b" "$identity_args $registry_arg $flags $force_arg"; then
       :
     else
       cleanup_staged_engine "$b"

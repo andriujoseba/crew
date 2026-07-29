@@ -286,6 +286,23 @@ else
   fail "crew status: an unhired box says so" "$(grep '^cli-nothired' "$CL_TMP/crew-out")"
 fi
 
+# Engine INTEGRITY is a column of its own (#159), not a decoration on ENGINE:
+# HOST vs ENGINE is skew, integrity is whether the box is running the engine it
+# names, and the two call for different actions. Asserted here because a hired
+# box reading anything but `current` on a clean stub fleet means the CLI's
+# report and the box's answer have drifted apart — the same class of failure
+# `crew status` had NEVER worked on a populated fleet.
+if grep -q 'INTEGRITY' "$CL_TMP/crew-out"; then
+  ok "crew status: the table carries an integrity column"
+else
+  fail "crew status: the table carries an integrity column" "$(head -1 "$CL_TMP/crew-out")"
+fi
+if grep -qE "^cli-hired .*current" "$CL_TMP/crew-out"; then
+  ok "crew status: a healthy box reads current"
+else
+  fail "crew status: a healthy box reads current" "$(grep '^cli-hired' "$CL_TMP/crew-out")"
+fi
+
 # `crew up` reads box info at its OWN call site and runs its own roster loop,
 # so it needs its own coverage: #47 and #48 were each present twice, and
 # fixing one copy would have left the convergence verb broken. --dry-run
