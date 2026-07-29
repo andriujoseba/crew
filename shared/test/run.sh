@@ -1504,6 +1504,9 @@ CHK_CANCEL_THEN_OK='[
 CHK_OK_THEN_CANCEL='[
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:08Z"}]'
+CHK_SAME_SECOND_CANCEL_LAST='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:17Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"}]'
 CHK_SUPERSEDED_CANCEL_AND_FAILURE='[
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
   {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
@@ -1519,6 +1522,10 @@ CHK_FAILURE_THEN_RUNNING='[
 SC_BAD='[{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
 SC_ERR='[{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}]'
 SC_MIX='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
+SC_COLLISION_STATUS_LAST='[
+  {"__typename":"CheckRun","name":"ci/build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
+  {"__typename":"StatusContext","context":"ci/build","state":"FAILURE","createdAt":"2026-07-29T11:05:00Z"}]'
+SC_COLLISION_STATUS_FIRST="$(printf '%s' "$SC_COLLISION_STATUS_LAST" | jq 'reverse')"
 
 state_of() { hc '[]' "$(mk_prc "$1")" | cut -f4; }
 t head-check-run-success      green   "$(state_of "$CHK_OK")"
@@ -1526,6 +1533,8 @@ t head-check-run-failure      red     "$(state_of "$CHK_BAD")"
 t head-status-context-failure red     "$(state_of "$SC_BAD")"
 t head-status-context-error   red     "$(state_of "$SC_ERR")"
 t head-mixed-shapes-one-red   red     "$(state_of "$SC_MIX")"
+t head-colliding-status-last-is-red red "$(state_of "$SC_COLLISION_STATUS_LAST")"
+t head-colliding-status-first-is-red red "$(state_of "$SC_COLLISION_STATUS_FIRST")"
 t head-check-still-running    pending "$(state_of "$CHK_RUNNING")"
 t head-no-checks-is-not-green none    "$(state_of '[]')"
 # GREEN IS A WHITELIST; ANYTHING ELSE IS RED (codex, #64). The first version
@@ -1546,6 +1555,7 @@ t head-unknown-conclusion-is-red red  "$(state_of "$CHK_UNKNOWN")"
 # not evidence; a cancellation that remains the latest run is still fail-closed.
 t head-cancelled-then-succeeded-is-green green "$(state_of "$CHK_CANCEL_THEN_OK")"
 t head-cancelled-as-last-word-is-red red "$(state_of "$CHK_OK_THEN_CANCEL")"
+t head-same-second-cancel-last-is-green green "$(state_of "$CHK_SAME_SECOND_CANCEL_LAST")"
 # Reduction is keyed by the check name, not workflow or run id: an unrelated
 # failure survives even while the superseded same-name cancellation disappears.
 t head-unrelated-failure-survives-superseded-cancel red \
