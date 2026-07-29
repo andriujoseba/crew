@@ -964,7 +964,7 @@ box_agent() {
 # Emits key=value lines:
 #     state=current|modified|unverified|absent
 #     stamp=<the ~/duty/VERSION first line>
-#     recorded=<the stamp the manifest was recorded at>
+#     recorded=<the stamp the engine manifest was recorded at>
 #     path=<modified|added|removed> <relpath>     (--paths, when modified)
 #
 # key=value rather than one delimited record on purpose: a TAB-joined line read
@@ -978,10 +978,10 @@ engine_report() {
     if [ -x "$HOME/duty/bin/engine-manifest.sh" ]; then
       "$HOME/duty/bin/engine-manifest.sh" --report '"$paths"'
     else
-      # An engine installed before content stamping ships no tool to compute a
-      # manifest and recorded none. That is UNVERIFIED, never modified: a fleet
-      # that reads modified everywhere on the day this lands has learned that
-      # the word means nothing. One upgrade cures it.
+      # An engine installed before content stamping ships no tool to compute
+      # an engine manifest and recorded none. That is UNVERIFIED, never
+      # modified: a fleet that reads modified everywhere on the day this lands
+      # has learned that the word means nothing. One upgrade cures it.
       if [ -s "$HOME/duty/VERSION" ]; then echo state=unverified; else echo state=absent; fi
       echo "stamp=$(head -1 "$HOME/duty/VERSION" 2>/dev/null)"
       echo recorded=
