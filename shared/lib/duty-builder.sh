@@ -553,11 +553,14 @@ _builder_repo() {
   # a red check is a human's call to make; a converged PR reaching nobody is
   # the failure this module exists to end. ---
   local my_open converged handoff_prs=""
-  my_open="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"
-  if [ "$my_open" = "err" ]; then
+  if [ "$mine_json" = "err" ]; then
     warn "$R: handoff detection failed; skipping"
   else
+    # Stay on the same authored-PR snapshot used above. A second listing could
+    # add a PR for which this tick has no cached review payload, or drop one
+    # whose round was just evaluated.
+    my_open="$(printf '%s' "$mine_json" \
+      | jq -r '.[] | select(.isDraft | not) | .number')"
     for N in $my_open; do
       # Round-log mirroring runs EVERY tick over my open PRs — not only at
       # handoff — so the body's Round log tracks each round as it is answered
