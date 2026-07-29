@@ -79,10 +79,29 @@ params cut it down, and raise the tile size for close work:
 | `mw` | `?mw=672` | cell tile width in px (default 336) |
 | `t` | `?t=8` | animation time in seconds |
 | `flat` | `?flat=1` | skip the chromatic split |
+| `guides` | `?guides=1` | draw the declared layout over each room tile |
 
 ```
 whiteboard.html?agents=grok&rooms=builder&states=working&w=1280
 ```
+
+## The layout, drawn
+
+`?guides=1` puts `LAYOUT` on the picture: the reserved sign, the two free wall
+bays, the deck each room already carries, the fixed structure, and the **unit
+envelope** — the union of `FLOORDEV.unitBox` across all 36 combinations, which
+is the alpha extent of the sprite the renderer actually draws rather than a
+number somebody estimated.
+
+That distinction is not pedantry. The first hand-written version of the
+envelope was 220px wide and wrong twice over: narrower than codex, whose six
+legs splay to 273px, and wide enough to overlap the pegboard — a rule invented
+to stop collisions, colliding. Writing the deck down found another one the same
+afternoon: the builder's conveyor started ten pixels inside the workbench top,
+four pixels tall, both surfaces dark, and fifteen loops of looking had not
+caught it.
+
+Re-derive the envelope by running the hook; do not nudge it by eye.
 
 ## Determinism
 

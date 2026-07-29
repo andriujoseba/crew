@@ -31,6 +31,7 @@
  *   ?mw=336                                                — cell tile width
  *   ?t=8                                                   — animation time, seconds
  *   ?flat=1                                                — skip the chromatic split
+ *   ?guides=1                                              — draw the declared layout
  */
 (function () {
   var D = window.FLOORDEV;
@@ -49,6 +50,7 @@
   var MH = D.MINI ? Math.round(MW * D.MINI.H / D.MINI.W) : Math.round(MW * 0.75);
   var T = q.get('t') === null ? 8 : Number(q.get('t'));
   var FLAT = q.get('flat') === '1';
+  var GUIDES = q.get('guides') === '1' && typeof D.guides === 'function';
   var VIEW = q.get('view') || 'both';
   var WANT_ROOM = VIEW === 'both' || VIEW === 'room';
   var WANT_CELL = (VIEW === 'both' || VIEW === 'cell') && typeof D.renderMini === 'function';
@@ -116,6 +118,11 @@
       'the console view · rendered by <code>FLOORDEV.render</code> — the same <code>drawTarget</code> the app uses');
     buildGrid('tile-', TW, TH, function (j) {
       D.render(j.cv, { agent: j.agent, room: j.room, state: j.state, t: T, flat: FLAT });
+      /* ?guides=1 lays the declared layout over the tile — the reserved sign,
+         the free wall bays, the keep-clear column and the deck each room
+         already carries. A prop that lands on one is then a visible mistake
+         against a stated rule rather than something that looked free. */
+      if (GUIDES) D.guides(j.cv, { room: j.room });
     });
   }
   if (WANT_CELL) {

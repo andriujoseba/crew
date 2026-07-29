@@ -96,6 +96,64 @@ var BAYS={
   reviewer:{L:[262,336,164,170], R:[690,428,300,124]},
   triage  :{L:[262,330,160,196], R:[836,424,160,128]}
 };
+/* And the rest of it, because seven rectangles out of a room is not a layout.
+   Loop 11 named the sign's rectangle, loop 13 named six wall bays, and its own
+   note says what was left: "every other placement still being decided by eye,
+   one prop at a time" — which is the habit that put a conduit through SECTOR-7
+   in the first place, still running, just further down the wall. Naming six
+   free areas does not fix it while the deck, the keep-clear column and the
+   fixed structure stay unstated, because a prop is placed against what is
+   ALREADY THERE at least as often as against what is free.
+
+   So: what the deck already carries, room by room, and what nothing may be
+   placed on in any room. Numbers are read off the props themselves, not
+   estimated — each row is the extent the function actually draws, and
+   FLOORDEV.guides draws these over a rendered tile so the claim is checkable
+   by looking rather than by trusting this comment.
+
+   Declaring it found one collision immediately, which is the argument for
+   declaring it: the builder's workbench ends at x=576 and its conveyor began
+   at x=566, so ten pixels of belt ran through the bench top. Both are dark and
+   the overlap is four pixels tall, which is exactly why eyes had not caught it
+   in fifteen loops. The conveyor now starts at 580. */
+var LAYOUT={
+  /* Where a unit can be. Not a guess: the union of FLOORDEV.unitBox over all
+     36 agent x room x state combinations, which is the alpha extent of the
+     sprite the renderer actually draws, mapped into room coordinates. Re-derive
+     it by running that hook; do not adjust it by eye.
+
+     The first hand-written version of this rectangle was 360..580 and wrong in
+     both directions at once — narrower than codex, whose six legs splay to
+     333..606, and wide enough to swallow the pegboard's left edge, so a rule
+     invented to stop collisions was itself colliding with two things. Measuring
+     it also settled a question nobody had asked: the inner edge of every room's
+     LEFT bay is inside codex's reach (bay L starts at 250-262 and codex reaches
+     333), so a prop in the inner ~40px of a left bay can be stood in front of.
+     Nothing there today needs to stay readable, and now that is a decision
+     rather than an accident. */
+  unit:["unit envelope",333,286,273,327],
+  /* Nothing goes here, in any room. The ceiling is deliberately not on this
+     list: the crane rail and the roof truss cross the lamp on purpose. */
+  keep:[
+    ["deck line",   250,596,760, 26]    // where every contact shadow lands
+  ],
+  /* What the floor already carries. x,y,w,h — including the parts that stand
+     proud of the bench top, because that is what a new prop would hit. */
+  deck:{
+    builder :[["crates",182,558,66,72],["workbench",372,536,204,76],["conveyor",580,558,222,54]],
+    reviewer:[["inspect desk",372,533,204,79],["verdict tower",632,496,14,116],
+              ["doc stacks",690,586,56,26],["file cabinets",1040,554,72,58]],
+    triage  :[["map console",372,536,204,76],["doc stack",700,586,26,26],
+              ["phone bank",1042,582,40,30],["file cabinet",1086,554,34,58]]
+  },
+  /* Structure. `all` is every room; the rest are the room's own. */
+  fixed:{
+    all     :[["right tower",1150,372,66,240]],
+    builder :[["crane rail",250,120,440,10]],
+    reviewer:[],
+    triage  :[]
+  }
+};
 /* Everything bolted to the wall stands a few centimetres off it, and until now
    not one of them said so. `plate()` gives a prop its own internal shading and
    stops at its outline, so a monitor bank, a kanban board and a hazard placard
@@ -282,7 +340,10 @@ function pegboard(t,lit){
   S.fillStyle="rgba(255,200,140,"+(0.06*lit)+")";S.fillRect(x,y,w,2);
 }
 function conveyor(t,st){
-  var x=566,y=558,w=236,run=st==="working";
+  /* x was 566, which put ten pixels of belt through the workbench top at
+     x=372..576. Four pixels tall, both surfaces dark, invisible for fifteen
+     loops and found the moment the deck was written down. See LAYOUT. */
+  var x=580,y=558,w=222,run=st==="working";
   S.fillStyle="#0f1520";S.fillRect(x+12,y+12,8,42);S.fillRect(x+w-20,y+12,8,42);
   plate(S,[[x,y],[x+w,y],[x+w,y+12],[x,y+12]],"#202836","#0d131e","#2a3444");
   var off=run?(t*40)%16:0;S.fillStyle="#0a0f16";S.fillRect(x+2,y+3,w-4,7);
@@ -2264,7 +2325,8 @@ function drawRobot(t){
      the result rather than re-deriving it and getting it wrong for two of the
      four vendors. */
   lastFeet=info.feet;
-  lastAnchors={hand:{x:px+info.hand.x*sc,y:py+info.hand.y*sc},
+  lastAnchors={sprite:{x:px,y:py,s:sc},
+               hand:{x:px+info.hand.x*sc,y:py+info.hand.y*sc},
                head:{x:px+260*sc,y:py+info.hy*sc},
                feet:(info.feet||[]).map(function(f){return {x:px+f.x*sc,y:py+f.y*sc,w:f.w*sc};})};
   /* Contact shadows, one per footprint the unit reported.
@@ -3199,6 +3261,49 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
     X.fillStyle="#03060d";X.fillRect(0,0,CELLW,dst.height/k);
     drawMini(o.t||0,5,5,CELLW-10,CELLH-10);
     X=sX;dpr=sdpr;miniFills=sfl;AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;
+  },
+  /* guides(dst,{room}) — the declared layout, drawn over a tile this hook has
+     already rendered. SIGN and BAYS were rules you had to hold in your head
+     while looking at a picture; this is the picture with the rules on it, which
+     is the difference between a stated layout and a documented intention. */
+  guides:function(dst,o){
+    var c=dst.getContext("2d"),k=dst.width/DW;
+    c.save();c.setTransform(k,0,0,k,0,0);
+    c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+    c.font="700 13px ui-monospace,monospace";c.textBaseline="top";c.textAlign="left";
+    var box=function(x,y,w,h,col,lab){
+      c.strokeStyle=col;c.lineWidth=2;c.setLineDash([7,5]);c.strokeRect(x,y,w,h);c.setLineDash([]);
+      var tw=c.measureText(lab).width;
+      c.fillStyle="rgba(0,0,0,0.65)";c.fillRect(x+3,y+3,tw+8,17);
+      c.fillStyle=col;c.fillText(lab,x+7,y+5);
+    };
+    box(SIGN.x,SIGN.y,SIGN.w,SIGN.h,"rgba(247,189,78,0.95)","sign");
+    var B=BAYS[o.room];
+    if(B){box(B.L[0],B.L[1],B.L[2],B.L[3],"rgba(120,205,255,0.95)","bay L");
+          box(B.R[0],B.R[1],B.R[2],B.R[3],"rgba(120,205,255,0.95)","bay R");}
+    var U=LAYOUT.unit;box(U[1],U[2],U[3],U[4],"rgba(255,140,60,0.95)",U[0]);
+    LAYOUT.keep.forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(255,90,80,0.9)",z[0]);});
+    (LAYOUT.deck[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(110,240,170,0.9)",z[0]);});
+    LAYOUT.fixed.all.concat(LAYOUT.fixed[o.room]||[]).forEach(function(z){box(z[1],z[2],z[3],z[4],"rgba(180,160,255,0.9)",z[0]);});
+    c.restore();
+  },
+  /* unitBox({agent,state}) — where a unit actually reaches, in room
+     coordinates, measured off the drawn sprite rather than estimated from it.
+     LAYOUT's keep-clear column is the union of these across every vendor and
+     state, and this is how it is re-derived when a robot changes shape. The
+     first hand-written version of that rectangle was 220 wide and wrong twice
+     over: it crossed into the builder's left bay AND under the pegboard, so a
+     rule invented to stop collisions was itself colliding. */
+  unitBox:function(o){
+    return borrowRoom({agent:o.agent,room:o.room||"builder",state:o.state||"working",t:o.t||0,warm:0},function(){
+      var sp=lastAnchors&&lastAnchors.sprite;if(!sp)return null;
+      var d=RB.getImageData(0,0,RW,RH).data,x0=RW,y0=RH,x1=0,y1=0,hit=false;
+      for(var y=0;y<RH;y++)for(var x=0;x<RW;x++){
+        if(d[(y*RW+x)*4+3]>24){hit=true;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
+      }
+      if(!hit)return null;
+      return {x:sp.x+x0*sp.s,y:sp.y+y0*sp.s,w:(x1-x0)*sp.s,h:(y1-y0)*sp.s};
+    });
   },
   /* Stop the hidden app loop painting behind a map. */
   pause:function(){devPaused=true;}};
