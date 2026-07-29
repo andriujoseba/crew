@@ -3052,6 +3052,41 @@ function nearSideProp(t,lit,st){
   ng2.addColorStop(0,"rgba(3,6,12,0.10)");ng2.addColorStop(1,"rgba(3,6,12,0.40)");
   S.fillStyle=ng2;S.fillRect(x-4,z[2],w+8,z[4]+8);
   });
+  /* L14 — the plane is WIRED together. Station and companions stood in the
+     same depth with nothing passing between them, which is how a stage set
+     stands. What actually crosses a shop floor is at ankle height: the
+     welding lead runs on to the drum it was cut over, the dispatch loom runs
+     out to its reel, and the review lab — which runs on paper, not power —
+     has dropped two sheets on the way to the cart. All of it lies in the
+     band the foreground lip half-swallows, which is where ankle clutter
+     belongs. */
+  if(ROOM==="builder"){
+    // bench edge → dips through the out-of-focus band → climbs the drum rim
+    S.strokeStyle="rgba(8,6,5,0.92)";S.lineWidth=3.5;
+    S.beginPath();S.moveTo(628,642);S.quadraticCurveTo(726,672,808,662);
+    S.quadraticCurveTo(892,650,944,588);S.stroke();
+    S.strokeStyle="rgba(120,90,60,0.20)";S.lineWidth=1.2;
+    S.beginPath();S.moveTo(628,640.5);S.quadraticCurveTo(726,670.5,808,660.5);S.stroke();
+    // the slack, coiled where it lands on the rim
+    S.strokeStyle="rgba(10,8,6,0.9)";S.lineWidth=2.6;
+    S.beginPath();S.arc(950,592,7,0,7);S.stroke();
+    S.beginPath();S.arc(950,593,4,0,7);S.stroke();
+  } else if(ROOM==="reviewer"){
+    // the lab runs on paper: two sheets dropped between the bench and the cart
+    [[686,636,-0.06],[742,645,0.09]].forEach(function(sh3){
+      S.save();S.translate(sh3[0],sh3[1]);S.rotate(sh3[2]);
+      S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(-13,2,27,3);
+      S.fillStyle="rgba(163,180,200,0.48)";S.fillRect(-13,-2,26,4);
+      S.fillStyle="rgba(210,226,244,0.32)";S.fillRect(-13,-2,26,1.2);
+      S.fillStyle="rgba(60,74,92,0.5)";S.fillRect(-9,-0.5,15,1);S.restore();});
+  } else {
+    // console loom → dips → rises to join the reel's wind
+    S.strokeStyle="rgba(10,12,22,0.92)";S.lineWidth=3.5;
+    S.beginPath();S.moveTo(628,640);S.quadraticCurveTo(742,674,836,662);
+    S.quadraticCurveTo(920,650,962,608);S.stroke();
+    S.strokeStyle="rgba(120,130,190,0.16)";S.lineWidth=1.2;
+    S.beginPath();S.moveTo(628,638.5);S.quadraticCurveTo(742,672.5,836,660.5);S.stroke();
+  }
 }
 
 /* BUILDER — a welding bench, straight-sided and heavy. */
