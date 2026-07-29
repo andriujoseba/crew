@@ -980,3 +980,87 @@ information a machine's silhouette owes you.
 > plane-wide veil plus a new object crossing the top of every frame touches
 > a third of the pixels in all 36 tiles. Same class of change as the loop 9
 > grade — the images are the evidence, not the percentage.
+
+---
+
+## Loop 15 — close the box, finish the metal
+
+Pull the exposure up two stops on any room from loop 14 and the same thing is
+wrong in all three: **the back wall is a large lit rectangle that simply ends.**
+A hard vertical cut, with black on the other side. Loop 12 put a darkening
+gradient at each end, which softened the cut without explaining it — and
+nothing explains a wall ending except a corner.
+
+`pilasters()` gives each end the structural column the wall is built against: a
+face turned slightly away from the room, a bright arris where the two planes
+meet, a shadow thrown back onto the wall in front of it, a capital and a base.
+The arris is the point. A hard bright vertical at each end of the frame is what
+makes the wall read as **one face of a box** rather than as a backdrop hung
+behind the set — and it costs a rectangle and a 2px line.
+
+**One diagonal.** Every edge in these rooms is horizontal or vertical: the wall
+grid, the props, the bays, the truss, the tray. In fifteen loops the only
+exceptions have been the lamp cone and the builder's gas hose. A grid with no
+diagonal in it reads as a diagram. `cableSwag()` hangs three catenaries off the
+tray loop 14 installed — the cheapest true curve there is, belonging to a
+ceiling that now exists to hang things from, crossing in front of the wall and
+behind the unit so the line runs *through* the middle plane rather than along
+it.
+
+**And the vignette moved onto the subject.** It was centred at `0.46` of the
+frame — nearer the geometric centre of the canvas than to the thing the picture
+is of. The unit stands at `ROBOX/DW = 0.367`. A vignette's entire job is to say
+where to look, and it was pointing at a spot two metres to the robot's right.
+It costs the right-hand props a little falloff, which is the correct trade:
+they are context and the unit is not.
+
+![builder](shots/loop-15/room-builder.webp)
+![reviewer](shots/loop-15/room-reviewer.webp)
+![triage](shots/loop-15/room-triage.webp)
+
+### Every unit: a specular
+
+`modelLight` (loop 11) is diffuse. It says how much light a surface *receives*
+and nothing about how sharply it gives it back — so for four loops every plate
+on every unit has had the reflectivity of matte paint. A specular is the small
+hard hit where a curved surface aims the lamp straight at the viewer, and it is
+the last thing standing between painted metal and metal.
+
+The interesting part is that the right answer is different for each of the
+four, because they are not made of the same stuff.
+
+| unit | material | so the highlight is |
+|---|---|---|
+| **claude** | rolled armour plate | two hard slivers on the pauldron crowns — the surfaces actually facing up |
+| **codex** | a machined shell | one tight hot spot up and left, plus the wide soft return underneath. The largest curved surface in the fleet, with a grain since loop 6 and tergites since loop 11, and never once a highlight — which is why it kept reading matte no matter how much structure went onto it |
+| **grok** | fabric | almost none. It is deliberately the matte one, which makes the two machined components it carries — the neck ring, and the waist bearing from loop 11 — the *only* places a specular belongs. Putting it exactly there is what tells you the rest is cloth |
+| **kimi** | moulded casing | a long soft band along the crown, wrapping the corner radius its bumpers interrupt. It has had a gloss sweep on the **glass** since loop 8, which is exactly why the screen looked like glass in a body that looked like a flat fill |
+
+![claude](shots/loop-15/robot-claude.webp)
+![codex](shots/loop-15/robot-codex.webp)
+![grok](shots/loop-15/robot-grok.webp)
+![kimi](shots/loop-15/robot-kimi.webp)
+
+> 12–16%. A vignette moves, so every pixel moves.
+
+---
+
+## Where fifteen loops got to
+
+Loops 1–10 built the rooms and the robots. Loops 11–15 were about **the picture
+they are in**, and the through-line is that almost every fix was structural
+rather than decorative:
+
+- **11** — the sign became an object with a bounding box, so props could stop
+  landing on it
+- **12** — the wall entered the lighting model that everything else was already in
+- **13** — the free wall got *named*, and then furnished, so placement stopped
+  being decided by eye
+- **14** — a middle plane and a near plane, so the frame stopped being a
+  backdrop and a subject
+- **15** — the box got its corners, the grid got its diagonal, and the vignette
+  got pointed at the robot
+
+The one rule that produced most of it: **when something is in the wrong place,
+find out what it was allowed to collide with.** The builder's conduit never had
+to move. The signage just had to exist.

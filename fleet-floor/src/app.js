@@ -1530,6 +1530,19 @@ function buildClaude(t,st){
      socket is the whole vocabulary: one dark sphere, one lit crescent on the
      lamp side, one bolt at the knee. It costs four shapes per joint and it is
      the difference between a figure and a mechanism. */
+  /* Speculars. modelLight is diffuse — it says how much light a surface
+     receives and nothing about how sharply it gives it back, so every plate on
+     every unit has had the reflectivity of matte paint. A specular is the
+     small hard hit where a curved surface aims the lamp straight at you, and
+     it is the last thing separating painted metal from metal. Two per unit,
+     on the surfaces that are actually facing up: the pauldron crowns. */
+  [-1,1].forEach(function(sg8){var px4=cx+sg8*66;
+    g.save();g.globalAlpha=offl?0.14:0.55;
+    var spg=g.createLinearGradient(0,222+breath,0,240+breath);
+    spg.addColorStop(0,"rgba(226,238,255,0.75)");spg.addColorStop(1,"rgba(226,238,255,0)");
+    g.fillStyle=spg;
+    poly(g,[[px4-sg8*30,224+breath],[px4+sg8*2,220+breath],[px4+sg8*4,229+breath],[px4-sg8*28,233+breath]]);g.fill();
+    g.restore();});
   [-1,1].forEach(function(sg5){
     var hx2=cx+sg5*31, hy3=357+breath*0.85;
     g.fillStyle="#04070d";g.beginPath();g.arc(hx2,hy3,11,0,7);g.fill();
@@ -1723,6 +1736,20 @@ function buildCodex(t,st){
      on it said "this edge is at head height" — a marking the OTHER units would
      need. The tarsus tips take the wear, because they are what touches the
      deck: bare metal through the coating, and only at the very ends. */
+  /* The dome specular. This is the largest curved surface in the fleet — it
+     has had a grain since loop 6 and tergites since loop 11, and never once a
+     highlight, which is why it kept reading as a matte shell no matter how
+     much structure went onto it. One tight hot spot up and left, where the
+     lamp is, plus the wide soft return underneath it. */
+  if(!offl){g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+    var dsp=g.createRadialGradient(ax-aw*0.34,ay-ah*0.52,1,ax-aw*0.3,ay-ah*0.42,aw*0.34);
+    dsp.addColorStop(0,"rgba(228,244,255,0.42)");dsp.addColorStop(0.4,"rgba(196,226,240,0.11)");
+    dsp.addColorStop(1,"rgba(196,226,240,0)");
+    g.fillStyle=dsp;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
+    var dsp2=g.createRadialGradient(ax+aw*0.2,ay+ah*0.5,2,ax+aw*0.2,ay+ah*0.45,aw*0.5);
+    dsp2.addColorStop(0,"rgba(120,168,190,0.10)");dsp2.addColorStop(1,"rgba(120,168,190,0)");
+    g.fillStyle=dsp2;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
+    g.restore();}
   g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
   g.globalAlpha=offl?0.16:0.36;
   for(var hz=-3;hz<=3;hz++){g.fillStyle=hz%2?"#c9a227":"#141a12";
@@ -1921,6 +1948,18 @@ function buildGrok(t,st){
      internal volume changing. grok's legs were smooth tapers from hip to boot,
      which is a drawing of a leg rather than a suit. Three ribs at each knee,
      brightest on the fold that faces the lamp. */
+  /* The one hard part on a soft unit. grok is deliberately the matte one —
+     it is fabric — which makes the two machined components it does carry, the
+     neck ring and the waist bearing loop 11 added, the only places a specular
+     belongs. Putting it exactly there is what tells you the rest is cloth. */
+  if(!offl){g.save();
+    var wsp=g.createLinearGradient(cx-29,0,cx+29,0);
+    wsp.addColorStop(0,"rgba(224,236,255,0)");wsp.addColorStop(0.3,"rgba(224,236,255,0.34)");
+    wsp.addColorStop(0.46,"rgba(255,255,255,0.5)");wsp.addColorStop(0.68,"rgba(224,236,255,0.16)");
+    wsp.addColorStop(1,"rgba(224,236,255,0)");
+    g.fillStyle=wsp;g.fillRect(cx-29,BY+22,58,3.4);
+    g.fillStyle=wsp;g.fillRect(cx-21,BY-46,42,2.6);
+    g.restore();}
   [-1,1].forEach(function(sg6){var bx4=cx+sg6*15;
     for(var rb=0;rb<3;rb++){var ry4=BY+72+rb*7;
       g.strokeStyle="rgba(3,6,12,0.55)";g.lineWidth=3.4;
@@ -2045,6 +2084,19 @@ function buildKimi(t,st){
   g.fillRect(bx+bw-25,by0+bh-17,16,2);g.fillRect(bx+bw-25,by0+bh-13,11,1.6);
   g.fillStyle="rgba(168,180,198,"+(offl?0.10:0.22)+")";      // the lifted corner
   poly(g,[[bx+bw-13,by0+bh-11],[bx+bw-7,by0+bh-8],[bx+bw-13,by0+bh-8]]);g.fill();
+  /* The casing is moulded, not machined — so its specular is a long soft band
+     along the crown rather than a hot point, and it wraps the corner radius
+     that loop 11's bumpers interrupt. kimi has had a gloss sweep on the GLASS
+     since loop 8, which is why the screen has always looked like glass sitting
+     in a body that looked like a flat fill: the shell itself reflected nothing
+     at all. */
+  if(!offl){g.save();
+    var ksp=g.createLinearGradient(0,by0,0,by0+22);
+    ksp.addColorStop(0,"rgba(230,242,255,0.30)");ksp.addColorStop(0.5,"rgba(230,242,255,0.07)");
+    ksp.addColorStop(1,"rgba(230,242,255,0)");
+    g.fillStyle=ksp;rr(g,bx+3,by0+1,bw-6,22,13);g.fill();
+    g.fillStyle="rgba(255,255,255,0.20)";g.fillRect(bx+22,by0+2.4,bw-46,1.6);
+    g.restore();}
   g.strokeStyle="rgba(3,7,13,0.5)";g.lineWidth=1.6;
   g.beginPath();g.moveTo(bx+1,by0+bh*0.54);g.lineTo(bx+bw-1,by0+bh*0.54);g.stroke();
   g.strokeStyle="rgba(186,208,242,"+(offl?0.05:0.13)+")";g.lineWidth=1;
@@ -2298,7 +2350,9 @@ function drawTarget(t,dt){
   else { kanban(t,STATE); radar(t,STATE); switchboard(t,STATE);
     tubeStation(t,lit,STATE); dutyBoard(t,lit,STATE); }
   wallKey(lit,ROOM);                // the lamp reaching the wall AND what is bolted to it
+  pilasters(t,lit);                 // where the wall stops, and why
   roofTruss(t,lit);                 // mid plane: in front of the wall, behind the unit
+  cableSwag(lit);                   // hangs from the truss; the room's only diagonal
   drawLampCone(t,lit,!offl,ROOM);   // light between wall attachments and robot
   stepSparks(dt);
   drawRobot(t);
@@ -2327,7 +2381,12 @@ function drawTarget(t,dt){
   C.globalCompositeOperation="overlay";C.globalAlpha=0.05;var nx=-Math.random()*40,ny=-Math.random()*40;
   for(var gx=nx;gx<DW;gx+=220)for(var gy=ny;gy<DH;gy+=220)C.drawImage(noise,gx,gy);
   C.globalCompositeOperation="source-over";C.globalAlpha=0.05;C.fillStyle="#000";for(var sl=0;sl<DH;sl+=3)C.fillRect(0,sl,DW,1);C.globalAlpha=1;
-  var vg=C.createRadialGradient(DW*0.46,DH*0.46,DH*0.30,DW*0.5,DH*0.52,DH*0.92);vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.80)");C.fillStyle=vg;C.fillRect(0,0,DW,DH);
+  /* The vignette was centred at 0.46 of the frame — nearer the geometric
+     centre of the canvas than to the thing the picture is of. The unit stands
+     at ROBOX/DW = 0.367, and a vignette's whole job is to say where to look.
+     Moved onto the subject, which costs the right-hand props a little falloff
+     and is the correct trade: they are context, and the unit is not. */
+  var vg=C.createRadialGradient(DW*0.40,DH*0.46,DH*0.30,DW*0.44,DH*0.52,DH*0.92);vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.80)");C.fillStyle=vg;C.fillRect(0,0,DW,DH);
   /* Room grade. Every prop, wall and floor in all three rooms was tinted one
      at a time, by hand, and they still came out of the compositor sharing the
      same neutral blue-black — because a grade is a property of the WHOLE
@@ -2591,6 +2650,56 @@ function roofTruss(t,lit){
   S.fillStyle="#101720";S.fillRect(LAMPX-9,y1+4,18,10);
   S.fillStyle="rgba(150,180,220,"+(0.10*lit)+")";S.fillRect(LAMPX-9,y1+4,18,1.4);
   S.restore();
+}
+/* Corner pilasters — where the wall stops.
+   Pull the exposure up on any of these rooms and the same thing is wrong in
+   all three: the back wall is a large lit rectangle that simply ENDS, on a
+   hard vertical cut, with black on the other side of it. Loop 12 put a
+   darkening gradient at each end, which softened the cut without explaining
+   it. Nothing explains a wall ending except a corner.
+   So each end gets the structural column the wall is built against: a face
+   turned slightly away from the room, a bright arris where the two planes
+   meet, and a shadow thrown back onto the wall it stands in front of. The
+   arris is the point — a hard bright vertical line at each end of the frame is
+   what makes the wall read as one face of a box rather than as a backdrop
+   hung behind the set. */
+function pilasters(t,lit){
+  [[WALL.x,-1],[WALL.x+WALL.w,1]].forEach(function(e){
+    var x=e[0],sg=e[1],w=26,y0=WALL.y-18;
+    S.save();
+    // shadow onto the wall, thrown inward because the lamp is between them
+    var sw3=S.createLinearGradient(x-sg*w*0.5,0,x-sg*(w*0.5+46),0);
+    sw3.addColorStop(0,"rgba(1,3,7,0.5)");sw3.addColorStop(1,"rgba(1,3,7,0)");
+    S.fillStyle=sw3;S.fillRect(Math.min(x-sg*w*0.5,x-sg*(w*0.5+46)),WALL.y,46,FLOORY-WALL.y);
+    // the returning face: darker, because it turns away from the lamp
+    plate(S,[[x-sg*2,y0],[x+sg*w,y0+10],[x+sg*w,FLOORY],[x-sg*2,FLOORY]],"#101722","#070b12","#1a2432");
+    // the arris
+    S.fillStyle="rgba(186,212,246,"+(0.10+0.17*lit)+")";S.fillRect(x-sg*2.4,y0,2.4,FLOORY-y0);
+    S.fillStyle="rgba(2,5,10,0.55)";S.fillRect(x-sg*(w*0.62),y0+8,3,FLOORY-y0-8);
+    // capital and base, and a bolt line up the face
+    S.fillStyle="#161e2a";S.fillRect(Math.min(x-sg*6,x+sg*w),y0,w+6,9);
+    S.fillStyle="rgba(186,212,246,"+(0.07+0.08*lit)+")";S.fillRect(Math.min(x-sg*6,x+sg*w),y0,w+6,1.4);
+    S.fillStyle="#131b26";S.fillRect(Math.min(x-sg*6,x+sg*w),FLOORY-16,w+6,16);
+    for(var bt=y0+34;bt<FLOORY-24;bt+=54)rivet(S,x+sg*9,bt,"#33415a");
+    S.restore();});
+}
+/* One diagonal.
+   Every edge in these rooms is horizontal or vertical. The wall grid, the
+   props, the bays, the truss, the tray — all of it is axis-aligned, and the
+   only exceptions in fourteen loops have been the lamp cone and the builder's
+   hose. A grid with no diagonal in it reads as a diagram.
+   A cable hanging from the tray is the cheapest true curve there is: it is a
+   catenary, it belongs on a ceiling that now exists to hang things from, and
+   it crosses in front of the wall and behind the unit, which puts a line
+   through the mid plane loop 14 opened up. */
+function cableSwag(lit){
+  [[132,470,168,0.85],[556,1006,156,0.6],[262,742,132,0.4]].forEach(function(c6){
+    var x0=c6[0],x1=c6[1],dip=c6[2],a=c6[3];
+    S.strokeStyle="rgba(3,6,12,"+(0.85*a)+")";S.lineWidth=3.4;
+    S.beginPath();S.moveTo(x0,101);S.quadraticCurveTo((x0+x1)/2,dip*2-40,x1,101);S.stroke();
+    S.strokeStyle="rgba(150,180,220,"+(0.09*a*lit)+")";S.lineWidth=1;
+    S.beginPath();S.moveTo(x0,99.6);S.quadraticCurveTo((x0+x1)/2,dip*2-42,x1,99.6);S.stroke();
+    S.fillStyle="#0a1017";S.fillRect(x0-3,97,6,7);S.fillRect(x1-3,97,6,7);});
 }
 /* The near plane. drawForeground already lays a blurred lip across the bottom
    of the frame; this is the same idea turned vertical, at the left edge, well
