@@ -1481,11 +1481,11 @@ HC="$SHARED/lib/jq/head-checks.jq"
 hc() {  # hc <panel-json> <pr-array-json> -> rows
   printf '%s' "$2" | jq -r --argjson panel "$1" --arg repo "o/r" -f "$HC"
 }
-mk_prc() {  # mk_prc <rollup> [reviews] [requests] [isDraft]
+mk_prc() {  # mk_prc <rollup> [opinionated-reviews] [requests] [isDraft]
   jq -cn --argjson c "$1" --argjson lr "${2:-[]}" --argjson rr "${3:-[]}" \
      --argjson d "${4:-false}" \
      '[{number:1, isDraft:$d, updatedAt:"T1", headRefOid:"abc1234",
-        statusCheckRollup:$c, latestReviews:$lr, reviewRequests:$rr}]'
+        statusCheckRollup:$c, latestOpinionatedReviews:$lr, reviewRequests:$rr}]'
 }
 CHK_OK='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]'
 CHK_BAD='[{"__typename":"CheckRun","name":"release-exercise / fixture-chain","status":"COMPLETED","conclusion":"FAILURE"}]'
@@ -1542,13 +1542,76 @@ t head-failing-names-carried "release-exercise / fixture-chain (FAILURE)" \
 t head-green-names-dash "-" "$(hc '[]' "$(mk_prc "$CHK_OK")" | cut -f6)"
 
 # Round-owed, and the two facts arriving on one row.
-CR_REQ='[{"state":"CHANGES_REQUESTED","author":{"login":"p1"}}]'
+CR_REQ='[{"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"abc1234"}}]'
 t head-round-owed-green owed "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$CR_REQ")" | cut -f5)"
 t head-round-owed-red-still-owed owed "$(hc '["p1"]' "$(mk_prc "$CHK_BAD" "$CR_REQ")" | cut -f5)"
 t head-round-owed-red-is-red red "$(hc '["p1"]' "$(mk_prc "$CHK_BAD" "$CR_REQ")" | cut -f4)"
+# Verdicts are opinions about a tree. A stale change request does not wake the
+# builder for a head that reviewer has not seen.
+CR_STALE='[{"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"oldhead"}}]'
+t head-round-stale-change-request - \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$CR_STALE")" | cut -f5)"
+# latestOpinionatedReviews retains the standing blocker even if a later plain
+# review comment displaced it from gh-pr-list's latestReviews. Carry the empty
+# commit oid that listing exposes as a trap: reading or head-filtering that
+# field would turn this owed round into a silent stall.
+COMMENT_MASKED="$(mk_prc "$CHK_OK" "$CR_REQ" \
+  | jq '.[0].latestReviews=[
+      {state:"COMMENTED",author:{login:"p1"},commit:{oid:""}}
+    ]')"
+t head-round-comment-does-not-mask-change owed \
+  "$(hc '["p1"]' "$COMMENT_MASKED" | cut -f5)"
+# GraphQL has already reduced a same-head request-changes → approve flip to the
+# reviewer's latest opinionated verdict.
+CR_FLIPPED='[{"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}}]'
+t head-round-flipped-to-approve - \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$CR_FLIPPED")" | cut -f5)"
 # An outstanding panel request means the round is not whole yet.
 t head-round-not-whole - \
   "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$CR_REQ" '[{"login":"p2"}]')" | cut -f5)"
+# An all-approved completed round is not builder work.
+ALL_APPROVED='[
+  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
+  {"state":"APPROVED","author":{"login":"p2"},"commit":{"oid":"abc1234"}}
+]'
+t head-round-all-approved - \
+  "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$ALL_APPROVED")" | cut -f5)"
+# ceremony#207: two current-head blockers and one approval, with the whole
+# requested panel returned, produces one owed row (and therefore one wake).
+CEREMONY_207='[
+  {"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
+  {"state":"CHANGES_REQUESTED","author":{"login":"p2"},"commit":{"oid":"abc1234"}},
+  {"state":"APPROVED","author":{"login":"p3"},"commit":{"oid":"abc1234"}}
+]'
+t head-round-ceremony-207-one-wake 1 \
+  "$(hc '["p1","p2","p3"]' "$(mk_prc "$CHK_OK" "$CEREMONY_207")" \
+    | awk -F'\t' '$5 == "owed" {n++} END {print n+0}')"
+# The row's existing number+updatedAt identity remains ledger-compatible: once
+# a completed session acknowledges this exact round, the next tick is quiet.
+ACK_ROUND="$TMP/head-round-ack"
+ACK_ITEM="$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$CR_REQ")" \
+  | awk -F'\t' '$5 == "owed" {print $1, $2}')"
+printf '%s\n' "$ACK_ITEM" | ledger_commit "$ACK_ROUND"
+t head-round-already-acknowledged 0 \
+  "$(printf '%s\n' "$ACK_ITEM" | ledger_filter "$ACK_ROUND" | n)"
+
+# The three round-close siblings agree on the same closed, non-approved round.
+# addressing=true, round_owed=owed, converged=false.
+CROSS_PR="$(jq -cn --argjson reviews "$CEREMONY_207" '{
+  data:{repository:{pullRequest:{
+    headRefOid:"abc1234",mergeable:"MERGEABLE",
+    labels:{nodes:[]},reviewRequests:{nodes:[]},
+    latestOpinionatedReviews:{nodes:$reviews}
+  }}}
+}')"
+t round-siblings-addressing true \
+  "$(printf '%s' "$CROSS_PR" | jq -r --argjson panel '["p1","p2","p3"]' \
+    --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
+t round-siblings-round-owed owed \
+  "$(hc '["p1","p2","p3"]' "$(mk_prc "$CHK_OK" "$CEREMONY_207")" | cut -f5)"
+t round-siblings-converged false \
+  "$(printf '%s' "$CROSS_PR" | jq -r --argjson panel '["p1","p2","p3"]' \
+    --arg needs_human state:needs-human -f "$SHARED/lib/jq/converged.jq")"
 
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
 # ledger_filter re-fires when the value sorts GREATER, and a SHA has no order.
@@ -1672,7 +1735,7 @@ t ci-red-rollup-fetched fetched "$r1"
 # three separate times.
 t ci-red-rollup-rides-round-listing 1 \
   "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'statusCheckRollup')"
-if grep -q 'latestReviews,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
+if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
   r1=shared
 else
   r1=SEPARATE

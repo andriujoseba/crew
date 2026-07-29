@@ -2,8 +2,13 @@
 # author-side facts that share a listing: the state of the check AT THE HEAD,
 # and whether a fix round is owed.
 #
-# Input: the `gh pr list --json number,isDraft,latestReviews,reviewRequests,
-# updatedAt,headRefOid,statusCheckRollup` array.
+# Its round-close predicate is the third sibling of converged.jq and
+# addressing.jq. All three consume latestOpinionatedReviews and scope verdicts
+# to the current head; keep their fixtures paired so those rules cannot drift.
+#
+# Input: the `gh pr list --json number,isDraft,reviewRequests,updatedAt,
+# headRefOid,statusCheckRollup` array, augmented by the caller with
+# latestOpinionatedReviews from its per-PR GraphQL payload.
 # Args: $panel (JSON array of logins, author already subtracted), $repo.
 #
 # Output, one TAB-delimited row per PR:
@@ -69,12 +74,15 @@ def check_state:
     elif ($c | map(is_pending) | any)   then "pending"
     else "green" end;
 
-# A round is owed when a panelist's LATEST review requests changes and no
-# panel review request is still outstanding — rounds are answered whole
-# (BUILDER.md). Computed from latestReviews, never reviewDecision, which is
-# empty without branch protection (ceremony#26/#39).
+# A round is owed when a panelist's latest OPINIONATED review AT THIS HEAD
+# requests changes and no panel review request is still outstanding — rounds
+# are answered whole (BUILDER.md). Computed from latestOpinionatedReviews,
+# never latestReviews (COMMENTED can mask a standing blocker) and never
+# reviewDecision (empty without branch protection; ceremony#26/#39).
 def round_owed:
-  ([.latestReviews[]? | select(.state == "CHANGES_REQUESTED")
+  .headRefOid as $head
+  | ([.latestOpinionatedReviews[]?
+    | select(.state == "CHANGES_REQUESTED" and .commit.oid == $head)
     | .author.login | select(. as $l | ($panel | index($l)) != null)] | length > 0)
   and (([.reviewRequests[]? | .login // empty
          | select(. as $l | ($panel | index($l)) != null)] | length) == 0);
