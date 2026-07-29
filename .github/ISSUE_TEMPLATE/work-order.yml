@@ -1,4 +1,4 @@
-# Copied from heavy-duty/ceremony@0.3.0 .github/ISSUE_TEMPLATE/work-order.yml (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
+# Copied from heavy-duty/ceremony@0.4.0 .github/ISSUE_TEMPLATE/work-order.yml (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
 # The issue contract (.ceremony/TRIAGE.md "The issue contract") as a form, so every
 # minted issue lands with the same bones and a later parser (heavy-duty/ceremony#18) can key on
 # stable section headings. Consistency, not a gate: the form applies no
