@@ -68,7 +68,7 @@ source "$OPERATOR_CONF"
 #  roster    --box NAME → fleet.roster (standing fleet).
 #  keep      existing conf/instance.conf (re-install/upgrade on a box whose
 #            name is not in the roster).
-AGENT_ARG="" ROLE_ARG="" BOX_ARG="" ARM_CRON=0 CONVERGE_REGISTRIES=0
+AGENT_ARG="" ROLE_ARG="" BOX_ARG="" ARM_CRON=0 CONVERGE_REGISTRIES=0 FORCE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent) AGENT_ARG="$2"; shift 2 ;;
@@ -76,9 +76,44 @@ while [ $# -gt 0 ]; do
     --box)   BOX_ARG="$2";   shift 2 ;;
     --converge-registries) CONVERGE_REGISTRIES=1; shift ;;
     --arm-cron) ARM_CRON=1; shift ;;
-    *) echo "unknown argument '$1' (usage: install.sh [--box <name> | --agent <a> --role <r>] [--arm-cron])"; exit 1 ;;
+    --force) FORCE=1; shift ;;
+    *) echo "unknown argument '$1' (usage: install.sh [--box <name> | --agent <a> --role <r>] [--arm-cron] [--force])"; exit 1 ;;
   esac
 done
+
+# --- The engine on this box is not overwritten in silence (#159) -------------
+# A re-install replaces bin/, lib/, prompts/ and the profiles in place. Whatever
+# the box was carrying — a hotfix, a debug probe, a half-finished experiment —
+# is gone, and until now nothing said so: two defect reports and a 20-assertion
+# test suite existed only on a box on 2026-07-29, and the next upgrade would
+# have deleted all three without a word.
+#
+# The refusal IS the feature. The operator learns the box was patched at the
+# last moment that knowledge is still useful. --force proceeds, as before.
+#
+# Three properties of where this sits:
+#   · BEFORE anything is written, so a refusal changes nothing at all;
+#   · in the installer rather than in `crew upgrade`, because the installer is
+#     what overwrites — `crew hire` and `crew up` reach the same files and must
+#     meet the same refusal;
+#   · run from the INCOMING tree ($HERE), never the installed copy under
+#     ~/duty/bin, which is the thing under suspicion.
+# A box with no record (installed before content stamping) reads `unverified`
+# and is NOT refused: the whole fleet blocking on the day this ships is how an
+# instrument gets forced off with --force and never trusted again.
+MANIFEST_TOOL="$HERE/bin/engine-manifest.sh"
+if [ "$FORCE" -eq 0 ] && [ -x "$MANIFEST_TOOL" ]; then
+  ENGINE_REPORT="$(env DUTY_DIR="$DUTY_DIR" "$MANIFEST_TOOL" --report --paths 2>/dev/null || true)"
+  if [ "$(printf '%s\n' "$ENGINE_REPORT" | sed -n 's/^state=//p' | head -1)" = modified ]; then
+    DIVERGED_FROM="$(printf '%s\n' "$ENGINE_REPORT" | sed -n 's/^recorded=//p' | head -1)"
+    echo "crew: REFUSING to overwrite a MODIFIED engine in $DUTY_DIR" >&2
+    echo "crew: these files are not what ${DIVERGED_FROM:-its recorded install} shipped:" >&2
+    printf '%s\n' "$ENGINE_REPORT" | sed -n 's/^path=/crew:   · /p' >&2
+    echo "crew: save anything you need from them — a re-install replaces every one." >&2
+    echo "crew: then run the same command again with --force." >&2
+    exit 1
+  fi
+fi
 
 # Capture the pre-install profile without sourcing it, so the resolved values
 # below cannot overwrite the evidence used to report a change (#36).
@@ -322,6 +357,19 @@ CREW_SHA="$(git -C "$HERE/.." rev-parse --short HEAD 2>/dev/null || true)"
   fi
   echo "installed $(date -u '+%Y-%m-%dT%H:%M:%SZ') (agent=$BOT_AGENT roles=$BOT_ROLE_LIST)"
 } >"$DUTY_DIR/VERSION"
+
+# ...and what that version actually put here, hashed (#159). Recorded LAST, so
+# it describes the tree as it now stands, and from the installed copy of the
+# tool, so the record can only ever be written by the algorithm that will read
+# it back. Identical bytes hash identically, so a converging re-run stays
+# converging and the box stays `current`.
+#
+# A failure here does NOT fail the install: the box reads `unverified`, which is
+# honest, and losing a working engine deployment over its instrument would be
+# the wrong trade in both directions.
+if ! env DUTY_DIR="$DUTY_DIR" "$DUTY_DIR/bin/engine-manifest.sh" --record 2>/dev/null; then
+  echo "crew: WARNING — could not record the engine manifest; this box will read 'unverified'" >&2
+fi
 
 echo "installed (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
 echo "  agent/role resolved from $RESOLVED_FROM — $CHANGE_NOTE"
