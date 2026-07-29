@@ -63,16 +63,20 @@ def is_blocking: (is_green or is_pending) | not;
 # GitHub keeps every run in statusCheckRollup, including concurrency-cancelled
 # runs superseded by a later run. Only that later run is evidence about the
 # check. Evidence providers stay separate even when a StatusContext context
-# equals a CheckRun name. startedAt (or a status's createdAt) identifies the
-# generation; completedAt (or updatedAt) breaks same-second ties. A still-
-# running tied rerun therefore loses to completed evidence, which is the
-# fail-closed direction.
+# equals a CheckRun name, and same-named jobs in different workflows remain
+# independent. startedAt (or a status's createdAt) identifies the generation;
+# completedAt breaks same-second CheckRun ties. A still-running tied rerun
+# therefore loses to completed evidence, which is the fail-closed direction.
 def latest_checks:
   (.statusCheckRollup // [])
-  | group_by([(.name // .context // "?"), (.__typename // "")])
+  | group_by([
+      (.name // .context // "?"),
+      (.__typename // ""),
+      (.workflowName // "")
+    ])
   | map(max_by([
       (.startedAt // .createdAt // ""),
-      (.completedAt // .updatedAt // "")
+      (.completedAt // "")
     ]));
 
 # "none" is its own state, never green: a repo with no CI configured and a
