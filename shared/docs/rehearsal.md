@@ -186,7 +186,7 @@ just the driver's final line.
 |---|---|---|
 | triage | an open issue carrying **no** queue label (a "stray") | a ruling comment, and the issue lands in exactly one of ready/claimed/blocked/epic; a re-tick adds no second ruling |
 | builder | an issue labelled `ready` and **unassigned** | a `build/*` PR authored by the identity, referencing the issue; the issue leaves `ready`; a re-tick opens no duplicate |
-| reviewer | a PR with the identity as requested reviewer | `🔎 reviewing head <sha>`, a verdict pinned to that head, dedup on re-tick, re-request auto-approve, and the one-shot gates |
+| reviewer | a PR with the identity as requested reviewer | `🔎 reviewing head <sha>`, a verdict pinned to that head, dedup on re-tick, a re-request queuing a real re-review with the auto-approval off, re-request auto-approve with it on, and the one-shot gates |
 
 > The builder fixture must be **unassigned**. `ready` + assigned is
 > deliberately not pickable — an assignee means mid-claim, and counting
@@ -206,16 +206,24 @@ just the driver's final line.
    the identity. Expect in order: candidate in the sweep log; the
    `🔎 reviewing head <full-sha>` comment posted exactly once (via
    post-once.sh); a verdict submitted via submit-verdict.sh pinned to that
-   head; next tick: `my latest review already covers head …; skipping`.
-4. Re-request drill: re-request review at the UNCHANGED head. Next tick
+   head; next tick adds no second announce and no second verdict. (It logs
+   no `already covers head` skip either — `requested_reviewers` self-clears
+   on submit, so a reviewed PR is not a candidate at all.)
+4. Re-request rule, auto-approval OFF: append `AUTO_APPROVE_REREQUEST=0` to
+   the box's `instance.conf` and re-request at the UNCHANGED head. Next
+   tick must queue a **real** re-review — the verdict count grows — and it
+   must NOT be the supersede path (no `re-request rule` in the body). The
+   flag disables the auto-APPROVAL and nothing else (#151); it is not a
+   switch for consulting the re-request. Remove the line afterwards.
+5. Re-request drill: re-request review at the UNCHANGED head. Next tick
    must auto-approve through the gate (`--supersede-own`), log it, and the
    tick after must be quiet again.
-5. Gate abuse: run `~/duty/bin/submit-verdict.sh` by hand with the same
+6. Gate abuse: run `~/duty/bin/submit-verdict.sh` by hand with the same
    args as the landed verdict — must exit 0 "already present" WITHOUT a
    second review appearing on the PR. A short SHA must be refused.
-6. Timeout: nothing to force here, but confirm every SESSION END line
+7. Timeout: nothing to force here, but confirm every SESSION END line
    carries rc= and dur=.
-7. Teardown: `repos.txt` is restored to its pre-drill contents and
+8. Teardown: `repos.txt` is restored to its pre-drill contents and
    `crontab -l` contains no duty tick.
 
 ## Phase 3 — report

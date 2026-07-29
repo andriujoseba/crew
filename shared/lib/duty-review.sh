@@ -51,11 +51,21 @@ REVIEW_MY_PR_REPOS=""
 #                  not sit as a blocker. This narrowing SERVES that intent.
 #   skip         — my verdict covers this head and no newer re-request exists
 #                  (request mid-clear or stale search index).
+#
+# AUTO_APPROVE_REREQUEST governs ONE edge: whether a standing APPROVED under a
+# newer re-request auto-approves or queues a real review (#151). It does NOT
+# govern whether the re-request is consulted. It used to: the flag sat in front
+# of the whole timestamp comparison, so `auto=0` collapsed BOTH branches to
+# `skip`, and a box with the flag off answered "standing block + newer
+# re-request + unchanged head" with `skip` every tick, forever — the reviewer
+# never came back and the round could not converge. That cost ceremony#207 37
+# minutes and needed clearing by hand; the box that re-reviewed the same head
+# fine differed by configuration, not by engine.
 rereq_decision() {
   local mine_oid="$1" head="$2" mine_state="$3" mine_at="$4" req_at="$5" auto="${6:-1}"
   if [ "$mine_oid" != "$head" ]; then echo queue; return 0; fi
-  if [ "$auto" = "1" ] && [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
-    if [ "$mine_state" = "APPROVED" ]; then echo auto-approve; else echo queue; fi
+  if [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
+    if [ "$mine_state" = "APPROVED" ] && [ "$auto" = "1" ]; then echo auto-approve; else echo queue; fi
   else
     echo skip
   fi
