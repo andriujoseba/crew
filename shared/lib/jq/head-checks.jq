@@ -29,10 +29,10 @@
 #
 # The first version enumerated the failing conclusions and let the rest fall
 # through to green, on the rationale that a CANCELLED run is usually one
-# superseded by a newer push. That rationale is wrong: `statusCheckRollup` is
-# ALREADY scoped to the current head, so a run superseded by a push is not in
-# this list at all. What is in it is a manual cancellation, or a same-head
-# concurrency cancellation — a head that is not passing, read as green.
+# superseded by a newer push. `statusCheckRollup` is scoped to the current
+# head, but it can retain several same-head generations of one check name.
+# The latest generation is the evidence; a CANCELLED latest generation is a
+# head that is not passing and must not be read as green.
 #
 # The cost was both halves of this feature at once: the build path could open a
 # panel round on a non-green head (#45's gate defeated) and the ci-red wake
@@ -62,12 +62,18 @@ def is_blocking: (is_green or is_pending) | not;
 # A workflow can start several runs with the same check name at one head.
 # GitHub keeps every run in statusCheckRollup, including concurrency-cancelled
 # runs superseded by a later run. Only that later run is evidence about the
-# check. startedAt identifies the run generation; completedAt is a defensive
-# fallback for rollup shapes that omit it.
+# check. Evidence providers stay separate even when a StatusContext context
+# equals a CheckRun name. startedAt (or a status's createdAt) identifies the
+# generation; completedAt (or updatedAt) breaks same-second ties. A still-
+# running tied rerun therefore loses to completed evidence, which is the
+# fail-closed direction.
 def latest_checks:
   (.statusCheckRollup // [])
-  | group_by(.name // .context // "?")
-  | map(max_by(.startedAt // .completedAt // ""));
+  | group_by([(.name // .context // "?"), (.__typename // "")])
+  | map(max_by([
+      (.startedAt // .createdAt // ""),
+      (.completedAt // .updatedAt // "")
+    ]));
 
 # "none" is its own state, never green: a repo with no CI configured and a
 # repo whose checks all passed are different facts, and only one of them is

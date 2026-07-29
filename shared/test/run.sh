@@ -1539,12 +1539,12 @@ t head-check-still-running    pending "$(state_of "$CHK_RUNNING")"
 t head-no-checks-is-not-green none    "$(state_of '[]')"
 # GREEN IS A WHITELIST; ANYTHING ELSE IS RED (codex, #64). The first version
 # enumerated the failing conclusions and let the rest fall through to green,
-# arguing a CANCELLED run is one superseded by a newer push. Wrong: the rollup
-# is already scoped to the CURRENT head, so a superseded run is not in it — a
-# cancelled one there is a manual or same-head-concurrency cancel, i.e. a head
-# that is not passing. Reading it green defeated #45's gate and blinded #17's
-# wake at the same time. This test previously asserted `green` and locked that
-# in, which is why it is called out here rather than quietly flipped.
+# arguing a CANCELLED run is one superseded by a newer push. Same-head rollups
+# can retain several generations of one check name, but after reducing those
+# generations a latest cancellation is a head that is not passing. Reading it
+# green defeated #45's gate and blinded #17's wake at the same time. This test
+# previously asserted `green` and locked that in, which is why it is called
+# out here rather than quietly flipped.
 t head-cancelled-is-red       red     "$(state_of "$CHK_CANCEL")"
 t head-stale-is-red           red     "$(state_of "$CHK_STALE")"
 # ...and the point of a whitelist: a conclusion nobody has written a branch for
