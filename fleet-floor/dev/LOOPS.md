@@ -7,9 +7,11 @@ on **every** robot and **every** room, and every change is rendered before and
 after through [the whiteboard](README.md) — same commit, same seed, so the only
 thing that moved is the code.
 
-Every fix lands in `src/app.js`. There is one copy of each robot and each room,
-so each of these improves the agent console, the god-view thumbnails and the
-asset map at the same time.
+Every fix lands in `src/app.js`. There is one copy of each robot — and, since
+[the review pass](#after-the-loops--the-review) below, one copy of each room
+too. Fifteen loops ran while that second sentence was false: the god-view cell
+was a separate renderer, so wall, sign, lighting and prop fixes reached the
+console and stopped there.
 
 ---
 
@@ -1066,3 +1068,105 @@ rather than decorative:
 The one rule that produced most of it: **when something is in the wrong place,
 find out what it was allowed to collide with.** The builder's conduit never had
 to move. The signage just had to exist.
+
+
+---
+
+## After the loops — the review
+
+Fifteen loops, then someone opened the PR in a browser and looked at the view
+the loops were *not* about. The defect register is on the PR; what follows is
+what it cost and what changed.
+
+### The god-view cell was a second room
+
+`drawMini` had its own wall, its own floor, its own overhead lamp, its own role
+prop and its own signage, and shared nothing with `drawTarget` but the robot
+sprite. One of the fifteen loops touched it:
+
+```
+git log -L :drawMini:fleet-floor/src/app.js 17acc04..e3828a8
+→ 00339c3  loop 8 — the god-view cell catches up      (the entire list)
+```
+
+So the cell still carried a 7%-opacity `SECTOR-7` painted straight onto a bare
+wall — the exact ghost loop 11 removed from the room — plus a desk drawn
+through every walker's shins, a wall with no structure below its gradient, and
+role props too small to identify. In the view the console opens on.
+
+The cell renders the real room now: same `drawTarget`, borrowed through the
+same seam the asset map uses, cached as a still per unit and composited with
+the few things that have to keep moving. Those four defects are gone because
+the code that drew them is gone.
+
+![the cell, before and after](shots/cell-before-after.webp)
+
+It is also **faster**, which was not the point but is the answer to "can the
+god-view afford a real room": one still per cell, at most one render a frame,
+on a cadence that backs off when a room turns out to be expensive.
+
+| headless, software rendering | 7 cells | 24 cells |
+|---|---|---|
+| merge base | 70 ms/frame | 90 ms |
+| after fifteen loops | 92 ms/frame | 115 ms |
+| after this | **16.7 ms** (vsync) | **16.7 ms** |
+
+### Two marks that were pinned to a bounding box
+
+The cell's offline `!` sat at the top of the sprite's bounding box plus a
+guess, which is the head for claude and grok and empty air for codex, whose
+body hangs low inside an arch of six legs, and kimi, whose rotors stand over
+its shell.
+
+The room had the same bug at full size and nobody had seen it: its offline
+diamond hangs off `hy`, which is the *visor* — the point a holo tether leaves
+from — and the visor is 93px below the top of codex and 62px below the top of
+kimi. So the diamond sat among codex's legs in every room and every state.
+
+Both read `unitTop` now: the top of the sprite the renderer just built,
+measured off its alpha, cached per agent and state. Measured rather than
+tabulated, because four hand-written numbers go stale the first time a robot
+changes shape and do it silently.
+
+![the offline cell, before and after](shots/cell-offline-before-after.webp)
+
+### A drone that had been swallowed by the furniture
+
+Every room stands its bench, desk or console in front of the unit, which is
+right for the three tall vendors. kimi is a wide drone that hovers while
+powered and settles when it is not, and a settled drone is 122px tall — so the
+desk top cut it in half and the console showed a dark lump lying on the bench,
+in all three rooms. Only findable at full size, which is exactly what the
+full-resolution pass over the 36 room tiles was for. A drone that has set
+itself down does not do it *inside* the bench: it lands on the open deck, in
+front of the furniture.
+
+### The rest of the layout, stated
+
+Loop 13 named six wall bays and left "every other placement still being decided
+by eye, one prop at a time" (LOOPS.md:822 — this file). `LAYOUT` now states the
+deck each room carries, the fixed structure, the deck line, and the unit
+envelope, and `?guides=1` draws all of it over a rendered tile.
+
+![the declared layout](shots/layout-guides.webp)
+
+Writing it down found two collisions the same afternoon:
+
+- the builder's conveyor began ten pixels inside the workbench top — four
+  pixels tall, both surfaces dark, invisible for fifteen loops;
+- and the first hand-written unit envelope was itself wrong in both directions,
+  narrower than codex and wide enough to overlap the pegboard. It is measured
+  now, like the tops.
+
+### And the cell got a map
+
+The room had one and the cell did not, which is the whole reason the defects
+above survived: the roster exercises seven of the cell's thirty-six
+combinations and the rest are unreachable in a healthy fleet. `?view=cell`
+renders all 36 through `FLOORDEV.renderMini` — the shipped `drawMini`, no
+second copy of anything.
+
+![the cell asset map](shots/cell-map.webp)
+
+Determinism holds across the pair: two browser launches, **72 of 72 tiles
+identical**, full-page PNGs sharing a sha256.

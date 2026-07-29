@@ -2531,6 +2531,25 @@ function buildKimi(t,st){
           feet:[{x:TX(cx),y:TY(BY+34),w:F*30}]};
 }
 
+/* The top of the unit, measured off the sprite the renderer just built, cached
+   per agent and state — twelve scans over the life of the page, once each.
+   Everything that puts a mark ABOVE a unit was using `hy` for this, and hy is
+   the visor: the point a holo tether leaves from. Those are the same place on
+   claude and grok, who wear their heads on top, and they are 93px apart on
+   codex, whose body hangs low inside an arch of six legs, and 62px apart on
+   kimi, whose rotors stand over its shell. So the room's offline diamond sat
+   among codex's legs instead of over it, in every room, for every state — the
+   full-size twin of the misplaced "!" the god-view cell had.
+   Measured rather than tabulated because a table of four numbers goes stale the
+   first time a robot changes shape, silently, and this cannot. */
+var unitTops={};
+function unitTop(){
+  var k=AGENT+"|"+STATE;
+  if(unitTops[k]!==undefined)return unitTops[k];
+  var d=RB.getImageData(0,0,RW,RH).data;
+  for(var y=0;y<RH;y++)for(var x=0;x<RW;x++)if(d[(y*RW+x)*4+3]>24)return (unitTops[k]=y);
+  return (unitTops[k]=0);
+}
 function drawRobot(t){
   var info=buildRobo(t,STATE);lastHand=info.hand;
   var sc=0.74, px=ROBOX-260*sc, py=FLOORY-560*sc;
@@ -2544,7 +2563,7 @@ function drawRobot(t){
   lastFeet=info.feet;
   lastAnchors={sprite:{x:px,y:py,s:sc},
                hand:{x:px+info.hand.x*sc,y:py+info.hand.y*sc},
-               head:{x:px+260*sc,y:py+info.hy*sc},
+               head:{x:px+260*sc,y:py+unitTop()*sc},
                feet:(info.feet||[]).map(function(f){return {x:px+f.x*sc,y:py+f.y*sc,w:f.w*sc};})};
   /* Contact shadows, one per footprint the unit reported.
      This used to be a single soft ellipse pinned at ROBOX+54 for every walker
@@ -2658,7 +2677,8 @@ function drawRobot(t){
   }
   // offline: "!" alarm diamond above head
   if(info.offl){
-    var ax=px+260*sc, ay=py+(info.hy-42)*sc + Math.sin(t*3)*3;
+    /* Above the UNIT, not above its visor — see unitTop. */
+    var ax=px+260*sc, ay=py+unitTop()*sc-26 + Math.sin(t*3)*3;
     S.save();S.translate(ax,ay);S.rotate(Math.PI/4);
     S.fillStyle="#1a0d0f";S.fillRect(-11,-11,22,22);
     var p=0.5+0.5*Math.sin(t*6);S.fillStyle=rgba(255,60,50,0.5+0.5*p);S.fillRect(-8,-8,16,16);S.restore();
@@ -2701,7 +2721,20 @@ function drawTarget(t,dt){
   cableSwag(lit);                   // hangs from the truss; the room's only diagonal
   drawLampCone(t,lit,!offl,ROOM);   // light between wall attachments and robot
   stepSparks(dt);
-  drawRobot(t);
+  /* Depth, and the one unit it is not the same question for. Every room stands
+     its bench, desk or console at y=536..612 in FRONT of the unit, which is
+     right for three vendors: they are tall, the furniture crosses their shins,
+     and being partly behind it is what puts them in the room rather than on it.
+     kimi is a wide drone that hovers 48px up while powered and settles when it
+     is not — and a settled drone is 122px tall, so the desk top cut it in half
+     and the console showed a dark lump lying on the bench. All three rooms, and
+     only findable at full size: at thumbnail scale it reads as a dark shape,
+     which is what a powered-down drone reads as anyway.
+     A drone that has set itself down does not do it INSIDE the bench, so this
+     is a placement fact and not a drawing-order trick: it lands on the open
+     deck, nearer the camera than the furniture. */
+  var landed=(AGENT==="kimi"&&offl);
+  if(!landed)drawRobot(t);
   if(ROOM==="builder"){ conveyor(t,STATE); workbench(t,lit,STATE); crateBig(206,558);crateBig(182,588); }
   /* The in-tray. A review lab that is idle is a review lab with a queue on the
      desk — two flat stacks said the same thing whether anything was pending or
@@ -2710,6 +2743,7 @@ function drawTarget(t,dt){
   else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
     if(STATE==="idle")for(var ip=0;ip<11;ip++){S.fillStyle=ip%2?"#c3cdda":"#a6b1c0";S.fillRect(752-(ip%2),FLOORY-6-ip*4,26,4);} }
   else { mapConsole(t,STATE); phoneBank(1042,t,STATE); fileCabinet(1086); docStack(700); }
+  if(landed)drawRobot(t);           // ... and this is where the deck is
   drawSparks();
   drawFloorFog(t);
   drawSteam(t);
@@ -3519,8 +3553,17 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
         if(d[(y*RW+x)*4+3]>24){hit=true;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}
       }
       if(!hit)return null;
-      return {x:sp.x+x0*sp.s,y:sp.y+y0*sp.s,w:(x1-x0)*sp.s,h:(y1-y0)*sp.s};
+      return {x:sp.x+x0*sp.s,y:sp.y+y0*sp.s,w:(x1-x0)*sp.s,h:(y1-y0)*sp.s,
+              head:lastAnchors.head,hand:lastAnchors.hand,feet:lastAnchors.feet};
     });
+  },
+  /* layout() — the declared rectangles, for a tool that wants to test them
+     rather than draw them. Bays come out named so a report can say which. */
+  layout:function(){
+    var bay=function(k,r){return [k+" bay",BAYS[r][k==="L"?"L":"R"][0],BAYS[r][k][1],BAYS[r][k][2],BAYS[r][k][3]];};
+    return {unit:LAYOUT.unit,keep:LAYOUT.keep,deck:LAYOUT.deck,fixed:LAYOUT.fixed,sign:["sign",SIGN.x,SIGN.y,SIGN.w,SIGN.h],
+            bayL:{builder:bay("L","builder"),reviewer:bay("L","reviewer"),triage:bay("L","triage")},
+            bayR:{builder:bay("R","builder"),reviewer:bay("R","reviewer"),triage:bay("R","triage")}};
   },
   /* Stop the hidden app loop painting behind a map. */
   pause:function(){devPaused=true;}};
