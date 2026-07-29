@@ -1527,6 +1527,28 @@ CHK_NEUTRAL='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conc
 CHK_SKIPPED='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SKIPPED"}]'
 # A conclusion this engine has never heard of. GitHub adds these.
 CHK_UNKNOWN='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"QUANTUM_FAILURE"}]'
+# Same-head reruns are all present in the rollup. The latest run of each check
+# name is the check's answer; older runs are not independent evidence.
+CHK_CANCEL_THEN_OK='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"}]'
+CHK_OK_THEN_CANCEL='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:08Z"}]'
+CHK_SAME_SECOND_CANCEL_LAST='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:17Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"}]'
+CHK_WORKFLOW_COLLISION_FAILURE_FIRST='[
+  {"__typename":"CheckRun","name":"test","workflowName":"ci","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-07-29T10:00:00Z","completedAt":"2026-07-29T10:01:00Z"},
+  {"__typename":"CheckRun","name":"test","workflowName":"nightly","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T10:05:00Z","completedAt":"2026-07-29T10:06:00Z"}]'
+CHK_WORKFLOW_COLLISION_FAILURE_LAST="$(printf '%s' "$CHK_WORKFLOW_COLLISION_FAILURE_FIRST" | jq 'reverse')"
+CHK_SUPERSEDED_CANCEL_AND_FAILURE='[
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-07-29T11:00:03Z","completedAt":"2026-07-29T11:00:04Z"},
+  {"__typename":"CheckRun","name":"labels / reconcile","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
+  {"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-07-29T10:58:47Z","completedAt":"2026-07-29T10:59:22Z"}]'
+CHK_FAILURE_THEN_RUNNING='[
+  {"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-07-29T10:58:47Z","completedAt":"2026-07-29T10:59:22Z"},
+  {"__typename":"CheckRun","name":"test","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-07-29T11:02:00Z","completedAt":null}]'
 # The StatusContext shape. THIS is the fixture that matters: crew's own CI is a
 # single CheckRun, so an implementation that discriminates on __typename and
 # reads only .conclusion passes every other test in this file and reports a
@@ -1535,6 +1557,10 @@ CHK_UNKNOWN='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conc
 SC_BAD='[{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
 SC_ERR='[{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}]'
 SC_MIX='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
+SC_COLLISION_STATUS_LAST='[
+  {"__typename":"CheckRun","name":"ci/build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
+  {"__typename":"StatusContext","context":"ci/build","state":"FAILURE","createdAt":"2026-07-29T11:05:00Z"}]'
+SC_COLLISION_STATUS_FIRST="$(printf '%s' "$SC_COLLISION_STATUS_LAST" | jq 'reverse')"
 
 state_of() { hc '[]' "$(mk_prc "$1")" | cut -f4; }
 t head-check-run-success      green   "$(state_of "$CHK_OK")"
@@ -1542,22 +1568,44 @@ t head-check-run-failure      red     "$(state_of "$CHK_BAD")"
 t head-status-context-failure red     "$(state_of "$SC_BAD")"
 t head-status-context-error   red     "$(state_of "$SC_ERR")"
 t head-mixed-shapes-one-red   red     "$(state_of "$SC_MIX")"
+t head-colliding-status-last-is-red red "$(state_of "$SC_COLLISION_STATUS_LAST")"
+t head-colliding-status-first-is-red red "$(state_of "$SC_COLLISION_STATUS_FIRST")"
 t head-check-still-running    pending "$(state_of "$CHK_RUNNING")"
 t head-no-checks-is-not-green none    "$(state_of '[]')"
 # GREEN IS A WHITELIST; ANYTHING ELSE IS RED (codex, #64). The first version
 # enumerated the failing conclusions and let the rest fall through to green,
-# arguing a CANCELLED run is one superseded by a newer push. Wrong: the rollup
-# is already scoped to the CURRENT head, so a superseded run is not in it — a
-# cancelled one there is a manual or same-head-concurrency cancel, i.e. a head
-# that is not passing. Reading it green defeated #45's gate and blinded #17's
-# wake at the same time. This test previously asserted `green` and locked that
-# in, which is why it is called out here rather than quietly flipped.
+# arguing a CANCELLED run is one superseded by a newer push. Same-head rollups
+# can retain several generations of one check name, but after reducing those
+# generations a latest cancellation is a head that is not passing. Reading it
+# green defeated #45's gate and blinded #17's wake at the same time. This test
+# previously asserted `green` and locked that in, which is why it is called
+# out here rather than quietly flipped.
 t head-cancelled-is-red       red     "$(state_of "$CHK_CANCEL")"
 t head-stale-is-red           red     "$(state_of "$CHK_STALE")"
 # ...and the point of a whitelist: a conclusion nobody has written a branch for
 # fails CLOSED. Enumerating the bad ones would have gotten this wrong the same
 # way, silently, the next time GitHub adds one.
 t head-unknown-conclusion-is-red red  "$(state_of "$CHK_UNKNOWN")"
+# #146: a concurrency cancellation superseded by a later same-name success is
+# not evidence; a cancellation that remains the latest run is still fail-closed.
+t head-cancelled-then-succeeded-is-green green "$(state_of "$CHK_CANCEL_THEN_OK")"
+t head-cancelled-as-last-word-is-red red "$(state_of "$CHK_OK_THEN_CANCEL")"
+t head-same-second-cancel-last-is-green green "$(state_of "$CHK_SAME_SECOND_CANCEL_LAST")"
+# Same-named jobs in different workflows are independent evidence. Neither
+# rollup order may let one workflow's success discard another one's failure.
+t head-workflow-collision-failure-first-is-red red \
+  "$(state_of "$CHK_WORKFLOW_COLLISION_FAILURE_FIRST")"
+t head-workflow-collision-failure-last-is-red red \
+  "$(state_of "$CHK_WORKFLOW_COLLISION_FAILURE_LAST")"
+# An unrelated failure survives even while the superseded cancellation from
+# another check identity disappears.
+t head-unrelated-failure-survives-superseded-cancel red \
+  "$(state_of "$CHK_SUPERSEDED_CANCEL_AND_FAILURE")"
+t head-unrelated-failure-is-named "test (FAILURE)" \
+  "$(hc '[]' "$(mk_prc "$CHK_SUPERSEDED_CANCEL_AND_FAILURE")" | cut -f6)"
+# A rerun in progress is the latest word and therefore pending, not the stale
+# failure from the earlier run.
+t head-running-rerun-supersedes-failure pending "$(state_of "$CHK_FAILURE_THEN_RUNNING")"
 # The genuinely-not-a-failure conclusions stay green, or every skipped matrix
 # leg would wake a builder.
 t head-neutral-is-green       green   "$(state_of "$CHK_NEUTRAL")"

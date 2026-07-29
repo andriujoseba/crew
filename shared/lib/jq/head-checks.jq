@@ -34,10 +34,10 @@
 #
 # The first version enumerated the failing conclusions and let the rest fall
 # through to green, on the rationale that a CANCELLED run is usually one
-# superseded by a newer push. That rationale is wrong: `statusCheckRollup` is
-# ALREADY scoped to the current head, so a run superseded by a push is not in
-# this list at all. What is in it is a manual cancellation, or a same-head
-# concurrency cancellation — a head that is not passing, read as green.
+# superseded by a newer push. `statusCheckRollup` is scoped to the current
+# head, but it can retain several same-head generations of one check name.
+# The latest generation is the evidence; a CANCELLED latest generation is a
+# head that is not passing and must not be read as green.
 #
 # The cost was both halves of this feature at once: the build path could open a
 # panel round on a non-green head (#45's gate defeated) and the ci-red wake
@@ -64,11 +64,31 @@ def is_pending:
 # Neither passing nor still running: the head is not green, whatever the reason.
 def is_blocking: (is_green or is_pending) | not;
 
+# A workflow can start several runs with the same check name at one head.
+# GitHub keeps every run in statusCheckRollup, including concurrency-cancelled
+# runs superseded by a later run. Only that later run is evidence about the
+# check. Evidence providers stay separate even when a StatusContext context
+# equals a CheckRun name, and same-named jobs in different workflows remain
+# independent. startedAt (or a status's createdAt) identifies the generation;
+# completedAt breaks same-second CheckRun ties. A still-running tied rerun
+# therefore loses to completed evidence, which is the fail-closed direction.
+def latest_checks:
+  (.statusCheckRollup // [])
+  | group_by([
+      (.name // .context // "?"),
+      (.__typename // ""),
+      (.workflowName // "")
+    ])
+  | map(max_by([
+      (.startedAt // .createdAt // ""),
+      (.completedAt // "")
+    ]));
+
 # "none" is its own state, never green: a repo with no CI configured and a
 # repo whose checks all passed are different facts, and only one of them is
 # evidence.
 def check_state:
-  (.statusCheckRollup // []) as $c
+  latest_checks as $c
   | if   ($c | length) == 0             then "none"
     elif ($c | map(is_blocking) | any)  then "red"
     elif ($c | map(is_pending) | any)   then "pending"
@@ -88,7 +108,7 @@ def round_owed:
          | select(. as $l | ($panel | index($l)) != null)] | length) == 0);
 
 def failing_names:
-  [(.statusCheckRollup // [])[] | select(is_blocking)
+  [latest_checks[] | select(is_blocking)
    | "\(.name // .context // "?") (\(.conclusion // .state // "?"))"]
   | if length == 0 then "-" else join(", ") end;
 
