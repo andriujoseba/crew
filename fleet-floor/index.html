@@ -874,7 +874,11 @@ function phoneBank(x,t,st){var y=612-30,live=st&&st!=="offline";
    racks at either end, and pushed down so the floor line lands where the
    miniature always had it. The unit comes back to roughly the size it was, and
    now it is standing in the real room. */
-var MINI_ZOOM=0.78, MINI_CX=620, MINI_FLOOR=0.88;
+/* L10 — MINI_FLOOR was set when nothing below FLOORY mattered; the near-plane
+   station now runs to y=668 and its plinth was landing exactly on the cell's
+   bottom edge. 0.865 buys the toe 12px of breathing room and costs the same
+   12px of empty wall above the lamp cone. */
+var MINI_ZOOM=0.78, MINI_CX=620, MINI_FLOOR=0.865;
 /* A fleet is a few dozen units and a window is one size, so the cache is small
    by construction — but a roster that churns or a window dragged between two
    displays would grow it forever, and each entry holds a canvas. Oldest out,
@@ -2751,8 +2755,11 @@ function deckBody(o){
   kg.addColorStop(mid,rgba(o.key[0],o.key[1],o.key[2],0.05+0.08*o.lit));
   kg.addColorStop(1,rgba(o.key[0],o.key[1],o.key[2],0));
   S.fillStyle=kg;poly(S,[[bx0,ty],[bx1,ty],[ax1,tf],[ax0,tf]]);S.fill();
-  // the rim on the back arris — the whole reason a backlit object reads
-  S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.16+0.26*o.lit);S.fillRect(bx0,ty,d.bw,1.6);
+  /* The rim on the back arris — the whole reason a backlit object reads.
+     2.2px, not 1.6: the god-view cell scales the room by ~0.26, and below
+     ~2px this line — the station's whole silhouette cue — rounds to nothing
+     at cell scale. At full size the difference reads as edge wear. */
+  S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.16+0.26*o.lit);S.fillRect(bx0,ty,d.bw,2.2);
   /* L7 — the other thing behind the station is the UNIT, and the unit has a
      lit core in its chest. The lamp's rim is even and pale; the unit's is a
      second, vendor-coloured swell in the middle of the back edge, strongest
@@ -2773,7 +2780,7 @@ function deckBody(o){
   var ag=S.createLinearGradient(0,tf,0,ab);
   ag.addColorStop(0,o.topFront);ag.addColorStop(1,o.foot);
   S.fillStyle=ag;S.fillRect(ax0,tf,aw,ab-tf);
-  S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.10+0.09*o.lit);S.fillRect(ax0,tf,aw,1.6);
+  S.fillStyle=rgba(o.key[0],o.key[1],o.key[2],0.10+0.09*o.lit);S.fillRect(ax0,tf,aw,2.2);
   S.fillStyle="rgba(0,0,0,0.35)";S.fillRect(ax0,tf,2,ab-tf);S.fillRect(ax1-2,tf,2,ab-tf);
   S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(ax0,ab-1.5,aw,1.5);
   S.fillStyle="rgba(0,0,0,0.5)";S.fillRect(fx0,ab,d.fw,3);
