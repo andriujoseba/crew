@@ -560,3 +560,66 @@ survive being looked at 36 times on one page.
 > A grade touches every pixel, so the changed-pixel share for this loop is
 > ~97–99% everywhere. That number stops being informative here; the images are
 > the evidence.
+
+---
+
+## Loop 10 — the last details
+
+Nine loops of structure. This one is the small stuff — each of these is a thing
+the eye lands on once and then stops asking about.
+
+### claude — the beacon blinks
+It was a constant red dot: an aircraft warning light that never flashes, which
+is the one thing they all do. Now a double-strobe with a short halo, giving the
+highest point on the unit the only hard rhythm in the frame.
+
+![claude](shots/loop-10/robot-claude.webp)
+
+### codex — claws
+Each leg ended in a small triangle. Six points, with nothing explaining how
+they hold a heavy shell steady. Two hooked tips splayed against the load is
+what an insect foot does — and it gives the contact shadows something to be
+cast *by*.
+
+![codex](shots/loop-10/robot-codex.webp)
+
+### grok — a helmet lamp
+An EVA suit carries one; it is the reason the visor can be mirrored and the
+wearer can still see. The only unit whose face is a mirror had no light of its
+own. Mounted left, throwing a short forward cone while working.
+
+![grok](shots/loop-10/robot-grok.webp)
+
+### kimi — a status strip
+Kimi was the only unit with no hard readout anywhere — claude has a core, codex
+a reactor, grok a chest panel — so its state lived entirely in a face, which is
+expressive and says nothing precise. Five cells filling left-to-right while
+working, one slow pulse while idle.
+
+![kimi](shots/loop-10/robot-kimi.webp)
+
+### builder — the crane carries something
+A gantry with an empty hook parked dead centre over the work is set dressing. A
+slung girder on two slings is the bay telling you what it is for.
+
+![builder](shots/loop-10/room-builder.webp)
+
+### reviewer — something under the lens
+The inspection desk had a lamp, an arm and a bare worktop: a review station
+with nothing being reviewed on it. A lit specimen plate directly beneath the
+lens is what the whole prop exists to point at.
+
+![reviewer](shots/loop-10/room-reviewer.webp)
+
+### triage — a line is ringing
+The phone bank was two dark handsets in a box — furniture, in the one room
+whose entire job is routing things to people. One line now rings, with an
+expanding indicator: the only event-shaped thing in the dispatch room. Silent
+when the box is.
+
+![triage](shots/loop-10/room-triage.webp)
+
+> Changed-pixel shares here are 0.08–0.66%, an order of magnitude below every
+> earlier loop. That is what a detail pass should look like — and it is only a
+> readable number because loop 8 removed the ~1.8% grain floor that would have
+> buried all seven of these.

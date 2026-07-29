@@ -64,6 +64,17 @@ function crane(t){
   emit(function(c){var p=0.35+0.65*Math.pow(Math.max(0,Math.sin(t*2)),2);c.fillStyle=rgba(255,60,50,0.9*p);c.beginPath();c.arc(tx,railY+80,2.5,0,7);c.fill();var g7=c.createRadialGradient(tx,railY+80,1,tx,railY+80,10);g7.addColorStop(0,rgba(255,60,50,0.5*p));g7.addColorStop(1,"rgba(255,60,50,0)");c.fillStyle=g7;c.beginPath();c.arc(tx,railY+80,10,0,7);c.fill();});
   var gy=railY+92;for(var s=tx-56;s<tx+56;s+=14){S.fillStyle=((s-tx+56)%28<14)?"#c9a227":"#0f1420";S.fillRect(s,gy,14,12);}
   S.fillStyle="rgba(0,0,0,0.4)";S.fillRect(tx-60,gy+12,120,3);
+  /* The crane was carrying nothing. A gantry with an empty hook, parked dead
+     centre over the work, is set dressing; a slung girder on two slings is the
+     bay telling you what it is for. Static and integer-aligned for the same
+     reason the trolley is — a striped mass that drifts aliases its own edges. */
+  var slY=gy+15;
+  S.strokeStyle="#1b2432";S.lineWidth=2;
+  S.beginPath();S.moveTo(tx-40,slY);S.lineTo(tx-52,slY+30);S.moveTo(tx+40,slY);S.lineTo(tx+52,slY+30);S.stroke();
+  plate(S,[[tx-58,slY+30],[tx+58,slY+30],[tx+58,slY+41],[tx-58,slY+41]],"#2b3444","#141b26","#3b4a60");
+  S.fillStyle="rgba(0,0,0,0.45)";S.fillRect(tx-58,slY+35,116,2);
+  S.fillStyle="rgba(150,175,210,0.14)";S.fillRect(tx-58,slY+30,116,1.5);
+  S.fillStyle="rgba(201,162,39,0.35)";S.fillRect(tx-26,slY+33,20,4);
 }
 function rightTower(t){
   var x=1150,w=66,yb=612,yt=372,seg=(yb-yt-26)/9;
@@ -192,6 +203,17 @@ function inspectDesk(t,st){
   S.fillStyle="#1a2230";S.beginPath();S.arc(ax+31,yl-33,9,0,7);S.fill();
   if(!off)emit(function(c){var g3=c.createRadialGradient(ax+31,yl-33,1,ax+31,yl-33,17);g3.addColorStop(0,"rgba(196,232,255,0.55)");g3.addColorStop(1,"rgba(196,232,255,0)");c.fillStyle=g3;c.beginPath();c.arc(ax+31,yl-33,17,0,7);c.fill();});
   S.strokeStyle="rgba(196,232,255,0.5)";S.lineWidth=1;S.beginPath();S.arc(ax+31,yl-33,7,0,7);S.stroke();
+  /* Something under the lamp. The inspection desk had a light, an arm and a
+     bare worktop — a review station with nothing being reviewed on it. A
+     specimen plate directly beneath the lens, lit from above and casting on
+     the desk, is what the whole prop exists to point at. */
+  var spx=ax+31,spy=y-3;
+  S.fillStyle="rgba(0,0,0,0.4)";S.beginPath();S.ellipse(spx,spy+2,17,3.5,0,0,7);S.fill();
+  plate(S,[[spx-15,spy-4],[spx+15,spy-4],[spx+13,spy+2],[spx-13,spy+2]],"#1b2634","#0d141d","#31415a");
+  if(!off){emit(function(c){
+    c.fillStyle="rgba(150,214,255,0.5)";c.fillRect(spx-10,spy-2.5,20,2);
+    c.fillStyle="rgba(90,210,130,0.7)";c.fillRect(spx-9,spy-2.5,6,2);
+    c.fillStyle="rgba(230,100,100,0.7)";c.fillRect(spx+2,spy-2.5,4,2);});}
 }
 function verdictTower(t,st){
   var x=632,pt=496,baseY=612;
@@ -273,7 +295,20 @@ function mapConsole(t,st){
   if(!off)emit(function(c){c.save();c.globalCompositeOperation="lighter";var g6=c.createRadialGradient(x+w/2,y+1,2,x+w/2,y+1,70);g6.addColorStop(0,"rgba(90,150,220,0.15)");g6.addColorStop(1,"rgba(90,150,220,0)");c.fillStyle=g6;c.fillRect(x,y-14,w,30);
     for(var b=0;b<5;b++){var bx=x+26+b*((w-52)/4);c.fillStyle="rgba(120,190,255,"+(0.4+0.4*Math.sin(t*3+b))+")";c.fillRect(bx,y-2+((b%2)*4),2,2);}c.restore();});
 }
-function phoneBank(x){var y=612-30;plate(S,[[x,y],[x+40,y],[x+40,y+30],[x,y+30]],"#1a2230","#0c1018","#2a3648");for(var i=0;i<2;i++){S.fillStyle="#0e1620";S.fillRect(x+5+i*20,y+5,14,10);S.fillStyle="#3a4656";S.fillRect(x+7+i*20,y+7,10,2);}contactShadow(x+20,612,40);}
+/* A live call. The phone bank was two dark handsets in a box — furniture in the
+   one room whose entire job is routing things to people. One line now rings:
+   a lit lamp on the left handset with an expanding ring, which is the only
+   event-shaped thing in the dispatch room and reads instantly as "someone is
+   trying to reach this desk". Silent when the box is. */
+function phoneBank(x,t,st){var y=612-30,live=st&&st!=="offline";
+  plate(S,[[x,y],[x+40,y],[x+40,y+30],[x,y+30]],"#1a2230","#0c1018","#2a3648");
+  for(var i=0;i<2;i++){S.fillStyle="#0e1620";S.fillRect(x+5+i*20,y+5,14,10);S.fillStyle="#3a4656";S.fillRect(x+7+i*20,y+7,10,2);}
+  if(live){var rp2=(t*1.4)%1, on2=rp2<0.5?1:0.15;
+    emit(function(c){c.fillStyle="rgba(247,189,78,"+(0.85*on2)+")";c.fillRect(x+9,y+18,6,3);
+      c.save();c.globalCompositeOperation="lighter";
+      c.strokeStyle="rgba(247,189,78,"+(0.4*(1-rp2))+")";c.lineWidth=1.4;
+      c.beginPath();c.arc(x+12,y+19,4+16*rp2,0,7);c.stroke();c.restore();});}
+  contactShadow(x+20,612,40);}
 
 /* ===================== GRID-CELL MINIATURE (god-view LOD, hi-detail) ===================== */
 var REPOCOL=["#e0913d","#e6c34a","#a884ff","#3fb0e6","#7bc86a","#e0664a"];
@@ -1128,9 +1163,17 @@ function buildClaude(t,st){
   // jaw grille, so the lower half of the helmet is not a blank plate
   RB.fillStyle=rc;for(var jw=0;jw<3;jw++)RB.fillRect(hcx-9+jw*7,hy+30,5,9);
   RB.fillStyle="rgba(90,110,140,0.3)";RB.fillRect(hcx-11,hy+28,24,1.5);
-  // antenna
+  /* Antenna beacon. It was a constant red dot — an aircraft warning light that
+     never blinks, which is the one thing they all do. Now it strobes on a
+     double-flash and throws a short halo, so the highest point on the unit has
+     the only hard rhythm in the frame. */
   pl(g,hcx+18,hy-4,hcx+24,hy-18,eH,1.6);
-  [RB,RE].forEach(function(c){if(!offl){c.fillStyle="rgba(255,80,70,0.9)";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();}});
+  if(!offl){var bt=(t*0.9)%1, bl=(bt<0.08||(bt>0.16&&bt<0.24))?1:0.12;
+    [RB,RE].forEach(function(c){
+      var bg2=c.createRadialGradient(hcx+24,hy-18,0.5,hcx+24,hy-18,11);
+      bg2.addColorStop(0,"rgba(255,110,96,"+(0.7*bl)+")");bg2.addColorStop(1,"rgba(255,80,70,0)");
+      c.fillStyle=bg2;c.beginPath();c.arc(hcx+24,hy-18,11,0,7);c.fill();
+      c.fillStyle="rgba(255,"+(80+120*bl)+",70,"+(0.35+0.6*bl)+")";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();});}
 
   buildRim(offl?[92,86,80]:[255,170,90]);       // claude: its own orange on the key side
   // two boots, flat on the deck — see FEET in drawRobot
@@ -1174,7 +1217,15 @@ function buildCodex(t,st){
     limbSeg(g,k1x,k1y,k2x,k2y,5.5,4,sT,sB);   // tibia: down + out past the foot
     limbSeg(g,k2x,k2y,fx,fy,4.5,2.6,sM,sB);   // tarsus: down + in to the foot (the flex)
     joint(g,k1x,k1y,5.5); joint(g,k2x,k2y,4.5);
+    /* Claws. Each leg ended in a small triangle — a point, with nothing that
+       explains how six of these hold a heavy shell steady. Two hooked tips
+       splayed against the direction of load is what an insect foot actually
+       does, and it gives the contact shadows something to be cast BY. */
     g.fillStyle=sB;g.beginPath();g.moveTo(fx-3,fy-3);g.lineTo(fx+3,fy-3);g.lineTo(fx+sgn*2,fy+5);g.closePath();g.fill();
+    g.strokeStyle=sT;g.lineWidth=1.6;g.lineCap="round";
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx-sgn*4,fy+4,fx-sgn*6,fy+1);g.stroke();
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx+sgn*4,fy+5,fx+sgn*7,fy+2);g.stroke();
+    g.lineCap="butt";
     if(!offl){RB.fillStyle=te(0.85);RB.fillRect(fx-1,fy-4,2,2);RE.fillStyle=te(0.9);RE.fillRect(fx-1,fy-4,2,2);}
   }
   for(var i=0;i<3;i++){drawLeg(-1,i);drawLeg(1,i);}
@@ -1404,6 +1455,20 @@ function buildGrok(t,st){
   // hard glass edge highlight, and the rim of the neck ring catching light
   g.strokeStyle="rgba(180,200,240,0.4)";g.lineWidth=2;g.beginPath();g.arc(cx-3,HY-3,hr-5,Math.PI*1.05,Math.PI*1.55);g.stroke();
   g.strokeStyle="rgba(226,240,255,"+(offl?0.1:0.3)+")";g.lineWidth=1.2;g.beginPath();g.arc(cx,HY,hr+2,Math.PI*1.12,Math.PI*1.48);g.stroke();
+  /* Helmet lamp. An EVA suit carries one, it is the reason the visor can be
+     dark and the wearer can still see, and grok did not have it — so the only
+     unit whose face is a mirror also had no light of its own. Mounted left,
+     it throws a short forward cone while working. */
+  if(!offl){var hlx=cx-hr+3,hly=HY-hr*0.42;
+    g.fillStyle=sT;rr(g,hlx-5,hly-4,10,8,2);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1;rr(g,hlx-5,hly-4,10,8,2);g.stroke();
+    [RB,RE].forEach(function(c){
+      c.fillStyle="rgba(236,246,255,"+(work?0.85:0.4)+")";c.fillRect(hlx-3,hly-2,4,4);
+      if(work){c.save();c.globalCompositeOperation="lighter";
+        var hc=c.createLinearGradient(hlx,hly,hlx-58,hly+16);
+        hc.addColorStop(0,"rgba(214,234,255,0.22)");hc.addColorStop(1,"rgba(214,234,255,0)");
+        c.fillStyle=hc;c.beginPath();c.moveTo(hlx-2,hly-4);c.lineTo(hlx-2,hly+4);
+        c.lineTo(hlx-58,hly+26);c.lineTo(hlx-58,hly-2);c.closePath();c.fill();c.restore();}});}
   pl(g,cx+hr-4,HY-hr+6,cx+hr+4,HY-hr-6,eH,1.6);
   if(!offl){RB.fillStyle="rgba(255,80,70,0.9)";RB.beginPath();RB.arc(cx+hr+4,HY-hr-6,2,0,7);RB.fill();RE.fillStyle="rgba(255,80,70,0.8)";RE.beginPath();RE.arc(cx+hr+4,HY-hr-6,2,0,7);RE.fill();}
 
@@ -1474,6 +1539,14 @@ function buildKimi(t,st){
   var bgr=g.createLinearGradient(0,by0,0,by0+bh);bgr.addColorStop(0,sT);bgr.addColorStop(1,sB);
   rr(g,bx,by0,bw,bh,br);g.fillStyle=bgr;g.fill();g.strokeStyle=ed;g.lineWidth=1.4;g.stroke();
   g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.moveTo(bx+8,by0+3);g.lineTo(bx+bw-8,by0+3);g.stroke();
+  /* Status strip along the top of the casing. Kimi is the only unit with no
+     hard readout anywhere — claude has a core, codex a reactor, grok a chest
+     panel — so its state lived entirely in a face, which is expressive and
+     says nothing precise. Five cells that fill left-to-right while working and
+     hold a slow single pulse while idle. */
+  if(!offl){var cells=5;for(var lc=0;lc<cells;lc++){
+    var lit2=work?((Math.floor(t*3)%cells)>=lc?1:0.16):((Math.sin(t*1.6)>0.3&&lc===0)?1:0.16);
+    [RB,RE].forEach(function(c){c.fillStyle=pkh(0.75*lit2);c.fillRect(bx+11+lc*(bw-22)/cells,by0+5.5,(bw-22)/cells-2.5,2);});}}
   // screen
   var sx=bx+8,sy=by0+8,sw=bw-16,sh=bh-16;rr(g,sx,sy,sw,sh,9);g.fillStyle="#05080e";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
   if(!offl){RB.fillStyle=pk(0.05);for(var sl=sy+3;sl<sy+sh;sl+=3)RB.fillRect(sx+2,sl,sw-4,1);}
@@ -1710,7 +1783,7 @@ function drawTarget(t,dt){
      reviewed. It is the room's own version of "work is waiting". */
   else if(ROOM==="reviewer"){ inspectDesk(t,STATE); verdictTower(t,STATE); fileCabinet(1040); fileCabinet(1078); docStack(690); docStack(720);
     if(STATE==="idle")for(var ip=0;ip<11;ip++){S.fillStyle=ip%2?"#c3cdda":"#a6b1c0";S.fillRect(752-(ip%2),FLOORY-6-ip*4,26,4);} }
-  else { mapConsole(t,STATE); phoneBank(1042); fileCabinet(1086); docStack(700); }
+  else { mapConsole(t,STATE); phoneBank(1042,t,STATE); fileCabinet(1086); docStack(700); }
   drawSparks();
   drawFloorFog(t);
   drawSteam(t);
