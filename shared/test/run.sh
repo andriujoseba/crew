@@ -645,6 +645,37 @@ t engine-request-green-gated green-gated "$r1"
 # shellcheck disable=SC2016
 if grep -q 'select(.isDraft | not)' "$SHARED/lib/duty-builder.sh"; then r1=draft-excluded; else r1=EXPOSED; fi
 t engine-request-excludes-drafts draft-excluded "$r1"
+# #155: GitHub rejects connection pages above 100 instead of truncating them.
+# Pin the live API ceiling across shared/, not only the query that exposed it.
+oversized_connections="$(grep -REho '(first|last):[0-9]+' "$SHARED" \
+  | awk -F: '$2 > 100 { print }')"
+t graphql-connection-pages-live-valid "" "$oversized_connections"
+# A GraphQL error can be non-empty stdout with a non-zero status and a null PR.
+# The handoff sweep must validate the object before either _request_panel or
+# converged.jq sees it; non-empty is not evidence of a successful fetch.
+GQL_EXCESSIVE='{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"EXCESSIVE_PAGINATION"}]}'
+GQL_LONG_OK="$(mk_rp "$H" '[]' "$REVS_OK" '[]' | jq --arg mark "$RP_MARK $H" '
+  .data.repository.pullRequest += {
+    mergeable:"MERGEABLE", labels:{nodes:[]},
+    comments:{nodes:([range(0;99) | {author:{login:"someone"},body:"thread"}]
+      + [{author:{login:"me-bot"},body:$mark}])}
+  }')"
+payload_usable() {
+  jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1 \
+    && printf usable || printf unusable
+}
+t graphql-error-body-is-unusable unusable "$(printf '%s' "$GQL_EXCESSIVE" | payload_usable)"
+t graphql-long-thread-payload-is-usable usable "$(printf '%s' "$GQL_LONG_OK" | payload_usable)"
+t graphql-long-thread-converges true \
+  "$(printf '%s' "$GQL_LONG_OK" | jq -r --argjson panel "$PANEL" \
+      --arg needs_human state:needs-human -f "$CJQ")"
+if grep -q "jq -e '.data.repository.pullRequest != null'" "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'PR state payload unusable; skipping request and handoff' "$SHARED/lib/duty-builder.sh"; then
+  r1=gated
+else
+  r1=EXPOSED
+fi
+t graphql-error-gates-request-and-handoff gated "$r1"
 # bots-reviewing is best-effort (|| warn), never gating.
 # shellcheck disable=SC2016
 if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh"; then r1=best-effort; else r1=GATING; fi

@@ -68,6 +68,9 @@ _mirror_rounds() {
   # so a still-arriving round is never stamped "no written reply" (round-log.jq).
   local repo="$1" num="$2" final="${3:-false}" owner name payload newbody
   owner="${repo%%/*}"; name="${repo##*/}"
+  # The assignment's status is tested outside the substitution: GraphQL errors
+  # may write a non-empty JSON body to stdout, but their non-zero status still
+  # reaches this guard (#155).
   payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
       body
@@ -570,17 +573,23 @@ _builder_repo() {
       _mirror_rounds "$R" "$N" false
       # Sessions above can run for up to an hour and can push a new head while
       # reviewers also act. Fetch again here so request-panel and convergence
-      # never act on the early round-detection snapshot (#147).
-      pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+      # never act on the early round-detection snapshot (#147). This one read
+      # drives both panel request and convergence; a fetch failure or GraphQL
+      # error body skips both this tick.
+      if ! pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable
           labels(first:50){nodes{name}}
           comments(last:100){nodes{author{login} body}}
           reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
           latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
-        } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
-      if [ -z "$pr_payload" ]; then
+        } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null)"; then
         warn "$R#$N: PR state fetch failed; skipping request and handoff this tick"
+        continue
+      fi
+      if ! printf '%s' "$pr_payload" \
+        | jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1; then
+        warn "$R#$N: PR state payload unusable; skipping request and handoff this tick"
         continue
       fi
       # Request the panel when the round is signalled answered at a green head

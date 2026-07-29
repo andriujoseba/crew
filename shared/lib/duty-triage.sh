@@ -111,7 +111,7 @@ _triage_repo() {
   # (50/50/20) truncate very busy threads — safe direction (re-wake), hygiene
   # is the backstop.
   local uncommented_disc
-  uncommented_disc="$(TR_ME="$ME" TR_R="$R" gh api graphql -f owner="$owner" -f name="$name" -f query='
+  if ! uncommented_disc="$(TR_ME="$ME" TR_R="$R" gh api graphql -f owner="$owner" -f name="$name" -f query='
     query($owner:String!,$name:String!){
       repository(owner:$owner,name:$name){
         discussions(first:50,states:OPEN){
@@ -124,8 +124,7 @@ _triage_repo() {
               | select( [ .comments.nodes[] | .author.login,
                           .replies.nodes[].author.login ]
                         | index(env.TR_ME) | not )
-              | "\(env.TR_R)#\(.number) \(.updatedAt)"] | .[]' 2>/dev/null || echo err)"
-  if [ "$uncommented_disc" = err ]; then
+              | "\(env.TR_R)#\(.number) \(.updatedAt)"] | .[]' 2>/dev/null)"; then
     warn "$R: discussion probe failed (discussions disabled?)"
     uncommented_disc=""
   else

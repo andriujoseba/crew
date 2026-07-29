@@ -89,15 +89,21 @@ rereq_decision() {
 _mark_addressing() {
   local repo="$1" num="$2" roster_json="$3" owner name payload author eff_panel verdict
   owner="${repo%%/*}"; name="${repo##*/}"
-  payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+  if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
       headRefOid
       author{login}
       labels(first:50){nodes{name}}
       reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
       latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
-    } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null || echo '')"
-  [ -n "$payload" ] || { warn "review: $repo#$num addressing eval fetch failed; skipping (best-effort)"; return 0; }
+    } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
+    warn "review: $repo#$num addressing eval fetch failed; skipping (best-effort)"
+    return 0
+  fi
+  if ! printf '%s' "$payload" | jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1; then
+    warn "review: $repo#$num addressing eval payload unusable; skipping (best-effort)"
+    return 0
+  fi
   author="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.author.login // ""' 2>/dev/null)"
   eff_panel="$(printf '%s' "$roster_json" | jq -c --arg a "$author" '. - [$a]' 2>/dev/null || echo '[]')"
   verdict="$(printf '%s' "$payload" \
@@ -169,7 +175,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     # Per-PR dedup guard: my own latest VERDICT's commit oid vs the live
     # head — one GraphQL call fetches both plus what the re-request rule
     # needs. states filter excludes COMMENTED: a comment is a non-verdict.
-    fields="$(RV_ME="$ME" gh api graphql \
+    if ! fields="$(RV_ME="$ME" gh api graphql \
       -f query='query($owner:String!,$name:String!,$num:Int!,$me:String!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid
@@ -182,8 +188,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         | ($pr.reviews.nodes[0] // {}) as $mine
         | ([$pr.timelineItems.nodes[] | select((.requestedReviewer.login // "") == env.RV_ME) | .createdAt] | max // "-") as $req
         | "\($pr.headRefOid) \($mine.commit.oid // "-") \($mine.submittedAt // "-") \($mine.state // "-") \($req)"' \
-      2>/dev/null || echo err)"
-    if [ "$fields" = "err" ]; then
+      2>/dev/null)"; then
       warn "review: $SR#$N state fetch failed; skipping this tick"
       sweep_complete=0
       continue

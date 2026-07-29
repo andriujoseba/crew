@@ -11,7 +11,7 @@
 # never decide on its own that a round is done.
 #
 # Assumes the caller's payload carries a deep enough comments page for the latest
-# MARK_ANSWERED to be present (duty-builder reads comments(last:200)). On a round
+# MARK_ANSWERED to be present (duty-builder reads comments(last:100)). On a round
 # so chatty the signal scrolls past that window the engine holds one extra tick
 # until the next signal or re-tick — a delay, never a wrong request.
 [ .data.repository.pullRequest.comments.nodes[]?
