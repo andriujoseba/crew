@@ -1185,7 +1185,9 @@ function buildClaude(t,st){
   [RB,RE].forEach(function(c){if(!offl){c.fillStyle="rgba(255,80,70,0.9)";c.beginPath();c.arc(hcx+24,hy-18,2,0,7);c.fill();}});
 
   buildRim();
-  return {hand:handR||{x:cx,y:400},coreY:262+breath,hy:hy,offl:offl,work:work};
+  // two boots, flat on the deck — see FEET in drawRobot
+  return {hand:handR||{x:cx,y:400},coreY:262+breath,hy:hy,offl:offl,work:work,
+          feet:[{x:cx-32,y:560,w:30},{x:cx+28,y:560,w:30}]};
 }
 
 /* ===================== CODEX — heavy armored 8-legged spider (teal) ===================== */
@@ -1265,7 +1267,10 @@ function buildCodex(t,st){
   }
 
   buildRim();
-  return {hand:handR||{x:cx+18,y:BY+42},coreY:coreY,hy:hy2-10,offl:offl,work:work};
+  /* Six tarsus tips, not one blob under the body: the whole point of the
+     spider is the stance, and the stance is where the feet are. */
+  var CFEET=[];[-1,1].forEach(function(sg){for(var fi=0;fi<3;fi++)CFEET.push({x:cx+sg*footX[fi],y:footY[fi],w:13});});
+  return {hand:handR||{x:cx+18,y:BY+42},coreY:coreY,hy:hy2-10,offl:offl,work:work,feet:CFEET};
 }
 
 /* ===================== GROK — floating astronaut w/ jetpack (purple) ===================== */
@@ -1345,7 +1350,12 @@ function buildGrok(t,st){
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
   buildRim();
   var hh=handR||{x:cx+30,y:BY+26};
-  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(HY-20),offl:offl,work:work};
+  /* Grok's boots dangle — they are NOT on the floor, and saying so is the
+     whole reason the shadow softens with height in drawRobot. When the
+     thrusters are out (offline) it hangs lower and the shadow tightens. */
+  var GFY=BY+26+(offl?90:78);
+  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(HY-20),offl:offl,work:work,
+          feet:[{x:TX(cx-14),y:TY(GFY),w:F*9},{x:TX(cx+14),y:TY(GFY),w:F*9}]};
 }
 
 /* ===================== KIMI — hovering companion drone, screen-face (pink) ===================== */
@@ -1423,16 +1433,48 @@ function buildKimi(t,st){
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
   buildRim();
   var hh=handR||{x:cx+30,y:BY+28};
-  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(BY-24),offl:offl,work:work};
+  /* Kimi has no feet — the skirt is what faces the floor, so it casts one
+     wide soft pool rather than two prints. Powered down it settles, and the
+     pool tightens on its own through the height rule. */
+  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(BY-24),offl:offl,work:work,
+          feet:[{x:TX(cx),y:TY(BY+34),w:F*30}]};
 }
 
 function drawRobot(t){
   var info=buildRobo(t,STATE);lastHand=info.hand;
   var sc=0.74, px=ROBOX-260*sc, py=FLOORY-560*sc;
   if(AGENT==="kimi"&&!info.offl)py-=48;   // kimi hovers higher in the full room (mini already sits ideally)
-  // cast shadow
-  var floating=(AGENT==="grok"||AGENT==="kimi"), shcx=floating?ROBOX:ROBOX+54, shW=floating?86:182, shH=floating?16:26, shA=floating?0.4:0.72;
-  S.save();var sh=S.createRadialGradient(shcx,FLOORY+8,4,shcx,FLOORY+8,shW+8);sh.addColorStop(0,"rgba(0,0,0,"+shA+")");sh.addColorStop(1,"rgba(0,0,0,0)");S.fillStyle=sh;S.beginPath();S.ellipse(shcx,FLOORY+8,shW,shH,0,0,7);S.fill();S.restore();
+  /* Contact shadows, one per footprint the unit reported.
+     This used to be a single soft ellipse pinned at ROBOX+54 for every walker
+     and ROBOX for every floater. It sat under nothing in particular — 54px to
+     the right of claude, nowhere near any of codex's six feet — and it was the
+     same blob whether a unit was planted on the deck or hanging 60px off it.
+     So nothing in the room read as touching the floor, which is the one job a
+     contact shadow has.
+     The rule is the physical one: the further a foot is above the surface, the
+     wider, softer and fainter its shadow. That single line is what makes
+     claude and codex read as heavy and grok and kimi read as airborne, without
+     either of them being special-cased. */
+  var floating=(AGENT==="grok"||AGENT==="kimi");
+  var feet=info.feet||[{x:260,y:560,w:90}];
+  S.save();
+  feet.forEach(function(f){
+    var fx2=px+f.x*sc, fy2=py+f.y*sc, fw=Math.max(6,f.w*sc);
+    var lift=Math.max(0,FLOORY-fy2);              // how high off the deck this foot is
+    var spread=1+Math.min(2.6,lift/34);           // soft-shadow growth with distance
+    var a=(floating?0.44:0.66)/Math.pow(spread,1.25);
+    var w2=fw*spread, h2=Math.max(3,fw*0.34*spread);
+    var sh=S.createRadialGradient(fx2,FLOORY+6,1,fx2,FLOORY+6,w2);
+    sh.addColorStop(0,"rgba(0,0,0,"+a.toFixed(3)+")");
+    sh.addColorStop(0.55,"rgba(0,0,0,"+(a*0.45).toFixed(3)+")");
+    sh.addColorStop(1,"rgba(0,0,0,0)");
+    S.fillStyle=sh;S.beginPath();S.ellipse(fx2,FLOORY+6,w2,h2,0,0,7);S.fill();
+    /* The dark core right at the contact point. Only for a foot that is
+       actually down — it is the thing that says "touching", so a hovering
+       unit must not get one. */
+    if(lift<7&&!floating){S.fillStyle="rgba(0,0,0,0.5)";S.beginPath();S.ellipse(fx2,FLOORY+4,fw*0.62,Math.max(2,fw*0.2),0,0,7);S.fill();}
+  });
+  S.restore();
   if(!info.offl&&AGENT!=="claude"){var vc=AGENT==="codex"?"55,212,166":AGENT==="grok"?"176,124,255":"255,114,182",vr=floating?122:150;S.save();S.globalCompositeOperation="lighter";var tgl=S.createRadialGradient(ROBOX,FLOORY,2,ROBOX,FLOORY,vr);tgl.addColorStop(0,"rgba("+vc+",0.14)");tgl.addColorStop(1,"rgba("+vc+",0)");S.fillStyle=tgl;S.beginPath();S.ellipse(ROBOX,FLOORY+4,vr,18,0,0,7);S.fill();S.restore();}
   // body
   S.imageSmoothingEnabled=true;
@@ -1488,6 +1530,7 @@ function drawTarget(t,dt){
 
   drawDeepRacks(t);
   drawBackWall(t,lit);
+  floorPlane(t,lit,STATE);   // owns everything below FLOORY; must run after the wall
   rightTower(t);
   drawRedBeacon(t,offl?1:0.14);
   // wall attachments FIRST, so the volumetric light reads in front of them
@@ -1535,8 +1578,12 @@ function drawBackWall(t,lit){
   S.beginPath();S.moveTo(wx,wy+150);S.lineTo(wx+ww,wy+150);S.stroke();
   S.save();S.globalAlpha=0.09+0.05*lit;S.fillStyle="#d9b23a";S.font="700 34px ui-monospace,monospace";S.fillText("SECTOR-7",672,wy+70);S.font="700 15px ui-monospace,monospace";S.fillText(ROOM==="builder"?"BUILDER QUARTERS":ROOM==="reviewer"?"REVIEW LAB":"DISPATCH",674,wy+92);S.restore();
   S.save();S.globalAlpha=0.14;for(var sx=wx;sx<wx+ww;sx+=18){S.fillStyle=sx%36<18?"#c9a227":"#0a0a0a";S.beginPath();S.moveTo(sx,FLOORY-8);S.lineTo(sx+9,FLOORY-8);S.lineTo(sx+18,FLOORY);S.lineTo(sx+9,FLOORY);S.closePath();S.fill();}S.restore();
-  var flg=S.createLinearGradient(0,FLOORY,0,DH);flg.addColorStop(0,"#060a12");flg.addColorStop(1,"#010307");S.fillStyle=flg;S.fillRect(0,FLOORY,DW,DH-FLOORY);
-  S.fillStyle="rgba(0,0,0,0.6)";S.fillRect(0,FLOORY,DW,3);
+  /* The floor used to be painted here, by the function that draws the WALL —
+     a flat gradient plus a black seam bar, filling everything below FLOORY.
+     It has moved to floorPlane(), which runs immediately after this and owns
+     that band alone. Leaving it here meant anything drawn on the floor before
+     the wall was silently erased, which is exactly what happened to the first
+     cut of floorPlane. */
 }
 function drawRedBeacon(t,intensity){
   var bx=300,by=200,pulse=reduced?0.6:(0.35+0.65*Math.pow(Math.max(0,Math.sin(t*1.6)),3));
@@ -1588,6 +1635,78 @@ function drawHolo(t,st){
     if(!offl){var sb=y+((t*60)%h);c.fillStyle=rgba(C0[0],C0[1],C0[2],0.10);c.fillRect(x+2,sb,w-4,10);}
     c.restore();}
   panel(S,0.9);panel(G,0.7);
+}
+/* The floor the whole room stands on. There wasn't one: below FLOORY the scene
+   was the same flat #02040a as the void above the wall, so every unit and every
+   prop was pasted onto a hole rather than standing in a room, and the contact
+   shadows had no surface to land on. One receding plane, tinted per room —
+   which is also the cheapest way to make three rooms that share a wall, a
+   ceiling and a lamp stop reading as the same room with different posters. */
+function floorPlane(t,lit,st){
+  var off=st==="offline", VPX=DW*0.5, H=DH-FLOORY;
+  var warm=ROOM==="builder", cool=ROOM==="reviewer";
+  /* These read brighter than they look on paper only because everything below
+     FLOORY is then hit twice — by drawForeground's blurred lip and by the
+     final vignette, which is at its strongest in exactly this band. Tuned
+     against the composite, not against this fill. */
+  var base=warm?[62,51,38]:cool?[42,57,76]:[50,54,63];
+  var k=off?0.42:1;
+  S.save();
+  // the wall's own contact shadow, where it meets the floor
+  S.fillStyle="rgba(0,0,0,0.6)";S.fillRect(0,FLOORY-3,DW,3);
+  var fg=S.createLinearGradient(0,FLOORY,0,DH);
+  fg.addColorStop(0,rgba(base[0]*k,base[1]*k,base[2]*k,1));
+  fg.addColorStop(0.35,rgba(base[0]*0.62*k,base[1]*0.62*k,base[2]*0.62*k,1));
+  fg.addColorStop(1,"#01030700");
+  S.fillStyle=fg;S.fillRect(0,FLOORY,DW,H);
+  /* Seams converge on the same vanishing point the wall grid implies, so the
+     floor agrees with the perspective already on screen instead of announcing
+     a second one. */
+  S.strokeStyle=rgba(120,150,190,0.05*k);S.lineWidth=1;
+  for(var sx2=-720;sx2<DW+720;sx2+=150){S.beginPath();S.moveTo(VPX+(sx2-VPX)*0.16,FLOORY);S.lineTo(sx2,DH);S.stroke();}
+  [7,18,34,56,86].forEach(function(dy,i){S.strokeStyle=rgba(120,150,190,(0.055-i*0.008)*k);S.beginPath();S.moveTo(0,FLOORY+dy);S.lineTo(DW,FLOORY+dy);S.stroke();});
+  /* The lip where floor meets wall. A hard bright edge here is what stops the
+     two planes from reading as one dark field — it is doing more work than the
+     whole gradient above it. */
+  S.fillStyle=rgba(150,180,215,0.13*lit*k);S.fillRect(0,FLOORY,DW,1);
+  S.fillStyle=rgba(150,180,215,0.05*lit*k);S.fillRect(0,FLOORY+1,DW,2);
+
+  if(warm){
+    /* Oil and scorch. A fabrication bay floor that is evenly clean is a
+       rendering, not a workshop — and the stains sell scale, because they are
+       the only thing down here with a size the eye already knows. */
+    /* Kept inside FLOORY..FLOORY+40. drawForeground's blurred lip rises to
+       about DH-96 at mid-screen and the vignette piles on below that, so
+       anything painted lower than ~+40 is painted where nobody can see it. */
+    [[300,13,80,0.62],[566,24,120,0.5],[858,10,64,0.56],[190,30,58,0.44]].forEach(function(o){
+      var og=S.createRadialGradient(o[0],FLOORY+o[1],2,o[0],FLOORY+o[1],o[2]);
+      og.addColorStop(0,rgba(6,5,4,o[3]*k));og.addColorStop(1,"rgba(6,5,4,0)");
+      S.fillStyle=og;S.beginPath();S.ellipse(o[0],FLOORY+o[1],o[2],o[2]*0.32,0,0,7);S.fill();});
+  } else if(cool){
+    /* Sealed lab floor: it reflects. A smeared, vertically-squashed echo of
+       the diff wall is enough — a real mirror would double the noise and read
+       as a bug. */
+    S.save();S.globalCompositeOperation="lighter";
+    var rf=S.createLinearGradient(0,FLOORY,0,FLOORY+70);
+    rf.addColorStop(0,rgba(120,180,240,0.085*k));rf.addColorStop(1,"rgba(120,180,240,0)");
+    S.fillStyle=rf;S.fillRect(250,FLOORY,420,70);
+    // specular pool directly under the lamp
+    var sp=S.createRadialGradient(ROBOX,FLOORY+16,3,ROBOX,FLOORY+16,210);
+    sp.addColorStop(0,rgba(180,215,255,0.10*lit*k));sp.addColorStop(1,"rgba(180,215,255,0)");
+    S.fillStyle=sp;S.beginPath();S.ellipse(ROBOX,FLOORY+16,210,26,0,0,7);S.fill();S.restore();
+  } else {
+    /* Dispatch floors are painted, because dispatch is about where a thing
+       goes next. The lane runs toward the console the triage unit works at. */
+    /* Same band constraint as the builder's stains: the lane has to live in
+       FLOORY..FLOORY+40 or the foreground lip swallows it. */
+    S.save();S.globalAlpha=(off?0.22:0.62);
+    S.strokeStyle="rgba(201,162,39,0.30)";S.lineWidth=2;
+    S.beginPath();S.moveTo(0,FLOORY+9);S.lineTo(DW,FLOORY+9);S.moveTo(0,FLOORY+39);S.lineTo(DW,FLOORY+39);S.stroke();
+    for(var cxp=48;cxp<DW;cxp+=124){S.strokeStyle="rgba(201,162,39,0.30)";S.lineWidth=3.5;S.beginPath();
+      S.moveTo(cxp,FLOORY+16);S.lineTo(cxp+22,FLOORY+24);S.lineTo(cxp,FLOORY+32);S.stroke();}
+    S.restore();
+  }
+  S.restore();
 }
 function drawFloorFog(t){S.save();S.globalCompositeOperation="lighter";floorHaze.forEach(function(f){var x=((f.x+t*f.sp)%1.2-0.1)*DW;var y=FLOORY+(f.y-0.8)*DH*0.4;var gr=S.createRadialGradient(x,y,10,x,y,260);gr.addColorStop(0,rgba(90,120,150,f.a));gr.addColorStop(1,"rgba(90,120,150,0)");S.fillStyle=gr;S.beginPath();S.ellipse(x,y,260,50,0,0,7);S.fill();});S.restore();}
 function drawSteam(t){if(reduced)return;S.save();S.globalCompositeOperation="lighter";var vx=1010,vy=FLOORY-30;S.fillStyle="#0c1219";rr(S,vx,vy,40,26,3);S.fill();steam.forEach(function(s){var p=(s.p+t*0.06)%1;var yy=vy-p*180;var xx=vx+20+Math.sin(t*0.8+s.sway)*24*p;var a=(1-p)*0.10;var rad=8+p*46;var gr=S.createRadialGradient(xx,yy,2,xx,yy,rad);gr.addColorStop(0,rgba(120,150,175,a));gr.addColorStop(1,"rgba(120,150,175,0)");S.fillStyle=gr;S.beginPath();S.arc(xx,yy,rad,0,7);S.fill();});S.restore();}
