@@ -340,6 +340,11 @@ function pl(c,x0,y0,x1,y1,col,w){c.strokeStyle=col;c.lineWidth=w||1;c.beginPath(
 function rivet(c,x,y,col){c.fillStyle=col;c.beginPath();c.arc(x,y,1.5,0,7);c.fill();}
 function makeNoise(n){var c=oc(n,n),x=c.getContext("2d"),d=x.createImageData(n,n),p=d.data;for(var i=0;i<p.length;i+=4){var v=Math.random()*255;p[i]=p[i+1]=p[i+2]=v;p[i+3]=255;}x.putImageData(d,0,0);return c;}
 function fnoise(t){return Math.sin(t*11.3)*0.5+Math.sin(t*23.7+1.3)*0.3+Math.sin(t*57.1+0.7)*0.2;}
+/* A phase angle derived from a string, so a per-unit animation can be offset
+   by WHICH UNIT IT IS rather than by Math.random. Two boxes side by side then
+   never blink in step, and the same box blinks the same way in two renders of
+   the same commit — which is the property an asset map is made of. */
+function strPhase(s){var h=2166136261;s=String(s);for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return (h>>>0)/4294967296*6.283;}
 
 var motes=[];for(var i=0;i<90;i++)motes.push({x:Math.random(),y:Math.random(),z:.3+Math.random()*.9,s:Math.random()*6.28});
 var steam=[];for(var i=0;i<26;i++)steam.push({p:Math.random(),x:.72+Math.random()*.12,sway:Math.random()*6.28});
@@ -1015,7 +1020,13 @@ function drawMini(t,mx,my,mw,mh){
   // thin desk in front
   X.fillStyle="#1a2230";X.fillRect(rcx-22,fY-6,50,6);X.fillStyle="#0d1119";X.fillRect(rcx-18,fY,4,7);X.fillRect(rcx+20,fY,4,7);
   // compact holo panel (right, well separated) — state + queue
-  var hx=dx0+dW*0.60,hy=dy0+dH*0.28,hw=dW*0.33,hh=dH*0.40,C0=off?[255,74,66]:[95,214,255],fl=off?(Math.random()<0.2?0.4:0.9):0.95,cs=C0[0]+","+C0[1]+","+C0[2];
+  /* The offline panel's flicker was raw Math.random(). Invisible in the app —
+     and fatal to any MAP of the app: all twelve offline tiles would differ
+     between two renders of the same commit, which is the exact trap the film
+     grain sprang on the room map before dev/seed.js existed. Same irregular
+     blink, driven by time and the unit's own name. */
+  var flp=strPhase(BOX),flw=Math.sin(t*7.7+flp)*0.6+Math.sin(t*13.1+flp*1.7)*0.4;
+  var hx=dx0+dW*0.60,hy=dy0+dH*0.28,hw=dW*0.33,hh=dH*0.40,C0=off?[255,74,66]:[95,214,255],fl=off?(flw>0.62?0.4:0.9):0.95,cs=C0[0]+","+C0[1]+","+C0[2];
   X.save();X.globalCompositeOperation="lighter";X.strokeStyle="rgba("+cs+",0.13)";X.lineWidth=1;X.beginPath();X.moveTo(rcx+14,fY-16);X.lineTo(hx+8,hy+hh);X.stroke();X.restore();
   X.save();X.globalAlpha=fl;
   X.fillStyle="rgba("+cs+",0.05)";rr(X,hx,hy,hw,hh,4);X.fill();
