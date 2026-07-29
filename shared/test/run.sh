@@ -654,13 +654,21 @@ t graphql-connection-pages-live-valid "" "$oversized_connections"
 # The handoff sweep must validate the object before either _request_panel or
 # converged.jq sees it; non-empty is not evidence of a successful fetch.
 GQL_EXCESSIVE='{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"EXCESSIVE_PAGINATION"}]}'
-GQL_LONG_OK="$(mk_rp "$H" '[]' "$REVS_OK" "$RP_SIG_H")"
+GQL_LONG_OK="$(mk_rp "$H" '[]' "$REVS_OK" '[]' | jq --arg mark "$RP_MARK $H" '
+  .data.repository.pullRequest += {
+    mergeable:"MERGEABLE", labels:{nodes:[]},
+    comments:{nodes:([range(0;99) | {author:{login:"someone"},body:"thread"}]
+      + [{author:{login:"me-bot"},body:$mark}])}
+  }')"
 payload_usable() {
   jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1 \
     && printf usable || printf unusable
 }
 t graphql-error-body-is-unusable unusable "$(printf '%s' "$GQL_EXCESSIVE" | payload_usable)"
 t graphql-long-thread-payload-is-usable usable "$(printf '%s' "$GQL_LONG_OK" | payload_usable)"
+t graphql-long-thread-converges true \
+  "$(printf '%s' "$GQL_LONG_OK" | jq -r --argjson panel "$PANEL" \
+      --arg needs_human state:needs-human -f "$CJQ")"
 if grep -q "jq -e '.data.repository.pullRequest != null'" "$SHARED/lib/duty-builder.sh" \
   && grep -q 'PR state payload unusable; skipping request and handoff' "$SHARED/lib/duty-builder.sh"; then
   r1=gated
