@@ -2726,6 +2726,26 @@ function deckStation(t,lit,st){
   if(ROOM==="builder")fabTable(t,lit,st);
   else if(ROOM==="reviewer")inspectBench(t,lit,st);
   else plotTable(t,lit,st);
+  /* L16 — the unit SHADES the bench. The lamp hangs directly over the unit
+     and the worktop stands in front of and below it, so the strip of top
+     face nearest the unit is the strip the unit's own body keeps the light
+     off. Width comes from the footprint the sprite actually reported — wide
+     for codex's straddle, narrow for claude — and a hovering unit throws it
+     softer and fainter, by the same height rule the floor shadows obey. It
+     scales with the lamp, so an offline room loses it with everything else. */
+  if(lit>0.02&&lastAnchors&&lastAnchors.feet&&lastAnchors.feet.length){
+    var sm=1e9,sx2=-1e9,slift=0;
+    lastAnchors.feet.forEach(function(f){sm=Math.min(sm,f.x-f.w);sx2=Math.max(sx2,f.x+f.w);slift+=Math.max(0,FLOORY-f.y);});
+    slift/=lastAnchors.feet.length;
+    var uw2=Math.max(70,Math.min(250,(sx2-sm)*1.15)),ucx=(sm+sx2)/2;
+    var soft=1+Math.min(1.6,slift/70),ua=0.30*lit/Math.pow(soft,1.2);
+    S.save();
+    poly(S,[[dd.cx-dd.bw/2,dd.top],[dd.cx+dd.bw/2,dd.top],[nx1+6,dd.top+dd.td],[nx0-6,dd.top+dd.td]]);S.clip();
+    var us2=S.createRadialGradient(ucx,dd.top+dd.td*0.32,2,ucx,dd.top+dd.td*0.32,uw2*0.55*soft);
+    us2.addColorStop(0,"rgba(2,4,8,"+ua.toFixed(3)+")");us2.addColorStop(1,"rgba(2,4,8,0)");
+    S.fillStyle=us2;S.beginPath();S.ellipse(ucx,dd.top+dd.td*0.32,uw2*0.55*soft,dd.td*0.6,0,0,7);S.fill();
+    S.restore();
+  }
   /* R1 — the last thing the near plane needs: to be nearer. Everything at
      this depth is on the camera's side of the room's haze and the lamp's
      throw, so it sits a stop under the mid-plane and falls off further toward
