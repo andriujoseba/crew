@@ -1710,6 +1710,22 @@ function buildClaude(t,st){
   rivet(g,cx-52,246+breath,eH);rivet(g,cx+52,246+breath,eH);rivet(g,cx-48,292+breath,eH);rivet(g,cx+48,292+breath,eH);
   // scratches (battle wear)
   if(!offl){g.strokeStyle="rgba(120,140,170,0.25)";g.lineWidth=1;g.beginPath();g.moveTo(cx+14,244+breath);g.lineTo(cx+30,258+breath);g.moveTo(cx-24,270+breath);g.lineTo(cx-12,282+breath);g.stroke();}
+  /* A service history. Every plate so far is the plate the unit shipped with,
+     which is its own kind of factory-clean. One repair on the right pec: a
+     patch of newer, bluer steel bolted over a scorch mark, weld stitches
+     along its top edge where it was tacked before bolting. The patch edges
+     deliberately align with nothing — repairs never do. */
+  var scorch=g.createRadialGradient(cx+37,278+breath,3,cx+37,278+breath,22);
+  scorch.addColorStop(0,"rgba(8,6,5,0.5)");scorch.addColorStop(1,"rgba(8,6,5,0)");
+  g.fillStyle=scorch;g.fillRect(cx+15,256+breath,44,44);
+  plate(g,[[cx+26,268+breath],[cx+43,264+breath],[cx+46,288+breath],[cx+28,293+breath]],
+    offl?"#1f2732":"#2e3a4e",offl?"#10151d":"#182130",ed);
+  rivet(g,cx+29,270+breath,eH);rivet(g,cx+41,267+breath,eH);
+  rivet(g,cx+43,285+breath,eH);rivet(g,cx+31,289+breath,eH);
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.14:0.34)+")";g.lineWidth=1.1;g.beginPath();
+  for(var wd=0;wd<5;wd++){var wx=cx+27.5+wd*3.6,wy=267.6+breath-wd*0.85;
+    g.moveTo(wx,wy-1.8);g.lineTo(wx+1.6,wy+1.8);}
+  g.stroke();
   /* Stencilled unit marking, and paint worn off the plate edges.
      A fleet vehicle carries its designation, and every plate on this model met
      its neighbour at a perfectly clean line — which is what made a heavy mech
@@ -1827,6 +1843,11 @@ function buildClaude(t,st){
     // deep cut seam across the face + two bolts holding it to the socket arm
     pl(g,shx+sgn*30,shy-12,shx+sgn*36,shy+8,rc,1.4);
     rivet(g,shx-sgn*18,shy-4,eH);rivet(g,shx+sgn*20,shy+2,eH);
+    if(sgn<0){ // one deep gouge across the left pauldron: dark trench, bright torn lip
+      g.strokeStyle="rgba(4,8,14,0.6)";g.lineWidth=2.2;g.beginPath();
+      g.moveTo(shx-18,shy-14);g.lineTo(shx+14,shy+2);g.stroke();
+      g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.4)+")";g.lineWidth=1;g.beginPath();
+      g.moveTo(shx-18,shy-15);g.lineTo(shx+14,shy+1);g.stroke();}
     // shoulder joint light, now sitting IN the socket
     [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx,shy+8,2.6,0,7);c.fill();}});
     /* The elbow, in the same joint language as the hips and knees: a dark
