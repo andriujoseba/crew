@@ -1661,8 +1661,17 @@ function buildClaude(t,st){
   // tassets
   plate(g,[[cx-40,344+breath],[cx-20,344+breath],[cx-24,382+breath*0.8],[cx-44,380+breath*0.8]],sM,sB,ed);
   plate(g,[[cx+20,344+breath],[cx+40,344+breath],[cx+44,380+breath*0.8],[cx+24,382+breath*0.8]],sM,sB,ed);
-  // codpiece accent
-  [RB,RE].forEach(function(c){accGlow(c,cx-3,352+breath,6,18);});
+  /* The girdle centre was a glowing stripe painted straight onto the pelvis.
+     Now the belt closes through a bolted buckle housing that bridges the
+     waist gap, and the codpiece is its own pointed plate — doom loincloth,
+     bolted at the corners — with the accent glow recessed into a slot in it
+     rather than resting on top. */
+  plate(g,[[cx-12,338+breath],[cx+12,338+breath],[cx+10,354+breath*0.9],[cx-10,354+breath*0.9]],sT,sB,ed);
+  rivet(g,cx-7,344+breath,eH);rivet(g,cx+7,344+breath,eH);
+  plate(g,[[cx-9,350+breath*0.9],[cx+9,350+breath*0.9],[cx+7,372+breath*0.8],[cx,384+breath*0.8],[cx-7,372+breath*0.8]],sM,sB,ed);
+  rivet(g,cx-5,368+breath*0.8,eH);rivet(g,cx+5,368+breath*0.8,eH);
+  g.fillStyle="#03060c";g.fillRect(cx-3,354+breath*0.9,6,18);
+  [RB,RE].forEach(function(c){accGlow(c,cx-2,355+breath*0.9,4,16);});
 
   /* ---------- ABDOMEN: the join you can see into ----------
      Two clean trapezoids used to butt the chest onto the pelvis, which is why
