@@ -262,6 +262,42 @@ printf 'fixture/incoming\n' >"$RDUTY/.crew-seed-repos.txt"
 roster_install --box claude-builder --converge-registries >/dev/null 2>&1
 t install-registry-migration-vetoes-unknown fixture/unknown-local "$(cat "$RDUTY/repos.txt")"
 
+# Convergence must fail closed when any one-shot transport leg is absent.
+# Call install.sh directly: roster_install deliberately backfills the payloads
+# so the ordinary convergence cases exercise the complete host transport.
+printf 'fixture/notify-contained\n' >"$RDUTY/notify-repos.txt"
+for missing_payload in \
+  .crew-seed-repos.txt \
+  .crew-seed-notify-repos.txt \
+  .crew-example-repos.txt \
+  .crew-example-notify-repos.txt; do
+  cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-seed-repos.txt"
+  cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-seed-notify-repos.txt"
+  cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-example-repos.txt"
+  cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-example-notify-repos.txt"
+  rm -f "$RDUTY/$missing_payload"
+  before_repos="$(cat "$RDUTY/repos.txt")"
+  before_notify_repos="$(cat "$RDUTY/notify-repos.txt")"
+  if refusal_out="$(env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" \
+    CRON_STATE="$CRON_STATE" /bin/bash "$SHARED/install.sh" \
+    --box claude-builder --converge-registries 2>&1)"; then
+    r1=0
+  else
+    r1=$?
+  fi
+  t "install-incomplete-$missing_payload-refused" 1 "$r1"
+  case "$refusal_out" in
+    *"missing transported registry payload $missing_payload"*) r1=named ;;
+    *) r1="missing: $refusal_out" ;;
+  esac
+  t "install-incomplete-$missing_payload-named" named "$r1"
+  t "install-incomplete-$missing_payload-keeps-repos" \
+    "$before_repos" "$(cat "$RDUTY/repos.txt")"
+  t "install-incomplete-$missing_payload-keeps-notify-repos" \
+    "$before_notify_repos" "$(cat "$RDUTY/notify-repos.txt")"
+done
+rm -f "$RDUTY/notify-repos.txt"
+
 runtime_fleet="$(DUTY_DIR="$RDUTY" bash -c \
   '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s|%s" "$FLEET_HUMAN" "$MARK_PICKUP"')"
 t install-loads-defaults-then-operator 'fixture-human|📌 picked up' "$runtime_fleet"

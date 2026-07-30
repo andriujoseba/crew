@@ -49,7 +49,7 @@ declare -a FAILS=()
 ok()   { echo "ok   $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL $1${2:+  — $2}"; FAILS+=("$1"); }
 bx()   { box exec "$BOX_NAME" -- bash -lc "$1" </dev/null; }
-bxput() {
+put_registry() {
   # shellcheck disable=SC2016  # expanded by bash inside the box
   box exec "$BOX_NAME" -- bash -lc '
     set -euo pipefail
@@ -166,7 +166,7 @@ else
 fi
 
 # 2a. The one-time migration adopts a shipped-example registry.
-bxput "$ROOT/examples/repos.txt"
+put_registry "$ROOT/examples/repos.txt"
 bx "rm -f ~/duty/.repos.txt.crew-provenance"
 printf 'drill/adopted\n' >"$CONFIG/repos.txt"
 upgrade_operator || true

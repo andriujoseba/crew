@@ -826,6 +826,15 @@ stage_agent_profiles() { # BOX
   return 0
 }
 
+stage_registry_examples() { # BOX
+  local box_name="$1"
+  if [ "$CONFIG_IS_OPERATOR" -eq 0 ]; then return 0; fi
+  bxput "$box_name" "$CREW_ROOT/examples/repos.txt" \
+    'duty/.crew-example-repos.txt' &&
+    bxput "$box_name" "$CREW_ROOT/examples/notify-repos.txt" \
+      'duty/.crew-example-notify-repos.txt'
+}
+
 stage_fleet_definition() { # BOX
   local box_name="$1" runtime_conf
   runtime_conf="$(mktemp)"
@@ -838,8 +847,7 @@ stage_fleet_definition() { # BOX
      bxput "$box_name" "$runtime_conf" 'duty/conf/fleet.conf' &&
      bxput "$box_name" "$REPOS_SEED" 'duty/.crew-seed-repos.txt' &&
      bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt' &&
-     bxput "$box_name" "$CREW_ROOT/examples/repos.txt" 'duty/.crew-example-repos.txt' &&
-     bxput "$box_name" "$CREW_ROOT/examples/notify-repos.txt" 'duty/.crew-example-notify-repos.txt' &&
+     stage_registry_examples "$box_name" &&
      stage_agent_profiles "$box_name"; then
     rm -f "$runtime_conf"
     return 0
