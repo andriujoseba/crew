@@ -419,7 +419,7 @@ t "ping and probe agree about the duty lock" "" "$DISAGREE"
 echo
 echo "== credentials come from the flow"
 PROBE_MS="$( { TIMEFORMAT=%R; time box exec "$(body GET /api/fleet | jqf "d['units'][0]['box']")" -- \
-  bash -lc "$(cat "$ROOT/fleet-floor/server/probe.sh")" >/dev/null 2>&1; } 2>&1 )"
+  bash -lc "$(cat "$ROOT/fleet-floor/server/probe.sh")" >/dev/null 2>&1 </dev/null; } 2>&1 )"
 PROBE_MS="${PROBE_MS%.*}"
 if [ -n "$PROBE_MS" ] && [ "$PROBE_MS" -le 3 ]; then
   ok "a real probe costs ${PROBE_MS}s — no network auth call in it"
