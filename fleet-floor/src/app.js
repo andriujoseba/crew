@@ -1642,11 +1642,17 @@ function buildClaude(t,st){
   var hy=150+breath+(offl?13:0), hcx=cx+(offl?5:0);
   // neck
   plate(g,[[hcx-9,206+breath],[hcx+9,206+breath],[hcx+7,196+breath],[hcx-7,196+breath]],sM,sB,null);
-  // helmet dome + jaw (angular)
-  plate(g,[[hcx-24,hy+34],[hcx-26,hy+10],[hcx-14,hy-6],[hcx+14,hy-6],[hcx+26,hy+10],[hcx+24,hy+34],[hcx+12,hy+48],[hcx-12,hy+48]],sT,sM,ed);
-  // brow crest
-  plate(g,[[hcx-16,hy+2],[hcx+16,hy+2],[hcx+12,hy-10],[hcx-12,hy-10]],"#2e3a4c","#1a2331",ed);
-  pl(g,hcx,hy-10,hcx,hy+2,rc,1);
+  /* Helmet: faceted, not domed. The old head was a soft octagon with a flat
+     brow tab — a diving helmet. The crown now breaks into facets meeting at a
+     ridge, the brow is a chevron dropping toward the visor centre so the
+     thing scowls, and the cheeks get their own bolted guard plates below —
+     three separate pieces of armour where there was one balloon. */
+  plate(g,[[hcx-24,hy+34],[hcx-26,hy+10],[hcx-16,hy-4],[hcx-6,hy-9],[hcx+6,hy-9],[hcx+16,hy-4],[hcx+26,hy+10],[hcx+24,hy+34],[hcx+12,hy+48],[hcx-12,hy+48]],sT,sM,ed);
+  // crown facet seams
+  pl(g,hcx-6,hy-9,hcx-10,hy+2,rc,1);pl(g,hcx+6,hy-9,hcx+10,hy+2,rc,1);
+  // chevron brow, centre point hanging over the visor
+  plate(g,[[hcx-17,hy+6],[hcx,hy+11],[hcx+17,hy+6],[hcx+13,hy-9],[hcx-13,hy-9]],"#2e3a4c","#1a2331",ed);
+  pl(g,hcx,hy-9,hcx,hy+11,rc,1);
   // side vents / breather
   [[-1],[1]].forEach(function(k){var s=k[0];RB.fillStyle=rc;for(var v=0;v<3;v++)RB.fillRect(hcx+s*16-(s<0?4:0),hy+16+v*6,4,3);});
   /* Visor. It was a flat two-stop gradient across a slit, which at this size
@@ -1690,6 +1696,10 @@ function buildClaude(t,st){
   // jaw grille, so the lower half of the helmet is not a blank plate
   RB.fillStyle=rc;for(var jw=0;jw<3;jw++)RB.fillRect(hcx-9+jw*7,hy+30,5,9);
   RB.fillStyle="rgba(90,110,140,0.3)";RB.fillRect(hcx-11,hy+28,24,1.5);
+  // bolted cheek guards, one separate blade of armour per side
+  [-1,1].forEach(function(sc2){
+    plate(g,[[hcx+sc2*27,hy+10],[hcx+sc2*24,hy+40],[hcx+sc2*10,hy+46],[hcx+sc2*16,hy+26]],sM,sB,ed);
+    rivet(g,hcx+sc2*21,hy+18,eH);});
   /* Antenna beacon. It was a constant red dot — an aircraft warning light that
      never blinks, which is the one thing they all do. Now it strobes on a
      double-flash and throws a short halo, so the highest point on the unit has
