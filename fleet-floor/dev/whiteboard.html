@@ -1705,21 +1705,14 @@ function buildClaude(t,st){
   function weep(x,y,len){g.fillStyle="rgba(70,44,24,0.30)";
     poly(g,[[x-1.2,y+2],[x+1.2,y+2],[x+0.6,y+len],[x-0.6,y+len]]);g.fill();}
 
-  /* ---------- BACKPACK heat-sink (behind, drawn first) ----------
-     It was drawn in the same tones as the front armour, so the part that
-     survives behind the chest — a flat wing beside each arm — read as a grey
-     rectangle floating at the torso's own depth. It is BEHIND: it gets the
-     shade of a back plane, a sharper taper so the wings are shaped, fin cuts
-     so they read as heat-sink, and the torso's own shadow falling on their
-     inner edge, which is what actually pushes them a plane back. */
-  var bpT=offl?"#0e131a":"#161d28", bpB="#060a10", bpE="#212a37";
-  plate(g,[[cx-66,264+breath],[cx-38,248+breath],[cx+38,248+breath],[cx+66,264+breath],[cx+54,334+breath],[cx-54,334+breath]],bpT,bpB,bpE);
-  [-1,1].forEach(function(sw){for(var fb=0;fb<3;fb++){var fy2=280+fb*16+breath;
-    pl(g,cx+sw*46,fy2,cx+sw*(62-fb*2),fy2-6,rc,1.3);}});
-  [-1,1].forEach(function(sw2){var sx0=cx+sw2*40;
-    var shg=g.createLinearGradient(sx0,0,cx+sw2*66,0);
-    shg.addColorStop(0,"rgba(0,0,0,0.45)");shg.addColorStop(1,"rgba(0,0,0,0)");
-    g.fillStyle=shg;poly(g,[[sx0,250+breath],[cx+sw2*66,264+breath],[cx+sw2*56,334+breath],[sx0,334+breath]]);g.fill();});
+  /* ---------- BACK: stacks only, no pack ----------
+     The heat-sink plate is GONE. It was recoloured, tapered, finned and
+     shadowed across two loops, and from the front it still read as a grey
+     wing filling the gap between torso and arm — because from the front,
+     that gap IS the drawing. Daylight between the arms and the waist is
+     what makes the chest read broad and the unit read fit; the exhaust
+     stacks emerge from behind the pauldrons, which is all the mounting a
+     front view can honestly show. */
   /* Exhaust stacks. They were straight rectangles with a lit square floating
      at the tip — behind the chest, only that tip survives, so each read as a
      glowing panel hanging beside the head with no pipe under it. Now each is
