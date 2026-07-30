@@ -250,6 +250,7 @@ bs_ctl() {
 bs_armed()  { grep -cE '^[^#].*tick\.sh' "$BS_CRON" 2>/dev/null || true; }
 bs_paused() { grep -c '^#CREW-FLOOR-PAUSED' "$BS_CRON" 2>/dev/null || true; }
 
+# shellcheck disable=SC2016  # a crontab line is stored unexpanded; $HOME is cron's
 printf '*/5 * * * * $HOME/duty/bin/tick.sh\n17 2 * * * unrelated-job\n' > "$BS_CRON"
 t "pause: exits 0 on an armed box"      0 "$(bs_ctl pause)"
 t "pause: comments the tick line out"   1 "$(bs_paused)"
@@ -288,6 +289,7 @@ t "pause: no crontab at all is still not a failure" 0 "$(bs_ctl pause)"
 
 # ...and a write that genuinely fails must redden the row and SAY why, which is
 # the whole point of not spending the exit status on a count.
+# shellcheck disable=SC2016
 printf '*/5 * * * * $HOME/duty/bin/tick.sh\n' > "$BS_CRON"
 BS_RO=1
 t "pause: a refused crontab write exits non-zero" 1 "$(bs_ctl pause)"
