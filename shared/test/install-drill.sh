@@ -16,6 +16,39 @@ trap 'rm -rf -- "$WORK"' EXIT
 NARROW="$WORK/repos.txt"
 printf 'drill/installer-rehearsal\n' >"$NARROW"
 
+# A test double for the box CLI. `list --json` names whatever STUB_BOXES says,
+# and `exec` runs the requested body against STUB_BOX_HOME — so the driver's
+# real identity reader runs against a real fixture file rather than a canned
+# answer. It also pins the no-host case: this suite runs on box HOSTS too,
+# where a real `box` would otherwise make the dry-run's output depend on which
+# drill boxes happen to exist.
+STUB="$WORK/stub"; mkdir -p "$STUB"
+cat >"$STUB/box" <<'SHIM'
+#!/usr/bin/env bash
+case "${1:-}" in
+  list)
+    [ "${2:-}" = --json ] || exit 1
+    printf '['
+    sep=''
+    for n in ${STUB_BOXES:-}; do printf '%s{"name":"%s"}' "$sep" "$n"; sep=','; done
+    printf ']\n' ;;
+  exec)
+    name="${2:-}"; shift 2
+    case " ${STUB_BOXES:-} " in *" $name "*) ;; *) exit 1 ;; esac
+    [ "${1:-}" = -- ] && shift
+    [ "${1:-}" = bash ] && shift
+    [ "${1:-}" = -lc ] && shift
+    HOME="${STUB_BOX_HOME:-/nonexistent}" bash -c "${1:-}" ;;
+  *) exit 1 ;;
+esac
+SHIM
+chmod +x "$STUB/box"
+PATH="$STUB:$PATH"; export PATH
+export STUB_BOXES="" STUB_BOX_HOME="$WORK/boxhome"
+mkdir -p "$STUB_BOX_HOME/duty/conf"
+# Written the way shared/install.sh writes it — unquoted agent, quoted roles.
+{ echo 'BOT_AGENT=kimi'; echo 'BOT_ROLES="triage"'; } >"$STUB_BOX_HOME/duty/conf/instance.conf"
+
 if out="$("$DRIVER" --box crew-drill-reviewer --tree "$ROOT" --registry "$NARROW" --dry-run 2>&1)"; then
   ok "dry-run-exits-zero"
 else
@@ -27,6 +60,56 @@ for evidence in "step 4:" "steps 5–6:" "step 8:" "step 9:" "host checkout:"; d
     *) bad "dry-run-reports-${evidence%:}" ;;
   esac
 done
+
+# The box's own identity is the only source Section A may hire from. A fixture
+# roster naming a role of its own re-roles a box that later phases share, and
+# the config drill then meets ROLES CHANGED on the box it was handed (#180).
+case "$out" in
+  *"WOULD ADOPT"*"instance.conf"*) ok "dry-run-with-no-host-says-it-adopts-the-installed-identity" ;;
+  *) bad "dry-run-with-no-host-says-it-adopts-the-installed-identity (got '$out')" ;;
+esac
+
+if adopt="$(STUB_BOXES="crew-drill-triage" "$DRIVER" --box crew-drill-triage --tree "$ROOT" \
+    --registry "$NARROW" --dry-run 2>&1)"; then
+  ok "identity-read-exits-zero"
+else
+  bad "identity-read-exits-zero (got '$adopt')"
+fi
+EXPECT_IDENTITY="agent \`kimi\`, roles \`triage\`"
+case "$adopt" in
+  *"$EXPECT_IDENTITY"*) ok "reads-agent-and-roles-off-the-box" ;;
+  *) bad "reads-agent-and-roles-off-the-box (got '$adopt')" ;;
+esac
+# Scoped to the identity line: the tree path alone can carry the word `claude`.
+IDENTITY_LINE="$(printf '%s\n' "$adopt" | grep -F 'WOULD HIRE' || true)"
+case "$IDENTITY_LINE" in
+  *claude*|*reviewer*) bad "does-not-fall-back-to-a-hard-coded-identity (got '$IDENTITY_LINE')" ;;
+  *) ok "does-not-fall-back-to-a-hard-coded-identity" ;;
+esac
+
+if missing="$(STUB_BOXES="crew-drill-triage" STUB_BOX_HOME="$WORK/empty-boxhome" \
+    "$DRIVER" --box crew-drill-triage --tree "$ROOT" --registry "$NARROW" --dry-run 2>&1)"; then
+  case "$missing" in
+    *"WOULD REFUSE"*"instance.conf"*) ok "unreadable-identity-refuses-rather-than-inventing-one" ;;
+    *) bad "unreadable-identity-refuses-rather-than-inventing-one (got '$missing')" ;;
+  esac
+else
+  bad "unreadable-identity-dry-run-still-reports (got '$missing')"
+fi
+
+# The roster field is comma-separated; a two-role box must not be written as
+# two roster columns, which resolves to the second role alone.
+# shellcheck disable=SC2016  # the driver's literal expansion is the pattern
+if grep -qF '${BOX_ROLES// /,}' "$DRIVER"; then
+  ok "multi-role-identity-is-comma-joined-for-the-roster"
+else
+  bad "multi-role-identity-is-comma-joined-for-the-roster"
+fi
+if grep -qE "printf '%s [a-z]+ [a-z]+" "$DRIVER"; then
+  bad "no-hard-coded-identity-left-in-the-fixture-roster"
+else
+  ok "no-hard-coded-identity-left-in-the-fixture-roster"
+fi
 
 if prod="$("$DRIVER" --box crew-drill-reviewer --tree "$ROOT" \
     --registry "$ROOT/examples/repos.txt" --dry-run 2>&1)"; then
