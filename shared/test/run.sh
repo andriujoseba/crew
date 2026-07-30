@@ -169,6 +169,18 @@ RHOME="$TMP/roster-home"
 RDUTY="$RHOME/duty"
 mkdir -p "$RHOME"
 roster_install() {
+  case " $* " in
+    *" --converge-registries "*)
+      [ -f "$RDUTY/.crew-seed-repos.txt" ] ||
+        cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-seed-repos.txt"
+      [ -f "$RDUTY/.crew-example-repos.txt" ] ||
+        cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-example-repos.txt"
+      [ -f "$RDUTY/.crew-example-notify-repos.txt" ] ||
+        cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-example-notify-repos.txt"
+      [ -f "$RDUTY/.crew-seed-notify-repos.txt" ] ||
+        cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-seed-notify-repos.txt"
+      ;;
+  esac
   env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
     /bin/bash "$SHARED/install.sh" "$@"
 }

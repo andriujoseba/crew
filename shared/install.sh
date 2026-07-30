@@ -430,10 +430,20 @@ REPOS_SEED="$DUTY_DIR/.crew-seed-repos.txt"
 NOTIFY_REPOS_SEED="$DUTY_DIR/.crew-seed-notify-repos.txt"
 REPOS_EXAMPLE="$DUTY_DIR/.crew-example-repos.txt"
 NOTIFY_REPOS_EXAMPLE="$DUTY_DIR/.crew-example-notify-repos.txt"
-if [ ! -f "$REPOS_SEED" ]; then REPOS_SEED="$HERE/../examples/repos.txt"; fi
-if [ ! -f "$NOTIFY_REPOS_SEED" ]; then NOTIFY_REPOS_SEED="$HERE/../examples/notify-repos.txt"; fi
-if [ ! -f "$REPOS_EXAMPLE" ]; then REPOS_EXAMPLE="$HERE/../examples/repos.txt"; fi
-if [ ! -f "$NOTIFY_REPOS_EXAMPLE" ]; then NOTIFY_REPOS_EXAMPLE="$HERE/../examples/notify-repos.txt"; fi
+if [ "$CONVERGE_REGISTRIES" -eq 1 ]; then
+  for registry_payload in \
+    "$REPOS_SEED" "$NOTIFY_REPOS_SEED" "$REPOS_EXAMPLE" "$NOTIFY_REPOS_EXAMPLE"; do
+    if [ ! -f "$registry_payload" ]; then
+      echo "crew: missing transported registry payload ${registry_payload#"$DUTY_DIR"/}" >&2
+      exit 1
+    fi
+  done
+else
+  if [ ! -f "$REPOS_SEED" ]; then REPOS_SEED="$HERE/../examples/repos.txt"; fi
+  if [ ! -f "$NOTIFY_REPOS_SEED" ]; then NOTIFY_REPOS_SEED="$HERE/../examples/notify-repos.txt"; fi
+  if [ ! -f "$REPOS_EXAMPLE" ]; then REPOS_EXAMPLE="$HERE/../examples/repos.txt"; fi
+  if [ ! -f "$NOTIFY_REPOS_EXAMPLE" ]; then NOTIFY_REPOS_EXAMPLE="$HERE/../examples/notify-repos.txt"; fi
+fi
 
 replace_registry() { # SOURCE DESTINATION PROVENANCE
   local src="$1" dest="$2" provenance="$3" tmp hash_tmp incoming_hash
