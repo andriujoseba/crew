@@ -49,6 +49,16 @@ declare -a FAILS=()
 ok()   { echo "ok   $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL $1${2:+  — $2}"; FAILS+=("$1"); }
 bx()   { box exec "$BOX_NAME" -- bash -lc "$1" </dev/null; }
+put_registry() {
+  # shellcheck disable=SC2016  # expanded by bash inside the box
+  box exec "$BOX_NAME" -- bash -lc '
+    set -euo pipefail
+    destination="$HOME/duty/repos.txt"
+    tmp="$(mktemp "$HOME/duty/.repos.XXXXXX")"
+    cat >"$tmp"
+    mv "$tmp" "$destination"
+  ' <"$1"
+}
 
 TMP="$(mktemp -d)"
 CONFIG="$TMP/operator"
@@ -156,7 +166,8 @@ else
 fi
 
 # 2a. The one-time migration adopts a shipped-example registry.
-bx "cp ~/crew/examples/repos.txt ~/duty/repos.txt; rm -f ~/duty/.repos.txt.crew-provenance"
+put_registry "$ROOT/examples/repos.txt"
+bx "rm -f ~/duty/.repos.txt.crew-provenance"
 printf 'drill/adopted\n' >"$CONFIG/repos.txt"
 upgrade_operator || true
 if registry_is drill/adopted && grep -qF "adopted and converged" "$TMP/upgrade.out"; then

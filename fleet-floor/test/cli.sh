@@ -1342,6 +1342,18 @@ else
   fail "crew hire: operator profiles ride the pre-install transport" \
        "no seed-dir put in the box calls"
 fi
+if grep -q 'duty/.crew-example-repos.txt' "$CL_TMP/hire-calls" 2>/dev/null; then
+  ok "crew hire: shipped repos example rides the pre-install transport"
+else
+  fail "crew hire: shipped repos example rides the pre-install transport" \
+       "no shipped repos-example put in the box calls"
+fi
+if grep -q 'duty/.crew-example-notify-repos.txt' "$CL_TMP/hire-calls" 2>/dev/null; then
+  ok "crew hire: shipped notify example rides the pre-install transport"
+else
+  fail "crew hire: shipped notify example rides the pre-install transport" \
+       "no shipped notify-example put in the box calls"
+fi
 if awk '/rm -rf ~\/duty\/.crew-seed-agents/{r=NR} /duty\/.crew-seed-agents\/vendorx.conf/{p=NR} END{exit !(r && p && r<p)}' \
      "$CL_TMP/hire-calls" 2>/dev/null; then
   ok "crew hire: the seed reset precedes the profile staging"
@@ -1419,6 +1431,19 @@ if [ "${CL_UPGRADES:-0}" -ge 6 ]; then
 else
   fail "config drill: registry cases run through crew upgrade" \
        "only ${CL_UPGRADES:-0} upgrade paths found"
+fi
+
+if grep -q '~[/]crew' "$CL_CONFIG_DRILL"; then
+  fail "config drill: no case reads the retired box-side crew checkout" \
+       "$(grep -n '~[/]crew' "$CL_CONFIG_DRILL")"
+else
+  ok "config drill: no case reads the retired box-side crew checkout"
+fi
+if grep -q 'put_registry.*examples/repos.txt' "$CL_CONFIG_DRILL"; then
+  ok "config drill: shipped-example migration uploads its host fixture"
+else
+  fail "config drill: shipped-example migration uploads its host fixture" \
+       "the fixture neither comes from the host nor names an unexpected box checkout"
 fi
 
 # shellcheck disable=SC2016  # matching the literal handoff in the source
