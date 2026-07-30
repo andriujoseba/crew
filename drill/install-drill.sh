@@ -5,6 +5,11 @@
 # driver invokes them, then adds only the observations that require a real box:
 # switch skew, hire/skip from a git-less install, no box-side crew repository,
 # full-uninstall refusal, and engine survival after the console is removed.
+#
+# It borrows a box the role rehearsal installed, and gives it back unchanged:
+# its fixture roster is built from the identity that box already carries, so
+# the hires below are version events, never identity events. An unhired box
+# has no identity to preserve, and is the one case where this drill picks one.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -80,24 +85,95 @@ echo "- Drill box: \`$BOX_NAME\`"
 echo "- Narrow registry: \`$SANDBOX\`"
 echo
 
+bx() { box exec "$BOX_NAME" -- bash -lc "$1" </dev/null; }
+# The identity this box already carries, read from the same file the
+# installer's own change guard reads. Sourcing is safe here: it happens in a
+# throwaway shell inside the box, not in this one.
+#
+# Three answers, and the difference between the last two decides whether
+# Section A may choose an identity. `absent` is a box that was never hired:
+# there is no identity to preserve, so choosing one overwrites nobody. Any
+# other failure is a box that may well be carrying an identity this driver
+# merely failed to read, and choosing there is #180 firing for real.
+read_box_identity() {
+  # shellcheck disable=SC2016  # expanded by bash inside the box
+  bx 'conf=~/duty/conf/instance.conf
+      [ -e "$conf" ] || { printf "absent\n"; exit 0; }
+      . "$conf" 2>/dev/null || { printf "unreadable\n"; exit 0; }
+      [ -n "${BOT_AGENT:-}" ] && [ -n "${BOT_ROLES:-}" ] ||
+        { printf "unreadable\n"; exit 0; }
+      printf "present %s %s\n" "$BOT_AGENT" "$BOT_ROLES"' 2>/dev/null |
+    tr -d '\r' | head -1
+}
+
+# The one case where Section A must choose, per #180's task list: a box with
+# no instance.conf at all.
+FALLBACK_AGENT=claude
+FALLBACK_ROLES=reviewer
+
+# Is there a box host here, carrying this box? Discovery is a fact, not yet a
+# refusal: --dry-run runs anywhere, and reports more when the box is reachable.
+BOX_PRESENT=0
+if command -v box >/dev/null && command -v jq >/dev/null &&
+   box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
+  BOX_PRESENT=1
+fi
+
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "- WOULD INVOKE: \`shared/test/install-lifecycle.sh\` (offline assertions)"
   echo "- WOULD INVOKE: \`shared/test/artifact.sh\` (offline artifact assertions)"
+  if [ "$BOX_PRESENT" -eq 1 ]; then
+    dry_state=""; dry_agent=""; dry_roles=""
+    read -r dry_state dry_agent dry_roles <<<"$(read_box_identity)"
+    case "$dry_state" in
+      present)
+        echo "- WOULD HIRE \`$BOX_NAME\` as the identity it already carries: agent \`$dry_agent\`, roles \`$dry_roles\`" ;;
+      absent)
+        echo "- WOULD HIRE \`$BOX_NAME\` as agent \`$FALLBACK_AGENT\`, roles \`$FALLBACK_ROLES\` — it carries no \`~/duty/conf/instance.conf\`, so there is no identity to preserve" ;;
+      *)
+        echo "- WOULD REFUSE: \`$BOX_NAME\` has an \`~/duty/conf/instance.conf\` this drill cannot read — it may be carrying an identity, and Section A will not guess over one" ;;
+    esac
+  else
+    echo "- WOULD ADOPT \`$BOX_NAME\`'s installed agent and roles from \`~/duty/conf/instance.conf\` (no box host here to read them)"
+  fi
   echo "- WOULD OBSERVE step 4: \`crew use\` names \`$BOX_NAME\` at the old engine version"
   echo "- WOULD OBSERVE steps 5–6: installed-tree hire stamps a git-less engine; second \`crew up\` skips; no box-side crew repo is consulted"
   echo "- WOULD OBSERVE step 8: \`crew uninstall --all\` refuses and names \`$BOX_NAME\`"
   echo "- WOULD OBSERVE step 9: forced console removal leaves \`$BOX_NAME\`'s engine, cron, and latest tick evidence in place"
+  echo "- WOULD OBSERVE identity: \`$BOX_NAME\` carries the agent and roles declared above after Section A, unchanged by its hires and uninstalls"
   echo "- WOULD OBSERVE host checkout: installer warning and \`command -v crew\` agree about PATH order"
   exit 0
 fi
 
-command -v box >/dev/null || { echo "box CLI not found — this runs on a box host" >&2; exit 1; }
-command -v jq >/dev/null || { echo "jq not found on the host" >&2; exit 1; }
-if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
+if [ "$BOX_PRESENT" -eq 0 ]; then
+  command -v box >/dev/null || { echo "box CLI not found — this runs on a box host" >&2; exit 1; }
+  command -v jq >/dev/null || { echo "jq not found on the host" >&2; exit 1; }
   echo "drill box '$BOX_NAME' does not exist — run drill/rehearsal-all.sh first" >&2
   exit 1
 fi
-bx() { box exec "$BOX_NAME" -- bash -lc "$1" </dev/null; }
+
+# Section A hires this box, so it must hire it as WHAT IT IS. A fixture roster
+# that names a role of its own re-roles the box behind the rehearsal's back —
+# silently, because the engine only warns on ROLES CHANGED and installs anyway
+# — and the phases that share this box by design then run against duty loops
+# nobody asked for (#180).
+IDENTITY_STATE=""; BOX_AGENT=""; BOX_ROLES=""
+read -r IDENTITY_STATE BOX_AGENT BOX_ROLES <<<"$(read_box_identity)"
+case "$IDENTITY_STATE" in
+  present)
+    IDENTITY_ORIGIN="adopted from the box, not changed"
+    echo "- Box identity: agent \`$BOX_AGENT\`, roles \`$BOX_ROLES\` ($IDENTITY_ORIGIN)" ;;
+  absent)
+    BOX_AGENT="$FALLBACK_AGENT"; BOX_ROLES="$FALLBACK_ROLES"
+    IDENTITY_ORIGIN="chosen by Section A — the box arrived unhired, carrying none"
+    echo "- Box identity: agent \`$BOX_AGENT\`, roles \`$BOX_ROLES\` ($IDENTITY_ORIGIN)" ;;
+  *)
+    echo "cannot read the installed identity of '$BOX_NAME' from ~/duty/conf/instance.conf" >&2
+    echo "— the file is there but unreadable, so this box may be carrying an identity" >&2
+    echo "— Section A adopts a box's identity or chooses for an unhired one; it never guesses over one" >&2
+    exit 1 ;;
+esac
+echo
 
 FAIL=0
 pass() { echo "- PASS: $1"; }
@@ -151,7 +227,7 @@ HOME="$DRILL_HOME" CREW_INSTALL_SOURCE="$SB" bash "$TREE/install.sh" >/dev/null 
 CONFIG="$WORK/config"
 "$CREW_BIN/crew" init "$CONFIG" >/dev/null 2>&1 ||
   { fail "create drill fleet definition"; exit 1; }
-printf '%s claude reviewer\n' "$BOX_NAME" >"$CONFIG/fleet.roster"
+printf '%s %s %s\n' "$BOX_NAME" "$BOX_AGENT" "${BOX_ROLES// /,}" >"$CONFIG/fleet.roster"
 cp "$REGISTRY" "$CONFIG/repos.txt"
 export CREW_CONFIG_DIR="$CONFIG" CREW_EXPECT_OPERATOR_CONFIG=1
 export HOME="$OPERATOR_HOME"
@@ -204,6 +280,20 @@ if "$CREW_BIN/crew" uninstall --all --force >"$WORK/remove.out" 2>&1 &&
   pass "step 9: console removed; \`$BOX_NAME\` kept engine \`$engine_after\`, armed cron, and latest tick \`$tick_after\`"
 else
   fail "step 9: positive engine/cron/tick survival observation" "$(cat "$WORK/remove.out" 2>/dev/null)"
+fi
+
+# Last, because it covers every mutation above: Section A hires, re-hires and
+# uninstalls, and none of that may leave the box carrying an identity other
+# than the one declared at the top — the box's own when it had one, Section A's
+# fallback when it arrived unhired. The phases after this one share the box.
+after_state=""; after_agent=""; after_roles=""
+read -r after_state after_agent after_roles <<<"$(read_box_identity)"
+if [ "$after_state" = present ] &&
+   [ "$after_agent" = "$BOX_AGENT" ] && [ "$after_roles" = "$BOX_ROLES" ]; then
+  pass "identity: \`$BOX_NAME\` carries agent \`$BOX_AGENT\`, roles \`$BOX_ROLES\` after Section A ($IDENTITY_ORIGIN)"
+else
+  fail "identity: Section A left \`$BOX_NAME\` carrying the identity it declared" \
+    "declared '$BOX_AGENT $BOX_ROLES', now '$after_state ${after_agent:-} ${after_roles:-}'"
 fi
 
 echo

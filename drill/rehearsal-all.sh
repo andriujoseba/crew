@@ -39,6 +39,11 @@ CONFIG_BOX=""
 CONFIG_ROLE=""
 # Section A's installer driver runs once, against the first role box this
 # session actually reached. It acquires the same tree/ref as the role drills.
+# That box is also the config phase's box, on purpose — and the two phases only
+# survive sharing it because the installer drill hires it as the identity the
+# role drill gave it. When Section A named its own role instead, the config
+# phase re-roled the box back: the engine warns "ROLES CHANGED" and installs
+# anyway, so the drill ran on duty loops nobody meant to swap (#180).
 INSTALL_DRILL=1
 INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
