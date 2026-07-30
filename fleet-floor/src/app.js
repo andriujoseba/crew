@@ -2405,6 +2405,22 @@ function drawRobot(t){
   S.restore();
   if(!info.offl&&AGENT!=="claude"){var vc=AGENT==="codex"?"55,212,166":AGENT==="grok"?"176,124,255":"255,114,182",vr=floating?122:150;S.save();S.globalCompositeOperation="lighter";var tgl=S.createRadialGradient(ROBOX,FLOORY,2,ROBOX,FLOORY,vr);tgl.addColorStop(0,"rgba("+vc+",0.14)");tgl.addColorStop(1,"rgba("+vc+",0)");S.fillStyle=tgl;S.beginPath();S.ellipse(ROBOX,FLOORY+4,vr,18,0,0,7);S.fill();S.restore();}
   // body
+  /* L17 — the room's light lands on the UNIT. The rooms are three different
+     lamps — sodium-warm, lab-cool, dispatch-violet — and the robots walked
+     between them without changing colour, which is the classic tell of a
+     sprite pasted over a background. One source-atop gradient tints the
+     composed body from the lamp side down, in the room's cone colour, scaled
+     by the lamp's own flicker; offline rooms instead cast the flat cold
+     slate of a dead hall. The sprite alpha is untouched, so unitTop, unitBox
+     and the envelope all still measure the same unit. */
+  var kt2=STATE==="offline"?[96,110,136]:ROOM==="builder"?[255,201,135]:ROOM==="reviewer"?[150,196,245]:[176,150,240];
+  var kta=STATE==="offline"?0.10:0.11*lamp.lit;
+  RB.save();RB.setTransform(1,0,0,1,0,0);RB.globalCompositeOperation="source-atop";
+  var ktg=RB.createLinearGradient(0,120,0,RH*0.92);
+  ktg.addColorStop(0,rgba(kt2[0],kt2[1],kt2[2],kta));
+  ktg.addColorStop(0.5,rgba(kt2[0],kt2[1],kt2[2],kta*0.35));
+  ktg.addColorStop(1,rgba(kt2[0],kt2[1],kt2[2],0));
+  RB.fillStyle=ktg;RB.fillRect(0,0,RW,RH);RB.restore();
   S.imageSmoothingEnabled=true;
   S.drawImage(robo,px,py,RW*sc,RH*sc);
   // rim additive
