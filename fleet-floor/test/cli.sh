@@ -1153,11 +1153,67 @@ else
   fail "drill: control verbs are opt-in" "the ALLOW_CONTROL gate is gone"
 fi
 
-# Anything it does pause must be repaired on the way out, on every exit path.
-if grep -q 'PAUSED_BY_DRILL' "$CL_DRILL" && grep -q 'trap cleanup EXIT' "$CL_DRILL"; then
-  ok "drill: pauses are repaired on teardown"
+# --- the control block arms what it exercises, and disarms it (#188) -------
+# All four are asserted over the SOURCE. Each describes what happens when a run
+# dies partway or when a box is in a state no invocation here can produce, and
+# a sampled run cannot show any of them.
+
+# The verbs had nothing to act on: rehearsal.sh disarms cron before any tick and
+# aborts the run if it cannot, so every drill box has no armed `tick.sh` line
+# for its whole run. `pause` therefore commented nothing out, and the block
+# could only ever assert that the transport was reachable.
+if grep -q 'drill_arm_cron' "$CL_DRILL"; then
+  ok "drill: the control block arms the tick line it exercises"
 else
-  fail "drill: pauses are repaired on teardown" "no PAUSED_BY_DRILL/trap pairing"
+  fail "drill: the control block arms the tick line it exercises" \
+       "every drill box is disarmed by construction, so the verbs assert only the transport"
+fi
+
+# Anything it ARMS must be disarmed on the way out, on every exit path. The
+# repair used to be a resume of PAUSED_BY_DRILL, the right shape for a block
+# that only paused; the block owns the arm now, so the state to restore is
+# disarmed and the ledger is ARMED_BY_DRILL.
+if grep -q 'ARMED_BY_DRILL' "$CL_DRILL" && grep -q 'trap cleanup EXIT' "$CL_DRILL"; then
+  ok "drill: armed tick lines are disarmed on teardown"
+else
+  fail "drill: armed tick lines are disarmed on teardown" "no ARMED_BY_DRILL/trap pairing"
+fi
+
+# ...and the ledger is written BEFORE the arm, or a half-applied arm — a box
+# exec that dies with the crontab already installed — is invisible to the trap
+# and the box is left ticking.
+# shellcheck disable=SC2016  # matching the literal source assignment
+CL_ARM_REC="$(grep -n 'ARMED_BY_DRILL="\$ARMED_BY_DRILL' "$CL_DRILL" | cut -d: -f1 | head -1)"
+CL_ARM_DO="$(grep -n 'if drill_arm_cron' "$CL_DRILL" | cut -d: -f1 | head -1)"
+if [ -n "$CL_ARM_REC" ] && [ -n "$CL_ARM_DO" ] && [ "$CL_ARM_REC" -lt "$CL_ARM_DO" ]; then
+  ok "drill: a box is recorded as armed before it is armed"
+else
+  fail "drill: a box is recorded as armed before it is armed" \
+       "record=${CL_ARM_REC:-none} arm=${CL_ARM_DO:-none} — a run that dies mid-arm leaves the box ticking"
+fi
+
+# The teardown check must assert the state the drill GUARANTEES. It looked only
+# for the absence of a pause marker, which passes on a box that was never armed
+# — every drill box — so `left armed` could not fail, and it sat green through
+# five drill runs while the verbs beside it were red. Comments are stripped
+# first: this file is allowed to describe the check it replaced.
+# shellcheck disable=SC2016  # matching the literal source text
+if grep -q 'teardown \$b: left disarmed' "$CL_DRILL" &&
+   ! grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'left armed'; then
+  ok "drill: teardown asserts the box was left disarmed"
+else
+  fail "drill: teardown asserts the box was left disarmed" \
+       "the vacuous 'left armed' check is still in the source"
+fi
+
+# A failing control must report what the BOX said. `command refused` was the
+# drill's own guess, and it was wrong for five runs: nothing was refusing.
+if grep -q 'no reason in the response' "$CL_DRILL" &&
+   ! grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'command refused'; then
+  ok "drill: a failing control reports the reason the box gave"
+else
+  fail "drill: a failing control reports the reason the box gave" \
+       "the drill still narrates its own diagnosis instead of reading the response"
 fi
 
 
