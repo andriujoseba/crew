@@ -1701,6 +1701,9 @@ function buildClaude(t,st){
 
   function em(c,fn){fn(c);} // draw emissive on given ctx
   function accGlow(c,x,y,w,h){ if(offl)return; var gg=c.createLinearGradient(0,y,0,y+h);gg.addColorStop(0,rgba(255,180,90,0.9));gg.addColorStop(1,rgba(200,90,20,0.9));c.fillStyle=gg;rr(c,x,y,w,h,1);c.fill(); }
+  // grime weeping from a bolt: albedo, so it does not dim with power state
+  function weep(x,y,len){g.fillStyle="rgba(70,44,24,0.30)";
+    poly(g,[[x-1.2,y+2],[x+1.2,y+2],[x+0.6,y+len],[x-0.6,y+len]]);g.fill();}
 
   // ---------- BACKPACK heat-sink (behind, drawn first) ----------
   plate(g,[[cx-70,270+breath],[cx-40,250+breath],[cx+40,250+breath],[cx+70,270+breath],[cx+58,336+breath],[cx-58,336+breath]],sM,sB,ed);
@@ -1760,6 +1763,7 @@ function buildClaude(t,st){
   plate(g,[[cx-12,338+breath],[cx+12,338+breath],[cx+10,354+breath*0.9],[cx-10,354+breath*0.9]],sT,sB,ed);
   rivet(g,cx-7,344+breath,eH);rivet(g,cx+7,344+breath,eH);
   plate(g,[[cx-9,350+breath*0.9],[cx+9,350+breath*0.9],[cx+7,372+breath*0.8],[cx,384+breath*0.8],[cx-7,372+breath*0.8]],sM,sB,ed);
+  g.fillStyle="rgba(0,0,0,0.30)";g.fillRect(cx-8,351+breath*0.9,16,3); // buckle's shade on the plate below it
   rivet(g,cx-5,368+breath*0.8,eH);rivet(g,cx+5,368+breath*0.8,eH);
   g.fillStyle="#03060c";g.fillRect(cx-3,354+breath*0.9,6,18);
   [RB,RE].forEach(function(c){accGlow(c,cx-2,355+breath*0.9,4,16);});
@@ -1833,6 +1837,10 @@ function buildClaude(t,st){
   g.beginPath();g.moveTo(cx-32,220+breath);g.lineTo(cx+32,220+breath);
   g.moveTo(cx-28,306+breath);g.lineTo(cx+28,306+breath);
   g.moveTo(cx-30,344+breath);g.lineTo(cx+30,344+breath);g.stroke();
+  // the bevel band sits ON the pecs: contact shadow under its lower edge,
+  // and the bolts it is torqued down by have been weeping into the paint
+  pl(g,cx-52,251.5+breath,cx+52,251.5+breath,"rgba(0,0,0,0.30)",2);
+  weep(cx-48,292+breath,11);weep(cx+48,292+breath,11);weep(cx+31,289+breath,8);
   /* Sternum housing and collarbone struts.
      The reactor was a lit circle cut into a flat slab: the single largest
      surface on the unit was one polygon, and the brightest thing on it had no
@@ -1939,6 +1947,15 @@ function buildClaude(t,st){
       g.moveTo(shx-18,shy-14);g.lineTo(shx+14,shy+2);g.stroke();
       g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.4)+")";g.lineWidth=1;g.beginPath();
       g.moveTo(shx-18,shy-15);g.lineTo(shx+14,shy+1);g.stroke();}
+    if(sgn>0){ // a bite out of the right spike: silhouette damage, cut to transparency
+      g.save();g.globalCompositeOperation="destination-out";
+      poly(g,[[shx+34,shy+2],[shx+44,shy+6],[shx+36,shy+15]]);g.fill();g.restore();
+      g.strokeStyle="rgba(170,192,222,"+(offl?0.12:0.32)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(shx+34,shy+2);g.lineTo(shx+36,shy+15);g.stroke();}
+    // the pauldron sits ON the arm: contact shadow under its lower rim
+    g.fillStyle="rgba(0,0,0,0.26)";
+    poly(g,P([[-22,13],[-8,3],[8,3],[13,13],[7,21],[-18,21]]));g.fill();
+    weep(shx-sgn*18,shy-3,9);
     // shoulder joint light, now sitting IN the socket
     [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx,shy+8,2.6,0,7);c.fill();}});
     /* The elbow, in the same joint language as the hips and knees: a dark
