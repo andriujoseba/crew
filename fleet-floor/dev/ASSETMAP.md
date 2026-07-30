@@ -7,11 +7,18 @@ Every robot × every room × every state, twice: once as the console renders it
 
 Columns are the four units. Rows are grouped by room, then by state.
 
-## Current — after loop 15
+## Current
 
-![asset map, loop 15](shots/asset-map-L15.webp)
+![asset map, current](shots/asset-map-current.webp)
 
 *4 agents × 3 rooms × 3 states = 36 tiles, t=8s.*
+
+## After loop 15
+
+The state the fifteen polish loops left it in, before the review pass and the
+deck stations.
+
+![asset map, loop 15](shots/asset-map-L15.webp)
 
 The per-loop before/afters are in [`LOOPS.md`](LOOPS.md).
 

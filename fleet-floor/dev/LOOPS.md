@@ -1170,3 +1170,382 @@ second copy of anything.
 
 Determinism holds across the pair: two browser launches, **72 of 72 tiles
 identical**, full-page PNGs sharing a sha256.
+
+
+---
+
+## The deck station
+
+The last thing in the room that had never been designed. All three rooms put
+the same object in front of the unit — a 204×12 plank on two 8px legs at
+x=372, with different things resting on it: a vise and a monitor, a lens and a
+specimen, a lit chart. Fifteen loops went round it, and it survived them
+because at a glance it reads as "a table" and the eye moves on. Look at it and
+you can see the unit's legs through the gap under the top.
+
+The footprint stays — it is a fact about the floor, not about the prop: the
+deck has room for exactly one object between the fabricator and the conveyor,
+and the other two rooms mirror that composition. Everything else is now per
+room.
+
+![the deck, before and after](shots/deck-before-after.webp)
+
+- **builder — a welding bench.** A chest of drawers under the left half so it
+  has mass, an open frame with a cable spool under the right so it is not a
+  solid block, a vise you can read left to right (base, fixed jaw, the stock
+  standing in the jaws, sliding jaw, screw, handle), stock leaning against the
+  chest, and the task monitor on a post.
+- **reviewer — an inspection bench.** A pale worktop over a slim drawer bank,
+  an open shelf with paper on it, the lens arm the room is named for with a
+  specimen under it, and the verdict stamp block: the other half of what a
+  review is.
+- **triage — a plotting table.** A single pedestal instead of legs and a top
+  **tilted towards the camera**, so the room that sorts and routes work reads
+  at a glance as the one with a chart you stand over. Routing blips cross it;
+  three toggles sit on the front rail.
+
+Two things fell out of doing it. The tops came back too bright on the first
+pass — a horizontal surface under a lamp does catch light, but it is not the
+subject, so the body went dark and the light now lands on the leading edge
+only. And the builder's toolbox is gone: it stood at x=574 with the conveyor
+starting at 580, the same class of collision the declared deck caught last
+time.
+
+Both views change together, because there is one renderer.
+
+
+---
+
+## Five loops on the deck stations
+
+The stations landed as three designed objects, which is not the same as three
+finished ones. Five passes, each one opened by looking at the last one
+adversarially and writing down what a professional would say about it. Every
+loop touches all three rooms, and every loop has a GIF: the same crop of the
+same three benches, before and after, so what changed is the only thing that
+moves.
+
+All six frames at once — the whole arc:
+
+![the deck stations, L0 to L5](shots/gifs/deck-all.gif)
+
+### Loop 1 — silhouette and value
+
+**The complaint.** Each station had one light-grey bar for a worktop, and at
+any size it read as a length of pipe: the same value on the top and the front,
+soft ends, and a lip hanging past the carcass on both sides over nothing. The
+triage table was worse — a single tilted plate with a bright outline, hovering,
+because nothing said which of the plate, the pedestal and the floor was in
+front.
+
+**What a worktop actually is:** a top FACE seen at a shallow angle, a front
+EDGE that catches the key, and the shadow the overhang throws on whatever is
+under it. Three things, drawn separately. The overhang came down from ±5 to
+±3 — the old lip is what made the ends look soft — and the corners got a hard
+dark return. The triage top got a front edge band with real thickness and a
+shadow cast down its pedestal.
+
+![loop 1](shots/gifs/deck-L1.gif)
+
+### Loop 2 — construction
+
+**The complaint.** Three carcasses that are boxes with slots cut in them. No
+plinth, so the bottom edge is a cut rather than a shadow; no panel seams; no
+fasteners anywhere; drawers that are dark rectangles rather than faces sitting
+proud of a frame; a lamp arm growing out of a worktop with no clamp; a
+pedestal meeting a table top with no collar.
+
+**What was added:** recessed kick plates, drawer faces with their own arris,
+under-shadow and recessed pull, panel seams, bolts where the top is fixed down
+and where the vise, the lamp clamp, the monitor post and the pedestal base
+plate are attached, a cross rail for the builder's spool to sit on, feet under
+the open frames, and housings around the triage toggles — three loose chips on
+a rail is a decal; three switches in housings is a panel.
+
+![loop 2](shots/gifs/deck-L2.gif)
+
+### Loop 3 — material and wear
+
+**The complaint.** Correctly built and identically surfaced: one flat tone per
+panel, every edge perfectly intact, nothing that had ever been used. A bench in
+a welding bay does not have a pristine top.
+
+**What was added:** brushed steel across the builder's top (a metal panel is
+not one tone), scorch where the vise is — which is where the work is held and
+therefore where the sparks land — paint gone off the front arris in broken
+patches where a bench gets leaned on, a chipped carcass corner, grime under the
+drawers, oil on the deck under the frame. The reviewer's glass got one soft
+specular streak at the lamp's angle rather than an even sheen, because a glossy
+surface reflects the light SOURCE. Its paper stack became sheets: what you see
+of a sheet from here is its edge, a bright line over a thin shadow, repeated.
+The triage chart went under acrylic, which catches the room in one shallow
+band.
+
+![loop 3](shots/gifs/deck-L3.gif)
+
+### Loop 4 — light
+
+**The complaint.** The stations were lit *next to* the room rather than *in*
+it. Three things were missing, and they are the three halves of lighting an
+object: the key did not fall off — a 1.2px line at one alpha ran the whole
+length of a bench standing under a point source — nothing bounced back up off
+the lit floor into the shadow side, and every light the stations carry stopped
+dead at its own bezel. A screen that does not spill is a sticker.
+
+**What was added:** `keyFallOff`, brightest under `LAMPX` and gone by the ends;
+`bounceUp`, the floor pool coming back into the underside of each carcass; and
+`spill`, which puts a fixture's own light on what is around it, into both
+buffers so the compositor blooms it. The task monitor now lights the bench top
+and the wall behind it, the inspection lamp pools on the worktop under its
+head, and the chart lights its own rail, its pedestal and the deck.
+
+![loop 4](shots/gifs/deck-L4.gif)
+
+### Loop 5 — state and story
+
+**The complaint.** All three were identical in all three states. The room
+changes — the lamp drops, the beacon comes up, the in-tray grows — and the
+object the unit actually works AT did not. A welding bench with the same cold
+bar clamped in it whether the unit is welding, standing by or dead is a
+photograph of a bench.
+
+**What was added:** the piece in the vise is the state — clamped and glowing
+hot at the end the unit has been working on, or out of the jaws entirely when
+there is nothing to hold. The reviewer's specimen is only under the lamp when
+there is something to look at, and the stamp block reads amber while a verdict
+is being worked out and green when one has been reached. The triage blips run
+when work is being dispatched and crawl when it is not. And every station got
+an asset plate, because equipment carries one — four pixels of pale on dark,
+and its absence is a large part of what makes props look like props.
+
+![loop 5](shots/gifs/deck-L5.gif)
+
+### The states, side by side
+
+The builder's bench in all three, at the end of the five:
+
+![the bench in three states](shots/gifs/deck-states.gif)
+
+
+---
+
+## The re-think — the station leaves the unit's plane
+
+Three designed objects and five polish loops, and it still read as a stool at
+the unit's ankles. Height was the symptom. Here is the error:
+
+**The station's base sat at `FLOORY=612`, and `FLOORY` is where the unit's feet
+are.** So it was never in front of the robot — it stood beside it, at the same
+depth, and nothing you do to an object in the wrong place in the room will fix
+it. A bench at a person's depth, drawn at a third of their height, *is* a
+stool. The eye read it correctly every time.
+
+The room has 108px of deck between `FLOORY` and the bottom of the frame, and
+until now nothing had ever stood on them. That is the near plane.
+
+![before and after the re-think](shots/gifs/deck-rethink.gif)
+
+Base at `y=668`, well in front of the unit's feet, and therefore bigger: 268
+wide against 204, 156 tall against 46. Three things follow from the move, and
+they are what make it read as depth rather than as a bigger stool:
+
+1. **We see its top.** The camera sits around the unit's chest, so a surface
+   below that shows itself — the top face is a trapezoid, wider at the front
+   than the back, and that single piece of perspective does more than every
+   edge highlight in the previous five loops. Everything standing on the
+   station is placed through `deckAt`, in the surface's own perspective.
+2. **It is backlit.** The lamp and the floor pool are behind it, so the front
+   face is the dark side and the back arris carries the rim. A near-plane
+   object is a silhouette with a lit edge, not a lit box.
+3. **It occludes.** It crosses the unit's legs and hides the pool at its feet —
+   the cue the old one could never give, because something at the same depth
+   cannot get in front of anything. The lost pool is not lost: it reads as a
+   halo spilling over the back edge, which is what a bright floor behind a dark
+   object looks like.
+
+It is drawn after the fog and the steam for the same reason.
+
+### The three polish passes
+
+![the whole re-think, five frames](shots/gifs/deck-rethink-all.gif)
+
+**R1 — the near plane is the dark plane.** Moving it exposed how bright it was:
+three stations washed out by their own spill, tops catching more key than the
+subject, and bottoms dissolving into a dark deck with nothing to stand on.
+Bodies darkened, key alpha cut, every fixture's spill radius roughly halved, a
+toe and a plinth so the thing touches the floor, and a graded wash over the
+whole station that puts it a stop under the mid-plane — because everything this
+close to camera is on the near side of the room's air.
+
+![R1](shots/gifs/deck-R1.gif)
+
+**R2 — the front face gets built.** At the new size the front face is the
+biggest surface in the frame, and on all three it was a flat rectangle.
+Louvred vents, a cabinet door with a frame and a handle that casts, the welding
+lead hung in two catenaries down to the deck, a divider in the reviewer's void
+and a label holder on its drawer, a keypad block and a vented bay on the triage
+fascia. Also the vise, which the hot stock had been washing out: the heat is in
+the metal now, only the top of the piece glows, and it goes to the emissive
+buffer alone so the bloom happens *around* the silhouette instead of erasing
+it.
+
+![R2](shots/gifs/deck-R2.gif)
+
+**R3 — the surface gets used.** A worktop this size has to look worked at. A
+parts tray with fasteners, offcuts, and the scorch ring where hot stock has
+been set down; a slide tray and two markers on the reviewer's glass; and on the
+triage chart a lit route running end to end with the blips travelling down it,
+plus sector ticks to give the grid a scale. The vise went dark — cast iron is
+nearly black and reads by its arris, one bright line per facet.
+
+![R3](shots/gifs/deck-R3.gif)
+
+### The states, at the new scale
+
+![three states](shots/gifs/deck-states.gif)
+
+## Ten loops on the near plane
+
+The re-think put the station in the right place; these ten loops made the
+place real. Same discipline as every run before them: one concrete change per
+loop, rendered in all three rooms before it lands, and everything through the
+one renderer so the four units, the console and the god-view cell inherit each
+change together.
+
+![before and after the ten loops](shots/deck-ten-loops.webp)
+
+**Loop 1 — the worktop rises to 178px.** It went out at 156 and read as a
+coffee table. A worktop at near-plane depth has to reach the unit's waist-line
+on screen before the eye accepts it as something to stand at: top moves
+512 → 490, and `LAYOUT.near` moves with it.
+
+**Loop 2 — the near plane occludes light.** The glow buffer composites over
+the scene in three blurred passes, so the lamp's floor pool bloomed straight
+*through* the carcass and lay on the front face as bright fog — in every room,
+worst where the face was darkest, quietly un-doing the occlusion the re-think
+bought. The station punches its silhouette out of the glow buffer before it
+draws; its own fixtures emit afterwards and still bloom, and the pool's light
+wraps the edges the way bloom hugs a real silhouette.
+
+**Loop 3 — the faces re-cut for the height.** Loop 1's 22px left the bottom
+60px of the biggest surface in the frame a void. Each room spends the height
+its own way: a fourth, deep drawer and a floor-length locker door (behind
+which the asset plate had been riveted, invisibly, since it was born); a low
+archive bay of box files and a deep file drawer; a service panel on
+quarter-turn latches with a vent and the loom dropping into the floor.
+
+**Loop 4 — the worktop overhangs the carcass.** A slab flush with the cabinet
+under it reads as a lid. The top runs 6px proud, the apron takes the leading
+bounce as one lit arris with shadowed end grain, and the face below starts in
+its shadow. One `deckBody` change; loop 2's silhouette moves with it.
+
+**Loop 5 — the tops are materials again.** Dark and in perspective had
+flattened all three tops into one gradient. The builder's steel gets plate
+seams and hold-down bolts; the reviewer's glass gets an edge-lit perimeter and
+corner clips; the triage acrylic gets the corner brackets that pinch it to the
+table. All through `deckAt`, so they recede with the surface.
+
+**Loop 6 — the plane gets a second citizen.** One plane with one object in it
+reads as an object with a trick. A second, humbler thing on the far side of
+frame — a spent-stock drum, the archive cart the low bay feeds, the
+half-unwound cable reel dispatch runs on — makes the depth a fact about the
+room. Each obeys the station's rules: silhouette first, one keyed rim, glow
+buffer punched out behind it, the same grade. Declared in `LAYOUT.nearSide`,
+drawn by `?guides=1`, reported by `layout()`.
+
+**Loop 7 — the bench knows who is standing at it.** The other thing behind
+the station is the unit, and the unit has a lit core in its chest: a
+vendor-coloured swell in the middle of the back edge — claude amber, codex
+green, grok violet, kimi pink — strongest working, gone offline.
+
+**Loop 8 — offline reaches the near plane.** When the lamp dies the beacon is
+the only thing burning, and it is up and to the LEFT: the station's left edges
+catch a red that breathes with `drawRedBeacon`'s own pulse. The right stays
+black — the asymmetry is what makes it a direction instead of a tint.
+
+**Loop 9 — the working station moves.** Flecks arc off the builder's hot
+stock and die on the steel; the reviewer's lens breathes, and a read-head
+sliver walks the glass while a specimen is under it; the triage readout's bars
+step while work is being dispatched. Pinned under reduced motion, dead when
+offline.
+
+**Loop 10 — the near plane at cell scale.** `MINI_FLOOR` predates anything
+living below `FLOORY`, so the taller station's plinth landed exactly on the
+cell's bottom edge — reframed to 0.865. And the back-arris rim was 1.6px,
+which rounds to nothing at the cell's ~0.26 scale: 2.2px survives it, and at
+full size the difference reads as edge wear.
+
+## Five loops on the residents
+
+The plane was right and two of the four units were wrong against it: codex
+hung with the desk edge at its chin, and offline kimi was not in the picture
+at all — settled to a floor the near-plane station now hides, an offline
+diamond floating over an apparently empty desk.
+
+![before and after](shots/deck-round2.webp)
+
+**Loop 11 — codex rides higher in its arch.** `BY=356` predates the worktop.
+The body rises 24px; the feet do not move — `footY` is absolute — so the same
+six prints hold the floor and the femurs stand steeper, which is what a
+spider that means to USE the bench does with its legs. The re-derived unit
+envelope across all 36 combinations is unchanged.
+
+**Loop 12 — offline kimi sags to parking altitude.** A drone that loses its
+duty cycle does not fall out of the sky: the skirt holds a dead-man's cushion
+and the unit sags and drifts, clearly above the worktop line, antennae still
+drooped. The landed-drone special case in the draw order left with the
+landing.
+
+**Loop 13 — the near plane's left side.** `LAYOUT.nearSide` is plural: a
+pallet of stock billets, the lab stool nobody is sitting on, a pair of queue
+stanchions whose tape sags over the dispatch lane.
+
+**Loop 14 — the plane is wired together.** The welding lead dips through the
+band the foreground lip blurs and climbs the drum to a coil on its rim; the
+dispatch loom rises to join the reel's wind; the review lab, which runs on
+paper, has dropped two sheets on the way to the cart.
+
+**Loop 15 — offline kimi catches the beacon.** One red arris down the shell's
+left edge, the skirt corner, the antenna ball — breathing with the same
+`beaconPulse` as the station's loop-8 rim, so the whole plane throbs together.
+
+## Five loops on the light
+
+Free loops, and the rule for them: every change crosses every room and every
+robot, because a detail that exists in one place reads as an accident and the
+same detail everywhere reads as physics.
+
+**Loop 16 — the unit shades the bench.** The lamp hangs directly over the
+unit and the worktop stands below and in front, so the strip of top face
+nearest the unit is the strip its body keeps the light off. Width comes from
+the footprint the sprite actually reports — wide for codex's straddle, narrow
+for claude — and a hovering kimi throws it softer and fainter by the same
+height rule the floor shadows obey.
+
+**Loop 17 — the room's light lands on the unit.** Three rooms, three lamps —
+sodium-warm, lab-cool, dispatch-violet — and the robots walked between them
+without changing colour, the classic tell of a pasted sprite. One source-atop
+gradient tints every composed body from the lamp side down, scaled by the
+lamp's own flicker; offline rooms cast cold slate instead. The sprite alpha
+is untouched, so `unitTop`, `unitBox` and the envelope still measure the same
+unit.
+
+**Loop 18 — the worktop reflects who stands at it.** Glass, acrylic and
+brushed steel all bounce some image back, in that order, and none of them
+did. The composed sprite draws again, flipped about the worktop line and
+compressed into the top face's 17px of perspective — a near-mirror on the lab
+glass, a coloured smear on the steel — and a hovering unit's reflection
+detaches from the back edge by exactly its lift, because that is where a
+mirror would put it.
+
+**Loop 19 — a shadow is not black.** A shadow is the floor with the key
+light subtracted: faintly brown on the builder's oiled amber, blue-black on
+the sealed lab floor, violet-tinged on the painted dispatch floor. Twelve
+robots' feet, the station's drop and both companions' pools all ask one
+`shadowRGB()` now instead of hard-coding 0,0,0.
+
+**Loop 20 — the air in front of the subject.** The cone's motes stop at the
+unit's depth, so the near plane hung in vacuum. Six larger, blurrier motes
+drift sideways across the near band — out of focus for the same reason the
+nearEdge is — keyed to each room's cone colour, dimmed but not killed offline;
+dust does not care. Pinned still under reduced motion.
