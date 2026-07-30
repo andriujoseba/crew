@@ -1342,6 +1342,12 @@ else
   fail "crew hire: operator profiles ride the pre-install transport" \
        "no seed-dir put in the box calls"
 fi
+if grep -q 'duty/.crew-example-repos.txt' "$CL_TMP/hire-calls" 2>/dev/null; then
+  ok "crew hire: shipped registry example rides the pre-install transport"
+else
+  fail "crew hire: shipped registry example rides the pre-install transport" \
+       "no shipped-example put in the box calls"
+fi
 if awk '/rm -rf ~\/duty\/.crew-seed-agents/{r=NR} /duty\/.crew-seed-agents\/vendorx.conf/{p=NR} END{exit !(r && p && r<p)}' \
      "$CL_TMP/hire-calls" 2>/dev/null; then
   ok "crew hire: the seed reset precedes the profile staging"

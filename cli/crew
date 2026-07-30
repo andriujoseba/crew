@@ -838,12 +838,14 @@ stage_fleet_definition() { # BOX
      bxput "$box_name" "$runtime_conf" 'duty/conf/fleet.conf' &&
      bxput "$box_name" "$REPOS_SEED" 'duty/.crew-seed-repos.txt' &&
      bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt' &&
+     bxput "$box_name" "$CREW_ROOT/examples/repos.txt" 'duty/.crew-example-repos.txt' &&
+     bxput "$box_name" "$CREW_ROOT/examples/notify-repos.txt" 'duty/.crew-example-notify-repos.txt' &&
      stage_agent_profiles "$box_name"; then
     rm -f "$runtime_conf"
     return 0
   fi
   rm -f "$runtime_conf"
-  bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt; rm -rf ~/duty/.crew-seed-agents' || true
+  bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt ~/duty/.crew-example-repos.txt ~/duty/.crew-example-notify-repos.txt; rm -rf ~/duty/.crew-seed-agents' || true
   return 1
 }
 

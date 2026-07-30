@@ -237,10 +237,13 @@ t install-registry-adoption-is-visible adopted "$r1"
 # A current-fleet copy matching the shipped example can be adopted without
 # provenance; an unknown local copy cannot.
 rm -f "$RDUTY/.repos.txt.crew-provenance"
-cp "$ROOT/examples/repos.txt" "$RDUTY/repos.txt"
+printf 'fixture/shipped-example\n' >"$RDUTY/repos.txt"
+printf 'fixture/shipped-example\n' >"$RDUTY/.crew-example-repos.txt"
 printf 'fixture/migrated\n' >"$RDUTY/.crew-seed-repos.txt"
 roster_install --box claude-builder --converge-registries >/dev/null 2>&1
 t install-registry-migration-adopts-example fixture/migrated "$(cat "$RDUTY/repos.txt")"
+t install-transported-example-discarded absent \
+  "$([ -e "$RDUTY/.crew-example-repos.txt" ] && printf present || printf absent)"
 rm -f "$RDUTY/.repos.txt.crew-provenance"
 printf 'fixture/unknown-local\n' >"$RDUTY/repos.txt"
 printf 'fixture/incoming\n' >"$RDUTY/.crew-seed-repos.txt"

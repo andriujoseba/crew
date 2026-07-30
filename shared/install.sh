@@ -30,7 +30,8 @@ DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 # Seed payloads are a one-install transport, never a second registry source.
 # Register cleanup before any validation or sourced operator file can fail.
 cleanup_seed_payloads() {
-  rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt"
+  rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt" \
+    "$DUTY_DIR/.crew-example-repos.txt" "$DUTY_DIR/.crew-example-notify-repos.txt"
   rm -rf "$DUTY_DIR/.crew-seed-agents"
 }
 trap cleanup_seed_payloads EXIT
@@ -427,8 +428,12 @@ sweep_unshipped
 # host; a locally changed copy is containment state and is never widened.
 REPOS_SEED="$DUTY_DIR/.crew-seed-repos.txt"
 NOTIFY_REPOS_SEED="$DUTY_DIR/.crew-seed-notify-repos.txt"
+REPOS_EXAMPLE="$DUTY_DIR/.crew-example-repos.txt"
+NOTIFY_REPOS_EXAMPLE="$DUTY_DIR/.crew-example-notify-repos.txt"
 if [ ! -f "$REPOS_SEED" ]; then REPOS_SEED="$HERE/../examples/repos.txt"; fi
 if [ ! -f "$NOTIFY_REPOS_SEED" ]; then NOTIFY_REPOS_SEED="$HERE/../examples/notify-repos.txt"; fi
+if [ ! -f "$REPOS_EXAMPLE" ]; then REPOS_EXAMPLE="$HERE/../examples/repos.txt"; fi
+if [ ! -f "$NOTIFY_REPOS_EXAMPLE" ]; then NOTIFY_REPOS_EXAMPLE="$HERE/../examples/notify-repos.txt"; fi
 
 replace_registry() { # SOURCE DESTINATION PROVENANCE
   local src="$1" dest="$2" provenance="$3" tmp hash_tmp incoming_hash
@@ -479,13 +484,14 @@ apply_registry() { # PAYLOAD DESTINATION SHIPPED_EXAMPLE PROVENANCE LABEL
   echo "crew: to adopt it, make $dest byte-identical to the host's $label and run crew upgrade again" >&2
 }
 
-apply_registry "$REPOS_SEED" "$DUTY_DIR/repos.txt" "$HERE/../examples/repos.txt" \
+apply_registry "$REPOS_SEED" "$DUTY_DIR/repos.txt" "$REPOS_EXAMPLE" \
   "$DUTY_DIR/.repos.txt.crew-provenance" repos.txt
 if [ "$IS_TRIAGE" -eq 1 ]; then
   apply_registry "$NOTIFY_REPOS_SEED" "$DUTY_DIR/notify-repos.txt" \
-    "$HERE/../examples/notify-repos.txt" "$DUTY_DIR/.notify-repos.txt.crew-provenance" notify-repos.txt
+    "$NOTIFY_REPOS_EXAMPLE" "$DUTY_DIR/.notify-repos.txt.crew-provenance" notify-repos.txt
 fi
-rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt"
+rm -f "$DUTY_DIR/.crew-seed-repos.txt" "$DUTY_DIR/.crew-seed-notify-repos.txt" \
+  "$DUTY_DIR/.crew-example-repos.txt" "$DUTY_DIR/.crew-example-notify-repos.txt"
 rm -rf "$DUTY_DIR/.crew-seed-agents"
 # A registry seeded before 2026-07-25 carries the SUPERSEDED header, which told
 # its reader the reviewer queue was an org-wide requested_reviewers sweep that
