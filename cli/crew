@@ -1073,15 +1073,21 @@ auth_from_flow() {
     # front of an operator, and a private PATTERN is that defect wearing a
     # smaller hat — a box would read armed here and disarmed there.
     #
-    # `|| echo 0` is load-bearing: grep -c exits 1 when it counts zero, which
-    # is the ordinary state of an unarmed box, not an error. Reading that
-    # status as failure is exactly #188.
-    armed="$(crontab -l 2>/dev/null | grep -cE "^[^#].*tick\.sh" || echo 0)"
+    # NO `||` guard, and that is deliberate. grep -c PRINTS the count and then
+    # exits 1 when it is zero; `|| echo 0` appends a SECOND zero on a new line,
+    # which pushes every later field off the line the caller reads. It shipped
+    # that way for one review round: a paused box emitted "… 0\n0 1", `read`
+    # saw only line 1, and the operator was told to `crew hire` a box they had
+    # just paused — the precise outcome the comment below claims to prevent.
+    # Nothing here runs under `set -e`, so the exit status is inert; the count
+    # on stdout is the whole answer. probe.sh carries no guard either, which is
+    # what makes the CHARACTER FOR CHARACTER claim above true.
+    armed="$(crontab -l 2>/dev/null | grep -cE "^[^#].*tick\.sh")"
     # Both counts, because "not armed" has two causes with two different fixes:
     # the console'\''s Pause comments the line out (resume it), and an unarmed
     # box never had one (crew hire it). Telling an operator to re-hire a box
     # they paused thirty seconds ago is worse than saying nothing.
-    paused="$(crontab -l 2>/dev/null | grep -cE "^#[[:space:]]*CREW-FLOOR-PAUSED" || echo 0)"
+    paused="$(crontab -l 2>/dev/null | grep -cE "^#[[:space:]]*CREW-FLOOR-PAUSED")"
     printf "%s %s %s\n" "$age" "$armed" "$paused"
     printf "\n"
   ' 2>/dev/null | tr -d '\r'

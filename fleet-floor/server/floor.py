@@ -521,10 +521,21 @@ def probe_box(unit, agent_conf):
     return out, None
 
 
-def build_unit(unit, state, agent_conf, now):
-    """Roster entry + live probe -> the record the page renders."""
-    u = dict(unit)
-    u.update({
+def unit_defaults():
+    """Every key a unit record carries, at its "nothing known yet" value.
+
+    ONE definition, because there are two producers — build_unit below and the
+    poller's probe-error path — and they used to spell the same dict out by
+    hand. They drifted the moment a key was added: the error path shipped
+    without `disarmed`, so a single box that threw during its probe made
+    `wake-silent` raise KeyError for the WHOLE fleet, and the poll log with it.
+    (It was also already missing `agent_actual`.)
+
+    A hand-copied second skeleton is the same defect this PR is about — two
+    readers holding private copies of one fact — one layer down. Adding the
+    missing key would have fixed today's instance and left the next one.
+    """
+    return {
         "state": "offline", "engine": "", "gh": "unknown", "vendor": "unknown",
         "queue": [], "sessions": [], "cur": None, "spark": [0.0] * 22,
         "up": {"h": 0, "m": 0}, "repo": "", "repos": [], "logs": [],
@@ -534,7 +545,13 @@ def build_unit(unit, state, agent_conf, now):
         "lock": {"held": None, "stuck": False},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
-    })
+    }
+
+
+def build_unit(unit, state, agent_conf, now):
+    """Roster entry + live probe -> the record the page renders."""
+    u = dict(unit)
+    u.update(unit_defaults())
 
     if state is None:
         u["note"] = "not created — crew new %s" % unit["box"]
@@ -790,16 +807,8 @@ class Fleet:
                                       self.agent_conf(unit["agent"]), now)
             except Exception as e:                          # noqa: BLE001
                 u = dict(unit)
-                u.update({"state": "offline", "note": "probe error: %s" % e,
-                          "queue": [], "sessions": [], "cur": None,
-                          "spark": [0.0] * 22, "up": {"h": 0, "m": 0},
-                          "repos": [], "logs": [], "longest": 0, "avg": 0,
-                          "success": 0, "today": 0, "paused": False,
-                          "cron": {"ok": False, "last": None, "age": None},
-                          "lock": {"held": None, "stuck": False},
-                          "authfail": [], "ping": None,
-                          "engine": "", "gh": "unknown", "vendor": "unknown",
-                          "repo": ""})
+                u.update(unit_defaults())
+                u["note"] = "probe error: %s" % e
                 units[i] = u
 
         # Boxes are probed concurrently: serially, seven `box exec` round-trips
