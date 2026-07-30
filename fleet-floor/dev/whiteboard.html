@@ -1985,9 +1985,18 @@ function buildClaude(t,st){
       g.fillStyle=eb;g.beginPath();g.arc(x,y,4.9,0,7);g.fill();
       rivet(g,x,y,eH);
     }
+    /* The muscle. Every joint got its mechanism in earlier loops but nothing
+       showed what MOVES the arm — the shoulder piston vanishes under the
+       pauldron. One exposed actuator runs down the outer upper arm into the
+       elbow in every pose: dark cylinder, bright rod, same language as the
+       shin hydraulics. */
+    function actuator(x0,y0,x1,y1){
+      pl(g,x0,y0,x1,y1,"#0a0f18",4.2);
+      pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.3);}
     if(mode==='reachdown'){ // reach forward + down (welding pose)
       var ex=shx+sgn*8, ey=shy+42;
       plate(g,[[shx-14,shy+22],[shx+18,shy+24],[ex+12,ey],[ex-12,ey]],sM,sB,ed);
+      actuator(shx+sgn*12,shy+28,ex+sgn*5,ey-7);
       var fx=ex - sgn*22, fy=ey+34;
       plate(g,[[ex-12,ey-2],[ex+12,ey],[fx+12,fy-4],[fx-8,fy-8]],sT,sM,ed);
       plate(g,[[fx-9,fy-8],[fx+13,fy-6],[fx+11,fy+12],[fx-11,fy+10]],sM,sB,ed); // gauntlet
@@ -1999,6 +2008,7 @@ function buildClaude(t,st){
     } else if(mode==='raiseup'){ // forearm raised, device held up in front of chest (inspect/dispatch)
       var ex3=shx+sgn*6, ey3=shy+40;
       plate(g,[[shx-15,shy+22],[shx+17,shy+24],[ex3+12,ey3],[ex3-12,ey3]],sM,sB,ed); // upper arm
+      actuator(shx+sgn*12,shy+28,ex3+sgn*5,ey3-7);
       var fx3=ex3 - sgn*26, fy3=ey3-32;   // forearm up + inward
       plate(g,[[ex3-12,ey3],[ex3+12,ey3-2],[fx3+12,fy3+6],[fx3-8,fy3-2]],sT,sM,ed);
       plate(g,[[fx3-9,fy3-6],[fx3+13,fy3-4],[fx3+11,fy3+14],[fx3-11,fy3+12]],sM,sB,ed); // gauntlet
@@ -2009,6 +2019,7 @@ function buildClaude(t,st){
     } else {
       var ex2=shx+sgn*4, ey2=shy+56;
       plate(g,[[shx-16,shy+22],[shx+16,shy+24],[ex2+14,ey2],[ex2-14,ey2]],sM,sB,ed);
+      actuator(shx+sgn*12,shy+30,ex2+sgn*6,ey2-9);
       /* The forearm was a straight slab. A bracer: the outer edge flares out
          from the elbow and cuts back hard to the wrist, and a blade fin
          stands off the flare — the arm's silhouette finally has an opinion. */
@@ -2017,6 +2028,9 @@ function buildClaude(t,st){
       plate(g,[[ox(17),ey2+6],[ox(26),ey2+18],[ox(17),ey2+32]],sM,sB,ed);
       pl(g,ox(14),ey2-2,ox(19),ey2+26,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1.1);
       pl(g,ox(-6),ey2+8,ox(-6),ey2+50,rc,1);
+      // power slot cut into the bracer face — the arm's one warm light
+      g.fillStyle="#03060c";g.fillRect(ox(4)-2,ey2+14,4.5,24);
+      [RB,RE].forEach(function(c){accGlow(c,ox(4)-1.2,ey2+16,2.8,20);});
       // wrist clamp: the gauntlet is a separate piece, banded on
       plate(g,[[ex2-15,ey2+40],[ex2+15,ey2+40],[ex2+14,ey2+48],[ex2-14,ey2+48]],sT,sM,ed);
       rivet(g,ex2-9,ey2+44,eH);rivet(g,ex2+9,ey2+44,eH);
