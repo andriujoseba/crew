@@ -1474,3 +1474,37 @@ living below `FLOORY`, so the taller station's plinth landed exactly on the
 cell's bottom edge — reframed to 0.865. And the back-arris rim was 1.6px,
 which rounds to nothing at the cell's ~0.26 scale: 2.2px survives it, and at
 full size the difference reads as edge wear.
+
+## Five loops on the residents
+
+The plane was right and two of the four units were wrong against it: codex
+hung with the desk edge at its chin, and offline kimi was not in the picture
+at all — settled to a floor the near-plane station now hides, an offline
+diamond floating over an apparently empty desk.
+
+![before and after](shots/deck-round2.webp)
+
+**Loop 11 — codex rides higher in its arch.** `BY=356` predates the worktop.
+The body rises 24px; the feet do not move — `footY` is absolute — so the same
+six prints hold the floor and the femurs stand steeper, which is what a
+spider that means to USE the bench does with its legs. The re-derived unit
+envelope across all 36 combinations is unchanged.
+
+**Loop 12 — offline kimi sags to parking altitude.** A drone that loses its
+duty cycle does not fall out of the sky: the skirt holds a dead-man's cushion
+and the unit sags and drifts, clearly above the worktop line, antennae still
+drooped. The landed-drone special case in the draw order left with the
+landing.
+
+**Loop 13 — the near plane's left side.** `LAYOUT.nearSide` is plural: a
+pallet of stock billets, the lab stool nobody is sitting on, a pair of queue
+stanchions whose tape sags over the dispatch lane.
+
+**Loop 14 — the plane is wired together.** The welding lead dips through the
+band the foreground lip blurs and climbs the drum to a coil on its rim; the
+dispatch loom rises to join the reel's wind; the review lab, which runs on
+paper, has dropped two sheets on the way to the cart.
+
+**Loop 15 — offline kimi catches the beacon.** One red arris down the shell's
+left edge, the skirt corner, the antenna ball — breathing with the same
+`beaconPulse` as the station's loop-8 rim, so the whole plane throbs together.
