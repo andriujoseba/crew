@@ -1622,6 +1622,28 @@ light catches the torn edge.
 
 ![claude structure progression, round 2](shots/claude-structure/progression-2.webp)
 
+Three more, from operator feedback — "there's a gray rectangle on the back"
+and "the arms could look cooler":
+
+**Loop 11 — the backpack is behind the torso, and looks it.** The pack was
+drawn in the front armour's own tones, so the wing surviving beside each arm
+read as a grey rectangle floating at the torso's depth. Back-plane shade, a
+sharper taper, heat-sink fin cuts, and the torso's own shadow cast on the
+wings' inner edges push it a plane back.
+
+**Loop 12 — the forearm is a bracer, not a slab.** The outer edge flares
+from the elbow and cuts back hard to the wrist, a blade fin stands off the
+flare with its own chamfer highlight, and the working poses carry the same
+fin on the gauntlet so it reads as one piece of kit in every pose.
+
+**Loop 13 — the arm shows its muscle and carries its own light.** One
+exposed actuator runs down the outer upper arm into the elbow in all three
+poses — dark cylinder, bright rod, the shin hydraulics' language — and a
+power slot cut into the bracer face gives the arms the one warm light every
+other body group already had.
+
+![claude structure progression, round 3](shots/claude-structure/progression-3.webp)
+
 ![claude after, three states](shots/claude-structure/states.webp)
 
 The unit envelope was re-measured over all 36 combinations after the wider
