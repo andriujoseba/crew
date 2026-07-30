@@ -42,8 +42,8 @@ CONFIG_ROLE=""
 # That box is also the config phase's box, on purpose — and the two phases only
 # survive sharing it because the installer drill hires it as the identity the
 # role drill gave it. When Section A named its own role instead, the config
-# phase's very first upgrade met "ROLES CHANGED" on a box nobody meant to
-# re-role (#180).
+# phase re-roled the box back: the engine warns "ROLES CHANGED" and installs
+# anyway, so the drill ran on duty loops nobody meant to swap (#180).
 INSTALL_DRILL=1
 INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"

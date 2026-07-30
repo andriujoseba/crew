@@ -43,6 +43,27 @@ case "${1:-}" in
 esac
 SHIM
 chmod +x "$STUB/box"
+# …and a double for the one jq query the driver's box-presence gate makes, so
+# stubbing `box` is enough to make this suite host-independent. Without it the
+# gate reports "no host" on any machine without jq, and the identity cases
+# below silently stop testing what they say they test. Both branches of the
+# gate are asserted below, so a wrong double fails the suite rather than
+# passing it.
+cat >"$STUB/jq" <<'SHIM'
+#!/usr/bin/env bash
+# jq -e --arg n <name> '.[] | select(.name == $n)' — present is exit 0.
+name=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --arg) name="$3"; shift 3 ;;
+    -e) shift ;;
+    *) shift ;;
+  esac
+done
+grep -qF "\"name\":\"$name\"" && exit 0
+exit 1
+SHIM
+chmod +x "$STUB/jq"
 PATH="$STUB:$PATH"; export PATH
 export STUB_BOXES="" STUB_BOX_HOME="$WORK/boxhome"
 mkdir -p "$STUB_BOX_HOME/duty/conf"
@@ -87,14 +108,43 @@ case "$IDENTITY_LINE" in
   *) ok "does-not-fall-back-to-a-hard-coded-identity" ;;
 esac
 
-if missing="$(STUB_BOXES="crew-drill-triage" STUB_BOX_HOME="$WORK/empty-boxhome" \
+# A box that was never hired carries no identity, so there is none to
+# overwrite: #180's task list makes that the one case where Section A chooses,
+# and it chooses `claude reviewer`.
+if unhired="$(STUB_BOXES="crew-drill-triage" STUB_BOX_HOME="$WORK/unhired-boxhome" \
     "$DRIVER" --box crew-drill-triage --tree "$ROOT" --registry "$NARROW" --dry-run 2>&1)"; then
-  case "$missing" in
-    *"WOULD REFUSE"*"instance.conf"*) ok "unreadable-identity-refuses-rather-than-inventing-one" ;;
-    *) bad "unreadable-identity-refuses-rather-than-inventing-one (got '$missing')" ;;
+  UNHIRED_LINE="$(printf '%s\n' "$unhired" | grep -F 'WOULD HIRE' || true)"
+  case "$UNHIRED_LINE" in
+    *'agent `claude`, roles `reviewer`'*) ok "unhired-box-falls-back-to-claude-reviewer" ;;
+    *) bad "unhired-box-falls-back-to-claude-reviewer (got '$UNHIRED_LINE')" ;;
+  esac
+  case "$UNHIRED_LINE" in
+    *"instance.conf"*) ok "unhired-fallback-says-why-it-chose" ;;
+    *) bad "unhired-fallback-says-why-it-chose (got '$UNHIRED_LINE')" ;;
   esac
 else
-  bad "unreadable-identity-dry-run-still-reports (got '$missing')"
+  bad "unhired-box-dry-run-still-reports (got '$unhired')"
+fi
+
+# But an instance.conf that is THERE and unreadable is not an unhired box: the
+# box may well be carrying an identity, and guessing over one is #180 firing
+# for real. Only the absent file licenses a choice.
+UNREADABLE_HOME="$WORK/unreadable-boxhome"
+mkdir -p "$UNREADABLE_HOME/duty/conf"
+printf 'BOT_AGENT=\nBOT_ROLES=""\n' >"$UNREADABLE_HOME/duty/conf/instance.conf"
+if unreadable="$(STUB_BOXES="crew-drill-triage" STUB_BOX_HOME="$UNREADABLE_HOME" \
+    "$DRIVER" --box crew-drill-triage --tree "$ROOT" --registry "$NARROW" --dry-run 2>&1)"; then
+  case "$unreadable" in
+    *"WOULD REFUSE"*"instance.conf"*) ok "unreadable-identity-refuses-rather-than-inventing-one" ;;
+    *) bad "unreadable-identity-refuses-rather-than-inventing-one (got '$unreadable')" ;;
+  esac
+  UNREADABLE_LINE="$(printf '%s\n' "$unreadable" | grep -F 'WOULD REFUSE' || true)"
+  case "$UNREADABLE_LINE" in
+    *claude*|*reviewer*) bad "unreadable-identity-does-not-fall-back (got '$UNREADABLE_LINE')" ;;
+    *) ok "unreadable-identity-does-not-fall-back" ;;
+  esac
+else
+  bad "unreadable-identity-dry-run-still-reports (got '$unreadable')"
 fi
 
 # The roster field is comma-separated; a two-role box must not be written as
