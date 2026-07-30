@@ -1813,11 +1813,35 @@ function buildClaude(t,st){
   var handR;
   function arm(sgn,mode){
     var shx=cx+sgn*62, shy=244+breath;
-    // pauldron: 2 stacked angular plates (big, overhanging) -> intimidating shoulders
-    plate(g,[[shx-sgn*4-28,shy-18],[shx-sgn*4+30,shy-22],[shx-sgn*4+34,shy+14],[shx-sgn*4-24,shy+18]],sT,sM,ed);
-    plate(g,[[shx-sgn*2-26,shy+8],[shx-sgn*2+30,shy+6],[shx-sgn*2+26,shy+30],[shx-sgn*2-22,shy+30]],sM,sB,ed);
-    // shoulder joint light
-    [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx+sgn*2,shy+2,3,0,7);c.fill();}});
+    /* Shoulder ASSEMBLY, not shoulder decoration. The pauldron was two stacked
+       slabs hanging in the air beside the chest — nothing said how the arm was
+       attached, and the same dx offsets were used unmirrored so neither slab
+       even faced its own side. Now the joint is a machine: a dark ball socket
+       the arm hangs from, a piston running down into the upper arm, and the
+       pauldron bolted OVER all of it as armour — mirrored properly, with a
+       hard outer spike so the silhouette reads doom-plate instead of pillow. */
+    function P(pts){return pts.map(function(p){return [shx+sgn*p[0],shy+p[1]];});}
+    // ball socket first, so the pauldron overhangs it
+    g.fillStyle="#04070d";g.beginPath();g.arc(shx,shy+8,10,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.6;g.beginPath();g.arc(shx,shy+8,10,0,7);g.stroke();
+    var sj=g.createRadialGradient(shx-3,shy+4,1,shx,shy+8,10);
+    sj.addColorStop(0,"rgba(148,172,206,"+(offl?0.18:0.42)+")");
+    sj.addColorStop(0.55,"rgba(56,68,88,0.5)");sj.addColorStop(1,"rgba(4,7,13,0.7)");
+    g.fillStyle=sj;g.beginPath();g.arc(shx,shy+8,7.6,0,7);g.fill();
+    // piston from the socket down into the upper arm
+    pl(g,shx,shy+14,shx+sgn*3,shy+32,"#0a0f18",5);
+    pl(g,shx,shy+14,shx+sgn*3,shy+32,offl?"#39424f":"#8fa6c4",1.6);
+    // pauldron: one notched plate, outer edge dropping to a spike; the
+    // underside is cut AROUND the socket so the joint visibly carries the arm
+    plate(g,P([[-28,-22],[8,-32],[34,-20],[42,-2],[30,26],[14,12],[8,2],[-8,2],[-14,12],[-24,12]]),sT,sM,ed);
+    // chamfer highlight along the crown, keyed to the lamp
+    g.fillStyle="rgba(168,192,226,"+(offl?0.07:0.18)+")";
+    poly(g,P([[-28,-22],[8,-32],[34,-20],[28,-14],[-24,-16]]));g.fill();
+    // deep cut seam across the face + two bolts holding it to the socket arm
+    pl(g,shx+sgn*30,shy-12,shx+sgn*36,shy+8,rc,1.4);
+    rivet(g,shx-sgn*18,shy-4,eH);rivet(g,shx+sgn*20,shy+2,eH);
+    // shoulder joint light, now sitting IN the socket
+    [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx,shy+8,2.6,0,7);c.fill();}});
     if(mode==='reachdown'){ // reach forward + down (welding pose)
       var ex=shx+sgn*8, ey=shy+42;
       plate(g,[[shx-14,shy+22],[shx+18,shy+24],[ex+12,ey],[ex-12,ey]],sM,sB,ed);
