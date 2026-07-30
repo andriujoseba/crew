@@ -1591,6 +1591,37 @@ blade.
 
 ![claude structure progression](shots/claude-structure/progression.webp)
 
+Five more, same brief — each pass finds the next join that does not read and
+makes it a mechanism:
+
+**Loop 6 — the arm bends at a machine, not at a seam.** The elbow was two
+plates touching. Every pose now caps that seam in the joint language the hips
+and knees already speak — dark ball, lit crescent, bolt — the hanging arm gets
+a wrist clamp band so the gauntlet is a banded-on piece, and the fist gets
+knuckle cuts so it is fingers, not a brick.
+
+**Loop 7 — the head is mounted, not adjacent.** A visible neck bearing ring,
+two intake cables clamped under the cheek guards running into the collar
+(endpoints ride `hcx`/`hy`, so the offline head-drop slackens them for free),
+and the antenna becomes a mast on a bolted bracket.
+
+**Loop 8 — the girdle closes through hardware.** A bolted buckle housing
+bridges the waist gap and the codpiece is its own pointed plate with the
+accent glow recessed into a cut slot — was: a stripe painted on the pelvis.
+
+**Loop 9 — the armour has a service history.** A patch of newer, bluer steel
+bolted over a scorch on the right pec, weld stitches where it was tacked,
+corners aligned with nothing the way repairs never are; one deep gouge across
+the left pauldron, dark trench with a bright torn lip.
+
+**Loop 10 — plates overlap, so they cast on what they cover.** Contact
+shadows under the pauldron rim, the chest bevel band and the buckle; grime
+weeping from the torqued bolts (albedo — wear does not dim with power state);
+and a bite cut out of the right pauldron spike to transparency, so the rim
+light catches the torn edge.
+
+![claude structure progression, round 2](shots/claude-structure/progression-2.webp)
+
 ![claude after, three states](shots/claude-structure/states.webp)
 
 The unit envelope was re-measured over all 36 combinations after the wider
