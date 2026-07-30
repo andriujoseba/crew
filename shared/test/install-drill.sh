@@ -114,6 +114,7 @@ esac
 if unhired="$(STUB_BOXES="crew-drill-triage" STUB_BOX_HOME="$WORK/unhired-boxhome" \
     "$DRIVER" --box crew-drill-triage --tree "$ROOT" --registry "$NARROW" --dry-run 2>&1)"; then
   UNHIRED_LINE="$(printf '%s\n' "$unhired" | grep -F 'WOULD HIRE' || true)"
+  # shellcheck disable=SC2016  # the backticks are the driver's literal output
   case "$UNHIRED_LINE" in
     *'agent `claude`, roles `reviewer`'*) ok "unhired-box-falls-back-to-claude-reviewer" ;;
     *) bad "unhired-box-falls-back-to-claude-reviewer (got '$UNHIRED_LINE')" ;;
@@ -138,11 +139,14 @@ if unreadable="$(STUB_BOXES="crew-drill-triage" STUB_BOX_HOME="$UNREADABLE_HOME"
     *"WOULD REFUSE"*"instance.conf"*) ok "unreadable-identity-refuses-rather-than-inventing-one" ;;
     *) bad "unreadable-identity-refuses-rather-than-inventing-one (got '$unreadable')" ;;
   esac
-  UNREADABLE_LINE="$(printf '%s\n' "$unreadable" | grep -F 'WOULD REFUSE' || true)"
-  case "$UNREADABLE_LINE" in
-    *claude*|*reviewer*) bad "unreadable-identity-does-not-fall-back (got '$UNREADABLE_LINE')" ;;
-    *) ok "unreadable-identity-does-not-fall-back" ;;
-  esac
+  # Asserted as the absence of a hire, not as a refusal line that says the
+  # right words: a mutation that routes `unreadable` into the fallback branch
+  # prints WOULD HIRE, and that is the failure worth catching.
+  if hire_line="$(printf '%s\n' "$unreadable" | grep -F 'WOULD HIRE')"; then
+    bad "unreadable-identity-does-not-fall-back (got '$hire_line')"
+  else
+    ok "unreadable-identity-does-not-fall-back"
+  fi
 else
   bad "unreadable-identity-dry-run-still-reports (got '$unreadable')"
 fi
