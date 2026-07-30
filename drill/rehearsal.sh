@@ -207,7 +207,63 @@ check "fixture tests green" bx "~/.crew-engine-stage/shared/test/run.sh | grep -
 echo "== phase 1: pre-auth engine install ($AGENT $ROLE)"
 # Every drill tick is explicit. Arming cron here created an autonomous
 # production bot merely to observe one scheduled boundary (#26).
-bx "~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role '$ROLE'" || fail "install"
+# The fleet installs via `crew hire` — stage_engine + stage_fleet_definition
+# (cli/crew:837) — never by calling install.sh directly. Drilling the raw
+# installer exercised a path nobody deploys, and it only broke when #99 stopped
+# shipping examples/: install.sh's $HERE/../examples/ fallbacks resolve in a
+# checkout and can NEVER resolve on a box.
+#
+# The drill builds its OWN fleet definition and lists this box in its roster,
+# which is hire_guard's FIRST branch — so no --allow-offroster, and no
+# production registry is ever consulted, because production_registry() reads
+# the SELECTED config dir (cli/crew:1071). What that registry must contain, and
+# why it is neither empty nor the production one, is spelled out where it is
+# written below.
+DRILL_TMP="$(mktemp -d)"
+DRILL_CONFIG="$DRILL_TMP/config"
+CREW_BIN="$SOURCE_TREE/cli/crew"
+# `crew init` takes its target POSITIONALLY and refuses a path that already
+# exists (cli/crew:1783), so the target must be a not-yet-created subpath.
+# CREW_CONFIG_DIR cannot name it either: that variable is validated as an
+# existing fleet definition before init runs. Same shape as
+# drill/rehearsal-config.sh, which has always done this correctly.
+"$CREW_BIN" init "$DRILL_CONFIG" >"$DRILL_TMP/init.out" 2>&1 \
+  || { echo "phase 1: crew init failed: $(cat "$DRILL_TMP/init.out")"; exit 1; }
+printf '%s %s %s\n' "$BOX_NAME" "$AGENT" "$ROLE" >"$DRILL_CONFIG/fleet.roster"
+# The registry must be NON-EMPTY: production_registry()'s grep exits 1 when it
+# matches nothing, and under `set -o pipefail` that kills `crew hire` silently
+# via set -e. It must also never BE the production registry -- `crew init`
+# copies examples/repos.txt, which is production, and seeding a drill box from
+# it is how #51 happened. The slug is resolvable from the HOST's gh identity
+# (the BOX stays creds-free); phase 2 mints the repo itself.
+DRILL_HOST_ME="$(gh api user --jq .login 2>/dev/null || echo crew-drill)"
+printf '%s/crew-drill-%s\n' "$DRILL_HOST_ME" "$ROLE" >"$DRILL_CONFIG/repos.txt"
+CREW_CONFIG_DIR="$DRILL_CONFIG" "$CREW_BIN" hire "$BOX_NAME" --ref "$SOURCE_SHA" \
+  || fail "crew hire"
+# `crew hire` removes ~/.crew-engine-stage AND ~/.crew-engine.tgz when it is
+# done (cleanup_staged_engine). The drill needs the shipped tree on the box
+# AFTER the hire -- for the VERSION stamp comparison, the agent-profile auth
+# probe, and the raw-install.sh reinstall assertions -- so put it back. This is
+# also what gives the raw installer coverage layered ON TOP of the deployed
+# path, rather than instead of it.
+# shellcheck disable=SC2016  # expanded by bash inside the box
+box exec "$BOX_NAME" -- bash -lc '
+  set -euo pipefail
+  archive="$HOME/.crew-engine.tgz"
+  tmp="$(mktemp "$HOME/.crew-engine.XXXXXX")"
+  cat >"$tmp"
+  mv "$tmp" "$archive"
+  stage="$HOME/.crew-engine-stage"
+  rm -rf "$stage"
+  mkdir -p "$stage"
+  tar xzf "$archive" -C "$stage"
+  test -f "$stage/shared/install.sh"
+  test -f "$stage/VERSION"
+' <"$ENGINE_ARCHIVE" || fail "re-stage engine after hire"
+# The drill fleet definition existed only to get through hire_guard by roster
+# membership. Nothing reads it afterwards, and a per-role mktemp -d that is
+# never removed leaks one fleet definition per drill into /tmp.
+rm -rf "$DRILL_TMP"
 rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
 version="$(bx "head -1 ~/.crew-engine-stage/VERSION" | tr -d '\r\n')"
 check "VERSION stamps crew@$version" bx "head -1 ~/duty/VERSION | grep -q '^crew@$version\\( \\|$\\)'"
