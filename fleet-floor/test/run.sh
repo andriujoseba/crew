@@ -268,6 +268,18 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
     # A box changing STATE under an open console. Shares the fast-polling
     # collector above: every other page test enters a console and leaves within
     # one poll, so the live-update path is otherwise untested.
+    #
+    # But sharing it has an edge: churn.js removes the roster's first box and
+    # restores the file in its teardown, and the collector only notices on its
+    # next poll. transition.js walks the floor BY ROSTER INDEX, so against the
+    # mid-restore snapshot it clicks one cell left of its target — or, on the
+    # other side of the poll, finds no working box at all. Wait for the
+    # restored fleet to be back in the snapshot before standing on it.
+    for _ in $(seq 1 40); do
+      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null \
+        | grep -q '"ff-working"' && break
+      sleep 0.5
+    done
     echo
     echo "== state transition"
     if SHOT_DIR="$TMP" node "$HERE/transition.js" "http://127.0.0.1:$CPORT/" "$USER" "$PASSWD"; then

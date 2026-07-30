@@ -1508,3 +1508,44 @@ paper, has dropped two sheets on the way to the cart.
 **Loop 15 — offline kimi catches the beacon.** One red arris down the shell's
 left edge, the skirt corner, the antenna ball — breathing with the same
 `beaconPulse` as the station's loop-8 rim, so the whole plane throbs together.
+
+## Five loops on the light
+
+Free loops, and the rule for them: every change crosses every room and every
+robot, because a detail that exists in one place reads as an accident and the
+same detail everywhere reads as physics.
+
+**Loop 16 — the unit shades the bench.** The lamp hangs directly over the
+unit and the worktop stands below and in front, so the strip of top face
+nearest the unit is the strip its body keeps the light off. Width comes from
+the footprint the sprite actually reports — wide for codex's straddle, narrow
+for claude — and a hovering kimi throws it softer and fainter by the same
+height rule the floor shadows obey.
+
+**Loop 17 — the room's light lands on the unit.** Three rooms, three lamps —
+sodium-warm, lab-cool, dispatch-violet — and the robots walked between them
+without changing colour, the classic tell of a pasted sprite. One source-atop
+gradient tints every composed body from the lamp side down, scaled by the
+lamp's own flicker; offline rooms cast cold slate instead. The sprite alpha
+is untouched, so `unitTop`, `unitBox` and the envelope still measure the same
+unit.
+
+**Loop 18 — the worktop reflects who stands at it.** Glass, acrylic and
+brushed steel all bounce some image back, in that order, and none of them
+did. The composed sprite draws again, flipped about the worktop line and
+compressed into the top face's 17px of perspective — a near-mirror on the lab
+glass, a coloured smear on the steel — and a hovering unit's reflection
+detaches from the back edge by exactly its lift, because that is where a
+mirror would put it.
+
+**Loop 19 — a shadow is not black.** A shadow is the floor with the key
+light subtracted: faintly brown on the builder's oiled amber, blue-black on
+the sealed lab floor, violet-tinged on the painted dispatch floor. Twelve
+robots' feet, the station's drop and both companions' pools all ask one
+`shadowRGB()` now instead of hard-coding 0,0,0.
+
+**Loop 20 — the air in front of the subject.** The cone's motes stop at the
+unit's depth, so the near plane hung in vacuum. Six larger, blurrier motes
+drift sideways across the near band — out of focus for the same reason the
+nearEdge is — keyed to each room's cone colour, dimmed but not killed offline;
+dust does not care. Pinned still under reduced motion.
