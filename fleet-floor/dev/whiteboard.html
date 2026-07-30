@@ -3268,6 +3268,30 @@ function nearSideProp(t,lit,st){
   }
 }
 
+/* L20 — the air in FRONT of the subject. The lamp cone has had motes since
+   loop 5, and they stop at the unit's depth, so the space between the near
+   plane and the camera reads as vacuum. A handful of larger, slower, blurred
+   motes now drift across the near band — bigger and softer than the cone's
+   because near dust is out of focus for the same reason the nearEdge is, and
+   moving mostly sideways because down here we are below the lamp's draft.
+   Keyed to the room's cone colour, dimmed but not killed offline (dust does
+   not care), pinned still under reduced motion. */
+function nearMotes(t,st){
+  if(reduced)return;
+  var mc=ROOM==="builder"?[255,214,160]:ROOM==="reviewer"?[186,218,250]:[206,190,255];
+  var dim=st==="offline"?0.35:1;
+  S.save();S.filter="blur(2.5px)";S.globalCompositeOperation="lighter";
+  for(var i=0;i<6;i++){
+    var dir=i%2?1:-1, sp5=0.011+0.006*(i%3);
+    var ph=(t*sp5+i*0.173)%1, x=dir>0?(-70+ph*(DW+140)):(DW+70-ph*(DW+140));
+    var y=436+((i*89)%224)+Math.sin(t*0.42+i*1.9)*13;
+    var r=3.2+(i%3)*1.8, a=(0.06+0.038*Math.sin(t*0.7+i*2.3))*dim;
+    if(a<=0)continue;
+    S.fillStyle=rgba(mc[0],mc[1],mc[2],a);S.beginPath();S.arc(x,y,r,0,7);S.fill();
+  }
+  S.restore();
+}
+
 /* BUILDER — a welding bench, straight-sided and heavy. */
 function fabTable(t,lit,st){
   var on=st!=="offline";
@@ -3663,6 +3687,7 @@ function drawTarget(t,dt){
      the unit's depth cannot get in front of it. */
   deckStation(t,lit,STATE);
   nearSideProp(t,lit,STATE);        // L6 — the plane's second citizen
+  nearMotes(t,STATE);               // L20 — the air in front of the subject
   roomForeground(t,STATE);
   nearEdge();                       // near plane, out of focus
   drawForeground();
