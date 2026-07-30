@@ -1598,13 +1598,29 @@ function buildClaude(t,st){
     rivet(g,shx-sgn*18,shy-4,eH);rivet(g,shx+sgn*20,shy+2,eH);
     // shoulder joint light, now sitting IN the socket
     [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx,shy+8,2.6,0,7);c.fill();}});
+    /* The elbow, in the same joint language as the hips and knees: a dark
+       ball, a lit crescent on the lamp side, a bolt through the middle. It
+       caps the seam where upper arm meets forearm in every pose — before it,
+       the two plates just touched, and the arm was the last limb whose bend
+       had no mechanism. */
+    function elbow(x,y){
+      g.fillStyle="#04070d";g.beginPath();g.arc(x,y,6.5,0,7);g.fill();
+      g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(x,y,6.5,0,7);g.stroke();
+      var eb=g.createRadialGradient(x-2,y-2,1,x,y,6.5);
+      eb.addColorStop(0,"rgba(148,172,206,"+(offl?0.16:0.38)+")");
+      eb.addColorStop(0.6,"rgba(56,68,88,0.5)");eb.addColorStop(1,"rgba(4,7,13,0.7)");
+      g.fillStyle=eb;g.beginPath();g.arc(x,y,4.9,0,7);g.fill();
+      rivet(g,x,y,eH);
+    }
     if(mode==='reachdown'){ // reach forward + down (welding pose)
       var ex=shx+sgn*8, ey=shy+42;
       plate(g,[[shx-14,shy+22],[shx+18,shy+24],[ex+12,ey],[ex-12,ey]],sM,sB,ed);
       var fx=ex - sgn*22, fy=ey+34;
       plate(g,[[ex-12,ey-2],[ex+12,ey],[fx+12,fy-4],[fx-8,fy-8]],sT,sM,ed);
       plate(g,[[fx-9,fy-8],[fx+13,fy-6],[fx+11,fy+12],[fx-11,fy+10]],sM,sB,ed); // gauntlet
+      rivet(g,fx-5,fy+4,eH);rivet(g,fx+7,fy+4,eH);
       plate(g,[[fx-2,fy+2],[fx+10,fy-3],[fx+14,fy+2],[fx+2,fy+9]],"#2a3444","#12181f","#3d4c63"); // torch
+      elbow(ex,ey-1);
       handR={x:fx+13,y:fy+2};
     } else if(mode==='raiseup'){ // forearm raised, device held up in front of chest (inspect/dispatch)
       var ex3=shx+sgn*6, ey3=shy+40;
@@ -1612,14 +1628,25 @@ function buildClaude(t,st){
       var fx3=ex3 - sgn*26, fy3=ey3-32;   // forearm up + inward
       plate(g,[[ex3-12,ey3],[ex3+12,ey3-2],[fx3+12,fy3+6],[fx3-8,fy3-2]],sT,sM,ed);
       plate(g,[[fx3-9,fy3-6],[fx3+13,fy3-4],[fx3+11,fy3+14],[fx3-11,fy3+12]],sM,sB,ed); // gauntlet
+      rivet(g,fx3-4,fy3+8,eH);rivet(g,fx3+7,fy3+8,eH);
+      elbow(ex3,ey3-1);
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
     } else {
       var ex2=shx+sgn*4, ey2=shy+56;
       plate(g,[[shx-16,shy+22],[shx+16,shy+24],[ex2+14,ey2],[ex2-14,ey2]],sM,sB,ed);
-      [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.6);c.fillRect(ex2-3,ey2-4,6,3);}});
       plate(g,[[ex2-15,ey2-2],[ex2+15,ey2-2],[ex2+13,ey2+58],[ex2-13,ey2+58]],sT,sM,ed);
       pl(g,ex2-6,ey2+8,ex2-6,ey2+50,rc,1);
+      // wrist clamp: the gauntlet is a separate piece, banded on
+      plate(g,[[ex2-15,ey2+40],[ex2+15,ey2+40],[ex2+14,ey2+48],[ex2-14,ey2+48]],sT,sM,ed);
+      rivet(g,ex2-9,ey2+44,eH);rivet(g,ex2+9,ey2+44,eH);
       plate(g,[[ex2-13,ey2+56],[ex2+13,ey2+56],[ex2+11,ey2+74],[ex2-11,ey2+74]],sM,sB,ed);
+      // knuckle cuts, so the fist is fingers and not a brick
+      for(var kn=0;kn<3;kn++)pl(g,ex2-7+kn*7,ey2+59,ex2-7+kn*7,ey2+67,rc,1.2);
+      g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.24)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(ex2-11,ey2+58);g.lineTo(ex2+11,ey2+58);g.stroke();
+      elbow(ex2,ey2-1);
+      // joint light rides the elbow cap
+      [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.6);c.beginPath();c.arc(ex2,ey2-1,1.8,0,7);c.fill();}});
       if(sgn>0)handR={x:ex2,y:ey2+64};
     }
   }
