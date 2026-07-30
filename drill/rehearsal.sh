@@ -216,9 +216,9 @@ echo "== phase 1: pre-auth engine install ($AGENT $ROLE)"
 # The drill builds its OWN fleet definition and lists this box in its roster,
 # which is hire_guard's FIRST branch — so no --allow-offroster, and no
 # production registry is ever consulted, because production_registry() reads
-# the SELECTED config dir (cli/crew:1071). The registry is deliberately empty:
-# `crew init` copies examples/repos.txt, which IS the production registry, and
-# seeding a drill box from it is exactly how #51 happened.
+# the SELECTED config dir (cli/crew:1071). What that registry must contain, and
+# why it is neither empty nor the production one, is spelled out where it is
+# written below.
 DRILL_TMP="$(mktemp -d)"
 DRILL_CONFIG="$DRILL_TMP/config"
 CREW_BIN="$SOURCE_TREE/cli/crew"
@@ -260,6 +260,10 @@ box exec "$BOX_NAME" -- bash -lc '
   test -f "$stage/shared/install.sh"
   test -f "$stage/VERSION"
 ' <"$ENGINE_ARCHIVE" || fail "re-stage engine after hire"
+# The drill fleet definition existed only to get through hire_guard by roster
+# membership. Nothing reads it afterwards, and a per-role mktemp -d that is
+# never removed leaks one fleet definition per drill into /tmp.
+rm -rf "$DRILL_TMP"
 rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
 version="$(bx "head -1 ~/.crew-engine-stage/VERSION" | tr -d '\r\n')"
 check "VERSION stamps crew@$version" bx "head -1 ~/duty/VERSION | grep -q '^crew@$version\\( \\|$\\)'"
