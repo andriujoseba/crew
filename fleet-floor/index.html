@@ -2610,14 +2610,14 @@ function drawRobot(t){
     var a=(floating?0.44:0.66)/Math.pow(spread,1.25);
     var w2=fw*spread, h2=Math.max(3,fw*0.34*spread);
     var sh=S.createRadialGradient(fx2,FLOORY+6,1,fx2,FLOORY+6,w2);
-    sh.addColorStop(0,"rgba(0,0,0,"+a.toFixed(3)+")");
-    sh.addColorStop(0.55,"rgba(0,0,0,"+(a*0.45).toFixed(3)+")");
-    sh.addColorStop(1,"rgba(0,0,0,0)");
+    sh.addColorStop(0,"rgba("+shadowRGB()+","+a.toFixed(3)+")");
+    sh.addColorStop(0.55,"rgba("+shadowRGB()+","+(a*0.45).toFixed(3)+")");
+    sh.addColorStop(1,"rgba("+shadowRGB()+",0)");
     S.fillStyle=sh;S.beginPath();S.ellipse(fx2,FLOORY+6,w2,h2,0,0,7);S.fill();
     /* The dark core right at the contact point. Only for a foot that is
        actually down — it is the thing that says "touching", so a hovering
        unit must not get one. */
-    if(lift<7&&!floating){S.fillStyle="rgba(0,0,0,0.5)";S.beginPath();S.ellipse(fx2,FLOORY+4,fw*0.62,Math.max(2,fw*0.2),0,0,7);S.fill();}
+    if(lift<7&&!floating){S.fillStyle="rgba("+shadowRGB()+",0.5)";S.beginPath();S.ellipse(fx2,FLOORY+4,fw*0.62,Math.max(2,fw*0.2),0,0,7);S.fill();}
   });
   S.restore();
   if(!info.offl&&AGENT!=="claude"){var vc=AGENT==="codex"?"55,212,166":AGENT==="grok"?"176,124,255":"255,114,182",vr=floating?122:150;S.save();S.globalCompositeOperation="lighter";var tgl=S.createRadialGradient(ROBOX,FLOORY,2,ROBOX,FLOORY,vr);tgl.addColorStop(0,"rgba("+vc+",0.14)");tgl.addColorStop(1,"rgba("+vc+",0)");S.fillStyle=tgl;S.beginPath();S.ellipse(ROBOX,FLOORY+4,vr,18,0,0,7);S.fill();S.restore();}
@@ -2767,6 +2767,14 @@ function drawSparks(){S.save();S.globalCompositeOperation="lighter";sparks.forEa
    The station is drawn after the fog and the steam for the same reason. */
 var DECK={cx:470, bw:268, fw:300, top:490, td:17, base:668};
 
+/* L19 — a shadow is not black. A shadow is the floor with the key light
+   subtracted, so on the builder's oiled amber it stays faintly brown, on the
+   sealed lab floor it goes blue-black, and on the painted dispatch floor it
+   carries a little violet. Every contact shadow in the room — feet, station,
+   props — asks this one function instead of hard-coding 0,0,0, which is what
+   ties twelve robots and three floors into the same light. */
+function shadowRGB(){return ROOM==="builder"?"24,15,6":ROOM==="reviewer"?"4,10,20":"10,7,18";}
+
 /* The floor the station stands on, and the pool it now hides. Losing the warm
    puddle at the unit's feet would be a real loss, so it is not lost: it reads
    as a halo spilling over the station's back edge, which is what a bright
@@ -2780,7 +2788,7 @@ function deckGround(o){
     c.fillStyle=g;c.fillRect(d.cx-d.bw/2-30,d.top-26,d.bw+60,32);c.restore();});
   // and the shadow it drops on the deck it stands on
   var s=S.createRadialGradient(d.cx,d.base+2,4,d.cx,d.base+2,d.fw*0.62);
-  s.addColorStop(0,"rgba(0,0,0,0.62)");s.addColorStop(1,"rgba(0,0,0,0)");
+  s.addColorStop(0,"rgba("+shadowRGB()+",0.62)");s.addColorStop(1,"rgba("+shadowRGB()+",0)");
   S.fillStyle=s;S.beginPath();S.ellipse(d.cx,d.base+2,d.fw*0.62,16,0,0,7);S.fill();
 }
 
@@ -3027,7 +3035,7 @@ function nearSideProp(t,lit,st){
   G.fillRect(x-2,z[2]-2,w+4,z[4]+4);G.restore();
   // floor contact first, so the body stands on something
   var cs=S.createRadialGradient(x+w/2,by+2,3,x+w/2,by+2,w*0.72);
-  cs.addColorStop(0,"rgba(0,0,0,0.58)");cs.addColorStop(1,"rgba(0,0,0,0)");
+  cs.addColorStop(0,"rgba("+shadowRGB()+",0.58)");cs.addColorStop(1,"rgba("+shadowRGB()+",0)");
   S.fillStyle=cs;S.beginPath();S.ellipse(x+w/2,by+2,w*0.72,10,0,0,7);S.fill();
   if(zi===1){
     /* the left props (L13), one per room */
