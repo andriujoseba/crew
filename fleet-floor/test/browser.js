@@ -447,7 +447,21 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      Both are re-read together each iteration, so there is no window where a
      label captured earlier is compared against a flag fetched later. */
   if (LIVE && visible.length && !READONLY) {
-    const victim = visible.find((v) => !/unreach|wedged|absent|stopped/.test(v.got)) || visible[0];
+    /* The victim must be a box a pause can actually MOVE. Since #188 a box with
+       no armed tick.sh line answers 200 `nothing to pause` — correctly; an
+       action with nothing to do is not a refusal — so landing on the fixture's
+       disarmed box would sit out all fourteen polls below waiting for a
+       `paused` that is never coming, and report the renderer as broken. The
+       name says nothing about this: `disarmed` is the flag the collector
+       derives from the box's own crontab count, so ask the API, in keeping with
+       the rest of this block. Falls back to the old choice if nothing is armed,
+       rather than silently skipping the assertion. */
+    const armed = await page.evaluate(async () => {
+      const r = await fetch(location.origin + '/api/fleet');
+      return (await r.json()).units.filter((u) => !u.disarmed).map((u) => u.box);
+    });
+    const reachable = visible.filter((v) => !/unreach|wedged|absent|stopped/.test(v.got));
+    const victim = reachable.find((v) => armed.includes(v.got)) || reachable[0] || visible[0];
     const cmd = (action, box) => page.evaluate(async ([a, b]) => {
       const r = await fetch(location.origin + '/api/command', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
