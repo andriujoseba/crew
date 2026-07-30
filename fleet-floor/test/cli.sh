@@ -243,6 +243,17 @@ if grep -qE '^cli-noauth .*MISSING' "$CL_TMP/crew-out"; then
 else
   fail "crew status: dead logins are FLAGGED, not blank" "$(grep '^cli-noauth' "$CL_TMP/crew-out")"
 fi
+# #189 — `crew status` could not answer "is this box armed?" at all, so the
+# drill's floor-vs-CLI agreement check had nothing to compare for a disarmed
+# box and skipped it, five runs running. The note must also name the FIX:
+# an unarmed box needs `crew hire`, and a paused one needs the console, so a
+# single "not armed" would send half of them to the wrong place.
+if grep -qE '^cli-disarmed .*disarmed .*crew hire' "$CL_TMP/crew-out"; then
+  ok "crew status: an unarmed box says disarmed and names the fix"
+else
+  fail "crew status: an unarmed box says disarmed and names the fix" \
+       "$(grep '^cli-disarmed' "$CL_TMP/crew-out")"
+fi
 # The floor and this CLI must derive credential state from the SAME evidence.
 # `rehearsal-app.sh` asserts they agree about every box on a real host, and
 # that assertion only means anything while neither has a private source: when

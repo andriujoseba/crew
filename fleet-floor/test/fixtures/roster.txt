@@ -16,3 +16,4 @@ ff-absent     kimi    triage
 ff-wedged     codex   builder
 ff-firstrun   claude  builder
 ff-stuck      claude  builder
+ff-disarmed   grok    builder

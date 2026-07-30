@@ -3038,6 +3038,27 @@ esac
 EOF
 chmod +x "$MSSHIM/box"
 ln -sf "$(command -v jq)" "$MSSHIM/jq"
+# Since #189 `crew status` asks the box whether cron is armed. The shim runs
+# these scripts on the HOST, so a real `crontab -l` would read whoever's
+# crontab is running the suite — and on a box host that genuinely carries a
+# tick.sh line the row would flip depending on the machine. Pin it. The fixture
+# box is ARMED, which is the ordinary case and the one the round-trip budget
+# below is about; the disarmed path is asserted separately, further down.
+cat >"$MSSHIM/crontab" <<'CRONEOF'
+#!/usr/bin/env bash
+[ "${1:-}" = "-l" ] || exit 0
+[ -n "${MSCRON_EMPTY:-}" ] && exit 0
+# The paused shape as the console's PAUSE_SH actually writes it: the live line
+# commented out with the marker in front. Both counts are then non-trivial —
+# armed 0, paused 1 — which is the only shape that catches a record whose
+# fields have been shifted onto a second line.
+[ -n "${MSCRON_PAUSED:-}" ] && {
+  printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n'
+  exit 0
+}
+printf '*/5 * * * * $HOME/duty/bin/tick.sh\n'
+CRONEOF
+chmod +x "$MSSHIM/crontab"
 crewstatus() {
   env CREW_CONFIG_DIR="$MSCONF" MSROOT="$MSROOT" MSCALLS="$MSCALLS" \
     PATH="$MSSHIM:$PATH" bash "$ROOT/cli/crew" status "$@" 2>&1
@@ -3066,6 +3087,36 @@ t status-clean-box-reads-current current "$r1"
 : >"$MSCALLS"
 crewstatus >/dev/null
 t status-round-trips-per-box 3 "$(grep -c . "$MSCALLS")"
+
+# #189 — an UNARMED box. `crew status` says so and names the fix, instead of
+# printing the newest duty.log line, which on a box whose cron is gone is a
+# fact about the past that reads exactly like a working box. The floor answers
+# from the same counts; drill/rehearsal-app.sh compares the two on real
+# hardware, and that comparison is the thing that had never once run.
+status_out="$(MSCRON_EMPTY=1 crewstatus)"
+case "$status_out" in *"fixture-box"*disarmed*"crew hire"*) r1=named ;; *) r1="$status_out" ;; esac
+t status-unarmed-box-says-disarmed named "$r1"
+# ...and it costs one round trip LESS, not more: the log-line read is skipped
+# precisely because its answer would mislead. The budget above is the ceiling.
+: >"$MSCALLS"
+MSCRON_EMPTY=1 crewstatus >/dev/null
+t status-round-trips-unarmed 2 "$(grep -c . "$MSCALLS")"
+
+# #189, round 1 (codex/grok/kimi, all three) — a PAUSED box must be told to
+# resume, never to re-hire. `grep -c` PRINTS the count and exits 1 when it is
+# zero, so a `|| echo 0` guard appended a SECOND zero and pushed the paused
+# count onto line two; `read` saw only line one and the note came out
+# "disarmed — crew hire". Armed and empty-crontab both parse that away, which
+# is why the first cut of these tests went green: this case is the one shape
+# where both counts are non-trivial, and it is the shape a real operator makes
+# by clicking Pause.
+status_out="$(MSCRON_PAUSED=1 crewstatus)"
+case "$status_out" in
+  *"fixture-box"*"paused by operator"*) r1=paused ;;
+  *"fixture-box"*disarmed*)             r1=WRONG-FIX-NAMED ;;
+  *)                                    r1="$status_out" ;;
+esac
+t status-paused-box-says-paused paused "$r1"
 
 # A modified box, end to end.
 printf '# hotfix by hand\n' >>"$MSROOT/fixture-box/duty/bin/duty.sh"
