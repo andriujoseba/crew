@@ -1613,9 +1613,30 @@ function buildClaude(t,st){
 
   // ---------- BACKPACK heat-sink (behind, drawn first) ----------
   plate(g,[[cx-70,270+breath],[cx-40,250+breath],[cx+40,250+breath],[cx+70,270+breath],[cx+58,336+breath],[cx-58,336+breath]],sM,sB,ed);
-  // exhaust stacks poking above shoulders
-  [[-52,-1],[52,1]].forEach(function(k){var bx=cx+k[0];plate(g,[[bx-11,250+breath],[bx-9,196+breath],[bx+9,196+breath],[bx+11,250+breath]],sT,sB,ed);
-    [RB,RE].forEach(function(c){accGlow(c,bx-5,200+breath,10,10);}); });
+  /* Exhaust stacks. They were straight rectangles with a lit square floating
+     at the tip — behind the chest, only that tip survives, so each read as a
+     glowing panel hanging beside the head with no pipe under it. Now each is
+     a canted pipe with a slanted-cut hollow mouth, heat fins where the metal
+     sheds, and a clamp band with a brace bolting it to the backpack — the tip
+     explains the machine it is welded to. */
+  [[-52,-1],[52,1]].forEach(function(k){var bx=cx+k[0],s=k[1],ty=breath;
+    var tc=bx+s*6; // mouth centre, canted outboard
+    plate(g,[[bx-s*11,250+ty],[tc-s*8,200+ty],[tc+s*8,192+ty],[bx+s*11,250+ty]],sT,sB,ed);
+    // hollow mouth, cut on the same slant
+    g.fillStyle="#03060c";poly(g,[[tc-s*8,200+ty],[tc+s*8,192+ty],[tc+s*8,197+ty],[tc-s*8,205+ty]]);g.fill();
+    // ember in the throat, not a sticker on the face
+    if(!offl)[RB,RE].forEach(function(c){var eg=c.createLinearGradient(0,193+ty,0,204+ty);
+      eg.addColorStop(0,rgba(255,170,80,0.85));eg.addColorStop(1,rgba(200,80,20,0.15));
+      c.fillStyle=eg;poly(c,[[tc-s*6,201+ty],[tc+s*6,194+ty],[tc+s*6,197+ty],[tc-s*6,204+ty]]);c.fill();});
+    // heat fins: three cuts, each with a lit upper lip
+    for(var f=0;f<3;f++){var fy=212+f*9+ty,fw=9+f*0.6,fcx=bx+s*(6-f*2);
+      pl(g,fcx-fw,fy,fcx+fw,fy,rc,1.6);
+      pl(g,fcx-fw,fy-1.2,fcx+fw,fy-1.2,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1);}
+    // clamp band + brace down to the backpack shoulder
+    plate(g,[[bx-13,240+ty],[bx+13,240+ty],[bx+13,246+ty],[bx-13,246+ty]],sT,sM,ed);
+    rivet(g,bx-8,243+ty,eH);rivet(g,bx+8,243+ty,eH);
+    pl(g,bx+s*13,243+ty,bx+s*17,262+ty,"#0a0f18",3);
+    pl(g,bx+s*13,243+ty,bx+s*17,262+ty,offl?"#2c3440":"#5b6c85",1);});
 
   // ---------- LEGS (mirror) ----------
   function leg(sgn){
