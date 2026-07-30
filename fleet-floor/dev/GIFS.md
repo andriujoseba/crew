@@ -73,3 +73,55 @@ code never made.
 
 The per-loop stills and the reasoning are in [`LOOPS.md`](LOOPS.md); the full
 36-tile grid is in [`ASSETMAP.md`](ASSETMAP.md).
+
+---
+
+# Baseline to current, in one animation
+
+The files above stop at loop 15, because that is where the work had got to when
+they were made. This one does not stop: **forty-three frames, one per commit
+that changed the art**, from the tree before loop 1 to `main` after #174.
+
+![the fleet floor, baseline to current](shots/gifs/evolution.gif)
+
+In order: the baseline, the fifteen polish loops (#142), the three commits of
+the review pass that followed them, the three deck-station commits (#174), and
+the twenty near-plane loops. Frames hold ~0.6s.
+
+Same subject as [`robot-claude.gif`](#claude) — claude, the builder bay,
+working — so the two are directly comparable, and the unit and its room are the
+only things that can move.
+
+**Four frames do not move, and that is the animation working.** D08 lands on
+the offline station, D11 on codex, D12 and D15 on kimi; none of those is in a
+claude-working frame. It is the same shape as loop 8 above — a frame that
+repeats is the loop telling you where its change actually was, and the caption
+says so.
+
+**The palette works harder here than anywhere else in this file.** One global
+256-colour table across forty-three frames of a room lit by two lamps: the rule
+that stops the quantiser inventing differences between loops is also what puts
+visible banding in the darkest gradients. The sixteen-frame files above do not
+show it, and the fix is not a per-frame palette — it is fewer frames or more
+light, and neither is worth having.
+
+## Rendering any revision
+
+Nothing had to be reconstructed to build this, and nothing will next time:
+**every revision from `95b0eff` onward renders itself deterministically.**
+`whiteboard.js` has seeded its own PRNG and defaulted to `t=8` since the day the
+map was added, so determinism never depended on `seed.js` — which was only split
+out of it at loop 8. One recipe therefore spans the whole art history:
+
+```sh
+git checkout -f <rev>              # in a detached worktree
+fleet-floor/build.sh
+# then screenshot canvas[id^="tile-"] from
+#   dev/whiteboard.html?view=room&agents=claude&rooms=builder&states=working&w=1280
+# once document.body.dataset.wbDone === '1'
+```
+
+Two things that will otherwise cost an afternoon: `build.sh` writes **tracked**
+files (`index.html`, `dev/whiteboard.html`), so the next checkout needs `-f`;
+and the older maps ignore query params they do not know, so `view=` is safe on
+revisions from before loop 8 added it.
