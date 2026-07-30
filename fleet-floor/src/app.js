@@ -2762,6 +2762,27 @@ function deckStation(t,lit,st){
     S.fillStyle=us2;S.beginPath();S.ellipse(ucx,dd.top+dd.td*0.32,uw2*0.55*soft,dd.td*0.6,0,0,7);S.fill();
     S.restore();
   }
+  /* L18 — the top REFLECTS who stands at it. Glass, acrylic and brushed
+     steel all bounce some image back, in that order, and none of them did:
+     the strip of worktop under each unit stayed the same whether claude or
+     kimi stood over it. The composed sprite is drawn again, flipped about
+     the worktop line and compressed to the top face's 17px of perspective,
+     clipped to the face, blurrier the rougher the material — a mirror line
+     on the glass, a coloured smear on the steel. A hovering unit's
+     reflection detaches from the back edge by the same lift that holds the
+     unit off the floor, because that is where a mirror would put it. */
+  if(lastAnchors&&lastAnchors.sprite){
+    var ra=ROOM==="reviewer"?0.12:ROOM==="triage"?0.085:0.05;
+    if(STATE==="offline")ra*=0.45;
+    var sp2=lastAnchors.sprite;
+    S.save();
+    poly(S,[[dd.cx-dd.bw/2,dd.top],[dd.cx+dd.bw/2,dd.top],[nx1+6,dd.top+dd.td],[nx0-6,dd.top+dd.td]]);S.clip();
+    S.globalAlpha=ra;
+    S.filter=ROOM==="builder"?"blur(3px)":ROOM==="triage"?"blur(1.5px)":"blur(1px)";
+    S.setTransform(1,0,0,-0.22,0,dd.top+FLOORY*0.22);
+    S.drawImage(robo,sp2.x,sp2.y,RW*sp2.s,RH*sp2.s);
+    S.restore();
+  }
   /* R1 — the last thing the near plane needs: to be nearer. Everything at
      this depth is on the camera's side of the room's haze and the lamp's
      throw, so it sits a stop under the mid-plane and falls off further toward
