@@ -1564,6 +1564,11 @@ function buildClaude(t,st){
   // ---------- COLLAR / NECK ----------
   plate(g,[[cx-30,214+breath],[cx+30,214+breath],[cx+22,226+breath],[cx-22,226+breath]],sT,sM,ed);
   plate(g,[[cx-10,206+breath],[cx+10,206+breath],[cx+8,220+breath],[cx-8,220+breath]],sM,sB,null);
+  // neck bearing: the ring the head actually turns on
+  g.fillStyle="#04070d";g.beginPath();g.ellipse(cx,208+breath,13,4.5,0,0,7);g.fill();
+  g.strokeStyle=ed;g.lineWidth=1.3;g.beginPath();g.ellipse(cx,208+breath,13,4.5,0,0,7);g.stroke();
+  g.strokeStyle="rgba(150,174,208,"+(offl?0.10:0.30)+")";g.lineWidth=1.2;
+  g.beginPath();g.ellipse(cx,208+breath,10,3.2,0,Math.PI*1.1,Math.PI*1.9);g.stroke();
 
   // ---------- ARMS (mirror; right arm can raise when working) ----------
   var handR;
@@ -1727,10 +1732,26 @@ function buildClaude(t,st){
   [-1,1].forEach(function(sc2){
     plate(g,[[hcx+sc2*27,hy+10],[hcx+sc2*24,hy+40],[hcx+sc2*10,hy+46],[hcx+sc2*16,hy+26]],sM,sB,ed);
     rivet(g,hcx+sc2*21,hy+18,eH);});
+  /* The head is MOUNTED. Nothing connected helmet to torso but proximity —
+     the one join on the unit a viewer looks straight at. Two intake cables
+     clamp under the cheek guards and run into the collar; they take their
+     endpoints from hcx/hy, so when the offline head drops and pitches, the
+     cables go slack with it for free. */
+  [-1,1].forEach(function(sc3){
+    var ax=hcx+sc3*15, ay=hy+43, bx5=cx+sc3*24, by5=222+breath, mx=hcx+sc3*27, my=(ay+by5)/2+7;
+    g.strokeStyle="#05080e";g.lineWidth=3.2;g.beginPath();
+    g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,bx5,by5);g.stroke();
+    g.strokeStyle=offl?"#2c333d":"#4d5d75";g.lineWidth=1;g.beginPath();
+    g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,bx5,by5);g.stroke();
+    rivet(g,ax,ay,eH);});
   /* Antenna beacon. It was a constant red dot — an aircraft warning light that
      never blinks, which is the one thing they all do. Now it strobes on a
      double-flash and throws a short halo, so the highest point on the unit has
      the only hard rhythm in the frame. */
+  // the mast gets a mounting: bracket plate, bolt, and a casing behind the wire
+  plate(g,[[hcx+13,hy-2],[hcx+22,hy-7],[hcx+21,hy+3],[hcx+13,hy+5]],sM,sB,ed);
+  rivet(g,hcx+17,hy-1,eH);
+  pl(g,hcx+18,hy-4,hcx+24,hy-18,"#0a0f18",2.8);
   pl(g,hcx+18,hy-4,hcx+24,hy-18,eH,1.6);
   if(!offl){var bt=(t*0.9)%1, bl=(bt<0.08||(bt>0.16&&bt<0.24))?1:0.12;
     [RB,RE].forEach(function(c){
