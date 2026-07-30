@@ -1734,15 +1734,38 @@ function buildClaude(t,st){
   [-1,1].forEach(function(sg3){                       // collarbone struts to the shoulders
     plate(g,[[cx+sg3*20,stY-8],[cx+sg3*30,stY-12],[cx+sg3*56,stY+6],[cx+sg3*50,stY+14]],sM,sB,ed);
     rivet(g,cx+sg3*48,stY+8,eH);});
-  // ---- REACTOR CORE (recessed, glowing) ----
+  /* ---- REACTOR CORE (angular caged furnace) ----
+     It was a lit circle behind thin pinstripes — a porthole. A reactor you
+     would build armour around is an octagonal recess with bolted facets and
+     two heavy cage bars in front of the fire, so the brightest thing on the
+     unit is something the assembly visibly RESTRAINS. The bars are cut out of
+     the emissive buffer too: bloom must leak around the cage, never through
+     it. */
   var coreY=262+breath;
-  RB.fillStyle="#03060c";RB.beginPath();RB.arc(cx,coreY,22,0,7);RB.fill();
-  RB.strokeStyle=ed;RB.lineWidth=2;RB.beginPath();RB.arc(cx,coreY,22,0,7);RB.stroke();
-  // grille bars
-  for(var b2=-2;b2<=2;b2++){RB.strokeStyle="#0a0f18";RB.lineWidth=2;RB.beginPath();RB.moveTo(cx-20,coreY+b2*7);RB.lineTo(cx+20,coreY+b2*7);RB.stroke();}
+  function octo(c,r){poly(c,[[cx-r*0.45,coreY-r],[cx+r*0.45,coreY-r],[cx+r,coreY-r*0.45],[cx+r,coreY+r*0.45],[cx+r*0.45,coreY+r],[cx-r*0.45,coreY+r],[cx-r,coreY+r*0.45],[cx-r,coreY-r*0.45]]);}
+  RB.fillStyle="#03060c";octo(RB,24);RB.fill();
+  RB.strokeStyle=ed;RB.lineWidth=2;octo(RB,24);RB.stroke();
+  // lamp catches the two upper facets of the recess lip
+  RB.strokeStyle="rgba(150,174,208,"+(offl?0.10:0.30)+")";RB.lineWidth=1.4;
+  RB.beginPath();RB.moveTo(cx-24,coreY-10.8);RB.lineTo(cx-10.8,coreY-24);RB.lineTo(cx+10.8,coreY-24);RB.stroke();
+  rivet(RB,cx-17,coreY-17,eH);rivet(RB,cx+17,coreY-17,eH);
+  rivet(RB,cx-17,coreY+17,eH);rivet(RB,cx+17,coreY+17,eH);
   [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,9,0,7);c.fill();return;}
-    var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,20);cg.addColorStop(0,rgba(255,225,160,corePulse));cg.addColorStop(0.4,rgba(255,150,60,0.7*corePulse));cg.addColorStop(1,"rgba(255,120,40,0)");c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,20,0,7);c.fill();
-    c.fillStyle=rgba(255,240,210,corePulse);c.beginPath();c.arc(cx,coreY,5,0,7);c.fill(); });
+    c.save();octo(c,21);c.clip();
+    var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,20);cg.addColorStop(0,rgba(255,225,160,corePulse));cg.addColorStop(0.4,rgba(255,150,60,0.7*corePulse));cg.addColorStop(1,"rgba(255,120,40,0)");c.fillStyle=cg;c.fillRect(cx-21,coreY-21,42,42);
+    c.fillStyle=rgba(255,240,210,corePulse);c.beginPath();c.arc(cx,coreY,5,0,7);c.fill();
+    c.restore(); });
+  // the cage: two heavy bars in front of the fire, on body AND emissive
+  [-8,8].forEach(function(bx4){
+    RB.save();octo(RB,22);RB.clip();
+    RB.strokeStyle="#0a0f18";RB.lineWidth=5;
+    RB.beginPath();RB.moveTo(cx+bx4,coreY-22);RB.lineTo(cx+bx4,coreY+22);RB.stroke();
+    RB.strokeStyle="rgba(150,174,208,"+(offl?0.08:0.22)+")";RB.lineWidth=1;
+    RB.beginPath();RB.moveTo(cx+bx4-2,coreY-20);RB.lineTo(cx+bx4-2,coreY+20);RB.stroke();
+    RB.restore();
+    if(!offl){RE.save();RE.globalCompositeOperation="destination-out";
+      RE.strokeStyle="rgba(0,0,0,1)";RE.lineWidth=5;
+      RE.beginPath();RE.moveTo(cx+bx4,coreY-22);RE.lineTo(cx+bx4,coreY+22);RE.stroke();RE.restore();}});
   /* The core lights the chest it is set into. Every emissive on this model
      glowed into the bloom buffer and then lit nothing — a reactor bright
      enough to read across a room, sitting in plate armour that stayed the
