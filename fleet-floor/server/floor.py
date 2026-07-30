@@ -1037,14 +1037,40 @@ class Fleet:
 # --------------------------------------------------------------------------
 
 # Fired into the box with `box exec`; the box initiates nothing.
+#
+# Each script states its own verdict on the last line and exits deliberately.
+# It used to end on a bare `grep -c`, and `grep -c` exits 1 when it counts
+# zero — so the count WAS the exit status, and a box with no armed `tick.sh`
+# line reported the same rc 1 as a box that could not be reached. `in_box`
+# read that as ok=False, `do_command` answered 500, and the console rendered
+# it "command refused" (#188). Nothing was refusing: a count of zero was
+# being reported as a failure, which is #176's shape — "nothing to do" and
+# "it went wrong" collapsed into one status.
+#
+# Three outcomes, three answers: `paused N` (it took effect), `nothing to
+# pause: ...` (rc 0, there was nothing armed), and a non-zero exit whose
+# stderr says why. The counts travel as data on stdout; only a real failure
+# is allowed to redden the row. Each pipeline's write is checked on its own
+# exit status rather than inferred from a later read, so a `crontab -` that
+# refuses is named as the failure it is.
 PAUSE_SH = r"""
-crontab -l 2>/dev/null | sed -E 's|^([^#].*tick\.sh.*)$|#CREW-FLOOR-PAUSED \1|' | crontab -
-crontab -l 2>/dev/null | grep -c CREW-FLOOR-PAUSED
+armed="$(crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh' || true)"
+[ "$armed" -gt 0 ] || { echo "nothing to pause: no armed tick.sh line"; exit 0; }
+crontab -l 2>/dev/null | sed -E 's|^([^#].*tick\.sh.*)$|#CREW-FLOOR-PAUSED \1|' | crontab - \
+  || { echo "pause: crontab write failed" >&2; exit 1; }
+paused="$(crontab -l 2>/dev/null | grep -c '^#CREW-FLOOR-PAUSED' || true)"
+[ "$paused" -gt 0 ] || { echo "pause: crontab write reported success, no line is commented" >&2; exit 1; }
+echo "paused $paused"
 """
 
 RESUME_SH = r"""
-crontab -l 2>/dev/null | sed -E 's|^#CREW-FLOOR-PAUSED ||' | crontab -
-crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh'
+paused="$(crontab -l 2>/dev/null | grep -c '^#CREW-FLOOR-PAUSED' || true)"
+[ "$paused" -gt 0 ] || { echo "nothing to resume: no paused tick.sh line"; exit 0; }
+crontab -l 2>/dev/null | sed -E 's|^#CREW-FLOOR-PAUSED ||' | crontab - \
+  || { echo "resume: crontab write failed" >&2; exit 1; }
+armed="$(crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh' || true)"
+[ "$armed" -gt 0 ] || { echo "resume: crontab write reported success, no line is live" >&2; exit 1; }
+echo "resumed $armed"
 """
 
 # The operator's message becomes a real session of the box's own vendor CLI,
