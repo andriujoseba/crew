@@ -1549,3 +1549,50 @@ unit's depth, so the near plane hung in vacuum. Six larger, blurrier motes
 drift sideways across the near band — out of focus for the same reason the
 nearEdge is — keyed to each room's cone colour, dimmed but not killed offline;
 dust does not care. Pinned still under reduced motion.
+
+## Five loops on claude's assembly
+
+The other series each swept every unit; this one stands still on one. Claude
+read as a rendered solid — a soft octagon head on a moulded torso — because
+nothing on it said how it was put together. Five passes, each making one join
+into a visible mechanism, each pushing the silhouette toward hard edges and
+separate pieces:
+
+**Loop 1 — the shoulder is an assembly, not a slab.** The pauldron was two
+stacked plates hanging beside the chest (drawn with unmirrored offsets, so
+neither slab even faced its own side). Now a dark ball socket carries the arm,
+a piston runs down into the upper arm, and one notched pauldron with a hard
+outer spike bolts over the joint — its underside cut around the socket so the
+mechanism stays visible.
+
+**Loop 2 — exhaust stacks are welded pipes, not lit panels.** Behind the chest
+only a stack's tip survives, and that tip was a rectangle with a glowing
+square stuck on it. Each stack is now a canted pipe with a slanted-cut hollow
+mouth and an ember down the throat, heat fins, and a bolted clamp band with a
+brace down to the backpack it is mounted on.
+
+**Loop 3 — the waist admits the torso is several machines.** Two clean
+trapezoids butt-joined the chest to the pelvis. Now a spine cavity with twin
+pistons and a power conduit runs through the waist, under two STAGGERED belt
+plates — one long left, one long right — with real gaps at every join. The
+blanket `cavity()` shade there dropped 0.44 → 0.28: the darkness is structure
+now, not filter.
+
+**Loop 4 — the reactor is caged, not a porthole.** The core sits in an
+octagonal recess with bolted facets, and two heavy bars stand in front of the
+fire — cut out of the emissive buffer too, so bloom leaks around the cage and
+never through it. The brightest thing on the unit is something the assembly
+visibly restrains.
+
+**Loop 5 — the helmet is three pieces of armour, not a balloon.** The crown
+breaks into facets meeting at a centre ridge, the brow is a chevron dropping
+toward the visor so the unit scowls, and each cheek gets its own bolted guard
+blade.
+
+![claude structure progression](shots/claude-structure/progression.webp)
+
+![claude after, three states](shots/claude-structure/states.webp)
+
+The unit envelope was re-measured over all 36 combinations after the wider
+pauldrons: the union moved by ±1px — breath-phase noise — and the binding
+edge is still codex's leg splay, so `LAYOUT.unit` stands unchanged.
