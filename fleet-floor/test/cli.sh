@@ -1421,6 +1421,16 @@ else
        "only ${CL_UPGRADES:-0} upgrade paths found"
 fi
 
+if grep -q '~[/]crew' "$CL_CONFIG_DRILL"; then
+  fail "config drill: no case reads the retired box-side crew checkout" \
+       "$(grep -n '~[/]crew' "$CL_CONFIG_DRILL")"
+elif grep -q 'bxput.*examples/repos.txt' "$CL_CONFIG_DRILL"; then
+  ok "config drill: shipped-example migration uploads its host fixture"
+else
+  fail "config drill: shipped-example migration uploads its host fixture" \
+       "the fixture neither comes from the host nor names an unexpected box checkout"
+fi
+
 # shellcheck disable=SC2016  # matching the literal handoff in the source
 if grep -q 'rehearsal-config.sh.*--box "\$CONFIG_BOX"' "$CL_ROOT/drill/rehearsal-all.sh"; then
   ok "rehearsal-all: operator-config drill runs by default on an installed box"
