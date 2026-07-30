@@ -1664,8 +1664,28 @@ function buildClaude(t,st){
   // codpiece accent
   [RB,RE].forEach(function(c){accGlow(c,cx-3,352+breath,6,18);});
 
-  // ---------- ABDOMEN (segmented) ----------
-  for(var a=0;a<2;a++){var ay=305+a*20+breath;plate(g,[[cx-30,ay],[cx+30,ay],[cx+26,ay+18],[cx-26,ay+18]],sM,sB,ed);}
+  /* ---------- ABDOMEN: the join you can see into ----------
+     Two clean trapezoids used to butt the chest onto the pelvis, which is why
+     the torso read as one casting. The waist is where a machine admits it is
+     several machines: a dark spine cavity with twin pistons and a power
+     conduit, and the armour is two STAGGERED belt plates — one long to the
+     left, one long to the right — bolted over it, so the seams never line up
+     the way a moulded shell's would. */
+  g.fillStyle="#02040a";poly(g,[[cx-18,300+breath],[cx+18,300+breath],[cx+15,345+breath],[cx-15,345+breath]]);g.fill();
+  [-1,1].forEach(function(sp){var px=cx+sp*9;
+    pl(g,px,302+breath,px,343+breath,"#0a0f18",4.5);
+    pl(g,px-1,302+breath,px-1,343+breath,offl?"#333c48":"#7e94b2",1.2);});
+  g.strokeStyle="#0a0f18";g.lineWidth=3.4;g.beginPath();
+  g.moveTo(cx+15,306+breath);g.quadraticCurveTo(cx+25,324+breath,cx+13,344+breath);g.stroke();
+  g.strokeStyle=offl?"#2b3038":"#a8500f";g.lineWidth=1.5;g.beginPath();
+  g.moveTo(cx+15,306+breath);g.quadraticCurveTo(cx+25,324+breath,cx+13,344+breath);g.stroke();
+  var ab1=307+breath, ab2=324+breath;
+  plate(g,[[cx-30,ab1],[cx+20,ab1],[cx+27,ab1+5],[cx+24,ab1+14],[cx-26,ab1+14]],sM,sB,ed);
+  plate(g,[[cx-20,ab2],[cx+30,ab2],[cx+26,ab2+14],[cx-24,ab2+14],[cx-27,ab2+5]],sM,sB,ed);
+  rivet(g,cx+21,ab1+10,eH);rivet(g,cx-21,ab2+10,eH);
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.08:0.18)+")";g.lineWidth=1;
+  g.beginPath();g.moveTo(cx-28,ab1+1);g.lineTo(cx+19,ab1+1);
+  g.moveTo(cx-19,ab2+1);g.lineTo(cx+28,ab2+1);g.stroke();
 
   // ---------- CHEST (broad, angled) ----------
   plate(g,[[cx-58,300+breath],[cx-66,236+breath],[cx-34,214+breath],[cx+34,214+breath],[cx+66,236+breath],[cx+58,300+breath]],sT,sM,ed);
@@ -1919,7 +1939,7 @@ function buildClaude(t,st){
     g.fillStyle="#05080e";g.beginPath();g.arc(kx3+sg5*17,449,6,0,7);g.fill();
     g.fillStyle="rgba(150,174,208,"+(offl?0.12:0.30)+")";g.beginPath();g.arc(kx3+sg5*17-1,447.6,3,0,7);g.fill();
     rivet(g,kx3+sg5*17,449,eH);});
-  cavity(g,cx-31,297+breath,62,34,0.44);
+  cavity(g,cx-31,297+breath,62,34,0.28);
   cavity(g,cx-40,375+breath*0.8,80,28,0.34);
   cavity(g,cx-25,225+breath,50,17,0.30);
   buildRim(offl?[92,86,80]:[255,170,90]);       // claude: its own orange on the key side
