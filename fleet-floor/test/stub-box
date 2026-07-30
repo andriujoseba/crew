@@ -59,8 +59,13 @@ cron_of() {
 # emit_probe NAME SCENARIO — the `::key value` record probe.sh would produce.
 emit_probe() {
   local n="$1" sc="$2" paused=0 cron=1
-  [ "$(cron_of "$n")" = "paused" ] && paused=1
-  [ "$sc" = "nocron" ] && cron=0
+  # Pausing COMMENTS the tick line out, so a paused box counts zero live
+  # `tick.sh` lines exactly like a disarmed one — probe.sh's ::cron is
+  # `grep -cE '^[^#].*tick\.sh'`. The stub used to report cron=1 while paused,
+  # which is the one shape a real box cannot be in, and it would have hidden a
+  # wake-silent that skipped paused boxes (#189).
+  [ "$(cron_of "$n")" = "paused" ] && { paused=1; cron=0; }
+  case "$sc" in nocron|disarmed) cron=0 ;; esac
 
   case "$sc" in
     nothired) printf '::engine \n' ;;
@@ -99,7 +104,7 @@ emit_probe() {
   # boundaries for the ones that have stopped ticking — which is what makes
   # `stale` reachable at all.
   case "$sc" in
-    silent|nocron) _tickage=4000 ;;
+    silent|nocron|disarmed) _tickage=4000 ;;
     nothired)      _tickage=-1 ;;
     *)             _tickage=30 ;;
   esac
@@ -136,7 +141,7 @@ emit_probe() {
       echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved"
       echo "$(ago 190) duty run end"
       ;;
-    silent)   # cron dead: newest line is older than two tick boundaries
+    silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"
       ;;
@@ -309,6 +314,37 @@ case "${1:-}" in
           *)      echo "l" ;;
         esac ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
+      # ABOVE the two CREW-FLOOR-PAUSED cases below, by this block's own
+      # ordering rule. Since #189 crew's auth_from_flow counts the PAUSED
+      # crontab lines as well as the live ones, so its script now contains the
+      # literal `CREW-FLOOR-PAUSED` and the broad pattern below would answer a
+      # status read with a crontab count — and, worse, record the box as
+      # paused as a side effect of reading it. `duty/.auth-fail.` stays the
+      # narrowest string unique to this one script.
+      *'duty/.auth-fail.'*)                     # crew's auth_from_flow
+        # Matched on `duty/.auth-fail.` — probe.sh reads the same markers, but
+        # via "$DUTY_DIR/.auth-fail.$svc", so this substring belongs to the
+        # CLI's script alone. It sits ABOVE the hired_at case because the script
+        # also reads duty/VERSION (to tell 'never ticked' from 'no failure
+        # recorded'), and hired_at's pattern would otherwise answer it with a
+        # version string — which crew then parsed as the gh column.
+        # Like every pattern here it is the narrowest
+        # string unique to one script; the two are otherwise near-identical and
+        # a looser match would answer the probe in the CLI's format.
+        # Two more fields since #189: the armed and paused crontab COUNTS, the
+        # same pair probe.sh emits as ::cron / ::paused. They are derived here
+        # exactly as emit_probe derives them — a stub whose CLI half and floor
+        # half disagreed about one box would let the very disagreement these
+        # tests exist to catch pass green.
+        _armed=1; _cpaused=0
+        [ "$(cron_of "$name")" = "paused" ] && { _armed=0; _cpaused=1; }
+        case "$sc" in nocron|disarmed|nothired) _armed=0 ;; esac
+        case "$sc" in
+          noauth)        echo "missing missing 30 $_armed $_cpaused" ;;
+          nothired)      echo "unknown unknown -1 $_armed $_cpaused" ;;
+          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused" ;;
+          *)             echo "nofail nofail 30 $_armed $_cpaused" ;;
+        esac ;;
       *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
       *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
       *'cat > "$HOME/duty/.floor-prompt'*)
@@ -349,22 +385,6 @@ case "${1:-}" in
       # driven here. Every one of these substrings ALSO appears in probe.sh,
       # which is why they sit below its `::logstart` case — the order comment
       # above applies to them exactly as it does to the rest.
-      *'duty/.auth-fail.'*)                     # crew's auth_from_flow
-        # Matched on `duty/.auth-fail.` — probe.sh reads the same markers, but
-        # via "$DUTY_DIR/.auth-fail.$svc", so this substring belongs to the
-        # CLI's script alone. It sits ABOVE the hired_at case because the script
-        # also reads duty/VERSION (to tell 'never ticked' from 'no failure
-        # recorded'), and hired_at's pattern would otherwise answer it with a
-        # version string — which crew then parsed as the gh column.
-        # Like every pattern here it is the narrowest
-        # string unique to one script; the two are otherwise near-identical and
-        # a looser match would answer the probe in the CLI's format.
-        case "$sc" in
-          noauth)        echo "missing missing 30" ;;
-          nothired)      echo "unknown unknown -1" ;;
-          silent|nocron) echo "nofail nofail 4000" ;;
-          *)             echo "nofail nofail 30" ;;
-        esac ;;
       *'engine-manifest.sh'*)                   # crew's engine_report (#159)
         # ABOVE the hired_at case, by the same ordering rule as auth_from_flow:
         # this script names duty/VERSION in its own pre-#159 fallback branch,

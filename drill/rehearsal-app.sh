@@ -329,13 +329,39 @@ import json,sys
 d=json.load(sys.stdin)
 u=[x for x in d['units'] if x['box']=='$name']
 print((u[0].get('note') or '') if u else '')")"
-        case "$note" in
-          *paused*|*SILENT*|*"not hired"*|*"no cron"*)
-            skip "agree: $name" "crew status shows it up; floor says offline because: $note" ;;
-          *)
-            AGREE_N=$((AGREE_N + 1))
-            fail "agree: $name is up" "crew status shows it up, floor says offline with no reason (note: '${note:-none}')" ;;
-        esac
+        # Read the FLAG, not the prose. The note is written for an operator and
+        # will be reworded; a check that greps English breaks when it improves.
+        dis="$(body GET /api/fleet | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+u=[x for x in d['units'] if x['box']=='$name']
+print(bool(u and u[0].get('disarmed')))")"
+        if [ "$dis" = "True" ]; then
+          # NOT a skip any more (#189). Both readers now answer "is this box
+          # armed?" from the same crontab patterns, so this is a real
+          # comparison — and making one is the entire point of this block,
+          # which asserted nothing at all for five consecutive runs (#50).
+          #
+          # This is also the ONLY branch a drill box can reach: the drill
+          # disarms cron before any tick and refuses to continue if it cannot
+          # (drill/rehearsal.sh). Every previous run landed here and skipped.
+          AGREE_N=$((AGREE_N + 1))
+          case "$cli_line" in
+            *disarmed*|*"paused by operator"*)
+              ok "agree: $name is not armed, and both readers say so" ;;
+            *)
+              fail "agree: $name is not armed, and both readers say so" \
+                   "floor reports disarmed; crew status does not: '$cli_line'" ;;
+          esac
+        else
+          case "$note" in
+            *SILENT*|*"not hired"*)
+              skip "agree: $name" "crew status shows it up; floor says offline because: $note" ;;
+            *)
+              AGREE_N=$((AGREE_N + 1))
+              fail "agree: $name is up" "crew status shows it up, floor says offline with no reason (note: '${note:-none}')" ;;
+          esac
+        fi
       fi ;;
   esac
 done < <(roster_rows)

@@ -1021,9 +1021,14 @@ vendor_probe() {
 }
 
 # auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
-# observed it, in one exec of pure local file reads. Echoes two fields:
+# observed it, in one exec of pure local file reads. Echoes five fields:
 #
-#     <gh-state> <vendor-state> <tick-age-seconds-or--1>
+#     <gh-state> <vendor-state> <tick-age-seconds-or--1> <armed> <paused>
+#
+# `armed` and `paused` are crontab line COUNTS, read with probe.sh's own
+# patterns, so `crew status` and the floor answer "is this box armed?" from
+# one source instead of two (#189: the floor called every unarmed box SILENT,
+# and the CLI could not answer the question at all).
 #
 # where a state is flowing | stale | missing | unknown, the same vocabulary
 # fleet-floor's probe.sh emits — including `stale`, which is the difference
@@ -1062,7 +1067,22 @@ auth_from_flow() {
       ts="$(grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" "$HOME/duty/duty.log" | tail -1)"
       [ -n "$ts" ] && age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
     fi
-    printf "%s\n" "$age"
+    # Live tick.sh crontab lines. The pattern is probe.sh'\''s ::cron pattern
+    # CHARACTER FOR CHARACTER, and it has to stay that way: this helper exists
+    # because a CLI and a floor holding private sources of truth disagree in
+    # front of an operator, and a private PATTERN is that defect wearing a
+    # smaller hat — a box would read armed here and disarmed there.
+    #
+    # `|| echo 0` is load-bearing: grep -c exits 1 when it counts zero, which
+    # is the ordinary state of an unarmed box, not an error. Reading that
+    # status as failure is exactly #188.
+    armed="$(crontab -l 2>/dev/null | grep -cE "^[^#].*tick\.sh" || echo 0)"
+    # Both counts, because "not armed" has two causes with two different fixes:
+    # the console'\''s Pause comments the line out (resume it), and an unarmed
+    # box never had one (crew hire it). Telling an operator to re-hire a box
+    # they paused thirty seconds ago is worse than saying nothing.
+    paused="$(crontab -l 2>/dev/null | grep -cE "^#[[:space:]]*CREW-FLOOR-PAUSED" || echo 0)"
+    printf "%s %s %s\n" "$age" "$armed" "$paused"
     printf "\n"
   ' 2>/dev/null | tr -d '\r'
 }
@@ -1538,8 +1558,13 @@ cmd_status() {
     estate="$(report_field state "$report")"
     erecorded="$(report_field recorded "$report")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
-    read -r ghs vs tickage <<<"$(auth_from_flow "$name")"
+    read -r ghs vs tickage armed cpaused <<<"$(auth_from_flow "$name")"
     ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
+    # An older engine, or a box that answered nothing, reports no counts. Treat
+    # that as "armed" rather than inventing an alarm: absence of evidence about
+    # cron is not evidence that cron is gone, and the old behaviour (say
+    # nothing) is the safe one to fall back to.
+    armed="${armed:-1}"; cpaused="${cpaused:-0}"
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
     # it, because two readers with private thresholds is the defect this whole
@@ -1579,6 +1604,16 @@ cmd_status() {
         if [ -n "$actual" ] && [ "$actual" != "$agent" ]; then
           note="⚠ $ROSTER says '$agent', box installed as '$actual' — probing the WRONG vendor"
         fi
+      fi
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] && [ "$armed" = 0 ]; then
+      # Not armed: cron will never fire here, so the newest duty.log line is a
+      # fact about the past and reads as though the box is working. The floor
+      # says the same thing from the same counts (#189) — that agreement is the
+      # point, and drill/rehearsal-app.sh asserts it on a real host.
+      if [ "$cpaused" != 0 ]; then
+        note="paused by operator — resume from the console"
+      else
+        note="disarmed — no cron line; crew hire $name arms it"
       fi
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
       last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"

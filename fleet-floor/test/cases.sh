@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  16 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  17 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -20,6 +20,34 @@ t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "state: paused -> offline"       offline  "$(uf ff-paused  "u['state']")"
 t "state: stopped -> offline"      offline  "$(uf ff-stopped "u['state']")"
 t "state: unreachable -> offline"  offline  "$(uf ff-unreach "u['state']")"
+t "state: disarmed -> offline"     offline  "$(uf ff-disarmed "u['state']")"
+
+# ---------------------------------------------------------------------------
+# #189 — DISARMED is not SILENT. probe.sh has always emitted ::cron; nothing
+# consumed it on a box that had ever ticked, so a box whose crontab holds no
+# live tick.sh line fell through to "SILENT — no tick for 66m". SILENT is an
+# alarm meaning "this box should be ticking and is not"; spending it on a box
+# nobody armed is how the drill's floor-vs-CLI agreement check skipped five
+# consecutive runs, and how an operator learns to ignore the word.
+# ---------------------------------------------------------------------------
+t "wire: disarmed box carries the flag"  True  "$(uf ff-disarmed "u['disarmed']")"
+t "wire: an armed box does not"         False  "$(uf ff-silent   "u['disarmed']")"
+# Pausing comments the line out, so a paused box IS disarmed. Kept as two
+# values rather than one tri-state: a caller asking "can this box tick at all"
+# must not have to know that paused implies disarmed.
+t "wire: paused implies disarmed"        True  "$(uf ff-paused   "u['disarmed']")"
+case "$(uf ff-disarmed "u['note']")" in
+  *SILENT*) fail "note: disarmed is not reported as SILENT" "$(uf ff-disarmed "u['note']")" ;;
+  *disarmed*"crew hire"*) ok "note: disarmed names crew hire, not SILENT" ;;
+  *) fail "note: disarmed names crew hire, not SILENT" "$(uf ff-disarmed "u['note']")" ;;
+esac
+# The alarm must survive: an armed box that stopped ticking is still SILENT.
+case "$(uf ff-silent "u['note']")" in *SILENT*) ok "note: an armed box that stopped is still SILENT" ;;
+  *) fail "note: an armed box that stopped is still SILENT" "$(uf ff-silent "u['note']")" ;; esac
+# Paused wins the note over disarmed: both are true, and "the operator did
+# this, here is how to undo it" is the more useful sentence.
+case "$(uf ff-paused "u['note']")" in *paused*) ok "note: paused outranks disarmed" ;;
+  *) fail "note: paused outranks disarmed" "$(uf ff-paused "u['note']")" ;; esac
 
 # A box that is down must say WHY. "offline" with no reason is the failure
 # mode that makes a fleet console useless during an incident.
@@ -130,7 +158,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 16 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -204,7 +232,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 16 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -258,6 +286,30 @@ if [ "$WS_CODE" = "200" ] || printf '%s' "$WS_BODY" | grep -q '"results"'; then
 else
   fail "wake-silent always reports per-box results" "$WS_CODE $WS_BODY"
 fi
+
+# #189 — wake-silent must not try to wake a box it CANNOT wake. A disarmed box
+# has no commented crontab line for RESUME_SH to restore, so the call did
+# nothing and then reported a failed row, because `grep -c` exits 1 on a zero
+# count (#188). Arming is `crew hire`, on the host — not a console action.
+#
+# The `not paused` half of the guard is the load-bearing half: pausing zeroes
+# the cron count too, so a paused box is disarmed, and it is exactly the box
+# this action exists to wake. Guard on `disarmed` alone and wake-silent stops
+# doing the one thing it is for.
+rm -f "$FLOOR_STATE/ff-disarmed.cron" "$FLOOR_STATE/ff-paused.cron"
+status POST /api/command '{"action":"pause","box":"ff-paused"}' >/dev/null
+# request_refresh polls in a BACKGROUND thread, so the snapshot wake-silent
+# reads is NOT updated by the time the pause call returns — and wake-silent
+# decides entirely from that snapshot. Wait for the fact to arrive rather than
+# sleeping a guessed interval; the test server polls on a 3600s cycle, so a
+# guess would have to be luck.
+for _ in $(seq 1 60); do
+  [ "$(uf ff-paused "u['paused']")" = "True" ] && break
+  sleep 0.5
+done
+status POST /api/command '{"action":"wake-silent"}' >/dev/null
+t "wake-silent: resumes a PAUSED box"   resumed "$(cat "$FLOOR_STATE/ff-paused.cron" 2>/dev/null)"
+t "wake-silent: leaves a DISARMED box alone" "" "$(cat "$FLOOR_STATE/ff-disarmed.cron" 2>/dev/null)"
 
 # ===========================================================================
 # ROUND 11 — codex-bot: two rapid messages to ONE box could interleave, and a

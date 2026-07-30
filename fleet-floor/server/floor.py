@@ -529,7 +529,8 @@ def build_unit(unit, state, agent_conf, now):
         "queue": [], "sessions": [], "cur": None, "spark": [0.0] * 22,
         "up": {"h": 0, "m": 0}, "repo": "", "repos": [], "logs": [],
         "longest": 0, "avg": 0, "success": 0, "today": 0,
-        "paused": False, "cron": {"ok": False, "last": None, "age": None},
+        "paused": False, "disarmed": False,
+        "cron": {"ok": False, "last": None, "age": None},
         "lock": {"held": None, "stuck": False},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
@@ -552,6 +553,19 @@ def build_unit(unit, state, agent_conf, now):
     u["gh"] = meta.get("gh", "unknown")
     u["vendor"] = meta.get("vendor", "unknown")
     u["paused"] = meta.get("paused", "0") != "0"
+    # DISARMED — no live `tick.sh` line in the crontab at all, which is a
+    # different fact from "armed and not ticking" and needs a different action.
+    # probe.sh has always emitted ::cron; nothing consumed it except a note on
+    # the one path where a box has no log history whatsoever, so a box with
+    # ticks behind it and cron since removed fell straight through to SILENT.
+    #
+    # `paused` is the same fact with a cause attached — the console's own Pause
+    # comments the line out — so a paused box is BOTH, and `paused` wins the
+    # note because "the operator did this, here is how to undo it" is the more
+    # useful sentence. Kept as separate wire values rather than one tri-state:
+    # a caller that means "can this box tick at all" must not have to know that
+    # `paused` implies `disarmed`.
+    u["disarmed"] = meta.get("cron", "0") == "0"
     # Both services, same shape. gh and the agent CLI fail independently and
     # are fixed by different commands, so they are never merged into one
     # "auth is bad" flag — the operator needs to know WHICH login to redo.
@@ -649,6 +663,17 @@ def build_unit(unit, state, agent_conf, now):
     if u["paused"]:
         u["state"] = "offline"
         u["note"] = u["note"] or "paused by operator — resume from the console"
+    elif u["disarmed"]:
+        # Disarmed OUTSIDE the console: `crew hire` before it arms, a box
+        # disarmed by hand, and every drill box by design (drill/rehearsal.sh
+        # disarms before any tick and aborts the run if it cannot). Ranked above
+        # SILENT because it is the more specific claim and the actionable one:
+        # SILENT says "this box should be ticking and is not", which is a real
+        # alarm, and it must not be spent on a box nobody armed. Resume cannot
+        # fix this — there is no commented line to uncomment — so the note names
+        # the command that can.
+        u["state"] = "offline"
+        u["note"] = u["note"] or "disarmed — no cron line; crew hire %s arms it" % unit["box"]
     elif last_ts and not u["cron"]["ok"]:
         u["state"] = "offline"
         u["note"] = u["note"] or "SILENT — no tick for %s" % fmt_dur(u["cron"]["age"])
@@ -982,9 +1007,17 @@ class Fleet:
             t0 = time.time()
             try:
                 snap = self.poll_once()
-                silent = sum(1 for u in snap["units"] if u["state"] == "offline")
-                log("polled %d units (%d silent) in %.1fs"
-                    % (len(snap["units"]), silent, time.time() - t0))
+                # SILENT is an alarm, so a box somebody deliberately stopped
+                # does not spend one — the same rule the note ordering applies,
+                # in the one number an operator reads without opening the page.
+                # Counted separately rather than dropped: "3 units, 0 silent"
+                # on a fleet that is entirely disarmed would be true and
+                # useless.
+                off = [u for u in snap["units"] if u["state"] == "offline"]
+                stopped = sum(1 for u in off if u["paused"] or u["disarmed"])
+                log("polled %d units (%d silent, %d paused/disarmed) in %.1fs"
+                    % (len(snap["units"]), len(off) - stopped, stopped,
+                       time.time() - t0))
             except Exception as e:                          # noqa: BLE001
                 log("poll failed: %s" % e)
             time.sleep(max(5, self.interval - (time.time() - t0)))
@@ -1152,6 +1185,17 @@ def do_command(fleet, body):
         tasks = []
         for u in fleet.get()["units"]:
             if u["state"] != "offline":
+                continue
+            # A box that is disarmed WITHOUT being paused has no commented line
+            # for RESUME_SH to restore, so waking it is not a thing this action
+            # can do — arming is `crew hire`, on the host. It used to be sent
+            # RESUME_SH anyway and reported as a failed row, which made
+            # wake-silent read as broken on any fleet holding an unarmed box.
+            #
+            # The `not paused` half is load-bearing: pausing comments the line
+            # out, so a paused box reports cron=0 and is disarmed too — and it
+            # is exactly the box this action exists to wake.
+            if u["disarmed"] and not u["paused"]:
                 continue
             name = u["box"]
             if states.get(name) == "stopped":

@@ -22,3 +22,8 @@ ff-firstrun    running  firstrun
 # and doing nothing. The floor calls this STUCK, and it is the state a healthy
 # fleet never produces on demand.
 ff-stuck       running  stuck
+# Reachable, has ticked before, and its crontab holds no live tick.sh line —
+# `crew hire` before it arms, a hand-disarmed box, and EVERY drill box by
+# design (drill/rehearsal.sh disarms before any tick). It read SILENT for five
+# consecutive drill runs, which is an alarm nobody could act on (#189).
+ff-disarmed    running  disarmed

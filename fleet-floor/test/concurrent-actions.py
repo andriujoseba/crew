@@ -23,7 +23,13 @@ class Fleet:
         self.refreshes = 0
 
     def get(self):
-        return {"units": [{"box": name, "state": "offline"} for name in BOXES]}
+        # Offline and ARMED — the silent box wake-silent exists to act on.
+        # Both flags are spelled out because do_command reads them to decide
+        # whether a box can be woken at all: a disarmed box has no commented
+        # crontab line to restore, and is skipped (#189).
+        return {"units": [{"box": name, "state": "offline",
+                           "paused": False, "disarmed": False}
+                          for name in BOXES]}
 
     def request_refresh(self):
         self.refreshes += 1
