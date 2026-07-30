@@ -1069,13 +1069,17 @@ auth_from_flow() {
 
 # production_registry — the repo list THIS checkout would seed into a box.
 production_registry() {
-  grep -vE '^[[:space:]]*(#|$)' "$REPOS_SEED" | sort
+  # `|| true` is load-bearing, as in box_state/box_agent/box_registry: an EMPTY
+  # or all-comment registry makes grep exit 1, pipefail takes that status, and
+  # `prod="$(production_registry)"` in hire_guard then dies under set -e with
+  # no message at all.
+  grep -vE '^[[:space:]]*(#|$)' "$REPOS_SEED" | sort || true
 }
 # box_registry NAME — the repos.txt the box actually carries, or empty when it
 # has none yet (install.sh seeds the production default in that case).
 box_registry() {
   bxn "$1" 'grep -vE "^[[:space:]]*(#|\$)" ~/duty/repos.txt 2>/dev/null' 2>/dev/null \
-    | tr -d '\r' | sort
+    | tr -d '\r' | sort || true
 }
 
 # fleet_static_identities — GitHub logins declared by the selected fleet.
