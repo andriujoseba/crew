@@ -1991,6 +1991,7 @@ function buildClaude(t,st){
       var fx=ex - sgn*22, fy=ey+34;
       plate(g,[[ex-12,ey-2],[ex+12,ey],[fx+12,fy-4],[fx-8,fy-8]],sT,sM,ed);
       plate(g,[[fx-9,fy-8],[fx+13,fy-6],[fx+11,fy+12],[fx-11,fy+10]],sM,sB,ed); // gauntlet
+      plate(g,[[fx-10,fy-4],[fx-17,fy+2],[fx-10,fy+8]],sM,sB,ed); // bracer fin, back edge
       rivet(g,fx-5,fy+4,eH);rivet(g,fx+7,fy+4,eH);
       plate(g,[[fx-2,fy+2],[fx+10,fy-3],[fx+14,fy+2],[fx+2,fy+9]],"#2a3444","#12181f","#3d4c63"); // torch
       elbow(ex,ey-1);
@@ -2001,14 +2002,21 @@ function buildClaude(t,st){
       var fx3=ex3 - sgn*26, fy3=ey3-32;   // forearm up + inward
       plate(g,[[ex3-12,ey3],[ex3+12,ey3-2],[fx3+12,fy3+6],[fx3-8,fy3-2]],sT,sM,ed);
       plate(g,[[fx3-9,fy3-6],[fx3+13,fy3-4],[fx3+11,fy3+14],[fx3-11,fy3+12]],sM,sB,ed); // gauntlet
+      plate(g,[[fx3+12,fy3],[fx3+19,fy3+6],[fx3+12,fy3+12]],sM,sB,ed); // bracer fin, back edge
       rivet(g,fx3-4,fy3+8,eH);rivet(g,fx3+7,fy3+8,eH);
       elbow(ex3,ey3-1);
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
     } else {
       var ex2=shx+sgn*4, ey2=shy+56;
       plate(g,[[shx-16,shy+22],[shx+16,shy+24],[ex2+14,ey2],[ex2-14,ey2]],sM,sB,ed);
-      plate(g,[[ex2-15,ey2-2],[ex2+15,ey2-2],[ex2+13,ey2+58],[ex2-13,ey2+58]],sT,sM,ed);
-      pl(g,ex2-6,ey2+8,ex2-6,ey2+50,rc,1);
+      /* The forearm was a straight slab. A bracer: the outer edge flares out
+         from the elbow and cuts back hard to the wrist, and a blade fin
+         stands off the flare — the arm's silhouette finally has an opinion. */
+      function ox(d){return ex2+sgn*d;}
+      plate(g,[[ox(-14),ey2-2],[ox(14),ey2-2],[ox(19),ey2+26],[ox(13),ey2+58],[ox(-13),ey2+58],[ox(-15),ey2+30]],sT,sM,ed);
+      plate(g,[[ox(17),ey2+6],[ox(26),ey2+18],[ox(17),ey2+32]],sM,sB,ed);
+      pl(g,ox(14),ey2-2,ox(19),ey2+26,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1.1);
+      pl(g,ox(-6),ey2+8,ox(-6),ey2+50,rc,1);
       // wrist clamp: the gauntlet is a separate piece, banded on
       plate(g,[[ex2-15,ey2+40],[ex2+15,ey2+40],[ex2+14,ey2+48],[ex2-14,ey2+48]],sT,sM,ed);
       rivet(g,ex2-9,ey2+44,eH);rivet(g,ex2+9,ey2+44,eH);
