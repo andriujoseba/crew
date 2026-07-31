@@ -1644,6 +1644,39 @@ other body group already had.
 
 ![claude structure progression, round 3](shots/claude-structure/progression-3.webp)
 
+Round four is subtraction. The operator kept naming the same discomfort from
+the front view — "the backpack looks odd", then "remove the grey plate that's
+the biceps" — and each cut proved the silhouette was better without the part:
+
+**Loop 14 — delete the backpack plate; the gap was the drawing.** Two loops
+of recolouring, tapering, finning and shadowing still left a grey wing
+filling the space between torso and arm, because from the front that space
+IS the drawing. Daylight between arms and waist is what makes the chest read
+broad and the unit read fit.
+
+**Loop 15 — bare-rod biceps, coned bracers.** The upper-arm plate was the
+same complaint one limb down. Deleted in all three poses: two exposed
+actuator rods run from the shoulder socket into the elbow cap, and the arm's
+mass moves to a forearm cone that leaves the elbow narrow and widens to a
+broader wrist clamp and fist.
+
+**Loop 16 — the stacks go too; the back trails cables.** Hardware standing
+above the shoulders read as luggage. Two power cables per side now loop out
+of the back and down into the collar, drawn first so torso and pauldrons
+overlap them. Doom units don't carry backpacks; they trail cables.
+
+**And the walk got honest about the camera.** During these loops the browser
+walk failed twice on an idle box — "15/17 boxes reached" — the same slow-
+runner miss its own comments describe. Mechanism: a console dwell expires
+every visible miniStill, the first floor frames after Escape cost a full
+room render each, so the fixed post-wheel waits covered ~4 easing frames and
+cell-centre clicks fell in the gaps. The camera is readable now
+(`FLOORDEV.cam()`, joining the whiteboard hook that postdates the original
+"no test hook" decision), and `scrollTo` polls convergence instead of
+sleeping. Full suite after the change: 360 ok, 0 failed.
+
+![claude structure progression, round 4](shots/claude-structure/progression-4.webp)
+
 ![claude after, three states](shots/claude-structure/states.webp)
 
 The unit envelope was re-measured over all 36 combinations after the wider

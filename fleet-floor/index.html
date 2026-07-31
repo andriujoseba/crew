@@ -4520,6 +4520,12 @@ pollFleet();setInterval(pollFleet,POLL_MS);
    Unused by index.html — it costs one property on window. */
 window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
+  /* The floor camera, for the browser walk. The camera eases per FRAME, not
+     per second, and a console dwell expires every visible miniStill — so the
+     first floor frames after Escape cost a full room render each, and a
+     fixed post-wheel wait covers almost no easing on a slow machine. The
+     walk polls this instead of sleeping; it asserts by outcome either way. */
+  cam:function(){return floorCam;},
   /* render(dst,{agent,room,state,t,warm,flat}) */
   render:function(dst,o){
     borrowRoom(o,function(){
