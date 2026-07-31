@@ -2079,10 +2079,72 @@ slots cut outboard of the stencil.
 two ticks scoured off entirely, the rest half-worn — the fleet's hazard
 idiom carried in kimi's own fiction. Paint, not a light.
 
-Envelope over all 36: `[316.8, 279.7 → 623.9, 613.5]`, declared. Suite:
-395 ok, 0 failed. Cells re-swept at 336px: the silhouette that survives is
-chest-furnace-and-pauldrons — a hulk with a fire in it, where the drone used
-to vanish into the wall.
+Envelope over all 36 after round 6: `[316.8, 279.7 → 623.9, 613.5]`,
+declared. Suite: 395 ok, 0 failed. Cells re-swept at 336px: the silhouette
+that survives is chest-furnace-and-pauldrons — a hulk with a fire in it,
+where the drone used to vanish into the wall.
+
+Round seven came back from the operator with three corrections: the unit
+was oversized for the room, the abdomen was fine but could be much cooler,
+and the working pose was odd — the arm should flex the way claude's does.
+
+**Loop 16 — 12.5% smaller.** F 1.2→1.05. At 1.2 the pauldrons out-spanned
+codex's whole leg splay and the head crowded the lamp; at 1.05 the siege
+mass stays and the room gets its air back. The local geometry — knuckle
+lines, bell park — is scale-invariant and held untouched; only the powered
+altitude re-tuned so the studs keep their worktop clearance.
+
+**Loop 17 — the abdomen is a machine.** The middle waist leaf deleted; in
+its place the service band the crew stopped re-armouring: twin hydraulic
+rams with bright rods under load, a ribbed bellows spine, corner grommets,
+the furnace glow reaching in from above, the loop-9 loom now crossing an
+actual mechanism. The waist stopped being a skirt.
+
+**Loop 18 — the working arm flexes.** The right arm bends to work: elbow
+out at the pauldron rim, thick forearm driving down and in, the fist
+landing low in FRONT of the waist where the weld arc lives. Drawn late —
+the codex front-leg lesson: anything drawn before the chest is overpainted
+— and under the jet's light. The hose pulls taut on a flexed arm (sag 11
+vs 22 hanging, 31 dead); the hand anchor follows the pose.
+
+Round eight was five discovery loops, each hunting one thing that made the
+unit cooler:
+
+**Loop 19 — the visor is an instrument.** The slit floor carries a cold
+strip of live light, both optics became hard 6px lenses in dark bezels, the
+amber glass eye takes one fixed white catchlight from the lamp (glass
+reflects; a sensor doesn't), and working, a ranging hairline crosses the
+pink optic — aiming, not looking.
+
+**Loop 20 — scoops and crane lugs.** Two ram-air ducts rise between the
+head and the cowls, drawn behind the chest so only their throats and lit
+mouth rims clear the trapezius line — a nuclear torch still breathes
+coolant. Two bolted D-ring crane lugs on the glacis crown, worn bright
+where the shackles ride: nothing this heavy walks onto a transport.
+
+**Loop 21 — the machinery lives.** Four vanes turn in each grav bell's
+mouth — 2.4× under throttle, 0.9× idle, frozen mid-rotation dead or under
+reduced motion — with a hub so the mouth reads as a machine, not a lamp.
+The abdomen rams breathe counter-phased against the hover bob; dead they
+sit at half stroke. All sin(t), deterministic at fixed t.
+
+**Loop 22 — the bent rangefinder.** A short armoured mast off the crown's
+right shoulder, kinked twenty degrees at the bolted joint by a hit that was
+never worth straightening. The one thin thing on the unit, and it is thin
+because it is broken.
+
+**Loop 23 — the ember and the beacon.** A nuclear core does not go black
+when the unit dies: behind the cage bars the window holds a deep-red ember
+— heat, not power, albedo only. And since the knuckle-rest hides the
+furnace behind the bench, the beacon takes over on what still shows: red
+glints on the left scoop rim and down the bent mast, breathing with
+beaconPulse like the rooms' own offline rims.
+
+Envelope re-measured after the resize: the union is back to exactly the
+pre-series box — `[333.8, 286.4 → 605.4, 613.5]`, codex's width and floor
+under claude's head top — and LAYOUT.unit is re-declared to match. Suite:
+395 ok, 0 failed. Cells re-swept: kimi now sits in its frame the way the
+others do, and still reads as the hulk with the fire in it.
 
 ![kimi structure progression, the port](shots/kimi-structure/progression.webp)
 ![kimi structure progression, round 2](shots/kimi-structure/progression-2.webp)
@@ -2090,4 +2152,6 @@ to vanish into the wall.
 ![kimi structure progression, round 4](shots/kimi-structure/progression-4.webp)
 ![kimi structure progression, round 5](shots/kimi-structure/progression-5.webp)
 ![kimi structure progression, round 6](shots/kimi-structure/progression-6.webp)
+![kimi structure progression, round 7](shots/kimi-structure/progression-7.webp)
+![kimi structure progression, round 8](shots/kimi-structure/progression-8.webp)
 ![kimi states](shots/kimi-structure/states.webp)
