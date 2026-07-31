@@ -1050,27 +1050,44 @@ class Fleet:
 # Three outcomes, three answers: `paused N` (it took effect), `nothing to
 # pause: ...` (rc 0, there was nothing armed), and a non-zero exit whose
 # stderr says why. The counts travel as data on stdout; only a real failure
-# is allowed to redden the row. Each pipeline's write is checked on its own
-# exit status rather than inferred from a later read, so a `crontab -` that
-# refuses is named as the failure it is.
+# is allowed to redden the row. Each write is checked on its own exit status
+# rather than inferred from a later read, so a `crontab -` that refuses is
+# named as the failure it is.
+#
+# N is the number of lines THIS call moved, not the number of lines now in
+# the target state: a box carrying a `#CREW-FLOOR-PAUSED` line from an
+# earlier pause, plus one armed line, pauses one line and says `paused 1`.
+# Reporting the post-state total would say `paused 2` — an overcount on a
+# control plane whose whole subject is saying what it actually did.
+#
+# That is also why the crontab is read ONCE, into `cron`, and the write is
+# fed from that snapshot rather than from a second `crontab -l`: the counts
+# and the text being rewritten are then the same crontab, so the delta check
+# below means what it says. It costs one read rather than adding one.
 PAUSE_SH = r"""
-armed="$(crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh' || true)"
+cron="$(crontab -l 2>/dev/null || true)"
+armed="$(printf '%s\n' "$cron" | grep -cE '^[^#].*tick\.sh' || true)"
 [ "$armed" -gt 0 ] || { echo "nothing to pause: no armed tick.sh line"; exit 0; }
-crontab -l 2>/dev/null | sed -E 's|^([^#].*tick\.sh.*)$|#CREW-FLOOR-PAUSED \1|' | crontab - \
+was="$(printf '%s\n' "$cron" | grep -c '^#CREW-FLOOR-PAUSED' || true)"
+printf '%s\n' "$cron" | sed -E 's|^([^#].*tick\.sh.*)$|#CREW-FLOOR-PAUSED \1|' | crontab - \
   || { echo "pause: crontab write failed" >&2; exit 1; }
-paused="$(crontab -l 2>/dev/null | grep -c '^#CREW-FLOOR-PAUSED' || true)"
-[ "$paused" -gt 0 ] || { echo "pause: crontab write reported success, no line is commented" >&2; exit 1; }
-echo "paused $paused"
+now="$(crontab -l 2>/dev/null | grep -c '^#CREW-FLOOR-PAUSED' || true)"
+[ "$(( now - was ))" -eq "$armed" ] \
+  || { echo "pause: crontab write reported success, $(( now - was )) of $armed lines are commented" >&2; exit 1; }
+echo "paused $armed"
 """
 
 RESUME_SH = r"""
-paused="$(crontab -l 2>/dev/null | grep -c '^#CREW-FLOOR-PAUSED' || true)"
+cron="$(crontab -l 2>/dev/null || true)"
+paused="$(printf '%s\n' "$cron" | grep -c '^#CREW-FLOOR-PAUSED' || true)"
 [ "$paused" -gt 0 ] || { echo "nothing to resume: no paused tick.sh line"; exit 0; }
-crontab -l 2>/dev/null | sed -E 's|^#CREW-FLOOR-PAUSED ||' | crontab - \
+was="$(printf '%s\n' "$cron" | grep -cE '^[^#].*tick\.sh' || true)"
+printf '%s\n' "$cron" | sed -E 's|^#CREW-FLOOR-PAUSED ||' | crontab - \
   || { echo "resume: crontab write failed" >&2; exit 1; }
-armed="$(crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh' || true)"
-[ "$armed" -gt 0 ] || { echo "resume: crontab write reported success, no line is live" >&2; exit 1; }
-echo "resumed $armed"
+now="$(crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh' || true)"
+[ "$(( now - was ))" -eq "$paused" ] \
+  || { echo "resume: crontab write reported success, $(( now - was )) of $paused lines are live" >&2; exit 1; }
+echo "resumed $paused"
 """
 
 # The operator's message becomes a real session of the box's own vendor CLI,

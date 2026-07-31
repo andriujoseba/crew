@@ -214,11 +214,13 @@ BS_CRON="$BS_TMP/crontab.state"
 # zero-line case, and swallowing it here would fake the bug away.
 #
 # The install is ATOMIC (temp file, then rename), like the real crontab(1),
-# which stages into the spool and renames. Truncating in place is wrong in a
-# way that bites immediately: both scripts run `crontab -l | sed | crontab -`,
-# one pipeline, both ends live at once — a `cat > $STATE` empties the file the
-# reader at the head of the same pipeline is still reading, and the box loses
-# its crontab. That is the stand-in's bug, not the script's.
+# which stages into the spool and renames. Truncating in place would be a
+# stand-in bug rather than a script bug, but it is the one that bites hardest
+# if the scripts ever go back to piping a live read into a live write
+# (`crontab -l | sed | crontab -`, both ends open at once): a `cat > $STATE`
+# empties the file the reader at the head of the same pipeline is still
+# reading, and the box loses its crontab. The scripts snapshot the crontab
+# first and write from the snapshot, so they do not do that today.
 cat > "$BS_C/crontab" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -281,6 +283,30 @@ case "$(cat "$BS_TMP/ctl.out")" in
   "nothing to resume"*) ok "resume: nothing paused says so" ;;
   *) fail "resume: nothing paused says so" "$(cat "$BS_TMP/ctl.out")" ;;
 esac
+
+# The count is what THIS call moved, not the post-state total. A box carrying
+# a `#CREW-FLOOR-PAUSED` line from an earlier pause AND one armed line pauses
+# exactly one line; reporting the total would say `paused 2`. Nothing in the
+# fleet produces this crontab today — a second pause short-circuits to
+# `nothing to pause` — which is why it is asserted here rather than left to a
+# scenario that cannot reach it (kimi, round 1).
+# shellcheck disable=SC2016
+printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n*/5 * * * * $HOME/duty/bin/other-tick.sh\n' > "$BS_CRON"
+t "pause: a pre-paused line is not counted as this call's work" 0 "$(bs_ctl pause)"
+t "pause: counts only the lines it commented"        "paused 1" "$(cat "$BS_TMP/ctl.out")"
+t "pause: the pre-existing marker is left as it was"          2 "$(bs_paused)"
+
+# Symmetric on the way back: resume moves both commented lines, and says 2 —
+# the number it uncommented, not the number of live lines it can see after.
+t "resume: exits 0 with two paused lines"    0 "$(bs_ctl resume)"
+t "resume: counts only the lines it restored" "resumed 2" "$(cat "$BS_TMP/ctl.out")"
+t "resume: both lines are live"              2 "$(bs_armed)"
+
+# A live tick line that was never paused must not be counted by resume either.
+# shellcheck disable=SC2016
+printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n7 * * * * $HOME/duty/bin/other-tick.sh\n' > "$BS_CRON"
+t "resume: exits 0 alongside an already-live line"  0 "$(bs_ctl resume)"
+t "resume: an already-live line is not this call's" "resumed 1" "$(cat "$BS_TMP/ctl.out")"
 
 # No crontab AT ALL: `crontab -l` exits 1, which is the shape that made the
 # zero count indistinguishable from a broken box in the first place.
