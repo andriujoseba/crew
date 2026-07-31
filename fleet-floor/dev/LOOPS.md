@@ -2360,3 +2360,7 @@ transition.js read it instead of re-deriving drawFloor's constants — the
 mirror is exactly what this rework would have silently broken. renderMini
 ships the new tile, so the whiteboard's cell view stays a picture of what
 runs. Suite green: 395 ok, 0 failed.
+
+![the fleet call](shots/fleet-call/floor-call.webp)
+![one tile, hovered](shots/fleet-call/tile-hover.webp)
+![all 36 cells](shots/fleet-call/cells-36.webp)
