@@ -2146,6 +2146,34 @@ under claude's head top — and LAYOUT.unit is re-declared to match. Suite:
 395 ok, 0 failed. Cells re-swept: kimi now sits in its frame the way the
 others do, and still reads as the hulk with the fire in it.
 
+Round nine was the operator's second look, and it reached past kimi:
+
+**Loop 24 — the torch comes out from behind the desk screen.** Every room
+parks a readout on the right half of its bench, exactly where the flexed
+right fist landed its weld arc — the torch was burning behind glass. The
+left half is the open work area (the builder's rig lives there), so the
+flex mirrors to the LEFT arm and the kill-tally fist becomes the working
+fist: arc over the rig at ~x 388, verified in all three rooms at 2x.
+
+**Loop 25 — the back trails cables.** The #195 verdict applied to the
+JUGGERNAUT: two power cables per side loop out of the spine, crest visibly
+between the scoops and the pauldron crowns, and dive behind the cowls —
+drawn before everything so the armour overlaps them; offline the loops sag
+with the dead machine. The first cut hid the arcs entirely behind the crown
+hardware; the control points now throw them above the scoop line.
+
+**Claude fix — the actuator rods hang FROM the shoulder.** The operator
+double-checked claude's arms and was right: the twin rods between shoulder
+joint and elbow started at shy+26/+30, below the pauldron's rim line at
+their x, so both tubes floated in mid-air under the plate. They now start
+at shy+18/+21, up in the socket's contact shadow, each terminated by a
+bolted clevis block — the pair visibly hangs from the shoulder into the
+elbow in all three poses.
+
+Envelope after round nine: unchanged, `[333.8, 286.4 → 605.4, 613.5]` —
+the cable arcs were tuned to crest below claude's head top on purpose.
+Suite: 395 ok, 0 failed.
+
 ![kimi structure progression, the port](shots/kimi-structure/progression.webp)
 ![kimi structure progression, round 2](shots/kimi-structure/progression-2.webp)
 ![kimi structure progression, round 3](shots/kimi-structure/progression-3.webp)
@@ -2154,4 +2182,5 @@ others do, and still reads as the hulk with the fire in it.
 ![kimi structure progression, round 6](shots/kimi-structure/progression-6.webp)
 ![kimi structure progression, round 7](shots/kimi-structure/progression-7.webp)
 ![kimi structure progression, round 8](shots/kimi-structure/progression-8.webp)
+![kimi structure progression, round 9](shots/kimi-structure/progression-9.webp)
 ![kimi states](shots/kimi-structure/states.webp)
