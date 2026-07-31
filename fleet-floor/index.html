@@ -3426,6 +3426,20 @@ function buildKimi(t,st){
   [-1,1].forEach(function(sg){plate(g,[[cx+sg*44,hy-22],[cx+sg*54,hy-19],[cx+sg*54,hy-7],[cx+sg*44,hy-8]],sM,sB,ed);
     pl(g,cx+sg*44,hy-22,cx+sg*54,hy-19,"rgba(186,208,242,"+(offl?0.06:0.16)+")",1.2);
     if(!offl){RE.fillStyle=pk(0.5);RE.beginPath();RE.arc(cx+sg*49,hy-14,1.6,0,7);RE.fill();}});
+  /* The rangefinder mast, and the bend it took. A short armoured stub off
+     the crown's right shoulder, kinked 20 degrees at the joint by a hit that
+     was never worth straightening — the instrument still works, so it stays
+     bent. The one thin thing on the unit, and it is thin because it is
+     broken. */
+  (function(){var mx=cx+24,m0=hy-29,m1=hy-38,tx2=cx+20,ty2=hy-45;
+    plate(g,[[mx-3.5,m0],[mx+3.5,m0],[mx+2.5,m0-4],[mx-2.5,m0-4]],sM,sB,ed);
+    pl(g,mx,m0-3,mx,m1,"rgba(16,21,30,0.98)",3);
+    pl(g,mx-0.8,m0-3,mx-0.8,m1,"rgba(160,176,204,"+(offl?0.08:0.2)+")",0.9);
+    pl(g,mx,m1,tx2,ty2,"rgba(16,21,30,0.98)",2.4);
+    bolt(g,mx,m1,1.8,offl?0.05:0.16);
+    g.fillStyle="#0a0f18";g.beginPath();g.arc(tx2,ty2,2.4,0,7);g.fill();
+    if(!offl){RB.fillStyle=pkh(0.5+0.3*pulse);RB.beginPath();RB.arc(tx2,ty2,1.1,0,7);RB.fill();
+      RE.fillStyle=pk(0.6);RE.beginPath();RE.arc(tx2,ty2,1.1,0,7);RE.fill();}})();
 
   /* ---- 6 · waist cincture + nozzle cowl ---- */
   // overlapping armoured leaves, like scale mail — layered, not extruded
