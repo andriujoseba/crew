@@ -2162,6 +2162,14 @@ drawn before everything so the armour overlaps them; offline the loops sag
 with the dead machine. The first cut hid the arcs entirely behind the crown
 hardware; the control points now throw them above the scoop line.
 
+**Loop 26 — the torch tool.** In builder the arc now comes off a TOOL: a
+stubby gripped barrel exits the flexed fist's inner-bottom corner, clamped
+where it leaves the knuckles, hot ring and white tip at the muzzle, the
+hand anchor on the tip so arc, sparks and deck pool all fire off it. Stubby
+on purpose — a wand would be the thinnest thing on the unit, and the only
+thin thing allowed is the broken one. The other rooms keep their own
+devices in the working hand.
+
 **Claude fix — the actuator rods hang FROM the shoulder.** The operator
 double-checked claude's arms and was right: the twin rods between shoulder
 joint and elbow started at shy+26/+30, below the pauldron's rim line at
