@@ -2026,30 +2026,66 @@ function buildCodex(t,st){
   }
   for(var i=0;i<3;i++){drawLeg(-1,i);drawLeg(1,i);}
 
-  // ---- abdomen (rear/upper rounded hull) ----
-  var ax=cx, ay=BY-44, aw=78, ah=56;
+  // ---- abdomen (faceted war hull) ----
+  /* Loop 15 — the shell stops being a balloon (operator: "almost a sphere…
+     I want R-rated"). An ellipse is a friendly shape no amount of grime can
+     threaten with. The silhouette is now cut from facets: a peaked crown, a
+     hard shoulder line each side, flared cowls standing off over the leg
+     roots, a jaw that tapers instead of rounding under. Wider and lower than
+     the old dome — the width lives well inside the legs' span, the crown
+     stays under the vent mouths, so the envelope holds. Every clip that used
+     to be the ellipse is re-cut to the hull, the nested chevrons and the
+     soft top-left sheen are DELETED (a soft highlight is a friendly
+     highlight), and the facet planes carry the value steps instead. */
+  var ax=cx, ay=BY-44, aw=86, ah=54;
+  var HP=[[0,-1],[0.28,-0.94],[0.72,-0.62],[1.0,-0.10],[0.98,0.30],[0.62,0.86],[0,1]];
+  function hullPath(c){c.beginPath();c.moveTo(ax,ay-ah);
+    for(var hi=1;hi<HP.length;hi++)c.lineTo(ax+HP[hi][0]*aw,ay+HP[hi][1]*ah);
+    for(var hj=HP.length-2;hj>=0;hj--)c.lineTo(ax-HP[hj][0]*aw,ay+HP[hj][1]*ah);
+    c.closePath();}
   /* Loop 7 — the shell casts on what it covers. The dome is the biggest
      overhang in the fleet and the legs passed behind it at full brightness,
      which is the tell that they are drawn, not under it. A contact shadow
      falls on everything within a few pixels of the shell's edge — painted
      source-atop, so it lands on the legs and never haloes the room. */
   g.save();g.globalCompositeOperation="source-atop";
-  g.fillStyle="rgba(0,0,0,0.30)";g.beginPath();g.ellipse(ax,ay,aw+8,ah+8,0,0,7);g.fill();
-  g.fillStyle="rgba(0,0,0,0.22)";g.beginPath();g.ellipse(ax,ay,aw+4,ah+4,0,0,7);g.fill();
+  [[8,0.30],[4,0.22]].forEach(function(sh){
+    g.save();g.translate(ax,ay);g.scale((aw+sh[0])/aw,(ah+sh[0])/ah);g.translate(-ax,-ay);
+    g.fillStyle="rgba(0,0,0,"+sh[1]+")";hullPath(g);g.fill();g.restore();});
   g.restore();
   var abg=g.createLinearGradient(0,ay-ah,0,ay+ah);abg.addColorStop(0,sT);abg.addColorStop(1,sB);
-  g.fillStyle=abg;g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.fill();
-  g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.stroke();
-  // carapace chevrons (nested), a top-left sheen, and rivets
-  g.strokeStyle="#2c3849";g.lineWidth=1.4;for(var cvr=0;cvr<3;cvr++){var rr2=0.5+cvr*0.17;g.beginPath();g.moveTo(ax-aw*rr2,ay-ah*0.12);g.quadraticCurveTo(ax,ay-ah*(0.66+cvr*0.09),ax+aw*rr2,ay-ah*0.12);g.stroke();}
-  g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.ellipse(ax-6,ay-8,aw-16,ah-16,0,Math.PI*1.02,Math.PI*1.62);g.stroke();
+  g.fillStyle=abg;hullPath(g);g.fill();
+  // facet planes: hard value steps, keyed to the lamp upper-left
+  function facet(pts,style){g.fillStyle=style;poly(g,pts.map(function(q){return [ax+q[0]*aw,ay+q[1]*ah];}));g.fill();}
+  facet([[0,-1],[-0.28,-0.94],[-0.40,-0.30],[0,-0.42]],"rgba(190,215,240,"+(offl?0.05:0.10)+")");
+  facet([[0,-1],[0.28,-0.94],[0.40,-0.30],[0,-0.42]],"rgba(190,215,240,"+(offl?0.02:0.045)+")");
+  facet([[-0.28,-0.94],[-0.72,-0.62],[-1.0,-0.10],[-0.40,-0.30]],"rgba(0,0,0,0.10)");
+  facet([[0.28,-0.94],[0.72,-0.62],[1.0,-0.10],[0.40,-0.30]],"rgba(0,0,0,0.17)");
+  facet([[-0.40,-0.30],[-1.0,-0.10],[-0.98,0.30],[-0.62,0.86]],"rgba(0,0,0,0.12)");
+  facet([[0.40,-0.30],[1.0,-0.10],[0.98,0.30],[0.62,0.86]],"rgba(0,0,0,0.18)");
+  // seams between the planes, and a worn bright lip on the edges facing the lamp
+  g.strokeStyle=rc;g.lineWidth=1.2;g.beginPath();
+  g.moveTo(ax,ay-ah);g.lineTo(ax,ay-ah*0.42);
+  [-1,1].forEach(function(sg){
+    g.moveTo(ax+sg*0.28*aw,ay-0.94*ah);g.lineTo(ax+sg*0.40*aw,ay-0.30*ah);
+    g.moveTo(ax+sg*0.40*aw,ay-0.30*ah);g.lineTo(ax+sg*1.0*aw,ay-0.10*ah);});
+  g.stroke();
+  g.strokeStyle="rgba(190,208,232,"+(offl?0.10:0.26)+")";g.lineWidth=1;g.beginPath();
+  g.moveTo(ax,ay-ah);g.lineTo(ax-0.28*aw,ay-0.94*ah);g.lineTo(ax-0.72*aw,ay-0.62*ah);
+  g.stroke();
+  g.strokeStyle=ed;g.lineWidth=1.4;hullPath(g);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(ax-aw+10,ay+2);g.lineTo(ax+aw-10,ay+2);g.stroke();
+  /* Cowl blades: the flared plates over the leg roots end in a spike each —
+     the shell grows the same claws the feet already have. */
+  [-1,1].forEach(function(sg){
+    plate(g,[[ax+sg*0.93*aw,ay-0.16*ah],[ax+sg*(aw+13),ay-0.02*ah],[ax+sg*0.95*aw,ay+0.12*ah]],sM,sB,ed);
+    plate(g,[[ax+sg*0.64*aw,ay-0.70*ah],[ax+sg*0.86*aw,ay-0.56*ah],[ax+sg*0.70*aw,ay-0.50*ah]],sM,sB,ed);});
   /* Brushed metal. The carapace is the single largest shape codex has and it
      was a vertical two-stop gradient — perfectly smooth, which is the one
      surface quality a machined shell does not have. Anisotropic streaks
      following the curve give it a grain, and the grain is what tells you the
      dome is metal rather than plastic or paint. */
-  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  g.save();hullPath(g);g.clip();
   for(var br=0;br<26;br++){var byv=ay-ah+br*(ah*2/26);
     g.strokeStyle="rgba(150,175,205,"+(0.014+0.02*Math.abs(Math.sin(br*2.7)))+")";
     g.lineWidth=1;g.beginPath();g.moveTo(ax-aw,byv);g.bezierCurveTo(ax-aw*0.3,byv-3,ax+aw*0.3,byv+3,ax+aw,byv);g.stroke();}
@@ -2071,8 +2107,8 @@ function buildCodex(t,st){
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
   // rim nicks (loop 10): the dome's leading edge meets the world first
   g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.32)+")";g.lineWidth=1.6;
-  [-2.25,-1.75,-0.55,0.4].forEach(function(na){
-    var nx3=ax+Math.cos(na)*(aw-1.5),ny3=ay+Math.sin(na)*(ah-1.5);
+  [[-0.14,-0.96],[-0.52,-0.77],[-0.88,-0.27],[0.9,0.03]].forEach(function(np2){
+    var nx3=ax+np2[0]*aw,ny3=ay+np2[1]*ah;
     g.beginPath();g.moveTo(nx3-1.2,ny3-1.2);g.lineTo(nx3+1.6,ny3+1.4);g.stroke();});
   /* Grime obeys gravity, not the power state: oily weep below the shell's
      rivets and the saddle bolts, in albedo, so a dead codex is exactly as
@@ -2257,14 +2293,11 @@ function buildCodex(t,st){
      highlight, which is why it kept reading as a matte shell no matter how
      much structure went onto it. One tight hot spot up and left, where the
      lamp is, plus the wide soft return underneath it. */
-  if(!offl){g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
-    var dsp=g.createRadialGradient(ax-aw*0.34,ay-ah*0.52,1,ax-aw*0.3,ay-ah*0.42,aw*0.34);
-    dsp.addColorStop(0,"rgba(228,244,255,0.42)");dsp.addColorStop(0.4,"rgba(196,226,240,0.11)");
-    dsp.addColorStop(1,"rgba(196,226,240,0)");
-    g.fillStyle=dsp;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
-    var dsp2=g.createRadialGradient(ax+aw*0.2,ay+ah*0.5,2,ax+aw*0.2,ay+ah*0.45,aw*0.5);
-    dsp2.addColorStop(0,"rgba(120,168,190,0.10)");dsp2.addColorStop(1,"rgba(120,168,190,0)");
-    g.fillStyle=dsp2;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
+  if(!offl){g.save();g.fillStyle="rgba(228,244,255,0.075)";
+    poly(g,[[ax-0.05*aw,ay-0.97*ah],[ax-0.28*aw,ay-0.90*ah],[ax-0.34*aw,ay-0.52*ah],[ax-0.08*aw,ay-0.56*ah]]);g.fill();
+    var dsp=g.createRadialGradient(ax-aw*0.2,ay-ah*0.78,1,ax-aw*0.18,ay-ah*0.7,aw*0.2);
+    dsp.addColorStop(0,"rgba(228,244,255,0.17)");dsp.addColorStop(1,"rgba(228,244,255,0)");
+    hullPath(g);g.clip();g.fillStyle=dsp;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
     g.restore();}
   /* Loop 5 — the hazard marking follows the plate it warns about. Seven
      rotated squares hung mid-dome like confetti: paint that ignored the
@@ -2273,7 +2306,7 @@ function buildCodex(t,st){
      every segment sits on the curve and turns with it — and it is worn the
      way deck paint wears: thin, nicked, gone entirely at one stretch where
      something scraped it off. */
-  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  g.save();hullPath(g);g.clip();
   (function(){var sy=ay-ah*0.34;
     var P=[[ax-aw,sy-6],[ax-aw*0.35,sy+5],[ax+aw*0.35,sy+5],[ax+aw,sy-6]];
     function bz(u){var v=1-u;return [
@@ -2299,7 +2332,7 @@ function buildCodex(t,st){
      weld stitches along its top edge first, the way field repairs are, its
      edges aligned with nothing. Lower left, a gouge through two chevrons:
      dark trench, bright torn lip, ending where whatever made it stopped. */
-  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  g.save();hullPath(g);g.clip();
   (function(){var px2=ax+aw*0.42,py2=ay-ah*0.02;
     var sc2=g.createRadialGradient(px2,py2,2,px2,py2,15);
     sc2.addColorStop(0,"rgba(8,6,4,0.55)");sc2.addColorStop(0.7,"rgba(12,10,7,0.28)");sc2.addColorStop(1,"rgba(12,10,7,0)");
@@ -2355,9 +2388,9 @@ function buildCodex(t,st){
      silhouette after this — breaks and catches on the torn edge. Silhouette
      damage is the one scar a repaint cannot hide. */
   g.save();g.globalCompositeOperation="destination-out";
-  poly(g,[[ax+61,ay-36],[ax+90,ay-30],[ax+84,ay-14],[ax+72,ay-9],[ax+63,ay-20]]);g.fill();g.restore();
+  poly(g,[[ax+0.36*aw,ay-1.02*ah],[ax+0.62*aw,ay-0.84*ah],[ax+0.56*aw,ay-0.62*ah],[ax+0.40*aw,ay-0.66*ah]]);g.fill();g.restore();
   g.strokeStyle="rgba(190,208,232,"+(offl?0.16:0.45)+")";g.lineWidth=1.2;
-  g.beginPath();g.moveTo(ax+61,ay-36);g.lineTo(ax+63,ay-20);g.lineTo(ax+72,ay-9);g.stroke();
+  g.beginPath();g.moveTo(ax+0.36*aw,ay-1.02*ah);g.lineTo(ax+0.40*aw,ay-0.66*ah);g.lineTo(ax+0.56*aw,ay-0.62*ah);g.stroke();
   buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
   /* Six tarsus tips, not one blob under the body: the whole point of the
      spider is the stance, and the stance is where the feet are. */
