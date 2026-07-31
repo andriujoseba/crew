@@ -3070,8 +3070,10 @@ function buildKimi(t,st){
   g.save();g.translate(cx-30,0);g.rotate(-0.05);
   g.fillStyle=sc2;g.beginPath();g.moveTo(-8,BY+4);g.quadraticCurveTo(-16,BY+22,-10,BY+34);g.lineTo(4,BY+34);g.quadraticCurveTo(-2,BY+18,2,BY+4);g.closePath();g.fill();g.restore();
 
-  /* ---- 5 · HEAD: buried, no neck, brow like a firing slit ---- */
-  var hy=BY-58;
+  /* ---- 5 · HEAD: buried, no neck, brow like a firing slit ----
+     Offline it sinks 6px deeper between the cowls — a head with no neck
+     cannot hang, so "head down" is the whole skull settling into the chest. */
+  var hy=BY-(offl?52:58);
   plate(g,[[cx-44,hy+6],[cx-50,hy-18],[cx-33,hy-30],[cx+33,hy-30],[cx+50,hy-18],[cx+44,hy+6]],sT,sB,ed);
   /* The crown is recessed, not a lit lid — the head must read buried between
      the cowls, and a bright top face floated it up off the shoulders. */
@@ -3090,8 +3092,12 @@ function buildKimi(t,st){
     RB.fillStyle="rgba(150,168,190,0.5)";RB.fillRect(vs.x+4,vs.y+4.4,vs.w-8,1.4);
     RE.fillStyle="rgba(150,168,190,0.2)";RE.fillRect(vs.x+4,vs.y+4.4,vs.w-8,1.4);}
   else{
-    var gaze=work?0:Math.round(Math.sin(t*0.55)*5);
-    [{x:cx-15+gaze,col:AM,colH:AMH},{x:cx+15+gaze,col:PK,colH:PKH}].forEach(function(op){ // amber glass eye + pink
+    /* The threat-scan lives in the PINK optic only. The amber eye is the
+       replacement — it glows, but it is set in the socket and does not
+       gimbal; the mismatch between a sweeping eye and a fixed one is what
+       makes the idle scan read as damage rather than animation. */
+    var gaze=(work||reduced)?0:Math.round(Math.sin(t*0.55)*5);
+    [{x:cx-15,col:AM,colH:AMH},{x:cx+15+gaze,col:PK,colH:PKH}].forEach(function(op){ // amber glass eye + pink
       [RB,RE].forEach(function(c){var eg=c.createRadialGradient(op.x,vs.y+5,0.4,op.x,vs.y+5,7.5);
         eg.addColorStop(0,"rgba("+op.colH[0]+","+op.colH[1]+","+op.colH[2]+","+(0.85+0.15*pulse)+")");
         eg.addColorStop(0.5,"rgba("+op.col[0]+","+op.col[1]+","+op.col[2]+","+(0.5*pulse)+")");
