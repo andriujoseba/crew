@@ -1706,3 +1706,110 @@ The whole arc, one frame per loop:
 The unit envelope was re-measured over all 36 combinations after the wider
 pauldrons: the union moved by ±1px — breath-phase noise — and the binding
 edge is still codex's leg splay, so `LAYOUT.unit` stands unchanged.
+
+## Thirteen loops on codex's assembly
+
+Claude's series proved the brief travels: stand still on one unit and make
+every join a mechanism. Codex was next for the same reason claude was first —
+it had the opposite problem. Claude was a solid that read as moulded; codex
+is the heaviest shell in the fleet carried by six bare wires. Everything the
+earlier sweeps had earned (tergites, coxa sockets, the dome specular, the eye
+hierarchy) sat on legs with no armour, a reactor with no housing, a head with
+no mount, and a hazard marking floating mid-dome like confetti. Thirteen
+passes, three rounds, all inside `buildCodex` — no other unit, room or shared
+helper is touched.
+
+Round one is the joins:
+
+**Loop 1 — the leg is an assembly, not a wire.** Each femur carries a
+chamfered armour plate bolted along its upper edge, a hydraulic ram slings
+under it to the upper tibia — sleeve at the hull end, polished rod at the
+load end — the knee is capped with a fitted shield angled with the femur,
+and the tarsus gets a clamp band where it takes the flex. (The first cut of
+the ram ran coxa → mid-femur and vanished: the dome overhangs everything
+inboard of its own edge. A knee ram lives in the span the room can see.)
+
+**Loop 2 — the reactor is housed, not a porthole.** The fire sits down a
+bolted blast collar with a recess shadow where the shell overhangs it, and
+three radial vanes stand in front of it — cut out of the emissive buffer
+too, so the bloom leaks around the grille and never through it.
+
+**Loop 3 — the head is mounted, not adjacent.** Two pedicel struts bolt from
+the shell's underside to the head's shoulders and a sensor trunk loops down
+each side into it. Offline the mount is honest about being one: the head
+sags in it and the trunks go slack.
+
+**Loop 4 — vents, not prongs.** The three spinneret stubs share one bolted
+saddle on the shell; each pipe cants outward, wears a clamp band, and ends
+in a slanted hollow mouth with the ember down the throat. Mouth height is
+unchanged — codex's envelope binds `LAYOUT.unit`, so the silhouette may get
+denser but not taller.
+
+**Loop 5 — the hazard band rides the plate it warns about.** The chevrons
+are evaluated along the same bezier the leading tergite is drawn with, so
+every segment sits on the curve and turns with it — and the band is worn
+like deck paint: thin, nicked, missing entirely where something scraped it.
+
+![codex structure progression](shots/codex-structure/progression.webp)
+
+Round two is what round one exposed:
+
+**Loop 6 — the pedipalps join the same machine as the legs.** Armoured upper
+segment, capped elbow, wrist clamp band, and a two-finger gripper instead of
+an end. And they pose: tucked up under the chin at rest — the idle pose used
+to BE the offline pose — slack and hanging when the power is gone, raised
+with the tool when working.
+
+**Loop 7 — the shell casts on what it covers.** A contact shadow falls on
+everything within a few pixels of the dome's edge, painted source-atop so it
+lands on the legs and never haloes the room; oily weep runs below the
+rivets and saddle bolts in albedo, so a dead codex is exactly as dirty as a
+live one.
+
+**Loop 8 — a service history.** A scorch on the right flank the shell never
+fully shed, a patch of newer, bluer steel bolted over it — weld stitches
+along the top edge where it was tacked first, edges aligned with nothing —
+and a gouge through two chevrons, dark trench with a bright torn lip.
+
+**Loop 9 — the face is armour, not a panel.** A brow that breaks to a V over
+the socket and casts its own shade into the recess, a bolted cheek guard
+down each side, and the chin stubs rebuilt as hinged chelicerae with a pivot
+rivet each.
+
+**Loop 10 — paint gone from the lips that lead.** Constant nicks — a nick is
+a place, and it stays where it happened — on the femur armour of the legs
+that work hardest and on the dome's leading rim.
+
+![codex structure progression, round 2](shots/codex-structure/progression-2.webp)
+
+Round three is biography, the same three-battle ledger claude carries:
+
+**Loop 11 — battle one: the strapped crack.** Something split the left flank
+along a tergite. The weld chases the crack segment by segment with stitch
+ticks across it, and a strap of newer steel is bolted ACROSS the line — a
+weld you strap is a weld you no longer worry about.
+
+**Loop 12 — battle two: the bite.** A piece of the dome's upper-right rim is
+gone — cut to transparency, not painted dark, so the room shows through the
+tear and the rim light breaks and catches on the torn edge. Silhouette
+damage is the one scar a repaint cannot hide.
+
+**Loop 13 — battle three's ledger.** The other three units carry markings;
+the most scarred shell in the fleet had no designation at all. A stencil
+block in the fleet's worn gold on the lower flank, and beside it three tally
+strokes in the same paint. The count matches the scars: the crack, the bite,
+the gouge.
+
+![codex structure progression, round 3](shots/codex-structure/progression-3.webp)
+
+![codex after, three states](shots/codex-structure/states.webp)
+
+The whole arc, one frame per loop:
+
+![codex evolution](shots/codex-structure/evolution.gif)
+
+The unit envelope was re-measured over all 36 combinations after the series:
+union `[333.1, 286.4 → 606.2, 613.5]` against declared `[333,286 → 606,613]`
+— sub-pixel, breath-phase noise. Every new part hangs inside the leg's own
+line, codex's working splay is still the binding edge, and `LAYOUT.unit`
+stands unchanged.
