@@ -3249,9 +3249,11 @@ function buildKimi(t,st){
     plate(g,[[px-sg*48,py+28],[px+sg*44,py+24],[px+sg*38,py+42],[px-sg*42,py+44]],sM,sB,ed);
     cavity(g,px-sg*44,py+24,86,6,0.5);
     // rim bolts + grime weep (albedo)
+    // grime weep on the ORIGINAL side only — a plate fitted last refit has
+    // not had time to stain (subtraction round, L11)
     [px-sg*40,px-sg*8,px+sg*28].forEach(function(bxp,i){
       bolt(g,bxp,py+33,2.4,offl?0.06:0.22);
-      if(i===1){g.fillStyle="rgba(70,50,30,0.3)";poly(g,[[bxp-1.2,py+35],[bxp+1.2,py+35],[bxp+0.5,py+42],[bxp-0.5,py+42]]);g.fill();}});
+      if(i===1&&sg<0){g.fillStyle="rgba(70,50,30,0.3)";poly(g,[[bxp-1.2,py+35],[bxp+1.2,py+35],[bxp+0.5,py+42],[bxp-0.5,py+42]]);g.fill();}});
   });
   // the GOUGE across the left pauldron — torn lip catches the lamp
   poly(g,[[cx-164,BY-66],[cx-128,BY-50],[cx-133,BY-42],[cx-168,BY-58]]);g.fillStyle="rgba(2,4,8,1)";g.fill();
@@ -3261,9 +3263,12 @@ function buildKimi(t,st){
   g.translate(cx+118,BY-42);g.rotate(-0.06);
   g.font="700 17px ui-monospace,monospace";g.textAlign="center";
   g.fillText("09",0,0);g.restore();g.textAlign="left";
-  // chipped edges — albedo nicks
+  /* Chipped edges — only at the pauldron tips. The glacis-corner pair from
+     the prototype died in the port: those corners sit UNDER the cowls here,
+     so the nicks were landing on top of the pauldron paint as floating
+     specks (subtraction round, L11). */
   g.fillStyle="rgba(206,220,242,"+(offl?0.09:0.24)+")";
-  [[cx-172,BY-50],[cx+170,BY-48],[cx-96,BY-61],[cx+95,BY-62]].forEach(function(nk,i){g.fillRect(nk[0],nk[1],3+(i%2),1.6);});
+  [[cx-172,BY-50],[cx+170,BY-48]].forEach(function(nk,i){g.fillRect(nk[0],nk[1],3+(i%2),1.6);});
   /* ---- 4b · the battles ----
      A bite out of the left pauldron's lower rim, cut to TRANSPARENCY — a hit
      that removed metal, not paint. The room shows through and the rim light
