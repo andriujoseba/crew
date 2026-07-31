@@ -2496,11 +2496,33 @@ function buildCodex(t,st){
     dsp2.addColorStop(0,"rgba(120,168,190,0.10)");dsp2.addColorStop(1,"rgba(120,168,190,0)");
     g.fillStyle=dsp2;g.fillRect(ax-aw,ay-ah,aw*2,ah*2);
     g.restore();}
+  /* Loop 5 — the hazard marking follows the plate it warns about. Seven
+     rotated squares hung mid-dome like confetti: paint that ignored the
+     shell's own geometry. The chevron band now rides the LEADING tergite
+     edge — evaluated along the same bezier the plate line is drawn with, so
+     every segment sits on the curve and turns with it — and it is worn the
+     way deck paint wears: thin, nicked, gone entirely at one stretch where
+     something scraped it off. */
   g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
-  g.globalAlpha=offl?0.16:0.36;
-  for(var hz=-3;hz<=3;hz++){g.fillStyle=hz%2?"#c9a227":"#141a12";
-    g.save();g.translate(ax+hz*15,ay-ah*0.34);g.rotate(0.5);g.fillRect(-5,-8,10,16);g.restore();}
-  g.restore();
+  (function(){var sy=ay-ah*0.34;
+    var P=[[ax-aw,sy-6],[ax-aw*0.35,sy+5],[ax+aw*0.35,sy+5],[ax+aw,sy-6]];
+    function bz(u){var v=1-u;return [
+      v*v*v*P[0][0]+3*v*v*u*P[1][0]+3*v*u*u*P[2][0]+u*u*u*P[3][0],
+      v*v*v*P[0][1]+3*v*v*u*P[1][1]+3*v*u*u*P[2][1]+u*u*u*P[3][1]];}
+    g.globalAlpha=offl?0.18:0.42;
+    for(var s2=0;s2<16;s2++){var u0=0.12+s2*0.048,pt=bz(u0),pt2=bz(u0+0.048);
+      if(s2===9||s2===10)continue;                       // the scrape took these
+      var ang=Math.atan2(pt2[1]-pt[1],pt2[0]-pt[0]);
+      g.save();g.translate(pt[0],pt[1]);g.rotate(ang);
+      g.fillStyle=s2%2?"#c9a227":"#141a12";
+      g.beginPath();g.moveTo(0,-4.5);g.lineTo(4,-4.5);g.lineTo(7.5,4.5);g.lineTo(3.5,4.5);g.closePath();g.fill();
+      g.restore();}
+    // paint nicks: the band's leading edge takes the hits
+    g.globalAlpha=offl?0.1:0.22;g.fillStyle="#0b0f16";
+    [[0.2,-2],[0.34,1],[0.55,-1],[0.78,2]].forEach(function(k){var pt=bz(k[0]);
+      g.fillRect(pt[0]-1.5,pt[1]+k[1]-1.5,3,3);});
+  })();
+  g.globalAlpha=1;g.restore();
   cavity(g,hxx-43,hy2-25,86,26,0.5);
   buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
   /* Six tarsus tips, not one blob under the body: the whole point of the
