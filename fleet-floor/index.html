@@ -1845,9 +1845,13 @@ function buildClaude(t,st){
     sj.addColorStop(0,"rgba(148,172,206,"+(offl?0.18:0.42)+")");
     sj.addColorStop(0.55,"rgba(56,68,88,0.5)");sj.addColorStop(1,"rgba(4,7,13,0.7)");
     g.fillStyle=sj;g.beginPath();g.arc(shx,shy+8,7.6,0,7);g.fill();
-    // piston from the socket down into the upper arm
-    pl(g,shx,shy+14,shx+sgn*3,shy+32,"#0a0f18",5);
-    pl(g,shx,shy+14,shx+sgn*3,shy+32,offl?"#39424f":"#8fa6c4",1.6);
+    /* No biceps plate. The upper arm was a grey trapezoid doing nothing but
+       filling the space the backpack used to fill — same complaint, one limb
+       down. The upper arm is now BARE MECHANISM: two exposed rods from the
+       socket into the elbow, and the mass all lives in the forearm, which is
+       where a machine that works with its hands would carry it. */
+    pl(g,shx,shy+14,shx-sgn*2,shy+38,"#0a0f18",5);
+    pl(g,shx,shy+14,shx-sgn*2,shy+38,offl?"#39424f":"#8fa6c4",1.6);
     // pauldron: one notched plate, outer edge dropping to a spike; the
     // underside is cut AROUND the socket so the joint visibly carries the arm
     plate(g,P([[-28,-22],[8,-32],[34,-20],[42,-2],[30,26],[14,12],[8,2],[-8,2],[-14,12],[-24,12]]),sT,sM,ed);
@@ -1897,50 +1901,50 @@ function buildClaude(t,st){
       pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.3);}
     if(mode==='reachdown'){ // reach forward + down (welding pose)
       var ex=shx+sgn*8, ey=shy+42;
-      plate(g,[[shx-14,shy+22],[shx+18,shy+24],[ex+12,ey],[ex-12,ey]],sM,sB,ed);
-      actuator(shx+sgn*12,shy+28,ex+sgn*5,ey-7);
+      actuator(shx+sgn*12,shy+26,ex+sgn*4,ey-4);
+      actuator(shx-sgn*6,shy+30,ex-sgn*4,ey-4);
       var fx=ex - sgn*22, fy=ey+34;
-      plate(g,[[ex-12,ey-2],[ex+12,ey],[fx+12,fy-4],[fx-8,fy-8]],sT,sM,ed);
-      plate(g,[[fx-9,fy-8],[fx+13,fy-6],[fx+11,fy+12],[fx-11,fy+10]],sM,sB,ed); // gauntlet
-      plate(g,[[fx-10,fy-4],[fx-17,fy+2],[fx-10,fy+8]],sM,sB,ed); // bracer fin, back edge
+      plate(g,[[ex-10,ey-2],[ex+10,ey],[fx+14,fy-4],[fx-10,fy-9]],sT,sM,ed);
+      plate(g,[[fx-11,fy-9],[fx+15,fy-7],[fx+13,fy+13],[fx-13,fy+11]],sM,sB,ed); // gauntlet
+      plate(g,[[fx-12,fy-4],[fx-19,fy+2],[fx-12,fy+8]],sM,sB,ed); // bracer fin, back edge
       rivet(g,fx-5,fy+4,eH);rivet(g,fx+7,fy+4,eH);
       plate(g,[[fx-2,fy+2],[fx+10,fy-3],[fx+14,fy+2],[fx+2,fy+9]],"#2a3444","#12181f","#3d4c63"); // torch
       elbow(ex,ey-1);
       handR={x:fx+13,y:fy+2};
     } else if(mode==='raiseup'){ // forearm raised, device held up in front of chest (inspect/dispatch)
       var ex3=shx+sgn*6, ey3=shy+40;
-      plate(g,[[shx-15,shy+22],[shx+17,shy+24],[ex3+12,ey3],[ex3-12,ey3]],sM,sB,ed); // upper arm
-      actuator(shx+sgn*12,shy+28,ex3+sgn*5,ey3-7);
+      actuator(shx+sgn*12,shy+26,ex3+sgn*4,ey3-4);
+      actuator(shx-sgn*6,shy+30,ex3-sgn*4,ey3-4);
       var fx3=ex3 - sgn*26, fy3=ey3-32;   // forearm up + inward
-      plate(g,[[ex3-12,ey3],[ex3+12,ey3-2],[fx3+12,fy3+6],[fx3-8,fy3-2]],sT,sM,ed);
-      plate(g,[[fx3-9,fy3-6],[fx3+13,fy3-4],[fx3+11,fy3+14],[fx3-11,fy3+12]],sM,sB,ed); // gauntlet
-      plate(g,[[fx3+12,fy3],[fx3+19,fy3+6],[fx3+12,fy3+12]],sM,sB,ed); // bracer fin, back edge
+      plate(g,[[ex3-10,ey3],[ex3+10,ey3-2],[fx3+14,fy3+6],[fx3-10,fy3-3]],sT,sM,ed);
+      plate(g,[[fx3-11,fy3-7],[fx3+15,fy3-5],[fx3+13,fy3+15],[fx3-13,fy3+13]],sM,sB,ed); // gauntlet
+      plate(g,[[fx3+14,fy3],[fx3+21,fy3+6],[fx3+14,fy3+12]],sM,sB,ed); // bracer fin, back edge
       rivet(g,fx3-4,fy3+8,eH);rivet(g,fx3+7,fy3+8,eH);
       elbow(ex3,ey3-1);
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
     } else {
       var ex2=shx+sgn*4, ey2=shy+56;
-      plate(g,[[shx-16,shy+22],[shx+16,shy+24],[ex2+14,ey2],[ex2-14,ey2]],sM,sB,ed);
-      actuator(shx+sgn*12,shy+30,ex2+sgn*6,ey2-9);
-      /* The forearm was a straight slab. A bracer: the outer edge flares out
-         from the elbow and cuts back hard to the wrist, and a blade fin
-         stands off the flare — the arm's silhouette finally has an opinion. */
+      actuator(shx+sgn*12,shy+26,ex2+sgn*5,ey2-8);
+      actuator(shx-sgn*6,shy+30,ex2-sgn*4,ey2-8);
+      /* The forearm is a CONE, not a slab: narrow where it leaves the elbow,
+         widening all the way to the wrist, blade fin off the outer flare —
+         all the arm's mass hangs low, over the fists. */
       function ox(d){return ex2+sgn*d;}
-      plate(g,[[ox(-14),ey2-2],[ox(14),ey2-2],[ox(19),ey2+26],[ox(13),ey2+58],[ox(-13),ey2+58],[ox(-15),ey2+30]],sT,sM,ed);
-      plate(g,[[ox(17),ey2+6],[ox(26),ey2+18],[ox(17),ey2+32]],sM,sB,ed);
-      pl(g,ox(14),ey2-2,ox(19),ey2+26,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1.1);
-      pl(g,ox(-6),ey2+8,ox(-6),ey2+50,rc,1);
+      plate(g,[[ox(-11),ey2-2],[ox(11),ey2-2],[ox(20),ey2+30],[ox(18),ey2+56],[ox(-18),ey2+56],[ox(-16),ey2+32]],sT,sM,ed);
+      plate(g,[[ox(16),ey2+10],[ox(26),ey2+22],[ox(19),ey2+34]],sM,sB,ed);
+      pl(g,ox(11),ey2-2,ox(20),ey2+30,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1.1);
+      pl(g,ox(-7),ey2+10,ox(-9),ey2+50,rc,1);
       // power slot cut into the bracer face — the arm's one warm light
-      g.fillStyle="#03060c";g.fillRect(ox(4)-2,ey2+14,4.5,24);
-      [RB,RE].forEach(function(c){accGlow(c,ox(4)-1.2,ey2+16,2.8,20);});
+      g.fillStyle="#03060c";g.fillRect(ox(4)-2,ey2+16,4.5,24);
+      [RB,RE].forEach(function(c){accGlow(c,ox(4)-1.2,ey2+18,2.8,20);});
       // wrist clamp: the gauntlet is a separate piece, banded on
-      plate(g,[[ex2-15,ey2+40],[ex2+15,ey2+40],[ex2+14,ey2+48],[ex2-14,ey2+48]],sT,sM,ed);
-      rivet(g,ex2-9,ey2+44,eH);rivet(g,ex2+9,ey2+44,eH);
-      plate(g,[[ex2-13,ey2+56],[ex2+13,ey2+56],[ex2+11,ey2+74],[ex2-11,ey2+74]],sM,sB,ed);
+      plate(g,[[ex2-19,ey2+42],[ex2+19,ey2+42],[ex2+18,ey2+50],[ex2-18,ey2+50]],sT,sM,ed);
+      rivet(g,ex2-12,ey2+46,eH);rivet(g,ex2+12,ey2+46,eH);
+      plate(g,[[ex2-16,ey2+56],[ex2+16,ey2+56],[ex2+13,ey2+76],[ex2-13,ey2+76]],sM,sB,ed);
       // knuckle cuts, so the fist is fingers and not a brick
-      for(var kn=0;kn<3;kn++)pl(g,ex2-7+kn*7,ey2+59,ex2-7+kn*7,ey2+67,rc,1.2);
+      for(var kn=0;kn<3;kn++)pl(g,ex2-8+kn*8,ey2+60,ex2-8+kn*8,ey2+69,rc,1.2);
       g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.24)+")";g.lineWidth=1;
-      g.beginPath();g.moveTo(ex2-11,ey2+58);g.lineTo(ex2+11,ey2+58);g.stroke();
+      g.beginPath();g.moveTo(ex2-13,ey2+58);g.lineTo(ex2+13,ey2+58);g.stroke();
       elbow(ex2,ey2-1);
       // joint light rides the elbow cap
       [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.6);c.beginPath();c.arc(ex2,ey2-1,1.8,0,7);c.fill();}});
