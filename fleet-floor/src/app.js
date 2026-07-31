@@ -3158,7 +3158,29 @@ function buildKimi(t,st){
 
   /* ---- 6 · waist cincture + nozzle cowl ---- */
   // overlapping armoured leaves, like scale mail — layered, not extruded
+  /* The middle leaf is GONE: in its place, the abdomen's service band — the
+     recess the crew stopped re-armouring. Twin hydraulic rams, a ribbed
+     bellows spine, and the cable run, all in a cavity the furnace glow
+     reaches from above. The unit's waist is a machine, not a skirt. */
+  (function(){var by2=BY+58;
+    plate(g,[[cx-50,by2],[cx+50,by2],[cx+54,by2+22],[cx-54,by2+22]],"#0a0e15","#04070b","#1d2530");
+    if(!offl){var ag=g.createLinearGradient(0,by2,0,by2+22);
+      ag.addColorStop(0,pk(0.12));ag.addColorStop(1,pk(0.02));
+      g.fillStyle=ag;g.fillRect(cx-50,by2,100,22);}
+    // ribbed bellows spine, centre
+    for(var rb2=0;rb2<5;rb2++){pl(g,cx-9,by2+3+rb2*4,cx+9,by2+3+rb2*4,"rgba(4,7,12,0.9)",2.2);
+      pl(g,cx-9,by2+2+rb2*4,cx+9,by2+2+rb2*4,"rgba(150,166,194,"+(offl?0.06:0.14)+")",0.8);}
+    // twin rams: dark cylinder, bright rod under load
+    [-1,1].forEach(function(rs){var rx2=cx+rs*30;
+      plate(g,[[rx2-6,by2+2],[rx2+6,by2+2],[rx2+6,by2+12],[rx2-6,by2+12]],sM,sB,ed);
+      pl(g,rx2,by2+12,rx2,by2+21,"rgba(8,12,18,0.95)",5);
+      pl(g,rx2,by2+12,rx2,by2+21,"rgba(196,212,240,"+(offl?0.10:0.30)+")",1.6);});
+    // corner grommet bolts
+    bolt(g,cx-46,by2+4,2,offl?0.05:0.18);bolt(g,cx+46,by2+4,2,offl?0.05:0.18);
+    bolt(g,cx-48,by2+18,2,offl?0.05:0.18);bolt(g,cx+48,by2+18,2,offl?0.05:0.18);
+    if(!offl)pl(g,cx-52,by2+21.2,cx+52,by2+21.2,pkh(0.21*th),1.4);})();
   for(var lf=0;lf<3;lf++){
+    if(lf===1)continue;
     var lw=58-lf*12, ly=BY+36+lf*22;
     plate(g,[[cx-lw,ly],[cx+lw,ly],[cx+lw+8,ly+20],[cx+6,ly+20],[cx,ly+15],[cx-6,ly+20],[cx-lw-8,ly+20]],lf%2?sM:sT,sB,ed);
     cavity(g,cx-lw-8,ly+13,(lw+8)*2,6,0.5);
