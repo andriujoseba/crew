@@ -3281,6 +3281,19 @@ function buildKimi(t,st){
   drawArm(-1);
   if(!work)drawArm(1);           // the flexed right arm waits for the torso
 
+  /* ---- 2b · intake scoops, behind everything ----
+     Two ram-air ducts rise between the head and the cowls — a nuclear torch
+     still breathes coolant. Drawn before the chest so only their throats
+     clear the trapezius line; the mouths are the one new thing on the
+     silhouette's crown. */
+  [-1,1].forEach(function(sg){
+    var ix=cx+sg*78;
+    plate(g,[[ix-sg*14,BY-62],[ix-sg*8,BY-90],[ix+sg*4,BY-96],[ix+sg*13,BY-89],[ix+sg*12,BY-62]],sM,sB,ed);
+    g.fillStyle="#04070c";g.beginPath();g.ellipse(ix+sg*2,BY-91,8,3.6,sg*0.28,0,7);g.fill();
+    g.strokeStyle="rgba(186,204,238,"+(offl?0.07:0.18)+")";g.lineWidth=1.1;
+    g.beginPath();g.ellipse(ix+sg*2,BY-91,8,3.6,sg*0.28,3.4,6.1);g.stroke();
+    pl(g,ix-sg*12,BY-68,ix-sg*7,BY-86,"rgba(4,8,14,0.5)",1.2);});
+
   /* ---- 3 · CHEST: the bunker ---- */
   // under-torso shadow plate
   plate(g,[[cx-88,BY+20],[cx+88,BY+20],[cx+64,BY+66],[cx-64,BY+66]],sM,"#05080d",ed);
@@ -3291,6 +3304,14 @@ function buildKimi(t,st){
   pl(g,cx-96,BY-62,cx-34,BY-40,"rgba(4,8,14,0.4)",1.3);                          // facet seams
   pl(g,cx+96,BY-62,cx+34,BY-40,"rgba(4,8,14,0.4)",1.3);
   pl(g,cx-95,BY-61,cx+95,BY-61,"rgba(186,208,242,"+(offl?0.06:0.18)+")",1.4);    // crown catch
+  /* Crane lugs on the crown — nothing this heavy walks onto a transport.
+     Two bolted D-rings, worn bright where the shackles ride. */
+  [-1,1].forEach(function(sg){var lx2=cx+sg*58;
+    plate(g,[[lx2-7,BY-60],[lx2+7,BY-60],[lx2+5,BY-54],[lx2-5,BY-54]],sT,sB,ed);
+    bolt(g,lx2-3.5,BY-57,1.6,offl?0.05:0.2);bolt(g,lx2+3.5,BY-57,1.6,offl?0.05:0.2);
+    g.strokeStyle="#05080e";g.lineWidth=3;g.beginPath();g.arc(lx2,BY-60,4.6,Math.PI,0,false);g.stroke();
+    g.strokeStyle="rgba(200,216,244,"+(offl?0.10:0.30)+")";g.lineWidth=1.2;
+    g.beginPath();g.arc(lx2,BY-60,4.6,Math.PI+0.3,-0.3,false);g.stroke();});
   cavity(g,cx-84,BY+24,168,10,0.55);                                             // the glacis throws a hard line
   // plastron over the lower chest — bolted, KM-09X stencilled
   plate(g,[[cx-58,BY+6],[cx+58,BY+6],[cx+50,BY+34],[cx-50,BY+34]],sM,sB,ed);
