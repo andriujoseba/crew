@@ -3175,6 +3175,14 @@ function buildKimi(t,st){
   g.fillRect(cx-46,BY+55,4,1.4);g.fillRect(cx-10,BY+77,4,1.4);
   // the cowl: a heavy armoured cone with vector vanes
   plate(g,[[cx-46,BY+102],[cx+46,BY+102],[cx+24,nozY-4],[cx-24,nozY-4]],sM,sB,ed);
+  /* Jet-blast warning band around the cowl throat — engines carry hazard
+     stripes, and this one has carried them through every campaign: two ticks
+     scoured off entirely, the rest half-scorched. Albedo only, never lit. */
+  for(var hz=0;hz<10;hz++){
+    if(hz===2||hz===7)continue;
+    var hx0=cx-44+hz*8.8, ha=(hz%3===1?0.5:0.3)*(offl?0.45:1);
+    g.fillStyle=hz%2?"rgba(188,152,72,"+(ha*0.66)+")":"rgba(20,16,10,"+ha+")";
+    poly(g,[[hx0,BY+104],[hx0+6.6,BY+104],[hx0+4.4,BY+109],[hx0-2.2,BY+109]]);g.fill();}
   pl(g,cx-38,BY+106,cx-26,nozY-10,"rgba(10,14,21,0.95)",2.6);       // clamped feed line
   pl(g,cx-38,BY+106,cx-26,nozY-10,"rgba(130,144,170,"+(offl?0.06:0.16)+")",0.9);
   // clamps ride the line by fraction, so they tuck with the bell when it parks
