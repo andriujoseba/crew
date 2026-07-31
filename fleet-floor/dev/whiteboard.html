@@ -1117,7 +1117,8 @@ function drawMini(t,mx,my,mw,mh){
     /* The alert marker, over the unit's HEAD. It was pinned to rpy+34 — the top
        of the sprite's bounding box plus a guess — which is the head for claude
        and grok, who fill their box, and empty air well above codex, whose body
-       hangs low between six legs, and kimi, who is a wide drone low in frame.
+       hangs low between six legs, and kimi, who at the time was a wide drone
+       low in frame.
        The contact shadows already read a real anchor off the unit; there was no
        reason this did not.
        It is a badge rather than a bare glyph because a red "!" dropped on a
@@ -3545,8 +3546,8 @@ function buildKimi(t,st){
    Everything that puts a mark ABOVE a unit was using `hy` for this, and hy is
    the visor: the point a holo tether leaves from. Those are the same place on
    claude and grok, who wear their heads on top, and they are 93px apart on
-   codex, whose body hangs low inside an arch of six legs, and 62px apart on
-   kimi, whose rotors stand over its shell. So the room's offline diamond sat
+   codex, whose body hangs low inside an arch of six legs — and were 62px
+   apart on the drone kimi used to be. So the room's offline diamond sat
    among codex's legs instead of over it, in every room, for every state — the
    full-size twin of the misplaced "!" the god-view cell had.
    Measured rather than tabulated because a table of four numbers goes stale the
@@ -4566,13 +4567,11 @@ function drawTarget(t,dt){
   drawLampCone(t,lit,!offl,ROOM);   // light between wall attachments and robot
   stepSparks(dt);
   /* Depth. Every unit hangs or stands behind the near-plane station, which
-     crosses its shins — or, for kimi, its skirt. The special case this slot
-     used to carry is gone: offline kimi settled to the FLOOR, and once the
-     station moved into the near plane the floor meant "hidden" — a dark lump
-     that the taller worktop then swallowed whole, leaving the offline
-     diamond floating over an apparently empty desk. Offline kimi sags to
-     parking altitude now (L12), clearly above the worktop line, so it draws
-     where every other unit draws. */
+     crosses its shins — or, for kimi, its fists and cowl. The special case
+     this slot used to carry is gone, and the worry it answered went with the
+     drone: the old shell on the floor vanished behind the worktop entirely,
+     but the JUGGERNAUT's knuckle-rest keeps head, pauldrons and furnace
+     above the bench line, so it draws where every other unit draws. */
   drawRobot(t);
   if(ROOM==="builder"){ conveyor(t,STATE); crateBig(206,558);crateBig(182,588); }
   /* The in-tray. A review lab that is idle is a review lab with a queue on the

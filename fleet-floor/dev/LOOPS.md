@@ -1974,3 +1974,120 @@ ten-lens battery reads as a cold glow cluster at cell size — more sentinel
 there, not less.
 
 ![codex structure progression, round 7](shots/codex-structure/progression-7.webp)
+
+## Fourteen loops on kimi's unit — the JUGGERNAUT lands
+
+Kimi's unit was the last of the old fleet: a rounded screen-face drone that
+eleven polish loops had lit, scuffed and labelled without ever changing what
+it WAS — the only unit whose silhouette stayed a single primitive. PR #198 is
+kimi's own answer: five prototype rounds ending in JUGGERNAUT (KM-09X), a
+siege torso on a nuclear torch, operator-approved and handed off with a design
+package for the production port. This series is that port, drawn with the same
+loop discipline as claude's and codex's, judged in the rooms at 2x and in the
+god-view cells at 336px.
+
+**Loop 1 — the port.** The prototype was already written in the fleet grammar
+at sprite scale, so the concept crossed whole: the faceted glacis with its
+caged reactor furnace (bloom around the bars, never through), engine-cowl
+pauldrons over grav bells, the buried head — one pink optic, one amber glass
+eye, the crack that cost it still in the glass — hammer gauntlets in an
+A-stance, scale-armour waist over a vector-vane nozzle. What died with the
+drone: drawRobot's kimi hover special-case (the unit draws its own altitude),
+the offline "floating" flag (a dead torch means knuckles on the deck, two
+hard contacts), and the hover-ring air effect (the torch column washes the
+deck instead). What the room taught immediately: the near-plane bench eats
+everything below ~490, so the flame itself is scenery the room almost never
+shows.
+
+**Loop 2 — the A-stance clears the worktop.** The knuckle studs sat exactly
+on the worktop line and the pose the whole unit hangs from was being bitten
+off. BY 200→184; the cells confirmed the pauldron line survives at 336px.
+
+**Loop 3 — fleet war-metal, and a furnace that burns.** The prototype's
+blue-grey read PALE beside claude and codex under the same lamp. Kimi now
+presses from the same plate stock — vendor identity lives in the lights and
+the rim, never in the metal — and the reactor gets a black-body window, a
+hard white core falling fast to pink, and a chest wash tightened 72→54 so the
+glacis stays dark armour with a fire in it rather than pink armour.
+
+**Loop 4 — the head grows out of the chest.** A lit crown had floated the
+head up off the shoulders like a hat. Crown recessed (a buried head has no
+lid), zygomatic wedges with one hard lit plane each side at eye level — the
+anatomy that made claude read like a fighter — and a squared chin plate
+dropping onto the glacis so the two masses actually meet.
+
+**Loop 5 — the underlight pass.** The flame hides behind the bench, so the
+machine wears it: hard pink catches on every down-facing arris — fist bottoms
+and inner edges strongest (closest to the fire), each waist leaf's lower edge
+fainter to stronger toward the nozzle, the under-torso arris — all scaled by
+the live throttle so the light breathes with the jet.
+
+**Loop 6 — hammer gauntlets earn the name.** Forearms 14/17→18/21 (nothing on
+this unit you could close a hand around), a bolted wrist clamp, fist blocks
+58×66, studs 2.6→3.4 over deeper finger separations, the whole bottom face
+worn to a bare-metal striking band. Offline BY re-tuned so the bigger fists
+still land exactly on the deck.
+
+**Loop 7 — a veteran's plates never match.** The left cowl stays the forged
+original with its gouge. The right went with the eye: what hangs there is a
+field replacement — straight mill cuts, mill-scale a shade off, a proud weld
+bead with hammer ticks, bolts driven wherever they bit, the 09 re-stencilled
+three degrees crooked by whoever fitted it.
+
+**Loop 8 — the battles.** A bite out of the left pauldron rim cut with
+destination-out — metal gone, room showing through, the rim light catching
+the tear because the silhouette itself changed. A crack across the left
+glacis facet strapped mid-campaign. Soot climbing from the furnace lip
+(albedo, never emissive). Kill tallies in worn gold on the LEFT fist —
+counted where they were made: four and a strike-through, one stroke half
+gone.
+
+**Loop 9 — naked wires.** A three-line loom ducks out of the waist stack
+through grommets and back in two leaves down; a clamped feed line runs the
+cowl flank. The arm hoses sag 22→31 offline — dead hydraulics hang. The rim
+bite widened ~40%, because the codex lesson holds: the first cut is always
+too timid.
+
+**Loop 10 — the amber eye does not track.** Offline the skull settles 6px
+deeper between the cowls — no neck means "head down" is the whole head
+sinking into the chest. Idle, the threat-scan lives in the pink optic alone;
+the amber replacement glows but is set in its socket, and the mismatch
+between a sweeping eye and a fixed one is what makes the scan read as damage
+rather than animation.
+
+**Loop 11 — subtraction.** The prototype's glacis-corner nicks died in the
+port — those corners sit under the cowls here, so the nicks were floating on
+the pauldron paint; deleted. Grime weep only on the forged rim: a plate
+fitted last refit has not had time to stain.
+
+**Loop 12 — the bell parks with the fists.** The envelope sweep caught the
+flight-length nozzle spearing 32px through the deck the dead fists rest on,
+plus a cowl clamp floating below it. Offline the vector vanes gimbal up and
+the bell tucks: nozzle bottom lands on the knuckles' own line — the
+hand-off's stated dead posture, fists AND cowl on the floor, now a third
+reported contact. Clamps ride the feed line by fraction. LAYOUT.unit
+re-measured over all 36: `[316,279 → 624,613]` — kimi now binds left, right
+and top (pauldron tips wider than codex's splay, working head top highest in
+the fleet); codex keeps the bottom.
+
+**Loop 13 — the cowls breathe.** Three factory louvres punched through the
+forged cowl, the bell's pink leaking up through the slats — the only light
+the pauldron armour is allowed. The field plate never got them: two crude
+slots cut outboard of the stencil.
+
+**Loop 14 — the warning.** Jet-blast hazard stripes around the cowl throat,
+two ticks scoured off entirely, the rest half-worn — the fleet's hazard
+idiom carried in kimi's own fiction. Paint, not a light.
+
+Envelope over all 36: `[316.8, 279.7 → 623.9, 613.5]`, declared. Suite:
+395 ok, 0 failed. Cells re-swept at 336px: the silhouette that survives is
+chest-furnace-and-pauldrons — a hulk with a fire in it, where the drone used
+to vanish into the wall.
+
+![kimi structure progression, the port](shots/kimi-structure/progression.webp)
+![kimi structure progression, round 2](shots/kimi-structure/progression-2.webp)
+![kimi structure progression, round 3](shots/kimi-structure/progression-3.webp)
+![kimi structure progression, round 4](shots/kimi-structure/progression-4.webp)
+![kimi structure progression, round 5](shots/kimi-structure/progression-5.webp)
+![kimi structure progression, round 6](shots/kimi-structure/progression-6.webp)
+![kimi states](shots/kimi-structure/states.webp)
