@@ -3137,6 +3137,12 @@ function buildKimi(t,st){
     for(var fg=1;fg<4;fg++){pl(g,gxx-gw/2+fg*(gw/4),gyy+gh-30,gxx-gw/2+fg*(gw/4)-1,gyy+gh-33,"rgba(3,6,11,0.5)",1.4);}
     for(var ks=0;ks<4;ks++){bolt(g,gxx-gw/2+8+ks*((gw-16)/3),gyy+gh-33,2.6,offl?0.06:0.24);}
     pl(g,gxx-gw/2+4,gyy+gh-28.6,gxx+gw/2-8,gyy+gh-28.6,"rgba(198,216,246,"+(offl?0.08:0.2)+")",1.2); // fist bottom catch
+    /* the torch is below and inboard: the fist's bottom face and its inner
+       edge catch pink — the strongest of the underlight cues because the
+       fists hang closest to the fire */
+    if(!offl){pl(g,gxx-gw/2+4,gyy+gh-27,gxx+gw/2-8,gyy+gh-27,pkh(0.34*th),1.6);
+      var ie=gxx-sg*(gw/2-4);
+      pl(g,ie,gyy-22,ie-sg*3,gyy+gh-31,pk(0.22*th),1.4);}
     g.fillStyle="rgba(206,220,242,"+(offl?0.08:0.22)+")";                          // scuffed striking face
     g.fillRect(gxx-gw/2+5,gyy+gh-29.6,10,1.6);g.fillRect(gxx+4,gyy-26,8,1.6);
     // hydraulic hose: pauldron to gauntlet — one thick line, not spaghetti
@@ -3146,6 +3152,7 @@ function buildKimi(t,st){
   /* ---- 3 · CHEST: the bunker ---- */
   // under-torso shadow plate
   plate(g,[[cx-88,BY+20],[cx+88,BY+20],[cx+64,BY+66],[cx-64,BY+66]],sM,"#05080d",ed);
+  if(!offl)pl(g,cx-63,BY+65,cx+63,BY+65,pkh(0.22*th),1.5);   // its lower arris faces the fire
   // main glacis — one huge slab, faceted
   plate(g,[[cx-96,BY-62],[cx+96,BY-62],[cx+84,BY+30],[cx-84,BY+30]],sT,sB,ed);
   pl(g,cx,BY-62,cx,BY+30,"rgba(4,8,14,0.55)",1.6);                               // centre arris
@@ -3277,7 +3284,12 @@ function buildKimi(t,st){
   for(var lf=0;lf<3;lf++){
     var lw=58-lf*12, ly=BY+36+lf*22;
     plate(g,[[cx-lw,ly],[cx+lw,ly],[cx+lw+8,ly+20],[cx+6,ly+20],[cx,ly+15],[cx-6,ly+20],[cx-lw-8,ly+20]],lf%2?sM:sT,sB,ed);
-    cavity(g,cx-lw-8,ly+13,(lw+8)*2,6,0.5);}
+    cavity(g,cx-lw-8,ly+13,(lw+8)*2,6,0.5);
+    /* each leaf's lower edge catches the torch, stronger the lower the leaf
+       hangs — the underlight climbing the scale armour is what says the fire
+       is real when the flame itself sits behind the near-plane bench */
+    if(!offl){var la=(0.12+lf*0.09)*th;
+      pl(g,cx-lw-7,ly+19.2,cx-7,ly+19.2,pkh(la),1.4);pl(g,cx+7,ly+19.2,cx+lw+7,ly+19.2,pkh(la),1.4);}}
   // the cowl: a heavy armoured cone with vector vanes
   plate(g,[[cx-46,BY+102],[cx+46,BY+102],[cx+24,nozY-4],[cx-24,nozY-4]],sM,sB,ed);
   [-1,1].forEach(function(vn){
@@ -3300,7 +3312,7 @@ function buildKimi(t,st){
     g.fillStyle=ul;g.beginPath();g.arc(cx,nozY-10,90,0,7);g.fill();g.restore();
     [-128,128].forEach(function(dx){g.save();g.globalCompositeOperation="lighter";
       var uf=g.createRadialGradient(cx+dx*0.9,BY+120,2,cx+dx*0.9,BY+120,40);
-      uf.addColorStop(0,pk(0.06*th));uf.addColorStop(1,pk(0));
+      uf.addColorStop(0,pk(0.09*th));uf.addColorStop(1,pk(0));
       g.fillStyle=uf;g.beginPath();g.arc(cx+dx*0.9,BY+120,40,0,7);g.fill();g.restore();});}
 
   /* ---- 7 · offline: the beacon catches the left pauldron arris ---- */
