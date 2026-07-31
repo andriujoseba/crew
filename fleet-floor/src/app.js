@@ -2017,10 +2017,10 @@ function buildCodex(t,st){
        explains how six of these hold a heavy shell steady. Two hooked tips
        splayed against the direction of load is what an insect foot actually
        does, and it gives the contact shadows something to be cast BY. */
-    g.fillStyle=sB;g.beginPath();g.moveTo(fx-4.5,fy-4);g.lineTo(fx+4.5,fy-4);g.lineTo(fx+sgn*2.5,fy+6);g.closePath();g.fill();
+    g.fillStyle=sB;g.beginPath();g.moveTo(fx-4.5,fy-4);g.lineTo(fx+4.5,fy-4);g.lineTo(fx+sgn*2.5,fy+4.8);g.closePath();g.fill();
     g.strokeStyle=sT;g.lineWidth=2.4;g.lineCap="round";
-    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx-sgn*5,fy+5,fx-sgn*8,fy+1);g.stroke();
-    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx+sgn*5,fy+6,fx+sgn*9,fy+2);g.stroke();
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx-sgn*5,fy+4,fx-sgn*8,fy+1);g.stroke();
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx+sgn*5,fy+5,fx+sgn*9,fy+2);g.stroke();
     g.lineCap="butt";
     if(!offl){RB.fillStyle=te(0.85);RB.fillRect(fx-1,fy-4,2,2);RE.fillStyle=te(0.9);RE.fillRect(fx-1,fy-4,2,2);}
   }
