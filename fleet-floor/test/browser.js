@@ -160,22 +160,62 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   };
   const onScreen = (i, cam) => { const { x } = cellXY(i, cam); return x > 10 && x < geom.vw - 10; };
   // Slot geometry, shared by the scan and by re-entry's search.
-  const slotX = (col) => geom.MARGINL + col * (geom.CELLW + geom.GAPX) + geom.CELLW / 2;
-  const maxColIdx = Math.max(0, Math.floor((geom.vw - geom.MARGINL) / (geom.CELLW + geom.GAPX)));
+  /* Which ROSTER columns are on screen at this camera, and where.
+     This walked fixed VIEWPORT slots and scrolled the content past them, so it
+     never knew which roster column it was clicking — and that is what made a
+     click that TIMED OUT indistinguishable from a slot past the end of the
+     fleet. Both came back "did not open", and the loop treated both as empty
+     (`continue`). One signal for "nothing there" and "it went wrong" is the
+     same defect as #188's `grep -c`, and it cost the same way: an intermittent
+     miss recorded as a clean walk, surfacing as `16/17 boxes reached` with no
+     way to tell which failure it was.
+     Knowing the column index means the walk knows whether a cell MUST open.
+     Only the last column of an odd roster is legitimately half empty. */
+  const colsTotal = Math.ceil(roster.length / 2);
+  const colsOnScreen = (cam) => {
+    const out = [];
+    for (let c = 0; c < colsTotal; c++) {
+      const x = geom.MARGINL - cam + c * (geom.CELLW + geom.GAPX) + geom.CELLW / 2;
+      if (x >= 10 && x <= geom.vw - 10) out.push({ c, x });
+    }
+    return out;
+  };
   const stepPx = Math.max(200, geom.vw - geom.CELLW - 40);
   // The camera eases toward its target, so scrolling needs a settle wait.
   // Absolute positioning: rewind to 0 first, then wheel forward by `cam`, so
   // the camera lands somewhere known rather than "as far as it got".
+  /* The floor camera EASES — app.js drawFloor: `floorCam += (floorCamTarget -
+     floorCam) * 0.18` — so cells keep sliding for ~38 frames after a wheel
+     event. This used to be a fixed 800/1200 ms sleep, which is ample at 60fps
+     and nowhere near enough once the frame rate drops. It drops WITH FLEET
+     SIZE, because drawFloor renders at most one room still per frame
+     (`miniFills`), so every added box makes the glide longer in wall-clock.
+
+     Clicking mid-glide does not miss — it lands on a NEIGHBOURING cell and
+     opens an already-seen box. The walk records a successful read of the wrong
+     unit, and the box that should have been under the cursor is never seen:
+     `16 reads → 16 distinct, roster 17`, with the missing box moving between
+     runs (ff-nothired one run, ff-noauth the next). The old comment claimed
+     callers "verify by OUTCOME, so a short settle costs a retry, never a false
+     result" — that holds for enter(), which knows the box it wants, and not
+     for this walk, which does not.
+
+     app.js is inlined as a classic script, so its top-level `var floorCam` is
+     a window global: poll the real camera instead of guessing at a duration. */
+  const settleCam = async () => {
+    await page.waitForFunction(
+      () => typeof window.floorCam !== 'number'
+        || Math.abs(window.floorCam - window.floorCamTarget) < 0.5,
+      null, { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(80);        // one frame, so the last draw lands
+  };
   const scrollTo = async (cam) => {
     await page.mouse.move(geom.vw / 2, geom.topY + 40);
-    // No DOM signal for the canvas camera, so this one still waits — but every
-    // caller verifies by OUTCOME (enter() returns the box that actually
-    // opened), so a short settle costs a retry, never a false result.
     await page.mouse.wheel(-(totalW + 2000), 0);
-    await page.waitForTimeout(800);
+    await settleCam();
     if (cam > 0) {
       await page.mouse.wheel(cam, 0);
-      await page.waitForTimeout(1200);
+      await settleCam();
     }
   };
   /* POLL, never sleep-and-hope. A fixed 700 ms for the room to open and 1200 ms
@@ -197,6 +237,23 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const leave = async () => {
     await page.keyboard.press('Escape');
     await settle(async () => (await page.locator('body.floor').count()) === 1, 4000);
+  };
+  /* NEVER click while a console is open.
+     `leave()` ran only after a SUCCESSFUL read, so a click whose room opened
+     just after its settle window closed left the console up. The next click
+     then landed INSIDE that console, where `body.room` is present and
+     `#c-target` still names the PREVIOUS box — so the settle reported success
+     and the walk recorded a read of a box it had already seen, while the cell
+     it was aiming at was never visited. That is `16 reads -> 16 distinct,
+     roster 17` with a DIFFERENT box missing each run (ff-nothired, ff-noauth,
+     ff-disarmed across four), and it gets likelier with every cell added,
+     because every cell is another chance for one settle to lose its race.
+     Escape is idempotent on the floor, so this costs one DOM read per click
+     and removes the class: whatever room appears after a click can only have
+     come from that click. */
+  const ensureFloor = async () => {
+    if ((await page.locator('body.floor').count()) === 1) return;
+    await leave();
   };
   // Re-open a unit recorded by the scan, by the position it was found at.
   /* Re-entry SEARCHES for the box; it does not replay a position.
@@ -223,9 +280,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     // search: every slot at every camera step until the wanted box appears
     for (let cam = 0; ; cam = Math.min(cam + stepPx, camMax)) {
       await scrollTo(cam);
-      for (let col = 0; col <= maxColIdx; col++) {
-        const x = slotX(col);
-        if (x < 10 || x > geom.vw - 10) continue;
+      for (const { x } of colsOnScreen(cam)) {
         for (let row = 0; row < 2; row++) {
           const y = geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2;
           got = await openHere(x, y);
@@ -266,18 +321,29 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   for (let cam = 0; ; cam = Math.min(cam + stepPx, camMax)) {
     await scrollTo(cam);
     const readHere = [];              // boxes read at this scroll position, in layout order
-    for (let col = 0; col <= maxColIdx; col++) {
-      const x = slotX(col);
-      if (x < 10 || x > geom.vw - 10) continue;
+    for (const { c, x } of colsOnScreen(cam)) {
       for (let row = 0; row < 2; row++) {
         const y = geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2;
-        await page.mouse.click(x, y);
-        const opened = await settle(async () =>
-          (await page.locator('body.room').count()) === 1
-          && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), 4000);
-        if (!opened) continue;        // empty slot past the end of the fleet
+        // The ONLY genuinely empty slot is the second row of the last column
+        // of an odd roster. Every other cell exists and must open, so a failed
+        // click there is a lost race, not an absence — retry it once with a
+        // longer budget instead of silently recording the box as unreachable.
+        const slotIsReal = c * 2 + row < roster.length;
+        if (!slotIsReal) continue;
+        let opened = false;
+        for (const budget of [4000, 8000]) {
+          await ensureFloor();
+          await page.mouse.click(x, y);
+          opened = await settle(async () =>
+            (await page.locator('body.room').count()) === 1
+            && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), budget);
+          if (opened) break;
+        }
+        // A room that opened after its settle window must not be left up for
+        // the next click to land in.
+        if (!opened) { await ensureFloor(); continue; }
         const box = (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
-        readHere.push({ box, col, row });
+        readHere.push({ box, col: c, row });
         if (!seenBox.has(box)) {
           seenBox.set(box, true);
           visible.push({ x, y, cam, got: box, expect: box });
@@ -307,8 +373,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   ok('nav: cells open', visible.length > 0, visible.length + ' distinct boxes entered');
   // Scrolling is what makes this meaningful: without it the tail of the fleet
   // is never clicked, and the tail is where the odd states live.
+  /* Name the boxes that were missed. "16/17" says a walk failed; it does not
+     say whether the renderer dropped a cell, the cell would not open, or the
+     scan never reached it — and those want three different fixes. */
+  const missed = roster.map((u) => u.box).filter((b) => !seenBox.has(b));
   ok('nav: the whole fleet is reachable by scrolling', seenBox.size === roster.length,
-     `${seenBox.size}/${roster.length} boxes reached`);
+     `${seenBox.size}/${roster.length} boxes reached` +
+     (missed.length ? ` — never opened: ${missed.join(', ')}` : ''));
   if (LIVE) {
     // Every roster box appears exactly once across the scan. Combined with the
     // ordering check above, that is the identity property without needing to
