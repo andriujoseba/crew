@@ -2267,22 +2267,28 @@ function buildCodex(t,st){
     var rx=cx+sgn*24, ry=BY+rootY[i], fx=cx+sgn*footX[i], fy=footY[i];
     var k1h=Math.max(12,kneeH[i]-slump*1.3);
     var k1x=cx+sgn*(footX[i]*0.64+16), k1y=BY-k1h;                    // knee: high → steep femur
-    var k2x=cx+sgn*(footX[i]+30), k2y=BY+(fy-BY)*(0.56+(offl?0.16:0)); // ankle: low + well beyond foot → sharp flex
+    var k2x=cx+sgn*(footX[i]+27), k2y=BY+(fy-BY)*(0.56+(offl?0.16:0)); // ankle: low + well beyond foot → sharp flex
     /* Coxa socket. The knee and the ankle have had proper joints since loop
        2 and the place each leg meets the BODY was a 5.5px dot — so eight legs
        appeared to emerge from the hull rather than to be mounted on it. An
        armoured collar with a lit rim, and the hull side of the joint darker
        than the leg side, which is what says one goes inside the other. */
-    g.fillStyle="#04080c";g.beginPath();g.arc(rx,ry,9,0,7);g.fill();
-    g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(rx,ry,9,0,7);g.stroke();
+    g.fillStyle="#04080c";g.beginPath();g.arc(rx,ry,10.5,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(rx,ry,10.5,0,7);g.stroke();
     var cxg=g.createRadialGradient(rx-sgn*3,ry-3,1,rx,ry,9);
     cxg.addColorStop(0,"rgba(150,182,196,"+(offl?0.16:0.38)+")");
     cxg.addColorStop(0.6,"rgba(48,62,72,0.45)");cxg.addColorStop(1,"rgba(3,7,11,0.75)");
-    g.fillStyle=cxg;g.beginPath();g.arc(rx,ry,6.6,0,7);g.fill();
-    g.fillStyle=sM;g.beginPath();g.arc(rx+sgn*3,ry,4.4,0,7);g.fill();  // coxa stub
-    limbSeg(g,rx,ry,k1x,k1y,7.5,5.5,sM,sB);   // femur: up + out
-    limbSeg(g,k1x,k1y,k2x,k2y,5.5,4,sT,sB);   // tibia: down + out past the foot
-    limbSeg(g,k2x,k2y,fx,fy,4.5,2.6,sM,sB);   // tarsus: down + in to the foot (the flex)
+    g.fillStyle=cxg;g.beginPath();g.arc(rx,ry,7.8,0,7);g.fill();
+    g.fillStyle=sM;g.beginPath();g.arc(rx+sgn*3.6,ry,5.4,0,7);g.fill();  // coxa stub
+    /* Loop 14 — the legs put on mass (operator: "they look like straws").
+       Loop 1 armoured the wire; this loop admits the wire itself was the
+       problem. Every segment's wall thickness goes up by half again — a limb
+       that carries a war hull is a forging, not tubing — the joints and the
+       claws scale with it, and the ankle overshoot pulls in 3px so the WIDER
+       tarsus still flexes inside the same measured envelope. */
+    limbSeg(g,rx,ry,k1x,k1y,11,8,sM,sB);      // femur: up + out
+    limbSeg(g,k1x,k1y,k2x,k2y,8,5.8,sT,sB);   // tibia: down + out past the foot
+    limbSeg(g,k2x,k2y,fx,fy,6,3.2,sM,sB);     // tarsus: down + in to the foot (the flex)
     /* Loop 1 — the leg is an assembly, not a wire. Six identical bare rods
        under the heaviest shell in the fleet is the claim that nothing moves
        them. Each femur now carries a chamfered armour plate bolted along its
@@ -2294,15 +2300,15 @@ function buildCodex(t,st){
        behind the dome — the abdomen overhangs everything inboard of its own
        edge. A knee ram, femur underside to upper tibia, lives in the span
        the room can actually see, and it is the joint that works hardest.) */
-    ram(g,rx+(k1x-rx)*0.5,ry+(k1y-ry)*0.5+8,k1x+(k2x-k1x)*0.34,k1y+(k2y-k1y)*0.34+3,4);
-    limbArmor(g,rx,ry,k1x,k1y,0.18,0.92,1.5,4.5);
-    limbArmor(g,k1x,k1y,k2x,k2y,0.12,0.6,1,3.5);
-    joint(g,k1x,k1y,5.5); joint(g,k2x,k2y,4.5);
+    ram(g,rx+(k1x-rx)*0.5,ry+(k1y-ry)*0.5+10,k1x+(k2x-k1x)*0.34,k1y+(k2y-k1y)*0.34+4,5);
+    limbArmor(g,rx,ry,k1x,k1y,0.18,0.92,2,6);
+    limbArmor(g,k1x,k1y,k2x,k2y,0.12,0.6,1.4,4.8);
+    joint(g,k1x,k1y,7.5); joint(g,k2x,k2y,6);
     /* The knee is capped, not dotted: a fitted shield over the joint, bolted
        once, angled with the femur so each pair reads as machinery in phase. */
     var kn=Math.atan2(k1y-ry,k1x-rx);
     g.save();g.translate(k1x,k1y);g.rotate(kn);
-    plate(g,[[-7,-7],[5,-7],[8,0],[5,6],[-7,6]],sT,sM,ed);g.restore();
+    plate(g,[[-10,-9.5],[7,-9.5],[11,0],[7,8],[-10,8]],sT,sM,ed);g.restore();
     rivet(g,k1x-1,k1y-1,eH);
     /* Loop 10 — paint gone from the lips that lead. Constants, not noise: a
        nick is a place, and it stays where it happened. The outer legs work
@@ -2313,16 +2319,16 @@ function buildCodex(t,st){
         g.beginPath();g.moveTo(px3-1,py3-6);g.lineTo(px3+1.4,py3-3.8);g.stroke();}}
     // ankle clamp band where the tarsus takes the flex
     (function(){var dx=fx-k2x,dy=fy-k2y,ln=Math.hypot(dx,dy)||1,bx=k2x+dx*0.18,by2=k2y+dy*0.18,nx=-dy/ln,ny=dx/ln;
-      pl(g,bx+nx*5,by2+ny*5,bx-nx*5,by2-ny*5,"#0a0f18",3);
-      pl(g,bx+nx*5,by2+ny*5,bx-nx*5,by2-ny*5,eH,1);})();
+      pl(g,bx+nx*7,by2+ny*7,bx-nx*7,by2-ny*7,"#0a0f18",4);
+      pl(g,bx+nx*7,by2+ny*7,bx-nx*7,by2-ny*7,eH,1.2);})();
     /* Claws. Each leg ended in a small triangle — a point, with nothing that
        explains how six of these hold a heavy shell steady. Two hooked tips
        splayed against the direction of load is what an insect foot actually
        does, and it gives the contact shadows something to be cast BY. */
-    g.fillStyle=sB;g.beginPath();g.moveTo(fx-3,fy-3);g.lineTo(fx+3,fy-3);g.lineTo(fx+sgn*2,fy+5);g.closePath();g.fill();
-    g.strokeStyle=sT;g.lineWidth=1.6;g.lineCap="round";
-    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx-sgn*4,fy+4,fx-sgn*6,fy+1);g.stroke();
-    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx+sgn*4,fy+5,fx+sgn*7,fy+2);g.stroke();
+    g.fillStyle=sB;g.beginPath();g.moveTo(fx-4.5,fy-4);g.lineTo(fx+4.5,fy-4);g.lineTo(fx+sgn*2.5,fy+6);g.closePath();g.fill();
+    g.strokeStyle=sT;g.lineWidth=2.4;g.lineCap="round";
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx-sgn*5,fy+5,fx-sgn*8,fy+1);g.stroke();
+    g.beginPath();g.moveTo(fx,fy);g.quadraticCurveTo(fx+sgn*5,fy+6,fx+sgn*9,fy+2);g.stroke();
     g.lineCap="butt";
     if(!offl){RB.fillStyle=te(0.85);RB.fillRect(fx-1,fy-4,2,2);RE.fillStyle=te(0.9);RE.fillRect(fx-1,fy-4,2,2);}
   }
