@@ -3064,11 +3064,12 @@ function buildKimi(t,st){
     c.beginPath();c.moveTo(x0,y0);c.quadraticCurveTo(mx,my,x1,y1);c.stroke();}
   var pulse=offl?0:(work?(0.62+0.26*Math.sin(t*6)):(0.38+0.14*Math.sin(t*2)));
   var bob=(offl||reduced)?0:Math.sin(t*1.6)*2.2;
-  /* Chest centre. Powered it hangs with the gauntlets just clearing the
-     near-plane worktop line (~local 332); offline the torch dies and it drops
-     140px so the knuckles land exactly on the deck — the offline posture IS
-     this number. */
-  var BY=offl?340:200+bob;
+  /* Chest centre. Powered it hangs with the gauntlets clearing the near-plane
+     worktop line (~local 332) with visible air under the knuckle studs — the
+     A-stance is the pose and the worktop must not bite it. Offline the torch
+     dies and it drops until the knuckles land exactly on the deck — the
+     offline posture IS this number. */
+  var BY=offl?340:184+bob;
   var th=offl?0:(work?(0.78+0.22*Math.sin(t*11)+0.07*Math.sin(t*23)):(0.44+0.1*Math.sin(t*3)));
 
   /* ---- 0 · the torch (furthest plane) ----
