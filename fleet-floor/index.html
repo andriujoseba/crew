@@ -2270,10 +2270,9 @@ function buildCodex(t,st){
     /* Loop 10 — paint gone from the lips that lead. Constants, not noise: a
        nick is a place, and it stays where it happened. The outer legs work
        hardest, so they carry the most. */
-    if(i<2){g.strokeStyle="rgba(190,208,232,"+(offl?0.12:0.3)+")";g.lineWidth=1.4;
-      var nf=[0.3+i*0.14+(sgn>0?0.09:0),0.68-i*0.11];
-      for(var nn=0;nn<(2-i);nn++){var u2=nf[nn],px3=rx+(k1x-rx)*u2,py3=ry+(k1y-ry)*u2;
-        g.beginPath();g.moveTo(px3-1,py3-6);g.lineTo(px3+1.4,py3-3.8);g.stroke();}}
+    if(i===0){g.strokeStyle="rgba(190,208,232,"+(offl?0.12:0.3)+")";g.lineWidth=1.4;
+      var u2=0.55+(sgn>0?0.09:0),px3=rx+(k1x-rx)*u2,py3=ry+(k1y-ry)*u2;
+      g.beginPath();g.moveTo(px3-1,py3-6);g.lineTo(px3+1.4,py3-3.8);g.stroke();}
     // ankle clamp band where the tarsus takes the flex
     (function(){var dx=fx-k2x,dy=fy-k2y,ln=Math.hypot(dx,dy)||1,bx=k2x+dx*0.18,by2=k2y+dy*0.18,nx=-dy/ln,ny=dx/ln;
       pl(g,bx+nx*7,by2+ny*7,bx-nx*7,by2-ny*7,"#0a0f18",4);
@@ -2367,7 +2366,7 @@ function buildCodex(t,st){
      petal lines step down from the peak, each a dark cut with a lit lower
      lip, so the top of the hull reads as plates OVER plates. */
   g.save();g.beginPath();g.rect(ax-aw-2,ay-ah-6,aw*2+4,ah*0.72);g.clip();
-  [0.86,0.72].forEach(function(sc2){
+  [0.8].forEach(function(sc2){
     g.save();g.translate(ax,ay);g.scale(sc2,sc2);g.translate(-ax,-ay);
     g.strokeStyle="rgba(3,7,12,0.62)";g.lineWidth=2.2/sc2;hullPath(g);g.stroke();g.restore();
     g.save();g.translate(ax,ay+1.7);g.scale(sc2,sc2);g.translate(-ax,-ay);
@@ -2445,24 +2444,22 @@ function buildCodex(t,st){
      silhouette into something built, and cost two strokes each.
      Still inside the dome clip the grain opened above, so the plates end at
      the shell edge instead of running out into the room. */
-  [-0.34,0.06,0.46].forEach(function(f){var sy=ay+ah*f;
+  [-0.34,0.10].forEach(function(f){var sy=ay+ah*f;
     g.strokeStyle="rgba(3,7,12,0.62)";g.lineWidth=3;
-    g.beginPath();g.moveTo(ax-aw,sy-4);g.bezierCurveTo(ax-aw*0.35,sy+7,ax+aw*0.35,sy+7,ax+aw,sy-4);g.stroke();
-    g.strokeStyle="rgba(168,200,226,"+(offl?0.07:0.17)+")";g.lineWidth=1.4;
-    g.beginPath();g.moveTo(ax-aw,sy-6.4);g.bezierCurveTo(ax-aw*0.35,sy+4.6,ax+aw*0.35,sy+4.6,ax+aw,sy-6.4);g.stroke();});
+    g.beginPath();g.moveTo(ax-aw,sy-4);g.bezierCurveTo(ax-aw*0.35,sy+7,ax+aw*0.35,sy+7,ax+aw,sy-4);g.stroke();});
   g.restore();
   g.restore();
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
   // rim nicks (loop 10): the dome's leading edge meets the world first
   g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.32)+")";g.lineWidth=1.6;
-  [[-0.14,-0.96],[-0.52,-0.77],[-0.88,-0.27],[0.9,0.03]].forEach(function(np2){
+  [[-0.14,-0.96],[0.9,0.03]].forEach(function(np2){
     var nx3=ax+np2[0]*aw,ny3=ay+np2[1]*ah;
     g.beginPath();g.moveTo(nx3-1.2,ny3-1.2);g.lineTo(nx3+1.6,ny3+1.4);g.stroke();});
   /* Grime obeys gravity, not the power state: oily weep below the shell's
      rivets and the saddle bolts, in albedo, so a dead codex is exactly as
      dirty as a live one. */
   (function(){g.fillStyle="rgba(58,40,26,0.30)";
-    [[ax-aw+16,ay+8,9],[ax+aw-16,ay+8,7],[ax-18,ay-ah+7,6],[ax+18,ay-ah+7,8]].forEach(function(w){
+    [[ax-aw+16,ay+8,9],[ax+aw-16,ay+8,7]].forEach(function(w){
       poly(g,[[w[0]-1.1,w[1]],[w[0]+1.1,w[1]],[w[0]+0.5,w[1]+w[2]],[w[0]-0.5,w[1]+w[2]]]);g.fill();});
     pl(g,ax-19,ay-ah+8.6,ax+19,ay-ah+8.6,"rgba(0,0,0,0.32)",2); // the saddle sits ON the shell
   })();
@@ -2712,6 +2709,13 @@ function buildCodex(t,st){
       g.fillRect(pt[0]-1.5,pt[1]+k[1]-1.5,3,3);});
   })();
   g.globalAlpha=1;g.restore();
+  /* Loop 24 — the quiet pass (operator: "the last iteration + damage
+     starts to look like a bit too much"). Nothing new: the scorch fades to
+     a stain, the gouge heals to a scratch, the crack keeps its strap but
+     loses its stitch ticks, half the rim nicks and half the bolt weep go,
+     one tergite line and one crown petal go. Damage stays where it earns
+     the veteran read; everywhere else the metal calms down so the NEW
+     structure — mounts, ribs, lenses — is what the eye finds first. */
   /* Loop 8 — a service history. Every plate on the dome was the plate it
      shipped with. One repair, right flank: a scorch the shell never fully
      shed, and a patch of newer, bluer steel bolted over it — tacked with
@@ -2720,9 +2724,9 @@ function buildCodex(t,st){
      dark trench, bright torn lip, ending where whatever made it stopped. */
   g.save();hullPath(g);g.clip();
   (function(){var px2=ax+aw*0.42,py2=ay-ah*0.02;
-    var sc2=g.createRadialGradient(px2,py2,2,px2,py2,15);
-    sc2.addColorStop(0,"rgba(8,6,4,0.55)");sc2.addColorStop(0.7,"rgba(12,10,7,0.28)");sc2.addColorStop(1,"rgba(12,10,7,0)");
-    g.fillStyle=sc2;g.beginPath();g.arc(px2,py2,15,0,7);g.fill();
+    var sc2=g.createRadialGradient(px2,py2,2,px2,py2,11);
+    sc2.addColorStop(0,"rgba(8,6,4,0.32)");sc2.addColorStop(0.7,"rgba(12,10,7,0.16)");sc2.addColorStop(1,"rgba(12,10,7,0)");
+    g.fillStyle=sc2;g.beginPath();g.arc(px2,py2,11,0,7);g.fill();
     g.save();g.translate(px2,py2);g.rotate(-0.22);
     var pg=g.createLinearGradient(0,-9,0,9);pg.addColorStop(0,"#31405a");pg.addColorStop(1,"#1c2637");
     g.fillStyle=pg;g.fillRect(-8,-9,16,18);g.strokeStyle=ed;g.lineWidth=1.2;g.strokeRect(-8,-9,16,18);
@@ -2731,8 +2735,8 @@ function buildCodex(t,st){
     rivet(g,-5.5,-6,eH);rivet(g,5.5,-6,eH);rivet(g,-5.5,6,eH);rivet(g,5.5,6,eH);
     g.restore();
     var gx=ax-aw*0.42,gy=ay+ah*0.22;
-    pl(g,gx,gy,gx+16,gy+7,"rgba(3,7,12,0.65)",2.6);
-    pl(g,gx+0.6,gy-1,gx+16.6,gy+6,"rgba(170,192,222,"+(offl?0.12:0.3)+")",1);
+    pl(g,gx,gy,gx+16,gy+7,"rgba(3,7,12,0.45)",2);
+    pl(g,gx+0.6,gy-1,gx+16.6,gy+6,"rgba(170,192,222,"+(offl?0.08:0.2)+")",1);
     /* Loop 11 — BATTLE ONE: the strapped crack. Something split the left
        flank along a tergite once. The weld runs jagged — segment by segment,
        the way a torch chases a crack — with stitch ticks across it, and a
@@ -2743,9 +2747,6 @@ function buildCodex(t,st){
     g.moveTo(ck[0][0],ck[0][1]);for(var ci=1;ci<ck.length;ci++)g.lineTo(ck[ci][0],ck[ci][1]);g.stroke();
     g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.3)+")";g.lineWidth=1;g.beginPath();
     g.moveTo(ck[0][0],ck[0][1]-1.2);for(var ci2=1;ci2<ck.length;ci2++)g.lineTo(ck[ci2][0],ck[ci2][1]-1.2);g.stroke();
-    g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.28)+")";g.lineWidth=1.1;g.beginPath();
-    for(var st2=0;st2<5;st2++){var cu=st2/4,cxp=ck[0][0]+(ck[4][0]-ck[0][0])*cu,cyp=ay+ah*0.08;
-      g.moveTo(cxp-1.6,cyp-2.6);g.lineTo(cxp+1.6,cyp+2.6);}g.stroke();
     g.save();g.translate(ax-aw*0.52,ay+ah*0.09);g.rotate(1.35);
     var sg3=g.createLinearGradient(0,-5,0,5);sg3.addColorStop(0,"#31405a");sg3.addColorStop(1,"#1c2637");
     g.fillStyle="rgba(0,0,0,0.3)";g.fillRect(-4.5,-9.5,11,21);
