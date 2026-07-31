@@ -1952,11 +1952,19 @@ function buildCodex(t,st){
      picture — now the footprint narrows by a fifth and the knees ride lower,
      which also pulls the six contact shadows in with it for free. */
   var rest=(!work&&!offl)?1:0;
-  var rootY=[-4,6,16], footY=[550,558,552];
+  /* Loop 20 — the assembly admits where the legs live. All six legs used to
+     sprout from one hidden column behind the shell — the body was a lid
+     SITTING on a leg rack, which is why the two never read as one machine.
+     Now the pairs are mounted where a machine would mount them: the FRONT
+     pair hangs off ball mounts bolted to the lower flanks IN FRONT of the
+     hull — joint, coil spring and feed cable all on show — the SIDE pair
+     sockets through a gimbal ring fixed at the hull's edge, and only the
+     BACK pair keeps its joints out of sight behind the shell. */
+  var rootX=[60,74,24], rootY=[-14,-28,16], footY=[550,558,552];
   var footX=[150,106,60].map(function(v){return Math.round(v*(rest?0.79:1));});
   var kneeH=[74,92,78].map(function(v){return v*(rest?0.72:1);});
-  function drawLeg(sgn,i){
-    var rx=cx+sgn*24, ry=BY+rootY[i], fx=cx+sgn*footX[i], fy=footY[i];
+  function drawLeg(sgn,i,front){
+    var rx=cx+sgn*rootX[i], ry=BY+rootY[i], fx=cx+sgn*footX[i], fy=footY[i];
     var k1h=Math.max(12,kneeH[i]-slump*1.3);
     var k1x=cx+sgn*(footX[i]*0.64+16), k1y=BY-k1h;                    // knee: high → steep femur
     var k2x=cx+sgn*(footX[i]+27), k2y=BY+(fy-BY)*(0.56+(offl?0.16:0)); // ankle: low + well beyond foot → sharp flex
@@ -1965,6 +1973,7 @@ function buildCodex(t,st){
        appeared to emerge from the hull rather than to be mounted on it. An
        armoured collar with a lit rim, and the hull side of the joint darker
        than the leg side, which is what says one goes inside the other. */
+    if(i===2){
     g.fillStyle="#04080c";g.beginPath();g.arc(rx,ry,10.5,0,7);g.fill();
     g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(rx,ry,10.5,0,7);g.stroke();
     var cxg=g.createRadialGradient(rx-sgn*3,ry-3,1,rx,ry,9);
@@ -1972,6 +1981,7 @@ function buildCodex(t,st){
     cxg.addColorStop(0.6,"rgba(48,62,72,0.45)");cxg.addColorStop(1,"rgba(3,7,11,0.75)");
     g.fillStyle=cxg;g.beginPath();g.arc(rx,ry,7.8,0,7);g.fill();
     g.fillStyle=sM;g.beginPath();g.arc(rx+sgn*3.6,ry,5.4,0,7);g.fill();  // coxa stub
+    }
     /* Loop 14 — the legs put on mass (operator: "they look like straws").
        Loop 1 armoured the wire; this loop admits the wire itself was the
        problem. Every segment's wall thickness goes up by half again — a limb
@@ -1992,6 +2002,28 @@ function buildCodex(t,st){
        behind the dome — the abdomen overhangs everything inboard of its own
        edge. A knee ram, femur underside to upper tibia, lives in the span
        the room can actually see, and it is the joint that works hardest.) */
+    if(front){
+      // bolted mount plate on the flank, the ball in it, and the suspension on show
+      plate(g,[[rx-10,ry-7],[rx+8,ry-9],[rx+10,ry+7],[rx-8,ry+9]],sT,sM,ed);
+      rivet(g,rx-6,ry-4,eH);rivet(g,rx+5,ry+5,eH);
+      g.fillStyle="#04080c";g.beginPath();g.arc(rx,ry,7,0,7);g.fill();
+      g.strokeStyle=ed;g.lineWidth=1.3;g.beginPath();g.arc(rx,ry,7,0,7);g.stroke();
+      g.strokeStyle=offl?"#2c3440":"#5b6c85";g.lineWidth=1.2;
+      g.beginPath();g.arc(rx-sgn*2,ry-2,4.4,Math.PI*0.9,Math.PI*1.6);g.stroke();
+      // coil spring root → femur: the spring a walker's front mount needs
+      (function(){var sx1=rx+(k1x-rx)*0.42,sy1=ry+(k1y-ry)*0.42+7,
+        dx=sx1-rx,dy=sy1-(ry+6),ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;
+        [["#0a0f18",3],[offl?"#39424f":"#8ea4c0",1.1]].forEach(function(st){
+          g.strokeStyle=st[0];g.lineWidth=st[1];g.beginPath();g.moveTo(rx,ry+6);
+          for(var q2=1;q2<7;q2++){var u4=q2/7,s4=(q2%2?1:-1);
+            g.lineTo(rx+dx*u4+nx*3.4*s4,ry+6+dy*u4+ny*3.4*s4);}
+          g.lineTo(sx1,sy1);g.stroke();});})();
+      // slack feed cable off the hull into the femur
+      var cby=ry+20+(offl?5:0);
+      [["#05080e",2.6],[offl?"#2c3440":"#5b6c85",1]].forEach(function(st){
+        g.strokeStyle=st[0];g.lineWidth=st[1];g.beginPath();
+        g.moveTo(rx-sgn*8,ry+8);g.quadraticCurveTo(rx-sgn*2,cby,rx+(k1x-rx)*0.6,ry+(k1y-ry)*0.6+10);g.stroke();});
+    }
     ram(g,rx+(k1x-rx)*0.5,ry+(k1y-ry)*0.5+10,k1x+(k2x-k1x)*0.34,k1y+(k2y-k1y)*0.34+4,5);
     limbArmor(g,rx,ry,k1x,k1y,0.18,0.92,2,6);
     limbArmor(g,k1x,k1y,k2x,k2y,0.12,0.6,1.4,4.8);
@@ -2024,7 +2056,16 @@ function buildCodex(t,st){
     g.lineCap="butt";
     if(!offl){RB.fillStyle=te(0.85);RB.fillRect(fx-1,fy-4,2,2);RE.fillStyle=te(0.9);RE.fillRect(fx-1,fy-4,2,2);}
   }
-  for(var i=0;i<3;i++){drawLeg(-1,i);drawLeg(1,i);}
+  for(var i=1;i<3;i++){drawLeg(-1,i);drawLeg(1,i);}
+  var drawFrontLegs=function(){drawLeg(-1,0,true);drawLeg(1,0,true);};
+  // the side pair's gimbal rings sit at the hull's edge, drawn after it
+  var drawSideGimbals=function(){[-1,1].forEach(function(sg){
+    var gx1=cx+sg*84, gy1=BY-24;
+    g.fillStyle="#04080c";g.beginPath();g.arc(gx1,gy1,6.5,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.6;g.beginPath();g.arc(gx1,gy1,6.5,0,7);g.stroke();
+    g.strokeStyle=offl?"#2c3440":"#5b6c85";g.lineWidth=1.2;
+    g.beginPath();g.arc(gx1-sg*2,gy1-2,4,Math.PI*0.9,Math.PI*1.6);g.stroke();
+    rivet(g,gx1-sg*5,gy1+4,eH);});};
 
   // ---- abdomen (faceted war hull) ----
   /* Loop 15 — the shell stops being a balloon (operator: "almost a sphere…
@@ -2106,15 +2147,24 @@ function buildCodex(t,st){
      lower lip, angled with the jaw facet — the structure a shell this size
      would actually have, and the first thing on it that looks like it could
      take a hit and vent it. */
+  /* (Loop 20 rebuilt these: slats → the rib CAGE. Claude's waist earned its
+     read by showing bone: a dark cavity with the structure crossing it. The
+     flank now opens into one recessed cavity per side with four rib hoops
+     spanning it — each a curved bar, lit on its outer edge — and the cavity
+     runs deeper toward the rear, so the shell reads as plated OVER a frame
+     rather than solid through. */
   [-1,1].forEach(function(sg){
-    for(var rv=0;rv<3;rv++){
-      var rxc=ax+sg*(0.44+rv*0.155)*aw, ryc=ay+(0.14+rv*0.115)*ah;
-      g.save();g.translate(rxc,ryc);g.rotate(sg*0.42);
-      g.fillStyle="rgba(2,5,9,"+(0.78-rv*0.08)+")";
-      poly(g,[[-9,-2.6],[9,-3.4],[10,2.6],[-8,3.2]]);g.fill();
-      g.strokeStyle="rgba(150,175,205,"+(offl?0.10:0.22)+")";g.lineWidth=1;
-      g.beginPath();g.moveTo(-8,3.2);g.lineTo(10,2.6);g.stroke();
-      g.restore();}});
+    g.save();g.translate(ax+sg*0.58*aw,ay+0.26*ah);g.rotate(sg*0.42);
+    g.fillStyle="#02050a";poly(g,[[-16,-9],[15,-11],[18,8],[-14,10]]);g.fill();
+    g.strokeStyle=rc;g.lineWidth=1.2;poly(g,[[-16,-9],[15,-11],[18,8],[-14,10]]);g.stroke();
+    for(var rv=0;rv<4;rv++){var rxr=-12+rv*8.6;
+      g.strokeStyle="#1c2634";g.lineWidth=3;g.beginPath();
+      g.moveTo(rxr,-8.4);g.quadraticCurveTo(rxr+3.4,0,rxr,9);g.stroke();
+      g.strokeStyle=offl?"#39424f":"#5f7390";g.lineWidth=1.2;g.beginPath();
+      g.moveTo(rxr+1.1,-8.4);g.quadraticCurveTo(rxr+4.5,0,rxr+1.1,9);g.stroke();}
+    g.fillStyle="rgba(0,0,0,0.5)";poly(g,[[-16,-9],[15,-11],[15,-6],[-16,-4]]);g.fill();
+    g.restore();});
+  drawSideGimbals();
   /* Brushed metal. The carapace is the single largest shape codex has and it
      was a vertical two-stop gradient — perfectly smooth, which is the one
      surface quality a machined shell does not have. Anisotropic streaks
@@ -2463,6 +2513,7 @@ function buildCodex(t,st){
   })();
   g.restore();
   cavity(g,hxx-43,hy2-25,86,26,0.5);
+  drawFrontLegs();
   /* Loop 12 — BATTLE TWO: the bite. Something took a piece of the dome's
      upper-right rim and kept it. Cut to transparency, not painted dark, so
      the room shows through the tear and the rim light — computed from the
