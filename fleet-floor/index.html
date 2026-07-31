@@ -2371,12 +2371,39 @@ function buildCodex(t,st){
   });
 
   // ---- front manipulators ----
+  /* Loop 6 — the pedipalps join the same machine as the legs. Two bare
+     two-segment wires hung off the head in every state: the idle pose WAS
+     the offline pose, and neither had a hand, just an end. Now the arms
+     speak the leg language — armoured upper segment, capped elbow, a clamp
+     band at the wrist — and they end in a two-finger gripper. And they POSE:
+     tucked up under the chin at rest (what a spider actually does with its
+     palps), slack and hanging when the power is gone, raised with the tool
+     when working. */
   var handR;
-  (function(){var rx=hxx-20,ry=hy2+14,ex=hxx-30,ey=hy2+30,tx2=hxx-18,ty=hy2+42;limbSeg(g,rx,ry,ex,ey,4,3,sM,sB);limbSeg(g,ex,ey,tx2,ty,3,2,sT,sB);joint(g,ex,ey,3);})();
-  (function(){var rx=hxx+20,ry=hy2+14;
-    if(work){var ex=hxx+30,ey=hy2-4,tx2=hxx+22,ty=hy2-30;limbSeg(g,rx,ry,ex,ey,4,3,sM,sB);limbSeg(g,ex,ey,tx2,ty,3,2.2,sT,sB);joint(g,ex,ey,3);plate(g,[[tx2-5,ty-5],[tx2+6,ty-6],[tx2+5,ty+5],[tx2-6,ty+4]],sM,sB,ed);handR={x:tx2+2,y:ty};}
-    else{var ex=hxx+30,ey=hy2+30,tx2=hxx+18,ty=hy2+42;limbSeg(g,rx,ry,ex,ey,4,3,sM,sB);limbSeg(g,ex,ey,tx2,ty,3,2,sT,sB);joint(g,ex,ey,3);handR={x:tx2,y:ty};}
-  })();
+  function palp(sg,mode){
+    var rx=hxx+sg*20,ry=hy2+14,ex,ey,tx2,ty;
+    if(mode==="raise"){ex=hxx+sg*30;ey=hy2-4;tx2=hxx+sg*22;ty=hy2-30;}
+    else if(mode==="hang"){ex=hxx+sg*29;ey=hy2+34;tx2=hxx+sg*25;ty=hy2+52;}
+    else{ex=hxx+sg*33;ey=hy2+24;tx2=hxx+sg*13;ty=hy2+33;}
+    limbSeg(g,rx,ry,ex,ey,4.5,3.5,sM,sB);
+    limbArmor(g,rx,ry,ex,ey,0.15,0.85,0.5,3);
+    limbSeg(g,ex,ey,tx2,ty,3.2,2.4,sT,sB);joint(g,ex,ey,3.4);
+    // wrist clamp
+    (function(){var dx=tx2-ex,dy=ty-ey,ln=Math.hypot(dx,dy)||1,bx=ex+dx*0.72,by2=ey+dy*0.72,nx=-dy/ln,ny=dx/ln;
+      pl(g,bx+nx*3.4,by2+ny*3.4,bx-nx*3.4,by2-ny*3.4,"#0a0f18",2.2);
+      pl(g,bx+nx*3.4,by2+ny*3.4,bx-nx*3.4,by2-ny*3.4,eH,0.8);})();
+    return {x:tx2,y:ty,ex:ex,ey:ey};
+  }
+  function gripper(p,sg){var dx=p.x-p.ex,dy=p.y-p.ey,ln=Math.hypot(dx,dy)||1,ux=dx/ln,uy=dy/ln;
+    g.strokeStyle=sT;g.lineWidth=1.8;g.lineCap="round";
+    g.beginPath();g.moveTo(p.x,p.y);g.quadraticCurveTo(p.x+ux*5-uy*4,p.y+uy*5+ux*4,p.x+ux*8-uy*2,p.y+uy*8+ux*2);g.stroke();
+    g.beginPath();g.moveTo(p.x,p.y);g.quadraticCurveTo(p.x+ux*5+uy*4,p.y+uy*5-ux*4,p.x+ux*8+uy*2,p.y+uy*8-ux*2);g.stroke();
+    g.lineCap="butt";}
+  var pL=palp(-1,offl?"hang":"tuck");gripper(pL,-1);
+  if(work){var pR=palp(1,"raise");
+    plate(g,[[pR.x-5,pR.y-5],[pR.x+6,pR.y-6],[pR.x+5,pR.y+5],[pR.x-6,pR.y+4]],sM,sB,ed);
+    handR={x:pR.x+2,y:pR.y};}
+  else{var pR2=palp(1,offl?"hang":"tuck");gripper(pR2,1);handR={x:pR2.x,y:pR2.y};}
   if(work&&handR){var h=handR;
     if(ROOM==="builder"){plate(g,[[h.x-2,h.y+2],[h.x+10,h.y-3],[h.x+14,h.y+2],[h.x+2,h.y+9]],"#2a3444","#12181f","#3d4c63");}
     else if(ROOM==="reviewer"){plate(g,[[h.x-3,h.y-9],[h.x+15,h.y-11],[h.x+15,h.y+2],[h.x-3,h.y+4]],"#1a2836","#0c1620","#3a5570");if(!offl){RB.fillStyle="rgba(130,205,255,0.75)";RB.fillRect(h.x+1,h.y-7,10,7);RE.fillStyle="rgba(130,205,255,0.7)";RE.fillRect(h.x+1,h.y-7,10,7);}}
