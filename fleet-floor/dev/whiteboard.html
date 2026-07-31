@@ -3252,8 +3252,9 @@ function buildKimi(t,st){
       pl(g,ie,gyy-22,ie-sg*3,gyy+gh-31,pk(0.22*th),1.4);}
     g.fillStyle="rgba(206,220,242,"+(offl?0.08:0.22)+")";                          // scuffed striking face
     g.fillRect(gxx-gw/2+5,gyy+gh-29.6,10,1.6);g.fillRect(gxx+4,gyy-26,8,1.6);
-    // hydraulic hose: pauldron to gauntlet — one thick line, not spaghetti
-    hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,22,5.2);
+    // hydraulic hose: pauldron to gauntlet — one thick line, not spaghetti.
+    // Dead, the pressure is gone and the line hangs slack.
+    hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,offl?31:22,5.2);
   });
 
   /* ---- 3 · CHEST: the bunker ---- */
@@ -3359,8 +3360,8 @@ function buildKimi(t,st){
      that removed metal, not paint. The room shows through and the rim light
      catches the tear on its own, because the silhouette itself changed. */
   RB.save();RB.globalCompositeOperation="destination-out";
-  poly(RB,[[cx-166,BY-36],[cx-150,BY-30],[cx-158,BY-22],[cx-169,BY-27]]);RB.fill();RB.restore();
-  pl(g,cx-166,BY-36,cx-158,BY-22,"rgba(198,216,246,"+(offl?0.1:0.3)+")",1.3);
+  poly(RB,[[cx-168,BY-38],[cx-144,BY-29],[cx-155,BY-17],[cx-170,BY-24]]);RB.fill();RB.restore();
+  pl(g,cx-168,BY-38,cx-155,BY-17,"rgba(198,216,246,"+(offl?0.1:0.3)+")",1.3);
   /* A crack across the left glacis facet, strapped rather than repaired —
      somebody bolted two straps over it mid-campaign and the unit kept flying. */
   g.strokeStyle="rgba(4,7,12,0.85)";g.lineWidth=1.6;
@@ -3437,8 +3438,22 @@ function buildKimi(t,st){
        is real when the flame itself sits behind the near-plane bench */
     if(!offl){var la=(0.12+lf*0.09)*th;
       pl(g,cx-lw-7,ly+19.2,cx-7,ly+19.2,pkh(la),1.4);pl(g,cx+7,ly+19.2,cx+lw+7,ly+19.2,pkh(la),1.4);}}
+  /* Naked wires — the rough-service read that costs no clutter: a three-line
+     loom ducking out of the waist stack through grommets and back in two
+     leaves down, and one clamped feed line running the cowl flank to the
+     nozzle. Service crews do not hide cable on a machine they open weekly. */
+  [0,1].forEach(function(wq){
+    hose(g,cx-44+wq*4,BY+57+wq*3,cx-10+wq*3,BY+79+wq*2,9-wq*3,2.4);});
+  g.fillStyle="#05080e";
+  g.beginPath();g.arc(cx-44,BY+58,3.4,0,7);g.fill();g.beginPath();g.arc(cx-8,BY+80,3.4,0,7);g.fill();
+  g.fillStyle="rgba(190,206,232,"+(offl?0.05:0.14)+")";
+  g.fillRect(cx-46,BY+55,4,1.4);g.fillRect(cx-10,BY+77,4,1.4);
   // the cowl: a heavy armoured cone with vector vanes
   plate(g,[[cx-46,BY+102],[cx+46,BY+102],[cx+24,nozY-4],[cx-24,nozY-4]],sM,sB,ed);
+  pl(g,cx-38,BY+106,cx-26,nozY-10,"rgba(10,14,21,0.95)",2.6);       // clamped feed line
+  pl(g,cx-38,BY+106,cx-26,nozY-10,"rgba(130,144,170,"+(offl?0.06:0.16)+")",0.9);
+  [[cx-35,BY+118],[cx-30,BY+142]].forEach(function(cl){
+    plate(g,[[cl[0]-3,cl[1]-2],[cl[0]+3,cl[1]-2],[cl[0]+3,cl[1]+2],[cl[0]-3,cl[1]+2]],sT,sB,ed);});
   [-1,1].forEach(function(vn){
     plate(g,[[cx+vn*30-5,BY+118],[cx+vn*30+5,BY+118],[cx+vn*26+3,nozY-6],[cx+vn*26-7,nozY-6]],sT,sB,ed);});
   // nozzle bell
