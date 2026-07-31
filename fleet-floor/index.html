@@ -3263,8 +3263,15 @@ function buildKimi(t,st){
     g.fillStyle=ch;g.beginPath();g.arc(rc2.x,rc2.y,54,0,7);g.fill();g.restore();
   }else{
     /* the dead furnace keeps one residual line behind the bars — powered
-       enough to be wrong, the fleet's SILENT idiom */
+       enough to be wrong, the fleet's SILENT idiom — and below it, an ember.
+       A nuclear core does not go black when the unit dies; it goes DARK RED
+       and stays that way for days. Heat, not power: albedo only, no
+       emissive, no pulse. */
     RB.fillStyle="rgba(150,168,190,0.3)";RB.fillRect(fw.x+4,rc2.y,fw.w-8,1.5);
+    var emb=RB.createRadialGradient(rc2.x,rc2.y+9,0.5,rc2.x,rc2.y+9,11);
+    emb.addColorStop(0,"rgba(255,72,44,0.16)");emb.addColorStop(0.6,"rgba(180,40,26,0.08)");
+    emb.addColorStop(1,"rgba(120,26,18,0)");
+    RB.fillStyle=emb;RB.fillRect(fw.x+1,fw.y+1,fw.w-2,fw.h-2);
   }
   [RB,RE].forEach(function(c,ci){if(ci===1&&offl)return;
     c.fillStyle=ci?"rgba(5,8,13,0.94)":"#0d121c";
@@ -3529,12 +3536,23 @@ function buildKimi(t,st){
       uf.addColorStop(0,pk(0.09*th));uf.addColorStop(1,pk(0));
       g.fillStyle=uf;g.beginPath();g.arc(cx+dx*0.9,BY+120,40,0,7);g.fill();g.restore();});}
 
-  /* ---- 7 · offline: the beacon catches the left pauldron arris ---- */
+  /* ---- 7 · offline: the beacon finds the wreck ----
+     The knuckle-rest hides most of the unit behind the bench, so the red
+     lands on what still shows: the left pauldron arris, the head's left
+     edge, the left scoop's mouth rim, and the bent mast — the highest metal
+     on the crown catches the most. All breathe with beaconPulse, same as
+     the rooms' own offline rims. */
   if(offl){var bp2=0.35+0.65*beaconPulse;
     pl(g,cx-172,BY-50,cx-160,BY-30,"rgba(255,64,52,"+(0.24*bp2)+")",2);
     pl(g,cx-46,hy-18,cx-40,hy+6,"rgba(255,64,52,"+(0.18*bp2)+")",1.6);
+    g.strokeStyle="rgba(255,64,52,"+(0.30*bp2)+")";g.lineWidth=1.1;
+    g.beginPath();g.ellipse(cx-76,BY-91,8,3.6,-0.28,3.4,5.6);g.stroke();
+    pl(g,cx+23.2,hy-32,cx+23.2,hy-38,"rgba(255,64,52,"+(0.30*bp2)+")",1.2);
+    pl(g,cx+24,hy-38,cx+20,hy-45,"rgba(255,64,52,"+(0.26*bp2)+")",1.1);
     RE.strokeStyle="rgba(255,64,52,"+(0.12*bp2)+")";RE.lineWidth=2.4;
-    RE.beginPath();RE.moveTo(cx-172,BY-50);RE.lineTo(cx-160,BY-30);RE.stroke();}
+    RE.beginPath();RE.moveTo(cx-172,BY-50);RE.lineTo(cx-160,BY-30);RE.stroke();
+    RE.strokeStyle="rgba(255,64,52,"+(0.10*bp2)+")";RE.lineWidth=1.6;
+    RE.beginPath();RE.moveTo(cx+24,hy-30);RE.lineTo(cx+20,hy-45);RE.stroke();}
 
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
   buildRim(offl?[94,84,90]:[255,114,182]);      // kimi: pink
