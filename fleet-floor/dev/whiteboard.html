@@ -3199,7 +3199,7 @@ function buildKimi(t,st){
   [-1,1].forEach(function(sg){
     var bx=cx+sg*118,by2=BY-8;
     g.fillStyle="#04070c";g.beginPath();g.ellipse(bx,by2+26,26,13,0,0,7);g.fill();     // bell mouth
-    if(!offl){var bg=0.5+0.3*pulse;
+    if(!offl){var bg=0.62+0.32*pulse;
       [RB,RE].forEach(function(c){c.save();c.globalCompositeOperation="lighter";
         var rg=c.createRadialGradient(bx,by2+26,2,bx,by2+26,26);
         rg.addColorStop(0,pkh(0.4*bg));rg.addColorStop(0.5,pk(0.18*bg));rg.addColorStop(1,pk(0));
@@ -3344,6 +3344,20 @@ function buildKimi(t,st){
       bolt(g,px-24,py-12,2.6,offl?0.06:0.22);bolt(g,px+14,py-16,2.2,offl?0.06:0.2);
       bolt(g,px+40,py+2,2.6,offl?0.06:0.22);bolt(g,px-6,py+18,2.2,offl?0.06:0.18);
     }
+    /* Louvres punched through the cowl face — these plates are ENGINE cowls
+       and an engine breathes. Powered, the bell's glow leaks up through the
+       slats; the leak is the only light the pauldron armour is allowed.
+       The forged left cowl carries its three factory louvres; the field
+       plate never got them — the crew cut two crude slots outboard of the
+       stencil and called it ventilated. */
+    var LVS=sg<0?[[6,8],[-10,11],[-26,14]]:[[16,10],[34,13]];
+    LVS.forEach(function(lvd){
+      var lx=px+lvd[0], lyv=py+lvd[1];
+      var crude=sg>0;
+      plate(g,[[lx-9,lyv],[lx+9,lyv-(crude?1:2)],[lx+(crude?8:10),lyv+3],[lx-8,lyv+(crude?4:5)]],"#0a0e16","#05080d","rgba(56,66,88,0.8)");
+      if(!crude)pl(g,lx-8,lyv+4.4,lx+9,lyv+2.6,"rgba(186,204,238,"+(offl?0.05:0.14)+")",1);
+      if(!offl){RB.fillStyle=pk(0.16+0.12*pulse);RB.fillRect(lx-6,lyv+0.5,12,2.2);
+        RE.fillStyle=pk(0.28+0.14*pulse);RE.fillRect(lx-6,lyv+0.5,12,2.2);}});
     // lower rim plate
     plate(g,[[px-sg*48,py+28],[px+sg*44,py+24],[px+sg*38,py+42],[px-sg*42,py+44]],sM,sB,ed);
     cavity(g,px-sg*44,py+24,86,6,0.5);
