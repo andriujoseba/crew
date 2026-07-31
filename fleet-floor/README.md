@@ -3,10 +3,14 @@
 A live-ops view of the `heavy-duty/crew` fleet. Two levels in one self-contained,
 dependency-free `index.html` — no build tools, no network, no external assets:
 
-- **God-view floor** — a scrollable grid of the fleet, one **cell per box**. Each
-  cell is a cinematic mini-room showing its robot (the vendor), role (builder /
-  reviewer / triage, read from the room + light), state, and queue. Up top: live
-  counts, **state/role filters**, and fleet **time metrics**; along the bottom:
+- **God-view floor** — the fleet as a **conference call**: a vertically
+  scrolling grid, one **webcam tile per box**. Each unit faces the camera in
+  close-up over a static, defocused backdrop in its role's colour (builder /
+  reviewer / triage), under an AR overlay of the facts an operator scans for:
+  state, uptime, **idle time over the last 24h**, queue depth, signal, a
+  **heartbeat trace** that flatlines with the box, the open session's timer and
+  a live **caption** naming the work item being handled. Up top: live counts,
+  **state/role filters**, and fleet **time metrics**; along the bottom:
   **active operations**, and a **fleet activity** stream.
 - **Agent console** — click any unit to zoom into its full room. The robot is
   framed by an operator console: identity, vitals (box health, uptime, cron, repo),

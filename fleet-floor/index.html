@@ -223,7 +223,7 @@ var DW=1280, DH=720, MODE="target", STATE="working", ROOM="builder", AGENT="clau
    agent+role. Those coincide in the current fleet (claude-builder is both),
    which is exactly why deriving it survived this long: nothing in the roster
    format requires it, and when they diverge the console labels one box while
-   its controls drive another. Set by drawCell (per cell) and focusUnit. */
+   its controls drive another. Set by drawCamCell (per tile) and focusUnit. */
 var BOX="claude-builder";
 function UNITID(u){return u.box||(u.agent+"-"+u.room);}
 function UNIT(){return BOX;}
@@ -852,203 +852,364 @@ function phoneBank(x,t,st){var y=612-30,live=st&&st!=="offline";
       c.beginPath();c.arc(x+12,y+19,4+16*rp2,0,7);c.stroke();c.restore();});}
   contactShadow(x+20,612,40);}
 
-/* ===================== GRID-CELL MINIATURE (god-view LOD) =====================
-   The cell used to be a SECOND room. It had its own wall, its own floor, its
-   own overhead lamp, its own role prop and its own signage, and it shared
-   nothing with the room view but the robot sprite. That is the whole reason
-   fifteen loops of art landed in the console and exactly one of them reached
-   the view an operator actually scans: two functions drawing one subject drift
-   the moment either is edited, and nothing ever makes them meet again. The
-   ghost "SECTOR-7" the room lost in loop 11, the desk through everybody's
-   shins, the role props too small to read — all of it was this.
+/* ===================== CONFERENCE CELL (god-view webcam tile) =====================
+   The cell used to be a camera pointed at the whole room — the real renderer,
+   borrowed through borrowRoom, cropped to a diorama. That kept the art honest,
+   and it kept the subject small: at 336px wide the unit an operator is meant
+   to recognise was a hundred-odd pixels in a frame that spent the rest of
+   itself on furniture. The fleet view's job is "who is here and how are they",
+   and a row of establishing shots answers it the long way round.
 
-   So the cell no longer draws a room. It renders the REAL one — the same
-   drawTarget, borrowed through the same seam the asset map uses — once per
-   unit into an offscreen still, blits that still every frame, and composites
-   over it only what has to keep moving. The god-view is a camera pointed at
-   the console now instead of a drawing of it, and the defects above are gone
-   because the code that drew them is gone.
+   So the cell is now a VIDEO CALL TILE. Each unit faces the camera in
+   close-up — the fleet view reads as a conference call with the roster — over
+   a static, defocused backdrop in its room's colour. Three layers, three
+   different lifetimes:
 
-   The still is what makes it affordable. One full room costs roughly 2.5x the
-   seven miniatures it replaced, so a room per cell per frame would not
-   survive; miniStill owns the budget that keeps it to one render a frame. */
+     backdrop  — static per role+size, blur baked in, rendered once ever.
+                 No animation by design: it is depth of field, not a scene.
+     portrait  — buildRobo cropped to head-and-shoulders, cached per unit and
+                 refreshed on a budget. The refresh IS the webcam frame rate:
+                 a feed that updates a few times a second reads as live video,
+                 so the budget is a feature here, not a compromise.
+     overlays  — AR-style telemetry drawn crisp every frame: state, uptime,
+                 idle time over the last 24h, queue, a heartbeat trace, the
+                 current session timer. These are the facts, so they never
+                 wait on the portrait's cadence. */
+var CAMREF={W:480,H:300};   // reference tile — renderMini and the whiteboard scale off it
 
-/* The cell's camera: which rectangle OF the room a cell is a picture of.
-   The room and the cell are within 1% of the same aspect (1280x720 against
-   316x180), so fitting the whole frame is possible and was the first thing
-   tried — and it hands back a unit three-quarters the height it had when the
-   cell drew its own, in a view whose whole job is telling four vendors apart
-   at a glance. So the cell is framed rather than fitted: a rectangle wide
-   enough to keep the bay, the sign and the lit props, cropped off the deep
-   racks at either end, and pushed down so the floor line lands where the
-   miniature always had it. The unit comes back to roughly the size it was, and
-   now it is standing in the real room. */
-/* L10 — MINI_FLOOR was set when nothing below FLOORY mattered; the near-plane
-   station now runs to y=668 and its plinth was landing exactly on the cell's
-   bottom edge. 0.865 buys the toe 12px of breathing room and costs the same
-   12px of empty wall above the lamp cone. */
-var MINI_ZOOM=0.78, MINI_CX=620, MINI_FLOOR=0.865;
-/* A fleet is a few dozen units and a window is one size, so the cache is small
-   by construction — but a roster that churns or a window dragged between two
-   displays would grow it forever, and each entry holds a canvas. Oldest out,
-   well above any real fleet. */
-var MINI_KEEP=64;
-function miniPrune(){
-  var ks=Object.keys(miniStills);if(ks.length<MINI_KEEP)return;
-  ks.sort(function(a,b){return miniStills[a].at-miniStills[b].at;});
-  for(var i=0;i<ks.length-MINI_KEEP+1;i++)delete miniStills[ks[i]];
+/* ---- static role backdrop --------------------------------------------------
+   Drawn sharp into a margin-padded scratch canvas, then blitted once through a
+   blur filter, so the cache holds finished pixels and the per-frame cost is a
+   single drawImage. The margin exists because a blur pulls transparency in
+   from the canvas edge; padding and cropping it off keeps the borders solid. */
+var camBGs={};
+function camBG(role,pw,ph){
+  var key=role+"|"+pw+"x"+ph, e=camBGs[key];
+  if(e)return e;
+  var M=Math.round(pw*0.06);
+  var tw=pw+M*2, th=ph+M*2;
+  var tmp=oc(tw,th), c=tmp.getContext("2d");
+  var P=role==="builder" ?{hi:[74,50,27], mid:[40,28,17], lo:[16,11,8],  g:[255,170,90]}
+       :role==="reviewer"?{hi:[32,60,90], mid:[20,38,58], lo:[8,15,26],  g:[110,190,255]}
+       :                  {hi:[64,47,98], mid:[39,30,64], lo:[15,12,27], g:[178,140,255]};
+  var g=c.createLinearGradient(0,0,0,th);
+  g.addColorStop(0,rgba(P.hi[0],P.hi[1],P.hi[2],1));
+  g.addColorStop(0.55,rgba(P.mid[0],P.mid[1],P.mid[2],1));
+  g.addColorStop(1,rgba(P.lo[0],P.lo[1],P.lo[2],1));
+  c.fillStyle=g;c.fillRect(0,0,tw,th);
+  /* Out-of-focus room shapes: a wall seam, two rack silhouettes, a few bokeh
+     lights in the role colour. Deliberately vague — after the blur they are
+     depth cues, not props. */
+  c.fillStyle="rgba(0,0,0,0.30)";c.fillRect(0,th*0.72,tw,th*0.28);
+  c.fillStyle=rgba(P.hi[0],P.hi[1],P.hi[2],0.5);c.fillRect(tw*0.06,th*0.16,tw*0.10,th*0.56);
+  c.fillStyle="rgba(0,0,0,0.28)";c.fillRect(tw*0.80,th*0.10,tw*0.13,th*0.62);
+  c.fillStyle="rgba(0,0,0,0.20)";c.fillRect(tw*0.30,th*0.24,tw*0.05,th*0.48);
+  var bok=[[0.16,0.22,0.028,0.55],[0.86,0.18,0.022,0.5],[0.70,0.30,0.016,0.4],[0.25,0.34,0.014,0.35]];
+  for(var b=0;b<bok.length;b++){var bk=bok[b];
+    var rg2=c.createRadialGradient(tw*bk[0],th*bk[1],1,tw*bk[0],th*bk[1],tw*bk[2]);
+    rg2.addColorStop(0,rgba(P.g[0],P.g[1],P.g[2],bk[3]));rg2.addColorStop(1,rgba(P.g[0],P.g[1],P.g[2],0));
+    c.fillStyle=rg2;c.beginPath();c.arc(tw*bk[0],th*bk[1],tw*bk[2],0,7);c.fill();}
+  var cv=oc(pw,ph), o=cv.getContext("2d");
+  o.filter="blur("+Math.max(4,Math.round(pw*0.014))+"px)";
+  o.drawImage(tmp,-M,-M);
+  o.filter="none";
+  /* The soft key the subject stands in, and a baked vignette — camera facts,
+     not scene effects, so they live in the cache too. */
+  var kg=o.createRadialGradient(pw*0.5,ph*0.34,ph*0.10,pw*0.5,ph*0.55,ph*0.85);
+  kg.addColorStop(0,rgba(P.g[0],P.g[1],P.g[2],0.10));kg.addColorStop(1,"rgba(0,0,0,0)");
+  o.fillStyle=kg;o.fillRect(0,0,pw,ph);
+  var vg=o.createRadialGradient(pw*0.5,ph*0.48,ph*0.45,pw*0.5,ph*0.52,ph*1.05);
+  vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.55)");
+  o.fillStyle=vg;o.fillRect(0,0,pw,ph);
+  o.globalAlpha=0.05;o.fillStyle="#000";
+  for(var sl=0;sl<ph;sl+=3)o.fillRect(0,sl,pw,1);
+  o.globalAlpha=1;
+  camBGs[key]=cv;return cv;
 }
-function miniCrop(dW,dH){
-  var sw=Math.min(DW,DH*(dW/dH)*MINI_ZOOM), sh=sw*(dH/dW);
-  var sx=Math.max(0,Math.min(DW-sw,MINI_CX-sw/2));
-  var sy=Math.max(0,Math.min(DH-sh,FLOORY-MINI_FLOOR*sh));
-  return {sx:sx,sw:sw,sy:sy,sh:sh};
-}
-/* A point the room reported, in cell coordinates. */
-function miniAt(a,dx0,dy0,dW,dH){var cr=miniCrop(dW,dH);return {x:dx0+(a.x-cr.sx)*(dW/cr.sw),y:dy0+(a.y-cr.sy)*(dH/cr.sh)};}
+
+/* ---- the portrait ----------------------------------------------------------
+   buildRobo, not borrowRoom: the tile needs the unit, not the hall, so the
+   still costs a sprite build instead of a full room render — cheap enough
+   that every visible feed refreshes a few times a second. Framing hangs off
+   the one face anchor every vendor already reports (`hy`, the visor line),
+   with a per-vendor crop width because a spider and a humanoid do not wear
+   their shoulders at the same span. */
+/* w — crop width in robo px (smaller = closer); fy — where the face line
+   sits down the frame; dy — bias in robo px for vendors whose `hy` is not
+   their eye line (kimi reports the cowl, a head lower than its optics). */
+var CAMFRAME={claude:{w:250,dy:0,fy:0.40},codex:{w:260,dy:14,fy:0.46},
+              grok:{w:206,dy:-2,fy:0.36},kimi:{w:330,dy:-38,fy:0.42}};
 function mnow(){return (window.performance&&performance.now)?performance.now():0;}
-
-var miniStills={};      // key -> {cv,at,jit,anchors}
-var miniFills=0;        // stills rendered THIS frame — drawFloor resets it
-var miniCost=0;         // what a still last cost, in ms, smoothed
-var MINI_WARM=0;        // settle frames before the still is taken
-var MINI_BUDGET=1;      // stills per frame, at most
-var MINI_TTL=4;         // seconds a still stays fresh
-var MINI_TTL_SLOW=24;   // ... on a machine where a room costs real time
-var MINI_SLOW_MS=40;    // ... which is this
-/* The still for the unit the globals currently name, re-rendering it when the
-   one we hold is missing, the wrong size or stale — but never more than
-   MINI_BUDGET of them in a frame, and never on a cadence the machine cannot
-   afford. A cell whose turn has not come blits the still it already had, which
-   is a picture of the same unit a few seconds ago; a cell that has never had
-   one gets a placeholder for a frame or two. Refresh times are jittered by a
-   phase off the unit's own name so that seven cells never all come due
-   together, and the cadence itself backs off if a room turns out to be
-   expensive here — which is what a software renderer or a loaded machine looks
-   like from inside the page. */
-function miniStill(t,dW,dH){
-  /* Keyed by size as well as by unit: the app and the asset map ask for the
-     same units at different scales, and a still that has to be resized is a
-     still that has to be re-rendered anyway. */
-  var pw=Math.max(1,Math.round(dW*dpr)),ph=Math.max(1,Math.round(dH*dpr));
-  var key=BOX+"|"+AGENT+"|"+ROOM+"|"+STATE+"|"+pw+"x"+ph;
-  var e=miniStills[key],ttl=(miniCost>MINI_SLOW_MS?MINI_TTL_SLOW:MINI_TTL);
+var camStills={}, camFills=0, camCost=0;
+var CAM_KEEP=64, CAM_BUDGET=2, CAM_SLOW_MS=14, CAM_TTL_SLOW=3.5;
+var CAM_TTL={working:0.30,idle:0.9,offline:2.5};
+function camPrune(){
+  var ks=Object.keys(camStills);if(ks.length<CAM_KEEP)return;
+  ks.sort(function(a,b){return camStills[a].at-camStills[b].at;});
+  for(var i=0;i<ks.length-CAM_KEEP+1;i++)delete camStills[ks[i]];
+}
+function camStill(t,u,pw,ph){
+  var box=UNITID(u);
+  var key=box+"|"+u.agent+"|"+u.room+"|"+u.state+"|"+pw+"x"+ph;
+  var e=camStills[key];
+  var ttl=camCost>CAM_SLOW_MS?CAM_TTL_SLOW:(CAM_TTL[u.state]||0.9);
   if(e&&(t-e.at)<ttl*e.jit)return e;
-  if(miniFills>=MINI_BUDGET)return e||null;
-  miniFills++;
-  if(!e){miniPrune();e=miniStills[key]={cv:oc(pw,ph),at:0,jit:0.7+0.6*(strPhase(key)/6.283),anchors:null};}
-  var cr=miniCrop(dW,dH),t0=mnow();
-  borrowRoom({agent:AGENT,room:ROOM,state:STATE,box:BOX,t:t,warm:MINI_WARM},function(){
-    var c=e.cv.getContext("2d");
-    c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
-    c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
-    c.clearRect(0,0,pw,ph);
-    /* comp, not the chromatic split blit(): a 1.1px fringe scaled by 0.25 is
-       not visible at cell size and costs three full-frame tint passes. */
-    c.drawImage(comp,cr.sx,cr.sy,cr.sw,cr.sh,0,0,pw,ph);
-    e.anchors=lastAnchors;
-  });
+  if(camFills>=CAM_BUDGET)return e||null;
+  camFills++;
+  if(!e){camPrune();e=camStills[key]={cv:oc(pw,ph),at:0,jit:0.75+0.5*(strPhase(key)/6.283)};}
+  var t0=mnow(), sa=AGENT, ss=STATE;
+  AGENT=u.agent;STATE=u.state;
+  var info=buildRobo(t,u.state);
+  /* The role's key light lands on the unit, same rule as drawRobot's L17 tint:
+     a sprite that keeps studio-neutral colour in an amber room is a paste-up. */
+  var off=u.state==="offline";
+  var kt=off?[96,110,136]:u.room==="builder"?[255,201,135]:u.room==="reviewer"?[150,196,245]:[176,150,240];
+  RB.save();RB.setTransform(1,0,0,1,0,0);RB.globalCompositeOperation="source-atop";
+  var ktg=RB.createLinearGradient(0,60,0,RH*0.9);
+  ktg.addColorStop(0,rgba(kt[0],kt[1],kt[2],off?0.10:0.13));
+  ktg.addColorStop(1,rgba(kt[0],kt[1],kt[2],0));
+  RB.fillStyle=ktg;RB.fillRect(0,0,RW,RH);RB.restore();
+  var f=CAMFRAME[u.agent]||CAMFRAME.claude;
+  /* Static per-box framing jitter — no two operators mount a camera at the
+     same angle, and identical framing is what makes a grid read as clones. */
+  var jx=(strPhase(box)/6.283-0.5)*16, jy=(strPhase(box+"y")/6.283-0.5)*10;
+  var sw=f.w, sh=sw*(ph/pw);
+  var sx=Math.max(0,Math.min(RW-sw,260+jx-sw/2));
+  var sy=info.hy+f.dy-sh*f.fy+jy;
+  var c=e.cv.getContext("2d");
+  c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+  c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
+  c.clearRect(0,0,pw,ph);
+  if(off)c.filter="saturate(0.45) brightness(0.88)";
+  c.drawImage(robo,sx,sy,sw,sh,0,0,pw,ph);
+  c.filter="none";
+  c.globalCompositeOperation="lighter";
+  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx,sy,sw,sh,0,0,pw,ph);
+  /* The emissive pass, blurred like the room compositor's glow buffer but
+     scaled to portrait zoom. Two taps, not three: the third radius at this
+     size is a wash. */
+  var bl=Math.max(2,Math.round(pw/90));
+  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalCompositeOperation="source-over";c.globalAlpha=1;
+  AGENT=sa;STATE=ss;
   e.at=t;
-  var d=mnow()-t0;miniCost=miniCost?miniCost*0.6+d*0.4:d;
+  var d=mnow()-t0;camCost=camCost?camCost*0.6+d*0.4:d;
   return e;
 }
 
-function drawMini(t,mx,my,mw,mh){
-  if(mx===undefined){mw=336;mh=252;mx=22;my=VH-mh-40;}
-  var off=STATE==="offline",work=STATE==="working";
-  var acc=off?"#ff5147":"#ff9a3c";
-  X.save();X.textBaseline="alphabetic";
-  // card + drop shadow
-  X.fillStyle="rgba(0,0,0,0.6)";rr(X,mx-4,my-4,mw+8,mh+8,14);X.fill();
-  X.fillStyle="#05080e";rr(X,mx,my,mw,mh,11);X.fill();
-  // vendor bezel + RTS corner ticks
-  X.lineWidth=2;X.strokeStyle=off?"rgba(255,81,71,"+(0.5+0.35*Math.abs(Math.sin(t*4)))+")":"rgba(255,154,60,0.6)";rr(X,mx+1,my+1,mw-2,mh-2,10);X.stroke();
-  X.strokeStyle=acc;X.lineWidth=2;var T=12;
-  [[mx+6,my+6,1,1],[mx+mw-6,my+6,-1,1],[mx+6,my+mh-6,1,-1],[mx+mw-6,my+mh-6,-1,-1]].forEach(function(k){X.beginPath();X.moveTo(k[0],k[1]+T*k[3]);X.lineTo(k[0],k[1]);X.lineTo(k[0]+T*k[2],k[1]);X.stroke();});
-  // title bar
-  X.fillStyle="rgba(255,154,60,0.06)";rr(X,mx+8,my+8,mw-16,24,5);X.fill();
-  X.fillStyle=off?"#5a3030":"#ff9a3c";X.beginPath();X.arc(mx+22,my+20,4,0,7);X.fill();
-  X.textBaseline="middle";X.fillStyle="#dbe6f2";X.font="700 12px ui-monospace,monospace";X.fillText(UNIT(),mx+34,my+21);
-  var chip=work?[(ROOM==="builder"?"● BUILDING":ROOM==="reviewer"?"● REVIEWING":"● DISPATCH"),"#f7bd4e"]:off?["▲ SILENT","#ff5147"]:["● IDLE","#5fce9b"];
-  X.font="700 10px ui-monospace,monospace";var cwd=X.measureText(chip[0]).width;
-  X.fillStyle="rgba(0,0,0,0.5)";rr(X,mx+mw-cwd-26,my+11,cwd+16,18,5);X.fill();X.fillStyle=chip[1];X.fillText(chip[0],mx+mw-cwd-18,my+21);
-  /* Queue depth, promoted out of the diorama and into the chrome. It used to
-     be a line of 8px text on the miniature's own holo panel — the one prop
-     here that carried a fact rather than a mood. The room has a holo of its
-     own, but it is composed to be read at 1280 wide and says nothing legible
-     at a quarter of that, so the number moves to where a number can be read.
-     Everything left inside the viewport is now picture. */
-  var qt=off?"q—":"q"+dataOf(BOX,ROOM).queue.length;
-  X.font="700 10px ui-monospace,monospace";X.fillStyle="rgba(160,190,220,0.55)";
-  X.fillText(qt,mx+mw-cwd-32-X.measureText(qt).width,my+21);
-  X.textBaseline="alphabetic";
-  // ---- diorama viewport: the room itself ----
-  var dx0=mx+10,dy0=my+40,dW=mw-20,dH=mh-72;
-  X.save();rr(X,dx0,dy0,dW,dH,6);X.clip();
-  var still=miniStill(t,dW,dH);
-  if(still&&still.at){X.drawImage(still.cv,dx0,dy0,dW,dH);}
-  else{
-    /* No still yet — one frame, maybe two, while the budget comes round. The
-       room's own grade rather than a hole, so a cold grid reads as a room with
-       the lights coming up and not as a rendering failure. */
-    var PG=ROOM==="builder"?[38,28,18]:ROOM==="reviewer"?[22,32,46]:[32,26,48];
-    var pg=X.createLinearGradient(0,dy0,0,dy0+dH);
-    pg.addColorStop(0,rgba(PG[0],PG[1],PG[2],1));pg.addColorStop(1,"#03060c");
-    X.fillStyle=pg;X.fillRect(dx0,dy0,dW,dH);
+/* ---- AR widgets ------------------------------------------------------------
+   One beat of an EKG, p in [0,1): flat baseline, P bump, QRS spike, T wave.
+   Positive is DOWN (canvas y). */
+function ekgY(p){
+  if(p<0.06)return 0;
+  if(p<0.13)return -0.14*Math.sin((p-0.06)/0.07*Math.PI);
+  if(p<0.16)return 0.20*((p-0.13)/0.03);
+  if(p<0.20)return 0.20-1.20*((p-0.16)/0.04);
+  if(p<0.24)return -1.0+1.34*((p-0.20)/0.04);
+  if(p<0.27)return 0.34-0.34*((p-0.24)/0.03);
+  if(p<0.34)return 0;
+  if(p<0.48)return -0.24*Math.sin((p-0.34)/0.14*Math.PI);
+  return 0;
+}
+function drawEKG(x,y,w,h,t,rate,col,label){
+  var yb=y+h*0.62, amp=h*0.52;
+  X.save();
+  X.strokeStyle="rgba(255,255,255,0.07)";X.lineWidth=1;
+  X.beginPath();X.moveTo(x,yb);X.lineTo(x+w,yb);X.stroke();
+  if(rate<=0){ // flatline: the trace is the fact, so a dead unit draws a dead trace
+    X.strokeStyle=col;X.globalAlpha=0.75;X.lineWidth=1.4;
+    X.beginPath();X.moveTo(x,yb);X.lineTo(x+w,yb);X.stroke();X.globalAlpha=1;
+  }else{
+    var lg=X.createLinearGradient(x,0,x+w,0);
+    lg.addColorStop(0,"rgba(0,0,0,0)");lg.addColorStop(0.35,col);lg.addColorStop(1,col);
+    X.strokeStyle=lg;X.lineWidth=1.6;X.lineJoin="round";
+    X.beginPath();
+    for(var i=0;i<=w;i+=2){
+      var p=(t*rate-(w-i)*0.006)%1;if(p<0)p+=1;
+      var py=yb+ekgY(p)*amp;
+      if(i)X.lineTo(x+i,py);else X.moveTo(x+i,py);
+    }
+    X.stroke();
+    var pl2=(t*rate)%1, ly=yb+ekgY(pl2)*amp;
+    X.fillStyle="#fff";X.globalAlpha=0.9;X.fillRect(x+w-1.5,ly-1.5,3,3);X.globalAlpha=1;
   }
-  /* ---- the live layer -----------------------------------------------------
-     Everything above is a photograph a few seconds old, which is right for a
-     wall, a floor and a bench and wrong for the three things that ARE the
-     unit's state. These composite over the still every frame, off the anchors
-     the room reported for this exact picture, so they land on the unit rather
-     than near it. */
-  var an=still&&still.anchors;
-  if(work&&an){
-    var A0=ROOM==="builder"?"214,234,255":ROOM==="reviewer"?"180,224,255":"226,190,255",
-        A1=ROOM==="builder"?"120,190,255":ROOM==="reviewer"?"90,180,255":"180,120,255";
-    var hd2=miniAt(an.hand,dx0,dy0,dW,dH),mhx=hd2.x,mhy=hd2.y,fk=0.5+0.5*Math.sin(t*30);
-    X.save();X.globalCompositeOperation="lighter";
-    var ag=X.createRadialGradient(mhx,mhy,0.5,mhx,mhy,8);
-    ag.addColorStop(0,"rgba("+A0+","+(0.7*fk+0.25)+")");ag.addColorStop(0.4,"rgba("+A1+","+(0.4*fk)+")");ag.addColorStop(1,"rgba("+A1+",0)");
-    X.fillStyle=ag;X.beginPath();X.arc(mhx,mhy,8,0,7);X.fill();
-    X.fillStyle="rgba(255,255,255,"+(0.6*fk+0.2)+")";X.fillRect(mhx-0.8,mhy-0.8,1.7,1.7);
-    if(ROOM==="builder")for(var sp=0;sp<3;sp++){var sa2=(Math.sin(t*22+sp*2.1)+1)/2;X.fillStyle="rgba(255,200,120,"+(0.5*sa2)+")";X.fillRect(mhx+(sp-1)*1.6,mhy+2+sa2*6,1,1);}
-    X.restore();
-  }
-  if(off){
-    /* A pulse, not a colour cast. The room already grades itself for offline —
-       the beacon comes up, the lamp goes out — so this only has to carry the
-       one thing a still cannot: that the fault is live and now. */
-    X.save();X.globalCompositeOperation="lighter";
-    var rp=0.05+0.06*Math.abs(Math.sin(t*4));
-    var rw2=X.createRadialGradient(dx0+dW*0.5,dy0+dH*0.34,3,dx0+dW*0.5,dy0+dH*0.34,dW*0.5);
-    rw2.addColorStop(0,"rgba(255,60,50,"+rp+")");rw2.addColorStop(1,"rgba(255,60,50,0)");
-    X.fillStyle=rw2;X.fillRect(dx0,dy0,dW,dH);X.restore();
-    /* The alert marker, over the unit's HEAD. It was pinned to rpy+34 — the top
-       of the sprite's bounding box plus a guess — which is the head for claude
-       and grok, who fill their box, and empty air well above codex, whose body
-       hangs low between six legs, and kimi, who at the time was a wide drone
-       low in frame.
-       The contact shadows already read a real anchor off the unit; there was no
-       reason this did not.
-       It is a badge rather than a bare glyph because a red "!" dropped on a
-       red-lit unit lands on whatever that unit's own warning lights are doing —
-       codex wears a red core exactly where the mark goes. A disc gives it a
-       silhouette that survives any body under it. */
-    var hd=an?miniAt(an.head,dx0,dy0,dW,dH):{x:dx0+dW*0.36,y:dy0+dH*0.34};
-    var by=Math.max(dy0+11,hd.y-11),pu=0.6+0.4*Math.abs(Math.sin(t*4));
-    X.save();
-    X.fillStyle="rgba(10,4,4,0.85)";X.beginPath();X.arc(hd.x,by,7.5,0,7);X.fill();
-    X.strokeStyle="rgba(255,70,58,"+pu+")";X.lineWidth=1.4;X.beginPath();X.arc(hd.x,by,7.5,0,7);X.stroke();
-    X.fillStyle="rgba(255,120,110,"+(0.75+0.25*pu)+")";
-    X.font="700 11px ui-monospace,monospace";X.textAlign="center";X.textBaseline="middle";
-    X.fillText("!",hd.x,by+0.5);X.textAlign="left";X.textBaseline="alphabetic";
-    X.restore();
-  }
-  X.restore();X.restore();
+  X.font="700 8px ui-monospace,monospace";X.fillStyle=col;X.textAlign="right";
+  X.fillText(label,x+w,y-2);X.textAlign="left";
+  X.restore();
+}
+/* Idle over the trailing 24h, from the same session ledger the console shows.
+   ago is minutes; durations are seconds; the window shrinks to the uptime so
+   a box hired an hour ago is idle out of ONE hour, not out of a day it has
+   not lived. null when the unit has reported nothing to count. */
+function idle24(d){
+  var upS=(d.up?d.up.h*3600+d.up.m*60:0);
+  if(!upS&&!(d.sessions&&d.sessions.length))return null;
+  var busy=0;
+  (d.sessions||[]).forEach(function(s){if((s.ago||0)<=1440)busy+=Math.min(s.dur||0,86400);});
+  if(d.cur&&d.cur.start)busy+=Math.max(0,Math.floor(Date.now()/1000)-d.cur.start);
+  var win=Math.min(86400,upS||86400);
+  return Math.max(0,win-busy);
 }
 
-/* ===================== GOD-VIEW FLOOR (scrollable fleet of cells) ===================== */
+/* One tile of the call. Chrome is drawn inside the feed like a heads-up
+   overlay burned into the stream, because that is what an AR readout is:
+   the video is the whole card, and the facts sit on top of it. */
+function drawCamCell(t,x,y,w,h,unit){
+  var off=unit.state==="offline", work=unit.state==="working";
+  var box=UNITID(unit), d=dataOf(box,unit.room), vc=VENDORCOL(unit.agent);
+  var bp=strPhase(box);
+  X.save();X.textBaseline="alphabetic";X.textAlign="left";
+  X.fillStyle="rgba(0,0,0,0.55)";rr(X,x-3,y-3,w+6,h+6,14);X.fill();
+  X.fillStyle="#04070d";rr(X,x,y,w,h,12);X.fill();
+  X.save();rr(X,x+1,y+1,w-2,h-2,11);X.clip();
+  var pw=Math.max(1,Math.round((w-2)*dpr)), ph=Math.max(1,Math.round((h-2)*dpr));
+  X.drawImage(camBG(unit.room,pw,ph),x+1,y+1,w-2,h-2);
+  var still=camStill(t,unit,pw,ph);
+  if(still&&still.at)X.drawImage(still.cv,x+1,y+1,w-2,h-2);
+  /* Live sensor grain — the one per-frame texture, and what says "feed"
+     rather than "poster" between portrait refreshes. */
+  X.save();X.globalAlpha=off?0.07:0.04;X.globalCompositeOperation="overlay";
+  var nx=-((t*61)%40),ny=-((t*47)%40);
+  for(var gx=nx;gx<w;gx+=220)for(var gy=ny;gy<h;gy+=220)X.drawImage(noise,x+gx,y+gy);
+  X.restore();
+  if(off){
+    /* A dead feed rolls: one displaced slice wandering the frame, and the
+       overlay says why. The portrait underneath is already cold and dark —
+       baked into the still — so this is only the motion. */
+    var gy2=y+((t*26+bp*40)%h);
+    X.save();X.globalAlpha=0.5;
+    X.drawImage(X.canvas,(x+1)*dpr,gy2*dpr,(w-2)*dpr,4*dpr,x+7,gy2,w-2,4);
+    X.fillStyle="rgba(255,81,71,0.05)";X.fillRect(x,y,w,h);
+    X.restore();
+  }
+  // legibility gradient under the lower-third overlays
+  var lg=X.createLinearGradient(0,y+h-58,0,y+h);
+  lg.addColorStop(0,"rgba(2,4,8,0)");lg.addColorStop(1,"rgba(2,4,8,0.78)");
+  X.fillStyle=lg;X.fillRect(x+1,y+h-58,w-2,57);
+
+  /* ---- AR overlay layer, crisp every frame ---- */
+  var pad=10;
+  X.strokeStyle=hexA(vc,off?0.35:0.7);X.lineWidth=1.5;var T=13;
+  [[x+pad,y+pad,1,1],[x+w-pad,y+pad,-1,1],[x+pad,y+h-pad,1,-1],[x+w-pad,y+h-pad,-1,-1]].forEach(function(k){
+    X.beginPath();X.moveTo(k[0],k[1]+T*k[3]);X.lineTo(k[0],k[1]);X.lineTo(k[0]+T*k[2],k[1]);X.stroke();});
+  X.textBaseline="middle";
+  // state, top-left — REC language when a session is actually open
+  var sx2=x+pad+7, sy2=y+pad+9;
+  X.font="700 10px ui-monospace,monospace";
+  if(work){
+    var rp=0.55+0.45*Math.sin(t*4+bp);
+    X.fillStyle="rgba(255,60,50,"+rp+")";X.beginPath();X.arc(sx2,sy2,3.5,0,7);X.fill();
+    X.fillStyle="#ffd9d5";X.fillText("REC",sx2+8,sy2+0.5);
+    X.fillStyle="#f7bd4e";X.fillText(unit.room==="builder"?"BUILDING":unit.room==="reviewer"?"REVIEWING":"DISPATCH",sx2+34,sy2+0.5);
+    if(d.cur&&d.cur.start){
+      X.font="9px ui-monospace,monospace";X.fillStyle="rgba(255,217,213,0.8)";
+      X.fillText(fmtDur(Math.floor(Date.now()/1000)-d.cur.start),sx2+8,sy2+13);
+    }
+  }else if(off){
+    X.fillStyle="#ff5147";X.fillText("✕ FEED DOWN",sx2-3,sy2+0.5);
+  }else{
+    X.fillStyle="#5fce9b";X.beginPath();X.arc(sx2,sy2,3,0,7);X.fill();
+    X.fillStyle="#8fe8bc";X.fillText("STANDBY",sx2+8,sy2+0.5);
+  }
+  /* telemetry block, top-right: the AR readout this view exists for.
+     A glass panel, not bare text — at tile size the facts have to win
+     against whatever the portrait is doing behind them. */
+  var idl=idle24(d);
+  var last=d.sessions&&d.sessions[0];
+  var rows=[["UPTIME",(d.up&&(d.up.h||d.up.m))?d.up.h+"h"+pad2(d.up.m)+"m":"—"],
+            ["IDLE·24H",idl===null?"—":(idl<60?"0m":fmtDur(idl))],
+            ["QUEUE",off?"—":String(d.queue.length)],
+            ["LAST",last?(last.ago>=60?Math.floor(last.ago/60)+"h"+pad2(last.ago%60)+"m ago":last.ago+"m ago"):"—"]];
+  var tpw=118,tph=rows.length*14+22,tpx=x+w-pad-4-tpw,tpy=y+pad+2;
+  X.fillStyle="rgba(4,8,14,0.55)";rr(X,tpx,tpy,tpw,tph,4);X.fill();
+  X.strokeStyle=hexA(vc,0.30);X.lineWidth=1;rr(X,tpx,tpy,tpw,tph,4);X.stroke();
+  X.fillStyle=hexA(vc,0.8);X.fillRect(tpx+tpw-1.5,tpy+3,1.5,tph-6);
+  var ty=tpy+10;
+  rows.forEach(function(r2){
+    X.textAlign="right";
+    X.font="700 10px ui-monospace,monospace";
+    X.fillStyle="#d5e6f6";X.fillText(r2[1],tpx+tpw-8,ty);
+    X.font="700 7px ui-monospace,monospace";
+    X.textAlign="left";X.fillStyle=hexA(vc,0.75);X.fillText(r2[0],tpx+7,ty);
+    ty+=14;
+  });
+  // signal, bottom row of the panel — live ping tier, or steady bars in demo
+  var bars=off?0:(d.ping?(d.ping.ok?4:Math.max(0,3-d.ping.fails)):3+(bp>4?1:0));
+  X.font="700 7px ui-monospace,monospace";X.fillStyle=hexA(vc,0.75);X.fillText("SIGNAL",tpx+7,ty);
+  for(var sb=0;sb<4;sb++){
+    var bh=3+sb*2.6, on=sb<bars;
+    X.fillStyle=on?(bars>=3?"rgba(95,206,155,0.95)":"rgba(247,189,78,0.95)"):"rgba(255,255,255,0.14)";
+    X.fillRect(tpx+tpw-8-(3-sb)*6,ty+4-bh,4,bh);
+  }
+  X.textAlign="left";
+  // lower third: identity plate, voice bars, heartbeat
+  var ny2=y+h-pad-10;
+  X.fillStyle=vc;X.beginPath();X.arc(x+pad+7,ny2-9,3.5,0,7);X.fill();
+  X.font="700 12px ui-monospace,monospace";X.fillStyle="#e8f0f8";
+  X.fillText(box,x+pad+16,ny2-9);
+  var nw=X.measureText(box).width;
+  X.font="9px ui-monospace,monospace";X.fillStyle="rgba(160,190,220,0.65)";
+  X.fillText(unit.agent+" · "+ROLEWORD2(unit.room),x+pad+16,ny2+4);
+  // voice-activity meter beside the name — the conference tell for "talking"
+  var vx2=x+pad+22+nw;
+  for(var vb=0;vb<4;vb++){
+    /* Working talks; idle is a muted mic that still hears the room — a soft
+       swell every few seconds — and a dead feed hears nothing at all. */
+    var lvl=work?(0.25+0.75*Math.abs(Math.sin(t*6.3+vb*1.7+bp)))
+               :off?0
+               :(0.06+0.5*Math.pow(Math.max(0,Math.sin(t*0.9+bp+vb*0.4)),8));
+    X.fillStyle=work?hexA(vc,0.85):"rgba(190,215,235,"+(off?0.10:0.30)+")";
+    var vh3=2+9*lvl;
+    X.fillRect(vx2+vb*4.5,ny2-7-vh3/2,2.6,vh3);
+  }
+  /* Live caption, centre-bottom: what this unit is saying right now — the
+     open session's work item, typed like speech-to-text. The one fact the
+     tile was still missing: QUEUE says how much is waiting, the caption says
+     what is actually being worked. */
+  if(work&&d.cur&&d.cur.key){
+    var cap=(d.kind==="build"?"building ":d.kind==="review"?"reviewing ":"dispatching ")+d.cur.key;
+    X.font="10px ui-monospace,monospace";
+    var cyc=cap.length+26, nch=Math.min(cap.length,Math.floor(((t*16+bp*10)%cyc)));
+    var shown=cap.slice(0,nch), cw2=X.measureText(cap).width;
+    if(cw2<w-2*pad-40){
+      var cx2=x+w/2, cy2=y+h-pad-36;
+      X.fillStyle="rgba(4,8,14,0.66)";rr(X,cx2-cw2/2-10,cy2-9,cw2+20,18,4);X.fill();
+      X.textAlign="center";
+      X.fillStyle="rgba(200,225,245,0.92)";
+      X.fillText(shown+(Math.sin(t*9)>0&&nch<cap.length?"▌":""),cx2,cy2);
+      X.textAlign="left";
+    }
+  }
+  // heartbeat, bottom-right: rate follows state, flatlines with the box
+  var hr=off?0:work?(1.35+0.25*Math.sin(bp)):0.72;
+  var hw=Math.min(140,w*0.32);
+  drawEKG(x+w-pad-6-hw,y+h-pad-26,hw,24,t+bp,hr,
+          off?"rgba(255,81,71,0.85)":work?"rgba(120,225,255,0.9)":"rgba(95,206,155,0.8)",
+          off?"— BPM":Math.round(hr*60+2*Math.sin(t*0.7+bp))+" BPM");
+  if(off){
+    X.font="700 11px ui-monospace,monospace";X.textAlign="center";
+    var slw=X.measureText("SIGNAL LOST — RECONNECTING").width;
+    X.fillStyle="rgba(8,3,3,0.72)";rr(X,x+(w-slw)/2-10,y+h*0.5-11,slw+20,22,4);X.fill();
+    X.fillStyle="rgba(255,124,114,"+(0.75+0.25*Math.sin(t*3))+")";
+    X.fillText("SIGNAL LOST — RECONNECTING",x+w/2,y+h*0.5);
+    X.textAlign="left";
+  }
+  X.restore(); // clip
+  // frame: a working unit wears the speaking ring, a dead one pulses red
+  if(work){
+    X.strokeStyle=hexA(vc,0.45+0.30*Math.sin(t*3+bp));X.lineWidth=2;
+    rr(X,x+1,y+1,w-2,h-2,11);X.stroke();
+  }else{
+    X.strokeStyle=off?"rgba(255,81,71,"+(0.35+0.25*Math.abs(Math.sin(t*3)))+")":"rgba(255,255,255,0.10)";
+    X.lineWidth=1.5;rr(X,x+1,y+1,w-2,h-2,11);X.stroke();
+  }
+  X.restore();X.textBaseline="alphabetic";
+}
+function ROLEWORD2(r){return r==="builder"?"builder":r==="reviewer"?"reviewer":"triage";}
+
+/* ===================== GOD-VIEW FLOOR (the call grid) ===================== */
 var VIEW="floor";
 /* The page has two modes and decides between them at load, by asking the
    collector for a snapshot:
@@ -1073,42 +1234,67 @@ var ROSTER=[
   {agent:"grok",  room:"reviewer",state:"idle"},
   {agent:"kimi",  room:"reviewer",state:"offline"}
 ];
-var CELLW=336, CELLH=252, GAPX=28, GAPY=26, MARGINL=44;
-var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragX=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
-function floorTotalW(){var cols=Math.ceil(ROSTER.length/2);return MARGINL*2+cols*CELLW+(cols-1)*GAPX;}
-/* One cell. It used to build the robot itself and hand drawMini the hand and
-   the footprints; the cell renders a whole room now and borrowRoom carries
-   every one of those globals across, so all that is left here is saying which
-   unit this cell is. */
-function drawCell(t,x,y,w,h,unit){var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX;AGENT=unit.agent;ROOM=unit.room;STATE=unit.state;BOX=UNITID(unit);drawMini(t,x,y,w,h);AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;}
+/* The grid is a call layout: columns fit the window at a comfortable tile
+   width and the OVERFLOW is vertical, because that is the way every
+   conference UI and every operator's mouse wheel already scrolls. */
+var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragY=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
+function floorGrid(){
+  var mX=26, mT=74, gap=20;
+  var availW=VW-mX*2;
+  var cols=Math.max(1,Math.min(4,Math.round(availW/500)));
+  if(ROSTER.length&&ROSTER.length<cols)cols=ROSTER.length;
+  var tw=Math.floor((availW-(cols-1)*gap)/cols);
+  var th=Math.round(tw*0.60);
+  var rows=Math.ceil(Math.max(1,ROSTER.length)/cols);
+  return {mX:mX,mT:mT,gap:gap,cols:cols,tw:tw,th:th,rows:rows,
+          totalH:mT+rows*th+(rows-1)*gap+170};
+}
 function drawFloor(t){
-  miniFills=0;   // one room render per frame, spent by whichever cell asks first
+  camFills=0;   // portrait refresh budget for THIS frame
   X.setTransform(dpr,0,0,dpr,0,0);X.imageSmoothingEnabled=true;X.textAlign="left";X.globalAlpha=1;X.globalCompositeOperation="source-over";
   X.fillStyle="#03060d";X.fillRect(0,0,VW,VH);
   var vg=X.createRadialGradient(VW/2,VH*0.36,VH*0.15,VW/2,VH*0.5,VH);vg.addColorStop(0,"rgba(20,32,52,0.22)");vg.addColorStop(1,"rgba(0,0,0,0)");X.fillStyle=vg;X.fillRect(0,0,VW,VH);
   X.strokeStyle="rgba(40,60,90,0.05)";X.lineWidth=1;for(var gx=0;gx<VW;gx+=48){X.beginPath();X.moveTo(gx,0);X.lineTo(gx,VH);X.stroke();}for(var gy=0;gy<VH;gy+=48){X.beginPath();X.moveTo(0,gy);X.lineTo(VW,gy);X.stroke();}
-  var camMax=Math.max(0,floorTotalW()-VW);
+  var Gd=floorGrid();
+  var camMax=Math.max(0,Gd.totalH-VH);
   if(!floorDrag)floorCam+=(floorCamTarget-floorCam)*0.18;
   floorCam=Math.max(0,Math.min(floorCam,camMax));floorCamTarget=Math.max(0,Math.min(floorCamTarget,camMax));
-  var topY=Math.max(70,64+((VH-222)-(2*CELLH+GAPY))/2);
   floorHits.length=0;
-  for(var i=0;i<ROSTER.length;i++){var col=Math.floor(i/2),row=i%2;var cx=MARGINL-floorCam+col*(CELLW+GAPX);var cy=topY+row*(CELLH+GAPY);
-    if(cx>-CELLW-60&&cx<VW+60){
+  for(var i=0;i<ROSTER.length;i++){var col=i%Gd.cols,row=Math.floor(i/Gd.cols);
+    var cx=Gd.mX+col*(Gd.tw+Gd.gap);var cy=Gd.mT+row*(Gd.th+Gd.gap)-floorCam;
+    if(cy>-Gd.th-40&&cy<VH+40){
       var u=ROSTER[i],match=(floorFilter.state==="all"||u.state===floorFilter.state)&&(floorFilter.role==="all"||u.room===floorFilter.role);
-      drawCell(t,cx,cy,CELLW,CELLH,u);
-      if(!match){X.fillStyle="rgba(3,6,13,0.76)";rr(X,cx,cy,CELLW,CELLH,11);X.fill();}
+      drawCamCell(t,cx,cy,Gd.tw,Gd.th,u);
+      if(!match){X.fillStyle="rgba(3,6,13,0.76)";rr(X,cx,cy,Gd.tw,Gd.th,11);X.fill();}
       /* A STUCK or UNREACHABLE unit must be visible from the god-view. Both
          wear an ordinary state otherwise — stuck reads "working", and a box
          that fails its ping keeps whatever the last evidence poll concluded —
          so the grid showed a calm fleet in exactly the two situations an
          operator is scanning it for. Drawn after the filter scrim, so a
          filtered-out unit does not shout through it. */
-      if(match)drawAlertBadge(cx,cy,u);
-      var hov=(floorMouse.x>=cx&&floorMouse.x<=cx+CELLW&&floorMouse.y>=cy&&floorMouse.y<=cy+CELLH);
-      if(hov&&match){X.save();X.strokeStyle="rgba(120,205,255,0.85)";X.lineWidth=2;rr(X,cx-2,cy-2,CELLW+4,CELLH+4,13);X.stroke();X.restore();}
-      floorHits.push({x:cx,y:cy,i:i,match:match});
+      if(match)drawAlertBadge(cx,cy,u,Gd.tw);
+      var hov=(floorMouse.x>=cx&&floorMouse.x<=cx+Gd.tw&&floorMouse.y>=cy&&floorMouse.y<=cy+Gd.th);
+      if(hov&&match){X.save();X.strokeStyle="rgba(120,205,255,0.85)";X.lineWidth=2;rr(X,cx-2,cy-2,Gd.tw+4,Gd.th+4,13);X.stroke();
+        /* Say what the click does. The ring alone marks the tile; nothing on
+           it said the whole feed is a door into the unit's console. */
+        var hint="OPEN CONSOLE ▸";X.font="700 9px ui-monospace,monospace";
+        var hwd=X.measureText(hint).width;
+        X.fillStyle="rgba(4,10,18,0.85)";rr(X,cx+(Gd.tw-hwd)/2-9,cy+Gd.th-22,hwd+18,17,4);X.fill();
+        X.strokeStyle="rgba(120,205,255,0.5)";X.lineWidth=1;rr(X,cx+(Gd.tw-hwd)/2-9,cy+Gd.th-22,hwd+18,17,4);X.stroke();
+        X.fillStyle="#9fdcff";X.textBaseline="middle";X.fillText(hint,cx+(Gd.tw-hwd)/2,cy+Gd.th-13.5);X.textBaseline="alphabetic";
+        X.restore();}
+      floorHits.push({x:cx,y:cy,w:Gd.tw,h:Gd.th,i:i,match:match});
     }}
-  if(camMax>0){var tw=Math.max(40,VW*(VW/floorTotalW())),tx=(floorCam/camMax)*(VW-tw),sby=VH-162;X.fillStyle="rgba(255,255,255,0.05)";X.fillRect(0,sby,VW,3);X.fillStyle="rgba(120,200,255,0.5)";X.fillRect(tx,sby,tw,3);}
+  /* The rows scroll under fixed chrome at both ends — ease them out instead
+     of letting a feed collide with the fleet bar's chips. */
+  var ts=X.createLinearGradient(0,0,0,104);ts.addColorStop(0,"rgba(3,6,13,1)");ts.addColorStop(0.55,"rgba(3,6,13,0.62)");ts.addColorStop(1,"rgba(3,6,13,0)");
+  X.fillStyle=ts;X.fillRect(0,0,VW,104);
+  var bs=X.createLinearGradient(0,VH-190,0,VH-120);bs.addColorStop(0,"rgba(3,6,13,0)");bs.addColorStop(1,"rgba(3,6,13,0.85)");
+  X.fillStyle=bs;X.fillRect(0,VH-190,VW,70);
+  if(camMax>0){var tr0=70,tr1=VH-170,trh=tr1-tr0;
+    var tl=Math.max(36,trh*(trh/Gd.totalH)),tp=tr0+(floorCam/camMax)*(trh-tl);
+    X.fillStyle="rgba(255,255,255,0.08)";X.fillRect(VW-10,tr0,4,trh);
+    X.fillStyle="rgba(120,200,255,0.65)";X.fillRect(VW-10,tp,4,tl);}
   var vg2=X.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(1,"rgba(0,0,0,0.5)");X.fillStyle=vg2;X.fillRect(0,0,VW,VH);
 }
 /* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
@@ -1124,11 +1310,13 @@ function alertOf(u){
   return "";
 }
 var PING_FAILS_SHOWN=3;
-function drawAlertBadge(cx,cy,u){
+function drawAlertBadge(cx,cy,u,cw){
   var a=alertOf(u);if(!a)return;
   X.save();
   X.font="700 9px ui-monospace,monospace";
-  var w=X.measureText(a).width+12,h=15,bx=cx+CELLW-w-9,by=cy+9;
+  /* Top-centre: the tile's own corners carry telemetry now, and an alert is
+     the one mark allowed to shove everything else aside. */
+  var w=X.measureText(a).width+12,h=15,bx=cx+(cw-w)/2,by=cy+9;
   X.fillStyle="rgba(255,81,71,0.92)";rr(X,bx,by,w,h,4);X.fill();
   /* Pulse, because these two states are otherwise indistinguishable from a
      calm cell at a glance across a wide grid. */
@@ -1143,8 +1331,8 @@ function t2(){return Date.now();}
 function drawFloorHeader(t){
   X.textBaseline="alphabetic";X.textAlign="left";
   X.font="700 15px ui-monospace,monospace";X.fillStyle="#c7d4e4";X.fillText("FLEET FLOOR",26,36);
-  X.font="11px ui-monospace,monospace";X.fillStyle="#5fd6ff";X.fillText("heavy-duty/crew · god-view",132,36);
-  X.font="10px ui-monospace,monospace";X.fillStyle="#46566a";X.fillText("scroll horizontally · click a unit to zoom in",26,54);
+  X.font="11px ui-monospace,monospace";X.fillStyle="#5fd6ff";X.fillText("heavy-duty/crew · fleet call",132,36);
+  X.font="10px ui-monospace,monospace";X.fillStyle="#46566a";X.fillText("scroll · click a unit to zoom in",26,54);
   var w=0,idl=0,offc=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")offc++;else idl++;});
   var stat=[[offc+" SILENT","#ff5147"],[idl+" IDLE","#5fce9b"],[w+" WORKING","#f7bd4e"]];
   /* Prepended so it reads leftmost, ahead of the ordinary counts, and only
@@ -1575,8 +1763,8 @@ function cavity(c,x,y,w,h,a){
 }
 function buildRobo(t,st){
   var info=AGENT==="codex"?buildCodex(t,st):AGENT==="grok"?buildGrok(t,st):AGENT==="kimi"?buildKimi(t,st):buildClaude(t,st);
-  /* Here rather than in drawRobot, because drawMini renders the god-view
-     thumbnails through this same function and would otherwise show four units
+  /* Here rather than in drawRobot, because camStill renders the god-view
+     portraits through this same function and would otherwise show four units
      lit differently from the four in the console. */
   modelLight(st==="offline");
   return info;
@@ -5584,13 +5772,15 @@ setInterval(tickerEvent,1500);
 refreshChrome();
 /* ---- god-view floor interactions ---- */
 var backBtn=document.getElementById("back");if(backBtn)backBtn.addEventListener("click",toFloor);
-cv.addEventListener("mousedown",function(e){if(VIEW!=="floor")return;floorDrag=true;floorMoved=false;floorDragX=e.clientX;floorDragCam=floorCam;});
+cv.addEventListener("mousedown",function(e){if(VIEW!=="floor")return;floorDrag=true;floorMoved=false;floorDragY=e.clientY;floorDragCam=floorCam;});
 window.addEventListener("mouseup",function(){floorDrag=false;});
 cv.addEventListener("mousemove",function(e){var r=cv.getBoundingClientRect();floorMouse.x=e.clientX-r.left;floorMouse.y=e.clientY-r.top;
-  if(floorDrag){floorCam=floorDragCam-(e.clientX-floorDragX);floorCamTarget=floorCam;if(Math.abs(e.clientX-floorDragX)>4)floorMoved=true;}
-  if(VIEW==="floor"){var over=false;for(var k=0;k<floorHits.length;k++){var c=floorHits[k];if(floorMouse.x>=c.x&&floorMouse.x<=c.x+CELLW&&floorMouse.y>=c.y&&floorMouse.y<=c.y+CELLH){over=true;break;}}cv.style.cursor=floorDrag?"grabbing":(over?"pointer":"grab");}else cv.style.cursor="default";});
-cv.addEventListener("click",function(e){if(VIEW!=="floor"||floorMoved)return;var r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;for(var k=0;k<floorHits.length;k++){var c=floorHits[k];if(mx>=c.x&&mx<=c.x+CELLW&&my>=c.y&&my<=c.y+CELLH){focusUnit(c.i);return;}}});
-cv.addEventListener("wheel",function(e){if(VIEW!=="floor")return;e.preventDefault();floorCamTarget+=(e.deltaX||e.deltaY);},{passive:false});
+  if(floorDrag){floorCam=floorDragCam-(e.clientY-floorDragY);floorCamTarget=floorCam;if(Math.abs(e.clientY-floorDragY)>4)floorMoved=true;}
+  if(VIEW==="floor"){var over=false;for(var k=0;k<floorHits.length;k++){var c=floorHits[k];if(floorMouse.x>=c.x&&floorMouse.x<=c.x+c.w&&floorMouse.y>=c.y&&floorMouse.y<=c.y+c.h){over=true;break;}}cv.style.cursor=floorDrag?"grabbing":(over?"pointer":"grab");}else cv.style.cursor="default";});
+cv.addEventListener("click",function(e){if(VIEW!=="floor"||floorMoved)return;var r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;for(var k=0;k<floorHits.length;k++){var c=floorHits[k];if(mx>=c.x&&mx<=c.x+c.w&&my>=c.y&&my<=c.y+c.h){focusUnit(c.i);return;}}});
+/* Vertical: the grid overflows downward now, so the wheel's natural axis IS
+   the scroll axis — deltaX still honoured for a trackpad held sideways. */
+cv.addEventListener("wheel",function(e){if(VIEW!=="floor")return;e.preventDefault();floorCamTarget+=(e.deltaY||e.deltaX);},{passive:false});
 document.addEventListener("keydown",function(e){
   if(e.key!=="Escape")return;
   /* Esc closes the log overlay first — otherwise it dismisses the room behind
@@ -5618,11 +5808,12 @@ pollFleet();setInterval(pollFleet,POLL_MS);
    Unused by index.html — it costs one property on window. */
 window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
-  /* The floor camera, for the browser walk. The camera eases per FRAME, not
-     per second, and a console dwell expires every visible miniStill — so the
-     first floor frames after Escape cost a full room render each, and a
-     fixed post-wheel wait covers almost no easing on a slow machine. The
-     walk polls this instead of sleeping; it asserts by outcome either way. */
+  /* The floor camera (vertical, in px of grid overflow), for the browser
+     walk. The camera eases per FRAME, not per second, and a console dwell
+     expires every visible portrait still — so the first floor frames after
+     Escape re-render sprites, and a fixed post-wheel wait covers almost no
+     easing on a slow machine. The walk polls this instead of sleeping; it
+     asserts by outcome either way. */
   cam:function(){return floorCam;},
   /* render(dst,{agent,room,state,t,warm,flat}) */
   render:function(dst,o){
@@ -5652,20 +5843,35 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      thirty-six combinations, the other twenty-nine are unreachable in a
      healthy fleet, and reviewing them meant patching ROSTER by hand. So the
      cell is addressable too, by the same rule as the room — this draws with
-     drawMini, the shipped one, and owns no art of its own.
-     dst decides the scale: the cell is laid out at CELLW x CELLH and scaled to
-     the canvas it is given, exactly as a device pixel ratio would. */
-  MINI:{W:CELLW,H:CELLH},
+     drawCamCell, the shipped one, and owns no art of its own.
+     dst decides the scale: the cell is laid out at CAMREF and scaled to the
+     canvas it is given, exactly as a device pixel ratio would. */
+  MINI:{W:CAMREF.W,H:CAMREF.H},
   renderMini:function(dst,o){
-    var sa=AGENT,sr=ROOM,ss=STATE,sb=BOX,sX=X,sdpr=dpr,sfl=miniFills;
-    AGENT=o.agent;ROOM=o.room;STATE=o.state;BOX=o.box||(o.agent+"-"+o.room);
-    var k=dst.width/CELLW;
-    X=dst.getContext("2d");dpr=k;miniFills=0;
+    var sX=X,sdpr=dpr,sfl=camFills;
+    var k=dst.width/CAMREF.W;
+    X=dst.getContext("2d");dpr=k;
+    /* No budget on a map: every tile needs its portrait THIS call, not when
+       the app's per-frame ration next comes round. */
+    camFills=-1e9;
     X.setTransform(k,0,0,k,0,0);X.globalAlpha=1;X.globalCompositeOperation="source-over";
     X.filter="none";X.textAlign="left";X.imageSmoothingEnabled=true;
-    X.fillStyle="#03060d";X.fillRect(0,0,CELLW,dst.height/k);
-    drawMini(o.t||0,5,5,CELLW-10,CELLH-10);
-    X=sX;dpr=sdpr;miniFills=sfl;AGENT=sa;ROOM=sr;STATE=ss;BOX=sb;
+    X.fillStyle="#03060d";X.fillRect(0,0,CAMREF.W,dst.height/k);
+    drawCamCell(o.t||0,5,5,CAMREF.W-10,CAMREF.H-10,
+                {agent:o.agent,room:o.room,state:o.state,box:o.box});
+    X=sX;dpr=sdpr;camFills=sfl;
+  },
+  /* The floor's real layout, for the browser walk: where each roster cell IS,
+     under the camera as it stands. Mirroring the grid maths in the test broke
+     every time the layout moved — this is the layout, so it cannot drift. */
+  grid:function(){
+    var g=floorGrid();g.camMax=Math.max(0,g.totalH-VH);g.cam=floorCam;g.n=ROSTER.length;
+    g.cell=[];
+    for(var i=0;i<ROSTER.length;i++){
+      g.cell.push({i:i,x:g.mX+(i%g.cols)*(g.tw+g.gap),
+                   y:g.mT+Math.floor(i/g.cols)*(g.th+g.gap)-floorCam});
+    }
+    return g;
   },
   /* guides(dst,{room}) — the declared layout, drawn over a tile this hook has
      already rendered. SIGN and BAYS were rules you had to hold in your head

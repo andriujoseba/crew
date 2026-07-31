@@ -53,10 +53,6 @@ const ok = (name, cond, detail = '') => {
   if (!target) { await browser.close(); process.exit(failed ? 1 : 0); }
 
   // Walk the floor to that box's console.
-  const geom = await page.evaluate(() => ({
-    topY: Math.max(70, 64 + ((window.innerHeight - 222) - (2 * 252 + 26)) / 2),
-    vw: window.innerWidth,
-  }));
   const roster = await page.evaluate(async () => {
     const r = await fetch(location.origin + '/api/fleet');
     return (await r.json()).units.map((u) => u.box);
@@ -64,24 +60,24 @@ const ok = (name, cond, detail = '') => {
   /* Scroll to the target rather than assuming it is on screen. Which box is
      "working" depends on what ran before this test, so a fixed assumption here
      makes the test fail for reasons that have nothing to do with the page —
-     it did exactly that once, on cell 8 at x=1668. */
+     it did exactly that once, on cell 8 at x=1668. The layout comes from
+     FLOORDEV.grid(), the floor's own geometry, so this cannot drift when the
+     grid does; the floor scrolls vertically now and the hook reflects that. */
   const idx = roster.indexOf(target);
-  const cols = Math.ceil(roster.length / 2);
-  const totalW = 44 * 2 + cols * 336 + (cols - 1) * 28;
-  const camMax = Math.max(0, totalW - geom.vw);
-  const col = Math.floor(idx / 2), row = idx % 2;
-  const xAt = (cam) => 44 - cam + col * (336 + 28) + 168;
-  let cam = 0;
-  if (xAt(0) > geom.vw - 10) {
-    await page.mouse.move(geom.vw / 2, geom.topY + 40);
-    await page.mouse.wheel(totalW + 2000, 0);       // pin the camera to the far end
+  const vh = await page.evaluate(() => window.innerHeight);
+  let g = await page.evaluate(() => window.FLOORDEV.grid());
+  const centreOf = (gr) => ({ x: gr.cell[idx].x + gr.tw / 2, y: gr.cell[idx].y + gr.th / 2 });
+  let c = centreOf(g);
+  if (c.y > vh - 170) {
+    await page.mouse.move(700, Math.min(vh - 170, 400));
+    await page.mouse.wheel(0, g.totalH + 2000);     // pin the camera to the far end
     await page.waitForTimeout(1200);
-    cam = camMax;
+    g = await page.evaluate(() => window.FLOORDEV.grid());
+    c = centreOf(g);
   }
-  const x = xAt(cam), y = geom.topY + row * (252 + 26) + 126;
-  ok('transition: target cell is reachable', x > 10 && x < geom.vw - 10,
-     `cell ${idx} at x=${x} with cam=${cam}`);
-  await page.mouse.click(x, y);
+  ok('transition: target cell is reachable', c.y > 80 && c.y < vh - 170,
+     `cell ${idx} at y=${Math.round(c.y)} with cam=${Math.round(g.cam)}`);
+  await page.mouse.click(c.x, c.y);
   await page.waitForTimeout(900);
 
   const before = await page.evaluate(() => ({

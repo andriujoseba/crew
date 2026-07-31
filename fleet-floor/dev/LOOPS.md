@@ -2313,3 +2313,50 @@ silhouette that survives is now mane-eyes-blades over a lit spine and REAL
 shoulders. Suite re-run green. All evidence regenerated.
 
 ![grok beef pass](shots/grok-structure/progression-2.webp)
+
+## The fleet view becomes a call — five loops on the conference grid
+
+The god-view stopped being a row of establishing shots. The cell had become a
+camera pointed at the whole room, which kept the art honest and the subject
+small: in a view whose one job is "who is here and how are they", the unit an
+operator must recognise was a hundred pixels in a frame that spent the rest of
+itself on furniture. The rework reframes the grid as a **conference call with
+the roster**: vertical scroll (the axis a mouse wheel already owns), one
+webcam tile per box, each unit facing the camera in close-up over a static
+defocused backdrop in its role's colour, under an AR overlay that carries the
+facts. Three layers with three lifetimes — backdrop rendered once ever,
+portrait (`buildRobo` cropped to head-and-shoulders off the `hy` face anchor)
+cached per unit and refreshed on a budget that IS the webcam frame rate,
+overlays crisp every frame.
+
+**Loop 1 — framing.** The one-table-fits-nobody crop: codex was legs, grok
+was a head across the room, kimi's optics were cut at the frame line because
+its `hy` is the cowl, not the eyes. `CAMFRAME` gains per-vendor crop width
+and a `dy` anchor bias; offline feeds brightened from unreadable to cold;
+EKG amplitude doubled; reviewer backdrop lifted out of the black.
+
+**Loop 2 — the AR panel.** Bare 8px text lost against the portrait; the
+telemetry block becomes a glass panel with a vendor-colour rail: UPTIME,
+IDLE·24H (windowed to the box's own uptime so a fresh hire is not "idle 23h"),
+QUEUE, SIGNAL bars off the live ping tier. Triage backdrop out of the
+vignette; the overflow scrollbar made findable.
+
+**Loop 3 — rows under chrome, and the LAST row.** Tiles scrolled straight
+into the fleet bar's chips; scrims now ease them out at both ends. Idle
+voice-meter bars read as a stray "····" — now a muted mic that still hears
+the room, swelling every few seconds. The panel gains LAST: for an idle unit,
+what it finished and how long ago is the fact a caller would ask for.
+
+**Loop 4 — captions.** The tile knew how much was queued but not what was
+being worked. Working tiles now caption their feed with the open session's
+work item — "building ceremony#109" — typed like speech-to-text.
+
+**Loop 5 — the door.** Nothing said the feed was clickable; hover now offers
+OPEN CONSOLE ▸ under the speaking ring.
+
+The walk stopped mirroring the layout: `FLOORDEV.grid()` reports where every
+cell IS under the camera as it stands, and browser.js, churn.js and
+transition.js read it instead of re-deriving drawFloor's constants — the
+mirror is exactly what this rework would have silently broken. renderMini
+ships the new tile, so the whiteboard's cell view stays a picture of what
+runs. Suite green: 395 ok, 0 failed.
