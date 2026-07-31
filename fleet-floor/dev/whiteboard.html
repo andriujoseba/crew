@@ -3228,7 +3228,12 @@ function buildKimi(t,st){
      plates — the same trap codex's front legs taught. */
   var handR=null;
   function drawArm(sg){
-    var flex=(sg>0&&work);
+    /* The flex lives on the LEFT arm: the right side of every bench carries
+       a desk screen (builder's sign monitor, reviewer's readout) exactly
+       where a flexed right fist lands its arc — the torch was burning
+       behind glass. The left half of the bench is the open work area (the
+       builder's rig lives there), so the tally fist is the working fist. */
+    var flex=(sg<0&&work);
     var shx=cx+sg*108,shy=BY-30,
         elx=cx+sg*(flex?144:134),ely=flex?BY+22:BY+30,
         gxx=cx+sg*(flex?106:128),gyy=flex?BY+82:BY+96;
@@ -3284,10 +3289,11 @@ function buildKimi(t,st){
     // hydraulic hose: pauldron to gauntlet — one thick line, not spaghetti.
     // Dead the pressure is gone and the line hangs slack; flexed it pulls taut.
     hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,flex?11:(offl?31:22),5.2);
-    if(sg>0)handR={x:gxx+sg*10,y:gyy+(flex?36:12)};
+    if(flex)handR={x:gxx-sg*12,y:gyy+36};
+    else if(sg>0&&!work)handR={x:gxx+10,y:gyy+12};
   }
-  drawArm(-1);
-  if(!work)drawArm(1);           // the flexed right arm waits for the torso
+  drawArm(1);
+  if(!work)drawArm(-1);          // the flexed left arm waits for the torso
 
   /* ---- 2b · intake scoops, behind everything ----
      Two ram-air ducts rise between the head and the cowls — a nuclear torch
@@ -3615,7 +3621,7 @@ function buildKimi(t,st){
   g.fillStyle=sco;poly(g,[[cx-30,BY+118],[cx+30,BY+118],[cx+24,nozY-4],[cx-24,nozY-4]]);g.fill();
 
   // the flexed working arm lands here — over the torso, under the jet's light
-  if(work)drawArm(1);
+  if(work)drawArm(-1);
 
   /* the jet's underlight: everything above the nozzle catches pink from
      below — the one lighting cue that says the torch is REAL. */
