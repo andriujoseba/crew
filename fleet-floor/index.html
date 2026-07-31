@@ -1614,38 +1614,21 @@ function buildClaude(t,st){
   function weep(x,y,len){g.fillStyle="rgba(70,44,24,0.30)";
     poly(g,[[x-1.2,y+2],[x+1.2,y+2],[x+0.6,y+len],[x-0.6,y+len]]);g.fill();}
 
-  /* ---------- BACK: stacks only, no pack ----------
-     The heat-sink plate is GONE. It was recoloured, tapered, finned and
-     shadowed across two loops, and from the front it still read as a grey
-     wing filling the gap between torso and arm — because from the front,
-     that gap IS the drawing. Daylight between the arms and the waist is
-     what makes the chest read broad and the unit read fit; the exhaust
-     stacks emerge from behind the pauldrons, which is all the mounting a
-     front view can honestly show. */
-  /* Exhaust stacks. They were straight rectangles with a lit square floating
-     at the tip — behind the chest, only that tip survives, so each read as a
-     glowing panel hanging beside the head with no pipe under it. Now each is
-     a canted pipe with a slanted-cut hollow mouth, heat fins where the metal
-     sheds, and a clamp band with a brace bolting it to the backpack — the tip
-     explains the machine it is welded to. */
-  [[-52,-1],[52,1]].forEach(function(k){var bx=cx+k[0],s=k[1],ty=breath;
-    var tc=bx+s*6; // mouth centre, canted outboard
-    plate(g,[[bx-s*11,250+ty],[tc-s*8,200+ty],[tc+s*8,192+ty],[bx+s*11,250+ty]],sT,sB,ed);
-    // hollow mouth, cut on the same slant
-    g.fillStyle="#03060c";poly(g,[[tc-s*8,200+ty],[tc+s*8,192+ty],[tc+s*8,197+ty],[tc-s*8,205+ty]]);g.fill();
-    // ember in the throat, not a sticker on the face
-    if(!offl)[RB,RE].forEach(function(c){var eg=c.createLinearGradient(0,193+ty,0,204+ty);
-      eg.addColorStop(0,rgba(255,170,80,0.85));eg.addColorStop(1,rgba(200,80,20,0.15));
-      c.fillStyle=eg;poly(c,[[tc-s*6,201+ty],[tc+s*6,194+ty],[tc+s*6,197+ty],[tc-s*6,204+ty]]);c.fill();});
-    // heat fins: three cuts, each with a lit upper lip
-    for(var f=0;f<3;f++){var fy=212+f*9+ty,fw=9+f*0.6,fcx=bx+s*(6-f*2);
-      pl(g,fcx-fw,fy,fcx+fw,fy,rc,1.6);
-      pl(g,fcx-fw,fy-1.2,fcx+fw,fy-1.2,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1);}
-    // clamp band + brace down to the backpack shoulder
-    plate(g,[[bx-13,240+ty],[bx+13,240+ty],[bx+13,246+ty],[bx-13,246+ty]],sT,sM,ed);
-    rivet(g,bx-8,243+ty,eH);rivet(g,bx+8,243+ty,eH);
-    pl(g,bx+s*13,243+ty,bx+s*17,262+ty,"#0a0f18",3);
-    pl(g,bx+s*13,243+ty,bx+s*17,262+ty,offl?"#2c3440":"#5b6c85",1);});
+  /* ---------- BACK: cables, nothing else ----------
+     The heat-sink plate went first (from the front, the gap between torso
+     and arm IS the drawing) and the exhaust stacks went next, on the same
+     verdict: hardware standing above the shoulders read as luggage. What
+     hangs there now is slack — two power cables per side looping out of the
+     back and down into the collar, drawn before everything so the torso and
+     pauldrons overlap them. Doom units don't carry backpacks; they trail
+     cables. */
+  [[-1],[1]].forEach(function(k){var s=k[0];
+    [[54,66,184,20,6],[40,48,198,10,4.5]].forEach(function(cb){
+      var x0=cx+s*cb[0], mx2=cx+s*cb[1], my2=cb[2]+breath, x1=cx+s*cb[3], y1=212+breath;
+      g.strokeStyle="#05080e";g.lineWidth=cb[4];g.beginPath();
+      g.moveTo(x0,252+breath);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();
+      g.strokeStyle=offl?"#2c3440":"#5b6c85";g.lineWidth=1.4;g.beginPath();
+      g.moveTo(x0,252+breath);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();});});
 
   // ---------- LEGS (mirror) ----------
   function leg(sgn){
@@ -2059,15 +2042,6 @@ function buildClaude(t,st){
   /* What the chest is standing in front of. The chest plate overhangs the
      abdomen, the pelvis overhangs the thighs and the collar overhangs the
      sternum housing loop 11 added — three joins that were open seams. */
-  /* Soot. Both stacks have been venting since loop 3 and the plate around
-     them was factory-clean — the one place on this unit where you can see what
-     it has been doing, and it looked unused. Heaviest at the lip, fading up
-     the stack the way a deposit actually builds. */
-  [[-52],[52]].forEach(function(k){var bx3=cx+k[0];
-    var so=g.createRadialGradient(bx3,200+breath,2,bx3,200+breath,26);
-    so.addColorStop(0,"rgba(10,8,7,0.42)");so.addColorStop(0.55,"rgba(14,11,9,0.18)");
-    so.addColorStop(1,"rgba(14,11,9,0)");
-    g.fillStyle=so;g.fillRect(bx3-26,178+breath,52,52);});
   /* Hips and knee pivots. Every limb on this unit met its body at a straight
      edge — the arms come off a pauldron, the legs come out of a tasset, and
      nothing anywhere said which way any of it is allowed to move. A ball in a
