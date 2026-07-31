@@ -2083,7 +2083,21 @@ function buildCodex(t,st){
     RE.lineWidth=3.4;RE.beginPath();RE.moveTo(cx+vx*4,coreY+vy*4);RE.lineTo(cx+vx*19.5,coreY+vy*19.5);RE.stroke();RE.restore();});
 
   // ---- cephalothorax (front hull) + eye cluster ----
-  var hxx=cx, hy2=BY+22;
+  /* Loop 3 — the head is mounted, not adjacent. The face hung under the dome
+     with nothing carrying it: no joint, no feed, no way on or off. Now a
+     pedicel does the work — two angled mounting struts bolted from the
+     shell's underside to the head's shoulders, and a sensor trunk looping
+     down each side into the head. Offline the mount is honest about being a
+     mount: the head sags a few pixels in it and the trunks go slack. */
+  var hxx=cx, hy2=BY+22+(offl?5:0);
+  [-1,1].forEach(function(sg){
+    plate(g,[[hxx+sg*20,BY+2],[hxx+sg*38,BY-4],[hxx+sg*44,hy2-20],[hxx+sg*30,hy2-16]],sM,sB,ed);
+    rivet(g,hxx+sg*36,BY-1,eH);rivet(g,hxx+sg*40,hy2-22,eH);
+    var sag=offl?7:0;
+    g.strokeStyle="#05080e";g.lineWidth=3.4;g.beginPath();
+    g.moveTo(hxx+sg*30,BY+4);g.quadraticCurveTo(hxx+sg*52,BY+16+sag,hxx+sg*34,hy2-6);g.stroke();
+    g.strokeStyle=offl?"#2c3440":"#5b6c85";g.lineWidth=1.2;g.beginPath();
+    g.moveTo(hxx+sg*30,BY+4);g.quadraticCurveTo(hxx+sg*52,BY+16+sag,hxx+sg*34,hy2-6);g.stroke();});
   plate(g,[[hxx-42,hy2-24],[hxx+42,hy2-24],[hxx+34,hy2+26],[hxx-34,hy2+26]],sT,sM,ed);
   plate(g,[[hxx-40,hy2-24],[hxx+40,hy2-24],[hxx+36,hy2-14],[hxx-36,hy2-14]],"#2c3849","#1a2331",null);
   plate(g,[[hxx-14,hy2+22],[hxx-4,hy2+22],[hxx-6,hy2+34],[hxx-16,hy2+32]],sM,sB,ed);
