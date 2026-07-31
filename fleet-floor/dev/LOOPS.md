@@ -1677,7 +1677,31 @@ sleeping. Full suite after the change: 360 ok, 0 failed.
 
 ![claude structure progression, round 4](shots/claude-structure/progression-4.webp)
 
+Round five is biography. Three battles, each won, each leaving the unit
+visibly stronger than the fight found it:
+
+**Loop 17 — battle one: the split pec, strapped.** A jagged rewelded crack
+across the left chest with stitch ticks, and a strap of newer steel bolted
+ACROSS it — a weld you strap is a weld you no longer worry about.
+
+**Loop 18 — battle two: the burned shoulder, over-plated.** Blast scorch on
+the left pauldron, answered with a cruder, heavier plate welded over the
+burn — square-cut, three fat bolts, no polished chamfer — half-burying the
+loop-9 gouge and breaking the crown line. The asymmetry is the record.
+
+**Loop 19 — battle three: the rake, the dent, the tally.** Three parallel
+claw rakes on the right thigh, a belt chamfer that folded under a hit and
+stays folded, paint nicks at fixed places on the leading lips, and three
+tally strokes next to the unit marking in the same worn gold — one per
+battle walked away from.
+
+![claude structure progression, round 5](shots/claude-structure/progression-5.webp)
+
 ![claude after, three states](shots/claude-structure/states.webp)
+
+The whole arc, one frame per loop:
+
+![claude evolution](shots/claude-structure/evolution.gif)
 
 The unit envelope was re-measured over all 36 combinations after the wider
 pauldrons: the union moved by ±1px — breath-phase noise — and the binding
