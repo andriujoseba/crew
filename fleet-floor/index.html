@@ -3072,7 +3072,7 @@ function buildKimi(t,st){
      A-stance is the pose and the worktop must not bite it. Offline the torch
      dies and it drops until the knuckles land exactly on the deck — the
      offline posture IS this number. */
-  var BY=offl?340:184+bob;
+  var BY=offl?336:184+bob;
   var th=offl?0:(work?(0.78+0.22*Math.sin(t*11)+0.07*Math.sin(t*23)):(0.44+0.1*Math.sin(t*3)));
 
   /* ---- 0 · the torch (furthest plane) ----
@@ -3128,14 +3128,23 @@ function buildKimi(t,st){
     g.strokeStyle="rgba(150,164,190,"+(offl?0.08:0.26)+")";g.lineWidth=1.6;
     g.beginPath();g.arc(elx,ely,7,-2.4,0.6);g.stroke();
     bolt(g,elx,ely,2.6,offl?0.06:0.2);
-    // the GAUNTLET: a hammer block, knuckle studs, scuffed to metal
-    seg2(g,elx,ely+2,gxx,gyy-30,14,17,sM,sB,ed);
-    var gw=52,gh=62;
+    // the GAUNTLET: a hammer block, knuckle studs, scuffed to metal.
+    // Thick-limb rule: the forearm is armour you could not close a hand
+    // around, and the fist is the widest thing below the pauldron line.
+    seg2(g,elx,ely+2,gxx,gyy-30,18,21,sM,sB,ed);
+    // wrist clamp where the forearm meets the hammer
+    (function(){var wx=(elx+gxx)/2,wy=(ely+gyy-28)/2+6;
+      seg2(g,wx-sg*2,wy-7,wx+sg*2,wy+7,22,22,sM,sB,ed);
+      bolt(g,wx-sg*10,wy,2.2,offl?0.06:0.2);bolt(g,wx+sg*8,wy+2,2.2,offl?0.06:0.2);})();
+    var gw=58,gh=66;
     plate(g,[[gxx-gw/2,gyy-28],[gxx+gw/2,gyy-28],[gxx+gw/2-6,gyy+gh-28],[gxx-gw/2+2,gyy+gh-28]],sT,sB,ed);
     cavity(g,gxx-gw/2,gyy-28,gw,9,0.5);
     pl(g,gxx-gw/2+3,gyy+gh-30,gxx+gw/2-3,gyy+gh-30,"rgba(3,6,11,0.6)",2);        // knuckle line
-    for(var fg=1;fg<4;fg++){pl(g,gxx-gw/2+fg*(gw/4),gyy+gh-30,gxx-gw/2+fg*(gw/4)-1,gyy+gh-33,"rgba(3,6,11,0.5)",1.4);}
-    for(var ks=0;ks<4;ks++){bolt(g,gxx-gw/2+8+ks*((gw-16)/3),gyy+gh-33,2.6,offl?0.06:0.24);}
+    for(var fg=1;fg<4;fg++){pl(g,gxx-gw/2+fg*(gw/4),gyy+gh-30,gxx-gw/2+fg*(gw/4)-1,gyy+gh-34,"rgba(3,6,11,0.5)",1.6);}
+    for(var ks=0;ks<4;ks++){bolt(g,gxx-gw/2+8+ks*((gw-16)/3),gyy+gh-34,3.4,offl?0.06:0.26);}
+    // the striking band: paint worn to bare metal across the whole bottom face
+    g.fillStyle="rgba(198,214,240,"+(offl?0.05:0.12)+")";
+    g.fillRect(gxx-gw/2+3,gyy+gh-30.5,gw-9,3);
     pl(g,gxx-gw/2+4,gyy+gh-28.6,gxx+gw/2-8,gyy+gh-28.6,"rgba(198,216,246,"+(offl?0.08:0.2)+")",1.2); // fist bottom catch
     /* the torch is below and inboard: the fist's bottom face and its inner
        edge catch pink — the strongest of the underlight cues because the
