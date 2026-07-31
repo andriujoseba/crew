@@ -2335,6 +2335,22 @@ function buildCodex(t,st){
     ram(g,rx+(k1x-rx)*0.5,ry+(k1y-ry)*0.5+10,k1x+(k2x-k1x)*0.34,k1y+(k2y-k1y)*0.34+4,5);
     limbArmor(g,rx,ry,k1x,k1y,0.18,0.92,2,6);
     limbArmor(g,k1x,k1y,k2x,k2y,0.12,0.6,1.4,4.8);
+    /* Loop 21 — what the sentinel comparison actually taught. Matrix
+       sentinels read as one organism because their limbs are RIBBED — dozens
+       of small identical segments — and their shells are LAYERED petals
+       around a lens cluster. Codex keeps its arthropod stance, but below the
+       knee each leg now runs in banded segments (tibia five, tarsus four),
+       which is what lets a straight drawn limb read as something that could
+       curl. */
+    (function(){function segBands(x0,y0,x1,y1,n,w){
+      var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;
+      for(var b3=1;b3<n;b3++){var u7=b3/n,bx3=x0+dx*u7,by3=y0+dy*u7;
+        g.strokeStyle="rgba(3,7,12,0.55)";g.lineWidth=1.6;
+        g.beginPath();g.moveTo(bx3+nx*w,by3+ny*w);g.lineTo(bx3-nx*w,by3-ny*w);g.stroke();
+        g.strokeStyle="rgba(150,175,205,"+(offl?0.08:0.16)+")";g.lineWidth=0.9;
+        g.beginPath();g.moveTo(bx3+nx*w+dx/ln*1.4,by3+ny*w+dy/ln*1.4);
+        g.lineTo(bx3-nx*w+dx/ln*1.4,by3-ny*w+dy/ln*1.4);g.stroke();}}
+      segBands(k1x,k1y,k2x,k2y,5,6.6);segBands(k2x,k2y,fx,fy,4,4.4);})();
     joint(g,k1x,k1y,7.5); joint(g,k2x,k2y,6);
     /* The knee is capped, not dotted: a fitted shield over the joint, bolted
        once, angled with the femur so each pair reads as machinery in phase. */
@@ -2422,6 +2438,16 @@ function buildCodex(t,st){
   g.strokeStyle="rgba(190,208,232,"+(offl?0.10:0.26)+")";g.lineWidth=1;g.beginPath();
   g.moveTo(ax,ay-ah);g.lineTo(ax-0.28*aw,ay-0.94*ah);g.lineTo(ax-0.72*aw,ay-0.62*ah);
   g.stroke();
+  /* Loop 21, on the shell: the crown is layered like theirs — two nested
+     petal lines step down from the peak, each a dark cut with a lit lower
+     lip, so the top of the hull reads as plates OVER plates. */
+  g.save();g.beginPath();g.rect(ax-aw-2,ay-ah-6,aw*2+4,ah*0.72);g.clip();
+  [0.86,0.72].forEach(function(sc2){
+    g.save();g.translate(ax,ay);g.scale(sc2,sc2);g.translate(-ax,-ay);
+    g.strokeStyle="rgba(3,7,12,0.62)";g.lineWidth=2.2/sc2;hullPath(g);g.stroke();g.restore();
+    g.save();g.translate(ax,ay+1.7);g.scale(sc2,sc2);g.translate(-ax,-ay);
+    g.strokeStyle="rgba(168,200,226,"+(offl?0.07:0.15)+")";g.lineWidth=1.2/sc2;hullPath(g);g.stroke();g.restore();});
+  g.restore();
   g.strokeStyle=ed;g.lineWidth=1.4;hullPath(g);g.stroke();
   g.strokeStyle=rc;g.lineWidth=1;g.beginPath();g.moveTo(ax-aw+10,ay+2);g.lineTo(ax+aw-10,ay+2);g.stroke();
   /* Cowl blades: the flared plates over the leg roots end in a spike each —
@@ -2622,7 +2648,13 @@ function buildCodex(t,st){
     rivet(g,hxx+sg*32,hy2+19,eH);});
   [-1,1].forEach(function(sg){var fx2=hxx+sg*9,fdrop=offl?3:0;
     plate(g,[[fx2-sg*6,hy2+22],[fx2+sg*5,hy2+22],[fx2+sg*4,hy2+30+fdrop],[fx2,hy2+38+fdrop],[fx2-sg*4,hy2+30+fdrop]],sM,sB,ed);
-    rivet(g,fx2,hy2+25,eH);});
+    rivet(g,fx2,hy2+25,eH);
+    // sentinel whiskers: a feeler cable dangling off each jaw corner
+    var wdrop=offl?5:0;
+    g.strokeStyle="#0a0f16";g.lineWidth=1.6;g.beginPath();
+    g.moveTo(hxx+sg*22,hy2+22);g.quadraticCurveTo(hxx+sg*27,hy2+31+wdrop,hxx+sg*24,hy2+38+wdrop);g.stroke();
+    g.strokeStyle=offl?"#242c36":"#3d4a5e";g.lineWidth=0.8;g.beginPath();
+    g.moveTo(hxx+sg*22,hy2+22);g.quadraticCurveTo(hxx+sg*27,hy2+31+wdrop,hxx+sg*24,hy2+38+wdrop);g.stroke();});
   /* Eye cluster. Six equal dots on a flat black rectangle read as a speaker
      grille, and at grid-cell size as nothing at all — codex was identified by
      its silhouette and by the reactor glow above, never by a face. A spider
@@ -2640,7 +2672,11 @@ function buildCodex(t,st){
   g.fillStyle="rgba(0,0,0,0.38)";
   poly(g,[[hxx-28,hy2-10],[hxx-2,hy2-6],[hxx+2,hy2-6],[hxx+28,hy2-10],[hxx+26,hy2-6.5],[hxx,hy2-2.5],[hxx-26,hy2-6.5]]);g.fill();
   var primary=[[hxx-12,hy2+1,4.6],[hxx+12,hy2+1,4.6]];
-  var minor=[[hxx-21,hy2-6,1.7],[hxx+21,hy2-6,1.7],[hxx-6,hy2+9,1.5],[hxx+6,hy2+9,1.5]];
+  /* Loop 21, on the face: a sentinel is a lens CLUSTER, not a pair. Two
+     more tertiary lenses at the socket's outer corners take the count to
+     eight — small and dim, but at cell size the extra points of light are
+     what read as swarm-machine rather than mascot. */
+  var minor=[[hxx-21,hy2-6,1.7],[hxx+21,hy2-6,1.7],[hxx-6,hy2+9,1.5],[hxx+6,hy2+9,1.5],[hxx-24,hy2+4,1.2],[hxx+24,hy2+4,1.2]];
   minor.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}
     var eg=c.createRadialGradient(e[0],e[1],0.3,e[0],e[1],e[2]*2.4);eg.addColorStop(0,te(0.4*pulse));eg.addColorStop(1,te(0));
     c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.4,0,7);c.fill();
