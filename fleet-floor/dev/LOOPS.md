@@ -1853,3 +1853,44 @@ edge, still inside `[333,286 → 606,613]`, still bound by codex's working
 splay. `LAYOUT.unit` stands.
 
 ![codex structure progression, round 4](shots/codex-structure/progression-4.webp)
+
+Round five came from the operator reading claude's PR back: the changes that
+made claude look toughest were the cheekbones, the strong neck with its
+tubes, the deleted back plate showing the rib-like spine, and the wider
+shoulders — "in hindsight it's pretty obvious that combination would make
+the robot look more badass. Do 3 chad passes." And the standing rule of
+thumb: **every robot should be a dangerous chad that has been through many
+wars and won.** Codex had the wars (round three); these three passes give
+it the physique.
+
+**Loop 17 — the neck of a fighter.** Loop 3's mount was two sticks and two
+wires — anatomically honest, visually a pencil neck. A broad trapezius
+collar now slopes from the hull's underside onto the head's shoulders,
+drawn behind the face so only its slopes show, and each side carries two
+FAT ribbed power tubes under visible tension. Offline the tubes bow outward
+and the collar is what the head visibly hangs from.
+
+**Loop 18 — cheekbones.** What made claude's face tough was zygomatic
+width: a hard lit plane at eye level with shadow under it. Codex's face was
+widest at the brow and fell straight to the chin — a child's proportions. A
+wedge now stands proud each side at eye level, top plane catching the lamp,
+its own shade cast onto the cheek below, and the jaw gets a squared step so
+the face ends in corners, not taper.
+
+**Loop 19 — shoulders and ribs.** The shoulder line was a seam with a fin
+on it. Each side now wears a pauldron standing proud of the hull edge — and
+they do NOT match, because a veteran's shoulders never do: the left is the
+forged original, ridged and notched; the right is the field replacement,
+squarer cut with three fat bolts and no chamfer — and the loop-12 bite
+carves the replacement's edge, which is why it needed replacing. Below,
+the lower flanks breathe through three rib slats a side — dark recess,
+bright lower lip, angled with the jaw facet — claude's best delete showed
+the mechanism between the plates; this is codex's version of having
+something to show.
+
+Envelope re-measured over all 36 after the pauldrons stood proud: union
+unchanged at `[333.8, 286.4 → 605.4, 613.5]` — the shoulders stay under the
+vent mouths and inside the legs' span. `LAYOUT.unit` stands. Suite: 395 ok,
+0 failed.
+
+![codex structure progression, round 5](shots/codex-structure/progression-5.webp)
