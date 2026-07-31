@@ -2364,3 +2364,8 @@ runs. Suite green: 395 ok, 0 failed.
 ![the fleet call](shots/fleet-call/floor-call.webp)
 ![one tile, hovered](shots/fleet-call/tile-hover.webp)
 ![all 36 cells](shots/fleet-call/cells-36.webp)
+
+Motion evidence — the portrait cadence and the overlay cadence, captured live:
+[tile-live.gif](shots/fleet-call/tile-live.gif) ·
+[tile-dead.gif](shots/fleet-call/tile-dead.gif) ·
+[call-grid.gif](shots/fleet-call/call-grid.gif)
