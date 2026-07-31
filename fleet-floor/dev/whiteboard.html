@@ -3317,6 +3317,9 @@ function buildKimi(t,st){
   /* ---- 5 · HEAD: buried, no neck, brow like a firing slit ---- */
   var hy=BY-58;
   plate(g,[[cx-44,hy+6],[cx-50,hy-18],[cx-33,hy-30],[cx+33,hy-30],[cx+50,hy-18],[cx+44,hy+6]],sT,sB,ed);
+  /* The crown is recessed, not a lit lid — the head must read buried between
+     the cowls, and a bright top face floated it up off the shoulders. */
+  cavity(g,cx-33,hy-30,66,6,0.4);
   pl(g,cx,hy-30,cx,hy-6,"rgba(4,8,14,0.55)",1.4);
   // the brow — two plates dipped toward the centre, so the unit SCOWLS
   plate(g,[[cx-42,hy-27],[cx+2,hy-24],[cx-2,hy-10],[cx-36,hy-12]],sM,sB,ed);
@@ -3344,9 +3347,21 @@ function buildKimi(t,st){
   // the crack that cost the eye
   g.strokeStyle="rgba(190,205,228,"+(offl?0.08:0.26)+")";g.lineWidth=0.9;
   g.beginPath();g.moveTo(vs.x+9,vs.y+0.6);g.lineTo(vs.x+16,vs.y+5);g.lineTo(vs.x+13,vs.y+9);g.stroke();
+  /* Cheekbones — the anatomy that made claude read like a fighter: one hard
+     lit plane each side at eye level, angling down and in under the visor.
+     On a slit-visor head they are the armour's zygomatic wedges. */
+  [-1,1].forEach(function(sg){
+    plate(g,[[cx+sg*44,hy-4],[cx+sg*18,hy+0.5],[cx+sg*24,hy+6],[cx+sg*42,hy+2]],sM,sB,ed);
+    pl(g,cx+sg*44,hy-4,cx+sg*18,hy+0.5,"rgba(198,216,246,"+(offl?0.08:0.28)+")",1.4);});
+  /* The jaw: a squared chin plate dropping onto the glacis crown, so the head
+     grows out of the chest instead of hovering over it — the no-neck read is
+     a fighter's, only if the two masses actually meet. */
+  plate(g,[[cx-30,hy+4],[cx+30,hy+4],[cx+22,hy+15],[cx-22,hy+15]],sM,sB,ed);
+  cavity(g,cx-22,hy+9,44,6,0.45);
   // armoured sensor ears — short, armoured, no whips
-  [-1,1].forEach(function(sg){plate(g,[[cx+sg*44,hy-22],[cx+sg*52,hy-20],[cx+sg*52,hy-8],[cx+sg*44,hy-8]],sM,sB,ed);
-    if(!offl){RE.fillStyle=pk(0.5);RE.beginPath();RE.arc(cx+sg*48,hy-14,1.6,0,7);RE.fill();}});
+  [-1,1].forEach(function(sg){plate(g,[[cx+sg*44,hy-22],[cx+sg*54,hy-19],[cx+sg*54,hy-7],[cx+sg*44,hy-8]],sM,sB,ed);
+    pl(g,cx+sg*44,hy-22,cx+sg*54,hy-19,"rgba(186,208,242,"+(offl?0.06:0.16)+")",1.2);
+    if(!offl){RE.fillStyle=pk(0.5);RE.beginPath();RE.arc(cx+sg*49,hy-14,1.6,0,7);RE.fill();}});
 
   /* ---- 6 · waist cincture + nozzle cowl ---- */
   // overlapping armoured leaves, like scale mail — layered, not extruded
