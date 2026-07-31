@@ -2928,6 +2928,13 @@ function buildKimi(t,st){
     // the striking band: paint worn to bare metal across the whole bottom face
     g.fillStyle="rgba(198,214,240,"+(offl?0.05:0.12)+")";
     g.fillRect(gxx-gw/2+3,gyy+gh-30.5,gw-9,3);
+    /* kill tallies on the LEFT fist — counted where they were made. Worn
+       gold, four and a strike-through, the paint half gone. */
+    if(sg<0){g.strokeStyle="rgba(212,178,110,"+(offl?0.14:0.38)+")";g.lineWidth=1.3;
+      for(var tl=0;tl<4;tl++){g.beginPath();g.moveTo(gxx-14+tl*7,gyy-8);g.lineTo(gxx-15+tl*7,gyy+6);g.stroke();}
+      g.beginPath();g.moveTo(gxx-18,gyy+3);g.lineTo(gxx+9,gyy-5);g.stroke();
+      g.strokeStyle="rgba(212,178,110,"+(offl?0.05:0.13)+")";
+      g.beginPath();g.moveTo(gxx-14+7,gyy-8);g.lineTo(gxx-15+7,gyy+6);g.stroke();}
     pl(g,gxx-gw/2+4,gyy+gh-28.6,gxx+gw/2-8,gyy+gh-28.6,"rgba(198,216,246,"+(offl?0.08:0.2)+")",1.2); // fist bottom catch
     /* the torch is below and inboard: the fist's bottom face and its inner
        edge catch pink — the strongest of the underlight cues because the
@@ -3039,6 +3046,28 @@ function buildKimi(t,st){
   // chipped edges — albedo nicks
   g.fillStyle="rgba(206,220,242,"+(offl?0.09:0.24)+")";
   [[cx-172,BY-50],[cx+170,BY-48],[cx-96,BY-61],[cx+95,BY-62]].forEach(function(nk,i){g.fillRect(nk[0],nk[1],3+(i%2),1.6);});
+  /* ---- 4b · the battles ----
+     A bite out of the left pauldron's lower rim, cut to TRANSPARENCY — a hit
+     that removed metal, not paint. The room shows through and the rim light
+     catches the tear on its own, because the silhouette itself changed. */
+  RB.save();RB.globalCompositeOperation="destination-out";
+  poly(RB,[[cx-166,BY-36],[cx-150,BY-30],[cx-158,BY-22],[cx-169,BY-27]]);RB.fill();RB.restore();
+  pl(g,cx-166,BY-36,cx-158,BY-22,"rgba(198,216,246,"+(offl?0.1:0.3)+")",1.3);
+  /* A crack across the left glacis facet, strapped rather than repaired —
+     somebody bolted two straps over it mid-campaign and the unit kept flying. */
+  g.strokeStyle="rgba(4,7,12,0.85)";g.lineWidth=1.6;
+  g.beginPath();g.moveTo(cx-74,BY-44);g.lineTo(cx-60,BY-32);g.lineTo(cx-63,BY-24);g.lineTo(cx-48,BY-10);g.stroke();
+  g.strokeStyle="rgba(178,196,226,"+(offl?0.05:0.12)+")";g.lineWidth=0.8;
+  g.beginPath();g.moveTo(cx-73,BY-43);g.lineTo(cx-59,BY-31);g.stroke();
+  [[cx-70,BY-40,cx-56,BY-36],[cx-60,BY-20,cx-46,BY-16]].forEach(function(sp){
+    plate(g,[[sp[0],sp[1]-3],[sp[2],sp[3]-3],[sp[2],sp[3]+3],[sp[0],sp[1]+3]],sT,sB,ed);
+    bolt(g,sp[0]+2,sp[1],1.7,offl?0.05:0.2);bolt(g,sp[2]-2,sp[3],1.7,offl?0.05:0.2);});
+  /* Scorch climbing from the furnace's lower lip — one overpressure, long
+     ago; soot outlasts paint (albedo only, never emissive). */
+  var sc2=g.createLinearGradient(0,BY+4,0,BY+34);
+  sc2.addColorStop(0,"rgba(10,6,4,0.45)");sc2.addColorStop(1,"rgba(10,6,4,0)");
+  g.save();g.translate(cx-30,0);g.rotate(-0.05);
+  g.fillStyle=sc2;g.beginPath();g.moveTo(-8,BY+4);g.quadraticCurveTo(-16,BY+22,-10,BY+34);g.lineTo(4,BY+34);g.quadraticCurveTo(-2,BY+18,2,BY+4);g.closePath();g.fill();g.restore();
 
   /* ---- 5 · HEAD: buried, no neck, brow like a firing slit ---- */
   var hy=BY-58;
