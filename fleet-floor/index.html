@@ -2264,8 +2264,23 @@ function buildCodex(t,st){
   g.restore();
   g.restore();
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
-  // spinneret nozzles (rear-top)
-  for(var n=-1;n<=1;n++){var nx2=ax+n*12;plate(g,[[nx2-4,ay-ah+2],[nx2+4,ay-ah+2],[nx2+3,ay-ah-12],[nx2-3,ay-ah-12]],sM,sB,ed);if(!offl){RB.fillStyle=te(0.55);RB.fillRect(nx2-2,ay-ah-12,4,3);RE.fillStyle=te(0.6);RE.fillRect(nx2-2,ay-ah-12,4,3);}}
+  /* Loop 4 — the spinnerets are plumbing, not prongs. Three bare stubs with
+     lit tips read as antennae; a machine's vents are welded and clamped. The
+     cluster now shares one bolted saddle on the shell, each pipe cants
+     outward from it, wears a clamp band, and ends in a slanted hollow mouth
+     with the teal ember down the throat — the pipe is dark, the heat is
+     inside it. Mouth height is unchanged: codex's envelope binds the fleet's
+     unit box, so the silhouette may get denser but not taller. */
+  plate(g,[[ax-23,ay-ah+8],[ax+23,ay-ah+8],[ax+19,ay-ah-1],[ax-19,ay-ah-1]],sM,sB,ed);
+  rivet(g,ax-18,ay-ah+4,eH);rivet(g,ax+18,ay-ah+4,eH);
+  for(var n=-1;n<=1;n++){var nx2=ax+n*13;
+    g.save();g.translate(nx2,ay-ah+2);g.rotate(n*0.16);
+    plate(g,[[-4.5,0],[4.5,0],[3.5,-14],[-3.5,-14]],sM,sB,ed);
+    pl(g,-4,-6,4,-6,"#0a0f18",2.4);pl(g,-4,-6.8,4,-6.8,eH,0.8);   // clamp band
+    g.fillStyle="#03060b";g.beginPath();g.ellipse(0,-13.4,3.4,1.9,n*0.12,0,7);g.fill();
+    g.restore();
+    if(!offl){var mx3=nx2-Math.sin(n*0.16)*13,my3=ay-ah+2-Math.cos(n*0.16)*13;
+      RB.fillStyle=te(0.5);RB.fillRect(mx3-1.6,my3+0.4,3.2,2);RE.fillStyle=te(0.55);RE.fillRect(mx3-1.6,my3+0.4,3.2,2);}}
 
   // ---- reactor core (abdomen front) ----
   /* Loop 2 — the reactor is housed, not a porthole. A fire this important
