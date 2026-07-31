@@ -2308,9 +2308,37 @@ function buildCodex(t,st){
     var gx=ax-aw*0.42,gy=ay+ah*0.22;
     pl(g,gx,gy,gx+16,gy+7,"rgba(3,7,12,0.65)",2.6);
     pl(g,gx+0.6,gy-1,gx+16.6,gy+6,"rgba(170,192,222,"+(offl?0.12:0.3)+")",1);
+    /* Loop 11 — BATTLE ONE: the strapped crack. Something split the left
+       flank along a tergite once. The weld runs jagged — segment by segment,
+       the way a torch chases a crack — with stitch ticks across it, and a
+       strap of newer steel is bolted ACROSS the line with two fat bolts. A
+       weld you strap is a weld you no longer worry about. */
+    var ck=[[ax-aw*0.78,ay+ah*0.1],[ax-aw*0.62,ay+ah*0.04],[ax-aw*0.52,ay+ah*0.12],[ax-aw*0.38,ay+ah*0.05],[ax-aw*0.28,ay+ah*0.1]];
+    g.strokeStyle="rgba(4,8,14,0.7)";g.lineWidth=2.2;g.beginPath();
+    g.moveTo(ck[0][0],ck[0][1]);for(var ci=1;ci<ck.length;ci++)g.lineTo(ck[ci][0],ck[ci][1]);g.stroke();
+    g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.3)+")";g.lineWidth=1;g.beginPath();
+    g.moveTo(ck[0][0],ck[0][1]-1.2);for(var ci2=1;ci2<ck.length;ci2++)g.lineTo(ck[ci2][0],ck[ci2][1]-1.2);g.stroke();
+    g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.28)+")";g.lineWidth=1.1;g.beginPath();
+    for(var st2=0;st2<5;st2++){var cu=st2/4,cxp=ck[0][0]+(ck[4][0]-ck[0][0])*cu,cyp=ay+ah*0.08;
+      g.moveTo(cxp-1.6,cyp-2.6);g.lineTo(cxp+1.6,cyp+2.6);}g.stroke();
+    g.save();g.translate(ax-aw*0.52,ay+ah*0.09);g.rotate(1.35);
+    var sg3=g.createLinearGradient(0,-5,0,5);sg3.addColorStop(0,"#31405a");sg3.addColorStop(1,"#1c2637");
+    g.fillStyle="rgba(0,0,0,0.3)";g.fillRect(-4.5,-9.5,11,21);
+    g.fillStyle=sg3;g.fillRect(-5,-10,10,20);g.strokeStyle=ed;g.lineWidth=1.1;g.strokeRect(-5,-10,10,20);
+    rivet(g,0,-6,eH);rivet(g,0,6,eH);
+    g.restore();
   })();
   g.restore();
   cavity(g,hxx-43,hy2-25,86,26,0.5);
+  /* Loop 12 — BATTLE TWO: the bite. Something took a piece of the dome's
+     upper-right rim and kept it. Cut to transparency, not painted dark, so
+     the room shows through the tear and the rim light — computed from the
+     silhouette after this — breaks and catches on the torn edge. Silhouette
+     damage is the one scar a repaint cannot hide. */
+  g.save();g.globalCompositeOperation="destination-out";
+  poly(g,[[ax+61,ay-36],[ax+90,ay-30],[ax+84,ay-14],[ax+72,ay-9],[ax+63,ay-20]]);g.fill();g.restore();
+  g.strokeStyle="rgba(190,208,232,"+(offl?0.16:0.45)+")";g.lineWidth=1.2;
+  g.beginPath();g.moveTo(ax+61,ay-36);g.lineTo(ax+63,ay-20);g.lineTo(ax+72,ay-9);g.stroke();
   buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
   /* Six tarsus tips, not one blob under the body: the whole point of the
      spider is the stance, and the stance is where the feet are. */
