@@ -3028,249 +3028,274 @@ function buildKimi(t,st){
   var offl=st==="offline", work=st==="working";
   var GX=[RB,RE,RR];for(var q=0;q<3;q++){var c0=GX[q];c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,RW,RH);c0.globalAlpha=1;c0.globalCompositeOperation="source-over";c0.filter="none";}
   var cx=260, g=RB;
-  var F=2.25, OY=-440, TA=260-260*F;                        // floats higher
+  /* JUGGERNAUT (KM-09X). Kimi's unit was the fleet's flying TV — one rounded
+     primitive with a face, and eleven loops of polish never changed what it
+     WAS. The replacement is kimi's own concept (PR #198, dev/prototypes/kimi):
+     a siege torso on a nuclear torch. Three huge shapes — a bunker chest with
+     a caged reactor furnace, two pauldrons that are engine cowls over grav
+     bells, hammer gauntlets in an A-stance — a head buried under a chevron
+     brow with one pink optic and one amber glass eye, no legs: scale-armour
+     waist leaves over a vector-vane nozzle and the torch does the rest.
+     Offline the torch dies and the unit settles onto its own knuckles. */
+  var F=1.2, OY=560-470*F, TA=260-260*F;
   RB.setTransform(F,0,0,F,TA,OY);RE.setTransform(F,0,0,F,TA,OY);
   function TX(x){return F*x+TA;} function TY(y){return F*y+OY;}
-  var sT="#2a3140",sM="#171d28",sB="#0a0e16",ed="#333b4d",eH="#4a5872",rc="#06090f";
-  if(offl){sT="#1b1f27";sM="#0f131a";sB="#070a0f";ed="#242a33";eH="#2e3540";}
+  var FLOORL=470;                                          // deck line in local coords (maps to sprite 560)
+  var sT="#2e3850",sM="#161d2b",sB="#090d15",ed="#35405a",eH="#4a5872",rc="#05080e";
+  if(offl){sT="#1d2330";sM="#0e121b";sB="#06090f";ed="#232a38";eH="#2c3444";}
   var PK=offl?[74,80,92]:[255,114,182], PKH=offl?[120,126,138]:[255,182,214];
+  /* The amber glass eye — the one place the per-vendor colour rule bends, and
+     kimi's single non-negotiable from the hand-off. Offline both optics die to
+     the same grey. */
+  var AM=offl?[80,80,88]:[255,176,84], AMH=offl?[130,124,120]:[255,214,150];
   function pk(a){return "rgba("+PK[0]+","+PK[1]+","+PK[2]+","+a+")";}
   function pkh(a){return "rgba("+PKH[0]+","+PKH[1]+","+PKH[2]+","+a+")";}
-  function limbSeg(c,x0,y0,x1,y1,w0,w1,top,bot){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;plate(c,[[x0+nx*w0,y0+ny*w0],[x1+nx*w1,y1+ny*w1],[x1-nx*w1,y1-ny*w1],[x0-nx*w0,y0-ny*w0]],top,bot,ed);}
-  var pulse=offl?0:(work?(0.6+0.28*Math.sin(t*6)):(0.36+0.16*Math.sin(t*2)));
-  var hov=offl?0:(0.8+0.2*Math.sin(t*10));
-  var bob=(offl||reduced)?0:Math.round(Math.sin(t*1.7)*3);
-  /* L12 — offline kimi SAGS instead of landing. 404 put the shell on the
-     floor, which was right when the floor was visible and is invisible now:
-     the near-plane station hid the whole unit and the room's offline diamond
-     floated over an apparently empty desk. A drone that loses its duty cycle
-     does not fall out of the sky — the skirt holds a dead-man's cushion and
-     the unit sags to parking altitude and drifts. 384 keeps the droop in the
-     posture; the rest of the sag lives in drawRobot, where the hover offset
-     halves instead of vanishing. */
-  var BY=offl?384:360+bob;
-  var blink=(!offl&&!reduced&&Math.sin(t*0.7)>0.986)?1:0;
+  function bolt(c,x,y,r,lit){c.fillStyle="#05080e";c.beginPath();c.arc(x,y,r,0,7);c.fill();
+    var bgr=c.createRadialGradient(x-r*0.3,y-r*0.4,0.4,x,y,r);bgr.addColorStop(0,"rgba(200,214,238,"+(lit||0.35)+")");bgr.addColorStop(1,"rgba(4,8,14,0.8)");
+    c.fillStyle=bgr;c.beginPath();c.arc(x,y,r*0.66,0,7);c.fill();
+    pl(c,x-r*0.34,y,x+r*0.34,y,"rgba(3,6,11,0.85)",1);}
+  function seg2(c,x0,y0,x1,y1,w0,w1,top,bot,edc){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;
+    plate(c,[[x0+nx*w0,y0+ny*w0],[x1+nx*w1,y1+ny*w1],[x1-nx*w1,y1-ny*w1],[x0-nx*w0,y0-ny*w0]],top,bot,edc);}
+  function hose(c,x0,y0,x1,y1,sag,w){
+    var mx=(x0+x1)/2,my=Math.max(y0,y1)+sag;
+    c.strokeStyle="rgba(12,17,25,0.98)";c.lineWidth=w;
+    c.beginPath();c.moveTo(x0,y0);c.quadraticCurveTo(mx,my,x1,y1);c.stroke();
+    c.strokeStyle="rgba(120,132,156,0.35)";c.lineWidth=w*0.28;
+    c.beginPath();c.moveTo(x0,y0);c.quadraticCurveTo(mx,my,x1,y1);c.stroke();}
+  var pulse=offl?0:(work?(0.62+0.26*Math.sin(t*6)):(0.38+0.14*Math.sin(t*2)));
+  var bob=(offl||reduced)?0:Math.sin(t*1.6)*2.2;
+  /* Chest centre. Powered it hangs with the gauntlets just clearing the
+     near-plane worktop line (~local 332); offline the torch dies and it drops
+     140px so the knuckles land exactly on the deck — the offline posture IS
+     this number. */
+  var BY=offl?340:200+bob;
+  var th=offl?0:(work?(0.78+0.22*Math.sin(t*11)+0.07*Math.sin(t*23)):(0.44+0.1*Math.sin(t*3)));
 
-  // ---- hover skirt glow + downward wash ----
-  if(!offl){var sky=BY+30;[RB,RE].forEach(function(c){c.save();c.globalCompositeOperation="lighter";
-    var rg2=c.createRadialGradient(cx,sky,2,cx,sky,46);rg2.addColorStop(0,pkh(0.42*hov));rg2.addColorStop(0.5,pk(0.22*hov));rg2.addColorStop(1,pk(0));c.fillStyle=rg2;c.beginPath();c.ellipse(cx,sky,46,12,0,0,7);c.fill();
-    var dw=c.createLinearGradient(0,sky,0,sky+54);dw.addColorStop(0,pk(0.2*hov));dw.addColorStop(1,pk(0));c.fillStyle=dw;c.beginPath();c.moveTo(cx-30,sky);c.lineTo(cx+30,sky);c.lineTo(cx+42,sky+54);c.lineTo(cx-42,sky+54);c.closePath();c.fill();c.restore();});}
+  /* ---- 0 · the torch (furthest plane) ----
+     A siege engine does not drift down like a leaf; it hangs LOW over a
+     short, violent column of fire and the deck remembers it. */
+  var nozY=BY+168;
+  if(!offl){
+    [RB,RE].forEach(function(c,ci){c.save();c.globalCompositeOperation="lighter";
+      var jg=c.createLinearGradient(0,nozY,0,FLOORL-2);
+      jg.addColorStop(0,pkh((ci?0.3:0.42)*th));jg.addColorStop(0.45,pk((ci?0.13:0.2)*th));jg.addColorStop(1,pk(0));
+      var wb=Math.sin(t*7)*3.5;
+      c.fillStyle=jg;c.beginPath();
+      c.moveTo(cx-18,nozY);c.lineTo(cx+18,nozY);
+      c.lineTo(cx+22+wb,FLOORL-2);c.lineTo(cx-22-wb,FLOORL-2);c.closePath();c.fill();
+      if(!ci){c.fillStyle="rgba(255,240,248,"+(0.4*th)+")";
+        c.beginPath();c.moveTo(cx-7,nozY);c.lineTo(cx+7,nozY);c.lineTo(cx+10+wb*0.4,FLOORL-2);c.lineTo(cx-10-wb*0.4,FLOORL-2);c.closePath();c.fill();}
+      c.restore();});
+    [RB,RE].forEach(function(c){c.save();c.globalCompositeOperation="lighter";
+      var nz=c.createRadialGradient(cx,nozY+4,1,cx,nozY+4,22);
+      nz.addColorStop(0,"rgba(255,240,248,"+(0.55*th)+")");nz.addColorStop(0.5,pk(0.3*th));nz.addColorStop(1,pk(0));
+      c.fillStyle=nz;c.beginPath();c.arc(cx,nozY+4,22,0,7);c.fill();c.restore();});
+  }
 
-  // ---- ear antennae (behind body) ----
-  /* Antennae. Held up under power; drooped outward and down when there is
-     nothing holding them up. Ears are how a face this simple shows mood, and
-     offline kimi needs a posture, not only darker pixels. */
-  [-1,1].forEach(function(sg){var ex=cx+sg*22, ey=BY-30;
-    var tipx=ex+sg*(offl?17:10), tipy=ey-(offl?4:26);
-    pl(g,ex,ey,tipx,tipy,eH,3);g.fillStyle=sM;g.beginPath();g.arc(tipx,tipy,5,0,7);g.fill();
-    if(!offl){RB.fillStyle=pkh(0.7+0.3*pulse);RB.beginPath();RB.arc(tipx,tipy,2.5,0,7);RB.fill();RE.fillStyle=pk(0.8);RE.beginPath();RE.arc(tipx,tipy,2.5,0,7);RE.fill();}});
+  /* ---- 1 · pauldron grav bells: the glow under the armour ---- */
+  [-1,1].forEach(function(sg){
+    var bx=cx+sg*118,by2=BY-8;
+    g.fillStyle="#04070c";g.beginPath();g.ellipse(bx,by2+26,26,13,0,0,7);g.fill();     // bell mouth
+    if(!offl){var bg=0.5+0.3*pulse;
+      [RB,RE].forEach(function(c){c.save();c.globalCompositeOperation="lighter";
+        var rg=c.createRadialGradient(bx,by2+26,2,bx,by2+26,26);
+        rg.addColorStop(0,pkh(0.4*bg));rg.addColorStop(0.5,pk(0.18*bg));rg.addColorStop(1,pk(0));
+        c.fillStyle=rg;c.beginPath();c.ellipse(bx,by2+26,26,13,0,0,7);c.fill();c.restore();});}
+    // bell vanes
+    for(var v=0;v<3;v++){pl(g,bx-14+v*14,by2+18,bx-12+v*14,by2+32,"rgba(8,12,18,0.9)",3.4);}
+  });
 
-  // ---- side thruster pods ----
-  [-1,1].forEach(function(sg){plate(g,[[cx+sg*34,BY-8],[cx+sg*46,BY-4],[cx+sg*46,BY+14],[cx+sg*34,BY+12]],sM,sB,ed);if(!offl){RB.fillStyle=pk(0.6*hov);RB.fillRect(cx+sg*40,BY+9,5,3);RE.fillStyle=pk(0.6*hov);RE.fillRect(cx+sg*40,BY+9,5,3);}});
+  /* ---- 2 · siege arms: piston, hammer gauntlet, stud knuckles ---- */
+  [-1,1].forEach(function(sg){
+    var shx=cx+sg*108,shy=BY-30, elx=cx+sg*134,ely=BY+30, gxx=cx+sg*128,gyy=BY+96;
+    // shoulder ball in its socket
+    g.fillStyle="#04070c";g.beginPath();g.arc(shx,shy,13,0,7);g.fill();
+    plate(g,[[shx-10,shy-14],[shx+10,shy-14],[shx+8,shy+2],[shx-8,shy+2]],sM,sB,ed);
+    bolt(g,shx-5,shy-7,2,offl?0.06:0.2);bolt(g,shx+5,shy-7,2,offl?0.06:0.2);
+    var sg2=g.createRadialGradient(shx-4,shy-5,2,shx,shy,13);
+    sg2.addColorStop(0,"rgba(196,208,232,"+(offl?0.14:0.32)+")");sg2.addColorStop(1,"rgba(4,8,14,0.8)");
+    g.fillStyle=sg2;g.beginPath();g.arc(shx,shy,8.6,0,7);g.fill();
+    // upper arm: thick armour + the piston along its underside
+    seg2(g,shx,shy+4,elx,ely,18,14,sT,sB,ed);
+    pl(g,shx+sg*2,shy+10,elx+sg*2,ely-4,"rgba(6,9,15,0.9)",4);
+    pl(g,shx+sg*2,shy+10,elx+sg*2,ely-4,"rgba(150,164,190,"+(offl?0.08:0.24)+")",1.4);
+    // elbow: dark ball, lit crescent
+    g.fillStyle="#04070c";g.beginPath();g.arc(elx,ely,10,0,7);g.fill();
+    g.strokeStyle="rgba(150,164,190,"+(offl?0.08:0.26)+")";g.lineWidth=1.6;
+    g.beginPath();g.arc(elx,ely,7,-2.4,0.6);g.stroke();
+    bolt(g,elx,ely,2.6,offl?0.06:0.2);
+    // the GAUNTLET: a hammer block, knuckle studs, scuffed to metal
+    seg2(g,elx,ely+2,gxx,gyy-30,14,17,sM,sB,ed);
+    var gw=52,gh=62;
+    plate(g,[[gxx-gw/2,gyy-28],[gxx+gw/2,gyy-28],[gxx+gw/2-6,gyy+gh-28],[gxx-gw/2+2,gyy+gh-28]],sT,sB,ed);
+    cavity(g,gxx-gw/2,gyy-28,gw,9,0.5);
+    pl(g,gxx-gw/2+3,gyy+gh-30,gxx+gw/2-3,gyy+gh-30,"rgba(3,6,11,0.6)",2);        // knuckle line
+    for(var fg=1;fg<4;fg++){pl(g,gxx-gw/2+fg*(gw/4),gyy+gh-30,gxx-gw/2+fg*(gw/4)-1,gyy+gh-33,"rgba(3,6,11,0.5)",1.4);}
+    for(var ks=0;ks<4;ks++){bolt(g,gxx-gw/2+8+ks*((gw-16)/3),gyy+gh-33,2.6,offl?0.06:0.24);}
+    pl(g,gxx-gw/2+4,gyy+gh-28.6,gxx+gw/2-8,gyy+gh-28.6,"rgba(198,216,246,"+(offl?0.08:0.2)+")",1.2); // fist bottom catch
+    g.fillStyle="rgba(206,220,242,"+(offl?0.08:0.22)+")";                          // scuffed striking face
+    g.fillRect(gxx-gw/2+5,gyy+gh-29.6,10,1.6);g.fillRect(gxx+4,gyy-26,8,1.6);
+    // hydraulic hose: pauldron to gauntlet — one thick line, not spaghetti
+    hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,22,5.2);
+  });
 
-  // ---- hover skirt casing ----
-  plate(g,[[cx-34,BY+20],[cx+34,BY+20],[cx+28,BY+34],[cx-28,BY+34]],sM,sB,ed);
-  /* Kimi is moulded plastic where the others are metal, and nothing said so —
-     same bevels, same edge treatment. A broad soft specular across the top of
-     the casing is what plastic does and brushed steel does not, and the decal
-     band on the skirt is kimi's marking, the counterpart to claude's stencil
-     and grok's patch. */
-  var kspec=g.createLinearGradient(0,BY+20,0,BY+27);
-  kspec.addColorStop(0,"rgba(214,228,250,"+(offl?0.05:0.13)+")");kspec.addColorStop(1,"rgba(214,228,250,0)");
-  /* The gimbal the casing hangs in.
-     kimi has no legs, no arms at rest and one visible joint in the whole unit
-     — so the one place it CAN articulate is the mount between the body and the
-     skirt, and the body was simply sitting on the skirt with a gap. A yoke and
-     a trunnion is what holds a camera head, a searchlight or anything else
-     that has to stay level while the thing under it moves; it is also the
-     mechanical reason kimi can face you while drifting sideways. */
-  [-1,1].forEach(function(sg7){var yx=cx+sg7*26;
-    plate(g,[[yx-4,BY+2],[yx+4,BY+2],[yx+5,BY+22],[yx-5,BY+22]],sT,sB,ed);
-    g.fillStyle="#05080e";g.beginPath();g.arc(yx,BY+13,5.4,0,7);g.fill();
-    var tg2=g.createRadialGradient(yx-1.6,BY+11,0.5,yx,BY+13,5.4);
-    tg2.addColorStop(0,"rgba(196,208,232,"+(offl?0.16:0.40)+")");
-    tg2.addColorStop(1,"rgba(4,8,14,0.7)");
-    g.fillStyle=tg2;g.beginPath();g.arc(yx,BY+13,3.6,0,7);g.fill();});
-  g.fillStyle=kspec;g.fillRect(cx-32,BY+20,64,7);
-  g.fillStyle=pk(offl?0.16:0.42);g.fillRect(cx-18,BY+24,36,2);
-  g.fillStyle=pk(offl?0.10:0.28);g.fillRect(cx-12,BY+28,10,2);g.fillStyle=pk(offl?0.10:0.28);g.fillRect(cx+4,BY+28,8,2);
-  if(!offl){RB.fillStyle=pk(0.5*hov);RB.fillRect(cx-26,BY+31,52,2);RE.fillStyle=pk(0.5*hov);RE.fillRect(cx-26,BY+31,52,2);}
+  /* ---- 3 · CHEST: the bunker ---- */
+  // under-torso shadow plate
+  plate(g,[[cx-88,BY+20],[cx+88,BY+20],[cx+64,BY+66],[cx-64,BY+66]],sM,"#05080d",ed);
+  // main glacis — one huge slab, faceted
+  plate(g,[[cx-96,BY-62],[cx+96,BY-62],[cx+84,BY+30],[cx-84,BY+30]],sT,sB,ed);
+  pl(g,cx,BY-62,cx,BY+30,"rgba(4,8,14,0.55)",1.6);                               // centre arris
+  pl(g,cx-96,BY-62,cx-34,BY-40,"rgba(4,8,14,0.4)",1.3);                          // facet seams
+  pl(g,cx+96,BY-62,cx+34,BY-40,"rgba(4,8,14,0.4)",1.3);
+  pl(g,cx-95,BY-61,cx+95,BY-61,"rgba(186,208,242,"+(offl?0.06:0.18)+")",1.4);    // crown catch
+  cavity(g,cx-84,BY+24,168,10,0.55);                                             // the glacis throws a hard line
+  // plastron over the lower chest — bolted, KM-09X stencilled
+  plate(g,[[cx-58,BY+6],[cx+58,BY+6],[cx+50,BY+34],[cx-50,BY+34]],sM,sB,ed);
+  bolt(g,cx-50,BY+12,2.4,offl?0.06:0.22);bolt(g,cx+50,BY+12,2.4,offl?0.06:0.22);
+  g.fillStyle="rgba(198,208,224,"+(offl?0.12:0.3)+")";
+  g.font="700 10px ui-monospace,monospace";g.textAlign="center";
+  g.fillText("KM-09X",cx,BY+28);g.textAlign="left";
+  /* the REACTOR: octagonal caged furnace, the one light that matters.
+     Two heavy bars in front of the fire; bloom leaks around, never through. */
+  var rc2={x:cx,y:BY-16};
+  var pts=[];for(var o=0;o<8;o++){var a=Math.PI/8+o*Math.PI/4;pts.push([rc2.x+Math.cos(a)*33,rc2.y+Math.sin(a)*33]);}
+  g.fillStyle="#04070c";poly(g,pts);g.fill();g.strokeStyle=ed;g.lineWidth=1.4;g.stroke();
+  var fw={x:rc2.x-19,y:rc2.y-16,w:38,h:32};
+  rr(g,fw.x,fw.y,fw.w,fw.h,4);g.fillStyle="#05090f";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
+  if(!offl){
+    var fire=g.createRadialGradient(rc2.x,rc2.y+2,1,rc2.x,rc2.y+2,16);
+    fire.addColorStop(0,"rgba(255,240,250,"+(0.9*pulse+0.1)+")");
+    fire.addColorStop(0.45,pkh(0.65*pulse+0.1));fire.addColorStop(1,pk(0.14));
+    g.fillStyle=fire;g.fillRect(fw.x+1,fw.y+1,fw.w-2,fw.h-2);
+    RE.save();RE.beginPath();rr(RE,fw.x,fw.y,fw.w,fw.h,4);RE.clip();
+    var f2=RE.createRadialGradient(rc2.x,rc2.y+2,1,rc2.x,rc2.y+2,20);
+    f2.addColorStop(0,"rgba(255,240,250,0.9)");f2.addColorStop(0.5,pk(0.55));f2.addColorStop(1,pk(0));
+    RE.fillStyle=f2;RE.fillRect(fw.x,fw.y,fw.w,fw.h);RE.restore();
+    // the furnace lights the chest it is set into
+    g.save();g.globalCompositeOperation="lighter";
+    var ch=g.createRadialGradient(rc2.x,rc2.y,8,rc2.x,rc2.y,72);
+    ch.addColorStop(0,pk(0.16));ch.addColorStop(0.5,pk(0.06));ch.addColorStop(1,pk(0));
+    g.fillStyle=ch;g.beginPath();g.arc(rc2.x,rc2.y,72,0,7);g.fill();g.restore();
+  }else{
+    /* the dead furnace keeps one residual line behind the bars — powered
+       enough to be wrong, the fleet's SILENT idiom */
+    RB.fillStyle="rgba(150,168,190,0.3)";RB.fillRect(fw.x+4,rc2.y,fw.w-8,1.5);
+  }
+  [RB,RE].forEach(function(c,ci){if(ci===1&&offl)return;
+    c.fillStyle=ci?"rgba(5,8,13,0.94)":"#0d121c";
+    c.fillRect(rc2.x-3,fw.y-2,6,fw.h+4);
+    c.fillRect(fw.x-2,rc2.y-2.2,fw.w+4,4.4);});
+  bolt(g,rc2.x,fw.y-6,2.4,offl?0.06:0.24);bolt(g,rc2.x,fw.y+fw.h+6,2.4,offl?0.06:0.24);
+  // reactor mount bolts on the glacis
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(function(sg){bolt(g,rc2.x+sg[0]*36,rc2.y+sg[1]*34,2.6,offl?0.06:0.24);});
 
-  // ---- body (rounded screen-face casing) ----
-  var bx=cx-38,by0=BY-34,bw=76,bh=58,br=15;
-  var bgr=g.createLinearGradient(0,by0,0,by0+bh);bgr.addColorStop(0,sT);bgr.addColorStop(1,sB);
-  rr(g,bx,by0,bw,bh,br);g.fillStyle=bgr;g.fill();g.strokeStyle=ed;g.lineWidth=1.4;g.stroke();
-  g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.moveTo(bx+8,by0+3);g.lineTo(bx+bw-8,by0+3);g.stroke();
-  /* Corner bumpers and a shell parting line.
-     Kimi's whole body was one rounded rectangle with a screen cut out of it —
-     the only unit in the fleet whose silhouette is a single primitive, and the
-     one the eye reads as drawn rather than assembled. A machine that floats
-     face-first through a workshop gets its corners protected, so four bumpers
-     go on the corners: they break the outline at exactly the four points that
-     were most obviously a computed radius, and they are the first thing on
-     this unit that is not concentric with the screen.
-     The parting line is the other half — the seam where the front shell meets
-     the back one, running around the casing at mid-height, with the front
-     shell's lip catching the lamp. */
-  [[bx,by0,1,1],[bx+bw,by0,-1,1],[bx,by0+bh,1,-1],[bx+bw,by0+bh,-1,-1]].forEach(function(k){
-    var kx=k[0],ky=k[1],sxk=k[2],syk=k[3];
-    plate(g,[[kx+sxk*3,ky+syk*15],[kx+sxk*5,ky+syk*6],[kx+sxk*11,ky+syk*2],[kx+sxk*17,ky+syk*1.5],
-             [kx+sxk*17,ky+syk*6],[kx+sxk*11,ky+syk*7],[kx+sxk*8,ky+syk*10],[kx+sxk*7,ky+syk*15]],
-      "#3b4356","#1b2130",ed);
-    g.fillStyle="rgba(198,216,246,"+(offl?0.07:0.17)+")";
-    g.fillRect(kx+sxk*(syk>0?11:11)-(sxk<0?5:0),ky+syk*2-(syk<0?1.4:0),5,1.4);});
-  /* Scuffed bumpers and an asset tag with a corner lifting.
-     Loop 11 put corner guards on this unit on the argument that a machine
-     which floats face-first through a workshop protects its corners. If that
-     argument is right then the guards are the part with paint missing, and
-     leaving them pristine quietly contradicts the reason they exist. The tag
-     is kimi's marking — the other three carry stencils, and a screen-faced
-     service unit would carry a printed label instead, with the bottom corner
-     already peeling off. */
-  g.save();g.globalAlpha=offl?0.35:0.8;
-  [[bx+9,by0+3],[bx+bw-14,by0+3],[bx+8,by0+bh-5],[bx+bw-13,by0+bh-5]].forEach(function(sc4,si4){
-    g.fillStyle="rgba(206,220,242,"+(0.14+0.05*(si4%2))+")";
-    g.fillRect(sc4[0],sc4[1],5+((si4*3)%4),1.6);});
-  g.restore();
-  g.fillStyle="rgba(196,206,222,"+(offl?0.14:0.30)+")";
-  g.fillRect(bx+bw-27,by0+bh-19,20,11);
-  g.fillStyle="rgba(20,26,36,0.55)";
-  g.fillRect(bx+bw-25,by0+bh-17,16,2);g.fillRect(bx+bw-25,by0+bh-13,11,1.6);
-  g.fillStyle="rgba(168,180,198,"+(offl?0.10:0.22)+")";      // the lifted corner
-  poly(g,[[bx+bw-13,by0+bh-11],[bx+bw-7,by0+bh-8],[bx+bw-13,by0+bh-8]]);g.fill();
-  /* The casing is moulded, not machined — so its specular is a long soft band
-     along the crown rather than a hot point, and it wraps the corner radius
-     that loop 11's bumpers interrupt. kimi has had a gloss sweep on the GLASS
-     since loop 8, which is why the screen has always looked like glass sitting
-     in a body that looked like a flat fill: the shell itself reflected nothing
-     at all. */
-  if(!offl){g.save();
-    var ksp=g.createLinearGradient(0,by0,0,by0+22);
-    ksp.addColorStop(0,"rgba(230,242,255,0.30)");ksp.addColorStop(0.5,"rgba(230,242,255,0.07)");
-    ksp.addColorStop(1,"rgba(230,242,255,0)");
-    g.fillStyle=ksp;rr(g,bx+3,by0+1,bw-6,22,13);g.fill();
-    g.fillStyle="rgba(255,255,255,0.20)";g.fillRect(bx+22,by0+2.4,bw-46,1.6);
-    g.restore();}
-  /* L15 — offline kimi catches the beacon. The sag (L12) made the unit
-     visible; this is what makes it READ as a thing in the room rather than a
-     hole in it. The beacon is up and to the left and it is the only light an
-     offline room has, so the moulded shell answers with one red arris — left
-     edge, a little of the crown — plus the skirt's left corner and the left
-     antenna ball. The same beaconPulse the station's L8 rim breathes with,
-     so the whole plane throbs together. */
-  if(offl){var bp2=0.35+0.65*beaconPulse;
-    var rg4=g.createLinearGradient(bx,0,bx+18,0);
-    rg4.addColorStop(0,"rgba(255,64,52,"+(0.16*bp2)+")");rg4.addColorStop(1,"rgba(255,64,52,0)");
-    g.fillStyle=rg4;rr(g,bx,by0,20,bh,br);g.fill();
-    g.strokeStyle="rgba(255,64,52,"+(0.34*bp2)+")";g.lineWidth=1.6;
-    g.beginPath();g.moveTo(bx+br+9,by0+0.9);g.lineTo(bx+br,by0+0.9);
-    g.arc(bx+br,by0+br,br-0.9,-Math.PI/2,Math.PI,true);
-    g.lineTo(bx+0.9,by0+bh-br);g.stroke();
-    g.strokeStyle="rgba(255,64,52,"+(0.22*bp2)+")";g.lineWidth=1.4;
-    g.beginPath();g.moveTo(cx-34,BY+20.7);g.lineTo(cx-20,BY+20.7);g.stroke();
-    g.fillStyle="rgba(255,64,52,"+(0.30*bp2)+")";
-    g.beginPath();g.arc(cx-39,BY-34,2.4,0,7);g.fill();
-    RE.strokeStyle="rgba(255,64,52,"+(0.18*bp2)+")";RE.lineWidth=2;
-    RE.beginPath();RE.moveTo(bx+br+9,by0+1);RE.lineTo(bx+br,by0+1);
-    RE.arc(bx+br,by0+br,br-1,-Math.PI/2,Math.PI,true);
-    RE.lineTo(bx+1,by0+bh-br);RE.stroke();}
-  g.strokeStyle="rgba(3,7,13,0.5)";g.lineWidth=1.6;
-  g.beginPath();g.moveTo(bx+1,by0+bh*0.54);g.lineTo(bx+bw-1,by0+bh*0.54);g.stroke();
-  g.strokeStyle="rgba(186,208,242,"+(offl?0.05:0.13)+")";g.lineWidth=1;
-  g.beginPath();g.moveTo(bx+2,by0+bh*0.54-1.6);g.lineTo(bx+bw-2,by0+bh*0.54-1.6);g.stroke();
-  /* Status strip along the top of the casing. Kimi is the only unit with no
-     hard readout anywhere — claude has a core, codex a reactor, grok a chest
-     panel — so its state lived entirely in a face, which is expressive and
-     says nothing precise. Five cells that fill left-to-right while working and
-     hold a slow single pulse while idle. */
-  if(!offl){var cells=5;for(var lc=0;lc<cells;lc++){
-    var lit2=work?((Math.floor(t*3)%cells)>=lc?1:0.16):((Math.sin(t*1.6)>0.3&&lc===0)?1:0.16);
-    [RB,RE].forEach(function(c){c.fillStyle=pkh(0.75*lit2);c.fillRect(bx+11+lc*(bw-22)/cells,by0+5.5,(bw-22)/cells-2.5,2);});}}
-  // screen
-  var sx=bx+8,sy=by0+8,sw=bw-16,sh=bh-16;rr(g,sx,sy,sw,sh,9);g.fillStyle="#05080e";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
-  if(!offl){RB.fillStyle=pk(0.05);for(var sl=sy+3;sl<sy+sh;sl+=3)RB.fillRect(sx+2,sl,sw-4,1);}
-  /* The screen is kimi's face, and it was a flat black rounded rect with one
-     triangular gloss wedge — which reads as a sticker, not as glass with a
-     display behind it. A CRT-ish face wants two things the flat version had
-     no way to say: that the glass is curved, and that the picture is being
-     emitted from inside rather than printed on the front. */
-  g.save();rr(g,sx,sy,sw,sh,9);g.clip();
-  /* The bezel stands proud of the glass, and threw nothing onto it. Kimi's
-     screen is the single largest flat area in the fleet and the one surface
-     the eye actually goes to, so the join that was open was also the most
-     expensive one: without it the glass sits flush with the casing and reads
-     as a printed panel. Deepest at the top, because the lamp is above. */
-  cavity(g,sx,sy,sw,13,0.62);
-  cavity(g,sx,sy+sh-7,sw,7,0.26);
-  // curvature: corners fall off, centre stays open
-  var curve=g.createRadialGradient(sx+sw*0.5,sy+sh*0.46,sw*0.14,sx+sw*0.5,sy+sh*0.5,sw*0.72);
-  curve.addColorStop(0,"rgba(0,0,0,0)");curve.addColorStop(1,"rgba(0,0,0,0.6)");
-  g.fillStyle=curve;g.fillRect(sx,sy,sw,sh);
-  // the emitted picture washing the inside of the glass
-  if(!offl){var wash=g.createLinearGradient(0,sy+sh,0,sy);wash.addColorStop(0,pk(0.16));wash.addColorStop(1,pk(0));
-    g.fillStyle=wash;g.fillRect(sx,sy,sw,sh);}
-  // gloss, now a curved sweep instead of a straight wedge
-  g.fillStyle="rgba(184,206,246,0.085)";
-  g.beginPath();g.moveTo(sx,sy+sh*0.66);g.quadraticCurveTo(sx+sw*0.30,sy-sh*0.06,sx+sw*0.62,sy);g.lineTo(sx,sy);g.closePath();g.fill();
-  g.restore();
-  // bezel catching the room, so the casing has a lit edge like everything else
-  g.strokeStyle="rgba(180,205,245,"+(offl?0.06:0.16)+")";g.lineWidth=1;rr(g,sx-1,sy-1,sw+2,sh+2,10);g.stroke();
-  /* A screen this size is the brightest thing in kimi's frame and it was
-     lighting nothing — the casing around it, the ear stalks and the skirt all
-     stayed the same grey they are in the dark. Screens light the room; this
-     one now at least lights its own housing. */
-  if(!offl){g.save();g.globalCompositeOperation="lighter";
-    var sb2=g.createRadialGradient(cx,by0+bh*0.5,6,cx,by0+bh*0.5,84);
-    sb2.addColorStop(0,pk(0.20));sb2.addColorStop(0.45,pk(0.08));sb2.addColorStop(1,pk(0));
-    g.fillStyle=sb2;g.beginPath();g.arc(cx,by0+bh*0.5,84,0,7);g.fill();g.restore();}
+  /* ---- 4 · pauldrons: layered cowls over the bells ---- */
+  [-1,1].forEach(function(sg){
+    var px=cx+sg*118,py=BY-56;
+    // upper cowl — the biggest single plate on the unit
+    plate(g,[[px-sg*56,py+6],[px-sg*30,py-22],[px+sg*34,py-26],[px+sg*52,py-6],[px+sg*44,py+22],[px-sg*40,py+26]],sT,sB,ed);
+    pl(g,px-sg*30,py-22,px+sg*34,py-26,"rgba(186,208,242,"+(offl?0.07:0.2)+")",1.5);   // crown catch
+    // lower rim plate
+    plate(g,[[px-sg*48,py+28],[px+sg*44,py+24],[px+sg*38,py+42],[px-sg*42,py+44]],sM,sB,ed);
+    cavity(g,px-sg*44,py+24,86,6,0.5);
+    // rim bolts + grime weep (albedo)
+    [px-sg*40,px-sg*8,px+sg*28].forEach(function(bxp,i){
+      bolt(g,bxp,py+33,2.4,offl?0.06:0.22);
+      if(i===1){g.fillStyle="rgba(70,50,30,0.3)";poly(g,[[bxp-1.2,py+35],[bxp+1.2,py+35],[bxp+0.5,py+42],[bxp-0.5,py+42]]);g.fill();}});
+  });
+  // the GOUGE across the left pauldron — torn lip catches the lamp
+  poly(g,[[cx-164,BY-66],[cx-128,BY-50],[cx-133,BY-42],[cx-168,BY-58]]);g.fillStyle="rgba(2,4,8,1)";g.fill();
+  pl(g,cx-164,BY-66,cx-128,BY-50,"rgba(198,216,246,"+(offl?0.1:0.36)+")",1.6);
+  // "09" stencil on the right pauldron, worn
+  g.save();g.globalAlpha=offl?0.14:0.34;g.fillStyle="#c6d2e4";
+  g.font="700 17px ui-monospace,monospace";g.textAlign="center";
+  g.fillText("09",cx+118,BY-42);g.restore();g.textAlign="left";
+  // chipped edges — albedo nicks
+  g.fillStyle="rgba(206,220,242,"+(offl?0.09:0.24)+")";
+  [[cx-172,BY-50],[cx+170,BY-48],[cx-96,BY-61],[cx+95,BY-62]].forEach(function(nk,i){g.fillRect(nk[0],nk[1],3+(i%2),1.6);});
 
-  // ---- face (per state) ----
-  var e1=cx-13,e2=cx+13,ey2=by0+bh*0.44;
+  /* ---- 5 · HEAD: buried, no neck, brow like a firing slit ---- */
+  var hy=BY-58;
+  plate(g,[[cx-44,hy+6],[cx-50,hy-18],[cx-33,hy-30],[cx+33,hy-30],[cx+50,hy-18],[cx+44,hy+6]],sT,sB,ed);
+  pl(g,cx,hy-30,cx,hy-6,"rgba(4,8,14,0.55)",1.4);
+  // the brow — two plates dipped toward the centre, so the unit SCOWLS
+  plate(g,[[cx-42,hy-27],[cx+2,hy-24],[cx-2,hy-10],[cx-36,hy-12]],sM,sB,ed);
+  plate(g,[[cx+42,hy-27],[cx-2,hy-24],[cx+2,hy-10],[cx+36,hy-12]],sM,sB,ed);
+  cavity(g,cx-36,hy-12,72,7,0.6);
+  bolt(g,cx-38,hy-20,2,offl?0.05:0.18);bolt(g,cx+38,hy-20,2,offl?0.05:0.18);
+  var vs={x:cx-32,y:hy-12,w:64,h:10};
+  rr(g,vs.x,vs.y,vs.w,vs.h,3);g.fillStyle="#03060b";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
   if(offl){
-    /* A display that has lost signal does not go evenly black — it collapses
-       to one bright horizontal line and a faint residual raster. That single
-       line is worth more than any amount of extra darkness: it says the panel
-       is powered enough to be wrong, which is exactly what SILENT means. */
-    RB.fillStyle="#20262e";RB.fillRect(e1-4,ey2,8,2);RB.fillRect(e2-4,ey2,8,2);
-    var deadY=by0+bh*0.52;
-    RB.fillStyle="rgba(150,168,190,0.30)";RB.fillRect(sx+3,deadY,sw-6,1.4);
-    RB.fillStyle="rgba(150,168,190,0.10)";RB.fillRect(sx+3,deadY-2,sw-6,1);RB.fillRect(sx+3,deadY+3,sw-6,1);
-    RE.fillStyle="rgba(150,168,190,0.16)";RE.fillRect(sx+3,deadY,sw-6,1.4);
-  }
+    /* collapse line — kimi's own idiom from its screen days, kept in the
+       visor: one bright line says the panel is powered enough to be wrong */
+    RB.fillStyle="rgba(150,168,190,0.5)";RB.fillRect(vs.x+4,vs.y+4.4,vs.w-8,1.4);
+    RE.fillStyle="rgba(150,168,190,0.2)";RE.fillRect(vs.x+4,vs.y+4.4,vs.w-8,1.4);}
   else{
-    [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){var eg=c.createRadialGradient(exx,ey2,0.5,exx,ey2,10);eg.addColorStop(0,pkh(0.8+0.2*pulse));eg.addColorStop(0.5,pk(0.5*pulse));eg.addColorStop(1,pk(0));c.fillStyle=eg;c.beginPath();c.arc(exx,ey2,10,0,7);c.fill();});});
-    /* Idle eyes wander. Working, they lock forward on the task; waiting, they
-       drift left and right on a slow cycle. Kimi has no body language to speak
-       of — the whole character is two shapes on a screen — so where those two
-       shapes point is the only way it can look busy or look bored. */
-    var eh=blink?1:(work?4:7), ew=6, gaze=work?0:Math.round(Math.sin(t*0.55)*2.2);
-    [e1,e2].forEach(function(exx){[RB,RE].forEach(function(c){c.fillStyle=pkh(0.92);rr(c,exx-ew/2+gaze,ey2-eh/2,ew,eh,2);c.fill();});RB.fillStyle="rgba(255,255,255,0.85)";RB.fillRect(exx-1+gaze,ey2-eh/2+1,2,2);});
-    RB.strokeStyle=pk(0.6);RB.lineWidth=1.4;RB.beginPath();
-    if(work){RB.moveTo(cx-5,by0+bh*0.72);RB.lineTo(cx+5,by0+bh*0.72);}
-    else{RB.arc(cx,by0+bh*0.64,5,0.12*Math.PI,0.88*Math.PI);}
-    RB.stroke();
+    var gaze=work?0:Math.round(Math.sin(t*0.55)*5);
+    [{x:cx-15+gaze,col:AM,colH:AMH},{x:cx+15+gaze,col:PK,colH:PKH}].forEach(function(op){ // amber glass eye + pink
+      [RB,RE].forEach(function(c){var eg=c.createRadialGradient(op.x,vs.y+5,0.4,op.x,vs.y+5,7.5);
+        eg.addColorStop(0,"rgba("+op.colH[0]+","+op.colH[1]+","+op.colH[2]+","+(0.85+0.15*pulse)+")");
+        eg.addColorStop(0.5,"rgba("+op.col[0]+","+op.col[1]+","+op.col[2]+","+(0.5*pulse)+")");
+        eg.addColorStop(1,"rgba("+op.col[0]+","+op.col[1]+","+op.col[2]+",0)");
+        c.fillStyle=eg;c.beginPath();c.arc(op.x,vs.y+5,7.5,0,7);c.fill();});
+      [RB,RE].forEach(function(c){c.fillStyle="rgba("+op.colH[0]+","+op.colH[1]+","+op.colH[2]+",0.95)";
+        rr(c,op.x-2.6,vs.y+2.4,5.2,5.2,1.5);c.fill();});});
   }
+  // the crack that cost the eye
+  g.strokeStyle="rgba(190,205,228,"+(offl?0.08:0.26)+")";g.lineWidth=0.9;
+  g.beginPath();g.moveTo(vs.x+9,vs.y+0.6);g.lineTo(vs.x+16,vs.y+5);g.lineTo(vs.x+13,vs.y+9);g.stroke();
+  // armoured sensor ears — short, armoured, no whips
+  [-1,1].forEach(function(sg){plate(g,[[cx+sg*44,hy-22],[cx+sg*52,hy-20],[cx+sg*52,hy-8],[cx+sg*44,hy-8]],sM,sB,ed);
+    if(!offl){RE.fillStyle=pk(0.5);RE.beginPath();RE.arc(cx+sg*48,hy-14,1.6,0,7);RE.fill();}});
 
-  // ---- manipulator arm (deploys when working) ----
-  var handR;
-  (function(){var rx=cx+28,ry=BY+14;
-    if(work){var ex=cx+42,ey=BY-10,gx2=cx+44,gy=BY-36;limbSeg(g,rx,ry,ex,ey,4.5,3.5,sM,sB);limbSeg(g,ex,ey,gx2,gy,3.5,2.5,sT,sB);g.fillStyle=sM;g.beginPath();g.arc(gx2,gy,3,0,7);g.fill();handR={x:gx2+2,y:gy};}
-    else{var ex=cx+34,ey=BY+22,gx2=cx+30,gy=BY+30;limbSeg(g,rx,ry,ex,ey,4,3,sM,sB);limbSeg(g,ex,ey,gx2,gy,3,2,sT,sB);handR={x:gx2,y:gy};}
-  })();
-  if(work&&handR){var h=handR;
-    if(ROOM==="builder"){plate(g,[[h.x-2,h.y+2],[h.x+10,h.y-3],[h.x+14,h.y+2],[h.x+2,h.y+9]],"#2a3444","#12181f","#3d4c63");}
-    else if(ROOM==="reviewer"){plate(g,[[h.x-3,h.y-9],[h.x+15,h.y-11],[h.x+15,h.y+2],[h.x-3,h.y+4]],"#1a2836","#0c1620","#3a5570");if(!offl){RB.fillStyle="rgba(130,205,255,0.75)";RB.fillRect(h.x+1,h.y-7,10,7);RE.fillStyle="rgba(130,205,255,0.7)";RE.fillRect(h.x+1,h.y-7,10,7);}}
-    else{plate(g,[[h.x-2,h.y-11],[h.x+9,h.y-13],[h.x+12,h.y+4],[h.x+1,h.y+6]],"#241a30","#140e1c","#4a3a5e");if(!offl){RB.fillStyle="rgba(201,139,255,0.75)";RB.fillRect(h.x+2,h.y-9,4,5);RE.fillStyle="rgba(201,139,255,0.7)";RE.fillRect(h.x+2,h.y-9,4,5);}}
-  }
+  /* ---- 6 · waist cincture + nozzle cowl ---- */
+  // overlapping armoured leaves, like scale mail — layered, not extruded
+  for(var lf=0;lf<3;lf++){
+    var lw=58-lf*12, ly=BY+36+lf*22;
+    plate(g,[[cx-lw,ly],[cx+lw,ly],[cx+lw+8,ly+20],[cx+6,ly+20],[cx,ly+15],[cx-6,ly+20],[cx-lw-8,ly+20]],lf%2?sM:sT,sB,ed);
+    cavity(g,cx-lw-8,ly+13,(lw+8)*2,6,0.5);}
+  // the cowl: a heavy armoured cone with vector vanes
+  plate(g,[[cx-46,BY+102],[cx+46,BY+102],[cx+24,nozY-4],[cx-24,nozY-4]],sM,sB,ed);
+  [-1,1].forEach(function(vn){
+    plate(g,[[cx+vn*30-5,BY+118],[cx+vn*30+5,BY+118],[cx+vn*26+3,nozY-6],[cx+vn*26-7,nozY-6]],sT,sB,ed);});
+  // nozzle bell
+  g.fillStyle="#04070c";g.beginPath();g.ellipse(cx,nozY-2,17,8,0,0,7);g.fill();
+  g.strokeStyle=eH;g.lineWidth=1.2;g.beginPath();g.ellipse(cx,nozY-2,17,8,0,0,7);g.stroke();
+  if(!offl){RB.fillStyle=pkh(0.5+0.3*pulse);RB.beginPath();RB.ellipse(cx,nozY-2,9,4.4,0,0,7);RB.fill();
+    RE.fillStyle=pk(0.6);RE.beginPath();RE.ellipse(cx,nozY-2,9,4.4,0,0,7);RE.fill();}
+  // scorch staining up the cowl — the torch marks its own machine (albedo)
+  var sco=g.createLinearGradient(0,nozY-30,0,nozY-2);
+  sco.addColorStop(0,"rgba(8,5,3,0)");sco.addColorStop(1,"rgba(8,5,3,0.5)");
+  g.fillStyle=sco;poly(g,[[cx-30,BY+118],[cx+30,BY+118],[cx+24,nozY-4],[cx-24,nozY-4]]);g.fill();
+
+  /* the jet's underlight: everything above the nozzle catches pink from
+     below — the one lighting cue that says the torch is REAL. */
+  if(!offl){g.save();g.globalCompositeOperation="lighter";
+    var ul=g.createRadialGradient(cx,nozY-10,4,cx,nozY-10,90);
+    ul.addColorStop(0,pk(0.14*th));ul.addColorStop(1,pk(0));
+    g.fillStyle=ul;g.beginPath();g.arc(cx,nozY-10,90,0,7);g.fill();g.restore();
+    [-128,128].forEach(function(dx){g.save();g.globalCompositeOperation="lighter";
+      var uf=g.createRadialGradient(cx+dx*0.9,BY+120,2,cx+dx*0.9,BY+120,40);
+      uf.addColorStop(0,pk(0.06*th));uf.addColorStop(1,pk(0));
+      g.fillStyle=uf;g.beginPath();g.arc(cx+dx*0.9,BY+120,40,0,7);g.fill();g.restore();});}
+
+  /* ---- 7 · offline: the beacon catches the left pauldron arris ---- */
+  if(offl){var bp2=0.35+0.65*beaconPulse;
+    pl(g,cx-172,BY-50,cx-160,BY-30,"rgba(255,64,52,"+(0.24*bp2)+")",2);
+    pl(g,cx-46,hy-18,cx-40,hy+6,"rgba(255,64,52,"+(0.18*bp2)+")",1.6);
+    RE.strokeStyle="rgba(255,64,52,"+(0.12*bp2)+")";RE.lineWidth=2.4;
+    RE.beginPath();RE.moveTo(cx-172,BY-50);RE.lineTo(cx-160,BY-30);RE.stroke();}
 
   RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
   buildRim(offl?[94,84,90]:[255,114,182]);      // kimi: pink
-  var hh=handR||{x:cx+30,y:BY+28};
-  /* Kimi has no feet — the skirt is what faces the floor, so it casts one
-     wide soft pool rather than two prints. Powered down it settles, and the
-     pool tightens on its own through the height rule. */
-  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY),hy:TY(BY-24),offl:offl,work:work,
-          feet:[{x:TX(cx),y:TY(BY+34),w:F*30}]};
+  /* Powered, the deck feels the torch: one soft pool under the nozzle, lifted
+     by the full hover height. Offline the fists ARE the contact — two hard
+     patches at the gauntlets, exactly where the knuckles meet the deck. */
+  var feet=offl
+    ?[{x:TX(cx-128),y:TY(FLOORL),w:F*30},{x:TX(cx+128),y:TY(FLOORL),w:F*30}]
+    :[{x:TX(cx),y:TY(nozY+6),w:F*26}];
+  return {hand:{x:TX(cx+150),y:TY(BY+108)},coreY:TY(BY-16),hy:TY(BY-65),offl:offl,work:work,
+          feet:feet};
 }
 
 /* The top of the unit, measured off the sprite the renderer just built, cached
@@ -3295,10 +3320,9 @@ function unitTop(){
 function drawRobot(t){
   var info=buildRobo(t,STATE);lastHand=info.hand;
   var sc=0.74, px=ROBOX-260*sc, py=FLOORY-560*sc;
-  /* kimi hovers higher in the full room; offline it keeps roughly half the
-     lift — parking altitude, not the floor (L12). The floor put the whole
-     unit behind the near-plane station. */
-  if(AGENT==="kimi")py-=(info.offl?26:48);
+  /* The kimi lift special-case is gone with the drone: the JUGGERNAUT draws
+     its own altitude — powered it hangs over its torch with the head level
+     with claude's, offline it drops until the knuckles meet the deck. */
   /* Publish where this unit landed, once, in room coordinates. buildRobo
      reports the hand, the head and the footprints in its own canvas space and
      drawRobot is what maps that space onto the floor — so anything else that
@@ -3321,7 +3345,10 @@ function drawRobot(t){
      wider, softer and fainter its shadow. That single line is what makes
      claude and codex read as heavy and grok and kimi read as airborne, without
      either of them being special-cased. */
-  var floating=(AGENT==="grok"||AGENT==="kimi");
+  /* Offline kimi is NOT floating any more: the torch is dead and the unit
+     rests on its own knuckles, so those two contacts get the hard core every
+     planted foot gets. */
+  var floating=(AGENT==="grok"||(AGENT==="kimi"&&!info.offl));
   var feet=info.feet||[{x:260,y:560,w:90}];
   S.save();
   feet.forEach(function(f){
@@ -3396,10 +3423,17 @@ function drawRobot(t){
         tg.addColorStop(0,"rgba(176,124,255,"+(info.work?0.14:0.09)+")");tg.addColorStop(1,"rgba(176,124,255,0)");
         S.fillStyle=tg;S.beginPath();S.ellipse(tx3+sg2*26,fy0+2,86,13,0,0,7);S.fill();});
     } else {
-      // a hover skirt rings the floor; the ring travels outward and fades
-      for(var rg3=0;rg3<2;rg3++){var rp=((t*0.5+rg3*0.5)%1), rr3=26+rp*104;
-        S.strokeStyle="rgba(255,114,182,"+(0.16*(1-rp))+")";S.lineWidth=1.6;
-        S.beginPath();S.ellipse(ROBOX,fy0+3,rr3,rr3*0.19,0,0,7);S.stroke();}
+      // the torch column hits the deck: a hot core where it lands, spill
+      // pushed out sideways, flickering with the throttle
+      var tf=0.72+0.28*Math.sin(t*11);
+      var tc=S.createRadialGradient(ROBOX,fy0+2,2,ROBOX,fy0+2,44);
+      tc.addColorStop(0,"rgba(255,214,232,"+(0.20*tf*(info.work?1:0.55))+")");
+      tc.addColorStop(0.5,"rgba(255,114,182,"+(0.11*tf*(info.work?1:0.55))+")");
+      tc.addColorStop(1,"rgba(255,114,182,0)");
+      S.fillStyle=tc;S.beginPath();S.ellipse(ROBOX,fy0+2,44,11,0,0,7);S.fill();
+      [-1,1].forEach(function(sg2){var tg=S.createRadialGradient(ROBOX+sg2*30,fy0+2,2,ROBOX+sg2*30,fy0+2,72);
+        tg.addColorStop(0,"rgba(255,114,182,"+(0.08*tf*(info.work?1:0.5))+")");tg.addColorStop(1,"rgba(255,114,182,0)");
+        S.fillStyle=tg;S.beginPath();S.ellipse(ROBOX+sg2*36,fy0+3,72,11,0,0,7);S.fill();});
     }
     S.restore();
   }
