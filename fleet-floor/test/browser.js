@@ -264,6 +264,12 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      but the replay itself is the unsound part. Try the saved spot first as a
      fast path, then fall back to scanning slots until the wanted box opens. */
   const openHere = async (x, y) => {
+    // Same guard as the scan (grok, round 1): re-entry can inherit a late-open
+    // room just as the walk could, and then reports the PREVIOUS box as this
+    // click's result. Closing the class on one half only leaves it live on the
+    // other, and enterAt()'s fast path is exactly where a stale console is
+    // most likely — it clicks a remembered position straight after a scroll.
+    await ensureFloor();
     await page.mouse.click(x, y);
     const opened = await settle(async () =>
       (await page.locator('body.room').count()) === 1
