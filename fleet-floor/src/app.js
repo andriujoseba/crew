@@ -1931,6 +1931,19 @@ function buildCodex(t,st){
   var slump=offl?18:0, BY=332+bob+slump;
   function limbSeg(c,x0,y0,x1,y1,w0,w1,top,bot){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;plate(c,[[x0+nx*w0,y0+ny*w0],[x1+nx*w1,y1+ny*w1],[x1-nx*w1,y1-ny*w1],[x0-nx*w0,y0-ny*w0]],top,bot,ed);}
   function joint(c,x,y,r){c.fillStyle=sT;c.beginPath();c.arc(x,y,r,0,7);c.fill();c.fillStyle=eH;c.beginPath();c.arc(x-1,y-1,1.2,0,7);c.fill();}
+  /* A plate bolted along a limb's upper edge — the armour rides the segment,
+     it is not the segment. f0..f1 are fractions of the limb's length; the
+     plate is chamfered at both ends so it reads as fitted, not painted. */
+  function limbArmor(c,x0,y0,x1,y1,f0,f1,off,w){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;if(ny>0){nx=-nx;ny=-ny;}
+    var ax0=x0+dx*f0,ay0=y0+dy*f0,ax1=x0+dx*f1,ay1=y0+dy*f1,ch=Math.min(5,ln*(f1-f0)*0.18);
+    plate(c,[[ax0+dx/ln*ch+nx*(off+w),ay0+dy/ln*ch+ny*(off+w)],[ax1-dx/ln*ch+nx*(off+w),ay1-dy/ln*ch+ny*(off+w)],[ax1+nx*off,ay1+ny*off],[ax0+nx*off,ay0+ny*off]],sT,sM,ed);
+    rivet(c,(ax0+ax1)/2+nx*(off+w*0.55),(ay0+ay1)/2+ny*(off+w*0.55),eH);}
+  /* Hydraulic ram: dark sleeve from the anchor, bright rod the rest of the
+     way. The rod is the one polished part a working machine keeps. */
+  function ram(c,x0,y0,x1,y1,sw){var mx2=x0+(x1-x0)*0.55,my2=y0+(y1-y0)*0.55;
+    pl(c,x0,y0,mx2,my2,"#0a0f18",sw);pl(c,x0,y0,mx2,my2,ed,1);
+    pl(c,mx2,my2,x1,y1,offl?"#333c48":"#8ea4c0",sw*0.45);
+    joint(c,x0,y0,sw*0.5+1);}
 
   // ---- 8 legs (behind body) ----
   /* Stance. A spider that is hunting braces wide; a spider that is waiting
@@ -1962,7 +1975,31 @@ function buildCodex(t,st){
     limbSeg(g,rx,ry,k1x,k1y,7.5,5.5,sM,sB);   // femur: up + out
     limbSeg(g,k1x,k1y,k2x,k2y,5.5,4,sT,sB);   // tibia: down + out past the foot
     limbSeg(g,k2x,k2y,fx,fy,4.5,2.6,sM,sB);   // tarsus: down + in to the foot (the flex)
+    /* Loop 1 — the leg is an assembly, not a wire. Six identical bare rods
+       under the heaviest shell in the fleet is the claim that nothing moves
+       them. Each femur now carries a chamfered armour plate bolted along its
+       upper edge, with a hydraulic ram slung underneath from the coxa to
+       mid-femur — sleeve at the hull end, polished rod at the load end — and
+       the tibia gets a shorter guard of the same cut. All of it hangs INSIDE
+       the leg's own line, so the stance (and the envelope it binds) holds. */
+    /* (Refined in-loop: the first ram ran coxa → mid-femur and vanished
+       behind the dome — the abdomen overhangs everything inboard of its own
+       edge. A knee ram, femur underside to upper tibia, lives in the span
+       the room can actually see, and it is the joint that works hardest.) */
+    ram(g,rx+(k1x-rx)*0.5,ry+(k1y-ry)*0.5+8,k1x+(k2x-k1x)*0.34,k1y+(k2y-k1y)*0.34+3,4);
+    limbArmor(g,rx,ry,k1x,k1y,0.18,0.92,1.5,4.5);
+    limbArmor(g,k1x,k1y,k2x,k2y,0.12,0.6,1,3.5);
     joint(g,k1x,k1y,5.5); joint(g,k2x,k2y,4.5);
+    /* The knee is capped, not dotted: a fitted shield over the joint, bolted
+       once, angled with the femur so each pair reads as machinery in phase. */
+    var kn=Math.atan2(k1y-ry,k1x-rx);
+    g.save();g.translate(k1x,k1y);g.rotate(kn);
+    plate(g,[[-7,-7],[5,-7],[8,0],[5,6],[-7,6]],sT,sM,ed);g.restore();
+    rivet(g,k1x-1,k1y-1,eH);
+    // ankle clamp band where the tarsus takes the flex
+    (function(){var dx=fx-k2x,dy=fy-k2y,ln=Math.hypot(dx,dy)||1,bx=k2x+dx*0.18,by2=k2y+dy*0.18,nx=-dy/ln,ny=dx/ln;
+      pl(g,bx+nx*5,by2+ny*5,bx-nx*5,by2-ny*5,"#0a0f18",3);
+      pl(g,bx+nx*5,by2+ny*5,bx-nx*5,by2-ny*5,eH,1);})();
     /* Claws. Each leg ended in a small triangle — a point, with nothing that
        explains how six of these hold a heavy shell steady. Two hooked tips
        splayed against the direction of load is what an insect foot actually
