@@ -2015,6 +2015,15 @@ function buildCodex(t,st){
 
   // ---- abdomen (rear/upper rounded hull) ----
   var ax=cx, ay=BY-44, aw=78, ah=56;
+  /* Loop 7 — the shell casts on what it covers. The dome is the biggest
+     overhang in the fleet and the legs passed behind it at full brightness,
+     which is the tell that they are drawn, not under it. A contact shadow
+     falls on everything within a few pixels of the shell's edge — painted
+     source-atop, so it lands on the legs and never haloes the room. */
+  g.save();g.globalCompositeOperation="source-atop";
+  g.fillStyle="rgba(0,0,0,0.30)";g.beginPath();g.ellipse(ax,ay,aw+8,ah+8,0,0,7);g.fill();
+  g.fillStyle="rgba(0,0,0,0.22)";g.beginPath();g.ellipse(ax,ay,aw+4,ah+4,0,0,7);g.fill();
+  g.restore();
   var abg=g.createLinearGradient(0,ay-ah,0,ay+ah);abg.addColorStop(0,sT);abg.addColorStop(1,sB);
   g.fillStyle=abg;g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.fill();
   g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.stroke();
@@ -2047,6 +2056,14 @@ function buildCodex(t,st){
   g.restore();
   g.restore();
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
+  /* Grime obeys gravity, not the power state: oily weep below the shell's
+     rivets and the saddle bolts, in albedo, so a dead codex is exactly as
+     dirty as a live one. */
+  (function(){g.fillStyle="rgba(58,40,26,0.30)";
+    [[ax-aw+16,ay+8,9],[ax+aw-16,ay+8,7],[ax-18,ay-ah+7,6],[ax+18,ay-ah+7,8]].forEach(function(w){
+      poly(g,[[w[0]-1.1,w[1]],[w[0]+1.1,w[1]],[w[0]+0.5,w[1]+w[2]],[w[0]-0.5,w[1]+w[2]]]);g.fill();});
+    pl(g,ax-19,ay-ah+8.6,ax+19,ay-ah+8.6,"rgba(0,0,0,0.32)",2); // the saddle sits ON the shell
+  })();
   /* Loop 4 — the spinnerets are plumbing, not prongs. Three bare stubs with
      lit tips read as antennae; a machine's vents are welded and clamped. The
      cluster now shares one bolted saddle on the shell, each pipe cants
