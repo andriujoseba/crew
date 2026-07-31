@@ -2690,51 +2690,33 @@ function buildCodex(t,st){
   [-1,1].forEach(function(sg){
     plate(g,[[hxx+sg*31,hy2-17],[hxx+sg*2,hy2-13],[hxx+sg*2,hy2-6],[hxx+sg*28,hy2-10]],sT,sM,ed);});
   g.fillStyle="rgba(0,0,0,0.38)";
-  poly(g,[[hxx-28,hy2-10],[hxx-2,hy2-6],[hxx+2,hy2-6],[hxx+28,hy2-10],[hxx+26,hy2-6.5],[hxx,hy2-2.5],[hxx-26,hy2-6.5]]);g.fill();
-  var primary=[[hxx-12,hy2+1,4.6],[hxx+12,hy2+1,4.6]];
-  /* Loop 21, on the face: a sentinel is a lens CLUSTER, not a pair. Two
-     more tertiary lenses at the socket's outer corners take the count to
-     eight — small and dim, but at cell size the extra points of light are
-     what read as swarm-machine rather than mascot. */
-  var minor=[[hxx-21,hy2-6,1.7],[hxx+21,hy2-6,1.7],[hxx-6,hy2+9,1.5],[hxx+6,hy2+9,1.5],[hxx-24,hy2+4,1.2],[hxx+24,hy2+4,1.2]];
-  minor.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}
-    var eg=c.createRadialGradient(e[0],e[1],0.3,e[0],e[1],e[2]*2.4);eg.addColorStop(0,te(0.4*pulse));eg.addColorStop(1,te(0));
-    c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.4,0,7);c.fill();
-    c.fillStyle=teh(0.6+0.2*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
-  primary.forEach(function(e,pi){[RB,RE].forEach(function(c){
-    if(offl){c.fillStyle="#252c34";c.beginPath();c.arc(e[0],e[1],e[2]*0.8,0,7);c.fill();
-             c.fillStyle="#12161c";c.beginPath();c.arc(e[0],e[1],e[2]*0.4,0,7);c.fill();
-             /* A dead lens is still a lens: it catches the room's emergency
-                beacon. Two red pinpricks in an otherwise black socket is what
-                makes offline codex read as switched off rather than absent. */
-             c.fillStyle="rgba(255,70,58,0.5)";c.beginPath();c.arc(e[0]+1.4,e[1]-1.2,0.9,0,7);c.fill();return;}
-    var eg=c.createRadialGradient(e[0],e[1],0.5,e[0],e[1],e[2]*3);eg.addColorStop(0,te(0.7*pulse));eg.addColorStop(1,te(0));
-    c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*3,0,7);c.fill();
-    c.fillStyle=teh(0.85+0.15*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();
-    // iris ring + pupil: what turns a lit dot into an eye that is looking at you
-    c.fillStyle=te(0.95);c.beginPath();c.arc(e[0],e[1],e[2]*0.62,0,7);c.fill();
-    c.fillStyle="rgba(2,10,9,0.85)";c.beginPath();c.arc(e[0],e[1],e[2]*0.3,0,7);c.fill();});
-    /* Loop 16 — the eyes narrow. A big round pupil with a catchlight is a
-       doll's eye; no amount of armour around it un-friends a face built on
-       circles. An angled lid plate now crops the top of each primary —
-       lower on the inner edge, so the pair slopes toward the centre and the
-       stare becomes a scowl — cut out of the emissive too, so the glow is
-       lidded along with the lens. The catchlight moves under the lid line. */
-    var inn=pi===0?1:-1, r3=e[2];
-    [RB,RE].forEach(function(c){var dout=(c===RE);
-      c.save();if(dout){c.globalCompositeOperation="destination-out";c.fillStyle="rgba(0,0,0,1)";}
-      else c.fillStyle="#070b12";
-      poly(c,[[e[0]-r3-2,e[1]-r3-2],[e[0]+r3+2,e[1]-r3-2],
-              [e[0]+r3+2,e[1]-r3*(inn>0?0.55:-0.05)],[e[0]-r3-2,e[1]-r3*(inn>0?-0.05:0.55)]]);
-      c.fill();c.restore();});
-    RB.strokeStyle=offl?"#1a212b":"#2c3849";RB.lineWidth=1.1;RB.beginPath();
-    RB.moveTo(e[0]-r3-2,e[1]-r3*(inn>0?-0.05:0.55));RB.lineTo(e[0]+r3+2,e[1]-r3*(inn>0?0.55:-0.05));RB.stroke();
-    // catchlight, offset the same way on both so they track together
-    RB.fillStyle="rgba(255,255,255,"+(offl?0:0.8)+")";RB.beginPath();RB.arc(e[0]-1.2,e[1]+0.6,0.9,0,7);RB.fill();
-    // working: a scan bar crossing the socket, phase-offset per eye
-    if(work&&!offl){var sy3=hy2-8+((t*26+pi*11)%20);[RB,RE].forEach(function(c){c.fillStyle=teh(0.22);c.fillRect(e[0]-e[2],sy3,e[2]*2,1);});}
-  });
-
+  poly(g,[[hxx-28,hy2-10],[hxx+28,hy2-10],[hxx+26,hy2-5],[hxx-26,hy2-5]]);g.fill();
+  /* Loop 23 — the cluster goes cold (operator: "the eyes shouldn't have
+     expression — codex is meant to look cold, scary, dangerous. the sad
+     eyes break that. add more eyes, like the robots from matrix"). The
+     iris, the pupil, the catchlight and the loop-16 lids are all DELETED —
+     every one of them was expression machinery, and expression is exactly
+     what a sentinel doesn't have. What is left is a symmetric battery of
+     ten identical lenses: dark bezel, cold light, nothing looking back.
+     Offline the battery dies to bezels, and only the central pair catches
+     the room's beacon as two red points. */
+  var lenses=[[hxx-12,hy2+1,4.2],[hxx+12,hy2+1,4.2],
+    [hxx-21,hy2-5,2.6],[hxx+21,hy2-5,2.6],
+    [hxx-4,hy2-6,2.2],[hxx+4,hy2-6,2.2],
+    [hxx-16,hy2+9,2.0],[hxx+16,hy2+9,2.0],
+    [hxx-25,hy2+5,1.6],[hxx+25,hy2+5,1.6]];
+  lenses.forEach(function(e,li){
+    RB.strokeStyle="#02050a";RB.lineWidth=1.4;RB.beginPath();RB.arc(e[0],e[1],e[2]+0.8,0,7);RB.stroke();
+    [RB,RE].forEach(function(c){
+      if(offl){c.fillStyle="#1d232b";c.beginPath();c.arc(e[0],e[1],e[2]*0.8,0,7);c.fill();
+        if(li<2&&c===RB){c.fillStyle="rgba(255,70,58,0.5)";c.beginPath();c.arc(e[0]+1.2,e[1]-1,0.9,0,7);c.fill();}
+        return;}
+      var eg=c.createRadialGradient(e[0],e[1],0.3,e[0],e[1],e[2]*2.6);
+      eg.addColorStop(0,te((li<2?0.7:0.45)*pulse));eg.addColorStop(1,te(0));
+      c.fillStyle=eg;c.beginPath();c.arc(e[0],e[1],e[2]*2.6,0,7);c.fill();
+      c.fillStyle=teh((li<2?0.9:0.65)+0.1*pulse);c.beginPath();c.arc(e[0],e[1],e[2],0,7);c.fill();});});
+  // working: one scan bar sweeps the whole battery — the cluster tracks, the face does not move
+  if(work&&!offl){var sy3=hy2-9+((t*26)%22);[RB,RE].forEach(function(c){c.fillStyle=teh(0.2);c.fillRect(hxx-26,sy3,52,1);});}
   // ---- front manipulators ----
   /* Loop 6 — the pedipalps join the same machine as the legs. Two bare
      two-segment wires hung off the head in every state: the idle pose WAS
