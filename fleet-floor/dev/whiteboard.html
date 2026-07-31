@@ -3305,12 +3305,29 @@ function buildKimi(t,st){
   // reactor mount bolts on the glacis
   [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(function(sg){bolt(g,rc2.x+sg[0]*36,rc2.y+sg[1]*34,2.6,offl?0.06:0.24);});
 
-  /* ---- 4 · pauldrons: layered cowls over the bells ---- */
+  /* ---- 4 · pauldrons: layered cowls over the bells ----
+     A veteran's plates never match. The LEFT cowl is the forged original —
+     shaped, crowned, and carrying the gouge that should have killed the unit.
+     The RIGHT one was lost with the eye: what hangs there now is a field
+     replacement — straight mill cuts, a proud weld bead, bolts driven wherever
+     they bit, the 09 re-stencilled crooked by whoever fitted it. */
   [-1,1].forEach(function(sg){
     var px=cx+sg*118,py=BY-56;
-    // upper cowl — the biggest single plate on the unit
-    plate(g,[[px-sg*56,py+6],[px-sg*30,py-22],[px+sg*34,py-26],[px+sg*52,py-6],[px+sg*44,py+22],[px-sg*40,py+26]],sT,sB,ed);
-    pl(g,px-sg*30,py-22,px+sg*34,py-26,"rgba(186,208,242,"+(offl?0.07:0.2)+")",1.5);   // crown catch
+    if(sg<0){
+      // forged original — the biggest single plate on the unit
+      plate(g,[[px-sg*56,py+6],[px-sg*30,py-22],[px+sg*34,py-26],[px+sg*52,py-6],[px+sg*44,py+22],[px-sg*40,py+26]],sT,sB,ed);
+      pl(g,px-sg*30,py-22,px+sg*34,py-26,"rgba(186,208,242,"+(offl?0.07:0.2)+")",1.5); // crown catch
+    }else{
+      // field replacement — straight cuts, one chamfer, mill-scale a shade off
+      plate(g,[[px-56,py+8],[px-32,py-20],[px+30,py-24],[px+50,py-12],[px+50,py+18],[px-40,py+26]],offl?"#161b24":"#202a38",sB,ed);
+      // the weld bead where the new plate was let into the old shoulder
+      pl(g,px-32,py-20,px-52,py+4,"rgba(9,13,20,0.9)",3);
+      pl(g,px-32,py-20,px-52,py+4,"rgba(186,204,236,"+(offl?0.07:0.2)+")",1.1);
+      for(var wd=0;wd<4;wd++){pl(g,px-34-wd*5,py-17+wd*6,px-31-wd*5,py-15+wd*6,"rgba(150,168,196,"+(offl?0.05:0.13)+")",1);}
+      // bolts driven wherever they bit
+      bolt(g,px-24,py-12,2.6,offl?0.06:0.22);bolt(g,px+14,py-16,2.2,offl?0.06:0.2);
+      bolt(g,px+40,py+2,2.6,offl?0.06:0.22);bolt(g,px-6,py+18,2.2,offl?0.06:0.18);
+    }
     // lower rim plate
     plate(g,[[px-sg*48,py+28],[px+sg*44,py+24],[px+sg*38,py+42],[px-sg*42,py+44]],sM,sB,ed);
     cavity(g,px-sg*44,py+24,86,6,0.5);
@@ -3322,10 +3339,11 @@ function buildKimi(t,st){
   // the GOUGE across the left pauldron — torn lip catches the lamp
   poly(g,[[cx-164,BY-66],[cx-128,BY-50],[cx-133,BY-42],[cx-168,BY-58]]);g.fillStyle="rgba(2,4,8,1)";g.fill();
   pl(g,cx-164,BY-66,cx-128,BY-50,"rgba(198,216,246,"+(offl?0.1:0.36)+")",1.6);
-  // "09" stencil on the right pauldron, worn
+  // "09" re-stencilled on the replacement plate, crooked and part-dry
   g.save();g.globalAlpha=offl?0.14:0.34;g.fillStyle="#c6d2e4";
+  g.translate(cx+118,BY-42);g.rotate(-0.06);
   g.font="700 17px ui-monospace,monospace";g.textAlign="center";
-  g.fillText("09",cx+118,BY-42);g.restore();g.textAlign="left";
+  g.fillText("09",0,0);g.restore();g.textAlign="left";
   // chipped edges — albedo nicks
   g.fillStyle="rgba(206,220,242,"+(offl?0.09:0.24)+")";
   [[cx-172,BY-50],[cx+170,BY-48],[cx-96,BY-61],[cx+95,BY-62]].forEach(function(nk,i){g.fillRect(nk[0],nk[1],3+(i%2),1.6);});
