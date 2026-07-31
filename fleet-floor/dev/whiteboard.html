@@ -2020,13 +2020,20 @@ function buildClaude(t,st){
        pauldron. One exposed actuator runs down the outer upper arm into the
        elbow in every pose: dark cylinder, bright rod, same language as the
        shin hydraulics. */
+    /* The rods used to start at shy+26/+30 — well below the pauldron's rim
+       at their x — so both hung in mid-air under the plate (operator caught
+       it). They now start up in the socket's contact shadow and each is
+       terminated by a clevis block, so the pair visibly hangs FROM the
+       shoulder instead of floating beside it. */
     function actuator(x0,y0,x1,y1){
       pl(g,x0,y0,x1,y1,"#0a0f18",4.2);
-      pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.3);}
+      pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.3);
+      plate(g,[[x0-3.4,y0-3],[x0+3.4,y0-3],[x0+2.6,y0+2.6],[x0-2.6,y0+2.6]],"#151b27","#080c14","#242d3c");
+      rivet(g,x0,y0-0.4,eH);}
     if(mode==='reachdown'){ // reach forward + down (welding pose)
       var ex=shx+sgn*8, ey=shy+42;
-      actuator(shx+sgn*12,shy+26,ex+sgn*4,ey-4);
-      actuator(shx-sgn*6,shy+30,ex-sgn*4,ey-4);
+      actuator(shx+sgn*11,shy+18,ex+sgn*4,ey-4);
+      actuator(shx-sgn*6,shy+21,ex-sgn*4,ey-4);
       var fx=ex - sgn*22, fy=ey+34;
       plate(g,[[ex-10,ey-2],[ex+10,ey],[fx+14,fy-4],[fx-10,fy-9]],sT,sM,ed);
       plate(g,[[fx-11,fy-9],[fx+15,fy-7],[fx+13,fy+13],[fx-13,fy+11]],sM,sB,ed); // gauntlet
@@ -2037,8 +2044,8 @@ function buildClaude(t,st){
       handR={x:fx+13,y:fy+2};
     } else if(mode==='raiseup'){ // forearm raised, device held up in front of chest (inspect/dispatch)
       var ex3=shx+sgn*6, ey3=shy+40;
-      actuator(shx+sgn*12,shy+26,ex3+sgn*4,ey3-4);
-      actuator(shx-sgn*6,shy+30,ex3-sgn*4,ey3-4);
+      actuator(shx+sgn*11,shy+18,ex3+sgn*4,ey3-4);
+      actuator(shx-sgn*6,shy+21,ex3-sgn*4,ey3-4);
       var fx3=ex3 - sgn*26, fy3=ey3-32;   // forearm up + inward
       plate(g,[[ex3-10,ey3],[ex3+10,ey3-2],[fx3+14,fy3+6],[fx3-10,fy3-3]],sT,sM,ed);
       plate(g,[[fx3-11,fy3-7],[fx3+15,fy3-5],[fx3+13,fy3+15],[fx3-13,fy3+13]],sM,sB,ed); // gauntlet
@@ -2048,8 +2055,8 @@ function buildClaude(t,st){
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
     } else {
       var ex2=shx+sgn*4, ey2=shy+56;
-      actuator(shx+sgn*12,shy+26,ex2+sgn*5,ey2-8);
-      actuator(shx-sgn*6,shy+30,ex2-sgn*4,ey2-8);
+      actuator(shx+sgn*11,shy+18,ex2+sgn*5,ey2-8);
+      actuator(shx-sgn*6,shy+21,ex2-sgn*4,ey2-8);
       /* The forearm is a CONE, not a slab: narrow where it leaves the elbow,
          widening all the way to the wrist, blade fin off the outer flare —
          all the arm's mass hangs low, over the fists. */
