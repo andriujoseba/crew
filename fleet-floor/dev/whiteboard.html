@@ -1033,7 +1033,7 @@ var CAMFRAME={claude:{w:250,dy:0,fy:0.40},codex:{w:260,dy:14,fy:0.46},
 function mnow(){return (window.performance&&performance.now)?performance.now():0;}
 var camStills={}, camFills=0, camCost=0;
 var CAM_KEEP=64, CAM_BUDGET=2, CAM_SLOW_MS=14, CAM_TTL_SLOW=3.5;
-var CAM_TTL={working:0.30,idle:0.9,offline:2.5};
+var CAM_TTL={working:0.30,idle:0.6,offline:2.5};
 function camPrune(){
   var ks=Object.keys(camStills);if(ks.length<CAM_KEEP)return;
   ks.sort(function(a,b){return camStills[a].at-camStills[b].at;});
@@ -1066,23 +1066,35 @@ function camStill(t,u,pw,ph){
   var jx=(strPhase(box)/6.283-0.5)*16, jy=(strPhase(box+"y")/6.283-0.5)*10;
   var sw=f.w, sh=sw*(ph/pw);
   var sx=Math.max(0,Math.min(RW-sw,260+jx-sw/2));
-  var sy=info.hy+f.dy-sh*f.fy+jy;
+  /* The camera is MOUNTED. hy rides the sprite's own idle motion — grok
+     reports half its breath, kimi its whole hover bob — so a crop recomputed
+     per refresh TRACKS the chest and cancels on screen exactly the life it
+     exists to show: kimi hovered perfectly still, claude sat frozen, grok
+     breathed at half height. Lock the mount on a key's first frame; from
+     then on the unit moves inside a fixed frame, like anything on a tripod. */
+  if(e.sy0===undefined)e.sy0=info.hy+f.dy-sh*f.fy+jy;
+  var sy=e.sy0;
   var c=e.cv.getContext("2d");
+  /* Codex's bob is Math.round()ed for the room — at portrait zoom that is a
+     1px stutter while everyone else sweeps. Top it up with the smooth curve
+     the round() threw away, applied to the whole draw so body and glow move
+     together. Offline units get nothing: dead is still. */
+  var dy3=(u.agent==="codex"&&!off)?Math.sin(t*1.5)*ph*0.008:0;
   c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
   c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
   c.clearRect(0,0,pw,ph);
   if(off)c.filter="saturate(0.45) brightness(0.88)";
-  c.drawImage(robo,sx,sy,sw,sh,0,0,pw,ph);
+  c.drawImage(robo,sx,sy,sw,sh,0,dy3,pw,ph);
   c.filter="none";
   c.globalCompositeOperation="lighter";
-  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx,sy,sw,sh,0,dy3,pw,ph);
   /* The emissive pass, blurred like the room compositor's glow buffer but
      scaled to portrait zoom. Two taps, not three: the third radius at this
      size is a wash. */
   var bl=Math.max(2,Math.round(pw/90));
-  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
-  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
-  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx,sy,sw,sh,0,dy3,pw,ph);
+  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx,sy,sw,sh,0,dy3,pw,ph);
+  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx,sy,sw,sh,0,dy3,pw,ph);
   c.globalCompositeOperation="source-over";c.globalAlpha=1;
   AGENT=sa;STATE=ss;
   e.at=t;

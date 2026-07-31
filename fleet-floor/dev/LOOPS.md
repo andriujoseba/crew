@@ -2365,6 +2365,20 @@ runs. Suite green: 395 ok, 0 failed.
 ![one tile, hovered](shots/fleet-call/tile-hover.webp)
 ![all 36 cells](shots/fleet-call/cells-36.webp)
 
+**Loop 6 — the camera gets a tripod.** Operator review: only grok seemed to
+breathe. All four sprites DO carry idle motion (claude's chest, codex's bob,
+grok's shallow-quick breath, kimi's hover) — but the crop was anchored to
+`hy`, which rides that same motion, so the camera tracked the chest and
+cancelled on screen exactly the life it exists to show: kimi hovered
+perfectly still, claude sat frozen, and grok read at half height only
+because its head reports half its breath. The mount now locks on a key's
+first frame and the unit moves inside a fixed frame. Codex's bob is
+`Math.round()`ed for the room — a 1px stutter at portrait zoom — so the
+portrait tops it up with the smooth curve the round threw away. Verified by
+pixel-diff at two breath phases through the shipped `renderMini`: every
+vendor now moves in both working and idle (claude 7.9k px, codex 13.9k,
+grok 4.0k, kimi 6.5k changed in the central region).
+
 Motion evidence — the portrait cadence and the overlay cadence, captured live:
 [tile-live.gif](shots/fleet-call/tile-live.gif) ·
 [tile-dead.gif](shots/fleet-call/tile-dead.gif) ·
