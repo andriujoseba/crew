@@ -2393,14 +2393,31 @@ function buildCodex(t,st){
      down each side into the head. Offline the mount is honest about being a
      mount: the head sags a few pixels in it and the trunks go slack. */
   var hxx=cx, hy2=BY+22+(offl?5:0);
+  /* Loop 17 — CHAD PASS ONE: the neck of a fighter. Loop 3's mount was two
+     sticks and two wires — anatomically honest, visually a pencil neck. What
+     reads as strength on claude is what reads as strength on anyone: no
+     taper between skull and shoulders. A broad trapezius collar now slopes
+     from the hull's underside onto the head's shoulders, drawn behind the
+     face so only its slopes show, and each side carries two FAT ribbed power
+     tubes under visible tension — the bundle a head that bites needs.
+     Offline the tubes bow outward and the collar is what the head visibly
+     hangs from. */
+  plate(g,[[hxx-50,BY+2],[hxx+50,BY+2],[hxx+36,hy2-12],[hxx-36,hy2-12]],sM,sB,ed);
+  rivet(g,hxx-42,BY+6,eH);rivet(g,hxx+42,BY+6,eH);
   [-1,1].forEach(function(sg){
-    plate(g,[[hxx+sg*20,BY+2],[hxx+sg*38,BY-4],[hxx+sg*44,hy2-20],[hxx+sg*30,hy2-16]],sM,sB,ed);
-    rivet(g,hxx+sg*36,BY-1,eH);rivet(g,hxx+sg*40,hy2-22,eH);
-    var sag=offl?7:0;
-    g.strokeStyle="#05080e";g.lineWidth=3.4;g.beginPath();
-    g.moveTo(hxx+sg*30,BY+4);g.quadraticCurveTo(hxx+sg*52,BY+16+sag,hxx+sg*34,hy2-6);g.stroke();
-    g.strokeStyle=offl?"#2c3440":"#5b6c85";g.lineWidth=1.2;g.beginPath();
-    g.moveTo(hxx+sg*30,BY+4);g.quadraticCurveTo(hxx+sg*52,BY+16+sag,hxx+sg*34,hy2-6);g.stroke();});
+    var sag=offl?9:0;
+    [[26,30,7],[36,40,5.2]].forEach(function(tb){
+      var x0=hxx+sg*tb[0],x1=hxx+sg*(tb[1]-(offl?2:0)),cx2=hxx+sg*(tb[1]+14+sag*0.6);
+      g.strokeStyle="#05080e";g.lineWidth=tb[2];g.beginPath();
+      g.moveTo(x0,BY+2);g.quadraticCurveTo(cx2,BY+14+sag,x1,hy2-6);g.stroke();
+      g.strokeStyle=offl?"#252d38":"#46566e";g.lineWidth=tb[2]*0.42;g.beginPath();
+      g.moveTo(x0-sg,BY+2);g.quadraticCurveTo(cx2-sg*2,BY+14+sag,x1-sg,hy2-6);g.stroke();
+      // corrugation: the tube is ribbed, not smooth
+      g.strokeStyle="rgba(3,7,12,0.65)";g.lineWidth=1.2;
+      for(var rb2=1;rb2<5;rb2++){var u3=rb2/5,qx=(1-u3)*(1-u3)*x0+2*(1-u3)*u3*cx2+u3*u3*x1,
+        qy=(1-u3)*(1-u3)*(BY+2)+2*(1-u3)*u3*(BY+14+sag)+u3*u3*(hy2-6);
+        g.beginPath();g.moveTo(qx-tb[2]*0.55,qy-1);g.lineTo(qx+tb[2]*0.55,qy+1);g.stroke();}
+    });});
   plate(g,[[hxx-42,hy2-24],[hxx+42,hy2-24],[hxx+34,hy2+26],[hxx-34,hy2+26]],sT,sM,ed);
   plate(g,[[hxx-40,hy2-24],[hxx+40,hy2-24],[hxx+36,hy2-14],[hxx-36,hy2-14]],"#2c3849","#1a2331",null);
   /* Loop 9 — the face is armour, not a panel. One trapezoid with a socket
