@@ -1996,6 +1996,13 @@ function buildCodex(t,st){
     g.save();g.translate(k1x,k1y);g.rotate(kn);
     plate(g,[[-7,-7],[5,-7],[8,0],[5,6],[-7,6]],sT,sM,ed);g.restore();
     rivet(g,k1x-1,k1y-1,eH);
+    /* Loop 10 — paint gone from the lips that lead. Constants, not noise: a
+       nick is a place, and it stays where it happened. The outer legs work
+       hardest, so they carry the most. */
+    if(i<2){g.strokeStyle="rgba(190,208,232,"+(offl?0.12:0.3)+")";g.lineWidth=1.4;
+      var nf=[0.3+i*0.14+(sgn>0?0.09:0),0.68-i*0.11];
+      for(var nn=0;nn<(2-i);nn++){var u2=nf[nn],px3=rx+(k1x-rx)*u2,py3=ry+(k1y-ry)*u2;
+        g.beginPath();g.moveTo(px3-1,py3-6);g.lineTo(px3+1.4,py3-3.8);g.stroke();}}
     // ankle clamp band where the tarsus takes the flex
     (function(){var dx=fx-k2x,dy=fy-k2y,ln=Math.hypot(dx,dy)||1,bx=k2x+dx*0.18,by2=k2y+dy*0.18,nx=-dy/ln,ny=dx/ln;
       pl(g,bx+nx*5,by2+ny*5,bx-nx*5,by2-ny*5,"#0a0f18",3);
@@ -2056,6 +2063,11 @@ function buildCodex(t,st){
   g.restore();
   g.restore();
   rivet(g,ax-aw+16,ay+6,eH);rivet(g,ax+aw-16,ay+6,eH);rivet(g,ax,ay+ah-9,eH);
+  // rim nicks (loop 10): the dome's leading edge meets the world first
+  g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.32)+")";g.lineWidth=1.6;
+  [-2.25,-1.75,-0.55,0.4].forEach(function(na){
+    var nx3=ax+Math.cos(na)*(aw-1.5),ny3=ay+Math.sin(na)*(ah-1.5);
+    g.beginPath();g.moveTo(nx3-1.2,ny3-1.2);g.lineTo(nx3+1.6,ny3+1.4);g.stroke();});
   /* Grime obeys gravity, not the power state: oily weep below the shell's
      rivets and the saddle bolts, in albedo, so a dead codex is exactly as
      dirty as a live one. */
