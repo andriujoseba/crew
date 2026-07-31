@@ -3221,6 +3221,22 @@ function buildKimi(t,st){
     // Dead the pressure is gone and the line hangs slack; flexed it pulls taut.
     hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,flex?11:(offl?31:22),5.2);
     if(flex)handR={x:gxx-sg*12,y:gyy+36};
+    /* The torch TOOL — builder only; the other rooms put their own device
+       in the working hand. A stubby gripped barrel exiting the fist's
+       inner-bottom corner, clamped where it leaves the knuckles, hot ring
+       at the tip: the arc now comes off a tool, not off bare studs. Stubby
+       on purpose — a wand would be the thinnest thing on the unit, and the
+       only thin thing allowed is the broken one. */
+    if(flex&&ROOM==="builder"){
+      seg2(g,gxx-sg*20,gyy+20,gxx-sg*40,gyy+33,4.6,3.2,"#1c2432","#0a0e16","#2d3749");
+      seg2(g,gxx-sg*25,gyy+22,gxx-sg*28,gyy+26,6,6,sM,sB,ed);
+      g.fillStyle="#05080e";g.beginPath();g.arc(gxx-sg*40,gyy+33,2.7,0,7);g.fill();
+      g.strokeStyle="rgba(200,216,244,"+(offl?0.1:0.3)+")";g.lineWidth=1;
+      g.beginPath();g.arc(gxx-sg*40,gyy+33,2.7,3.6,5.9);g.stroke();
+      [RB,RE].forEach(function(c){c.fillStyle="rgba(255,246,252,0.9)";
+        c.beginPath();c.arc(gxx-sg*41,gyy+35,1.3,0,7);c.fill();});
+      handR={x:gxx-sg*42,y:gyy+36};
+    }
     else if(sg>0&&!work)handR={x:gxx+10,y:gyy+12};
   }
   drawArm(1);
