@@ -2051,16 +2051,36 @@ function buildCodex(t,st){
   for(var n=-1;n<=1;n++){var nx2=ax+n*12;plate(g,[[nx2-4,ay-ah+2],[nx2+4,ay-ah+2],[nx2+3,ay-ah-12],[nx2-3,ay-ah-12]],sM,sB,ed);if(!offl){RB.fillStyle=te(0.55);RB.fillRect(nx2-2,ay-ah-12,4,3);RE.fillStyle=te(0.6);RE.fillRect(nx2-2,ay-ah-12,4,3);}}
 
   // ---- reactor core (abdomen front) ----
+  /* Loop 2 — the reactor is housed, not a porthole. A fire this important
+     was a soft disc laid ON the shell: a thin ring, three hairlines the glow
+     erased, nothing that said the hull holds it. Now the fire sits down a
+     bolted blast collar — recess shadow at the top where the shell overhangs
+     it — and three radial vanes stand IN FRONT of it. The vanes are cut out
+     of the emissive buffer too, so the bloom leaks around the grille and
+     never through it: caged light is what reads as contained power. */
   var coreY=ay+10;
-  RB.fillStyle="#03060c";RB.beginPath();RB.arc(cx,coreY,19,0,7);RB.fill();
-  RB.strokeStyle=ed;RB.lineWidth=2;RB.beginPath();RB.arc(cx,coreY,19,0,7);RB.stroke();
-  for(var b2=-1;b2<=1;b2++){RB.strokeStyle="#0a0f18";RB.lineWidth=2;RB.beginPath();RB.moveTo(cx-17,coreY+b2*7);RB.lineTo(cx+17,coreY+b2*7);RB.stroke();}
-  [RB,RE].forEach(function(c){if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,8,0,7);c.fill();return;}var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,19);cg.addColorStop(0,teh(pulse));cg.addColorStop(0.4,te(0.75*pulse));cg.addColorStop(1,te(0));c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,19,0,7);c.fill();c.fillStyle=teh(pulse);c.beginPath();c.arc(cx,coreY,4.5,0,7);c.fill();});
+  RB.fillStyle="#02050a";RB.beginPath();RB.arc(cx,coreY,21,0,7);RB.fill();
+  var crs=RB.createLinearGradient(0,coreY-21,0,coreY+8);
+  crs.addColorStop(0,"rgba(0,0,0,0.75)");crs.addColorStop(1,"rgba(0,0,0,0)");
+  RB.fillStyle=crs;RB.beginPath();RB.arc(cx,coreY,21,0,7);RB.fill();
+  RB.strokeStyle=sT;RB.lineWidth=3;RB.beginPath();RB.arc(cx,coreY,21,0,7);RB.stroke();
+  RB.strokeStyle=rc;RB.lineWidth=1;RB.beginPath();RB.arc(cx,coreY,22.6,0,7);RB.stroke();
+  for(var bb=0;bb<6;bb++){var ba=bb*Math.PI/3+0.52;rivet(RB,cx+Math.cos(ba)*21,coreY+Math.sin(ba)*21,eH);}
+  [RB,RE].forEach(function(c){if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,8,0,7);c.fill();return;}var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,18);cg.addColorStop(0,teh(pulse));cg.addColorStop(0.4,te(0.75*pulse));cg.addColorStop(1,te(0));c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,18,0,7);c.fill();c.fillStyle=teh(pulse);c.beginPath();c.arc(cx,coreY,4.5,0,7);c.fill();});
   // the core lights the carapace above it and the head plate below — see claude
   if(!offl){RB.save();RB.globalCompositeOperation="lighter";
     var tb=RB.createRadialGradient(cx,coreY,4,cx,coreY,96);
     tb.addColorStop(0,te(0.26*pulse));tb.addColorStop(0.5,te(0.09*pulse));tb.addColorStop(1,te(0));
     RB.fillStyle=tb;RB.beginPath();RB.arc(cx,coreY,96,0,7);RB.fill();RB.restore();}
+  // the grille: three vanes in front of the fire, punched out of the emissive
+  [ -Math.PI/2, Math.PI/6, Math.PI*5/6 ].forEach(function(va){
+    var vx=Math.cos(va),vy=Math.sin(va);
+    RB.strokeStyle="#0a0f18";RB.lineWidth=3.4;RB.beginPath();
+    RB.moveTo(cx+vx*4,coreY+vy*4);RB.lineTo(cx+vx*19.5,coreY+vy*19.5);RB.stroke();
+    RB.strokeStyle=offl?"#242a33":"#3a4658";RB.lineWidth=1.2;RB.beginPath();
+    RB.moveTo(cx+vx*4-1,coreY+vy*4-1);RB.lineTo(cx+vx*19.5-1,coreY+vy*19.5-1);RB.stroke();
+    RE.save();RE.globalCompositeOperation="destination-out";RE.strokeStyle="rgba(0,0,0,1)";
+    RE.lineWidth=3.4;RE.beginPath();RE.moveTo(cx+vx*4,coreY+vy*4);RE.lineTo(cx+vx*19.5,coreY+vy*19.5);RE.stroke();RE.restore();});
 
   // ---- cephalothorax (front hull) + eye cluster ----
   var hxx=cx, hy2=BY+22;
