@@ -131,7 +131,10 @@ var LAYOUT={
      333), so a prop in the inner ~40px of a left bay can be stood in front of.
      Nothing there today needs to stay readable, and now that is a decision
      rather than an accident. */
-  unit:["unit envelope",333,286,273,327],
+  /* Re-measured for the JUGGERNAUT: kimi now binds three of the four edges —
+     pauldron tips left and right (316..624, wider than codex's leg splay) and
+     the working head top (279); codex still owns the bottom (613). */
+  unit:["unit envelope",316,279,308,335],
   /* Nothing goes here, in any room. The ceiling is deliberately not on this
      list: the crane rail and the roof truss cross the lamp on purpose. */
   keep:[
@@ -2860,8 +2863,13 @@ function buildKimi(t,st){
 
   /* ---- 0 · the torch (furthest plane) ----
      A siege engine does not drift down like a leaf; it hangs LOW over a
-     short, violent column of fire and the deck remembers it. */
-  var nozY=BY+168;
+     short, violent column of fire and the deck remembers it.
+     Parked, the vector vanes gimbal up and the bell tucks into the cowl:
+     nozzle bottom lands at exactly the same local line as the knuckles
+     (BY+134 = deck), because the hand-off's dead posture is fists AND cowl
+     on the floor — and because a bell left at flight length would spear
+     32px through the deck the fists rest on. */
+  var nozY=BY+(offl?128:168);
   if(!offl){
     [RB,RE].forEach(function(c,ci){c.save();c.globalCompositeOperation="lighter";
       var jg=c.createLinearGradient(0,nozY,0,FLOORL-2);
@@ -3155,8 +3163,10 @@ function buildKimi(t,st){
   plate(g,[[cx-46,BY+102],[cx+46,BY+102],[cx+24,nozY-4],[cx-24,nozY-4]],sM,sB,ed);
   pl(g,cx-38,BY+106,cx-26,nozY-10,"rgba(10,14,21,0.95)",2.6);       // clamped feed line
   pl(g,cx-38,BY+106,cx-26,nozY-10,"rgba(130,144,170,"+(offl?0.06:0.16)+")",0.9);
-  [[cx-35,BY+118],[cx-30,BY+142]].forEach(function(cl){
-    plate(g,[[cl[0]-3,cl[1]-2],[cl[0]+3,cl[1]-2],[cl[0]+3,cl[1]+2],[cl[0]-3,cl[1]+2]],sT,sB,ed);});
+  // clamps ride the line by fraction, so they tuck with the bell when it parks
+  [0.35,0.75].forEach(function(cf){
+    var clx=cx-38+cf*12, cly=BY+106+cf*(nozY-116-BY);
+    plate(g,[[clx-3,cly-2],[clx+3,cly-2],[clx+3,cly+2],[clx-3,cly+2]],sT,sB,ed);});
   [-1,1].forEach(function(vn){
     plate(g,[[cx+vn*30-5,BY+118],[cx+vn*30+5,BY+118],[cx+vn*26+3,nozY-6],[cx+vn*26-7,nozY-6]],sT,sB,ed);});
   // nozzle bell
@@ -3193,7 +3203,8 @@ function buildKimi(t,st){
      by the full hover height. Offline the fists ARE the contact — two hard
      patches at the gauntlets, exactly where the knuckles meet the deck. */
   var feet=offl
-    ?[{x:TX(cx-128),y:TY(FLOORL),w:F*30},{x:TX(cx+128),y:TY(FLOORL),w:F*30}]
+    ?[{x:TX(cx-128),y:TY(FLOORL),w:F*30},{x:TX(cx+128),y:TY(FLOORL),w:F*30},
+      {x:TX(cx),y:TY(FLOORL),w:F*20}]
     :[{x:TX(cx),y:TY(nozY+6),w:F*26}];
   return {hand:{x:TX(cx+150),y:TY(BY+108)},coreY:TY(BY-16),hy:TY(BY-65),offl:offl,work:work,
           feet:feet};
