@@ -1428,6 +1428,12 @@ function buildClaude(t,st){
     // thigh
     plate(g,[[lx-22,360+breath*0.7],[lx+24,360+breath*0.7],[lx+20,440+breath*0.4],[lx-20,440+breath*0.4]],sM,sB,ed);
     pl(g,lx-10,372+breath*0.7,lx-8,432,rc,1);
+    /* BATTLE THREE. Something with claws got the right thigh and lost the
+       exchange: three parallel rakes, dark trenches with bright torn lips,
+       ending where they end because that is where it stopped. */
+    if(sgn>0)for(var rk=0;rk<3;rk++){var rx=lx-10+rk*8;
+      pl(g,rx,364+breath*0.7,rx+13,389+breath*0.6,"rgba(4,8,14,0.6)",2);
+      pl(g,rx+0.5,363+breath*0.7,rx+13.5,388+breath*0.6,"rgba(170,192,222,"+(offl?0.12:0.32)+")",0.9);}
   }
   leg(-1);leg(1);
 
@@ -1468,6 +1474,9 @@ function buildClaude(t,st){
   plate(g,[[cx-30,ab1],[cx+20,ab1],[cx+27,ab1+5],[cx+24,ab1+14],[cx-26,ab1+14]],sM,sB,ed);
   plate(g,[[cx-20,ab2],[cx+30,ab2],[cx+26,ab2+14],[cx-24,ab2+14],[cx-27,ab2+5]],sM,sB,ed);
   rivet(g,cx+21,ab1+10,eH);rivet(g,cx-21,ab2+10,eH);
+  // battle three's other souvenir: the belt chamfer took a hit and folded
+  g.fillStyle="rgba(4,8,14,0.55)";poly(g,[[cx+21,ab1+4],[cx+27,ab1+6],[cx+24,ab1+12],[cx+19,ab1+9]]);g.fill();
+  pl(g,cx+20,ab1+9,cx+25,ab1+6,"rgba(170,192,222,"+(offl?0.12:0.30)+")",1);
   g.strokeStyle="rgba(150,172,204,"+(offl?0.08:0.18)+")";g.lineWidth=1;
   g.beginPath();g.moveTo(cx-28,ab1+1);g.lineTo(cx+19,ab1+1);
   g.moveTo(cx-19,ab2+1);g.lineTo(cx+28,ab2+1);g.stroke();
@@ -1528,7 +1537,14 @@ function buildClaude(t,st){
   g.save();g.globalAlpha=offl?0.25:0.5;
   g.fillStyle="#c9a227";g.fillRect(cx-46,272+breath,3,12);g.fillRect(cx-40,272+breath,3,12);
   g.fillStyle="rgba(201,162,39,0.6)";g.fillRect(cx-46,286+breath,9,2);
+  // the tally: one stroke per battle walked away from, same paint as the marking
+  for(var tl=0;tl<3;tl++)g.fillRect(cx-46+tl*4,291+breath,2,7);
   g.restore();
+  // nicks: paint gone from the lips that lead. Constants, not noise — a nick
+  // is a place, and it stays where it happened.
+  g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.34)+")";g.lineWidth=1.6;g.beginPath();
+  [[-20],[-2],[25]].forEach(function(nk){g.moveTo(cx+nk[0],218.6+breath);g.lineTo(cx+nk[0]+2.4,221+breath);});
+  g.stroke();
   // worn edges: a bright hairline along the top lip of each big plate
   g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.22)+")";g.lineWidth=1;
   g.beginPath();g.moveTo(cx-32,220+breath);g.lineTo(cx+32,220+breath);
