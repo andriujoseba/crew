@@ -1491,6 +1491,22 @@ function buildClaude(t,st){
      patch of newer, bluer steel bolted over a scorch mark, weld stitches
      along its top edge where it was tacked before bolting. The patch edges
      deliberately align with nothing — repairs never do. */
+  /* BATTLE ONE. Something split the left pec plate and the unit finished the
+     job before anyone fixed it. The crack is rewelded — a jagged seam with
+     stitch ticks — and a strap of newer steel is bolted ACROSS it, because a
+     weld you strap is a weld you no longer worry about. Scar tissue as
+     reinforcement: the left chest is now stronger than the plate it split
+     from. */
+  var ck=[[cx-53,244],[cx-46,252],[cx-49,258],[cx-40,264],[cx-42,270],[cx-34,275]];
+  g.strokeStyle="rgba(4,8,14,0.65)";g.lineWidth=1.8;g.beginPath();
+  g.moveTo(ck[0][0],ck[0][1]+breath);for(var c9=1;c9<ck.length;c9++)g.lineTo(ck[c9][0],ck[c9][1]+breath);g.stroke();
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.30)+")";g.lineWidth=1;g.beginPath();
+  for(var w9=1;w9<ck.length;w9++){var mx9=(ck[w9][0]+ck[w9-1][0])/2,my9=(ck[w9][1]+ck[w9-1][1])/2+breath;
+    g.moveTo(mx9-2.4,my9-2);g.lineTo(mx9+2.4,my9+2);}
+  g.stroke();
+  plate(g,[[cx-58,254+breath],[cx-36,260+breath],[cx-37,268+breath],[cx-59,262+breath]],
+    offl?"#1f2732":"#2e3a4e",offl?"#10151d":"#182130",ed);
+  rivet(g,cx-55,258+breath,eH);rivet(g,cx-40,264+breath,eH);
   var scorch=g.createRadialGradient(cx+37,278+breath,3,cx+37,278+breath,22);
   scorch.addColorStop(0,"rgba(8,6,5,0.5)");scorch.addColorStop(1,"rgba(8,6,5,0)");
   g.fillStyle=scorch;g.fillRect(cx+15,256+breath,44,44);
