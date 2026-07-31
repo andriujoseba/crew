@@ -2349,8 +2349,19 @@ function buildCodex(t,st){
     g.moveTo(hxx+sg*30,BY+4);g.quadraticCurveTo(hxx+sg*52,BY+16+sag,hxx+sg*34,hy2-6);g.stroke();});
   plate(g,[[hxx-42,hy2-24],[hxx+42,hy2-24],[hxx+34,hy2+26],[hxx-34,hy2+26]],sT,sM,ed);
   plate(g,[[hxx-40,hy2-24],[hxx+40,hy2-24],[hxx+36,hy2-14],[hxx-36,hy2-14]],"#2c3849","#1a2331",null);
-  plate(g,[[hxx-14,hy2+22],[hxx-4,hy2+22],[hxx-6,hy2+34],[hxx-16,hy2+32]],sM,sB,ed);
-  plate(g,[[hxx+4,hy2+22],[hxx+14,hy2+22],[hxx+16,hy2+32],[hxx+6,hy2+34]],sM,sB,ed);
+  /* Loop 9 — the face is armour, not a panel. One trapezoid with a socket
+     cut in it read as an instrument, and an instrument does not glare. Three
+     changes make it a head that means it: a brow ridge that breaks to a V
+     over the socket and casts its own shade into the recess, a bolted cheek
+     guard down each side, and the chin stubs rebuilt as hinged chelicerae —
+     paired cutters with a pivot rivet each, the one part of a spider's face
+     you do not want a closer look at. */
+  [-1,1].forEach(function(sg){
+    plate(g,[[hxx+sg*42,hy2-12],[hxx+sg*30,hy2-12],[hxx+sg*27,hy2+20],[hxx+sg*37,hy2+22]],sM,sB,ed);
+    rivet(g,hxx+sg*33,hy2-8,eH);rivet(g,hxx+sg*32,hy2+16,eH);});
+  [-1,1].forEach(function(sg){var fx2=hxx+sg*9,fdrop=offl?3:0;
+    plate(g,[[fx2-sg*6,hy2+22],[fx2+sg*5,hy2+22],[fx2+sg*4,hy2+30+fdrop],[fx2,hy2+38+fdrop],[fx2-sg*4,hy2+30+fdrop]],sM,sB,ed);
+    rivet(g,fx2,hy2+25,eH);});
   /* Eye cluster. Six equal dots on a flat black rectangle read as a speaker
      grille, and at grid-cell size as nothing at all — codex was identified by
      its silhouette and by the reactor glow above, never by a face. A spider
@@ -2362,6 +2373,11 @@ function buildCodex(t,st){
   // recessed socket: a top-down gradient inside the plate
   var sg2=RB.createLinearGradient(0,hy2-11,0,hy2+13);sg2.addColorStop(0,"rgba(0,0,0,0.7)");sg2.addColorStop(1,"rgba(0,0,0,0)");
   RB.fillStyle=sg2;rr(RB,hxx-27,hy2-11,54,24,4);RB.fill();
+  // the brow: two plates meeting in a V, and their shade falls into the socket
+  [-1,1].forEach(function(sg){
+    plate(g,[[hxx+sg*31,hy2-17],[hxx+sg*2,hy2-13],[hxx+sg*2,hy2-6],[hxx+sg*28,hy2-10]],sT,sM,ed);});
+  g.fillStyle="rgba(0,0,0,0.38)";
+  poly(g,[[hxx-28,hy2-10],[hxx-2,hy2-6],[hxx+2,hy2-6],[hxx+28,hy2-10],[hxx+26,hy2-6.5],[hxx,hy2-2.5],[hxx-26,hy2-6.5]]);g.fill();
   var primary=[[hxx-12,hy2+1,4.6],[hxx+12,hy2+1,4.6]];
   var minor=[[hxx-21,hy2-6,1.7],[hxx+21,hy2-6,1.7],[hxx-6,hy2+9,1.5],[hxx+6,hy2+9,1.5]];
   minor.forEach(function(e){[RB,RE].forEach(function(c){if(offl){c.fillStyle="#20262e";c.beginPath();c.arc(e[0],e[1],e[2]*0.7,0,7);c.fill();return;}
