@@ -3041,7 +3041,10 @@ function buildKimi(t,st){
      brow with one pink optic and one amber glass eye, no legs: scale-armour
      waist leaves over a vector-vane nozzle and the torch does the rest.
      Offline the torch dies and the unit settles onto its own knuckles. */
-  var F=1.2, OY=560-470*F, TA=260-260*F;
+  /* 1.2 crowded the room — the pauldrons out-spanned codex's whole leg splay
+     and the head ran at the lamp. 1.05 keeps the siege mass but lets the
+     room breathe around it (operator: ~10-15% down, not small). */
+  var F=1.05, OY=560-470*F, TA=260-260*F;
   RB.setTransform(F,0,0,F,TA,OY);RE.setTransform(F,0,0,F,TA,OY);
   function TX(x){return F*x+TA;} function TY(y){return F*y+OY;}
   var FLOORL=470;                                          // deck line in local coords (maps to sprite 560)
@@ -3076,7 +3079,7 @@ function buildKimi(t,st){
      A-stance is the pose and the worktop must not bite it. Offline the torch
      dies and it drops until the knuckles land exactly on the deck — the
      offline posture IS this number. */
-  var BY=offl?336:184+bob;
+  var BY=offl?336:156+bob;
   var th=offl?0:(work?(0.78+0.22*Math.sin(t*11)+0.07*Math.sin(t*23)):(0.44+0.1*Math.sin(t*3)));
 
   /* ---- 0 · the torch (furthest plane) ----
