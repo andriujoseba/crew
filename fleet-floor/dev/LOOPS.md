@@ -1974,3 +1974,67 @@ ten-lens battery reads as a cold glow cluster at cell size — more sentinel
 there, not less.
 
 ![codex structure progression, round 7](shots/codex-structure/progression-7.webp)
+
+---
+
+## GROK — the grounded stalker (series of 5, plus two renderer verdicts)
+
+The concept replacement for the EVA balloon (and for the #200 canopy draft,
+which had hardened the suit but kept a mirrored dome for a head — a unit with
+no face to be a veteran with). Operator direction: predator. Slicked-back
+mane of black cables, a machined mask whose BUILT-IN structure does the
+intimidating (no bio, no worn mask), rough chin, thin — and grounded, the
+float rule of #200 explicitly withdrawn. Flight survives as history only.
+
+**Loop 1 — the skeleton lands whole.** Digitigrade legs (the third segment a
+plantigrade walker does not have), narrow pelvis, rib slats over a bared
+spine cavity, compact angular chest with a vertical purple SPINE SLIT crossed
+by two armour bridges (bloom leaks around, never through), swept pauldron
+blades riding above a sunk skull, bare-rod arms ending in three-finger
+claws, and the mane in two layers: rear cables slicked over the crown and
+falling behind the shoulders, front dreads over them with machined ferrule
+tips — one severed mid-length, stump cauterized. States drawn in from the
+start: working burns both optics, idle threat-scans, offline folds the
+crouch deeper and spills the mane FORWARD over the mask. In drawRobot, grok
+leaves the floating set — hard contact shadows for the first time — and the
+thruster-wash floor effect becomes breath vapor off the chin vents.
+
+**Loop 2 — the lower half was a black post.** The spine cavity ended where
+the pelvis began and both vanished into each other; thighs drawn sM-on-sB
+disappeared against the cavity. Cavity shortened, pelvis widened and given a
+lamp-lit top edge, legs relit sT-on-sM and thickened, knee guards brightened,
+stance widened 2px. The idle optic scan de-synced from full antiphase to a
+0.7-radian offset — full antiphase read as one dead eye, which is offline's
+tell, not idle's.
+
+**Loop 3 — the blades out-massed the head.** Pauldrons cut down by a third
+and sockets pulled 3px inboard; the skull widened 2px per side to meet them.
+Crown comb strokes softened (they read as punk spikes at 2x, not slick), rib
+tops relit, cheek-ridge edges given their own light.
+
+**Loop 4 — the room owns the bench.** The kimi round-9 verdict applied:
+every room parks a readout on the right half of its bench, exactly where a
+right-handed weld lands. grok works LEFT-handed in builder — the arc goes
+over the rig — and raises the right hand for the handheld rooms. Spine slit
+widened to 12 with a 6px core and a stronger bounce (at cell size the slit
+is the vendor mark that survives), optic glow radius up, chin given a
+lamp-catching lower lip.
+
+**Loop 5 — the service record.** A bite out of the right blade's trailing
+spike, cut to transparency so the rim light catches the tear. Reentry plasma
+streaks rake the LEFT blade — straw-anodized lips, angled the way the
+airflow went. A hand of orbital heat tiles bolted where the middle right rib
+lost its plate, charred top edge — a material nothing else on the fleet has.
+Kill tallies in worn gold inside the left forearm, read when the arm hangs.
+And the face scar: one gouge across the brow, aimed at the right optic and
+stopped by it.
+
+Envelope over all 36: unchanged, `[333.8, 286.4 → 605.4, 613.5]` — grok
+tucks inside codex's splay under claude's head top; `LAYOUT.unit` holds.
+Suite: 388 ok, 0 failed. Cells swept at 336px: the surviving silhouette is
+mane-eyes-blades over a lean taper, and offline is the only state whose
+head has no face at all.
+
+![grok structure progression](shots/grok-structure/progression.webp)
+![grok states](shots/grok-structure/states.webp)
+![the mask and the mane at 4x](shots/grok-structure/head-detail.webp)
