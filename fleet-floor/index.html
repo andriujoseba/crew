@@ -3121,9 +3121,18 @@ function buildKimi(t,st){
     for(var v=0;v<3;v++){pl(g,bx-14+v*14,by2+18,bx-12+v*14,by2+32,"rgba(8,12,18,0.9)",3.4);}
   });
 
-  /* ---- 2 · siege arms: piston, hammer gauntlet, stud knuckles ---- */
-  [-1,1].forEach(function(sg){
-    var shx=cx+sg*108,shy=BY-30, elx=cx+sg*134,ely=BY+30, gxx=cx+sg*128,gyy=BY+96;
+  /* ---- 2 · siege arms: piston, hammer gauntlet, stud knuckles ----
+     Working, the RIGHT arm flexes — elbow out, fist raised over the bench,
+     the way claude carries a working arm. That side is drawn LATE (after the
+     waist, via drawWorkArm) so the raised forearm reads in front of the
+     torso; anything drawn here first would be overpainted by the chest
+     plates — the same trap codex's front legs taught. */
+  var handR=null;
+  function drawArm(sg){
+    var flex=(sg>0&&work);
+    var shx=cx+sg*108,shy=BY-30,
+        elx=cx+sg*(flex?144:134),ely=flex?BY+22:BY+30,
+        gxx=cx+sg*(flex?106:128),gyy=flex?BY+82:BY+96;
     // shoulder ball in its socket
     g.fillStyle="#04070c";g.beginPath();g.arc(shx,shy,13,0,7);g.fill();
     plate(g,[[shx-10,shy-14],[shx+10,shy-14],[shx+8,shy+2],[shx-8,shy+2]],sM,sB,ed);
@@ -3174,9 +3183,12 @@ function buildKimi(t,st){
     g.fillStyle="rgba(206,220,242,"+(offl?0.08:0.22)+")";                          // scuffed striking face
     g.fillRect(gxx-gw/2+5,gyy+gh-29.6,10,1.6);g.fillRect(gxx+4,gyy-26,8,1.6);
     // hydraulic hose: pauldron to gauntlet — one thick line, not spaghetti.
-    // Dead, the pressure is gone and the line hangs slack.
-    hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,offl?31:22,5.2);
-  });
+    // Dead the pressure is gone and the line hangs slack; flexed it pulls taut.
+    hose(g,shx-sg*9,shy+2,gxx-sg*18,gyy-22,flex?11:(offl?31:22),5.2);
+    if(sg>0)handR={x:gxx+sg*10,y:gyy+(flex?36:12)};
+  }
+  drawArm(-1);
+  if(!work)drawArm(1);           // the flexed right arm waits for the torso
 
   /* ---- 3 · CHEST: the bunker ---- */
   // under-torso shadow plate
@@ -3444,6 +3456,9 @@ function buildKimi(t,st){
   sco.addColorStop(0,"rgba(8,5,3,0)");sco.addColorStop(1,"rgba(8,5,3,0.5)");
   g.fillStyle=sco;poly(g,[[cx-30,BY+118],[cx+30,BY+118],[cx+24,nozY-4],[cx-24,nozY-4]]);g.fill();
 
+  // the flexed working arm lands here — over the torso, under the jet's light
+  if(work)drawArm(1);
+
   /* the jet's underlight: everything above the nozzle catches pink from
      below — the one lighting cue that says the torch is REAL. */
   if(!offl){g.save();g.globalCompositeOperation="lighter";
@@ -3471,7 +3486,8 @@ function buildKimi(t,st){
     ?[{x:TX(cx-128),y:TY(FLOORL),w:F*30},{x:TX(cx+128),y:TY(FLOORL),w:F*30},
       {x:TX(cx),y:TY(FLOORL),w:F*20}]
     :[{x:TX(cx),y:TY(nozY+6),w:F*26}];
-  return {hand:{x:TX(cx+150),y:TY(BY+108)},coreY:TY(BY-16),hy:TY(BY-65),offl:offl,work:work,
+  var hh=handR||{x:cx+150,y:BY+108};
+  return {hand:{x:TX(hh.x),y:TY(hh.y)},coreY:TY(BY-16),hy:TY(BY-65),offl:offl,work:work,
           feet:feet};
 }
 
