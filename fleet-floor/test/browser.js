@@ -166,16 +166,29 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // The camera eases toward its target, so scrolling needs a settle wait.
   // Absolute positioning: rewind to 0 first, then wheel forward by `cam`, so
   // the camera lands somewhere known rather than "as far as it got".
+  /* The camera IS readable now: FLOORDEV.cam() (the whiteboard hook postdates
+     the "reading the real camera would need a test hook" decision below, and
+     the hook exists regardless). The fixed waits this replaced covered ~4
+     easing frames on a machine where a console dwell expires every visible
+     miniStill — each post-Escape floor frame then costs a full room render,
+     the camera lands half-scrolled, and a cell-centre click falls in a gap:
+     that was "15/17 boxes reached", twice, on an idle box. Poll convergence;
+     on timeout click anyway — every caller still verifies by outcome. */
+  const camAt = () => page.evaluate(() => window.FLOORDEV.cam());
+  const settleCam = async (want) => {
+    for (let w = 0; w < 8000; w += 60) {
+      if (Math.abs((await camAt()) - want) < 0.75) return true;
+      await page.waitForTimeout(60);
+    }
+    return false;
+  };
   const scrollTo = async (cam) => {
     await page.mouse.move(geom.vw / 2, geom.topY + 40);
-    // No DOM signal for the canvas camera, so this one still waits — but every
-    // caller verifies by OUTCOME (enter() returns the box that actually
-    // opened), so a short settle costs a retry, never a false result.
     await page.mouse.wheel(-(totalW + 2000), 0);
-    await page.waitForTimeout(800);
+    await settleCam(0);
     if (cam > 0) {
       await page.mouse.wheel(cam, 0);
-      await page.waitForTimeout(1200);
+      await settleCam(Math.min(cam, camMax));
     }
   };
   /* POLL, never sleep-and-hope. A fixed 700 ms for the room to open and 1200 ms

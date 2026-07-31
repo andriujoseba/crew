@@ -1701,12 +1701,25 @@ function buildClaude(t,st){
 
   function em(c,fn){fn(c);} // draw emissive on given ctx
   function accGlow(c,x,y,w,h){ if(offl)return; var gg=c.createLinearGradient(0,y,0,y+h);gg.addColorStop(0,rgba(255,180,90,0.9));gg.addColorStop(1,rgba(200,90,20,0.9));c.fillStyle=gg;rr(c,x,y,w,h,1);c.fill(); }
+  // grime weeping from a bolt: albedo, so it does not dim with power state
+  function weep(x,y,len){g.fillStyle="rgba(70,44,24,0.30)";
+    poly(g,[[x-1.2,y+2],[x+1.2,y+2],[x+0.6,y+len],[x-0.6,y+len]]);g.fill();}
 
-  // ---------- BACKPACK heat-sink (behind, drawn first) ----------
-  plate(g,[[cx-70,270+breath],[cx-40,250+breath],[cx+40,250+breath],[cx+70,270+breath],[cx+58,336+breath],[cx-58,336+breath]],sM,sB,ed);
-  // exhaust stacks poking above shoulders
-  [[-52,-1],[52,1]].forEach(function(k){var bx=cx+k[0];plate(g,[[bx-11,250+breath],[bx-9,196+breath],[bx+9,196+breath],[bx+11,250+breath]],sT,sB,ed);
-    [RB,RE].forEach(function(c){accGlow(c,bx-5,200+breath,10,10);}); });
+  /* ---------- BACK: cables, nothing else ----------
+     The heat-sink plate went first (from the front, the gap between torso
+     and arm IS the drawing) and the exhaust stacks went next, on the same
+     verdict: hardware standing above the shoulders read as luggage. What
+     hangs there now is slack — two power cables per side looping out of the
+     back and down into the collar, drawn before everything so the torso and
+     pauldrons overlap them. Doom units don't carry backpacks; they trail
+     cables. */
+  [[-1],[1]].forEach(function(k){var s=k[0];
+    [[54,66,184,20,6],[40,48,198,10,4.5]].forEach(function(cb){
+      var x0=cx+s*cb[0], mx2=cx+s*cb[1], my2=cb[2]+breath, x1=cx+s*cb[3], y1=212+breath;
+      g.strokeStyle="#05080e";g.lineWidth=cb[4];g.beginPath();
+      g.moveTo(x0,252+breath);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();
+      g.strokeStyle=offl?"#2c3440":"#5b6c85";g.lineWidth=1.4;g.beginPath();
+      g.moveTo(x0,252+breath);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();});});
 
   // ---------- LEGS (mirror) ----------
   function leg(sgn){
@@ -1723,6 +1736,12 @@ function buildClaude(t,st){
     // thigh
     plate(g,[[lx-22,360+breath*0.7],[lx+24,360+breath*0.7],[lx+20,440+breath*0.4],[lx-20,440+breath*0.4]],sM,sB,ed);
     pl(g,lx-10,372+breath*0.7,lx-8,432,rc,1);
+    /* BATTLE THREE. Something with claws got the right thigh and lost the
+       exchange: three parallel rakes, dark trenches with bright torn lips,
+       ending where they end because that is where it stopped. */
+    if(sgn>0)for(var rk=0;rk<3;rk++){var rx=lx-10+rk*8;
+      pl(g,rx,364+breath*0.7,rx+13,389+breath*0.6,"rgba(4,8,14,0.6)",2);
+      pl(g,rx+0.5,363+breath*0.7,rx+13.5,388+breath*0.6,"rgba(170,192,222,"+(offl?0.12:0.32)+")",0.9);}
   }
   leg(-1);leg(1);
 
@@ -1731,11 +1750,44 @@ function buildClaude(t,st){
   // tassets
   plate(g,[[cx-40,344+breath],[cx-20,344+breath],[cx-24,382+breath*0.8],[cx-44,380+breath*0.8]],sM,sB,ed);
   plate(g,[[cx+20,344+breath],[cx+40,344+breath],[cx+44,380+breath*0.8],[cx+24,382+breath*0.8]],sM,sB,ed);
-  // codpiece accent
-  [RB,RE].forEach(function(c){accGlow(c,cx-3,352+breath,6,18);});
+  /* The girdle centre was a glowing stripe painted straight onto the pelvis.
+     Now the belt closes through a bolted buckle housing that bridges the
+     waist gap, and the codpiece is its own pointed plate — doom loincloth,
+     bolted at the corners — with the accent glow recessed into a slot in it
+     rather than resting on top. */
+  plate(g,[[cx-12,338+breath],[cx+12,338+breath],[cx+10,354+breath*0.9],[cx-10,354+breath*0.9]],sT,sB,ed);
+  rivet(g,cx-7,344+breath,eH);rivet(g,cx+7,344+breath,eH);
+  plate(g,[[cx-9,350+breath*0.9],[cx+9,350+breath*0.9],[cx+7,372+breath*0.8],[cx,384+breath*0.8],[cx-7,372+breath*0.8]],sM,sB,ed);
+  g.fillStyle="rgba(0,0,0,0.30)";g.fillRect(cx-8,351+breath*0.9,16,3); // buckle's shade on the plate below it
+  rivet(g,cx-5,368+breath*0.8,eH);rivet(g,cx+5,368+breath*0.8,eH);
+  g.fillStyle="#03060c";g.fillRect(cx-3,354+breath*0.9,6,18);
+  [RB,RE].forEach(function(c){accGlow(c,cx-2,355+breath*0.9,4,16);});
 
-  // ---------- ABDOMEN (segmented) ----------
-  for(var a=0;a<2;a++){var ay=305+a*20+breath;plate(g,[[cx-30,ay],[cx+30,ay],[cx+26,ay+18],[cx-26,ay+18]],sM,sB,ed);}
+  /* ---------- ABDOMEN: the join you can see into ----------
+     Two clean trapezoids used to butt the chest onto the pelvis, which is why
+     the torso read as one casting. The waist is where a machine admits it is
+     several machines: a dark spine cavity with twin pistons and a power
+     conduit, and the armour is two STAGGERED belt plates — one long to the
+     left, one long to the right — bolted over it, so the seams never line up
+     the way a moulded shell's would. */
+  g.fillStyle="#02040a";poly(g,[[cx-18,300+breath],[cx+18,300+breath],[cx+15,345+breath],[cx-15,345+breath]]);g.fill();
+  [-1,1].forEach(function(sp){var px=cx+sp*9;
+    pl(g,px,302+breath,px,343+breath,"#0a0f18",4.5);
+    pl(g,px-1,302+breath,px-1,343+breath,offl?"#333c48":"#7e94b2",1.2);});
+  g.strokeStyle="#0a0f18";g.lineWidth=3.4;g.beginPath();
+  g.moveTo(cx+15,306+breath);g.quadraticCurveTo(cx+25,324+breath,cx+13,344+breath);g.stroke();
+  g.strokeStyle=offl?"#2b3038":"#a8500f";g.lineWidth=1.5;g.beginPath();
+  g.moveTo(cx+15,306+breath);g.quadraticCurveTo(cx+25,324+breath,cx+13,344+breath);g.stroke();
+  var ab1=307+breath, ab2=324+breath;
+  plate(g,[[cx-30,ab1],[cx+20,ab1],[cx+27,ab1+5],[cx+24,ab1+14],[cx-26,ab1+14]],sM,sB,ed);
+  plate(g,[[cx-20,ab2],[cx+30,ab2],[cx+26,ab2+14],[cx-24,ab2+14],[cx-27,ab2+5]],sM,sB,ed);
+  rivet(g,cx+21,ab1+10,eH);rivet(g,cx-21,ab2+10,eH);
+  // battle three's other souvenir: the belt chamfer took a hit and folded
+  g.fillStyle="rgba(4,8,14,0.55)";poly(g,[[cx+21,ab1+4],[cx+27,ab1+6],[cx+24,ab1+12],[cx+19,ab1+9]]);g.fill();
+  pl(g,cx+20,ab1+9,cx+25,ab1+6,"rgba(170,192,222,"+(offl?0.12:0.30)+")",1);
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.08:0.18)+")";g.lineWidth=1;
+  g.beginPath();g.moveTo(cx-28,ab1+1);g.lineTo(cx+19,ab1+1);
+  g.moveTo(cx-19,ab2+1);g.lineTo(cx+28,ab2+1);g.stroke();
 
   // ---------- CHEST (broad, angled) ----------
   plate(g,[[cx-58,300+breath],[cx-66,236+breath],[cx-34,214+breath],[cx+34,214+breath],[cx+66,236+breath],[cx+58,300+breath]],sT,sM,ed);
@@ -1751,6 +1803,38 @@ function buildClaude(t,st){
   rivet(g,cx-52,246+breath,eH);rivet(g,cx+52,246+breath,eH);rivet(g,cx-48,292+breath,eH);rivet(g,cx+48,292+breath,eH);
   // scratches (battle wear)
   if(!offl){g.strokeStyle="rgba(120,140,170,0.25)";g.lineWidth=1;g.beginPath();g.moveTo(cx+14,244+breath);g.lineTo(cx+30,258+breath);g.moveTo(cx-24,270+breath);g.lineTo(cx-12,282+breath);g.stroke();}
+  /* A service history. Every plate so far is the plate the unit shipped with,
+     which is its own kind of factory-clean. One repair on the right pec: a
+     patch of newer, bluer steel bolted over a scorch mark, weld stitches
+     along its top edge where it was tacked before bolting. The patch edges
+     deliberately align with nothing — repairs never do. */
+  /* BATTLE ONE. Something split the left pec plate and the unit finished the
+     job before anyone fixed it. The crack is rewelded — a jagged seam with
+     stitch ticks — and a strap of newer steel is bolted ACROSS it, because a
+     weld you strap is a weld you no longer worry about. Scar tissue as
+     reinforcement: the left chest is now stronger than the plate it split
+     from. */
+  var ck=[[cx-53,244],[cx-46,252],[cx-49,258],[cx-40,264],[cx-42,270],[cx-34,275]];
+  g.strokeStyle="rgba(4,8,14,0.65)";g.lineWidth=1.8;g.beginPath();
+  g.moveTo(ck[0][0],ck[0][1]+breath);for(var c9=1;c9<ck.length;c9++)g.lineTo(ck[c9][0],ck[c9][1]+breath);g.stroke();
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.30)+")";g.lineWidth=1;g.beginPath();
+  for(var w9=1;w9<ck.length;w9++){var mx9=(ck[w9][0]+ck[w9-1][0])/2,my9=(ck[w9][1]+ck[w9-1][1])/2+breath;
+    g.moveTo(mx9-2.4,my9-2);g.lineTo(mx9+2.4,my9+2);}
+  g.stroke();
+  plate(g,[[cx-58,254+breath],[cx-36,260+breath],[cx-37,268+breath],[cx-59,262+breath]],
+    offl?"#1f2732":"#2e3a4e",offl?"#10151d":"#182130",ed);
+  rivet(g,cx-55,258+breath,eH);rivet(g,cx-40,264+breath,eH);
+  var scorch=g.createRadialGradient(cx+37,278+breath,3,cx+37,278+breath,22);
+  scorch.addColorStop(0,"rgba(8,6,5,0.5)");scorch.addColorStop(1,"rgba(8,6,5,0)");
+  g.fillStyle=scorch;g.fillRect(cx+15,256+breath,44,44);
+  plate(g,[[cx+26,268+breath],[cx+43,264+breath],[cx+46,288+breath],[cx+28,293+breath]],
+    offl?"#1f2732":"#2e3a4e",offl?"#10151d":"#182130",ed);
+  rivet(g,cx+29,270+breath,eH);rivet(g,cx+41,267+breath,eH);
+  rivet(g,cx+43,285+breath,eH);rivet(g,cx+31,289+breath,eH);
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.14:0.34)+")";g.lineWidth=1.1;g.beginPath();
+  for(var wd=0;wd<5;wd++){var wx=cx+27.5+wd*3.6,wy=267.6+breath-wd*0.85;
+    g.moveTo(wx,wy-1.8);g.lineTo(wx+1.6,wy+1.8);}
+  g.stroke();
   /* Stencilled unit marking, and paint worn off the plate edges.
      A fleet vehicle carries its designation, and every plate on this model met
      its neighbour at a perfectly clean line — which is what made a heavy mech
@@ -1761,12 +1845,23 @@ function buildClaude(t,st){
   g.save();g.globalAlpha=offl?0.25:0.5;
   g.fillStyle="#c9a227";g.fillRect(cx-46,272+breath,3,12);g.fillRect(cx-40,272+breath,3,12);
   g.fillStyle="rgba(201,162,39,0.6)";g.fillRect(cx-46,286+breath,9,2);
+  // the tally: one stroke per battle walked away from, same paint as the marking
+  for(var tl=0;tl<3;tl++)g.fillRect(cx-46+tl*4,291+breath,2,7);
   g.restore();
+  // nicks: paint gone from the lips that lead. Constants, not noise — a nick
+  // is a place, and it stays where it happened.
+  g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.34)+")";g.lineWidth=1.6;g.beginPath();
+  [[-20],[-2],[25]].forEach(function(nk){g.moveTo(cx+nk[0],218.6+breath);g.lineTo(cx+nk[0]+2.4,221+breath);});
+  g.stroke();
   // worn edges: a bright hairline along the top lip of each big plate
   g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.22)+")";g.lineWidth=1;
   g.beginPath();g.moveTo(cx-32,220+breath);g.lineTo(cx+32,220+breath);
   g.moveTo(cx-28,306+breath);g.lineTo(cx+28,306+breath);
   g.moveTo(cx-30,344+breath);g.lineTo(cx+30,344+breath);g.stroke();
+  // the bevel band sits ON the pecs: contact shadow under its lower edge,
+  // and the bolts it is torqued down by have been weeping into the paint
+  pl(g,cx-52,251.5+breath,cx+52,251.5+breath,"rgba(0,0,0,0.30)",2);
+  weep(cx-48,292+breath,11);weep(cx+48,292+breath,11);weep(cx+31,289+breath,8);
   /* Sternum housing and collarbone struts.
      The reactor was a lit circle cut into a flat slab: the single largest
      surface on the unit was one polygon, and the brightest thing on it had no
@@ -1784,15 +1879,38 @@ function buildClaude(t,st){
   [-1,1].forEach(function(sg3){                       // collarbone struts to the shoulders
     plate(g,[[cx+sg3*20,stY-8],[cx+sg3*30,stY-12],[cx+sg3*56,stY+6],[cx+sg3*50,stY+14]],sM,sB,ed);
     rivet(g,cx+sg3*48,stY+8,eH);});
-  // ---- REACTOR CORE (recessed, glowing) ----
+  /* ---- REACTOR CORE (angular caged furnace) ----
+     It was a lit circle behind thin pinstripes — a porthole. A reactor you
+     would build armour around is an octagonal recess with bolted facets and
+     two heavy cage bars in front of the fire, so the brightest thing on the
+     unit is something the assembly visibly RESTRAINS. The bars are cut out of
+     the emissive buffer too: bloom must leak around the cage, never through
+     it. */
   var coreY=262+breath;
-  RB.fillStyle="#03060c";RB.beginPath();RB.arc(cx,coreY,22,0,7);RB.fill();
-  RB.strokeStyle=ed;RB.lineWidth=2;RB.beginPath();RB.arc(cx,coreY,22,0,7);RB.stroke();
-  // grille bars
-  for(var b2=-2;b2<=2;b2++){RB.strokeStyle="#0a0f18";RB.lineWidth=2;RB.beginPath();RB.moveTo(cx-20,coreY+b2*7);RB.lineTo(cx+20,coreY+b2*7);RB.stroke();}
+  function octo(c,r){poly(c,[[cx-r*0.45,coreY-r],[cx+r*0.45,coreY-r],[cx+r,coreY-r*0.45],[cx+r,coreY+r*0.45],[cx+r*0.45,coreY+r],[cx-r*0.45,coreY+r],[cx-r,coreY+r*0.45],[cx-r,coreY-r*0.45]]);}
+  RB.fillStyle="#03060c";octo(RB,24);RB.fill();
+  RB.strokeStyle=ed;RB.lineWidth=2;octo(RB,24);RB.stroke();
+  // lamp catches the two upper facets of the recess lip
+  RB.strokeStyle="rgba(150,174,208,"+(offl?0.10:0.30)+")";RB.lineWidth=1.4;
+  RB.beginPath();RB.moveTo(cx-24,coreY-10.8);RB.lineTo(cx-10.8,coreY-24);RB.lineTo(cx+10.8,coreY-24);RB.stroke();
+  rivet(RB,cx-17,coreY-17,eH);rivet(RB,cx+17,coreY-17,eH);
+  rivet(RB,cx-17,coreY+17,eH);rivet(RB,cx+17,coreY+17,eH);
   [RB,RE].forEach(function(c){ if(offl){c.fillStyle="#161b22";c.beginPath();c.arc(cx,coreY,9,0,7);c.fill();return;}
-    var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,20);cg.addColorStop(0,rgba(255,225,160,corePulse));cg.addColorStop(0.4,rgba(255,150,60,0.7*corePulse));cg.addColorStop(1,"rgba(255,120,40,0)");c.fillStyle=cg;c.beginPath();c.arc(cx,coreY,20,0,7);c.fill();
-    c.fillStyle=rgba(255,240,210,corePulse);c.beginPath();c.arc(cx,coreY,5,0,7);c.fill(); });
+    c.save();octo(c,21);c.clip();
+    var cg=c.createRadialGradient(cx,coreY,1,cx,coreY,20);cg.addColorStop(0,rgba(255,225,160,corePulse));cg.addColorStop(0.4,rgba(255,150,60,0.7*corePulse));cg.addColorStop(1,"rgba(255,120,40,0)");c.fillStyle=cg;c.fillRect(cx-21,coreY-21,42,42);
+    c.fillStyle=rgba(255,240,210,corePulse);c.beginPath();c.arc(cx,coreY,5,0,7);c.fill();
+    c.restore(); });
+  // the cage: two heavy bars in front of the fire, on body AND emissive
+  [-8,8].forEach(function(bx4){
+    RB.save();octo(RB,22);RB.clip();
+    RB.strokeStyle="#0a0f18";RB.lineWidth=5;
+    RB.beginPath();RB.moveTo(cx+bx4,coreY-22);RB.lineTo(cx+bx4,coreY+22);RB.stroke();
+    RB.strokeStyle="rgba(150,174,208,"+(offl?0.08:0.22)+")";RB.lineWidth=1;
+    RB.beginPath();RB.moveTo(cx+bx4-2,coreY-20);RB.lineTo(cx+bx4-2,coreY+20);RB.stroke();
+    RB.restore();
+    if(!offl){RE.save();RE.globalCompositeOperation="destination-out";
+      RE.strokeStyle="rgba(0,0,0,1)";RE.lineWidth=5;
+      RE.beginPath();RE.moveTo(cx+bx4,coreY-22);RE.lineTo(cx+bx4,coreY+22);RE.stroke();RE.restore();}});
   /* The core lights the chest it is set into. Every emissive on this model
      glowed into the bloom buffer and then lit nothing — a reactor bright
      enough to read across a room, sitting in plate armour that stayed the
@@ -1808,38 +1926,147 @@ function buildClaude(t,st){
   // ---------- COLLAR / NECK ----------
   plate(g,[[cx-30,214+breath],[cx+30,214+breath],[cx+22,226+breath],[cx-22,226+breath]],sT,sM,ed);
   plate(g,[[cx-10,206+breath],[cx+10,206+breath],[cx+8,220+breath],[cx-8,220+breath]],sM,sB,null);
+  // neck bearing: the ring the head actually turns on
+  g.fillStyle="#04070d";g.beginPath();g.ellipse(cx,208+breath,13,4.5,0,0,7);g.fill();
+  g.strokeStyle=ed;g.lineWidth=1.3;g.beginPath();g.ellipse(cx,208+breath,13,4.5,0,0,7);g.stroke();
+  g.strokeStyle="rgba(150,174,208,"+(offl?0.10:0.30)+")";g.lineWidth=1.2;
+  g.beginPath();g.ellipse(cx,208+breath,10,3.2,0,Math.PI*1.1,Math.PI*1.9);g.stroke();
 
   // ---------- ARMS (mirror; right arm can raise when working) ----------
   var handR;
   function arm(sgn,mode){
     var shx=cx+sgn*62, shy=244+breath;
-    // pauldron: 2 stacked angular plates (big, overhanging) -> intimidating shoulders
-    plate(g,[[shx-sgn*4-28,shy-18],[shx-sgn*4+30,shy-22],[shx-sgn*4+34,shy+14],[shx-sgn*4-24,shy+18]],sT,sM,ed);
-    plate(g,[[shx-sgn*2-26,shy+8],[shx-sgn*2+30,shy+6],[shx-sgn*2+26,shy+30],[shx-sgn*2-22,shy+30]],sM,sB,ed);
-    // shoulder joint light
-    [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx+sgn*2,shy+2,3,0,7);c.fill();}});
+    /* Shoulder ASSEMBLY, not shoulder decoration. The pauldron was two stacked
+       slabs hanging in the air beside the chest — nothing said how the arm was
+       attached, and the same dx offsets were used unmirrored so neither slab
+       even faced its own side. Now the joint is a machine: a dark ball socket
+       the arm hangs from, a piston running down into the upper arm, and the
+       pauldron bolted OVER all of it as armour — mirrored properly, with a
+       hard outer spike so the silhouette reads doom-plate instead of pillow. */
+    function P(pts){return pts.map(function(p){return [shx+sgn*p[0],shy+p[1]];});}
+    // ball socket first, so the pauldron overhangs it
+    g.fillStyle="#04070d";g.beginPath();g.arc(shx,shy+8,10,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.6;g.beginPath();g.arc(shx,shy+8,10,0,7);g.stroke();
+    var sj=g.createRadialGradient(shx-3,shy+4,1,shx,shy+8,10);
+    sj.addColorStop(0,"rgba(148,172,206,"+(offl?0.18:0.42)+")");
+    sj.addColorStop(0.55,"rgba(56,68,88,0.5)");sj.addColorStop(1,"rgba(4,7,13,0.7)");
+    g.fillStyle=sj;g.beginPath();g.arc(shx,shy+8,7.6,0,7);g.fill();
+    /* No biceps plate. The upper arm was a grey trapezoid doing nothing but
+       filling the space the backpack used to fill — same complaint, one limb
+       down. The upper arm is now BARE MECHANISM: two exposed rods from the
+       socket into the elbow, and the mass all lives in the forearm, which is
+       where a machine that works with its hands would carry it. */
+    pl(g,shx,shy+14,shx-sgn*2,shy+38,"#0a0f18",5);
+    pl(g,shx,shy+14,shx-sgn*2,shy+38,offl?"#39424f":"#8fa6c4",1.6);
+    // pauldron: one notched plate, outer edge dropping to a spike; the
+    // underside is cut AROUND the socket so the joint visibly carries the arm
+    plate(g,P([[-28,-22],[8,-32],[34,-20],[42,-2],[30,26],[14,12],[8,2],[-8,2],[-14,12],[-24,12]]),sT,sM,ed);
+    // chamfer highlight along the crown, keyed to the lamp
+    g.fillStyle="rgba(168,192,226,"+(offl?0.07:0.18)+")";
+    poly(g,P([[-28,-22],[8,-32],[34,-20],[28,-14],[-24,-16]]));g.fill();
+    // deep cut seam across the face + two bolts holding it to the socket arm
+    pl(g,shx+sgn*30,shy-12,shx+sgn*36,shy+8,rc,1.4);
+    rivet(g,shx-sgn*18,shy-4,eH);rivet(g,shx+sgn*20,shy+2,eH);
+    if(sgn<0){ // one deep gouge across the left pauldron: dark trench, bright torn lip
+      g.strokeStyle="rgba(4,8,14,0.6)";g.lineWidth=2.2;g.beginPath();
+      g.moveTo(shx-18,shy-14);g.lineTo(shx+14,shy+2);g.stroke();
+      g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.4)+")";g.lineWidth=1;g.beginPath();
+      g.moveTo(shx-18,shy-15);g.lineTo(shx+14,shy+1);g.stroke();
+      /* BATTLE TWO. A blast scorched this shoulder black; the answer was not
+         paint. A cruder, heavier plate is welded over the burn — cut square
+         in the field, three fat bolts, no chamfer anybody polished — and it
+         half-buries the old gouge. The left shoulder now outweighs the
+         right, and that asymmetry IS the record of the fight. */
+      var bs2=g.createRadialGradient(shx+4,shy-8,3,shx+4,shy-8,24);
+      bs2.addColorStop(0,"rgba(6,5,4,0.55)");bs2.addColorStop(1,"rgba(6,5,4,0)");
+      g.fillStyle=bs2;g.fillRect(shx-20,shy-32,48,48);
+      plate(g,[[shx-28,shy-24],[shx+4,shy-31],[shx+11,shy-9],[shx-20,shy-2]],
+        offl?"#232c39":"#37455c",offl?"#11161f":"#1c2635",ed);
+      [[shx-20,shy-17],[shx-5,shy-23],[shx+2,shy-10]].forEach(function(fb2){
+        g.fillStyle="#0a0f18";g.beginPath();g.arc(fb2[0],fb2[1],2.6,0,7);g.fill();
+        g.fillStyle=eH;g.beginPath();g.arc(fb2[0]-0.6,fb2[1]-0.6,1.3,0,7);g.fill();});}
+    if(sgn>0){ // a bite out of the right spike: silhouette damage, cut to transparency
+      g.save();g.globalCompositeOperation="destination-out";
+      poly(g,[[shx+34,shy+2],[shx+44,shy+6],[shx+36,shy+15]]);g.fill();g.restore();
+      g.strokeStyle="rgba(170,192,222,"+(offl?0.12:0.32)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(shx+34,shy+2);g.lineTo(shx+36,shy+15);g.stroke();}
+    // the pauldron sits ON the arm: contact shadow under its lower rim
+    g.fillStyle="rgba(0,0,0,0.26)";
+    poly(g,P([[-22,13],[-8,3],[8,3],[13,13],[7,21],[-18,21]]));g.fill();
+    weep(shx-sgn*18,shy-3,9);
+    // shoulder joint light, now sitting IN the socket
+    [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.7);c.beginPath();c.arc(shx,shy+8,2.6,0,7);c.fill();}});
+    /* The elbow, in the same joint language as the hips and knees: a dark
+       ball, a lit crescent on the lamp side, a bolt through the middle. It
+       caps the seam where upper arm meets forearm in every pose — before it,
+       the two plates just touched, and the arm was the last limb whose bend
+       had no mechanism. */
+    function elbow(x,y){
+      g.fillStyle="#04070d";g.beginPath();g.arc(x,y,6.5,0,7);g.fill();
+      g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(x,y,6.5,0,7);g.stroke();
+      var eb=g.createRadialGradient(x-2,y-2,1,x,y,6.5);
+      eb.addColorStop(0,"rgba(148,172,206,"+(offl?0.16:0.38)+")");
+      eb.addColorStop(0.6,"rgba(56,68,88,0.5)");eb.addColorStop(1,"rgba(4,7,13,0.7)");
+      g.fillStyle=eb;g.beginPath();g.arc(x,y,4.9,0,7);g.fill();
+      rivet(g,x,y,eH);
+    }
+    /* The muscle. Every joint got its mechanism in earlier loops but nothing
+       showed what MOVES the arm — the shoulder piston vanishes under the
+       pauldron. One exposed actuator runs down the outer upper arm into the
+       elbow in every pose: dark cylinder, bright rod, same language as the
+       shin hydraulics. */
+    function actuator(x0,y0,x1,y1){
+      pl(g,x0,y0,x1,y1,"#0a0f18",4.2);
+      pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.3);}
     if(mode==='reachdown'){ // reach forward + down (welding pose)
       var ex=shx+sgn*8, ey=shy+42;
-      plate(g,[[shx-14,shy+22],[shx+18,shy+24],[ex+12,ey],[ex-12,ey]],sM,sB,ed);
+      actuator(shx+sgn*12,shy+26,ex+sgn*4,ey-4);
+      actuator(shx-sgn*6,shy+30,ex-sgn*4,ey-4);
       var fx=ex - sgn*22, fy=ey+34;
-      plate(g,[[ex-12,ey-2],[ex+12,ey],[fx+12,fy-4],[fx-8,fy-8]],sT,sM,ed);
-      plate(g,[[fx-9,fy-8],[fx+13,fy-6],[fx+11,fy+12],[fx-11,fy+10]],sM,sB,ed); // gauntlet
+      plate(g,[[ex-10,ey-2],[ex+10,ey],[fx+14,fy-4],[fx-10,fy-9]],sT,sM,ed);
+      plate(g,[[fx-11,fy-9],[fx+15,fy-7],[fx+13,fy+13],[fx-13,fy+11]],sM,sB,ed); // gauntlet
+      plate(g,[[fx-12,fy-4],[fx-19,fy+2],[fx-12,fy+8]],sM,sB,ed); // bracer fin, back edge
+      rivet(g,fx-5,fy+4,eH);rivet(g,fx+7,fy+4,eH);
       plate(g,[[fx-2,fy+2],[fx+10,fy-3],[fx+14,fy+2],[fx+2,fy+9]],"#2a3444","#12181f","#3d4c63"); // torch
+      elbow(ex,ey-1);
       handR={x:fx+13,y:fy+2};
     } else if(mode==='raiseup'){ // forearm raised, device held up in front of chest (inspect/dispatch)
       var ex3=shx+sgn*6, ey3=shy+40;
-      plate(g,[[shx-15,shy+22],[shx+17,shy+24],[ex3+12,ey3],[ex3-12,ey3]],sM,sB,ed); // upper arm
+      actuator(shx+sgn*12,shy+26,ex3+sgn*4,ey3-4);
+      actuator(shx-sgn*6,shy+30,ex3-sgn*4,ey3-4);
       var fx3=ex3 - sgn*26, fy3=ey3-32;   // forearm up + inward
-      plate(g,[[ex3-12,ey3],[ex3+12,ey3-2],[fx3+12,fy3+6],[fx3-8,fy3-2]],sT,sM,ed);
-      plate(g,[[fx3-9,fy3-6],[fx3+13,fy3-4],[fx3+11,fy3+14],[fx3-11,fy3+12]],sM,sB,ed); // gauntlet
+      plate(g,[[ex3-10,ey3],[ex3+10,ey3-2],[fx3+14,fy3+6],[fx3-10,fy3-3]],sT,sM,ed);
+      plate(g,[[fx3-11,fy3-7],[fx3+15,fy3-5],[fx3+13,fy3+15],[fx3-13,fy3+13]],sM,sB,ed); // gauntlet
+      plate(g,[[fx3+14,fy3],[fx3+21,fy3+6],[fx3+14,fy3+12]],sM,sB,ed); // bracer fin, back edge
+      rivet(g,fx3-4,fy3+8,eH);rivet(g,fx3+7,fy3+8,eH);
+      elbow(ex3,ey3-1);
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
     } else {
       var ex2=shx+sgn*4, ey2=shy+56;
-      plate(g,[[shx-16,shy+22],[shx+16,shy+24],[ex2+14,ey2],[ex2-14,ey2]],sM,sB,ed);
-      [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.6);c.fillRect(ex2-3,ey2-4,6,3);}});
-      plate(g,[[ex2-15,ey2-2],[ex2+15,ey2-2],[ex2+13,ey2+58],[ex2-13,ey2+58]],sT,sM,ed);
-      pl(g,ex2-6,ey2+8,ex2-6,ey2+50,rc,1);
-      plate(g,[[ex2-13,ey2+56],[ex2+13,ey2+56],[ex2+11,ey2+74],[ex2-11,ey2+74]],sM,sB,ed);
+      actuator(shx+sgn*12,shy+26,ex2+sgn*5,ey2-8);
+      actuator(shx-sgn*6,shy+30,ex2-sgn*4,ey2-8);
+      /* The forearm is a CONE, not a slab: narrow where it leaves the elbow,
+         widening all the way to the wrist, blade fin off the outer flare —
+         all the arm's mass hangs low, over the fists. */
+      function ox(d){return ex2+sgn*d;}
+      plate(g,[[ox(-11),ey2-2],[ox(11),ey2-2],[ox(20),ey2+30],[ox(18),ey2+56],[ox(-18),ey2+56],[ox(-16),ey2+32]],sT,sM,ed);
+      plate(g,[[ox(16),ey2+10],[ox(26),ey2+22],[ox(19),ey2+34]],sM,sB,ed);
+      pl(g,ox(11),ey2-2,ox(20),ey2+30,"rgba(150,172,204,"+(offl?0.10:0.26)+")",1.1);
+      pl(g,ox(-7),ey2+10,ox(-9),ey2+50,rc,1);
+      // power slot cut into the bracer face — the arm's one warm light
+      g.fillStyle="#03060c";g.fillRect(ox(4)-2,ey2+16,4.5,24);
+      [RB,RE].forEach(function(c){accGlow(c,ox(4)-1.2,ey2+18,2.8,20);});
+      // wrist clamp: the gauntlet is a separate piece, banded on
+      plate(g,[[ex2-19,ey2+42],[ex2+19,ey2+42],[ex2+18,ey2+50],[ex2-18,ey2+50]],sT,sM,ed);
+      rivet(g,ex2-12,ey2+46,eH);rivet(g,ex2+12,ey2+46,eH);
+      plate(g,[[ex2-16,ey2+56],[ex2+16,ey2+56],[ex2+13,ey2+76],[ex2-13,ey2+76]],sM,sB,ed);
+      // knuckle cuts, so the fist is fingers and not a brick
+      for(var kn=0;kn<3;kn++)pl(g,ex2-8+kn*8,ey2+60,ex2-8+kn*8,ey2+69,rc,1.2);
+      g.strokeStyle="rgba(150,172,204,"+(offl?0.10:0.24)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(ex2-13,ey2+58);g.lineTo(ex2+13,ey2+58);g.stroke();
+      elbow(ex2,ey2-1);
+      // joint light rides the elbow cap
+      [RB,RE].forEach(function(c){if(!offl){c.fillStyle=rgba(255,150,70,0.6);c.beginPath();c.arc(ex2,ey2-1,1.8,0,7);c.fill();}});
       if(sgn>0)handR={x:ex2,y:ey2+64};
     }
   }
@@ -1862,11 +2089,17 @@ function buildClaude(t,st){
   var hy=150+breath+(offl?13:0), hcx=cx+(offl?5:0);
   // neck
   plate(g,[[hcx-9,206+breath],[hcx+9,206+breath],[hcx+7,196+breath],[hcx-7,196+breath]],sM,sB,null);
-  // helmet dome + jaw (angular)
-  plate(g,[[hcx-24,hy+34],[hcx-26,hy+10],[hcx-14,hy-6],[hcx+14,hy-6],[hcx+26,hy+10],[hcx+24,hy+34],[hcx+12,hy+48],[hcx-12,hy+48]],sT,sM,ed);
-  // brow crest
-  plate(g,[[hcx-16,hy+2],[hcx+16,hy+2],[hcx+12,hy-10],[hcx-12,hy-10]],"#2e3a4c","#1a2331",ed);
-  pl(g,hcx,hy-10,hcx,hy+2,rc,1);
+  /* Helmet: faceted, not domed. The old head was a soft octagon with a flat
+     brow tab — a diving helmet. The crown now breaks into facets meeting at a
+     ridge, the brow is a chevron dropping toward the visor centre so the
+     thing scowls, and the cheeks get their own bolted guard plates below —
+     three separate pieces of armour where there was one balloon. */
+  plate(g,[[hcx-24,hy+34],[hcx-26,hy+10],[hcx-16,hy-4],[hcx-6,hy-9],[hcx+6,hy-9],[hcx+16,hy-4],[hcx+26,hy+10],[hcx+24,hy+34],[hcx+12,hy+48],[hcx-12,hy+48]],sT,sM,ed);
+  // crown facet seams
+  pl(g,hcx-6,hy-9,hcx-10,hy+2,rc,1);pl(g,hcx+6,hy-9,hcx+10,hy+2,rc,1);
+  // chevron brow, centre point hanging over the visor
+  plate(g,[[hcx-17,hy+6],[hcx,hy+11],[hcx+17,hy+6],[hcx+13,hy-9],[hcx-13,hy-9]],"#2e3a4c","#1a2331",ed);
+  pl(g,hcx,hy-9,hcx,hy+11,rc,1);
   // side vents / breather
   [[-1],[1]].forEach(function(k){var s=k[0];RB.fillStyle=rc;for(var v=0;v<3;v++)RB.fillRect(hcx+s*16-(s<0?4:0),hy+16+v*6,4,3);});
   /* Visor. It was a flat two-stop gradient across a slit, which at this size
@@ -1910,10 +2143,30 @@ function buildClaude(t,st){
   // jaw grille, so the lower half of the helmet is not a blank plate
   RB.fillStyle=rc;for(var jw=0;jw<3;jw++)RB.fillRect(hcx-9+jw*7,hy+30,5,9);
   RB.fillStyle="rgba(90,110,140,0.3)";RB.fillRect(hcx-11,hy+28,24,1.5);
+  // bolted cheek guards, one separate blade of armour per side
+  [-1,1].forEach(function(sc2){
+    plate(g,[[hcx+sc2*27,hy+10],[hcx+sc2*24,hy+40],[hcx+sc2*10,hy+46],[hcx+sc2*16,hy+26]],sM,sB,ed);
+    rivet(g,hcx+sc2*21,hy+18,eH);});
+  /* The head is MOUNTED. Nothing connected helmet to torso but proximity —
+     the one join on the unit a viewer looks straight at. Two intake cables
+     clamp under the cheek guards and run into the collar; they take their
+     endpoints from hcx/hy, so when the offline head drops and pitches, the
+     cables go slack with it for free. */
+  [-1,1].forEach(function(sc3){
+    var ax=hcx+sc3*15, ay=hy+43, bx5=cx+sc3*24, by5=222+breath, mx=hcx+sc3*27, my=(ay+by5)/2+7;
+    g.strokeStyle="#05080e";g.lineWidth=3.2;g.beginPath();
+    g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,bx5,by5);g.stroke();
+    g.strokeStyle=offl?"#2c333d":"#4d5d75";g.lineWidth=1;g.beginPath();
+    g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,bx5,by5);g.stroke();
+    rivet(g,ax,ay,eH);});
   /* Antenna beacon. It was a constant red dot — an aircraft warning light that
      never blinks, which is the one thing they all do. Now it strobes on a
      double-flash and throws a short halo, so the highest point on the unit has
      the only hard rhythm in the frame. */
+  // the mast gets a mounting: bracket plate, bolt, and a casing behind the wire
+  plate(g,[[hcx+13,hy-2],[hcx+22,hy-7],[hcx+21,hy+3],[hcx+13,hy+5]],sM,sB,ed);
+  rivet(g,hcx+17,hy-1,eH);
+  pl(g,hcx+18,hy-4,hcx+24,hy-18,"#0a0f18",2.8);
   pl(g,hcx+18,hy-4,hcx+24,hy-18,eH,1.6);
   if(!offl){var bt=(t*0.9)%1, bl=(bt<0.08||(bt>0.16&&bt<0.24))?1:0.12;
     [RB,RE].forEach(function(c){
@@ -1925,15 +2178,6 @@ function buildClaude(t,st){
   /* What the chest is standing in front of. The chest plate overhangs the
      abdomen, the pelvis overhangs the thighs and the collar overhangs the
      sternum housing loop 11 added — three joins that were open seams. */
-  /* Soot. Both stacks have been venting since loop 3 and the plate around
-     them was factory-clean — the one place on this unit where you can see what
-     it has been doing, and it looked unused. Heaviest at the lip, fading up
-     the stack the way a deposit actually builds. */
-  [[-52],[52]].forEach(function(k){var bx3=cx+k[0];
-    var so=g.createRadialGradient(bx3,200+breath,2,bx3,200+breath,26);
-    so.addColorStop(0,"rgba(10,8,7,0.42)");so.addColorStop(0.55,"rgba(14,11,9,0.18)");
-    so.addColorStop(1,"rgba(14,11,9,0)");
-    g.fillStyle=so;g.fillRect(bx3-26,178+breath,52,52);});
   /* Hips and knee pivots. Every limb on this unit met its body at a straight
      edge — the arms come off a pauldron, the legs come out of a tasset, and
      nothing anywhere said which way any of it is allowed to move. A ball in a
@@ -1965,7 +2209,7 @@ function buildClaude(t,st){
     g.fillStyle="#05080e";g.beginPath();g.arc(kx3+sg5*17,449,6,0,7);g.fill();
     g.fillStyle="rgba(150,174,208,"+(offl?0.12:0.30)+")";g.beginPath();g.arc(kx3+sg5*17-1,447.6,3,0,7);g.fill();
     rivet(g,kx3+sg5*17,449,eH);});
-  cavity(g,cx-31,297+breath,62,34,0.44);
+  cavity(g,cx-31,297+breath,62,34,0.28);
   cavity(g,cx-40,375+breath*0.8,80,28,0.34);
   cavity(g,cx-25,225+breath,50,17,0.30);
   buildRim(offl?[92,86,80]:[255,170,90]);       // claude: its own orange on the key side
@@ -4412,6 +4656,12 @@ pollFleet();setInterval(pollFleet,POLL_MS);
    Unused by index.html — it costs one property on window. */
 window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
+  /* The floor camera, for the browser walk. The camera eases per FRAME, not
+     per second, and a console dwell expires every visible miniStill — so the
+     first floor frames after Escape cost a full room render each, and a
+     fixed post-wheel wait covers almost no easing on a slow machine. The
+     walk polls this instead of sleeping; it asserts by outcome either way. */
+  cam:function(){return floorCam;},
   /* render(dst,{agent,room,state,t,warm,flat}) */
   render:function(dst,o){
     borrowRoom(o,function(){
