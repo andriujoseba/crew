@@ -99,6 +99,40 @@ t "cmd: pause ok"     200 "$(status POST /api/command '{"action":"pause","box":"
 t "cmd: pause applied" paused "$(cat "$FLOOR_STATE/ff-working.cron" 2>/dev/null)"
 t "cmd: resume ok"    200 "$(status POST /api/command '{"action":"resume","box":"ff-working"}')"
 t "cmd: resume applied" resumed "$(cat "$FLOOR_STATE/ff-working.cron" 2>/dev/null)"
+# The verb says what it DID, so the console can tell a control that took effect
+# from one that had nothing to do. Asserted on the per-box `out` the page and
+# the drill both read, not on the status code alone — the status code is what
+# was already wrong.
+case "$(body POST /api/command '{"action":"pause","box":"ff-working"}')" in
+  *"paused 1"*) ok "cmd: pause reports what it did" ;;
+  *) fail "cmd: pause reports what it did" "$(body POST /api/command '{"action":"pause","box":"ff-working"}')" ;;
+esac
+status POST /api/command '{"action":"resume","box":"ff-working"}' >/dev/null
+
+# #188 — a box with no armed tick.sh line has NOTHING to pause, and that is a
+# success. It answered 500 "command refused", because PAUSE_SH ended on a
+# `grep -c` and `grep -c` exits 1 on a zero count. Every drill box is in
+# exactly this state by design (drill/rehearsal.sh disarms before any tick),
+# which is why the whole control block on a real host was red.
+t "cmd: pause on a disarmed box is not a refusal" 200 \
+  "$(status POST /api/command '{"action":"pause","box":"ff-disarmed"}')"
+case "$(body POST /api/command '{"action":"pause","box":"ff-disarmed"}')" in
+  *"nothing to pause"*) ok "cmd: pause on a disarmed box says nothing to pause" ;;
+  *) fail "cmd: pause on a disarmed box says nothing to pause" \
+          "$(body POST /api/command '{"action":"pause","box":"ff-disarmed"}')" ;;
+esac
+# And it must not have invented a state change to report success with.
+t "cmd: pause on a disarmed box changes nothing" "" \
+  "$(cat "$FLOOR_STATE/ff-disarmed.cron" 2>/dev/null)"
+# The same rule on the other verb: ff-working was resumed above, so there is no
+# commented line left for RESUME_SH to restore.
+t "cmd: resume with nothing paused is not a refusal" 200 \
+  "$(status POST /api/command '{"action":"resume","box":"ff-working"}')"
+case "$(body POST /api/command '{"action":"resume","box":"ff-working"}')" in
+  *"nothing to resume"*) ok "cmd: resume with nothing paused says so" ;;
+  *) fail "cmd: resume with nothing paused says so" \
+          "$(body POST /api/command '{"action":"resume","box":"ff-working"}')" ;;
+esac
 
 t "cmd: power-off ok" 200 "$(status POST /api/command '{"action":"power-off","box":"ff-idle"}')"
 t "cmd: power-off applied" stopped "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev/null)"

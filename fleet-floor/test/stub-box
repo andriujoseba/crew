@@ -56,6 +56,18 @@ cron_of() {
   else echo running; fi
 }
 
+# armed_of NAME — true when the box has a LIVE `tick.sh` line. One reader,
+# because three answers now derive from it: probe.sh's ::cron below, and the
+# verdicts PAUSE_SH and RESUME_SH reach (#188). A stub whose pause half and
+# probe half disagreed about one box would let exactly the disagreement these
+# tests exist to catch pass green.
+armed_of() {
+  local n="$1"
+  [ "$(cron_of "$n")" = "paused" ] && return 1     # pausing comments the line out
+  case "$(scenario_of "$n")" in nocron|disarmed) return 1 ;; esac
+  return 0
+}
+
 # emit_probe NAME SCENARIO — the `::key value` record probe.sh would produce.
 emit_probe() {
   local n="$1" sc="$2" paused=0 cron=1
@@ -64,8 +76,8 @@ emit_probe() {
   # `grep -cE '^[^#].*tick\.sh'`. The stub used to report cron=1 while paused,
   # which is the one shape a real box cannot be in, and it would have hidden a
   # wake-silent that skipped paused boxes (#189).
-  [ "$(cron_of "$n")" = "paused" ] && { paused=1; cron=0; }
-  case "$sc" in nocron|disarmed) cron=0 ;; esac
+  [ "$(cron_of "$n")" = "paused" ] && paused=1
+  armed_of "$n" || cron=0
 
   case "$sc" in
     nothired) printf '::engine \n' ;;
@@ -345,8 +357,24 @@ case "${1:-}" in
           silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused" ;;
           *)             echo "nofail nofail 30 $_armed $_cpaused" ;;
         esac ;;
-      *"s|^#CREW-FLOOR-PAUSED ||"*)             echo resumed > "$STATEDIR/$name.cron"; echo 1 ;;
-      *CREW-FLOOR-PAUSED*)                      echo paused  > "$STATEDIR/$name.cron"; echo 1 ;;
+      # RESUME_SH, then PAUSE_SH. Since #188 each script states what it DID and
+      # a box with nothing to do says so on stdout and exits 0 — so the stub has
+      # to be able to produce that answer. It used to echo `1` unconditionally,
+      # which is the one thing a real box cannot do: it made every pause take
+      # effect here, so the zero-count path that reddened the whole control
+      # block on a real host had no representation in this suite at all.
+      *"s|^#CREW-FLOOR-PAUSED ||"*)
+        if [ "$(cron_of "$name")" = "paused" ]; then
+          echo resumed > "$STATEDIR/$name.cron"; echo "resumed 1"
+        else
+          echo "nothing to resume: no paused tick.sh line"
+        fi ;;
+      *CREW-FLOOR-PAUSED*)
+        if armed_of "$name"; then
+          echo paused > "$STATEDIR/$name.cron"; echo "paused 1"
+        else
+          echo "nothing to pause: no armed tick.sh line"
+        fi ;;
       *'cat > "$HOME/duty/.floor-prompt'*)
         # Hop 1 of a message. Staged into a per-box SANDBOX HOME, not just
         # recorded: hop 2 below runs the real MESSAGE_SH against that sandbox,

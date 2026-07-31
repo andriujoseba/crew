@@ -140,7 +140,9 @@ minutes before `run_session`'s own timeout resolves it.
   placeholder list. A box is **SILENT** when it has not logged a line for two
   tick boundaries — the same death rule the engine uses.
 - **Control** — every action is applied by the host: pause/resume comment and
-  restore the box's crontab line, power/restart are `box down`/`box start`, and
+  restore the box's crontab line — and a box with no armed `tick.sh` line
+  answers **`nothing to pause`** at 200, because an action with nothing to do
+  is not a refusal (#188) — power/restart are `box down`/`box start`, and
   a message starts a real one-shot session of that box's own vendor CLI, logged
   to `duty/logs/` and marked in `duty.log` like any other session. The prompt
   travels as **stdin bytes** and is read from a file inside the box, so it never
@@ -188,7 +190,11 @@ Two halves, because neither can do the other's job:
   floor and `crew status` **agree** about every box (they share `probe.sh`'s
   sources, so a disagreement means one is lying to an operator), and — with
   `--allow-control --boxes <name>` — that pause/resume really moves the box's
-  crontab. It is **read-only by default**; a drill that quietly power-cycles a
+  crontab. That block **arms the tick line itself** before exercising the
+  verbs and disarms it again on every exit path: every drill box is disarmed
+  for its whole run (`rehearsal.sh` disarms before any tick), so without the
+  arm the verbs act on nothing and prove only that the transport is reachable.
+  It is **read-only by default**; a drill that quietly power-cycles a
   working fleet member is worse than no drill. It also runs the page walk in
   read-only mode and **proves** it stayed read-only, by putting a logging
   wrapper ahead of the real `box` on `PATH` and checking that not one mutating
@@ -198,11 +204,13 @@ Two halves, because neither can do the other's job:
 
 `test/boxside.sh` is what stops the rest being circular: every other collector
 assertion runs against `stub-box`, which *imitates* what `probe.sh` emits, so a
-real bug in `probe.sh` or in the operator-message script would sail straight
-through. Neither needs a box to run, so both are executed for real and their
-output fed to the actual parser — including the message script's quoting, which
-must deliver an operator's prompt as **one argv element, byte-identical**,
-metacharacters and all.
+real bug in `probe.sh`, in the operator-message script or in `PAUSE_SH`/
+`RESUME_SH` would sail straight through. None of them needs a box to run, so
+all are executed for real and their output fed to the actual parser —
+including the message script's quoting, which must deliver an operator's
+prompt as **one argv element, byte-identical**, metacharacters and all, and
+the two control scripts against a `crontab(1)` stand-in the test controls:
+armed, disarmed, no crontab at all, and a write that is refused.
 
 The page half (`test/browser.js`) needs `playwright-core` and a Chrome —
 `npm i playwright-core`, and `PW_CHROME` to point at one. It asserts the
