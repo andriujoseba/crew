@@ -1813,3 +1813,43 @@ union `[333.1, 286.4 → 606.2, 613.5]` against declared `[333,286 → 606,613]`
 — sub-pixel, breath-phase noise. Every new part hangs inside the leg's own
 line, codex's working splay is still the binding edge, and `LAYOUT.unit`
 stands unchanged.
+
+Round four came from operator feedback — "the legs look like straws; the body
+is almost a sphere; I want it to go from kid-friendly to R-rated war robot."
+Rounds one to three had made every part more MADE, and none of it had touched
+the two shapes doing the talking: thin tubes and a circle. Surface passes
+cannot fix a silhouette.
+
+**Loop 14 — the legs put on mass.** Loop 1 armoured the wire; this loop
+admits the wire itself was the problem. Every segment's wall thickness goes
+up by half again — femur 7.5 → 11, tibia 5.5 → 8, tarsus 4.5 → 6 — the
+coxae, knee caps, rams, clamps and claws scale with them, and the ankle
+overshoot pulls in 3px so the wider tarsus still flexes inside the same
+measured envelope.
+
+**Loop 15 — the shell stops being a balloon.** An ellipse is a friendly
+shape no amount of grime can threaten with. The silhouette is now cut from
+facets — a peaked crown, a hard shoulder line each side, flared cowls
+standing off over the leg roots ending in a blade each, a jaw that tapers
+instead of rounding under. Wider and lower than the dome it replaces (the
+width lives well inside the legs' span, the crown stays under the vent
+mouths, so the envelope holds). Every clip that was the ellipse is re-cut to
+the hull, the facet planes carry hard value steps keyed to the lamp, and two
+things are DELETED: the nested chevrons and the soft top-left sheen — a soft
+highlight is a friendly highlight. The scars all survive the recut: band,
+patch, crack, strap, stencil, and the bite moves onto the new shoulder edge.
+
+**Loop 16 — the eyes narrow.** A big round pupil with a catchlight is a
+doll's eye; no amount of armour around it un-friends a face built on
+circles. An angled lid plate crops the top of each primary — lower on the
+inner edge, so the pair slopes toward the centre and the stare becomes a
+scowl — cut out of the emissive buffer too, so the glow is lidded along with
+the lens.
+
+The heavier talons crept 1px past the declared envelope bottom; the tips
+were pulled in rather than the envelope let out. Re-measured over all 36:
+union `[333.8, 286.4 → 605.4, 613.5]` — identical to the pre-series bottom
+edge, still inside `[333,286 → 606,613]`, still bound by codex's working
+splay. `LAYOUT.unit` stands.
+
+![codex structure progression, round 4](shots/codex-structure/progression-4.webp)
