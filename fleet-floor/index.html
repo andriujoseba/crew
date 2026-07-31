@@ -2295,8 +2295,43 @@ function buildCodex(t,st){
   /* Cowl blades: the flared plates over the leg roots end in a spike each —
      the shell grows the same claws the feet already have. */
   [-1,1].forEach(function(sg){
-    plate(g,[[ax+sg*0.93*aw,ay-0.16*ah],[ax+sg*(aw+13),ay-0.02*ah],[ax+sg*0.95*aw,ay+0.12*ah]],sM,sB,ed);
-    plate(g,[[ax+sg*0.64*aw,ay-0.70*ah],[ax+sg*0.86*aw,ay-0.56*ah],[ax+sg*0.70*aw,ay-0.50*ah]],sM,sB,ed);});
+    plate(g,[[ax+sg*0.93*aw,ay-0.16*ah],[ax+sg*(aw+13),ay-0.02*ah],[ax+sg*0.95*aw,ay+0.12*ah]],sM,sB,ed);});
+  /* Loop 19 — CHAD PASS THREE, half one: shoulders. The shoulder line was a
+     seam with a fin on it. Now each side wears a pauldron standing proud of
+     the hull edge — and they do NOT match, because a veteran's shoulders
+     never do: the left is the forged original, ridged and notched; the
+     right is the field replacement — squarer cut, three fat bolts, no
+     chamfer — the plate a crew hangs after a fight, not before one. The
+     loop-12 bite carves the replacement's edge, which is why it needed
+     replacing. */
+  function hq(px4,py4){return [ax+px4*aw,ay+py4*ah];}
+  plate(g,[hq(-0.26,-1.06),hq(-0.78,-0.66),hq(-0.86,-0.46),hq(-0.60,-0.50),hq(-0.34,-0.80)],sT,sM,ed);
+  g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.34)+")";g.lineWidth=1.3;g.beginPath();
+  g.moveTo(ax-0.26*aw,ay-1.06*ah);g.lineTo(ax-0.78*aw,ay-0.66*ah);g.stroke();
+  g.fillStyle="rgba(2,5,9,0.7)";poly(g,[hq(-0.55,-0.80),hq(-0.63,-0.74),hq(-0.56,-0.70)]);g.fill(); // the notch
+  rivet(g,ax-0.42*aw,ay-0.82*ah,eH);rivet(g,ax-0.68*aw,ay-0.60*ah,eH);
+  plate(g,[hq(0.30,-1.02),hq(0.68,-0.82),hq(0.84,-0.54),hq(0.60,-0.46),hq(0.34,-0.76)],
+    offl?"#232c39":"#37455c",offl?"#11161f":"#1c2635",ed);
+  [[0.44,-0.84],[0.60,-0.72],[0.68,-0.58]].forEach(function(fb3){
+    g.fillStyle="#0a0f18";g.beginPath();g.arc(ax+fb3[0]*aw,ay+fb3[1]*ah,2.8,0,7);g.fill();
+    g.fillStyle=eH;g.beginPath();g.arc(ax+fb3[0]*aw-0.7,ay+fb3[1]*ah-0.7,1.3,0,7);g.fill();});
+  g.strokeStyle="rgba(3,7,12,0.7)";g.lineWidth=1.4;g.beginPath();
+  g.moveTo(ax+0.60*aw,ay-0.46*ah);g.lineTo(ax+0.50*aw,ay-0.56*ah);g.lineTo(ax+0.42*aw,ay-0.52*ah);g.stroke();
+  /* Half two: ribs. Claude's best delete showed the mechanism between the
+     plates; codex's hull meets its legs with nothing showing, so the lower
+     flanks now breathe through three rib slats a side — dark recess, bright
+     lower lip, angled with the jaw facet — the structure a shell this size
+     would actually have, and the first thing on it that looks like it could
+     take a hit and vent it. */
+  [-1,1].forEach(function(sg){
+    for(var rv=0;rv<3;rv++){
+      var rxc=ax+sg*(0.44+rv*0.155)*aw, ryc=ay+(0.14+rv*0.115)*ah;
+      g.save();g.translate(rxc,ryc);g.rotate(sg*0.42);
+      g.fillStyle="rgba(2,5,9,"+(0.78-rv*0.08)+")";
+      poly(g,[[-9,-2.6],[9,-3.4],[10,2.6],[-8,3.2]]);g.fill();
+      g.strokeStyle="rgba(150,175,205,"+(offl?0.10:0.22)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(-8,3.2);g.lineTo(10,2.6);g.stroke();
+      g.restore();}});
   /* Brushed metal. The carapace is the single largest shape codex has and it
      was a vertical two-stop gradient — perfectly smooth, which is the one
      surface quality a machined shell does not have. Anisotropic streaks
