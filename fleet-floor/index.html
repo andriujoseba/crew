@@ -3356,15 +3356,29 @@ function buildKimi(t,st){
        replacement — it glows, but it is set in the socket and does not
        gimbal; the mismatch between a sweeping eye and a fixed one is what
        makes the idle scan read as damage rather than animation. */
+    /* The slit itself is a live instrument: a cold strip of light runs its
+       floor so the visor reads as a sensor bar at room scale, not a dark
+       groove with two dots in it. */
+    var sg3=g.createLinearGradient(0,vs.y+6.5,0,vs.y+9.5);
+    sg3.addColorStop(0,pk(0.16*(0.6+0.4*pulse)));sg3.addColorStop(1,pk(0));
+    g.fillStyle=sg3;g.fillRect(vs.x+3,vs.y+6.5,vs.w-6,3);
     var gaze=(work||reduced)?0:Math.round(Math.sin(t*0.55)*5);
-    [{x:cx-15,col:AM,colH:AMH},{x:cx+15+gaze,col:PK,colH:PKH}].forEach(function(op){ // amber glass eye + pink
+    [{x:cx-15,col:AM,colH:AMH},{x:cx+15+gaze,col:PK,colH:PKH}].forEach(function(op,oi){ // amber glass eye + pink
       [RB,RE].forEach(function(c){var eg=c.createRadialGradient(op.x,vs.y+5,0.4,op.x,vs.y+5,7.5);
         eg.addColorStop(0,"rgba("+op.colH[0]+","+op.colH[1]+","+op.colH[2]+","+(0.85+0.15*pulse)+")");
         eg.addColorStop(0.5,"rgba("+op.col[0]+","+op.col[1]+","+op.col[2]+","+(0.5*pulse)+")");
         eg.addColorStop(1,"rgba("+op.col[0]+","+op.col[1]+","+op.col[2]+",0)");
         c.fillStyle=eg;c.beginPath();c.arc(op.x,vs.y+5,7.5,0,7);c.fill();});
+      // hard lens in a bezel, not a dot
+      g.strokeStyle="rgba(3,6,11,0.9)";g.lineWidth=1.2;
+      rr(g,op.x-3.6,vs.y+1.6,7.2,7.2,2);g.stroke();
       [RB,RE].forEach(function(c){c.fillStyle="rgba("+op.colH[0]+","+op.colH[1]+","+op.colH[2]+",0.95)";
-        rr(c,op.x-2.6,vs.y+2.4,5.2,5.2,1.5);c.fill();});});
+        rr(c,op.x-3,vs.y+2.2,6,6,1.8);c.fill();});
+      if(oi===0){ // the glass eye reflects the lamp above — a fixed catchlight
+        RB.fillStyle="rgba(255,255,255,0.75)";RB.fillRect(op.x-1.8,vs.y+3,1.4,1.4);}
+      else if(work){ // ranging hairline through the live optic: aiming, not looking
+        [RB,RE].forEach(function(c){c.fillStyle="rgba(255,240,250,0.5)";
+          c.fillRect(op.x-0.5,vs.y+0.8,1,8.6);});}});
   }
   // the crack that cost the eye
   g.strokeStyle="rgba(190,205,228,"+(offl?0.08:0.26)+")";g.lineWidth=0.9;
