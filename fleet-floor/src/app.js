@@ -2900,8 +2900,15 @@ function buildKimi(t,st){
         var rg=c.createRadialGradient(bx,by2+26,2,bx,by2+26,26);
         rg.addColorStop(0,pkh(0.4*bg));rg.addColorStop(0.5,pk(0.18*bg));rg.addColorStop(1,pk(0));
         c.fillStyle=rg;c.beginPath();c.ellipse(bx,by2+26,26,13,0,0,7);c.fill();c.restore();});}
-    // bell vanes
-    for(var v=0;v<3;v++){pl(g,bx-14+v*14,by2+18,bx-12+v*14,by2+32,"rgba(8,12,18,0.9)",3.4);}
+    /* The bell is a MACHINE: four vanes turn in the mouth, faster under
+       throttle, frozen mid-rotation when dead or reduced. In a still they
+       read as an off-angle turbine; live they read as lift. */
+    var rot=(offl||reduced)?0.5:t*(work?2.4:0.9)+sg;
+    for(var v=0;v<4;v++){var va=rot+v*Math.PI/2;
+      pl(g,bx,by2+26,bx+Math.cos(va)*22,by2+26+Math.sin(va)*10,"rgba(8,12,18,"+(offl?0.7:0.9)+")",3);}
+    g.fillStyle="#0a0f18";g.beginPath();g.ellipse(bx,by2+26,4.5,2.6,0,0,7);g.fill();
+    g.strokeStyle="rgba(150,166,196,"+(offl?0.08:0.2)+")";g.lineWidth=0.9;
+    g.beginPath();g.ellipse(bx,by2+26,4.5,2.6,0,0,7);g.stroke();
   });
 
   /* ---- 2 · siege arms: piston, hammer gauntlet, stud knuckles ----
@@ -3217,11 +3224,14 @@ function buildKimi(t,st){
     // ribbed bellows spine, centre
     for(var rb2=0;rb2<5;rb2++){pl(g,cx-9,by2+3+rb2*4,cx+9,by2+3+rb2*4,"rgba(4,7,12,0.9)",2.2);
       pl(g,cx-9,by2+2+rb2*4,cx+9,by2+2+rb2*4,"rgba(150,166,194,"+(offl?0.06:0.14)+")",0.8);}
-    // twin rams: dark cylinder, bright rod under load
+    // twin rams: dark cylinder, bright rod under load — the rods breathe
+    // against the hover bob, counter-phased, because they are what carries
+    // the waist. Dead or reduced they sit at half stroke.
     [-1,1].forEach(function(rs){var rx2=cx+rs*30;
+      var ext=(offl||reduced)?1.5:1.5+Math.sin(t*1.6+(rs>0?Math.PI:0))*1.4;
       plate(g,[[rx2-6,by2+2],[rx2+6,by2+2],[rx2+6,by2+12],[rx2-6,by2+12]],sM,sB,ed);
-      pl(g,rx2,by2+12,rx2,by2+21,"rgba(8,12,18,0.95)",5);
-      pl(g,rx2,by2+12,rx2,by2+21,"rgba(196,212,240,"+(offl?0.10:0.30)+")",1.6);});
+      pl(g,rx2,by2+12,rx2,by2+19.5+ext,"rgba(8,12,18,0.95)",5);
+      pl(g,rx2,by2+12,rx2,by2+19.5+ext,"rgba(196,212,240,"+(offl?0.10:0.30)+")",1.6);});
     // corner grommet bolts
     bolt(g,cx-46,by2+4,2,offl?0.05:0.18);bolt(g,cx+46,by2+4,2,offl?0.05:0.18);
     bolt(g,cx-48,by2+18,2,offl?0.05:0.18);bolt(g,cx+48,by2+18,2,offl?0.05:0.18);
