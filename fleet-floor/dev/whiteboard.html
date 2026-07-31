@@ -2521,6 +2521,20 @@ function buildCodex(t,st){
   [-1,1].forEach(function(sg){
     plate(g,[[hxx+sg*42,hy2-12],[hxx+sg*30,hy2-12],[hxx+sg*27,hy2+20],[hxx+sg*37,hy2+22]],sM,sB,ed);
     rivet(g,hxx+sg*33,hy2-8,eH);rivet(g,hxx+sg*32,hy2+16,eH);});
+  /* Loop 18 — CHAD PASS TWO: cheekbones. What made claude's face tough was
+     zygomatic width: a hard lit plane at eye level with shadow under it.
+     Codex's face was widest at the brow and fell straight to the chin —
+     a child's proportions. A wedge now stands proud each side at eye level,
+     top plane catching the lamp, its own shade cast onto the cheek below,
+     and the jaw gets a squared step so the face ends in corners, not taper. */
+  [-1,1].forEach(function(sg){
+    plate(g,[[hxx+sg*39,hy2-13],[hxx+sg*51,hy2-5],[hxx+sg*45,hy2+5],[hxx+sg*33,hy2-1]],sT,sM,ed);
+    g.strokeStyle="rgba(190,208,232,"+(offl?0.14:0.4)+")";g.lineWidth=1.3;
+    g.beginPath();g.moveTo(hxx+sg*39,hy2-13);g.lineTo(hxx+sg*51,hy2-5);g.stroke();
+    g.fillStyle="rgba(0,0,0,0.35)";
+    poly(g,[[hxx+sg*45,hy2+5],[hxx+sg*33,hy2-1],[hxx+sg*31,hy2+4],[hxx+sg*42,hy2+9]]);g.fill();
+    plate(g,[[hxx+sg*37,hy2+12],[hxx+sg*25,hy2+15],[hxx+sg*27,hy2+25],[hxx+sg*36,hy2+22]],sM,sB,ed);
+    rivet(g,hxx+sg*32,hy2+19,eH);});
   [-1,1].forEach(function(sg){var fx2=hxx+sg*9,fdrop=offl?3:0;
     plate(g,[[fx2-sg*6,hy2+22],[fx2+sg*5,hy2+22],[fx2+sg*4,hy2+30+fdrop],[fx2,hy2+38+fdrop],[fx2-sg*4,hy2+30+fdrop]],sM,sB,ed);
     rivet(g,fx2,hy2+25,eH);});
