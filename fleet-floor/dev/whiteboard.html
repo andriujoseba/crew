@@ -2635,6 +2635,19 @@ function buildCodex(t,st){
     g.fillStyle=sg3;g.fillRect(-5,-10,10,20);g.strokeStyle=ed;g.lineWidth=1.1;g.strokeRect(-5,-10,10,20);
     rivet(g,0,-6,eH);rivet(g,0,6,eH);
     g.restore();
+    /* Loop 13 — BATTLE THREE'S LEDGER. The other three carry stencils; a
+       shell this scarred had no designation at all. A geometric stencil
+       block in the fleet's worn gold — a glyph would be mush at grid-cell
+       size — set on the lower flank where a crew would actually paint it,
+       and beside it three tally strokes in the same paint, one per battle
+       walked away from. The count matches the scars: the crack, the bite,
+       the gouge. */
+    g.save();g.translate(ax+aw*0.38,ay+ah*0.5);g.rotate(-0.18);
+    g.globalAlpha=offl?0.25:0.5;g.fillStyle="#c9a227";
+    g.fillRect(0,0,3,11);g.fillRect(5.5,0,3,11);
+    g.fillStyle="rgba(201,162,39,0.6)";g.fillRect(0,13,8.5,2);
+    for(var tl2=0;tl2<3;tl2++)g.fillRect(12+tl2*4,2,2,7);
+    g.restore();
   })();
   g.restore();
   cavity(g,hxx-43,hy2-25,86,26,0.5);
