@@ -2234,8 +2234,23 @@ function buildCodex(t,st){
     // iris ring + pupil: what turns a lit dot into an eye that is looking at you
     c.fillStyle=te(0.95);c.beginPath();c.arc(e[0],e[1],e[2]*0.62,0,7);c.fill();
     c.fillStyle="rgba(2,10,9,0.85)";c.beginPath();c.arc(e[0],e[1],e[2]*0.3,0,7);c.fill();});
+    /* Loop 16 — the eyes narrow. A big round pupil with a catchlight is a
+       doll's eye; no amount of armour around it un-friends a face built on
+       circles. An angled lid plate now crops the top of each primary —
+       lower on the inner edge, so the pair slopes toward the centre and the
+       stare becomes a scowl — cut out of the emissive too, so the glow is
+       lidded along with the lens. The catchlight moves under the lid line. */
+    var inn=pi===0?1:-1, r3=e[2];
+    [RB,RE].forEach(function(c){var dout=(c===RE);
+      c.save();if(dout){c.globalCompositeOperation="destination-out";c.fillStyle="rgba(0,0,0,1)";}
+      else c.fillStyle="#070b12";
+      poly(c,[[e[0]-r3-2,e[1]-r3-2],[e[0]+r3+2,e[1]-r3-2],
+              [e[0]+r3+2,e[1]-r3*(inn>0?0.55:-0.05)],[e[0]-r3-2,e[1]-r3*(inn>0?-0.05:0.55)]]);
+      c.fill();c.restore();});
+    RB.strokeStyle=offl?"#1a212b":"#2c3849";RB.lineWidth=1.1;RB.beginPath();
+    RB.moveTo(e[0]-r3-2,e[1]-r3*(inn>0?-0.05:0.55));RB.lineTo(e[0]+r3+2,e[1]-r3*(inn>0?0.55:-0.05));RB.stroke();
     // catchlight, offset the same way on both so they track together
-    RB.fillStyle="rgba(255,255,255,"+(offl?0:0.8)+")";RB.beginPath();RB.arc(e[0]-1.5,e[1]-1.6,0.9,0,7);RB.fill();
+    RB.fillStyle="rgba(255,255,255,"+(offl?0:0.8)+")";RB.beginPath();RB.arc(e[0]-1.2,e[1]+0.6,0.9,0,7);RB.fill();
     // working: a scan bar crossing the socket, phase-offset per eye
     if(work&&!offl){var sy3=hy2-8+((t*26+pi*11)%20);[RB,RE].forEach(function(c){c.fillStyle=teh(0.22);c.fillRect(e[0]-e[2],sy3,e[2]*2,1);});}
   });
