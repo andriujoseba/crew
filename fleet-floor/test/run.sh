@@ -194,10 +194,12 @@ if [ "$BROWSER" -eq 1 ]; then
       fi
     }
     # 30 -> 40 with the heartbeat/stuck/renew assertions, then -> 38 when the
-    # renewal countdown was dropped and its four checks went with it. Moved
-    # deliberately both times: the floor exists so a walk that silently stops
-    # asserting cannot still exit 0, and it caught that removal.
-    walk "browser walk" 38 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # renewal countdown was dropped and its four checks went with it, then -> 39
+    # when the engine assertion split in two: a shape check that holds on any
+    # fleet, and the exact-fixture check that only this run can make (#202).
+    # Moved deliberately each time: the floor exists so a walk that silently
+    # stops asserting cannot still exit 0, and it caught that removal.
+    walk "browser walk" 39 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"

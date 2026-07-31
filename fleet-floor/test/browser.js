@@ -452,9 +452,24 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // rendered "gh ✗" while every collector assertion stayed green.
   const allSeen = Object.keys(byState).reduce((a, k) => a.concat(byState[k]), []);
   if (LIVE && allSeen.length) {
+    // Asserted by SHAPE, because this block is gated on LIVE alone and LIVE
+    // only means "the page flipped to real data" — true on a real host as much
+    // as against the stub. The previous form pinned `0.4.1` and `deadbee`,
+    // which are stub-box fixture constants (test/stub-box:84,431), so on a real
+    // fleet — rendering its own VERSION — it could not pass by construction. It
+    // failed every real-host drill while reading as an app defect (#190, #202).
+    // The exact-constant form still runs, under LIVE && FIXTURE below, which is
+    // the only place those values are true.
+    //
+    // What survives here is the regression this exists to catch: stampVersion
+    // (src/app.js) maps `crew@X.Y.Z[-suffix]` to the version alone, so a leaked
+    // `crew@` prefix means the raw stamp reached the tile, and `unknown` means
+    // it could not parse one. Both are anchored on the Engine label rather than
+    // searched loose in the vitals string, or the check would match on a
+    // neighbouring field and report the wrong tier.
     ok('render: engine shows the version without provenance',
-       allSeen.some((u) => /Engine\s*0\.4\.1/.test(u.vitals)) &&
-         allSeen.every((u) => !/deadbee/.test(u.vitals)),
+       allSeen.some((u) => /Engine\s*\d+\.\d+\.\d+/.test(u.vitals)) &&
+         allSeen.every((u) => !/Engine\s*(?:crew@|unknown)/.test(u.vitals)),
        allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     ok('render: the heartbeat is on screen',
        allSeen.every((u) => /Heartbeat/.test(u.vitals)),
@@ -474,6 +489,16 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        allSeen.map((u) => u.box + ': ' + (u.vitals.match(/Box\s*(\S+ \S+)/) || [])[1]).join(' | '));
   }
   if (LIVE && FIXTURE) {
+    // The exact-constant half of the engine assertion above. The stub stamps
+    // `crew@0.4.1 (deadbee)` (test/stub-box:84), so this is the one run where
+    // provenance-stripping can be checked against a KNOWN input: the version
+    // must render and the provenance token must not. A real fleet cannot make
+    // this claim — its stamp carries whatever provenance it carries — which is
+    // why the live block above asserts shape instead.
+    ok('render: the fixture engine renders 0.4.1 with its provenance stripped',
+       allSeen.some((u) => /Engine\s*0\.4\.1/.test(u.vitals)) &&
+         allSeen.every((u) => !/deadbee/.test(u.vitals)),
+       allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
     // FIXTURE-gated: a real fleet has no box wedged on purpose, and should not.
     const stuck = allSeen.find((u) => /ff-stuck/.test(u.box));
     ok('render: the stuck box was reachable', !!stuck,
