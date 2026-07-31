@@ -1937,3 +1937,40 @@ god-view cells were re-swept: mounts, ribs and the front pair survive at
 cell scale.
 
 ![codex structure progression, round 6](shots/codex-structure/progression-6.webp)
+
+Round seven came from stepping back: "looks a bit convoluted — the latest
+passes + the accumulated damage + sad looking eyes." Twenty-two loops of
+addition had left three problems only subtraction could fix, plus the one
+the operator named precisely: codex is meant to look cold, scary,
+dangerous — and the eyes had an expression.
+
+**Loop 23 — the cluster goes cold.** The iris, the pupil, the catchlight
+and the loop-16 lids are all DELETED — every one of them was expression
+machinery, and expression is exactly what a sentinel doesn't have. The
+loop-9 brow shade flattens from a V to a straight band for the same reason:
+a scowl is a feeling too. What is left is a symmetric battery of ten
+identical lenses — dark bezel, cold light, nothing looking back. Offline
+the battery dies to bezels and only the central pair catches the room's
+beacon; working, one scan bar sweeps the whole battery.
+
+**Loop 24 — the quiet pass.** Nothing new: the scorch fades to a stain, the
+gouge heals to a scratch, the crack keeps its strap but loses its stitch
+ticks, half the rim nicks and half the bolt weep go, one tergite line and
+one crown petal go, the femur nicks drop to one per front leg. Damage
+stays where it earns the veteran read; everywhere else the metal calms
+down so the new structure — mounts, ribs, lenses — is what the eye finds
+first.
+
+**Loop 25 — naked wires.** A machine this repaired has looms the crew never
+re-sheathed: a bundle sags out of the left rib cavity and re-enters the
+hull through a grommet, a clamped run crosses the right flank below the
+patch, one stray unsheathed wire rides the left neck bundle. Small, dark,
+gravity-obedient — the rough-service read without another plate of
+clutter.
+
+Envelope over all 36: unchanged, `[333.8, 286.4 → 605.4, 613.5]`, still
+inside the declared box. Suite: 395 ok, 0 failed. Cells re-swept: the
+ten-lens battery reads as a cold glow cluster at cell size — more sentinel
+there, not less.
+
+![codex structure progression, round 7](shots/codex-structure/progression-7.webp)
