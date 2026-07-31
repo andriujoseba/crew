@@ -1864,7 +1864,20 @@ function buildClaude(t,st){
       g.strokeStyle="rgba(4,8,14,0.6)";g.lineWidth=2.2;g.beginPath();
       g.moveTo(shx-18,shy-14);g.lineTo(shx+14,shy+2);g.stroke();
       g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.4)+")";g.lineWidth=1;g.beginPath();
-      g.moveTo(shx-18,shy-15);g.lineTo(shx+14,shy+1);g.stroke();}
+      g.moveTo(shx-18,shy-15);g.lineTo(shx+14,shy+1);g.stroke();
+      /* BATTLE TWO. A blast scorched this shoulder black; the answer was not
+         paint. A cruder, heavier plate is welded over the burn — cut square
+         in the field, three fat bolts, no chamfer anybody polished — and it
+         half-buries the old gouge. The left shoulder now outweighs the
+         right, and that asymmetry IS the record of the fight. */
+      var bs2=g.createRadialGradient(shx+4,shy-8,3,shx+4,shy-8,24);
+      bs2.addColorStop(0,"rgba(6,5,4,0.55)");bs2.addColorStop(1,"rgba(6,5,4,0)");
+      g.fillStyle=bs2;g.fillRect(shx-20,shy-32,48,48);
+      plate(g,[[shx-28,shy-24],[shx+4,shy-31],[shx+11,shy-9],[shx-20,shy-2]],
+        offl?"#232c39":"#37455c",offl?"#11161f":"#1c2635",ed);
+      [[shx-20,shy-17],[shx-5,shy-23],[shx+2,shy-10]].forEach(function(fb2){
+        g.fillStyle="#0a0f18";g.beginPath();g.arc(fb2[0],fb2[1],2.6,0,7);g.fill();
+        g.fillStyle=eH;g.beginPath();g.arc(fb2[0]-0.6,fb2[1]-0.6,1.3,0,7);g.fill();});}
     if(sgn>0){ // a bite out of the right spike: silhouette damage, cut to transparency
       g.save();g.globalCompositeOperation="destination-out";
       poly(g,[[shx+34,shy+2],[shx+44,shy+6],[shx+36,shy+15]]);g.fill();g.restore();
