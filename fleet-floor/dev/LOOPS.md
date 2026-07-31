@@ -2038,3 +2038,60 @@ head has no face at all.
 ![grok structure progression](shots/grok-structure/progression.webp)
 ![grok states](shots/grok-structure/states.webp)
 ![the mask and the mane at 4x](shots/grok-structure/head-detail.webp)
+
+### GROK, rounds 2–3 — the beef pass (loops 6–15)
+
+Operator verdict on the first five: the concept is there, the body is not —
+"he looks like he comes from skid row." The read was right: lean had slid
+into starved. Ten loops, structured as ordered: five on anatomy, five on
+detail.
+
+**Loop 6 — the chest.** The torso broadens to a real slab with two stepped
+PEC plates standing proud of it and a lamp-lit clavicle bevel; TRAPEZIUS
+wedges climb from the collar toward the pauldron crowns, so the raised
+shoulders stop being a posture and become a build. The V-taper to the waist
+stays — light-heavyweight, not juggernaut.
+
+**Loop 7 — the arms.** An armoured biceps plate carries real width from
+socket to elbow (the tendon stays strung on the inner line, exposed); the
+hanging forearm becomes a cone arriving at a clamped wrist with a bracer
+fin; the claws grow to match.
+
+**Loop 8 — the hindquarters.** The thigh is now the widest thing below the
+chest, with a quad slab riding its outer face; the shank carries a calf
+swell before raking to the high ankle; knee guards, feet and toe claws all
+scale up. A predator's engine is its legs.
+
+**Loop 9 — the shoulders catch up.** Sockets to r9.5, blades up a fifth,
+the bite moved out to the new trailing spike.
+
+**Loop 10 — the girdle.** A waist band bridges abdomen to pelvis, tassets
+ride the hip line over the quads, hip balls grow to carry what they now
+carry; the spine cavity shortens and the ribs chunk up.
+
+**Loop 11 — the face, seated.** Deeper brow shadow; the optics get recessed
+instrument seats — first drawn as rimmed bezels, which read as GOGGLES at
+4x and were cut back to a shadow-line with a lower lip. Chin widened with
+the new mass.
+
+**Loop 12 — the mane, filled.** Third cable pair per side, hung OUTSIDE the
+new biceps line so nothing tangles; strokes and ferrules thickened, ranked
+outer-heavy; two frayed conductors out of the severed stump's melt bead; a
+soft sheen band across the slicked crown — cable shines where plate does
+not.
+
+**Loop 13 — materials.** Clavicle specular, leading-lip nicks (constants —
+a nick is a place), bolt weep under the clavicle rivets, breath soot
+streaking the chin below the vents, bare metal on the knee spikes.
+
+**Loop 14 — state language.** The builder weld becomes the FLEX: elbow
+thrown out past the blade, thick forearm driving down and in, the claw
+landing low in front of the hip where the arc lives. A dead spine slit now
+keeps a dying ember at its base — a core goes dark red, not black.
+
+**Loop 15 — the second look.** Envelope over all 36: still exactly the
+declared box `[333.8, 286.4 → 605.4, 613.5]`. Cells re-swept at 336px: the
+silhouette that survives is now mane-eyes-blades over a lit spine and REAL
+shoulders. Suite re-run green. All evidence regenerated.
+
+![grok beef pass](shots/grok-structure/progression-2.webp)
