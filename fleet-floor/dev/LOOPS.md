@@ -1894,3 +1894,46 @@ vent mouths and inside the legs' span. `LAYOUT.unit` stands. Suite: 395 ok,
 0 failed.
 
 ![codex structure progression, round 5](shots/codex-structure/progression-5.webp)
+
+Round six came from the operator seeing the one lie all five earlier rounds
+had left standing: "the legs are just in the back, and the body is just
+sitting on top of it." However good the parts got, the ASSEMBLY was a lid on
+a leg rack. The brief: front legs with actual joints coming from the body,
+side legs properly jointed, back legs implied; cables and spring-looking
+things; steal the concept of claude's rib structure; take inspiration from
+the Matrix sentinels' shape and leg style; then one loop over the whole
+thing for light and shadow.
+
+**Loop 20 — the re-assembly.** The six legs no longer share one hidden
+column. The FRONT pair hangs off ball mounts bolted to the lower flanks IN
+FRONT of the hull — mount plate, ball, coil spring and slack feed cable all
+on show, drawn after the hull top-coats so nothing paints over them. The
+SIDE pair sockets through gimbal rings fixed at the hull's edge. Only the
+BACK pair keeps its joints out of sight. And the loop-19 rib slats became
+the rib CAGE: one recessed cavity per flank with four curved rib hoops
+spanning it, lit on their outer edges — claude's bone-structure read, moved
+to where a hexapod would actually have one.
+
+**Loop 21 — the sentinel pass.** What the Matrix comparison actually
+taught: sentinels read as one organism because their limbs are RIBBED and
+their shells are LAYERED. Below each knee the legs now run in banded
+segments (tibia five, tarsus four) — a straight limb that looks like it
+could curl. The crown gets two nested petal lines stepping down from the
+peak, each a dark cut with a lit lower lip. The eye cluster grows to eight
+lenses, and a feeler cable dangles off each jaw corner — longer when the
+power is gone.
+
+**Loop 22 — the light pass.** New structure earns new shadow: each front
+femur lays a soft shadow on the hull it stands in front of (clipped to the
+hull, never the room), the pauldrons get contact shade under their inner
+edges onto the crown, and after the front legs are down the reactor tops up
+its spill so the mounts and springs standing in front of the fire catch
+some of it.
+
+Envelope re-measured over all 36 after the re-assembly: union unchanged at
+`[333.8, 286.4 → 605.4, 613.5]` — the new mounts and gimbals live well
+inside the feet's span. `LAYOUT.unit` stands. Suite: 395 ok, 0 failed. The
+god-view cells were re-swept: mounts, ribs and the front pair survive at
+cell scale.
+
+![codex structure progression, round 6](shots/codex-structure/progression-6.webp)
