@@ -138,49 +138,27 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      `tile says ${tileUnits}, roster has ${roster.length}`);
   await shot('01-floor');
 
-  // Cell geometry mirrors app.js drawFloor().
-  const geom = await page.evaluate(() => ({
-    CELLW: 336, CELLH: 252, GAPX: 28, GAPY: 26, MARGINL: 44,
-    topY: Math.max(70, 64 + ((window.innerHeight - 222) - (2 * 252 + 26)) / 2),
-    vw: window.innerWidth,
-  }));
-  /* The floor scrolls horizontally, so a viewport-sized walk silently skips the
-     tail of any fleet bigger than ~8 boxes — which is where the awkward states
-     tend to sit. Walk in two passes, camera pinned at each end, and take the
-     union: camMax is computable from the same geometry drawFloor() uses. */
-  const cols = Math.ceil(roster.length / 2);
-  const totalW = geom.MARGINL * 2 + cols * geom.CELLW + (cols - 1) * geom.GAPX;
-  const camMax = Math.max(0, totalW - geom.vw);
-  const cellXY = (i, cam) => {
-    const col = Math.floor(i / 2), row = i % 2;
-    return {
-      x: geom.MARGINL - cam + col * (geom.CELLW + geom.GAPX) + geom.CELLW / 2,
-      y: geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2,
-    };
+  /* Cell geometry comes from the layout itself: FLOORDEV.grid() reports where
+     every roster cell IS under the camera as it stands, plus the camera range.
+     The test used to mirror drawFloor()'s constants and re-derive positions,
+     and every layout change broke the mirror silently — the conference-grid
+     rework (vertical scroll, window-sized tiles) is exactly the kind of change
+     that would have clicked thin air for a whole walk. */
+  const gridAt = () => page.evaluate(() => window.FLOORDEV.grid());
+  const g0 = await gridAt();
+  const vh = await page.evaluate(() => window.innerHeight);
+  const camMax = g0.camMax;
+  /* A slot is clickable when its centre is clear of the fixed chrome: the
+     fleet bar (top) and the ops bar (bottom 152px) both overlay the canvas. */
+  const CHROME_TOP = 80, CHROME_BOT = 170;
+  const slotsOnScreen = async () => {
+    const g = await gridAt();
+    return g.cell
+      .map((c) => ({ i: c.i, x: c.x + g.tw / 2, y: c.y + g.th / 2 }))
+      .filter((c) => c.y >= CHROME_TOP && c.y <= vh - CHROME_BOT);
   };
-  const onScreen = (i, cam) => { const { x } = cellXY(i, cam); return x > 10 && x < geom.vw - 10; };
-  // Slot geometry, shared by the scan and by re-entry's search.
-  /* Which ROSTER columns are on screen at this camera, and where.
-     This walked fixed VIEWPORT slots and scrolled the content past them, so it
-     never knew which roster column it was clicking — and that is what made a
-     click that TIMED OUT indistinguishable from a slot past the end of the
-     fleet. Both came back "did not open", and the loop treated both as empty
-     (`continue`). One signal for "nothing there" and "it went wrong" is the
-     same defect as #188's `grep -c`, and it cost the same way: an intermittent
-     miss recorded as a clean walk, surfacing as `16/17 boxes reached` with no
-     way to tell which failure it was.
-     Knowing the column index means the walk knows whether a cell MUST open.
-     Only the last column of an odd roster is legitimately half empty. */
-  const colsTotal = Math.ceil(roster.length / 2);
-  const colsOnScreen = (cam) => {
-    const out = [];
-    for (let c = 0; c < colsTotal; c++) {
-      const x = geom.MARGINL - cam + c * (geom.CELLW + geom.GAPX) + geom.CELLW / 2;
-      if (x >= 10 && x <= geom.vw - 10) out.push({ c, x });
-    }
-    return out;
-  };
-  const stepPx = Math.max(200, geom.vw - geom.CELLW - 40);
+  // The floor scrolls VERTICALLY; a viewport-sized walk steps the camera down.
+  const stepPx = Math.max(150, vh - g0.th - CHROME_TOP - CHROME_BOT);
   // The camera eases toward its target, so scrolling needs a settle wait.
   // Absolute positioning: rewind to 0 first, then wheel forward by `cam`, so
   // the camera lands somewhere known rather than "as far as it got".
@@ -208,11 +186,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     return false;
   };
   const scrollTo = async (cam) => {
-    await page.mouse.move(geom.vw / 2, geom.topY + 40);
-    await page.mouse.wheel(-(totalW + 2000), 0);
+    await page.mouse.move(700, Math.min(vh - CHROME_BOT, 400));
+    await page.mouse.wheel(0, -(g0.totalH + 2000));
     await settleCam(0);
     if (cam > 0) {
-      await page.mouse.wheel(cam, 0);
+      await page.mouse.wheel(0, cam);
       await settleCam(Math.min(cam, camMax));
     }
   };
@@ -281,16 +259,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     let got = await openHere(v.x, v.y);
     if (got === v.got) return got;
     if (got !== null) await leave();
-    // search: every slot at every camera step until the wanted box appears
+    // search: every on-screen slot at every camera step until the box appears
     for (let cam = 0; ; cam = Math.min(cam + stepPx, camMax)) {
       await scrollTo(cam);
-      for (const { x } of colsOnScreen(cam)) {
-        for (let row = 0; row < 2; row++) {
-          const y = geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2;
-          got = await openHere(x, y);
-          if (got === v.got) { v.x = x; v.y = y; v.cam = cam; return got; }
-          if (got !== null) await leave();
-        }
+      for (const sl of await slotsOnScreen()) {
+        got = await openHere(sl.x, sl.y);
+        if (got === v.got) { v.x = sl.x; v.y = sl.y; v.cam = cam; return got; }
+        if (got !== null) await leave();
       }
       if (cam >= camMax) break;
     }
@@ -325,35 +300,31 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   for (let cam = 0; ; cam = Math.min(cam + stepPx, camMax)) {
     await scrollTo(cam);
     const readHere = [];              // boxes read at this scroll position, in layout order
-    for (const { c, x } of colsOnScreen(cam)) {
-      for (let row = 0; row < 2; row++) {
-        const y = geom.topY + row * (geom.CELLH + geom.GAPY) + geom.CELLH / 2;
-        // The ONLY genuinely empty slot is the second row of the last column
-        // of an odd roster. Every other cell exists and must open, so a failed
-        // click there is a lost race, not an absence — retry it once with a
-        // longer budget instead of silently recording the box as unreachable.
-        const slotIsReal = c * 2 + row < roster.length;
-        if (!slotIsReal) continue;
-        let opened = false;
-        for (const budget of [4000, 8000]) {
-          await ensureFloor();
-          await page.mouse.click(x, y);
-          opened = await settle(async () =>
-            (await page.locator('body.room').count()) === 1
-            && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), budget);
-          if (opened) break;
-        }
-        // A room that opened after its settle window must not be left up for
-        // the next click to land in.
-        if (!opened) { await ensureFloor(); continue; }
-        const box = (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
-        readHere.push({ box, col: c, row });
-        if (!seenBox.has(box)) {
-          seenBox.set(box, true);
-          visible.push({ x, y, cam, got: box, expect: box });
-        }
-        await leave();
+    /* Every slot the grid reports is a real roster cell — the layout hook
+       enumerates cells, not grid positions, so there is no "half-empty last
+       column" case to special-case around. A slot that will not open is a
+       lost race, not an absence — retry it once with a longer budget instead
+       of silently recording the box as unreachable. */
+    for (const sl of await slotsOnScreen()) {
+      let opened = false;
+      for (const budget of [4000, 8000]) {
+        await ensureFloor();
+        await page.mouse.click(sl.x, sl.y);
+        opened = await settle(async () =>
+          (await page.locator('body.room').count()) === 1
+          && ((await page.locator('#c-target').textContent()) || '').includes('MESSAGE'), budget);
+        if (opened) break;
       }
+      // A room that opened after its settle window must not be left up for
+      // the next click to land in.
+      if (!opened) { await ensureFloor(); continue; }
+      const box = (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
+      readHere.push({ box, i: sl.i });
+      if (!seenBox.has(box)) {
+        seenBox.set(box, true);
+        visible.push({ x: sl.x, y: sl.y, cam, got: box, expect: box });
+      }
+      await leave();
     }
     // Ordering: layout order must follow roster order. A cell rendering some
     // other unit's identity breaks this without needing the camera value.

@@ -42,10 +42,13 @@ const ok = (name, cond, detail = '') => {
     await page.waitForTimeout(3500);
     ok('churn: page starts LIVE', (await page.locator('.demo-badge.live').count()) > 0);
 
-    // Stand in the first cell's console.
-    const topY = await page.evaluate(() =>
-      Math.max(70, 64 + ((window.innerHeight - 222) - (2 * 252 + 26)) / 2));
-    await page.mouse.click(44 + 168, topY + 126);
+    // Stand in the first cell's console — where the first cell IS comes from
+    // the floor's own layout hook, not a re-derivation of its constants.
+    const c0 = await page.evaluate(() => {
+      const g = window.FLOORDEV.grid();
+      return { x: g.cell[0].x + g.tw / 2, y: g.cell[0].y + g.th / 2 };
+    });
+    await page.mouse.click(c0.x, c0.y);
     await page.waitForTimeout(900);
     const focused = (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim();
     ok('churn: a console is open', (await page.locator('body.room').count()) === 1, focused);
