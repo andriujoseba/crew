@@ -2567,6 +2567,29 @@ function buildCodex(t,st){
       g.fillRect(pt[0]-1.5,pt[1]+k[1]-1.5,3,3);});
   })();
   g.globalAlpha=1;g.restore();
+  /* Loop 8 — a service history. Every plate on the dome was the plate it
+     shipped with. One repair, right flank: a scorch the shell never fully
+     shed, and a patch of newer, bluer steel bolted over it — tacked with
+     weld stitches along its top edge first, the way field repairs are, its
+     edges aligned with nothing. Lower left, a gouge through two chevrons:
+     dark trench, bright torn lip, ending where whatever made it stopped. */
+  g.save();g.beginPath();g.ellipse(ax,ay,aw,ah,0,0,7);g.clip();
+  (function(){var px2=ax+aw*0.42,py2=ay-ah*0.02;
+    var sc2=g.createRadialGradient(px2,py2,2,px2,py2,15);
+    sc2.addColorStop(0,"rgba(8,6,4,0.55)");sc2.addColorStop(0.7,"rgba(12,10,7,0.28)");sc2.addColorStop(1,"rgba(12,10,7,0)");
+    g.fillStyle=sc2;g.beginPath();g.arc(px2,py2,15,0,7);g.fill();
+    g.save();g.translate(px2,py2);g.rotate(-0.22);
+    var pg=g.createLinearGradient(0,-9,0,9);pg.addColorStop(0,"#31405a");pg.addColorStop(1,"#1c2637");
+    g.fillStyle=pg;g.fillRect(-8,-9,16,18);g.strokeStyle=ed;g.lineWidth=1.2;g.strokeRect(-8,-9,16,18);
+    g.strokeStyle="rgba(170,192,222,"+(offl?0.14:0.34)+")";g.lineWidth=1;
+    for(var wl=0;wl<4;wl++){g.beginPath();g.moveTo(-6+wl*4,-9);g.lineTo(-4+wl*4,-11.5);g.stroke();}
+    rivet(g,-5.5,-6,eH);rivet(g,5.5,-6,eH);rivet(g,-5.5,6,eH);rivet(g,5.5,6,eH);
+    g.restore();
+    var gx=ax-aw*0.42,gy=ay+ah*0.22;
+    pl(g,gx,gy,gx+16,gy+7,"rgba(3,7,12,0.65)",2.6);
+    pl(g,gx+0.6,gy-1,gx+16.6,gy+6,"rgba(170,192,222,"+(offl?0.12:0.3)+")",1);
+  })();
+  g.restore();
   cavity(g,hxx-43,hy2-25,86,26,0.5);
   buildRim(offl?[80,90,88]:[55,212,166]);       // codex: teal
   /* Six tarsus tips, not one blob under the body: the whole point of the
