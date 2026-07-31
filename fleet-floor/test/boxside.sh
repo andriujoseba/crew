@@ -195,6 +195,136 @@ else
   fail "message: a failed session is recorded FAILED with its rc" "$(cat "$BS_M/duty/duty.log")"
 fi
 
+# --------------------------------------------------------------------------
+# PAUSE_SH / RESUME_SH — run for real against a real crontab(1) stand-in.
+#
+# This is the pair #188 was about, and it is exactly the circularity this file
+# exists to break: every other assertion about pause and resume is made against
+# test/stub-box's imitation of them, so the bug — `grep -c` exits 1 on a zero
+# count, and it was the last command, so the count WAS the verdict — could not
+# be seen from the collector side at all. Here the scripts run, against a
+# crontab whose contents the test controls, and the exit status is read.
+# --------------------------------------------------------------------------
+BS_C="$BS_TMP/cronbin"; mkdir -p "$BS_C"
+BS_CRON="$BS_TMP/crontab.state"
+# Only the two forms floor.py's scripts use: `-l` to read, `-` to replace from
+# stdin. Anything else is a script doing something this stand-in has not been
+# shown to model, and must fail loudly rather than be quietly accepted.
+# `-l` with no crontab exits 1 the way cron(8)'s does — that is the real
+# zero-line case, and swallowing it here would fake the bug away.
+#
+# The install is ATOMIC (temp file, then rename), like the real crontab(1),
+# which stages into the spool and renames. Truncating in place would be a
+# stand-in bug rather than a script bug, but it is the one that bites hardest
+# if the scripts ever go back to piping a live read into a live write
+# (`crontab -l | sed | crontab -`, both ends open at once): a `cat > $STATE`
+# empties the file the reader at the head of the same pipeline is still
+# reading, and the box loses its crontab. The scripts snapshot the crontab
+# first and write from the snapshot, so they do not do that today.
+cat > "$BS_C/crontab" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -l) [ -s "$CRONTAB_STATE" ] || { echo "no crontab for tester" >&2; exit 1; }
+      cat "$CRONTAB_STATE" ;;
+  -)  if [ "${CRONTAB_RO:-0}" = 1 ]; then cat >/dev/null; echo "crontab: installing new crontab: permission denied" >&2; exit 1; fi
+      tmp="$(mktemp)"; cat > "$tmp"; mv -f "$tmp" "$CRONTAB_STATE" ;;
+  *)  echo "crontab: unsupported argument ${1:-}" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$BS_C/crontab"
+
+BS_SERVER="$BS_FLOOR/server" BS_OUT="$BS_TMP" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+import floor
+out = os.environ["BS_OUT"]
+open(os.path.join(out, "pause.sh"), "w").write(floor.PAUSE_SH)
+open(os.path.join(out, "resume.sh"), "w").write(floor.RESUME_SH)
+PY
+
+# bs_ctl <pause|resume> -> writes $BS_TMP/ctl.out and $BS_TMP/ctl.err, echoes rc
+bs_ctl() {
+  local rc=0
+  PATH="$BS_C:$PATH" CRONTAB_STATE="$BS_CRON" CRONTAB_RO="${BS_RO:-0}" \
+    bash "$BS_TMP/$1.sh" >"$BS_TMP/ctl.out" 2>"$BS_TMP/ctl.err" || rc=$?
+  echo "$rc"
+}
+bs_armed()  { grep -cE '^[^#].*tick\.sh' "$BS_CRON" 2>/dev/null || true; }
+bs_paused() { grep -c '^#CREW-FLOOR-PAUSED' "$BS_CRON" 2>/dev/null || true; }
+
+# shellcheck disable=SC2016  # a crontab line is stored unexpanded; $HOME is cron's
+printf '*/5 * * * * $HOME/duty/bin/tick.sh\n17 2 * * * unrelated-job\n' > "$BS_CRON"
+t "pause: exits 0 on an armed box"      0 "$(bs_ctl pause)"
+t "pause: comments the tick line out"   1 "$(bs_paused)"
+t "pause: no live tick line remains"    0 "$(bs_armed)"
+t "pause: says what it did"    "paused 1" "$(cat "$BS_TMP/ctl.out")"
+# The unrelated line is somebody else's job. A control that quietly rewrote it
+# would be a far worse bug than the one being fixed.
+t "pause: leaves unrelated crontab lines alone" 1 "$(grep -c '^17 2 \* \* \* unrelated-job$' "$BS_CRON")"
+
+t "resume: exits 0"                     0 "$(bs_ctl resume)"
+t "resume: restores the live line"      1 "$(bs_armed)"
+t "resume: no commented line remains"   0 "$(bs_paused)"
+t "resume: says what it did"  "resumed 1" "$(cat "$BS_TMP/ctl.out")"
+
+# #188 itself. Every drill box is in this state for its whole run — cron is
+# disarmed before any tick — so this path is the one the drill always took, and
+# it used to exit 1 and be rendered "command refused".
+printf '17 2 * * * unrelated-job\n' > "$BS_CRON"
+t "pause: a box with no armed line exits 0"  0 "$(bs_ctl pause)"
+case "$(cat "$BS_TMP/ctl.out")" in
+  "nothing to pause"*) ok "pause: a box with no armed line says nothing to pause" ;;
+  *) fail "pause: a box with no armed line says nothing to pause" "$(cat "$BS_TMP/ctl.out")" ;;
+esac
+t "pause: nothing to pause changes nothing" "17 2 * * * unrelated-job" "$(cat "$BS_CRON")"
+
+t "resume: nothing paused exits 0"  0 "$(bs_ctl resume)"
+case "$(cat "$BS_TMP/ctl.out")" in
+  "nothing to resume"*) ok "resume: nothing paused says so" ;;
+  *) fail "resume: nothing paused says so" "$(cat "$BS_TMP/ctl.out")" ;;
+esac
+
+# The count is what THIS call moved, not the post-state total. A box carrying
+# a `#CREW-FLOOR-PAUSED` line from an earlier pause AND one armed line pauses
+# exactly one line; reporting the total would say `paused 2`. Nothing in the
+# fleet produces this crontab today — a second pause short-circuits to
+# `nothing to pause` — which is why it is asserted here rather than left to a
+# scenario that cannot reach it (kimi, round 1).
+# shellcheck disable=SC2016
+printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n*/5 * * * * $HOME/duty/bin/other-tick.sh\n' > "$BS_CRON"
+t "pause: a pre-paused line is not counted as this call's work" 0 "$(bs_ctl pause)"
+t "pause: counts only the lines it commented"        "paused 1" "$(cat "$BS_TMP/ctl.out")"
+t "pause: the pre-existing marker is left as it was"          2 "$(bs_paused)"
+
+# Symmetric on the way back: resume moves both commented lines, and says 2 —
+# the number it uncommented, not the number of live lines it can see after.
+t "resume: exits 0 with two paused lines"    0 "$(bs_ctl resume)"
+t "resume: counts only the lines it restored" "resumed 2" "$(cat "$BS_TMP/ctl.out")"
+t "resume: both lines are live"              2 "$(bs_armed)"
+
+# A live tick line that was never paused must not be counted by resume either.
+# shellcheck disable=SC2016
+printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n7 * * * * $HOME/duty/bin/other-tick.sh\n' > "$BS_CRON"
+t "resume: exits 0 alongside an already-live line"  0 "$(bs_ctl resume)"
+t "resume: an already-live line is not this call's" "resumed 1" "$(cat "$BS_TMP/ctl.out")"
+
+# No crontab AT ALL: `crontab -l` exits 1, which is the shape that made the
+# zero count indistinguishable from a broken box in the first place.
+: > "$BS_CRON"
+t "pause: no crontab at all is still not a failure" 0 "$(bs_ctl pause)"
+
+# ...and a write that genuinely fails must redden the row and SAY why, which is
+# the whole point of not spending the exit status on a count.
+# shellcheck disable=SC2016
+printf '*/5 * * * * $HOME/duty/bin/tick.sh\n' > "$BS_CRON"
+BS_RO=1
+t "pause: a refused crontab write exits non-zero" 1 "$(bs_ctl pause)"
+case "$(cat "$BS_TMP/ctl.err")" in
+  *"crontab write failed"*) ok "pause: a refused write states its reason" ;;
+  *) fail "pause: a refused write states its reason" "$(cat "$BS_TMP/ctl.err")" ;;
+esac
+BS_RO=0
+
 rm -rf "$BS_TMP"
 
 # --------------------------------------------------------------------------

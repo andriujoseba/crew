@@ -184,38 +184,36 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   // The camera eases toward its target, so scrolling needs a settle wait.
   // Absolute positioning: rewind to 0 first, then wheel forward by `cam`, so
   // the camera lands somewhere known rather than "as far as it got".
-  /* The floor camera EASES — app.js drawFloor: `floorCam += (floorCamTarget -
-     floorCam) * 0.18` — so cells keep sliding for ~38 frames after a wheel
-     event. This used to be a fixed 800/1200 ms sleep, which is ample at 60fps
-     and nowhere near enough once the frame rate drops. It drops WITH FLEET
-     SIZE, because drawFloor renders at most one room still per frame
-     (`miniFills`), so every added box makes the glide longer in wall-clock.
-
-     Clicking mid-glide does not miss — it lands on a NEIGHBOURING cell and
-     opens an already-seen box. The walk records a successful read of the wrong
-     unit, and the box that should have been under the cursor is never seen:
-     `16 reads → 16 distinct, roster 17`, with the missing box moving between
-     runs (ff-nothired one run, ff-noauth the next). The old comment claimed
-     callers "verify by OUTCOME, so a short settle costs a retry, never a false
-     result" — that holds for enter(), which knows the box it wants, and not
-     for this walk, which does not.
-
-     app.js is inlined as a classic script, so its top-level `var floorCam` is
-     a window global: poll the real camera instead of guessing at a duration. */
-  const settleCam = async () => {
-    await page.waitForFunction(
-      () => typeof window.floorCam !== 'number'
-        || Math.abs(window.floorCam - window.floorCamTarget) < 0.5,
-      null, { timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(80);        // one frame, so the last draw lands
+  /* #195 landed an independent fix for the same race while this PR was in
+     review, from the other end: FLOORDEV.cam() is a real hook, and settleCam
+     takes the target to converge ON rather than inferring convergence from a
+     window global. That is the better mechanism and it wins the merge — this
+     branch's version, which polled `window.floorCam` because app.js is inlined
+     as a classic script, is dropped. Both were chasing the same symptom; #195's
+     comment records "15/17 boxes reached, twice, on an idle box". */
+  /* The camera IS readable now: FLOORDEV.cam() (the whiteboard hook postdates
+     the "reading the real camera would need a test hook" decision below, and
+     the hook exists regardless). The fixed waits this replaced covered ~4
+     easing frames on a machine where a console dwell expires every visible
+     miniStill — each post-Escape floor frame then costs a full room render,
+     the camera lands half-scrolled, and a cell-centre click falls in a gap:
+     that was "15/17 boxes reached", twice, on an idle box. Poll convergence;
+     on timeout click anyway — every caller still verifies by outcome. */
+  const camAt = () => page.evaluate(() => window.FLOORDEV.cam());
+  const settleCam = async (want) => {
+    for (let w = 0; w < 8000; w += 60) {
+      if (Math.abs((await camAt()) - want) < 0.75) return true;
+      await page.waitForTimeout(60);
+    }
+    return false;
   };
   const scrollTo = async (cam) => {
     await page.mouse.move(geom.vw / 2, geom.topY + 40);
     await page.mouse.wheel(-(totalW + 2000), 0);
-    await settleCam();
+    await settleCam(0);
     if (cam > 0) {
       await page.mouse.wheel(cam, 0);
-      await settleCam();
+      await settleCam(Math.min(cam, camMax));
     }
   };
   /* POLL, never sleep-and-hope. A fixed 700 ms for the room to open and 1200 ms
@@ -524,7 +522,21 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      Both are re-read together each iteration, so there is no window where a
      label captured earlier is compared against a flag fetched later. */
   if (LIVE && visible.length && !READONLY) {
-    const victim = visible.find((v) => !/unreach|wedged|absent|stopped/.test(v.got)) || visible[0];
+    /* The victim must be a box a pause can actually MOVE. Since #188 a box with
+       no armed tick.sh line answers 200 `nothing to pause` — correctly; an
+       action with nothing to do is not a refusal — so landing on the fixture's
+       disarmed box would sit out all fourteen polls below waiting for a
+       `paused` that is never coming, and report the renderer as broken. The
+       name says nothing about this: `disarmed` is the flag the collector
+       derives from the box's own crontab count, so ask the API, in keeping with
+       the rest of this block. Falls back to the old choice if nothing is armed,
+       rather than silently skipping the assertion. */
+    const armed = await page.evaluate(async () => {
+      const r = await fetch(location.origin + '/api/fleet');
+      return (await r.json()).units.filter((u) => !u.disarmed).map((u) => u.box);
+    });
+    const reachable = visible.filter((v) => !/unreach|wedged|absent|stopped/.test(v.got));
+    const victim = reachable.find((v) => armed.includes(v.got)) || reachable[0] || visible[0];
     const cmd = (action, box) => page.evaluate(async ([a, b]) => {
       const r = await fetch(location.origin + '/api/command', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -1549,3 +1549,160 @@ unit's depth, so the near plane hung in vacuum. Six larger, blurrier motes
 drift sideways across the near band — out of focus for the same reason the
 nearEdge is — keyed to each room's cone colour, dimmed but not killed offline;
 dust does not care. Pinned still under reduced motion.
+
+## Five loops on claude's assembly
+
+The other series each swept every unit; this one stands still on one. Claude
+read as a rendered solid — a soft octagon head on a moulded torso — because
+nothing on it said how it was put together. Five passes, each making one join
+into a visible mechanism, each pushing the silhouette toward hard edges and
+separate pieces:
+
+**Loop 1 — the shoulder is an assembly, not a slab.** The pauldron was two
+stacked plates hanging beside the chest (drawn with unmirrored offsets, so
+neither slab even faced its own side). Now a dark ball socket carries the arm,
+a piston runs down into the upper arm, and one notched pauldron with a hard
+outer spike bolts over the joint — its underside cut around the socket so the
+mechanism stays visible.
+
+**Loop 2 — exhaust stacks are welded pipes, not lit panels.** Behind the chest
+only a stack's tip survives, and that tip was a rectangle with a glowing
+square stuck on it. Each stack is now a canted pipe with a slanted-cut hollow
+mouth and an ember down the throat, heat fins, and a bolted clamp band with a
+brace down to the backpack it is mounted on.
+
+**Loop 3 — the waist admits the torso is several machines.** Two clean
+trapezoids butt-joined the chest to the pelvis. Now a spine cavity with twin
+pistons and a power conduit runs through the waist, under two STAGGERED belt
+plates — one long left, one long right — with real gaps at every join. The
+blanket `cavity()` shade there dropped 0.44 → 0.28: the darkness is structure
+now, not filter.
+
+**Loop 4 — the reactor is caged, not a porthole.** The core sits in an
+octagonal recess with bolted facets, and two heavy bars stand in front of the
+fire — cut out of the emissive buffer too, so bloom leaks around the cage and
+never through it. The brightest thing on the unit is something the assembly
+visibly restrains.
+
+**Loop 5 — the helmet is three pieces of armour, not a balloon.** The crown
+breaks into facets meeting at a centre ridge, the brow is a chevron dropping
+toward the visor so the unit scowls, and each cheek gets its own bolted guard
+blade.
+
+![claude structure progression](shots/claude-structure/progression.webp)
+
+Five more, same brief — each pass finds the next join that does not read and
+makes it a mechanism:
+
+**Loop 6 — the arm bends at a machine, not at a seam.** The elbow was two
+plates touching. Every pose now caps that seam in the joint language the hips
+and knees already speak — dark ball, lit crescent, bolt — the hanging arm gets
+a wrist clamp band so the gauntlet is a banded-on piece, and the fist gets
+knuckle cuts so it is fingers, not a brick.
+
+**Loop 7 — the head is mounted, not adjacent.** A visible neck bearing ring,
+two intake cables clamped under the cheek guards running into the collar
+(endpoints ride `hcx`/`hy`, so the offline head-drop slackens them for free),
+and the antenna becomes a mast on a bolted bracket.
+
+**Loop 8 — the girdle closes through hardware.** A bolted buckle housing
+bridges the waist gap and the codpiece is its own pointed plate with the
+accent glow recessed into a cut slot — was: a stripe painted on the pelvis.
+
+**Loop 9 — the armour has a service history.** A patch of newer, bluer steel
+bolted over a scorch on the right pec, weld stitches where it was tacked,
+corners aligned with nothing the way repairs never are; one deep gouge across
+the left pauldron, dark trench with a bright torn lip.
+
+**Loop 10 — plates overlap, so they cast on what they cover.** Contact
+shadows under the pauldron rim, the chest bevel band and the buckle; grime
+weeping from the torqued bolts (albedo — wear does not dim with power state);
+and a bite cut out of the right pauldron spike to transparency, so the rim
+light catches the torn edge.
+
+![claude structure progression, round 2](shots/claude-structure/progression-2.webp)
+
+Three more, from operator feedback — "there's a gray rectangle on the back"
+and "the arms could look cooler":
+
+**Loop 11 — the backpack is behind the torso, and looks it.** The pack was
+drawn in the front armour's own tones, so the wing surviving beside each arm
+read as a grey rectangle floating at the torso's depth. Back-plane shade, a
+sharper taper, heat-sink fin cuts, and the torso's own shadow cast on the
+wings' inner edges push it a plane back.
+
+**Loop 12 — the forearm is a bracer, not a slab.** The outer edge flares
+from the elbow and cuts back hard to the wrist, a blade fin stands off the
+flare with its own chamfer highlight, and the working poses carry the same
+fin on the gauntlet so it reads as one piece of kit in every pose.
+
+**Loop 13 — the arm shows its muscle and carries its own light.** One
+exposed actuator runs down the outer upper arm into the elbow in all three
+poses — dark cylinder, bright rod, the shin hydraulics' language — and a
+power slot cut into the bracer face gives the arms the one warm light every
+other body group already had.
+
+![claude structure progression, round 3](shots/claude-structure/progression-3.webp)
+
+Round four is subtraction. The operator kept naming the same discomfort from
+the front view — "the backpack looks odd", then "remove the grey plate that's
+the biceps" — and each cut proved the silhouette was better without the part:
+
+**Loop 14 — delete the backpack plate; the gap was the drawing.** Two loops
+of recolouring, tapering, finning and shadowing still left a grey wing
+filling the space between torso and arm, because from the front that space
+IS the drawing. Daylight between arms and waist is what makes the chest read
+broad and the unit read fit.
+
+**Loop 15 — bare-rod biceps, coned bracers.** The upper-arm plate was the
+same complaint one limb down. Deleted in all three poses: two exposed
+actuator rods run from the shoulder socket into the elbow cap, and the arm's
+mass moves to a forearm cone that leaves the elbow narrow and widens to a
+broader wrist clamp and fist.
+
+**Loop 16 — the stacks go too; the back trails cables.** Hardware standing
+above the shoulders read as luggage. Two power cables per side now loop out
+of the back and down into the collar, drawn first so torso and pauldrons
+overlap them. Doom units don't carry backpacks; they trail cables.
+
+**And the walk got honest about the camera.** During these loops the browser
+walk failed twice on an idle box — "15/17 boxes reached" — the same slow-
+runner miss its own comments describe. Mechanism: a console dwell expires
+every visible miniStill, the first floor frames after Escape cost a full
+room render each, so the fixed post-wheel waits covered ~4 easing frames and
+cell-centre clicks fell in the gaps. The camera is readable now
+(`FLOORDEV.cam()`, joining the whiteboard hook that postdates the original
+"no test hook" decision), and `scrollTo` polls convergence instead of
+sleeping. Full suite after the change: 360 ok, 0 failed.
+
+![claude structure progression, round 4](shots/claude-structure/progression-4.webp)
+
+Round five is biography. Three battles, each won, each leaving the unit
+visibly stronger than the fight found it:
+
+**Loop 17 — battle one: the split pec, strapped.** A jagged rewelded crack
+across the left chest with stitch ticks, and a strap of newer steel bolted
+ACROSS it — a weld you strap is a weld you no longer worry about.
+
+**Loop 18 — battle two: the burned shoulder, over-plated.** Blast scorch on
+the left pauldron, answered with a cruder, heavier plate welded over the
+burn — square-cut, three fat bolts, no polished chamfer — half-burying the
+loop-9 gouge and breaking the crown line. The asymmetry is the record.
+
+**Loop 19 — battle three: the rake, the dent, the tally.** Three parallel
+claw rakes on the right thigh, a belt chamfer that folded under a hit and
+stays folded, paint nicks at fixed places on the leading lips, and three
+tally strokes next to the unit marking in the same worn gold — one per
+battle walked away from.
+
+![claude structure progression, round 5](shots/claude-structure/progression-5.webp)
+
+![claude after, three states](shots/claude-structure/states.webp)
+
+The whole arc, one frame per loop:
+
+![claude evolution](shots/claude-structure/evolution.gif)
+
+The unit envelope was re-measured over all 36 combinations after the wider
+pauldrons: the union moved by ±1px — breath-phase noise — and the binding
+edge is still codex's leg splay, so `LAYOUT.unit` stands unchanged.
