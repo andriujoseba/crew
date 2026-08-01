@@ -249,6 +249,28 @@ var RW=520,RH=600;
 var robo=oc(RW,RH), RB=robo.getContext("2d");
 var remit=oc(RW,RH), RE=remit.getContext("2d");
 var rrim=oc(RW,RH), RR=rrim.getContext("2d");
+/* Portrait supersampling (#226 RC3). Every conference-cell portrait crops
+   this same 520x600 sprite with a per-vendor width and stretches it to the
+   same tile buffer, so a narrow crop (grok, 206px) lands ~40% fewer source
+   pixels per screen pixel than a wide one (kimi, 330px) — four vendors, four
+   effective resolutions. Portrait builds therefore run on their own trio,
+   drawn at SS = clamp(pw/cropW, 1, SS_MAX): every builder already takes its
+   canvas transform from its entry reset, so composing SS there (and in
+   kimi's F transform, buildRim's pixel offsets and the key-light tint)
+   scales the whole build with ZERO changes to the art. The room path keeps
+   SS=1 and the original trio. Allocated once, lazily, at SS_MAX size
+   (~25MB); per-build SS varies via the transform, and entry resets clear
+   the full physical canvas so a smaller build never composites a larger
+   build's stale margin. */
+var SS=1, SS_MAX=2.6;
+var roboP=null,RBP=null,remitP=null,REP=null,rrimP=null,RRP=null;
+function ensurePortraitTrio(){
+  if(roboP)return;
+  var W2=Math.ceil(RW*SS_MAX),H2=Math.ceil(RH*SS_MAX);
+  roboP=oc(W2,H2);RBP=roboP.getContext("2d");
+  remitP=oc(W2,H2);REP=remitP.getContext("2d");
+  rrimP=oc(W2,H2);RRP=rrimP.getContext("2d");
+}
 var noise=makeNoise(220);
 
 function rgba(r,g,b,a){return "rgba("+r+","+g+","+b+","+a+")";}
@@ -981,17 +1003,24 @@ function camStill(t,u,pw,ph){
   var tCanon=strPhase(box);
   beaconPulse=0.65;
   AGENT=u.agent;STATE=u.state;
+  var f=CAMFRAME[u.agent]||CAMFRAME.claude;
+  /* The build lands on the supersampled portrait trio, at the density THIS
+     crop needs to hit ~1:1 device pixels — resolution parity across vendors
+     regardless of crop width. Same save/swap/restore pattern as AGENT/STATE. */
+  ensurePortraitTrio();
+  var sRo=robo,sRB=RB,sEm=remit,sRE=RE,sRi=rrim,sRR=RR;
+  robo=roboP;RB=RBP;remit=remitP;RE=REP;rrim=rrimP;RR=RRP;
+  SS=Math.max(1,Math.min(SS_MAX,pw/f.w));
   var info=buildRobo(tCanon,u.state);
   /* The role's key light lands on the unit, same rule as drawRobot's L17 tint:
      a sprite that keeps studio-neutral colour in an amber room is a paste-up. */
   var off=u.state==="offline";
   var kt=off?[96,110,136]:u.room==="builder"?[255,201,135]:u.room==="reviewer"?[150,196,245]:[176,150,240];
-  RB.save();RB.setTransform(1,0,0,1,0,0);RB.globalCompositeOperation="source-atop";
+  RB.save();RB.setTransform(SS,0,0,SS,0,0);RB.globalCompositeOperation="source-atop";
   var ktg=RB.createLinearGradient(0,60,0,RH*0.9);
   ktg.addColorStop(0,rgba(kt[0],kt[1],kt[2],off?0.10:0.13));
   ktg.addColorStop(1,rgba(kt[0],kt[1],kt[2],0));
   RB.fillStyle=ktg;RB.fillRect(0,0,RW,RH);RB.restore();
-  var f=CAMFRAME[u.agent]||CAMFRAME.claude;
   /* Static per-box framing jitter — no two operators mount a camera at the
      same angle, and identical framing is what makes a grid read as clones. */
   var jx=(strPhase(box)/6.283-0.5)*16, jy=(strPhase(box+"y")/6.283-0.5)*10;
@@ -1007,18 +1036,19 @@ function camStill(t,u,pw,ph){
   c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
   c.clearRect(0,0,pw,ph);
   if(off)c.filter="saturate(0.45) brightness(0.88)";
-  c.drawImage(robo,sx,sy,sw,sh,0,0,pw,ph);
+  c.drawImage(robo,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
   c.filter="none";
   c.globalCompositeOperation="lighter";
-  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
   /* The emissive pass, blurred like the room compositor's glow buffer but
      scaled to portrait zoom. Two taps, not three: the third radius at this
      size is a wash. */
   var bl=Math.max(2,Math.round(pw/90));
-  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
-  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
-  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
+  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
+  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
   c.globalCompositeOperation="source-over";c.globalAlpha=1;
+  robo=sRo;RB=sRB;remit=sEm;RE=sRE;rrim=sRi;RR=sRR;SS=1;
   AGENT=sa;STATE=ss;beaconPulse=sbp;
   e.ok=1;e.at=mnow();
   /* A landed build is a feed swap — drawCamCell performs a glitch over it.
@@ -1863,18 +1893,24 @@ function buildRobo(t,st){
    is the only part of it that survives at grid-cell size. */
 function buildRim(vend){
   var V=vend||[255,170,90];
+  /* Pixel ops, so this one runs in PHYSICAL space: the self-copy must be 1:1
+     whatever SS is, and the hairline offsets and gradient span scale by SS
+     explicitly so the rim wears the same sprite-relative width at every
+     sampling density. */
+  RR.setTransform(1,0,0,1,0,0);
   RR.globalCompositeOperation="source-over";RR.drawImage(robo,0,0);
-  RR.globalCompositeOperation="destination-out";RR.drawImage(robo,-2.4,1.8);RR.drawImage(robo,-1.6,-2.6);
+  RR.globalCompositeOperation="destination-out";RR.drawImage(robo,-2.4*SS,1.8*SS);RR.drawImage(robo,-1.6*SS,-2.6*SS);
   RR.globalCompositeOperation="source-in";
-  var rg=RR.createLinearGradient(70,0,450,0);
+  var rg=RR.createLinearGradient(70*SS,0,450*SS,0);
   rg.addColorStop(0,rgba(V[0],V[1],V[2],0.95));
   rg.addColorStop(0.42,rgba((V[0]+150)/2,(V[1]+175)/2,(V[2]+205)/2,0.45));
   rg.addColorStop(1,rgba(95,214,255,1));
-  RR.fillStyle=rg;RR.fillRect(0,0,RW,RH);RR.globalCompositeOperation="source-over";
+  RR.fillStyle=rg;RR.fillRect(0,0,RW*SS,RH*SS);RR.globalCompositeOperation="source-over";
+  RR.setTransform(SS,0,0,SS,0,0);
 }
 function buildClaude(t,st){
   var offl=st==="offline",work=st==="working";
-  var ctxs=[RB,RE,RR];for(var i=0;i<3;i++){var c=ctxs[i];c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,RW,RH);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";}
+  var ctxs=[RB,RE,RR];for(var i=0;i<3;i++){var c=ctxs[i];c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,c.canvas.width,c.canvas.height);c.setTransform(SS,0,0,SS,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";}
   var cx=260,gyf=560;
   var breath=(reduced||offl)?0:Math.sin(t*1.4)*2.0;
   var sT="#242e3d",sM="#131a25",sB="#080c13",ed="#2c3648",eH="#41506a",rc="#05080d";
@@ -2412,7 +2448,7 @@ function buildClaude(t,st){
 /* ===================== CODEX — heavy armored 8-legged spider (teal) ===================== */
 function buildCodex(t,st){
   var offl=st==="offline", work=st==="working";
-  var CX=[RB,RE,RR];for(var q=0;q<3;q++){var c0=CX[q];c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,RW,RH);c0.globalAlpha=1;c0.globalCompositeOperation="source-over";c0.filter="none";}
+  var CX=[RB,RE,RR];for(var q=0;q<3;q++){var c0=CX[q];c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,c0.canvas.width,c0.canvas.height);c0.setTransform(SS,0,0,SS,0,0);c0.globalAlpha=1;c0.globalCompositeOperation="source-over";c0.filter="none";}
   var cx=260, g=RB;
   var sT="#242e3d",sM="#131a25",sB="#080c13",ed="#2c3648",eH="#41506a",rc="#05080d";
   if(offl){sT="#181d25";sM="#0e131b";sB="#05080d";ed="#222932";eH="#2a323d";}
@@ -3104,7 +3140,7 @@ function buildCodex(t,st){
    orbit once, and never needed to go up again. */
 function buildGrok(t,st){
   var offl=st==="offline", work=st==="working";
-  var ctxs=[RB,RE,RR];for(var i=0;i<3;i++){var c=ctxs[i];c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,RW,RH);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";}
+  var ctxs=[RB,RE,RR];for(var i=0;i<3;i++){var c=ctxs[i];c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,c.canvas.width,c.canvas.height);c.setTransform(SS,0,0,SS,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";}
   var cx=260, g=RB;
   // same war-metal as the rest of the fleet — vendor identity lives in the
   // lights and the rim, never in the paint (the kimi round-2 lesson)
@@ -3532,7 +3568,7 @@ function buildGrok(t,st){
 /* ===================== KIMI — hovering companion drone, screen-face (pink) ===================== */
 function buildKimi(t,st){
   var offl=st==="offline", work=st==="working";
-  var GX=[RB,RE,RR];for(var q=0;q<3;q++){var c0=GX[q];c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,RW,RH);c0.globalAlpha=1;c0.globalCompositeOperation="source-over";c0.filter="none";}
+  var GX=[RB,RE,RR];for(var q=0;q<3;q++){var c0=GX[q];c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,c0.canvas.width,c0.canvas.height);c0.setTransform(SS,0,0,SS,0,0);c0.globalAlpha=1;c0.globalCompositeOperation="source-over";c0.filter="none";}
   var cx=260, g=RB;
   /* JUGGERNAUT (KM-09X). Kimi's unit was the fleet's flying TV — one rounded
      primitive with a face, and eleven loops of polish never changed what it
@@ -3547,7 +3583,7 @@ function buildKimi(t,st){
      and the head ran at the lamp. 1.05 keeps the siege mass but lets the
      room breathe around it (operator: ~10-15% down, not small). */
   var F=1.05, OY=560-470*F, TA=260-260*F;
-  RB.setTransform(F,0,0,F,TA,OY);RE.setTransform(F,0,0,F,TA,OY);
+  RB.setTransform(F*SS,0,0,F*SS,TA*SS,OY*SS);RE.setTransform(F*SS,0,0,F*SS,TA*SS,OY*SS);
   function TX(x){return F*x+TA;} function TY(y){return F*y+OY;}
   var FLOORL=470;                                          // deck line in local coords (maps to sprite 560)
   /* The same war-metal claude and codex are pressed from. The prototype's
@@ -4093,7 +4129,7 @@ function buildKimi(t,st){
     RE.strokeStyle="rgba(255,64,52,"+(0.10*bp2)+")";RE.lineWidth=1.6;
     RE.beginPath();RE.moveTo(cx+24,hy-30);RE.lineTo(cx+20,hy-45);RE.stroke();}
 
-  RB.setTransform(1,0,0,1,0,0);RE.setTransform(1,0,0,1,0,0);RR.setTransform(1,0,0,1,0,0);
+  RB.setTransform(SS,0,0,SS,0,0);RE.setTransform(SS,0,0,SS,0,0);RR.setTransform(SS,0,0,SS,0,0);
   buildRim(offl?[94,84,90]:[255,114,182]);      // kimi: pink
   /* Powered, the deck feels the torch: one soft pool under the nozzle, lifted
      by the full hover height. Offline the fists ARE the contact — two hard
