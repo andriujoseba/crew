@@ -295,7 +295,8 @@ def box_states(strict=False):
 
 TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
 RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)")
-RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+) dur=(\d+)s outcome=(\S+)")
+RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+) dur=(\d+)s outcome=(\S+)"
+                    r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
 RE_ANY_TS = re.compile("^" + TS + r" ")
 
 # Wake lines the duty modules already write. The queue shown on the floor is
@@ -391,9 +392,14 @@ def derive_sessions(loglines, now):
     for line in loglines:
         m = RE_END.search(line)
         if m:
+            try:
+                reply = base64.b64decode(m.group(8) or "", validate=True).decode("utf-8", "replace")
+            except (ValueError, TypeError):
+                reply = ""
             done.append({
                 "ts": parse_ts(m.group(1)), "kind": m.group(2), "key": m.group(3),
                 "rc": int(m.group(4)), "dur": int(m.group(5)), "out": m.group(6),
+                "acted": m.group(7) or "unknown", "reply": reply,
             })
             if opens:
                 opens.pop()
@@ -660,7 +666,7 @@ def build_unit(unit, state, agent_conf, now):
     sessions, cur = derive_sessions(loglines, now)
     u["queue"] = derive_queue(loglines)
     u["cur"] = cur
-    u["sessions"] = [{k: s[k] for k in ("ago", "kind", "key", "rc", "dur", "out")}
+    u["sessions"] = [{k: s[k] for k in ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply")}
                      for s in sessions[:11]]
     u["spark"] = spark_24h(sessions, now)
     u["repo"] = (u["queue"][0]["repo"] if u["queue"]
@@ -1128,11 +1134,16 @@ nohup setsid bash -c '
   export PATH="${BOT_PATH_PREPEND:-$HOME/.local/bin}:$PATH"
   cd "$HOME"
   timeout -k 60 1800 "${BOT_CLI_CMD[@]}" "$1" </dev/null >"$slog" 2>&1 || rc=$?
-  dur=$((SECONDS - start)); v=ok
+  dur=$((SECONDS - start)); v=ok; acted=unknown
   [ "$rc" -eq 124 ] && v=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && v=FAILED
-  printf "%s SESSION END kind=operator key=floor rc=%s dur=%ss outcome=%s\n" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$dur" "$v" >>"$DUTY_DIR/duty.log"
+  if declare -F bot_session_acted >/dev/null 2>&1; then
+    bot_session_acted "$slog" && arc=0 || arc=$?
+    case "$arc" in 0) acted=yes;; 1) acted=no;; esac
+  fi
+  reply_tail="$(awk '\''NF { line=$0 } END { print substr(line, 1, 200) }'\'' "$slog" 2>/dev/null | base64 | tr -d '\''\n'\'')"
+  printf "%s SESSION END kind=operator key=floor rc=%s dur=%ss outcome=%s acted=%s reply_tail=%s\n" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$dur" "$v" "$acted" "$reply_tail" >>"$DUTY_DIR/duty.log"
 ' _ "$prompt" </dev/null >/dev/null 2>&1 &
 echo "session started; log $slog"
 """

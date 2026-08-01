@@ -1641,10 +1641,12 @@ function liveTicker(snap){
   var fresh=[],next={},primed=seenSess.__primed;
   snap.units.forEach(function(u){
     (u.sessions||[]).slice(0,6).forEach(function(x){
-      var id=u.box+"|"+x.kind+"|"+x.key+"|"+x.dur+"|"+x.out;
+      var id=u.box+"|"+x.kind+"|"+x.key+"|"+x.dur+"|"+x.out+"|"+x.acted;
       next[id]=1;
       if(seenSess[id]||!primed)return;
-      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+x.rc+" outcome="+x.out,rc:x.rc,ago:x.ago});
+      var state=x.acted==="no"?" no-op":"";
+      var tail=x.reply?" — "+x.reply:"";
+      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+x.rc+" outcome="+x.out+" acted="+x.acted+state+tail,rc:x.rc,noop:x.acted==="no",ago:x.ago});
     });
     if(u.cur){
       var cid=u.box+"|open|"+u.cur.kind+"|"+u.cur.key+"|"+u.cur.start;
@@ -1660,7 +1662,7 @@ function liveTicker(snap){
   fresh.forEach(function(f){
     var el=document.createElement("div");el.className="l";
     var m=esc(f.msg);
-    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>');
+    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="cr">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
     el.innerHTML='<span class="tt">'+clockStr()+'</span><span class="u" style="color:'+VENDORCOL(f.u.agent)+'">'+esc(f.u.box)+'</span><span class="m">'+m+'</span>';
     s.appendChild(el);
   });
