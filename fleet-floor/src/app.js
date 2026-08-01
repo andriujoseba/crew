@@ -5714,6 +5714,21 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      wait covers almost no easing on a slow machine. The walk polls this
      instead of sleeping; it asserts by outcome either way. */
   cam:function(){return floorCam;},
+  /* camstats() — the portrait pipeline's stated behavior, checkable on a
+     real fleet (same ethos as guides: a claim should be a lookable-at).
+     buildsLastSec MUST read 0 with a stable roster — a deterministic still
+     rebuilds only on first sight, state change or resize. buildEmaMs is
+     what settles whether the old 14ms slow-mode cliff (#226 RC2) was ever
+     being crossed, and what CAM_BUDGET should be tuned against. lastSwap
+     and the beat grammar in drawCamCell are the declared glitch events the
+     motion test is allowed to see artifacts on. */
+  camstats:function(){
+    var now=mnow(),n=0,sw={};
+    for(var i=camBuiltAt.length-1;i>=0&&camBuiltAt[i]>now-1000;i--)n++;
+    for(var k in camSwaps)sw[k]=camSwaps[k];
+    return {buildEmaMs:camCost,buildsLastSec:n,
+            cacheSize:Object.keys(camStills).length,lastSwap:sw};
+  },
   /* render(dst,{agent,room,state,t,warm,flat}) */
   render:function(dst,o){
     borrowRoom(o,function(){
