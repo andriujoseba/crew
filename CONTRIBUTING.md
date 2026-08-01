@@ -48,8 +48,10 @@ cap it must not exceed is the vendored builder doctrine's — read the number in
 [`.ceremony/BUILDER.md`](.ceremony/BUILDER.md), which this file deliberately
 does not copy: a number that moves only with a pin bump drifts the moment it is
 written down twice. Wrapping an entry across source lines is not length and
-never counts against it; a long entry is cut down, or split into the several
-short entries the doctrine prescribes.
+never counts against it. What to do about an entry that is over the cap is the
+doctrine's answer too, and this file leaves it there: whatever that remedy is,
+it fixes one entry's length and never answers how many entries a fragment
+carries. That question is settled below, and length is no part of it.
 
 **Bullet count follows the distinct user-visible changes, never the author's
 judgment about length.** One entry per change a reader meets on its own: four
