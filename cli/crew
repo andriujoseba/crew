@@ -1149,10 +1149,10 @@ convergence_of() {
 convergence_detail() {
   local report="$1" marker
   printf '%s\n' "$report" | grep -qx 'probe=ok' ||
-    { printf 'the box did not answer — /etc/rig/role could not be read\n'; return 0; }
+    { printf 'the box did not answer: /etc/rig/role could not be read\n'; return 0; }
   marker="$(report_field marker "$report")"
   if [ -z "$marker" ]; then
-    printf 'no /etc/rig/role marker — rig bootstrap never converged this box, so its vendor CLI was never installed\n'
+    printf 'no /etc/rig/role marker: rig bootstrap never converged this box, so its vendor CLI was never installed\n'
   else
     printf '/etc/rig/role names a machine role (%s), not an agent tenant\n' "$marker"
   fi
