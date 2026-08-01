@@ -1191,6 +1191,16 @@ function drawRoom(t,st){
     S.fillStyle="#2c3441";S.fillRect(ux8+8,GYS-18,32,12);
     S.fillStyle="rgba(200,218,246,"+(0.18*lit)+")";S.fillRect(ux8+8,GYS-18,32,1.3);
     S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(ux8+8,GYS-7.4,32,2);});
+  /* ROUND 7 — standoffs. A blind reviewer: "every pipe in this room passes
+     edge to edge without a single wall bracket, standoff or clamp." A run
+     that long has to be carried, and the carriers are what stop it reading
+     as a beam floating in front of the wall. */
+  RACKX.forEach(function(sxq){
+    var yq=540+Math.sin((sxq/SW)*Math.PI)*46;
+    S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(sxq-11,yq-16,24,20);
+    S.fillStyle="#2c3441";S.fillRect(sxq-12,yq-18,24,20);
+    S.fillStyle="rgba(200,218,246,"+(0.18*lit)+")";S.fillRect(sxq-12,yq-18,24,1.3);
+    S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(sxq-12,yq,24,2);});
   // the main trunk sagging across the wall, now with weight
   cable([0,540,SW/2,588,SW,536],11);
   // a second, thinner one riding above it
@@ -1209,7 +1219,7 @@ function drawRoom(t,st){
      a wet-looking access floor under a wall of screens is the shot this
      room exists for, and it costs one blurred pass. */
   var sdg=S.createLinearGradient(0,GYS,0,SH);
-  sdg.addColorStop(0,"#1a212c");sdg.addColorStop(0.4,"#141a24");sdg.addColorStop(1,"#0c1017");
+  sdg.addColorStop(0,"#2b3440");sdg.addColorStop(0.45,"#212833");sdg.addColorStop(1,"#151b24");
   S.fillStyle=sdg;S.fillRect(0,GYS,SW,SH-GYS);
   /* a low cable tray running the width, in front of the wall and behind the
      unit: it separates near from far and gives the floor a horizon */
@@ -1246,19 +1256,19 @@ function drawRoom(t,st){
        parallel. That is a tiled wall, not a floor. Seams now converge on a
        vanishing point and the transverse joints compress toward it. */
     var VPX=UX, VPY=GYS-150;
-    S.strokeStyle="rgba(70,84,106,"+(0.13*lit)+")";S.lineWidth=1.2;
+    S.strokeStyle="rgba(178,196,226,"+(0.2*lit)+")";S.lineWidth=1.3;
     for(var tz=1;tz<=6;tz++){
       var ty3=GYS+10+Math.pow(tz/6,1.75)*(SH-GYS-16);
       S.beginPath();S.moveTo(0,ty3);S.lineTo(SW,ty3);S.stroke();
       S.strokeStyle="rgba(1,3,6,0.5)";S.lineWidth=1.6;
       S.beginPath();S.moveTo(0,ty3-1.6);S.lineTo(SW,ty3-1.6);S.stroke();
-      S.strokeStyle="rgba(70,84,106,"+(0.13*lit)+")";S.lineWidth=1.2;}
+      S.strokeStyle="rgba(178,196,226,"+(0.2*lit)+")";S.lineWidth=1.3;}
     for(var tx3=-3;tx3<12;tx3++){
       var sx3=tx3*150, ex3=sx3+(sx3-VPX)*((SH-GYS)/(GYS-VPY));
       S.strokeStyle="rgba(1,3,6,0.5)";S.lineWidth=1.6;
       S.beginPath();S.moveTo(sx3,GYS+8);S.lineTo(ex3,SH);S.stroke();
-      S.strokeStyle="rgba(150,170,204,"+(0.06*lit)+")";S.lineWidth=1;
-      S.beginPath();S.moveTo(sx3+2,GYS+8);S.lineTo(ex3+3,SH);S.stroke();}
+      S.strokeStyle="rgba(186,204,232,"+(0.19*lit)+")";S.lineWidth=1.2;
+      S.beginPath();S.moveTo(sx3+2.4,GYS+8);S.lineTo(ex3+3.4,SH);S.stroke();}
     // the lifted tile, and the black under-floor it exposes
     S.fillStyle="rgba(2,4,8,0.95)";
     S.beginPath();S.moveTo(378,GYS+30);S.lineTo(486,GYS+27);
@@ -1769,8 +1779,8 @@ function drawScene(t,st){
      on stanchions, so that is what crosses here — high enough to pass in
      FRONT of the hovering unit's lower whips and give the room a third
      plane instead of two. */
-  var TRY=SH-126;
-  S.save();S.filter="blur(2.6px)";
+  var TRY=SH-52;   // BELOW the deck line, or it covers the floor it stands on
+  S.save();S.filter="blur(1.6px)";   // less, or the near plane eats the floor
   S.fillStyle="rgba(1,3,6,0.38)";S.fillRect(0,TRY+12,SW,18);
   // the tray: a channel with a lit top flange and a dark web
   var tyg=S.createLinearGradient(0,TRY,0,TRY+15);
