@@ -39,20 +39,56 @@ genuinely crew's.
 
 ## Changelog entries
 
-Every PR that changes behaviour writes one `changelog.d/<issue>.md` fragment.
-The fragment keeps the relevant `### Added` / `### Changed` / `### Fixed`
-heading above its entry. One line is the whole rule — if it wraps more than
-twice in your editor, cut it down.
+Every PR that changes behaviour writes one `changelog.d/<issue>.md` fragment,
+holding one or more entries under the relevant `### Added` / `### Changed` /
+`### Fixed` heading.
+
+**Length is a per-entry rule and nothing else.** One entry is one line, and the
+cap it must not exceed is the vendored builder doctrine's — read the number in
+[`.ceremony/BUILDER.md`](.ceremony/BUILDER.md), which this file deliberately
+does not copy: a number that moves only with a pin bump drifts the moment it is
+written down twice. Wrapping an entry across source lines is not length and
+never counts against it. What to do about an entry that is over the cap is the
+doctrine's answer too, and this file leaves it there: whatever that remedy is,
+it fixes one entry's length and never answers how many entries a fragment
+carries. That question is settled below, and length is no part of it.
+
+**Bullet count follows the distinct user-visible changes, never the author's
+judgment about length.** One entry per change a reader meets on its own: four
+separate outcomes ship four entries, and one outcome that took three lines to
+state is still one entry. The test, applied to a specific fragment:
+
+> A reader who cares about only one of the two outcomes — does the other
+> sentence still tell them something they can act on? Yes → two bullets.
+> No → one.
 
 - **Say what changed, and stop.** Why it was wrong, how it was found, what it
   cost — that belongs in the PR body and the commit message. This file answers
-  one question: what is different in this version.
+  one question: what is different in this version. This is also the rule that
+  decides a bullet explaining, justifying or naming the mechanism of another
+  one: it is not a second change, so it is **deleted**, not merged back into
+  the first.
 - **Any word that can be removed, is removed.**
 - **Lead with the surface, not the mechanism.**
 - **Cite the issue or PR** — `(#84)` — and let the reader follow it for the rest.
 - **Mark a breaking change** with a leading `BREAKING:`.
 - Group under `### Added` / `### Changed` / `### Fixed` / `### Removed`.
 - No bold run-in headings, no sub-paragraphs, no code blocks, no prose essays.
+
+Not all of that is worth a `CHANGES_REQUESTED`. A fragment's accuracy is
+load-bearing and a reviewer blocks on it; its phrasing is editorial and rides
+an approval as a nit (`.ceremony/REVIEWER.md`). **Bullet count is editorial** —
+one sentence that two reviewers read into opposite verdicts (#263) is what this
+split exists to stop:
+
+| blocking | editorial — a nit, rides an approval |
+|---|---|
+| an entry that is inaccurate about the behaviour that shipped | how many bullets the fragment carries |
+| a missing `###` group heading | which of two accurate phrasings is tighter |
+| a missing issue cite | word-level trimming inside an accurate entry |
+| mechanism, justification or how-it-was-found prose | ordering of bullets within a fragment |
+| an entry over the per-entry cap | |
+| editing `CHANGELOG.md` directly instead of writing a fragment | |
 
 ## Releasing
 
