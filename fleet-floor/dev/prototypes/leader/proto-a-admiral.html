@@ -1273,9 +1273,21 @@ function drawRoom(t,st){
     var bx9=dv+(dv-VPX)*0.5;
     pl(S,dv,GYS,bx9,SH,"rgba(2,4,8,0.8)",2.4);
     pl(S,dv+2.4,GYS,bx9+3.4,SH,"rgba(186,202,232,"+(0.16*lit)+")",1.3);}
-  if(!offl){var pool=S.createRadialGradient(UX,GYS+8,10,UX,GYS+8,260);
-    pool.addColorStop(0,kk(0.09*lit));pool.addColorStop(1,kk(0));
-    S.fillStyle=pool;S.beginPath();S.ellipse(UX,GYS+8,260,32,0,0,7);S.fill();}
+  /* ROUND 8 — THE KEY LIGHT LANDS. A blind reviewer sampled the deck at
+     three x positions and got the same RGB at all three: the room had one
+     hard key and no light pool on the ground at all, which is the single
+     thing that separates a space from a backdrop. The pool is now wide,
+     bright, and falls off both ways from directly under the pendant. */
+  if(!offl){
+    S.save();S.globalCompositeOperation="lighter";
+    var pool=S.createRadialGradient(UX,GYS+22,12,UX,GYS+22,400);
+    pool.addColorStop(0,kk(0.3*lit));pool.addColorStop(0.35,kk(0.12*lit));
+    pool.addColorStop(0.7,kk(0.035*lit));pool.addColorStop(1,kk(0));
+    S.fillStyle=pool;S.beginPath();S.ellipse(UX,GYS+22,400,74,0,0,7);S.fill();
+    var pool2=S.createRadialGradient(UX+430,GYS+18,10,UX+430,GYS+18,250);
+    pool2.addColorStop(0,kk(0.12*lit));pool2.addColorStop(1,kk(0));
+    S.fillStyle=pool2;S.beginPath();S.ellipse(UX+430,GYS+18,250,46,0,0,7);S.fill();
+    S.restore();}
   S.save();S.globalAlpha=0.5;
   S.strokeStyle="rgba(150,166,194,"+(0.05*lit)+")";S.lineWidth=1.5;
   S.beginPath();S.arc(UX,GYS+36,92,Math.PI*1.08,Math.PI*1.92);S.stroke();
@@ -1340,6 +1352,36 @@ function drawRoom(t,st){
     if(!offl){var wet=S.createRadialGradient(1006,GYS+52,4,1006,GYS+52,72);
       wet.addColorStop(0,kk(0.05*lit));wet.addColorStop(1,kk(0));
       S.fillStyle=wet;S.beginPath();S.ellipse(1006,GYS+52,72,18,0,0,7);S.fill();}
+  })();
+  /* ROUND 8 — THINGS ON THE FLOOR. Every benchmark room stands objects on
+     its deck — a stool, book stacks, a crate, a cable reel — and each one
+     has a baseline. This deck had nothing on it at all, which is why it
+     read as a painted band rather than a surface. */
+  (function(){
+    // a crate, port of the platform
+    var qx=196, qy=GYS+52, QW=88, QH=52;
+    S.fillStyle="rgba(2,4,8,0.66)";
+    poly(S,[[qx-4,qy-2],[qx+QW+4,qy-2],[qx+QW+22,qy+10],[qx+10,qy+10]]);S.fill();
+    plate(S,[[qx,qy-QH],[qx+QW,qy-QH],[qx+QW,qy],[qx,qy]],
+          offl?"#171d26":"#333c4a",offl?"#0c1017":"#171d26","rgba(2,4,8,0.6)");
+    plate(S,[[qx,qy-QH],[qx+QW,qy-QH],[qx+QW+13,qy-QH-8],[qx+13,qy-QH-8]],
+          offl?"#1e252f":"#3f4958",offl?"#151b23":"#2b3340",null);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(qx,qy-QH+15,QW,2.4);
+    S.fillStyle="rgba(200,218,246,"+(0.12*lit)+")";S.fillRect(qx,qy-QH+17.4,QW,1.2);
+    S.fillStyle="rgba(178,166,124,"+(0.16+0.18*lit)+")";S.fillRect(qx+9,qy-QH+26,44,11);
+    // a bollard, starboard, catching the plot table's cold light
+    var bqx=1104, bqy=GYS+56;
+    S.fillStyle="rgba(2,4,8,0.62)";
+    poly(S,[[bqx-16,bqy-2],[bqx+16,bqy-2],[bqx+34,bqy+9],[bqx-2,bqy+9]]);S.fill();
+    var bqg=S.createLinearGradient(bqx-15,0,bqx+15,0);
+    bqg.addColorStop(0,offl?"#12171f":"#252d39");bqg.addColorStop(0.35,offl?"#1a212b":"#3b4452");
+    bqg.addColorStop(1,offl?"#0b0e14":"#141a22");
+    S.fillStyle=bqg;S.fillRect(bqx-15,bqy-56,30,56);
+    S.fillStyle=offl?"#232a35":"#454f5f";
+    S.beginPath();S.ellipse(bqx,bqy-56,18,6,0,0,7);S.fill();
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";
+    S.beginPath();S.ellipse(bqx,bqy-57.4,18,6,0,Math.PI,Math.PI*2);S.fill();
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(bqx-15,bqy-30,30,3);
   })();
   // a coil of spare cable on the deck
   (function(){
@@ -2055,12 +2097,23 @@ function vignette(){
   vg2.addColorStop(1,"rgba(0,0,0,0.84)");
   S.fillStyle=vg2;S.fillRect(0,0,SW,SH);
   // hard edges: the outer band goes to near-black on all four sides
+  /* ROUND 8 — the side bands stop at the deck line. At 0.72/0.74 running
+     full height they crushed the floor to RGB(6,9,13) outside the middle
+     third, so a blind reviewer measured "no ground plane exists across
+     ~1250px of frame width". The walls can take that falloff; the floor
+     cannot, because the floor is the thing that has to read as continuous. */
   var lb=S.createLinearGradient(0,0,150,0);
-  lb.addColorStop(0,"rgba(0,0,0,0.72)");lb.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=lb;S.fillRect(0,0,150,SH);
+  lb.addColorStop(0,"rgba(0,0,0,0.62)");lb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=lb;S.fillRect(0,0,150,GYS);
   var rb=S.createLinearGradient(SW,0,SW-190,0);
-  rb.addColorStop(0,"rgba(0,0,0,0.74)");rb.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=rb;S.fillRect(SW-190,0,190,SH);
+  rb.addColorStop(0,"rgba(0,0,0,0.64)");rb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=rb;S.fillRect(SW-190,0,190,GYS);
+  var lb2=S.createLinearGradient(0,0,110,0);       // much gentler on the deck
+  lb2.addColorStop(0,"rgba(0,0,0,0.3)");lb2.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=lb2;S.fillRect(0,GYS,110,SH-GYS);
+  var rb2=S.createLinearGradient(SW,0,SW-130,0);
+  rb2.addColorStop(0,"rgba(0,0,0,0.32)");rb2.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=rb2;S.fillRect(SW-130,GYS,130,SH-GYS);
   var tb=S.createLinearGradient(0,0,0,132);
   tb.addColorStop(0,"rgba(0,0,0,0.7)");tb.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=tb;S.fillRect(0,0,SW,132);
