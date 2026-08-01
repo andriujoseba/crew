@@ -2279,7 +2279,14 @@ case "${EVENT_PAYLOAD:-readable}:$*" in
         "$FOREIGN_ACTOR" "$FOREIGN_ACTOR" ;;
 esac
 EOF
-chmod +x "$OFSHIM/box" "$OFSHIM/gh"
+REAL_JQ="$(command -v jq)"
+export REAL_JQ
+cat >"$OFSHIM/jq" <<'EOF'
+#!/usr/bin/env bash
+[ -z "${JQ_SUCCESS_STDERR:-}" ] || printf '%s\n' "$JQ_SUCCESS_STDERR" >&2
+exec "$REAL_JQ" "$@"
+EOF
+chmod +x "$OFSHIM/box" "$OFSHIM/gh" "$OFSHIM/jq"
 before_registry="$(cat "$OFROOT/repos.txt")"
 GH_CALLS="$TMP/overlap-gh-calls"
 overlap_out="$(env CREW_CONFIG_DIR="$OFROOT" EVENT_PAYLOAD=foreign FOREIGN_ACTOR=other-builder GH_CALLS="$GH_CALLS" \
@@ -2293,13 +2300,24 @@ case "$overlap_out" in *"registries LEFT UNCHANGED"*"operators must decide"*) r1
 t fleet-overlap-resolution-is-operator operator "$r1"
 t fleet-overlap-does-not-edit-registry "$before_registry" "$(cat "$OFROOT/repos.txt")"
 
+stderr_out="$(env CREW_CONFIG_DIR="$OFROOT" EVENT_PAYLOAD=foreign FOREIGN_ACTOR=other-builder \
+  JQ_SUCCESS_STDERR='synthetic jq warning' GH_CALLS="$GH_CALLS" PATH="$OFSHIM:$PATH" \
+  bash "$ROOT/cli/crew" up --dry-run 2>&1)"
+case "$stderr_out" in *"synthetic jq warning"*) r1=CONTAMINATED ;; *) r1=isolated ;; esac
+t fleet-overlap-successful-jq-stderr-is-not-data isolated "$r1"
+case "$stderr_out" in
+  *"WARN one-repo-one-fleet: foreign claim by @other-builder in registered repo fixture/overlap"*) r1=preserved ;;
+  *) r1=LOST ;;
+esac
+t fleet-overlap-successful-jq-stderr-preserves-data preserved "$r1"
+
 disjoint_out="$(env CREW_CONFIG_DIR="$OFROOT" GH_CALLS="$GH_CALLS" PATH="$OFSHIM:$PATH" \
   bash "$ROOT/cli/crew" up --dry-run 2>&1)"
 case "$disjoint_out" in *"WARN one-repo-one-fleet"*) r1=NOISY ;; *) r1=silent ;; esac
 t fleet-disjoint-is-silent silent "$r1"
 t fleet-disjoint-does-not-edit-registry "$before_registry" "$(cat "$OFROOT/repos.txt")"
 
-printf 'fixture/overlap\nfixture/later\n' >"$OFROOT/repos.txt"
+printf 'fixture/overlap\nfixture/zlater\n' >"$OFROOT/repos.txt"
 if unreadable_out="$(env CREW_CONFIG_DIR="$OFROOT" EVENT_PAYLOAD=unreadable GH_CALLS="$GH_CALLS" \
   PATH="$OFSHIM:$PATH" bash "$ROOT/cli/crew" up --dry-run 2>&1)"; then
   r1=survived
@@ -2313,7 +2331,7 @@ case "$unreadable_out" in
 esac
 t fleet-overlap-unreadable-payload-names-repo named "$r1"
 case "$unreadable_out" in
-  *"WARN one-repo-one-fleet: foreign claim by @other-builder in registered repo fixture/later"*) r1=continued ;;
+  *"WARN one-repo-one-fleet: foreign claim by @other-builder in registered repo fixture/zlater"*) r1=continued ;;
   *) r1=STOPPED ;;
 esac
 t fleet-overlap-unreadable-payload-continues continued "$r1"

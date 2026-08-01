@@ -1149,7 +1149,7 @@ fleet_identities() {
 # only operators decide which fleet keeps a repo, and this path never writes a
 # registry (crew#70, option 2).
 foreign_actor_check() {
-  local allowed repo events parsed finding action actor
+  local allowed repo events parsed jq_err_file jq_err finding action actor
   allowed="$(fleet_identities | sed '/^$/d' | sort -u)"
 
   while read -r repo; do
@@ -1157,6 +1157,7 @@ foreign_actor_check() {
       echo "crew: NOTE one-repo-one-fleet: could not inspect recent board activity for $repo; overlap detection skipped" >&2
       continue
     fi
+    jq_err_file="$(mktemp)"
     if ! parsed="$(printf '%s' "$events" | jq -r '
       .[] |
       if .type == "IssuesEvent" and .payload.action == "assigned" then
@@ -1170,10 +1171,13 @@ foreign_actor_check() {
         ["verdict", .actor.login]
       else empty end |
       select(.[1] != null) | @tsv
-    ' 2>&1)"; then
-      echo "crew: NOTE one-repo-one-fleet: unreadable recent board activity for $repo ($parsed); overlap detection skipped" >&2
+    ' 2>"$jq_err_file")"; then
+      jq_err="$(<"$jq_err_file")"
+      rm -f "$jq_err_file"
+      echo "crew: NOTE one-repo-one-fleet: unreadable recent board activity for $repo ($jq_err); overlap detection skipped" >&2
       continue
     fi
+    rm -f "$jq_err_file"
     [ -n "$parsed" ] || continue
     finding="$(while IFS=$'\t' read -r action actor; do
       if ! grep -Fxq "$actor" <<<"$allowed"; then
