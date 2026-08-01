@@ -322,6 +322,58 @@ else
   fail "crew status: an unhired box says so" "$(grep '^cli-nothired' "$CL_TMP/crew-out")"
 fi
 
+# #224 — a hired box with no ~/duty/duty.log made `tail` exit 1, and under
+# `set -o pipefail` that status killed the assignment and the whole table with
+# it. The row count above already bites (cli-neverticked is FIRST, so the loop
+# died before printing anything), but a count alone cannot tell the two
+# one-sided fixes apart, and each half is separately reachable:
+#
+#   · repair only the note string  → the table still truncates → count fails
+#   · repair only the truncation   → `no ticks yet` never renders → this fails
+#
+# Both assertions are therefore required, and so is the fixture ORDER: behind
+# a healthy box the truncation would have left cli-hired printed and every
+# assertion above green.
+if grep -qE '^cli-neverticked .*no ticks yet' "$CL_TMP/crew-out"; then
+  ok "crew status: a box that has never ticked reads 'no ticks yet'"
+else
+  fail "crew status: a box that has never ticked reads 'no ticks yet'" \
+       "$(grep '^cli-neverticked' "$CL_TMP/crew-out")"
+fi
+# The healthy row BELOW it. Named separately from the count so a regression
+# says which shape came back rather than only that the total moved.
+if grep -qE '^cli-hired ' "$CL_TMP/crew-out"; then
+  ok "crew status: a never-ticked box does not suppress the rows after it"
+else
+  fail "crew status: a never-ticked box does not suppress the rows after it" \
+       "cli-hired is missing; the loop stopped at cli-neverticked"
+fi
+# A box nobody can reach has no duty log EITHER, and the two must not read
+# alike: one is fine and one is broken. `crew hire` is the honest note for a
+# box that answered no engine report at all (#221 is the same distinction one
+# call site over, and these two fixes must not contradict each other).
+if grep -qE '^cli-unreachable ' "$CL_TMP/crew-out" &&
+   ! grep -qE '^cli-unreachable .*no ticks yet' "$CL_TMP/crew-out"; then
+  ok "crew status: an unreachable box is not laundered into 'no ticks yet'"
+else
+  fail "crew status: an unreachable box is not laundered into 'no ticks yet'" \
+       "$(grep '^cli-unreachable' "$CL_TMP/crew-out")"
+fi
+# The guard, pinned where it lives. The assertions above go red the moment it
+# is dropped, but they cannot say WHY; this names the one-line cure and the
+# three helpers it matches, so a future edit that "tidies" it away is told
+# what it is removing.
+CL_TICK_GUARD="$(awk '
+  /^cmd_status\(\)/ { inf = 1 }
+  inf && /tail -n 1 ~\/duty\/duty\.log/ { print; exit }
+' "$CL_CLI")"
+if printf '%s' "$CL_TICK_GUARD" | grep -q '|| true'; then
+  ok "crew status: the duty-log read is guarded, as box_state/box_agent/box_registry are"
+else
+  fail "crew status: the duty-log read is guarded, as box_state/box_agent/box_registry are" \
+       "${CL_TICK_GUARD:-no duty.log read found in cmd_status}"
+fi
+
 # Engine INTEGRITY is a column of its own (#159), not a decoration on ENGINE:
 # HOST vs ENGINE is skew, integrity is whether the box is running the engine it
 # names, and the two call for different actions. Asserted here because a hired
