@@ -21,14 +21,21 @@ station on a slow figure-of-eight drift, one soft shadow pooled far below.
 Dead it is on the floor. (The earlier coil-stack "feet" are gone — a
 sentinel that stands on furniture isn't a sentinel.)
 
-- **A bilobed cranium**, drawn to the operator's own outline (the blue
-  overlay on PR #230): **two humps with a saddle dipping between them**,
-  flanks bulging out and down, the mass tapering to a rounded chin. That
-  dip is the whole shape — a flat oval carapace over a straight brow bar
-  reads as a *tick*, which is what the previous revision was. The brow is
-  therefore not one horizontal ledge but **two ridges, one per lobe**,
-  meeting in the saddle and throwing a **V** of shadow into the eye field.
-  The face bowl follows the organic outline instead of being a hexagon.
+- **The silhouette is traced, not interpreted.** danmt's blue overlay on
+  PR #230 was extracted from the screenshot pixel by pixel and mapped back
+  into canvas space through the eye cluster (whose coordinates in the
+  annotated revision are known exactly). That polygon is `TARGET` in the
+  source — also saved as `target-outline.json` — and `skullPath()`
+  interpolates it directly. Every earlier round failed because the shape
+  was *my reading of* the sketch rather than the sketch. Render with
+  `?outline=1` to draw the target over the unit and check the fit.
+- **What the trace actually says**: wide and squat, ~172 x 148 — two low
+  humps with a shallow saddle between them, flanks falling away fast, a
+  rounded chin hanging lowest on the centre line. The tall crown of every
+  previous revision lies entirely outside the line, so it is gone, and
+  every feature that used to live on it (louvres, hatch, sensor pods,
+  stencil) moved inside. The head is then scaled as one unit, so its
+  presence on the page can change without the shape drifting.
 - **Volume, not a mask**: one modelling pass clipped to the silhouette
   puts the highlight on the left-of-centre crown and drives a terminator
   down the right flank, so the head turns away from the light at its own

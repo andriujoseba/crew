@@ -31,14 +31,18 @@
    Drawn against the actual Matrix sentinel reference, then taken through
    ten render loops. What the reference actually is:
 
-     · a BILOBED cranium, drawn to the operator's own outline (the blue
-       overlay on PR #230): two humps with a saddle dipping between them,
-       flanks bulging out and down, the mass tapering to a rounded chin.
-       That dip is the whole shape — a flat oval carapace with a straight
-       brow bar under it is a TICK, which is exactly what the previous
-       revision was. So the brow is not one horizontal ledge: it is two
-       ridges, one per lobe, meeting in the saddle and throwing a V of
-       shadow down into the eye field.
+     · the SILHOUETTE IS NOT DRAWN BY HAND. danmt's blue overlay on
+       PR #230 was traced out of the screenshot pixel by pixel and mapped
+       back into canvas space through the eye cluster, whose coordinates
+       in the annotated revision are known exactly. That polygon is
+       TARGET, and skullPath() interpolates it directly — every previous
+       round failed because the shape was my reading of his sketch
+       instead of his sketch. Render with ?outline=1 to draw the target
+       over the unit.
+     · what the trace says: WIDE AND SQUAT, about 172 x 148 — two low
+       humps with a shallow saddle, flanks falling away fast, a rounded
+       chin lowest on the centre line. The tall crown of every earlier
+       revision sits entirely outside the line and is gone.
      · the eyes are glossy red BERRIES in chrome sockets, fifteen of
        them, different sizes, packed across a deep recessed face bowl,
        each with its own specular glint, shimmer clock and socket
@@ -95,7 +99,7 @@ function drawUnit(t,st){
      way down and the whips crumple under it. That is the state language. */
   var hov=offl?0:Math.sin(t*0.9)*5+Math.sin(t*0.37)*3;
   var hovX=offl?0:Math.sin(t*0.53)*4;
-  var DY=offl?150:hov;
+  var DY=offl?166:hov;
   var HC={x:cx+hovX,y:250+DY};            // skull centre
 
   /* ---- helpers: ribbed whip + grapple claw + coil stack ---- */
@@ -136,25 +140,27 @@ function drawUnit(t,st){
 
   /* ---- 0 · BACK WHIPS: flared around the skull, S-curving, never straight.
      Offline they fall and lie where they land. ---- */
-  var HX=hovX, RT=HC.y+112;                          // whip root, under the skull
+  var HS=window.__HS__=1.34;                 // head scale — shape unchanged, presence fixed
+  var HX=hovX, RT=HC.y+128*HS;                          // whip root, under the skull
   var BACK=offl?[
-    [[cx-46,RT],[cx-138,500],[cx-206,538],[cx-236,558]],
-    [[cx+46,RT],[cx+126,516],[cx+196,530],[cx+244,557]],
-    [[cx-52,RT+8],[cx-168,530],[cx-104,560],[cx-172,552]],
-    [[cx+52,RT+8],[cx+186,522],[cx+142,559],[cx+182,545]],
-    [[cx-30,RT+12],[cx-58,548],[cx-14,560],[cx-70,556]],
-    [[cx+30,RT+12],[cx+80,536],[cx+38,559],[cx+96,553]]
+    [[cx-40,RT],[cx-138,500],[cx-206,538],[cx-236,558]],
+    [[cx+40,RT],[cx+126,516],[cx+196,530],[cx+244,557]],
+    [[cx-46,RT+8],[cx-168,530],[cx-104,560],[cx-172,552]],
+    [[cx+46,RT+8],[cx+186,522],[cx+142,559],[cx+182,545]],
+    [[cx-26,RT+12],[cx-58,548],[cx-14,560],[cx-70,556]],
+    [[cx+26,RT+12],[cx+80,536],[cx+38,559],[cx+96,553]]
   ]:[
-    // two thrown high and back — the rest sweep out and down like a jellyfish
-    [[cx-52+HX,RT],[cx-186,RT-40+sw*6],[cx-118,180],[cx-198,110+sw*5]],
-    [[cx+52+HX,RT],[cx+192,RT-36-sw*6],[cx+124,188],[cx+208,124-sw*5]],
-    [[cx-58+HX,RT+6],[cx-206,RT+70+sw2*5],[cx-232,398],[cx-238,330+sw2*7]],
-    [[cx+58+HX,RT+6],[cx+214,RT+74-sw2*5],[cx+240,406],[cx+246,342-sw2*7]],
-    [[cx-34+HX,RT+12],[cx-142,RT+70],[cx-96,466],[cx-176,498+sw*6]],
-    [[cx+34+HX,RT+12],[cx+86,RT+118],[cx+178,432],[cx+118,470-sw*6]]
+    // the two thrown high swing WIDE of the head before they climb, so the
+    // face is never crossed by its own limbs
+    [[cx-44+HX,RT-4],[cx-186,RT+40+sw*6],[cx-214,170],[cx-198,104+sw*5]],
+    [[cx+44+HX,RT-2],[cx+192,RT+44-sw*6],[cx+220,180],[cx+208,118-sw*5]],
+    [[cx-50+HX,RT+6],[cx-206,RT+90+sw2*5],[cx-238,404],[cx-242,336+sw2*7]],
+    [[cx+50+HX,RT+6],[cx+214,RT+94-sw2*5],[cx+244,412],[cx+248,348-sw2*7]],
+    [[cx-30+HX,RT+12],[cx-138,RT+80],[cx-104,472],[cx-166,512+sw*6]],
+    [[cx+30+HX,RT+12],[cx+112,RT+104],[cx+172,476],[cx+126,520-sw*6]]
   ];
   BACK.forEach(function(P,bi){
-    var pts=whip(P,6.5,2.6,42);
+    var pts=whip(P,5.2,2.1,42);
     var e=pts[pts.length-1],pe=pts[pts.length-2];
     grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.5+0.3*Math.sin(t*2+bi),true);
   });
@@ -165,135 +171,126 @@ function drawUnit(t,st){
     [[cx-20,RT-6],[cx-52,542],[cx-104,556],[cx-134,548]],
     [[cx+20,RT-4],[cx+58,546],[cx+112,558],[cx+136,550]]
   ]:[
-    [[cx-20+HX,RT-6],[cx-84,RT+64],[cx-18,RT+140],[cx-70,RT+188+sw*5]],
-    [[cx+20+HX,RT-4],[cx+58,RT+96],[cx+104,RT+140],[cx+44,RT+222-sw*5]]
+    [[cx-18+HX,RT-6],[cx-76,RT+60],[cx-16,RT+134],[cx-64,RT+182+sw*5]],
+    [[cx+18+HX,RT-4],[cx+54,RT+92],[cx+96,RT+136],[cx+40,RT+214-sw*5]]
   ];
-  TWO.forEach(function(P,ti){var pts=whip(P,7,3.4,30);
+  TWO.forEach(function(P,ti){var pts=whip(P,5.6,2.7,30);
     var e=pts[pts.length-1],pe=pts[pts.length-2];
     grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.4+0.25*Math.sin(t*1.7+ti),true);});
   // throat collar: stacked rings narrowing away from the skull
   for(var th=0;th<4;th++){
-    var ty2=HC.y+82+th*13, tw=46-th*7;
+    var ty2=HC.y+(104+th*11)*HS, tw=(30-th*5)*HS;
     g.fillStyle=th%2?"#0d1219":"#10151e";
     g.beginPath();g.ellipse(HC.x,ty2,tw,9,0,0,7);g.fill();
     g.strokeStyle="rgba(4,8,14,0.7)";g.lineWidth=1;g.beginPath();g.ellipse(HC.x,ty2,tw,9,0,0,7);g.stroke();
     if(th<2)cavity(g,HC.x-tw,ty2-2,tw*2,7,0.4);}
 
-  /* ---- 2 · THE SKULL POD: a bilobed cranium ---- */
-  /* Operator sketch (PR #230, the blue outline): the head is BILOBED — two
-     humps with a saddle dipping between them, sides bulging out and down,
-     and the whole mass tapering to a rounded chin. That dip is the entire
-     shape. Without it the outline is a flat oval carapace with a straight
-     brow bar under it, which is a TICK; with it the thing reads as a skull
-     that grew lobes. So the brow is no longer one horizontal ledge across
-     the face — it is two ridges, one per lobe, meeting in the saddle. */
+  /* the whole head — silhouette, plating, greebles, eyes, fangs — is drawn
+     at 1:1 and scaled about HC as one unit, so nothing can drift off the
+     traced outline when the size changes */
+  [g,RE].forEach(function(c){c.save();c.translate(HC.x,HC.y);c.scale(HS,HS);c.translate(-HC.x,-HC.y);});
+  /* ---- 2 · THE SKULL POD: the operator's own outline ---- */
+  /* TARGET is danmt's blue overlay from PR #230, traced out of the
+     screenshot pixel by pixel and mapped back into canvas space through the
+     eye cluster (whose coordinates in that revision are known exactly). It
+     is the authority on this silhouette — everything outside it is gone.
+
+     What it says, and what every previous revision got wrong: the head is
+     WIDE AND SQUAT, roughly 172 x 148, not a tall dome. The crown I kept
+     rebuilding sits entirely outside the line. The top carries two low
+     humps with a shallow saddle between them; the flanks fall away fast;
+     the underside is a rounded chin that hangs lowest at the centre line
+     and lifts at the jaw corners. Render with ?outline=1 to draw the
+     target over the unit and check the fit. */
+  var TARGET=window.__TARGET__=[[-87.9,8.2],[-81.1,-13.6],[-74.2,-20.8],[-67.4,-26.3],[-60.6,-29.9],[-53.7,-32.7],[-46.9,-34.5],[-40.1,-35.4],[-33.2,-35.4],[-26.4,-34.5],[-19.6,-29.9],[-12.7,-21.8],[-5.9,-14.5],[1.6,-11.8],[8.4,-16.3],[15.2,-23.6],[22.1,-31.7],[28.9,-37.2],[35.7,-37.2],[42.5,-35.4],[49.4,-33.6],[56.2,-30.8],[63,-27.2],[69.9,-20.8],[76.7,-7.2],[83.5,18.2],[83.5,34.6],[76.7,69.1],[69.9,82.7],[63,88.2],[56.2,89.1],[49.4,87.3],[42.5,85.5],[35.7,85.5],[28.9,90],[22.1,99.1],[15.2,107.3],[8.4,111.8],[1.6,112.7],[-5.9,111.8],[-12.7,110],[-19.6,106.3],[-26.4,99.1],[-33.2,86.4],[-40.1,84.5],[-46.9,90],[-53.7,92.7],[-60.6,90],[-67.4,81.8],[-74.2,61.8],[-81.1,27.3],[-87.9,8.2]];
   function skullPath(c){
     c.beginPath();
-    c.moveTo(HC.x,HC.y-74);                                            // the saddle, dead centre
-    c.bezierCurveTo(HC.x-22,HC.y-96, HC.x-52,HC.y-104, HC.x-80,HC.y-96); // up over the left hump
-    c.bezierCurveTo(HC.x-110,HC.y-86, HC.x-126,HC.y-50, HC.x-128,HC.y-6); // down the left flank
-    c.bezierCurveTo(HC.x-130,HC.y+40, HC.x-104,HC.y+78, HC.x-56,HC.y+96); // bulge, then in to the jaw
-    c.bezierCurveTo(HC.x-30,HC.y+107, HC.x+30,HC.y+107, HC.x+56,HC.y+96); // the rounded chin
-    c.bezierCurveTo(HC.x+104,HC.y+78, HC.x+130,HC.y+40, HC.x+128,HC.y-6);
-    c.bezierCurveTo(HC.x+126,HC.y-50, HC.x+110,HC.y-86, HC.x+80,HC.y-96);
-    c.bezierCurveTo(HC.x+52,HC.y-104, HC.x+22,HC.y-96, HC.x,HC.y-74);   // back down into the saddle
+    c.moveTo(HC.x+TARGET[0][0],HC.y+TARGET[0][1]);
+    for(var ti=1;ti<TARGET.length;ti++){
+      // Catmull-Rom through the traced points: the sketch is hand-drawn, so
+      // the line is smoothed, but never moved off its own samples.
+      var p0=TARGET[(ti-2+TARGET.length)%TARGET.length],p1=TARGET[ti-1],
+          p2=TARGET[ti],p3=TARGET[(ti+1)%TARGET.length];
+      c.bezierCurveTo(HC.x+p1[0]+(p2[0]-p0[0])/6, HC.y+p1[1]+(p2[1]-p0[1])/6,
+                      HC.x+p2[0]-(p3[0]-p1[0])/6, HC.y+p2[1]-(p3[1]-p1[1])/6,
+                      HC.x+p2[0], HC.y+p2[1]);}
     c.closePath();
   }
   skullPath(g);
-  var hg=g.createLinearGradient(0,HC.y-106,0,HC.y+107);
-  hg.addColorStop(0,sT);hg.addColorStop(0.58,sM);hg.addColorStop(1,sB);
+  var hg=g.createLinearGradient(0,HC.y-38,0,HC.y+113);
+  hg.addColorStop(0,sT);hg.addColorStop(0.5,sM);hg.addColorStop(1,sB);
   g.fillStyle=hg;g.fill();g.strokeStyle=ed;g.lineWidth=1.3;g.stroke();
-  /* the two lobe shells, each following its own hump and ending AT the
-     saddle — the seam between them is the head's centre line */
-  function lobeShell(sg){
+  /* the two low humps read as swells on ONE mass: no closed outlines, just
+     a lit crest riding each and a seam dropping out of the saddle */
+  [-1,1].forEach(function(sg){
+    g.strokeStyle="rgba(198,216,246,"+(offl?(sg<0?0.09:0.05):(sg<0?0.26:0.15))+")";g.lineWidth=1.6;
+    g.beginPath();g.moveTo(HC.x+sg*10,HC.y-16);
+    g.bezierCurveTo(HC.x+sg*22,HC.y-31, HC.x+sg*44,HC.y-36, HC.x+sg*62,HC.y-28);g.stroke();
+    // the shell under the crest, a shade proud of the base
     g.beginPath();
-    g.moveTo(HC.x+sg*3,HC.y-72);
-    g.bezierCurveTo(HC.x+sg*22,HC.y-92, HC.x+sg*52,HC.y-100, HC.x+sg*78,HC.y-92);
-    g.bezierCurveTo(HC.x+sg*106,HC.y-82, HC.x+sg*120,HC.y-48, HC.x+sg*120,HC.y-10);
-    g.bezierCurveTo(HC.x+sg*104,HC.y-14, HC.x+sg*62,HC.y-26, HC.x+sg*8,HC.y-34);
+    g.moveTo(HC.x+sg*6,HC.y-13);
+    g.bezierCurveTo(HC.x+sg*24,HC.y-33, HC.x+sg*48,HC.y-37, HC.x+sg*72,HC.y-22);
+    g.bezierCurveTo(HC.x+sg*80,HC.y-4, HC.x+sg*54,HC.y+2, HC.x+sg*8,HC.y+2);
     g.closePath();
-    var lg3=g.createLinearGradient(0,HC.y-102,0,HC.y-6);
-    lg3.addColorStop(0,offl?"#20262f":"#323b4b");lg3.addColorStop(1,"rgba(22,28,40,0)");
-    g.fillStyle=lg3;g.fill();
-    // the crest highlight riding the top of the hump
-    g.strokeStyle="rgba(198,216,246,"+(offl?(sg<0?0.08:0.05):(sg<0?0.24:0.14))+")";g.lineWidth=1.5;
-    g.beginPath();g.moveTo(HC.x+sg*20,HC.y-86);
-    g.bezierCurveTo(HC.x+sg*46,HC.y-97, HC.x+sg*82,HC.y-90, HC.x+sg*104,HC.y-60);g.stroke();
-  }
-  lobeShell(-1);lobeShell(1);
-  // the saddle itself: a sunk keel channel where the two lobes meet
+    var lg3=g.createLinearGradient(0,HC.y-38,0,HC.y+4);
+    lg3.addColorStop(0,offl?"#232a35":"#38424f");lg3.addColorStop(1,"rgba(22,28,40,0)");
+    g.fillStyle=lg3;g.fill();});
+  // the saddle: a shallow sunk valley on the centre line
   g.beginPath();
-  g.moveTo(HC.x-30,HC.y-46);
-  g.bezierCurveTo(HC.x-12,HC.y-76, HC.x+12,HC.y-76, HC.x+30,HC.y-46);
-  g.bezierCurveTo(HC.x+14,HC.y-34, HC.x-14,HC.y-34, HC.x-30,HC.y-46);
+  g.moveTo(HC.x-16,HC.y-8);
+  g.bezierCurveTo(HC.x-7,HC.y-24, HC.x+7,HC.y-24, HC.x+16,HC.y-8);
+  g.bezierCurveTo(HC.x+7,HC.y-1, HC.x-7,HC.y-1, HC.x-16,HC.y-8);
   g.closePath();
-  var kg2=g.createLinearGradient(0,HC.y-76,0,HC.y-34);
-  kg2.addColorStop(0,"rgba(4,8,14,0.55)");kg2.addColorStop(1,"rgba(4,8,14,0)");
+  var kg2=g.createLinearGradient(0,HC.y-24,0,HC.y-1);
+  kg2.addColorStop(0,"rgba(4,8,14,0.5)");kg2.addColorStop(1,"rgba(4,8,14,0)");
   g.fillStyle=kg2;g.fill();
-  // one seam running down out of the valley — the head's centre line
-  g.strokeStyle="rgba(4,8,14,0.5)";g.lineWidth=1.3;
-  g.beginPath();g.moveTo(HC.x,HC.y-70);g.lineTo(HC.x,HC.y-26);g.stroke();
-  g.strokeStyle="rgba(186,208,242,"+(offl?0.04:0.1)+")";g.lineWidth=1;
-  g.beginPath();g.moveTo(HC.x+1.4,HC.y-68);g.lineTo(HC.x+1.4,HC.y-30);g.stroke();
-  /* BROW RIDGES — one per lobe, sweeping down and outward from the saddle,
-     so the shadow they throw is a V and not a bar */
+  g.strokeStyle="rgba(4,8,14,0.45)";g.lineWidth=1.2;
+  g.beginPath();g.moveTo(HC.x,HC.y-18);g.lineTo(HC.x,HC.y+4);g.stroke();
+  /* BROW RIDGES — one per hump, sweeping down and out, so the shadow they
+     drop into the eye field is a V and never a bar */
   [-1,1].forEach(function(sg){
     g.beginPath();
-    g.moveTo(HC.x+sg*10,HC.y-22);
-    g.bezierCurveTo(HC.x+sg*48,HC.y-30, HC.x+sg*92,HC.y-18, HC.x+sg*114,HC.y+8);
-    g.bezierCurveTo(HC.x+sg*92,HC.y+2, HC.x+sg*50,HC.y-8, HC.x+sg*10,HC.y-4);
+    g.moveTo(HC.x+sg*8,HC.y+6);
+    g.bezierCurveTo(HC.x+sg*38,HC.y+1, HC.x+sg*66,HC.y+8, HC.x+sg*82,HC.y+26);
+    g.bezierCurveTo(HC.x+sg*64,HC.y+22, HC.x+sg*38,HC.y+15, HC.x+sg*8,HC.y+18);
     g.closePath();
-    var bg3=g.createLinearGradient(0,HC.y-30,0,HC.y+8);
+    var bg3=g.createLinearGradient(0,HC.y,0,HC.y+26);
     bg3.addColorStop(0,sT);bg3.addColorStop(1,sB);
-    g.fillStyle=bg3;g.fill();g.strokeStyle=ed;g.lineWidth=1.1;g.stroke();
-    g.strokeStyle="rgba(198,216,246,"+(offl?0.07:0.2)+")";g.lineWidth=1.3;
-    g.beginPath();g.moveTo(HC.x+sg*12,HC.y-21);
-    g.bezierCurveTo(HC.x+sg*48,HC.y-29, HC.x+sg*90,HC.y-17, HC.x+sg*110,HC.y+6);g.stroke();});
-  // the V-shaped shadow the ridges throw down into the eye field
+    g.fillStyle=bg3;g.fill();g.strokeStyle=ed;g.lineWidth=1;g.stroke();
+    g.strokeStyle="rgba(198,216,246,"+(offl?0.07:0.2)+")";g.lineWidth=1.2;
+    g.beginPath();g.moveTo(HC.x+sg*10,HC.y+7);
+    g.bezierCurveTo(HC.x+sg*38,HC.y+2, HC.x+sg*64,HC.y+9, HC.x+sg*79,HC.y+25);g.stroke();});
+  // the V of shadow under the ridges
   g.save();g.beginPath();
-  g.moveTo(HC.x-116,HC.y+4);g.lineTo(HC.x,HC.y-8);g.lineTo(HC.x+116,HC.y+4);
-  g.lineTo(HC.x+116,HC.y+40);g.lineTo(HC.x-116,HC.y+40);g.closePath();g.clip();
-  cavity(g,HC.x-116,HC.y-8,232,40,0.7);g.restore();
-  // cheek plates hugging the flank bulges, following the curve down
-  [-1,1].forEach(function(sg){
-    g.beginPath();
-    g.moveTo(HC.x+sg*122,HC.y+2);
-    g.bezierCurveTo(HC.x+sg*124,HC.y+38, HC.x+sg*104,HC.y+72, HC.x+sg*62,HC.y+90);
-    g.lineTo(HC.x+sg*58,HC.y+76);
-    g.bezierCurveTo(HC.x+sg*96,HC.y+60, HC.x+sg*112,HC.y+34, HC.x+sg*110,HC.y+2);
-    g.closePath();
-    var cg4=g.createLinearGradient(0,HC.y+2,0,HC.y+90);
-    cg4.addColorStop(0,sM);cg4.addColorStop(1,sB);
-    g.fillStyle=cg4;g.fill();g.strokeStyle=ed;g.lineWidth=1.1;g.stroke();});
+  g.moveTo(HC.x-84,HC.y+22);g.lineTo(HC.x,HC.y+12);g.lineTo(HC.x+84,HC.y+22);
+  g.lineTo(HC.x+84,HC.y+52);g.lineTo(HC.x-84,HC.y+52);g.closePath();g.clip();
+  cavity(g,HC.x-84,HC.y+12,168,42,0.7);g.restore();
   // seam cracks wandering the crown; rivets where the panels pin
   g.strokeStyle="rgba(4,8,14,0.6)";g.lineWidth=1.1;
-  g.beginPath();g.moveTo(HC.x-58,HC.y-74);g.lineTo(HC.x-44,HC.y-58);g.lineTo(HC.x-52,HC.y-48);g.stroke();
-  g.beginPath();g.moveTo(HC.x+40,HC.y-78);g.lineTo(HC.x+52,HC.y-62);g.lineTo(HC.x+44,HC.y-52);g.stroke();
+  g.beginPath();g.moveTo(HC.x-46,HC.y-22);g.lineTo(HC.x-34,HC.y-10);g.lineTo(HC.x-40,HC.y-2);g.stroke();
+  g.beginPath();g.moveTo(HC.x+30,HC.y-26);g.lineTo(HC.x+40,HC.y-14);g.lineTo(HC.x+34,HC.y-6);g.stroke();
   [[HC.x-86,HC.y-36],[HC.x+86,HC.y-36],[HC.x-26,HC.y-76],[HC.x+26,HC.y-76],[HC.x-120,HC.y-2],[HC.x+120,HC.y-2]].forEach(function(rv){
     g.fillStyle="#05080e";g.beginPath();g.arc(rv[0],rv[1],1.8,0,7);g.fill();
     g.fillStyle="rgba(190,204,228,"+(offl?0.08:0.2)+")";g.beginPath();g.arc(rv[0]-0.5,rv[1]-0.5,0.8,0,7);g.fill();});
   // battle record: gouge across the left crown panel, scorch up the right cheek
-  poly(g,[[HC.x-92,HC.y-46],[HC.x-56,HC.y-68],[HC.x-52,HC.y-60],[HC.x-86,HC.y-38]]);
+  poly(g,[[HC.x-76,HC.y+2],[HC.x-46,HC.y-14],[HC.x-43,HC.y-8],[HC.x-72,HC.y+9]]);
   g.fillStyle="rgba(2,4,8,0.92)";g.fill();
-  pl(g,HC.x-92,HC.y-46,HC.x-56,HC.y-68,"rgba(198,216,246,"+(offl?0.06:0.16)+")",1.2);
-  var sco=g.createLinearGradient(0,HC.y+40,0,HC.y+92);
+  pl(g,HC.x-76,HC.y+2,HC.x-46,HC.y-14,"rgba(198,216,246,"+(offl?0.06:0.16)+")",1.2);
+  var sco=g.createLinearGradient(0,HC.y+50,0,HC.y+100);
   sco.addColorStop(0,"rgba(8,5,3,0)");sco.addColorStop(1,"rgba(8,5,3,0.4)");
-  g.fillStyle=sco;poly(g,[[HC.x+56,HC.y+44],[HC.x+104,HC.y+40],[HC.x+70,HC.y+90],[HC.x+40,HC.y+92]]);g.fill();
-  // hook antennae on the crown — three small black barbs
-  [[-64,-98,-0.6],[-38,-100,-0.3],[38,-100,0.3],[64,-98,0.6]].forEach(function(an){
-    g.strokeStyle="#0a0e15";g.lineWidth=2.6;g.lineCap="round";
-    g.beginPath();g.moveTo(HC.x+an[0],HC.y+an[1]+6);
-    g.quadraticCurveTo(HC.x+an[0]+an[2]*10,HC.y+an[1]-8,HC.x+an[0]+an[2]*16,HC.y+an[1]-4);g.stroke();
-    g.strokeStyle="rgba(150,164,190,"+(offl?0.08:0.2)+")";g.lineWidth=1;
-    g.beginPath();g.moveTo(HC.x+an[0],HC.y+an[1]+6);
-    g.quadraticCurveTo(HC.x+an[0]+an[2]*10,HC.y+an[1]-8,HC.x+an[0]+an[2]*16,HC.y+an[1]-4);g.stroke();});
-  // side sensor pods on the temple bevels, one lens each
+  g.fillStyle=sco;poly(g,[[HC.x+42,HC.y+54],[HC.x+72,HC.y+52],[HC.x+50,HC.y+96],[HC.x+26,HC.y+100]]);g.fill();
+  // panel seams over both humps + small raised plates near the crests
   [-1,1].forEach(function(sg){
-    plate(g,[[HC.x+sg*106,HC.y+16],[HC.x+sg*92,HC.y+14],[HC.x+sg*90,HC.y+40],[HC.x+sg*104,HC.y+42]],sM,sB,ed);
-    if(!offl){g.fillStyle=rdh(0.8);g.beginPath();g.arc(HC.x+sg*98,HC.y+27,2.4,0,7);g.fill();
-      RE.fillStyle=rd(0.5);RE.beginPath();RE.arc(HC.x+sg*98,HC.y+27,4,0,7);RE.fill();}
-    else{g.fillStyle="rgba(150,168,190,0.2)";g.beginPath();g.arc(HC.x+sg*98-1,HC.y+26,1.2,0,7);g.fill();}
-  });
+    g.strokeStyle="rgba(4,8,14,0.42)";g.lineWidth=1.1;
+    g.beginPath();g.moveTo(HC.x+sg*16,HC.y-6);
+    g.bezierCurveTo(HC.x+sg*36,HC.y-24, HC.x+sg*60,HC.y-27, HC.x+sg*76,HC.y-14);g.stroke();
+    g.beginPath();g.moveTo(HC.x+sg*22,HC.y+4);
+    g.bezierCurveTo(HC.x+sg*44,HC.y-10, HC.x+sg*66,HC.y-11, HC.x+sg*80,HC.y+2);g.stroke();
+    plate(g,[[HC.x+sg*30,HC.y-30],[HC.x+sg*50,HC.y-33],[HC.x+sg*52,HC.y-24],[HC.x+sg*32,HC.y-21]],sM,sB,ed);
+    [[34,-27],[48,-29]].forEach(function(bp){
+      var bx=HC.x+sg*bp[0],by=HC.y+bp[1];
+      g.fillStyle="#05080e";g.beginPath();g.arc(bx,by,1.6,0,7);g.fill();
+      g.fillStyle="rgba(190,204,228,"+(offl?0.06:0.18)+")";g.beginPath();g.arc(bx-0.5,by-0.5,0.7,0,7);g.fill();});});
   /* SKULL MODELLING — the pass that stops it reading as a flat mask.
      plate() lights every panel in its own little vertical box, so a head
      built from eight of them comes out evenly bright edge to edge, which
@@ -302,62 +299,75 @@ function drawUnit(t,st){
      where the room lamp actually is, and hard falloff into both temples,
      so the thing finally turns away from the light at its own edges. */
   g.save();skullPath(g);g.clip();
-  var vol=g.createRadialGradient(HC.x-26,HC.y-72,10,HC.x-10,HC.y-30,168);
+  var vol=g.createRadialGradient(HC.x-30,HC.y-18,8,HC.x-10,HC.y+30,150);
   vol.addColorStop(0,"rgba(214,232,255,"+(offl?0.07:0.17)+")");
   vol.addColorStop(0.34,"rgba(150,178,214,"+(offl?0.02:0.06)+")");
   vol.addColorStop(0.72,"rgba(2,6,14,0.16)");
   vol.addColorStop(1,"rgba(2,6,14,0.5)");
-  g.fillStyle=vol;g.fillRect(HC.x-140,HC.y-130,280,240);
+  g.fillStyle=vol;g.fillRect(HC.x-100,HC.y-46,200,168);
   // terminator down the right flank: the side the lamp never reaches
-  var trm=g.createLinearGradient(HC.x+34,0,HC.x+124,0);
-  trm.addColorStop(0,"rgba(2,6,14,0)");trm.addColorStop(1,"rgba(2,6,14,0.42)");
-  g.fillStyle=trm;g.fillRect(HC.x+34,HC.y-130,110,240);
+  var trm=g.createLinearGradient(HC.x+26,0,HC.x+90,0);
+  trm.addColorStop(0,"rgba(2,6,14,0)");trm.addColorStop(1,"rgba(2,6,14,0.4)");
+  g.fillStyle=trm;g.fillRect(HC.x+26,HC.y-46,100,168);
   g.restore();
-  /* GREEBLES — the pass that turns three big panels into a machine. Cheap
-     shapes, all of them reading at grid size: a louvre bank, an inspection
-     hatch, and panel lines that cross the seams the way real plating does. */
-  for(var lv=0;lv<4;lv++){                                   // louvre bank, left lobe
-    var lvy=HC.y-78+lv*9;
-    pl(g,HC.x-92+lv*2,lvy,HC.x-58+lv*2,lvy-5,"rgba(3,6,11,0.8)",2.6);
-    pl(g,HC.x-92+lv*2,lvy+1.6,HC.x-58+lv*2,lvy-3.4,"rgba(150,166,194,"+(offl?0.05:0.14)+")",0.9);}
-  // inspection hatch, right lobe: recessed panel, four bolts, one corner sprung
-  plate(g,[[HC.x+50,HC.y-76],[HC.x+92,HC.y-66],[HC.x+88,HC.y-38],[HC.x+46,HC.y-48]],sM,sB,ed);
-  cavity(g,HC.x+46,HC.y-76,46,8,0.5);
-  [[HC.x+54,HC.y-70],[HC.x+86,HC.y-62],[HC.x+83,HC.y-44],[HC.x+51,HC.y-52]].forEach(function(bp){
-    g.fillStyle="#05080e";g.beginPath();g.arc(bp[0],bp[1],2,0,7);g.fill();
-    g.fillStyle="rgba(190,204,228,"+(offl?0.08:0.22)+")";g.beginPath();g.arc(bp[0]-0.6,bp[1]-0.6,0.9,0,7);g.fill();});
-  pl(g,HC.x+46,HC.y-48,HC.x+58,HC.y-45,"rgba(206,222,248,"+(offl?0.1:0.28)+")",1.3);
-  // panel lines raking across the brow shelf, crossing the seams
-  pl(g,HC.x-74,HC.y-22,HC.x-30,HC.y-30,"rgba(4,8,14,0.5)",1.1);
-  pl(g,HC.x+74,HC.y-22,HC.x+30,HC.y-30,"rgba(4,8,14,0.5)",1.1);
-  pl(g,HC.x-52,HC.y-8,HC.x+52,HC.y-8,"rgba(4,8,14,0.35)",1);
-  // stencil, worn, on the right crown panel
-  g.save();g.globalAlpha=offl?0.12:0.26;g.fillStyle="#c6d2e4";
-  g.font="700 9px ui-monospace,monospace";g.textAlign="center";
-  g.fillText("SN-100",HC.x+70,HC.y-50);g.restore();
-
+  /* GREEBLES — kept, but every one of them now lives INSIDE the outline.
+     On the old tall crown they sat where the head no longer is. */
+  // louvre bank, left hump: thin, well separated, following the hump slope
+  for(var lv=0;lv<5;lv++){
+    var lx0=HC.x-64+lv*3, ly0=HC.y-16+lv*7.5, lx1=lx0+22, ly1=ly0-5;
+    pl(g,lx0,ly0,lx1,ly1,"rgba(3,6,11,0.62)",1.5);
+    pl(g,lx0,ly0+1.3,lx1,ly1+1.3,"rgba(154,170,198,"+(offl?0.05:0.13)+")",0.7);}
+  // inspection hatch, right hump: recessed panel, bolts, one sprung corner
+  plate(g,[[HC.x+36,HC.y-18],[HC.x+70,HC.y-10],[HC.x+66,HC.y+10],[HC.x+32,HC.y+3]],sM,sB,ed);
+  cavity(g,HC.x+32,HC.y-18,38,7,0.5);
+  pl(g,HC.x+38,HC.y-8,HC.x+64,HC.y-2,"rgba(4,8,14,0.5)",1);          // seam across it
+  [[HC.x+42,HC.y-13],[HC.x+64,HC.y-7],[HC.x+61,HC.y+5],[HC.x+38,HC.y-1]].forEach(function(bp){
+    g.fillStyle="#05080e";g.beginPath();g.arc(bp[0],bp[1],1.7,0,7);g.fill();
+    g.fillStyle="rgba(190,204,228,"+(offl?0.08:0.2)+")";g.beginPath();g.arc(bp[0]-0.5,bp[1]-0.5,0.75,0,7);g.fill();});
+  pl(g,HC.x+32,HC.y+3,HC.x+42,HC.y+5,"rgba(206,222,248,"+(offl?0.1:0.26)+")",1.2);
+  // side sensor pods, tucked onto the flanks well inside the edge
+  [-1,1].forEach(function(sg){
+    plate(g,[[HC.x+sg*78,HC.y+30],[HC.x+sg*64,HC.y+27],[HC.x+sg*62,HC.y+46],[HC.x+sg*75,HC.y+49]],sM,sB,ed);
+    if(!offl){g.fillStyle=rdh(0.8);g.beginPath();g.arc(HC.x+sg*70,HC.y+38,2.2,0,7);g.fill();
+      RE.fillStyle=rd(0.5);RE.beginPath();RE.arc(HC.x+sg*70,HC.y+38,3.6,0,7);RE.fill();}
+    else{g.fillStyle="rgba(150,168,190,0.2)";g.beginPath();g.arc(HC.x+sg*70-1,HC.y+37,1.2,0,7);g.fill();}});
+  // stencil, worn, low on the right flank
+  g.save();g.globalAlpha=offl?0.12:0.24;g.fillStyle="#c6d2e4";
+  g.font="700 8px ui-monospace,monospace";g.textAlign="center";
+  g.fillText("SN-100",HC.x+50,HC.y+70);g.restore();
   /* ---- 3 · THE FACE: steel plate, berry eyes, mandible fringe ---- */
-  // recessed face plate — a shade of worn steel the shell is not
+  /* the bowl is the SAME ring inset toward the face centre — derived from
+     the outline rather than drawn beside it, so no edge of it can ever fall
+     outside the silhouette again */
+  /* The bowl must not echo the silhouette — an inset copy of the ring drew
+     the humps a second time and the head came out double-outlined. It is a
+     lens instead: its top follows the brow V (high in the middle, falling
+     to the temples) and its floor follows the chin. */
+  var FC={x:HC.x,y:HC.y+46};
   g.beginPath();
-  g.moveTo(HC.x-96,HC.y+6);
-  g.bezierCurveTo(HC.x-100,HC.y+44, HC.x-80,HC.y+72, HC.x-42,HC.y+86);
-  g.bezierCurveTo(HC.x-18,HC.y+95, HC.x+18,HC.y+95, HC.x+42,HC.y+86);
-  g.bezierCurveTo(HC.x+80,HC.y+72, HC.x+100,HC.y+44, HC.x+96,HC.y+6);
-  g.bezierCurveTo(HC.x+50,HC.y-4, HC.x-50,HC.y-4, HC.x-96,HC.y+6);
+  g.moveTo(HC.x-78,HC.y+30);
+  g.bezierCurveTo(HC.x-52,HC.y+13, HC.x-22,HC.y+9, HC.x,HC.y+12);
+  g.bezierCurveTo(HC.x+22,HC.y+9, HC.x+52,HC.y+13, HC.x+78,HC.y+30);
+  g.bezierCurveTo(HC.x+80,HC.y+56, HC.x+60,HC.y+80, HC.x+34,HC.y+90);
+  g.bezierCurveTo(HC.x+14,HC.y+97, HC.x-14,HC.y+97, HC.x-34,HC.y+90);
+  g.bezierCurveTo(HC.x-60,HC.y+80, HC.x-80,HC.y+56, HC.x-78,HC.y+30);
   g.closePath();
-  var fg2=g.createLinearGradient(0,HC.y-4,0,HC.y+95);
+  var fg2=g.createLinearGradient(0,HC.y+9,0,HC.y+97);
   fg2.addColorStop(0,offl?"#161b24":"#222937");fg2.addColorStop(0.5,offl?"#0e1219":"#141a25");fg2.addColorStop(1,"#080b11");
-  g.fillStyle=fg2;g.fill();g.strokeStyle="#0a0e15";g.lineWidth=1.6;g.stroke();
+  g.fillStyle=fg2;g.fill();
+  // no outline stroke: the rim is sold by the cavity below, not by a line
+  g.strokeStyle="rgba(8,12,20,0.7)";g.lineWidth=1.2;g.stroke();
   cavity(g,HC.x-70,HC.y-54,140,12,0.55);
   // plate scratches — the face has been CLOSE to things
   pl(g,HC.x-52,HC.y+30,HC.x-20,HC.y+44,"rgba(198,216,246,"+(offl?0.05:0.12)+")",1);
   pl(g,HC.x+26,HC.y+52,HC.x+50,HC.y+40,"rgba(198,216,246,"+(offl?0.04:0.1)+")",1);
   /* the EYES: glossy red berries in chrome sockets, spider-wrapped.
      [dx,dy,r] from face centre; one is dead and cracked. */
-  var FY=HC.y+42;
+  var FY=HC.y+46, ES=0.74;                       // the head shrank; the stare scales with it
   var EYES=[[0,6,15],[-33,2,10.5],[33,2,10.5],[-16,-18,8.5],[16,-18,8.5],
             [-57,-8,7.5],[57,-8,7.5],[0,-30,6.5],[-40,-26,6],[40,-26,6],
-            [-66,-24,4.5],[66,-24,4.5],[-18,26,5.5],[18,26,5.5],[0,34,4]];
+            [-66,-24,4.5],[66,-24,4.5],[-18,26,5.5],[18,26,5.5],[0,34,4]]
+           .map(function(e){return [e[0]*ES,e[1]*ES,e[2]*ES];});
   var DEAD=9;
   EYES.forEach(function(E,ei){
     var ex=HC.x+E[0], ey=FY+E[1], er=E[2];
@@ -403,43 +413,44 @@ function drawUnit(t,st){
   }
   /* mandible fringe: small dark claws hanging along the chin curve,
      twitching independently — an underbite of hooks, not a grin */
-  for(var md=0;md<9;md++){
-    var mu=md/8, mx=HC.x-40+mu*80, my=HC.y+80+Math.sin(mu*Math.PI)*7;
-    // fangs, not staples: each is a tapered wedge that curls inward toward
-    // the centreline, longest at the jaw's middle, and every one twitches
-    // on its own clock so the fringe is never a tidy row
-    var ml2=(13+Math.sin(mu*Math.PI)*9)*(0.78+Rnd(md*5)*0.4);
-    var inw=(HC.x-mx)*0.09, tw2=offl?0:Math.sin(t*(5.5+md*0.6)+md*2)*2.2;
-    var w0=5+Rnd(md*3)*1.8;
-    var tipx=mx+inw+tw2, tipy=my+ml2;
+  /* An even row of triangles is a GRIN. These are feed hooks: irregular
+     spacing, three lengths, a couple folded back under the jaw, and none of
+     them vertical — the fringe should look like it grabs, not like it smiles. */
+  var FANG=[[-33,0.55,0.5],[-25,1.0,0.15],[-18,0.42,-0.35],[-9,0.86,0.1],
+            [-1,0.62,-0.2],[7,1.0,0.25],[15,0.5,-0.4],[23,0.78,0.05],[31,0.46,0.45]];
+  FANG.forEach(function(F,md){
+    var mx=HC.x+F[0]*1.9, my=HC.y+68+Math.cos(F[0]*0.05)*8;
+    var taper=1-Math.pow(Math.abs(F[0])/34,2)*0.45;    // the jaw lifts at its corners
+    var ml2=(8+F[1]*15)*taper, tw2=offl?0:Math.sin(t*(5+md*0.8)+md*2)*1.8;
+    var w0=2.6+F[1]*2.6;
+    var tipx=mx+F[2]*ml2*0.8+tw2, tipy=my+ml2;
     var ang=Math.atan2(tipy-my,tipx-mx), nx=-Math.sin(ang)*w0, ny=Math.cos(ang)*w0;
-    poly(g,[[mx+nx,my+ny],[mx-nx,my-ny],[tipx-nx*0.12,tipy-ny*0.12],[tipx+nx*0.12,tipy+ny*0.12]]);
+    poly(g,[[mx+nx,my+ny],[mx-nx,my-ny],[tipx-nx*0.1,tipy-ny*0.1],[tipx+nx*0.1,tipy+ny*0.1]]);
     var fgd=g.createLinearGradient(mx,my,tipx,tipy);
-    fgd.addColorStop(0,offl?"#333b48":"#5a6678");fgd.addColorStop(0.55,offl?"#1c222c":"#2c3442");fgd.addColorStop(1,"#080c13");
+    fgd.addColorStop(0,offl?"#2b323d":"#4d5768");fgd.addColorStop(0.5,offl?"#181e27":"#252c39");fgd.addColorStop(1,"#070b11");
     g.fillStyle=fgd;g.fill();
-    // the honed inner edge — a fang catches light on one side only
-    pl(g,mx-nx*0.7,my-ny*0.7,tipx-nx*0.1,tipy-ny*0.1,"rgba(206,222,248,"+(offl?0.12:0.4)+")",1.2);
-    // socket knuckle where it hinges into the jaw
-    // hinge knuckle, lit — a black dot here just reads as a hole
-    var kg=g.createRadialGradient(mx-0.6,my-1.6,0.3,mx,my-0.6,w0*0.6);
-    kg.addColorStop(0,offl?"#232b36":"#3d4757");kg.addColorStop(1,"#070b11");
-    g.fillStyle=kg;g.beginPath();g.arc(mx,my-0.6,w0*0.52,0,7);g.fill();}
+    pl(g,mx-nx*0.7,my-ny*0.7,tipx-nx*0.1,tipy-ny*0.1,"rgba(206,222,248,"+(offl?0.1:0.3)+")",1);
+    var kg=g.createRadialGradient(mx-0.6,my-1.4,0.3,mx,my-0.5,w0*0.6);
+    kg.addColorStop(0,offl?"#232b36":"#3a4453");kg.addColorStop(1,"#070b11");
+    g.fillStyle=kg;g.beginPath();g.arc(mx,my-0.5,w0*0.5,0,7);g.fill();});
+  [g,RE].forEach(function(c){c.restore();});
+
   /* ---- 4 · FRONT WHIPS: one curling high past the skull, one strike
      whip hovering its grapple over the deck. Offline both lie dead. ---- */
   if(!offl){
     // one thrown up past the skull, one reaching forward-down at the viewer
-    var FP1=[[cx-26+HX,RT-8],[cx-136,RT-70],[cx-186,240],[cx-140,150+sw*6]];
-    var p1=whip(FP1,7.5,3,40), e1=p1[p1.length-1], q1=p1[p1.length-2];
+    var FP1=[[cx-24+HX,RT-8],[cx-150,RT+10],[cx-190,236],[cx-146,158+sw*6]];
+    var p1=whip(FP1,6,2.4,40), e1=p1[p1.length-1], q1=p1[p1.length-2];
     grapple(e1[0],e1[1],Math.atan2(e1[1]-q1[1],e1[0]-q1[0]),0.75,true);
     var FP2=[[cx+26+HX,RT-6],[cx+128,RT+60],[cx+196,RT+130],[cx+150,RT+196+sw2*6]];
-    var p2=whip(FP2,7.5,3.2,38), e2=p2[p2.length-1], q2=p2[p2.length-2];
+    var p2=whip(FP2,6,2.6,38), e2=p2[p2.length-1], q2=p2[p2.length-2];
     grapple(e2[0],e2[1],Math.atan2(e2[1]-q2[1],e2[0]-q2[0]),0.9,true);
   }else{
     var FP1=[[cx-26,RT-8],[cx-96,528],[cx-146,556],[cx-198,546]];
-    var p1=whip(FP1,7.5,3,36), e1=p1[p1.length-1], q1=p1[p1.length-2];
+    var p1=whip(FP1,6,2.4,36), e1=p1[p1.length-1], q1=p1[p1.length-2];
     grapple(e1[0],e1[1],Math.atan2(e1[1]-q1[1],e1[0]-q1[0]),0,true);
     var FP2=[[cx+26,RT-6],[cx+104,534],[cx+156,559],[cx+206,548]];
-    var p2=whip(FP2,7.5,3.2,36), e2=p2[p2.length-1], q2=p2[p2.length-2];
+    var p2=whip(FP2,6,2.6,36), e2=p2[p2.length-1], q2=p2[p2.length-2];
     grapple(e2[0],e2[1],Math.atan2(e2[1]-q2[1],e2[0]-q2[0]),0,true);
   }
 
@@ -447,10 +458,12 @@ function drawUnit(t,st){
   if(offl){var bp=0.55;
     // the beacon catches EDGES: the lobe's top arris and the brow lip, the
     // two lines that actually face a light standing off to the left
-    pl(g,HC.x-96,HC.y-82,HC.x-54,HC.y-102,"rgba(255,64,52,"+(0.3*bp)+")",2);
-    pl(g,HC.x-116,HC.y-2,HC.x-60,HC.y-8,"rgba(255,64,52,"+(0.18*bp)+")",1.6);
+    // drawn outside the head transform, so the crest coords carry HS themselves
+    var kx=function(v){return HC.x+v*HS;}, ky=function(v){return HC.y+v*HS;};
+    pl(g,kx(-72),ky(-16),kx(-34),ky(-33),"rgba(255,64,52,"+(0.3*bp)+")",2);
+    pl(g,kx(-84),ky(18),kx(-44),ky(6),"rgba(255,64,52,"+(0.17*bp)+")",1.6);
     RE.strokeStyle="rgba(255,64,52,"+(0.13*bp)+")";RE.lineWidth=2.4;
-    RE.beginPath();RE.moveTo(HC.x-96,HC.y-82);RE.lineTo(HC.x-54,HC.y-102);RE.stroke();}
+    RE.beginPath();RE.moveTo(kx(-72),ky(-16));RE.lineTo(kx(-34),ky(-33));RE.stroke();}
 
   /* ---- room light lands on the unit ---- */
   RB.save();RB.globalCompositeOperation="source-atop";
@@ -515,9 +528,16 @@ function drawScene(t,st){
   S.save();S.globalCompositeOperation="lighter";S.drawImage(emis,0,0);S.restore();
 }
 
+function drawTarget(){
+  if(qs.get("outline")===null)return;
+  var T=window.__TARGET__;if(!T)return;
+  S.save();S.strokeStyle="#2b6bff";S.lineWidth=3;S.lineJoin="round";
+  var k=window.__HS__||1;
+  S.beginPath();T.forEach(function(p,i){var x=260+p[0]*k,y=250+p[1]*k;i?S.lineTo(x,y):S.moveTo(x,y);});
+  S.closePath();S.stroke();S.restore();}
 function frame(){
   var t=reduced?T0:(performance.now()/1000);
-  drawUnit(t,STATE);drawScene(t,STATE);
+  drawUnit(t,STATE);drawScene(t,STATE);drawTarget();
   if(!reduced)requestAnimationFrame(frame);
 }
 frame();
