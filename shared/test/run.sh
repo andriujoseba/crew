@@ -1217,10 +1217,23 @@ else
   r1=DROPPED
 fi
 t builder-round-items-preserved preserved "$r1"
+# The build ledger commit must stay inside this call site's success guard. A
+# whole-module grep can accidentally match the independent ci-red guard.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+builder_rc_block="$(sed -n '/^    if \[ "${RUN_SESSION_RC:-1}" -eq 0 \]; then$/,/^    fi$/p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_rc_block"; then
+  r1=gated
+else
+  r1=UNGATED
+fi
+t builder-ready-commit-gated-by-session-rc gated "$r1"
 # A failed re-query must stay visible and fail open toward another session,
 # never burying the whole pre-session ready set (#264 D4).
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
 if [ "$(grep -Fc 'post-session ready re-query failed; committing no ready lines (#264)' \
-     <<<"$builder_commit_block")" -eq 1 ]; then
+     <<<"$builder_commit_block")" -eq 1 ] &&
+   ! grep -Fq 'ready_commit="$ready_items"' <<<"$builder_commit_block"; then
   r1=safe
 else
   r1=WHOLE_SET
