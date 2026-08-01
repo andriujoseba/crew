@@ -35,7 +35,7 @@ source "$SHARED/lib/common.sh"
 # logical line first; advancing past only the opening "$(`` also finds nested
 # render_prompt calls such as review.txt's ONESHOT_RULES argument.
 render_site_missing_slots() {  # render_site_missing_slots PROMPTS SOURCE...
-  local prompts="$1" source record site call rest prompt slot supplied
+  local prompts="$1" source site call rest prompt slot supplied
   shift
   for source in "$@"; do
     while IFS='|' read -r site call; do
@@ -2300,6 +2300,7 @@ RS_PROMPTS="$TMP/render-site-prompts"
 RS_SOURCE="$TMP/render-site.sh"
 mkdir -p "$RS_PROMPTS"
 printf 'required {{GIVEN}} {{MISSING}} {{DOCTRINE_BUILDER}}' >"$RS_PROMPTS/fixture.txt"
+# shellcheck disable=SC2016  # fixture source must contain the literal expansion
 printf 'x="$(render_prompt fixture.txt GIVEN="$value")"\n' >"$RS_SOURCE"
 render_missing="$(render_site_missing_slots "$RS_PROMPTS" "$RS_SOURCE")"
 case "$render_missing" in
@@ -2315,6 +2316,21 @@ render_missing="$(render_site_missing_slots "$RS_PROMPTS" "$RS_SOURCE")"
 case "$render_missing" in *'missing ANYTHING'*) r1=failed ;; *) r1=MISSED ;; esac
 t render-sites-new-slot-without-argument-fails failed "$r1"
 
+cp "$BMOD" "$TMP/duty-builder-missing-round.sh"
+# shellcheck disable=SC2016  # removing the module's literal argument
+sed -i 's/ ROUND_RULES="$round_rules"//' "$TMP/duty-builder-missing-round.sh"
+render_missing="$(render_site_missing_slots "$SHARED/prompts" "$TMP/duty-builder-missing-round.sh")"
+case "$render_missing" in *'ci-red.txt missing ROUND_RULES'*) r1=failed ;; *) r1=MISSED ;; esac
+t render-sites-ci-red-missing-round-rules-fails failed "$r1"
+
+cp "$SHARED/lib/duty-attention.sh" "$TMP/duty-attention-missing-answered.sh"
+# shellcheck disable=SC2016  # removing the module's literal argument
+sed -i 's/ MARK_ANSWERED="$MARK_ANSWERED"//' "$TMP/duty-attention-missing-answered.sh"
+render_missing="$(render_site_missing_slots "$SHARED/prompts" "$TMP/duty-attention-missing-answered.sh")"
+case "$render_missing" in *'fragment-round-rules.txt missing MARK_ANSWERED'*) r1=failed ;; *) r1=MISSED ;; esac
+t render-sites-attention-missing-answered-fails failed "$r1"
+
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
 if grep -q '{{ROUND_RULES}}' "$SHARED/prompts/ci-red.txt" \
   && grep -q 'ROUND_RULES="$round_rules"' "$BMOD"; then r1=rendered; else r1=MISSING; fi
 t ci-red-renders-round-rules rendered "$r1"
