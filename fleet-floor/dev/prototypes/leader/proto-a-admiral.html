@@ -499,12 +499,22 @@ function drawUnit(t,st){
 
   /* ---- room light lands on the unit ---- */
   RB.save();RB.globalCompositeOperation="source-atop";
+  /* RUN 3 · LOOP 1 — the unit was the darkest object in its own spotlight:
+     chest measured half the wall behind it, and no top plane answered the
+     pendant hanging directly overhead. The key is now the LAMP's light —
+     warm, strong at cap height, falling to the boots — plus a radial hot
+     pool centred over the cap so the crown, bill and boards actually catch. */
   var key=RB.createLinearGradient(0,140,0,GY);
-  key.addColorStop(0,"rgba(206,226,255,"+(offl?0.05:0.12)+")");
-  key.addColorStop(0.3,"rgba(186,206,238,"+(offl?0.02:0.045)+")");
-  key.addColorStop(0.68,"rgba(2,6,14,0.10)");
-  key.addColorStop(1,"rgba(2,6,14,0.22)");
+  key.addColorStop(0,"rgba(244,222,178,"+(offl?0.05:0.30)+")");
+  key.addColorStop(0.3,"rgba(216,196,160,"+(offl?0.02:0.13)+")");
+  key.addColorStop(0.72,"rgba(2,6,14,0.08)");
+  key.addColorStop(1,"rgba(2,6,14,0.2)");
   RB.fillStyle=key;RB.fillRect(0,0,W,H);
+  var hp=RB.createRadialGradient(cx,160,12,cx,160,280);
+  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.24)+")");
+  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.09)+")");
+  hp.addColorStop(1,"rgba(250,228,184,0)");
+  RB.fillStyle=hp;RB.fillRect(0,0,W,H);
   var bnc=RB.createLinearGradient(0,GY-130,0,GY-8);
   bnc.addColorStop(0,"rgba(104,146,196,0)");bnc.addColorStop(1,"rgba(104,146,196,"+(offl?0.04:0.1)+")");
   RB.fillStyle=bnc;RB.fillRect(0,0,W,H);RB.restore();
@@ -603,6 +613,13 @@ function drawRoom(t,st){
     kg.addColorStop(0.45,"rgba(206,182,142,"+(0.045*dk)+")");
     kg.addColorStop(1,"rgba(180,164,140,0)");
     S.fillStyle=kg;S.fillRect(0,0,SW,GYS);
+    // the second pendant does the same for the starboard wall — this is
+    // what keeps the fire station out of the dark
+    var kg2=S.createRadialGradient(UX+430,150,30,UX+430,150,520);
+    kg2.addColorStop(0,"rgba(238,206,150,"+(0.07*dk)+")");
+    kg2.addColorStop(0.45,"rgba(206,182,142,"+(0.035*dk)+")");
+    kg2.addColorStop(1,"rgba(180,164,140,0)");
+    S.fillStyle=kg2;S.fillRect(0,0,SW,GYS);
     S.restore();
     // and the corners go the other way: ambient occlusion into the angles
     var ao=S.createLinearGradient(0,0,240,0);
@@ -2090,11 +2107,15 @@ function roomFrame(lit){
    this is the pass that decides what the eye is meant to look at. */
 function vignette(){
   // the subject pool: everything falls away from the unit and the console
-  var vg2=S.createRadialGradient(UX-40,380,190,UX-40,380,760);
+  /* RUN 3 · LOOP 1 — this pool reached a=0.62 over the fire station and
+     0.84 in the near corner: the whole right third of drawn work measured
+     RGB(6,5,7). The pool survives — the eye should still land on the unit —
+     but the falloff must dim the edges, not delete them. */
+  var vg2=S.createRadialGradient(UX-40,380,190,UX-40,380,880);
   vg2.addColorStop(0,"rgba(0,0,0,0)");
-  vg2.addColorStop(0.42,"rgba(0,0,0,0.1)");
-  vg2.addColorStop(0.74,"rgba(0,0,0,0.42)");
-  vg2.addColorStop(1,"rgba(0,0,0,0.84)");
+  vg2.addColorStop(0.42,"rgba(0,0,0,0.08)");
+  vg2.addColorStop(0.78,"rgba(0,0,0,0.3)");
+  vg2.addColorStop(1,"rgba(0,0,0,0.6)");
   S.fillStyle=vg2;S.fillRect(0,0,SW,SH);
   // hard edges: the outer band goes to near-black on all four sides
   /* ROUND 8 — the side bands stop at the deck line. At 0.72/0.74 running
@@ -2105,14 +2126,17 @@ function vignette(){
   var lb=S.createLinearGradient(0,0,150,0);
   lb.addColorStop(0,"rgba(0,0,0,0.62)");lb.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=lb;S.fillRect(0,0,150,GYS);
-  var rb=S.createLinearGradient(SW,0,SW-190,0);
-  rb.addColorStop(0,"rgba(0,0,0,0.64)");rb.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=rb;S.fillRect(SW-190,0,190,GYS);
+  /* RUN 3 · LOOP 1 — at 0.64 this band buried the entire fire station:
+     the right third measured RGB(6,5,7), a black void hiding drawn work.
+     The starboard wall may fall off, but it must stay readable. */
+  var rb=S.createLinearGradient(SW,0,SW-150,0);
+  rb.addColorStop(0,"rgba(0,0,0,0.34)");rb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=rb;S.fillRect(SW-150,0,150,GYS);
   var lb2=S.createLinearGradient(0,0,110,0);       // much gentler on the deck
   lb2.addColorStop(0,"rgba(0,0,0,0.3)");lb2.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=lb2;S.fillRect(0,GYS,110,SH-GYS);
   var rb2=S.createLinearGradient(SW,0,SW-130,0);
-  rb2.addColorStop(0,"rgba(0,0,0,0.32)");rb2.addColorStop(1,"rgba(0,0,0,0)");
+  rb2.addColorStop(0,"rgba(0,0,0,0.18)");rb2.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=rb2;S.fillRect(SW-130,GYS,130,SH-GYS);
   var tb=S.createLinearGradient(0,0,0,132);
   tb.addColorStop(0,"rgba(0,0,0,0.7)");tb.addColorStop(1,"rgba(0,0,0,0)");
