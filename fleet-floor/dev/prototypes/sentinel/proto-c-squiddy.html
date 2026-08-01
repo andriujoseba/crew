@@ -196,7 +196,12 @@ function drawUnit(t,st){
     [[cx-29+HX,RT-14],[cx-218,RT+94+sw2*5],[cx-252,412],[cx-256,330+sw2*7]],
     [[cx+29+HX,RT-14],[cx+226,RT+98-sw2*5],[cx+258,420],[cx+262,342-sw2*7]],
     [[cx-17+HX,RT-12],[cx-138,RT+80],[cx-104,472],[cx-166,512+sw*6]],
-    [[cx+17+HX,RT-12],[cx+112,RT+104],[cx+172,476],[cx+126,520-sw*6]]
+    /* RUN 1 · LOOP 1 (squiddy) — this whip used to dive to (cx+126,520):
+       its final stretch ran exactly under a front whip, so the stem vanished
+       behind that tentacle and only the claw re-emerged, orphaned. It now
+       hangs down into the open gap left of the front-right whip, with its
+       last run of stem in clear air before the claw. */
+    [[cx+17+HX,RT-12],[cx+112,RT+104],[cx+150,470],[cx+75,556-sw*6]]
   ];
   /* These eight are BACK limbs: they run out from behind the hull and the
      hub covers where they meet it, so they need no visible attachment —
@@ -645,9 +650,14 @@ function drawUnit(t,st){
     [[cx+30,RT-22],[cx+58,546],[cx+112,558],[cx+136,550]]
   ]:[
     [[cx-56+HX,RT-30],[cx-150,RT+10],[cx-190,236],[cx-146,158+sw*6]],
-    [[cx+56+HX,RT-30],[cx+128,RT+60],[cx+196,RT+130],[cx+150,RT+196+sw2*6]],
-    [[cx-30+HX,RT-22],[cx-76,RT+60],[cx-16,RT+134],[cx-64,RT+182+sw*5]],
-    [[cx+30+HX,RT-22],[cx+54,RT+92],[cx+96,RT+136],[cx+40,RT+214-sw*5]]
+    /* RUN 1 · LOOP 1 (squiddy) — the three low-hanging whips used to end at
+       RT+182..214, which put their last stems BEHIND the foreground cable
+       tray: only the claw tips peeked out below it, reading as orphaned,
+       wrong-scale claws sitting on the floor. Their endpoints are raised so
+       stem AND claw stay fully above the tray, visibly attached. */
+    [[cx+56+HX,RT-30],[cx+128,RT+60],[cx+196,RT+118],[cx+150,RT+148+sw2*6]],
+    [[cx-30+HX,RT-22],[cx-76,RT+60],[cx-16,RT+112],[cx-64,RT+146+sw*5]],
+    [[cx+30+HX,RT-22],[cx+54,RT+92],[cx+96,RT+110],[cx+40,RT+150-sw*5]]
   ];
   FRONT.forEach(function(P,fi){
     var pts=whip(P,13,4.5,46);
@@ -681,12 +691,16 @@ function drawUnit(t,st){
   bnc.addColorStop(0,"rgba(104,146,196,0)");bnc.addColorStop(1,"rgba(104,146,196,"+(offl?0.04:0.1)+")");
   RB.fillStyle=bnc;RB.fillRect(0,0,W,H);RB.restore();
 
-  /* ---- rim light: red key, cyan fill ---- */
+  /* ---- rim light: red key, cool fill ---- */
+  /* RUN 1 · LOOP 1 (squiddy) — the right-side rim was saturated cyan with no
+     cyan source anywhere in frame (the right quarter is coal black). It is
+     neutralized to the room's own cool blue-grey — the screen wall's hue —
+     and knocked back, so it reads as ambient bounce rather than a lamp. */
   RR.globalCompositeOperation="source-over";RR.drawImage(body,0,0);
   RR.globalCompositeOperation="destination-out";RR.drawImage(body,-2.2,1.7);RR.drawImage(body,-1.5,-2.4);
   RR.globalCompositeOperation="source-in";
   var rl=RR.createLinearGradient(60,0,460,0);
-  rl.addColorStop(0,"rgba(255,45,34,0.95)");rl.addColorStop(0.42,"rgba(198,140,150,0.42)");rl.addColorStop(1,"rgba(95,214,255,1)");
+  rl.addColorStop(0,"rgba(255,45,34,0.95)");rl.addColorStop(0.42,"rgba(198,140,150,0.42)");rl.addColorStop(1,"rgba(150,178,206,0.6)");
   RR.fillStyle=rl;RR.fillRect(0,0,W,H);RR.globalCompositeOperation="source-over";
 }
 
@@ -904,33 +918,41 @@ function drawRoom(t,st){
        between wallpaper and a wall of televisions. */
     var kind=(si*7+si%5)%11;                       // deterministic per screen
     S.save();S.beginPath();S.rect(sc.x,sc.y,sc.w,sc.h);S.clip();
+    /* RUN 1 · LOOP 1 (squiddy) — NOTHING IN THE WALL EMITTED. The colour-bar
+       tube measured DARKER than the dead wall beside it and the snow screens
+       matched their own bezels: every live face was drawn at alpha 0.34-0.5
+       over near-black, then scanlined and vignetted below the wall value.
+       A powered tube is the brightest surface in its own bay. The fix is in
+       the drawn VALUES — bar/snow/card alphas pushed toward full — not in
+       washes over the wall. */
     if(kind===2||kind===9){
       // colour bars — the one place saturated colour belongs in this room
-      var BARS=["#8b8b8b","#8b8b16","#168b8b","#168b16","#8b168b","#8b1616","#16168b"];
+      var BARS=["#c8c8c8","#c8c832","#32c8c8","#32c832","#c832c8","#c83232","#3232c8"];
       for(var bi9=0;bi9<7;bi9++){
-        S.globalAlpha=offl?0.14:0.5;
+        S.globalAlpha=offl?0.14:0.94;
         S.fillStyle=BARS[bi9];S.fillRect(sc.x+bi9*sc.w/7,sc.y,sc.w/7+1,sc.h*0.74);}
-      S.globalAlpha=offl?0.1:0.34;
-      ["#16168b","#0b0b0b","#8b168b","#0b0b0b"].forEach(function(bc9,bj){
+      S.globalAlpha=offl?0.1:0.8;
+      ["#3232c8","#161616","#c832c8","#161616"].forEach(function(bc9,bj){
         S.fillStyle=bc9;S.fillRect(sc.x+bj*sc.w/4,sc.y+sc.h*0.74,sc.w/4+1,sc.h*0.26);});
       S.globalAlpha=1;
     }else if(kind===5){
       // a test card: crosshair, circle, resolution wedges — frozen
-      S.fillStyle=offl?"rgba(10,12,16,1)":"rgba(24,28,36,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
-      S.strokeStyle="rgba(190,206,232,"+(offl?0.1:0.34)+")";S.lineWidth=1;
+      S.fillStyle=offl?"rgba(10,12,16,1)":"rgba(88,102,122,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
+      S.strokeStyle="rgba(224,236,255,"+(offl?0.1:0.8)+")";S.lineWidth=1;
       S.beginPath();S.arc(sc.x+sc.w/2,sc.y+sc.h/2,Math.min(sc.w,sc.h)*0.36,0,7);S.stroke();
       S.beginPath();S.moveTo(sc.x+sc.w/2,sc.y+2);S.lineTo(sc.x+sc.w/2,sc.y+sc.h-2);
       S.moveTo(sc.x+2,sc.y+sc.h/2);S.lineTo(sc.x+sc.w-2,sc.y+sc.h/2);S.stroke();
       for(var wg9=0;wg9<6;wg9++){
-        S.fillStyle="rgba(190,206,232,"+(offl?0.08:0.26)+")";
+        S.fillStyle="rgba(224,236,255,"+(offl?0.08:0.7)+")";
         S.fillRect(sc.x+6+wg9*5,sc.y+sc.h*0.72,1.4+wg9*0.5,7);}
     }else if(kind===7){
       // a camera still working: a dim room with a slow horizontal pan
-      S.fillStyle=offl?"rgba(6,8,12,1)":"rgba(14,20,28,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
+      // RUN 1 · LOOP 1 (squiddy) — lifted with the rest of the wall
+      S.fillStyle=offl?"rgba(6,8,12,1)":"rgba(38,52,70,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
       var pan=Math.sin(t*0.13+si)*sc.w*0.1;
-      S.fillStyle="rgba(60,76,98,"+(offl?0.14:0.5)+")";
+      S.fillStyle="rgba(112,138,170,"+(offl?0.14:0.85)+")";
       S.fillRect(sc.x+pan,sc.y+sc.h*0.55,sc.w,sc.h*0.45);
-      S.fillStyle="rgba(84,104,132,"+(offl?0.1:0.34)+")";
+      S.fillStyle="rgba(150,176,208,"+(offl?0.1:0.7)+")";
       S.fillRect(sc.x+sc.w*0.2+pan,sc.y+sc.h*0.3,sc.w*0.16,sc.h*0.3);
       S.fillRect(sc.x+sc.w*0.62+pan,sc.y+sc.h*0.38,sc.w*0.2,sc.h*0.22);
       if(!offl){S.fillStyle="rgba(236,90,60,0.7)";
@@ -941,7 +963,11 @@ function drawRoom(t,st){
       var ox=Math.floor((Math.sin(si*3.1+t*sc.sp*9)*0.5+0.5)*64);
       var oy=Math.floor((t*sc.sp*140+si*17)%64);
       var blown=(kind===8);                       // one or two are over-driven
-      S.globalAlpha=(offl?0.08:(blown?0.62:0.38))+(offl?0:0.09*Math.sin(t*sc.sp*2+sc.ph));
+      // RUN 1 · LOOP 1 (squiddy) — a snowing tube GLOWS: a cold blue base
+      // under the noise, and the noise itself near opaque, so the face sits
+      // clearly above the wall value instead of matching its own bezel
+      if(!offl){S.fillStyle="rgba(96,116,146,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);}
+      S.globalAlpha=(offl?0.08:(blown?0.85:0.66))+(offl?0:0.09*Math.sin(t*sc.sp*2+sc.ph));
       for(var gx=-1;gx<Math.ceil(sc.w/64)+1;gx++)
         for(var gy=-1;gy<Math.ceil(sc.h/64)+1;gy++)
           S.drawImage(NOISE,sc.x+gx*64-ox,sc.y+gy*64-oy);
@@ -1004,9 +1030,15 @@ function drawRoom(t,st){
     S.fillStyle="rgba(150,170,200,"+(0.035*lit)+")";
     S.beginPath();S.moveTo(sc.x,sc.y+sc.h*0.7);S.lineTo(sc.x+sc.w*0.55,sc.y);
     S.lineTo(sc.x+sc.w*0.78,sc.y);S.lineTo(sc.x,sc.y+sc.h);S.closePath();S.fill();S.restore();
-    if(!offl){S.save();S.globalCompositeOperation="lighter";
-      var sg8=S.createRadialGradient(sc.x+sc.w/2,sc.y+sc.h/2,4,sc.x+sc.w/2,sc.y+sc.h/2,sc.w*0.9);
-      sg8.addColorStop(0,"rgba(126,148,182,0.13)");sg8.addColorStop(1,"rgba(120,140,170,0)");
+    /* RUN 1 · LOOP 1 (squiddy) — the SPILL. One generic 0.13 wash for every
+       screen, dead ones included, read as fog. Now: no glow at all off a
+       dead tube, and each live face throws a local glow in ITS OWN hue onto
+       its bezel and the wall round it — per-object, not a region wash. */
+    var deadFace=(kind===4)||si===9||si===17;
+    if(!offl&&!deadFace){S.save();S.globalCompositeOperation="lighter";
+      var hue8=(kind===2||kind===9)?"206,196,176":(kind===5?"170,190,220":(kind===7?"120,158,198":"146,170,210"));
+      var sg8=S.createRadialGradient(sc.x+sc.w/2,sc.y+sc.h/2,4,sc.x+sc.w/2,sc.y+sc.h/2,sc.w*0.95);
+      sg8.addColorStop(0,"rgba("+hue8+",0.36)");sg8.addColorStop(0.5,"rgba("+hue8+",0.13)");sg8.addColorStop(1,"rgba("+hue8+",0)");
       S.fillStyle=sg8;S.fillRect(sc.x-sc.w,sc.y-sc.h,sc.w*3,sc.h*3);S.restore();}
   });
   // the last ceiling tube, strobing
@@ -1370,18 +1402,17 @@ function drawRoom(t,st){
     S.strokeStyle="rgba(1,3,6,0.65)";S.lineWidth=1.2;rrS(ox2-40,oy2-46,86,48,3);S.stroke();
     S.fillStyle="rgba(1,3,6,0.9)";S.fillRect(ox2-33,oy2-40,72,29);
     if(!offl){
+      /* RUN 1 · LOOP 1 (squiddy) — the one screen still doing its job was
+         dimmer than the wall behind it and dropped nothing on the desk.
+         Face value up (it is a live terminal), log lines near full. */
       var osg=S.createLinearGradient(0,oy2-40,0,oy2-11);
-      osg.addColorStop(0,"rgba(96,186,206,0.2)");osg.addColorStop(1,"rgba(96,186,206,0.05)");
+      osg.addColorStop(0,"rgba(108,196,216,0.66)");osg.addColorStop(1,"rgba(96,186,206,0.28)");
       S.fillStyle=osg;S.fillRect(ox2-33,oy2-40,72,29);
-      S.fillStyle="rgba(150,226,242,"+(0.55*lit)+")";     // a log still scrolling
+      S.fillStyle="rgba(190,240,252,"+(0.95*lit)+")";     // a log still scrolling
       for(var ol=0;ol<5;ol++)
         S.fillRect(ox2-29,oy2-36+ol*5,26+((ol*29+Math.floor(t*0.7))%34),1.4);
       S.fillStyle="rgba(0,0,0,0.3)";
-      for(var osl=0;osl<29;osl+=3)S.fillRect(ox2-33,oy2-40+osl,72,1.1);
-      S.save();S.globalCompositeOperation="lighter";       // it lights the desk
-      var odg=S.createRadialGradient(ox2+3,oy2-24,4,ox2+3,oy2-24,110);
-      odg.addColorStop(0,"rgba(110,196,220,0.16)");odg.addColorStop(1,"rgba(110,196,220,0)");
-      S.fillStyle=odg;S.beginPath();S.arc(ox2+3,oy2-24,110,0,7);S.fill();S.restore();}
+      for(var osl=0;osl<29;osl+=3)S.fillRect(ox2-33,oy2-40+osl,72,1.1);}
     S.fillStyle="rgba(206,224,255,0.05)";
     poly(S,[[ox2-33,oy2-16],[ox2-8,oy2-40],[ox2+6,oy2-40],[ox2-33,oy2-11]]);S.fill();
     // the pilot lamps on the monitor's chin
@@ -1414,6 +1445,17 @@ function drawRoom(t,st){
       S.fillStyle="rgba(86,100,122,"+(0.3+0.2*lit)+")";
       S.fillRect(-17+kk2*4.7,-2.4+kr2*4,3.4,2.6);}
     S.restore();
+    /* RUN 1 · LOOP 1 (squiddy) — the terminal's spill, drawn AFTER the desk
+       top, mug and keyboard so it actually lands on them: a local cyan glow
+       pooling below the screen, in the screen's own hue. */
+    if(!offl){S.save();S.globalCompositeOperation="lighter";
+      var odg=S.createRadialGradient(ox2+3,oy2-22,4,ox2+3,oy2-22,120);
+      odg.addColorStop(0,"rgba(110,196,220,0.34)");odg.addColorStop(0.5,"rgba(110,196,220,0.12)");
+      odg.addColorStop(1,"rgba(110,196,220,0)");
+      S.fillStyle=odg;S.beginPath();S.arc(ox2+3,oy2-22,120,0,7);S.fill();
+      var odd=S.createRadialGradient(ox2-8,oy2+2,2,ox2-8,oy2+2,72);
+      odd.addColorStop(0,"rgba(120,206,228,0.22)");odd.addColorStop(1,"rgba(120,206,228,0)");
+      S.fillStyle=odd;S.beginPath();S.ellipse(ox2-8,oy2+2,72,20,0,0,7);S.fill();S.restore();}
     // the chair, pushed back and turned away
     /* ROUND 7 — the chair had a base and a stem and NO SEAT, at about a
        third of the size it should be for the nearest object in frame. It is
@@ -1758,9 +1800,23 @@ function drawScene(t,st){
     S.fillStyle=sh2;S.beginPath();S.ellipse(UX,GYS-2,200,20,0,0,7);S.fill();
   }else{
     var dr=Math.sin(t*0.53)*4;
-    var sh3=S.createRadialGradient(UX+dr,GYS+4,10,UX+dr,GYS+4,140);
-    sh3.addColorStop(0,"rgba(0,0,0,0.34)");sh3.addColorStop(0.55,"rgba(0,0,0,0.14)");sh3.addColorStop(1,"rgba(0,0,0,0)");
-    S.fillStyle=sh3;S.beginPath();S.ellipse(UX+dr,GYS+4,140,15,0,0,7);S.fill();
+    /* RUN 1 · LOOP 1 (squiddy) — "the creature stands on nothing". The old
+       pool was a 15px-tall smear pinned to the wall junction; the deck
+       directly beneath the hull's mass measured identical to open floor.
+       Still HOVERING — nothing touches — but the shadow now pools properly:
+       one broad soft ellipse under the hull reaching down the visible deck,
+       a tighter dark core, and fainter small pools under the lowest whip
+       tips, all in the room's soft-edged shadow language. */
+    var sh3=S.createRadialGradient(UX+dr,GYS+42,12,UX+dr,GYS+42,170);
+    sh3.addColorStop(0,"rgba(0,0,0,0.72)");sh3.addColorStop(0.5,"rgba(0,0,0,0.48)");sh3.addColorStop(1,"rgba(0,0,0,0)");
+    S.fillStyle=sh3;S.beginPath();S.ellipse(UX+dr,GYS+42,170,46,0,0,7);S.fill();
+    var sh4=S.createRadialGradient(UX+dr,GYS+62,8,UX+dr,GYS+62,120);
+    sh4.addColorStop(0,"rgba(0,0,0,0.58)");sh4.addColorStop(0.6,"rgba(0,0,0,0.32)");sh4.addColorStop(1,"rgba(0,0,0,0)");
+    S.fillStyle=sh4;S.beginPath();S.ellipse(UX+dr,GYS+62,120,26,0,0,7);S.fill();
+    [[-166,28],[-64,44],[40,48],[75,42],[150,40]].forEach(function(wp){
+      var shw=S.createRadialGradient(UX+dr+wp[0],GYS+wp[1],2,UX+dr+wp[0],GYS+wp[1],34);
+      shw.addColorStop(0,"rgba(0,0,0,0.34)");shw.addColorStop(1,"rgba(0,0,0,0)");
+      S.fillStyle=shw;S.beginPath();S.ellipse(UX+dr+wp[0],GYS+wp[1],34,9,0,0,7);S.fill();});
     S.save();S.globalCompositeOperation="lighter";
     var tp=S.createRadialGradient(UX+dr,GYS,4,UX+dr,GYS,180);
     tp.addColorStop(0,"rgba(255,45,34,0.07)");tp.addColorStop(1,"rgba(255,45,34,0)");
