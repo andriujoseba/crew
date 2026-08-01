@@ -176,6 +176,8 @@ session_acted() {
 }
 
 session_reply_tail() {
+  # SESSION END is space-delimited, so encode arbitrary reply prose as one
+  # token; the fleet floor decodes it for display.
   awk 'NF { line=$0 } END { printf "%s", substr(line, 1, 200) }' "$1" 2>/dev/null \
     | base64 | tr -d '\n'
 }

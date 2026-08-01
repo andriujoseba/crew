@@ -1694,12 +1694,10 @@ t session-codex-exec-is-yes yes "$(codex_acted)"
 claude_acted() {
   # shellcheck disable=SC1091
   source "$SHARED/conf/agents/claude.conf"
-  bot_session_acted "$SA_LOG" && printf yes || printf no
+  session_acted "$SA_LOG"
 }
 printf 'Claude Code\nfinal answer: I need more information.\n' >"$SA_LOG"
-t session-claude-no-tool-is-no no "$(claude_acted)"
-printf 'Claude Code\n⏺ Bash(git status)\nfinal answer: done\n' >"$SA_LOG"
-t session-claude-tool-is-yes yes "$(claude_acted)"
+t session-claude-print-log-is-unknown unknown "$(claude_acted)"
 
 # Exercise run_session itself so a helper-only implementation cannot pass.
 SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"

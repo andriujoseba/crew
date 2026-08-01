@@ -180,6 +180,23 @@ t "message: session kind is 'operator'" operator "$(sed -n 's/^KIND=//p' "$BS_TM
 t "message: successful no-action session parses as no-op" no "$(sed -n 's/^ACTED=//p' "$BS_TMP/msg.parsed")"
 t "message: final reply tail parses for the floor" "LAST=$BS_PROMPT" "$(sed -n 's/^REPLY=//p' "$BS_TMP/msg.parsed")"
 
+# A profile without the optional action hook must stay honest: successful is
+# not evidence of action, and absence of a classifier is never a false no-op.
+sed '/^bot_session_acted()/d' "$BS_TMP/agent.conf" > "$BS_TMP/agent-hookless.conf"
+: > "$BS_M/duty/duty.log"
+printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
+HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  bash "$BS_SH" < "$BS_TMP/agent-hookless.conf" >/dev/null 2>&1
+for _ in $(seq 1 40); do
+  grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break
+  sleep 0.25
+done
+if grep -q 'SESSION END kind=operator key=floor rc=0 .* outcome=ok acted=unknown ' "$BS_M/duty/duty.log"; then
+  ok "message: hookless profile records acted=unknown"
+else
+  fail "message: hookless profile records acted=unknown" "$(cat "$BS_M/duty/duty.log")"
+fi
+
 # A failing vendor CLI must be recorded as FAILED with its real rc, not swallowed.
 cat > "$BS_M/bin/fake-cli" <<'EOF'
 #!/usr/bin/env bash
