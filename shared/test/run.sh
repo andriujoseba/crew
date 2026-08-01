@@ -38,6 +38,7 @@ source "$SHARED/lib/common.sh"
 # assertions make removing either half of the suite guard fail visibly.
 if grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
 t suite-unsets-ambient-crew-config guarded "$r1"
+# shellcheck disable=SC2016  # Match the literal assignment in this file.
 if grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
 t suite-pins-empty-xdg-config guarded "$r1"
 

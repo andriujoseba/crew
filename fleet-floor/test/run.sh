@@ -75,6 +75,7 @@ if grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG DUTY_DIR' "$HERE
 else
   fail "suite unsets ambient crew and duty config" "guard missing"
 fi
+# shellcheck disable=SC2016  # Match the literal assignment in this file.
 if grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/run.sh"; then
   ok "suite pins empty XDG config"
 else
