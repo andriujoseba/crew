@@ -31,6 +31,52 @@ export HOME="${HOME:-$TMP}"
 # shellcheck disable=SC1091
 source "$SHARED/lib/common.sh"
 
+# List prompt slots omitted by engine render sites. Calls are folded to one
+# logical line first; advancing past only the opening "$(`` also finds nested
+# render_prompt calls such as review.txt's ONESHOT_RULES argument.
+render_site_missing_slots() {  # render_site_missing_slots PROMPTS SOURCE...
+  local prompts="$1" source site call rest prompt slot supplied
+  shift
+  for source in "$@"; do
+    while IFS='|' read -r site call; do
+      [ -n "$call" ] || continue
+      rest="${call#*render_prompt }"
+      prompt="${rest%%[[:space:]]*}"
+      [ -f "$prompts/$prompt" ] || continue
+      supplied="$(printf '%s\n' "$call" | grep -oE '[A-Z_][A-Z_]*=' | tr -d '=' | sort -u)"
+      while read -r slot; do
+        [ -n "$slot" ] || continue
+        case "$slot" in
+          DOCTRINE_ENTRYPOINT|DOCTRINE_TRIAGE|DOCTRINE_BUILDER|DOCTRINE_REVIEWER) continue ;;
+        esac
+        if ! grep -qx "$slot" <<<"$supplied"; then
+          printf '%s:%s: %s missing %s\n' "$source" "$site" "$prompt" "$slot"
+        fi
+      done < <(grep -oE '\{\{[A-Z_][A-Z_]*\}\}' "$prompts/$prompt" \
+        | tr -d '{}' | sort -u)
+    done < <(awk '
+      function calls(text, line, rest, tail, endpos, call) {
+        rest = text
+        while (match(rest, /\$\(render_prompt[[:space:]]+/)) {
+          tail = substr(rest, RSTART)
+          endpos = index(tail, ")")
+          call = endpos ? substr(tail, 1, endpos) : tail
+          print line "|" call
+          rest = substr(rest, RSTART + 2)
+        }
+      }
+      {
+        if (buf == "") start = NR
+        buf = buf $0
+        if (sub(/\\[[:space:]]*$/, "", buf)) next
+        calls(buf, start)
+        buf = ""
+      }
+      END { if (buf != "") calls(buf, start) }
+    ' "$source")
+  done
+}
+
 # --- read_repo_list: comments (incl. inline), blanks, whitespace, missing
 # trailing newline
 printf '# a comment\nheavy-duty/ceremony\n\n  heavy-duty/rig  # inline note\n# tail\nheavy-duty/incubator' >"$TMP/repos.txt"
@@ -2241,6 +2287,60 @@ for prompt_path in "$SHARED"/prompts/*.txt; do
 done
 t doctrine-custom-no-shipped-name-leaks "" "$doctrine_leaks"
 t doctrine-custom-no-unresolved-slots "" "$doctrine_unresolved"
+
+# Every engine render site must fill every prompt slot. render_prompt leaves
+# unknown slots literal deliberately, so this belongs in CI rather than the
+# runtime tick. The fixture mutations prove both missing-argument failure
+# shapes and the built-in doctrine exemption.
+render_sources=("$SHARED"/lib/*.sh "$SHARED"/bin/*.sh)
+t render-sites-supply-every-prompt-slot "" \
+  "$(render_site_missing_slots "$SHARED/prompts" "${render_sources[@]}")"
+
+RS_PROMPTS="$TMP/render-site-prompts"
+RS_SOURCE="$TMP/render-site.sh"
+mkdir -p "$RS_PROMPTS"
+printf 'required {{GIVEN}} {{MISSING}} {{DOCTRINE_BUILDER}}' >"$RS_PROMPTS/fixture.txt"
+# shellcheck disable=SC2016  # fixture source must contain the literal expansion
+printf 'x="$(render_prompt fixture.txt GIVEN="$value")"\n' >"$RS_SOURCE"
+render_missing="$(render_site_missing_slots "$RS_PROMPTS" "$RS_SOURCE")"
+case "$render_missing" in
+  *"$RS_SOURCE:1: fixture.txt missing MISSING"*) r1=named ;;
+  *) r1="$render_missing" ;;
+esac
+t render-sites-name-missing-slot named "$r1"
+if grep -q 'DOCTRINE_BUILDER' <<<"$render_missing"; then r1=FLAGGED; else r1=exempt; fi
+t render-sites-exempt-built-in-doctrine exempt "$r1"
+
+printf 'required {{GIVEN}} {{ANYTHING}}' >"$RS_PROMPTS/fixture.txt"
+render_missing="$(render_site_missing_slots "$RS_PROMPTS" "$RS_SOURCE")"
+case "$render_missing" in *'missing ANYTHING'*) r1=failed ;; *) r1=MISSED ;; esac
+t render-sites-new-slot-without-argument-fails failed "$r1"
+
+cp "$BMOD" "$TMP/duty-builder-missing-round.sh"
+# shellcheck disable=SC2016  # removing the module's literal argument
+sed -i 's/ ROUND_RULES="$round_rules"//' "$TMP/duty-builder-missing-round.sh"
+render_missing="$(render_site_missing_slots "$SHARED/prompts" "$TMP/duty-builder-missing-round.sh")"
+case "$render_missing" in *'ci-red.txt missing ROUND_RULES'*) r1=failed ;; *) r1=MISSED ;; esac
+t render-sites-ci-red-missing-round-rules-fails failed "$r1"
+
+cp "$SHARED/lib/duty-attention.sh" "$TMP/duty-attention-missing-answered.sh"
+# shellcheck disable=SC2016  # removing the module's literal argument
+sed -i 's/ MARK_ANSWERED="$MARK_ANSWERED"//' "$TMP/duty-attention-missing-answered.sh"
+render_missing="$(render_site_missing_slots "$SHARED/prompts" "$TMP/duty-attention-missing-answered.sh")"
+case "$render_missing" in *'fragment-round-rules.txt missing MARK_ANSWERED'*) r1=failed ;; *) r1=MISSED ;; esac
+t render-sites-attention-missing-answered-fails failed "$r1"
+
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
+if grep -q '{{ROUND_RULES}}' "$SHARED/prompts/ci-red.txt" \
+  && grep -q 'ROUND_RULES="$round_rules"' "$BMOD"; then r1=rendered; else r1=MISSING; fi
+t ci-red-renders-round-rules rendered "$r1"
+if grep -q 'signal is' "$SHARED/prompts/ci-red.txt" \
+  && ! grep -q "let the new head's check speak for itself" "$SHARED/prompts/ci-red.txt"; then
+  r1=signals
+else
+  r1=STALE
+fi
+t ci-red-fix-ends-in-signal signals "$r1"
 if grep -REq 'AGENTS\.md|TRIAGE\.md|BUILDER\.md|REVIEWER\.md' "$SHARED/prompts"; then
   r1=HARDCODED
 else
