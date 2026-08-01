@@ -204,6 +204,18 @@ if [ "$BROWSER" -eq 1 ]; then
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"
 
+    # The #226 acceptance criteria: deterministic stills (zero steady-state
+    # builds), bounded portrait motion, reproducible dev renders, reduced
+    # motion. Runs on DEMO because its roster is static — the "stable roster"
+    # the claims are about.
+    echo
+    echo "== portrait motion (#226)"
+    if node "$HERE/motion.js" "file://$FLOOR/index.html"; then
+      ok "portrait motion: #226 acceptance criteria"
+    else
+      fail "portrait motion: #226 acceptance criteria" "see output above"
+    fi
+
     # Killed collector, on its own throwaway instance so the walk above keeps
     # the one it was using.
     echo

@@ -105,6 +105,21 @@ visible banding in the darkest gradients. The sixteen-frame files above do not
 show it, and the fix is not a per-frame palette — it is fewer frames or more
 light, and neither is worth having.
 
+## The cell cadence fix (#226)
+
+One working tile from the live DEMO floor, 36 frames at ~100ms, before and
+after the deterministic-still redesign. Before: the portrait teleports
+between breath poses every refresh while the AR overlays animate smoothly on
+top — the "broken renderer" read the issue was filed about. After: the
+subject moves continuously (sub-pixel composite-time bob), the pose never
+jumps, and lag exists only as the occasional performed glitch.
+
+### before — sampled cadence
+![cell, before #226](shots/gifs/cell-cadence-before.gif)
+
+### after — deterministic still + composite motion
+![cell, after #226](shots/gifs/cell-cadence-after.gif)
+
 ## Rendering any revision
 
 Nothing had to be reconstructed to build this, and nothing will next time:
