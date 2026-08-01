@@ -232,9 +232,11 @@ CREW_BIN="$SOURCE_TREE/cli/crew"
 printf '%s %s %s\n' "$BOX_NAME" "$AGENT" "$ROLE" >"$DRILL_CONFIG/fleet.roster"
 # The registry must be NON-EMPTY: production_registry()'s grep exits 1 when it
 # matches nothing, and under `set -o pipefail` that kills `crew hire` silently
-# via set -e. It must also never BE the production registry -- `crew init`
-# copies examples/repos.txt, which is production, and seeding a drill box from
-# it is how #51 happened. The slug is resolvable from the HOST's gh identity
+# via set -e. `crew init` cannot supply one -- since #216 it copies an
+# examples/repos.txt that ships EMPTY, precisely so a scaffold is aimed at
+# nothing -- and it must never be a production registry either, because
+# seeding a drill box from one is how #51 happened. So the drill writes its
+# own, naming a sandbox repo it mints itself. The slug is resolvable from the HOST's gh identity
 # (the BOX stays creds-free); phase 2 mints the repo itself.
 DRILL_HOST_ME="$(gh api user --jq .login 2>/dev/null || echo crew-drill)"
 printf '%s/crew-drill-%s\n' "$DRILL_HOST_ME" "$ROLE" >"$DRILL_CONFIG/repos.txt"

@@ -201,7 +201,12 @@ else
   fail "untouched registry converges an added repo through crew upgrade" "$(tail -8 "$TMP/upgrade.out")"
 fi
 
-# 4. With no operator directory selected, examples/ is a seed, not authority.
+# 4. With no operator directory selected, examples/ is a seed, not authority —
+# and since #216 it is not even that: a mutating verb REFUSES there outright.
+# Both halves are asserted. Containment alone would now pass vacuously (a verb
+# that never runs converges nothing), and a drill that cannot tell "refused"
+# from "ran and declined" is exactly the drill that stops noticing when the
+# refusal is lost.
 bx "printf '%s\n' drill/fallback-contained > ~/duty/repos.txt; rm -f ~/duty/.repos.txt.crew-provenance"
 (
   cd "$ROOT/examples"
@@ -212,6 +217,27 @@ if registry_is drill/fallback-contained; then
   ok "examples fallback does not converge an existing registry"
 else
   fail "examples fallback does not converge an existing registry" "$(tail -8 "$TMP/fallback.out")"
+fi
+if grep -qF "refuses under the shipped example fleet definition" "$TMP/fallback.out" &&
+   grep -qF "crew init" "$TMP/fallback.out"; then
+  ok "examples fallback refuses to upgrade at all, and names crew init"
+else
+  fail "examples fallback refuses to upgrade at all, and names crew init" "$(tail -8 "$TMP/fallback.out")"
+fi
+
+# 4a. ...and the read-only verbs still work there, banner and all. This is the
+# half a real host needs: refusing everything would leave an operator with no
+# way to see WHY their unconfigured host refuses.
+(
+  cd "$ROOT/examples"
+  XDG_CONFIG_HOME="$TMP/no-such-xdg" \
+    env -u CREW_CONFIG_DIR -u CREW_EXPECT_OPERATOR_CONFIG "$CREW" status
+) >"$TMP/fallback-status.out" 2>&1 || true
+if grep -qF "NO operator fleet definition" "$TMP/fallback-status.out"; then
+  ok "examples fallback still reports status, and says what it is reading"
+else
+  fail "examples fallback still reports status, and says what it is reading" \
+    "$(tail -8 "$TMP/fallback-status.out")"
 fi
 
 # 5. A roster alone is not allowed to borrow the rest from examples/.

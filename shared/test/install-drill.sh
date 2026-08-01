@@ -168,7 +168,7 @@ fi
 if prod="$("$DRIVER" --box crew-drill-reviewer --tree "$ROOT" \
     --registry "$ROOT/examples/repos.txt" --dry-run 2>&1)"; then
   bad "production-registry-refuses"
-elif [[ "$prod" == *"refusing production registry"* &&
+elif [[ "$prod" == *"byte-equivalent to the shipped examples/repos.txt scaffold"* &&
         "$prod" == *"narrowed, non-production repos.txt"* ]]; then
   ok "production-registry-refuses-and-explains"
 else

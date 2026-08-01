@@ -2555,6 +2555,190 @@ t cli-adopt-not-in-help hidden "$r1"
 relisted="$(sed -n '2,/^set -euo pipefail/p' "$CLIBIN" | grep -cE '^#[[:space:]]+crew [a-z-]+' || true)"
 t cli-header-is-not-a-command-list 0 "$relisted"
 
+# --- the examples fallback creates and arms NOTHING (#216) ------------------
+# A host with no operator config at all resolves to $CREW_ROOT/examples and,
+# before this, presented as a fully configured seven-box fleet: `crew up`
+# there created seven boxes and armed cron against the three live
+# repositories the shipped registry then named. The fallback itself stays —
+# it is deliberate and the config rehearsal covers it. What it loses is the
+# ability to create or arm.
+#
+# The fixture must reproduce the REPORTED environment exactly, because every
+# other test in this file arrives here through a configured path: HOME with no
+# .config/crew, XDG unset, CREW_CONFIG_DIR unset, and a $PWD carrying no
+# fleet.roster. Get any one of those wrong and resolution lands on an operator
+# directory, CONFIG_IS_OPERATOR is 1, and the whole block asserts nothing.
+FBHOME="$TMP/fallback-home"
+FBPWD="$TMP/fallback-pwd"
+mkdir -p "$FBHOME" "$FBPWD"
+fbcrew() {  # stdout+stderr, from the unconfigured host
+  (cd "$FBPWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+    HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$CLIBIN" "$@" 2>&1)
+}
+fbrc() {
+  (cd "$FBPWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+    HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$CLIBIN" "$@" >/dev/null 2>&1)
+  echo $?
+}
+
+# The fixture proves itself first: if this says operator, every assertion
+# below is vacuous.
+case "$(fbcrew status)" in
+  *"NO operator fleet definition"*) r1=fallback ;;
+  *) r1=OPERATOR ;;
+esac
+t cli-fallback-fixture-is-really-the-fallback fallback "$r1"
+
+# Every mutating verb refuses, and every one of them names `crew init` — the
+# refusal is only useful if it says what to do instead. Asserted per verb
+# rather than on a sample: the defect was per-call-site and so is the fix.
+refused="" unnamed=""
+while IFS= read -r spec; do
+  [ -n "$spec" ] || continue
+  # shellcheck disable=SC2086  # splitting the spec into argv is the point
+  [ "$(fbrc $spec)" != 0 ] || refused="$refused [$spec]"
+  # shellcheck disable=SC2086
+  case "$(fbcrew $spec)" in *"crew init"*) : ;; *) unnamed="$unnamed [$spec]" ;; esac
+done <<'SPECS'
+new claude-triage
+create-all
+hire claude-triage
+hire-all
+up
+down
+upgrade --all
+gold somebox
+SPECS
+t cli-fallback-mutating-verbs-refuse "" "$refused"
+t cli-fallback-refusal-names-crew-init "" "$unnamed"
+
+# ...and the read-only verbs still WORK, because inspecting a host in this
+# state is exactly what they are for. A fix that made `crew status` refuse
+# would take away the one instrument that explains the refusals.
+t cli-fallback-status-still-works   0 "$(fbrc status)"
+t cli-fallback-profiles-still-works 0 "$(fbrc profiles)"
+t cli-fallback-dry-run-still-works  0 "$(fbrc up --dry-run)"
+
+# Each of them says what it is reading. The reported symptom was a table
+# nobody could tell apart from a configured fleet's, so the banner is the
+# fix's user-visible half and is asserted by content, not by presence.
+bannerless=""
+for verb in status profiles; do
+  case "$(fbcrew "$verb")" in
+    *"NO operator fleet definition"*"$ROOT/examples"*) : ;;
+    *) bannerless="$bannerless [$verb]" ;;
+  esac
+done
+case "$(fbcrew up --dry-run)" in
+  *"NO operator fleet definition"*"$ROOT/examples"*) : ;;
+  *) bannerless="$bannerless [up --dry-run]" ;;
+esac
+t cli-fallback-read-only-verbs-banner "" "$bannerless"
+
+# The banner is on stderr, so the tables stay machine-readable: a row-parsing
+# caller must not have to filter it back out. This is the assertion that keeps
+# a later "make it more visible" edit from breaking every such caller silently.
+fb_stdout="$( (cd "$FBPWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+  HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$CLIBIN" status 2>/dev/null) )"
+case "$fb_stdout" in
+  *"NO operator fleet definition"*) r1=ON_STDOUT ;;
+  *MEMBER*) r1=rows-only ;;
+  *) r1="$fb_stdout" ;;
+esac
+t cli-fallback-banner-is-on-stderr rows-only "$r1"
+
+# THE REGRESSION THAT MATTERS MORE THAN THE BUG: a real fleet must behave
+# exactly as before. A fix that makes configured hosts refuse is a fleet
+# outage; the bug it replaces is one confusing table.
+OPCONF="$TMP/op-config"
+mkdir -p "$OPCONF"
+cp "$ROOT/examples/fleet.roster" "$ROOT/examples/fleet.conf" "$OPCONF/"
+printf '# an operator registry\nfixture/operator-repo\n' >"$OPCONF/repos.txt"
+printf '# an operator notify registry\nfixture/operator-repo\n' >"$OPCONF/notify-repos.txt"
+opcrew() {
+  (cd "$FBPWD" && env -u XDG_CONFIG_HOME -u CREW_ROSTER CREW_CONFIG_DIR="$OPCONF" \
+    HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$CLIBIN" "$@" 2>&1)
+}
+overreach=""
+while IFS= read -r spec; do
+  [ -n "$spec" ] || continue
+  # shellcheck disable=SC2086  # splitting the spec into argv is the point
+  case "$(opcrew $spec)" in
+    *"refuses under the shipped example"*|*"NO operator fleet definition"*)
+      overreach="$overreach [$spec]" ;;
+  esac
+done <<'SPECS'
+status
+profiles
+up --dry-run
+new claude-triage
+create-all
+hire claude-triage
+hire-all
+up
+down
+upgrade --all
+gold somebox
+SPECS
+t cli-operator-config-never-refused-or-bannered "" "$overreach"
+
+# $PWD discovery is an operator definition too — the third resolution hop, and
+# the one a developer running crew from a config directory relies on. Banner
+# it and this fix breaks that workflow.
+pwdcrew_out="$(cd "$OPCONF" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+  HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$CLIBIN" status 2>&1)"
+case "$pwdcrew_out" in
+  *"NO operator fleet definition"*) r1=BANNERED ;;
+  *) r1=clean ;;
+esac
+t cli-pwd-discovery-is-operator clean "$r1"
+
+# The shipped registry ships EMPTY. Asserted by parsing rather than by diffing
+# a literal, so a future edit that re-adds a live repository reds this instead
+# of shipping a scaffold aimed at somebody else's board.
+t cli-examples-registry-is-empty 0 \
+  "$(grep -cvE '^[[:space:]]*(#|$)' "$ROOT/examples/repos.txt" || true)"
+
+# ...and the same must be true one hop later, of what an operator actually
+# gets: `crew init` seeds from examples/, so a fresh fleet definition starts
+# aimed at nothing and stays that way until the operator names a repo.
+INIT_TARGET="$TMP/init-seeded"
+init_rc="$(fbrc init "$INIT_TARGET")"
+t cli-init-still-works-under-fallback 0 "$init_rc"
+t cli-init-seeds-an-empty-registry 0 \
+  "$(grep -cvE '^[[:space:]]*(#|$)' "$INIT_TARGET/repos.txt" 2>/dev/null || true)"
+
+# Validation parity: the completeness check ran only for operator definitions,
+# so the LEAST trusted directory got the LEAST verification. Both directions
+# are asserted, because the property is that the check does not care who wrote
+# the directory.
+FBROOT="$TMP/fallback-root"
+mkdir -p "$FBROOT/cli"
+cp "$CLIBIN" "$FBROOT/cli/crew"
+cp "$ROOT/VERSION" "$FBROOT/VERSION"
+ln -s "$SHARED" "$FBROOT/shared"
+cp -R "$ROOT/examples" "$FBROOT/examples"
+rm -f "$FBROOT/examples/repos.txt"
+fb_incomplete="$( (cd "$FBPWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+  HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$FBROOT/cli/crew" status 2>&1) )"
+case "$fb_incomplete" in
+  *"is incomplete; missing: repos.txt"*) r1=refused ;;
+  *) r1="$fb_incomplete" ;;
+esac
+t cli-fallback-incompleteness-is-fatal refused "$r1"
+
+OPINCOMPLETE="$TMP/op-incomplete"
+mkdir -p "$OPINCOMPLETE"
+cp "$ROOT/examples/fleet.roster" "$ROOT/examples/fleet.conf" "$OPINCOMPLETE/"
+op_incomplete="$( (cd "$FBPWD" && env -u XDG_CONFIG_HOME -u CREW_ROSTER \
+  CREW_CONFIG_DIR="$OPINCOMPLETE" HOME="$FBHOME" PATH="$CLISHIM:$PATH" \
+  bash "$CLIBIN" status 2>&1) )"
+case "$op_incomplete" in
+  *"is incomplete; missing: repos.txt"*) r1=refused ;;
+  *) r1="$op_incomplete" ;;
+esac
+t cli-operator-incompleteness-is-fatal refused "$r1"
+
 # --- shared-ci's draft gate: the suite does not run on unfinished trees (#136)
 # Repo furniture, in the same family as valid_version-parity above: assertions
 # about a file the engine never executes, kept here because the property is
