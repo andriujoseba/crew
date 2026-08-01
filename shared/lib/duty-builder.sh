@@ -24,6 +24,33 @@ _gate_ready_for_open_pr() {
   return 1
 }
 
+# _ready_lines_to_commit PRE_LINES POST_IDS — preserve the whole enumerated
+# ready set only when the completed session declined every issue. If even one
+# pre-session id is no longer pickable, the session acted on the set and none
+# of the remaining (withheld) ready lines belongs in the ledger (#264).
+_ready_lines_to_commit() {
+  local pre_lines="$1" post_ids="$2" line id
+  [ -n "${pre_lines//[[:space:]]/}" ] || return 0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    id="${line%% *}"
+    printf '%s\n' "$post_ids" | grep -qxF "$id" || return 0
+  done <<<"$pre_lines"
+  printf '%s\n' "$pre_lines"
+}
+
+# Existing boxes may already have pickable work buried by the old whole-set
+# commit. Re-open every build signal once after upgrade; ready and round ids
+# share a key shape, so the old file cannot be narrowed safely (#264 D5).
+_repair_seen_build_264() {
+  local marker="$DUTY_DIR/.seen-build.repair-264"
+  [ -e "$marker" ] && return 0
+  rm -f "$DUTY_DIR/.seen-build"
+  find "$DUTY_DIR" -maxdepth 1 -type f -name '.suppressed-build.*' -delete 2>/dev/null || true
+  : >"$marker"
+  log "builder: repaired build ledgers for #264; cleared .seen-build and suppression state once"
+}
+
 # Author-side duty repos are repos.txt-scoped, like every other module
 # (danmt 2026-07-25). This previously swept the org, on the rationale that
 # cast#143's converged round sat unowed 40 minutes while every tick looked
@@ -230,6 +257,7 @@ _request_panel() {
 
 duty_builder() {
   local duty_repos R
+  _repair_seen_build_264
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
   _warn_unscoped_authored
 
@@ -548,7 +576,18 @@ _builder_repo() {
     # uncommitted so the next tick retries: declined and never-got-there must
     # not look the same to the ledger.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-      printf '%s\n%s\n' "$ready_items" "$cr_items" | ledger_commit "$DUTY_DIR/.seen-build"
+      local ready_commit="" post_ready_json post_ready_ids
+      if [ -n "${ready_items//[[:space:]]/}" ]; then
+        if post_ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
+          --json number,assignees 2>/dev/null)"; then
+          post_ready_ids="$(printf '%s' "$post_ready_json" | jq -r --arg repo "$R" \
+            '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number)"' 2>/dev/null || true)"
+          ready_commit="$(_ready_lines_to_commit "$ready_items" "$post_ready_ids")"
+        else
+          warn "$R: post-session ready re-query failed; committing no ready lines (#264)"
+        fi
+      fi
+      printf '%s\n%s\n' "$ready_commit" "$cr_items" | ledger_commit "$DUTY_DIR/.seen-build"
     fi
   else
     log "$R: no build duty"
