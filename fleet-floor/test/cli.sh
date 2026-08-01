@@ -1007,7 +1007,45 @@ else
        "$(cat "$CL_TMP/crew-out")"
 fi
 
-# 12. THE BUDGET. Convergence is read only for UN-HIRED boxes, so a healthy
+# 12. `crew up` runs the same roster loop through its OWN call site, and this
+#     suite exists partly because #47 and #48 were each present twice — once in
+#     `crew status`, once in `crew up` — so fixing one copy left the other
+#     broken. The skip is proved at that call site rather than inferred from
+#     hire-all's.
+#
+#     It skips TWO here, not three: `up` starts a stopped box before hiring it,
+#     so cli-stopped converges and is hired in the same run. That difference is
+#     the assertion — `up` is the steady-state verb and must not refuse a box
+#     merely because it found it switched off.
+crew_cmd up
+if grep -qE '^up: 2 box\(es\) SKIPPED' "$CL_TMP/crew-out" &&
+   grep -q 'cli-unconverged' "$CL_TMP/crew-out"; then
+  ok "crew up: skips the unconverged box, counts it, and names it"
+else
+  fail "crew up: skips the unconverged box, counts it, and names it" \
+       "$(grep -E '^up:' "$CL_TMP/crew-out" || cat "$CL_TMP/crew-out")"
+fi
+t "crew up: a skip is not success" 1 "$CL_RC"
+if grep -qE '^cli-stopped: started|^cli-stopped ' "$CL_TMP/crew-out" ||
+   grep -q 'started' "$CL_TMP/crew-out"; then
+  ok "crew up: a stopped box is started, then hired — not skipped for being off"
+else
+  fail "crew up: a stopped box is started, then hired — not skipped for being off" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+# Every healthy box still converged in the same run — the point of a skip
+# rather than an abort, and cli-unconverged is LAST in the roster.
+if grep -q 'hiring cli-disarmed' "$CL_TMP/crew-out"; then
+  ok "crew up: healthy boxes past the skip are still hired"
+else
+  fail "crew up: healthy boxes past the skip are still hired" \
+       "the loop stopped before the end of the roster"
+fi
+# `box start` wrote a state override; put the fixture back so the rows below
+# see the fleet the fixture file declares.
+rm -f "$CL_TMP/crew-state/cli-stopped.state"
+
+# 13. THE BUDGET. Convergence is read only for UN-HIRED boxes, so a healthy
 #     steady-state fleet pays no extra round trip at all. Asserted over the
 #     source rather than by counting calls: the read has to sit inside the
 #     `[ -z "$hired" ]` arm, and a later edit that hoists it out of there would
