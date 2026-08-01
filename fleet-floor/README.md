@@ -11,7 +11,13 @@ dependency-free `index.html` — no build tools, no network, no external assets:
   **heartbeat trace** that flatlines with the box, the open session's timer and
   a live **caption** naming the work item being handled. Up top: live counts,
   **state/role filters**, and fleet **time metrics**; along the bottom:
-  **active operations**, and a **fleet activity** stream.
+  **active operations**, and a **fleet activity** stream. The portrait in each
+  tile is a **deterministic still** — built once per (unit, state, size) at a
+  per-unit canonical time, on a supersampled sprite pass so every vendor lands
+  at the same effective resolution — animated at composite time by a sub-pixel
+  bob in the sprite's own rhythm, with a rare **glitch grammar** (displaced
+  slices, chroma splits, block smears) carrying the webcam fiction. Motion is
+  continuous; lag is performed, never rendered by accident (#226).
 - **Agent console** — click any unit to zoom into its full room. The robot is
   framed by an operator console: identity, vitals (box health, uptime, cron, repo),
   work queue, **access** links, a live **current-session** timer, **time metrics**,

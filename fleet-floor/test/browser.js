@@ -172,11 +172,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   /* The camera IS readable now: FLOORDEV.cam() (the whiteboard hook postdates
      the "reading the real camera would need a test hook" decision below, and
      the hook exists regardless). The fixed waits this replaced covered ~4
-     easing frames on a machine where a console dwell expires every visible
-     miniStill — each post-Escape floor frame then costs a full room render,
-     the camera lands half-scrolled, and a cell-centre click falls in a gap:
-     that was "15/17 boxes reached", twice, on an idle box. Poll convergence;
-     on timeout click anyway — every caller still verifies by outcome. */
+     easing frames on a slow machine — the camera lands half-scrolled and a
+     cell-centre click falls in a gap: that was "15/17 boxes reached", twice,
+     on an idle box. (When this was written, a console dwell also expired
+     every visible portrait still, making post-Escape frames build-heavy;
+     stills are deterministic and permanent since #226, but the easing-vs-
+     fixed-wait race is real on its own.) Poll convergence; on timeout click
+     anyway — every caller still verifies by outcome. */
   const camAt = () => page.evaluate(() => window.FLOORDEV.cam());
   const settleCam = async (want) => {
     for (let w = 0; w < 8000; w += 60) {
