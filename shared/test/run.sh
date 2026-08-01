@@ -2270,16 +2270,19 @@ EOF
 cat >"$OFSHIM/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_CALLS"
-case "${FOREIGN_ACTOR:-}" in
-  "") printf '[{"type":"IssuesEvent","actor":{"login":"local-triage"},"payload":{"action":"opened"}}]\n' ;;
-  *)  printf '[{"type":"IssuesEvent","actor":{"login":"%s"},"payload":{"action":"assigned","assignee":{"login":"%s"}}}]\n' \
+case "${EVENT_PAYLOAD:-readable}:$*" in
+  unreadable:*fixture/overlap*) printf '{"message":"API rate limit exceeded"}\n' ;;
+  unreadable:*) printf '[{"type":"IssuesEvent","actor":{"login":"other-builder"},"payload":{"action":"assigned","assignee":{"login":"other-builder"}}}]\n' ;;
+  empty:*) printf '[]\n' ;;
+  readable:*) printf '[{"type":"IssuesEvent","actor":{"login":"local-triage"},"payload":{"action":"opened"}}]\n' ;;
+  foreign:*) printf '[{"type":"IssuesEvent","actor":{"login":"%s"},"payload":{"action":"assigned","assignee":{"login":"%s"}}}]\n' \
         "$FOREIGN_ACTOR" "$FOREIGN_ACTOR" ;;
 esac
 EOF
 chmod +x "$OFSHIM/box" "$OFSHIM/gh"
 before_registry="$(cat "$OFROOT/repos.txt")"
 GH_CALLS="$TMP/overlap-gh-calls"
-overlap_out="$(env CREW_CONFIG_DIR="$OFROOT" FOREIGN_ACTOR=other-builder GH_CALLS="$GH_CALLS" \
+overlap_out="$(env CREW_CONFIG_DIR="$OFROOT" EVENT_PAYLOAD=foreign FOREIGN_ACTOR=other-builder GH_CALLS="$GH_CALLS" \
   PATH="$OFSHIM:$PATH" bash "$ROOT/cli/crew" up --dry-run 2>&1)"
 case "$overlap_out" in
   *"WARN one-repo-one-fleet: foreign claim by @other-builder in registered repo fixture/overlap"*) r1=named ;;
@@ -2295,6 +2298,31 @@ disjoint_out="$(env CREW_CONFIG_DIR="$OFROOT" GH_CALLS="$GH_CALLS" PATH="$OFSHIM
 case "$disjoint_out" in *"WARN one-repo-one-fleet"*) r1=NOISY ;; *) r1=silent ;; esac
 t fleet-disjoint-is-silent silent "$r1"
 t fleet-disjoint-does-not-edit-registry "$before_registry" "$(cat "$OFROOT/repos.txt")"
+
+printf 'fixture/overlap\nfixture/later\n' >"$OFROOT/repos.txt"
+if unreadable_out="$(env CREW_CONFIG_DIR="$OFROOT" EVENT_PAYLOAD=unreadable GH_CALLS="$GH_CALLS" \
+  PATH="$OFSHIM:$PATH" bash "$ROOT/cli/crew" up --dry-run 2>&1)"; then
+  r1=survived
+else
+  r1=FAILED
+fi
+t fleet-overlap-unreadable-payload-survives survived "$r1"
+case "$unreadable_out" in
+  *"NOTE one-repo-one-fleet: unreadable recent board activity for fixture/overlap"*"overlap detection skipped"*) r1=named ;;
+  *) r1=SILENT ;;
+esac
+t fleet-overlap-unreadable-payload-names-repo named "$r1"
+case "$unreadable_out" in
+  *"WARN one-repo-one-fleet: foreign claim by @other-builder in registered repo fixture/later"*) r1=continued ;;
+  *) r1=STOPPED ;;
+esac
+t fleet-overlap-unreadable-payload-continues continued "$r1"
+
+empty_out="$(env CREW_CONFIG_DIR="$OFROOT" EVENT_PAYLOAD=empty GH_CALLS="$GH_CALLS" \
+  PATH="$OFSHIM:$PATH" bash "$ROOT/cli/crew" up --dry-run 2>&1)"
+case "$empty_out" in *"one-repo-one-fleet"*) r1=NOISY ;; *) r1=silent ;; esac
+t fleet-overlap-empty-array-is-silent silent "$r1"
+printf 'fixture/overlap\n' >"$OFROOT/repos.txt"
 if grep -q 'repos/fixture/outside/events' "$GH_CALLS"; then r1=QUERIED; else r1=silent; fi
 t fleet-out-of-scope-activity-is-not-queried silent "$r1"
 

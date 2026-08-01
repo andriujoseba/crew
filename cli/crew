@@ -1149,7 +1149,7 @@ fleet_identities() {
 # only operators decide which fleet keeps a repo, and this path never writes a
 # registry (crew#70, option 2).
 foreign_actor_check() {
-  local allowed repo events finding action actor
+  local allowed repo events parsed finding action actor
   allowed="$(fleet_identities | sed '/^$/d' | sort -u)"
 
   while read -r repo; do
@@ -1157,7 +1157,7 @@ foreign_actor_check() {
       echo "crew: NOTE one-repo-one-fleet: could not inspect recent board activity for $repo; overlap detection skipped" >&2
       continue
     fi
-    finding="$(printf '%s' "$events" | jq -r '
+    if ! parsed="$(printf '%s' "$events" | jq -r '
       .[] |
       if .type == "IssuesEvent" and .payload.action == "assigned" then
         ["claim", (.payload.assignee.login // .actor.login)]
@@ -1170,12 +1170,17 @@ foreign_actor_check() {
         ["verdict", .actor.login]
       else empty end |
       select(.[1] != null) | @tsv
-    ' 2>/dev/null | while IFS=$'\t' read -r action actor; do
+    ' 2>&1)"; then
+      echo "crew: NOTE one-repo-one-fleet: unreadable recent board activity for $repo ($parsed); overlap detection skipped" >&2
+      continue
+    fi
+    [ -n "$parsed" ] || continue
+    finding="$(while IFS=$'\t' read -r action actor; do
       if ! grep -Fxq "$actor" <<<"$allowed"; then
         printf '%s\t%s\n' "$action" "$actor"
         break
       fi
-    done)"
+    done <<<"$parsed")"
     [ -n "$finding" ] || continue
     IFS=$'\t' read -r action actor <<<"$finding"
     echo "crew: WARN one-repo-one-fleet: foreign $action by @$actor in registered repo $repo indicates another fleet may also govern it." >&2
