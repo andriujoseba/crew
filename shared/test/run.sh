@@ -2642,6 +2642,73 @@ t cli-empty-option-value-is-2 2 "$(crewrc new --agent "")"
 t cli-hire-all-unknown-flag-is-2 2 "$(crewrc hire-all --dry-run)"
 t cli-up-unknown-flag-is-2       2 "$(crewrc up --bogus)"
 t cli-up-dry-run-still-works     0 "$(crewrc up --dry-run)"
+
+# create-all is a fleet convergence verb: one failed box must not prevent the
+# remaining roster rows from being attempted, and the final report is the
+# operator's record of the partial run (#219).
+CACONF="$TMP/create-all-config"
+CASHIM="$TMP/create-all-bin"
+CA_CALLS="$TMP/create-all-calls"
+mkdir -p "$CACONF" "$CASHIM"
+cp "$ROOT/examples/fleet.conf" "$ROOT/examples/repos.txt" \
+  "$ROOT/examples/notify-repos.txt" "$CACONF/"
+cat >"$CACONF/fleet.roster" <<'EOF'
+one claude triage
+two codex builder
+three grok reviewer
+four kimi reviewer
+five claude reviewer
+six codex reviewer
+seven grok reviewer
+EOF
+cat >"$CASHIM/box" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf '%s\n' "${BOX_LIST:-[]}" ;;
+  new)
+    name=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in --name) name="$2"; shift 2 ;; *) shift ;; esac
+    done
+    printf '%s\n' "$name" >>"$CA_CALLS"
+    [ "$name" != "${FAIL_NAME:-}" ]
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$CASHIM/box"
+ca_run() {
+  env CREW_CONFIG_DIR="$CACONF" CA_CALLS="$CA_CALLS" \
+    BOX_LIST="${BOX_LIST:-[]}" FAIL_NAME="${FAIL_NAME:-}" \
+    PATH="$CASHIM:$PATH" bash "$CLIBIN" create-all
+}
+BOX_LIST='[{"name":"three"}]' FAIL_NAME=four
+: >"$CA_CALLS"
+if ca_out="$(ca_run 2>&1)"; then ca_rc=0; else ca_rc=$?; fi
+t cli-create-all-partial-is-nonzero 1 "$ca_rc"
+t cli-create-all-continues-after-failure "one
+two
+four
+five
+six
+seven" "$(cat "$CA_CALLS")"
+case "$ca_out" in
+  *"create-all: 5 created, 1 existing, 1 failed (four)."*) r1=complete ;;
+  *) r1="$ca_out" ;;
+esac
+t cli-create-all-partial-summary complete "$r1"
+
+# The all-pass path retains the established closing text byte-for-byte.
+BOX_LIST='[]' FAIL_NAME=''
+: >"$CA_CALLS"
+if ca_all_out="$(ca_run 2>&1)"; then ca_all_rc=0; else ca_all_rc=$?; fi
+t cli-create-all-all-pass-is-zero 0 "$ca_all_rc"
+case "$ca_all_out" in
+  *"7 created. Next: log each new box in by hand"*) r1=unchanged ;;
+  *) r1="$ca_all_out" ;;
+esac
+t cli-create-all-all-pass-summary-unchanged unchanged "$r1"
+
 # ...and `crew upgrade --bogus` took the flag as a BOX NAME, printing
 # "upgrade FAILED on --bogus" and exiting 0 — a report, not a verdict (kimi).
 t cli-upgrade-unknown-flag-is-2  2 "$(crewrc upgrade --bogus)"
