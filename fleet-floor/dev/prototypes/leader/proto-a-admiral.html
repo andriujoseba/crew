@@ -92,21 +92,61 @@ function drawUnit(t,st){
   // grime weeping from a bolt: albedo, so it does not dim with power state
   function weep(x,y,len){g.fillStyle="rgba(66,46,26,0.32)";
     poly(g,[[x-1.2,y+2],[x+1.2,y+2],[x+0.6,y+len],[x-0.6,y+len]]);g.fill();}
+  /* the machine under the uniform: coil springs, hydraulic pistons, hoses.
+     An admiral's coat is armour over a war chassis, and the chassis shows
+     at every joint. */
+  function spring(x0,y0,x1,y1,n,r){
+    var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln,pts=[[x0,y0]];
+    for(var i2=1;i2<n*2;i2++){var u=i2/(n*2),s2=(i2%2?1:-1);
+      pts.push([x0+dx*u+nx*r*s2,y0+dy*u+ny*r*s2]);}
+    pts.push([x1,y1]);
+    g.strokeStyle="rgba(5,8,14,0.9)";g.lineWidth=3;g.lineJoin="round";g.beginPath();
+    pts.forEach(function(p,i3){i3?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]);});g.stroke();
+    g.strokeStyle="rgba(152,166,192,"+(offl?0.16:0.4)+")";g.lineWidth=1.2;g.beginPath();
+    pts.forEach(function(p,i3){i3?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]);});g.stroke();}
+  function piston(x0,y0,x1,y1,w){
+    var mx3=x0+(x1-x0)*0.55,my3=y0+(y1-y0)*0.55;
+    pl(g,x0,y0,mx3,my3,"#0a0f18",w);
+    pl(g,x0,y0,mx3,my3,"rgba(140,154,182,"+(offl?0.08:0.22)+")",1.1);
+    pl(g,mx3,my3,x1,y1,"rgba(190,204,228,"+(offl?0.14:0.5)+")",w*0.42);}
+  function hose(x0,y0,x1,y1,sag,w){
+    var mx3=(x0+x1)/2,my3=Math.max(y0,y1)+sag;
+    g.strokeStyle="rgba(10,15,23,0.96)";g.lineWidth=w;
+    g.beginPath();g.moveTo(x0,y0);g.quadraticCurveTo(mx3,my3,x1,y1);g.stroke();
+    g.strokeStyle="rgba(120,132,156,"+(offl?0.1:0.3)+")";g.lineWidth=w*0.3;
+    g.beginPath();g.moveTo(x0,y0);g.quadraticCurveTo(mx3,my3,x1,y1);g.stroke();}
   var pulse=offl?0:(work?(0.6+0.24*Math.sin(t*5)):(0.36+0.12*Math.sin(t*1.8)));
   var breath=(offl)?0:Math.sin(t*1.3)*1.8;
 
-  /* ---- 0 · ARMS first: parade rest. Upper arms angle back and out, the
-     forearms vanish behind the small of the back — torso overlaps them, so
-     from the front the figure is chest, boards and elbows. ---- */
+  /* ---- 0 · BACK CABLES, then ARMS: parade rest. The power trunks loop
+     out of the collar and dive into the lower back — drawn first so the
+     coat and arms overlap them; what survives is the slack bowing out
+     through the elbow gap. Doom units trail cables. ---- */
+  [-1,1].forEach(function(sg){
+    [[40,132,44,76,152],[30,116,80,64,168]].forEach(function(cb,ci){
+      var x0=cx+sg*cb[0],y0=TY-14+breath,mx2=cx+sg*cb[1],my2=TY+cb[2]+breath,x1=cx+sg*cb[3],y1=TY+cb[4]+breath*0.5;
+      g.strokeStyle="#05080e";g.lineWidth=ci?4.4:5.4;g.beginPath();
+      g.moveTo(x0,y0);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();
+      g.strokeStyle=offl?"#2b323e":"#5d6a82";g.lineWidth=1.5;g.beginPath();
+      g.moveTo(x0,y0);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();});
+  });
   [-1,1].forEach(function(sg){
     var shx=cx+sg*84, shy=248+breath, elx=cx+sg*112, ely=330+breath;
     seg(g,shx,shy,elx,ely,15,11,sM,sB,ed);                       // upper arm, swept back
-    pl(g,shx+sg*6,shy+12,elx+sg*3,ely-6,"rgba(6,9,15,0.85)",3);  // actuator channel
-    pl(g,shx+sg*6,shy+12,elx+sg*3,ely-6,"rgba(140,154,182,"+(offl?0.07:0.2)+")",1.2);
-    g.fillStyle="#04070c";g.beginPath();g.arc(elx,ely,9.5,0,7);g.fill();  // elbow ball
-    g.strokeStyle="rgba(150,164,190,"+(offl?0.08:0.24)+")";g.lineWidth=1.5;
-    g.beginPath();g.arc(elx,ely,6.6,-2.5,0.5);g.stroke();
+    piston(shx+sg*11,shy+4,elx+sg*4,ely-10,4.6);                 // the arm's own hydraulic
+    // elbow: a REAL joint — ring, hub bolt, guard horn, grease
+    g.fillStyle="#04070c";g.beginPath();g.arc(elx,ely,10,0,7);g.fill();
+    g.strokeStyle=eH;g.lineWidth=1.2;g.beginPath();g.arc(elx,ely,10,0,7);g.stroke();
+    g.strokeStyle="rgba(150,164,190,"+(offl?0.1:0.3)+")";g.lineWidth=1.6;
+    g.beginPath();g.arc(elx,ely,6.8,-2.5,0.5);g.stroke();
+    g.strokeStyle="rgba(4,8,14,0.9)";g.lineWidth=1;
+    g.beginPath();g.arc(elx,ely,4.2,0,7);g.stroke();
+    bolt(g,elx,ely,2.4,offl?0.08:0.26);
+    weep(elx,ely+9,7);
+    plate(g,[[elx-sg*2,ely-13],[elx+sg*9,ely-9],[elx+sg*7,ely-2]],sM,sB,ed); // guard horn
     seg(g,elx,ely,cx+sg*40,368+breath,10,8,sB,sB,null);          // forearm folding behind
+    // hose from the chest side into the upper arm, swinging under the pit
+    hose(cx+sg*62,286+breath,shx+sg*8,shy+26,14,4.2);
   });
 
   /* ---- 1 · LEGS: planted shoulder-width, dead vertical. ---- */
@@ -129,14 +169,25 @@ function drawUnit(t,st){
     pl(g,lx+sg*17,386,lx+sg*20,GY-40,brh(0.28),1);
     // the braid is scuffed through mid-shin on the left leg
     if(sg<0){g.fillStyle=sM;g.fillRect(lx+sg*20-1.6,468,3.2,10);}
+    // the chassis at the knee: coil shock outboard, return hose down the calf
+    spring(lx+sg*21,424,lx+sg*23,450,6,2.6);
+    hose(lx+sg*16,GY-66,lx+sg*21,GY-14,5,3.6);
+    // ankle gaiter: ribbed flex joint between shin armour and boot
+    for(var gr=0;gr<3;gr++){
+      pl(g,lx-15,GY-56+gr*4.6,lx+15,GY-56+gr*4.6,"rgba(4,8,14,0.75)",2);
+      pl(g,lx-15,GY-54.8+gr*4.6,lx+15,GY-54.8+gr*4.6,"rgba(130,144,170,"+(offl?0.05:0.13)+")",0.9);}
   });
   // boot chips + old deck-scrape across the left toe
   g.fillStyle="rgba(206,220,242,"+(offl?0.08:0.2)+")";
   g.fillRect(cx-52,GY-30,4,1.6);g.fillRect(cx+18,GY-38,3,1.4);
   pl(g,cx-44,GY-16,cx-30,GY-18.5,"rgba(198,216,246,"+(offl?0.04:0.1)+")",1.1);
-  // pelvis block between the thighs
+  // pelvis block between the thighs — hip shocks and actuator rods exposed
   plate(g,[[cx-30,372],[cx+30,372],[cx+24,404],[cx-24,404]],sM,sB,ed);
   cavity(g,cx-24,372,48,8,0.5);
+  [-1,1].forEach(function(sg){
+    spring(cx+sg*31,376,cx+sg*25,402,6,3);
+    piston(cx+sg*12,376,cx+sg*19,400,3.6);});
+  bolt(g,cx,388,2.6,offl?0.06:0.22);
 
   /* ---- 2 · BELT: broad, dark, brass buckle with the command star ---- */
   plate(g,[[cx-58,356+breath*0.4],[cx+58,356+breath*0.4],[cx+56,378],[cx-56,378]],"#10151f","#05080d",ed);
@@ -223,9 +274,16 @@ function drawUnit(t,st){
   plate(g,[[cx-40,TY-16],[cx-30,TY-30],[cx+30,TY-30],[cx+40,TY-16],[cx+34,TY+2],[cx-34,TY+2]],sM,sB,ed); // high collar
   pl(g,cx-29,TY-29,cx+29,TY-29,brh(offl?0.15:0.5),1.3);         // brass collar cord
   cavity(g,cx-34,TY-8,68,8,0.35);
-  // ribbed fighter neck inside the collar
+  // ribbed fighter neck inside the collar, slung with its own hardware:
+  // twin head-tilt pistons outboard, a data conduit looping in from the jaw
   g.fillStyle="#070b12";g.fillRect(cx-14,TY-38,28,14);
   for(var nr=0;nr<3;nr++){pl(g,cx-13,TY-35+nr*4,cx+13,TY-35+nr*4,"rgba(120,134,160,"+(offl?0.08:0.22)+")",1.2);}
+  piston(cx-20,TY-26,cx-15,TY-42,3);piston(cx+20,TY-26,cx+15,TY-42,3);
+  hose(cx+12,TY-40,cx+26,TY-28,6,2.8);
+  // intake gills low on each coat side, under the arm gap
+  [-1,1].forEach(function(sg){for(var vt=0;vt<3;vt++){
+    pl(g,cx+sg*(62+vt*3),TY+24+vt*8,cx+sg*(72+vt*3),TY+29+vt*8,"rgba(4,8,14,0.8)",2.4);
+    pl(g,cx+sg*(62+vt*3),TY+25.4+vt*8,cx+sg*(72+vt*3),TY+30.4+vt*8,"rgba(140,154,182,"+(offl?0.05:0.14)+")",0.9);}});
 
   /* ---- 6 · HEAD + THE CAP ---- */
   var hy=192+breath;    // face centre band

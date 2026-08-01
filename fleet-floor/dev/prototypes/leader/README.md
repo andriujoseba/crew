@@ -30,6 +30,13 @@ the wars instead:
   edge broken by an old hit**; grime weeps from the pauldron bolts
 - Scorched coat hem, patched thigh armour, scuffed boot braid, chipped
   boots — worn gold trouser stripes in place of the old crimson
+- **The chassis shows at every joint** (revision two): power cables
+  looping out of the collar and diving into the lower back, twin
+  head-tilt pistons at the neck, hydraulic rams down each upper arm,
+  true elbow joints (ring, hub bolt, guard horn, grease weep), hoses
+  swinging under the arm pits, hip coil shocks and actuator rods on the
+  pelvis, outboard knee springs, return hoses down the calves, ribbed
+  ankle gaiters, intake gills low on the coat sides
 - **Offline it stays at attention** — an admiral does not slump; the
   crest dies, the optics go dark, the service beacon rakes the cap
 

@@ -1,51 +1,54 @@
-# sentinel — "ARGUS" (SN-100) · prototype B (war-form)
+# sentinel — "SQUIDDY" (SN-100) · prototype C
 
 Standing-look prototype for the **sentinel ops role** of crew#128. A **role
 droid** like the leader: no vendor colour — the sentinel's palette is red,
-full stop. Named for the hundred-eyed watchman.
+full stop.
 
-**Current: `proto-b-warform.html`** (working / idle / offline buttons under
-the canvas; `?state=X&t=N` renders a deterministic still). `proto-a-argus.html`
-is the first round — a smooth bell with eyes scattered politely — kept as
-history; the operator's verdict on it was *soft, not scary, not dangerous*.
+**Current: `proto-c-squiddy.html`** (working / idle / offline buttons under
+the canvas; `?state=X&t=N` renders a deterministic still). Drawn against the
+actual Matrix sentinel reference (the Hot Toys 1/16 still and the fan render
+the operator supplied) after two misses:
 
-## The concept (B)
+- `proto-a-argus.html` — smooth bell, eyes scattered politely. Verdict:
+  *soft, not scary, not dangerous.*
+- `proto-b-warform.html` — angular crab shield with thick jointed arms.
+  Verdict: *worse — not the movie shape.*
 
-The Matrix-sentinel read of the role: an **angular hunched carapace standing
-on jointed arms**, one packed cluster of red lenses for a face, and half its
-arms held ready rather than standing. The sentinel flags and never acts —
-but nothing about it should suggest that being flagged is pleasant.
+## The concept (C)
 
-- **The eyes are a CLUSTER** — one master lens with iris and pupil, ~20
-  more packed lens-to-lens in a deep recessed face bowl: the
-  machine-mother stare. A scan wave sweeps the cluster when working. One
-  lens is **dead and cracked** and stays that way.
-- **Faceted shield hull**, all hard edges: blade flanges and spurs off
-  both shoulders (kept sharp, one tip chipped), chevron armour bands
-  layered over the crown, aux lenses watching sideways, gouge, weld
-  bead, patched facet, scorch climbing the jaw.
-- **Eight jointed arms with hard elbows** — dark ball joints, piston
-  channels, no soft curves. **Four are support**: splayed wide and
-  planted, pincers closed and dug into the deck — it *stands* on them.
-  **Four are weapons**: two raised past the hull with pincers open, two
-  cocked mid-height, held off the deck so they never read as feet. Every
-  arm ends in a **hooked two-fang pincer** with a red sensor at the hub.
-- **Offline** the weapon arms drop and drag, every pincer closes, the
-  hull settles onto its haunches — and twenty dead lenses still catch
-  the room light, which is worse.
+What the reference actually is, honoured in the fleet grammar:
+
+- **A bulbous skull pod**, not a bell and not a shield — overlapping
+  organic shell lobes with seam cracks and rivets, hook-barb antennae on
+  the crown, side sensor pods, a gouge across the left lobe, scorch up
+  the right cheek.
+- **The eyes are glossy red BERRIES in chrome sockets** — fifteen of
+  them, different sizes, wrapped across a dark recessed face like spider
+  eyes, each with its own specular glint and its own shimmer clock. One
+  is **dead and cracked** and stays that way. Offline they all go to
+  dead glass — and keep their glints, which is worse.
+- **A fringe of small mandible claws** twitching under the chin.
+- **A dozen long thin ribbed whips** — segmented conduit, S-curving in
+  every direction, never straight, each tipped with a **three-prong
+  grapple claw** with a red sensor. Standing translation of a thing
+  that flies: it **perches on two of its own coiled whip-stacks** like a
+  snake standing on its body; one strike whip hovers its grapple over
+  the deck, one curls high past the skull, the rest flare around it.
+- **Offline** the coils flatten, every whip falls and lies where it
+  lands, the grapples close.
 
 Written in the fleet-floor grammar — canvas 2D, `plate()`/rim/emissive
 buffers, no assets, no deps — so it ports into a `buildSentinel()` in
 `fleet-floor/src/app.js` the way JUGGERNAUT ported into `buildKimi()`.
 
-## Renders — proto B
+## Renders — proto C
 
 | working | idle | offline |
 |---|---|---|
-| ![working](renders/B-working.png) | ![idle](renders/B-idle.png) | ![offline](renders/B-offline.png) |
+| ![working](renders/C-working.png) | ![idle](renders/C-idle.png) | ![offline](renders/C-offline.png) |
 
-## Renders — proto A (superseded)
+## Prior rounds (superseded)
 
-| working | idle | offline |
+| B working | B offline | A working |
 |---|---|---|
-| ![working](renders/A-working.png) | ![idle](renders/A-idle.png) | ![offline](renders/A-offline.png) |
+| ![B working](renders/B-working.png) | ![B offline](renders/B-offline.png) | ![A working](renders/A-working.png) |
