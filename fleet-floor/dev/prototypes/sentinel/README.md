@@ -44,10 +44,17 @@ sentinel that stands on furniture isn't a sentinel.)
   stops overlapping cleanly and the limb comes out scalloped like a
   feather.
 - **The root hub is an assembly, not a plinth**: an armoured collar under
-  the chin, a ribbed drum with a caged lit core, and **a socket for every
-  limb** — each with its own rim, lip highlight and shadow — with the
-  whips starting *at* their sockets, so they read as plugged in rather
-  than as lines that happen to converge.
+  the chin, a ribbed drum with a caged lit core, outboard mount ears,
+  slung hoses and bolts.
+- **Front limbs are mounted in the open; back limbs are not.** The same
+  division codex uses for its legs. Eight whips run out from *behind* the
+  hull with the hub covering where they meet it — no attachment to sell.
+  The **four in front** each get a real mechanism: a bolted mount plate,
+  a dark socket cup with a **ball joint** and its lit crescent, a clamp
+  collar biting the limb's first segment, a stub ram (sleeve, then
+  polished rod) and a feed line off the drum. The mount is drawn *after*
+  its limb so it visibly clamps it. Eight sockets along the drum's lower
+  edge account for the back limbs.
 - **Nothing under the chin reads as a mouth.** Tapered spikes along a jaw
   line are teeth, and lit edges on them are a grin. What hangs there is a
   cluster of short matte manipulator stubs at mixed depths and gauges,

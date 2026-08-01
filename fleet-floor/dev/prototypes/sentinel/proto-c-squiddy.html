@@ -101,7 +101,7 @@ function drawUnit(t,st){
      way down and the whips crumple under it. That is the state language. */
   var hov=offl?0:Math.sin(t*0.9)*5+Math.sin(t*0.37)*3;
   var hovX=offl?0:Math.sin(t*0.53)*4;
-  var DY=offl?198:hov;
+  var DY=offl?152:hov;   // dead: the hub is the lowest part, so it sets the rest height
   var HC={x:cx+hovX,y:250+DY};            // skull centre
 
   /* ---- helpers: ribbed whip + grapple claw + coil stack ---- */
@@ -175,40 +175,32 @@ function drawUnit(t,st){
   var HS=window.__HS__=1.0;                  // 1:1 — the whips own the frame, not the skull
   var HX=hovX, RT=HC.y+148*HS;      // the socket row — limbs start where they plug in                          // whip root, under the skull
   var BACK=offl?[
-    [[cx-40,RT-2],[cx-138,500],[cx-206,538],[cx-236,558]],
-    [[cx+40,RT-2],[cx+126,516],[cx+196,530],[cx+244,557]],
-    [[cx-29,RT+2],[cx-168,530],[cx-104,560],[cx-172,552]],
-    [[cx+29,RT+2],[cx+186,522],[cx+142,559],[cx+182,545]],
-    [[cx-17,RT+4],[cx-58,548],[cx-14,560],[cx-70,556]],
-    [[cx+17,RT+4],[cx+80,536],[cx+38,559],[cx+96,553]]
+    [[cx-40,RT-16],[cx-138,500],[cx-206,538],[cx-236,558]],
+    [[cx+40,RT-16],[cx+126,516],[cx+196,530],[cx+244,557]],
+    [[cx-29,RT-14],[cx-168,530],[cx-104,560],[cx-172,552]],
+    [[cx+29,RT-14],[cx+186,522],[cx+142,559],[cx+182,545]],
+    [[cx-17,RT-12],[cx-58,548],[cx-14,560],[cx-70,556]],
+    [[cx+17,RT-12],[cx+80,536],[cx+38,559],[cx+96,553]]
   ]:[
     // the two thrown high swing WIDE of the head before they climb, so the
     // face is never crossed by its own limbs
-    [[cx-40+HX,RT-2],[cx-198,RT+40+sw*6],[cx-232,158],[cx-214,86+sw*5]],
-    [[cx+40+HX,RT-2],[cx+204,RT+44-sw*6],[cx+238,168],[cx+224,100-sw*5]],
-    [[cx-29+HX,RT+2],[cx-218,RT+94+sw2*5],[cx-252,412],[cx-256,330+sw2*7]],
-    [[cx+29+HX,RT+2],[cx+226,RT+98-sw2*5],[cx+258,420],[cx+262,342-sw2*7]],
-    [[cx-17+HX,RT+4],[cx-138,RT+80],[cx-104,472],[cx-166,512+sw*6]],
-    [[cx+17+HX,RT+4],[cx+112,RT+104],[cx+172,476],[cx+126,520-sw*6]]
+    [[cx-40+HX,RT-16],[cx-198,RT+40+sw*6],[cx-232,158],[cx-214,86+sw*5]],
+    [[cx+40+HX,RT-16],[cx+204,RT+44-sw*6],[cx+238,168],[cx+224,100-sw*5]],
+    [[cx-29+HX,RT-14],[cx-218,RT+94+sw2*5],[cx-252,412],[cx-256,330+sw2*7]],
+    [[cx+29+HX,RT-14],[cx+226,RT+98-sw2*5],[cx+258,420],[cx+262,342-sw2*7]],
+    [[cx-17+HX,RT-12],[cx-138,RT+80],[cx-104,472],[cx-166,512+sw*6]],
+    [[cx+17+HX,RT-12],[cx+112,RT+104],[cx+172,476],[cx+126,520-sw*6]]
   ];
+  /* These eight are BACK limbs: they run out from behind the hull and the
+     hub covers where they meet it, so they need no visible attachment —
+     the same division codex uses for its rear legs. Roots are pulled up
+     into the drum's footprint so no stub is left showing beside it. */
   BACK.forEach(function(P,bi){
     var pts=whip(P,12,4.2,52);
     var e=pts[pts.length-1],pe=pts[pts.length-2];
     grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.5+0.3*Math.sin(t*2+bi),true);
   });
 
-  /* ---- 1 · THE UNDERSIDE: the ribbed throat collar the whips root into.
-     No feet, no stand — this thing never touches the deck while it lives. */
-  var TWO=offl?[
-    [[cx-6,RT+5],[cx-52,542],[cx-104,556],[cx-134,548]],
-    [[cx+6,RT+5],[cx+58,546],[cx+112,558],[cx+136,550]]
-  ]:[
-    [[cx-6+HX,RT+5],[cx-76,RT+60],[cx-16,RT+134],[cx-64,RT+182+sw*5]],
-    [[cx+6+HX,RT+5],[cx+54,RT+92],[cx+96,RT+136],[cx+40,RT+214-sw*5]]
-  ];
-  TWO.forEach(function(P,ti){var pts=whip(P,12.5,4.6,38);
-    var e=pts[pts.length-1],pe=pts[pts.length-2];
-    grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.4+0.25*Math.sin(t*1.7+ti),true);});
   /* ---- THE ROOT HUB ----
      Four stacked ellipses were standing in for the single most mechanically
      interesting part of the unit: the place a dozen limbs actually attach.
@@ -233,6 +225,13 @@ function drawUnit(t,st){
       pl(g,P(rx2+2,20)[0],P(rx2+2,20)[1],P(rx2*0.88+2,50)[0],P(rx2*0.88+2,50)[1],
          "rgba(150,166,194,"+(offl?0.04:0.11)+")",0.9);}
     cavity(g,P(-48,46)[0],P(-48,46)[1],96*k,10*k,0.6);
+    // outboard mount ears: the outer pair of limbs needs something to bolt
+    // ONTO, otherwise the assembly floats beside the drum
+    [-1,1].forEach(function(sg6){
+      plate(g,[[P(sg6*46,22)[0],P(sg6*46,22)[1]],[P(sg6*64,26)[0],P(sg6*64,26)[1]],
+               [P(sg6*62,44)[0],P(sg6*62,44)[1]],[P(sg6*44,42)[0],P(sg6*44,42)[1]]],sT,sB,ed);
+      pl(g,P(sg6*47,24)[0],P(sg6*47,24)[1],P(sg6*63,28)[0],P(sg6*63,28)[1],
+         "rgba(198,216,246,"+(offl?0.06:0.18)+")",1.2);});
     // 3 · the core: a caged vent in the middle of the drum, lit from inside
     var cw=26*k, chh=15*k, cxp=P(0,28)[0]-cw/2, cyp=P(0,28)[1];
     g.fillStyle="#04070c";rr(g,cxp,cyp,cw,chh,3);g.fill();
@@ -251,8 +250,8 @@ function drawUnit(t,st){
       var bxp=cxp+cw*(cb+1)/4;
       g.fillStyle="#0b1018";g.fillRect(bxp-1.6,cyp-1,3.2,chh+2);}
     // 4 · SOCKETS: one per limb, along the drum's lower edge
-    var SOCK=[[-40,50,8],[-29,54,9],[-17,56,8.5],[-6,57,9.5],[6,57,9.5],
-              [17,56,8.5],[29,54,9],[40,50,8],[-34,42,6.5],[34,42,6.5],[-12,42,6],[12,42,6]];
+    var SOCK=[[-38,52,7.5],[-27,55,8],[-16,57,8],[-5,58,8.5],[5,58,8.5],
+              [16,57,8],[27,55,8],[38,52,7.5],[-11,44,5],[11,44,5]];
     SOCK.forEach(function(S2,si){
       var sp=P(S2[0],S2[1]), sr=S2[2]*k;
       g.fillStyle="#04070c";g.beginPath();g.ellipse(sp[0],sp[1],sr,sr*0.78,0,0,7);g.fill();
@@ -574,24 +573,83 @@ function drawUnit(t,st){
   g.fillStyle=uj;g.fillRect(HC.x-58,HC.y+62,116,32);g.restore();
   [g,RE].forEach(function(c){c.restore();});
 
-  /* ---- 4 · FRONT WHIPS: one curling high past the skull, one strike
-     whip hovering its grapple over the deck. Offline both lie dead. ---- */
-  if(!offl){
-    // one thrown up past the skull, one reaching forward-down at the viewer
-    var FP1=[[cx-34+HX,RT-6],[cx-150,RT+10],[cx-190,236],[cx-146,158+sw*6]];
-    var p1=whip(FP1,13,4.4,50), e1=p1[p1.length-1], q1=p1[p1.length-2];
-    grapple(e1[0],e1[1],Math.atan2(e1[1]-q1[1],e1[0]-q1[0]),0.75,true);
-    var FP2=[[cx+34+HX,RT-6],[cx+128,RT+60],[cx+196,RT+130],[cx+150,RT+196+sw2*6]];
-    var p2=whip(FP2,13,4.6,48), e2=p2[p2.length-1], q2=p2[p2.length-2];
-    grapple(e2[0],e2[1],Math.atan2(e2[1]-q2[1],e2[0]-q2[0]),0.9,true);
-  }else{
-    var FP1=[[cx-34,RT-6],[cx-96,528],[cx-146,556],[cx-198,546]];
-    var p1=whip(FP1,13,4.4,40), e1=p1[p1.length-1], q1=p1[p1.length-2];
-    grapple(e1[0],e1[1],Math.atan2(e1[1]-q1[1],e1[0]-q1[0]),0,true);
-    var FP2=[[cx+34,RT-6],[cx+104,534],[cx+156,559],[cx+206,548]];
-    var p2=whip(FP2,13,4.6,40), e2=p2[p2.length-1], q2=p2[p2.length-2];
-    grapple(e2[0],e2[1],Math.atan2(e2[1]-q2[1],e2[0]-q2[0]),0,true);
+  /* ---- 4 · FRONT LIMBS, and the only joints that have to be believed ----
+     Eight limbs run from behind the hull and the hub hides where they meet
+     it. These four are in FRONT of it, so their attachment is on show and
+     has to be a mechanism: a bolted mount plate on the hub face, a dark
+     socket cup, a ball with a lit crescent, a clamp collar round the limb's
+     first segment, a stub ram, and a feed line off the drum. Same division
+     codex uses — front legs mounted in the open, rear legs' joints hidden. */
+  function whipMount(x,y,ang,k2){
+    var co=Math.cos(ang),si=Math.sin(ang), nx6=-si, ny6=co;
+    g.save();
+    // bolted mount plate, sitting flat on the hub's face
+    plate(g,[[x-nx6*13*k2-co*5*k2,y-ny6*13*k2-si*5*k2],
+             [x+nx6*13*k2-co*5*k2,y+ny6*13*k2-si*5*k2],
+             [x+nx6*10*k2+co*9*k2,y+ny6*10*k2+si*9*k2],
+             [x-nx6*10*k2+co*9*k2,y-ny6*10*k2+si*9*k2]],sT,sM,ed);
+    [[-9,-1],[9,-1]].forEach(function(bp3){
+      var bx3=x+nx6*bp3[0]*k2+co*bp3[1]*k2, by3=y+ny6*bp3[0]*k2+si*bp3[1]*k2;
+      g.fillStyle="#05080e";g.beginPath();g.arc(bx3,by3,2*k2,0,7);g.fill();
+      g.fillStyle="rgba(190,204,228,"+(offl?0.07:0.2)+")";
+      g.beginPath();g.arc(bx3-0.6*k2,by3-0.6*k2,0.9*k2,0,7);g.fill();});
+    // socket cup: dark, and wider than the ball so the ball sits INSIDE it
+    g.fillStyle="#04070c";g.beginPath();g.arc(x+co*7*k2,y+si*7*k2,10.5*k2,0,7);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1.3;g.beginPath();g.arc(x+co*7*k2,y+si*7*k2,10.5*k2,0,7);g.stroke();
+    // the ball, lit on the lamp side — the one shape that says "this rotates"
+    var bg6=g.createRadialGradient(x+co*7*k2-3*k2,y+si*7*k2-3.4*k2,0.6,x+co*7*k2,y+si*7*k2,8.4*k2);
+    bg6.addColorStop(0,"rgba(168,188,220,"+(offl?0.2:0.5)+")");
+    bg6.addColorStop(0.55,"rgba(52,64,82,0.7)");bg6.addColorStop(1,"rgba(3,7,12,0.9)");
+    g.fillStyle=bg6;g.beginPath();g.arc(x+co*7*k2,y+si*7*k2,8.4*k2,0,7);g.fill();
+    g.strokeStyle="rgba(206,222,248,"+(offl?0.1:0.3)+")";g.lineWidth=1.2;
+    g.beginPath();g.arc(x+co*7*k2,y+si*7*k2,8.4*k2,ang-2.5,ang-0.7);g.stroke();
+    // clamp collar biting the limb just past the ball
+    var clx=x+co*19*k2, cly=y+si*19*k2;
+    plate(g,[[clx-nx6*12*k2-co*4*k2,cly-ny6*12*k2-si*4*k2],
+             [clx+nx6*12*k2-co*4*k2,cly+ny6*12*k2-si*4*k2],
+             [clx+nx6*11*k2+co*5*k2,cly+ny6*11*k2+si*5*k2],
+             [clx-nx6*11*k2+co*5*k2,cly-ny6*11*k2+si*5*k2]],sM,sB,ed);
+    pl(g,clx-nx6*11*k2-co*3*k2,cly-ny6*11*k2-si*3*k2,clx+nx6*11*k2-co*3*k2,cly+ny6*11*k2-si*3*k2,
+       "rgba(206,222,248,"+(offl?0.08:0.24)+")",1.1);
+    // stub ram from the mount plate to the collar: sleeve then polished rod
+    var r0x=x-nx6*11*k2, r0y=y-ny6*11*k2, r1x=clx-nx6*9*k2, r1y=cly-ny6*9*k2;
+    var mx7=r0x+(r1x-r0x)*0.55, my7=r0y+(r1y-r0y)*0.55;
+    pl(g,r0x,r0y,mx7,my7,"#0a0f18",4.4*k2);
+    pl(g,mx7,my7,r1x,r1y,offl?"#333c48":"#93a7c2",2*k2);
+    g.fillStyle=sT;g.beginPath();g.arc(r0x,r0y,2.6*k2,0,7);g.fill();
+    // feed line off the drum into the collar
+    g.strokeStyle="rgba(8,12,19,0.95)";g.lineWidth=3.4*k2;
+    g.beginPath();g.moveTo(x+nx6*12*k2,y+ny6*12*k2);
+    g.quadraticCurveTo(x+nx6*20*k2+co*10*k2,y+ny6*20*k2+si*10*k2,clx+nx6*9*k2,cly+ny6*9*k2);g.stroke();
+    g.strokeStyle="rgba(120,132,156,"+(offl?0.08:0.22)+")";g.lineWidth=1*k2;
+    g.beginPath();g.moveTo(x+nx6*12*k2,y+ny6*12*k2);
+    g.quadraticCurveTo(x+nx6*20*k2+co*10*k2,y+ny6*20*k2+si*10*k2,clx+nx6*9*k2,cly+ny6*9*k2);g.stroke();
+    // a thin status pip on the mount plate — not on the ball, which is a
+    // bearing; a glowing ball just reads as another eye
+    if(!offl){var pipx=x+nx6*9*k2+co*6*k2, pipy=y+ny6*9*k2+si*6*k2;
+      g.fillStyle=rdh(0.75);g.beginPath();g.arc(pipx,pipy,1.5*k2,0,7);g.fill();
+      RE.fillStyle=rd(0.3);RE.beginPath();RE.arc(pipx,pipy,2.6*k2,0,7);RE.fill();}
+    g.restore();
   }
+  var FRONT=offl?[
+    [[cx-56,RT-30],[cx-96,528],[cx-146,556],[cx-198,546]],
+    [[cx+56,RT-30],[cx+104,534],[cx+156,559],[cx+206,548]],
+    [[cx-30,RT-22],[cx-52,542],[cx-104,556],[cx-134,548]],
+    [[cx+30,RT-22],[cx+58,546],[cx+112,558],[cx+136,550]]
+  ]:[
+    [[cx-56+HX,RT-30],[cx-150,RT+10],[cx-190,236],[cx-146,158+sw*6]],
+    [[cx+56+HX,RT-30],[cx+128,RT+60],[cx+196,RT+130],[cx+150,RT+196+sw2*6]],
+    [[cx-30+HX,RT-22],[cx-76,RT+60],[cx-16,RT+134],[cx-64,RT+182+sw*5]],
+    [[cx+30+HX,RT-22],[cx+54,RT+92],[cx+96,RT+136],[cx+40,RT+214-sw*5]]
+  ];
+  FRONT.forEach(function(P,fi){
+    var pts=whip(P,13,4.5,46);
+    var e=pts[pts.length-1],pe=pts[pts.length-2];
+    grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.7+0.25*Math.sin(t*2+fi),true);
+    // the mount goes on LAST, over the limb's own root, so it clamps it
+    var q0=pts[0],q1=pts[2];
+    whipMount(q0[0],q0[1],Math.atan2(q1[1]-q0[1],q1[0]-q0[0]),HS*(fi<2?0.94:0.8));
+  });
 
   /* ---- 5 · offline: beacon rakes the crown lobes ---- */
   if(offl){var bp=0.55;
