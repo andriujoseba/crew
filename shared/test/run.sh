@@ -2955,7 +2955,17 @@ done
 # commands/bootstrap-tenant.sh writes the tenant line, commands/bootstrap.sh
 # the machine one) plus the hand-edited near-misses, and a stub box can only
 # ever answer with one of them at a time.
-cv_extract() { awk -v f="$2" '$0 ~ "^"f"\\(\\) \\{"{p=1} p{print} p&&/^\}$/{exit}' "$1"; }
+# vv_extract above assumes a multi-line body, which is fine for the one
+# function it takes. report_field is a ONE-LINER, and on that shape a
+# stop-at-`^}` rule never fires on its own line — it runs on to the next
+# function's closing brace and evals that too. It happened to be harmless here,
+# which is exactly the kind of silence that stops being harmless the day
+# somebody inserts a function between the two. So this one closes on its own
+# line when the definition is self-contained.
+cv_extract() { awk -v f="$2" '
+  $0 ~ "^"f"\\(\\) \\{" { print; if ($0 ~ /\}[[:space:]]*$/) exit; p=1; next }
+  p { print; if ($0 ~ /^\}$/) exit }
+' "$1"; }
 eval "$(cv_extract "$ROOT/cli/crew" report_field)"
 eval "$(cv_extract "$ROOT/cli/crew" convergence_of)"
 eval "$(cv_extract "$ROOT/cli/crew" convergence_detail)"
