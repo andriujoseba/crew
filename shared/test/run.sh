@@ -2727,6 +2727,23 @@ case "$fb_incomplete" in
 esac
 t cli-fallback-incompleteness-is-fatal refused "$r1"
 
+# fleet.conf is named by the same criterion, so it is asserted by the same
+# route rather than assumed to follow from repos.txt.
+FBROOT2="$TMP/fallback-root-noconf"
+mkdir -p "$FBROOT2/cli"
+cp "$CLIBIN" "$FBROOT2/cli/crew"
+cp "$ROOT/VERSION" "$FBROOT2/VERSION"
+ln -s "$SHARED" "$FBROOT2/shared"
+cp -R "$ROOT/examples" "$FBROOT2/examples"
+rm -f "$FBROOT2/examples/fleet.conf"
+fb_noconf="$( (cd "$FBPWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+  HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$FBROOT2/cli/crew" status 2>&1) )"
+case "$fb_noconf" in
+  *"is incomplete; missing: fleet.conf"*) r1=refused ;;
+  *) r1="$fb_noconf" ;;
+esac
+t cli-fallback-missing-fleet-conf-is-fatal refused "$r1"
+
 OPINCOMPLETE="$TMP/op-incomplete"
 mkdir -p "$OPINCOMPLETE"
 cp "$ROOT/examples/fleet.roster" "$ROOT/examples/fleet.conf" "$OPINCOMPLETE/"

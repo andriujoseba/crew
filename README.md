@@ -8,8 +8,15 @@ the same upstream engine without maintaining a fork:
 ```sh
 crew init
 $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/crew/fleet.roster"
+$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/crew/repos.txt"   # ships EMPTY — name your repos
 crew up
 ```
+
+`crew init` is not optional. Without an operator definition crew falls back to
+the shipped `examples/` directory, and there it refuses to create a box or arm
+cron — it will only report, and it says so on every read-only verb. A scaffold
+is a thing to read, not a fleet to run, so `repos.txt` ships empty and the
+fleet is aimed at nothing until you name a repository (#216).
 
 The operator definition owns fleet membership, participants, repository scope,
 agent profiles, and the doctrine paths named in prompts. Shipped files under
