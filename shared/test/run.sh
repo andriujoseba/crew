@@ -1476,6 +1476,45 @@ jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
   > "$KH/.kimi-code/credentials/kimi-code.json"
 t cred-kimi-unparseable-is-unknown 2 "$(cred_rc kimi "$KH")"
 
+# -- kimi, the second home. The shipped CLI keeps the same credential at
+# ~/.kimi, not ~/.kimi-code, so the profile resolves the home instead of
+# assuming it (#240): the fleet's kimi box reported a dead vendor credential
+# on every tick while being perfectly logged in. cred_rc clears
+# KIMI_CODE_HOME by design, so these four are the unset case.
+KH2="$CREDH/kimialt"; mkdir -p "$KH2/.kimi/credentials"
+jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
+  > "$KH2/.kimi/credentials/kimi-code.json"
+t cred-kimi-alt-home-present 0 "$(cred_rc kimi "$KH2")"
+# A wider search must reach the SAME parser, not a second, dumber one.
+jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
+  > "$KH2/.kimi/credentials/kimi-code.json"
+t cred-kimi-alt-home-unparseable-is-unknown 2 "$(cred_rc kimi "$KH2")"
+# Neither home holds anything: still a CONFIDENT logout. A resolver that fell
+# back to a path it never checked would answer 2 here and silence a real one.
+KH0="$CREDH/kiminone"; mkdir -p "$KH0/.kimi/credentials" "$KH0/.kimi-code/credentials"
+t cred-kimi-neither-home 1 "$(cred_rc kimi "$KH0")"
+
+# KIMI_CODE_HOME is explicit operator intent and outranks both probes. Proven
+# by pointing it at a home with NO credential while BOTH known homes hold a
+# good one: a resolver that probed first would answer 0.
+kimi_cred_rc() {  # kimi_cred_rc <home> <KIMI_CODE_HOME> -> rc of bot_cli_present
+  local rc=0
+  # shellcheck disable=SC2034  # consumed inside the conf sourced below
+  ( HOME="$1" KIMI_CODE_HOME="$2" CODEX_HOME="" GROK_HOME=""
+    # shellcheck disable=SC1090
+    source "$SHARED/conf/agents/kimi.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+KHO="$CREDH/kimiover"; mkdir -p "$KHO/.kimi/credentials" "$KHO/.kimi-code/credentials" "$KHO/elsewhere/credentials"
+jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
+  > "$KHO/.kimi/credentials/kimi-code.json"
+cp "$KHO/.kimi/credentials/kimi-code.json" "$KHO/.kimi-code/credentials/kimi-code.json"
+t cred-kimi-override-outranks-probe 1 "$(kimi_cred_rc "$KHO" "$KHO/elsewhere")"
+# ...and it reaches a credential neither probe would ever find.
+jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
+  > "$KHO/elsewhere/credentials/kimi-code.json"
+t cred-kimi-override-reaches-elsewhere 0 "$(kimi_cred_rc "$KH0" "$KHO/elsewhere")"
+
 # -- codex: file-backed vs keyring-backed, and NO expiry at all
 DH="$CREDH/codex"; mkdir -p "$DH/.codex"
 jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
@@ -1537,6 +1576,30 @@ for agent in claude codex grok kimi; do
   grep -q 'bot_cli_present()' "$SHARED/conf/agents/$agent.conf" || missing="$missing $agent"
 done
 t agent-profiles-define-present "" "$missing"
+
+# ...and every profile must launch its CLI NON-INTERACTIVELY. run_session runs
+# each CLI with </dev/null, deliberately, so a tool-approval prompt has no
+# stdin to read and no human to answer it: the session blocks until the role
+# budget kills it and writes rc=124 outcome=TIMEOUT — no verdict, no comment,
+# 45 minutes spent. kimi shipped with no flag at all and did exactly that on
+# every session, which kept every PR in this repo one panel verdict short
+# (#240). Nothing here read BOT_CLI_CMD before, so the only detector was a
+# 45-minute silence on one box. The flag's SPELLING is the vendor's; that one
+# is present is crew's, and this is where crew says so.
+for pair in \
+  "claude:--dangerously-skip-permissions" \
+  "codex:--dangerously-bypass-approvals-and-sandbox" \
+  "grok:--permission-mode bypassPermissions" \
+  "kimi:--afk"; do
+  agent="${pair%%:*}"; want="${pair#*:}"
+  # The array is joined and matched with surrounding spaces so a multi-token
+  # flag is pinned whole and a longer flag that merely starts the same cannot
+  # pass for it.
+  # shellcheck disable=SC1090
+  got="$( source "$SHARED/conf/agents/$agent.conf"; printf '%s' "${BOT_CLI_CMD[*]}" )"
+  case " $got " in *" $want "*) r1=present ;; *) r1=MISSING ;; esac
+  t "agent-conf-$agent-non-interactive" present "$r1"
+done
 
 # --- the two-boundary rule must exist once, not once per reader -----------
 # floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
