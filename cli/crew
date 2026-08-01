@@ -1055,6 +1055,106 @@ engine_report() {
 # report_field KEY REPORT — one value out of an engine_report capture.
 report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 
+# rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and
+# which rig did it (#220). Read BEFORE hiring, which is the whole point — every
+# other column crew has (GH, VENDOR, ENGINE) is derived through the engine, and
+# the engine does not exist until hire, so for exactly the window in which
+# convergence is the only thing that matters every existing signal reads
+# `unknown`.
+#
+# Two files, because rig writes two and they answer different questions
+# (heavy-duty/rig, commands/bootstrap-tenant.sh): `/etc/rig/role` is what the
+# box IS — `role=<agent>-box tenant=yes host=no`, written only after the tenant
+# bootstrap converged — and `/etc/rig/manifest` is what BUILT it, key=value
+# provenance. The marker decides the verdict; the manifest only enriches the
+# report, because a marker with no manifest beside it is a box converged by a
+# pre-manifest rig, which is old, not broken.
+#
+# Emits key=value lines:
+#     probe=ok                      (always, when the box answered at all)
+#     marker=<the marker's first line>          (omitted when absent)
+#     rig_version=<manifest converged_by>       (omitted when absent)
+#     rig_at=<manifest converged_at>            (omitted when absent)
+#
+# `probe=ok` is the load-bearing line and not a decoration: without it an
+# unreachable box and a converged-but-markerless one both capture as the empty
+# string, and the spec's rule 5 is that those two must never collapse — the
+# failure this closes is a broken box passing for a healthy one, so the
+# ambiguous case has to be nameable. `|| true` for the same reason it is on
+# box_state, box_agent and engine_report: an unreachable box must degrade to a
+# verdict, never kill the caller under `set -e`.
+rig_report() {
+  # shellcheck disable=SC2016  # the substitutions must run INSIDE the box
+  bxn "$1" '
+    echo probe=ok
+    if [ -r /etc/rig/role ]; then
+      printf "marker=%s\n" "$(head -n1 /etc/rig/role 2>/dev/null)"
+    fi
+    if [ -r /etc/rig/manifest ]; then
+      sed -n "s/^converged_by=/rig_version=/p; s/^converged_at=/rig_at=/p" /etc/rig/manifest
+    fi
+  ' 2>/dev/null | tr -d '\r' || true
+}
+
+# convergence_of REPORT — the verdict from a rig_report capture:
+#
+#     converged   the marker is there and names an agent tenant
+#     incomplete  the box answered and rig never converged it
+#     unknown     the box did not answer, so nothing is known
+#
+# `unknown` is NOT converged. That is rule 5 of #220's spec and it is the whole
+# safety property: the defect being closed is a broken box reading as a healthy
+# one, so the case crew cannot see into must refuse rather than proceed.
+#
+# The tenant test is FIELD-ANCHORED, never a substring — the marker is one line
+# of space-separated key=value fields, and rig's own root_door_of learned this
+# the hard way on rig#77, where an unanchored pattern let `root-door=closedish`
+# resolve as `closed` and pass the one gate that authorizes an irreversible
+# act. Hiring is crew's irreversible act. Whitespace is normalised first so a
+# hand-edited marker using tabs is read the same way rather than silently
+# failing to match.
+convergence_of() {
+  local report="$1" marker padded
+  printf '%s\n' "$report" | grep -qx 'probe=ok' || { printf 'unknown\n'; return 0; }
+  marker="$(report_field marker "$report")"
+  [ -n "$marker" ] || { printf 'incomplete\n'; return 0; }
+  padded=" ${marker//[[:space:]]/ } "
+  case "$padded" in
+    *" tenant=yes "*) printf 'converged\n' ;;
+    *) printf 'incomplete\n' ;;
+  esac
+}
+
+# convergence_detail REPORT — what is missing, in one clause, for the operator
+# who has to fix it. Three causes, and they take three different actions, so
+# collapsing them into "not converged" would throw away the only part of this
+# that is actionable.
+convergence_detail() {
+  local report="$1" marker
+  printf '%s\n' "$report" | grep -qx 'probe=ok' ||
+    { printf 'the box did not answer — /etc/rig/role could not be read\n'; return 0; }
+  marker="$(report_field marker "$report")"
+  if [ -z "$marker" ]; then
+    printf 'no /etc/rig/role marker — rig bootstrap never converged this box, so its vendor CLI was never installed\n'
+  else
+    printf '/etc/rig/role names a machine role (%s), not an agent tenant\n' "$marker"
+  fi
+}
+
+# convergence_recovery NAME AGENT — the three commands that fix it, which are
+# the ones `box` itself prints when the bootstrap hook fails. crew's job here
+# is to stop advising `crew hire` and start advising this.
+#
+# An off-roster box names no agent, and the recovery is still worth printing —
+# it renders the tenant as `<agent>-box` rather than a malformed `-box`, which
+# is a placeholder an operator can fill in rather than a command that would
+# fail if pasted.
+convergence_recovery() {
+  local name="$1" agent="${2:-}"
+  printf 'box shell %s → sudo rig bootstrap %s-box → box snapshot %s bootstrapped\n' \
+    "$name" "${agent:-<agent>}" "$name"
+}
+
 # hired_at NAME — the raw first-line engine stamp, if any. Keep this raw for
 # status and provenance; comparisons go through stamp_version below.
 hired_at() { report_field stamp "$(engine_report "$1")"; }
@@ -1287,8 +1387,46 @@ hire_guard() {
   add it to the roster, or pass --allow-offroster if arming production is what you mean."
 }
 
+# convergence_guard NAME AGENT FORCE — refuse to arm a box whose tenant role
+# never converged (#220). Returns 0 to proceed, 3 to SKIP.
+#
+# 3 rather than 1, and the distinction is the point: hire-all and up must count
+# a skip apart from a failure, because they are different facts about the
+# fleet. A failure is "this hire went wrong"; a skip is "this box was never
+# eligible to be hired", and an operator reading a summary that merges them
+# cannot tell a flaky install from a box that needs `rig bootstrap`.
+#
+# Hiring is the irreversible step — it installs the engine and arms cron — and
+# arming a box whose vendor CLI was never installed produces a member that
+# wakes every five minutes, fails, and writes the failure into its own duty.log
+# where nobody is looking. The fleet then reports seven members and six work.
+# Reporting alone does not close that: the table told the operator to hire this
+# box, so the refusal is the load-bearing half.
+convergence_guard() {
+  local name="$1" agent="$2" force="$3" report conv
+  report="$(rig_report "$name")"
+  conv="$(convergence_of "$report")"
+  [ "$conv" = converged ] && return 0
+  # --force already meant "install over what is there regardless" — a version
+  # match, a MODIFIED engine (#159). One flag, one meaning, and it carries here
+  # too: the operator who knows better (a box converged out of band, a marker
+  # lost to a hand-edit) needs a way through. It stays LOUD, because a forced
+  # hire of an unconverged box is exactly the member that fails silently later.
+  if [ "$force" -eq 1 ]; then
+    echo "$name: NOT CONVERGED — $(convergence_detail "$report")"
+    echo "  hiring anyway (--force): the engine installs and cron arms, but the agent still cannot run"
+    return 0
+  fi
+  echo "$name: REFUSED — $(convergence_detail "$report")"
+  echo "  $(convergence_recovery "$name" "$agent")"
+  echo "  crew hire $name --force arms it anyway, if you know better"
+  return 3
+}
+
 # hire_box NAME AGENT ROLE REF FORCE [ALLOW_OFFROSTER] — bake + arm; release
 # versions skip when already installed, while development versions re-bake.
+#
+# Returns 3 when the box was SKIPPED for non-convergence — see convergence_guard.
 hire_box() {
   local name="$1" agent="$2" role="$3" ref="$4" force="$5" allow="${6:-0}"
   local want have have_version identity_args registry_arg
@@ -1302,6 +1440,12 @@ hire_box() {
   # is consulted (found by this PR's own regression assertion, round 3). It
   # also stops re-running `git rev-parse` once per box.
   want="$ENGINE_VERSION"
+  # Convergence FIRST, before the registry guard and before the already-hired
+  # shortcut. It is the most fundamental question of the three — "can this box
+  # run an agent at all" comes before "which registry would it work" — and
+  # asking it first means an unconverged box is never talked about as though
+  # the only thing wrong with it were its registry.
+  convergence_guard "$name" "$agent" "$force" || return 3
   # The guard runs BEFORE the already-hired shortcut: a box that is already
   # armed against the wrong registry is precisely the state an operator needs
   # told about, and "skipping" would hide it.
@@ -1448,7 +1592,19 @@ cmd_hire() {
   if [ -z "$role" ] || [ -z "$agent" ]; then usage_error "--role and --agent go together"; fi
   validate_profiles "$agent" "$role"
   foreign_actor_check
-  hire_box "$name" "$agent" "$role" "$ref" "$force" "$allow"
+  # 3 is hire_box's SKIP status, which only the fleet verbs need to tell apart
+  # from a failure: for a single named box the operator asked for one hire and
+  # did not get it, so it collapses to crew's ordinary "the world is not ready"
+  # 1 — the same code cmd_status uses for a box that does not exist (#97), and
+  # the same one `crew hire nosuchbox` already exits with. Leaving 3 to escape
+  # would put a third meaning on crew's exit surface for no caller's benefit.
+  local rc=0
+  hire_box "$name" "$agent" "$role" "$ref" "$force" "$allow" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    3) return 1 ;;
+    *) return "$rc" ;;
+  esac
 }
 
 cmd_hire_all() {
@@ -1467,7 +1623,7 @@ cmd_hire_all() {
   fi
   resolve_engine "$ref"
   require_operator_config "crew hire-all"
-  local name agent role _from hired=0 failed=0
+  local name agent role _from hired=0 failed=0 skipped=0 skipped_names="" rc
   foreign_actor_check
   while read -r name agent role _from; do
     validate_profiles "$agent" "$role"
@@ -1475,19 +1631,32 @@ cmd_hire_all() {
       echo "$name: not created — crew new $name first"
       continue
     fi
-    # An `if`, not a bare call: crew's top-level `set -e` used to kill
+    # `|| rc=$?`, not a bare call: crew's top-level `set -e` used to kill
     # hire-all on the first failing box, so one failed engine convergence
     # blocked the ENTIRE fleet (#49). A fleet verb reports what it could not
     # do and carries on; the summary below is what makes the failure loud.
-    if hire_box "$name" "$agent" "$role" "$ref" 0; then
-      hired=$((hired + 1))
-    else
-      failed=$((failed + 1))
-    fi
+    # Same reason one unconverged box (rc 3) must not stop the run either — it
+    # is counted and named, never fatal (#220).
+    rc=0
+    hire_box "$name" "$agent" "$role" "$ref" 0 || rc=$?
+    case "$rc" in
+      0) hired=$((hired + 1)) ;;
+      3) skipped=$((skipped + 1)); skipped_names="${skipped_names}${skipped_names:+, }$name" ;;
+      *) failed=$((failed + 1)) ;;
+    esac
   done < <(read_roster)
   echo
-  echo "hire-all: $hired hired, $failed failed"
-  if [ "$failed" -ne 0 ]; then return 1; fi
+  echo "hire-all: $hired hired, $skipped skipped, $failed failed"
+  # NAMED, not just counted. A count tells the operator something is wrong; the
+  # name is what they act on, and this whole issue exists because a table full
+  # of equals never named the one box that could not work.
+  if [ "$skipped" -ne 0 ]; then
+    echo "  not converged (rig bootstrap never finished): $skipped_names"
+  fi
+  # A skip is not success: `crew hire-all` is run by automation, and an rc of 0
+  # with a member missing from the fleet is the same silent partial outage this
+  # issue is about, one level up.
+  if [ "$failed" -ne 0 ] || [ "$skipped" -ne 0 ]; then return 1; fi
 }
 
 cmd_up() {
@@ -1513,7 +1682,7 @@ cmd_up() {
   # resolves — so it resolves HEAD once here, for the same reason and with the
   # same "once, not per box" property.
   resolve_engine HEAD
-  local name agent role from state failed=0
+  local name agent role from state failed=0 skipped=0 skipped_names="" rc conv
   foreign_actor_check
   while read -r name agent role from; do
     validate_profiles "$agent" "$role"
@@ -1530,12 +1699,34 @@ cmd_up() {
       fi
     fi
     if [ "$dry" -eq 0 ]; then
-      # Same reasoning as hire-all: one box must not abort the convergence.
-      if ! hire_box "$name" "$agent" "$role" HEAD 0; then failed=$((failed + 1)); fi
+      # Same reasoning as hire-all: one box must not abort the convergence, and
+      # an unconverged box (rc 3) is skipped and named rather than fatal (#220).
+      rc=0
+      hire_box "$name" "$agent" "$role" HEAD 0 || rc=$?
+      case "$rc" in
+        0) : ;;
+        3) skipped=$((skipped + 1)); skipped_names="${skipped_names}${skipped_names:+, }$name" ;;
+        *) failed=$((failed + 1)) ;;
+      esac
     else
-      echo "$name: WOULD hire (currently: $(hired_at "$name"))" 2>/dev/null || echo "$name: WOULD hire"
+      # A dry run that says WOULD hire about a box the real run will refuse
+      # tells the same lie the NOTE column told, one verb over — and --dry-run
+      # is precisely what an operator reads BEFORE the irreversible verb, so it
+      # is the last place that lie can still be cheap to correct.
+      conv="$(convergence_of "$(rig_report "$name")")"
+      if [ "$conv" = converged ]; then
+        echo "$name: WOULD hire (currently: $(hired_at "$name"))" 2>/dev/null || echo "$name: WOULD hire"
+      else
+        echo "$name: WOULD SKIP — not converged; crew hire $name would refuse"
+      fi
     fi
   done < <(read_roster)
+
+  if [ "$dry" -eq 0 ] && [ "$skipped" -ne 0 ]; then
+    echo
+    echo "up: $skipped box(es) SKIPPED — rig bootstrap never converged them: $skipped_names"
+    echo "    they are NOT on duty; each needs: box shell <box> → sudo rig bootstrap <agent>-box → box snapshot <box> bootstrapped"
+  fi
 
   if [ "$dry" -eq 0 ] && [ "$failed" -ne 0 ]; then
     echo
@@ -1557,8 +1748,11 @@ cmd_up() {
     comm -23 <(box_names | sort) <(roster_names | sort) | sed 's/^/  /' || true
   fi
   # Convergence that could not converge must not exit 0: `crew up` is what
-  # automation runs, and a success rc is the only thing most callers read.
-  if [ "$dry" -eq 0 ] && [ "$failed" -ne 0 ]; then return 1; fi
+  # automation runs, and a success rc is the only thing most callers read. A
+  # SKIP counts for that purpose exactly as a failure does — the fleet is short
+  # a member either way, and the whole defect being closed here is a short
+  # fleet that reads as a full one.
+  if [ "$dry" -eq 0 ] && { [ "$failed" -ne 0 ] || [ "$skipped" -ne 0 ]; }; then return 1; fi
 }
 
 cmd_down() {
@@ -1622,6 +1816,27 @@ cmd_status() {
       unverified)
         echo "integrity: unverified — hired before content stamping; the next crew upgrade records one" ;;
     esac
+    # The provenance half of #220, and this is the view it belongs in: the
+    # table's NOTE has to fit one clause, while the operator who opened a
+    # single box wants the marker line itself and which rig wrote it. Costs one
+    # round trip on a one-box view, and none at all on the table.
+    local rreport rconv rver rat
+    rreport="$(rig_report "$b")"
+    rconv="$(convergence_of "$rreport")"
+    rver="$(report_field rig_version "$rreport")"
+    rat="$(report_field rig_at "$rreport")"
+    case "$rconv" in
+      converged)
+        echo "rig: converged — $(report_field marker "$rreport")"
+        # A converged box with no manifest was built by a pre-manifest rig
+        # (rig#61). That is old, not broken, so it says nothing rather than
+        # inventing an alarm — the marker is what the verdict rests on.
+        if [ -n "$rver" ]; then echo "     converged by $rver${rat:+ at $rat}"; fi ;;
+      *)
+        echo "rig: ${rconv^^} — $(convergence_detail "$rreport")"
+        echo "     $(convergence_recovery "$b" "$(roster_line "$b" | awk '{print $1}')")"
+        echo "     crew hire $b refuses until this is fixed (--force overrides)" ;;
+    esac
     bxn "$b" 'tail -n 5 ~/duty/duty.log 2>/dev/null' 2>/dev/null ||
       echo "  (unreachable)"
     return 0
@@ -1640,6 +1855,7 @@ cmd_status() {
   printf "$fmt" MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
   local report estate erecorded edisplay
+  local rreport conv convnote
   while read -r name agent role _from; do
     if ! box_exists "$name"; then
       # shellcheck disable=SC2059
@@ -1683,8 +1899,28 @@ cmd_status() {
     ghs_d="$ghs"; vs_d="$vs"
     [ "$ghs" = missing ] && ghs_d=MISSING
     [ "$vs"  = missing ] && vs_d=MISSING
-    note=""
-    [ -z "$hired" ] && { hired="not hired"; note="crew hire $name"; }
+    note=""; conv=""; convnote=""
+    # Convergence is asked ONLY of an un-hired box, and that is a budget
+    # decision as much as a semantic one: a hired box already proved it could
+    # run, so a healthy steady-state fleet pays no extra round trip at all and
+    # this column costs exactly what it cost before (the same rule engine_report
+    # is written to). The window where it matters is bring-up, and in that
+    # window every OTHER signal is derived through an engine that does not
+    # exist yet — GH and VENDOR both read `unknown`, which is why nothing in
+    # this table carried the failure (#220).
+    if [ -z "$hired" ]; then
+      hired="not hired"
+      rreport="$(rig_report "$name")"
+      conv="$(convergence_of "$rreport")"
+      case "$conv" in
+        converged) note="crew hire $name" ;;
+        incomplete)
+          convnote="INCOMPLETE — $(convergence_detail "$rreport"); $(convergence_recovery "$name" "$agent")" ;;
+        unknown)
+          convnote="convergence unknown — $(convergence_detail "$rreport"); crew hire refuses until it can read the marker" ;;
+      esac
+      note="${note:-$convnote}"
+    fi
     if [ "$ghs" = missing ] || [ "$vs" = missing ]; then
       note="⚠ log in: box shell $name${note:+; $note}"
       # A failing vendor probe has two very different causes, and they were
@@ -1733,6 +1969,15 @@ cmd_status() {
       last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60 || true)"
       note="${last:-no ticks yet}"
     fi
+    # Convergence WINS the note outright, over the login advice above. Both are
+    # true of an unconverged box, and only one of them is worth doing: logging
+    # in a box that has no vendor CLI installed fixes nothing, and `crew hire`
+    # will refuse it either way. The note must carry the action that actually
+    # moves the box forward, which is the bootstrap.
+    # An `if`, not `[ … ] && …`: this file already carries that scar twice
+    # (cmd_upgrade's loop, hire_box's force_arg) — the short form takes the
+    # test's exit status, and here the common case is the empty one.
+    if [ -n "$convnote" ]; then note="$convnote"; fi
     # The wire vocabulary is lowercase; MODIFIED shouts for the same reason
     # MISSING does — it is the one row an operator must not skim past, and the
     # note names the version it diverged from so the column stays one word.
