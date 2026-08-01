@@ -113,6 +113,8 @@ _mirror_rounds() {
   payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
       body
+      headRefOid
+      commits(last:100){nodes{commit{oid committedDate}}}
       reviews(first:100){nodes{author{login} state commit{oid} submittedAt}}
       comments(first:100){nodes{author{login} body createdAt}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
