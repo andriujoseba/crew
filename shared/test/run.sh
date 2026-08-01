@@ -1510,6 +1510,28 @@ jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
   > "$KHO/elsewhere/credentials/kimi-code.json"
 t cred-kimi-override-reaches-elsewhere 0 "$(cred_rc kimi "$KH0" "$KHO/elsewhere")"
 
+# -- the SAME resolution drives PATH, and until now nothing asserted that half
+# of #240's D2: BOT_PATH_PREPEND is an assignment evaluated when the profile is
+# sourced, so reading it back also proves the resolver is defined ABOVE it.
+# The resolved home's bin comes first, then every other known home's — a
+# non-existent PATH entry costs nothing, which is why the fallbacks are cheaper
+# than guessing right. Only PRESENCE of the credential picks the home here, not
+# whether its JWT parses, so the fixtures above are reused exactly as they lie.
+path_prepend() {  # path_prepend <home> [KIMI_CODE_HOME] -> BOT_PATH_PREPEND
+  # shellcheck disable=SC2034  # consumed inside the conf sourced below
+  ( HOME="$1" KIMI_CODE_HOME="${2:-}"
+    # shellcheck disable=SC1091
+    source "$SHARED/conf/agents/kimi.conf"; printf '%s' "$BOT_PATH_PREPEND" ) 2>/dev/null
+}
+t path-kimi-alt-home-first "$KH2/.kimi/bin:$KH2/.kimi-code/bin" "$(path_prepend "$KH2")"
+t path-kimi-old-home-first "$KH/.kimi-code/bin:$KH/.kimi/bin" "$(path_prepend "$KH")"
+# No credential anywhere: the ~/.kimi-code fallback leads, and the other home
+# is still on PATH — the CLI may be installed where the credential is not.
+t path-kimi-neither-home-falls-back "$KH0/.kimi-code/bin:$KH0/.kimi/bin" "$(path_prepend "$KH0")"
+# Explicit operator intent leads here too, even though both probes would hit.
+t path-kimi-override-first "$KHO/elsewhere/bin:$KHO/.kimi/bin:$KHO/.kimi-code/bin" \
+  "$(path_prepend "$KHO" "$KHO/elsewhere")"
+
 # -- codex: file-backed vs keyring-backed, and NO expiry at all
 DH="$CREDH/codex"; mkdir -p "$DH/.codex"
 jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
