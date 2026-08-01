@@ -2896,6 +2896,13 @@ t cli-fallback-fixture-is-really-the-fallback fallback "$r1"
 # Every mutating verb refuses, and every one of them names `crew init` — the
 # refusal is only useful if it says what to do instead. Asserted per verb
 # rather than on a sample: the defect was per-call-site and so is the fix.
+#
+# `floor` refuses too (#244) and is deliberately NOT in this list: fbrc runs
+# each spec in the FOREGROUND with no timeout, so a regressed floor refusal
+# would serve until the CI job's own limit rather than fail here. Its cases
+# live in fleet-floor/test/cli.sh, which owns the verb, caps every process it
+# starts and watches the port. Add it here and this suite hangs on the day the
+# assertion matters.
 refused="" unnamed=""
 while IFS= read -r spec; do
   [ -n "$spec" ] || continue
