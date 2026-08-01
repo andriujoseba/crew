@@ -184,13 +184,19 @@ function drawUnit(t,st){
     return pts;
   }
   function grapple(x,y,ang,open,alive){
+    /* RUN 1 · LOOP 3 (squiddy) — the low claws sit in the figure's own
+       shadow: a grapple hanging a hand above the deck cannot catch the
+       full cool key, and its bright prongs were reading as lit patches ON
+       the walkway. The polished stroke now fades with proximity to the
+       deck line (unit y 560); high claws keep their shine. */
+    var shd=offl?1:1-0.72*Math.max(0,Math.min(1,(y-455)/95));
     [-1,0,1].forEach(function(k){
       var a2=ang+k*(0.34+open*0.5);
       var tx=x+Math.cos(a2)*21, ty=y+Math.sin(a2)*21;
       var hx=tx+Math.cos(a2+ (k>=0?1.7:-1.7))*6.4, hy=ty+Math.sin(a2+(k>=0?1.7:-1.7))*6.4;
       g.strokeStyle="#05080e";g.lineWidth=6;g.lineCap="round";
       g.beginPath();g.moveTo(x,y);g.quadraticCurveTo(tx,ty,hx,hy);g.stroke();
-      g.strokeStyle=offl?"#3a4350":"#8b98ac";g.lineWidth=2.3;
+      g.strokeStyle=offl?"#3a4350":"rgba(139,152,172,"+(0.16+0.84*shd)+")";g.lineWidth=2.3;
       g.beginPath();g.moveTo(x,y);g.quadraticCurveTo(tx,ty,hx,hy);g.stroke();});
     g.fillStyle="#04070c";g.beginPath();g.arc(x,y,7,0,7);g.fill();
     g.strokeStyle=eH;g.lineWidth=1.2;g.beginPath();g.arc(x,y,7,0,7);g.stroke();
@@ -587,23 +593,42 @@ function drawUnit(t,st){
      instead of a row of anything. */
   // wide length spread and thin gauges, so the cluster never closes into a
   // solid bar; the chin curve stays readable between them
-  var STUB=[[-31,5,2.0],[-25,14,2.8],[-19,7,2.2],[-13,20,3.2],[-7,9,2.4],
-            [-1,16,2.6],[5,6,2.0],[11,19,3.0],[17,8,2.2],[24,13,2.6],[30,5,2.0],
-            [-22,4,1.6],[-9,4,1.6],[8,3,1.5],[21,4,1.6]];
-  STUB.forEach(function(F,md){
+  /* RUN 1 · LOOP 3 (squiddy) — the stubs get NAMEABLE mechanical form. The
+     matte row read as drips: same value top to bottom, no joints, tips
+     fading to nothing. Each one is now a short segmented tool — barrel
+     segments stepping slightly slimmer, a wider dark collar ring at every
+     joint, a blunt square end pad — and the row sits at three depths, the
+     rear rank a full shade darker so the stubs separate from each other
+     and from the recess shadow. Still the operator's rule: value steps
+     only, no specular, no lit edge, nothing tapering to a point — so it
+     can never close back into teeth. Rear rank drawn first. */
+  var STUB=[[-31,5,2.0,1],[-25,14,2.8,0],[-19,7,2.2,1],[-13,20,3.2,0],[-7,9,2.4,1],
+            [-1,16,2.6,0],[5,6,2.0,1],[11,19,3.0,0],[17,8,2.2,1],[24,13,2.6,0],[30,5,2.0,1],
+            [-22,4,1.6,2],[-9,4,1.6,2],[8,3,1.5,2],[21,4,1.6,2]];
+  [2,1,0].forEach(function(rank){STUB.forEach(function(F,md){
+    if(F[3]!==rank)return;
     var mx=HC.x+F[0]*1.62, my=HC.y+70+Math.cos(F[0]*0.048)*9;
     var ln=F[1]*(offl?0.85:1), w0=F[2];
     var tw2=offl?0:Math.sin(t*(3.5+md*0.4)+md*1.7)*1.1;   // a slow, uneasy shift
-    var tipx=mx+tw2, tipy=my+ln;
-    // the stub itself: dark, matte, no lit edge anywhere
-    var sg5=g.createLinearGradient(mx,my,tipx,tipy);
-    sg5.addColorStop(0,offl?"#12161e":"#1b212b");sg5.addColorStop(1,"#05080d");
-    g.strokeStyle=sg5;g.lineWidth=w0*1.8;g.lineCap="round";
-    g.beginPath();g.moveTo(mx,my);g.lineTo(tipx,tipy);g.stroke();
-    // two ribs, darker still — texture without a silhouette edge
-    g.strokeStyle="rgba(2,5,10,0.6)";g.lineWidth=1;
-    g.beginPath();g.moveTo(mx-w0*0.7,my+ln*0.38);g.lineTo(mx+w0*0.7+tw2*0.4,my+ln*0.38);g.stroke();
-    g.beginPath();g.moveTo(mx-w0*0.6,my+ln*0.68);g.lineTo(mx+w0*0.6+tw2*0.7,my+ln*0.68);g.stroke();});
+    var TOP=[offl?"#191f28":"#242a34",offl?"#11161e":"#1a202a",offl?"#0c1017":"#131820"][rank];
+    var BOT=["#090d13","#060a0f","#04070b"][rank];
+    var nseg=ln>12?3:(ln>6?2:1), sh=ln/nseg;
+    g.lineCap="butt";
+    for(var sg5=0;sg5<nseg;sg5++){
+      var y0=my+sg5*sh, y1=my+(sg5+1)*sh;
+      var xw0=tw2*sg5/nseg, xw1=tw2*(sg5+1)/nseg;      // the twitch carries down it
+      var bg5=g.createLinearGradient(mx,y0,mx,y1);
+      bg5.addColorStop(0,TOP);bg5.addColorStop(1,BOT);
+      g.strokeStyle=bg5;g.lineWidth=Math.max(1.4,w0*1.8-sg5*0.5); // each segment a touch slimmer
+      g.beginPath();g.moveTo(mx+xw0,y0);g.lineTo(mx+xw1,y1);g.stroke();
+      // collar ring at the joint: wider and darker — a seam, not a shine
+      g.strokeStyle="rgba(3,6,11,0.85)";g.lineWidth=Math.max(2,w0*2.3-sg5*0.5);
+      g.beginPath();g.moveTo(mx+xw1,y1-1.1);g.lineTo(mx+xw1,y1+0.4);g.stroke();
+    }
+    // blunt end pad — flat and square, never a point
+    g.fillStyle=BOT;g.fillRect(mx+tw2-w0*0.8,my+ln,w0*1.6,1.7);
+  });});
+  g.lineCap="round";
   // the shadow the cluster sits in — it should look recessed, not applied
   g.save();g.globalCompositeOperation="source-atop";
   var uj=g.createLinearGradient(0,HC.y+62,0,HC.y+96);
@@ -958,11 +983,13 @@ function drawRoom(t,st){
          burned for years is worn: bars dropped ~two stops and pulled to
          broadcast-worn pastels. Still clearly the brightest face in its
          own bay — just no longer the loudest thing in the room. */
+      /* RUN 1 · LOOP 3 (squiddy) — and one more step down: the art director
+         still ranked the card among the competing emitters. */
       var BARS=["#4a4c50","#4c4832","#32484c","#324838","#483442","#4a3432","#303248"];
       for(var bi9=0;bi9<7;bi9++){
-        S.globalAlpha=offl?0.14:0.94;
+        S.globalAlpha=offl?0.14:0.66;
         S.fillStyle=BARS[bi9];S.fillRect(sc.x+bi9*sc.w/7,sc.y,sc.w/7+1,sc.h*0.74);}
-      S.globalAlpha=offl?0.1:0.8;
+      S.globalAlpha=offl?0.1:0.55;
       ["#282a3e","#101012","#3e2c38","#101012"].forEach(function(bc9,bj){
         S.fillStyle=bc9;S.fillRect(sc.x+bj*sc.w/4,sc.y+sc.h*0.74,sc.w/4+1,sc.h*0.26);});
       S.globalAlpha=1;
@@ -1043,15 +1070,24 @@ function drawRoom(t,st){
       S.fillStyle="rgba(126,142,170,"+(0.3+0.24*lit)+")";S.beginPath();S.arc(sw9[0],sw9[1],1.9,0,7);S.fill();
       S.fillStyle="rgba(210,226,250,"+(0.22*lit)+")";S.beginPath();S.arc(sw9[0]-0.6,sw9[1]-0.6,0.7,0,7);S.fill();});
     // tally: green if this one is still receiving, red if it is orphaned
+    /* RUN 1 · LOOP 3 (squiddy) — the tally CULL. Twenty identical
+       full-value green dots pinged at equal size across the wall and
+       competed with the stare. The greens drop to a desaturated
+       service-lamp value at mixed sizes; only the pair beside gear that
+       still works (the live camera feed, and the top of the bay by the
+       equipment bank) keeps real brightness and a halo. Reds come down
+       with them. The eye cluster is the only loud emitter left. */
     var tal=(si%3===0), tred=(si===9||si===17||si%7===5);
+    var tbright=(si===7||si===16);
     var tp9=offl?0:(tred?(Math.sin(t*3+si)>0.2?1:0.25):0.7+0.3*Math.sin(t*1.3+si));
-    var tcol=tred?"rgba(236,74,54,":"rgba(110,214,140,";
-    S.fillStyle=offl?"rgba(48,58,68,0.7)":tcol+(0.95*tp9*lit)+")";
-    S.beginPath();S.arc(sc.x+sc.w-6,sc.y+sc.h+6,2.1,0,7);S.fill();
-    if(!offl){S.save();S.globalCompositeOperation="lighter";
-      var tg9=S.createRadialGradient(sc.x+sc.w-6,sc.y+sc.h+6,1,sc.x+sc.w-6,sc.y+sc.h+6,13);
-      tg9.addColorStop(0,tcol+(0.3*tp9)+")");tg9.addColorStop(1,tcol+"0)");
-      S.fillStyle=tg9;S.beginPath();S.arc(sc.x+sc.w-6,sc.y+sc.h+6,13,0,7);S.fill();S.restore();}
+    var tcol=tred?"rgba(196,84,64,":"rgba(104,138,116,";
+    var trr=tbright?2.1:1.2+Rnd(si*11)*0.8;
+    S.fillStyle=offl?"rgba(48,58,68,0.7)":tcol+((tbright?0.85:0.32)*tp9*lit)+")";
+    S.beginPath();S.arc(sc.x+sc.w-6,sc.y+sc.h+6,trr,0,7);S.fill();
+    if(!offl&&tbright){S.save();S.globalCompositeOperation="lighter";
+      var tg9=S.createRadialGradient(sc.x+sc.w-6,sc.y+sc.h+6,1,sc.x+sc.w-6,sc.y+sc.h+6,10);
+      tg9.addColorStop(0,tcol+(0.22*tp9)+")");tg9.addColorStop(1,tcol+"0)");
+      S.fillStyle=tg9;S.beginPath();S.arc(sc.x+sc.w-6,sc.y+sc.h+6,10,0,7);S.fill();S.restore();}
     if(tal){
       S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(sc.x+5,sc.y+sc.h+3.5,30,8);
       S.fillStyle="rgba(178,166,124,"+(0.2+0.22*lit)+")";S.fillRect(sc.x+5,sc.y+sc.h+3,30,8);
@@ -1086,8 +1122,14 @@ function drawRoom(t,st){
       // the face is the SOURCE, not a target: the spill fills a donut round
       // the tube (even-odd hole over the glass) so it lands on bezel and
       // wall without re-brightening the face the rebalance just dimmed
+      /* RUN 1 · LOOP 3 (squiddy) — the donut's outer rect ran past where
+         its gradient dies, so every screen printed a translucent rectangle
+         whose edges hung mid-air — the "ghost glass" sheets the art
+         director flagged around the creature. The rect is now bound to the
+         gradient's own zero radius, so the spill has no edge at all. */
+      var gcx=sc.x+sc.w/2, gcy=sc.y+sc.h/2, gR=sc.w*1.15;
       S.fillStyle=sg8;
-      S.beginPath();S.rect(sc.x-sc.w*1.2,sc.y-sc.h*1.2,sc.w*3.4,sc.h*3.4);
+      S.beginPath();S.rect(gcx-gR,gcy-gR,gR*2,gR*2);
       S.rect(sc.x,sc.y,sc.w,sc.h);S.fill("evenodd");S.restore();}
   });
   // the last ceiling tube, strobing
@@ -1130,11 +1172,19 @@ function drawRoom(t,st){
     S.strokeStyle="rgba(178,198,230,"+(0.12*lit)+")";S.lineWidth=0.9;
     S.beginPath();S.moveTo(bx9+16,BTY+21.4);S.lineTo(bx9+bw9-16,BTY+21.4);S.stroke();
     if(fl2>0.5){S.save();S.globalCompositeOperation="lighter";
-      var tg2=S.createLinearGradient(0,BTY+20,0,430);
-      tg2.addColorStop(0,"rgba(170,192,224,"+(0.11*fl2)+")");tg2.addColorStop(1,"rgba(170,192,224,0)");
-      S.fillStyle=tg2;S.beginPath();
+      /* RUN 1 · LOOP 3 (squiddy) — the cone's slanted sides printed as
+         ghost-glass edges hanging mid-air beside the unit. Same poly, but
+         the fill is now a radial falloff from the tube clipped inside it,
+         so the light dies before it can reach its own boundary. */
+      S.beginPath();
       S.moveTo(bx9+6,BTY+20);S.lineTo(bx9+bw9-6,BTY+20);
-      S.lineTo(bx9+bw9+110,430);S.lineTo(bx9-110,430);S.closePath();S.fill();S.restore();}
+      S.lineTo(bx9+bw9+110,430);S.lineTo(bx9-110,430);S.closePath();S.clip();
+      S.translate(bx9+bw9/2,BTY+22);
+      var tg2=S.createRadialGradient(0,0,8,0,0,300);
+      tg2.addColorStop(0,"rgba(170,192,224,"+(0.13*fl2)+")");
+      tg2.addColorStop(0.55,"rgba(170,192,224,"+(0.05*fl2)+")");
+      tg2.addColorStop(1,"rgba(170,192,224,0)");
+      S.fillStyle=tg2;S.fillRect(-300,-300,600,600);S.restore();}
   })();
   /* the screens' own wash, falling on the rack steel they are bolted to.
      One pass over the whole wall rather than per-screen: the individual
@@ -1203,13 +1253,16 @@ function drawRoom(t,st){
       var cx=x+w*0.28, cy=y+h/2, R=19;
       S.fillStyle="rgba(1,3,6,0.9)";S.beginPath();S.arc(cx,cy,R,0,7);S.fill();
       if(!offl){
+        /* RUN 1 · LOOP 3 (squiddy) — the scope steps down a stop with the
+           rest of the secondary lights: the hero rebalance applies to the
+           equipment bank too. */
         var wg=S.createRadialGradient(cx,cy,1,cx,cy,R);
-        wg.addColorStop(0,"rgba(90,200,140,"+(0.24*lit)+")");wg.addColorStop(1,"rgba(40,110,80,"+(0.16*lit)+")");
+        wg.addColorStop(0,"rgba(90,200,140,"+(0.14*lit)+")");wg.addColorStop(1,"rgba(40,110,80,"+(0.09*lit)+")");
         S.fillStyle=wg;S.beginPath();S.arc(cx,cy,R,0,7);S.fill();
-        S.strokeStyle="rgba(60,160,110,"+(0.34*lit)+")";S.lineWidth=0.8;
+        S.strokeStyle="rgba(60,160,110,"+(0.2*lit)+")";S.lineWidth=0.8;
         S.beginPath();S.moveTo(cx-R,cy);S.lineTo(cx+R,cy);S.moveTo(cx,cy-R);S.lineTo(cx,cy+R);S.stroke();
         S.save();S.beginPath();S.arc(cx,cy,R-1,0,7);S.clip();
-        S.strokeStyle="rgba(160,255,200,"+(0.8*lit)+")";S.lineWidth=1.3;S.beginPath();
+        S.strokeStyle="rgba(150,236,186,"+(0.45*lit)+")";S.lineWidth=1.1;S.beginPath();
         for(var wx=-R;wx<=R;wx+=2)
           S.lineTo(cx+wx,cy+Math.sin(wx*0.55+t*3)*Math.exp(-Math.abs(wx)/26)*10);
         S.stroke();S.restore();}
@@ -1515,23 +1568,46 @@ function drawRoom(t,st){
       var odd=S.createRadialGradient(ox2-8,oy2+2,2,ox2-8,oy2+2,72);
       odd.addColorStop(0,"rgba(120,206,228,0.16)");odd.addColorStop(1,"rgba(120,206,228,0)");
       S.fillStyle=odd;S.beginPath();S.ellipse(ox2-8,oy2+2,72,20,0,0,7);S.fill();S.restore();}
-    // the chair, pushed back and turned away
-    /* ROUND 7 — the chair had a base and a stem and NO SEAT, at about a
-       third of the size it should be for the nearest object in frame. It is
-       full size now, it has a seat pan and a back, and its base lands on
-       the same floor line as the desk feet. */
-    S.save();S.translate(ox2+96,GYS+40);S.scale(1.55,1.55);S.rotate(-0.14);
-    S.fillStyle="rgba(1,3,6,0.6)";
-    poly(S,[[-34,26],[34,26],[46,34],[-22,34]]);S.fill();
-    S.fillStyle="#131a25";S.fillRect(-32,-58,62,12);
-    S.fillStyle="rgba(150,170,204,"+(0.2*lit)+")";S.fillRect(-32,-58,62,1.8);
-    S.fillStyle="#06090e";S.fillRect(-8,-46,9,26);
-    S.fillStyle="#121822";S.fillRect(-34,-20,68,11);
-    S.fillStyle="#06090e";S.fillRect(-5,-9,9,30);
-    S.strokeStyle="#06090e";S.lineWidth=5;
-    [[-30,34],[0,38],[30,34]].forEach(function(ft){
-      S.beginPath();S.moveTo(0,24);S.lineTo(ft[0],ft[1]);S.stroke();});
-    S.restore();
+    /* RUN 1 · LOOP 3 (squiddy) — the under-desk pile becomes NAMEABLE. The
+       rotated chair read as three dark slabs at contradictory angles, one
+       crossing in front of a desk leg while its twin read behind. It is
+       now a flight-case stack: a long case flat on the deck, a smaller
+       case squared on top, and a spare panel leaning against the end —
+       every base on the desk's own floor line, latches and corner caps to
+       say "case", and the whole group drawn after the desk so it occludes
+       both legs consistently. */
+    (function(){
+      var FLY=DFY+6;                        // the group's floor line
+      S.fillStyle="rgba(1,3,6,0.6)";        // contact shadow for the whole group
+      poly(S,[[ox2+46,FLY-3],[ox2+186,FLY-3],[ox2+206,FLY+8],[ox2+62,FLY+8]]);S.fill();
+      function fcase(x,y,w,h){
+        S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(x+3,y+3,w,h);
+        var cg7=S.createLinearGradient(0,y,0,y+h);
+        cg7.addColorStop(0,"#2b323e");cg7.addColorStop(0.5,"#1a202a");cg7.addColorStop(1,"#0e131b");
+        S.fillStyle=cg7;S.fillRect(x,y,w,h);
+        S.fillStyle="rgba(200,216,244,"+(0.13*lit)+")";S.fillRect(x,y,w,1.4);   // top edge in room light
+        S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(x,y+h*0.42,w,1.6);             // the lid seam
+        [x+7,x+w-13].forEach(function(lx9){                                     // latches over the seam
+          S.fillStyle="rgba(1,3,6,0.7)";S.fillRect(lx9,y+h*0.42-3.4,6,8);
+          S.fillStyle="#39424f";S.fillRect(lx9+0.8,y+h*0.42-3,4.4,6.6);});
+        [[x,y],[x+w-5,y],[x,y+h-5],[x+w-5,y+h-5]].forEach(function(cc9){        // corner caps
+          S.fillStyle="#232a34";S.fillRect(cc9[0],cc9[1],5,5);});
+        S.fillStyle="rgba(1,3,6,0.75)";S.fillRect(x+w/2-9,y+h*0.42-2.6,18,5);   // recessed handle
+      }
+      fcase(ox2+52,FLY-40,120,40);          // the long case, flat on the deck
+      fcase(ox2+66,FLY-68,82,28);           // the smaller one squared on top
+      // the spare panel leaning on the stack's end: base ON the floor, top
+      // resting against the case, one consistent angle
+      S.fillStyle="rgba(1,3,6,0.55)";
+      poly(S,[[ox2+178,FLY-54],[ox2+192,FLY-50],[ox2+208,FLY+4],[ox2+194,FLY+4]]);S.fill();
+      var lpg=S.createLinearGradient(ox2+178,FLY-56,ox2+200,FLY);
+      lpg.addColorStop(0,"#242b35");lpg.addColorStop(1,"#10151d");
+      poly(S,[[ox2+172,FLY-58],[ox2+186,FLY-54],[ox2+200,FLY],[ox2+186,FLY]]);
+      S.fillStyle=lpg;S.fill();
+      S.strokeStyle="rgba(1,3,6,0.6)";S.lineWidth=1.1;S.stroke();
+      S.fillStyle="rgba(200,216,244,"+(0.1*lit)+")";                            // its top edge, matte
+      poly(S,[[ox2+172,FLY-58],[ox2+186,FLY-54],[ox2+184.6,FLY-50.4],[ox2+171,FLY-54.4]]);S.fill();
+    })();
   })();
   // spare gear: a stack of dead CRTs and a parts crate, starboard
   (function(){
@@ -1681,24 +1757,52 @@ function drawRoom(t,st){
       eg2.addColorStop(0,"rgba(240,170,86,"+(0.2*ep*lit)+")");eg2.addColorStop(1,"rgba(240,170,86,0)");
       S.fillStyle=eg2;S.beginPath();S.arc(ex2,ey2+16,120,0,7);S.fill();
       // it washes the wall below it, warm against all that grey
-      var ew=S.createLinearGradient(0,ey2+18,0,ey2+190);
+      /* RUN 1 · LOOP 3 (squiddy) — the wash was a 180px fillRect whose
+         vertical sides printed as a ghost-glass sheet over the jamb (the
+         "4-88-" pane the art director flagged). Elliptical falloff now:
+         the warmth dies out in every direction, no edge. */
+      S.translate(ex2,ey2+52);S.scale(1,1.7);
+      var ew=S.createRadialGradient(0,0,4,0,0,96);
       ew.addColorStop(0,"rgba(240,170,86,"+(0.07*ep*lit)+")");ew.addColorStop(1,"rgba(240,170,86,0)");
-      S.fillStyle=ew;S.fillRect(ex2-90,ey2+18,180,172);S.restore();}
+      S.fillStyle=ew;S.fillRect(-96,-96,192,192);S.restore();}
     else{S.fillStyle="rgba(90,72,48,0.4)";S.fillRect(ex2-12,ey2+13,24,4);}
   })();
   // a second warm note: the operator's desk lamp, still on after everyone left
   (function(){
-    var dlx=196, dly=GYS-104;
+    /* RUN 1 · LOOP 3 (squiddy) — the lamp arm gets its LAMP. The black
+       angled arm with the amber tag terminated in nothing: a head with no
+       shade, floating clear of the desk it belonged to. It now has a base
+       foot bolted to the desktop, an elbow, a hooded shade with a readable
+       rim, and its light lands where a lamp's does — a warm pool on the
+       desk under the head, over the mug that stands in it. */
+    var dlx=196, dly=GYS-104, DTY=GYS-92;   // DTY: the desktop it stands on
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(dlx-7,DTY-1,18,4);
+    S.fillStyle="#232a35";S.fillRect(dlx-8,DTY-3,18,4);
+    S.fillStyle="rgba(200,216,244,"+(0.14*lit)+")";S.fillRect(dlx-8,DTY-3,18,1.1);
     S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=3;
-    S.beginPath();S.moveTo(dlx,dly);S.lineTo(dlx+22,dly-30);S.stroke();
-    S.fillStyle="#141b26";S.beginPath();
-    S.moveTo(dlx+12,dly-30);S.lineTo(dlx+34,dly-30);S.lineTo(dlx+30,dly-18);S.lineTo(dlx+16,dly-18);S.closePath();S.fill();
+    S.beginPath();S.moveTo(dlx,DTY-2);S.lineTo(dlx+8,dly-6);S.lineTo(dlx+22,dly-30);S.stroke();
+    S.fillStyle="#1a202a";S.beginPath();S.arc(dlx+8,dly-6,2.6,0,7);S.fill();   // the elbow
+    // the shade: hooded, mouth facing the desk
+    S.fillStyle="rgba(1,3,6,0.55)";
+    poly(S,[[dlx+13,dly-28],[dlx+37,dly-28],[dlx+31,dly-15],[dlx+17,dly-15]]);S.fill();
+    var shg=S.createLinearGradient(0,dly-32,0,dly-16);
+    shg.addColorStop(0,"#333c49");shg.addColorStop(0.6,"#1c232d");shg.addColorStop(1,"#11161e");
+    S.fillStyle=shg;
+    poly(S,[[dlx+12,dly-30],[dlx+34,dly-30],[dlx+30,dly-17],[dlx+16,dly-17]]);S.fill();
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(dlx+13,dly-30,20,1.2); // the rim
     if(!offl){
-      S.fillStyle="rgba(240,180,110,"+(0.7*lit)+")";S.fillRect(dlx+17,dly-20,12,3);
+      S.fillStyle="rgba(255,208,140,"+(0.9*lit)+")";S.fillRect(dlx+17,dly-19.5,12,2.6); // the tube
       S.save();S.globalCompositeOperation="lighter";
-      var dg2=S.createRadialGradient(dlx+23,dly-18,2,dlx+23,dly-18,90);
-      dg2.addColorStop(0,"rgba(240,180,110,0.15)");dg2.addColorStop(1,"rgba(240,180,110,0)");
-      S.fillStyle=dg2;S.beginPath();S.arc(dlx+23,dly-18,90,0,7);S.fill();S.restore();}
+      var dg2=S.createRadialGradient(dlx+23,dly-16,2,dlx+23,dly-16,64);
+      dg2.addColorStop(0,"rgba(240,180,110,0.2)");dg2.addColorStop(1,"rgba(240,180,110,0)");
+      S.fillStyle=dg2;S.beginPath();S.arc(dlx+23,dly-16,64,0,7);S.fill();
+      // the pool on the desktop
+      S.translate(dlx+24,DTY+1);S.scale(1,0.22);
+      var dpl=S.createRadialGradient(0,0,2,0,0,52);
+      dpl.addColorStop(0,"rgba(244,188,116,0.3)");dpl.addColorStop(0.6,"rgba(244,188,116,0.12)");
+      dpl.addColorStop(1,"rgba(244,188,116,0)");
+      S.fillStyle=dpl;S.fillRect(-52,-52,104,104);S.restore();}
+    else{S.fillStyle="rgba(90,72,48,0.4)";S.fillRect(dlx+17,dly-19,12,2.4);}
   })();
 }
 
@@ -1846,9 +1950,25 @@ function drawScene(t,st){
   var offl=st==="offline";
   drawRoom(t,st);
   if(!offl){
-    var rg=S.createRadialGradient(UX,400,20,UX,400,340);
-    rg.addColorStop(0,"rgba(255,45,34,0.055)");rg.addColorStop(1,"rgba(255,45,34,0)");
-    S.fillStyle=rg;S.fillRect(0,0,SW,SH);}
+    /* RUN 1 · LOOP 3 (squiddy) — the red key BOUNCES. The old red wash was a
+       340px veil at 0.055 that measured zero at the wall: fifteen lit
+       berries a hand's width from a bulkhead put warm light ON that
+       bulkhead. Replaced with a local glow centred on the eye cluster
+       itself, dead by ~200 stage px, drawn on the room before the unit so
+       the hull occludes its own core — plus a small kick on the wall
+       behind each thrown-high tip lamp. */
+    var hovX3=Math.sin(t*0.53)*4, hov3=Math.sin(t*0.9)*5+Math.sin(t*0.37)*3;
+    var EYX=UX+hovX3, EYY=374+hov3, sw3=Math.sin(t*0.9);
+    S.save();S.globalCompositeOperation="lighter";
+    var rg=S.createRadialGradient(EYX,EYY,12,EYX,EYY,200);
+    rg.addColorStop(0,"rgba(255,56,30,0.28)");rg.addColorStop(0.6,"rgba(255,56,30,0.165)");
+    rg.addColorStop(1,"rgba(255,56,30,0)");
+    S.fillStyle=rg;S.beginPath();S.arc(EYX,EYY,200,0,7);S.fill();
+    [[386,166+sw3*5],[824,180-sw3*5]].forEach(function(tk){
+      var tkg=S.createRadialGradient(tk[0],tk[1],2,tk[0],tk[1],58);
+      tkg.addColorStop(0,"rgba(255,64,40,0.13)");tkg.addColorStop(1,"rgba(255,64,40,0)");
+      S.fillStyle=tkg;S.beginPath();S.arc(tk[0],tk[1],58,0,7);S.fill();});
+    S.restore();}
   if(offl){
     [-238,-166,-100,-58,-52,58,70,112,176,242].forEach(function(dx){
       var sh=S.createRadialGradient(UX+dx,GYS,1,UX+dx,GYS,32);
@@ -1883,8 +2003,23 @@ function drawScene(t,st){
        is elliptical — soft in every direction, no printed edge — and deep
        enough to read as occlusion (≥8 levels under open floor). Still a
        HOVER: the pools are shadow on the deck, nothing touches. */
-    [[-84,20,46,0.88],[22,16,40,0.68],[120,20,26,0.62],[-168,6,22,0.42]].forEach(function(wp){
-      S.save();S.translate(UX+dr+wp[0],GYS+wp[1]);S.scale(1,0.42);
+    /* RUN 1 · LOOP 3 (squiddy) — the figure's shadow reaches the WALKWAY.
+       The pools were drawn after the reflections, but the strip light's
+       long mirror streak (x 316-584) is bright enough that a 0.5 pool over
+       it still measured brighter than open floor — the deck under the
+       creature glowed. One soft occlusion band under the whole figure now
+       kills the mirror where a hovering hull would actually block it,
+       biased toward the streak side. Still a hover: shadow, no contact. */
+    S.save();S.translate(UX+dr-80,GYS+18);S.scale(1,0.32);
+    var occ=S.createRadialGradient(0,0,6,0,0,210);
+    occ.addColorStop(0,"rgba(0,0,0,0.5)");occ.addColorStop(0.55,"rgba(0,0,0,0.26)");
+    occ.addColorStop(1,"rgba(0,0,0,0)");
+    S.fillStyle=occ;S.fillRect(-210,-210,420,420);S.restore();
+    /* RUN 1 · LOOP 3 (squiddy) — pools re-aimed under the claws that are
+       actually low this revision (stage x ≈ 434/536/640/675/750; the whip
+       endpoints carry no hovX, so neither do their pools). */
+    [[-64,18,50,0.92],[40,16,42,0.8],[75,18,34,0.7],[150,18,40,0.8],[-166,8,26,0.5]].forEach(function(wp){
+      S.save();S.translate(UX+wp[0],GYS+wp[1]);S.scale(1,0.42);
       var shw=S.createRadialGradient(0,0,2,0,0,wp[2]);
       shw.addColorStop(0,"rgba(0,0,0,"+wp[3]+")");shw.addColorStop(0.5,"rgba(0,0,0,"+(wp[3]*0.55)+")");
       shw.addColorStop(1,"rgba(0,0,0,0)");
@@ -1897,8 +2032,11 @@ function drawScene(t,st){
        fades out radially on the deck in every direction. */
     S.save();S.globalCompositeOperation="lighter";
     S.translate(UX+dr,GYS+8);S.scale(1,0.24);
+    /* RUN 1 · LOOP 3 (squiddy) — the red kick on the deck comes up: the
+       stare's floor bounce was 0.085 peak and the art director measured it
+       as nearly absent. Doubled, still local to the strip under the head. */
     var tp=S.createRadialGradient(0,0,4,0,0,175);
-    tp.addColorStop(0,"rgba(255,45,34,0.085)");tp.addColorStop(0.55,"rgba(255,45,34,0.035)");
+    tp.addColorStop(0,"rgba(255,45,34,0.16)");tp.addColorStop(0.55,"rgba(255,45,34,0.065)");
     tp.addColorStop(1,"rgba(255,45,34,0)");
     S.fillStyle=tp;S.fillRect(-175,-175,350,350);S.restore();}
   S.drawImage(body,UOX,UOY);
