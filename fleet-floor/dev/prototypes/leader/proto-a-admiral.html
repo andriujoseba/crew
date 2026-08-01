@@ -183,9 +183,7 @@ function drawUnit(t,st){
     plate(g,[[lx-29,GY-50],[lx+29,GY-50],[lx+34,GY],[lx-34,GY]],sT,sB,ed);
     plate(g,[[lx-34,GY-11],[lx+34,GY-11],[lx+34,GY],[lx-34,GY]],"#0c1119","#03050a",null);
     // toe cap: its own plate over the boot, scuffed at the leading edge
-    // RUN 3 · LOOP 5 — lifted a shade: the deepened key was sinking the
-    // boots into the deck band behind them
-    plate(g,[[lx-29,GY-24],[lx+29,GY-24],[lx+34,GY-10],[lx-34,GY-10]],offl?"#161c26":"#1f2937",sB,ed);
+    plate(g,[[lx-29,GY-24],[lx+29,GY-24],[lx+34,GY-10],[lx-34,GY-10]],sM,sB,ed);
     pl(g,lx-27,GY-23,lx+27,GY-23,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.1);
     bolt(g,lx-20,GY-16,1.8,offl?0.04:0.14);bolt(g,lx+20,GY-16,1.8,offl?0.04:0.14);
     pl(g,lx-32,GY-12,lx+32,GY-12,"rgba(198,214,242,"+(offl?0.07:0.2)+")",1.3); // shine line
@@ -528,50 +526,20 @@ function drawUnit(t,st){
      hologram. So: a MODERATE warm key with a hot pool on the top planes
      only, and the separation comes from the shadow the unit now casts on
      the wall behind it (drawScene), not from washing the figure brighter. */
-  /* RUN 3 · LOOP 5 — the key modelled nothing: chest-to-thigh fell only 3
-     levels over a metre. Steeper head-to-toe ramp — hotter cap/shoulders,
-     deeper shins/boots — CONTRAST, not the loop-1 flat wash. */
   var key=RB.createLinearGradient(0,140,0,GY);
-  key.addColorStop(0,"rgba(248,228,186,"+(offl?0.07:0.34)+")");
-  key.addColorStop(0.3,"rgba(212,196,166,"+(offl?0.03:0.12)+")");
-  key.addColorStop(0.62,"rgba(2,6,14,"+(offl?0.12:0.16)+")");
-  key.addColorStop(1,"rgba(2,6,14,"+(offl?0.4:0.46)+")");
+  key.addColorStop(0,"rgba(240,220,180,"+(offl?0.05:0.2)+")");
+  key.addColorStop(0.3,"rgba(210,194,164,"+(offl?0.02:0.08)+")");
+  key.addColorStop(0.7,"rgba(2,6,14,0.10)");
+  key.addColorStop(1,"rgba(2,6,14,0.22)");
   RB.fillStyle=key;RB.fillRect(0,0,W,H);
   var hp=RB.createRadialGradient(cx,160,12,cx,160,250);
-  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.26)+")");
-  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.1)+")");
+  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.2)+")");
+  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.08)+")");
   hp.addColorStop(1,"rgba(250,228,184,0)");
   RB.fillStyle=hp;RB.fillRect(0,0,W,H);
   var bnc=RB.createLinearGradient(0,GY-130,0,GY-8);
   bnc.addColorStop(0,"rgba(104,146,196,0)");bnc.addColorStop(1,"rgba(104,146,196,"+(offl?0.04:0.1)+")");
   RB.fillStyle=bnc;RB.fillRect(0,0,W,H);RB.restore();
-
-  /* RUN 3 · LOOP 5 — specular pass AFTER the key so the hits stay crisp:
-     the pendant catches every upward-facing arris (cap crown, pauldron
-     ridges, chest plate tops, knee cops) and gunmetal reads as metal.
-     Dead when offline — no lamp, no hits. */
-  RB.save();RB.globalCompositeOperation="source-atop";
-  if(!offl){
-    var sp9=function(x0,y0,x1,y1,a,w){pl(RB,x0,y0,x1,y1,"rgba(255,244,214,"+a+")",w||1.4);};
-    sp9(cx-51,capy-29.5,cx-19,capy-39.5,0.5,1.6);            // cap crown, key side
-    sp9(cx+19,capy-39.5,cx+51,capy-29.5,0.28,1.3);           // cap crown, far side
-    [-1,1].forEach(function(sg){var px=cx+sg*108,py=TY+2;
-      sp9(px-sg*39,py-11,px-sg*11,py-29,sg<0?0.46:0.34,1.6); // pauldron upstand ridge
-      sp9(px-sg*11,py-27,px+sg*21,py-19,0.24,1.2);});        // main cop top edge
-    sp9(cx-47,TY+11,cx-9,TY+7,0.34,1.4);                     // pectoral arris, key side
-    sp9(cx+9,TY+7,cx+47,TY+11,0.2,1.2);                      // pectoral arris, far side
-    sp9(cx-6,TY+5.5,cx+6,TY+5.5,0.3,1.2);                    // sternum ridge top
-    [-1,1].forEach(function(sg){var lx=cx+sg*34;
-      sp9(lx-20,421.5,lx+20,421.5,0.34,1.5);});              // knee cop tops
-  }
-  /* RUN 3 · LOOP 5 — boot/deck separation: the soles were within 5 levels
-     of the deck band behind them. A cool shine along the welt and toe-cap
-     edges in every state (dimmer offline, it is sheen not emission). */
-  [-1,1].forEach(function(sg){var lx=cx+sg*34;
-    pl(RB,lx-33,GY-1.2,lx+33,GY-1.2,"rgba(150,196,242,"+(offl?0.14:0.4)+")",1.7);
-    pl(RB,lx-32,GY-11.5,lx+32,GY-11.5,"rgba(170,205,245,"+(offl?0.1:0.3)+")",1.3);
-    pl(RB,lx-27,GY-23.5,lx+27,GY-23.5,"rgba(200,220,246,"+(offl?0.08:0.26)+")",1.2);});
-  RB.restore();
 
   /* ---- rim light: brass key, cyan fill ---- */
   RR.globalCompositeOperation="source-over";RR.drawImage(body,0,0);
@@ -1484,11 +1452,7 @@ function drawRoom(t,st){
     var C0=142, C1=432, CW=C1-C0;
     // BASEY is the PLATFORM top, not the deck: this console stands on the
     // command platform alongside the unit, on the one shared ground plane
-    /* RUN 3 · LOOP 5 — the console topped out at the figure's knees, which
-       made the bridge unusable; raised ~24px so the coaming meets the
-       unit's waist (~stage y 450). Everything on it is keyed to TOPY and
-       rides up with it (dials, telegraph, wheel, compass). */
-    var TOPY=GYS-190, KNEE=GYS-108, BASEY=GYS-14, OV=20;  // OV: front overhang
+    var TOPY=GYS-166, KNEE=GYS-108, BASEY=GYS-14, OV=20;  // OV: front overhang
     function fx(u){return C0-OV+u*(CW+OV*2);}             // front-edge x at 0..1
     // ---- cast shadow on the deck, thrown away from the port lamp
     S.fillStyle="rgba(2,4,8,0.6)";
@@ -1641,11 +1605,7 @@ function drawRoom(t,st){
          at roughly a metre, and raising the centre keeps the rim clear of
          the coaming instead of crossing it (it was reading as both in
          front of and on top of the console at the same time). */
-      /* RUN 3 · LOOP 5 — R=60→70 (a true bridge wheel against this unit)
-         and the hub sits a little higher off the raised coaming so the
-         rim and its handles stay clear of it. Still well port of the
-         figure: rim+handles end at stage x≈367 < 440. */
-      var wx=(C0+C1)/2-4, wy=TOPY-96, R=70;
+      var wx=(C0+C1)/2-4, wy=TOPY-88, R=60;
       var BR2=function(a){return "rgba(212,176,104,"+a+")";};
       var BRD=function(a){return "rgba(96,74,38,"+a+")";};
       // the boss: a splayed housing the column comes out of, ON the coaming
@@ -1675,12 +1635,7 @@ function drawRoom(t,st){
       S.beginPath();S.arc(wx,wy,R,0,7);S.stroke();
       S.strokeStyle="rgba(250,232,190,"+(0.42*lit)+")";S.lineWidth=1.4;
       S.beginPath();S.arc(wx,wy,R-1.7,Math.PI*1.02,Math.PI*1.72);S.stroke();
-      /* RUN 3 · LOOP 5 — the handle-pegs were offset 0.4rad (~23°) off the
-         spoke axes and ignored the wheel's slow turn; on a real wheel each
-         spoke BECOMES its handle, so the pegs share the spokes' exact
-         angle (including the t*0.08 rotation) — 8 pegs, one per spoke,
-         top spoke included. */
-      for(var hg=0;hg<8;hg++){var ah=hg/8*6.28+(offl?0:t*0.08);
+      for(var hg=0;hg<8;hg++){var ah=hg/8*6.28+0.4;
         var gx6=wx+Math.cos(ah)*(R+9), gy6=wy+Math.sin(ah)*(R+9);
         S.fillStyle="rgba(2,4,8,0.5)";
         S.beginPath();S.ellipse(gx6+1.6,gy6+1.6,5.4,3.2,ah,0,7);S.fill();
@@ -2285,15 +2240,12 @@ function drawScene(t,st){
   // the light the rail steals from the deck behind it
   S.fillStyle="rgba(2,4,8,0.35)";S.fillRect(0,RY+10,SW,16);
   // top rail, with a lit crown so it is not a black bar
-  /* RUN 3 · LOOP 5 — the crown at 0.16 merged into the dark zone the bar
-     crosses in front of the figure's shins (image x 1160-1430); brighter
-     top stop + stronger crown so the bar survives both floor pools. */
   var trg=S.createLinearGradient(0,RY,0,RY+13);
-  trg.addColorStop(0,"rgba(76,88,106,0.99)");
+  trg.addColorStop(0,"rgba(58,68,84,0.99)");
   trg.addColorStop(0.28,"rgba(30,37,47,0.99)");
   trg.addColorStop(1,"rgba(9,12,18,0.99)");
   S.fillStyle=trg;S.fillRect(0,RY,SW,13);
-  S.fillStyle="rgba(196,212,238,0.3)";S.fillRect(0,RY,SW,1.8);
+  S.fillStyle="rgba(186,204,232,0.16)";S.fillRect(0,RY,SW,1.8);
   // mid rail
   S.fillStyle="rgba(16,21,28,0.98)";S.fillRect(0,RY+42,SW,8);
   S.fillStyle="rgba(160,178,206,0.09)";S.fillRect(0,RY+42,SW,1.3);
@@ -2316,10 +2268,7 @@ function drawScene(t,st){
   S.fillStyle="rgba(14,18,25,0.99)";S.fillRect(0,TOEY,SW,15);   // toe board
   S.fillStyle="rgba(170,188,218,0.1)";S.fillRect(0,TOEY,SW,1.5);
   S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(0,TOEY+13,SW,3);
-  /* RUN 3 · LOOP 5 — the 414px gap 286→700 framed the figure and left the
-     bar reading unsupported; one more post at 640, just starboard of the
-     figure (legs span stage ~440-580, so it crosses nothing). */
-  [66,286,640,700,930,1160].forEach(function(sx3){
+  [66,286,700,930,1160].forEach(function(sx3){
     S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(sx3-7,RY+2,18,TOEY-RY);
     var stg=S.createLinearGradient(sx3-8,0,sx3+8,0);
     stg.addColorStop(0,"rgba(48,57,71,0.99)");stg.addColorStop(0.45,"rgba(22,28,37,0.99)");
