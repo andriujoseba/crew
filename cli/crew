@@ -431,6 +431,13 @@ refused, because that arms a second production agent racing the fleet for
 the same work. Narrow its registry first, add it to the roster, or pass
 --allow-offroster if arming production is genuinely what you mean.
 
+The other guard: a box whose tenant role never converged is refused, because
+hiring installs the engine and arms cron on a box that can never run its
+agent — it then wakes every five minutes, fails, and writes the failure to
+its own duty.log where nobody is looking. crew reads rig's role marker
+(/etc/rig/role) to tell the two apart. A box that cannot be read is refused
+too: an unreadable marker is not a converged one. --force overrides both.
+
 'adopt' was this verb's old name and still works.
 EOF
       ;;
@@ -440,6 +447,10 @@ The steady-state verb: it creates what is missing, starts what is stopped,
 hires what is unhired, and reports who still owes a login. Nothing is ever
 deleted — a box on the host but not in the roster is reported and left
 alone. --dry-run says what it would do and touches nothing.
+
+A box whose tenant role never converged is SKIPPED, named in the summary,
+and reflected in the exit status — one box must not stop the convergence,
+and a fleet short a member must not exit 0.
 EOF
       ;;
     upgrade) cat <<'EOF'
@@ -505,6 +516,12 @@ a box: that box's engine version and the tail of its duty log.
 A box whose duty log has not moved in two tick boundaries reads as stale
 rather than flowing. An idle tick is not silent — the engine logs every run
 — so silence means no tick RAN, which is a cron problem.
+
+For an UN-HIRED box the note carries whether rig converged its tenant role:
+an INCOMPLETE one names the bootstrap recovery rather than 'crew hire', and
+'crew hire' refuses it. Every other column here is derived through the
+engine, which does not exist until hire — so before hiring, this is the only
+column that can carry the failure.
 EOF
       ;;
     profiles) cat <<'EOF'
