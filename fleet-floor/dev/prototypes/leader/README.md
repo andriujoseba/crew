@@ -76,6 +76,61 @@ cables, wear on the deck, and structure framing the opening.
 - **Framed opening** with structural posts, corner gussets and a vignette, so
   the bridge sits inside a darker space rather than filling the frame
 
+## Round 5 — ten loops on detail, not on composition
+
+The operator's note on round 4: *the composition in both is decent, the amount
+of things and their placing is not bad, but the quality and detail is really
+poor.* That was the right diagnosis, and it pointed at one root cause. Every
+prop listed above was already **there** — drawn, placed, and then rendered
+invisible. The bulkhead topped out at `#0e1218` and the furniture sat on it at
+alpha `0.06`–`0.16`, so the picture collapsed into a single value and every
+object in it read as line-art. The builder quarters works because its wall is
+a **mid tone**: props read light-or-dark against it, and saturated accents
+have somewhere to pop from.
+
+So loop 1 was the grade, and the remaining nine were the modelling that only
+became worth doing once there was a value range to model in.
+
+1. **The grade** — bulkhead lifted to real painted steel, re-lit with a damped
+   key (`0.66+0.34*lit`, the trick `wallKey` plays in the app: an undamped
+   lamp swings the whole wall and reads as a rendering fault, not as light),
+   plus occlusion into the corners. Rivet courses got a bevel because there
+   was finally room for one.
+2. **The deck joins it** — the floor was left behind at `#0c1017`; a deck
+   catches *more* of an overhead lamp than a wall does. Platform re-cut into
+   three faces: top, lit nosing, shadowed riser.
+3. **The glass** — a fifth of the frame was a black hole: the sea, horizon and
+   three hulls were all drawn *behind* an opaque pane fill. Now night water
+   with a horizon glow, a moon path breaking on the swell, hulls hazed by
+   distance with their reflections, rain on the outside and the room's own
+   lamps reflected on the inside. Sill rebuilt with real section and bolts.
+4. **The fixtures** — the checklist item every other fleet room passes: a real
+   object at the top of the light cone. Were flat trapezoids; now spun shades
+   with a bounced interior, a hot rim, a wire cage and a shadow thrown up onto
+   the deckhead.
+5. **The signage board** — `FLAG-1` was flush to the wall and lit by nothing.
+   Now a backlit box on stand-off brackets, engraved lettering, corner screws,
+   a live pilot, and a shadow proving it stands off the bulkhead.
+6. **The pedestal instruments** — helm, telegraph, gyro repeater and binnacle
+   were all "a stroked circle on a rectangle". Each now has a pedestal with a
+   lit and a shadowed side, a cast shadow on the deck, and its own material:
+   the wheel is **brass**, which is the one warm thing a grey bridge owns.
+7. **The plot table, as a light** — it is the room's second source and the
+   reason the unit stands left of centre, but it was a dark trapezoid with
+   three hairlines. Now a sheet of lit glass: cold cyan against all that
+   brass, contacts casting shadows *across* it, and light thrown up onto the
+   air, the bulkhead and the deck.
+8. **The starboard wall** — fire station rebuilt as a cabinet with a glazed
+   door, a wound hose reel and an extinguisher with a body, neck, handle and
+   gauge; chevroned hazard placard; the console raked, with a live phosphor
+   screen and keycaps that are moulded rather than filled.
+9. **The cable runs** — two hairlines were doing the job of the draped service
+   cabling. Four passes per run (wall shadow, body, core, lit crown) plus
+   saddle clamps. Annunciator panel and chart board rebuilt at the same time.
+10. **The deck, finished** — the painted margin was invisible under a
+    `globalAlpha`; the floor was reflecting none of the three light sources
+    now standing on it. Both fixed, plus turn scuffs round the unit's feet.
+
 ## Renders
 
 | working | idle | offline |

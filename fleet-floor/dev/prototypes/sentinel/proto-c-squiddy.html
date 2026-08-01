@@ -717,9 +717,39 @@ var SCREENS=(function(){
 function drawRoom(t,st){
   var offl=st==="offline";
   var lit=offl?0.3:1;
+  /* LOOP 1 · THE GRADE. Same disease as the flag bridge, further along: the
+     hall was #05070b top to bottom and every fitting in it was drawn at
+     alpha 0.05-0.26, so the room was a black field with screens floating on
+     it. The builder quarters reads because the wall is a MID tone and the
+     props sit light-or-dark against it. Here the logic is even simpler —
+     the screens ARE the room's light, so the wall must be a surface they
+     can visibly fall on. Base value up, then a cold key from the screen
+     wall itself and occlusion into the corners. */
   var wall=S.createLinearGradient(0,0,0,SH);
-  wall.addColorStop(0,"#05070b");wall.addColorStop(0.7,"#04060a");wall.addColorStop(1,"#030508");
+  wall.addColorStop(0,"#1b2230");wall.addColorStop(0.45,"#171d29");
+  wall.addColorStop(0.78,"#121822");wall.addColorStop(1,"#0d121a");
   S.fillStyle=wall;S.fillRect(0,0,SW,SH);
+  (function(){
+    var dk=0.6+0.4*lit;
+    // the wall of screens is a broad, soft, COLD source — it washes the
+    // whole bulkhead it is bolted to
+    S.save();S.globalCompositeOperation="lighter";
+    var kg=S.createLinearGradient(0,60,0,GYS);
+    kg.addColorStop(0,"rgba(120,150,196,"+(0.07*dk)+")");
+    kg.addColorStop(0.55,"rgba(104,132,176,"+(0.045*dk)+")");
+    kg.addColorStop(1,"rgba(90,116,156,0)");
+    S.fillStyle=kg;S.fillRect(0,0,SW,GYS);
+    S.restore();
+    var ao=S.createLinearGradient(0,0,220,0);
+    ao.addColorStop(0,"rgba(1,3,6,0.66)");ao.addColorStop(1,"rgba(1,3,6,0)");
+    S.fillStyle=ao;S.fillRect(0,0,220,SH);
+    var ao2=S.createLinearGradient(SW,0,SW-220,0);
+    ao2.addColorStop(0,"rgba(1,3,6,0.6)");ao2.addColorStop(1,"rgba(1,3,6,0)");
+    S.fillStyle=ao2;S.fillRect(SW-220,0,220,SH);
+    var ao3=S.createLinearGradient(0,0,0,64);
+    ao3.addColorStop(0,"rgba(1,3,6,0.52)");ao3.addColorStop(1,"rgba(1,3,6,0)");
+    S.fillStyle=ao3;S.fillRect(0,0,SW,64);
+  })();
 
   /* ============ PLANE 1 · a lit corridor through the far doorway ============ */
   (function(){
@@ -740,10 +770,42 @@ function drawRoom(t,st){
     [0.55,0.72,0.86].forEach(function(u4){
       var yy=dy2+dh*u4, inset=(1-u4)*44;
       S.beginPath();S.moveTo(dx2+16+inset,yy);S.lineTo(dx2+dw-16-inset,yy);S.stroke();});
-    // the door frame itself
-    S.fillStyle="#070a11";S.fillRect(dx2-12,dy2-12,dw+24,14);
-    S.fillRect(dx2-12,dy2,12,dh);S.fillRect(dx2+dw,dy2,12,dh);
-    S.fillStyle="rgba(110,126,156,"+(0.06*lit)+")";S.fillRect(dx2-12,dy2-12,dw+24,1.6);
+    /* the door frame. It was three flat black rectangles — the second-
+       largest object in frame and it read as a hole. A pressure door on a
+       ship this old has a heavy flanged frame, a dogging lever, a viewport
+       and a kick plate that has been kicked. */
+    var frg=S.createLinearGradient(0,dy2-16,0,dy2+4);
+    frg.addColorStop(0,"#3b4452");frg.addColorStop(1,"#161c26");
+    S.fillStyle=frg;S.fillRect(dx2-16,dy2-16,dw+32,20);
+    S.fillStyle="rgba(206,222,248,"+(0.24*lit)+")";S.fillRect(dx2-16,dy2-16,dw+32,1.6);
+    S.fillStyle="rgba(1,3,6,0.7)";S.fillRect(dx2-16,dy2+2,dw+32,3);
+    [[dx2-16,1],[dx2+dw,-1]].forEach(function(jm){
+      var jg=S.createLinearGradient(jm[0],0,jm[0]+16,0);
+      jg.addColorStop(0,jm[1]>0?"#39424f":"#1a212a");
+      jg.addColorStop(0.5,"#242b36");jg.addColorStop(1,jm[1]>0?"#161c26":"#333b48");
+      S.fillStyle=jg;S.fillRect(jm[0],dy2,16,dh);
+      S.fillStyle="rgba(206,222,248,"+(0.18*lit)+")";
+      S.fillRect(jm[1]>0?jm[0]:jm[0]+14.4,dy2,1.6,dh);
+      // frame bolts down the jamb
+      for(var jb=0;jb<9;jb++){var jby=dy2+26+jb*44;
+        if(jby>dy2+dh-16)break;
+        S.fillStyle="rgba(1,3,6,0.6)";S.beginPath();S.arc(jm[0]+8,jby+0.8,2.6,0,7);S.fill();
+        S.fillStyle="rgba(128,144,172,"+(0.32+0.24*lit)+")";S.beginPath();S.arc(jm[0]+8,jby,2.4,0,7);S.fill();
+        S.fillStyle="rgba(212,228,250,"+(0.22*lit)+")";S.beginPath();S.arc(jm[0]+7.3,jby-0.7,0.9,0,7);S.fill();}});
+    // the dogging lever, and a stencilled compartment number on the jamb
+    S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(dx2+dw+3,dy2+206,12,4);
+    S.fillStyle="rgba(150,166,196,"+(0.3+0.26*lit)+")";S.fillRect(dx2+dw+2,dy2+204,12,4);
+    S.save();S.translate(dx2+dw+8,dy2+204);S.rotate(-0.5);
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(-1.4,1.4,5,34);
+    var dlg=S.createLinearGradient(-3,0,3,0);
+    dlg.addColorStop(0,"#4a5464");dlg.addColorStop(1,"#1b212b");
+    S.fillStyle=dlg;S.fillRect(-2.5,0,5,32);
+    S.fillStyle="rgba(214,230,252,"+(0.2*lit)+")";S.fillRect(-2.5,0,1.2,32);
+    S.fillStyle="#2a323e";S.beginPath();S.arc(0,32,4.4,0,7);S.fill();
+    S.restore();
+    S.save();S.textAlign="center";
+    S.fillStyle="rgba(178,194,222,"+(0.24*lit)+")";S.font="700 9px ui-monospace,Menlo,monospace";
+    S.fillText("4-88-0-E",dx2+dw+8,dy2+60);S.restore();
   })();
 
   // the corridor's light falls out of the doorway onto the deck
@@ -754,18 +816,117 @@ function drawRoom(t,st){
     S.moveTo(944,GYS-40);S.lineTo(1082,GYS-40);S.lineTo(1150,SH);S.lineTo(876,SH);S.closePath();S.fill();S.restore();}
 
   /* ============ PLANE 2 · the screen wall ============ */
+  /* LOOP 3 · THE RACKS. The uprights were 12px black bars drawn AFTER the
+     screens, so the structure crossed IN FRONT of the monitors it was
+     supposed to be holding — the wall read as wallpaper with bars over it.
+     Rebuilt as real 19" rack steel: a channel section with a lit inner
+     flange and a dark web, the punched hole pattern every rack has, and a
+     shelf rail per row so each monitor is standing ON something. Drawn
+     FIRST, so the screens sit in front of it. */
+  var RACKX=[24,216,408,586,760,946,1114,1262];
+  RACKX.forEach(function(ux,ri){
+    S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(ux-5,24,17,GYS-24);   // shadow on the wall
+    // the channel: front flange lit, web in shadow, back flange catching a little
+    var rug=S.createLinearGradient(ux-8,0,ux+8,0);
+    rug.addColorStop(0,"#333c49");rug.addColorStop(0.22,"#3d4757");
+    rug.addColorStop(0.5,"#1b212b");rug.addColorStop(0.78,"#232a35");rug.addColorStop(1,"#12171f");
+    S.fillStyle=rug;S.fillRect(ux-8,24,16,GYS-24);
+    S.fillStyle="rgba(206,222,248,"+(0.2+0.14*lit)+")";S.fillRect(ux-8,24,1.6,GYS-24);
+    S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(ux+6.4,24,1.6,GYS-24);
+    // the punched hole column — square holes, each with a lit lower lip
+    for(var bh=0;bh<26;bh++){var hy9=40+bh*23;
+      if(hy9>GYS-14)break;
+      S.fillStyle="rgba(1,3,6,0.92)";S.fillRect(ux-3.2,hy9,6.4,5);
+      S.fillStyle="rgba(170,190,220,"+(0.1*lit)+")";S.fillRect(ux-3.2,hy9+4.2,6.4,1);}
+    // the foot the upright is bolted down on
+    S.fillStyle="#151b24";S.fillRect(ux-13,GYS-9,26,9);
+    S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";S.fillRect(ux-13,GYS-9,26,1.3);
+    S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(ux-13,GYS-1.4,26,2);});
+  // the shelf rails each row of monitors stands on, spanning between uprights
+  [70,182,294,406].forEach(function(sy9){
+    var ry9=sy9+64;
+    S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(0,ry9+3,SW,7);
+    var srg=S.createLinearGradient(0,ry9,0,ry9+8);
+    srg.addColorStop(0,"#2f3745");srg.addColorStop(0.4,"#1d232d");srg.addColorStop(1,"#10151d");
+    S.fillStyle=srg;S.fillRect(0,ry9,SW,8);
+    S.fillStyle="rgba(206,222,248,"+(0.16+0.12*lit)+")";S.fillRect(0,ry9,SW,1.4);
+    S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(0,ry9+6.6,SW,1.6);
+    // a bolt where each rail meets each upright
+    RACKX.forEach(function(ux2){
+      S.fillStyle="rgba(1,3,6,0.6)";S.beginPath();S.arc(ux2,ry9+4.6,2.4,0,7);S.fill();
+      S.fillStyle="rgba(132,148,176,"+(0.34+0.22*lit)+")";S.beginPath();S.arc(ux2,ry9+4,2.2,0,7);S.fill();
+      S.fillStyle="rgba(214,230,252,"+(0.22*lit)+")";S.beginPath();S.arc(ux2-0.7,ry9+3.3,0.9,0,7);S.fill();});});
+  /* LOOP 2 · THE MONITORS. Twenty-four of these are the signature prop of
+     the room and each was a rectangle of noise with a one-pixel stroke
+     round it — they read as paper tiles glued to a wall. A monitor is a
+     BOX: a moulded case with a lit top and a shadowed underside, a bezel
+     with real depth around a recessed tube, a glass face that bulges (so
+     the highlight bends), corner screws, and a tally lamp. Drawn once,
+     twenty-four times over. */
   SCREENS.forEach(function(sc,si){
-    S.fillStyle="#080b11";S.fillRect(sc.x-4,sc.y-4,sc.w+8,sc.h+8);
-    S.strokeStyle="rgba(90,102,124,"+(0.12*lit)+")";S.lineWidth=1;
-    S.strokeRect(sc.x-4.5,sc.y-4.5,sc.w+9,sc.h+9);
+    // the case's shadow on the rack behind it
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(sc.x-6,sc.y-4,sc.w+14,sc.h+16);
+    // the case: a moulded shell, lit on top, dark under the chin
+    var csg=S.createLinearGradient(0,sc.y-9,0,sc.y+sc.h+11);
+    csg.addColorStop(0,"#39414f");csg.addColorStop(0.1,"#2b323e");
+    csg.addColorStop(0.72,"#1c222c");csg.addColorStop(1,"#11161e");
+    S.fillStyle=csg;rrS(sc.x-9,sc.y-9,sc.w+18,sc.h+22,3);S.fill();
+    S.fillStyle="rgba(198,214,240,"+(0.16+0.14*lit)+")";S.fillRect(sc.x-7,sc.y-9,sc.w+14,1.5);
+    S.strokeStyle="rgba(1,3,6,0.6)";S.lineWidth=1.2;rrS(sc.x-9,sc.y-9,sc.w+18,sc.h+22,3);S.stroke();
+    // the bezel's inner wall, in shadow — this is the depth
+    S.fillStyle="rgba(1,3,6,0.85)";S.fillRect(sc.x-3,sc.y-3,sc.w+6,sc.h+6);
+    S.fillStyle="rgba(150,168,200,"+(0.1*lit)+")";S.fillRect(sc.x-3,sc.y+sc.h+2,sc.w+6,1.2);
+    /* LOOP 4 · WHAT IS ON THE SCREENS. Twenty-four identical fields of snow
+       read as one texture, not as twenty-four feeds. A signal gallery that
+       has lost its feeds still has variety in HOW each one failed: most are
+       snow, but some hold a frozen test card, some a colour-bar generator
+       that never stopped, one or two a camera still limping along in another
+       room, and a few have simply gone to black. That mix is the difference
+       between wallpaper and a wall of televisions. */
+    var kind=(si*7+si%5)%11;                       // deterministic per screen
     S.save();S.beginPath();S.rect(sc.x,sc.y,sc.w,sc.h);S.clip();
-    var ox=Math.floor((Math.sin(si*3.1+t*sc.sp*9)*0.5+0.5)*64);
-    var oy=Math.floor((t*sc.sp*140+si*17)%64);
-    S.globalAlpha=(offl?0.08:0.38)+(offl?0:0.09*Math.sin(t*sc.sp*2+sc.ph));
-    for(var gx=-1;gx<Math.ceil(sc.w/64)+1;gx++)
-      for(var gy=-1;gy<Math.ceil(sc.h/64)+1;gy++)
-        S.drawImage(NOISE,sc.x+gx*64-ox,sc.y+gy*64-oy);
-    S.globalAlpha=1;
+    if(kind===2||kind===9){
+      // colour bars — the one place saturated colour belongs in this room
+      var BARS=["#8b8b8b","#8b8b16","#168b8b","#168b16","#8b168b","#8b1616","#16168b"];
+      for(var bi9=0;bi9<7;bi9++){
+        S.globalAlpha=offl?0.14:0.5;
+        S.fillStyle=BARS[bi9];S.fillRect(sc.x+bi9*sc.w/7,sc.y,sc.w/7+1,sc.h*0.74);}
+      S.globalAlpha=offl?0.1:0.34;
+      ["#16168b","#0b0b0b","#8b168b","#0b0b0b"].forEach(function(bc9,bj){
+        S.fillStyle=bc9;S.fillRect(sc.x+bj*sc.w/4,sc.y+sc.h*0.74,sc.w/4+1,sc.h*0.26);});
+      S.globalAlpha=1;
+    }else if(kind===5){
+      // a test card: crosshair, circle, resolution wedges — frozen
+      S.fillStyle=offl?"rgba(10,12,16,1)":"rgba(24,28,36,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
+      S.strokeStyle="rgba(190,206,232,"+(offl?0.1:0.34)+")";S.lineWidth=1;
+      S.beginPath();S.arc(sc.x+sc.w/2,sc.y+sc.h/2,Math.min(sc.w,sc.h)*0.36,0,7);S.stroke();
+      S.beginPath();S.moveTo(sc.x+sc.w/2,sc.y+2);S.lineTo(sc.x+sc.w/2,sc.y+sc.h-2);
+      S.moveTo(sc.x+2,sc.y+sc.h/2);S.lineTo(sc.x+sc.w-2,sc.y+sc.h/2);S.stroke();
+      for(var wg9=0;wg9<6;wg9++){
+        S.fillStyle="rgba(190,206,232,"+(offl?0.08:0.26)+")";
+        S.fillRect(sc.x+6+wg9*5,sc.y+sc.h*0.72,1.4+wg9*0.5,7);}
+    }else if(kind===7){
+      // a camera still working: a dim room with a slow horizontal pan
+      S.fillStyle=offl?"rgba(6,8,12,1)":"rgba(14,20,28,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
+      var pan=Math.sin(t*0.13+si)*sc.w*0.1;
+      S.fillStyle="rgba(60,76,98,"+(offl?0.14:0.5)+")";
+      S.fillRect(sc.x+pan,sc.y+sc.h*0.55,sc.w,sc.h*0.45);
+      S.fillStyle="rgba(84,104,132,"+(offl?0.1:0.34)+")";
+      S.fillRect(sc.x+sc.w*0.2+pan,sc.y+sc.h*0.3,sc.w*0.16,sc.h*0.3);
+      S.fillRect(sc.x+sc.w*0.62+pan,sc.y+sc.h*0.38,sc.w*0.2,sc.h*0.22);
+      if(!offl){S.fillStyle="rgba(236,90,60,0.7)";
+        S.beginPath();S.arc(sc.x+sc.w-7,sc.y+6,1.8,0,7);S.fill();}
+    }else if(kind===4){
+      S.fillStyle="rgba(3,5,9,1)";S.fillRect(sc.x,sc.y,sc.w,sc.h);   // dead
+    }else{
+      var ox=Math.floor((Math.sin(si*3.1+t*sc.sp*9)*0.5+0.5)*64);
+      var oy=Math.floor((t*sc.sp*140+si*17)%64);
+      var blown=(kind===8);                       // one or two are over-driven
+      S.globalAlpha=(offl?0.08:(blown?0.62:0.38))+(offl?0:0.09*Math.sin(t*sc.sp*2+sc.ph));
+      for(var gx=-1;gx<Math.ceil(sc.w/64)+1;gx++)
+        for(var gy=-1;gy<Math.ceil(sc.h/64)+1;gy++)
+          S.drawImage(NOISE,sc.x+gx*64-ox,sc.y+gy*64-oy);
+      S.globalAlpha=1;}
     var rb=((t*sc.sp*0.5+sc.ph)%1)*(sc.h+40)-20;
     var rg2=S.createLinearGradient(0,sc.y+rb-14,0,sc.y+rb+14);
     rg2.addColorStop(0,"rgba(200,214,238,0)");
@@ -778,10 +939,40 @@ function drawRoom(t,st){
     vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.34)");
     S.fillStyle=vg;S.fillRect(sc.x,sc.y,sc.w,sc.h);
     S.restore();
-    if(si%3===0){
-      S.fillStyle="rgba(196,188,150,"+(0.12*lit)+")";S.fillRect(sc.x+5,sc.y+sc.h+4,28,7);
-      S.fillStyle="rgba(20,24,30,"+(0.5*lit)+")";
-      for(var tl=0;tl<4;tl++)S.fillRect(sc.x+7+tl*6.4,sc.y+sc.h+6.6,3.6,1.5);}
+    /* the glass. A tube face is curved, so it takes the room's light as a
+       BENT highlight in the top-left corner and darkens at the edges — the
+       single cue that separates a screen from a printed rectangle. */
+    S.save();S.beginPath();S.rect(sc.x,sc.y,sc.w,sc.h);S.clip();
+    var gcv=S.createRadialGradient(sc.x+sc.w*0.3,sc.y+sc.h*0.24,2,sc.x+sc.w*0.3,sc.y+sc.h*0.24,sc.w*0.62);
+    gcv.addColorStop(0,"rgba(206,226,255,"+(0.075*lit)+")");
+    gcv.addColorStop(0.5,"rgba(206,226,255,0.012)");
+    gcv.addColorStop(1,"rgba(206,226,255,0)");
+    S.fillStyle=gcv;S.fillRect(sc.x,sc.y,sc.w,sc.h);
+    S.strokeStyle="rgba(214,232,255,"+(0.14*lit)+")";S.lineWidth=1.4;   // the bent sheen
+    S.beginPath();S.moveTo(sc.x+3,sc.y+sc.h*0.5);
+    S.quadraticCurveTo(sc.x+sc.w*0.1,sc.y+3,sc.x+sc.w*0.46,sc.y+2);S.stroke();
+    S.restore();
+    // the chin: screws, a tally lamp, and a worn brand strip
+    [[sc.x-5.5,sc.y-5.5],[sc.x+sc.w+5.5,sc.y-5.5],
+     [sc.x-5.5,sc.y+sc.h+5.5],[sc.x+sc.w+5.5,sc.y+sc.h+5.5]].forEach(function(sw9){
+      S.fillStyle="rgba(1,3,6,0.6)";S.beginPath();S.arc(sw9[0],sw9[1]+0.7,2,0,7);S.fill();
+      S.fillStyle="rgba(126,142,170,"+(0.3+0.24*lit)+")";S.beginPath();S.arc(sw9[0],sw9[1],1.9,0,7);S.fill();
+      S.fillStyle="rgba(210,226,250,"+(0.22*lit)+")";S.beginPath();S.arc(sw9[0]-0.6,sw9[1]-0.6,0.7,0,7);S.fill();});
+    // tally: green if this one is still receiving, red if it is orphaned
+    var tal=(si%3===0), tred=(si===9||si===17||si%7===5);
+    var tp9=offl?0:(tred?(Math.sin(t*3+si)>0.2?1:0.25):0.7+0.3*Math.sin(t*1.3+si));
+    var tcol=tred?"rgba(236,74,54,":"rgba(110,214,140,";
+    S.fillStyle=offl?"rgba(48,58,68,0.7)":tcol+(0.95*tp9*lit)+")";
+    S.beginPath();S.arc(sc.x+sc.w-6,sc.y+sc.h+6,2.1,0,7);S.fill();
+    if(!offl){S.save();S.globalCompositeOperation="lighter";
+      var tg9=S.createRadialGradient(sc.x+sc.w-6,sc.y+sc.h+6,1,sc.x+sc.w-6,sc.y+sc.h+6,13);
+      tg9.addColorStop(0,tcol+(0.3*tp9)+")");tg9.addColorStop(1,tcol+"0)");
+      S.fillStyle=tg9;S.beginPath();S.arc(sc.x+sc.w-6,sc.y+sc.h+6,13,0,7);S.fill();S.restore();}
+    if(tal){
+      S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(sc.x+5,sc.y+sc.h+3.5,30,8);
+      S.fillStyle="rgba(178,166,124,"+(0.2+0.22*lit)+")";S.fillRect(sc.x+5,sc.y+sc.h+3,30,8);
+      S.fillStyle="rgba(16,20,26,"+(0.6*lit+0.2)+")";
+      for(var tl=0;tl<4;tl++)S.fillRect(sc.x+7+tl*6.6,sc.y+sc.h+6,3.8,1.6);}
     if(si===9||si===17){
       S.fillStyle="rgba(3,5,9,0.96)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
       S.strokeStyle="rgba(150,166,196,"+(0.16*lit)+")";S.lineWidth=1;
@@ -799,61 +990,242 @@ function drawRoom(t,st){
       sg8.addColorStop(0,"rgba(126,148,182,0.13)");sg8.addColorStop(1,"rgba(120,140,170,0)");
       S.fillStyle=sg8;S.fillRect(sc.x-sc.w,sc.y-sc.h,sc.w*3,sc.h*3);S.restore();}
   });
-  // rack uprights
-  [24,216,408,586,760,946,1114,1262].forEach(function(ux){
-    S.fillStyle="#070a0f";S.fillRect(ux-6,30,12,GYS-30);
-    S.fillStyle="rgba(120,136,164,"+(0.05*lit)+")";S.fillRect(ux-6,30,1.5,GYS-30);
-    for(var bh=0;bh<10;bh++){S.fillStyle="rgba(4,7,12,0.9)";S.fillRect(ux-5,64+bh*58,10,3);}});
   // the signage board, failing
   (function(){
-    var nx=44, ny=32, nw=210, nh=34;
-    S.fillStyle="#070a10";rrS(nx,ny,nw,nh,2);S.fill();
-    S.strokeStyle="rgba(100,114,140,"+(0.14*lit)+")";S.lineWidth=1.1;rrS(nx,ny,nw,nh,2);S.stroke();
+    /* LOOP 7 · THE SIGNAGE BOARD. First item on the checklist and this one
+       was a 34px sliver at alpha 0.14 in the corner — the room was
+       effectively unnamed. Built to the same spec as the bridge's: a lit
+       box standing off the wall on brackets, deep bezel, engraved text,
+       corner screws. The difference is that THIS one is failing — half its
+       backlight is dead, so the right of the face is a dark panel and the
+       whole sign guts every few seconds. A named board that is broken says
+       more about the room than a clean one would. */
+    /* placement, twice corrected. At x=44 the grade's own corner occlusion
+       ate it — which is how it stayed invisible for eight rounds — and at
+       y=36 it collided with the top row of monitors. It belongs on the
+       clear band of bulkhead above the racks, where a compartment sign
+       actually goes. */
+    var nx=104, ny=4, nw=228, nh=46;
+    S.fillStyle="rgba(1,3,6,0.55)";rrS(nx+5,ny+6,nw,nh,3);S.fill();
+    [ny-4,ny+nh+4].forEach(function(by8){
+      [nx+26,nx+nw-26].forEach(function(bx8){
+        S.fillStyle="#232b37";S.fillRect(bx8-5,by8-4,10,9);
+        S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";S.fillRect(bx8-5,by8-4,10,1.2);});});
+    var csg9=S.createLinearGradient(0,ny,0,ny+nh);
+    csg9.addColorStop(0,"#3a4351");csg9.addColorStop(0.16,"#242c37");csg9.addColorStop(1,"#141a23");
+    S.fillStyle=csg9;rrS(nx,ny,nw,nh,3);S.fill();
+    S.strokeStyle="rgba(1,3,6,0.7)";S.lineWidth=1.4;rrS(nx,ny,nw,nh,3);S.stroke();
+    S.fillStyle="rgba(206,222,248,"+(0.24*lit)+")";S.fillRect(nx+3,ny+1,nw-6,1.4);
+    // the face, recessed
+    S.fillStyle="#12171f";S.fillRect(nx+6,ny+6,nw-12,nh-12);
+    S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(nx+6,ny+6,nw-12,2.2);
+    S.fillStyle="rgba(1,3,6,0.4)";S.fillRect(nx+6,ny+6,2.2,nh-12);
     var gut=offl?0:(Math.sin(t*23)>0.86?0.25:1)*(0.7+0.3*Math.sin(t*3.1));
+    if(!offl){                              // only the LEFT half still lights
+      var blg9=S.createLinearGradient(nx+6,0,nx+nw*0.62,0);
+      blg9.addColorStop(0,"rgba(150,178,222,"+(0.16*gut*lit)+")");
+      blg9.addColorStop(0.7,"rgba(150,178,222,"+(0.05*gut*lit)+")");
+      blg9.addColorStop(1,"rgba(150,178,222,0)");
+      S.fillStyle=blg9;S.fillRect(nx+6,ny+6,nw-12,nh-12);}
     S.save();S.textAlign="left";
-    S.fillStyle="rgba(168,186,214,"+(0.62*gut*lit)+")";S.font="700 16px ui-monospace,Menlo,monospace";
-    S.fillText("MON-4",nx+13,ny+21);
-    S.fillStyle="rgba(120,136,164,"+(0.34*gut*lit)+")";S.font="600 8px ui-monospace,Menlo,monospace";
-    S.fillText("SIGNAL GALLERY  ·  NO FEED",nx+13,ny+30);
+    S.fillStyle="rgba(1,3,6,0.75)";S.font="700 21px ui-monospace,Menlo,monospace";
+    S.fillText("MON-4",nx+15.6,ny+27.8);
+    S.fillStyle="rgba(190,208,238,"+((offl?0.2:0.92)*gut*lit)+")";S.font="700 21px ui-monospace,Menlo,monospace";
+    S.fillText("MON-4",nx+15,ny+27);
+    S.fillStyle="rgba(1,3,6,0.6)";S.font="600 9px ui-monospace,Menlo,monospace";
+    S.fillText("SIGNAL GALLERY",nx+15.5,ny+39.5);
+    S.fillStyle="rgba(146,164,196,"+((offl?0.16:0.6)*gut*lit)+")";S.font="600 9px ui-monospace,Menlo,monospace";
+    S.fillText("SIGNAL GALLERY",nx+15,ny+39);
+    // the status half of the subtitle, in dead amber — NO FEED
+    S.fillStyle=offl?"rgba(80,64,36,0.5)":"rgba(226,150,60,"+(0.7*gut*lit)+")";
+    S.fillText("NO FEED",nx+124,ny+39);
     S.restore();
-    S.fillStyle="rgba(4,7,12,0.6)";S.fillRect(nx+nw*0.58,ny+2,nw*0.42-2,nh-4);
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(nx+112,ny+34.5,7,1.4);
+    // the dead half of the panel, and the screws
+    S.fillStyle="rgba(3,6,11,0.5)";S.fillRect(nx+nw*0.66,ny+7,nw*0.34-7,nh-14);
+    [[nx+11,ny+11],[nx+nw-11,ny+11],[nx+11,ny+nh-11],[nx+nw-11,ny+nh-11]].forEach(function(cp8){
+      S.fillStyle="rgba(1,3,6,0.6)";S.beginPath();S.arc(cp8[0],cp8[1]+0.8,2.5,0,7);S.fill();
+      S.fillStyle="rgba(128,144,172,"+(0.36+0.26*lit)+")";S.beginPath();S.arc(cp8[0],cp8[1],2.3,0,7);S.fill();
+      S.fillStyle="rgba(212,228,250,"+(0.26*lit)+")";S.beginPath();S.arc(cp8[0]-0.7,cp8[1]-0.7,0.9,0,7);S.fill();});
+    if(!offl){S.save();S.globalCompositeOperation="lighter";
+      var ng8=S.createRadialGradient(nx+nw*0.36,ny+nh/2,10,nx+nw*0.36,ny+nh/2,140);
+      ng8.addColorStop(0,"rgba(150,178,222,"+(0.08*gut*lit)+")");ng8.addColorStop(1,"rgba(150,178,222,0)");
+      S.fillStyle=ng8;S.fillRect(nx-140,ny-140,nw+280,nh+280);S.restore();}
   })();
   // the last ceiling tube, strobing
   (function(){
+    /* LOOP 5 · THE LIGHT. Two failures. The ceiling fitting was a flat bar
+       with a brighter bar under it — the checklist asks for a REAL fixture
+       at the top of the light cone, and every other room in the fleet has
+       one. And the screens, which are the only other light in here, were
+       lighting nothing: a wall of twenty-four televisions throws a cold
+       flickering wash onto the steel it is bolted to, and without it the
+       racks read as painted-on. */
     var fl2=offl?0:(Math.sin(t*17)*Math.sin(t*5.3)>0.3?1:0.12);
-    S.fillStyle="#070a10";S.fillRect(300,24,300,11);
-    S.fillStyle="rgba(110,126,156,"+(0.05*lit)+")";S.fillRect(300,24,300,1.2);
-    S.fillStyle="rgba(198,214,240,"+(0.5*fl2*lit)+")";S.fillRect(308,31,284,4);
+    var bx9=300, bw9=300;
+    // the batten: a channel body, end caps, two suspension drops, a wire guard
+    [bx9+40,bx9+bw9-40].forEach(function(dx9){
+      S.fillStyle="rgba(1,3,6,0.7)";S.fillRect(dx9-1.4,0,3,26);
+      S.fillStyle="#2a323e";S.fillRect(dx9-1,0,2,26);});
+    S.fillStyle="rgba(1,3,6,0.55)";S.fillRect(bx9+4,28,bw9,14);
+    var btg=S.createLinearGradient(0,24,0,38);
+    btg.addColorStop(0,"#39414f");btg.addColorStop(0.45,"#242b36");btg.addColorStop(1,"#141a23");
+    S.fillStyle=btg;S.fillRect(bx9,24,bw9,14);
+    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";S.fillRect(bx9,24,bw9,1.4);
+    [bx9,bx9+bw9-9].forEach(function(ec){          // end caps
+      S.fillStyle="#323a47";S.fillRect(ec,23,9,16);
+      S.fillStyle="rgba(206,222,248,"+(0.18*lit)+")";S.fillRect(ec,23,9,1.3);});
+    // the tube itself, and the hot core inside it
+    S.fillStyle="rgba(150,168,200,"+(0.18+0.2*fl2*lit)+")";S.fillRect(bx9+10,32,bw9-20,6);
+    if(fl2>0.1){
+      S.fillStyle="rgba(214,232,255,"+(0.72*fl2*lit)+")";S.fillRect(bx9+10,33.4,bw9-20,3.4);
+      S.save();S.globalCompositeOperation="lighter";
+      S.fillStyle="rgba(255,255,255,"+(0.4*fl2*lit)+")";S.fillRect(bx9+12,34.4,bw9-24,1.4);
+      var bl9=S.createRadialGradient(bx9+bw9/2,36,10,bx9+bw9/2,36,190);
+      bl9.addColorStop(0,"rgba(180,204,240,"+(0.16*fl2)+")");bl9.addColorStop(1,"rgba(180,204,240,0)");
+      S.fillStyle=bl9;S.fillRect(bx9-120,0,bw9+240,240);S.restore();}
+    // the wire guard slung under it — a working room cages its tubes
+    S.strokeStyle="rgba(1,3,6,0.72)";S.lineWidth=1.6;
+    for(var wg8=0;wg8<9;wg8++){var wgx=bx9+16+wg8*((bw9-32)/8);
+      S.beginPath();S.moveTo(wgx,38);S.quadraticCurveTo(wgx,46,wgx,47);S.stroke();}
+    S.beginPath();S.moveTo(bx9+16,46);S.lineTo(bx9+bw9-16,46);S.stroke();
+    S.strokeStyle="rgba(178,198,230,"+(0.12*lit)+")";S.lineWidth=0.9;
+    S.beginPath();S.moveTo(bx9+16,45.4);S.lineTo(bx9+bw9-16,45.4);S.stroke();
     if(fl2>0.5){S.save();S.globalCompositeOperation="lighter";
-      var tg2=S.createLinearGradient(0,35,0,400);
-      tg2.addColorStop(0,"rgba(170,192,224,"+(0.07*fl2)+")");tg2.addColorStop(1,"rgba(170,192,224,0)");
-      S.fillStyle=tg2;S.fillRect(250,35,400,365);S.restore();}
+      var tg2=S.createLinearGradient(0,44,0,430);
+      tg2.addColorStop(0,"rgba(170,192,224,"+(0.11*fl2)+")");tg2.addColorStop(1,"rgba(170,192,224,0)");
+      S.fillStyle=tg2;S.beginPath();
+      S.moveTo(bx9+6,44);S.lineTo(bx9+bw9-6,44);
+      S.lineTo(bx9+bw9+110,430);S.lineTo(bx9-110,430);S.closePath();S.fill();S.restore();}
   })();
-  // cable trunk sagging across the wall
-  S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=8;
-  S.beginPath();S.moveTo(0,540);S.quadraticCurveTo(SW/2,584,SW,536);S.stroke();
-  S.strokeStyle="rgba(90,102,124,"+(0.07*lit)+")";S.lineWidth=1.5;
-  S.beginPath();S.moveTo(0,540);S.quadraticCurveTo(SW/2,584,SW,536);S.stroke();
+  /* the screens' own wash, falling on the rack steel they are bolted to.
+     One pass over the whole wall rather than per-screen: the individual
+     glows already exist, this is the sum of them landing on structure. */
+  if(!offl){S.save();S.globalCompositeOperation="lighter";
+    RACKX.forEach(function(ux9,ri9){
+      var fk9=0.7+0.3*Math.sin(t*1.7+ri9*2.2);   // the flicker the wall has
+      var rwg=S.createLinearGradient(ux9-8,0,ux9+8,0);
+      rwg.addColorStop(0,"rgba(146,178,224,"+(0.16*fk9*lit)+")");
+      rwg.addColorStop(0.4,"rgba(146,178,224,"+(0.05*fk9*lit)+")");
+      rwg.addColorStop(1,"rgba(146,178,224,0)");
+      S.fillStyle=rwg;S.fillRect(ux9-8,24,16,GYS-24);});
+    [70,182,294,406].forEach(function(sy8,rj){
+      var ry8=sy8+64, fk8=0.75+0.25*Math.sin(t*1.3+rj*1.9);
+      var swg=S.createLinearGradient(0,ry8,0,ry8+8);
+      swg.addColorStop(0,"rgba(146,178,224,"+(0.13*fk8*lit)+")");
+      swg.addColorStop(1,"rgba(146,178,224,0)");
+      S.fillStyle=swg;S.fillRect(0,ry8,SW,8);});
+    S.restore();}
+  /* LOOP 6 · THE CABLING. A signal gallery IS its cabling, and this room
+     had two hairline curves. Three things were missing: the vertical looms
+     that drop down every rack upright feeding the monitors, the zip-tie
+     clamps that hold them there, and any thickness at all — a cable has a
+     lit crown, a dark belly and a shadow on the steel behind it. */
+  function cable(pts,w,hue){                    // one run, four passes
+    function path(ox,oy){S.beginPath();S.moveTo(pts[0]+ox,pts[1]+oy);
+      if(pts.length>6)S.bezierCurveTo(pts[2]+ox,pts[3]+oy,pts[4]+ox,pts[5]+oy,pts[6]+ox,pts[7]+oy);
+      else S.quadraticCurveTo(pts[2]+ox,pts[3]+oy,pts[4]+ox,pts[5]+oy);S.stroke();}
+    S.lineCap="round";
+    S.strokeStyle="rgba(1,3,6,0.45)";S.lineWidth=w+3;path(4,4);
+    S.strokeStyle="rgba(5,8,13,0.98)";S.lineWidth=w;path(0,0);
+    S.strokeStyle=hue||"rgba(40,48,62,0.95)";S.lineWidth=Math.max(1,w-2.4);path(-0.4,-0.4);
+    S.strokeStyle="rgba(172,192,224,"+(0.14*lit)+")";S.lineWidth=1.2;path(-1.4,-1.4);
+    S.lineCap="butt";}
+  // the looms feeding each rack, dropping from the ceiling tray
+  RACKX.forEach(function(ux8,rk){
+    if(rk%2)return;                              // not every bay, or it reads as a fence
+    var lw=6+((rk*3)%4);
+    cable([ux8+11,24,ux8+26,220,ux8+15,430,ux8+21,GYS-16],lw);
+    cable([ux8+15,24,ux8+32,240,ux8+21,440,ux8+29,GYS-16],lw-2.4,"rgba(52,44,38,0.95)");
+    // zip-tie clamps holding the loom to the upright
+    [140,268,396,524].forEach(function(zy,zi){
+      if(zi%2&&rk%4)return;
+      S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(ux8+5,zy+2,26,7);
+      var zg=S.createLinearGradient(0,zy,0,zy+7);
+      zg.addColorStop(0,"#333b48");zg.addColorStop(1,"#161c25");
+      S.fillStyle=zg;S.fillRect(ux8+5,zy,26,7);
+      S.fillStyle="rgba(198,214,240,"+(0.16*lit)+")";S.fillRect(ux8+5,zy,26,1.2);});});
+  // the main trunk sagging across the wall, now with weight
+  cable([0,540,SW/2,588,SW,536],11);
+  // a second, thinner one riding above it
+  cable([0,516,SW/2,556,SW,510],6,"rgba(56,46,40,0.95)");
 
   /* ============ PLANE 3 · the floor of the gallery ============ */
   // the operator's station, abandoned, port side
   (function(){
+    /* LOOP 8 · THE OPERATOR'S STATION. The one piece of human furniture in
+       the room and it was five flat rectangles. It carries the story — a
+       post somebody left in a hurry and never came back to — so every item
+       on it has to read: a desk with a real top and an apron, a monitor
+       that is still on, a keyboard shoved aside, a mug going cold. */
     var ox2=150, oy2=GYS-92;
-    S.fillStyle="#111721";S.fillRect(ox2-70,oy2,196,11);
-    S.fillStyle="rgba(150,170,204,"+(0.2*lit)+")";S.fillRect(ox2-70,oy2,196,1.8);
-    S.fillStyle="#05070c";S.fillRect(ox2-60,oy2+11,9,80);S.fillRect(ox2+108,oy2+11,9,80);
-    S.fillStyle="#131a25";S.fillRect(ox2-40,oy2-44,86,44);
-    S.strokeStyle="rgba(134,152,184,"+(0.26*lit)+")";S.lineWidth=1.2;S.strokeRect(ox2-40,oy2-44,86,44);
-    S.fillStyle="rgba(3,5,9,0.9)";S.fillRect(ox2-33,oy2-37,72,26);
-    S.fillStyle="rgba(70,80,96,0.5)";S.fillRect(ox2-33,oy2-8,13,4);
-    if(!offl){S.fillStyle="rgba(226,120,70,"+(0.5*lit)+")";S.fillRect(ox2-15,oy2-8,13,4);}
-    // a mug left on the shelf, and a keyboard shoved aside
-    S.fillStyle="#0b0f16";S.fillRect(ox2+56,oy2-14,16,14);
-    S.strokeStyle="rgba(110,126,156,"+(0.09*lit)+")";S.lineWidth=1.4;
-    S.beginPath();S.arc(ox2+76,oy2-7,5,-1.2,1.2);S.stroke();
-    S.fillStyle="#080b11";S.fillRect(ox2-64,oy2-11,44,11);
-    for(var kk2=0;kk2<8;kk2++){S.fillStyle="rgba(70,82,100,"+(0.14*lit)+")";
-      S.fillRect(ox2-61+kk2*5,oy2-8,3.4,2);}
+    // the desk: a lit top surface, a dark apron under it, and legs
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(ox2-66,oy2+4,196,13);
+    var dtg=S.createLinearGradient(0,oy2,0,oy2+12);
+    dtg.addColorStop(0,"#38414f");dtg.addColorStop(0.35,"#232a35");dtg.addColorStop(1,"#141a23");
+    S.fillStyle=dtg;S.fillRect(ox2-70,oy2,196,12);
+    S.fillStyle="rgba(210,226,250,"+(0.26+0.14*lit)+")";S.fillRect(ox2-70,oy2,196,1.8);
+    S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(ox2-70,oy2+10.5,196,2);
+    S.fillStyle="#151b24";S.fillRect(ox2-66,oy2+12,188,7);        // apron
+    [[-60,9],[108,9]].forEach(function(lg8){
+      S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(ox2+lg8[0]+2,oy2+19,lg8[1],72);
+      var lgg8=S.createLinearGradient(ox2+lg8[0],0,ox2+lg8[0]+lg8[1],0);
+      lgg8.addColorStop(0,"#2b323e");lgg8.addColorStop(1,"#10151d");
+      S.fillStyle=lgg8;S.fillRect(ox2+lg8[0],oy2+19,lg8[1],72);
+      S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";S.fillRect(ox2+lg8[0],oy2+19,1.2,72);});
+    // the monitor, in a case like the wall's, still showing something
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(ox2-36,oy2-40,86,44);
+    var mcg=S.createLinearGradient(0,oy2-46,0,oy2);
+    mcg.addColorStop(0,"#3a4351");mcg.addColorStop(0.14,"#2a323e");mcg.addColorStop(1,"#151b24");
+    S.fillStyle=mcg;rrS(ox2-40,oy2-46,86,48,3);S.fill();
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(ox2-38,oy2-46,82,1.4);
+    S.strokeStyle="rgba(1,3,6,0.65)";S.lineWidth=1.2;rrS(ox2-40,oy2-46,86,48,3);S.stroke();
+    S.fillStyle="rgba(1,3,6,0.9)";S.fillRect(ox2-33,oy2-40,72,29);
+    if(!offl){
+      var osg=S.createLinearGradient(0,oy2-40,0,oy2-11);
+      osg.addColorStop(0,"rgba(96,186,206,0.2)");osg.addColorStop(1,"rgba(96,186,206,0.05)");
+      S.fillStyle=osg;S.fillRect(ox2-33,oy2-40,72,29);
+      S.fillStyle="rgba(150,226,242,"+(0.55*lit)+")";     // a log still scrolling
+      for(var ol=0;ol<5;ol++)
+        S.fillRect(ox2-29,oy2-36+ol*5,26+((ol*29+Math.floor(t*0.7))%34),1.4);
+      S.fillStyle="rgba(0,0,0,0.3)";
+      for(var osl=0;osl<29;osl+=3)S.fillRect(ox2-33,oy2-40+osl,72,1.1);
+      S.save();S.globalCompositeOperation="lighter";       // it lights the desk
+      var odg=S.createRadialGradient(ox2+3,oy2-24,4,ox2+3,oy2-24,110);
+      odg.addColorStop(0,"rgba(110,196,220,0.16)");odg.addColorStop(1,"rgba(110,196,220,0)");
+      S.fillStyle=odg;S.beginPath();S.arc(ox2+3,oy2-24,110,0,7);S.fill();S.restore();}
+    S.fillStyle="rgba(206,224,255,0.05)";
+    poly(S,[[ox2-33,oy2-16],[ox2-8,oy2-40],[ox2+6,oy2-40],[ox2-33,oy2-11]]);S.fill();
+    // the pilot lamps on the monitor's chin
+    S.fillStyle="rgba(60,70,86,0.6)";S.fillRect(ox2-33,oy2-8,12,4);
+    if(!offl){S.fillStyle="rgba(236,130,74,"+(0.85*lit)+")";S.fillRect(ox2-15,oy2-8,12,4);
+      S.save();S.globalCompositeOperation="lighter";
+      var pg8=S.createRadialGradient(ox2-9,oy2-6,1,ox2-9,oy2-6,16);
+      pg8.addColorStop(0,"rgba(236,130,74,0.3)");pg8.addColorStop(1,"rgba(236,130,74,0)");
+      S.fillStyle=pg8;S.beginPath();S.arc(ox2-9,oy2-6,16,0,7);S.fill();S.restore();}
+    // the mug, with a handle and a rim you can read
+    S.fillStyle="rgba(1,3,6,0.5)";
+    S.beginPath();S.ellipse(ox2+66,oy2+1,10,3.4,0,0,7);S.fill();
+    var mgg=S.createLinearGradient(ox2+56,0,ox2+74,0);
+    mgg.addColorStop(0,"#2e3744");mgg.addColorStop(0.32,"#414b5a");mgg.addColorStop(1,"#161c26");
+    S.fillStyle=mgg;S.fillRect(ox2+57,oy2-15,16,16);
+    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";
+    S.beginPath();S.ellipse(ox2+65,oy2-15,8,2.6,0,0,7);S.fill();
+    S.fillStyle="rgba(10,14,18,0.9)";
+    S.beginPath();S.ellipse(ox2+65,oy2-14.6,6.2,1.9,0,0,7);S.fill();
+    S.strokeStyle="rgba(150,168,200,"+(0.24+0.2*lit)+")";S.lineWidth=2;
+    S.beginPath();S.arc(ox2+77,oy2-8,5,-1.25,1.25);S.stroke();
+    // the keyboard, shoved aside and sitting at an angle
+    S.save();S.translate(ox2-44,oy2-6);S.rotate(-0.07);
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(-19,-3,46,12);
+    var kbg=S.createLinearGradient(0,-5,0,7);
+    kbg.addColorStop(0,"#2c3440");kbg.addColorStop(1,"#141a22");
+    S.fillStyle=kbg;S.fillRect(-20,-5,46,12);
+    S.fillStyle="rgba(198,214,240,"+(0.18*lit)+")";S.fillRect(-20,-5,46,1.2);
+    for(var kk2=0;kk2<9;kk2++)for(var kr2=0;kr2<2;kr2++){
+      S.fillStyle="rgba(86,100,122,"+(0.3+0.2*lit)+")";
+      S.fillRect(-17+kk2*4.7,-2.4+kr2*4,3.4,2.6);}
+    S.restore();
     // the chair, pushed back and turned away
     S.save();S.translate(ox2+58,GYS+22);S.rotate(-0.14);
     S.fillStyle="#131a25";S.fillRect(-32,-58,62,12);
@@ -887,12 +1259,18 @@ function drawRoom(t,st){
             [880,534,820,606,900,646],[1000,540,1080,606,1020,650],
             [1180,536,1120,600,1200,646]];
     CB.forEach(function(c3,ci3){
-      S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=ci3%2?6:4.4;
-      S.beginPath();S.moveTo(c3[0],c3[1]);S.bezierCurveTo(c3[2],c3[3],c3[4],c3[5],c3[4]+52,650);S.stroke();
-      S.strokeStyle="rgba(100,116,144,"+(0.05*lit)+")";S.lineWidth=1.1;
-      S.beginPath();S.moveTo(c3[0],c3[1]);S.bezierCurveTo(c3[2],c3[3],c3[4],c3[5],c3[4]+52,650);S.stroke();});
-    S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=5;
-    [20,13,7].forEach(function(rr5){S.beginPath();S.ellipse(960,656,rr5,rr5*0.4,0.2,0,7);S.stroke();});
+      cable([c3[0],c3[1],c3[2],c3[3],c3[4],c3[5],c3[4]+52,650],ci3%2?7:5.4,
+            ci3===2?"rgba(64,50,40,0.95)":(ci3===4?"rgba(38,52,64,0.95)":null));});
+    // a coil of slack somebody left on the deck, with real section
+    [20,13,7].forEach(function(rr5,qi){
+      S.strokeStyle="rgba(1,3,6,0.5)";S.lineWidth=6;
+      S.beginPath();S.ellipse(962,658,rr5,rr5*0.4,0.2,0,7);S.stroke();
+      S.strokeStyle="rgba(5,8,13,0.98)";S.lineWidth=5.4;
+      S.beginPath();S.ellipse(960,656,rr5,rr5*0.4,0.2,0,7);S.stroke();
+      S.strokeStyle="rgba(44,52,66,0.95)";S.lineWidth=3;
+      S.beginPath();S.ellipse(960,656,rr5,rr5*0.4,0.2,0,7);S.stroke();
+      S.strokeStyle="rgba(170,190,222,"+(0.12*lit)+")";S.lineWidth=1;
+      S.beginPath();S.ellipse(960,655.4,rr5,rr5*0.4,0.2,Math.PI*1.05,Math.PI*1.95);S.stroke();});
   })();
 
   /* ---- more of the gallery: the gear a signals room accumulates and then
@@ -900,22 +1278,54 @@ function drawRoom(t,st){
      years, overhead pipe runs, and a stain on the deck. */
   // patch panel with a jack field, port wall
   (function(){
+    /* LOOP 9 · THE PATCH PANEL, AND THE ROOM'S COLOUR. Outside the screens
+       this room had no local colour at all — the checklist asks for props
+       with red/amber/green accents against the neutral grade, and a patch
+       bay is exactly where a signals room keeps them. Real jacks now: a
+       drilled plate, each socket a hole with a lit lower rim, tally LEDs
+       down the side, and patch leads in SATURATED sleeve colours with
+       proper weight and real slack. */
     var px4=300, py4=470;
-    S.fillStyle="#0e131c";S.fillRect(px4,py4,150,74);
-    S.strokeStyle="rgba(130,148,180,"+(0.26*lit)+")";S.lineWidth=1.2;S.strokeRect(px4,py4,150,74);
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(px4+5,py4+6,150,74);
+    var ppg=S.createLinearGradient(0,py4,0,py4+74);
+    ppg.addColorStop(0,"#39424f");ppg.addColorStop(0.12,"#262e3a");ppg.addColorStop(1,"#141a23");
+    S.fillStyle=ppg;S.fillRect(px4,py4,150,74);
+    S.fillStyle="rgba(206,222,248,"+(0.24*lit)+")";S.fillRect(px4,py4,150,1.5);
+    S.strokeStyle="rgba(1,3,6,0.65)";S.lineWidth=1.3;S.strokeRect(px4+0.6,py4+0.6,148.8,72.8);
     for(var jr=0;jr<3;jr++)for(var jc=0;jc<12;jc++){
-      S.fillStyle="rgba(3,6,11,0.95)";
-      S.beginPath();S.arc(px4+13+jc*11,py4+16+jr*20,3.2,0,7);S.fill();
-      S.strokeStyle="rgba(130,150,184,"+(0.2*lit)+")";S.lineWidth=0.9;
-      S.beginPath();S.arc(px4+13+jc*11,py4+16+jr*20,3.6,0,7);S.stroke();}
-    // three patch leads still plugged, looping down
-    [[24,0],[57,1],[112,2]].forEach(function(pl4,pi){
+      var jx=px4+13+jc*11, jy=py4+16+jr*20;
+      S.fillStyle="rgba(1,3,6,0.96)";S.beginPath();S.arc(jx,jy,3.3,0,7);S.fill();
+      S.strokeStyle="rgba(158,176,208,"+(0.3+0.22*lit)+")";S.lineWidth=1;
+      S.beginPath();S.arc(jx,jy,3.9,Math.PI*0.1,Math.PI*0.95);S.stroke();
+      S.strokeStyle="rgba(1,3,6,0.6)";
+      S.beginPath();S.arc(jx,jy,3.9,Math.PI*1.1,Math.PI*1.95);S.stroke();}
+    // per-row tallies down the right edge — green, amber, dead
+    [["rgba(110,214,140,",1],["rgba(230,170,60,",1],["rgba(70,80,96,",0]].forEach(function(tl9,tj){
+      var ty9=py4+16+tj*20;
+      S.fillStyle=offl||!tl9[1]?"rgba(60,70,86,0.7)":tl9[0]+(0.9*lit)+")";
+      S.beginPath();S.arc(px4+143,ty9,2.4,0,7);S.fill();
+      if(!offl&&tl9[1]){S.save();S.globalCompositeOperation="lighter";
+        var tg8=S.createRadialGradient(px4+143,ty9,1,px4+143,ty9,14);
+        tg8.addColorStop(0,tl9[0]+"0.3)");tg8.addColorStop(1,tl9[0]+"0)");
+        S.fillStyle=tg8;S.beginPath();S.arc(px4+143,ty9,14,0,7);S.fill();S.restore();}});
+    // the leads: coloured sleeves, weight, and a plug body at each end
+    [[24,0,"rgba(196,72,58,"],[57,1,"rgba(210,158,54,"],[112,2,"rgba(72,140,190,"]].forEach(function(pl4,pi){
       var sx4=px4+13+pl4[0], sy4=py4+16+pl4[1]*20;
-      S.strokeStyle="rgba(5,8,13,0.95)";S.lineWidth=3.4;
-      S.beginPath();S.moveTo(sx4,sy4);S.quadraticCurveTo(sx4+18,sy4+62,sx4+46,sy4+30);S.stroke();
-      S.strokeStyle=pi===1?"rgba(146,110,70,"+(0.16*lit)+")":"rgba(90,104,132,"+(0.12*lit)+")";
-      S.lineWidth=1.1;
-      S.beginPath();S.moveTo(sx4,sy4);S.quadraticCurveTo(sx4+18,sy4+62,sx4+46,sy4+30);S.stroke();});
+      var ex4=sx4+46, ey4=sy4+30;
+      S.lineCap="round";
+      S.strokeStyle="rgba(1,3,6,0.45)";S.lineWidth=7;
+      S.beginPath();S.moveTo(sx4+3,sy4+3);S.quadraticCurveTo(sx4+21,sy4+65,ex4+3,ey4+3);S.stroke();
+      S.strokeStyle="rgba(3,6,11,0.98)";S.lineWidth=5;
+      S.beginPath();S.moveTo(sx4,sy4);S.quadraticCurveTo(sx4+18,sy4+62,ex4,ey4);S.stroke();
+      S.strokeStyle=pl4[2]+(0.5+0.4*lit)+")";S.lineWidth=3;
+      S.beginPath();S.moveTo(sx4,sy4);S.quadraticCurveTo(sx4+18,sy4+62,ex4,ey4);S.stroke();
+      S.strokeStyle="rgba(255,235,220,"+(0.16*lit)+")";S.lineWidth=1;
+      S.beginPath();S.moveTo(sx4-0.8,sy4-0.8);S.quadraticCurveTo(sx4+17,sy4+61,ex4-0.8,ey4-0.8);S.stroke();
+      S.lineCap="butt";
+      [[sx4,sy4],[ex4,ey4]].forEach(function(pg9){      // the plug bodies
+        S.fillStyle="rgba(1,3,6,0.6)";rrS(pg9[0]-3.4,pg9[1]-4.4,7,10,2);S.fill();
+        S.fillStyle="rgba(52,60,74,0.98)";rrS(pg9[0]-4,pg9[1]-5,7,10,2);S.fill();
+        S.fillStyle="rgba(186,202,230,"+(0.26*lit)+")";S.fillRect(pg9[0]-4,pg9[1]-5,7,1.4);});});
   })();
   // test cart on castors, parked and forgotten
   (function(){
@@ -996,7 +1406,15 @@ function drawRoom(t,st){
   })();
 
   /* ============ deck ============ */
-  S.fillStyle="#05070b";S.fillRect(0,GYS,SW,SH-GYS);
+  /* LOOP 10 · THE DECK. Left behind by loop 1 at #05070b, so the room
+     stopped at the deck line. Two jobs: bring the floor into the same
+     range as the wall, and REFLECT. There are twenty-four televisions and
+     a strip light above this floor and it was mirroring none of them —
+     a wet-looking access floor under a wall of screens is the shot this
+     room exists for, and it costs one blurred pass. */
+  var sdg=S.createLinearGradient(0,GYS,0,SH);
+  sdg.addColorStop(0,"#1a212c");sdg.addColorStop(0.4,"#141a24");sdg.addColorStop(1,"#0c1017");
+  S.fillStyle=sdg;S.fillRect(0,GYS,SW,SH-GYS);
   /* a low cable tray running the width, in front of the wall and behind the
      unit: it separates near from far and gives the floor a horizon */
   (function(){
@@ -1031,14 +1449,32 @@ function drawRoom(t,st){
     S.beginPath();S.moveTo(300,GYS+64);S.lineTo(392,GYS+30);S.stroke();
   })();
   if(!offl){
-    S.save();S.globalAlpha=0.1;S.filter="blur(7px)";
+    /* the screen wall, mirrored in the access floor. Each monitor smears
+       down as one soft band, brightest at the deck line and gone by
+       mid-floor, flickering with the screen that casts it. This was a
+       globalAlpha 0.1 source-over wash — invisible, and the wrong operator
+       for a reflection, which ADDS light to a surface. */
+    S.save();S.globalCompositeOperation="lighter";S.filter="blur(8px)";
     SCREENS.forEach(function(sc){
-      if(sc.y>420)return;
-      var rgd=S.createLinearGradient(0,GYS+2,0,GYS+58);
-      rgd.addColorStop(0,"rgba(150,170,200,0.45)");
-      rgd.addColorStop(0.5,"rgba(150,170,200,0.16)");
-      rgd.addColorStop(1,"rgba(150,170,200,0)");
-      S.fillStyle=rgd;S.fillRect(sc.x+12,GYS+2,sc.w-24,56);});
+      if(sc.y>460)return;
+      var fk7=0.6+0.4*Math.abs(Math.sin(t*sc.sp*2+sc.ph));
+      var far=1-Math.min(0.8,(sc.y-60)/460);      // higher rows reflect weaker
+      var rgd=S.createLinearGradient(0,GYS+2,0,GYS+64);
+      rgd.addColorStop(0,"rgba(150,178,220,"+(0.24*fk7*far*lit)+")");
+      rgd.addColorStop(0.45,"rgba(140,166,206,"+(0.07*fk7*far*lit)+")");
+      rgd.addColorStop(1,"rgba(140,166,206,0)");
+      S.fillStyle=rgd;S.fillRect(sc.x+8,GYS+2,sc.w-16,62);});
+    // the strip light's own long reflection, the brightest thing down here
+    var blr=S.createLinearGradient(0,GYS+2,0,GYS+78);
+    blr.addColorStop(0,"rgba(186,208,244,"+(0.2*lit)+")");
+    blr.addColorStop(1,"rgba(186,208,244,0)");
+    S.fillStyle=blr;S.fillRect(316,GYS+2,268,76);
+    S.restore();
+    // grime the reflection does not survive: worn tracks across the tiles
+    S.save();S.globalAlpha=0.55;
+    for(var gm=0;gm<9;gm++){
+      S.fillStyle="rgba(9,12,18,"+(0.3+0.3*((gm*29)%5)/5)+")";
+      S.fillRect(60+gm*146,GYS+10+((gm*23)%24),56+((gm*37)%62),10);}
     S.restore();
     // dust in the corridor light
     S.save();S.globalCompositeOperation="lighter";

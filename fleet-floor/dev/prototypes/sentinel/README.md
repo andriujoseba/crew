@@ -110,6 +110,55 @@ a board with half its tube gone.
 The noise is one shared 64px tile sampled per screen — sixteen live noise
 canvases a frame would cost more than the unit does.
 
+## Round 5 — ten loops on detail, not on composition
+
+Same diagnosis as the flag bridge, further along. The hall was `#05070b` top
+to bottom and every fitting in it drawn at alpha `0.05`–`0.26`, so the room
+was a black field with screens floating on it. Here the logic is even simpler
+than on the bridge: **the screens are the room's light**, so the wall has to
+be a surface they can visibly fall on.
+
+1. **The grade** — base value up, a cold key from the screen wall itself,
+   occlusion into the corners.
+2. **The monitors** — twenty-four of these are the room's signature prop and
+   each was a rectangle of noise with a 1px stroke: they read as paper tiles
+   glued to a wall. Now a moulded case with a lit top and shadowed chin, a
+   bezel with real depth, a **curved** glass face (the highlight bends, which
+   is the one cue that separates a screen from a printed rectangle), corner
+   screws, a tally lamp and a worn tape label.
+3. **The racks** — the uprights were 12px black bars drawn *after* the
+   screens, so the structure crossed in front of the monitors it was holding.
+   Rebuilt as 19" rack steel with a punched hole column and a shelf rail per
+   row, drawn **first** so the screens sit in front of it.
+4. **What is on the screens** — twenty-four identical fields of snow read as
+   one texture. A gallery that has lost its feeds still varies in *how* each
+   one failed: colour bars, a frozen test card, a camera still limping along
+   in another room, some gone to black, one over-driven.
+5. **The light** — the ceiling fitting was a flat bar; now a real batten with
+   end caps, suspension drops and a wire guard. And the wall of televisions
+   now washes the steel it is bolted to, flickering.
+6. **The cabling** — a signal gallery *is* its cabling and this room had two
+   hairlines. Vertical looms down the rack bays, zip-tie clamps, and four
+   passes per run so a cable has a crown, a belly and a shadow.
+7. **The signage board** — `MON-4` was a 34px sliver at alpha `0.14`; the room
+   was effectively unnamed. Built to the bridge's spec, but **failing**: half
+   the backlight is dead and the whole sign guts. Placement corrected twice —
+   the grade's own corner occlusion ate it at `x=44`, and it collided with the
+   top row of monitors at `y=36`.
+8. **The operator's station and the door** — the one piece of human furniture
+   was five flat rectangles; it carries the story, so the desk, the still-live
+   console, the shoved-aside keyboard and the cold mug all had to read. The
+   door was three black rectangles — the second-largest object in frame — and
+   now has a flanged frame, jamb bolts, a dogging lever and a compartment
+   number.
+9. **The patch panel** — outside the screens the room had no local colour at
+   all. Drilled jack field, per-row tallies, and patch leads in saturated
+   sleeve colours with real weight and plug bodies.
+10. **The deck** — left behind by loop 1, and reflecting none of the
+    twenty-four televisions above it. The old reflection pass was a
+    `globalAlpha 0.1` source-over wash: invisible, and the wrong operator for
+    a reflection, which *adds* light to a surface.
+
 ## Renders — proto C
 
 | working | idle | offline |
