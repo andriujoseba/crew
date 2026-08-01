@@ -20,6 +20,11 @@ PASS=0 FAIL=0
 ok()   { PASS=$((PASS+1)); printf 'ok   %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf 'FAIL %s\n' "$1"; }
 same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$2' got '$3')"; fi; }
+same_done_source() { # <case-name> <installer-output> <version-dir>
+  source_stamp="$(cat "$3/INSTALLED_FROM" 2>/dev/null)"
+  same "$1" "crew-install: done ($source_stamp, version $(cat "$3/VERSION" 2>/dev/null)) — try: crew help" \
+    "$(printf '%s\n' "$2" | tail -n 1)"
+}
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -54,7 +59,7 @@ fi
 
 # 3. install from the artifact → versioned layout, crew runs through current.
 DA="$WORK/homeA"
-HOME="$DA" CREW_HOME="$DA/share" CREW_BIN="$DA/bin" bash "$ART" >/dev/null 2>&1
+artifact_out="$(HOME="$DA" CREW_HOME="$DA/share" CREW_BIN="$DA/bin" bash "$ART" 2>&1)"
 link="$(readlink -f "$DA/bin/crew" 2>/dev/null || true)"
 case "$link" in */versions/"$V"/cli/crew) ok "artifact-installs-versioned-layout" ;;
   *) bad "artifact-installs-versioned-layout (got '$link')" ;; esac
@@ -99,6 +104,7 @@ case "$(cat "$DA/share/versions/$V/INSTALLED_FROM" 2>/dev/null)" in
 esac
 same "source-install-records-its-source-path" "local:$SRC" \
   "$(cat "$DB/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+same_done_source "artifact-done-source-matches-record" "$artifact_out" "$DA/share/versions/$V"
 
 # 5. re-running the artifact on the already-installed version is a no-op.
 before="$(readlink "$DA/share/current")"
@@ -203,9 +209,9 @@ GH
 chmod +x "$GHBIN/gh"
 DG="$WORK/homeG"
 SBG="$WORK/tmpboxG"; mkdir -p "$SBG"
-if GH_SRC_PARENT="$GHP" GH_TOPDIR="crew-ghsha" PATH="$GHBIN:$PATH" TMPDIR="$SBG" \
+if gh_out="$(GH_SRC_PARENT="$GHP" GH_TOPDIR="crew-ghsha" PATH="$GHBIN:$PATH" TMPDIR="$SBG" \
      HOME="$DG" CREW_HOME="$DG/share" CREW_BIN="$DG/bin" \
-     bash "$ROOT/dist/fetch.sh" --repo test/crew --ref latest -- >/dev/null 2>&1 \
+     bash "$ROOT/dist/fetch.sh" --repo test/crew --ref latest -- 2>&1)" \
    && [ -d "$DG/share/versions/$V" ]; then
   ok "gh-channel-installs-through-install-sh"
 else
@@ -213,6 +219,7 @@ else
 fi
 same "gh-channel-records-ref-provenance" "gh:test/crew tag:0.0.0-ghtag" \
   "$(cat "$DG/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+same_done_source "gh-channel-done-source-matches-record" "$gh_out" "$DG/share/versions/$V"
 # fetch.sh downloaded the tarball into its own temp dir; `exec`-ing install.sh
 # would drop its `trap … EXIT` and orphan that tarball. Assert the sandbox is
 # empty after a clean fetch-install (round 1).
@@ -290,6 +297,7 @@ case "$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )" in
 esac
 same "curl-channel-records-resolved-tag-provenance" "curl:heavy-duty/crew ref:$CTAG" \
   "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+same_done_source "curl-channel-done-source-matches-record" "$CURL_OUT" "$CURL_HOME/share/versions/$V"
 # The resolution is GitHub's own redirect, taken with a HEAD — never the API,
 # never a token. Both halves matter: the API needs auth this channel must not have.
 case "$(cat "$CURL_LOG")" in
@@ -410,6 +418,7 @@ run_curl_channel local CREW_YES=1 CREW_INSTALL_SOURCE="$SRC"
 same "curl-channel-local-source-installs" "$V" "$(installed_version "$CURL_HOME")"
 same "curl-channel-local-source-provenance" "local:$SRC" \
   "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
+same_done_source "local-done-source-matches-record" "$CURL_OUT" "$CURL_HOME/share/versions/$V"
 same "curl-channel-local-source-touches-no-network" "" "$(cat "$CURL_LOG")"
 
 # 11h. the download lands in the channel's own temp dir; `exec`-ing install.sh

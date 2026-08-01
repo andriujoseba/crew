@@ -282,4 +282,4 @@ case ":$PATH:" in
     ;;
 esac
 
-log "done (local:$SRC, version $new_ver) — try: crew help"
+log "done ($INSTALLED_FROM, version $new_ver) — try: crew help"
