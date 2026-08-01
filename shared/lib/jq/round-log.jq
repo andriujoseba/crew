@@ -8,8 +8,12 @@
 # retried tick is a no-op — the same discipline post-once.sh applies to a
 # comment, applied to the body).
 #
-# A "round" is a head SHA that received at least one opinionated verdict
-# (APPROVED / CHANGES_REQUESTED — a bare COMMENTED review is not a verdict).
+# A "round" is keyed by the head SHA that received at least one opinionated
+# verdict (APPROVED / CHANGES_REQUESTED — a bare COMMENTED review is not a
+# verdict). GitHub can re-point a review to a base-merge commit created after
+# the verdict. That impossible key is repaired to the newest payload commit at
+# or before the verdict; when history has no such commit, the reported key is
+# retained rather than guessed.
 # Its reply is the author's comments posted AFTER that round's newest verdict
 # and BEFORE the next round's first verdict — the window in which the builder
 # answers the round whole before pushing the fix that opens the next one. Each
@@ -18,8 +22,9 @@
 # builder answered with no comment is recorded as passed without one and never
 # blocks the handoff.
 #
-# The LIVE round — the last one, with no next round to close its reply window —
-# is NOT finalized during a per-tick mirror ($final=false). Because the mirror
+# The LIVE round — the current head, or the last one when no next round closes
+# its reply window — is NOT finalized during a per-tick mirror ($final=false).
+# Because the mirror
 # now runs every tick (#91 B1), a round's FIRST verdict would otherwise stamp
 # `<!-- round:<head> -->` with "no written reply" while the remaining verdicts
 # and the builder's whole-round reply are still arriving — and the already-in-
@@ -31,10 +36,23 @@
 # legitimately passed with no written reply is recorded.
 .data.repository.pullRequest as $pr
 | ($pr.body // "")                                                as $body
+| [ ($pr.commits.nodes // [])[]
+    | .commit
+    | select(.oid != null and .committedDate != null) ]
+  | sort_by(.committedDate)                                      as $commits
 | [ ($pr.reviews.nodes // [])[]
     | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
     | select(.commit.oid != null and .submittedAt != null)
-    | {oid: .commit.oid, at: .submittedAt} ]                      as $verdicts
+    | . as $review
+    | ([$commits[] | select(.oid == $review.commit.oid)] | first) as $reported
+    | { oid: (if $reported != null
+                 and $reported.committedDate > $review.submittedAt
+              then ([$commits[]
+                     | select(.committedDate <= $review.submittedAt)]
+                    | last | .oid) // $review.commit.oid
+              else $review.commit.oid
+              end),
+        at: $review.submittedAt} ]                                as $verdicts
 | [ ($pr.comments.nodes // [])[]
     | select(.author.login == $me)
     | {body: .body, at: .createdAt} ]                             as $mine
@@ -45,10 +63,11 @@
     | sort_by(.first) )                                           as $rounds
 | ($rounds | length)                                              as $n
 | [ range(0; $n) as $i
-    # Defer the live (last) round unless $final: only a superseded round is
-    # closed enough to finalize per-tick. See the header note.
-    | select($i + 1 < $n or $final)
     | $rounds[$i] as $r
+    # Defer both the current-head round and the last round unless $final: only
+    # a superseded, non-current round is closed enough to finalize per-tick.
+    | select($final or ($i + 1 < $n
+                        and $r.oid != ($pr.headRefOid // "")))
     | (if $i + 1 < $n then $rounds[$i + 1].first else null end) as $next
     | { oid: $r.oid,
         marker: ("<!-- round:" + $r.oid + " -->"),
