@@ -581,7 +581,7 @@ _builder_repo() {
         if post_ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
           --json number,assignees 2>/dev/null)"; then
           post_ready_ids="$(printf '%s' "$post_ready_json" | jq -r --arg repo "$R" \
-            '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number)"' 2>/dev/null)"
+            '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number)"' 2>/dev/null || true)"
           ready_commit="$(_ready_lines_to_commit "$ready_items" "$post_ready_ids")"
         else
           warn "$R: post-session ready re-query failed; committing no ready lines (#264)"

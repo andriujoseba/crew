@@ -1217,6 +1217,15 @@ else
   r1=DROPPED
 fi
 t builder-round-items-preserved preserved "$r1"
+# A failed re-query must stay visible and fail open toward another session,
+# never burying the whole pre-session ready set (#264 D4).
+if [ "$(grep -Fc 'post-session ready re-query failed; committing no ready lines (#264)' \
+     <<<"$builder_commit_block")" -eq 1 ]; then
+  r1=safe
+else
+  r1=WHOLE_SET
+fi
+t builder-ready-requery-failure-commits-none safe "$r1"
 # shellcheck disable=SC2016  # Match literal shell source, not test variables.
 if grep -Fq '[ -e "$marker" ] && return 0' "$BUILDER_MOD" &&
    grep -Fq '_repair_seen_build_264' "$BUILDER_MOD"; then
@@ -1225,6 +1234,15 @@ else
   r1=UNGATED
 fi
 t builder-ledger-repair-marker-gated gated "$r1"
+# The repair is box-wide, so it runs once before duty_builder enters its
+# per-repository loop rather than once from _builder_repo (#264 D5).
+builder_entry_block="$(sed -n '/^duty_builder() {/,/^_builder_repo() {/p' "$BUILDER_MOD")"
+if [ "$(grep -Fc '_repair_seen_build_264' <<<"$builder_entry_block")" -eq 1 ]; then
+  r1=once-per-box
+else
+  r1=PER_REPO
+fi
+t builder-ledger-repair-call-site once-per-box "$r1"
 
 # The repair clears both state classes once, names #264, and leaves files
 # created after its marker untouched on later invocations.
