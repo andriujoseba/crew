@@ -1118,6 +1118,44 @@ function drawCamCell(t,x,y,w,h,unit){
   var nx=-((t*61)%40),ny=-((t*47)%40);
   for(var gx=nx;gx<w;gx+=220)for(var gy=ny;gy<h;gy+=220)X.drawImage(noise,x+gx,y+gy);
   X.restore();
+  /* Glitch grammar — the feed fiction the refresh cadence used to fake, done
+     the way real degraded video does it: the subject's motion is continuous
+     and the LAG is an artifact the tile performs. Two triggers: a landed
+     still swap (state change, resize — the feed "re-syncs"), and a rare
+     per-tile beat, phase-hashed so tiles never fire together. Three effects
+     in the vocabulary the offline roll established: a displaced slice, a
+     chroma split, a block smear. All of it a pure function of (t, box), so
+     dev renders reproduce; none of it under reduced motion; offline tiles
+     keep their own roll instead. */
+  if(!reduced&&!off&&still&&still.ok){
+    var swT=camSwaps[box], gk=-1, gs=0;
+    if(swT!==undefined&&t-swT>=0&&t-swT<0.06){gk=0;gs=1;}
+    else{
+      var gP=7+(bp/6.283)*5, gph=(t+bp*7)%gP;
+      if(gph<0.08){gk=Math.floor((t+bp*7)/gP)%3;gs=1-gph/0.08;}
+    }
+    if(gk===0){ // displaced slices, the roll's own move at feed strength
+      for(var gi=0;gi<3;gi++){
+        var gsy=y+8+((bp*151+gi*67+Math.floor(t*30)*13)%(h-24));
+        var gdx=(((bp*89+gi*41)%13)-6)*gs;
+        X.save();X.globalAlpha=0.55*gs;
+        X.drawImage(X.canvas,(x+1)*dpr,gsy*dpr,(w-2)*dpr,3*dpr,x+1+gdx,gsy,w-2,3);
+        X.restore();
+      }
+    }else if(gk===1){ // one-frame chroma split: the still ghosted either side
+      X.save();X.globalCompositeOperation="lighter";X.globalAlpha=0.16*gs;
+      X.drawImage(still.cv,x+1-3*gs,y+1,w-2,h-2);
+      X.drawImage(still.cv,x+1+3*gs,y+1,w-2,h-2);
+      X.restore();
+    }else if(gk===2){ // block smear: one region of the feed re-sent too big
+      var smw=w*0.26, smh=h*0.15;
+      var smx=x+1+((bp*97)%(w-smw-2)), smy=y+1+8+((bp*53)%(h-smh-16));
+      X.save();X.globalAlpha=0.6*gs;
+      X.drawImage(X.canvas,smx*dpr,smy*dpr,smw*dpr,smh*dpr,
+                  smx-smw*0.09,smy-smh*0.09,smw*1.18,smh*1.18);
+      X.restore();
+    }
+  }
   if(off){
     /* A dead feed rolls: one displaced slice wandering the frame, and the
        overlay says why. The portrait underneath is already cold and dark —
