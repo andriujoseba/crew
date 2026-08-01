@@ -428,7 +428,7 @@ for f in "$FLOOR_STATE"/ff-working.prompt.*; do
     continue
   fi
   _log=$(find "$CM_HOME/duty/logs" -name "*operator-floor-$_tok.log" 2>/dev/null | head -1)
-  _got="$(sed -n 's/^PROMPT=\[\(.*\)\]$/\1/p' "$_log")"
+  _got="$(sed '1s/^PROMPT=\[//; $s/]$//' "$_log")"
   [ "$_got" = "$_staged" ] || CM_BAD="$CM_BAD token=$_tok:staged[$_staged]!=delivered[$_got]"
 done
 if [ -z "$CM_BAD" ] && [ "$CM_STAGED" -eq 5 ]; then

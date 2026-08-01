@@ -156,7 +156,7 @@ BS_LOG="$(cat "$BS_M"/duty/logs/*operator-floor*.log 2>/dev/null)"
 t "message: prompt arrives as ONE argv element" "ARGC=3" "$(printf '%s\n' "$BS_LOG" | sed -n 's/^\(ARGC=[0-9]*\)$/\1/p')"
 t "message: envelope precedes operator text byte-identically" \
   "$(cat "$BS_TMP/expected-floor-prompt")" \
-  "$(printf '%s\n' "$BS_LOG" | sed '1s/^LAST=//')"
+  "$(printf '%s\n' "$BS_LOG" | sed '1d; 2s/^LAST=//')"
 
 if grep -q 'SESSION START kind=operator key=floor' "$BS_M/duty/duty.log"; then
   ok "message: writes a SESSION START marker"
@@ -194,12 +194,11 @@ import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 floor.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
-try:
-    floor.floor_message_prompt("operator text")
-except RuntimeError as exc:
-    if "floor message envelope unavailable" in str(exc):
-        raise SystemExit(0)
-raise SystemExit("missing envelope did not fail loudly")
+floor.read_roster = lambda: [{"box": "test-box"}]
+status, result = floor.do_command(
+    [], {"action": "message", "box": "test-box", "prompt": "operator text"})
+if status != 500 or "floor message envelope unavailable" not in result.get("error", ""):
+    raise SystemExit("missing envelope did not fail the message action loudly")
 PY
 t "message: missing envelope fails loudly" 0 "$?"
 
