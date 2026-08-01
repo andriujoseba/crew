@@ -70,14 +70,18 @@ else
   done
   [ -n "$CONFIG_DIR" ] || { echo "crew: no fleet definition found (fleet.roster is required)" >&2; exit 1; }
 fi
-if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then
-  missing=""
-  for required in fleet.conf repos.txt; do
-    [ -f "$CONFIG_DIR/$required" ] || missing="$missing $required"
-  done
-  [ -z "$missing" ] ||
-    { echo "crew: fleet definition '$CONFIG_DIR' is incomplete; missing:$missing" >&2; exit 1; }
-fi
+# Completeness is checked on WHATEVER directory resolution selected, operator
+# or fallback. It used to run only under CONFIG_IS_OPERATOR=1, which gave the
+# least-trusted definition the least verification: an operator config missing
+# a required file failed loudly, and a shipped-examples directory missing one
+# ran unchecked (#216). Nothing about "is this file here" depends on who wrote
+# the directory.
+missing=""
+for required in fleet.conf repos.txt; do
+  [ -f "$CONFIG_DIR/$required" ] || missing="$missing $required"
+done
+[ -z "$missing" ] ||
+  { echo "crew: fleet definition '$CONFIG_DIR' is incomplete; missing:$missing" >&2; exit 1; }
 # Rehearsals that claim to exercise operator-owned configuration set this
 # assertion. Keep it beside resolution so a missing CREW_CONFIG_DIR cannot
 # silently fall through to examples/ and turn a real-host drill into coverage
@@ -145,6 +149,50 @@ SILENT_AFTER_S="${CREW_SILENT_AFTER:-600}"
 die() { echo "crew: $*" >&2; exit 1; }         # 1 = it went wrong
 usage_error() { echo "crew: $*" >&2; echo "try 'crew help'." >&2; exit 2; }  # 2 = you asked wrong
 need_box() { command -v box >/dev/null || die "the 'box' CLI is not on PATH — crew runs on a box host"; }
+
+# The examples fallback is a definition NOBODY WROTE, and it must not be able
+# to create infrastructure or arm cron (#216). Resolution ends at
+# $CREW_ROOT/examples only when a host has no operator config at all, and
+# before this that host presented as a fully configured seven-box fleet:
+# `crew up` created seven boxes and armed cron against the three live
+# repositories the shipped registry then named, with nothing in the output
+# saying the definition was not the operator's. The shipped registry ships
+# empty now, which closes the "aimed at somebody else's boards" half; this
+# closes the other half — a scaffold is a thing to READ, never a mandate to
+# act on.
+#
+# WHERE THESE ARE CALLED FROM is the load-bearing part, and it follows crew's
+# own two-exit-code split above: a malformed invocation is diagnosed FIRST and
+# still exits 2, because the operator asked wrong before the world could
+# answer. The refusal is a WORLD fault — you asked correctly and the answer is
+# no — so it exits 1, and every call site sits after that verb's argument
+# parsing (and after resolve_engine, which is where a bad --ref earns its 2)
+# and before that verb's first mutation.
+require_operator_config() { # VERB
+  if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then return 0; fi
+  die "$1 refuses under the shipped example fleet definition at $CONFIG_DIR.
+  Nobody configured this host, so there is nothing here to create or arm: the
+  examples are a scaffold to read, not a fleet to run. Scaffold your own —
+    crew init
+  then edit the generated files (repos.txt ships EMPTY: name your repos) and
+  run again. 'crew status', 'crew profiles' and 'crew up --dry-run' keep
+  working here, which is how you inspect a host in this state."
+}
+
+# The read-only half of the same rule. `status`, `profiles` and `up --dry-run`
+# are how someone INSPECTS an unconfigured host, so they keep working — but
+# they say what they are reading, because the reported symptom was a table
+# nobody could tell from a configured fleet's.
+#
+# On stderr deliberately: these verbs print tables, and a banner mixed into
+# the rows is a second thing every reader of that stdout has to filter. A
+# terminal shows both; a pipe keeps the rows it asked for.
+fallback_banner() {
+  if [ "$CONFIG_IS_OPERATOR" -eq 1 ]; then return 0; fi
+  echo "crew: NOTE this host has NO operator fleet definition." >&2
+  echo "crew: reading the shipped examples at $CONFIG_DIR — a scaffold, not an operator definition." >&2
+  echo "crew: 'crew init' scaffolds one; until then no verb here will create a box or arm cron." >&2
+}
 
 # `--flag` with no value is a malformed invocation and must exit 2 like every
 # other one. Reading "$2" directly under `set -u` makes BASH kill the process
@@ -1298,6 +1346,7 @@ cmd_new() {
   fi
   if [ -z "$role" ] || [ -z "$agent" ]; then usage_error "usage: crew new <roster-name> | crew new --role <r> --agent <a>"; fi
   validate_profiles "$agent" "$role"
+  require_operator_config "crew new"
   if [ -z "$name" ]; then
     name="$agent-$role"
     local i=2
@@ -1324,6 +1373,7 @@ EOF
 cmd_create_all() {
   max_args create-all 0 "$@"
   need_box
+  require_operator_config "crew create-all"
   local name agent role from made=0
   while read -r name agent role from; do
     validate_profiles "$agent" "$role"
@@ -1359,6 +1409,7 @@ cmd_hire() {
     esac
   done
   resolve_engine "$ref"
+  require_operator_config "crew hire"
   box_exists "$name" || die "no box named '$name' — crew new $name first"
   line="$(roster_line "$name")"
   if [ -n "$line" ] && [ "$explicit_profile" -eq 1 ]; then
@@ -1390,6 +1441,7 @@ cmd_hire_all() {
     [ "$#" -eq 0 ] || usage_error "usage: $(synopsis_of hire-all)"
   fi
   resolve_engine "$ref"
+  require_operator_config "crew hire-all"
   local name agent role _from hired=0 failed=0
   foreign_actor_check
   while read -r name agent role _from; do
@@ -1427,6 +1479,10 @@ cmd_up() {
     [ "$#" -eq 0 ] || usage_error "usage: $(synopsis_of up)"
   fi
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
+  # --dry-run is a read: it is exactly how an operator inspects a host that has
+  # no configuration yet, so it keeps working and carries the banner. The
+  # converging form creates boxes and arms cron, so it refuses.
+  if [ "$dry" -eq 1 ]; then fallback_banner; else require_operator_config "crew up"; fi
 
   # `up` takes no --ref, but hire_box now consumes the globals the caller
   # resolves — so it resolves HEAD once here, for the same reason and with the
@@ -1484,6 +1540,7 @@ cmd_down() {
   max_args down 0 "$@"
   need_box
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
+  require_operator_config "crew down"
   local name _rest
   while read -r name _rest; do
     if box_exists "$name"; then
@@ -1503,6 +1560,7 @@ cmd_down() {
 cmd_status() {
   max_args status 1 "$@"
   need_box
+  fallback_banner
   if [ -n "${1:-}" ]; then
     local b="$1" engine
     # A box that does not exist is a FAILURE, not an empty report (#97). The
@@ -1685,6 +1743,9 @@ cmd_upgrade() {
     "")    usage_error "usage: $(synopsis_of upgrade)" ;;
     *)     targets="$target" ;;
   esac
+  # After the target `case`, so `crew upgrade` with no target still earns its
+  # invocation-fault 2 rather than this world-fault 1.
+  require_operator_config "crew upgrade"
   local b armed flags line agent role identity_args registry_arg
   registry_arg="$(registry_install_arg)"
   for b in $targets; do
@@ -1736,6 +1797,7 @@ cmd_gold() {
   need_box
   local name="${1:-}" force="${2:-}"
   [ -n "$name" ] || usage_error "usage: crew gold <box> [--force]"
+  require_operator_config "crew gold"
   # Gold images are the bake cache and must carry ZERO credentials — cut
   # them pre-auth. A logged-in box is refused.
   if bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
@@ -1854,6 +1916,7 @@ cmd_init() {
 
 cmd_profiles() {
   max_args profiles 0 "$@"
+  fallback_banner
   local f name
   echo "roles:"
   for f in "$ROLES_DIR"/*.conf; do
