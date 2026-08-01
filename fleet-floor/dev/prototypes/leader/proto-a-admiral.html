@@ -909,575 +909,284 @@ function drawRoom(t,st){
       ng.addColorStop(0,kk(0.09*lit));ng.addColorStop(1,kk(0));
       S.fillStyle=ng;S.fillRect(nx-150,ny-150,nw+300,nh+300);S.restore();}
   })();
-  // chart board
-  (function(){
-    // a glazed chart frame with a real chart in it, not a line on a box
-    var cx4=346, cy4=300;
-    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(cx4+4,cy4+5,132,92);
-    var cfg=S.createLinearGradient(0,cy4,0,cy4+92);
-    cfg.addColorStop(0,offl?"#171d26":"#303947");cfg.addColorStop(1,offl?"#0b0e14":"#151b24");
-    S.fillStyle=cfg;S.fillRect(cx4,cy4,132,92);
-    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(cx4,cy4,132,1.5);
-    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.3;S.strokeRect(cx4+0.6,cy4+0.6,130.8,90.8);
-    // the chart paper: aged, warmer than the steel around it
-    var chp=S.createLinearGradient(0,cy4+6,0,cy4+86);
+  /* ROUND 6 · LOOP 3 — THE WALL BECOMES A RANK.
+     The benchmark rooms lay their back wall out as a rank of rectangular
+     boards on a SHARED BASELINE with a consistent gutter, all in the same
+     bezel. This room strung its panels along at random heights — the
+     annunciator at y=300 on the far port edge, the chart board 300px away,
+     the bell lower still — and left 950x480px of the starboard wall
+     completely blank, which is the largest single region in the frame.
+     One `panel()` for all of them, one baseline, one gutter, one bezel. */
+  var PBY=306, PBH=98;                       // the shared baseline and height
+  function panel(px,pw,label,fill){
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(px+5,PBY+6,pw,PBH);
+    var fg9=S.createLinearGradient(0,PBY,0,PBY+PBH);
+    fg9.addColorStop(0,offl?"#191f29":"#333c4a");
+    fg9.addColorStop(0.1,offl?"#12171f":"#232a35");
+    fg9.addColorStop(1,offl?"#0b0e14":"#151b24");
+    S.fillStyle=fg9;S.fillRect(px,PBY,pw,PBH);
+    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";S.fillRect(px,PBY,pw,1.5);
+    S.strokeStyle="rgba(2,4,8,0.62)";S.lineWidth=1.3;S.strokeRect(px+0.6,PBY+0.6,pw-1.2,PBH-1.2);
+    // the recessed field, with the bezel's own occlusion at its head
+    S.fillStyle="rgba(3,6,11,0.78)";S.fillRect(px+6,PBY+6,pw-12,PBH-22);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(px+6,PBY+6,pw-12,2.2);
+    S.save();S.beginPath();S.rect(px+6,PBY+6,pw-12,PBH-22);S.clip();
+    fill(px+6,PBY+6,pw-12,PBH-22);S.restore();
+    // the label strip along the bottom — the fleet's own idiom
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(px+6,PBY+PBH-14,pw-12,10);
+    S.fillStyle="rgba(178,166,124,"+(0.14+0.18*lit)+")";S.fillRect(px+6,PBY+PBH-15,pw-12,10);
+    S.save();S.textAlign="left";S.font="700 7px ui-monospace,Menlo,monospace";
+    S.fillStyle="rgba(14,18,24,"+(0.5*lit+0.3)+")";
+    S.fillText(label,px+10,PBY+PBH-7.6);S.restore();
+    // corner screws, same four on every panel
+    [[px+4,PBY+4],[px+pw-4,PBY+4],[px+4,PBY+PBH-4],[px+pw-4,PBY+PBH-4]].forEach(function(cp){
+      S.fillStyle="rgba(2,4,8,0.55)";S.beginPath();S.arc(cp[0],cp[1]+0.7,2.1,0,7);S.fill();
+      S.fillStyle="rgba(126,142,170,"+(0.3+0.22*lit)+")";S.beginPath();S.arc(cp[0],cp[1],1.9,0,7);S.fill();
+      S.fillStyle="rgba(212,228,250,"+(0.22*lit)+")";S.beginPath();S.arc(cp[0]-0.6,cp[1]-0.6,0.7,0,7);S.fill();});}
+
+  // ---- port rank: the annunciator, a repeater cluster, the chart
+  panel(62,84,"MAIN ANNUN",function(x,y,w,h){
+    for(var lg=0;lg<10;lg++){
+      var lx2=x+7+(lg%2)*36, ly2=y+7+Math.floor(lg/2)*13;
+      var on2=!offl&&((lg*7+Math.floor(t*0.6))%5)!==0;
+      var col2=on2?(lg%4===1?"rgba(120,208,140,":(lg%7===3?"rgba(226,92,60,":"rgba(226,186,90,")):"rgba(64,74,90,";
+      S.fillStyle="rgba(2,4,8,0.6)";rrS(lx2,ly2+1,28,8,1.5);S.fill();
+      var lgg2=S.createLinearGradient(0,ly2,0,ly2+8);
+      lgg2.addColorStop(0,col2+(on2?0.95*lit:0.6)+")");lgg2.addColorStop(1,col2+(on2?0.45*lit:0.42)+")");
+      S.fillStyle=lgg2;rrS(lx2,ly2,28,8,1.5);S.fill();
+      S.fillStyle="rgba(255,255,255,"+(on2?0.22*lit:0.05)+")";S.fillRect(lx2+2,ly2+1,24,1.4);}});
+  panel(152,84,"RPT · GYRO",function(x,y,w,h){
+    // the gyro repeater, now a panel instrument instead of a floor stalk
+    var gx=x+w/2, gy=y+h/2-3;
+    S.fillStyle=offl?"#0b0e15":"#101620";S.beginPath();S.arc(gx,gy,25,0,7);S.fill();
+    if(!offl){
+      var grd=S.createRadialGradient(gx-6,gy-6,1,gx,gy,25);
+      grd.addColorStop(0,"rgba(120,226,158,"+(0.4*lit)+")");
+      grd.addColorStop(0.6,"rgba(64,164,106,"+(0.26*lit)+")");
+      grd.addColorStop(1,"rgba(30,80,56,"+(0.5*lit)+")");
+      S.fillStyle=grd;S.beginPath();S.arc(gx,gy,25,0,7);S.fill();
+      for(var gt=0;gt<16;gt++){var gta=gt/16*6.28;
+        pl(S,gx+Math.cos(gta)*19,gy+Math.sin(gta)*19,gx+Math.cos(gta)*23,gy+Math.sin(gta)*23,
+           "rgba(14,44,28,"+((gt%4?0.4:0.7)*lit)+")",gt%4?0.9:1.6);}
+      var ga=Math.sin(t*0.22)*0.7;
+      pl(S,gx-Math.cos(ga)*21,gy-Math.sin(ga)*21,gx+Math.cos(ga)*21,gy+Math.sin(ga)*21,
+         "rgba(200,255,222,"+(0.85*lit)+")",1.8);
+      S.fillStyle="rgba(220,255,232,"+(0.7*lit)+")";S.beginPath();S.arc(gx,gy,2.2,0,7);S.fill();
+      S.fillStyle="rgba(220,255,236,0.1)";
+      S.beginPath();S.ellipse(gx-8,gy-9,13,7,-0.6,0,7);S.fill();}
+    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=2.4;S.beginPath();S.arc(gx,gy,25,0,7);S.stroke();});
+  panel(624,150,"CHART · APPR",function(x,y,w,h){
+    var chp=S.createLinearGradient(0,y,0,y+h);
     chp.addColorStop(0,"rgba(112,102,78,"+(0.24+0.3*lit)+")");
-    chp.addColorStop(1,"rgba(70,64,50,"+(0.3+0.24*lit)+")");
-    S.fillStyle=chp;S.fillRect(cx4+6,cy4+6,120,80);
-    S.fillStyle="rgba(2,4,8,0.45)";S.fillRect(cx4+6,cy4+6,120,2);
-    S.strokeStyle="rgba(150,138,104,"+(0.14*lit)+")";S.lineWidth=1;   // the grid
-    for(var cl2=0;cl2<5;cl2++){S.beginPath();S.moveTo(cx4+8,cy4+16+cl2*16);S.lineTo(cx4+124,cy4+16+cl2*16);S.stroke();}
-    for(var cg9=0;cg9<7;cg9++){S.beginPath();S.moveTo(cx4+12+cg9*17,cy4+8);S.lineTo(cx4+12+cg9*17,cy4+84);S.stroke();}
-    // a coastline, and the track pencilled across it with fixes marked
-    S.fillStyle="rgba(58,66,54,"+(0.4+0.24*lit)+")";
-    S.beginPath();S.moveTo(cx4+6,cy4+86);S.lineTo(cx4+6,cy4+62);
-    S.lineTo(cx4+38,cy4+54);S.lineTo(cx4+62,cy4+66);S.lineTo(cx4+96,cy4+58);
-    S.lineTo(cx4+126,cy4+70);S.lineTo(cx4+126,cy4+86);S.closePath();S.fill();
+    chp.addColorStop(1,"rgba(66,60,46,"+(0.3+0.24*lit)+")");
+    S.fillStyle=chp;S.fillRect(x,y,w,h);
+    S.strokeStyle="rgba(150,138,104,"+(0.14*lit)+")";S.lineWidth=1;
+    for(var cl2=0;cl2<5;cl2++){S.beginPath();S.moveTo(x,y+9+cl2*14);S.lineTo(x+w,y+9+cl2*14);S.stroke();}
+    for(var cg9=0;cg9<8;cg9++){S.beginPath();S.moveTo(x+7+cg9*18,y);S.lineTo(x+7+cg9*18,y+h);S.stroke();}
+    S.fillStyle="rgba(54,62,50,"+(0.42+0.24*lit)+")";
+    S.beginPath();S.moveTo(x,y+h);S.lineTo(x,y+h-22);S.lineTo(x+34,y+h-30);
+    S.lineTo(x+62,y+h-18);S.lineTo(x+98,y+h-26);S.lineTo(x+w,y+h-14);S.lineTo(x+w,y+h);S.closePath();S.fill();
     S.strokeStyle="rgba(226,104,72,"+(0.5+0.3*lit)+")";S.lineWidth=1.4;
-    S.beginPath();S.moveTo(cx4+10,cy4+74);S.lineTo(cx4+44,cy4+40);S.lineTo(cx4+72,cy4+56);S.lineTo(cx4+122,cy4+26);S.stroke();
-    [[10,74],[44,40],[72,56],[122,26]].forEach(function(fx9){
+    S.beginPath();S.moveTo(x+6,y+62);S.lineTo(x+40,y+28);S.lineTo(x+70,y+44);S.lineTo(x+130,y+14);S.stroke();
+    [[6,62],[40,28],[70,44],[130,14]].forEach(function(fx9){
       S.strokeStyle="rgba(240,140,104,"+(0.6*lit)+")";S.lineWidth=1;
-      S.beginPath();S.arc(cx4+fx9[0],cy4+fx9[1],2.6,0,7);S.stroke();});
-    // glass over it
-    S.fillStyle="rgba(206,224,255,0.045)";
-    poly(S,[[cx4+6,cy4+70],[cx4+58,cy4+6],[cx4+80,cy4+6],[cx4+6,cy4+86]]);S.fill();
-  })();
-  // fire station + hazard placard, starboard bulkhead
+      S.beginPath();S.arc(x+fx9[0],y+fx9[1],2.6,0,7);S.stroke();});});
+
+  /* ---- starboard rank, filling the void under the window. Same baseline,
+     same gutter, same bezel — a signal locker, the ship's schematic, and
+     a notice board of standing orders. */
+  panel(790,150,"SHIP · SCHEM",function(x,y,w,h){
+    // a profile of the hull with compartments picked out — the one panel
+    // that tells you what ship this is
+    S.strokeStyle="rgba(140,190,220,"+(0.2+0.2*lit)+")";S.lineWidth=1.2;
+    S.beginPath();S.moveTo(x+6,y+h*0.62);S.lineTo(x+30,y+h*0.4);
+    S.lineTo(x+w-24,y+h*0.4);S.lineTo(x+w-6,y+h*0.62);
+    S.lineTo(x+w-16,y+h*0.8);S.lineTo(x+16,y+h*0.8);S.closePath();S.stroke();
+    S.strokeStyle="rgba(140,190,220,"+(0.12*lit)+")";S.lineWidth=0.9;
+    for(var cm=1;cm<6;cm++){S.beginPath();
+      S.moveTo(x+16+cm*((w-32)/6),y+h*0.42);S.lineTo(x+18+cm*((w-32)/6),y+h*0.79);S.stroke();}
+    S.strokeStyle="rgba(140,190,220,"+(0.16*lit)+")";S.lineWidth=1;
+    S.beginPath();S.moveTo(x+34,y+h*0.4);S.lineTo(x+42,y+h*0.2);
+    S.lineTo(x+62,y+h*0.2);S.lineTo(x+68,y+h*0.4);S.stroke();
+    if(!offl){                       // one compartment lit amber, one red
+      S.fillStyle="rgba(226,186,90,"+(0.4*lit)+")";S.fillRect(x+16+2*((w-32)/6),y+h*0.44,((w-32)/6)-4,h*0.32);
+      var al9=0.4+0.6*Math.abs(Math.sin(t*1.1));
+      S.fillStyle="rgba(226,92,60,"+(0.5*al9*lit)+")";S.fillRect(x+16+4*((w-32)/6),y+h*0.44,((w-32)/6)-4,h*0.32);}});
+  panel(956,104,"STANDING ORD",function(x,y,w,h){
+    for(var nt=0;nt<3;nt++){
+      var ny9=y+5+nt*22;
+      S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(x+7,ny9+1,w-14,18);
+      S.fillStyle="rgba(158,150,124,"+(0.2+0.24*lit)+")";S.fillRect(x+6,ny9,w-14,18);
+      S.fillStyle="rgba(30,26,18,"+(0.5*lit+0.25)+")";
+      for(var nl=0;nl<3;nl++)S.fillRect(x+10,ny9+4+nl*4.4,(w-26)*(nl===2?0.5:0.86),1.6);
+      S.fillStyle=offl?"rgba(70,60,40,0.6)":"rgba(226,92,60,"+(0.6*lit)+")";
+      S.beginPath();S.arc(x+w-16,ny9+4,2.2,0,7);S.fill();}});
+
+  /* ROUND 6 · LOOP 6 — THE FIRE STATION, AT SCALE.
+     The operator's note: "the fire extinguisher is cool but super tiny, the
+     hose wouldn't be able to turn off a birthday candle light." Measured
+     against the unit it was ~11cm tall — a keyring extinguisher in a box
+     with 30px of empty cabinet under it. A fire station is one of the
+     largest fittings on any bulkhead. The cabinet is now 148x206 rather
+     than 68x86: roughly 2.2x in each axis, which puts the extinguisher at
+     about 60cm and the reel at a diameter you could actually run out. */
   (function(){
-    /* LOOP 8 · THE STARBOARD WALL. This side of the frame was carrying two
-       flat colour blocks and a stroked spiral. The fire station is the
-       room's only saturated red and it has to earn that: a real cabinet
-       with a bezel, a glazed door with a sheen on it, a hose reel that is
-       wound rather than drawn as concentric circles, and an extinguisher
-       with a body, a neck, a handle and a gauge. */
-    var fx2=1196, fy2=380;
-    // hazard placard above it — amber, with a real border and a symbol
-    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(fx2+3,fy2-39,68,28);
-    var hpg=S.createLinearGradient(0,fy2-42,0,fy2-14);
+    var fx2=1078, fy2=352, FW=148, FH=206;
+    // hazard placard above it, scaled to match
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(fx2+4,fy2-40,FW,34);
+    var hpg=S.createLinearGradient(0,fy2-44,0,fy2-10);
     hpg.addColorStop(0,"rgba(178,138,38,"+(0.42+0.4*lit)+")");
     hpg.addColorStop(1,"rgba(112,84,20,"+(0.5+0.3*lit)+")");
-    S.fillStyle=hpg;S.fillRect(fx2,fy2-42,68,28);
-    S.strokeStyle="rgba(20,14,4,0.8)";S.lineWidth=2.6;S.strokeRect(fx2+1.3,fy2-40.7,65.4,25.4);
-    S.fillStyle="rgba(246,226,166,"+(0.2+0.34*lit)+")";S.fillRect(fx2,fy2-42,68,1.4);
-    // a chevron band, the way a real placard carries one
-    S.save();S.beginPath();S.rect(fx2+5,fy2-37,58,8);S.clip();
-    for(var cvx=-10;cvx<70;cvx+=9){
+    S.fillStyle=hpg;S.fillRect(fx2,fy2-44,FW,34);
+    S.strokeStyle="rgba(20,14,4,0.8)";S.lineWidth=2.6;S.strokeRect(fx2+1.3,fy2-42.7,FW-2.6,31.4);
+    S.fillStyle="rgba(246,226,166,"+(0.2+0.34*lit)+")";S.fillRect(fx2,fy2-44,FW,1.4);
+    S.save();S.beginPath();S.rect(fx2+6,fy2-38,FW-12,10);S.clip();
+    for(var cvx=-12;cvx<FW;cvx+=11){
       S.fillStyle="rgba(24,16,4,0.75)";
-      poly(S,[[fx2+cvx,fy2-29],[fx2+cvx+4.5,fy2-37],[fx2+cvx+9,fy2-37],[fx2+cvx+4.5,fy2-29]]);S.fill();}
+      poly(S,[[fx2+cvx,fy2-28],[fx2+cvx+5.5,fy2-38],[fx2+cvx+11,fy2-38],[fx2+cvx+5.5,fy2-28]]);S.fill();}
     S.restore();
-    for(var hl=0;hl<2;hl++){S.fillStyle="rgba(28,20,6,"+(0.62*lit+0.2)+")";
-      S.fillRect(fx2+7,fy2-25+hl*7,52-hl*18,2.6);}
+    S.save();S.textAlign="left";S.font="700 9px ui-monospace,Menlo,monospace";
+    S.fillStyle="rgba(28,20,6,"+(0.62*lit+0.25)+")";
+    S.fillText("FIRE STATION 4",fx2+8,fy2-16);S.restore();
     // the cabinet
-    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(fx2+4,fy2+4,68,86);
-    var fcg2=S.createLinearGradient(fx2,0,fx2+68,0);
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(fx2+6,fy2+6,FW,FH);
+    var fcg2=S.createLinearGradient(fx2,0,fx2+FW,0);
     fcg2.addColorStop(0,"rgba(150,44,34,"+(0.55+0.4*lit)+")");
-    fcg2.addColorStop(0.28,"rgba(184,58,42,"+(0.6+0.4*lit)+")");
-    fcg2.addColorStop(1,"rgba(78,22,18,"+(0.72+0.24*lit)+")");
-    S.fillStyle=fcg2;S.fillRect(fx2,fy2,68,86);
-    S.fillStyle="rgba(255,170,150,"+(0.24*lit)+")";S.fillRect(fx2,fy2,68,1.6);
-    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.4;S.strokeRect(fx2+0.7,fy2+0.7,66.6,84.6);
-    // the glazed door: dark inside, with a sheen raking across the glass
-    S.fillStyle="rgba(8,10,16,0.88)";S.fillRect(fx2+6,fy2+7,56,72);
-    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(fx2+6,fy2+7,56,2.4);
-    // hose reel: an actual wound coil, tighter as it goes in
-    S.strokeStyle="rgba(26,32,26,0.9)";S.lineWidth=3.4;
-    for(var hr=0;hr<7;hr++){
-      S.beginPath();S.arc(fx2+36,fy2+48,26-hr*3.4,0.2+hr*0.5,6.1+hr*0.5);S.stroke();}
-    S.strokeStyle="rgba(96,112,92,"+(0.2+0.2*lit)+")";S.lineWidth=1;
-    for(var hr2=0;hr2<7;hr2++){
-      S.beginPath();S.arc(fx2+36,fy2+48,26-hr2*3.4,3.5+hr2*0.5,5.2+hr2*0.5);S.stroke();}
+    fcg2.addColorStop(0.24,"rgba(190,62,44,"+(0.6+0.4*lit)+")");
+    fcg2.addColorStop(1,"rgba(74,20,16,"+(0.72+0.24*lit)+")");
+    S.fillStyle=fcg2;S.fillRect(fx2,fy2,FW,FH);
+    S.fillStyle="rgba(255,170,150,"+(0.24*lit)+")";S.fillRect(fx2,fy2,FW,1.8);
+    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.6;S.strokeRect(fx2+0.8,fy2+0.8,FW-1.6,FH-1.6);
+    // the glazed doors: two leaves with a centre mullion
+    S.fillStyle="rgba(8,10,16,0.88)";S.fillRect(fx2+9,fy2+10,FW-18,FH-20);
+    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(fx2+9,fy2+10,FW-18,3);
+    S.fillStyle="rgba(120,34,26,"+(0.7+0.24*lit)+")";S.fillRect(fx2+FW/2-2.4,fy2+10,5,FH-20);
+    // the hose reel: a wound drum big enough to matter
+    var rcx=fx2+FW*0.66, rcy=fy2+FH*0.44, RR=42;
+    S.strokeStyle="rgba(24,30,24,0.92)";S.lineWidth=5.4;
+    for(var hr=0;hr<8;hr++){
+      S.beginPath();S.arc(rcx,rcy,RR-hr*4.6,0.2+hr*0.5,6.1+hr*0.5);S.stroke();}
+    S.strokeStyle="rgba(96,112,92,"+(0.2+0.22*lit)+")";S.lineWidth=1.5;
+    for(var hr2=0;hr2<8;hr2++){
+      S.beginPath();S.arc(rcx,rcy,RR-hr2*4.6,3.5+hr2*0.5,5.2+hr2*0.5);S.stroke();}
     S.fillStyle="rgba(120,132,150,"+(0.3+0.24*lit)+")";
-    S.beginPath();S.arc(fx2+36,fy2+48,4,0,7);S.fill();
-    // the extinguisher: body, neck, handle, gauge
-    S.fillStyle="rgba(2,4,8,0.5)";rrS(fx2+11,fy2+16,13,30,3);S.fill();
-    var exg=S.createLinearGradient(fx2+9,0,fx2+22,0);
-    exg.addColorStop(0,"rgba(226,92,60,"+(0.5+0.44*lit)+")");
-    exg.addColorStop(0.3,"rgba(255,140,104,"+(0.5+0.44*lit)+")");
-    exg.addColorStop(1,"rgba(120,36,26,0.95)");
-    S.fillStyle=exg;rrS(fx2+9,fy2+14,13,30,3);S.fill();
-    S.fillStyle="rgba(60,66,78,0.95)";S.fillRect(fx2+13,fy2+9,5,6);
-    S.fillStyle="rgba(150,162,184,"+(0.34+0.3*lit)+")";S.fillRect(fx2+12,fy2+7,9,2.6);
-    S.fillStyle="rgba(198,214,240,"+(0.3+0.3*lit)+")";
-    S.beginPath();S.arc(fx2+21,fy2+10,2.2,0,7);S.fill();
-    S.fillStyle="rgba(230,200,160,"+(0.3*lit)+")";S.fillRect(fx2+10,fy2+28,11,1.6);
-    // glass sheen over the whole door, and the latch
-    S.fillStyle="rgba(200,220,255,0.055)";
-    poly(S,[[fx2+6,fy2+62],[fx2+40,fy2+7],[fx2+56,fy2+7],[fx2+6,fy2+79]]);S.fill();
-    S.fillStyle="rgba(180,196,224,"+(0.26+0.24*lit)+")";S.fillRect(fx2+58,fy2+38,4,10);
+    S.beginPath();S.arc(rcx,rcy,7,0,7);S.fill();
+    S.fillStyle="rgba(2,4,8,0.6)";S.beginPath();S.arc(rcx,rcy,2.6,0,7);S.fill();
+    // the run of hose off the reel, down to a NOZZLE you can see
+    S.strokeStyle="rgba(24,30,24,0.95)";S.lineWidth=5;
+    S.beginPath();S.moveTo(rcx-RR,rcy+6);
+    S.quadraticCurveTo(rcx-RR-16,rcy+52,rcx-RR-6,rcy+78);S.stroke();
+    S.strokeStyle="rgba(86,100,82,"+(0.2+0.2*lit)+")";S.lineWidth=1.4;
+    S.beginPath();S.moveTo(rcx-RR-1,rcy+5);
+    S.quadraticCurveTo(rcx-RR-17,rcy+51,rcx-RR-7,rcy+77);S.stroke();
+    S.save();S.translate(rcx-RR-6,rcy+80);S.rotate(0.4);
+    S.fillStyle="rgba(130,142,162,"+(0.34+0.3*lit)+")";S.fillRect(-4,-3,20,7);
+    S.fillStyle="rgba(196,146,54,"+(0.4+0.34*lit)+")";S.fillRect(14,-2.2,9,5.4);
+    S.fillStyle="rgba(214,232,255,"+(0.24*lit)+")";S.fillRect(-4,-3,20,1.4);
+    S.restore();
+    // the extinguisher: body, neck, handle, gauge, at a size you could lift
+    var ex9=fx2+26, ey9=fy2+FH*0.34, EW=30, EH=78;
+    S.fillStyle="rgba(2,4,8,0.5)";rrS(ex9+3,ey9+4,EW,EH,7);S.fill();
+    var exg=S.createLinearGradient(ex9,0,ex9+EW,0);
+    exg.addColorStop(0,"rgba(206,78,52,"+(0.5+0.44*lit)+")");
+    exg.addColorStop(0.28,"rgba(255,146,110,"+(0.5+0.44*lit)+")");
+    exg.addColorStop(1,"rgba(104,30,22,0.96)");
+    S.fillStyle=exg;rrS(ex9,ey9,EW,EH,7);S.fill();
+    S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=1.2;rrS(ex9,ey9,EW,EH,7);S.stroke();
+    S.fillStyle="rgba(60,66,78,0.96)";S.fillRect(ex9+10,ey9-13,10,14);           // neck
+    S.fillStyle="rgba(150,162,184,"+(0.34+0.3*lit)+")";S.fillRect(ex9+5,ey9-18,21,5.4); // handle
+    S.fillStyle="rgba(120,132,152,"+(0.3+0.26*lit)+")";S.fillRect(ex9+22,ey9-16,12,3.4);// lever
+    S.fillStyle="rgba(198,214,240,"+(0.34+0.3*lit)+")";                              // gauge
+    S.beginPath();S.arc(ex9+30,ey9-6,4.6,0,7);S.fill();
+    S.fillStyle="rgba(2,4,8,0.6)";S.beginPath();S.arc(ex9+30,ey9-6,3.2,0,7);S.fill();
+    S.fillStyle="rgba(120,208,140,"+(0.7*lit)+")";S.fillRect(ex9+29.4,ey9-9,1.2,3.4);
+    S.fillStyle="rgba(236,222,196,"+(0.26*lit)+")";S.fillRect(ex9+5,ey9+30,20,3);     // label
+    S.fillStyle="rgba(236,222,196,"+(0.16*lit)+")";S.fillRect(ex9+5,ey9+36,14,2);
+    // bracket strap holding it, and the glass over the whole cabinet
+    S.fillStyle="rgba(140,152,172,"+(0.3+0.24*lit)+")";S.fillRect(ex9-4,ey9+20,EW+8,5);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(ex9-4,ey9+24.4,EW+8,1.6);
+    S.fillStyle="rgba(200,220,255,0.05)";
+    poly(S,[[fx2+9,fy2+FH*0.72],[fx2+FW*0.62,fy2+10],[fx2+FW-18,fy2+10],[fx2+9,fy2+FH-10]]);S.fill();
+    S.fillStyle="rgba(180,196,224,"+(0.26+0.24*lit)+")";S.fillRect(fx2+FW-14,fy2+FH*0.46,5,22);
+    // "BREAK GLASS" strip along the bottom rail
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(fx2+9,fy2+FH-16,FW-18,10);
+    S.save();S.textAlign="center";S.font="700 7px ui-monospace,Menlo,monospace";
+    S.fillStyle="rgba(236,180,150,"+(0.4*lit)+")";
+    S.fillText("IN CASE OF FIRE BREAK GLASS",fx2+FW/2,fy2+FH-8);S.restore();
   })();
   /* LOOP 9 · THE CABLE RUNS. Two hairline curves were doing the job of the
      draped service cabling the checklist asks for. A cable on a bulkhead
      has thickness, a lit crown and a dark belly, a SHADOW on the wall an
      inch behind it, and it is clamped at intervals because nothing is
      allowed to swing on a ship. Same run, four passes. */
-  [[[0,72],[300,92],[318,300],7],[[SW,80],[1000,104],[1010,392],6]].forEach(function(cr){
-    function path(ox,oy){S.beginPath();S.moveTo(cr[0][0]+ox,cr[0][1]+oy);
-      S.quadraticCurveTo(cr[1][0]+ox,cr[1][1]+oy,cr[2][0]+ox,cr[2][1]+oy);S.stroke();}
+  /* ROUND 6 · LOOP 5 — THE CABLE RUNS, RE-ROUTED. Three faults, all from
+     the same cause: this route was authored before the window, the signage
+     board and the wall rank existed, and was never re-checked against them.
+        · a clamp sat ON TOP of the FLAG-1 board (318,186)
+        · two clamps were bolted to the WINDOW GLASS (1010,208 / 1010,300) —
+          you do not bolt a saddle to a pane
+        · both runs simply STOPPED in bare wall with a rounded cap, connected
+          to no gland, box or penetration. A pipe that runs 500px and then
+          ends in mid-air is the loudest "thrown there" signal there is.
+     Cabling on a ship follows STRUCTURE. Both runs now drop from the header,
+     hug the inside of a pilaster, and terminate in a real deck gland. */
+  var RUNS=[
+    {p:[[PILX[0]+30,90],[PILX[0]+16,300],[PILX[0]+22,GYS-26]], w:8, clamps:[168,254,352,470,556]},
+    {p:[[PILX[1]-30,90],[PILX[1]-16,300],[PILX[1]-22,GYS-26]], w:7, clamps:[168,254,352,470,556]}
+  ];
+  RUNS.forEach(function(cr){
+    function path(ox,oy){S.beginPath();S.moveTo(cr.p[0][0]+ox,cr.p[0][1]+oy);
+      S.quadraticCurveTo(cr.p[1][0]+ox,cr.p[1][1]+oy,cr.p[2][0]+ox,cr.p[2][1]+oy);S.stroke();}
     S.lineCap="round";
-    S.strokeStyle="rgba(2,4,8,0.42)";S.lineWidth=cr[3]+3;path(5,5);   // shadow on the wall
-    S.strokeStyle="rgba(6,9,15,0.98)";S.lineWidth=cr[3];path(0,0);    // the cable body
-    S.strokeStyle="rgba(46,56,72,0.9)";S.lineWidth=cr[3]-2.4;path(-0.5,-0.5);
+    S.strokeStyle="rgba(2,4,8,0.42)";S.lineWidth=cr.w+3;path(5,5);   // shadow on the wall
+    S.strokeStyle="rgba(6,9,15,0.98)";S.lineWidth=cr.w;path(0,0);    // the cable body
+    S.strokeStyle="rgba(46,56,72,0.9)";S.lineWidth=cr.w-2.4;path(-0.5,-0.5);
     S.strokeStyle="rgba(176,194,222,"+(0.16*lit)+")";S.lineWidth=1.3;path(-1.6,-1.6);  // lit crown
-    S.lineCap="butt";});
-  // clamps: a saddle, two bolts, and the shadow it throws
-  [[318,186],[318,250],[1010,208],[1010,300],[309,120],[1004,150]].forEach(function(cp2){
-    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(cp2[0]-9,cp2[1]-6+3,20,13);
-    var clg=S.createLinearGradient(0,cp2[1]-6,0,cp2[1]+7);
-    clg.addColorStop(0,offl?"#1a212b":"#39424f");clg.addColorStop(1,offl?"#0b0e14":"#161c25");
-    S.fillStyle=clg;S.fillRect(cp2[0]-9,cp2[1]-6,20,13);
-    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";S.fillRect(cp2[0]-9,cp2[1]-6,20,1.3);
-    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(cp2[0]-9,cp2[1]+5.6,20,1.6);
-    [-6,7].forEach(function(bxo){
-      S.fillStyle="rgba(126,140,166,"+(0.34+0.24*lit)+")";
-      S.beginPath();S.arc(cp2[0]+bxo,cp2[1]+0.5,1.9,0,7);S.fill();
-      S.fillStyle="rgba(214,228,250,"+(0.24*lit)+")";
-      S.beginPath();S.arc(cp2[0]+bxo-0.6,cp2[1]-0.2,0.8,0,7);S.fill();});});
-  // the status board: was ten flat pills, now a real annunciator panel
-  (function(){
-    var sx2=46, sy2=300;
-    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(sx2+4,sy2+5,66,92);
-    var abg=S.createLinearGradient(0,sy2,0,sy2+92);
-    abg.addColorStop(0,offl?"#171d26":"#2f3846");abg.addColorStop(1,offl?"#0b0e14":"#151b24");
-    S.fillStyle=abg;S.fillRect(sx2,sy2,66,92);
-    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(sx2,sy2,66,1.5);
-    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.3;S.strokeRect(sx2+0.6,sy2+0.6,64.8,90.8);
-    S.fillStyle="rgba(3,6,11,0.8)";S.fillRect(sx2+5,sy2+7,56,80);   // the recessed field
-    for(var lg=0;lg<10;lg++){
-      var lx2=sx2+10+(lg%2)*29, ly2=sy2+12+Math.floor(lg/2)*16;
-      var on2=!offl&&((lg*7+Math.floor(t*0.6))%5)!==0;
-      var col2=on2?(lg%4===1?"rgba(120,208,140,":(lg%7===3?"rgba(226,92,60,":"rgba(226,186,90,")):"rgba(64,74,90,";
-      S.fillStyle="rgba(2,4,8,0.6)";rrS(lx2,ly2+1,19,8,1.5);S.fill();
-      var lgg2=S.createLinearGradient(0,ly2,0,ly2+8);
-      lgg2.addColorStop(0,col2+(on2?0.95*lit:0.6)+")");lgg2.addColorStop(1,col2+(on2?0.45*lit:0.42)+")");
-      S.fillStyle=lgg2;rrS(lx2,ly2,19,8,1.5);S.fill();
-      S.fillStyle="rgba(255,255,255,"+(on2?0.22*lit:0.05)+")";S.fillRect(lx2+2,ly2+1,15,1.4);
-      if(on2){S.save();S.globalCompositeOperation="lighter";
-        var lgr=S.createRadialGradient(lx2+9.5,ly2+4,1,lx2+9.5,ly2+4,17);
-        lgr.addColorStop(0,col2+(0.2*lit)+")");lgr.addColorStop(1,col2+"0)");
-        S.fillStyle=lgr;S.fillRect(lx2-8,ly2-13,36,34);S.restore();}}
-  })();
+    S.lineCap="butt";
+    // where it leaves the header: a gland box, not a rounded stub
+    var gx8=cr.p[0][0], gy8=cr.p[0][1];
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(gx8-13,gy8-16,28,20);
+    S.fillStyle=offl?"#1a212b":"#39424f";S.fillRect(gx8-14,gy8-18,28,20);
+    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";S.fillRect(gx8-14,gy8-18,28,1.4);
+    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(gx8-14,gy8+0.6,28,1.6);
+    [-8,8].forEach(function(bo8){
+      S.fillStyle="rgba(126,142,170,"+(0.32+0.22*lit)+")";
+      S.beginPath();S.arc(gx8+bo8,gy8-9,1.9,0,7);S.fill();});
+    // and where it enters the deck: a flanged penetration with a collar
+    var dx8=cr.p[2][0], dy8=cr.p[2][1];
+    S.fillStyle="rgba(2,4,8,0.55)";
+    S.beginPath();S.ellipse(dx8+3,dy8+16,20,7,0,0,7);S.fill();
+    S.fillStyle=offl?"#161c25":"#2f3846";
+    S.beginPath();S.ellipse(dx8,dy8+14,19,6.5,0,0,7);S.fill();
+    S.fillStyle="rgba(206,222,248,"+(0.18*lit)+")";
+    S.beginPath();S.ellipse(dx8,dy8+12.6,19,6.5,0,Math.PI,Math.PI*2);S.fill();
+    S.fillStyle=offl?"#1c232d":"#3d4655";S.fillRect(dx8-9,dy8-2,19,15);
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(dx8-9,dy8-2,1.5,15);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(dx8-9,dy8+3,19,2);
+    // clamps, now placed by parameter along the run rather than by hand —
+    // which is what let them land on a sign and on a window in the first place
+    cr.clamps.forEach(function(cy8){
+      var u=(cy8-cr.p[0][1])/(cr.p[2][1]-cr.p[0][1]);u=Math.max(0,Math.min(1,u));
+      var iv=1-u, cx8=iv*iv*cr.p[0][0]+2*iv*u*cr.p[1][0]+u*u*cr.p[2][0];
+      S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(cx8-9,cy8-3,20,13);
+      var clg=S.createLinearGradient(0,cy8-6,0,cy8+7);
+      clg.addColorStop(0,offl?"#1a212b":"#39424f");clg.addColorStop(1,offl?"#0b0e14":"#161c25");
+      S.fillStyle=clg;S.fillRect(cx8-9,cy8-6,20,13);
+      S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";S.fillRect(cx8-9,cy8-6,20,1.3);
+      S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(cx8-9,cy8+5.6,20,1.6);
+      [-6,7].forEach(function(bxo){
+        S.fillStyle="rgba(126,140,166,"+(0.34+0.24*lit)+")";
+        S.beginPath();S.arc(cx8+bxo,cy8+0.5,1.9,0,7);S.fill();
+        S.fillStyle="rgba(214,228,250,"+(0.24*lit)+")";
+        S.beginPath();S.arc(cx8+bxo-0.6,cy8-0.2,0.8,0,7);S.fill();});});});
 
-  /* ============ PLANE 3 · the room's furniture ============ */
-  // engine-order telegraph, port, in front of the bulkhead
-  (function(){
-    var tx2=176, ty2=GYS-160;
-    pedestal(tx2,ty2+40,ty2+150,11);
-    // the case: a brass drum, hot on the lamp side, with a deep bezel
-    S.fillStyle="rgba(2,4,8,0.5)";S.beginPath();S.arc(tx2+3,ty2+23,31,0,7);S.fill();
-    var tcg=S.createLinearGradient(tx2-31,ty2-8,tx2+31,ty2+51);
-    tcg.addColorStop(0,"rgba(196,162,96,"+(0.3+0.42*lit)+")");
-    tcg.addColorStop(0.36,"rgba(214,180,112,"+(0.34+0.46*lit)+")");
-    tcg.addColorStop(0.7,"rgba(88,68,36,"+(0.62+0.24*lit)+")");
-    tcg.addColorStop(1,"rgba(58,46,26,0.9)");
-    S.fillStyle=tcg;S.beginPath();S.arc(tx2,ty2+20,31,0,7);S.fill();
-    S.strokeStyle="rgba(250,232,190,"+(0.34*lit)+")";S.lineWidth=1.4;
-    S.beginPath();S.arc(tx2,ty2+20,30,Math.PI*1.05,Math.PI*1.8);S.stroke();
-    // the dial face, sunk inside it
-    var tfg=S.createRadialGradient(tx2-7,ty2+13,2,tx2,ty2+20,25);
-    tfg.addColorStop(0,offl?"#141922":"#242c38");tfg.addColorStop(1,offl?"#080b11":"#101620");
-    S.fillStyle=tfg;S.beginPath();S.arc(tx2,ty2+20,25,0,7);S.fill();
-    S.strokeStyle="rgba(2,4,8,0.7)";S.lineWidth=2.4;
-    S.beginPath();S.arc(tx2,ty2+20,26,0,7);S.stroke();
-    // the ordered sectors: this is where the telegraph earns its colour
-    [[-2.75,-1.9,"rgba(96,206,138,"],[-1.9,-1.05,"rgba(226,186,90,"],
-     [-1.05,-0.2,"rgba(226,92,60,"]].forEach(function(sc5){
-      S.strokeStyle=sc5[2]+(0.34*lit)+")";S.lineWidth=5;
-      S.beginPath();S.arc(tx2,ty2+20,21,sc5[0],sc5[1]);S.stroke();});
-    for(var tk=0;tk<12;tk++){var a5=tk/12*6.28;
-      pl(S,tx2+Math.cos(a5)*17,ty2+20+Math.sin(a5)*17,tx2+Math.cos(a5)*24,ty2+20+Math.sin(a5)*24,
-         "rgba(226,214,186,"+((tk%3?0.2:0.42)*lit)+")",tk%3?1:1.8);}
-    if(!offl){var ha=-2.1+Math.sin(t*0.4)*0.5;
-      // the pointer, with its own shadow on the dial under it
-      S.strokeStyle="rgba(2,4,8,0.55)";S.lineWidth=3.4;
-      S.beginPath();S.moveTo(tx2+2,ty2+22);S.lineTo(tx2+2+Math.cos(ha)*23,ty2+22+Math.sin(ha)*23);S.stroke();
-      S.strokeStyle="rgba(236,104,70,"+(0.95*lit)+")";S.lineWidth=2.6;
-      S.beginPath();S.moveTo(tx2,ty2+20);S.lineTo(tx2+Math.cos(ha)*23,ty2+20+Math.sin(ha)*23);S.stroke();
-      S.fillStyle="rgba(255,180,150,"+(0.5*lit)+")";
-      S.beginPath();S.arc(tx2+Math.cos(ha)*23,ty2+20+Math.sin(ha)*23,1.8,0,7);S.fill();
-      var hbg2=S.createRadialGradient(tx2-1.5,ty2+18.5,0.5,tx2,ty2+20,4);
-      hbg2.addColorStop(0,"rgba(250,232,190,"+(0.85*lit)+")");hbg2.addColorStop(1,"rgba(150,118,58,"+(0.7*lit)+")");
-      S.fillStyle=hbg2;S.beginPath();S.arc(tx2,ty2+20,3.8,0,7);S.fill();
-      // the glass over the dial: one raking sheen is all it takes
-      S.save();S.beginPath();S.arc(tx2,ty2+20,25,0,7);S.clip();
-      S.fillStyle="rgba(214,232,255,0.07)";
-      S.beginPath();S.moveTo(tx2-26,ty2+10);S.lineTo(tx2+2,ty2-6);
-      S.lineTo(tx2+14,ty2-6);S.lineTo(tx2-26,ty2+26);S.closePath();S.fill();S.restore();}
-    // the twin handles a telegraph is worked by
-    [-1,1].forEach(function(hd){
-      S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=4.4;
-      S.beginPath();S.moveTo(tx2+hd*22+2,ty2+22);S.lineTo(tx2+hd*40+2,ty2+8);S.stroke();
-      S.strokeStyle="rgba(206,172,104,"+(0.34+0.4*lit)+")";S.lineWidth=3.6;
-      S.beginPath();S.moveTo(tx2+hd*22,ty2+20);S.lineTo(tx2+hd*40,ty2+6);S.stroke();
-      S.fillStyle="rgba(30,36,46,0.95)";
-      S.beginPath();S.ellipse(tx2+hd*41,ty2+5,5,3.4,-0.6*hd,0,7);S.fill();
-      S.fillStyle="rgba(198,214,240,"+(0.2*lit)+")";
-      S.beginPath();S.ellipse(tx2+hd*40,ty2+4,2.4,1.4,-0.6*hd,0,7);S.fill();});
-  })();
-  // THE PLOT TABLE — big, starboard of the unit, throwing light up
-  (function(){
-    /* LOOP 7 · THE PLOT TABLE, AS A LIGHT. This is the room's second light
-       source and the reason the unit stands left of centre — but it was
-       drawn as a dark trapezoid with three hairline arcs on it, so it lit
-       nothing and read as furniture. A backlit plot table is a sheet of
-       glass with a lamp under it: the TOP is the brightest surface in the
-       room, it throws light UP onto everything around it, and every object
-       standing on it is a silhouette with a long shadow pointing away. */
-    var tx=740, ty=GYS-136, TW=300;
-    // legs first, behind the top
-    [[18,20],[262,20]].forEach(function(lg7){
-      S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(tx+lg7[0]+2,ty+44,lg7[1],100);
-      var lgg=S.createLinearGradient(tx+lg7[0],0,tx+lg7[0]+lg7[1],0);
-      lgg.addColorStop(0,offl?"#0d1118":"#1c222c");
-      lgg.addColorStop(0.4,offl?"#11161e":"#262e3a");
-      lgg.addColorStop(1,offl?"#080b10":"#10151c");
-      S.fillStyle=lgg;S.fillRect(tx+lg7[0],ty+44,lg7[1],100);
-      S.fillStyle="rgba(198,214,240,"+(0.12*lit)+")";S.fillRect(tx+lg7[0],ty+44,1.4,100);});
-    // the apron under the glass, in its own shadow
-    var apg=S.createLinearGradient(0,ty+6,0,ty+44);
-    apg.addColorStop(0,offl?"#12171f":"#232a35");apg.addColorStop(1,offl?"#080b10":"#10151d");
-    S.fillStyle=apg;S.beginPath();
-    S.moveTo(tx,ty+6);S.lineTo(tx+TW,ty+6);S.lineTo(tx+TW+22,ty+44);S.lineTo(tx-22,ty+44);S.closePath();S.fill();
-    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.4;S.stroke();
-    if(!offl){
-      /* the glass. Drawn as a lit surface in its own right: a cold cyan
-         plot table is the counterweight to all this brass, and it is the
-         only thing in the room brighter than the lamps. */
-      var PL=function(a){return "rgba(126,206,226,"+a+")";};
-      S.save();S.beginPath();
-      S.moveTo(tx+2,ty);S.lineTo(tx+TW-2,ty);S.lineTo(tx+TW+8,ty+8);S.lineTo(tx-8,ty+8);S.closePath();S.clip();
-      var gsg=S.createLinearGradient(0,ty,0,ty+9);
-      gsg.addColorStop(0,PL(0.24*lit));gsg.addColorStop(1,PL(0.55*lit));
-      S.fillStyle=gsg;S.fillRect(tx-10,ty-2,TW+20,12);
-      // the chart on the glass, seen almost edge-on: rings + a coastline
-      S.strokeStyle=PL(0.5*lit);S.lineWidth=1;
-      [40,78,116].forEach(function(rr6){
-        S.beginPath();S.ellipse(tx+150,ty+7,rr6,rr6*0.09,0,Math.PI,Math.PI*2);S.stroke();});
-      S.strokeStyle="rgba(180,236,250,"+(0.62*lit)+")";S.lineWidth=1.2;
-      S.beginPath();
-      for(var cs7=0;cs7<=TW;cs7+=14)
-        S.lineTo(tx+cs7,ty+5.4+Math.sin(cs7*0.05)*1.5);
-      S.stroke();
-      var sweep=(t*0.6)%Math.PI;                       // the sweep, foreshortened
-      S.strokeStyle="rgba(200,244,255,"+(0.8*lit)+")";S.lineWidth=1.6;
-      S.beginPath();S.moveTo(tx+150,ty+7);
-      S.lineTo(tx+150-Math.cos(sweep)*116,ty+7-Math.sin(sweep)*11);S.stroke();
-      S.restore();
-      // the glass's lit near edge, and the bright arris where it meets air
-      S.fillStyle="rgba(216,248,255,"+(0.9*lit)+")";S.fillRect(tx-6,ty+7.2,TW+12,2.2);
-      S.fillStyle=PL(0.4*lit);S.fillRect(tx-8,ty+9.4,TW+16,2.4);
-      // the brass surround the glass is bedded into
-      S.strokeStyle="rgba(196,164,100,"+(0.3+0.34*lit)+")";S.lineWidth=2.4;
-      S.beginPath();S.moveTo(tx-9,ty+9);S.lineTo(tx+TW+9,ty+9);S.stroke();
-      /* contacts standing ON the plot: each a token with a long shadow
-         thrown across the glass by the light coming up through it */
-      [[-46,0.9],[28,1.7],[62,2.6]].forEach(function(ct,ci4){
-        var cp3=0.4+0.6*Math.abs(Math.sin(t*0.9+ci4)), cxp=tx+150+ct[0];
-        S.fillStyle="rgba(10,30,40,"+(0.5*lit)+")";
-        S.fillRect(cxp-1,ty+2,14+ci4*5,2.4);
-        S.fillStyle="rgba(236,110,74,"+(0.9*cp3*lit)+")";
-        S.beginPath();S.moveTo(cxp,ty-1);S.lineTo(cxp+4.4,ty+5);S.lineTo(cxp-4.4,ty+5);S.closePath();S.fill();
-        S.save();S.globalCompositeOperation="lighter";
-        var cg7=S.createRadialGradient(cxp,ty+2,1,cxp,ty+2,14);
-        cg7.addColorStop(0,"rgba(236,110,74,"+(0.34*cp3)+")");cg7.addColorStop(1,"rgba(236,110,74,0)");
-        S.fillStyle=cg7;S.beginPath();S.arc(cxp,ty+2,14,0,7);S.fill();S.restore();});
-      /* AND IT LIGHTS THE ROOM. Three casts: a column of air above the
-         glass, the bulkhead behind it washed cyan, and the deck under it. */
-      S.save();S.globalCompositeOperation="lighter";
-      var upc=S.createLinearGradient(0,ty-180,0,ty+8);
-      upc.addColorStop(0,PL(0));upc.addColorStop(0.55,PL(0.05*lit));upc.addColorStop(1,PL(0.22*lit));
-      S.fillStyle=upc;S.beginPath();
-      S.moveTo(tx-60,ty-180);S.lineTo(tx+TW+60,ty-180);
-      S.lineTo(tx+TW+10,ty+8);S.lineTo(tx-10,ty+8);S.closePath();S.fill();
-      var flc=S.createLinearGradient(0,ty+44,0,GYS+40);
-      flc.addColorStop(0,PL(0.09*lit));flc.addColorStop(1,PL(0));
-      S.fillStyle=flc;S.fillRect(tx-60,ty+44,TW+120,GYS+40-ty-44);
-      S.restore();}
-    else{
-      S.fillStyle="rgba(24,30,40,0.9)";S.fillRect(tx-8,ty+6,TW+16,4);
-      S.fillStyle="rgba(90,100,116,0.22)";S.fillRect(tx-6,ty+6,TW+12,1.4);}
-  })();
-  // a console bank under the window, starboard
-  (function(){
-    var bx2=1010, by2=GYS-96;
-    // a raked console, not a flat box: sloped screen deck over a key panel
-    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(bx2+4,by2+6,150,92);
-    var cbg=S.createLinearGradient(0,by2,0,by2+96);
-    cbg.addColorStop(0,offl?"#161c25":"#2c3441");
-    cbg.addColorStop(0.42,offl?"#10151d":"#1e242f");
-    cbg.addColorStop(1,offl?"#0a0d13":"#12171f");
-    S.fillStyle=cbg;S.fillRect(bx2,by2,150,96);
-    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(bx2,by2,150,1.6);
-    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.3;S.strokeRect(bx2+0.6,by2+0.6,148.8,94.8);
-    // the screen, sunk into a bezel and lit by its own phosphor
-    S.fillStyle="rgba(2,4,8,0.7)";S.fillRect(bx2+9,by2+9,132,36);
-    S.fillStyle="rgba(4,7,12,0.95)";S.fillRect(bx2+11,by2+11,128,32);
-    if(!offl){
-      var scg2=S.createLinearGradient(0,by2+11,0,by2+43);
-      scg2.addColorStop(0,"rgba(96,186,206,0.12)");scg2.addColorStop(1,"rgba(96,186,206,0.03)");
-      S.fillStyle=scg2;S.fillRect(bx2+11,by2+11,128,32);
-      S.fillStyle="rgba(140,220,238,"+(0.5*lit)+")";
-      for(var sl2=0;sl2<4;sl2++)S.fillRect(bx2+16,by2+16+sl2*7,58+((sl2*37)%56),1.8);
-      S.fillStyle="rgba(226,186,90,"+(0.6*lit)+")";      // a cursor block, blinking
-      if(Math.floor(t*1.4)%2)S.fillRect(bx2+16+((Math.floor(t*3)%9)*6),by2+37,5,4);
-      S.fillStyle="rgba(0,0,0,0.3)";                      // scanlines
-      for(var scl=0;scl<32;scl+=3)S.fillRect(bx2+11,by2+11+scl,128,1.1);
-      S.save();S.globalCompositeOperation="lighter";      // spill onto the console lip
-      var spg=S.createLinearGradient(0,by2+43,0,by2+62);
-      spg.addColorStop(0,"rgba(120,206,226,0.16)");spg.addColorStop(1,"rgba(120,206,226,0)");
-      S.fillStyle=spg;S.fillRect(bx2+9,by2+43,132,19);S.restore();}
-    S.fillStyle="rgba(214,232,255,0.05)";                 // glass sheen
-    poly(S,[[bx2+11,by2+40],[bx2+50,by2+11],[bx2+70,by2+11],[bx2+11,by2+43]]);S.fill();
-    // the key panel: each key a real cap with a lit face and a shadow
-    for(var kb=0;kb<12;kb++){
-      var kbx=bx2+12+(kb%6)*22, kby=by2+56+Math.floor(kb/6)*16;
-      var on3=!offl&&((kb*5+Math.floor(t*1.1))%4)!==0;
-      S.fillStyle="rgba(2,4,8,0.6)";rrS(kbx,kby+1.4,14,7,1.4);S.fill();
-      var kcol=on3?(kb%5===2?"rgba(120,206,138,":(kb%5===4?"rgba(226,92,60,":"rgba(226,190,110,")):"rgba(56,66,82,";
-      var kgg=S.createLinearGradient(0,kby,0,kby+7);
-      kgg.addColorStop(0,kcol+(on3?0.9*lit:0.6)+")");kgg.addColorStop(1,kcol+(on3?0.42*lit:0.4)+")");
-      S.fillStyle=kgg;rrS(kbx,kby,14,7,1.4);S.fill();
-      S.fillStyle="rgba(255,255,255,"+(on3?0.2*lit:0.05)+")";S.fillRect(kbx+1.4,kby+0.8,11,1.2);}
-    // a shelf lip and two toggle switches, because a console has switches
-    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(bx2+8,by2+50,134,2.4);
-    S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";S.fillRect(bx2+8,by2+52.4,134,1);
-    [118,132].forEach(function(tgx,tgi){
-      S.fillStyle="rgba(40,48,60,0.95)";rrS(bx2+tgx,by2+58,9,20,2);S.fill();
-      S.fillStyle="rgba(178,194,222,"+(0.3+0.3*lit)+")";
-      S.fillRect(bx2+tgx+3,by2+(tgi?60:68),3,10);});
-  })();
-
-  /* ---- more of the ship. A bridge is a working room: it has a helm, a
-     binnacle, a voicepipe cluster, a rack of rolled charts and a bell. */
-  /* LOOP 6 · THE PEDESTAL INSTRUMENTS. The helm, the telegraph, the gyro
-     repeater and the binnacle were all drawn the same way: a stroked circle
-     on a rectangle. They are the props nearest the subject and they read as
-     wireframe. Each one gets what an object gets — a pedestal with a lit
-     side and a shadowed side, a cast shadow on the deck, and a material
-     that is not the wall's material. The wheel in particular is BRASS, and
-     brass is the one warm thing a grey bridge has. */
-  function pedestal(px,ptop,pbot,hw2){        // the column all four stand on
-    S.fillStyle="rgba(2,4,8,0.45)";           // cast shadow, thrown away from the lamp
-    S.beginPath();S.ellipse(px+hw2*1.5,pbot,hw2*3.2,7,0,0,7);S.fill();
-    var pg6=S.createLinearGradient(px-hw2,0,px+hw2,0);
-    pg6.addColorStop(0,offl?"#0a0d13":"#141a23");
-    pg6.addColorStop(0.3,offl?"#151a23":"#2b3341");
-    pg6.addColorStop(0.62,offl?"#0f141b":"#1d232d");
-    pg6.addColorStop(1,offl?"#080b10":"#10151c");
-    S.fillStyle=pg6;S.fillRect(px-hw2,ptop,hw2*2,pbot-ptop);
-    S.fillStyle="rgba(198,214,240,"+(0.16*lit)+")";S.fillRect(px-hw2+1,ptop,1.4,pbot-ptop);
-    // the flange bolted to the deck
-    S.fillStyle=offl?"#0d1118":"#1e242e";
-    S.beginPath();S.ellipse(px,pbot,hw2*2.4,7,0,0,7);S.fill();
-    S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";
-    S.beginPath();S.ellipse(px,pbot-1.4,hw2*2.4,7,0,Math.PI,Math.PI*2);S.fill();
-  }
-  // helm pedestal with its wheel, port of the unit
-  (function(){
-    var hx5=306, hy5=GYS-104;
-    pedestal(hx5,hy5+18,hy5+92,13);
-    // brass: a rim gradient across the wheel, hot on the lamp side
-    var BR2=function(a){return "rgba(212,176,104,"+a+")";};
-    var BRD=function(a){return "rgba(96,74,38,"+a+")";};
-    S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=7;   // the rim's own shadow
-    S.beginPath();S.arc(hx5+3,hy5+3,32,0,7);S.stroke();
-    var rmg=S.createLinearGradient(hx5-32,hy5-32,hx5+32,hy5+32);
-    rmg.addColorStop(0,BR2(0.24+0.5*lit));rmg.addColorStop(0.34,BR2(0.4+0.55*lit));
-    rmg.addColorStop(0.62,BRD(0.5+0.3*lit));rmg.addColorStop(1,BR2(0.18+0.3*lit));
-    S.strokeStyle=rmg;S.lineWidth=5.4;
-    S.beginPath();S.arc(hx5,hy5,32,0,7);S.stroke();
-    S.strokeStyle="rgba(250,232,190,"+(0.42*lit)+")";S.lineWidth=1.3;  // specular on the rim
-    S.beginPath();S.arc(hx5,hy5,30.4,Math.PI*1.02,Math.PI*1.72);S.stroke();
-    S.strokeStyle="rgba(2,4,8,0.45)";S.lineWidth=1.2;
-    S.beginPath();S.arc(hx5,hy5,34.2,Math.PI*0.1,Math.PI*0.82);S.stroke();
-    // handles: turned grips standing proud of the rim, each with a shadow
-    for(var hg=0;hg<8;hg++){var ah=hg/8*6.28+0.4;
-      var gx6=hx5+Math.cos(ah)*40, gy6=hy5+Math.sin(ah)*40;
-      S.fillStyle="rgba(2,4,8,0.5)";
-      S.beginPath();S.ellipse(gx6+1.6,gy6+1.6,5,3,ah,0,7);S.fill();
-      var hgg=S.createLinearGradient(gx6-4,gy6-4,gx6+4,gy6+4);
-      hgg.addColorStop(0,BR2(0.34+0.5*lit));hgg.addColorStop(0.5,BR2(0.2+0.34*lit));hgg.addColorStop(1,BRD(0.5+0.2*lit));
-      S.fillStyle=hgg;S.beginPath();S.ellipse(gx6,gy6,4.8,2.9,ah,0,7);S.fill();
-      S.fillStyle="rgba(250,232,190,"+(0.3*lit)+")";
-      S.beginPath();S.ellipse(gx6-Math.cos(ah)*1.2,gy6-Math.sin(ah)*1.2,2,1,ah,0,7);S.fill();}
-    // spokes: tapered, lit on their upper edge, dark on the lower
-    for(var sp2=0;sp2<8;sp2++){var a7=sp2/8*6.28+(offl?0:t*0.08);
-      var c7=Math.cos(a7),s7=Math.sin(a7),n7x=-s7,n7y=c7;
-      S.fillStyle="rgba(2,4,8,0.42)";
-      poly(S,[[hx5+c7*7+n7x*2.4+2,hy5+s7*7+n7y*2.4+2],[hx5+c7*38+n7x*1.5+2,hy5+s7*38+n7y*1.5+2],
-              [hx5+c7*38-n7x*1.5+2,hy5+s7*38-n7y*1.5+2],[hx5+c7*7-n7x*2.4+2,hy5+s7*7-n7y*2.4+2]]);S.fill();
-      plate(S,[[hx5+c7*7+n7x*2.4,hy5+s7*7+n7y*2.4],[hx5+c7*38+n7x*1.5,hy5+s7*38+n7y*1.5],
-               [hx5+c7*38-n7x*1.5,hy5+s7*38-n7y*1.5],[hx5+c7*7-n7x*2.4,hy5+s7*7-n7y*2.4]],
-            BR2(0.3+0.42*lit),BRD(0.55+0.25*lit),null);}
-    // the hub: a turned boss with a nut on it
-    S.fillStyle="rgba(2,4,8,0.5)";S.beginPath();S.arc(hx5+2,hy5+2,8.4,0,7);S.fill();
-    var hbg=S.createRadialGradient(hx5-3,hy5-3,1,hx5,hy5,9);
-    hbg.addColorStop(0,BR2(0.5+0.4*lit));hbg.addColorStop(0.6,BR2(0.24+0.3*lit));hbg.addColorStop(1,BRD(0.6+0.2*lit));
-    S.fillStyle=hbg;S.beginPath();S.arc(hx5,hy5,8.4,0,7);S.fill();
-    S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=1;S.beginPath();S.arc(hx5,hy5,8.4,0,7);S.stroke();
-    S.fillStyle=BRD(0.6+0.2*lit);S.beginPath();
-    for(var nz=0;nz<6;nz++){var na=nz/6*6.28+0.4;
-      S.lineTo(hx5+Math.cos(na)*4,hy5+Math.sin(na)*4);}
-    S.closePath();S.fill();
-    S.strokeStyle="rgba(250,232,190,"+(0.26*lit)+")";S.lineWidth=0.9;S.stroke();
-  })();
-  // binnacle: a hooded compass throwing a small warm pool of its own
-  (function(){
-    var bx3=636, by3=GYS-118;
-    pedestal(bx3,by3+26,by3+118,15);
-    // the hood: a truncated brass cone, lit hard on the port side
-    plate(S,[[bx3-26,by3+28],[bx3-20,by3-4],[bx3+20,by3-4],[bx3+26,by3+28]],
-          "rgba(188,156,94,"+(0.28+0.36*lit)+")","rgba(66,52,30,0.92)",null);
-    S.fillStyle="rgba(250,232,190,"+(0.24*lit)+")";
-    poly(S,[[bx3-26,by3+28],[bx3-20,by3-4],[bx3-16.6,by3-4],[bx3-22,by3+28]]);S.fill();
-    S.strokeStyle="rgba(2,4,8,0.55)";S.lineWidth=1.2;
-    poly(S,[[bx3-26,by3+28],[bx3-20,by3-4],[bx3+20,by3-4],[bx3+26,by3+28]]);S.stroke();
-    if(!offl){
-      // the compass card lit from below inside the hood — the reason a
-      // binnacle exists is that it is a small warm light on a dark bridge
-      S.fillStyle="rgba(2,4,8,0.85)";S.beginPath();S.ellipse(bx3,by3+1,19,7,0,0,7);S.fill();
-      var cdg=S.createRadialGradient(bx3,by3+2,1,bx3,by3+2,17);
-      cdg.addColorStop(0,kk(0.9*lit));cdg.addColorStop(0.55,kk(0.42*lit));cdg.addColorStop(1,kk(0.14*lit));
-      S.fillStyle=cdg;S.beginPath();S.ellipse(bx3,by3+2,17,6,0,0,7);S.fill();
-      // the card's lubber line and its needle, seen edge-on
-      S.strokeStyle="rgba(60,42,18,"+(0.7*lit)+")";S.lineWidth=1.1;
-      var ca=Math.sin(t*0.17)*0.5;
-      S.beginPath();S.moveTo(bx3-Math.cos(ca)*15,by3+2-Math.sin(ca)*5);
-      S.lineTo(bx3+Math.cos(ca)*15,by3+2+Math.sin(ca)*5);S.stroke();
-      S.fillStyle="rgba(226,92,60,"+(0.8*lit)+")";
-      S.beginPath();S.ellipse(bx3+Math.cos(ca)*11,by3+2+Math.sin(ca)*4,3,1.6,0,0,7);S.fill();
-      S.save();S.globalCompositeOperation="lighter";
-      var bg4=S.createRadialGradient(bx3,by3,3,bx3,by3,66);
-      bg4.addColorStop(0,kk(0.24*lit));bg4.addColorStop(0.4,kk(0.07*lit));bg4.addColorStop(1,kk(0));
-      S.fillStyle=bg4;S.beginPath();S.arc(bx3,by3,66,0,7);S.fill();
-      // and it throws light UP the inside of its own hood
-      S.fillStyle=kk(0.1*lit);
-      poly(S,[[bx3-24,by3+22],[bx3-19,by3-2],[bx3+19,by3-2],[bx3+24,by3+22]]);S.fill();S.restore();}
-  })();
-  // voicepipe cluster on the port bulkhead
-  (function(){
-    var vx=268, vy=402;
-    [0,26,52].forEach(function(dv2,vi){
-      S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=9;
-      S.beginPath();S.moveTo(vx+dv2,vy);S.lineTo(vx+dv2,vy+70);
-      S.quadraticCurveTo(vx+dv2,vy+94,vx+dv2+(vi-1)*16,vy+96);S.stroke();
-      S.strokeStyle="rgba(150,166,194,"+(0.07*lit)+")";S.lineWidth=1.4;
-      S.beginPath();S.moveTo(vx+dv2+2,vy);S.lineTo(vx+dv2+2,vy+70);S.stroke();
-      var vm=vx+dv2+(vi-1)*16;
-      S.fillStyle="rgba(6,10,16,0.9)";S.beginPath();S.ellipse(vm,vy+99,11,5,0,0,7);S.fill();
-      S.strokeStyle=kk(0.5*lit);S.lineWidth=1.8;
-      S.beginPath();S.ellipse(vm,vy+98,11,5,0,Math.PI*0.04,Math.PI*0.96);S.stroke();
-      S.fillStyle=kk(0.2*lit);S.fillRect(vm-8,vy+90,16,4);});
-    S.fillStyle="#0a0e15";S.fillRect(vx-16,vy-10,86,16);
-    S.fillStyle="rgba(150,166,194,"+(0.07*lit)+")";S.fillRect(vx-16,vy-10,86,1.4);
-  })();
-  // chart rack: rolled charts standing in a tube rack, starboard
-  (function(){
-    var rx6=1108, ry6=GYS-72;
-    S.fillStyle="#0a0e15";S.fillRect(rx6,ry6,58,72);
-    S.strokeStyle="rgba(140,156,184,"+(0.11*lit)+")";S.lineWidth=1;S.strokeRect(rx6,ry6,58,72);
-    [0,1,2,3].forEach(function(ci5){
-      S.fillStyle=ci5%2?"rgba(126,116,88,"+(0.3*lit+0.1)+")":"rgba(104,96,74,"+(0.26*lit+0.1)+")";
-      S.save();S.translate(rx6+10+ci5*13,ry6-4);S.rotate((ci5-1.5)*0.06);
-      S.fillRect(-4,-34,8,40);S.restore();});
-  })();
-  // the ship's bell, hung by the door
-  (function(){
-    var lx6=86, ly6=430;
-    // the bracket it actually hangs from, and its shadow on the bulkhead
-    S.fillStyle="rgba(2,4,8,0.45)";S.fillRect(lx6-13,ly6-30,30,7);
-    S.fillStyle=offl?"#161c25":"#2b3340";S.fillRect(lx6-16,ly6-32,32,7);
-    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(lx6-16,ly6-32,32,1.3);
-    S.fillStyle="rgba(2,4,8,0.4)";
-    S.beginPath();S.ellipse(lx6+7,ly6+14,20,26,0.12,0,7);S.fill();
-    S.strokeStyle="rgba(6,10,16,0.9)";S.lineWidth=3;
-    S.beginPath();S.moveTo(lx6,ly6-25);S.lineTo(lx6,ly6-4);S.stroke();
-    var bgd=S.createLinearGradient(lx6-16,0,lx6+16,0);
-    bgd.addColorStop(0,kk(0.3+0.34*lit));bgd.addColorStop(0.3,kk(0.4+0.55*lit));
-    bgd.addColorStop(0.66,"rgba(96,74,38,"+(0.7+0.2*lit)+")");bgd.addColorStop(1,kk(0.24+0.24*lit));
-    S.fillStyle=bgd;S.beginPath();
-    S.moveTo(lx6-17,ly6+28);S.quadraticCurveTo(lx6-15,ly6-6,lx6,ly6-6);
-    S.quadraticCurveTo(lx6+15,ly6-6,lx6+17,ly6+28);S.closePath();S.fill();
-    S.fillStyle="rgba(6,10,16,0.9)";S.beginPath();S.ellipse(lx6,ly6+28,17,5,0,0,7);S.fill();   // mouth
-    S.strokeStyle=kk(0.75*lit);S.lineWidth=2;                                                  // lip
-    S.beginPath();S.ellipse(lx6,ly6+27,17,5,0,Math.PI*0.05,Math.PI*0.95);S.stroke();
-    S.fillStyle=kk(0.34*lit);S.beginPath();S.arc(lx6,ly6+31,3,0,7);S.fill();                   // clapper
-    S.fillStyle=kk(0.5*lit);S.fillRect(lx6-6,ly6-9,12,4);                                      // crown
-  })();
-
-  /* ---- COLOUR. The room graded itself so thoroughly to brass that the red
-     and green were exiled to the far edges and the picture read monochrome.
-     Three accents placed INSIDE the composition, each justified: an alarm
-     lamp that is the only saturated red near the subject, a green-lit
-     gyro repeater, and a cold blue signal lamp on the starboard console. */
-  // alarm lamp on a bracket, port of the unit
-  (function(){
-    var ax2=418, ay2=246;
-    S.fillStyle="#0a0e15";S.fillRect(ax2-5,ay2-16,10,16);
-    S.fillStyle="#101724";S.beginPath();S.arc(ax2,ay2+9,12,0,7);S.fill();
-    S.strokeStyle="rgba(150,166,194,"+(0.16*lit)+")";S.lineWidth=1.2;
-    S.beginPath();S.arc(ax2,ay2+9,12,0,7);S.stroke();
-    if(!offl){var ap=0.45+0.55*Math.abs(Math.sin(t*1.6));
-      S.fillStyle="rgba(228,74,52,"+(0.85*ap)+")";S.beginPath();S.arc(ax2,ay2+9,8,0,7);S.fill();
-      S.save();S.globalCompositeOperation="lighter";
-      var ag2=S.createRadialGradient(ax2,ay2+9,2,ax2,ay2+9,54);
-      ag2.addColorStop(0,"rgba(228,74,52,"+(0.3*ap)+")");ag2.addColorStop(1,"rgba(228,74,52,0)");
-      S.fillStyle=ag2;S.beginPath();S.arc(ax2,ay2+9,54,0,7);S.fill();S.restore();}
-    else{S.fillStyle="rgba(80,44,40,0.5)";S.beginPath();S.arc(ax2,ay2+9,8,0,7);S.fill();}
-  })();
-  // gyro repeater, green, standing beside the helm
-  (function(){
-    var gx2=228, gy2=GYS-118;
-    pedestal(gx2,gy2+22,gy2+118,9);
-    S.fillStyle="rgba(2,4,8,0.5)";S.beginPath();S.arc(gx2+2.4,gy2+2.4,21,0,7);S.fill();
-    var gcg=S.createLinearGradient(gx2-21,gy2-21,gx2+21,gy2+21);
-    gcg.addColorStop(0,offl?"#1a212b":"#3a4450");
-    gcg.addColorStop(0.4,offl?"#131820":"#242c37");
-    gcg.addColorStop(1,offl?"#0a0d13":"#12171f");
-    S.fillStyle=gcg;S.beginPath();S.arc(gx2,gy2,21,0,7);S.fill();
-    S.strokeStyle="rgba(206,222,248,"+(0.24*lit)+")";S.lineWidth=1.3;
-    S.beginPath();S.arc(gx2,gy2,20,Math.PI*1.05,Math.PI*1.8);S.stroke();
-    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.4;
-    S.beginPath();S.arc(gx2,gy2,21,0,7);S.stroke();
-    if(!offl){
-      // the repeater's face: green, and lit from inside — the only cool
-      // saturated light on the port side of the room
-      var grd=S.createRadialGradient(gx2,gy2,1,gx2,gy2,15);
-      grd.addColorStop(0,"rgba(120,226,158,"+(0.5*lit)+")");
-      grd.addColorStop(0.6,"rgba(72,180,116,"+(0.34*lit)+")");
-      grd.addColorStop(1,"rgba(38,96,66,"+(0.5*lit)+")");
-      S.fillStyle=grd;S.beginPath();S.arc(gx2,gy2,15,0,7);S.fill();
-      // graduations round the card
-      for(var gt=0;gt<16;gt++){var gta=gt/16*6.28;
-        pl(S,gx2+Math.cos(gta)*11.5,gy2+Math.sin(gta)*11.5,gx2+Math.cos(gta)*14,gy2+Math.sin(gta)*14,
-           "rgba(16,50,32,"+((gt%4?0.4:0.7)*lit)+")",gt%4?0.9:1.6);}
-      S.strokeStyle="rgba(190,255,214,"+(0.85*lit)+")";S.lineWidth=1.6;
-      var ga=Math.sin(t*0.22)*0.7;
-      S.beginPath();S.moveTo(gx2-Math.cos(ga)*13,gy2-Math.sin(ga)*13);
-      S.lineTo(gx2+Math.cos(ga)*13,gy2+Math.sin(ga)*13);S.stroke();
-      S.fillStyle="rgba(220,255,232,"+(0.7*lit)+")";
-      S.beginPath();S.arc(gx2,gy2,2,0,7);S.fill();
-      S.save();S.beginPath();S.arc(gx2,gy2,15,0,7);S.clip();   // glass
-      S.fillStyle="rgba(220,255,236,0.1)";
-      S.beginPath();S.moveTo(gx2-16,gy2+2);S.lineTo(gx2-2,gy2-16);
-      S.lineTo(gx2+7,gy2-16);S.lineTo(gx2-16,gy2+12);S.closePath();S.fill();S.restore();
-      S.save();S.globalCompositeOperation="lighter";
-      var gg2=S.createRadialGradient(gx2,gy2,2,gx2,gy2,58);
-      gg2.addColorStop(0,"rgba(96,206,138,0.26)");gg2.addColorStop(0.4,"rgba(96,206,138,0.07)");
-      gg2.addColorStop(1,"rgba(96,206,138,0)");
-      S.fillStyle=gg2;S.beginPath();S.arc(gx2,gy2,58,0,7);S.fill();S.restore();}
-  })();
-  // blue signal lamp on the starboard console
-  (function(){
-    var bx4=1150, by4=GYS-112;
-    S.fillStyle="#0a0e15";S.fillRect(bx4-7,by4,14,22);
-    if(!offl){var bp2=0.4+0.6*Math.abs(Math.sin(t*0.8+1.4));
-      S.fillStyle="rgba(96,168,236,"+(0.8*bp2)+")";S.fillRect(bx4-5,by4+3,10,9);
-      S.save();S.globalCompositeOperation="lighter";
-      var bg5=S.createRadialGradient(bx4,by4+8,2,bx4,by4+8,40);
-      bg5.addColorStop(0,"rgba(96,168,236,"+(0.2*bp2)+")");bg5.addColorStop(1,"rgba(96,168,236,0)");
-      S.fillStyle=bg5;S.beginPath();S.arc(bx4,by4+8,40,0,7);S.fill();S.restore();}
-  })();
-
+  /* ROUND 6 · LOOP 2 (cont) — DRAW ORDER. The deck was painted AFTER the
+     furniture, so the floor fill and the command platform overpainted the
+     bottom 24px of every object standing on them: the console's kick
+     recess, the plot table's feet, the plinth of anything with a base.
+     That is the mechanical reason nothing in this room looked grounded —
+     each prop was literally having its contact with the floor erased.
+     A floor goes down before the things standing on it. */
   /* ============ deck ============ */
   /* The room was one flat floor plane, so everything sat at the same
      distance. There is a raised command platform now: the unit stands on
@@ -1496,7 +1205,11 @@ function drawRoom(t,st){
   dkg.addColorStop(1,offl?"#080a0e":"#12171f");
   S.fillStyle=dkg;S.fillRect(0,GYS,SW,SH-GYS);
   (function(){
-    var px5=300, pw2=560, ptop=GYS-16;
+    /* the platform runs from under the helm console to past the plot table,
+       so the console, the unit and the table all stand on ONE plane. It
+       used to start at x=300, which put the console half on the platform
+       and half on the deck 16px below — two ground planes in one object. */
+    var px5=112, pw2=986, ptop=GYS-16;
     // riser face, in shadow — it faces the camera, away from the lamp
     var rzg=S.createLinearGradient(0,ptop,0,GYS+30);
     rzg.addColorStop(0,offl?"#0d1117":"#1e242f");
@@ -1595,6 +1308,603 @@ function drawRoom(t,st){
     S.strokeStyle="rgba(120,136,164,"+(0.07*lit)+")";S.lineWidth=1;
     S.beginPath();S.ellipse(qx2,qy2,19,8,0,Math.PI,Math.PI*2);S.stroke();
   })();
+  /* ============ PLANE 3 · the room's furniture ============ */
+  /* ROUND 6 · LOOP 2 — THE HELM CONSOLE.
+     The wheel, the telegraph, the gyro repeater and the binnacle were four
+     separate objects standing on four separate little disc feet, spaced out
+     across the deck like garden ornaments. Individually each was fine; the
+     problem was that a bridge does not keep its instruments that way. A helm
+     is ONE STATION: a plinth, a raked instrument face carrying the dials and
+     switches, and the wheel properly mounted on a boss rising out of it,
+     with the telegraph and the compass integrated at either end.
+     Consolidating them also buys the thing the fleet's rooms all have and
+     this one lacked — objects RESTING ON a surface instead of floating. */
+  (function(){
+    var C0=142, C1=432, CW=C1-C0;
+    // BASEY is the PLATFORM top, not the deck: this console stands on the
+    // command platform alongside the unit, on the one shared ground plane
+    var TOPY=GYS-166, KNEE=GYS-108, BASEY=GYS-14, OV=20;  // OV: front overhang
+    function fx(u){return C0-OV+u*(CW+OV*2);}             // front-edge x at 0..1
+    // ---- cast shadow on the deck, thrown away from the port lamp
+    S.fillStyle="rgba(2,4,8,0.5)";
+    S.beginPath();S.ellipse((C0+C1)/2+26,BASEY+2,CW/2+40,13,0,0,7);S.fill();
+    // ---- the kick recess and the plinth it stands on. The console was
+    //      clipped flat by the floor with no toe space and no end caps,
+    //      which is what made it read as a rectangle floated on the wall.
+    S.fillStyle="rgba(2,4,8,0.85)";S.fillRect(C0-OV+9,BASEY-14,CW+OV*2-18,14);
+    S.fillStyle=offl?"#0d1118":"#1a202a";S.fillRect(C0-OV,BASEY-4,CW+OV*2,5);
+    S.fillStyle="rgba(190,208,236,"+(0.12*lit)+")";S.fillRect(C0-OV,BASEY-4,CW+OV*2,1.2);
+    // ---- the vertical fascia
+    var fsg=S.createLinearGradient(0,KNEE,0,BASEY);
+    fsg.addColorStop(0,offl?"#161c25":"#2c3441");
+    fsg.addColorStop(0.3,offl?"#11161e":"#1f2630");
+    fsg.addColorStop(1,offl?"#0a0d13":"#12171f");
+    S.fillStyle=fsg;S.fillRect(C0-OV,KNEE,CW+OV*2,BASEY-KNEE-14);
+    // ---- end caps: the returns that prove this is a box and not a flat
+    [[C0-OV,-1],[C1+OV,1]].forEach(function(ec9){
+      var eg9=S.createLinearGradient(ec9[0],0,ec9[0]+ec9[1]*11,0);
+      eg9.addColorStop(0,offl?"#11161e":"#232a35");eg9.addColorStop(1,offl?"#080b10":"#0f141c");
+      S.fillStyle=eg9;
+      poly(S,[[ec9[0],KNEE],[ec9[0]+ec9[1]*11,KNEE+7],[ec9[0]+ec9[1]*11,BASEY-10],[ec9[0],BASEY-14]]);S.fill();
+      S.fillStyle="rgba(206,222,248,"+(0.14*lit)+")";
+      poly(S,[[ec9[0],KNEE],[ec9[0]+ec9[1]*11,KNEE+7],[ec9[0]+ec9[1]*11,KNEE+9],[ec9[0],KNEE+2]]);S.fill();});
+    // panel joints down the fascia, one per instrument bay above
+    for(var pj=1;pj<4;pj++){
+      pl(S,fx(pj/4),KNEE+4,fx(pj/4),BASEY-15,"rgba(2,4,8,0.5)",1.8);
+      pl(S,fx(pj/4)+1.6,KNEE+4,fx(pj/4)+1.6,BASEY-15,"rgba(190,208,236,"+(0.07*lit)+")",1);}
+    // ---- the raked instrument face: the lit plane of the whole object
+    var rkg=S.createLinearGradient(0,TOPY,0,KNEE);
+    rkg.addColorStop(0,offl?"#1c232d":"#3d4655");
+    rkg.addColorStop(0.5,offl?"#171d26":"#2e3644");
+    rkg.addColorStop(1,offl?"#12171f":"#232a35");
+    S.fillStyle=rkg;
+    poly(S,[[C0,TOPY],[C1,TOPY],[C1+OV,KNEE],[C0-OV,KNEE]]);S.fill();
+    S.strokeStyle="rgba(2,4,8,0.55)";S.lineWidth=1.4;S.stroke();
+    // the arris where rake meets fascia — the brightest line on the console
+    S.fillStyle="rgba(214,230,252,"+(0.3*lit)+")";S.fillRect(C0-OV,KNEE-1.6,CW+OV*2,2);
+    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(C0-OV,KNEE+0.4,CW+OV*2,2.4);
+    // the coaming along the back top edge
+    S.fillStyle=offl?"#232a35":"#454f5f";S.fillRect(C0,TOPY-5,CW,6);
+    S.fillStyle="rgba(214,230,252,"+(0.26*lit)+")";S.fillRect(C0,TOPY-5,CW,1.4);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(C0,TOPY+0.8,CW,1.6);
+
+    /* ---- what is ON the raked face. Laid out on a grid, the way the
+       reviewer room lays out its four code screens: same size, same bezel,
+       same spacing. Three dials to port, a switch block to starboard. */
+    function dial(dx,dy,r,col,val){
+      S.fillStyle="rgba(2,4,8,0.6)";S.beginPath();S.ellipse(dx+1.6,dy+2,r+2,(r+2)*0.82,0,0,7);S.fill();
+      var bz=S.createLinearGradient(dx-r,dy-r,dx+r,dy+r);
+      bz.addColorStop(0,offl?"#232a35":"#4a5464");bz.addColorStop(0.5,offl?"#161c25":"#2a323e");
+      bz.addColorStop(1,offl?"#0e131a":"#171d26");
+      S.fillStyle=bz;S.beginPath();S.ellipse(dx,dy,r+2,(r+2)*0.82,0,0,7);S.fill();
+      S.fillStyle=offl?"#080b11":"#0e131b";S.beginPath();S.ellipse(dx,dy,r,r*0.82,0,0,7);S.fill();
+      if(!offl){
+        var fg=S.createRadialGradient(dx-r*0.3,dy-r*0.3,1,dx,dy,r);
+        fg.addColorStop(0,col+(0.34*lit)+")");fg.addColorStop(1,col+(0.1*lit)+")");
+        S.fillStyle=fg;S.beginPath();S.ellipse(dx,dy,r,r*0.82,0,0,7);S.fill();
+        for(var tk=0;tk<10;tk++){var ta=Math.PI*(0.82+tk/9*1.36);
+          pl(S,dx+Math.cos(ta)*(r-4),dy+Math.sin(ta)*(r-4)*0.82,
+               dx+Math.cos(ta)*(r-1),dy+Math.sin(ta)*(r-1)*0.82,
+               "rgba(226,238,255,"+((tk%3?0.28:0.5)*lit)+")",tk%3?0.9:1.5);}
+        var na=Math.PI*(0.86+val*1.28);
+        pl(S,dx,dy,dx+Math.cos(na)*(r-3),dy+Math.sin(na)*(r-3)*0.82,"rgba(236,104,72,"+(0.95*lit)+")",1.9);
+        S.fillStyle="rgba(226,238,255,"+(0.6*lit)+")";S.beginPath();S.arc(dx,dy,1.9,0,7);S.fill();
+        S.fillStyle="rgba(214,232,255,0.08)";       // glass
+        S.beginPath();S.ellipse(dx-r*0.28,dy-r*0.3,r*0.6,r*0.3,-0.5,0,7);S.fill();}
+      S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=1.1;
+      S.beginPath();S.ellipse(dx,dy,r+2,(r+2)*0.82,0,0,7);S.stroke();}
+    var FY=(TOPY+KNEE)/2+4;
+    dial(C0+34,FY,17,"rgba(96,206,138,",0.32+(offl?0:0.06*Math.sin(t*0.5)));
+    dial(C0+80,FY,17,"rgba(226,186,90,",0.58+(offl?0:0.05*Math.sin(t*0.37+1)));
+    dial(C0+126,FY,17,"rgba(126,190,226,",0.44+(offl?0:0.07*Math.sin(t*0.61+2)));
+    // label strip under the dials — the fleet's own idiom
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(C0+14,FY+23,132,9);
+    S.fillStyle="rgba(178,166,124,"+(0.16+0.2*lit)+")";S.fillRect(C0+14,FY+22,132,9);
+    for(var lb=0;lb<3;lb++){S.fillStyle="rgba(14,18,24,"+(0.55*lit+0.25)+")";
+      S.fillRect(C0+22+lb*46,FY+25,26,2.4);}
+    // the switch block to starboard: two rows of toggles on a sunk plate
+    (function(){
+      var sxo=C0+186, syo=FY-22, sw=CW-196, sh=46;
+      S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(sxo,syo,sw,sh);
+      S.fillStyle=offl?"#12171f":"#212833";S.fillRect(sxo+2,syo+2,sw-4,sh-4);
+      S.fillStyle="rgba(190,208,236,"+(0.1*lit)+")";S.fillRect(sxo+2,syo+sh-3,sw-4,1.2);
+      for(var sr=0;sr<2;sr++)for(var sc9=0;sc9<6;sc9++){
+        var tx9=sxo+11+sc9*15, ty9=syo+12+sr*22, up=((sc9*5+sr*3)%3)!==0;
+        S.fillStyle="rgba(2,4,8,0.7)";rrS(tx9-4,ty9-6,9,15,2);S.fill();
+        S.fillStyle=offl?"#1a2029":"#333c49";rrS(tx9-4,ty9-6,9,15,2);S.fill();
+        S.fillStyle="rgba(186,202,230,"+(0.3+0.3*lit)+")";
+        S.fillRect(tx9-1.6,ty9+(up?-4:1),3.4,8);
+        S.fillStyle=offl?"rgba(60,70,86,0.6)":(up?"rgba(120,214,146,":"rgba(226,140,70,")+(0.85*lit)+")";
+        S.beginPath();S.arc(tx9,ty9+(up?-7.5:9.5),1.5,0,7);S.fill();}
+    })();
+
+    /* ---- and the things standing ON the console top, in a row along the
+       coaming: telegraph to port, wheel amidships, compass to starboard. */
+    // the engine telegraph, a brass drum on a short column
+    (function(){
+      /* moved to the STARBOARD end and given a real base. It sat to port on
+         a thin stalk, which put it back in lollipop territory the moment
+         the wheel grew — and it swaps with the compass, which needs the
+         port end because the unit's arm was eating it. */
+      var ex=C1-54, ey=TOPY-46;
+      S.fillStyle="rgba(2,4,8,0.45)";
+      S.beginPath();S.ellipse(ex+4,TOPY-2,28,7,0,0,7);S.fill();
+      // a splayed pedestal standing on the coaming, not a stick
+      plate(S,[[ex-24,TOPY-2],[ex-13,ey+16],[ex+13,ey+16],[ex+24,TOPY-2]],
+            offl?"#2b3340":"#454f5f",offl?"#10151d":"#1b212b","rgba(2,4,8,0.55)");
+      S.fillStyle="rgba(214,230,252,"+(0.2*lit)+")";
+      poly(S,[[ex-24,TOPY-2],[ex-13,ey+16],[ex-9.6,ey+16],[ex-20,TOPY-2]]);S.fill();
+      S.fillStyle=offl?"#1a212b":"#333c49";
+      S.beginPath();S.ellipse(ex,TOPY-2,24,6,0,0,7);S.fill();
+      S.fillStyle="rgba(206,222,248,"+(0.18*lit)+")";
+      S.beginPath();S.ellipse(ex,TOPY-3.4,24,6,0,Math.PI,Math.PI*2);S.fill();
+      var dg=S.createLinearGradient(ex-20,ey-20,ex+20,ey+20);
+      dg.addColorStop(0,"rgba(206,172,104,"+(0.3+0.42*lit)+")");
+      dg.addColorStop(0.36,"rgba(224,190,120,"+(0.34+0.46*lit)+")");
+      dg.addColorStop(1,"rgba(72,56,30,0.92)");
+      S.fillStyle=dg;S.beginPath();S.arc(ex,ey,20,0,7);S.fill();
+      S.fillStyle=offl?"#0c1017":"#141a24";S.beginPath();S.arc(ex,ey,15,0,7);S.fill();
+      [[-2.6,-1.85,"rgba(96,206,138,"],[-1.85,-1.1,"rgba(226,186,90,"],
+       [-1.1,-0.4,"rgba(226,92,60,"]].forEach(function(sg9){
+        S.strokeStyle=sg9[2]+(0.4*lit)+")";S.lineWidth=3.4;
+        S.beginPath();S.arc(ex,ey,11,sg9[0],sg9[1]);S.stroke();});
+      if(!offl){var ha=-2.1+Math.sin(t*0.4)*0.5;
+        pl(S,ex,ey,ex+Math.cos(ha)*12,ey+Math.sin(ha)*12,"rgba(236,104,70,"+(0.95*lit)+")",2.2);
+        S.fillStyle="rgba(250,232,190,"+(0.8*lit)+")";S.beginPath();S.arc(ex,ey,2.6,0,7);S.fill();}
+      S.strokeStyle="rgba(250,232,190,"+(0.34*lit)+")";S.lineWidth=1.3;
+      S.beginPath();S.arc(ex,ey,19,Math.PI*1.05,Math.PI*1.8);S.stroke();
+      [-1,1].forEach(function(hd){                   // the two handles
+        S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=4;
+        S.beginPath();S.moveTo(ex+hd*15+2,ey+2);S.lineTo(ex+hd*29+2,ey-8);S.stroke();
+        S.strokeStyle="rgba(206,172,104,"+(0.34+0.4*lit)+")";S.lineWidth=3.2;
+        S.beginPath();S.moveTo(ex+hd*15,ey);S.lineTo(ex+hd*29,ey-10);S.stroke();
+        S.fillStyle="rgba(30,36,46,0.95)";
+        S.beginPath();S.ellipse(ex+hd*30,ey-11,4.4,3,-0.6*hd,0,7);S.fill();});
+    })();
+    // the WHEEL, amidships, mounted on a boss that rises out of the console
+    (function(){
+      /* SCALE. At R=36 against a ~980px unit this wheel was ~35cm across —
+         a toy in a display case. A bridge wheel is 1.0–1.5m. R=60 puts it
+         at roughly a metre, and raising the centre keeps the rim clear of
+         the coaming instead of crossing it (it was reading as both in
+         front of and on top of the console at the same time). */
+      var wx=(C0+C1)/2-4, wy=TOPY-88, R=60;
+      var BR2=function(a){return "rgba(212,176,104,"+a+")";};
+      var BRD=function(a){return "rgba(96,74,38,"+a+")";};
+      // the boss: a splayed housing the column comes out of, ON the coaming
+      S.fillStyle="rgba(2,4,8,0.45)";
+      poly(S,[[wx-30,TOPY-1],[wx+36,TOPY-1],[wx+26,TOPY-26],[wx-20,TOPY-26]]);S.fill();
+      plate(S,[[wx-32,TOPY],[wx+32,TOPY],[wx+21,TOPY-28],[wx-21,TOPY-28]],
+            offl?"#2a323e":"#4b5565",offl?"#10151d":"#1d232d","rgba(2,4,8,0.55)");
+      S.fillStyle="rgba(214,230,252,"+(0.24*lit)+")";S.fillRect(wx-21,TOPY-28,42,1.6);
+      // the column, with a bearing collar where the shaft enters the boss
+      S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(wx-8,wy,17,TOPY-wy-26);
+      var clg=S.createLinearGradient(wx-9,0,wx+9,0);
+      clg.addColorStop(0,offl?"#141a23":"#39424f");clg.addColorStop(0.4,offl?"#0f141b":"#242c37");
+      clg.addColorStop(1,offl?"#090c12":"#12171f");
+      S.fillStyle=clg;S.fillRect(wx-9,wy,18,TOPY-wy-26);
+      S.fillStyle="rgba(214,230,252,"+(0.2*lit)+")";S.fillRect(wx-9,wy,1.6,TOPY-wy-26);
+      S.fillStyle=offl?"#1b222c":"#3d4655";
+      S.fillRect(wx-13,TOPY-40,27,13);
+      S.fillStyle="rgba(214,230,252,"+(0.22*lit)+")";S.fillRect(wx-13,TOPY-40,27,1.4);
+      S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(wx-13,TOPY-28.6,27,1.8);
+      // the rim
+      S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=7.4;
+      S.beginPath();S.arc(wx+3,wy+3,R,0,7);S.stroke();
+      var rmg=S.createLinearGradient(wx-R,wy-R,wx+R,wy+R);
+      rmg.addColorStop(0,BR2(0.24+0.5*lit));rmg.addColorStop(0.34,BR2(0.4+0.55*lit));
+      rmg.addColorStop(0.62,BRD(0.5+0.3*lit));rmg.addColorStop(1,BR2(0.18+0.3*lit));
+      S.strokeStyle=rmg;S.lineWidth=5.8;
+      S.beginPath();S.arc(wx,wy,R,0,7);S.stroke();
+      S.strokeStyle="rgba(250,232,190,"+(0.42*lit)+")";S.lineWidth=1.4;
+      S.beginPath();S.arc(wx,wy,R-1.7,Math.PI*1.02,Math.PI*1.72);S.stroke();
+      for(var hg=0;hg<8;hg++){var ah=hg/8*6.28+0.4;
+        var gx6=wx+Math.cos(ah)*(R+9), gy6=wy+Math.sin(ah)*(R+9);
+        S.fillStyle="rgba(2,4,8,0.5)";
+        S.beginPath();S.ellipse(gx6+1.6,gy6+1.6,5.4,3.2,ah,0,7);S.fill();
+        var hgg=S.createLinearGradient(gx6-4,gy6-4,gx6+4,gy6+4);
+        hgg.addColorStop(0,BR2(0.34+0.5*lit));hgg.addColorStop(0.5,BR2(0.2+0.34*lit));hgg.addColorStop(1,BRD(0.5+0.2*lit));
+        S.fillStyle=hgg;S.beginPath();S.ellipse(gx6,gy6,5.2,3.1,ah,0,7);S.fill();
+        S.fillStyle="rgba(250,232,190,"+(0.3*lit)+")";
+        S.beginPath();S.ellipse(gx6-Math.cos(ah)*1.3,gy6-Math.sin(ah)*1.3,2.1,1.1,ah,0,7);S.fill();}
+      for(var sp2=0;sp2<8;sp2++){var a7=sp2/8*6.28+(offl?0:t*0.08);
+        var c7=Math.cos(a7),s7=Math.sin(a7),n7x=-s7,n7y=c7;
+        S.fillStyle="rgba(2,4,8,0.42)";
+        poly(S,[[wx+c7*8+n7x*2.6+2,wy+s7*8+n7y*2.6+2],[wx+c7*R+n7x*1.6+2,wy+s7*R+n7y*1.6+2],
+                [wx+c7*R-n7x*1.6+2,wy+s7*R-n7y*1.6+2],[wx+c7*8-n7x*2.6+2,wy+s7*8-n7y*2.6+2]]);S.fill();
+        plate(S,[[wx+c7*8+n7x*2.6,wy+s7*8+n7y*2.6],[wx+c7*R+n7x*1.6,wy+s7*R+n7y*1.6],
+                 [wx+c7*R-n7x*1.6,wy+s7*R-n7y*1.6],[wx+c7*8-n7x*2.6,wy+s7*8-n7y*2.6]],
+              BR2(0.3+0.42*lit),BRD(0.55+0.25*lit),null);}
+      S.fillStyle="rgba(2,4,8,0.5)";S.beginPath();S.arc(wx+2,wy+2,9.4,0,7);S.fill();
+      var hbg=S.createRadialGradient(wx-3,wy-3,1,wx,wy,10);
+      hbg.addColorStop(0,BR2(0.5+0.4*lit));hbg.addColorStop(0.6,BR2(0.24+0.3*lit));hbg.addColorStop(1,BRD(0.6+0.2*lit));
+      S.fillStyle=hbg;S.beginPath();S.arc(wx,wy,9.4,0,7);S.fill();
+      S.strokeStyle="rgba(2,4,8,0.5)";S.lineWidth=1;S.beginPath();S.arc(wx,wy,9.4,0,7);S.stroke();
+    })();
+    /* the compass. Previously an open brass trapezoid seen from above — a
+       fresh reviewer called it an upside-down lampshade, a wastebasket and
+       a spittoon before guessing binnacle. The failure was reading it from
+       the wrong angle: an open tub shows you its inside and hides the one
+       feature that identifies it. Redrawn side-on as a GIMBALLED DOME — a
+       glass hemisphere in a brass ring on a short column, with a compass
+       rose visible through it and N marked. Nothing else is that shape. */
+    (function(){
+      var bx3=C0+48, cy9=TOPY-32, R9=22;   // port end, clear of the unit
+      S.fillStyle="rgba(2,4,8,0.45)";
+      S.beginPath();S.ellipse(bx3+4,TOPY-2,26,7,0,0,7);S.fill();
+      // the short column and its base flange, standing on the coaming
+      S.fillStyle=offl?"#141a23":"#2a323e";S.fillRect(bx3-9,cy9,19,TOPY-cy9-2);
+      S.fillStyle="rgba(206,222,248,"+(0.16*lit)+")";S.fillRect(bx3-9,cy9,1.5,TOPY-cy9-2);
+      S.fillStyle=offl?"#1a212b":"#333c49";
+      S.beginPath();S.ellipse(bx3,TOPY-2,22,6,0,0,7);S.fill();
+      S.fillStyle="rgba(206,222,248,"+(0.18*lit)+")";
+      S.beginPath();S.ellipse(bx3,TOPY-3.4,22,6,0,Math.PI,Math.PI*2);S.fill();
+      // the gimbal ring
+      var gr9=S.createLinearGradient(bx3-R9,0,bx3+R9,0);
+      gr9.addColorStop(0,"rgba(150,122,68,"+(0.5+0.3*lit)+")");
+      gr9.addColorStop(0.3,"rgba(224,190,120,"+(0.34+0.5*lit)+")");
+      gr9.addColorStop(1,"rgba(72,56,30,0.95)");
+      S.strokeStyle=gr9;S.lineWidth=5;
+      S.beginPath();S.arc(bx3,cy9,R9,0,7);S.stroke();
+      [-1,1].forEach(function(pv){        // the two trunnion pivots
+        S.fillStyle="rgba(206,172,104,"+(0.4+0.34*lit)+")";
+        S.beginPath();S.arc(bx3+pv*R9,cy9,3.4,0,7);S.fill();
+        S.fillStyle="rgba(2,4,8,0.6)";
+        S.beginPath();S.arc(bx3+pv*R9,cy9,1.4,0,7);S.fill();});
+      // the card inside, lit — the identifying feature
+      S.fillStyle=offl?"#0b0e15":"#12171f";S.beginPath();S.arc(bx3,cy9,R9-3,0,7);S.fill();
+      if(!offl){
+        var cdg=S.createRadialGradient(bx3-4,cy9-5,1,bx3,cy9,R9-3);
+        cdg.addColorStop(0,kk(0.62*lit));cdg.addColorStop(0.6,kk(0.26*lit));cdg.addColorStop(1,kk(0.08*lit));
+        S.fillStyle=cdg;S.beginPath();S.arc(bx3,cy9,R9-3,0,7);S.fill();
+        var ca=Math.sin(t*0.17)*0.32;
+        for(var cp9=0;cp9<16;cp9++){var pa=cp9/16*6.28+ca;
+          pl(S,bx3+Math.cos(pa)*(R9-8),cy9+Math.sin(pa)*(R9-8),
+               bx3+Math.cos(pa)*(R9-4),cy9+Math.sin(pa)*(R9-4),
+               "rgba(50,36,14,"+((cp9%4?0.34:0.62)*lit)+")",cp9%4?0.9:1.6);}
+        // the needle: red north, dark south — reads as a compass instantly
+        pl(S,bx3,cy9,bx3+Math.sin(ca)*(R9-6),cy9-Math.cos(ca)*(R9-6),"rgba(226,72,54,"+(0.95*lit)+")",2.4);
+        pl(S,bx3,cy9,bx3-Math.sin(ca)*(R9-6),cy9+Math.cos(ca)*(R9-6),"rgba(40,30,14,"+(0.8*lit)+")",2.4);
+        S.fillStyle="rgba(60,44,18,"+(0.85*lit)+")";
+        S.save();S.textAlign="center";S.font="700 8px ui-monospace,Menlo,monospace";
+        S.fillText("N",bx3+Math.sin(ca)*(R9-13),cy9-Math.cos(ca)*(R9-13)+3);S.restore();
+        S.fillStyle="rgba(226,238,255,"+(0.5*lit)+")";S.beginPath();S.arc(bx3,cy9,1.8,0,7);S.fill();
+        // the dome glass over it
+        S.fillStyle="rgba(220,238,255,0.11)";
+        S.beginPath();S.ellipse(bx3-6,cy9-7,10,6,-0.6,0,7);S.fill();
+        S.save();S.globalCompositeOperation="lighter";
+        var bg4=S.createRadialGradient(bx3,cy9,3,bx3,cy9,64);
+        bg4.addColorStop(0,kk(0.2*lit));bg4.addColorStop(0.4,kk(0.055*lit));bg4.addColorStop(1,kk(0));
+        S.fillStyle=bg4;S.beginPath();S.arc(bx3,cy9,64,0,7);S.fill();S.restore();}
+    })();
+    // the console's own light, thrown up onto the face and down onto the deck
+    if(!offl){S.save();S.globalCompositeOperation="lighter";
+      var cug=S.createLinearGradient(0,TOPY-70,0,KNEE);
+      cug.addColorStop(0,kk(0));cug.addColorStop(1,kk(0.05*lit));
+      S.fillStyle=cug;S.fillRect(C0-OV,TOPY-70,CW+OV*2,KNEE-TOPY+70);
+      S.restore();}
+  })();
+
+  // THE PLOT TABLE — big, starboard of the unit, throwing light up
+  (function(){
+    /* LOOP 7 · THE PLOT TABLE, AS A LIGHT. This is the room's second light
+       source and the reason the unit stands left of centre — but it was
+       drawn as a dark trapezoid with three hairline arcs on it, so it lit
+       nothing and read as furniture. A backlit plot table is a sheet of
+       glass with a lamp under it: the TOP is the brightest surface in the
+       room, it throws light UP onto everything around it, and every object
+       standing on it is a silhouette with a long shadow pointing away. */
+    var tx=740, ty=GYS-136, TW=300;
+    /* ROUND 6 · LOOP 7 — THE TABLE BECOMES FURNITURE.
+       A fresh reviewer: "the most physically impossible object in the room."
+       A 300px slab on two thin posts, both inboard of its centroid, neither
+       with a base flange, both dying into darkness where the floor should
+       be — so ~700px of glass hung unsupported. Fixed as furniture is
+       fixed: the legs move OUT to the corners where they carry load, each
+       gets a splayed foot bolted to the platform, and a stretcher rail ties
+       them together at ankle height, which is also somewhere to rest a boot. */
+    [[-8,26],[TW-18,26]].forEach(function(lg7){
+      var lx7=tx+lg7[0], lw7=lg7[1], footY=GYS-16;
+      // the foot: a splayed plate on the platform, with its own shadow
+      S.fillStyle="rgba(2,4,8,0.5)";
+      S.beginPath();S.ellipse(lx7+lw7/2+5,footY+3,lw7*1.5,8,0,0,7);S.fill();
+      S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(lx7+2,ty+44,lw7,footY-ty-44);
+      var lgg=S.createLinearGradient(lx7,0,lx7+lw7,0);
+      lgg.addColorStop(0,offl?"#0d1118":"#1c222c");
+      lgg.addColorStop(0.36,offl?"#131922":"#2e3744");
+      lgg.addColorStop(1,offl?"#080b10":"#10151c");
+      S.fillStyle=lgg;S.fillRect(lx7,ty+44,lw7,footY-ty-44);
+      S.fillStyle="rgba(198,214,240,"+(0.16*lit)+")";S.fillRect(lx7,ty+44,1.6,footY-ty-44);
+      // splayed foot + flange
+      S.fillStyle=offl?"#151b24":"#2a323e";
+      poly(S,[[lx7-9,footY],[lx7+lw7+9,footY],[lx7+lw7,footY-16],[lx7,footY-16]]);S.fill();
+      S.fillStyle="rgba(206,222,248,"+(0.18*lit)+")";S.fillRect(lx7-9,footY-16.6,lw7+18,1.4);
+      S.fillStyle=offl?"#1a212b":"#333c49";S.fillRect(lx7-13,footY-5,lw7+26,6);
+      S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(lx7-13,footY-5,lw7+26,1.3);
+      S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(lx7-13,footY-0.4,lw7+26,1.8);
+      [-7,lw7+7].forEach(function(bo7){
+        S.fillStyle="rgba(126,142,170,"+(0.32+0.22*lit)+")";
+        S.beginPath();S.arc(lx7+bo7,footY-2,2,0,7);S.fill();});});
+    // the stretcher rail between the legs, at ankle height
+    (function(){
+      var ry7=GYS-52, rx0=tx+16, rx1=tx+TW-16;
+      S.fillStyle="rgba(2,4,8,0.45)";S.fillRect(rx0,ry7+4,rx1-rx0,7);
+      var srg7=S.createLinearGradient(0,ry7,0,ry7+8);
+      srg7.addColorStop(0,offl?"#232a35":"#414b5a");srg7.addColorStop(1,offl?"#0d1118":"#171d26");
+      S.fillStyle=srg7;S.fillRect(rx0,ry7,rx1-rx0,8);
+      S.fillStyle="rgba(214,230,252,"+(0.2*lit)+")";S.fillRect(rx0,ry7,rx1-rx0,1.4);
+      S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(rx0,ry7+6.6,rx1-rx0,1.6);
+      // wear where boots have scuffed the middle of it
+      S.fillStyle="rgba(226,214,190,"+(0.09*lit)+")";S.fillRect(rx0+90,ry7+1,120,2);
+    })();
+    // the apron under the glass, in its own shadow
+    var apg=S.createLinearGradient(0,ty+6,0,ty+44);
+    apg.addColorStop(0,offl?"#12171f":"#232a35");apg.addColorStop(1,offl?"#080b10":"#10151d");
+    S.fillStyle=apg;S.beginPath();
+    S.moveTo(tx,ty+6);S.lineTo(tx+TW,ty+6);S.lineTo(tx+TW+22,ty+44);S.lineTo(tx-22,ty+44);S.closePath();S.fill();
+    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.4;S.stroke();
+    if(!offl){
+      /* the glass. Drawn as a lit surface in its own right: a cold cyan
+         plot table is the counterweight to all this brass, and it is the
+         only thing in the room brighter than the lamps. */
+      var PL=function(a){return "rgba(126,206,226,"+a+")";};
+      S.save();S.beginPath();
+      S.moveTo(tx+2,ty);S.lineTo(tx+TW-2,ty);S.lineTo(tx+TW+8,ty+8);S.lineTo(tx-8,ty+8);S.closePath();S.clip();
+      var gsg=S.createLinearGradient(0,ty,0,ty+9);
+      gsg.addColorStop(0,PL(0.24*lit));gsg.addColorStop(1,PL(0.55*lit));
+      S.fillStyle=gsg;S.fillRect(tx-10,ty-2,TW+20,12);
+      // the chart on the glass, seen almost edge-on: rings + a coastline
+      S.strokeStyle=PL(0.5*lit);S.lineWidth=1;
+      [40,78,116].forEach(function(rr6){
+        S.beginPath();S.ellipse(tx+150,ty+7,rr6,rr6*0.09,0,Math.PI,Math.PI*2);S.stroke();});
+      S.strokeStyle="rgba(180,236,250,"+(0.62*lit)+")";S.lineWidth=1.2;
+      S.beginPath();
+      for(var cs7=0;cs7<=TW;cs7+=14)
+        S.lineTo(tx+cs7,ty+5.4+Math.sin(cs7*0.05)*1.5);
+      S.stroke();
+      var sweep=(t*0.6)%Math.PI;                       // the sweep, foreshortened
+      S.strokeStyle="rgba(200,244,255,"+(0.8*lit)+")";S.lineWidth=1.6;
+      S.beginPath();S.moveTo(tx+150,ty+7);
+      S.lineTo(tx+150-Math.cos(sweep)*116,ty+7-Math.sin(sweep)*11);S.stroke();
+      S.restore();
+      // the glass's lit near edge, and the bright arris where it meets air
+      S.fillStyle="rgba(216,248,255,"+(0.9*lit)+")";S.fillRect(tx-6,ty+7.2,TW+12,2.2);
+      S.fillStyle=PL(0.4*lit);S.fillRect(tx-8,ty+9.4,TW+16,2.4);
+      // the brass surround the glass is bedded into
+      S.strokeStyle="rgba(196,164,100,"+(0.3+0.34*lit)+")";S.lineWidth=2.4;
+      S.beginPath();S.moveTo(tx-9,ty+9);S.lineTo(tx+TW+9,ty+9);S.stroke();
+      /* contacts standing ON the plot: each a token with a long shadow
+         thrown across the glass by the light coming up through it */
+      [[-46,0.9],[28,1.7],[62,2.6]].forEach(function(ct,ci4){
+        var cp3=0.4+0.6*Math.abs(Math.sin(t*0.9+ci4)), cxp=tx+150+ct[0];
+        S.fillStyle="rgba(10,30,40,"+(0.5*lit)+")";
+        S.fillRect(cxp-1,ty+2,14+ci4*5,2.4);
+        S.fillStyle="rgba(236,110,74,"+(0.9*cp3*lit)+")";
+        S.beginPath();S.moveTo(cxp,ty-1);S.lineTo(cxp+4.4,ty+5);S.lineTo(cxp-4.4,ty+5);S.closePath();S.fill();
+        S.save();S.globalCompositeOperation="lighter";
+        var cg7=S.createRadialGradient(cxp,ty+2,1,cxp,ty+2,14);
+        cg7.addColorStop(0,"rgba(236,110,74,"+(0.34*cp3)+")");cg7.addColorStop(1,"rgba(236,110,74,0)");
+        S.fillStyle=cg7;S.beginPath();S.arc(cxp,ty+2,14,0,7);S.fill();S.restore();});
+      /* AND IT LIGHTS THE ROOM. Three casts: a column of air above the
+         glass, the bulkhead behind it washed cyan, and the deck under it. */
+      S.save();S.globalCompositeOperation="lighter";
+      var upc=S.createLinearGradient(0,ty-180,0,ty+8);
+      upc.addColorStop(0,PL(0));upc.addColorStop(0.55,PL(0.05*lit));upc.addColorStop(1,PL(0.22*lit));
+      S.fillStyle=upc;S.beginPath();
+      S.moveTo(tx-60,ty-180);S.lineTo(tx+TW+60,ty-180);
+      S.lineTo(tx+TW+10,ty+8);S.lineTo(tx-10,ty+8);S.closePath();S.fill();
+      var flc=S.createLinearGradient(0,ty+44,0,GYS+40);
+      flc.addColorStop(0,PL(0.09*lit));flc.addColorStop(1,PL(0));
+      S.fillStyle=flc;S.fillRect(tx-60,ty+44,TW+120,GYS+40-ty-44);
+      S.restore();}
+    else{
+      S.fillStyle="rgba(24,30,40,0.9)";S.fillRect(tx-8,ty+6,TW+16,4);
+      S.fillStyle="rgba(90,100,116,0.22)";S.fillRect(tx-6,ty+6,TW+12,1.4);}
+  })();
+  // a console bank under the window, starboard
+  (function(){
+    var bx2=1104, by2=GYS-88;
+    // a raked console, not a flat box: sloped screen deck over a key panel
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(bx2+4,by2+6,128,84);
+    var cbg=S.createLinearGradient(0,by2,0,by2+96);
+    cbg.addColorStop(0,offl?"#161c25":"#2c3441");
+    cbg.addColorStop(0.42,offl?"#10151d":"#1e242f");
+    cbg.addColorStop(1,offl?"#0a0d13":"#12171f");
+    S.fillStyle=cbg;S.fillRect(bx2,by2,128,88);
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(bx2,by2,128,1.6);
+    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.3;S.strokeRect(bx2+0.6,by2+0.6,126.8,86.8);
+    // the screen, sunk into a bezel and lit by its own phosphor
+    S.fillStyle="rgba(2,4,8,0.7)";S.fillRect(bx2+8,by2+8,112,32);
+    S.fillStyle="rgba(4,7,12,0.95)";S.fillRect(bx2+10,by2+10,108,28);
+    if(!offl){
+      var scg2=S.createLinearGradient(0,by2+11,0,by2+43);
+      scg2.addColorStop(0,"rgba(96,186,206,0.12)");scg2.addColorStop(1,"rgba(96,186,206,0.03)");
+      S.fillStyle=scg2;S.fillRect(bx2+10,by2+10,108,28);
+      S.fillStyle="rgba(140,220,238,"+(0.5*lit)+")";
+      for(var sl2=0;sl2<4;sl2++)S.fillRect(bx2+14,by2+14+sl2*6,48+((sl2*37)%46),1.6);
+      S.fillStyle="rgba(226,186,90,"+(0.6*lit)+")";      // a cursor block, blinking
+      if(Math.floor(t*1.4)%2)S.fillRect(bx2+16+((Math.floor(t*3)%9)*6),by2+37,5,4);
+      S.fillStyle="rgba(0,0,0,0.3)";                      // scanlines
+      for(var scl=0;scl<28;scl+=3)S.fillRect(bx2+10,by2+10+scl,108,1.1);
+      S.save();S.globalCompositeOperation="lighter";      // spill onto the console lip
+      var spg=S.createLinearGradient(0,by2+38,0,by2+55);
+      spg.addColorStop(0,"rgba(120,206,226,0.16)");spg.addColorStop(1,"rgba(120,206,226,0)");
+      S.fillStyle=spg;S.fillRect(bx2+8,by2+38,112,17);S.restore();}
+    S.fillStyle="rgba(214,232,255,0.05)";                 // glass sheen
+    poly(S,[[bx2+10,by2+36],[bx2+44,by2+10],[bx2+62,by2+10],[bx2+10,by2+38]]);S.fill();
+    // the key panel: each key a real cap with a lit face and a shadow
+    for(var kb=0;kb<12;kb++){
+      var kbx=bx2+10+(kb%6)*19, kby=by2+50+Math.floor(kb/6)*15;
+      var on3=!offl&&((kb*5+Math.floor(t*1.1))%4)!==0;
+      S.fillStyle="rgba(2,4,8,0.6)";rrS(kbx,kby+1.4,14,7,1.4);S.fill();
+      var kcol=on3?(kb%5===2?"rgba(120,206,138,":(kb%5===4?"rgba(226,92,60,":"rgba(226,190,110,")):"rgba(56,66,82,";
+      var kgg=S.createLinearGradient(0,kby,0,kby+7);
+      kgg.addColorStop(0,kcol+(on3?0.9*lit:0.6)+")");kgg.addColorStop(1,kcol+(on3?0.42*lit:0.4)+")");
+      S.fillStyle=kgg;rrS(kbx,kby,14,7,1.4);S.fill();
+      S.fillStyle="rgba(255,255,255,"+(on3?0.2*lit:0.05)+")";S.fillRect(kbx+1.4,kby+0.8,11,1.2);}
+    // a shelf lip and two toggle switches, because a console has switches
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(bx2+7,by2+44,114,2.4);
+    S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";S.fillRect(bx2+7,by2+46.4,114,1);
+    [].forEach(function(tgx,tgi){
+      S.fillStyle="rgba(40,48,60,0.95)";rrS(bx2+tgx,by2+58,9,20,2);S.fill();
+      S.fillStyle="rgba(178,194,222,"+(0.3+0.3*lit)+")";
+      S.fillRect(bx2+tgx+3,by2+(tgi?60:68),3,10);});
+  })();
+
+  /* ---- more of the ship. A bridge is a working room: it has a helm, a
+     binnacle, a voicepipe cluster, a rack of rolled charts and a bell. */
+  /* LOOP 6 · THE PEDESTAL INSTRUMENTS. The helm, the telegraph, the gyro
+     repeater and the binnacle were all drawn the same way: a stroked circle
+     on a rectangle. They are the props nearest the subject and they read as
+     wireframe. Each one gets what an object gets — a pedestal with a lit
+     side and a shadowed side, a cast shadow on the deck, and a material
+     that is not the wall's material. The wheel in particular is BRASS, and
+     brass is the one warm thing a grey bridge has. */
+  function pedestal(px,ptop,pbot,hw2){        // the column all four stand on
+    S.fillStyle="rgba(2,4,8,0.45)";           // cast shadow, thrown away from the lamp
+    S.beginPath();S.ellipse(px+hw2*1.5,pbot,hw2*3.2,7,0,0,7);S.fill();
+    var pg6=S.createLinearGradient(px-hw2,0,px+hw2,0);
+    pg6.addColorStop(0,offl?"#0a0d13":"#141a23");
+    pg6.addColorStop(0.3,offl?"#151a23":"#2b3341");
+    pg6.addColorStop(0.62,offl?"#0f141b":"#1d232d");
+    pg6.addColorStop(1,offl?"#080b10":"#10151c");
+    S.fillStyle=pg6;S.fillRect(px-hw2,ptop,hw2*2,pbot-ptop);
+    S.fillStyle="rgba(198,214,240,"+(0.16*lit)+")";S.fillRect(px-hw2+1,ptop,1.4,pbot-ptop);
+    // the flange bolted to the deck
+    S.fillStyle=offl?"#0d1118":"#1e242e";
+    S.beginPath();S.ellipse(px,pbot,hw2*2.4,7,0,0,7);S.fill();
+    S.fillStyle="rgba(190,208,236,"+(0.14*lit)+")";
+    S.beginPath();S.ellipse(px,pbot-1.4,hw2*2.4,7,0,Math.PI,Math.PI*2);S.fill();
+  }
+  // the ship's bell, hung by the door
+  (function(){
+    /* ROUND 6 · LOOP 4 — the bell. It hung on a hairline stem from a grey
+       bar stuck flat to the bulkhead with no bracket or yoke, and its
+       "shadow" was a hard-edged filled ellipse that read as a punched hole
+       in the hull — no other shadow in the room has a crisp edge. Now a
+       cantilevered gallows bracket with a gusset, a real yoke and pin, and
+       a soft directional shadow like everything else casts. */
+    var lx6=90, ly6=430;
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(lx6-33,ly6-56,17,44);
+    var bpg=S.createLinearGradient(lx6-36,0,lx6-20,0);
+    bpg.addColorStop(0,offl?"#1a212b":"#39424f");bpg.addColorStop(1,offl?"#0d1118":"#171d26");
+    S.fillStyle=bpg;S.fillRect(lx6-36,ly6-58,17,44);
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(lx6-36,ly6-58,1.5,44);
+    [-50,-22].forEach(function(byo){
+      S.fillStyle="rgba(2,4,8,0.55)";S.beginPath();S.arc(lx6-27.5,ly6+byo+0.7,2.2,0,7);S.fill();
+      S.fillStyle="rgba(126,142,170,"+(0.3+0.22*lit)+")";S.beginPath();S.arc(lx6-27.5,ly6+byo,2,0,7);S.fill();});
+    S.fillStyle=offl?"#1b222c":"#333c49";S.fillRect(lx6-30,ly6-52,42,8);
+    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";S.fillRect(lx6-30,ly6-52,42,1.4);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(lx6-30,ly6-45.4,42,1.8);
+    S.fillStyle=offl?"#151b24":"#262e3a";
+    poly(S,[[lx6-30,ly6-44],[lx6-30,ly6-20],[lx6-13,ly6-44]]);S.fill();
+    S.save();S.filter="blur(5px)";
+    S.fillStyle="rgba(2,4,8,0.4)";
+    S.beginPath();S.ellipse(lx6+11,ly6+12,17,24,0.14,0,7);S.fill();
+    S.restore();
+    S.strokeStyle=offl?"rgba(90,100,116,0.7)":"rgba(150,166,196,"+(0.34+0.26*lit)+")";
+    S.lineWidth=2.6;S.beginPath();S.arc(lx6,ly6-13,9,Math.PI*1.12,Math.PI*1.88);S.stroke();
+    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(lx6-2.4,ly6-46,5,10);
+    S.fillStyle=offl?"#2a323e":"#454f5f";S.fillRect(lx6-3,ly6-47,5,10);
+    S.fillStyle="rgba(126,142,170,"+(0.34+0.24*lit)+")";
+    S.beginPath();S.arc(lx6,ly6-13,2.4,0,7);S.fill();
+    S.strokeStyle="rgba(6,10,16,0.9)";S.lineWidth=3.4;
+    S.beginPath();S.moveTo(lx6,ly6-44);S.lineTo(lx6,ly6-6);S.stroke();
+    var bgd=S.createLinearGradient(lx6-16,0,lx6+16,0);
+    bgd.addColorStop(0,kk(0.3+0.34*lit));bgd.addColorStop(0.3,kk(0.4+0.55*lit));
+    bgd.addColorStop(0.66,"rgba(96,74,38,"+(0.7+0.2*lit)+")");bgd.addColorStop(1,kk(0.24+0.24*lit));
+    S.fillStyle=bgd;S.beginPath();
+    S.moveTo(lx6-17,ly6+28);S.quadraticCurveTo(lx6-15,ly6-6,lx6,ly6-6);
+    S.quadraticCurveTo(lx6+15,ly6-6,lx6+17,ly6+28);S.closePath();S.fill();
+    S.fillStyle="rgba(6,10,16,0.9)";S.beginPath();S.ellipse(lx6,ly6+28,17,5,0,0,7);S.fill();   // mouth
+    S.strokeStyle=kk(0.75*lit);S.lineWidth=2;                                                  // lip
+    S.beginPath();S.ellipse(lx6,ly6+27,17,5,0,Math.PI*0.05,Math.PI*0.95);S.stroke();
+    S.fillStyle=kk(0.34*lit);S.beginPath();S.arc(lx6,ly6+31,3,0,7);S.fill();                   // clapper
+    S.fillStyle=kk(0.5*lit);S.fillRect(lx6-6,ly6-9,12,4);                                      // crown
+  })();
+
+  /* ---- COLOUR. The room graded itself so thoroughly to brass that the red
+     and green were exiled to the far edges and the picture read monochrome.
+     Three accents placed INSIDE the composition, each justified: an alarm
+     lamp that is the only saturated red near the subject, a green-lit
+     gyro repeater, and a cold blue signal lamp on the starboard console. */
+  // alarm lamp on a bracket, port of the unit
+  (function(){
+    /* ROUND 6 · LOOP 4 — the alarm. A flat red circle with a tab on top and
+       no bezel, housing or mounting ring, when every other wall fitting in
+       the room has a riveted frame: a fresh reviewer could not tell whether
+       it was a klaxon, an E-stop or a bell push. Now a rotating beacon —
+       backplate, bolts, a ribbed fresnel lens and a guard cage, which is
+       what makes the shape unambiguous. */
+    var ax2=418, ay2=252, AR=14;
+    S.fillStyle="rgba(2,4,8,0.5)";
+    S.beginPath();S.ellipse(ax2+5,ay2+7,AR+6,AR+7,0,0,7);S.fill();
+    S.fillStyle=offl?"#161c25":"#2b3340";rrS(ax2-15,ay2-22,30,17,2);S.fill();
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(ax2-15,ay2-22,30,1.3);
+    [-9,9].forEach(function(bo){
+      S.fillStyle="rgba(126,142,170,"+(0.32+0.22*lit)+")";
+      S.beginPath();S.arc(ax2+bo,ay2-14,1.9,0,7);S.fill();});
+    var abg=S.createLinearGradient(ax2-AR,0,ax2+AR,0);
+    abg.addColorStop(0,offl?"#10151d":"#232a35");
+    abg.addColorStop(0.35,offl?"#1a212b":"#3b4451");
+    abg.addColorStop(1,offl?"#0a0d13":"#141a22");
+    S.fillStyle=abg;S.fillRect(ax2-AR,ay2-6,AR*2,9);
+    var lp=offl?0:(0.45+0.55*Math.abs(Math.sin(t*1.6)));
+    var lng=S.createRadialGradient(ax2-4,ay2+5,1,ax2,ay2+8,AR);
+    lng.addColorStop(0,offl?"rgba(96,50,44,0.7)":"rgba(255,150,130,"+(0.95*lp)+")");
+    lng.addColorStop(0.5,offl?"rgba(72,38,34,0.7)":"rgba(232,78,54,"+(0.9*lp)+")");
+    lng.addColorStop(1,offl?"rgba(44,24,22,0.8)":"rgba(150,34,24,"+(0.85*lp)+")");
+    S.fillStyle=lng;S.beginPath();S.arc(ax2,ay2+8,AR,Math.PI,Math.PI*2);S.fill();
+    S.fillRect(ax2-AR,ay2+8,AR*2,5);
+    S.strokeStyle="rgba(2,4,8,0.35)";S.lineWidth=1;
+    for(var lr=1;lr<5;lr++){S.beginPath();S.arc(ax2,ay2+8,AR*(lr/5),Math.PI,Math.PI*2);S.stroke();}
+    S.strokeStyle="rgba(6,10,16,0.85)";S.lineWidth=2;
+    for(var cg8=-2;cg8<=2;cg8++){
+      S.beginPath();S.moveTo(ax2+cg8*AR*0.45,ay2+13);
+      S.quadraticCurveTo(ax2+cg8*AR*0.5,ay2-7,ax2+cg8*AR*0.3,ay2-8);S.stroke();}
+    S.strokeStyle="rgba(6,10,16,0.85)";S.lineWidth=2.2;
+    S.beginPath();S.arc(ax2,ay2+8,AR+2,Math.PI*1.06,Math.PI*1.94);S.stroke();
+    S.strokeStyle="rgba(178,196,224,"+(0.16*lit)+")";S.lineWidth=0.9;
+    S.beginPath();S.arc(ax2,ay2+8,AR+2,Math.PI*1.06,Math.PI*1.94);S.stroke();
+    S.fillStyle=offl?"#12171f":"#262e3a";S.fillRect(ax2-AR-3,ay2+12,AR*2+6,4);
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(ax2-AR-3,ay2+15.4,AR*2+6,1.6);
+    if(!offl){S.save();S.globalCompositeOperation="lighter";
+      var ag2=S.createRadialGradient(ax2,ay2+8,2,ax2,ay2+8,70);
+      ag2.addColorStop(0,"rgba(228,74,52,"+(0.3*lp)+")");ag2.addColorStop(1,"rgba(228,74,52,0)");
+      S.fillStyle=ag2;S.beginPath();S.arc(ax2,ay2+8,70,0,7);S.fill();S.restore();}
+  })();
+  // blue signal lamp on the starboard console
+  (function(){
+    /* ROUND 6 · LOOP 4 — the last orphan. A 14x22 blue rectangle standing
+       in mid-air above the chart rack, attached to nothing; a fresh
+       reviewer logged it as "a blue chip, reads as a rendering artifact".
+       It is a call lamp, so it belongs ON the console bank it is named
+       after, in a hooded bezel at the bank's top edge. */
+    var bx4=1168, by4=GYS-112;
+    S.fillStyle="rgba(2,4,8,0.5)";rrS(bx4-13,by4+2,28,24,3);S.fill();
+    var hbg9=S.createLinearGradient(0,by4,0,by4+22);
+    hbg9.addColorStop(0,offl?"#1a212b":"#39424f");hbg9.addColorStop(1,offl?"#0c1017":"#161c25");
+    S.fillStyle=hbg9;rrS(bx4-14,by4,28,22,3);S.fill();
+    S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(bx4-12,by4,24,1.4);
+    S.strokeStyle="rgba(2,4,8,0.6)";S.lineWidth=1.2;rrS(bx4-14,by4,28,22,3);S.stroke();
+    S.fillStyle=offl?"#232a35":"#4a5464";
+    poly(S,[[bx4-15,by4+3],[bx4+15,by4+3],[bx4+11,by4+9],[bx4-11,by4+9]]);S.fill();
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(bx4-11,by4+9,22,2);
+    S.fillStyle=offl?"rgba(34,48,66,0.8)":"rgba(10,20,32,0.9)";S.fillRect(bx4-9,by4+10,18,9);
+    if(!offl){var bp2=0.4+0.6*Math.abs(Math.sin(t*0.8+1.4));
+      var blg9=S.createLinearGradient(0,by4+10,0,by4+19);
+      blg9.addColorStop(0,"rgba(150,204,255,"+(0.9*bp2)+")");
+      blg9.addColorStop(1,"rgba(72,140,214,"+(0.8*bp2)+")");
+      S.fillStyle=blg9;S.fillRect(bx4-9,by4+10,18,9);
+      S.fillStyle="rgba(220,240,255,"+(0.4*bp2)+")";S.fillRect(bx4-7,by4+11,14,1.6);
+      S.save();S.globalCompositeOperation="lighter";
+      var bg5=S.createRadialGradient(bx4,by4+14,2,bx4,by4+14,46);
+      bg5.addColorStop(0,"rgba(96,168,236,"+(0.24*bp2)+")");bg5.addColorStop(1,"rgba(96,168,236,0)");
+      S.fillStyle=bg5;S.beginPath();S.arc(bx4,by4+14,46,0,7);S.fill();S.restore();}
+    S.save();S.textAlign="center";S.font="700 6px ui-monospace,Menlo,monospace";
+    S.fillStyle="rgba(178,196,224,"+(0.3*lit)+")";S.fillText("CALL",bx4,by4+25.5);S.restore();
+  })();
+
   /* atmosphere. Two passes: a depth grade that puts a thin veil over
      everything far from the camera, and volumetric shafts under each lamp
      so the air itself is visible. Together they are what stop a room of
@@ -1619,9 +1929,66 @@ function drawRoom(t,st){
       S.beginPath();S.arc(mfx,mfy,0.9,0,7);S.fill();}
     S.restore();}
 }
+var PILX=[34,1246];              // the aperture's two pilasters
+/* ROUND 6 · LOOP 1 — THE ROOM BECOMES A BOX.
+   Every room in the fleet — builder, reviewer, triage — is an APERTURE: a
+   back panel held between two pilasters under a header, with a truss above
+   and darker space all round, so the room sits INSIDE something. This one
+   bled edge to edge, which is the real reason its props read as floating on
+   a backdrop rather than installed in a place: there was no structure for
+   them to be installed IN. `roomFrame` drew a 26px black bar. */
 function roomFrame(lit){
-  S.fillStyle="#080b11";S.fillRect(0,0,SW,26);
-  S.fillStyle="rgba(150,166,194,"+(0.05*lit)+")";S.fillRect(0,25,SW,1.4);
+  var vd=S.createLinearGradient(0,0,0,86);
+  vd.addColorStop(0,"#020407");vd.addColorStop(1,"#05080d");
+  S.fillStyle=vd;S.fillRect(0,0,SW,86);
+  S.strokeStyle="rgba(150,168,200,"+(0.075*lit)+")";S.lineWidth=1.6;
+  S.beginPath();S.moveTo(0,18);S.lineTo(SW,18);S.moveTo(0,50);S.lineTo(SW,50);S.stroke();
+  S.strokeStyle="rgba(150,168,200,"+(0.055*lit)+")";S.lineWidth=1.3;
+  S.beginPath();
+  for(var zz=0;zz<SW+40;zz+=40){S.moveTo(zz,50);S.lineTo(zz+20,18);S.lineTo(zz+40,50);}
+  S.stroke();
+  var hd=S.createLinearGradient(0,54,0,90);
+  hd.addColorStop(0,"#2b3340");hd.addColorStop(0.22,"#1e242e");hd.addColorStop(1,"#11161e");
+  S.fillStyle=hd;S.fillRect(0,54,SW,36);
+  S.fillStyle="rgba(206,222,248,"+(0.2*lit)+")";S.fillRect(0,54,SW,1.6);
+  S.fillStyle="rgba(2,4,8,0.72)";S.fillRect(0,86,SW,4);
+  for(var hb=28;hb<SW;hb+=52){
+    S.fillStyle="rgba(2,4,8,0.55)";S.beginPath();S.arc(hb,72.8,2.6,0,7);S.fill();
+    S.fillStyle="rgba(128,144,172,"+(0.3+0.22*lit)+")";S.beginPath();S.arc(hb,72,2.4,0,7);S.fill();
+    S.fillStyle="rgba(212,228,250,"+(0.22*lit)+")";S.beginPath();S.arc(hb-0.7,71.3,0.9,0,7);S.fill();}
+  PILX.forEach(function(px,pi){
+    var w=13, inward=pi?-1:1;
+    S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(px-w+inward*5,86,w*2,GYS+34-86);
+    var pg=S.createLinearGradient(px-w,0,px+w,0);
+    pg.addColorStop(0,pi?"#161c25":"#39424f");
+    pg.addColorStop(0.42,"#232a35");
+    pg.addColorStop(1,pi?"#3b4451":"#141a22");
+    S.fillStyle=pg;S.fillRect(px-w,86,w*2,GYS+34-86);
+    S.fillStyle="rgba(206,222,248,"+(0.22*lit)+")";
+    S.fillRect(pi?px+w-1.6:px-w,86,1.6,GYS+34-86);
+    for(var bp=112;bp<GYS+10;bp+=76){
+      S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(px-w+1.4,bp+2,w*2-2.8,22);
+      S.fillStyle="rgba(28,34,44,0.95)";S.fillRect(px-w+1.4,bp,w*2-2.8,22);
+      S.fillStyle="rgba(190,208,236,"+(0.12*lit)+")";S.fillRect(px-w+1.4,bp,w*2-2.8,1.2);
+      [6,16].forEach(function(byo){
+        S.fillStyle="rgba(132,148,176,"+(0.28+0.2*lit)+")";
+        S.beginPath();S.arc(px,bp+byo,1.8,0,7);S.fill();});}
+    S.fillStyle="rgba(30,37,47,0.95)";
+    poly(S,[[px+inward*w,90],[px+inward*(w+26),90],[px+inward*w,124]]);S.fill();
+    S.fillStyle="rgba(196,214,242,"+(0.1*lit)+")";
+    poly(S,[[px+inward*w,90],[px+inward*(w+26),90],[px+inward*(w+24),92],[px+inward*w,92]]);S.fill();
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(px-w-7,GYS+26,w*2+14,10);
+    S.fillStyle="#232a35";S.fillRect(px-w-6,GYS+22,w*2+12,12);
+    S.fillStyle="rgba(206,222,248,"+(0.16*lit)+")";S.fillRect(px-w-6,GYS+22,w*2+12,1.4);});
+  var lf=S.createLinearGradient(PILX[0]+13,0,PILX[0]+40,0);
+  lf.addColorStop(0,"rgba(2,4,8,0.6)");lf.addColorStop(1,"rgba(2,4,8,0)");
+  S.fillStyle=lf;S.fillRect(PILX[0]+13,86,27,GYS-86);
+  var rf2=S.createLinearGradient(PILX[1]-13,0,PILX[1]-40,0);
+  rf2.addColorStop(0,"rgba(2,4,8,0.6)");rf2.addColorStop(1,"rgba(2,4,8,0)");
+  S.fillStyle=rf2;S.fillRect(PILX[1]-40,86,27,GYS-86);
+  var tf=S.createLinearGradient(0,90,0,124);
+  tf.addColorStop(0,"rgba(2,4,8,0.66)");tf.addColorStop(1,"rgba(2,4,8,0)");
+  S.fillStyle=tf;S.fillRect(0,90,SW,34);
 }
 function vignette(){
   var vg2=S.createRadialGradient(UX,340,240,UX,340,780);
