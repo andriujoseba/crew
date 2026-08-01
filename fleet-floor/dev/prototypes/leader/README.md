@@ -1,31 +1,37 @@
-# leader — "CAPTAIN" (LD-01) · prototype A
+# leader — "ADMIRAL" (LD-01) · prototype A
 
 Standing-look prototype for the **leader (foreman) agent** of crew#225. The
 first **role droid**: its identity is the chair, not a vendor — so it wears
-no vendor colour anywhere. Command brass and a crimson sash are the role's
-own palette.
+no vendor colour anywhere. Antique command brass is the role's palette.
 
-Open `proto-a-captain.html` in a browser (working / idle / offline buttons
+Open `proto-a-admiral.html` in a browser (working / idle / offline buttons
 under the canvas; `?state=X&t=N` renders a deterministic still).
 
 ## The concept
 
-A captain at **parade rest**: legs planted shoulder-width, arms clasped
+An admiral at **parade rest**: legs planted shoulder-width, arms clasped
 behind the back, chin up. The leader never writes code, so it carries no
 tools — the silhouette is chest, boards and cap.
 
-- **The cap is armour, not a hat** — the crown, the brass-corded band, the
-  laurel-and-star crest and the glossy visor bill are all helmet plates.
-  It is the one shape that reads LEADER at grid-cell size.
-- **Greatcoat torso** — double row of brass closure studs, service ribbons
-  over the left breast, a crimson command sash shoulder-to-hip, brass
-  buckle with the command star.
-- **Stepped shoulder boards** with four rank bars riding squared pauldrons.
-- **War-veteran grammar** (the fleet's standing art rule): squared jaw
-  guard with vent grille, cheek plates with a scar, gouged coat hem,
-  chipped cap crown, crimson officer stripes down the trouser seams.
-- **Offline it stays at attention** — a captain does not slump. The crest
-  dies, the optics go dark, the service beacon rakes the cap.
+Operator direction, revision one: the crimson command sash read *dictator*
+and is gone. Rank now lives where a flag officer carries it — the cap, the
+boards, and gold oak-leaf filigree on the bill — and the surface carries
+the wars instead:
+
+- **The cap is armour, not a hat** — crown, brass-corded band and
+  laurel-and-star crest are helmet plates; the glossy bill wears the
+  admiral's scrambled eggs and has a **notch shot out of its edge**
+- **Hard slit optics** under the bill, lids cut on the glare angle; a
+  **crack runs from the bill notch through the visor glass to the cheek**
+- Greatcoat torso: double brass closure studs, **eight dulled service
+  ribbons (one half torn away)**, a bent-wing breast crest, and a
+  **bead-welded replacement plate** that doesn't quite match the coat
+- Stepped shoulder boards with four rank bars — the **left board's brass
+  edge broken by an old hit**; grime weeps from the pauldron bolts
+- Scorched coat hem, patched thigh armour, scuffed boot braid, chipped
+  boots — worn gold trouser stripes in place of the old crimson
+- **Offline it stays at attention** — an admiral does not slump; the
+  crest dies, the optics go dark, the service beacon rakes the cap
 
 Written in the fleet-floor grammar — canvas 2D, `plate()`/rim/emissive
 buffers, no assets, no deps — so it ports into a `buildLeader()` in

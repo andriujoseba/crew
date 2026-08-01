@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>CAPTAIN — leader prototype A</title>
+<title>ADMIRAL — leader prototype A</title>
 <style>
   html,body{margin:0;background:#04060a;height:100%;font-family:ui-monospace,Menlo,Consolas,monospace}
   #wrap{display:flex;flex-direction:column;align-items:center;padding:18px 0}
@@ -22,29 +22,33 @@
     <button data-st="idle">idle</button>
     <button data-st="offline">offline</button>
   </div>
-  <div id="cap">CAPTAIN (LD-01) — role droid, not a vendor · parade rest · the cap is armour, not a hat</div>
+  <div id="cap">ADMIRAL (LD-01) — role droid, not a vendor · parade rest · the cap is armour, not a hat</div>
 </div>
 <script>
 /* ============================================================================
-   LEADER PROTO A — "CAPTAIN" (LD-01)                              crew#225
+   LEADER PROTO A — "ADMIRAL" (LD-01)                              crew#225
 
    The first ROLE droid: tied to the leader's chair, not to a vendor. The
-   brief: a captain — military leader cap as part of the assembly, not a
-   real hat; the crown and the glossy visor bill are helmet plates. The
-   leader never writes code, so it carries no tools: it stands at PARADE
-   REST — legs planted shoulder-width, arms clasped behind the back so the
-   silhouette is all chest, boards and cap. Fleet grammar throughout:
-   plate()/rim/emissive buffers, no assets, no deps.
+   brief evolved from captain to ADMIRAL — the crimson sash read dictator
+   and is gone; rank lives in the cap, the boards and the bill filigree
+   now. The leader never writes code, so it carries no tools: it stands
+   at PARADE REST — legs planted shoulder-width, arms clasped behind the
+   back so the silhouette is all chest, boards and cap. Fleet grammar
+   throughout: plate()/rim/emissive buffers, no assets, no deps.
 
      · peaked cap assembly — armoured crown overhanging a brass-banded
-       headband, laurel-and-star crest dead centre, glossy black bill
-       shading the optics. The one shape that reads LEADER at grid size.
-     · greatcoat torso — double row of brass closure studs, service
-       ribbons over the left breast, crimson command sash shoulder-to-hip
-     · squared pauldrons with stepped shoulder boards, four rank bars
-     · war-veteran grammar: jaw guard, cheek gouge, chipped crown, scuffs
-     · offline it stays at attention — a captain does not slump — but the
-       crest dies, the optics go dark, the service beacon rakes the cap
+       headband, laurel-and-star crest, gold oak-leaf filigree on the
+       glossy bill (the admiral's scrambled eggs), a notch shot out of
+       the bill's edge. The one shape that reads LEADER at grid size.
+     · greatcoat torso — double row of brass closure studs, eight
+       service ribbons, a welded patch plate where armour was replaced
+     · squared pauldrons with stepped shoulder boards, four rank bars,
+       the left board's brass edge broken by an old hit
+     · war-veteran everywhere: hard slit optics under the bill, a crack
+       running bill-to-cheek through the visor glass, grime weeping from
+       bolts, scorched hem, patched thigh, chipped boots
+     · offline it stays at attention — an admiral does not slump — but
+       the crest dies, the optics go dark, the beacon rakes the cap
    ========================================================================== */
 var cv=document.getElementById("cv"), S=cv.getContext("2d");
 var W=520,H=640;
@@ -81,11 +85,13 @@ function drawUnit(t,st){
   // steel: cool officer grey-blue, a shade cleaner than a builder's plate
   var sT="#2b3546",sM="#151c29",sB="#090d14",ed="#333f54",eH="#48566e",rc="#05080e";
   if(offl){sT="#1c222d";sM="#0e121a";sB="#06090f";ed="#232a36";eH="#2b3342";}
-  // command brass + crimson sash — the role's colours, no vendor anywhere
-  var BR=offl?[76,80,90]:[216,169,78], BRH=offl?[118,122,132]:[255,217,140];
-  var CR=offl?[64,58,62]:[168,44,58], CRH=offl?[96,88,92]:[224,92,104];
+  // antique command brass — the role's colour, no vendor anywhere
+  var BR=offl?[76,80,90]:[194,150,72], BRH=offl?[118,122,132]:[236,200,128];
   function br(a){return "rgba("+BR[0]+","+BR[1]+","+BR[2]+","+a+")";}
   function brh(a){return "rgba("+BRH[0]+","+BRH[1]+","+BRH[2]+","+a+")";}
+  // grime weeping from a bolt: albedo, so it does not dim with power state
+  function weep(x,y,len){g.fillStyle="rgba(66,46,26,0.32)";
+    poly(g,[[x-1.2,y+2],[x+1.2,y+2],[x+0.6,y+len],[x-0.6,y+len]]);g.fill();}
   var pulse=offl?0:(work?(0.6+0.24*Math.sin(t*5)):(0.36+0.12*Math.sin(t*1.8)));
   var breath=(offl)?0:Math.sin(t*1.3)*1.8;
 
@@ -118,10 +124,16 @@ function drawUnit(t,st){
     bolt(g,lx,436,2.6,offl?0.06:0.22);
     // thigh
     plate(g,[[lx-22,382],[lx+22,382],[lx+20,430],[lx-20,430]],sM,sB,ed);
-    // crimson trouser stripe down the outer seam — officer's stripe
-    pl(g,lx+sg*17,386,lx+sg*20,GY-40,"rgba("+CR[0]+","+CR[1]+","+CR[2]+",0.85)",3);
-    pl(g,lx+sg*17,386,lx+sg*20,GY-40,"rgba("+CRH[0]+","+CRH[1]+","+CRH[2]+",0.4)",1);
+    // gold trouser stripe down the outer seam — flag-rank braid, worn dull
+    pl(g,lx+sg*17,386,lx+sg*20,GY-40,br(0.7),2.6);
+    pl(g,lx+sg*17,386,lx+sg*20,GY-40,brh(0.28),1);
+    // the braid is scuffed through mid-shin on the left leg
+    if(sg<0){g.fillStyle=sM;g.fillRect(lx+sg*20-1.6,468,3.2,10);}
   });
+  // boot chips + old deck-scrape across the left toe
+  g.fillStyle="rgba(206,220,242,"+(offl?0.08:0.2)+")";
+  g.fillRect(cx-52,GY-30,4,1.6);g.fillRect(cx+18,GY-38,3,1.4);
+  pl(g,cx-44,GY-16,cx-30,GY-18.5,"rgba(198,216,246,"+(offl?0.04:0.1)+")",1.1);
   // pelvis block between the thighs
   plate(g,[[cx-30,372],[cx+30,372],[cx+24,404],[cx-24,404]],sM,sB,ed);
   cavity(g,cx-24,372,48,8,0.5);
@@ -150,21 +162,24 @@ function drawUnit(t,st){
       var sg3=g.createRadialGradient(cx+bxx-1.4,byy-1.6,0.4,cx+bxx,byy,4.4);
       sg3.addColorStop(0,brh(offl?0.25:0.95));sg3.addColorStop(1,br(offl?0.1:0.5));
       g.fillStyle=sg3;g.beginPath();g.arc(cx+bxx,byy,3.6,0,7);g.fill();});}
-  // crimson command sash: right shoulder to left hip, brass-edged
-  var sash=[[cx+52,TY+8],[cx+74,TY+16],[cx-40,352+breath*0.4],[cx-58,344+breath*0.4]];
-  var sg4=g.createLinearGradient(cx+60,TY,cx-50,350);
-  sg4.addColorStop(0,"rgba("+CRH[0]+","+CRH[1]+","+CRH[2]+",0.95)");sg4.addColorStop(1,"rgba("+CR[0]+","+CR[1]+","+CR[2]+",0.95)");
-  poly(g,sash);g.fillStyle=sg4;g.fill();g.strokeStyle="rgba(4,8,14,0.6)";g.lineWidth=1;g.stroke();
-  pl(g,cx+53,TY+9,cx-57,345+breath*0.4,br(0.8),1.4);                  // brass edge cords
-  pl(g,cx+73,TY+17,cx-41,353+breath*0.4,br(0.8),1.4);
-  // service ribbons over the left breast (viewer left), 2 rows of 3
-  for(var rb=0;rb<6;rb++){var rx=cx-62+(rb%3)*15,ry=TY+40+Math.floor(rb/3)*9;
-    var rcls=[[168,44,58],[216,169,78],[70,110,160],[92,128,92],[150,80,150],[190,190,200]][rb];
-    g.fillStyle="rgba("+rcls[0]+","+rcls[1]+","+rcls[2]+","+(offl?0.25:0.8)+")";
-    g.fillRect(rx,ry,13,6);pl(g,rx,ry+6,rx+13,ry+6,"rgba(3,6,11,0.7)",1);}
-  // breast crest on the right pec: small brass wing bar
-  plate(g,[[cx+34,TY+42],[cx+62,TY+42],[cx+60,TY+50],[cx+36,TY+50]],brh(0.8),br(0.6),null);
-  cavity(g,cx-62,TY+58,124,8,0.35);
+  // service ribbons over the left breast (viewer left) — two rows of four,
+  // colours dulled by service; one ribbon half torn away
+  for(var rb=0;rb<8;rb++){var rx=cx-66+(rb%4)*15,ry=TY+40+Math.floor(rb/4)*9;
+    var rcls=[[150,52,60],[176,140,70],[70,104,148],[88,116,88],[134,80,134],[168,168,178],[104,74,50],[60,86,120]][rb];
+    var rw2=(rb===5)?8:13; // the torn one
+    g.fillStyle="rgba("+rcls[0]+","+rcls[1]+","+rcls[2]+","+(offl?0.22:0.7)+")";
+    g.fillRect(rx,ry,rw2,6);pl(g,rx,ry+6,rx+rw2,ry+6,"rgba(3,6,11,0.7)",1);}
+  // breast crest on the right pec: small brass wing bar, one wing bent dark
+  plate(g,[[cx+34,TY+42],[cx+62,TY+42],[cx+60,TY+50],[cx+36,TY+50]],brh(0.75),br(0.55),null);
+  poly(g,[[cx+56,TY+42],[cx+62,TY+42],[cx+60,TY+50],[cx+55,TY+50]]);g.fillStyle="rgba(24,20,12,0.75)";g.fill();
+  cavity(g,cx-66,TY+58,132,8,0.35);
+  /* the REPAIR: a replacement plate welded over the right panel — close in
+     tone but not the coat's own steel, bead stitching around it */
+  plate(g,[[cx+26,TY+80],[cx+54,TY+76],[cx+58,TY+104],[cx+30,TY+108]],"#182130","#0a0e16","#242b39");
+  g.setLineDash([2.2,2]);g.strokeStyle="rgba(150,164,190,"+(offl?0.06:0.13)+")";g.lineWidth=1.4;
+  poly(g,[[cx+25,TY+79],[cx+55,TY+75],[cx+59,TY+105],[cx+29,TY+109]]);g.stroke();g.setLineDash([]);
+  bolt(g,cx+30,TY+83,1.8,offl?0.04:0.13);bolt(g,cx+54,TY+101,1.8,offl?0.04:0.13);
+  weep(cx+30,TY+83,10);
   // battle history on the coat skirt: a short gouge low on the hem
   poly(g,[[cx+40,344+breath*0.4],[cx+56,338+breath*0.4],[cx+57,342+breath*0.4],[cx+42,348+breath*0.4]]);
   g.fillStyle="rgba(2,4,8,0.95)";g.fill();
@@ -185,10 +200,24 @@ function drawUnit(t,st){
     for(var rk=0;rk<4;rk++){var fx=px-sg*(26-rk*13);
       pl(g,fx,py-19+ (sg>0? -rk*1.6: rk*1.6)*0,fx+sg*6,py-20,br(offl?0.2:0.85),2.2);}
     bolt(g,px+sg*24,py+2,2.6,offl?0.06:0.22);
+    weep(px+sg*24,py+2,11);
     // panel step lines on the pauldron face — armour, not epaulette hair
     pl(g,px-sg*16,py+12,px+sg*20,py+8,"rgba(4,8,14,0.5)",1.4);
     pl(g,px-sg*18,py+22,px+sg*16,py+19,"rgba(4,8,14,0.4)",1.2);
+    // the left board's brass edge is broken mid-span — an old hit
+    if(sg<0){g.fillStyle=sB;g.fillRect(px-4,py-21,6,4.4);
+      g.fillStyle="rgba(206,220,242,"+(offl?0.1:0.3)+")";g.fillRect(px+2,py-20.4,1.8,1.6);}
   });
+  // scorch up the left coat skirt — it has stood close to something burning
+  var sco2=g.createLinearGradient(0,322+breath*0.4,0,356+breath*0.4);
+  sco2.addColorStop(0,"rgba(8,5,3,0)");sco2.addColorStop(1,"rgba(8,5,3,0.42)");
+  g.fillStyle=sco2;poly(g,[[cx-60,322+breath*0.4],[cx-14,322+breath*0.4],[cx-20,356+breath*0.4],[cx-62,356+breath*0.4]]);g.fill();
+  // patched thigh armour on the right leg, bead-welded like the chest
+  plate(g,[[cx+24,394],[cx+45,392],[cx+47,411],[cx+26,413]],"#172030","#0a0e15","#232a38");
+  g.setLineDash([2.2,2]);g.strokeStyle="rgba(150,164,190,"+(offl?0.05:0.12)+")";g.lineWidth=1.3;
+  poly(g,[[cx+23,393],[cx+46,391],[cx+48,412],[cx+25,414]]);g.stroke();g.setLineDash([]);
+  bolt(g,cx+28,397,1.6,offl?0.04:0.12);
+  weep(cx+28,397,9);
 
   /* ---- 5 · COLLAR + NECK ---- */
   plate(g,[[cx-40,TY-16],[cx-30,TY-30],[cx+30,TY-30],[cx+40,TY-16],[cx+34,TY+2],[cx-34,TY+2]],sM,sB,ed); // high collar
@@ -223,10 +252,14 @@ function drawUnit(t,st){
   }else{
     var gaze=work?0:Math.round(Math.sin(t*0.5)*4);
     [-11,11].forEach(function(dx){var ox=cx+dx+gaze;
-      [RB,RE].forEach(function(c){var eg=c.createRadialGradient(ox,vs.y+4.5,0.4,ox,vs.y+4.5,7);
-        eg.addColorStop(0,brh(0.9+0.1*pulse));eg.addColorStop(0.5,br(0.5*pulse+0.2));eg.addColorStop(1,br(0));
-        c.fillStyle=eg;c.beginPath();c.arc(ox,vs.y+4.5,7,0,7);c.fill();});
-      [RB,RE].forEach(function(c){c.fillStyle=brh(0.95);rr(c,ox-2.4,vs.y+2.2,4.8,4.6,1.4);c.fill();});});
+      [RB,RE].forEach(function(c){var eg=c.createRadialGradient(ox,vs.y+4.8,0.4,ox,vs.y+4.8,5);
+        eg.addColorStop(0,brh(0.8+0.1*pulse));eg.addColorStop(0.5,br(0.4*pulse+0.16));eg.addColorStop(1,br(0));
+        c.fillStyle=eg;c.beginPath();c.arc(ox,vs.y+4.8,5,0,7);c.fill();});
+      // hard flat slits, not orbs — the stare, lids cut on the glare angle
+      [RB,RE].forEach(function(c){c.fillStyle=brh(0.95);rr(c,ox-3.6,vs.y+3.2,7.2,3.2,1);c.fill();});
+      var inn=dx<0?1:-1; // inner corner dips toward the nose: the scowl
+      [RB,RE].forEach(function(c){c.fillStyle="rgba(3,6,11,0.95)";
+        poly(c,[[ox-4*inn,vs.y+2.6],[ox+4.2*inn,vs.y+2.6],[ox+4.2*inn,vs.y+4.6]]);c.fill();});});
   }
   /* THE CAP ASSEMBLY — all armour.
      band: dark drum around the skull, brass cords top and bottom.
@@ -242,6 +275,14 @@ function drawUnit(t,st){
   g.fillStyle=billg;g.fill();
   g.strokeStyle="rgba(200,216,242,"+(offl?0.1:0.3)+")";g.lineWidth=1.1;   // the gloss catch
   g.beginPath();g.moveTo(cx-26,capy+0.5);g.quadraticCurveTo(cx,capy+9,cx+26,capy+0.5);g.stroke();
+  // oak-leaf filigree along the bill — the admiral's scrambled eggs, worn
+  [[-15.5,1.8],[-5.5,2.9],[5.5,2.9],[15.5,1.8]].forEach(function(lf){
+    var lx2=cx+lf[0],ly2=capy+lf[1];
+    pl(g,lx2-1.8,ly2+1,lx2,ly2-0.8,br(offl?0.16:0.5),1);
+    pl(g,lx2,ly2-0.8,lx2+1.8,ly2+1,br(offl?0.16:0.5),1);});
+  // the notch shot out of the bill's right edge
+  poly(g,[[cx+20,capy+2.4],[cx+26.5,capy+0.6],[cx+23,capy+4.4]]);g.fillStyle="#04060a";g.fill();
+  pl(g,cx+20,capy+2.4,cx+23,capy+4.4,"rgba(198,216,246,"+(offl?0.1:0.3)+")",1.1);
   cavity(g,vs.x-4,capy+2,vs.w+8,7,0.6);                                    // bill shades the visor
   // band
   plate(g,[[cx-28,capy-18],[cx+28,capy-18],[cx+30,capy-2],[cx-30,capy-2]],sM,sB,ed);
@@ -259,6 +300,11 @@ function drawUnit(t,st){
   // chipped crown edge — the cap has been through it
   g.fillStyle="rgba(206,220,242,"+(offl?0.1:0.26)+")";
   g.fillRect(cx-40,capy-24,4,1.6);g.fillRect(cx+22,capy-31,3,1.4);
+  /* the crack that runs from the bill notch down through the visor glass
+     and onto the cheek plate — the face's war record */
+  g.strokeStyle="rgba(190,205,228,"+(offl?0.08:0.26)+")";g.lineWidth=0.9;
+  g.beginPath();g.moveTo(cx+22,capy+4.4);g.lineTo(cx+18,vs.y+3);
+  g.lineTo(cx+21,vs.y+8);g.lineTo(cx+16,hy+5);g.stroke();
 
   /* ---- 7 · offline: attention held, beacon rakes cap and boards ---- */
   if(offl){var bp=0.55;
