@@ -159,7 +159,10 @@ if [ -e /tmp/floor-pwned ]; then fail "message: prompt cannot inject" "/tmp/floo
 else ok "message: prompt cannot inject"; fi
 if grep -q 'floor-pwned' "$FLOOR_CALLS"; then fail "message: prompt never in argv" "found in call log"
 else ok "message: prompt never in argv"; fi
-t "message: prompt delivered via stdin" "$INJECT" "$(cat "$FLOOR_STATE/ff-working.prompt" 2>/dev/null)"
+t "message: envelope and prompt delivered via stdin" \
+  "$(cat "$FLOOR/../shared/prompts/fragment-floor-envelope.txt")
+$INJECT" \
+  "$(cat "$FLOOR_STATE/ff-working.prompt" 2>/dev/null)"
 
 t "cmd: unknown box refused"    400 "$(status POST /api/command '{"action":"pause","box":"nope"}')"
 t "cmd: unknown action refused" 400 "$(status POST /api/command '{"action":"rm -rf","box":"ff-working"}')"
@@ -425,7 +428,7 @@ for f in "$FLOOR_STATE"/ff-working.prompt.*; do
     continue
   fi
   _log=$(find "$CM_HOME/duty/logs" -name "*operator-floor-$_tok.log" 2>/dev/null | head -1)
-  _got="$(sed -n 's/^PROMPT=\[\(.*\)\]$/\1/p' "$_log")"
+  _got="$(sed '1s/^PROMPT=\[//; $s/]$//' "$_log")"
   [ "$_got" = "$_staged" ] || CM_BAD="$CM_BAD token=$_tok:staged[$_staged]!=delivered[$_got]"
 done
 if [ -z "$CM_BAD" ] && [ "$CM_STAGED" -eq 5 ]; then

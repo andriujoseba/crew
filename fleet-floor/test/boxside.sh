@@ -117,14 +117,19 @@ BS_PROMPT='check PR #40 "now"; rm -rf /tmp/floor-boxside-pwned; $(id) `whoami` &
 # The prompt path carries the collector's per-request token now, so the
 # standalone run has to mint one the same way and write to the matching name.
 BS_TOK="boxsidetest$$"
-printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
 
 BS_SH="$BS_TMP/message.sh"
-BS_SERVER="$BS_FLOOR/server" BS_TOK="$BS_TOK" python3 - "$BS_SH" <<'PY'
+BS_PROMPT_FILE="$BS_M/duty/.floor-prompt.$BS_TOK"
+BS_SERVER="$BS_FLOOR/server" BS_TOK="$BS_TOK" BS_PROMPT="$BS_PROMPT" \
+  BS_PROMPT_FILE="$BS_PROMPT_FILE" \
+  python3 - "$BS_SH" "$BS_TMP/expected-floor-prompt" <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
+prompt = floor.floor_message_prompt(os.environ["BS_PROMPT"])
 open(sys.argv[1], "w").write(floor.MESSAGE_SH.replace("__TOK__", os.environ["BS_TOK"]))
+open(sys.argv[2], "w").write(prompt)
+open(os.environ["BS_PROMPT_FILE"], "w").write(prompt)
 PY
 
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
@@ -149,7 +154,9 @@ fi
 # which is what stops two same-second sessions overwriting each other.
 BS_LOG="$(cat "$BS_M"/duty/logs/*operator-floor*.log 2>/dev/null)"
 t "message: prompt arrives as ONE argv element" "ARGC=3" "$(printf '%s\n' "$BS_LOG" | sed -n 's/^\(ARGC=[0-9]*\)$/\1/p')"
-t "message: prompt arrives byte-identical" "$BS_PROMPT" "$(printf '%s\n' "$BS_LOG" | sed -n 's/^LAST=//p')"
+t "message: envelope precedes operator text byte-identically" \
+  "$(cat "$BS_TMP/expected-floor-prompt")" \
+  "$(printf '%s\n' "$BS_LOG" | sed '1d; 2s/^LAST=//')"
 
 if grep -q 'SESSION START kind=operator key=floor' "$BS_M/duty/duty.log"; then
   ok "message: writes a SESSION START marker"
@@ -178,13 +185,34 @@ PY
 t "message: its markers parse back as a session" 1 "$(sed -n 's/^N=//p' "$BS_TMP/msg.parsed")"
 t "message: session kind is 'operator'" operator "$(sed -n 's/^KIND=//p' "$BS_TMP/msg.parsed")"
 t "message: successful no-action session parses as no-op" no "$(sed -n 's/^ACTED=//p' "$BS_TMP/msg.parsed")"
-t "message: final reply tail parses for the floor" "LAST=$BS_PROMPT" "$(sed -n 's/^REPLY=//p' "$BS_TMP/msg.parsed")"
+t "message: final reply tail parses for the floor" "$BS_PROMPT" "$(sed -n 's/^REPLY=//p' "$BS_TMP/msg.parsed")"
+
+# The envelope is a required shipped input, not an optional hint. If packaging
+# or a later refactor drops it, fail before launching a raw operator message.
+BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+import floor
+floor.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
+floor.read_roster = lambda: [{"box": "test-box"}]
+status, result = floor.do_command(
+    [], {"action": "message", "box": "test-box", "prompt": "operator text"})
+if status != 500 or "floor message envelope unavailable" not in result.get("error", ""):
+    raise SystemExit("missing envelope did not fail the message action loudly")
+PY
+t "message: missing envelope fails loudly" 0 "$?"
+
+if grep -Fq 'model_reasoning_effort="medium"' "$BS_ROOT/shared/conf/agents/codex.conf"; then
+  ok "message: codex profile pins medium reasoning effort"
+else
+  fail "message: codex profile pins medium reasoning effort" "pin missing"
+fi
 
 # A profile without the optional action hook must stay honest: successful is
 # not evidence of action, and absence of a classifier is never a false no-op.
 sed '/^bot_session_acted()/d' "$BS_TMP/agent.conf" > "$BS_TMP/agent-hookless.conf"
 : > "$BS_M/duty/duty.log"
-printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
+cp "$BS_TMP/expected-floor-prompt" "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
   bash "$BS_SH" < "$BS_TMP/agent-hookless.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
@@ -206,7 +234,7 @@ chmod +x "$BS_M/bin/fake-cli"
 : > "$BS_M/duty/duty.log"
 # MESSAGE_SH consumes the prompt file (rm after read), so the second run needs
 # its own — which is the point of the per-request path.
-printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
+cp "$BS_TMP/expected-floor-prompt" "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
   bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
