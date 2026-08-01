@@ -87,6 +87,27 @@ fi
 # real roster clobbered in the working tree, one `git add -A` away from being
 # committed.
 export CREW_FLOOR_ROSTER="$HERE/fixtures/roster.txt"
+
+# ...and the suite's own operator fleet DEFINITION, which is a different thing
+# (#244). `crew floor` and floor.py now refuse under the examples fallback,
+# and CREW_FLOOR_ROSTER does not lift that: it selects a roster file while
+# fleet.conf and the agent profiles still come from the resolved config dir.
+# Exporting only the roster left every case here resolving that dir to the
+# shipped examples/ — i.e. to the refusal. Built under $TMP, so it is the
+# suite's own definition and not anything ambient: the unset above still keeps
+# the operator's real config out, and this puts a known one in its place.
+export CREW_CONFIG_DIR="$TMP/opconfig"
+mkdir -p "$CREW_CONFIG_DIR"
+cp "$HERE/fixtures/roster.txt" "$CREW_CONFIG_DIR/fleet.roster"
+printf 'FLEET_HUMAN=fixture\n' >"$CREW_CONFIG_DIR/fleet.conf"
+printf 'heavy-duty/crew\n' >"$CREW_CONFIG_DIR/repos.txt"
+if [ -f "$CREW_CONFIG_DIR/fleet.roster" ] && [ "$CREW_CONFIG_DIR" = "$TMP/opconfig" ]; then
+  ok "suite serves its own operator fleet definition, not the shipped examples"
+else
+  fail "suite serves its own operator fleet definition, not the shipped examples" \
+       "every floor.py in this suite would hit the #244 refusal"
+fi
+
 # shellcheck disable=SC2317  # invoked by the traps below, which shellcheck
 # does not treat as a call site.
 cleanup() {

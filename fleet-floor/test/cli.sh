@@ -33,6 +33,21 @@ export FLOOR_FIXTURE="$CL_HERE/fixtures/fleet.txt"
 export FLOOR_STATE="$CL_TMP/state"
 export CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt"
 
+# The fleet DEFINITION, which is a different thing from the roster above:
+# `crew floor` and floor.py refuse under the examples fallback (#244), so
+# every case here that starts either process needs an operator config dir.
+# run.sh exports one for the whole suite; this builds cli.sh's own only when
+# it is run standalone. Never overriding run.sh's is deliberate — this file
+# ends by removing $CL_TMP, and the browser cases that run after run.sh
+# sources it would then be pointed at a directory that no longer exists.
+if [ -z "${CREW_CONFIG_DIR:-}" ]; then
+  mkdir -p "$CL_TMP/opconfig"
+  cp "$CL_HERE/fixtures/roster.txt" "$CL_TMP/opconfig/fleet.roster"
+  printf 'FLEET_HUMAN=fixture\n' >"$CL_TMP/opconfig/fleet.conf"
+  printf 'heavy-duty/crew\n' >"$CL_TMP/opconfig/repos.txt"
+  export CREW_CONFIG_DIR="$CL_TMP/opconfig"
+fi
+
 echo
 echo "== crew floor CLI"
 
@@ -1406,7 +1421,8 @@ fi
 # Fallback: with no operator config dir, the listing is byte-for-byte
 # today's — no fixture vendor, no [operator] marker anywhere.
 CL_RC=0
-(cd "$CL_TMP" && XDG_CONFIG_HOME="$CL_TMP/no-such-xdg" "$CL_ROOT/cli/crew" profiles) \
+(cd "$CL_TMP" && env -u CREW_CONFIG_DIR XDG_CONFIG_HOME="$CL_TMP/no-such-xdg" \
+  "$CL_ROOT/cli/crew" profiles) \
   >"$CL_TMP/prof-none" 2>&1 || CL_RC=$?
 t "crew profiles: fallback exits 0 with no operator config dir" 0 "$CL_RC"
 if grep -qE 'vendorx|\[operator\]' "$CL_TMP/prof-none"; then
@@ -1498,6 +1514,197 @@ if [ "$CL_RC" -ne 0 ] && grep -q 'fleet.roster is required' "$CL_TMP/floor-bad";
 else
   fail "floor: an invalid CREW_CONFIG_DIR is refused like the CLI refuses it" \
        "rc=$CL_RC $(cat "$CL_TMP/floor-bad")"
+fi
+
+# --- the console refuses under the examples fallback (#216 / #244) ----------
+# The console is the ninth verb of #216's rule. Its read path is itself an act
+# — a long-lived HTTP service on 0.0.0.0 with a generated password — and every
+# button on the page reaches POST /api/command, where `resume` arms a box's
+# cron and `message` starts a model session against whatever roster the
+# fallback resolved. The browser gets no banner, so refusal is the whole fix.
+#
+# The fixture must reproduce the REPORTED environment exactly: HOME with no
+# .config/crew, XDG unset, CREW_CONFIG_DIR unset, and a $PWD carrying no
+# fleet.roster. Get one wrong and resolution lands on an operator directory,
+# CONFIG_IS_OPERATOR is 1, and every assertion below is vacuous.
+echo
+echo "== crew floor under the examples fallback (#244)"
+
+CL_FB_HOME="$CL_TMP/fb-home"
+CL_FB_PWD="$CL_TMP/fb-pwd"
+mkdir -p "$CL_FB_HOME" "$CL_FB_PWD"
+
+# cl_fb CMD... — run CMD from the unconfigured host.
+cl_fb() {
+  (cd "$CL_FB_PWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+     -u CREW_FLOOR_ROSTER HOME="$CL_FB_HOME" PATH="$CL_TMP/bin:$PATH" \
+     "$@" </dev/null)
+}
+cl_listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3<&- 3>&-; return 0; }; return 1; }
+
+# cl_refuses LABEL PORT CMD... — CMD must exit non-zero, name the fallback
+# directory and `crew init`, and bind nothing.
+#
+# Run in the BACKGROUND rather than under `timeout`, because a foreground
+# timeout cannot tell a refusal from a server: by the time the status is read
+# the port is free either way. Here a process still alive after the wait is
+# one that served, which is the bug wearing a message.
+cl_refuses() {
+  local label="$1" port="$2"; shift 2
+  local pid rc alive=0 bound=0 out="$CL_TMP/fb-refuse.out"
+  "$@" >"$out" 2>&1 &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$pid" 2>/dev/null || break
+    cl_listening "$port" && { bound=1; break; }
+    sleep 0.3
+  done
+  if kill -0 "$pid" 2>/dev/null; then alive=1; kill "$pid" 2>/dev/null; fi
+  wait "$pid" 2>/dev/null; rc=$?
+  if [ "$alive" -eq 1 ] || [ "$bound" -eq 1 ]; then
+    fail "$label" "it served instead of refusing (alive=$alive bound=$bound)"
+  elif [ "$rc" -eq 0 ]; then
+    fail "$label" "exited 0: $(cat "$out")"
+  elif ! grep -q 'refuses under the shipped example fleet definition' "$out"; then
+    fail "$label" "no refusal in the output: $(cat "$out")"
+  elif ! grep -q "$CL_ROOT/examples" "$out"; then
+    fail "$label" "the refusal does not name the fallback directory: $(cat "$out")"
+  elif ! grep -q 'crew init' "$out"; then
+    fail "$label" "the refusal does not say what to do instead: $(cat "$out")"
+  else
+    ok "$label"
+  fi
+}
+
+# The fixture proves itself first — the banner only an unconfigured host prints.
+CL_FB_PROOF="$(cl_fb "$CL_ROOT/cli/crew" status 2>&1)"
+case "$CL_FB_PROOF" in
+  *"NO operator fleet definition"*) CL_R1=fallback ;;
+  *) CL_R1=OPERATOR ;;
+esac
+t "floor fallback: the fixture really reaches the fallback" fallback "$CL_R1"
+
+cl_refuses "floor fallback: crew floor refuses and binds nothing" 8880 \
+  cl_fb "$CL_ROOT/cli/crew" floor --port 8880
+cl_refuses "floor fallback: floor.py refuses the same way, run directly" 8881 \
+  cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py"
+
+# The refusal is a WORLD fault: `crew floor` under the fallback exits 1, and
+# floor.py matches it, so a caller of either reads the same status.
+CL_RC=0
+cl_fb "$CL_ROOT/cli/crew" floor --port 8880 >"$CL_TMP/fb-cli.out" 2>&1 || CL_RC=$?
+CL_RC2=0
+cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py" \
+  >"$CL_TMP/fb-py.out" 2>&1 || CL_RC2=$?
+t "floor fallback: the refusal is a world fault (exit 1)" 1 "$CL_RC"
+t "floor fallback: both processes exit the same way" "$CL_RC" "$CL_RC2"
+
+# A roster is not a fleet definition. Both spellings of the override must
+# leave the refusal standing, or "but the operator passed a roster" quietly
+# reopens the whole path.
+cl_refuses "floor fallback: --roster does not lift the refusal" 8882 \
+  cl_fb "$CL_ROOT/cli/crew" floor --port 8882 --roster "$CL_HERE/fixtures/roster.txt"
+cl_refuses "floor fallback: CREW_FLOOR_ROSTER does not lift the refusal" 8883 \
+  cl_fb env CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt" \
+    "$CL_ROOT/cli/crew" floor --port 8883
+cl_refuses "floor fallback: floor.py refuses with CREW_FLOOR_ROSTER set" 8884 \
+  cl_fb env CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt" CREW_FLOOR_PORT=8884 \
+    CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py"
+
+# The invocation fault is still diagnosed first: a malformed `crew floor` on an
+# unconfigured host exits 2, because the operator asked wrong before the world
+# could answer. This is what pins the call site AFTER the option loop.
+CL_RC=0
+cl_fb "$CL_ROOT/cli/crew" floor --port >"$CL_TMP/fb-usage.out" 2>&1 || CL_RC=$?
+t "floor fallback: a missing option value is still an invocation fault (2)" 2 "$CL_RC"
+
+# ...and the other half of the call site's position, which no behaviour can
+# reach without breaking the host's python3: the config answer must come
+# before the python3 / index.html / roster preconditions, so an unconfigured
+# host is told what is actually wrong instead of that a build is missing.
+CL_FLOOR_FN="$(sed -n '/^cmd_floor()/,/^}/p' "$CL_ROOT/cli/crew")"
+CL_LOOP_LINE="$(printf '%s\n' "$CL_FLOOR_FN" | grep -n '^  done$' | head -1 | cut -d: -f1)"
+CL_GATE_LINE="$(printf '%s\n' "$CL_FLOOR_FN" | grep -n 'require_operator_config "crew floor"' | cut -d: -f1)"
+CL_PY_LINE="$(printf '%s\n' "$CL_FLOOR_FN" | grep -n 'command -v python3' | cut -d: -f1)"
+if [ -n "$CL_LOOP_LINE" ] && [ -n "$CL_GATE_LINE" ] && [ -n "$CL_PY_LINE" ] &&
+   [ "$CL_LOOP_LINE" -lt "$CL_GATE_LINE" ] && [ "$CL_GATE_LINE" -lt "$CL_PY_LINE" ]; then
+  ok "floor fallback: the refusal sits after the option loop and before the preconditions"
+else
+  fail "floor fallback: the refusal sits after the option loop and before the preconditions" \
+       "loop=${CL_LOOP_LINE:-missing} gate=${CL_GATE_LINE:-missing} python3=${CL_PY_LINE:-missing}"
+fi
+
+# THE REGRESSION THAT MATTERS MORE THAN THE BUG: a configured host must behave
+# exactly as before. A fix that makes real operators' consoles refuse is a
+# fleet outage; the bug it replaces is a console nobody should have had.
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" CREW_CONFIG_DIR="$CL_OPCONF" \
+  env -u CREW_FLOOR_ROSTER timeout 4 "$CL_ROOT/cli/crew" floor --local --port 8885 \
+  </dev/null >"$CL_TMP/op-floor.out" 2>&1 || CL_RC=$?
+if grep -q 'refuses under the shipped example' "$CL_TMP/op-floor.out"; then
+  fail "floor: an operator config dir is not refused" "$(cat "$CL_TMP/op-floor.out")"
+elif grep -q 'crew floor — fleet console' "$CL_TMP/op-floor.out"; then
+  ok "floor: an operator config dir is not refused"
+else
+  fail "floor: an operator config dir is not refused" \
+       "no startup banner: rc=$CL_RC $(cat "$CL_TMP/op-floor.out")"
+fi
+CL_RC=0
+PATH="$CL_TMP/bin:$PATH" CREW_CONFIG_DIR="$CL_OPCONF" \
+  "$CL_ROOT/cli/crew" floor --help </dev/null >"$CL_TMP/op-help.out" 2>&1 || CL_RC=$?
+t "floor: --help still exits 0 with an operator config dir" 0 "$CL_RC"
+
+# $PWD discovery is an operator definition too — the third resolution hop, and
+# the one a developer running crew from a config directory relies on. Both
+# processes must agree it is one: the CLI passes the refusal, and the floor.py
+# it execs resolves the same directory and serves.
+CL_RC=0
+(cd "$CL_OPCONF" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_ROSTER \
+   -u CREW_FLOOR_ROSTER HOME="$CL_FB_HOME" PATH="$CL_TMP/bin:$PATH" \
+   timeout 4 "$CL_ROOT/cli/crew" floor --local --port 8886 </dev/null) \
+   >"$CL_TMP/pwd-floor.out" 2>&1 || CL_RC=$?
+if grep -q 'refuses under the shipped example' "$CL_TMP/pwd-floor.out"; then
+  fail "floor: \$PWD discovery still counts as an operator definition" \
+       "$(cat "$CL_TMP/pwd-floor.out")"
+elif grep -q 'serving fleet-floor on' "$CL_TMP/pwd-floor.out"; then
+  ok "floor: \$PWD discovery still counts as an operator definition"
+else
+  fail "floor: \$PWD discovery still counts as an operator definition" \
+       "the server never came up: rc=$CL_RC $(cat "$CL_TMP/pwd-floor.out")"
+fi
+
+# Validation parity: floor.py's completeness check ran only for operator
+# definitions, so the LEAST trusted directory got the LEAST verification.
+# Both directions are asserted, because the property is that the check does
+# not care who wrote the directory — and an incomplete definition must report
+# incomplete rather than reach the refusal, whichever it is.
+CL_FBROOT="$CL_TMP/fb-root"
+mkdir -p "$CL_FBROOT/fleet-floor/server"
+cp "$CL_FLOOR/server/floor.py" "$CL_FBROOT/fleet-floor/server/floor.py"
+cp -R "$CL_ROOT/examples" "$CL_FBROOT/examples"
+rm -f "$CL_FBROOT/examples/repos.txt"
+CL_RC=0
+cl_fb env CREW_FLOOR_PASS=x python3 "$CL_FBROOT/fleet-floor/server/floor.py" \
+  >"$CL_TMP/fb-incomplete.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'is incomplete; missing: repos.txt' "$CL_TMP/fb-incomplete.out"; then
+  ok "floor: an incomplete FALLBACK definition reports incomplete, not refused"
+else
+  fail "floor: an incomplete FALLBACK definition reports incomplete, not refused" \
+       "rc=$CL_RC $(cat "$CL_TMP/fb-incomplete.out")"
+fi
+CL_OP_INCOMPLETE="$CL_TMP/op-incomplete"
+mkdir -p "$CL_OP_INCOMPLETE"
+cp "$CL_CREW_ROSTER" "$CL_OP_INCOMPLETE/fleet.roster"
+printf 'FLEET_HUMAN=fixture\n' >"$CL_OP_INCOMPLETE/fleet.conf"
+CL_RC=0
+(cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_OP_INCOMPLETE" \
+  env -u CREW_FLOOR_ROSTER CREW_FLOOR_PASS=x python3 floor.py) \
+  >"$CL_TMP/op-incomplete.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'is incomplete; missing: repos.txt' "$CL_TMP/op-incomplete.out"; then
+  ok "floor: an incomplete OPERATOR definition reports identically"
+else
+  fail "floor: an incomplete OPERATOR definition reports identically" \
+       "rc=$CL_RC $(cat "$CL_TMP/op-incomplete.out")"
 fi
 
 # --- operator-config real-host rehearsal contract (#82) -------------------

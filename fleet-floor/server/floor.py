@@ -83,16 +83,50 @@ def fleet_config_dir():
                 break
         if chosen is None:
             sys.exit("crew floor: no fleet definition found (fleet.roster is required)")
-    if operator:
-        missing = [f for f in ("fleet.conf", "repos.txt")
-                   if not os.path.isfile(os.path.join(chosen, f))]
-        if missing:
-            sys.exit("crew floor: fleet definition '%s' is incomplete; missing: %s"
-                     % (chosen, " ".join(missing)))
+    # Unconditional, because the property is that the check does not care who
+    # wrote the directory: under `if operator:` the LEAST trusted definition
+    # got the LEAST verification, and an incomplete fallback reported its
+    # incompleteness in the CLI and not here. #216 item 4 made the CLI's
+    # unconditional; this is the console's half (#244). It runs at resolution,
+    # i.e. BEFORE the operator-config refusal in main(), so an incomplete
+    # directory reports incomplete in both processes whoever owns it — the
+    # same order the CLI has.
+    missing = [f for f in ("fleet.conf", "repos.txt")
+               if not os.path.isfile(os.path.join(chosen, f))]
+    if missing:
+        sys.exit("crew floor: fleet definition '%s' is incomplete; missing: %s"
+                 % (chosen, " ".join(missing)))
     return chosen, operator
 
 
 CONFIG_DIR, CONFIG_IS_OPERATOR = fleet_config_dir()
+
+
+def require_operator_config():
+    """The console refuses under the examples fallback, exactly as cli/crew's
+    mutating verbs do (#216/#244).
+
+    Both processes must refuse the same fleet the same way. `crew floor` is
+    the door an operator uses, but floor.py is invoked directly too — by this
+    repo's own suites and by anyone starting the server by hand — so a check
+    only in cmd_floor is a door with a hinge side.
+
+    Called from main() rather than at import: refusing at module level would
+    also refuse in-process READERS that never bind a port (the CLI/console
+    resolution-parity assertions, the box-side parser tests), and what this
+    refuses is serving the console, not reading floor.py's answers. The words
+    are the CLI's, so an operator who hits it from either direction gets one
+    message and one instruction.
+    """
+    if CONFIG_IS_OPERATOR:
+        return
+    sys.exit("""crew floor: refuses under the shipped example fleet definition at %s.
+  Nobody configured this host, so there is nothing here to create or arm: the
+  examples are a scaffold to read, not a fleet to run. Scaffold your own —
+    crew init
+  then edit the generated files (repos.txt ships EMPTY: name your repos) and
+  run again. 'crew status', 'crew profiles' and 'crew up --dry-run' keep
+  working here, which is how you inspect a host in this state.""" % CONFIG_DIR)
 
 
 def agent_conf_path(agent):
@@ -1432,6 +1466,10 @@ def serve(bind, port, user, password, interval):
 
 
 def main():
+    # First, and before the auth and index preconditions below: an
+    # unconfigured host must get the config answer, not a missing-password or
+    # missing-build one — the same order cmd_floor uses.
+    require_operator_config()
     ap_port = int(os.environ.get("CREW_FLOOR_PORT", "8420"))
     ap_bind = os.environ.get("CREW_FLOOR_BIND", "0.0.0.0")
     ap_user = os.environ.get("CREW_FLOOR_USER", "operator")
