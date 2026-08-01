@@ -131,7 +131,7 @@ function drawUnit(t,st){
       g.moveTo(x0,y0);g.quadraticCurveTo(mx2,my2,x1,y1);g.stroke();});
   });
   [-1,1].forEach(function(sg){
-    var shx=cx+sg*92, shy=252+breath, elx=cx+sg*118, ely=334+breath;
+    var shx=cx+sg*100, shy=254+breath, elx=cx+sg*124, ely=336+breath;
     seg(g,shx,shy,elx,ely,15,11,sM,sB,ed);                       // upper arm, swept back
     piston(shx+sg*11,shy+4,elx+sg*4,ely-10,4.6);                 // the arm's own hydraulic
     // elbow: a REAL joint — ring, hub bolt, guard horn, grease
@@ -153,23 +153,33 @@ function drawUnit(t,st){
   [-1,1].forEach(function(sg){
     var lx=cx+sg*34;
     // boot: heavy, squared toe, polished catch along the welt
-    plate(g,[[lx-27,GY-46],[lx+27,GY-46],[lx+30,GY],[lx-30,GY]],sT,sB,ed);
-    plate(g,[[lx-30,GY-10],[lx+30,GY-10],[lx+30,GY],[lx-30,GY]],"#0c1119","#03050a",null);
+    plate(g,[[lx-29,GY-50],[lx+29,GY-50],[lx+34,GY],[lx-34,GY]],sT,sB,ed);
+    plate(g,[[lx-34,GY-11],[lx+34,GY-11],[lx+34,GY],[lx-34,GY]],"#0c1119","#03050a",null);
     // toe cap: its own plate over the boot, scuffed at the leading edge
-    plate(g,[[lx-27,GY-22],[lx+27,GY-22],[lx+30,GY-9],[lx-30,GY-9]],sM,sB,ed);
-    pl(g,lx-25,GY-21,lx+25,GY-21,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.1);
+    plate(g,[[lx-29,GY-24],[lx+29,GY-24],[lx+34,GY-10],[lx-34,GY-10]],sM,sB,ed);
+    pl(g,lx-27,GY-23,lx+27,GY-23,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.1);
     bolt(g,lx-20,GY-16,1.8,offl?0.04:0.14);bolt(g,lx+20,GY-16,1.8,offl?0.04:0.14);
-    pl(g,lx-28,GY-11,lx+28,GY-11,"rgba(198,214,242,"+(offl?0.07:0.2)+")",1.3); // shine line
+    pl(g,lx-32,GY-12,lx+32,GY-12,"rgba(198,214,242,"+(offl?0.07:0.2)+")",1.3); // shine line
     // shin plate + knee guard
     plate(g,[[lx-23,442],[lx+23,442],[lx+26,GY-42],[lx-26,GY-42]],sM,sB,ed);
     pl(g,lx,446,lx,GY-42,"rgba(4,8,14,0.5)",1.3);                 // trouser crease, pressed
-    plate(g,[[lx-21,422],[lx+21,422],[lx+25,452],[lx-25,452]],sT,sB,ed);
+    // knee cop: a domed plate over the joint with a spur, not a flat tile
+    plate(g,[[lx-23,420],[lx+23,420],[lx+27,442],[lx+22,456],[lx-22,456],[lx-27,442]],sT,sB,ed);
+    pl(g,lx-21,422,lx+21,422,"rgba(206,222,248,"+(offl?0.07:0.22)+")",1.3);
+    plate(g,[[lx+sg*18,432],[lx+sg*31,438],[lx+sg*20,446]],sM,sB,ed);       // knee spur
+    // shin centre ridge + side ribs
+    pl(g,lx,460,lx,GY-46,"rgba(206,222,248,"+(offl?0.05:0.14)+")",1.2);
+    for(var sr=0;sr<3;sr++){pl(g,lx-19,470+sr*16,lx-13,470+sr*16,"rgba(4,8,14,0.6)",2);
+      pl(g,lx+13,470+sr*16,lx+19,470+sr*16,"rgba(4,8,14,0.6)",2);}
     cavity(g,lx-25,448,50,7,0.5);
     bolt(g,lx,436,2.6,offl?0.06:0.22);
     bolt(g,lx-14,442,1.7,offl?0.04:0.13);bolt(g,lx+14,442,1.7,offl?0.04:0.13);
     weep(lx,438,8);
     // thigh
     plate(g,[[lx-26,380],[lx+26,380],[lx+23,430],[lx-23,430]],sM,sB,ed);
+    plate(g,[[lx-20,384],[lx+20,384],[lx+18,412],[lx-18,412]],sT,sB,ed);   // thigh plate
+    pl(g,lx-19,386,lx+19,386,"rgba(198,216,246,"+(offl?0.05:0.16)+")",1.2);
+    bolt(g,lx-14,406,1.8,offl?0.04:0.14);bolt(g,lx+14,406,1.8,offl?0.04:0.14);
     // gold trouser stripe down the outer seam — flag-rank braid, worn dull
     pl(g,lx+sg*21,386,lx+sg*24,GY-44,br(0.7),2.6);
     pl(g,lx+sg*21,386,lx+sg*24,GY-44,brh(0.28),1);
@@ -196,7 +206,7 @@ function drawUnit(t,st){
   bolt(g,cx,388,2.6,offl?0.06:0.22);
 
   /* ---- 2 · BELT: broad, dark, brass buckle with the command star ---- */
-  plate(g,[[cx-58,356+breath*0.4],[cx+58,356+breath*0.4],[cx+56,378],[cx-56,378]],"#10151f","#05080d",ed);
+  plate(g,[[cx-60,356+breath*0.4],[cx+60,356+breath*0.4],[cx+57,380],[cx-57,380]],"#10151f","#05080d",ed);
   var bk={x:cx-15,y:358+breath*0.4,w:30,h:17};
   rr(g,bk.x,bk.y,bk.w,bk.h,2.5);
   var bg2=g.createLinearGradient(0,bk.y,0,bk.y+bk.h);bg2.addColorStop(0,brh(0.9));bg2.addColorStop(1,br(0.75));
@@ -210,14 +220,14 @@ function drawUnit(t,st){
      its chest is FACETED: a raised centre slab with the side panels angled
      away from it, so the light breaks across three planes instead of one. */
   var TY=232+breath;
-  plate(g,[[cx-84,TY],[cx+84,TY],[cx+64,358+breath*0.4],[cx-64,358+breath*0.4]],sM,sB,ed);
+  plate(g,[[cx-92,TY],[cx+92,TY],[cx+58,358+breath*0.4],[cx-58,358+breath*0.4]],sM,sB,ed);
   // raised centre slab, standing proud of the side panels
-  plate(g,[[cx-46,TY+4],[cx+46,TY+4],[cx+38,352+breath*0.4],[cx-38,352+breath*0.4]],"#1e2634",sB,ed);
-  pl(g,cx-45,TY+5,cx+45,TY+5,"rgba(198,216,246,"+(offl?0.06:0.16)+")",1.3);
-  cavity(g,cx-64,TY+2,128,10,0.4);
+  plate(g,[[cx-50,TY+4],[cx+50,TY+4],[cx+36,352+breath*0.4],[cx-36,352+breath*0.4]],"#1e2634",sB,ed);
+  pl(g,cx-49,TY+5,cx+49,TY+5,"rgba(198,216,246,"+(offl?0.06:0.16)+")",1.3);
+  cavity(g,cx-70,TY+2,140,10,0.45);
   // the side panels' own bevel edges, catching from the far side
-  pl(g,cx-46,TY+6,cx-38,350+breath*0.4,"rgba(4,8,14,0.5)",1.4);
-  pl(g,cx+46,TY+6,cx+38,350+breath*0.4,"rgba(4,8,14,0.5)",1.4);
+  pl(g,cx-50,TY+6,cx-36,350+breath*0.4,"rgba(4,8,14,0.5)",1.4);
+  pl(g,cx+50,TY+6,cx+36,350+breath*0.4,"rgba(4,8,14,0.5)",1.4);
   pl(g,cx,TY+34,cx,354+breath*0.4,"rgba(4,8,14,0.6)",1.6);            // closure seam
   pl(g,cx-79,TY+2,cx-61,356+breath*0.4,"rgba(4,8,14,0.35)",1.2);      // panel seams
   pl(g,cx+79,TY+2,cx+61,356+breath*0.4,"rgba(4,8,14,0.35)",1.2);
@@ -229,17 +239,44 @@ function drawUnit(t,st){
       var sg3=g.createRadialGradient(cx+bxx-1.4,byy-1.6,0.4,cx+bxx,byy,4.4);
       sg3.addColorStop(0,brh(offl?0.25:0.95));sg3.addColorStop(1,br(offl?0.1:0.5));
       g.fillStyle=sg3;g.beginPath();g.arc(cx+bxx,byy,3.6,0,7);g.fill();});}
+  /* data conduits: gorget down to the belt, one each side, clipped at three
+     points. The uniform is the fairing; this is what runs under it. */
+  [-1,1].forEach(function(sg7){
+    var x0=cx+sg7*30,y0=TY+2,x1=cx+sg7*46,y1=352+breath*0.4;
+    g.strokeStyle="rgba(8,12,19,0.95)";g.lineWidth=5;
+    g.beginPath();g.moveTo(x0,y0);g.quadraticCurveTo(cx+sg7*60,TY+150,x1,y1);g.stroke();
+    g.strokeStyle="rgba(120,132,156,"+(offl?0.08:0.22)+")";g.lineWidth=1.4;
+    g.beginPath();g.moveTo(x0,y0);g.quadraticCurveTo(cx+sg7*60,TY+150,x1,y1);g.stroke();
+    [0.3,0.58,0.84].forEach(function(u3){
+      var qx=(1-u3)*(1-u3)*x0+2*(1-u3)*u3*(cx+sg7*60)+u3*u3*x1;
+      var qy=(1-u3)*(1-u3)*y0+2*(1-u3)*u3*(TY+150)+u3*u3*y1;
+      plate(g,[[qx-6,qy-4],[qx+6,qy-4],[qx+5,qy+4],[qx-5,qy+4]],sM,sB,ed);});});
+  /* CUIRASS. The centre slab was one flat field with buttons on it, which is
+     a coat; a war chassis wears plate over the coat. Two pectoral plates
+     stepped off a sternum ridge, so the chest has a centre line and turns
+     away from it on both sides. */
+  plate(g,[[cx-48,TY+10],[cx-8,TY+6],[cx-8,TY+92],[cx-44,TY+96]],sT,sB,ed);
+  plate(g,[[cx+48,TY+10],[cx+8,TY+6],[cx+8,TY+92],[cx+44,TY+96]],sT,sB,ed);
+  pl(g,cx-47,TY+12,cx-9,TY+8,"rgba(206,222,248,"+(offl?0.07:0.22)+")",1.4);
+  pl(g,cx+47,TY+12,cx+9,TY+8,"rgba(206,222,248,"+(offl?0.05:0.14)+")",1.4);
+  // sternum ridge standing proud between them
+  plate(g,[[cx-8,TY+4],[cx+8,TY+4],[cx+6,TY+98],[cx-6,TY+98]],"#242d3d",sB,ed);
+  pl(g,cx,TY+6,cx,TY+96,"rgba(206,222,248,"+(offl?0.05:0.16)+")",1.1);
+  cavity(g,cx-48,TY+90,96,10,0.5);
+  [[-40,22],[40,22],[-38,84],[38,84]].forEach(function(rv4){
+    bolt(g,cx+rv4[0],TY+rv4[1],2.2,offl?0.05:0.17);});
+  weep(cx-40,TY+22,13);
   // service ribbons over the left breast (viewer left) — two rows of four,
   // colours dulled by service; one ribbon half torn away
-  for(var rb=0;rb<8;rb++){var rx=cx-66+(rb%4)*15,ry=TY+40+Math.floor(rb/4)*9;
+  for(var rb=0;rb<8;rb++){var rx=cx-46+(rb%4)*10,ry=TY+26+Math.floor(rb/4)*8;
     var rcls=[[150,52,60],[176,140,70],[70,104,148],[88,116,88],[134,80,134],[168,168,178],[104,74,50],[60,86,120]][rb];
-    var rw2=(rb===5)?8:13; // the torn one
+    var rw2=(rb===5)?5:9; // the torn one
     g.fillStyle="rgba("+rcls[0]+","+rcls[1]+","+rcls[2]+","+(offl?0.22:0.7)+")";
-    g.fillRect(rx,ry,rw2,6);pl(g,rx,ry+6,rx+rw2,ry+6,"rgba(3,6,11,0.7)",1);}
+    g.fillRect(rx,ry,rw2,5);pl(g,rx,ry+5,rx+rw2,ry+5,"rgba(3,6,11,0.7)",1);}
   // breast crest on the right pec: small brass wing bar, one wing bent dark
-  plate(g,[[cx+34,TY+42],[cx+62,TY+42],[cx+60,TY+50],[cx+36,TY+50]],brh(0.75),br(0.55),null);
-  poly(g,[[cx+56,TY+42],[cx+62,TY+42],[cx+60,TY+50],[cx+55,TY+50]]);g.fillStyle="rgba(24,20,12,0.75)";g.fill();
-  cavity(g,cx-66,TY+58,132,8,0.35);
+  plate(g,[[cx+16,TY+28],[cx+44,TY+28],[cx+42,TY+36],[cx+18,TY+36]],brh(0.75),br(0.55),null);
+  poly(g,[[cx+38,TY+28],[cx+44,TY+28],[cx+42,TY+36],[cx+37,TY+36]]);g.fillStyle="rgba(24,20,12,0.75)";g.fill();
+  
   /* DETAIL PASS — rivet rows down both coat seams. A greatcoat on a war
      chassis is bolted, not sewn, and the rows are what make the panel edges
      read as edges instead of as drawn lines. */
@@ -269,22 +306,35 @@ function drawUnit(t,st){
   [-1,1].forEach(function(sg){
     /* Chad proportions: claude's unit reads wide because the pauldron is a
        big trapezoid slab that overhangs the arm, not a small cap. */
-    var px=cx+sg*96,py=TY+4;
-    plate(g,[[px-sg*40,py-10],[px-sg*12,py-26],[px+sg*22,py-18],[px+sg*34,py+16],[px+sg*24,py+52],[px-sg*26,py+40]],sT,sB,ed);
-    cavity(g,px-(sg>0?26:34),py+44,60,9,0.55);
-    // the BOARD: a stepped flat slab sitting proud on top, brass edged
+    var px=cx+sg*108,py=TY+2;
+    /* A single flat slab per shoulder is a plank, and it is what was making
+       the whole unit read tin-soldier. The pauldron is three pieces now: a
+       big main cop, a lower lame hinged under it, and an upstand ridge
+       along the crown — each with its own light, so the shoulder turns. */
+    // main cop
+    plate(g,[[px-sg*42,py-10],[px-sg*12,py-28],[px+sg*22,py-20],[px+sg*36,py+14],[px+sg*26,py+44],[px-sg*28,py+38]],sT,sB,ed);
+    // upstand ridge along the crown — a hard lip that catches the lamp
+    plate(g,[[px-sg*40,py-12],[px-sg*12,py-30],[px+sg*22,py-22],[px+sg*24,py-14],[px-sg*10,py-22],[px-sg*38,py-5]],sT,sM,ed);
+    pl(g,px-sg*39,py-11,px-sg*11,py-29,"rgba(206,222,248,"+(offl?0.09:0.28)+")",1.6);
+    // lower lame, hinged under the cop and stepped away from it
+    plate(g,[[px-sg*30,py+34],[px+sg*26,py+40],[px+sg*20,py+62],[px-sg*24,py+56]],sM,sB,ed);
+    cavity(g,px-(sg>0?24:30),py+34,56,9,0.6);
+    pl(g,px-sg*28,py+37,px+sg*24,py+43,"rgba(198,216,246,"+(offl?0.06:0.18)+")",1.2);
+    // rivet line along the cop's lower edge + the hinge pins
+    [[-22,26],[-4,32],[14,34]].forEach(function(rv3){
+      bolt(g,px+sg*rv3[0],py+rv3[1],2.2,offl?0.05:0.17);});
+    bolt(g,px-sg*28,py+37,2.6,offl?0.06:0.2);bolt(g,px+sg*24,py+43,2.6,offl?0.06:0.2);
+    weep(px+sg*14,py+34,12);
+    // BATTLE DAMAGE on the cop: a torn gouge with a lifted lip
+    poly(g,[[px-sg*26,py-2],[px+sg*2,py+8],[px+sg*0,py+15],[px-sg*28,py+5]]);
+    g.fillStyle="rgba(2,4,8,0.95)";g.fill();
+    pl(g,px-sg*26,py-2,px+sg*2,py+8,"rgba(206,222,248,"+(offl?0.1:0.32)+")",1.5);
+    // the BOARD, riding the cop
     plate(g,[[px-sg*42,py-18],[px+sg*28,py-30],[px+sg*32,py-21],[px-sg*40,py-9]],sM,sB,ed);
     pl(g,px-sg*41,py-17,px+sg*29,py-29,brh(offl?0.2:0.75),1.7);
     pl(g,px-sg*39,py-9.5,px+sg*31,py-21.5,br(offl?0.15:0.6),1.3);
-    // four rank bars across the board
     for(var rk=0;rk<4;rk++){var fx=px-sg*(32-rk*14);
       pl(g,fx,py-23,fx+sg*7,py-24.6,br(offl?0.2:0.85),2.3);}
-    bolt(g,px+sg*24,py+8,2.8,offl?0.06:0.22);
-    weep(px+sg*24,py+8,11);
-    // panel step lines on the pauldron face — armour, not epaulette hair
-    pl(g,px-sg*20,py+16,px+sg*20,py+16,"rgba(4,8,14,0.5)",1.5);
-    pl(g,px-sg*22,py+30,px+sg*18,py+32,"rgba(4,8,14,0.4)",1.3);
-    // the left board's brass edge is broken mid-span — an old hit
     if(sg<0){g.fillStyle=sB;g.fillRect(px-6,py-26,7,4.8);
       g.fillStyle="rgba(206,220,242,"+(offl?0.1:0.3)+")";g.fillRect(px+1,py-25.4,1.8,1.6);}
   });
@@ -300,13 +350,17 @@ function drawUnit(t,st){
   weep(cx+28,397,9);
 
   /* ---- 5 · COLLAR + NECK ---- */
-  plate(g,[[cx-44,TY-18],[cx-33,TY-33],[cx+33,TY-33],[cx+44,TY-18],[cx+37,TY+2],[cx-37,TY+2]],sM,sB,ed); // high collar
-  pl(g,cx-32,TY-32,cx+32,TY-32,brh(offl?0.15:0.5),1.3);         // brass collar cord
-  cavity(g,cx-37,TY-8,74,8,0.35);
+  plate(g,[[cx-52,TY-20],[cx-38,TY-38],[cx+38,TY-38],[cx+52,TY-20],[cx+44,TY+4],[cx-44,TY+4]],sM,sB,ed);
+  // gorget lames, stepped — the head is carried, not balanced
+  plate(g,[[cx-46,TY-8],[cx+46,TY-8],[cx+40,TY+6],[cx-40,TY+6]],sT,sB,ed);
+  pl(g,cx-45,TY-7,cx+45,TY-7,"rgba(198,216,246,"+(offl?0.06:0.2)+")",1.3);
+  bolt(g,cx-40,TY-1,2.2,offl?0.05:0.18);bolt(g,cx+40,TY-1,2.2,offl?0.05:0.18); // high collar
+  pl(g,cx-37,TY-37,cx+37,TY-37,brh(offl?0.15:0.5),1.3);         // brass collar cord
+  cavity(g,cx-44,TY-6,88,8,0.4);
   // ribbed fighter neck inside the collar, slung with its own hardware:
   // twin head-tilt pistons outboard, a data conduit looping in from the jaw
-  g.fillStyle="#070b12";g.fillRect(cx-16,TY-41,32,16);
-  for(var nr=0;nr<3;nr++){pl(g,cx-15,TY-37+nr*4.4,cx+15,TY-37+nr*4.4,"rgba(120,134,160,"+(offl?0.08:0.22)+")",1.2);}
+  g.fillStyle="#070b12";g.fillRect(cx-18,TY-46,36,18);
+  for(var nr=0;nr<4;nr++){pl(g,cx-17,TY-43+nr*4.4,cx+17,TY-43+nr*4.4,"rgba(120,134,160,"+(offl?0.08:0.22)+")",1.2);}
   piston(cx-20,TY-26,cx-15,TY-42,3);piston(cx+20,TY-26,cx+15,TY-42,3);
   hose(cx+12,TY-40,cx+26,TY-28,6,2.8);
   // intake gills low on each coat side, under the arm gap
@@ -315,23 +369,23 @@ function drawUnit(t,st){
     pl(g,cx+sg*(62+vt*3),TY+25.4+vt*8,cx+sg*(72+vt*3),TY+30.4+vt*8,"rgba(140,154,182,"+(offl?0.05:0.14)+")",0.9);}});
 
   /* ---- 6 · HEAD + THE CAP ---- */
-  var hy=188+breath;    // face centre band
+  var hy=186+breath;    // face centre band
   // jaw + face armour: squared jaw guard, hard cheek plates
-  plate(g,[[cx-30,hy-16],[cx-33,hy+7],[cx-23,hy+26],[cx+23,hy+26],[cx+33,hy+7],[cx+30,hy-16]],sT,sM,ed);
+  plate(g,[[cx-35,hy-18],[cx-38,hy+8],[cx-27,hy+31],[cx+27,hy+31],[cx+38,hy+8],[cx+35,hy-18]],sT,sM,ed);
   // chin guard: its own plate, catching the lamp so the jaw reads as a JAW
-  plate(g,[[cx-17,hy+9],[cx+17,hy+9],[cx+13,hy+25],[cx-13,hy+25]],sT,sB,ed);
-  pl(g,cx-16,hy+10,cx+16,hy+10,"rgba(186,208,242,"+(offl?0.07:0.22)+")",1.2);
-  for(var mv=-1;mv<2;mv++){pl(g,cx+mv*8,hy+13,cx+mv*8,hy+21,"rgba(4,8,14,0.7)",1.6);} // mouth vents
-  pl(g,cx-22,hy+25,cx+22,hy+25,"rgba(4,8,14,0.7)",1.5);          // jaw slit
+  plate(g,[[cx-20,hy+10],[cx+20,hy+10],[cx+16,hy+31],[cx-16,hy+31]],sT,sB,ed);
+  pl(g,cx-19,hy+11,cx+19,hy+11,"rgba(186,208,242,"+(offl?0.07:0.22)+")",1.2);
+  for(var mv=-1;mv<2;mv++){pl(g,cx+mv*9,hy+15,cx+mv*9,hy+26,"rgba(4,8,14,0.7)",1.6);} // mouth vents
+  pl(g,cx-26,hy+30,cx+26,hy+30,"rgba(4,8,14,0.7)",1.5);          // jaw slit
   // cheekbone plates — the veteran face
-  plate(g,[[cx-31,hy-7],[cx-15,hy-3],[cx-17,hy+8],[cx-30,hy+5]],sM,sB,ed);
-  plate(g,[[cx+31,hy-7],[cx+15,hy-3],[cx+17,hy+8],[cx+30,hy+5]],sM,sB,ed);
-  pl(g,cx-30,hy-6,cx-16,hy-2,"rgba(186,208,242,"+(offl?0.07:0.24)+")",1.2);
-  pl(g,cx+30,hy-6,cx+16,hy-2,"rgba(186,208,242,"+(offl?0.07:0.24)+")",1.2);
+  plate(g,[[cx-36,hy-8],[cx-17,hy-3],[cx-19,hy+9],[cx-35,hy+6]],sM,sB,ed);
+  plate(g,[[cx+36,hy-8],[cx+17,hy-3],[cx+19,hy+9],[cx+35,hy+6]],sM,sB,ed);
+  pl(g,cx-35,hy-7,cx-18,hy-2,"rgba(186,208,242,"+(offl?0.07:0.24)+")",1.2);
+  pl(g,cx+35,hy-7,cx+18,hy-2,"rgba(186,208,242,"+(offl?0.07:0.24)+")",1.2);
   // the scar across the left cheek plate
-  pl(g,cx-28,hy-2,cx-18,hy+7,"rgba(198,216,246,"+(offl?0.1:0.32)+")",1.1);
+  pl(g,cx-33,hy-2,cx-20,hy+8,"rgba(198,216,246,"+(offl?0.1:0.32)+")",1.1);
   // VISOR: one hard slit under the bill; two steady optics, command amber
-  var vs={x:cx-27,y:hy-18,w:54,h:10};
+  var vs={x:cx-31,y:hy-20,w:62,h:11};
   rr(g,vs.x,vs.y,vs.w,vs.h,3);g.fillStyle="#03060b";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
   if(offl){
     RB.fillStyle="rgba(150,168,190,0.5)";RB.fillRect(vs.x+4,vs.y+4,vs.w-8,1.3);
@@ -356,12 +410,12 @@ function drawUnit(t,st){
   // bill first (behind the band's shadow but over the brow)
   var billg=g.createLinearGradient(0,capy-4,0,capy+8);
   billg.addColorStop(0,"#11151d");billg.addColorStop(1,"#03050a");
-  g.beginPath();g.moveTo(cx-35,capy-2);
-  g.quadraticCurveTo(cx,capy+13,cx+35,capy-2);
-  g.quadraticCurveTo(cx,capy+4,cx-35,capy-2);g.closePath();
+  g.beginPath();g.moveTo(cx-40,capy-2);
+  g.quadraticCurveTo(cx,capy+15,cx+40,capy-2);
+  g.quadraticCurveTo(cx,capy+4,cx-40,capy-2);g.closePath();
   g.fillStyle=billg;g.fill();
   g.strokeStyle="rgba(200,216,242,"+(offl?0.1:0.3)+")";g.lineWidth=1.1;   // the gloss catch
-  g.beginPath();g.moveTo(cx-29,capy+0.5);g.quadraticCurveTo(cx,capy+10,cx+29,capy+0.5);g.stroke();
+  g.beginPath();g.moveTo(cx-33,capy+0.5);g.quadraticCurveTo(cx,capy+11,cx+33,capy+0.5);g.stroke();
   // oak-leaf filigree along the bill — the admiral's scrambled eggs, worn
   [[-15.5,1.8],[-5.5,2.9],[5.5,2.9],[15.5,1.8]].forEach(function(lf){
     var lx2=cx+lf[0],ly2=capy+lf[1];
@@ -370,28 +424,44 @@ function drawUnit(t,st){
   // the notch shot out of the bill's right edge
   poly(g,[[cx+20,capy+2.4],[cx+26.5,capy+0.6],[cx+23,capy+4.4]]);g.fillStyle="#04060a";g.fill();
   pl(g,cx+20,capy+2.4,cx+23,capy+4.4,"rgba(198,216,246,"+(offl?0.1:0.3)+")",1.1);
-  cavity(g,vs.x-4,capy+2,vs.w+8,7,0.6);                                    // bill shades the visor
+  cavity(g,vs.x-6,capy+2,vs.w+12,11,0.8);   // the bill throws a real shadow                                    // bill shades the visor
   // band
-  plate(g,[[cx-32,capy-20],[cx+32,capy-20],[cx+34,capy-2],[cx-34,capy-2]],sM,sB,ed);
-  pl(g,cx-33,capy-3.5,cx+33,capy-3.5,br(offl?0.2:0.8),1.6);               // lower brass cord
-  pl(g,cx-31,capy-18.5,cx+31,capy-18.5,br(offl?0.15:0.6),1.2);            // upper brass cord
+  plate(g,[[cx-37,capy-22],[cx+37,capy-22],[cx+39,capy-2],[cx-39,capy-2]],sM,sB,ed);
+  pl(g,cx-38,capy-3.5,cx+38,capy-3.5,br(offl?0.2:0.8),1.6);               // lower brass cord
+  pl(g,cx-36,capy-20.5,cx+36,capy-20.5,br(offl?0.15:0.6),1.2);            // upper brass cord
   // crest: laurel arcs + star, centred on the band — emissive when alive
   laurel(g,cx,capy-10,offl?br(0.3):br(0.9));
   star(g,cx,capy-10,4.4,offl?"rgba(90,86,74,0.6)":brh(0.95));
   if(!offl){RE.save();laurel(RE,cx,capy-10,br(0.2*pulse));star(RE,cx,capy-10,4.4,brh(0.4*pulse));RE.restore();}
   // crown: wide, slightly saddled slab overhanging the band
-  plate(g,[[cx-45,capy-27],[cx-16,capy-36],[cx+16,capy-36],[cx+45,capy-27],[cx+38,capy-16],[cx-38,capy-16]],sT,sB,ed);
-  pl(g,cx-44,capy-26,cx-17,capy-35,"rgba(186,208,242,"+(offl?0.07:0.22)+")",1.3);  // crown catch, left facet
-  pl(g,cx+44,capy-26,cx+17,capy-35,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.3);
-  cavity(g,cx-38,capy-17,76,7,0.55);                                       // crown overhangs band
+  plate(g,[[cx-52,capy-30],[cx-18,capy-40],[cx+18,capy-40],[cx+52,capy-30],[cx+44,capy-17],[cx-44,capy-17]],sT,sB,ed);
+  pl(g,cx-51,capy-29,cx-19,capy-39,"rgba(186,208,242,"+(offl?0.07:0.22)+")",1.3);  // crown catch, left facet
+  pl(g,cx+51,capy-29,cx+19,capy-39,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.3);
+  cavity(g,cx-44,capy-18,88,8,0.6);                                       // crown overhangs band
   // chipped crown edge — the cap has been through it
   g.fillStyle="rgba(206,220,242,"+(offl?0.1:0.26)+")";
-  g.fillRect(cx-45,capy-27,4,1.6);g.fillRect(cx+24,capy-35,3,1.4);
+  g.fillRect(cx-52,capy-30,5,1.8);g.fillRect(cx+27,capy-39,3.4,1.5);
   /* the crack that runs from the bill notch down through the visor glass
      and onto the cheek plate — the face's war record */
   g.strokeStyle="rgba(190,205,228,"+(offl?0.08:0.26)+")";g.lineWidth=0.9;
   g.beginPath();g.moveTo(cx+22,capy+4.4);g.lineTo(cx+18,vs.y+3);
   g.lineTo(cx+21,vs.y+8);g.lineTo(cx+16,hy+5);g.stroke();
+
+  /* ---- DAMAGE PASS. A veteran is not clean plate with one gouge on it.
+     Small dents wherever a plate faces the room, each with a lit upper lip
+     and a dark floor, plus scorch where something burned close. ---- */
+  function dent(x,y,w,h){
+    poly(g,[[x,y],[x+w,y-h*0.35],[x+w*0.86,y+h],[x+w*0.1,y+h*0.7]]);
+    g.fillStyle="rgba(2,5,10,0.55)";g.fill();
+    pl(g,x,y,x+w,y-h*0.35,"rgba(206,222,248,"+(offl?0.08:0.26)+")",1.2);}
+  dent(cx-38,TY+52,13,6); dent(cx+22,TY+70,11,5); dent(cx-30,412,10,5);
+  dent(cx+34,GY-34,12,5); dent(cx-118,TY+30,14,6);
+  var sc3=g.createLinearGradient(0,TY+8,0,TY+56);
+  sc3.addColorStop(0,"rgba(10,6,4,0.45)");sc3.addColorStop(1,"rgba(10,6,4,0)");
+  g.fillStyle=sc3;poly(g,[[cx+72,TY+8],[cx+126,TY+14],[cx+118,TY+56],[cx+68,TY+50]]);g.fill();
+  g.fillStyle="rgba(206,220,242,"+(offl?0.07:0.2)+")";      // chipped edges
+  [[cx-92,TY+6],[cx+91,TY+18],[cx-58,352],[cx+56,346]].forEach(function(nk,i4){
+    g.fillRect(nk[0],nk[1],3+(i4%2),1.6);});
 
   /* ---- 7 · offline: attention held, beacon rakes cap and boards ---- */
   if(offl){var bp=0.55;
@@ -417,7 +487,7 @@ function drawUnit(t,st){
   RR.globalCompositeOperation="destination-out";RR.drawImage(body,-2.2,1.7);RR.drawImage(body,-1.5,-2.4);
   RR.globalCompositeOperation="source-in";
   var rl=RR.createLinearGradient(60,0,460,0);
-  rl.addColorStop(0,"rgba(216,169,78,0.95)");rl.addColorStop(0.42,"rgba(190,175,150,0.42)");rl.addColorStop(1,"rgba(95,214,255,1)");
+  rl.addColorStop(0,"rgba(226,180,90,1)");rl.addColorStop(0.42,"rgba(196,182,158,0.5)");rl.addColorStop(1,"rgba(112,222,255,1)");
   RR.fillStyle=rl;RR.fillRect(0,0,W,H);RR.globalCompositeOperation="source-over";
 }
 function star(c,x,y,r,col){c.save();c.fillStyle=col;c.beginPath();
@@ -431,20 +501,130 @@ function laurel(c,x,y,col){c.save();c.strokeStyle=col;c.lineWidth=1.4;
     c.beginPath();c.ellipse(x+lf[0],y+lf[1],2.4,1.1,lf[0]<0?-0.7:0.7,0,7);c.stroke();});
   c.restore();}
 
+/* ---- scene: THE FLAG BRIDGE ----
+   The leader's room is the place a battleship is commanded from: an armoured
+   gallery with a raked window band looking out on nothing, a plot table
+   throwing light up into the room, repeater dials, a chart board, and the
+   ship's own structure overhead. It is built in the fleet-floor grammar —
+   flat plates, one warm key, contact darkening at every corner — and it is
+   drawn ENTIRELY behind and around the unit, never in front of its legs,
+   because the silhouette is the asset. */
+function drawRoom(t,st){
+  var offl=st==="offline", work=st==="working";
+  var K=offl?[120,128,144]:[236,200,128];          // the room is graded to command brass
+  function kk(a){return "rgba("+K[0]+","+K[1]+","+K[2]+","+a+")";}
+  var lit=offl?0.22:(work?1:0.72);
+  // ---- back bulkhead
+  var wall=S.createLinearGradient(0,0,0,H);
+  wall.addColorStop(0,offl?"#080a0e":"#0e1218");
+  wall.addColorStop(0.62,offl?"#06080c":"#0b0e14");
+  wall.addColorStop(1,"#05070b");
+  S.fillStyle=wall;S.fillRect(0,0,W,H);
+  // riveted plate courses across the bulkhead
+  for(var pc=0;pc<5;pc++){var py2=96+pc*84;
+    S.strokeStyle="rgba(4,8,14,0.4)";S.lineWidth=1.4;
+    S.beginPath();S.moveTo(0,py2);S.lineTo(W,py2);S.stroke();
+    S.strokeStyle="rgba(150,166,194,"+(0.03*lit)+")";S.lineWidth=1;
+    S.beginPath();S.moveTo(0,py2+1.4);S.lineTo(W,py2+1.4);S.stroke();
+    for(var rv5=0;rv5<W;rv5+=34){
+      S.fillStyle="rgba(120,136,164,"+(0.07*lit)+")";
+      S.beginPath();S.arc(rv5+17,py2-5,1.3,0,7);S.fill();}}
+  // ---- the window band: raked armoured glass, looking out on deep nothing
+  S.save();
+  var wy=118, wh=92;
+  S.beginPath();S.moveTo(28,wy+16);S.lineTo(W-28,wy+16);S.lineTo(W-40,wy+wh);S.lineTo(40,wy+wh);S.closePath();
+  var og=S.createLinearGradient(0,wy,0,wy+wh);
+  og.addColorStop(0,offl?"#0a0e14":"#141c26");og.addColorStop(1,offl?"#05070c":"#0a1017");
+  S.fillStyle=og;S.fill();
+  S.save();S.clip();
+  // a far horizon line and a couple of distant running lights
+  S.strokeStyle=kk(0.2*lit);S.lineWidth=1.2;
+  S.beginPath();S.moveTo(28,wy+62);S.lineTo(W-28,wy+58);S.stroke();
+  [[110,wy+50],[318,wy+44],[430,wy+56]].forEach(function(fl,i5){
+    var fp=offl?0:(0.4+0.6*Math.abs(Math.sin(t*0.7+i5*2)));
+    S.fillStyle="rgba(255,120,90,"+(0.8*fp*lit)+")";
+    S.beginPath();S.arc(fl[0],fl[1],1.6,0,7);S.fill();});
+  S.restore();
+  // mullions + the frame's own armour
+  S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=7;
+  [96,180,264,348,432].forEach(function(mx){
+    S.beginPath();S.moveTo(mx,wy+16);S.lineTo(mx-3,wy+wh);S.stroke();});
+  S.strokeStyle="rgba(160,178,208,"+(0.2*lit)+")";S.lineWidth=1.4;
+  [96,180,264,348,432].forEach(function(mx){
+    S.beginPath();S.moveTo(mx+3,wy+16);S.lineTo(mx,wy+wh);S.stroke();});
+  S.fillStyle="#0a0e15";S.fillRect(0,wy+wh-2,W,14);
+  S.fillStyle=kk(0.06*lit);S.fillRect(0,wy+wh-2,W,1.4);
+  S.fillStyle="#0a0e15";S.fillRect(0,wy+4,W,14);
+  S.restore();
+  // ---- overhead: deckhead beams and a caged lamp
+  S.fillStyle="#080b11";S.fillRect(0,0,W,44);
+  S.fillStyle="rgba(150,166,194,"+(0.05*lit)+")";S.fillRect(0,42,W,1.4);
+  [70,200,330,460].forEach(function(bx){
+    S.fillStyle="#0a0e15";S.fillRect(bx-9,0,18,30);
+    S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.fillRect(bx-9,0,2,30);});
+  // the room lamp, and its cone down onto the unit
+  if(!offl){
+    var cone=S.createLinearGradient(0,44,0,GYS);
+    cone.addColorStop(0,kk(0.11*lit));cone.addColorStop(1,kk(0));
+    S.fillStyle=cone;S.beginPath();
+    S.moveTo(222,44);S.lineTo(298,44);S.lineTo(408,GYS);S.lineTo(112,GYS);S.closePath();S.fill();}
+  else{var bc2=S.createRadialGradient(74,120,4,74,120,170);
+    bc2.addColorStop(0,"rgba(255,60,50,0.11)");bc2.addColorStop(1,"rgba(255,60,50,0)");
+    S.fillStyle=bc2;S.fillRect(0,0,W,H);}
+  // ---- repeater dials down the left bulkhead
+  [[38,250],[38,318],[38,386]].forEach(function(dp,i6){
+    S.fillStyle="#0a0e15";rrS(dp[0]-19,dp[1]-19,38,38,4);S.fill();
+    S.strokeStyle="rgba(140,156,184,"+(0.16*lit)+")";S.lineWidth=1.2;
+    rrS(dp[0]-19,dp[1]-19,38,38,4);S.stroke();
+    S.beginPath();S.arc(dp[0],dp[1],12,0,7);
+    S.strokeStyle="rgba(140,156,184,"+(0.13*lit)+")";S.lineWidth=1;S.stroke();
+    if(!offl){var ang=Math.sin(t*(0.5+i6*0.3)+i6)*1.1-1.6;
+      S.strokeStyle=kk(0.55*lit);S.lineWidth=1.6;
+      S.beginPath();S.moveTo(dp[0],dp[1]);
+      S.lineTo(dp[0]+Math.cos(ang)*9,dp[1]+Math.sin(ang)*9);S.stroke();
+      S.fillStyle=kk(0.5*lit);S.beginPath();S.arc(dp[0],dp[1],1.8,0,7);S.fill();}});
+  // ---- chart board on the right bulkhead
+  S.fillStyle="#0a0e15";S.fillRect(W-92,236,74,116);
+  S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.2;S.strokeRect(W-92,236,74,116);
+  S.strokeStyle=kk(0.13*lit);S.lineWidth=1;
+  for(var cl2=0;cl2<5;cl2++){S.beginPath();S.moveTo(W-86,250+cl2*20);S.lineTo(W-26,250+cl2*20);S.stroke();}
+  S.strokeStyle=kk(0.3*lit);S.lineWidth=1.4;
+  S.beginPath();S.moveTo(W-84,330);S.lineTo(W-64,300);S.lineTo(W-44,312);S.lineTo(W-28,282);S.stroke();
+  // ---- the PLOT TABLE, low and forward, throwing light UP into the room
+  var tx=cx-232, ty=GYS-104;    // off to port, where its up-glow can be seen
+  S.fillStyle="#0b0f16";S.beginPath();
+  S.moveTo(tx,ty);S.lineTo(tx+150,ty);S.lineTo(tx+162,ty+28);S.lineTo(tx-12,ty+28);S.closePath();S.fill();
+  S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.2;S.stroke();
+  if(!offl){
+    var glow=S.createLinearGradient(0,ty-46,0,ty+6);
+    glow.addColorStop(0,kk(0));glow.addColorStop(1,kk(0.17*lit));
+    S.fillStyle=glow;S.fillRect(tx-12,ty-56,176,60);
+    S.fillStyle=kk(0.55*lit);S.fillRect(tx+4,ty+2,144,2);
+    // plot traces on the glass
+    S.strokeStyle=kk(0.35*lit);S.lineWidth=1;
+    S.beginPath();S.arc(tx+74,ty+14,22,Math.PI,Math.PI*2);S.stroke();
+    S.beginPath();S.arc(tx+74,ty+14,38,Math.PI,Math.PI*2);S.stroke();
+    var sweep=(t*0.6)%Math.PI;
+    S.strokeStyle=kk(0.6*lit);S.lineWidth=1.4;
+    S.beginPath();S.moveTo(tx+74,ty+14);
+    S.lineTo(tx+74-Math.cos(sweep)*38,ty+14-Math.sin(sweep)*38);S.stroke();}
+  S.fillStyle="#070a10";S.fillRect(tx+8,ty+28,14,72);S.fillRect(tx+130,ty+28,14,72);
+  // ---- deck
+  S.fillStyle=offl?"#07090c":"#0c1017";S.fillRect(0,GYS,W,H-GYS);
+  pl(S,0,GYS,W,GYS,"rgba(120,140,170,0.14)",1);
+  for(var dp2=0;dp2<6;dp2++){                       // deck plate seams
+    pl(S,0,GYS+12+dp2*14,W,GYS+12+dp2*14,"rgba(4,8,14,0.5)",1);}
+  if(!offl){var pool=S.createRadialGradient(cx,GYS+6,10,cx,GYS+6,190);
+    pool.addColorStop(0,kk(0.09*lit));pool.addColorStop(1,kk(0));
+    S.fillStyle=pool;S.beginPath();S.ellipse(cx,GYS+6,190,26,0,0,7);S.fill();}
+}
+function rrS(x,y,w,h,r){S.beginPath();if(S.roundRect)S.roundRect(x,y,w,h,r);else S.rect(x,y,w,h);}
+var GYS=560, cx=260;
+
 /* ---- scene ---- */
 function drawScene(t,st){
   var offl=st==="offline";
-  var wall=S.createLinearGradient(0,0,0,H);
-  wall.addColorStop(0,offl?"#07090d":"#0b0e14");wall.addColorStop(0.75,offl?"#05070a":"#090c12");wall.addColorStop(1,"#05070b");
-  S.fillStyle=wall;S.fillRect(0,0,W,H);
-  if(!offl){var cone=S.createLinearGradient(0,40,0,560);
-    cone.addColorStop(0,"rgba(255,224,170,0.10)");cone.addColorStop(1,"rgba(255,224,170,0)");
-    S.fillStyle=cone;S.beginPath();S.moveTo(225,40);S.lineTo(295,40);S.lineTo(410,560);S.lineTo(110,560);S.closePath();S.fill();}
-  else{var bc=S.createRadialGradient(90,120,4,90,120,150);
-    bc.addColorStop(0,"rgba(255,60,50,0.12)");bc.addColorStop(1,"rgba(255,60,50,0)");
-    S.fillStyle=bc;S.fillRect(0,0,W,H);}
-  S.fillStyle=offl?"#07090c":"#0d1118";S.fillRect(0,560,W,H-560);
-  pl(S,0,560,W,560,"rgba(120,140,170,0.14)",1);
+  drawRoom(t,st);
   // boots planted: two contact shadows plus the standing pool
   [-34,34].forEach(function(dx){var sh=S.createRadialGradient(260+dx,564,1,260+dx,564,34);
     sh.addColorStop(0,"rgba(0,0,0,0.6)");sh.addColorStop(0.6,"rgba(0,0,0,0.28)");sh.addColorStop(1,"rgba(0,0,0,0)");
@@ -455,6 +635,14 @@ function drawScene(t,st){
   S.drawImage(body,0,0);
   S.drawImage(rim,0,0);
   S.save();S.globalCompositeOperation="lighter";S.drawImage(emis,0,0);S.restore();
+  /* foreground: a stanchion the camera stands behind, blurred — depth for
+     almost nothing, and it never crosses the unit */
+  S.save();S.filter="blur(3px)";
+  S.fillStyle="rgba(7,10,16,0.96)";S.fillRect(0,0,26,H);
+  S.fillStyle="rgba(150,166,194,0.06)";S.fillRect(24,0,2,H);
+  S.fillStyle="rgba(7,10,16,0.9)";
+  S.beginPath();S.moveTo(W,0);S.lineTo(W,72);S.lineTo(W-64,18);S.lineTo(W-64,0);S.closePath();S.fill();
+  S.restore();
 }
 
 function frame(){

@@ -683,26 +683,120 @@ function drawUnit(t,st){
   RR.fillStyle=rl;RR.fillRect(0,0,W,H);RR.globalCompositeOperation="source-over";
 }
 
+/* ---- scene: THE STATIC ROOM ----
+   The sentinel's room is a dead monitoring gallery: a wall of screens, every
+   one of them showing snow. Nothing is being watched by anyone but it. The
+   static is a real per-screen noise field with its own roll and its own
+   phase, because a room of identical grey rectangles is a wallpaper — these
+   have to look like they are each receiving nothing, separately.
+   Built once into an offscreen tile and sampled per screen: nineteen live
+   noise canvases a frame would cost more than the whole unit. */
+var NOISE=(function(){
+  var n=document.createElement("canvas");n.width=64;n.height=64;
+  var nc=n.getContext("2d"),im=nc.createImageData(64,64),d=im.data;
+  var seed=1;function rnd(){seed=(seed*1664525+1013904223)%4294967296;return seed/4294967296;}
+  for(var i=0;i<d.length;i+=4){var v=rnd()*255;d[i]=d[i+1]=d[i+2]=v;d[i+3]=255;}
+  nc.putImageData(im,0,0);return n;})();
+var SCREENS=(function(){
+  var out=[],cols=[36,150,264,378],i=0;
+  cols.forEach(function(x,ci){
+    for(var r=0;r<4;r++){
+      var w2=88+((ci+r)%3)*14, h2=56+((ci*2+r)%3)*10;
+      out.push({x:x+((r%2)?6:0),y:64+r*104,w:w2,h:h2,
+                ph:(i*1.7)%6.28, sp:0.6+((i*37)%9)/9*1.4, tilt:((i%3)-1)*0.02});
+      i++;}});
+  return out;})();
+
+function drawRoom(t,st){
+  var offl=st==="offline";
+  var lit=offl?0.3:1;
+  // ---- the room itself: a black box, barely graded
+  var wall=S.createLinearGradient(0,0,0,H);
+  wall.addColorStop(0,"#05070b");wall.addColorStop(0.7,"#04060a");wall.addColorStop(1,"#030508");
+  S.fillStyle=wall;S.fillRect(0,0,W,H);
+  // ---- the screen wall
+  SCREENS.forEach(function(sc,si){
+    // bezel
+    S.fillStyle="#080b11";S.fillRect(sc.x-3,sc.y-3,sc.w+6,sc.h+6);
+    S.strokeStyle="rgba(90,102,124,"+(0.12*lit)+")";S.lineWidth=1;
+    S.strokeRect(sc.x-3.5,sc.y-3.5,sc.w+7,sc.h+7);
+    // the snow: the shared noise tile, offset per screen per frame, so each
+    // one rolls on its own clock
+    S.save();S.beginPath();S.rect(sc.x,sc.y,sc.w,sc.h);S.clip();
+    var ox=Math.floor((Math.sin(si*3.1+t*sc.sp*9)*0.5+0.5)*64);
+    var oy=Math.floor((t*sc.sp*140+si*17)%64);
+    S.globalAlpha=(offl?0.06:0.2)+(offl?0:0.06*Math.sin(t*sc.sp*2+sc.ph));
+    for(var gx=-1;gx<Math.ceil(sc.w/64)+1;gx++)
+      for(var gy=-1;gy<Math.ceil(sc.h/64)+1;gy++)
+        S.drawImage(NOISE,sc.x+gx*64-ox,sc.y+gy*64-oy);
+    S.globalAlpha=1;
+    // the roll bar: a brighter band sweeping down, the tell of a dead signal
+    var rb=((t*sc.sp*0.5+sc.ph)%1)*(sc.h+40)-20;
+    var rg2=S.createLinearGradient(0,sc.y+rb-14,0,sc.y+rb+14);
+    rg2.addColorStop(0,"rgba(200,214,238,0)");
+    rg2.addColorStop(0.5,"rgba(200,214,238,"+(offl?0.03:0.09)+")");
+    rg2.addColorStop(1,"rgba(200,214,238,0)");
+    S.fillStyle=rg2;S.fillRect(sc.x,sc.y+rb-14,sc.w,28);
+    // scanlines over everything
+    S.fillStyle="rgba(0,0,0,0.28)";
+    for(var sl=0;sl<sc.h;sl+=3)S.fillRect(sc.x,sc.y+sl,sc.w,1.2);
+    // the tube's own curvature: darker at the corners
+    var vg=S.createRadialGradient(sc.x+sc.w/2,sc.y+sc.h/2,sc.w*0.2,sc.x+sc.w/2,sc.y+sc.h/2,sc.w*0.72);
+    vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.55)");
+    S.fillStyle=vg;S.fillRect(sc.x,sc.y,sc.w,sc.h);
+    S.restore();
+    // the glass catches the room: one raking highlight per screen
+    S.save();S.beginPath();S.rect(sc.x,sc.y,sc.w,sc.h);S.clip();
+    S.fillStyle="rgba(150,170,200,"+(0.035*lit)+")";
+    S.beginPath();S.moveTo(sc.x,sc.y+sc.h*0.7);S.lineTo(sc.x+sc.w*0.55,sc.y);
+    S.lineTo(sc.x+sc.w*0.78,sc.y);S.lineTo(sc.x,sc.y+sc.h);S.closePath();S.fill();S.restore();
+    // each screen throws its own weak light into the room
+    if(!offl){S.save();S.globalCompositeOperation="lighter";
+      var sg8=S.createRadialGradient(sc.x+sc.w/2,sc.y+sc.h/2,4,sc.x+sc.w/2,sc.y+sc.h/2,sc.w*0.9);
+      sg8.addColorStop(0,"rgba(120,140,170,0.05)");sg8.addColorStop(1,"rgba(120,140,170,0)");
+      S.fillStyle=sg8;S.fillRect(sc.x-sc.w,sc.y-sc.h,sc.w*3,sc.h*3);S.restore();}
+  });
+  // ---- rack uprights the screens are bolted to
+  [24,138,252,366,470].forEach(function(ux){
+    S.fillStyle="#070a0f";S.fillRect(ux-5,40,10,H-40);
+    S.fillStyle="rgba(120,136,164,"+(0.05*lit)+")";S.fillRect(ux-5,40,1.4,H-40);
+    for(var bh=0;bh<9;bh++){S.fillStyle="rgba(4,7,12,0.9)";S.fillRect(ux-4,72+bh*56,8,3);}});
+  // cable trunk sagging across the wall under the screens
+  S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=7;
+  S.beginPath();S.moveTo(0,470);S.quadraticCurveTo(W/2,502,W,468);S.stroke();
+  S.strokeStyle="rgba(90,102,124,"+(0.07*lit)+")";S.lineWidth=1.4;
+  S.beginPath();S.moveTo(0,470);S.quadraticCurveTo(W/2,502,W,468);S.stroke();
+  // ---- deck: wet-looking, because the only light is the wall behind it
+  S.fillStyle="#05070b";S.fillRect(0,560,W,H-560);
+  pl(S,0,560,W,560,"rgba(90,110,140,0.1)",1);
+  if(!offl){
+    // the screen wall reflects in the floor — vertical smears, no detail
+    /* the wall smears in the floor. Hard-edged rectangles read as painted
+       tiles, so each one is blurred and feathered at both ends — a wet deck
+       returns a suggestion of a screen, never a copy of one. */
+    S.save();S.globalAlpha=0.1;S.filter="blur(6px)";
+    SCREENS.forEach(function(sc){
+      if(sc.y>380)return;
+      var rgd=S.createLinearGradient(0,562,0,606);
+      rgd.addColorStop(0,"rgba(150,170,200,0.45)");
+      rgd.addColorStop(0.5,"rgba(150,170,200,0.16)");
+      rgd.addColorStop(1,"rgba(150,170,200,0)");
+      S.fillStyle=rgd;S.fillRect(sc.x+10,562,sc.w-20,44);});
+    S.restore();}
+  else{var bc3=S.createRadialGradient(70,120,4,70,120,160);
+    bc3.addColorStop(0,"rgba(255,60,50,0.10)");bc3.addColorStop(1,"rgba(255,60,50,0)");
+    S.fillStyle=bc3;S.fillRect(0,0,W,H);}
+}
+
 /* ---- scene ---- */
 function drawScene(t,st){
   var offl=st==="offline";
-  var wall=S.createLinearGradient(0,0,0,H);
-  wall.addColorStop(0,offl?"#07090d":"#0b0e14");wall.addColorStop(0.75,offl?"#05070a":"#090c12");wall.addColorStop(1,"#05070b");
-  S.fillStyle=wall;S.fillRect(0,0,W,H);
-  if(!offl){var cone=S.createLinearGradient(0,40,0,560);
-    cone.addColorStop(0,"rgba(255,214,150,0.07)");cone.addColorStop(1,"rgba(255,214,150,0)");
-    S.fillStyle=cone;S.beginPath();S.moveTo(225,40);S.lineTo(295,40);S.lineTo(410,560);S.lineTo(110,560);S.closePath();S.fill();
-    var rg=S.createRadialGradient(260,290,20,260,290,240);
-    rg.addColorStop(0,"rgba(255,45,34,0.06)");rg.addColorStop(1,"rgba(255,45,34,0)");
+  drawRoom(t,st);
+  // the unit's own red wash on the room, and its shadow
+  if(!offl){
+    var rg=S.createRadialGradient(260,330,20,260,330,250);
+    rg.addColorStop(0,"rgba(255,45,34,0.05)");rg.addColorStop(1,"rgba(255,45,34,0)");
     S.fillStyle=rg;S.fillRect(0,0,W,H);}
-  else{var bc=S.createRadialGradient(90,120,4,90,120,150);
-    bc.addColorStop(0,"rgba(255,60,50,0.12)");bc.addColorStop(1,"rgba(255,60,50,0)");
-    S.fillStyle=bc;S.fillRect(0,0,W,H);}
-  S.fillStyle=offl?"#07090c":"#0d1118";S.fillRect(0,560,W,H-560);
-  pl(S,0,560,W,560,"rgba(120,140,170,0.14)",1);
-  /* Alive: ONE soft shadow pooled far below a body that touches nothing —
-     small, diffuse and offset by the drift, which is the whole tell that a
-     thing is airborne. Dead: hard contact patches where it fell. */
   if(offl){
     [-238,-166,-100,-58,-52,58,70,112,176,242].forEach(function(dx){
       var sh=S.createRadialGradient(260+dx,560,1,260+dx,560,30);
@@ -723,13 +817,18 @@ function drawScene(t,st){
   S.drawImage(body,0,0);
   S.drawImage(rim,0,0);
   S.save();S.globalCompositeOperation="lighter";S.drawImage(emis,0,0);S.restore();
+  // foreground: a rack upright the camera stands behind
+  S.save();S.filter="blur(3px)";
+  S.fillStyle="rgba(4,6,10,0.96)";S.fillRect(0,0,22,H);
+  S.fillStyle="rgba(120,136,164,0.05)";S.fillRect(20,0,2,H);
+  S.restore();
 }
 
 function drawTarget(){
   if(qs.get("outline")===null)return;
   var T=window.__TARGET__;if(!T)return;
-  S.save();S.strokeStyle="#2b6bff";S.lineWidth=3;S.lineJoin="round";
   var k=window.__HS__||1;
+  S.save();S.strokeStyle="#2b6bff";S.lineWidth=3;S.lineJoin="round";
   S.beginPath();T.forEach(function(p,i){var x=260+p[0]*k,y=250+p[1]*k;i?S.lineTo(x,y):S.moveTo(x,y);});
   S.closePath();S.stroke();S.restore();}
 function frame(){

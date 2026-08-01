@@ -84,6 +84,15 @@ Written in the fleet-floor grammar — canvas 2D, `plate()`/rim/emissive
 buffers, no assets, no deps — so it ports into a `buildSentinel()` in
 `fleet-floor/src/app.js` the way JUGGERNAUT ported into `buildKimi()`.
 
+## The room — the static gallery
+
+A dead monitoring room: sixteen screens on rack uprights, **every one of them
+showing snow**. Each has its own roll speed, phase and drift, so the wall
+never reads as tiled wallpaper — plus a sweeping roll bar, scanlines, tube
+vignetting and a raking glass highlight per screen, and each throws its own
+weak light into the room. The deck returns them as blurred vertical smears.
+Nothing in here is being watched by anyone but the sentinel.
+
 ## Renders — proto C
 
 | working | idle | offline |

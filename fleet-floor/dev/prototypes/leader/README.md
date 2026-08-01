@@ -52,6 +52,16 @@ Written in the fleet-floor grammar — canvas 2D, `plate()`/rim/emissive
 buffers, no assets, no deps — so it ports into a `buildLeader()` in
 `fleet-floor/src/app.js` the way JUGGERNAUT ported into `buildKimi()`.
 
+## The room — the flag bridge
+
+The leader stands where a battleship is commanded from: an armoured gallery
+with a raked window band looking out on deep nothing, riveted plate courses,
+deckhead beams, repeater dials down one bulkhead, a chart board on the other,
+and a **plot table off to port throwing its light up into the room** — a
+second, lower light source so the unit is not lit only from overhead. Graded
+entirely to command brass. Drawn behind and around the unit, never across its
+silhouette, with one blurred stanchion in the foreground for depth.
+
 ## Renders
 
 | working | idle | offline |
