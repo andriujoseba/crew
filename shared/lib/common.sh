@@ -151,15 +151,35 @@ run_session() {
   # timeout -k: a CLI that ignores TERM still dies 60s later.
   ( cd "$dir" && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
       timeout -k 60 "$tmo" "${BOT_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 || rc=$?
-  local dur=$((SECONDS - start)) verdict=ok
+  local dur=$((SECONDS - start)) verdict=ok acted reply_tail
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict"
+  acted="$(session_acted "$slog")"
+  reply_tail="$(session_reply_tail "$slog")"
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail"
   # Outcome exposed for callers that gate follow-up state on success (the seen-
   # ledger commits in duty-triage.sh) WITHOUT reintroducing the set -e abort a
   # failed session must never cause — return stays 0.
   RUN_SESSION_RC="$rc"
   return 0
+}
+
+session_acted() {
+  local rc
+  declare -F bot_session_acted >/dev/null 2>&1 || { printf unknown; return; }
+  bot_session_acted "$1" && rc=0 || rc=$?
+  case "$rc" in
+    0) printf yes ;;
+    1) printf no ;;
+    *) printf unknown ;;
+  esac
+}
+
+session_reply_tail() {
+  # SESSION END is space-delimited, so encode arbitrary reply prose as one
+  # token; the fleet floor decodes it for display.
+  awk 'NF { line=$0 } END { printf "%s", substr(line, 1, 200) }' "$1" 2>/dev/null \
+    | base64 | tr -d '\n'
 }
 
 # --- Seen-ledgers: turn "signal is present" into "signal CHANGED since I last
