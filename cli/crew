@@ -1715,7 +1715,22 @@ cmd_status() {
         note="disarmed — no cron line; crew hire $name arms it"
       fi
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
-      last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60)"
+      # `|| true` is load-bearing, exactly as it is in box_state, box_agent and
+      # box_registry: ~/duty/duty.log does not exist until the first duty run
+      # writes it, so `tail` exits 1, bxn propagates that, `pipefail` takes it,
+      # and the assignment died under `set -e` — killing the table at the first
+      # never-ticked box with no message at all (#224). That is not an edge
+      # case during bring-up: it is EVERY box, for the first five minutes.
+      #
+      # It also makes `no ticks yet` reachable. The fallback was written for
+      # exactly this box and could never render, because the assignment that
+      # would leave `last` empty ended the command first.
+      #
+      # An UNREACHABLE box never arrives here: it answers no engine_report, so
+      # `hired` is empty and the branch above claims the row. That separation
+      # is the point — a box nobody can talk to must not read as a healthy box
+      # that has simply not ticked (#221, one call site over).
+      last="$(bxn "$name" 'tail -n 1 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' | cut -c1-60 || true)"
       note="${last:-no ticks yet}"
     fi
     # The wire vocabulary is lowercase; MODIFIED shouts for the same reason

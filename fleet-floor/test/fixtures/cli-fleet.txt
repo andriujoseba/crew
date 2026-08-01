@@ -8,8 +8,17 @@
 # What is here is what the roster loops must survive: a hired box, a stopped
 # one, one never hired, one whose logins are dead, and one that is not on the
 # host at all. Every row exercises a different branch of `crew status`.
+# Hired seconds ago, armed, credentials fine — and no ~/duty/duty.log yet,
+# because nothing has run. FIRST on purpose: this is the row that used to end
+# `crew status` outright (#224), and only a fixture that puts it AHEAD of a
+# healthy box can tell a real fix from one that repairs the note alone.
+cli-neverticked running  neverticked
 cli-hired      running  working
 cli-idle       running  idle
+# Present on the host and answering nothing. It must stay distinguishable from
+# the never-ticked box above: both have no duty log, and only one of them is
+# fine (#224 criterion 4, #221 one call site over).
+cli-unreachable running  unreachable
 cli-stopped    stopped  working
 cli-nothired   running  nothired
 cli-noauth     running  noauth

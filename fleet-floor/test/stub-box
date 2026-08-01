@@ -117,7 +117,9 @@ emit_probe() {
   # `stale` reachable at all.
   case "$sc" in
     silent|nocron|disarmed) _tickage=4000 ;;
-    nothired)      _tickage=-1 ;;
+    # -1 is "no duty.log to read an age from" — true of a box that was never
+    # hired, and equally true of one hired a minute ago that has not ticked.
+    nothired|neverticked) _tickage=-1 ;;
     *)             _tickage=30 ;;
   esac
   printf '::tickage %s\n' "$_tickage"
@@ -162,7 +164,7 @@ emit_probe() {
       echo "$(ago 200) heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"
       echo "$(ago 190) SESSION START kind=build key=heavy-duty/rig#3 timeout=7200s log=/h/duty/logs/f.log"
       ;;
-    fresh|nothired|nocron) : ;;              # hired seconds ago: no evidence yet
+    fresh|nothired|nocron|neverticked) : ;;  # hired seconds ago: no evidence yet
     failing)
       echo "$(ago 300) duty run start"
       echo "$(ago 295) SESSION END kind=build key=crew#41 rc=1 dur=12s outcome=FAILED"
@@ -354,6 +356,9 @@ case "${1:-}" in
         case "$sc" in
           noauth)        echo "missing missing 30 $_armed $_cpaused" ;;
           nothired)      echo "unknown unknown -1 $_armed $_cpaused" ;;
+          # Hired and armed, nothing recorded against it, and no duty.log to
+          # age: the box is healthy and has simply not run yet.
+          neverticked)   echo "nofail nofail -1 $_armed $_cpaused" ;;
           silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused" ;;
           *)             echo "nofail nofail 30 $_armed $_cpaused" ;;
         esac ;;
@@ -447,7 +452,15 @@ case "${1:-}" in
       *'duty/repos.txt'*)                       # crew's box_registry (#51)
         cat "$STATEDIR/$name.repos" 2>/dev/null || {
           echo heavy-duty/ceremony; echo heavy-duty/incubator; echo heavy-duty/rig; } ;;
-      *tail*)                                   echo "$(now) duty run start"; echo "stub log for $name" ;;
+      *tail*)
+        # A box that has never ticked has NO ~/duty/duty.log, so the real
+        # `tail -n 1 ~/duty/duty.log 2>/dev/null` prints nothing and exits 1 —
+        # and `box exec` propagates that status. Reproduced faithfully, because
+        # a stub that returned empty-and-0 here would have let #224 through
+        # again: the defect is entirely in what the CALLER does with the
+        # non-zero status under `set -o pipefail`.
+        [ "$sc" = "neverticked" ] && exit 1
+        echo "$(now) duty run start"; echo "stub log for $name" ;;
       *) echo "stub-box: unmatched exec script for $name" >&2; exit 3 ;;
     esac
     ;;

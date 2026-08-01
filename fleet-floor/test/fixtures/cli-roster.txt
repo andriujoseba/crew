@@ -5,8 +5,14 @@
 # rows than there are lines here is what #47 (jq killed the command on the
 # first existing box) and #48 (box exec drained the roster FIFO after one
 # iteration) each looked like from the outside.
+# FIRST, and the position is the assertion (#224): a box that has never
+# ticked used to kill the whole loop, so every row BELOW it vanished. Behind
+# `cli-hired` the truncation would still have left the healthy row printed and
+# the fixture would have passed a one-sided fix.
+cli-neverticked claude builder
 cli-hired      claude  builder
 cli-idle       claude  reviewer
+cli-unreachable grok   reviewer
 cli-stopped    codex   builder
 cli-nothired   grok    reviewer
 cli-noauth     kimi    reviewer
