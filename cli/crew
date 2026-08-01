@@ -1383,19 +1383,30 @@ cmd_create_all() {
   max_args create-all 0 "$@"
   need_box
   require_operator_config "crew create-all"
-  local name agent role from made=0
+  local name agent role from made=0 existing=0 failed=0 failed_names=""
   while read -r name agent role from; do
     validate_profiles "$agent" "$role"
     if box_exists "$name"; then
       echo "$name: exists"
+      existing=$((existing + 1))
     else
-      create_box "$name" "$agent" "$role" "$from"
-      made=$((made + 1))
+      if create_box "$name" "$agent" "$role" "$from"; then
+        made=$((made + 1))
+      else
+        failed=$((failed + 1))
+        failed_names="${failed_names}${failed_names:+, }$name"
+      fi
     fi
   done < <(read_roster)
   echo
-  echo "$made created. Next: log each new box in by hand (box shell <box> → gh auth login; the worst part,"
+  if [ "$failed" -eq 0 ] && [ "$existing" -eq 0 ]; then
+    echo "$made created. Next: log each new box in by hand (box shell <box> → gh auth login; the worst part,"
+  else
+    echo "create-all: $made created, $existing existing, $failed failed${failed_names:+ ($failed_names)}."
+    echo "Next: log each new box in by hand (box shell <box> → gh auth login; the worst part,"
+  fi
   echo "halved: GitHub is automated), then 'crew hire-all'."
+  if [ "$failed" -ne 0 ]; then return 1; fi
 }
 
 cmd_hire() {
