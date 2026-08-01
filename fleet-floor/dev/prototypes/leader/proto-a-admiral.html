@@ -415,8 +415,13 @@ function drawUnit(t,st){
   plate(g,[[cx+36,hy-8],[cx+17,hy-3],[cx+19,hy+9],[cx+35,hy+6]],sM,sB,ed);
   pl(g,cx-35,hy-7,cx-18,hy-2,"rgba(186,208,242,"+(offl?0.07:0.24)+")",1.2);
   pl(g,cx+35,hy-7,cx+18,hy-2,"rgba(186,208,242,"+(offl?0.07:0.24)+")",1.2);
-  // the scar across the left cheek plate
-  pl(g,cx-33,hy-2,cx-20,hy+8,"rgba(198,216,246,"+(offl?0.1:0.32)+")",1.1);
+  /* the scar across the left cheek plate — operator call: CARVED, not
+     etched. A gouge has a dark trench and a lit lip where the metal
+     rolled out, and this blade skipped once and cut twice. */
+  pl(g,cx-34,hy-3,cx-19,hy+9,"rgba(3,6,11,0.85)",2.8);
+  pl(g,cx-33.2,hy-1.8,cx-19.6,hy+10,"rgba(210,226,250,"+(offl?0.12:0.42)+")",1.2);
+  pl(g,cx-30,hy+2,cx-23,hy+8,"rgba(3,6,11,0.7)",1.9);
+  pl(g,cx-29.4,hy+3,cx-23.6,hy+8.9,"rgba(210,226,250,"+(offl?0.08:0.28)+")",1);
   // VISOR: one hard slit under the bill; two steady optics, command amber
   var vs={x:cx-31,y:hy-20,w:62,h:11};
   rr(g,vs.x,vs.y,vs.w,vs.h,3);g.fillStyle="#03060b";g.fill();g.strokeStyle=rc;g.lineWidth=1;g.stroke();
@@ -475,10 +480,16 @@ function drawUnit(t,st){
   g.fillStyle="rgba(206,220,242,"+(offl?0.1:0.26)+")";
   g.fillRect(cx-52,capy-30,5,1.8);g.fillRect(cx+27,capy-39,3.4,1.5);
   /* the crack that runs from the bill notch down through the visor glass
-     and onto the cheek plate — the face's war record */
-  g.strokeStyle="rgba(190,205,228,"+(offl?0.08:0.26)+")";g.lineWidth=0.9;
+     and onto the cheek plate — the face's war record. Operator call:
+     carved into the metal, so it is a real trench now — wider, with a
+     lit burr riding its edge — and it runs further, off the visor and
+     down across the jaw guard. */
+  g.strokeStyle="rgba(3,6,11,0.85)";g.lineWidth=2.4;g.lineJoin="round";
   g.beginPath();g.moveTo(cx+22,capy+4.4);g.lineTo(cx+18,vs.y+3);
-  g.lineTo(cx+21,vs.y+8);g.lineTo(cx+16,hy+5);g.stroke();
+  g.lineTo(cx+21,vs.y+8);g.lineTo(cx+15,hy+6);g.lineTo(cx+19,hy+13);g.stroke();
+  g.strokeStyle="rgba(205,220,244,"+(offl?0.1:0.36)+")";g.lineWidth=1.1;
+  g.beginPath();g.moveTo(cx+23,capy+5.2);g.lineTo(cx+19,vs.y+3.8);
+  g.lineTo(cx+22,vs.y+8.7);g.lineTo(cx+16,hy+6.8);g.lineTo(cx+20,hy+13.6);g.stroke();
 
   /* ---- NO HANDS, by operator call. Loop 3 grew gauntlet fists at his
      sides because blind reviews read the arms as stumps; the operator
