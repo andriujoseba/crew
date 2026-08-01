@@ -92,7 +92,13 @@ function drawUnit(t,st){
   [RB,RE,RR].forEach(function(c){c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,W,H);c.globalAlpha=1;c.globalCompositeOperation="source-over";});
   var g=RB, cx=260, GY=560;
   // steel: cool officer grey-blue, a shade cleaner than a builder's plate
-  var sT="#2b3546",sM="#151c29",sB="#090d14",ed="#333f54",eH="#48566e",rc="#05080e";
+  /* RUN 3 · LOOP 6 — the light is BAKED into the plate palette now. Every
+     overlay wash tried on this figure read as translucency to a blind
+     reviewer ("hologram", "ghost"), while the room's props — lit top,
+     dark bottom, per object — never drew that complaint once. So the unit
+     is lit the way the room is: plate tops carry the lamp, plate bottoms
+     stay dark, and the local contrast is what says SOLID. */
+  var sT="#43516b",sM="#20293c",sB="#090d14",ed="#3d4a62",eH="#5d6e8c",rc="#05080e";
   if(offl){sT="#1c222d";sM="#0e121a";sB="#06090f";ed="#232a36";eH="#2b3342";}
   // antique command brass — the role's colour, no vendor anywhere
   var BR=offl?[76,80,90]:[194,150,72], BRH=offl?[118,122,132]:[236,200,128];
