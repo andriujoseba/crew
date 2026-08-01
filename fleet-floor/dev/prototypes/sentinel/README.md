@@ -6,36 +6,47 @@ full stop.
 
 **Current: `proto-c-squiddy.html`** (working / idle / offline buttons under
 the canvas; `?state=X&t=N` renders a deterministic still). Drawn against the
-actual Matrix sentinel reference (the Hot Toys 1/16 still and the fan render
-the operator supplied) after two misses:
+actual Matrix sentinel reference the operator supplied, then taken through
+**ten render loops** — five structural, five detail — against
+`~/pw-harness/droids.js`.
 
-- `proto-a-argus.html` — smooth bell, eyes scattered politely. Verdict:
-  *soft, not scary, not dangerous.*
-- `proto-b-warform.html` — angular crab shield with thick jointed arms.
-  Verdict: *worse — not the movie shape.*
+Two earlier rounds are kept as history: `proto-a-argus.html` (a smooth bell
+— *soft, not scary*) and `proto-b-warform.html` (an angular crab shield —
+*worse, not the movie shape*).
 
-## The concept (C)
+## The concept
 
-What the reference actually is, honoured in the fleet grammar:
+**It flies.** Alive it hovers with nothing touching the deck, holding
+station on a slow figure-of-eight drift, one soft shadow pooled far below.
+Dead it is on the floor. (The earlier coil-stack "feet" are gone — a
+sentinel that stands on furniture isn't a sentinel.)
 
-- **A bulbous skull pod**, not a bell and not a shield — overlapping
-  organic shell lobes with seam cracks and rivets, hook-barb antennae on
-  the crown, side sensor pods, a gouge across the left lobe, scorch up
-  the right cheek.
-- **The eyes are glossy red BERRIES in chrome sockets** — fifteen of
-  them, different sizes, wrapped across a dark recessed face like spider
-  eyes, each with its own specular glint and its own shimmer clock. One
-  is **dead and cracked** and stays that way. Offline they all go to
-  dead glass — and keep their glints, which is worse.
-- **A fringe of small mandible claws** twitching under the chin.
-- **A dozen long thin ribbed whips** — segmented conduit, S-curving in
-  every direction, never straight, each tipped with a **three-prong
-  grapple claw** with a red sensor. Standing translation of a thing
-  that flies: it **perches on two of its own coiled whip-stacks** like a
-  snake standing on its body; one strike whip hovers its grapple over
-  the deck, one curls high past the skull, the rest flare around it.
-- **Offline** the coils flatten, every whip falls and lies where it
-  lands, the grapples close.
+- **A helmet carapace**, not a ball and not a shield: a low domed crown
+  split into two swept **brow lobes** over a keel panel, a hard **brow
+  shelf** running the full width that overhangs the face and casts a real
+  shadow into it, temple bevels at the widest point, a jaw that tapers
+  narrow. Straight runs between corner arcs — geometric, the way claude's
+  unit is, because that is what reads as armour.
+- **Volume, not a mask**: one modelling pass clipped to the silhouette
+  puts the highlight on the left-of-centre crown and drives a terminator
+  down the right flank, so the head turns away from the light at its own
+  edges instead of sitting flat.
+- **Fifteen glossy red berry-eyes in chrome sockets**, different sizes,
+  packed across a deep recessed face bowl. Each has its own glint,
+  shimmer clock and socket polish; a scan wave sweeps them when working.
+  One is **dead and cracked**. Offline they all go to dead glass and keep
+  their glints — worse.
+- **A fringe of tapered mandible fangs** under the jaw, curling inward,
+  each on its own twitch clock, each with a lit honed edge.
+- **Machine surface**: louvre bank on the left lobe, bolted inspection
+  hatch on the right, panel lines crossing the seams, rivets, seam
+  cracks, a crown gouge, cheek scorch.
+- **A dozen ribbed whips** — lit crown, shadowed belly — S-curving in
+  every direction, tipped with three-prong grapple claws with red sensor
+  hubs. One thrown high past the skull, one reaching forward-down.
+- **Offline**: the hull drops to the deck, every whip crumples at its own
+  height and folds back on itself, the grapples close, and the service
+  beacon rakes the lobe arris and the brow lip.
 
 Written in the fleet-floor grammar — canvas 2D, `plate()`/rim/emissive
 buffers, no assets, no deps — so it ports into a `buildSentinel()` in

@@ -37,6 +37,14 @@ the wars instead:
   swinging under the arm pits, hip coil shocks and actuator rods on the
   pelvis, outboard knee springs, return hoses down the calves, ribbed
   ankle gaiters, intake gills low on the coat sides
+- **Chad geometry** (revision three, against claude's unit as the
+  benchmark): a faceted chest — raised centre slab with the side panels
+  angled away from it, so light breaks over three planes; big trapezoid
+  pauldrons that drape down over the arms rather than jutting out level;
+  wider boards, chunkier thighs and boots with their own toe caps; a
+  head and cap scaled up to hold against the shoulders
+- **Surface**: rivet rows down both coat seams, intake grilles on the
+  flanks (clear of the stud rows), knee bolts, grime weeps
 - **Offline it stays at attention** — an admiral does not slump; the
   crest dies, the optics go dark, the service beacon rakes the cap
 
