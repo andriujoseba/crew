@@ -480,27 +480,11 @@ function drawUnit(t,st){
   g.beginPath();g.moveTo(cx+22,capy+4.4);g.lineTo(cx+18,vs.y+3);
   g.lineTo(cx+21,vs.y+8);g.lineTo(cx+16,hy+5);g.stroke();
 
-  /* ---- HANDS. RUN 3 · LOOP 3 — three blind reviews in a row read the arms
-     as amputated stumps: the forearms dive behind the coat and nothing
-     comes out. An admiral at attention carries closed gauntlet fists at
-     his sides — drawn AFTER the coat so they hang in front of its edge,
-     knuckles out, thumb inboard. ---- */
-  [-1,1].forEach(function(sg){
-    var hx=cx+sg*62, hy2=384+breath;
-    // wrist, continuing the forearm line out from behind the coat edge
-    seg(g,cx+sg*48,372+breath,hx,hy2,7,5.6,sM,sB,ed);
-    // gauntlet back-plate
-    plate(g,[[hx-sg*3,hy2-5],[hx+sg*11,hy2-3],[hx+sg*13,hy2+13],[hx-sg*4,hy2+15]],sT,sB,ed);
-    pl(g,hx-sg*2,hy2-4,hx+sg*10,hy2-2,"rgba(198,216,246,"+(offl?0.06:0.2)+")",1.1);
-    // four finger plates, curled into a fist
-    for(var fj=0;fj<4;fj++){
-      var fy0=hy2+1+fj*5.4;
-      plate(g,[[hx+sg*9,fy0],[hx+sg*17,fy0+1.2],[hx+sg*16,fy0+4.8],[hx+sg*8,fy0+3.8]],sM,sB,ed);}
-    // thumb plate, inboard, pressed against the fist
-    plate(g,[[hx-sg*2,hy2+5],[hx+sg*5,hy2+14],[hx+sg*2,hy2+19],[hx-sg*5,hy2+10]],sT,sB,ed);
-    bolt(g,hx+sg*10,hy2+2,1.5,offl?0.05:0.16);
-    weep(hx+sg*6,hy2+15,5);
-  });
+  /* ---- NO HANDS, by operator call. Loop 3 grew gauntlet fists at his
+     sides because blind reviews read the arms as stumps; the operator
+     overruled it — parade rest with the hands clasped BEHIND the back is
+     the pose, and the silhouette is cooler without little mitts at the
+     hips. The forearms dive behind the coat and stay there. ---- */
 
   /* ---- DAMAGE PASS. A veteran is not clean plate with one gouge on it.
      Small dents wherever a plate faces the room, each with a lit upper lip
@@ -538,9 +522,11 @@ function drawUnit(t,st){
   key.addColorStop(0.7,"rgba(2,6,14,0.10)");
   key.addColorStop(1,"rgba(2,6,14,0.22)");
   RB.fillStyle=key;RB.fillRect(0,0,W,H);
+  /* operator call: the face was too shiny — the hot pool over the cap is
+     damped so the pendant reads without glazing the visor */
   var hp=RB.createRadialGradient(cx,160,12,cx,160,250);
-  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.2)+")");
-  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.08)+")");
+  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.11)+")");
+  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.045)+")");
   hp.addColorStop(1,"rgba(250,228,184,0)");
   RB.fillStyle=hp;RB.fillRect(0,0,W,H);
   var bnc=RB.createLinearGradient(0,GY-130,0,GY-8);
