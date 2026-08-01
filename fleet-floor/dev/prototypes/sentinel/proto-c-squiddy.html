@@ -22,7 +22,7 @@
     <button data-st="idle">idle</button>
     <button data-st="offline">offline</button>
   </div>
-  <div id="cap">SQUIDDY (SN-100) — the machine-mother stare · it never touches the deck · the whips are never still</div>
+  <div id="cap">SQUIDDY (SN-100) — bilobed skull, the machine-mother stare · it never touches the deck</div>
 </div>
 <script>
 /* ============================================================================
@@ -31,13 +31,14 @@
    Drawn against the actual Matrix sentinel reference, then taken through
    ten render loops. What the reference actually is:
 
-     · a HELMET carapace, not a ball and not a crab shield — a low domed
-       crown split into two swept brow lobes over a keel panel, a hard
-       BROW SHELF running the full width that overhangs the face and
-       casts a real shadow into it, temple bevels at the widest point,
-       and a jaw that tapers narrow. Cut with straight runs between
-       corner arcs, because the fleet's chad grammar is geometric —
-       claude's unit reads as armour for exactly that reason.
+     · a BILOBED cranium, drawn to the operator's own outline (the blue
+       overlay on PR #230): two humps with a saddle dipping between them,
+       flanks bulging out and down, the mass tapering to a rounded chin.
+       That dip is the whole shape — a flat oval carapace with a straight
+       brow bar under it is a TICK, which is exactly what the previous
+       revision was. So the brow is not one horizontal ledge: it is two
+       ridges, one per lobe, meeting in the saddle and throwing a V of
+       shadow down into the eye field.
      · the eyes are glossy red BERRIES in chrome sockets, fifteen of
        them, different sizes, packed across a deep recessed face bowl,
        each with its own specular glint, shimmer clock and socket
@@ -178,67 +179,92 @@ function drawUnit(t,st){
     g.strokeStyle="rgba(4,8,14,0.7)";g.lineWidth=1;g.beginPath();g.ellipse(HC.x,ty2,tw,9,0,0,7);g.stroke();
     if(th<2)cavity(g,HC.x-tw,ty2-2,tw*2,7,0.4);}
 
-  /* ---- 2 · THE SKULL POD: overlapping shell lobes, seam cracks ---- */
-  // base cranium blob
-  /* The reference silhouette is a HELMET, not a ball: wider than tall, a
-     low flat crown, a hard brow shelf that overhangs the eye field, and a
-     lower face that tapers to the mandible ring. Drawn with straight runs
-     between corner arcs so it reads faceted the way claude's unit does —
-     the fleet's chad grammar is geometric, and a smooth blob was the whole
-     problem with rounds A and C-1. */
+  /* ---- 2 · THE SKULL POD: a bilobed cranium ---- */
+  /* Operator sketch (PR #230, the blue outline): the head is BILOBED — two
+     humps with a saddle dipping between them, sides bulging out and down,
+     and the whole mass tapering to a rounded chin. That dip is the entire
+     shape. Without it the outline is a flat oval carapace with a straight
+     brow bar under it, which is a TICK; with it the thing reads as a skull
+     that grew lobes. So the brow is no longer one horizontal ledge across
+     the face — it is two ridges, one per lobe, meeting in the saddle. */
   function skullPath(c){
     c.beginPath();
-    c.moveTo(HC.x-122,HC.y+4);                                        // widest point, brow line
-    c.lineTo(HC.x-116,HC.y-48);                                       // temple bevel
-    c.bezierCurveTo(HC.x-104,HC.y-92, HC.x-64,HC.y-112, HC.x,HC.y-112); // domed crown
-    c.bezierCurveTo(HC.x+64,HC.y-112, HC.x+104,HC.y-92, HC.x+116,HC.y-48);
-    c.lineTo(HC.x+122,HC.y+4);
-    c.lineTo(HC.x+100,HC.y+52);                                       // cheek taper
-    c.lineTo(HC.x+44,HC.y+94);                                        // jaw corner — narrow
-    c.lineTo(HC.x-44,HC.y+94);
-    c.lineTo(HC.x-100,HC.y+52);
+    c.moveTo(HC.x,HC.y-74);                                            // the saddle, dead centre
+    c.bezierCurveTo(HC.x-22,HC.y-96, HC.x-52,HC.y-104, HC.x-80,HC.y-96); // up over the left hump
+    c.bezierCurveTo(HC.x-110,HC.y-86, HC.x-126,HC.y-50, HC.x-128,HC.y-6); // down the left flank
+    c.bezierCurveTo(HC.x-130,HC.y+40, HC.x-104,HC.y+78, HC.x-56,HC.y+96); // bulge, then in to the jaw
+    c.bezierCurveTo(HC.x-30,HC.y+107, HC.x+30,HC.y+107, HC.x+56,HC.y+96); // the rounded chin
+    c.bezierCurveTo(HC.x+104,HC.y+78, HC.x+130,HC.y+40, HC.x+128,HC.y-6);
+    c.bezierCurveTo(HC.x+126,HC.y-50, HC.x+110,HC.y-86, HC.x+80,HC.y-96);
+    c.bezierCurveTo(HC.x+52,HC.y-104, HC.x+22,HC.y-96, HC.x,HC.y-74);   // back down into the saddle
     c.closePath();
   }
   skullPath(g);
-  var hg=g.createLinearGradient(0,HC.y-98,0,HC.y+106);
+  var hg=g.createLinearGradient(0,HC.y-106,0,HC.y+107);
   hg.addColorStop(0,sT);hg.addColorStop(0.58,sM);hg.addColorStop(1,sB);
   g.fillStyle=hg;g.fill();g.strokeStyle=ed;g.lineWidth=1.3;g.stroke();
-  // crown lobes: three overlapping shells across the top, like plated bone
-  function lobe(x0,y0,x1,y1,bulge,tone){
-    g.beginPath();g.moveTo(x0,y0);
-    g.quadraticCurveTo((x0+x1)/2,y0-bulge,x1,y1);
-    g.quadraticCurveTo((x0+x1)/2,(y0+y1)/2+bulge*0.4,x0,y0);g.closePath();
-    var lg2=g.createLinearGradient(0,Math.min(y0,y1)-bulge,0,Math.max(y0,y1)+bulge*0.4);
-    lg2.addColorStop(0,tone);lg2.addColorStop(1,sB);
-    g.fillStyle=lg2;g.fill();g.strokeStyle=ed;g.lineWidth=1.1;g.stroke();
-    g.strokeStyle="rgba(186,208,242,"+(offl?0.06:0.16)+")";g.lineWidth=1.1;
-    g.beginPath();g.moveTo(x0+(x1-x0)*0.12,y0-(bulge*0.36)*(1-0.12));
-    g.quadraticCurveTo((x0+x1)/2,y0-bulge*1.0,x0+(x1-x0)*0.88,y1-(bulge*0.3));g.stroke();
+  /* the two lobe shells, each following its own hump and ending AT the
+     saddle — the seam between them is the head's centre line */
+  function lobeShell(sg){
+    g.beginPath();
+    g.moveTo(HC.x+sg*3,HC.y-72);
+    g.bezierCurveTo(HC.x+sg*22,HC.y-92, HC.x+sg*52,HC.y-100, HC.x+sg*78,HC.y-92);
+    g.bezierCurveTo(HC.x+sg*106,HC.y-82, HC.x+sg*120,HC.y-48, HC.x+sg*120,HC.y-10);
+    g.bezierCurveTo(HC.x+sg*104,HC.y-14, HC.x+sg*62,HC.y-26, HC.x+sg*8,HC.y-34);
+    g.closePath();
+    var lg3=g.createLinearGradient(0,HC.y-102,0,HC.y-6);
+    lg3.addColorStop(0,offl?"#20262f":"#323b4b");lg3.addColorStop(1,"rgba(22,28,40,0)");
+    g.fillStyle=lg3;g.fill();
+    // the crest highlight riding the top of the hump
+    g.strokeStyle="rgba(198,216,246,"+(offl?(sg<0?0.08:0.05):(sg<0?0.24:0.14))+")";g.lineWidth=1.5;
+    g.beginPath();g.moveTo(HC.x+sg*20,HC.y-86);
+    g.bezierCurveTo(HC.x+sg*46,HC.y-97, HC.x+sg*82,HC.y-90, HC.x+sg*104,HC.y-60);g.stroke();
   }
-  /* crown plating: three flat armour panels across the top, cut as polygons
-     so every edge is a straight line and a corner — plated, not moulded */
-  // two swept brow lobes (the reference's defining bulges) + a keel panel
-  // between them: read as a domed carapace, still cut with straight edges
-  plate(g,[[HC.x-112,HC.y-46],[HC.x-98,HC.y-84],[HC.x-54,HC.y-104],[HC.x-30,HC.y-98],[HC.x-26,HC.y-44],[HC.x-84,HC.y-30]],sT,sB,ed);
-  plate(g,[[HC.x+112,HC.y-46],[HC.x+98,HC.y-84],[HC.x+54,HC.y-104],[HC.x+30,HC.y-98],[HC.x+26,HC.y-44],[HC.x+84,HC.y-30]],sT,sB,ed);
-  // keel: a broad FLAT-topped panel sunk between the lobes — a peak here
-  // reads as a witch hat, and the reference has no peak anywhere
-  plate(g,[[HC.x-32,HC.y-96],[HC.x-18,HC.y-107],[HC.x+18,HC.y-107],[HC.x+32,HC.y-96],[HC.x+22,HC.y-48],[HC.x-22,HC.y-48]],sM,sB,ed);
-  pl(g,HC.x-96,HC.y-82,HC.x-54,HC.y-102,"rgba(186,208,242,"+(offl?0.07:0.2)+")",1.4);
-  pl(g,HC.x+96,HC.y-82,HC.x+54,HC.y-102,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.4);
-  pl(g,HC.x-17,HC.y-106,HC.x+17,HC.y-106,"rgba(186,208,242,"+(offl?0.05:0.14)+")",1.2);
-  // the lobes overhang the keel — cavity sells the layering
-  cavity(g,HC.x-32,HC.y-96,64,12,0.55);
-  /* THE BROW SHELF — the shape that makes it a helmet: a hard horizontal
-     ledge across the full width, overhanging the eye field and casting a
-     real shadow onto it. This is the sentinel's scowl. */
-  plate(g,[[HC.x-120,HC.y+2],[HC.x-112,HC.y-40],[HC.x-26,HC.y-50],[HC.x+26,HC.y-50],[HC.x+112,HC.y-40],[HC.x+120,HC.y+2],
-           [HC.x+88,HC.y+12],[HC.x-88,HC.y+12]],sT,sM,ed);
-  pl(g,HC.x-116,HC.y-1,HC.x+116,HC.y-1,"rgba(198,216,246,"+(offl?0.07:0.22)+")",1.5);
-  cavity(g,HC.x-100,HC.y+8,200,22,0.75);                          // the brow's own shadow
-  // temple bevels: angled cheek plates hugging the widest point
-  plate(g,[[HC.x-120,HC.y+6],[HC.x-98,HC.y+4],[HC.x-92,HC.y+52],[HC.x-104,HC.y+52]],sM,sB,ed);
-  plate(g,[[HC.x+120,HC.y+6],[HC.x+98,HC.y+4],[HC.x+92,HC.y+52],[HC.x+104,HC.y+52]],sM,sB,ed);
+  lobeShell(-1);lobeShell(1);
+  // the saddle itself: a sunk keel channel where the two lobes meet
+  g.beginPath();
+  g.moveTo(HC.x-30,HC.y-46);
+  g.bezierCurveTo(HC.x-12,HC.y-76, HC.x+12,HC.y-76, HC.x+30,HC.y-46);
+  g.bezierCurveTo(HC.x+14,HC.y-34, HC.x-14,HC.y-34, HC.x-30,HC.y-46);
+  g.closePath();
+  var kg2=g.createLinearGradient(0,HC.y-76,0,HC.y-34);
+  kg2.addColorStop(0,"rgba(4,8,14,0.55)");kg2.addColorStop(1,"rgba(4,8,14,0)");
+  g.fillStyle=kg2;g.fill();
+  // one seam running down out of the valley — the head's centre line
+  g.strokeStyle="rgba(4,8,14,0.5)";g.lineWidth=1.3;
+  g.beginPath();g.moveTo(HC.x,HC.y-70);g.lineTo(HC.x,HC.y-26);g.stroke();
+  g.strokeStyle="rgba(186,208,242,"+(offl?0.04:0.1)+")";g.lineWidth=1;
+  g.beginPath();g.moveTo(HC.x+1.4,HC.y-68);g.lineTo(HC.x+1.4,HC.y-30);g.stroke();
+  /* BROW RIDGES — one per lobe, sweeping down and outward from the saddle,
+     so the shadow they throw is a V and not a bar */
+  [-1,1].forEach(function(sg){
+    g.beginPath();
+    g.moveTo(HC.x+sg*10,HC.y-22);
+    g.bezierCurveTo(HC.x+sg*48,HC.y-30, HC.x+sg*92,HC.y-18, HC.x+sg*114,HC.y+8);
+    g.bezierCurveTo(HC.x+sg*92,HC.y+2, HC.x+sg*50,HC.y-8, HC.x+sg*10,HC.y-4);
+    g.closePath();
+    var bg3=g.createLinearGradient(0,HC.y-30,0,HC.y+8);
+    bg3.addColorStop(0,sT);bg3.addColorStop(1,sB);
+    g.fillStyle=bg3;g.fill();g.strokeStyle=ed;g.lineWidth=1.1;g.stroke();
+    g.strokeStyle="rgba(198,216,246,"+(offl?0.07:0.2)+")";g.lineWidth=1.3;
+    g.beginPath();g.moveTo(HC.x+sg*12,HC.y-21);
+    g.bezierCurveTo(HC.x+sg*48,HC.y-29, HC.x+sg*90,HC.y-17, HC.x+sg*110,HC.y+6);g.stroke();});
+  // the V-shaped shadow the ridges throw down into the eye field
+  g.save();g.beginPath();
+  g.moveTo(HC.x-116,HC.y+4);g.lineTo(HC.x,HC.y-8);g.lineTo(HC.x+116,HC.y+4);
+  g.lineTo(HC.x+116,HC.y+40);g.lineTo(HC.x-116,HC.y+40);g.closePath();g.clip();
+  cavity(g,HC.x-116,HC.y-8,232,40,0.7);g.restore();
+  // cheek plates hugging the flank bulges, following the curve down
+  [-1,1].forEach(function(sg){
+    g.beginPath();
+    g.moveTo(HC.x+sg*122,HC.y+2);
+    g.bezierCurveTo(HC.x+sg*124,HC.y+38, HC.x+sg*104,HC.y+72, HC.x+sg*62,HC.y+90);
+    g.lineTo(HC.x+sg*58,HC.y+76);
+    g.bezierCurveTo(HC.x+sg*96,HC.y+60, HC.x+sg*112,HC.y+34, HC.x+sg*110,HC.y+2);
+    g.closePath();
+    var cg4=g.createLinearGradient(0,HC.y+2,0,HC.y+90);
+    cg4.addColorStop(0,sM);cg4.addColorStop(1,sB);
+    g.fillStyle=cg4;g.fill();g.strokeStyle=ed;g.lineWidth=1.1;g.stroke();});
   // seam cracks wandering the crown; rivets where the panels pin
   g.strokeStyle="rgba(4,8,14,0.6)";g.lineWidth=1.1;
   g.beginPath();g.moveTo(HC.x-58,HC.y-74);g.lineTo(HC.x-44,HC.y-58);g.lineTo(HC.x-52,HC.y-48);g.stroke();
@@ -254,7 +280,7 @@ function drawUnit(t,st){
   sco.addColorStop(0,"rgba(8,5,3,0)");sco.addColorStop(1,"rgba(8,5,3,0.4)");
   g.fillStyle=sco;poly(g,[[HC.x+56,HC.y+44],[HC.x+104,HC.y+40],[HC.x+70,HC.y+90],[HC.x+40,HC.y+92]]);g.fill();
   // hook antennae on the crown — three small black barbs
-  [[-26,-92,-0.5],[0,-98,0],[24,-92,0.5]].forEach(function(an){
+  [[-64,-98,-0.6],[-38,-100,-0.3],[38,-100,0.3],[64,-98,0.6]].forEach(function(an){
     g.strokeStyle="#0a0e15";g.lineWidth=2.6;g.lineCap="round";
     g.beginPath();g.moveTo(HC.x+an[0],HC.y+an[1]+6);
     g.quadraticCurveTo(HC.x+an[0]+an[2]*10,HC.y+an[1]-8,HC.x+an[0]+an[2]*16,HC.y+an[1]-4);g.stroke();
@@ -313,14 +339,13 @@ function drawUnit(t,st){
   /* ---- 3 · THE FACE: steel plate, berry eyes, mandible fringe ---- */
   // recessed face plate — a shade of worn steel the shell is not
   g.beginPath();
-  g.moveTo(HC.x-88,HC.y+10);
-  g.lineTo(HC.x+88,HC.y+10);
-  g.lineTo(HC.x+74,HC.y+52);
-  g.lineTo(HC.x+32,HC.y+88);
-  g.lineTo(HC.x-32,HC.y+88);
-  g.lineTo(HC.x-74,HC.y+52);
+  g.moveTo(HC.x-96,HC.y+6);
+  g.bezierCurveTo(HC.x-100,HC.y+44, HC.x-80,HC.y+72, HC.x-42,HC.y+86);
+  g.bezierCurveTo(HC.x-18,HC.y+95, HC.x+18,HC.y+95, HC.x+42,HC.y+86);
+  g.bezierCurveTo(HC.x+80,HC.y+72, HC.x+100,HC.y+44, HC.x+96,HC.y+6);
+  g.bezierCurveTo(HC.x+50,HC.y-4, HC.x-50,HC.y-4, HC.x-96,HC.y+6);
   g.closePath();
-  var fg2=g.createLinearGradient(0,HC.y+4,0,HC.y+88);
+  var fg2=g.createLinearGradient(0,HC.y-4,0,HC.y+95);
   fg2.addColorStop(0,offl?"#161b24":"#222937");fg2.addColorStop(0.5,offl?"#0e1219":"#141a25");fg2.addColorStop(1,"#080b11");
   g.fillStyle=fg2;g.fill();g.strokeStyle="#0a0e15";g.lineWidth=1.6;g.stroke();
   cavity(g,HC.x-70,HC.y-54,140,12,0.55);
