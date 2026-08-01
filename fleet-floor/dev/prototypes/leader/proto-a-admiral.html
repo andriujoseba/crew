@@ -474,6 +474,28 @@ function drawUnit(t,st){
   g.beginPath();g.moveTo(cx+22,capy+4.4);g.lineTo(cx+18,vs.y+3);
   g.lineTo(cx+21,vs.y+8);g.lineTo(cx+16,hy+5);g.stroke();
 
+  /* ---- HANDS. RUN 3 · LOOP 3 — three blind reviews in a row read the arms
+     as amputated stumps: the forearms dive behind the coat and nothing
+     comes out. An admiral at attention carries closed gauntlet fists at
+     his sides — drawn AFTER the coat so they hang in front of its edge,
+     knuckles out, thumb inboard. ---- */
+  [-1,1].forEach(function(sg){
+    var hx=cx+sg*62, hy2=384+breath;
+    // wrist, continuing the forearm line out from behind the coat edge
+    seg(g,cx+sg*48,372+breath,hx,hy2,7,5.6,sM,sB,ed);
+    // gauntlet back-plate
+    plate(g,[[hx-sg*3,hy2-5],[hx+sg*11,hy2-3],[hx+sg*13,hy2+13],[hx-sg*4,hy2+15]],sT,sB,ed);
+    pl(g,hx-sg*2,hy2-4,hx+sg*10,hy2-2,"rgba(198,216,246,"+(offl?0.06:0.2)+")",1.1);
+    // four finger plates, curled into a fist
+    for(var fj=0;fj<4;fj++){
+      var fy0=hy2+1+fj*5.4;
+      plate(g,[[hx+sg*9,fy0],[hx+sg*17,fy0+1.2],[hx+sg*16,fy0+4.8],[hx+sg*8,fy0+3.8]],sM,sB,ed);}
+    // thumb plate, inboard, pressed against the fist
+    plate(g,[[hx-sg*2,hy2+5],[hx+sg*5,hy2+14],[hx+sg*2,hy2+19],[hx-sg*5,hy2+10]],sT,sB,ed);
+    bolt(g,hx+sg*10,hy2+2,1.5,offl?0.05:0.16);
+    weep(hx+sg*6,hy2+15,5);
+  });
+
   /* ---- DAMAGE PASS. A veteran is not clean plate with one gouge on it.
      Small dents wherever a plate faces the room, each with a lit upper lip
      and a dark floor, plus scorch where something burned close. ---- */
@@ -675,12 +697,10 @@ function drawRoom(t,st){
     wg2.addColorStop(1,offl?"#05080d":"#0b1119");
     S.fillStyle=wg2;S.fillRect(wx0,HZ,ww,wy+wh-HZ);
     if(!offl){
-      // the moon path: a broken column of specular, wider as it nears us
-      for(var sw2=0;sw2<26;sw2++){
-        var su=sw2/26, sy5=HZ+2+su*su*(wh*0.42);
-        var swd=8+su*70, sxc=wx0+ww*0.63+Math.sin(sw2*2.3+t*0.5)*su*26;
-        S.fillStyle="rgba(206,198,186,"+((0.24-su*0.16)*lit)+")";
-        S.fillRect(sxc-swd/2,sy5,swd,1.1+su*1.6);}
+      /* RUN 3 · LOOP 3 — the moon path is gone. It sat exactly under the
+         starboard lamp with no moon anywhere in the sky, so two blind
+         reviews read it as an interior fixture laying a glitter column on
+         the open sea. The swell crests below carry the water read alone. */
       // swell: a few long slow crests catching the same light
       S.strokeStyle="rgba(150,168,196,"+(0.11*lit)+")";S.lineWidth=1.1;
       for(var cw=0;cw<7;cw++){
@@ -798,8 +818,12 @@ function drawRoom(t,st){
       S.beginPath();S.arc(bx,bby,1.9,0,7);S.fill();
       S.fillStyle="rgba(200,216,242,"+(0.2*lit)+")";
       S.beginPath();S.arc(bx-0.6,bby-0.6,0.8,0,7);S.fill();});}
-  [UX,UX+430].forEach(function(lx3,li){
-    var ly3=li?126:134, R=li?28:34, hot=li?0.55:1;   // same family, same drop
+  /* RUN 3 · LOOP 3 — a THIRD pendant, over the helm. A blind review
+     measured the wheel/compass/gauge cluster glowing 4-8x brighter than
+     its wall with both lamps hundreds of px away: the station was lit by
+     nothing. Same fixture family, hung where its light falls on the helm. */
+  [[UX,134,34,1,88,0.15],[UX+430,126,28,0.55,62,0.05],[UX-272,126,28,0.7,72,0.1]].forEach(function(LP,li){
+    var lx3=LP[0], ly3=LP[1], R=LP[2], hot=LP[3], GR=LP[4], CA=LP[5];
     /* ROUND 6 · LOOP 8 — CONSISTENT MOUNTING. A fresh reviewer: "identical
        fixtures, two different mounting stories — the left one hangs on a
        visible drop stem, the right one is flush against the beam with no
@@ -836,9 +860,9 @@ function drawRoom(t,st){
       S.fillStyle=kk(0.95*hot*lit);S.fillRect(lx3-R*0.6,ly3+7,R*1.2,4.4);
       S.save();S.globalCompositeOperation="lighter";
       S.fillStyle="rgba(255,246,224,"+(0.5*hot*lit)+")";S.fillRect(lx3-R*0.46,ly3+8,R*0.92,2);
-      var lg3=S.createRadialGradient(lx3,ly3+10,2,lx3,ly3+10,li?62:88);
-      lg3.addColorStop(0,kk((li?0.2:0.4)*lit));lg3.addColorStop(0.4,kk((li?0.06:0.13)*lit));lg3.addColorStop(1,kk(0));
-      S.fillStyle=lg3;S.beginPath();S.arc(lx3,ly3+10,88,0,7);S.fill();S.restore();
+      var lg3=S.createRadialGradient(lx3,ly3+10,2,lx3,ly3+10,GR);
+      lg3.addColorStop(0,kk(0.4*hot*lit));lg3.addColorStop(0.4,kk(0.13*hot*lit));lg3.addColorStop(1,kk(0));
+      S.fillStyle=lg3;S.beginPath();S.arc(lx3,ly3+10,GR,0,7);S.fill();S.restore();
       // the cage: a working ship guards its lamps
       S.strokeStyle="rgba(6,10,16,0.8)";S.lineWidth=1.8;
       for(var cg=-2;cg<=2;cg++){
@@ -850,11 +874,15 @@ function drawRoom(t,st){
       // the shade's own shadow thrown up onto the deckhead
       S.fillStyle="rgba(2,4,8,0.35)";
       S.beginPath();S.ellipse(lx3,52,R*0.8,5,0,0,7);S.fill();
+      /* the cone stops at the window glass — an interior lamp does not
+         light the sea. Even-odd clip carves the panes out of the beam. */
+      S.save();S.beginPath();S.rect(0,0,SW,SH);S.rect(560,150,620,150);S.clip("evenodd");
       var cone=S.createLinearGradient(0,ly3+11,0,GYS);
-      cone.addColorStop(0,kk((li?0.05:0.15)*lit));cone.addColorStop(1,kk(0));
+      cone.addColorStop(0,kk(CA*lit));cone.addColorStop(1,kk(0));
       S.fillStyle=cone;S.beginPath();
       S.moveTo(lx3-R,ly3+11);S.lineTo(lx3+R,ly3+11);
-      S.lineTo(lx3+164,GYS);S.lineTo(lx3-164,GYS);S.closePath();S.fill();}
+      S.lineTo(lx3+164,GYS);S.lineTo(lx3-164,GYS);S.closePath();S.fill();
+      S.restore();}
     else{S.fillStyle="rgba(96,104,120,0.3)";S.fillRect(lx3-R*0.6,ly3+7,R*1.2,3.4);
       S.strokeStyle="rgba(6,10,16,0.7)";S.lineWidth=1.8;
       for(var cg2=-2;cg2<=2;cg2++){
