@@ -1445,7 +1445,7 @@ function liveTicker(snap){
   fresh.forEach(function(f){
     var el=document.createElement("div");el.className="l";
     var m=esc(f.msg);
-    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="cr">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
+    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="noop">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
     el.innerHTML='<span class="tt">'+clockStr()+'</span><span class="u" style="color:'+VENDORCOL(f.u.agent)+'">'+esc(f.u.box)+'</span><span class="m">'+m+'</span>';
     s.appendChild(el);
   });
@@ -1578,7 +1578,7 @@ function populateDash(){
     +'<div class="mcell"><div class="mv">'+d.today+'</div><div class="ml">Runs today</div></div>'
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
-  d.sessions.forEach(function(s){sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+(s.rc?"cr":"ok")+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(s.out)+'</span><span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
+  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=s.rc?"cr":s.acted==="no"?"noop":"ok";sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span><span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
   document.getElementById("w-sessions").innerHTML=sh+'</div>';
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";

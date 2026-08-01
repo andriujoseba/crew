@@ -1141,7 +1141,7 @@ nohup setsid bash -c '
     bot_session_acted "$slog" && arc=0 || arc=$?
     case "$arc" in 0) acted=yes;; 1) acted=no;; esac
   fi
-  reply_tail="$(awk '\''NF { line=$0 } END { print substr(line, 1, 200) }'\'' "$slog" 2>/dev/null | base64 | tr -d '\''\n'\'')"
+  reply_tail="$(awk '\''NF { line=$0 } END { printf "%s", substr(line, 1, 200) }'\'' "$slog" 2>/dev/null | base64 | tr -d '\''\n'\'')"
   printf "%s SESSION END kind=operator key=floor rc=%s dur=%ss outcome=%s acted=%s reply_tail=%s\n" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$dur" "$v" "$acted" "$reply_tail" >>"$DUTY_DIR/duty.log"
 ' _ "$prompt" </dev/null >/dev/null 2>&1 &

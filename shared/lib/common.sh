@@ -176,7 +176,7 @@ session_acted() {
 }
 
 session_reply_tail() {
-  awk 'NF { line=$0 } END { print substr(line, 1, 200) }' "$1" 2>/dev/null \
+  awk 'NF { line=$0 } END { printf "%s", substr(line, 1, 200) }' "$1" 2>/dev/null \
     | base64 | tr -d '\n'
 }
 

@@ -100,6 +100,7 @@ cat > "$BS_TMP/agent.conf" <<'EOF'
 BOT_PATH_PREPEND="$HOME/.local/bin"
 BOT_CLI_CMD=(fake-cli --flag -p)
 bot_cli_probe() { true; }
+bot_session_acted() { return 1; }
 EOF
 cat > "$BS_M/bin/fake-cli" <<'EOF'
 #!/usr/bin/env bash
@@ -171,9 +172,13 @@ sess, cur = floor.derive_sessions(open(sys.argv[1]).read().splitlines(), time.ti
 print("N=%d" % len(sess))
 print("KIND=%s" % (sess[0]["kind"] if sess else ""))
 print("OUT=%s" % (sess[0]["out"] if sess else ""))
+print("ACTED=%s" % (sess[0]["acted"] if sess else ""))
+print("REPLY=%s" % (sess[0]["reply"] if sess else ""))
 PY
 t "message: its markers parse back as a session" 1 "$(sed -n 's/^N=//p' "$BS_TMP/msg.parsed")"
 t "message: session kind is 'operator'" operator "$(sed -n 's/^KIND=//p' "$BS_TMP/msg.parsed")"
+t "message: successful no-action session parses as no-op" no "$(sed -n 's/^ACTED=//p' "$BS_TMP/msg.parsed")"
+t "message: final reply tail parses for the floor" "LAST=$BS_PROMPT" "$(sed -n 's/^REPLY=//p' "$BS_TMP/msg.parsed")"
 
 # A failing vendor CLI must be recorded as FAILED with its real rc, not swallowed.
 cat > "$BS_M/bin/fake-cli" <<'EOF'

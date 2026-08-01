@@ -1675,6 +1675,36 @@ for pair in \
   t "agent-conf-$agent-non-interactive" present "$r1"
 done
 
+# --- session action telemetry is best-effort and additive (#256) ----------
+SA_LOG="$TMP/session-action.log"
+printf 'OpenAI Codex\nfinal answer: Please connect a plugin.\n' >"$SA_LOG"
+t session-hookless-is-unknown unknown "$(session_acted "$SA_LOG")"
+t session-reply-tail-captured 'final answer: Please connect a plugin.' \
+  "$(session_reply_tail "$SA_LOG" | base64 -d)"
+
+codex_acted() {
+  # shellcheck disable=SC1090
+  source "$SHARED/conf/agents/codex.conf"
+  bot_session_acted "$SA_LOG" && printf yes || printf no
+}
+t session-codex-no-tool-is-no no "$(codex_acted)"
+printf 'OpenAI Codex\nexec\n/bin/bash -lc git status\nfinal answer: done\n' >"$SA_LOG"
+t session-codex-exec-is-yes yes "$(codex_acted)"
+
+# Exercise run_session itself so a helper-only implementation cannot pass.
+SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
+BOT_CLI_CMD=(bash -c 'printf "exec\ncommand output\nfinal reply\n"')
+bot_session_acted() { grep -qx exec "$1"; }
+sa_end="$(run_session build fixture/test "$SA_WORK" 5 prompt | tail -1)"
+case "$sa_end" in
+  *'outcome=ok acted=yes reply_tail='*) r1=present ;;
+  *) r1=MISSING ;;
+esac
+t session-end-fields-written present "$r1"
+t session-end-outcome-token-unchanged ok \
+  "$(printf '%s\n' "$sa_end" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
+unset -f bot_session_acted
+
 # --- the two-boundary rule must exist once, not once per reader -----------
 # floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
 # hold it at all: the box ships ::tickage and the HOST decides. A third copy

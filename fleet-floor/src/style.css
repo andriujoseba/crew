@@ -49,7 +49,7 @@ body.floor .hud{display:none}
 .stream{flex:1;overflow:hidden;padding:0 20px 8px;font-family:var(--mono);font-size:11px;line-height:1.55}
 .stream .l{display:flex;gap:10px;white-space:nowrap;color:#6a7d92}
 .stream .l .tt{color:#46566a}.stream .l .u{min-width:130px}.stream .l .m{color:#7d8ba0;overflow:hidden;text-overflow:ellipsis}
-.stream .l .ok{color:#5fce9b}.stream .l .cr{color:#f7bd4e}
+.stream .l .ok{color:#5fce9b}.stream .l .cr{color:#f7bd4e}.stream .l .noop{color:#f7bd4e}
 .rail{position:fixed;bottom:14px;z-index:7;flex-direction:column;gap:12px;pointer-events:none}
 .rail-l{left:16px;top:58px;width:298px}
 .rail-r{right:16px;top:14px;width:376px}
@@ -67,7 +67,7 @@ body.floor .hud{display:none}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
 .fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
 .fev .ago{color:#46566a;flex:none;min-width:34px}
-.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .kd{flex:none}
+.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .noop{color:#f7bd4e}.fev .kd{flex:none}
 .fev.k-build .kd{color:#f7bd4e}.fev.k-review .kd{color:#5cb4ff}.fev.k-triage .kd{color:#c98bff}
 .qchips{display:flex;flex-wrap:wrap;gap:5px}
 .qc{font-family:var(--mono);font-size:9.5px;padding:3px 7px;border-radius:5px;border-left:2px solid;background:#0c1420;color:#9fb2c6}
