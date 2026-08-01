@@ -126,7 +126,8 @@ import floor
 open(sys.argv[1], "w").write(floor.MESSAGE_SH.replace("__TOK__", os.environ["BS_TOK"]))
 PY
 
-HOME="$BS_M" PATH="$BS_M/bin:$PATH" bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
+HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 t "message: script exits 0" 0 "$?"
 
 # The session is detached on purpose, so wait for its END marker rather than
@@ -184,7 +185,8 @@ chmod +x "$BS_M/bin/fake-cli"
 # MESSAGE_SH consumes the prompt file (rm after read), so the second run needs
 # its own — which is the point of the per-request path.
 printf '%s\n' "$BS_PROMPT" > "$BS_M/duty/.floor-prompt.$BS_TOK"
-HOME="$BS_M" PATH="$BS_M/bin:$PATH" bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
+HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
   grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break
   sleep 0.25
