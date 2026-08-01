@@ -1,14 +1,11 @@
 name: labels
 on:
-  # Hourly, not */15 (#199): the cron is the sweep's only wake for the
-  # transitions no subscribed event carries — a review verdict landing (no
-  # pull_request_review trigger), blocker:ci-red set/cleared, a blocker:conflict
-  # when another PR merges under this one, and the time-based stale / 48h
-  # claim-reclaim. Events below carry the rest in seconds. Hourly trades ≤1h of
-  # latency on those four for dropping */15's four sweeps an hour at GitHub's
-  # 1-minute floor. Keep the cron — it is the discovery path, not a safety net.
-  schedule: [{cron: "0 * * * *"}]
-  workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  # No schedule and no workflow_dispatch here since ceremony 0.4.1 (#209 —
+  # crew#259): the hourly cron and the manual/bootstrap dispatch RELOCATED to
+  # labels-sweep.yml, whose runs are detached from PRs so a queue-displaced
+  # sweep can never land a cancelled `reconcile` check on a PR again. A cron
+  # left behind here would double-fire sweeps into the one shared concurrency
+  # group and read as the displacement bug getting worse after the fix.
   pull_request_target:
     # Fork PRs; these carry the head/draft/review facts state:* derives from.
     # labeled/unlabeled are the handoff wake (state:needs-human confirmed here);
@@ -32,9 +29,11 @@ permissions:
   contents: read
   checks: read          # mergeability/check-rollup read for PR state
   statuses: read        # commit-status rollup read for PR state
-  actions: read         # workflow-run nodes inside the check rollup — private repos do not imply it (incubator#60)
+  actions: write        # the trigger job's `gh workflow run` dispatch of the sweep caller (ceremony#209)
   issues: write
   pull-requests: write
 jobs:
   labels:
-    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.4.0
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.4.1
+    # The sweep caller beside this file is named labels-sweep.yml, the
+    # default, so no `with: { sweep_workflow: ... }` is needed.
