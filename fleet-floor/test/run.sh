@@ -47,6 +47,9 @@ for _p in "${FLOOR_TEST_PORT:-8791}" $(( ${FLOOR_TEST_PORT:-8791} + 1 )) $(( ${F
 done
 
 TMP="$(mktemp -d)"
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG DUTY_DIR
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
 PORT="${FLOOR_TEST_PORT:-8791}"
 USER=operator
 PASSWD="test-$$"
@@ -64,6 +67,19 @@ export PATH="$TMP/bin:$PATH"
 mkdir -p "$TMP/bin" "$FLOOR_STATE"
 ln -sf "$HERE/stub-box" "$TMP/bin/box"
 : > "$FLOOR_CALLS"
+
+# Keep ambient operator and duty configuration out of fixture resolution.
+# These static assertions make removing either half fail in this suite.
+if grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG DUTY_DIR' "$HERE/run.sh"; then
+  ok "suite unsets ambient crew and duty config"
+else
+  fail "suite unsets ambient crew and duty config" "guard missing"
+fi
+if grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/run.sh"; then
+  ok "suite pins empty XDG config"
+else
+  fail "suite pins empty XDG config" "guard missing"
+fi
 
 # The fixture fleet is handed to the collector by env, NOT by swapping the
 # tracked fleet.roster and restoring it on exit: any killed run then left the

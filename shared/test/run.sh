@@ -26,10 +26,20 @@ t() {  # t <name> <expected> <actual>
 # Source common.sh against a scratch DUTY_DIR.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
 export DUTY_DIR="$TMP"
 export HOME="${HOME:-$TMP}"
 # shellcheck disable=SC1091
 source "$SHARED/lib/common.sh"
+
+# Keep ambient operator configuration out of fixture resolution. These static
+# assertions make removing either half of the suite guard fail visibly.
+if grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
+t suite-unsets-ambient-crew-config guarded "$r1"
+if grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
+t suite-pins-empty-xdg-config guarded "$r1"
 
 # List prompt slots omitted by engine render sites. Calls are folded to one
 # logical line first; advancing past only the opening "$(`` also finds nested
