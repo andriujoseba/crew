@@ -1545,13 +1545,25 @@ cl_listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3<&- 3>
 # cl_refuses LABEL PORT CMD... — CMD must exit non-zero, name the fallback
 # directory and `crew init`, and bind nothing.
 #
-# Run in the BACKGROUND rather than under `timeout`, because a foreground
-# timeout cannot tell a refusal from a server: by the time the status is read
-# the port is free either way. Here a process still alive after the wait is
-# one that served, which is the bug wearing a message.
+# Run in the BACKGROUND rather than read from a foreground exit status, because
+# a foreground run cannot tell a refusal from a server: by the time the status
+# is read the port is free either way. Here a process still alive during the
+# wait window, or a bound port, is one that served — the bug wearing a message.
+#
+# Every call site still wraps its command in `timeout`, and that is not
+# belt-and-braces: `kill $!` reaches the job this shell started, which for a
+# regressed refusal is not always the python3 that ended up holding the port.
+# The first must-fail run of these cases left five collectors alive on 8880-8884
+# and the NEXT run reported "it served instead of refusing" for a tree that
+# refuses correctly. A leaked server poisons the machine, so the cap belongs
+# inside the process being tested, not around this shell's idea of it.
 cl_refuses() {
   local label="$1" port="$2"; shift 2
   local pid rc alive=0 bound=0 out="$CL_TMP/fb-refuse.out"
+  if cl_listening "$port"; then
+    fail "$label" "port $port was already in use before the case started"
+    return
+  fi
   "$@" >"$out" 2>&1 &
   pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -1585,18 +1597,21 @@ esac
 t "floor fallback: the fixture really reaches the fallback" fallback "$CL_R1"
 
 cl_refuses "floor fallback: crew floor refuses and binds nothing" 8880 \
-  cl_fb "$CL_ROOT/cli/crew" floor --port 8880
+  cl_fb timeout 6 "$CL_ROOT/cli/crew" floor --port 8880
 cl_refuses "floor fallback: floor.py refuses the same way, run directly" 8881 \
-  cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py"
+  cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x timeout 6 python3 "$CL_FLOOR/server/floor.py"
 
 # The refusal is a WORLD fault: `crew floor` under the fallback exits 1, and
 # floor.py matches it, so a caller of either reads the same status. Both are
 # bounded by `timeout` — these run in the foreground, and a regressed refusal
 # serves forever rather than returning a status to compare.
+# Their own ports, too: reusing one a cl_refuses case touched would let an
+# "address already in use" traceback stand in for the refusal and report 1 for
+# the wrong reason.
 CL_RC=0
-cl_fb timeout 10 "$CL_ROOT/cli/crew" floor --port 8880 >"$CL_TMP/fb-cli.out" 2>&1 || CL_RC=$?
+cl_fb timeout 10 "$CL_ROOT/cli/crew" floor --port 8887 >"$CL_TMP/fb-cli.out" 2>&1 || CL_RC=$?
 CL_RC2=0
-cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x timeout 10 python3 "$CL_FLOOR/server/floor.py" \
+cl_fb env CREW_FLOOR_PORT=8888 CREW_FLOOR_PASS=x timeout 10 python3 "$CL_FLOOR/server/floor.py" \
   >"$CL_TMP/fb-py.out" 2>&1 || CL_RC2=$?
 t "floor fallback: the refusal is a world fault (exit 1)" 1 "$CL_RC"
 t "floor fallback: both processes exit the same way" "$CL_RC" "$CL_RC2"
@@ -1605,13 +1620,13 @@ t "floor fallback: both processes exit the same way" "$CL_RC" "$CL_RC2"
 # leave the refusal standing, or "but the operator passed a roster" quietly
 # reopens the whole path.
 cl_refuses "floor fallback: --roster does not lift the refusal" 8882 \
-  cl_fb "$CL_ROOT/cli/crew" floor --port 8882 --roster "$CL_HERE/fixtures/roster.txt"
+  cl_fb timeout 6 "$CL_ROOT/cli/crew" floor --port 8882 --roster "$CL_HERE/fixtures/roster.txt"
 cl_refuses "floor fallback: CREW_FLOOR_ROSTER does not lift the refusal" 8883 \
   cl_fb env CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt" \
-    "$CL_ROOT/cli/crew" floor --port 8883
+    timeout 6 "$CL_ROOT/cli/crew" floor --port 8883
 cl_refuses "floor fallback: floor.py refuses with CREW_FLOOR_ROSTER set" 8884 \
   cl_fb env CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt" CREW_FLOOR_PORT=8884 \
-    CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py"
+    CREW_FLOOR_PASS=x timeout 6 python3 "$CL_FLOOR/server/floor.py"
 
 # The invocation fault is still diagnosed first: a malformed `crew floor` on an
 # unconfigured host exits 2, because the operator asked wrong before the world
