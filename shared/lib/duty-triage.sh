@@ -1,7 +1,15 @@
-# duty-triage.sh — the triage wake signals, per repo in repos.txt:
+# duty-triage.sh — the triage wake signals, per repo in repos.txt, in the
+# order they run:
+#   (d) unread mentions (own session, and it goes FIRST)
 #   (a) needs-triage issues        (b) queue-unlabeled strays
-#   (c) discussions without my voice  (d) unread mentions (own session)
+#   (c) discussions without my voice
 #   (e) blocked issues whose named blockers all landed (a LEAD, not a verdict)
+#
+# The board poll follows the mention session because that session can run for
+# TIMEOUT_MENTION (25 minutes) and can itself change the board: polled first,
+# the launch decision is made on a snapshot up to 25 minutes stale, which
+# spends a triage session on leads that died mid-session and defers a signal
+# born during it by a full tick (#253).
 #
 # Architectural spine (dan-claude-bot): this module only ever WAKES a
 # session — it never edits a label itself. A parser bug becomes a false lead
@@ -28,6 +36,51 @@ _triage_repo() {
   local R="$1"
   local owner="${R%%/*}" name="${R##*/}"
   local signals="" nt stray undisc unblockable="" dir prompt
+
+  # (d) unread mentions — a separate wake with its own session, so a builder
+  # blocked on a question is answered even when the board is clean. Only the
+  # thread ids and API subject URLs travel in the prompt (never titles —
+  # anyone on GitHub writes those, and this is a permissionless session).
+  # Idempotency is the seen-ledger, NOT mark-read alone: a mention the session
+  # reads but correctly does not act on (an FYI, an already-answered thread, a
+  # PR I don't own) used to stay unread and re-fire a full session every tick.
+  # A thread now re-wakes only when its notification updated_at advances.
+  #
+  # This block runs FIRST, and everything below it polls the board afterwards
+  # (#253). Nothing here reads any board signal — mention.txt is rendered from
+  # ME, REPO and MENTIONS alone — so the two are independent in that direction
+  # only, and the order is the one that makes the poll fresh where it is used.
+  local all_mentions keep_threads keep_json mentions mcount
+  all_mentions="$(gh api notifications --paginate 2>/dev/null | jq -c -s --arg repo "$R" 'add
+    | [ .[] | select(.repository.full_name == $repo
+                and (.reason == "mention" or .reason == "team_mention"))
+      | {thread: .id, subject: .subject.url, updated: .updated_at} ]' 2>/dev/null || echo '[]')"
+  keep_threads="$(printf '%s\n' "$all_mentions" \
+    | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
+    | ledger_filter "$DUTY_DIR/.seen-mentions" | awk '{print $1}')"
+  if [ -n "$keep_threads" ]; then
+    keep_json="$(printf '%s\n' "$keep_threads" | jq -R . | jq -cs .)"
+    mentions="$(jq -c --argjson keep "$keep_json" \
+      '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")"
+  else
+    mentions='[]'
+  fi
+  mcount="$(jq 'length' <<<"$mentions" 2>/dev/null || echo 0)"
+  if [ "$mcount" -gt 0 ]; then
+    log "$R: ${mcount} unread mention(s) — launching mention session"
+    dir="$WORK_DIR/${R//\//__}"
+    if ensure_checkout "$R" "$dir"; then
+      RUN_SESSION_RC=1
+      run_session mention "$R" "$dir" "$TIMEOUT_MENTION" \
+        "$(render_prompt mention.txt ME="$ME" REPO="$R" MENTIONS="$mentions")"
+      # Commit only on success: a crashed/timed-out session leaves these
+      # uncommitted and retries next tick (crash-only), as before.
+      if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
+        printf '%s\n' "$all_mentions" | jq -r '.[] | "\(.thread) \(.updated)"' \
+          | ledger_commit "$DUTY_DIR/.seen-mentions"
+      fi
+    fi
+  fi
 
   # (a) and (b) are BOARD-STATE signals, and both are enumerated rather than
   # counted so they can be compared against what a previous session already
@@ -94,6 +147,9 @@ _triage_repo() {
   # new and warns again, which is precisely the every-tick spam the change
   # detection exists to prevent, on precisely the multi-repo box #59 is about
   # (codex-bot and grok-bot both caught this; grok-bot reproduced the flip-flop).
+  # After #253 this reports the board as it stood when the launch decision was
+  # made, which is what the message claims — so the WARN now lands after the
+  # mention session's SESSION START/END lines rather than before them.
   printf '%s\n%s\n' "$nt_items" "$stray_items" \
     | ledger_suppressed "$DUTY_DIR/.seen-triage-board" \
     | report_suppressed "$DUTY_DIR/.suppressed-triage-board.${R//\//_}" "$R: board"
@@ -148,46 +204,6 @@ _triage_repo() {
       <<<"$blocked_json" 2>/dev/null || echo "")"
   fi
   [ -n "$unblockable" ] && signals="$signals unblockable:${unblockable};"
-
-  # (d) unread mentions — a separate wake with its own session, so a builder
-  # blocked on a question is answered even when the board is clean. Only the
-  # thread ids and API subject URLs travel in the prompt (never titles —
-  # anyone on GitHub writes those, and this is a permissionless session).
-  # Idempotency is the seen-ledger, NOT mark-read alone: a mention the session
-  # reads but correctly does not act on (an FYI, an already-answered thread, a
-  # PR I don't own) used to stay unread and re-fire a full session every tick.
-  # A thread now re-wakes only when its notification updated_at advances.
-  local all_mentions keep_threads keep_json mentions mcount
-  all_mentions="$(gh api notifications --paginate 2>/dev/null | jq -c -s --arg repo "$R" 'add
-    | [ .[] | select(.repository.full_name == $repo
-                and (.reason == "mention" or .reason == "team_mention"))
-      | {thread: .id, subject: .subject.url, updated: .updated_at} ]' 2>/dev/null || echo '[]')"
-  keep_threads="$(printf '%s\n' "$all_mentions" \
-    | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
-    | ledger_filter "$DUTY_DIR/.seen-mentions" | awk '{print $1}')"
-  if [ -n "$keep_threads" ]; then
-    keep_json="$(printf '%s\n' "$keep_threads" | jq -R . | jq -cs .)"
-    mentions="$(jq -c --argjson keep "$keep_json" \
-      '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")"
-  else
-    mentions='[]'
-  fi
-  mcount="$(jq 'length' <<<"$mentions" 2>/dev/null || echo 0)"
-  if [ "$mcount" -gt 0 ]; then
-    log "$R: ${mcount} unread mention(s) — launching mention session"
-    dir="$WORK_DIR/${R//\//__}"
-    if ensure_checkout "$R" "$dir"; then
-      RUN_SESSION_RC=1
-      run_session mention "$R" "$dir" "$TIMEOUT_MENTION" \
-        "$(render_prompt mention.txt ME="$ME" REPO="$R" MENTIONS="$mentions")"
-      # Commit only on success: a crashed/timed-out session leaves these
-      # uncommitted and retries next tick (crash-only), as before.
-      if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-        printf '%s\n' "$all_mentions" | jq -r '.[] | "\(.thread) \(.updated)"' \
-          | ledger_commit "$DUTY_DIR/.seen-mentions"
-      fi
-    fi
-  fi
 
   if [ -z "$signals" ]; then
     if [ "$mcount" -eq 0 ]; then

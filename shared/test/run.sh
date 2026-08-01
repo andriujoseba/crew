@@ -1278,6 +1278,177 @@ t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_bui
 t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
 t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
 
+# --- the triage board poll follows the mention session (#253) ---------------
+# _triage_repo used to compute all four board signals, THEN run the mention
+# session (ceiling TIMEOUT_MENTION=1500), THEN decide on the values it had
+# computed up to 25 minutes earlier — so a lead that died during the session
+# still spent a full triage session, and a signal born during it waited a
+# whole tick. These drive the real module under a stateful `gh` shim whose
+# answers change when the mention session runs, in the shape _handoff_finalize
+# is tested in above.
+TRD="$TMP/tr-duty"; TRS="$TMP/tr-shim"; TRF="$TMP/tr-fix"
+mkdir -p "$TRD/lib/jq" "$TRD/work" "$TRS" "$TRF"
+cp "$SHARED/lib/jq/blockers.jq" "$TRD/lib/jq/"
+cp -r "$SHARED/prompts" "$TRD/prompts"
+TR_CALLS="$TMP/tr-calls.log"; TR_PHASE="$TMP/tr-phase"
+TR_LOG="$TMP/tr-log.txt"; TR_PROMPT="$TMP/tr-prompt"
+
+# Phase 1 is the board before the mention session, phase 2 the board after it;
+# the runner's run_session override flips the phase file. Every invocation is
+# recorded, so the call log doubles as the "no extra reads" guard.
+cat >"$TRS/gh" <<'TRGH'
+#!/usr/bin/env bash
+set -eu
+# One line per invocation — the GraphQL query argument is multi-line, and the
+# call log is counted, not just grepped.
+printf '%s\n' "${*//$'\n'/ }" >>"$TR_CALLS"
+p=1; [ -f "$TR_PHASE" ] && p="$(cat "$TR_PHASE")"
+case "$*" in
+  *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
+  *"api graphql"*)          : ;;  # --jq already applied: no uncommented discussions
+  *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
+  *"--label blocked"*)      cat "$TR_FIX/blocked.$p.json" ;;
+  *"--state all"*)          cat "$TR_FIX/numstates.json" ;;
+  *"issue list"*)           cat "$TR_FIX/stray.$p.json" ;;
+  *)                        printf '[]\n' ;;
+esac
+exit 0
+TRGH
+chmod +x "$TRS/gh"
+
+cat >"$TMP/tr-run.sh" <<'TRRUN'
+#!/usr/bin/env bash
+set -uo pipefail
+# shellcheck disable=SC1091
+. "$SHARED_DIR/lib/common.sh"
+# shellcheck disable=SC1091
+. "$SHARED_DIR/lib/duty-triage.sh"
+run_session() {
+  printf 'SESSION %s\n' "$1" >>"$TR_CALLS"
+  printf '%s' "$5" >"$TR_PROMPT.$1"
+  [ "$1" = mention ] && printf '2' >"$TR_PHASE"
+  RUN_SESSION_RC="${TR_SESSION_RC:-0}"
+}
+ensure_checkout() { return 0; }
+_triage_repo o/r
+TRRUN
+
+tr_fix() {  # tr_fix <notif json> <nt1> <nt2> <blocked1> <blocked2> <numstates>
+  printf '%s' "$1" >"$TRF/notif.json"
+  printf '%s' "$2" >"$TRF/nt.1.json";      printf '%s' "$3" >"$TRF/nt.2.json"
+  printf '%s' "$4" >"$TRF/blocked.1.json"; printf '%s' "$5" >"$TRF/blocked.2.json"
+  printf '%s' "$6" >"$TRF/numstates.json"
+  printf '[]' >"$TRF/stray.1.json";        printf '[]' >"$TRF/stray.2.json"
+}
+tr_run() {  # tr_run <run_session rc>
+  : >"$TR_CALLS"
+  rm -f "$TR_PHASE" "$TR_PROMPT".* "$TRD"/.seen-* "$TRD"/.suppressed-*
+  SHARED_DIR="$SHARED" TR_CALLS="$TR_CALLS" TR_PHASE="$TR_PHASE" TR_FIX="$TRF" \
+  TR_PROMPT="$TR_PROMPT" TR_SESSION_RC="$1" DUTY_DIR="$TRD" ME=me-bot \
+  LABEL_NEEDS_TRIAGE=needs-triage LABEL_BLOCKED=blocked LABEL_READY=ready \
+  LABEL_CLAIMED=claimed LABEL_EPIC=epic TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 \
+  PATH="$TRS:$PATH" bash "$TMP/tr-run.sh" >"$TR_LOG" 2>&1
+}
+trc() { grep -c -- "$1" "$TR_CALLS"; }
+TR_MENTION='[{"id":"t1","reason":"mention","updated_at":"2026-08-01T15:40:00Z",
+  "repository":{"full_name":"o/r"},"subject":{"url":"https://api/x"}}]'
+TR_LEAD='[{"number":244,"body":"Blocked by #216."}]'
+TR_LANDED='[{"number":216,"state":"CLOSED"}]'
+
+# The reported case: the sweep clears #244 forty-four seconds after the poll,
+# and the session that would have been launched on it starts nineteen minutes
+# later. Polled after the mention session, the lead is simply gone.
+tr_fix "$TR_MENTION" '[]' '[]' "$TR_LEAD" '[]' "$TR_LANDED"
+tr_run 0
+t triage253-dead-lead-spends-no-triage-session 0 "$(trc '^SESSION triage$')"
+t triage253-dead-lead-still-runs-the-mention 1 "$(trc '^SESSION mention$')"
+if grep -q 'no triage signals — mention session was the only wake' "$TR_LOG"; then
+  r1=said; else r1="$(cat "$TR_LOG")"; fi
+t triage253-dead-lead-logs-mention-only said "$r1"
+# Asserted on the prompt text, not only the session count: the two differ the
+# moment another signal is live.
+if [ -f "$TR_PROMPT.triage" ] && grep -q '244' "$TR_PROMPT.triage"; then
+  r1=STALE_LEAD; else r1=none; fi
+t triage253-dead-lead-not-in-prompt none "$r1"
+
+# The positive control that keeps the assertion above from being vacuous: a
+# lead that is STILL live after the mention session reaches the prompt.
+tr_fix "$TR_MENTION" '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
+tr_run 0
+t triage253-live-lead-launches-triage 1 "$(trc '^SESSION triage$')"
+if grep -q 'unblockable' "$TR_PROMPT.triage" && grep -q '244' "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage253-live-lead-named-in-prompt named "$r1"
+
+# The inverse: a signal BORN during the mention session is seen by the same
+# tick instead of waiting for the next one.
+tr_fix "$TR_MENTION" '[]' '[{"number":999,"updatedAt":"2026-08-01T15:50:00Z"}]' \
+  '[]' '[]' '[]'
+tr_run 0
+t triage253-newborn-signal-wakes-same-tick 1 "$(trc '^SESSION triage$')"
+if grep -q '1x needs-triage' "$TR_LOG"; then r1=named; else r1="$(cat "$TR_LOG")"; fi
+t triage253-newborn-signal-in-log named "$r1"
+if grep -q 'o/r#999' "$TRD/.seen-triage-board"; then r1=ledgered; else r1=MISSING; fi
+t triage253-newborn-signal-ledgered ledgered "$r1"
+
+# No extra reads. The rejected "poll twice" shape passes every behavioural case
+# above and fails here, which is the only reason this counts calls at all.
+# One tick reads notifications, needs-triage, strays, discussions and blocked
+# exactly once each — five calls, plus the two state-map reads only when the
+# blocked list is non-empty.
+tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage253-reads-notifications-once 1 "$(trc 'api notifications')"
+t triage253-reads-needs-triage-once   1 "$(trc '--label needs-triage')"
+t triage253-reads-strays-once         1 "$(trc 'number,labels,updatedAt')"
+t triage253-reads-discussions-once    1 "$(trc 'api graphql')"
+t triage253-reads-blocked-once        1 "$(trc '--label blocked')"
+t triage253-gh-calls-with-mention     5 "$(grep -vc '^SESSION' "$TR_CALLS")"
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage253-gh-calls-without-mention  5 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-quiet-tick-spends-nothing 0 "$(trc '^SESSION')"
+if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
+  r1=said; else r1="$(cat "$TR_LOG")"; fi
+t triage253-quiet-tick-log-unchanged said "$r1"
+# The state-map reads still ride the non-empty blocked list, and nothing else.
+tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
+tr_run 0
+t triage253-gh-calls-with-blocked-list 7 "$(grep -vc '^SESSION' "$TR_CALLS")"
+
+# The mention path itself is untouched — the regression that matters, since
+# this change moves code around that block. One session, kind mention, and the
+# ledger committed only on rc 0.
+tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage253-mention-only-one-session 1 "$(trc '^SESSION')"
+t triage253-mention-only-kind        1 "$(trc '^SESSION mention$')"
+if grep -q '^t1 ' "$TRD/.seen-mentions"; then r1=committed; else r1=MISSING; fi
+t triage253-mention-ledger-on-rc0 committed "$r1"
+tr_run 1
+if [ -f "$TRD/.seen-mentions" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage253-mention-ledger-not-on-rcfail withheld "$r1"
+
+# Static ordering, in the style of the module-wiring checks above: every board
+# read must sit BELOW the mention call site, and the launch decision below all
+# of them. Cheap, and it fails loudly if a later edit hoists a poll back up.
+TRIAGE_MOD="$SHARED/lib/duty-triage.sh"
+tr_ln() { grep -Fn -- "$1" "$TRIAGE_MOD" | head -1 | cut -d: -f1; }
+tr_mention_ln="$(tr_ln 'run_session mention')"
+# shellcheck disable=SC2016  # matching the module's literal source text
+tr_decide_ln="$(tr_ln '[ -z "$signals" ]')"
+# shellcheck disable=SC2016  # ditto
+for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
+             'gh api graphql' '--label "$LABEL_BLOCKED"'; do
+  probe_ln="$(tr_ln "$probe")"
+  if [ -n "$probe_ln" ] && [ "$probe_ln" -gt "$tr_mention_ln" ]; then
+    r1=after; else r1="BEFORE($probe_ln vs $tr_mention_ln)"; fi
+  t "triage253-poll-after-mention:$probe" after "$r1"
+  if [ -n "$probe_ln" ] && [ "$probe_ln" -lt "$tr_decide_ln" ]; then
+    r1=before; else r1="AFTER($probe_ln vs $tr_decide_ln)"; fi
+  t "triage253-poll-before-decision:$probe" before "$r1"
+done
+
 # The reviewer must carry updated_at from the existing pulls page, partition
 # before assembling per-repo prompts, and commit that repo's exact fresh set.
 REVIEW_MOD="$SHARED/lib/duty-review.sh"
