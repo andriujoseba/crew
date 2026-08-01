@@ -1859,6 +1859,9 @@ cmd_status() {
         if [ -n "$rver" ]; then echo "     converged by $rver${rat:+ at $rat}"; fi ;;
       *)
         echo "rig: ${rconv^^} — $(convergence_detail "$rreport")"
+        # roster_line prints "agent role from", so field 1 is the agent — and
+        # an off-roster box yields nothing, which convergence_recovery renders
+        # as a `<agent>` placeholder rather than a malformed command.
         echo "     $(convergence_recovery "$b" "$(roster_line "$b" | awk '{print $1}')")"
         echo "     crew hire $b refuses until this is fixed (--force overrides)" ;;
     esac
@@ -1944,7 +1947,6 @@ cmd_status() {
         unknown)
           convnote="convergence unknown — $(convergence_detail "$rreport"); crew hire refuses until it can read the marker" ;;
       esac
-      note="${note:-$convnote}"
     fi
     if [ "$ghs" = missing ] || [ "$vs" = missing ]; then
       note="⚠ log in: box shell $name${note:+; $note}"
