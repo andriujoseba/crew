@@ -46,6 +46,20 @@ CREW_ROOT = os.path.dirname(os.path.dirname(HERE))
 INDEX = os.path.join(CREW_ROOT, "fleet-floor", "index.html")
 PROBE = os.path.join(HERE, "probe.sh")
 AGENTS_DIR = os.path.join(CREW_ROOT, "shared", "conf", "agents")
+FLOOR_ENVELOPE = os.path.join(CREW_ROOT, "shared", "prompts",
+                              "fragment-floor-envelope.txt")
+
+
+def floor_message_prompt(operator_text):
+    """Wrap an operator message in the shared one-shot environment contract."""
+    try:
+        with open(FLOOR_ENVELOPE, encoding="utf-8") as src:
+            envelope = src.read()
+    except OSError as exc:
+        raise RuntimeError("floor message envelope unavailable: %s" % exc) from exc
+    if not envelope:
+        raise RuntimeError("floor message envelope is empty: %s" % FLOOR_ENVELOPE)
+    return envelope + operator_text
 
 
 def fleet_config_dir():
@@ -1228,6 +1242,10 @@ def do_command(fleet, body):
             return 400, {"ok": False, "error": "empty prompt"}
         if len(prompt) > 8000:
             return 400, {"ok": False, "error": "prompt too long"}
+        try:
+            prompt = floor_message_prompt(prompt)
+        except RuntimeError as exc:
+            return 500, {"ok": False, "error": str(exc)}
         # Two hops so the prompt is never interpolated into a shell string:
         # it travels as stdin bytes, and the session reads it from a file.
         # The filename carries a per-request token: with one fixed name, two
