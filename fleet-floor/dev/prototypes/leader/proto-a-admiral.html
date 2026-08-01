@@ -1259,8 +1259,8 @@ function drawRoom(t,st){
   pl(S,0,GYS+1.6,SW,GYS+1.6,"rgba(3,6,11,0.5)",1.6);
   for(var dp2=0;dp2<6;dp2++){
     var dy9=GYS+10+Math.pow(dp2/5,1.7)*(SH-GYS-14);   // compressed toward the horizon
-    pl(S,0,dy9,SW,dy9,"rgba(3,6,11,0.6)",1.4+dp2*0.5);
-    pl(S,0,dy9+1.6,SW,dy9+1.6,"rgba(174,190,218,"+(0.075*lit)+")",1);}
+    pl(S,0,dy9,SW,dy9,"rgba(2,4,8,0.78)",1.6+dp2*0.7);
+    pl(S,0,dy9+2,SW,dy9+2,"rgba(186,202,232,"+(0.17*lit)+")",1.2);}
   /* ROUND 6 · LOOP 10b — THE GROUND PLANE. A fresh reviewer's verdict on the
      whole room: "the deck seams run dead vertical with zero convergence, so
      the lower quarter reads as a second wall — the single biggest remaining
@@ -1271,8 +1271,8 @@ function drawRoom(t,st){
   var VPX=UX-30;
   for(var dv=-320;dv<SW+320;dv+=160){
     var bx9=dv+(dv-VPX)*0.5;
-    pl(S,dv,GYS,bx9,SH,"rgba(3,6,11,0.55)",1.8);
-    pl(S,dv+1.6,GYS,bx9+2.4,SH,"rgba(174,190,218,"+(0.06*lit)+")",1);}
+    pl(S,dv,GYS,bx9,SH,"rgba(2,4,8,0.8)",2.4);
+    pl(S,dv+2.4,GYS,bx9+3.4,SH,"rgba(186,202,232,"+(0.16*lit)+")",1.3);}
   if(!offl){var pool=S.createRadialGradient(UX,GYS+8,10,UX,GYS+8,260);
     pool.addColorStop(0,kk(0.09*lit));pool.addColorStop(1,kk(0));
     S.fillStyle=pool;S.beginPath();S.ellipse(UX,GYS+8,260,32,0,0,7);S.fill();}
@@ -1305,6 +1305,9 @@ function drawRoom(t,st){
         S.fillStyle=lrg;S.fillRect(lrx-56,GYS+4,112,68);});
       S.restore();}
     // yellow safety margin painted along the platform's foot, worn through
+    /* ROUND 7 — the stripe is paint on a HORIZONTAL surface, so its blocks
+       must foreshorten with distance across frame and it needs a visible
+       near face. As a constant-width rectangle it read as a painted curb. */
     var pmg=S.createLinearGradient(0,GYS+34,0,GYS+46);
     pmg.addColorStop(0,"rgba(214,176,72,"+(0.34+0.34*lit)+")");
     pmg.addColorStop(1,"rgba(140,110,40,"+(0.34+0.26*lit)+")");
@@ -1314,7 +1317,10 @@ function drawRoom(t,st){
     S.fillStyle="rgba(2,4,8,0.4)";S.fillRect(240,GYS+45,680,2);
     for(var wr=0;wr<11;wr++){                       // wear breaking the paint
       S.fillStyle="rgba(28,34,44,"+(0.55+0.4*((wr*37)%5)/5)+")";
-      S.fillRect(262+wr*62,GYS+34,14+((wr*13)%22),13);}
+      var wxp=262+wr*62, wsk=(wxp-UX)*0.035;      // blocks skew with the plane
+      poly(S,[[wxp,GYS+34],[wxp+14+((wr*13)%22),GYS+34],
+              [wxp+14+((wr*13)%22)+wsk,GYS+47],[wxp+wsk,GYS+47]]);S.fill();}
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(238,GYS+46.6,684,2.4);
     // scuffs where the unit turns on its own footprint, arcing round it
     S.save();S.globalAlpha=0.4;
     for(var sc9=0;sc9<7;sc9++){
@@ -1361,8 +1367,8 @@ function drawRoom(t,st){
     var TOPY=GYS-166, KNEE=GYS-108, BASEY=GYS-14, OV=20;  // OV: front overhang
     function fx(u){return C0-OV+u*(CW+OV*2);}             // front-edge x at 0..1
     // ---- cast shadow on the deck, thrown away from the port lamp
-    S.fillStyle="rgba(2,4,8,0.5)";
-    S.beginPath();S.ellipse((C0+C1)/2+26,BASEY+2,CW/2+40,13,0,0,7);S.fill();
+    S.fillStyle="rgba(2,4,8,0.6)";
+    poly(S,[[C0-OV-6,BASEY-3],[C1+OV+6,BASEY-3],[C1+OV+30,BASEY+9],[C0-OV+18,BASEY+9]]);S.fill();
     // ---- the kick recess and the plinth it stands on. The console was
     //      clipped flat by the floor with no toe space and no end caps,
     //      which is what made it read as a rectangle floated on the wall.
@@ -1471,7 +1477,7 @@ function drawRoom(t,st){
          port end because the unit's arm was eating it. */
       var ex=C1-54, ey=TOPY-46;
       S.fillStyle="rgba(2,4,8,0.45)";
-      S.beginPath();S.ellipse(ex+4,TOPY-2,28,7,0,0,7);S.fill();
+      poly(S,[[ex-26,TOPY-5],[ex+26,TOPY-5],[ex+34,TOPY+3],[ex-18,TOPY+3]]);S.fill();
       // a splayed pedestal standing on the coaming, not a stick
       plate(S,[[ex-24,TOPY-2],[ex-13,ey+16],[ex+13,ey+16],[ex+24,TOPY-2]],
             offl?"#2b3340":"#454f5f",offl?"#10151d":"#1b212b","rgba(2,4,8,0.55)");
@@ -1574,7 +1580,7 @@ function drawRoom(t,st){
     (function(){
       var bx3=C0+48, cy9=TOPY-32, R9=22;   // port end, clear of the unit
       S.fillStyle="rgba(2,4,8,0.45)";
-      S.beginPath();S.ellipse(bx3+4,TOPY-2,26,7,0,0,7);S.fill();
+      poly(S,[[bx3-24,TOPY-5],[bx3+24,TOPY-5],[bx3+32,TOPY+3],[bx3-16,TOPY+3]]);S.fill();
       // the short column and its base flange, standing on the coaming
       S.fillStyle=offl?"#141a23":"#2a323e";S.fillRect(bx3-9,cy9,19,TOPY-cy9-2);
       S.fillStyle="rgba(206,222,248,"+(0.16*lit)+")";S.fillRect(bx3-9,cy9,1.5,TOPY-cy9-2);
@@ -2071,12 +2077,26 @@ function drawScene(t,st){
   var offl=st==="offline";
   drawRoom(t,st);
   // contact shadows, in stage coordinates
-  [-34,34].forEach(function(dx){var sh=S.createRadialGradient(UX+dx,GYS+4,1,UX+dx,GYS+4,38);
-    sh.addColorStop(0,"rgba(0,0,0,0.6)");sh.addColorStop(0.6,"rgba(0,0,0,0.28)");sh.addColorStop(1,"rgba(0,0,0,0)");
-    S.fillStyle=sh;S.beginPath();S.ellipse(UX+dx,GYS+4,38,10,0,0,7);S.fill();});
-  var sh2=S.createRadialGradient(UX,GYS+2,6,UX,GYS+2,100);
-  sh2.addColorStop(0,"rgba(0,0,0,0.35)");sh2.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=sh2;S.beginPath();S.ellipse(UX,GYS+2,100,15,0,0,7);S.fill();
+  /* ROUND 7 — CONTACT, IN THIS ROOM'S OWN LANGUAGE. Two blind reviewers,
+     independently: the unit had "zero contact with anything — no contact
+     shadow, no ambient occlusion", and separately the room mixed "soft
+     airbrushed ellipses with hard flat shapes, two shadow languages in one
+     image". Both are fixed by the same move: a HARD-EDGED contact shape,
+     because that is the idiom every other edge in this room is drawn in.
+     The soft pass survives only as a wide, very faint ambient bed. */
+  var FTY=GYS-16;                                  // the platform top he stands on
+  S.save();S.globalAlpha=0.55;S.filter="blur(9px)";
+  S.fillStyle="rgba(0,0,0,0.5)";
+  S.beginPath();S.ellipse(UX+16,FTY+6,104,15,0,0,7);S.fill();
+  S.restore();
+  [-34,34].forEach(function(dx){                   // the hard core of each sole
+    S.fillStyle="rgba(2,4,8,0.82)";
+    poly(S,[[UX+dx-30,FTY+1],[UX+dx+30,FTY+1],[UX+dx+38,FTY+9],[UX+dx-24,FTY+9]]);S.fill();
+    S.fillStyle="rgba(2,4,8,0.5)";
+    poly(S,[[UX+dx-24,FTY+9],[UX+dx+38,FTY+9],[UX+dx+50,FTY+17],[UX+dx-16,FTY+17]]);S.fill();});
+  // and the occlusion where sole meets deck — the line that sells the contact
+  [-34,34].forEach(function(dx){
+    S.fillStyle="rgba(1,2,5,0.9)";S.fillRect(UX+dx-30,FTY-1.5,60,3.5);});
   S.drawImage(body,UOX,UOY);
   S.drawImage(rim,UOX,UOY);
   S.save();S.globalCompositeOperation="lighter";S.drawImage(emis,UOX,UOY);S.restore();
@@ -2113,6 +2133,16 @@ function drawScene(t,st){
      the figure, and each lands on a base plate with a toe board between —
      which is also what stops the bottom of the frame reading as a void. */
   var TOEY=SH-34;
+  /* ROUND 7 — the camera's own standing plane. Below the toe board there
+     was nothing at all, so the frame bottomed out in void and the rail had
+     no floor to stand on. */
+  var nfg=S.createLinearGradient(0,TOEY,0,SH);
+  nfg.addColorStop(0,"rgba(26,32,41,0.99)");nfg.addColorStop(1,"rgba(13,17,23,0.99)");
+  S.fillStyle=nfg;S.fillRect(0,TOEY+10,SW,SH-TOEY-10);
+  for(var nf=-2;nf<10;nf++){
+    var nfx=nf*180, nfe=nfx+(nfx-UX)*0.9;
+    pl(S,nfx,TOEY+14,nfe,SH,"rgba(2,4,8,0.6)",2);
+    pl(S,nfx+2.4,TOEY+14,nfe+3.4,SH,"rgba(180,196,226,0.07)",1);}
   S.fillStyle="rgba(14,18,25,0.99)";S.fillRect(0,TOEY,SW,15);   // toe board
   S.fillStyle="rgba(170,188,218,0.1)";S.fillRect(0,TOEY,SW,1.5);
   S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(0,TOEY+13,SW,3);
