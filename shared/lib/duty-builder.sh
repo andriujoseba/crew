@@ -399,7 +399,8 @@ _builder_repo() {
         RUN_SESSION_RC=1
         run_session ci-red "$R#$red_num" "$dir" "$TIMEOUT_CIRED" \
           "$(render_prompt ci-red.txt ME="$ME" REPO="$R" NUM="$red_num" \
-            CHECKS="${red_checks:-unknown}" WT_RULES="$wt_rules")"
+            CHECKS="${red_checks:-unknown}" WT_RULES="$wt_rules" \
+            ROUND_RULES="$round_rules")"
         if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
           printf '%s\thead\n' "$red_key" | ledger_commit "$DUTY_DIR/.seen-ci-red"
         fi
