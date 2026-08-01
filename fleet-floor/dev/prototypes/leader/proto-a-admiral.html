@@ -16,7 +16,7 @@
 </head>
 <body>
 <div id="wrap">
-  <canvas id="cv" width="520" height="640"></canvas>
+  <canvas id="cv" width="1280" height="720"></canvas>
   <div id="bar">
     <button data-st="working">working</button>
     <button data-st="idle">idle</button>
@@ -51,7 +51,16 @@
        the crest dies, the optics go dark, the beacon rakes the cap
    ========================================================================== */
 var cv=document.getElementById("cv"), S=cv.getContext("2d");
-var W=520,H=640;
+/* LANDSCAPE STAGE. The fleet's rooms are 16:9 and the unit is one figure
+   standing in them, not the whole picture. So the robot keeps its own
+   520x640 buffer — every coordinate in drawUnit is unchanged — and that
+   buffer is composited onto a 1280x720 stage at UOX/UOY. The room is then
+   authored in stage coordinates with room to actually be a room. */
+var SW=1280, SH=720;                 // the stage
+var W=520,H=640;                     // the unit's own buffer
+var UOX=250, UOY=80;                 // where the buffer lands on the stage
+var GYS=640;                         // the stage's deck line
+var UX=UOX+260;                      // the unit's centre, in stage coords
 var body=document.createElement("canvas"),emis=document.createElement("canvas"),rim=document.createElement("canvas");
 [body,emis,rim].forEach(function(c){c.width=W;c.height=H;});
 var RB=body.getContext("2d"),RE=emis.getContext("2d"),RR=rim.getContext("2d");
@@ -519,303 +528,510 @@ function laurel(c,x,y,col){c.save();c.strokeStyle=col;c.lineWidth=1.4;
     c.beginPath();c.ellipse(x+lf[0],y+lf[1],2.4,1.1,lf[0]<0?-0.7:0.7,0,7);c.stroke();});
   c.restore();}
 
-/* ---- scene: THE FLAG BRIDGE ----
-   The leader's room is the place a battleship is commanded from: an armoured
-   gallery with a raked window band looking out on nothing, a plot table
-   throwing light up into the room, repeater dials, a chart board, and the
-   ship's own structure overhead. It is built in the fleet-floor grammar —
-   flat plates, one warm key, contact darkening at every corner — and it is
-   drawn ENTIRELY behind and around the unit, never in front of its legs,
-   because the silhouette is the asset. */
+/* ---- scene: THE FLAG BRIDGE, in landscape ----
+   Authored across the full 1280x720 stage in four depth planes: what is
+   beyond the glass, the bulkhead itself, the room's furniture, and a
+   blurred foreground the camera stands behind. The unit is one figure in
+   it, standing left of centre where the plot table's light can reach him
+   from the side. */
+function rrS(x,y,w,h,r){S.beginPath();if(S.roundRect)S.roundRect(x,y,w,h,r);else S.rect(x,y,w,h);}
+
 function drawRoom(t,st){
   var offl=st==="offline", work=st==="working";
-  var K=offl?[120,128,144]:[236,200,128];          // the room is graded to command brass
+  var K=offl?[120,128,144]:[236,200,128];
   function kk(a){return "rgba("+K[0]+","+K[1]+","+K[2]+","+a+")";}
-  var lit=offl?0.22:(work?1:0.72);
-  var FX0=34, FX1=W-34;                 // the framed opening the camera sees through
-  // ---- back bulkhead
-  var wall=S.createLinearGradient(0,0,0,H);
+  var lit=offl?0.18:(work?1:0.7);
+
+  /* ============ PLANE 1 · beyond the glass ============ */
+  var sky=S.createLinearGradient(0,0,0,GYS);
+  sky.addColorStop(0,offl?"#04060a":"#070c14");
+  sky.addColorStop(0.55,offl?"#05070c":"#0a1019");
+  sky.addColorStop(1,"#04060a");
+  S.fillStyle=sky;S.fillRect(0,0,SW,SH);
+  // a far horizon and the silhouette of another hull out there
+  S.fillStyle=offl?"rgba(10,14,22,0.6)":"rgba(14,20,32,0.85)";
+  S.beginPath();S.moveTo(760,236);S.lineTo(830,206);S.lineTo(880,214);S.lineTo(902,196);
+  S.lineTo(946,214);S.lineTo(1010,222);S.lineTo(1052,244);S.lineTo(760,244);S.closePath();S.fill();
+  S.strokeStyle=kk(0.16*lit);S.lineWidth=1.2;
+  S.beginPath();S.moveTo(540,246);S.lineTo(1200,243);S.stroke();
+  [[812,214],[900,203],[988,220],[1044,236]].forEach(function(fl,i5){
+    var fp=offl?0:(0.35+0.65*Math.abs(Math.sin(t*0.6+i5*1.9)));
+    S.fillStyle="rgba(255,116,86,"+(0.75*fp*lit)+")";
+    S.beginPath();S.arc(fl[0],fl[1],1.8,0,7);S.fill();});
+
+  /* the fleet out there: three hulls at different distances, the far ones
+     hazed almost to nothing. Atmospheric perspective is the cheapest depth
+     there is and the window is the only place this room can use it. */
+  [[0.5,700,262,150],[0.8,884,250,210],[1.0,1084,240,120]].forEach(function(hl){
+    S.fillStyle="rgba(26,36,54,"+hl[0]+")";
+    var hx4=hl[1],hy4=hl[2],hw=hl[3];
+    S.beginPath();S.moveTo(hx4-hw/2,hy4+16);S.lineTo(hx4-hw*0.3,hy4-6);
+    S.lineTo(hx4-hw*0.08,hy4-2);S.lineTo(hx4+hw*0.05,hy4-16);
+    S.lineTo(hx4+hw*0.2,hy4-4);S.lineTo(hx4+hw/2,hy4+16);S.closePath();S.fill();
+    // a running light on each, so they read as ships and not as hills
+    S.fillStyle="rgba(255,150,110,"+(0.5*hl[0]*lit)+")";
+    S.beginPath();S.arc(hx4+hw*0.05,hy4-18,1.7,0,7);S.fill();});
+
+  /* ============ PLANE 2 · the bulkhead ============ */
+  var wall=S.createLinearGradient(0,0,0,GYS);
   wall.addColorStop(0,offl?"#080a0e":"#0e1218");
   wall.addColorStop(0.62,offl?"#06080c":"#0b0e14");
   wall.addColorStop(1,"#05070b");
-  S.fillStyle=wall;S.fillRect(0,0,W,H);
-  // the space BEYOND the bridge: darker, colder, visible past the frame
-  S.fillStyle="#04060a";S.fillRect(0,0,FX0,H);S.fillRect(FX1,0,W-FX1,H);
-  // riveted plate courses across the bulkhead
-  for(var pc=0;pc<5;pc++){var py2=96+pc*84;
+  S.fillStyle=wall;
+  S.fillRect(0,0,560,GYS);                       // port bulkhead, solid
+  S.fillRect(0,0,SW,150);                        // above the glass
+  S.fillRect(0,300,SW,GYS-300);                  // below the glass
+  S.fillRect(1180,0,SW-1180,GYS);                // starboard bulkhead
+  // riveted plate courses
+  for(var pc=0;pc<6;pc++){var py2=96+pc*92;
     S.strokeStyle="rgba(4,8,14,0.4)";S.lineWidth=1.4;
-    S.beginPath();S.moveTo(0,py2);S.lineTo(W,py2);S.stroke();
+    S.beginPath();S.moveTo(0,py2);S.lineTo(SW,py2);S.stroke();
     S.strokeStyle="rgba(150,166,194,"+(0.03*lit)+")";S.lineWidth=1;
-    S.beginPath();S.moveTo(0,py2+1.4);S.lineTo(W,py2+1.4);S.stroke();
-    for(var rv5=0;rv5<W;rv5+=34){
-      S.fillStyle="rgba(120,136,164,"+(0.07*lit)+")";
-      S.beginPath();S.arc(rv5+17,py2-5,1.3,0,7);S.fill();}}
-  // ---- the window band: raked armoured glass, looking out on deep nothing
-  S.save();
-  var wy=118, wh=92;
-  S.beginPath();S.moveTo(28,wy+16);S.lineTo(W-28,wy+16);S.lineTo(W-40,wy+wh);S.lineTo(40,wy+wh);S.closePath();
-  var og=S.createLinearGradient(0,wy,0,wy+wh);
-  og.addColorStop(0,offl?"#0a0e14":"#141c26");og.addColorStop(1,offl?"#05070c":"#0a1017");
-  S.fillStyle=og;S.fill();
-  S.save();S.clip();
-  // a far horizon line and a couple of distant running lights
-  S.strokeStyle=kk(0.2*lit);S.lineWidth=1.2;
-  S.beginPath();S.moveTo(28,wy+62);S.lineTo(W-28,wy+58);S.stroke();
-  [[110,wy+50],[318,wy+44],[430,wy+56]].forEach(function(fl,i5){
-    var fp=offl?0:(0.4+0.6*Math.abs(Math.sin(t*0.7+i5*2)));
-    S.fillStyle="rgba(255,120,90,"+(0.8*fp*lit)+")";
-    S.beginPath();S.arc(fl[0],fl[1],1.6,0,7);S.fill();});
-  S.restore();
-  // mullions + the frame's own armour
-  S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=7;
-  [96,180,264,348,432].forEach(function(mx){
-    S.beginPath();S.moveTo(mx,wy+16);S.lineTo(mx-3,wy+wh);S.stroke();});
-  S.strokeStyle="rgba(160,178,208,"+(0.2*lit)+")";S.lineWidth=1.4;
-  [96,180,264,348,432].forEach(function(mx){
-    S.beginPath();S.moveTo(mx+3,wy+16);S.lineTo(mx,wy+wh);S.stroke();});
-  S.fillStyle="#0a0e15";S.fillRect(0,wy+wh-2,W,14);
-  S.fillStyle=kk(0.06*lit);S.fillRect(0,wy+wh-2,W,1.4);
-  S.fillStyle="#0a0e15";S.fillRect(0,wy+4,W,14);
-  S.restore();
-  // ---- overhead: deckhead beams and a caged lamp
-  S.fillStyle="#080b11";S.fillRect(0,0,W,44);
-  S.fillStyle="rgba(150,166,194,"+(0.05*lit)+")";S.fillRect(0,42,W,1.4);
-  [70,200,330,460].forEach(function(bx){
-    S.fillStyle="#0a0e15";S.fillRect(bx-9,0,18,30);
-    S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.fillRect(bx-9,0,2,30);});
-  // the fixture the key light actually comes out of: a hooded pan lamp on a
-  // drop cable. A cone with no lamp at the top of it is the tell of a
-  // backdrop rather than a room.
+    S.beginPath();S.moveTo(0,py2+1.4);S.lineTo(SW,py2+1.4);S.stroke();
+    for(var rv5=0;rv5<SW;rv5+=38){
+      S.fillStyle="rgba(120,136,164,"+(0.06*lit)+")";
+      S.beginPath();S.arc(rv5+19,py2-6,1.3,0,7);S.fill();}}
+  // ---- the window band: raked armoured glass, starboard half of the room
   (function(){
-    var lx3=cx, ly3=104;
-    S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=3;
-    S.beginPath();S.moveTo(lx3,34);S.lineTo(lx3,ly3-12);S.stroke();
-    S.strokeStyle="rgba(150,166,194,"+(0.08*lit)+")";S.lineWidth=1;
-    S.beginPath();S.moveTo(lx3+1,34);S.lineTo(lx3+1,ly3-12);S.stroke();
-    S.fillStyle="#0b0f16";S.beginPath();
-    S.moveTo(lx3-30,ly3+10);S.lineTo(lx3-17,ly3-12);S.lineTo(lx3+17,ly3-12);S.lineTo(lx3+30,ly3+10);S.closePath();S.fill();
-    S.strokeStyle="rgba(150,166,194,"+(0.14*lit)+")";S.lineWidth=1.2;S.stroke();
-    if(!offl){
-      S.fillStyle=kk(0.85*lit);S.fillRect(lx3-22,ly3+8,44,4);
-      S.save();S.globalCompositeOperation="lighter";
-      var lg3=S.createRadialGradient(lx3,ly3+10,2,lx3,ly3+10,64);
-      lg3.addColorStop(0,kk(0.3*lit));lg3.addColorStop(1,kk(0));
-      S.fillStyle=lg3;S.beginPath();S.arc(lx3,ly3+10,64,0,7);S.fill();S.restore();
-    }else{S.fillStyle="rgba(90,98,112,0.3)";S.fillRect(lx3-22,ly3+8,44,3);}
+    var wy=150, wh=150, wx0=560, wx1=1180;
+    S.save();S.beginPath();S.rect(wx0,wy,wx1-wx0,wh);S.clip();
+    var og=S.createLinearGradient(0,wy,0,wy+wh);
+    og.addColorStop(0,offl?"#0c1017":"#1b2536");og.addColorStop(0.62,offl?"#080b12":"#111926");og.addColorStop(1,offl?"#05070c":"#0a1017");
+    S.fillStyle=og;S.fillRect(wx0,wy,wx1-wx0,wh);
+    S.restore();
+    if(!offl){var hz=S.createLinearGradient(0,wy+wh*0.5,0,wy+wh);
+      hz.addColorStop(0,"rgba(90,116,150,0)");hz.addColorStop(1,"rgba(90,116,150,0.1)");
+      S.fillStyle=hz;S.fillRect(wx0,wy,wx1-wx0,wh);}
+    // mullions, raked
+    S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=9;
+    for(var mx=wx0+78;mx<wx1;mx+=104){
+      S.beginPath();S.moveTo(mx,wy);S.lineTo(mx-6,wy+wh);S.stroke();}
+    S.strokeStyle="rgba(160,178,208,"+(0.18*lit)+")";S.lineWidth=1.5;
+    for(var mx2=wx0+78;mx2<wx1;mx2+=104){
+      S.beginPath();S.moveTo(mx2+4,wy);S.lineTo(mx2-2,wy+wh);S.stroke();}
+    // frame: heavy sill and head
+    S.fillStyle="#0a0e15";S.fillRect(wx0-8,wy-14,wx1-wx0+16,18);
+    S.fillRect(wx0-8,wy+wh-4,wx1-wx0+16,20);
+    S.fillStyle=kk(0.07*lit);S.fillRect(wx0-8,wy+wh-4,wx1-wx0+16,1.6);
+    // rust weeping from the sill bolts
+    for(var wb=wx0+40;wb<wx1;wb+=130){
+      var wg=S.createLinearGradient(0,wy+wh+14,0,wy+wh+62);
+      wg.addColorStop(0,"rgba(74,50,28,0.32)");wg.addColorStop(1,"rgba(74,50,28,0)");
+      S.fillStyle=wg;S.fillRect(wb-2,wy+wh+14,4,48);}
   })();
-  // the room lamp, and its cone down onto the unit
-  if(!offl){
-    var cone=S.createLinearGradient(0,114,0,GYS);
-    cone.addColorStop(0,kk(0.11*lit));cone.addColorStop(1,kk(0));
-    S.fillStyle=cone;S.beginPath();
-    S.moveTo(cx-30,114);S.lineTo(cx+30,114);S.lineTo(cx+150,GYS);S.lineTo(cx-150,GYS);S.closePath();S.fill();}
-  else{var bc2=S.createRadialGradient(74,120,4,74,120,170);
-    bc2.addColorStop(0,"rgba(255,60,50,0.11)");bc2.addColorStop(1,"rgba(255,60,50,0)");
-    S.fillStyle=bc2;S.fillRect(0,0,W,H);}
-  /* ---- NAMEPLATE. The fleet's rooms are labelled — the builder's wall says
-     SECTOR-7 / BUILDER QUARTERS — and the label is the single strongest cue
-     that a space is a place rather than a backdrop. */
+  // ---- deckhead beams + the pan lamps
+  S.fillStyle="#080b11";S.fillRect(0,0,SW,48);
+  S.fillStyle="rgba(150,166,194,"+(0.05*lit)+")";S.fillRect(0,46,SW,1.4);
+  for(var bx=90;bx<SW;bx+=150){
+    S.fillStyle="#0a0e15";S.fillRect(bx-10,0,20,34);
+    S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.fillRect(bx-10,0,2,34);}
+  [UX,UX+430].forEach(function(lx3,li){
+    var ly3=li?96:118;
+    S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=3;
+    S.beginPath();S.moveTo(lx3,48);S.lineTo(lx3,ly3-12);S.stroke();
+    S.fillStyle="#0b0f16";S.beginPath();
+    S.moveTo(lx3-34,ly3+11);S.lineTo(lx3-19,ly3-12);S.lineTo(lx3+19,ly3-12);S.lineTo(lx3+34,ly3+11);S.closePath();S.fill();
+    S.strokeStyle="rgba(150,166,194,"+(0.14*lit)+")";S.lineWidth=1.2;S.stroke();
+    if(!offl){S.fillStyle=kk((li?0.5:0.9)*lit);S.fillRect(lx3-25,ly3+9,50,4);
+      S.save();S.globalCompositeOperation="lighter";
+      var lg3=S.createRadialGradient(lx3,ly3+11,2,lx3,ly3+11,li?54:78);
+      lg3.addColorStop(0,kk((li?0.14:0.3)*lit));lg3.addColorStop(1,kk(0));
+      S.fillStyle=lg3;S.beginPath();S.arc(lx3,ly3+11,72,0,7);S.fill();S.restore();
+      var cone=S.createLinearGradient(0,ly3+11,0,GYS);
+      cone.addColorStop(0,kk((li?0.045:0.13)*lit));cone.addColorStop(1,kk(0));
+      S.fillStyle=cone;S.beginPath();
+      S.moveTo(lx3-34,ly3+11);S.lineTo(lx3+34,ly3+11);
+      S.lineTo(lx3+164,GYS);S.lineTo(lx3-164,GYS);S.closePath();S.fill();}
+    else{S.fillStyle="rgba(90,98,112,0.28)";S.fillRect(lx3-25,ly3+9,50,3);}});
+  if(offl){var bc2=S.createRadialGradient(120,150,4,120,150,240);
+    bc2.addColorStop(0,"rgba(255,60,50,0.10)");bc2.addColorStop(1,"rgba(255,60,50,0)");
+    S.fillStyle=bc2;S.fillRect(0,0,SW,SH);}
+
+  /* ============ PLANE 2b · wall furniture ============ */
+  // nameplate, high on the port bulkhead
   (function(){
-    var nx=cx-104, ny=54, nw=208, nh=44;
+    var nx=96, ny=178, nw=230, nh=50;
     S.fillStyle="#0a0e15";rrS(nx,ny,nw,nh,3);S.fill();
     S.strokeStyle="rgba(150,166,194,"+(0.16*lit)+")";S.lineWidth=1.2;rrS(nx,ny,nw,nh,3);S.stroke();
     S.fillStyle="rgba(6,9,14,0.9)";S.fillRect(nx+5,ny+5,nw-10,nh-10);
-    [[nx+6,ny+6],[nx+nw-6,ny+6],[nx+6,ny+nh-6],[nx+nw-6,ny+nh-6]].forEach(function(cp){
-      S.fillStyle="rgba(120,136,164,"+(0.2*lit)+")";S.beginPath();S.arc(cp[0],cp[1],1.4,0,7);S.fill();});
+    [[nx+7,ny+7],[nx+nw-7,ny+7],[nx+7,ny+nh-7],[nx+nw-7,ny+nh-7]].forEach(function(cp){
+      S.fillStyle="rgba(120,136,164,"+(0.2*lit)+")";S.beginPath();S.arc(cp[0],cp[1],1.5,0,7);S.fill();});
     S.save();S.textAlign="left";
-    S.fillStyle=kk(0.8*lit);S.font="700 20px ui-monospace,Menlo,monospace";
-    S.fillText("FLAG-1",nx+15,ny+25);
-    S.fillStyle="rgba(150,166,194,"+(0.45*lit)+")";S.font="600 9px ui-monospace,Menlo,monospace";
-    S.fillText("FLEET COMMAND",nx+15,ny+37);
+    S.fillStyle=kk(0.8*lit);S.font="700 24px ui-monospace,Menlo,monospace";
+    S.fillText("FLAG-1",nx+16,ny+30);
+    S.fillStyle="rgba(150,166,194,"+(0.45*lit)+")";S.font="600 10px ui-monospace,Menlo,monospace";
+    S.fillText("FLEET COMMAND",nx+16,ny+43);
     S.restore();
     if(!offl){S.save();S.globalCompositeOperation="lighter";
-      var ng=S.createRadialGradient(nx+nw/2,ny+nh/2,4,nx+nw/2,ny+nh/2,96);
-      ng.addColorStop(0,kk(0.07*lit));ng.addColorStop(1,kk(0));
-      S.fillStyle=ng;S.fillRect(nx-96,ny-96,nw+192,nh+192);S.restore();}
+      var ng=S.createRadialGradient(nx+nw/2,ny+nh/2,4,nx+nw/2,ny+nh/2,120);
+      ng.addColorStop(0,kk(0.06*lit));ng.addColorStop(1,kk(0));
+      S.fillStyle=ng;S.fillRect(nx-120,ny-120,nw+240,nh+240);S.restore();}
   })();
-  // ---- repeater dials down the left bulkhead
-  [[38,250],[38,318],[38,386]].forEach(function(dp,i6){
-    S.fillStyle="#0a0e15";rrS(dp[0]-19,dp[1]-19,38,38,4);S.fill();
-    S.strokeStyle="rgba(140,156,184,"+(0.16*lit)+")";S.lineWidth=1.2;
-    rrS(dp[0]-19,dp[1]-19,38,38,4);S.stroke();
-    S.beginPath();S.arc(dp[0],dp[1],12,0,7);
-    S.strokeStyle="rgba(140,156,184,"+(0.13*lit)+")";S.lineWidth=1;S.stroke();
-    if(!offl){var ang=Math.sin(t*(0.5+i6*0.3)+i6)*1.1-1.6;
-      S.strokeStyle=kk(0.55*lit);S.lineWidth=1.6;
-      S.beginPath();S.moveTo(dp[0],dp[1]);
-      S.lineTo(dp[0]+Math.cos(ang)*9,dp[1]+Math.sin(ang)*9);S.stroke();
-      S.fillStyle=kk(0.5*lit);S.beginPath();S.arc(dp[0],dp[1],1.8,0,7);S.fill();}});
-  // ---- chart board on the right bulkhead
-  S.fillStyle="#0a0e15";S.fillRect(W-104,286,80,104);
-  S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.2;S.strokeRect(W-104,286,80,104);
-  S.strokeStyle=kk(0.13*lit);S.lineWidth=1;
-  for(var cl2=0;cl2<5;cl2++){S.beginPath();S.moveTo(W-98,300+cl2*18);S.lineTo(W-30,300+cl2*18);S.stroke();}
-  S.strokeStyle=kk(0.3*lit);S.lineWidth=1.4;
-  S.beginPath();S.moveTo(W-96,372);S.lineTo(W-74,340);S.lineTo(W-54,352);S.lineTo(W-32,318);S.stroke();
-  /* ---- PROPS. The builder's room works because it is full of objects that
-     each have a job and a local colour — green cylinders, a red hose
-     cabinet, a yellow placard. A bridge in one flat grade is a backdrop; a
-     bridge with a fire station and a telegraph on it is a place. */
-  // engine-order telegraph on its pedestal, port side
+  // status board
   (function(){
-    var tx2=76, ty2=GYS-118;
-    S.fillStyle="#0a0e15";S.fillRect(tx2-9,ty2+34,18,84);           // column
-    S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.fillRect(tx2-9,ty2+34,1.6,84);
-    S.fillStyle="#0c1119";S.beginPath();S.ellipse(tx2,ty2+118,26,7,0,0,7);S.fill();
-    S.fillStyle="#101724";S.beginPath();S.arc(tx2,ty2+18,25,0,7);S.fill();   // dial head
-    S.strokeStyle="rgba(150,166,194,"+(0.18*lit)+")";S.lineWidth=1.4;
-    S.beginPath();S.arc(tx2,ty2+18,25,0,7);S.stroke();
-    S.strokeStyle=kk(0.28*lit);S.lineWidth=1;
-    S.beginPath();S.arc(tx2,ty2+18,17,0,7);S.stroke();
-    for(var tk=0;tk<8;tk++){var a5=tk/8*6.28;
-      pl(S,tx2+Math.cos(a5)*17,ty2+18+Math.sin(a5)*17,tx2+Math.cos(a5)*22,ty2+18+Math.sin(a5)*22,kk(0.22*lit),1);}
-    if(!offl){var ha=-2.1+Math.sin(t*0.4)*0.5;
-      S.strokeStyle="rgba(226,92,60,"+(0.85*lit)+")";S.lineWidth=2.2;
-      S.beginPath();S.moveTo(tx2,ty2+18);S.lineTo(tx2+Math.cos(ha)*19,ty2+18+Math.sin(ha)*19);S.stroke();
-      S.fillStyle=kk(0.7*lit);S.beginPath();S.arc(tx2,ty2+18,3,0,7);S.fill();}
-  })();
-  // fire station: red cabinet, the room's one hot accent, starboard
-  (function(){
-    var fx2=W-96, fy2=GYS-176;
-    S.fillStyle="rgba(96,26,22,"+(0.5+0.4*lit)+")";S.fillRect(fx2,fy2,60,74);
-    S.strokeStyle="rgba(196,72,58,"+(0.34*lit)+")";S.lineWidth=1.4;S.strokeRect(fx2,fy2,60,74);
-    S.fillStyle="rgba(10,14,20,0.75)";S.fillRect(fx2+5,fy2+5,50,64);
-    S.strokeStyle="rgba(214,96,74,"+(0.4*lit)+")";S.lineWidth=1.6;   // coiled hose
-    [13,18,23].forEach(function(rr3){S.beginPath();S.arc(fx2+30,fy2+38,rr3,0,7);S.stroke();});
-    S.fillStyle="rgba(226,92,60,"+(0.55*lit)+")";S.fillRect(fx2+8,fy2+8,10,22);  // extinguisher
-    S.fillStyle="rgba(150,166,194,"+(0.1*lit)+")";S.fillRect(fx2,fy2-6,60,4);
-  })();
-  // hazard placard, amber, above the fire station
-  (function(){
-    var hx2=W-96, hy2=GYS-206;
-    S.fillStyle="rgba(126,96,26,"+(0.35+0.3*lit)+")";S.fillRect(hx2,hy2,60,22);
-    S.strokeStyle="rgba(226,186,90,"+(0.3*lit)+")";S.lineWidth=1.2;S.strokeRect(hx2,hy2,60,22);
-    for(var hl=0;hl<3;hl++){
-      S.fillStyle="rgba(230,206,150,"+(0.28*lit)+")";S.fillRect(hx2+6,hy2+5+hl*5,48-hl*13,2);}
-  })();
-  // status board, green, port bulkhead — the fleet's health at a glance
-  (function(){
-    var sx2=44, sy2=250;
-    S.fillStyle="#0a0e15";S.fillRect(sx2,sy2,54,72);
-    S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.1;S.strokeRect(sx2,sy2,54,72);
-    for(var lg=0;lg<8;lg++){
-      var lx2=sx2+9+(lg%2)*24, ly2=sy2+11+Math.floor(lg/2)*16;
+    var sx2=46, sy2=300;
+    S.fillStyle="#0a0e15";S.fillRect(sx2,sy2,66,92);
+    S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.1;S.strokeRect(sx2,sy2,66,92);
+    for(var lg=0;lg<10;lg++){
+      var lx2=sx2+10+(lg%2)*29, ly2=sy2+12+Math.floor(lg/2)*16;
       var on2=!offl&&((lg*7+Math.floor(t*0.6))%5)!==0;
       var col2=on2?(lg%4===1?"rgba(120,208,140,":"rgba(226,186,90,"):"rgba(70,80,96,";
-      S.fillStyle=col2+(on2?0.75*lit:0.5)+")";
-      rrS(lx2,ly2,15,7,1.5);S.fill();}
+      S.fillStyle=col2+(on2?0.75*lit:0.5)+")";rrS(lx2,ly2,19,8,1.5);S.fill();}
   })();
-  // ---- the PLOT TABLE, low and forward, throwing light UP into the room
-  var tx=cx-232, ty=GYS-104;    // off to port, where its up-glow can be seen
-  S.fillStyle="#0b0f16";S.beginPath();
-  S.moveTo(tx,ty);S.lineTo(tx+150,ty);S.lineTo(tx+162,ty+28);S.lineTo(tx-12,ty+28);S.closePath();S.fill();
-  S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.2;S.stroke();
-  if(!offl){
-    var glow=S.createLinearGradient(0,ty-46,0,ty+6);
-    glow.addColorStop(0,kk(0));glow.addColorStop(1,kk(0.17*lit));
-    S.fillStyle=glow;S.fillRect(tx-12,ty-56,176,60);
-    S.fillStyle=kk(0.55*lit);S.fillRect(tx+4,ty+2,144,2);
-    // plot traces on the glass
-    S.strokeStyle=kk(0.35*lit);S.lineWidth=1;
-    S.beginPath();S.arc(tx+74,ty+14,22,Math.PI,Math.PI*2);S.stroke();
-    S.beginPath();S.arc(tx+74,ty+14,38,Math.PI,Math.PI*2);S.stroke();
-    var sweep=(t*0.6)%Math.PI;
-    S.strokeStyle=kk(0.6*lit);S.lineWidth=1.4;
-    S.beginPath();S.moveTo(tx+74,ty+14);
-    S.lineTo(tx+74-Math.cos(sweep)*38,ty+14-Math.sin(sweep)*38);S.stroke();}
-  S.fillStyle="#070a10";S.fillRect(tx+8,ty+28,14,72);S.fillRect(tx+130,ty+28,14,72);
-  // ---- deck
-  S.fillStyle=offl?"#07090c":"#0c1017";S.fillRect(0,GYS,W,H-GYS);
-  pl(S,0,GYS,W,GYS,"rgba(120,140,170,0.14)",1);
-  for(var dp2=0;dp2<6;dp2++){                       // deck plate seams
-    pl(S,0,GYS+12+dp2*14,W,GYS+12+dp2*14,"rgba(4,8,14,0.5)",1);}
-  if(!offl){var pool=S.createRadialGradient(cx,GYS+6,10,cx,GYS+6,190);
-    pool.addColorStop(0,kk(0.09*lit));pool.addColorStop(1,kk(0));
-    S.fillStyle=pool;S.beginPath();S.ellipse(cx,GYS+6,190,26,0,0,7);S.fill();}
-  /* ---- SERVICE RUN + WEAR. The builder's room hangs cables across its wall
-     and lets the floor be dirty; a bridge that is spotless reads as a render
-     of a bridge. Conduit along the deckhead with drops to the consoles, a
-     rust weep under the window, deck scuffs where the watch stands. */
-  S.strokeStyle="rgba(5,8,13,0.95)";S.lineWidth=5;
-  S.beginPath();S.moveTo(FX0,60);S.quadraticCurveTo(cx-120,74,cx-108,222);S.stroke();
-  S.beginPath();S.moveTo(FX1,66);S.quadraticCurveTo(cx+126,82,cx+118,238);S.stroke();
-  S.strokeStyle="rgba(140,156,184,"+(0.06*lit)+")";S.lineWidth=1.2;
-  S.beginPath();S.moveTo(FX0,60);S.quadraticCurveTo(cx-120,74,cx-108,222);S.stroke();
-  S.beginPath();S.moveTo(FX1,66);S.quadraticCurveTo(cx+126,82,cx+118,238);S.stroke();
-  [[cx-108,150],[cx-108,196],[cx+118,164],[cx+118,208]].forEach(function(cp2){
-    S.fillStyle="#0a0e15";S.fillRect(cp2[0]-6,cp2[1]-4,12,8);
-    S.fillStyle="rgba(140,156,184,"+(0.07*lit)+")";S.fillRect(cp2[0]-6,cp2[1]-4,12,1.2);});
-  // rust weeping from the window frame's lower bolts
-  [96,180,264,348,432].forEach(function(wx2,i8){
-    if(i8%2)return;
-    var wg=S.createLinearGradient(0,212,0,246);
-    wg.addColorStop(0,"rgba(74,50,28,0.34)");wg.addColorStop(1,"rgba(74,50,28,0)");
-    S.fillStyle=wg;S.fillRect(wx2-2,212,4,34);});
-  // deck: scuff arcs where a watch has stood and turned for years
-  S.save();S.globalAlpha=0.5;
-  S.strokeStyle="rgba(150,166,194,"+(0.05*lit)+")";S.lineWidth=1.4;
-  S.beginPath();S.arc(cx,GYS+30,74,Math.PI*1.08,Math.PI*1.92);S.stroke();
-  S.beginPath();S.arc(cx,GYS+34,104,Math.PI*1.14,Math.PI*1.86);S.stroke();
-  S.restore();
-  // a coil of spare cable on the deck, starboard
+  // chart board
   (function(){
-    var qx2=W-104, qy2=GYS+22;
-    S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=4;
-    [16,11,6].forEach(function(rr4){S.beginPath();S.ellipse(qx2,qy2,rr4,rr4*0.42,0,0,7);S.stroke();});
-    S.strokeStyle="rgba(120,136,164,"+(0.07*lit)+")";S.lineWidth=1;
-    S.beginPath();S.ellipse(qx2,qy2,16,6.7,0,Math.PI,Math.PI*2);S.stroke();
+    var cx4=346, cy4=300;
+    S.fillStyle="#0a0e15";S.fillRect(cx4,cy4,132,92);
+    S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.2;S.strokeRect(cx4,cy4,132,92);
+    S.strokeStyle=kk(0.13*lit);S.lineWidth=1;
+    for(var cl2=0;cl2<5;cl2++){S.beginPath();S.moveTo(cx4+8,cy4+16+cl2*16);S.lineTo(cx4+124,cy4+16+cl2*16);S.stroke();}
+    S.strokeStyle=kk(0.34*lit);S.lineWidth=1.5;
+    S.beginPath();S.moveTo(cx4+10,cy4+74);S.lineTo(cx4+44,cy4+40);S.lineTo(cx4+72,cy4+56);S.lineTo(cx4+122,cy4+26);S.stroke();
   })();
-  roomFrame(lit);
-  vignette();
+  // fire station + hazard placard, starboard bulkhead
+  (function(){
+    var fx2=1196, fy2=380;
+    S.fillStyle="rgba(126,96,26,"+(0.32+0.3*lit)+")";S.fillRect(fx2,fy2-42,68,28);
+    S.strokeStyle="rgba(226,186,90,"+(0.3*lit)+")";S.lineWidth=1.2;S.strokeRect(fx2,fy2-42,68,28);
+    for(var hl=0;hl<3;hl++){S.fillStyle="rgba(230,206,150,"+(0.26*lit)+")";
+      S.fillRect(fx2+7,fy2-36+hl*7,54-hl*15,2.4);}
+    S.fillStyle="rgba(96,26,22,"+(0.5+0.4*lit)+")";S.fillRect(fx2,fy2,68,86);
+    S.strokeStyle="rgba(196,72,58,"+(0.34*lit)+")";S.lineWidth=1.4;S.strokeRect(fx2,fy2,68,86);
+    S.fillStyle="rgba(10,14,20,0.75)";S.fillRect(fx2+6,fy2+6,56,74);
+    S.strokeStyle="rgba(214,96,74,"+(0.4*lit)+")";S.lineWidth=1.8;
+    [15,21,27].forEach(function(rr3){S.beginPath();S.arc(fx2+34,fy2+44,rr3,0,7);S.stroke();});
+    S.fillStyle="rgba(226,92,60,"+(0.55*lit)+")";S.fillRect(fx2+9,fy2+10,12,26);
+  })();
+  // conduit runs with junction boxes
+  S.strokeStyle="rgba(5,8,13,0.95)";S.lineWidth=6;
+  S.beginPath();S.moveTo(0,72);S.quadraticCurveTo(300,92,318,300);S.stroke();
+  S.beginPath();S.moveTo(SW,80);S.quadraticCurveTo(1000,104,1010,392);S.stroke();
+  S.strokeStyle="rgba(140,156,184,"+(0.06*lit)+")";S.lineWidth=1.3;
+  S.beginPath();S.moveTo(0,72);S.quadraticCurveTo(300,92,318,300);S.stroke();
+  S.beginPath();S.moveTo(SW,80);S.quadraticCurveTo(1000,104,1010,392);S.stroke();
+  [[318,186],[318,250],[1010,208],[1010,300]].forEach(function(cp2){
+    S.fillStyle="#0a0e15";S.fillRect(cp2[0]-7,cp2[1]-5,14,10);
+    S.fillStyle="rgba(140,156,184,"+(0.07*lit)+")";S.fillRect(cp2[0]-7,cp2[1]-5,14,1.3);});
+
+  /* ============ PLANE 3 · the room's furniture ============ */
+  // engine-order telegraph, port, in front of the bulkhead
+  (function(){
+    var tx2=176, ty2=GYS-160;
+    S.fillStyle="#0a0e15";S.fillRect(tx2-11,ty2+40,22,110);
+    S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.fillRect(tx2-11,ty2+40,1.8,110);
+    S.fillStyle="#0c1119";S.beginPath();S.ellipse(tx2,ty2+150,32,9,0,0,7);S.fill();
+    S.fillStyle="#101724";S.beginPath();S.arc(tx2,ty2+20,31,0,7);S.fill();
+    S.strokeStyle="rgba(150,166,194,"+(0.18*lit)+")";S.lineWidth=1.5;
+    S.beginPath();S.arc(tx2,ty2+20,31,0,7);S.stroke();
+    S.strokeStyle=kk(0.26*lit);S.lineWidth=1;
+    S.beginPath();S.arc(tx2,ty2+20,21,0,7);S.stroke();
+    for(var tk=0;tk<12;tk++){var a5=tk/12*6.28;
+      pl(S,tx2+Math.cos(a5)*21,ty2+20+Math.sin(a5)*21,tx2+Math.cos(a5)*27,ty2+20+Math.sin(a5)*27,kk(0.22*lit),1);}
+    if(!offl){var ha=-2.1+Math.sin(t*0.4)*0.5;
+      S.strokeStyle="rgba(226,92,60,"+(0.85*lit)+")";S.lineWidth=2.4;
+      S.beginPath();S.moveTo(tx2,ty2+20);S.lineTo(tx2+Math.cos(ha)*23,ty2+20+Math.sin(ha)*23);S.stroke();
+      S.fillStyle=kk(0.7*lit);S.beginPath();S.arc(tx2,ty2+20,3.4,0,7);S.fill();}
+  })();
+  // THE PLOT TABLE — big, starboard of the unit, throwing light up
+  (function(){
+    var tx=740, ty=GYS-136;
+    S.fillStyle="#0b0f16";S.beginPath();
+    S.moveTo(tx,ty);S.lineTo(tx+300,ty);S.lineTo(tx+322,ty+44);S.lineTo(tx-22,ty+44);S.closePath();S.fill();
+    S.strokeStyle="rgba(140,156,184,"+(0.14*lit)+")";S.lineWidth=1.3;S.stroke();
+    if(!offl){
+      var glow=S.createLinearGradient(0,ty-110,0,ty+8);
+      glow.addColorStop(0,kk(0));glow.addColorStop(1,kk(0.18*lit));
+      S.fillStyle=glow;S.fillRect(tx-40,ty-110,384,118);
+      S.fillStyle=kk(0.55*lit);S.fillRect(tx+8,ty+3,284,2.6);
+      S.strokeStyle=kk(0.3*lit);S.lineWidth=1.1;
+      [30,52,74].forEach(function(rr6){
+        S.beginPath();S.arc(tx+150,ty+22,rr6,Math.PI,Math.PI*2);S.stroke();});
+      var sweep=(t*0.6)%Math.PI;
+      S.strokeStyle=kk(0.62*lit);S.lineWidth=1.6;
+      S.beginPath();S.moveTo(tx+150,ty+22);
+      S.lineTo(tx+150-Math.cos(sweep)*74,ty+22-Math.sin(sweep)*74);S.stroke();
+      // contacts on the plot
+      [[-46,-30],[28,-44],[62,-18]].forEach(function(ct,ci4){
+        var cp3=0.4+0.6*Math.abs(Math.sin(t*0.9+ci4));
+        S.fillStyle="rgba(226,92,60,"+(0.7*cp3*lit)+")";
+        S.beginPath();S.arc(tx+150+ct[0],ty+22+ct[1],2.4,0,7);S.fill();});}
+    S.fillStyle="#070a10";S.fillRect(tx+18,ty+44,20,100);S.fillRect(tx+262,ty+44,20,100);
+  })();
+  // a console bank under the window, starboard
+  (function(){
+    var bx2=1010, by2=GYS-96;
+    S.fillStyle="#0a0e15";S.fillRect(bx2,by2,150,96);
+    S.strokeStyle="rgba(140,156,184,"+(0.12*lit)+")";S.lineWidth=1.2;S.strokeRect(bx2,by2,150,96);
+    S.fillStyle="rgba(5,8,13,0.9)";S.fillRect(bx2+10,by2+10,130,34);
+    if(!offl){S.fillStyle=kk(0.22*lit);
+      for(var sl2=0;sl2<4;sl2++)S.fillRect(bx2+16,by2+16+sl2*7,60+((sl2*37)%56),2);}
+    for(var kb=0;kb<12;kb++){
+      var on3=!offl&&((kb*5+Math.floor(t*1.1))%4)!==0;
+      S.fillStyle=on3?kk(0.4*lit):"rgba(60,70,86,0.5)";
+      S.fillRect(bx2+12+(kb%6)*22,by2+56+Math.floor(kb/6)*16,14,7);}
+  })();
+
+  /* ---- more of the ship. A bridge is a working room: it has a helm, a
+     binnacle, a voicepipe cluster, a rack of rolled charts and a bell. */
+  // helm pedestal with its wheel, port of the unit
+  (function(){
+    var hx5=306, hy5=GYS-104;
+    S.fillStyle="#0a0e15";S.fillRect(hx5-13,hy5+18,26,74);
+    S.fillStyle="#0c1119";S.beginPath();S.ellipse(hx5,hy5+92,34,9,0,0,7);S.fill();
+    S.strokeStyle="rgba(150,168,198,"+(0.42*lit)+")";S.lineWidth=4.4;
+    S.beginPath();S.arc(hx5,hy5,32,0,7);S.stroke();
+    S.strokeStyle=kk(0.3*lit);S.lineWidth=1.6;
+    S.beginPath();S.arc(hx5,hy5,32,Math.PI*1.05,Math.PI*1.85);S.stroke();
+    for(var hg=0;hg<8;hg++){var ah=hg/8*6.28+0.4;      // handle spokes standing proud
+      S.fillStyle="rgba(150,168,198,"+(0.3*lit)+")";
+      S.beginPath();S.ellipse(hx5+Math.cos(ah)*40,hy5+Math.sin(ah)*40,4.4,2.6,ah,0,7);S.fill();}
+    S.strokeStyle=kk(0.3*lit);S.lineWidth=2;
+    for(var sp2=0;sp2<8;sp2++){var a7=sp2/8*6.28+(offl?0:t*0.08);
+      S.beginPath();S.moveTo(hx5+Math.cos(a7)*7,hy5+Math.sin(a7)*7);
+      S.lineTo(hx5+Math.cos(a7)*38,hy5+Math.sin(a7)*38);S.stroke();}
+    S.fillStyle="#101724";S.beginPath();S.arc(hx5,hy5,8,0,7);S.fill();
+    S.strokeStyle="rgba(150,166,194,"+(0.18*lit)+")";S.lineWidth=1.2;
+    S.beginPath();S.arc(hx5,hy5,8,0,7);S.stroke();
+  })();
+  // binnacle: a hooded compass throwing a small warm pool of its own
+  (function(){
+    var bx3=636, by3=GYS-118;
+    S.fillStyle="#0a0e15";S.fillRect(bx3-15,by3+26,30,92);
+    S.fillStyle="#0c1119";S.beginPath();S.ellipse(bx3,by3+118,32,9,0,0,7);S.fill();
+    S.fillStyle="#101724";S.beginPath();
+    S.moveTo(bx3-26,by3+28);S.lineTo(bx3-20,by3-4);S.lineTo(bx3+20,by3-4);S.lineTo(bx3+26,by3+28);S.closePath();S.fill();
+    S.strokeStyle="rgba(150,166,194,"+(0.16*lit)+")";S.lineWidth=1.2;S.stroke();
+    if(!offl){
+      S.fillStyle=kk(0.5*lit);S.beginPath();S.ellipse(bx3,by3+2,17,6,0,0,7);S.fill();
+      S.save();S.globalCompositeOperation="lighter";
+      var bg4=S.createRadialGradient(bx3,by3,3,bx3,by3,58);
+      bg4.addColorStop(0,kk(0.16*lit));bg4.addColorStop(1,kk(0));
+      S.fillStyle=bg4;S.beginPath();S.arc(bx3,by3,58,0,7);S.fill();S.restore();}
+  })();
+  // voicepipe cluster on the port bulkhead
+  (function(){
+    var vx=268, vy=402;
+    [0,26,52].forEach(function(dv2,vi){
+      S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=9;
+      S.beginPath();S.moveTo(vx+dv2,vy);S.lineTo(vx+dv2,vy+70);
+      S.quadraticCurveTo(vx+dv2,vy+94,vx+dv2+(vi-1)*16,vy+96);S.stroke();
+      S.strokeStyle="rgba(150,166,194,"+(0.07*lit)+")";S.lineWidth=1.4;
+      S.beginPath();S.moveTo(vx+dv2+2,vy);S.lineTo(vx+dv2+2,vy+70);S.stroke();
+      var vm=vx+dv2+(vi-1)*16;
+      S.fillStyle="rgba(6,10,16,0.9)";S.beginPath();S.ellipse(vm,vy+99,11,5,0,0,7);S.fill();
+      S.strokeStyle=kk(0.5*lit);S.lineWidth=1.8;
+      S.beginPath();S.ellipse(vm,vy+98,11,5,0,Math.PI*0.04,Math.PI*0.96);S.stroke();
+      S.fillStyle=kk(0.2*lit);S.fillRect(vm-8,vy+90,16,4);});
+    S.fillStyle="#0a0e15";S.fillRect(vx-16,vy-10,86,16);
+    S.fillStyle="rgba(150,166,194,"+(0.07*lit)+")";S.fillRect(vx-16,vy-10,86,1.4);
+  })();
+  // chart rack: rolled charts standing in a tube rack, starboard
+  (function(){
+    var rx6=1108, ry6=GYS-72;
+    S.fillStyle="#0a0e15";S.fillRect(rx6,ry6,58,72);
+    S.strokeStyle="rgba(140,156,184,"+(0.11*lit)+")";S.lineWidth=1;S.strokeRect(rx6,ry6,58,72);
+    [0,1,2,3].forEach(function(ci5){
+      S.fillStyle=ci5%2?"rgba(126,116,88,"+(0.3*lit+0.1)+")":"rgba(104,96,74,"+(0.26*lit+0.1)+")";
+      S.save();S.translate(rx6+10+ci5*13,ry6-4);S.rotate((ci5-1.5)*0.06);
+      S.fillRect(-4,-34,8,40);S.restore();});
+  })();
+  // the ship's bell, hung by the door
+  (function(){
+    var lx6=86, ly6=430;
+    S.strokeStyle="rgba(6,10,16,0.9)";S.lineWidth=3;
+    S.beginPath();S.moveTo(lx6,ly6-20);S.lineTo(lx6,ly6-4);S.stroke();
+    var bgd=S.createLinearGradient(lx6-16,0,lx6+16,0);
+    bgd.addColorStop(0,kk(0.26*lit));bgd.addColorStop(0.34,kk(0.62*lit));bgd.addColorStop(1,kk(0.2*lit));
+    S.fillStyle=bgd;S.beginPath();
+    S.moveTo(lx6-17,ly6+28);S.quadraticCurveTo(lx6-15,ly6-6,lx6,ly6-6);
+    S.quadraticCurveTo(lx6+15,ly6-6,lx6+17,ly6+28);S.closePath();S.fill();
+    S.fillStyle="rgba(6,10,16,0.9)";S.beginPath();S.ellipse(lx6,ly6+28,17,5,0,0,7);S.fill();   // mouth
+    S.strokeStyle=kk(0.75*lit);S.lineWidth=2;                                                  // lip
+    S.beginPath();S.ellipse(lx6,ly6+27,17,5,0,Math.PI*0.05,Math.PI*0.95);S.stroke();
+    S.fillStyle=kk(0.34*lit);S.beginPath();S.arc(lx6,ly6+31,3,0,7);S.fill();                   // clapper
+    S.fillStyle=kk(0.5*lit);S.fillRect(lx6-6,ly6-9,12,4);                                      // crown
+  })();
+
+  /* ---- COLOUR. The room graded itself so thoroughly to brass that the red
+     and green were exiled to the far edges and the picture read monochrome.
+     Three accents placed INSIDE the composition, each justified: an alarm
+     lamp that is the only saturated red near the subject, a green-lit
+     gyro repeater, and a cold blue signal lamp on the starboard console. */
+  // alarm lamp on a bracket, port of the unit
+  (function(){
+    var ax2=418, ay2=246;
+    S.fillStyle="#0a0e15";S.fillRect(ax2-5,ay2-16,10,16);
+    S.fillStyle="#101724";S.beginPath();S.arc(ax2,ay2+9,12,0,7);S.fill();
+    S.strokeStyle="rgba(150,166,194,"+(0.16*lit)+")";S.lineWidth=1.2;
+    S.beginPath();S.arc(ax2,ay2+9,12,0,7);S.stroke();
+    if(!offl){var ap=0.45+0.55*Math.abs(Math.sin(t*1.6));
+      S.fillStyle="rgba(228,74,52,"+(0.85*ap)+")";S.beginPath();S.arc(ax2,ay2+9,8,0,7);S.fill();
+      S.save();S.globalCompositeOperation="lighter";
+      var ag2=S.createRadialGradient(ax2,ay2+9,2,ax2,ay2+9,54);
+      ag2.addColorStop(0,"rgba(228,74,52,"+(0.3*ap)+")");ag2.addColorStop(1,"rgba(228,74,52,0)");
+      S.fillStyle=ag2;S.beginPath();S.arc(ax2,ay2+9,54,0,7);S.fill();S.restore();}
+    else{S.fillStyle="rgba(80,44,40,0.5)";S.beginPath();S.arc(ax2,ay2+9,8,0,7);S.fill();}
+  })();
+  // gyro repeater, green, standing beside the helm
+  (function(){
+    var gx2=228, gy2=GYS-118;
+    S.fillStyle="#0a0e15";S.fillRect(gx2-9,gy2+22,18,96);
+    S.fillStyle="#0c1119";S.beginPath();S.ellipse(gx2,gy2+118,24,7,0,0,7);S.fill();
+    S.fillStyle="#101724";S.beginPath();S.arc(gx2,gy2,21,0,7);S.fill();
+    S.strokeStyle="rgba(150,166,194,"+(0.16*lit)+")";S.lineWidth=1.2;
+    S.beginPath();S.arc(gx2,gy2,21,0,7);S.stroke();
+    if(!offl){
+      S.fillStyle="rgba(96,206,138,"+(0.3*lit)+")";S.beginPath();S.arc(gx2,gy2,15,0,7);S.fill();
+      S.strokeStyle="rgba(150,240,180,"+(0.7*lit)+")";S.lineWidth=1.5;
+      var ga=Math.sin(t*0.22)*0.7;
+      S.beginPath();S.moveTo(gx2-Math.cos(ga)*13,gy2-Math.sin(ga)*13);
+      S.lineTo(gx2+Math.cos(ga)*13,gy2+Math.sin(ga)*13);S.stroke();
+      S.save();S.globalCompositeOperation="lighter";
+      var gg2=S.createRadialGradient(gx2,gy2,2,gx2,gy2,52);
+      gg2.addColorStop(0,"rgba(96,206,138,0.16)");gg2.addColorStop(1,"rgba(96,206,138,0)");
+      S.fillStyle=gg2;S.beginPath();S.arc(gx2,gy2,52,0,7);S.fill();S.restore();}
+  })();
+  // blue signal lamp on the starboard console
+  (function(){
+    var bx4=1150, by4=GYS-112;
+    S.fillStyle="#0a0e15";S.fillRect(bx4-7,by4,14,22);
+    if(!offl){var bp2=0.4+0.6*Math.abs(Math.sin(t*0.8+1.4));
+      S.fillStyle="rgba(96,168,236,"+(0.8*bp2)+")";S.fillRect(bx4-5,by4+3,10,9);
+      S.save();S.globalCompositeOperation="lighter";
+      var bg5=S.createRadialGradient(bx4,by4+8,2,bx4,by4+8,40);
+      bg5.addColorStop(0,"rgba(96,168,236,"+(0.2*bp2)+")");bg5.addColorStop(1,"rgba(96,168,236,0)");
+      S.fillStyle=bg5;S.beginPath();S.arc(bx4,by4+8,40,0,7);S.fill();S.restore();}
+  })();
+
+  /* ============ deck ============ */
+  /* The room was one flat floor plane, so everything sat at the same
+     distance. There is a raised command platform now: the unit stands on
+     it, the furniture stands off it, and the step's own riser and nosing
+     give the eye something to measure depth against. */
+  S.fillStyle=offl?"#07090c":"#0c1017";S.fillRect(0,GYS,SW,SH-GYS);
+  (function(){
+    var px5=300, pw2=560, ptop=GYS-16;
+    S.fillStyle=offl?"#080b0f":"#0e131b";
+    S.beginPath();S.moveTo(px5,ptop);S.lineTo(px5+pw2,ptop);
+    S.lineTo(px5+pw2+34,GYS+30);S.lineTo(px5-34,GYS+30);S.closePath();S.fill();
+    S.fillStyle="rgba(150,166,194,"+(0.07*lit)+")";S.fillRect(px5,ptop,pw2,2);   // nosing
+    S.fillStyle="rgba(3,6,11,0.55)";S.fillRect(px5-34,GYS+26,pw2+68,5);
+    for(var tr=0;tr<9;tr++){                                     // tread strips
+      pl(S,px5+18+tr*62,ptop+5,px5+12+tr*62,GYS+26,"rgba(4,8,14,0.45)",1.2);}
+  })();
+  pl(S,0,GYS,SW,GYS,"rgba(120,140,170,0.14)",1);
+  for(var dp2=0;dp2<5;dp2++)pl(S,0,GYS+14+dp2*16,SW,GYS+14+dp2*16,"rgba(4,8,14,0.5)",1);
+  for(var dv=0;dv<SW;dv+=160)pl(S,dv,GYS,dv-14,SH,"rgba(4,8,14,0.4)",1);
+  if(!offl){var pool=S.createRadialGradient(UX,GYS+8,10,UX,GYS+8,260);
+    pool.addColorStop(0,kk(0.09*lit));pool.addColorStop(1,kk(0));
+    S.fillStyle=pool;S.beginPath();S.ellipse(UX,GYS+8,260,32,0,0,7);S.fill();}
+  S.save();S.globalAlpha=0.5;
+  S.strokeStyle="rgba(150,166,194,"+(0.05*lit)+")";S.lineWidth=1.5;
+  S.beginPath();S.arc(UX,GYS+36,92,Math.PI*1.08,Math.PI*1.92);S.stroke();
+  S.beginPath();S.arc(UX,GYS+40,128,Math.PI*1.14,Math.PI*1.86);S.stroke();
+  S.restore();
+  /* ---- the deck itself. It was a flat tone with a couple of seam lines, so
+     everything below the platform read as empty page. Painted safety
+     margin, a drain, bolt heads along the platform footing. */
+  (function(){
+    // yellow safety margin painted along the platform's foot, worn through
+    S.save();S.globalAlpha=0.5;
+    S.fillStyle="rgba(196,158,66,"+(0.22*lit)+")";
+    S.beginPath();S.moveTo(258,GYS+34);S.lineTo(902,GYS+34);
+    S.lineTo(920,GYS+46);S.lineTo(240,GYS+46);S.closePath();S.fill();
+    S.globalAlpha=1;
+    for(var wr=0;wr<9;wr++){                       // wear breaking the paint
+      S.fillStyle="rgba(12,17,23,"+(0.5+0.4*((wr*37)%5)/5)+")";
+      S.fillRect(268+wr*72,GYS+34,20+((wr*13)%22),13);}
+    S.restore();
+    // deck bolts along the platform footing
+    for(var db=0;db<16;db++){
+      var dbx=252+db*44, dby=GYS+30;
+      S.fillStyle="rgba(4,8,14,0.8)";S.beginPath();S.arc(dbx,dby,2.6,0,7);S.fill();
+      S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.beginPath();S.arc(dbx-0.8,dby-0.8,1.1,0,7);S.fill();}
+    // a scupper drain, and the wet it never quite loses
+    S.fillStyle="rgba(3,6,11,0.9)";S.beginPath();S.ellipse(1006,GYS+52,26,9,0,0,7);S.fill();
+    S.strokeStyle="rgba(140,156,184,"+(0.12*lit)+")";S.lineWidth=1.2;
+    S.beginPath();S.ellipse(1006,GYS+52,26,9,0,0,7);S.stroke();
+    for(var gr2=0;gr2<4;gr2++)pl(S,986+gr2*13,GYS+45,986+gr2*13,GYS+59,"rgba(140,156,184,"+(0.09*lit)+")",1.4);
+    if(!offl){var wet=S.createRadialGradient(1006,GYS+52,4,1006,GYS+52,72);
+      wet.addColorStop(0,kk(0.05*lit));wet.addColorStop(1,kk(0));
+      S.fillStyle=wet;S.beginPath();S.ellipse(1006,GYS+52,72,18,0,0,7);S.fill();}
+  })();
+  // a coil of spare cable on the deck
+  (function(){
+    var qx2=1128, qy2=GYS+34;
+    S.strokeStyle="rgba(6,10,16,0.95)";S.lineWidth=4.4;
+    [19,13,7].forEach(function(rr4){S.beginPath();S.ellipse(qx2,qy2,rr4,rr4*0.42,0,0,7);S.stroke();});
+    S.strokeStyle="rgba(120,136,164,"+(0.07*lit)+")";S.lineWidth=1;
+    S.beginPath();S.ellipse(qx2,qy2,19,8,0,Math.PI,Math.PI*2);S.stroke();
+  })();
+  /* atmosphere. Two passes: a depth grade that puts a thin veil over
+     everything far from the camera, and volumetric shafts under each lamp
+     so the air itself is visible. Together they are what stop a room of
+     flat plates from reading as a sticker sheet. */
+  if(!offl){
+    var haze=S.createLinearGradient(0,150,0,GYS);
+    haze.addColorStop(0,kk(0.02*lit));haze.addColorStop(1,kk(0.055*lit));
+    S.fillStyle=haze;S.fillRect(0,150,SW,GYS-150);
+    S.save();S.globalCompositeOperation="lighter";
+    [UX,UX+430].forEach(function(lx7,li2){
+      var ly7=(li2?96:118)+11;
+      var shaft=S.createLinearGradient(0,ly7,0,GYS);
+      shaft.addColorStop(0,kk((li2?0.02:0.06)*lit));shaft.addColorStop(0.6,kk((li2?0.007:0.02)*lit));shaft.addColorStop(1,kk(0));
+      S.fillStyle=shaft;S.beginPath();
+      S.moveTo(lx7-30,ly7);S.lineTo(lx7+30,ly7);
+      S.lineTo(lx7+150,GYS);S.lineTo(lx7-150,GYS);S.closePath();S.fill();});
+    // motes riding the port lamp's shaft
+    for(var mo2=0;mo2<30;mo2++){
+      var mfx=UX-120+((mo2*83)%240), mfy=150+((mo2*167)%460);
+      var mff=0.25+0.75*Math.abs(Math.sin(t*0.4+mo2*0.7));
+      S.fillStyle=kk(0.14*mff*lit);
+      S.beginPath();S.arc(mfx,mfy,0.9,0,7);S.fill();}
+    S.restore();}
 }
 function roomFrame(lit){
-  // structural posts either side of the opening, and the head beam over it
-  [34,W-34].forEach(function(px2,i7){
-    S.fillStyle="#080b11";S.fillRect(px2-13,0,26,GYS+18);
-    S.fillStyle="rgba(150,166,194,"+(0.07*lit)+")";S.fillRect(px2+(i7?11:-13),0,2,GYS+18);
-    S.fillStyle="rgba(4,7,12,0.9)";
-    for(var fb=0;fb<10;fb++)S.fillRect(px2-12,44+fb*56,24,3);});
-  S.fillStyle="#080b11";S.fillRect(0,0,W,34);
-  S.fillStyle="rgba(150,166,194,"+(0.06*lit)+")";S.fillRect(34,33,W-68,1.6);
-  // corner gussets, so the frame reads welded rather than drawn
-  [[47,34,1],[W-47,34,-1]].forEach(function(gp2){
-    S.fillStyle="#0a0e15";S.beginPath();
-    S.moveTo(gp2[0],gp2[1]);S.lineTo(gp2[0]+gp2[2]*26,gp2[1]);S.lineTo(gp2[0],gp2[1]+26);S.closePath();S.fill();});
+  S.fillStyle="#080b11";S.fillRect(0,0,SW,26);
+  S.fillStyle="rgba(150,166,194,"+(0.05*lit)+")";S.fillRect(0,25,SW,1.4);
 }
 function vignette(){
-  // heavy edge darkening — every fleet room has it and it is what keeps the
-  // eye on the unit instead of wandering into the corners
-  var vg2=S.createRadialGradient(cx,330,120,cx,330,400);
-  vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(0.62,"rgba(0,0,0,0.12)");vg2.addColorStop(1,"rgba(0,0,0,0.6)");
-  S.fillStyle=vg2;S.fillRect(0,0,W,H);
-  var tb=S.createLinearGradient(0,0,0,110);
+  var vg2=S.createRadialGradient(UX,340,240,UX,340,780);
+  vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(0.6,"rgba(0,0,0,0.16)");vg2.addColorStop(1,"rgba(0,0,0,0.72)");
+  S.fillStyle=vg2;S.fillRect(0,0,SW,SH);
+  var tb=S.createLinearGradient(0,0,0,120);
   tb.addColorStop(0,"rgba(0,0,0,0.6)");tb.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=tb;S.fillRect(0,0,W,110);
+  S.fillStyle=tb;S.fillRect(0,0,SW,120);
 }
-function rrS(x,y,w,h,r){S.beginPath();if(S.roundRect)S.roundRect(x,y,w,h,r);else S.rect(x,y,w,h);}
-var GYS=560, cx=260;
 
 /* ---- scene ---- */
 function drawScene(t,st){
   var offl=st==="offline";
   drawRoom(t,st);
-  // boots planted: two contact shadows plus the standing pool
-  [-34,34].forEach(function(dx){var sh=S.createRadialGradient(260+dx,564,1,260+dx,564,34);
+  // contact shadows, in stage coordinates
+  [-34,34].forEach(function(dx){var sh=S.createRadialGradient(UX+dx,GYS+4,1,UX+dx,GYS+4,38);
     sh.addColorStop(0,"rgba(0,0,0,0.6)");sh.addColorStop(0.6,"rgba(0,0,0,0.28)");sh.addColorStop(1,"rgba(0,0,0,0)");
-    S.fillStyle=sh;S.beginPath();S.ellipse(260+dx,564,34,9,0,0,7);S.fill();});
-  var sh2=S.createRadialGradient(260,562,6,260,562,86);
+    S.fillStyle=sh;S.beginPath();S.ellipse(UX+dx,GYS+4,38,10,0,0,7);S.fill();});
+  var sh2=S.createRadialGradient(UX,GYS+2,6,UX,GYS+2,100);
   sh2.addColorStop(0,"rgba(0,0,0,0.35)");sh2.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=sh2;S.beginPath();S.ellipse(260,562,86,13,0,0,7);S.fill();
-  S.drawImage(body,0,0);
-  S.drawImage(rim,0,0);
-  S.save();S.globalCompositeOperation="lighter";S.drawImage(emis,0,0);S.restore();
-  /* foreground: a stanchion the camera stands behind, blurred — depth for
-     almost nothing, and it never crosses the unit */
-  S.save();S.filter="blur(3px)";
-  S.fillStyle="rgba(7,10,16,0.96)";S.fillRect(0,0,26,H);
-  S.fillStyle="rgba(150,166,194,0.06)";S.fillRect(24,0,2,H);
-  S.fillStyle="rgba(7,10,16,0.9)";
-  S.beginPath();S.moveTo(W,0);S.lineTo(W,72);S.lineTo(W-64,18);S.lineTo(W-64,0);S.closePath();S.fill();
+  S.fillStyle=sh2;S.beginPath();S.ellipse(UX,GYS+2,100,15,0,0,7);S.fill();
+  S.drawImage(body,UOX,UOY);
+  S.drawImage(rim,UOX,UOY);
+  S.save();S.globalCompositeOperation="lighter";S.drawImage(emis,UOX,UOY);S.restore();
+  roomFrame(offl?0.22:1);
+  vignette();
+  /* ============ PLANE 4 · foreground the camera stands behind ============ */
+  S.save();S.filter="blur(4px)";
+  // a bridge rail crossing the bottom of frame
+  S.fillStyle="rgba(7,10,16,0.94)";
+  S.fillRect(0,SH-52,SW,9);
+  [70,300,530,760,990,1220].forEach(function(sx3){
+    S.fillRect(sx3-6,SH-52,12,52);});
+  S.fillStyle="rgba(150,166,194,0.05)";S.fillRect(0,SH-52,SW,1.6);
+  // a stanchion hard left, and a cable dropping through frame right
+  S.fillStyle="rgba(7,10,16,0.96)";S.fillRect(0,0,34,SH);
+  S.fillStyle="rgba(150,166,194,0.05)";S.fillRect(32,0,2,SH);
+  S.strokeStyle="rgba(7,10,16,0.92)";S.lineWidth=11;
+  S.beginPath();S.moveTo(1214,0);S.quadraticCurveTo(1244,220,1226,SH);S.stroke();
   S.restore();
 }
 
