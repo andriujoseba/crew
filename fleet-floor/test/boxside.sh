@@ -119,8 +119,9 @@ BS_PROMPT='check PR #40 "now"; rm -rf /tmp/floor-boxside-pwned; $(id) `whoami` &
 BS_TOK="boxsidetest$$"
 
 BS_SH="$BS_TMP/message.sh"
+BS_PROMPT_FILE="$BS_M/duty/.floor-prompt.$BS_TOK"
 BS_SERVER="$BS_FLOOR/server" BS_TOK="$BS_TOK" BS_PROMPT="$BS_PROMPT" \
-  BS_PROMPT_FILE="$BS_M/duty/.floor-prompt.$BS_TOK" \
+  BS_PROMPT_FILE="$BS_PROMPT_FILE" \
   python3 - "$BS_SH" "$BS_TMP/expected-floor-prompt" <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
