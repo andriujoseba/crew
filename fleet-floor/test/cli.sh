@@ -1590,11 +1590,13 @@ cl_refuses "floor fallback: floor.py refuses the same way, run directly" 8881 \
   cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py"
 
 # The refusal is a WORLD fault: `crew floor` under the fallback exits 1, and
-# floor.py matches it, so a caller of either reads the same status.
+# floor.py matches it, so a caller of either reads the same status. Both are
+# bounded by `timeout` — these run in the foreground, and a regressed refusal
+# serves forever rather than returning a status to compare.
 CL_RC=0
-cl_fb "$CL_ROOT/cli/crew" floor --port 8880 >"$CL_TMP/fb-cli.out" 2>&1 || CL_RC=$?
+cl_fb timeout 10 "$CL_ROOT/cli/crew" floor --port 8880 >"$CL_TMP/fb-cli.out" 2>&1 || CL_RC=$?
 CL_RC2=0
-cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x python3 "$CL_FLOOR/server/floor.py" \
+cl_fb env CREW_FLOOR_PORT=8881 CREW_FLOOR_PASS=x timeout 10 python3 "$CL_FLOOR/server/floor.py" \
   >"$CL_TMP/fb-py.out" 2>&1 || CL_RC2=$?
 t "floor fallback: the refusal is a world fault (exit 1)" 1 "$CL_RC"
 t "floor fallback: both processes exit the same way" "$CL_RC" "$CL_RC2"
@@ -1615,7 +1617,7 @@ cl_refuses "floor fallback: floor.py refuses with CREW_FLOOR_ROSTER set" 8884 \
 # unconfigured host exits 2, because the operator asked wrong before the world
 # could answer. This is what pins the call site AFTER the option loop.
 CL_RC=0
-cl_fb "$CL_ROOT/cli/crew" floor --port >"$CL_TMP/fb-usage.out" 2>&1 || CL_RC=$?
+cl_fb timeout 10 "$CL_ROOT/cli/crew" floor --port >"$CL_TMP/fb-usage.out" 2>&1 || CL_RC=$?
 t "floor fallback: a missing option value is still an invocation fault (2)" 2 "$CL_RC"
 
 # ...and the other half of the call site's position, which no behaviour can
@@ -1684,7 +1686,7 @@ cp "$CL_FLOOR/server/floor.py" "$CL_FBROOT/fleet-floor/server/floor.py"
 cp -R "$CL_ROOT/examples" "$CL_FBROOT/examples"
 rm -f "$CL_FBROOT/examples/repos.txt"
 CL_RC=0
-cl_fb env CREW_FLOOR_PASS=x python3 "$CL_FBROOT/fleet-floor/server/floor.py" \
+cl_fb env CREW_FLOOR_PASS=x timeout 10 python3 "$CL_FBROOT/fleet-floor/server/floor.py" \
   >"$CL_TMP/fb-incomplete.out" 2>&1 || CL_RC=$?
 if [ "$CL_RC" -ne 0 ] && grep -q 'is incomplete; missing: repos.txt' "$CL_TMP/fb-incomplete.out"; then
   ok "floor: an incomplete FALLBACK definition reports incomplete, not refused"
@@ -1698,7 +1700,7 @@ cp "$CL_CREW_ROSTER" "$CL_OP_INCOMPLETE/fleet.roster"
 printf 'FLEET_HUMAN=fixture\n' >"$CL_OP_INCOMPLETE/fleet.conf"
 CL_RC=0
 (cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_OP_INCOMPLETE" \
-  env -u CREW_FLOOR_ROSTER CREW_FLOOR_PASS=x python3 floor.py) \
+  env -u CREW_FLOOR_ROSTER CREW_FLOOR_PASS=x timeout 10 python3 floor.py) \
   >"$CL_TMP/op-incomplete.out" 2>&1 || CL_RC=$?
 if [ "$CL_RC" -ne 0 ] && grep -q 'is incomplete; missing: repos.txt' "$CL_TMP/op-incomplete.out"; then
   ok "floor: an incomplete OPERATOR definition reports identically"

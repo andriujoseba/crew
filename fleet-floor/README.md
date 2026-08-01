@@ -39,10 +39,18 @@ crew floor --port 9000 --user dan --pass hunter2
 crew floor --local               # loopback only
 ```
 
-Run it **on the box host**. It serves the page and polls every roster box every
-60s, and the badge turns green **LIVE**. Because the page can power-cycle boxes
-and start sessions, HTTP Basic auth is mandatory — without `--pass` one is
-generated and printed once at startup.
+Run it **on the box host**, over an **operator fleet definition**. It serves the
+page and polls every roster box every 60s, and the badge turns green **LIVE**.
+Because the page can power-cycle boxes and start sessions, HTTP Basic auth is
+mandatory — without `--pass` one is generated and printed once at startup.
+
+For the same reason the console refuses under the shipped `examples/` fallback
+(#244): those buttons resume cron and start model sessions, so a definition
+nobody wrote does not get one. `crew init` scaffolds one, `CREW_CONFIG_DIR`
+selects it, and `crew status` inspects a host that has neither. `--roster`
+selects a roster file rather than a fleet, so it does not lift the refusal.
+Both doors are the same: `crew floor` and `python3 fleet-floor/server/floor.py`
+refuse identically.
 
 ### DEMO — no host, no fleet
 
@@ -180,6 +188,7 @@ cannot be messaged; the request is refused rather than queued.
 
 ```sh
 fleet-floor/test/run.sh                 # collector + box-side + CLI + page, no fleet needed
+                                        #   (it builds its own operator definition under $TMP)
 fleet-floor/test/run.sh --no-browser    # everything except the page
 drill/rehearsal-app.sh                  # the same, against this host's REAL boxes
 drill/rehearsal-all.sh                  # three roles, then the app
@@ -261,7 +270,7 @@ fleet-floor/
   test/run.sh       # collector + box-side + CLI + page, against a stub box CLI
   test/cases.sh     # collector assertions, grouped by the round that found them
   test/boxside.sh   # runs probe.sh and the message script FOR REAL
-  test/cli.sh       # `crew floor` argument handling and the auth decision
+  test/cli.sh       # `crew floor` arguments, the auth decision, the #244 refusal
   test/stub-box     # fake `box`, driven by test/fixtures/fleet.txt
   test/browser.js   # playwright-core walk of the real page
   test/stale.js     # kills the collector, checks the page says so
