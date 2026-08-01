@@ -527,14 +527,14 @@ function drawUnit(t,st){
      only, and the separation comes from the shadow the unit now casts on
      the wall behind it (drawScene), not from washing the figure brighter. */
   var key=RB.createLinearGradient(0,140,0,GY);
-  key.addColorStop(0,"rgba(240,220,180,"+(offl?0.05:0.2)+")");
-  key.addColorStop(0.3,"rgba(210,194,164,"+(offl?0.02:0.08)+")");
+  key.addColorStop(0,"rgba(240,220,180,"+(offl?0.05:0.24)+")");
+  key.addColorStop(0.3,"rgba(210,194,164,"+(offl?0.02:0.1)+")");
   key.addColorStop(0.7,"rgba(2,6,14,0.10)");
   key.addColorStop(1,"rgba(2,6,14,0.22)");
   RB.fillStyle=key;RB.fillRect(0,0,W,H);
   var hp=RB.createRadialGradient(cx,160,12,cx,160,250);
-  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.2)+")");
-  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.08)+")");
+  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.26)+")");
+  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.1)+")");
   hp.addColorStop(1,"rgba(250,228,184,0)");
   RB.fillStyle=hp;RB.fillRect(0,0,W,H);
   var bnc=RB.createLinearGradient(0,GY-130,0,GY-8);
@@ -1788,7 +1788,7 @@ function drawRoom(t,st){
       S.save();S.beginPath();
       S.moveTo(tx+2,ty);S.lineTo(tx+TW-2,ty);S.lineTo(tx+TW+8,ty+8);S.lineTo(tx-8,ty+8);S.closePath();S.clip();
       var gsg=S.createLinearGradient(0,ty,0,ty+9);
-      gsg.addColorStop(0,PL(0.24*lit));gsg.addColorStop(1,PL(0.55*lit));
+      gsg.addColorStop(0,PL(0.2*lit));gsg.addColorStop(1,PL(0.42*lit));
       S.fillStyle=gsg;S.fillRect(tx-10,ty-2,TW+20,12);
       // the chart on the glass, seen almost edge-on: rings + a coastline
       S.strokeStyle=PL(0.5*lit);S.lineWidth=1;
@@ -1804,9 +1804,11 @@ function drawRoom(t,st){
       S.beginPath();S.moveTo(tx+150,ty+7);
       S.lineTo(tx+150-Math.cos(sweep)*116,ty+7-Math.sin(sweep)*11);S.stroke();
       S.restore();
-      // the glass's lit near edge, and the bright arris where it meets air
-      S.fillStyle="rgba(216,248,255,"+(0.9*lit)+")";S.fillRect(tx-6,ty+7.2,TW+12,2.2);
-      S.fillStyle=PL(0.4*lit);S.fillRect(tx-8,ty+9.4,TW+16,2.4);
+      /* RUN 3 · LOOP 4 — the arris was L=205, the brightest surface in the
+         frame: the eye went to a featureless glass edge before the unit.
+         The table stays lit, but below the lamps and below the hero. */
+      S.fillStyle="rgba(216,248,255,"+(0.34*lit)+")";S.fillRect(tx-6,ty+7.2,TW+12,2.2);
+      S.fillStyle=PL(0.22*lit);S.fillRect(tx-8,ty+9.4,TW+16,2.4);
       // the brass surround the glass is bedded into
       S.strokeStyle="rgba(196,164,100,"+(0.3+0.34*lit)+")";S.lineWidth=2.4;
       S.beginPath();S.moveTo(tx-9,ty+9);S.lineTo(tx+TW+9,ty+9);S.stroke();
@@ -2202,20 +2204,23 @@ function drawScene(t,st){
   ws.addColorStop(1,"rgba(2,4,8,0)");
   S.fillStyle=ws;S.fillRect(UX-290,150,640,GYS-150);
   // the blocked key: the floor pool dims where the figure stands in it
-  S.save();S.filter="blur(7px)";
-  var fsh=S.createRadialGradient(UX+10,FTY+6,20,UX+10,FTY+6,160);
-  fsh.addColorStop(0,"rgba(2,4,8,0.42)");fsh.addColorStop(1,"rgba(2,4,8,0)");
-  S.fillStyle=fsh;S.beginPath();S.ellipse(UX+10,FTY+8,180,26,0,0,7);S.fill();
+  /* RUN 3 · LOOP 4 — the key is a VERTICAL beam, so the shadow pools hard
+     and symmetric directly beneath him; the old right-skewed smudge implied
+     a 45-degree key that does not exist. */
+  S.save();S.filter="blur(5px)";
+  var fsh=S.createRadialGradient(UX+4,FTY+6,20,UX+4,FTY+6,140);
+  fsh.addColorStop(0,"rgba(2,4,8,0.58)");fsh.addColorStop(1,"rgba(2,4,8,0)");
+  S.fillStyle=fsh;S.beginPath();S.ellipse(UX+4,FTY+8,150,24,0,0,7);S.fill();
   S.restore();
-  S.save();S.globalAlpha=0.55;S.filter="blur(9px)";
+  S.save();S.globalAlpha=0.6;S.filter="blur(9px)";
   S.fillStyle="rgba(0,0,0,0.5)";
-  S.beginPath();S.ellipse(UX+16,FTY+6,104,15,0,0,7);S.fill();
+  S.beginPath();S.ellipse(UX+4,FTY+6,104,15,0,0,7);S.fill();
   S.restore();
   [-34,34].forEach(function(dx){                   // the hard core of each sole
-    S.fillStyle="rgba(2,4,8,0.82)";
-    poly(S,[[UX+dx-30,FTY+1],[UX+dx+30,FTY+1],[UX+dx+38,FTY+9],[UX+dx-24,FTY+9]]);S.fill();
-    S.fillStyle="rgba(2,4,8,0.5)";
-    poly(S,[[UX+dx-24,FTY+9],[UX+dx+38,FTY+9],[UX+dx+50,FTY+17],[UX+dx-16,FTY+17]]);S.fill();});
+    S.fillStyle="rgba(2,4,8,0.85)";
+    poly(S,[[UX+dx-32,FTY+1],[UX+dx+32,FTY+1],[UX+dx+38,FTY+9],[UX+dx-38,FTY+9]]);S.fill();
+    S.fillStyle="rgba(2,4,8,0.55)";
+    poly(S,[[UX+dx-38,FTY+9],[UX+dx+38,FTY+9],[UX+dx+46,FTY+17],[UX+dx-46,FTY+17]]);S.fill();});
   // and the occlusion where sole meets deck — the line that sells the contact
   [-34,34].forEach(function(dx){
     S.fillStyle="rgba(1,2,5,0.9)";S.fillRect(UX+dx-30,FTY-1.5,60,3.5);});
@@ -2245,7 +2250,10 @@ function drawScene(t,st){
   trg.addColorStop(0.28,"rgba(30,37,47,0.99)");
   trg.addColorStop(1,"rgba(9,12,18,0.99)");
   S.fillStyle=trg;S.fillRect(0,RY,SW,13);
-  S.fillStyle="rgba(186,204,232,0.16)";S.fillRect(0,RY,SW,1.8);
+  /* RUN 3 · LOOP 4 — where this pipe crossed the boots it matched their
+     value exactly and the feet dissolved into the DOF layer. A brighter
+     crown keeps the rail in front of the figure it crosses. */
+  S.fillStyle="rgba(186,204,232,0.34)";S.fillRect(0,RY,SW,1.8);
   // mid rail
   S.fillStyle="rgba(16,21,28,0.98)";S.fillRect(0,RY+42,SW,8);
   S.fillStyle="rgba(160,178,206,0.09)";S.fillRect(0,RY+42,SW,1.3);
