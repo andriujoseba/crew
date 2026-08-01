@@ -218,6 +218,11 @@ input.woff{color:#5a6a80}
 "use strict";
 (function(){
 var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* The page's own epoch, taken once at boot. Dev renders (FLOORDEV.renderMini)
+   pin Date.now to this so a golden of a fixed (unit, state, size, t) does not
+   drift with the wall clock between two draws — the REC timer and IDLE-24H
+   read the clock, and demo session starts are derived from it at load. */
+var BOOT=Date.now();
 var DW=1280, DH=720, MODE="target", STATE="working", ROOM="builder", AGENT="claude";
 /* BOX is the identity — the roster's box NAME, not a label derived from
    agent+role. Those coincide in the current fleet (claude-builder is both),
@@ -979,20 +984,39 @@ var CAMFRAME={claude:{w:250,dy:0,fy:0.40,ba:2.0,bf:1.4},
               grok:{w:206,dy:-2,fy:0.36,ba:1.6,bf:1.7,bx:0.8,bxf:1.3},
               kimi:{w:330,dy:-38,fy:0.42,ba:2.2,bf:1.6}};
 function mnow(){return (window.performance&&performance.now)?performance.now():0;}
-var camStills={}, camFills=0, camCost=0, camSwaps={}, camBuiltAt=[];
-var CAM_KEEP=64, CAM_BUDGET=2;
+var camStills={}, camFills=0, camCost=0, camSwaps={}, camShown={}, camBuiltAt=[], camVis=0;
+/* CAM_BUDGET is a builds-per-frame ration for miss storms (resize,
+   scroll-reveal) — steady state builds nothing. It is 1 because a
+   supersampled build costs ~45-85ms (camstats().buildEmaMs, measured
+   headless): at 2, a storm frame carried two of those. One per frame keeps
+   the worst storm frame at one build; the storm lasts longer instead of
+   cutting deeper, and the backdrop shows through the extra frames. */
+var CAM_KEEP=64, CAM_BUDGET=1;
 function camPrune(){
-  var ks=Object.keys(camStills);if(ks.length<CAM_KEEP)return;
+  /* The floor may show more than CAM_KEEP tiles (4 columns on a tall enough
+     wall display). A fixed cap below the visible count would evict a VISIBLE
+     still on every miss and turn the cache into a rolling 1-build-per-frame
+     stampede — so the cap follows the roster the floor actually draws. */
+  var keep=Math.max(CAM_KEEP,camVis+8);
+  var ks=Object.keys(camStills);if(ks.length<keep)return;
   ks.sort(function(a,b){return camStills[a].at-camStills[b].at;});
-  for(var i=0;i<ks.length-CAM_KEEP+1;i++)delete camStills[ks[i]];
+  for(var i=0;i<ks.length-keep+1;i++)delete camStills[ks[i]];
 }
 function camStill(t,u,pw,ph){
   var box=UNITID(u);
   var key=box+"|"+u.agent+"|"+u.room+"|"+u.state+"|"+pw+"x"+ph;
   var e=camStills[key];
-  if(e&&e.ok){e.at=mnow();return e;}
-  /* CAM_BUDGET survives the cadence's removal as a builds-per-frame throttle
-     for miss storms only — resize and scroll-reveal, not steady state. */
+  if(e&&e.ok){
+    e.at=mnow();
+    /* A cache hit that CHANGES which still this box shows — a state flip
+       back to a still that is already warm, a resize to a cached size — is
+       still a feed swap. Without this, only cache-MISS swaps glitched, and a
+       warm working-idle flip was an instant unglitched teleport: the exact
+       artifact this redesign exists to kill. Dev renders (camFills forced
+       negative) record nothing, so goldens stay pure. */
+    if(camFills>=0&&camShown[box]!==key){camShown[box]=key;camSwaps[box]=t;}
+    return e;
+  }
   if(camFills>=CAM_BUDGET)return null;
   camFills++;
   if(!e){camPrune();e=camStills[key]={cv:oc(pw,ph),at:mnow(),ok:0};}
@@ -1001,14 +1025,20 @@ function camStill(t,u,pw,ph){
      ROOM view's beacon each frame, so an offline kimi still would otherwise
      depend on which console the operator last visited. */
   var tCanon=strPhase(box);
-  beaconPulse=0.65;
-  AGENT=u.agent;STATE=u.state;
   var f=CAMFRAME[u.agent]||CAMFRAME.claude;
   /* The build lands on the supersampled portrait trio, at the density THIS
      crop needs to hit ~1:1 device pixels — resolution parity across vendors
-     regardless of crop width. Same save/swap/restore pattern as AGENT/STATE. */
+     regardless of crop width. Same save/swap/restore pattern as AGENT/STATE —
+     but in a try/finally: if a build ever throws (a null context under
+     canvas-memory pressure, a context loss), the room renderer must not be
+     left drawing on the portrait trio at SS!=1. That corruption would
+     outlive the frame that caused it; the old wall-clock code risked only a
+     one-frame AGENT/STATE mislabel. */
   ensurePortraitTrio();
   var sRo=robo,sRB=RB,sEm=remit,sRE=RE,sRi=rrim,sRR=RR;
+  try{
+  beaconPulse=0.65;
+  AGENT=u.agent;STATE=u.state;
   robo=roboP;RB=RBP;remit=remitP;RE=REP;rrim=rrimP;RR=RRP;
   SS=Math.max(1,Math.min(SS_MAX,pw/f.w));
   var info=buildRobo(tCanon,u.state);
@@ -1048,15 +1078,22 @@ function camStill(t,u,pw,ph){
   c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
   c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx*SS,sy*SS,sw*SS,sh*SS,0,0,pw,ph);
   c.globalCompositeOperation="source-over";c.globalAlpha=1;
+  }finally{
   robo=sRo;RB=sRB;remit=sEm;RE=sRE;rrim=sRi;RR=sRR;SS=1;
   AGENT=sa;STATE=ss;beaconPulse=sbp;
+  }
   e.ok=1;e.at=mnow();
   /* A landed build is a feed swap — drawCamCell performs a glitch over it.
-     The dev path (renderMini, camFills forced negative) records none, so a
-     golden render of a fixed (unit, state, size, t) stays reproducible. */
-  if(camFills>0)camSwaps[box]=t;
-  var d=mnow()-t0;camCost=camCost?camCost*0.6+d*0.4:d;
-  camBuiltAt.push(mnow());if(camBuiltAt.length>240)camBuiltAt.splice(0,120);
+     The dev path (renderMini, camFills forced negative) records none — not
+     in the ledger, not in the stats — so a golden render stays a pure
+     function of its arguments and camstats describes the LIVE pipeline only
+     (its contract: buildsLastSec reads 0 on a stable roster). */
+  if(camFills>0){
+    camShown[box]=key;camSwaps[box]=t;
+    for(var sk in camSwaps)if(t-camSwaps[sk]>2)delete camSwaps[sk];
+    var d=mnow()-t0;camCost=camCost?camCost*0.6+d*0.4:d;
+    camBuiltAt.push(mnow());if(camBuiltAt.length>240)camBuiltAt.splice(0,120);
+  }
   return e;
 }
 
@@ -1145,7 +1182,7 @@ function drawCamCell(t,x,y,w,h,unit){
   /* Live sensor grain — the one per-frame texture, and the base coat of the
      feed fiction under the glitch grammar. */
   X.save();X.globalAlpha=off?0.07:0.04;X.globalCompositeOperation="overlay";
-  var nx=-((t*61)%40),ny=-((t*47)%40);
+  var nx=-(((reduced?bp:t)*61)%40),ny=-(((reduced?bp:t)*47)%40);
   for(var gx=nx;gx<w;gx+=220)for(var gy=ny;gy<h;gy+=220)X.drawImage(noise,x+gx,y+gy);
   X.restore();
   /* Glitch grammar — the feed fiction the refresh cadence used to fake, done
@@ -1173,9 +1210,12 @@ function drawCamCell(t,x,y,w,h,unit){
         X.restore();
       }
     }else if(gk===1){ // one-frame chroma split: the still ghosted either side
+      /* At the bob's own offset — a ghost that ignores the bob would jump
+         vertically against its subject, breaking the grammar's one rule:
+         the subject's motion is continuous, only artifacts flash. */
       X.save();X.globalCompositeOperation="lighter";X.globalAlpha=0.16*gs;
-      X.drawImage(still.cv,x+1-3*gs,y+1,w-2,h-2);
-      X.drawImage(still.cv,x+1+3*gs,y+1,w-2,h-2);
+      X.drawImage(still.cv,x+1+bx3-3*gs,y+1+by,w-2,h-2);
+      X.drawImage(still.cv,x+1+bx3+3*gs,y+1+by,w-2,h-2);
       X.restore();
     }else if(gk===2){ // block smear: one region of the feed re-sent too big
       var smw=w*0.26, smh=h*0.15;
@@ -1190,7 +1230,7 @@ function drawCamCell(t,x,y,w,h,unit){
     /* A dead feed rolls: one displaced slice wandering the frame, and the
        overlay says why. The portrait underneath is already cold and dark —
        baked into the still — so this is only the motion. */
-    var gy2=y+((t*26+bp*40)%h);
+    var gy2=y+(((reduced?0:t*26)+bp*40)%h);
     X.save();X.globalAlpha=0.5;
     X.drawImage(X.canvas,(x+1)*dpr,gy2*dpr,(w-2)*dpr,4*dpr,x+7,gy2,w-2,4);
     X.fillStyle="rgba(255,81,71,0.05)";X.fillRect(x,y,w,h);
@@ -1372,6 +1412,7 @@ function drawFloor(t){
   if(!floorDrag)floorCam+=(floorCamTarget-floorCam)*0.18;
   floorCam=Math.max(0,Math.min(floorCam,camMax));floorCamTarget=Math.max(0,Math.min(floorCamTarget,camMax));
   floorHits.length=0;
+  var vis=0;
   for(var i=0;i<ROSTER.length;i++){var col=i%Gd.cols,row=Math.floor(i/Gd.cols);
     var cx=Gd.mX+col*(Gd.tw+Gd.gap);var cy=Gd.mT+row*(Gd.th+Gd.gap)-floorCam;
     if(cy>-Gd.th-40&&cy<VH+40){
@@ -1396,7 +1437,9 @@ function drawFloor(t){
         X.fillStyle="#9fdcff";X.textBaseline="middle";X.fillText(hint,cx+(Gd.tw-hwd)/2,cy+Gd.th-13.5);X.textBaseline="alphabetic";
         X.restore();}
       floorHits.push({x:cx,y:cy,w:Gd.tw,h:Gd.th,i:i,match:match});
+      vis++;
     }}
+  camVis=vis;
   /* The rows scroll under fixed chrome at both ends — ease them out instead
      of letting a feed collide with the fleet bar's chips. */
   var ts=X.createLinearGradient(0,0,0,104);ts.addColorStop(0,"rgba(3,6,13,1)");ts.addColorStop(0.55,"rgba(3,6,13,0.62)");ts.addColorStop(1,"rgba(3,6,13,0)");
@@ -5979,18 +6022,30 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      canvas it is given, exactly as a device pixel ratio would. */
   MINI:{W:CAMREF.W,H:CAMREF.H},
   renderMini:function(dst,o){
-    var sX=X,sdpr=dpr,sfl=camFills;
+    var sX=X,sdpr=dpr,sfl=camFills,ssw=camSwaps,sNow=Date.now;
     var k=dst.width/CAMREF.W;
-    X=dst.getContext("2d");dpr=k;
-    /* No budget on a map: every tile needs its portrait THIS call, not when
-       the app's per-frame ration next comes round. */
-    camFills=-1e9;
-    X.setTransform(k,0,0,k,0,0);X.globalAlpha=1;X.globalCompositeOperation="source-over";
-    X.filter="none";X.textAlign="left";X.imageSmoothingEnabled=true;
-    X.fillStyle="#03060d";X.fillRect(0,0,CAMREF.W,dst.height/k);
-    drawCamCell(o.t||0,5,5,CAMREF.W-10,CAMREF.H-10,
-                {agent:o.agent,room:o.room,state:o.state,box:o.box});
-    X=sX;dpr=sdpr;camFills=sfl;
+    /* A dev render must be a pure function of its arguments. Three pieces of
+       live state would otherwise leak in: the frame budget (forced open — a
+       map needs every portrait THIS call, not when the app's ration next
+       comes round), the swap ledger (the live floor's glitch history would
+       replay into a golden), and the wall clock (the REC timer and IDLE-24H
+       read Date.now, so two identical draws differed whenever they straddled
+       a second boundary — pinning to BOOT also makes demo timers a constant,
+       since demo session starts derive from the load-time clock). All three
+       are swapped out and restored in a finally, so even a throwing build
+       cannot leave the app rendering dev state. */
+    try{
+      X=dst.getContext("2d");dpr=k;
+      camFills=-1e9;camSwaps={};
+      Date.now=function(){return BOOT;};
+      X.setTransform(k,0,0,k,0,0);X.globalAlpha=1;X.globalCompositeOperation="source-over";
+      X.filter="none";X.textAlign="left";X.imageSmoothingEnabled=true;
+      X.fillStyle="#03060d";X.fillRect(0,0,CAMREF.W,dst.height/k);
+      drawCamCell(o.t||0,5,5,CAMREF.W-10,CAMREF.H-10,
+                  {agent:o.agent,room:o.room,state:o.state,box:o.box});
+    }finally{
+      X=sX;dpr=sdpr;camFills=sfl;camSwaps=ssw;Date.now=sNow;
+    }
   },
   /* The floor's real layout, for the browser walk: where each roster cell IS,
      under the camera as it stands. Mirroring the grid maths in the test broke

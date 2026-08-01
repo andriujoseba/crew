@@ -34,12 +34,17 @@ next to it had been fixed.
 
 Since #226 the cell's portrait is a deterministic still: built at
 `strPhase(box)` rather than wall-clock time, through a supersampled
-portrait-only sprite trio (`SS = clamp(pw/cropW, 1, 2.6)`) so all four vendors
-sample at the same effective density. Two consequences for this map: cell tiles
+portrait-only sprite trio (`SS = clamp(pw/cropW, 1, 2.6)`) so vendors sample
+at the same effective density **up to the `SS_MAX` clamp** — at dpr 1 all
+four land unclamped at ~1:1; at a 3-column dpr-2 layout every vendor wants
+more than 2.6 and clamps, so all four sharpen uniformly ~2.6× but grok's
+narrower crop keeps a relative disadvantage inside the clamp (raising
+`SS_MAX` buys it back with memory). Two consequences for this map: cell tiles
 rendered through `FLOORDEV.renderMini` are **reproducible** for fixed
-`(unit, state, size, t)` — diffs between commits are now meaningful at the
-pixel level — and portrait sharpness no longer varies with a vendor's crop
-width. `FLOORDEV.camstats()` exposes the pipeline's build cost and cache
-behavior.
+`(unit, state, size, t)` — `renderMini` pins the wall clock (REC timer,
+IDLE·24H) and isolates the live glitch ledger, so diffs between commits are
+meaningful at the pixel level — and portrait sharpness no longer varies with
+crop width at dpr 1. `FLOORDEV.camstats()` exposes the pipeline's build cost
+and cache behavior.
 
 ![the cell asset map](shots/cell-map.webp)

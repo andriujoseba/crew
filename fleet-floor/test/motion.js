@@ -59,23 +59,31 @@ const ok = (name, cond, detail = '') => {
   const stats = await page.evaluate(() => window.FLOORDEV.camstats());
   ok('camstats reports a warm cache', stats.cacheSize > 0, JSON.stringify(stats));
 
-  // ---- 2. bounded motion on working + idle tiles ----
-  const motion = await page.evaluate(() => new Promise((res) => {
+  // ---- 2. bounded motion on working + idle + offline tiles ----
+  // DEMO roster: 0 = claude/triage/working, 2 = claude/reviewer/idle,
+  // 6 = kimi/reviewer/offline (the roll is a declared artifact; it copies a
+  // band sideways and never translates the portrait, so the vertical
+  // alignment metric holds for it too).
+  const TILES = [0, 2, 6];
+  const motion = await page.evaluate((tiles) => new Promise((res) => {
     const D = window.FLOORDEV, g = D.grid();
     const cv = document.getElementById('scene'), c2 = cv.getContext('2d');
     const dpr = cv.width / innerWidth;
     // upper-centre of the tile: portrait, clear of every overlay group
-    const regs = [0, 2].map((i) => ({
+    const regs = tiles.map((i) => ({
       x: Math.round((g.cell[i].x + g.tw * 0.30) * dpr), y: Math.round((g.cell[i].y + g.th * 0.16) * dpr),
       w: Math.round(g.tw * 0.40 * dpr), h: Math.round(g.th * 0.38 * dpr),
     }));
     const lum = (d, w, x, y) => { const k = (y * w + x) * 4; return d[k] * 0.5 + d[k + 1] + d[k + 2] * 0.25; };
-    const prev = new Map(); const shifts = [[], []]; const deltas = [[], []];
-    let n = 0;
-    (function step() {
+    const prev = new Map(); const shifts = regs.map(() => []); const deltas = regs.map(() => []);
+    let n = 0, lastT = 0;
+    (function step(ts) {
+      // A stalled RAF (loaded CI box) legitimately accumulates more than a
+      // frame of bob; the criterion is per-FRAME, so a long gap is exempt.
+      const gap = lastT && ts - lastT > 80; lastT = ts;
       regs.forEach((r, ri) => {
         const cur = c2.getImageData(r.x, r.y, r.w, r.h).data, pv = prev.get(ri);
-        if (pv) {
+        if (pv && !gap) {
           let ch = 0;
           for (let k = 0; k < cur.length; k += 16)
             if (Math.abs(cur[k] - pv[k]) + Math.abs(cur[k + 1] - pv[k + 1]) + Math.abs(cur[k + 2] - pv[k + 2]) > 30) ch++;
@@ -90,11 +98,11 @@ const ok = (name, cond, detail = '') => {
         prev.set(ri, cur);
       });
       if (++n < 100) requestAnimationFrame(step); else res({ shifts, deltas });
-    })();
-  }));
+    })(0);
+  }), TILES);
   motion.shifts.forEach((sh, ri) => {
     const maxSh = Math.max(...sh.map(Math.abs));
-    ok(`bounded motion: tile ${ri === 0 ? 0 : 2} never jumps a whole pixel between frames`,
+    ok(`bounded motion: tile ${TILES[ri]} never jumps a whole pixel between frames`,
       maxSh === 0, `max |shift| = ${maxSh}px over ${sh.length} frames`);
   });
   ok('the working portrait actually moves (composite bob is alive)',
@@ -107,13 +115,23 @@ const ok = (name, cond, detail = '') => {
     const draw = () => {
       const c = document.createElement('canvas'); c.width = 960; c.height = 600;
       D.renderMini(c, { agent: 'grok', room: 'builder', state: 'working', t: 8.0, box: 'motion-golden' });
-      return c;
+      return c.getContext('2d').getImageData(0, 0, 960, 600).data;
     };
-    const a = draw(), b = draw();
-    const da = a.getContext('2d').getImageData(0, 0, 960, 600).data;
-    const db = b.getContext('2d').getImageData(0, 0, 960, 600).data;
+    const da = draw(), db = draw();
     let diff = 0;
     for (let i = 0; i < da.length; i++) if (da[i] !== db[i]) diff++;
+    // The second draw above is a cache HIT — identical bytes prove the
+    // overlays, not the still. Evict the golden's key through the LRU (the
+    // cache keeps ~64 entries; small dummies build fast) and draw again: a
+    // REBUILT still must reproduce, which is the tCanon/beaconPulse pinning
+    // actually under test.
+    for (let i = 0; i < 80; i++) {
+      const c = document.createElement('canvas'); c.width = 96; c.height = 60;
+      D.renderMini(c, { agent: 'claude', room: 'triage', state: 'idle', t: 8.0, box: 'evict-' + i });
+    }
+    const dc = draw();
+    let rediff = 0;
+    for (let i = 0; i < dc.length; i++) if (da[i] !== dc[i]) rediff++;
     // forced-build proof: an unseen box must land its portrait THIS call —
     // sample the face region for non-backdrop pixels
     let lit = 0;
@@ -121,10 +139,12 @@ const ok = (name, cond, detail = '') => {
       const k = (y * 960 + x) * 4;
       if (da[k] + da[k + 1] + da[k + 2] > 90) lit++;
     }
-    return { diff, lit };
+    return { diff, rediff, lit };
   });
   ok('renderMini is deterministic for fixed (unit, state, size, t)', mini.diff === 0,
     mini.diff + ' bytes differ');
+  ok('a REBUILT still reproduces (cache evicted between draws)', mini.rediff === 0,
+    mini.rediff + ' bytes differ after eviction');
   ok('renderMini forced-build path bypasses the frame budget', mini.lit > 40,
     'portrait region looks like backdrop: ' + mini.lit + ' lit samples');
 
@@ -138,31 +158,37 @@ const ok = (name, cond, detail = '') => {
   const rpage = await rctx.newPage();
   await rpage.goto(url, { waitUntil: 'load' });
   await rpage.waitForTimeout(2500);
+  // Working tile 0 (bob + beats must be off) and offline tile 6 (the roll
+  // and grain must be pinned, not wandering).
   const still = await rpage.evaluate(() => new Promise((res) => {
     const D = window.FLOORDEV, g = D.grid();
     const cv = document.getElementById('scene'), c2 = cv.getContext('2d');
     const dpr = cv.width / innerWidth;
-    const r = { x: Math.round((g.cell[0].x + g.tw * 0.30) * dpr), y: Math.round((g.cell[0].y + g.th * 0.16) * dpr),
-                w: Math.round(g.tw * 0.40 * dpr), h: Math.round(g.th * 0.38 * dpr) };
-    const grab = () => c2.getImageData(r.x, r.y, r.w, r.h).data;
-    const frames = [];
+    const regs = [0, 6].map((i) => ({
+      x: Math.round((g.cell[i].x + g.tw * 0.30) * dpr), y: Math.round((g.cell[i].y + g.th * 0.16) * dpr),
+      w: Math.round(g.tw * 0.40 * dpr), h: Math.round(g.th * 0.38 * dpr) }));
+    const frames = regs.map(() => []);
     let n = 0;
     (function step() {
-      frames.push(grab());
+      regs.forEach((r, ri) => frames[ri].push(c2.getImageData(r.x, r.y, r.w, r.h).data));
       if (++n < 30) requestAnimationFrame(step);
       else {
-        let ch = 0;
-        for (let f = 1; f < frames.length; f++) {
-          const a = frames[f], p = frames[f - 1];
-          for (let k = 0; k < a.length; k += 16)
-            if (Math.abs(a[k] - p[k]) + Math.abs(a[k + 1] - p[k + 1]) + Math.abs(a[k + 2] - p[k + 2]) > 30) ch++;
-        }
-        res(ch);
+        res(frames.map((fr) => {
+          let ch = 0;
+          for (let f = 1; f < fr.length; f++) {
+            const a = fr[f], p = fr[f - 1];
+            for (let k = 0; k < a.length; k += 16)
+              if (Math.abs(a[k] - p[k]) + Math.abs(a[k + 1] - p[k + 1]) + Math.abs(a[k + 2] - p[k + 2]) > 30) ch++;
+          }
+          return ch;
+        }));
       }
     })();
   }));
-  ok('reduced motion: portrait region is static (no bob, no glitch beats)', still === 0,
-    still + ' changed samples across 30 frames');
+  ok('reduced motion: working portrait is static (no bob, no glitch beats)', still[0] === 0,
+    still[0] + ' changed samples across 30 frames');
+  ok('reduced motion: offline roll and grain are pinned', still[1] === 0,
+    still[1] + ' changed samples across 30 frames');
   await rctx.close();
 
   await browser.close();
