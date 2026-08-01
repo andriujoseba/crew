@@ -1,0 +1,39 @@
+name: labels-sweep
+on:
+  # The consumer owns this cadence (ceremony#203). Hourly is the recommended
+  # default when no other engine drives board state: the cron is then the
+  # sweep's only wake for four transition classes — a review verdict landing
+  # (no pull_request_review trigger on the labels caller), blocker:ci-red
+  # set/cleared, blocker:conflict when another PR merges under this one, and
+  # time-based stale / 48h claim-reclaim. The labels caller's events carry the
+  # rest in seconds, one trigger-job dispatch away. RELOCATED here from
+  # labels.yml at ceremony 0.4.1 (#209 — crew#259); moved, never copied. Do
+  # not delete the cron: it is those four transitions' only discovery path.
+  schedule: [{cron: "0 * * * *"}]
+  # A manual full-board sweep. A bare dispatch (input default "yes") also
+  # bootstraps the taxonomy on a fresh repo. The labels caller's trigger job
+  # wakes this workflow with bootstrap=no on every board event, so the
+  # declared input is part of the contract: a dispatch naming an undeclared
+  # input is refused, and the trigger job goes loudly red.
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Bootstrap the label taxonomy before sweeping
+        type: choice
+        options: ["yes", "no"]
+        default: "yes"
+permissions:
+  contents: read
+  checks: read          # mergeability/check-rollup read for PR state
+  statuses: read        # commit-status rollup read for PR state
+  actions: read         # workflow-run nodes inside the check rollup — private repos do not imply it (incubator#60)
+  issues: write
+  pull-requests: write
+jobs:
+  sweep:
+    uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@0.4.1
+    # This repo's PR-facing labels caller is named `labels`, the default, so
+    # no `with: { pr_workflow_name: ... }` is needed. The sweep exports that
+    # name as SELF_WORKFLOW so the label machinery's own check entries
+    # (scope, trigger) never count toward blocker:ci-red — a red trigger
+    # means "fix the caller", which no PR edit can do (ceremony#208 reads it).
