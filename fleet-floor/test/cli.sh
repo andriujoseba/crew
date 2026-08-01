@@ -990,9 +990,14 @@ fi
 # 11. The single-box view carries rig's provenance — the marker line itself and
 #     which rig wrote it. The table has room for one clause; this is where an
 #     operator who opened one box gets the rest.
+#     The version is asserted BARE, as rig writes it (`converged_by=0.3.2-dev`,
+#     no `rig@`), and against the manifest's `converged_*` pair rather than the
+#     `bootstrapped_*` one two lines above it — the stub's two pairs differ on
+#     purpose, so an unanchored read would print the wrong date here.
 crew_cmd status cli-nothired
 if grep -qE '^rig: converged — role=.*tenant=yes' "$CL_TMP/crew-out" &&
-   grep -q 'converged by rig@' "$CL_TMP/crew-out"; then
+   grep -qE 'converged by rig 0\.3\.2-dev at ' "$CL_TMP/crew-out" &&
+   ! grep -q '0\.3\.1' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a converged box reports its marker and its provenance"
 else
   fail "crew status <box>: a converged box reports its marker and its provenance" \
@@ -1006,6 +1011,59 @@ else
   fail "crew status <box>: an unconverged box reports INCOMPLETE and the recovery" \
        "$(cat "$CL_TMP/crew-out")"
 fi
+
+# 11b. THE MANIFEST IS CORROBORATING, NEVER LOAD-BEARING — and this is the
+#      end-to-end half of it. cli-premanifest carries a valid role line and no
+#      /etc/rig/manifest at all, which is what a box converged by a rig older
+#      than that file looks like (rig#61). Old, not broken. Gating on a field an
+#      older rig never wrote would convert every box on that rig into a refusal,
+#      and #220's test plan names that outcome as worse than the bug itself.
+#
+#      The bulk verbs above already hired it — correctly, it is a healthy box —
+#      and the table's marker read is scoped to UN-hired boxes, so put it back
+#      the way bring-up finds it first. Without this the table assertion below
+#      would pass for the wrong reason: no note at all rather than a hire note.
+rm -f "$CL_TMP/crew-state/cli-premanifest.version"
+crew_cmd status cli-premanifest
+#      The marker's own role name is the stub's, not the roster's — cli.sh sets
+#      CREW_ROSTER and not CREW_FLOOR_ROSTER, so stub-box falls back to
+#      `claude-box` here exactly as it does for cli-nothired above. What is
+#      under test is the verdict without a manifest, so this matches the marker
+#      the same generic way that assertion does.
+if grep -qE '^rig: converged — role=.*-box tenant=yes host=no' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a converged box with no rig manifest still reads converged"
+else
+  fail "crew status <box>: a converged box with no rig manifest still reads converged" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+# It says NOTHING rather than inventing an alarm, an `unknown`, or an empty
+# `converged by  at `. A missing provenance file is not a finding.
+if ! grep -q 'converged by' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a missing rig manifest is silent, not an alarm"
+else
+  fail "crew status <box>: a missing rig manifest is silent, not an alarm" \
+       "$(grep 'converged by' "$CL_TMP/crew-out")"
+fi
+# The table row is untouched too — no INCOMPLETE, and the note still offers the
+# hire, because this box is genuinely fine.
+crew_cmd status
+CL_PREMAN="$(grep '^cli-premanifest ' "$CL_TMP/crew-out" || true)"
+if printf '%s' "$CL_PREMAN" | grep -q 'crew hire cli-premanifest' &&
+   ! printf '%s' "$CL_PREMAN" | grep -qE 'INCOMPLETE|unknown —'; then
+  ok "crew status: a box with no rig manifest is not refused in the table"
+else
+  fail "crew status: a box with no rig manifest is not refused in the table" \
+       "${CL_PREMAN:-no row at all}"
+fi
+# …and the load-bearing half: it HIRES. A refusal here is the fleet outage.
+crew_cmd hire cli-premanifest
+if [ "$CL_RC" -eq 0 ] && ! grep -q 'REFUSED' "$CL_TMP/crew-out"; then
+  ok "crew hire: a converged box with no rig manifest is hired, not refused"
+else
+  fail "crew hire: a converged box with no rig manifest is hired, not refused" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+rm -f "$CL_TMP/crew-state/cli-premanifest.version"
 
 # 12. `crew up` runs the same roster loop through its OWN call site, and this
 #     suite exists partly because #47 and #48 were each present twice — once in

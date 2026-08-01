@@ -24,3 +24,6 @@ cli-disarmed   grok    builder
 # aborted the run would still have hired the rows above and read as a partial
 # success.
 cli-unconverged kimi   builder
+# Converged by a rig too old to write /etc/rig/manifest (rig#61). It must hire
+# exactly like any healthy box — the manifest corroborates, it never decides.
+cli-premanifest codex  reviewer

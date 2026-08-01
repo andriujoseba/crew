@@ -1069,7 +1069,11 @@ engine_report() {
   ' 2>/dev/null | tr -d '\r' || true
 }
 
-# report_field KEY REPORT — one value out of an engine_report capture.
+# report_field KEY REPORT — one value out of an engine_report or rig_report
+# capture. The `^` is not a tidiness: /etc/rig/manifest carries `bootstrapped_at=`
+# two lines above `converged_at=`, so an unanchored read of the latter returns
+# the former — the same near-miss class as the `closedish` one below, and this
+# is the anchor that closes it.
 report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 
 # rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and
@@ -1079,19 +1083,40 @@ report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # convergence is the only thing that matters every existing signal reads
 # `unknown`.
 #
-# Two files, because rig writes two and they answer different questions
-# (heavy-duty/rig, commands/bootstrap-tenant.sh): `/etc/rig/role` is what the
-# box IS — `role=<agent>-box tenant=yes host=no`, written only after the tenant
-# bootstrap converged — and `/etc/rig/manifest` is what BUILT it, key=value
-# provenance. The marker decides the verdict; the rig manifest only enriches
-# the report, because a marker with no rig manifest beside it is a box
-# converged by a rig older than that file, which is old, not broken.
+# Two files, because rig writes two and they answer different questions. Both
+# shapes below are quoted from a real rig-converged tenant box (this one, rig
+# 0.3.2-dev), not inferred from rig's source:
+#
+#     /etc/rig/role      role=claude-box tenant=yes host=no
+#     /etc/rig/manifest  schema=1
+#                        bootstrapped_by=0.3.2-dev
+#                        bootstrapped_at=2026-08-01T12:31:11Z
+#                        converged_by=0.3.2-dev
+#                        converged_at=2026-08-01T12:31:11Z
+#
+# `/etc/rig/role` is what the box IS — ONE line of space-separated key=value,
+# written only after the tenant bootstrap converged — and `/etc/rig/manifest`
+# is what BUILT it, key=value PER LINE. The marker decides the verdict; the rig
+# manifest only enriches the report, because a marker with no rig manifest
+# beside it is a box converged by a rig older than that file, which is old, not
+# broken.
+#
+# Both are 0644, so the read takes no `sudo` and must not grow one: a `sudo` in
+# a non-interactive `box exec` is itself a way to turn a converged box into a
+# false INCOMPLETE.
 #
 # Emits key=value lines:
 #     probe=ok                      (always, when the box answered at all)
 #     marker=<the marker's first line>          (omitted when absent)
-#     rig_version=<rig manifest converged_by>   (omitted when absent)
-#     rig_at=<rig manifest converged_at>        (omitted when absent)
+#     rig:<k>=<v>                   one per /etc/rig/manifest line (omitted when absent)
+#
+# The box side does no INTERPRETING — it cats the two files and namespaces the
+# provenance one under `rig:`, and every semantic read happens back here through
+# report_field. That split is deliberate: the box side of an exec is the half
+# no offline test can reach (a stub intercepts the whole script and answers for
+# it), so anything that decides a meaning has to sit on this side of it or it
+# ships unexercised. The `rig:` namespace says whose keys those are and keeps a
+# future rig manifest key from answering for one of crew's own report keys.
 #
 # `probe=ok` is the load-bearing line and not a decoration: without it an
 # unreachable box and a converged-but-markerless one both capture as the empty
@@ -1108,7 +1133,7 @@ rig_report() {
       printf "marker=%s\n" "$(head -n1 /etc/rig/role 2>/dev/null)"
     fi
     if [ -r /etc/rig/manifest ]; then
-      sed -n "s/^converged_by=/rig_version=/p; s/^converged_at=/rig_at=/p" /etc/rig/manifest
+      sed "s|^|rig:|" /etc/rig/manifest 2>/dev/null
     fi
   ' 2>/dev/null | tr -d '\r' || true
 }
@@ -1848,15 +1873,21 @@ cmd_status() {
     local rreport rconv rver rat
     rreport="$(rig_report "$b")"
     rconv="$(convergence_of "$rreport")"
-    rver="$(report_field rig_version "$rreport")"
-    rat="$(report_field rig_at "$rreport")"
+    # `converged_*`, never `bootstrapped_*`: a box re-bootstrapped by a newer
+    # rig carries both pairs and they differ, and what authorized the hire is
+    # the convergence. report_field's `^` is what keeps the two apart.
+    rver="$(report_field rig:converged_by "$rreport")"
+    rat="$(report_field rig:converged_at "$rreport")"
     case "$rconv" in
       converged)
         echo "rig: converged — $(report_field marker "$rreport")"
         # A converged box with no rig manifest was built by a rig older than
         # that file (rig#61) — old, not broken — so it says nothing rather than
         # inventing an alarm — the marker is what the verdict rests on.
-        if [ -n "$rver" ]; then echo "     converged by $rver${rat:+ at $rat}"; fi ;;
+        # rig records a BARE version (`converged_by=0.3.2-dev`), so the word
+        # "rig" is crew's to supply — without it the line reads as a version of
+        # nothing in particular.
+        if [ -n "$rver" ]; then echo "     converged by rig $rver${rat:+ at $rat}"; fi ;;
       *)
         echo "rig: ${rconv^^} — $(convergence_detail "$rreport")"
         # roster_line prints "agent role from", so field 1 is the agent — and

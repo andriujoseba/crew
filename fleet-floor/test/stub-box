@@ -80,7 +80,7 @@ emit_probe() {
   armed_of "$n" || cron=0
 
   case "$sc" in
-    nothired|unconverged) printf '::engine \n' ;;
+    nothired|unconverged|premanifest) printf '::engine \n' ;;
     *)        printf '::engine crew@0.4.1 (deadbee)\n' ;;
   esac
   # The agent the box was ACTUALLY installed as. The roster may claim another,
@@ -88,7 +88,7 @@ emit_probe() {
   # to be able to produce it. 'wrongagent' is a box installed as codex while
   # the roster says otherwise.
   case "$sc" in
-    nothired|unconverged)   printf '::agent \n' ;;
+    nothired|unconverged|premanifest)   printf '::agent \n' ;;
     wrongagent) printf '::agent codex\n' ;;
     *)          printf '::agent %s\n' "$(roster_agent_of "$n")" ;;
   esac
@@ -109,7 +109,7 @@ emit_probe() {
   # written against a vocabulary probe.sh no longer speaks.
   _cred=nofail
   case "$sc" in
-    nothired|unconverged) _cred=unknown ;;
+    nothired|unconverged|premanifest) _cred=unknown ;;
     noauth)   _cred=missing ;;
   esac
   # Tick age drives the host's verdict: fresh for a healthy box, long past two
@@ -119,7 +119,7 @@ emit_probe() {
     silent|nocron|disarmed) _tickage=4000 ;;
     # -1 is "no duty.log to read an age from" — true of a box that was never
     # hired, and equally true of one hired a minute ago that has not ticked.
-    nothired|neverticked|unconverged) _tickage=-1 ;;
+    nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
     *)             _tickage=30 ;;
   esac
   printf '::tickage %s\n' "$_tickage"
@@ -164,7 +164,7 @@ emit_probe() {
       echo "$(ago 200) heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"
       echo "$(ago 190) SESSION START kind=build key=heavy-duty/rig#3 timeout=7200s log=/h/duty/logs/f.log"
       ;;
-    fresh|nothired|nocron|neverticked|unconverged) : ;;  # hired seconds ago: no evidence yet
+    fresh|nothired|nocron|neverticked|unconverged|premanifest) : ;;  # hired seconds ago: no evidence yet
     failing)
       echo "$(ago 300) duty run start"
       echo "$(ago 295) SESSION END kind=build key=crew#41 rc=1 dur=12s outcome=FAILED"
@@ -352,10 +352,10 @@ case "${1:-}" in
         # tests exist to catch pass green.
         _armed=1; _cpaused=0
         [ "$(cron_of "$name")" = "paused" ] && { _armed=0; _cpaused=1; }
-        case "$sc" in nocron|disarmed|nothired|unconverged) _armed=0 ;; esac
+        case "$sc" in nocron|disarmed|nothired|unconverged|premanifest) _armed=0 ;; esac
         case "$sc" in
           noauth)        echo "missing missing 30 $_armed $_cpaused" ;;
-          nothired|unconverged) echo "unknown unknown -1 $_armed $_cpaused" ;;
+          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused" ;;
           # Hired and armed, nothing recorded against it, and no duty.log to
           # age: the box is healthy and has simply not run yet.
           neverticked)   echo "nofail nofail -1 $_armed $_cpaused" ;;
@@ -419,13 +419,31 @@ case "${1:-}" in
       # which is why they sit below its `::logstart` case — the order comment
       # above applies to them exactly as it does to the rest.
       *'/etc/rig/role'*)                        # crew's rig_report (#220)
-        # rig's ground truth, as rig writes it (heavy-duty/rig,
-        # commands/bootstrap-tenant.sh): the tenant marker is one line of
-        # space-separated key=value fields, and `tenant=yes` is what says the
-        # bootstrap converged. Reproduced in rig's exact shape rather than a
-        # convenient `converged=1`, because the field-anchored parse crew does
-        # is the thing under test — a stub emitting a tidier format would test
-        # a format no box has.
+        # rig's ground truth, in the shape rig actually writes — read on
+        # 2026-08-01 from a real rig-converged tenant box (the builder's own,
+        # rig 0.3.2-dev), not inferred from rig's source:
+        #
+        #     /etc/rig/role      role=claude-box tenant=yes host=no
+        #     /etc/rig/manifest  schema=1
+        #                        bootstrapped_by=0.3.2-dev
+        #                        bootstrapped_at=2026-08-01T12:31:11Z
+        #                        converged_by=0.3.2-dev
+        #                        converged_at=2026-08-01T12:31:11Z
+        #
+        # Reproduced in that shape rather than a convenient `converged=1`,
+        # because the parse crew does is the thing under test — a stub emitting
+        # a tidier format would test a format no box has, and the previous
+        # version of this case did exactly that (`rig_version=rig@0.6.0`, a
+        # string no rig produces, against a rename that ran on the far side of
+        # this stub and so was never executed at all).
+        #
+        # crew's rig_report does no interpreting box-side: it cats both files
+        # and prefixes the manifest's lines, so what this stub owes it is those
+        # lines verbatim. The version is BARE (`0.3.2-dev`, no `rig@`), and the
+        # manifest's `bootstrapped_*` pair comes FIRST and here deliberately
+        # differs from `converged_*` — a box bootstrapped once and re-converged
+        # by a later rig — so an unanchored read of `converged_at` would be
+        # visibly wrong rather than accidentally right.
         #
         # `probe=ok` first and unconditionally: it is how the CLI tells a box
         # that answered nothing from one that answered "no marker", and those
@@ -435,8 +453,16 @@ case "${1:-}" in
         echo probe=ok
         if [ "$sc" != "unconverged" ]; then
           printf 'marker=role=%s-box tenant=yes host=no\n' "$(roster_agent_of "$name")"
-          printf 'rig_version=rig@0.6.0\n'
-          printf 'rig_at=%s\n' "$(ago 86400)"
+          # A converged box with NO manifest is a box built by a rig older than
+          # that file (rig#61) — old, not broken — and must still read
+          # `converged`. It is the corroborating-only rule made observable.
+          if [ "$sc" != "premanifest" ]; then
+            printf 'rig:schema=1\n'
+            printf 'rig:bootstrapped_by=0.3.1\n'
+            printf 'rig:bootstrapped_at=%s\n' "$(ago 172800)"
+            printf 'rig:converged_by=0.3.2-dev\n'
+            printf 'rig:converged_at=%s\n' "$(ago 86400)"
+          fi
         fi ;;
       *'engine-manifest.sh'*)                   # crew's engine_report (#159)
         # ABOVE the hired_at case, by the same ordering rule as auth_from_flow:
@@ -450,7 +476,8 @@ case "${1:-}" in
         # to diverge from. `modified` and `unverified` are asserted end to end
         # in shared/test/run.sh, against a REAL installed tree, which is the
         # only place the hash can prove anything at all.
-        if [ "$sc" = "nothired" ] || [ "$sc" = "unconverged" ]; then
+        case "$sc" in nothired|unconverged|premanifest) _unhired=1 ;; *) _unhired=0 ;; esac
+        if [ "$_unhired" = 1 ]; then
           printf 'state=absent\nstamp=\nrecorded=\n'
         else
           _ver="$(cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)")"
@@ -458,7 +485,7 @@ case "${1:-}" in
         fi ;;
       *'duty/VERSION'*)                         # crew's hired_at
         case "$sc" in
-          nothired|unconverged) : ;;
+          nothired|unconverged|premanifest) : ;;
           *) cat "$STATEDIR/$name.version" 2>/dev/null || echo "crew@0.4.1 (deadbee)" ;;
         esac ;;
       *'gh auth status'*)                       # crew hire / boot gate
@@ -469,7 +496,7 @@ case "${1:-}" in
         # AFTER the ::logstart case: probe.sh reads instance.conf too, now that
         # it reports the box's own agent. Same ordering rule as the rest.
         case "$sc" in
-          nothired|unconverged) : ;;
+          nothired|unconverged|premanifest) : ;;
           *) printf 'BOT_AGENT=%s\n' "$(roster_agent_of "$name")" ;;
         esac ;;
       *'duty/repos.txt'*)                       # crew's box_registry (#51)

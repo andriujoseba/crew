@@ -3055,6 +3055,90 @@ case "$(convergence_recovery kimi-reviewer kimi)" in
 esac
 t convergence-recovery-does-not-advise-crew-hire bootstrap "$r1"
 
+# --- convergence: rig's marker and manifest, as the real files (crew#220) ---
+# THE REAL TEXT, not a fixture format. Read on 2026-08-01 from inside a
+# rig-converged tenant box — the box this branch was built in, which is itself
+# a rig box — with the files written by rig 0.3.2-dev on the same day:
+#
+#     $ ls -l /etc/rig/
+#     -rw-r--r-- 1 root root 129 Aug  1 12:31 manifest
+#     -rw-r--r-- 1 root root  35 Aug  1 12:31 role
+#     $ cat /etc/rig/role
+#     role=claude-box tenant=yes host=no
+#     $ cat /etc/rig/manifest
+#     schema=1
+#     bootstrapped_by=0.3.2-dev
+#     bootstrapped_at=2026-08-01T12:31:11Z
+#     converged_by=0.3.2-dev
+#     converged_at=2026-08-01T12:31:11Z
+#
+# The parse is asserted against THAT, byte for byte, rather than against a
+# shape read out of rig's source: reading the writer tells you what rig means
+# to emit, and only the artifact tells you what it emitted. Both files are
+# 0644, which is the other fact this read establishes — crew's exec must not
+# grow a `sudo`, because a `sudo` in a non-interactive `box exec` is itself a
+# way to turn a converged box into a false INCOMPLETE.
+cv_real_role='role=claude-box tenant=yes host=no'
+cv_real_manifest="$(printf '%s\n' \
+  'schema=1' \
+  'bootstrapped_by=0.3.2-dev' \
+  'bootstrapped_at=2026-08-01T12:31:11Z' \
+  'converged_by=0.3.2-dev' \
+  'converged_at=2026-08-01T12:31:11Z')"
+# …assembled into the capture rig_report produces from them: `probe=ok`, the
+# marker's first line, and the manifest prefixed a line at a time. The box side
+# does no interpreting precisely so that this — the part that decides meaning —
+# is reachable from here.
+cv_real_report="$(printf 'probe=ok\nmarker=%s\n%s\n' "$cv_real_role" \
+  "$(printf '%s\n' "$cv_real_manifest" | sed 's|^|rig:|')")"
+
+t convergence-real-marker-is-converged converged "$(convergence_of "$cv_real_report")"
+t convergence-real-manifest-converged-by 0.3.2-dev \
+  "$(report_field rig:converged_by "$cv_real_report")"
+t convergence-real-manifest-converged-at 2026-08-01T12:31:11Z \
+  "$(report_field rig:converged_at "$cv_real_report")"
+# The prefix is what stops a rig manifest key from being read as one of crew's
+# own report keys. `schema=1` unprefixed would answer a `report_field schema`
+# somebody adds later; prefixed it cannot.
+t convergence-real-manifest-keys-are-namespaced "" "$(report_field schema "$cv_real_report")"
+t convergence-real-marker-survives-the-manifest "$cv_real_role" \
+  "$(report_field marker "$cv_real_report")"
+
+# MUST FAIL — the anchoring, and this file's own `closedish`. rig's manifest
+# puts `bootstrapped_by=`/`bootstrapped_at=` TWO LINES ABOVE the `converged_*`
+# pair, so an unanchored read of `converged_at` returns the bootstrap's date.
+# On the real text above the two are equal, which is exactly why that text
+# cannot catch it on its own: this is the same box re-converged later by a
+# newer rig, where they differ and the wrong answer is visible.
+cv_reconverged="$(printf 'probe=ok\nmarker=%s\n%s\n' "$cv_real_role" "$(printf '%s\n' \
+  'rig:schema=1' \
+  'rig:bootstrapped_by=0.3.1' \
+  'rig:bootstrapped_at=2026-07-04T08:00:00Z' \
+  'rig:converged_by=0.3.2-dev' \
+  'rig:converged_at=2026-08-01T12:31:11Z')")"
+t convergence-anchored-read-skips-bootstrapped-by 0.3.2-dev \
+  "$(report_field rig:converged_by "$cv_reconverged")"
+t convergence-anchored-read-skips-bootstrapped-at 2026-08-01T12:31:11Z \
+  "$(report_field rig:converged_at "$cv_reconverged")"
+# …and the near-miss from the other direction: a key that merely ENDS in the
+# one being asked for must not answer for it.
+t convergence-anchored-read-refuses-a-suffix-key "" \
+  "$(report_field rig:verged_at "$cv_reconverged")"
+
+# CORROBORATING, NEVER LOAD-BEARING. A box whose rig predates the manifest
+# (rig#61) has a valid role line and no provenance at all — old, not broken.
+# Gating the verdict on `converged_at` would turn every box on that rig into a
+# refusal, which #220's test plan names as the outcome worse than the bug.
+cv_no_manifest="$(printf 'probe=ok\nmarker=%s\n' "$cv_real_role")"
+t convergence-without-a-manifest-is-still-converged converged "$(convergence_of "$cv_no_manifest")"
+t convergence-without-a-manifest-reports-no-provenance "" \
+  "$(report_field rig:converged_by "$cv_no_manifest")"
+# …and the inverse must not rescue anything: a full manifest beside a role file
+# that never got written is still INCOMPLETE. The manifest cannot vouch for a
+# convergence the marker does not claim.
+t convergence-manifest-without-a-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\n%s\n' "$(printf '%s\n' "$cv_real_manifest" | sed 's|^|rig:|')")")"
+
 # The marker path is rig's, and it is not crew's to invent. Asserted against the
 # source so a refactor that "tidies" it to a crew-shaped path is caught here
 # rather than on a real host — crew reads what rig writes, and rig writes these
@@ -3065,6 +3149,28 @@ else
   r1=INVENTED
 fi
 t convergence-reads-rigs-own-paths rigs "$r1"
+
+# Both files are 0644 on a real box, so the read takes no privilege — and must
+# never acquire one. A `sudo` in a NON-INTERACTIVE `box exec` prompts, or fails,
+# and either way turns a converged box into a false INCOMPLETE: the refusal
+# would then be crew's own doing, on a box that was fine.
+if cv_extract "$ROOT/cli/crew" rig_report | grep -q 'sudo'; then
+  r1=ESCALATES
+else
+  r1=unprivileged
+fi
+t convergence-reads-the-marker-without-sudo unprivileged "$r1"
+# …and it goes through bxn, never a fresh literal `box exec`. This helper runs
+# inside `while read … done < <(read_roster)` in status, hire-all and up, and a
+# raw exec there drains the roster FIFO and converges ONE box out of N with
+# rc=0 (#48). bxn is the only shape that pins stdin to /dev/null.
+if cv_extract "$ROOT/cli/crew" rig_report | grep -qE '^[[:space:]]*bxn ' &&
+   ! cv_extract "$ROOT/cli/crew" rig_report | grep -q 'box exec'; then
+  r1=bxn
+else
+  r1=RAW_EXEC
+fi
+t convergence-reads-the-marker-through-bxn bxn "$r1"
 
 # --- cli/crew's self-description: the table is the source of truth (#97) ----
 # The property under test is ANTI-DRIFT, not cosmetics. Before #97 the command

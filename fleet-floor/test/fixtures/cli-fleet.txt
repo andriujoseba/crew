@@ -31,3 +31,9 @@ cli-disarmed   running  disarmed
 # un-hired — indistinguishable from cli-nothired above in every column crew
 # had, which is exactly why the table invited the operator to hire it.
 cli-unconverged running  unconverged
+# Converged, un-hired, and built by a rig older than /etc/rig/manifest (rig#61)
+# — the marker is there, the provenance file is not. It exists to hold the
+# corroborating-only rule down: a box missing `converged_at` is `converged`, so
+# gating on the manifest would turn every box on an older rig into a refusal,
+# which #220's own test plan calls the outcome worse than the bug.
+cli-premanifest running  premanifest
