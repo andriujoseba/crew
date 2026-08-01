@@ -477,6 +477,11 @@ That makes HTTP Basic auth non-optional: a page that can power-cycle boxes
 and start model sessions is not one to leave open on a LAN. Without --pass a
 password is generated and printed once, at startup. --local binds loopback
 instead, and over plain HTTP on a LAN the password crosses in the clear.
+
+It needs an operator fleet definition and REFUSES under the shipped examples,
+like every verb that creates or arms: its buttons resume cron and start model
+sessions. 'crew init' scaffolds one; 'crew status' inspects a host without.
+--roster selects a roster file, not a fleet — it does not lift the refusal.
 EOF
       ;;
     init) cat <<'EOF'
@@ -1863,6 +1868,25 @@ cmd_floor() {
       *) usage_error "crew floor: unknown option '$1'" ;;
     esac
   done
+
+  # The console is the ninth verb of #216's rule (#244). It reads like an
+  # inspection surface and is not one: every button on the page fires through
+  # POST /api/command, where `resume` uncomments a box's crontab and `message`
+  # starts a real vendor-CLI session — the two acts #216 exists to stop the
+  # fallback from performing. `do_command` gates only on the box being in the
+  # resolved roster, and under the fallback the resolved roster is the shipped
+  # one. Serving it is itself an act besides: a long-lived HTTP service on
+  # 0.0.0.0 with a generated password is not the same category as printing a
+  # table, and the browser gets none of the banner `crew status` prints.
+  #
+  # Placed after the option loop so `crew floor --port` still earns its
+  # invocation-fault 2, and before the python3 / index.html / roster
+  # preconditions so an unconfigured host gets the config answer rather than a
+  # missing-build one. `--roster` does not lift it: that flag selects a roster
+  # file while fleet.conf and the agent profiles still come from the resolved
+  # config dir, so serving a console over a definition that is not the
+  # resolved one is CREW_CONFIG_DIR's job.
+  require_operator_config "crew floor"
 
   command -v python3 >/dev/null \
     || die "python3 is required for 'crew floor' (stdlib only, nothing to install)"

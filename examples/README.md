@@ -22,6 +22,11 @@ host. crew says so and then does nothing irreversible (#216):
   `down`, `upgrade` and `gold` exit non-zero naming `crew init`. Creating
   boxes and arming cron against a definition the operator never wrote is how
   an unconfigured host becomes a fleet aimed at somebody else's repositories.
+- **`crew floor` refuses too**, in both processes — the CLI and `floor.py` run
+  directly (#244). The console's buttons resume cron and start model sessions,
+  so it belongs to the class above however much it reads like a view, and a
+  `--roster` does not lift the refusal: that selects a roster file, not a
+  fleet. `crew status` is the inspection surface on a host in this state.
 - **Read-only verbs keep working**, because inspecting an unconfigured host is
   exactly what they are for. `crew status`, `crew profiles` and
   `crew up --dry-run` print a banner on stderr naming this directory as the
