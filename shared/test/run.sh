@@ -1683,7 +1683,7 @@ t session-reply-tail-captured 'final answer: Please connect a plugin.' \
   "$(session_reply_tail "$SA_LOG" | base64 -d)"
 
 codex_acted() {
-  # shellcheck disable=SC1090
+  # shellcheck disable=SC1091
   source "$SHARED/conf/agents/codex.conf"
   bot_session_acted "$SA_LOG" && printf yes || printf no
 }
@@ -1691,9 +1691,20 @@ t session-codex-no-tool-is-no no "$(codex_acted)"
 printf 'OpenAI Codex\nexec\n/bin/bash -lc git status\nfinal answer: done\n' >"$SA_LOG"
 t session-codex-exec-is-yes yes "$(codex_acted)"
 
+claude_acted() {
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/claude.conf"
+  bot_session_acted "$SA_LOG" && printf yes || printf no
+}
+printf 'Claude Code\nfinal answer: I need more information.\n' >"$SA_LOG"
+t session-claude-no-tool-is-no no "$(claude_acted)"
+printf 'Claude Code\n⏺ Bash(git status)\nfinal answer: done\n' >"$SA_LOG"
+t session-claude-tool-is-yes yes "$(claude_acted)"
+
 # Exercise run_session itself so a helper-only implementation cannot pass.
 SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
 BOT_CLI_CMD=(bash -c 'printf "exec\ncommand output\nfinal reply\n"')
+# shellcheck disable=SC2317  # invoked indirectly by session_acted
 bot_session_acted() { grep -qx exec "$1"; }
 sa_end="$(run_session build fixture/test "$SA_WORK" 5 prompt | tail -1)"
 case "$sa_end" in
