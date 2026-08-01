@@ -499,12 +499,22 @@ function drawUnit(t,st){
 
   /* ---- room light lands on the unit ---- */
   RB.save();RB.globalCompositeOperation="source-atop";
+  /* RUN 3 · LOOP 2 — the unit must catch its own pendant, but loop 1's flat
+     wash pushed its values level with the wall and the figure read as a
+     hologram. So: a MODERATE warm key with a hot pool on the top planes
+     only, and the separation comes from the shadow the unit now casts on
+     the wall behind it (drawScene), not from washing the figure brighter. */
   var key=RB.createLinearGradient(0,140,0,GY);
-  key.addColorStop(0,"rgba(206,226,255,"+(offl?0.05:0.12)+")");
-  key.addColorStop(0.3,"rgba(186,206,238,"+(offl?0.02:0.045)+")");
-  key.addColorStop(0.68,"rgba(2,6,14,0.10)");
+  key.addColorStop(0,"rgba(240,220,180,"+(offl?0.05:0.2)+")");
+  key.addColorStop(0.3,"rgba(210,194,164,"+(offl?0.02:0.08)+")");
+  key.addColorStop(0.7,"rgba(2,6,14,0.10)");
   key.addColorStop(1,"rgba(2,6,14,0.22)");
   RB.fillStyle=key;RB.fillRect(0,0,W,H);
+  var hp=RB.createRadialGradient(cx,160,12,cx,160,250);
+  hp.addColorStop(0,"rgba(255,238,200,"+(offl?0:0.2)+")");
+  hp.addColorStop(0.5,"rgba(250,228,184,"+(offl?0:0.08)+")");
+  hp.addColorStop(1,"rgba(250,228,184,0)");
+  RB.fillStyle=hp;RB.fillRect(0,0,W,H);
   var bnc=RB.createLinearGradient(0,GY-130,0,GY-8);
   bnc.addColorStop(0,"rgba(104,146,196,0)");bnc.addColorStop(1,"rgba(104,146,196,"+(offl?0.04:0.1)+")");
   RB.fillStyle=bnc;RB.fillRect(0,0,W,H);RB.restore();
@@ -603,6 +613,14 @@ function drawRoom(t,st){
     kg.addColorStop(0.45,"rgba(206,182,142,"+(0.045*dk)+")");
     kg.addColorStop(1,"rgba(180,164,140,0)");
     S.fillStyle=kg;S.fillRect(0,0,SW,GYS);
+    /* the second pendant does the same for the starboard side, but ONLY on
+       the wall below the glass — an interior lamp has no business lighting
+       the sea. This is what keeps the fire station out of the dark. */
+    var kg2=S.createRadialGradient(UX+430,320,30,UX+430,320,460);
+    kg2.addColorStop(0,"rgba(238,206,150,"+(0.07*dk)+")");
+    kg2.addColorStop(0.45,"rgba(206,182,142,"+(0.035*dk)+")");
+    kg2.addColorStop(1,"rgba(180,164,140,0)");
+    S.fillStyle=kg2;S.fillRect(0,300,SW,GYS-300);
     S.restore();
     // and the corners go the other way: ambient occlusion into the angles
     var ao=S.createLinearGradient(0,0,240,0);
@@ -2090,11 +2108,15 @@ function roomFrame(lit){
    this is the pass that decides what the eye is meant to look at. */
 function vignette(){
   // the subject pool: everything falls away from the unit and the console
-  var vg2=S.createRadialGradient(UX-40,380,190,UX-40,380,760);
+  /* RUN 3 · LOOP 2 — this pool reached a=0.62 over the fire station and
+     0.84 in the near corner: the right third measured RGB(6,5,7), a black
+     void hiding drawn work. The pool survives — the eye still lands on the
+     unit — but the falloff dims the edges rather than deleting them. */
+  var vg2=S.createRadialGradient(UX-40,380,190,UX-40,380,880);
   vg2.addColorStop(0,"rgba(0,0,0,0)");
-  vg2.addColorStop(0.42,"rgba(0,0,0,0.1)");
-  vg2.addColorStop(0.74,"rgba(0,0,0,0.42)");
-  vg2.addColorStop(1,"rgba(0,0,0,0.84)");
+  vg2.addColorStop(0.42,"rgba(0,0,0,0.08)");
+  vg2.addColorStop(0.78,"rgba(0,0,0,0.3)");
+  vg2.addColorStop(1,"rgba(0,0,0,0.6)");
   S.fillStyle=vg2;S.fillRect(0,0,SW,SH);
   // hard edges: the outer band goes to near-black on all four sides
   /* ROUND 8 — the side bands stop at the deck line. At 0.72/0.74 running
@@ -2105,14 +2127,14 @@ function vignette(){
   var lb=S.createLinearGradient(0,0,150,0);
   lb.addColorStop(0,"rgba(0,0,0,0.62)");lb.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=lb;S.fillRect(0,0,150,GYS);
-  var rb=S.createLinearGradient(SW,0,SW-190,0);
-  rb.addColorStop(0,"rgba(0,0,0,0.64)");rb.addColorStop(1,"rgba(0,0,0,0)");
-  S.fillStyle=rb;S.fillRect(SW-190,0,190,GYS);
+  var rb=S.createLinearGradient(SW,0,SW-150,0);
+  rb.addColorStop(0,"rgba(0,0,0,0.34)");rb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=rb;S.fillRect(SW-150,0,150,GYS);
   var lb2=S.createLinearGradient(0,0,110,0);       // much gentler on the deck
   lb2.addColorStop(0,"rgba(0,0,0,0.3)");lb2.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=lb2;S.fillRect(0,GYS,110,SH-GYS);
   var rb2=S.createLinearGradient(SW,0,SW-130,0);
-  rb2.addColorStop(0,"rgba(0,0,0,0.32)");rb2.addColorStop(1,"rgba(0,0,0,0)");
+  rb2.addColorStop(0,"rgba(0,0,0,0.18)");rb2.addColorStop(1,"rgba(0,0,0,0)");
   S.fillStyle=rb2;S.fillRect(SW-130,GYS,130,SH-GYS);
   var tb=S.createLinearGradient(0,0,0,132);
   tb.addColorStop(0,"rgba(0,0,0,0.7)");tb.addColorStop(1,"rgba(0,0,0,0)");
@@ -2137,7 +2159,26 @@ function drawScene(t,st){
      image". Both are fixed by the same move: a HARD-EDGED contact shape,
      because that is the idiom every other edge in this room is drawn in.
      The soft pass survives only as a wide, very faint ambient bed. */
-  var FTY=GYS-16;                                  // the platform top he stands on
+  /* RUN 3 · LOOP 2 — TWO GROUNDING FAULTS, one cause each.
+     (a) The soles sit at stage y=GYS (unit GY=560 + UOY=80) but the contact
+         shadows were painted at GYS-16, sixteen pixels BEHIND the boots —
+         a blind reviewer measured "zero contact shadow under either foot"
+         because the boots were covering their own shadows.
+     (b) The deck directly under the figure was the brightest patch of the
+         floor: an 880px unit blocks its own key, so the pool dies behind
+         his ankles and the wall chart behind him goes into his shade. */
+  var FTY=GYS;                                     // the sole line, not the platform lip
+  // the unit's shade on the wall and furniture behind it
+  var ws=S.createRadialGradient(UX+26,400,60,UX+26,400,310);
+  ws.addColorStop(0,"rgba(2,4,8,0.4)");ws.addColorStop(0.6,"rgba(2,4,8,0.18)");
+  ws.addColorStop(1,"rgba(2,4,8,0)");
+  S.fillStyle=ws;S.fillRect(UX-290,150,640,GYS-150);
+  // the blocked key: the floor pool dims where the figure stands in it
+  S.save();S.filter="blur(7px)";
+  var fsh=S.createRadialGradient(UX+10,FTY+6,20,UX+10,FTY+6,160);
+  fsh.addColorStop(0,"rgba(2,4,8,0.42)");fsh.addColorStop(1,"rgba(2,4,8,0)");
+  S.fillStyle=fsh;S.beginPath();S.ellipse(UX+10,FTY+8,180,26,0,0,7);S.fill();
+  S.restore();
   S.save();S.globalAlpha=0.55;S.filter="blur(9px)";
   S.fillStyle="rgba(0,0,0,0.5)";
   S.beginPath();S.ellipse(UX+16,FTY+6,104,15,0,0,7);S.fill();
