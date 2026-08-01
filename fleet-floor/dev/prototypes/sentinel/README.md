@@ -21,7 +21,14 @@ station on a slow figure-of-eight drift, one soft shadow pooled far below.
 Dead it is on the floor. (The earlier coil-stack "feet" are gone — a
 sentinel that stands on furniture isn't a sentinel.)
 
-- **A wide, squat, symmetric skull.** The shape comes from danmt's blue
+- **A squared, wide, squat, symmetric skull.** Two round bumps over a
+  notch read as a backside at any size, so the crown is cut like a
+  machined casting: a narrow steep notch on the centre line, a nearly
+  **flat plateau** across each hump, and a **hard shoulder corner** into
+  the flank. Corners are filleted with small radii up top so they stay
+  crisp, and generous radii round the chin where the casting really is
+  round.
+- **The base shape.** The shape comes from danmt's blue
   overlay on PR #230 — traced out of the screenshot pixel by pixel and
   mapped into canvas space through the eye cluster (kept as `TARGET` /
   `target-outline.json`; render with `?outline=1` to see it). But the
@@ -31,8 +38,16 @@ sentinel that stands on furniture isn't a sentinel.)
   source — pulled wider and flatter than the trace, with the saddle dip
   cut to about a third of what the trace showed. ~202 x 124.
 - **The head stays at 1:1 and is the small end of the unit.** The whips
-  are the mass and are meant to own the frame; they are the thickest and
-  furthest-reaching they have been.
+  are the mass and own the frame. They are drawn as real **tapered tubes**
+  — a body polygon down both offsets of the spine, lit crown, shadowed
+  belly, cross-stroke ribs — because at this gauge a row of ellipses
+  stops overlapping cleanly and the limb comes out scalloped like a
+  feather.
+- **The root hub is an assembly, not a plinth**: an armoured collar under
+  the chin, a ribbed drum with a caged lit core, and **a socket for every
+  limb** — each with its own rim, lip highlight and shadow — with the
+  whips starting *at* their sockets, so they read as plugged in rather
+  than as lines that happen to converge.
 - **Nothing under the chin reads as a mouth.** Tapered spikes along a jaw
   line are teeth, and lit edges on them are a grin. What hangs there is a
   cluster of short matte manipulator stubs at mixed depths and gauges,

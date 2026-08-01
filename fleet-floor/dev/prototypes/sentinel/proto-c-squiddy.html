@@ -106,63 +106,93 @@ function drawUnit(t,st){
 
   /* ---- helpers: ribbed whip + grapple claw + coil stack ---- */
   var segA="#1b222d", segB="#11161f", segAo="#141922", segBo="#0c1017";
+  /* A fat conduit cannot be drawn as a row of ellipses — at this gauge the
+     ellipses stop overlapping cleanly and the limb comes out scalloped, like
+     a feather. It is built as a real tube instead: one tapered body polygon
+     down both offsets of the spine, then shading across it (lit crown, dark
+     belly) and ribs drawn as short cross-strokes. */
   function whip(P,r0,r1,N){
-    var pts=[];for(var i2=0;i2<=N;i2++)pts.push(cub(P,i2/N));
-    for(var i2=0;i2<N;i2++){
-      var a=pts[i2],b=pts[i2+1];
-      var ang=Math.atan2(b[1]-a[1],b[0]-a[0]);
-      var r=r0+(r1-r0)*(i2/N), stp=Math.hypot(b[0]-a[0],b[1]-a[1]);
-      g.save();g.translate((a[0]+b[0])/2,(a[1]+b[1])/2);g.rotate(ang);
-      g.fillStyle=(i2%2)?(offl?segAo:segA):(offl?segBo:segB);
-      g.beginPath();g.ellipse(0,0,Math.max(stp*0.72,1.4),r,0,0,7);g.fill();
-      // conduit is a tube: lit crown on top, hard shadow along the belly
-      if(i2%2){g.strokeStyle="rgba(150,164,190,"+(offl?0.05:0.14)+")";g.lineWidth=0.9;
-        g.beginPath();g.ellipse(0,0,Math.max(stp*0.6,1.2),r*0.94,0,Math.PI*1.15,Math.PI*1.85);g.stroke();}
-      g.strokeStyle="rgba(2,5,10,0.5)";g.lineWidth=Math.max(r*0.5,1);
-      g.beginPath();g.moveTo(-stp*0.5,r*0.45);g.lineTo(stp*0.5,r*0.45);g.stroke();
-      g.restore();
+    var pts=[],i2;for(i2=0;i2<=N;i2++)pts.push(cub(P,i2/N));
+    var rad=function(u){return r0+(r1-r0)*u;};
+    var nrm=[];
+    for(i2=0;i2<=N;i2++){
+      var pa=pts[Math.max(0,i2-1)],pb=pts[Math.min(N,i2+1)];
+      var dx=pb[0]-pa[0],dy=pb[1]-pa[1],ln=Math.hypot(dx,dy)||1;
+      nrm.push([-dy/ln,dx/ln]);
     }
+    // body
+    g.beginPath();
+    for(i2=0;i2<=N;i2++){var r=rad(i2/N),q=pts[i2],n2=nrm[i2];
+      var x=q[0]+n2[0]*r,y=q[1]+n2[1]*r;i2?g.lineTo(x,y):g.moveTo(x,y);}
+    for(i2=N;i2>=0;i2--){var r2=rad(i2/N),q2=pts[i2],n3=nrm[i2];
+      g.lineTo(q2[0]-n3[0]*r2,q2[1]-n3[1]*r2);}
+    g.closePath();
+    var tg=g.createLinearGradient(0,0,0,1);   // replaced per-segment below
+    g.fillStyle=offl?"#141922":"#1c232e";g.fill();
+    g.strokeStyle=offl?"rgba(30,36,46,0.8)":"rgba(46,56,72,0.85)";g.lineWidth=1;g.stroke();
+    // lit crown along one offset, hard shadow along the belly
+    g.save();g.clip();
+    for(i2=0;i2<N;i2++){
+      var u=i2/N,r3=rad(u),q3=pts[i2],n4=nrm[i2],q4=pts[i2+1];
+      g.strokeStyle="rgba(2,5,10,0.5)";g.lineWidth=r3*0.85;
+      g.beginPath();g.moveTo(q3[0]-n4[0]*r3*0.55,q3[1]-n4[1]*r3*0.55);
+      g.lineTo(q4[0]-n4[0]*r3*0.55,q4[1]-n4[1]*r3*0.55);g.stroke();
+      g.strokeStyle="rgba(158,174,202,"+(offl?0.07:0.17)+")";g.lineWidth=r3*0.34;
+      g.beginPath();g.moveTo(q3[0]+n4[0]*r3*0.5,q3[1]+n4[1]*r3*0.5);
+      g.lineTo(q4[0]+n4[0]*r3*0.5,q4[1]+n4[1]*r3*0.5);g.stroke();
+    }
+    // ribs: cross-strokes every other step, so it reads as segmented armour
+    for(i2=1;i2<N;i2+=2){
+      var r5=rad(i2/N),q5=pts[i2],n5=nrm[i2];
+      g.strokeStyle="rgba(3,7,13,0.55)";g.lineWidth=1.8;
+      g.beginPath();g.moveTo(q5[0]+n5[0]*r5,q5[1]+n5[1]*r5);
+      g.lineTo(q5[0]-n5[0]*r5,q5[1]-n5[1]*r5);g.stroke();
+      g.strokeStyle="rgba(170,186,214,"+(offl?0.05:0.12)+")";g.lineWidth=0.9;
+      g.beginPath();g.moveTo(q5[0]+n5[0]*r5*0.92,q5[1]+n5[1]*r5*0.92);
+      g.lineTo(q5[0]-n5[0]*r5*0.2,q5[1]-n5[1]*r5*0.2);g.stroke();
+    }
+    g.restore();
     return pts;
   }
   function grapple(x,y,ang,open,alive){
     [-1,0,1].forEach(function(k){
       var a2=ang+k*(0.34+open*0.5);
-      var tx=x+Math.cos(a2)*15, ty=y+Math.sin(a2)*15;
-      var hx=tx+Math.cos(a2+ (k>=0?1.7:-1.7))*4.5, hy=ty+Math.sin(a2+(k>=0?1.7:-1.7))*4.5;
-      g.strokeStyle="#05080e";g.lineWidth=4.2;g.lineCap="round";
+      var tx=x+Math.cos(a2)*21, ty=y+Math.sin(a2)*21;
+      var hx=tx+Math.cos(a2+ (k>=0?1.7:-1.7))*6.4, hy=ty+Math.sin(a2+(k>=0?1.7:-1.7))*6.4;
+      g.strokeStyle="#05080e";g.lineWidth=6;g.lineCap="round";
       g.beginPath();g.moveTo(x,y);g.quadraticCurveTo(tx,ty,hx,hy);g.stroke();
-      g.strokeStyle=offl?"#3a4350":"#8b98ac";g.lineWidth=1.7;
+      g.strokeStyle=offl?"#3a4350":"#8b98ac";g.lineWidth=2.3;
       g.beginPath();g.moveTo(x,y);g.quadraticCurveTo(tx,ty,hx,hy);g.stroke();});
-    g.fillStyle="#04070c";g.beginPath();g.arc(x,y,5,0,7);g.fill();
-    g.strokeStyle=eH;g.lineWidth=1;g.beginPath();g.arc(x,y,5,0,7);g.stroke();
-    if(alive&&!offl){g.fillStyle=rdh(0.9);g.beginPath();g.arc(x,y,1.7,0,7);g.fill();
-      RE.fillStyle=rd(0.5);RE.beginPath();RE.arc(x,y,3,0,7);RE.fill();}
+    g.fillStyle="#04070c";g.beginPath();g.arc(x,y,7,0,7);g.fill();
+    g.strokeStyle=eH;g.lineWidth=1.2;g.beginPath();g.arc(x,y,7,0,7);g.stroke();
+    if(alive&&!offl){g.fillStyle=rdh(0.9);g.beginPath();g.arc(x,y,2.4,0,7);g.fill();
+      RE.fillStyle=rd(0.5);RE.beginPath();RE.arc(x,y,4.2,0,7);RE.fill();}
   }
   var sw=offl?0:Math.sin(t*0.9), sw2=offl?0:Math.cos(t*0.7);
 
   /* ---- 0 · BACK WHIPS: flared around the skull, S-curving, never straight.
      Offline they fall and lie where they land. ---- */
   var HS=window.__HS__=1.0;                  // 1:1 — the whips own the frame, not the skull
-  var HX=hovX, RT=HC.y+128*HS;                          // whip root, under the skull
+  var HX=hovX, RT=HC.y+148*HS;      // the socket row — limbs start where they plug in                          // whip root, under the skull
   var BACK=offl?[
-    [[cx-40,RT],[cx-138,500],[cx-206,538],[cx-236,558]],
-    [[cx+40,RT],[cx+126,516],[cx+196,530],[cx+244,557]],
-    [[cx-46,RT+8],[cx-168,530],[cx-104,560],[cx-172,552]],
-    [[cx+46,RT+8],[cx+186,522],[cx+142,559],[cx+182,545]],
-    [[cx-26,RT+12],[cx-58,548],[cx-14,560],[cx-70,556]],
-    [[cx+26,RT+12],[cx+80,536],[cx+38,559],[cx+96,553]]
+    [[cx-40,RT-2],[cx-138,500],[cx-206,538],[cx-236,558]],
+    [[cx+40,RT-2],[cx+126,516],[cx+196,530],[cx+244,557]],
+    [[cx-29,RT+2],[cx-168,530],[cx-104,560],[cx-172,552]],
+    [[cx+29,RT+2],[cx+186,522],[cx+142,559],[cx+182,545]],
+    [[cx-17,RT+4],[cx-58,548],[cx-14,560],[cx-70,556]],
+    [[cx+17,RT+4],[cx+80,536],[cx+38,559],[cx+96,553]]
   ]:[
     // the two thrown high swing WIDE of the head before they climb, so the
     // face is never crossed by its own limbs
-    [[cx-42+HX,RT-4],[cx-198,RT+40+sw*6],[cx-232,158],[cx-214,86+sw*5]],
-    [[cx+42+HX,RT-2],[cx+204,RT+44-sw*6],[cx+238,168],[cx+224,100-sw*5]],
-    [[cx-48+HX,RT+6],[cx-218,RT+94+sw2*5],[cx-252,412],[cx-256,330+sw2*7]],
-    [[cx+48+HX,RT+6],[cx+226,RT+98-sw2*5],[cx+258,420],[cx+262,342-sw2*7]],
-    [[cx-30+HX,RT+12],[cx-138,RT+80],[cx-104,472],[cx-166,512+sw*6]],
-    [[cx+30+HX,RT+12],[cx+112,RT+104],[cx+172,476],[cx+126,520-sw*6]]
+    [[cx-40+HX,RT-2],[cx-198,RT+40+sw*6],[cx-232,158],[cx-214,86+sw*5]],
+    [[cx+40+HX,RT-2],[cx+204,RT+44-sw*6],[cx+238,168],[cx+224,100-sw*5]],
+    [[cx-29+HX,RT+2],[cx-218,RT+94+sw2*5],[cx-252,412],[cx-256,330+sw2*7]],
+    [[cx+29+HX,RT+2],[cx+226,RT+98-sw2*5],[cx+258,420],[cx+262,342-sw2*7]],
+    [[cx-17+HX,RT+4],[cx-138,RT+80],[cx-104,472],[cx-166,512+sw*6]],
+    [[cx+17+HX,RT+4],[cx+112,RT+104],[cx+172,476],[cx+126,520-sw*6]]
   ];
   BACK.forEach(function(P,bi){
-    var pts=whip(P,7,2.4,44);
+    var pts=whip(P,12,4.2,52);
     var e=pts[pts.length-1],pe=pts[pts.length-2];
     grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.5+0.3*Math.sin(t*2+bi),true);
   });
@@ -170,22 +200,83 @@ function drawUnit(t,st){
   /* ---- 1 · THE UNDERSIDE: the ribbed throat collar the whips root into.
      No feet, no stand — this thing never touches the deck while it lives. */
   var TWO=offl?[
-    [[cx-20,RT-6],[cx-52,542],[cx-104,556],[cx-134,548]],
-    [[cx+20,RT-4],[cx+58,546],[cx+112,558],[cx+136,550]]
+    [[cx-6,RT+5],[cx-52,542],[cx-104,556],[cx-134,548]],
+    [[cx+6,RT+5],[cx+58,546],[cx+112,558],[cx+136,550]]
   ]:[
-    [[cx-18+HX,RT-6],[cx-76,RT+60],[cx-16,RT+134],[cx-64,RT+182+sw*5]],
-    [[cx+18+HX,RT-4],[cx+54,RT+92],[cx+96,RT+136],[cx+40,RT+214-sw*5]]
+    [[cx-6+HX,RT+5],[cx-76,RT+60],[cx-16,RT+134],[cx-64,RT+182+sw*5]],
+    [[cx+6+HX,RT+5],[cx+54,RT+92],[cx+96,RT+136],[cx+40,RT+214-sw*5]]
   ];
-  TWO.forEach(function(P,ti){var pts=whip(P,7.4,3,32);
+  TWO.forEach(function(P,ti){var pts=whip(P,12.5,4.6,38);
     var e=pts[pts.length-1],pe=pts[pts.length-2];
     grapple(e[0],e[1],Math.atan2(e[1]-pe[1],e[0]-pe[0]),offl?0:0.4+0.25*Math.sin(t*1.7+ti),true);});
-  // throat collar: stacked rings narrowing away from the skull
-  for(var th=0;th<4;th++){
-    var ty2=HC.y+(104+th*(offl?5:11))*HS, tw=(30-th*5)*HS;
-    g.fillStyle=th%2?"#0d1219":"#10151e";
-    g.beginPath();g.ellipse(HC.x,ty2,tw,9,0,0,7);g.fill();
-    g.strokeStyle="rgba(4,8,14,0.7)";g.lineWidth=1;g.beginPath();g.ellipse(HC.x,ty2,tw,9,0,0,7);g.stroke();
-    if(th<2)cavity(g,HC.x-tw,ty2-2,tw*2,7,0.4);}
+  /* ---- THE ROOT HUB ----
+     Four stacked ellipses were standing in for the single most mechanically
+     interesting part of the unit: the place a dozen limbs actually attach.
+     It is now a real assembly — an armoured collar under the chin, a ribbed
+     drum below it, and a socket for every whip, each with its own rim and
+     its own shadow, so the limbs read as PLUGGED IN rather than as lines
+     that happen to converge. */
+  (function(){
+    var HY=HC.y+96*HS, k=HS;
+    function P(x,y){return [HC.x+x*k, HY+y*k];}
+    // 1 · collar: a faceted ring plate the drum hangs from
+    var col=[P(-62,0),P(62,0),P(53,20),P(-53,20)];
+    plate(g,col,sT,sM,ed);
+    pl(g,P(-60,2)[0],P(-60,2)[1],P(60,2)[0],P(60,2)[1],"rgba(198,216,246,"+(offl?0.07:0.2)+")",1.4);
+    cavity(g,P(-53,18)[0],P(-53,18)[1],106*k,8*k,0.55);
+    // 2 · drum: ribbed barrel, lit crown, dark underside
+    var dr=[P(-55,18),P(55,18),P(48,52),P(-48,52)];
+    plate(g,dr,sM,sB,ed);
+    for(var rb2=-4;rb2<=4;rb2++){                      // vertical ribs
+      var rx2=rb2*12;
+      pl(g,P(rx2,20)[0],P(rx2,20)[1],P(rx2*0.88,50)[0],P(rx2*0.88,50)[1],"rgba(4,8,14,0.55)",2.2);
+      pl(g,P(rx2+2,20)[0],P(rx2+2,20)[1],P(rx2*0.88+2,50)[0],P(rx2*0.88+2,50)[1],
+         "rgba(150,166,194,"+(offl?0.04:0.11)+")",0.9);}
+    cavity(g,P(-48,46)[0],P(-48,46)[1],96*k,10*k,0.6);
+    // 3 · the core: a caged vent in the middle of the drum, lit from inside
+    var cw=26*k, chh=15*k, cxp=P(0,28)[0]-cw/2, cyp=P(0,28)[1];
+    g.fillStyle="#04070c";rr(g,cxp,cyp,cw,chh,3);g.fill();
+    g.strokeStyle=eH;g.lineWidth=1.1;rr(g,cxp,cyp,cw,chh,3);g.stroke();
+    if(!offl){
+      var cg5=g.createLinearGradient(cxp,cyp,cxp,cyp+chh);
+      cg5.addColorStop(0,rdh(0.5*pulse+0.2));cg5.addColorStop(1,rd(0.28*pulse+0.1));
+      g.save();rr(g,cxp+1,cyp+1,cw-2,chh-2,2);g.clip();g.fillStyle=cg5;
+      g.fillRect(cxp,cyp,cw,chh);g.restore();
+      RE.save();rr(RE,cxp,cyp,cw,chh,3);RE.clip();
+      var ce=RE.createRadialGradient(cxp+cw/2,cyp+chh/2,1,cxp+cw/2,cyp+chh/2,cw*0.7);
+      ce.addColorStop(0,rdh(0.55*pulse+0.2));ce.addColorStop(1,rd(0));
+      RE.fillStyle=ce;RE.fillRect(cxp-6,cyp-6,cw+12,chh+12);RE.restore();
+    }else{g.fillStyle="rgba(150,168,190,0.22)";g.fillRect(cxp+3,cyp+chh/2-0.7,cw-6,1.4);}
+    for(var cb=0;cb<3;cb++){                            // cage bars over the vent
+      var bxp=cxp+cw*(cb+1)/4;
+      g.fillStyle="#0b1018";g.fillRect(bxp-1.6,cyp-1,3.2,chh+2);}
+    // 4 · SOCKETS: one per limb, along the drum's lower edge
+    var SOCK=[[-40,50,8],[-29,54,9],[-17,56,8.5],[-6,57,9.5],[6,57,9.5],
+              [17,56,8.5],[29,54,9],[40,50,8],[-34,42,6.5],[34,42,6.5],[-12,42,6],[12,42,6]];
+    SOCK.forEach(function(S2,si){
+      var sp=P(S2[0],S2[1]), sr=S2[2]*k;
+      g.fillStyle="#04070c";g.beginPath();g.ellipse(sp[0],sp[1],sr,sr*0.78,0,0,7);g.fill();
+      // rim: bright on top, so each socket reads as a hole with a lip
+      g.strokeStyle=offl?"rgba(58,66,80,0.8)":"rgba(112,126,150,0.9)";g.lineWidth=1.4;
+      g.beginPath();g.ellipse(sp[0],sp[1],sr,sr*0.78,0,0,7);g.stroke();
+      g.strokeStyle="rgba(206,222,248,"+(offl?0.08:0.22)+")";g.lineWidth=1;
+      g.beginPath();g.ellipse(sp[0],sp[1],sr*0.98,sr*0.76,0,Math.PI*1.08,Math.PI*1.92);g.stroke();
+      if(!offl&&si<8){ RE.fillStyle=rd(0.16);RE.beginPath();
+        RE.ellipse(sp[0],sp[1],sr*0.5,sr*0.4,0,0,7);RE.fill(); }
+    });
+    // 5 · bolts round the collar, and two hoses slung across the drum
+    [-52,-26,0,26,52].forEach(function(bx2){
+      var bp2=P(bx2,10);
+      g.fillStyle="#05080e";g.beginPath();g.arc(bp2[0],bp2[1],2*k,0,7);g.fill();
+      g.fillStyle="rgba(190,204,228,"+(offl?0.07:0.2)+")";
+      g.beginPath();g.arc(bp2[0]-0.6*k,bp2[1]-0.6*k,0.9*k,0,7);g.fill();});
+    [[-53,24,-20,40],[53,24,20,40]].forEach(function(h2){
+      var s1=P(h2[0],h2[1]),e1=P(h2[2],h2[3]);
+      g.strokeStyle="rgba(8,12,19,0.95)";g.lineWidth=4*k;
+      g.beginPath();g.moveTo(s1[0],s1[1]);g.quadraticCurveTo((s1[0]+e1[0])/2,e1[1]+10*k,e1[0],e1[1]);g.stroke();
+      g.strokeStyle="rgba(120,132,156,"+(offl?0.08:0.22)+")";g.lineWidth=1.2;
+      g.beginPath();g.moveTo(s1[0],s1[1]);g.quadraticCurveTo((s1[0]+e1[0])/2,e1[1]+10*k,e1[0],e1[1]);g.stroke();});
+  })();
 
   /* the whole head — silhouette, plating, greebles, eyes, fangs — is drawn
      at 1:1 and scaled about HC as one unit, so nothing can drift off the
@@ -213,23 +304,34 @@ function drawUnit(t,st){
 
      HALF[i] = [dx, top y, bottom y], from the centre line out to the widest
      point where the two edges meet. */
-  var HALF=[[0,-26,98],[12,-30,95],[25,-34,89],[38,-36,82],[50,-35.5,78],
-            [62,-33,77],[74,-27.5,73],[86,-18,60],[95,-4,38],[101,14,14]];
+  var HALF=[[0,-24,98],[14,-36,95],[30,-38,89],[46,-38.5,83],[60,-37,78],
+            [74,-33,75],[88,-24,66],[98,-10,46],[104,16,16]];
+  /* Squared, not domed. Two round bumps over a notch is a butt at any size,
+     so the crown is built like a machined casting instead: a narrow steep
+     notch on the centre line, then a nearly FLAT plateau across each hump,
+     then a hard shoulder corner into the flank. The corners are filleted
+     with arcTo — small radii up top so they stay crisp and read as milled
+     edges, big radii round the chin where the casting really is round. */
   function skullPath(c){
     var pts=[],i2;
-    for(i2=HALF.length-1;i2>=0;i2--)pts.push([-HALF[i2][0],HALF[i2][1]]);   // top, left→centre
-    for(i2=1;i2<HALF.length;i2++)pts.push([HALF[i2][0],HALF[i2][1]]);       // top, centre→right
-    for(i2=HALF.length-2;i2>=0;i2--)pts.push([HALF[i2][0],HALF[i2][2]]);    // bottom, right→centre
-    for(i2=1;i2<HALF.length;i2++)pts.push([-HALF[i2][0],HALF[i2][2]]);      // bottom, centre→left
+    for(i2=HALF.length-1;i2>=0;i2--)pts.push([-HALF[i2][0],HALF[i2][1]]);
+    for(i2=1;i2<HALF.length;i2++)pts.push([HALF[i2][0],HALF[i2][1]]);
+    for(i2=HALF.length-2;i2>=0;i2--)pts.push([HALF[i2][0],HALF[i2][2]]);
+    for(i2=1;i2<HALF.length;i2++)pts.push([-HALF[i2][0],HALF[i2][2]]);
     window.__SHAPE__=pts;
+    var n=pts.length;
     c.beginPath();
-    c.moveTo(HC.x+pts[0][0],HC.y+pts[0][1]);
-    for(i2=1;i2<=pts.length;i2++){
-      var p0=pts[(i2-2+pts.length)%pts.length],p1=pts[(i2-1)%pts.length],
-          p2=pts[i2%pts.length],p3=pts[(i2+1)%pts.length];
-      c.bezierCurveTo(HC.x+p1[0]+(p2[0]-p0[0])/6, HC.y+p1[1]+(p2[1]-p0[1])/6,
-                      HC.x+p2[0]-(p3[0]-p1[0])/6, HC.y+p2[1]-(p3[1]-p1[1])/6,
-                      HC.x+p2[0], HC.y+p2[1]);}
+    for(i2=0;i2<n;i2++){
+      var pv=pts[(i2-1+n)%n], cu=pts[i2], nx2=pts[(i2+1)%n];
+      // crisp on the crown, generous round the underside
+      var r=cu[1]<0?5:26;
+      var d1=Math.hypot(cu[0]-pv[0],cu[1]-pv[1])||1, d2=Math.hypot(nx2[0]-cu[0],nx2[1]-cu[1])||1;
+      var rr2=Math.min(r,d1/2,d2/2);
+      var ax=cu[0]+(pv[0]-cu[0])/d1*rr2, ay=cu[1]+(pv[1]-cu[1])/d1*rr2;
+      var bx=cu[0]+(nx2[0]-cu[0])/d2*rr2, by=cu[1]+(nx2[1]-cu[1])/d2*rr2;
+      if(i2===0)c.moveTo(HC.x+ax,HC.y+ay);else c.lineTo(HC.x+ax,HC.y+ay);
+      c.quadraticCurveTo(HC.x+cu[0],HC.y+cu[1],HC.x+bx,HC.y+by);
+    }
     c.closePath();
   }
   skullPath(g);
@@ -240,22 +342,22 @@ function drawUnit(t,st){
      a lit crest riding each and a seam dropping out of the saddle */
   [-1,1].forEach(function(sg){
     g.strokeStyle="rgba(198,216,246,"+(offl?(sg<0?0.09:0.05):(sg<0?0.26:0.15))+")";g.lineWidth=1.6;
-    g.beginPath();g.moveTo(HC.x+sg*10,HC.y-16);
-    g.bezierCurveTo(HC.x+sg*22,HC.y-31, HC.x+sg*44,HC.y-36, HC.x+sg*62,HC.y-28);g.stroke();
+    g.beginPath();g.moveTo(HC.x+sg*17,HC.y-32);
+    g.lineTo(HC.x+sg*58,HC.y-34);g.lineTo(HC.x+sg*72,HC.y-29);g.stroke();
     // the shell under the crest, a shade proud of the base
     g.beginPath();
-    g.moveTo(HC.x+sg*6,HC.y-13);
-    g.bezierCurveTo(HC.x+sg*24,HC.y-33, HC.x+sg*48,HC.y-37, HC.x+sg*72,HC.y-22);
-    g.bezierCurveTo(HC.x+sg*80,HC.y-4, HC.x+sg*54,HC.y+2, HC.x+sg*8,HC.y+2);
+    g.moveTo(HC.x+sg*8,HC.y-16);
+    g.lineTo(HC.x+sg*16,HC.y-34);g.lineTo(HC.x+sg*60,HC.y-36);g.lineTo(HC.x+sg*78,HC.y-24);
+    g.lineTo(HC.x+sg*84,HC.y-4);g.lineTo(HC.x+sg*52,HC.y+2);g.lineTo(HC.x+sg*10,HC.y+2);
     g.closePath();
     var lg3=g.createLinearGradient(0,HC.y-38,0,HC.y+4);
     lg3.addColorStop(0,offl?"#232a35":"#38424f");lg3.addColorStop(1,"rgba(22,28,40,0)");
     g.fillStyle=lg3;g.fill();});
   // the saddle: a shallow sunk valley on the centre line
   g.beginPath();
-  g.moveTo(HC.x-24,HC.y-10);
-  g.bezierCurveTo(HC.x-10,HC.y-26, HC.x+10,HC.y-26, HC.x+24,HC.y-10);
-  g.bezierCurveTo(HC.x+10,HC.y-4, HC.x-10,HC.y-4, HC.x-24,HC.y-10);
+  g.moveTo(HC.x-15,HC.y-8);
+  g.lineTo(HC.x-11,HC.y-30);g.lineTo(HC.x+11,HC.y-30);g.lineTo(HC.x+15,HC.y-8);
+  g.lineTo(HC.x+9,HC.y-3);g.lineTo(HC.x-9,HC.y-3);
   g.closePath();
   var kg2=g.createLinearGradient(0,HC.y-24,0,HC.y-1);
   kg2.addColorStop(0,"rgba(4,8,14,0.5)");kg2.addColorStop(1,"rgba(4,8,14,0)");
@@ -476,18 +578,18 @@ function drawUnit(t,st){
      whip hovering its grapple over the deck. Offline both lie dead. ---- */
   if(!offl){
     // one thrown up past the skull, one reaching forward-down at the viewer
-    var FP1=[[cx-24+HX,RT-8],[cx-150,RT+10],[cx-190,236],[cx-146,158+sw*6]];
-    var p1=whip(FP1,7.6,2.6,42), e1=p1[p1.length-1], q1=p1[p1.length-2];
+    var FP1=[[cx-34+HX,RT-6],[cx-150,RT+10],[cx-190,236],[cx-146,158+sw*6]];
+    var p1=whip(FP1,13,4.4,50), e1=p1[p1.length-1], q1=p1[p1.length-2];
     grapple(e1[0],e1[1],Math.atan2(e1[1]-q1[1],e1[0]-q1[0]),0.75,true);
-    var FP2=[[cx+26+HX,RT-6],[cx+128,RT+60],[cx+196,RT+130],[cx+150,RT+196+sw2*6]];
-    var p2=whip(FP2,7.6,2.8,40), e2=p2[p2.length-1], q2=p2[p2.length-2];
+    var FP2=[[cx+34+HX,RT-6],[cx+128,RT+60],[cx+196,RT+130],[cx+150,RT+196+sw2*6]];
+    var p2=whip(FP2,13,4.6,48), e2=p2[p2.length-1], q2=p2[p2.length-2];
     grapple(e2[0],e2[1],Math.atan2(e2[1]-q2[1],e2[0]-q2[0]),0.9,true);
   }else{
-    var FP1=[[cx-26,RT-8],[cx-96,528],[cx-146,556],[cx-198,546]];
-    var p1=whip(FP1,7.6,2.6,36), e1=p1[p1.length-1], q1=p1[p1.length-2];
+    var FP1=[[cx-34,RT-6],[cx-96,528],[cx-146,556],[cx-198,546]];
+    var p1=whip(FP1,13,4.4,40), e1=p1[p1.length-1], q1=p1[p1.length-2];
     grapple(e1[0],e1[1],Math.atan2(e1[1]-q1[1],e1[0]-q1[0]),0,true);
-    var FP2=[[cx+26,RT-6],[cx+104,534],[cx+156,559],[cx+206,548]];
-    var p2=whip(FP2,7.6,2.8,36), e2=p2[p2.length-1], q2=p2[p2.length-2];
+    var FP2=[[cx+34,RT-6],[cx+104,534],[cx+156,559],[cx+206,548]];
+    var p2=whip(FP2,13,4.6,40), e2=p2[p2.length-1], q2=p2[p2.length-2];
     grapple(e2[0],e2[1],Math.atan2(e2[1]-q2[1],e2[0]-q2[0]),0,true);
   }
 
