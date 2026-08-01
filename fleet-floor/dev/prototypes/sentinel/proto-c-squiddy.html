@@ -707,6 +707,20 @@ var SCREENS=(function(){
       i++;}});
   return out;})();
 
+function rrS(x,y,w,h,r){S.beginPath();if(S.roundRect)S.roundRect(x,y,w,h,r);else S.rect(x,y,w,h);}
+function roomFrame(lit){
+  // the gallery is seen through a doorway: uprights either side, head beam
+  [22,W-22].forEach(function(px2,i7){
+    S.fillStyle="#050810";S.fillRect(px2-11,0,22,H);
+    S.fillStyle="rgba(110,126,156,"+(0.05*lit)+")";S.fillRect(px2+(i7?9:-11),0,1.6,H);});
+  S.fillStyle="#050810";S.fillRect(0,0,W,26);
+  S.fillStyle="rgba(110,126,156,"+(0.04*lit)+")";S.fillRect(22,25,W-44,1.4);
+}
+function vignette(){
+  var vg2=S.createRadialGradient(260,320,110,260,320,400);
+  vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(0.6,"rgba(0,0,0,0.14)");vg2.addColorStop(1,"rgba(0,0,0,0.7)");
+  S.fillStyle=vg2;S.fillRect(0,0,W,H);
+}
 function drawRoom(t,st){
   var offl=st==="offline";
   var lit=offl?0.3:1;
@@ -745,6 +759,21 @@ function drawRoom(t,st){
     vg.addColorStop(0,"rgba(0,0,0,0)");vg.addColorStop(1,"rgba(0,0,0,0.55)");
     S.fillStyle=vg;S.fillRect(sc.x,sc.y,sc.w,sc.h);
     S.restore();
+    // tape label stuck on the bezel — every one of these was somebody's job
+    if(si%3===0){
+      S.fillStyle="rgba(196,188,150,"+(0.12*lit)+")";
+      S.fillRect(sc.x+4,sc.y+sc.h+2,26,6);
+      S.fillStyle="rgba(20,24,30,"+(0.5*lit)+")";
+      for(var tl=0;tl<4;tl++)S.fillRect(sc.x+6+tl*6,sc.y+sc.h+4,3.4,1.4);}
+    // one tube is cracked and dead: a black face with a star fracture
+    if(si===6){
+      S.fillStyle="rgba(3,5,9,0.96)";S.fillRect(sc.x,sc.y,sc.w,sc.h);
+      S.strokeStyle="rgba(150,166,196,"+(0.16*lit)+")";S.lineWidth=1;
+      var hx3=sc.x+sc.w*0.44, hy3=sc.y+sc.h*0.5;
+      for(var fr=0;fr<7;fr++){var a6=fr*0.9+0.3;
+        S.beginPath();S.moveTo(hx3,hy3);
+        S.lineTo(hx3+Math.cos(a6)*(16+fr*4),hy3+Math.sin(a6)*(12+fr*3));S.stroke();}
+      S.beginPath();S.arc(hx3,hy3,4,0,7);S.fillStyle="rgba(8,10,14,1)";S.fill();}
     // the glass catches the room: one raking highlight per screen
     S.save();S.beginPath();S.rect(sc.x,sc.y,sc.w,sc.h);S.clip();
     S.fillStyle="rgba(150,170,200,"+(0.035*lit)+")";
@@ -756,11 +785,88 @@ function drawRoom(t,st){
       sg8.addColorStop(0,"rgba(120,140,170,0.05)");sg8.addColorStop(1,"rgba(120,140,170,0)");
       S.fillStyle=sg8;S.fillRect(sc.x-sc.w,sc.y-sc.h,sc.w*3,sc.h*3);S.restore();}
   });
+  /* ---- SIGNAGE, but failing. The builder's room has a lit SECTOR-7 board;
+     this room's board is the same idea with the power half gone — one tube
+     out, the text guttering. A label that flickers says more about a place
+     than a label that shines. */
+  (function(){
+    var nx=260-96, ny=30, nw=192, nh=34;
+    S.fillStyle="#070a10";rrS(nx,ny,nw,nh,2);S.fill();
+    S.strokeStyle="rgba(100,114,140,"+(0.14*lit)+")";S.lineWidth=1.1;rrS(nx,ny,nw,nh,2);S.stroke();
+    var gut=offl?0:(Math.sin(t*23)>0.86?0.25:1)*(0.7+0.3*Math.sin(t*3.1));
+    S.save();S.textAlign="left";
+    S.fillStyle="rgba(168,186,214,"+(0.62*gut*lit)+")";S.font="700 15px ui-monospace,Menlo,monospace";
+    S.fillText("MON-4",nx+12,ny+20);
+    S.fillStyle="rgba(120,136,164,"+(0.34*gut*lit)+")";S.font="600 8px ui-monospace,Menlo,monospace";
+    S.fillText("SIGNAL GALLERY  ·  NO FEED",nx+12,ny+29);
+    S.restore();
+    // the dead tube in the fitting: a dark half
+    S.fillStyle="rgba(4,7,12,0.6)";S.fillRect(nx+nw*0.58,ny+2,nw*0.42-2,nh-4);
+    if(!offl&&gut>0.5){S.save();S.globalCompositeOperation="lighter";
+      var ng2=S.createRadialGradient(nx+50,ny+17,3,nx+50,ny+17,80);
+      ng2.addColorStop(0,"rgba(150,170,200,"+(0.05*gut)+")");ng2.addColorStop(1,"rgba(150,170,200,0)");
+      S.fillStyle=ng2;S.fillRect(nx-60,ny-60,nw+120,nh+120);S.restore();}
+  })();
+  /* ---- THE OPERATOR'S STATION, empty. The room's whole point is that
+     nobody is watching these screens any more, and the cheapest way to say
+     that is to draw the chair someone left. */
+  (function(){
+    var ox2=88, oy2=470;
+    // desk shelf under the screen wall
+    S.fillStyle="#070a10";S.fillRect(ox2-52,oy2,148,9);
+    S.fillStyle="rgba(110,126,156,"+(0.06*lit)+")";S.fillRect(ox2-52,oy2,148,1.4);
+    S.fillStyle="#05070c";S.fillRect(ox2-44,oy2+9,7,52);S.fillRect(ox2+82,oy2+9,7,52);
+    // a dead console on the shelf, screen black, one pilot light out
+    S.fillStyle="#080b11";S.fillRect(ox2-30,oy2-34,64,34);
+    S.strokeStyle="rgba(100,114,140,"+(0.12*lit)+")";S.lineWidth=1;S.strokeRect(ox2-30,oy2-34,64,34);
+    S.fillStyle="rgba(3,5,9,0.9)";S.fillRect(ox2-25,oy2-29,54,20);
+    S.fillStyle="rgba(70,80,96,"+(0.5)+")";S.fillRect(ox2-25,oy2-6,10,3);
+    if(!offl){S.fillStyle="rgba(226,120,70,"+(0.5*lit)+")";S.fillRect(ox2-11,oy2-6,10,3);}
+    // the chair: pushed back and turned away, nobody in it
+    S.save();S.translate(ox2+26,oy2+96);S.rotate(-0.12);
+    S.fillStyle="#080b11";S.fillRect(-26,-46,50,10);           // back rest
+    S.fillStyle="rgba(110,126,156,"+(0.05*lit)+")";S.fillRect(-26,-46,50,1.4);
+    S.fillStyle="#06090e";S.fillRect(-6,-36,7,22);             // spine
+    S.fillStyle="#080b11";S.fillRect(-28,-14,56,9);            // seat
+    S.fillStyle="#06090e";S.fillRect(-4,-5,7,26);              // column
+    S.strokeStyle="#06090e";S.lineWidth=4;                      // splayed feet
+    [[-24,30],[0,34],[24,30]].forEach(function(ft){
+      S.beginPath();S.moveTo(0,21);S.lineTo(ft[0],ft[1]);S.stroke();});
+    S.restore();
+  })();
   // ---- rack uprights the screens are bolted to
   [24,138,252,366,470].forEach(function(ux){
     S.fillStyle="#070a0f";S.fillRect(ux-5,40,10,H-40);
     S.fillStyle="rgba(120,136,164,"+(0.05*lit)+")";S.fillRect(ux-5,40,1.4,H-40);
     for(var bh=0;bh<9;bh++){S.fillStyle="rgba(4,7,12,0.9)";S.fillRect(ux-4,72+bh*56,8,3);}});
+  /* ---- the last working ceiling tube, and losing. It strobes on a hard
+     random-ish beat, and when it fires it is the only cool light in the room
+     that is not a dead signal. */
+  (function(){
+    var fl2=offl?0:(Math.sin(t*17)*Math.sin(t*5.3)>0.3?1:0.12);
+    S.fillStyle="#070a10";S.fillRect(150,34,220,10);
+    S.fillStyle="rgba(110,126,156,"+(0.05*lit)+")";S.fillRect(150,34,220,1.2);
+    S.fillStyle="rgba(198,214,240,"+(0.5*fl2*lit)+")";S.fillRect(156,40,208,4);
+    if(fl2>0.5){S.save();S.globalCompositeOperation="lighter";
+      var tg2=S.createLinearGradient(0,44,0,300);
+      tg2.addColorStop(0,"rgba(170,192,224,"+(0.07*fl2)+")");tg2.addColorStop(1,"rgba(170,192,224,0)");
+      S.fillStyle=tg2;S.fillRect(120,44,280,256);S.restore();}
+  })();
+  /* ---- cable spaghetti. Every feed in the room comes down the wall and
+     nobody ever dressed them; they pool on the deck and run off-frame. */
+  (function(){
+    var CB=[[40,470,150,520,96,556],[120,462,206,528,168,558],
+            [332,466,268,530,318,557],[420,470,380,522,442,556],
+            [470,464,432,516,486,554]];
+    CB.forEach(function(c3,ci3){
+      S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=ci3%2?5:3.6;
+      S.beginPath();S.moveTo(c3[0],c3[1]);S.bezierCurveTo(c3[2],c3[3],c3[4],c3[5],c3[4]+40,558);S.stroke();
+      S.strokeStyle="rgba(100,116,144,"+(0.05*lit)+")";S.lineWidth=1;
+      S.beginPath();S.moveTo(c3[0],c3[1]);S.bezierCurveTo(c3[2],c3[3],c3[4],c3[5],c3[4]+40,558);S.stroke();});
+    // a loose coil dumped on the deck
+    S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=4;
+    [15,10,5].forEach(function(rr5){S.beginPath();S.ellipse(432,552,rr5,rr5*0.4,0.2,0,7);S.stroke();});
+  })();
   // cable trunk sagging across the wall under the screens
   S.strokeStyle="rgba(4,7,12,0.95)";S.lineWidth=7;
   S.beginPath();S.moveTo(0,470);S.quadraticCurveTo(W/2,502,W,468);S.stroke();
@@ -786,6 +892,8 @@ function drawRoom(t,st){
   else{var bc3=S.createRadialGradient(70,120,4,70,120,160);
     bc3.addColorStop(0,"rgba(255,60,50,0.10)");bc3.addColorStop(1,"rgba(255,60,50,0)");
     S.fillStyle=bc3;S.fillRect(0,0,W,H);}
+  roomFrame(lit);
+  vignette();
 }
 
 /* ---- scene ---- */

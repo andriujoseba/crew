@@ -86,12 +86,29 @@ buffers, no assets, no deps — so it ports into a `buildSentinel()` in
 
 ## The room — the static gallery
 
-A dead monitoring room: sixteen screens on rack uprights, **every one of them
-showing snow**. Each has its own roll speed, phase and drift, so the wall
-never reads as tiled wallpaper — plus a sweeping roll bar, scanlines, tube
-vignetting and a raking glass highlight per screen, and each throws its own
-weak light into the room. The deck returns them as blurred vertical smears.
-Nothing in here is being watched by anyone but the sentinel.
+![the gallery](renders/room-gallery.png)
+
+A dead monitoring room. Same checklist as the bridge, answered in the
+negative at every point — this room's equivalent of a lit `SECTOR-7` board is
+a board with half its tube gone.
+
+- **Sixteen screens on rack uprights, every one showing snow.** Each has its
+  own roll speed, phase and drift so the wall never reads as tiled wallpaper,
+  plus a sweeping roll bar, scanlines, tube vignetting, a raking glass
+  highlight, and its own weak spill into the room
+- **`MON-4 / SIGNAL GALLERY · NO FEED`** — guttering, half the fitting dark
+- **One tube cracked and dead**: a black face with a star fracture
+- **Tape labels** on every third bezel — somebody's job, once
+- **The operator's station, empty**: a shelf, a dead console with one pilot
+  light, and the chair pushed back and turned away
+- **One failing ceiling tube** strobing on a hard beat — the only cool light
+  in the room that is not a dead signal
+- **Cable spaghetti** pooling on the deck and running off-frame, a dumped
+  coil, and the wall returned by the floor as blurred smears
+- **Framed opening** and vignette, matching the bridge's treatment
+
+The noise is one shared 64px tile sampled per screen — sixteen live noise
+canvases a frame would cost more than the unit does.
 
 ## Renders — proto C
 

@@ -54,13 +54,27 @@ buffers, no assets, no deps — so it ports into a `buildLeader()` in
 
 ## The room — the flag bridge
 
-The leader stands where a battleship is commanded from: an armoured gallery
-with a raked window band looking out on deep nothing, riveted plate courses,
-deckhead beams, repeater dials down one bulkhead, a chart board on the other,
-and a **plot table off to port throwing its light up into the room** — a
-second, lower light source so the unit is not lit only from overhead. Graded
-entirely to command brass. Drawn behind and around the unit, never across its
-silhouette, with one blurred stanchion in the foreground for depth.
+![the bridge](renders/room-bridge.png)
+
+The leader stands where a battleship is commanded from. Built against the
+fleet's existing rooms as the bar (the builder's `SECTOR-7` workshop), which
+is what set the checklist: a named board, props that each have a job and a
+local colour, a real fixture at the top of the light cone, draped service
+cables, wear on the deck, and structure framing the opening.
+
+- **`FLAG-1 / FLEET COMMAND`** board on the clear bulkhead above the window
+- **Raked armoured window band** onto deep nothing, with distant running
+  lights blinking on their own clocks, riveted plate courses, deckhead beams
+- **Props with local colour**: an engine-order telegraph on its pedestal with
+  a live pointer, a red fire station with coiled hose, an amber hazard
+  placard, a green/amber status board whose lamps drop out and return
+- **Two light sources**: a hooded pan lamp on a drop cable overhead, and the
+  **plot table off to port throwing light up** — its sweep arm runs
+- **Wear**: conduit runs with junction boxes, rust weeping from the window
+  bolts, scuff arcs on the deck where a watch has stood and turned, a coil of
+  spare cable
+- **Framed opening** with structural posts, corner gussets and a vignette, so
+  the bridge sits inside a darker space rather than filling the frame
 
 ## Renders
 
