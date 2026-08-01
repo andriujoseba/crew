@@ -26,3 +26,8 @@ cli-absent     absent   working
 # Hired, has ticked, and its crontab holds no live tick.sh line — the shape
 # `crew status` could not describe at all before #189.
 cli-disarmed   running  disarmed
+# The reported case (#220): `rig bootstrap` FAILED, so /etc/rig/role was never
+# written and the vendor CLI was never installed. Reachable, running, and
+# un-hired — indistinguishable from cli-nothired above in every column crew
+# had, which is exactly why the table invited the operator to hire it.
+cli-unconverged running  unconverged

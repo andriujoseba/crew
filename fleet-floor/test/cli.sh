@@ -791,18 +791,235 @@ fi
 # crew's top-level `set -e` killed hire-all on the first failure, so a single
 # box with an unusable ~/crew blocked every box after it. Asserted over the
 # source: the fixture fleet has no way to make a hire fail part-way.
+# The call must stay STATUS-CAPTURING rather than bare. `|| rc=$?` replaced the
+# `if hire_box …; then` form when hire_box grew a third answer (#220: 0 hired,
+# 3 skipped, anything else failed) — the property is unchanged and is the only
+# thing asserted here: whatever hire_box returns, `set -e` must not see it.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
-if grep -q 'if hire_box "\$name" "\$agent" "\$role" "\$ref" 0; then' "$CL_ROOT/cli/crew"; then
+if grep -q 'hire_box "\$name" "\$agent" "\$role" "\$ref" 0 || rc=\$?' "$CL_ROOT/cli/crew"; then
   ok "crew hire-all: a failing box is caught, not fatal"
 else
   fail "crew hire-all: a failing box is caught, not fatal" "the bare hire_box call is back — set -e will abort the fleet"
 fi
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
-if grep -q 'hire-all: \$hired hired, \$failed failed' "$CL_ROOT/cli/crew"; then
+if grep -q 'hire-all: \$hired hired, \$skipped skipped, \$failed failed' "$CL_ROOT/cli/crew"; then
   ok "crew hire-all: summarises what it could not do"
 else
   fail "crew hire-all: summarises what it could not do" "no failure summary — a partial fleet reads as a whole one"
 fi
+# ---------------------------------------------------------------------------
+# A box whose tenant role never converged (#220).
+#
+# The reported case: `rig bootstrap` FAILED on one of seven boxes, `box` said
+# so unambiguously, and `crew status` moments later reported it as one of seven
+# equals — same `running`, same `not hired`, same `unknown`/`unknown`, and a
+# NOTE inviting the operator to hire a box that cannot run its agent. Every
+# assertion below fails against the pre-#220 CLI, which is what makes them
+# worth having.
+#
+# The three verdicts have to stay separable, and the fixture provides all
+# three: cli-unconverged answers with NO marker, cli-unreachable answers
+# nothing at all, and cli-nothired is healthy and merely un-hired.
+# ---------------------------------------------------------------------------
+echo
+echo "== crew: rig convergence (#220)"
+
+crew_cmd status
+CL_UNCONV="$(grep '^cli-unconverged ' "$CL_TMP/crew-out" || true)"
+
+# 1. The reported case: it must READ as broken.
+if printf '%s' "$CL_UNCONV" | grep -q 'INCOMPLETE'; then
+  ok "crew status: an unconverged box reads INCOMPLETE"
+else
+  fail "crew status: an unconverged box reads INCOMPLETE" "${CL_UNCONV:-no row at all}"
+fi
+
+# 2. …and the NOTE must stop advising the verb that breaks the fleet. This is
+#    the half that cost the operator: the table did not merely fail to warn,
+#    it actively pointed at `crew hire`.
+if printf '%s' "$CL_UNCONV" | grep -q 'rig bootstrap' &&
+   ! printf '%s' "$CL_UNCONV" | grep -q 'crew hire cli-unconverged'; then
+  ok "crew status: the note names the bootstrap recovery, not crew hire"
+else
+  fail "crew status: the note names the bootstrap recovery, not crew hire" "$CL_UNCONV"
+fi
+
+# 3. The recovery names the box's OWN tenant, not a generic one — the roster
+#    says kimi, so the command an operator pastes has to say kimi-box.
+if printf '%s' "$CL_UNCONV" | grep -q 'rig bootstrap kimi-box'; then
+  ok "crew status: the recovery names the box's own tenant role"
+else
+  fail "crew status: the recovery names the box's own tenant role" "$CL_UNCONV"
+fi
+
+# 4. THE FALSE NEGATIVE, which would be worse than the bug. A healthy un-hired
+#    box must be untouched: still `crew hire`, no INCOMPLETE, no new noise. A
+#    fix that refuses real boxes is a fleet outage, not a safety feature.
+CL_NOTHIRED="$(grep '^cli-nothired ' "$CL_TMP/crew-out" || true)"
+if printf '%s' "$CL_NOTHIRED" | grep -q 'crew hire cli-nothired' &&
+   ! printf '%s' "$CL_NOTHIRED" | grep -qE 'INCOMPLETE|unknown —'; then
+  ok "crew status: a converged un-hired box is unchanged"
+else
+  fail "crew status: a converged un-hired box is unchanged" "${CL_NOTHIRED:-no row at all}"
+fi
+
+# 5. The ambiguous case is NAMED, and named differently. `unknown` must not
+#    collapse into either neighbour: not into INCOMPLETE (crew did not observe
+#    a failed bootstrap, it observed nothing) and certainly not into converged.
+CL_UNREACH="$(grep '^cli-unreachable ' "$CL_TMP/crew-out" || true)"
+if printf '%s' "$CL_UNREACH" | grep -q 'convergence unknown'; then
+  ok "crew status: an unreachable box reports convergence unknown"
+else
+  fail "crew status: an unreachable box reports convergence unknown" "${CL_UNREACH:-no row at all}"
+fi
+
+# 6. THE LOAD-BEARING HALF. Reporting alone still lets a tired operator hire
+#    the box the table told them to hire, and hire is the irreversible verb.
+crew_cmd hire cli-unconverged
+if [ "$CL_RC" -ne 0 ] && grep -q 'REFUSED' "$CL_TMP/crew-out"; then
+  ok "crew hire: an unconverged box is refused, non-zero"
+else
+  fail "crew hire: an unconverged box is refused, non-zero" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# Naming WHAT is missing is the difference between a refusal an operator can
+# act on and one they have to go debug.
+if grep -q '/etc/rig/role' "$CL_TMP/crew-out" && grep -q 'rig bootstrap kimi-box' "$CL_TMP/crew-out"; then
+  ok "crew hire: the refusal names what is missing and how to fix it"
+else
+  fail "crew hire: the refusal names what is missing and how to fix it" "$(cat "$CL_TMP/crew-out")"
+fi
+# It must refuse BEFORE it installs anything. A refusal that has already staged
+# the engine is not a refusal.
+if ! grep -qE 'hiring cli-unconverged|registry:' "$CL_TMP/crew-out"; then
+  ok "crew hire: the refusal comes before any transport or registry work"
+else
+  fail "crew hire: the refusal comes before any transport or registry work" "$(cat "$CL_TMP/crew-out")"
+fi
+
+# 7. The unreachable box refuses too — rule 5 of the spec. The failure mode
+#    being closed is a broken box passing for a healthy one, so the case crew
+#    cannot see into must refuse rather than proceed.
+crew_cmd hire cli-unreachable
+if [ "$CL_RC" -ne 0 ] && grep -q 'did not answer' "$CL_TMP/crew-out"; then
+  ok "crew hire: an unreachable box is refused, not hired"
+else
+  fail "crew hire: an unreachable box is refused, not hired" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+
+# 8. The escape hatch actually hires. An override nobody can use is a wall.
+crew_cmd hire cli-unconverged --force
+if [ "$CL_RC" -eq 0 ] && grep -q 'hiring anyway (--force)' "$CL_TMP/crew-out"; then
+  ok "crew hire --force: the escape hatch still hires"
+else
+  fail "crew hire --force: the escape hatch still hires" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# …and it stays LOUD. A forced hire of an unconverged box is exactly the member
+# that fails every five minutes into a log nobody reads, so the operator who
+# asked for it must still be told what they armed.
+if grep -q 'NOT CONVERGED' "$CL_TMP/crew-out"; then
+  ok "crew hire --force: the override is still loud about what it armed"
+else
+  fail "crew hire --force: the override is still loud about what it armed" "$(cat "$CL_TMP/crew-out")"
+fi
+rm -f "$CL_TMP/crew-state/cli-unconverged.version"
+
+# 9. BULK. One box must not stop the convergence, and the skip must be counted,
+#    named, and reflected in the exit status — a fleet short a member that
+#    exits 0 is the same silent partial outage, one level up.
+#     The fixture skips THREE, and the spread is the point: cli-unconverged
+#     answered and has no marker, while cli-stopped and cli-unreachable answered
+#     nothing at all. All three refuse — an unreadable marker is not converged —
+#     and all three are skips rather than failures, because none of them was
+#     ever eligible to be hired.
+crew_cmd hire-all
+if grep -qE 'hire-all: [0-9]+ hired, 3 skipped, 0 failed' "$CL_TMP/crew-out"; then
+  ok "crew hire-all: an ineligible box is counted as a skip, not a failure"
+else
+  fail "crew hire-all: an ineligible box is counted as a skip, not a failure" \
+       "$(grep '^hire-all:' "$CL_TMP/crew-out" || cat "$CL_TMP/crew-out")"
+fi
+if grep -q 'not confirmed converged.*cli-unconverged' "$CL_TMP/crew-out"; then
+  ok "crew hire-all: the skipped box is NAMED, not just counted"
+else
+  fail "crew hire-all: the skipped box is NAMED, not just counted" "$(cat "$CL_TMP/crew-out")"
+fi
+# The summary must not assert the STRONGER fact about the whole set. A box that
+# is merely switched off has not failed a bootstrap, and sending an operator to
+# `rig bootstrap` for it is a new wrong answer in place of the old one.
+CL_SKIPLINE="$(grep '^  not confirmed converged' "$CL_TMP/crew-out" || true)"
+if [ -n "$CL_SKIPLINE" ] && ! printf '%s' "$CL_SKIPLINE" | grep -q 'rig bootstrap'; then
+  ok "crew hire-all: the summary does not blame a bootstrap it did not observe"
+else
+  fail "crew hire-all: the summary does not blame a bootstrap it did not observe" \
+       "${CL_SKIPLINE:-no summary line at all}"
+fi
+# …and the stopped box's own reason is the honest one.
+if grep -A2 '^cli-stopped: REFUSED' "$CL_TMP/crew-out" | grep -q 'did not answer'; then
+  ok "crew hire-all: a stopped box is refused for being unreadable, not unbootstrapped"
+else
+  fail "crew hire-all: a stopped box is refused for being unreadable, not unbootstrapped" \
+       "$(grep -A2 '^cli-stopped' "$CL_TMP/crew-out")"
+fi
+t "crew hire-all: a skip is not success" 1 "$CL_RC"
+# The healthy boxes in the same run were still hired — the whole point of a
+# skip rather than an abort. cli-unconverged is LAST in the roster, so this
+# also proves the loop reached the end.
+if grep -qE '^hire-all: [1-9][0-9]* hired' "$CL_TMP/crew-out"; then
+  ok "crew hire-all: healthy boxes are still hired in the same run"
+else
+  fail "crew hire-all: healthy boxes are still hired in the same run" \
+       "$(grep '^hire-all:' "$CL_TMP/crew-out")"
+fi
+
+# 10. `crew up --dry-run` is what an operator reads BEFORE the irreversible
+#     verb, so it is the last cheap place to stop the lie the NOTE told.
+crew_cmd up --dry-run
+if grep -qE '^cli-unconverged: WOULD SKIP' "$CL_TMP/crew-out"; then
+  ok "crew up --dry-run: does not say WOULD hire about a box it would refuse"
+else
+  fail "crew up --dry-run: does not say WOULD hire about a box it would refuse" \
+       "$(grep '^cli-unconverged' "$CL_TMP/crew-out")"
+fi
+if grep -qE '^cli-nothired: WOULD hire' "$CL_TMP/crew-out"; then
+  ok "crew up --dry-run: a converged box still reads WOULD hire"
+else
+  fail "crew up --dry-run: a converged box still reads WOULD hire" \
+       "$(grep '^cli-nothired' "$CL_TMP/crew-out")"
+fi
+
+# 11. The single-box view carries rig's provenance — the marker line itself and
+#     which rig wrote it. The table has room for one clause; this is where an
+#     operator who opened one box gets the rest.
+crew_cmd status cli-nothired
+if grep -qE '^rig: converged — role=.*tenant=yes' "$CL_TMP/crew-out" &&
+   grep -q 'converged by rig@' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a converged box reports its marker and its provenance"
+else
+  fail "crew status <box>: a converged box reports its marker and its provenance" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+crew_cmd status cli-unconverged
+if grep -q '^rig: INCOMPLETE' "$CL_TMP/crew-out" &&
+   grep -q 'rig bootstrap kimi-box' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: an unconverged box reports INCOMPLETE and the recovery"
+else
+  fail "crew status <box>: an unconverged box reports INCOMPLETE and the recovery" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+
+# 12. THE BUDGET. Convergence is read only for UN-HIRED boxes, so a healthy
+#     steady-state fleet pays no extra round trip at all. Asserted over the
+#     source rather than by counting calls: the read has to sit inside the
+#     `[ -z "$hired" ]` arm, and a later edit that hoists it out of there would
+#     add one exec per box per invocation to the verb an operator runs most.
+CL_RIGCALL="$(awk '
+  /^cmd_status\(\)/ { inf = 1 }
+  inf && /if \[ -z "\$hired" \]; then/ { arm = 1 }
+  inf && arm && /rig_report/ { print "in-arm"; exit }
+  inf && arm && /^    fi$/ { exit }
+' "$CL_CLI")"
+t "crew status: the marker is read only for un-hired boxes" in-arm "${CL_RIGCALL:-hoisted}"
+
 # The old #49 origin-repair surface disappears with the box-side checkout.
 if ! grep -qE 'git clone|remote get-url origin|git -C ~/crew (fetch|pull|checkout)' "$CL_ROOT/cli/crew"; then
   ok "crew hire: no box-side checkout or origin repair remains"

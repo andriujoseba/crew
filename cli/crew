@@ -1066,15 +1066,15 @@ report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # (heavy-duty/rig, commands/bootstrap-tenant.sh): `/etc/rig/role` is what the
 # box IS — `role=<agent>-box tenant=yes host=no`, written only after the tenant
 # bootstrap converged — and `/etc/rig/manifest` is what BUILT it, key=value
-# provenance. The marker decides the verdict; the manifest only enriches the
-# report, because a marker with no manifest beside it is a box converged by a
-# pre-manifest rig, which is old, not broken.
+# provenance. The marker decides the verdict; the rig manifest only enriches
+# the report, because a marker with no rig manifest beside it is a box
+# converged by a rig older than that file, which is old, not broken.
 #
 # Emits key=value lines:
 #     probe=ok                      (always, when the box answered at all)
 #     marker=<the marker's first line>          (omitted when absent)
-#     rig_version=<manifest converged_by>       (omitted when absent)
-#     rig_at=<manifest converged_at>            (omitted when absent)
+#     rig_version=<rig manifest converged_by>   (omitted when absent)
+#     rig_at=<rig manifest converged_at>        (omitted when absent)
 #
 # `probe=ok` is the load-bearing line and not a decoration: without it an
 # unreachable box and a converged-but-markerless one both capture as the empty
@@ -1650,8 +1650,16 @@ cmd_hire_all() {
   # NAMED, not just counted. A count tells the operator something is wrong; the
   # name is what they act on, and this whole issue exists because a table full
   # of equals never named the one box that could not work.
+  #
+  # "not confirmed converged" rather than "rig bootstrap failed", because the
+  # skip set holds two different facts: a box that answered and has no marker,
+  # and a box that answered nothing at all (stopped, unreachable). Both refuse
+  # — an unreadable marker is NOT converged — but only the first is a failed
+  # bootstrap, and a summary asserting the stronger one would send an operator
+  # to `rig bootstrap` for a box that is merely switched off. The per-box line
+  # above already carries the accurate reason for each.
   if [ "$skipped" -ne 0 ]; then
-    echo "  not converged (rig bootstrap never finished): $skipped_names"
+    echo "  not confirmed converged (reason printed above for each): $skipped_names"
   fi
   # A skip is not success: `crew hire-all` is run by automation, and an rc of 0
   # with a member missing from the fleet is the same silent partial outage this
@@ -1724,8 +1732,8 @@ cmd_up() {
 
   if [ "$dry" -eq 0 ] && [ "$skipped" -ne 0 ]; then
     echo
-    echo "up: $skipped box(es) SKIPPED — rig bootstrap never converged them: $skipped_names"
-    echo "    they are NOT on duty; each needs: box shell <box> → sudo rig bootstrap <agent>-box → box snapshot <box> bootstrapped"
+    echo "up: $skipped box(es) SKIPPED — not confirmed converged: $skipped_names"
+    echo "    they are NOT on duty; each printed its own reason above"
   fi
 
   if [ "$dry" -eq 0 ] && [ "$failed" -ne 0 ]; then
@@ -1828,8 +1836,8 @@ cmd_status() {
     case "$rconv" in
       converged)
         echo "rig: converged — $(report_field marker "$rreport")"
-        # A converged box with no manifest was built by a pre-manifest rig
-        # (rig#61). That is old, not broken, so it says nothing rather than
+        # A converged box with no rig manifest was built by a rig older than
+        # that file (rig#61) — old, not broken — so it says nothing rather than
         # inventing an alarm — the marker is what the verdict rests on.
         if [ -n "$rver" ]; then echo "     converged by $rver${rat:+ at $rat}"; fi ;;
       *)

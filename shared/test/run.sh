@@ -372,14 +372,18 @@ roster_install --box claude-builder --converge-registries >/dev/null 2>&1
 t install-triage-notify-seed fixture/wide "$(cat "$RDUTY/notify-repos.txt")"
 
 # The role registry is conf/roles/*.conf and nothing else; a second list — a
-# "role manifest" — is what this refuses. #159 introduced an unrelated manifest,
-# the content hash of the installed ENGINE tree, so rather than delete the guard
-# it now subtracts exactly that one use: a `manifest` that is not the ENGINE's
-# is still a duplicated registry, and the subtraction is per LINE, so the phrase
-# has to be written out every time it appears in these files.
+# "role manifest" — is what this refuses. Two unrelated manifests have since
+# turned up, so rather than delete the guard it subtracts exactly those two
+# uses: the content hash of the installed ENGINE tree (#159), and rig's
+# PROVENANCE file (#220 — /etc/rig/manifest, which rig owns and crew only
+# reads; crew declares no roles in it and could not, since it never writes it).
+# A `manifest` that is neither is still a duplicated registry, and the
+# subtraction is per LINE, so the qualified phrase has to be written out every
+# time it appears in these files.
 manifest_hits="$(grep -Rsinw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
     "$SHARED/lib" "$SHARED/install.sh" "$ROOT/examples/fleet.roster" "$ROOT/cli/crew" \
-    "$ROOT/drill" 2>/dev/null | grep -vi 'engine[ ._-]manifest' || true)"
+    "$ROOT/drill" 2>/dev/null \
+    | grep -vi 'engine[ ._-]manifest' | grep -vi 'rig[ /._-]manifest' || true)"
 if [ -n "$manifest_hits" ]; then
   r1="DUPLICATED: $manifest_hits"
 else
@@ -2938,6 +2942,119 @@ for ok in "0.1.0" "0.1.0-dev" "0.1.0-rc1" "1.2.3+meta"; do
   if valid_version "$ok"; then got=accept; else got=reject; fi
   t "valid_version-accepts[$ok]" accept "$got"
 done
+
+# --- convergence: rig's role marker, parsed (crew#220) ----------------------
+# `crew hire` is crew's irreversible verb — it installs the engine and arms
+# cron — and since #220 the thing that authorizes it is this parse. A box whose
+# tenant role never converged was indistinguishable from a healthy one in every
+# column crew had, so the marker became the discriminator; what the marker MEANS
+# is decided here, in eight lines that no fixture fleet can exercise fully.
+#
+# Extracted and eval'd out of cli/crew, the same way valid_version above is:
+# these are the shapes a real /etc/rig/role takes (heavy-duty/rig,
+# commands/bootstrap-tenant.sh writes the tenant line, commands/bootstrap.sh
+# the machine one) plus the hand-edited near-misses, and a stub box can only
+# ever answer with one of them at a time.
+cv_extract() { awk -v f="$2" '$0 ~ "^"f"\\(\\) \\{"{p=1} p{print} p&&/^\}$/{exit}' "$1"; }
+eval "$(cv_extract "$ROOT/cli/crew" report_field)"
+eval "$(cv_extract "$ROOT/cli/crew" convergence_of)"
+eval "$(cv_extract "$ROOT/cli/crew" convergence_detail)"
+eval "$(cv_extract "$ROOT/cli/crew" convergence_recovery)"
+
+# A box that answered NOTHING is `unknown`, and unknown is not converged. This
+# is rule 5 of #220's spec and the whole safety property: the defect closed is a
+# broken box passing for a healthy one, so the case crew cannot see into must
+# refuse rather than proceed. An empty capture is what an unreachable box, a
+# stopped box and a `box exec` that died all produce.
+t convergence-empty-capture-is-unknown unknown "$(convergence_of "")"
+t convergence-no-probe-line-is-unknown unknown "$(convergence_of "marker=role=claude-box tenant=yes host=no")"
+
+# Answered, and rig never wrote a marker: the reported case. The bootstrap
+# failed, so the vendor CLI was never installed.
+t convergence-answered-without-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\n')")"
+t convergence-empty-marker-value-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=\n')")"
+
+# The tenant line rig actually writes.
+t convergence-tenant-marker-is-converged converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box tenant=yes host=no\n')")"
+# …for every agent in the bench, since the role name is data and not a fixed set.
+for cv_agent in claude codex grok kimi; do
+  t "convergence-tenant-marker[$cv_agent]" converged \
+    "$(convergence_of "$(printf 'probe=ok\nmarker=role=%s-box tenant=yes host=no\n' "$cv_agent")")"
+done
+# Hand-edited with tabs or doubled spaces reads the same way, rather than
+# silently failing to match — whitespace is normalised before the field test,
+# exactly as rig's own root_door_of does it.
+t convergence-tenant-marker-tabs-are-normalised converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box\ttenant=yes\thost=no\n')")"
+t convergence-tenant-marker-double-space-is-normalised converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box  tenant=yes  host=no\n')")"
+
+# A MACHINE marker is not an agent tenant. rig writes this shape for the
+# `-server` roles and for a guest joined as a workload; a crew member is a box
+# guest converged by the tenant bootstrap, and nothing else installed its
+# vendor CLI.
+t convergence-machine-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=workload-server root-door=open host=no join=yes join-by=rig\n')")"
+t convergence-host-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=staging-server root-door=closed host=yes join=yes join-by=rig\n')")"
+
+# MUST FAIL — the field-anchoring. rig#77 is the scar: an unanchored pattern let
+# `root-door=closedish` resolve as `closed` and pass the one gate authorizing an
+# irreversible act. Hiring is crew's irreversible act, so a value that merely
+# EXTENDS `yes`, or a key that merely ENDS in `tenant`, must not authorize it.
+for cv_bad in "tenant=yesish" "tenant=yes-not" "xtenant=yes" "no-tenant=yes" "tenant=no" "tenant=YES"; do
+  t "convergence-refuses-near-miss[$cv_bad]" incomplete \
+    "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box %s host=no\n' "$cv_bad")")"
+done
+
+# The three causes take three different actions, so the detail must name which
+# one it is. Collapsing them into "not converged" throws away the only part of
+# the refusal an operator can act on.
+case "$(convergence_detail "")" in
+  *"did not answer"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-names-the-unreadable-case named "$r1"
+case "$(convergence_detail "$(printf 'probe=ok\n')")" in
+  *"/etc/rig/role"*"never converged"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-names-the-missing-marker named "$r1"
+case "$(convergence_detail "$(printf 'probe=ok\nmarker=role=workload-server root-door=open host=no\n')")" in
+  *"machine role"*"role=workload-server"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-quotes-the-machine-marker named "$r1"
+
+# The recovery is the three commands `box` itself prints when the bootstrap
+# hook fails, and it names the box's OWN tenant — a generic one is a command
+# that fails when pasted.
+t convergence-recovery-names-the-tenant \
+  "box shell kimi-reviewer → sudo rig bootstrap kimi-box → box snapshot kimi-reviewer bootstrapped" \
+  "$(convergence_recovery kimi-reviewer kimi)"
+# An off-roster box names no agent. A placeholder an operator can fill in beats
+# a malformed `rig bootstrap -box`.
+case "$(convergence_recovery adhoc-box "")" in
+  *"rig bootstrap <agent>-box"*) r1=placeholder ;; *) r1=MALFORMED ;;
+esac
+t convergence-recovery-without-an-agent-is-a-placeholder placeholder "$r1"
+# It must never advise the verb that caused the incident. `crew hire` on a box
+# the table told the operator to hire is the whole of #220.
+case "$(convergence_recovery kimi-reviewer kimi)" in
+  *"crew hire"*) r1=ADVISES_HIRE ;; *) r1=bootstrap ;;
+esac
+t convergence-recovery-does-not-advise-crew-hire bootstrap "$r1"
+
+# The marker path is rig's, and it is not crew's to invent. Asserted against the
+# source so a refactor that "tidies" it to a crew-shaped path is caught here
+# rather than on a real host — crew reads what rig writes, and rig writes these
+# two (rig#61 for the manifest).
+if grep -q '/etc/rig/role' "$ROOT/cli/crew" && grep -q '/etc/rig/manifest' "$ROOT/cli/crew"; then
+  r1=rigs
+else
+  r1=INVENTED
+fi
+t convergence-reads-rigs-own-paths rigs "$r1"
 
 # --- cli/crew's self-description: the table is the source of truth (#97) ----
 # The property under test is ANTI-DRIFT, not cosmetics. Before #97 the command
