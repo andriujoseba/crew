@@ -867,14 +867,20 @@ function phoneBank(x,t,st){var y=612-30,live=st&&st!=="offline";
 
      backdrop  — static per role+size, blur baked in, rendered once ever.
                  No animation by design: it is depth of field, not a scene.
-     portrait  — buildRobo cropped to head-and-shoulders, cached per unit and
-                 refreshed on a budget. The refresh IS the webcam frame rate:
-                 a feed that updates a few times a second reads as live video,
-                 so the budget is a feature here, not a compromise.
+     portrait  — buildRobo cropped to head-and-shoulders, built ONCE per
+                 (unit, state, size) at a canonical per-unit time and cached
+                 as a deterministic still. The still never advances: sampling
+                 smooth positional motion at seconds-scale cadence reads as a
+                 broken renderer, not as a laggy webcam (#226). The life the
+                 cadence was meant to fake lives in COMPOSITE TIME instead —
+                 the blit bobs the still sub-pixel per frame, and the feed
+                 fiction is carried by an explicit glitch grammar (still
+                 swaps and rare beats), the way real degraded video shows
+                 lag: artifacts over continuous motion, never teleports.
      overlays  — AR-style telemetry drawn crisp every frame: state, uptime,
                  idle time over the last 24h, queue, a heartbeat trace, the
                  current session timer. These are the facts, so they never
-                 wait on the portrait's cadence. */
+                 wait on the portrait. */
 var CAMREF={W:480,H:300};   // reference tile — renderMini and the whiteboard scale off it
 
 /* ---- static role backdrop --------------------------------------------------
@@ -929,20 +935,30 @@ function camBG(role,pw,ph){
 
 /* ---- the portrait ----------------------------------------------------------
    buildRobo, not borrowRoom: the tile needs the unit, not the hall, so the
-   still costs a sprite build instead of a full room render — cheap enough
-   that every visible feed refreshes a few times a second. Framing hangs off
-   the one face anchor every vendor already reports (`hy`, the visor line),
-   with a per-vendor crop width because a spider and a humanoid do not wear
-   their shoulders at the same span. */
+   still costs a sprite build instead of a full room render. A still is a PURE
+   FUNCTION of (box, agent, room, state, size): it is built at a canonical
+   per-unit time — strPhase(box), constant for the life of the box — so every
+   time-driven term in the builders (breath, sway, bob, glow pulses) freezes
+   at a stable, per-unit phase, and a cache hit is always exact. Rebuilds
+   happen on cache miss only: first sight, state change, resize. Framing
+   hangs off the one face anchor every vendor already reports (`hy`, the
+   visor line), with a per-vendor crop width because a spider and a humanoid
+   do not wear their shoulders at the same span. */
 /* w — crop width in robo px (smaller = closer); fy — where the face line
    sits down the frame; dy — bias in robo px for vendors whose `hy` is not
-   their eye line (kimi reports the cowl, a head lower than its optics). */
-var CAMFRAME={claude:{w:250,dy:0,fy:0.40},codex:{w:260,dy:14,fy:0.46},
-              grok:{w:206,dy:-2,fy:0.36},kimi:{w:330,dy:-38,fy:0.42}};
+   their eye line (kimi reports the cowl, a head lower than its optics).
+   ba/bf — composite-time bob amplitude (sprite px) and frequency, seeded
+   from each sprite's own baked sine so the tile moves the way the room
+   shows the same unit moving; bx/bxf — grok's sway x-component. Applied at
+   blit time in drawCamCell, scaled by screen-px-per-sprite-px, so screen
+   motion is uniform across vendors regardless of crop zoom. */
+var CAMFRAME={claude:{w:250,dy:0,fy:0.40,ba:2.0,bf:1.4},
+              codex:{w:260,dy:14,fy:0.46,ba:1.4,bf:1.5},
+              grok:{w:206,dy:-2,fy:0.36,ba:1.6,bf:1.7,bx:0.8,bxf:1.3},
+              kimi:{w:330,dy:-38,fy:0.42,ba:2.2,bf:1.6}};
 function mnow(){return (window.performance&&performance.now)?performance.now():0;}
-var camStills={}, camFills=0, camCost=0;
-var CAM_KEEP=64, CAM_BUDGET=2, CAM_SLOW_MS=14, CAM_TTL_SLOW=3.5;
-var CAM_TTL={working:0.30,idle:0.6,offline:2.5};
+var camStills={}, camFills=0, camCost=0, camSwaps={}, camBuiltAt=[];
+var CAM_KEEP=64, CAM_BUDGET=2;
 function camPrune(){
   var ks=Object.keys(camStills);if(ks.length<CAM_KEEP)return;
   ks.sort(function(a,b){return camStills[a].at-camStills[b].at;});
@@ -952,14 +968,20 @@ function camStill(t,u,pw,ph){
   var box=UNITID(u);
   var key=box+"|"+u.agent+"|"+u.room+"|"+u.state+"|"+pw+"x"+ph;
   var e=camStills[key];
-  var ttl=camCost>CAM_SLOW_MS?CAM_TTL_SLOW:(CAM_TTL[u.state]||0.9);
-  if(e&&(t-e.at)<ttl*e.jit)return e;
-  if(camFills>=CAM_BUDGET)return e||null;
+  if(e&&e.ok){e.at=mnow();return e;}
+  /* CAM_BUDGET survives the cadence's removal as a builds-per-frame throttle
+     for miss storms only — resize and scroll-reveal, not steady state. */
+  if(camFills>=CAM_BUDGET)return null;
   camFills++;
-  if(!e){camPrune();e=camStills[key]={cv:oc(pw,ph),at:0,jit:0.75+0.5*(strPhase(key)/6.283)};}
-  var t0=mnow(), sa=AGENT, ss=STATE;
+  if(!e){camPrune();e=camStills[key]={cv:oc(pw,ph),at:mnow(),ok:0};}
+  var t0=mnow(), sa=AGENT, ss=STATE, sbp=beaconPulse;
+  /* The canonical build time. Also pin beaconPulse — it is written by the
+     ROOM view's beacon each frame, so an offline kimi still would otherwise
+     depend on which console the operator last visited. */
+  var tCanon=strPhase(box);
+  beaconPulse=0.65;
   AGENT=u.agent;STATE=u.state;
-  var info=buildRobo(t,u.state);
+  var info=buildRobo(tCanon,u.state);
   /* The role's key light lands on the unit, same rule as drawRobot's L17 tint:
      a sprite that keeps studio-neutral colour in an amber room is a paste-up. */
   var off=u.state==="offline";
@@ -975,39 +997,36 @@ function camStill(t,u,pw,ph){
   var jx=(strPhase(box)/6.283-0.5)*16, jy=(strPhase(box+"y")/6.283-0.5)*10;
   var sw=f.w, sh=sw*(ph/pw);
   var sx=Math.max(0,Math.min(RW-sw,260+jx-sw/2));
-  /* The camera is MOUNTED. hy rides the sprite's own idle motion — grok
-     reports half its breath, kimi its whole hover bob — so a crop recomputed
-     per refresh TRACKS the chest and cancels on screen exactly the life it
-     exists to show: kimi hovered perfectly still, claude sat frozen, grok
-     breathed at half height. Lock the mount on a key's first frame; from
-     then on the unit moves inside a fixed frame, like anything on a tripod. */
-  if(e.sy0===undefined)e.sy0=info.hy+f.dy-sh*f.fy+jy;
-  var sy=e.sy0;
+  /* The camera is MOUNTED. hy rides the sprite's own idle motion, but the
+     sprite is now built at tCanon, so hy is the same number every build of
+     this key — the mount is deterministic without the first-frame lock the
+     wall-clock builds needed. */
+  var sy=info.hy+f.dy-sh*f.fy+jy;
   var c=e.cv.getContext("2d");
-  /* Codex's bob is Math.round()ed for the room — at portrait zoom that is a
-     1px stutter while everyone else sweeps. Top it up with the smooth curve
-     the round() threw away, applied to the whole draw so body and glow move
-     together. Offline units get nothing: dead is still. */
-  var dy3=(u.agent==="codex"&&!off)?Math.sin(t*1.5)*ph*0.008:0;
   c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
   c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
   c.clearRect(0,0,pw,ph);
   if(off)c.filter="saturate(0.45) brightness(0.88)";
-  c.drawImage(robo,sx,sy,sw,sh,0,dy3,pw,ph);
+  c.drawImage(robo,sx,sy,sw,sh,0,0,pw,ph);
   c.filter="none";
   c.globalCompositeOperation="lighter";
-  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx,sy,sw,sh,0,dy3,pw,ph);
+  c.globalAlpha=off?0.4:0.9;c.drawImage(rrim,sx,sy,sw,sh,0,0,pw,ph);
   /* The emissive pass, blurred like the room compositor's glow buffer but
      scaled to portrait zoom. Two taps, not three: the third radius at this
      size is a wash. */
   var bl=Math.max(2,Math.round(pw/90));
-  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx,sy,sw,sh,0,dy3,pw,ph);
-  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx,sy,sw,sh,0,dy3,pw,ph);
-  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx,sy,sw,sh,0,dy3,pw,ph);
+  c.globalAlpha=0.55;c.filter="blur("+bl+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=0.45;c.filter="blur("+bl*3+"px)";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
+  c.globalAlpha=off?0.5:0.9;c.filter="none";c.drawImage(remit,sx,sy,sw,sh,0,0,pw,ph);
   c.globalCompositeOperation="source-over";c.globalAlpha=1;
-  AGENT=sa;STATE=ss;
-  e.at=t;
+  AGENT=sa;STATE=ss;beaconPulse=sbp;
+  e.ok=1;e.at=mnow();
+  /* A landed build is a feed swap — drawCamCell performs a glitch over it.
+     The dev path (renderMini, camFills forced negative) records none, so a
+     golden render of a fixed (unit, state, size, t) stays reproducible. */
+  if(camFills>0)camSwaps[box]=t;
   var d=mnow()-t0;camCost=camCost?camCost*0.6+d*0.4:d;
+  camBuiltAt.push(mnow());if(camBuiltAt.length>240)camBuiltAt.splice(0,120);
   return e;
 }
 
@@ -1079,9 +1098,22 @@ function drawCamCell(t,x,y,w,h,unit){
   var pw=Math.max(1,Math.round((w-2)*dpr)), ph=Math.max(1,Math.round((h-2)*dpr));
   X.drawImage(camBG(unit.room,pw,ph),x+1,y+1,w-2,h-2);
   var still=camStill(t,unit,pw,ph);
-  if(still&&still.at)X.drawImage(still.cv,x+1,y+1,w-2,h-2);
-  /* Live sensor grain — the one per-frame texture, and what says "feed"
-     rather than "poster" between portrait refreshes. */
+  if(still&&still.ok){
+    /* Composite-time motion: the still is frozen, so the LIFE is applied at
+       blit time — a sub-pixel bob in each sprite's own rhythm, phase-offset
+       per box so tiles never sync, amplitude scaled to screen px so every
+       vendor moves the same amount regardless of crop zoom. One translated
+       drawImage per frame: 60fps smoothness at negligible cost. The 1-2px
+       gap it opens at the frame edge shows the defocused backdrop — the
+       subject moves inside a mounted camera's frame, which is the webcam
+       grammar the cadence never delivered. Dead is still; reduced is still. */
+    var fb=CAMFRAME[unit.agent]||CAMFRAME.claude, bsc=(w-2)/fb.w;
+    var by=(off||reduced)?0:fb.ba*bsc*Math.sin(t*fb.bf+bp);
+    var bx3=(off||reduced||!fb.bx)?0:fb.bx*bsc*Math.sin(t*(fb.bxf||1.3)+bp*1.7);
+    X.drawImage(still.cv,x+1+bx3,y+1+by,w-2,h-2);
+  }
+  /* Live sensor grain — the one per-frame texture, and the base coat of the
+     feed fiction under the glitch grammar. */
   X.save();X.globalAlpha=off?0.07:0.04;X.globalCompositeOperation="overlay";
   var nx=-((t*61)%40),ny=-((t*47)%40);
   for(var gx=nx;gx<w;gx+=220)for(var gy=ny;gy<h;gy+=220)X.drawImage(noise,x+gx,y+gy);
@@ -5821,11 +5853,9 @@ pollFleet();setInterval(pollFleet,POLL_MS);
 window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
   /* The floor camera (vertical, in px of grid overflow), for the browser
-     walk. The camera eases per FRAME, not per second, and a console dwell
-     expires every visible portrait still — so the first floor frames after
-     Escape re-render sprites, and a fixed post-wheel wait covers almost no
-     easing on a slow machine. The walk polls this instead of sleeping; it
-     asserts by outcome either way. */
+     walk. The camera eases per FRAME, not per second, so a fixed post-wheel
+     wait covers almost no easing on a slow machine. The walk polls this
+     instead of sleeping; it asserts by outcome either way. */
   cam:function(){return floorCam;},
   /* render(dst,{agent,room,state,t,warm,flat}) */
   render:function(dst,o){
