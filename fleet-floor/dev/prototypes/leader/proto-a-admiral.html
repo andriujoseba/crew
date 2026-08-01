@@ -1067,6 +1067,20 @@ function drawRoom(t,st){
     // the glazed doors: two leaves with a centre mullion
     S.fillStyle="rgba(8,10,16,0.88)";S.fillRect(fx2+9,fy2+10,FW-18,FH-20);
     S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(fx2+9,fy2+10,FW-18,3);
+    /* THE CABINET FLOOR. A fresh reviewer: "there is no cabinet floor drawn
+       anywhere — the extinguisher's bottom cap ends in air, its straps span
+       nothing, the nozzle floats." All true, and all one omission: a box
+       with no interior surface cannot hold anything. A shelf, a back panel
+       and a mounting rail, so every item in here stands or hangs on something. */
+    var IFY=fy2+FH-30;                                  // the shelf
+    S.fillStyle="rgba(30,34,42,0.95)";S.fillRect(fx2+9,IFY,FW-18,9);
+    S.fillStyle="rgba(150,166,196,"+(0.16*lit)+")";S.fillRect(fx2+9,IFY,FW-18,1.4);
+    S.fillStyle="rgba(2,4,8,0.7)";S.fillRect(fx2+9,IFY+7.6,FW-18,3);
+    // the vertical mounting rail the strap and the reel bracket bolt to
+    S.fillStyle="rgba(40,46,56,0.95)";S.fillRect(fx2+16,fy2+14,7,IFY-fy2-14);
+    S.fillStyle="rgba(150,166,196,"+(0.14*lit)+")";S.fillRect(fx2+16,fy2+14,1.3,IFY-fy2-14);
+    for(var mr=0;mr<7;mr++){
+      S.fillStyle="rgba(2,4,8,0.7)";S.fillRect(fx2+18,fy2+22+mr*22,3.4,4);}
     S.fillStyle="rgba(120,34,26,"+(0.7+0.24*lit)+")";S.fillRect(fx2+FW/2-2.4,fy2+10,5,FH-20);
     // the hose reel: a wound drum big enough to matter
     var rcx=fx2+FW*0.66, rcy=fy2+FH*0.44, RR=42;
@@ -1076,6 +1090,8 @@ function drawRoom(t,st){
     S.strokeStyle="rgba(96,112,92,"+(0.2+0.22*lit)+")";S.lineWidth=1.5;
     for(var hr2=0;hr2<8;hr2++){
       S.beginPath();S.arc(rcx,rcy,RR-hr2*4.6,3.5+hr2*0.5,5.2+hr2*0.5);S.stroke();}
+    S.fillStyle="rgba(40,46,56,0.95)";S.fillRect(fx2+20,rcy-5,rcx-fx2-20,10);   // bracket off the rail
+    S.fillStyle="rgba(150,166,196,"+(0.14*lit)+")";S.fillRect(fx2+20,rcy-5,rcx-fx2-20,1.3);
     S.fillStyle="rgba(120,132,150,"+(0.3+0.24*lit)+")";
     S.beginPath();S.arc(rcx,rcy,7,0,7);S.fill();
     S.fillStyle="rgba(2,4,8,0.6)";S.beginPath();S.arc(rcx,rcy,2.6,0,7);S.fill();
@@ -1086,13 +1102,13 @@ function drawRoom(t,st){
     S.strokeStyle="rgba(86,100,82,"+(0.2+0.2*lit)+")";S.lineWidth=1.4;
     S.beginPath();S.moveTo(rcx-RR-1,rcy+5);
     S.quadraticCurveTo(rcx-RR-17,rcy+51,rcx-RR-7,rcy+77);S.stroke();
-    S.save();S.translate(rcx-RR-6,rcy+80);S.rotate(0.4);
+    S.save();S.translate(rcx-RR-6,Math.min(rcy+80,IFY-6));S.rotate(0.4);
     S.fillStyle="rgba(130,142,162,"+(0.34+0.3*lit)+")";S.fillRect(-4,-3,20,7);
     S.fillStyle="rgba(196,146,54,"+(0.4+0.34*lit)+")";S.fillRect(14,-2.2,9,5.4);
     S.fillStyle="rgba(214,232,255,"+(0.24*lit)+")";S.fillRect(-4,-3,20,1.4);
     S.restore();
     // the extinguisher: body, neck, handle, gauge, at a size you could lift
-    var ex9=fx2+26, ey9=fy2+FH*0.34, EW=30, EH=78;
+    var EW=30, EH=78, ex9=fx2+30, ey9=fy2+FH-30-EH;   // its base ON the shelf
     S.fillStyle="rgba(2,4,8,0.5)";rrS(ex9+3,ey9+4,EW,EH,7);S.fill();
     var exg=S.createLinearGradient(ex9,0,ex9+EW,0);
     exg.addColorStop(0,"rgba(206,78,52,"+(0.5+0.44*lit)+")");
@@ -1110,7 +1126,9 @@ function drawRoom(t,st){
     S.fillStyle="rgba(236,222,196,"+(0.26*lit)+")";S.fillRect(ex9+5,ey9+30,20,3);     // label
     S.fillStyle="rgba(236,222,196,"+(0.16*lit)+")";S.fillRect(ex9+5,ey9+36,14,2);
     // bracket strap holding it, and the glass over the whole cabinet
-    S.fillStyle="rgba(140,152,172,"+(0.3+0.24*lit)+")";S.fillRect(ex9-4,ey9+20,EW+8,5);
+    // the strap now spans from the mounting rail to the cabinet side
+    S.fillStyle="rgba(140,152,172,"+(0.3+0.24*lit)+")";S.fillRect(fx2+16,ey9+22,ex9-fx2+EW+8,5);
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(fx2+16,ey9+26.4,ex9-fx2+EW+8,1.6);
     S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(ex9-4,ey9+24.4,EW+8,1.6);
     S.fillStyle="rgba(200,220,255,0.05)";
     poly(S,[[fx2+9,fy2+FH*0.72],[fx2+FW*0.62,fy2+10],[fx2+FW-18,fy2+10],[fx2+9,fy2+FH-10]]);S.fill();
@@ -1239,12 +1257,22 @@ function drawRoom(t,st){
   // the deck line itself is a lit arris where floor meets bulkhead
   pl(S,0,GYS,SW,GYS,"rgba(190,206,234,"+(0.2*lit)+")",1.4);
   pl(S,0,GYS+1.6,SW,GYS+1.6,"rgba(3,6,11,0.5)",1.6);
-  for(var dp2=0;dp2<5;dp2++){
-    pl(S,0,GYS+14+dp2*16,SW,GYS+14+dp2*16,"rgba(3,6,11,0.6)",1.8);
-    pl(S,0,GYS+15.6+dp2*16,SW,GYS+15.6+dp2*16,"rgba(174,190,218,"+(0.075*lit)+")",1);}
-  for(var dv=0;dv<SW;dv+=160){
-    pl(S,dv,GYS,dv-14,SH,"rgba(3,6,11,0.55)",1.8);
-    pl(S,dv+1.6,GYS,dv-12.4,SH,"rgba(174,190,218,"+(0.06*lit)+")",1);}
+  for(var dp2=0;dp2<6;dp2++){
+    var dy9=GYS+10+Math.pow(dp2/5,1.7)*(SH-GYS-14);   // compressed toward the horizon
+    pl(S,0,dy9,SW,dy9,"rgba(3,6,11,0.6)",1.4+dp2*0.5);
+    pl(S,0,dy9+1.6,SW,dy9+1.6,"rgba(174,190,218,"+(0.075*lit)+")",1);}
+  /* ROUND 6 · LOOP 10b — THE GROUND PLANE. A fresh reviewer's verdict on the
+     whole room: "the deck seams run dead vertical with zero convergence, so
+     the lower quarter reads as a second wall — the single biggest remaining
+     gap." Correct, and it was a one-line bug: every seam was offset by a
+     FIXED -14px at the bottom, which is a shear, not a perspective. Seams
+     in a floor converge on a vanishing point. They now splay outward from
+     one, so the deck reads as receding away from the camera. */
+  var VPX=UX-30;
+  for(var dv=-320;dv<SW+320;dv+=160){
+    var bx9=dv+(dv-VPX)*0.5;
+    pl(S,dv,GYS,bx9,SH,"rgba(3,6,11,0.55)",1.8);
+    pl(S,dv+1.6,GYS,bx9+2.4,SH,"rgba(174,190,218,"+(0.06*lit)+")",1);}
   if(!offl){var pool=S.createRadialGradient(UX,GYS+8,10,UX,GYS+8,260);
     pool.addColorStop(0,kk(0.09*lit));pool.addColorStop(1,kk(0));
     S.fillStyle=pool;S.beginPath();S.ellipse(UX,GYS+8,260,32,0,0,7);S.fill();}
@@ -2079,14 +2107,28 @@ function drawScene(t,st){
   // mid rail
   S.fillStyle="rgba(16,21,28,0.98)";S.fillRect(0,RY+42,SW,8);
   S.fillStyle="rgba(160,178,206,0.09)";S.fillRect(0,RY+42,SW,1.3);
-  // stanchions, on the same 230px pitch as the deck seams
-  [70,300,530,760,990,1220].forEach(function(sx3){
-    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(sx3-7,RY+2,18,SH-RY);
+  /* stanchions. The reviewer caught two faults I introduced with this rail:
+     the posts "run into undrawn black at the frame edge" with no feet, and
+     one passed straight THROUGH the unit's boot. Posts now stand clear of
+     the figure, and each lands on a base plate with a toe board between —
+     which is also what stops the bottom of the frame reading as a void. */
+  var TOEY=SH-34;
+  S.fillStyle="rgba(14,18,25,0.99)";S.fillRect(0,TOEY,SW,15);   // toe board
+  S.fillStyle="rgba(170,188,218,0.1)";S.fillRect(0,TOEY,SW,1.5);
+  S.fillStyle="rgba(2,4,8,0.6)";S.fillRect(0,TOEY+13,SW,3);
+  [66,286,700,930,1160].forEach(function(sx3){
+    S.fillStyle="rgba(2,4,8,0.5)";S.fillRect(sx3-7,RY+2,18,TOEY-RY);
     var stg=S.createLinearGradient(sx3-8,0,sx3+8,0);
     stg.addColorStop(0,"rgba(48,57,71,0.99)");stg.addColorStop(0.45,"rgba(22,28,37,0.99)");
     stg.addColorStop(1,"rgba(9,12,18,0.99)");
-    S.fillStyle=stg;S.fillRect(sx3-8,RY,16,SH-RY);
-    S.fillStyle="rgba(186,204,232,0.14)";S.fillRect(sx3-8,RY,1.6,SH-RY);});
+    S.fillStyle=stg;S.fillRect(sx3-8,RY,16,TOEY-RY+10);
+    S.fillStyle="rgba(186,204,232,0.14)";S.fillRect(sx3-8,RY,1.6,TOEY-RY+10);
+    // the base plate the post is actually bolted down on
+    S.fillStyle="rgba(2,4,8,0.55)";S.fillRect(sx3-17,TOEY+8,38,9);
+    S.fillStyle="rgba(34,42,54,0.99)";S.fillRect(sx3-16,TOEY+4,34,11);
+    S.fillStyle="rgba(186,204,232,0.13)";S.fillRect(sx3-16,TOEY+4,34,1.4);
+    [-10,10].forEach(function(bo9){
+      S.fillStyle="rgba(128,144,172,0.4)";S.beginPath();S.arc(sx3+bo9,TOEY+9,2,0,7);S.fill();});});
   // the near bulkhead corner, hard left, and a cable dropping frame right
   S.fillStyle="rgba(7,10,16,0.96)";S.fillRect(0,0,34,SH);
   S.fillStyle="rgba(150,166,194,0.06)";S.fillRect(32,0,2,SH);

@@ -136,3 +136,49 @@ became worth doing once there was a value range to model in.
 | working | idle | offline |
 |---|---|---|
 | ![working](renders/A-working.png) | ![idle](renders/A-idle.png) | ![offline](renders/A-offline.png) |
+
+## Round 6 — integration, not more detail
+
+Round 5 raised the *fidelity* of each prop. The operator's note on it was that
+the room still read as "a lot of things just thrown there" — correct, and a
+different problem: fidelity is per-object, **integration is between objects**.
+An adversarial review against the builder/reviewer/triage rooms (run blind, no
+knowledge of intent) confirmed it and found the mechanical cause: **the deck
+was drawn AFTER the furniture**, so the floor fill and the command platform
+overpainted the bottom 24px of everything standing on them. Every prop was
+literally having its contact with the floor erased.
+
+1. **The room becomes a box** — pilasters, header, truss, reveal, darker
+   surround. It had bled edge to edge, so there was no structure for anything
+   to be installed *in*.
+2. **The helm console** — wheel, telegraph, gyro repeater and binnacle were
+   four objects on four disc feet spread across the deck like garden
+   ornaments. Now one station: plinth, raked instrument face, wheel on a boss.
+   The wheel was ~35cm against a 2m unit; it is ~1m now. The compass was
+   redrawn as a gimballed dome after a blind reviewer guessed "upside-down
+   lampshade, wastebasket, spittoon" before "binnacle".
+3. **The wall becomes a rank** — one `panel()`, one baseline, one gutter, one
+   bezel, which also fills the 950x480 void that was the largest single region
+   in the frame.
+4. **Nothing unidentifiable** — caged beacon, bell on a gallows bracket, chart
+   rolls seen end-on, call lamp mounted on the bank it is named after.
+5. **Cable runs re-routed** — a clamp had been sitting *on* the FLAG-1 board
+   and two more were bolted to the *window glass*; both runs ended in mid-air.
+   They now follow structure into real deck glands.
+6. **Fire station at 2.2x** — it was a keyring extinguisher in an empty box.
+7. **Plot table becomes furniture** — legs at the corners, splayed feet,
+   stretcher rail. It had been cantilevered on one off-centre post.
+8. **One mounting language** — both pendants hang on visible stems (one had
+   been hidden behind the new header, so identical fixtures told two stories).
+9. **A real foreground** — the bridge rail moves to shin height and crosses in
+   front of the unit, grounding it by occlusion the way the benchmarks do.
+10. **Focal hierarchy**, then **the ground plane**: deck seams had a fixed
+    -14px offset, which is a shear, not a perspective, so the floor read as a
+    second wall. They converge now; the rail got base plates and a toe board;
+    the fire cabinet got an interior shelf so its contents stand on something.
+
+Blind re-review after loop 10 rated execution **5/10** against the benchmarks
+and named the ground plane as the biggest gap — that verdict is what drove the
+final pass. Known remaining: soft airbrushed shadows sit oddly in a hard-edge
+flat-vector room, the light cones are opaque wedges rather than falloff, and
+secondary label type is illegible at 1x.

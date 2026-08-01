@@ -863,8 +863,27 @@ function drawRoom(t,st){
      with real depth around a recessed tube, a glass face that bulges (so
      the highlight bends), corner screws, and a tally lamp. Drawn once,
      twenty-four times over. */
+  /* ROUND 6 · LOOP 2 — THE SCREENS ARE ACTUALLY MOUNTED.
+     Operator: "some are transparent-ish or seem like they are not mounted."
+     Both were true and both were the same fault — a monitor was a case with
+     nothing BEHIND it, so the wall's own value showed through the gaps and
+     the whole bay read as a decal. A rack monitor sits in a shelf: it has a
+     solid backing plate behind it, a pair of L-brackets carrying it, and it
+     is TILTED down towards the operator, which is the cue that reads as
+     "installed" faster than any amount of bezel detail. */
   SCREENS.forEach(function(sc,si){
-    // the case's shadow on the rack behind it
+    // the backing plate: an opaque panel filling the bay behind the monitor
+    S.fillStyle="rgba(1,3,6,0.62)";S.fillRect(sc.x-15,sc.y-14,sc.w+30,sc.h+34);
+    var bkg=S.createLinearGradient(0,sc.y-14,0,sc.y+sc.h+20);
+    bkg.addColorStop(0,"#1c222c");bkg.addColorStop(1,"#11161e");
+    S.fillStyle=bkg;S.fillRect(sc.x-13,sc.y-13,sc.w+26,sc.h+31);
+    S.fillStyle="rgba(150,170,204,"+(0.09*lit)+")";S.fillRect(sc.x-13,sc.y-13,sc.w+26,1.2);
+    // the two L-brackets it hangs on, standing proud of the plate
+    [sc.x-9,sc.x+sc.w+3].forEach(function(bkx){
+      S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(bkx,sc.y+sc.h+4,6,14);
+      S.fillStyle="#2c3441";S.fillRect(bkx,sc.y+sc.h+2,6,14);
+      S.fillStyle="rgba(198,214,240,"+(0.14*lit)+")";S.fillRect(bkx,sc.y+sc.h+2,6,1.1);});
+    // the case's shadow on the plate behind it
     S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(sc.x-6,sc.y-4,sc.w+14,sc.h+16);
     // the case: a moulded shell, lit on top, dark under the chin
     var csg=S.createLinearGradient(0,sc.y-9,0,sc.y+sc.h+11);
@@ -1054,6 +1073,88 @@ function drawRoom(t,st){
       swg.addColorStop(1,"rgba(146,178,224,0)");
       S.fillStyle=swg;S.fillRect(0,ry8,SW,8);});
     S.restore();}
+  /* ROUND 6 · LOOPS 3+4 — AN EQUIPMENT BANK.
+     Operator: "I'd have added a VHS, and more devices." Right — a signal
+     gallery is not only screens; it is the GEAR that drives them, and a
+     wall of nothing but monitors reads as a texture however varied the
+     content. This is also the consolidation loop: rather than scattering
+     more objects, the devices go into ONE rack bank in a single frame with
+     a shared gutter, the way the reviewer room banks its four code screens.
+     Two decks, a waveform monitor and a tape store, stacked on rails. */
+  (function(){
+    var EX=1126, EY=196, EW=114;   // inside the pilaster, clear of the door
+    function unit3u(uy,uh,fill,label){
+      S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(EX+4,uy+4,EW,uh);
+      var ug=S.createLinearGradient(0,uy,0,uy+uh);
+      ug.addColorStop(0,"#333c4a");ug.addColorStop(0.12,"#242c37");ug.addColorStop(1,"#141a23");
+      S.fillStyle=ug;S.fillRect(EX,uy,EW,uh);
+      S.fillStyle="rgba(200,218,246,"+(0.2*lit)+")";S.fillRect(EX,uy,EW,1.4);
+      S.strokeStyle="rgba(1,3,6,0.6)";S.lineWidth=1.2;S.strokeRect(EX+0.6,uy+0.6,EW-1.2,uh-1.2);
+      [EX+1,EX+EW-8].forEach(function(ea){
+        S.fillStyle="rgba(1,3,6,0.45)";S.fillRect(ea,uy+3,7,uh-6);
+        S.fillStyle="rgba(126,142,170,"+(0.28+0.2*lit)+")";
+        S.beginPath();S.arc(ea+3.5,uy+7,1.8,0,7);S.fill();
+        S.beginPath();S.arc(ea+3.5,uy+uh-7,1.8,0,7);S.fill();});
+      fill(EX+10,uy+4,EW-20,uh-8);
+      S.save();S.textAlign="left";S.font="700 6px ui-monospace,Menlo,monospace";
+      S.fillStyle="rgba(150,168,200,"+(0.34*lit)+")";S.fillText(label,EX+11,uy+uh-4);S.restore();}
+    unit3u(EY,42,function(x,y,w,h){
+      S.fillStyle="rgba(1,3,6,0.85)";S.fillRect(x,y+3,w*0.5,10);
+      S.fillStyle="rgba(120,136,164,"+(0.16*lit)+")";S.fillRect(x,y+3,w*0.5,1.1);
+      S.fillStyle="rgba(1,3,6,0.8)";S.fillRect(x+w*0.56,y+3,w*0.44,10);
+      if(!offl){S.save();S.textAlign="right";S.font="700 8px ui-monospace,Menlo,monospace";
+        S.fillStyle="rgba(120,214,150,"+(0.8*lit)+")";
+        S.fillText(("000"+(Math.floor(t*2)%10000)).slice(-4),x+w-3,y+12);S.restore();}
+      for(var k=0;k<6;k++){
+        S.fillStyle="rgba(1,3,6,0.6)";rrS(x+2+k*10,y+18,8,7,1.4);S.fill();
+        S.fillStyle=k===2?"rgba(226,92,60,"+(0.7*lit)+")":"rgba(70,82,100,"+(0.5+0.3*lit)+")";
+        rrS(x+2+k*10,y+17,8,7,1.4);S.fill();}
+      if(!offl){S.fillStyle="rgba(226,140,70,"+(0.85*lit)+")";S.fillRect(x+w-12,y+19,4,4);}},
+      "VTR-1");
+    unit3u(EY+48,38,function(x,y,w,h){
+      S.fillStyle="rgba(1,3,6,0.85)";S.fillRect(x,y+3,w*0.5,9);
+      S.fillStyle="rgba(1,3,6,0.7)";S.fillRect(x+w*0.56,y+3,w*0.44,9);
+      for(var k=0;k<6;k++){
+        S.fillStyle="rgba(58,68,84,"+(0.5+0.2*lit)+")";rrS(x+2+k*10,y+16,8,6,1.4);S.fill();}
+      S.fillStyle="rgba(70,80,96,0.6)";S.fillRect(x+w-12,y+17,4,4);},
+      "VTR-2");
+    unit3u(EY+92,56,function(x,y,w,h){
+      var cx=x+w*0.28, cy=y+h/2, R=19;
+      S.fillStyle="rgba(1,3,6,0.9)";S.beginPath();S.arc(cx,cy,R,0,7);S.fill();
+      if(!offl){
+        var wg=S.createRadialGradient(cx,cy,1,cx,cy,R);
+        wg.addColorStop(0,"rgba(90,200,140,"+(0.24*lit)+")");wg.addColorStop(1,"rgba(40,110,80,"+(0.16*lit)+")");
+        S.fillStyle=wg;S.beginPath();S.arc(cx,cy,R,0,7);S.fill();
+        S.strokeStyle="rgba(60,160,110,"+(0.34*lit)+")";S.lineWidth=0.8;
+        S.beginPath();S.moveTo(cx-R,cy);S.lineTo(cx+R,cy);S.moveTo(cx,cy-R);S.lineTo(cx,cy+R);S.stroke();
+        S.save();S.beginPath();S.arc(cx,cy,R-1,0,7);S.clip();
+        S.strokeStyle="rgba(160,255,200,"+(0.8*lit)+")";S.lineWidth=1.3;S.beginPath();
+        for(var wx=-R;wx<=R;wx+=2)
+          S.lineTo(cx+wx,cy+Math.sin(wx*0.55+t*3)*Math.exp(-Math.abs(wx)/26)*10);
+        S.stroke();S.restore();}
+      S.strokeStyle="rgba(1,3,6,0.7)";S.lineWidth=2.2;S.beginPath();S.arc(cx,cy,R,0,7);S.stroke();
+      for(var kn=0;kn<3;kn++){
+        var kx=x+w*0.66+kn*16, ky=y+h*0.42;
+        S.fillStyle="rgba(1,3,6,0.6)";S.beginPath();S.arc(kx,ky+1.4,5.6,0,7);S.fill();
+        var kg=S.createLinearGradient(kx-6,ky-6,kx+6,ky+6);
+        kg.addColorStop(0,"#4a5464");kg.addColorStop(1,"#171d26");
+        S.fillStyle=kg;S.beginPath();S.arc(kx,ky,5.6,0,7);S.fill();
+        pl(S,kx,ky,kx+Math.cos(kn*1.6-1.2)*4.2,ky+Math.sin(kn*1.6-1.2)*4.2,
+           "rgba(214,230,252,"+(0.4*lit)+")",1.4);}},
+      "WFM");
+    unit3u(EY+154,52,function(x,y,w,h){
+      S.fillStyle="rgba(1,3,6,0.85)";S.fillRect(x,y+2,w,h-4);
+      for(var tp=0;tp<10;tp++){
+        var tw=7+((tp*13)%3), txp=x+3+tp*9.4;
+        S.save();S.translate(txp,y+h-4);S.rotate((tp>6)?(tp-6)*0.09:0);
+        S.fillStyle=["#2a3038","#333a44","#252b33"][tp%3];
+        S.fillRect(0,-(h-10),tw,h-10);
+        S.fillStyle="rgba(200,214,238,"+(0.12*lit)+")";S.fillRect(0,-(h-10),1,h-10);
+        S.fillStyle="rgba(196,188,150,"+(0.3+0.2*lit)+")";S.fillRect(0.6,-(h-16),tw-1.2,7);
+        S.fillStyle="rgba(20,24,30,"+(0.5*lit+0.2)+")";S.fillRect(1.4,-(h-14),tw-3,1.4);
+        S.restore();}},
+      "TAPE STORE");
+  })();
   /* LOOP 6 · THE CABLING. A signal gallery IS its cabling, and this room
      had two hairline curves. Three things were missing: the vertical looms
      that drop down every rack upright feeding the monitors, the zip-tie
@@ -1175,8 +1276,8 @@ function drawRoom(t,st){
      hall than at the doorway, so the room has an inside and an outside */
   if(!offl){
     var dep=S.createLinearGradient(0,0,SW,0);
-    dep.addColorStop(0,"rgba(10,16,26,0.34)");dep.addColorStop(0.42,"rgba(10,16,26,0.06)");
-    dep.addColorStop(0.78,"rgba(10,16,26,0.1)");dep.addColorStop(1,"rgba(10,16,26,0.4)");
+    dep.addColorStop(0,"rgba(10,16,26,0.16)");dep.addColorStop(0.42,"rgba(10,16,26,0.03)");
+    dep.addColorStop(0.78,"rgba(10,16,26,0.05)");dep.addColorStop(1,"rgba(10,16,26,0.2)");
     S.fillStyle=dep;S.fillRect(0,0,SW,SH);
     var flr=S.createLinearGradient(0,GYS,0,SH);
     flr.addColorStop(0,"rgba(120,140,170,0.05)");flr.addColorStop(1,"rgba(120,140,170,0)");
@@ -1554,10 +1655,31 @@ function roomFrame(lit,t,offl){
   tf.addColorStop(0,"rgba(1,3,6,0.68)");tf.addColorStop(1,"rgba(1,3,6,0)");
   S.fillStyle=tf;S.fillRect(0,84,SW,34);
 }
+/* ROUND 6 · LOOP 10 — FOCAL HIERARCHY. The gallery had the opposite problem
+   to the bridge: twenty-four screens all competing at the same brightness
+   across the full width, so the eye had nowhere to land. The benchmarks all
+   push the outer band to near-black and lay a faint scrim over everything,
+   which is what subordinates the wall to the figure standing in front of it. */
 function vignette(){
-  var vg2=S.createRadialGradient(UX,330,230,UX,330,780);
-  vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(0.62,"rgba(0,0,0,0.1)");vg2.addColorStop(1,"rgba(0,0,0,0.62)");
+  var vg2=S.createRadialGradient(UX,350,200,UX,350,760);
+  vg2.addColorStop(0,"rgba(0,0,0,0)");
+  vg2.addColorStop(0.44,"rgba(0,0,0,0.1)");
+  vg2.addColorStop(0.74,"rgba(0,0,0,0.4)");
+  vg2.addColorStop(1,"rgba(0,0,0,0.8)");
   S.fillStyle=vg2;S.fillRect(0,0,SW,SH);
+  var lb=S.createLinearGradient(0,0,160,0);
+  lb.addColorStop(0,"rgba(0,0,0,0.7)");lb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=lb;S.fillRect(0,0,160,SH);
+  var rb=S.createLinearGradient(SW,0,SW-160,0);
+  rb.addColorStop(0,"rgba(0,0,0,0.7)");rb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=rb;S.fillRect(SW-160,0,160,SH);
+  var tb=S.createLinearGradient(0,0,0,124);
+  tb.addColorStop(0,"rgba(0,0,0,0.66)");tb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=tb;S.fillRect(0,0,SW,124);
+  var bb=S.createLinearGradient(0,SH,0,SH-104);
+  bb.addColorStop(0,"rgba(0,0,0,0.58)");bb.addColorStop(1,"rgba(0,0,0,0)");
+  S.fillStyle=bb;S.fillRect(0,SH-104,SW,104);
+  S.fillStyle="rgba(24,38,58,0.08)";S.fillRect(0,0,SW,SH);
 }
 
 /* ---- scene ---- */
@@ -1591,16 +1713,45 @@ function drawScene(t,st){
   roomFrame(offl?0.22:1,t,offl);
   vignette();
   /* ============ PLANE 4 · foreground ============ */
-  S.save();S.filter="blur(4px)";
+  /* ROUND 6 · LOOP 8 — A REAL FOREGROUND. Same fault the bridge had: the
+     foreground existed but sat in the outer 30-52px as near-black slabs, so
+     it read as the edge of the frame rather than as an object the camera
+     stands behind. Every benchmark room puts something SOLID across the
+     picture plane in front of the figure. A machine hall has a cable tray
+     on stanchions, so that is what crosses here — high enough to pass in
+     FRONT of the hovering unit's lower whips and give the room a third
+     plane instead of two. */
+  var TRY=SH-126;
+  S.save();S.filter="blur(2.6px)";
+  S.fillStyle="rgba(1,3,6,0.38)";S.fillRect(0,TRY+12,SW,18);
+  // the tray: a channel with a lit top flange and a dark web
+  var tyg=S.createLinearGradient(0,TRY,0,TRY+15);
+  tyg.addColorStop(0,"rgba(54,64,80,0.99)");
+  tyg.addColorStop(0.26,"rgba(28,35,45,0.99)");
+  tyg.addColorStop(1,"rgba(8,11,17,0.99)");
+  S.fillStyle=tyg;S.fillRect(0,TRY,SW,15);
+  S.fillStyle="rgba(180,198,228,0.15)";S.fillRect(0,TRY,SW,1.8);
+  // the cables riding in it, seen over the lip
+  for(var tc=0;tc<5;tc++){
+    S.strokeStyle="rgba(16,21,28,0.95)";S.lineWidth=5-tc*0.5;
+    S.beginPath();S.moveTo(0,TRY+3+tc*2.2);
+    S.bezierCurveTo(SW*0.3,TRY+1+tc*2.2,SW*0.7,TRY+5+tc*2.2,SW,TRY+2+tc*2.2);S.stroke();}
+  // rungs, and the stanchions carrying the tray down to the deck
+  for(var rg=0;rg<SW;rg+=46){
+    S.fillStyle="rgba(1,3,6,0.6)";S.fillRect(rg,TRY+13,26,5);}
+  [96,392,688,984,1220].forEach(function(sx8){
+    S.fillStyle="rgba(1,3,6,0.5)";S.fillRect(sx8-7,TRY+2,18,SH-TRY);
+    var stg=S.createLinearGradient(sx8-8,0,sx8+8,0);
+    stg.addColorStop(0,"rgba(46,55,69,0.99)");stg.addColorStop(0.45,"rgba(20,26,35,0.99)");
+    stg.addColorStop(1,"rgba(8,11,17,0.99)");
+    S.fillStyle=stg;S.fillRect(sx8-8,TRY,16,SH-TRY);
+    S.fillStyle="rgba(180,198,228,0.13)";S.fillRect(sx8-8,TRY,1.6,SH-TRY);});
+  // the near bulkhead corners the camera stands between
   S.fillStyle="rgba(3,5,9,0.96)";S.fillRect(0,0,30,SH);
-  S.fillStyle="rgba(120,136,164,0.05)";S.fillRect(28,0,2,SH);
-  // a rack cabinet the camera stands beside, hard right
+  S.fillStyle="rgba(120,136,164,0.06)";S.fillRect(28,0,2,SH);
   S.fillStyle="rgba(4,6,11,0.9)";S.fillRect(SW-52,0,52,SH);
-  S.fillStyle="rgba(110,126,156,0.045)";S.fillRect(SW-52,0,2,SH);
+  S.fillStyle="rgba(110,126,156,0.05)";S.fillRect(SW-52,0,2,SH);
   for(var fb2=0;fb2<12;fb2++){S.fillStyle="rgba(2,4,8,0.9)";S.fillRect(SW-48,40+fb2*58,44,4);}
-  // a cable swagging through the top of frame
-  S.strokeStyle="rgba(3,5,9,0.9)";S.lineWidth=13;
-  S.beginPath();S.moveTo(0,58);S.quadraticCurveTo(300,132,620,42);S.stroke();
   S.restore();
 }
 
