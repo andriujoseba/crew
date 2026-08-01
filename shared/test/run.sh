@@ -1416,13 +1416,15 @@ t vendor-legacy-profile-silent absent \
 # claim of bot_cli_present is that it needs nothing but local disk.
 
 CREDH="$TMP/credhome"; mkdir -p "$CREDH"
-cred_rc() {  # cred_rc <agent> <home> -> rc of bot_cli_present
+cred_rc() {  # cred_rc <agent> <home> [KIMI_CODE_HOME] -> rc of bot_cli_present
   local rc=0
   # Every vendor env override is cleared, not just the one under test: these
   # are read by the sourced profile, and inheriting the RUNNER's credentials
-  # would make the result depend on whose machine ran the suite.
+  # would make the result depend on whose machine ran the suite. KIMI_CODE_HOME
+  # is the one a caller may set back, in $3, because kimi's home resolver gives
+  # it precedence over both probed homes and that precedence is under test.
   # shellcheck disable=SC2034  # consumed inside the conf sourced below
-  ( HOME="$2" KIMI_CODE_HOME="" CODEX_HOME="" GROK_HOME="" \
+  ( HOME="$2" KIMI_CODE_HOME="${3:-}" CODEX_HOME="" GROK_HOME="" \
     ANTHROPIC_API_KEY="" XAI_API_KEY=""
     # shellcheck disable=SC1090
     source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
@@ -1496,24 +1498,17 @@ t cred-kimi-neither-home 1 "$(cred_rc kimi "$KH0")"
 
 # KIMI_CODE_HOME is explicit operator intent and outranks both probes. Proven
 # by pointing it at a home with NO credential while BOTH known homes hold a
-# good one: a resolver that probed first would answer 0.
-kimi_cred_rc() {  # kimi_cred_rc <home> <KIMI_CODE_HOME> -> rc of bot_cli_present
-  local rc=0
-  # shellcheck disable=SC2034  # consumed inside the conf sourced below
-  ( HOME="$1" KIMI_CODE_HOME="$2" CODEX_HOME="" GROK_HOME=""
-    # shellcheck disable=SC1090
-    source "$SHARED/conf/agents/kimi.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
-  echo "$rc"
-}
+# good one: a resolver that probed first would answer 0. cred_rc's third
+# argument is the only vendor override it does not clear, for exactly this.
 KHO="$CREDH/kimiover"; mkdir -p "$KHO/.kimi/credentials" "$KHO/.kimi-code/credentials" "$KHO/elsewhere/credentials"
 jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
   > "$KHO/.kimi/credentials/kimi-code.json"
 cp "$KHO/.kimi/credentials/kimi-code.json" "$KHO/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-override-outranks-probe 1 "$(kimi_cred_rc "$KHO" "$KHO/elsewhere")"
+t cred-kimi-override-outranks-probe 1 "$(cred_rc kimi "$KHO" "$KHO/elsewhere")"
 # ...and it reaches a credential neither probe would ever find.
 jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
   > "$KHO/elsewhere/credentials/kimi-code.json"
-t cred-kimi-override-reaches-elsewhere 0 "$(kimi_cred_rc "$KH0" "$KHO/elsewhere")"
+t cred-kimi-override-reaches-elsewhere 0 "$(cred_rc kimi "$KH0" "$KHO/elsewhere")"
 
 # -- codex: file-backed vs keyring-backed, and NO expiry at all
 DH="$CREDH/codex"; mkdir -p "$DH/.codex"
