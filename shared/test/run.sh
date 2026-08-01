@@ -33,6 +33,8 @@ export DUTY_DIR="$TMP"
 export HOME="${HOME:-$TMP}"
 # shellcheck disable=SC1091
 source "$SHARED/lib/common.sh"
+# shellcheck disable=SC1091
+source "$SHARED/lib/duty-builder.sh"
 
 # Keep ambient operator configuration out of fixture resolution. These static
 # assertions make removing either half of the suite guard fail visibly.
@@ -1061,6 +1063,20 @@ t ledger-monotonic 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG
 printf '' | ledger_commit "$LG"
 t ledger-empty-safe 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG" | n)"
 
+# Build ready lines are committed only when the post-session board proves the
+# whole enumerated set was declined. IDs compare as whole keys (#264).
+READY3='heavy-duty/crew#2 T2
+heavy-duty/crew#25 T25
+heavy-duty/crew#30 T30'
+t ready-commit-whole-decline "$READY3" \
+  "$(_ready_lines_to_commit "$READY3" $'heavy-duty/crew#2\nheavy-duty/crew#25\nheavy-duty/crew#30')"
+t ready-commit-one-claimed "" \
+  "$(_ready_lines_to_commit "$READY3" $'heavy-duty/crew#2\nheavy-duty/crew#30')"
+t ready-commit-none-left "" "$(_ready_lines_to_commit "$READY3" '')"
+t ready-commit-empty "" "$(_ready_lines_to_commit '' 'heavy-duty/crew#2')"
+t ready-commit-whole-id "" \
+  "$(_ready_lines_to_commit 'heavy-duty/crew#2 T2' 'heavy-duty/crew#25')"
+
 # cross-repo collision: discussion numbers are PER-REPO but the ledger is one
 # file across every repo in repos.txt, so keys must be repo-qualified. After
 # committing ceremony#1, an unchanged/older rig#1 must still wake — a bare "1"
@@ -1183,6 +1199,84 @@ for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" \
   if grep -q 'report_suppressed' "$SHARED/lib/$mod"; then r1=reported; else r1=SILENT; fi
   t "suppression-reported-$mod" reported "$r1"
 done
+
+BUILDER_MOD="$SHARED/lib/duty-builder.sh"
+builder_commit_block="$(sed -n '/# Record what this session SAW/,/# --- HANDOFF:/p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '_ready_lines_to_commit "$ready_items" "$post_ready_ids"' <<<"$builder_commit_block" &&
+   ! grep -Fq '"$ready_items" "$cr_items" | ledger_commit' <<<"$builder_commit_block"; then
+  r1=narrowed
+else
+  r1=WHOLE_SET
+fi
+t builder-ready-commit-routed-through-helper narrowed "$r1"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_commit_block"; then
+  r1=preserved
+else
+  r1=DROPPED
+fi
+t builder-round-items-preserved preserved "$r1"
+# The build ledger commit must stay inside this call site's success guard. A
+# whole-module grep can accidentally match the independent ci-red guard.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+builder_rc_block="$(sed -n '/^    if \[ "${RUN_SESSION_RC:-1}" -eq 0 \]; then$/,/^    fi$/p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_rc_block"; then
+  r1=gated
+else
+  r1=UNGATED
+fi
+t builder-ready-commit-gated-by-session-rc gated "$r1"
+# A failed re-query must stay visible and fail open toward another session,
+# never burying the whole pre-session ready set (#264 D4).
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if [ "$(grep -Fc 'post-session ready re-query failed; committing no ready lines (#264)' \
+     <<<"$builder_commit_block")" -eq 1 ] &&
+   ! grep -Fq 'ready_commit="$ready_items"' <<<"$builder_commit_block"; then
+  r1=safe
+else
+  r1=WHOLE_SET
+fi
+t builder-ready-requery-failure-commits-none safe "$r1"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '[ -e "$marker" ] && return 0' "$BUILDER_MOD" &&
+   grep -Fq '_repair_seen_build_264' "$BUILDER_MOD"; then
+  r1=gated
+else
+  r1=UNGATED
+fi
+t builder-ledger-repair-marker-gated gated "$r1"
+# The repair is box-wide, so it runs once before duty_builder enters its
+# per-repository loop rather than once from _builder_repo (#264 D5).
+builder_entry_block="$(sed -n '/^duty_builder() {/,/^_builder_repo() {/p' "$BUILDER_MOD")"
+if [ "$(grep -Fc '_repair_seen_build_264' <<<"$builder_entry_block")" -eq 1 ]; then
+  r1=once-per-box
+else
+  r1=PER_REPO
+fi
+t builder-ledger-repair-call-site once-per-box "$r1"
+
+# The repair clears both state classes once, names #264, and leaves files
+# created after its marker untouched on later invocations.
+REPAIR_DIR="$TMP/repair-264"
+mkdir -p "$REPAIR_DIR"
+printf old >"$REPAIR_DIR/.seen-build"
+printf old >"$REPAIR_DIR/.suppressed-build.one"
+repair_log="$(DUTY_DIR="$REPAIR_DIR" _repair_seen_build_264)"
+[ -e "$REPAIR_DIR/.seen-build" ] && r1=kept || r1=deleted
+t builder-ledger-repair-seen deleted "$r1"
+[ -e "$REPAIR_DIR/.suppressed-build.one" ] && r1=kept || r1=deleted
+t builder-ledger-repair-suppressed deleted "$r1"
+[ -e "$REPAIR_DIR/.seen-build.repair-264" ] && r1=created || r1=missing
+t builder-ledger-repair-marker created "$r1"
+case "$repair_log" in *'#264'*) r1=named ;; *) r1=missing ;; esac
+t builder-ledger-repair-log-names-issue named "$r1"
+printf later >"$REPAIR_DIR/.seen-build"
+printf later >"$REPAIR_DIR/.suppressed-build.two"
+t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_build_264)"
+t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
+t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
 
 # --- the triage board poll follows the mention session (#253) ---------------
 # _triage_repo used to compute all four board signals, THEN run the mention
