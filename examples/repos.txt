@@ -1,6 +1,14 @@
 # repos.txt — this box's repo registry. One owner/repo per line; # and blank
 # lines are ignored.
 #
+# THIS FILE SHIPS EMPTY, DELIBERATELY. It is a scaffold, and a scaffold's
+# default scope must be nothing: `crew init` copies it, and until the operator
+# names a repo here their fleet is aimed at no board at all. It used to ship
+# three live heavy-duty repositories, which meant a host with no operator
+# config at all resolved to this file and read as a fleet pointed at another
+# fleet's boards — the precise state the ONE REPO, ONE FLEET rule below exists
+# to prevent (#216). Name your own repos; never take these on trust.
+#
 # THIS LIST IS THE SCOPE. Every duty module works the repos named here and
 # only those. What the list MEANS still varies by role (FLEET.md):
 #   triage   — these boards get the triage sweep and the hourly hygiene pass.
@@ -59,6 +67,5 @@
 # A future release may derive candidates from the `agents` team behind an
 # explicit approval step, making this file the approved set rather than a
 # hand-maintained one — see heavy-duty/crew#31.
-heavy-duty/ceremony
-heavy-duty/incubator
-heavy-duty/rig
+#
+# Add one owner/repo per line below this comment block.

@@ -203,11 +203,21 @@ FLOOR_STATE="$CL_TMP/crew-state" CREW_CONFIG_DIR="$CL_CONFIG" \
 t "crew config: out-of-tree fleet drives roster loops" 0 "$CL_RC"
 
 # crew_cmd ARGS... — cli/crew against the stub fleet, output in $CL_TMP/crew-out.
+#
+# CREW_CONFIG_DIR is what makes this a CONFIGURED host, and it is not optional
+# now that the examples fallback refuses to create or arm anything (#216).
+# CREW_ROSTER alone is a roster-only override — by contract it does NOT select
+# a fleet context — so every helper below used to resolve to $CREW_ROOT/examples
+# and was testing `hire`/`upgrade`/`gold` through the fallback: the one host
+# state where those verbs are now supposed to die. The verbs under test are
+# right, the host was wrong. $CL_CONFIG carries the same roster, so the loops
+# and counts are unchanged; CREW_ROSTER stays for the per-case roster swaps
+# (crew_off below), which is exactly the narrow job it is documented to have.
 crew_cmd() {
   CL_RC=0
   PATH="$CL_TMP/bin:$PATH" \
   FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
-  CREW_ROSTER="$CL_CREW_ROSTER" \
+  CREW_CONFIG_DIR="$CL_CONFIG" CREW_ROSTER="$CL_CREW_ROSTER" \
     timeout 60 "$CL_ROOT/cli/crew" "$@" </dev/null > "$CL_TMP/crew-out" 2>&1 || CL_RC=$?
 }
 
@@ -424,7 +434,8 @@ crew_release() {
   CL_RC=0
   PATH="$CL_TMP/bin:$PATH" \
   FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
-  CREW_ROSTER="$CL_CREW_ROSTER" STUB_INSTALL_VERSION="${STUB_INSTALL_VERSION:-0.2.0}" \
+  CREW_CONFIG_DIR="$CL_CONFIG" CREW_ROSTER="$CL_CREW_ROSTER" \
+  STUB_INSTALL_VERSION="${STUB_INSTALL_VERSION:-0.2.0}" \
     timeout 60 "$CL_RELEASE_ROOT/cli/crew" "$@" \
     </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
 }
@@ -623,11 +634,27 @@ fi
 # The production roster is authoritative. Explicit profile flags on one of its
 # members used to be accepted, echoed as fact, then silently discarded in
 # favour of the roster row by install_identity_args (#35 review).
+#
+# This case reads the roster from the CONFIG DIRECTORY rather than CREW_ROSTER
+# — that is the whole point, "the roster in force", not a fixture handed in on
+# the side — so it needs its own operator definition. It used to get one by
+# accident: with CREW_ROSTER unset it fell through to $CREW_ROOT/examples and
+# borrowed examples/fleet.roster's claude-builder line. That is the fallback,
+# where `hire` now refuses before it can reach this guard (#216), and it was a
+# read of the shipped tree that would have gone quiet the day the real fleet
+# changed. The line is written out here instead, so what the guard is supposed
+# to be authoritative ABOUT is visible in the test.
+CL_PRODCONF="$CL_TMP/prod-config"
+mkdir -p "$CL_PRODCONF"
+printf 'claude-builder   claude  builder\n' >"$CL_PRODCONF/fleet.roster"
+printf 'FLEET_HUMAN=fixture\n' >"$CL_PRODCONF/fleet.conf"
+printf 'heavy-duty/crew\n' >"$CL_PRODCONF/repos.txt"
 CL_PROD_FLEET="$CL_TMP/prod-fleet.txt"
 printf 'claude-builder running idle\n' >"$CL_PROD_FLEET"
 CL_RC=0
 PATH="$CL_TMP/bin:$PATH" \
 FLOOR_FIXTURE="$CL_PROD_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+CREW_CONFIG_DIR="$CL_PRODCONF" \
   env -u CREW_ROSTER timeout 60 "$CL_ROOT/cli/crew" \
     hire claude-builder --agent claude --role reviewer \
     </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
@@ -647,9 +674,18 @@ crew_off() {
   CL_RC=0
   PATH="$CL_TMP/bin:$PATH" \
   FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
-  CREW_ROSTER="$CL_OFFROSTER" \
+  CREW_CONFIG_DIR="$CL_CONFIG" CREW_ROSTER="$CL_OFFROSTER" \
     timeout 60 "$CL_ROOT/cli/crew" "$@" </dev/null > "$CL_TMP/crew-out" 2>&1 || CL_RC=$?
 }
+# The guard compares the registry the BOX carries against the fleet's, so the
+# box has to carry the fleet's for "production" to mean anything here. It used
+# to line up by coincidence: stub-box hands back a hard-coded
+# ceremony/incubator/rig for `~/duty/repos.txt`, and that was a copy of what
+# examples/repos.txt held, which the fallback made the production registry. Two
+# unrelated files agreeing by looking the same. Written from $CL_CONFIG's own
+# registry instead, so the case says what it is testing and cannot pass or fail
+# on the stub's default drifting.
+cp "$CL_CONFIG/repos.txt" "$CL_TMP/crew-state/cli-hired.repos"
 crew_off hire cli-hired --role builder --agent claude
 if [ "$CL_RC" -ne 0 ] && grep -q 'PRODUCTION registry' "$CL_TMP/crew-out"; then
   ok "crew hire: off-roster + production registry is REFUSED"

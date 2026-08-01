@@ -70,7 +70,7 @@ if [ -z "$REGISTRY" ]; then
 fi
 [ -f "$REGISTRY" ] || { echo "registry '$REGISTRY' is not a file" >&2; exit 1; }
 if [ "$(normalize_registry "$REGISTRY")" = "$(normalize_registry "$TREE/examples/repos.txt")" ]; then
-  echo "refusing production registry '$REGISTRY' — an installer drill box must use a narrowed, non-production repos.txt" >&2
+  echo "refusing registry '$REGISTRY' — it is byte-equivalent to the shipped examples/repos.txt scaffold; an installer drill box must use a narrowed, non-production repos.txt" >&2
   exit 1
 fi
 registry_count="$(normalize_registry "$REGISTRY" | grep -c . || true)"
