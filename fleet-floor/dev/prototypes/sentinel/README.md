@@ -21,21 +21,22 @@ station on a slow figure-of-eight drift, one soft shadow pooled far below.
 Dead it is on the floor. (The earlier coil-stack "feet" are gone — a
 sentinel that stands on furniture isn't a sentinel.)
 
-- **The silhouette is traced, not interpreted.** danmt's blue overlay on
-  PR #230 was extracted from the screenshot pixel by pixel and mapped back
-  into canvas space through the eye cluster (whose coordinates in the
-  annotated revision are known exactly). That polygon is `TARGET` in the
-  source — also saved as `target-outline.json` — and `skullPath()`
-  interpolates it directly. Every earlier round failed because the shape
-  was *my reading of* the sketch rather than the sketch. Render with
-  `?outline=1` to draw the target over the unit and check the fit.
-- **What the trace actually says**: wide and squat, ~172 x 148 — two low
-  humps with a shallow saddle between them, flanks falling away fast, a
-  rounded chin hanging lowest on the centre line. The tall crown of every
-  previous revision lies entirely outside the line, so it is gone, and
-  every feature that used to live on it (louvres, hatch, sensor pods,
-  stencil) moved inside. The head is then scaled as one unit, so its
-  presence on the page can change without the shape drifting.
+- **A wide, squat, symmetric skull.** The shape comes from danmt's blue
+  overlay on PR #230 — traced out of the screenshot pixel by pixel and
+  mapped into canvas space through the eye cluster (kept as `TARGET` /
+  `target-outline.json`; render with `?outline=1` to see it). But the
+  trace is the *intent*, not the geometry: a freehand line is asymmetric,
+  and shipping that wobble literally was its own mistake. So the head is
+  authored as a symmetric **half-profile, mirrored** — `HALF[]` in the
+  source — pulled wider and flatter than the trace, with the saddle dip
+  cut to about a third of what the trace showed. ~202 x 124.
+- **The head stays at 1:1 and is the small end of the unit.** The whips
+  are the mass and are meant to own the frame; they are the thickest and
+  furthest-reaching they have been.
+- **Nothing under the chin reads as a mouth.** Tapered spikes along a jaw
+  line are teeth, and lit edges on them are a grin. What hangs there is a
+  cluster of short matte manipulator stubs at mixed depths and gauges,
+  with no highlight on any of them, sitting in their own shadow.
 - **Volume, not a mask**: one modelling pass clipped to the silhouette
   puts the highlight on the left-of-centre crown and drives a terminator
   down the right flank, so the head turns away from the light at its own
