@@ -4752,12 +4752,17 @@ crewstatus() {
 # The fixture box IS the installed tree from the installer fixtures above.
 mkdir -p "$MSROOT/fixture-box"
 cp -R "$MDUTY" "$MSROOT/fixture-box/duty"
-# ...and it has ticked once. Not decoration: with no duty.log at all, the row's
-# `tail -n 1` exits 1, and under `set -o pipefail` that kills cmd_status's loop
-# after the header — which is why its own `no ticks yet` fallback is
-# unreachable today. That is a pre-existing defect, reported separately rather
-# than fixed here, and a box that has never ticked is not the state #159 is
-# about.
+# ...and it has ticked once. Not decoration: it pins the round-trip count
+# asserted below at the steady state #159 is about — a box that has never
+# ticked is a different state, and it has its own coverage in
+# fleet-floor/test/cli.sh (the table's NOTE, #224; the detail view's line,
+# #221).
+#
+# It used to say the never-ticked case was UNREACHABLE here: with no duty.log
+# at all the row's `tail -n 1` exited 1, and under `set -o pipefail` that
+# killed cmd_status's loop after the header. #224 fixed that — the fallback
+# renders, the loop survives — so the reason this fixture ticks is now the
+# count above and nothing else.
 printf '2026-07-29T00:00:00Z duty run start\n' >"$MSROOT/fixture-box/duty/duty.log"
 
 # #283 — exercise the real upgrade branch and installer, not a reconstruction
