@@ -850,10 +850,12 @@ RLJQ="$SHARED/lib/jq/round-log.jq"
 RL_ME="me-bot"
 RL_O1="1111111111111111111111111111111111111111"
 RL_O2="2222222222222222222222222222222222222222"
-mk_rl() {  # <body> <reviews-json> <comments-json>
+mk_rl() {  # <body> <reviews-json> <comments-json> [commits-json] [head-oid-json]
   jq -n --arg body "$1" --argjson reviews "$2" --argjson comments "$3" \
+    --argjson commits "${4:-[]}" --argjson head "${5:-null}" \
     '{data:{repository:{pullRequest:{
-      body:$body, reviews:{nodes:$reviews}, comments:{nodes:$comments}}}}}'
+      body:$body, headRefOid:$head, commits:{nodes:$commits},
+      reviews:{nodes:$reviews}, comments:{nodes:$comments}}}}}'
 }
 RL_REVS="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T03:00:00Z"}]' "$RL_O1" "$RL_O2")"
 RL_REVS1="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]' "$RL_O1")"
@@ -945,6 +947,56 @@ t roundlog-handoff-not-premature-noreply clean "$r1"
 RL_TERM="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
 case "$RL_TERM" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-terminal-no-comment-at-handoff yes "$r1"
+
+# #249: GitHub can re-point an existing verdict to a base-merge commit made
+# after the verdict. Repair only that impossible key to the newest commit that
+# existed when the verdict was submitted.
+RL_OLD="6bb9f61000000000000000000000000000000000"
+RL_HEAD="bfb1f3a4dc313b370981f75e0034d7c0ec720324"
+RL_227_COMMITS="$(printf '[{"commit":{"oid":"%s","committedDate":"2026-01-01T13:39:23Z"}},{"commit":{"oid":"%s","committedDate":"2026-01-01T14:56:52Z"}}]' "$RL_OLD" "$RL_HEAD")"
+RL_227_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T14:46:20Z"},{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T14:48:02Z"},{"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T14:54:22Z"}]' "$RL_HEAD" "$RL_HEAD" "$RL_OLD")"
+RL_227_FINAL="$(mk_rl "Body." "$RL_227_REVS" '[]' "$RL_227_COMMITS" "\"$RL_HEAD\"" | rl)"
+case "$RL_227_FINAL" in *"round:$RL_OLD"*) r1=old ;; *) r1=WRONG ;; esac
+t roundlog-repointed-verdicts-use-original-head old "$r1"
+case "$RL_227_FINAL" in *"round:$RL_HEAD"*) r1=LEAKED ;; *) r1=one-round ;; esac
+t roundlog-repointed-verdicts-form-one-round one-round "$r1"
+RL_227_LIVE="$(mk_rl "Body." "$RL_227_REVS" '[]' "$RL_227_COMMITS" "\"$RL_HEAD\"" | rl_live)"
+t roundlog-repointed-live-payload-stays-empty "" "$RL_227_LIVE"
+
+# A possible reported key stays put even when a newer commit exists: this is
+# not a blanket timestamp-based forward re-key.
+RL_STALE_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T16:00:00Z"}]' "$RL_OLD")"
+RL_STALE="$(mk_rl "Body." "$RL_STALE_REVS" '[]' "$RL_227_COMMITS" null | rl)"
+case "$RL_STALE" in *"round:$RL_OLD"*) r1=kept ;; *) r1=MOVED ;; esac
+t roundlog-possible-stale-key-is-preserved kept "$r1"
+
+# If the verdict predates every returned commit, retain and render its reported
+# key: truncated or rewritten history is not evidence for a guessed repair.
+RL_PRE="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+RL_PRE_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T12:00:00Z"}]' "$RL_PRE")"
+RL_PRE_OUT="$(mk_rl "Body." "$RL_PRE_REVS" '[]' "$RL_227_COMMITS" null | rl)"
+case "$RL_PRE_OUT" in *"round:$RL_PRE"*) r1=rendered ;; *) r1=DROPPED ;; esac
+t roundlog-prehistory-verdict-keeps-reported-key rendered "$r1"
+
+# The current-head guard is independent of sort position: defer a current head
+# even when a later round exists, but finalize it at handoff.
+RL_HEAD_FIRST_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T02:00:00Z"}]' "$RL_O1" "$RL_O2")"
+RL_HEAD_FIRST_LIVE="$(mk_rl "Body." "$RL_HEAD_FIRST_REVS" '[]' '[]' "\"$RL_O1\"" | rl_live)"
+case "$RL_HEAD_FIRST_LIVE" in *"round:$RL_O1"*) r1=LEAKED ;; *) r1=deferred ;; esac
+t roundlog-current-head-deferred-out-of-sort-position deferred "$r1"
+RL_HEAD_FIRST_FINAL="$(mk_rl "Body." "$RL_HEAD_FIRST_REVS" '[]' '[]' "\"$RL_O1\"" | rl)"
+case "$RL_HEAD_FIRST_FINAL" in *"round:$RL_O1"*) r1=finalized ;; *) r1=MISSING ;; esac
+t roundlog-current-head-finalized-at-handoff finalized "$r1"
+
+# The live GraphQL query carries the repair inputs and stays at GitHub's
+# connection ceiling.
+if grep -q 'headRefOid' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'commits(last:100){nodes{commit{oid committedDate}}}' "$SHARED/lib/duty-builder.sh"; then
+  r1=present
+else
+  r1=MISSING
+fi
+t roundlog-query-carries-head-and-commits present "$r1"
 
 # B1 (#91): mirroring must be wired into the per-tick `my_open` builder sweep,
 # not only into `_handoff_finalize` — else the Round log fills only at
