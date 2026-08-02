@@ -277,27 +277,34 @@ alert() {
   return 0
 }
 
-# panel_for_repo REPO DIR — the review panel of REPO as a JSON array of
-# logins, author NOT yet subtracted. Doctrine (BUILDER.md): the `panel=` line
+# panel_for_repo REPO DIR [AUTHOR] — the review panel of REPO as a JSON array
+# of logins, author NOT yet subtracted. An optional `panel[AUTHOR]=` line wins
+# over `panel=`; callers still subtract AUTHOR as a safety net.
 # in the repo's own .github/labels.conf governs over any prose or hardcoded
 # list — rig#120 shipped a kimi-less panel from a stale hardcoded roster.
 # Resolution order: local clone (any default branch name), then the contents
 # API (covers repos not yet cloned — the first tick must not run on the
 # fallback bench when a panel= line exists), then FLEET_BENCH.
 panel_for_repo() {
-  local repo="$1" dir="$2" line=""
+  local repo="$1" dir="$2" author="${3:-}" conf="" line=""
   if [ -d "$dir/.git" ]; then
-    line="$(git -C "$dir" show 'origin/HEAD:.github/labels.conf' 2>/dev/null \
-      | grep -m1 '^panel=' || true)"
-    [ -n "$line" ] || line="$(git -C "$dir" show 'origin/main:.github/labels.conf' 2>/dev/null \
-      | grep -m1 '^panel=' || true)"
+    conf="$(git -C "$dir" show 'origin/HEAD:.github/labels.conf' 2>/dev/null || true)"
+    [ -n "$conf" ] || conf="$(git -C "$dir" show 'origin/main:.github/labels.conf' 2>/dev/null || true)"
   fi
+  if [ -n "$author" ]; then
+    line="$(printf '%s\n' "$conf" | awk -v key="panel[$author]=" 'index($0,key)==1 { print; exit }')"
+  fi
+  [ -n "$line" ] || line="$(printf '%s\n' "$conf" | grep -m1 '^panel=' || true)"
   if [ -z "$line" ]; then
-    line="$(gh api "repos/$repo/contents/.github/labels.conf" --jq .content 2>/dev/null \
-      | base64 -d 2>/dev/null | grep -m1 '^panel=' || true)"
+    conf="$(gh api "repos/$repo/contents/.github/labels.conf" --jq .content 2>/dev/null \
+      | base64 -d 2>/dev/null || true)"
+    if [ -n "$author" ]; then
+      line="$(printf '%s\n' "$conf" | awk -v key="panel[$author]=" 'index($0,key)==1 { print; exit }')"
+    fi
+    [ -n "$line" ] || line="$(printf '%s\n' "$conf" | grep -m1 '^panel=' || true)"
   fi
   if [ -n "$line" ]; then
-    printf '%s' "${line#panel=}" | tr ', ' '\n' | sed '/^$/d' | jq -R . | jq -cs .
+    printf '%s' "${line#*=}" | tr ', ' '\n' | sed '/^$/d' | jq -R . | jq -cs .
   else
     # shellcheck disable=SC2086  # word splitting of the bench list is the point
     printf '%s\n' $FLEET_BENCH | jq -R . | jq -cs .

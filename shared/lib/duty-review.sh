@@ -71,23 +71,23 @@ rereq_decision() {
   fi
 }
 
-# _mark_addressing REPO NUM ROSTER_JSON — after MY verdict lands, evaluate the
+# _mark_addressing REPO NUM — after MY verdict lands, evaluate the
 # round and, if it closed WITHOUT full approval, set state:addressing (#130).
 #
 # The reviewer that lands the last verdict does this, not the author's next
 # builder tick: it is already here, it already computed the round to decide its
 # own action, and it does the right thing even when the author's box is the one
 # that is down — the case the board most needs to survive. addressing.jq is the
-# deliberate mirror of converged.jq; ROSTER_JSON is the PR repo's full panel and
-# the PR AUTHOR (not $ME the reviewer) is subtracted here, since the required
-# verdicts are the panel minus the author.
+# deliberate mirror of converged.jq. The PR AUTHOR from the payload selects an
+# optional author-specific panel, then is subtracted from that panel as the
+# final safety net.
 #
 # Best-effort and gating NOTHING: this runs AFTER the verdict has already
 # landed, so a failed label write costs a stale board the reconciler corrects
 # on its next sweep, never a lost or blocked verdict. The engine write is
 # optimistic; the reconciler stays authoritative.
 _mark_addressing() {
-  local repo="$1" num="$2" roster_json="$3" owner name payload author eff_panel verdict
+  local repo="$1" num="$2" owner name payload author roster_json eff_panel verdict
   owner="${repo%%/*}"; name="${repo##*/}"
   if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
@@ -105,6 +105,7 @@ _mark_addressing() {
     return 0
   fi
   author="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.author.login // ""' 2>/dev/null)"
+  roster_json="$(panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author")"
   eff_panel="$(printf '%s' "$roster_json" | jq -c --arg a "$author" '. - [$a]' 2>/dev/null || echo '[]')"
   verdict="$(printf '%s' "$payload" \
     | jq -r --argjson panel "$eff_panel" --arg addressing "$LABEL_ADDRESSING" \
@@ -309,15 +310,12 @@ $key $updated"
   # reconciler. Bounded to the PRs this box actually acted on — an auto-approve
   # or a review session — never a whole-board sweep. addressing.jq no-ops unless
   # the round closed without full approval and the label is not already set, so
-  # a re-tick writes nothing. Roster resolved once per repo.
+  # a re-tick writes nothing. _mark_addressing resolves the effective roster
+  # from the author already present in its GraphQL payload.
   local ap SRa Na
-  local -A roster_cache=()
   for ap in $acted_prs; do
     [ -n "$ap" ] || continue
     SRa="${ap%#*}"; Na="${ap##*#}"
-    if [ -z "${roster_cache[$SRa]:-}" ]; then
-      roster_cache[$SRa]="$(panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review")"
-    fi
-    _mark_addressing "$SRa" "$Na" "${roster_cache[$SRa]}"
+    _mark_addressing "$SRa" "$Na"
   done
 }
