@@ -3308,8 +3308,9 @@ function buildGrok(t,st){
     pl(g,x0,y0,x1,y1,"#0a0f18",w||3.4);
     pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.1);}
   // ONE key, upper-left: mirrored speculars are never mirrored in intensity —
-  // the left member takes the lamp, the right sits in fill
-  function kf(s){return s<0?1:0.32;}
+  // the left member takes the lamp, the right sits in HALF fill: any lower
+  // and the dark flank sinks into the stage wall
+  function kf(s){return s<0?1:0.5;}
 
   // head reference — the mane and the mask both hang off this
   var hby=166+(offl?13:0)+breath*0.5, hcx=cx+(offl?3:0);
@@ -3370,7 +3371,7 @@ function buildGrok(t,st){
     // knee: joint first, pointed guard bolted over it, spike leading
     joint(kx,ky,7);
     plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],
-      offl?(sgn<0?"#252d3d":"#1f2735"):(sgn<0?"#3a4a66":"#2f3d55"),lM,ed);
+      offl?(sgn<0?"#252d3d":"#232c3c"):(sgn<0?"#3a4a66":"#364764"),lM,ed);
     rivet(g,kx+sgn*5,ky-1,eH);
     // the guards lead every contact: paint gone from the spike lips
     pl(g,kx+sgn*12,ky-7,kx+sgn*15,ky+2,"rgba(190,208,232,"+((offl?0.12:0.3)*kf(sgn))+")",1.2);
@@ -3380,7 +3381,7 @@ function buildGrok(t,st){
     plate(g,[[fx-sgn*10,fy-2],[fx-sgn*20,fy+1],[fx-sgn*19,fy+9],[fx-sgn*9,fy+8]],lM,lB,ed);
     plate(g,[[fx-14,fy+1],[fx+14,fy+1],[fx+15,fy+7],[fx-15,fy+7]],lT,lM,ed);
     plate(g,[[fx-10,fy-3],[fx+9,fy-3],[fx+13,fy+2],[fx-14,fy+2]],
-      offl?(sgn<0?"#2b3446":"#212939"):(sgn<0?"#46587a":"#33415c"),lT,ed);
+      offl?(sgn<0?"#2b3446":"#252e40"):(sgn<0?"#46587a":"#3b4c6a"),lT,ed);
     plate(g,[[fx-15,fy+6],[fx+15,fy+6],[fx+15,fy+9.5],[fx-15,fy+9.5]],lM,lB,null);
     [-1,0,1].forEach(function(ti){var tx2=fx+ti*9;
       plate(g,[[tx2-4,fy+8],[tx2+4,fy+8],[tx2+2,560],[tx2-2,560]],lT,lB,null);
@@ -3521,8 +3522,8 @@ function buildGrok(t,st){
     // crown facet: the blade's top face as an OPAQUE palette step (never an
     // alpha sheet) — the left crown takes the key, the right sits a step down
     plate(g,P([[-16,-14],[4,-26],[26,-16],[19,-11],[-12,-9]]),
-      offl?(sgn<0?"#2b3446":"#222a3a"):(sgn<0?"#4a5c7e":"#33415a"),
-      offl?"#1a212e":(sgn<0?"#2c3850":"#232d41"),ed);
+      offl?(sgn<0?"#2b3446":"#262e40"):(sgn<0?"#4a5c7e":"#3b4c6a"),
+      offl?"#1a212e":(sgn<0?"#2c3850":"#273349"),ed);
     pl(g,sx+sgn*21,sy-14,sx+sgn*27,sy+1,rc,1.2);
     rivet(g,sx-sgn*7,sy-5,eH);rivet(g,sx+sgn*14,sy-2,eH);
     if(sgn>0){ // a bite out of the right blade's trailing spike — silhouette
@@ -3556,7 +3557,7 @@ function buildGrok(t,st){
       // knuckle block: palm slab, then the top face as an opaque palette step
       plate(g,[[x-10,y],[x+10,y],[x+8.5,y+9],[x-8.5,y+9]],sM,sB,ed);
       plate(g,[[x-10,y],[x+10,y],[x+8,y+3.6],[x-8,y+3.6]],
-        offl?(sgn<0?"#2b3446":"#212939"):(sgn<0?"#46587a":"#33415c"),sM,null);
+        offl?(sgn<0?"#2b3446":"#252e40"):(sgn<0?"#46587a":"#3b4c6a"),sM,null);
       rivet(g,x-5,y+6,eH);rivet(g,x+5,y+6,eH);
       // three talon digits, slightly splayed off the knuckle row
       [-1,0,1].forEach(function(f){
@@ -3566,7 +3567,7 @@ function buildGrok(t,st){
         // proximal phalanx — real width, one palette step UP off the thigh
         // it hangs against: the value gap is the separation
         plate(g,[[rx-3.2,y+8],[rx+3.2,y+8],[mx3+2.4,my3],[mx3-2.4,my3]],
-          offl?(sgn<0?"#28303f":"#1f2734"):(sgn<0?"#3e4e6a":"#2e3a52"),sM,null);
+          offl?(sgn<0?"#28303f":"#232c3c"):(sgn<0?"#3e4e6a":"#354460"),sM,null);
         pl(g,mx3-2.4,my3,mx3+2.4,my3,rc,1);            // knuckle shadow-line
         // distal phalanx — curving to the point
         plate(g,[[mx3-2.2,my3],[mx3+2.2,my3],[tx3+0.9,ty3],[tx3-0.9,ty3]],sM,sB,null);
@@ -3604,6 +3605,13 @@ function buildGrok(t,st){
       // under tension even at rest: the claw is always loaded
       tendon(ex+sgn*4,ey+6,wx+sgn*4,wy+2,3);
       pl(g,ex-sgn*4,ey+8,wx-sgn*6,wy-6,rc,1);
+      /* the hand hangs IN FRONT of the quad: cast its shadow onto the thigh
+         first (down-right, off the upper-left key), so digits read against a
+         dark gap, never interleaved with leg plate. source-atop — the shadow
+         lands on the thigh, never widens the silhouette. */
+      g.save();g.globalCompositeOperation="source-atop";g.fillStyle="rgba(2,4,9,0.55)";
+      poly(g,[[wx-11,wy+1],[wx+14,wy+1],[wx+17,wy+16],[wx+10,wy+34],[wx-4,wy+34],[wx-13,wy+16]]);g.fill();
+      g.restore();
       // wrist clamp: the claw is a separate machine, banded on
       plate(g,[[wx-9.5,wy-2],[wx+9.5,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
       rivet(g,wx-6,wy+1,eH);rivet(g,wx+6,wy+1,eH);
@@ -3758,18 +3766,49 @@ function buildGrok(t,st){
   cavity(g,cx-20,243+breath,40,13,0.28);
   buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet on the key side
   /* the shared rim survives only on trailing (right) edges — the declared key
-     is upper-LEFT and vendor-coloured, so the key-side rim is drawn by hand
-     down the left contours: pauldron crest, outer thigh, shank, metatarsal */
+     is upper-LEFT and vendor-coloured, so the key-side rim is drawn by hand.
+     PER PLATE: every stroke hugs one plate's own outer edge and dies at the
+     joint. The hanging arm rides OVER the thigh, so the strokes follow the
+     arm stack (upper arm, forearm, fin, claw) and the thigh takes one only
+     when the arm is away — a line across the stack reads as a stray wire. */
+  var lHang=!(work&&ROOM==="builder"), rHang=!(work&&ROOM!=="builder");
   (function(){var kc=puh(offl?0.28:0.8);
-    var sx=cx-44, sy=248+breath;
-    pl(RR,sx-4,sy-26,sx-26,sy-16,kc,2);
-    pl(RR,sx-26,sy-16,sx-36,sy+1,kc,1.6);
+    var sx=cx-44, sy=248+breath, ex=sx-8, ey=316+d*0.6, wx=sx+8, wy=395+d*0.5;
     var hy0=362+d*0.55+breath*0.3, kx=cx-(offl?44:38), ky=447+d*0.5,
         ax=cx-(offl?31:26), ay=514+d*0.2, fx=cx-34;
-    pl(RR,cx-33,hy0+4,kx-9,ky-6,kc,2);
-    pl(RR,kx-8,ky+4,ax-5,ay-6,kc,1.8);
+    pl(RR,sx-4,sy-26,sx-26,sy-16,kc,2);
+    pl(RR,sx-26,sy-16,sx-36,sy+1,kc,1.6);
+    if(lHang){
+      pl(RR,sx-11,sy+15,ex-6,ey-11,kc,1.6);            // upper arm, to the elbow
+      pl(RR,ex-5,ey+8,ex+1,wy-37,kc,1.6);              // forearm, to the fin
+      pl(RR,wx-11.5,wy-33,wx-16.5,wy-23,kc,1.4);       // bracer fin lead edge
+      pl(RR,wx-10,wy+3,wx-8.7,wy+11,kc,1.4);           // knuckle block
+      pl(RR,wx-9,wy+12,wx-9.4-(offl?2:0),wy+(offl?22:24),kc,1.2); // outer digit
+    } else pl(RR,cx-33,hy0+8,kx-9,ky-9,kc,1.8);        // thigh, tasset to knee
+    pl(RR,kx-12,ky-8,kx-15.5,ky+3,kc,1.6);             // knee guard spike
+    pl(RR,kx-6,ky+14,ax-5,ay-6,kc,1.8);                // shank, below the guard
     pl(RR,ax-5,ay+2,fx-7,544,kc,1.6);
     pl(RR,fx-14,547,fx-15,553,kc,1.4);})();
+  /* fill side: the shared cyan rim is a hairline and the dark flank sank into
+     the wall — short cool strokes hold the right silhouette, dim, per plate,
+     broken at shoulder/elbow/wrist/knee/ankle */
+  (function(){var fc="rgba(150,196,235,"+(offl?0.14:0.36)+")";
+    var sx=cx+44, sy=248+breath, ex=sx+8, ey=316+d*0.6, wx=sx-8, wy=395+d*0.5;
+    var hy0=362+d*0.55+breath*0.3, kx=cx+(offl?44:38), ky=447+d*0.5,
+        ax=cx+(offl?31:26), ay=514+d*0.2, fx=cx+34;
+    pl(RR,sx+6,sy-25,sx+25,sy-16.5,fc,1.6);            // crown outer edge
+    pl(RR,sx+27,sy-15,sx+36,sy+1,fc,1.4);              // trailing spike, to the bite
+    if(rHang){
+      pl(RR,sx+11,sy+15,ex+6,ey-11,fc,1.4);
+      pl(RR,ex+5,ey+8,ex-1,wy-37,fc,1.4);
+      pl(RR,wx+11.5,wy-33,wx+16.5,wy-23,fc,1.2);
+      pl(RR,wx+10,wy+3,wx+8.7,wy+11,fc,1.2);
+      pl(RR,wx+9,wy+12,wx+9.4+(offl?2:0),wy+(offl?22:24),fc,1.1);
+    } else pl(RR,cx+33,hy0+8,kx+9,ky-9,fc,1.6);
+    pl(RR,kx+12,ky-8,kx+15.5,ky+3,fc,1.6);
+    pl(RR,kx+6,ky+14,ax+5,ay-6,fc,1.6);
+    pl(RR,ax+5,ay+2,fx+7,544,fc,1.4);
+    pl(RR,fx+14,547,fx+15,553,fc,1.2);})();
   var hh=handR||{x:cx+45,y:394+d*0.8};
   // two clawed feet, planted flat on the deck — grounded, for the first time
   return {hand:hh,coreY:275+breath,hy:hby+8,offl:offl,work:work,
@@ -6319,14 +6358,22 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
          its toes — the floor plane runs on past the feet in both directions,
          so the figure stands IN the room, never on a ledge lip */
       var fyd=my2(fy), jy=fyd-Math.min(54,(H2-fyd)*0.5);
+      /* the backdrop sits LOW: the unit's own darks must clear it, and the
+         silhouette separates against the wall pools, never by brightening
+         the figure */
       var wg=c.createLinearGradient(0,0,0,jy);
-      wg.addColorStop(0,"#0d1119");wg.addColorStop(1,"#070a10");
+      wg.addColorStop(0,"#080b11");wg.addColorStop(1,"#04060a");
       c.fillStyle=wg;c.fillRect(0,0,W2,jy);
       var pool=c.createRadialGradient(W2*0.44,H2*0.36,H2*0.06,W2*0.44,H2*0.36,H2*0.52);
-      pool.addColorStop(0,"rgba(126,146,176,0.10)");pool.addColorStop(1,"rgba(126,146,176,0)");
+      pool.addColorStop(0,"rgba(126,146,176,0.12)");pool.addColorStop(1,"rgba(126,146,176,0)");
       c.fillStyle=pool;c.fillRect(0,0,W2,jy);
+      /* second pool behind the FILL side: the dark flank reads against
+         lifted wall — hip to ankle needs grey behind it */
+      var pool2=c.createRadialGradient(W2*0.63,H2*0.60,H2*0.05,W2*0.63,H2*0.60,H2*0.52);
+      pool2.addColorStop(0,"rgba(126,146,176,0.14)");pool2.addColorStop(1,"rgba(126,146,176,0)");
+      c.fillStyle=pool2;c.fillRect(0,0,W2,jy);
       var fg=c.createLinearGradient(0,jy,0,H2);
-      fg.addColorStop(0,"#10151f");fg.addColorStop(1,"#05070c");
+      fg.addColorStop(0,"#0a0e15");fg.addColorStop(1,"#030509");
       c.fillStyle=fg;c.fillRect(0,jy,W2,H2-jy);
       /* the floor must read as a PLANE under ONE lamp: the grey spill lands
          up-LEFT of the unit (where the key is), two faint transverse joints
