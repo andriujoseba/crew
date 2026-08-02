@@ -3595,12 +3595,12 @@ function buildGrok(t,st){
     // upper arm: bare mechanism — twin rods from the socket, no plate at all
     var ex,ey;
     if(mode==='reachdown'){ex=sx+sgn*20;ey=sy+28;}
-    else if(mode==='strike'){ex=sx+sgn*19;ey=sy+9;}
+    else if(mode==='strike'){ex=sx+sgn*24;ey=sy+2;}
     else if(mode==='raiseup'){ex=sx+sgn*4;ey=sy+42;}
     // hanging: elbow flexed and held a touch OUTBOARD — a coiled hang, not a
     // plumb line, and the silhouette gap it opens is what keeps the forearm
     // readable across the tasset line
-    else {ex=sx+sgn*11;ey=302+d*0.6;}
+    else {ex=sx+sgn*11;ey=294+d*0.6;}
     /* loop 7: the upper arm gets MEAT — an armoured biceps plate carrying
        real width from the socket to the elbow. The tendon stays strung on
        the inner line, exposed: muscle first, wiring still visible. */
@@ -3680,7 +3680,7 @@ function buildGrok(t,st){
     if(mode==='strike'){ /* the action pose: forearm CLIMBS off the high
       elbow, wrist beside the mask, talon splayed open and presented — the
       free arm is not resting, it is mid-swing. */
-      var ux5=sx+sgn*9, uy5=sy-36;
+      var ux5=sx+sgn*20, uy5=sy-30;
       limbSeg(g,ex,ey,ux5,uy5,8.5,11,sT,sM);
       tendon(ex-sgn*2,ey-4,ux5-sgn*3,uy5+6,3);
       joint(ex,ey,8);
@@ -3695,7 +3695,7 @@ function buildGrok(t,st){
     } else if(mode==='reachdown'){ /* builder: the FLEX — elbow thrown out past the
       blade, thick forearm driving down and IN, the claw landing low in front
       of the hip where the arc lives. A hunter leans on its work. */
-      var hx3=cx+sgn*46, hy3=346;
+      var hx3=cx+sgn*30, hy3=352;
       limbSeg(g,ex,ey,hx3,hy3-8,8.5,12,sT,sM);
       tendon(ex+sgn*2,ey+4,hx3-sgn*2,hy3-10,3);
       joint(ex,ey-1,6.5);
@@ -3713,7 +3713,7 @@ function buildGrok(t,st){
       // wrist dropping to mid-thigh: the talon hangs BELOW and CLEAR of the
       // pelvis cluster, read against the thigh by a value step, not luck.
       // In the coil the hang is SHORT — knuckles never reach the knee line.
-      var wx=sx+sgn*10, wy=390+d*0.5;
+      var wx=sx+sgn*10, wy=356+d*0.5;
       limbSeg(g,ex,ey,wx,wy,8.5,11.5,sT,sM);
       // bracer fin off the outer flare, riding the forearm's line
       plate(g,[[wx+sgn*13,wy-36],[wx+sgn*21,wy-22],[wx+sgn*12,wy-12]],sM,sB,ed);
@@ -3972,7 +3972,7 @@ function buildGrok(t,st){
   var lHang=!work, rHang=!work; // working, both arms leave the hang — strike/tool
   (function(){var kc=puh(offl?0.28:0.8);
     // arm/torso strokes live in stance space (+WS,+SD); leg strokes in world
-    var sx=cx+WS-47, sy=248+SD+breath, ex=sx-11, ey=302+SD+d*0.6, wx=sx-10, wy=390+SD+d*0.5;
+    var sx=cx+WS-47, sy=248+SD+breath, ex=sx-11, ey=294+SD+d*0.6, wx=sx-10, wy=356+SD+d*0.5;
     var hy0=362+SD+d*0.4+breath*0.3, kx=cx-(offl?54:58), ky=452+d*0.3,
         ax=cx-45, ay=516+d*0.1, fx=cx-52;
     pl(RR,sx-4,sy-26,sx-26,sy-16,kc,2);
@@ -3992,7 +3992,7 @@ function buildGrok(t,st){
      ACCENTS near each plate's crown only. A full-length lit right contour
      reads as a second lamp, and one lamp is the whole stage's story. */
   (function(){var fc="rgba(150,196,235,"+(offl?0.05:0.14)+")";
-    var sx=cx+WS+47, sy=248+SD+breath, ex=sx+11, ey=302+SD+d*0.6, wx=sx+10, wy=390+SD+d*0.5;
+    var sx=cx+WS+47, sy=248+SD+breath, ex=sx+11, ey=294+SD+d*0.6, wx=sx+10, wy=356+SD+d*0.5;
     var hy0=362+SD+d*0.4+breath*0.3, kx=cx+(offl?54:50), ky=456+d*0.3,
         ax=cx+30, ay=518+d*0.1, fx=cx+38;
     var hcx2=hcx+WS, hby2=hby+SD;
