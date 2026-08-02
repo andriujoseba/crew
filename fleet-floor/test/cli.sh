@@ -308,7 +308,7 @@ else
 fi
 # Both readers must speak one vocabulary, or "they agree" is a string compare
 # between two dialects.
-for cl_word in nofail stale missing unknown; do
+for cl_word in nofail waiting stale missing unknown; do
   if grep -q "$cl_word" "$CL_CLI" && grep -q "$cl_word" "$CL_FLOOR/server/probe.sh"; then
     ok "vocabulary '$cl_word' is shared by crew and probe.sh"
   else
@@ -340,6 +340,66 @@ else
   fail "crew status: a box that has never ticked reads 'no ticks yet'" \
        "$(grep '^cli-neverticked' "$CL_TMP/crew-out")"
 fi
+# #265 — the CREDENTIAL columns of that same row. The NOTE said "no ticks yet"
+# while GH and VENDOR beside it said `stale`, which is the row contradicting
+# itself: `stale` claims the engine used to talk to these services and has
+# stopped. It has never started.
+#
+# cl_pair NAME REGEX DESC — one row's GH and VENDOR cells, matched as an
+# ADJACENT PAIR followed by the start of its NOTE.
+#
+# A pair and not two greps: floor.py and cli/crew age both services in one
+# loop, so a fix that reached `gh` alone leaves `waiting  stale`, and a
+# single-cell assertion passes it. Matched by regex rather than by field index
+# or character offset because neither survives this table — `$6` is INTEGRITY
+# on a hired row and GH on an unhired one, since the stub's ENGINE value
+# (`crew@0.4.1 (deadbee)`) both contains a space and overruns its `%-15s`
+# field. Anchoring on the NOTE that follows is what keeps the match honest:
+# it pins the cells to their column rather than to any two words in the row.
+cl_pair() {
+  if grep -qE "$2" "$CL_TMP/crew-out"; then
+    ok "$3"
+  else
+    fail "$3" "$(grep "^$1" "$CL_TMP/crew-out")"
+  fi
+}
+cl_pair cli-neverticked '^cli-neverticked .+ waiting +waiting +no ticks yet$' \
+  "crew status: a never-ticked box reports waiting, not stale"
+# THE GUARD, and it outranks the fix. Reporting a genuinely silent box as
+# "waiting for its first tick" puts a possibly-dead credential behind a
+# reassuring word — strictly worse than the bug it fixes. cli-disarmed HAS
+# ticked (tickage 4000) and must still read `stale` in both columns.
+cl_pair cli-disarmed '^cli-disarmed .+ stale +stale +disarmed' \
+  "crew status: a box that ticked and stopped is still stale"
+# A recent tick still reads `flowing`: the new branch must not swallow the
+# healthy case on its way past.
+cl_pair cli-hired '^cli-hired .+ flowing +flowing +[0-9]{4}-' \
+  "crew status: a ticking box still reports flowing"
+# The boundary the new branch could have swallowed. It fires only inside the
+# `nofail` arm, so a box with no VERSION is untouched — keying it on tickage
+# alone would have turned every unhired box into `waiting`, a word that claims
+# an engine is installed and about to run. cli-nothired reports tickage -1 too,
+# which is exactly what makes this a boundary and not a formality.
+cl_pair cli-nothired '^cli-nothired .+ unknown +unknown +crew hire' \
+  "crew status: an unhired box is untouched by the waiting branch"
+# A recorded rejection still outranks everything above it: cli-noauth reports a
+# tick age, but its verdict is decided before any aging happens at all.
+cl_pair cli-noauth '^cli-noauth .+ MISSING +MISSING +' \
+  "crew status: a recorded rejection still outranks the aged verdicts"
+# #265's alignment criterion, pinned where it can actually be broken: the
+# format string. The stub's ENGINE value overruns `%-15s`, so no fixture row
+# can prove alignment by inspection — but a credential verdict wider than the
+# `%-8s` cells would shift the NOTE on every hired row of a real fleet, and
+# that is a one-character edit away. `waiting` is seven, so this contract is
+# unchanged; the golden compare means widening it has to be deliberate.
+CL_FMT="$(sed -n "s/^  local fmt='\(.*\)'\$/\1/p" "$CL_CLI" | head -1)"
+t "crew status: the table's column contract is unchanged" \
+  '%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
+CL_WIDE=""
+for cl_word in flowing waiting stale missing unknown MISSING; do
+  [ "${#cl_word}" -le 8 ] || CL_WIDE="$CL_WIDE $cl_word"
+done
+t "crew status: every credential verdict fits its 8-wide column" "" "$CL_WIDE"
 # The healthy row BELOW it. Named separately from the count so a regression
 # says which shape came back rather than only that the total moved.
 if grep -qE '^cli-hired ' "$CL_TMP/crew-out"; then

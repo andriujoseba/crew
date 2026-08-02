@@ -2052,6 +2052,29 @@ CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p
 t silent-rule-floor-derived 600 "$FL_SILENT"
 t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 
+# The never-ticked boundary is the same kind of shared rule and pinned the same
+# way (#265). SILENT_AFTER_S was never the only number the two readers had to
+# agree on — it was only the only one that EXISTED. `waiting` adds a second
+# boundary, and a verdict living in one reader alone is precisely the
+# disagreement auth_from_flow was written to remove: `crew status` would say a
+# fresh hire is waiting while the floor called it stale, in front of the same
+# operator, about the same box. Extracted rather than grepped for, so that
+# moving the boundary in one reader fails HERE rather than silently.
+# shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
+CL_NEVER="$(sed -n 's/^ *if \[ "$tickage" -lt \(-*[0-9][0-9]*\) \]; then.*/\1/p' "$CREW_CLI" | head -1)"
+FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
+t nevertick-rule-floor-boundary 0 "$FL_NEVER"
+t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
+# ...and it must be a verdict BOTH readers can actually produce. The boundary
+# matching proves they agree on WHEN; these prove they agree on what to CALL it,
+# which is the half a numeric compare cannot see: two readers could share the
+# boundary exactly and still print different words at it.
+# shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
+if grep -q 'printf -v "$_v" waiting' "$CREW_CLI"; then r1=emitted; else r1=MISSING; fi
+t nevertick-cli-emits-waiting emitted "$r1"
+if grep -q 'u\[svc\] = "waiting"' "$FLOOR_PY"; then r1=emitted; else r1=MISSING; fi
+t nevertick-floor-emits-waiting emitted "$r1"
+
 # ...and the box must hold no threshold of its own. Comments and the log-tail
 # line count are stripped before looking, so only real code counts.
 PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"

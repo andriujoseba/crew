@@ -1611,12 +1611,20 @@ function credGlyph(label,v){
      distinct from ✓ — a disarmed box with a dead token used to render a tick
      here, which is the single most misleading thing this panel could say. */
   if(v==="stale")return label+" ~";
+  /* waiting: hired, armed, and no tick has happened YET — distinct from stale,
+     which claims we used to hear from this box. The operator's action differs:
+     stale is "go find out why it stopped", waiting is "wait one tick boundary".
+     Rendering them alike told a minute-old hire it had gone silent (#265). */
+  if(v==="waiting")return label+" …";
   return label+" ?";               /* unknown: no engine has run, so nothing is known */
 }
 function credColour(d){
   if(d.gh==="missing"||d.vendor==="missing")return "#ff5147";
   if(d.gh==="flowing"&&d.vendor==="flowing")return "#5fce9b";
-  return "#f7bd4e";                /* stale or unknown: not established, not green */
+  /* stale, waiting or unknown: not established, not green. `waiting` shares the
+     amber deliberately — a box we have not heard from yet has not proved its
+     credentials work, and green is a claim only a completed tick can support. */
+  return "#f7bd4e";
 }
 /* The ping tier. `null` means this collector never reported one — an older
    floor.py, or a box it skipped because it is stopped — and must read as "—",

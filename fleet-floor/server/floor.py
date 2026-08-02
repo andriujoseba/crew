@@ -650,12 +650,29 @@ def build_unit(unit, state, agent_conf, now):
     except (TypeError, ValueError):
         tick_age = -1
     fresh = 0 <= tick_age < SILENT_AFTER_S
+    # WAITING — no tick has ever been observed, so there is no age to compare
+    # against any threshold. `stale` is the wrong word here and it is wrong in
+    # a costly direction: it means "we used to hear from this box and no longer
+    # do", which is why the page renders it amber `~`. A box hired sixty seconds
+    # ago has not stopped ticking; nobody has heard from it AT ALL. Telling an
+    # operator their minute-old hire is stale, on a row whose every other column
+    # says it is fine, is the same conflation #221 and #224 fix at the two
+    # neighbouring call sites (#265).
+    #
+    # Not `unknown`: that value is reserved for a box with no engine, and
+    # rehearsal-app.sh asserts no HIRED box ever reports it, on the grounds that
+    # it leaves the operator nothing to act on. A never-ticked box is actionable
+    # — the action is to wait one tick boundary — so it gets its own word.
+    never_ticked = tick_age < 0
     for svc in ("gh", "vendor"):
         fail = meta.get("authfail-%s" % svc, "")
         if fail:
             u["authfail"].append("%s: %s" % (svc, fail))
         if u[svc] == "nofail":
-            u[svc] = "flowing" if fresh else "stale"
+            if never_ticked:
+                u[svc] = "waiting"
+            else:
+                u[svc] = "flowing" if fresh else "stale"
 
     # A duty run is in flight and has held the lock this long. Absent means no
     # run is in flight — the common case between ticks, and not a fault.

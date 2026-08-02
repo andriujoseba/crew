@@ -1266,11 +1266,13 @@ vendor_probe() {
 # one source instead of two (#189: the floor called every unarmed box SILENT,
 # and the CLI could not answer the question at all).
 #
-# where a state is flowing | stale | missing | unknown, the same vocabulary
-# fleet-floor's probe.sh emits — including `stale`, which is the difference
-# between an engine that is INSTALLED and one that is RUNNING. VERSION alone
-# proves only the first, so a disarmed box with a dead token reported
-# `flowing` until this required a recent tick too.
+# where a state is flowing | waiting | stale | missing | unknown, the same
+# vocabulary fleet-floor's probe.sh emits — including `stale`, which is the
+# difference between an engine that is INSTALLED and one that is RUNNING.
+# VERSION alone proves only the first, so a disarmed box with a dead token
+# reported `flowing` until this required a recent tick too. `waiting` splits
+# the never-ticked box back out of `stale`: it has not STOPPED ticking, it has
+# not STARTED (#265).
 #
 # The box reports the tick AGE and this host applies the rule, exactly as the
 # floor does with probe.sh's ::tickage. A threshold baked into the in-box
@@ -1978,9 +1980,17 @@ cmd_status() {
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
     # it, because two readers with private thresholds is the defect this whole
     # helper exists to remove.
+    # The never-ticked branch is floor.py's `never_ticked = tick_age < 0`, and
+    # shared/test asserts the two boundaries match for the same reason it
+    # asserts SILENT_AFTER_S does: a verdict that exists in one reader only is
+    # exactly the disagreement auth_from_flow was written to remove. It comes
+    # FIRST because "no age at all" is not a point on the freshness scale —
+    # falling through to the else called a box hired a minute ago `stale` (#265).
     for _v in ghs vs; do
       if [ "${!_v}" = nofail ]; then
-        if [ "$tickage" -ge 0 ] && [ "$tickage" -lt "$SILENT_AFTER_S" ]; then
+        if [ "$tickage" -lt 0 ]; then
+          printf -v "$_v" waiting
+        elif [ "$tickage" -lt "$SILENT_AFTER_S" ]; then
           printf -v "$_v" flowing
         else
           printf -v "$_v" stale
