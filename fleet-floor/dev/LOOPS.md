@@ -2517,3 +2517,10 @@ upright reference (arms down-and-out, hands free beside the thighs), working
    caps, lit-side-only highlight; ferrules sized to their tip; a fourth,
    shorter outer pair per side. One stiff quadratic at constant width reads
    as rope — this reads as a curtain.
+
+**Post-round correction (operator):** idle talons had landed exactly over the
+knee guards — hands-on-knees, winded. The arms were the culprit: too long.
+Both segments shortened (elbow 294, wrist 356) so the talon dies at the upper
+thigh, 40+ units above the knee line, hanging beside the leg. Working's tool
+hand moved from beside the hip to IN FRONT of the body, and the strike went
+from vertical (a wave) to a cocked diagonal above the pauldron (a slash).
