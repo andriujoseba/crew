@@ -2144,7 +2144,7 @@ cmd_upgrade() {
     # Preserve the box's armed state instead of asserting one. An upgrade
     # that arms a box nobody armed is a behaviour change wearing the
     # clothes of a version bump.
-    if bxn "$b" 'crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh' 2>/dev/null; then
+    if bxn "$b" 'crontab -l 2>/dev/null | grep -qE "^[^#].*tick\.sh"' 2>/dev/null; then
       armed=1; flags="--arm-cron"
     else
       armed=0; flags=""

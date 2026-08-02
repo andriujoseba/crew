@@ -468,6 +468,27 @@ else
 fi
 t upgrade-passes-roster-box-key box-keyed "$r1"
 
+# #283 — every reader of the armed state must agree that only a live tick
+# line counts. A paused line contains tick.sh too, so an unanchored probe makes
+# routine maintenance silently resume a box the operator deliberately paused.
+status_tick_pattern="$(sed -n 's/.*grep -cE "\([^"]*tick\\\.sh\)".*/\1/p' "$ROOT/cli/crew" | head -1)"
+upgrade_tick_pattern="$(sed -n 's/.*grep -qE "\([^"]*tick\\\.sh\)".*/\1/p' "$ROOT/cli/crew" | tail -1)"
+floor_tick_pattern="$(sed -n "s/.*grep -cE '\([^']*tick\\\\\.sh\)'.*/\1/p" "$ROOT/fleet-floor/server/probe.sh" | head -1)"
+t upgrade-armed-pattern-matches-status "$status_tick_pattern" "$upgrade_tick_pattern"
+t upgrade-armed-pattern-matches-floor "$floor_tick_pattern" "$upgrade_tick_pattern"
+
+upgrade_armed_flag() {
+  local crontab_text="$1"
+  if printf '%s\n' "$crontab_text" | grep -qE "$upgrade_tick_pattern"; then
+    printf '%s' --arm-cron
+  fi
+}
+armed_cron="*/5 * * * * \$HOME/duty/bin/tick.sh"
+paused_cron="#CREW-FLOOR-PAUSED */5 * * * * \$HOME/duty/bin/tick.sh"
+t upgrade-armed-box-keeps-arm-flag --arm-cron "$(upgrade_armed_flag "$armed_cron")"
+t upgrade-paused-box-passes-no-arm-flag '' "$(upgrade_armed_flag "$paused_cron")"
+t upgrade-never-armed-box-passes-no-arm-flag '' "$(upgrade_armed_flag '')"
+
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed
 # with --arm-cron. That reached off-roster boxes -- a drill box between runs
