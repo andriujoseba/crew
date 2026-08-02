@@ -3385,9 +3385,8 @@ function buildGrok(t,st){
     plate(g,[[fx-15,fy+6],[fx+15,fy+6],[fx+15,fy+9.5],[fx-15,fy+9.5]],lM,lB,null);
     [-1,0,1].forEach(function(ti){var tx2=fx+ti*9;
       plate(g,[[tx2-4,fy+8],[tx2+4,fy+8],[tx2+2,560],[tx2-2,560]],lT,lB,null);
-      // the key catches each claw's LEFT face; bare metal where it meets the deck
-      pl(g,tx2-3.4,fy+9,tx2-2,558.5,"rgba(186,205,238,"+((offl?0.12:0.34)*kf(sgn))+")",1.2);
-      g.fillStyle="rgba(190,208,232,"+(offl?0.18:0.32)+")";g.fillRect(tx2-2,557.4,4,2.6);});
+      // bare metal at the deck stays DARK — brightness at contact reads as glow
+      g.fillStyle="rgba(150,168,192,"+(offl?0.06:0.12)+")";g.fillRect(tx2-2,557.4,4,2.6);});
   }
   leg(-1);leg(1);
 
@@ -3698,9 +3697,11 @@ function buildGrok(t,st){
       // stagger: motion sells it there, a still never has to.
       var scn=0.62+0.2*Math.sin(t*2.1);
       var br2=work?(0.8+0.2*Math.sin(t*9+s)):scn;
-      var eg=c2.createRadialGradient(ox,oy,0.5,ox,oy,8.5);
-      eg.addColorStop(0,puh(0.95*br2));eg.addColorStop(0.45,pu(0.62*br2));eg.addColorStop(1,pu(0));
-      c2.fillStyle=eg;c2.beginPath();c2.arc(ox,oy,8.5,0,7);c2.fill();
+      // hard point of light: bright core, tight falloff — a wide soft halo
+      // here fogs the whole mask once the stage blooms it
+      var eg=c2.createRadialGradient(ox,oy,0.5,ox,oy,6);
+      eg.addColorStop(0,puh(0.98*br2));eg.addColorStop(0.35,pu(0.72*br2));eg.addColorStop(1,pu(0));
+      c2.fillStyle=eg;c2.beginPath();c2.arc(ox,oy,6,0,7);c2.fill();
       c2.fillStyle=puh(0.95*br2);c2.fillRect(ox-2.6,oy-1,5.2,2.2);});});
   // cheek ridges: flaring OUT toward the jaw — the mandible echo, built in
   [-1,1].forEach(function(s){
@@ -3765,6 +3766,12 @@ function buildGrok(t,st){
   cavity(g,cx-24,376+d*0.55,48,20,0.32);
   cavity(g,cx-20,243+breath,40,13,0.28);
   buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet on the key side
+  // ONE key: the shared rim's cyan flank sits at HALF, or the fill side
+  // argues with the lamp the floor already declared
+  (function(){var dg=RR.createLinearGradient(cx,0,cx+90,0);
+    dg.addColorStop(0,"rgba(0,0,0,0)");dg.addColorStop(1,"rgba(0,0,0,0.5)");
+    RR.save();RR.globalCompositeOperation="destination-out";
+    RR.fillStyle=dg;RR.fillRect(cx,0,RW-cx,RH);RR.restore();})();
   /* the shared rim survives only on trailing (right) edges — the declared key
      is upper-LEFT and vendor-coloured, so the key-side rim is drawn by hand.
      PER PLATE: every stroke hugs one plate's own outer edge and dies at the
@@ -3792,7 +3799,7 @@ function buildGrok(t,st){
   /* fill side: the shared cyan rim is a hairline and the dark flank sank into
      the wall — short cool strokes hold the right silhouette, dim, per plate,
      broken at shoulder/elbow/wrist/knee/ankle */
-  (function(){var fc="rgba(150,196,235,"+(offl?0.14:0.36)+")";
+  (function(){var fc="rgba(150,196,235,"+(offl?0.08:0.18)+")";
     var sx=cx+44, sy=248+breath, ex=sx+8, ey=316+d*0.6, wx=sx-8, wy=395+d*0.5;
     var hy0=362+d*0.55+breath*0.3, kx=cx+(offl?44:38), ky=447+d*0.5,
         ax=cx+(offl?31:26), ay=514+d*0.2, fx=cx+34;
@@ -3809,6 +3816,12 @@ function buildGrok(t,st){
     pl(RR,kx+6,ky+14,ax+5,ay-6,fc,1.6);
     pl(RR,ax+5,ay+2,fx+7,544,fc,1.4);
     pl(RR,fx+14,547,fx+15,553,fc,1.2);})();
+  // deck rule: NO rim inside the last 8 units above the sole — a lit edge at
+  // the contact row reads as glow, and the shared rim hugs the toe corners
+  (function(){var fg2=RR.createLinearGradient(0,551,0,556);
+    fg2.addColorStop(0,"rgba(0,0,0,0)");fg2.addColorStop(1,"rgba(0,0,0,1)");
+    RR.save();RR.globalCompositeOperation="destination-out";
+    RR.fillStyle=fg2;RR.fillRect(0,551,RW,RH-551);RR.restore();})();
   var hh=handR||{x:cx+45,y:394+d*0.8};
   // two clawed feet, planted flat on the deck — grounded, for the first time
   return {hand:hh,coreY:275+breath,hy:hby+8,offl:offl,work:work,
@@ -6390,9 +6403,8 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
       c.fillStyle=fpool;c.beginPath();c.arc(plx,ply,W2*0.5,0,7);c.fill();
       c.restore();
       c.fillStyle="rgba(140,162,192,0.08)";c.fillRect(0,jy,W2,Math.max(1,sc2*0.8));
-      [0.3,0.66].forEach(function(fr){
-        c.fillStyle="rgba(140,162,192,"+(0.055-fr*0.03)+")";
-        c.fillRect(0,jy+(H2-jy)*fr,W2,1);});
+      // one barely-there transverse joint — more and the floor reads as bands
+      c.fillStyle="rgba(140,162,192,0.03)";c.fillRect(0,jy+(H2-jy)*0.34,W2,1);
       if((info.feet||[]).length){
         var fmn=1e9,fmx=-1e9;info.feet.forEach(function(f2){var xx=mx2(f2.x);if(xx<fmn)fmn=xx;if(xx>fmx)fmx=xx;});
         var scx=(fmn+fmx)/2, shw=(fmx-fmn)/2+info.feet[0].w*sc2;
@@ -6403,18 +6415,20 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
         c.fillStyle=csg;c.beginPath();c.arc(shw*0.9,0,shw*2.6,0,7);c.fill();
         c.restore();}
       (info.feet||[]).forEach(function(f2){
+        // pooled shadow per foot — strong enough to survive the darkened
+        // floor: under-foot must sit clearly below the open deck's value
         var fx2=mx2(f2.x),fw2=f2.w*sc2;
-        var sg2=c.createRadialGradient(fx2,fyd+2,1,fx2,fyd+2,fw2*1.35);
-        sg2.addColorStop(0,"rgba(0,0,0,0.7)");sg2.addColorStop(0.6,"rgba(0,0,0,0.36)");sg2.addColorStop(1,"rgba(0,0,0,0)");
-        c.save();c.translate(fx2,fyd+2);c.scale(1,0.24);c.translate(-fx2,-(fyd+2));
-        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+2,fw2*1.35,0,7);c.fill();c.restore();
+        var sg2=c.createRadialGradient(fx2,fyd+3,1,fx2,fyd+3,fw2*1.5);
+        sg2.addColorStop(0,"rgba(0,0,0,0.85)");sg2.addColorStop(0.6,"rgba(0,0,0,0.5)");sg2.addColorStop(1,"rgba(0,0,0,0)");
+        c.save();c.translate(fx2,fyd+3);c.scale(1,0.3);c.translate(-fx2,-(fyd+3));
+        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+3,fw2*1.5,0,7);c.fill();c.restore();
         // contact occlusion: a tight dark pinch under each toe TIP — the
         // broad pool says "near the floor", only this says "on it"
         (f2.toes||[]).forEach(function(tx5){
-          var txd=mx2(tx5), tr=Math.max(3,sc2*5), tcy=fyd+2.5;
+          var txd=mx2(tx5), tr=Math.max(3,sc2*6.5), tcy=fyd+2.5;
           var tg=c.createRadialGradient(txd,tcy,0.5,txd,tcy,tr);
-          tg.addColorStop(0,"rgba(0,0,0,0.85)");tg.addColorStop(0.55,"rgba(0,0,0,0.45)");tg.addColorStop(1,"rgba(0,0,0,0)");
-          c.save();c.translate(txd,tcy);c.scale(1,0.38);c.translate(-txd,-tcy);
+          tg.addColorStop(0,"rgba(0,0,0,0.9)");tg.addColorStop(0.55,"rgba(0,0,0,0.5)");tg.addColorStop(1,"rgba(0,0,0,0)");
+          c.save();c.translate(txd,tcy);c.scale(1,0.45);c.translate(-txd,-tcy);
           c.fillStyle=tg;c.beginPath();c.arc(txd,tcy,tr,0,7);c.fill();c.restore();});});
       // sprite: colour, then rim, then the emissive taps — the portrait recipe
       var sxp=cx0*K,syp=cy0*K,swp=(cx1-cx0)*K,shp=(cy1-cy0)*K;
@@ -6424,9 +6438,11 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
       c.drawImage(robo,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
       c.filter="none";c.globalCompositeOperation="lighter";
       c.globalAlpha=off2?0.4:0.9;c.drawImage(rrim,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
-      var bl2=Math.max(2,Math.round(W2/90));
+      /* bloom taps stay TIGHT: wide taps fog every hard edge near an
+         emissive — optics are points of light, never weather */
+      var bl2=Math.max(2,Math.round(W2/240));
       c.globalAlpha=0.55;c.filter="blur("+bl2+"px)";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
-      c.globalAlpha=0.45;c.filter="blur("+bl2*3+"px)";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
+      c.globalAlpha=0.45;c.filter="blur("+(bl2*2.5)+"px)";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
       c.globalAlpha=off2?0.5:0.9;c.filter="none";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
       c.globalCompositeOperation="source-over";c.globalAlpha=1;
       return {box:{x:cx0,y:cy0,w:cx1-cx0,h:cy1-cy0},feet:info.feet};
