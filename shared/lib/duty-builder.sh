@@ -257,6 +257,59 @@ _request_panel() {
   return 0
 }
 
+# --- The dirty-worktree report: once per (worktree, dirt), never per tick ---
+#
+# Leaving a dirty worktree alone is right — a `--force` here deletes
+# uncommitted work irrecoverably, and no log line is worth that. What was
+# wrong is that the engine said so on EVERY pass, forever, about a condition
+# nothing in the loop can change: the same two lines every five minutes for
+# days on build/77-fleet-action-status (PR #103, merged). A warning that
+# repeats forever is not a warning, it is wallpaper, and this fleet already
+# has a family of defects that survived because a signal was present and
+# unread (#114, #147, #155, #158). So the ledger buys silence for a condition
+# already stated once — not for an unstated one (#59).
+#
+# THE DIRT GOES IN THE ID, AND THE VALUE IS A FIXED SENTINEL — the ci-red
+# scheme (#17) for the same reason: ledger_filter re-fires when the VALUE
+# sorts greater, and a dirt fingerprint has no order. Keyed the ordinary way,
+# a worktree that became dirty in a NEW way whose fingerprint happened to sort
+# below the old one would be suppressed — losing the report exactly when the
+# condition changed, which is the one thing this ledger must not do.
+#
+# `cksum`, not `sha256sum`: this is an identity for a local state file, not
+# provenance, and cksum is POSIX, so the engine gains no new dependency. A
+# collision costs one un-repeated warning about a worktree already reported.
+_wt_dirt_id() { # $1=repo $2=branch $3=porcelain text -> ledger id
+  printf '%s:%s@%s' "$1" "$2" \
+    "$(printf '%s' "$3" | cksum | awk '{print $1 "-" $2}')"
+}
+
+_wt_dirt_summary() { # $1=porcelain text -> what made it dirty, in two counts
+  printf '%s\n' "$1" | awk '
+    /^\?\?/ { u++; next }
+    NF      { m++ }
+    END     { printf "%d modified, %d untracked", m+0, u+0 }'
+}
+
+# _wt_hygiene_report LEDGER REPO BRANCH PATH — say it once, and say what it
+# costs. "leaving it for inspection" never told the reader the price: the
+# worktree holds its branch, so the next `git worktree add` for that branch
+# fails with "already checked out", on somebody else's build, later, with no
+# obvious connection to the warning nobody was reading. Always returns 0 —
+# whether it spoke or not is not the caller's business.
+_wt_hygiene_report() {
+  local ledger="$1" repo="$2" branch="$3" path="$4" dirt item
+  dirt="$(git -C "$path" status --porcelain 2>/dev/null | sort)"
+  item="$(printf '%s\tdirty' "$(_wt_dirt_id "$repo" "$branch" "$dirt")")"
+  [ -n "$(printf '%s\n' "$item" | ledger_filter "$ledger")" ] || return 0
+  warn "$repo: worktree $path not clean ($(_wt_dirt_summary "$dirt")); leaving it for inspection — it holds $branch, so a later 'git worktree add' for that branch fails with 'already checked out'"
+  # Committed here, not after a session: no session runs on this signal, and
+  # what is suppressed is a repeated REPORT of an unchanged condition, not
+  # work a crashed session still owes.
+  printf '%s\n' "$item" | ledger_commit "$ledger"
+  return 0
+}
+
 duty_builder() {
   local duty_repos R
   _repair_seen_build_264
@@ -710,7 +763,9 @@ _builder_repo() {
   # a joined state list, so a newer closed PR can never shadow an older open
   # one (the .[0]-of-newest-first bug in codex's variant could delete a live
   # branch). A branch with no PR at all is an in-flight claim: resume's
-  # business, stays. A dirty worktree is never force-removed. ---
+  # business, stays. A dirty worktree is never force-removed, and the fact
+  # that it was left is reported once per (worktree, dirt state) rather than
+  # on every tick (#167, _wt_hygiene_report above). ---
   if [ -d "$dir/.git" ]; then
     git -C "$dir" worktree prune 2>/dev/null || true
     local wt_branch wt_path pr_states
@@ -726,7 +781,7 @@ _builder_repo() {
           if git -C "$dir" worktree remove "$wt_path" 2>/dev/null; then
             git -C "$dir" branch -D "$wt_branch" 2>/dev/null || true
           else
-            warn "worktree $wt_path not clean; leaving it for inspection"
+            _wt_hygiene_report "$DUTY_DIR/.seen-wt-dirty" "$R" "$wt_branch" "$wt_path"
           fi
           git -C "$dir" worktree prune 2>/dev/null || true
           ;;
