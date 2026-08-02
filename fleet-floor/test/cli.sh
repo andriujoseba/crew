@@ -451,6 +451,179 @@ else
   fail "crew status: a healthy box reads current" "$(grep '^cli-hired' "$CL_TMP/crew-out")"
 fi
 
+# ---------------------------------------------------------------------------
+# `crew status <box>` — the DETAIL view, which is a different code path from
+# the table above and had the same defect from the other direction (#221).
+#
+# The table asks "which boxes are healthy"; this asks "is THIS box healthy",
+# and it is what an operator types in the 5 minutes between `crew hire`
+# returning and the first cron tick. In that window ~/duty/duty.log does not
+# exist yet, `tail` exits 1, and the old `|| echo "  (unreachable)"` reported a
+# missing file as a missing box. The line directly above it — `integrity:` —
+# is itself a `box exec` round trip that answered, so the view contradicted
+# itself on one screen.
+#
+# Four states, four different sentences, and the fixture fleet already carries
+# a box for each.
+# ---------------------------------------------------------------------------
+echo
+echo "== crew status <box> (detail view)"
+
+# The round-trip budget is a criterion of #221's, so it is measured rather than
+# reasoned about: a wrapper that COUNTS `box exec` and then delegates to the
+# stub unchanged. Nothing else about the run differs.
+CL_COUNT_BIN="$CL_TMP/count-bin"
+mkdir -p "$CL_COUNT_BIN"
+cat >"$CL_COUNT_BIN/box" <<EOF
+#!/usr/bin/env bash
+[ "\${1:-}" = exec ] && printf 'x\n' >>"\${CL_EXEC_LOG:-/dev/null}"
+exec "$CL_HERE/stub-box" "\$@"
+EOF
+chmod +x "$CL_COUNT_BIN/box"
+
+# crew_detail BOX — `crew status BOX` with its round trips counted. Output in
+# $CL_TMP/crew-out and status in $CL_RC, exactly as crew_cmd; the exec count
+# lands in $CL_EXECN.
+CL_EXECN=0
+crew_detail() {
+  CL_RC=0
+  : >"$CL_TMP/execlog"
+  PATH="$CL_COUNT_BIN:$PATH" \
+  FLOOR_FIXTURE="$CL_CREW_FLEET" FLOOR_STATE="$CL_TMP/crew-state" \
+  CREW_CONFIG_DIR="$CL_CONFIG" CREW_ROSTER="$CL_CREW_ROSTER" \
+  CL_EXEC_LOG="$CL_TMP/execlog" \
+    timeout 60 "$CL_ROOT/cli/crew" status "$1" \
+    </dev/null >"$CL_TMP/crew-out" 2>&1 || CL_RC=$?
+  CL_EXECN="$(grep -c . "$CL_TMP/execlog" || true)"
+}
+
+# --- the reported case -----------------------------------------------------
+# cli-neverticked answers `box exec` and has no ~/duty/duty.log, which is every
+# box for the first five minutes of its life. Before the fix this printed
+# `(unreachable)`, so the negative half is the proof the test bites.
+crew_detail cli-neverticked
+t "crew status <box>: a box awaiting its first tick exits 0" 0 "$CL_RC"
+if grep -q 'no duty log yet' "$CL_TMP/crew-out" &&
+   ! grep -q 'unreachable' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a hired box with no duty log yet is not unreachable"
+else
+  fail "crew status <box>: a hired box with no duty log yet is not unreachable" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+# The line has to be actionable, not merely non-alarming: the operator was told
+# at hire that the first tick lands on the next 5-minute boundary, and this is
+# the same sentence, so the answer to "did my hire work?" reads as the hire's
+# own promise. The engine stamp is what makes it a fact about THIS box.
+if grep -qE 'no duty log yet — hired at .+; first tick at the next 5-minute boundary' \
+     "$CL_TMP/crew-out"; then
+  ok "crew status <box>: the wait names the engine stamp and the tick boundary"
+else
+  fail "crew status <box>: the wait names the engine stamp and the tick boundary" \
+       "$(grep 'no duty log' "$CL_TMP/crew-out")"
+fi
+# #221's round-trip criterion, measured: engine_report, rig_report, and the
+# duty-log read. THREE, and the number is the assertion — the reachability
+# signal had to come from a probe already made, so a fix that asked the box a
+# fourth question (auth_from_flow, a second `tail`, a `test -f`) would be a
+# different and more expensive fix than the one specified.
+t "crew status <box>: the detail view still costs three round trips" 3 "$CL_EXECN"
+
+# --- the regression guard, and it outranks the fix -------------------------
+# A box nobody can reach must not be laundered into "just hasn't ticked yet".
+# That failure is strictly worse than the bug being fixed: it puts a dead box
+# behind a reassuring sentence. cli-unreachable answers nothing at all.
+crew_detail cli-unreachable
+t "crew status <box>: an unreachable box still exits 0" 0 "$CL_RC"
+if grep -q '(unreachable)' "$CL_TMP/crew-out" &&
+   ! grep -q 'no duty log yet' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a box that answers nothing still reads (unreachable)"
+else
+  fail "crew status <box>: a box that answers nothing still reads (unreachable)" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+
+# --- the normal case, unchanged --------------------------------------------
+crew_detail cli-hired
+t "crew status <box>: a ticking box exits 0" 0 "$CL_RC"
+if grep -q 'stub log for cli-hired' "$CL_TMP/crew-out" &&
+   ! grep -qE 'unreachable|no duty log yet|not hired' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a box with a duty log still shows its log"
+else
+  fail "crew status <box>: a box with a duty log still shows its log" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+# The depth is part of "unchanged output": the detail view shows five lines, and
+# a fix that quietly became `tail -n 1` (the TABLE's read, one call site over)
+# would still pass every assertion above on a two-line stub log.
+if grep -q 'tail -n 5 ~/duty/duty.log' "$CL_CLI"; then
+  ok "crew status <box>: the detail view still reads the last 5 lines"
+else
+  fail "crew status <box>: the detail view still reads the last 5 lines" \
+       "no 'tail -n 5 ~/duty/duty.log' in $CL_CLI"
+fi
+
+# --- an un-hired box -------------------------------------------------------
+# There is no engine here, so a missing duty log is not the news — and the
+# stub deliberately still ANSWERS this read with a log (its `*tail*` case only
+# withholds one from `neverticked`). That unfaithfulness is what makes this
+# assertion bite: the un-hired verdict has to come from the absent engine, not
+# from an empty read it would also have got by accident.
+crew_detail cli-nothired
+t "crew status <box>: an un-hired box exits 0" 0 "$CL_RC"
+if grep -q 'not hired — no engine installed' "$CL_TMP/crew-out" &&
+   ! grep -q 'no duty log yet' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: an un-hired box reports the absent engine, not a missing log"
+else
+  fail "crew status <box>: an un-hired box reports the absent engine, not a missing log" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+
+# --- a box that is not on the host at all (#97) ----------------------------
+# The one case that is a FAILURE rather than a report, and the reason the
+# branch above is documented as deliberately narrow. It must survive a change
+# that adds three new sentences to the same view.
+crew_detail nosuchbox
+if [ "$CL_RC" -eq 1 ] && grep -q "no box named 'nosuchbox'" "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a box that does not exist still dies with rc=1 (#97)"
+else
+  fail "crew status <box>: a box that does not exist still dies with rc=1 (#97)" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+
+# --- the two readers must not contradict each other ------------------------
+# #221 and #224 are the same distinction one call site apart, and the issue
+# makes their agreement an explicit constraint. One box, both readers: the
+# table calls cli-neverticked `no ticks yet` (the newest LINE is absent) and
+# the detail view calls it `no duty log yet` (the FILE is absent). Different
+# sentences because they report different facts at different widths — what
+# must never differ is the VERDICT, and neither may say `unreachable`.
+crew_cmd status
+if grep -qE '^cli-neverticked .*no ticks yet' "$CL_TMP/crew-out" &&
+   ! grep -qE '^cli-neverticked .*unreachable' "$CL_TMP/crew-out"; then
+  ok "crew status: table and detail view agree that a never-ticked box is reachable"
+else
+  fail "crew status: table and detail view agree that a never-ticked box is reachable" \
+       "$(grep '^cli-neverticked' "$CL_TMP/crew-out")"
+fi
+
+# --- the guard, pinned where it lives --------------------------------------
+# The assertions above go red the moment the old form comes back, but they
+# cannot say WHY. This names the defect itself: the duty-log read's exit status
+# must not be what decides reachability. It is the same shape as the `|| true`
+# guard the table's read carries, and for the same reason — a future edit that
+# "tidies" this back into a one-liner is told what it is removing.
+CL_D5="$(awk '
+  /^cmd_status\(\)/ { inf = 1 }
+  inf && /tail -n 5 ~\/duty\/duty\.log/ { print; getline; print; exit }
+' "$CL_CLI")"
+if printf '%s' "$CL_D5" | grep -q '|| true' &&
+   ! printf '%s' "$CL_D5" | grep -q 'unreachable'; then
+  ok "crew status <box>: the duty-log read is guarded and decides no reachability"
+else
+  fail "crew status <box>: the duty-log read is guarded and decides no reachability" \
+       "${CL_D5:-no 'tail -n 5' read found in cmd_status}"
+fi
+
 # `crew up` reads box info at its OWN call site and runs its own roster loop,
 # so it needs its own coverage: #47 and #48 were each present twice, and
 # fixing one copy would have left the convergence verb broken. --dry-run
