@@ -468,6 +468,18 @@ else
 fi
 t upgrade-passes-roster-box-key box-keyed "$r1"
 
+# #283 — every reader of the armed state must agree that only a live tick
+# line counts. A paused line contains tick.sh too, so an unanchored probe makes
+# routine maintenance silently resume a box the operator deliberately paused.
+status_tick_pattern="$(sed -n 's/.*grep -cE "\([^"]*tick\\\.sh\)".*/\1/p' "$ROOT/cli/crew" | head -1)"
+upgrade_tick_pattern="$(sed -n 's/.*grep -qE "\([^"]*tick\\\.sh\)".*/\1/p' "$ROOT/cli/crew" | tail -1)"
+floor_tick_pattern="$(sed -n "s/.*grep -cE '\([^']*tick\\\\\.sh\)'.*/\1/p" "$ROOT/fleet-floor/server/probe.sh" | head -1)"
+t upgrade-status-armed-pattern-is-present present "$([ -n "$status_tick_pattern" ] && printf present || printf MISSING)"
+t upgrade-armed-pattern-is-present present "$([ -n "$upgrade_tick_pattern" ] && printf present || printf MISSING)"
+t upgrade-floor-armed-pattern-is-present present "$([ -n "$floor_tick_pattern" ] && printf present || printf MISSING)"
+t upgrade-armed-pattern-matches-status "$status_tick_pattern" "$upgrade_tick_pattern"
+t upgrade-armed-pattern-matches-floor "$floor_tick_pattern" "$upgrade_tick_pattern"
+
 # --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
 # `--all` used to mean box_names(): every box on the host, each installed
 # with --arm-cron. That reached off-roster boxes -- a drill box between runs
@@ -4677,6 +4689,7 @@ MSROOT="$TMP/status-boxes"
 MSSHIM="$TMP/status-bin"
 MSCONF="$TMP/status-fleet"
 MSCALLS="$TMP/status-box-calls"
+MSINSTALL_SCRIPTS="$TMP/status-install-scripts"
 mkdir -p "$MSSHIM" "$MSCONF" "$MSROOT"
 printf 'fixture-box claude reviewer\n' >"$MSCONF/fleet.roster"
 printf 'FLEET_BENCH="b"\nFLEET_TRIAGE="t"\nFLEET_HUMAN="h"\n' >"$MSCONF/fleet.conf"
@@ -4696,7 +4709,8 @@ case "$1" in
     # under test is meant to be the directory and nothing else. DUTY_DIR is
     # unset because a real box has none — it resolves from HOME, which is the
     # resolution under test.
-    env -u DUTY_DIR HOME="$MSROOT/$name" bash -c "$3"
+    case "$3" in *shared/install.sh*) printf '%s\n' "$3" >>"$MSINSTALL_SCRIPTS" ;; esac
+    env -u DUTY_DIR HOME="$MSROOT/$name" CRON_STATE="$MSROOT/$name/crontab" bash -c "$3"
     ;;
   *) exit 2 ;;
 esac
@@ -4711,17 +4725,24 @@ ln -sf "$(command -v jq)" "$MSSHIM/jq"
 # below is about; the disarmed path is asserted separately, further down.
 cat >"$MSSHIM/crontab" <<'CRONEOF'
 #!/usr/bin/env bash
-[ "${1:-}" = "-l" ] || exit 0
-[ -n "${MSCRON_EMPTY:-}" ] && exit 0
-# The paused shape as the console's PAUSE_SH actually writes it: the live line
-# commented out with the marker in front. Both counts are then non-trivial —
-# armed 0, paused 1 — which is the only shape that catches a record whose
-# fields have been shifted onto a second line.
-[ -n "${MSCRON_PAUSED:-}" ] && {
-  printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n'
-  exit 0
-}
-printf '*/5 * * * * $HOME/duty/bin/tick.sh\n'
+case "${1:-}" in
+  -l)
+    [ -n "${MSCRON_EMPTY:-}" ] && exit 0
+    # The paused shape as the console's PAUSE_SH actually writes it: the live
+    # line commented out with the marker in front. Both counts are then
+    # non-trivial — armed 0, paused 1 — which is the only shape that catches a
+    # record whose fields have been shifted onto a second line.
+    if [ -n "${MSCRON_PAUSED:-}" ]; then
+      printf '#CREW-FLOOR-PAUSED */5 * * * * $HOME/duty/bin/tick.sh\n'
+    elif [ -f "$CRON_STATE" ]; then
+      cat "$CRON_STATE"
+    else
+      printf '*/5 * * * * $HOME/duty/bin/tick.sh\n'
+    fi
+    ;;
+  -) tmp="$CRON_STATE.new"; cat >"$tmp"; mv "$tmp" "$CRON_STATE" ;;
+  *) tmp="$CRON_STATE.new"; cat "$1" >"$tmp"; mv "$tmp" "$CRON_STATE" ;;
+esac
 CRONEOF
 chmod +x "$MSSHIM/crontab"
 crewstatus() {
@@ -4738,6 +4759,41 @@ cp -R "$MDUTY" "$MSROOT/fixture-box/duty"
 # than fixed here, and a box that has never ticked is not the state #159 is
 # about.
 printf '2026-07-29T00:00:00Z duty run start\n' >"$MSROOT/fixture-box/duty/duty.log"
+
+# #283 — exercise the real upgrade branch and installer, not a reconstruction
+# of its grep. The script capture proves which flags reached install.sh; the
+# state-backed crontab shim proves what the installer left behind.
+upgradefixture() {
+  : >"$MSINSTALL_SCRIPTS"
+  env CREW_CONFIG_DIR="$MSCONF" MSROOT="$MSROOT" MSCALLS="$MSCALLS" \
+    MSINSTALL_SCRIPTS="$MSINSTALL_SCRIPTS" PATH="$MSSHIM:$PATH" \
+    bash "$ROOT/cli/crew" upgrade fixture-box >/dev/null 2>&1
+}
+resolved_tick="$MSROOT/fixture-box/duty/bin/tick.sh"
+
+paused_cron="#CREW-FLOOR-PAUSED */5 * * * * $resolved_tick"
+printf '%s\n' "$paused_cron" >"$MSROOT/fixture-box/crontab"
+upgradefixture
+if grep -q -- '--arm-cron' "$MSINSTALL_SCRIPTS"; then r1=PASSED; else r1=absent; fi
+t upgrade-paused-box-passes-no-arm-flag absent "$r1"
+t upgrade-paused-box-keeps-crontab "$paused_cron" "$(cat "$MSROOT/fixture-box/crontab")"
+
+armed_cron="*/5 * * * * $resolved_tick"
+printf '%s\n' "$armed_cron" >"$MSROOT/fixture-box/crontab"
+upgradefixture
+if grep -q -- '--arm-cron' "$MSINSTALL_SCRIPTS"; then r1=present; else r1=MISSING; fi
+t upgrade-armed-box-keeps-arm-flag present "$r1"
+t upgrade-armed-box-has-one-canonical-tick 1 \
+  "$(grep -cF "$resolved_tick" "$MSROOT/fixture-box/crontab")"
+
+: >"$MSROOT/fixture-box/crontab"
+upgradefixture
+if grep -q -- '--arm-cron' "$MSINSTALL_SCRIPTS"; then r1=PASSED; else r1=absent; fi
+t upgrade-never-armed-box-passes-no-arm-flag absent "$r1"
+t upgrade-never-armed-box-keeps-crontab '' "$(cat "$MSROOT/fixture-box/crontab")"
+
+# Restore the ordinary armed fixture consumed by the status cases below.
+printf '%s\n' "$armed_cron" >"$MSROOT/fixture-box/crontab"
 
 status_out="$(crewstatus)"
 case "$status_out" in *INTEGRITY*) r1=present ;; *) r1=MISSING ;; esac
