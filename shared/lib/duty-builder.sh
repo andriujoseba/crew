@@ -381,6 +381,11 @@ _stranded_resume_keys() {
   # of MARK_ANSWERED. In particular, fleet comments may wrap the SHA in
   # backticks or put punctuation after the marker; answered-head.jq accepts
   # both, and resume must classify the exact same bodies the request gate does.
+  # That parser returns the whole licence, {sha, createdAt}, since #286. Resume
+  # asks only "does the latest signal name this head", so it reads the sha half
+  # — the same half _request_panel gates on. The time half is the request
+  # side's: whether a signal was spent by the verdicts answering it says nothing
+  # about whether a session died before posting it.
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
     num="$(printf '%s' "$pr" | jq -r '.number')"
@@ -388,7 +393,8 @@ _stranded_resume_keys() {
     answered="$(printf '%s' "$pr" \
       | jq -c '{data:{repository:{pullRequest:{comments:{nodes:(.comments // [])}}}}}' \
       | jq -r --arg me "$me" --arg mark "$mark" \
-          -f "$BUILDER_LIB_DIR/jq/answered-head.jq")"
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
+      | jq -r '.sha // ""')"
     [ "$answered" = "$head" ] || printf '%s#%s@%s\n' "$repo" "$num" "$head"
   done < <(jq -c '.[] | select(.isDraft | not)')
 }

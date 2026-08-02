@@ -914,9 +914,26 @@ if grep -q -- '--argjson signal "\$signal_json"' "$SHARED/lib/duty-builder.sh" \
   && grep -q 'signal\.createdAt' "$SHARED/lib/jq/request-panel.jq" \
   && ! grep -q 'mark' "$SHARED/lib/jq/request-panel.jq"; then r1=one-object; else r1=RE-DERIVED; fi
 t engine-request-passes-the-whole-signal one-object "$r1"
-# And exactly one call site parses the signal, for the same reason.
+# And exactly one PROGRAM parses the signal, for the same reason. Not one call
+# site: #243's resume scan is a second legitimate consumer, and it deliberately
+# reuses this parser rather than keeping its own definition of MARK_ANSWERED —
+# fleet comments wrap the SHA in backticks or trail punctuation after the
+# marker, and resume must classify the exact bodies the request gate does.
+# shellcheck disable=SC2016  # the grep literal contains $mark on purpose
 t engine-has-one-signal-parser 1 \
-  "$(grep -c 'answered-head\.jq' "$SHARED/lib/duty-builder.sh")"
+  "$(grep -l 'startswith(\$mark)' "$SHARED"/lib/jq/*.jq | wc -l | tr -d ' ')"
+# Every consumer reads the licence as the OBJECT it now is. One `.sha` read per
+# call site: a consumer left comparing the raw output to a head would classify
+# every PR as unsignalled — resume would re-answer finished rounds forever and
+# the request gate would never open (#286).
+ah_calls="$(grep -c -- '-f "\$[A-Z_]*DIR[A-Za-z_/]*/jq/answered-head\.jq"' "$SHARED/lib/duty-builder.sh")"
+ah_sha_reads="$(grep -c "jq -r '\.sha // \"\"'" "$SHARED/lib/duty-builder.sh")"
+if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$ah_sha_reads" ]; then
+  r1=object-read
+else
+  r1="MISMATCH($ah_calls/$ah_sha_reads)"
+fi
+t engine-signal-consumers-read-the-object object-read "$r1"
 # Green-head precondition, mechanical half only: request on green|none, hold else.
 # shellcheck disable=SC2016  # the shell literal contains $check_state
 if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh"; then r1=green-gated; else r1=UNGATED; fi
