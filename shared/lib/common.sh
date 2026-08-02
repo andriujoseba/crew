@@ -434,3 +434,139 @@ check_vendor_credential() {
   esac
   return 0
 }
+
+# --------------------------------------------------------------------------
+# Git identity — the SECOND carrier of the box's login (#294).
+#
+# The builder-identity split rotated the gh credential on each box and touched
+# nothing else that carries identity. git kept the pre-split account, so every
+# commit a split box pushed was authored by another droid and GitHub bylined
+# that droid on the builder's own PR. On 2026-08-02 that read as a two-box race
+# on PR #292 when one box had done everything; the record's own operator could
+# not tell the difference, and the investigation nearly filed the wrong bug.
+#
+# So identity has ONE source of truth — the gh credential — and every other
+# carrier is DERIVED from it, never set beside it. That is the same rule #285
+# found on the panel copy; this is the git copy.
+#
+# The address written is GitHub's ID-prefixed noreply form,
+# `<id>+<login>@users.noreply.github.com`, because that is the form GitHub
+# guarantees links a commit to an account for every account minted since
+# 2017-07-18 — which is every account this fleet has. The bare
+# `<login>@users.noreply.github.com` form is ACCEPTED and never WRITTEN: it
+# bylines correctly for older accounts, and accepting it is what stops this
+# code from rewriting a hand-swept box on every upgrade forever.
+# --------------------------------------------------------------------------
+
+# git_identity_login EMAIL — the GitHub login a noreply author address names,
+# or nothing if the address is not one. Case-folded, because logins are
+# case-insensitive and `git config` stores whatever was typed.
+#
+# Anything that is NOT a github noreply address names nobody here, on purpose.
+# A box could in principle commit under a verified account email and byline
+# correctly, but the fleet provisions noreply addresses only, so an address
+# outside that shape is one nothing in this engine wrote — which is exactly
+# the state #294 is about, and guessing at it would re-open the hole.
+git_identity_login() {
+  local email id
+  email="$(printf '%s' "${1:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  case "$email" in
+    ?*@users.noreply.github.com) : ;;
+    *) return 0 ;;
+  esac
+  email="${email%@users.noreply.github.com}"
+  # Split at the FIRST '+': a GitHub login cannot contain one, so what precedes
+  # it is the numeric account id and must look like one. A local part with a
+  # non-numeric prefix is not an address GitHub issued, so it names nobody
+  # rather than half-parsing into a login it does not carry.
+  case "$email" in
+    *+*)
+      id="${email%%+*}"
+      case "$id" in
+        ''|*[!0-9]*) return 0 ;;
+      esac
+      email="${email#*+}"
+      ;;
+  esac
+  [ -n "$email" ] || return 0
+  printf '%s' "$email"
+}
+
+# git_identity_ok LOGIN — does git's configured author address resolve to
+# LOGIN? The EMAIL decides and `user.name` does not: the address is what
+# GitHub matches a commit to an account by, and the name is a display string
+# that can attribute nothing. The name is still written on convergence, so the
+# two halves of the byline agree for a human reading `git log`.
+git_identity_ok() {
+  local want have
+  want="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  [ -n "$want" ] || return 1
+  have="$(git_identity_login "$(git config --global user.email 2>/dev/null || true)")"
+  [ -n "$have" ] && [ "$have" = "$want" ]
+}
+
+# converge_git_identity [LOGIN] — make git's author identity name this box's
+# own account. Returns 0 when git will byline this box, 1 when it would byline
+# somebody else and that could not be repaired.
+#
+# CONVERGENCE, not a bare refusal, and the difference is load-bearing. #294
+# proposed an assert that refuses on mismatch; a refusal alone is the
+# stronger-sounding half of the fix and the weaker one in practice, because
+# the gh credential arrives BY HAND after `crew hire` (`box shell <box>` →
+# `gh auth login`). At provisioning time there is frequently no truth yet to
+# copy, so a box that only refused would refuse every tick forever with
+# nobody left to fix it — a fleet-wide brick shipped as a safety feature.
+# Writing the copy at the first moment the source exists is what makes the
+# invariant hold with no hand at all. The refusal is still here: it is what a
+# non-zero return means, and duty.sh spends no session on one.
+#
+# The fast path is one local `git config` read and NO network — which is what
+# every tick after the first pays. `gh api user` is called only when the copy
+# is actually wrong, so the steady state costs nothing and the repair costs
+# one request, once.
+converge_git_identity() {
+  local want="${1:-}" pair id email had_email had_name
+  if [ -n "$want" ] && git_identity_ok "$want"; then
+    return 0
+  fi
+  # One call for both halves: the login names the account and the id builds the
+  # address GitHub attributes by. Asking twice could straddle a credential
+  # rotation and write a login with another account's id.
+  pair="$(gh api user --jq '[.login, .id] | @tsv' 2>/dev/null | head -1 || true)"
+  want="$(printf '%s' "$pair" | cut -f1)"
+  id="$(printf '%s' "$pair" | cut -f2)"
+  case "$id" in
+    ''|*[!0-9]*) id="" ;;
+  esac
+  if [ -z "$want" ] || [ -z "$id" ]; then
+    warn "git identity: cannot resolve this box's own account (gh credential dead?) — git config left untouched"
+    return 1
+  fi
+  # Re-checked against the login gh just reported rather than the caller's:
+  # this is the no-argument call (install.sh, which has no $ME) and the case
+  # where a hand sweep already wrote the bare-login form. Both are already
+  # converged and owe no write and no announcement.
+  if git_identity_ok "$want"; then
+    return 0
+  fi
+  email="$id+$want@users.noreply.github.com"
+  had_email="$(git config --global user.email 2>/dev/null || true)"
+  had_name="$(git config --global user.name 2>/dev/null || true)"
+  if ! git config --global user.email "$email" || ! git config --global user.name "$want"; then
+    warn "git identity: could not write git config — this box would commit as '${had_email:-nobody}'"
+    return 1
+  fi
+  # Read back rather than trust the write. A `git config` that exits 0 against
+  # a file some other setting shadows leaves the byline wrong while reporting
+  # success, and a silent false green here is the whole bug a second time.
+  if ! git_identity_ok "$want"; then
+    warn "git identity: wrote $email, but git still reads '$(git config --global user.email 2>/dev/null || true)'"
+    return 1
+  fi
+  log "git identity: converged to $want <$email> (was ${had_name:-unset} <${had_email:-unset}>)"
+  # Once, by construction: the fast path above takes every later tick. An
+  # operator learns that a box was committing under the wrong name at the
+  # moment it stops, which is the only moment the fact is actionable.
+  alert "🪪 $(hostname): git identity was <${had_email:-unset}> — now <$email> ($want)"
+  return 0
+}
