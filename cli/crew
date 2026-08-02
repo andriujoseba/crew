@@ -1070,10 +1070,13 @@ engine_report() {
 }
 
 # report_field KEY REPORT — one value out of an engine_report or rig_report
-# capture. The `^` is not a tidiness: /etc/rig/manifest carries `bootstrapped_at=`
-# two lines above `converged_at=`, so an unanchored read of the latter returns
-# the former — the same near-miss class as the `closedish` one below, and this
-# is the anchor that closes it.
+# capture. The `^` is what makes rig_report's `rig:` namespace real rather than
+# decorative: unanchored, a plain `schema` would be answered by `rig:schema=1`,
+# and the namespace it was added to provide would be gone. Keeping rig's two
+# provenance PAIRS apart is a different discipline and lives at the call sites
+# — ask for the whole key (`rig:converged_at`), never for the family (`.*_at=`),
+# because /etc/rig/manifest carries `bootstrapped_at=` two lines above
+# `converged_at=` and a family read answers with the first one it meets.
 report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 
 # rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and

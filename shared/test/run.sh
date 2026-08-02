@@ -3097,32 +3097,37 @@ t convergence-real-manifest-converged-by 0.3.2-dev \
   "$(report_field rig:converged_by "$cv_real_report")"
 t convergence-real-manifest-converged-at 2026-08-01T12:31:11Z \
   "$(report_field rig:converged_at "$cv_real_report")"
-# The prefix is what stops a rig manifest key from being read as one of crew's
-# own report keys. `schema=1` unprefixed would answer a `report_field schema`
-# somebody adds later; prefixed it cannot.
+# The namespace, and the `^` that makes it real. `schema=1` unprefixed would
+# answer a `report_field schema` somebody adds later; prefixed, and read with an
+# anchor, it cannot. Drop the `^` from report_field and this is the assertion
+# that reds — the namespace becomes decoration.
 t convergence-real-manifest-keys-are-namespaced "" "$(report_field schema "$cv_real_report")"
 t convergence-real-marker-survives-the-manifest "$cv_real_role" \
   "$(report_field marker "$cv_real_report")"
 
-# MUST FAIL — the anchoring, and this file's own `closedish`. rig's manifest
-# puts `bootstrapped_by=`/`bootstrapped_at=` TWO LINES ABOVE the `converged_*`
-# pair, so an unanchored read of `converged_at` returns the bootstrap's date.
-# On the real text above the two are equal, which is exactly why that text
-# cannot catch it on its own: this is the same box re-converged later by a
-# newer rig, where they differ and the wrong answer is visible.
+# MUST FAIL — the manifest's own `closedish`, and it is a NAMING discipline
+# rather than an anchoring one. rig puts `bootstrapped_by=`/`bootstrapped_at=`
+# TWO LINES ABOVE the `converged_*` pair, so any read that goes after the
+# FAMILY — `.*_at=`, "grab the timestamp" — answers with the bootstrap's, which
+# is the date the box was first built rather than the one that authorized the
+# hire. The guard is that every read names the whole key. On the real text
+# above the two pairs are equal, which is exactly why that text cannot catch it
+# alone: this is the same box re-converged later by a newer rig, where they
+# differ and the wrong answer is visible.
 cv_reconverged="$(printf 'probe=ok\nmarker=%s\n%s\n' "$cv_real_role" "$(printf '%s\n' \
   'rig:schema=1' \
   'rig:bootstrapped_by=0.3.1' \
   'rig:bootstrapped_at=2026-07-04T08:00:00Z' \
   'rig:converged_by=0.3.2-dev' \
   'rig:converged_at=2026-08-01T12:31:11Z')")"
-t convergence-anchored-read-skips-bootstrapped-by 0.3.2-dev \
+t convergence-converged-by-is-not-bootstrapped-by 0.3.2-dev \
   "$(report_field rig:converged_by "$cv_reconverged")"
-t convergence-anchored-read-skips-bootstrapped-at 2026-08-01T12:31:11Z \
+t convergence-converged-at-is-not-bootstrapped-at 2026-08-01T12:31:11Z \
   "$(report_field rig:converged_at "$cv_reconverged")"
-# …and the near-miss from the other direction: a key that merely ENDS in the
-# one being asked for must not answer for it.
-t convergence-anchored-read-refuses-a-suffix-key "" \
+# …and from the other direction: a PARTIAL key name gets nothing. `verged_at`
+# is a tail of `converged_at`, and a read loose enough to accept it is a read
+# loose enough to accept `bootstrapped_at` too — same defect, cheaper to see.
+t convergence-read-refuses-a-suffix-key "" \
   "$(report_field rig:verged_at "$cv_reconverged")"
 
 # CORROBORATING, NEVER LOAD-BEARING. A box whose rig predates the manifest
