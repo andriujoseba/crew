@@ -2497,3 +2497,23 @@ standing rule). Five loops, no blind reviewer:
    trophy cables lashed to the left tasset (none of them grok's own gauge),
    pec weld seam + stitch ticks, two dents that did not get through, a chip
    out of the left pauldron's leading edge, shin grazes.
+
+### The pose loops (operator-driven, three, against the two reference poses)
+
+Operator verdict on the predator loops: dreads still rough, and the resting
+talon STILL read hand-on-waist — hated. Targets set by two stills: idle = the
+upright reference (arms down-and-out, hands free beside the thighs), working
+= the action reference (free arm raised, claw presented). Three loops:
+
+1. **The idle hang** — elbow eased, forearm drops near-vertical and OUTBOARD:
+   wrist at cx±57, mid-thigh, talon hanging in open air beside the leg. The
+   thigh shadow shrinks to the sliver of real overlap.
+2. **The STRIKE** — a new working arm mode: elbow thrown out at shoulder
+   height, forearm climbing, splayed talon flipped point-up and presented
+   beside the mask. Builder: left tool + right strike; handheld rooms: right
+   device + left strike. Hang rim strokes gate off while working.
+3. **The mane** — `cable()`: sampled cubic with per-segment width taper (fat
+   root → ferrule gauge), an S-bow out off the temple before the fall, round
+   caps, lit-side-only highlight; ferrules sized to their tip; a fourth,
+   shorter outer pair per side. One stiff quadratic at constant width reads
+   as rope — this reads as a curtain.
