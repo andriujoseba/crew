@@ -99,7 +99,8 @@ emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 #
 #   unknown  no engine: nothing has ever run, so nothing is known
 #   nofail   engine installed, no rejection recorded — the host ages this
-#            into `flowing` (ticking) or `stale` (installed but not running)
+#            into `flowing` (ticking), `stale` (it ticked once and stopped) or
+#            `waiting` (::tickage is absent, so it has never ticked at all)
 #   missing  a rejection was recorded
 #
 # One marker file PER SERVICE. The first cut used a single .auth-fail and

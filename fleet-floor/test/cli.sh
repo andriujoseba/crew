@@ -308,7 +308,7 @@ else
 fi
 # Both readers must speak one vocabulary, or "they agree" is a string compare
 # between two dialects.
-for cl_word in nofail stale missing unknown; do
+for cl_word in nofail waiting stale missing unknown; do
   if grep -q "$cl_word" "$CL_CLI" && grep -q "$cl_word" "$CL_FLOOR/server/probe.sh"; then
     ok "vocabulary '$cl_word' is shared by crew and probe.sh"
   else
@@ -340,6 +340,55 @@ else
   fail "crew status: a box that has never ticked reads 'no ticks yet'" \
        "$(grep '^cli-neverticked' "$CL_TMP/crew-out")"
 fi
+# #265 — the CREDENTIAL columns of that same row. The NOTE said "no ticks yet"
+# while GH and VENDOR beside it said `stale`, which is the row contradicting
+# itself: `stale` claims the engine used to talk to these services and has
+# stopped. It has never started.
+#
+# cl_creds NAME — the GH and VENDOR cells of one row, as `<gh>/<vendor>`.
+# Read by CHARACTER OFFSET from the header, not by field-splitting: the ENGINE
+# column holds `crew@0.4.1 (deadbee)`, which contains a space, so $6/$7 are not
+# the credential cells on a hired row and a field-split assertion would be
+# reading INTEGRITY and GH while looking green. Taking the offsets from the
+# header rather than from the format string makes the same read prove the
+# alignment criterion: a verdict too wide for `%-8s` shifts the cells out from
+# under the heading and every assertion below fails, which is the point.
+cl_creds() {
+  awk -v want="$1" '
+    $1=="MEMBER" { gh = index($0, "GH"); vn = index($0, "VENDOR"); next }
+    $1==want {
+      g = substr($0, gh, 8); v = substr($0, vn, 8)
+      sub(/ +$/, "", g); sub(/ +$/, "", v)
+      print g "/" v; exit
+    }
+  ' "$CL_TMP/crew-out"
+}
+# Both cells, because floor.py ages the pair in one loop and a fix that reached
+# only `gh` is exactly the shape a single-column assertion would pass.
+t "crew status: a never-ticked box reports waiting, not stale" \
+  "waiting/waiting" "$(cl_creds cli-neverticked)"
+# THE GUARD, and it outranks the fix. Reporting a genuinely silent box as
+# "waiting for its first tick" puts a possibly-dead credential behind a
+# reassuring word — strictly worse than the bug it fixes. cli-disarmed HAS
+# ticked (tickage 4000) and must still read `stale` in both columns.
+t "crew status: a box that ticked and stopped is still stale" \
+  "stale/stale" "$(cl_creds cli-disarmed)"
+# A recent tick still reads `flowing`: the branch must not swallow the healthy
+# case on its way past.
+t "crew status: a ticking box still reports flowing" \
+  "flowing/flowing" "$(cl_creds cli-hired)"
+# The boundary the new branch could have swallowed. It fires only inside the
+# `nofail` arm, so a box with no VERSION is untouched — keying it on tickage
+# alone would have turned every unhired box into `waiting`, a word that claims
+# an engine is installed and about to run. cli-nothired reports tickage -1 too,
+# which is what makes this a boundary and not a formality.
+t "crew status: an unhired box is untouched by the waiting branch" \
+  "unknown/unknown" "$(cl_creds cli-nothired)"
+# A recorded rejection still outranks everything above it: cli-noauth reports a
+# tick age, but the verdict is decided before any aging happens at all. The
+# table shouts this one, so the cells are the display form.
+t "crew status: a recorded rejection still outranks the aged verdicts" \
+  "MISSING/MISSING" "$(cl_creds cli-noauth)"
 # The healthy row BELOW it. Named separately from the count so a regression
 # says which shape came back rather than only that the total moved.
 if grep -qE '^cli-hired ' "$CL_TMP/crew-out"; then
