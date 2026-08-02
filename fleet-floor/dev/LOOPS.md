@@ -2383,3 +2383,74 @@ Motion evidence — the portrait cadence and the overlay cadence, captured live:
 [tile-live.gif](shots/fleet-call/tile-live.gif) ·
 [tile-dead.gif](shots/fleet-call/tile-dead.gif) ·
 [call-grid.gif](shots/fleet-call/call-grid.gif)
+
+## GROK again — the recon run (blind-verified anatomy loops)
+
+The stalker shipped in #206 was rushed, and it showed: stilt legs, a plumb-line
+hang, gripper curls for hands — the operator's verdict was "looks like Lurch
+from the Addams family" against a brief of *next-gen recon unit, he sees you
+before you see him*. This run worked the droid ALONE — no room — under the
+blind-loop protocol from `prototypes/LOOP-PROTOCOL.md`: render → a fresh
+context-free reviewer gets one image and the critique prompt, nothing else →
+fix only its top-ranked findings → re-render; the next loop's reviewer judges
+the fix. One commit per loop, score in the message.
+
+Two pieces of kit made the droid-only run possible:
+
+- **`FLOORDEV.renderSolo(dst,{agent,state,t})`** — the unit sprite alone,
+  full body, on a deliberately mute studio stage (grey wall pool, floor,
+  contact shadows under the returned feet). Same rules as the other dev
+  hooks: it draws through `buildRobo` on a supersampled trio, never a second
+  copy of the art. The stage is part of the picture the reviewer grades, so
+  it took fixes of its own across the run.
+- **`~/pw-harness/grokrecon.js`** — shoots solo idle/working/offline at
+  880x1400 plus a room-context crop; the idle still is the verifier image.
+
+### Score sequence
+
+| loop | verdict | what the fix changed |
+|---|---|---|
+| L1 | 5 (baseline) | leg plates one palette step up off the void; floor made a plane; the severed-dread stump de-cursored; optic scan differential capped |
+| L2 | 5 | ONE upper-left key committed (kf side factors); ghost pauldron washes → opaque facets; feet given front-to-back depth, figure moved inside the floor plane |
+| L3 | 5 | the predator arms: coiled outboard hang, wrist dropped past the pelvis, `claw()` rebuilt as articulated three-digit talons + thumb-spur; twin optics; toe occlusion |
+| L4 | 5 | dark-side separation (stage wall pools + fill lift + per-plate cool rim); the ruler-straight rim streak broken at every joint; hands shade the thighs |
+| L5 | 5 | the head un-blurred: stage emissive taps 10/30px → 4/10px, optic falloff tightened to hard points; toe-contact rims killed; fill rim halved |
+| L6 | 5 | both flanks' rims made to tell one key story; cyclorama floor, per-foot pools; orphan geometry socketed (ferrule termini, housed light bars, bite opened to the silhouette) |
+| L7 | 4 | **regression verdict on loop 6** — the grounding overshot: stance-shadow core near-black "a hole cut in the canvas", floor darker than the wall. Loop 7 corrected it: shadow softened to ~1.6x adjacent floor, floor re-lit above the wall base, mask palette lifted so the face wins the thumbnail, mane cable shading de-inverted |
+| L8 | 5 | — run stopped here (operator call): loop 7's fix recovered the regression back to the plateau |
+
+### What held under measurement
+
+- **The plateau is real and the findings still matter.** Six straight 5s, but
+  every loop's cited defects verified fixed at their coordinates and the next
+  reviewer found NEW real ones — the droid at L7 shares almost nothing with
+  L0 except the silhouette. For a dense dark figure this reviewer pool sits
+  at 5 unless something is actively wrong (loop 6's overshoot promptly cost
+  a point).
+- **The stage is part of the drawing.** Three separate loops were spent on
+  studio-stage physics (floor value story, shadow depth, blur taps) — a solo
+  render has nowhere to hide grounding and lighting sins that a busy room
+  absorbs.
+- **Bright marks at contact points read as floating.** The single most
+  repeated class of finding: rim strokes reaching the sole line, shadows
+  lighter than ambient, glow at the toe caps. Contact = the darkest thing in
+  its neighbourhood, every time.
+- **Anything dangling reads as debris.** The severed-dread stump was flagged
+  by three independent reviewers (cursor → clothespin → tripod) until the
+  dangle was cut to a blunt cauterized ferrule. Story survives; jewelry does
+  not.
+
+### Survived the run unfixed (structural, next run's backlog)
+
+- The mannequin problem — perfect frontal mirror symmetry, both feet on one
+  baseline, zero weight shift: the pose still says turnaround sheet, not
+  stalk. A real menace pass needs an asymmetric stance program.
+- Warm accents (heat-tile waffle, gold tallies, plasma streaks) all sit on
+  the left half and read as decals; they need a right-side logic or a cull.
+- The knee-to-ankle run is bare strut — the lower half carries less design
+  density than the torso.
+- Emissives still don't light their neighbourhood at full believability
+  (chest bar vs adjacent plates).
+
+![before / after](shots/grok-recon/before-after.webp)
+![evolution](shots/grok-recon/evolution.gif)
