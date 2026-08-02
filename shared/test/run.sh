@@ -2066,7 +2066,10 @@ FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "$F
 t nevertick-rule-floor-boundary 0 "$FL_NEVER"
 t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
 # ...and it must be a verdict BOTH readers can actually produce. The boundary
-# matching proves they agree on when; these prove they agree on what to call it.
+# matching proves they agree on WHEN; these prove they agree on what to CALL it,
+# which is the half a numeric compare cannot see: two readers could share the
+# boundary exactly and still print different words at it.
+# shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
 if grep -q 'printf -v "$_v" waiting' "$CREW_CLI"; then r1=emitted; else r1=MISSING; fi
 t nevertick-cli-emits-waiting emitted "$r1"
 if grep -q 'u\[svc\] = "waiting"' "$FLOOR_PY"; then r1=emitted; else r1=MISSING; fi

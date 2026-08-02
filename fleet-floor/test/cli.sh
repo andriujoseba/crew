@@ -345,50 +345,61 @@ fi
 # itself: `stale` claims the engine used to talk to these services and has
 # stopped. It has never started.
 #
-# cl_creds NAME — the GH and VENDOR cells of one row, as `<gh>/<vendor>`.
-# Read by CHARACTER OFFSET from the header, not by field-splitting: the ENGINE
-# column holds `crew@0.4.1 (deadbee)`, which contains a space, so $6/$7 are not
-# the credential cells on a hired row and a field-split assertion would be
-# reading INTEGRITY and GH while looking green. Taking the offsets from the
-# header rather than from the format string makes the same read prove the
-# alignment criterion: a verdict too wide for `%-8s` shifts the cells out from
-# under the heading and every assertion below fails, which is the point.
-cl_creds() {
-  awk -v want="$1" '
-    $1=="MEMBER" { gh = index($0, "GH"); vn = index($0, "VENDOR"); next }
-    $1==want {
-      g = substr($0, gh, 8); v = substr($0, vn, 8)
-      sub(/ +$/, "", g); sub(/ +$/, "", v)
-      print g "/" v; exit
-    }
-  ' "$CL_TMP/crew-out"
+# cl_pair NAME REGEX DESC — one row's GH and VENDOR cells, matched as an
+# ADJACENT PAIR followed by the start of its NOTE.
+#
+# A pair and not two greps: floor.py and cli/crew age both services in one
+# loop, so a fix that reached `gh` alone leaves `waiting  stale`, and a
+# single-cell assertion passes it. Matched by regex rather than by field index
+# or character offset because neither survives this table — `$6` is INTEGRITY
+# on a hired row and GH on an unhired one, since the stub's ENGINE value
+# (`crew@0.4.1 (deadbee)`) both contains a space and overruns its `%-15s`
+# field. Anchoring on the NOTE that follows is what keeps the match honest:
+# it pins the cells to their column rather than to any two words in the row.
+cl_pair() {
+  if grep -qE "$2" "$CL_TMP/crew-out"; then
+    ok "$3"
+  else
+    fail "$3" "$(grep "^$1" "$CL_TMP/crew-out")"
+  fi
 }
-# Both cells, because floor.py ages the pair in one loop and a fix that reached
-# only `gh` is exactly the shape a single-column assertion would pass.
-t "crew status: a never-ticked box reports waiting, not stale" \
-  "waiting/waiting" "$(cl_creds cli-neverticked)"
+cl_pair cli-neverticked '^cli-neverticked .+ waiting +waiting +no ticks yet$' \
+  "crew status: a never-ticked box reports waiting, not stale"
 # THE GUARD, and it outranks the fix. Reporting a genuinely silent box as
 # "waiting for its first tick" puts a possibly-dead credential behind a
 # reassuring word — strictly worse than the bug it fixes. cli-disarmed HAS
 # ticked (tickage 4000) and must still read `stale` in both columns.
-t "crew status: a box that ticked and stopped is still stale" \
-  "stale/stale" "$(cl_creds cli-disarmed)"
-# A recent tick still reads `flowing`: the branch must not swallow the healthy
-# case on its way past.
-t "crew status: a ticking box still reports flowing" \
-  "flowing/flowing" "$(cl_creds cli-hired)"
+cl_pair cli-disarmed '^cli-disarmed .+ stale +stale +disarmed' \
+  "crew status: a box that ticked and stopped is still stale"
+# A recent tick still reads `flowing`: the new branch must not swallow the
+# healthy case on its way past.
+cl_pair cli-hired '^cli-hired .+ flowing +flowing +[0-9]{4}-' \
+  "crew status: a ticking box still reports flowing"
 # The boundary the new branch could have swallowed. It fires only inside the
 # `nofail` arm, so a box with no VERSION is untouched — keying it on tickage
 # alone would have turned every unhired box into `waiting`, a word that claims
 # an engine is installed and about to run. cli-nothired reports tickage -1 too,
-# which is what makes this a boundary and not a formality.
-t "crew status: an unhired box is untouched by the waiting branch" \
-  "unknown/unknown" "$(cl_creds cli-nothired)"
+# which is exactly what makes this a boundary and not a formality.
+cl_pair cli-nothired '^cli-nothired .+ unknown +unknown +crew hire' \
+  "crew status: an unhired box is untouched by the waiting branch"
 # A recorded rejection still outranks everything above it: cli-noauth reports a
-# tick age, but the verdict is decided before any aging happens at all. The
-# table shouts this one, so the cells are the display form.
-t "crew status: a recorded rejection still outranks the aged verdicts" \
-  "MISSING/MISSING" "$(cl_creds cli-noauth)"
+# tick age, but its verdict is decided before any aging happens at all.
+cl_pair cli-noauth '^cli-noauth .+ MISSING +MISSING +' \
+  "crew status: a recorded rejection still outranks the aged verdicts"
+# #265's alignment criterion, pinned where it can actually be broken: the
+# format string. The stub's ENGINE value overruns `%-15s`, so no fixture row
+# can prove alignment by inspection — but a credential verdict wider than the
+# `%-8s` cells would shift the NOTE on every hired row of a real fleet, and
+# that is a one-character edit away. `waiting` is seven, so this contract is
+# unchanged; the golden compare means widening it has to be deliberate.
+CL_FMT="$(sed -n "s/^  local fmt='\(.*\)'\$/\1/p" "$CL_CLI" | head -1)"
+t "crew status: the table's column contract is unchanged" \
+  '%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
+CL_WIDE=""
+for cl_word in flowing waiting stale missing unknown MISSING; do
+  [ "${#cl_word}" -le 8 ] || CL_WIDE="$CL_WIDE $cl_word"
+done
+t "crew status: every credential verdict fits its 8-wide column" "" "$CL_WIDE"
 # The healthy row BELOW it. Named separately from the count so a regression
 # says which shape came back rather than only that the total moved.
 if grep -qE '^cli-hired ' "$CL_TMP/crew-out"; then
