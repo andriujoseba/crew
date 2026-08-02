@@ -3024,6 +3024,11 @@ function buildGrok(t,st){
   });
 
   // ---------- LEGS: digitigrade — the third segment a walker does not have ----------
+  /* below the pelvis the fleet palette bottoms out INTO the stage's own
+     values and the legs vanish from the waist down. The legs get their own
+     plate palette, one step up the lamp — still war-metal, no wash: the
+     shank must carry the read the chest carries. */
+  var lT=offl?"#232b3b":"#35445e",lM=offl?"#161d2a":"#202c40",lB=offl?"#0c111b":"#121a28";
   function leg(sgn){
     var hx=cx+sgn*20, hy0=362+d*0.55+breath*0.3;
     var kx=cx+sgn*(offl?44:38), ky=447+d*0.5;
@@ -3033,28 +3038,31 @@ function buildGrok(t,st){
        is now the widest thing below the chest, with its own armour slab
        riding the outer face, and the shank carries a calf swell before it
        rakes to the ankle. The tendons stay strung outside the meat. */
-    limbSeg(g,hx,hy0,kx,ky,13,9,sT,sM);
-    plate(g,[[hx+sgn*5,hy0+2],[hx+sgn*14,hy0+8],[kx+sgn*6,ky-14],[kx-sgn*3,ky-10]],"#2b3648","#161e2b",ed);
+    limbSeg(g,hx,hy0,kx,ky,13,9,lT,lM);
+    plate(g,[[hx+sgn*5,hy0+2],[hx+sgn*14,hy0+8],[kx+sgn*6,ky-14],[kx-sgn*3,ky-10]],lT,lM,ed);
+    pl(g,hx+sgn*6,hy0+4,kx+sgn*4,ky-13,"rgba(150,172,204,"+(offl?0.08:0.2)+")",1);
     tendon(hx-sgn*7,hy0+8,kx-sgn*5,ky-6);
     // shank — calf swell at the top, raking thin toward the high ankle
-    limbSeg(g,kx,ky,ax,ay,8,4.8,sT,sM);
-    plate(g,[[kx-sgn*8,ky+4],[kx+sgn*2,ky+8],[ax+sgn*1,ay-22],[ax-sgn*6,ay-24]],sM,sB,null);
+    limbSeg(g,kx,ky,ax,ay,8,4.8,lT,lM);
+    plate(g,[[kx-sgn*8,ky+4],[kx+sgn*2,ky+8],[ax+sgn*1,ay-22],[ax-sgn*6,ay-24]],lM,lB,null);
     pl(g,kx-sgn*3,ky+8,ax-sgn*2,ay-4,rc,1);
+    // the shin's leading edge catches the lamp all the way down
+    pl(g,kx+sgn*3,ky+8,ax+sgn*2,ay-6,"rgba(150,172,204,"+(offl?0.08:0.22)+")",1);
     // metatarsal — drops forward onto the toes
-    limbSeg(g,ax,ay,fx,fy,5,7,sM,sB);
+    limbSeg(g,ax,ay,fx,fy,5,7,lM,lB);
     joint(ax,ay,5);
     // heel spur behind the ankle
-    plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],sM,sB,null);
+    plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],lM,lB,null);
     // knee: joint first, pointed guard bolted over it, spike leading
     joint(kx,ky,7);
-    plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],"#2e3a4c",sM,ed);
+    plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],offl?"#252d3d":"#3a4a66",lM,ed);
     rivet(g,kx+sgn*5,ky-1,eH);
     // the guards lead every contact: paint gone from the spike lips
     pl(g,kx+sgn*12,ky-7,kx+sgn*15,ky+2,"rgba(190,208,232,"+(offl?0.12:0.28)+")",1.2);
     // clawed foot: three toes, PLANTED — the deck contact the old unit never had
-    plate(g,[[fx-13,fy],[fx+13,fy],[fx+15,fy+8],[fx-15,fy+8]],sT,sM,ed);
+    plate(g,[[fx-13,fy],[fx+13,fy],[fx+15,fy+8],[fx-15,fy+8]],lT,lM,ed);
     [-1,0,1].forEach(function(ti){var tx2=fx+ti*9;
-      plate(g,[[tx2-4,fy+7],[tx2+4,fy+7],[tx2+2,560],[tx2-2,560]],sT,sB,null);
+      plate(g,[[tx2-4,fy+7],[tx2+4,fy+7],[tx2+2,560],[tx2-2,560]],lT,lB,null);
       // bare metal at the claw tip — the paint went first where it meets the deck
       g.fillStyle="rgba(190,208,232,"+(offl?0.18:0.32)+")";g.fillRect(tx2-2,557.4,4,2.6);});
   }
@@ -3317,7 +3325,11 @@ function buildGrok(t,st){
   [-1,1].forEach(function(s){var ox=hcx+s*8.5, oy=hby+33;
     [RB,RE].forEach(function(c2){ if(offl){c2.fillStyle="#20262e";c2.fillRect(ox-3.5,oy-1.5,7,3);
         if(s<0){c2.fillStyle="rgba(120,44,18,0.4)";c2.fillRect(ox-1,oy-0.5,2,1.6);}return;}
-      var br2=work?(0.8+0.2*Math.sin(t*9+s)):(0.55+0.32*Math.sin(t*2.1+(s>0?0.7:0)));
+      // idle scan: both optics breathe together; the side-to-side sweep is a
+      // capped differential — any wider and a still frame reads as two
+      // different eyes instead of twin optics
+      var scn=0.62+0.2*Math.sin(t*2.1);
+      var br2=work?(0.8+0.2*Math.sin(t*9+s)):scn*(1+0.09*s*Math.sin(t*1.3));
       var eg=c2.createRadialGradient(ox,oy,0.5,ox,oy,8.5);
       eg.addColorStop(0,puh(0.95*br2));eg.addColorStop(0.45,pu(0.62*br2));eg.addColorStop(1,pu(0));
       c2.fillStyle=eg;c2.beginPath();c2.arc(ox,oy,8.5,0,7);c2.fill();
@@ -3362,10 +3374,14 @@ function buildGrok(t,st){
     else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);mx=hcx+s*(cb[1]+13);my=hby+36;}
     g.strokeStyle="#07090f";g.lineWidth=4.8;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
     g.strokeStyle=offl?"#20242c":"#343c48";g.lineWidth=1.1;g.beginPath();g.moveTo(ax-s,ay);g.quadraticCurveTo(mx-s,my-1,tx-s,ty-1);g.stroke();
-    if(cut){ // the stump: no ferrule — a melt bead and two frayed conductors
-      g.fillStyle="rgba(220,190,150,"+(offl?0.2:0.55)+")";g.beginPath();g.arc(tx,ty+1,2.2,0,7);g.fill();
-      pl(g,tx,ty+1,tx+s*4,ty+5,offl?"#39424f":"#8fa6c4",1);
-      pl(g,tx,ty+1,tx-s*1,ty+6,offl?"#333c48":"#7e94b2",0.9);
+    if(cut){ // the stump: no ferrule — a charred blunt cap, conductors
+      // drooping DEAD (a bright disc-and-chevron here reads as a cursor)
+      g.fillStyle="#10151d";rr(g,tx-2.4,ty-2,4.8,4.5,1);g.fill();
+      g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-2.4,ty-2,4.8,4.5,1);g.stroke();
+      pl(g,tx-1,ty+2,tx-2,ty+8,offl?"#2a323d":"#5a6a82",0.9);
+      pl(g,tx+1,ty+2,tx+2.5,ty+7,offl?"#2a323d":"#5a6a82",0.9);
+      // the cauterized lip — the only heat left in the story
+      g.fillStyle="rgba(196,120,60,"+(offl?0.12:0.35)+")";g.fillRect(tx-1.8,ty+1.6,3.6,1.3);
     } else {
       g.fillStyle="#10151d";rr(g,tx-2.7,ty,5.4,7,1);g.fill();
       g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-2.7,ty,5.4,7,1);g.stroke();
@@ -5921,7 +5937,8 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
         if(pd[(y*robo.width+x)*4+3]>24){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}}
       var padU=26, fy=0;
       for(var fi=0;fi<(info.feet||[]).length;fi++)if(info.feet[fi].y>fy)fy=info.feet[fi].y;
-      var cx0=x0/K-padU, cy0=y0/K-padU*1.3, cx1=x1/K+padU, cy1=Math.max(y1/K,fy)+padU;
+      // the bottom pad is the floor's whole depth — a plane needs room to recede
+      var cx0=x0/K-padU, cy0=y0/K-padU*1.3, cx1=x1/K+padU, cy1=Math.max(y1/K,fy)+padU*2.6;
       var W2=dst.width,H2=dst.height,c=dst.getContext("2d");
       var sc2=Math.min(W2/(cx1-cx0),H2/(cy1-cy0));
       var ox=(W2-(cx1-cx0)*sc2)/2, oy=(H2-(cy1-cy0)*sc2)/2;
@@ -5937,14 +5954,27 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
       pool.addColorStop(0,"rgba(126,146,176,0.10)");pool.addColorStop(1,"rgba(126,146,176,0)");
       c.fillStyle=pool;c.fillRect(0,0,W2,fyd);
       var fg=c.createLinearGradient(0,fyd,0,H2);
-      fg.addColorStop(0,"#0a0e15");fg.addColorStop(1,"#04060a");
+      fg.addColorStop(0,"#10151f");fg.addColorStop(1,"#05070c");
       c.fillStyle=fg;c.fillRect(0,fyd,W2,H2-fyd);
-      c.fillStyle="rgba(140,162,192,0.10)";c.fillRect(0,fyd,W2,Math.max(1,sc2*0.8));
+      /* the floor must read as a PLANE, not a seam: a grey pool of lamp
+         spill spreads back from the contact line (clipped to the floor),
+         and two faint transverse joints recede under the figure. Still
+         mute — grey light on grey deck, nothing the figure has to answer. */
+      c.save();c.beginPath();c.rect(0,fyd,W2,H2-fyd);c.clip();
+      var fpool=c.createRadialGradient(W2/2,fyd+2,2,W2/2,fyd+2,W2*0.5);
+      fpool.addColorStop(0,"rgba(150,170,198,0.20)");fpool.addColorStop(0.55,"rgba(150,170,198,0.08)");fpool.addColorStop(1,"rgba(150,170,198,0)");
+      c.translate(W2/2,fyd+2);c.scale(1,0.34);c.translate(-W2/2,-(fyd+2));
+      c.fillStyle=fpool;c.beginPath();c.arc(W2/2,fyd+2,W2*0.5,0,7);c.fill();
+      c.restore();
+      c.fillStyle="rgba(140,162,192,0.12)";c.fillRect(0,fyd,W2,Math.max(1,sc2*0.8));
+      [0.3,0.66].forEach(function(fr){
+        c.fillStyle="rgba(140,162,192,"+(0.055-fr*0.03)+")";
+        c.fillRect(0,fyd+(H2-fyd)*fr,W2,1);});
       (info.feet||[]).forEach(function(f2){
         var fx2=mx2(f2.x),fw2=f2.w*sc2;
         var sg2=c.createRadialGradient(fx2,fyd+2,1,fx2,fyd+2,fw2*1.35);
-        sg2.addColorStop(0,"rgba(0,0,0,0.55)");sg2.addColorStop(0.6,"rgba(0,0,0,0.28)");sg2.addColorStop(1,"rgba(0,0,0,0)");
-        c.save();c.translate(fx2,fyd+2);c.scale(1,0.22);c.translate(-fx2,-(fyd+2));
+        sg2.addColorStop(0,"rgba(0,0,0,0.7)");sg2.addColorStop(0.6,"rgba(0,0,0,0.36)");sg2.addColorStop(1,"rgba(0,0,0,0)");
+        c.save();c.translate(fx2,fyd+2);c.scale(1,0.24);c.translate(-fx2,-(fyd+2));
         c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+2,fw2*1.35,0,7);c.fill();c.restore();});
       // sprite: colour, then rim, then the emissive taps — the portrait recipe
       var sxp=cx0*K,syp=cy0*K,swp=(cx1-cx0)*K,shp=(cy1-cy0)*K;
