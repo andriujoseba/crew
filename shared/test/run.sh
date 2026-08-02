@@ -372,14 +372,18 @@ roster_install --box claude-builder --converge-registries >/dev/null 2>&1
 t install-triage-notify-seed fixture/wide "$(cat "$RDUTY/notify-repos.txt")"
 
 # The role registry is conf/roles/*.conf and nothing else; a second list — a
-# "role manifest" — is what this refuses. #159 introduced an unrelated manifest,
-# the content hash of the installed ENGINE tree, so rather than delete the guard
-# it now subtracts exactly that one use: a `manifest` that is not the ENGINE's
-# is still a duplicated registry, and the subtraction is per LINE, so the phrase
-# has to be written out every time it appears in these files.
+# "role manifest" — is what this refuses. Two unrelated manifests have since
+# turned up, so rather than delete the guard it subtracts exactly those two
+# uses: the content hash of the installed ENGINE tree (#159), and rig's
+# PROVENANCE file (#220 — /etc/rig/manifest, which rig owns and crew only
+# reads; crew declares no roles in it and could not, since it never writes it).
+# A `manifest` that is neither is still a duplicated registry, and the
+# subtraction is per LINE, so the qualified phrase has to be written out every
+# time it appears in these files.
 manifest_hits="$(grep -Rsinw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
     "$SHARED/lib" "$SHARED/install.sh" "$ROOT/examples/fleet.roster" "$ROOT/cli/crew" \
-    "$ROOT/drill" 2>/dev/null | grep -vi 'engine[ ._-]manifest' || true)"
+    "$ROOT/drill" 2>/dev/null \
+    | grep -vi 'engine[ ._-]manifest' | grep -vi 'rig[ /._-]manifest' || true)"
 if [ -n "$manifest_hits" ]; then
   r1="DUPLICATED: $manifest_hits"
 else
@@ -2990,6 +2994,279 @@ for ok in "0.1.0" "0.1.0-dev" "0.1.0-rc1" "1.2.3+meta"; do
   if valid_version "$ok"; then got=accept; else got=reject; fi
   t "valid_version-accepts[$ok]" accept "$got"
 done
+
+# --- convergence: rig's role marker, parsed (crew#220) ----------------------
+# `crew hire` is crew's irreversible verb — it installs the engine and arms
+# cron — and since #220 the thing that authorizes it is this parse. A box whose
+# tenant role never converged was indistinguishable from a healthy one in every
+# column crew had, so the marker became the discriminator; what the marker MEANS
+# is decided here, in eight lines that no fixture fleet can exercise fully.
+#
+# Extracted and eval'd out of cli/crew, the same way valid_version above is:
+# these are the shapes a real /etc/rig/role takes (heavy-duty/rig,
+# commands/bootstrap-tenant.sh writes the tenant line, commands/bootstrap.sh
+# the machine one) plus the hand-edited near-misses, and a stub box can only
+# ever answer with one of them at a time.
+# vv_extract above assumes a multi-line body, which is fine for the one
+# function it takes. report_field is a ONE-LINER, and on that shape a
+# stop-at-`^}` rule never fires on its own line — it runs on to the next
+# function's closing brace and evals that too. It happened to be harmless here,
+# which is exactly the kind of silence that stops being harmless the day
+# somebody inserts a function between the two. So this one closes on its own
+# line when the definition is self-contained.
+cv_extract() { awk -v f="$2" '
+  $0 ~ "^"f"\\(\\) \\{" { print; if ($0 ~ /\}[[:space:]]*$/) exit; p=1; next }
+  p { print; if ($0 ~ /^\}$/) exit }
+' "$1"; }
+eval "$(cv_extract "$ROOT/cli/crew" report_field)"
+eval "$(cv_extract "$ROOT/cli/crew" marker_fault)"
+eval "$(cv_extract "$ROOT/cli/crew" convergence_of)"
+eval "$(cv_extract "$ROOT/cli/crew" convergence_detail)"
+eval "$(cv_extract "$ROOT/cli/crew" convergence_recovery)"
+# An extraction that came back empty leaves every assertion below testing a
+# function that does not exist — and `t` between two empty strings passes. The
+# suite would report the gate as covered while executing none of it, which is
+# the same shape of silence the manifest parse sat in. Say so once, here.
+cv_lifted=""
+for cv_f in report_field marker_fault convergence_of convergence_detail convergence_recovery; do
+  declare -F "$cv_f" >/dev/null || cv_lifted="$cv_lifted $cv_f"
+done
+t convergence-functions-lifted "" "$cv_lifted"
+
+# A box that answered NOTHING is `unknown`, and unknown is not converged. This
+# is rule 5 of #220's spec and the whole safety property: the defect closed is a
+# broken box passing for a healthy one, so the case crew cannot see into must
+# refuse rather than proceed. An empty capture is what an unreachable box, a
+# stopped box and a `box exec` that died all produce.
+t convergence-empty-capture-is-unknown unknown "$(convergence_of "")"
+t convergence-no-probe-line-is-unknown unknown "$(convergence_of "marker=role=claude-box tenant=yes host=no")"
+
+# Answered, and rig never wrote a marker: the reported case. The bootstrap
+# failed, so the vendor CLI was never installed.
+t convergence-answered-without-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\n')")"
+t convergence-empty-marker-value-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=\n')")"
+
+# The tenant line rig actually writes.
+t convergence-tenant-marker-is-converged converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box tenant=yes host=no\n')")"
+# …for every agent in the bench, since the role name is data and not a fixed set.
+for cv_agent in claude codex grok kimi; do
+  t "convergence-tenant-marker[$cv_agent]" converged \
+    "$(convergence_of "$(printf 'probe=ok\nmarker=role=%s-box tenant=yes host=no\n' "$cv_agent")")"
+done
+# Hand-edited with tabs or doubled spaces reads the same way, rather than
+# silently failing to match — whitespace is normalised before the field test,
+# exactly as rig's own root_door_of does it.
+t convergence-tenant-marker-tabs-are-normalised converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box\ttenant=yes\thost=no\n')")"
+t convergence-tenant-marker-double-space-is-normalised converged \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box  tenant=yes  host=no\n')")"
+
+# A MACHINE marker is not an agent tenant. rig writes this shape for the
+# `-server` roles and for a guest joined as a workload; a crew member is a box
+# guest converged by the tenant bootstrap, and nothing else installed its
+# vendor CLI.
+t convergence-machine-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=workload-server root-door=open host=no join=yes join-by=rig\n')")"
+t convergence-host-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role=staging-server root-door=closed host=yes join=yes join-by=rig\n')")"
+
+# HALF A MARKER is not a converged box. #220 pins the verdict on both fields —
+# "parses to a non-empty `role=`, and carries `tenant=yes`" — and rig writes the
+# two in one line, so a marker with one and not the other is a box interrupted
+# partway through converging. Reading it as converged would hire on the strength
+# of the half that happened to land.
+t convergence-refuses-marker-without-a-role incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=tenant=yes host=no\n')")"
+t convergence-refuses-empty-role-field incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role= tenant=yes host=no\n')")"
+case "$(convergence_detail "$(printf 'probe=ok\nmarker=tenant=yes host=no\n')")" in
+  *"no role="*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-names-the-half-written-marker named "$r1"
+
+# The verdict and the reason are ONE reader, so they cannot drift apart. A row
+# reading INCOMPLETE beside a detail saying nothing is missing is a refusal an
+# operator cannot act on, and that is what two copies of this parse decay into.
+cv_disagree=""
+for cv_m in 'role=claude-box tenant=yes host=no' 'role=workload-server root-door=open host=no' \
+            'role= tenant=yes host=no' 'tenant=yes' 'role=claude-box tenant=yesish'; do
+  cv_v="$(convergence_of "$(printf 'probe=ok\nmarker=%s\n' "$cv_m")")"
+  cv_d="$(convergence_detail "$(printf 'probe=ok\nmarker=%s\n' "$cv_m")")"
+  case "$cv_v:$cv_d" in
+    converged:*|incomplete:?*) : ;;
+    *) cv_disagree="$cv_disagree [$cv_m -> $cv_v / ${cv_d:-<silence>}]" ;;
+  esac
+done
+t convergence-verdict-and-detail-agree "" "$cv_disagree"
+
+# MUST FAIL — the field-anchoring. rig#77 is the scar: an unanchored pattern let
+# `root-door=closedish` resolve as `closed` and pass the one gate authorizing an
+# irreversible act. Hiring is crew's irreversible act, so a value that merely
+# EXTENDS `yes`, or a key that merely ENDS in `tenant`, must not authorize it.
+for cv_bad in "tenant=yesish" "tenant=yes-not" "xtenant=yes" "no-tenant=yes" "tenant=no" "tenant=YES"; do
+  t "convergence-refuses-near-miss[$cv_bad]" incomplete \
+    "$(convergence_of "$(printf 'probe=ok\nmarker=role=claude-box %s host=no\n' "$cv_bad")")"
+done
+
+# The three causes take three different actions, so the detail must name which
+# one it is. Collapsing them into "not converged" throws away the only part of
+# the refusal an operator can act on.
+case "$(convergence_detail "")" in
+  *"did not answer"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-names-the-unreadable-case named "$r1"
+case "$(convergence_detail "$(printf 'probe=ok\n')")" in
+  *"/etc/rig/role"*"never converged"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-names-the-missing-marker named "$r1"
+case "$(convergence_detail "$(printf 'probe=ok\nmarker=role=workload-server root-door=open host=no\n')")" in
+  *"machine role"*"role=workload-server"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-quotes-the-machine-marker named "$r1"
+
+# The recovery is the three commands `box` itself prints when the bootstrap
+# hook fails, and it names the box's OWN tenant — a generic one is a command
+# that fails when pasted.
+t convergence-recovery-names-the-tenant \
+  "box shell kimi-reviewer → sudo rig bootstrap kimi-box → box snapshot kimi-reviewer bootstrapped" \
+  "$(convergence_recovery kimi-reviewer kimi)"
+# An off-roster box names no agent. A placeholder an operator can fill in beats
+# a malformed `rig bootstrap -box`.
+case "$(convergence_recovery adhoc-box "")" in
+  *"rig bootstrap <agent>-box"*) r1=placeholder ;; *) r1=MALFORMED ;;
+esac
+t convergence-recovery-without-an-agent-is-a-placeholder placeholder "$r1"
+# It must never advise the verb that caused the incident. `crew hire` on a box
+# the table told the operator to hire is the whole of #220.
+case "$(convergence_recovery kimi-reviewer kimi)" in
+  *"crew hire"*) r1=ADVISES_HIRE ;; *) r1=bootstrap ;;
+esac
+t convergence-recovery-does-not-advise-crew-hire bootstrap "$r1"
+
+# --- convergence: rig's marker and manifest, as the real files (crew#220) ---
+# THE REAL TEXT, not a fixture format. Read on 2026-08-01 from inside a
+# rig-converged tenant box — the box this branch was built in, which is itself
+# a rig box — with the files written by rig 0.3.2-dev on the same day:
+#
+#     $ ls -l /etc/rig/
+#     -rw-r--r-- 1 root root 129 Aug  1 12:31 manifest
+#     -rw-r--r-- 1 root root  35 Aug  1 12:31 role
+#     $ cat /etc/rig/role
+#     role=claude-box tenant=yes host=no
+#     $ cat /etc/rig/manifest
+#     schema=1
+#     bootstrapped_by=0.3.2-dev
+#     bootstrapped_at=2026-08-01T12:31:11Z
+#     converged_by=0.3.2-dev
+#     converged_at=2026-08-01T12:31:11Z
+#
+# The parse is asserted against THAT, byte for byte, rather than against a
+# shape read out of rig's source: reading the writer tells you what rig means
+# to emit, and only the artifact tells you what it emitted. Both files are
+# 0644, which is the other fact this read establishes — crew's exec must not
+# grow a `sudo`, because a `sudo` in a non-interactive `box exec` is itself a
+# way to turn a converged box into a false INCOMPLETE.
+cv_real_role='role=claude-box tenant=yes host=no'
+cv_real_manifest="$(printf '%s\n' \
+  'schema=1' \
+  'bootstrapped_by=0.3.2-dev' \
+  'bootstrapped_at=2026-08-01T12:31:11Z' \
+  'converged_by=0.3.2-dev' \
+  'converged_at=2026-08-01T12:31:11Z')"
+# …assembled into the capture rig_report produces from them: `probe=ok`, the
+# marker's first line, and the manifest prefixed a line at a time. The box side
+# does no interpreting precisely so that this — the part that decides meaning —
+# is reachable from here.
+cv_real_report="$(printf 'probe=ok\nmarker=%s\n%s\n' "$cv_real_role" \
+  "$(printf '%s\n' "$cv_real_manifest" | sed 's|^|rig:|')")"
+
+t convergence-real-marker-is-converged converged "$(convergence_of "$cv_real_report")"
+t convergence-real-manifest-converged-by 0.3.2-dev \
+  "$(report_field rig:converged_by "$cv_real_report")"
+t convergence-real-manifest-converged-at 2026-08-01T12:31:11Z \
+  "$(report_field rig:converged_at "$cv_real_report")"
+# The namespace, and the `^` that makes it real. `schema=1` unprefixed would
+# answer a `report_field schema` somebody adds later; prefixed, and read with an
+# anchor, it cannot. Drop the `^` from report_field and this is the assertion
+# that reds — the namespace becomes decoration.
+t convergence-real-manifest-keys-are-namespaced "" "$(report_field schema "$cv_real_report")"
+t convergence-real-marker-survives-the-manifest "$cv_real_role" \
+  "$(report_field marker "$cv_real_report")"
+
+# MUST FAIL — the manifest's own `closedish`, and it is a NAMING discipline
+# rather than an anchoring one. rig puts `bootstrapped_by=`/`bootstrapped_at=`
+# TWO LINES ABOVE the `converged_*` pair, so any read that goes after the
+# FAMILY — `.*_at=`, "grab the timestamp" — answers with the bootstrap's, which
+# is the date the box was first built rather than the one that authorized the
+# hire. The guard is that every read names the whole key. On the real text
+# above the two pairs are equal, which is exactly why that text cannot catch it
+# alone: this is the same box re-converged later by a newer rig, where they
+# differ and the wrong answer is visible.
+cv_reconverged="$(printf 'probe=ok\nmarker=%s\n%s\n' "$cv_real_role" "$(printf '%s\n' \
+  'rig:schema=1' \
+  'rig:bootstrapped_by=0.3.1' \
+  'rig:bootstrapped_at=2026-07-04T08:00:00Z' \
+  'rig:converged_by=0.3.2-dev' \
+  'rig:converged_at=2026-08-01T12:31:11Z')")"
+t convergence-converged-by-is-not-bootstrapped-by 0.3.2-dev \
+  "$(report_field rig:converged_by "$cv_reconverged")"
+t convergence-converged-at-is-not-bootstrapped-at 2026-08-01T12:31:11Z \
+  "$(report_field rig:converged_at "$cv_reconverged")"
+# …and from the other direction: a PARTIAL key name gets nothing. `verged_at`
+# is a tail of `converged_at`, and a read loose enough to accept it is a read
+# loose enough to accept `bootstrapped_at` too — same defect, cheaper to see.
+t convergence-read-refuses-a-suffix-key "" \
+  "$(report_field rig:verged_at "$cv_reconverged")"
+
+# CORROBORATING, NEVER LOAD-BEARING. A box whose rig predates the manifest
+# (rig#61) has a valid role line and no provenance at all — old, not broken.
+# Gating the verdict on `converged_at` would turn every box on that rig into a
+# refusal, which #220's test plan names as the outcome worse than the bug.
+cv_no_manifest="$(printf 'probe=ok\nmarker=%s\n' "$cv_real_role")"
+t convergence-without-a-manifest-is-still-converged converged "$(convergence_of "$cv_no_manifest")"
+t convergence-without-a-manifest-reports-no-provenance "" \
+  "$(report_field rig:converged_by "$cv_no_manifest")"
+# …and the inverse must not rescue anything: a full manifest beside a role file
+# that never got written is still INCOMPLETE. The manifest cannot vouch for a
+# convergence the marker does not claim.
+t convergence-manifest-without-a-marker-is-incomplete incomplete \
+  "$(convergence_of "$(printf 'probe=ok\n%s\n' "$(printf '%s\n' "$cv_real_manifest" | sed 's|^|rig:|')")")"
+
+# The marker path is rig's, and it is not crew's to invent. Asserted against the
+# source so a refactor that "tidies" it to a crew-shaped path is caught here
+# rather than on a real host — crew reads what rig writes, and rig writes these
+# two (rig#61 for the manifest).
+if grep -q '/etc/rig/role' "$ROOT/cli/crew" && grep -q '/etc/rig/manifest' "$ROOT/cli/crew"; then
+  r1=rigs
+else
+  r1=INVENTED
+fi
+t convergence-reads-rigs-own-paths rigs "$r1"
+
+# Both files are 0644 on a real box, so the read takes no privilege — and must
+# never acquire one. A `sudo` in a NON-INTERACTIVE `box exec` prompts, or fails,
+# and either way turns a converged box into a false INCOMPLETE: the refusal
+# would then be crew's own doing, on a box that was fine.
+if cv_extract "$ROOT/cli/crew" rig_report | grep -q 'sudo'; then
+  r1=ESCALATES
+else
+  r1=unprivileged
+fi
+t convergence-reads-the-marker-without-sudo unprivileged "$r1"
+# …and it goes through bxn, never a fresh literal `box exec`. This helper runs
+# inside `while read … done < <(read_roster)` in status, hire-all and up, and a
+# raw exec there drains the roster FIFO and converges ONE box out of N with
+# rc=0 (#48). bxn is the only shape that pins stdin to /dev/null.
+if cv_extract "$ROOT/cli/crew" rig_report | grep -qE '^[[:space:]]*bxn ' &&
+   ! cv_extract "$ROOT/cli/crew" rig_report | grep -q 'box exec'; then
+  r1=bxn
+else
+  r1=RAW_EXEC
+fi
+t convergence-reads-the-marker-through-bxn bxn "$r1"
 
 # --- cli/crew's self-description: the table is the source of truth (#97) ----
 # The property under test is ANTI-DRIFT, not cosmetics. Before #97 the command

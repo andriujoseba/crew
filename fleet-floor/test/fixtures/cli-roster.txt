@@ -1,8 +1,9 @@
 # Test roster for cli/crew — mirrors fixtures/cli-fleet.txt, swapped in via
 # CREW_ROSTER so these tests do not drift when the real fleet.roster changes.
 #
-# SEVEN entries, and the count is the assertion: `crew status` printing fewer
-# rows than there are lines here is what #47 (jq killed the command on the
+# The COUNT of entries here is the assertion — derived, never written down, so
+# a row can be added without stating a number twice: `crew status` printing
+# fewer rows than there are lines here is what #47 (jq killed the command on the
 # first existing box) and #48 (box exec drained the roster FIFO after one
 # iteration) each looked like from the outside.
 # FIRST, and the position is the assertion (#224): a box that has never
@@ -18,3 +19,11 @@ cli-nothired   grok    reviewer
 cli-noauth     kimi    reviewer
 cli-absent     claude  triage
 cli-disarmed   grok    builder
+# The box whose tenant role never converged (#220). LAST, so the bulk verbs
+# have to carry on past every healthy box before reaching it — a skip that
+# aborted the run would still have hired the rows above and read as a partial
+# success.
+cli-unconverged kimi   builder
+# Converged by a rig too old to write /etc/rig/manifest (rig#61). It must hire
+# exactly like any healthy box — the manifest corroborates, it never decides.
+cli-premanifest codex  reviewer
