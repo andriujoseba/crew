@@ -24,6 +24,12 @@ t "clock: session age survives negative skew" 8 "$(uf ff-skew-behind "u['session
 t "clock: session age survives positive skew" 8 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
 t "clock: invalid tickage never invents cron freshness" False "$(uf ff-invalid-age "u['cron']['ok']")"
 t "clock: invalid tickage leaves cron age unknown" None "$(uf ff-invalid-age "u['cron']['age']")"
+if awk '/^def build_unit/,/^def load_units/' "$FLOOR/server/floor.py" | grep -q 'now - last_ts'; then
+  fail "clock: unit building never mixes host now with a box timestamp" \
+       "found the skew-sensitive subtraction 'now - last_ts'"
+else
+  ok "clock: unit building never mixes host now with a box timestamp"
+fi
 t "state: paused -> offline"       offline  "$(uf ff-paused  "u['state']")"
 t "state: stopped -> offline"      offline  "$(uf ff-stopped "u['state']")"
 t "state: unreachable -> offline"  offline  "$(uf ff-unreach "u['state']")"
