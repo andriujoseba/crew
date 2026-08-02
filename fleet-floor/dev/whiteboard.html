@@ -1556,6 +1556,64 @@ function alertOf(u){
   return "";
 }
 var PING_FAILS_SHOWN=3;
+/* stoppedWord DATA — why this box is not ticking, or "" if nobody stopped it.
+   SILENT is an alarm: "this box should be ticking and is not". #189 taught the
+   COLLECTOR to rank paused, disarmed and silent apart, and it does — but it
+   gives all three the same state:"offline" (server/floor.py), deliberately,
+   because they share a colour. The page then keyed every label off that one
+   value, so a fleet nobody had armed read as a fleet-wide alarm and the word
+   an operator most needs to trust became the word they learn to ignore
+   (#203).
+
+   Paused outranks disarmed for the same reason the collector's note does:
+   pausing comments the tick line out, so a paused box IS disarmed (`wire:
+   paused implies disarmed`, test/cases.sh) — and "the operator did this, the
+   console undoes it" is the more useful sentence than "nothing is armed".
+
+   "" for a genuinely silent box, and for every DEMO unit: reserving the alarm
+   is the whole point, and the art-preview toggles set a state with no unit
+   behind it. */
+function stoppedWord(d){
+  if(!LIVE||!d)return "";
+  return d.paused?"PAUSED":d.disarmed?"DISARMED":"";
+}
+/* fleetCounts() — the roster split four ways instead of three. The fourth
+   bucket is exactly stoppedWord above, so the page never invents a category
+   /api/fleet does not already carry, and `silent` counts only what the alarm
+   is for. Shared by the header's stage counts and the HUD tiles: two counters
+   that disagreed about what SILENT means would be worse than one that was
+   wrong. */
+function fleetCounts(){
+  var c={working:0,idle:0,stopped:0,silent:0};
+  ROSTER.forEach(function(u){
+    if(u.state==="working")c.working++;
+    else if(u.state!=="offline")c.idle++;
+    else if(stoppedWord(dataOf(UNITID(u),u.room)))c.stopped++;
+    else c.silent++;
+  });
+  return c;
+}
+/* The floor header's counters, as drawn. Split out so FLOORDEV can hand the
+   browser walk the same array drawFloorHeader paints — these are canvas text,
+   invisible to any DOM assertion, which is how "0 silent" in the collector's
+   own log sat next to a page shouting SILENT at three boxes for a week. */
+function stageCounts(){
+  var c=fleetCounts();
+  var stat=[[c.silent+" SILENT","#ff5147"],[c.idle+" IDLE","#5fce9b"],[c.working+" WORKING","#f7bd4e"]];
+  /* Only when non-zero, on the ALERT counter's rule below: a permanent
+     "0 DISARMED" is furniture. SILENT stays unconditional either way — an
+     operator reading a calm fleet is entitled to see the alarm counter sitting
+     at zero, not to infer it from an absence. */
+  if(c.stopped)stat.splice(1,0,[c.stopped+" DISARMED","#8aa0b8"]);
+  /* Prepended so it reads leftmost, ahead of the ordinary counts, and only
+     when non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
+     counted as working or idle above — that is correct, they are, and the
+     point of this counter is that the state they are in is not the whole
+     story. */
+  var alerts=LIVE?ROSTER.filter(function(u){return alertOf(u)!=="";}).length:0;
+  if(alerts)stat.unshift([alerts+" ALERT","#ff5147"]);
+  return stat;
+}
 function drawAlertBadge(cx,cy,u,cw){
   var a=alertOf(u);if(!a)return;
   X.save();
@@ -1579,15 +1637,7 @@ function drawFloorHeader(t){
   X.font="700 15px ui-monospace,monospace";X.fillStyle="#c7d4e4";X.fillText("FLEET FLOOR",26,36);
   X.font="11px ui-monospace,monospace";X.fillStyle="#5fd6ff";X.fillText("heavy-duty/crew · fleet call",132,36);
   X.font="10px ui-monospace,monospace";X.fillStyle="#46566a";X.fillText("scroll · click a unit to zoom in",26,54);
-  var w=0,idl=0,offc=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")offc++;else idl++;});
-  var stat=[[offc+" SILENT","#ff5147"],[idl+" IDLE","#5fce9b"],[w+" WORKING","#f7bd4e"]];
-  /* Prepended so it reads leftmost, ahead of the ordinary counts, and only
-     when non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
-     counted as working or idle above — that is correct, they are, and the
-     point of this counter is that the state they are in is not the whole
-     story. */
-  var alerts=LIVE?ROSTER.filter(function(u){return alertOf(u)!=="";}).length:0;
-  if(alerts)stat.unshift([alerts+" ALERT","#ff5147"]);
+  var stat=stageCounts();
   X.textAlign="right";X.font="700 11px ui-monospace,monospace";var sxp=VW-26;
   stat.forEach(function(s){X.fillStyle=s[1];X.fillText("● "+s[0],sxp,36);sxp-=X.measureText("● "+s[0]).width+20;});
   X.fillStyle="#46566a";X.font="10px ui-monospace,monospace";X.fillText(ROSTER.length+" UNITS",VW-26,54);
@@ -1623,7 +1673,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1676,6 +1726,12 @@ function liveData(u){
   d.ping=u.ping||null;d.lock=u.lock||{held:null,stuck:false};
   d.authfail=u.authfail||[];
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
+  /* #189 gave the collector this flag and nothing here read it, so every
+     deliberately-stopped box came through as a bare state:"offline" and got
+     shouted at as SILENT (#203). Defaulted like the fields above: a collector
+     older than #189 reports no `disarmed` at all, and "not known" must render
+     as "not disarmed", never as a crash mid-draw. */
+  d.disarmed=!!u.disarmed;
   if(d.cur&&d.cur.kind)d.kind=d.cur.kind;
   return d;
 }
@@ -1829,22 +1885,37 @@ function cmd(action,extra){
 function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;";});}
 function stampVersion(s){var m=String(s||"").match(/^crew@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?)(?:\s|$)/);return m?m[1]:"unknown";}
 function clockStr(){var d=new Date();return pad2(d.getUTCHours())+":"+pad2(d.getUTCMinutes())+":"+pad2(d.getUTCSeconds());}
-function buildTiles(){var w=0,idl=0,o=0,q=0;ROSTER.forEach(function(u){if(u.state==="working")w++;else if(u.state==="offline")o++;else idl++;q+=dataOf(UNITID(u),u.room).queue.length;});
+function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dataOf(UNITID(u),u.room).queue.length;});
   function tl(n,l,c,al){return '<div class="tile'+(al?' alert':'')+'"><span class="n" style="color:'+c+'">'+n+'</span><span class="l">'+l+'</span></div>';}
-  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(ROSTER.length,"units","#c7d4e4")+tl(w,"working","#f7bd4e")+tl(idl,"idle","#5fce9b")+tl(o,"silent","#ff5147",o>0)+tl(q,"queued","#5fd6ff");}
+  /* `disarmed` sits between idle and silent because that is where it belongs
+     on the operator's ladder: nothing is wrong, nothing is running. It is
+     never given the alert class — the pulsing red border is the fleet's one
+     "look at this now" mark, and a fleet the operator disarmed on purpose must
+     not be able to trigger it (#189, #203). Five tiles became six rather than
+     six meanings sharing five tiles. */
+  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(ROSTER.length,"units","#c7d4e4")+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.stopped,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
      claim a session is running when there is one to count. */
   var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",work=STATE==="working"&&!!(d.cur||!LIVE);
-  var sc=off?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=off?"SILENT":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY";
+  /* PAUSED, DISARMED or "" — the one thing standing between this console and
+     the word SILENT. Every readout below that used to key off `off` alone now
+     asks this first; `off` still decides the shape of the panel, this decides
+     what it is allowed to shout (#203). */
+  var stw=off?stoppedWord(d):"";
+  var sc=stw?"#8aa0b8":off?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
   document.getElementById("w-id").innerHTML='<div class="idc"><div class="av" style="background:'+hexA(vc,0.16)+';box-shadow:inset 0 0 0 1px '+hexA(vc,0.5)+';color:'+vc+'">'+AGENT[0].toUpperCase()+'</div><div><div class="nm">'+id+'</div><div class="rl">'+AGENT+' · '+ROOM+'</div><span class="pill" style="color:'+sc+';background:'+hexA(sc,0.14)+';box-shadow:inset 0 0 0 1px '+hexA(sc,0.4)+'">● '+sl+'</span></div></div><div class="spark" title="24h activity">'+(off?"":d.spark.map(function(v,i){return '<span style="height:'+Math.round(v*100)+'%;background:'+hexA(vc,i>=d.spark.length-4?0.95:0.42)+'"></span>';}).join(''))+'</div>';
   /* In LIVE mode every value here is what the box reported this poll; the
      DEMO strings it replaces were the placeholders #38 was filed about. */
   var vBox=off?"unreachable":"gh ✓ · box ✓", vCron=off?"SILENT":"≤2m ago", vRc=(off||!d.sessions.length)?"—":d.sessions[0].rc;
   if(LIVE){
     vBox=credGlyph("gh",d.gh)+" · "+credGlyph(AGENT,d.vendor);
-    vCron=d.paused?"PAUSED":(d.cron.age===null||d.cron.age===undefined)?"no ticks yet":(d.cron.ok?fmtDur(d.cron.age)+" ago":"SILENT · "+fmtDur(d.cron.age));
+    /* Was `d.paused?"PAUSED":…`, which is why paused was the one state already
+       half-right here and disarmed was not started: this vital named the
+       operator's pause and then fell through to SILENT for a box with no cron
+       line at all. */
+    vCron=stw||((d.cron.age===null||d.cron.age===undefined)?"no ticks yet":(d.cron.ok?fmtDur(d.cron.age)+" ago":"SILENT · "+fmtDur(d.cron.age)));
     if(d.note&&!d.engine)vBox=esc(d.note);
   }
   document.getElementById("w-vitals").innerHTML='<div class="wt"><span class="dot"></span>VITALS</div><div class="kv">'
@@ -1855,7 +1926,7 @@ function populateDash(){
     +'<span class="k">Heartbeat</span><span class="v" id="v-ping" style="color:'+pingColour(d)+'">'+pingText(d)+'</span>'
     +'<span class="k">Engine</span><span class="v">'+(d.engine?esc(stampVersion(d.engine)):"—")+'</span>'
     +'<span class="k">Uptime</span><span class="v">'+(off&&!LIVE?"—":(d.up.h+"h "+pad2(d.up.m)+"m"))+'</span>'
-    +'<span class="k">Cron</span><span class="v" style="color:'+((off||d.paused)?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
+    +'<span class="k">Cron</span><span class="v" style="color:'+(stw?"#8aa0b8":off?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
     +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'
     +'<span class="k">Sessions today</span><span class="v">'+d.today+'</span>'
     +'<span class="k">Last rc</span><span class="v">'+vRc+'</span></div>';
@@ -1869,7 +1940,10 @@ function populateDash(){
     +ab("ac-logs","▤ &nbsp;Raw session logs")+ab("ac-restart","↻ &nbsp;Restart box")
     +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div></div>';
   var cs='<div class="wt"><span class="dot"></span>CURRENT SESSION</div><div class="cursess">';
-  if(off)cs+='<div class="big" style="color:#ff5147">— SILENT —</div><div class="task">'+esc(LIVE&&d.note?d.note:"no active session · cron missed")+'</div>';
+  /* The note under the big card always named the real reason, so an operator
+     who read the sub-text was never blind — but the word in 40px type above it
+     said SILENT for all three, and that is the one the eye takes. */
+  if(off)cs+='<div class="big" style="color:'+(stw?"#8aa0b8":"#ff5147")+'">— '+(stw||"SILENT")+' —</div><div class="task">'+esc(LIVE&&d.note?d.note:"no active session · cron missed")+'</div>';
   /* STUCK outranks the running-session view even though a session IS running.
      That is the whole point: cron is ticking, duty.log is fresh, the box looks
      busy — and it has been holding the same lock for longer than two tick
@@ -6250,7 +6324,11 @@ function frame(ms){var t=ms/1000,dt=Math.min(0.05,(ms-lastT)/1000)||0.016;lastT=
 
 function refreshChrome(){
   document.getElementById("modelabel").textContent=STATE.toUpperCase();
-  document.getElementById("fl").textContent=UNIT()+" · "+(STATE==="offline"?"CRON SILENT":STATE)+" · sector-7";
+  /* The fourth site that read "offline" and said SILENT. Same rule as the
+     headline, the CRON vital and the big card: the alarm is for a box that
+     should be ticking and is not (#203). */
+  var stw=STATE==="offline"?stoppedWord(dataOf(BOX,ROOM)):"";
+  document.getElementById("fl").textContent=UNIT()+" · "+(stw||(STATE==="offline"?"CRON SILENT":STATE))+" · sector-7";
   var sub=document.getElementById("sub");if(sub)sub.textContent=AGENT+" · "+ROLEWORD()+" quarters — detailed god-view cell";
 }
 var _un=document.getElementById("un");if(_un)_un.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;AGENT=b.dataset.a;[].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});refreshChrome();populateDash();});
@@ -6399,6 +6477,12 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      wait covers almost no easing on a slow machine. The walk polls this
      instead of sleeping; it asserts by outcome either way. */
   cam:function(){return floorCam;},
+  /* The floor header's stage counters, exactly as drawn — [text,colour] pairs.
+     Canvas text is unreachable from the DOM, so a walk cannot read "0 SILENT"
+     off the page any other way; the collector logging `0 silent` while the
+     header shouted SILENT at three boxes is the regression this exists to
+     make assertable (#203). Same ethos as cam(): a hook, not a second copy. */
+  stages:function(){return stageCounts();},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
      real fleet (same ethos as guides: a claim should be a lookable-at).
      buildsLastSec MUST read 0 with a stable roster — a deterministic still
