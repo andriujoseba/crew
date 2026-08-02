@@ -18,3 +18,6 @@ ff-firstrun   claude  builder
 ff-stuck      claude  builder
 ff-disarmed   grok    builder
 ff-neverticked kimi    builder
+ff-skew-behind claude  builder
+ff-skew-ahead  codex   reviewer
+ff-invalid-age grok    builder

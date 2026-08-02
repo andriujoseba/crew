@@ -11,12 +11,19 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  18 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  21 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
 t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
+t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
+t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
+t "clock: cron age comes from box-side tickage" 30 "$(uf ff-skew-behind "u['cron']['age']")"
+t "clock: session age survives negative skew" 8 "$(uf ff-skew-behind "u['sessions'][0]['ago']")"
+t "clock: session age survives positive skew" 8 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
+t "clock: invalid tickage never invents cron freshness" False "$(uf ff-invalid-age "u['cron']['ok']")"
+t "clock: invalid tickage leaves cron age unknown" None "$(uf ff-invalid-age "u['cron']['age']")"
 t "state: paused -> offline"       offline  "$(uf ff-paused  "u['state']")"
 t "state: stopped -> offline"      offline  "$(uf ff-stopped "u['state']")"
 t "state: unreachable -> offline"  offline  "$(uf ff-unreach "u['state']")"
@@ -195,7 +202,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 18 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 21 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -269,7 +276,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 18 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 21 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
