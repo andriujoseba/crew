@@ -2255,6 +2255,18 @@ t round-siblings-converged false \
 # #243: a ready PR missing its current-head signal becomes resume work only on
 # the twelfth consecutive tick. The state is keyed by head, so a push resets
 # the count even when the PR number is unchanged.
+STRANDED_JSON="$(jq -cn '[
+  {number:1,isDraft:true,headRefOid:"draft",comments:[]},
+  {number:2,isDraft:false,headRefOid:"same",comments:[
+    {author:{login:"me"},body:"ANSWER same"}]},
+  {number:3,isDraft:false,headRefOid:"new",comments:[
+    {author:{login:"me"},body:"ANSWER old"}]},
+  {number:4,isDraft:false,headRefOid:"none",comments:[
+    {author:{login:"other"},body:"ANSWER none"}]}
+]')"
+t stranded-keys-exclude-draft-and-current-signal \
+  "$(printf 'o/r#3@new\no/r#4@none')" \
+  "$(printf '%s' "$STRANDED_JSON" | _stranded_resume_keys o/r me ANSWER)"
 STRANDED_STATE="$TMP/resume-unsignalled"
 for _tick in $(seq 1 11); do
   stranded_out="$(printf 'o/r#243@aaa\n' | _stranded_resume_due "$STRANDED_STATE" 12)"

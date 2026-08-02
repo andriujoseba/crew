@@ -358,6 +358,21 @@ _stranded_resume_due() {
   mv "$tmp" "$state"
 }
 
+# _stranded_resume_keys REPO ME MARK — stdin is the authored open-PR listing
+# used by resume detection. Emit only ready PR heads whose latest signal from
+# this builder does not name the current head. Drafts already use the original
+# resume path and must never be double-counted here.
+_stranded_resume_keys() {
+  local repo="$1" me="$2" mark="$3"
+  jq -r --arg repo "$repo" --arg me "$me" --arg mark "$mark" '
+    .[] | select(.isDraft | not)
+    | ([.comments[]?
+        | select(.author.login == $me and (.body | startswith($mark + " ")))
+        | .body | ltrimstr($mark + " ") | split("\n")[0]] | last // "") as $answered
+    | select($answered != .headRefOid)
+    | "\($repo)#\(.number)@\(.headRefOid)"'
+}
+
 # _ci_red_rollup_settled EXPECTED_HEAD — stdin is the post-session gh-pr-view
 # object. Success means this ci-red ledger item may be committed. A pending
 # rollup at the same head, or an unreadable snapshot, remains retryable. Head
@@ -411,14 +426,8 @@ _builder_repo() {
   else
     draft_nums="$(printf '%s' "$resume_json" | jq -r '.[] | select(.isDraft) | .number' \
       2>/dev/null | tr '\n' ' ' || echo err)"
-    stranded_keys="$(printf '%s' "$resume_json" | jq -r \
-      --arg repo "$R" --arg me "$ME" --arg mark "$MARK_ANSWERED" '
-        .[] | select(.isDraft | not)
-        | ([.comments[]?
-            | select(.author.login == $me and (.body | startswith($mark + " ")))
-            | .body | ltrimstr($mark + " ") | split("\n")[0]] | last // "") as $answered
-        | select($answered != .headRefOid)
-        | "\($repo)#\(.number)@\(.headRefOid)"' 2>/dev/null || echo err)"
+    stranded_keys="$(printf '%s' "$resume_json" \
+      | _stranded_resume_keys "$R" "$ME" "$MARK_ANSWERED" 2>/dev/null || echo err)"
   fi
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
