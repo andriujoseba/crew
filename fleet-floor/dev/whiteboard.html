@@ -3294,6 +3294,15 @@ function buildGrok(t,st){
      feet never leave the deck — a grounded unit dies standing in its own
      stance. */
   var d=offl?22:0;
+  /* THE STANCE. Ready-to-attack is a geometry, not a mood: the upper body
+     drops SD into deeper knee flex (the coil — soles never move), shifts WS
+     toward the lead-left foot, and the feet STAGGER — lead planted wide,
+     trail tucked under the mass. Working coils deeper still. Dead keeps SD:
+     the unit dies in its stance, d does the folding. The torso/head/arms all
+     ride one translate; the legs are drawn in world coords to the same hip. */
+  var SD=work?30:24, WS=offl?0:-6;
+  function stanceOn(){[RB,RE,RR].forEach(function(c2){c2.save();c2.translate(WS,SD);});}
+  function stanceOff(){[RB,RE,RR].forEach(function(c2){c2.restore();});}
   function limbSeg(c,x0,y0,x1,y1,w0,w1,top,bot){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;plate(c,[[x0+nx*w0,y0+ny*w0],[x1+nx*w1,y1+ny*w1],[x1-nx*w1,y1-ny*w1],[x0-nx*w0,y0-ny*w0]],top,bot,ed);}
   function joint(x,y,r){g.fillStyle="#04070d";g.beginPath();g.arc(x,y,r,0,7);g.fill();
     g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(x,y,r,0,7);g.stroke();
@@ -3331,6 +3340,7 @@ function buildGrok(t,st){
      housing is buried reads as a sprite floating on whatever hides it. The
      mane's purple lives in the front dreads, whose ferrules show. */
   var REARC=[[-1,4,32,266],[-1,10,44,284],[-1,15,56,298],[1,4,32,266],[1,10,44,284],[1,15,56,298]];
+  stanceOn();
   REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+8, rank=ci%3;
     var tx=cx+s*cb[2]+(offl?s*6:0), ty=cb[3]+(offl?30:sway*2.5*(ci%2?1:-1));
     var mx=hcx+s*(cb[1]+(rank===2?32:24)), my=offl?hby+62:hby+40;
@@ -3342,6 +3352,7 @@ function buildGrok(t,st){
     g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.fill();
     g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.stroke();
   });
+  stanceOff();
 
   // ---------- LEGS: digitigrade — the third segment a walker does not have ----------
   /* below the pelvis the fleet palette bottoms out INTO the stage's own
@@ -3350,20 +3361,25 @@ function buildGrok(t,st){
      shank must carry the read the chest carries. */
   var lT=offl?"#232b3b":"#35445e",lM=offl?"#161d2a":"#202c40",lB=offl?"#0c111b":"#121a28";
   function leg(sgn){
-    var hx=cx+sgn*20, hy0=362+d*0.55+breath*0.3;
-    var kx=cx+sgn*(offl?44:38), ky=447+d*0.5;
-    var ax=cx+sgn*(offl?31:26), ay=514+d*0.2;
-    var fx=cx+sgn*34, fy=546;
+    /* the coil: hip rides the dropped pelvis, the knee is thrown far out and
+       the shank rakes hard back in — a deep zigzag holds SD of travel the
+       old straight column had to spend on length. Lead-left plants wide,
+       trail-right tucks under the hips: the stagger is the attack. */
+    var lead=sgn<0;
+    var hx=cx+WS+sgn*20, hy0=362+SD+d*0.4+breath*0.3;
+    var kx=cx+sgn*(offl?52:(lead?54:46)), ky=(lead?452:456)+d*0.3;
+    var ax=cx+sgn*(lead?40:24), ay=(lead?516:518)+d*0.1;
+    var fx=cx+sgn*(lead?46:30), fy=546;
     /* loop 8: the QUADS. A predator's engine is its hindquarters — the thigh
        is now the widest thing below the chest, with its own armour slab
        riding the outer face, and the shank carries a calf swell before it
        rakes to the ankle. The tendons stay strung outside the meat. */
-    limbSeg(g,hx,hy0,kx,ky,13,9,lT,lM);
+    limbSeg(g,hx,hy0,kx,ky,15,10,lT,lM);
     plate(g,[[hx+sgn*5,hy0+2],[hx+sgn*14,hy0+8],[kx+sgn*6,ky-14],[kx-sgn*3,ky-10]],lT,lM,ed);
     pl(g,hx+sgn*6,hy0+4,kx+sgn*4,ky-13,"rgba(150,172,204,"+((offl?0.08:0.22)*kf(sgn))+")",1);
     tendon(hx-sgn*7,hy0+8,kx-sgn*5,ky-6);
     // shank — calf swell at the top, raking thin toward the high ankle
-    limbSeg(g,kx,ky,ax,ay,8,4.8,lT,lM);
+    limbSeg(g,kx,ky,ax,ay,9.5,5.4,lT,lM);
     plate(g,[[kx-sgn*8,ky+4],[kx+sgn*2,ky+8],[ax+sgn*1,ay-22],[ax-sgn*6,ay-24]],lM,lB,null);
     pl(g,kx-sgn*3,ky+8,ax-sgn*2,ay-4,rc,1);
     // the shin's leading edge catches the lamp all the way down
@@ -3372,7 +3388,7 @@ function buildGrok(t,st){
     if(sgn<0){pl(g,hx-12,hy0+6,kx-8,ky-8,"rgba(186,205,238,"+(offl?0.12:0.3)+")",1.4);
       pl(g,kx-8,ky+8,ax-4.5,ay-8,"rgba(186,205,238,"+(offl?0.14:0.34)+")",1.4);}
     // metatarsal — drops forward onto the toes
-    limbSeg(g,ax,ay,fx,fy,5,7,lM,lB);
+    limbSeg(g,ax,ay,fx,fy,5.5,7.5,lM,lB);
     joint(ax,ay,5);
     // heel spur behind the ankle
     plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],lM,lB,null);
@@ -3397,6 +3413,7 @@ function buildGrok(t,st){
       g.fillStyle="rgba(150,168,192,"+(offl?0.06:0.12)+")";g.fillRect(tx2-2,557.4,4,2.6);});
   }
   leg(-1);leg(1);
+  stanceOn();
 
   /* ---------- PELVIS: a girdle, not an afterthought ----------
      loop 10: the thighs got their mass in loop 8 and the pelvis they hung
@@ -3607,8 +3624,9 @@ function buildGrok(t,st){
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
     } else { // hanging — the forearm rakes IN off the outboard elbow, the
       // wrist dropping to mid-thigh: the talon hangs BELOW and CLEAR of the
-      // pelvis cluster, read against the thigh by a value step, not luck
-      var wx=sx-sgn*8, wy=395+d*0.5;
+      // pelvis cluster, read against the thigh by a value step, not luck.
+      // In the coil the hang is SHORT — knuckles never reach the knee line.
+      var wx=sx-sgn*8, wy=382+d*0.5;
       limbSeg(g,ex,ey,wx,wy,6,8.5,sT,sM);
       // bracer fin off the outer flare, riding the forearm's line
       plate(g,[[wx+sgn*11,wy-34],[wx+sgn*17,wy-22],[wx+sgn*10,wy-14]],sM,sB,ed);
@@ -3627,7 +3645,8 @@ function buildGrok(t,st){
       plate(g,[[wx-9.5,wy-2],[wx+9.5,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
       rivet(g,wx-6,wy+1,eH);rivet(g,wx+6,wy+1,eH);
       joint(ex,ey-1,6.5);
-      claw(wx,wy+3,offl);
+      // working, the hanging talon SPLAYS — strike-ready, not at rest
+      claw(wx,wy+3,offl||work);
       joint(wx,wy,4.5);
       /* kill tallies, scratched into the LEFT forearm's flat — counted where
          they were made, read when the arm hangs. Worn gold, same paint life
@@ -3794,6 +3813,7 @@ function buildGrok(t,st){
   cavity(g,cx-30,296+breath,60,16,0.3);
   cavity(g,cx-24,376+d*0.55,48,20,0.32);
   cavity(g,cx-20,243+breath,40,13,0.28);
+  stanceOff();
   buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet on the key side
   /* ONE key: the shared rim lands on right-facing edges only, and from the
      torso out those are either interior (a gap edge the lamp cannot see) or
@@ -3812,9 +3832,10 @@ function buildGrok(t,st){
      when the arm is away — a line across the stack reads as a stray wire. */
   var lHang=!(work&&ROOM==="builder"), rHang=!(work&&ROOM!=="builder");
   (function(){var kc=puh(offl?0.28:0.8);
-    var sx=cx-44, sy=248+breath, ex=sx-8, ey=316+d*0.6, wx=sx+8, wy=395+d*0.5;
-    var hy0=362+d*0.55+breath*0.3, kx=cx-(offl?44:38), ky=447+d*0.5,
-        ax=cx-(offl?31:26), ay=514+d*0.2, fx=cx-34;
+    // arm/torso strokes live in stance space (+WS,+SD); leg strokes in world
+    var sx=cx+WS-44, sy=248+SD+breath, ex=sx-8, ey=316+SD+d*0.6, wx=sx+8, wy=382+SD+d*0.5;
+    var hy0=362+SD+d*0.4+breath*0.3, kx=cx-(offl?52:54), ky=452+d*0.3,
+        ax=cx-40, ay=516+d*0.1, fx=cx-46;
     pl(RR,sx-4,sy-26,sx-26,sy-16,kc,2);
     pl(RR,sx-26,sy-16,sx-36,sy+1,kc,1.6);
     if(lHang){
@@ -3832,13 +3853,14 @@ function buildGrok(t,st){
      ACCENTS near each plate's crown only. A full-length lit right contour
      reads as a second lamp, and one lamp is the whole stage's story. */
   (function(){var fc="rgba(150,196,235,"+(offl?0.05:0.14)+")";
-    var sx=cx+44, sy=248+breath, ex=sx+8, ey=316+d*0.6, wx=sx-8, wy=395+d*0.5;
-    var hy0=362+d*0.55+breath*0.3, kx=cx+(offl?44:38), ky=447+d*0.5,
-        ax=cx+(offl?31:26), ay=514+d*0.2, fx=cx+34;
-    pl(RR,hcx+20,hby+30,hcx+22,hby+38,fc,1.1);         // cheek ridge, upper flare only
+    var sx=cx+WS+44, sy=248+SD+breath, ex=sx+8, ey=316+SD+d*0.6, wx=sx-8, wy=382+SD+d*0.5;
+    var hy0=362+SD+d*0.4+breath*0.3, kx=cx+(offl?52:46), ky=456+d*0.3,
+        ax=cx+24, ay=518+d*0.1, fx=cx+30;
+    var hcx2=hcx+WS, hby2=hby+SD;
+    pl(RR,hcx2+20,hby2+30,hcx2+22,hby2+38,fc,1.1);     // cheek ridge, upper flare only
     RR.strokeStyle=fc;RR.lineWidth=1.1;RR.beginPath(); // outermost rear cable, crown reach only
-    RR.moveTo(hcx+17,hby+10);
-    RR.quadraticCurveTo(hcx+28,hby+21,hcx+36,hby+38);
+    RR.moveTo(hcx2+17,hby2+10);
+    RR.quadraticCurveTo(hcx2+28,hby2+21,hcx2+36,hby2+38);
     RR.stroke();
     pl(RR,sx+6,sy-25,sx+19,sy-19,fc,1.4);              // crown outer edge, top run
     pl(RR,sx+27,sy-15,sx+32,sy-7,fc,1.2);              // trailing spike root
@@ -3857,13 +3879,14 @@ function buildGrok(t,st){
     fg2.addColorStop(0,"rgba(0,0,0,0)");fg2.addColorStop(1,"rgba(0,0,0,1)");
     RR.save();RR.globalCompositeOperation="destination-out";
     RR.fillStyle=fg2;RR.fillRect(0,551,RW,RH-551);RR.restore();})();
-  var hh=handR||{x:cx+45,y:394+d*0.8};
-  // two clawed feet, planted flat on the deck — grounded, for the first time
-  return {hand:hh,coreY:275+breath,hy:hby+8,offl:offl,work:work,
+  // anchors return in WORLD coords — the rooms and the portrait crop consume
+  // them, and the stance translate is this function's private business
+  var hh=handR?{x:handR.x+WS,y:handR.y+SD}:{x:cx+WS+45,y:382+SD+d*0.8};
+  return {hand:hh,coreY:275+breath+SD,hy:hby+8+SD,offl:offl,work:work,
           // toes: where each claw actually meets the deck — the stage's
           // occlusion wants the contact points, not the foot's centroid
-          feet:[{x:cx-30,y:560,w:24,toes:[cx-43,cx-34,cx-25]},
-                {x:cx+30,y:560,w:24,toes:[cx+25,cx+34,cx+43]}]};
+          feet:[{x:cx-46,y:560,w:26,toes:[cx-55,cx-46,cx-37]},
+                {x:cx+30,y:560,w:24,toes:[cx+21,cx+30,cx+39]}]};
 }
 
 /* ===================== KIMI — hovering companion drone, screen-face (pink) ===================== */
