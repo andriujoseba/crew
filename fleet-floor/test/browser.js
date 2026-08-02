@@ -521,8 +521,12 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       // The defect, at each of the four sites, in the order an eye hits them.
       ok('disarmed: the headline says DISARMED, not SILENT',
          /DISARMED/.test(dis.headline) && !/SILENT/.test(dis.headline), four(dis));
+      // Anchored, not equal: `cron` is scraped out of a CSS grid's
+      // textContent, so the value runs straight into the next field's label
+      // ("DISARMEDRepoheavy-duty/crew…"). The neighbours are what makes the
+      // negative half worth asserting rather than implying.
       ok('disarmed: the CRON vital says DISARMED, not SILENT',
-         dis.cron === 'DISARMED', four(dis));
+         /^DISARMED/.test(dis.cron) && !/SILENT/.test(dis.cron), four(dis));
       // Case-sensitive on purpose: the note UNDER the big card has always said
       // "disarmed — no cron line", and it is the 40px word above it that said
       // SILENT. Matching case-insensitively would pass on the note alone.
@@ -645,7 +649,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         // named it and the other three shouted SILENT anyway. All four now.
         ok('paused: the headline says PAUSED, not SILENT',
            /PAUSED/.test(paused.headline) && !/SILENT/.test(paused.headline), four);
-        ok('paused: the CRON vital says PAUSED', paused.cron === 'PAUSED', four);
+        ok('paused: the CRON vital says PAUSED, not SILENT',
+           /^PAUSED/.test(paused.cron) && !/SILENT/.test(paused.cron), four);
         ok('paused: the big card says PAUSED, not SILENT',
            /PAUSED/.test(paused.current) && !/SILENT/.test(paused.current), four);
         ok('paused: the status line does not call it silent',
