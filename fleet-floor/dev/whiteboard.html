@@ -3505,7 +3505,10 @@ function buildGrok(t,st){
     var ex,ey;
     if(mode==='reachdown'){ex=sx+sgn*20;ey=sy+28;}
     else if(mode==='raiseup'){ex=sx+sgn*4;ey=sy+42;}
-    else {ex=sx+sgn*3;ey=324+d*0.7;}
+    // hanging: elbow flexed and held a touch OUTBOARD — a coiled hang, not a
+    // plumb line, and the silhouette gap it opens is what keeps the forearm
+    // readable across the tasset line
+    else {ex=sx+sgn*8;ey=316+d*0.6;}
     /* loop 7: the upper arm gets MEAT — an armoured biceps plate carrying
        real width from the socket to the elbow. The tendon stays strung on
        the inner line, exposed: muscle first, wiring still visible. */
@@ -3537,11 +3540,42 @@ function buildGrok(t,st){
       g.restore();}
     // contact shadow under the blade's lower rim
     g.fillStyle="rgba(0,0,0,0.26)";poly(g,P([[-7,6],[5,4],[17,10],[12,15],[-4,13]]));g.fill();
+    /* the talon: a HAND, not a stub — knuckle block with a lit top face,
+       three segmented digits (two phalanx plates each, tapering, tips bare
+       metal), and an opposable thumb-spur on the inner line. Same machine in
+       every pose; `open` is the dead splay. Digits carry real width and the
+       key lands per-side — this is the thing the whole arm exists to aim. */
     function claw(x,y,open){
-      plate(g,[[x-9.5,y],[x+9.5,y],[x+7.5,y+8],[x-7.5,y+8]],sM,sB,ed);
-      [-1,0,1].forEach(function(f){var fx2=x+f*6.2, len=open?17:13;
-        plate(g,[[fx2-2.8,y+7],[fx2+2.8,y+7],[fx2+1.8,y+7+len],[fx2-1.8,y+7+len]],sT,sB,null);
-        g.fillStyle="rgba(190,208,232,"+(offl?0.14:0.3)+")";g.fillRect(fx2-1.8,y+5.4+len,3.4,2);});}
+      var K=kf(sgn);
+      // thumb-spur first — inner side, hooked in toward the work; drawn
+      // under the palm so the block reads as gripping over it
+      var ti=-sgn, tdy=open?5:0;
+      plate(g,[[x+ti*7,y+3],[x+ti*14.5,y+9+tdy],[x+ti*11,y+16+tdy],[x+ti*5.5,y+8]],sT,sB,null);
+      g.fillStyle="rgba(190,208,232,"+(offl?0.16:0.34)+")";
+      poly(g,[[x+ti*12.5,y+12+tdy],[x+ti*14.5,y+9+tdy],[x+ti*11,y+16+tdy]]);g.fill();
+      // knuckle block: palm slab, then the top face as an opaque palette step
+      plate(g,[[x-10,y],[x+10,y],[x+8.5,y+9],[x-8.5,y+9]],sM,sB,ed);
+      plate(g,[[x-10,y],[x+10,y],[x+8,y+3.6],[x-8,y+3.6]],
+        offl?(sgn<0?"#2b3446":"#212939"):(sgn<0?"#46587a":"#33415c"),sM,null);
+      rivet(g,x-5,y+6,eH);rivet(g,x+5,y+6,eH);
+      // three talon digits, slightly splayed off the knuckle row
+      [-1,0,1].forEach(function(f){
+        var sp=f*(open?4.6:1.7), rx=x+f*6;
+        var mx3=rx+sp*0.6, my3=y+8+(open?9:11);        // mid knuckle
+        var tx3=rx+sp*1.2-(open?0:f*0.6), ty3=my3+(open?8:10); // tip
+        // proximal phalanx — real width, one palette step UP off the thigh
+        // it hangs against: the value gap is the separation
+        plate(g,[[rx-3.2,y+8],[rx+3.2,y+8],[mx3+2.4,my3],[mx3-2.4,my3]],
+          offl?(sgn<0?"#28303f":"#1f2734"):(sgn<0?"#3e4e6a":"#2e3a52"),sM,null);
+        pl(g,mx3-2.4,my3,mx3+2.4,my3,rc,1);            // knuckle shadow-line
+        // distal phalanx — curving to the point
+        plate(g,[[mx3-2.2,my3],[mx3+2.2,my3],[tx3+0.9,ty3],[tx3-0.9,ty3]],sM,sB,null);
+        // bare-metal tip: paint never survives the business end
+        g.fillStyle="rgba(190,208,232,"+(offl?0.2:0.42)+")";
+        poly(g,[[tx3-1.3,ty3-3],[tx3+1.3,ty3-3],[tx3,ty3+1.5]]);g.fill();
+        // the key catches each digit's LEFT face
+        pl(g,rx-2.4,y+9,mx3-1.7,my3-1,"rgba(186,205,238,"+((offl?0.08:0.28)*K)+")",1.1);
+      });}
     if(mode==='reachdown'){ /* builder: the FLEX — elbow thrown out past the
       blade, thick forearm driving down and IN, the claw landing low in front
       of the hip where the arc lives. A hunter leans on its work. */
@@ -3559,26 +3593,30 @@ function buildGrok(t,st){
       joint(ex,ey-1,6.5);
       claw(fx3,fy3+2,false);
       if(sgn>0)handR={x:fx3+2,y:fy3+4};
-    } else { // hanging — the forearm is a CONE: narrow off the elbow, all the
-      // mass arriving at the wrist, where a machine that grips carries it
-      var wx=sx-sgn*2, wy=380+d*0.8;
-      limbSeg(g,ex,ey,wx,wy,6,9.5,sT,sM);
-      // bracer fin off the outer flare
-      plate(g,[[wx+sgn*8,wy-26],[wx+sgn*15,wy-14],[wx+sgn*9,wy-6]],sM,sB,ed);
-      tendon(ex+sgn*3,ey+6,wx+sgn*5,wy-8,3);
-      pl(g,ex-sgn*4,ey+8,wx-sgn*7,wy-6,rc,1);
+    } else { // hanging — the forearm rakes IN off the outboard elbow, the
+      // wrist dropping to mid-thigh: the talon hangs BELOW and CLEAR of the
+      // pelvis cluster, read against the thigh by a value step, not luck
+      var wx=sx-sgn*8, wy=395+d*0.5;
+      limbSeg(g,ex,ey,wx,wy,6,8.5,sT,sM);
+      // bracer fin off the outer flare, riding the forearm's line
+      plate(g,[[wx+sgn*11,wy-34],[wx+sgn*17,wy-22],[wx+sgn*10,wy-14]],sM,sB,ed);
+      // tendon strung the length of the forearm INTO the knuckle block —
+      // under tension even at rest: the claw is always loaded
+      tendon(ex+sgn*4,ey+6,wx+sgn*4,wy+2,3);
+      pl(g,ex-sgn*4,ey+8,wx-sgn*6,wy-6,rc,1);
       // wrist clamp: the claw is a separate machine, banded on
-      plate(g,[[wx-10,wy-2],[wx+10,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
+      plate(g,[[wx-9.5,wy-2],[wx+9.5,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
       rivet(g,wx-6,wy+1,eH);rivet(g,wx+6,wy+1,eH);
       joint(ex,ey-1,6.5);
-      claw(wx,wy+4,offl);
+      claw(wx,wy+3,offl);
+      joint(wx,wy,4.5);
       /* kill tallies, scratched into the LEFT forearm's flat — counted where
          they were made, read when the arm hangs. Worn gold, same paint life
          as the stencil. */
       if(sgn<0){g.save();g.globalAlpha=offl?0.25:0.5;g.fillStyle="#c9a227";
-        for(var tl2=0;tl2<4;tl2++)g.fillRect(wx-4+tl2*3,wy-26,1.6,7);
+        for(var tl2=0;tl2<4;tl2++)g.fillRect(wx-6+tl2*3,wy-32,1.6,7);
         g.restore();}
-      if(sgn>0)handR={x:wx,y:wy+14};
+      if(sgn>0)handR={x:wx,y:wy+16};
     }
   }
   /* The rooms park a readout on the right half of the bench, exactly where a
@@ -3646,11 +3684,12 @@ function buildGrok(t,st){
   [-1,1].forEach(function(s){var ox=hcx+s*8.5, oy=hby+33;
     [RB,RE].forEach(function(c2){ if(offl){c2.fillStyle="#20262e";c2.fillRect(ox-3.5,oy-1.5,7,3);
         if(s<0){c2.fillStyle="rgba(120,44,18,0.4)";c2.fillRect(ox-1,oy-0.5,2,1.6);}return;}
-      // idle scan: both optics breathe together; the side-to-side sweep is a
-      // capped differential — any wider and a still frame reads as two
-      // different eyes instead of twin optics
+      // idle scan: both optics breathe TOGETHER — any per-side differential,
+      // however small, makes a still frame read as two different eyes
+      // instead of twin optics (the L2 verdict). Working keeps the phase
+      // stagger: motion sells it there, a still never has to.
       var scn=0.62+0.2*Math.sin(t*2.1);
-      var br2=work?(0.8+0.2*Math.sin(t*9+s)):scn*(1+0.09*s*Math.sin(t*1.3));
+      var br2=work?(0.8+0.2*Math.sin(t*9+s)):scn;
       var eg=c2.createRadialGradient(ox,oy,0.5,ox,oy,8.5);
       eg.addColorStop(0,puh(0.95*br2));eg.addColorStop(0.45,pu(0.62*br2));eg.addColorStop(1,pu(0));
       c2.fillStyle=eg;c2.beginPath();c2.arc(ox,oy,8.5,0,7);c2.fill();
@@ -3734,7 +3773,10 @@ function buildGrok(t,st){
   var hh=handR||{x:cx+45,y:394+d*0.8};
   // two clawed feet, planted flat on the deck — grounded, for the first time
   return {hand:hh,coreY:275+breath,hy:hby+8,offl:offl,work:work,
-          feet:[{x:cx-30,y:560,w:24},{x:cx+30,y:560,w:24}]};
+          // toes: where each claw actually meets the deck — the stage's
+          // occlusion wants the contact points, not the foot's centroid
+          feet:[{x:cx-30,y:560,w:24,toes:[cx-43,cx-34,cx-25]},
+                {x:cx+30,y:560,w:24,toes:[cx+25,cx+34,cx+43]}]};
 }
 
 /* ===================== KIMI — hovering companion drone, screen-face (pink) ===================== */
@@ -6291,13 +6333,16 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
          recede, and the figure answers the spill with a cast shadow thrown
          down-RIGHT. Still mute — grey light on grey deck. */
       c.save();c.beginPath();c.rect(0,jy,W2,H2-jy);c.clip();
+      /* the spill, not a strip: the band hugging the seam used to outshine
+         anything the key could put there — kept dim enough that the pool
+         reads as the lamp's spill landing on the deck */
       var plx=W2*0.33, ply=jy+4;
       var fpool=c.createRadialGradient(plx,ply,2,plx,ply,W2*0.5);
-      fpool.addColorStop(0,"rgba(150,170,198,0.20)");fpool.addColorStop(0.55,"rgba(150,170,198,0.08)");fpool.addColorStop(1,"rgba(150,170,198,0)");
+      fpool.addColorStop(0,"rgba(150,170,198,0.10)");fpool.addColorStop(0.55,"rgba(150,170,198,0.045)");fpool.addColorStop(1,"rgba(150,170,198,0)");
       c.translate(plx,ply);c.scale(1,0.34);c.translate(-plx,-ply);
       c.fillStyle=fpool;c.beginPath();c.arc(plx,ply,W2*0.5,0,7);c.fill();
       c.restore();
-      c.fillStyle="rgba(140,162,192,0.12)";c.fillRect(0,jy,W2,Math.max(1,sc2*0.8));
+      c.fillStyle="rgba(140,162,192,0.08)";c.fillRect(0,jy,W2,Math.max(1,sc2*0.8));
       [0.3,0.66].forEach(function(fr){
         c.fillStyle="rgba(140,162,192,"+(0.055-fr*0.03)+")";
         c.fillRect(0,jy+(H2-jy)*fr,W2,1);});
@@ -6315,7 +6360,15 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
         var sg2=c.createRadialGradient(fx2,fyd+2,1,fx2,fyd+2,fw2*1.35);
         sg2.addColorStop(0,"rgba(0,0,0,0.7)");sg2.addColorStop(0.6,"rgba(0,0,0,0.36)");sg2.addColorStop(1,"rgba(0,0,0,0)");
         c.save();c.translate(fx2,fyd+2);c.scale(1,0.24);c.translate(-fx2,-(fyd+2));
-        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+2,fw2*1.35,0,7);c.fill();c.restore();});
+        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+2,fw2*1.35,0,7);c.fill();c.restore();
+        // contact occlusion: a tight dark pinch under each toe TIP — the
+        // broad pool says "near the floor", only this says "on it"
+        (f2.toes||[]).forEach(function(tx5){
+          var txd=mx2(tx5), tr=Math.max(3,sc2*5), tcy=fyd+2.5;
+          var tg=c.createRadialGradient(txd,tcy,0.5,txd,tcy,tr);
+          tg.addColorStop(0,"rgba(0,0,0,0.85)");tg.addColorStop(0.55,"rgba(0,0,0,0.45)");tg.addColorStop(1,"rgba(0,0,0,0)");
+          c.save();c.translate(txd,tcy);c.scale(1,0.38);c.translate(-txd,-tcy);
+          c.fillStyle=tg;c.beginPath();c.arc(txd,tcy,tr,0,7);c.fill();c.restore();});});
       // sprite: colour, then rim, then the emissive taps — the portrait recipe
       var sxp=cx0*K,syp=cy0*K,swp=(cx1-cx0)*K,shp=(cy1-cy0)*K;
       var dxp=ox,dyp=oy,dwp=(cx1-cx0)*sc2,dhp=(cy1-cy0)*sc2;
