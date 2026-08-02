@@ -219,7 +219,7 @@ _report_unsignalled_hold() {
 # best-effort and gates nothing — the same rule as _handoff_finalize.
 _request_panel() {
   local repo="$1" num="$2" payload="$3" panel_json="$4" check_state="$5" hc_head="$6"
-  local gql_head answered_head to_request rvr requested_any=0
+  local gql_head signal_json answered_head to_request rvr requested_any=0
   gql_head="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null)"
   [ -n "$gql_head" ] || { warn "$repo#$num: no head in payload; not requesting"; return 0; }
   # THE SIGNAL GATE. The latest MARK_ANSWERED comment of mine names the head the
@@ -227,9 +227,15 @@ _request_panel() {
   # one. No marker, or a marker for a superseded head (a fix was pushed after
   # the answer and not yet re-signalled), means the round is not answered here —
   # hold, do not infer done-ness from the push.
-  answered_head="$(printf '%s' "$payload" \
-    | jq -r --arg me "$ME" --arg mark "$MARK_ANSWERED" \
+  # The licence is ONE object, {sha, createdAt} (#286). This gate reads its sha;
+  # request-panel.jq reads its createdAt to decide whether the signal answers a
+  # verdict or merely predates it. Neither half is re-derived on the other side —
+  # a second program means a second copy of the predicate.
+  signal_json="$(printf '%s' "$payload" \
+    | jq -c --arg me "$ME" --arg mark "$MARK_ANSWERED" \
         -f "$DUTY_DIR/lib/jq/answered-head.jq" 2>/dev/null)"
+  [ -n "$signal_json" ] || signal_json='{"sha":"","createdAt":""}'
+  answered_head="$(printf '%s' "$signal_json" | jq -r '.sha // ""' 2>/dev/null)"
   if [ "$answered_head" != "$gql_head" ]; then
     _report_unsignalled_hold "$repo" "$num" "$gql_head"
     return 0
@@ -249,7 +255,14 @@ _request_panel() {
   # check nobody has seen settle.
   [ "$hc_head" = "$gql_head" ] || { log "$repo#$num: head moved mid-tick — deferring panel request"; return 0; }
   to_request="$(printf '%s' "$payload" \
-    | jq -r --argjson panel "$panel_json" -f "$DUTY_DIR/lib/jq/request-panel.jq" 2>/dev/null)"
+    | jq -r --argjson panel "$panel_json" --argjson signal "$signal_json" \
+        -f "$DUTY_DIR/lib/jq/request-panel.jq" 2>/dev/null)"
+  # Nothing to request is now the ROUND-CLOSED case as well as the
+  # nothing-owed one (#286): a panel that answered with CHANGES_REQUESTED spends
+  # the signal, and the ball returns to the builder through round_owed and
+  # state:addressing, which log it there. Silent here on purpose — a handed-off
+  # PR stays in this loop for every tick until the human merges it, and a line
+  # per tick per PR would bury the writes that matter.
   [ -n "${to_request//[[:space:]]/}" ] || return 0
   # One reviewer per call, not a batched reviewers[] array: a single 422 (an
   # already-pending request that raced the predicate) must not drop the others.
@@ -368,6 +381,11 @@ _stranded_resume_keys() {
   # of MARK_ANSWERED. In particular, fleet comments may wrap the SHA in
   # backticks or put punctuation after the marker; answered-head.jq accepts
   # both, and resume must classify the exact same bodies the request gate does.
+  # That parser returns the whole licence, {sha, createdAt}, since #286. Resume
+  # asks only "does the latest signal name this head", so it reads the sha half
+  # — the same half _request_panel gates on. The time half is the request
+  # side's: whether a signal was spent by the verdicts answering it says nothing
+  # about whether a session died before posting it.
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
     num="$(printf '%s' "$pr" | jq -r '.number')"
@@ -375,7 +393,8 @@ _stranded_resume_keys() {
     answered="$(printf '%s' "$pr" \
       | jq -c '{data:{repository:{pullRequest:{comments:{nodes:(.comments // [])}}}}}' \
       | jq -r --arg me "$me" --arg mark "$mark" \
-          -f "$BUILDER_LIB_DIR/jq/answered-head.jq")"
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
+      | jq -r '.sha // ""')"
     [ "$answered" = "$head" ] || printf '%s#%s@%s\n' "$repo" "$num" "$head"
   done < <(jq -c '.[] | select(.isDraft | not)')
 }
@@ -805,13 +824,17 @@ _builder_repo() {
       # never act on the early round-detection snapshot (#147). This one read
       # drives both panel request and convergence; a fetch failure or GraphQL
       # error body skips both this tick.
+      # createdAt and submittedAt are the ORDERING evidence (#286): whether the
+      # signal answers a verdict or merely predates it is a question about time,
+      # and this payload already drives the request, so asking for the two
+      # timestamps costs no extra call.
       if ! pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable
           labels(first:50){nodes{name}}
-          comments(last:100){nodes{author{login} body}}
+          comments(last:100){nodes{author{login} body createdAt}}
           reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
-          latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+          latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}
         } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null)"; then
         warn "$R#$N: PR state fetch failed; skipping request and handoff this tick"
         continue
