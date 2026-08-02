@@ -3579,6 +3579,7 @@ function buildGrok(t,st){
     // upper arm: bare mechanism — twin rods from the socket, no plate at all
     var ex,ey;
     if(mode==='reachdown'){ex=sx+sgn*20;ey=sy+28;}
+    else if(mode==='strike'){ex=sx+sgn*19;ey=sy+9;}
     else if(mode==='raiseup'){ex=sx+sgn*4;ey=sy+42;}
     // hanging: elbow flexed and held a touch OUTBOARD — a coiled hang, not a
     // plumb line, and the silhouette gap it opens is what keeps the forearm
@@ -3660,7 +3661,22 @@ function buildGrok(t,st){
         // the key catches each digit's LEFT face
         pl(g,rx-2.4,y+9,mx3-1.7,my3-1,"rgba(186,205,238,"+((offl?0.08:0.28)*K)+")",1.1);
       });}
-    if(mode==='reachdown'){ /* builder: the FLEX — elbow thrown out past the
+    if(mode==='strike'){ /* the action pose: forearm CLIMBS off the high
+      elbow, wrist beside the mask, talon splayed open and presented — the
+      free arm is not resting, it is mid-swing. */
+      var ux5=sx+sgn*9, uy5=sy-36;
+      limbSeg(g,ex,ey,ux5,uy5,8.5,11,sT,sM);
+      tendon(ex-sgn*2,ey-4,ux5-sgn*3,uy5+6,3);
+      joint(ex,ey,8);
+      // wrist clamp on the climbing forearm
+      plate(g,[[ux5-9,uy5+2],[ux5+9,uy5+2],[ux5+8.5,uy5+8],[ux5-8.5,uy5+8]],sT,sM,ed);
+      joint(ux5,uy5+4,5.5);
+      // the talon points UP: flip the claw about the wrist line
+      g.save();g.translate(ux5,uy5);g.scale(1,-1);g.translate(-ux5,-uy5);
+      claw(ux5,uy5+2,true);
+      g.restore();
+      if(sgn>0&&!handR)handR={x:ux5,y:uy5-18};
+    } else if(mode==='reachdown'){ /* builder: the FLEX — elbow thrown out past the
       blade, thick forearm driving down and IN, the claw landing low in front
       of the hip where the arc lives. A hunter leans on its work. */
       var hx3=cx+sgn*46, hy3=346;
@@ -3716,8 +3732,8 @@ function buildGrok(t,st){
      right-handed weld lands (the kimi round-9 verdict). grok works LEFT-handed
      in builder — the arc goes over the rig — and raises the right for the
      handheld rooms. */
-  arm(-1, (work&&ROOM==="builder")?'reachdown':'down');
-  arm(1, (work&&ROOM!=="builder")?'raiseup':'down');
+  arm(-1, work?(ROOM==="builder"?'reachdown':'strike'):'down');
+  arm(1, work?(ROOM==="builder"?'strike':'raiseup'):'down');
   if(work&&ROOM!=="builder"&&handR){var h=handR;
     if(ROOM==="reviewer"){ plate(g,[[h.x-3,h.y-9],[h.x+17,h.y-11],[h.x+17,h.y+2],[h.x-3,h.y+4]],"#1a2836","#0c1620","#3a5570");
       [RB,RE].forEach(function(c2){if(!offl){c2.fillStyle=rgba(130,205,255,0.75);c2.fillRect(h.x+1,h.y-7,11,7);}}); }
@@ -3937,7 +3953,7 @@ function buildGrok(t,st){
      joint. The hanging arm rides OVER the thigh, so the strokes follow the
      arm stack (upper arm, forearm, fin, claw) and the thigh takes one only
      when the arm is away — a line across the stack reads as a stray wire. */
-  var lHang=!(work&&ROOM==="builder"), rHang=!(work&&ROOM!=="builder");
+  var lHang=!work, rHang=!work; // working, both arms leave the hang — strike/tool
   (function(){var kc=puh(offl?0.28:0.8);
     // arm/torso strokes live in stance space (+WS,+SD); leg strokes in world
     var sx=cx+WS-47, sy=248+SD+breath, ex=sx-11, ey=302+SD+d*0.6, wx=sx-10, wy=390+SD+d*0.5;
