@@ -541,6 +541,20 @@ else
   fail "crew status <box>: a box that answers nothing still reads (unreachable)" \
        "$(cat "$CL_TMP/crew-out")"
 fi
+# Both halves of the criterion, because they arrive by different routes: a
+# STOPPED box fails `box exec` in the daemon, an unreachable one fails inside
+# it. The detail view reads neither state directly — it reads the two probes'
+# silence — so a change that started special-casing `box_state` here would show
+# up as a difference between these two cases.
+crew_detail cli-stopped
+t "crew status <box>: a stopped box still exits 0" 0 "$CL_RC"
+if grep -q '(unreachable)' "$CL_TMP/crew-out" &&
+   ! grep -q 'no duty log yet' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a stopped box still reads (unreachable)"
+else
+  fail "crew status <box>: a stopped box still reads (unreachable)" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
 
 # --- the normal case, unchanged --------------------------------------------
 crew_detail cli-hired
