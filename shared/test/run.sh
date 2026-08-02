@@ -44,6 +44,49 @@ t suite-unsets-ambient-crew-config guarded "$r1"
 if grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
 t suite-pins-empty-xdg-config guarded "$r1"
 
+# --- #285: per-author repository panels ------------------------------------
+PANEL_REPO="$TMP/panel-repo"
+git init -q "$PANEL_REPO"
+mkdir -p "$PANEL_REPO/.github"
+cat >"$PANEL_REPO/.github/labels.conf" <<'EOF'
+panel=full-a full-b builder-one
+panel[builder-one]=author-a author-b builder-one
+panel[hyphen-builder]=hyphen-a hyphen-b
+EOF
+git -C "$PANEL_REPO" add .github/labels.conf
+git -C "$PANEL_REPO" -c user.name=test -c user.email=test@example.invalid commit -qm fixture
+git -C "$PANEL_REPO" update-ref refs/remotes/origin/main HEAD
+t panel-author-line-preferred '["author-a","author-b","builder-one"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" builder-one)"
+t panel-author-safety-subtraction '["author-a","author-b"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" builder-one | jq -c --arg me builder-one '. - [$me]')"
+t panel-hyphen-author-literal '["hyphen-a","hyphen-b"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" hyphen-builder)"
+t panel-missing-author-falls-back '["full-a","full-b","builder-one"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" unknown-builder)"
+
+# A repo absent locally must choose the same author line from the contents API.
+PANEL_API_CONF="$(base64 -w0 "$PANEL_REPO/.github/labels.conf")"
+gh() { printf '%s\n' "$PANEL_API_CONF"; }
+t panel-api-author-line '["author-a","author-b","builder-one"]' \
+  "$(panel_for_repo owner/api "$TMP/not-cloned" builder-one)"
+unset -f gh
+
+# With neither repository config path available, the fleet bench is unchanged.
+FLEET_BENCH='bench-a bench-b'
+gh() { return 1; }
+t panel-bench-fallback '["bench-a","bench-b"]' \
+  "$(panel_for_repo owner/missing "$TMP/not-cloned" builder-one)"
+unset -f gh
+
+# Both request and convergence paths must receive an author-aware roster.
+if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
+t panel-builder-resolution author-aware "$r1"
+if grep -Fq 'panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
+t panel-reviewer-resolution author-aware "$r1"
+if grep -Fq 'cache_key="$SRa|$author"' "$SHARED/lib/duty-review.sh"; then r1=repo-author; else r1=REPO-ONLY; fi
+t panel-reviewer-cache-key repo-author "$r1"
+
 # List prompt slots omitted by engine render sites. Calls are folded to one
 # logical line first; advancing past only the opening "$(`` also finds nested
 # render_prompt calls such as review.txt's ONESHOT_RULES argument.

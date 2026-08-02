@@ -309,15 +309,18 @@ $key $updated"
   # reconciler. Bounded to the PRs this box actually acted on — an auto-approve
   # or a review session — never a whole-board sweep. addressing.jq no-ops unless
   # the round closed without full approval and the label is not already set, so
-  # a re-tick writes nothing. Roster resolved once per repo.
-  local ap SRa Na
+  # a re-tick writes nothing. The effective roster is cached per repo+author.
+  local ap SRa Na author cache_key
   local -A roster_cache=()
   for ap in $acted_prs; do
     [ -n "$ap" ] || continue
     SRa="${ap%#*}"; Na="${ap##*#}"
-    if [ -z "${roster_cache[$SRa]:-}" ]; then
-      roster_cache[$SRa]="$(panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review")"
+    author="$(gh api "repos/$SRa/pulls/$Na" --jq '.user.login // ""' 2>/dev/null || true)"
+    [ -n "$author" ] || { warn "review: $SRa#$Na author fetch failed; skipping addressing eval"; continue; }
+    cache_key="$SRa|$author"
+    if [ -z "${roster_cache[$cache_key]:-}" ]; then
+      roster_cache[$cache_key]="$(panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review" "$author")"
     fi
-    _mark_addressing "$SRa" "$Na" "${roster_cache[$SRa]}"
+    _mark_addressing "$SRa" "$Na" "${roster_cache[$cache_key]}"
   done
 }

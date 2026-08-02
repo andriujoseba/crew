@@ -484,7 +484,7 @@ _builder_repo() {
     log "$R: no resume duty"
   fi
 
-  panel_json="$(panel_for_repo "$R" "$dir" | jq -c --arg me "$ME" '. - [$me]')"
+  panel_json="$(panel_for_repo "$R" "$dir" "$ME" | jq -c --arg me "$ME" '. - [$me]')"
 
   # --- One listing of my open PRs, several facts. The state of the check at
   # the head was never read by this engine at all: `statusCheckRollup` appeared
