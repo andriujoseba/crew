@@ -520,7 +520,12 @@ t "no box reports the retired 'ok' credential state" "" "$OKS"
 # `stale` counts: a paused or disarmed box genuinely cannot know, and saying so
 # is the actionable answer, not the blank one. Only `unknown` on a box that HAS
 # an engine would be the nothing-to-act-on outcome this is guarding against.
-BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','stale','missing'))")"
+# `waiting` counts for the same reason and is the case this drill meets most
+# often: every drill box is hired and disarmed before it can tick, so it has no
+# duty.log to age (#265). It names a state and the action it implies — wait one
+# tick boundary — which is precisely what `unknown` on a hired box cannot do,
+# and why widening this set must not stop it biting on `unknown`.
+BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','waiting','stale','missing'))")"
 t "every hired box reports a gh credential state" "" "$BLANK"
 
 # Auth is not optional on a page that can power-cycle boxes.

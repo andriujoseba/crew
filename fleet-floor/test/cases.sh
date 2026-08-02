@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  17 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  18 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -195,7 +195,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 18 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -269,7 +269,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 17 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 18 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -530,6 +530,21 @@ t "creds: an unhired box knows nothing"   unknown "$(uf ff-nothired 'u["gh"]')"
 # The fourth state: installed, not ticking, therefore nothing established.
 # Reporting `flowing` here would call a disarmed box with a dead token healthy.
 t "creds: a box that stopped ticking is stale, not flowing" stale "$(uf ff-silent 'u["gh"]')"
+# The fifth (#265). `stale` means "we heard from this box and no longer do";
+# nobody has heard from a never-ticked one at all, and the operator's action
+# differs — wait a tick boundary, versus go find out what broke.
+t "creds: a never-ticked box is waiting, not stale"  waiting "$(uf ff-neverticked 'u["gh"]')"
+t "creds: waiting applies to both services"          waiting "$(uf ff-neverticked 'u["vendor"]')"
+# THE REGRESSION THAT MATTERS MORE THAN THE FIX. A verdict keyed on tickage
+# alone, or on "no log lines", would launder a genuinely silent box — one whose
+# credentials may be dead — behind a reassuring word. ff-silent above holds the
+# floor half of that line and must never be relaxed; these two hold the
+# boundaries the new branch could have swallowed on its way in.
+t "creds: a never-ticked box is still hired"        True "$(uf ff-neverticked 'bool(u["engine"])')"
+t "creds: an unhired box is untouched by waiting"   unknown "$(uf ff-nothired 'u["gh"]')"
+# `waiting` is a credential verdict and nothing more: it must not leak into the
+# colour rule as a green, and it must not make a box read healthy elsewhere.
+t "creds: a waiting box is not flowing"             False "$(uf ff-neverticked 'u["gh"] == "flowing"')"
 # The flowing-requires-a-recent-tick COUPLING is asserted in boxside.sh, where
 # the real probe.sh runs against a duty.log this suite controls. It cannot be
 # asserted here: stub-box picks its credential value from the scenario name,
@@ -572,9 +587,12 @@ fi
 # the engine was installed, not that it has run. The rule now lives on the
 # HOST: probe.sh reports `nofail` plus ::tickage and floor.py ages the pair,
 # so the threshold is not copied into the box in a second language.
-if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'flowing\|stale'; then
+# `waiting` joins the forbidden list for the same reason (#265): the box knows
+# its own tick age is absent and could "helpfully" name the state itself, and
+# that is the same third copy of the rule wearing a friendlier word.
+if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'flowing\|waiting\|stale'; then
   fail "creds: the box reports a fact, not a verdict" \
-       "probe.sh decides flowing/stale itself — that is a third copy of SILENT_AFTER_S"
+       "probe.sh decides flowing/waiting/stale itself — that is a third copy of the host's rule"
 else
   ok "creds: the box reports a fact, not a verdict"
 fi
@@ -583,4 +601,15 @@ if grep -q 'fresh = 0 <= tick_age < SILENT_AFTER_S' "$FLOOR/server/floor.py"; th
 else
   fail "creds: the host ages nofail with the same rule it calls SILENT" \
        "floor.py does not derive freshness from SILENT_AFTER_S"
+fi
+# The never-ticked half of the same rule. Pinned at the source because the
+# behavioural assertions above can only see the verdict the floor produced —
+# they cannot see whether it came from the boundary the CLI also uses, and a
+# reader that agreed by coincidence is what shared/test's cross-reader
+# invariant exists to refuse.
+if grep -q 'never_ticked = tick_age < 0' "$FLOOR/server/floor.py"; then
+  ok "creds: the host names the never-ticked case rather than falling through"
+else
+  fail "creds: the host names the never-ticked case rather than falling through" \
+       "floor.py has no never_ticked predicate — a never-ticked box ages to stale"
 fi

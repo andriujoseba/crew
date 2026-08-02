@@ -27,3 +27,8 @@ ff-stuck       running  stuck
 # design (drill/rehearsal.sh disarms before any tick). It read SILENT for five
 # consecutive drill runs, which is an alarm nobody could act on (#189).
 ff-disarmed    running  disarmed
+# Hired, armed, credentials never rejected — and no ~/duty/duty.log at all,
+# because the engine has not run once. The credential columns must read
+# `waiting`, not `stale`: this box has not STOPPED ticking, it has not STARTED
+# (#265). Its CLI twin is cli-neverticked in fixtures/cli-fleet.txt.
+ff-neverticked running  neverticked
