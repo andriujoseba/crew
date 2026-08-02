@@ -701,59 +701,180 @@ if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then 
 t addressing-keys-on-head head-keyed "$r1"
 
 # --- #133: engine (re-)requests the panel, keyed off the session's SIGNAL -----
-# Two fixtures + the structural gates. request-panel.jq answers "whom, given the
-# engine already holds the licence"; answered-head.jq is that licence — the head
-# the session last signalled — and the engine acts only when it equals the
-# current head, never on commit activity (#133's hardest must-fail).
+# request-panel.jq answers "whom, given the engine already holds the licence";
+# answered-head.jq is that licence — the head the session last signalled, and
+# (since #286) WHEN it signalled — and the engine acts only when that head
+# equals the current one, never on commit activity (#133's hardest must-fail).
 RPJQ="$SHARED/lib/jq/request-panel.jq"
 AHJQ="$SHARED/lib/jq/answered-head.jq"
 RP_OLD="dddddddddddddddddddddddddddddddddddddddd"
 RP_MARK="📣 round answered at head"
+# The fixture CLOCK (#286). Ordering is the whole subject now, so every fixture
+# states its times against these three, taken from the #281 transcript: the
+# signal that OPENED round 1, the verdict that CLOSED it, and a later signal that
+# would answer that verdict. T_SIG_OPEN < T_VERDICT < T_SIG_ANSWER.
+RP_T_SIG_OPEN="2026-08-02T10:08:12Z"
+RP_T_VERDICT="2026-08-02T10:32:33Z"
+RP_T_SIG_ANSWER="2026-08-02T11:12:27Z"
 # payload builder carrying comments (the signal lives there), reviewRequests and
 # latestOpinionatedReviews. Reuses H from the converged block.
+#
+# Timestamps are DEFAULTED, not forced: a review node with no submittedAt gets
+# RP_T_VERDICT and a comment with no createdAt gets RP_T_SIG_ANSWER, so a
+# fixture that says nothing about time describes the ordinary case — the builder
+# signalled after reading the verdict. A fixture that cares states its own, and
+# one that means "the API returned no time here" says so with an explicit null,
+# which `has` preserves. Before #286 the nodes carried no times at all, and that
+# is precisely why no test could fail on this bug.
 mk_rp() {  # <head> <reqs-json> <revs-json> <comments-json>
   jq -n --arg head "$1" --argjson reqs "$2" --argjson revs "$3" --argjson coms "$4" \
+    --arg rev_at "$RP_T_VERDICT" --arg com_at "$RP_T_SIG_ANSWER" \
     '{data:{repository:{pullRequest:{
       headRefOid:$head,
       reviewRequests:{nodes:($reqs|map({requestedReviewer:{login:.}}))},
-      latestOpinionatedReviews:{nodes:$revs},
-      comments:{nodes:$coms}}}}}'
+      latestOpinionatedReviews:{nodes:($revs|map(
+        if has("submittedAt") then . else . + {submittedAt:$rev_at} end))},
+      comments:{nodes:($coms|map(
+        if has("createdAt") then . else . + {createdAt:$com_at} end))}}}}}'
 }
-rp() { jq -r --argjson panel "$PANEL" -f "$RPJQ" | tr '\n' ' ' | sed 's/ $//'; }
-ah() { jq -r --arg me me-bot --arg mark "$RP_MARK" -f "$AHJQ"; }
+# The signal request-panel.jq is handed. Shaped exactly like answered-head.jq's
+# output, because in the engine it IS that output — the two are wired together
+# in _request_panel and nowhere else.
+sig() { jq -cn --arg sha "$1" --arg at "$2" '{sha:$sha,createdAt:$at}'; }
+rp() {  # <signal-json> [panel-json]
+  jq -r --argjson panel "${2:-$PANEL}" --argjson signal "$1" -f "$RPJQ" \
+    | tr '\n' ' ' | sed 's/ $//'
+}
+ah() { jq -c --arg me me-bot --arg mark "$RP_MARK" -f "$AHJQ"; }
+ah_sha() { ah | jq -r '.sha'; }
+# The default signal: at the current head, later than the default verdict time.
+# Fixtures with no current-head verdict are indifferent to it by construction.
+RP_SIG_LATE="$(sig "$H" "$RP_T_SIG_ANSWER")"
 RP_CR_AT_HEAD='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
 RP_STALE_BOTH='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$RP_OLD'"}},{"author":{"login":"rev-b"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$RP_OLD'"}}]'
 
 # request-panel.jq — whom to request once licensed.
-t rp-first-round-requests-all "rev-a rev-b" "$(mk_rp "$H" '[]' '[]' '[]' | rp)"
+t rp-first-round-requests-all "rev-a rev-b" \
+  "$(mk_rp "$H" '[]' '[]' '[]' | rp "$RP_SIG_LATE")"
 # The no-push half #133 exists for: a change-request AT the current head is
 # re-requested (the builder answered with argument), the head approver is not.
-t rp-no-push-cr-at-head-requests-cr-er "rev-a" "$(mk_rp "$H" '[]' "$RP_CR_AT_HEAD" '[]' | rp)"
-t rp-converged-requests-none "" "$(mk_rp "$H" '[]' "$REVS_OK" '[]' | rp)"
+# RETIMED for #286, not preserved: this case was written with no comments at
+# all, so its signal could never be newer than the verdict it claimed to answer,
+# and it expected rev-a anyway. It is now the boundary PAIR below — the same
+# reviews read twice, once under a signal newer than the verdict and once under
+# the signal that opened the round. Leaving it as it stood and still passing
+# would mean the predicate is not reading the ordering.
+t rp-no-push-cr-at-head-requests-cr-er "rev-a" \
+  "$(mk_rp "$H" '[]' "$RP_CR_AT_HEAD" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+t rp-no-push-stale-signal-requests-none "" \
+  "$(mk_rp "$H" '[]' "$RP_CR_AT_HEAD" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
+t rp-converged-requests-none "" \
+  "$(mk_rp "$H" '[]' "$REVS_OK" '[]' | rp "$RP_SIG_LATE")"
 # Head moved: every prior review is stale → all re-requested, approvers included.
-t rp-head-moved-requests-all "rev-a rev-b" "$(mk_rp "$H" '[]' "$RP_STALE_BOTH" '[]' | rp)"
-t rp-already-requested-none "" "$(mk_rp "$H" '["rev-a","rev-b"]' "$RP_STALE_BOTH" '[]' | rp)"
+t rp-head-moved-requests-all "rev-a rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_STALE_BOTH" '[]' | rp "$RP_SIG_LATE")"
+t rp-already-requested-none "" \
+  "$(mk_rp "$H" '["rev-a","rev-b"]' "$RP_STALE_BOTH" '[]' | rp "$RP_SIG_LATE")"
 # Never triage: the request derives only from $panel, so an off-panel identity
 # (dan-claude-bot) that left a review or a request cannot be returned.
 RP_TRIAGE_REV='[{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$RP_OLD'"}}]'
-t rp-never-targets-triage "rev-a rev-b" "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_TRIAGE_REV" '[]' | rp)"
+t rp-never-targets-triage "rev-a rev-b" \
+  "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_TRIAGE_REV" '[]' | rp "$RP_SIG_LATE")"
+
+# --- #286: ONE SIGNAL OPENS ONE ROUND ----------------------------------------
+# The licence is spent by the verdicts that answer it. Every case below was
+# inexpressible before the fixtures had a clock.
+#
+# THE #281 LOOP, in one fixture. Signal opens the round; both panelists answer
+# it at the head, one blocking; GitHub has dropped them from requested_reviewers
+# the instant they submitted. Before the fix this returned the change-requester
+# and did so on every tick, forever, on a tree nobody had changed.
+RP_281='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"},
+         {"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"},"submittedAt":"2026-08-02T10:29:40Z"}]'
+# The same blocking verdict with rev-b's approval removed: rev-b now owes a
+# first verdict at this head, so it rides through every hold that binds rev-a
+# and each fixture below shows WHICH panelist was held rather than an empty set
+# that two different rules could have produced.
+RP_CR_A_ONLY='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
+t rp-286-closed-round-requests-none "" \
+  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
+# ...and the no-push resolution still works: the builder answers with argument,
+# pushes nothing, re-signals — a signal NEWER than the blocking verdict — and
+# exactly the change-requester is re-requested. The pair is the boundary: revert
+# the predicate and the fixture above goes red while this one stays green.
+t rp-286-newer-signal-requests-cr-er "rev-a" \
+  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# An equal-second tie HOLDS — fail-closed. A signal posted in the same second as
+# the verdict cannot be shown to have read it, and the cost of guessing wrong is
+# the loop above; the cost of holding is one tick, cleared by the next signal.
+t rp-286-same-second-tie-holds "" \
+  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_VERDICT")")"
+# Absent times hold for the same reason — an unstamped verdict is not evidence
+# that the signal came after it. (An engine reading a payload from before the
+# query carried submittedAt would see exactly this.)
+RP_CR_UNSTAMPED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":null}]'
+t rp-286-unstamped-verdict-holds "rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_CR_UNSTAMPED" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+t rp-286-unstamped-signal-holds "rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_CR_A_ONLY" '[]' | rp "$(sig "$H" "")")"
+# THE COHERENCE GATE (ruled 2026-08-02, danmt). A `📣` posted mid-round is inert
+# until the round closes: rev-a blocked and the builder re-signalled, but rev-b
+# still owes a first verdict, so the round is still the panel's and rev-a is not
+# re-requested under a signal that would blur two rounds into one head.
+t rp-286-coherence-holds-mid-round "" \
+  "$(mk_rp "$H" '["rev-b"]' "$RP_CR_A_ONLY" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# ...and it is the PANEL's round that holds it open, not any request: an
+# off-panel reviewer's outstanding request (triage, a human, an advisory
+# reviewer) is not the panel's verdict to wait for. Same scoping as
+# addressing.jq's $no_panel_reqs, so the two never disagree about whose ball it
+# is.
+t rp-286-offpanel-request-does-not-hold-the-round "rev-a" \
+  "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_CR_AT_HEAD" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# The gate is narrow BY DESIGN: it binds verdict-holders only. A panelist who
+# owes a first verdict at this head is requested even while another request is
+# outstanding — otherwise the first round, where the whole panel is requested at
+# once and each request lands beside the others, could never complete. Three
+# panelists, because that is the smallest set where the two rules can be told
+# apart: rev-a is held by the gate, rev-b holds the round open, rev-c rides
+# through untouched.
+t rp-286-coherence-spares-first-verdicts "rev-c" \
+  "$(mk_rp "$H" '["rev-b"]' "$RP_CR_A_ONLY" '[]' \
+    | rp "$(sig "$H" "$RP_T_SIG_ANSWER")" '["rev-a","rev-b","rev-c"]')"
+# No reviewer is requested twice at one head under one signal: the engine's own
+# request puts them back on the list, and the next tick sees that and holds.
+t rp-286-requested-not-requested-again "" \
+  "$(mk_rp "$H" '["rev-a"]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
 
 # answered-head.jq — the signal. This is the WIP-safety property: a mid-fix push
 # moves the head away from the last signalled one, so the engine holds.
 RP_SIG_H='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
 RP_SIG_OLD='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"}]'
 RP_SIG_TWO='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"},{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
-t ah-signal-at-head "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_H" | ah)"
-t ah-no-signal-empty "" "$(mk_rp "$H" '[]' '[]' '[]' | ah)"
-t ah-latest-signal-wins "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO" | ah)"
+t ah-signal-at-head "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_H" | ah_sha)"
+t ah-no-signal-empty "" "$(mk_rp "$H" '[]' '[]' '[]' | ah_sha)"
+t ah-latest-signal-wins "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO" | ah_sha)"
 # The must-fail made concrete: a WIP push after the last signal (signal at OLD,
 # head now H) yields a signalled head != current head, so the engine's
 # `answered_head = gql_head` gate is false — it does NOT request. No commit
 # inference.
-t ah-wip-push-stales-signal "$RP_OLD" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OLD" | ah)"
+t ah-wip-push-stales-signal "$RP_OLD" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OLD" | ah_sha)"
 # Another user's MARK_ANSWERED is not my signal.
 RP_SIG_OTHER='[{"author":{"login":"someone"},"body":"'"$RP_MARK"' '"$H"'"}]'
-t ah-other-user-signal-ignored "" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OTHER" | ah)"
+t ah-other-user-signal-ignored "" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OTHER" | ah_sha)"
+# #286: the licence carries its TIME, and it is the time of the signal it
+# returned — the latest one, not the first. Both halves come out of one program
+# so no caller can pair a sha with another signal's clock.
+RP_SIG_TWO_TIMED='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'","createdAt":"'$RP_T_SIG_OPEN'"},
+                   {"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'","createdAt":"'$RP_T_SIG_ANSWER'"}]'
+t ah-carries-the-signal-time "$RP_T_SIG_ANSWER" \
+  "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO_TIMED" | ah | jq -r '.createdAt')"
+t ah-pairs-sha-with-its-own-time "$H $RP_T_SIG_ANSWER" \
+  "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO_TIMED" | ah | jq -r '"\(.sha) \(.createdAt)"')"
+# No signal is the empty OBJECT, never null: _request_panel reads .sha off it
+# unconditionally, and request-panel.jq reads .createdAt, so the shape has to
+# survive the absence.
+t ah-no-signal-is-an-empty-object '{"sha":"","createdAt":""}' \
+  "$(mk_rp "$H" '[]' '[]' '[]' | ah)"
 
 # Structural gates (#133 test plan, must-fails).
 # The engine acts on the signal, not commits: _request_panel gates on
@@ -832,9 +953,16 @@ done
 # already at its head → the engine requests (die-after-ready is safe). The
 # die-before-ready arm is a still-draft PR, excluded by my_open
 # (engine-request-excludes-drafts) and recovered by resume — proven above.
+#
+# The two programs are wired together here exactly as _request_panel wires them
+# — answered-head.jq's object is what request-panel.jq is handed — so this case
+# also pins that the licence survives the trip between them (#286).
 RP_READY_SIGNALLED="$(mk_rp "$H" '[]' '[]' "$RP_SIG_H")"
-t strand-fix-ready-with-signal-requests "rev-a rev-b" "$(printf '%s' "$RP_READY_SIGNALLED" | rp)"
-t strand-fix-ready-with-signal-has-signal "$H" "$(printf '%s' "$RP_READY_SIGNALLED" | ah)"
+t strand-fix-ready-with-signal-requests "rev-a rev-b" \
+  "$(printf '%s' "$RP_READY_SIGNALLED" \
+    | rp "$(printf '%s' "$RP_READY_SIGNALLED" | ah)")"
+t strand-fix-ready-with-signal-has-signal "$H" \
+  "$(printf '%s' "$RP_READY_SIGNALLED" | ah_sha)"
 # rebase.txt aligns with the engine: it posts the signal, it does not re-request.
 if grep -qi 'MARK_ANSWERED' "$SHARED/prompts/rebase.txt" \
   && ! grep -qi 're-request every panel reviewer' "$SHARED/prompts/rebase.txt"; then r1=aligned; else r1=RACES; fi
