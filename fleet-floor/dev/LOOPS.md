@@ -2471,3 +2471,29 @@ Pass 2 re-fit the knee guards to the bent joints (a guard square to the world
 floats off a knee that isn't) and tucked the calf swell inside the shank
 silhouette. The anchors return in world coords; the stance translate is
 buildGrok's private business.
+
+### The predator loops (operator-driven, five, against the movie references)
+
+Operator verdict after the stance pass: limbs still too thin, arms long, the
+resting talon read as a tired hand-on-waist, the face needed the mask. Four
+reference stills of the movie predator were fetched and READ first (the
+standing rule). Five loops, no blind reviewer:
+
+1. **MASS** — thighs 20/13, shanks 13/7.2, arms thick and SHORT (elbow up,
+   wrist up), talons scaled to the new arms, layered second pauldron slat,
+   wide feet with spread toes.
+2. **POSE** — the chad stance: both feet planted wide (small stagger kept),
+   arms bent and held OUT from the lats, wrists outboard, talons hanging
+   free in the air beside the thighs. The hand-on-waist read is dead.
+3. **THE MASK** — spiked crown rim (temple to temple), center ridge with the
+   trident carve, canted GLARE slits hot at the inner corner (round lamps
+   gone), layered cheek sweeps, a projecting segment-grooved MUZZLE, and the
+   dread curtain re-rooted at the temples falling outward, ring bands
+   mid-length.
+4. **THE CLAW MARKS** — three gouges carved across brow, socket line, cheek
+   and muzzle: dark trench, torn lip on the key side, burrs of displaced
+   metal, bitten entry notches. Carved, not painted.
+5. **BATTLE-TESTED** — mesh netting whisper on the thigh slabs, three severed
+   trophy cables lashed to the left tasset (none of them grok's own gauge),
+   pec weld seam + stitch ticks, two dents that did not get through, a chip
+   out of the left pauldron's leading edge, shin grazes.
