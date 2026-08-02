@@ -2252,6 +2252,47 @@ t round-siblings-converged false \
     --arg needs_human state:needs-human -f "$SHARED/lib/jq/converged.jq")"
 
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
+# #243: a ready PR missing its current-head signal becomes resume work only on
+# the twelfth consecutive tick. The state is keyed by head, so a push resets
+# the count even when the PR number is unchanged.
+STRANDED_STATE="$TMP/resume-unsignalled"
+for _tick in $(seq 1 11); do
+  stranded_out="$(printf 'o/r#243@aaa\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
+done
+t stranded-resume-not-before-12 "" "$stranded_out"
+t stranded-resume-on-12 243 \
+  "$(printf 'o/r#243@aaa\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
+t stranded-resume-push-resets "" \
+  "$(printf 'o/r#243@bbb\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
+t stranded-resume-new-head-count-is-one 1 \
+  "$(awk -F'\t' '$1 == "o/r#243@bbb" {print $2}' "$STRANDED_STATE")"
+# A signal removes the PR from the candidate input; a later new head starts a
+# fresh episode rather than inheriting the old count.
+printf '' | _stranded_resume_due "$STRANDED_STATE" 12 >/dev/null
+t stranded-resume-signal-clears-state 0 "$(wc -l <"$STRANDED_STATE" | tr -d ' ')"
+
+# The no-signal hold speaks once for one repo/PR/head, then speaks again when a
+# push changes the key. report_suppressed writes through warn on stderr.
+hold1="$(_report_unsignalled_hold o/r 243 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 2>&1)"
+hold2="$(_report_unsignalled_hold o/r 243 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 2>&1)"
+hold3="$(_report_unsignalled_hold o/r 243 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 2>&1)"
+t unsignalled-hold-first-warns 1 "$(grep -c 'no round-answered signal' <<<"$hold1")"
+t unsignalled-hold-same-head-quiet 0 "$(grep -c 'no round-answered signal' <<<"$hold2")"
+t unsignalled-hold-new-head-warns 1 "$(grep -c 'no round-answered signal' <<<"$hold3")"
+
+# A ci-red session returning zero does not consume an unsettled same-head item.
+# Red is terminal and remains one-shot; a moved head settles the old key and
+# will independently enter under its new id if it is red.
+CI_PENDING="$(jq -cn '{number:243,isDraft:false,updatedAt:"T",headRefOid:"aaa",statusCheckRollup:[{name:"ci",status:"IN_PROGRESS"}]}')"
+CI_RED="$(jq -cn '{number:243,isDraft:false,updatedAt:"T",headRefOid:"aaa",statusCheckRollup:[{name:"ci",status:"COMPLETED",conclusion:"FAILURE"}]}')"
+CI_MOVED="$(jq -cn '{number:243,isDraft:false,updatedAt:"T",headRefOid:"bbb",statusCheckRollup:[{name:"ci",status:"IN_PROGRESS"}]}')"
+if printf '%s' "$CI_PENDING" | _ci_red_rollup_settled aaa; then r1=settled; else r1=retry; fi
+t ci-red-pending-remains-retryable retry "$r1"
+if printf '%s' "$CI_RED" | _ci_red_rollup_settled aaa; then r1=settled; else r1=retry; fi
+t ci-red-red-remains-one-shot settled "$r1"
+if printf '%s' "$CI_MOVED" | _ci_red_rollup_settled aaa; then r1=settled; else r1=retry; fi
+t ci-red-moved-head-settles-old-key settled "$r1"
+
 # ledger_filter re-fires when the value sorts GREATER, and a SHA has no order.
 # This is the negative control for the scheme NOT used: keyed the ordinary way,
 # a corrective push whose oid happens to sort below the previous one is
@@ -2448,14 +2489,14 @@ t wt-clean-removal-path-intact intact "$r1"
 # --- wiring (#45/#17) --------------------------------------------------------
 if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
 t ci-red-rollup-fetched fetched "$r1"
-# No new API call: the rollup rides the listing the round signal was already
-# fetching. Asserted as "requested exactly once on the authored-PR listing" —
-# a second listing added for handoff would be a second occurrence.
+# The primary rollup rides the authored-PR listing. #243 deliberately adds one
+# post-ci-red `gh pr view` re-read so a session that exits while checks are
+# pending does not consume the head; no third rollup read belongs here.
 # Comment lines are stripped first. The block above EXPLAINS that the rollup
 # rides an existing call, so counting raw occurrences counts the explanation —
 # a detector tripping on its own documentation, which this repo has now managed
 # three separate times.
-t ci-red-rollup-rides-round-listing 1 \
+t ci-red-rollup-list-plus-settle-reread 2 \
   "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'statusCheckRollup')"
 if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
   r1=shared

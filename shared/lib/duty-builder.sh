@@ -12,6 +12,8 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
 
+BUILDER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Mutates the caller's dynamically scoped ready_count/ready_items. Withheld
 # items must disappear from both the prompt and the eventual seen-ledger.
 _gate_ready_for_open_pr() {
@@ -182,6 +184,20 @@ _handoff_finalize() {
     || warn "$repo#$num: could not set $LABEL_NEEDS_HUMAN"
 }
 
+_report_unsignalled_hold() {
+  local repo="$1" num="$2" head="$3" item fresh state
+  item="$repo#$num@$head head"
+  fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-round-signal")"
+  if [ -n "$fresh" ]; then
+    printf '%s\n' "$fresh" | ledger_commit "$DUTY_DIR/.seen-round-signal"
+  fi
+  state="$DUTY_DIR/.suppressed-round-signal.${repo//\//__}.$num"
+  printf '%s\n' "$item" \
+    | ledger_suppressed "$DUTY_DIR/.seen-round-signal" \
+    | report_suppressed "$state" \
+        "$repo#$num: no round-answered signal at head ${head:0:12} — not requesting (#133)"
+}
+
 # _request_panel REPO NUM PAYLOAD PANEL_JSON CHECK_STATE HC_HEAD — engine-side
 # panel (re-)request, and state:bots-reviewing beside it (#133). This moves the
 # request off the builder SESSION, where a session that died between its last
@@ -203,7 +219,7 @@ _handoff_finalize() {
 # best-effort and gates nothing — the same rule as _handoff_finalize.
 _request_panel() {
   local repo="$1" num="$2" payload="$3" panel_json="$4" check_state="$5" hc_head="$6"
-  local gql_head answered_head to_request rvr requested_any=0 signal_item signal_fresh signal_state
+  local gql_head answered_head to_request rvr requested_any=0
   gql_head="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null)"
   [ -n "$gql_head" ] || { warn "$repo#$num: no head in payload; not requesting"; return 0; }
   # THE SIGNAL GATE. The latest MARK_ANSWERED comment of mine names the head the
@@ -215,16 +231,7 @@ _request_panel() {
     | jq -r --arg me "$ME" --arg mark "$MARK_ANSWERED" \
         -f "$DUTY_DIR/lib/jq/answered-head.jq" 2>/dev/null)"
   if [ "$answered_head" != "$gql_head" ]; then
-    signal_item="$repo#$num@$gql_head head"
-    signal_fresh="$(printf '%s\n' "$signal_item" | ledger_filter "$DUTY_DIR/.seen-round-signal")"
-    if [ -n "$signal_fresh" ]; then
-      printf '%s\n' "$signal_fresh" | ledger_commit "$DUTY_DIR/.seen-round-signal"
-    fi
-    signal_state="$DUTY_DIR/.suppressed-round-signal.${repo//\//__}.$num"
-    printf '%s\n' "$signal_item" \
-      | ledger_suppressed "$DUTY_DIR/.seen-round-signal" \
-      | report_suppressed "$signal_state" \
-          "$repo#$num: no round-answered signal at head ${gql_head:0:12} — not requesting (#133)"
+    _report_unsignalled_hold "$repo" "$num" "$gql_head"
     return 0
   fi
   # The MECHANICAL half of the green-head precondition — the only half the
@@ -349,6 +356,23 @@ _stranded_resume_due() {
     printf '%s\t%s\n' "$key" "${current[$key]}" >>"$tmp"
   done
   mv "$tmp" "$state"
+}
+
+# _ci_red_rollup_settled EXPECTED_HEAD — stdin is the post-session gh-pr-view
+# object. Success means this ci-red ledger item may be committed. A pending
+# rollup at the same head, or an unreadable snapshot, remains retryable. Head
+# movement is settled for the old key; the new head gets its own ledger id.
+_ci_red_rollup_settled() {
+  local expected_head="$1" snapshot head state
+  snapshot="$(cat)"
+  head="$(printf '%s' "$snapshot" | jq -r '.headRefOid // ""' 2>/dev/null)"
+  [ -n "$head" ] || return 1
+  [ "$head" != "$expected_head" ] && return 0
+  state="$(printf '%s' "$snapshot" \
+    | jq -c '[. + {reviewRequests:[], latestOpinionatedReviews:[]}]' 2>/dev/null \
+    | jq -r --argjson panel '[]' --arg repo _ \
+        -f "$BUILDER_LIB_DIR/jq/head-checks.jq" 2>/dev/null | cut -f4)"
+  [ -n "$state" ] && [ "$state" != "pending" ]
 }
 
 duty_builder() {
@@ -547,19 +571,14 @@ _builder_repo() {
             CHECKS="${red_checks:-unknown}" WT_RULES="$wt_rules" \
             ROUND_RULES="$round_rules")"
         if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-          local settled_json settled_head settled_state
+          local settled_json
           settled_json="$(gh pr view "$red_num" -R "$R" \
             --json number,isDraft,updatedAt,headRefOid,statusCheckRollup \
             2>/dev/null || echo err)"
           if [ "$settled_json" = "err" ]; then
             warn "$R#$red_num: check rollup re-read failed; leaving ci-red head uncommitted"
           else
-            settled_head="$(printf '%s' "$settled_json" | jq -r '.headRefOid')"
-            settled_state="$(printf '%s' "$settled_json" \
-              | jq -c '[. + {reviewRequests:[], latestOpinionatedReviews:[]}]' \
-              | jq -r --argjson panel '[]' --arg repo "$R" \
-                  -f "$DUTY_DIR/lib/jq/head-checks.jq" | cut -f4)"
-            if [ "$settled_head" = "${red_key##*@}" ] && [ "$settled_state" = "pending" ]; then
+            if ! printf '%s' "$settled_json" | _ci_red_rollup_settled "${red_key##*@}"; then
               log "$R#$red_num: check still pending after ci-red session; leaving head uncommitted for retry"
             else
               printf '%s\thead\n' "$red_key" | ledger_commit "$DUTY_DIR/.seen-ci-red"
