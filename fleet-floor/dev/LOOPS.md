@@ -2383,3 +2383,156 @@ Motion evidence — the portrait cadence and the overlay cadence, captured live:
 [tile-live.gif](shots/fleet-call/tile-live.gif) ·
 [tile-dead.gif](shots/fleet-call/tile-dead.gif) ·
 [call-grid.gif](shots/fleet-call/call-grid.gif)
+
+## GROK again — the recon run (blind-verified anatomy loops)
+
+The stalker shipped in #206 was rushed, and it showed: stilt legs, a plumb-line
+hang, gripper curls for hands — the operator's verdict was "looks like Lurch
+from the Addams family" against a brief of *next-gen recon unit, he sees you
+before you see him*. This run worked the droid ALONE — no room — under the
+blind-loop protocol from `prototypes/LOOP-PROTOCOL.md`: render → a fresh
+context-free reviewer gets one image and the critique prompt, nothing else →
+fix only its top-ranked findings → re-render; the next loop's reviewer judges
+the fix. One commit per loop, score in the message.
+
+Two pieces of kit made the droid-only run possible:
+
+- **`FLOORDEV.renderSolo(dst,{agent,state,t})`** — the unit sprite alone,
+  full body, on a deliberately mute studio stage (grey wall pool, floor,
+  contact shadows under the returned feet). Same rules as the other dev
+  hooks: it draws through `buildRobo` on a supersampled trio, never a second
+  copy of the art. The stage is part of the picture the reviewer grades, so
+  it took fixes of its own across the run.
+- **`~/pw-harness/grokrecon.js`** — shoots solo idle/working/offline at
+  880x1400 plus a room-context crop; the idle still is the verifier image.
+
+### Score sequence
+
+| loop | verdict | what the fix changed |
+|---|---|---|
+| L1 | 5 (baseline) | leg plates one palette step up off the void; floor made a plane; the severed-dread stump de-cursored; optic scan differential capped |
+| L2 | 5 | ONE upper-left key committed (kf side factors); ghost pauldron washes → opaque facets; feet given front-to-back depth, figure moved inside the floor plane |
+| L3 | 5 | the predator arms: coiled outboard hang, wrist dropped past the pelvis, `claw()` rebuilt as articulated three-digit talons + thumb-spur; twin optics; toe occlusion |
+| L4 | 5 | dark-side separation (stage wall pools + fill lift + per-plate cool rim); the ruler-straight rim streak broken at every joint; hands shade the thighs |
+| L5 | 5 | the head un-blurred: stage emissive taps 10/30px → 4/10px, optic falloff tightened to hard points; toe-contact rims killed; fill rim halved |
+| L6 | 5 | both flanks' rims made to tell one key story; cyclorama floor, per-foot pools; orphan geometry socketed (ferrule termini, housed light bars, bite opened to the silhouette) |
+| L7 | 4 | **regression verdict on loop 6** — the grounding overshot: stance-shadow core near-black "a hole cut in the canvas", floor darker than the wall. Loop 7 corrected it: shadow softened to ~1.6x adjacent floor, floor re-lit above the wall base, mask palette lifted so the face wins the thumbnail, mane cable shading de-inverted |
+| L8 | 5 | — run stopped here (operator call): loop 7's fix recovered the regression back to the plateau |
+
+### What held under measurement
+
+- **The plateau is real and the findings still matter.** Six straight 5s, but
+  every loop's cited defects verified fixed at their coordinates and the next
+  reviewer found NEW real ones — the droid at L7 shares almost nothing with
+  L0 except the silhouette. For a dense dark figure this reviewer pool sits
+  at 5 unless something is actively wrong (loop 6's overshoot promptly cost
+  a point).
+- **The stage is part of the drawing.** Three separate loops were spent on
+  studio-stage physics (floor value story, shadow depth, blur taps) — a solo
+  render has nowhere to hide grounding and lighting sins that a busy room
+  absorbs.
+- **Bright marks at contact points read as floating.** The single most
+  repeated class of finding: rim strokes reaching the sole line, shadows
+  lighter than ambient, glow at the toe caps. Contact = the darkest thing in
+  its neighbourhood, every time.
+- **Anything dangling reads as debris.** The severed-dread stump was flagged
+  by three independent reviewers (cursor → clothespin → tripod) until the
+  dangle was cut to a blunt cauterized ferrule. Story survives; jewelry does
+  not.
+
+### Survived the run unfixed (structural, next run's backlog)
+
+- The mannequin problem — perfect frontal mirror symmetry, both feet on one
+  baseline, zero weight shift: the pose still says turnaround sheet, not
+  stalk. A real menace pass needs an asymmetric stance program.
+- Warm accents (heat-tile waffle, gold tallies, plasma streaks) all sit on
+  the left half and read as decals; they need a right-side logic or a cull.
+- The knee-to-ankle run is bare strut — the lower half carries less design
+  density than the torso.
+- Emissives still don't light their neighbourhood at full believability
+  (chest bar vs adjacent plates).
+
+![before / after](shots/grok-recon/before-after.webp)
+![evolution](shots/grok-recon/evolution.gif)
+
+### The stance pass (operator-driven, no blind reviewer)
+
+Two fast passes straight from the operator's brief: *idle is ready to attack,
+working is even more menacing, and he reads thin and stretched long.* The fix
+is a geometry, not a mood — THE COIL: the whole upper body (mane, torso, arms,
+head) rides one stance translate, dropping SD (24 idle / 30 working) into
+deeper knee flex and shifting WS toward the lead foot; the legs are drawn in
+world coords to the same hips — knees thrown far out, shanks raking hard back
+in, lead-left foot planted wide, trail-right tucked under the mass. Soles
+never move. Limbs widened (thigh 15, shank 9.5), the hanging wrist shortened
+so knuckles never reach the knee line, and working splays the hanging talon
+open with a small head-jut. Dead keeps SD — the unit dies in its stance.
+Pass 2 re-fit the knee guards to the bent joints (a guard square to the world
+floats off a knee that isn't) and tucked the calf swell inside the shank
+silhouette. The anchors return in world coords; the stance translate is
+buildGrok's private business.
+
+### The predator loops (operator-driven, five, against the movie references)
+
+Operator verdict after the stance pass: limbs still too thin, arms long, the
+resting talon read as a tired hand-on-waist, the face needed the mask. Four
+reference stills of the movie predator were fetched and READ first (the
+standing rule). Five loops, no blind reviewer:
+
+1. **MASS** — thighs 20/13, shanks 13/7.2, arms thick and SHORT (elbow up,
+   wrist up), talons scaled to the new arms, layered second pauldron slat,
+   wide feet with spread toes.
+2. **POSE** — the chad stance: both feet planted wide (small stagger kept),
+   arms bent and held OUT from the lats, wrists outboard, talons hanging
+   free in the air beside the thighs. The hand-on-waist read is dead.
+3. **THE MASK** — spiked crown rim (temple to temple), center ridge with the
+   trident carve, canted GLARE slits hot at the inner corner (round lamps
+   gone), layered cheek sweeps, a projecting segment-grooved MUZZLE, and the
+   dread curtain re-rooted at the temples falling outward, ring bands
+   mid-length.
+4. **THE CLAW MARKS** — three gouges carved across brow, socket line, cheek
+   and muzzle: dark trench, torn lip on the key side, burrs of displaced
+   metal, bitten entry notches. Carved, not painted.
+5. **BATTLE-TESTED** — mesh netting whisper on the thigh slabs, three severed
+   trophy cables lashed to the left tasset (none of them grok's own gauge),
+   pec weld seam + stitch ticks, two dents that did not get through, a chip
+   out of the left pauldron's leading edge, shin grazes.
+
+### The pose loops (operator-driven, three, against the two reference poses)
+
+Operator verdict on the predator loops: dreads still rough, and the resting
+talon STILL read hand-on-waist — hated. Targets set by two stills: idle = the
+upright reference (arms down-and-out, hands free beside the thighs), working
+= the action reference (free arm raised, claw presented). Three loops:
+
+1. **The idle hang** — elbow eased, forearm drops near-vertical and OUTBOARD:
+   wrist at cx±57, mid-thigh, talon hanging in open air beside the leg. The
+   thigh shadow shrinks to the sliver of real overlap.
+2. **The STRIKE** — a new working arm mode: elbow thrown out at shoulder
+   height, forearm climbing, splayed talon flipped point-up and presented
+   beside the mask. Builder: left tool + right strike; handheld rooms: right
+   device + left strike. Hang rim strokes gate off while working.
+3. **The mane** — `cable()`: sampled cubic with per-segment width taper (fat
+   root → ferrule gauge), an S-bow out off the temple before the fall, round
+   caps, lit-side-only highlight; ferrules sized to their tip; a fourth,
+   shorter outer pair per side. One stiff quadratic at constant width reads
+   as rope — this reads as a curtain.
+
+**Post-round correction (operator):** idle talons had landed exactly over the
+knee guards — hands-on-knees, winded. The arms were the culprit: too long.
+Both segments shortened (elbow 294, wrist 356) so the talon dies at the upper
+thigh, 40+ units above the knee line, hanging beside the leg. Working's tool
+hand moved from beside the hip to IN FRONT of the body, and the strike went
+from vertical (a wave) to a cocked diagonal above the pauldron (a slash).
+
+**Working-pose reversal (operator):** the two-arm working pose died on
+contact — the tool hand read as a fist parked on the waist and the raised
+strike talon read as "the number 3". The fleet already had the answer: one
+moving arm per unit (claude raises one, kimi flexes one, codex lifts one
+palp). The right arm now NEVER leaves the idle vertical hang — the resting
+talon is identical idle or working, closed unless dead — and the left alone
+does a single simple stretched reach: elbow landed OUTBOARD of the waist
+edge in open air (an arm that lives on the torso reads as a clutch), long
+forearm driving down and in, closed claw presenting the tool at mid-torso
+with its shadow cast on the waist plates. The strike mode is gone entirely;
+a working claw grips, it does not display.

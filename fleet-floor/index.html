@@ -3211,6 +3211,15 @@ function buildGrok(t,st){
      feet never leave the deck — a grounded unit dies standing in its own
      stance. */
   var d=offl?22:0;
+  /* THE STANCE. Ready-to-attack is a geometry, not a mood: the upper body
+     drops SD into deeper knee flex (the coil — soles never move), shifts WS
+     toward the lead-left foot, and the feet STAGGER — lead planted wide,
+     trail tucked under the mass. Working coils deeper still. Dead keeps SD:
+     the unit dies in its stance, d does the folding. The torso/head/arms all
+     ride one translate; the legs are drawn in world coords to the same hip. */
+  var SD=work?30:24, WS=offl?0:-6;
+  function stanceOn(){[RB,RE,RR].forEach(function(c2){c2.save();c2.translate(WS,SD);});}
+  function stanceOff(){[RB,RE,RR].forEach(function(c2){c2.restore();});}
   function limbSeg(c,x0,y0,x1,y1,w0,w1,top,bot){var dx=x1-x0,dy=y1-y0,ln=Math.hypot(dx,dy)||1,nx=-dy/ln,ny=dx/ln;plate(c,[[x0+nx*w0,y0+ny*w0],[x1+nx*w1,y1+ny*w1],[x1-nx*w1,y1-ny*w1],[x0-nx*w0,y0-ny*w0]],top,bot,ed);}
   function joint(x,y,r){g.fillStyle="#04070d";g.beginPath();g.arc(x,y,r,0,7);g.fill();
     g.strokeStyle=ed;g.lineWidth=1.4;g.beginPath();g.arc(x,y,r,0,7);g.stroke();
@@ -3224,66 +3233,142 @@ function buildGrok(t,st){
   function tendon(x0,y0,x1,y1,w){
     pl(g,x0,y0,x1,y1,"#0a0f18",w||3.4);
     pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.1);}
+  // ONE key, upper-left: mirrored speculars are never mirrored in intensity —
+  // the left member takes the lamp, the right sits in HALF fill: any lower
+  // and the dark flank sinks into the stage wall
+  function kf(s){return s<0?1:0.5;}
+  // an emissive needs a FIXTURE: dark housing slot first, light bar inset —
+  // a bare pill on plate reads as a floating sprite
+  function litBar(bx,by,w){
+    g.fillStyle="#02040a";rr(g,bx-(w+1.2)/2,by-1.7,w+1.2,3.4,1);g.fill();
+    g.strokeStyle=ed;g.lineWidth=0.8;rr(g,bx-(w+1.2)/2,by-1.7,w+1.2,3.4,1);g.stroke();
+    [RB,RE].forEach(function(c2){c2.fillStyle=pu(offl?0.2:0.75);c2.fillRect(bx-(w-1)/2,by-0.75,w-1,1.5);});}
 
-  // head reference — the mane and the mask both hang off this
-  var hby=166+(offl?13:0)+breath*0.5, hcx=cx+(offl?3:0);
+  // head reference — the mane and the mask both hang off this. Working the
+  // head JUTS: sunk a touch deeper between the crowns, leading the mass
+  var hby=166+(offl?13:0)+(work?3:0)+breath*0.5, hcx=cx+(offl?3:0);
 
   /* ---------- THE MANE, rear layer ----------
      The signature. Black armored cables slick back over the crown and fall
      BEHIND the shoulders — drawn first, so every plate of the body overlaps
      them and they read as coming from behind the skull. Live they hold
      tension: swept, tips riding at shoulder-blade height, one slow sway.
-     Dead they just hang. Each tip carries a machined ferrule, and two
-     ferrules carry the only purple the mane is allowed. */
-  var REARC=[[-1,4,32,266],[-1,10,44,284],[-1,15,56,298],[1,4,32,266],[1,10,44,284],[1,15,56,298]];
-  REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+8, rank=ci%3;
+     Dead they just hang. Each tip carries a machined ferrule — DARK: every
+     rear tip ends up behind chest or arm plate, and an emissive whose
+     housing is buried reads as a sprite floating on whatever hides it. The
+     mane's purple lives in the front dreads, whose ferrules show. */
+  /* a dread is a CABLE: fat at the root, tapering to its ferrule, bowing
+     OUT off the temple before it falls — one stiff quadratic at constant
+     width reads as rope. Sampled cubic, width stepped per segment, round
+     caps, highlight ride on the lit side only. */
+  function cable(ax,ay,c1x,c1y,c2x,c2y,tx,ty,w0,w1,hi){
+    var P=[];for(var i5=0;i5<=5;i5++){var u=i5/5,v=1-u;
+      P.push([v*v*v*ax+3*v*v*u*c1x+3*v*u*u*c2x+u*u*u*tx,
+              v*v*v*ay+3*v*v*u*c1y+3*v*u*u*c2y+u*u*u*ty]);}
+    g.lineCap="round";
+    for(var i6=0;i6<5;i6++){
+      g.strokeStyle="#07090f";g.lineWidth=w0+(w1-w0)*(i6/4.5);
+      g.beginPath();g.moveTo(P[i6][0],P[i6][1]);g.lineTo(P[i6+1][0],P[i6+1][1]);g.stroke();}
+    if(hi){g.strokeStyle=hi;g.lineWidth=1;g.beginPath();g.moveTo(P[0][0]-1,P[0][1]-0.8);
+      for(var i7=1;i7<4;i7++)g.lineTo(P[i7][0]-1,P[i7][1]-0.8);g.stroke();}
+    g.lineCap="butt";return P;}
+  var REARC=[[-1,13,36,268],[-1,18,48,286],[-1,23,60,300],[-1,27,68,252],
+              [1,13,36,268],[1,18,48,286],[1,23,60,300],[1,27,68,252]];
+  stanceOn();
+  REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+10, rank=ci%4;
     var tx=cx+s*cb[2]+(offl?s*6:0), ty=cb[3]+(offl?30:sway*2.5*(ci%2?1:-1));
-    var mx=hcx+s*(cb[1]+(rank===2?32:24)), my=offl?hby+62:hby+40;
-    g.strokeStyle="#07090f";g.lineWidth=5.8-rank*0.7;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
-    g.strokeStyle=offl?"#20242c":"#343c48";g.lineWidth=1.2;g.beginPath();g.moveTo(ax,ay-1);g.quadraticCurveTo(mx,my-2,tx-s,ty-1);g.stroke();
-    // ferrule: the machined weight that keeps a cable hanging straight
-    var fw3=6-rank*0.5;
-    g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.fill();
-    g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.stroke();
-    if(rank===1){[RB,RE].forEach(function(c2){c2.fillStyle=pu(offl?0.2:0.75);c2.fillRect(tx-fw3/2,ty+2.6,fw3,1.7);});}
+    var c1x=hcx+s*(cb[1]+(offl?10:(rank>=2?30:22))), c1y=offl?hby+30:hby+18+rank*2,
+        c2x=tx+s*(rank>=2?13:8), c2y=(ty+hby+60)/2+(offl?14:0);
+    var w0=6.4-rank*0.55, w1=3.4-rank*0.35;
+    var P=cable(ax,ay,c1x,c1y,c2x,c2y,tx,ty,w0,w1,offl?"#20242c":(s<0?"#4e5a6e":"#242b36"));
+    // ferrule: the machined weight, sized to the tip's own gauge
+    var fw3=w1+2.4;
+    g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,7-rank*0.5,1);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-fw3/2,ty,fw3,7-rank*0.5,1);g.stroke();
+    if(rank===1){ // ring band mid-length — the reference dreads carry metal rings
+      var q=P[3];
+      g.fillStyle="#232b38";g.fillRect(q[0]-3,q[1]-1.6,6,3.2);
+      pl(g,q[0]-3,q[1]-1.4,q[0]+3,q[1]-1.4,"rgba(150,172,204,"+(offl?0.1:0.3)+")",0.9);}
   });
+  stanceOff();
 
   // ---------- LEGS: digitigrade — the third segment a walker does not have ----------
+  /* below the pelvis the fleet palette bottoms out INTO the stage's own
+     values and the legs vanish from the waist down. The legs get their own
+     plate palette, one step up the lamp — still war-metal, no wash: the
+     shank must carry the read the chest carries. */
+  var lT=offl?"#232b3b":"#35445e",lM=offl?"#161d2a":"#202c40",lB=offl?"#0c111b":"#121a28";
   function leg(sgn){
-    var hx=cx+sgn*20, hy0=362+d*0.55+breath*0.3;
-    var kx=cx+sgn*(offl?44:38), ky=447+d*0.5;
-    var ax=cx+sgn*(offl?31:26), ay=514+d*0.2;
-    var fx=cx+sgn*34, fy=546;
+    /* the coil: hip rides the dropped pelvis, the knee is thrown far out and
+       the shank rakes hard back in — a deep zigzag holds SD of travel the
+       old straight column had to spend on length. Lead-left plants wide,
+       trail-right tucks under the hips: the stagger is the attack. */
+    var lead=sgn<0;
+    var hx=cx+WS+sgn*20, hy0=362+SD+d*0.4+breath*0.3;
+    var kx=cx+sgn*(offl?54:(lead?58:50)), ky=(lead?452:456)+d*0.3;
+    var ax=cx+sgn*(lead?45:30), ay=(lead?516:518)+d*0.1;
+    var fx=cx+sgn*(lead?52:38), fy=546;
     /* loop 8: the QUADS. A predator's engine is its hindquarters — the thigh
        is now the widest thing below the chest, with its own armour slab
        riding the outer face, and the shank carries a calf swell before it
        rakes to the ankle. The tendons stay strung outside the meat. */
-    limbSeg(g,hx,hy0,kx,ky,13,9,sT,sM);
-    plate(g,[[hx+sgn*5,hy0+2],[hx+sgn*14,hy0+8],[kx+sgn*6,ky-14],[kx-sgn*3,ky-10]],"#2b3648","#161e2b",ed);
+    limbSeg(g,hx,hy0,kx,ky,20,13,lT,lM);
+    plate(g,[[hx+sgn*5,hy0+2],[hx+sgn*14,hy0+8],[kx+sgn*6,ky-14],[kx-sgn*3,ky-10]],lT,lM,ed);
+    /* the net: the reference wears diamond mesh under the plate — here it is
+       a whisper of crosshatch on the slab face, armor texture, not fishnet */
+    g.save();g.beginPath();
+    [[hx+sgn*6,hy0+4],[hx+sgn*13,hy0+9],[kx+sgn*5,ky-15],[kx-sgn*2,ky-11]].forEach(function(pp,pi){pi?g.lineTo(pp[0],pp[1]):g.moveTo(pp[0],pp[1]);});
+    g.closePath();g.clip();
+    g.strokeStyle="rgba(3,6,12,0.35)";g.lineWidth=0.8;g.beginPath();
+    for(var mh=-3;mh<9;mh++){
+      g.moveTo(hx+sgn*(2+mh*4),hy0-2);g.lineTo(kx+sgn*(mh*4-8),ky);
+      g.moveTo(hx+sgn*(2+mh*4),hy0-2);g.lineTo(kx+sgn*(mh*4+16),ky);}
+    g.stroke();g.restore();
+    pl(g,hx+sgn*6,hy0+4,kx+sgn*4,ky-13,"rgba(150,172,204,"+((offl?0.08:0.22)*kf(sgn))+")",1);
     tendon(hx-sgn*7,hy0+8,kx-sgn*5,ky-6);
     // shank — calf swell at the top, raking thin toward the high ankle
-    limbSeg(g,kx,ky,ax,ay,8,4.8,sT,sM);
-    plate(g,[[kx-sgn*8,ky+4],[kx+sgn*2,ky+8],[ax+sgn*1,ay-22],[ax-sgn*6,ay-24]],sM,sB,null);
+    limbSeg(g,kx,ky,ax,ay,13,7.2,lT,lM);
+    // calf swell hugs the shank axis — corners inside the silhouette
+    plate(g,[[kx-sgn*5,ky+7],[kx+sgn*2,ky+10],[ax+sgn*1,ay-22],[ax-sgn*4,ay-24]],lM,lB,null);
     pl(g,kx-sgn*3,ky+8,ax-sgn*2,ay-4,rc,1);
+    // the shin's leading edge catches the lamp all the way down
+    pl(g,kx+sgn*3,ky+8,ax+sgn*2,ay-6,"rgba(150,172,204,"+((offl?0.08:0.24)*kf(sgn))+")",1);
+    // grazes: the shin is what goes through the door first
+    pl(g,kx+sgn*1,ky+22,kx+sgn*6,ky+27,"rgba(190,208,232,"+(offl?0.08:0.22)+")",1);
+    pl(g,ax+sgn*1,ay-16,ax+sgn*5,ay-12,"rgba(190,208,232,"+(offl?0.07:0.18)+")",0.9);
+    // the key edge: only the LEFT leg's outer contour carries the full lamp
+    if(sgn<0){pl(g,hx-12,hy0+6,kx-8,ky-8,"rgba(186,205,238,"+(offl?0.12:0.3)+")",1.4);
+      pl(g,kx-8,ky+8,ax-4.5,ay-8,"rgba(186,205,238,"+(offl?0.14:0.34)+")",1.4);}
     // metatarsal — drops forward onto the toes
-    limbSeg(g,ax,ay,fx,fy,5,7,sM,sB);
+    limbSeg(g,ax,ay,fx,fy,7,9.5,lM,lB);
     joint(ax,ay,5);
     // heel spur behind the ankle
-    plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],sM,sB,null);
-    // knee: joint first, pointed guard bolted over it, spike leading
+    plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],lM,lB,null);
+    // knee: joint first, pointed guard bolted over it. The guard HUGS the
+    // bent joint — top edge raked back along the thigh axis, spike thrown
+    // outboard-down the way the shank leaves: a guard square to the world
+    // floats off a knee that isn't
     joint(kx,ky,7);
-    plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],"#2e3a4c",sM,ed);
-    rivet(g,kx+sgn*5,ky-1,eH);
+    plate(g,[[kx-sgn*11,ky-12],[kx+sgn*7,ky-11],[kx+sgn*16,ky+3],[kx+sgn*5,ky+12],[kx-sgn*8,ky+5]],
+      offl?(sgn<0?"#252d3d":"#232c3c"):(sgn<0?"#3a4a66":"#364764"),lM,ed);
+    rivet(g,kx+sgn*3,ky-1,eH);
     // the guards lead every contact: paint gone from the spike lips
-    pl(g,kx+sgn*12,ky-7,kx+sgn*15,ky+2,"rgba(190,208,232,"+(offl?0.12:0.28)+")",1.2);
-    // clawed foot: three toes, PLANTED — the deck contact the old unit never had
-    plate(g,[[fx-13,fy],[fx+13,fy],[fx+15,fy+8],[fx-15,fy+8]],sT,sM,ed);
-    [-1,0,1].forEach(function(ti){var tx2=fx+ti*9;
-      plate(g,[[tx2-4,fy+7],[tx2+4,fy+7],[tx2+2,560],[tx2-2,560]],sT,sB,null);
-      // bare metal at the claw tip — the paint went first where it meets the deck
-      g.fillStyle="rgba(190,208,232,"+(offl?0.18:0.32)+")";g.fillRect(tx2-2,557.4,4,2.6);});
+    pl(g,kx+sgn*9,ky-9,kx+sgn*15,ky+1,"rgba(190,208,232,"+((offl?0.12:0.3)*kf(sgn))+")",1.2);
+    /* clawed foot, with DEPTH: a heel block aft, an instep deck whose TOP
+       face takes the lamp, and a toe bar all three claws root into — a foot
+       that occupies floor, not a comb balanced on a line */
+    plate(g,[[fx-sgn*10,fy-2],[fx-sgn*20,fy+1],[fx-sgn*19,fy+9],[fx-sgn*9,fy+8]],lM,lB,ed);
+    plate(g,[[fx-17,fy+1],[fx+17,fy+1],[fx+18,fy+7],[fx-18,fy+7]],lT,lM,ed);
+    plate(g,[[fx-12,fy-3],[fx+11,fy-3],[fx+16,fy+2],[fx-17,fy+2]],
+      offl?(sgn<0?"#2b3446":"#252e40"):(sgn<0?"#46587a":"#3b4c6a"),lT,ed);
+    plate(g,[[fx-18,fy+6],[fx+18,fy+6],[fx+18,fy+9.5],[fx-18,fy+9.5]],lM,lB,null);
+    [-1,0,1].forEach(function(ti){var tx2=fx+ti*11;
+      plate(g,[[tx2-5,fy+8],[tx2+5,fy+8],[tx2+2.6,560],[tx2-2.6,560]],lT,lB,null);
+      // bare metal at the deck stays DARK — brightness at contact reads as glow
+      g.fillStyle="rgba(150,168,192,"+(offl?0.06:0.12)+")";g.fillRect(tx2-2.6,557.4,5.2,2.6);});
   }
   leg(-1);leg(1);
+  stanceOn();
 
   /* ---------- PELVIS: a girdle, not an afterthought ----------
      loop 10: the thighs got their mass in loop 8 and the pelvis they hung
@@ -3291,13 +3376,27 @@ function buildGrok(t,st){
      girdle, tassets ride the hip line over the quads, and the hip balls
      grow to carry what they now carry. */
   plate(g,[[cx-21,338+d*0.62+breath*0.6],[cx+21,338+d*0.62+breath*0.6],[cx+20,348+d*0.6],[cx-20,348+d*0.6]],sT,sM,ed);
-  plate(g,[[cx-27,348+d*0.6+breath*0.5],[cx+27,348+d*0.6+breath*0.5],[cx+20,380+d*0.55],[cx-20,380+d*0.55]],sT,sM,ed);
+  plate(g,[[cx-31,348+d*0.6+breath*0.5],[cx+31,348+d*0.6+breath*0.5],[cx+22,380+d*0.55],[cx-22,380+d*0.55]],sT,sM,ed);
   g.fillStyle="rgba(168,192,226,"+(offl?0.06:0.16)+")";
-  poly(g,[[cx-27,348+d*0.6+breath*0.5],[cx+27,348+d*0.6+breath*0.5],[cx+24,353+d*0.6],[cx-24,353+d*0.6]]);g.fill();
+  poly(g,[[cx-31,348+d*0.6+breath*0.5],[cx+31,348+d*0.6+breath*0.5],[cx+28,353+d*0.6],[cx-28,353+d*0.6]]);g.fill();
   // tassets: one angled plate per hip, thrown over the quad
   [-1,1].forEach(function(s){
-    plate(g,[[cx+s*20,350+d*0.6],[cx+s*33,353+d*0.58],[cx+s*29,374+d*0.56],[cx+s*18,370+d*0.56]],sM,sB,ed);
+    plate(g,[[cx+s*20,350+d*0.6],[cx+s*37,353+d*0.58],[cx+s*32,376+d*0.56],[cx+s*18,371+d*0.56]],sM,sB,ed);
     rivet(g,cx+s*25,357+d*0.58,eH);});
+  /* the TROPHIES: three severed cables lashed to the left tasset, different
+     gauges — none of them grok's own. The predator keeps score. */
+  (function(){var ty5=372+d*0.56;
+    [[-31,13,4.4],[-26,16,3.4],[-21,11,2.6]].forEach(function(tr,tri){
+      var tx5=cx+tr[0];
+      g.strokeStyle="#07090f";g.lineWidth=tr[2];
+      g.beginPath();g.moveTo(tx5,ty5);g.quadraticCurveTo(tx5-2,ty5+tr[1]*0.6,tx5-3+tri,ty5+tr[1]);g.stroke();
+      g.strokeStyle=offl?"#20242c":"#3d4756";g.lineWidth=0.9;
+      g.beginPath();g.moveTo(tx5-1,ty5+1);g.quadraticCurveTo(tx5-3,ty5+tr[1]*0.6,tx5-4+tri,ty5+tr[1]-1);g.stroke();
+      g.fillStyle="#10151d";g.fillRect(tx5-3+tri-tr[2]/2,ty5+tr[1]-1,tr[2]+1,3);
+      pl(g,tx5-3+tri-tr[2]/2,ty5+tr[1]-0.8,tx5-3+tri+tr[2]/2+1,ty5+tr[1]-0.8,"rgba(170,192,222,"+(offl?0.1:0.26)+")",0.8);});
+    // the lash that holds them
+    pl(g,cx-33,ty5+0.5,cx-18,ty5+0.5,"#0a0f18",2.2);
+    pl(g,cx-33,ty5-0.6,cx-18,ty5-0.6,"rgba(150,172,204,"+(offl?0.08:0.2)+")",0.8);})();
   plate(g,[[cx-9,370+d*0.58],[cx+9,370+d*0.58],[cx+7,388+d*0.56],[cx,395+d*0.55],[cx-7,388+d*0.56]],sM,sB,ed);
   rivet(g,cx-5,375+d*0.58,eH);rivet(g,cx+5,375+d*0.58,eH);
   joint(cx-20,366+d*0.55,8);joint(cx+20,366+d*0.55,8);
@@ -3313,7 +3412,7 @@ function buildGrok(t,st){
     pl(g,px-1,303+breath,px-1,340+d*0.6,offl?"#333c48":"#7e94b2",1.2);});
   [-1,1].forEach(function(s){for(var rb2=0;rb2<3;rb2++){var ry=302+rb2*12+breath;
     plate(g,[[cx+s*12,ry],[cx+s*(29-rb2*3),ry+3],[cx+s*(28-rb2*3),ry+10],[cx+s*11,ry+8]],sT,sM,ed);
-    pl(g,cx+s*12,ry+1,cx+s*(28-rb2*3),ry+4,"rgba(150,172,204,"+(offl?0.08:0.2)+")",1);}});
+    pl(g,cx+s*12,ry+1,cx+s*(28-rb2*3),ry+4,"rgba(150,172,204,"+((offl?0.08:0.22)*kf(s))+")",1);}});
   /* the heat-tile patch: the middle RIGHT rib lost its plate over the ocean
      somewhere, and what went on instead was a hand of orbital heat tiles —
      matte black squares in a grid nothing else on the fleet has, edges
@@ -3336,18 +3435,26 @@ function buildGrok(t,st){
   [-1,1].forEach(function(s){
     plate(g,[[cx+s*8,258+breath],[cx+s*46,254+breath],[cx+s*50,282+breath],[cx+s*40,294+breath],[cx+s*8,296+breath]],"#2b3648","#161e2b",ed);
     // top edge catches the lamp; the underside throws onto the ribs
-    pl(g,cx+s*10,259.5+breath,cx+s*44,255.5+breath,"rgba(168,192,226,"+(offl?0.08:0.22)+")",1.2);
+    pl(g,cx+s*10,259.5+breath,cx+s*44,255.5+breath,"rgba(168,192,226,"+((offl?0.08:0.24)*kf(s))+")",1.2);
     rivet(g,cx+s*42,258+breath,eH);rivet(g,cx+s*44,286+breath,eH);});
   g.fillStyle="rgba(0,0,0,0.3)";g.fillRect(cx-40,294+breath,80,4);
+  // the pec was cut open and welded shut — seam line, stitch ticks, done cold
+  pl(g,cx-38,284+breath,cx-12,279+breath,"rgba(3,6,12,0.7)",1.4);
+  g.strokeStyle="rgba(150,172,204,"+(offl?0.1:0.3)+")";g.lineWidth=1;g.beginPath();
+  for(var ws2=0;ws2<6;ws2++){var wx5=cx-38+ws2*4.4;
+    g.moveTo(wx5,281.6+breath-ws2*0.8);g.lineTo(wx5+1.8,284.4+breath-ws2*0.8);}
+  g.stroke();
+  // two dents in the right pec — something hit hard and did not get through
+  [[cx+28,272],[cx+37,281]].forEach(function(dn){
+    g.fillStyle="rgba(0,0,0,0.32)";
+    g.beginPath();g.ellipse(dn[0],dn[1]+breath,4.2,2.6,-0.4,0,7);g.fill();
+    g.strokeStyle="rgba(170,192,222,"+(offl?0.08:0.2)+")";g.lineWidth=0.9;
+    g.beginPath();g.ellipse(dn[0]+0.8,dn[1]+breath+1,3.4,2,-0.4,0.6,2.6);g.stroke();});
   rivet(g,cx-52,248+breath,eH);rivet(g,cx+52,248+breath,eH);
   /* loop 13, the material pass: one hard specular along the clavicle bevel —
      the surface most squarely facing the lamp — and the paint gone from the
      lips that lead. Nicks are constants: a nick is a place. */
-  if(!offl){g.save();g.globalAlpha=0.5;
-    var csp=g.createLinearGradient(0,232+breath,0,244+breath);
-    csp.addColorStop(0,"rgba(226,238,255,0.7)");csp.addColorStop(1,"rgba(226,238,255,0)");
-    g.fillStyle=csp;poly(g,[[cx-30,233+breath],[cx+30,233+breath],[cx+26,240+breath],[cx-26,240+breath]]);g.fill();
-    g.restore();}
+  if(!offl)plate(g,[[cx-30,233+breath],[cx+30,233+breath],[cx+26,240+breath],[cx-26,240+breath]],"#465878","#2e3a4e",null);
   g.strokeStyle="rgba(190,208,232,"+(offl?0.12:0.3)+")";g.lineWidth=1.5;g.beginPath();
   [[-34,-2],[-6,-5],[22,-3]].forEach(function(nk){g.moveTo(cx+nk[0],230.6+breath+nk[1]*0.2);g.lineTo(cx+nk[0]+2.6,233+breath+nk[1]*0.2);});
   g.stroke();
@@ -3377,8 +3484,10 @@ function buildGrok(t,st){
     plate(g,[[cx-6.5,by+breath],[cx+6.5,by+breath],[cx+6.5,by+3.6+breath],[cx-6.5,by+3.6+breath]],sT,sB,null);
     if(!offl){RE.save();RE.globalCompositeOperation="destination-out";RE.fillRect(cx-6.5,by+breath-0.5,13,4.6);RE.restore();}});
   if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    // the core's bounce must TOUCH the plates around the slit — the glow is
+    // the proof the metal is near a light, not a sticker over it
     var bounce=RB.createRadialGradient(cx,275+breath,3,cx,275+breath,72);
-    bounce.addColorStop(0,pu(0.26*pulse));bounce.addColorStop(0.5,pu(0.09*pulse));bounce.addColorStop(1,pu(0));
+    bounce.addColorStop(0,pu(0.34*pulse));bounce.addColorStop(0.5,pu(0.12*pulse));bounce.addColorStop(1,pu(0));
     RB.fillStyle=bounce;RB.beginPath();RB.arc(cx,275+breath,72,0,7);RB.fill();RB.restore();}
 
   // ---------- COLLAR + fighter neck + TRAPS ----------
@@ -3388,7 +3497,7 @@ function buildGrok(t,st){
      a posture and becomes a build. */
   [-1,1].forEach(function(s){
     plate(g,[[cx+s*10,226+breath],[cx+s*36,232+breath],[cx+s*46,242+breath],[cx+s*12,240+breath]],"#2b3648","#161e2b",ed);
-    pl(g,cx+s*11,227.5+breath,cx+s*34,233+breath,"rgba(168,192,226,"+(offl?0.08:0.2)+")",1.1);});
+    pl(g,cx+s*11,227.5+breath,cx+s*34,233+breath,"rgba(168,192,226,"+((offl?0.08:0.22)*kf(s))+")",1.1);});
   plate(g,[[cx-26,232+breath],[cx+26,232+breath],[cx+19,244+breath],[cx-19,244+breath]],sT,sM,ed);
   plate(g,[[cx-11,216+breath],[cx+11,216+breath],[cx+9,234+breath],[cx-9,234+breath]],sM,sB,null);
   // the neck is two corded tendons under load — short, forward-set, sunk
@@ -3397,32 +3506,46 @@ function buildGrok(t,st){
   // ---------- ARMS: reach, not weight ----------
   var handR;
   function arm(sgn,mode){
-    var sx=cx+sgn*44, sy=248+breath;
-    joint(sx,sy+7,9.5);
+    var sx=cx+sgn*47, sy=248+breath;
+    joint(sx,sy+7,11);
     function P(pts){return pts.map(function(p){return [sx+sgn*p[0],sy+p[1]];});}
     // upper arm: bare mechanism — twin rods from the socket, no plate at all
     var ex,ey;
-    if(mode==='reachdown'){ex=sx+sgn*20;ey=sy+28;}
-    else if(mode==='raiseup'){ex=sx+sgn*4;ey=sy+42;}
-    else {ex=sx+sgn*3;ey=324+d*0.7;}
+    if(mode==='reach'){ex=sx+sgn*22;ey=sy+34;}
+    // hanging: elbow flexed and held a touch OUTBOARD — a coiled hang, not a
+    // plumb line, and the silhouette gap it opens is what keeps the forearm
+    // readable across the tasset line
+    else {ex=sx+sgn*11;ey=294+d*0.6;}
     /* loop 7: the upper arm gets MEAT — an armoured biceps plate carrying
        real width from the socket to the elbow. The tendon stays strung on
        the inner line, exposed: muscle first, wiring still visible. */
     tendon(sx-sgn*4,sy+14,ex-sgn*3,ey-4,3.4);
-    limbSeg(g,sx+sgn*3,sy+11,ex+sgn*1,ey-5,8,6,sT,sM);
+    limbSeg(g,sx+sgn*3,sy+11,ex+sgn*1,ey-5,11,8.5,sT,sM);
     pl(g,sx+sgn*7,sy+14,ex+sgn*4,ey-8,"rgba(150,172,204,"+(offl?0.08:0.2)+")",1);
     // pauldron: a swept blade riding HIGH — the raised shoulder is the hunch,
     // and the hunch is the stalk. Bolted over the socket, spike trailing out.
-    plate(g,P([[-16,-14],[4,-26],[26,-16],[37,2],[24,11],[7,5],[-10,7]]),sT,sM,ed);
-    g.fillStyle="rgba(168,192,226,"+(offl?0.07:0.18)+")";
-    poly(g,P([[-16,-14],[4,-26],[26,-16],[19,-11],[-12,-9]]));g.fill();
+    plate(g,P([[-19,-15],[3,-28],[29,-17],[42,3],[27,13],[8,6],[-12,8]]),sT,sM,ed);
+    // second slat under the blade — the refs layer armour, one plate is a lid
+    plate(g,P([[-14,6],[10,4],[26,10],[30,17],[12,20],[-8,15]]),sM,sB,ed);
+    // crown facet: the blade's top face as an OPAQUE palette step (never an
+    // alpha sheet) — the left crown takes the key, the right sits a step down
+    plate(g,P([[-19,-15],[3,-28],[29,-17],[21,-12],[-14,-10]]),
+      offl?(sgn<0?"#2b3446":"#262e40"):(sgn<0?"#4a5c7e":"#3b4c6a"),
+      offl?"#1a212e":(sgn<0?"#2c3850":"#273349"),ed);
     pl(g,sx+sgn*21,sy-14,sx+sgn*27,sy+1,rc,1.2);
     rivet(g,sx-sgn*7,sy-5,eH);rivet(g,sx+sgn*14,sy-2,eH);
     if(sgn>0){ // a bite out of the right blade's trailing spike — silhouette
-      // damage, cut to transparency, the rim light catching the tear
+      // damage: the cut OPENS to the edge (a cut that closes strands a
+      // detached sliver of blade in the air), tear lips bright
       g.save();g.globalCompositeOperation="destination-out";
-      poly(g,[[sx+27,sy+2],[sx+38,sy+5],[sx+29,sy+13]]);g.fill();g.restore();
-      pl(g,sx+27,sy+2,sx+29,sy+13,"rgba(170,192,222,"+(offl?0.12:0.32)+")",1);}
+      poly(g,[[sx+29,sy+2],[sx+46,sy+3],[sx+32,sy+15]]);g.fill();g.restore();
+      pl(g,sx+29.5,sy+2.5,sx+40,sy+3,"rgba(170,192,222,"+(offl?0.12:0.32)+")",1);
+      pl(g,sx+29.5,sy+2.5,sx+32,sy+14,"rgba(170,192,222,"+(offl?0.1:0.26)+")",1);}
+    if(sgn<0){ // a chip out of the leading crown edge — cut to transparency,
+      // torn lip bright: the left blade blocked something once
+      g.save();g.globalCompositeOperation="destination-out";
+      poly(g,[[sx-14,sy-22],[sx-7,sy-25],[sx-9,sy-19]]);g.fill();g.restore();
+      pl(g,sx-13.5,sy-21.5,sx-9,sy-19.5,"rgba(190,208,232,"+(offl?0.14:0.4)+")",1.1);}
     if(sgn<0){ // reentry plasma streaks rake the LEFT blade — the flight
       // history, kept as an albedo scar: heat-darkened tracks with a
       // straw-anodized lip, angled the way the airflow went
@@ -3433,56 +3556,114 @@ function buildGrok(t,st){
       g.restore();}
     // contact shadow under the blade's lower rim
     g.fillStyle="rgba(0,0,0,0.26)";poly(g,P([[-7,6],[5,4],[17,10],[12,15],[-4,13]]));g.fill();
+    /* the talon: a HAND, not a stub — knuckle block with a lit top face,
+       three segmented digits (two phalanx plates each, tapering, tips bare
+       metal), and an opposable thumb-spur on the inner line. Same machine in
+       every pose; `open` is the dead splay. Digits carry real width and the
+       key lands per-side — this is the thing the whole arm exists to aim. */
     function claw(x,y,open){
-      plate(g,[[x-9.5,y],[x+9.5,y],[x+7.5,y+8],[x-7.5,y+8]],sM,sB,ed);
-      [-1,0,1].forEach(function(f){var fx2=x+f*6.2, len=open?17:13;
-        plate(g,[[fx2-2.8,y+7],[fx2+2.8,y+7],[fx2+1.8,y+7+len],[fx2-1.8,y+7+len]],sT,sB,null);
-        g.fillStyle="rgba(190,208,232,"+(offl?0.14:0.3)+")";g.fillRect(fx2-1.8,y+5.4+len,3.4,2);});}
-    if(mode==='reachdown'){ /* builder: the FLEX — elbow thrown out past the
-      blade, thick forearm driving down and IN, the claw landing low in front
-      of the hip where the arc lives. A hunter leans on its work. */
-      var hx3=cx+sgn*40, hy3=342;
-      limbSeg(g,ex,ey,hx3,hy3-8,6.5,9.5,sT,sM);
-      tendon(ex+sgn*2,ey+4,hx3-sgn*2,hy3-10,3);
+      var K=kf(sgn);
+      // thumb-spur first — inner side, hooked in toward the work; drawn
+      // under the palm so the block reads as gripping over it
+      var ti=-sgn, tdy=open?5:0;
+      plate(g,[[x+ti*8,y+3],[x+ti*17,y+10+tdy],[x+ti*13,y+18+tdy],[x+ti*6.5,y+9]],sT,sB,null);
+      g.fillStyle="rgba(190,208,232,"+(offl?0.16:0.34)+")";
+      poly(g,[[x+ti*12.5,y+12+tdy],[x+ti*14.5,y+9+tdy],[x+ti*11,y+16+tdy]]);g.fill();
+      // knuckle block: palm slab, then the top face as an opaque palette step
+      plate(g,[[x-12,y],[x+12,y],[x+10.5,y+10],[x-10.5,y+10]],sM,sB,ed);
+      plate(g,[[x-12,y],[x+12,y],[x+10,y+4],[x-10,y+4]],
+        offl?(sgn<0?"#2b3446":"#252e40"):(sgn<0?"#46587a":"#3b4c6a"),sM,null);
+      rivet(g,x-5,y+6,eH);rivet(g,x+5,y+6,eH);
+      // three talon digits, slightly splayed off the knuckle row
+      [-1,0,1].forEach(function(f){
+        var sp=f*(open?5.2:2), rx=x+f*7.4;
+        var mx3=rx+sp*0.6, my3=y+9+(open?10:12);        // mid knuckle
+        var tx3=rx+sp*1.2-(open?0:f*0.6), ty3=my3+(open?8:10); // tip
+        // proximal phalanx — real width, one palette step UP off the thigh
+        // it hangs against: the value gap is the separation
+        plate(g,[[rx-4,y+9],[rx+4,y+9],[mx3+3,my3],[mx3-3,my3]],
+          offl?(sgn<0?"#28303f":"#232c3c"):(sgn<0?"#3e4e6a":"#354460"),sM,null);
+        pl(g,mx3-2.4,my3,mx3+2.4,my3,rc,1);            // knuckle shadow-line
+        // distal phalanx — curving to the point
+        plate(g,[[mx3-2.8,my3],[mx3+2.8,my3],[tx3+1.1,ty3],[tx3-1.1,ty3]],sM,sB,null);
+        // bare-metal tip: paint never survives the business end
+        g.fillStyle="rgba(190,208,232,"+(offl?0.2:0.42)+")";
+        poly(g,[[tx3-1.3,ty3-3],[tx3+1.3,ty3-3],[tx3,ty3+1.5]]);g.fill();
+        // the key catches each digit's LEFT face
+        pl(g,rx-2.4,y+9,mx3-1.7,my3-1,"rgba(186,205,238,"+((offl?0.08:0.28)*K)+")",1.1);
+      });}
+    if(mode==='reach'){ /* the working pose, fleet rule: ONE arm leaves the
+      hang, and it leaves as a SIMPLE STRETCHED REACH at the work in front —
+      the claude arm. The elbow lands OUTBOARD of the waist edge in open air
+      (the claude trick — the forearm must ENTER the silhouette, an arm that
+      lives on the torso reads as a clutch), then the long forearm drives
+      down and IN to present the closed claw at mid-torso, well clear of the
+      hip line. No splay and no raised talon: a working claw grips its tool,
+      it does not display. The tool rides the claw — torch in builder, the
+      room device everywhere else (drawn off handR, after the arm). */
+      var hx3=ex-sgn*36, hy3=ey+38;
+      limbSeg(g,ex,ey,hx3,hy3-8,8.5,13,sT,sM);
+      tendon(ex-sgn*2,ey+2,hx3+sgn*4,hy3-10,3);
       joint(ex,ey-1,6.5);
+      /* the claw hangs IN FRONT of the waist: cast its shadow onto the torso
+         first (down-right, off the upper-left key) so the digits read against
+         a dark gap — the hanging hand's thigh trick, moved up a joint. */
+      g.save();g.globalCompositeOperation="source-atop";g.fillStyle="rgba(2,4,9,0.4)";
+      poly(g,[[hx3-sgn*15,hy3-4],[hx3-sgn*5,hy3-8],[hx3-sgn*1,hy3+18],[hx3-sgn*11,hy3+22]]);g.fill();
+      g.restore();
+      // wrist clamp: the claw is a separate machine, banded on (hang parity)
+      plate(g,[[hx3-9,hy3-12],[hx3+9,hy3-12],[hx3+8.5,hy3-6],[hx3-8.5,hy3-6]],sT,sM,ed);
       claw(hx3,hy3-6,false);
-      plate(g,[[hx3-sgn*2,hy3+2],[hx3+sgn*10,hy3-3],[hx3+sgn*14,hy3+2],[hx3+sgn*2,hy3+9]],"#2a3444","#12181f","#3d4c63"); // torch
-      handR={x:hx3+sgn*12,y:hy3+2};
-    } else if(mode==='raiseup'){ // device held up before the chest
-      var fx3=sx-sgn*24, fy3=sy+10;
-      limbSeg(g,ex,ey,fx3,fy3+6,6,8.5,sT,sM);
-      tendon(ex+sgn*2,ey-2,fx3+sgn*4,fy3+8,3);
-      joint(ex,ey-1,6.5);
-      claw(fx3,fy3+2,false);
-      if(sgn>0)handR={x:fx3+2,y:fy3+4};
-    } else { // hanging — the forearm is a CONE: narrow off the elbow, all the
-      // mass arriving at the wrist, where a machine that grips carries it
-      var wx=sx-sgn*2, wy=380+d*0.8;
-      limbSeg(g,ex,ey,wx,wy,6,9.5,sT,sM);
-      // bracer fin off the outer flare
-      plate(g,[[wx+sgn*8,wy-26],[wx+sgn*15,wy-14],[wx+sgn*9,wy-6]],sM,sB,ed);
-      tendon(ex+sgn*3,ey+6,wx+sgn*5,wy-8,3);
-      pl(g,ex-sgn*4,ey+8,wx-sgn*7,wy-6,rc,1);
+      if(ROOM==="builder"){ // torch exits outboard: the arc lands over the rig
+        plate(g,[[hx3-sgn*2,hy3+2],[hx3+sgn*10,hy3-3],[hx3+sgn*14,hy3+2],[hx3+sgn*2,hy3+9]],"#2a3444","#12181f","#3d4c63");
+        handR={x:hx3+sgn*12,y:hy3+2};
+      } else handR={x:hx3,y:hy3+2};
+    } else { // hanging — the forearm rakes IN off the outboard elbow, the
+      // wrist dropping to mid-thigh: the talon hangs BELOW and CLEAR of the
+      // pelvis cluster, read against the thigh by a value step, not luck.
+      // In the coil the hang is SHORT — knuckles never reach the knee line.
+      var wx=sx+sgn*10, wy=356+d*0.5;
+      limbSeg(g,ex,ey,wx,wy,8.5,11.5,sT,sM);
+      // bracer fin off the outer flare, riding the forearm's line
+      plate(g,[[wx+sgn*13,wy-36],[wx+sgn*21,wy-22],[wx+sgn*12,wy-12]],sM,sB,ed);
+      // tendon strung the length of the forearm INTO the knuckle block —
+      // under tension even at rest: the claw is always loaded
+      tendon(ex+sgn*4,ey+6,wx+sgn*4,wy+2,3);
+      pl(g,ex-sgn*4,ey+8,wx-sgn*6,wy-6,rc,1);
+      /* the hand hangs IN FRONT of the quad: cast its shadow onto the thigh
+         first (down-right, off the upper-left key), so digits read against a
+         dark gap, never interleaved with leg plate. source-atop — the shadow
+         lands on the thigh, never widens the silhouette. */
+      g.save();g.globalCompositeOperation="source-atop";g.fillStyle="rgba(2,4,9,0.4)";
+      poly(g,[[wx-sgn*16,wy+4],[wx-sgn*8,wy+4],[wx-sgn*10,wy+26],[wx-sgn*18,wy+22]]);g.fill();
+      g.restore();
       // wrist clamp: the claw is a separate machine, banded on
-      plate(g,[[wx-10,wy-2],[wx+10,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
+      plate(g,[[wx-9.5,wy-2],[wx+9.5,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
       rivet(g,wx-6,wy+1,eH);rivet(g,wx+6,wy+1,eH);
-      joint(ex,ey-1,6.5);
-      claw(wx,wy+4,offl);
+      joint(ex,ey-1,8);
+      // the hanging talon rests CLOSED in every live state — the resting
+      // hand is identical idle or working (the operator's rule); only the
+      // dead splay opens it
+      claw(wx,wy+3,offl);
+      joint(wx,wy,5.5);
       /* kill tallies, scratched into the LEFT forearm's flat — counted where
          they were made, read when the arm hangs. Worn gold, same paint life
          as the stencil. */
       if(sgn<0){g.save();g.globalAlpha=offl?0.25:0.5;g.fillStyle="#c9a227";
-        for(var tl2=0;tl2<4;tl2++)g.fillRect(wx-4+tl2*3,wy-26,1.6,7);
+        for(var tl2=0;tl2<4;tl2++)g.fillRect(wx-6+tl2*3,wy-32,1.6,7);
         g.restore();}
-      if(sgn>0)handR={x:wx,y:wy+14};
+      // idle anchor only — never steal the anchor from the working reach
+      // (the right arm hangs THROUGH work now, and it draws after the left)
+      if(sgn>0&&!handR)handR={x:wx,y:wy+16};
     }
   }
   /* The rooms park a readout on the right half of the bench, exactly where a
      right-handed weld lands (the kimi round-9 verdict). grok works LEFT-handed
-     in builder — the arc goes over the rig — and raises the right for the
-     handheld rooms. */
-  arm(-1, (work&&ROOM==="builder")?'reachdown':'down');
-  arm(1, (work&&ROOM!=="builder")?'raiseup':'down');
+     in EVERY room, and the right arm never leaves the idle hang — one moving
+     arm per unit is the fleet rule (claude raises one, kimi flexes one,
+     codex lifts one palp). */
+  arm(-1, work?'reach':'down');
+  arm(1, 'down');
   if(work&&ROOM!=="builder"&&handR){var h=handR;
     if(ROOM==="reviewer"){ plate(g,[[h.x-3,h.y-9],[h.x+17,h.y-11],[h.x+17,h.y+2],[h.x-3,h.y+4]],"#1a2836","#0c1620","#3a5570");
       [RB,RE].forEach(function(c2){if(!offl){c2.fillStyle=rgba(130,205,255,0.75);c2.fillRect(h.x+1,h.y-7,11,7);}}); }
@@ -3497,8 +3678,13 @@ function buildGrok(t,st){
      outward toward the jaw, and a vented, chipped chin that has been hit and
      kept. The head sits LOW, sunk to the collar between raised pauldron
      crowns: that sink is the hunch, and the hunch is the stalk. */
+  /* the mask must WIN the thumbnail: head plates run ONE palette step up the
+     lamp (the legs' trick) — opaque steps, no wash. The brow recess stays
+     dark so the optics stay deep-set; the step is what beats the sternum. */
+  var hT=offl?"#1f2531":"#313e53", hM=offl?"#141a25":"#1b2432",
+      hBr=offl?"#28303d":"#405169", hBrB=offl?"#1b222d":"#243043";
   // skull
-  plate(g,[[hcx-22,hby+24],[hcx-19,hby+8],[hcx-9,hby],[hcx+9,hby],[hcx+19,hby+8],[hcx+22,hby+24],[hcx+17,hby+46],[hcx+10,hby+56],[hcx-10,hby+56],[hcx-17,hby+46]],sT,sM,ed);
+  plate(g,[[hcx-24,hby+24],[hcx-21,hby+8],[hcx-10,hby],[hcx+10,hby],[hcx+21,hby+8],[hcx+24,hby+24],[hcx+18,hby+46],[hcx+10,hby+56],[hcx-10,hby+56],[hcx-18,hby+46]],hT,hM,ed);
   /* the slick-back: the crown is not armour, it is CABLE — a cap of combed
      rows swept front-to-back, socketed into an anchor band at the hairline.
      The silhouette gets small scallops where the rows crest. */
@@ -3515,62 +3701,121 @@ function buildGrok(t,st){
   // band across the crown, keyed to the lamp
   g.fillStyle="rgba(186,205,238,"+(offl?0.05:0.13)+")";
   poly(g,[[hcx-15,hby+8],[hcx-8,hby+2],[hcx+8,hby+2],[hcx+15,hby+8],[hcx+11,hby+10.5],[hcx-11,hby+10.5]]);g.fill();
+  /* the crown wears TEETH: short conical spikes rimming the dome, temple to
+     temple — the mask reference's silhouette is spiked, not smooth. Each cone
+     leans outward the way it sits on the curve; lit face left. */
+  [[-21,10],[-16,3],[-9,-1.5],[0,-3],[9,-1.5],[16,3],[21,10]].forEach(function(sk){
+    var sxk=hcx+sk[0], syk=hby+sk[1], dx4=sk[0]*0.16, ln4=6.5-Math.abs(sk[0])*0.06;
+    poly(g,[[sxk-2,syk+1.5],[sxk+2,syk+1.5],[sxk+dx4,syk-ln4]]);
+    g.fillStyle="#141a26";g.fill();
+    g.strokeStyle=ed;g.lineWidth=0.8;
+    poly(g,[[sxk-2,syk+1.5],[sxk+2,syk+1.5],[sxk+dx4,syk-ln4]]);g.stroke();
+    pl(g,sxk-1.6,syk+1,sxk+dx4-0.4,syk-ln4+1,"rgba(170,192,222,0.3)",0.8);});
+  // center ridge, and the trident carve at the forehead — the mark of the mask
+  pl(g,hcx,hby-1,hcx,hby+14,"#0a0f18",2.8);
+  pl(g,hcx-0.9,hby,hcx-0.9,hby+13,"rgba(170,192,222,"+(offl?0.1:0.26)+")",0.9);
+  pl(g,hcx,hby+9,hcx-5,hby+3,"#0a0f18",1.6);pl(g,hcx,hby+9,hcx+5,hby+3,"#0a0f18",1.6);
   // the anchor band the mane sockets into
   pl(g,hcx-14,hby+14,hcx+14,hby+14,rc,1.2);
   rivet(g,hcx-10,hby+12,eH);rivet(g,hcx+10,hby+12,eH);
   // brow ridge: one heavy chevron, overhanging
-  plate(g,[[hcx-18,hby+26],[hcx,hby+30],[hcx+18,hby+26],[hcx+14,hby+15],[hcx-14,hby+15]],"#2e3a4c","#1a2331",ed);
+  plate(g,[[hcx-19,hby+27],[hcx,hby+31],[hcx+19,hby+27],[hcx+15,hby+15],[hcx-15,hby+15]],hBr,hBrB,ed);
   pl(g,hcx,hby+15,hcx,hby+30,rc,1);
-  /* the face scar: one gouge across the brow, aimed at the right optic and
-     stopped by it — dark trench, bright torn lip, and the paint never came
-     back. A mask that has been hit face-on and kept looking. */
-  pl(g,hcx+3,hby+14,hcx+13,hby+25,"rgba(4,8,14,0.65)",2);
-  pl(g,hcx+3.5,hby+13,hcx+13.5,hby+24,"rgba(170,192,222,"+(offl?0.14:0.36)+")",0.9);
   // the recess the brow shades — deepest right under the ridge
   RB.fillStyle="#03060d";poly(RB,[[hcx-17,hby+27],[hcx+17,hby+27],[hcx+15,hby+41],[hcx-15,hby+41]]);RB.fill();
   var bs=RB.createLinearGradient(0,hby+26,0,hby+38);bs.addColorStop(0,"rgba(0,0,0,0.85)");bs.addColorStop(1,"rgba(0,0,0,0)");
   RB.fillStyle=bs;poly(RB,[[hcx-17,hby+26],[hcx+17,hby+26],[hcx+16,hby+36],[hcx-16,hby+36]]);RB.fill();
-  // bezels: the optics are instruments seated in the recess — but the seat is
-  // a shadow-line, not a goggle rim; only the lower lip catches anything
-  [-1,1].forEach(function(s){g.fillStyle="#02040a";g.fillRect(hcx+s*8.5-4.5,hby+30,9,6);
-    pl(g,hcx+s*8.5-4.5,hby+36,hcx+s*8.5+4.5,hby+36,"rgba(120,142,175,"+(offl?0.1:0.22)+")",0.9);});
   // nose bridge between the optics — mask geometry, not anatomy
   plate(g,[[hcx-3,hby+28],[hcx+3,hby+28],[hcx+2,hby+42],[hcx-2,hby+42]],sM,sB,null);
-  /* twin optics, deep-set. Idle they SCAN — brightness alternates side to
-     side, slow, the way a thing watches a room it already owns. Working they
-     both burn. Dead: two grey ticks, one holding a last ember. */
-  [-1,1].forEach(function(s){var ox=hcx+s*8.5, oy=hby+33;
-    [RB,RE].forEach(function(c2){ if(offl){c2.fillStyle="#20262e";c2.fillRect(ox-3.5,oy-1.5,7,3);
-        if(s<0){c2.fillStyle="rgba(120,44,18,0.4)";c2.fillRect(ox-1,oy-0.5,2,1.6);}return;}
-      var br2=work?(0.8+0.2*Math.sin(t*9+s)):(0.55+0.32*Math.sin(t*2.1+(s>0?0.7:0)));
-      var eg=c2.createRadialGradient(ox,oy,0.5,ox,oy,8.5);
-      eg.addColorStop(0,puh(0.95*br2));eg.addColorStop(0.45,pu(0.62*br2));eg.addColorStop(1,pu(0));
-      c2.fillStyle=eg;c2.beginPath();c2.arc(ox,oy,8.5,0,7);c2.fill();
-      c2.fillStyle=puh(0.95*br2);c2.fillRect(ox-2.6,oy-1,5.2,2.2);});});
+  /* the GLARE: two canted wedge slits, swept up-and-out under the brow — the
+     mask reference's narrowed eyes, not a pair of round lamps. Sockets first:
+     dark wedges cut deeper than the recess. Hot at the inner corner, the slit
+     tapers as it climbs. Idle both breathe together; working both burn.
+     Dead: grey ticks, one ember. */
+  [-1,1].forEach(function(s){var oy=hby+33;
+    g.fillStyle="#01030a";
+    poly(g,[[hcx+s*3.5,oy+1],[hcx+s*16,oy-4],[hcx+s*17,oy+1],[hcx+s*4.5,oy+4.5]]);g.fill();
+    [RB,RE].forEach(function(c2){ if(offl){c2.fillStyle="#20262e";
+        poly(c2,[[hcx+s*5,oy+1.5],[hcx+s*14,oy-1.5],[hcx+s*14,oy+0.5],[hcx+s*5,oy+3]]);c2.fill();
+        if(s<0){c2.fillStyle="rgba(120,44,18,0.4)";c2.fillRect(hcx+s*7,oy+0.8,2.4,1.4);}return;}
+      var scn=0.66+0.2*Math.sin(t*2.1);
+      var br2=work?(0.85+0.15*Math.sin(t*9+s)):scn;
+      c2.fillStyle=pu(0.6*br2);
+      poly(c2,[[hcx+s*4,oy+0.8],[hcx+s*15.5,oy-3.2],[hcx+s*16,oy+0.6],[hcx+s*4.5,oy+3.8]]);c2.fill();
+      c2.fillStyle=puh(0.95*br2);
+      poly(c2,[[hcx+s*4.5,oy+1.2],[hcx+s*12,oy-1.2],[hcx+s*12,oy+1],[hcx+s*5,oy+3]]);c2.fill();
+      // inner-corner burn: the hottest point sits by the nose — the scowl
+      var eg=c2.createRadialGradient(hcx+s*6,oy+1.8,0.4,hcx+s*6,oy+1.8,4.5);
+      eg.addColorStop(0,puh(0.9*br2));eg.addColorStop(1,pu(0));
+      c2.fillStyle=eg;c2.beginPath();c2.arc(hcx+s*6,oy+1.8,4.5,0,7);c2.fill();});});
   // cheek ridges: flaring OUT toward the jaw — the mandible echo, built in
   [-1,1].forEach(function(s){
-    plate(g,[[hcx+s*19,hby+28],[hcx+s*12,hby+42],[hcx+s*15,hby+58],[hcx+s*23,hby+48]],sT,sB,ed);
-    plate(g,[[hcx+s*23,hby+48],[hcx+s*28,hby+56],[hcx+s*16,hby+58]],sT,sB,null);
-    pl(g,hcx+s*19,hby+29,hcx+s*13,hby+42,"rgba(150,172,204,"+(offl?0.1:0.24)+")",1);
-    rivet(g,hcx+s*17,hby+38,eH);});
+    plate(g,[[hcx+s*20,hby+27],[hcx+s*12,hby+43],[hcx+s*16,hby+61],[hcx+s*26,hby+50]],hT,sB,ed);
+    plate(g,[[hcx+s*26,hby+50],[hcx+s*31,hby+58],[hcx+s*17,hby+61]],hT,sB,null);
+    // second ridge line inside the sweep — the cheek is layered, not a fin
+    pl(g,hcx+s*17,hby+33,hcx+s*13,hby+46,rc,1);
+    pl(g,hcx+s*20,hby+28,hcx+s*13,hby+43,"rgba(150,172,204,"+((offl?0.1:0.26)*kf(s))+")",1);
+    rivet(g,hcx+s*17,hby+39,eH);});
   // the chin: wide, vented, and it has been HIT — a chip out of the left
   // lip, cut to transparency, torn edge bright; weld stitches where the jaw
   // was re-seated after
-  plate(g,[[hcx-13,hby+44],[hcx+13,hby+44],[hcx+15,hby+58],[hcx+9,hby+66],[hcx-9,hby+66],[hcx-15,hby+58]],sT,sM,ed);
-  // the lower lip of the chin catches the lamp — the "rough chin" needs an edge
-  pl(g,hcx-8,hby+64.5,hcx+8,hby+64.5,"rgba(170,192,222,"+(offl?0.1:0.28)+")",1.2);
-  RB.fillStyle=rc;for(var vs=0;vs<3;vs++)RB.fillRect(hcx-6.5+vs*5,hby+50.5,3.4,7.5);
+  /* the MOUTH PIECE: not a chin — a muzzle. It projects: wide at the cheeks,
+     tapering to a blunt snout well below the old jaw line, split by a center
+     ridge and wrapped in segment grooves like the mask's wrinkled lip armor. */
+  plate(g,[[hcx-14,hby+44],[hcx+14,hby+44],[hcx+15,hby+56],[hcx+10,hby+68],[hcx+6,hby+76],[hcx-6,hby+76],[hcx-10,hby+68],[hcx-15,hby+56]],hT,hM,ed);
+  // center ridge — the beak line, lit on the key side
+  pl(g,hcx,hby+45,hcx,hby+74,"#0a0f18",2.8);
+  pl(g,hcx-1,hby+46,hcx-1,hby+73,"rgba(170,192,222,"+(offl?0.1:0.28)+")",0.9);
+  // segment grooves: the muzzle is plated in bands, each lip catching light
+  [[56,13],[63,10],[69,7.5]].forEach(function(gr){
+    pl(g,hcx-gr[1],hby+gr[0],hcx+gr[1],hby+gr[0],"rgba(3,6,12,0.8)",1.6);
+    pl(g,hcx-gr[1]+1,hby+gr[0]+1.2,hcx+gr[1]-1,hby+gr[0]+1.2,"rgba(150,172,204,"+(offl?0.06:0.16)+")",0.8);});
+  // the snout lip
+  pl(g,hcx-5,hby+74.8,hcx+5,hby+74.8,"rgba(170,192,222,"+(offl?0.1:0.3)+")",1.2);
+  RB.fillStyle=rc;for(var vs=0;vs<3;vs++)RB.fillRect(hcx-6.5+vs*5,hby+48.5,3.4,6);
   // breath soot: the vents exhale onto the chin below them, and it stays
   g.save();g.globalAlpha=offl?0.5:0.8;g.fillStyle="rgba(24,20,18,0.35)";
-  for(var st2=0;st2<3;st2++)poly(g,[[hcx-6+st2*5,hby+58],[hcx-3.6+st2*5,hby+58],[hcx-4+st2*5,hby+64],[hcx-5.6+st2*5,hby+64]]),g.fill();
+  for(var st2=0;st2<3;st2++)poly(g,[[hcx-6+st2*5,hby+55],[hcx-3.6+st2*5,hby+55],[hcx-4+st2*5,hby+61],[hcx-5.6+st2*5,hby+61]]),g.fill();
   g.restore();
   g.save();g.globalCompositeOperation="destination-out";
-  poly(g,[[hcx-15,hby+56],[hcx-9,hby+58],[hcx-12,hby+63]]);g.fill();g.restore();
-  pl(g,hcx-15,hby+56,hcx-12,hby+63,"rgba(170,192,222,"+(offl?0.14:0.34)+")",1);
+  poly(g,[[hcx-14.5,hby+58],[hcx-8.5,hby+60],[hcx-11.5,hby+66]]);g.fill();g.restore();
+  pl(g,hcx-14.5,hby+58,hcx-11.5,hby+66,"rgba(170,192,222,"+(offl?0.14:0.34)+")",1);
   g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.3)+")";g.lineWidth=1;
   g.beginPath();for(var wj=0;wj<4;wj++){var wx2=hcx+3+wj*2.6;g.moveTo(wx2,hby+45);g.lineTo(wx2+1.4,hby+47.6);}g.stroke();
+  /* THE CLAW MARKS. Three gouges raked across the mask by something with
+     talons of its own — and CARVED, not painted: each is a dark trench with
+     a torn lip thrown up on the light side, burrs of displaced metal along
+     the cut, and a bitten notch where it enters or leaves a plate edge. They
+     cross brow, socket line, cheek and muzzle — whatever was in the way. */
+  (function(){
+    var GOUGE=[ [[2,13],[12,26],[22,44]],
+                [[-4,20],[7,38],[16,56]],
+                [[-10,28],[1,46],[8,61]] ];
+    GOUGE.forEach(function(gp,gi){
+      var a=[hcx+gp[0][0],hby+gp[0][1]],b=[hcx+gp[1][0],hby+gp[1][1]],c=[hcx+gp[2][0],hby+gp[2][1]];
+      // under-shadow of the whole wound
+      g.strokeStyle="rgba(0,0,0,0.35)";g.lineWidth=4.2-gi*0.5;
+      g.beginPath();g.moveTo(a[0]+1,a[1]+1);g.quadraticCurveTo(b[0]+1,b[1]+1,c[0]+1,c[1]+1);g.stroke();
+      // the trench
+      g.strokeStyle="rgba(2,5,10,0.92)";g.lineWidth=2.6-gi*0.3;
+      g.beginPath();g.moveTo(a[0],a[1]);g.quadraticCurveTo(b[0],b[1],c[0],c[1]);g.stroke();
+      // torn lip on the key side of the cut
+      g.strokeStyle="rgba(186,205,238,"+(offl?0.16:0.42)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(a[0]-1.2,a[1]-1);g.quadraticCurveTo(b[0]-1.2,b[1]-1,c[0]-1.2,c[1]-1);g.stroke();
+      // burrs: displaced metal standing off the cut
+      [0.3,0.62].forEach(function(bt){
+        var bx3=(1-bt)*(1-bt)*a[0]+2*bt*(1-bt)*b[0]+bt*bt*c[0],
+            by3=(1-bt)*(1-bt)*a[1]+2*bt*(1-bt)*b[1]+bt*bt*c[1];
+        g.fillStyle="rgba(190,208,232,"+(offl?0.1:0.3)+")";
+        g.fillRect(bx3+1.4,by3-0.6,1.6,1.2);});
+      // entry notch: the plate edge it broke on the way in
+      g.fillStyle="rgba(2,5,10,0.85)";
+      poly(g,[[a[0]-1.8,a[1]-1.8],[a[0]+2,a[1]-0.6],[a[0]+0.4,a[1]+2]]);g.fill();
+      g.fillStyle="rgba(186,205,238,"+(offl?0.12:0.32)+")";
+      poly(g,[[a[0]-2.2,a[1]-2.2],[a[0]-0.4,a[1]-1.6],[a[0]-1.6,a[1]-0.4]]);g.fill();
+    });})();
   // the jaw throws onto the neck cords below it
-  cavity(g,hcx-13,hby+63,26,9,0.4);
+  cavity(g,hcx-11,hby+72,22,8,0.4);
 
   /* ---------- THE MANE, front layer ----------
      Two dreads a side fall in FRONT of the shoulders, drawn after the head so
@@ -3579,43 +3824,122 @@ function buildGrok(t,st){
      hair, which is the strongest "nobody home" this unit can say. And the
      right outer dread is SEVERED mid-length, the stump cauterized bright:
      something got a grip on it once. Once. */
-  var FRONTC=[[-1,15,33,272],[-1,18,40,286],[1,15,33,272],[1,18,0,0]];
-  FRONTC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+13, cut=(ci===3);
-    var tx,ty,mx,my;
-    if(cut){tx=hcx+s*26;ty=hby+44;mx=hcx+s*22;my=hby+26;}
-    else if(offl){tx=hcx+s*(6+(ci%2)*5);ty=hby+62+(ci%2)*6;mx=hcx+s*17;my=hby+34;}
-    else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);mx=hcx+s*(cb[1]+13);my=hby+36;}
-    g.strokeStyle="#07090f";g.lineWidth=4.8;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
-    g.strokeStyle=offl?"#20242c":"#343c48";g.lineWidth=1.1;g.beginPath();g.moveTo(ax-s,ay);g.quadraticCurveTo(mx-s,my-1,tx-s,ty-1);g.stroke();
-    if(cut){ // the stump: no ferrule — a melt bead and two frayed conductors
-      g.fillStyle="rgba(220,190,150,"+(offl?0.2:0.55)+")";g.beginPath();g.arc(tx,ty+1,2.2,0,7);g.fill();
-      pl(g,tx,ty+1,tx+s*4,ty+5,offl?"#39424f":"#8fa6c4",1);
-      pl(g,tx,ty+1,tx-s*1,ty+6,offl?"#333c48":"#7e94b2",0.9);
+  var FRONTC=[[-1,21,37,274],[-1,24,44,288],[1,21,37,274],[1,24,0,0]];
+  FRONTC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+16, cut=(ci===3);
+    var tx,ty,c1x,c1y;
+    if(cut){tx=hcx+s*26;ty=hby+44;c1x=hcx+s*25;c1y=hby+26;}
+    else if(offl){tx=hcx+s*(6+(ci%2)*5);ty=hby+62+(ci%2)*6;c1x=hcx+s*15;c1y=hby+34;}
+    else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);c1x=hcx+s*(cb[1]+17);c1y=hby+26;}
+    var c2x=cut?tx+s*3:tx+s*7, c2y=cut?(ty+hby+28)/2:(ty+hby+72)/2;
+    var hi=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");
+    cable(ax,ay,c1x,c1y,c2x,c2y,tx,ty,cut?5.4:5.6,cut?4.2:2.8,hi);
+    if(cut){ // the stump: a blunt cauterized ferrule HARD against the cable
+      // end — nothing hangs off it; the shorter-than-its-mirror cable
+      // carries the story alone
+      g.fillStyle="#10151d";rr(g,tx-2.6,ty-1.5,5.2,4,1);g.fill();
+      g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-2.6,ty-1.5,5.2,4,1);g.stroke();
+      pl(g,tx-2,ty+2.2,tx+2,ty+2.2,"rgba(170,192,222,"+(offl?0.12:0.3)+")",1);
     } else {
+      // ferrule terminus, SEATED: the tip rests on chest plate — a contact
+      // shadow under the weight, or the ferrule reads as pasted on
+      g.fillStyle="rgba(2,4,9,0.5)";
+      g.beginPath();g.ellipse(tx,ty+7.5,4.6,2,0,0,7);g.fill();
       g.fillStyle="#10151d";rr(g,tx-2.7,ty,5.4,7,1);g.fill();
       g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-2.7,ty,5.4,7,1);g.stroke();
-      if(ci===0){[RB,RE].forEach(function(c2){c2.fillStyle=pu(offl?0.2:0.75);c2.fillRect(tx-2.7,ty+2.4,5.4,1.6);});}
+      pl(g,tx-2.7,ty+0.8,tx+2.7,ty+0.8,"rgba(150,172,204,"+((offl?0.08:0.22)*kf(s))+")",1);
+      if(ci!==1)litBar(tx,ty+3.2,5.4);
     }});
 
-  // speculars: only on what faces the lamp — the pauldron crowns, the brow
-  [-1,1].forEach(function(sg8){var px4=cx+sg8*47;
-    g.save();g.globalAlpha=offl?0.14:0.5;
-    var spg=g.createLinearGradient(0,226+breath,0,242+breath);
-    spg.addColorStop(0,"rgba(226,238,255,0.75)");spg.addColorStop(1,"rgba(226,238,255,0)");
-    g.fillStyle=spg;
-    poly(g,[[px4-sg8*14,228+breath],[px4+sg8*24,224+breath],[px4+sg8*26,232+breath],[px4-sg8*12,236+breath]]);g.fill();
-    g.restore();});
+  /* the mane is OVER the shoulders, so it must THROW: each front dread casts
+     a soft dark onto the pauldron crown it crosses, biased down-right off the
+     upper-left key. source-atop — lands on plate, never widens the
+     silhouette. Dead the dreads spill inboard and cross nothing. */
+  if(!offl){g.save();g.globalCompositeOperation="source-atop";g.fillStyle="rgba(2,4,9,0.28)";
+    [-1,1].forEach(function(s){var sy2=248+breath;
+      poly(g,[[cx+s*25+2,sy2-18],[cx+s*40+2,sy2-14],[cx+s*43+2,sy2-7],[cx+s*27+2,sy2-4]]);g.fill();});
+    g.restore();}
+  // crown speculars live IN the pauldron facets (opaque, in arm()) — the only
+  // free lamp note left up here is the brow band
   g.fillStyle="rgba(196,214,244,"+(offl?0.08:0.2)+")";
   poly(g,[[hcx-14,hby+16],[hcx+14,hby+16],[hcx+12,hby+19],[hcx-12,hby+19]]);g.fill();
 
   cavity(g,cx-30,296+breath,60,16,0.3);
   cavity(g,cx-24,376+d*0.55,48,20,0.32);
   cavity(g,cx-20,243+breath,40,13,0.28);
+  stanceOff();
   buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet on the key side
-  var hh=handR||{x:cx+45,y:394+d*0.8};
-  // two clawed feet, planted flat on the deck — grounded, for the first time
-  return {hand:hh,coreY:275+breath,hy:hby+8,offl:offl,work:work,
-          feet:[{x:cx-30,y:560,w:24},{x:cx+30,y:560,w:24}]};
+  /* ONE key: the shared rim lands on right-facing edges only, and from the
+     torso out those are either interior (a gap edge the lamp cannot see) or
+     the fill flank — both owed ONE consistent story the offset trick cannot
+     tell. Kill it from center-left out; the hand strokes own both flanks,
+     and interior edges get NO rim: shadow is a story too. */
+  (function(){var dg=RR.createLinearGradient(cx-70,0,cx-30,0);
+    dg.addColorStop(0,"rgba(0,0,0,0)");dg.addColorStop(1,"rgba(0,0,0,1)");
+    RR.save();RR.globalCompositeOperation="destination-out";
+    RR.fillStyle=dg;RR.fillRect(cx-70,0,RW-(cx-70),RH);RR.restore();})();
+  /* the shared rim survives only on trailing (right) edges — the declared key
+     is upper-LEFT and vendor-coloured, so the key-side rim is drawn by hand.
+     PER PLATE: every stroke hugs one plate's own outer edge and dies at the
+     joint. The hanging arm rides OVER the thigh, so the strokes follow the
+     arm stack (upper arm, forearm, fin, claw) and the thigh takes one only
+     when the arm is away — a line across the stack reads as a stray wire. */
+  var lHang=!work, rHang=true; // only the LEFT arm leaves the hang for the tool; the right always rests
+  (function(){var kc=puh(offl?0.28:0.8);
+    // arm/torso strokes live in stance space (+WS,+SD); leg strokes in world
+    var sx=cx+WS-47, sy=248+SD+breath, ex=sx-11, ey=294+SD+d*0.6, wx=sx-10, wy=356+SD+d*0.5;
+    var hy0=362+SD+d*0.4+breath*0.3, kx=cx-(offl?54:58), ky=452+d*0.3,
+        ax=cx-45, ay=516+d*0.1, fx=cx-52;
+    pl(RR,sx-4,sy-26,sx-26,sy-16,kc,2);
+    pl(RR,sx-26,sy-16,sx-36,sy+1,kc,1.6);
+    if(lHang){
+      pl(RR,sx-11,sy+15,ex-6,ey-11,kc,1.6);            // upper arm, to the elbow
+      pl(RR,ex-5,ey+8,ex+1,wy-37,kc,1.6);              // forearm, to the fin
+      pl(RR,wx-11.5,wy-33,wx-16.5,wy-23,kc,1.4);       // bracer fin lead edge
+      pl(RR,wx-10,wy+3,wx-8.7,wy+11,kc,1.4);           // knuckle block
+      pl(RR,wx-9,wy+12,wx-9.4-(offl?2:0),wy+(offl?22:24),kc,1.2); // outer digit
+    } else pl(RR,cx-33,hy0+8,kx-9,ky-9,kc,1.8);        // thigh, tasset to knee
+    pl(RR,kx-11,ky-11,kx-8,ky+4,kc,1.6);               // knee guard, raked back edge
+    pl(RR,kx-6,ky+14,ax-5,ay-6,kc,1.8);                // shank, below the guard
+    pl(RR,ax-5,ay+2,fx-7,544,kc,1.6);
+    pl(RR,fx-14,547,fx-15,553,kc,1.4);})();
+  /* fill side: cool bounce off the room — SUBORDINATE to the key: ~0.14, and
+     ACCENTS near each plate's crown only. A full-length lit right contour
+     reads as a second lamp, and one lamp is the whole stage's story. */
+  (function(){var fc="rgba(150,196,235,"+(offl?0.05:0.14)+")";
+    var sx=cx+WS+47, sy=248+SD+breath, ex=sx+11, ey=294+SD+d*0.6, wx=sx+10, wy=356+SD+d*0.5;
+    var hy0=362+SD+d*0.4+breath*0.3, kx=cx+(offl?54:50), ky=456+d*0.3,
+        ax=cx+30, ay=518+d*0.1, fx=cx+38;
+    var hcx2=hcx+WS, hby2=hby+SD;
+    pl(RR,hcx2+20,hby2+30,hcx2+22,hby2+38,fc,1.1);     // cheek ridge, upper flare only
+    RR.strokeStyle=fc;RR.lineWidth=1.1;RR.beginPath(); // outermost rear cable, crown reach only
+    RR.moveTo(hcx2+17,hby2+10);
+    RR.quadraticCurveTo(hcx2+28,hby2+21,hcx2+36,hby2+38);
+    RR.stroke();
+    pl(RR,sx+6,sy-25,sx+19,sy-19,fc,1.4);              // crown outer edge, top run
+    pl(RR,sx+27,sy-15,sx+32,sy-7,fc,1.2);              // trailing spike root
+    if(rHang){
+      pl(RR,sx+11,sy+15,sx+13,sy+34,fc,1.2);           // biceps crown
+      pl(RR,ex+5,ey+8,ex+3,ey+22,fc,1.2);              // forearm, off the elbow only
+      pl(RR,wx+11.5,wy-33,wx+16.5,wy-23,fc,1.1);
+      pl(RR,wx+10,wy+3,wx+8.7,wy+11,fc,1.1);
+    } else pl(RR,cx+33,hy0+8,cx+36,hy0+24,fc,1.4);     // thigh crown only
+    pl(RR,kx+9,ky-9,kx+15,ky+1,fc,1.4);                // knee spike root
+    pl(RR,kx+6,ky+14,kx+3,ky+30,fc,1.4);               // shank, calf swell only
+    pl(RR,ax+5,ay+2,ax+7,ay+13,fc,1.2);})();           // metatarsal crown
+  // deck rule: NO rim inside the last 8 units above the sole — a lit edge at
+  // the contact row reads as glow, and the shared rim hugs the toe corners
+  (function(){var fg2=RR.createLinearGradient(0,551,0,556);
+    fg2.addColorStop(0,"rgba(0,0,0,0)");fg2.addColorStop(1,"rgba(0,0,0,1)");
+    RR.save();RR.globalCompositeOperation="destination-out";
+    RR.fillStyle=fg2;RR.fillRect(0,551,RW,RH-551);RR.restore();})();
+  // anchors return in WORLD coords — the rooms and the portrait crop consume
+  // them, and the stance translate is this function's private business
+  var hh=handR?{x:handR.x+WS,y:handR.y+SD}:{x:cx+WS+45,y:382+SD+d*0.8};
+  return {hand:hh,coreY:275+breath+SD,hy:hby+8+SD,offl:offl,work:work,
+          // toes: where each claw actually meets the deck — the stage's
+          // occlusion wants the contact points, not the foot's centroid
+          feet:[{x:cx-52,y:560,w:30,toes:[cx-63,cx-52,cx-41]},
+                {x:cx+38,y:560,w:28,toes:[cx+27,cx+38,cx+49]}]};
 }
 
 /* ===================== KIMI — hovering companion drone, screen-face (pink) ===================== */
@@ -6122,6 +6446,136 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
     return {unit:LAYOUT.unit,near:LAYOUT.near,nearSide:LAYOUT.nearSide,keep:LAYOUT.keep,deck:LAYOUT.deck,fixed:LAYOUT.fixed,sign:["sign",SIGN.x,SIGN.y,SIGN.w,SIGN.h],
             bayL:{builder:bay("L","builder"),reviewer:bay("L","reviewer"),triage:bay("L","triage")},
             bayR:{builder:bay("R","builder"),reviewer:bay("R","reviewer"),triage:bay("R","triage")}};
+  },
+  /* renderSolo(dst,{agent,state,t,room}) — the unit ALONE, full body, on a
+     deliberately mute studio stage: grey wall pool for silhouette separation,
+     a floor seam, contact shadows under the returned feet, nothing else. For
+     judging a robot's anatomy without its room. Drawn through buildRobo on a
+     supersampled trio (the portrait path's trick), never a second copy. */
+  renderSolo:function(dst,o){
+    var sa=AGENT,sr=ROOM,st2=STATE,sbp=beaconPulse;
+    var sRo=robo,sRB=RB,sEm=remit,sRE=RE,sRi=rrim,sRR=RR,sSS=SS;
+    try{
+      AGENT=o.agent;ROOM=o.room||"builder";STATE=o.state;beaconPulse=0.65;
+      var K=Math.max(1,Math.min(3,(dst.height||1200)/RH));
+      robo=oc(Math.round(RW*K),Math.round(RH*K));RB=robo.getContext("2d");
+      remit=oc(robo.width,robo.height);RE=remit.getContext("2d");
+      rrim=oc(robo.width,robo.height);RR=rrim.getContext("2d");
+      SS=K;
+      var info=buildRobo(o.t||0,o.state);
+      // frame off the drawn alpha, not an estimate (the unitBox lesson)
+      var pd=RB.getImageData(0,0,robo.width,robo.height).data,
+          x0=robo.width,y0=robo.height,x1=0,y1=0;
+      for(var y=0;y<robo.height;y+=2)for(var x=0;x<robo.width;x+=2){
+        if(pd[(y*robo.width+x)*4+3]>24){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;}}
+      var padU=26, fy=0;
+      for(var fi=0;fi<(info.feet||[]).length;fi++)if(info.feet[fi].y>fy)fy=info.feet[fi].y;
+      // the bottom pad is the floor's whole depth — a plane needs room to recede
+      var cx0=x0/K-padU, cy0=y0/K-padU*1.3, cx1=x1/K+padU, cy1=Math.max(y1/K,fy)+padU*2.6;
+      var W2=dst.width,H2=dst.height,c=dst.getContext("2d");
+      var sc2=Math.min(W2/(cx1-cx0),H2/(cy1-cy0));
+      var ox=(W2-(cx1-cx0)*sc2)/2, oy=(H2-(cy1-cy0)*sc2)/2;
+      function mx2(u){return ox+(u-cx0)*sc2;} function my2(u){return oy+(u-cy0)*sc2;}
+      c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
+      c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
+      /* the stage: the wall/floor junction sits BEHIND the unit, not under
+         its toes — the floor plane runs on past the feet in both directions,
+         so the figure stands IN the room, never on a ledge lip */
+      var fyd=my2(fy), jy=fyd-Math.min(54,(H2-fyd)*0.5);
+      /* the backdrop sits LOW: the unit's own darks must clear it, and the
+         silhouette separates against the wall pools, never by brightening
+         the figure */
+      var wg=c.createLinearGradient(0,0,0,jy);
+      wg.addColorStop(0,"#070a10");wg.addColorStop(1,"#03050a");
+      c.fillStyle=wg;c.fillRect(0,0,W2,jy);
+      /* a CYCLORAMA, not a backdrop edge: the floor starts at the wall's own
+         value, and the value story runs WALL DARK, FLOOR LIT — the key's
+         spill lands on the deck around the figure, clearly above the wall's
+         base, and falls off toward the bottom corners. The floor's ambient
+         never drops below the stance shadow's core: darkest floor stays
+         under the feet, and nothing on the deck goes near-black. */
+      var fg=c.createLinearGradient(0,jy,0,H2);
+      fg.addColorStop(0,"#03050a");fg.addColorStop(0.2,"#131b2a");fg.addColorStop(1,"#0c1320");
+      c.fillStyle=fg;c.fillRect(0,jy,W2,H2-jy);
+      /* the wall pools ride OVER the junction, full height: light that
+         stops dead at a cyc's base re-draws the seam the blend removed.
+         They stay BELOW the floor's key spill — the wall must recede. */
+      var pool=c.createRadialGradient(W2*0.44,H2*0.36,H2*0.06,W2*0.44,H2*0.36,H2*0.52);
+      pool.addColorStop(0,"rgba(126,146,176,0.09)");pool.addColorStop(1,"rgba(126,146,176,0)");
+      c.fillStyle=pool;c.fillRect(0,0,W2,H2);
+      /* second pool behind the FILL side: the dark flank reads against
+         lifted wall — hip to ankle needs grey behind it */
+      var pool2=c.createRadialGradient(W2*0.63,H2*0.60,H2*0.05,W2*0.63,H2*0.60,H2*0.52);
+      pool2.addColorStop(0,"rgba(126,146,176,0.10)");pool2.addColorStop(1,"rgba(126,146,176,0)");
+      c.fillStyle=pool2;c.fillRect(0,0,W2,H2);
+      /* the floor must read as a PLANE under ONE lamp: the grey spill lands
+         up-LEFT of the unit (where the key is), a faint transverse joint
+         recedes, and the figure answers the spill with a cast shadow thrown
+         down-RIGHT. Still mute — grey light on grey deck. */
+      /* the spill, unclipped: it curls a little way up the cyc base, which
+         is what a pool of lamp light does where wall becomes floor */
+      var plx=W2*0.35, ply=jy+4;
+      var fpool=c.createRadialGradient(plx,ply,2,plx,ply,W2*0.62);
+      fpool.addColorStop(0,"rgba(150,170,198,0.20)");fpool.addColorStop(0.55,"rgba(150,170,198,0.09)");fpool.addColorStop(1,"rgba(150,170,198,0)");
+      c.save();c.translate(plx,ply);c.scale(1,0.42);c.translate(-plx,-ply);
+      c.fillStyle=fpool;c.beginPath();c.arc(plx,ply,W2*0.62,0,7);c.fill();
+      c.restore();
+      // one barely-there transverse joint — more and the floor reads as bands
+      c.fillStyle="rgba(140,162,192,0.03)";c.fillRect(0,jy+(H2-jy)*0.34,W2,1);
+      if((info.feet||[]).length){
+        var fmn=1e9,fmx=-1e9;info.feet.forEach(function(f2){var xx=mx2(f2.x);if(xx<fmn)fmn=xx;if(xx>fmx)fmx=xx;});
+        var scx=(fmn+fmx)/2, shw=(fmx-fmn)/2+info.feet[0].w*sc2;
+        // unclipped: on a cyc the cast grazes the wall base — a shadow that
+        // stops dead at jy cuts the very line the blend band removed
+        c.save();c.translate(scx,fyd+3);c.rotate(0.3);c.scale(1,0.3);
+        var csg=c.createRadialGradient(shw*0.9,0,2,shw*0.9,0,shw*2.6);
+        csg.addColorStop(0,"rgba(0,0,0,0.3)");csg.addColorStop(0.55,"rgba(0,0,0,0.14)");csg.addColorStop(1,"rgba(0,0,0,0)");
+        c.fillStyle=csg;c.beginPath();c.arc(shw*0.9,0,shw*2.6,0,7);c.fill();
+        c.restore();
+        /* stance core: one ellipse under the whole stance, feet AND the gap.
+           SOFT — a shadow is dimmed floor, never a hole: its core must hold
+           within ~2x of the adjacent lit deck, so the alpha stays under 0.5
+           and the falloff runs wide */
+        var stg=c.createRadialGradient(scx,fyd+3,2,scx,fyd+3,shw*1.3);
+        stg.addColorStop(0,"rgba(0,0,0,0.38)");stg.addColorStop(0.55,"rgba(0,0,0,0.2)");stg.addColorStop(1,"rgba(0,0,0,0)");
+        c.save();c.translate(scx,fyd+3);c.scale(1,0.3);c.translate(-scx,-(fyd+3));
+        c.fillStyle=stg;c.beginPath();c.arc(scx,fyd+3,shw*1.3,0,7);c.fill();c.restore();}
+      (info.feet||[]).forEach(function(f2){
+        // pooled shadow per foot — EACH foot owns one, same weight, tight
+        // enough that the pair never merges into the stance core's gradient
+        var fx2=mx2(f2.x),fw2=f2.w*sc2;
+        var sg2=c.createRadialGradient(fx2,fyd+3,1,fx2,fyd+3,fw2*1.5);
+        sg2.addColorStop(0,"rgba(0,0,0,0.5)");sg2.addColorStop(0.6,"rgba(0,0,0,0.26)");sg2.addColorStop(1,"rgba(0,0,0,0)");
+        c.save();c.translate(fx2,fyd+3);c.scale(1,0.4);c.translate(-fx2,-(fyd+3));
+        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+3,fw2*1.5,0,7);c.fill();c.restore();
+        // contact occlusion: a tight dark pinch under each toe TIP — the
+        // broad pool says "near the floor", only this says "on it"
+        (f2.toes||[]).forEach(function(tx5){
+          var txd=mx2(tx5), tr=Math.max(3,sc2*6.5), tcy=fyd+2.5;
+          var tg=c.createRadialGradient(txd,tcy,0.5,txd,tcy,tr);
+          tg.addColorStop(0,"rgba(0,0,0,0.9)");tg.addColorStop(0.55,"rgba(0,0,0,0.5)");tg.addColorStop(1,"rgba(0,0,0,0)");
+          c.save();c.translate(txd,tcy);c.scale(1,0.45);c.translate(-txd,-tcy);
+          c.fillStyle=tg;c.beginPath();c.arc(txd,tcy,tr,0,7);c.fill();c.restore();});});
+      // sprite: colour, then rim, then the emissive taps — the portrait recipe
+      var sxp=cx0*K,syp=cy0*K,swp=(cx1-cx0)*K,shp=(cy1-cy0)*K;
+      var dxp=ox,dyp=oy,dwp=(cx1-cx0)*sc2,dhp=(cy1-cy0)*sc2;
+      var off2=o.state==="offline";
+      if(off2)c.filter="saturate(0.45) brightness(0.88)";
+      c.drawImage(robo,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
+      c.filter="none";c.globalCompositeOperation="lighter";
+      c.globalAlpha=off2?0.4:0.9;c.drawImage(rrim,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
+      /* bloom taps stay TIGHT: wide taps fog every hard edge near an
+         emissive — optics are points of light, never weather */
+      var bl2=Math.max(2,Math.round(W2/240));
+      c.globalAlpha=0.55;c.filter="blur("+bl2+"px)";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
+      c.globalAlpha=0.45;c.filter="blur("+(bl2*2.5)+"px)";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
+      c.globalAlpha=off2?0.5:0.9;c.filter="none";c.drawImage(remit,sxp,syp,swp,shp,dxp,dyp,dwp,dhp);
+      c.globalCompositeOperation="source-over";c.globalAlpha=1;
+      return {box:{x:cx0,y:cy0,w:cx1-cx0,h:cy1-cy0},feet:info.feet};
+    }finally{
+      robo=sRo;RB=sRB;remit=sEm;RE=sRE;rrim=sRi;RR=sRR;SS=sSS;
+      AGENT=sa;ROOM=sr;STATE=st2;beaconPulse=sbp;
+    }
   },
   /* Stop the hidden app loop painting behind a map. */
   pause:function(){devPaused=true;}};
