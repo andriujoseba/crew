@@ -434,7 +434,7 @@ def derive_queue(loglines):
     return q
 
 
-def derive_sessions(loglines, now):
+def derive_sessions(loglines, now, clock_offset=0):
     """Finished sessions (newest first) and the open one, if any."""
     done, opens = [], []
     for line in loglines:
@@ -445,7 +445,7 @@ def derive_sessions(loglines, now):
             except (ValueError, TypeError):
                 reply = ""
             done.append({
-                "ts": parse_ts(m.group(1)), "kind": m.group(2), "key": m.group(3),
+                "ts": parse_ts(m.group(1)) + clock_offset, "kind": m.group(2), "key": m.group(3),
                 "rc": int(m.group(4)), "dur": int(m.group(5)), "out": m.group(6),
                 "acted": m.group(7) or "unknown", "reply": reply,
             })
@@ -454,7 +454,8 @@ def derive_sessions(loglines, now):
             continue
         m = RE_START.search(line)
         if m:
-            opens.append({"ts": parse_ts(m.group(1)), "kind": m.group(2), "key": m.group(3)})
+            opens.append({"ts": parse_ts(m.group(1)) + clock_offset,
+                          "kind": m.group(2), "key": m.group(3)})
 
     done.sort(key=lambda s: s["ts"], reverse=True)
     for s in done:
@@ -710,25 +711,26 @@ def build_unit(unit, state, agent_conf, now):
             "roster says %s, box is installed as %s — the vendor probe is running "
             "the wrong profile" % (unit.get("agent"), u["agent_actual"]))
 
-    # Cron liveness: tick.sh guarantees a line per boundary, so the newest
-    # timestamped line IS the heartbeat.
+    # Cron liveness: probe.sh computes tick_age inside the box, where both
+    # operands use the same clock. Log timestamps are still useful for ordering,
+    # but must be translated onto the host timeline before the page ages them.
     last_ts = 0.0
     for line in reversed(loglines):
         m = RE_ANY_TS.match(line)
         if m:
             last_ts = parse_ts(m.group(1))
             break
-    if last_ts:
-        age = int(now - last_ts)
+    if last_ts and tick_age >= 0:
         u["cron"] = {
-            "ok": age < SILENT_AFTER_S and not u["paused"],
-            "last": datetime.fromtimestamp(last_ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "age": age,
+            "ok": tick_age < SILENT_AFTER_S and not u["paused"],
+            "last": datetime.fromtimestamp(now - tick_age, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "age": tick_age,
         }
     elif meta.get("cron", "0") == "0":
         u["note"] = u["note"] or "no cron armed — crew hire %s" % unit["box"]
 
-    sessions, cur = derive_sessions(loglines, now)
+    clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
+    sessions, cur = derive_sessions(loglines, now, clock_offset)
     u["queue"] = derive_queue(loglines)
     u["cur"] = cur
     u["sessions"] = [{k: s[k] for k in ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply")}
@@ -762,6 +764,9 @@ def build_unit(unit, state, agent_conf, now):
         # the command that can.
         u["state"] = "offline"
         u["note"] = u["note"] or "disarmed — no cron line; crew hire %s arms it" % unit["box"]
+    elif last_ts and u["cron"]["age"] is None:
+        u["state"] = "offline"
+        u["note"] = u["note"] or "tick age unknown — waiting for a valid probe"
     elif last_ts and not u["cron"]["ok"]:
         u["state"] = "offline"
         u["note"] = u["note"] or "SILENT — no tick for %s" % fmt_dur(u["cron"]["age"])

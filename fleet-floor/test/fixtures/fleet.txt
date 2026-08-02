@@ -32,3 +32,10 @@ ff-disarmed    running  disarmed
 # `waiting`, not `stale`: this box has not STOPPED ticking, it has not STARTED
 # (#265). Its CLI twin is cli-neverticked in fixtures/cli-fleet.txt.
 ff-neverticked running  neverticked
+# Healthy boxes whose guest clocks differ from the collector by three hours.
+ff-skew-behind running  skew-behind
+ff-skew-ahead  running  skew-ahead
+ff-invalid-age running  invalid-tickage
+ff-missing-age running  missing-tickage
+ff-silent-behind running skew-silent-behind
+ff-silent-ahead  running skew-silent-ahead

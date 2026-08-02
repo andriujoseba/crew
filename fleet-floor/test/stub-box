@@ -27,6 +27,11 @@ printf '%s\n' "$*" >> "$CALLS"
 
 now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 ago() { date -u -d "@$(( $(date +%s) - ${1:-0} ))" '+%Y-%m-%dT%H:%M:%SZ'; }
+box_ago() {
+  local sc="$1" age="$2" skew=0
+  case "$sc" in skew-behind|skew-silent-behind) skew=-10800 ;; skew-ahead|skew-silent-ahead) skew=10800 ;; esac
+  date -u -d "@$(( $(date +%s) + skew - age ))" '+%Y-%m-%dT%H:%M:%SZ'
+}
 
 rows()         { grep -vE '^[[:space:]]*(#|$)' "$FIXTURE"; }
 fixture_line() { rows | awk -v n="$1" '$1==n {print; exit}'; }
@@ -116,13 +121,15 @@ emit_probe() {
   # boundaries for the ones that have stopped ticking — which is what makes
   # `stale` reachable at all.
   case "$sc" in
-    silent|nocron|disarmed) _tickage=4000 ;;
+    silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
     # -1 is "no duty.log to read an age from" — true of a box that was never
     # hired, and equally true of one hired a minute ago that has not ticked.
+    invalid-tickage) _tickage=garbage ;;
     nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
+    skew-behind|skew-ahead) _tickage=110 ;;
     *)             _tickage=30 ;;
   esac
-  printf '::tickage %s\n' "$_tickage"
+  [ "$sc" = missing-tickage ] || printf '::tickage %s\n' "$_tickage"
   printf '::gh %s\n'     "$_cred"
   printf '::vendor %s\n' "$_cred"
   [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
@@ -138,16 +145,16 @@ emit_probe() {
   printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
   echo '::logstart'
   case "$sc" in
-    working|paused|noauth)
+    working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
       # a closed session, then an open one: state must read WORKING
-      echo "$(ago 900) duty run start"
-      echo "$(ago 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
-      echo "$(ago 890) SESSION START kind=build key=crew#40 timeout=7200s log=/h/duty/logs/a.log"
-      echo "$(ago 600) SESSION END kind=build key=crew#40 rc=0 dur=290s outcome=ok"
-      echo "$(ago 600) duty run end"
-      echo "$(ago 120) duty run start"
-      echo "$(ago 120) attention: heavy-duty/ceremony#12 — launching pickup session"
-      echo "$(ago 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"
+      echo "$(box_ago "$sc" 900) duty run start"
+      echo "$(box_ago "$sc" 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
+      echo "$(box_ago "$sc" 890) SESSION START kind=build key=crew#40 timeout=7200s log=/h/duty/logs/a.log"
+      echo "$(box_ago "$sc" 600) SESSION END kind=build key=crew#40 rc=0 dur=290s outcome=ok"
+      echo "$(box_ago "$sc" 600) duty run end"
+      echo "$(box_ago "$sc" 120) duty run start"
+      echo "$(box_ago "$sc" 120) attention: heavy-duty/ceremony#12 — launching pickup session"
+      echo "$(box_ago "$sc" 110) SESSION START kind=triage key=board timeout=2400s log=/h/duty/logs/b.log"
       ;;
     idle)
       echo "$(ago 200) duty run start"
@@ -158,6 +165,13 @@ emit_probe() {
     silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"
+      ;;
+    skew-silent-behind|skew-silent-ahead)
+      echo "$(box_ago "$sc" 4010) duty run start"
+      echo "$(box_ago "$sc" 4000) duty run end"
+      ;;
+    missing-tickage)
+      echo "$(ago 110) duty run start"
       ;;
     firstrun)  # its very first session: an open START, no END anywhere yet
       echo "$(ago 200) duty run start"

@@ -45,6 +45,8 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$HERE")"
+# shellcheck source=drill/agreement.sh disable=SC1091
+source "$HERE/agreement.sh"
 
 BOXES=""
 PORT=8792
@@ -365,23 +367,20 @@ print(u[0]['state'] if u else 'MISSING')")"
     *) fail "agree: $name" "floor returned no usable state (got '$floor_state')"; continue ;;
   esac
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
-  case "$cli_line" in
-    *stopped*|*"NOT CREATED"*)
+  agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "${dis:-False}")"
+  case "$agreement" in
+    down)
       AGREE_N=$((AGREE_N + 1))
       t "agree: $name is down" offline "$floor_state" ;;
-    "")
+    missing)
       # Still a skip: ONE box absent from the output is an absent box. The
       # every-box case is caught once, above, before this loop runs.
       skip "agree: $name" "crew status printed no row" ;;
+    up)
+      AGREE_N=$((AGREE_N + 1))
+      ok "agree: $name is up" ;;
     *)
-      # The CLI showing a box up does NOT mean the floor must call it up: a
-      # paused box and a cron-silent one are offline on the floor BY DESIGN,
-      # and both are ordinary states on a real fleet. Only disagree when the
-      # floor reports offline with no reason for it.
-      if [ "$floor_state" != "offline" ]; then
-        AGREE_N=$((AGREE_N + 1))
-        ok "agree: $name is up"
-      else
+      if [ "$floor_state" = "offline" ]; then
         note="$(body GET /api/fleet | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -394,7 +393,8 @@ import json,sys
 d=json.load(sys.stdin)
 u=[x for x in d['units'] if x['box']=='$name']
 print(bool(u and u[0].get('disarmed')))")"
-        if [ "$dis" = "True" ]; then
+        agreement="$(agreement_case "$floor_state" "$cli_line" "$note" "$dis")"
+        if [ "$agreement" = "disarmed" ]; then
           # NOT a skip any more (#189). Both readers now answer "is this box
           # armed?" from the same crontab patterns, so this is a real
           # comparison — and making one is the entire point of this block,
@@ -404,18 +404,16 @@ print(bool(u and u[0].get('disarmed')))")"
           # disarms cron before any tick and refuses to continue if it cannot
           # (drill/rehearsal.sh). Every previous run landed here and skipped.
           AGREE_N=$((AGREE_N + 1))
-          case "$cli_line" in
-            *disarmed*|*"paused by operator"*)
-              ok "agree: $name is not armed, and both readers say so" ;;
-            *)
-              fail "agree: $name is not armed, and both readers say so" \
-                   "floor reports disarmed; crew status does not: '$cli_line'" ;;
-          esac
+          ok "agree: $name is not armed, and both readers say so"
+        elif [ "$agreement" = "disarmed-mismatch" ]; then
+          AGREE_N=$((AGREE_N + 1))
+          fail "agree: $name is not armed, and both readers say so" \
+               "floor reports disarmed; crew status does not: '$cli_line'"
         else
-          case "$note" in
-            *SILENT*|*"not hired"*)
+          case "$agreement" in
+            skip)
               skip "agree: $name" "crew status shows it up; floor says offline because: $note" ;;
-            *)
+            up-mismatch)
               AGREE_N=$((AGREE_N + 1))
               fail "agree: $name is up" "crew status shows it up, floor says offline with no reason (note: '${note:-none}')" ;;
           esac
