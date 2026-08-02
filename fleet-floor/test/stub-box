@@ -29,7 +29,7 @@ now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 ago() { date -u -d "@$(( $(date +%s) - ${1:-0} ))" '+%Y-%m-%dT%H:%M:%SZ'; }
 box_ago() {
   local sc="$1" age="$2" skew=0
-  case "$sc" in skew-behind) skew=-10800 ;; skew-ahead) skew=10800 ;; esac
+  case "$sc" in skew-behind|skew-silent-behind) skew=-10800 ;; skew-ahead|skew-silent-ahead) skew=10800 ;; esac
   date -u -d "@$(( $(date +%s) + skew - age ))" '+%Y-%m-%dT%H:%M:%SZ'
 }
 
@@ -121,14 +121,15 @@ emit_probe() {
   # boundaries for the ones that have stopped ticking — which is what makes
   # `stale` reachable at all.
   case "$sc" in
-    silent|nocron|disarmed) _tickage=4000 ;;
+    silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
     # -1 is "no duty.log to read an age from" — true of a box that was never
     # hired, and equally true of one hired a minute ago that has not ticked.
     invalid-tickage) _tickage=garbage ;;
     nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
+    skew-behind|skew-ahead) _tickage=110 ;;
     *)             _tickage=30 ;;
   esac
-  printf '::tickage %s\n' "$_tickage"
+  [ "$sc" = missing-tickage ] || printf '::tickage %s\n' "$_tickage"
   printf '::gh %s\n'     "$_cred"
   printf '::vendor %s\n' "$_cred"
   [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
@@ -164,6 +165,13 @@ emit_probe() {
     silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"
+      ;;
+    skew-silent-behind|skew-silent-ahead)
+      echo "$(box_ago "$sc" 4010) duty run start"
+      echo "$(box_ago "$sc" 4000) duty run end"
+      ;;
+    missing-tickage)
+      echo "$(ago 110) duty run start"
       ;;
     firstrun)  # its very first session: an open START, no END anywhere yet
       echo "$(ago 200) duty run start"

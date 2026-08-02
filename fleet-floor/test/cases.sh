@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  21 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  24 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -19,13 +19,27 @@ t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
-t "agreement: skewed box reaches the real up-comparison branch" working "$(uf ff-skew-behind "u['state']")"
-t "clock: cron age comes from box-side tickage" 30 "$(uf ff-skew-behind "u['cron']['age']")"
-t "clock: session age survives negative skew" 8 "$(uf ff-skew-behind "u['sessions'][0]['ago']")"
-t "clock: session age survives positive skew" 8 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
+t "clock: cron age comes from box-side tickage" 110 "$(uf ff-skew-behind "u['cron']['age']")"
+t "clock: session age survives negative skew" 10 "$(uf ff-skew-behind "u['sessions'][0]['ago']")"
+t "clock: session age survives positive skew" 10 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
+t "clock: negative-skew session lands in newest spark bucket" 1.0 "$(uf ff-skew-behind "u['spark'][21]")"
+t "clock: positive-skew session lands in newest spark bucket" 1.0 "$(uf ff-skew-ahead "u['spark'][21]")"
+t "clock: displayed last tick is on host timeline" True "$(uf ff-skew-behind "__import__('time').time() - __import__('datetime').datetime.strptime(u['cron']['last'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=__import__('datetime').timezone.utc).timestamp() < 120")"
+t "clock: skewed stopped box behind is silent" offline "$(uf ff-skew-silent-behind "u['state']")"
+t "clock: skewed stopped box ahead is silent" offline "$(uf ff-skew-silent-ahead "u['state']")"
 t "clock: invalid tickage never invents cron freshness" False "$(uf ff-invalid-age "u['cron']['ok']")"
 t "clock: invalid tickage leaves cron age unknown" None "$(uf ff-invalid-age "u['cron']['age']")"
-if awk '/^def build_unit/,/^def load_units/' "$FLOOR/server/floor.py" | grep -q 'now - last_ts'; then
+t "clock: missing tickage never invents cron freshness" False "$(uf ff-missing-age "u['cron']['ok']")"
+t "clock: missing tickage leaves cron age unknown" None "$(uf ff-missing-age "u['cron']['age']")"
+case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage renders unknown, not SILENT" ;;
+  *) fail "clock: missing tickage renders unknown, not SILENT" "$(uf ff-missing-age "u['note']")" ;; esac
+# Execute the same classifier sourced by the real-host drill. A Floor state
+# assertion alone cannot prove that the comparison increments instead of skips.
+# shellcheck source=drill/agreement.sh disable=SC1091
+source "$FLOOR/../drill/agreement.sh"
+t "agreement: skewed box reaches the real up-comparison branch" up \
+  "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
+if awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor.py" | grep -q 'now - last_ts'; then
   fail "clock: unit building never mixes host now with a box timestamp" \
        "found the skew-sensitive subtraction 'now - last_ts'"
 else
@@ -209,7 +223,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 21 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 24 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -283,7 +297,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 21 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 24 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.

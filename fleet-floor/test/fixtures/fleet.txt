@@ -36,3 +36,6 @@ ff-neverticked running  neverticked
 ff-skew-behind running  skew-behind
 ff-skew-ahead  running  skew-ahead
 ff-invalid-age running  invalid-tickage
+ff-missing-age running  missing-tickage
+ff-skew-silent-behind running skew-silent-behind
+ff-skew-silent-ahead  running skew-silent-ahead

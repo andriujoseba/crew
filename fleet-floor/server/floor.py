@@ -764,6 +764,9 @@ def build_unit(unit, state, agent_conf, now):
         # the command that can.
         u["state"] = "offline"
         u["note"] = u["note"] or "disarmed — no cron line; crew hire %s arms it" % unit["box"]
+    elif last_ts and u["cron"]["age"] is None:
+        u["state"] = "offline"
+        u["note"] = u["note"] or "tick age unknown — waiting for a valid probe"
     elif last_ts and not u["cron"]["ok"]:
         u["state"] = "offline"
         u["note"] = u["note"] or "SILENT — no tick for %s" % fmt_dur(u["cron"]["age"])

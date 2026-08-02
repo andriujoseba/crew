@@ -21,3 +21,6 @@ ff-neverticked kimi    builder
 ff-skew-behind claude  builder
 ff-skew-ahead  codex   reviewer
 ff-invalid-age grok    builder
+ff-missing-age kimi    builder
+ff-skew-silent-behind claude builder
+ff-skew-silent-ahead codex reviewer
