@@ -12,6 +12,8 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
 
+BUILDER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Mutates the caller's dynamically scoped ready_count/ready_items. Withheld
 # items must disappear from both the prompt and the eventual seen-ledger.
 _gate_ready_for_open_pr() {
@@ -182,6 +184,20 @@ _handoff_finalize() {
     || warn "$repo#$num: could not set $LABEL_NEEDS_HUMAN"
 }
 
+_report_unsignalled_hold() {
+  local repo="$1" num="$2" head="$3" item fresh state
+  item="$repo#$num@$head head"
+  fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-round-signal")"
+  if [ -n "$fresh" ]; then
+    printf '%s\n' "$fresh" | ledger_commit "$DUTY_DIR/.seen-round-signal"
+  fi
+  state="$DUTY_DIR/.suppressed-round-signal.${repo//\//__}.$num"
+  printf '%s\n' "$item" \
+    | ledger_suppressed "$DUTY_DIR/.seen-round-signal" \
+    | report_suppressed "$state" \
+        "$repo#$num: no round-answered signal at head ${head:0:12} — not requesting (#133)"
+}
+
 # _request_panel REPO NUM PAYLOAD PANEL_JSON CHECK_STATE HC_HEAD — engine-side
 # panel (re-)request, and state:bots-reviewing beside it (#133). This moves the
 # request off the builder SESSION, where a session that died between its last
@@ -215,7 +231,7 @@ _request_panel() {
     | jq -r --arg me "$ME" --arg mark "$MARK_ANSWERED" \
         -f "$DUTY_DIR/lib/jq/answered-head.jq" 2>/dev/null)"
   if [ "$answered_head" != "$gql_head" ]; then
-    log "$repo#$num: no round-answered signal at head ${gql_head:0:12} — not requesting (#133)"
+    _report_unsignalled_hold "$repo" "$num" "$gql_head"
     return 0
   fi
   # The MECHANICAL half of the green-head precondition — the only half the
@@ -310,6 +326,77 @@ _wt_hygiene_report() {
   return 0
 }
 
+# _stranded_resume_due STATE THRESHOLD — count consecutive duty ticks for
+# open, ready authored PR heads that have no current-head MARK_ANSWERED signal.
+# stdin is one repo#num@head key per PR. The head belongs in the key so every
+# push starts again at one; keys absent this tick (draft, signalled, or closed)
+# disappear. stdout is the PR number for each key reaching THRESHOLD.
+_stranded_resume_due() {
+  local state="$1" threshold="$2" key num next tmp
+  local -A previous=() current=()
+  tmp="$state.tmp.$$"
+  if [ -f "$state" ]; then
+    while IFS=$'\t' read -r key next; do
+      [ -n "$key" ] || continue
+      previous["$key"]="${next:-0}"
+    done <"$state"
+  fi
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    [ -n "${current[$key]+x}" ] && continue
+    next=$(( ${previous[$key]:-0} + 1 ))
+    current["$key"]="$next"
+    if [ "$next" -ge "$threshold" ]; then
+      num="${key#*#}"; num="${num%@*}"
+      printf '%s\n' "$num"
+    fi
+  done
+  : >"$tmp"
+  for key in "${!current[@]}"; do
+    printf '%s\t%s\n' "$key" "${current[$key]}" >>"$tmp"
+  done
+  mv "$tmp" "$state"
+}
+
+# _stranded_resume_keys REPO ME MARK — stdin is the authored open-PR listing
+# used by resume detection. Emit only ready PR heads whose latest signal from
+# this builder does not name the current head. Drafts already use the original
+# resume path and must never be double-counted here.
+_stranded_resume_keys() {
+  local repo="$1" me="$2" mark="$3" pr num head answered
+  # Use the signal gate's parser rather than maintaining a second definition
+  # of MARK_ANSWERED. In particular, fleet comments may wrap the SHA in
+  # backticks or put punctuation after the marker; answered-head.jq accepts
+  # both, and resume must classify the exact same bodies the request gate does.
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    num="$(printf '%s' "$pr" | jq -r '.number')"
+    head="$(printf '%s' "$pr" | jq -r '.headRefOid')"
+    answered="$(printf '%s' "$pr" \
+      | jq -c '{data:{repository:{pullRequest:{comments:{nodes:(.comments // [])}}}}}' \
+      | jq -r --arg me "$me" --arg mark "$mark" \
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq")"
+    [ "$answered" = "$head" ] || printf '%s#%s@%s\n' "$repo" "$num" "$head"
+  done < <(jq -c '.[] | select(.isDraft | not)')
+}
+
+# _ci_red_rollup_settled EXPECTED_HEAD — stdin is the post-session gh-pr-view
+# object. Success means this ci-red ledger item may be committed. A pending
+# rollup at the same head, or an unreadable snapshot, remains retryable. Head
+# movement is settled for the old key; the new head gets its own ledger id.
+_ci_red_rollup_settled() {
+  local expected_head="$1" snapshot head state
+  snapshot="$(cat)"
+  head="$(printf '%s' "$snapshot" | jq -r '.headRefOid // ""' 2>/dev/null)"
+  [ -n "$head" ] || return 1
+  [ "$head" != "$expected_head" ] && return 0
+  state="$(printf '%s' "$snapshot" \
+    | jq -c '[. + {reviewRequests:[], latestOpinionatedReviews:[]}]' 2>/dev/null \
+    | jq -r --argjson panel '[]' --arg repo _ \
+        -f "$BUILDER_LIB_DIR/jq/head-checks.jq" 2>/dev/null | cut -f4)"
+  [ -n "$state" ] && [ "$state" != "pending" ]
+}
+
 duty_builder() {
   local duty_repos R
   _repair_seen_build_264
@@ -331,14 +418,24 @@ _builder_repo() {
   round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED")"
   oneshot_rules="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
 
-  # --- RESUME: interrupted work of mine, checked FIRST. Two shapes: an open
+  # --- RESUME: interrupted work of mine, checked FIRST. Three shapes: an open
   # draft PR (a session died mid-build), or a claimed issue whose build/*
   # branch exists on my fork with no open PR (died between first push and
   # `gh pr create`). I hold the duty lock, so nothing else of mine can be
   # mid-flight — that lock is what makes resume detection sound. ---
-  local draft_nums orphan_nums="" claimed_nums open_heads merged_heads N branch
-  draft_nums="$(gh pr list -R "$R" --state open --author "$ME" --draft \
-    --json number --jq '.[].number' 2>/dev/null | tr '\n' ' ' || echo err)"
+  local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
+  local claimed_nums open_heads merged_heads N branch
+  resume_json="$(gh pr list -R "$R" --state open --author "$ME" \
+    --json number,isDraft,headRefOid,comments 2>/dev/null || echo err)"
+  if [ "$resume_json" = "err" ]; then
+    draft_nums=err
+    stranded_keys=err
+  else
+    draft_nums="$(printf '%s' "$resume_json" | jq -r '.[] | select(.isDraft) | .number' \
+      2>/dev/null | tr '\n' ' ' || echo err)"
+    stranded_keys="$(printf '%s' "$resume_json" \
+      | _stranded_resume_keys "$R" "$ME" "$MARK_ANSWERED" 2>/dev/null || echo err)"
+  fi
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
   open_heads="$(gh pr list -R "$R" --state open --author "$ME" \
@@ -353,10 +450,14 @@ _builder_repo() {
   # hand per box (codex's per-box bridge, heavy-duty/crew#19).
   merged_heads="$(gh pr list -R "$R" --state merged --author "$ME" \
     --json headRefName --jq '.[].headRefName' 2>/dev/null || echo err)"
-  if [ "$draft_nums" = "err" ] || [ "$claimed_nums" = "err" ] || [ "$open_heads" = "err" ] || [ "$merged_heads" = "err" ]; then
+  if [ "$draft_nums" = "err" ] || [ "$stranded_keys" = "err" ] \
+    || [ "$claimed_nums" = "err" ] || [ "$open_heads" = "err" ] || [ "$merged_heads" = "err" ]; then
     warn "$R: resume detection failed (a listing errored); skipping resume this tick"
     draft_nums=""
   else
+    stranded_nums="$(printf '%s\n' "$stranded_keys" \
+      | _stranded_resume_due "$DUTY_DIR/.resume-unsignalled.$slug" 12 \
+      | tr '\n' ' ')"
     for N in $claimed_nums; do
       branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
         --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
@@ -370,12 +471,13 @@ _builder_repo() {
       fi
     done
   fi
-  if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ]; then
-    log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"})"
+  if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
+    log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none})"
     ensure_main_clone "$R" "$dir" || return 0
     run_session resume "$R" "$dir" "$TIMEOUT_RESUME" \
       "$(render_prompt resume.txt ME="$ME" REPO="$R" NAME="$name" \
         DRAFTS="${draft_nums:-none}" ORPHANS="${orphan_nums:-none}" \
+        STRANDED="${stranded_nums:-none}" \
         MARK_RESUME="$MARK_RESUME" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules")"
   else
@@ -485,7 +587,19 @@ _builder_repo() {
             CHECKS="${red_checks:-unknown}" WT_RULES="$wt_rules" \
             ROUND_RULES="$round_rules")"
         if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-          printf '%s\thead\n' "$red_key" | ledger_commit "$DUTY_DIR/.seen-ci-red"
+          local settled_json
+          settled_json="$(gh pr view "$red_num" -R "$R" \
+            --json number,isDraft,updatedAt,headRefOid,statusCheckRollup \
+            2>/dev/null || echo err)"
+          if [ "$settled_json" = "err" ]; then
+            warn "$R#$red_num: check rollup re-read failed; leaving ci-red head uncommitted"
+          else
+            if ! printf '%s' "$settled_json" | _ci_red_rollup_settled "${red_key##*@}"; then
+              log "$R#$red_num: check still pending after ci-red session; leaving head uncommitted for retry"
+            else
+              printf '%s\thead\n' "$red_key" | ledger_commit "$DUTY_DIR/.seen-ci-red"
+            fi
+          fi
         fi
       done <<<"$red_fresh"
     fi
