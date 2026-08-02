@@ -2454,3 +2454,20 @@ Two pieces of kit made the droid-only run possible:
 
 ![before / after](shots/grok-recon/before-after.webp)
 ![evolution](shots/grok-recon/evolution.gif)
+
+### The stance pass (operator-driven, no blind reviewer)
+
+Two fast passes straight from the operator's brief: *idle is ready to attack,
+working is even more menacing, and he reads thin and stretched long.* The fix
+is a geometry, not a mood — THE COIL: the whole upper body (mane, torso, arms,
+head) rides one stance translate, dropping SD (24 idle / 30 working) into
+deeper knee flex and shifting WS toward the lead foot; the legs are drawn in
+world coords to the same hips — knees thrown far out, shanks raking hard back
+in, lead-left foot planted wide, trail-right tucked under the mass. Soles
+never move. Limbs widened (thigh 15, shank 9.5), the hanging wrist shortened
+so knuckles never reach the knee line, and working splays the hanging talon
+open with a small head-jut. Dead keeps SD — the unit dies in its stance.
+Pass 2 re-fit the knee guards to the bent joints (a guard square to the world
+floats off a knee that isn't) and tucked the calf swell inside the shank
+silhouette. The anchors return in world coords; the stance translate is
+buildGrok's private business.
