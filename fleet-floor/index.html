@@ -3236,8 +3236,9 @@ function buildGrok(t,st){
     g.strokeStyle=ed;g.lineWidth=0.8;rr(g,bx-(w+1.2)/2,by-1.7,w+1.2,3.4,1);g.stroke();
     [RB,RE].forEach(function(c2){c2.fillStyle=pu(offl?0.2:0.75);c2.fillRect(bx-(w-1)/2,by-0.75,w-1,1.5);});}
 
-  // head reference — the mane and the mask both hang off this
-  var hby=166+(offl?13:0)+breath*0.5, hcx=cx+(offl?3:0);
+  // head reference — the mane and the mask both hang off this. Working the
+  // head JUTS: sunk a touch deeper between the crowns, leading the mass
+  var hby=166+(offl?13:0)+(work?3:0)+breath*0.5, hcx=cx+(offl?3:0);
 
   /* ---------- THE MANE, rear layer ----------
      The signature. Black armored cables slick back over the crown and fall
@@ -3289,7 +3290,8 @@ function buildGrok(t,st){
     tendon(hx-sgn*7,hy0+8,kx-sgn*5,ky-6);
     // shank — calf swell at the top, raking thin toward the high ankle
     limbSeg(g,kx,ky,ax,ay,9.5,5.4,lT,lM);
-    plate(g,[[kx-sgn*8,ky+4],[kx+sgn*2,ky+8],[ax+sgn*1,ay-22],[ax-sgn*6,ay-24]],lM,lB,null);
+    // calf swell hugs the shank axis — corners inside the silhouette
+    plate(g,[[kx-sgn*5,ky+7],[kx+sgn*2,ky+10],[ax+sgn*1,ay-22],[ax-sgn*4,ay-24]],lM,lB,null);
     pl(g,kx-sgn*3,ky+8,ax-sgn*2,ay-4,rc,1);
     // the shin's leading edge catches the lamp all the way down
     pl(g,kx+sgn*3,ky+8,ax+sgn*2,ay-6,"rgba(150,172,204,"+((offl?0.08:0.24)*kf(sgn))+")",1);
@@ -3301,13 +3303,16 @@ function buildGrok(t,st){
     joint(ax,ay,5);
     // heel spur behind the ankle
     plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],lM,lB,null);
-    // knee: joint first, pointed guard bolted over it, spike leading
+    // knee: joint first, pointed guard bolted over it. The guard HUGS the
+    // bent joint — top edge raked back along the thigh axis, spike thrown
+    // outboard-down the way the shank leaves: a guard square to the world
+    // floats off a knee that isn't
     joint(kx,ky,7);
-    plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],
+    plate(g,[[kx-sgn*11,ky-12],[kx+sgn*7,ky-11],[kx+sgn*16,ky+3],[kx+sgn*5,ky+12],[kx-sgn*8,ky+5]],
       offl?(sgn<0?"#252d3d":"#232c3c"):(sgn<0?"#3a4a66":"#364764"),lM,ed);
-    rivet(g,kx+sgn*5,ky-1,eH);
+    rivet(g,kx+sgn*3,ky-1,eH);
     // the guards lead every contact: paint gone from the spike lips
-    pl(g,kx+sgn*12,ky-7,kx+sgn*15,ky+2,"rgba(190,208,232,"+((offl?0.12:0.3)*kf(sgn))+")",1.2);
+    pl(g,kx+sgn*9,ky-9,kx+sgn*15,ky+1,"rgba(190,208,232,"+((offl?0.12:0.3)*kf(sgn))+")",1.2);
     /* clawed foot, with DEPTH: a heel block aft, an instep deck whose TOP
        face takes the lamp, and a toe bar all three claws root into — a foot
        that occupies floor, not a comb balanced on a line */
@@ -3754,7 +3759,7 @@ function buildGrok(t,st){
       pl(RR,wx-10,wy+3,wx-8.7,wy+11,kc,1.4);           // knuckle block
       pl(RR,wx-9,wy+12,wx-9.4-(offl?2:0),wy+(offl?22:24),kc,1.2); // outer digit
     } else pl(RR,cx-33,hy0+8,kx-9,ky-9,kc,1.8);        // thigh, tasset to knee
-    pl(RR,kx-12,ky-8,kx-15.5,ky+3,kc,1.6);             // knee guard spike
+    pl(RR,kx-11,ky-11,kx-8,ky+4,kc,1.6);               // knee guard, raked back edge
     pl(RR,kx-6,ky+14,ax-5,ay-6,kc,1.8);                // shank, below the guard
     pl(RR,ax-5,ay+2,fx-7,544,kc,1.6);
     pl(RR,fx-14,547,fx-15,553,kc,1.4);})();
@@ -3779,7 +3784,7 @@ function buildGrok(t,st){
       pl(RR,wx+11.5,wy-33,wx+16.5,wy-23,fc,1.1);
       pl(RR,wx+10,wy+3,wx+8.7,wy+11,fc,1.1);
     } else pl(RR,cx+33,hy0+8,cx+36,hy0+24,fc,1.4);     // thigh crown only
-    pl(RR,kx+12,ky-8,kx+15,ky-1,fc,1.4);               // knee spike root
+    pl(RR,kx+9,ky-9,kx+15,ky+1,fc,1.4);                // knee spike root
     pl(RR,kx+6,ky+14,kx+3,ky+30,fc,1.4);               // shank, calf swell only
     pl(RR,ax+5,ay+2,ax+7,ay+13,fc,1.2);})();           // metatarsal crown
   // deck rule: NO rim inside the last 8 units above the sole — a lit edge at
