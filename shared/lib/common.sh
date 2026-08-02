@@ -469,7 +469,21 @@ check_vendor_credential() {
 # the state #294 is about, and guessing at it would re-open the hole.
 git_identity_login() {
   local email id
-  email="$(printf '%s' "${1:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  email="${1:-}"
+  # Trim the EDGES, never the middle. A value's leading/trailing space is a
+  # shape a hand-edited config can still present, so trimming it reads the
+  # address that was meant; whitespace INSIDE the address is a different
+  # animal, and deleting it INVENTS an identity — `cnd grr@users.noreply.
+  # github.com`, which GitHub attributes to nobody, would collapse into a
+  # valid-looking `cndgrr` and green a box that bylines no account at all.
+  # That is this file's own bug class one layer down, so an interior space
+  # names nobody rather than being helpfully removed.
+  email="${email#"${email%%[![:space:]]*}"}"
+  email="${email%"${email##*[![:space:]]}"}"
+  case "$email" in
+    *[[:space:]]*) return 0 ;;
+  esac
+  email="$(printf '%s' "$email" | tr '[:upper:]' '[:lower:]')"
   case "$email" in
     ?*@users.noreply.github.com) : ;;
     *) return 0 ;;
@@ -497,6 +511,17 @@ git_identity_login() {
 # GitHub matches a commit to an account by, and the name is a display string
 # that can attribute nothing. The name is still written on convergence, so the
 # two halves of the byline agree for a human reading `git log`.
+#
+# `--global` is read DELIBERATELY, not by oversight. git resolves an author
+# address from `GIT_AUTHOR_EMAIL`, then a repo-local `user.email`, then the
+# global one — so this checks the last of three carriers. It is the only one
+# the fleet has: nothing in shared/, cli/ or drill/ writes either of the other
+# two (#294's audit, surface 3), and the global file is what convergence
+# writes. Reading the EFFECTIVE identity instead would mean resolving it
+# inside some repository, and converge_git_identity runs where there may not
+# be one — trading a stated assumption for an unstated failure. If anything
+# here ever starts exporting GIT_AUTHOR_EMAIL or writing a repo-local
+# user.email, this check stops being the whole answer and must widen with it.
 git_identity_ok() {
   local want have
   want="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
@@ -525,7 +550,7 @@ git_identity_ok() {
 # is actually wrong, so the steady state costs nothing and the repair costs
 # one request, once.
 converge_git_identity() {
-  local want="${1:-}" pair id email had_email had_name
+  local want="${1:-}" expect="${1:-}" pair id email had_email had_name
   if [ -n "$want" ] && git_identity_ok "$want"; then
     return 0
   fi
@@ -545,6 +570,20 @@ converge_git_identity() {
   esac
   if [ -z "$want" ] || [ -z "$id" ]; then
     warn "git identity: cannot resolve this box's own account (gh credential dead?) — git config left untouched"
+    return 1
+  fi
+  # The caller named a login; gh must still name the SAME one. duty.sh resolved
+  # $ME from its own `gh api user` moments ago, and if the credential rotated
+  # between that call and this one, converging on the login gh reports NOW
+  # would write the new account, return 0, and hand the tick to a session
+  # still running as the old $ME — sessions acting as one identity while
+  # commits byline another, which is #294 restated one call later. So a
+  # rotation refuses: write nothing, spend no session, and let the next tick
+  # resolve both halves from a single consistent reading.
+  if [ -n "$expect" ] &&
+     [ "$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')" != \
+       "$(printf '%s' "$expect" | tr '[:upper:]' '[:lower:]')" ]; then
+    warn "git identity: the gh credential now names '$want', but this tick is running as '$expect' — the credential rotated mid-tick; git config left untouched"
     return 1
   fi
   # Re-checked against the login gh just reported rather than the caller's:

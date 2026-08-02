@@ -581,9 +581,17 @@ if command -v gh >/dev/null 2>&1 &&
    env DUTY_DIR="$DUTY_DIR" bash -c '. "$1/lib/common.sh"; converge_git_identity' _ "$DUTY_DIR"; then
   echo "  git identity: $(git config --global user.name) <$(git config --global user.email)>"
 else
-  echo "  git identity: NOT written — this box has no usable gh credential yet."
-  echo "    It is the gh login that says which account this box is, so there is"
-  echo "    nothing to copy until you run it:  gh auth login"
+  # The headline names no cause. This branch is every non-zero the helper can
+  # return — no gh on PATH, a dead credential, a `git config` that would not
+  # write, a read-back that disagreed — and the helper already `warn`ed the
+  # real one immediately above. Naming the commonest cause here sent an
+  # operator with an unwritable ~/.gitconfig to `gh auth login`, which fixes
+  # nothing (claude-bot, PR #300); the usual case is still spelled out, as
+  # the usual case rather than as the diagnosis.
+  echo "  git identity: NOT written — see the reason logged just above."
+  echo "    Usually that is simply a box with no gh credential yet: it is the gh"
+  echo "    login that says which account this box is, so there is nothing to copy"
+  echo "    until you run it:  gh auth login"
   echo "    The engine writes it on the first tick after that, before any session,"
   echo "    and refuses to run one until it can."
 fi

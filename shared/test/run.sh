@@ -4785,6 +4785,21 @@ t gitid-rejects-non-numeric-id "" \
 # The domain must END the address; a lookalike suffix must not match.
 t gitid-rejects-lookalike-domain "" \
   "$(git_identity_login '59120057+cndgrr@users.noreply.github.com.example.net')"
+# Whitespace INSIDE the address names nobody. Deleting it would manufacture an
+# identity out of an address GitHub attributes to no account — the parser's own
+# version of the bug this file is about.
+t gitid-rejects-an-interior-space "" \
+  "$(git_identity_login 'cnd grr@users.noreply.github.com')"
+t gitid-rejects-a-space-around-the-id "" \
+  "$(git_identity_login '59120057 + cndgrr@users.noreply.github.com')"
+t gitid-rejects-a-space-in-the-domain "" \
+  "$(git_identity_login 'cndgrr@users.noreply.git hub.com')"
+# The EDGES are still trimmed: that is a value a hand-edited config presents,
+# and the address inside it is unambiguous.
+t gitid-trims-surrounding-whitespace cndgrr \
+  "$(git_identity_login '  59120057+cndgrr@users.noreply.github.com
+')"
+t gitid-rejects-whitespace-only "" "$(git_identity_login '   ')"
 
 # --- the must-fail proof (#294's test plan) ---------------------------------
 # A duty environment whose user.email does not match $ME. Reverting the assert
@@ -4794,6 +4809,22 @@ git config --global user.email 'claude-bot-andresmgsl@users.noreply.github.com'
 git config --global user.name 'claude-bot-andresmgsl'
 if git_identity_ok cndgrr; then r1=GREEN; else r1=refused; fi
 t gitid-mismatched-email-is-refused refused "$r1"
+
+# The SAME foreign address in the id-prefixed form — the row #294 singles out
+# as the one that matters, because a parser that greened anything containing a
+# '+' would green every foreign address on the fleet and still pass the bare
+# row above.
+git config --global user.email '1234567+claude-bot-andresmgsl@users.noreply.github.com'
+if git_identity_ok cndgrr; then r1=GREEN; else r1=refused; fi
+t gitid-foreign-id-prefixed-form-is-refused refused "$r1"
+
+# An address that is only this box's login once its interior whitespace is
+# deleted is NOT this box's login. git config stores the value verbatim, so
+# this is a state a real ~/.gitconfig can hold, and greening it would byline
+# every commit to nobody while the guard reported a converged box.
+git config --global user.email 'cnd grr@users.noreply.github.com'
+if git_identity_ok cndgrr; then r1=GREEN; else r1=refused; fi
+t gitid-interior-space-email-is-refused refused "$r1"
 
 # Both forms of this box's own address pass. One is what provisioning writes,
 # the other is what the 2026-08-02 hand sweep wrote; an assert that took only
@@ -4867,8 +4898,30 @@ t gitid-dead-credential-refuses 1 "$?"
 t gitid-dead-credential-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
   "$(git config --global user.email)"
 
+# A credential that ROTATED between duty.sh resolving $ME and this call must
+# refuse, not converge. Converging would write the NEW account and return 0
+# while the tick carries on as the OLD $ME — a session acting as one identity
+# whose commits byline another, which is #294 one call later rather than
+# fixed. Refusing costs one tick; the next one reads both halves consistently.
+git config --global user.email 'claude-bot-andresmgsl@users.noreply.github.com'
+git config --global user.name 'claude-bot-andresmgsl'
+# shellcheck disable=SC2317
+gh() { printf '%s\t%s\n' andriujoseba 12345678; }
+converge_git_identity cndgrr >/dev/null 2>&1
+t gitid-rotated-credential-refuses 1 "$?"
+t gitid-rotated-credential-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
+  "$(git config --global user.email)"
+# The rotation guard is the CALLER's to invoke: install.sh passes no login
+# because it has no $ME, and its whole job is to write whatever gh now says.
+converge_git_identity >/dev/null 2>&1
+t gitid-no-argument-follows-the-rotation '12345678+andriujoseba@users.noreply.github.com' \
+  "$(git config --global user.email)"
+
 # A malformed id is the same class: an address built from it would attribute
 # to nobody, and writing it would look like a repair while fixing nothing.
+# The starting address is set here rather than inherited from the block above,
+# so this case reds for its own reason and not for a neighbour's.
+git config --global user.email 'claude-bot-andresmgsl@users.noreply.github.com'
 # shellcheck disable=SC2317
 gh() { printf '%s\t%s\n' cndgrr 'not-a-number'; }
 converge_git_identity cndgrr >/dev/null 2>&1
