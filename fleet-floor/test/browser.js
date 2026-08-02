@@ -414,6 +414,14 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       vitals: (await page.locator('#w-vitals').textContent()).replace(/\s+/g, ' '),
       pauseLabel: (await page.locator('#a-pause').textContent()).trim(),
       cron: ((await page.locator('#w-vitals').textContent()).match(/Cron\s*(\S+)/) || [])[1] || '',
+      // The headline pill and the room's status line: the two loudest words on
+      // the console, and two of the four that called every stopped box SILENT
+      // (#203). Read here rather than in their own walk so the four readouts
+      // for one box come from ONE render — a headline captured on a later
+      // entry than its big card could disagree for a reason no operator would
+      // ever see.
+      headline: ((await page.locator('#w-id .pill').textContent()) || '').trim(),
+      fl: (await page.locator('#fl').textContent()).trim(),
     });
     await leave();
   }
@@ -483,6 +491,59 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
          /STUCK/.test(stuck.current), stuck.current.slice(0, 90));
       ok('render: the stuck panel names how long the lock has been held',
          /lock held/.test(stuck.current), stuck.current.slice(0, 90));
+    }
+  }
+
+  /* ---- SILENT is an alarm, and the page must spend it on nothing else -----
+     #189 taught the COLLECTOR the difference and cases.sh pins it: `wire:
+     disarmed box carries the flag`, `note: disarmed names crew hire, not
+     SILENT`. The page was never taught, and every one of those green
+     assertions stayed green while an operator looked at three disarmed boxes
+     and read SILENT three times (#203).
+
+     That is the gap the comment at the head of the tier block above is about,
+     one field over. So these read the RENDERED page — the headline pill, the
+     CRON vital, the big card and the room's status line — and the API is not
+     consulted for any of them.
+
+     FIXTURE-gated: `ff-disarmed` and `ff-silent` are states a healthy real
+     fleet does not have and should not be asked for. `ff-paused` is NOT used
+     here, deliberately — the collector cases run `wake-silent`, which resumes
+     the fixture's paused box long before this walk starts, so the paused half
+     is asserted further down where the walk pauses a box itself. */
+  if (LIVE && FIXTURE) {
+    const four = (u) => `${u.box}: headline=[${u.headline}] cron=[${u.cron}] ` +
+      `fl=[${u.fl}] current=[${u.current.slice(0, 60)}]`;
+    const dis = allSeen.find((u) => /ff-disarmed/.test(u.box));
+    ok('disarmed: the disarmed box was reachable', !!dis,
+       `no ff-disarmed among ${allSeen.length} consoles`);
+    if (dis) {
+      // The defect, at each of the four sites, in the order an eye hits them.
+      ok('disarmed: the headline says DISARMED, not SILENT',
+         /DISARMED/.test(dis.headline) && !/SILENT/.test(dis.headline), four(dis));
+      ok('disarmed: the CRON vital says DISARMED, not SILENT',
+         dis.cron === 'DISARMED', four(dis));
+      // Case-sensitive on purpose: the note UNDER the big card has always said
+      // "disarmed — no cron line", and it is the 40px word above it that said
+      // SILENT. Matching case-insensitively would pass on the note alone.
+      ok('disarmed: the big card says DISARMED, not SILENT',
+         /DISARMED/.test(dis.current) && !/SILENT/.test(dis.current), four(dis));
+      ok('disarmed: the status line does not call it silent',
+         /DISARMED/.test(dis.fl) && !/SILENT/.test(dis.fl), four(dis));
+    }
+    /* The other half, and the one that matters more: #189 exists because an
+       alarm nobody can act on is an alarm nobody reads. Suppressing it for a
+       box that really has stopped ticking would be a worse bug than the one
+       above, so every site is asserted in both directions. */
+    const sil = allSeen.find((u) => /ff-silent/.test(u.box));
+    ok('disarmed: the genuinely silent box was reachable', !!sil,
+       `no ff-silent among ${allSeen.length} consoles`);
+    if (sil) {
+      ok('silent: an armed box that stopped still says SILENT in the headline',
+         /SILENT/.test(sil.headline), four(sil));
+      ok('silent: ...and in the CRON vital', /^SILENT/.test(sil.cron), four(sil));
+      ok('silent: ...and on the big card', /SILENT/.test(sil.current), four(sil));
+      ok('silent: ...and on the status line', /SILENT/.test(sil.fl), four(sil));
     }
   }
 
@@ -561,11 +622,34 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         continue;
       }
       const label = (await page.locator('#a-pause').textContent()).trim();
+      /* The paused half of #203, read from the SAME entry as the label above.
+         It cannot use the fixture's `ff-paused`: the collector cases run
+         `wake-silent` before this walk starts, which resumes it. So the state
+         is made here — which is why this block already exists — and the four
+         readouts are captured while it holds. */
+      const paused = {
+        box: victim.got,
+        headline: ((await page.locator('#w-id .pill').textContent()) || '').trim(),
+        current: (await page.locator('#w-current').textContent()).replace(/\s+/g, ' '),
+        cron: ((await page.locator('#w-vitals').textContent()).match(/Cron\s*(\S+)/) || [])[1] || '',
+        fl: (await page.locator('#fl').textContent()).trim(),
+      };
       await leave();
       // The page can lag the collector by one poll; only assert once it agrees.
       if (/Resume/.test(label)) {
         ok('render: a paused box offers Resume', /Resume/.test(label),
            `${victim.got} label=${label}`);
+        const four = `${paused.box}: headline=[${paused.headline}] ` +
+          `cron=[${paused.cron}] fl=[${paused.fl}] current=[${paused.current.slice(0, 60)}]`;
+        // Paused was the ONE state the page half-knew about: the CRON vital
+        // named it and the other three shouted SILENT anyway. All four now.
+        ok('paused: the headline says PAUSED, not SILENT',
+           /PAUSED/.test(paused.headline) && !/SILENT/.test(paused.headline), four);
+        ok('paused: the CRON vital says PAUSED', paused.cron === 'PAUSED', four);
+        ok('paused: the big card says PAUSED, not SILENT',
+           /PAUSED/.test(paused.current) && !/SILENT/.test(paused.current), four);
+        ok('paused: the status line does not call it silent',
+           /PAUSED/.test(paused.fl) && !/SILENT/.test(paused.fl), four);
         checked = true;
         break;
       }

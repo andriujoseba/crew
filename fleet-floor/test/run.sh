@@ -236,8 +236,11 @@ if [ "$BROWSER" -eq 1 ]; then
     # when the engine assertion split in two: a shape check that holds on any
     # fleet, and the exact-fixture check that only this run can make (#202).
     # Moved deliberately each time: the floor exists so a walk that silently
-    # stops asserting cannot still exit 0, and it caught that removal.
-    walk "browser walk" 39 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # stops asserting cannot still exit 0, and it caught that removal. 39 -> 53
+    # with #203's fourteen: the disarmed box and the genuinely silent one across
+    # four readouts each plus a reachability check, and the paused box's four,
+    # captured where the walk pauses one itself.
+    walk "browser walk" 53 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"
@@ -338,6 +341,40 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
       ok "state transition under an open console"
     else
       fail "state transition under an open console" "see output above"
+    fi
+
+    # A fleet of only deliberately-stopped boxes (#203). It has to be its own
+    # roster: the assertion is "the alarm counter reads zero", and the fixture
+    # fleet is seventeen boxes broken in seventeen ways on purpose. Reuses the
+    # churn collector — its roster is the scratch copy those tests already
+    # rewrite, and a fourth collector would cost CI a minute to say the same
+    # thing. LAST, for the same reason: it leaves that roster at two boxes.
+    #
+    # ff-paused is re-paused by hand here. `wake-silent` in the collector cases
+    # resumes it (test/cases.sh), and the stub keeps that decision in a state
+    # file, so by this point in the suite the fixture's paused box is not one.
+    echo
+    echo "== a disarmed fleet raises no alarm (#203)"
+    echo paused > "$FLOOR_STATE/ff-paused.cron"
+    printf 'ff-disarmed   grok    builder\nff-paused     codex   reviewer\n' \
+      > "$TMP/churn-roster.txt"
+    # Both halves, not just the count: the roster shrinking to two is one poll,
+    # the re-pause landing in the snapshot can be the next one, and standing on
+    # the first alone asserts against a box the collector still thinks is armed.
+    for _ in $(seq 1 40); do
+      if curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null \
+           | python3 -c "
+import json,sys
+u=json.load(sys.stdin)['units']
+sys.exit(0 if len(u)==2 and all(x['disarmed'] for x in u) and any(x['paused'] for x in u) else 1)"; then
+        break
+      fi
+      sleep 0.5
+    done
+    if node "$HERE/stopped.js" "http://127.0.0.1:$CPORT/" "$USER" "$PASSWD"; then
+      ok "a disarmed fleet raises no alarm"
+    else
+      fail "a disarmed fleet raises no alarm" "see output above"
     fi
     kill "$SRV3" 2>/dev/null
   fi
