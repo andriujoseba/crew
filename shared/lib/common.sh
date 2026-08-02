@@ -533,8 +533,13 @@ converge_git_identity() {
   # address GitHub attributes by. Asking twice could straddle a credential
   # rotation and write a login with another account's id.
   pair="$(gh api user --jq '[.login, .id] | @tsv' 2>/dev/null | head -1 || true)"
-  want="$(printf '%s' "$pair" | cut -f1)"
-  id="$(printf '%s' "$pair" | cut -f2)"
+  # Split in the shell rather than with `cut`. install.sh's fixture runs this
+  # under a curated PATH that is the box's whole world, and every external
+  # this reaches for is one more way a real install degrades into a diagnostic
+  # nobody reads. A pair with no tab leaves id == want, which is not numeric
+  # and is refused below — the malformed case needs no separate branch.
+  want="${pair%%$'\t'*}"
+  id="${pair#*$'\t'}"
   case "$id" in
     ''|*[!0-9]*) id="" ;;
   esac
