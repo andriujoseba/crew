@@ -67,23 +67,29 @@ t panel-missing-author-falls-back '["full-a","full-b","builder-one"]' \
 
 # A repo absent locally must choose the same author line from the contents API.
 PANEL_API_CONF="$(base64 -w0 "$PANEL_REPO/.github/labels.conf")"
+# shellcheck disable=SC2317  # called indirectly by panel_for_repo
 gh() { printf '%s\n' "$PANEL_API_CONF"; }
 t panel-api-author-line '["author-a","author-b","builder-one"]' \
   "$(panel_for_repo owner/api "$TMP/not-cloned" builder-one)"
 unset -f gh
 
 # With neither repository config path available, the fleet bench is unchanged.
+# shellcheck disable=SC2034  # consumed dynamically by sourced panel_for_repo
 FLEET_BENCH='bench-a bench-b'
+# shellcheck disable=SC2317  # called indirectly by panel_for_repo
 gh() { return 1; }
 t panel-bench-fallback '["bench-a","bench-b"]' \
   "$(panel_for_repo owner/missing "$TMP/not-cloned" builder-one)"
 unset -f gh
 
 # Both request and convergence paths must receive an author-aware roster.
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-builder-resolution author-aware "$r1"
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-reviewer-resolution author-aware "$r1"
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'cache_key="$SRa|$author"' "$SHARED/lib/duty-review.sh"; then r1=repo-author; else r1=REPO-ONLY; fi
 t panel-reviewer-cache-key repo-author "$r1"
 
