@@ -3249,22 +3249,38 @@ function buildGrok(t,st){
      rear tip ends up behind chest or arm plate, and an emissive whose
      housing is buried reads as a sprite floating on whatever hides it. The
      mane's purple lives in the front dreads, whose ferrules show. */
-  var REARC=[[-1,13,36,268],[-1,18,48,286],[-1,23,60,300],[1,13,36,268],[1,18,48,286],[1,23,60,300]];
+  /* a dread is a CABLE: fat at the root, tapering to its ferrule, bowing
+     OUT off the temple before it falls — one stiff quadratic at constant
+     width reads as rope. Sampled cubic, width stepped per segment, round
+     caps, highlight ride on the lit side only. */
+  function cable(ax,ay,c1x,c1y,c2x,c2y,tx,ty,w0,w1,hi){
+    var P=[];for(var i5=0;i5<=5;i5++){var u=i5/5,v=1-u;
+      P.push([v*v*v*ax+3*v*v*u*c1x+3*v*u*u*c2x+u*u*u*tx,
+              v*v*v*ay+3*v*v*u*c1y+3*v*u*u*c2y+u*u*u*ty]);}
+    g.lineCap="round";
+    for(var i6=0;i6<5;i6++){
+      g.strokeStyle="#07090f";g.lineWidth=w0+(w1-w0)*(i6/4.5);
+      g.beginPath();g.moveTo(P[i6][0],P[i6][1]);g.lineTo(P[i6+1][0],P[i6+1][1]);g.stroke();}
+    if(hi){g.strokeStyle=hi;g.lineWidth=1;g.beginPath();g.moveTo(P[0][0]-1,P[0][1]-0.8);
+      for(var i7=1;i7<4;i7++)g.lineTo(P[i7][0]-1,P[i7][1]-0.8);g.stroke();}
+    g.lineCap="butt";return P;}
+  var REARC=[[-1,13,36,268],[-1,18,48,286],[-1,23,60,300],[-1,27,68,252],
+              [1,13,36,268],[1,18,48,286],[1,23,60,300],[1,27,68,252]];
   stanceOn();
-  REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+10, rank=ci%3;
+  REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+10, rank=ci%4;
     var tx=cx+s*cb[2]+(offl?s*6:0), ty=cb[3]+(offl?30:sway*2.5*(ci%2?1:-1));
-    var mx=hcx+s*(cb[1]+(rank===2?34:26)), my=offl?hby+62:hby+38;
-    g.strokeStyle="#07090f";g.lineWidth=5.8-rank*0.7;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
-    // the key is upper-LEFT: left cables carry the light, right cables sit dark
-    g.strokeStyle=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");g.lineWidth=s<0?1.5:1.1;g.beginPath();g.moveTo(ax,ay-1);g.quadraticCurveTo(mx,my-2,tx-s,ty-1);g.stroke();
-    // ferrule: the machined weight that keeps a cable hanging straight
-    var fw3=6-rank*0.5;
-    g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.fill();
-    g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.stroke();
+    var c1x=hcx+s*(cb[1]+(offl?10:(rank>=2?30:22))), c1y=offl?hby+30:hby+18+rank*2,
+        c2x=tx+s*(rank>=2?13:8), c2y=(ty+hby+60)/2+(offl?14:0);
+    var w0=6.4-rank*0.55, w1=3.4-rank*0.35;
+    var P=cable(ax,ay,c1x,c1y,c2x,c2y,tx,ty,w0,w1,offl?"#20242c":(s<0?"#4e5a6e":"#242b36"));
+    // ferrule: the machined weight, sized to the tip's own gauge
+    var fw3=w1+2.4;
+    g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,7-rank*0.5,1);g.fill();
+    g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-fw3/2,ty,fw3,7-rank*0.5,1);g.stroke();
     if(rank===1){ // ring band mid-length — the reference dreads carry metal rings
-      var qt=0.52, qx=(1-qt)*(1-qt)*ax+2*qt*(1-qt)*mx+qt*qt*tx, qy=(1-qt)*(1-qt)*ay+2*qt*(1-qt)*my+qt*qt*ty;
-      g.fillStyle="#232b38";g.fillRect(qx-3,qy-1.6,6,3.2);
-      pl(g,qx-3,qy-1.4,qx+3,qy-1.4,"rgba(150,172,204,"+(offl?0.1:0.3)+")",0.9);}
+      var q=P[3];
+      g.fillStyle="#232b38";g.fillRect(q[0]-3,q[1]-1.6,6,3.2);
+      pl(g,q[0]-3,q[1]-1.4,q[0]+3,q[1]-1.4,"rgba(150,172,204,"+(offl?0.1:0.3)+")",0.9);}
   });
   stanceOff();
 
@@ -3805,16 +3821,16 @@ function buildGrok(t,st){
      something got a grip on it once. Once. */
   var FRONTC=[[-1,21,37,274],[-1,24,44,288],[1,21,37,274],[1,24,0,0]];
   FRONTC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+16, cut=(ci===3);
-    var tx,ty,mx,my;
-    if(cut){tx=hcx+s*26;ty=hby+44;mx=hcx+s*22;my=hby+26;}
-    else if(offl){tx=hcx+s*(6+(ci%2)*5);ty=hby+62+(ci%2)*6;mx=hcx+s*17;my=hby+34;}
-    else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);mx=hcx+s*(cb[1]+15);my=hby+38;}
-    g.strokeStyle="#07090f";g.lineWidth=4.8;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
-    // same one-key rule as the rear rank: lit highlight left, dark right
-    g.strokeStyle=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");g.lineWidth=s<0?1.4:1.0;g.beginPath();g.moveTo(ax-s,ay);g.quadraticCurveTo(mx-s,my-1,tx-s,ty-1);g.stroke();
+    var tx,ty,c1x,c1y;
+    if(cut){tx=hcx+s*26;ty=hby+44;c1x=hcx+s*25;c1y=hby+26;}
+    else if(offl){tx=hcx+s*(6+(ci%2)*5);ty=hby+62+(ci%2)*6;c1x=hcx+s*15;c1y=hby+34;}
+    else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);c1x=hcx+s*(cb[1]+17);c1y=hby+26;}
+    var c2x=cut?tx+s*3:tx+s*7, c2y=cut?(ty+hby+28)/2:(ty+hby+72)/2;
+    var hi=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");
+    cable(ax,ay,c1x,c1y,c2x,c2y,tx,ty,cut?5.4:5.6,cut?4.2:2.8,hi);
     if(cut){ // the stump: a blunt cauterized ferrule HARD against the cable
-      // end — nothing hangs off it (dangling conductors read as jewelry);
-      // the shorter-than-its-mirror cable carries the story alone
+      // end — nothing hangs off it; the shorter-than-its-mirror cable
+      // carries the story alone
       g.fillStyle="#10151d";rr(g,tx-2.6,ty-1.5,5.2,4,1);g.fill();
       g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-2.6,ty-1.5,5.2,4,1);g.stroke();
       pl(g,tx-2,ty+2.2,tx+2,ty+2.2,"rgba(170,192,222,"+(offl?0.12:0.3)+")",1);
