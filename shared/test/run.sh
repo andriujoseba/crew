@@ -2521,6 +2521,24 @@ STRANDED_JSON="$(jq -cn --arg head "$STRANDED_HEAD" --arg old "$STRANDED_OLD" --
 t stranded-keys-exclude-draft-and-current-signal \
   "$(printf 'o/r#3@%s\no/r#4@%s' "$STRANDED_HEAD" "$STRANDED_NONE")" \
   "$(printf '%s' "$STRANDED_JSON" | _stranded_resume_keys o/r me ANSWER)"
+# #286: the licence grew a createdAt half, and THIS path stays indifferent to
+# it. These listings carry the field natively — `gh pr list --json comments`
+# returns it — so the fixture proves the extra field changes nothing here.
+# The two cases are deliberately inverted against the clock: #6 signals the
+# CURRENT head with the OLDER comment and is not stranded, #7 signals an OLD
+# head with the NEWER comment and is. A path that started reading the time
+# instead of the sha would get both backwards. Stranded detection asks which
+# head a signal names; whether that signal was spent by the verdicts answering
+# it is the request side's question (#286), never resume's (#243).
+STRANDED_TIMED="$(jq -cn --arg head "$STRANDED_HEAD" --arg old "$STRANDED_OLD" '[
+  {number:6,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("ANSWER " + $head),createdAt:"2026-08-02T10:08:12Z"}]},
+  {number:7,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("ANSWER " + $old),createdAt:"2026-08-02T11:12:27Z"}]}
+]')"
+t stranded-keys-ignore-the-signal-clock \
+  "$(printf 'o/r#7@%s' "$STRANDED_HEAD")" \
+  "$(printf '%s' "$STRANDED_TIMED" | _stranded_resume_keys o/r me ANSWER)"
 STRANDED_STATE="$TMP/resume-unsignalled"
 for _tick in $(seq 1 11); do
   stranded_out="$(printf 'o/r#243@aaa\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
