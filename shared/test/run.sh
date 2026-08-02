@@ -2363,6 +2363,88 @@ t c163-second-tick-quiet 0 "$(printf '%s\n' "$C163_ITEM" | ledger_filter "$C163_
 t c163-corrective-push-wakes 1 \
   "$(printf 'o/r#163@0000001\thead\n' | ledger_filter "$C163_LG" | n)"
 
+# --- #167: the dirty-worktree WARN, once per (worktree, dirt state) ----------
+# Leaving a dirty worktree alone is right; saying so every five minutes for a
+# week is not — that is how a WARN becomes wallpaper. Driven against a REAL
+# linked worktree, because the fingerprint is `git status --porcelain` read
+# inside one, and a fixture that only feeds text would not prove that.
+WTBASE="$TMP/wt-base"
+mkdir -p "$WTBASE"
+git -C "$WTBASE" init -q
+printf 'engine\n' >"$WTBASE/README.md"
+git -C "$WTBASE" add README.md
+git -C "$WTBASE" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+WTDIR="$TMP/wt-build-9"
+git -C "$WTBASE" worktree add "$WTDIR" -b build/9-x >/dev/null 2>&1
+printf 'scratch\n' >"$WTDIR/untracked.txt"
+WTLG="$TMP/seen-wt-dirty"
+
+# The two assertions are each other's must-fail. A fix that keeps warning every
+# tick fails the second; a fix that goes permanently silent after the first
+# emission fails wt-dirty-new-dirt-rewarns below — and silence is the worse of
+# the two, which is why both directions are pinned here.
+W1="$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+W2="$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+t wt-dirty-first-pass-warns 1 "$(printf '%s\n' "$W1" | grep -c 'WARN')"
+t wt-dirty-second-pass-silent "" "$W2"
+# The message names the branch and the price, not just the state: the worktree
+# holds its branch, and the failure lands later, on somebody else's build.
+case "$W1" in *"build/9-x"*)             r1=named ;; *) r1=MISSING ;; esac
+t wt-dirty-warn-names-branch named "$r1"
+case "$W1" in *"already checked out"*)   r1=named ;; *) r1=MISSING ;; esac
+t wt-dirty-warn-names-consequence named "$r1"
+case "$W1" in *"0 modified, 1 untracked"*) r1=counted ;; *) r1=MISSING ;; esac
+t wt-dirty-warn-names-the-dirt counted "$r1"
+
+# Dirty in a NEW way is a new condition and is reported again.
+printf 'more\n' >"$WTDIR/second.txt"
+W3="$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+t wt-dirty-new-dirt-rewarns 1 "$(printf '%s\n' "$W3" | grep -c 'WARN')"
+t wt-dirty-new-dirt-then-silent "" "$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+# One worktree's silence is not another's: branch and repo are both in the key,
+# so a second stale worktree is not swallowed by the first one's report.
+t wt-dirty-other-branch-still-warns 1 \
+  "$(_wt_hygiene_report "$WTLG" o/r build/10-y "$WTDIR" | grep -c 'WARN')"
+t wt-dirty-other-repo-still-warns 1 \
+  "$(_wt_hygiene_report "$WTLG" o/other build/9-x "$WTDIR" | grep -c 'WARN')"
+
+# The id carries the dirt and the value is a fixed sentinel — the ci-red scheme
+# (#17), for the same reason. This is the negative control for the scheme NOT
+# used: keyed the ordinary way, a new dirt state whose fingerprint sorts below
+# the old one is suppressed, losing the report exactly when the condition
+# changed.
+WTNAIVE="$TMP/wt-naive"
+printf 'o/r:build/9-x 999-77\n' | ledger_commit "$WTNAIVE"
+t wt-dirt-naive-value-loses-new-dirt 0 \
+  "$(printf 'o/r:build/9-x 111-88\n' | ledger_filter "$WTNAIVE" | n)"
+t wt-dirt-id-distinguishes-dirt-shapes 2 \
+  "$(printf '%s\n%s\n' "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" \
+                       "$(_wt_dirt_id o/r build/9-x '?? b.txt')" | sort -u | n)"
+t wt-dirt-id-stable-for-the-same-dirt 1 \
+  "$(printf '%s\n%s\n' "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" \
+                       "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" | sort -u | n)"
+
+# Wiring: the hygiene block reports through the ledger rather than warning flat.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq '_wt_hygiene_report "$DUTY_DIR/.seen-wt-dirty" "$R" "$wt_branch" "$wt_path"' "$BMOD"; then
+  r1=ledgered
+else
+  r1=UNGUARDED
+fi
+t wt-dirty-warn-is-ledgered-in-module ledgered "$r1"
+# The one thing #167 must never buy. A worktree holding real uncommitted work is
+# the one thing the engine must never discard; #168 is the only place a force may
+# ever be earned, and only as the confirmed consequence of a preservation push.
+# Comments are stripped first: the block above SAYS why there is no --force, and
+# counting raw occurrences counts that sentence — a detector tripping on its own
+# documentation, which this repo has now managed four separate times.
+t wt-hygiene-never-force-removes 0 \
+  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c -- '--force')"
+# ...and the clean path is untouched: removed, branch deleted, no warning.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq 'git -C "$dir" branch -D "$wt_branch"' "$BMOD"; then r1=intact; else r1=MISSING; fi
+t wt-clean-removal-path-intact intact "$r1"
+
 # --- wiring (#45/#17) --------------------------------------------------------
 if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
 t ci-red-rollup-fetched fetched "$r1"
