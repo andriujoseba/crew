@@ -3731,11 +3731,6 @@ function buildGrok(t,st){
   // brow ridge: one heavy chevron, overhanging
   plate(g,[[hcx-19,hby+27],[hcx,hby+31],[hcx+19,hby+27],[hcx+15,hby+15],[hcx-15,hby+15]],hBr,hBrB,ed);
   pl(g,hcx,hby+15,hcx,hby+30,rc,1);
-  /* the face scar: one gouge across the brow, aimed at the right optic and
-     stopped by it — dark trench, bright torn lip, and the paint never came
-     back. A mask that has been hit face-on and kept looking. */
-  pl(g,hcx+3,hby+14,hcx+13,hby+25,"rgba(4,8,14,0.65)",2);
-  pl(g,hcx+3.5,hby+13,hcx+13.5,hby+24,"rgba(170,192,222,"+(offl?0.14:0.36)+")",0.9);
   // the recess the brow shades — deepest right under the ridge
   RB.fillStyle="#03060d";poly(RB,[[hcx-17,hby+27],[hcx+17,hby+27],[hcx+15,hby+41],[hcx-15,hby+41]]);RB.fill();
   var bs=RB.createLinearGradient(0,hby+26,0,hby+38);bs.addColorStop(0,"rgba(0,0,0,0.85)");bs.addColorStop(1,"rgba(0,0,0,0)");
@@ -3797,6 +3792,38 @@ function buildGrok(t,st){
   pl(g,hcx-14.5,hby+58,hcx-11.5,hby+66,"rgba(170,192,222,"+(offl?0.14:0.34)+")",1);
   g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.3)+")";g.lineWidth=1;
   g.beginPath();for(var wj=0;wj<4;wj++){var wx2=hcx+3+wj*2.6;g.moveTo(wx2,hby+45);g.lineTo(wx2+1.4,hby+47.6);}g.stroke();
+  /* THE CLAW MARKS. Three gouges raked across the mask by something with
+     talons of its own — and CARVED, not painted: each is a dark trench with
+     a torn lip thrown up on the light side, burrs of displaced metal along
+     the cut, and a bitten notch where it enters or leaves a plate edge. They
+     cross brow, socket line, cheek and muzzle — whatever was in the way. */
+  (function(){
+    var GOUGE=[ [[2,13],[12,26],[22,44]],
+                [[-4,20],[7,38],[16,56]],
+                [[-10,28],[1,46],[8,61]] ];
+    GOUGE.forEach(function(gp,gi){
+      var a=[hcx+gp[0][0],hby+gp[0][1]],b=[hcx+gp[1][0],hby+gp[1][1]],c=[hcx+gp[2][0],hby+gp[2][1]];
+      // under-shadow of the whole wound
+      g.strokeStyle="rgba(0,0,0,0.35)";g.lineWidth=4.2-gi*0.5;
+      g.beginPath();g.moveTo(a[0]+1,a[1]+1);g.quadraticCurveTo(b[0]+1,b[1]+1,c[0]+1,c[1]+1);g.stroke();
+      // the trench
+      g.strokeStyle="rgba(2,5,10,0.92)";g.lineWidth=2.6-gi*0.3;
+      g.beginPath();g.moveTo(a[0],a[1]);g.quadraticCurveTo(b[0],b[1],c[0],c[1]);g.stroke();
+      // torn lip on the key side of the cut
+      g.strokeStyle="rgba(186,205,238,"+(offl?0.16:0.42)+")";g.lineWidth=1;
+      g.beginPath();g.moveTo(a[0]-1.2,a[1]-1);g.quadraticCurveTo(b[0]-1.2,b[1]-1,c[0]-1.2,c[1]-1);g.stroke();
+      // burrs: displaced metal standing off the cut
+      [0.3,0.62].forEach(function(bt){
+        var bx3=(1-bt)*(1-bt)*a[0]+2*bt*(1-bt)*b[0]+bt*bt*c[0],
+            by3=(1-bt)*(1-bt)*a[1]+2*bt*(1-bt)*b[1]+bt*bt*c[1];
+        g.fillStyle="rgba(190,208,232,"+(offl?0.1:0.3)+")";
+        g.fillRect(bx3+1.4,by3-0.6,1.6,1.2);});
+      // entry notch: the plate edge it broke on the way in
+      g.fillStyle="rgba(2,5,10,0.85)";
+      poly(g,[[a[0]-1.8,a[1]-1.8],[a[0]+2,a[1]-0.6],[a[0]+0.4,a[1]+2]]);g.fill();
+      g.fillStyle="rgba(186,205,238,"+(offl?0.12:0.32)+")";
+      poly(g,[[a[0]-2.2,a[1]-2.2],[a[0]-0.4,a[1]-1.6],[a[0]-1.6,a[1]-0.4]]);g.fill();
+    });})();
   // the jaw throws onto the neck cords below it
   cavity(g,hcx-11,hby+72,22,8,0.4);
 
