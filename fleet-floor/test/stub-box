@@ -442,8 +442,10 @@ case "${1:-}" in
         # lines verbatim. The version is BARE (`0.3.2-dev`, no `rig@`), and the
         # manifest's `bootstrapped_*` pair comes FIRST and here deliberately
         # differs from `converged_*` — a box bootstrapped once and re-converged
-        # by a later rig — so an unanchored read of `converged_at` would be
-        # visibly wrong rather than accidentally right.
+        # by a later rig — so a read that went after the FAMILY (`.*_at=`)
+        # rather than the whole key would be visibly wrong here rather than
+        # accidentally right. On a real manifest the two pairs are usually
+        # equal, which is why the stub is where that near-miss can be seen.
         #
         # `probe=ok` first and unconditionally: it is how the CLI tells a box
         # that answered nothing from one that answered "no marker", and those

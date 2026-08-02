@@ -993,7 +993,11 @@ fi
 #     The version is asserted BARE, as rig writes it (`converged_by=0.3.2-dev`,
 #     no `rig@`), and against the manifest's `converged_*` pair rather than the
 #     `bootstrapped_*` one two lines above it — the stub's two pairs differ on
-#     purpose, so an unanchored read would print the wrong date here.
+#     purpose, so a read that named the FAMILY (`.*_at=`) rather than the whole
+#     key would print the bootstrap's date here, visibly wrong rather than
+#     accidentally right. It is a naming discipline, not an anchoring one: the
+#     two key names do not overlap, so the `^` in report_field is not what
+#     separates them.
 crew_cmd status cli-nothired
 if grep -qE '^rig: converged — role=.*tenant=yes' "$CL_TMP/crew-out" &&
    grep -qE 'converged by rig 0\.3\.2-dev at ' "$CL_TMP/crew-out" &&

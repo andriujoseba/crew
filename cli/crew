@@ -1878,7 +1878,11 @@ cmd_status() {
     rconv="$(convergence_of "$rreport")"
     # `converged_*`, never `bootstrapped_*`: a box re-bootstrapped by a newer
     # rig carries both pairs and they differ, and what authorized the hire is
-    # the convergence. report_field's `^` is what keeps the two apart.
+    # the convergence. Asking for the WHOLE key is what keeps the two apart —
+    # rig writes `bootstrapped_at=` two lines above `converged_at=`, so a read
+    # that went after the family (`.*_at=`, "grab the timestamp") would answer
+    # with the first it met. Not the `^`: the key names do not overlap, so
+    # anchored or not, `converged_at` never matches the bootstrap's line.
     rver="$(report_field rig:converged_by "$rreport")"
     rat="$(report_field rig:converged_at "$rreport")"
     case "$rconv" in
