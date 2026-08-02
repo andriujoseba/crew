@@ -2255,17 +2255,22 @@ t round-siblings-converged false \
 # #243: a ready PR missing its current-head signal becomes resume work only on
 # the twelfth consecutive tick. The state is keyed by head, so a push resets
 # the count even when the PR number is unchanged.
-STRANDED_JSON="$(jq -cn '[
-  {number:1,isDraft:true,headRefOid:"draft",comments:[]},
-  {number:2,isDraft:false,headRefOid:"same",comments:[
-    {author:{login:"me"},body:"ANSWER same"}]},
-  {number:3,isDraft:false,headRefOid:"new",comments:[
-    {author:{login:"me"},body:"ANSWER old"}]},
-  {number:4,isDraft:false,headRefOid:"none",comments:[
-    {author:{login:"other"},body:"ANSWER none"}]}
+STRANDED_HEAD="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+STRANDED_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+STRANDED_NONE="cccccccccccccccccccccccccccccccccccccccc"
+STRANDED_JSON="$(jq -cn --arg head "$STRANDED_HEAD" --arg old "$STRANDED_OLD" --arg none "$STRANDED_NONE" '[
+  {number:1,isDraft:true,headRefOid:$head,comments:[]},
+  {number:2,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("ANSWER `" + $head + "`")}]},
+  {number:3,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("ANSWER " + $old)}]},
+  {number:4,isDraft:false,headRefOid:$none,comments:[
+    {author:{login:"other"},body:("ANSWER " + $none)}]},
+  {number:5,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("ANSWER: " + $head)}]}
 ]')"
 t stranded-keys-exclude-draft-and-current-signal \
-  "$(printf 'o/r#3@new\no/r#4@none')" \
+  "$(printf 'o/r#3@%s\no/r#4@%s' "$STRANDED_HEAD" "$STRANDED_NONE")" \
   "$(printf '%s' "$STRANDED_JSON" | _stranded_resume_keys o/r me ANSWER)"
 STRANDED_STATE="$TMP/resume-unsignalled"
 for _tick in $(seq 1 11); do
@@ -2291,6 +2296,15 @@ hold3="$(_report_unsignalled_hold o/r 243 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 t unsignalled-hold-first-warns 1 "$(grep -c 'no round-answered signal' <<<"$hold1")"
 t unsignalled-hold-same-head-quiet 0 "$(grep -c 'no round-answered signal' <<<"$hold2")"
 t unsignalled-hold-new-head-warns 1 "$(grep -c 'no round-answered signal' <<<"$hold3")"
+# Pin the wake-path wiring too: helper-only tests stay green if the request
+# gate regresses to the old bare log that flooded #227 on every tick.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_report_unsignalled_hold "$repo" "$num" "$gql_head"' "$SHARED/lib/duty-builder.sh"; then
+  r1=wired
+else
+  r1=BARE-OR-MISSING
+fi
+t unsignalled-hold-wired-into-request-gate wired "$r1"
 
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
@@ -2304,6 +2318,39 @@ if printf '%s' "$CI_RED" | _ci_red_rollup_settled aaa; then r1=settled; else r1=
 t ci-red-red-remains-one-shot settled "$r1"
 if printf '%s' "$CI_MOVED" | _ci_red_rollup_settled aaa; then r1=settled; else r1=retry; fi
 t ci-red-moved-head-settles-old-key settled "$r1"
+
+# The settle predicate must gate the ledger commit, not merely exist beside a
+# post-session rollup re-read. Removing this condition restores the
+# unconditional commit while leaving the fixture-level helper tests green.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '| _ci_red_rollup_settled "${red_key##*@}"; then' "$SHARED/lib/duty-builder.sh"; then
+  r1=gated
+else
+  r1=UNCONDITIONAL
+fi
+t ci-red-ledger-commit-is-settle-gated gated "$r1"
+
+# `attention` remains a hand-written demand. Reads in duty-attention.sh are the
+# wake mechanism and are allowed; engine label writes are not. Fold continued
+# shell lines before looking for add/remove-label or labels[]= writes so moving
+# an argument onto the next source line cannot evade the guard.
+attention_writes="$(awk '
+  FNR == 1 { logical = "" }
+  {
+    line = $0
+    if (logical != "") line = logical line
+    if (line ~ /\\[[:space:]]*$/) {
+      sub(/\\[[:space:]]*$/, " ", line)
+      logical = line
+      next
+    }
+    logical = ""
+    if (line !~ /^[[:space:]]*#/ &&
+        line ~ /(--add-label|--remove-label|labels\[\])/ &&
+        line ~ /(LABEL_ATTENTION|attention)/) print FILENAME ":" FNR ":" line
+  }
+' "$SHARED"/lib/*.sh "$SHARED"/bin/* 2>/dev/null)"
+t engine-never-writes-attention-label "" "$attention_writes"
 
 # ledger_filter re-fires when the value sorts GREATER, and a SHA has no order.
 # This is the negative control for the scheme NOT used: keyed the ordinary way,

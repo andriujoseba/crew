@@ -363,14 +363,21 @@ _stranded_resume_due() {
 # this builder does not name the current head. Drafts already use the original
 # resume path and must never be double-counted here.
 _stranded_resume_keys() {
-  local repo="$1" me="$2" mark="$3"
-  jq -r --arg repo "$repo" --arg me "$me" --arg mark "$mark" '
-    .[] | select(.isDraft | not)
-    | ([.comments[]?
-        | select(.author.login == $me and (.body | startswith($mark + " ")))
-        | .body | ltrimstr($mark + " ") | split("\n")[0]] | last // "") as $answered
-    | select($answered != .headRefOid)
-    | "\($repo)#\(.number)@\(.headRefOid)"'
+  local repo="$1" me="$2" mark="$3" pr num head answered
+  # Use the signal gate's parser rather than maintaining a second definition
+  # of MARK_ANSWERED. In particular, fleet comments may wrap the SHA in
+  # backticks or put punctuation after the marker; answered-head.jq accepts
+  # both, and resume must classify the exact same bodies the request gate does.
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    num="$(printf '%s' "$pr" | jq -r '.number')"
+    head="$(printf '%s' "$pr" | jq -r '.headRefOid')"
+    answered="$(printf '%s' "$pr" \
+      | jq -c '{data:{repository:{pullRequest:{comments:{nodes:(.comments // [])}}}}}' \
+      | jq -r --arg me "$me" --arg mark "$mark" \
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq")"
+    [ "$answered" = "$head" ] || printf '%s#%s@%s\n' "$repo" "$num" "$head"
+  done < <(jq -c '.[] | select(.isDraft | not)')
 }
 
 # _ci_red_rollup_settled EXPECTED_HEAD — stdin is the post-session gh-pr-view
