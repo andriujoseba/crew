@@ -562,6 +562,40 @@ fi
 echo "installed (agent: $BOT_AGENT, roles: $BOT_ROLE_LIST)"
 echo "  agent/role resolved from $RESOLVED_FROM — $CHANGE_NOTE"
 
+# --- Identity's second carrier: git (#294) -----------------------------------
+# Provisioning writes git identity from the same source of truth as the gh
+# credential, so a box never commits under the account it carried before an
+# identity change. Through the engine that was just installed rather than a
+# copy of the rule here: a private second implementation of "which login is
+# this box" is how the panel copy (#285) and the git copy (#294) both happened.
+#
+# This can only run when the box is ALREADY authenticated — which is the
+# upgrade and re-hire path, and therefore the automatic sweep of a live fleet.
+# A first hire is authenticated BY HAND afterwards, so there is no truth to
+# copy yet; the engine converges on the first tick after that login, before any
+# session. Said out loud below rather than left as a silent no-op, because
+# "provisioning writes it" is only half true and the operator owns the half
+# that is not.
+# shellcheck disable=SC2016  # $1 is the INNER shell's positional, passed below
+if command -v gh >/dev/null 2>&1 &&
+   env DUTY_DIR="$DUTY_DIR" bash -c '. "$1/lib/common.sh"; converge_git_identity' _ "$DUTY_DIR"; then
+  echo "  git identity: $(git config --global user.name) <$(git config --global user.email)>"
+else
+  # The headline names no cause. This branch is every non-zero the helper can
+  # return — no gh on PATH, a dead credential, a `git config` that would not
+  # write, a read-back that disagreed — and the helper already `warn`ed the
+  # real one immediately above. Naming the commonest cause here sent an
+  # operator with an unwritable ~/.gitconfig to `gh auth login`, which fixes
+  # nothing (claude-bot, PR #300); the usual case is still spelled out, as
+  # the usual case rather than as the diagnosis.
+  echo "  git identity: NOT written — see the reason logged just above."
+  echo "    Usually that is simply a box with no gh credential yet: it is the gh"
+  echo "    login that says which account this box is, so there is nothing to copy"
+  echo "    until you run it:  gh auth login"
+  echo "    The engine writes it on the first tick after that, before any session,"
+  echo "    and refuses to run one until it can."
+fi
+
 if [ "$ARM_CRON" -eq 1 ]; then
   # Deliberately check after the atomic file install: a missing host package
   # must not discard a valid engine deployment, and install.sh is idempotent.

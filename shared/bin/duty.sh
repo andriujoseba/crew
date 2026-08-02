@@ -104,6 +104,32 @@ if [ -z "$ME" ]; then
   exit 0
 fi
 
+# Identity's second carrier (#294). $ME is the gh half; git holds a COPY, and
+# until now nothing kept it converged — the builder-identity split rotated the
+# gh credential alone, so a split box authored every commit as the account it
+# carried BEFORE the split and GitHub bylined that droid on this box's own PRs.
+#
+# Converged HERE: after $ME resolves, because that is the source of truth, and
+# before the first duty dispatch below, because after it a session could
+# already have committed. Nothing between these two points writes a commit.
+#
+# A box that cannot be made to byline itself spends no session at all. That is
+# the refusal #294 asks for, and it is deliberately narrow: convergence has
+# already tried, so reaching here means git would demonstrably commit under
+# another droid's name. Running anyway is how the record got corrupted.
+if ! converge_git_identity "$ME"; then
+  warn "git identity does not name $ME and could not be repaired — no session this tick"
+  # Once per boot, on the channel the auth watchdog already uses: this is a
+  # by-hand repair (git config --global user.email), so re-alerting every five
+  # minutes would train the operator to ignore the one channel that matters.
+  if [ "$(cat "$DUTY_DIR/.identity-alerted" 2>/dev/null)" != "$boot_id" ]; then
+    alert "🪪 $(hostname): git identity does not name $ME — refusing to run sessions that would commit as somebody else"
+    echo "$boot_id" >"$DUTY_DIR/.identity-alerted"
+  fi
+  log "duty run end"
+  exit 0
+fi
+
 # shellcheck source=../lib/duty-attention.sh disable=SC1091
 source "$DUTY_DIR/lib/duty-attention.sh"
 # shellcheck source=../lib/duty-review.sh disable=SC1091

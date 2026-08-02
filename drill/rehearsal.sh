@@ -280,6 +280,24 @@ check "bad role refused"           bx "! ~/.crew-engine-stage/shared/install.sh 
 GH_AUTHED=0
 bx "gh auth status >/dev/null 2>&1" && GH_AUTHED=1
 
+# A hired box bylines ITSELF, and does so before its first session (#294). The
+# gh credential is the source of truth and git is a copy; when the split left
+# the copy behind, every commit the claude builder pushed was authored by the
+# claude reviewer and the board read a one-box afternoon as a two-box race.
+#
+# Asserted HERE, between the install above and the tick below, on purpose: the
+# engine converges on every tick too, so checking after one would prove the
+# engine's half while a box that never ticked stayed wrong. Both forms of the
+# address pass — provisioning writes the ID-prefixed one, and the 2026-08-02
+# hand sweep wrote the bare one.
+if [ "$GH_AUTHED" -eq 1 ]; then
+  DRILL_BOX_ME="$(bx "gh api user --jq .login" | tr -d '\r\n')"
+  check "hired box bylines itself as $DRILL_BOX_ME, before its first tick" \
+    bx "git config --global user.email | grep -qiE '^([0-9]+\\+)?$DRILL_BOX_ME@users\\.noreply\\.github\\.com\$'"
+else
+  skip "hired box bylines itself (box is not gh-authenticated — no identity to copy yet)"
+fi
+
 # An authenticated engine can act on its first explicit tick. Preserve the
 # operator's registry, then point the drill at nothing until its sandbox
 # exists. EXIT/INT/TERM restore it and leave no cron behind.

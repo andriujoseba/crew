@@ -15,5 +15,13 @@ heavy-duty/incubator
 heavy-duty/rig
 heavy-duty/box
 heavy-duty/cast
+#
+# The fork lines run AHEAD of the forks on purpose. A repo that does not
+# exist yet is inert here — the sweep's `gh pr list` fails, stderr is
+# discarded and the loop `continue`s to the next repo (notify.sh) — so a
+# line costs nothing until its fork is minted and covers it the moment it
+# is. A list that lags the fork is rig#112 again.
 dan-claude-bot/incubator
 claude-bot-andresmgsl/incubator
+cndgrr/incubator
+andriujoseba/incubator
