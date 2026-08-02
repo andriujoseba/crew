@@ -844,6 +844,19 @@ t rp-286-coherence-spares-first-verdicts "rev-c" \
 # request puts them back on the list, and the next tick sees that and holds.
 t rp-286-requested-not-requested-again "" \
   "$(mk_rp "$H" '["rev-a"]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# The hold is scoped to CHANGES_REQUESTED, the only state that closes a round
+# against the builder. A DISMISSED verdict at the head is a WITHDRAWN opinion:
+# round_owed does not count it, addressing.jq calls the round closed and
+# converged.jq calls it unapproved, so if this predicate held it too the
+# panelist would owe a verdict nobody would ever ask for — the stall this issue
+# exists to end, arriving through its own fix. An unknown future state takes the
+# same door for the same reason.
+RP_DISMISSED='[{"author":{"login":"rev-a"},"state":"DISMISSED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
+RP_FUTURE_STATE='[{"author":{"login":"rev-a"},"state":"PONDERED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
+t rp-286-dismissed-verdict-is-re-requested "rev-a rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_DISMISSED" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
+t rp-286-unknown-state-is-re-requested "rev-a rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_FUTURE_STATE" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
 
 # answered-head.jq — the signal. This is the WIP-safety property: a mid-fix push
 # moves the head away from the last signalled one, so the engine holds.

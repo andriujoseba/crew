@@ -75,6 +75,15 @@
       | ($head_reviews | map(select(.author.login == $l)) | last) as $verdict
       | if   $verdict == null             then true
         elif $verdict.state == "APPROVED" then false
+        # Only CHANGES_REQUESTED closes a round against the builder, so only it
+        # spends the signal. A DISMISSED verdict at the head — or any state a
+        # later GitHub adds — is a withdrawn opinion, not a standing one: the
+        # panelist owes a fresh verdict and NOTHING else would ask for it.
+        # round_owed counts only CHANGES_REQUESTED, so holding a dismissal here
+        # would leave addressing.jq true, converged.jq false and no request
+        # outstanding — the stall this issue exists to end, reintroduced through
+        # its own fix. Unknown states therefore keep today's behaviour.
+        elif $verdict.state != "CHANGES_REQUESTED" then true
         else ($round_open | not)
              and $sig_at != ""
              and ($verdict.submittedAt // "") != ""
