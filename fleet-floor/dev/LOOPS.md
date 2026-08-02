@@ -2524,3 +2524,15 @@ Both segments shortened (elbow 294, wrist 356) so the talon dies at the upper
 thigh, 40+ units above the knee line, hanging beside the leg. Working's tool
 hand moved from beside the hip to IN FRONT of the body, and the strike went
 from vertical (a wave) to a cocked diagonal above the pauldron (a slash).
+
+**Working-pose reversal (operator):** the two-arm working pose died on
+contact — the tool hand read as a fist parked on the waist and the raised
+strike talon read as "the number 3". The fleet already had the answer: one
+moving arm per unit (claude raises one, kimi flexes one, codex lifts one
+palp). The right arm now NEVER leaves the idle vertical hang — the resting
+talon is identical idle or working, closed unless dead — and the left alone
+does a single simple stretched reach: elbow landed OUTBOARD of the waist
+edge in open air (an arm that lives on the torso reads as a clutch), long
+forearm driving down and in, closed claw presenting the tool at mid-torso
+with its shadow cast on the waist plates. The strike mode is gone entirely;
+a working claw grips, it does not display.
