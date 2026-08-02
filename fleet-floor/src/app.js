@@ -3286,9 +3286,7 @@ function buildGrok(t,st){
     function P(pts){return pts.map(function(p){return [sx+sgn*p[0],sy+p[1]];});}
     // upper arm: bare mechanism — twin rods from the socket, no plate at all
     var ex,ey;
-    if(mode==='reachdown'){ex=sx+sgn*20;ey=sy+28;}
-    else if(mode==='strike'){ex=sx+sgn*24;ey=sy+2;}
-    else if(mode==='raiseup'){ex=sx+sgn*4;ey=sy+42;}
+    if(mode==='reach'){ex=sx+sgn*22;ey=sy+34;}
     // hanging: elbow flexed and held a touch OUTBOARD — a coiled hang, not a
     // plumb line, and the silhouette gap it opens is what keeps the forearm
     // readable across the tasset line
@@ -3369,38 +3367,32 @@ function buildGrok(t,st){
         // the key catches each digit's LEFT face
         pl(g,rx-2.4,y+9,mx3-1.7,my3-1,"rgba(186,205,238,"+((offl?0.08:0.28)*K)+")",1.1);
       });}
-    if(mode==='strike'){ /* the action pose: forearm CLIMBS off the high
-      elbow, wrist beside the mask, talon splayed open and presented — the
-      free arm is not resting, it is mid-swing. */
-      var ux5=sx+sgn*20, uy5=sy-30;
-      limbSeg(g,ex,ey,ux5,uy5,8.5,11,sT,sM);
-      tendon(ex-sgn*2,ey-4,ux5-sgn*3,uy5+6,3);
-      joint(ex,ey,8);
-      // wrist clamp on the climbing forearm
-      plate(g,[[ux5-9,uy5+2],[ux5+9,uy5+2],[ux5+8.5,uy5+8],[ux5-8.5,uy5+8]],sT,sM,ed);
-      joint(ux5,uy5+4,5.5);
-      // the talon points UP: flip the claw about the wrist line
-      g.save();g.translate(ux5,uy5);g.scale(1,-1);g.translate(-ux5,-uy5);
-      claw(ux5,uy5+2,true);
+    if(mode==='reach'){ /* the working pose, fleet rule: ONE arm leaves the
+      hang, and it leaves as a SIMPLE STRETCHED REACH at the work in front —
+      the claude arm. The elbow lands OUTBOARD of the waist edge in open air
+      (the claude trick — the forearm must ENTER the silhouette, an arm that
+      lives on the torso reads as a clutch), then the long forearm drives
+      down and IN to present the closed claw at mid-torso, well clear of the
+      hip line. No splay and no raised talon: a working claw grips its tool,
+      it does not display. The tool rides the claw — torch in builder, the
+      room device everywhere else (drawn off handR, after the arm). */
+      var hx3=ex-sgn*36, hy3=ey+38;
+      limbSeg(g,ex,ey,hx3,hy3-8,8.5,13,sT,sM);
+      tendon(ex-sgn*2,ey+2,hx3+sgn*4,hy3-10,3);
+      joint(ex,ey-1,6.5);
+      /* the claw hangs IN FRONT of the waist: cast its shadow onto the torso
+         first (down-right, off the upper-left key) so the digits read against
+         a dark gap — the hanging hand's thigh trick, moved up a joint. */
+      g.save();g.globalCompositeOperation="source-atop";g.fillStyle="rgba(2,4,9,0.4)";
+      poly(g,[[hx3-sgn*15,hy3-4],[hx3-sgn*5,hy3-8],[hx3-sgn*1,hy3+18],[hx3-sgn*11,hy3+22]]);g.fill();
       g.restore();
-      if(sgn>0&&!handR)handR={x:ux5,y:uy5-18};
-    } else if(mode==='reachdown'){ /* builder: the FLEX — elbow thrown out past the
-      blade, thick forearm driving down and IN, the claw landing low in front
-      of the hip where the arc lives. A hunter leans on its work. */
-      var hx3=cx+sgn*30, hy3=352;
-      limbSeg(g,ex,ey,hx3,hy3-8,8.5,12,sT,sM);
-      tendon(ex+sgn*2,ey+4,hx3-sgn*2,hy3-10,3);
-      joint(ex,ey-1,6.5);
+      // wrist clamp: the claw is a separate machine, banded on (hang parity)
+      plate(g,[[hx3-9,hy3-12],[hx3+9,hy3-12],[hx3+8.5,hy3-6],[hx3-8.5,hy3-6]],sT,sM,ed);
       claw(hx3,hy3-6,false);
-      plate(g,[[hx3-sgn*2,hy3+2],[hx3+sgn*10,hy3-3],[hx3+sgn*14,hy3+2],[hx3+sgn*2,hy3+9]],"#2a3444","#12181f","#3d4c63"); // torch
-      handR={x:hx3+sgn*12,y:hy3+2};
-    } else if(mode==='raiseup'){ // device held up before the chest
-      var fx3=sx-sgn*24, fy3=sy+10;
-      limbSeg(g,ex,ey,fx3,fy3+6,8,11,sT,sM);
-      tendon(ex+sgn*2,ey-2,fx3+sgn*4,fy3+8,3);
-      joint(ex,ey-1,6.5);
-      claw(fx3,fy3+2,false);
-      if(sgn>0)handR={x:fx3+2,y:fy3+4};
+      if(ROOM==="builder"){ // torch exits outboard: the arc lands over the rig
+        plate(g,[[hx3-sgn*2,hy3+2],[hx3+sgn*10,hy3-3],[hx3+sgn*14,hy3+2],[hx3+sgn*2,hy3+9]],"#2a3444","#12181f","#3d4c63");
+        handR={x:hx3+sgn*12,y:hy3+2};
+      } else handR={x:hx3,y:hy3+2};
     } else { // hanging — the forearm rakes IN off the outboard elbow, the
       // wrist dropping to mid-thigh: the talon hangs BELOW and CLEAR of the
       // pelvis cluster, read against the thigh by a value step, not luck.
@@ -3424,8 +3416,10 @@ function buildGrok(t,st){
       plate(g,[[wx-9.5,wy-2],[wx+9.5,wy-2],[wx+9,wy+4],[wx-9,wy+4]],sT,sM,ed);
       rivet(g,wx-6,wy+1,eH);rivet(g,wx+6,wy+1,eH);
       joint(ex,ey-1,8);
-      // working, the hanging talon SPLAYS — strike-ready, not at rest
-      claw(wx,wy+3,offl||work);
+      // the hanging talon rests CLOSED in every live state — the resting
+      // hand is identical idle or working (the operator's rule); only the
+      // dead splay opens it
+      claw(wx,wy+3,offl);
       joint(wx,wy,5.5);
       /* kill tallies, scratched into the LEFT forearm's flat — counted where
          they were made, read when the arm hangs. Worn gold, same paint life
@@ -3433,15 +3427,18 @@ function buildGrok(t,st){
       if(sgn<0){g.save();g.globalAlpha=offl?0.25:0.5;g.fillStyle="#c9a227";
         for(var tl2=0;tl2<4;tl2++)g.fillRect(wx-6+tl2*3,wy-32,1.6,7);
         g.restore();}
-      if(sgn>0)handR={x:wx,y:wy+16};
+      // idle anchor only — never steal the anchor from the working reach
+      // (the right arm hangs THROUGH work now, and it draws after the left)
+      if(sgn>0&&!handR)handR={x:wx,y:wy+16};
     }
   }
   /* The rooms park a readout on the right half of the bench, exactly where a
      right-handed weld lands (the kimi round-9 verdict). grok works LEFT-handed
-     in builder — the arc goes over the rig — and raises the right for the
-     handheld rooms. */
-  arm(-1, work?(ROOM==="builder"?'reachdown':'strike'):'down');
-  arm(1, work?(ROOM==="builder"?'strike':'raiseup'):'down');
+     in EVERY room, and the right arm never leaves the idle hang — one moving
+     arm per unit is the fleet rule (claude raises one, kimi flexes one,
+     codex lifts one palp). */
+  arm(-1, work?'reach':'down');
+  arm(1, 'down');
   if(work&&ROOM!=="builder"&&handR){var h=handR;
     if(ROOM==="reviewer"){ plate(g,[[h.x-3,h.y-9],[h.x+17,h.y-11],[h.x+17,h.y+2],[h.x-3,h.y+4]],"#1a2836","#0c1620","#3a5570");
       [RB,RE].forEach(function(c2){if(!offl){c2.fillStyle=rgba(130,205,255,0.75);c2.fillRect(h.x+1,h.y-7,11,7);}}); }
@@ -3661,7 +3658,7 @@ function buildGrok(t,st){
      joint. The hanging arm rides OVER the thigh, so the strokes follow the
      arm stack (upper arm, forearm, fin, claw) and the thigh takes one only
      when the arm is away — a line across the stack reads as a stray wire. */
-  var lHang=!work, rHang=!work; // working, both arms leave the hang — strike/tool
+  var lHang=!work, rHang=true; // only the LEFT arm leaves the hang for the tool; the right always rests
   (function(){var kc=puh(offl?0.28:0.8);
     // arm/torso strokes live in stance space (+WS,+SD); leg strokes in world
     var sx=cx+WS-47, sy=248+SD+breath, ex=sx-11, ey=294+SD+d*0.6, wx=sx-10, wy=356+SD+d*0.5;
