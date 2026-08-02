@@ -883,6 +883,27 @@ t ah-no-signal-is-an-empty-object '{"sha":"","createdAt":""}' \
 if grep -q 'answered-head.jq' "$SHARED/lib/duty-builder.sh" \
   && grep -q 'answered_head" != "\$gql_head"' "$SHARED/lib/duty-builder.sh"; then r1=signal-gated; else r1=UNGATED; fi
 t engine-request-requires-signal signal-gated "$r1"
+# #286: a predicate can only read what the query asks for, and the handoff query
+# carried neither timestamp — which is why the ordering bug was invisible to
+# every fixture in this file. Pin both fields at the query.
+if grep -q 'comments(last:100){nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}' \
+       "$SHARED/lib/duty-builder.sh"; then r1=timestamped; else r1=UNTIMED; fi
+t engine-request-fetches-ordering-evidence timestamped "$r1"
+# The licence crosses into jq as ONE object: request-panel.jq is HANDED the
+# signal and reads its time, rather than parsing MARK_ANSWERED out of the
+# comments a second time. Two parsers would be two copies of the predicate, and
+# the copies drift — head-checks.jq's header is the standing warning. Pinned on
+# the wire string, not on prose: a second parser needs $mark to find a signal at
+# all, so its absence here is the property.
+# shellcheck disable=SC2016  # the grep literals contain $signal_json / $mark
+if grep -q -- '--argjson signal "\$signal_json"' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'signal\.createdAt' "$SHARED/lib/jq/request-panel.jq" \
+  && ! grep -q 'mark' "$SHARED/lib/jq/request-panel.jq"; then r1=one-object; else r1=RE-DERIVED; fi
+t engine-request-passes-the-whole-signal one-object "$r1"
+# And exactly one call site parses the signal, for the same reason.
+t engine-has-one-signal-parser 1 \
+  "$(grep -c 'answered-head\.jq' "$SHARED/lib/duty-builder.sh")"
 # Green-head precondition, mechanical half only: request on green|none, hold else.
 # shellcheck disable=SC2016  # the shell literal contains $check_state
 if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh"; then r1=green-gated; else r1=UNGATED; fi
@@ -2401,6 +2422,53 @@ t round-siblings-round-owed owed \
 t round-siblings-converged false \
   "$(printf '%s' "$CROSS_PR" | jq -r --argjson panel '["p1","p2","p3"]' \
     --arg needs_human state:needs-human -f "$SHARED/lib/jq/converged.jq")"
+
+# #286: the same agreement extended to the REQUEST side, on the #281 snapshot as
+# it reads once the signal is spent — every verdict in, no request outstanding,
+# and the only signal older than the blocking verdicts it supposedly answered.
+# The bug was never that one of these predicates was wrong. round_owed and
+# addressing.jq were both right and both held false by the engine's own request,
+# so the ball landed nowhere: request-panel.jq has to agree with its siblings on
+# the same payload or the round has no owner at all. Asserting the four together
+# is what makes "the ball provably lands somewhere" a test rather than a claim.
+PR281_PANEL='["p1","p2","p3"]'
+PR281_REVIEWS='[
+  {"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-02T10:32:33Z"},
+  {"state":"CHANGES_REQUESTED","author":{"login":"p2"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-02T10:35:14Z"},
+  {"state":"APPROVED","author":{"login":"p3"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-02T10:29:40Z"}]'
+# The signal that opened round 1 at 10:08:12Z — older than every verdict above,
+# and the only one #281 ever carried.
+PR281_SIG="$(sig abc1234 2026-08-02T10:08:12Z)"
+PR281_GQL="$(jq -cn --argjson reviews "$PR281_REVIEWS" '{
+  data:{repository:{pullRequest:{
+    headRefOid:"abc1234",mergeable:"MERGEABLE",
+    labels:{nodes:[]},reviewRequests:{nodes:[]},
+    latestOpinionatedReviews:{nodes:$reviews}
+  }}}
+}')"
+t round-siblings-281-requests-none "" \
+  "$(mk_rp abc1234 '[]' "$PR281_REVIEWS" '[]' | rp "$PR281_SIG" "$PR281_PANEL")"
+t round-siblings-281-round-owed owed \
+  "$(hc "$PR281_PANEL" "$(mk_prc "$CHK_OK" "$PR281_REVIEWS")" | cut -f5)"
+t round-siblings-281-addressing true \
+  "$(printf '%s' "$PR281_GQL" | jq -r --argjson panel "$PR281_PANEL" \
+    --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
+t round-siblings-281-converged false \
+  "$(printf '%s' "$PR281_GQL" | jq -r --argjson panel "$PR281_PANEL" \
+    --arg needs_human state:needs-human -f "$CJQ")"
+# The live-round half of the same agreement, and the reason state:bots-reviewing
+# is true only while a request awaits a verdict: with p2 still requested, the
+# round is the panel's — addressing.jq holds off, and request-panel.jq's
+# coherence gate holds p1 rather than opening a second round at one head.
+PR281_MID="$(printf '%s' "$PR281_GQL" \
+  | jq -c '.data.repository.pullRequest.reviewRequests.nodes
+             = [{requestedReviewer:{login:"p2"}}]')"
+t round-siblings-281-mid-round-addressing false \
+  "$(printf '%s' "$PR281_MID" | jq -r --argjson panel "$PR281_PANEL" \
+    --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
+t round-siblings-281-mid-round-requests-none "" \
+  "$(mk_rp abc1234 '["p2"]' "$PR281_REVIEWS" '[]' \
+    | rp "$(sig abc1234 2026-08-02T11:12:27Z)" "$PR281_PANEL")"
 
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
 # #243: a ready PR missing its current-head signal becomes resume work only on
