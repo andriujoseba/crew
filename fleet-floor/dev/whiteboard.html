@@ -1605,8 +1605,10 @@ function stageCounts(){
      operator reading a calm fleet is entitled to see the alarm counter sitting
      at zero, not to infer it from an absence. */
   if(c.stopped)stat.splice(1,0,[c.stopped+" DISARMED","#8aa0b8"]);
-  /* Prepended so it reads leftmost, ahead of the ordinary counts, and only
-     when non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
+  /* Prepended so it reads outermost, ahead of the ordinary counts —
+     drawFloorHeader paints this array right-aligned from VW-26 and walks
+     leftward, so element 0 lands at the right edge — and only when
+     non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
      counted as working or idle above — that is correct, they are, and the
      point of this counter is that the state they are in is not the whole
      story. */
