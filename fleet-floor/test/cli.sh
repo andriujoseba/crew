@@ -503,7 +503,7 @@ crew_detail() {
 # `(unreachable)`, so the negative half is the proof the test bites.
 crew_detail cli-neverticked
 t "crew status <box>: a box awaiting its first tick exits 0" 0 "$CL_RC"
-if grep -q 'no duty log yet' "$CL_TMP/crew-out" &&
+if grep -q 'no ticks yet' "$CL_TMP/crew-out" &&
    ! grep -q 'unreachable' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a hired box with no duty log yet is not unreachable"
 else
@@ -513,13 +513,25 @@ fi
 # The line has to be actionable, not merely non-alarming: the operator was told
 # at hire that the first tick lands on the next 5-minute boundary, and this is
 # the same sentence, so the answer to "did my hire work?" reads as the hire's
-# own promise. The engine stamp is what makes it a fact about THIS box.
-if grep -qE 'no duty log yet — hired at .+; first tick at the next 5-minute boundary' \
+# own promise. It also names the file, because "no ticks yet" alone does not
+# say what the view went looking for.
+if grep -qE 'no ticks yet — ~/duty/duty\.log is written by the first tick, at the next 5-minute boundary' \
      "$CL_TMP/crew-out"; then
-  ok "crew status <box>: the wait names the engine stamp and the tick boundary"
+  ok "crew status <box>: the wait names the duty log and the tick boundary"
 else
-  fail "crew status <box>: the wait names the engine stamp and the tick boundary" \
-       "$(grep 'no duty log' "$CL_TMP/crew-out")"
+  fail "crew status <box>: the wait names the duty log and the tick boundary" \
+       "$(grep 'no ticks' "$CL_TMP/crew-out")"
+fi
+# ...and it carries NO hire stamp (#221 criterion 1, amended 2026-08-02). The
+# assertion is negative because the positive one above would keep passing if a
+# stamp came back appended. The only stamp within reach is the engine VERSION,
+# which the `engine:` line two rows up already prints — repeating it here reads
+# as a hire TIME, which it is not. `crew@` catches it in any phrasing.
+if ! grep 'no ticks yet' "$CL_TMP/crew-out" | grep -qE 'hired at|crew@'; then
+  ok "crew status <box>: the wait asserts no hire time"
+else
+  fail "crew status <box>: the wait asserts no hire time" \
+       "$(grep 'no ticks yet' "$CL_TMP/crew-out")"
 fi
 # #221's round-trip criterion, measured: engine_report, rig_report, and the
 # duty-log read. THREE, and the number is the assertion — the reachability
@@ -535,7 +547,7 @@ t "crew status <box>: the detail view still costs three round trips" 3 "$CL_EXEC
 crew_detail cli-unreachable
 t "crew status <box>: an unreachable box still exits 0" 0 "$CL_RC"
 if grep -q '(unreachable)' "$CL_TMP/crew-out" &&
-   ! grep -q 'no duty log yet' "$CL_TMP/crew-out"; then
+   ! grep -q 'no ticks yet' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a box that answers nothing still reads (unreachable)"
 else
   fail "crew status <box>: a box that answers nothing still reads (unreachable)" \
@@ -549,7 +561,7 @@ fi
 crew_detail cli-stopped
 t "crew status <box>: a stopped box still exits 0" 0 "$CL_RC"
 if grep -q '(unreachable)' "$CL_TMP/crew-out" &&
-   ! grep -q 'no duty log yet' "$CL_TMP/crew-out"; then
+   ! grep -q 'no ticks yet' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a stopped box still reads (unreachable)"
 else
   fail "crew status <box>: a stopped box still reads (unreachable)" \
@@ -560,7 +572,7 @@ fi
 crew_detail cli-hired
 t "crew status <box>: a ticking box exits 0" 0 "$CL_RC"
 if grep -q 'stub log for cli-hired' "$CL_TMP/crew-out" &&
-   ! grep -qE 'unreachable|no duty log yet|not hired' "$CL_TMP/crew-out"; then
+   ! grep -qE 'unreachable|no ticks yet|not hired' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a box with a duty log still shows its log"
 else
   fail "crew status <box>: a box with a duty log still shows its log" \
@@ -585,7 +597,7 @@ fi
 crew_detail cli-nothired
 t "crew status <box>: an un-hired box exits 0" 0 "$CL_RC"
 if grep -q 'not hired — no engine installed' "$CL_TMP/crew-out" &&
-   ! grep -q 'no duty log yet' "$CL_TMP/crew-out"; then
+   ! grep -q 'no ticks yet' "$CL_TMP/crew-out"; then
   ok "crew status <box>: an un-hired box reports the absent engine, not a missing log"
 else
   fail "crew status <box>: an un-hired box reports the absent engine, not a missing log" \
@@ -604,20 +616,33 @@ else
        "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
 fi
 
-# --- the two readers must not contradict each other ------------------------
+# --- the two readers say the same words ------------------------------------
 # #221 and #224 are the same distinction one call site apart, and the issue
-# makes their agreement an explicit constraint. One box, both readers: the
-# table calls cli-neverticked `no ticks yet` (the newest LINE is absent) and
-# the detail view calls it `no duty log yet` (the FILE is absent). Different
-# sentences because they report different facts at different widths — what
-# must never differ is the VERDICT, and neither may say `unreachable`.
+# makes their agreement an explicit constraint — sharpened by triage on
+# 2026-08-02 from "must not contradict" to "must not need a glossary": one
+# box, both readers, the SAME phrase. The table prints `no ticks yet` in NOTE
+# (#224) and the detail view now prints it too; the floor's `waiting` (#265)
+# is the third reader of the same state.
+#
+# Asserted as one string checked against both outputs rather than two literals
+# that happen to match today, so a rename of either reader alone goes red here
+# rather than quietly minting the third phrase this constraint exists to
+# prevent.
+CL_TICKPHRASE='no ticks yet'
 crew_cmd status
-if grep -qE '^cli-neverticked .*no ticks yet' "$CL_TMP/crew-out" &&
+if grep -qE "^cli-neverticked .*$CL_TICKPHRASE" "$CL_TMP/crew-out" &&
    ! grep -qE '^cli-neverticked .*unreachable' "$CL_TMP/crew-out"; then
-  ok "crew status: table and detail view agree that a never-ticked box is reachable"
+  ok "crew status: the table calls a never-ticked box '$CL_TICKPHRASE', not unreachable"
 else
-  fail "crew status: table and detail view agree that a never-ticked box is reachable" \
+  fail "crew status: the table calls a never-ticked box '$CL_TICKPHRASE', not unreachable" \
        "$(grep '^cli-neverticked' "$CL_TMP/crew-out")"
+fi
+crew_detail cli-neverticked
+if grep -q "$CL_TICKPHRASE" "$CL_TMP/crew-out"; then
+  ok "crew status: table and detail view name a never-ticked box in the same words"
+else
+  fail "crew status: table and detail view name a never-ticked box in the same words" \
+       "detail view of cli-neverticked does not say '$CL_TICKPHRASE': $(cat "$CL_TMP/crew-out")"
 fi
 
 # --- the guard, pinned where it lives --------------------------------------

@@ -1974,6 +1974,20 @@ cmd_status() {
       # telling them apart would mean deciding a meaning box-side, where no
       # offline test can reach it (rig_report's split, same rule).
       #
+      # `no ticks yet` is NOT this line's own phrase: it is what the table
+      # prints in NOTE for this same box a few hundred lines down (#224), and
+      # the floor renders the same fact as `waiting` (#265). Three readers of
+      # one state, so a third phrase here would mean an operator needs a
+      # glossary to see that two views agree — which is the disagreement #265
+      # was raised to end. Amended into #221's spec by triage on 2026-08-02.
+      #
+      # No hire stamp, deliberately. The only stamp in reach is $engine, which
+      # is the engine VERSION (hired_at() reads ~/duty/VERSION line 1) and is
+      # already on screen two rows up as `engine:` — so "hired at crew@0.1.0"
+      # would be both redundant and read as a time it is not. The real
+      # wall-clock stamp is that file's line 2, which `crew upgrade` rewrites
+      # and engine_report does not carry.
+      #
       # The wait is quoted from what `crew hire` told this operator minutes
       # ago (shared/install.sh's "first tick at the next 5-minute boundary"):
       # the answer to "did my hire work?" should read as the hire's own
@@ -1982,7 +1996,7 @@ cmd_status() {
       # this view cannot see without a round trip it is not allowed to make
       # (#221's own budget), and the table — `crew status` with no argument —
       # is the reader that reports `disarmed` from counts it already has.
-      echo "  no duty log yet — hired at $engine; first tick at the next 5-minute boundary"
+      echo "  no ticks yet — ~/duty/duty.log is written by the first tick, at the next 5-minute boundary"
     else
       printf '%s\n' "$log"
     fi
