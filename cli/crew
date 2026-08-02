@@ -1158,22 +1158,50 @@ rig_report() {
 # act. Hiring is crew's irreversible act. Whitespace is normalised first so a
 # hand-edited marker using tabs is read the same way rather than silently
 # failing to match.
+#
+# BOTH halves of #220's pinned rule are required — a non-empty `role=` AND
+# `tenant=yes`. rig writes the two in one line, so a marker carrying one and
+# not the other is a box it was interrupted partway through converging, and
+# mid-convergence is exactly what this refuses.
 convergence_of() {
-  local report="$1" marker padded
+  local report="$1" marker
   printf '%s\n' "$report" | grep -qx 'probe=ok' || { printf 'unknown\n'; return 0; }
   marker="$(report_field marker "$report")"
   [ -n "$marker" ] || { printf 'incomplete\n'; return 0; }
-  padded=" ${marker//[[:space:]]/ } "
+  case "$(marker_fault "$marker")" in
+    "") printf 'converged\n' ;;
+    *)  printf 'incomplete\n' ;;
+  esac
+}
+
+# marker_fault MARKER — empty when the marker line names a converged agent
+# tenant, otherwise the one clause saying which half of it is wrong.
+#
+# ONE reader, because the verdict and the reason must never disagree about a
+# marker: a row reading INCOMPLETE beside a detail naming nothing missing is a
+# refusal an operator cannot act on, and two copies of a field-anchored parse
+# is how that starts.
+marker_fault() {
+  local padded role
+  padded=" ${1//[[:space:]]/ } "
   case "$padded" in
-    *" tenant=yes "*) printf 'converged\n' ;;
-    *) printf 'incomplete\n' ;;
+    *" role="*) role="${padded##* role=}"; role="${role%% *}" ;;
+    *) role="" ;;
+  esac
+  if [ -z "$role" ]; then
+    printf '/etc/rig/role carries no role= field (%s) — the marker is half-written\n' "$1"
+    return 0
+  fi
+  case "$padded" in
+    *" tenant=yes "*) : ;;
+    *) printf '/etc/rig/role names a machine role (%s), not an agent tenant\n' "$1" ;;
   esac
 }
 
 # convergence_detail REPORT — what is missing, in one clause, for the operator
-# who has to fix it. Three causes, and they take three different actions, so
-# collapsing them into "not converged" would throw away the only part of this
-# that is actionable.
+# who has to fix it. The causes take different actions — reach the box, run the
+# bootstrap, look at a marker that is there and wrong — so collapsing them into
+# "not converged" would throw away the only part of this that is actionable.
 convergence_detail() {
   local report="$1" marker
   printf '%s\n' "$report" | grep -qx 'probe=ok' ||
@@ -1182,7 +1210,7 @@ convergence_detail() {
   if [ -z "$marker" ]; then
     printf 'no /etc/rig/role marker: rig bootstrap never converged this box, so its vendor CLI was never installed\n'
   else
-    printf '/etc/rig/role names a machine role (%s), not an agent tenant\n' "$marker"
+    marker_fault "$marker"
   fi
 }
 

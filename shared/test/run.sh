@@ -3019,9 +3019,19 @@ cv_extract() { awk -v f="$2" '
   p { print; if ($0 ~ /^\}$/) exit }
 ' "$1"; }
 eval "$(cv_extract "$ROOT/cli/crew" report_field)"
+eval "$(cv_extract "$ROOT/cli/crew" marker_fault)"
 eval "$(cv_extract "$ROOT/cli/crew" convergence_of)"
 eval "$(cv_extract "$ROOT/cli/crew" convergence_detail)"
 eval "$(cv_extract "$ROOT/cli/crew" convergence_recovery)"
+# An extraction that came back empty leaves every assertion below testing a
+# function that does not exist — and `t` between two empty strings passes. The
+# suite would report the gate as covered while executing none of it, which is
+# the same shape of silence the manifest parse sat in. Say so once, here.
+cv_lifted=""
+for cv_f in report_field marker_fault convergence_of convergence_detail convergence_recovery; do
+  declare -F "$cv_f" >/dev/null || cv_lifted="$cv_lifted $cv_f"
+done
+t convergence-functions-lifted "" "$cv_lifted"
 
 # A box that answered NOTHING is `unknown`, and unknown is not converged. This
 # is rule 5 of #220's spec and the whole safety property: the defect closed is a
@@ -3062,6 +3072,35 @@ t convergence-machine-marker-is-incomplete incomplete \
   "$(convergence_of "$(printf 'probe=ok\nmarker=role=workload-server root-door=open host=no join=yes join-by=rig\n')")"
 t convergence-host-marker-is-incomplete incomplete \
   "$(convergence_of "$(printf 'probe=ok\nmarker=role=staging-server root-door=closed host=yes join=yes join-by=rig\n')")"
+
+# HALF A MARKER is not a converged box. #220 pins the verdict on both fields —
+# "parses to a non-empty `role=`, and carries `tenant=yes`" — and rig writes the
+# two in one line, so a marker with one and not the other is a box interrupted
+# partway through converging. Reading it as converged would hire on the strength
+# of the half that happened to land.
+t convergence-refuses-marker-without-a-role incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=tenant=yes host=no\n')")"
+t convergence-refuses-empty-role-field incomplete \
+  "$(convergence_of "$(printf 'probe=ok\nmarker=role= tenant=yes host=no\n')")"
+case "$(convergence_detail "$(printf 'probe=ok\nmarker=tenant=yes host=no\n')")" in
+  *"no role="*) r1=named ;; *) r1=VAGUE ;;
+esac
+t convergence-detail-names-the-half-written-marker named "$r1"
+
+# The verdict and the reason are ONE reader, so they cannot drift apart. A row
+# reading INCOMPLETE beside a detail saying nothing is missing is a refusal an
+# operator cannot act on, and that is what two copies of this parse decay into.
+cv_disagree=""
+for cv_m in 'role=claude-box tenant=yes host=no' 'role=workload-server root-door=open host=no' \
+            'role= tenant=yes host=no' 'tenant=yes' 'role=claude-box tenant=yesish'; do
+  cv_v="$(convergence_of "$(printf 'probe=ok\nmarker=%s\n' "$cv_m")")"
+  cv_d="$(convergence_detail "$(printf 'probe=ok\nmarker=%s\n' "$cv_m")")"
+  case "$cv_v:$cv_d" in
+    converged:*|incomplete:?*) : ;;
+    *) cv_disagree="$cv_disagree [$cv_m -> $cv_v / ${cv_d:-<silence>}]" ;;
+  esac
+done
+t convergence-verdict-and-detail-agree "" "$cv_disagree"
 
 # MUST FAIL — the field-anchoring. rig#77 is the scar: an unanchored pattern let
 # `root-door=closedish` resolve as `closed` and pass the one gate authorizing an
