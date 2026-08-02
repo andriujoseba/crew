@@ -2999,6 +2999,9 @@ function buildGrok(t,st){
   function tendon(x0,y0,x1,y1,w){
     pl(g,x0,y0,x1,y1,"#0a0f18",w||3.4);
     pl(g,x0,y0,x1,y1,offl?"#333c48":"#7e94b2",1.1);}
+  // ONE key, upper-left: mirrored speculars are never mirrored in intensity —
+  // the left member takes the lamp, the right sits in fill
+  function kf(s){return s<0?1:0.32;}
 
   // head reference — the mane and the mask both hang off this
   var hby=166+(offl?13:0)+breath*0.5, hcx=cx+(offl?3:0);
@@ -3040,14 +3043,17 @@ function buildGrok(t,st){
        rakes to the ankle. The tendons stay strung outside the meat. */
     limbSeg(g,hx,hy0,kx,ky,13,9,lT,lM);
     plate(g,[[hx+sgn*5,hy0+2],[hx+sgn*14,hy0+8],[kx+sgn*6,ky-14],[kx-sgn*3,ky-10]],lT,lM,ed);
-    pl(g,hx+sgn*6,hy0+4,kx+sgn*4,ky-13,"rgba(150,172,204,"+(offl?0.08:0.2)+")",1);
+    pl(g,hx+sgn*6,hy0+4,kx+sgn*4,ky-13,"rgba(150,172,204,"+((offl?0.08:0.22)*kf(sgn))+")",1);
     tendon(hx-sgn*7,hy0+8,kx-sgn*5,ky-6);
     // shank — calf swell at the top, raking thin toward the high ankle
     limbSeg(g,kx,ky,ax,ay,8,4.8,lT,lM);
     plate(g,[[kx-sgn*8,ky+4],[kx+sgn*2,ky+8],[ax+sgn*1,ay-22],[ax-sgn*6,ay-24]],lM,lB,null);
     pl(g,kx-sgn*3,ky+8,ax-sgn*2,ay-4,rc,1);
     // the shin's leading edge catches the lamp all the way down
-    pl(g,kx+sgn*3,ky+8,ax+sgn*2,ay-6,"rgba(150,172,204,"+(offl?0.08:0.22)+")",1);
+    pl(g,kx+sgn*3,ky+8,ax+sgn*2,ay-6,"rgba(150,172,204,"+((offl?0.08:0.24)*kf(sgn))+")",1);
+    // the key edge: only the LEFT leg's outer contour carries the full lamp
+    if(sgn<0){pl(g,hx-12,hy0+6,kx-8,ky-8,"rgba(186,205,238,"+(offl?0.12:0.3)+")",1.4);
+      pl(g,kx-8,ky+8,ax-4.5,ay-8,"rgba(186,205,238,"+(offl?0.14:0.34)+")",1.4);}
     // metatarsal — drops forward onto the toes
     limbSeg(g,ax,ay,fx,fy,5,7,lM,lB);
     joint(ax,ay,5);
@@ -3055,15 +3061,23 @@ function buildGrok(t,st){
     plate(g,[[ax-sgn*2,ay+3],[ax-sgn*12,ay+10],[ax-sgn*3,ay+15]],lM,lB,null);
     // knee: joint first, pointed guard bolted over it, spike leading
     joint(kx,ky,7);
-    plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],offl?"#252d3d":"#3a4a66",lM,ed);
+    plate(g,[[kx-sgn*4,ky-15],[kx+sgn*12,ky-8],[kx+sgn*16,ky+4],[kx+sgn*7,ky+13],[kx-sgn*9,ky+9]],
+      offl?(sgn<0?"#252d3d":"#1f2735"):(sgn<0?"#3a4a66":"#2f3d55"),lM,ed);
     rivet(g,kx+sgn*5,ky-1,eH);
     // the guards lead every contact: paint gone from the spike lips
-    pl(g,kx+sgn*12,ky-7,kx+sgn*15,ky+2,"rgba(190,208,232,"+(offl?0.12:0.28)+")",1.2);
-    // clawed foot: three toes, PLANTED — the deck contact the old unit never had
-    plate(g,[[fx-13,fy],[fx+13,fy],[fx+15,fy+8],[fx-15,fy+8]],lT,lM,ed);
+    pl(g,kx+sgn*12,ky-7,kx+sgn*15,ky+2,"rgba(190,208,232,"+((offl?0.12:0.3)*kf(sgn))+")",1.2);
+    /* clawed foot, with DEPTH: a heel block aft, an instep deck whose TOP
+       face takes the lamp, and a toe bar all three claws root into — a foot
+       that occupies floor, not a comb balanced on a line */
+    plate(g,[[fx-sgn*10,fy-2],[fx-sgn*20,fy+1],[fx-sgn*19,fy+9],[fx-sgn*9,fy+8]],lM,lB,ed);
+    plate(g,[[fx-14,fy+1],[fx+14,fy+1],[fx+15,fy+7],[fx-15,fy+7]],lT,lM,ed);
+    plate(g,[[fx-10,fy-3],[fx+9,fy-3],[fx+13,fy+2],[fx-14,fy+2]],
+      offl?(sgn<0?"#2b3446":"#212939"):(sgn<0?"#46587a":"#33415c"),lT,ed);
+    plate(g,[[fx-15,fy+6],[fx+15,fy+6],[fx+15,fy+9.5],[fx-15,fy+9.5]],lM,lB,null);
     [-1,0,1].forEach(function(ti){var tx2=fx+ti*9;
-      plate(g,[[tx2-4,fy+7],[tx2+4,fy+7],[tx2+2,560],[tx2-2,560]],lT,lB,null);
-      // bare metal at the claw tip — the paint went first where it meets the deck
+      plate(g,[[tx2-4,fy+8],[tx2+4,fy+8],[tx2+2,560],[tx2-2,560]],lT,lB,null);
+      // the key catches each claw's LEFT face; bare metal where it meets the deck
+      pl(g,tx2-3.4,fy+9,tx2-2,558.5,"rgba(186,205,238,"+((offl?0.12:0.34)*kf(sgn))+")",1.2);
       g.fillStyle="rgba(190,208,232,"+(offl?0.18:0.32)+")";g.fillRect(tx2-2,557.4,4,2.6);});
   }
   leg(-1);leg(1);
@@ -3096,7 +3110,7 @@ function buildGrok(t,st){
     pl(g,px-1,303+breath,px-1,340+d*0.6,offl?"#333c48":"#7e94b2",1.2);});
   [-1,1].forEach(function(s){for(var rb2=0;rb2<3;rb2++){var ry=302+rb2*12+breath;
     plate(g,[[cx+s*12,ry],[cx+s*(29-rb2*3),ry+3],[cx+s*(28-rb2*3),ry+10],[cx+s*11,ry+8]],sT,sM,ed);
-    pl(g,cx+s*12,ry+1,cx+s*(28-rb2*3),ry+4,"rgba(150,172,204,"+(offl?0.08:0.2)+")",1);}});
+    pl(g,cx+s*12,ry+1,cx+s*(28-rb2*3),ry+4,"rgba(150,172,204,"+((offl?0.08:0.22)*kf(s))+")",1);}});
   /* the heat-tile patch: the middle RIGHT rib lost its plate over the ocean
      somewhere, and what went on instead was a hand of orbital heat tiles —
      matte black squares in a grid nothing else on the fleet has, edges
@@ -3119,18 +3133,14 @@ function buildGrok(t,st){
   [-1,1].forEach(function(s){
     plate(g,[[cx+s*8,258+breath],[cx+s*46,254+breath],[cx+s*50,282+breath],[cx+s*40,294+breath],[cx+s*8,296+breath]],"#2b3648","#161e2b",ed);
     // top edge catches the lamp; the underside throws onto the ribs
-    pl(g,cx+s*10,259.5+breath,cx+s*44,255.5+breath,"rgba(168,192,226,"+(offl?0.08:0.22)+")",1.2);
+    pl(g,cx+s*10,259.5+breath,cx+s*44,255.5+breath,"rgba(168,192,226,"+((offl?0.08:0.24)*kf(s))+")",1.2);
     rivet(g,cx+s*42,258+breath,eH);rivet(g,cx+s*44,286+breath,eH);});
   g.fillStyle="rgba(0,0,0,0.3)";g.fillRect(cx-40,294+breath,80,4);
   rivet(g,cx-52,248+breath,eH);rivet(g,cx+52,248+breath,eH);
   /* loop 13, the material pass: one hard specular along the clavicle bevel —
      the surface most squarely facing the lamp — and the paint gone from the
      lips that lead. Nicks are constants: a nick is a place. */
-  if(!offl){g.save();g.globalAlpha=0.5;
-    var csp=g.createLinearGradient(0,232+breath,0,244+breath);
-    csp.addColorStop(0,"rgba(226,238,255,0.7)");csp.addColorStop(1,"rgba(226,238,255,0)");
-    g.fillStyle=csp;poly(g,[[cx-30,233+breath],[cx+30,233+breath],[cx+26,240+breath],[cx-26,240+breath]]);g.fill();
-    g.restore();}
+  if(!offl)plate(g,[[cx-30,233+breath],[cx+30,233+breath],[cx+26,240+breath],[cx-26,240+breath]],"#465878","#2e3a4e",null);
   g.strokeStyle="rgba(190,208,232,"+(offl?0.12:0.3)+")";g.lineWidth=1.5;g.beginPath();
   [[-34,-2],[-6,-5],[22,-3]].forEach(function(nk){g.moveTo(cx+nk[0],230.6+breath+nk[1]*0.2);g.lineTo(cx+nk[0]+2.6,233+breath+nk[1]*0.2);});
   g.stroke();
@@ -3171,7 +3181,7 @@ function buildGrok(t,st){
      a posture and becomes a build. */
   [-1,1].forEach(function(s){
     plate(g,[[cx+s*10,226+breath],[cx+s*36,232+breath],[cx+s*46,242+breath],[cx+s*12,240+breath]],"#2b3648","#161e2b",ed);
-    pl(g,cx+s*11,227.5+breath,cx+s*34,233+breath,"rgba(168,192,226,"+(offl?0.08:0.2)+")",1.1);});
+    pl(g,cx+s*11,227.5+breath,cx+s*34,233+breath,"rgba(168,192,226,"+((offl?0.08:0.22)*kf(s))+")",1.1);});
   plate(g,[[cx-26,232+breath],[cx+26,232+breath],[cx+19,244+breath],[cx-19,244+breath]],sT,sM,ed);
   plate(g,[[cx-11,216+breath],[cx+11,216+breath],[cx+9,234+breath],[cx-9,234+breath]],sM,sB,null);
   // the neck is two corded tendons under load — short, forward-set, sunk
@@ -3197,8 +3207,11 @@ function buildGrok(t,st){
     // pauldron: a swept blade riding HIGH — the raised shoulder is the hunch,
     // and the hunch is the stalk. Bolted over the socket, spike trailing out.
     plate(g,P([[-16,-14],[4,-26],[26,-16],[37,2],[24,11],[7,5],[-10,7]]),sT,sM,ed);
-    g.fillStyle="rgba(168,192,226,"+(offl?0.07:0.18)+")";
-    poly(g,P([[-16,-14],[4,-26],[26,-16],[19,-11],[-12,-9]]));g.fill();
+    // crown facet: the blade's top face as an OPAQUE palette step (never an
+    // alpha sheet) — the left crown takes the key, the right sits a step down
+    plate(g,P([[-16,-14],[4,-26],[26,-16],[19,-11],[-12,-9]]),
+      offl?(sgn<0?"#2b3446":"#222a3a"):(sgn<0?"#4a5c7e":"#33415a"),
+      offl?"#1a212e":(sgn<0?"#2c3850":"#232d41"),ed);
     pl(g,sx+sgn*21,sy-14,sx+sgn*27,sy+1,rc,1.2);
     rivet(g,sx-sgn*7,sy-5,eH);rivet(g,sx+sgn*14,sy-2,eH);
     if(sgn>0){ // a bite out of the right blade's trailing spike — silhouette
@@ -3338,7 +3351,7 @@ function buildGrok(t,st){
   [-1,1].forEach(function(s){
     plate(g,[[hcx+s*19,hby+28],[hcx+s*12,hby+42],[hcx+s*15,hby+58],[hcx+s*23,hby+48]],sT,sB,ed);
     plate(g,[[hcx+s*23,hby+48],[hcx+s*28,hby+56],[hcx+s*16,hby+58]],sT,sB,null);
-    pl(g,hcx+s*19,hby+29,hcx+s*13,hby+42,"rgba(150,172,204,"+(offl?0.1:0.24)+")",1);
+    pl(g,hcx+s*19,hby+29,hcx+s*13,hby+42,"rgba(150,172,204,"+((offl?0.1:0.26)*kf(s))+")",1);
     rivet(g,hcx+s*17,hby+38,eH);});
   // the chin: wide, vented, and it has been HIT — a chip out of the left
   // lip, cut to transparency, torn edge bright; weld stitches where the jaw
@@ -3388,14 +3401,8 @@ function buildGrok(t,st){
       if(ci===0){[RB,RE].forEach(function(c2){c2.fillStyle=pu(offl?0.2:0.75);c2.fillRect(tx-2.7,ty+2.4,5.4,1.6);});}
     }});
 
-  // speculars: only on what faces the lamp — the pauldron crowns, the brow
-  [-1,1].forEach(function(sg8){var px4=cx+sg8*47;
-    g.save();g.globalAlpha=offl?0.14:0.5;
-    var spg=g.createLinearGradient(0,226+breath,0,242+breath);
-    spg.addColorStop(0,"rgba(226,238,255,0.75)");spg.addColorStop(1,"rgba(226,238,255,0)");
-    g.fillStyle=spg;
-    poly(g,[[px4-sg8*14,228+breath],[px4+sg8*24,224+breath],[px4+sg8*26,232+breath],[px4-sg8*12,236+breath]]);g.fill();
-    g.restore();});
+  // crown speculars live IN the pauldron facets (opaque, in arm()) — the only
+  // free lamp note left up here is the brow band
   g.fillStyle="rgba(196,214,244,"+(offl?0.08:0.2)+")";
   poly(g,[[hcx-14,hby+16],[hcx+14,hby+16],[hcx+12,hby+19],[hcx-12,hby+19]]);g.fill();
 
@@ -3403,6 +3410,19 @@ function buildGrok(t,st){
   cavity(g,cx-24,376+d*0.55,48,20,0.32);
   cavity(g,cx-20,243+breath,40,13,0.28);
   buildRim(offl?[86,84,94]:[176,124,255]);      // grok: violet on the key side
+  /* the shared rim survives only on trailing (right) edges — the declared key
+     is upper-LEFT and vendor-coloured, so the key-side rim is drawn by hand
+     down the left contours: pauldron crest, outer thigh, shank, metatarsal */
+  (function(){var kc=puh(offl?0.28:0.8);
+    var sx=cx-44, sy=248+breath;
+    pl(RR,sx-4,sy-26,sx-26,sy-16,kc,2);
+    pl(RR,sx-26,sy-16,sx-36,sy+1,kc,1.6);
+    var hy0=362+d*0.55+breath*0.3, kx=cx-(offl?44:38), ky=447+d*0.5,
+        ax=cx-(offl?31:26), ay=514+d*0.2, fx=cx-34;
+    pl(RR,cx-33,hy0+4,kx-9,ky-6,kc,2);
+    pl(RR,kx-8,ky+4,ax-5,ay-6,kc,1.8);
+    pl(RR,ax-5,ay+2,fx-7,544,kc,1.6);
+    pl(RR,fx-14,547,fx-15,553,kc,1.4);})();
   var hh=handR||{x:cx+45,y:394+d*0.8};
   // two clawed feet, planted flat on the deck — grounded, for the first time
   return {hand:hh,coreY:275+breath,hy:hby+8,offl:offl,work:work,
@@ -5945,31 +5965,43 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
       function mx2(u){return ox+(u-cx0)*sc2;} function my2(u){return oy+(u-cy0)*sc2;}
       c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;c.globalCompositeOperation="source-over";c.filter="none";
       c.imageSmoothingEnabled=true;c.imageSmoothingQuality="high";
-      // the stage: wall to the foot line, floor below it
-      var fyd=my2(fy);
-      var wg=c.createLinearGradient(0,0,0,fyd);
+      /* the stage: the wall/floor junction sits BEHIND the unit, not under
+         its toes — the floor plane runs on past the feet in both directions,
+         so the figure stands IN the room, never on a ledge lip */
+      var fyd=my2(fy), jy=fyd-Math.min(54,(H2-fyd)*0.5);
+      var wg=c.createLinearGradient(0,0,0,jy);
       wg.addColorStop(0,"#0d1119");wg.addColorStop(1,"#070a10");
-      c.fillStyle=wg;c.fillRect(0,0,W2,fyd);
-      var pool=c.createRadialGradient(W2/2,H2*0.38,H2*0.06,W2/2,H2*0.38,H2*0.52);
+      c.fillStyle=wg;c.fillRect(0,0,W2,jy);
+      var pool=c.createRadialGradient(W2*0.44,H2*0.36,H2*0.06,W2*0.44,H2*0.36,H2*0.52);
       pool.addColorStop(0,"rgba(126,146,176,0.10)");pool.addColorStop(1,"rgba(126,146,176,0)");
-      c.fillStyle=pool;c.fillRect(0,0,W2,fyd);
-      var fg=c.createLinearGradient(0,fyd,0,H2);
+      c.fillStyle=pool;c.fillRect(0,0,W2,jy);
+      var fg=c.createLinearGradient(0,jy,0,H2);
       fg.addColorStop(0,"#10151f");fg.addColorStop(1,"#05070c");
-      c.fillStyle=fg;c.fillRect(0,fyd,W2,H2-fyd);
-      /* the floor must read as a PLANE, not a seam: a grey pool of lamp
-         spill spreads back from the contact line (clipped to the floor),
-         and two faint transverse joints recede under the figure. Still
-         mute — grey light on grey deck, nothing the figure has to answer. */
-      c.save();c.beginPath();c.rect(0,fyd,W2,H2-fyd);c.clip();
-      var fpool=c.createRadialGradient(W2/2,fyd+2,2,W2/2,fyd+2,W2*0.5);
+      c.fillStyle=fg;c.fillRect(0,jy,W2,H2-jy);
+      /* the floor must read as a PLANE under ONE lamp: the grey spill lands
+         up-LEFT of the unit (where the key is), two faint transverse joints
+         recede, and the figure answers the spill with a cast shadow thrown
+         down-RIGHT. Still mute — grey light on grey deck. */
+      c.save();c.beginPath();c.rect(0,jy,W2,H2-jy);c.clip();
+      var plx=W2*0.33, ply=jy+4;
+      var fpool=c.createRadialGradient(plx,ply,2,plx,ply,W2*0.5);
       fpool.addColorStop(0,"rgba(150,170,198,0.20)");fpool.addColorStop(0.55,"rgba(150,170,198,0.08)");fpool.addColorStop(1,"rgba(150,170,198,0)");
-      c.translate(W2/2,fyd+2);c.scale(1,0.34);c.translate(-W2/2,-(fyd+2));
-      c.fillStyle=fpool;c.beginPath();c.arc(W2/2,fyd+2,W2*0.5,0,7);c.fill();
+      c.translate(plx,ply);c.scale(1,0.34);c.translate(-plx,-ply);
+      c.fillStyle=fpool;c.beginPath();c.arc(plx,ply,W2*0.5,0,7);c.fill();
       c.restore();
-      c.fillStyle="rgba(140,162,192,0.12)";c.fillRect(0,fyd,W2,Math.max(1,sc2*0.8));
+      c.fillStyle="rgba(140,162,192,0.12)";c.fillRect(0,jy,W2,Math.max(1,sc2*0.8));
       [0.3,0.66].forEach(function(fr){
         c.fillStyle="rgba(140,162,192,"+(0.055-fr*0.03)+")";
-        c.fillRect(0,fyd+(H2-fyd)*fr,W2,1);});
+        c.fillRect(0,jy+(H2-jy)*fr,W2,1);});
+      if((info.feet||[]).length){
+        var fmn=1e9,fmx=-1e9;info.feet.forEach(function(f2){var xx=mx2(f2.x);if(xx<fmn)fmn=xx;if(xx>fmx)fmx=xx;});
+        var scx=(fmn+fmx)/2, shw=(fmx-fmn)/2+info.feet[0].w*sc2;
+        c.save();c.beginPath();c.rect(0,jy,W2,H2-jy);c.clip();
+        c.translate(scx,fyd+3);c.rotate(0.3);c.scale(1,0.3);
+        var csg=c.createRadialGradient(shw*0.9,0,2,shw*0.9,0,shw*2.6);
+        csg.addColorStop(0,"rgba(0,0,0,0.4)");csg.addColorStop(0.55,"rgba(0,0,0,0.18)");csg.addColorStop(1,"rgba(0,0,0,0)");
+        c.fillStyle=csg;c.beginPath();c.arc(shw*0.9,0,shw*2.6,0,7);c.fill();
+        c.restore();}
       (info.feet||[]).forEach(function(f2){
         var fx2=mx2(f2.x),fw2=f2.w*sc2;
         var sg2=c.createRadialGradient(fx2,fyd+2,1,fx2,fyd+2,fw2*1.35);
