@@ -16,10 +16,12 @@ genuinely crew's.
 1. **Fork and branch.** Contributors work from forks; upstream branches are
    for maintainers. crew's branch convention is `<type>/<issue>-<slug>`.
    Title the PR conventionally (`feat:`, `fix:`, `docs:`, `ci:`, `chore:`).
-2. **The review panel** (`.github/labels.conf`'s `panel=` line):
+2. **The review panel** (`.github/labels.conf`): an author-specific
+   `panel[<login>]=` line governs when present; otherwise `panel=` governs.
+   The default panel is
    `claude-bot-andresmgsl`, `codex-bot-andresmgsl`, `grok-bot-andresmgsl`,
-   `kimi-bot-andresmgsl` — the required verdicts for a PR are the panel minus
-   its author. The maintainer (`danmt`) takes the last word and merges.
+   `kimi-bot-andresmgsl`. The required verdicts are the resolved panel minus
+   the author. The maintainer (`danmt`) takes the last word and merges.
 3. **Checks must be green.** crew runs two CI workflows:
    - `shared-ci.yml` — crew's engine suite (`shellcheck`, `shared/test/run.sh`,
      the fleet-floor collector + page tests, the built-page freshness check).

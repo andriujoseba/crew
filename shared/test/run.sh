@@ -73,25 +73,47 @@ t panel-api-author-line '["author-a","author-b","builder-one"]' \
   "$(panel_for_repo owner/api "$TMP/not-cloned" builder-one)"
 unset -f gh
 
+# A stale/local config with no panel row retains the old contents-API fallback.
+PANEL_EMPTY_REPO="$TMP/panel-empty-repo"
+git init -q "$PANEL_EMPTY_REPO"
+mkdir -p "$PANEL_EMPTY_REPO/.github"
+printf '%s\n' 'scope:test|C5DEF5|fixture' >"$PANEL_EMPTY_REPO/.github/labels.conf"
+git -C "$PANEL_EMPTY_REPO" add .github/labels.conf
+git -C "$PANEL_EMPTY_REPO" -c user.name=test -c user.email=test@example.invalid commit -qm fixture
+git -C "$PANEL_EMPTY_REPO" update-ref refs/remotes/origin/main HEAD
+# shellcheck disable=SC2317  # called indirectly by panel_for_repo
+gh() { printf '%s\n' "$PANEL_API_CONF"; }
+t panel-local-without-panel-uses-api '["full-a","full-b","builder-one"]' \
+  "$(panel_for_repo owner/stale "$PANEL_EMPTY_REPO" unknown-builder)"
+unset -f gh
+
 # With neither repository config path available, the fleet bench is unchanged.
 # shellcheck disable=SC2034  # consumed dynamically by sourced panel_for_repo
+PANEL_SAVED_BENCH="${FLEET_BENCH-}"
+PANEL_BENCH_WAS_SET="${FLEET_BENCH+x}"
 FLEET_BENCH='bench-a bench-b'
 # shellcheck disable=SC2317  # called indirectly by panel_for_repo
 gh() { return 1; }
 t panel-bench-fallback '["bench-a","bench-b"]' \
   "$(panel_for_repo owner/missing "$TMP/not-cloned" builder-one)"
 unset -f gh
+if [ -n "$PANEL_BENCH_WAS_SET" ]; then
+  FLEET_BENCH="$PANEL_SAVED_BENCH"
+else
+  unset FLEET_BENCH
+fi
 
 # Both request and convergence paths must receive an author-aware roster.
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-builder-resolution author-aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
-if grep -Fq 'panel_for_repo "$SRa" "$WORK_DIR/${SRa//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
+if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-reviewer-resolution author-aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
-if grep -Fq 'cache_key="$SRa|$author"' "$SHARED/lib/duty-review.sh"; then r1=repo-author; else r1=REPO-ONLY; fi
-t panel-reviewer-cache-key repo-author "$r1"
+if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
+    ! grep -Fq 'repos/$SRa/pulls/$Na' "$SHARED/lib/duty-review.sh"; then r1=payload-author; else r1=EXTRA-FETCH; fi
+t panel-reviewer-reuses-payload-author payload-author "$r1"
 
 # List prompt slots omitted by engine render sites. Calls are folded to one
 # logical line first; advancing past only the opening "$(`` also finds nested

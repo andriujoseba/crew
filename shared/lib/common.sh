@@ -291,14 +291,18 @@ panel_for_repo() {
     conf="$(git -C "$dir" show 'origin/HEAD:.github/labels.conf' 2>/dev/null || true)"
     [ -n "$conf" ] || conf="$(git -C "$dir" show 'origin/main:.github/labels.conf' 2>/dev/null || true)"
   fi
-  if [ -z "$conf" ]; then
-    conf="$(gh api "repos/$repo/contents/.github/labels.conf" --jq .content 2>/dev/null \
-      | base64 -d 2>/dev/null || true)"
-  fi
   if [ -n "$author" ]; then
     line="$(printf '%s\n' "$conf" | awk -v key="panel[$author]=" 'index($0,key)==1 { print; exit }')"
   fi
   [ -n "$line" ] || line="$(printf '%s\n' "$conf" | grep -m1 '^panel=' || true)"
+  if [ -z "$line" ]; then
+    conf="$(gh api "repos/$repo/contents/.github/labels.conf" --jq .content 2>/dev/null \
+      | base64 -d 2>/dev/null || true)"
+    if [ -n "$author" ]; then
+      line="$(printf '%s\n' "$conf" | awk -v key="panel[$author]=" 'index($0,key)==1 { print; exit }')"
+    fi
+    [ -n "$line" ] || line="$(printf '%s\n' "$conf" | grep -m1 '^panel=' || true)"
+  fi
   if [ -n "$line" ]; then
     printf '%s' "${line#*=}" | tr ', ' '\n' | sed '/^$/d' | jq -R . | jq -cs .
   else
