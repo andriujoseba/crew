@@ -3249,11 +3249,11 @@ function buildGrok(t,st){
      rear tip ends up behind chest or arm plate, and an emissive whose
      housing is buried reads as a sprite floating on whatever hides it. The
      mane's purple lives in the front dreads, whose ferrules show. */
-  var REARC=[[-1,4,32,266],[-1,10,44,284],[-1,15,56,298],[1,4,32,266],[1,10,44,284],[1,15,56,298]];
+  var REARC=[[-1,13,36,268],[-1,18,48,286],[-1,23,60,300],[1,13,36,268],[1,18,48,286],[1,23,60,300]];
   stanceOn();
-  REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+8, rank=ci%3;
+  REARC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+10, rank=ci%3;
     var tx=cx+s*cb[2]+(offl?s*6:0), ty=cb[3]+(offl?30:sway*2.5*(ci%2?1:-1));
-    var mx=hcx+s*(cb[1]+(rank===2?32:24)), my=offl?hby+62:hby+40;
+    var mx=hcx+s*(cb[1]+(rank===2?34:26)), my=offl?hby+62:hby+38;
     g.strokeStyle="#07090f";g.lineWidth=5.8-rank*0.7;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
     // the key is upper-LEFT: left cables carry the light, right cables sit dark
     g.strokeStyle=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");g.lineWidth=s<0?1.5:1.1;g.beginPath();g.moveTo(ax,ay-1);g.quadraticCurveTo(mx,my-2,tx-s,ty-1);g.stroke();
@@ -3261,6 +3261,10 @@ function buildGrok(t,st){
     var fw3=6-rank*0.5;
     g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.fill();
     g.strokeStyle=ed;g.lineWidth=1;rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.stroke();
+    if(rank===1){ // ring band mid-length — the reference dreads carry metal rings
+      var qt=0.52, qx=(1-qt)*(1-qt)*ax+2*qt*(1-qt)*mx+qt*qt*tx, qy=(1-qt)*(1-qt)*ay+2*qt*(1-qt)*my+qt*qt*ty;
+      g.fillStyle="#232b38";g.fillRect(qx-3,qy-1.6,6,3.2);
+      pl(g,qx-3,qy-1.4,qx+3,qy-1.4,"rgba(150,172,204,"+(offl?0.1:0.3)+")",0.9);}
   });
   stanceOff();
 
@@ -3599,7 +3603,7 @@ function buildGrok(t,st){
   var hT=offl?"#1f2531":"#313e53", hM=offl?"#141a25":"#1b2432",
       hBr=offl?"#28303d":"#405169", hBrB=offl?"#1b222d":"#243043";
   // skull
-  plate(g,[[hcx-22,hby+24],[hcx-19,hby+8],[hcx-9,hby],[hcx+9,hby],[hcx+19,hby+8],[hcx+22,hby+24],[hcx+17,hby+46],[hcx+10,hby+56],[hcx-10,hby+56],[hcx-17,hby+46]],hT,hM,ed);
+  plate(g,[[hcx-24,hby+24],[hcx-21,hby+8],[hcx-10,hby],[hcx+10,hby],[hcx+21,hby+8],[hcx+24,hby+24],[hcx+18,hby+46],[hcx+10,hby+56],[hcx-10,hby+56],[hcx-18,hby+46]],hT,hM,ed);
   /* the slick-back: the crown is not armour, it is CABLE — a cap of combed
      rows swept front-to-back, socketed into an anchor band at the hairline.
      The silhouette gets small scallops where the rows crest. */
@@ -3616,11 +3620,25 @@ function buildGrok(t,st){
   // band across the crown, keyed to the lamp
   g.fillStyle="rgba(186,205,238,"+(offl?0.05:0.13)+")";
   poly(g,[[hcx-15,hby+8],[hcx-8,hby+2],[hcx+8,hby+2],[hcx+15,hby+8],[hcx+11,hby+10.5],[hcx-11,hby+10.5]]);g.fill();
+  /* the crown wears TEETH: short conical spikes rimming the dome, temple to
+     temple — the mask reference's silhouette is spiked, not smooth. Each cone
+     leans outward the way it sits on the curve; lit face left. */
+  [[-21,10],[-16,3],[-9,-1.5],[0,-3],[9,-1.5],[16,3],[21,10]].forEach(function(sk){
+    var sxk=hcx+sk[0], syk=hby+sk[1], dx4=sk[0]*0.16, ln4=6.5-Math.abs(sk[0])*0.06;
+    poly(g,[[sxk-2,syk+1.5],[sxk+2,syk+1.5],[sxk+dx4,syk-ln4]]);
+    g.fillStyle="#141a26";g.fill();
+    g.strokeStyle=ed;g.lineWidth=0.8;
+    poly(g,[[sxk-2,syk+1.5],[sxk+2,syk+1.5],[sxk+dx4,syk-ln4]]);g.stroke();
+    pl(g,sxk-1.6,syk+1,sxk+dx4-0.4,syk-ln4+1,"rgba(170,192,222,0.3)",0.8);});
+  // center ridge, and the trident carve at the forehead — the mark of the mask
+  pl(g,hcx,hby-1,hcx,hby+14,"#0a0f18",2.8);
+  pl(g,hcx-0.9,hby,hcx-0.9,hby+13,"rgba(170,192,222,"+(offl?0.1:0.26)+")",0.9);
+  pl(g,hcx,hby+9,hcx-5,hby+3,"#0a0f18",1.6);pl(g,hcx,hby+9,hcx+5,hby+3,"#0a0f18",1.6);
   // the anchor band the mane sockets into
   pl(g,hcx-14,hby+14,hcx+14,hby+14,rc,1.2);
   rivet(g,hcx-10,hby+12,eH);rivet(g,hcx+10,hby+12,eH);
   // brow ridge: one heavy chevron, overhanging
-  plate(g,[[hcx-18,hby+26],[hcx,hby+30],[hcx+18,hby+26],[hcx+14,hby+15],[hcx-14,hby+15]],hBr,hBrB,ed);
+  plate(g,[[hcx-19,hby+27],[hcx,hby+31],[hcx+19,hby+27],[hcx+15,hby+15],[hcx-15,hby+15]],hBr,hBrB,ed);
   pl(g,hcx,hby+15,hcx,hby+30,rc,1);
   /* the face scar: one gouge across the brow, aimed at the right optic and
      stopped by it — dark trench, bright torn lip, and the paint never came
@@ -3631,54 +3649,65 @@ function buildGrok(t,st){
   RB.fillStyle="#03060d";poly(RB,[[hcx-17,hby+27],[hcx+17,hby+27],[hcx+15,hby+41],[hcx-15,hby+41]]);RB.fill();
   var bs=RB.createLinearGradient(0,hby+26,0,hby+38);bs.addColorStop(0,"rgba(0,0,0,0.85)");bs.addColorStop(1,"rgba(0,0,0,0)");
   RB.fillStyle=bs;poly(RB,[[hcx-17,hby+26],[hcx+17,hby+26],[hcx+16,hby+36],[hcx-16,hby+36]]);RB.fill();
-  // bezels: the optics are instruments seated in the recess — but the seat is
-  // a shadow-line, not a goggle rim; only the lower lip catches anything
-  [-1,1].forEach(function(s){g.fillStyle="#02040a";g.fillRect(hcx+s*8.5-4.5,hby+30,9,6);
-    pl(g,hcx+s*8.5-4.5,hby+36,hcx+s*8.5+4.5,hby+36,"rgba(120,142,175,"+(offl?0.1:0.22)+")",0.9);});
   // nose bridge between the optics — mask geometry, not anatomy
   plate(g,[[hcx-3,hby+28],[hcx+3,hby+28],[hcx+2,hby+42],[hcx-2,hby+42]],sM,sB,null);
-  /* twin optics, deep-set. Idle they SCAN — brightness alternates side to
-     side, slow, the way a thing watches a room it already owns. Working they
-     both burn. Dead: two grey ticks, one holding a last ember. */
-  [-1,1].forEach(function(s){var ox=hcx+s*8.5, oy=hby+33;
-    [RB,RE].forEach(function(c2){ if(offl){c2.fillStyle="#20262e";c2.fillRect(ox-3.5,oy-1.5,7,3);
-        if(s<0){c2.fillStyle="rgba(120,44,18,0.4)";c2.fillRect(ox-1,oy-0.5,2,1.6);}return;}
-      // idle scan: both optics breathe TOGETHER — any per-side differential,
-      // however small, makes a still frame read as two different eyes
-      // instead of twin optics (the L2 verdict). Working keeps the phase
-      // stagger: motion sells it there, a still never has to.
-      var scn=0.62+0.2*Math.sin(t*2.1);
-      var br2=work?(0.8+0.2*Math.sin(t*9+s)):scn;
-      // hard point of light: bright core, tight falloff — a wide soft halo
-      // here fogs the whole mask once the stage blooms it
-      var eg=c2.createRadialGradient(ox,oy,0.5,ox,oy,6);
-      eg.addColorStop(0,puh(0.98*br2));eg.addColorStop(0.35,pu(0.72*br2));eg.addColorStop(1,pu(0));
-      c2.fillStyle=eg;c2.beginPath();c2.arc(ox,oy,6,0,7);c2.fill();
-      c2.fillStyle=puh(0.95*br2);c2.fillRect(ox-2.6,oy-1,5.2,2.2);});});
+  /* the GLARE: two canted wedge slits, swept up-and-out under the brow — the
+     mask reference's narrowed eyes, not a pair of round lamps. Sockets first:
+     dark wedges cut deeper than the recess. Hot at the inner corner, the slit
+     tapers as it climbs. Idle both breathe together; working both burn.
+     Dead: grey ticks, one ember. */
+  [-1,1].forEach(function(s){var oy=hby+33;
+    g.fillStyle="#01030a";
+    poly(g,[[hcx+s*3.5,oy+1],[hcx+s*16,oy-4],[hcx+s*17,oy+1],[hcx+s*4.5,oy+4.5]]);g.fill();
+    [RB,RE].forEach(function(c2){ if(offl){c2.fillStyle="#20262e";
+        poly(c2,[[hcx+s*5,oy+1.5],[hcx+s*14,oy-1.5],[hcx+s*14,oy+0.5],[hcx+s*5,oy+3]]);c2.fill();
+        if(s<0){c2.fillStyle="rgba(120,44,18,0.4)";c2.fillRect(hcx+s*7,oy+0.8,2.4,1.4);}return;}
+      var scn=0.66+0.2*Math.sin(t*2.1);
+      var br2=work?(0.85+0.15*Math.sin(t*9+s)):scn;
+      c2.fillStyle=pu(0.6*br2);
+      poly(c2,[[hcx+s*4,oy+0.8],[hcx+s*15.5,oy-3.2],[hcx+s*16,oy+0.6],[hcx+s*4.5,oy+3.8]]);c2.fill();
+      c2.fillStyle=puh(0.95*br2);
+      poly(c2,[[hcx+s*4.5,oy+1.2],[hcx+s*12,oy-1.2],[hcx+s*12,oy+1],[hcx+s*5,oy+3]]);c2.fill();
+      // inner-corner burn: the hottest point sits by the nose — the scowl
+      var eg=c2.createRadialGradient(hcx+s*6,oy+1.8,0.4,hcx+s*6,oy+1.8,4.5);
+      eg.addColorStop(0,puh(0.9*br2));eg.addColorStop(1,pu(0));
+      c2.fillStyle=eg;c2.beginPath();c2.arc(hcx+s*6,oy+1.8,4.5,0,7);c2.fill();});});
   // cheek ridges: flaring OUT toward the jaw — the mandible echo, built in
   [-1,1].forEach(function(s){
-    plate(g,[[hcx+s*19,hby+28],[hcx+s*12,hby+42],[hcx+s*15,hby+58],[hcx+s*23,hby+48]],hT,sB,ed);
-    plate(g,[[hcx+s*23,hby+48],[hcx+s*28,hby+56],[hcx+s*16,hby+58]],hT,sB,null);
-    pl(g,hcx+s*19,hby+29,hcx+s*13,hby+42,"rgba(150,172,204,"+((offl?0.1:0.26)*kf(s))+")",1);
-    rivet(g,hcx+s*17,hby+38,eH);});
+    plate(g,[[hcx+s*20,hby+27],[hcx+s*12,hby+43],[hcx+s*16,hby+61],[hcx+s*26,hby+50]],hT,sB,ed);
+    plate(g,[[hcx+s*26,hby+50],[hcx+s*31,hby+58],[hcx+s*17,hby+61]],hT,sB,null);
+    // second ridge line inside the sweep — the cheek is layered, not a fin
+    pl(g,hcx+s*17,hby+33,hcx+s*13,hby+46,rc,1);
+    pl(g,hcx+s*20,hby+28,hcx+s*13,hby+43,"rgba(150,172,204,"+((offl?0.1:0.26)*kf(s))+")",1);
+    rivet(g,hcx+s*17,hby+39,eH);});
   // the chin: wide, vented, and it has been HIT — a chip out of the left
   // lip, cut to transparency, torn edge bright; weld stitches where the jaw
   // was re-seated after
-  plate(g,[[hcx-13,hby+44],[hcx+13,hby+44],[hcx+15,hby+58],[hcx+9,hby+66],[hcx-9,hby+66],[hcx-15,hby+58]],hT,hM,ed);
-  // the lower lip of the chin catches the lamp — the "rough chin" needs an edge
-  pl(g,hcx-8,hby+64.5,hcx+8,hby+64.5,"rgba(170,192,222,"+(offl?0.1:0.28)+")",1.2);
-  RB.fillStyle=rc;for(var vs=0;vs<3;vs++)RB.fillRect(hcx-6.5+vs*5,hby+50.5,3.4,7.5);
+  /* the MOUTH PIECE: not a chin — a muzzle. It projects: wide at the cheeks,
+     tapering to a blunt snout well below the old jaw line, split by a center
+     ridge and wrapped in segment grooves like the mask's wrinkled lip armor. */
+  plate(g,[[hcx-14,hby+44],[hcx+14,hby+44],[hcx+15,hby+56],[hcx+10,hby+68],[hcx+6,hby+76],[hcx-6,hby+76],[hcx-10,hby+68],[hcx-15,hby+56]],hT,hM,ed);
+  // center ridge — the beak line, lit on the key side
+  pl(g,hcx,hby+45,hcx,hby+74,"#0a0f18",2.8);
+  pl(g,hcx-1,hby+46,hcx-1,hby+73,"rgba(170,192,222,"+(offl?0.1:0.28)+")",0.9);
+  // segment grooves: the muzzle is plated in bands, each lip catching light
+  [[56,13],[63,10],[69,7.5]].forEach(function(gr){
+    pl(g,hcx-gr[1],hby+gr[0],hcx+gr[1],hby+gr[0],"rgba(3,6,12,0.8)",1.6);
+    pl(g,hcx-gr[1]+1,hby+gr[0]+1.2,hcx+gr[1]-1,hby+gr[0]+1.2,"rgba(150,172,204,"+(offl?0.06:0.16)+")",0.8);});
+  // the snout lip
+  pl(g,hcx-5,hby+74.8,hcx+5,hby+74.8,"rgba(170,192,222,"+(offl?0.1:0.3)+")",1.2);
+  RB.fillStyle=rc;for(var vs=0;vs<3;vs++)RB.fillRect(hcx-6.5+vs*5,hby+48.5,3.4,6);
   // breath soot: the vents exhale onto the chin below them, and it stays
   g.save();g.globalAlpha=offl?0.5:0.8;g.fillStyle="rgba(24,20,18,0.35)";
-  for(var st2=0;st2<3;st2++)poly(g,[[hcx-6+st2*5,hby+58],[hcx-3.6+st2*5,hby+58],[hcx-4+st2*5,hby+64],[hcx-5.6+st2*5,hby+64]]),g.fill();
+  for(var st2=0;st2<3;st2++)poly(g,[[hcx-6+st2*5,hby+55],[hcx-3.6+st2*5,hby+55],[hcx-4+st2*5,hby+61],[hcx-5.6+st2*5,hby+61]]),g.fill();
   g.restore();
   g.save();g.globalCompositeOperation="destination-out";
-  poly(g,[[hcx-15,hby+56],[hcx-9,hby+58],[hcx-12,hby+63]]);g.fill();g.restore();
-  pl(g,hcx-15,hby+56,hcx-12,hby+63,"rgba(170,192,222,"+(offl?0.14:0.34)+")",1);
+  poly(g,[[hcx-14.5,hby+58],[hcx-8.5,hby+60],[hcx-11.5,hby+66]]);g.fill();g.restore();
+  pl(g,hcx-14.5,hby+58,hcx-11.5,hby+66,"rgba(170,192,222,"+(offl?0.14:0.34)+")",1);
   g.strokeStyle="rgba(150,172,204,"+(offl?0.12:0.3)+")";g.lineWidth=1;
   g.beginPath();for(var wj=0;wj<4;wj++){var wx2=hcx+3+wj*2.6;g.moveTo(wx2,hby+45);g.lineTo(wx2+1.4,hby+47.6);}g.stroke();
   // the jaw throws onto the neck cords below it
-  cavity(g,hcx-13,hby+63,26,9,0.4);
+  cavity(g,hcx-11,hby+72,22,8,0.4);
 
   /* ---------- THE MANE, front layer ----------
      Two dreads a side fall in FRONT of the shoulders, drawn after the head so
@@ -3687,12 +3716,12 @@ function buildGrok(t,st){
      hair, which is the strongest "nobody home" this unit can say. And the
      right outer dread is SEVERED mid-length, the stump cauterized bright:
      something got a grip on it once. Once. */
-  var FRONTC=[[-1,15,33,272],[-1,18,40,286],[1,15,33,272],[1,18,0,0]];
-  FRONTC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+13, cut=(ci===3);
+  var FRONTC=[[-1,21,37,274],[-1,24,44,288],[1,21,37,274],[1,24,0,0]];
+  FRONTC.forEach(function(cb,ci){var s=cb[0], ax=hcx+s*cb[1], ay=hby+16, cut=(ci===3);
     var tx,ty,mx,my;
     if(cut){tx=hcx+s*26;ty=hby+44;mx=hcx+s*22;my=hby+26;}
     else if(offl){tx=hcx+s*(6+(ci%2)*5);ty=hby+62+(ci%2)*6;mx=hcx+s*17;my=hby+34;}
-    else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);mx=hcx+s*(cb[1]+13);my=hby+36;}
+    else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);mx=hcx+s*(cb[1]+15);my=hby+38;}
     g.strokeStyle="#07090f";g.lineWidth=4.8;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
     // same one-key rule as the rear rank: lit highlight left, dark right
     g.strokeStyle=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");g.lineWidth=s<0?1.4:1.0;g.beginPath();g.moveTo(ax-s,ay);g.quadraticCurveTo(mx-s,my-1,tx-s,ty-1);g.stroke();
