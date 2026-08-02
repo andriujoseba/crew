@@ -3244,7 +3244,8 @@ function buildGrok(t,st){
     var tx=cx+s*cb[2]+(offl?s*6:0), ty=cb[3]+(offl?30:sway*2.5*(ci%2?1:-1));
     var mx=hcx+s*(cb[1]+(rank===2?32:24)), my=offl?hby+62:hby+40;
     g.strokeStyle="#07090f";g.lineWidth=5.8-rank*0.7;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
-    g.strokeStyle=offl?"#20242c":"#343c48";g.lineWidth=1.2;g.beginPath();g.moveTo(ax,ay-1);g.quadraticCurveTo(mx,my-2,tx-s,ty-1);g.stroke();
+    // the key is upper-LEFT: left cables carry the light, right cables sit dark
+    g.strokeStyle=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");g.lineWidth=s<0?1.5:1.1;g.beginPath();g.moveTo(ax,ay-1);g.quadraticCurveTo(mx,my-2,tx-s,ty-1);g.stroke();
     // ferrule: the machined weight that keeps a cable hanging straight
     var fw3=6-rank*0.5;
     g.fillStyle="#10151d";rr(g,tx-fw3/2,ty,fw3,8-rank*0.6,1);g.fill();
@@ -3394,8 +3395,10 @@ function buildGrok(t,st){
     plate(g,[[cx-6.5,by+breath],[cx+6.5,by+breath],[cx+6.5,by+3.6+breath],[cx-6.5,by+3.6+breath]],sT,sB,null);
     if(!offl){RE.save();RE.globalCompositeOperation="destination-out";RE.fillRect(cx-6.5,by+breath-0.5,13,4.6);RE.restore();}});
   if(!offl){RB.save();RB.globalCompositeOperation="lighter";
+    // the core's bounce must TOUCH the plates around the slit — the glow is
+    // the proof the metal is near a light, not a sticker over it
     var bounce=RB.createRadialGradient(cx,275+breath,3,cx,275+breath,72);
-    bounce.addColorStop(0,pu(0.26*pulse));bounce.addColorStop(0.5,pu(0.09*pulse));bounce.addColorStop(1,pu(0));
+    bounce.addColorStop(0,pu(0.34*pulse));bounce.addColorStop(0.5,pu(0.12*pulse));bounce.addColorStop(1,pu(0));
     RB.fillStyle=bounce;RB.beginPath();RB.arc(cx,275+breath,72,0,7);RB.fill();RB.restore();}
 
   // ---------- COLLAR + fighter neck + TRAPS ----------
@@ -3564,8 +3567,13 @@ function buildGrok(t,st){
      outward toward the jaw, and a vented, chipped chin that has been hit and
      kept. The head sits LOW, sunk to the collar between raised pauldron
      crowns: that sink is the hunch, and the hunch is the stalk. */
+  /* the mask must WIN the thumbnail: head plates run ONE palette step up the
+     lamp (the legs' trick) — opaque steps, no wash. The brow recess stays
+     dark so the optics stay deep-set; the step is what beats the sternum. */
+  var hT=offl?"#1f2531":"#313e53", hM=offl?"#141a25":"#1b2432",
+      hBr=offl?"#28303d":"#405169", hBrB=offl?"#1b222d":"#243043";
   // skull
-  plate(g,[[hcx-22,hby+24],[hcx-19,hby+8],[hcx-9,hby],[hcx+9,hby],[hcx+19,hby+8],[hcx+22,hby+24],[hcx+17,hby+46],[hcx+10,hby+56],[hcx-10,hby+56],[hcx-17,hby+46]],sT,sM,ed);
+  plate(g,[[hcx-22,hby+24],[hcx-19,hby+8],[hcx-9,hby],[hcx+9,hby],[hcx+19,hby+8],[hcx+22,hby+24],[hcx+17,hby+46],[hcx+10,hby+56],[hcx-10,hby+56],[hcx-17,hby+46]],hT,hM,ed);
   /* the slick-back: the crown is not armour, it is CABLE — a cap of combed
      rows swept front-to-back, socketed into an anchor band at the hairline.
      The silhouette gets small scallops where the rows crest. */
@@ -3586,7 +3594,7 @@ function buildGrok(t,st){
   pl(g,hcx-14,hby+14,hcx+14,hby+14,rc,1.2);
   rivet(g,hcx-10,hby+12,eH);rivet(g,hcx+10,hby+12,eH);
   // brow ridge: one heavy chevron, overhanging
-  plate(g,[[hcx-18,hby+26],[hcx,hby+30],[hcx+18,hby+26],[hcx+14,hby+15],[hcx-14,hby+15]],"#2e3a4c","#1a2331",ed);
+  plate(g,[[hcx-18,hby+26],[hcx,hby+30],[hcx+18,hby+26],[hcx+14,hby+15],[hcx-14,hby+15]],hBr,hBrB,ed);
   pl(g,hcx,hby+15,hcx,hby+30,rc,1);
   /* the face scar: one gouge across the brow, aimed at the right optic and
      stopped by it — dark trench, bright torn lip, and the paint never came
@@ -3623,14 +3631,14 @@ function buildGrok(t,st){
       c2.fillStyle=puh(0.95*br2);c2.fillRect(ox-2.6,oy-1,5.2,2.2);});});
   // cheek ridges: flaring OUT toward the jaw — the mandible echo, built in
   [-1,1].forEach(function(s){
-    plate(g,[[hcx+s*19,hby+28],[hcx+s*12,hby+42],[hcx+s*15,hby+58],[hcx+s*23,hby+48]],sT,sB,ed);
-    plate(g,[[hcx+s*23,hby+48],[hcx+s*28,hby+56],[hcx+s*16,hby+58]],sT,sB,null);
+    plate(g,[[hcx+s*19,hby+28],[hcx+s*12,hby+42],[hcx+s*15,hby+58],[hcx+s*23,hby+48]],hT,sB,ed);
+    plate(g,[[hcx+s*23,hby+48],[hcx+s*28,hby+56],[hcx+s*16,hby+58]],hT,sB,null);
     pl(g,hcx+s*19,hby+29,hcx+s*13,hby+42,"rgba(150,172,204,"+((offl?0.1:0.26)*kf(s))+")",1);
     rivet(g,hcx+s*17,hby+38,eH);});
   // the chin: wide, vented, and it has been HIT — a chip out of the left
   // lip, cut to transparency, torn edge bright; weld stitches where the jaw
   // was re-seated after
-  plate(g,[[hcx-13,hby+44],[hcx+13,hby+44],[hcx+15,hby+58],[hcx+9,hby+66],[hcx-9,hby+66],[hcx-15,hby+58]],sT,sM,ed);
+  plate(g,[[hcx-13,hby+44],[hcx+13,hby+44],[hcx+15,hby+58],[hcx+9,hby+66],[hcx-9,hby+66],[hcx-15,hby+58]],hT,hM,ed);
   // the lower lip of the chin catches the lamp — the "rough chin" needs an edge
   pl(g,hcx-8,hby+64.5,hcx+8,hby+64.5,"rgba(170,192,222,"+(offl?0.1:0.28)+")",1.2);
   RB.fillStyle=rc;for(var vs=0;vs<3;vs++)RB.fillRect(hcx-6.5+vs*5,hby+50.5,3.4,7.5);
@@ -3660,7 +3668,8 @@ function buildGrok(t,st){
     else if(offl){tx=hcx+s*(6+(ci%2)*5);ty=hby+62+(ci%2)*6;mx=hcx+s*17;my=hby+34;}
     else {tx=cx+s*cb[2];ty=cb[3]+sway*2*(ci%2?-1:1);mx=hcx+s*(cb[1]+13);my=hby+36;}
     g.strokeStyle="#07090f";g.lineWidth=4.8;g.beginPath();g.moveTo(ax,ay);g.quadraticCurveTo(mx,my,tx,ty);g.stroke();
-    g.strokeStyle=offl?"#20242c":"#343c48";g.lineWidth=1.1;g.beginPath();g.moveTo(ax-s,ay);g.quadraticCurveTo(mx-s,my-1,tx-s,ty-1);g.stroke();
+    // same one-key rule as the rear rank: lit highlight left, dark right
+    g.strokeStyle=offl?"#20242c":(s<0?"#4e5a6e":"#242b36");g.lineWidth=s<0?1.4:1.0;g.beginPath();g.moveTo(ax-s,ay);g.quadraticCurveTo(mx-s,my-1,tx-s,ty-1);g.stroke();
     if(cut){ // the stump: a blunt cauterized ferrule HARD against the cable
       // end — nothing hangs off it (dangling conductors read as jewelry);
       // the shorter-than-its-mirror cable carries the story alone
@@ -3678,6 +3687,14 @@ function buildGrok(t,st){
       if(ci!==1)litBar(tx,ty+3.2,5.4);
     }});
 
+  /* the mane is OVER the shoulders, so it must THROW: each front dread casts
+     a soft dark onto the pauldron crown it crosses, biased down-right off the
+     upper-left key. source-atop — lands on plate, never widens the
+     silhouette. Dead the dreads spill inboard and cross nothing. */
+  if(!offl){g.save();g.globalCompositeOperation="source-atop";g.fillStyle="rgba(2,4,9,0.28)";
+    [-1,1].forEach(function(s){var sy2=248+breath;
+      poly(g,[[cx+s*25+2,sy2-18],[cx+s*40+2,sy2-14],[cx+s*43+2,sy2-7],[cx+s*27+2,sy2-4]]);g.fill();});
+    g.restore();}
   // crown speculars live IN the pauldron facets (opaque, in arm()) — the only
   // free lamp note left up here is the brow band
   g.fillStyle="rgba(196,214,244,"+(offl?0.08:0.2)+")";
@@ -3720,32 +3737,29 @@ function buildGrok(t,st){
     pl(RR,kx-6,ky+14,ax-5,ay-6,kc,1.8);                // shank, below the guard
     pl(RR,ax-5,ay+2,fx-7,544,kc,1.6);
     pl(RR,fx-14,547,fx-15,553,kc,1.4);})();
-  /* fill side: cool bounce off the room, ~0.4 of the key — one level for
-     every right (outer) silhouette edge, per plate, broken at joints. An
-     edge is never brighter than the one more key-facing. */
-  (function(){var fc="rgba(150,196,235,"+(offl?0.09:0.24)+")";
+  /* fill side: cool bounce off the room — SUBORDINATE to the key: ~0.14, and
+     ACCENTS near each plate's crown only. A full-length lit right contour
+     reads as a second lamp, and one lamp is the whole stage's story. */
+  (function(){var fc="rgba(150,196,235,"+(offl?0.05:0.14)+")";
     var sx=cx+44, sy=248+breath, ex=sx+8, ey=316+d*0.6, wx=sx-8, wy=395+d*0.5;
     var hy0=362+d*0.55+breath*0.3, kx=cx+(offl?44:38), ky=447+d*0.5,
         ax=cx+(offl?31:26), ay=514+d*0.2, fx=cx+34;
-    pl(RR,hcx+20,hby+30,hcx+23,hby+47,fc,1.1);         // cheek ridge flare
-    pl(RR,hcx+23,hby+48,hcx+27,hby+55,fc,1.1);
-    RR.strokeStyle=fc;RR.lineWidth=1.2;RR.beginPath(); // outermost rear cable
+    pl(RR,hcx+20,hby+30,hcx+22,hby+38,fc,1.1);         // cheek ridge, upper flare only
+    RR.strokeStyle=fc;RR.lineWidth=1.1;RR.beginPath(); // outermost rear cable, crown reach only
     RR.moveTo(hcx+17,hby+10);
-    RR.quadraticCurveTo(hcx+49,(offl?hby+62:hby+40),cx+57.5+(offl?6:0),(offl?322:292+sway*2.5));
+    RR.quadraticCurveTo(hcx+28,hby+21,hcx+36,hby+38);
     RR.stroke();
-    pl(RR,sx+6,sy-25,sx+25,sy-16.5,fc,1.6);            // crown outer edge
-    pl(RR,sx+27,sy-15,sx+36,sy+1,fc,1.4);              // trailing spike, to the bite
+    pl(RR,sx+6,sy-25,sx+19,sy-19,fc,1.4);              // crown outer edge, top run
+    pl(RR,sx+27,sy-15,sx+32,sy-7,fc,1.2);              // trailing spike root
     if(rHang){
-      pl(RR,sx+11,sy+15,ex+6,ey-11,fc,1.4);
-      pl(RR,ex+5,ey+8,ex-1,wy-37,fc,1.4);
-      pl(RR,wx+11.5,wy-33,wx+16.5,wy-23,fc,1.2);
-      pl(RR,wx+10,wy+3,wx+8.7,wy+11,fc,1.2);
-      pl(RR,wx+9,wy+12,wx+9.4+(offl?2:0),wy+(offl?22:24),fc,1.1);
-    } else pl(RR,cx+33,hy0+8,kx+9,ky-9,fc,1.6);
-    pl(RR,kx+12,ky-8,kx+15.5,ky+3,fc,1.6);
-    pl(RR,kx+6,ky+14,ax+5,ay-6,fc,1.6);
-    pl(RR,ax+5,ay+2,fx+7,544,fc,1.4);
-    pl(RR,fx+14,547,fx+15,553,fc,1.2);})();
+      pl(RR,sx+11,sy+15,sx+13,sy+34,fc,1.2);           // biceps crown
+      pl(RR,ex+5,ey+8,ex+3,ey+22,fc,1.2);              // forearm, off the elbow only
+      pl(RR,wx+11.5,wy-33,wx+16.5,wy-23,fc,1.1);
+      pl(RR,wx+10,wy+3,wx+8.7,wy+11,fc,1.1);
+    } else pl(RR,cx+33,hy0+8,cx+36,hy0+24,fc,1.4);     // thigh crown only
+    pl(RR,kx+12,ky-8,kx+15,ky-1,fc,1.4);               // knee spike root
+    pl(RR,kx+6,ky+14,kx+3,ky+30,fc,1.4);               // shank, calf swell only
+    pl(RR,ax+5,ay+2,ax+7,ay+13,fc,1.2);})();           // metatarsal crown
   // deck rule: NO rim inside the last 8 units above the sole — a lit edge at
   // the contact row reads as glow, and the shared rim hugs the toe corners
   (function(){var fg2=RR.createLinearGradient(0,551,0,556);
@@ -6305,25 +6319,27 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
          silhouette separates against the wall pools, never by brightening
          the figure */
       var wg=c.createLinearGradient(0,0,0,jy);
-      wg.addColorStop(0,"#080b11");wg.addColorStop(1,"#04060a");
+      wg.addColorStop(0,"#070a10");wg.addColorStop(1,"#03050a");
       c.fillStyle=wg;c.fillRect(0,0,W2,jy);
       /* a CYCLORAMA, not a backdrop edge: the floor starts at the wall's own
-         value and brightens over a soft band — no line, no step; recession
-         cues come from the key pool and its falloff. The floor's ambient
-         bottoms out ABOVE the contact shadows: darkest pixels belong under
-         the feet, nowhere else. */
+         value, and the value story runs WALL DARK, FLOOR LIT — the key's
+         spill lands on the deck around the figure, clearly above the wall's
+         base, and falls off toward the bottom corners. The floor's ambient
+         never drops below the stance shadow's core: darkest floor stays
+         under the feet, and nothing on the deck goes near-black. */
       var fg=c.createLinearGradient(0,jy,0,H2);
-      fg.addColorStop(0,"#04060a");fg.addColorStop(0.16,"#0a0e15");fg.addColorStop(1,"#060a12");
+      fg.addColorStop(0,"#03050a");fg.addColorStop(0.2,"#131b2a");fg.addColorStop(1,"#0c1320");
       c.fillStyle=fg;c.fillRect(0,jy,W2,H2-jy);
       /* the wall pools ride OVER the junction, full height: light that
-         stops dead at a cyc's base re-draws the seam the blend removed */
+         stops dead at a cyc's base re-draws the seam the blend removed.
+         They stay BELOW the floor's key spill — the wall must recede. */
       var pool=c.createRadialGradient(W2*0.44,H2*0.36,H2*0.06,W2*0.44,H2*0.36,H2*0.52);
-      pool.addColorStop(0,"rgba(126,146,176,0.12)");pool.addColorStop(1,"rgba(126,146,176,0)");
+      pool.addColorStop(0,"rgba(126,146,176,0.09)");pool.addColorStop(1,"rgba(126,146,176,0)");
       c.fillStyle=pool;c.fillRect(0,0,W2,H2);
       /* second pool behind the FILL side: the dark flank reads against
          lifted wall — hip to ankle needs grey behind it */
       var pool2=c.createRadialGradient(W2*0.63,H2*0.60,H2*0.05,W2*0.63,H2*0.60,H2*0.52);
-      pool2.addColorStop(0,"rgba(126,146,176,0.14)");pool2.addColorStop(1,"rgba(126,146,176,0)");
+      pool2.addColorStop(0,"rgba(126,146,176,0.10)");pool2.addColorStop(1,"rgba(126,146,176,0)");
       c.fillStyle=pool2;c.fillRect(0,0,W2,H2);
       /* the floor must read as a PLANE under ONE lamp: the grey spill lands
          up-LEFT of the unit (where the key is), a faint transverse joint
@@ -6331,11 +6347,11 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
          down-RIGHT. Still mute — grey light on grey deck. */
       /* the spill, unclipped: it curls a little way up the cyc base, which
          is what a pool of lamp light does where wall becomes floor */
-      var plx=W2*0.33, ply=jy+4;
-      var fpool=c.createRadialGradient(plx,ply,2,plx,ply,W2*0.5);
-      fpool.addColorStop(0,"rgba(150,170,198,0.10)");fpool.addColorStop(0.55,"rgba(150,170,198,0.045)");fpool.addColorStop(1,"rgba(150,170,198,0)");
-      c.save();c.translate(plx,ply);c.scale(1,0.34);c.translate(-plx,-ply);
-      c.fillStyle=fpool;c.beginPath();c.arc(plx,ply,W2*0.5,0,7);c.fill();
+      var plx=W2*0.35, ply=jy+4;
+      var fpool=c.createRadialGradient(plx,ply,2,plx,ply,W2*0.62);
+      fpool.addColorStop(0,"rgba(150,170,198,0.20)");fpool.addColorStop(0.55,"rgba(150,170,198,0.09)");fpool.addColorStop(1,"rgba(150,170,198,0)");
+      c.save();c.translate(plx,ply);c.scale(1,0.42);c.translate(-plx,-ply);
+      c.fillStyle=fpool;c.beginPath();c.arc(plx,ply,W2*0.62,0,7);c.fill();
       c.restore();
       // one barely-there transverse joint — more and the floor reads as bands
       c.fillStyle="rgba(140,162,192,0.03)";c.fillRect(0,jy+(H2-jy)*0.34,W2,1);
@@ -6346,24 +6362,25 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
         // stops dead at jy cuts the very line the blend band removed
         c.save();c.translate(scx,fyd+3);c.rotate(0.3);c.scale(1,0.3);
         var csg=c.createRadialGradient(shw*0.9,0,2,shw*0.9,0,shw*2.6);
-        csg.addColorStop(0,"rgba(0,0,0,0.4)");csg.addColorStop(0.55,"rgba(0,0,0,0.18)");csg.addColorStop(1,"rgba(0,0,0,0)");
+        csg.addColorStop(0,"rgba(0,0,0,0.3)");csg.addColorStop(0.55,"rgba(0,0,0,0.14)");csg.addColorStop(1,"rgba(0,0,0,0)");
         c.fillStyle=csg;c.beginPath();c.arc(shw*0.9,0,shw*2.6,0,7);c.fill();
         c.restore();
-        // stance core: one ellipse under the whole stance, feet AND the gap
-        // between them — the per-foot pools alone leave the gap lighter than
-        // the far corner, and a shadow lighter than ambient unpins the feet
-        var stg=c.createRadialGradient(scx,fyd+3,2,scx,fyd+3,shw*1.15);
-        stg.addColorStop(0,"rgba(0,0,0,0.72)");stg.addColorStop(0.55,"rgba(0,0,0,0.4)");stg.addColorStop(1,"rgba(0,0,0,0)");
+        /* stance core: one ellipse under the whole stance, feet AND the gap.
+           SOFT — a shadow is dimmed floor, never a hole: its core must hold
+           within ~2x of the adjacent lit deck, so the alpha stays under 0.5
+           and the falloff runs wide */
+        var stg=c.createRadialGradient(scx,fyd+3,2,scx,fyd+3,shw*1.3);
+        stg.addColorStop(0,"rgba(0,0,0,0.38)");stg.addColorStop(0.55,"rgba(0,0,0,0.2)");stg.addColorStop(1,"rgba(0,0,0,0)");
         c.save();c.translate(scx,fyd+3);c.scale(1,0.3);c.translate(-scx,-(fyd+3));
-        c.fillStyle=stg;c.beginPath();c.arc(scx,fyd+3,shw*1.15,0,7);c.fill();c.restore();}
+        c.fillStyle=stg;c.beginPath();c.arc(scx,fyd+3,shw*1.3,0,7);c.fill();c.restore();}
       (info.feet||[]).forEach(function(f2){
-        // pooled shadow per foot — strong enough to survive the darkened
-        // floor: under-foot must sit clearly below the open deck's value
+        // pooled shadow per foot — EACH foot owns one, same weight, tight
+        // enough that the pair never merges into the stance core's gradient
         var fx2=mx2(f2.x),fw2=f2.w*sc2;
-        var sg2=c.createRadialGradient(fx2,fyd+3,1,fx2,fyd+3,fw2*1.9);
-        sg2.addColorStop(0,"rgba(0,0,0,0.92)");sg2.addColorStop(0.6,"rgba(0,0,0,0.62)");sg2.addColorStop(1,"rgba(0,0,0,0)");
+        var sg2=c.createRadialGradient(fx2,fyd+3,1,fx2,fyd+3,fw2*1.5);
+        sg2.addColorStop(0,"rgba(0,0,0,0.5)");sg2.addColorStop(0.6,"rgba(0,0,0,0.26)");sg2.addColorStop(1,"rgba(0,0,0,0)");
         c.save();c.translate(fx2,fyd+3);c.scale(1,0.4);c.translate(-fx2,-(fyd+3));
-        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+3,fw2*1.9,0,7);c.fill();c.restore();
+        c.fillStyle=sg2;c.beginPath();c.arc(fx2,fyd+3,fw2*1.5,0,7);c.fill();c.restore();
         // contact occlusion: a tight dark pinch under each toe TIP — the
         // broad pool says "near the floor", only this says "on it"
         (f2.toes||[]).forEach(function(tx5){
