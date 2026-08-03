@@ -2277,11 +2277,12 @@ esac
 EOF
 chmod +x "$KIMI_PROBE_HOME/.kimi/bin/kimi"
 
+# shellcheck disable=SC2030,SC2031  # HOME/PATH are deliberately fixture-local
 kimi_probe_rc() {  # kimi_probe_rc [working|interactive]
   local shape="${1:-working}" rc=0
   ( export HOME="$KIMI_PROBE_HOME"
     unset KIMI_CODE_HOME
-    # shellcheck disable=SC1090
+    # shellcheck disable=SC1091
     source "$SHARED/conf/agents/kimi.conf"
     export PATH="$BOT_PATH_PREPEND:/usr/bin:/bin"
     [ "$shape" != interactive ] || BOT_CLI_CMD=(kimi -p)
