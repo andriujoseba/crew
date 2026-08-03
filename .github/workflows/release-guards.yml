@@ -34,20 +34,20 @@ jobs:
       # changelog-armed: the version-keyed arming rule — a -dev tree keeps its
       # fragments in changelog.d/, a release tree has consumed them into a
       # stamped section.
-      - uses: heavy-duty/ceremony/actions/changelog-armed@0.4.1
+      - uses: heavy-duty/ceremony/actions/changelog-armed@0.5.0
       # changelog-monotonic: no shipped release heading deleted or duplicated.
       # Strict by default: an unresolvable base ref is red, never a quiet skip —
       # hence fetch-depth: 0 above.
-      - uses: heavy-duty/ceremony/actions/changelog-monotonic@0.4.1
+      - uses: heavy-duty/ceremony/actions/changelog-monotonic@0.5.0
       # changelog-assembled: a release's stamped section must exactly match the
       # fragments it consumed. Vacuous on non-release PRs.
-      - uses: heavy-duty/ceremony/actions/changelog-assembled@0.4.1
+      - uses: heavy-duty/ceremony/actions/changelog-assembled@0.5.0
       # drill-recorded: a release version carries drills/<version>.md (crew's
       # drill meaning: drills/README.md). Vacuous on -dev trees.
-      - uses: heavy-duty/ceremony/actions/drill-recorded@0.4.1
+      - uses: heavy-duty/ceremony/actions/drill-recorded@0.5.0
       # runner-isolated: no pull_request-triggered workflow runs unreviewed
       # branch code on a self-hosted runner. crew runs only ubuntu-latest.
-      - uses: heavy-duty/ceremony/actions/runner-isolated@0.4.1
+      - uses: heavy-duty/ceremony/actions/runner-isolated@0.5.0
       # docs-sync: the .ceremony/ doctrine mirror is byte-identical to the pin
       # read from release.yml — a hand edit or a half-done pin bump goes red.
-      - uses: heavy-duty/ceremony/actions/docs-sync@0.4.1
+      - uses: heavy-duty/ceremony/actions/docs-sync@0.5.0

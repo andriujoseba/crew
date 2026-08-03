@@ -49,6 +49,19 @@ In order of authority:
      `0.1.0`'s `load_config` rejected `triage-actors=...` with
      `malformed label row` and `exit=1`. CI green on a conversion PR proves
      nothing about the new config: the base branch's workflow is what ran.
+   - **Third-party actions never hold a write-capable token by default.** In
+     any job whose token is write-capable (`packages: write`,
+     `contents: write`, `id-token: write`, or one carrying deploy secrets),
+     the default is a repo-owned script a test can drive. A third-party
+     action may hold that token only if it comes from an **established
+     publisher** — a real organization with maintenance history and more
+     than one maintainer, not a memberless shell or a lone account shipping
+     an unauditable `dist/` blob — and is **pinned by full commit SHA**. An
+     action matching the incubator red-flag profile never holds a write
+     token, however well it works. Read-only jobs: ordinary dependency
+     judgement, SHA-pinning still required. This is bot-run infrastructure —
+     no human watches runtime logs, so a compromised action's window is
+     unbounded (incubator#53/#54; #216).
 3. **The code itself** — correctness first, then tests (does the test plan's
    floor exist? do the failure cases actually fail?), then conventions.
    Changelog line present for behavior changes; comments carry why, not
@@ -65,7 +78,9 @@ saw Y" outranks one that says "this looks like it might".
   wait for the repo to appear on a list: review is reversible
   read-plus-comment work, and the requester already decided it should happen.
 - **A request is authorization, not panel membership.** Convergence is
-  measured against the target repo's `panel=` roster minus the author. If you
+  measured against the target repo's `panel[<author>]=` line if its
+  `labels.conf` defines one for the PR author, else its `panel=` line; minus
+  the author in either case (#224). If you
   are requested off-panel, post the verdict anyway and say in its body that
   it is advisory; neither your silence nor your request-changes is a gate the
   reconciler enforces. The nine-hour wait for kimi's off-panel verdict on

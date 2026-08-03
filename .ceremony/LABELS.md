@@ -17,7 +17,7 @@ and the reconciler recomputes it from GitHub's own facts.
 
 | Label | Color | Waiting on |
 |---|---|---|
-| `state:building` | `#FBCA04` | the builder — PR is a draft |
+| `state:building` | `#FBCA04` | the builder — pre-round: no verdict stands against the head. Draft is evidence for it, not the definition of it: a draft carrying a standing non-approving verdict is a fix round and reads `state:addressing` (#205) |
 | `state:bots-reviewing` | `#1D76DB` | the reviewer panel to finish the round (a request is live) |
 | `state:addressing` | `#D93F0B` | the builder — round complete without full approval, or nobody was asked, or a blocker is up, or a ruling is pending |
 | `state:needs-human` | `#8250DF` | the human — **this PR could be merged right now**: zero blockers, whole panel approved the current head |
