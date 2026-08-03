@@ -14,6 +14,91 @@ ledger at 0.1.0**, do not backfill.
 release PR from the fragments in changelog.d/. There are none yet: 0.1.0 has
 not been cut. -->
 
+## 0.1.1 — 2026-08-03
+
+### Added
+
+- `shared/docs/rehearsal.md` names `--remote` / `CREW_DRILL_REMOTE` as the way to rehearse against a fork (#302).
+- The duty engine converges git identity before the first duty of every tick, and runs no session on a box whose commits would name another droid (#294).
+
+### Changed
+
+- Fleet Floor: grok's anatomy rebuilt under the blind-verifier loop protocol — predator arms with articulated talons, one committed key light, hard-point optics, grounded digitigrade feet — plus a `FLOORDEV.renderSolo` dev hook for droid-only studio renders (#289).
+- CONTRIBUTING: a changelog fragment carries one entry per distinct user-visible change, with the reader test that decides it (#268).
+- CONTRIBUTING: names which changelog rules block a review and which ride an approval as a nit — bullet count is editorial (#268).
+- Adopt ceremony 0.4.1 (crew#259): a new `labels-sweep.yml` caller carries the
+  reconcile sweep, with the hourly cron and the bootstrap dispatch relocated
+  out of `labels.yml`, which gains `actions: write` for its trigger dispatch
+  (ceremony#209).
+- Sweeps now run detached from PRs: a queue-displaced sweep can no longer land
+  a cancelled `reconcile` check on a PR, or set `blocker:ci-red` off its own
+  displaced run (ceremony#208).
+- `crew new`, `create-all`, `hire`, `hire-all`, `up`, `down`, `upgrade` and `gold` refuse under the shipped example fleet definition, naming `crew init` (#216).
+- `crew status`, `crew profiles` and `crew up --dry-run` still work there, and say they are reading the shipped examples (#216).
+- `examples/repos.txt` ships empty, so `crew init` seeds a fleet aimed at nothing until the operator names a repo (#216).
+- The `fleet.conf` / `repos.txt` completeness check runs on the shipped examples too, not only on operator definitions (#216).
+- Fleet Floor: the fleet view is a conference call — a vertically scrolling grid of webcam tiles, one per box, each unit front-on in close-up over a static blurred role-colour backdrop (#209).
+- Fleet Floor: each tile carries AR telemetry — uptime, idle over the last 24h, queue, signal, a heartbeat trace that flatlines with the box, the open session's timer, and a live caption naming the work item (#209).
+- Note: both `#209` entries above describe work that shipped in `0.1.0`. Their fragment went unconsumed because `0.1.0`'s release PR merged twelve commits stale (#212), so this is the first section that could carry them; the published `0.1.0` section is left as it stands (#162).
+- Fleet Floor: grok's unit is rebuilt as a grounded stalker — digitigrade stance with hard deck contacts, a built-in predator-mask face, and a slicked-back cable mane with state language (#206).
+- Fleet Floor: grok keeps a purple spine-slit readout and a flight-lineage service record; the jetpack hover and its thruster wash are gone (#206).
+- Note: both `#206` entries above describe work that shipped in `0.1.0`. Their fragment went unconsumed because `0.1.0`'s release PR merged twelve commits stale (#212), so this is the first section that could carry them; the published `0.1.0` section is left as it stands (#162).
+
+### Fixed
+
+- Resume dispatches only when a draft's head, a foreign comment or review, or its referenced issue has moved since the last resume — a parked draft no longer wakes a session every tick forever. The builder's own comments and reviews are excluded (#314).
+- `shared/prompts/resume.txt` posts the resume marker only when the session is going to act on the draft (#314).
+- A resume that makes no commit at one head three times running is suppressed until the head moves, with one WARN in `duty.log` naming the PR, the head and the count (#314).
+- `shared/docs/rehearsal.md` clones `heavy-duty/crew` at `main`, the drill's own default, not a personal fork and its merged branch (#302).
+- Author-specific review panels now keep each builder's paired reviewer identity out of crew's required roster. (#298)
+- A box's git identity is derived from its gh credential, so commits are bylined by the account that pushed them instead of the account the box carried before an identity change (#294).
+- `crew hire` and `crew upgrade` write the box's git identity when it is authenticated, and say plainly when there is no credential to copy yet (#294).
+- The shipped `examples/notify-repos.txt` names the builder accounts' forks, so a `state:needs-human` PR pushed to one is swept instead of waiting for somebody to notice it (#294).
+- A reviewer who requested changes is no longer re-requested forever at an unchanged head: one round-answered signal opens one round, and the verdicts answering it spend it (#286).
+- A round-answered signal posted while a review round is still open now takes effect once that round closes, rather than requesting a reviewer mid-round (#286).
+- Review requests and convergence use a repository's per-author panel when configured. (#285)
+- `crew upgrade` now leaves operator-paused boxes paused. (#283)
+- A hired box that has never ticked reports `waiting` for its `gh` and vendor
+  credentials instead of `stale`, in `crew status` and on the fleet floor (#265)
+- Builder ticks keep ready issues claimable after choosing one and repair ledgers that previously buried the queue. (#264)
+- Session history distinguishes successful no-op runs and shows their final reply. (#256)
+- Fleet-floor messages now carry the duty environment contract. (#255)
+- Codex sessions use medium reasoning effort. (#255)
+- A board signal created during a triage box's mention session wakes triage in the same tick, instead of waiting a full tick (#253).
+- A mention session that clears the last board signal no longer launches a triage session on the pre-session reading (#253).
+- Test suites ignore ambient crew and duty configuration. (#252)
+- Round logs retain verdicts on their original head after GitHub re-points reviews during a base merge. (#249)
+- `crew floor` refuses under the shipped example fleet definition, in the CLI and in `floor.py` alike: a console over a definition nobody wrote could arm cron, power-cycle boxes and start model sessions (#244).
+- `floor.py`'s fleet-definition completeness check runs whoever owns the directory, matching the CLI (#244).
+- Resume stranded unsignalled PRs and retry CI-red heads after their checks settle. (#243)
+- Warn once when a PR waits for its round-answered signal. (#243)
+- CI-red and attention fix rounds now receive the complete round protocol and finish with the answered-head signal. (#242)
+- The kimi profile launches its CLI non-interactively (#240).
+- The kimi profile resolves its credential home across `~/.kimi` and `~/.kimi-code` (#240).
+- Scope labels now cover the full install channel and the engine's test gate. (#238)
+- `crew status` prints the whole roster when a hired box has no duty log yet, instead of stopping at the first one (#224).
+- That box's row reads `no ticks yet` (#224).
+- Fleet overlap checks now skip and report unreadable GitHub event payloads without stopping crew commands. (#223)
+- Installer completion messages now report the recorded source provenance. (#222)
+- `crew status <box>` reads `no ticks yet` on a box hired minutes ago — the
+  same words its table and the floor already use for that box — naming the duty
+  log it waits for and the tick that writes it, instead of `(unreachable)`
+  (#221).
+- The same view on an un-hired box names the absent engine rather than the
+  missing log (#221).
+- `crew status`: an un-hired box whose tenant role never converged reads `INCOMPLETE` and its note names the bootstrap recovery instead of `crew hire` (#220).
+- `crew hire`: refuses a box rig never converged, naming what is missing; `--force` overrides (#220).
+- `crew hire-all` and `crew up`: skip such a box, name it in the summary, and exit non-zero, while still hiring every healthy box in the same run (#220).
+- `crew status <box>`: reports the rig role marker and which rig converged the box (#220).
+- `crew create-all` continues after box failures and reports created, existing, and failed boxes (#219).
+- The fleet floor's page names a paused box PAUSED and a disarmed one DISARMED
+  in the headline, the CRON vital, the big card, the status line, the
+  alert-coloured `silent` counter and the stage counts, so SILENT is reserved
+  for a box that should be ticking and is not (#203).
+- Fleet Floor now measures box liveness and session recency without mixing host and guest clocks. (#181)
+- The engine reports a dirty worktree it left behind once per worktree and dirt state, not on every tick (#167).
+- That report names the branch the worktree holds and the `git worktree add` failure it will cause (#167).
+
 ## 0.1.0 — 2026-07-31
 
 ### Added
