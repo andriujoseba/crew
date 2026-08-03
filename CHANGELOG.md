@@ -11,8 +11,7 @@ This decision is the recorded one heavy-duty/crew#84 asks for: **start the
 ledger at 0.1.0**, do not backfill.
 
 <!-- Release sections land below this line, newest first, each stamped by the
-release PR from the fragments in changelog.d/. There are none yet: 0.1.0 has
-not been cut. -->
+release PR from the fragments in changelog.d/. -->
 
 ## 0.1.1 — 2026-08-03
 
