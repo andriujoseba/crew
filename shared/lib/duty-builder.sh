@@ -399,6 +399,184 @@ _stranded_resume_keys() {
   done < <(jq -c '.[] | select(.isDraft | not)')
 }
 
+# --- The resume gate (#314) -------------------------------------------------
+#
+# Resume was the one wake in this engine with no doable-work condition: it
+# fired whenever `draft_nums` was non-empty, and `draft_nums` is every open
+# draft I author, so a correctly PARKED draft woke a full model session every
+# tick, forever, with no self-heal and no cap. PR #311 spent 58 sessions at one
+# head across 4h45m, each posting a resume marker and a worklog checkpoint and
+# committing nothing; the operator disarming the box is what stopped it.
+#
+# THE BUILDER'S OWN OUTPUT IS NOT A SIGNAL, and that is the whole decision.
+# Nothing outside the builder ever spoke on #311, so a naive "anything changed"
+# fingerprint would have re-armed itself on each of those 58 markers and
+# suppressed nothing — the self-resetting trap LABELS.md already records for the
+# staleness sweep ("label churn is not activity … or the sweep would reset
+# itself"). Comments and reviews authored by ME are excluded by construction.
+#
+# THE HEAD GOES IN THE ID, THE TIMESTAMPS GO IN THE VALUE — the ci-red scheme
+# (#17), for the reason recorded at that block: ledger_filter re-fires when the
+# VALUE sorts greater, and a SHA has no order, so a head carried in the value
+# would suppress exactly the corrective push it must wake on. Carried in the id,
+# a new head is an id never seen and always fires, which is the issue's "the
+# builder's own commits count: a push is progress" without asking a SHA to
+# compare. What remains in the value is then all ISO-8601 — foreign comment,
+# foreign review, referenced issue — so a lexical max is a chronological one.
+
+# _resume_pr_fingerprints REPO ME — stdin is the authored open-PR listing resume
+# detection already fetches. One tab-separated line per DRAFT:
+#   <repo>#<num>@<head>  <newest foreign activity>  <referenced issue or empty>
+# The floor is `0`, which sorts below any ISO-8601 stamp: a draft nobody else
+# has touched still produces a well-formed ledger line rather than a blank
+# second field, which ledger_filter's NF>=2 guard would drop silently.
+#
+# The issue reference is read from the BODY, never from the branch name: crew
+# branches are `<type>/<issue>-<slug>` and only some are `build/` (#315 is
+# `docs/302-rehearsal-remote`). `Closes #N` and `Refs #N` are the two forms
+# BUILDER.md writes; the GitHub closing synonyms ride along. `Part of
+# owner/repo#N` is deliberately NOT matched — that form is cross-repo, so the
+# number does not address an issue in this repo at all — and neither is a bare
+# `#N`, because crew bodies cite epics and siblings in prose and the first such
+# mention is not the authorizing one.
+_resume_pr_fingerprints() {
+  local repo="$1" me="$2"
+  jq -r --arg repo "$repo" --arg me "$me" '
+    .[] | select(.isDraft)
+    | ( [ ((.comments // [])[] | select(.author.login != $me) | .createdAt),
+          ((.reviews  // [])[] | select(.author.login != $me) | .submittedAt) ]
+        | map(select(. != null and . != "")) | max // "0" ) as $foreign
+    | ( first( (.body // "")
+               | capture("(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)"; "i")
+               | .n ) // "" ) as $issue
+    | "\($repo)#\(.number)@\(.headRefOid)\t\($foreign)\t\($issue)"
+  ' 2>/dev/null
+}
+
+# _resume_breaker STATE THRESHOLD — the zero-action circuit breaker. stdin is
+# one `<key>\t<fresh|held>` line per draft this tick, `fresh` meaning the ledger
+# would dispatch it; stdout is `<key>\t<dispatch|suppress|hold>\t<count>`.
+#
+# _stranded_resume_due's shape, with one deliberate difference: a key the gate
+# HELD this tick keeps its count instead of being dropped. The breaker bounds
+# what the ledger does not catch — a chatty external actor waking one head over
+# and over — and those wakes are consecutive DISPATCHES, not consecutive ticks,
+# so a quiet tick in between must not silently reset the count. Keys absent from
+# stdin entirely (merged, closed, or no longer a draft) still disappear, so the
+# state cannot grow without bound.
+#
+# The head is in the key, so any commit resets the count to one: "produced no
+# commit" needs no separate observation. Counting on dispatch rather than on
+# rc 0 is also deliberate — a session that crashes before committing anything is
+# one of the zero-action dispatches this is here to bound.
+_resume_breaker() {
+  local state="$1" threshold="$2" key want count tmp
+  local -A previous=() current=()
+  tmp="$state.tmp.$$"
+  if [ -f "$state" ]; then
+    while IFS=$'\t' read -r key count; do
+      [ -n "$key" ] || continue
+      previous["$key"]="${count:-0}"
+    done <"$state"
+  fi
+  while IFS=$'\t' read -r key want; do
+    [ -n "$key" ] || continue
+    [ -n "${current[$key]+x}" ] && continue
+    count="${previous[$key]:-0}"
+    if [ "$want" != fresh ]; then
+      current["$key"]="$count"
+      printf '%s\thold\t%s\n' "$key" "$count"
+    elif [ "$count" -ge "$threshold" ]; then
+      current["$key"]="$count"
+      printf '%s\tsuppress\t%s\n' "$key" "$count"
+    else
+      count=$(( count + 1 ))
+      current["$key"]="$count"
+      printf '%s\tdispatch\t%s\n' "$key" "$count"
+    fi
+  done
+  : >"$tmp"
+  for key in "${!current[@]}"; do
+    printf '%s\t%s\n' "$key" "${current[$key]}" >>"$tmp"
+  done
+  mv "$tmp" "$state"
+}
+
+# _resume_gate REPO SLUG LISTING — the whole doable-work decision for this
+# repo's drafts. Echoes the space-joined draft numbers resume may dispatch for,
+# and says out loud, once per tick, which drafts it withheld and why: a ledger
+# trades a burn for SILENCE, and silence is how the fleet starves (#59). The
+# lines the session must EARN are left in RESUME_COMMIT_LINES for the caller to
+# commit only on rc 0 — a crashed session re-dispatches next tick rather than
+# losing its wake, the same rule .seen-build and .seen-ci-red follow.
+_resume_gate() {
+  local repo="$1" slug="$2" listing="$3"
+  local key foreign issue issue_ts lines="" fresh want verdict count num head
+  local dispatch_nums="" breaker=3
+  local -A ts_by_key=() issue_by_key=()
+  RESUME_COMMIT_LINES=""
+  while IFS=$'\t' read -r key foreign issue; do
+    [ -n "$key" ] || continue
+    # THE REFERENCED ISSUE IS IN THE FINGERPRINT, at one API call per draft per
+    # tick, because without it the gate converts a flood into a stall: on this
+    # very incident the wake landed as a comment on #290, not on #311, and a
+    # PR-only fingerprint would have held the builder asleep through its own
+    # park being lifted. Drafts per builder are ~1; the call is affordable and
+    # the stall is not. REST, not `gh issue view` — that path dies on crew's
+    # projects-classic GraphQL — and `updated_at` moves on label events as well
+    # as comments, which is what a park lifted by label alone looks like.
+    issue_ts=""
+    if [ -n "$issue" ]; then
+      issue_ts="$(gh api "repos/$repo/issues/$issue" --jq '.updated_at' 2>/dev/null || echo "")"
+      [ -n "$issue_ts" ] || warn "$repo: issue #$issue lookup failed for the resume fingerprint; using the PR half this tick"
+    fi
+    [ -n "$issue_ts" ] && [ "$issue_ts" \> "$foreign" ] && foreign="$issue_ts"
+    ts_by_key["$key"]="$foreign"
+    issue_by_key["$key"]="$issue"
+    lines="$lines$key $foreign"$'\n'
+  done < <(printf '%s' "$listing" | _resume_pr_fingerprints "$repo" "$ME")
+  [ -n "${lines//[[:space:]]/}" ] || { printf '%s' ""; return 0; }
+  fresh="$(printf '%s' "$lines" | ledger_filter "$DUTY_DIR/.seen-resume")"
+  # One line per withheld draft, every tick it is withheld — not report_suppressed's
+  # speak-on-change. This branch already logs once per tick either way, so naming
+  # the drafts it skipped adds no volume and removes the one thing #59 warns
+  # about: a suppression nobody can see.
+  printf '%s' "$lines" \
+    | ledger_suppressed "$DUTY_DIR/.seen-resume" \
+    | while read -r key _; do
+        [ -n "$key" ] || continue
+        log "no resume duty: ${key%@*} unchanged at ${key##*@}"
+      done
+  while IFS=$'\t' read -r key verdict count; do
+    [ -n "$key" ] || continue
+    num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
+    case "$verdict" in
+      dispatch)
+        dispatch_nums="$dispatch_nums $num"
+        RESUME_COMMIT_LINES="$RESUME_COMMIT_LINES$key ${ts_by_key[$key]}"$'\n'
+        if [ "$count" -eq "$breaker" ]; then
+          warn "$repo#$num: $count consecutive resume dispatches at head ${head:0:12} produced no commit — suppressing resume for this head until it moves (#314); declared wake: ${issue_by_key[$key]:+$repo#${issue_by_key[$key]}}${issue_by_key[$key]:-none parseable from the PR body}"
+        fi
+        ;;
+      suppress)
+        log "no resume duty: $repo#$num breaker-suppressed at $head after $count zero-action dispatches — only a push clears it (#314)"
+        ;;
+      *) : ;;   # held by the ledger; already named above
+    esac
+  done < <(
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      if printf '%s\n' "$fresh" | grep -qxF "$key ${ts_by_key[$key]}"; then
+        printf '%s\tfresh\n' "$key"
+      else
+        printf '%s\theld\n' "$key"
+      fi
+    done < <(printf '%s' "$lines" | awk 'NF{print $1}') \
+      | _resume_breaker "$DUTY_DIR/.resume-zero-action.$slug" "$breaker"
+  )
+  printf '%s' "${dispatch_nums# }"
+}
+
 # _ci_red_rollup_settled EXPECTED_HEAD — stdin is the post-session gh-pr-view
 # object. Success means this ci-red ledger item may be committed. A pending
 # rollup at the same head, or an unreadable snapshot, remains retryable. Head
@@ -445,7 +623,7 @@ _builder_repo() {
   local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
   local claimed_nums open_heads merged_heads N branch
   resume_json="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft,headRefOid,comments 2>/dev/null || echo err)"
+    --json number,isDraft,headRefOid,comments,reviews,body 2>/dev/null || echo err)"
   if [ "$resume_json" = "err" ]; then
     draft_nums=err
     stranded_keys=err
@@ -489,16 +667,29 @@ _builder_repo() {
         orphan_nums="$orphan_nums $N"
       fi
     done
+    # THE DOABLE-WORK GATE (#314). Every other wake in this engine is
+    # ledger-filtered; resume was the one that was not, and a park is invisible
+    # to a bare "is there a draft" test. Applied to DRAFTS only: an orphaned
+    # claim has no PR to fingerprint, and a stranded ready PR already carries
+    # its own 12-tick counter above.
+    draft_nums="$(_resume_gate "$R" "$slug" "$resume_json")"
   fi
   if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
     log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none})"
     ensure_main_clone "$R" "$dir" || return 0
+    RUN_SESSION_RC=1
     run_session resume "$R" "$dir" "$TIMEOUT_RESUME" \
       "$(render_prompt resume.txt ME="$ME" REPO="$R" NAME="$name" \
         DRAFTS="${draft_nums:-none}" ORPHANS="${orphan_nums:-none}" \
         STRANDED="${stranded_nums:-none}" \
         MARK_RESUME="$MARK_RESUME" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules")"
+    # Committed only on rc 0, exactly as .seen-build and .seen-ci-red are: a
+    # crashed or timed-out session must re-dispatch next tick, never lose the
+    # wake it never got to act on.
+    if [ "${RUN_SESSION_RC:-1}" -eq 0 ] && [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then
+      printf '%s' "$RESUME_COMMIT_LINES" | ledger_commit "$DUTY_DIR/.seen-resume"
+    fi
   else
     log "$R: no resume duty"
   fi
