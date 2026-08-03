@@ -1638,6 +1638,38 @@ else
        "$(grep -E '^(REF|REMOTE)=' "$CL_DRILL_SH" | tr '\n' ' ')"
 fi
 
+# ...and the runbook that explains the drill must not send the operator
+# somewhere else. It told them to clone dan-claude-bot/crew long after the line
+# above moved to the org, and that fork EXISTS — so the clone succeeded and the
+# operator rehearsed a tree the drill is not written for, with nothing to say
+# so (#302). The pattern is the URL form on purpose: prose that RECORDS the old
+# default — the comment above, and rehearsal.sh's own — is the history of why
+# it moved, and stays put.
+CL_REHEARSAL_MD="$CL_ROOT/shared/docs/rehearsal.md"
+CL_FORK_URLS="$(grep -rnE 'github\.com/[A-Za-z0-9._-]+/crew' \
+  "$CL_ROOT/shared" "$CL_ROOT/drill" "$CL_ROOT/cli" \
+  | grep -v 'github\.com/heavy-duty/crew')"
+if [ -n "$CL_FORK_URLS" ]; then
+  fail "docs: no personal fork is named as the source of crew" \
+       "$(echo "$CL_FORK_URLS" | tr '\n' ' ')"
+elif ! grep -q 'git clone https://github.com/heavy-duty/crew' "$CL_REHEARSAL_MD"; then
+  fail "docs: no personal fork is named as the source of crew" \
+       "the rehearsal runbook's clone command names no heavy-duty remote at all"
+else
+  ok "docs: no personal fork is named as the source of crew"
+fi
+
+# The override has to be findable from the runbook alone — a reader who wants
+# to rehearse against a fork should not have to read rehearsal.sh to learn it
+# is a flag and not an edit to the clone command (#302).
+if grep -q 'CREW_DRILL_REMOTE' "$CL_REHEARSAL_MD" \
+   && grep -q -- '--remote' "$CL_REHEARSAL_MD"; then
+  ok "docs: the runbook names --remote / CREW_DRILL_REMOTE as the override"
+else
+  fail "docs: the runbook names --remote / CREW_DRILL_REMOTE as the override" \
+       "rehearsal.md must name both, so the fork case never edits the clone"
+fi
+
 # rehearsal-all must point the app drill at the boxes it just drilled. Falling
 # through to fleet.roster meant comparing the real fleet's members, which do not
 # exist on a drill host: three "NOT CREATED vs offline" agreements about nothing.
