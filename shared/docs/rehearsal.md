@@ -74,17 +74,18 @@ logs, as a finding — never silently worked around.
 ## Phase 0 — acquire the exact tree, then run static checks
 
 ```sh
-git clone https://github.com/dan-claude-bot/crew ~/crew-host
+git clone https://github.com/heavy-duty/crew ~/crew-host
 cd ~/crew-host
-git checkout crew/shared-duty
 drill/rehearsal.sh
 ```
 
-The default invocation fetches `crew/shared-duty` from
-`https://github.com/dan-claude-bot/crew.git` on the host, creates a Git bundle,
+The default invocation fetches `main` from
+`https://github.com/heavy-duty/crew.git` on the host, creates a Git bundle,
 and streams that bundle into the box. The box needs no GitHub credentials and
-receives a real `.git` tree at the exact reported SHA. Override acquisition
-explicitly when needed:
+receives a real `.git` tree at the exact reported SHA. To rehearse against a
+fork or any other tree, pass `--remote <git-url>` or set `CREW_DRILL_REMOTE`
+rather than editing the clone above. Override acquisition explicitly when
+needed:
 
 ```sh
 drill/rehearsal.sh --remote <git-url> --ref <git-ref>
