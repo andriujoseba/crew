@@ -2706,7 +2706,16 @@ gh() {
       case "$RG_GH_FAIL" in foreign|all) return 1 ;; esac
       case "$args" in */comments*) kind=comments ;; *) kind=reviews ;; esac
       n="${args##*/issues/}"; n="${n##*/pulls/}"; n="${n%%/*}"
-      [ -f "$RG_SPEECH/$n.$kind" ] && cat "$RG_SPEECH/$n.$kind"
+      [ -f "$RG_SPEECH/$n.$kind" ] || return 0
+      # THE PAGE BOUNDARY IS HONOURED, and that is the point of this stub. A
+      # JSON fixture cannot reproduce a GraphQL connection's cap, but a REST
+      # page is exactly reproducible: without `--paginate` the caller gets the
+      # FIRST page and nothing after it. That makes the deep-thread cases below
+      # behavioural must-fails rather than assertions about source text.
+      case "$args" in
+        *--paginate*) cat "$RG_SPEECH/$n.$kind" ;;
+        *) head -100 "$RG_SPEECH/$n.$kind" ;;
+      esac
       return 0 ;;
     *)
       case "$RG_GH_FAIL" in issue|all) return 1 ;; esac
