@@ -192,6 +192,12 @@ for profile in "$SHARED"/conf/agents/*.conf; do
     r1=broken
   fi
   t "agent-conf-$agent-standalone" sourceable "$r1"
+  if sed -n '/^AGENT_LOGIN_HINT=.*${/p' "$profile" | grep -q .; then
+    r1=deferred
+  else
+    r1=literal
+  fi
+  t "agent-conf-$agent-login-hint-literal" literal "$r1"
 done
 
 if unknown_out="$(bash "$ROOT/drill/rehearsal.sh" --agent nosuchagent 2>&1)"; then
@@ -2257,6 +2263,84 @@ for pair in \
   case " $got " in *" $want "*) r1=present ;; *) r1=MISSING ;; esac
   t "agent-conf-$agent-non-interactive" present "$r1"
 done
+
+# The boot gate must exercise the same Kimi command shape as a real session.
+# `kimi doctor` looked plausible but bypassed both --afk and the resolved
+# credential home, so the upgraded Kimi box warned on every tick while real
+# review sessions succeeded at the same minutes (#240). This fixture accepts
+# only the command/environment pair that makes sessions work on that box.
+KIMI_PROBE_HOME="$TMP/kimi-probe-home"
+mkdir -p "$KIMI_PROBE_HOME/.kimi/bin" "$KIMI_PROBE_HOME/.kimi/credentials"
+printf '%s\n' '{"refresh_token":"fixture"}' \
+  >"$KIMI_PROBE_HOME/.kimi/credentials/kimi-code.json"
+cat >"$KIMI_PROBE_HOME/.kimi/bin/kimi" <<'EOF'
+#!/usr/bin/env bash
+[ "${KIMI_CODE_HOME:-}" = "$HOME/.kimi" ] || exit 21
+[ "${KIMI_PROBE_AUTH:-accept}" != reject ] || exit 23
+[ "${KIMI_PROBE_EXPECT_GUARDS:-0}" != 1 ] || {
+  [ -z "${DUTY_LOCKED+x}${NOTIFY_LOCKED+x}${DUTY_SNAPSHOT+x}" ] || exit 24
+}
+[ "${KIMI_PROBE_READ_STDIN:-0}" != 1 ] || cat >/dev/null
+[ "${KIMI_PROBE_HANG:-0}" != 1 ] || while :; do sleep 10; done
+case " $* " in
+  *" --afk -p "*) exit 0 ;;
+  *) exit 22 ;;
+esac
+EOF
+chmod +x "$KIMI_PROBE_HOME/.kimi/bin/kimi"
+
+KIMI_TIMEOUT_BIN="$TMP/kimi-timeout-bin"
+KIMI_TIMEOUT_CAPTURE="$TMP/kimi-timeout-args"
+mkdir -p "$KIMI_TIMEOUT_BIN"
+cat >"$KIMI_TIMEOUT_BIN/timeout" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s %s\n' "${1:-}" "${2:-}" "${3:-}" >"$KIMI_TIMEOUT_CAPTURE"
+shift 3
+exec /usr/bin/timeout -k 1 1 "$@"
+EOF
+chmod +x "$KIMI_TIMEOUT_BIN/timeout"
+
+kimi_probe_rc() {  # kimi_probe_rc [working|interactive|logged-out|stdin|guards|bound]
+  local shape="${1:-working}" auth=accept read_stdin=0 expect_guards=0 hang=0 rc=0
+  [ "$shape" != logged-out ] || auth=reject
+  [ "$shape" != stdin ] || read_stdin=1
+  [ "$shape" != guards ] || expect_guards=1
+  [ "$shape" != bound ] || hang=1
+  # shellcheck disable=SC2016  # expansion belongs to the fixture shell
+  /usr/bin/timeout -k 1 3 \
+    env HOME="$KIMI_PROBE_HOME" SHARED="$SHARED" KIMI_PROBE_SHAPE="$shape" \
+    KIMI_PROBE_AUTH="$auth" KIMI_PROBE_READ_STDIN="$read_stdin" \
+    KIMI_PROBE_EXPECT_GUARDS="$expect_guards" KIMI_PROBE_HANG="$hang" \
+    KIMI_TIMEOUT_BIN="$KIMI_TIMEOUT_BIN" \
+    KIMI_TIMEOUT_CAPTURE="$KIMI_TIMEOUT_CAPTURE" \
+    DUTY_LOCKED=1 NOTIFY_LOCKED=1 DUTY_SNAPSHOT=fixture \
+    bash -c '
+      unset KIMI_CODE_HOME
+      source "$SHARED/conf/agents/kimi.conf"
+      export PATH="$BOT_PATH_PREPEND:$KIMI_TIMEOUT_BIN:/usr/bin:/bin"
+      [ "$KIMI_PROBE_SHAPE" != interactive ] || \
+        BOT_CLI_CMD=(env "KIMI_CODE_HOME=$(_kimi_home)" kimi -p)
+      bot_cli_probe
+    ' >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+t kimi-boot-probe-matches-working-session 0 "$(kimi_probe_rc working)"
+if [ "$(kimi_probe_rc interactive)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
+t kimi-boot-probe-rejects-interactive-session failed "$r1"
+if [ "$(kimi_probe_rc logged-out)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
+t kimi-boot-probe-rejects-logged-out-session failed "$r1"
+KIMI_STDIN_FIFO="$TMP/kimi-probe-stdin"
+mkfifo "$KIMI_STDIN_FIFO"
+( sleep 5 >"$KIMI_STDIN_FIFO" ) & kimi_stdin_writer=$!
+t kimi-boot-probe-closes-inherited-stdin 0 "$(kimi_probe_rc stdin <"$KIMI_STDIN_FIFO")"
+kill "$kimi_stdin_writer" 2>/dev/null || true
+wait "$kimi_stdin_writer" 2>/dev/null || true
+t kimi-boot-probe-clears-lock-environment 0 "$(kimi_probe_rc guards)"
+rm -f "$KIMI_TIMEOUT_CAPTURE"
+if [ "$(kimi_probe_rc bound)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
+t kimi-boot-probe-bounds-hung-cli failed "$r1"
+t kimi-boot-probe-timeout-arguments "-k 10 60" \
+  "$(cat "$KIMI_TIMEOUT_CAPTURE" 2>/dev/null)"
 
 # --- session action telemetry is best-effort and additive (#256) ----------
 SA_LOG="$TMP/session-action.log"
