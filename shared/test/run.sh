@@ -2656,6 +2656,263 @@ else
 fi
 t unsignalled-hold-wired-into-request-gate wired "$r1"
 
+# --- #314: the doable-work gate on resume dispatch --------------------------
+# Resume was the one wake with no doable-work condition — it fired on "is there
+# a draft", and a park is invisible to that. PR #311 spent 58 sessions at one
+# head across 4h45m with zero commits, and every comment on it was the
+# builder's own. These fixtures ARE that incident: the self comment advances
+# every tick, which is what makes an "anything changed" fingerprint re-arm
+# itself and suppress nothing.
+RG_HEAD=9ff004ac9ff004ac9ff004ac9ff004ac9ff004ac
+RG_HEAD2=1782445178244517824451782445178244517824
+rg_listing() {  # rg_listing HEAD NEWEST-SELF-TS NEWEST-FOREIGN-TS BODY
+  jq -cn --arg head "$1" --arg self "$2" --arg foreign "$3" --arg body "$4" '[
+    { number: 311, isDraft: true, headRefOid: $head, body: $body,
+      comments: ([{author:{login:"me"}, createdAt:$self}]
+        + (if $foreign == "" then [] else [{author:{login:"other"}, createdAt:$foreign}] end)),
+      reviews: [] },
+    { number: 999, isDraft: false, headRefOid: $head, body: "Closes #99",
+      comments: [], reviews: [] }
+  ]'
+}
+RG_DUTY="$TMP/resume-gate"; RG_LOG="$TMP/resume-gate.log"
+mkdir -p "$RG_DUTY"
+RG_ISSUE_TS="2026-08-01T00:00:00Z"
+# shellcheck disable=SC2317  # called indirectly by _resume_gate
+gh() { printf '%s\n' "$RG_ISSUE_TS"; }
+RG_SAVED_DUTY="$DUTY_DIR"; RG_SAVED_ME="${ME-}"; RG_ME_WAS_SET="${ME+x}"
+DUTY_DIR="$RG_DUTY"; ME=me
+rg_reset() { rm -f "$RG_DUTY/.seen-resume" "$RG_DUTY/.resume-zero-action.o__r"; }
+rg_tick() {  # rg_tick LISTING [SESSION-RC] — one duty tick, caller side included
+  # Cleared, not assumed: against a tree without the gate this keeps `set -u`
+  # from taking the whole suite down, so each case below reports its own FAIL
+  # rather than the run dying at the first one.
+  RESUME_DISPATCH_NUMS=""; RESUME_COMMIT_LINES=""
+  _resume_gate o/r o__r "$1" >"$RG_LOG" 2>&1 || true
+  if [ "${2:-0}" -eq 0 ] && [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then
+    printf '%s' "$RESUME_COMMIT_LINES" | ledger_commit "$RG_DUTY/.seen-resume"
+  fi
+}
+
+# The pure half first: one line per DRAFT, my own comments excluded, the issue
+# read from the body and never from a branch name.
+t resume-fp-one-line-per-draft \
+  "o/r#311@$RG_HEAD	2026-08-02T19:20:37Z	290" \
+  "$(rg_listing "$RG_HEAD" 2026-08-03T00:05:52Z 2026-08-02T19:20:37Z 'Closes #290' \
+     | _resume_pr_fingerprints o/r me)"
+# Nobody else has spoken: the floor is `0`, which sorts below any ISO stamp and
+# keeps the line at NF>=2 — a blank second field is a line ledger_filter drops.
+t resume-fp-foreign-floor \
+  "o/r#311@$RG_HEAD	0	290" \
+  "$(rg_listing "$RG_HEAD" 2026-08-03T00:05:52Z '' 'Closes #290' \
+     | _resume_pr_fingerprints o/r me)"
+# A foreign REVIEW counts the same as a foreign comment.
+t resume-fp-foreign-review \
+  "o/r#7@$RG_HEAD	2026-08-02T20:00:00Z	" \
+  "$(jq -cn --arg h "$RG_HEAD" '[{number:7,isDraft:true,headRefOid:$h,body:"",
+       comments:[{author:{login:"me"},createdAt:"2026-08-03T00:00:00Z"}],
+       reviews:[{author:{login:"other"},submittedAt:"2026-08-02T20:00:00Z"}]}]' \
+     | _resume_pr_fingerprints o/r me)"
+# Body forms: Refs is the post-merge citation, Part of is CROSS-repo and must
+# not be mistaken for a local issue, and a body with neither degrades to the PR
+# half rather than erroring.
+rg_ref() { rg_listing "$RG_HEAD" T '' "$1" | _resume_pr_fingerprints o/r me | cut -f3; }
+t resume-fp-body-refs 314 "$(rg_ref 'Refs #314')"
+t resume-fp-body-closes 290 "$(rg_ref 'Closes #290')"
+t resume-fp-body-cross-repo-ignored "" "$(rg_ref 'Part of heavy-duty/crew#280')"
+t resume-fp-body-bare-hash-ignored "" "$(rg_ref 'see #280 for the epic')"
+t resume-fp-body-none-degrades "" "$(rg_ref 'no reference at all')"
+
+# 1. THE FLOOD, reproduced and then impossible. Three consecutive ticks whose
+# only new comments are the builder's own marker and checkpoint. Pre-fix this
+# dispatches three times; post-fix the cold ledger dispatches once and the next
+# two are suppressed and SAID (#59: stop paying, do not stop saying).
+rg_reset
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-02T19:20:37Z '' 'Closes #290')"
+t resume-gate-cold-dispatches-once 311 "$RESUME_DISPATCH_NUMS"
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-02T19:25:41Z '' 'Closes #290')"
+t resume-gate-self-comment-suppressed "" "$RESUME_DISPATCH_NUMS"
+t resume-gate-suppression-is-logged 1 \
+  "$(grep -c "no resume duty: o/r#311 unchanged at $RG_HEAD" "$RG_LOG")"
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-03T00:05:52Z '' 'Closes #290')"
+t resume-gate-self-comment-still-suppressed "" "$RESUME_DISPATCH_NUMS"
+t resume-gate-suppression-logged-every-tick 1 \
+  "$(grep -c "no resume duty: o/r#311 unchanged at $RG_HEAD" "$RG_LOG")"
+# A non-draft PR is not this gate's business at all.
+t resume-gate-ignores-non-drafts 0 "$(grep -c 'o/r#999' "$RG_LOG")"
+
+# 2. A FOREIGN comment wakes it, and the ledger advances.
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-03T00:05:52Z 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-gate-foreign-comment-wakes 311 "$RESUME_DISPATCH_NUMS"
+t resume-gate-ledger-advanced 1 \
+  "$(grep -c "^o/r#311@$RG_HEAD 2026-08-03T01:00:00Z$" "$RG_DUTY/.seen-resume")"
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-03T02:00:00Z 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-gate-foreign-comment-once "" "$RESUME_DISPATCH_NUMS"
+
+# 3. A PUSH wakes it even when no one else has spoken. The head is in the ID,
+# so this holds however the two SHAs happen to sort — the ci-red lesson (#17).
+rg_tick "$(rg_listing "$RG_HEAD2" 2026-08-03T02:00:00Z 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-gate-push-wakes 311 "$RESUME_DISPATCH_NUMS"
+
+# 4. AN ISSUE-SIDE WAKE, with the PR untouched — the #311/#290 shape, where the
+# wake that lifts the park lands off the PR entirely.
+rg_tick "$(rg_listing "$RG_HEAD2" 2026-08-03T02:00:00Z 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-gate-issue-quiet-suppressed "" "$RESUME_DISPATCH_NUMS"
+RG_ISSUE_TS="2026-08-03T10:18:04Z"
+rg_tick "$(rg_listing "$RG_HEAD2" 2026-08-03T02:00:00Z 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-gate-issue-wake-dispatches 311 "$RESUME_DISPATCH_NUMS"
+# A body naming no local issue cannot be woken from the issue side, and must
+# still be gated rather than erroring: the clock moves, the draft stays quiet.
+rg_reset
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-03T02:00:00Z '' 'no reference at all')"
+t resume-gate-no-ref-cold-dispatches 311 "$RESUME_DISPATCH_NUMS"
+RG_ISSUE_TS="2026-08-04T00:00:00Z"
+rg_tick "$(rg_listing "$RG_HEAD" 2026-08-03T03:00:00Z '' 'no reference at all')"
+t resume-gate-no-ref-degrades-to-pr-half "" "$RESUME_DISPATCH_NUMS"
+RG_ISSUE_TS="2026-08-01T00:00:00Z"
+# An issue lookup that fails degrades the same way and says so rather than
+# silently pinning the fingerprint to the PR half.
+# shellcheck disable=SC2317  # called indirectly by _resume_gate
+gh() { return 1; }
+rg_reset
+rg_tick "$(rg_listing "$RG_HEAD" T '' 'Closes #290')"
+t resume-gate-issue-fetch-failure-warns 1 "$(grep -c 'lookup failed for the resume fingerprint' "$RG_LOG")"
+t resume-gate-issue-fetch-failure-still-dispatches 311 "$RESUME_DISPATCH_NUMS"
+# shellcheck disable=SC2317  # called indirectly by _resume_gate
+gh() { printf '%s\n' "$RG_ISSUE_TS"; }
+
+# 5. rc != 0 DOES NOT COMMIT the ledger: a session that fails re-dispatches on
+# the next tick rather than losing the wake it never got to act on.
+rg_reset
+rg_tick "$(rg_listing "$RG_HEAD" T '' 'Closes #290')" 1
+t resume-gate-failed-session-dispatched 311 "$RESUME_DISPATCH_NUMS"
+t resume-gate-failed-session-uncommitted 0 \
+  "$(awk 'NF' "$RG_DUTY/.seen-resume" 2>/dev/null | wc -l | tr -d ' ')"
+rg_tick "$(rg_listing "$RG_HEAD" T '' 'Closes #290')" 1
+t resume-gate-failed-session-redispatches 311 "$RESUME_DISPATCH_NUMS"
+
+# 6. THE BREAKER. Three consecutive dispatches at one head that produce no
+# commit trip it: no fourth dispatch at that head, exactly one WARN, and a push
+# resets the count to one. Foreign comments advance every tick here, so the
+# ledger admits each one — this is precisely the case the ledger does NOT catch.
+rg_reset
+rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-breaker-first-dispatch 311 "$RESUME_DISPATCH_NUMS"
+t resume-breaker-quiet-at-one 0 "$(grep -c 'consecutive resume dispatches' "$RG_LOG")"
+rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T02:00:00Z 'Closes #290')"
+t resume-breaker-second-dispatch 311 "$RESUME_DISPATCH_NUMS"
+t resume-breaker-quiet-at-two 0 "$(grep -c 'consecutive resume dispatches' "$RG_LOG")"
+rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T03:00:00Z 'Closes #290')"
+t resume-breaker-third-dispatch 311 "$RESUME_DISPATCH_NUMS"
+t resume-breaker-trips-once 1 "$(grep -c 'consecutive resume dispatches' "$RG_LOG")"
+t resume-breaker-warn-names-pr-head-count 1 \
+  "$(grep -c "WARN: o/r#311: 3 consecutive resume dispatches at head ${RG_HEAD:0:12} produced no commit" "$RG_LOG")"
+rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T04:00:00Z 'Closes #290')"
+t resume-breaker-no-fourth-dispatch "" "$RESUME_DISPATCH_NUMS"
+t resume-breaker-suppression-is-said 1 \
+  "$(grep -c "breaker-suppressed at $RG_HEAD after 3 zero-action dispatches" "$RG_LOG")"
+t resume-breaker-warns-only-once 0 "$(grep -c 'consecutive resume dispatches' "$RG_LOG")"
+# A push clears it: a new head is a new key, and the count starts at one.
+rg_tick "$(rg_listing "$RG_HEAD2" T 2026-08-03T05:00:00Z 'Closes #290')"
+t resume-breaker-push-clears-suppression 311 "$RESUME_DISPATCH_NUMS"
+t resume-breaker-push-resets-count-to-one 1 \
+  "$(awk -F'\t' -v k="o/r#311@$RG_HEAD2" '$1 == k {print $2}' "$RG_DUTY/.resume-zero-action.o__r")"
+# A tick the LEDGER held must not reset the count: the breaker bounds
+# consecutive DISPATCHES, and a quiet tick between two of them is not progress.
+rg_reset
+rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T01:00:00Z 'Closes #290')"
+rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T01:00:00Z 'Closes #290')"
+t resume-breaker-quiet-tick-held "" "$RESUME_DISPATCH_NUMS"
+t resume-breaker-quiet-tick-preserves-count 1 \
+  "$(awk -F'\t' -v k="o/r#311@$RG_HEAD" '$1 == k {print $2}' "$RG_DUTY/.resume-zero-action.o__r")"
+# Three ticks at DIFFERENT heads must never trip it — the must-fail case.
+rg_reset
+rg_tick "$(rg_listing aaa1 T 2026-08-03T01:00:00Z 'Closes #290')"
+rg_tick "$(rg_listing aaa2 T 2026-08-03T02:00:00Z 'Closes #290')"
+rg_tick "$(rg_listing aaa3 T 2026-08-03T03:00:00Z 'Closes #290')"
+t resume-breaker-different-heads-never-trip 0 "$(grep -c 'consecutive resume dispatches' "$RG_LOG")"
+t resume-breaker-different-heads-still-dispatch 311 "$RESUME_DISPATCH_NUMS"
+# The state prunes: a key gone from the input (merged, closed, undrafted) does
+# not accumulate forever.
+t resume-breaker-state-prunes 1 "$(awk 'NF' "$RG_DUTY/.resume-zero-action.o__r" | wc -l | tr -d ' ')"
+
+# 7. THE SUPPRESSED SET AND THE DISPATCHED SET PARTITION the draft set — no
+# draft in both, none missing. The `suppressed-partitions` assertion above is
+# the model; here it is asserted end to end, through the gate.
+RG_TWO="$(jq -cn --arg h "$RG_HEAD" '[
+  {number:1,isDraft:true,headRefOid:$h,body:"",comments:[],reviews:[]},
+  {number:2,isDraft:true,headRefOid:$h,body:"",comments:[],reviews:[]}]')"
+RG_TWO_B="$(jq -cn --arg h "$RG_HEAD" '[
+  {number:1,isDraft:true,headRefOid:$h,body:"",comments:[],reviews:[]},
+  {number:2,isDraft:true,headRefOid:$h,body:"",
+   comments:[{author:{login:"other"},createdAt:"2026-08-03T09:00:00Z"}],reviews:[]}]')"
+rg_reset
+rg_tick "$RG_TWO"
+rg_tick "$RG_TWO_B"
+t resume-gate-partition-dispatched 2 "$RESUME_DISPATCH_NUMS"
+t resume-gate-partition-suppressed 1 "$(grep -c 'no resume duty: o/r#1 unchanged' "$RG_LOG")"
+t resume-gate-partition-disjoint 0 "$(grep -c 'no resume duty: o/r#2 unchanged' "$RG_LOG")"
+DUTY_DIR="$RG_SAVED_DUTY"
+if [ -n "$RG_ME_WAS_SET" ]; then ME="$RG_SAVED_ME"; else unset ME; fi
+unset -f gh
+
+# 8. THE WIRING. Helper-level tests stay green if the dispatch site stops
+# routing through the ledger, which is exactly how the flood would come back.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq 'ledger_filter "$DUTY_DIR/.seen-resume"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq 'ledger_suppressed "$DUTY_DIR/.seen-resume"' "$SHARED/lib/duty-builder.sh"; then
+  r1=gated
+else
+  r1=UNGATED
+fi
+t resume-gate-wired-through-the-ledger gated "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_resume_gate "$R" "$slug" "$resume_json"' "$SHARED/lib/duty-builder.sh"; then r1=wired; else r1=BYPASSED; fi
+t resume-gate-wired-into-dispatch wired "$r1"
+# The commit must stay rc-gated at the call site, not merely inside the helper.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -F -A2 'if [ "${RUN_SESSION_RC:-1}" -eq 0 ] && [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then' \
+       "$SHARED/lib/duty-builder.sh" \
+     | grep -Fq 'ledger_commit "$DUTY_DIR/.seen-resume"'; then
+  r1='rc-gated'
+else
+  r1=UNCONDITIONAL
+fi
+t resume-gate-commit-is-rc-gated rc-gated "$r1"
+# The listing must carry what the fingerprint reads. Dropping a field here would
+# silently pin every fingerprint to its floor and suppress every draft forever.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq -- '--json number,isDraft,headRefOid,comments,reviews,body' "$SHARED/lib/duty-builder.sh"; then
+  r1=complete
+else
+  r1='MISSING-FIELDS'
+fi
+t resume-gate-listing-carries-fingerprint-fields complete "$r1"
+
+# 9. THE PROMPT AND THE DOCTRINE STATE THE SAME RULE. The prompt must carry no
+# instruction to comment that is unconditional on the session acting — a parked
+# builder cannot obey both halves of a fork, and #311's builder correctly obeyed
+# the prompt.
+RG_PROMPT="$SHARED/prompts/resume.txt"
+if grep -Fq 'For each draft PR: post one comment' "$RG_PROMPT"; then
+  r1=UNCONDITIONAL
+else
+  r1=conditional
+fi
+t resume-prompt-marker-not-unconditional conditional "$r1"
+if grep -Fq 'ONLY WHEN YOU ARE GOING TO ACT' "$RG_PROMPT" \
+  && grep -Fq 'POST NOTHING AT ALL' "$RG_PROMPT"; then r1=gated; else r1=MISSING; fi
+t resume-prompt-marker-gated-on-acting gated "$r1"
+# The doctrine sentence itself, quoted rather than paraphrased, so the two can
+# be read side by side.
+if grep -Fq 'a resumption that finds nothing changed posts nothing' "$RG_PROMPT" \
+  && grep -Fq 'a resumption that finds nothing changed posts nothing' "$ROOT/.ceremony/BUILDER.md"; then
+  r1=agreed
+else
+  r1=DIVERGED
+fi
+t resume-prompt-quotes-the-doctrine agreed "$r1"
+
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
 # will independently enter under its new id if it is red.
