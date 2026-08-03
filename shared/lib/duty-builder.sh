@@ -596,6 +596,11 @@ _resume_gate() {
       issue_ts="$(gh api "repos/$repo/issues/$issue" --jq '.updated_at' 2>/dev/null || echo "")"
       [ -n "$issue_ts" ] || warn "$repo: issue #$issue lookup failed for the resume fingerprint; using the PR half this tick"
     fi
+    # The comparison is and must stay LEXICAL: both sides are ISO-8601, which is
+    # why the value carries only timestamps (the head lives in the id). With the
+    # `0` floor now assigned literally just above, shellcheck infers a number and
+    # wants -gt, which would compare `2026-08-03T…` as arithmetic and abort.
+    # shellcheck disable=SC2071  # ISO-8601 stamps; lexical is the whole scheme
     [ -n "$issue_ts" ] && [ "$issue_ts" \> "$foreign" ] && foreign="$issue_ts"
     ts_by_key["$key"]="$foreign"
     issue_by_key["$key"]="$issue"
