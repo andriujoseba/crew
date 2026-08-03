@@ -2270,6 +2270,7 @@ printf '%s\n' '{"refresh_token":"fixture"}' \
 cat >"$KIMI_PROBE_HOME/.kimi/bin/kimi" <<'EOF'
 #!/usr/bin/env bash
 [ "${KIMI_CODE_HOME:-}" = "$HOME/.kimi" ] || exit 21
+[ "${KIMI_PROBE_AUTH:-accept}" != reject ] || exit 23
 case " $* " in
   *" --afk -p "*) exit 0 ;;
   *) exit 22 ;;
@@ -2277,10 +2278,12 @@ esac
 EOF
 chmod +x "$KIMI_PROBE_HOME/.kimi/bin/kimi"
 
-kimi_probe_rc() {  # kimi_probe_rc [working|interactive]
-  local shape="${1:-working}" rc=0
+kimi_probe_rc() {  # kimi_probe_rc [working|interactive|logged-out]
+  local shape="${1:-working}" auth=accept rc=0
+  [ "$shape" != logged-out ] || auth=reject
   # shellcheck disable=SC2016  # expansion belongs to the fixture shell
   env HOME="$KIMI_PROBE_HOME" SHARED="$SHARED" KIMI_PROBE_SHAPE="$shape" \
+    KIMI_PROBE_AUTH="$auth" \
     bash -c '
       unset KIMI_CODE_HOME
       source "$SHARED/conf/agents/kimi.conf"
@@ -2293,6 +2296,8 @@ kimi_probe_rc() {  # kimi_probe_rc [working|interactive]
 t kimi-boot-probe-matches-working-session 0 "$(kimi_probe_rc working)"
 if [ "$(kimi_probe_rc interactive)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
 t kimi-boot-probe-rejects-interactive-session failed "$r1"
+if [ "$(kimi_probe_rc logged-out)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
+t kimi-boot-probe-rejects-logged-out-session failed "$r1"
 
 # --- session action telemetry is best-effort and additive (#256) ----------
 SA_LOG="$TMP/session-action.log"
