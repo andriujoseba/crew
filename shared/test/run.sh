@@ -192,6 +192,12 @@ for profile in "$SHARED"/conf/agents/*.conf; do
     r1=broken
   fi
   t "agent-conf-$agent-standalone" sourceable "$r1"
+  if sed -n '/^AGENT_LOGIN_HINT=.*${/p' "$profile" | grep -q .; then
+    r1=deferred
+  else
+    r1=literal
+  fi
+  t "agent-conf-$agent-login-hint-literal" literal "$r1"
 done
 
 if unknown_out="$(bash "$ROOT/drill/rehearsal.sh" --agent nosuchagent 2>&1)"; then
@@ -2288,7 +2294,8 @@ kimi_probe_rc() {  # kimi_probe_rc [working|interactive|logged-out]
       unset KIMI_CODE_HOME
       source "$SHARED/conf/agents/kimi.conf"
       export PATH="$BOT_PATH_PREPEND:/usr/bin:/bin"
-      [ "$KIMI_PROBE_SHAPE" != interactive ] || BOT_CLI_CMD=(kimi -p)
+      [ "$KIMI_PROBE_SHAPE" != interactive ] || \
+        BOT_CLI_CMD=(env "KIMI_CODE_HOME=$(_kimi_home)" kimi -p)
       bot_cli_probe
     ' >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
