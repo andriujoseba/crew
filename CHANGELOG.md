@@ -14,17 +14,6 @@ ledger at 0.1.0**, do not backfill.
 release PR from the fragments in changelog.d/. There are none yet: 0.1.0 has
 not been cut. -->
 
-> **Misattribution note — `0.1.1`.** The two `#206` and two `#209` entries in
-> the section below describe work that shipped in **`0.1.0`**. Their fragments
-> went unconsumed because `0.1.0`'s release PR merged twelve commits stale
-> (#212), so this is the first section that could carry them. Recorded here
-> under **Option A** of the decision on
-> [#162](https://github.com/heavy-duty/crew/issues/162): assemble the fragments
-> where they lie and name the misattribution, rather than amend a published
-> section. The note sits above the heading rather than inside the section
-> because `changelog-assembled` requires the body to be byte-for-byte the
-> assembly of the fragments it consumed.
-
 ## 0.1.1 — 2026-08-03
 
 ### Added
@@ -50,8 +39,10 @@ not been cut. -->
 - The `fleet.conf` / `repos.txt` completeness check runs on the shipped examples too, not only on operator definitions (#216).
 - Fleet Floor: the fleet view is a conference call — a vertically scrolling grid of webcam tiles, one per box, each unit front-on in close-up over a static blurred role-colour backdrop (#209).
 - Fleet Floor: each tile carries AR telemetry — uptime, idle over the last 24h, queue, signal, a heartbeat trace that flatlines with the box, the open session's timer, and a live caption naming the work item (#209).
+- Note: both `#209` entries above describe work that shipped in `0.1.0`. Their fragment went unconsumed because `0.1.0`'s release PR merged twelve commits stale (#212), so this is the first section that could carry them; the published `0.1.0` section is left as it stands (#162).
 - Fleet Floor: grok's unit is rebuilt as a grounded stalker — digitigrade stance with hard deck contacts, a built-in predator-mask face, and a slicked-back cable mane with state language (#206).
 - Fleet Floor: grok keeps a purple spine-slit readout and a flight-lineage service record; the jetpack hover and its thruster wash are gone (#206).
+- Note: both `#206` entries above describe work that shipped in `0.1.0`. Their fragment went unconsumed because `0.1.0`'s release PR merged twelve commits stale (#212), so this is the first section that could carry them; the published `0.1.0` section is left as it stands (#162).
 
 ### Fixed
 
