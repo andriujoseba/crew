@@ -2258,6 +2258,40 @@ for pair in \
   t "agent-conf-$agent-non-interactive" present "$r1"
 done
 
+# The boot gate must exercise the same Kimi command shape as a real session.
+# `kimi doctor` looked plausible but bypassed both --afk and the resolved
+# credential home, so the upgraded Kimi box warned on every tick while real
+# review sessions succeeded at the same minutes (#240). This fixture accepts
+# only the command/environment pair that makes sessions work on that box.
+KIMI_PROBE_HOME="$TMP/kimi-probe-home"
+mkdir -p "$KIMI_PROBE_HOME/.kimi/bin" "$KIMI_PROBE_HOME/.kimi/credentials"
+printf '%s\n' '{"refresh_token":"fixture"}' \
+  >"$KIMI_PROBE_HOME/.kimi/credentials/kimi-code.json"
+cat >"$KIMI_PROBE_HOME/.kimi/bin/kimi" <<'EOF'
+#!/usr/bin/env bash
+[ "${KIMI_CODE_HOME:-}" = "$HOME/.kimi" ] || exit 21
+case " $* " in
+  *" --afk -p "*) exit 0 ;;
+  *) exit 22 ;;
+esac
+EOF
+chmod +x "$KIMI_PROBE_HOME/.kimi/bin/kimi"
+
+kimi_probe_rc() {  # kimi_probe_rc [working|interactive]
+  local shape="${1:-working}" rc=0
+  ( export HOME="$KIMI_PROBE_HOME"
+    unset KIMI_CODE_HOME
+    # shellcheck disable=SC1090
+    source "$SHARED/conf/agents/kimi.conf"
+    export PATH="$BOT_PATH_PREPEND:/usr/bin:/bin"
+    [ "$shape" != interactive ] || BOT_CLI_CMD=(kimi -p)
+    bot_cli_probe ) >/dev/null 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+t kimi-boot-probe-matches-working-session 0 "$(kimi_probe_rc working)"
+if [ "$(kimi_probe_rc interactive)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
+t kimi-boot-probe-rejects-interactive-session failed "$r1"
+
 # --- session action telemetry is best-effort and additive (#256) ----------
 SA_LOG="$TMP/session-action.log"
 printf 'OpenAI Codex\nfinal answer: Please connect a plugin.\n' >"$SA_LOG"
