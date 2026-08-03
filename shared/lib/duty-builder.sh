@@ -424,12 +424,22 @@ _stranded_resume_keys() {
 # compare. What remains in the value is then all ISO-8601 — foreign comment,
 # foreign review, referenced issue — so a lexical max is a chronological one.
 
-# _resume_pr_fingerprints REPO ME — stdin is the authored open-PR listing resume
+# _resume_pr_fingerprints REPO — stdin is the authored open-PR listing resume
 # detection already fetches. One tab-separated line per DRAFT:
-#   <repo>#<num>@<head>  <newest foreign activity>  <referenced issue or empty>
-# The floor is `0`, which sorts below any ISO-8601 stamp: a draft nobody else
-# has touched still produces a well-formed ledger line rather than a blank
-# second field, which ledger_filter's NF>=2 guard would drop silently.
+#   <repo>#<num>@<head>  <referenced issue or empty>
+#
+# THE FOREIGN HALF IS NOT READ FROM THE LISTING, and that is not a style choice.
+# `gh pr list --json comments,reviews` generates `comments(first: 100)` /
+# `reviews(first: 100)` and does not paginate those nested connections, so the
+# array is oldest-first and truncated: `max` over it is the newest of the FIRST
+# hundred, and it stops moving for good once the thread passes that mark.
+# Measured on the incident PR itself — `gh pr list --json number,comments`
+# returns exactly 100 for #311, newest returned `2026-08-03T00:05:52Z`, while
+# `/issues/311/comments --paginate` has 124. A builder that floods its own PR
+# past 100 comments would be left permanently unwakeable by anyone speaking on
+# it, which fails this gate's central criterion on precisely the shape it exists
+# for. The newest-foreign lookup therefore goes through _resume_newest_foreign
+# below, and the listing no longer fetches those fields at all.
 #
 # The issue reference is read from the BODY, never from the branch name: crew
 # branches are `<type>/<issue>-<slug>` and only some are `build/` (#315 is
@@ -438,19 +448,48 @@ _stranded_resume_keys() {
 # owner/repo#N` is deliberately NOT matched — that form is cross-repo, so the
 # number does not address an issue in this repo at all — and neither is a bare
 # `#N`, because crew bodies cite epics and siblings in prose and the first such
-# mention is not the authorizing one.
+# mention is not the authorizing one. The leading `(^|[^a-z])` is a word
+# boundary: without it `the operator discloses #99 in passing` yields issue 99,
+# costing a gh call per tick and a WARN naming a wake nobody declared.
 _resume_pr_fingerprints() {
-  local repo="$1" me="$2"
-  jq -r --arg repo "$repo" --arg me "$me" '
+  local repo="$1"
+  jq -r --arg repo "$repo" '
     .[] | select(.isDraft)
-    | ( [ ((.comments // [])[] | select(.author.login != $me) | .createdAt),
-          ((.reviews  // [])[] | select(.author.login != $me) | .submittedAt) ]
-        | map(select(. != null and . != "")) | max // "0" ) as $foreign
     | ( first( (.body // "")
-               | capture("(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)"; "i")
+               | capture("(^|[^a-z])(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)"; "i")
                | .n ) // "" ) as $issue
-    | "\($repo)#\(.number)@\(.headRefOid)\t\($foreign)\t\($issue)"
-  ' 2>/dev/null
+    | "\($repo)#\(.number)@\(.headRefOid)\t\($issue)"
+  '
+}
+
+# _resume_newest_foreign REPO NUM ME — the newest activity on PR NUM not
+# authored by ME, as an ISO-8601 stamp, or empty when nobody else has spoken.
+# Nonzero means the lookup itself failed and the answer is unknown.
+#
+# Paginated REST, not the listing's capped GraphQL connections (above), and not
+# a single page of either: `sort`/`direction` are NOT parameters of
+# `GET /repos/{owner}/{repo}/issues/{n}/comments` — they belong to the
+# repo-level `/issues/comments` list — so GitHub ignores them and a `per_page=1`
+# read returns the OLDEST comment, pinning the fingerprint to the first thing
+# ever posted. Verified on #311: `-f per_page=3 -f sort=created -f
+# direction=desc` returns the same three stamps as the unsorted call, oldest
+# first. Full pagination is what actually answers "the newest, at any thread
+# length"; it costs ceil(n/100) calls per draft per tick, which is one for a
+# normal draft and two for #311's 124, against ~1 draft per builder.
+#
+# ME is filtered in awk rather than in jq because `gh api --jq` takes no --arg,
+# and a login interpolated into a jq program is a login that can break it.
+_resume_newest_foreign() {
+  local repo="$1" num="$2" me="$3" raw
+  raw="$( {
+      gh api --paginate "repos/$repo/issues/$num/comments?per_page=100" \
+        --jq '.[] | "\(.user.login // "")\t\(.created_at // "")"' \
+      && gh api --paginate "repos/$repo/pulls/$num/reviews?per_page=100" \
+        --jq '.[] | "\(.user.login // "")\t\(.submitted_at // "")"'
+    } 2>/dev/null )" || return 1
+  printf '%s\n' "$raw" \
+    | awk -F'\t' -v me="$me" '$1 != me && $2 != "" { print $2 }' \
+    | sort | tail -1
 }
 
 # _resume_breaker STATE THRESHOLD — the zero-action circuit breaker. stdin is
@@ -519,12 +558,31 @@ _resume_breaker() {
 _resume_gate() {
   local repo="$1" slug="$2" listing="$3"
   local key foreign issue issue_ts lines="" fresh want verdict count num head
-  local dispatch_nums="" breaker=3 wake
+  local dispatch_nums="" breaker=3 wake fingerprints
   local -A ts_by_key=() issue_by_key=()
   RESUME_COMMIT_LINES=""
   RESUME_DISPATCH_NUMS=""
-  while IFS=$'\t' read -r key foreign issue; do
+  # FAIL OPEN, AND SAY SO. jq's stderr is no longer swallowed, and a filter that
+  # breaks returns nonzero here so the caller keeps its pre-gate draft list: a
+  # broken gate must not become a silent permanent stall, which is the exact
+  # failure #59 names ("stop paying, do not stop saying") and the one this whole
+  # PR is built on. Nothing is committed on this path, so the next working tick
+  # decides afresh.
+  if ! fingerprints="$(printf '%s' "$listing" | _resume_pr_fingerprints "$repo")"; then
+    warn "$repo: the resume fingerprint filter failed; dispatching resume ungated this tick"
+    return 1
+  fi
+  while IFS=$'\t' read -r key issue; do
     [ -n "$key" ] || continue
+    num="${key#*#}"; num="${num%@*}"
+    # The floor is `0`, which sorts below any ISO-8601 stamp: a draft nobody
+    # else has touched still produces a well-formed ledger line rather than a
+    # blank second field, which ledger_filter's NF>=2 guard would drop silently.
+    if ! foreign="$(_resume_newest_foreign "$repo" "$num" "$ME")"; then
+      warn "$repo#$num: the foreign-activity lookup failed for the resume fingerprint; using the issue half this tick"
+      foreign=""
+    fi
+    [ -n "$foreign" ] || foreign="0"
     # THE REFERENCED ISSUE IS IN THE FINGERPRINT, at one API call per draft per
     # tick, because without it the gate converts a flood into a stall: on this
     # very incident the wake landed as a comment on #290, not on #311, and a
@@ -542,7 +600,7 @@ _resume_gate() {
     ts_by_key["$key"]="$foreign"
     issue_by_key["$key"]="$issue"
     lines="$lines$key $foreign"$'\n'
-  done < <(printf '%s' "$listing" | _resume_pr_fingerprints "$repo" "$ME")
+  done <<<"$fingerprints"
   [ -n "${lines//[[:space:]]/}" ] || return 0
   fresh="$(printf '%s' "$lines" | ledger_filter "$DUTY_DIR/.seen-resume")"
   # One line per withheld draft, every tick it is withheld — not report_suppressed's
@@ -571,7 +629,11 @@ _resume_gate() {
           else
             wake="none parseable from the PR body"
           fi
-          warn "$repo#$num: $count consecutive resume dispatches at head ${head:0:12} produced no commit — suppressing resume for this head until it moves (#314); declared wake: $wake"
+          # ASSERT ONLY WHAT IS OBSERVED. The trip fires as the third dispatch
+          # goes out, so only the first two are known to have produced nothing;
+          # the third has not run yet. Naming all three as commitless would be
+          # one session ahead of the evidence.
+          warn "$repo#$num: resume dispatch $count of $count at head ${head:0:12} — the previous $(( count - 1 )) produced no commit, and after this one resume is suppressed at this head until it moves (#314); declared wake: $wake"
         fi
         ;;
       suppress)
@@ -638,8 +700,11 @@ _builder_repo() {
   # mid-flight — that lock is what makes resume detection sound. ---
   local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
   local claimed_nums open_heads merged_heads N branch
+  # `comments` and `reviews` are deliberately NOT requested: those nested
+  # connections are generated as `first: 100` and never paginate, so reading the
+  # foreign half from here caps it at the oldest hundred (_resume_pr_fingerprints).
   resume_json="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft,headRefOid,comments,reviews,body 2>/dev/null || echo err)"
+    --json number,isDraft,headRefOid,body 2>/dev/null || echo err)"
   if [ "$resume_json" = "err" ]; then
     draft_nums=err
     stranded_keys=err
@@ -688,8 +753,12 @@ _builder_repo() {
     # to a bare "is there a draft" test. Applied to DRAFTS only: an orphaned
     # claim has no PR to fingerprint, and a stranded ready PR already carries
     # its own 12-tick counter above.
-    _resume_gate "$R" "$slug" "$resume_json"
-    draft_nums="$RESUME_DISPATCH_NUMS"
+    # Fail open: a gate that cannot run leaves the pre-gate draft list standing
+    # and has already warned. Over-dispatching for one tick is recoverable; a
+    # silent stall is what #314 is about.
+    if _resume_gate "$R" "$slug" "$resume_json"; then
+      draft_nums="$RESUME_DISPATCH_NUMS"
+    fi
   fi
   if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
     log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none})"
