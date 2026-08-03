@@ -519,7 +519,7 @@ _resume_breaker() {
 _resume_gate() {
   local repo="$1" slug="$2" listing="$3"
   local key foreign issue issue_ts lines="" fresh want verdict count num head
-  local dispatch_nums="" breaker=3
+  local dispatch_nums="" breaker=3 wake
   local -A ts_by_key=() issue_by_key=()
   RESUME_COMMIT_LINES=""
   RESUME_DISPATCH_NUMS=""
@@ -563,7 +563,15 @@ _resume_gate() {
         dispatch_nums="$dispatch_nums $num"
         RESUME_COMMIT_LINES="$RESUME_COMMIT_LINES$key ${ts_by_key[$key]}"$'\n'
         if [ "$count" -eq "$breaker" ]; then
-          warn "$repo#$num: $count consecutive resume dispatches at head ${head:0:12} produced no commit — suppressing resume for this head until it moves (#314); declared wake: ${issue_by_key[$key]:+$repo#${issue_by_key[$key]}}${issue_by_key[$key]:-none parseable from the PR body}"
+          # The park declares what it waits on, and the WARN carries it where
+          # one is parseable: a human or a chair reading duty.log should not
+          # have to open the PR to learn which issue the wake is expected on.
+          if [ -n "${issue_by_key[$key]}" ]; then
+            wake="$repo#${issue_by_key[$key]}"
+          else
+            wake="none parseable from the PR body"
+          fi
+          warn "$repo#$num: $count consecutive resume dispatches at head ${head:0:12} produced no commit — suppressing resume for this head until it moves (#314); declared wake: $wake"
         fi
         ;;
       suppress)

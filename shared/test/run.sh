@@ -2805,8 +2805,14 @@ t resume-breaker-quiet-at-two 0 "$(grep -c 'consecutive resume dispatches' "$RG_
 rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T03:00:00Z 'Closes #290')"
 t resume-breaker-third-dispatch 311 "$RESUME_DISPATCH_NUMS"
 t resume-breaker-trips-once 1 "$(grep -c 'consecutive resume dispatches' "$RG_LOG")"
+# The WHOLE line, not a prefix: the declared wake is the half a human reads to
+# know where the park expects its signal, and a prefix match let a `:+`/`:-`
+# pair that printed the issue number twice through in review.
+# ANCHORED at the end, deliberately: an unanchored match is a substring match,
+# and the `:+`/`:-` pair this replaced printed `o/r#290290` — which a prefix
+# assertion accepts.
 t resume-breaker-warn-names-pr-head-count 1 \
-  "$(grep -c "WARN: o/r#311: 3 consecutive resume dispatches at head ${RG_HEAD:0:12} produced no commit" "$RG_LOG")"
+  "$(grep -c "WARN: o/r#311: 3 consecutive resume dispatches at head ${RG_HEAD:0:12} produced no commit — suppressing resume for this head until it moves (#314); declared wake: o/r#290\$" "$RG_LOG")"
 rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T04:00:00Z 'Closes #290')"
 t resume-breaker-no-fourth-dispatch "" "$RESUME_DISPATCH_NUMS"
 t resume-breaker-suppression-is-said 1 \
