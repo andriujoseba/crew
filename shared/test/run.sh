@@ -2277,16 +2277,17 @@ esac
 EOF
 chmod +x "$KIMI_PROBE_HOME/.kimi/bin/kimi"
 
-# shellcheck disable=SC2030,SC2031  # HOME/PATH are deliberately fixture-local
 kimi_probe_rc() {  # kimi_probe_rc [working|interactive]
   local shape="${1:-working}" rc=0
-  ( export HOME="$KIMI_PROBE_HOME"
-    unset KIMI_CODE_HOME
-    # shellcheck disable=SC1091
-    source "$SHARED/conf/agents/kimi.conf"
-    export PATH="$BOT_PATH_PREPEND:/usr/bin:/bin"
-    [ "$shape" != interactive ] || BOT_CLI_CMD=(kimi -p)
-    bot_cli_probe ) >/dev/null 2>&1 || rc=$?
+  # shellcheck disable=SC2016  # expansion belongs to the fixture shell
+  env HOME="$KIMI_PROBE_HOME" SHARED="$SHARED" KIMI_PROBE_SHAPE="$shape" \
+    bash -c '
+      unset KIMI_CODE_HOME
+      source "$SHARED/conf/agents/kimi.conf"
+      export PATH="$BOT_PATH_PREPEND:/usr/bin:/bin"
+      [ "$KIMI_PROBE_SHAPE" != interactive ] || BOT_CLI_CMD=(kimi -p)
+      bot_cli_probe
+    ' >/dev/null 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 t kimi-boot-probe-matches-working-session 0 "$(kimi_probe_rc working)"
