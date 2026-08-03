@@ -503,18 +503,26 @@ _resume_breaker() {
 }
 
 # _resume_gate REPO SLUG LISTING — the whole doable-work decision for this
-# repo's drafts. Echoes the space-joined draft numbers resume may dispatch for,
-# and says out loud, once per tick, which drafts it withheld and why: a ledger
-# trades a burn for SILENCE, and silence is how the fleet starves (#59). The
-# lines the session must EARN are left in RESUME_COMMIT_LINES for the caller to
-# commit only on rc 0 — a crashed session re-dispatches next tick rather than
-# losing its wake, the same rule .seen-build and .seen-ci-red follow.
+# repo's drafts. It says out loud, once per tick, which drafts it withheld and
+# why: a ledger trades a burn for SILENCE, and silence is how the fleet starves
+# (#59).
+#
+# Its two answers come back in GLOBALS, not on stdout, because every one of
+# those reports is a log line and log writes to stdout (tick.sh redirects the
+# whole tick there). A function that returned the dispatch set through the same
+# channel would fold its own reporting into the draft list.
+#   RESUME_DISPATCH_NUMS  the space-joined draft numbers resume may dispatch for
+#   RESUME_COMMIT_LINES   the ledger lines the SESSION must earn — committed by
+#                         the caller only on rc 0, the rule .seen-build and
+#                         .seen-ci-red already follow, so a crashed session
+#                         re-dispatches next tick rather than losing its wake.
 _resume_gate() {
   local repo="$1" slug="$2" listing="$3"
   local key foreign issue issue_ts lines="" fresh want verdict count num head
   local dispatch_nums="" breaker=3
   local -A ts_by_key=() issue_by_key=()
   RESUME_COMMIT_LINES=""
+  RESUME_DISPATCH_NUMS=""
   while IFS=$'\t' read -r key foreign issue; do
     [ -n "$key" ] || continue
     # THE REFERENCED ISSUE IS IN THE FINGERPRINT, at one API call per draft per
@@ -535,7 +543,7 @@ _resume_gate() {
     issue_by_key["$key"]="$issue"
     lines="$lines$key $foreign"$'\n'
   done < <(printf '%s' "$listing" | _resume_pr_fingerprints "$repo" "$ME")
-  [ -n "${lines//[[:space:]]/}" ] || { printf '%s' ""; return 0; }
+  [ -n "${lines//[[:space:]]/}" ] || return 0
   fresh="$(printf '%s' "$lines" | ledger_filter "$DUTY_DIR/.seen-resume")"
   # One line per withheld draft, every tick it is withheld — not report_suppressed's
   # speak-on-change. This branch already logs once per tick either way, so naming
@@ -574,7 +582,7 @@ _resume_gate() {
     done < <(printf '%s' "$lines" | awk 'NF{print $1}') \
       | _resume_breaker "$DUTY_DIR/.resume-zero-action.$slug" "$breaker"
   )
-  printf '%s' "${dispatch_nums# }"
+  RESUME_DISPATCH_NUMS="${dispatch_nums# }"
 }
 
 # _ci_red_rollup_settled EXPECTED_HEAD — stdin is the post-session gh-pr-view
@@ -672,7 +680,8 @@ _builder_repo() {
     # to a bare "is there a draft" test. Applied to DRAFTS only: an orphaned
     # claim has no PR to fingerprint, and a stranded ready PR already carries
     # its own 12-tick counter above.
-    draft_nums="$(_resume_gate "$R" "$slug" "$resume_json")"
+    _resume_gate "$R" "$slug" "$resume_json"
+    draft_nums="$RESUME_DISPATCH_NUMS"
   fi
   if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
     log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none})"
