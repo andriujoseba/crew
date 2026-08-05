@@ -3882,13 +3882,17 @@ source "$SHARED/lib/duty-review.sh"
 # reviewer's triage-scoped box writes state:addressing; the author-owned builder
 # tick performs the draft mutation. Those acts are independent and idempotent.
 AR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-AR_BLOCKED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$AR_H'"}}]'
-AR_APPROVED='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$AR_H'"}}]'
-mk_addressing_payload() {  # draft labels requests reviews
+AR_T_VERDICT="2026-08-05T18:57:00Z"
+AR_T_SIGNAL="2026-08-05T19:00:00Z"
+AR_BLOCKED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}}]'
+AR_APPROVED='[{"author":{"login":"rev-a"},"state":"APPROVED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}}]'
+mk_addressing_payload() {  # draft labels requests reviews [comments]
   jq -cn --argjson draft "$1" --argjson labels "$2" --argjson requests "$3" \
-    --argjson reviews "$4" --arg head "$AR_H" '{data:{repository:{pullRequest:{
+    --argjson reviews "$4" --argjson comments "${5:-[]}" --arg head "$AR_H" \
+    '{data:{repository:{pullRequest:{
       id:"PR_fixture",isDraft:$draft,headRefOid:$head,author:{login:"builder"},
       labels:{nodes:($labels|map({name:.}))},
+      comments:{nodes:$comments},
       reviewRequests:{nodes:($requests|map({requestedReviewer:{login:.}}))},
       latestOpinionatedReviews:{nodes:$reviews}}}}}'
 }
@@ -3920,9 +3924,8 @@ review_addressing_actions() (  # payload [label-rc]
 author_redraft_actions() (  # payload [draft-rc]
   AR_PAYLOAD="$1"; AR_DRAFT_RC="${2:-0}"
   LABEL_ADDRESSING=state:addressing
-  DUTY_DIR="$SHARED"
+  DUTY_DIR="$SHARED" ME=builder MARK_ANSWERED="$RP_MARK"
   AR_LOG="$TMP/redraft-actions"; : >"$AR_LOG"
-  panel_for_repo() { printf '%s\n' '["rev-a","rev-b"]'; }
   log() { :; }
   warn() { :; }
   gh() {
@@ -3936,13 +3939,14 @@ author_redraft_actions() (  # payload [draft-rc]
     fi
     return 3
   }
-  _redraft_authored_pr owner/repo 7
+  _redraft_authored_pr owner/repo 7 '["rev-a","rev-b"]'
   ar_rc=$?
   printf 'rc=%s actions=%s' "$ar_rc" "$(paste -sd, "$AR_LOG")"
 )
 AR_OPEN="$(mk_addressing_payload false '[]' '[]' "$AR_BLOCKED")"
 AR_LABELLED="$(mk_addressing_payload false '["state:addressing"]' '[]' "$AR_BLOCKED")"
 AR_DRAFT="$(mk_addressing_payload true '["state:addressing"]' '[]' "$AR_BLOCKED")"
+AR_DRAFT_UNLABELLED="$(mk_addressing_payload true '[]' '[]' "$AR_BLOCKED")"
 AR_OK="$(mk_addressing_payload false '[]' '[]' "$AR_APPROVED")"
 AR_LIVE="$(mk_addressing_payload false '[]' '["rev-b"]' "$AR_BLOCKED")"
 t redraft-reviewer-writes-addressing-only 'rc=0 actions=label' \
@@ -3955,12 +3959,27 @@ t redraft-live-panel-request-writes-nothing 'rc=0 actions=' \
   "$(author_redraft_actions "$AR_LIVE")"
 t redraft-second-tick-is-noop 'rc=0 actions=' \
   "$(author_redraft_actions "$AR_DRAFT")"
+t redraft-draft-guard-does-not-depend-on-label 'rc=0 actions=' \
+  "$(author_redraft_actions "$AR_DRAFT_UNLABELLED")"
 t redraft-retries-after-label-landed 'rc=0 actions=draft' \
   "$(author_redraft_actions "$AR_LABELLED")"
 t redraft-label-failure-is-best-effort 'rc=0 actions=label' \
   "$(review_addressing_actions "$AR_OPEN" 1)"
 t redraft-conversion-failure-is-best-effort 'rc=0 actions=draft' \
   "$(author_redraft_actions "$AR_LABELLED" 1)"
+
+# The author-aware panel is resolved once per repository tick and passed into
+# every PR predicate. panel_for_repo owns the safe fleet-bench fallback, so the
+# redraft path must not advertise an unreachable lookup-failure branch.
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+t redraft-panel-resolved-once-per-repo 1 \
+  "$(grep -c 'panel_for_repo "\$R" "\$dir" "\$ME"' "$SHARED/lib/duty-builder.sh")"
+if grep -q 'panel lookup failed' "$SHARED/lib/duty-builder.sh"; then
+  r1=MISLEADING
+else
+  r1=fallback-owned
+fi
+t redraft-panel-fallback-contract fallback-owned "$r1"
 
 # The engine owns only the ready -> draft edge. Ready-for-review remains the
 # builder's judgement, and draft exclusion is shared by request and handoff.
@@ -3984,7 +4003,9 @@ fi
 t redraft-prompt-returns-ready-act-to-builder builder-owned "$r1"
 if grep -Fq 'A draft carrying a completed review round is actionable' \
      "$SHARED/prompts/resume.txt" \
-  && grep -Fq "append the round's fix steps" "$SHARED/prompts/resume.txt"; then
+  && grep -Fq "append the round's fix steps" "$SHARED/prompts/resume.txt" \
+  && grep -Fq 'AND NO COMPLETED ROUND STANDS, POST NOTHING AT ALL' \
+       "$SHARED/prompts/resume.txt"; then
   r1=woken
 else
   r1=STRANDED
@@ -3997,13 +4018,14 @@ t redraft-resume-names-completed-round woken "$r1"
 # object to request-panel.jq. A broken link changes or stops this trace.
 # shellcheck disable=SC2034,SC2317  # vars/mocks consumed by engine helpers
 redraft_round_trip() (
-  AR_IS_DRAFT=false AR_LABELS='[]' AR_ACTIONS=""
-  LABEL_ADDRESSING=state:addressing DUTY_DIR="$SHARED"
+  AR_IS_DRAFT=false AR_LABELS='[]' AR_COMMENTS='[]' AR_ACTIONS=""
+  LABEL_ADDRESSING=state:addressing LABEL_BOTS_REVIEWING=state:bots-reviewing
+  DUTY_DIR="$SHARED" ME=builder MARK_ANSWERED="$RP_MARK"
   panel_for_repo() { printf '%s\n' '["rev-a","rev-b"]'; }
   log() { :; }
   warn() { :; }
   ar_payload() {
-    mk_addressing_payload "$AR_IS_DRAFT" "$AR_LABELS" '[]' "$AR_BLOCKED"
+    mk_addressing_payload "$AR_IS_DRAFT" "$AR_LABELS" '[]' "$AR_BLOCKED" "$AR_COMMENTS"
   }
   gh() {
     if [ "$1" = api ] && [ "$2" = graphql ]; then
@@ -4015,7 +4037,21 @@ redraft_round_trip() (
       ar_payload
       return 0
     fi
+    if [ "$1" = api ] && [[ "$2" == repos/*/requested_reviewers ]]; then
+      local ar_arg
+      for ar_arg in "$@"; do
+        case "$ar_arg" in
+          reviewers\[\]=*)
+            AR_ACTIONS="${AR_ACTIONS:+$AR_ACTIONS,}request:${ar_arg#*=}"
+            ;;
+        esac
+      done
+      return 0
+    fi
     if [ "$1" = issue ] && [ "$2" = edit ]; then
+      if [[ "$*" == *state:bots-reviewing* ]]; then
+        return 0
+      fi
       AR_LABELS='["state:addressing"]'
       AR_ACTIONS="${AR_ACTIONS:+$AR_ACTIONS,}addressing"
       return 0
@@ -4023,26 +4059,30 @@ redraft_round_trip() (
     return 3
   }
   _mark_addressing owner/repo 7
-  _redraft_authored_pr owner/repo 7
+  _redraft_authored_pr owner/repo 7 '["rev-a","rev-b"]'
   [ "$AR_IS_DRAFT" = true ] || { printf 'NOT-DRAFT'; return; }
   for ar_ci in "$ROOT/.github/workflows/ci-shell.yml" "$ROOT/.github/workflows/ci-floor.yml"; do
     grep -q 'github.event.pull_request.draft == false' "$ar_ci" || { printf 'DRAFT-CI'; return; }
     grep -q 'ready_for_review' "$ar_ci" || { printf 'NO-READY-WAKE'; return; }
   done
   AR_ACTIONS="$AR_ACTIONS,draft-push:no-ci"
-  # SIGNAL THEN READY is the builder-owned edge. The ready event starts CI;
-  # once green, request-panel.jq selects the full panel at the moved head.
-  AR_SIGNAL="$(jq -cn --arg h "$AR_H" \
-    '{sha:$h,createdAt:"2026-08-05T19:00:00Z"}')"
+  # SIGNAL THEN READY is the builder-owned edge. This no-push answer retains
+  # the standing current-head reviews. The next real author sweep must consume
+  # the newer signal as proof that this round was already converted and leave
+  # the PR ready; pending CI still holds the real request helper, then green
+  # re-requests only the current-head change-requester.
+  AR_COMMENTS='[{"author":{"login":"builder"},"body":"'"$RP_MARK"' '"$AR_H"'","createdAt":"'"$AR_T_SIGNAL"'"}]'
   AR_IS_DRAFT=false
-  AR_ACTIONS="$AR_ACTIONS,signal,ready,ci:green"
-  AR_REQUEST_PAYLOAD="$(mk_rp "$AR_H" '[]' '[]' \
-    '[{"author":{"login":"builder"},"body":"📣 round answered at head '"$AR_H"'","createdAt":"2026-08-05T19:00:00Z"}]')"
-  AR_REQUESTED="$(printf '%s' "$AR_REQUEST_PAYLOAD" | rp "$AR_SIGNAL")"
-  printf '%s,request:%s' "$AR_ACTIONS" "$AR_REQUESTED"
+  AR_ACTIONS="$AR_ACTIONS,signal,ready"
+  _redraft_authored_pr owner/repo 7 '["rev-a","rev-b"]'
+  [ "$AR_IS_DRAFT" = false ] || { printf 'REDRAFT-LOOP'; return; }
+  _request_panel owner/repo 7 "$(ar_payload)" '["rev-a","rev-b"]' pending "$AR_H"
+  AR_ACTIONS="$AR_ACTIONS,ci:green"
+  _request_panel owner/repo 7 "$(ar_payload)" '["rev-a","rev-b"]' green "$AR_H"
+  printf '%s' "$AR_ACTIONS"
 )
 t redraft-full-round-trip \
-  'addressing,draft,draft-push:no-ci,signal,ready,ci:green,request:rev-a rev-b' \
+  'addressing,draft,draft-push:no-ci,signal,ready,ci:green,request:rev-a' \
   "$(redraft_round_trip)"
 
 # MUST FAIL before the ceremony prerequisite: the caller pin must be at least

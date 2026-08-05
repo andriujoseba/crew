@@ -94,15 +94,19 @@ _warn_unscoped_authored() {
   fi
 }
 
-# _redraft_authored_pr REPO NUM — convert my ready PR back to draft after a
+# _redraft_authored_pr REPO NUM PANEL_JSON — convert my ready PR back to draft after a
 # round closes without full approval. The last reviewer can write the triage-
 # permitted state:addressing label, but cannot draft another author's PR; this
 # author-side tick owns that mutation. Ignore an already-standing addressing
 # label only in this evaluation: the reconciler may have written it before this
 # tick, and conversion must not depend on which actor won that independent
-# best-effort write. A failed conversion remains ready and retries next tick.
+# best-effort write. A current-head answer signal newer than the verdict spends
+# this round's conversion licence: once the builder marks that unchanged head
+# ready, leave it ready so the ordinary green gate can re-request the panel.
+# A failed conversion remains ready and retries next tick.
 _redraft_authored_pr() {
-  local repo="$1" num="$2" owner name payload author roster_json eff_panel redraft pr_id is_draft
+  local repo="$1" num="$2" eff_panel="$3" owner name payload redraft pr_id is_draft
+  local head signal_json answered_head to_request
   owner="${repo%%/*}"; name="${repo##*/}"
   if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
@@ -111,8 +115,9 @@ _redraft_authored_pr() {
       headRefOid
       author{login}
       labels(first:50){nodes{name}}
+      comments(last:100){nodes{author{login} body createdAt}}
       reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
-      latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+      latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}
     } }
   }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
     warn "$repo#$num: draft conversion lookup failed; retrying on the author's next tick"
@@ -120,13 +125,6 @@ _redraft_authored_pr() {
   fi
   is_draft="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.isDraft // false' 2>/dev/null)"
   [ "$is_draft" = false ] || return 0
-  author="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.author.login // ""' 2>/dev/null)"
-  roster_json="$(panel_for_repo "$repo" "" "$author" 2>/dev/null || echo err)"
-  if [ "$roster_json" = err ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$roster_json"; then
-    warn "$repo#$num: panel lookup failed; skipping draft conversion (best-effort)"
-    return 0
-  fi
-  eff_panel="$(printf '%s' "$roster_json" | jq -c --arg author "$author" '. - [$author]')"
   redraft="$(printf '%s' "$payload" \
     | jq -c --arg addressing "$LABEL_ADDRESSING" \
         '.data.repository.pullRequest.labels.nodes |= map(select(.name != $addressing))' 2>/dev/null \
@@ -134,6 +132,21 @@ _redraft_authored_pr() {
         -f "$DUTY_DIR/lib/jq/addressing.jq" 2>/dev/null || echo err)"
   case "$redraft" in
     true)
+      head="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null)"
+      signal_json="$(printf '%s' "$payload" \
+        | jq -c --arg me "$ME" --arg mark "$MARK_ANSWERED" \
+            -f "$DUTY_DIR/lib/jq/answered-head.jq" 2>/dev/null)"
+      [ -n "$signal_json" ] || signal_json='{"sha":"","createdAt":""}'
+      answered_head="$(printf '%s' "$signal_json" | jq -r '.sha // ""' 2>/dev/null)"
+      if [ -n "$head" ] && [ "$answered_head" = "$head" ]; then
+        to_request="$(printf '%s' "$payload" \
+          | jq -r --argjson panel "$eff_panel" --argjson signal "$signal_json" \
+              -f "$DUTY_DIR/lib/jq/request-panel.jq" 2>/dev/null)"
+        if [ -n "${to_request//[[:space:]]/}" ]; then
+          log "$repo#$num: current-head round already answered — leaving ready for the green-gated panel request"
+          return 0
+        fi
+      fi
       pr_id="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.id // ""' 2>/dev/null)"
       if [ -z "$pr_id" ]; then
         warn "$repo#$num: draft conversion missing pull request id; retrying on the author's next tick"
@@ -152,7 +165,7 @@ _redraft_authored_pr() {
 }
 
 _redraft_authored_rounds() {
-  local repo="$1" nums num
+  local repo="$1" eff_panel="$2" nums num
   nums="$(gh pr list -R "$repo" --state open --author "$ME" \
     --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"
   if [ "$nums" = err ]; then
@@ -161,7 +174,7 @@ _redraft_authored_rounds() {
   fi
   while IFS= read -r num; do
     [ -n "$num" ] || continue
-    _redraft_authored_pr "$repo" "$num"
+    _redraft_authored_pr "$repo" "$num" "$eff_panel"
   done <<<"$nums"
 }
 
@@ -893,10 +906,16 @@ _builder_repo() {
   round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED")"
   oneshot_rules="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
 
+  # panel_for_repo deliberately falls back to FLEET_BENCH when neither the
+  # local clone nor the contents API yields a roster. Resolve this author-aware
+  # panel once for the whole repository tick; redraft, request and convergence
+  # all consume the same roster.
+  panel_json="$(panel_for_repo "$R" "$dir" "$ME" | jq -c --arg me "$ME" '. - [$me]')"
+
   # This must precede resume discovery. A completed foreign review is the wake;
   # after the author-owned conversion below, the same tick's draft listing and
   # resume gate can deliver that fix round to its builder.
-  _redraft_authored_rounds "$R"
+  _redraft_authored_rounds "$R" "$panel_json"
 
   # --- RESUME: interrupted work of mine, checked FIRST. Three shapes: an open
   # draft PR (a session died mid-build), or a claimed issue whose build/*
@@ -1010,8 +1029,6 @@ _builder_repo() {
   else
     log "$R: no resume duty"
   fi
-
-  panel_json="$(panel_for_repo "$R" "$dir" "$ME" | jq -c --arg me "$ME" '. - [$me]')"
 
   # --- One listing of my open PRs, several facts. The state of the check at
   # the head was never read by this engine at all: `statusCheckRollup` appeared
