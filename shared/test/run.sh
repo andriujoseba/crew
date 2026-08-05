@@ -105,11 +105,11 @@ fi
 
 # Both request and convergence paths must receive an author-aware roster.
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
-if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
-t panel-builder-resolution author-aware "$r1"
+if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
+t panel-builder-resolution author_aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
-if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
-t panel-reviewer-resolution author-aware "$r1"
+if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
+t panel-reviewer-resolution author_aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
     ! grep -Fq 'repos/$SRa/pulls/$Na' "$SHARED/lib/duty-review.sh"; then r1=payload-author; else r1=EXTRA-FETCH; fi
@@ -211,6 +211,79 @@ case "$unknown_out" in
   *) r1=missing ;;
 esac
 t rehearsal-unknown-agent-list listed "$r1"
+
+# --- rehearsal builder fixtures: tie checks to this run (#179) -----------
+# shellcheck source=drill/rehearsal-fixtures.sh
+source "$ROOT/drill/rehearsal-fixtures.sh"
+EMPTY_BUILDER_PRS='[]'
+STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
+RIGHT_BUILDER_PRS='[{"number":6,"body":"Closes #5"},{"number":12,"body":"Closes #179"}]'
+PREFIX_BUILDER_PRS='[{"number":13,"body":"Closes #1790"}]'
+DUPLICATE_BUILDER_PRS='[{"number":12,"body":"Closes #179"},{"number":14,"body":"Fixes #179"}]'
+
+t rehearsal-builder-stale-pr-occupies-slot 6 \
+  "$(rehearsal_builder_slot_prs_from_json "$STALE_BUILDER_PRS")"
+if empty_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$EMPTY_BUILDER_PRS")"; then
+  empty_builder_rc=0
+else
+  empty_builder_rc=$?
+fi
+t rehearsal-builder-empty-response-refused '' "$empty_builder_out"
+t rehearsal-builder-empty-response-lookup-fails 1 "$empty_builder_rc"
+if stale_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$STALE_BUILDER_PRS")"; then
+  stale_builder_rc=0
+else
+  stale_builder_rc=$?
+fi
+t rehearsal-builder-stale-pr-cannot-satisfy-this-run '' "$stale_builder_out"
+t rehearsal-builder-stale-pr-lookup-fails 1 "$stale_builder_rc"
+t rehearsal-builder-run-specific-pr-resolves 12 \
+  "$(rehearsal_builder_pr_for_issue_from_json 179 "$RIGHT_BUILDER_PRS")"
+if prefix_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$PREFIX_BUILDER_PRS")"; then
+  prefix_builder_rc=0
+else
+  prefix_builder_rc=$?
+fi
+t rehearsal-builder-wrong-issue-prefix-refused '' "$prefix_builder_out"
+t rehearsal-builder-wrong-issue-prefix-lookup-fails 1 "$prefix_builder_rc"
+if duplicate_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$DUPLICATE_BUILDER_PRS")"; then
+  duplicate_builder_rc=0
+else
+  duplicate_builder_rc=$?
+fi
+t rehearsal-builder-duplicate-current-prs-refused '' "$duplicate_builder_out"
+t rehearsal-builder-duplicate-current-prs-lookup-fails 1 "$duplicate_builder_rc"
+
+OCCUPIED_BUILDER_OUT="$({
+  fail() { printf 'FAIL %s\n' "$1"; }
+  skip() { printf 'skip %s\n' "$1"; }
+  rehearsal_report_occupied_builder_slot builder
+})"
+t rehearsal-builder-occupied-slot-fails-opened-pr 1 \
+  "$(grep -cFx 'FAIL builder: opened a PR for the ready issue' <<<"$OCCUPIED_BUILDER_OUT")"
+t rehearsal-builder-occupied-slot-fails-run-specific-authorship 1 \
+  "$(grep -cFx "FAIL builder: PR authored by builder for this run's fixture issue" \
+    <<<"$OCCUPIED_BUILDER_OUT")"
+t rehearsal-builder-occupied-slot-skips-unreachable-checks 4 \
+  "$(grep -c '^skip ' <<<"$OCCUPIED_BUILDER_OUT")"
+
+REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
+gh() {
+  case "$1 $2" in
+    "api repos/owner/sandbox/pulls?state=open&per_page=100")
+      jq '[.[] | .user = {login:"builder"}]' <<<"$RIGHT_BUILDER_PRS" ;;
+    "api -X") printf '%s\n' "$*" >>"$REHEARSAL_GH_CALLS" ;;
+    *) return 2 ;;
+  esac
+}
+rehearsal_close_builder_fixture_prs owner/sandbox builder >/dev/null
+t rehearsal-builder-teardown-closes-all-fixture-prs 2 \
+  "$(wc -l <"$REHEARSAL_GH_CALLS")"
+t rehearsal-builder-teardown-closes-first 1 \
+  "$(grep -cF 'repos/owner/sandbox/pulls/6' "$REHEARSAL_GH_CALLS")"
+t rehearsal-builder-teardown-closes-current 1 \
+  "$(grep -cF 'repos/owner/sandbox/pulls/12' "$REHEARSAL_GH_CALLS")"
+unset -f gh
 
 # --- install.sh: crontab preflight and convergence (#25) ----------------
 # A curated PATH makes "crontab absent" deterministic even on a workstation
