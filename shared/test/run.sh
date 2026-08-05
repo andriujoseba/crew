@@ -4523,6 +4523,7 @@ t p168-record-goes-to-the-pr 'o/r#43' "$(tail -1 "$P168_PO_CALLS")"
 P_REC="$(cat "$P168_PO_BODY")"
 case "$P_REC" in *'wip/build/released'*) r1=named ;; *) r1=MISSING ;; esac
 t p168-record-names-the-ref named "$r1"
+# shellcheck disable=SC2016  # the markdown the record contains, not an expansion
 case "$P_REC" in *'`origin`'*) r1=named ;; *) r1=MISSING ;; esac
 t p168-record-names-the-remote named "$r1"
 # What it holds, in the counts the criterion asks for: one modified tracked
