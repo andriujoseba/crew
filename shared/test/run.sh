@@ -1937,6 +1937,176 @@ t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_bui
 t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
 t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
 
+# --- `no build duty` names its cause (#345) --------------------------------
+# One spelling for three causes cost the operator an hour on 2026-08-03: the
+# line was indistinguishable from #264's burial bug and the answer was the
+# boring one (the slot was held). These drive the module's own variables in the
+# module's own order — enumerate, ledger-filter, gate, name the cause — because
+# the gate WIPES ready_items, so a reason read off anything but the pre-gate
+# snapshot collapses every scenario below onto `board empty`.
+# Two ledgers, chosen per scenario rather than mutated in place: the ONLY
+# difference between the slot-held and the seen-ledger cause is whether the
+# board survived the filter, so a single ledger would make the scenarios
+# order-dependent and the mutation count below would silently drop.
+NBD_LG_COLD="$TMP/ledger-nbd-cold"
+NBD_LG_HOT="$TMP/ledger-nbd-hot"
+NBD_LG="$NBD_LG_COLD"
+nbd() {  # nbd READY_LINES CR_LINES MINE_JSON [BOARD_READ]
+  local R=heavy-duty/crew
+  local ready_items="$1" cr_items="$2" mine_json="$3" board_read="${4:-1}"
+  local ready_board ledgered_rounds ready_count cr_count open_pr_count
+  local slot_prs="" open_pr_ids=""
+  ready_board="$(printf '%s\n' "$ready_items" | awk 'NF{c++} END{print c+0}')"
+  ready_count="$(printf '%s\n' "$ready_items" \
+    | ledger_filter "$NBD_LG" | awk 'NF{c++} END{print c+0}')"
+  ledgered_rounds="$(printf '%s\n' "$cr_items" | awk 'NF{c++} END{print c+0}')"
+  cr_count="$(printf '%s\n' "$cr_items" \
+    | ledger_filter "$NBD_LG" | awk 'NF{c++} END{print c+0}')"
+  open_pr_count="$(printf '%s' "$mine_json" | jq 'length')"
+  open_pr_ids="$(printf '%s' "$mine_json" \
+    | jq -r --arg repo "$R" '[.[].number] | sort | map("\($repo)#\(.)") | join(", ")')"
+  _gate_ready_for_open_pr >/dev/null || true
+  if [ "$ready_count" -gt 0 ] || [ "$cr_count" -gt 0 ]; then
+    printf 'BUILD_DUTY'
+    return 0
+  fi
+  _no_build_duty_reason "$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read"
+}
+NBD_READY="$(printf 'heavy-duty/crew#2 T2\nheavy-duty/crew#25 T25\nheavy-duty/crew#30 T30')"
+NBD_CR="$(printf 'heavy-duty/crew#40 T40')"
+
+# (a) BOARD EMPTY — nothing enumerated on either side.
+t nbd-board-empty 'board empty' "$(nbd '' '' '[]')"
+
+# (c) SLOT HELD — a non-empty, unledgered board and an open authored PR. The
+# board count is the pre-gate one: the gate has emptied ready_items by the time
+# the line is written, and 3 is what the operator sees on the queue.
+t nbd-slot-held 'slot held by heavy-duty/crew#231; board holds 3 ready' \
+  "$(nbd "$NBD_READY" '' '[{"number":231}]')"
+# The count is READ, never hardcoded: a different board gives a different N,
+# which is the number #264's discriminating read depends on.
+t nbd-slot-count-is-live 'slot held by heavy-duty/crew#231; board holds 1 ready' \
+  "$(nbd 'heavy-duty/crew#2 T2' '' '[{"number":231}]')"
+# Every PR occupying the slot is named, in numeric order, whatever order the
+# listing returned — the line has to be stable across ticks.
+t nbd-slot-names-all-prs \
+  'slot held by heavy-duty/crew#9, heavy-duty/crew#40; board holds 3 ready' \
+  "$(nbd "$NBD_READY" '' '[{"number":40},{"number":9}]')"
+# (b) SEEN-LEDGER — enumerated, then hidden whole. N is the pre-filter count.
+printf '%s\n%s\n' "$NBD_READY" "$NBD_CR" | ledger_commit "$NBD_LG_HOT"
+NBD_LG="$NBD_LG_HOT"
+t nbd-seen-ledger-ready '3 ready held by seen-ledger' "$(nbd "$NBD_READY" '' '[]')"
+# An open PR does NOT claim the tick when the gate never fired: with the board
+# ledgered to zero the ledger is what zeroed it, and the slot is not the news.
+t nbd-slot-not-claimed-when-gate-idle '3 ready held by seen-ledger' \
+  "$(nbd "$NBD_READY" '' '[{"number":231}]')"
+# cr_count runs the SAME filter over a different set, so the noun follows the
+# count it came from. An empty board with a ledgered round is not `board empty`.
+t nbd-seen-ledger-rounds '1 round(s) held by seen-ledger' "$(nbd '' "$NBD_CR" '[{"number":40}]')"
+t nbd-seen-ledger-both '3 ready, 1 round(s) held by seen-ledger' \
+  "$(nbd "$NBD_READY" "$NBD_CR" '[{"number":40}]')"
+# Fresh work on either side is duty, not a cause — the no-duty branch is never
+# reached, so no spelling may claim it.
+t nbd-fresh-ready-is-duty BUILD_DUTY "$(nbd 'heavy-duty/crew#77 T77' '' '[]')"
+t nbd-fresh-round-is-duty BUILD_DUTY "$(nbd '' 'heavy-duty/crew#78 T78' '[{"number":78}]')"
+
+# (d) BOARD UNREAD — the issue listing failed, so neither of the two above may
+# be asserted. Narrower than both; it claims only that nobody read the board.
+t nbd-board-unread 'board unread' "$(nbd '' '' '[]' 0)"
+
+# MUTATION — the property that makes this issue worth building. Merge any two
+# causes back into one spelling and this count drops below 4. Each scenario
+# picks its own ledger, because the ledger IS the discriminator between two of
+# them.
+NBD_LG="$NBD_LG_COLD"; nbd_slot="$(nbd "$NBD_READY" '' '[{"number":231}]')"
+NBD_LG="$NBD_LG_HOT"
+NBD_ALL="$(printf '%s\n%s\n%s\n%s\n' \
+  "$(nbd '' '' '[]')" \
+  "$(nbd "$NBD_READY" '' '[]')" \
+  "$nbd_slot" \
+  "$(nbd '' '' '[]' 0)" | sort -u | awk 'NF{c++} END{print c+0}')"
+t nbd-causes-are-distinct 4 "$NBD_ALL"
+
+# CONSUMERS — the prefix is the contract. `crew status` renders the newest duty
+# line as its NOTE through `cut -c1-60`, and the floor's RE_BUILD_DUTY matches
+# the POSITIVE line only; a parenthetical must reach neither.
+NBD_LINE="$(log "heavy-duty/crew: no build duty ($nbd_slot)")"
+case "$NBD_LINE" in
+  *'heavy-duty/crew: no build duty (slot held by'*) r1=prefixed ;;
+  *) r1="$NBD_LINE" ;;
+esac
+t nbd-grep-prefix-unchanged prefixed "$r1"
+case "$(printf '%s' "$NBD_LINE" | cut -c1-60)" in
+  *'no build duty'*) r1=survives ;;
+  *) r1=TRUNCATED_AWAY ;;
+esac
+t nbd-note-column-keeps-prefix survives "$r1"
+if printf '%s\n' "$NBD_LINE" \
+  | grep -qE ' (\S+): build duty \(ready unclaimed=([0-9]+), whole rounds owed=([0-9]+)\)'; then
+  r1=MATCHED_POSITIVE
+else
+  r1=distinct
+fi
+t nbd-not-mistaken-for-positive-line distinct "$r1"
+
+# WIRING — the fixtures above prove the spellings; these pin them to the module.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+nbd_board_assign="$(grep -F 'ready_board="$(' "$BUILDER_MOD")"
+case "$nbd_board_assign" in
+  *ledger_filter*)  r1=LEDGERED ;;
+  *'"$ready_items"'*) r1=pre-filter ;;
+  *)                r1=MISSING ;;
+esac
+t nbd-board-count-is-pre-ledger pre-filter "$r1"
+# ...and taken before the gate empties the set it counts.
+nbd_board_ln="$(grep -nF 'ready_board="$(' "$BUILDER_MOD" | head -n1 | cut -d: -f1)"
+nbd_gate_ln="$(grep -nF '_gate_ready_for_open_pr || true' "$BUILDER_MOD" | head -n1 | cut -d: -f1)"
+if [ -n "$nbd_board_ln" ] && [ -n "$nbd_gate_ln" ] && [ "$nbd_board_ln" -lt "$nbd_gate_ln" ]; then
+  r1=before
+else
+  r1=AFTER_GATE
+fi
+t nbd-board-count-taken-before-gate before "$r1"
+# The line names the cause, and names it from the board facts rather than from
+# the survivors, every one of which is zero by then.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+nbd_call="$(sed -n '/log "\$R: no build duty (\$(_no_build_duty_reason/,+1p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '"$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read"' <<<"$nbd_call"; then
+  r1=named
+else
+  r1=BARE
+fi
+t nbd-call-site-passes-board-facts named "$r1"
+# The gate is what knows the slot fired; nothing downstream can re-derive it.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+nbd_gate_body="$(sed -n '/^_gate_ready_for_open_pr() {/,/^}/p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq 'slot_prs="$open_pr_ids"' <<<"$nbd_gate_body"; then r1=recorded; else r1=SILENT; fi
+t nbd-gate-records-that-it-fired recorded "$r1"
+# One listing, several derived facts (the comment at the top of the block). A
+# second ready listing would let the board count disagree with the set it
+# describes. Two are expected and neither is new: the pre-session enumeration
+# and #264's post-session re-query.
+t nbd-no-second-ready-listing 2 \
+  "$(grep -Fc 'gh issue list -R "$R" --state open --label "$LABEL_READY"' "$BUILDER_MOD")"
+# Spec decision 3: a single-cause line stays exactly as it was, and no new log
+# lines are added. Only the build kind has three causes to tell apart.
+for nbd_kind in resume ci-red handoff rebase; do
+  # shellcheck disable=SC2016  # Match literal shell source, not test variables.
+  if grep -Fq "log \"\$R: no $nbd_kind duty\"" "$BUILDER_MOD"; then r1=plain; else r1=CHANGED; fi
+  t "nbd-other-kind-untouched-$nbd_kind" plain "$r1"
+done
+# Must-not-change: the positive line and the board-anomaly NOTE.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq 'log "$R: build duty (ready unclaimed=$ready_count, whole rounds owed=$cr_count)"' \
+     "$BUILDER_MOD"; then r1=intact; else r1=CHANGED; fi
+t nbd-positive-line-intact intact "$r1"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq 'ready issue(s) WITH an assignee (board anomaly; hygiene'"'"'s to fix)' \
+     "$BUILDER_MOD"; then r1=intact; else r1=CHANGED; fi
+t nbd-anomaly-note-intact intact "$r1"
+
 # --- the triage board poll follows the mention session (#253) ---------------
 # _triage_repo used to compute all four board signals, THEN run the mention
 # session (ceiling TIMEOUT_MENTION=1500), THEN decide on the values it had
