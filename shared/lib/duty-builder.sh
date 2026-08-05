@@ -722,9 +722,10 @@ _wt_say_once() {
   return 0
 }
 
-# _wt_record REPO PR BRANCH PATH REMOTE REF SHA URL [STAGED] — the durable half of a
-# preservation: a comment on the PR the worktree belonged to, naming the remote,
-# the ref, and what it holds. Returns 0 only once that comment is present.
+# _wt_record REPO PR BRANCH PATH REMOTE REF SHA URL [STAGED] — the durable half
+# of a preservation: a comment on the PR the worktree belonged to, naming the
+# remote, the ref, what it holds and the staged snapshot where there is one.
+# Returns 0 only once that comment is present.
 #
 # The payload and the record fail differently, which is the whole reason they
 # are separate (triage, #168, 2026-08-05). A `wip/` ref lives on the bot's fork
