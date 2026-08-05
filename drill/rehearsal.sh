@@ -152,6 +152,7 @@ cleanup_all() {
 command -v box >/dev/null || { echo "box CLI not found — this runs on a box host"; exit 1; }
 command -v gh  >/dev/null || { echo "gh not found on the host (phase 2 needs it)"; exit 1; }
 command -v jq  >/dev/null || { echo "jq not found on the host"; exit 1; }
+command -v git >/dev/null || { echo "git not found on the host (source acquisition needs it)"; exit 1; }
 
 trap cleanup_all EXIT
 trap 'exit 130' INT
@@ -167,8 +168,9 @@ if [ -n "$TREE" ]; then
     echo "phase 0: --tree '$TREE' must be a git checkout with a clean working tree" >&2
     exit 1
   fi
-  if ! TREE_STATUS="$(git -C "$SOURCE_TREE" status --short --untracked-files=all 2>&1)"; then
-    echo "phase 0: could not inspect --tree '$TREE' for uncommitted changes: $TREE_STATUS" >&2
+  TREE_STATUS_ERROR="$ACQUIRE_TMP/tree-status.err"
+  if ! TREE_STATUS="$(git -C "$SOURCE_TREE" status --short --untracked-files=all 2>"$TREE_STATUS_ERROR")"; then
+    echo "phase 0: could not inspect --tree '$TREE' for uncommitted changes: $(cat "$TREE_STATUS_ERROR")" >&2
     exit 1
   fi
   if [ -n "$TREE_STATUS" ]; then

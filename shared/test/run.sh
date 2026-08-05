@@ -851,6 +851,7 @@ t rehearsal-dirty-untracked-rc 1 "$r1"
 case "$p0out" in *"NEW-FILE"*) r2=named ;; *) r2=missing ;; esac
 t rehearsal-dirty-untracked-names-path named "$r2"
 t rehearsal-dirty-untracked-before-box 0 "$(wc -l <"$P0LOG")"
+rm -f "$P0TREE/NEW-FILE"
 
 P0NONGIT="$TMP/phase0-not-git"
 mkdir -p "$P0NONGIT/shared/test"
@@ -865,6 +866,23 @@ case "$p0out" in *"must be a git checkout with a clean working tree"*) r2=owned 
 t rehearsal-non-git-tree-owned-error owned "$r2"
 t rehearsal-non-git-tree-before-box 0 "$(wc -l <"$P0LOG")"
 
+# A missing host git gets its own preflight reason, before the source guard or
+# any box operation can turn it into a misleading checkout error.
+P0NOGITSHIM="$TMP/phase0-no-git-bin"
+mkdir -p "$P0NOGITSHIM"
+ln -s "$(command -v dirname)" "$P0NOGITSHIM/dirname"
+ln -s "$P0SHIM/box" "$P0NOGITSHIM/box"
+ln -s "$P0SHIM/gh" "$P0NOGITSHIM/gh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0NOGITSHIM/jq"
+chmod +x "$P0NOGITSHIM/jq"
+: >"$P0LOG"
+if p0out="$(PATH="$P0NOGITSHIM" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  /usr/bin/bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-missing-git-rc 1 "$r1"
+case "$p0out" in *"git not found on the host"*) r2=owned ;; *) r2=misattributed ;; esac
+t rehearsal-missing-git-owned-error owned "$r2"
+t rehearsal-missing-git-before-box 0 "$(wc -l <"$P0LOG")"
+
 # Remote/ref acquisition already uses git clone, but must not inherit the
 # --tree-only clean-status probe.
 P0GSHIM="$TMP/phase0-git-bin"
@@ -872,14 +890,41 @@ P0GITLOG="$TMP/phase0-git.log"
 REAL_GIT="$(command -v git)"
 mkdir -p "$P0GSHIM"
 # shellcheck disable=SC2016  # expanded by the shim at execution time
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0GITLOG"\nexec "$REAL_GIT" "$@"\n' >"$P0GSHIM/git"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0GITLOG"\ncase " $* " in\n  *" status "*)\n    if [ "${P0GIT_FAIL_STATUS:-0}" -eq 1 ]; then echo "fixture status failure" >&2; exit 42; fi\n    if [ "${P0GIT_WARN_STATUS:-0}" -eq 1 ]; then echo "fixture status warning" >&2; fi ;;\nesac\nexec "$REAL_GIT" "$@"\n' >"$P0GSHIM/git"
 chmod +x "$P0GSHIM/git"
+
+# A warning from a successful status is not a dirty path and must not make a
+# clean checkout refuse. A failed status retains its stderr in crew's error.
 : >"$P0GITLOG"
+: >"$P0LOG"
+if p0out="$(PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" P0GIT_WARN_STATUS=1 \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+case "$p0out" in *"has uncommitted changes"*) r2=refused ;; *) r2=passed-guard ;; esac
+t rehearsal-status-warning-is-not-dirty passed-guard "$r2"
+if grep -Eq '^(list|new) ' "$P0LOG"; then r2=reached-box; else r2=stopped-early; fi
+t rehearsal-status-warning-reaches-box reached-box "$r2"
+
+: >"$P0GITLOG"
+: >"$P0LOG"
+if p0out="$(PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" P0GIT_FAIL_STATUS=1 \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-status-failure-rc 1 "$r1"
+case "$p0out" in *"could not inspect"*"fixture status failure"*) r2=owned ;; *) r2=missing ;; esac
+t rehearsal-status-failure-owned-error owned "$r2"
+t rehearsal-status-failure-before-box 0 "$(wc -l <"$P0LOG")"
+
+P0REMOTE="$TMP/phase0-remote.git"
+P0REF="$(git -C "$P0TREE" branch --show-current)"
+git clone -q --bare "$P0TREE" "$P0REMOTE"
+: >"$P0GITLOG"
+: >"$P0LOG"
 PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
   P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" \
-  bash "$ROOT/drill/rehearsal.sh" --remote "$TMP/no-such-remote" \
-    --ref nosuchbranch --quick >/dev/null 2>&1 || true
-if grep -q '^status ' "$P0GITLOG"; then r2=probed; else r2=untouched; fi
+  bash "$ROOT/drill/rehearsal.sh" --remote "$P0REMOTE" \
+    --ref "$P0REF" --quick >/dev/null 2>&1 || true
+if grep -Eq '(^|[[:space:]])status([[:space:]]|$)' "$P0GITLOG"; then r2=probed; else r2=untouched; fi
 t rehearsal-remote-skips-clean-tree-probe untouched "$r2"
 
 BADTREE="$TMP/bad-tree"
