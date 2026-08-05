@@ -9,10 +9,10 @@ on:
     # non-draft PR in exactly the checkless state this trigger exists to
     # prevent.
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/shared-ci.yml']
   push:
     branches: [main]
-    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.github/workflows/shared-ci.yml']
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/shared-ci.yml']
 
 # Unlike the labels reconciler (ceremony#199), shared-ci only reads a tree and
 # reports: a superseded run has no partial writes to preserve. Keying on ref
