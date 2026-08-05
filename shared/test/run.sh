@@ -4903,8 +4903,10 @@ t p168-capture-uses-a-scratch-index 3 \
 # is one line somebody would delete as redundant.
 # shellcheck disable=SC2016  # the literals the module contains, not expansions
 P_IDXFN="$(awk '/^_wt_index_tree\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
 case "$P_IDXFN" in *'cp "$real" "$copy"'*) r1=copied ;; *) r1=IN_PLACE ;; esac
 t p168-index-read-through-a-copy copied "$r1"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
 t p168-index-read-never-in-place 0 \
   "$(printf '%s\n' "$P_IDXFN" | grep -v '^[[:space:]]*#' | grep -c 'GIT_INDEX_FILE="\$real"')"
 # ...and it fails closed, exactly as the status read does: an index that cannot
@@ -4917,7 +4919,9 @@ t p168-index-fn-fails-closed closed "$r1"
 # the swap would pass every "both versions survive" assertion.
 # shellcheck disable=SC2016  # the literals the module contains, not expansions
 P_PRESFN="$(awk '/^_wt_preserve\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
 P_STAGED_LN="$(printf '%s\n' "$P_PRESFN" | grep -n 'staged_commit="\$(_wt_commit' | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
 P_TIP_LN="$(printf '%s\n' "$P_PRESFN" | grep -n 'commit="\$(_wt_commit "\$path" "\$tree"' | head -1 | cut -d: -f1)"
 t p168-staged-commit-precedes-the-tip yes \
   "$([ -n "$P_STAGED_LN" ] && [ -n "$P_TIP_LN" ] && [ "$P_STAGED_LN" -lt "$P_TIP_LN" ] && echo yes || echo NO)"
