@@ -2081,6 +2081,18 @@ t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || 
 clear_auth_failure gh   # must be idempotent, not an error under set -e
 t authfail-clear-idempotent 0 "$?"
 
+# Cross the file-contract boundary instead of testing only its writer. The
+# floor probe must read the exact marker common.sh writes, including the
+# service-specific filename and its single-line reason (#138, edge 3).
+printf 'crew@fixture\n' >"$AUTHDIR/VERSION"
+note_auth_failure gh "fixture rejection"
+AUTH_PROBE="$(DUTY_DIR="$AUTHDIR" bash "$ROOT/fleet-floor/server/probe.sh" </dev/null)"
+case "$AUTH_PROBE" in *$'::gh missing\n'*) r1=missing ;; *) r1=UNREAD ;; esac
+t authfail-common-to-probe-state missing "$r1"
+case "$AUTH_PROBE" in *'::authfail-gh '*'fixture rejection'*) r1=reason ;; *) r1=LOST ;; esac
+t authfail-common-to-probe-reason reason "$r1"
+clear_auth_failure gh
+
 # Multi-line reasons: gh's errors routinely are, and one record must stay one
 # line or probe.sh's ::key contract silently gains phantom keys.
 note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
@@ -4819,60 +4831,100 @@ case "$op_incomplete" in
 esac
 t cli-operator-incompleteness-is-fatal refused "$r1"
 
-# --- shared-ci's draft gate: the suite does not run on unfinished trees (#136)
+# --- CI split: route the browser walk without dropping coverage (#138) -----
 # Repo furniture, in the same family as valid_version-parity above: assertions
 # about a file the engine never executes, kept here because the property is
-# anti-drift and every way of losing it is silent. A reverted gate just starts
-# costing the fleet 51% of its Actions minutes again; a gate that loses
-# `ready_for_review` is worse, because it leaves a PR marked ready with no
-# check at its head, which the round protocol cannot tell apart from a tree
-# that failed.
-CI_YML="$ROOT/.github/workflows/shared-ci.yml"
+# anti-drift and every way of losing it is silent.
+CI_SHELL="$ROOT/.github/workflows/ci-shell.yml"
+CI_FLOOR="$ROOT/.github/workflows/ci-floor.yml"
 
-# The trigger must fire when the PR stops being a draft. Naming `types:` at all
-# replaces GitHub's default set, so the default three are asserted alongside it
-# — dropping `reopened` reintroduces the checkless-head case by omission.
-ci_types=",$(sed -n 's/^ *types: *\[\(.*\)\].*$/\1/p' "$CI_YML" | tr -d ' '),"
-for ev in opened synchronize reopened ready_for_review; do
-  case "$ci_types" in *",$ev,"*) r1=present ;; *) r1=MISSING ;; esac
-  t "shared-ci-trigger-fires-on[$ev]" present "$r1"
+ci_paths() {
+  sed -n "s/^    paths: \[\(.*\)\]$/\1/p" "$1" \
+    | tr ',' '\n' | tr -d " '\"" | sed '/^$/d' | sort -u
+}
+
+# The old filter's product paths survive exactly once across the union. Its
+# deleted self-path is replaced by both new workflows' self-paths. Explicitly
+# naming .ceremony/** prevents two mutually-agreeing filters from dropping the
+# path that caught #363.
+CI_EXPECTED="$(printf '%s\n' \
+  '.ceremony/**' '.github/workflows/ci-floor.yml' '.github/workflows/ci-shell.yml' \
+  'cli/**' 'dist/**' 'drill/**' 'examples/**' 'fleet-floor/**' 'install.sh' 'shared/**' | sort)"
+CI_UNION="$(ci_paths "$CI_SHELL"; ci_paths "$CI_FLOOR")"
+t ci-path-union-preserves-coverage "$CI_EXPECTED" "$(printf '%s\n' "$CI_UNION" | sort -u)"
+t ci-path-union-has-no-overlap 10 "$(printf '%s\n' "$CI_UNION" | wc -l | tr -d ' ')"
+case "$(ci_paths "$CI_SHELL")" in *'.ceremony/**'*) r1=present ;; *) r1=MISSING ;; esac
+t ci-shell-keeps-ceremony-fixtures present "$r1"
+
+# The three routing cases, plus the load-bearing CLI coverage on the cheap
+# side. Native paths do the routing; a billed filter job is forbidden.
+ci_shell_paths="$(ci_paths "$CI_SHELL")"
+case "$ci_shell_paths" in *'shared/**'*) r1=present ;; *) r1=MISSING ;; esac
+t ci-shared-routes-to-shell present "$r1"
+case "$ci_shell_paths" in *'cli/**'*) r1=present ;; *) r1=MISSING ;; esac
+t ci-cli-routes-to-shell present "$r1"
+case "$(ci_paths "$CI_FLOOR")" in *'fleet-floor/**'*) r1=floor ;; *) r1=MISSING ;; esac
+t ci-fleet-floor-routes-to-floor floor "$r1"
+if grep -q 'fleet-floor/test/run.sh --no-browser' "$CI_SHELL"; then r1=covered; else r1=DROPPED; fi
+t ci-shell-runs-floor-cli-fixtures covered "$r1"
+if grep -Eq 'paths-filter|filter-changes|changes:' "$CI_SHELL" "$CI_FLOOR"; then r1=BILLED; else r1=native; fi
+t ci-routing-uses-native-paths native "$r1"
+
+# Both workflows inherit the draft wake/gate, per-ref cancellation and the
+# push-to-main post-merge run. A missing half is a checkless current head.
+for ci_yml in "$CI_SHELL" "$CI_FLOOR"; do
+  ci_name="$(sed -n 's/^name: //p' "$ci_yml")"
+  ci_types=",$(sed -n 's/^ *types: *\[\(.*\)\].*$/\1/p' "$ci_yml" | tr -d ' '),"
+  for ev in opened synchronize reopened ready_for_review; do
+    case "$ci_types" in *",$ev,"*) r1=present ;; *) r1=MISSING ;; esac
+    t "$ci_name-trigger-fires-on[$ev]" present "$r1"
+  done
+  ci_if="$(awk '/^  check:/{p=1} p && /^    if:/{print; exit}' "$ci_yml")"
+  case "$ci_if" in *github.event.pull_request.draft*) r1=payload ;; *) r1=MISSING ;; esac
+  t "$ci_name-gates-on-draft-payload" payload "$r1"
+  case "$ci_if" in *state:*|*label*) r1=LABEL ;; *) r1=payload-only ;; esac
+  t "$ci_name-gate-is-not-label" payload-only "$r1"
+  case "$ci_if" in *github.event_name*) r1=explicit ;; *) r1=COERCION ;; esac
+  t "$ci_name-push-exemption-is-explicit" explicit "$r1"
+  t "$ci_name-pushes-run-on-main" 1 "$(grep -c '^    branches: \[main\]$' "$ci_yml")"
+  ci_group="$(sed -n 's/^  group: *//p' "$ci_yml")"
+  # shellcheck disable=SC2016  # Match the literal GitHub expression in YAML.
+  case "$ci_group" in *'${{ github.ref }}'*) r1=per-ref ;; *) r1=TOO-COARSE ;; esac
+  t "$ci_name-concurrency-is-per-ref" per-ref "$r1"
+  t "$ci_name-cancels-superseded-runs" 1 "$(grep -c '^  cancel-in-progress: true$' "$ci_yml")"
 done
 
-# The gate itself: the first `if:` under the `check` job.
-ci_if="$(awk '/^  check:/{p=1} p && /^    if:/{print; exit}' "$CI_YML")"
-case "$ci_if" in *github.event.pull_request.draft*) r1=payload ;; *) r1=MISSING ;; esac
-t shared-ci-gates-on-the-draft-payload payload "$r1"
+# Every old step is routed. The expensive browser invocation exists only on
+# the floor side; the cheap side still executes the headless floor/CLI suite.
+for command in 'shared/test/run.sh' 'shared/test/install-lifecycle.sh' \
+  'shared/test/artifact.sh' 'shared/test/install-drill.sh'; do
+  t "ci-shell-keeps[$command]" 1 "$(grep -Fc "run: $command" "$CI_SHELL")"
+done
+t ci-floor-keeps-python-syntax 1 "$(grep -Fc 'python3 -m py_compile fleet-floor/server/floor.py' "$CI_FLOOR")"
+t ci-floor-keeps-browser-gate 1 "$(grep -Fc 'FLOOR_TEST_REQUIRE_BROWSER=1 fleet-floor/test/run.sh' "$CI_FLOOR")"
+t ci-floor-keeps-built-page-check 1 "$(grep -Fc 'git diff --exit-code -- fleet-floor/index.html' "$CI_FLOOR")"
+# shellcheck disable=SC2016  # Match the literal loop variable in workflow YAML.
+t ci-floor-keeps-bash-syntax 1 "$(grep -Fc 'bash -n "$f"' "$CI_FLOOR")"
+t ci-floor-keeps-shellcheck 1 "$(grep -c '^      - name: shellcheck (floor)$' "$CI_FLOOR")"
 
-# MUST FAIL: a label gate. `state:building` is derived from this same draft bit
-# by ceremony's reconciler, so gating on it would read a shadow of a fact
-# already in the payload and inherit the reconciler's timing — and a label
-# write that fails leaves a ready head with no check, in the merge path.
-case "$ci_if" in *state:*|*label*) r1=LABEL ;; *) r1=payload-only ;; esac
-t shared-ci-gate-is-not-a-label payload-only "$r1"
-
-# The push-to-main path has no draft concept, and stays exempt in the
-# expression rather than through GitHub's null-to-false coercion — which is
-# correct but invisible in the source, on the branch that gates main.
-case "$ci_if" in *github.event_name*) r1=explicit ;; *) r1=COERCION ;; esac
-t shared-ci-push-exemption-is-explicit explicit "$r1"
-t shared-ci-still-triggers-on-push-to-main 1 "$(grep -c '^    branches: \[main\]$' "$CI_YML")"
-
-# Both triggers keep the SAME path filter. #136 touched the trigger types and
-# added a job gate and must not have touched these; a list that drifts between
-# the two means a file is guarded on main but not on PRs, or the reverse.
-t shared-ci-has-two-path-filters 2 "$(grep -c '^    paths: ' "$CI_YML")"
-t shared-ci-path-filters-agree   1 "$(grep '^    paths: ' "$CI_YML" | sort -u | wc -l | tr -d ' ')"
-
-# Superseded runs may be cancelled only within the same ref. Pull-request runs
-# use refs/pull/N/merge while main uses refs/heads/main, so this one key proves
-# both negative cases: one PR cannot cancel another, and neither can cancel a
-# push to main. MUST FAIL: a repository- or workflow-wide constant group.
-ci_concurrency_group="$(sed -n 's/^  group: *//p' "$CI_YML")"
-t shared-ci-has-one-concurrency-group 1 "$(grep -c '^  group: ' "$CI_YML")"
-# shellcheck disable=SC2016  # Match the literal GitHub expression in YAML.
-case "$ci_concurrency_group" in *'${{ github.ref }}'*) r1=per-ref ;; *) r1=TOO-COARSE ;; esac
-t shared-ci-concurrency-is-per-ref per-ref "$r1"
-t shared-ci-cancels-superseded-runs 1 "$(grep -c '^  cancel-in-progress: true$' "$CI_YML")"
+# The cheap cross-layer contracts that make a browser skip safe (#138 edges 1
+# and 6). cmd_floor must keep the server/build/env bridge, and every operator
+# command the console names must remain in the CLI's dispatch table.
+CI_CREW="$ROOT/cli/crew"
+CI_FLOOR_FN="$(sed -n '/^cmd_floor()/,/^}/p' "$CI_CREW")"
+case "$CI_FLOOR_FN" in *'fleet-floor/index.html'*'CREW_FLOOR_PORT='*'CREW_FLOOR_BIND='*'CREW_FLOOR_USER='*'CREW_FLOOR_PASS='*'CREW_FLOOR_INTERVAL='*'CREW_FLOOR_ROSTER='*'fleet-floor/server/floor.py'*) r1=bridged ;; *) r1=BROKEN ;; esac
+t cli-floor-server-contract bridged "$r1"
+CI_CONSOLE_VERBS='floor hire new status up upgrade'
+CI_COMMAND_ROWS="$(sed -n '/^CMDS=(/,/^)/p' "$CI_CREW")"
+for verb in $CI_CONSOLE_VERBS; do
+  if grep -q "crew $verb" "$ROOT/fleet-floor/server/floor.py" "$ROOT/fleet-floor/src/app.js" &&
+     printf '%s\n' "$CI_COMMAND_ROWS" | grep -q "^  \"$verb\\^"; then
+    r1=dispatchable
+  else
+    r1=MISSING
+  fi
+  t "floor-named-crew-verb-dispatches[$verb]" dispatchable "$r1"
+done
 
 # --- #159: the stamp is a claim, the manifest is the evidence ---------------
 # ~/duty/VERSION said what was SHIPPED and nothing ever looked at what was
