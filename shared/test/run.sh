@@ -4250,6 +4250,247 @@ t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 # sourcing costs nothing and runs nothing.
 # shellcheck disable=SC1091
 source "$SHARED/lib/duty-review.sh"
+
+# --- #139: a closed fix round returns to draft ------------------------------
+# GitHub preserves pending review requests across conversion (crew#110 is the
+# live trace), so the existing addressing predicate's no-panel-request gate is
+# load-bearing: conversion happens only after the whole round closes. The last
+# reviewer's triage-scoped box writes state:addressing; the author-owned builder
+# tick performs the draft mutation. Those acts are independent and idempotent.
+AR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+AR_T_VERDICT="2026-08-05T18:57:00Z"
+AR_T_SIGNAL="2026-08-05T19:00:00Z"
+AR_BLOCKED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}}]'
+AR_APPROVED='[{"author":{"login":"rev-a"},"state":"APPROVED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","submittedAt":"'$AR_T_VERDICT'","commit":{"oid":"'$AR_H'"}}]'
+mk_addressing_payload() {  # draft labels requests reviews [comments]
+  jq -cn --argjson draft "$1" --argjson labels "$2" --argjson requests "$3" \
+    --argjson reviews "$4" --argjson comments "${5:-[]}" --arg head "$AR_H" \
+    '{data:{repository:{pullRequest:{
+      id:"PR_fixture",isDraft:$draft,headRefOid:$head,author:{login:"builder"},
+      labels:{nodes:($labels|map({name:.}))},
+      comments:{nodes:$comments},
+      reviewRequests:{nodes:($requests|map({requestedReviewer:{login:.}}))},
+      latestOpinionatedReviews:{nodes:$reviews}}}}}'
+}
+# shellcheck disable=SC2034,SC2317  # vars/functions consumed by engine helpers
+review_addressing_actions() (  # payload [label-rc]
+  AR_PAYLOAD="$1"; AR_LABEL_RC="${2:-0}"
+  LABEL_ADDRESSING=state:addressing
+  DUTY_DIR="$SHARED"
+  AR_LOG="$TMP/addressing-actions"; : >"$AR_LOG"
+  panel_for_repo() { printf '%s\n' '["rev-a","rev-b"]'; }
+  log() { :; }
+  warn() { :; }
+  gh() {
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      printf '%s\n' "$AR_PAYLOAD"
+      return 0
+    fi
+    if [ "$1" = issue ] && [ "$2" = edit ]; then
+      printf '%s\n' label >>"$AR_LOG"
+      return "$AR_LABEL_RC"
+    fi
+    return 3
+  }
+  _mark_addressing owner/repo 7
+  ar_rc=$?
+  printf 'rc=%s actions=%s' "$ar_rc" "$(paste -sd, "$AR_LOG")"
+)
+# shellcheck disable=SC2317  # mock functions are called indirectly by helper
+author_redraft_actions() (  # payload [draft-rc]
+  AR_PAYLOAD="$1"; AR_DRAFT_RC="${2:-0}"
+  LABEL_ADDRESSING=state:addressing
+  DUTY_DIR="$SHARED" ME=builder MARK_ANSWERED="$RP_MARK"
+  AR_LOG="$TMP/redraft-actions"; : >"$AR_LOG"
+  log() { :; }
+  warn() { :; }
+  gh() {
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      if [[ "$*" == *convertPullRequestToDraft* ]]; then
+        printf '%s\n' draft >>"$AR_LOG"
+        return "$AR_DRAFT_RC"
+      fi
+      printf '%s\n' "$AR_PAYLOAD"
+      return 0
+    fi
+    return 3
+  }
+  _redraft_authored_pr owner/repo 7 '["rev-a","rev-b"]'
+  ar_rc=$?
+  printf 'rc=%s actions=%s' "$ar_rc" "$(paste -sd, "$AR_LOG")"
+)
+AR_OPEN="$(mk_addressing_payload false '[]' '[]' "$AR_BLOCKED")"
+AR_LABELLED="$(mk_addressing_payload false '["state:addressing"]' '[]' "$AR_BLOCKED")"
+AR_DRAFT="$(mk_addressing_payload true '["state:addressing"]' '[]' "$AR_BLOCKED")"
+AR_DRAFT_UNLABELLED="$(mk_addressing_payload true '[]' '[]' "$AR_BLOCKED")"
+AR_OK="$(mk_addressing_payload false '[]' '[]' "$AR_APPROVED")"
+AR_LIVE="$(mk_addressing_payload false '[]' '["rev-b"]' "$AR_BLOCKED")"
+t redraft-reviewer-writes-addressing-only 'rc=0 actions=label' \
+  "$(review_addressing_actions "$AR_OPEN")"
+t redraft-author-converts-after-label 'rc=0 actions=draft' \
+  "$(author_redraft_actions "$AR_LABELLED")"
+t redraft-full-approval-writes-nothing 'rc=0 actions=' \
+  "$(author_redraft_actions "$AR_OK")"
+t redraft-live-panel-request-writes-nothing 'rc=0 actions=' \
+  "$(author_redraft_actions "$AR_LIVE")"
+t redraft-second-tick-is-noop 'rc=0 actions=' \
+  "$(author_redraft_actions "$AR_DRAFT")"
+t redraft-draft-guard-does-not-depend-on-label 'rc=0 actions=' \
+  "$(author_redraft_actions "$AR_DRAFT_UNLABELLED")"
+t redraft-retries-after-label-landed 'rc=0 actions=draft' \
+  "$(author_redraft_actions "$AR_LABELLED")"
+t redraft-label-failure-is-best-effort 'rc=0 actions=label' \
+  "$(review_addressing_actions "$AR_OPEN" 1)"
+t redraft-conversion-failure-is-best-effort 'rc=0 actions=draft' \
+  "$(author_redraft_actions "$AR_LABELLED" 1)"
+
+# The author-aware panel is resolved once per repository tick and passed into
+# every PR predicate. panel_for_repo owns the safe fleet-bench fallback, so the
+# redraft path must not advertise an unreachable lookup-failure branch.
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+t redraft-panel-resolved-once-per-repo 1 \
+  "$(grep -c 'panel_for_repo "\$R" "\$dir" "\$ME"' "$SHARED/lib/duty-builder.sh")"
+if grep -q 'panel lookup failed' "$SHARED/lib/duty-builder.sh"; then
+  r1=MISLEADING
+else
+  r1=fallback-owned
+fi
+t redraft-panel-fallback-contract fallback-owned "$r1"
+
+# The engine owns only the ready -> draft edge. Ready-for-review remains the
+# builder's judgement, and draft exclusion is shared by request and handoff.
+if ! grep -q 'convertPullRequestToDraft' "$SHARED/lib/duty-review.sh" \
+  && grep -q 'convertPullRequestToDraft' "$SHARED/lib/duty-builder.sh" \
+  && ! grep -Rq 'markPullRequestReadyForReview\|gh pr ready' \
+       "$SHARED/lib" "$SHARED/bin" "$ROOT/cli"; then
+  r1=one-way
+else
+  r1=ENGINE-MARKS-READY
+fi
+t redraft-engine-never-marks-ready one-way "$r1"
+if grep -qi "while it is still draft, mark it ready with no commit between, and let the head checks settle" \
+     "$SHARED/prompts/fragment-round-rules.txt" \
+  && grep -qi 'requests the panel only after that ready head is green' \
+     "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=builder-owned
+else
+  r1=MISSING
+fi
+t redraft-prompt-returns-ready-act-to-builder builder-owned "$r1"
+if grep -Fq 'A draft carrying a completed review round is actionable' \
+     "$SHARED/prompts/resume.txt" \
+  && grep -Fq "append the round's fix steps" "$SHARED/prompts/resume.txt" \
+  && grep -Fq 'AND NO COMPLETED ROUND STANDS, POST NOTHING AT ALL' \
+       "$SHARED/prompts/resume.txt"; then
+  r1=woken
+else
+  r1=STRANDED
+fi
+t redraft-resume-names-completed-round woken "$r1"
+
+# The issue's whole lifecycle in one stateful fixture. It drives the real
+# reviewer and author helpers against one mutable PR, reads the checked-in CI
+# workflow gates for the draft-push/ready edges, then hands the real signal
+# object to request-panel.jq. A broken link changes or stops this trace.
+# shellcheck disable=SC2034,SC2317  # vars/mocks consumed by engine helpers
+redraft_round_trip() (
+  AR_IS_DRAFT=false AR_LABELS='[]' AR_COMMENTS='[]' AR_ACTIONS=""
+  LABEL_ADDRESSING=state:addressing LABEL_BOTS_REVIEWING=state:bots-reviewing
+  DUTY_DIR="$SHARED" ME=builder MARK_ANSWERED="$RP_MARK"
+  panel_for_repo() { printf '%s\n' '["rev-a","rev-b"]'; }
+  log() { :; }
+  warn() { :; }
+  ar_payload() {
+    mk_addressing_payload "$AR_IS_DRAFT" "$AR_LABELS" '[]' "$AR_BLOCKED" "$AR_COMMENTS"
+  }
+  gh() {
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      if [[ "$*" == *convertPullRequestToDraft* ]]; then
+        AR_IS_DRAFT=true
+        AR_ACTIONS="${AR_ACTIONS:+$AR_ACTIONS,}draft"
+        return 0
+      fi
+      ar_payload
+      return 0
+    fi
+    if [ "$1" = api ] && [[ "$2" == repos/*/requested_reviewers ]]; then
+      local ar_arg
+      for ar_arg in "$@"; do
+        case "$ar_arg" in
+          reviewers\[\]=*)
+            AR_ACTIONS="${AR_ACTIONS:+$AR_ACTIONS,}request:${ar_arg#*=}"
+            ;;
+        esac
+      done
+      return 0
+    fi
+    if [ "$1" = issue ] && [ "$2" = edit ]; then
+      if [[ "$*" == *state:bots-reviewing* ]]; then
+        return 0
+      fi
+      AR_LABELS='["state:addressing"]'
+      AR_ACTIONS="${AR_ACTIONS:+$AR_ACTIONS,}addressing"
+      return 0
+    fi
+    return 3
+  }
+  _mark_addressing owner/repo 7
+  _redraft_authored_pr owner/repo 7 '["rev-a","rev-b"]'
+  [ "$AR_IS_DRAFT" = true ] || { printf 'NOT-DRAFT'; return; }
+  for ar_ci in "$ROOT/.github/workflows/ci-shell.yml" "$ROOT/.github/workflows/ci-floor.yml"; do
+    grep -q 'github.event.pull_request.draft == false' "$ar_ci" || { printf 'DRAFT-CI'; return; }
+    grep -q 'ready_for_review' "$ar_ci" || { printf 'NO-READY-WAKE'; return; }
+  done
+  AR_ACTIONS="$AR_ACTIONS,draft-push:no-ci"
+  # SIGNAL THEN READY is the builder-owned edge. This no-push answer retains
+  # the standing current-head reviews. The next real author sweep must consume
+  # the newer signal as proof that this round was already converted and leave
+  # the PR ready; pending CI still holds the real request helper, then green
+  # re-requests only the current-head change-requester.
+  AR_COMMENTS='[{"author":{"login":"builder"},"body":"'"$RP_MARK"' '"$AR_H"'","createdAt":"'"$AR_T_SIGNAL"'"}]'
+  AR_IS_DRAFT=false
+  AR_ACTIONS="$AR_ACTIONS,signal,ready"
+  _redraft_authored_pr owner/repo 7 '["rev-a","rev-b"]'
+  [ "$AR_IS_DRAFT" = false ] || { printf 'REDRAFT-LOOP'; return; }
+  _request_panel owner/repo 7 "$(ar_payload)" '["rev-a","rev-b"]' pending "$AR_H"
+  AR_ACTIONS="$AR_ACTIONS,ci:green"
+  _request_panel owner/repo 7 "$(ar_payload)" '["rev-a","rev-b"]' green "$AR_H"
+  printf '%s' "$AR_ACTIONS"
+)
+t redraft-full-round-trip \
+  'addressing,draft,draft-push:no-ci,signal,ready,ci:green,request:rev-a' \
+  "$(redraft_round_trip)"
+
+# MUST FAIL before the ceremony prerequisite: the caller pin must be at least
+# the release that shipped round-over-draft precedence, and the vendored state
+# table must still state that a standing non-approval makes a draft addressing.
+AR_LABELS_REF="$(sed -n 's|.*heavy-duty/ceremony/.github/workflows/labels.yml@||p' \
+  "$ROOT/.github/workflows/labels.yml")"
+AR_OLDEST="$(printf '%s\n%s\n' 0.5.0 "$AR_LABELS_REF" | sort -V | head -n1)"
+# shellcheck disable=SC2016  # literal doctrine text contains backticks
+if [ "$AR_OLDEST" = 0.5.0 ] \
+  && tr -s '[:space:]' ' ' <"$ROOT/.ceremony/LABELS.md" \
+     | grep -Fq 'Draft is evidence for it, not the definition of it: a draft carrying a standing non-approving verdict is a fix round and reads `state:addressing`'; then
+  r1=present
+else
+  r1=MISSING
+fi
+t redraft-ceremony-round-precedence-prerequisite present "$r1"
+
+# Conversion precedes draft discovery in the author tick, so the foreign
+# closing verdict reaches resume immediately rather than waiting another tick.
+# shellcheck disable=SC2016  # grep patterns intentionally contain shell syntax
+AR_REDAFT_LINE="$(grep -n '_redraft_authored_rounds "$R"' "$SHARED/lib/duty-builder.sh" | cut -d: -f1)"
+# shellcheck disable=SC2016
+AR_RESUME_LINE="$(grep -n 'resume_json="$(gh pr list' "$SHARED/lib/duty-builder.sh" | cut -d: -f1)"
+if [ -n "$AR_REDAFT_LINE" ] && [ -n "$AR_RESUME_LINE" ] \
+  && [ "$AR_REDAFT_LINE" -lt "$AR_RESUME_LINE" ]; then
+  r1=ordered
+else
+  r1=WRONG-ORDER
+fi
+t redraft-author-converts-before-resume-discovery ordered "$r1"
+
 RR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 RR_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 RR_T1="2026-07-28T10:00:00Z"; RR_T2="2026-07-28T11:00:00Z"
