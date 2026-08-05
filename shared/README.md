@@ -30,7 +30,7 @@ shared/
   ../cli/crew            fleet CLI on a box host: new/create-all → auth → hire/hire-all; up converges
   ../examples/           fallback roster, operator config and registry seeds
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
-  test/run.sh            fixture tests (bash+jq only, no network) — run by shared-ci
+  test/run.sh            fixture tests (bash+jq only, no network) — run by ci-shell
   install.sh             deploy to ~/duty; identity comes from the box's fleet.roster row
   crontab.example        one line per box
 ```

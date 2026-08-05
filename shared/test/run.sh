@@ -4839,7 +4839,17 @@ CI_SHELL="$ROOT/.github/workflows/ci-shell.yml"
 CI_FLOOR="$ROOT/.github/workflows/ci-floor.yml"
 
 ci_paths() {
-  sed -n "s/^    paths: \[\(.*\)\]$/\1/p" "$1" \
+  trigger="$1"
+  workflow="$2"
+  awk -v trigger="$trigger" '
+    $0 == "  " trigger ":" { in_trigger = 1; next }
+    in_trigger && /^  [[:alnum:]_-]+:/ { exit }
+    in_trigger && /^    paths: \[/ {
+      sub(/^    paths: \[/, "")
+      sub(/\]$/, "")
+      print
+    }
+  ' "$workflow" \
     | tr ',' '\n' | tr -d " '\"" | sed '/^$/d' | sort -u
 }
 
@@ -4850,20 +4860,22 @@ ci_paths() {
 CI_EXPECTED="$(printf '%s\n' \
   '.ceremony/**' '.github/workflows/ci-floor.yml' '.github/workflows/ci-shell.yml' \
   'cli/**' 'dist/**' 'drill/**' 'examples/**' 'fleet-floor/**' 'install.sh' 'shared/**' | sort)"
-CI_UNION="$(ci_paths "$CI_SHELL"; ci_paths "$CI_FLOOR")"
+CI_SHELL_PR_PATHS="$(ci_paths pull_request "$CI_SHELL")"
+CI_FLOOR_PR_PATHS="$(ci_paths pull_request "$CI_FLOOR")"
+CI_UNION="$(printf '%s\n%s\n' "$CI_SHELL_PR_PATHS" "$CI_FLOOR_PR_PATHS")"
 t ci-path-union-preserves-coverage "$CI_EXPECTED" "$(printf '%s\n' "$CI_UNION" | sort -u)"
 t ci-path-union-has-no-overlap 10 "$(printf '%s\n' "$CI_UNION" | wc -l | tr -d ' ')"
-case "$(ci_paths "$CI_SHELL")" in *'.ceremony/**'*) r1=present ;; *) r1=MISSING ;; esac
+case "$CI_SHELL_PR_PATHS" in *'.ceremony/**'*) r1=present ;; *) r1=MISSING ;; esac
 t ci-shell-keeps-ceremony-fixtures present "$r1"
 
 # The three routing cases, plus the load-bearing CLI coverage on the cheap
 # side. Native paths do the routing; a billed filter job is forbidden.
-ci_shell_paths="$(ci_paths "$CI_SHELL")"
+ci_shell_paths="$CI_SHELL_PR_PATHS"
 case "$ci_shell_paths" in *'shared/**'*) r1=present ;; *) r1=MISSING ;; esac
 t ci-shared-routes-to-shell present "$r1"
 case "$ci_shell_paths" in *'cli/**'*) r1=present ;; *) r1=MISSING ;; esac
 t ci-cli-routes-to-shell present "$r1"
-case "$(ci_paths "$CI_FLOOR")" in *'fleet-floor/**'*) r1=floor ;; *) r1=MISSING ;; esac
+case "$CI_FLOOR_PR_PATHS" in *'fleet-floor/**'*) r1=floor ;; *) r1=MISSING ;; esac
 t ci-fleet-floor-routes-to-floor floor "$r1"
 if grep -q 'fleet-floor/test/run.sh --no-browser' "$CI_SHELL"; then r1=covered; else r1=DROPPED; fi
 t ci-shell-runs-floor-cli-fixtures covered "$r1"
@@ -4887,6 +4899,7 @@ for ci_yml in "$CI_SHELL" "$CI_FLOOR"; do
   case "$ci_if" in *github.event_name*) r1=explicit ;; *) r1=COERCION ;; esac
   t "$ci_name-push-exemption-is-explicit" explicit "$r1"
   t "$ci_name-pushes-run-on-main" 1 "$(grep -c '^    branches: \[main\]$' "$ci_yml")"
+  t "$ci_name-push-preserves-union-filter" "$CI_EXPECTED" "$(ci_paths push "$ci_yml")"
   ci_group="$(sed -n 's/^  group: *//p' "$ci_yml")"
   # shellcheck disable=SC2016  # Match the literal GitHub expression in YAML.
   case "$ci_group" in *'${{ github.ref }}'*) r1=per-ref ;; *) r1=TOO-COARSE ;; esac
@@ -4916,7 +4929,14 @@ CI_CREW="$ROOT/cli/crew"
 CI_FLOOR_FN="$(sed -n '/^cmd_floor()/,/^}/p' "$CI_CREW")"
 case "$CI_FLOOR_FN" in *'fleet-floor/index.html'*'CREW_FLOOR_PORT='*'CREW_FLOOR_BIND='*'CREW_FLOOR_USER='*'CREW_FLOOR_PASS='*'CREW_FLOOR_INTERVAL='*'CREW_FLOOR_ROSTER='*'fleet-floor/server/floor.py'*) r1=bridged ;; *) r1=BROKEN ;; esac
 t cli-floor-server-contract bridged "$r1"
-CI_CONSOLE_VERBS='floor hire new status up upgrade'
+CI_CONSOLE_VERBS='floor hire init new profiles status up upgrade'
+CI_CONSOLE_PROSE_VERBS='and cut hangs makes on reads stopped would'
+CI_CONSOLE_CANDIDATES="$(grep -ohE 'crew [a-z][a-z-]*' \
+  "$ROOT/fleet-floor/server/floor.py" "$ROOT/fleet-floor/src/app.js" \
+  | sed 's/^crew //' | sort -u \
+  | grep -Ev "^($(printf '%s' "$CI_CONSOLE_PROSE_VERBS" | tr ' ' '|'))$")"
+t floor-named-crew-verb-roster-is-complete "$CI_CONSOLE_VERBS" \
+  "$(printf '%s\n' "$CI_CONSOLE_CANDIDATES" | paste -sd ' ' -)"
 CI_COMMAND_ROWS="$(sed -n '/^CMDS=(/,/^)/p' "$CI_CREW")"
 for verb in $CI_CONSOLE_VERBS; do
   if grep -q "crew $verb" "$ROOT/fleet-floor/server/floor.py" "$ROOT/fleet-floor/src/app.js" &&

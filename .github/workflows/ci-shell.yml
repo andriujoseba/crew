@@ -5,9 +5,11 @@ on:
     # the draft gate below wake at the head the panel will review.
     types: [opened, synchronize, reopened, ready_for_review]
     paths: ['shared/**', 'cli/**', 'drill/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/ci-shell.yml']
-  # Main keeps the pre-split invariant: both halves run after every merge.
+  # Main keeps the pre-split invariant: both halves run after every relevant
+  # merge, using the former workflow's full filter on each half.
   push:
     branches: [main]
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/ci-shell.yml', '.github/workflows/ci-floor.yml']
 
 concurrency:
   group: ci-shell-${{ github.ref }}
@@ -20,7 +22,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: bash -n (syntax)
         run: |
           set -e

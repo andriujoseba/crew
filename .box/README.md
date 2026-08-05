@@ -4,7 +4,8 @@ This repo needs only bash, git, gh, jq, flock and timeout (all present on
 a stock Debian box); shellcheck is optional but used by CI.
 
 - Working ON the repo (development): run `shared/test/run.sh` (must end
-  `failed 0`) and shellcheck as in `.github/workflows/shared-ci.yml`.
+  `failed 0`) and shellcheck as in `.github/workflows/ci-shell.yml` and
+  `.github/workflows/ci-floor.yml`.
   Nothing here needs credentials or a box host.
 - Spawned to REHEARSE the duty engine on this box: follow
   `shared/docs/rehearsal.md` — phase 1 is deliberately pre-auth; do not

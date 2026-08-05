@@ -1,10 +1,10 @@
 name: release-guards
 # The ceremony's release gates, run on EVERY PR — deliberately a workflow of
-# its own, not folded into shared-ci.yml (crew#84's CI decision).
+# its own, not folded into ci-shell.yml or ci-floor.yml (crew#84's CI decision).
 #
-# shared-ci.yml carries a paths filter (shared/**, cli/**, drill/**,
-# fleet-floor/**, examples/**) so a docs-only PR skips crew's expensive engine
-# suite — the browser-driven fleet-floor tests, the fixture run. None of the
+# The split CI workflows carry paths filters for engine and floor surfaces, so
+# a docs-only PR skips crew's expensive engine suite and browser-driven floor
+# tests. None of the
 # release furniture this repo now carries — CHANGELOG.md, changelog.d/,
 # VERSION, drills/, the .ceremony/ mirror, these callers — matches that filter.
 # Widening it would drag every doc PR through the engine suite, and folding the

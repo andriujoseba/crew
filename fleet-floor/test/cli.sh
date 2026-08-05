@@ -1620,7 +1620,15 @@ else
 fi
 # CI must never turn them on — headed needs a display, and a slowed walk in CI
 # is a timeout waiting to happen.
-if grep -qE 'FLOOR_TEST_(HEADED|SLOWMO)' "$CL_ROOT/.github/workflows/shared-ci.yml"; then
+CL_CI_SHELL="$CL_ROOT/.github/workflows/ci-shell.yml"
+CL_CI_FLOOR="$CL_ROOT/.github/workflows/ci-floor.yml"
+CL_CI_MISSING=""
+for CL_CI_WORKFLOW in "$CL_CI_SHELL" "$CL_CI_FLOOR"; do
+  [ -r "$CL_CI_WORKFLOW" ] || CL_CI_MISSING="$CL_CI_MISSING $CL_CI_WORKFLOW"
+done
+if [ -n "$CL_CI_MISSING" ]; then
+  fail "CI does not enable headed/slowMo" "missing or unreadable:$CL_CI_MISSING"
+elif grep -qE 'FLOOR_TEST_(HEADED|SLOWMO)' "$CL_CI_SHELL" "$CL_CI_FLOOR"; then
   fail "CI does not enable headed/slowMo" "CI has no display and no time for it"
 else
   ok "CI does not enable headed/slowMo"
