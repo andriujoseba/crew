@@ -4289,12 +4289,18 @@ else
 fi
 t wt-dirty-warn-is-ledgered-in-module ledgered "$r1"
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
-if grep -Fq '_wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$DUTY_DIR/.seen-wt-dirty"' "$BMOD"; then
+if grep -Fq '_wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$pr_num" "$DUTY_DIR/.seen-wt-dirty"' "$BMOD"; then
   r1=wired
 else
   r1=UNWIRED
 fi
 t wt-hygiene-block-calls-release wired "$r1"
+# The PR the record goes on comes from the lookup that decided the branch was
+# done — one query, so the record can never name a different PR than the removal
+# was decided on, and the rare refusal path costs no second API call.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq -- '--state all --json state,number' "$BMOD"; then r1=joined; else r1=SPLIT; fi
+t wt-hygiene-lookup-carries-the-pr-number joined "$r1"
 # #167's must-fail, in the amended form #168 gives it: not "no --force" but
 # "no --force except as the confirmed consequence of a successful preservation
 # push". One occurrence, and the ordering assertions below pin it to that one
@@ -4336,10 +4342,31 @@ _p168_fixture() { # $1=name -> a bare remote, a clone with origin, a worktree
 
 _p168_wip_refs() { git -C "$1" for-each-ref --format='%(refname)' refs/heads/wip | n; }
 
+# The record's transport is post-once.sh, so the suite stubs it where the engine
+# looks: BIN_DIR, pointed at this block's own bin and restored at the end. The
+# stub records the (repo, number) it was called with and the exact body, which
+# is what the dedup assertion below reads — post-once.sh's own idempotence is
+# tested at post-once.sh; what is this module's to prove is that it hands over a
+# body that does not change when nothing changed.
+P168_BIN="$P168/bin"; mkdir -p "$P168_BIN"
+export P168_PO_CALLS="$P168/po-calls" P168_PO_BODY="$P168/po-body" P168_PO_RC=0
+: >"$P168_PO_CALLS"; : >"$P168_PO_BODY"
+cat >"$P168_BIN/post-once.sh" <<'P168PO'
+#!/usr/bin/env bash
+printf '%s#%s\n' "$1" "$2" >>"$P168_PO_CALLS"
+printf '%s' "$3" >"$P168_PO_BODY"
+exit "${P168_PO_RC:-0}"
+P168PO
+chmod +x "$P168_BIN/post-once.sh"
+P168_BIN_SAVED="$BIN_DIR"
+BIN_DIR="$P168_BIN"
+
 # The remote a preservation goes to. `fork` where the clone has one — the bot
 # cannot write to upstream, and a push that is always refused earns no force
-# and preserves nothing — else `origin`, which is the single-remote case the
-# spec describes. (Raised on #168 rather than assumed.)
+# and preserves nothing — else `origin`, the single-remote case, which the
+# amended spec still describes ("a remote the pushing identity can actually
+# write to"). Triage ruled the preference in on 2026-08-05: `origin` on a fleet
+# box is unwritable, so the criterion as first written was unsatisfiable.
 _p168_fixture remote-choice
 t p168-remote-origin-when-alone origin "$(_wt_preserve_remote "$P_CLONE")"
 git -C "$P_CLONE" remote add fork "$P168/fork.git"
@@ -4398,13 +4425,30 @@ case "$(git -C "$P_BARE" ls-tree -r --name-only refs/heads/wip/build/dirty)" in
 esac
 t p168-new-dirt-carries-the-new-file carried "$r1"
 
+# The capture's own refusal, reached directly. `_wt_preserve` refuses when what
+# it captured is HEAD's own tree — nothing was at risk — and that path is
+# otherwise only reachable when a removal refuses for a reason that leaves the
+# tree unchanged (a locked worktree), so it is exercised here rather than left
+# to the one shape that happens to reach it. The refusal is what denies the
+# caller its force, and a refusal that pushed anyway would earn a force it
+# cannot explain: both halves are asserted.
+_p168_fixture nothing-at-risk
+mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
+if _wt_preserve "$P_WT" build/nothing-at-risk >/dev/null; then r1=CLAIMED; else r1=refused; fi
+t p168-ignored-only-capture-refuses refused "$r1"
+t p168-ignored-only-capture-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+rm -rf "$P_WT/ignored"
+if _wt_preserve "$P_WT" build/nothing-at-risk >/dev/null; then r1=CLAIMED; else r1=refused; fi
+t p168-clean-capture-refuses refused "$r1"
+t p168-clean-capture-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+
 # 2. Only-ignored dirt: removed, and nothing pushed. Nothing was at risk, so
 # there is no ref to explain and no force to earn — the clean removal already
 # succeeds, which is why the preservation path is reached only by a refusal.
 _p168_fixture ignored-only
 mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
 P_LG="$P168/ledger-ignored"
-if _wt_release "$P_CLONE" o/r build/ignored-only "$P_WT" "$P_LG" >/dev/null; then
+if _wt_release "$P_CLONE" o/r build/ignored-only "$P_WT" 41 "$P_LG" >/dev/null; then
   r1=released
 else
   r1=KEPT
@@ -4412,6 +4456,8 @@ fi
 t p168-ignored-only-released released "$r1"
 t p168-ignored-only-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
 t p168-ignored-only-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+# ...and nothing was recorded either: there is no ref to point a reader at.
+t p168-ignored-only-records-nothing 0 "$(grep -c 'o/r#41' "$P168_PO_CALLS")"
 # ...and a second sweep has nothing left to re-remove: the released worktree is
 # out of `worktree list`, which is what the hygiene block enumerates.
 t p168-released-worktree-off-the-list 0 \
@@ -4425,7 +4471,7 @@ printf 'rescue me\n' >"$P_WT/untracked.txt"
 git -C "$P_CLONE" remote set-url origin "$P168/nowhere-at-all.git"
 git -C "$P_WT" remote set-url origin "$P168/nowhere-at-all.git"
 P_LG="$P168/ledger-nopush"
-if P_OUT="$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" "$P_LG")"; then
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" 42 "$P_LG")"; then
   r1=RELEASED
 else
   r1=kept
@@ -4435,7 +4481,10 @@ t p168-failed-push-keeps-worktree present \
   "$([ -d "$P_WT" ] && echo present || echo GONE)"
 t p168-failed-push-keeps-the-work 'rescue me' "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
 t p168-failed-push-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
-t p168-failed-push-then-silent "" "$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" "$P_LG")"
+t p168-failed-push-then-silent "" "$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" 42 "$P_LG")"
+# Nothing landed, so nothing is recorded: a comment naming a ref that does not
+# exist is worse than no comment, because the reader stops looking.
+t p168-failed-push-records-nothing 0 "$(grep -c 'o/r#42' "$P168_PO_CALLS")"
 
 # 4. The whole order, end to end: a worktree holding real work is released
 # only because the push landed, and the work is retrievable from the remote
@@ -4446,7 +4495,7 @@ _p168_fixture released
 printf 'changed\n' >"$P_WT/README.md"
 printf 'rescue me\n' >"$P_WT/untracked.txt"
 P_LG="$P168/ledger-released"
-if P_OUT="$(_wt_release "$P_CLONE" o/r build/released "$P_WT" "$P_LG")"; then
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/released "$P_WT" 43 "$P_LG")"; then
   r1=released
 else
   r1=KEPT
@@ -4466,6 +4515,114 @@ t p168-log-carries-the-recovery-command recoverable "$r1"
 t p168-release-deletes-the-branch 0 \
   "$(git -C "$P_CLONE" branch --list build/released | n)"
 
+# 5. The record, which is the half that survives losing the other one. It goes
+# on the PR the worktree belonged to, and it names the remote, the ref, what it
+# holds and how to get it back — enough to decide the work is worthless without
+# fetching it, and enough to fetch it where it is not.
+t p168-record-goes-to-the-pr 'o/r#43' "$(tail -1 "$P168_PO_CALLS")"
+P_REC="$(cat "$P168_PO_BODY")"
+case "$P_REC" in *'wip/build/released'*) r1=named ;; *) r1=MISSING ;; esac
+t p168-record-names-the-ref named "$r1"
+case "$P_REC" in *'`origin`'*) r1=named ;; *) r1=MISSING ;; esac
+t p168-record-names-the-remote named "$r1"
+# What it holds, in the counts the criterion asks for: one modified tracked
+# file (README.md) and one untracked (untracked.txt).
+case "$P_REC" in *'1 modified, 1 untracked'*) r1=counted ;; *) r1=MISSING ;; esac
+t p168-record-carries-the-counts counted "$r1"
+case "$P_REC" in
+  *"git fetch $P168/released.git wip/build/released"*) r1=recoverable ;;
+  *) r1=MISSING ;;
+esac
+t p168-record-carries-the-recovery-command recoverable "$r1"
+# The sha ties the record to what was actually pushed — and is what makes the
+# body stable, which is the property post-once.sh's exact-body dedup runs on.
+P_REC_SHA="$(git -C "$P_BARE" rev-parse refs/heads/wip/build/released)"
+case "$P_REC" in *"$P_REC_SHA"*) r1=pinned ;; *) r1=MISSING ;; esac
+t p168-record-names-the-sha pinned "$r1"
+
+# Dedup, from this module's side: the same preservation asked for twice hands
+# post-once.sh a byte-identical body, so its exact-body match suppresses the
+# second. A body carrying a timestamp or a run id would pass every assertion
+# above and post a fresh comment every tick — which is the shape #167 exists to
+# prevent, moved upstream where it is louder.
+_p168_fixture record-stable
+printf 'changed\n' >"$P_WT/README.md"
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_PRES="$(_wt_preserve "$P_WT" build/record-stable)"
+read -r P_RM P_RF P_RS P_RU <<<"$P_PRES"
+_wt_record o/r 44 build/record-stable "$P_WT" "$P_RM" "$P_RF" "$P_RS" "$P_RU"
+P_REC1="$(cat "$P168_PO_BODY")"
+_wt_record o/r 44 build/record-stable "$P_WT" "$P_RM" "$P_RF" "$P_RS" "$P_RU"
+t p168-record-body-is-stable "$P_REC1" "$(cat "$P168_PO_BODY")"
+
+# 6. A record that does not land is a hard stop on the removal, exactly as a
+# failed push is. The payload is the deletable half and the comment the durable
+# one (#168, amended 2026-08-05), so a worktree forced away with the ref pushed
+# and nothing upstream saying where it went ships the gap the amendment closes.
+# Self-healing by construction: the worktree stays, and the next pass
+# re-preserves to the same sha and retries the record.
+_p168_fixture record-fails
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_LG="$P168/ledger-norecord"
+P168_PO_RC=1
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/record-fails "$P_WT" 45 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+t p168-failed-record-refuses-release kept "$r1"
+t p168-failed-record-keeps-worktree present \
+  "$([ -d "$P_WT" ] && echo present || echo GONE)"
+t p168-failed-record-keeps-the-work 'rescue me' "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+t p168-failed-record-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+t p168-failed-record-then-silent 0 \
+  "$(_wt_release "$P_CLONE" o/r build/record-fails "$P_WT" 45 "$P_LG" | grep -c 'WARN')"
+# The payload is still on the remote — the stop is about the pointer, never
+# about the work, and the second pass mints no second ref for it.
+t p168-failed-record-keeps-the-ref 1 "$(_p168_wip_refs "$P_BARE")"
+# ...and once the record does land, the same worktree releases.
+P168_PO_RC=0
+if _wt_release "$P_CLONE" o/r build/record-fails "$P_WT" 45 "$P_LG" >/dev/null; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-record-recovered-releases released "$r1"
+t p168-record-recovered-removed-the-worktree gone \
+  "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+
+# 7. A worktree that survives the forced removal is reported ONCE, not on every
+# tick: the same discipline #167 bought for the dirty-worktree warning, on the
+# path that bypassed it. A lock is the reachable way to make `remove --force`
+# refuse; the engine never locks a worktree itself, so this needs a human lock
+# or a filesystem refusal in the wild — which is exactly why it repeated
+# unnoticed on a five-minute unattended loop.
+_p168_fixture force-survives
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+git -C "$P_CLONE" worktree lock "$P_WT"
+P_LG="$P168/ledger-locked"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/force-survives "$P_WT" 46 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+t p168-locked-force-refuses-release kept "$r1"
+t p168-locked-force-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+t p168-locked-force-then-silent 0 \
+  "$(_wt_release "$P_CLONE" o/r build/force-survives "$P_WT" 46 "$P_LG" | grep -c 'WARN')"
+# Silence is not amnesia: the work is still on the remote, still one ref, still
+# one commit, however many ticks pass over it.
+t p168-locked-force-keeps-one-ref 1 "$(_p168_wip_refs "$P_BARE")"
+t p168-locked-force-keeps-the-work 'rescue me' \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/force-survives:untracked.txt)"
+# New dirt is new news, and says so once again: the ledger id carries the
+# preserved sha, so a changed worktree is never swallowed by the last one's
+# silence. Must-fail: key it on the worktree alone and this goes quiet.
+printf 'later\n' >"$P_WT/second.txt"
+t p168-locked-force-rewarns-on-new-dirt 1 \
+  "$(_wt_release "$P_CLONE" o/r build/force-survives "$P_WT" 46 "$P_LG" | grep -c 'WARN')"
+git -C "$P_CLONE" worktree unlock "$P_WT"
+
 # The ordering, read as an ordering. Every one of these is a real defect that
 # passes a behavioural suite on a good day: a force before the push confirms
 # discards work only when the remote is down, and a `git stash` capture drops
@@ -4480,6 +4637,15 @@ t p168-clean-attempt-precedes-capture yes \
   "$([ -n "$P_CLEAN_LN" ] && [ -n "$P_PRES_LN" ] && [ "$P_CLEAN_LN" -lt "$P_PRES_LN" ] && echo yes || echo NO)"
 t p168-capture-precedes-force yes \
   "$([ -n "$P_PRES_LN" ] && [ -n "$P_FORCE_LN" ] && [ "$P_PRES_LN" -lt "$P_FORCE_LN" ] && echo yes || echo NO)"
+# The record is between them, and reads the worktree while there still is one:
+# the counts it carries come from `git status` on a path the force is about to
+# take away, so a record moved below the force names nothing at all.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_RECORD_LN="$(printf '%s\n' "$P_REL" | grep -n '_wt_record "\$repo"' | head -1 | cut -d: -f1)"
+t p168-capture-precedes-record yes \
+  "$([ -n "$P_PRES_LN" ] && [ -n "$P_RECORD_LN" ] && [ "$P_PRES_LN" -lt "$P_RECORD_LN" ] && echo yes || echo NO)"
+t p168-record-precedes-force yes \
+  "$([ -n "$P_RECORD_LN" ] && [ -n "$P_FORCE_LN" ] && [ "$P_RECORD_LN" -lt "$P_FORCE_LN" ] && echo yes || echo NO)"
 # The force is inside the branch the preservation's success opens, not beside
 # it: the guard is `if preserved=...`, so a force outside it cannot exist.
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
@@ -4496,6 +4662,19 @@ t p168-capture-never-stashes 0 "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'gi
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
 t p168-capture-uses-a-scratch-index 3 \
   "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'GIT_INDEX_FILE="\$idx"')"
+# The record goes through post-once.sh rather than a bare POST: its dedup is an
+# exact body match against the comments endpoint, so a tick that dies between
+# the push and the removal re-records nothing. A local ledger cannot promise
+# that — it dies with the box, and this whole issue is about a box dying.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_RECFN="$(awk '/^_wt_record\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+case "$P_RECFN" in *'"$BIN_DIR/post-once.sh"'*) r1=post_once ;; *) r1=RAW ;; esac
+t p168-record-uses-post-once post_once "$r1"
+t p168-record-never-posts-raw 0 \
+  "$(printf '%s\n' "$P_RECFN" | grep -v '^[[:space:]]*#' | grep -c 'issues/.*comments')"
+
+BIN_DIR="$P168_BIN_SAVED"
 
 # --- wiring (#45/#17) --------------------------------------------------------
 if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
