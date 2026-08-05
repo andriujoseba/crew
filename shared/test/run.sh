@@ -4556,6 +4556,48 @@ P_REC1="$(cat "$P168_PO_BODY")"
 _wt_record o/r 44 build/record-stable "$P_WT" "$P_RM" "$P_RF" "$P_RS" "$P_RU"
 t p168-record-body-is-stable "$P_REC1" "$(cat "$P168_PO_BODY")"
 
+# The counts describe the REF, and the shape that made them lie is the common
+# one: an untracked DIRECTORY. `git status --porcelain` with its default
+# untracked mode collapses `newdir/a` and `newdir/b` into a single `?? newdir/`
+# row, so the record said "1 untracked" over a ref holding two files — and a
+# whole uncommitted `bin/` or `test/`, which is exactly what #168 exists to
+# save, is the case that reads as one stray file to whoever decides not to
+# fetch it. Asserted against the ref's own file count rather than a literal, so
+# the record is checked against the payload and not against itself. Every
+# earlier fixture puts its untracked file at the root, where the defect is
+# invisible.
+_p168_fixture nested-untracked
+printf 'changed\n' >"$P_WT/README.md"
+mkdir -p "$P_WT/newdir"
+printf 'a\n' >"$P_WT/newdir/a"
+printf 'b\n' >"$P_WT/newdir/b"
+P_LG="$P168/ledger-nested"
+_wt_release "$P_CLONE" o/r build/nested-untracked "$P_WT" 49 "$P_LG" >/dev/null
+P_NESTED_N="$(git -C "$P_BARE" ls-tree -r --name-only \
+  refs/heads/wip/build/nested-untracked -- newdir | n)"
+t p168-nested-ref-carries-both-files 2 "$P_NESTED_N"
+P_REC="$(cat "$P168_PO_BODY")"
+case "$P_REC" in
+  *"1 modified, $P_NESTED_N untracked"*) r1=counted ;;
+  *) r1="MISCOUNTED: $P_REC" ;;
+esac
+t p168-record-counts-nested-untracked counted "$r1"
+
+# The same read, failing. Two shapes, because they arrive differently: the
+# worktree's directory gone out from under the sweep, and a git that cannot
+# answer where the directory is still there.
+#
+# The failure has to be LOUD, and the reason is the `if !` it is called inside:
+# `set -e` is disarmed over the whole condition, so a swallowed exit status is
+# not caught anywhere downstream. A status that returned nothing summarises as
+# "0 modified, 0 untracked" — a record that reads like a triviality over content
+# nobody has seen, and a `--force` earned on it. The must-fail is a `_wt_record`
+# that returns 0 here.
+if _wt_record o/r 48 build/vanished "$P168/vanished" origin wip/build/vanished \
+  deadbeef "$P_BARE" >/dev/null 2>&1; then r1=CLAIMED; else r1=refused; fi
+t p168-record-refuses-unreadable-status refused "$r1"
+t p168-record-refuses-before-posting 0 "$(grep -c 'o/r#48' "$P168_PO_CALLS")"
+
 # 6. A record that does not land is a hard stop on the removal, exactly as a
 # failed push is. The payload is the deletable half and the comment the durable
 # one (#168, amended 2026-08-05), so a worktree forced away with the ref pushed
@@ -4591,6 +4633,60 @@ fi
 t p168-record-recovered-releases released "$r1"
 t p168-record-recovered-removed-the-worktree gone \
   "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+
+# ...and the same refusal reached through `_wt_release`, which is where it has
+# to hold: a `git` on PATH that fails only `status` (73, so nothing can mistake
+# it for a clean exit) and passes everything else through to the real one. The
+# push still lands — `_wt_preserve` never reads a status — so this pins the
+# exact division the amendment draws: the payload is safe, the pointer is not,
+# and it is the pointer that gates the force.
+_p168_fixture status-unreadable
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_LG="$P168/ledger-nostatus"
+P168_REAL_GIT="$(command -v git)"
+export P168_REAL_GIT
+cat >"$P168_BIN/git" <<'P168GIT'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$a" = status ] && exit 73; done
+exec "$P168_REAL_GIT" "$@"
+P168GIT
+chmod +x "$P168_BIN/git"
+P_PATH_SAVED="$PATH"
+PATH="$P168_BIN:$PATH"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/status-unreadable "$P_WT" 47 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+PATH="$P_PATH_SAVED"
+rm -f "$P168_BIN/git"
+t p168-unreadable-status-refuses-release kept "$r1"
+t p168-unreadable-status-keeps-worktree present \
+  "$([ -d "$P_WT" ] && echo present || echo GONE)"
+t p168-unreadable-status-keeps-the-work 'rescue me' \
+  "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+t p168-unreadable-status-records-nothing 0 "$(grep -c 'o/r#47' "$P168_PO_CALLS")"
+t p168-unreadable-status-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+# The payload landed before the record was ever attempted, and it stays: the
+# stop is about the pointer, never about the work.
+t p168-unreadable-status-keeps-the-ref 1 "$(_p168_wip_refs "$P_BARE")"
+
+# One read, in one place, listing every file. Both properties are structural
+# because both are invisible to a suite whose fixtures happen to have flat
+# untracked files and a working git — which is what the fixtures above were
+# until this round. Comment lines are stripped first: the helper DOCUMENTS the
+# bare form it exists to replace, and a detector that counts its own
+# explanation is a mistake this repo has now made five separate times.
+P_STATUS_READS="$(grep -v '^[[:space:]]*#' "$BMOD" | grep 'status --porcelain')"
+t p168-one-status-read 1 "$(printf '%s\n' "$P_STATUS_READS" | n)"
+t p168-status-lists-every-file 0 \
+  "$(printf '%s\n' "$P_STATUS_READS" | grep -vc -- '--untracked-files=all')"
+# ...and it fails closed rather than returning an empty listing that summarises
+# as "0 modified, 0 untracked".
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_DIRTFN="$(awk '/^_wt_dirt\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+case "$P_DIRTFN" in *'|| return 1'*) r1=closed ;; *) r1=OPEN ;; esac
+t p168-dirt-read-fails-closed closed "$r1"
 
 # 7. A worktree that survives the forced removal is reported ONCE, not on every
 # tick: the same discipline #167 bought for the dirty-worktree warning, on the
