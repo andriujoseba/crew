@@ -4788,6 +4788,16 @@ t shared-ci-still-triggers-on-push-to-main 1 "$(grep -c '^    branches: \[main\]
 t shared-ci-has-two-path-filters 2 "$(grep -c '^    paths: ' "$CI_YML")"
 t shared-ci-path-filters-agree   1 "$(grep '^    paths: ' "$CI_YML" | sort -u | wc -l | tr -d ' ')"
 
+# Superseded runs may be cancelled only within the same ref. Pull-request runs
+# use refs/pull/N/merge while main uses refs/heads/main, so this one key proves
+# both negative cases: one PR cannot cancel another, and neither can cancel a
+# push to main. MUST FAIL: a repository- or workflow-wide constant group.
+ci_concurrency_group="$(sed -n 's/^  group: *//p' "$CI_YML")"
+t shared-ci-has-one-concurrency-group 1 "$(grep -c '^  group: ' "$CI_YML")"
+case "$ci_concurrency_group" in *'${{ github.ref }}'*) r1=per-ref ;; *) r1=TOO-COARSE ;; esac
+t shared-ci-concurrency-is-per-ref per-ref "$r1"
+t shared-ci-cancels-superseded-runs 1 "$(grep -c '^  cancel-in-progress: true$' "$CI_YML")"
+
 # --- #159: the stamp is a claim, the manifest is the evidence ---------------
 # ~/duty/VERSION said what was SHIPPED and nothing ever looked at what was
 # THERE, so a hand-edited engine reported as in-sync and the next upgrade

@@ -14,6 +14,15 @@ on:
     branches: [main]
     paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.github/workflows/shared-ci.yml']
 
+# Unlike the labels reconciler (ceremony#199), shared-ci only reads a tree and
+# reports: a superseded run has no partial writes to preserve. Keying on ref
+# means only a newer run for the same PR or branch can cancel it; PR merge refs
+# and refs/heads/main cannot cancel one another. The current head's run survives,
+# so cancelled superseded heads never weaken the panel's green-head rule (#137).
+concurrency:
+  group: shared-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     # A draft is the builder's own statement that the tree is not a proposal
