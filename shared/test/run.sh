@@ -254,6 +254,19 @@ fi
 t rehearsal-builder-duplicate-current-prs-refused '' "$duplicate_builder_out"
 t rehearsal-builder-duplicate-current-prs-lookup-fails 1 "$duplicate_builder_rc"
 
+OCCUPIED_BUILDER_OUT="$({
+  fail() { printf 'FAIL %s\n' "$1"; }
+  skip() { printf 'skip %s\n' "$1"; }
+  rehearsal_report_occupied_builder_slot builder
+})"
+t rehearsal-builder-occupied-slot-fails-opened-pr 1 \
+  "$(grep -cFx 'FAIL builder: opened a PR for the ready issue' <<<"$OCCUPIED_BUILDER_OUT")"
+t rehearsal-builder-occupied-slot-fails-run-specific-authorship 1 \
+  "$(grep -cFx "FAIL builder: PR authored by builder for this run's fixture issue" \
+    <<<"$OCCUPIED_BUILDER_OUT")"
+t rehearsal-builder-occupied-slot-skips-unreachable-checks 4 \
+  "$(grep -c '^skip ' <<<"$OCCUPIED_BUILDER_OUT")"
+
 REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
 gh() {
   case "$1 $2" in

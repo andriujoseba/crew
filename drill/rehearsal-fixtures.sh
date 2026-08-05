@@ -47,6 +47,16 @@ rehearsal_builder_pr_for_issue() {
   rehearsal_builder_pr_for_issue_from_json "$issue" "$pulls_json"
 }
 
+rehearsal_report_occupied_builder_slot() {
+  local author="$1"
+  fail "builder: opened a PR for the ready issue"
+  fail "builder: PR authored by $author for this run's fixture issue"
+  skip "builder fixture is unassigned (ready+assigned is not pickable)"
+  skip "builder: PR branch is build/*"
+  skip "builder: issue moved off ready (claimed)"
+  skip "builder: no duplicate PR on re-tick"
+}
+
 rehearsal_close_builder_fixture_prs() {
   local repo="$1" author="$2" pr prs failed=0
   if ! prs="$(rehearsal_builder_slot_prs "$repo" "$author")"; then

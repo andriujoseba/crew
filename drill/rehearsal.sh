@@ -477,11 +477,7 @@ else
     ok "builder: build slot clear at run start"
   fi
   if [ "$builder_slot_clear" -eq 0 ]; then
-    fail "builder: opened a PR for the ready issue"
-    skip "builder fixture is unassigned (ready+assigned is not pickable)"
-    skip "builder: PR branch is build/*"
-    skip "builder: issue moved off ready (claimed)"
-    skip "builder: no duplicate PR on re-tick"
+    rehearsal_report_occupied_builder_slot "$ME2"
   else
     bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
@@ -493,11 +489,12 @@ else
       rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum"
     bpr="$(rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum" 2>/dev/null || echo '')"
     if [ -n "$bpr" ]; then
-      ok "builder: PR #$bpr authored by $ME2 for issue #$bnum"
+      echo "builder: resolved PR #$bpr for fixture issue #$bnum"
+      ok "builder: PR authored by $ME2 for this run's fixture issue"
       check "builder: PR branch is build/*" bash -c \
         "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .head.ref | grep -q '^build/'"
     else
-      fail "builder: PR authored by $ME2 for issue #$bnum"
+      fail "builder: PR authored by $ME2 for this run's fixture issue"
     fi
     # The claim must be visible on the board, not just in the PR.
     wait_for 300 "builder: issue moved off ready (claimed)" bash -c \
