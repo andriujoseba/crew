@@ -411,20 +411,21 @@ _resume_pr_comments() {
 # not support — and a transient failure costing one restarted count is cheaper
 # than a resume session spent on a PR that signalled correctly.
 _resume_attach_comments() {
-  local repo="$1" listing num comments
+  local repo="$1" listing spliced num comments
   listing="$(cat)"
   while IFS= read -r num; do
     [ -n "$num" ] || continue
     if comments="$(_resume_pr_comments "$repo" "$num")"; then
-      listing="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
+      spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
         --argjson comments "$comments" \
-        'map(if .number == $num then . + {comments:$comments} else . end)')"
+        'map(if .number == $num then . + {comments:$comments} else . end)')" || spliced=""
     else
       warn "$repo#$num: comment read failed; leaving it out of stranded-resume detection this tick"
-      listing="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
-        'map(if .number == $num then . + {comments:null} else . end)')"
+      spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
+        'map(if .number == $num then . + {comments:null} else . end)')" || spliced=""
     fi
-  done < <(printf '%s' "$listing" | jq -r '.[] | select(.isDraft | not) | .number')
+    if [ -n "$spliced" ]; then listing="$spliced"; fi
+  done < <(printf '%s' "$listing" | jq -r '.[] | select(.isDraft | not) | .number' 2>/dev/null)
   printf '%s' "$listing"
 }
 
@@ -454,7 +455,7 @@ _resume_attach_comments() {
 # twelve, because this line's whole purpose is to be compared against a signal
 # that is also written out in full.
 _near_miss_resume_rows() {
-  local repo="$1" me="$2" pr num head payload answered near_sha near_id
+  local repo="$1" me="$2" mark="$3" pr num head payload answered near_sha near_id
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
     num="$(printf '%s' "$pr" | jq -r '.number')"
@@ -464,18 +465,21 @@ _near_miss_resume_rows() {
     # The same parser the request gate is licensed by: a PR that signalled
     # properly is not stranded and no near-miss beside that signal changes it.
     answered="$(printf '%s' "$payload" \
-      | jq -r --arg me "$me" --arg mark "$MARK_ANSWERED" \
+      | jq -r --arg me "$me" --arg mark "$mark" \
           -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
       | jq -r '.sha // ""')"
     [ "$answered" = "$head" ] && continue
-    near_sha="$(printf '%s' "$payload" \
-      | jq -c --arg me "$me" -f "$BUILDER_LIB_DIR/jq/near-miss-signal.jq")"
-    near_id="$(printf '%s' "$near_sha" | jq -r '.id // ""')"
-    near_sha="$(printf '%s' "$near_sha" | jq -r '.sha // ""')"
+    # Both halves of the near-miss in one read: the id is only ever printed
+    # beside the sha it belongs to, so splitting them into two jq calls would
+    # be two chances for them to describe different comments.
+    near_sha=""; near_id=""
+    IFS=$'\t' read -r near_sha near_id < <(printf '%s' "$payload" \
+      | jq -r --arg me "$me" -f "$BUILDER_LIB_DIR/jq/near-miss-signal.jq" \
+      | jq -r '[.sha, .id] | @tsv') || true
     # A near-miss naming a SUPERSEDED head is no evidence at all: the session's
     # own push invalidated what it announced, so whatever it finished is not
     # what is on the branch now. That PR waits out the ordinary twelve ticks.
-    [ -n "$near_sha" ] && [ "$near_sha" = "$head" ] || continue
+    if [ -z "$near_sha" ] || [ "$near_sha" != "$head" ]; then continue; fi
     warn "$repo#$num: comment $near_id opens with an unrendered marker slot and names head $head — not a signal (#133), but the round was answered there; resuming this tick instead of the twelfth (#319)"
     printf '%s\t%s\n' "$num" "$near_id"
   done < <(jq -c '.[] | select((.isDraft | not) and .comments != null)')
@@ -834,7 +838,7 @@ _builder_repo() {
     stranded_keys="$(printf '%s' "$resume_json" \
       | _stranded_resume_keys "$R" "$ME" "$MARK_ANSWERED" 2>/dev/null || echo err)"
     near_miss_rows="$(printf '%s' "$resume_json" \
-      | _near_miss_resume_rows "$R" "$ME" || echo "")"
+      | _near_miss_resume_rows "$R" "$ME" "$MARK_ANSWERED" || echo "")"
   fi
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
