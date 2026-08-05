@@ -2835,19 +2835,22 @@ chmod +x "$NM_STUB/gh"
 # function in this one: a fixture that calls an engine function directly drags
 # the engine's own dataflow into this file's static analysis, and the child
 # keeps the two apart.
+# `nm_pr` / `nm_log`, not `payload` / `gh_log`: a variable named `payload` in
+# this file makes shellcheck read the unrelated `r1=payload-author` above as
+# arithmetic (SC2100), and the suite is shellcheck-clean in CI.
 nm_request() {  # nm_request <payload> <call-log> -> how many API calls it made
-  local payload="$1" gh_log="$2"
-  : >"$gh_log"
-  PATH="$NM_STUB:$PATH" NM_GH_LOG="$gh_log" ME=me-bot MARK_ANSWERED="$RP_MARK" \
-    DUTY_DIR="$NM_DUTY" LABEL_BOTS_REVIEWING=state:bots-reviewing \
+  local nm_pr="$1" nm_log="$2"
+  : >"$nm_log"
+  PATH="$NM_STUB:$PATH" NM_GH_LOG="$nm_log" ME="me-bot" MARK_ANSWERED="$RP_MARK" \
+    DUTY_DIR="$NM_DUTY" LABEL_BOTS_REVIEWING="state:bots-reviewing" \
     bash -c 'set -uo pipefail
       # shellcheck disable=SC1090
       source "$1/lib/common.sh"
       # shellcheck disable=SC1090
       source "$1/lib/duty-builder.sh"
       _request_panel o/r 311 "$2" "$3" green "$4"' \
-    nm_request "$SHARED" "$payload" "$PANEL" "$H" >/dev/null 2>&1
-  awk 'NF' "$gh_log" | wc -l | tr -d ' '
+    nm_request "$SHARED" "$nm_pr" "$PANEL" "$H" >/dev/null 2>&1
+  awk 'NF' "$nm_log" | wc -l | tr -d ' '
 }
 t near-miss-request-issues-no-review-request 0 \
   "$(nm_request "$NM_ONLY" "$TMP/near-miss-gh-calls")"
