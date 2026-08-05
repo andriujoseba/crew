@@ -104,10 +104,10 @@ else
 fi
 
 # Both request and convergence paths must receive an author-aware roster.
-# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+# shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-builder-resolution author-aware "$r1"
-# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+# shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-reviewer-resolution author-aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
