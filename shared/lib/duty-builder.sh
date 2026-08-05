@@ -480,6 +480,134 @@ _wt_hygiene_report() {
   return 0
 }
 
+# --- #168: preserve before removing ------------------------------------------
+#
+# Ignored dirt no longer blocks a removal, so every refusal that remains is
+# real uncommitted work: modified tracked files, or untracked files nobody
+# chose to ignore. A merged PR proves the COMMITTED content reached main and
+# says nothing about that. `bin/claim-issue.sh` and its 20-assertion suite once
+# existed only as untracked files on claude-builder; a sweep that forced on
+# "the PR merged" would have taken them silently, every five minutes, on five
+# boxes, unattended.
+#
+# So the work is pushed to a remote first and the force is the CONSEQUENCE of
+# that push landing — never a flag anyone can reach for. A remote, not a local
+# stash or a copy under ~/duty: both die at the next `crew upgrade` (#159), and
+# a preservation that does not survive the thing it is preserving against is
+# not preservation.
+
+# _wt_preserve_remote PATH — where a preservation push goes. `fork` when the
+# clone has one, else `origin`.
+#
+# The issue says "push it to origin", and on a one-remote clone that is what
+# this returns. On a fleet clone it is not: ensure_main_clone adds `fork` at
+# the bot's own fork precisely because the bot cannot write to the upstream —
+# builds push there, and a preservation that pushed to origin would be refused
+# on every box, leaving the force unearned and every dirty worktree stuck
+# forever. Naming the remote in the log keeps the recovery line honest either
+# way. Asked on #168 rather than assumed.
+_wt_preserve_remote() {
+  local path="$1"
+  if git -C "$path" remote get-url fork >/dev/null 2>&1; then
+    printf 'fork\n'
+  elif git -C "$path" remote get-url origin >/dev/null 2>&1; then
+    printf 'origin\n'
+  else
+    return 1
+  fi
+}
+
+# _wt_preserve PATH BRANCH — capture PATH's uncommitted content and push it as
+# `wip/BRANCH`. Prints "<remote> <ref> <sha> <url>" and returns 0 ONLY once the
+# remote has it; every other path returns nonzero, which is what denies the
+# caller its force.
+#
+# THE WORKTREE IS NEVER TOUCHED. The commit is built in a scratch index —
+# read-tree HEAD, then `add -A` against that index — so nothing is staged,
+# stashed or checked out in the tree itself, and a push that fails leaves it
+# byte-identical to how it was found. `add -A` is also what gets untracked
+# files in and ignored files out, which `git stash` without `--include-untracked`
+# famously does not: untracked is where the real example lived.
+_wt_preserve() {
+  local path="$1" branch="$2"
+  local remote ref idx tree head parent commit remote_sha url
+  ref="wip/$branch"
+  remote="$(_wt_preserve_remote "$path")" || return 1
+  url="$(git -C "$path" remote get-url "$remote" 2>/dev/null)" || return 1
+  head="$(git -C "$path" rev-parse HEAD 2>/dev/null)" || return 1
+  idx="$(mktemp "${TMPDIR:-/tmp}/wt-preserve.XXXXXX")" || return 1
+  if GIT_INDEX_FILE="$idx" git -C "$path" read-tree HEAD 2>/dev/null \
+    && GIT_INDEX_FILE="$idx" git -C "$path" add -A 2>/dev/null; then
+    tree="$(GIT_INDEX_FILE="$idx" git -C "$path" write-tree 2>/dev/null)" || tree=""
+  fi
+  rm -f "$idx"
+  [ -n "${tree:-}" ] || return 1
+  # Nothing but ignored dirt captures to HEAD's own tree. Nothing was at risk,
+  # so nothing is pushed — and no force is earned by a refusal this cannot
+  # explain.
+  [ "$tree" != "$(git -C "$path" rev-parse 'HEAD^{tree}' 2>/dev/null)" ] || return 1
+  # Idempotence, and the reason the ref is read before it is written: a pass
+  # that pushed and then failed to remove leaves the ref already holding this
+  # exact tree. Re-pushing would mint a second commit for one preservation and
+  # be refused as a non-fast-forward — so an identical tree on the remote IS
+  # the confirmation, and a different one becomes the new commit's parent so
+  # the push still fast-forwards.
+  remote_sha="$(git -C "$path" ls-remote "$remote" "refs/heads/$ref" 2>/dev/null \
+    | awk 'NR==1{print $1}')"
+  if [ -n "$remote_sha" ] \
+    && git -C "$path" fetch -q "$remote" "refs/heads/$ref" 2>/dev/null; then
+    if [ "$(git -C "$path" rev-parse "$remote_sha^{tree}" 2>/dev/null)" = "$tree" ]; then
+      printf '%s %s %s %s\n' "$remote" "$ref" "$remote_sha" "$url"
+      return 0
+    fi
+    parent="$remote_sha"
+  else
+    parent="$head"
+  fi
+  # The engine's own commit: the box's git identity may be anything or nothing,
+  # and commit-tree refuses without one.
+  commit="$(git -C "$path" \
+    -c "user.name=${ME:-crew}" -c "user.email=${ME:-crew}@users.noreply.github.com" \
+    commit-tree "$tree" -p "$parent" \
+    -m "wip($branch): uncommitted work preserved before worktree removal" 2>/dev/null)" \
+    || return 1
+  git -C "$path" push -q "$remote" "$commit:refs/heads/$ref" 2>/dev/null || return 1
+  printf '%s %s %s %s\n' "$remote" "$ref" "$commit" "$url"
+  return 0
+}
+
+# _wt_release DIR REPO BRANCH PATH LEDGER — release a done branch's worktree,
+# in the one order that is safe: try the clean removal, and only where it
+# refuses, preserve, and only where the preservation lands, force. Returns 0
+# when the worktree is gone.
+#
+# The ordering is the entire safety property, so it is read as an ordering in
+# the suite too: the clean attempt before the capture, the capture before the
+# push, the push before the force.
+_wt_release() {
+  local dir="$1" repo="$2" branch="$3" path="$4" ledger="$5"
+  local preserved remote ref sha url
+  if git -C "$dir" worktree remove "$path" 2>/dev/null; then
+    git -C "$dir" branch -D "$branch" 2>/dev/null || true
+    return 0
+  fi
+  if preserved="$(_wt_preserve "$path" "$branch")"; then
+    read -r remote ref sha url <<<"$preserved"
+    # The line has to be enough on its own: whoever reads it a week later is
+    # not holding this box, and the worktree it names is gone.
+    log "$repo: preserved $path's uncommitted work as $ref ($remote, ${sha:0:12}) — recover with: git fetch $url $ref && git checkout FETCH_HEAD"
+    if git -C "$dir" worktree remove --force "$path" 2>/dev/null; then
+      git -C "$dir" branch -D "$branch" 2>/dev/null || true
+      return 0
+    fi
+    warn "$repo: $path survived a forced removal after $ref was pushed; leaving it — the work is on $remote either way"
+    return 1
+  fi
+  # No push, no force: today's behaviour, said once per (worktree, dirt).
+  _wt_hygiene_report "$ledger" "$repo" "$branch" "$path"
+  return 1
+}
+
 # _stranded_resume_due STATE THRESHOLD — count consecutive duty ticks for
 # open, ready authored PR heads that have no current-head MARK_ANSWERED signal.
 # stdin is one repo#num@head key per PR. The head belongs in the key so every
@@ -1500,9 +1628,10 @@ _builder_repo() {
   # a joined state list, so a newer closed PR can never shadow an older open
   # one (the .[0]-of-newest-first bug in codex's variant could delete a live
   # branch). A branch with no PR at all is an in-flight claim: resume's
-  # business, stays. A dirty worktree is never force-removed, and the fact
-  # that it was left is reported once per (worktree, dirt state) rather than
-  # on every tick (#167, _wt_hygiene_report above). ---
+  # business, stays. A dirty worktree is preserved to a `wip/` ref before it
+  # is removed and left alone where that push does not land (#168), and the
+  # fact that it was left is reported once per (worktree, dirt state) rather
+  # than on every tick (#167, _wt_release above). ---
   if [ -d "$dir/.git" ]; then
     git -C "$dir" worktree prune 2>/dev/null || true
     local wt_branch wt_path pr_states
@@ -1515,11 +1644,7 @@ _builder_repo() {
         ""|*OPEN*) : ;;
         *)
           log "$R: $wt_branch is done ($pr_states) — removing worktree $wt_path"
-          if git -C "$dir" worktree remove "$wt_path" 2>/dev/null; then
-            git -C "$dir" branch -D "$wt_branch" 2>/dev/null || true
-          else
-            _wt_hygiene_report "$DUTY_DIR/.seen-wt-dirty" "$R" "$wt_branch" "$wt_path"
-          fi
+          _wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$DUTY_DIR/.seen-wt-dirty" || true
           git -C "$dir" worktree prune 2>/dev/null || true
           ;;
       esac
