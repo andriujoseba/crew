@@ -3893,6 +3893,7 @@ mk_addressing_payload() {  # draft labels requests reviews
       reviewRequests:{nodes:($requests|map({requestedReviewer:{login:.}}))},
       latestOpinionatedReviews:{nodes:$reviews}}}}}'
 }
+# shellcheck disable=SC2034,SC2317  # vars/functions consumed by _mark_addressing
 addressing_actions() (  # payload [label-rc] [draft-rc]
   AR_PAYLOAD="$1"; AR_LABEL_RC="${2:-0}"; AR_DRAFT_RC="${3:-0}"
   LABEL_ADDRESSING=state:addressing
