@@ -719,6 +719,177 @@ t rehearsal-invalid-tree-rc 1 "$r1"
 case "$p0out" in *"shared/install.sh"*"missing"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
 t rehearsal-invalid-tree-attributed attributed "$r1"
 
+# --- install-drill step 9: engine/cron/tick survival, both paths (#341) --
+# The tick leg used to demand an unchanged, NON-EMPTY last duty.log line. A box
+# hired seconds earlier has no duty.log at all — it is written at the first
+# cron boundary — so on the drill's own standalone path the assertion failed by
+# construction. Observed on crew-drill-011, 2026-08-03: the drill read an empty
+# tail and redded, and the box's first tick fired 14s later, AFTER the console
+# removal.
+#
+# These fixtures drive the predicate itself, not a host: a fake box home, the
+# crontab shim above, and a clock the wait spends instead of the suite's wall
+# time. As with the rehearsal-safety block above, the caller's bx() is what
+# makes that possible; each block defines its own and nothing after either one
+# calls it.
+SHOME="$TMP/survival-home"
+SDUTY="$SHOME/duty"
+SCRON="$TMP/survival-crontab"
+SURVIVAL_CLOCK=0
+SURVIVAL_TICK_AT=""
+
+# survival_reset <engine> <armed|disarmed> [last duty.log line]
+# The third argument is the whole difference between the two paths: a borrowed
+# box arrives with tick history, a freshly hired one does not.
+survival_reset() {
+  rm -rf "$SHOME"; mkdir -p "$SDUTY/bin"
+  printf '%s\n' "$1" >"$SDUTY/VERSION"
+  : >"$SCRON"
+  if [ "$2" = armed ]; then
+    printf '*/5 * * * * %s/bin/tick.sh\n17 2 * * * unrelated-job\n' "$SDUTY" >"$SCRON"
+  fi
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >"$SDUTY/duty.log"
+  SURVIVAL_CLOCK=0
+  SURVIVAL_TICK_AT=""
+}
+
+bx() { HOME="$SHOME" PATH="$ISHIM" CRON_STATE="$SCRON" bash -c "$1"; }
+# shellcheck source=drill/install-survival.sh
+source "$ROOT/drill/install-survival.sh"
+# The two seams, taken over: the clock only moves when the predicate sleeps, so
+# the real 300+90s budget is exercised in no wall time at all — and the tick
+# lands when the fixture's boundary strikes, the way a surviving engine's does.
+install_survival_now() { printf '%s\n' "$SURVIVAL_CLOCK"; }
+install_survival_sleep() {
+  SURVIVAL_CLOCK=$((SURVIVAL_CLOCK + $1))
+  if [ -n "$SURVIVAL_TICK_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_TICK_AT" ]; then
+    printf 'tick %s duty run end\n' "$SURVIVAL_TICK_AT" >>"$SDUTY/duty.log"
+  fi
+}
+# Which surfaces the detail blames, as a list — the D2 assertion in one line.
+survival_surfaces() {
+  printf '%s' "$INSTALL_SURVIVAL_DETAIL" | tr ';' '\n' |
+    sed 's/^ *//;s/:.*//' | tr '\n' ',' | sed 's/,$//'
+}
+
+# The budget is the box's own schedule, not a constant this file guesses at.
+t survival-budget-reads-the-cron-period 150 "$(install_survival_budget '*/1 * * * * /h/duty/bin/tick.sh')"
+t survival-budget-default-when-unparsable 390 "$(install_survival_budget '17 2 * * * /h/duty/bin/tick.sh')"
+t survival-budget-default-when-cron-empty 390 "$(install_survival_budget '')"
+
+# --- the fresh-box path: no duty.log before the removal
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+t survival-fresh-box-takes-the-wait-path fresh "$INSTALL_SURVIVAL_PATH"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-passes-on-the-observed-tick survived "$r1"
+t survival-fresh-box-reports-the-new-tick "tick 305 duty run end" "$INSTALL_SURVIVAL_TICK"
+[ "$SURVIVAL_CLOCK" -le 390 ] && r1=bounded || r1=OVERRAN
+t survival-fresh-wait-stops-at-one-boundary-plus-grace bounded "$r1"
+
+# The mutation #192's precedent requires: step 9's leg as it read before this
+# fix — one read, no wait — against the same fixture that just passed.
+SURVIVAL_WAIT="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+install_survival_wait_for_tick() {
+  INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"; [ -n "$INSTALL_SURVIVAL_TICK" ]
+}
+install_survival_check && r1=survived || r1=red
+t survival-deleting-the-wait-reds-the-fresh-box red "$r1"
+t survival-deleting-the-wait-still-names-tick tick "$(survival_surfaces)"
+eval "$SURVIVAL_WAIT"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-restoring-the-wait-passes-the-same-fixture survived "$r1"
+
+# A fresh box whose engine never ticks again is the failure this path exists to
+# catch, and it must be reported as the tick — not as the removal transcript.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-with-no-tick-reds red "$r1"
+t survival-fresh-box-with-no-tick-names-tick tick "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in *"duty.log"*"390s"*) r1=says-what-it-read ;; *) r1=OPAQUE ;; esac
+t survival-fresh-box-with-no-tick-says-what-it-read says-what-it-read "$r1"
+t survival-fresh-box-with-no-tick-waited-the-budget 390 "$SURVIVAL_CLOCK"
+
+# --- the borrowed-box path: history, so the diff form, byte-identical
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+t survival-borrowed-box-takes-the-diff-path history "$INSTALL_SURVIVAL_PATH"
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-box-passes survived "$r1"
+t survival-borrowed-box-never-waits 0 "$SURVIVAL_CLOCK"
+
+# …and the diff is not weakened by the fresh path existing beside it.
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z duty run end\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-box-changed-log-still-reds red "$r1"
+t survival-borrowed-box-changed-log-names-tick tick "$(survival_surfaces)"
+
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+rm -f "$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-box-emptied-log-still-reds red "$r1"
+
+# --- the real survival failures, on the surfaces they happened to
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+: >"$SCRON"
+install_survival_check && r1=survived || r1=red
+t survival-cron-removed-by-hand-reds red "$r1"
+t survival-cron-removed-by-hand-names-cron cron "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in *"tick.sh"*) r1=says-what-it-read ;; *) r1=OPAQUE ;; esac
+t survival-cron-removed-says-what-it-read says-what-it-read "$r1"
+
+# The same removal on a fresh box: no boundary can strike, so the wait is not
+# entered at all and the report says so rather than blaming the tick alone.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+: >"$SCRON"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-cron-removed-reds red "$r1"
+t survival-fresh-box-cron-removed-names-cron-first cron,tick "$(survival_surfaces)"
+t survival-fresh-box-cron-removed-does-not-wait 0 "$SURVIVAL_CLOCK"
+
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf 'crew@9.9.9-someone-elses\n' >"$SDUTY/VERSION"
+install_survival_check && r1=survived || r1=red
+t survival-engine-restamped-reds red "$r1"
+t survival-engine-restamped-names-engine engine "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"crew@9.9.9-someone-elses"*"crew@0.0.0-drill-b"*) r1=says-both ;; *) r1=OPAQUE ;;
+esac
+t survival-engine-restamped-says-read-and-expected says-both "$r1"
+
+survival_reset '' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+install_survival_check && r1=survived || r1=red
+t survival-engine-gone-reds red "$r1"
+t survival-engine-gone-names-engine engine "$(survival_surfaces)"
+
+# The driver reads the predicate from here and reports the surfaces, so the
+# transcript that misled #341 cannot come back as the evidence.
+if grep -qF 'install_survival_before' "$ROOT/drill/install-drill.sh" &&
+   grep -qF 'install_survival_check' "$ROOT/drill/install-drill.sh"; then r1=wired; else r1=MISSING; fi
+t survival-driver-uses-the-shared-predicate wired "$r1"
+# shellcheck disable=SC2016  # the driver's literal line is the pattern
+if grep -qF 'fail "step 9: positive engine/cron/tick survival observation" "$INSTALL_SURVIVAL_DETAIL"' \
+     "$ROOT/drill/install-drill.sh"; then r1=surfaces; else r1=TRANSCRIPT; fi
+t survival-driver-fails-with-the-surfaces surfaces "$r1"
+if grep -qE 'tick_(pre_remove|after)' "$ROOT/drill/install-drill.sh"; then r1=INLINE; else r1=extracted; fi
+t survival-driver-keeps-no-inline-copy extracted "$r1"
+
 # --- validate_sha
 validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad
 validate_sha "0123456" && r2=ok || r2=bad
