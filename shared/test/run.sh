@@ -569,6 +569,50 @@ t notify-lock-sentinel-rc 199 "$nlock_rc"
 case "$nlock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
 t notify-lock-sentinel-message message "$r1"
 
+# --- notify repo set: work repos union additive handoff targets (#316) ----
+# Run the real notifier with an empty-board gh shim. This observes every
+# repository it queries without network access or duplicating its set logic in
+# the test. A repo in repos.txt is always covered; notify-repos.txt only adds
+# cross-repo targets; overlap is queried once.
+NSHIM="$TMP/notify-bin"
+NLOG="$TMP/notify-gh.log"
+mkdir -p "$NSHIM"
+cat >"$NSHIM/gh" <<'EOF'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-R" ]; then printf '%s\n' "$2" >>"$NLOG"; break; fi
+  shift
+done
+printf '[]\n'
+EOF
+chmod +x "$NSHIM/gh"
+printf '\nBOT_PATH_PREPEND=%q\n' "$NSHIM" >>"$LHOME/duty/conf/agents/claude.conf"
+printf 'fixture/work-only\nfixture/both\n' >"$LHOME/duty/repos.txt"
+printf 'fixture/notify-only\nfixture/both\n' >"$LHOME/duty/notify-repos.txt"
+printf 'fixture-token\n' >"$LHOME/.tg_bot_token"
+printf 'fixture-chat\n' >"$LHOME/.tg_chat_id"
+: >"$NLOG"
+env HOME="$LHOME" DUTY_DIR="$LHOME/duty" NLOG="$NLOG" \
+  /bin/bash "$LHOME/duty/bin/notify.sh" >/dev/null
+t notify-repos-union "fixture/both
+fixture/notify-only
+fixture/work-only" "$(sort "$NLOG")"
+t notify-repos-overlap-once 1 "$(grep -cxF fixture/both "$NLOG")"
+
+# With no additive registry the work set is still watched, and the existing
+# fallback log remains explicit.
+rm -f "$LHOME/duty/notify-repos.txt"
+: >"$NLOG"
+notify_fallback_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" NLOG="$NLOG" \
+  /bin/bash "$LHOME/duty/bin/notify.sh")"
+t notify-repos-fallback "fixture/both
+fixture/work-only" "$(sort "$NLOG")"
+case "$notify_fallback_out" in
+  *"notify-repos.txt missing — falling back to repos.txt"*) r1=logged ;;
+  *) r1=SILENT ;;
+esac
+t notify-repos-fallback-is-logged logged "$r1"
+
 # --- attention label predicate: never let a null reach the shell ---------
 # `gh api --jq` prints NOTHING for a null result (real jq prints "null"), so
 # `index("attention") | grep -q null` matched in NEITHER state: present
