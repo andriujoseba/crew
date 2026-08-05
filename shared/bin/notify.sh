@@ -102,7 +102,10 @@ tg_edit() {  # $1 message_id, $2 text -> 0 always
 if [ ! -r "$NOTIFY_REPOS" ]; then
   log "notify-repos.txt missing — falling back to repos.txt"
 fi
-repos="$({ read_repo_list "$REPOS_FILE"; read_repo_list "$NOTIFY_REPOS"; } | sort -u)"
+repos="$({
+  read_repo_list "$REPOS_FILE"
+  [ ! -r "$NOTIFY_REPOS" ] || read_repo_list "$NOTIFY_REPOS"
+} | sort -u)"
 
 state_put() {  # $1 repo $2 pr $3 head $4 msgid $5 status
   # Same-directory temp file: mktemp's default /tmp can be a different
