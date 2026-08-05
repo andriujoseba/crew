@@ -112,7 +112,7 @@ fleet's real protocol existed only inside five diverging scripts.
 | `state:needs-human` refire guard; UNKNOWN mergeable waits | claude-bot | handoff refires; post-merge flap |
 | Panel read from the PR repo's `labels.conf panel=`, never hardcoded | doctrine + codex's knowledge | rig#120 kimi-less panel |
 | Resume before build; the lock makes resume sound | claude-bot / codex | crash-only recovery, 10 clean resumes |
-| Dirty worktrees/clones never force-removed | codex | unpushed work on a disposable box is gone |
+| No `--force` except as the confirmed consequence of a successful preservation push | codex, amended by #168 | unpushed work on a disposable box is gone (#167); a bar nothing could satisfy left every dirty worktree stuck (#168) |
 | Worktree cleanup requires *no OPEN PR* on the branch | fix of codex's `.[0]` probe | newer closed PR shadowed an older open one |
 | Detection wakes sessions, never edits labels; fail-safe parser defaults | dan-claude-bot | four false `blocked-unparseable` leads |
 | Mark-read-after-handling mention idempotency | dan-claude-bot | retry-by-default with no extra state |

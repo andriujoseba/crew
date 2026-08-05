@@ -499,13 +499,16 @@ _wt_hygiene_report() {
 # _wt_preserve_remote PATH — where a preservation push goes. `fork` when the
 # clone has one, else `origin`.
 #
-# The issue says "push it to origin", and on a one-remote clone that is what
+# #168 first said "push it to origin", and on a one-remote clone that is what
 # this returns. On a fleet clone it is not: ensure_main_clone adds `fork` at
 # the bot's own fork precisely because the bot cannot write to the upstream —
 # builds push there, and a preservation that pushed to origin would be refused
 # on every box, leaving the force unearned and every dirty worktree stuck
-# forever. Naming the remote in the log keeps the recovery line honest either
-# way. Asked on #168 rather than assumed.
+# forever. Triage amended the criterion to the writable remote on 2026-08-05,
+# for that reason: `origin` was unsatisfiable in production rather than merely
+# inconvenient, and the requirement's own reason — it must outlive the box and
+# the next `crew upgrade` — turns on *remote*, not on *origin*. Naming the
+# remote in the log keeps the recovery line honest either way.
 _wt_preserve_remote() {
   local path="$1"
   if git -C "$path" remote get-url fork >/dev/null 2>&1; then
@@ -576,16 +579,79 @@ _wt_preserve() {
   return 0
 }
 
-# _wt_release DIR REPO BRANCH PATH LEDGER — release a done branch's worktree,
+# _wt_say_once LEDGER ID MESSAGE — one WARN per ID, ever. #167's discipline
+# without its message: the report below says "not clean, leaving it for
+# inspection", which is not what happened on the paths that use this — the work
+# is already on the remote there, and a reader told the wrong thing acts on the
+# wrong thing. The ID carries the preserved SHA rather than a dirt fingerprint:
+# the sha identifies that dirt exactly, it is in hand at both call sites, and it
+# costs no second `git status` on a path that is already going wrong. Keyed
+# distinctly from _wt_hygiene_report's own items, whose shape is untouched so no
+# live box re-warns after the upgrade. Always returns 0.
+_wt_say_once() {
+  local ledger="$1" id="$2" msg="$3" item
+  item="$(printf '%s\tsaid' "$id")"
+  [ -n "$(printf '%s\n' "$item" | ledger_filter "$ledger")" ] || return 0
+  warn "$msg"
+  printf '%s\n' "$item" | ledger_commit "$ledger"
+  return 0
+}
+
+# _wt_record REPO PR BRANCH PATH REMOTE REF SHA URL — the durable half of a
+# preservation: a comment on the PR the worktree belonged to, naming the remote,
+# the ref, and what it holds. Returns 0 only once that comment is present.
+#
+# The payload and the record fail differently, which is the whole reason they
+# are separate (triage, #168, 2026-08-05). A `wip/` ref lives on the bot's fork
+# because that is the only remote it can write to, and a fork is not durable in
+# this org: the public-repo flip detached the bots' forks once already, and an
+# org-level action nobody associates with worktrees can take the payload with
+# it. A comment upstream survives fork deletion, box destruction and identity
+# rotation, and for the 99% of preservations that are worthless it is enough to
+# decide so without fetching anything.
+#
+# post-once.sh, not a bare POST and not a local ledger: its dedup is an exact
+# body match against the comments endpoint, so a tick that dies between the push
+# and the removal re-records nothing, and a ledger that dies with the box cannot
+# make the same promise. The body is deterministic in the sha and the counts —
+# same dirt, same body, no second comment; changed dirt, new sha, a new record,
+# which is right, because it holds something else.
+_wt_record() {
+  local repo="$1" pr="$2" branch="$3" path="$4" remote="$5" ref="$6" sha="$7" url="$8"
+  local dirt body
+  [ -n "$pr" ] || return 1
+  dirt="$(git -C "$path" status --porcelain 2>/dev/null | sort)"
+  body="$(printf '%s\n' \
+    "🗃️ Uncommitted work preserved before this branch's worktree was removed" \
+    "" \
+    "\`$branch\`'s worktree was dirty when the hygiene sweep removed it. The work is on the \`$remote\` remote as \`$ref\` (\`$sha\`), holding $(_wt_dirt_summary "$dirt") file(s)." \
+    "" \
+    "    git fetch $url $ref && git checkout FETCH_HEAD" \
+    "" \
+    "The ref can be lost with the remote that holds it; this comment is the record that outlives it (#168).")"
+  "$BIN_DIR/post-once.sh" "$repo" "$pr" "$body" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# _wt_release DIR REPO BRANCH PATH PR LEDGER — release a done branch's worktree,
 # in the one order that is safe: try the clean removal, and only where it
-# refuses, preserve, and only where the preservation lands, force. Returns 0
-# when the worktree is gone.
+# refuses, preserve, and only where the preservation lands AND is recorded
+# upstream, force. Returns 0 when the worktree is gone.
 #
 # The ordering is the entire safety property, so it is read as an ordering in
 # the suite too: the clean attempt before the capture, the capture before the
-# push, the push before the force.
+# push, the push before the record, the record before the force.
+#
+# A failed record stops the removal exactly as a failed push does. #168 spells
+# out the hard stop for the push only, so this is the builder's call and is said
+# out loud rather than buried: the amendment's own argument is that the ref is
+# the deletable half and the comment the durable one, so forcing the worktree
+# away with the payload pushed and nothing upstream saying where it went ships
+# the gap the amendment exists to close. It is self-healing — the worktree
+# stays, and the next tick re-preserves to the same sha (no new commit, no new
+# ref) and retries the record.
 _wt_release() {
-  local dir="$1" repo="$2" branch="$3" path="$4" ledger="$5"
+  local dir="$1" repo="$2" branch="$3" path="$4" pr="$5" ledger="$6"
   local preserved remote ref sha url
   if git -C "$dir" worktree remove "$path" 2>/dev/null; then
     git -C "$dir" branch -D "$branch" 2>/dev/null || true
@@ -596,11 +662,17 @@ _wt_release() {
     # The line has to be enough on its own: whoever reads it a week later is
     # not holding this box, and the worktree it names is gone.
     log "$repo: preserved $path's uncommitted work as $ref ($remote, ${sha:0:12}) — recover with: git fetch $url $ref && git checkout FETCH_HEAD"
+    if ! _wt_record "$repo" "$pr" "$branch" "$path" "$remote" "$ref" "$sha" "$url"; then
+      _wt_say_once "$ledger" "record-failed:$repo:$branch@$sha" \
+        "$repo: $ref is on $remote but the record on ${pr:+#}${pr:-the PR} did not post; keeping $path until it does — the work is safe, the pointer to it is not"
+      return 1
+    fi
     if git -C "$dir" worktree remove --force "$path" 2>/dev/null; then
       git -C "$dir" branch -D "$branch" 2>/dev/null || true
       return 0
     fi
-    warn "$repo: $path survived a forced removal after $ref was pushed; leaving it — the work is on $remote either way"
+    _wt_say_once "$ledger" "force-survived:$repo:$branch@$sha" \
+      "$repo: $path survived a forced removal after $ref was pushed; leaving it — the work is on $remote either way"
     return 1
   fi
   # No push, no force: today's behaviour, said once per (worktree, dirt).
@@ -1631,20 +1703,30 @@ _builder_repo() {
   # business, stays. A dirty worktree is preserved to a `wip/` ref before it
   # is removed and left alone where that push does not land (#168), and the
   # fact that it was left is reported once per (worktree, dirt state) rather
-  # than on every tick (#167, _wt_release above). ---
+  # than on every tick (#167, _wt_release above). The preservation's record goes
+  # on the PR this same lookup found — one query knows both that the branch is
+  # done and which PR it was done by, so the record costs no second call and
+  # cannot name a different PR than the removal was decided on. Highest number
+  # wins where a branch carries several: none is OPEN by the time we are here,
+  # so the newest is the one the worktree was last living under. ---
   if [ -d "$dir/.git" ]; then
     git -C "$dir" worktree prune 2>/dev/null || true
-    local wt_branch wt_path pr_states
+    local wt_branch wt_path wt_prs pr_states pr_num
     while read -r wt_branch wt_path; do
       [ -z "$wt_branch" ] && continue
-      pr_states="$(gh pr list -R "$R" --author "$ME" --head "$wt_branch" \
-        --state all --json state --jq '[.[].state] | join(" ")' 2>/dev/null || echo err)"
+      wt_prs="$(gh pr list -R "$R" --author "$ME" --head "$wt_branch" \
+        --state all --json state,number 2>/dev/null || echo err)"
+      if [ "$wt_prs" = err ]; then
+        warn "$R: worktree-hygiene PR lookup failed for $wt_branch; leaving it"
+        continue
+      fi
+      pr_states="$(printf '%s' "$wt_prs" | jq -r '[.[].state] | join(" ")' 2>/dev/null)"
       case "$pr_states" in
-        err)       warn "$R: worktree-hygiene PR lookup failed for $wt_branch; leaving it" ;;
         ""|*OPEN*) : ;;
         *)
+          pr_num="$(printf '%s' "$wt_prs" | jq -r 'max_by(.number).number // empty' 2>/dev/null)"
           log "$R: $wt_branch is done ($pr_states) — removing worktree $wt_path"
-          _wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$DUTY_DIR/.seen-wt-dirty" || true
+          _wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$pr_num" "$DUTY_DIR/.seen-wt-dirty" || true
           git -C "$dir" worktree prune 2>/dev/null || true
           ;;
       esac
