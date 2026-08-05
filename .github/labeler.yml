@@ -20,7 +20,7 @@
       - any-glob-to-any-file: ["install.sh", "shared/install.sh", "dist/**"]
 "scope:ci":
   - changed-files:
-      - any-glob-to-any-file: [".github/workflows/shared-ci.yml"]
+      - any-glob-to-any-file: [".github/workflows/ci-shell.yml", ".github/workflows/ci-floor.yml"]
 "scope:fleet-floor":
   - changed-files:
       - any-glob-to-any-file: ["fleet-floor/**"]

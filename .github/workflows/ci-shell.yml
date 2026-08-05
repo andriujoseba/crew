@@ -1,0 +1,45 @@
+name: ci-shell
+on:
+  pull_request:
+    # Naming types replaces GitHub's defaults; ready_for_review is what makes
+    # the draft gate below wake at the head the panel will review.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: ['shared/**', 'cli/**', 'drill/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/ci-shell.yml']
+  # Main keeps the pre-split invariant: both halves run after every merge.
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-shell-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Draft pushes are checkpoints, not proposals. Pushes have no PR payload.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n (syntax)
+        run: |
+          set -e
+          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/claim.test.sh shared/test/install-lifecycle.sh shared/test/artifact.sh shared/test/install-drill.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
+                   fleet-floor/test/run.sh fleet-floor/test/stub-box; do
+            bash -n "$f"
+          done
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y shellcheck >/dev/null
+          shellcheck -x install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/run.sh shared/test/claim.test.sh shared/test/install-lifecycle.sh shared/test/artifact.sh shared/test/install-drill.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+      - name: fixture tests
+        run: shared/test/run.sh
+      - name: install lifecycle (offline — layout, root-resolution, interrupt-safe reinstall)
+        run: shared/test/install-lifecycle.sh
+      - name: installer artifact (offline — checksum-before-unpack, byte-identical, generic)
+        run: shared/test/artifact.sh
+      - name: installer drill contract (offline — dry-run, interlock, no duplicated assertions)
+        run: shared/test/install-drill.sh
+      # The cheap half includes cli.sh, so cli/shared-only changes retain the
+      # runtime coverage that caught the populated-roster failures in #47/#48.
+      - name: fleet-floor tests (no browser)
+        run: fleet-floor/test/run.sh --no-browser
