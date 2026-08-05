@@ -4896,6 +4896,8 @@ done
 
 # Every old step is routed. The expensive browser invocation exists only on
 # the floor side; the cheap side still executes the headless floor/CLI suite.
+t ci-check-names-are-distinct 2 \
+  "$(sed -n 's/^    name: \(ci-.*\)$/\1/p' "$CI_SHELL" "$CI_FLOOR" | sort -u | wc -l | tr -d ' ')"
 for command in 'shared/test/run.sh' 'shared/test/install-lifecycle.sh' \
   'shared/test/artifact.sh' 'shared/test/install-drill.sh'; do
   t "ci-shell-keeps[$command]" 1 "$(grep -Fc "run: $command" "$CI_SHELL")"

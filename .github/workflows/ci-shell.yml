@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   check:
+    name: ci-shell
     # Draft pushes are checkpoints, not proposals. Pushes have no PR payload.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
