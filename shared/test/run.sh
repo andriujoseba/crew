@@ -3225,8 +3225,18 @@ if grep -Fq 'ONLY WHEN YOU ARE GOING TO ACT' "$RG_PROMPT" \
 t resume-prompt-marker-gated-on-acting gated "$r1"
 # The doctrine sentence itself, quoted rather than paraphrased, so the two can
 # be read side by side.
-if grep -Fq 'a resumption that finds nothing changed posts nothing' "$RG_PROMPT" \
-  && grep -Fq 'a resumption that finds nothing changed posts nothing' "$ROOT/.ceremony/BUILDER.md"; then
+#
+# Compared on whitespace-NORMALISED text, never line by line. `.ceremony/` is
+# machine-written by `docs-sync --fix` at whatever pin is vendored, so its
+# prose REWRAPS on a bump that changes no word — and a line-based `grep -Fq`
+# reads that rewrap as a divergence. That is half of how the 0.6.0 re-vendor
+# reddened main (#363): the sentence had moved across a line break as well as
+# changed wording, so re-syncing the prompt alone would still have failed here
+# and invited the assertion to be gutted instead. Normalising costs nothing and
+# leaves the real contract — same words, both files — exactly as strict.
+RG_SENTENCE='a resumption finding nothing changed posts nothing'
+if tr -s '[:space:]' ' ' <"$RG_PROMPT" | grep -Fq -- "$RG_SENTENCE" \
+  && tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" | grep -Fq -- "$RG_SENTENCE"; then
   r1=agreed
 else
   r1=DIVERGED
