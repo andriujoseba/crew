@@ -86,6 +86,8 @@ echo "- Narrow registry: \`$SANDBOX\`"
 echo
 
 bx() { box exec "$BOX_NAME" -- bash -lc "$1" </dev/null; }
+# shellcheck source=drill/install-survival.sh
+. "$ROOT/drill/install-survival.sh"
 # The identity this box already carries, read from the same file the
 # installer's own change guard reads. Sourcing is safe here: it happens in a
 # throwaway shell inside the box, not in this one.
@@ -139,7 +141,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "- WOULD OBSERVE step 4: \`crew use\` names \`$BOX_NAME\` at the old engine version"
   echo "- WOULD OBSERVE steps 5–6: installed-tree hire stamps a git-less engine; second \`crew up\` skips; no box-side crew repo is consulted"
   echo "- WOULD OBSERVE step 8: \`crew uninstall --all\` refuses and names \`$BOX_NAME\`"
-  echo "- WOULD OBSERVE step 9: forced console removal leaves \`$BOX_NAME\`'s engine, cron, and latest tick evidence in place"
+  echo "- WOULD OBSERVE step 9: forced console removal leaves \`$BOX_NAME\`'s engine and armed cron in place, and its latest tick evidence — an unchanged last \`duty.log\` line on a box that arrived with history, a tick landing after the removal itself completed, within one cron boundary plus grace, on a box that had none"
   echo "- WOULD OBSERVE identity: \`$BOX_NAME\` carries the agent and roles declared above after Section A, unchanged by its hires and uninstalls"
   echo "- WOULD OBSERVE host checkout: installer warning and \`command -v crew\` agree about PATH order"
   exit 0
@@ -267,19 +269,16 @@ else
   fail "step 8: refusal names box and consequence" "$(cat "$WORK/refuse.out")"
 fi
 
-engine_pre_remove="$(bx "head -1 ~/duty/VERSION 2>/dev/null" | tr -d '\r\n' || true)"
-tick_pre_remove="$(bx "tail -n 1 ~/duty/duty.log 2>/dev/null" | tr -d '\r' || true)"
-cron_pre_remove="$(bx "crontab -l 2>/dev/null | grep -F '/duty/bin/tick.sh' || true" | tr -d '\r' || true)"
-if "$CREW_BIN/crew" uninstall --all --force >"$WORK/remove.out" 2>&1 &&
-   engine_after="$(bx "head -1 ~/duty/VERSION 2>/dev/null" | tr -d '\r\n' || true)" &&
-   tick_after="$(bx "tail -n 1 ~/duty/duty.log 2>/dev/null" | tr -d '\r' || true)" &&
-   cron_after="$(bx "crontab -l 2>/dev/null | grep -F '/duty/bin/tick.sh' || true" | tr -d '\r' || true)" &&
-   [ "$engine_after" = "$engine_pre_remove" ] && [ -n "$engine_after" ] &&
-   [ "$cron_after" = "$cron_pre_remove" ] && [ -n "$cron_after" ] &&
-   [ "$tick_after" = "$tick_pre_remove" ] && [ -n "$tick_after" ]; then
-  pass "step 9: console removed; \`$BOX_NAME\` kept engine \`$engine_after\`, armed cron, and latest tick \`$tick_after\`"
+install_survival_before
+if ! "$CREW_BIN/crew" uninstall --all --force >"$WORK/remove.out" 2>&1; then
+  fail "step 9: forced console removal" "$(tail -3 "$WORK/remove.out" 2>/dev/null | tr '\n' ' ')"
+elif install_survival_check; then
+  pass "step 9: console removed; \`$BOX_NAME\` kept engine \`$INSTALL_SURVIVAL_ENGINE\`, armed cron, and latest tick \`$INSTALL_SURVIVAL_TICK\` ($INSTALL_SURVIVAL_PATH_LABEL)"
 else
-  fail "step 9: positive engine/cron/tick survival observation" "$(cat "$WORK/remove.out" 2>/dev/null)"
+  # The detail is the surfaces, never remove.out: that transcript holds the
+  # removal's own success message and says nothing about what went missing
+  # after it, which is how a true survival got reported as a failure (#341).
+  fail "step 9: positive engine/cron/tick survival observation" "$INSTALL_SURVIVAL_DETAIL"
 fi
 
 # Last, because it covers every mutation above: Section A hires, re-hires and
