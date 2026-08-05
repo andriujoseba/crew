@@ -1962,7 +1962,10 @@ nbd() {  # nbd READY_LINES CR_LINES MINE_JSON [BOARD_READ]
   ledgered_rounds="$(printf '%s\n' "$cr_items" | awk 'NF{c++} END{print c+0}')"
   cr_count="$(printf '%s\n' "$cr_items" \
     | ledger_filter "$NBD_LG" | awk 'NF{c++} END{print c+0}')"
+  # shellcheck disable=SC2034  # read by _gate_ready_for_open_pr through bash's
+  # dynamic scoping, exactly as _builder_repo hands them over.
   open_pr_count="$(printf '%s' "$mine_json" | jq 'length')"
+  # shellcheck disable=SC2034  # same: the gate reads this, then writes slot_prs.
   open_pr_ids="$(printf '%s' "$mine_json" \
     | jq -r --arg repo "$R" '[.[].number] | sort | map("\($repo)#\(.)") | join(", ")')"
   _gate_ready_for_open_pr >/dev/null || true
@@ -2052,6 +2055,7 @@ t nbd-not-mistaken-for-positive-line distinct "$r1"
 # WIRING — the fixtures above prove the spellings; these pin them to the module.
 # shellcheck disable=SC2016  # Match literal shell source, not test variables.
 nbd_board_assign="$(grep -F 'ready_board="$(' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
 case "$nbd_board_assign" in
   *ledger_filter*)  r1=LEDGERED ;;
   *'"$ready_items"'*) r1=pre-filter ;;
@@ -2059,6 +2063,7 @@ case "$nbd_board_assign" in
 esac
 t nbd-board-count-is-pre-ledger pre-filter "$r1"
 # ...and taken before the gate empties the set it counts.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
 nbd_board_ln="$(grep -nF 'ready_board="$(' "$BUILDER_MOD" | head -n1 | cut -d: -f1)"
 nbd_gate_ln="$(grep -nF '_gate_ready_for_open_pr || true' "$BUILDER_MOD" | head -n1 | cut -d: -f1)"
 if [ -n "$nbd_board_ln" ] && [ -n "$nbd_gate_ln" ] && [ "$nbd_board_ln" -lt "$nbd_gate_ln" ]; then
@@ -2067,6 +2072,11 @@ else
   r1=AFTER_GATE
 fi
 t nbd-board-count-taken-before-gate before "$r1"
+# Why that order is load-bearing, stated as behaviour rather than left to the
+# line numbers: fed the post-gate set, the same scenario reports an empty board
+# it does not have — the stale count #264's read cannot survive.
+t nbd-post-gate-count-would-lie 'slot held by heavy-duty/crew#231; board holds 0 ready' \
+  "$(_no_build_duty_reason 0 0 'heavy-duty/crew#231' 1)"
 # The line names the cause, and names it from the board facts rather than from
 # the survivors, every one of which is zero by then.
 # shellcheck disable=SC2016  # Match literal shell source, not test variables.
@@ -2088,8 +2098,9 @@ t nbd-gate-records-that-it-fired recorded "$r1"
 # second ready listing would let the board count disagree with the set it
 # describes. Two are expected and neither is new: the pre-session enumeration
 # and #264's post-session re-query.
-t nbd-no-second-ready-listing 2 \
-  "$(grep -Fc 'gh issue list -R "$R" --state open --label "$LABEL_READY"' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+nbd_ready_listings="$(grep -Fc 'gh issue list -R "$R" --state open --label "$LABEL_READY"' "$BUILDER_MOD")"
+t nbd-no-second-ready-listing 2 "$nbd_ready_listings"
 # Spec decision 3: a single-cause line stays exactly as it was, and no new log
 # lines are added. Only the build kind has three causes to tell apart.
 for nbd_kind in resume ci-red handoff rebase; do
