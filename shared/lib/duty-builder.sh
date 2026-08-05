@@ -23,7 +23,12 @@ BUILDER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _gate_ready_for_open_pr() {
   if [ "$open_pr_count" -gt 0 ] && [ "$ready_count" -gt 0 ]; then
     log "$R: $open_pr_count open authored PR(s) occupy the build slot — not claiming a ready issue"
-    slot_prs="$open_pr_ids"
+    # Unconditional: the gate's record of having fired must not depend on the
+    # id render succeeding. If open_pr_ids is empty (jq failing on mine_json
+    # after `jq length` returned non-zero) the count still names the slot, and
+    # the no-duty line cannot fall through to blaming the ledger or an empty
+    # board for what the slot did (#345, review condition).
+    slot_prs="${open_pr_ids:-$open_pr_count open PR(s)}"
     ready_count=0
     ready_items=""
     return 0
@@ -41,12 +46,18 @@ _gate_ready_for_open_pr() {
 # slot was held. The prefix stays `$R: no build duty` so `crew status` and every
 # grep consumer are untouched — only the parenthetical is new (#345).
 #
-# The order is causal, not cosmetic, and each branch excludes the ones below it:
-#   slot        the gate zeroed a count that was still non-zero AFTER the
-#               ledger ran, so neither of the other two is what happened.
-#   seen-ledger something was enumerated and the ledger hid all of it. In this
-#               branch the counts are whole-set: a partial suppression leaves
-#               ready_count/cr_count non-zero and never reaches here.
+# The order is causal, not cosmetic — first match wins, and the first match is
+# the most useful answer, not the only true one:
+#   slot        the gate zeroed a ready count that was still non-zero AFTER the
+#               ledger ran, so the ready side is the slot's doing. The rounds
+#               side can be ledger-held on the same tick — an open PR whose
+#               owed round is already seen at that head — and this branch then
+#               prints the slot clause alone: incomplete, never false, and the
+#               slot is the answer an operator is actually looking for.
+#   seen-ledger nothing is left for the slot to explain, and the ledger hid all
+#               of what was enumerated. In this branch the counts are
+#               whole-set: a partial suppression leaves ready_count/cr_count
+#               non-zero and never reaches here.
 #   board empty what is left when nothing was enumerated at all.
 # `board unread` is the fourth state and not a fourth cause: the issue listing
 # failed, so which of the two above holds is unknown and neither may be

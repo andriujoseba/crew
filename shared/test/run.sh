@@ -2092,8 +2092,15 @@ t nbd-call-site-passes-board-facts named "$r1"
 # shellcheck disable=SC2016  # Match literal shell source, not test variables.
 nbd_gate_body="$(sed -n '/^_gate_ready_for_open_pr() {/,/^}/p' "$BUILDER_MOD")"
 # shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq 'slot_prs="$open_pr_ids"' <<<"$nbd_gate_body"; then r1=recorded; else r1=SILENT; fi
+if grep -Fq 'slot_prs="${open_pr_ids' <<<"$nbd_gate_body"; then r1=recorded; else r1=SILENT; fi
 t nbd-gate-records-that-it-fired recorded "$r1"
+# And records it UNCONDITIONALLY: the fallback makes the record independent of
+# the id render, so an empty open_pr_ids cannot make the line blame the ledger
+# for what the slot did. Text here, behaviour in claim.test.sh, which drives the
+# production gate with an empty render (gate-record-survives-empty-ids).
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq 'slot_prs="${open_pr_ids:-' <<<"$nbd_gate_body"; then r1=always; else r1=CONDITIONAL; fi
+t nbd-gate-record-is-unconditional always "$r1"
 # One listing, several derived facts (the comment at the top of the block). A
 # second ready listing would let the board count disagree with the set it
 # describes. Two are expected and neither is new: the pre-session enumeration
