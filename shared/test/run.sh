@@ -4279,26 +4279,223 @@ t wt-dirt-id-stable-for-the-same-dirt 1 \
   "$(printf '%s\n%s\n' "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" \
                        "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" | sort -u | n)"
 
-# Wiring: the hygiene block reports through the ledger rather than warning flat.
+# Wiring: the hygiene block reports through the ledger rather than warning flat,
+# now by way of _wt_release, which owns the whole clean/preserve/force order.
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
-if grep -Fq '_wt_hygiene_report "$DUTY_DIR/.seen-wt-dirty" "$R" "$wt_branch" "$wt_path"' "$BMOD"; then
+if grep -Fq '_wt_hygiene_report "$ledger" "$repo" "$branch" "$path"' "$BMOD"; then
   r1=ledgered
 else
   r1=UNGUARDED
 fi
 t wt-dirty-warn-is-ledgered-in-module ledgered "$r1"
-# The one thing #167 must never buy. A worktree holding real uncommitted work is
-# the one thing the engine must never discard; #168 is the only place a force may
-# ever be earned, and only as the confirmed consequence of a preservation push.
-# Comments are stripped first: the block above SAYS why there is no --force, and
-# counting raw occurrences counts that sentence — a detector tripping on its own
-# documentation, which this repo has now managed four separate times.
-t wt-hygiene-never-force-removes 0 \
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq '_wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$DUTY_DIR/.seen-wt-dirty"' "$BMOD"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t wt-hygiene-block-calls-release wired "$r1"
+# #167's must-fail, in the amended form #168 gives it: not "no --force" but
+# "no --force except as the confirmed consequence of a successful preservation
+# push". One occurrence, and the ordering assertions below pin it to that one
+# place. Comments are stripped first: the block above SAYS why the force is
+# earned rather than reached for, and counting raw occurrences counts that
+# sentence — a detector tripping on its own documentation, which this repo has
+# now managed four separate times.
+t wt-hygiene-force-removes-exactly-once 1 \
   "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c -- '--force')"
 # ...and the clean path is untouched: removed, branch deleted, no warning.
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
-if grep -Fq 'git -C "$dir" branch -D "$wt_branch"' "$BMOD"; then r1=intact; else r1=MISSING; fi
+if grep -Fq 'git -C "$dir" branch -D "$branch"' "$BMOD"; then r1=intact; else r1=MISSING; fi
 t wt-clean-removal-path-intact intact "$r1"
+
+# --- #168: preserve before removing ------------------------------------------
+# Driven against real repositories — a real bare remote, a real clone, a real
+# linked worktree — because every claim here is about what git actually did:
+# what the pushed tree contains, whether the ref reached the REMOTE, and
+# whether the worktree survived a push that failed. A text fixture proves none
+# of that, and the defect this issue exists to prevent (a --force reached
+# before the push confirms) is invisible to one.
+P168="$TMP/p168"
+mkdir -p "$P168"
+P_BARE="" P_CLONE="" P_WT=""
+
+_p168_fixture() { # $1=name -> a bare remote, a clone with origin, a worktree
+  local name="$1"
+  P_BARE="$P168/$name.git"; P_CLONE="$P168/$name"; P_WT="$P168/$name-wt"
+  git init -q --bare "$P_BARE"
+  git init -q "$P_CLONE"
+  printf 'engine\n' >"$P_CLONE/README.md"
+  printf 'ignored/\n' >"$P_CLONE/.gitignore"
+  git -C "$P_CLONE" add -A
+  git -C "$P_CLONE" -c user.name=fixture -c user.email=fixture@example.invalid \
+    commit -qm fixture
+  git -C "$P_CLONE" remote add origin "$P_BARE"
+  git -C "$P_CLONE" worktree add "$P_WT" -b "build/$name" >/dev/null 2>&1
+}
+
+_p168_wip_refs() { git -C "$1" for-each-ref --format='%(refname)' refs/heads/wip | n; }
+
+# The remote a preservation goes to. `fork` where the clone has one — the bot
+# cannot write to upstream, and a push that is always refused earns no force
+# and preserves nothing — else `origin`, which is the single-remote case the
+# spec describes. (Raised on #168 rather than assumed.)
+_p168_fixture remote-choice
+t p168-remote-origin-when-alone origin "$(_wt_preserve_remote "$P_CLONE")"
+git -C "$P_CLONE" remote add fork "$P168/fork.git"
+t p168-remote-prefers-fork fork "$(_wt_preserve_remote "$P_CLONE")"
+git -C "$P_CLONE" remote remove fork
+git -C "$P_CLONE" remote remove origin
+if _wt_preserve_remote "$P_CLONE" >/dev/null; then r1=CLAIMED; else r1=refused; fi
+t p168-remote-none-refuses refused "$r1"
+
+# 1. Real uncommitted work: modified tracked AND untracked, ignored dirt left
+# out. Asserted from the BARE repo throughout — the must-fail is a
+# preservation that lands only locally, and reading the clone's own objects
+# would pass while the remote holds nothing.
+_p168_fixture dirty
+printf 'changed\n' >"$P_WT/README.md"
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
+P_STATUS_BEFORE="$(git -C "$P_WT" status --porcelain | sort)"
+if P_OUT="$(_wt_preserve "$P_WT" build/dirty)"; then r1=pushed; else r1=REFUSED; fi
+t p168-dirty-preserved pushed "$r1"
+t p168-ref-is-on-the-remote 1 "$(_p168_wip_refs "$P_BARE")"
+P_REMOTE_TREE="$(git -C "$P_BARE" ls-tree -r --name-only refs/heads/wip/build/dirty | sort)"
+case "$P_REMOTE_TREE" in *untracked.txt*) r1=carried ;; *) r1=DROPPED ;; esac
+t p168-ref-carries-untracked carried "$r1"
+t p168-ref-carries-modified changed \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/dirty:README.md)"
+case "$P_REMOTE_TREE" in *ignored/x*) r1=LEAKED ;; *) r1=excluded ;; esac
+t p168-ref-excludes-ignored excluded "$r1"
+# The capture is built in a scratch index, so the worktree it captured is
+# byte-identical afterwards: nothing staged, nothing stashed, nothing checked
+# out. A push that fails must leave the tree exactly as it was found, and this
+# is the property that makes that true.
+t p168-capture-leaves-worktree-untouched "$P_STATUS_BEFORE" \
+  "$(git -C "$P_WT" status --porcelain | sort)"
+t p168-capture-leaves-content-untouched 'rescue me' "$(cat "$P_WT/untracked.txt")"
+
+# Idempotence: the same dirt preserved twice is one ref at one sha. The second
+# pass reads the remote, finds its own tree already there, and treats that as
+# the confirmation it is — never a second commit, and never the
+# non-fast-forward such a commit would be refused as.
+if P_OUT2="$(_wt_preserve "$P_WT" build/dirty)"; then r1=confirmed; else r1=REFUSED; fi
+t p168-rerun-still-confirms confirmed "$r1"
+t p168-rerun-pushes-nothing-new "$P_OUT" "$P_OUT2"
+t p168-rerun-leaves-one-ref 1 "$(_p168_wip_refs "$P_BARE")"
+
+# Dirt that CHANGED between passes is new work, and the ref moves to it — the
+# new commit is parented on what the remote already holds, so the push is a
+# fast-forward rather than a rejection that would strand the worktree.
+printf 'later\n' >"$P_WT/second.txt"
+if P_OUT3="$(_wt_preserve "$P_WT" build/dirty)"; then r1=pushed; else r1=REFUSED; fi
+t p168-new-dirt-preserved pushed "$r1"
+case "$P_OUT3" in "$P_OUT") r1=STALE ;; *) r1=advanced ;; esac
+t p168-new-dirt-advances-the-ref advanced "$r1"
+case "$(git -C "$P_BARE" ls-tree -r --name-only refs/heads/wip/build/dirty)" in
+  *second.txt*) r1=carried ;; *) r1=DROPPED ;;
+esac
+t p168-new-dirt-carries-the-new-file carried "$r1"
+
+# 2. Only-ignored dirt: removed, and nothing pushed. Nothing was at risk, so
+# there is no ref to explain and no force to earn — the clean removal already
+# succeeds, which is why the preservation path is reached only by a refusal.
+_p168_fixture ignored-only
+mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
+P_LG="$P168/ledger-ignored"
+if _wt_release "$P_CLONE" o/r build/ignored-only "$P_WT" "$P_LG" >/dev/null; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-ignored-only-released released "$r1"
+t p168-ignored-only-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+t p168-ignored-only-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+# ...and a second sweep has nothing left to re-remove: the released worktree is
+# out of `worktree list`, which is what the hygiene block enumerates.
+t p168-released-worktree-off-the-list 0 \
+  "$(git -C "$P_CLONE" worktree list --porcelain | grep -c "$P_WT\$")"
+
+# 3. A failed push is a hard stop. No preservation, no removal — today's
+# behaviour, including #167's once-per-dirt WARN, and the worktree still
+# holding every byte of the work.
+_p168_fixture push-fails
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+git -C "$P_CLONE" remote set-url origin "$P168/nowhere-at-all.git"
+git -C "$P_WT" remote set-url origin "$P168/nowhere-at-all.git"
+P_LG="$P168/ledger-nopush"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+t p168-failed-push-refuses-release kept "$r1"
+t p168-failed-push-keeps-worktree present \
+  "$([ -d "$P_WT" ] && echo present || echo GONE)"
+t p168-failed-push-keeps-the-work 'rescue me' "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+t p168-failed-push-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+t p168-failed-push-then-silent "" "$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" "$P_LG")"
+
+# 4. The whole order, end to end: a worktree holding real work is released
+# only because the push landed, and the work is retrievable from the remote
+# afterwards. This is the acceptance criterion as data — and the must-fail it
+# carries is the reordering that would look harmless, a --force reached before
+# the confirmation.
+_p168_fixture released
+printf 'changed\n' >"$P_WT/README.md"
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_LG="$P168/ledger-released"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/released "$P_WT" "$P_LG")"; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-release-succeeds released "$r1"
+t p168-release-removed-the-worktree gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+t p168-release-left-the-work-on-the-remote 'rescue me' \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/released:untracked.txt)"
+# The log line is the whole recovery instruction: whoever reads it a week later
+# is not holding this box, and the worktree it names no longer exists.
+case "$P_OUT" in *"wip/build/released"*) r1=named ;; *) r1=MISSING ;; esac
+t p168-log-names-the-ref named "$r1"
+case "$P_OUT" in *"git fetch $P168/released.git wip/build/released"*) r1=recoverable ;; *) r1=MISSING ;; esac
+t p168-log-carries-the-recovery-command recoverable "$r1"
+# A released branch is deleted the same way the clean path deletes it — the two
+# removals differ in what they preserved first, not in what they leave behind.
+t p168-release-deletes-the-branch 0 \
+  "$(git -C "$P_CLONE" branch --list build/released | n)"
+
+# The ordering, read as an ordering. Every one of these is a real defect that
+# passes a behavioural suite on a good day: a force before the push confirms
+# discards work only when the remote is down, and a `git stash` capture drops
+# untracked files only when there are some.
+P_REL="$(awk '/^_wt_release\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_CLEAN_LN="$(printf '%s\n' "$P_REL" | grep -n 'worktree remove "\$path"' | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_PRES_LN="$(printf '%s\n' "$P_REL" | grep -n '_wt_preserve "\$path"' | head -1 | cut -d: -f1)"
+P_FORCE_LN="$(printf '%s\n' "$P_REL" | grep -n -- '--force' | head -1 | cut -d: -f1)"
+t p168-clean-attempt-precedes-capture yes \
+  "$([ -n "$P_CLEAN_LN" ] && [ -n "$P_PRES_LN" ] && [ "$P_CLEAN_LN" -lt "$P_PRES_LN" ] && echo yes || echo NO)"
+t p168-capture-precedes-force yes \
+  "$([ -n "$P_PRES_LN" ] && [ -n "$P_FORCE_LN" ] && [ "$P_PRES_LN" -lt "$P_FORCE_LN" ] && echo yes || echo NO)"
+# The force is inside the branch the preservation's success opens, not beside
+# it: the guard is `if preserved=...`, so a force outside it cannot exist.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+case "$P_REL" in *'if preserved="$(_wt_preserve'*) r1=guarded ;; *) r1=UNGUARDED ;; esac
+t p168-force-is-inside-the-push-guard guarded "$r1"
+# The capture never goes through `git stash`: without --include-untracked it
+# silently drops exactly the files this issue was filed over, and with it, it
+# mutates the worktree it is supposed to leave alone.
+t p168-capture-never-stashes 0 "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'git stash\|stash push\|stash create')"
+# ...it writes a scratch index instead, which is what leaves the tree untouched.
+# All three index-touching commands are under it — read-tree, add, write-tree —
+# and the one that got left out would be the one that stages the build's work
+# into the real index on its way past.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+t p168-capture-uses-a-scratch-index 3 \
+  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'GIT_INDEX_FILE="\$idx"')"
 
 # --- wiring (#45/#17) --------------------------------------------------------
 if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
