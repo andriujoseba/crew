@@ -1946,9 +1946,14 @@ t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-
 # answers change when the mention session runs, in the shape _handoff_finalize
 # is tested in above.
 TRD="$TMP/tr-duty"; TRS="$TMP/tr-shim"; TRF="$TMP/tr-fix"
-mkdir -p "$TRD/lib/jq" "$TRD/work" "$TRS" "$TRF"
+mkdir -p "$TRD/lib/jq" "$TRD/work" "$TRD/conf" "$TRS" "$TRF"
 cp "$SHARED/lib/jq/blockers.jq" "$TRD/lib/jq/"
 cp -r "$SHARED/prompts" "$TRD/prompts"
+# The label vocabulary comes from the SHIPPED conf, not from assignments in
+# this file (#358). The runner calls load_fleet_conf against this copy, so a
+# queue label the engine's config does not define is a label these fixtures
+# cannot silently supply on its behalf.
+cp "$SHARED/conf/fleet.defaults.conf" "$TRD/conf/"
 TR_CALLS="$TMP/tr-calls.log"; TR_PHASE="$TMP/tr-phase"
 TR_LOG="$TMP/tr-log.txt"; TR_PROMPT="$TMP/tr-prompt"
 
@@ -1982,6 +1987,7 @@ set -uo pipefail
 . "$SHARED_DIR/lib/common.sh"
 # shellcheck disable=SC1091
 . "$SHARED_DIR/lib/duty-triage.sh"
+load_fleet_conf
 run_session() {
   printf 'SESSION %s\n' "$1" >>"$TR_CALLS"
   printf '%s' "$5" >"$TR_PROMPT.$1"
@@ -1992,20 +1998,22 @@ ensure_checkout() { return 0; }
 _triage_repo o/r
 TRRUN
 
-tr_fix() {  # tr_fix <notif json> <nt1> <nt2> <blocked1> <blocked2> <numstates>
+# The two stray arguments are optional and default to an empty board, so every
+# call written before #358 keeps its meaning.
+tr_fix() {  # tr_fix <notif json> <nt1> <nt2> <blocked1> <blocked2> <numstates> [stray1] [stray2]
   printf '%s' "$1" >"$TRF/notif.json"
   printf '%s' "$2" >"$TRF/nt.1.json";      printf '%s' "$3" >"$TRF/nt.2.json"
   printf '%s' "$4" >"$TRF/blocked.1.json"; printf '%s' "$5" >"$TRF/blocked.2.json"
   printf '%s' "$6" >"$TRF/numstates.json"
-  printf '[]' >"$TRF/stray.1.json";        printf '[]' >"$TRF/stray.2.json"
+  printf '%s' "${7:-[]}" >"$TRF/stray.1.json"
+  printf '%s' "${8:-${7:-[]}}" >"$TRF/stray.2.json"
 }
 tr_run() {  # tr_run <run_session rc>
   : >"$TR_CALLS"
   rm -f "$TR_PHASE" "$TR_PROMPT".* "$TRD"/.seen-* "$TRD"/.suppressed-*
   SHARED_DIR="$SHARED" TR_CALLS="$TR_CALLS" TR_PHASE="$TR_PHASE" TR_FIX="$TRF" \
   TR_PROMPT="$TR_PROMPT" TR_SESSION_RC="$1" DUTY_DIR="$TRD" ME=me-bot \
-  LABEL_NEEDS_TRIAGE=needs-triage LABEL_BLOCKED=blocked LABEL_READY=ready \
-  LABEL_CLAIMED=claimed LABEL_EPIC=epic TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 \
+  TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 \
   PATH="$TRS:$PATH" bash "$TMP/tr-run.sh" >"$TR_LOG" 2>&1
 }
 trc() { grep -c -- "$1" "$TR_CALLS"; }
@@ -2107,6 +2115,104 @@ for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
     r1=before; else r1="AFTER($probe_ln vs $tr_decide_ln)"; fi
   t "triage253-poll-before-decision:$probe" before "$r1"
 done
+
+# --- #358: post-merge is a queue label, and the engine's set is LABELS.md's -
+# LABELS.md declares a SIX-label board invariant; fleet.defaults.conf defined
+# five and signal (b) selected on those five. So the moment triage did its job
+# — a Refs-linked PR merges, the issue moves claimed -> post-merge — it turned
+# that issue into a permanent violation of the engine's own invariant, one no
+# session could ever clear because post-merge is the correct terminal state.
+# All four live matches on this board were that false positive.
+#
+# Both directions are driven through the real module and the same shim: the
+# select is proven by what it selects, never by reading it. The label values
+# reach the module from the SHIPPED conf (see the TRD/conf copy above), so a
+# label the engine's config does not define cannot pass here.
+TR358_STAMP='2026-08-05T00:00:00Z'
+tr358_board() {  # tr358_board <label|-> ... — one open issue per argument
+  printf '%s\n' "$@" | jq -R . | jq -cs --arg s "$TR358_STAMP" \
+    'to_entries | map({number: (100 + .key),
+                       labels: (if .value == "-" then [] else [{name: .value}] end),
+                       updatedAt: $s})'
+}
+
+# Direction one — an issue whose only queue label is post-merge is not a stray.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$(tr358_board post-merge)"
+tr_run 0
+t triage358-post-merge-spends-no-session 0 "$(trc '^SESSION')"
+if grep -q 'queue-unlabeled' "$TR_LOG"; then r1="$(cat "$TR_LOG")"; else r1=silent; fi
+t triage358-post-merge-raises-no-signal silent "$r1"
+if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
+  r1=quiet; else r1="$(cat "$TR_LOG")"; fi
+t triage358-post-merge-tick-is-quiet quiet "$r1"
+# The fixture analogue of this issue's post-merge criterion: the suppression
+# report must not name it either. A signal that is merely ledgered still WARNs
+# every tick, which is the cost this issue is about.
+if cat "$TRD"/.suppressed-triage-board.* 2>/dev/null | grep -q 'o/r#100'; then
+  r1=NAMED; else r1=absent; fi
+t triage358-post-merge-not-in-suppressed absent "$r1"
+
+# Direction two — an issue carrying none of the six still is one. The detector
+# is narrowed to the truth, not silenced; a select widened until it is quiet is
+# the failure mode this half exists to prevent.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$(tr358_board -)"
+tr_run 0
+t triage358-unlabeled-still-a-stray 1 "$(trc '^SESSION triage$')"
+if grep -q '1x queue-unlabeled' "$TR_LOG"; then r1=named; else r1="$(cat "$TR_LOG")"; fi
+t triage358-unlabeled-signal-named named "$r1"
+# ...and a label outside the queue vocabulary does not stand in for one.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$(tr358_board bug)"
+tr_run 0
+t triage358-non-queue-label-still-a-stray 1 "$(trc '^SESSION triage$')"
+
+# The doctrine's own sentence, parsed rather than restated: from its opening
+# clause to the end of that sentence, which is the first backtick-then-period
+# — the full stop closing the last backticked label.
+tr358_doctrine="$(awk '
+  /invariant a board scan relies on/ { on = 1 }
+  on { printf "%s ", $0 }
+  on && /`\./ { exit }
+' "$ROOT/.ceremony/LABELS.md")"
+tr358_doctrine="${tr358_doctrine%%\`.*}\`"
+# shellcheck disable=SC2016  # a grep pattern: the backticks are LABELS.md's
+tr358_doctrine_set="$(printf '%s' "$tr358_doctrine" | grep -o '`[a-z][a-z-]*`' \
+  | tr -d '`' | sort -u | tr '\n' ' ')"
+# Anti-vacuity guard, and the only place a count is written down: without it a
+# parse that silently stops matching compares an empty set to an empty set and
+# passes. It asserts cardinality, never membership — the comparison below is
+# what asserts which labels, and it is derived on both sides.
+t triage358-doctrine-set-nonvacuous 6 "$(printf '%s' "$tr358_doctrine_set" | wc -w | tr -d ' ')"
+
+# The engine's set, taken from signal (b)'s own --arg list and resolved through
+# the shipped conf. A label added to LABELS.md and not to the engine fails
+# here, and so does one added to the engine and not to LABELS.md.
+tr358_select="$(awk '/elif ! stray_items=/,/stray parse failed/' "$SHARED/lib/duty-triage.sh")"
+# shellcheck disable=SC2016  # a grep pattern: the $LABEL_ is the module's text
+tr358_pairs="$(printf '%s\n' "$tr358_select" \
+  | grep -o -- '--arg [a-z_]* "\$LABEL_[A-Z_]*"' \
+  | sed 's/--arg \([a-z_]*\) "\$\(LABEL_[A-Z_]*\)"/\1 \2/')"
+tr358_engine_set=""
+while read -r tr358_arg tr358_var; do
+  [ -n "${tr358_arg:-}" ] || continue
+  # Declared is not consulted: an --arg the select never tests is a label the
+  # engine does not actually accept, so it is reported rather than counted.
+  case "$tr358_select" in
+    *". == \$$tr358_arg"*) ;;
+    *) tr358_engine_set="$tr358_engine_set UNCONSULTED-$tr358_arg"; continue ;;
+  esac
+  tr358_engine_set="$tr358_engine_set $(sed -n "s/^$tr358_var=\"\(.*\)\"\$/\1/p" \
+    "$SHARED/conf/fleet.defaults.conf" | head -1)"
+done <<TR358PAIRS
+$tr358_pairs
+TR358PAIRS
+# shellcheck disable=SC2086  # deliberate word-splitting: these are set members
+tr358_engine_set="$(printf '%s\n' $tr358_engine_set | sort -u | tr '\n' ' ')"
+t triage358-engine-set-is-the-doctrine-set "$tr358_doctrine_set" "$tr358_engine_set"
+# Named separately so the conf's own omission — the whole defect — reads as
+# itself rather than as a set diff.
+if grep -q '^LABEL_POST_MERGE="post-merge"$' "$SHARED/conf/fleet.defaults.conf"; then
+  r1=defined; else r1=MISSING; fi
+t triage358-conf-defines-post-merge defined "$r1"
 
 # The reviewer must carry updated_at from the existing pulls page, partition
 # before assembling per-repo prompts, and commit that repo's exact fresh set.
