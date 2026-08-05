@@ -4538,16 +4538,22 @@ t p168-plain-dirt-has-no-staged-snapshot - "$P_SAP_STAGED1"
 t p168-plain-dirt-is-one-commit 1 \
   "$(git -C "$P_BARE" rev-list --count refs/heads/wip/build/stage-after-preserve \
     ^"$(git -C "$P_WT" rev-parse HEAD)")"
+P_SAP_TIP1="$(git -C "$P_BARE" rev-parse refs/heads/wip/build/stage-after-preserve)"
 printf 'now-staged\n' >"$P_WT/README.md"
 git -C "$P_WT" add README.md
 printf 'engine\n' >"$P_WT/README.md"
-if P_SAP2="$(_wt_preserve "$P_WT" build/stage-after-preserve)"; then
+if _wt_preserve "$P_WT" build/stage-after-preserve >/dev/null; then
   r1=pushed
 else
   r1=REFUSED
 fi
 t p168-stage-after-preserve-pushes pushed "$r1"
-case "$P_SAP2" in "$P_SAP1") r1=CONFIRMED_STALE ;; *) r1=advanced ;; esac
+# Measured on the REMOTE, never on what the function printed: a tip-only
+# confirmation returns a different line (it now has a parent to name) while the
+# ref stands still, which is the false pass this assertion exists to refuse.
+case "$(git -C "$P_BARE" rev-parse refs/heads/wip/build/stage-after-preserve)" in
+  "$P_SAP_TIP1") r1=CONFIRMED_STALE ;; *) r1=advanced ;;
+esac
 t p168-stage-after-preserve-advances-the-ref advanced "$r1"
 t p168-stage-after-preserve-carries-the-index now-staged \
   "$(git -C "$P_BARE" show 'refs/heads/wip/build/stage-after-preserve^:README.md')"
