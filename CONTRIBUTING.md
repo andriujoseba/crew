@@ -19,10 +19,10 @@ genuinely crew's.
 2. **The review panel** (`.github/labels.conf`): an author-specific
    `panel[<login>]=` line governs when present; otherwise `panel=` governs.
    The default panel is
-   `claude-bot-andresmgsl`, `codex-bot-andresmgsl`, `grok-bot-andresmgsl`,
-   `kimi-bot-andresmgsl`. The required verdicts are the resolved panel minus
-   the author. The maintainer (`danmt`) takes the last word and merges.
-3. **Checks must be green.** crew runs two CI workflows:
+   `claude-bot-andresmgsl`, `codex-bot-andresmgsl`,  `kimi-bot-andresmgsl`.
+   The required verdicts are the resolved panel minus the author.
+   The maintainer (`danmt`) takes the last word and merges.
+4. **Checks must be green.** crew runs two CI workflows:
    - `shared-ci.yml` — crew's engine suite (`shellcheck`, `shared/test/run.sh`,
      the fleet-floor collector + page tests, the built-page freshness check).
      It carries a paths filter, so a PR touching only release furniture skips
@@ -35,7 +35,7 @@ genuinely crew's.
      `runner-isolated`, `docs-sync`), run as ceremony's pinned actions on
      **every** PR with no paths filter, so a furniture PR still carries a real
      green check.
-4. **Feature PRs land their changelog entry as part of the PR**: write
+5. **Feature PRs land their changelog entry as part of the PR**: write
    `changelog.d/<issue>.md` — the release PR assembles those fragments into
    the release notes verbatim.
 
