@@ -94,15 +94,18 @@ tg_edit() {  # $1 message_id, $2 text -> 0 always
 }
 
 # --- repo set -------------------------------------------------------------
-# notify-repos.txt, NOT org discovery (see that file for the cost analysis).
-# Falls back to the duty repo list — through the same comment-stripping
-# reader; the old fallback `cat repos.txt` fed comment prose to gh -R.
-if [ -r "$NOTIFY_REPOS" ]; then
-  repos="$(read_repo_list "$NOTIFY_REPOS" | sort -u)"
-else
+# The work registry always participates: working a repo implies notification
+# coverage. notify-repos.txt is additive for cross-repo handoff targets, NOT
+# an alternative registry and NOT org discovery (see that file for costs).
+# read_repo_list tolerates the missing file, making the fallback the union's
+# degenerate case while retaining its operator-visible log line.
+if [ ! -r "$NOTIFY_REPOS" ]; then
   log "notify-repos.txt missing — falling back to repos.txt"
-  repos="$(read_repo_list "$REPOS_FILE")"
 fi
+repos="$({
+  read_repo_list "$REPOS_FILE"
+  [ ! -r "$NOTIFY_REPOS" ] || read_repo_list "$NOTIFY_REPOS"
+} | sort -u)"
 
 state_put() {  # $1 repo $2 pr $3 head $4 msgid $5 status
   # Same-directory temp file: mktemp's default /tmp can be a different

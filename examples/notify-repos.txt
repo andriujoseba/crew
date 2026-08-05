@@ -1,11 +1,10 @@
-# notify-repos.txt — the operator notifier's sweep list. One owner/repo per
-# line; # and blanks ignored.
+# notify-repos.txt — additional targets for the operator notifier. One
+# owner/repo per line; # and blanks ignored.
 #
-# This list must stay WIDER than the triage repos.txt: a cross-repo handoff
-# is exactly the case the operator cannot discover on their own (rig#112
-# sat state:needs-human nine hours because the old notifier swept ceremony
-# alone). Every repo the fleet can put a state:needs-human PR in belongs
-# here — org repos AND the bot forks.
+# This list ADDS cross-repo handoff targets to repos.txt. Working a repo
+# already implies notification coverage; list here the extra repos where the
+# fleet can put a state:needs-human PR without working them (rig#112 sat in
+# that state nine hours because the old notifier swept ceremony alone).
 #
 # Explicit list, not org discovery: ~34 API calls per 5 minutes for a
 # few-times-a-day event is the wrong trade, and deriving repos from prose

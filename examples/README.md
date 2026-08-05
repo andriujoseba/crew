@@ -42,7 +42,7 @@ names a repository.
 fleet.roster       box name, agent and role
 fleet.conf         operator fleet values
 repos.txt          seed for a new box's work registry
-notify-repos.txt   seed for a new triage box's wider notification registry
+notify-repos.txt   additive cross-repo notification targets for a new triage box
 agents/*.conf      optional operator agent profiles; same name overrides shipped
 doctrine.conf      optional doctrine paths named in rendered prompts
 ```
