@@ -3874,6 +3874,88 @@ t auto-approve-rerequest-still-backs-the-carveout present "$r1"
 # sourcing costs nothing and runs nothing.
 # shellcheck disable=SC1091
 source "$SHARED/lib/duty-review.sh"
+
+# --- #139: a closed fix round returns to draft ------------------------------
+# GitHub preserves pending review requests across conversion (crew#110 is the
+# live trace), so the existing addressing predicate's no-panel-request gate is
+# load-bearing: conversion happens only after the whole round closes. The two
+# writes made at that close are independent and idempotent. In particular, a
+# successful label write must not prevent a later tick retrying a failed draft
+# conversion, while an already-draft PR must write nothing at all.
+AR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+AR_BLOCKED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$AR_H'"}}]'
+AR_APPROVED='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$AR_H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$AR_H'"}}]'
+mk_addressing_payload() {  # draft labels requests reviews
+  jq -cn --argjson draft "$1" --argjson labels "$2" --argjson requests "$3" \
+    --argjson reviews "$4" --arg head "$AR_H" '{data:{repository:{pullRequest:{
+      id:"PR_fixture",isDraft:$draft,headRefOid:$head,author:{login:"builder"},
+      labels:{nodes:($labels|map({name:.}))},
+      reviewRequests:{nodes:($requests|map({requestedReviewer:{login:.}}))},
+      latestOpinionatedReviews:{nodes:$reviews}}}}}'
+}
+addressing_actions() (  # payload [label-rc] [draft-rc]
+  AR_PAYLOAD="$1"; AR_LABEL_RC="${2:-0}"; AR_DRAFT_RC="${3:-0}"
+  LABEL_ADDRESSING=state:addressing
+  DUTY_DIR="$SHARED"
+  AR_LOG="$TMP/addressing-actions"; : >"$AR_LOG"
+  panel_for_repo() { printf '%s\n' '["rev-a","rev-b"]'; }
+  log() { :; }
+  warn() { :; }
+  gh() {
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      if [[ "$*" == *convertPullRequestToDraft* ]]; then
+        printf '%s\n' draft >>"$AR_LOG"
+        return "$AR_DRAFT_RC"
+      fi
+      printf '%s\n' "$AR_PAYLOAD"
+      return 0
+    fi
+    if [ "$1" = issue ] && [ "$2" = edit ]; then
+      printf '%s\n' label >>"$AR_LOG"
+      return "$AR_LABEL_RC"
+    fi
+    return 3
+  }
+  _mark_addressing owner/repo 7
+  ar_rc=$?
+  printf 'rc=%s actions=%s' "$ar_rc" "$(paste -sd, "$AR_LOG")"
+)
+AR_OPEN="$(mk_addressing_payload false '[]' '[]' "$AR_BLOCKED")"
+AR_LABELLED="$(mk_addressing_payload false '["state:addressing"]' '[]' "$AR_BLOCKED")"
+AR_DRAFT="$(mk_addressing_payload true '["state:addressing"]' '[]' "$AR_BLOCKED")"
+AR_OK="$(mk_addressing_payload false '[]' '[]' "$AR_APPROVED")"
+AR_LIVE="$(mk_addressing_payload false '[]' '["rev-b"]' "$AR_BLOCKED")"
+t redraft-closed-round-writes-both 'rc=0 actions=label,draft' \
+  "$(addressing_actions "$AR_OPEN")"
+t redraft-full-approval-writes-nothing 'rc=0 actions=' \
+  "$(addressing_actions "$AR_OK")"
+t redraft-live-panel-request-writes-nothing 'rc=0 actions=' \
+  "$(addressing_actions "$AR_LIVE")"
+t redraft-second-tick-is-noop 'rc=0 actions=' \
+  "$(addressing_actions "$AR_DRAFT")"
+t redraft-retries-after-label-landed 'rc=0 actions=draft' \
+  "$(addressing_actions "$AR_LABELLED")"
+t redraft-label-failure-does-not-gate-conversion 'rc=0 actions=label,draft' \
+  "$(addressing_actions "$AR_OPEN" 1 0)"
+t redraft-conversion-failure-does-not-gate-label 'rc=0 actions=label,draft' \
+  "$(addressing_actions "$AR_OPEN" 0 1)"
+
+# The engine owns only the ready -> draft edge. Ready-for-review remains the
+# builder's judgement, and draft exclusion is shared by request and handoff.
+if grep -q 'convertPullRequestToDraft' "$SHARED/lib/duty-review.sh" \
+  && ! grep -Rq 'markPullRequestReadyForReview\|gh pr ready' "$SHARED/lib"; then
+  r1=one-way
+else
+  r1=ENGINE-MARKS-READY
+fi
+t redraft-engine-never-marks-ready one-way "$r1"
+if grep -qi 'mark it ready-for-review again' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=builder-owned
+else
+  r1=MISSING
+fi
+t redraft-prompt-returns-ready-act-to-builder builder-owned "$r1"
+
 RR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 RR_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 RR_T1="2026-07-28T10:00:00Z"; RR_T2="2026-07-28T11:00:00Z"
