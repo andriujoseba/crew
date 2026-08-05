@@ -461,6 +461,33 @@ _wt_dirt_summary() { # $1=porcelain text -> what made it dirty, in two counts
     END     { printf "%d modified, %d untracked", m+0, u+0 }'
 }
 
+# _wt_dirt PATH — the porcelain listing, one row per FILE, or nonzero if git
+# could not say. Every count in this module comes through here, for two reasons
+# a bare `git status --porcelain` gets wrong.
+#
+# `--untracked-files=all`: the default collapses a whole untracked directory to
+# a single `?? newdir/` row, so two files under one new directory are summarised
+# as "1 untracked" — and the record built from that count describes a ref
+# holding something else. That is the wrong half to get wrong: the record is
+# what somebody reads to decide the work is worthless WITHOUT fetching it, so an
+# undercount is read as "one stray file" over content nobody looks at again.
+# Untracked-in-a-new-directory is also the common shape of the thing #168 exists
+# to save — a whole `bin/` or `test/` nobody committed yet.
+#
+# ...and it fails closed. `dirt="$(git ... 2>/dev/null)"` swallows the exit
+# status, and the callers run inside `if !` conditions where `set -e` is
+# disarmed, so a git that cannot answer used to yield an empty listing that
+# summarises as "0 modified, 0 untracked" — a record that reads like a triviality
+# over unknown content, and a `--force` earned on it. A read that failed says so
+# instead, and the caller keeps the worktree.
+_wt_dirt() { # $1=path -> porcelain text (sorted), nonzero if git failed
+  local out
+  out="$(git -C "$1" status --porcelain --untracked-files=all 2>/dev/null)" \
+    || return 1
+  [ -n "$out" ] || return 0
+  printf '%s\n' "$out" | sort
+}
+
 # _wt_hygiene_report LEDGER REPO BRANCH PATH — say it once, and say what it
 # costs. "leaving it for inspection" never told the reader the price: the
 # worktree holds its branch, so the next `git worktree add` for that branch
@@ -469,7 +496,15 @@ _wt_dirt_summary() { # $1=porcelain text -> what made it dirty, in two counts
 # whether it spoke or not is not the caller's business.
 _wt_hygiene_report() {
   local ledger="$1" repo="$2" branch="$3" path="$4" dirt item
-  dirt="$(git -C "$path" status --porcelain 2>/dev/null | sort)"
+  # A status that cannot be read is its own news, and it is not "0 modified, 0
+  # untracked": the worktree is still there, still holding its branch, and the
+  # reader needs to know the counts are missing rather than zero. Said once,
+  # keyed on the path, since the condition does not vary with dirt it cannot see.
+  if ! dirt="$(_wt_dirt "$path")"; then
+    _wt_say_once "$ledger" "dirt-unreadable:$repo:$branch:$path" \
+      "$repo: worktree $path is not clean and 'git status' there failed, so what it holds is unknown; leaving it for inspection — it holds $branch, so a later 'git worktree add' for that branch fails with 'already checked out'"
+    return 0
+  fi
   item="$(printf '%s\tdirty' "$(_wt_dirt_id "$repo" "$branch" "$dirt")")"
   [ -n "$(printf '%s\n' "$item" | ledger_filter "$ledger")" ] || return 0
   warn "$repo: worktree $path not clean ($(_wt_dirt_summary "$dirt")); leaving it for inspection — it holds $branch, so a later 'git worktree add' for that branch fails with 'already checked out'"
@@ -620,7 +655,10 @@ _wt_record() {
   local repo="$1" pr="$2" branch="$3" path="$4" remote="$5" ref="$6" sha="$7" url="$8"
   local dirt body
   [ -n "$pr" ] || return 1
-  dirt="$(git -C "$path" status --porcelain 2>/dev/null | sort)"
+  # Nonzero rather than a fabricated count: the counts are the part of this
+  # record that is checked against nothing, so a read that failed must deny the
+  # record, which denies the force, which keeps the worktree.
+  dirt="$(_wt_dirt "$path")" || return 1
   body="$(printf '%s\n' \
     "🗃️ Uncommitted work preserved before this branch's worktree was removed" \
     "" \
@@ -662,6 +700,14 @@ _wt_release() {
     # The line has to be enough on its own: whoever reads it a week later is
     # not holding this box, and the worktree it names is gone.
     log "$repo: preserved $path's uncommitted work as $ref ($remote, ${sha:0:12}) — recover with: git fetch $url $ref && git checkout FETCH_HEAD"
+    # The record is retried every tick while the worktree stays stuck, and the
+    # WARN beside it is not: a deliberate asymmetry, not an oversight
+    # (@claude-bot-andresmgsl, #376). The retry IS the self-heal — a rate limit
+    # or a five-minute auth blip resolves itself on the next pass, and a ledger
+    # remembering "the record failed" would turn that into a worktree stuck until
+    # somebody clears a file on a box nobody logs into. The two cost differently:
+    # the WARN is noise in a log a human reads, the retry is one cheap GET that
+    # is also the recovery attempt.
     if ! _wt_record "$repo" "$pr" "$branch" "$path" "$remote" "$ref" "$sha" "$url"; then
       _wt_say_once "$ledger" "record-failed:$repo:$branch@$sha" \
         "$repo: $ref is on $remote but the record on ${pr:+#}${pr:-the PR} did not post; keeping $path until it does — the work is safe, the pointer to it is not"
