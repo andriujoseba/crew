@@ -34,7 +34,12 @@ In order of authority:
    not a defect: the issue directs it, triage owns that close, and a
    request-changes on the "missing" keyword enforces the bug the shape
    exists to fix — `Closes #137` closed its issue with a post-merge
-   criterion unmet (#151). Check every
+   criterion unmet (#151). For a `Refs #N` body, also verify that no closing
+   keyword immediately precedes `#N` anywhere in the body, even in prose
+   explaining the hand close or inside a code span: GitHub used those exact
+   shapes to close #209, #212 and #199 (#200, #218). The safe forms put the
+   number first (`#N is closed by hand`) or omit it (`triage closes the issue
+   by hand`). Check every
    criterion; a PR that ships less than the issue says is a request-changes
    even if the code is beautiful.
 2. **The repo's load-bearing constraints** — the rules bought with
@@ -136,6 +141,11 @@ saw Y" outranks one that says "this looks like it might".
 - The builder answers rounds whole and re-requests you; until re-requested,
   the ball is not yours (`state:addressing` is the builder working — pile-on
   reviews mid-address just churn the target).
+- A **draft carrying `state:addressing` is a fix round in progress**, not
+  abandonment: an engine may convert a PR back to draft at round close so the
+  builder's mid-round saves stop firing CI, and the flip back to ready is the
+  builder's own act announcing the round is answered
+  ([BUILDER.md](BUILDER.md#the-review-round)).
 - Convergence = every panel verdict approves the current head, no
   `blocker:*` standing. Then the builder hands off (`state:needs-human`) and
   the panel's job is done.
