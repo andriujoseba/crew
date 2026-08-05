@@ -92,9 +92,9 @@ _triage_repo() {
   # themselves. They only clear if the session labels EVERY issue it sees.
   #
   # One ledger for both: they are open issues in a single numbering space, and
-  # the sets are disjoint by construction — a stray carries none of the five
-  # labels, so it can never also be needs-triage. Keys are REPO-qualified for
-  # the reason (c) records: one ledger spans every repo in repos.txt, and a
+  # the sets are disjoint by construction — a stray carries none of the six
+  # queue labels, so it can never also be needs-triage. Keys are REPO-qualified
+  # for the reason (c) records: one ledger spans every repo in repos.txt, and a
   # bare number let rig#1 shadow ceremony#1.
   #
   # Fetch and parse are SEPARATE steps, matching the builder's shape below
@@ -119,17 +119,26 @@ _triage_repo() {
     [ "$nt" -gt 0 ] && signals="$signals ${nt}x needs-triage;"
   fi
 
-  # (b) queue-unlabeled strays: the board invariant says every open issue
-  # carries needs-triage, epic, or exactly one of ready/claimed/blocked.
+  # (b) queue-unlabeled strays: the board invariant, quoted from LABELS.md, is
+  # that every open issue "is either needs-triage, epic, or carries exactly one
+  # of ready / claimed / blocked / post-merge" — SIX labels. This enumeration
+  # said five until #358, dropping post-merge, and the paraphrase is what made
+  # that survivable-looking: the moment triage did its job and moved a merged
+  # issue post-merge, it converted that issue into a permanent violation of the
+  # engine's own invariant, which no session could ever clear because
+  # post-merge is the correct terminal state. The detector asks exactly one
+  # question — does this issue carry a queue label — and the composition rules
+  # (post-merge never composes with blocked or attention, an assigned
+  # post-merge issue is flagged) are the sweep's, not this signal's.
   stray_json="$(gh issue list -R "$R" --state open --limit 200 \
     --json number,labels,updatedAt 2>/dev/null || echo err)"
   if [ "$stray_json" = err ]; then
     warn "$R: stray probe failed"
   elif ! stray_items="$(printf '%s' "$stray_json" \
       | jq -r --arg repo "$R" --arg r "$LABEL_READY" --arg c "$LABEL_CLAIMED" --arg b "$LABEL_BLOCKED" \
-           --arg e "$LABEL_EPIC" --arg n "$LABEL_NEEDS_TRIAGE" \
+           --arg p "$LABEL_POST_MERGE" --arg e "$LABEL_EPIC" --arg n "$LABEL_NEEDS_TRIAGE" \
         '.[] | select( ([.labels[].name]
-            | map(. == $r or . == $c or . == $b or . == $e or . == $n) | any) | not )
+            | map(. == $r or . == $c or . == $b or . == $p or . == $e or . == $n) | any) | not )
           | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
     warn "$R: stray parse failed"
     stray_items=""
