@@ -371,10 +371,134 @@ _stranded_resume_due() {
   mv "$tmp" "$state"
 }
 
+# _resume_pr_comments REPO NUM — every comment on PR NUM, oldest first, shaped
+# as the comments.nodes[] the two signal predicates read: {author:{login}, body,
+# createdAt, id}. Nonzero means the read failed and the thread is unknown.
+#
+# Paginated REST, for the same reason _resume_newest_foreign is (below), and the
+# reason is sharper here. `gh pr list --json comments` generates `comments(first:
+# 100)` and never paginates that nested connection, so it returns the OLDEST
+# hundred — while a signal, by construction, is the NEWEST comment on the thread.
+# On #311's 124 comments the listing's window stops at `2026-08-03T00:05:52Z`,
+# eleven hours before the incident it was meant to classify. The request gate
+# reads `comments(last:100)` in its own GraphQL query and is unaffected; this is
+# the resume side getting the same depth by the route that is available to it.
+_resume_pr_comments() {
+  local repo="$1" num="$2" raw
+  raw="$(gh api --paginate "repos/$repo/issues/$num/comments?per_page=100" \
+    --jq '.[] | {author:{login:(.user.login // "")}, body:(.body // ""),
+                 createdAt:(.created_at // ""), id:((.id // "") | tostring)}' \
+    2>/dev/null)" || return 1
+  printf '%s' "$raw" | jq -sc '.'
+}
+
+# _resume_attach_comments REPO LISTING — the answer is the same listing with
+# `.comments` filled for every non-draft PR, and it comes back in a GLOBAL,
+# RESUME_LISTING, for the reason _resume_gate states
+# below: every report here is a log line, log writes to stdout, and a function
+# that returned its data through the same channel would fold its own warnings
+# into the JSON the caller parses.
+#
+# THE LISTING STOPPED CARRYING COMMENTS AND NOTHING SAID SO. `_stranded_resume_keys`
+# classifies a PR by reading `.comments` off this listing, and the field left it
+# at 70823ac (#314) — correctly for the foreign-activity half that commit was
+# about, and silently for the signal half, because `.comments // []` reads an
+# absent field as an empty thread. Every non-draft authored PR has therefore
+# classified as unsignalled since, and a near-miss predicate would have had
+# nothing to run against. The comments come back here rather than in the listing
+# so the foreign half keeps the paginated read #314 gave it.
+#
+# A PR whose thread could not be read gets `.comments = null`, NOT an empty
+# array: the predicates below skip a null and the PR leaves the stranded set for
+# this tick, forfeiting its counter. That is the safe direction. Read as an empty
+# thread it would look unsignalled — accruing toward a resume the evidence does
+# not support — and a transient failure costing one restarted count is cheaper
+# than a resume session spent on a PR that signalled correctly.
+_resume_attach_comments() {
+  local repo="$1" listing="$2" spliced num comments
+  RESUME_LISTING=""
+  while IFS= read -r num; do
+    [ -n "$num" ] || continue
+    if comments="$(_resume_pr_comments "$repo" "$num")"; then
+      spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
+        --argjson comments "$comments" \
+        'map(if .number == $num then . + {comments:$comments} else . end)')" || spliced=""
+    else
+      warn "$repo#$num: comment read failed; leaving it out of stranded-resume detection this tick"
+      spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
+        'map(if .number == $num then . + {comments:null} else . end)')" || spliced=""
+    fi
+    if [ -n "$spliced" ]; then listing="$spliced"; fi
+  done < <(printf '%s' "$listing" | jq -r '.[] | select(.isDraft | not) | .number' 2>/dev/null)
+  RESUME_LISTING="$listing"
+}
+
+# _near_miss_resume_rows REPO ME MARK LISTING — LISTING is the same listing
+# _stranded_resume_keys reads. The answer comes back in the global
+# NEAR_MISS_ROWS, one `<num>\t<comment id>` line per non-draft PR of mine whose
+# latest NEAR-MISS names the current head while no valid signal does, and one
+# WARN per detection (#319). A global for the same reason _resume_gate uses two:
+# the WARN and the rows would otherwise share stdout.
+#
+# THE BYPASS IS ABOUT EVIDENCE, NOT IMPATIENCE. `_stranded_resume_due`'s twelve
+# ticks are the price of not knowing whether a session died before it signalled
+# or is still working; a near-miss at the current head answers that question on
+# sight — the session announced a head it had finished, and only the wire format
+# was wrong. There is nothing left to wait for, so the PR is due now. Genuine
+# silence still buys the full twelve, which is the case that threshold was
+# measured against.
+#
+# DETECTED, NEVER HONOURED. Nothing here requests a panel, sets a label, or
+# writes to the board at all — the near-miss buys exactly one thing, a resume
+# session that posts the real signal. Honouring it would make unrendered
+# template text into wire protocol, and #133's rule that the engine acts only on
+# the session's own signal is worth more than the fourteen minutes it saves.
+#
+# THE MALFORMED COMMENT IS EVIDENCE AND IS LEFT ALONE. It is not edited, hidden
+# or deleted here or in the prompt: it is the only trace this class of failure
+# leaves, and the WARN names its id so a reader can find it rather than so
+# anything can tidy it. The head is printed whole, not shortened to the usual
+# twelve, because this line's whole purpose is to be compared against a signal
+# that is also written out in full.
+_near_miss_resume_rows() {
+  local repo="$1" me="$2" mark="$3" listing="$4"
+  local pr num head payload answered near_sha near_id
+  NEAR_MISS_ROWS=""
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    num="$(printf '%s' "$pr" | jq -r '.number')"
+    head="$(printf '%s' "$pr" | jq -r '.headRefOid')"
+    payload="$(printf '%s' "$pr" \
+      | jq -c '{data:{repository:{pullRequest:{comments:{nodes:.comments}}}}}')"
+    # The same parser the request gate is licensed by: a PR that signalled
+    # properly is not stranded and no near-miss beside that signal changes it.
+    answered="$(printf '%s' "$payload" \
+      | jq -r --arg me "$me" --arg mark "$mark" \
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
+      | jq -r '.sha // ""')"
+    [ "$answered" = "$head" ] && continue
+    # Both halves of the near-miss in one read: the id is only ever printed
+    # beside the sha it belongs to, so splitting them into two jq calls would
+    # be two chances for them to describe different comments.
+    near_sha=""; near_id=""
+    IFS=$'\t' read -r near_sha near_id < <(printf '%s' "$payload" \
+      | jq -r --arg me "$me" -f "$BUILDER_LIB_DIR/jq/near-miss-signal.jq" \
+      | jq -r '[.sha, .id] | @tsv') || true
+    # A near-miss naming a SUPERSEDED head is no evidence at all: the session's
+    # own push invalidated what it announced, so whatever it finished is not
+    # what is on the branch now. That PR waits out the ordinary twelve ticks.
+    if [ -z "$near_sha" ] || [ "$near_sha" != "$head" ]; then continue; fi
+    warn "$repo#$num: comment $near_id opens with an unrendered marker slot and names head $head — not a signal (#133), but the round was answered there; resuming this tick instead of the twelfth (#319)"
+    NEAR_MISS_ROWS="${NEAR_MISS_ROWS}${num}"$'\t'"${near_id}"$'\n'
+  done < <(printf '%s' "$listing" \
+    | jq -c '.[] | select((.isDraft | not) and .comments != null)')
+}
+
 # _stranded_resume_keys REPO ME MARK — stdin is the authored open-PR listing
 # used by resume detection. Emit only ready PR heads whose latest signal from
 # this builder does not name the current head. Drafts already use the original
-# resume path and must never be double-counted here.
+# resume path and must never be double-counted here, and neither does a PR whose
+# thread could not be read (_resume_attach_comments).
 _stranded_resume_keys() {
   local repo="$1" me="$2" mark="$3" pr num head answered
   # Use the signal gate's parser rather than maintaining a second definition
@@ -396,7 +520,7 @@ _stranded_resume_keys() {
           -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
       | jq -r '.sha // ""')"
     [ "$answered" = "$head" ] || printf '%s#%s@%s\n' "$repo" "$num" "$head"
-  done < <(jq -c '.[] | select(.isDraft | not)')
+  done < <(jq -c '.[] | select((.isDraft | not) and .comments != null)')
 }
 
 # --- The resume gate (#314) -------------------------------------------------
@@ -704,10 +828,13 @@ _builder_repo() {
   # `gh pr create`). I hold the duty lock, so nothing else of mine can be
   # mid-flight — that lock is what makes resume detection sound. ---
   local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
+  local near_miss_rows="" near_miss_nums="" near_miss_desc="" _nm_num _nm_id
   local claimed_nums open_heads merged_heads N branch
   # `comments` and `reviews` are deliberately NOT requested: those nested
   # connections are generated as `first: 100` and never paginate, so reading the
   # foreign half from here caps it at the oldest hundred (_resume_pr_fingerprints).
+  # The SIGNAL half needs the same depth from the other end of the thread and is
+  # read per PR just below (_resume_attach_comments), never from here.
   resume_json="$(gh pr list -R "$R" --state open --author "$ME" \
     --json number,isDraft,headRefOid,body 2>/dev/null || echo err)"
   if [ "$resume_json" = "err" ]; then
@@ -716,8 +843,14 @@ _builder_repo() {
   else
     draft_nums="$(printf '%s' "$resume_json" | jq -r '.[] | select(.isDraft) | .number' \
       2>/dev/null | tr '\n' ' ' || echo err)"
+    # The signal half is read from the thread itself, per PR, because the
+    # listing's nested connection cannot carry it (_resume_attach_comments).
+    _resume_attach_comments "$R" "$resume_json"
+    resume_json="${RESUME_LISTING:-$resume_json}"
     stranded_keys="$(printf '%s' "$resume_json" \
       | _stranded_resume_keys "$R" "$ME" "$MARK_ANSWERED" 2>/dev/null || echo err)"
+    _near_miss_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"
+    near_miss_rows="$NEAR_MISS_ROWS"
   fi
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
@@ -741,6 +874,23 @@ _builder_repo() {
     stranded_nums="$(printf '%s\n' "$stranded_keys" \
       | _stranded_resume_due "$DUTY_DIR/.resume-unsignalled.$slug" 12 \
       | tr '\n' ' ')"
+    # THE BYPASS RIDES BESIDE THE THRESHOLD, NEVER THROUGH IT (#319). A
+    # near-miss PR is in `stranded_keys` like any other unsignalled PR, so its
+    # counter advances above exactly as it would have; what is added here is a
+    # second, independent reason to be due this tick. `_stranded_resume_due`
+    # keeps its threshold, its per-key counters and its state-file format —
+    # nothing about genuine silence is collapsed, and a fleet upgrading mid-run
+    # finds `.resume-unsignalled.<slug>` exactly as it left it.
+    while IFS=$'\t' read -r _nm_num _nm_id; do
+      [ -n "$_nm_num" ] || continue
+      near_miss_nums="$near_miss_nums $_nm_num"
+      near_miss_desc="$near_miss_desc; #$_nm_num (comment ${_nm_id:-unknown})"
+    done <<<"$near_miss_rows"
+    near_miss_desc="${near_miss_desc#; }"
+    if [ -n "${near_miss_nums// /}" ]; then
+      stranded_nums="$(printf '%s %s' "$stranded_nums" "$near_miss_nums" \
+        | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+    fi
     for N in $claimed_nums; do
       branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
         --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
@@ -766,13 +916,13 @@ _builder_repo() {
     fi
   fi
   if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
-    log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none})"
+    log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none}; of those, signals that missed the wire: ${near_miss_desc:-none})"
     ensure_main_clone "$R" "$dir" || return 0
     RUN_SESSION_RC=1
     run_session resume "$R" "$dir" "$TIMEOUT_RESUME" \
       "$(render_prompt resume.txt ME="$ME" REPO="$R" NAME="$name" \
         DRAFTS="${draft_nums:-none}" ORPHANS="${orphan_nums:-none}" \
-        STRANDED="${stranded_nums:-none}" \
+        STRANDED="${stranded_nums:-none}" NEAR_MISS="${near_miss_desc:-none}" \
         MARK_RESUME="$MARK_RESUME" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules")"
     # Committed only on rc 0, exactly as .seen-build and .seen-ci-red are: a

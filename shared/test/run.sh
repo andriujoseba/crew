@@ -2805,6 +2805,248 @@ else
 fi
 t unsignalled-hold-wired-into-request-gate wired "$r1"
 
+# --- #319: a round-answered signal that missed the wire ---------------------
+# PR #311 posted `{{MARK_ANSWERED}} 3741918e…` — the literal slot name, then the
+# correct head. The marker is accepted only as a prefix, so to the engine that
+# was not a partial signal, it was no comment at all: no panel requested,
+# state:addressing standing over an answered round at a green head, and the
+# twelve-tick stranded path an hour away. A near-miss is detectable on sight,
+# and these fixtures ARE that comment body.
+NM_HEAD=3741918e27139974532956470a2c411e5bc6ad62
+NM_OLD=f117b520f117b520f117b520f117b520f117b520
+NMJQ="$SHARED/lib/jq/near-miss-signal.jq"
+nm_payload() {  # nm_payload <comment json>... -> the GraphQL payload shape
+  jq -cn --argjson nodes "$(printf '%s\n' "$@" | jq -sc '.')" \
+    '{data:{repository:{pullRequest:{comments:{nodes:$nodes}}}}}'
+}
+nm_comment() {  # nm_comment LOGIN BODY [ID] [CREATED]
+  jq -cn --arg login "$1" --arg body "$2" --arg id "${3:-5165639326}" \
+    --arg at "${4:-2026-08-03T11:17:54Z}" \
+    '{author:{login:$login},body:$body,createdAt:$at,id:$id}'
+}
+nm() { jq -c --arg me me -f "$NMJQ"; }
+
+# The incident, byte for byte.
+t near-miss-detects-the-incident \
+  "{\"sha\":\"$NM_HEAD\",\"createdAt\":\"2026-08-03T11:17:54Z\",\"id\":\"5165639326\"}" \
+  "$(nm_payload "$(nm_comment me "{{MARK_ANSWERED}} $NM_HEAD")" | nm)"
+# Any unrendered slot is the same defect: the shape is the evidence, not the
+# name. Whichever marker the session meant, a ready PR at a head with no valid
+# signal is owed the round-answered one, so resume's next act is the same.
+t near-miss-matches-any-marker-slot "$NM_HEAD" \
+  "$(nm_payload "$(nm_comment me "{{MARK_RESUME}} $NM_HEAD")" | nm | jq -r .sha)"
+# MUST FAIL — a near-miss treated as a signal. The two predicates partition the
+# same thread: neither body is ever both, in either direction. The engine
+# requesting a panel off unrendered template text is a worse failure than the
+# stall #319 fixes.
+NM_REAL="$(nm_payload "$(nm_comment me "📣 round answered at head $NM_HEAD")")"
+t near-miss-real-signal-is-not-a-near-miss "" \
+  "$(printf '%s' "$NM_REAL" | nm | jq -r .sha)"
+t near-miss-real-signal-still-reads-as-a-signal "$NM_HEAD" \
+  "$(printf '%s' "$NM_REAL" \
+     | jq -r --arg me me --arg mark '📣 round answered at head' -f "$AHJQ" | jq -r .sha)"
+NM_PLACEHOLDER="$(nm_payload "$(nm_comment me "{{MARK_ANSWERED}} $NM_HEAD")")"
+t near-miss-placeholder-is-not-a-signal "" \
+  "$(printf '%s' "$NM_PLACEHOLDER" \
+     | jq -r --arg me me --arg mark '📣 round answered at head' -f "$AHJQ" | jq -r .sha)"
+# Anchored, like the startswith it mirrors: a body that MENTIONS a placeholder —
+# a reviewer quoting the incident, this suite's own prose — is discussion, and
+# must never make a PR resume-due.
+t near-miss-prose-mentioning-a-slot-is-not-one "" \
+  "$(nm_payload "$(nm_comment me "the session posted {{MARK_ANSWERED}} $NM_HEAD by mistake")" \
+     | nm | jq -r .sha)"
+# A slot with no head names nothing to resume at.
+t near-miss-without-a-head-is-nothing "" \
+  "$(nm_payload "$(nm_comment me '{{MARK_ANSWERED}} (sha to follow)')" | nm | jq -r .sha)"
+# Somebody else's botched marker is not my signal, exactly as in answered-head.
+t near-miss-is-mine-only "" \
+  "$(nm_payload "$(nm_comment other "{{MARK_ANSWERED}} $NM_HEAD")" | nm | jq -r .sha)"
+# Latest wins, and the id travels with the sha it belongs to.
+t near-miss-latest-wins "$NM_HEAD 5165639326" \
+  "$(nm_payload "$(nm_comment me "{{MARK_ANSWERED}} $NM_OLD" 111)" \
+       "$(nm_comment me "{{MARK_ANSWERED}} $NM_HEAD" 5165639326)" \
+     | nm | jq -r '"\(.sha) \(.id)"')"
+# The sha is captured from what FOLLOWS the slot, so a near-miss that quotes
+# another commit first cannot name the wrong head.
+t near-miss-reads-the-head-after-the-slot "$NM_HEAD" \
+  "$(nm_payload "$(nm_comment me "{{MARK_ANSWERED}} $NM_HEAD (was $NM_OLD)")" | nm | jq -r .sha)"
+t near-miss-empty-thread-is-empty "" "$(echo '{}' | nm | jq -r .sha)"
+
+# THE PANEL IS NOT REQUESTED FROM A NEAR-MISS, end to end. With only that
+# comment on the thread, answered-head.jq reads no signal, so _request_panel
+# returns at its gate; and request-panel.jq, handed the empty licence that gate
+# would have handed it, names nobody. `me-bot` and `$H` are the request-side
+# fixture's own author and head (above), so this is that block's PR with the
+# incident's comment body substituted for its signal — the only difference.
+NM_ONLY="$(mk_rp "$H" '[]' '[]' \
+  "$(jq -cn --arg b "{{MARK_ANSWERED}} $H" '[{author:{login:"me-bot"},body:$b}]')")"
+t near-miss-answered-head-reads-no-signal "" "$(printf '%s' "$NM_ONLY" | ah_sha)"
+# ...and _request_panel therefore issues nothing. Driven through the gate itself
+# rather than through request-panel.jq, because the sha half of the licence is
+# the CALLER's gate and is deliberately not re-checked in the predicate (that
+# file's header) — asking the predicate would be asking the wrong layer. `gh` is
+# a shell function here, so any API call the gate lets through is recorded
+# instead of made.
+NM_DUTY="$TMP/near-miss-duty"; mkdir -p "$NM_DUTY/lib"
+ln -sfn "$SHARED/lib/jq" "$NM_DUTY/lib/jq"
+NM_STUB="$TMP/near-miss-bin"; mkdir -p "$NM_STUB"
+cat >"$NM_STUB/gh" <<'NMGH'
+#!/usr/bin/env bash
+# Every API call the gate lets through is recorded here instead of made.
+printf '%s\n' "$*" >>"$NM_GH_LOG"
+NMGH
+chmod +x "$NM_STUB/gh"
+# Driven in a child shell with that stub first on PATH, rather than with a `gh`
+# function in this one: a fixture that calls an engine function directly drags
+# the engine's own dataflow into this file's static analysis, and the child
+# keeps the two apart.
+# `nm_pr` / `nm_log`, not `payload` / `gh_log`: a variable named `payload` in
+# this file makes shellcheck read the unrelated `r1=payload-author` above as
+# arithmetic (SC2100), and the suite is shellcheck-clean in CI.
+nm_request() {  # nm_request <payload> <call-log> -> how many API calls it made
+  local nm_pr="$1" nm_log="$2"
+  : >"$nm_log"
+  PATH="$NM_STUB:$PATH" NM_GH_LOG="$nm_log" ME="me-bot" MARK_ANSWERED="$RP_MARK" \
+    DUTY_DIR="$NM_DUTY" LABEL_BOTS_REVIEWING="state:bots-reviewing" \
+    bash -c 'set -uo pipefail
+      # shellcheck disable=SC1090
+      source "$1/lib/common.sh"
+      # shellcheck disable=SC1090
+      source "$1/lib/duty-builder.sh"
+      _request_panel o/r 311 "$2" "$3" green "$4"' \
+    nm_request "$SHARED" "$nm_pr" "$PANEL" "$H" >/dev/null 2>&1
+  awk 'NF' "$nm_log" | wc -l | tr -d ' '
+}
+t near-miss-request-issues-no-review-request 0 \
+  "$(nm_request "$NM_ONLY" "$TMP/near-miss-gh-calls")"
+# The control: the same payload with a REAL signal in place of the near-miss
+# does request, so the zero above is the near-miss being refused and not the
+# harness being inert.
+NM_REAL_ONLY="$(mk_rp "$H" '[]' '[]' \
+  "$(jq -cn --arg b "$RP_MARK $H" '[{author:{login:"me-bot"},body:$b}]')")"
+t near-miss-control-real-signal-does-request 3 \
+  "$(nm_request "$NM_REAL_ONLY" "$TMP/near-miss-gh-calls-control")"
+
+# The detection over a listing. Fixtures, never a live box (#319's test plan).
+NM_LISTING="$(jq -cn --arg head "$NM_HEAD" --arg old "$NM_OLD" '[
+  {number:311,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("{{MARK_ANSWERED}} " + $head),id:"5165639326",
+     createdAt:"2026-08-03T11:17:54Z"}]},
+  {number:312,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("{{MARK_ANSWERED}} " + $old),id:"222",
+     createdAt:"2026-08-03T11:17:54Z"}]},
+  {number:313,isDraft:false,headRefOid:$head,comments:[]},
+  {number:314,isDraft:true,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("{{MARK_ANSWERED}} " + $head),id:"444",
+     createdAt:"2026-08-03T11:17:54Z"}]},
+  {number:315,isDraft:false,headRefOid:$head,comments:[
+    {author:{login:"me"},body:("{{MARK_ANSWERED}} " + $head),id:"555",
+     createdAt:"2026-08-03T11:17:54Z"},
+    {author:{login:"me"},body:("ANSWER " + $head),
+     createdAt:"2026-08-03T11:32:08Z"}]},
+  {number:316,isDraft:false,headRefOid:$head,comments:null}
+]')"
+# Called in THIS shell, never inside a command substitution: the answer comes
+# back in a global, and a subshell's globals die with it. Its reports go to
+# stdout like every other log line, so they are captured through a file.
+_near_miss_resume_rows o/r me ANSWER "$NM_LISTING" >"$TMP/near-miss.log" 2>&1
+nm_out="$(cat "$TMP/near-miss.log")"
+# 311 alone: 312's near-miss names a SUPERSEDED head — its own push invalidated
+# what it announced — 313 is genuine silence, 314 is a draft (the draft path
+# already owns it), 315 signalled properly beside its near-miss, and 316's
+# thread could not be read.
+t near-miss-rows-only-the-current-head-case "$(printf '311\t5165639326')" \
+  "$(printf '%s' "$NEAR_MISS_ROWS" | awk 'NF')"
+# MUST FAIL — the bypass firing on genuine silence. #313 has no signal and no
+# near-miss and must still wait the full twelve ticks; collapsing that threshold
+# is a different decision with a different cost, and it is not #319's.
+t near-miss-silence-is-not-a-near-miss 0 \
+  "$(printf '%s' "$NEAR_MISS_ROWS" | grep -c '^313')"
+# MUST FAIL — a near-miss naming a stale head triggering the bypass.
+t near-miss-stale-head-does-not-bypass 0 \
+  "$(printf '%s' "$NEAR_MISS_ROWS" | grep -c '^312')"
+# ...and all four of those PRs are still stranded the ordinary way, so the
+# bypass adds a reason to be due and never removes one.
+t near-miss-non-bypassed-still-stranded "$(printf 'o/r#311@%s\no/r#312@%s\no/r#313@%s' \
+    "$NM_HEAD" "$NM_HEAD" "$NM_HEAD")" \
+  "$(printf '%s' "$NM_LISTING" | _stranded_resume_keys o/r me ANSWER)"
+# EXACTLY ONE WARN per detection, naming the PR, the head in full, and the
+# comment id — the three things a reader needs to find the malformed comment.
+t near-miss-warns-once 1 "$(grep -c 'WARN.*o/r#311' <<<"$nm_out")"
+t near-miss-warn-names-the-head 1 "$(grep -c "$NM_HEAD" <<<"$nm_out")"
+t near-miss-warn-names-the-comment 1 "$(grep -c '5165639326' <<<"$nm_out")"
+t near-miss-warn-is-silent-about-the-rest 1 "$(grep -c 'WARN' <<<"$nm_out")"
+# MUST FAIL — the malformed comment edited, hidden or deleted. The board record
+# is the only trace this class leaves; a fix that tidies it destroys the
+# evidence. The detection makes NO GitHub write of any kind: it reads the
+# listing it was handed and warns.
+nm_body="$(declare -f _near_miss_resume_rows)"
+t near-miss-detection-makes-no-github-call 0 "$(grep -c 'gh ' <<<"$nm_body")"
+if grep -Fq 'LEAVE THE MALFORMED COMMENT WHERE IT IS' "$SHARED/prompts/resume.txt" \
+  && grep -Fq 'do not edit it, hide it, delete it' "$SHARED/prompts/resume.txt"; then
+  r1=left-alone
+else
+  r1=TIDIED
+fi
+t near-miss-prompt-leaves-the-comment-alone left-alone "$r1"
+# MUST FAIL — a second definition of the marker. A hand-rolled brace match or a
+# marker comparison inside duty-builder.sh is exactly what answered-head.jq's
+# header warns about; both predicates live in jq, and the shell only calls them.
+t near-miss-no-hand-rolled-slot-match-in-the-engine 0 \
+  "$(grep -c 'MARK_[A-Z]*}}' "$SHARED/lib/duty-builder.sh")"
+t near-miss-has-one-placeholder-parser 1 \
+  "$(grep -l 'MARK_\[A-Z0-9_\]' "$SHARED"/lib/jq/*.jq | wc -l | tr -d ' ')"
+# The predicate is its own file, never a fallback branch inside answered-head.jq:
+# a fallback there is how placeholder text becomes wire protocol.
+t near-miss-not-a-branch-of-the-signal-parser 0 \
+  "$(grep -c 'MARK_\[A-Z0-9_\]' "$SHARED/lib/jq/answered-head.jq")"
+# MUST FAIL — the state file's format changing. `.resume-unsignalled.<slug>` is
+# written by a live fleet, and a format change strands every counter on every
+# box at upgrade. The bypass rides BESIDE _stranded_resume_due, never through
+# it: same threshold, same call, same two-column state file, and its tests above
+# run unmodified.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_stranded_resume_due "$DUTY_DIR/.resume-unsignalled.$slug" 12' \
+     "$SHARED/lib/duty-builder.sh"; then r1=threshold-intact; else r1=DISTURBED; fi
+t near-miss-threshold-call-unchanged threshold-intact "$r1"
+NM_STATE="$TMP/resume-unsignalled-319"
+printf 'o/r#311@%s\n' "$NM_HEAD" | _stranded_resume_due "$NM_STATE" 12 >/dev/null
+t near-miss-state-file-format-unchanged "o/r#311@$NM_HEAD	1" "$(cat "$NM_STATE")"
+# The near-miss PR's counter advances exactly as any other stranded PR's does:
+# the bypass adds a second, independent reason to be due, and takes nothing
+# away from the evidence the threshold path is accumulating.
+printf 'o/r#311@%s\n' "$NM_HEAD" | _stranded_resume_due "$NM_STATE" 12 >/dev/null
+t near-miss-counter-still-advances "o/r#311@$NM_HEAD	2" "$(cat "$NM_STATE")"
+
+# The listing stopped carrying comments at 70823ac (#314) and `.comments // []`
+# read the absence as an empty thread, so every non-draft authored PR has
+# classified as unsignalled since. The signal half is read per PR now; these pin
+# the route and the reason it is not the listing's own connection.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq 'gh api --paginate "repos/$repo/issues/$num/comments?per_page=100"' \
+     "$SHARED/lib/duty-builder.sh"; then r1=paginated; else r1=CAPPED; fi
+t near-miss-comments-read-is-paginated paginated "$r1"
+# A thread that could not be read is NOT an empty thread: the PR leaves the
+# stranded set for the tick rather than accruing toward a resume the evidence
+# does not support.
+t near-miss-unread-thread-is-not-stranded "" \
+  "$(printf '%s' "$NM_LISTING" | jq -c '[.[] | select(.number == 316)]' \
+     | _stranded_resume_keys o/r me ANSWER)"
+t near-miss-unread-thread-is-not-a-detection 0 \
+  "$(printf '%s' "$NEAR_MISS_ROWS" | grep -c '^316')"
+# The wake path: the rows reach the resume prompt, and the prompt tells the
+# session what the comment it is looking at actually is.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq 'NEAR_MISS="${near_miss_desc:-none}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '{{NEAR_MISS}}' "$SHARED/prompts/resume.txt"; then r1=wired; else r1=UNWIRED; fi
+t near-miss-wired-into-the-resume-prompt wired "$r1"
+if grep -Fq 'OPENS WITH AN UNRENDERED TEMPLATE SLOT' "$SHARED/prompts/resume.txt"; then
+  r1=explained
+else
+  r1=MISSING
+fi
+t near-miss-prompt-explains-the-comment explained "$r1"
+
 # --- #314: the doable-work gate on resume dispatch --------------------------
 # Resume was the one wake with no doable-work condition — it fired on "is there
 # a draft", and a park is invisible to that. PR #311 spent 58 sessions at one
