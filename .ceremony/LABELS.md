@@ -68,7 +68,16 @@ assignee, and comments with the remaining criteria verbatim. The comment says
 that the claim is released and that triage owes a follow-up naming the owner
 and wake condition for completion. Triage writes that full transition comment
 in the same tick when it or the operator makes the move by hand. The sweep
-never reclaims `post-merge`: weeks of quiet can be the state working.
+never reclaims `post-merge`: weeks of quiet can be the state working. It does
+make the quiet visible — after 7 days with no comment on the issue, the sweep
+posts one nudge naming the triage actor, saying the wake evidence is owed and
+linking the item. Only a comment resets that clock: label churn does not, and
+neither does an assignment, which is the claim clock's fact and on this queue
+state is the invalid composition flagged below. Which criterion starved is
+prose the machine never judges; the link is the payload. Like the ruling nudge
+it carries no idempotency marker on purpose — the comment is itself activity,
+so the rule self-rate-limits to one nudge per 7 quiet days — and it writes no
+label.
 
 `post-merge` never composes with `blocked`; the transition comment carries the
 wait. It never composes with `attention`, because releasing the claim clears
@@ -145,8 +154,11 @@ label never removed — and a ruling with no real activity for 7 days draws a
 comment-only nudge addressed to the decider, linking the escalation. The
 nudge carries no marker on purpose: the comment is itself activity, so it
 resets its own window and never repeats within a quiet week. Label churn is
-not activity — the clock reads comments, reviews and commits, or the sweep
-would reset itself.
+never activity, or the sweep would reset itself — and each surface's clock
+reads what exists on it: on a pull request, comments, reviews and commits;
+on an issue, comments alone. An assignment is the claim clock's fact, not
+the ruling's — claiming a flagged issue does not answer it, and buys the
+escalation no quiet (#284).
 
 `offsite` is issue-only and records that a claimed issue's deliverable lives
 in another repository, where a closing reference cannot make a local open PR
@@ -171,8 +183,15 @@ The flag is additive: it composes with `ready`, `claimed`, or `blocked` and
 with `needs-ruling`, and never substitutes for queue state. It pauses no
 clock. Unlike `offsite` and `needs-ruling`, which make silence legitimate,
 unanswered `attention` is exactly the silence the 48-hour reclaim should
-take. It is hand-set doctrine only: nothing in `actions/` sets, clears,
-reads, or validates it, and no reconciler enforces the assignee requirement.
+take. It is hand-set: the machine never sets `attention`, never assigns
+anyone to receive one, and never decides that one has been answered — the
+assignee's removal is the only ack. It writes the label in exactly one
+place, the derived `claimed` → `post-merge` transition below, and nowhere
+else; where it reads the flag it reads it to diagnose. The PR sweep comments
+when `attention` is put on a pull request, and the issue sweep comments when
+it is put on an issue with no assignee. Both diagnoses leave the label and
+assignees alone; the machine never infers the claim issue, decides that the
+demand was answered, or repairs either malformed shape.
 An `attention` issue without an assignee is therefore a board bug, not a
 demand; anyone may assign it or remove the flag. It never composes with
 `post-merge`, whose released claim has no assignee to answer the demand. The
