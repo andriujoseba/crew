@@ -94,6 +94,77 @@ _warn_unscoped_authored() {
   fi
 }
 
+# _redraft_authored_pr REPO NUM — convert my ready PR back to draft after a
+# round closes without full approval. The last reviewer can write the triage-
+# permitted state:addressing label, but cannot draft another author's PR; this
+# author-side tick owns that mutation. Ignore an already-standing addressing
+# label only in this evaluation: the reconciler may have written it before this
+# tick, and conversion must not depend on which actor won that independent
+# best-effort write. A failed conversion remains ready and retries next tick.
+_redraft_authored_pr() {
+  local repo="$1" num="$2" owner name payload author roster_json eff_panel redraft pr_id is_draft
+  owner="${repo%%/*}"; name="${repo##*/}"
+  if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+    repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      id
+      isDraft
+      headRefOid
+      author{login}
+      labels(first:50){nodes{name}}
+      reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
+      latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+    } }
+  }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
+    warn "$repo#$num: draft conversion lookup failed; retrying on the author's next tick"
+    return 0
+  fi
+  is_draft="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.isDraft // false' 2>/dev/null)"
+  [ "$is_draft" = false ] || return 0
+  author="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.author.login // ""' 2>/dev/null)"
+  roster_json="$(panel_for_repo "$repo" "" "$author" 2>/dev/null || echo err)"
+  if [ "$roster_json" = err ] || ! jq -e 'type == "array"' >/dev/null 2>&1 <<<"$roster_json"; then
+    warn "$repo#$num: panel lookup failed; skipping draft conversion (best-effort)"
+    return 0
+  fi
+  eff_panel="$(printf '%s' "$roster_json" | jq -c --arg author "$author" '. - [$author]')"
+  redraft="$(printf '%s' "$payload" \
+    | jq -c --arg addressing "$LABEL_ADDRESSING" \
+        '.data.repository.pullRequest.labels.nodes |= map(select(.name != $addressing))' 2>/dev/null \
+    | jq -r --argjson panel "$eff_panel" --arg addressing "$LABEL_ADDRESSING" \
+        -f "$DUTY_DIR/lib/jq/addressing.jq" 2>/dev/null || echo err)"
+  case "$redraft" in
+    true)
+      pr_id="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.id // ""' 2>/dev/null)"
+      if [ -z "$pr_id" ]; then
+        warn "$repo#$num: draft conversion missing pull request id; retrying on the author's next tick"
+      else
+        log "$repo#$num: round closed without full approval — author converting to draft"
+        gh api graphql -f query='mutation($id:ID!){
+          convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}
+        }' -f id="$pr_id" >/dev/null 2>&1 \
+          || warn "$repo#$num: could not convert to draft; retrying on the author's next tick"
+      fi
+      ;;
+    false) : ;;
+    *) warn "$repo#$num: draft conversion eval failed; skipping (best-effort)" ;;
+  esac
+  return 0
+}
+
+_redraft_authored_rounds() {
+  local repo="$1" nums num
+  nums="$(gh pr list -R "$repo" --state open --author "$ME" \
+    --json number,isDraft --jq '.[] | select(.isDraft | not) | .number' 2>/dev/null || echo err)"
+  if [ "$nums" = err ]; then
+    warn "$repo: authored PR listing failed; skipping draft conversion this tick"
+    return 0
+  fi
+  while IFS= read -r num; do
+    [ -n "$num" ] || continue
+    _redraft_authored_pr "$repo" "$num"
+  done <<<"$nums"
+}
+
 # _mirror_rounds REPO NUM — mirror each whole-round reply into the PR body's
 # `## Round log` (#91, ceremony#196 option B). The builder owes the reply and
 # nothing else; the engine copies it into the body where the merging human
@@ -821,6 +892,11 @@ _builder_repo() {
   wt_rules="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name")"
   round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED")"
   oneshot_rules="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
+
+  # This must precede resume discovery. A completed foreign review is the wake;
+  # after the author-owned conversion below, the same tick's draft listing and
+  # resume gate can deliver that fix round to its builder.
+  _redraft_authored_rounds "$R"
 
   # --- RESUME: interrupted work of mine, checked FIRST. Three shapes: an open
   # draft PR (a session died mid-build), or a claimed issue whose build/*
