@@ -5095,10 +5095,11 @@ ci_paths() {
     | tr ',' '\n' | tr -d " '\"" | sed '/^$/d' | sort -u
 }
 
-# The old filter's product paths survive exactly once across the union. Its
-# deleted self-path is replaced by both new workflows' self-paths. Explicitly
-# naming .ceremony/** prevents two mutually-agreeing filters from dropping the
-# path that caught #363.
+# The old filter's product paths survive across the union. Its deleted
+# self-path is replaced by both new workflows' paths. ci-floor.yml also routes
+# to ci-shell so edits to that workflow run the assertions below; it is the one
+# intentional overlap. Explicitly naming .ceremony/** prevents two
+# mutually-agreeing filters from dropping the path that caught #363.
 CI_EXPECTED="$(printf '%s\n' \
   '.ceremony/**' '.github/workflows/ci-floor.yml' '.github/workflows/ci-shell.yml' \
   'cli/**' 'dist/**' 'drill/**' 'examples/**' 'fleet-floor/**' 'install.sh' 'shared/**' | sort)"
@@ -5106,9 +5107,12 @@ CI_SHELL_PR_PATHS="$(ci_paths pull_request "$CI_SHELL")"
 CI_FLOOR_PR_PATHS="$(ci_paths pull_request "$CI_FLOOR")"
 CI_UNION="$(printf '%s\n%s\n' "$CI_SHELL_PR_PATHS" "$CI_FLOOR_PR_PATHS")"
 t ci-path-union-preserves-coverage "$CI_EXPECTED" "$(printf '%s\n' "$CI_UNION" | sort -u)"
-t ci-path-union-has-no-overlap 10 "$(printf '%s\n' "$CI_UNION" | wc -l | tr -d ' ')"
+CI_OVERLAP="$(comm -12 <(printf '%s\n' "$CI_SHELL_PR_PATHS") <(printf '%s\n' "$CI_FLOOR_PR_PATHS"))"
+t ci-path-overlap-is-only-floor-self-edit '.github/workflows/ci-floor.yml' "$CI_OVERLAP"
 case "$CI_SHELL_PR_PATHS" in *'.ceremony/**'*) r1=present ;; *) r1=MISSING ;; esac
 t ci-shell-keeps-ceremony-fixtures present "$r1"
+case "$CI_SHELL_PR_PATHS" in *'.github/workflows/ci-floor.yml'*) r1=present ;; *) r1=MISSING ;; esac
+t ci-floor-self-edit-routes-to-shell present "$r1"
 
 # The three routing cases, plus the load-bearing CLI coverage on the cheap
 # side. Native paths do the routing; a billed filter job is forbidden.

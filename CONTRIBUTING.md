@@ -28,11 +28,10 @@ genuinely crew's.
      and other engine paths.
    - `ci-floor.yml` — floor shell/Python checks, the full collector + page
      suite, and the built-page freshness check. It runs for `fleet-floor/`.
-     Both CI workflows carry native paths filters and **do not run while the PR
-     is a draft** — your WIP saves are free. Marking the PR ready for review
-     runs the applicable workflows at that head, with no further push needed,
-     so the round's green-check precondition is met by the act of marking ready
-     (#136).
+   Both CI workflows carry native paths filters and **do not run while the PR
+   is a draft** — your WIP saves are free. Marking the PR ready for review runs
+   the applicable workflows at that head, with no further push needed, so the
+   round's green-check precondition is met by the act of marking ready (#136).
    - `release-guards.yml` — the ceremony guards (`changelog-armed`,
      `changelog-monotonic`, `changelog-assembled`, `drill-recorded`,
      `runner-isolated`, `docs-sync`), run as ceremony's pinned actions on

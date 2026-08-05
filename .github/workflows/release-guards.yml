@@ -4,9 +4,9 @@ name: release-guards
 #
 # The split CI workflows carry paths filters for engine and floor surfaces, so
 # a docs-only PR skips crew's expensive engine suite and browser-driven floor
-# tests. None of the
-# release furniture this repo now carries — CHANGELOG.md, changelog.d/,
-# VERSION, drills/, the .ceremony/ mirror, these callers — matches that filter.
+# tests. None of the release furniture this repo now carries — CHANGELOG.md,
+# changelog.d/, VERSION, drills/, the .ceremony/ mirror, these callers —
+# matches that filter.
 # Widening it would drag every doc PR through the engine suite, and folding the
 # gates behind it would leave them silent on exactly the trees they must guard.
 # So the gates live here, with NO paths filter: they run on every PR, and the
