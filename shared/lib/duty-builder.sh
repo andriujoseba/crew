@@ -392,8 +392,11 @@ _resume_pr_comments() {
   printf '%s' "$raw" | jq -sc '.'
 }
 
-# _resume_attach_comments REPO — stdin is the authored open-PR listing; stdout is
-# the same listing with `.comments` filled for every non-draft PR.
+# _resume_attach_comments REPO LISTING — the answer is the same listing with `.comments` filled for every non-draft PR, and
+# it comes back in a GLOBAL, RESUME_LISTING, for the reason _resume_gate states
+# below: every report here is a log line, log writes to stdout, and a function
+# that returned its data through the same channel would fold its own warnings
+# into the JSON the caller parses.
 #
 # THE LISTING STOPPED CARRYING COMMENTS AND NOTHING SAID SO. `_stranded_resume_keys`
 # classifies a PR by reading `.comments` off this listing, and the field left it
@@ -411,8 +414,8 @@ _resume_pr_comments() {
 # not support — and a transient failure costing one restarted count is cheaper
 # than a resume session spent on a PR that signalled correctly.
 _resume_attach_comments() {
-  local repo="$1" listing spliced num comments
-  listing="$(cat)"
+  local repo="$1" listing="$2" spliced num comments
+  RESUME_LISTING=""
   while IFS= read -r num; do
     [ -n "$num" ] || continue
     if comments="$(_resume_pr_comments "$repo" "$num")"; then
@@ -426,13 +429,15 @@ _resume_attach_comments() {
     fi
     if [ -n "$spliced" ]; then listing="$spliced"; fi
   done < <(printf '%s' "$listing" | jq -r '.[] | select(.isDraft | not) | .number' 2>/dev/null)
-  printf '%s' "$listing"
+  RESUME_LISTING="$listing"
 }
 
-# _near_miss_resume_rows REPO ME — stdin is the same listing _stranded_resume_keys
-# reads. One `<num>\t<comment id>` line per non-draft PR of mine whose latest
-# NEAR-MISS names the current head while no valid signal does, and one WARN per
-# detection (#319).
+# _near_miss_resume_rows REPO ME MARK LISTING — LISTING is the same listing
+# _stranded_resume_keys reads. The answer comes back in the global
+# NEAR_MISS_ROWS, one `<num>\t<comment id>` line per non-draft PR of mine whose
+# latest NEAR-MISS names the current head while no valid signal does, and one
+# WARN per detection (#319). A global for the same reason _resume_gate uses two:
+# the WARN and the rows would otherwise share stdout.
 #
 # THE BYPASS IS ABOUT EVIDENCE, NOT IMPATIENCE. `_stranded_resume_due`'s twelve
 # ticks are the price of not knowing whether a session died before it signalled
@@ -455,7 +460,9 @@ _resume_attach_comments() {
 # twelve, because this line's whole purpose is to be compared against a signal
 # that is also written out in full.
 _near_miss_resume_rows() {
-  local repo="$1" me="$2" mark="$3" pr num head payload answered near_sha near_id
+  local repo="$1" me="$2" mark="$3" listing="$4"
+  local pr num head payload answered near_sha near_id
+  NEAR_MISS_ROWS=""
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
     num="$(printf '%s' "$pr" | jq -r '.number')"
@@ -481,8 +488,9 @@ _near_miss_resume_rows() {
     # what is on the branch now. That PR waits out the ordinary twelve ticks.
     if [ -z "$near_sha" ] || [ "$near_sha" != "$head" ]; then continue; fi
     warn "$repo#$num: comment $near_id opens with an unrendered marker slot and names head $head — not a signal (#133), but the round was answered there; resuming this tick instead of the twelfth (#319)"
-    printf '%s\t%s\n' "$num" "$near_id"
-  done < <(jq -c '.[] | select((.isDraft | not) and .comments != null)')
+    NEAR_MISS_ROWS="${NEAR_MISS_ROWS}${num}"$'\t'"${near_id}"$'\n'
+  done < <(printf '%s' "$listing" \
+    | jq -c '.[] | select((.isDraft | not) and .comments != null)')
 }
 
 # _stranded_resume_keys REPO ME MARK — stdin is the authored open-PR listing
@@ -834,11 +842,12 @@ _builder_repo() {
       2>/dev/null | tr '\n' ' ' || echo err)"
     # The signal half is read from the thread itself, per PR, because the
     # listing's nested connection cannot carry it (_resume_attach_comments).
-    resume_json="$(printf '%s' "$resume_json" | _resume_attach_comments "$R")"
+    _resume_attach_comments "$R" "$resume_json"
+    resume_json="${RESUME_LISTING:-$resume_json}"
     stranded_keys="$(printf '%s' "$resume_json" \
       | _stranded_resume_keys "$R" "$ME" "$MARK_ANSWERED" 2>/dev/null || echo err)"
-    near_miss_rows="$(printf '%s' "$resume_json" \
-      | _near_miss_resume_rows "$R" "$ME" "$MARK_ANSWERED" || echo "")"
+    _near_miss_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"
+    near_miss_rows="$NEAR_MISS_ROWS"
   fi
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
