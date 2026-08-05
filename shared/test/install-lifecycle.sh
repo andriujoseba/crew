@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shared/test/install-lifecycle.sh — real, OFFLINE installs of the crew CLI
-# against the tree under test (no network, no root). Runs in CI (shared-ci.yml)
+# against the tree under test (no network, no root). Runs in CI (ci-shell.yml)
 # and by hand. Asserts the versioned layout, root-resolution through the
 # `current` symlink, coexistence/flip, the converging re-run, and — the
 # regression codex-bot and grok-bot required on #95 — that an interrupted
