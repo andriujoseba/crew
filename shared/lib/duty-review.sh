@@ -88,9 +88,12 @@ rereq_decision() {
 # optimistic; the reconciler stays authoritative.
 _mark_addressing() {
   local repo="$1" num="$2" owner name payload author roster_json eff_panel verdict
+  local pr_id is_draft redraft
   owner="${repo%%/*}"; name="${repo##*/}"
   if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
+      id
+      isDraft
       headRefOid
       author{login}
       labels(first:50){nodes{name}}
@@ -110,6 +113,19 @@ _mark_addressing() {
   verdict="$(printf '%s' "$payload" \
     | jq -r --argjson panel "$eff_panel" --arg addressing "$LABEL_ADDRESSING" \
         -f "$DUTY_DIR/lib/jq/addressing.jq" 2>/dev/null || echo err)"
+  pr_id="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.id // ""' 2>/dev/null)"
+  is_draft="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.isDraft // false' 2>/dev/null)"
+  redraft=false
+  if [ "$is_draft" = "false" ]; then
+    # The label and draft writes are independently idempotent. If a previous
+    # conversion failed after state:addressing landed, remove that label only
+    # from this in-memory evaluation so a later tick retries the conversion.
+    redraft="$(printf '%s' "$payload" \
+      | jq -c --arg addressing "$LABEL_ADDRESSING" \
+          '.data.repository.pullRequest.labels.nodes |= map(select(.name != $addressing))' 2>/dev/null \
+      | jq -r --argjson panel "$eff_panel" --arg addressing "$LABEL_ADDRESSING" \
+          -f "$DUTY_DIR/lib/jq/addressing.jq" 2>/dev/null || echo err)"
+  fi
   case "$verdict" in
     true)
       log "review: $repo#$num round closed without full approval — setting $LABEL_ADDRESSING"
@@ -118,6 +134,21 @@ _mark_addressing() {
       ;;
     false) : ;;
     *) warn "review: $repo#$num addressing eval failed; skipping (best-effort)" ;;
+  esac
+  case "$redraft" in
+    true)
+      if [ -z "$pr_id" ]; then
+        warn "review: $repo#$num draft conversion missing pull request id; skipping (best-effort)"
+      else
+        log "review: $repo#$num round closed without full approval — converting to draft"
+        gh api graphql -f query='mutation($id:ID!){
+          convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}
+        }' -f id="$pr_id" >/dev/null 2>&1 \
+          || warn "review: $repo#$num could not convert to draft (will retry)"
+      fi
+      ;;
+    false) : ;;
+    *) warn "review: $repo#$num draft conversion eval failed; skipping (best-effort)" ;;
   esac
   return 0
 }
