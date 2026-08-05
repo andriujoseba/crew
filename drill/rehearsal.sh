@@ -127,8 +127,8 @@ BUILDER_CLEANUP_REPO=""
 BUILDER_CLEANUP_AUTHOR=""
 # shellcheck source=drill/rehearsal-safety.sh
 . "$ROOT/drill/rehearsal-safety.sh"
-# shellcheck source=shared/test/rehearsal-fixtures.sh
-. "$ROOT/shared/test/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-fixtures.sh
+. "$ROOT/drill/rehearsal-fixtures.sh"
 cleanup_all() {
   local rc=$?
   if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
@@ -462,19 +462,27 @@ else
   # counting those launched sessions with nothing to do). The fixture must
   # therefore leave the issue unassigned, or the builder correctly ignores it
   # and the drill would blame the engine for its own bad fixture.
+  builder_slot_clear=0
   if ! slot_prs="$(rehearsal_builder_slot_prs "$SANDBOX" "$ME2")"; then
     echo "builder: cannot inspect the build slot for $ME2 in $SANDBOX"
-    fail "builder: build slot readable at run start"
-    fail "builder: opened a PR for the ready issue"
+    fail "builder: build slot clear at run start"
   elif [ -n "$slot_prs" ]; then
     echo "builder: occupied build slot at run start for $ME2 in $SANDBOX:"
     while read -r slot_pr; do
       echo "  PR #$slot_pr"
     done <<<"$slot_prs"
     fail "builder: build slot clear at run start"
-    fail "builder: opened a PR for the ready issue"
   else
+    builder_slot_clear=1
     ok "builder: build slot clear at run start"
+  fi
+  if [ "$builder_slot_clear" -eq 0 ]; then
+    fail "builder: opened a PR for the ready issue"
+    skip "builder fixture is unassigned (ready+assigned is not pickable)"
+    skip "builder: PR branch is build/*"
+    skip "builder: issue moved off ready (claimed)"
+    skip "builder: no duplicate PR on re-tick"
+  else
     bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
       -f "labels[]=ready" --jq .number)"
@@ -498,8 +506,13 @@ else
     BPR="$bpr"
     bx "~/duty/bin/tick.sh" || true
     sleep 20
-    check "builder: no duplicate PR on re-tick" test \
-      "$(rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum")" = "$BPR"
+    if [ -n "$BPR" ] && \
+        retry_bpr="$(rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum")" && \
+        [ "$retry_bpr" = "$BPR" ]; then
+      ok "builder: no duplicate PR on re-tick"
+    else
+      fail "builder: no duplicate PR on re-tick"
+    fi
   fi
 
   else

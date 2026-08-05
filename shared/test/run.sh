@@ -104,10 +104,10 @@ else
 fi
 
 # Both request and convergence paths must receive an author-aware roster.
-# shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-builder-resolution author-aware "$r1"
-# shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author-aware; else r1=FULL-PANEL; fi
 t panel-reviewer-resolution author-aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
@@ -213,8 +213,9 @@ esac
 t rehearsal-unknown-agent-list listed "$r1"
 
 # --- rehearsal builder fixtures: tie checks to this run (#179) -----------
-# shellcheck source=shared/test/rehearsal-fixtures.sh
-source "$ROOT/shared/test/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-fixtures.sh
+source "$ROOT/drill/rehearsal-fixtures.sh"
+EMPTY_BUILDER_PRS='[]'
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
 RIGHT_BUILDER_PRS='[{"number":6,"body":"Closes #5"},{"number":12,"body":"Closes #179"}]'
 PREFIX_BUILDER_PRS='[{"number":13,"body":"Closes #1790"}]'
@@ -222,14 +223,36 @@ DUPLICATE_BUILDER_PRS='[{"number":12,"body":"Closes #179"},{"number":14,"body":"
 
 t rehearsal-builder-stale-pr-occupies-slot 6 \
   "$(rehearsal_builder_slot_prs_from_json "$STALE_BUILDER_PRS")"
-t rehearsal-builder-stale-pr-cannot-satisfy-this-run '' \
-  "$(rehearsal_builder_pr_for_issue_from_json 179 "$STALE_BUILDER_PRS")"
+if empty_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$EMPTY_BUILDER_PRS")"; then
+  empty_builder_rc=0
+else
+  empty_builder_rc=$?
+fi
+t rehearsal-builder-empty-response-refused '' "$empty_builder_out"
+t rehearsal-builder-empty-response-lookup-fails 1 "$empty_builder_rc"
+if stale_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$STALE_BUILDER_PRS")"; then
+  stale_builder_rc=0
+else
+  stale_builder_rc=$?
+fi
+t rehearsal-builder-stale-pr-cannot-satisfy-this-run '' "$stale_builder_out"
+t rehearsal-builder-stale-pr-lookup-fails 1 "$stale_builder_rc"
 t rehearsal-builder-run-specific-pr-resolves 12 \
   "$(rehearsal_builder_pr_for_issue_from_json 179 "$RIGHT_BUILDER_PRS")"
-t rehearsal-builder-wrong-issue-prefix-refused '' \
-  "$(rehearsal_builder_pr_for_issue_from_json 179 "$PREFIX_BUILDER_PRS")"
-t rehearsal-builder-duplicate-current-prs-refused '' \
-  "$(rehearsal_builder_pr_for_issue_from_json 179 "$DUPLICATE_BUILDER_PRS")"
+if prefix_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$PREFIX_BUILDER_PRS")"; then
+  prefix_builder_rc=0
+else
+  prefix_builder_rc=$?
+fi
+t rehearsal-builder-wrong-issue-prefix-refused '' "$prefix_builder_out"
+t rehearsal-builder-wrong-issue-prefix-lookup-fails 1 "$prefix_builder_rc"
+if duplicate_builder_out="$(rehearsal_builder_pr_for_issue_from_json 179 "$DUPLICATE_BUILDER_PRS")"; then
+  duplicate_builder_rc=0
+else
+  duplicate_builder_rc=$?
+fi
+t rehearsal-builder-duplicate-current-prs-refused '' "$duplicate_builder_out"
+t rehearsal-builder-duplicate-current-prs-lookup-fails 1 "$duplicate_builder_rc"
 
 REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
 gh() {

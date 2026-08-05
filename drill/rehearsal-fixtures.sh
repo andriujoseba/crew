@@ -8,8 +8,8 @@ rehearsal_builder_slot_prs_from_json() {
 }
 
 rehearsal_builder_pr_for_issue_from_json() {
-  local issue="$1" pulls_json="$2"
-  jq -r --arg issue "$issue" '
+  local issue="$1" pulls_json="$2" pr
+  pr="$(jq -r --arg issue "$issue" '
     [ .[]
       | select(
           (.body // "")
@@ -21,7 +21,9 @@ rehearsal_builder_pr_for_issue_from_json() {
       | .number
     ]
     | if length == 1 then .[0] else empty end
-  ' <<<"$pulls_json"
+  ' <<<"$pulls_json")" || return
+  [ -n "$pr" ] || return 1
+  printf '%s\n' "$pr"
 }
 
 rehearsal_builder_open_prs_json() {
