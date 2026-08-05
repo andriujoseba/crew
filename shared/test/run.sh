@@ -4794,6 +4794,7 @@ t shared-ci-path-filters-agree   1 "$(grep '^    paths: ' "$CI_YML" | sort -u | 
 # push to main. MUST FAIL: a repository- or workflow-wide constant group.
 ci_concurrency_group="$(sed -n 's/^  group: *//p' "$CI_YML")"
 t shared-ci-has-one-concurrency-group 1 "$(grep -c '^  group: ' "$CI_YML")"
+# shellcheck disable=SC2016  # Match the literal GitHub expression in YAML.
 case "$ci_concurrency_group" in *'${{ github.ref }}'*) r1=per-ref ;; *) r1=TOO-COARSE ;; esac
 t shared-ci-concurrency-is-per-ref per-ref "$r1"
 t shared-ci-cancels-superseded-runs 1 "$(grep -c '^  cancel-in-progress: true$' "$CI_YML")"
