@@ -218,6 +218,7 @@ source "$ROOT/shared/test/rehearsal-fixtures.sh"
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
 RIGHT_BUILDER_PRS='[{"number":6,"body":"Closes #5"},{"number":12,"body":"Closes #179"}]'
 PREFIX_BUILDER_PRS='[{"number":13,"body":"Closes #1790"}]'
+DUPLICATE_BUILDER_PRS='[{"number":12,"body":"Closes #179"},{"number":14,"body":"Fixes #179"}]'
 
 t rehearsal-builder-stale-pr-occupies-slot 6 \
   "$(rehearsal_builder_slot_prs_from_json "$STALE_BUILDER_PRS")"
@@ -227,6 +228,8 @@ t rehearsal-builder-run-specific-pr-resolves 12 \
   "$(rehearsal_builder_pr_for_issue_from_json 179 "$RIGHT_BUILDER_PRS")"
 t rehearsal-builder-wrong-issue-prefix-refused '' \
   "$(rehearsal_builder_pr_for_issue_from_json 179 "$PREFIX_BUILDER_PRS")"
+t rehearsal-builder-duplicate-current-prs-refused '' \
+  "$(rehearsal_builder_pr_for_issue_from_json 179 "$DUPLICATE_BUILDER_PRS")"
 
 REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
 gh() {

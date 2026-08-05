@@ -462,8 +462,11 @@ else
   # counting those launched sessions with nothing to do). The fixture must
   # therefore leave the issue unassigned, or the builder correctly ignores it
   # and the drill would blame the engine for its own bad fixture.
-  slot_prs="$(rehearsal_builder_slot_prs "$SANDBOX" "$ME2")"
-  if [ -n "$slot_prs" ]; then
+  if ! slot_prs="$(rehearsal_builder_slot_prs "$SANDBOX" "$ME2")"; then
+    echo "builder: cannot inspect the build slot for $ME2 in $SANDBOX"
+    fail "builder: build slot readable at run start"
+    fail "builder: opened a PR for the ready issue"
+  elif [ -n "$slot_prs" ]; then
     echo "builder: occupied build slot at run start for $ME2 in $SANDBOX:"
     while read -r slot_pr; do
       echo "  PR #$slot_pr"
@@ -589,14 +592,17 @@ fi
 if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
   if rehearsal_close_builder_fixture_prs \
       "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR"; then
-    if [ -z "$(rehearsal_builder_slot_prs \
-        "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR")" ]; then
+    remaining_prs=""
+    if ! remaining_prs="$(rehearsal_builder_slot_prs \
+        "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR")"; then
+      fail "teardown: verify builder fixture PR cleanup"
+    elif [ -z "$remaining_prs" ]; then
       ok "teardown: no builder fixture PR occupies the next run"
+      BUILDER_CLEANUP_REPO=""
+      BUILDER_CLEANUP_AUTHOR=""
     else
       fail "teardown: no builder fixture PR occupies the next run"
     fi
-    BUILDER_CLEANUP_REPO=""
-    BUILDER_CLEANUP_AUTHOR=""
   else
     fail "teardown: close builder fixture PRs"
   fi

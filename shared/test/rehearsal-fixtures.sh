@@ -19,7 +19,8 @@ rehearsal_builder_pr_for_issue_from_json() {
             )
         )
       | .number
-    ][0] // empty
+    ]
+    | if length == 1 then .[0] else empty end
   ' <<<"$pulls_json"
 }
 
@@ -45,7 +46,11 @@ rehearsal_builder_pr_for_issue() {
 }
 
 rehearsal_close_builder_fixture_prs() {
-  local repo="$1" author="$2" pr failed=0
+  local repo="$1" author="$2" pr prs failed=0
+  if ! prs="$(rehearsal_builder_slot_prs "$repo" "$author")"; then
+    echo "teardown: WARNING — could not list builder fixture PRs" >&2
+    return 1
+  fi
   while read -r pr; do
     [ -n "$pr" ] || continue
     if gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null; then
@@ -54,6 +59,6 @@ rehearsal_close_builder_fixture_prs() {
       echo "teardown: WARNING — could not close builder fixture PR #$pr" >&2
       failed=1
     fi
-  done < <(rehearsal_builder_slot_prs "$repo" "$author")
+  done <<<"$prs"
   return "$failed"
 }
