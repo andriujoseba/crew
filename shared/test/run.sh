@@ -212,6 +212,40 @@ case "$unknown_out" in
 esac
 t rehearsal-unknown-agent-list listed "$r1"
 
+# --- rehearsal builder fixtures: tie checks to this run (#179) -----------
+# shellcheck source=shared/test/rehearsal-fixtures.sh
+source "$ROOT/shared/test/rehearsal-fixtures.sh"
+STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
+RIGHT_BUILDER_PRS='[{"number":6,"body":"Closes #5"},{"number":12,"body":"Closes #179"}]'
+PREFIX_BUILDER_PRS='[{"number":13,"body":"Closes #1790"}]'
+
+t rehearsal-builder-stale-pr-occupies-slot 6 \
+  "$(rehearsal_builder_slot_prs_from_json "$STALE_BUILDER_PRS")"
+t rehearsal-builder-stale-pr-cannot-satisfy-this-run '' \
+  "$(rehearsal_builder_pr_for_issue_from_json 179 "$STALE_BUILDER_PRS")"
+t rehearsal-builder-run-specific-pr-resolves 12 \
+  "$(rehearsal_builder_pr_for_issue_from_json 179 "$RIGHT_BUILDER_PRS")"
+t rehearsal-builder-wrong-issue-prefix-refused '' \
+  "$(rehearsal_builder_pr_for_issue_from_json 179 "$PREFIX_BUILDER_PRS")"
+
+REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
+gh() {
+  case "$1 $2" in
+    "api repos/owner/sandbox/pulls?state=open&per_page=100")
+      jq '[.[] | .user = {login:"builder"}]' <<<"$RIGHT_BUILDER_PRS" ;;
+    "api -X") printf '%s\n' "$*" >>"$REHEARSAL_GH_CALLS" ;;
+    *) return 2 ;;
+  esac
+}
+rehearsal_close_builder_fixture_prs owner/sandbox builder >/dev/null
+t rehearsal-builder-teardown-closes-all-fixture-prs 2 \
+  "$(wc -l <"$REHEARSAL_GH_CALLS")"
+t rehearsal-builder-teardown-closes-first 1 \
+  "$(grep -cF 'repos/owner/sandbox/pulls/6' "$REHEARSAL_GH_CALLS")"
+t rehearsal-builder-teardown-closes-current 1 \
+  "$(grep -cF 'repos/owner/sandbox/pulls/12' "$REHEARSAL_GH_CALLS")"
+unset -f gh
+
 # --- install.sh: crontab preflight and convergence (#25) ----------------
 # A curated PATH makes "crontab absent" deterministic even on a workstation
 # that happens to have cron installed. Everything install.sh legitimately

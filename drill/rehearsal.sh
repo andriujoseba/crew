@@ -123,10 +123,18 @@ bx() { box exec "$BOX_NAME" -- bash -lc "$1"; }
 # shellcheck disable=SC2034  # read and updated by rehearsal-safety.sh
 REPOS_BACKUP=""
 ACQUIRE_TMP=""
+BUILDER_CLEANUP_REPO=""
+BUILDER_CLEANUP_AUTHOR=""
 # shellcheck source=drill/rehearsal-safety.sh
 . "$ROOT/drill/rehearsal-safety.sh"
+# shellcheck source=shared/test/rehearsal-fixtures.sh
+. "$ROOT/shared/test/rehearsal-fixtures.sh"
 cleanup_all() {
   local rc=$?
+  if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
+    rehearsal_close_builder_fixture_prs \
+      "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
+  fi
   rehearsal_cleanup "$rc"
   if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
     bx "rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz" >/dev/null 2>&1 || true
@@ -359,6 +367,13 @@ else
   if ! gh repo view "$SANDBOX" >/dev/null 2>&1; then
     gh repo create "$SANDBOX" --public --add-readme >/dev/null || fail "sandbox create"
   fi
+  if [ "$ROLE" = "builder" ]; then
+    # Any PR by the builder identity in its role-specific sandbox is a drill
+    # fixture. Keep cleanup armed across every exit path, while retaining the
+    # repo, issues and logs for inspection.
+    BUILDER_CLEANUP_REPO="$SANDBOX"
+    BUILDER_CLEANUP_AUTHOR="$ME2"
+  fi
   # The whole board vocabulary: triage keys on needs-triage and on strays
   # carrying none of ready/claimed/blocked/epic, and the builder keys on
   # ready. A missing label makes a fixture silently unbuildable.
@@ -447,33 +462,42 @@ else
   # counting those launched sessions with nothing to do). The fixture must
   # therefore leave the issue unassigned, or the builder correctly ignores it
   # and the drill would blame the engine for its own bad fixture.
-  bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
-    -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
-    -f "labels[]=ready" --jq .number)"
-  check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length' | grep -qx 0"
-  bx "~/duty/bin/tick.sh" || true
-  wait_for 1800 "builder: opened a PR for the ready issue" bash -c \
-    "gh pr list -R '$SANDBOX' --state open --author '$ME2' --json number --jq 'length' | grep -qE '^[1-9][0-9]*\$'"
-  bpr="$(gh pr list -R "$SANDBOX" --state open --author "$ME2" --json number --jq '.[0].number' 2>/dev/null || echo '')"
-  if [ -n "$bpr" ]; then
-    ok "builder: PR #$bpr authored by $ME2"
-    check "builder: PR branch is build/*" bash -c \
-      "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .head.ref | grep -q '^build/'"
-    check "builder: PR references the issue" bash -c \
-      "gh api 'repos/$SANDBOX/pulls/$bpr' --jq '.body // \"\"' | grep -q '#$bnum'"
+  slot_prs="$(rehearsal_builder_slot_prs "$SANDBOX" "$ME2")"
+  if [ -n "$slot_prs" ]; then
+    echo "builder: occupied build slot at run start for $ME2 in $SANDBOX:"
+    while read -r slot_pr; do
+      echo "  PR #$slot_pr"
+    done <<<"$slot_prs"
+    fail "builder: build slot clear at run start"
+    fail "builder: opened a PR for the ready issue"
   else
-    fail "builder: PR authored by $ME2"
+    ok "builder: build slot clear at run start"
+    bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
+      -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
+      -f "labels[]=ready" --jq .number)"
+    check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
+      "gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length' | grep -qx 0"
+    bx "~/duty/bin/tick.sh" || true
+    wait_for 1800 "builder: opened a PR for the ready issue" \
+      rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum"
+    bpr="$(rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum" 2>/dev/null || echo '')"
+    if [ -n "$bpr" ]; then
+      ok "builder: PR #$bpr authored by $ME2 for issue #$bnum"
+      check "builder: PR branch is build/*" bash -c \
+        "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .head.ref | grep -q '^build/'"
+    else
+      fail "builder: PR authored by $ME2 for issue #$bnum"
+    fi
+    # The claim must be visible on the board, not just in the PR.
+    wait_for 300 "builder: issue moved off ready (claimed)" bash -c \
+      "gh api 'repos/$SANDBOX/issues/$bnum' --jq '[.labels[].name] | index(\"ready\") == null' | grep -qx true"
+    # Re-tick must not phantom-rebuild: this issue still resolves to one PR.
+    BPR="$bpr"
+    bx "~/duty/bin/tick.sh" || true
+    sleep 20
+    check "builder: no duplicate PR on re-tick" test \
+      "$(rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum")" = "$BPR"
   fi
-  # The claim must be visible on the board, not just in the PR.
-  wait_for 300 "builder: issue moved off ready (claimed)" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$bnum' --jq '[.labels[].name] | index(\"ready\") == null' | grep -qx true"
-  # Re-tick must not phantom-rebuild: one PR, not two.
-  BPRS="$(gh pr list -R "$SANDBOX" --state open --author "$ME2" --json number --jq 'length')"
-  bx "~/duty/bin/tick.sh" || true
-  sleep 20
-  check "builder: no duplicate PR on re-tick" bash -c \
-    "[ \"\$(gh pr list -R '$SANDBOX' --state open --author '$ME2' --json number --jq 'length')\" = '$BPRS' ]"
 
   else
   # -- review round through the gates --
@@ -559,6 +583,22 @@ else
     ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' '$head_sha' approve /tmp/drill-body 2>&1 | grep -q 'already present'"
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
+  fi
+fi
+
+if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
+  if rehearsal_close_builder_fixture_prs \
+      "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR"; then
+    if [ -z "$(rehearsal_builder_slot_prs \
+        "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR")" ]; then
+      ok "teardown: no builder fixture PR occupies the next run"
+    else
+      fail "teardown: no builder fixture PR occupies the next run"
+    fi
+    BUILDER_CLEANUP_REPO=""
+    BUILDER_CLEANUP_AUTHOR=""
+  else
+    fail "teardown: close builder fixture PRs"
   fi
 fi
 
