@@ -2807,6 +2807,58 @@ t near-miss-reads-the-head-after-the-slot "$NM_HEAD" \
   "$(nm_payload "$(nm_comment me "{{MARK_ANSWERED}} $NM_HEAD (was $NM_OLD)")" | nm | jq -r .sha)"
 t near-miss-empty-thread-is-empty "" "$(echo '{}' | nm | jq -r .sha)"
 
+# THE PANEL IS NOT REQUESTED FROM A NEAR-MISS, end to end. With only that
+# comment on the thread, answered-head.jq reads no signal, so _request_panel
+# returns at its gate; and request-panel.jq, handed the empty licence that gate
+# would have handed it, names nobody. `me-bot` and `$H` are the request-side
+# fixture's own author and head (above), so this is that block's PR with the
+# incident's comment body substituted for its signal — the only difference.
+NM_ONLY="$(mk_rp "$H" '[]' '[]' \
+  "$(jq -cn --arg b "{{MARK_ANSWERED}} $H" '[{author:{login:"me-bot"},body:$b}]')")"
+t near-miss-answered-head-reads-no-signal "" "$(printf '%s' "$NM_ONLY" | ah_sha)"
+# ...and _request_panel therefore issues nothing. Driven through the gate itself
+# rather than through request-panel.jq, because the sha half of the licence is
+# the CALLER's gate and is deliberately not re-checked in the predicate (that
+# file's header) — asking the predicate would be asking the wrong layer. `gh` is
+# a shell function here, so any API call the gate lets through is recorded
+# instead of made.
+NM_DUTY="$TMP/near-miss-duty"; mkdir -p "$NM_DUTY/lib"
+ln -sfn "$SHARED/lib/jq" "$NM_DUTY/lib/jq"
+NM_STUB="$TMP/near-miss-bin"; mkdir -p "$NM_STUB"
+cat >"$NM_STUB/gh" <<'NMGH'
+#!/usr/bin/env bash
+# Every API call the gate lets through is recorded here instead of made.
+printf '%s\n' "$*" >>"$NM_GH_LOG"
+NMGH
+chmod +x "$NM_STUB/gh"
+# Driven in a child shell with that stub first on PATH, rather than with a `gh`
+# function in this one: a fixture that calls an engine function directly drags
+# the engine's own dataflow into this file's static analysis, and the child
+# keeps the two apart.
+nm_request() {  # nm_request <payload> <call-log> -> how many API calls it made
+  local payload="$1" gh_log="$2"
+  : >"$gh_log"
+  PATH="$NM_STUB:$PATH" NM_GH_LOG="$gh_log" ME=me-bot MARK_ANSWERED="$RP_MARK" \
+    DUTY_DIR="$NM_DUTY" LABEL_BOTS_REVIEWING=state:bots-reviewing \
+    bash -c 'set -uo pipefail
+      # shellcheck disable=SC1090
+      source "$1/lib/common.sh"
+      # shellcheck disable=SC1090
+      source "$1/lib/duty-builder.sh"
+      _request_panel o/r 311 "$2" "$3" green "$4"' \
+    nm_request "$SHARED" "$payload" "$PANEL" "$H" >/dev/null 2>&1
+  awk 'NF' "$gh_log" | wc -l | tr -d ' '
+}
+t near-miss-request-issues-no-review-request 0 \
+  "$(nm_request "$NM_ONLY" "$TMP/near-miss-gh-calls")"
+# The control: the same payload with a REAL signal in place of the near-miss
+# does request, so the zero above is the near-miss being refused and not the
+# harness being inert.
+NM_REAL_ONLY="$(mk_rp "$H" '[]' '[]' \
+  "$(jq -cn --arg b "$RP_MARK $H" '[{author:{login:"me-bot"},body:$b}]')")"
+t near-miss-control-real-signal-does-request 3 \
+  "$(nm_request "$NM_REAL_ONLY" "$TMP/near-miss-gh-calls-control")"
+
 # The detection over a listing. Fixtures, never a live box (#319's test plan).
 NM_LISTING="$(jq -cn --arg head "$NM_HEAD" --arg old "$NM_OLD" '[
   {number:311,isDraft:false,headRefOid:$head,comments:[
