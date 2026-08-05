@@ -599,6 +599,27 @@ fixture/notify-only
 fixture/work-only" "$(sort "$NLOG")"
 t notify-repos-overlap-once 1 "$(grep -cxF fixture/both "$NLOG")"
 
+# A present but unreadable additive registry takes the same explicit fallback
+# path: the work set remains covered, the sweep succeeds, and the operator is
+# told that only repos.txt participated.
+chmod 000 "$LHOME/duty/notify-repos.txt"
+: >"$NLOG"
+if notify_unreadable_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" NLOG="$NLOG" \
+  /bin/bash "$LHOME/duty/bin/notify.sh")"; then
+  notify_unreadable_rc=0
+else
+  notify_unreadable_rc=$?
+fi
+t notify-repos-unreadable-rc 0 "$notify_unreadable_rc"
+t notify-repos-unreadable-fallback "fixture/both
+fixture/work-only" "$(sort "$NLOG")"
+case "$notify_unreadable_out" in
+  *"notify-repos.txt missing — falling back to repos.txt"*) r1=logged ;;
+  *) r1=SILENT ;;
+esac
+t notify-repos-unreadable-fallback-is-logged logged "$r1"
+chmod 600 "$LHOME/duty/notify-repos.txt"
+
 # With no additive registry the work set is still watched, and the existing
 # fallback log remains explicit.
 rm -f "$LHOME/duty/notify-repos.txt"

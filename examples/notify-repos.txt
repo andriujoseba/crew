@@ -1,5 +1,5 @@
-# notify-repos.txt — the operator notifier's sweep list. One owner/repo per
-# line; # and blanks ignored.
+# notify-repos.txt — additional targets for the operator notifier. One
+# owner/repo per line; # and blanks ignored.
 #
 # This list ADDS cross-repo handoff targets to repos.txt. Working a repo
 # already implies notification coverage; list here the extra repos where the
