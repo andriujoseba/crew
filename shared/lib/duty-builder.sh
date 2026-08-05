@@ -14,16 +14,73 @@
 
 BUILDER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Mutates the caller's dynamically scoped ready_count/ready_items. Withheld
-# items must disappear from both the prompt and the eventual seen-ledger.
+# Mutates the caller's dynamically scoped ready_count/ready_items/slot_prs.
+# Withheld items must disappear from both the prompt and the eventual
+# seen-ledger. slot_prs is the gate's OWN record that it fired: downstream, the
+# no-duty line has to name which of three causes zeroed the tick, and once this
+# has run, a zeroed ready_count is indistinguishable from an empty board and a
+# ledgered one (#345).
 _gate_ready_for_open_pr() {
   if [ "$open_pr_count" -gt 0 ] && [ "$ready_count" -gt 0 ]; then
     log "$R: $open_pr_count open authored PR(s) occupy the build slot — not claiming a ready issue"
+    # Unconditional: the gate's record of having fired must not depend on the
+    # id render succeeding. If open_pr_ids is empty (jq failing on mine_json
+    # after `jq length` returned non-zero) the count still names the slot, and
+    # the no-duty line cannot fall through to blaming the ledger or an empty
+    # board for what the slot did (#345, review condition).
+    slot_prs="${open_pr_ids:-$open_pr_count open PR(s)}"
     ready_count=0
     ready_items=""
     return 0
   fi
   return 1
+}
+
+# _no_build_duty_reason BOARD_READY LEDGERED_ROUNDS SLOT_PRS BOARD_READ — the
+# parenthetical on `no build duty`.
+#
+# One spelling for three causes is a diagnosis tax on every reader. On
+# 2026-08-03 the operator read `build duty (ready unclaimed=8)` → claim → `no
+# build duty` ten minutes later, which is indistinguishable from the burial bug
+# #264 exists to prevent; an hour of ledger reads later the answer was that the
+# slot was held. The prefix stays `$R: no build duty` so `crew status` and every
+# grep consumer are untouched — only the parenthetical is new (#345).
+#
+# The order is causal, not cosmetic — first match wins, and the first match is
+# the most useful answer, not the only true one:
+#   slot        the gate zeroed a ready count that was still non-zero AFTER the
+#               ledger ran, so the ready side is the slot's doing. The rounds
+#               side can be ledger-held on the same tick — an open PR whose
+#               owed round is already seen at that head — and this branch then
+#               prints the slot clause alone: incomplete, never false, and the
+#               slot is the answer an operator is actually looking for.
+#   seen-ledger nothing is left for the slot to explain, and the ledger hid all
+#               of what was enumerated. In this branch the counts are
+#               whole-set: a partial suppression leaves ready_count/cr_count
+#               non-zero and never reaches here.
+#   board empty what is left when nothing was enumerated at all.
+# `board unread` is the fourth state and not a fourth cause: the issue listing
+# failed, so which of the two above holds is unknown and neither may be
+# asserted. The warn at that call site names the failure; this says only that
+# the board behind the line was never read.
+_no_build_duty_reason() {
+  local board_ready="$1" ledgered_rounds="$2" slot_prs="$3" board_read="$4"
+  if [ -n "$slot_prs" ]; then
+    # The board count is the pre-ledger, pre-gate one on purpose: it is the
+    # board's own fact, the number an operator sees on the queue, and it is what
+    # makes #264's discriminating read work from a single tick's log.
+    printf 'slot held by %s; board holds %s ready' "$slot_prs" "$board_ready"
+  elif [ "$board_ready" -gt 0 ] && [ "$ledgered_rounds" -gt 0 ]; then
+    printf '%s ready, %s round(s) held by seen-ledger' "$board_ready" "$ledgered_rounds"
+  elif [ "$board_ready" -gt 0 ]; then
+    printf '%s ready held by seen-ledger' "$board_ready"
+  elif [ "$ledgered_rounds" -gt 0 ]; then
+    printf '%s round(s) held by seen-ledger' "$ledgered_rounds"
+  elif [ "$board_read" = 0 ]; then
+    printf 'board unread'
+  else
+    printf 'board empty'
+  fi
 }
 
 # _ready_lines_to_commit PRE_LINES POST_IDS — preserve the whole enumerated
@@ -1168,15 +1225,22 @@ _builder_repo() {
   # the same snapshot the pickable set came from.
   local ready_json ready_count ready_assigned cr_count open_pr_count head_checks="-"
   local ready_items="" cr_items=""
+  # The same one listing, two more derived facts — the board's own numbers,
+  # taken before the seen-ledger hides anything and before the slot gate zeroes
+  # the set, because by the time the no-duty line is reached every survivor is
+  # zero and none of them says which zero this is (#345).
+  local ready_board=0 board_read=1 ledgered_rounds=0 slot_prs="" open_pr_ids=""
   ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
     --json number,assignees,updatedAt 2>/dev/null || echo err)"
   if [ "$ready_json" = "err" ]; then
     ready_count=err
+    board_read=0
   else
     ready_items="$(printf '%s' "$ready_json" | jq -r --arg repo "$R" \
       '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null || true)"
     ready_assigned="$(printf '%s' "$ready_json" \
       | jq '[.[] | select((.assignees | length) > 0)] | length' 2>/dev/null || echo 0)"
+    ready_board="$(printf '%s\n' "$ready_items" | awk 'NF{c++} END{print c+0}')"
     ready_count="$(printf '%s\n' "$ready_items" \
       | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
     # ready+assigned is a board anomaly (a claim swaps ready→claimed); it
@@ -1250,6 +1314,10 @@ _builder_repo() {
     head_checks="$(awk -F'\t' '$5 == "owed" && $4 == "none" { s = s (s ? "; " : "") $1 " (no checks configured)" } END { print s }' <<<"$mine_rows")"
     [ -n "$head_checks" ] && log "$R: round(s) admitted with no check at the head — $head_checks"
     head_checks="${head_checks:--}"
+    # cr_count runs the SAME filter over a different set, so the ledger cause
+    # has to be attributed per count or the no-duty line names the wrong noun
+    # (#345). This is the rounds side's pre-filter number.
+    ledgered_rounds="$(printf '%s\n' "$cr_items" | awk 'NF{c++} END{print c+0}')"
     cr_count="$(printf '%s\n' "$cr_items" \
       | ledger_filter "$DUTY_DIR/.seen-build" | awk 'NF{c++} END{print c+0}')"
   fi
@@ -1271,6 +1339,12 @@ _builder_repo() {
     # still wakes so it can be answered, but ready work never starts beside an
     # awaiting-review or draft PR. Post-merge waits have no open PR to count.
     open_pr_count="$(printf '%s' "$mine_json" | jq 'length' 2>/dev/null || echo 0)"
+    # Named, not counted: `slot held by heavy-duty/ceremony#231` is the answer
+    # to "why did the claim not happen", and the count alone is not (#345).
+    # Sorted so the line is stable across ticks whatever order gh returns.
+    open_pr_ids="$(printf '%s' "$mine_json" \
+      | jq -r --arg repo "$R" '[.[].number] | sort | map("\($repo)#\(.)") | join(", ")' \
+        2>/dev/null || true)"
     _gate_ready_for_open_pr || true
   fi
   if [ "$cr_count" = "err" ]; then
@@ -1303,7 +1377,8 @@ _builder_repo() {
       printf '%s\n%s\n' "$ready_commit" "$cr_items" | ledger_commit "$DUTY_DIR/.seen-build"
     fi
   else
-    log "$R: no build duty"
+    log "$R: no build duty ($(_no_build_duty_reason \
+      "$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read"))"
   fi
 
   # --- HANDOFF: a converged round of mine that owes the human. Convergence

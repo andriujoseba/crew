@@ -161,20 +161,44 @@ open_pr_count=1
 ready_count=1
 ready_items='o/r#7 2026-07-29T10:00:00Z'
 cr_items='o/r#166 2026-07-29T11:00:00Z'
+open_pr_ids='o/r#166'
+slot_prs=''
 _gate_ready_for_open_pr; rc=$?
 t awaiting-review-occupies-slot 0 "$ready_count"
 t awaiting-review-gate-fired 0 "$rc"
+# The gate is the only thing that knows it fired: downstream, a zeroed
+# ready_count is indistinguishable from an empty board (#345).
+t gate-records-the-holding-pr 'o/r#166' "$slot_prs"
 GATE_LEDGER="$TMP/gated-seen"
 printf '%s\n%s\n' "$ready_items" "$cr_items" | ledger_commit "$GATE_LEDGER"
 t gated-ready-absent-from-seen 0 "$(grep -c '^o/r#7 ' "$GATE_LEDGER")"
 t owed-round-still-enters-seen 1 "$(grep -c '^o/r#166 ' "$GATE_LEDGER")"
 
+# The record is unconditional: it must not depend on the id render succeeding.
+# If open_pr_ids came back empty while the gate fired, the count still names the
+# slot — otherwise the no-duty line blames the ledger or an empty board for what
+# the slot did, which is this issue's own defect (#345, review condition).
+open_pr_count=2
+ready_count=1
+ready_items='o/r#9 2026-07-29T13:00:00Z'
+open_pr_ids=''
+slot_prs=''
+_gate_ready_for_open_pr; rc=$?
+t gate-fired-without-rendered-ids 0 "$rc"
+t gate-record-survives-empty-ids '2 open PR(s)' "$slot_prs"
+t gate-record-empty-ids-still-blames-slot \
+  'slot held by 2 open PR(s); board holds 4 ready' \
+  "$(_no_build_duty_reason 4 0 "$slot_prs" 1)"
+
 open_pr_count=0
 ready_count=1
 ready_items='o/r#8 2026-07-29T12:00:00Z'
+open_pr_ids=''
+slot_prs=''
 _gate_ready_for_open_pr; rc=$?
 t post-merge-closed-pr-frees-slot 1 "$ready_count"
 t post-merge-gate-not-fired 1 "$rc"
+t gate-silent-when-it-did-not-fire '' "$slot_prs"
 
 echo "claim: passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
