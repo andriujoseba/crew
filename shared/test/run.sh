@@ -4442,6 +4442,136 @@ if _wt_preserve "$P_WT" build/nothing-at-risk >/dev/null; then r1=CLAIMED; else 
 t p168-clean-capture-refuses refused "$r1"
 t p168-clean-capture-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
 
+# --- the index is uncommitted work too (@codex-bot-andresmgsl, #376) ----------
+#
+# A capture built from the working tree alone answers the wrong question. For a
+# partially staged path the index holds ONE version and the working tree
+# ANOTHER, and both are uncommitted: preserving the second and forcing the
+# worktree away destroys the first, which is this issue's own failure mode
+# reached through its own fix. Driven end to end through `_wt_release` because
+# that is the level that decides a `--force`, and read from the BARE remote
+# after the worktree is gone, because "still retrievable" is the claim.
+#
+# THE ASSERTIONS GO PAST THE TIP. A suite that checks only
+# `refs/heads/wip/<branch>:<file>` passes on the defective capture — the tip is
+# the half that survives it. The staged version's own assertion is what bites.
+_p168_fixture partial-stage
+printf 'carefully-staged\n' >"$P_WT/README.md"
+git -C "$P_WT" add README.md
+printf 'later-working-edit\n' >"$P_WT/README.md"
+t p168-partial-stage-is-partially-staged 'MM README.md' \
+  "$(git -C "$P_WT" status --porcelain --untracked-files=all)"
+# The chain is idempotent as the single commit was: a second pass finds its own
+# tip AND its own parent already on the remote and confirms rather than minting
+# a duplicate pair.
+P_PS1="$(_wt_preserve "$P_WT" build/partial-stage)"
+P_PS2="$(_wt_preserve "$P_WT" build/partial-stage)"
+t p168-partial-stage-rerun-confirms-the-chain "$P_PS1" "$P_PS2"
+t p168-partial-stage-rerun-leaves-one-ref 1 "$(_p168_wip_refs "$P_BARE")"
+P_LG="$P168/ledger-partial"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/partial-stage "$P_WT" 50 "$P_LG")"; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-partial-stage-released released "$r1"
+t p168-partial-stage-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+# The tip is the working tree, which is what `checkout FETCH_HEAD` should land
+# somebody on...
+t p168-partial-stage-tip-is-the-working-tree later-working-edit \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/partial-stage:README.md)"
+# ...and the staged bytes are the commit below it, on the remote, after the only
+# copy that was ever local has been forced away.
+t p168-partial-stage-parent-is-the-index carefully-staged \
+  "$(git -C "$P_BARE" show 'refs/heads/wip/build/partial-stage^:README.md')"
+P_PS_SEEN="$(for P_PS_C in refs/heads/wip/build/partial-stage \
+  'refs/heads/wip/build/partial-stage^'; do
+  git -C "$P_BARE" show "$P_PS_C:README.md"
+done | sort -u | tr '\n' ' ')"
+t p168-partial-stage-both-versions-survive 'carefully-staged later-working-edit ' \
+  "$P_PS_SEEN"
+# The record is the durable half, so it names the half nobody would think to
+# look for — the sha, and the ref-relative way to reach it.
+P_REC="$(cat "$P168_PO_BODY")"
+P_PS_STAGED="$(git -C "$P_BARE" rev-parse 'refs/heads/wip/build/partial-stage^')"
+case "$P_REC" in *"$P_PS_STAGED"*) r1=named ;; *) r1=MISSING ;; esac
+t p168-record-names-the-staged-snapshot named "$r1"
+case "$P_REC" in *'FETCH_HEAD^'*) r1=reachable ;; *) r1=MISSING ;; esac
+t p168-record-carries-the-staged-recovery reachable "$r1"
+case "$P_OUT" in *'FETCH_HEAD^'*) r1=named ;; *) r1=MISSING ;; esac
+t p168-log-names-the-staged-snapshot named "$r1"
+
+# The shape the working-tree capture cannot see AT ALL: content staged and then
+# put back in the tree. `git status` calls it dirty (`MM`), so the removal
+# refuses — and the capture equalled HEAD's tree, so the preservation refused
+# too, and the worktree was stuck on every five-minute tick for the life of the
+# box with nothing preserved and nothing said. The refusal now reads "neither
+# half holds anything", which is what releases this one.
+_p168_fixture staged-only
+printf 'staged-then-reverted\n' >"$P_WT/README.md"
+git -C "$P_WT" add README.md
+printf 'engine\n' >"$P_WT/README.md"
+t p168-staged-only-worktree-matches-head "" \
+  "$(git -C "$P_WT" diff HEAD --name-only)"
+P_LG="$P168/ledger-staged-only"
+if _wt_release "$P_CLONE" o/r build/staged-only "$P_WT" 51 "$P_LG" >/dev/null; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-staged-only-released released "$r1"
+t p168-staged-only-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+t p168-staged-only-pushes-a-ref 1 "$(_p168_wip_refs "$P_BARE")"
+t p168-staged-only-preserves-the-staged-bytes staged-then-reverted \
+  "$(git -C "$P_BARE" show 'refs/heads/wip/build/staged-only^:README.md')"
+
+# A ref already on the remote from a pass that knew nothing about indexes — the
+# upgrade case, and the must-fail for checking the chain rather than the tip.
+# The tip matches what this pass captured (the working tree did not change), so
+# a confirmation on the tip alone would return "already preserved" and force the
+# worktree away with the staged bytes on no remote at all.
+_p168_fixture stage-after-preserve
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_SAP1="$(_wt_preserve "$P_WT" build/stage-after-preserve)"
+read -r _ _ _ _ P_SAP_STAGED1 <<<"$P_SAP1"
+t p168-plain-dirt-has-no-staged-snapshot - "$P_SAP_STAGED1"
+t p168-plain-dirt-is-one-commit 1 \
+  "$(git -C "$P_BARE" rev-list --count refs/heads/wip/build/stage-after-preserve \
+    ^"$(git -C "$P_WT" rev-parse HEAD)")"
+printf 'now-staged\n' >"$P_WT/README.md"
+git -C "$P_WT" add README.md
+printf 'engine\n' >"$P_WT/README.md"
+if P_SAP2="$(_wt_preserve "$P_WT" build/stage-after-preserve)"; then
+  r1=pushed
+else
+  r1=REFUSED
+fi
+t p168-stage-after-preserve-pushes pushed "$r1"
+case "$P_SAP2" in "$P_SAP1") r1=CONFIRMED_STALE ;; *) r1=advanced ;; esac
+t p168-stage-after-preserve-advances-the-ref advanced "$r1"
+t p168-stage-after-preserve-carries-the-index now-staged \
+  "$(git -C "$P_BARE" show 'refs/heads/wip/build/stage-after-preserve^:README.md')"
+
+# An index that cannot be read is not an empty one. Corrupted here because that
+# is deterministic wherever this runs (a chmod proves nothing under root), and
+# the shape is the same either way: what is staged is unknown, and unknown must
+# not be summarised as nothing on the way to a `--force`. No capture, no push,
+# no removal — every byte still on disk.
+_p168_fixture unreadable-index
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+printf 'not-an-index-at-all' >"$(git -C "$P_WT" rev-parse --git-path index)"
+if _wt_index_tree "$P_WT" >/dev/null 2>&1; then r1=CLAIMED; else r1=refused; fi
+t p168-index-read-fails-closed refused "$r1"
+if _wt_preserve "$P_WT" build/unreadable-index >/dev/null 2>&1; then
+  r1=CLAIMED
+else
+  r1=refused
+fi
+t p168-unreadable-index-capture-refuses refused "$r1"
+t p168-unreadable-index-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+t p168-unreadable-index-keeps-the-work 'rescue me' \
+  "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+
 # 2. Only-ignored dirt: removed, and nothing pushed. Nothing was at risk, so
 # there is no ref to explain and no force to earn — the clean removal already
 # succeeds, which is why the preservation path is reached only by a refusal.
@@ -4759,6 +4889,32 @@ t p168-capture-never-stashes 0 "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'gi
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
 t p168-capture-uses-a-scratch-index 3 \
   "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'GIT_INDEX_FILE="\$idx"')"
+# The REAL index is read the same way: through a copy, never in place. This is
+# not fussiness — `git write-tree` rewrites the cache-tree extension into
+# whichever index it is handed, so a read that pointed GIT_INDEX_FILE at the
+# worktree's own index would modify the worktree this module promises to leave
+# byte-identical. The copy is the only thing standing between those two, and it
+# is one line somebody would delete as redundant.
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_IDXFN="$(awk '/^_wt_index_tree\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+case "$P_IDXFN" in *'cp "$real" "$copy"'*) r1=copied ;; *) r1=IN_PLACE ;; esac
+t p168-index-read-through-a-copy copied "$r1"
+t p168-index-read-never-in-place 0 \
+  "$(printf '%s\n' "$P_IDXFN" | grep -v '^[[:space:]]*#' | grep -c 'GIT_INDEX_FILE="\$real"')"
+# ...and it fails closed, exactly as the status read does: an index that cannot
+# be written to a tree is unknown content, and unknown is not empty.
+case "$P_IDXFN" in *'|| return 1'*) r1=closed ;; *) r1=OPEN ;; esac
+t p168-index-fn-fails-closed closed "$r1"
+# The staged snapshot is the tip's PARENT, never the tip: whoever runs the
+# recovery command lands on the working tree, which is what they were told they
+# would get. Read as an ordering, since both commits are built the same way and
+# the swap would pass every "both versions survive" assertion.
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_PRESFN="$(awk '/^_wt_preserve\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+P_STAGED_LN="$(printf '%s\n' "$P_PRESFN" | grep -n 'staged_commit="\$(_wt_commit' | head -1 | cut -d: -f1)"
+P_TIP_LN="$(printf '%s\n' "$P_PRESFN" | grep -n 'commit="\$(_wt_commit "\$path" "\$tree"' | head -1 | cut -d: -f1)"
+t p168-staged-commit-precedes-the-tip yes \
+  "$([ -n "$P_STAGED_LN" ] && [ -n "$P_TIP_LN" ] && [ "$P_STAGED_LN" -lt "$P_TIP_LN" ] && echo yes || echo NO)"
 # The record goes through post-once.sh rather than a bare POST: its dedup is an
 # exact body match against the comments endpoint, so a tick that dies between
 # the push and the removal re-records nothing. A local ledger cannot promise
