@@ -3,7 +3,8 @@
 #
 # Run on a box HOST (box + rig installed), from a crew checkout:
 #
-#   drill/rehearsal.sh [--agent <name>] [--box <name>] [--tree <path>]
+#   drill/rehearsal.sh [--agent <name>] [--box <name>]
+#     [--tree <clean-git-checkout>]
 #     [--remote <url>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]
 #
 # Phase 1 (pre-auth) runs unconditionally: install the engine in the drill
@@ -33,7 +34,7 @@ BOX_NAME=""
 # after that work merged the drill still rehearsed a fork's stale branch by
 # default, and an operator running `drill/rehearsal.sh` with no flags tested
 # code that was not what the fleet deploys. Pass --tree/--remote/--ref to
-# override; --tree is what you want when drilling a working checkout.
+# override; --tree is what you want when drilling a clean git checkout.
 REF="${CREW_DRILL_REF:-main}"
 REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 TREE=""
@@ -47,7 +48,7 @@ ROLE="reviewer"
 
 usage() {
   echo "usage: drill/rehearsal.sh [--agent <name>] [--role triage|builder|reviewer]"
-  echo "         [--box <name>] [--tree <path>] [--remote <url>] [--ref <git-ref>]"
+  echo "         [--box <name>] [--tree <clean-git-checkout>] [--remote <url>] [--ref <git-ref>]"
   echo "         [--sandbox <owner/repo>] [--quick]"
 }
 
@@ -123,6 +124,7 @@ bx() { box exec "$BOX_NAME" -- bash -lc "$1"; }
 # shellcheck disable=SC2034  # read and updated by rehearsal-safety.sh
 REPOS_BACKUP=""
 ACQUIRE_TMP=""
+BOX_TOUCHED=0
 BUILDER_CLEANUP_REPO=""
 BUILDER_CLEANUP_AUTHOR=""
 # shellcheck source=drill/rehearsal-safety.sh
@@ -131,13 +133,15 @@ BUILDER_CLEANUP_AUTHOR=""
 . "$ROOT/drill/rehearsal-fixtures.sh"
 cleanup_all() {
   local rc=$?
-  if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
-    rehearsal_close_builder_fixture_prs \
-      "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
-  fi
-  rehearsal_cleanup "$rc"
-  if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
-    bx "rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz" >/dev/null 2>&1 || true
+  if [ "$BOX_TOUCHED" -eq 1 ]; then
+    if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
+      rehearsal_close_builder_fixture_prs \
+        "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
+    fi
+    rehearsal_cleanup "$rc"
+    if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
+      bx "rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz" >/dev/null 2>&1 || true
+    fi
   fi
   if [ -n "$ACQUIRE_TMP" ] && [ -d "$ACQUIRE_TMP" ]; then
     rm -rf -- "$ACQUIRE_TMP"
@@ -149,12 +153,6 @@ command -v box >/dev/null || { echo "box CLI not found — this runs on a box ho
 command -v gh  >/dev/null || { echo "gh not found on the host (phase 2 needs it)"; exit 1; }
 command -v jq  >/dev/null || { echo "jq not found on the host"; exit 1; }
 
-# --- the drill box -------------------------------------------------------
-if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
-  echo "== minting $BOX_NAME from the $AGENT-box template"
-  box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
-fi
-check "box reachable" bx "true"
 trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -165,6 +163,21 @@ if [ -n "$TREE" ]; then
   SOURCE_TREE="$(cd "$TREE" 2>/dev/null && pwd)" \
     || { echo "phase 0: --tree '$TREE' is not a readable directory"; exit 1; }
   SOURCE_DESC="tree $SOURCE_TREE"
+  if ! git -C "$SOURCE_TREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "phase 0: --tree '$TREE' must be a git checkout with a clean working tree" >&2
+    exit 1
+  fi
+  if ! TREE_STATUS="$(git -C "$SOURCE_TREE" status --short --untracked-files=all 2>&1)"; then
+    echo "phase 0: could not inspect --tree '$TREE' for uncommitted changes: $TREE_STATUS" >&2
+    exit 1
+  fi
+  if [ -n "$TREE_STATUS" ]; then
+    echo "phase 0: --tree '$TREE' has uncommitted changes:" >&2
+    printf '%s\n' "$TREE_STATUS" >&2
+    # shellcheck disable=SC2016  # explain the literal hire argument to the operator
+    echo 'phase 0: refusing because tar czf … shared VERSION archives working-tree content while crew hire --ref "$SOURCE_SHA" installs committed content' >&2
+    exit 1
+  fi
 else
   SOURCE_TREE="$ACQUIRE_TMP/source"
   SOURCE_DESC="remote $REMOTE ref $REF"
@@ -182,6 +195,17 @@ SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
 ENGINE_ARCHIVE="$ACQUIRE_TMP/crew-engine.tgz"
 tar czf "$ENGINE_ARCHIVE" -C "$SOURCE_TREE" shared VERSION \
   || { echo "phase 0: could not archive the engine from $SOURCE_DESC at $SOURCE_SHA"; exit 1; }
+
+# --- the drill box -------------------------------------------------------
+# Acquisition and the --tree clean-checkout guard stay above this line: an
+# input the drill refuses must not create or mutate a box before it says why.
+if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
+  echo "== minting $BOX_NAME from the $AGENT-box template"
+  box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
+fi
+BOX_TOUCHED=1
+check "box reachable" bx "true"
+
 # shellcheck disable=SC2016  # expanded by bash inside the box
 box exec "$BOX_NAME" -- bash -lc '
   set -euo pipefail

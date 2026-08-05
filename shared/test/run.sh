@@ -761,6 +761,7 @@ mkdir -p "$P0SHIM" "$P0HOME"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0LOG"\ncase "$1" in\n  list) printf "[]\\n" ;;\n  new|exec) exit 0 ;;\n  *) exit 2 ;;\nesac\n' >"$P0SHIM/box"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$P0SHIM/gh"
 chmod +x "$P0SHIM/box" "$P0SHIM/gh"
+: >"$P0LOG"
 
 if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
   bash "$ROOT/drill/rehearsal.sh" --remote "$TMP/no-such-remote" \
@@ -775,6 +776,111 @@ t rehearsal-bad-ref-attributed attributed "$r1"
 t rehearsal-bad-ref-no-tick 0 "$(grep -cF 'exec crew-drill -- bash -lc ~/duty/bin/tick.sh' "$P0LOG" || true)"
 case "$p0out" in *"fixture tests green"*|*"FAIL install"*) r1=cascaded ;; *) r1=stopped ;; esac
 t rehearsal-bad-ref-no-cascade stopped "$r1"
+
+# --tree is a promise that phase 0's working-tree archive and crew hire's
+# committed ref describe one tree (#183). Refuse every dirty shape before the
+# first box operation, and show the paths plus both consumers in the error.
+P0TREE="$TMP/phase0-tree"
+mkdir -p "$P0TREE/shared/test" "$P0TREE/cli"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0TREE/shared/install.sh"
+printf '#!/usr/bin/env bash\nprintf "failed 0\\n"\n' >"$P0TREE/shared/test/run.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$P0TREE/cli/crew"
+printf '0.0.0-test\n' >"$P0TREE/VERSION"
+chmod +x "$P0TREE/shared/install.sh" "$P0TREE/shared/test/run.sh" "$P0TREE/cli/crew"
+git -C "$P0TREE" init -q
+git -C "$P0TREE" add .
+git -C "$P0TREE" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+case "$p0out" in *"has uncommitted changes"*) r2=refused ;; *) r2=passed-guard ;; esac
+t rehearsal-clean-tree-passes-guard passed-guard "$r2"
+if grep -Eq '^(list|new) ' "$P0LOG"; then r2=reached-box; else r2=stopped-early; fi
+t rehearsal-clean-tree-reaches-box reached-box "$r2"
+
+printf '# dirty shared\n' >>"$P0TREE/shared/install.sh"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-shared-rc 1 "$r1"
+case "$p0out" in
+  *"shared/install.sh"*"tar czf"*"shared VERSION"*"crew hire --ref"*) r2=attributed ;;
+  *) r2=missing ;;
+esac
+t rehearsal-dirty-shared-attributed attributed "$r2"
+t rehearsal-dirty-shared-before-box 0 "$(wc -l <"$P0LOG")"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal-all.sh" --roles reviewer --tree "$P0TREE" \
+    --quick --no-app --no-config-drill --no-install-drill 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-all-passes-dirty-refusal-rc 1 "$r1"
+case "$p0out" in *"has uncommitted changes"*"FAIL       reviewer"*) r2=passed ;; *) r2=swallowed ;; esac
+t rehearsal-all-passes-dirty-refusal passed "$r2"
+
+git -C "$P0TREE" restore shared/install.sh
+printf '# dirty cli\n' >>"$P0TREE/cli/crew"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-cli-rc 1 "$r1"
+case "$p0out" in *"cli/crew"*) r2=named ;; *) r2=missing ;; esac
+t rehearsal-dirty-cli-names-path named "$r2"
+t rehearsal-dirty-cli-before-box 0 "$(wc -l <"$P0LOG")"
+
+git -C "$P0TREE" restore cli/crew
+printf '0.0.1-staged\n' >"$P0TREE/VERSION"
+git -C "$P0TREE" add VERSION
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-staged-rc 1 "$r1"
+case "$p0out" in *"VERSION"*) r2=named ;; *) r2=missing ;; esac
+t rehearsal-dirty-staged-names-path named "$r2"
+t rehearsal-dirty-staged-before-box 0 "$(wc -l <"$P0LOG")"
+
+git -C "$P0TREE" restore --staged --worktree VERSION
+printf 'untracked\n' >"$P0TREE/NEW-FILE"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-untracked-rc 1 "$r1"
+case "$p0out" in *"NEW-FILE"*) r2=named ;; *) r2=missing ;; esac
+t rehearsal-dirty-untracked-names-path named "$r2"
+t rehearsal-dirty-untracked-before-box 0 "$(wc -l <"$P0LOG")"
+
+P0NONGIT="$TMP/phase0-not-git"
+mkdir -p "$P0NONGIT/shared/test"
+printf 'fixture\n' >"$P0NONGIT/shared/install.sh"
+printf 'fixture\n' >"$P0NONGIT/shared/test/run.sh"
+printf 'fixture\n' >"$P0NONGIT/VERSION"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0NONGIT" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-non-git-tree-rc 1 "$r1"
+case "$p0out" in *"must be a git checkout with a clean working tree"*) r2=owned ;; *) r2=raw ;; esac
+t rehearsal-non-git-tree-owned-error owned "$r2"
+t rehearsal-non-git-tree-before-box 0 "$(wc -l <"$P0LOG")"
+
+# Remote/ref acquisition already uses git clone, but must not inherit the
+# --tree-only clean-status probe.
+P0GSHIM="$TMP/phase0-git-bin"
+P0GITLOG="$TMP/phase0-git.log"
+REAL_GIT="$(command -v git)"
+mkdir -p "$P0GSHIM"
+# shellcheck disable=SC2016  # expanded by the shim at execution time
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0GITLOG"\nexec "$REAL_GIT" "$@"\n' >"$P0GSHIM/git"
+chmod +x "$P0GSHIM/git"
+: >"$P0GITLOG"
+PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" \
+  bash "$ROOT/drill/rehearsal.sh" --remote "$TMP/no-such-remote" \
+    --ref nosuchbranch --quick >/dev/null 2>&1 || true
+if grep -q '^status ' "$P0GITLOG"; then r2=probed; else r2=untouched; fi
+t rehearsal-remote-skips-clean-tree-probe untouched "$r2"
 
 BADTREE="$TMP/bad-tree"
 mkdir -p "$BADTREE"
