@@ -737,6 +737,8 @@ SDUTY="$SHOME/duty"
 SCRON="$TMP/survival-crontab"
 SURVIVAL_CLOCK=0
 SURVIVAL_TICK_AT=""
+SURVIVAL_RESTAMP_AT=""
+SURVIVAL_DISARM_AT=""
 
 # survival_reset <engine> <armed|disarmed> [last duty.log line]
 # The third argument is the whole difference between the two paths: a borrowed
@@ -751,6 +753,8 @@ survival_reset() {
   [ -z "${3:-}" ] || printf '%s\n' "$3" >"$SDUTY/duty.log"
   SURVIVAL_CLOCK=0
   SURVIVAL_TICK_AT=""
+  SURVIVAL_RESTAMP_AT=""
+  SURVIVAL_DISARM_AT=""
 }
 
 bx() { HOME="$SHOME" PATH="$ISHIM" CRON_STATE="$SCRON" bash -c "$1"; }
@@ -759,11 +763,19 @@ source "$ROOT/drill/install-survival.sh"
 # The two seams, taken over: the clock only moves when the predicate sleeps, so
 # the real 300+90s budget is exercised in no wall time at all — and the tick
 # lands when the fixture's boundary strikes, the way a surviving engine's does.
+# The two *_AT breakages are how a box is made to lose engine or cron INSIDE the
+# wait window, which is the only place the second engine/cron read can see them.
 install_survival_now() { printf '%s\n' "$SURVIVAL_CLOCK"; }
 install_survival_sleep() {
   SURVIVAL_CLOCK=$((SURVIVAL_CLOCK + $1))
   if [ -n "$SURVIVAL_TICK_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_TICK_AT" ]; then
     printf 'tick %s duty run end\n' "$SURVIVAL_TICK_AT" >>"$SDUTY/duty.log"
+  fi
+  if [ -n "$SURVIVAL_RESTAMP_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_RESTAMP_AT" ]; then
+    printf 'crew@9.9.9-someone-elses\n' >"$SDUTY/VERSION"
+  fi
+  if [ -n "$SURVIVAL_DISARM_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_DISARM_AT" ]; then
+    : >"$SCRON"
   fi
 }
 # Which surfaces the detail blames, as a list — the D2 assertion in one line.
@@ -817,6 +829,93 @@ t survival-fresh-box-with-no-tick-names-tick tick "$(survival_surfaces)"
 case "$INSTALL_SURVIVAL_DETAIL" in *"duty.log"*"390s"*) r1=says-what-it-read ;; *) r1=OPAQUE ;; esac
 t survival-fresh-box-with-no-tick-says-what-it-read says-what-it-read "$r1"
 t survival-fresh-box-with-no-tick-waited-the-budget 390 "$SURVIVAL_CLOCK"
+
+# --- a tick that lands DURING the uninstall proves nothing
+# The wait measures against the log as the COMPLETED removal left it, not the
+# empty read taken before it. A boundary striking while `crew uninstall` runs
+# writes a line the console was still installed for; accepting it would pass
+# step 9 at zero elapsed time on a box whose engine never ticked again.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+t survival-uninstall-tick-still-takes-the-wait-path fresh "$INSTALL_SURVIVAL_PATH"
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-tick-during-uninstall-alone-reds red "$r1"
+t survival-tick-during-uninstall-names-tick tick "$(survival_surfaces)"
+t survival-tick-during-uninstall-waits-the-budget 390 "$SURVIVAL_CLOCK"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"tick during uninstall"*"already there"*) r1=says-the-stale-line ;; *) r1=OPAQUE ;;
+esac
+t survival-tick-during-uninstall-says-the-stale-line says-the-stale-line "$r1"
+
+# …and that same box passes the moment the engine ticks after the removal.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-tick-during-uninstall-then-a-real-tick-passes survived "$r1"
+t survival-tick-during-uninstall-reports-the-later-tick "tick 305 duty run end" "$INSTALL_SURVIVAL_TICK"
+
+# The mutation the case exists for: the baseline-blind wait — first non-empty
+# line wins — takes the during-uninstall line as its evidence and concludes in
+# no time at all, which is the false pass this fixture must catch.
+SURVIVAL_WAIT_PRE="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+install_survival_wait_for_tick() {
+  local budget="$1" deadline
+  deadline=$(( $(install_survival_now) + budget ))
+  while :; do
+    INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
+    [ -z "$INSTALL_SURVIVAL_TICK" ] || return 0
+    [ "$(install_survival_now)" -lt "$deadline" ] || return 1
+    install_survival_sleep "$INSTALL_SURVIVAL_POLL"
+  done
+}
+install_survival_check && r1=survived || r1=red
+t survival-baseline-blind-wait-false-passes-the-uninstall-tick survived "$r1"
+t survival-baseline-blind-wait-spends-nothing 0 "$SURVIVAL_CLOCK"
+eval "$SURVIVAL_WAIT_PRE"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-restoring-the-baseline-reds-the-same-fixture red "$r1"
+
+# --- the wait window is not a blind spot
+# Up to a whole cron period passes inside the wait, so engine and cron are read
+# again on the other side of it: a box that loses either one in there did not
+# outlive its console, and the detail names the read that saw it go.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+SURVIVAL_RESTAMP_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-engine-restamped-inside-the-wait-reds red "$r1"
+t survival-engine-restamped-inside-the-wait-names-engine engine "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"after the 390s tick wait"*) r1=says-which-read ;; *) r1=OPAQUE ;;
+esac
+t survival-engine-restamped-inside-the-wait-says-which-read says-which-read "$r1"
+
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+SURVIVAL_DISARM_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-cron-disarmed-inside-the-wait-reds red "$r1"
+t survival-cron-disarmed-inside-the-wait-names-cron cron "$(survival_surfaces)"
+
+# A surface that missed before the wait is reported once, at the read that saw
+# it — the second pass must not double it into the detail.
+survival_reset '' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-engine-gone-reds red "$r1"
+t survival-fresh-box-engine-gone-reported-once engine "$(survival_surfaces)"
 
 # --- the borrowed-box path: history, so the diff form, byte-identical
 survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'

@@ -141,7 +141,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "- WOULD OBSERVE step 4: \`crew use\` names \`$BOX_NAME\` at the old engine version"
   echo "- WOULD OBSERVE steps 5–6: installed-tree hire stamps a git-less engine; second \`crew up\` skips; no box-side crew repo is consulted"
   echo "- WOULD OBSERVE step 8: \`crew uninstall --all\` refuses and names \`$BOX_NAME\`"
-  echo "- WOULD OBSERVE step 9: forced console removal leaves \`$BOX_NAME\`'s engine and armed cron in place, and its latest tick evidence — an unchanged last \`duty.log\` line on a box that arrived with history, a tick landing within one cron boundary plus grace on a box that had none"
+  echo "- WOULD OBSERVE step 9: forced console removal leaves \`$BOX_NAME\`'s engine and armed cron in place, and its latest tick evidence — an unchanged last \`duty.log\` line on a box that arrived with history, a tick landing after the removal itself completed, within one cron boundary plus grace, on a box that had none"
   echo "- WOULD OBSERVE identity: \`$BOX_NAME\` carries the agent and roles declared above after Section A, unchanged by its hires and uninstalls"
   echo "- WOULD OBSERVE host checkout: installer warning and \`command -v crew\` agree about PATH order"
   exit 0
