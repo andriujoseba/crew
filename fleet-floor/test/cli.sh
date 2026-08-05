@@ -1368,12 +1368,37 @@ else
        "$(cat "$CL_TMP/crew-out")"
 fi
 # Every healthy box still converged in the same run — the point of a skip
-# rather than an abort, and cli-unconverged is LAST in the roster.
-if grep -q 'hiring cli-disarmed' "$CL_TMP/crew-out"; then
+# rather than an abort. cli-unconverged is the skip, and cli-premanifest sits
+# BELOW it in the roster, so a loop that aborted on the skip never reaches it.
+#
+# Read the OUTCOME, never the arm: `hire_box` prints `hiring <box>` when it
+# bakes and `<box>: already hired … matches, skipping` when the installed
+# version already equals the engine's, and which one fires is the documented
+# version split — a `-dev` tree re-bakes unconditionally, a release tree skips a
+# box already at the matching version. So `grep hiring cli-disarmed`, the shape
+# this case carried until #323, asserted that the tree was `-dev`: it redded on
+# every bare-`VERSION` tree and only there, which is exactly once per release
+# and never in between. Either line means the loop reached the box, which is
+# what "still hired" is about; the engine is untouched.
+cl_hire_line() {
+  grep -nE "^hiring $1 |^$1: already hired at .* matches, skipping\$" \
+    "$CL_TMP/crew-out" | head -1 | cut -d: -f1
+}
+# For the failure detail: where the box was seen, or that it was not.
+cl_hire_where() {
+  if [ -n "$1" ]; then echo "at output line $1"; else echo "never reached"; fi
+}
+CL_DISARMED_AT="$(cl_hire_line cli-disarmed)"
+CL_PREMANIFEST_AT="$(cl_hire_line cli-premanifest)"
+if [ -n "$CL_DISARMED_AT" ] && [ -n "$CL_PREMANIFEST_AT" ] &&
+   [ "$CL_PREMANIFEST_AT" -gt "$CL_DISARMED_AT" ]; then
   ok "crew up: healthy boxes past the skip are still hired"
 else
+  # Name the two boxes and what was read of each. The detail this replaces
+  # claimed "the loop stopped before the end of the roster" — a diagnosis the
+  # captured output contradicted, the roster having run to completion (#323).
   fail "crew up: healthy boxes past the skip are still hired" \
-       "the loop stopped before the end of the roster"
+       "expected cli-premanifest hired after cli-disarmed: cli-disarmed $(cl_hire_where "$CL_DISARMED_AT"), cli-premanifest $(cl_hire_where "$CL_PREMANIFEST_AT")"
 fi
 # `box start` wrote a state override; put the fixture back so the rows below
 # see the fleet the fixture file declares.
