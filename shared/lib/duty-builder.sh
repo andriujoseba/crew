@@ -555,10 +555,58 @@ _wt_preserve_remote() {
   fi
 }
 
+# _wt_index_tree PATH — the tree PATH's REAL index holds, or nonzero where it
+# cannot be read. The staged snapshot is a SECOND piece of uncommitted work, not
+# a preview of the first: for a partially staged path (`MM file`) the index
+# holds one version and the working tree another, and a capture built from the
+# working tree alone destroys the staged one on its way to earning a --force
+# (@codex-bot-andresmgsl, #376). There is also a shape the working-tree capture
+# cannot see at all — content staged and then reverted in the tree — where the
+# capture equals HEAD's tree and refuses, leaving the worktree stuck on every
+# tick forever with `git status` still calling it dirty.
+#
+# Read through a COPY of the index, never the index itself. `git write-tree`
+# rewrites the cache-tree extension into the index it is given, and "the
+# worktree is byte-identical afterwards" is the property this whole design rests
+# on — a preservation that mutated the thing it was preserving would be worse
+# than the one it replaced. The copy is what keeps the promise; the real index
+# is only ever read with `cp`.
+#
+# ...and it fails closed. An unmerged index makes `write-tree` refuse, and so
+# does an index nobody can read; either way what is staged is unknown, and
+# unknown is not empty. The caller returns nonzero, so nothing is pushed and no
+# force is earned — the worktree keeps every byte on disk and is reported once
+# per dirt, which is the same bargain `_wt_dirt` strikes for a status git cannot
+# answer.
+_wt_index_tree() { # $1=path -> tree sha, nonzero if the index cannot be read
+  local path="$1" real copy tree
+  real="$(git -C "$path" rev-parse --git-path index 2>/dev/null)" || return 1
+  [ -n "$real" ] || return 1
+  # Absolute in a linked worktree, relative to the worktree root in a plain
+  # clone — and this runs from neither.
+  case "$real" in /*) ;; *) real="$path/$real" ;; esac
+  [ -f "$real" ] || return 1
+  copy="$(mktemp "${TMPDIR:-/tmp}/wt-index.XXXXXX")" || return 1
+  if cp "$real" "$copy" 2>/dev/null; then
+    tree="$(GIT_INDEX_FILE="$copy" git -C "$path" write-tree 2>/dev/null)" || tree=""
+  fi
+  rm -f "$copy"
+  [ -n "${tree:-}" ] || return 1
+  printf '%s\n' "$tree"
+}
+
+# _wt_commit TREE PARENT MESSAGE, in PATH — the engine's own commit. The box's
+# git identity may be anything or nothing, and commit-tree refuses without one.
+_wt_commit() { # $1=path $2=tree $3=parent $4=message -> commit sha
+  git -C "$1" \
+    -c "user.name=${ME:-crew}" -c "user.email=${ME:-crew}@users.noreply.github.com" \
+    commit-tree "$2" -p "$3" -m "$4" 2>/dev/null
+}
+
 # _wt_preserve PATH BRANCH — capture PATH's uncommitted content and push it as
-# `wip/BRANCH`. Prints "<remote> <ref> <sha> <url>" and returns 0 ONLY once the
-# remote has it; every other path returns nonzero, which is what denies the
-# caller its force.
+# `wip/BRANCH`. Prints "<remote> <ref> <sha> <url> <staged-sha-or-dash>" and
+# returns 0 ONLY once the remote has it; every other path returns nonzero, which
+# is what denies the caller its force.
 #
 # THE WORKTREE IS NEVER TOUCHED. The commit is built in a scratch index —
 # read-tree HEAD, then `add -A` against that index — so nothing is staged,
@@ -566,13 +614,22 @@ _wt_preserve_remote() {
 # byte-identical to how it was found. `add -A` is also what gets untracked
 # files in and ignored files out, which `git stash` without `--include-untracked`
 # famously does not: untracked is where the real example lived.
+#
+# TWO SNAPSHOTS, ONE REF. Where the index holds something neither HEAD nor the
+# working tree does, it is pushed as the working-tree commit's PARENT. The tip
+# stays the working tree — that is what `checkout FETCH_HEAD` should land on,
+# and what somebody expects to find — and the staged snapshot is one commit
+# behind it, reachable as `FETCH_HEAD^` and named in the record so nobody has to
+# guess it is there.
 _wt_preserve() {
   local path="$1" branch="$2"
-  local remote ref idx tree head parent commit remote_sha url
+  local remote ref idx tree head head_tree idx_tree staged staged_commit
+  local parent commit remote_sha remote_staged url
   ref="wip/$branch"
   remote="$(_wt_preserve_remote "$path")" || return 1
   url="$(git -C "$path" remote get-url "$remote" 2>/dev/null)" || return 1
   head="$(git -C "$path" rev-parse HEAD 2>/dev/null)" || return 1
+  head_tree="$(git -C "$path" rev-parse 'HEAD^{tree}' 2>/dev/null)" || return 1
   idx="$(mktemp "${TMPDIR:-/tmp}/wt-preserve.XXXXXX")" || return 1
   if GIT_INDEX_FILE="$idx" git -C "$path" read-tree HEAD 2>/dev/null \
     && GIT_INDEX_FILE="$idx" git -C "$path" add -A 2>/dev/null; then
@@ -580,37 +637,63 @@ _wt_preserve() {
   fi
   rm -f "$idx"
   [ -n "${tree:-}" ] || return 1
-  # Nothing but ignored dirt captures to HEAD's own tree. Nothing was at risk,
-  # so nothing is pushed — and no force is earned by a refusal this cannot
-  # explain.
-  [ "$tree" != "$(git -C "$path" rev-parse 'HEAD^{tree}' 2>/dev/null)" ] || return 1
+  idx_tree="$(_wt_index_tree "$path")" || return 1
+  # The staged snapshot earns its own commit only where it holds something the
+  # other two do not: equal to HEAD's tree it is nothing, equal to the capture
+  # it is already the tip, and a duplicate commit for either would be noise in
+  # the one history somebody reads under pressure.
+  staged=""
+  if [ "$idx_tree" != "$head_tree" ] && [ "$idx_tree" != "$tree" ]; then
+    staged="$idx_tree"
+  fi
+  # Nothing but ignored dirt captures to HEAD's own tree with nothing staged
+  # beside it. Nothing was at risk, so nothing is pushed — and no force is
+  # earned by a refusal this cannot explain. Read as "neither half holds
+  # anything", never as "the working tree holds nothing": the staged-then-
+  # reverted worktree fails the first test and passes this one, which is the
+  # whole of why it is now releasable.
+  [ "$tree" != "$head_tree" ] || [ -n "$staged" ] || return 1
   # Idempotence, and the reason the ref is read before it is written: a pass
   # that pushed and then failed to remove leaves the ref already holding this
   # exact tree. Re-pushing would mint a second commit for one preservation and
   # be refused as a non-fast-forward — so an identical tree on the remote IS
   # the confirmation, and a different one becomes the new commit's parent so
-  # the push still fast-forwards.
+  # the push still fast-forwards. The parent is checked too where there is a
+  # staged snapshot: a tip matching on its own is what a ref pushed before this
+  # module read indexes looks like, and confirming on it would skip the staged
+  # half for exactly the worktrees that have one.
   remote_sha="$(git -C "$path" ls-remote "$remote" "refs/heads/$ref" 2>/dev/null \
     | awk 'NR==1{print $1}')"
   if [ -n "$remote_sha" ] \
     && git -C "$path" fetch -q "$remote" "refs/heads/$ref" 2>/dev/null; then
-    if [ "$(git -C "$path" rev-parse "$remote_sha^{tree}" 2>/dev/null)" = "$tree" ]; then
-      printf '%s %s %s %s\n' "$remote" "$ref" "$remote_sha" "$url"
+    remote_staged=""
+    [ -z "$staged" ] \
+      || remote_staged="$(git -C "$path" rev-parse "$remote_sha^" 2>/dev/null)"
+    if [ "$(git -C "$path" rev-parse "$remote_sha^{tree}" 2>/dev/null)" = "$tree" ] \
+      && { [ -z "$staged" ] \
+        || [ "$(git -C "$path" rev-parse "$remote_staged^{tree}" 2>/dev/null)" = "$staged" ]; }
+    then
+      printf '%s %s %s %s %s\n' "$remote" "$ref" "$remote_sha" "$url" "${remote_staged:--}"
       return 0
     fi
     parent="$remote_sha"
   else
     parent="$head"
   fi
-  # The engine's own commit: the box's git identity may be anything or nothing,
-  # and commit-tree refuses without one.
-  commit="$(git -C "$path" \
-    -c "user.name=${ME:-crew}" -c "user.email=${ME:-crew}@users.noreply.github.com" \
-    commit-tree "$tree" -p "$parent" \
-    -m "wip($branch): uncommitted work preserved before worktree removal" 2>/dev/null)" \
-    || return 1
+  staged_commit=""
+  if [ -n "$staged" ]; then
+    staged_commit="$(_wt_commit "$path" "$staged" "$parent" \
+      "wip($branch): staged (index) snapshot preserved before worktree removal")" \
+      || return 1
+    parent="$staged_commit"
+  fi
+  commit="$(_wt_commit "$path" "$tree" "$parent" \
+    "wip($branch): uncommitted work preserved before worktree removal")" || return 1
+  # One push, and it carries the chain: the tip's parent is the staged commit,
+  # so a push that lands lands both, and one that fails leaves neither behind
+  # half-preserved.
   git -C "$path" push -q "$remote" "$commit:refs/heads/$ref" 2>/dev/null || return 1
-  printf '%s %s %s %s\n' "$remote" "$ref" "$commit" "$url"
+  printf '%s %s %s %s %s\n' "$remote" "$ref" "$commit" "$url" "${staged_commit:--}"
   return 0
 }
 
@@ -621,8 +704,15 @@ _wt_preserve() {
 # wrong thing. The ID carries the preserved SHA rather than a dirt fingerprint:
 # the sha identifies that dirt exactly, it is in hand at both call sites, and it
 # costs no second `git status` on a path that is already going wrong. Keyed
-# distinctly from _wt_hygiene_report's own items, whose shape is untouched so no
-# live box re-warns after the upgrade. Always returns 0.
+# distinctly from _wt_hygiene_report's own items, whose shape is untouched, so
+# nothing here re-warns for a worktree whose dirt still reads the same.
+#
+# One live box WILL re-warn once, and it is the right line to lose the silence
+# over (@claude-bot-andresmgsl, #376): _wt_dirt_id hashes the porcelain text,
+# and `--untracked-files=all` changes that text for exactly the
+# untracked-directory worktrees whose old warning undercounted them. So each of
+# those says itself once more, with the truer counts, and then goes quiet again.
+# Always returns 0.
 _wt_say_once() {
   local ledger="$1" id="$2" msg="$3" item
   item="$(printf '%s\tsaid' "$id")"
@@ -632,7 +722,7 @@ _wt_say_once() {
   return 0
 }
 
-# _wt_record REPO PR BRANCH PATH REMOTE REF SHA URL — the durable half of a
+# _wt_record REPO PR BRANCH PATH REMOTE REF SHA URL [STAGED] — the durable half of a
 # preservation: a comment on the PR the worktree belonged to, naming the remote,
 # the ref, and what it holds. Returns 0 only once that comment is present.
 #
@@ -651,20 +741,45 @@ _wt_say_once() {
 # make the same promise. The body is deterministic in the sha and the counts —
 # same dirt, same body, no second comment; changed dirt, new sha, a new record,
 # which is right, because it holds something else.
+#
+# THE COUNTS COME FROM THE WORKTREE, not from the ref they describe
+# (@claude-bot-andresmgsl, #376, argued and not taken). Deriving them with
+# `diff-tree HEAD..<tip>` would tie them to the payload by construction, which
+# was the right instinct while the ref was one commit — but the ref is a chain
+# now, and its tip legitimately equals HEAD's tree for a worktree whose work is
+# all staged and reverted. That record would read "0 modified, 0 untracked" over
+# real preserved content: the "reads like a triviality" failure this record was
+# hardened against, reintroduced by the fix for it. Walking the chain instead
+# means teaching the record to reconstruct dirt the worktree states in one read.
+# So the read stays, and the cross-check does the work the derivation would:
+# p168-record-counts-nested-untracked asserts the counts against the ref's own
+# file list, so a systematic drift between them fails the suite.
 _wt_record() {
   local repo="$1" pr="$2" branch="$3" path="$4" remote="$5" ref="$6" sha="$7" url="$8"
-  local dirt body
+  local staged="${9:--}"
+  local dirt body staged_line=""
   [ -n "$pr" ] || return 1
   # Nonzero rather than a fabricated count: the counts are the part of this
   # record that is checked against nothing, so a read that failed must deny the
   # record, which denies the force, which keeps the worktree.
   dirt="$(_wt_dirt "$path")" || return 1
+  # A pointer at the tip alone is a pointer at half the work where the index
+  # held its own version, and the half it omits is the one nobody would think to
+  # look for. Absent a staged snapshot the body is byte-identical to the one
+  # this module has always posted — the dedup upstream is an exact body match,
+  # and a cosmetic blank line would re-post every already-recorded preservation
+  # once on the upgrade.
+  case "$staged" in
+    ''|-) ;;
+    *) staged_line="$(printf '\n\n%s\n' \
+      "Part of that work was **staged and differed from the working tree**, so the index has its own snapshot one commit below the tip (\`$staged\`) — reach it with \`git checkout FETCH_HEAD^\` after the fetch above.")" ;;
+  esac
   body="$(printf '%s\n' \
     "🗃️ Uncommitted work preserved before this branch's worktree was removed" \
     "" \
     "\`$branch\`'s worktree was dirty when the hygiene sweep removed it. The work is on the \`$remote\` remote as \`$ref\` (\`$sha\`), holding $(_wt_dirt_summary "$dirt") file(s)." \
     "" \
-    "    git fetch $url $ref && git checkout FETCH_HEAD" \
+    "    git fetch $url $ref && git checkout FETCH_HEAD${staged_line}" \
     "" \
     "The ref can be lost with the remote that holds it; this comment is the record that outlives it (#168).")"
   "$BIN_DIR/post-once.sh" "$repo" "$pr" "$body" >/dev/null 2>&1 || return 1
@@ -690,16 +805,20 @@ _wt_record() {
 # ref) and retries the record.
 _wt_release() {
   local dir="$1" repo="$2" branch="$3" path="$4" pr="$5" ledger="$6"
-  local preserved remote ref sha url
+  local preserved remote ref sha url staged staged_note=""
   if git -C "$dir" worktree remove "$path" 2>/dev/null; then
     git -C "$dir" branch -D "$branch" 2>/dev/null || true
     return 0
   fi
   if preserved="$(_wt_preserve "$path" "$branch")"; then
-    read -r remote ref sha url <<<"$preserved"
+    read -r remote ref sha url staged <<<"$preserved"
     # The line has to be enough on its own: whoever reads it a week later is
     # not holding this box, and the worktree it names is gone.
-    log "$repo: preserved $path's uncommitted work as $ref ($remote, ${sha:0:12}) — recover with: git fetch $url $ref && git checkout FETCH_HEAD"
+    case "$staged" in
+      ''|-) ;;
+      *) staged_note=" (staged content differed and is the commit below the tip, ${staged:0:12} — git checkout FETCH_HEAD^)" ;;
+    esac
+    log "$repo: preserved $path's uncommitted work as $ref ($remote, ${sha:0:12}) — recover with: git fetch $url $ref && git checkout FETCH_HEAD$staged_note"
     # The record is retried every tick while the worktree stays stuck, and the
     # WARN beside it is not: a deliberate asymmetry, not an oversight
     # (@claude-bot-andresmgsl, #376). The retry IS the self-heal — a rate limit
@@ -708,7 +827,7 @@ _wt_release() {
     # somebody clears a file on a box nobody logs into. The two cost differently:
     # the WARN is noise in a log a human reads, the retry is one cheap GET that
     # is also the recovery attempt.
-    if ! _wt_record "$repo" "$pr" "$branch" "$path" "$remote" "$ref" "$sha" "$url"; then
+    if ! _wt_record "$repo" "$pr" "$branch" "$path" "$remote" "$ref" "$sha" "$url" "$staged"; then
       _wt_say_once "$ledger" "record-failed:$repo:$branch@$sha" \
         "$repo: $ref is on $remote but the record on ${pr:+#}${pr:-the PR} did not post; keeping $path until it does — the work is safe, the pointer to it is not"
       return 1
