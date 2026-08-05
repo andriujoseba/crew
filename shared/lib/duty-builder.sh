@@ -392,8 +392,9 @@ _resume_pr_comments() {
   printf '%s' "$raw" | jq -sc '.'
 }
 
-# _resume_attach_comments REPO LISTING — the answer is the same listing with `.comments` filled for every non-draft PR, and
-# it comes back in a GLOBAL, RESUME_LISTING, for the reason _resume_gate states
+# _resume_attach_comments REPO LISTING — the answer is the same listing with
+# `.comments` filled for every non-draft PR, and it comes back in a GLOBAL,
+# RESUME_LISTING, for the reason _resume_gate states
 # below: every report here is a log line, log writes to stdout, and a function
 # that returned its data through the same channel would fold its own warnings
 # into the JSON the caller parses.
@@ -832,6 +833,8 @@ _builder_repo() {
   # `comments` and `reviews` are deliberately NOT requested: those nested
   # connections are generated as `first: 100` and never paginate, so reading the
   # foreign half from here caps it at the oldest hundred (_resume_pr_fingerprints).
+  # The SIGNAL half needs the same depth from the other end of the thread and is
+  # read per PR just below (_resume_attach_comments), never from here.
   resume_json="$(gh pr list -R "$R" --state open --author "$ME" \
     --json number,isDraft,headRefOid,body 2>/dev/null || echo err)"
   if [ "$resume_json" = "err" ]; then
