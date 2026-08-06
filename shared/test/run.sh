@@ -6743,7 +6743,7 @@ t cli-up-dry-run-does-not-probe-new-box "" "$(grep ':fresh$' "$UPCALLS" || true)
 dry_hires="$(grep -c ': WOULD hire ' <<<"$up_dry_out" || true)"
 
 up_reset
-if up_real_out="$(up_run 2>&1)"; then up_real_rc=0; else up_real_rc=$?; fi
+if up_run >/dev/null 2>&1; then up_real_rc=0; else up_real_rc=$?; fi
 t cli-up-real-run-mixed-exits-zero 0 "$up_real_rc"
 t cli-up-dry-run-hire-count-matches-real "$dry_hires" \
   "$(grep -c '^hire:' "$UPCALLS" || true)"
