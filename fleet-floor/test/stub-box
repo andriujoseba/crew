@@ -88,6 +88,24 @@ emit_probe() {
     nothired|unconverged|premanifest) printf '::engine \n' ;;
     *)        printf '::engine crew@0.4.1 (deadbee)\n' ;;
   esac
+  # The engine-integrity verdict probe.sh gets from engine-manifest.sh (#159),
+  # and the one field on this record the stub cannot honestly compute: there is
+  # no installed tree here to hash, so the VALUE is fixture data. Its TRUTH is
+  # asserted where it can be — boxside.sh runs the real engine-manifest.sh
+  # through the real probe.sh for all three hired states, as shared/test/run.sh
+  # does for the CLI half. What this fixture buys is the page walk: three
+  # verdicts that must render distinctly, which needs three boxes carrying them.
+  #
+  # `absent` tracks ::engine above and must keep tracking it: state() answers
+  # absent exactly when VERSION is empty, which is exactly when the stamp is,
+  # and a fixture where one says hired and the other says absent is a shape no
+  # box can be in.
+  case "$sc" in
+    nothired|unconverged|premanifest) printf '::integrity absent\n' ;;
+    modified)   printf '::integrity modified\n' ;;
+    unverified) printf '::integrity unverified\n' ;;
+    *)          printf '::integrity current\n' ;;
+  esac
   # The agent the box was ACTUALLY installed as. The roster may claim another,
   # and that disagreement is the thing the floor now reports — so the stub has
   # to be able to produce it. 'wrongagent' is a box installed as codex while

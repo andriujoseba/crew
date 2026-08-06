@@ -11,7 +11,7 @@
 # collapse. A fleet where every box is healthy would pass a broken renderer.
 # ===========================================================================
 echo "== telemetry"
-t "fleet: every roster box present"  24 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  26 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
@@ -223,7 +223,7 @@ t "200: healthz"       200 "$(status GET /healthz)"
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 24 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 26 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
@@ -297,7 +297,7 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 24 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 26 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ===========================================================================
 # LOOP 5 — what the page does when the COLLECTOR is the thing that broke.
@@ -316,7 +316,7 @@ t "fleet: snapshot advertises the poll interval" True \
 # Every unit must be JSON-serialisable and complete — a missing key is a
 # TypeError in the page, several panels deep, long after the poll that caused it.
 t "fleet: every unit has the full shape" True "$(body GET /api/fleet | jqf "
-all(set(('box','agent','room','state','engine','gh','vendor','queue','sessions',
+all(set(('box','agent','room','state','engine','integrity','gh','vendor','queue','sessions',
          'cur','spark','up','repo','repos','logs','longest','avg','success',
          'today','paused','disarmed','cron','note')) <= set(u) for u in d['units'])")"
 t "fleet: cron sub-shape complete" True "$(body GET /api/fleet | jqf "
@@ -640,4 +640,39 @@ if grep -q 'never_ticked = tick_age < 0' "$FLOOR/server/floor.py"; then
 else
   fail "creds: the host names the never-ticked case rather than falling through" \
        "floor.py has no never_ticked predicate — a never-ticked box ages to stale"
+fi
+
+# ===========================================================================
+# #190 — the engine's INTEGRITY reaches the page. `~/duty/VERSION` is a claim
+# install.sh wrote once; #159 made it checkable and nothing carried the answer
+# to the console, so the tile named a version an operator could not trust.
+# ===========================================================================
+echo "== engine integrity"
+t "integrity: a clean box reports current"          current    "$(uf ff-working   'u["integrity"]')"
+# The one that matters: a hotfix nobody told the fleet about, on a box whose
+# every other reading is fine. The collector CARRIES this word — it must never
+# smooth it, and it must never re-derive it, because the files are on the box.
+t "integrity: a diverged engine is carried, not smoothed" modified "$(uf ff-modified 'u["integrity"]')"
+t "integrity: a box hired before content stamping is unverified" unverified "$(uf ff-unverified 'u["integrity"]')"
+# absent tracks the engine stamp: state() answers absent exactly when VERSION
+# is empty, which is exactly when ::engine is.
+t "integrity: an unhired box has no engine to verify" absent    "$(uf ff-nothired  'u["integrity"]')"
+t "integrity: an unhired box says so on both fields"  ""         "$(uf ff-nothired  'u["engine"]')"
+# A box that never answered must not inherit a neighbour's verdict, and must
+# not read as verified: the default is empty and the page renders nothing.
+t "integrity: an unreachable box claims nothing"      ""         "$(uf ff-unreach   'u["integrity"]')"
+# Pinned at the source, like the credential rule above: the behavioural checks
+# can only see the value the collector produced, and a floor that computed its
+# own verdict would agree with `crew status` by coincidence until either moved.
+if grep -q 'engine-manifest.sh' "$FLOOR/server/probe.sh"; then
+  ok "integrity: the verdict comes from #159's script, not a second copy of it"
+else
+  fail "integrity: the verdict comes from #159's script, not a second copy of it" \
+       "probe.sh does not consult engine-manifest.sh"
+fi
+if grep -qE 'u\["integrity"\] = meta\.get\("integrity"' "$FLOOR/server/floor.py"; then
+  ok "integrity: the collector carries the box's word"
+else
+  fail "integrity: the collector carries the box's word" \
+       "floor.py does not read ::integrity from the probe record"
 fi

@@ -24,3 +24,5 @@ ff-invalid-age grok    builder
 ff-missing-age kimi    builder
 ff-silent-behind claude builder
 ff-silent-ahead codex reviewer
+ff-modified   codex   builder
+ff-unverified grok    reviewer

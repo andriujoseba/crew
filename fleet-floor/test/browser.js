@@ -461,13 +461,65 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('render: at least one box shows a measured round-trip',
        pinged.length > 0,
        allSeen.map((u) => u.box + ': ' + (u.vitals.match(/Heartbeat\s*(\S+)/) || [])[1]).join(' | '));
-    // The regression guard. "gh ?" is legitimate (an unhired box), "gh ✗" is
-    // legitimate (a real rejection) — but not for every box at once, which is
-    // what a vocabulary mismatch produces.
-    const ticked = allSeen.filter((u) => /gh ✓/.test(u.vitals));
-    ok('render: healthy boxes show gh ✓, not a blanket ✗',
-       ticked.length > 0,
-       allSeen.map((u) => u.box + ': ' + (u.vitals.match(/Box\s*(\S+ \S+)/) || [])[1]).join(' | '));
+    // #159's verdict, beside the version and never instead of it. The version
+    // alone is what install.sh wrote once; this says whether the files still
+    // hash to it, and an operator who cannot see it is reading a claim nobody
+    // checked. Shape, on the same reasoning as the assertion above: the words
+    // are `crew status`'s INTEGRITY vocabulary and hold on any fleet, while
+    // WHICH word is true of WHICH box is a fixture fact, asserted below.
+    //
+    // Over the boxes that render a version, not all of them: an unreachable or
+    // unhired box shows "—" and has no verdict to carry.
+    const stamped = allSeen.filter((u) => /Engine\s*\d+\.\d+\.\d+/.test(u.vitals));
+    ok('render: the engine tile carries its integrity verdict',
+       stamped.length > 0 &&
+         // No trailing \b: the grid's textContent runs one field straight into
+         // the next label ("…0.4.1✓ currentUptime25h 30m"), so a word boundary
+         // after the verdict never occurs and the check would red on a page
+         // that renders it perfectly.
+         stamped.every((u) => /Engine\s*\d+\.\d+\.\d+\s*[✓⚠~]\s*(?:current|MODIFIED|unverified)/.test(u.vitals)),
+       stamped.map((u) => u.box + ': ' + (u.vitals.match(/Engine\s*(\S+ ?\S*)/) || [])[1]).join(' | '));
+    /* ---- the gh check, SCOPED to boxes that could be flowing (#190) -------
+       `flowing` — the ✓ — is a claim the collector makes only while the last
+       tick is younger than SILENT_AFTER_S: a credential the box reported as
+       `nofail` ages to `stale` past that boundary (server/floor.py), and the
+       page renders stale as the amber `~` on purpose. A DISARMED box has no
+       cron line, so it cannot tick, so it passes that threshold BY
+       CONSTRUCTION — and drill/rehearsal.sh disarms every box before the walk
+       runs. Asserting `gh ✓` over that fleet failed a page that was behaving
+       exactly as designed, and read as a rendering defect for four drills.
+       That is #202's shape one field over: an assertion that cannot pass on a
+       run the harness allows.
+       So the check runs over the boxes it could ever have been about — the
+       ones whose CRON vital shows a live tick age, which is armed AND ticking
+       in one readout. DISARMED, PAUSED, SILENT and "no ticks yet" all render a
+       word there instead, and none of them is evidence about a credential.
+       Scoped, never loosened: what the check asserts about a candidate box is
+       untouched, and an armed, freshly-ticking box rendering a blanket ✗ still
+       reds it — the probe.sh vocabulary-mismatch regression it was written for.
+       A check that would pass vacuously says so instead, in the same stream as
+       the ok lines: a fleet with nothing to check is not a fleet that passed. */
+    const canFlow = allSeen.filter((u) => /^\d/.test(u.cron));
+    if (FIXTURE) {
+      // The fixture guarantees healthy ticking boxes, so an empty candidate set
+      // here is the scrape breaking, not a fleet at rest — and it would silently
+      // retire the check below rather than fail it.
+      ok('render: the fixture offers an armed, ticking box to check gh against',
+         canFlow.length > 0,
+         allSeen.map((u) => u.box + ': cron=' + u.cron).join(' | '));
+    }
+    if (canFlow.length) {
+      // The regression guard. "gh ?" is legitimate (an unhired box), "gh ✗" is
+      // legitimate (a real rejection) — but not for every box at once, which is
+      // what a vocabulary mismatch produces.
+      const ticked = canFlow.filter((u) => /gh ✓/.test(u.vitals));
+      ok('render: healthy boxes show gh ✓, not a blanket ✗',
+         ticked.length > 0,
+         canFlow.map((u) => u.box + ': ' + (u.vitals.match(/Box\s*(\S+ \S+)/) || [])[1]).join(' | '));
+    } else {
+      console.log('  --   no armed, ticking box in this fleet: gh ✓ is not a claim the page '
+                  + 'can make about a box whose credentials age to ~, so the check did not run');
+    }
   }
   if (LIVE && FIXTURE) {
     // The exact-constant half of the engine assertion above. The stub stamps
@@ -480,6 +532,40 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        allSeen.some((u) => /Engine\s*0\.4\.1/.test(u.vitals)) &&
          allSeen.every((u) => !/deadbee/.test(u.vitals)),
        allSeen.map((u) => u.box + ': ' + u.vitals).join(' | '));
+    /* The three verdicts must render as three verdicts (#159, #190). A tile
+       that shows every box as verified has added a word and no information,
+       and the two boxes it would be wrong about are the only two the
+       instrument exists for. FIXTURE-gated because a healthy real fleet has no
+       hand-edited box in it and should not be asked for one — its truth is
+       asserted where the hash can prove it, in boxside.sh.
+       Read out of the Engine field alone: `MODIFIED` loose in the vitals would
+       also match a neighbouring readout, and this check is precisely about
+       which field the word is in. */
+    const eng = (u) => (u.vitals.match(/Engine\s*(.*?)\s*Uptime/) || [])[1] || '';
+    const mod = allSeen.find((u) => /ff-modified/.test(u.box));
+    ok('integrity: the modified box was reachable', !!mod,
+       `no ff-modified among ${allSeen.length} consoles`);
+    if (mod) {
+      ok('integrity: a diverged engine says MODIFIED on the tile',
+         /MODIFIED/.test(eng(mod)) && !/current/.test(eng(mod)), `${mod.box}: Engine=[${eng(mod)}]`);
+    }
+    const unv = allSeen.find((u) => /ff-unverified/.test(u.box));
+    ok('integrity: the unverified box was reachable', !!unv,
+       `no ff-unverified among ${allSeen.length} consoles`);
+    if (unv) {
+      // The state every box is in the day content stamping ships. Rendering it
+      // as verified would be the most expensive of the three mistakes: it
+      // claims a check that never ran.
+      ok('integrity: an unverified engine is not rendered as verified',
+         /unverified/.test(eng(unv)) && !/current/.test(eng(unv)), `${unv.box}: Engine=[${eng(unv)}]`);
+    }
+    // The positive half, in one unconditional check: the negatives above prove
+    // two boxes are not called verified, and prove nothing about whether any
+    // box ever is.
+    const clean = allSeen.find((u) => /ff-working/.test(u.box));
+    ok('integrity: a clean engine is rendered as verified',
+       !!clean && /current/.test(eng(clean)) && !/MODIFIED|unverified/.test(eng(clean)),
+       clean ? `${clean.box}: Engine=[${eng(clean)}]` : `no ff-working among ${allSeen.length} consoles`);
     // FIXTURE-gated: a real fleet has no box wedged on purpose, and should not.
     const stuck = allSeen.find((u) => /ff-stuck/.test(u.box));
     ok('render: the stuck box was reachable', !!stuck,

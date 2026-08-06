@@ -71,6 +71,10 @@ body.floor .hud{display:none}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-family:var(--mono);font-size:11px}
 .kv .k{color:#5a6a80;text-transform:uppercase;font-size:9.5px;letter-spacing:.05em;align-self:center}
 .kv .v{color:#c7d4e4;text-align:right;font-variant-numeric:tabular-nums}
+/* The engine's integrity verdict, beside the version (#190). Smaller and
+   spaced off the stamp so the version stays the thing the eye reads first;
+   its colour is set inline per verdict, and is the whole point of the mark. */
+.kv .v .ig{margin-left:7px;font-size:9.5px;letter-spacing:.04em}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
 .fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
 .fev .ago{color:#46566a;flex:none;min-width:34px}
@@ -1584,7 +1588,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1630,6 +1634,11 @@ function liveData(u){
   d.repo=u.repo||"";d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
   d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
   d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
+  /* #159's verdict about that stamp. Defaulted to "" like the fields below,
+     and for the same reason: a collector older than this field reports none,
+     and "not known" must render as no mark at all — never as `current`, which
+     would be the one wrong answer, and never as a crash mid-draw. */
+  d.integrity=u.integrity||"";
   /* The ping tier and the flow-reported credential state. Defaulted rather
      than assigned straight through: a collector older than these fields, or a
      unit built from the error path, must render as "not known" and never as a
@@ -1835,7 +1844,7 @@ function populateDash(){
        shorter clock: Box is what the last evidence poll concluded up to a
        minute ago, Heartbeat is whether the guest answered seconds ago. */
     +'<span class="k">Heartbeat</span><span class="v" id="v-ping" style="color:'+pingColour(d)+'">'+pingText(d)+'</span>'
-    +'<span class="k">Engine</span><span class="v">'+(d.engine?esc(stampVersion(d.engine)):"—")+'</span>'
+    +'<span class="k">Engine</span><span class="v">'+(d.engine?esc(stampVersion(d.engine))+integrityMark(d.integrity):"—")+'</span>'
     +'<span class="k">Uptime</span><span class="v">'+(off&&!LIVE?"—":(d.up.h+"h "+pad2(d.up.m)+"m"))+'</span>'
     +'<span class="k">Cron</span><span class="v" style="color:'+(stw?"#8aa0b8":off?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
     +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'
@@ -1910,6 +1919,29 @@ function credGlyph(label,v){
      Rendering them alike told a minute-old hire it had gone silent (#265). */
   if(v==="waiting")return label+" …";
   return label+" ?";               /* unknown: no engine has run, so nothing is known */
+}
+/* The engine's INTEGRITY, rendered beside the version it claims (#159, #190).
+   The version alone is what install.sh wrote once; this is what the files on
+   the box hash to NOW, so a hand-edited engine says so here instead of showing
+   its shipped stamp forever. "Is my fleet running what I think it is?" was made
+   answerable by #159 and the answer never reached the operator looking at this
+   page.
+   The VERDICT, never the build provenance. stampVersion() strips `crew@` and
+   the commit on purpose and the walk asserts they stay stripped; rendering the
+   stamp here would red that check and tell the operator nothing about whether
+   the tree still matches it.
+   The words are `crew status`'s INTEGRITY column verbatim, not synonyms: a CLI
+   and a floor holding private vocabularies for one fact is what #38 was filed
+   about, and MODIFIED shouts here for the reason it shouts there — it is the
+   one value an operator must not skim past.
+   "" is a box that did not answer (a probe that could not run), and renders
+   nothing: an unhired box has no engine line at all, and an engine too old to
+   carry the tool still answers `unverified`. */
+function integrityMark(v){
+  if(v==="current")return '<span class="ig" style="color:#5fce9b" title="every engine file is what the recorded install shipped">✓ current</span>';
+  if(v==="modified")return '<span class="ig" style="color:#ff5147" title="the engine files diverge from the recorded install — crew status names them">⚠ MODIFIED</span>';
+  if(v==="unverified")return '<span class="ig" style="color:#f7bd4e" title="no readable manifest: hired before content stamping, or by another format — the next crew upgrade records one">~ unverified</span>';
+  return "";
 }
 function credColour(d){
   if(d.gh==="missing"||d.vendor==="missing")return "#ff5147";

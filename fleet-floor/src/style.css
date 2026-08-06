@@ -64,6 +64,10 @@ body.floor .hud{display:none}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;font-family:var(--mono);font-size:11px}
 .kv .k{color:#5a6a80;text-transform:uppercase;font-size:9.5px;letter-spacing:.05em;align-self:center}
 .kv .v{color:#c7d4e4;text-align:right;font-variant-numeric:tabular-nums}
+/* The engine's integrity verdict, beside the version (#190). Smaller and
+   spaced off the stamp so the version stays the thing the eye reads first;
+   its colour is set inline per verdict, and is the whole point of the mark. */
+.kv .v .ig{margin-left:7px;font-size:9.5px;letter-spacing:.04em}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
 .fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
 .fev .ago{color:#46566a;flex:none;min-width:34px}
