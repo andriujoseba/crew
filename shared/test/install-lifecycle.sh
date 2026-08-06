@@ -51,6 +51,105 @@ else
   bad "installed-crew-runs-through-symlink"
 fi
 
+# 1b. THE PAYLOAD (#365) — the installed tree is the product, not the
+#     repository. Every assertion here reads the INSTALLED TREE, never
+#     install.sh's exclude list: a list with no assertion is re-broken by the
+#     next directory somebody adds, silently, because the install still works
+#     and is only fat again. Both directions are asserted, because either one
+#     alone passes on a catastrophe — an empty tree carries no excluded path,
+#     and the whole repository carries every kept one.
+VTREE="$CREW_HOME/versions/$VA"
+shipped=""
+for p in .git .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
+         dist drill drills postmortems protocols shared/test \
+         fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
+  [ -e "$VTREE/$p" ] && shipped="$shipped $p"
+done
+if [ -z "$shipped" ]; then
+  ok "payload-excludes-repository-furniture"
+else
+  bad "payload-excludes-repository-furniture (still shipped:$shipped)"
+fi
+# The console must not go out with the bathwater: these are what an installed
+# tree RUNS, and the minimisation is only correct while every one survives.
+absent=""
+for p in cli/crew VERSION install.sh examples/fleet.roster examples/fleet.conf \
+         shared/install.sh shared/lib/common.sh shared/conf/roles \
+         shared/conf/agents shared/prompts \
+         fleet-floor/index.html fleet-floor/server/floor.py; do
+  [ -e "$VTREE/$p" ] || absent="$absent $p"
+done
+if [ -z "$absent" ]; then
+  ok "payload-keeps-what-the-tree-runs"
+else
+  bad "payload-keeps-what-the-tree-runs (missing:$absent)"
+fi
+# The bound, not a target: a regression is a red test rather than a judgement
+# call. Measured with -L on `current` — a bare `du -sk` on a symlink reports
+# the link, which would pass on a tree of any size (#365).
+tree_kb="$(du -skL "$CREW_HOME/current" | cut -f1)"
+if [ "$tree_kb" -lt 3072 ]; then
+  ok "payload-under-3M ($tree_kb KiB)"
+else
+  bad "payload-under-3M (installed tree is $tree_kb KiB)"
+fi
+
+# The read-only verbs still answer from the minimised tree — `--version` off
+# VERSION, `profiles` off shared/conf/{roles,agents}.
+same "installed-crew-reports-version" "crew $VA ($VTREE)" \
+  "$("$CREW_BIN/crew" --version 2>/dev/null)"
+if profiles_out="$("$CREW_BIN/crew" profiles 2>/dev/null)" && [ -n "$profiles_out" ]; then
+  ok "installed-crew-reads-shipped-profiles"
+else
+  bad "installed-crew-reads-shipped-profiles (got '$profiles_out')"
+fi
+
+# …and the console still SERVES from it. This is the assertion that stops the
+# minimisation quietly taking fleet-floor with it: `crew floor` resolves
+# index.html and server/floor.py out of $CREW_ROOT, and it only gets that far
+# through an operator config `crew init` scaffolds from the shipped examples/
+# — so one HTTP 200 exercises three kept paths at once. A `box` stub satisfies
+# `need_box` for this one invocation only; the console polls it and finds no
+# fleet, which changes nothing about whether the page is served.
+floorbox="$WORK/floorbox"; mkdir -p "$floorbox"
+cat >"$floorbox/box" <<'SHIM'
+#!/usr/bin/env bash
+[ "${1:-}" = list ] && printf '[]\n'
+exit 0
+SHIM
+chmod +x "$floorbox/box"
+CFG="$WORK/opcfg"
+"$CREW_BIN/crew" init "$CFG" >/dev/null 2>&1
+port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || echo 0)"
+if [ "$port" -gt 0 ] && [ -f "$CFG/fleet.roster" ]; then
+  PATH="$floorbox:$PATH" CREW_CONFIG_DIR="$CFG" CREW_FLOOR_PASS=lifecycle \
+    "$CREW_BIN/crew" floor --local --port "$port" >"$WORK/floor.log" 2>&1 &
+  floor_srv=$!
+  served=0
+  for _ in $(seq 1 60); do
+    kill -0 "$floor_srv" 2>/dev/null || break
+    if python3 - "$port" <<'PY' >/dev/null 2>&1
+import base64, sys, urllib.request
+req = urllib.request.Request("http://127.0.0.1:%s/" % sys.argv[1])
+req.add_header("Authorization", "Basic " + base64.b64encode(b"operator:lifecycle").decode())
+body = urllib.request.urlopen(req, timeout=3).read().decode("utf-8", "replace")
+sys.exit(0 if "<title>Fleet Floor</title>" in body else 1)
+PY
+    then served=1; break; fi
+    sleep 0.5
+  done
+  kill "$floor_srv" 2>/dev/null || true
+  wait "$floor_srv" 2>/dev/null || true
+  if [ "$served" -eq 1 ]; then
+    ok "installed-tree-serves-the-console"
+  else
+    bad "installed-tree-serves-the-console ($(tail -3 "$WORK/floor.log" 2>/dev/null | tr '\n' ' '))"
+  fi
+else
+  bad "installed-tree-serves-the-console (no free port or 'crew init' wrote no roster)"
+fi
+rm -rf "$CFG"
+
 # 2. re-run the same version → no-op, current unchanged
 before="$(readlink "$CREW_HOME/current")"
 install_from "$SA"
