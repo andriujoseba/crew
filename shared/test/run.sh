@@ -4875,6 +4875,192 @@ t p384-flip-ungradeable-forces-nothing "" "$(printf '%s' "$RESUME_FORCE_FRESH" |
 t p384-flip-ungradeable-warns 1 \
   "$(grep -c 'check rollup could not be graded' "$TMP/p384-flip-fail.log")"
 
+# 5. THROUGH THE GATE. Its own DUTY_DIR and its own `gh` stub, in the shape the
+# #314 block above establishes: the foreign half is served from files so a
+# command substitution cannot lose it, and the issue half from a variable.
+P384_DUTY="$TMP/p384-gate"; P384_LOG="$TMP/p384-gate.log"
+P384_SPEECH="$TMP/p384-speech"
+mkdir -p "$P384_DUTY" "$P384_SPEECH"
+: >"$P384_SPEECH/381.comments"; : >"$P384_SPEECH/381.reviews"
+: >"$P384_SPEECH/386.comments"; : >"$P384_SPEECH/386.reviews"
+P384_ISSUE_TS="2026-08-01T00:00:00Z"
+# shellcheck disable=SC2317  # called indirectly by _resume_gate
+gh() {
+  local args="$*" n kind
+  case "$args" in
+    */comments*|*/reviews*)
+      case "$args" in */comments*) kind=comments ;; *) kind=reviews ;; esac
+      n="${args##*/issues/}"; n="${n##*/pulls/}"; n="${n%%/*}"
+      [ -f "$P384_SPEECH/$n.$kind" ] && cat "$P384_SPEECH/$n.$kind"
+      return 0 ;;
+    *) printf '%s\n' "$P384_ISSUE_TS" ;;
+  esac
+  return 0
+}
+P384_SAVED_DUTY="$DUTY_DIR"; P384_SAVED_ME="${ME-}"; P384_ME_WAS_SET="${ME+x}"
+DUTY_DIR="$P384_DUTY"; ME=me
+p384_reset() {
+  rm -f "$P384_DUTY/.seen-resume" "$P384_DUTY/.resume-zero-action.o__r"
+  RESUME_FORCE_FRESH=""
+}
+p384_tick() {  # p384_tick LISTING — one duty tick, caller side included
+  RESUME_DISPATCH_NUMS=""; RESUME_COMMIT_LINES=""
+  _resume_gate o/r o__r "$1" >"$P384_LOG" 2>&1 || true
+  if [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then
+    printf '%s' "$RESUME_COMMIT_LINES" | ledger_commit "$P384_DUTY/.seen-resume"
+  fi
+}
+p384_draft() {  # p384_draft ROLLUP -> the one-draft listing #381 is
+  jq -cn --argjson roll "$1" --arg head "$P384_HEAD" \
+    '[{number:381,isDraft:true,headRefOid:$head,body:"Closes #290",
+       statusCheckRollup:$roll,reviewRequests:[],comments:[]}]'
+}
+
+# THE #381 REPLAY. The session pushed d4b8035 and parked on `ci-floor`. Tick one
+# is the cold ledger and dispatches; tick two is the same head with the check
+# still running and nobody foreign speaking, and is correctly suppressed. Then
+# `ci-floor` CONCLUDES at 07:52:18Z — and that is the tick the old engine could
+# not see, because a check conclusion is neither a comment nor a review. It
+# dispatches now, forty-six minutes and eleven ticks before the twelfth.
+p384_reset
+p384_tick "$(p384_draft "$P384_PENDING")"
+t p384-replay-cold-dispatches 381 "$RESUME_DISPATCH_NUMS"
+p384_tick "$(p384_draft "$P384_PENDING")"
+t p384-replay-parked-on-a-running-check-is-quiet "" "$RESUME_DISPATCH_NUMS"
+t p384-replay-quiet-tick-is-said 1 \
+  "$(grep -c "no resume duty: o/r#381 unchanged at $P384_HEAD" "$P384_LOG")"
+p384_tick "$(p384_draft "$P384_GREEN")"
+t p384-replay-the-conclusion-wakes-it 381 "$RESUME_DISPATCH_NUMS"
+# ...and the ledger advanced to the conclusion stamp, so the value is what fired
+# and not some coincidence of the other halves.
+t p384-replay-ledger-carries-the-conclusion 1 \
+  "$(grep -c "^o/r#381@$P384_HEAD $P384_DONE\$" "$P384_DUTY/.seen-resume")"
+# THE ID IS UNTOUCHED. A check term in the id would mint an id never seen on
+# every re-run and fire again on an unchanged tree; the head stays its whole
+# content, exactly as the ci-red scheme requires (#17).
+t p384-ledger-id-carries-only-the-head 1 \
+  "$(awk '{print $1}' "$P384_DUTY/.seen-resume" | grep -cx "o/r#381@$P384_HEAD")"
+# The value stays ALL ISO-8601, which is what makes a lexical max a
+# chronological one — the invariant the fingerprint block's header states.
+t p384-ledger-value-is-iso8601 1 \
+  "$(awk '{print $2}' "$P384_DUTY/.seen-resume" \
+     | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
+# A RE-RUN of the same check does not re-fire. Its conclusion stamp is not newer
+# than the one already committed, so the value does not sort greater and the
+# ledger holds — which is the difference between a term in the value and a term
+# in the id, asserted rather than argued.
+p384_tick "$(p384_draft "$P384_GREEN")"
+t p384-rerun-of-the-same-check-does-not-refire "" "$RESUME_DISPATCH_NUMS"
+# A LATER conclusion does: a rerun that finishes at a new time is new evidence.
+P384_RERUN="$(p384_run SUCCESS 2026-08-06T09:30:00Z)"
+p384_tick "$(p384_draft "$P384_RERUN")"
+t p384-a-later-conclusion-refires 381 "$RESUME_DISPATCH_NUMS"
+
+# FAIL-SOFT AT THE GATE. A check lookup that errors warns and drops that half
+# for the tick; the other halves still decide, and no green is fabricated.
+p384_reset
+P384_REAL_CHECK="$(declare -f _resume_newest_check)"
+# shellcheck disable=SC2317  # reinstated immediately below
+_resume_newest_check() { return 1; }
+p384_tick "$(p384_draft "$P384_GREEN")"
+t p384-check-failure-warns 1 \
+  "$(grep -c 'check-conclusion lookup failed for the resume fingerprint' "$P384_LOG")"
+t p384-check-failure-still-decides-on-the-rest 381 "$RESUME_DISPATCH_NUMS"
+t p384-check-failure-fabricates-no-stamp 0 \
+  "$(grep -c "$P384_DONE" "$P384_DUTY/.seen-resume")"
+eval "$P384_REAL_CHECK"
+
+# THE #386 REPLAY. A draft carrying a valid signal at a green head with no panel
+# requested: the head has not moved and nobody foreign has spoken, so the ledger
+# is right to hold it and would hold it forever. The force-fresh override is
+# what makes it due.
+P384_386="$(jq -cn --argjson roll "$P384_GREEN" --arg head "$P384_HEAD" \
+  '[{number:386,isDraft:true,headRefOid:$head,body:"Closes #291",
+     statusCheckRollup:$roll,reviewRequests:[],
+     comments:[{author:{login:"me"},body:("ANSWER " + $head),
+                createdAt:"2026-08-06T09:54:56Z",id:"9002"}]}]')"
+p384_reset
+p384_tick "$P384_386"
+t p384-386-cold-dispatches 386 "$RESUME_DISPATCH_NUMS"
+# THE CONTROL: without the override the second tick is suppressed, which is the
+# state #386 actually sat in. This assertion is what makes the next one mean
+# something — it shows the ledger genuinely holds this shape.
+p384_tick "$P384_386"
+t p384-386-ledger-would-hold-it-forever "" "$RESUME_DISPATCH_NUMS"
+t p384-386-hold-is-said 1 \
+  "$(grep -c "no resume duty: o/r#386 unchanged at $P384_HEAD" "$P384_LOG")"
+# Now the predicate speaks, and the same unchanged tick becomes due.
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386" >/dev/null 2>&1
+p384_tick "$P384_386"
+t p384-386-force-fresh-makes-it-due 386 "$RESUME_DISPATCH_NUMS"
+# BOUNDED. The override rides _resume_breaker rather than going around it: three
+# consecutive zero-action dispatches at one head and no fourth. An unbounded
+# bypass would dispatch every five minutes for as long as the draft stood, which
+# is the #314 flood re-entering through the door built to end it.
+#
+# The COUNTER is reset here and the LEDGER deliberately is not, so all three
+# dispatches below are the override's own — with the ledger left holding, a
+# dispatch can have no other cause, and the bound is measured on exactly the
+# path this PR adds rather than on the cold-start it inherits.
+rm -f "$P384_DUTY/.resume-zero-action.o__r"
+for _p384_i in 1 2 3; do
+  _flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386" >/dev/null 2>&1
+  p384_tick "$P384_386"
+  t "p384-386-override-dispatch-$_p384_i" 386 "$RESUME_DISPATCH_NUMS"
+done
+t p384-386-breaker-trips-once 1 \
+  "$(grep -c 'produced no commit, and after this one' "$P384_LOG")"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386" >/dev/null 2>&1
+p384_tick "$P384_386"
+t p384-386-no-fourth-dispatch "" "$RESUME_DISPATCH_NUMS"
+t p384-386-breaker-suppression-is-said 1 \
+  "$(grep -c "breaker-suppressed at $P384_HEAD after 3 zero-action dispatches" "$P384_LOG")"
+# A PUSH ends the episode: the signal at the old head is no longer at the head,
+# so the predicate stops naming it and the ordinary path takes over.
+P384_386_MOVED="$(printf '%s' "$P384_386" | jq -c --arg h "$P384_OLD" '.[0].headRefOid = $h | .')"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386_MOVED" >/dev/null 2>&1
+t p384-386-push-ends-the-episode "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+DUTY_DIR="$P384_SAVED_DUTY"
+if [ -n "$P384_ME_WAS_SET" ]; then ME="$P384_SAVED_ME"; else unset ME; fi
+unset -f gh
+RESUME_FORCE_FRESH=""
+
+# 6. THE WIRING. Helper-level tests stay green if the dispatch site stops
+# consulting either predicate, which is exactly how these stalls come back.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_green_head_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '_flip_owed_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$panel_json" "$resume_json"' "$SHARED/lib/duty-builder.sh"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t p384-predicates-wired-into-the-tick wired "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq 'GREEN_HEAD="${green_head_nums:-none}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '{{GREEN_HEAD}}' "$RG_PROMPT" \
+  && grep -Fq 'FLIP_OWED="${flip_owed_nums:-none}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '{{FLIP_OWED}}' "$RG_PROMPT"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t p384-reasons-reach-the-resume-prompt wired "$r1"
+# The prompt must hand the flip BACK to the builder rather than instructing the
+# session to rubber-stamp it: the judgement is the whole reason a session is
+# bought instead of the engine acting.
+if grep -Fq 'THE FLIP IS YOURS AND ONLY YOURS' "$RG_PROMPT"; then r1=owned; else r1=DELEGATED; fi
+t p384-prompt-keeps-the-flip-with-the-builder owned "$r1"
+# The green-head reason rides BESIDE the threshold, never through it: #319's
+# assertions on _stranded_resume_due's call, threshold and state-file format
+# above run unmodified, and this pins the union that adds the second reason.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq 'stranded_nums="$(printf '"'"'%s %s'"'"' "$stranded_nums" "$green_head_nums" \' "$SHARED/lib/duty-builder.sh"; then
+  r1=beside
+else
+  r1=THROUGH
+fi
+t p384-green-rides-beside-the-threshold beside "$r1"
+
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
 # will independently enter under its new id if it is red.
