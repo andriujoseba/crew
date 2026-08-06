@@ -546,6 +546,13 @@ t "crew status <box>: the detail view still costs three round trips" 3 "$CL_EXEC
 # behind a reassuring sentence. cli-unreachable answers nothing at all.
 crew_detail cli-unreachable
 t "crew status <box>: an unreachable box still exits 0" 0 "$CL_RC"
+if grep -qx 'engine: unknown — the box did not answer' "$CL_TMP/crew-out" &&
+   ! grep '^engine:' "$CL_TMP/crew-out" | grep -q 'hired'; then
+  ok "crew status <box>: an unanswered engine report is unknown, not un-hired"
+else
+  fail "crew status <box>: an unanswered engine report is unknown, not un-hired" \
+       "$(grep '^engine:' "$CL_TMP/crew-out" || true)"
+fi
 if grep -q '(unreachable)' "$CL_TMP/crew-out" &&
    ! grep -q 'no ticks yet' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a box that answers nothing still reads (unreachable)"
@@ -553,6 +560,7 @@ else
   fail "crew status <box>: a box that answers nothing still reads (unreachable)" \
        "$(cat "$CL_TMP/crew-out")"
 fi
+t "crew status <box>: the unreachable detail view still costs three round trips" 3 "$CL_EXECN"
 # Both halves of the criterion, because they arrive by different routes: a
 # STOPPED box fails `box exec` in the daemon, an unreachable one fails inside
 # it. The detail view reads neither state directly — it reads the two probes'
@@ -560,6 +568,12 @@ fi
 # up as a difference between these two cases.
 crew_detail cli-stopped
 t "crew status <box>: a stopped box still exits 0" 0 "$CL_RC"
+if grep -qx 'engine: unknown — the box did not answer' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a stopped box does not infer an absent engine"
+else
+  fail "crew status <box>: a stopped box does not infer an absent engine" \
+       "$(grep '^engine:' "$CL_TMP/crew-out" || true)"
+fi
 if grep -q '(unreachable)' "$CL_TMP/crew-out" &&
    ! grep -q 'no ticks yet' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a stopped box still reads (unreachable)"
@@ -567,10 +581,17 @@ else
   fail "crew status <box>: a stopped box still reads (unreachable)" \
        "$(cat "$CL_TMP/crew-out")"
 fi
+t "crew status <box>: the stopped detail view still costs three round trips" 3 "$CL_EXECN"
 
 # --- the normal case, unchanged --------------------------------------------
 crew_detail cli-hired
 t "crew status <box>: a ticking box exits 0" 0 "$CL_RC"
+if grep -qx 'engine: crew@0.4.1 (deadbee)' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a hired box keeps its engine line"
+else
+  fail "crew status <box>: a hired box keeps its engine line" \
+       "$(grep '^engine:' "$CL_TMP/crew-out" || true)"
+fi
 if grep -q 'stub log for cli-hired' "$CL_TMP/crew-out" &&
    ! grep -qE 'unreachable|no ticks yet|not hired' "$CL_TMP/crew-out"; then
   ok "crew status <box>: a box with a duty log still shows its log"
@@ -587,6 +608,23 @@ else
   fail "crew status <box>: the detail view still reads the last 5 lines" \
        "no 'tail -n 5 ~/duty/duty.log' in $CL_CLI"
 fi
+t "crew status <box>: the hired detail view still costs three round trips" 3 "$CL_EXECN"
+
+# A partial answer is not an absent engine: rig_report and the duty-log read
+# can both succeed even when engine_report fails. Reverting the duty-log branch
+# to key on an empty stamp would turn this reachable hired box into "not hired"
+# and hide the log, even though the state discriminator above remains correct.
+STUB_ENGINE_REPORT_FAIL=cli-hired crew_detail cli-hired
+t "crew status <box>: a box with only the engine probe silent still exits 0" 0 "$CL_RC"
+if grep -qx 'engine: unknown — the box did not answer' "$CL_TMP/crew-out" &&
+   grep -q 'stub log for cli-hired' "$CL_TMP/crew-out" &&
+   ! grep -qE 'unreachable|no ticks yet|not hired' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a silent engine probe does not hide a reachable duty log"
+else
+  fail "crew status <box>: a silent engine probe does not hide a reachable duty log" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+t "crew status <box>: a partly answered detail view still costs three round trips" 3 "$CL_EXECN"
 
 # --- an un-hired box -------------------------------------------------------
 # There is no engine here, so a missing duty log is not the news — and the
@@ -596,6 +634,12 @@ fi
 # from an empty read it would also have got by accident.
 crew_detail cli-nothired
 t "crew status <box>: an un-hired box exits 0" 0 "$CL_RC"
+if grep -qx 'engine: not hired (no engine)' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a reachable un-hired box keeps its engine line"
+else
+  fail "crew status <box>: a reachable un-hired box keeps its engine line" \
+       "$(grep '^engine:' "$CL_TMP/crew-out" || true)"
+fi
 if grep -q 'not hired — no engine installed' "$CL_TMP/crew-out" &&
    ! grep -q 'no ticks yet' "$CL_TMP/crew-out"; then
   ok "crew status <box>: an un-hired box reports the absent engine, not a missing log"
@@ -603,6 +647,7 @@ else
   fail "crew status <box>: an un-hired box reports the absent engine, not a missing log" \
        "$(cat "$CL_TMP/crew-out")"
 fi
+t "crew status <box>: the un-hired detail view still costs three round trips" 3 "$CL_EXECN"
 
 # --- a box that is not on the host at all (#97) ----------------------------
 # The one case that is a FAILURE rather than a report, and the reason the

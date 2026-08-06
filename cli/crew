@@ -1885,7 +1885,11 @@ cmd_status() {
     engine="$(report_field stamp "$report")"
     state="$(report_field state "$report")"
     recorded="$(report_field recorded "$report")"
-    echo "engine: ${engine:-not hired (no engine)}"
+    case "$state" in
+      absent) echo "engine: not hired (no engine)" ;;
+      '')     echo "engine: unknown — the box did not answer" ;;
+      *)      echo "engine: $engine" ;;
+    esac
     case "$state" in
       current)
         echo "integrity: current — every engine file is what ${recorded:-this install} shipped" ;;
@@ -1952,9 +1956,9 @@ cmd_status() {
     # captures are already in hand, and this read is the same one it always
     # was.
     #
-    # The hired/un-hired split keys on $engine, the same variable the `engine:`
-    # line above prints, so the two can never contradict each other on one
-    # screen.
+    # The hired/un-hired split keys on the report state, as does the `engine:`
+    # line above: `absent` is a reachable box with no engine, while an empty
+    # state means the box did not answer at all (#308).
     #
     # Stopped and unreachable keep printing "(unreachable)" and keep returning
     # 0, per the narrowness comment at the top of this branch: stopped is a
@@ -1963,7 +1967,7 @@ cmd_status() {
     log="$(bxn "$b" 'tail -n 5 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' || true)"
     if [ -z "$state" ] && [ "$rconv" = unknown ]; then
       echo "  (unreachable)"
-    elif [ -z "$engine" ]; then
+    elif [ "$state" = absent ]; then
       # No engine, so a missing duty log is not the news — the absent engine
       # is. Factual and not prescriptive: `crew hire` is the action, but
       # whether it will be REFUSED belongs to the rig lines directly above,
