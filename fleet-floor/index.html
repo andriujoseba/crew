@@ -1397,7 +1397,10 @@ var ROSTER=[
    conference UI and every operator's mouse wheel already scrolls. */
 var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragY=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
 function floorGrid(){
-  var mX=26, mT=74, gap=20;
+  /* The byline owns the lane immediately below the fixed fleetbar. Keep the
+     first row below that lane too, so solving the DOM collision cannot turn
+     into a canvas-on-tile collision. */
+  var mX=26, mT=floorHeaderY()+18, gap=20;
   var availW=VW-mX*2;
   var cols=Math.max(1,Math.min(4,Math.round(availW/500)));
   if(ROSTER.length&&ROSTER.length<cols)cols=ROSTER.length;
@@ -1536,9 +1539,10 @@ function stageCounts(){
    without maintaining a test-only copy. */
 function floorHeaderLabels(){
   var version=(LIVEMETA&&LIVEMETA.version)||"version unavailable";
+  var y=floorHeaderY();
   var labels=[
-    {text:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#7f93aa",align:"left"},
-    {text:"scroll · click a unit to zoom in",after:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#46566a",align:"left"}
+    {text:version,x:26,y:y,font:"10px ui-monospace,monospace",color:"#7f93aa",align:"left"},
+    {text:"scroll · click a unit to zoom in",after:version,x:26,y:y,font:"10px ui-monospace,monospace",color:"#46566a",align:"left"}
   ];
   labels.forEach(function(h){
     X.font=h.font;
@@ -1546,6 +1550,18 @@ function floorHeaderLabels(){
     h.width=X.measureText(h.text).width;
   });
   return labels;
+}
+/* Reserve a canvas lane below every visible child of the responsive DOM bar.
+   Vertical separation makes the result independent of the install-root length
+   embedded in `crew --version`; a longer byline can never run back through the
+   badge or counter row. */
+function floorHeaderY(){
+  var bar=document.querySelector(".fleetbar"),bottom=70;
+  if(bar){[].forEach.call(bar.querySelectorAll("*"),function(el){
+    var r=el.getBoundingClientRect(),s=getComputedStyle(el);
+    if(r.width>0&&r.height>0&&s.display!=="none"&&s.visibility!=="hidden")bottom=Math.max(bottom,r.bottom);
+  });}
+  return Math.ceil(bottom)+18;
 }
 function drawAlertBadge(cx,cy,u,cw){
   var a=alertOf(u);if(!a)return;
