@@ -152,6 +152,7 @@ done
 # This is a one-way handoff from the launcher. An absent private environment
 # value degrades visibly; floor.py must not grow a second VERSION reader.
 CL_FLOOR_FN="$(sed -n '/^cmd_floor()/,/^}/p' "$CL_ROOT/cli/crew")"
+# shellcheck disable=SC2016  # the launcher must contain this literal handoff
 case "$CL_FLOOR_FN" in
   *'CREW_FLOOR_VERSION="$(version)"'*) ok "cli: floor hands its exact version answer to the server" ;;
   *) fail "cli: floor hands its exact version answer to the server" "version handoff missing" ;;
