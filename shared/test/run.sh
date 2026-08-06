@@ -2811,13 +2811,29 @@ if grep -q 'test whether it already has an open PR' "$ATT_MOD" &&
 t attention-builder-route-dispatches-new-build dispatched "$r1"
 if grep -q 'For a builder claim with no open PR, your output is board state, never code' \
      "$SHARED/prompts/attention.txt" &&
-   grep -q 'unassign yourself and swap claimed to ready' "$ATT_MOD" &&
-   grep -q 'unassign yourself and swap claimed to ready' "$SHARED/prompts/attention.txt"; then
+   grep -q 'when one exists, keep the issue claimed and assigned' "$ATT_MOD" &&
+   grep -q 'A pushed branch keeps the issue claimed and assigned for ORPHANS resume' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'If a directed hold remains, keep the issue claimed and assigned' "$ATT_MOD" &&
+   grep -q 'a standing hold keeps it claimed and assigned with its park re-stated' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'Only when no build branch exists and no hold remains' "$ATT_MOD" &&
+   grep -q 'Only genuinely unstarted work with no remaining hold is unassigned' \
+     "$SHARED/prompts/attention.txt"; then
   r1=dispatched
 else
   r1=MISSING
 fi
 t attention-prompt-dispatches-new-build dispatched "$r1"
+# Production run_session, not only the behavior stub below, must expose the
+# immutable log path consumed by the timeout evidence branch.
+# shellcheck disable=SC2016  # literal source assignment, not test expansion
+if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common.sh"; then
+  r1=exposed
+else
+  r1=MISSING
+fi
+t attention-run-session-exposes-log exposed "$r1"
 # shellcheck disable=SC2016  # literal source wiring, not this test's expansion
 if grep -q 'fragment-round-rules.txt.*MARK_ANSWERED="\$MARK_ANSWERED"' "$ATT_MOD"; then
   r1=whole
@@ -2854,10 +2870,12 @@ cat >"$ATT_BEHAVIOR/bin/post-once.sh" <<'ATTPO'
 printf 'COMMENT %s#%s %s\n' "$1" "$2" "$3" >>"$ATT_CALLS"
 ATTPO
 chmod +x "$ATT_BEHAVIOR/bin/post-once.sh"
-attention_case() { # attention_case <run_session rc>
-  local case_rc="$1" calls="$ATT_BEHAVIOR/calls-$1"
+attention_case() { # attention_case <run_session rc> <tag>
+  local case_rc="$1" tag="${2:-one}" calls
+  calls="$ATT_BEHAVIOR/calls-$case_rc-$tag"
   : >"$calls"
-  ATT_CASE_RC="$case_rc" ATT_CALLS="$calls" bash -s -- "$SHARED" "$ATT_BEHAVIOR" <<'ATTCASE'
+  ATT_CASE_RC="$case_rc" ATT_CASE_TAG="$tag" ATT_CALLS="$calls" \
+    bash -s -- "$SHARED" "$ATT_BEHAVIOR" <<'ATTCASE'
 set -u
 SHARED="$1"; ATT_BEHAVIOR="$2"
 export ATT_CALLS
@@ -2879,7 +2897,7 @@ MARK_ADDRESSING=addressing
 MARK_ANSWERED=answered
 MARK_PICKUP=pickup
 mkdir -p "$DUTY_DIR"
-gh() { printf 'o/r 9 T1\n'; }
+gh() { printf 'GH %s\n' "$*" >>"$ATT_CALLS"; printf 'o/r 9 T1\n'; }
 read_repo_list() { printf 'o/r\n'; }
 report_suppressed() { cat >/dev/null; }
 ledger_filter() { cat; }
@@ -2890,7 +2908,9 @@ ensure_main_clone() { mkdir -p "$2"; }
 render_prompt() { printf 'prompt'; }
 run_session() {
   RUN_SESSION_RC="$ATT_CASE_RC"
-  RUN_SESSION_LOG=/logs/attention-o_r_9.log
+  mkdir -p "$ATT_BEHAVIOR/logs"
+  RUN_SESSION_LOG="$ATT_BEHAVIOR/logs/$ATT_CASE_TAG.log"
+  : >"$RUN_SESSION_LOG"
 }
 alert() { printf 'ALERT %s\n' "$1" >>"$ATT_CALLS"; }
 warn() { printf 'WARN %s\n' "$1" >>"$ATT_CALLS"; }
@@ -2905,8 +2925,17 @@ ATT_124="$(attention_case 124)"
 t attention-timeout-comments-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^COMMENT ' || true)"
 t attention-timeout-alerts-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^ALERT ' || true)"
 t attention-timeout-names-session-log named \
-  "$(printf '%s\n' "$ATT_124" | grep -q '/logs/attention-o_r_9.log' && echo named || echo MISSING)"
+  "$(printf '%s\n' "$ATT_124" | grep -q 'attention-o__r_9-latest.log' && echo named || echo MISSING)"
 t attention-timeout-does-not-commit 0 "$(printf '%s\n' "$ATT_124" | grep -c '^LEDGER$' || true)"
+t attention-timeout-gh-read-only 1 "$(printf '%s\n' "$ATT_124" | grep -c '^GH api /issues?' || true)"
+t attention-timeout-gh-makes-no-writes 0 \
+  "$(printf '%s\n' "$ATT_124" | grep '^GH ' | grep -Ec 'issue edit| -X (POST|PATCH|DELETE)|--add-|--remove-' || true)"
+# A retry has a different immutable run log but hands post-once a byte-identical
+# stable link, so its exact-body match suppresses duplicate board comments.
+ATT_124_RETRY="$(attention_case 124 retry)"
+t attention-timeout-comment-body-stable \
+  "$(printf '%s\n' "$ATT_124" | grep '^COMMENT ')" \
+  "$(printf '%s\n' "$ATT_124_RETRY" | grep '^COMMENT ')"
 ATT_0="$(attention_case 0)"
 t attention-success-no-comment 0 "$(printf '%s\n' "$ATT_0" | grep -c '^COMMENT ' || true)"
 t attention-success-no-alert 0 "$(printf '%s\n' "$ATT_0" | grep -c '^ALERT ' || true)"
