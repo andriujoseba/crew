@@ -1,0 +1,37 @@
+name: release-artifact
+description: >-
+  Build crew's release assets — the scp-able offline installer crew-<version>.sh
+  and its sha256 sidecar — into $RELEASE_ASSETS_DIR, for the release ceremony to
+  attach with `gh release create` (heavy-duty/crew#210).
+# Ceremony's supported artifact hook, shipped since 0.4.0 and pinned here at
+# 0.6.0: BOTH doors — the merge door and the tag door — invoke this action after
+# the tag exists and before the publish, with the release `version` as input and
+# RELEASE_ASSETS_DIR exported (heavy-duty/ceremony docs/CONSUMERS.md). Every file
+# left in that directory is uploaded as a release asset; a non-zero exit aborts
+# the release with the tag created and nothing published.
+#
+# It replaces a bespoke `artifact` job that was gated on `refs/tags/` and so
+# could never run on the door crew actually releases through: the merge door
+# creates the tag with GITHUB_TOKEN, and GitHub fires no workflow for a ref that
+# token creates. 0.1.0 and 0.1.1 both published with no installer asset.
+#
+# THE BUILD ITSELF IS NOT HERE. A composite action cannot be invoked offline, so
+# a build re-typed in this file could drift from the one CI exercises without a
+# single test going red. `dist/release-artifact.sh` is the one build, driven by
+# both this hook and shared/test/artifact.sh.
+inputs:
+  version:
+    description: the release version, as the tag names it
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: build the installer asset and its checksum sidecar
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      # Absolute paths: the consumer checkout is the tree to pack, and a
+      # composite action's own directory is not where its steps run.
+      run: |
+        "$GITHUB_WORKSPACE/dist/release-artifact.sh" \
+          --version "$VERSION" --root "$GITHUB_WORKSPACE"

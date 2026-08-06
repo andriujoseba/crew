@@ -55,14 +55,15 @@ between them.
 - **From the scp-able artifact** — *primary; offline, no `gh`, no `curl`, no
   network.* Each release publishes `crew-<version>.sh`: a stub with the whole
   tree appended, small enough to email
-  ([#98](https://github.com/heavy-duty/crew/issues/98)). Copy it to the target
-  and run it:
+  ([#98](https://github.com/heavy-duty/crew/issues/98)), and
+  `crew-<version>.sh.sha256` beside it. Copy it to the target and run it:
 
   ```sh
   scp crew-<version>.sh box:/tmp/     # or a USB stick, or a chat paste
   ./crew-<version>.sh                 # verifies its checksum, then installs
   ./crew-<version>.sh --check         # verify only, install nothing
   ./crew-<version>.sh --version       # identify the file without running it
+  sha256sum -c crew-<version>.sh.sha256   # check the download against the release
   ```
 
   It verifies the payload's sha256 **before** unpacking, so a truncated or
