@@ -1497,10 +1497,14 @@ def serve(bind, port, user, password, interval):
     if not os.path.exists(INDEX):
         # Named for both trees this runs in: a checkout, where build.sh is the
         # fix, and an installed one, which carries the built page and not the
-        # builder (#365) — so advice naming only build.sh cannot be followed there.
+        # builder (#365) — so advice naming only build.sh cannot be followed
+        # there. "a repository checkout" rather than the obvious alternative:
+        # run.sh's floor-named-crew-verb-roster-is-complete greps `crew <word>`
+        # out of this whole file, comments included, and prose in that position
+        # mints a console verb that does not exist.
         sys.exit("crew floor: %s is missing — build it with fleet-floor/build.sh "
-                 "from a crew checkout, or reinstall (an installed tree carries "
-                 "the built page, not the builder)" % INDEX)
+                 "in a repository checkout, or reinstall (an installed tree "
+                 "carries the built page, not the builder)" % INDEX)
 
     fleet = Fleet(interval)
     Handler.fleet = fleet
