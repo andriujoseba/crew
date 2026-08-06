@@ -2323,7 +2323,7 @@ cmd_floor() {
   command -v python3 >/dev/null \
     || die "python3 is required for 'crew floor' (stdlib only, nothing to install)"
   [ -f "$CREW_ROOT/fleet-floor/index.html" ] \
-    || die "fleet-floor/index.html is missing — run fleet-floor/build.sh"
+    || die "fleet-floor/index.html is missing — build it with fleet-floor/build.sh from a crew checkout, or reinstall (an installed tree carries the built page, not the builder)"
   # Named at startup rather than surfaced as an empty fleet on first poll: a
   # typo'd --roster otherwise renders a console with nothing on it, which reads
   # exactly like a dead host.

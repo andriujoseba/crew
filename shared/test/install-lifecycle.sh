@@ -54,7 +54,7 @@ install_from() { CREW_INSTALL_SOURCE="$1" bash "$INSTALL" >/dev/null 2>&1; }
 # repository (claude-bot and codex-bot, round 1). Both channels answer to this.
 assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
   local prefix="$1" tree="$2" p shipped="" absent="" kb
-  for p in .git .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
+  for p in .git .gitignore .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
            dist drill drills postmortems protocols shared/test \
            fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
     [ -e "$tree/$p" ] && shipped="$shipped $p"
@@ -427,6 +427,52 @@ assert_payload tarball-payload "$TGZH/share/current"
 # furniture and nothing else.
 same "tarball-installed-crew-reports-version" "crew $VT ($TGZH/share/versions/$VT)" \
   "$("$TGZH/bin/crew" --version 2>/dev/null)"
+
+# THE PRUNE CANNOT LEAVE THE TREE IT WAS HANDED (#365, round 2). Minimising a
+# tree that already exists means removing BY PATH, and `rm -rf -- "$root/…"`
+# resolves every component but the last — so a source whose `shared` is a
+# symlink had the install delete a directory outside the extracted tree and
+# still exit 0 (codex-bot). This is that source, and what it asserts is what
+# survives it: a sentinel OUTSIDE the tree, a refusal rather than a silent
+# half-minimisation, and nothing laid down. The escape came in with the prune,
+# so the assertion belongs beside the branch that introduced it.
+#
+# Its own $CREW_HOME, so "installed nothing" is a fact about this case and not
+# a leftover from the ones above.
+VS=0.0.0-lifecycle-sym
+SYMH="$WORK/sym-home"
+OUTSIDE="$WORK/sym-outside"; mkdir -p "$OUTSIDE/test"; : > "$OUTSIDE/test/sentinel"
+SYMPACK="$WORK/sym-pack"; mkdir -p "$SYMPACK/crew-sym/cli"
+# A real cli/crew and VERSION: install.sh checks for the first before pruning,
+# so a fixture without it would be refused for the wrong reason entirely.
+cp "$SRC/cli/crew" "$SYMPACK/crew-sym/cli/crew"
+printf '%s\n' "$VS" > "$SYMPACK/crew-sym/VERSION"
+ln -s "$OUTSIDE" "$SYMPACK/crew-sym/shared"
+tar -C "$SYMPACK" -czf "$WORK/crew-sym.tgz" crew-sym
+sym_out="$(HOME="$SYMH" CREW_HOME="$SYMH/share" CREW_BIN="$SYMH/bin" \
+  CREW_INSTALL_SOURCE="$WORK/crew-sym.tgz" bash "$INSTALL" 2>&1)"
+sym_rc=$?
+# The one that matters: a file the installer was never pointed at is still there.
+if [ -f "$OUTSIDE/test/sentinel" ]; then
+  ok "symlinked-source-prune-stays-inside-the-tree"
+else
+  bad "symlinked-source-prune-stays-inside-the-tree (removed a path outside the source tree)"
+fi
+# Refused, and saying so. Skipping the prune instead would install the whole
+# repository — the defect #365 exists to close — so silence is not the pass.
+if [ "$sym_rc" -ne 0 ]; then
+  case "$sym_out" in
+    *"lies under a symlink"*) ok "symlinked-source-refused" ;;
+    *) bad "symlinked-source-refused (exited $sym_rc, but not for this reason: '$sym_out')" ;;
+  esac
+else
+  bad "symlinked-source-refused (installed it and exited 0)"
+fi
+if [ ! -e "$SYMH/share/versions" ]; then
+  ok "symlinked-source-installs-nothing"
+else
+  bad "symlinked-source-installs-nothing (laid down: $(ls "$SYMH/share/versions"))"
+fi
 
 echo
 echo "install-lifecycle: passed $PASS, failed $FAIL"
