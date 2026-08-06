@@ -47,6 +47,61 @@ _attention_partition() {
   done
 }
 
+# _attention_audit_classify — classify every object carrying `attention` in a
+# registry repo. stdin: "<repo> <num> <kind> <assignee-count>"; stdout: the
+# same rows prefixed OK, PR or UNASSIGNED. Pull requests are malformed even
+# when assigned: `attention` belongs to the issue that owns the claim.
+_attention_audit_classify() {
+  local repo num kind assignees class
+  while read -r repo num kind assignees; do
+    [ -n "${num:-}" ] || continue
+    if [ "$kind" = pr ]; then
+      class=PR
+    elif [ "${assignees:-0}" -eq 0 ]; then
+      class=UNASSIGNED
+    else
+      class=OK
+    fi
+    printf '%s %s %s %s %s\n' "$class" "$repo" "$num" "$kind" "$assignees"
+  done
+}
+
+# duty_attention_audit — hourly, triage-only board audit, called from the
+# hygiene slot in duty.sh. It observes malformed flags and reports them; it
+# never repairs the board or launches a session.
+duty_attention_audit() {
+  local R fetched rows="" classified malformed
+  while IFS= read -r R; do
+    [ -n "$R" ] || continue
+    fetched="$(gh api "/repos/$R/issues?state=open&labels=$LABEL_ATTENTION&per_page=100" \
+      --jq '.[] | "\(.repository_url | split("/") | .[-2:] | join("/")) \(.number) \(if has("pull_request") then "pr" else "issue" end) \(.assignees | length)"' \
+      2>/dev/null)" || {
+        warn "$R: malformed attention audit fetch failed this tick"
+        return 0
+      }
+    rows="${rows}${rows:+$'\n'}${fetched}"
+  done < <(read_repo_list "$REPOS_FILE")
+
+  classified="$(printf '%s\n' "$rows" | _attention_audit_classify)"
+  malformed="$(printf '%s\n' "$classified" \
+    | awk '$1 == "PR" || $1 == "UNASSIGNED" { print $2 "#" $3, $1 }')"
+
+  local state="$DUTY_DIR/.attention-malformed" previous current
+  previous="$(cat "$state" 2>/dev/null || true)"
+  printf '%s\n' "$malformed" \
+    | report_suppressed "$state" "attention: malformed flag(s)" \
+        "on pull requests or unassigned issues; audit only, not repaired"
+  current="$(cat "$state" 2>/dev/null || true)"
+  if [ "$current" != "$previous" ]; then
+    if [ -n "$current" ]; then
+      alert "🚨 $(hostname): malformed attention flag(s) — $(printf '%s\n' "$malformed" | awk 'NF{printf "%s[%s] ", $1, $2}')— move each flag to the assigned issue that owns the claim"
+    else
+      alert "✅ $(hostname): malformed attention flags cleared"
+    fi
+  fi
+  return 0
+}
+
 duty_attention() {
   local rows
   # updated_at travels so the out-of-scope report can name WHEN, and so a
