@@ -609,7 +609,44 @@ fi
 case "$noassets_out" in *RELEASE_ASSETS_DIR*) ok "no-assets-dir-says-why" ;;
   *) bad "no-assets-dir-says-why (got '$noassets_out')" ;; esac
 
-# 12c. THE ANTI-DRIFT ASSERTION, which is why the build is a script at all: the
+# 12c. THE TREE THAT GETS PACKED, where the release path and every other caller
+#      differ: at release time the workspace is not just the crew checkout —
+#      ceremony checks ITSELF out into `.ceremony-src` beside it, in the same
+#      job, before the hook runs. install.sh prunes crew's own furniture and
+#      knows nothing of a runner's, so packing the directory as found would put
+#      ceremony's repository inside crew's installer and onto every box that
+#      installs it. The asset is built from the committed tree instead, and this
+#      is the case that says so: a git tree carrying two strays a release
+#      workspace would have.
+GT="$WORK/gittree"; mkdir -p "$GT"
+cp -a "$SRC/." "$GT/"
+(
+  cd "$GT" &&
+  git init -q &&
+  git add -A &&
+  git -c user.email=test@example.invalid -c user.name=test commit -qm "release tree"
+) >/dev/null 2>&1 || bad "git-tree-fixture-builds"
+mkdir -p "$GT/.ceremony-src/lib"
+printf 'the ceremony checkout the runner leaves in the workspace\n' > "$GT/.ceremony-src/lib/decide.sh"
+printf 'an uncommitted stray\n' > "$GT/stray-file"
+GADIR="$WORK/assets-git"
+git_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$GT" --assets-dir "$GADIR" 2>&1)" \
+  || bad "release-hook-builds-from-a-git-tree (got '$git_out')"
+case "$git_out" in *"packing the committed tree"*) ok "release-hook-says-it-packs-the-commit" ;;
+  *) bad "release-hook-says-it-packs-the-commit (got '$git_out')" ;; esac
+DGIT="$WORK/homeGit"
+HOME="$DGIT" CREW_HOME="$DGIT/share" CREW_BIN="$DGIT/bin" bash "$GADIR/crew-$V.sh" >/dev/null 2>&1
+gtree="$DGIT/share/versions/$V"
+if [ -d "$gtree" ]; then ok "release-hook-artifact-installs"; else bad "release-hook-artifact-installs"; fi
+strays=""
+for p in .ceremony-src stray-file; do [ -e "$gtree/$p" ] && strays="$strays $p"; done
+if [ -z "$strays" ]; then
+  ok "release-hook-packs-only-the-committed-tree"
+else
+  bad "release-hook-packs-only-the-committed-tree (shipped:$strays)"
+fi
+
+# 12d. THE ANTI-DRIFT ASSERTION, which is why the build is a script at all: the
 #      hook must CALL it and re-type no build of its own. A composite action
 #      cannot be invoked from here, so its shape is what this file can hold —
 #      and it is exactly the property whose absence let the old job rot.

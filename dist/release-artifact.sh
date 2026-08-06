@@ -49,8 +49,9 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$version" ] || die "--version is required"
-[ -n "$root" ]    || root="$(cd "$HERE/.." && pwd)"
+[ -n "$root" ]    || root="$HERE/.."
 [ -d "$root" ]    || die "--root '$root' is not a directory"
+root="$(cd "$root" && pwd -P)"
 # RELEASE_ASSETS_DIR is what ceremony exports to the hook; the flag is how the
 # offline test drives the same code without inventing that environment.
 [ -n "$assets" ]  || assets="${RELEASE_ASSETS_DIR:-}"
@@ -61,9 +62,31 @@ assets="$(cd "$assets" && pwd)"
 art="$assets/$NAME-$version.sh"
 sidecar="$art.sha256"
 
+# WHAT GETS PACKED IS THE COMMITTED TREE, not the working directory. At release
+# time the workspace holds more than crew: ceremony checks ITSELF out into
+# `.ceremony-src` inside it, in the same job, before this hook runs. install.sh's
+# payload exclusions name crew's own furniture and nothing a runner leaves
+# beside it, so packing the directory as found would ship ceremony's repository
+# inside crew's installer and install it on every box. `git archive HEAD` is
+# exactly the tree the release commit names, on both doors. A --root that is not
+# a git work tree — the offline test, a hand build from an unpacked tarball — is
+# packed as it is, there being no commit to prefer.
+pack="$root"
+top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$top" ] && top="$(cd "$top" && pwd -P)"
+if [ "$top" = "$root" ]; then
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  pack="$work/tree"
+  mkdir -p "$pack"
+  git -C "$root" archive --format=tar HEAD | tar -xf - -C "$pack" \
+    || die "could not export the committed tree at HEAD from '$root'."
+  say "packing the committed tree at $(git -C "$root" rev-parse --short HEAD), not the working directory"
+fi
+
 say "building $(basename "$art") from $root"
 # A failed build is a stopped release, never an empty asset.
-bash "$HERE/make-installer.sh" --name "$NAME" --version "$version" --root "$root" --out "$art" \
+bash "$HERE/make-installer.sh" --name "$NAME" --version "$version" --root "$pack" --out "$art" \
   || die "the installer build failed — no asset is published rather than an empty one."
 [ -s "$art" ] || die "the build left no usable artifact at '$art' — refusing to publish an empty asset."
 # The stub verifies its own payload; make the release prove that here, where the
