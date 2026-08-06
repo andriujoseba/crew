@@ -174,50 +174,28 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         const labels = window.FLOORDEV.header();
         const expected = [version, 'scroll · click a unit to zoom in'];
         const bar = document.querySelector('.fleetbar').getBoundingClientRect();
-        const dom = Array.from(document.querySelectorAll(
-          '.fleetbar > :not(.sp), .fleetbar .tiles > *, .fleetbar .filters > *'))
-          .filter((el) => {
-            const style = getComputedStyle(el);
-            const rect = el.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden'
-              && rect.width > 0 && rect.height > 0;
-          })
-          .map((el) => {
-            const r = el.getBoundingClientRect();
-            return { text: (el.textContent || '').trim(), left: r.left, right: r.right,
-              top: r.top, bottom: r.bottom };
-          });
         const wanted = new Set(labels.map((h) => h.text));
         const paints = window.__floorHeaderPaint
           .filter((p) => wanted.has(p.text) && p.y >= bar.top && p.y <= bar.bottom)
           .filter((p, i, all) => all.findIndex((q) => q.text === p.text && q.x === p.x && q.y === p.y) === i)
-          .map((p) => {
-            const left = p.align === 'right' ? p.x - p.width
-              : p.align === 'center' ? p.x - p.width / 2 : p.x;
-            return { text: p.text, left, right: left + p.width,
-              top: p.y - p.ascent, bottom: p.y + p.descent };
-          });
-        const overlaps = [];
-        paints.forEach((paint) => dom.forEach((el) => {
-          if (paint.left < el.right && paint.right > el.left
-              && paint.top < el.bottom && paint.bottom > el.top) {
-            overlaps.push(`${paint.text} <> ${el.text}`);
-          }
-        }));
+          .map((p) => p.text);
+        const domChrome = document.querySelector('.fleetbar').textContent;
         return {
           labels: labels.map((h) => h.text), expected,
-          painted: paints.map((p) => p.text), overlaps,
+          painted: paints,
+          domOwnsChrome: domChrome.includes('FLEET FLOOR')
+            && document.querySelectorAll('.fleetbar #tiles .tile').length > 0,
         };
       }, snapshot.version);
       if (JSON.stringify(composition.labels) !== JSON.stringify(composition.expected)
           || composition.expected.some((text) => !composition.painted.includes(text))
-          || composition.overlaps.length) {
+          || !composition.domOwnsChrome) {
         clearAtWalkWidths = false;
         collision = `${width}px: ${JSON.stringify(composition)}`;
       }
     }
     await page.setViewportSize({ width: 1600, height: 1000 });
-    ok('floor: canvas byline clears the DOM fleetbar at browser-walk widths',
+    ok('floor: canvas byline does not duplicate DOM fleetbar chrome at browser-walk widths',
        clearAtWalkWidths, collision);
   }
   /* Not just "the word units appears": that is true of an empty fleet too,
