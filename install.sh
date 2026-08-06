@@ -114,6 +114,116 @@ self="$(readlink -f "${BASH_SOURCE[0]}")"
 SRC="${CREW_INSTALL_SOURCE:-$(cd "$(dirname "$self")" && pwd)}"
 command -v tar >/dev/null 2>&1 || die "tar is required but was not found. Please install tar and re-run."
 
+# --- the payload -----------------------------------------------------------
+# THE INSTALLED TREE IS THE PRODUCT, NOT THE REPOSITORY (heavy-duty/crew#365).
+# One rule decides every line below: a path ships only if something an
+# installed tree RUNS reads it — `cli/crew`, the `shared/` engine it pushes to
+# boxes, or `fleet-floor/server/` serving the console. Everything else is
+# repository furniture: it is read in a checkout, by CI, by the release
+# ceremony or by a contributor, and on a host it is bytes every `crew upgrade`
+# moves for nothing.
+#
+# What that leaves, so the next person adding a directory can tell which side
+# it falls on: `cli/`, `shared/` (bar its suite), `examples/` (cli/crew's
+# config fallback), `VERSION`, `install.sh`, `README.md`, `CHANGELOG.md`, and
+# `fleet-floor/`'s pre-built `index.html` plus `server/`.
+#
+# ONE list, TWO enforcements. The paths are named once, each with its reason;
+# what follows derives both the `tar --exclude` array and prune_payload(). The
+# script acquires its tree two ways — a DIRECTORY (a checkout, the scp-able
+# artifact's unpacked temp dir, `dist/curl-install.sh`'s extracted tree) or a
+# TARBALL (`dist/fetch.sh` hands over the file `gh` streamed, and the README's
+# own `CREW_INSTALL_SOURCE=<a crew tree or tarball>` form) — and the rule has
+# to be a property of the TREE, not of the branch that got it: filtering only
+# the tar left the tarball branch installing 52M while this comment claimed
+# otherwise (claude-bot and codex-bot, round 1 on #365). So the prune runs on
+# whatever was acquired, and a third acquisition shape inherits the rule by
+# construction; the tar excludes stay as what they are — the optimisation that
+# keeps the directory branch from copying 30M in order to delete it.
+PAYLOAD_EXCLUDED_PATHS=(
+  .git             # a working checkout's VCS state, never the product's
+  .gitignore       # the same checkout's ignore rules — repository furniture by the rule above
+  .github          # CI workflows and labels.conf — GitHub reads them in the repo
+  .box             # the box bootstrap runbook, for an agent in a checkout
+  .ceremony        # vendored governance doctrine; agents read it in the repo they work in
+  AGENTS.md        # the same doctrine's router
+  CONTRIBUTING.md  # contributor doctrine for the checkout
+  changelog.d      # release-note fragments, assembled by the release PR
+  dist             # the installer builders; an installed tree is their output, not their input
+  drill            # the release rehearsal — it refuses a source with no git HEAD, so an install can never run it
+  drills           # the per-version drill records, a release-guard input
+  postmortems      # repo records
+  protocols        # repo records
+  shared/test      # the engine suite, run from a checkout — and `crew upgrade` pushes shared/ to every box
+  fleet-floor/dev  # the design-time asset map: 163 webp, 27 gif, 25 png, shipped only in dev/whiteboard.html
+  fleet-floor/src  # the page's sources; `crew floor` serves the committed index.html and CI asserts it fresh
+  fleet-floor/build.sh  # the src/ concatenator, whose only inputs are excluded above
+  fleet-floor/test # the collector + page suite, run from a checkout
+)
+
+# Anchored patterns (`./x`), so an exclusion names one path at the tree ROOT
+# and can never match a like-named directory deeper in — a bare
+# `--exclude=test` would take any `test` at any depth, silently. `--anchored`
+# is GNU tar's, as are the `mv -Tf` and `readlink -f` this script already
+# depends on, so it adds no portability the installer did not already require.
+PAYLOAD_EXCLUDES=(--anchored)
+for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do PAYLOAD_EXCLUDES+=("--exclude=./$p"); done
+unset p
+
+# True when $2 — a path from the list above, relative to the tree root $1 — can
+# be removed without the removal leaving that root: every DIRECTORY component
+# of it is a real directory rather than a symlink. Stops early on a component
+# that does not exist, since there is then nothing below it to remove and
+# nothing to escape through. The FINAL component is deliberately not checked:
+# `rm -rf` unlinks a trailing symlink instead of following it, which is the
+# right treatment for an excluded path that is itself a link.
+payload_path_is_contained() {  # $1 = tree root, $2 = path under it
+  local at="$1" rest="$2" comp
+  while [ "$rest" != "${rest#*/}" ]; do
+    comp="${rest%%/*}"; rest="${rest#*/}"
+    at="$at/$comp"
+    [ ! -L "$at" ] || return 1
+    [ -d "$at" ] || return 0
+  done
+  return 0
+}
+
+# The same list, applied to a tree that already exists. Rooted removals only —
+# each path is joined to the root the caller names, never globbed — so this
+# touches exactly the paths above inside exactly that tree. Two guards make
+# that true, and both are load-bearing:
+#
+#   1. The root is required and must be a real directory. An empty $1 would
+#      make every removal a bare relative path in $PWD.
+#   2. Nothing is removed THROUGH a symlink. `rm -rf -- "$root/shared/test"`
+#      resolves `shared` during pathname resolution — only the last component
+#      of the path is safe from being followed — so a source whose `shared` is
+#      a symlink had this delete a directory outside the tree entirely while
+#      the install still exited 0 (codex-bot, round 2 on #365). The escape
+#      arrived with the prune; the directory branch never had it, because tar
+#      does not follow symlinks when archiving, so an exclude simply matches
+#      nothing there. Every path is therefore checked BEFORE any is removed.
+#
+# A source with a symlinked ancestor is REFUSED, not skipped. `shared` and
+# `fleet-floor` are plain directories in the repository, in GitHub's tarball
+# and in what dist/make-installer.sh packs, so a tree where they are not is not
+# one this installer can minimise — and installing it unpruned would ship the
+# whole repository, which is the defect #365 exists to close. Checking every
+# path before removing any also means a refusal leaves no half-pruned tree.
+prune_payload() {  # $1 = tree root
+  local root="$1" p
+  if [ -z "$root" ] || [ ! -d "$root" ] || [ -L "$root" ]; then
+    die "prune_payload: not a tree: '${root:-<empty>}'"
+  fi
+  for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do
+    payload_path_is_contained "$root" "$p" || die \
+      "refusing to install $SRC: '$p' lies under a symlink in the source tree, so minimising the payload would remove files outside it. That is not a crew tree — nothing has been removed or installed."
+  done
+  for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do
+    rm -rf -- "${root:?}/${p:?}"
+  done
+}
+
 confirm "Install crew from $SRC?" || die "cancelled — nothing was changed."
 
 # --- temp workspace --------------------------------------------------------
@@ -131,9 +241,9 @@ INSTALLED_FROM="${CREW_INSTALLED_FROM:-local:$SRC}"
 if [ -d "$SRC" ]; then
   log "copying local tree $SRC"
   mkdir -p "$TMPDIR/tree"
-  # tar, not cp -a: --exclude=.git, so a working checkout never carries its VCS
-  # state (or its size) into the install tree.
-  tar -C "$SRC" --exclude=.git -cf - . | tar -xf - -C "$TMPDIR/tree"
+  # tar, not cp -a: the exclude list above, so a working checkout carries
+  # neither its VCS state nor the repository furniture into the install tree.
+  tar -C "$SRC" "${PAYLOAD_EXCLUDES[@]}" -cf - . | tar -xf - -C "$TMPDIR/tree"
   EXTRACTED="$TMPDIR/tree"
 elif [ -f "$SRC" ]; then
   log "extracting local tarball $SRC"
@@ -144,6 +254,12 @@ else
 fi
 [ -n "${EXTRACTED:-}" ] || die "could not find the source tree in $SRC"
 [ -f "$EXTRACTED/cli/crew" ] || die "source does not contain cli/crew — is $SRC a crew tree?"
+
+# The payload rule, on whatever was acquired. A no-op after the directory
+# branch (tar already dropped those paths); the whole of the minimisation after
+# the tarball branch, whose archive is packed elsewhere — by GitHub, by
+# `dist/make-installer.sh` — and arrives whole.
+prune_payload "$EXTRACTED"
 
 # The tree's own VERSION file names the directory it lands in — the version IS
 # the identity of what is being installed.

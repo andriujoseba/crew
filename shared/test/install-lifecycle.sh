@@ -30,11 +30,72 @@ mk_src() {  # <dir> <version> — the tree under test, with VERSION rewritten
   mkdir -p "$1"
   tar -C "$SRC" --exclude=.git -cf - . | tar -xf - -C "$1"
   printf '%s\n' "$2" > "$1/VERSION"
+  # A stand-in for the VCS state a real checkout carries. Without it the
+  # fixture is the one tree install.sh's oldest exclusion could never be
+  # observed on — the source has no .git to leave behind, so the assertion
+  # below would pass whether or not the installer still excludes it.
+  mkdir -p "$1/.git" && : > "$1/.git/HEAD"
 }
 SA="$WORK/src-a"; SB="$WORK/src-b"
 mk_src "$SA" "$VA"
 mk_src "$SB" "$VB"
 install_from() { CREW_INSTALL_SOURCE="$1" bash "$INSTALL" >/dev/null 2>&1; }
+
+# THE PAYLOAD (#365) — the installed tree is the product, not the repository.
+# Every assertion here reads the INSTALLED TREE, never install.sh's exclude
+# list: a list with no assertion is re-broken by the next directory somebody
+# adds, silently, because the install still works and is only fat again. Both
+# directions, because either one alone passes on a catastrophe — an empty tree
+# carries no excluded path, and the whole repository carries every kept one.
+#
+# Parameterised because install.sh acquires its tree TWO ways and the rule is a
+# property of the tree, not of the branch that got it: filtering the tar left
+# the tarball branch — the `gh` and `curl` channels — installing the whole
+# repository (claude-bot and codex-bot, round 1). Both channels answer to this.
+assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
+  local prefix="$1" tree="$2" p shipped="" absent="" kb
+  for p in .git .gitignore .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
+           dist drill drills postmortems protocols shared/test \
+           fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
+    [ -e "$tree/$p" ] && shipped="$shipped $p"
+  done
+  if [ -z "$shipped" ]; then
+    ok "$prefix-excludes-repository-furniture"
+  else
+    bad "$prefix-excludes-repository-furniture (still shipped:$shipped)"
+  fi
+  # The console must not go out with the bathwater: these are what an installed
+  # tree RUNS, and the minimisation is only correct while every one survives.
+  # `shared/bin` is named by its FILES, not as a directory — it is the engine
+  # `crew upgrade` pushes to every box, and an `--exclude=./shared/bin` would
+  # otherwise pass every assertion here (claude-bot, round 1): the deny list
+  # ignores it, the bound only shrinks, and no verb below reads it.
+  for p in cli/crew VERSION install.sh examples/fleet.roster examples/fleet.conf \
+           shared/install.sh shared/lib/common.sh shared/conf/roles \
+           shared/conf/agents shared/prompts \
+           shared/bin/engine-manifest.sh shared/bin/tick.sh shared/bin/duty.sh \
+           fleet-floor/index.html fleet-floor/server/floor.py; do
+    [ -e "$tree/$p" ] || absent="$absent $p"
+  done
+  if [ -z "$absent" ]; then
+    ok "$prefix-keeps-what-the-tree-runs"
+  else
+    bad "$prefix-keeps-what-the-tree-runs (missing:$absent)"
+  fi
+  # The bound, not a target: a regression is a red test rather than a judgement
+  # call. Measured with -L, so passing `current` measures the tree it resolves
+  # to — a bare `du -sk` on a symlink reports the link, which would pass on a
+  # tree of any size (#365). This is also the only assertion here that catches
+  # the OTHER direction of the same defect: the deny list reds when an entry is
+  # dropped, and says nothing about the next fat directory somebody adds, which
+  # lands here instead.
+  kb="$(du -skL "$tree" | cut -f1)"
+  if [ "$kb" -lt 3072 ]; then
+    ok "$prefix-under-3M ($kb KiB)"
+  else
+    bad "$prefix-under-3M (installed tree is $kb KiB)"
+  fi
+}
 
 # 1. fresh install → PATH link resolves under versions/, and the installed crew
 #    runs THROUGH the current symlink (which is what proves $CREW_ROOT resolved
@@ -50,6 +111,78 @@ if ( cd "$WORK" && "$CREW_BIN/crew" help >/dev/null 2>&1 ); then
 else
   bad "installed-crew-runs-through-symlink"
 fi
+
+# 1b. THE PAYLOAD (#365), through the DIRECTORY channel — measured on
+#     `current`, the path an operator's `crew` actually resolves.
+VTREE="$CREW_HOME/versions/$VA"
+assert_payload payload "$CREW_HOME/current"
+
+# The read-only verbs still answer from the minimised tree — `--version` off
+# VERSION, `profiles` off shared/conf/{roles,agents}.
+same "installed-crew-reports-version" "crew $VA ($VTREE)" \
+  "$("$CREW_BIN/crew" --version 2>/dev/null)"
+if profiles_out="$("$CREW_BIN/crew" profiles 2>/dev/null)" && [ -n "$profiles_out" ]; then
+  ok "installed-crew-reads-shipped-profiles"
+else
+  bad "installed-crew-reads-shipped-profiles (got '$profiles_out')"
+fi
+
+# …and the console still SERVES from it. This is the assertion that stops the
+# minimisation quietly taking fleet-floor with it: `crew floor` resolves
+# index.html and server/floor.py out of $CREW_ROOT, and it only gets that far
+# through an operator config `crew init` scaffolds from the shipped examples/
+# — so one HTTP 200 exercises three kept paths at once. A `box` stub satisfies
+# `need_box` for this one invocation only; the console polls it and finds no
+# fleet, which changes nothing about whether the page is served.
+floorbox="$WORK/floorbox"; mkdir -p "$floorbox"
+cat >"$floorbox/box" <<'SHIM'
+#!/usr/bin/env bash
+[ "${1:-}" = list ] && printf '[]\n'
+exit 0
+SHIM
+chmod +x "$floorbox/box"
+CFG="$WORK/opcfg"
+"$CREW_BIN/crew" init "$CFG" >/dev/null 2>&1
+# Each precondition names its OWN cause. The port probe is python3's, and so is
+# `crew floor` itself (cli/crew dies with "python3 is required"), so a box
+# without it must not be reported as a console that failed to serve — that red
+# would send a reader to fleet-floor for a missing interpreter (claude-bot,
+# round 1). CI has python3, so this is the bare-box case only.
+port=0
+if ! command -v python3 >/dev/null 2>&1; then
+  bad "installed-tree-serves-the-console (python3 is required, and this host has none — 'crew floor' would die the same way)"
+elif ! [ -f "$CFG/fleet.roster" ]; then
+  bad "installed-tree-serves-the-console ('crew init' wrote no roster to $CFG — the console never gets as far as the page)"
+else
+  port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()' 2>/dev/null || echo 0)"
+  [ "$port" -gt 0 ] || bad "installed-tree-serves-the-console (no free loopback port to bind)"
+fi
+if [ "$port" -gt 0 ]; then
+  PATH="$floorbox:$PATH" CREW_CONFIG_DIR="$CFG" CREW_FLOOR_PASS=lifecycle \
+    "$CREW_BIN/crew" floor --local --port "$port" >"$WORK/floor.log" 2>&1 &
+  floor_srv=$!
+  served=0
+  for _ in $(seq 1 60); do
+    kill -0 "$floor_srv" 2>/dev/null || break
+    if python3 - "$port" <<'PY' >/dev/null 2>&1
+import base64, sys, urllib.request
+req = urllib.request.Request("http://127.0.0.1:%s/" % sys.argv[1])
+req.add_header("Authorization", "Basic " + base64.b64encode(b"operator:lifecycle").decode())
+body = urllib.request.urlopen(req, timeout=3).read().decode("utf-8", "replace")
+sys.exit(0 if "<title>Fleet Floor</title>" in body else 1)
+PY
+    then served=1; break; fi
+    sleep 0.5
+  done
+  kill "$floor_srv" 2>/dev/null || true
+  wait "$floor_srv" 2>/dev/null || true
+  if [ "$served" -eq 1 ]; then
+    ok "installed-tree-serves-the-console"
+  else
+    bad "installed-tree-serves-the-console ($(tail -3 "$WORK/floor.log" 2>/dev/null | tr '\n' ' '))"
+  fi
+fi
+rm -rf "$CFG"
 
 # 2. re-run the same version → no-op, current unchanged
 before="$(readlink "$CREW_HOME/current")"
@@ -262,6 +395,84 @@ for verb in versions use uninstall; do
     case "$worktree_out" in *"working tree"*"$ROOT"*) ok "$verb-working-tree-refuses" ;; *) bad "$verb-working-tree-refuses (got '$worktree_out')" ;; esac
   fi
 done
+
+# THE OTHER ACQUISITION BRANCH (#365, round 1). install.sh takes a DIRECTORY or
+# a TARBALL, and until this round only the directory branch was minimised — so
+# `dist/fetch.sh` and `dist/curl-install.sh`, which both hand it a file,
+# installed the whole repository while install.sh's own header said they did
+# not. The regression assertion belongs where the branch is, so: the same three
+# assertions against a tarball source.
+#
+# Packed the way GitHub's archive endpoint packs a tag — ONE top-level
+# directory, which is what install.sh's `find -maxdepth 1 -type d` picks up —
+# but carrying a `.git`, as a tarball rolled by hand from a checkout does. That
+# shape is the only one on which the oldest exclusion is observable at all.
+# Its own $CREW_HOME: the suite above has just uninstalled --all, and this
+# channel's business is the payload, not the layout that is already asserted.
+VT=0.0.0-lifecycle-tgz
+TGZH="$WORK/tgz-home"
+PACK="$WORK/tgz-pack"; mkdir -p "$PACK/crew-tgzsha"
+tar -C "$SA" -cf - . | tar -xf - -C "$PACK/crew-tgzsha"
+printf '%s\n' "$VT" > "$PACK/crew-tgzsha/VERSION"
+tar -C "$PACK" -czf "$WORK/crew-src.tgz" crew-tgzsha
+if HOME="$TGZH" CREW_HOME="$TGZH/share" CREW_BIN="$TGZH/bin" \
+   CREW_INSTALL_SOURCE="$WORK/crew-src.tgz" bash "$INSTALL" >/dev/null 2>&1 &&
+   [ -d "$TGZH/share/versions/$VT" ]; then
+  ok "tarball-source-installs"
+else
+  bad "tarball-source-installs"
+fi
+assert_payload tarball-payload "$TGZH/share/current"
+# …and the tree it laid down still runs, which is what says the prune took the
+# furniture and nothing else.
+same "tarball-installed-crew-reports-version" "crew $VT ($TGZH/share/versions/$VT)" \
+  "$("$TGZH/bin/crew" --version 2>/dev/null)"
+
+# THE PRUNE CANNOT LEAVE THE TREE IT WAS HANDED (#365, round 2). Minimising a
+# tree that already exists means removing BY PATH, and `rm -rf -- "$root/…"`
+# resolves every component but the last — so a source whose `shared` is a
+# symlink had the install delete a directory outside the extracted tree and
+# still exit 0 (codex-bot). This is that source, and what it asserts is what
+# survives it: a sentinel OUTSIDE the tree, a refusal rather than a silent
+# half-minimisation, and nothing laid down. The escape came in with the prune,
+# so the assertion belongs beside the branch that introduced it.
+#
+# Its own $CREW_HOME, so "installed nothing" is a fact about this case and not
+# a leftover from the ones above.
+VS=0.0.0-lifecycle-sym
+SYMH="$WORK/sym-home"
+OUTSIDE="$WORK/sym-outside"; mkdir -p "$OUTSIDE/test"; : > "$OUTSIDE/test/sentinel"
+SYMPACK="$WORK/sym-pack"; mkdir -p "$SYMPACK/crew-sym/cli"
+# A real cli/crew and VERSION: install.sh checks for the first before pruning,
+# so a fixture without it would be refused for the wrong reason entirely.
+cp "$SRC/cli/crew" "$SYMPACK/crew-sym/cli/crew"
+printf '%s\n' "$VS" > "$SYMPACK/crew-sym/VERSION"
+ln -s "$OUTSIDE" "$SYMPACK/crew-sym/shared"
+tar -C "$SYMPACK" -czf "$WORK/crew-sym.tgz" crew-sym
+sym_out="$(HOME="$SYMH" CREW_HOME="$SYMH/share" CREW_BIN="$SYMH/bin" \
+  CREW_INSTALL_SOURCE="$WORK/crew-sym.tgz" bash "$INSTALL" 2>&1)"
+sym_rc=$?
+# The one that matters: a file the installer was never pointed at is still there.
+if [ -f "$OUTSIDE/test/sentinel" ]; then
+  ok "symlinked-source-prune-stays-inside-the-tree"
+else
+  bad "symlinked-source-prune-stays-inside-the-tree (removed a path outside the source tree)"
+fi
+# Refused, and saying so. Skipping the prune instead would install the whole
+# repository — the defect #365 exists to close — so silence is not the pass.
+if [ "$sym_rc" -ne 0 ]; then
+  case "$sym_out" in
+    *"lies under a symlink"*) ok "symlinked-source-refused" ;;
+    *) bad "symlinked-source-refused (exited $sym_rc, but not for this reason: '$sym_out')" ;;
+  esac
+else
+  bad "symlinked-source-refused (installed it and exited 0)"
+fi
+if [ ! -e "$SYMH/share/versions" ]; then
+  ok "symlinked-source-installs-nothing"
+else
+  bad "symlinked-source-installs-nothing (laid down: $(ls "$SYMH/share/versions"))"
+fi
 
 echo
 echo "install-lifecycle: passed $PASS, failed $FAIL"

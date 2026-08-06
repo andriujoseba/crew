@@ -84,6 +84,55 @@ else
   bad "artifact-success-cleans-temp-dir (installed=$([ -d "$DLA/share/versions/$V" ] && echo y || echo n) leftovers='$leftA')"
 fi
 
+# 3c. THE PAYLOAD, INHERITED (#365) — asserted per channel rather than assumed
+#     from test 4's tree comparison, which would go on passing if both channels
+#     regressed together. Every channel here ends in install.sh, and install.sh
+#     acquires its tree two ways: the artifact and `dist/curl-install.sh` (test
+#     11) each unpack and hand over a DIRECTORY, while `dist/fetch.sh` (test
+#     10) hands over the TARBALL `gh` streamed — the branch that shipped the
+#     whole repository until round 1 of #365. So the same three assertions run
+#     at each channel's installed tree, whichever branch it lands on, and the
+#     helper is shared so a fourth channel is one line.
+#
+#     The artifact FILE stays the size of the repository, deliberately: it
+#     packs the whole tree and reimplements no install logic, so the payload
+#     rule applies on the way OUT of the stub, not on the way in.
+assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
+  local prefix="$1" tree="$2" p shipped="" absent="" kb
+  for p in .git .gitignore .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
+           dist drill drills postmortems protocols shared/test \
+           fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
+    [ -e "$tree/$p" ] && shipped="$shipped $p"
+  done
+  if [ -z "$shipped" ]; then
+    ok "$prefix-excludes-repository-furniture"
+  else
+    bad "$prefix-excludes-repository-furniture (still shipped:$shipped)"
+  fi
+  # `shared/bin` by its FILES, not as a directory: it is the engine `crew
+  # upgrade` pushes to every box, and an --exclude=./shared/bin would otherwise
+  # pass every assertion here (claude-bot, round 1).
+  for p in cli/crew VERSION install.sh examples/fleet.roster shared/lib/common.sh \
+           shared/bin/engine-manifest.sh shared/bin/tick.sh shared/bin/duty.sh \
+           fleet-floor/index.html fleet-floor/server/floor.py; do
+    [ -e "$tree/$p" ] || absent="$absent $p"
+  done
+  if [ -z "$absent" ]; then
+    ok "$prefix-keeps-what-the-tree-runs"
+  else
+    bad "$prefix-keeps-what-the-tree-runs (missing:$absent)"
+  fi
+  # -L, so a `current` symlink is measured as the tree it resolves to: a bare
+  # `du -sk` there reports the link and passes on any size (#365).
+  kb="$(du -skL "$tree" | cut -f1)"
+  if [ "$kb" -lt 3072 ]; then
+    ok "$prefix-under-3M ($kb KiB)"
+  else
+    bad "$prefix-under-3M (installed tree is $kb KiB)"
+  fi
+}
+assert_payload artifact-install "$DA/share/current"
+
 # 4. byte-identical (bar provenance) to a CREW_INSTALL_SOURCE install of the
 #    same tree; provenance names the artifact, not a dead temp path.
 DB="$WORK/homeB"
@@ -220,6 +269,13 @@ fi
 same "gh-channel-records-ref-provenance" "gh:test/crew tag:0.0.0-ghtag" \
   "$(cat "$DG/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
 same_done_source "gh-channel-done-source-matches-record" "$gh_out" "$DG/share/versions/$V"
+# THE TARBALL BRANCH (#365, round 1). fetch.sh hands install.sh a FILE, and
+# that branch carried no payload rule until this round: this channel installed
+# 52M — every path the list names — where the artifact installed 1.2M. Asserted
+# here, one block below the install this channel already does, because a
+# minimisation that holds on one branch of install.sh and not the other is not
+# a property of the product.
+assert_payload gh-channel-payload "$DG/share/versions/$V"
 # fetch.sh downloaded the tarball into its own temp dir; `exec`-ing install.sh
 # would drop its `trap … EXIT` and orphan that tarball. Assert the sandbox is
 # empty after a clean fetch-install (round 1).
@@ -295,6 +351,14 @@ case "$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )" in
   "crew $V ("*) ok "curl-installed-crew-answers-version" ;;
   *) bad "curl-installed-crew-answers-version (got '$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )')" ;;
 esac
+# The anonymous channel was never the defect — it extracts the archive itself
+# and hands install.sh the resulting TREE (`curl-channel-hands-tree-to-install-sh`
+# above), so it took the directory branch and was minimised from the start.
+# Asserted anyway, and pinned here rather than left implied: it is the channel
+# a machine with no `gh` and no scp'd artifact reaches for, and the thing that
+# makes it safe — which branch it happens to hand to — is one line in
+# curl-install.sh away from changing.
+assert_payload curl-channel-payload "$CURL_HOME/share/current"
 same "curl-channel-records-resolved-tag-provenance" "curl:heavy-duty/crew ref:$CTAG" \
   "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
 same_done_source "curl-channel-done-source-matches-record" "$CURL_OUT" "$CURL_HOME/share/versions/$V"
