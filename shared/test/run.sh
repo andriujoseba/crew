@@ -4770,22 +4770,34 @@ p384_gh_out="$(cat "$TMP/p384-green.log")"
 # case, untouched; 384 signalled its current head; 386 is a draft (the draft
 # path owns it); 387 has no checks configured, which is not green; 388's thread
 # could not be read.
-t p384-green-head-rows "$(printf '381\n385')" "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
+p384_gh_nums="$(printf '%s' "$GREEN_HEAD_ROWS" | awk -F'\t' 'NF{print $1}')"
+t p384-green-head-rows "$(printf '381\n385')" "$p384_gh_nums"
 # MUST FAIL, one per line — these are the regressions, and each is its own
 # assertion so a failure names which guarantee broke rather than "the set moved".
-t p384-pending-head-still-waits-twelve 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^382$')"
-t p384-red-head-still-waits-twelve 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^383$')"
-t p384-correct-signal-is-never-resumed 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^384$')"
-t p384-draft-is-not-this-predicates-business 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^386$')"
-t p384-no-checks-is-not-green 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^387$')"
-t p384-unread-thread-is-not-a-detection 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^388$')"
+t p384-pending-head-still-waits-twelve 0 "$(grep -c '^382$' <<<"$p384_gh_nums")"
+t p384-red-head-still-waits-twelve 0 "$(grep -c '^383$' <<<"$p384_gh_nums")"
+t p384-correct-signal-is-never-resumed 0 "$(grep -c '^384$' <<<"$p384_gh_nums")"
+t p384-draft-is-not-this-predicates-business 0 "$(grep -c '^386$' <<<"$p384_gh_nums")"
+t p384-no-checks-is-not-green 0 "$(grep -c '^387$' <<<"$p384_gh_nums")"
+t p384-unread-thread-is-not-a-detection 0 "$(grep -c '^388$' <<<"$p384_gh_nums")"
 # A signal naming a SUPERSEDED head is no signal at this head: 385 is due.
-t p384-stale-signal-is-still-unsignalled 1 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^385$')"
+t p384-stale-signal-is-still-unsignalled 1 "$(grep -c '^385$' <<<"$p384_gh_nums")"
+# THE HEAD RIDES WITH THE NUMBER, from this read and not a second one: the
+# caller builds the breaker's `<repo>#<num>@<head>` key out of this row, and two
+# reads of the listing are two chances to key a count to the wrong head.
+t p384-green-row-carries-the-head "$(printf '381\t%s\n385\t%s' "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
 # EXACTLY ONE WARN per detection, naming the head in full and the reason.
 t p384-green-warns-once-per-detection 2 "$(grep -c 'WARN' <<<"$p384_gh_out")"
 t p384-green-warn-names-the-head 2 "$(grep -c "green and no signal names that head" <<<"$p384_gh_out")"
 t p384-green-warn-carries-the-full-sha 2 "$(grep -c "$P384_HEAD" <<<"$p384_gh_out")"
 t p384-green-warn-names-the-pr 1 "$(grep -c 'WARN.*o/r#381' <<<"$p384_gh_out")"
+# DETECTION DOES NOT PROMISE A DISPATCH. Whether this tick actually resumes is
+# the breaker's answer, said at the breaker's site — so the detection WARN must
+# not carry the old "so resuming this tick instead of the twelfth" tail, which
+# would be a claim this function cannot make once a bypass can be suppressed.
+t p384-green-warn-does-not-promise-a-dispatch 0 \
+  "$(grep -c 'resuming this tick' <<<"$p384_gh_out")"
 # The bypass ADDS a reason to be due and removes none: both PRs it named are
 # still stranded the ordinary way, their counters advancing exactly as before,
 # and so are the three it declined to name. Five in total — 384 signalled its
@@ -4808,6 +4820,75 @@ _green_head_resume_rows o/r me ANSWER 'not json' >"$TMP/p384-green-fail.log" 2>&
 t p384-green-ungradeable-detects-nothing "" "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
 t p384-green-ungradeable-warns 1 \
   "$(grep -c 'check rollup could not be graded' "$TMP/p384-green-fail.log")"
+
+# 3b. THE GREEN-HEAD BOUND. Detection above answers "is this PR due"; the
+# breaker answers "how many times may being due buy a session before the
+# evidence is that the sessions produce nothing". The predicate holds no state
+# of its own, so unbounded it would name the same PR every tick for as long as
+# the head stood — a resume session every five minutes, indefinitely, which is
+# the #314 flood re-entering through the door built to end it. That is this
+# PR's own argument for bounding the flip-owed lane, and it is no weaker here:
+# "non-draft, green head, no signal at that head" is a shape every PR passes
+# through on the ordinary path between CI concluding and its builder signalling.
+P384_GB="$TMP/p384-green-breaker"; P384_GB_LOG="$TMP/p384-green-breaker.log"
+mkdir -p "$P384_GB"
+P384_GB_SAVED_DUTY="$DUTY_DIR"; DUTY_DIR="$P384_GB"
+p384_gb_tick() {  # p384_gb_tick ROWS — one tick of the bypass, caller side
+  GREEN_HEAD_DISPATCH_NUMS=""
+  _green_head_breaker o/r o__r "$1" >"$P384_GB_LOG" 2>&1 || true
+}
+P384_GB_ROWS="$(printf '381\t%s\n' "$P384_HEAD")"
+for _p384_i in 1 2 3; do
+  p384_gb_tick "$P384_GB_ROWS"
+  t "p384-green-bypass-dispatch-$_p384_i" 381 "$GREEN_HEAD_DISPATCH_NUMS"
+done
+t p384-green-bypass-dispatch-is-said 1 \
+  "$(grep -c "green head owed a signal .* dispatch 3 of 3 at $P384_HEAD" "$P384_GB_LOG")"
+# The trip fires as the THIRD dispatch goes out and asserts only what is
+# observed — the previous two produced nothing; the third has not run yet.
+t p384-green-bypass-trips-once 1 \
+  "$(grep -c 'the previous 2 produced no signal' "$P384_GB_LOG")"
+# AND NO FOURTH. This is the assertion the round asked for.
+p384_gb_tick "$P384_GB_ROWS"
+t p384-green-bypass-no-fourth-dispatch "" "$GREEN_HEAD_DISPATCH_NUMS"
+t p384-green-bypass-suppression-is-said 1 \
+  "$(grep -c "green-head bypass suppressed at $P384_HEAD after 3 zero-action dispatches" "$P384_GB_LOG")"
+# SUPPRESSION ENDS THE BYPASS, NOT THE PR'S CLAIM ON RESUME: the twelve-tick
+# counter is a different lane with a different state file, and the suppression
+# line says so rather than leaving a reader to infer the PR was abandoned.
+t p384-green-bypass-suppression-names-the-other-lane 1 \
+  "$(grep -c 'the twelve-tick counter still runs' "$P384_GB_LOG")"
+# A PUSH ENDS THE EPISODE, with no separate observation of "produced no commit":
+# the head is in the key, so a moved head is a key never seen.
+p384_gb_tick "$(printf '381\t%s\n' "$P384_OLD")"
+t p384-green-bypass-push-resets 381 "$GREEN_HEAD_DISPATCH_NUMS"
+t p384-green-bypass-count-restarts-at-one 1 \
+  "$(awk -F'\t' -v k="o/r#381@$P384_OLD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action-green.o__r")"
+t p384-green-bypass-prunes-the-old-head 0 \
+  "$(grep -c "@$P384_HEAD" "$P384_GB/.resume-zero-action-green.o__r")"
+# THE TWO LANES DO NOT SHARE A STATE FILE, and this is why. _resume_breaker
+# rebuilds its state from stdin alone and `mv`s it into place, so keys absent
+# from a call are pruned (`resume-breaker-state-prunes` pins it deliberately).
+# Two call sites on one file would therefore erase each other's counters every
+# tick — the gate's drafts are not in the bypass's stdin, and the bypass's PRs
+# are not in the gate's. Written through _resume_breaker itself, so this is the
+# gate's own state file in the gate's own format.
+printf 'o/r#999@%s\tfresh\n' "$P384_HEAD" \
+  | _resume_breaker "$P384_GB/.resume-zero-action.o__r" 3 >/dev/null
+p384_gb_tick "$(printf '381\t%s\n' "$P384_OLD")"
+t p384-green-bypass-leaves-the-gate-counters 1 \
+  "$(awk -F'\t' -v k="o/r#999@$P384_HEAD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action.o__r")"
+t p384-green-bypass-keeps-its-own-count 2 \
+  "$(awk -F'\t' -v k="o/r#381@$P384_OLD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action-green.o__r")"
+# A QUIET TICK DISPATCHES NOTHING AND RESETS NOTHING. The count is of
+# consecutive DISPATCHES, not consecutive ticks — the breaker's own rule — so a
+# tick with no rows returns early rather than rebuilding an empty state file.
+p384_gb_tick ""
+t p384-green-bypass-quiet-tick-is-empty "" "$GREEN_HEAD_DISPATCH_NUMS"
+t p384-green-bypass-quiet-tick-keeps-the-count 2 \
+  "$(awk -F'\t' -v k="o/r#381@$P384_OLD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action-green.o__r")"
+DUTY_DIR="$P384_GB_SAVED_DUTY"
+unset -f p384_gb_tick
 
 # 4. THE FLIP-OWED DUE-PREDICATE — the terminal state neither path can leave.
 # PR #386 was ready, green and correctly signalled when it was converted to
@@ -5153,9 +5234,12 @@ t p384-reasons-reach-the-resume-prompt wired "$r1"
 # bought instead of the engine acting.
 if grep -Fq 'THE FLIP IS YOURS AND ONLY YOURS' "$RG_PROMPT"; then r1=owned; else r1=DELEGATED; fi
 t p384-prompt-keeps-the-flip-with-the-builder owned "$r1"
-# The green-head reason rides BESIDE the threshold, never through it: #319's
-# assertions on _stranded_resume_due's call, threshold and state-file format
-# above run unmodified, and this pins the union that adds the second reason.
+# The green-head reason rides BESIDE the threshold — #319's assertions on
+# _stranded_resume_due's call, threshold and state-file format above run
+# unmodified, and this pins the union that adds the second reason — and THROUGH
+# the breaker, which is the half a helper-level test cannot see. An earlier cut
+# of this PR had the union alone, and this assertion as written then pinned the
+# unbounded wiring rather than catching it; both halves are named now.
 # shellcheck disable=SC2016  # matching shell source literally
 if grep -Fq '"$stranded_nums" "$green_head_nums"' "$SHARED/lib/duty-builder.sh"; then
   r1=beside
@@ -5163,6 +5247,25 @@ else
   r1=THROUGH
 fi
 t p384-green-rides-beside-the-threshold beside "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_green_head_breaker "$R" "$slug" "$green_head_rows"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq 'green_head_nums="$GREEN_HEAD_DISPATCH_NUMS"' "$SHARED/lib/duty-builder.sh"; then
+  r1=bounded
+else
+  r1=UNBOUNDED
+fi
+t p384-green-also-rides-the-breaker bounded "$r1"
+# ...on a state file of its own. A second call site against the gate's file
+# would silently prune the gate's counters every tick, so the path is part of
+# the wiring and not an implementation detail.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_resume_breaker "$DUTY_DIR/.resume-zero-action-green.$slug"' "$SHARED/lib/duty-builder.sh" \
+  && [ "$(grep -cF '_resume_breaker "$DUTY_DIR/.resume-zero-action.$slug"' "$SHARED/lib/duty-builder.sh")" = 1 ]; then
+  r1=separate
+else
+  r1=SHARED
+fi
+t p384-green-breaker-has-its-own-state-file separate "$r1"
 
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and

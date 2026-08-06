@@ -1495,7 +1495,7 @@ _green_head_breaker() {
       *) : ;;
     esac
   done < <(
-    printf '%s' "$rows" \
+    printf '%s\n' "$rows" \
       | while IFS=$'\t' read -r num head; do
           [ -n "$num" ] || continue
           [ -n "$head" ] || continue
