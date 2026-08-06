@@ -130,14 +130,14 @@ duty_attention() {
   fi
   rows="$fresh"
 
-  # Route the demand by role. Builders get the full build machinery rules:
-  # an authorization that unblocks a claimed issue's acceptance criterion IS
-  # build work, done in the pickup session.
+  # Route the demand by role. A builder continues work that already has an open
+  # PR here, but dispatches a not-yet-started build to the normal duty tick: the
+  # attention slot has half the build budget and runs before every other duty.
   local route
   if has_role triage; then
     route="Act per $DOCTRINE_TRIAGE. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."
   elif has_role builder; then
-    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now."
+    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. Before doing build work on a claimed issue, test whether it already has an open PR. If it does, complete the in-flight work here under the round protocol and end in the exact-head signal. If it does not, dispatch: address the situation, leave the board claimable with the next build step recorded, and exit without creating a branch, commit, or PR; the normal duty tick owns that build."
   else
     route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you ($DOCTRINE_REVIEWER for a verdict). Never spawn work off a bare @-mention."
   fi
@@ -162,11 +162,18 @@ duty_attention() {
       MARK_PICKUP="$MARK_PICKUP" LABEL_ATTENTION="$LABEL_ATTENTION" \
       ROLE_ROUTE="$route" EXTRA_RULES="$extra")"
     RUN_SESSION_RC=1
+    RUN_SESSION_LOG=""
     run_session attention "$repo#$num" "$dir" "$TIMEOUT_ATTENTION" "$prompt"
     # Per demand, not per sweep: each row is its own session, and one that
     # crashed must not be settled by a sibling that succeeded.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
       printf '%s %s\n' "$id" "$upd" | ledger_commit "$DUTY_DIR/.seen-attention"
+    elif [ "${RUN_SESSION_RC:-1}" -eq 124 ]; then
+      local timeout_note
+      timeout_note="⏱️ attention pickup timed out; work may be incomplete. Session log: ${RUN_SESSION_LOG:-unknown}"
+      "$BIN_DIR/post-once.sh" "$repo" "$num" "$timeout_note" >/dev/null 2>&1 \
+        || warn "attention: timeout comment failed for $repo#$num"
+      alert "⏱️ $(hostname): attention pickup timed out for $repo#$num — session log: ${RUN_SESSION_LOG:-unknown}"
     fi
   done <<<"$rows"
 }
