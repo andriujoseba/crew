@@ -3720,9 +3720,16 @@ CHK_FAILURE_THEN_RUNNING='[
 SC_BAD='[{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
 SC_ERR='[{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}]'
 SC_MIX='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
+# The status carries `startedAt`, not `createdAt`: `gh` requests GitHub's
+# `createdAt` for a StatusContext and serialises it under its own key, so
+# `createdAt` never reaches a caller. `latest_checks` reads `.startedAt //
+# .createdAt`, so the generation ordering this fixture pins is unchanged either
+# way — but the fiction is the one that went on to kill `_resume_newest_check`
+# one module over (#391 round 2), and a fixture file cannot hold a shape
+# contract while contradicting it here.
 SC_COLLISION_STATUS_LAST='[
   {"__typename":"CheckRun","name":"ci/build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
-  {"__typename":"StatusContext","context":"ci/build","state":"FAILURE","createdAt":"2026-07-29T11:05:00Z"}]'
+  {"__typename":"StatusContext","context":"ci/build","state":"FAILURE","startedAt":"2026-07-29T11:05:00Z"}]'
 SC_COLLISION_STATUS_FIRST="$(printf '%s' "$SC_COLLISION_STATUS_LAST" | jq 'reverse')"
 
 state_of() { hc '[]' "$(mk_prc "$1")" | cut -f4; }
@@ -4673,12 +4680,22 @@ p384_run() {  # p384_run CONCLUSION [COMPLETED] — one CheckRun in a rollup
   # The jq arg is `fin`, not `done`: shellcheck reads a bare `done` after --arg
   # as the loop keyword and warns (SC1010), and ci-shell runs it without a
   # severity floor, so a warning is a red job.
+  #
+  # THE RUNNING SHAPE IS `gh`'s, NOT A TIDIED ONE. A running CheckRun comes back
+  # with `conclusion:""` and Go's ZERO TIME in `completedAt` — neither key is
+  # ever absent, live on nodejs/node:
+  #   {"__typename":"CheckRun","completedAt":"0001-01-01T00:00:00Z",
+  #    "conclusion":"","name":"coverage-windows","status":"IN_PROGRESS",...}
+  # The first cut of this fixture omitted both, which is the only reason a
+  # `completedAt != ""` test for "has concluded" passed here while fabricating a
+  # stamp on every real running check (#391 round 2, claude).
   jq -cn --arg c "$1" --arg fin "${2:-}" --arg started "$P384_START" \
     '[{__typename:"CheckRun", name:"ci-floor", workflowName:"ci-floor",
        status:(if $c == "" then "IN_PROGRESS" else "COMPLETED" end),
-       conclusion:(if $c == "" then null else $c end),
-       startedAt:$started, completedAt:(if $fin == "" then null else $fin end)}]'
+       conclusion:$c, startedAt:$started,
+       completedAt:(if $fin == "" then "0001-01-01T00:00:00Z" else $fin end)}]'
 }
+P384_ZERO_TIME=0001-01-01T00:00:00Z
 P384_GREEN="$(p384_run SUCCESS "$P384_DONE")"
 P384_PENDING="$(p384_run "" "")"
 P384_RED="$(p384_run FAILURE "$P384_DONE")"
@@ -4702,6 +4719,17 @@ P384_RUNNING="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_PENDING" '')" '[$
 t p384-running-check-has-no-stamp "" "$(_resume_newest_check "$P384_RUNNING" 381)"
 t p384-running-check-does-not-leak-startedAt 0 \
   "$(_resume_newest_check "$P384_RUNNING" 381 | grep -c "$P384_START")"
+# …and does not leak the ZERO TIME either. `completedAt` is present-but-zero
+# while a check runs, so "has concluded" is `.status == "COMPLETED"` and not a
+# non-empty string. The three assertions above are one contract read three ways:
+# a running check contributes NOTHING, neither a real start nor a fabricated
+# end. A fabricated one sorts below every genuine stamp so it would never mask a
+# conclusion — but it displaces the documented `0` floor, and the floor is what
+# the gate's own comment promises a reader.
+t p384-running-check-does-not-leak-the-zero-time 0 \
+  "$(_resume_newest_check "$P384_RUNNING" 381 | grep -c "$P384_ZERO_TIME")"
+t p384-running-fixture-carries-the-zero-time 1 \
+  "$(printf '%s' "$P384_RUNNING" | grep -c "$P384_ZERO_TIME")"
 # A RED check has concluded, and its stamp counts: the fingerprint's job is to
 # say the head answered, not that it passed. Whether green or red is the
 # due-predicates' question, two blocks down.
@@ -4715,15 +4743,40 @@ P384_MANY="$(jq -cn --arg h "$P384_HEAD" '[{number:381,isDraft:true,headRefOid:$
     {__typename:"CheckRun",name:"b",status:"COMPLETED",conclusion:"SUCCESS",
      startedAt:"2026-08-06T07:00:00Z",completedAt:"2026-08-06T07:52:18Z"}]}]')"
 t p384-check-stamp-is-the-newest "$P384_DONE" "$(_resume_newest_check "$P384_MANY" 381)"
-# A StatusContext has no completedAt at all, so its createdAt stands in — but
-# only where its state is TERMINAL. A PENDING context's createdAt is when the
-# wait began, and the rollup mixes the two shapes (head-checks.jq's header).
+# A StatusContext has no completedAt at all, so its start stands in — but only
+# where its state is TERMINAL. A PENDING context's stamp is when the wait began,
+# and the rollup mixes the two shapes (head-checks.jq's header).
+#
+# THE KEY IS `startedAt`, WHICH GITHUB'S SCHEMA DOES NOT HAVE. `gh` requests
+# StatusContext.createdAt and serialises it under its own `startedAt`, so
+# `createdAt` never reaches a caller of `gh pr list --json statusCheckRollup`.
+# Live on python/cpython:
+#   {"__typename":"StatusContext","context":"CLA Signing",
+#    "startedAt":"2026-08-06T15:09:40Z","state":"SUCCESS","targetUrl":""}
+# The first cut of this fixture fabricated `createdAt`, so it passed against a
+# shape that does not occur while the branch was dead against every real rollup
+# — met for a repo whose checks are CheckRuns, crew's own among them, and unmet
+# exactly where a legacy status concludes. That is head-checks.jq's #50 (its
+# header, and `head-status-context-failure` above) transposed from grading to
+# stamping, which is why this fixture is now `gh`'s output key for key
+# (#391 round 2, codex and claude).
 P384_CTX="$(jq -cn --arg h "$P384_HEAD" --arg s "$P384_DONE" '[{number:381,isDraft:true,
   headRefOid:$h,body:"",reviewRequests:[],comments:[],
-  statusCheckRollup:[{__typename:"StatusContext",context:"legacy",state:"SUCCESS",createdAt:$s}]}]')"
+  statusCheckRollup:[{__typename:"StatusContext",context:"legacy",state:"SUCCESS",
+                      startedAt:$s,targetUrl:""}]}]')"
 t p384-status-context-concludes "$P384_DONE" "$(_resume_newest_check "$P384_CTX" 381)"
+# The negative was VACUOUS before the fix — there was no `createdAt` for the
+# terminal-state gate to reject, so it could not fail. It is a real assertion
+# for the first time here.
 P384_CTX_WAIT="$(printf '%s' "$P384_CTX" | jq -c '.[0].statusCheckRollup[0].state = "PENDING" | .')"
 t p384-pending-status-context-has-no-stamp "" "$(_resume_newest_check "$P384_CTX_WAIT" 381)"
+# The `//` form, not a bare swap to `.startedAt`: `head-checks.jq`'s own idiom
+# in `latest_checks`, so a fleet box whose `gh` serialises GitHub's key
+# unrenamed still stamps rather than going quietly dead a second time.
+P384_CTX_CREATED="$(printf '%s' "$P384_CTX" \
+  | jq -c '.[0].statusCheckRollup[0] |= (.createdAt = .startedAt | del(.startedAt))')"
+t p384-status-context-createdAt-still-concludes "$P384_DONE" \
+  "$(_resume_newest_check "$P384_CTX_CREATED" 381)"
 # No checks configured is not a conclusion either; the gate floors it to `0`.
 P384_NOCI="$(jq -cn --argjson pr "$(p384_pr 381 true '[]' '')" '[$pr]')"
 t p384-no-checks-no-stamp "" "$(_resume_newest_check "$P384_NOCI" 381)"
@@ -4732,6 +4785,52 @@ t p384-no-checks-no-stamp "" "$(_resume_newest_check "$P384_NOCI" 381)"
 # flooring a half it could not read.
 t p384-check-lookup-failure-is-nonzero 1 \
   "$(_resume_newest_check "$P384_ONE" 999 >/dev/null 2>&1; echo $?)"
+
+# MUST FAIL — a rollup fixture that is not the shape `gh` emits. Both halves of
+# the round-2 defect were fixtures, not code: the code was a correct reading of
+# a rollup nobody receives, and every test above passed against it. crew's own
+# CI is a single CheckRun, so this repo's CI can never catch either one — the
+# same reason head-checks.jq keeps `SC_BAD` and says so in its header. That
+# makes a shape guard the only thing standing between this class and its next
+# recurrence, and it is asserted on the fixtures as DATA rather than by reading
+# the source, so a fixture built by transform is covered like a literal one.
+p384_shape_lies() {  # p384_shape_lies ROLLUP — count nodes lying about `gh`
+  printf '%s' "$1" | jq '[ .[] | select(
+      # `gh` renames StatusContext.createdAt to `startedAt` on the way out, so a
+      # fixture carrying createdAt is asserting against a shape that never
+      # arrives — the dead branch, exactly.
+      (.__typename == "StatusContext" and has("createdAt"))
+      # A running CheckRun carries a present-but-zero completedAt, so a fixture
+      # omitting the key lets a non-empty test for "has concluded" pass here and
+      # fabricate a stamp in production — the half claude found, exactly.
+      or (.__typename == "CheckRun" and (.status // "") != "COMPLETED"
+          and ((has("completedAt") and .completedAt != null) | not))
+    )] | length'
+}
+p384_rollup_of() { printf '%s' "$1" | jq -c '.[0].statusCheckRollup'; }
+t p384-fixture-shape-green 0 "$(p384_shape_lies "$P384_GREEN")"
+t p384-fixture-shape-pending 0 "$(p384_shape_lies "$P384_PENDING")"
+t p384-fixture-shape-red 0 "$(p384_shape_lies "$P384_RED")"
+t p384-fixture-shape-many 0 "$(p384_shape_lies "$(p384_rollup_of "$P384_MANY")")"
+t p384-fixture-shape-status-context 0 "$(p384_shape_lies "$(p384_rollup_of "$P384_CTX")")"
+t p384-fixture-shape-pending-status-context 0 \
+  "$(p384_shape_lies "$(p384_rollup_of "$P384_CTX_WAIT")")"
+t p384-fixture-shape-collision 0 "$(p384_shape_lies "$SC_COLLISION_STATUS_LAST")"
+# The guard catches the shapes this round shipped broken, or it is decoration.
+t p384-shape-guard-catches-status-createdAt 1 \
+  "$(p384_shape_lies "$(p384_rollup_of "$P384_CTX_CREATED")")"
+t p384-shape-guard-catches-running-without-completedAt 1 \
+  "$(p384_shape_lies "$(printf '%s' "$P384_PENDING" | jq -c 'map(del(.completedAt))')")"
+# `P384_CTX_CREATED` is the ONE fixture that carries createdAt on purpose — it
+# asserts the `//` fallback for a `gh` that does not rename the field — so it is
+# named here rather than exempted quietly, and the assertion above is that the
+# guard does see it. Every other fixture in this file is `gh`'s shape, which a
+# literal scan says in one line and independently of the list above.
+# The pattern is split across two lines on purpose: written whole it would
+# match ITSELF and the guard would red on its own source.
+P384_SC_LITERAL='__typename":"StatusContext"'
+t p384-no-fixture-fabricates-status-createdAt 0 \
+  "$(grep -c "$P384_SC_LITERAL"'.*createdAt":' "$SHARED/test/run.sh")"
 
 # 2. THE CHECK STATE, graded through head-checks.jq and never restated here.
 t p384-state-green "$(printf '381\tgreen')" "$(_resume_check_states o/r "$P384_ONE")"

@@ -988,12 +988,29 @@ _resume_check_states() {
 # fabricated one would be worse than none — it advances the value, and an
 # advanced value is a wake spent on evidence that does not exist.
 #
-# A CONCLUSION, NEVER A START. A CheckRun carries `completedAt` only once it has
-# finished, so a queued or running check contributes nothing; a StatusContext
-# has no completedAt at all, so its `createdAt` stands in — but only where its
-# state is terminal, since a PENDING context's createdAt is when the wait began.
-# Reading a start time here would move the fingerprint when CI STARTS, which is
-# the tick the session is still working through, not the one it is waiting for.
+# A CONCLUSION, NEVER A START. Reading a start time here would move the
+# fingerprint when CI STARTS, which is the tick the session is still working
+# through, not the one it is waiting for. The rollup mixes two shapes, so that
+# one rule needs two readings — and BOTH are read from what `gh` EMITS, which
+# is not what GitHub's schema names (#391 round 2, codex and claude).
+#
+# A CheckRun has concluded when `.status` says `COMPLETED`, and only then is
+# `.completedAt` a conclusion. It is NOT absent while the check runs: `gh`
+# marshals Go's zero time and emits `"completedAt":"0001-01-01T00:00:00Z"`
+# beside `"conclusion":""`, so a non-empty test admits a running check and
+# stamps it with a fabricated date. The status is the discriminator; a sentinel
+# blacklist for the zero time would be a second thing to keep true.
+#
+# A StatusContext carries no completedAt at all, so its start stands in — but
+# only where its state is terminal, a PENDING context's stamp being when the
+# wait began. `gh` requests GitHub's `createdAt` for it and then serialises it
+# under its OWN key, `startedAt`; the schema has no `startedAt` on that type and
+# `createdAt` never reaches us. Reading `createdAt` alone made this branch dead
+# against every real rollup — met for a repo whose checks are CheckRuns, crew's
+# own among them, and unmet exactly where a legacy status concludes, which is
+# head-checks.jq's #50 transposed from grading to stamping. The `//` form is
+# that file's own idiom (`latest_checks`), and it survives a fleet box whose
+# `gh` serialises the field either way.
 _resume_newest_check() {
   local listing="$1" num="$2" out
   out="$(printf '%s' "$listing" | jq -r --argjson num "$num" '
@@ -1003,9 +1020,10 @@ _resume_newest_check() {
           # `["A"] | index(.state)` the `.` is the array literal, so `.state` is
           # null and the test silently answers false rather than erroring.
           | (.state // "") as $s
-          | if ((.completedAt // "") != "") then .completedAt
+          | (.status // "") as $st
+          | if ($st == "COMPLETED") then (.completedAt // "")
             elif ((["SUCCESS","FAILURE","ERROR"] | index($s)) != null)
-              then (.createdAt // "")
+              then (.startedAt // .createdAt // "")
             else "" end ]
       | map(select(. != "")) | max // ""
     ' 2>/dev/null)" || return 1
