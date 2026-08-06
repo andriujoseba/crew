@@ -4745,6 +4745,136 @@ t p384-state-unreadable-is-nonzero 1 \
 t p384-green-is-not-restated-in-the-engine 0 \
   "$(grep -c 'SUCCESS.*NEUTRAL.*SKIPPED' "$SHARED/lib/duty-builder.sh")"
 
+# 3. THE GREEN-HEAD DUE-PREDICATE. Its evidence is a check conclusion where
+# #319's is a near-miss comment, and it reaches the same conclusion from it: the
+# checks have finished, the head is passing, and there is nothing left to wait
+# for, so the twelve ticks are no longer buying information.
+P384_GH_LISTING="$(jq -cn \
+  --argjson a "$(p384_pr 381 false "$P384_GREEN" '')" \
+  --argjson b "$(p384_pr 382 false "$P384_PENDING" '')" \
+  --argjson c "$(p384_pr 383 false "$P384_RED" '')" \
+  --argjson d "$(p384_pr 384 false "$P384_GREEN" "$P384_HEAD")" \
+  --argjson e "$(p384_pr 385 false "$P384_GREEN" "$P384_OLD")" \
+  --argjson f "$(p384_pr 386 true "$P384_GREEN" '')" \
+  --argjson g "$(p384_pr 387 false '[]' '')" \
+  '[$a,$b,$c,$d,$e,$f,$g] | map(if .number == 388 then . else . end)')"
+# #388: a thread that could not be read is not an empty thread.
+P384_GH_LISTING="$(printf '%s' "$P384_GH_LISTING" | jq -c \
+  --argjson h "$(p384_pr 388 false "$P384_GREEN" '')" '. + [$h | .comments = null]')"
+_green_head_resume_rows o/r me ANSWER "$P384_GH_LISTING" >"$TMP/p384-green.log" 2>&1
+p384_gh_out="$(cat "$TMP/p384-green.log")"
+# 381 and 385 alone. 382 is PENDING and 383 is RED — the measured twelve-tick
+# case, untouched; 384 signalled its current head; 386 is a draft (the draft
+# path owns it); 387 has no checks configured, which is not green; 388's thread
+# could not be read.
+t p384-green-head-rows "$(printf '381\n385')" "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
+# MUST FAIL, one per line — these are the regressions, and each is its own
+# assertion so a failure names which guarantee broke rather than "the set moved".
+t p384-pending-head-still-waits-twelve 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^382$')"
+t p384-red-head-still-waits-twelve 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^383$')"
+t p384-correct-signal-is-never-resumed 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^384$')"
+t p384-draft-is-not-this-predicates-business 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^386$')"
+t p384-no-checks-is-not-green 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^387$')"
+t p384-unread-thread-is-not-a-detection 0 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^388$')"
+# A signal naming a SUPERSEDED head is no signal at this head: 385 is due.
+t p384-stale-signal-is-still-unsignalled 1 "$(printf '%s' "$GREEN_HEAD_ROWS" | grep -c '^385$')"
+# EXACTLY ONE WARN per detection, naming the head in full and the reason.
+t p384-green-warns-once-per-detection 2 "$(grep -c 'WARN' <<<"$p384_gh_out")"
+t p384-green-warn-names-the-head 2 "$(grep -c "green and no signal names that head" <<<"$p384_gh_out")"
+t p384-green-warn-carries-the-full-sha 2 "$(grep -c "$P384_HEAD" <<<"$p384_gh_out")"
+t p384-green-warn-names-the-pr 1 "$(grep -c 'WARN.*o/r#381' <<<"$p384_gh_out")"
+# The bypass ADDS a reason to be due and removes none: both PRs it named are
+# still stranded the ordinary way, their counters advancing exactly as before,
+# and so are the three it declined to name. Five in total — 384 signalled its
+# head, 386 is a draft and 388's thread could not be read, and none of those
+# three was ever stranded.
+t p384-green-bypassed-are-still-stranded "$(printf 'o/r#381@%s\no/r#385@%s' \
+    "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$P384_GH_LISTING" | _stranded_resume_keys o/r me ANSWER \
+     | grep -E '#(381|385)@')"
+t p384-green-declined-are-still-stranded "$(printf 'o/r#382@%s\no/r#383@%s\no/r#387@%s' \
+    "$P384_HEAD" "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$P384_GH_LISTING" | _stranded_resume_keys o/r me ANSWER \
+     | grep -E '#(382|383|387)@')"
+t p384-green-strands-nothing-new 5 \
+  "$(printf '%s' "$P384_GH_LISTING" | _stranded_resume_keys o/r me ANSWER | wc -l | tr -d ' ')"
+# FAIL-SOFT: a rollup that cannot be graded warns and leaves every PR out for
+# the tick. It must NEVER fabricate a green — the whole predicate is an
+# assertion about evidence, and inventing the evidence inverts it.
+_green_head_resume_rows o/r me ANSWER 'not json' >"$TMP/p384-green-fail.log" 2>&1
+t p384-green-ungradeable-detects-nothing "" "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
+t p384-green-ungradeable-warns 1 \
+  "$(grep -c 'check rollup could not be graded' "$TMP/p384-green-fail.log")"
+
+# 4. THE FLIP-OWED DUE-PREDICATE — the terminal state neither path can leave.
+# PR #386 was ready, green and correctly signalled when it was converted to
+# draft six seconds into the request pass. The request path stopped seeing it
+# (the handoff listing is `select(.isDraft | not)`) and the resume ledger
+# suppressed it (unchanged head, nobody foreign spoke). Both correct; together a
+# hole, and no panel was ever requested.
+P384_PANEL='["p1","p2"]'
+P384_FO_LISTING="$(jq -cn \
+  --argjson a "$(p384_pr 386 true "$P384_GREEN" "$P384_HEAD")" \
+  --argjson b "$(p384_pr 387 true "$P384_GREEN" "$P384_HEAD" '[{"login":"p1"}]')" \
+  --argjson c "$(p384_pr 388 true "$P384_GREEN" '')" \
+  --argjson d "$(p384_pr 389 true "$P384_PENDING" "$P384_HEAD")" \
+  --argjson e "$(p384_pr 390 false "$P384_GREEN" "$P384_HEAD")" \
+  --argjson f "$(p384_pr 391 true "$P384_GREEN" "$P384_OLD")" \
+  --argjson g "$(p384_pr 392 true "$P384_GREEN" "$P384_HEAD" '[{"login":"advisory-bot"}]')" \
+  '[$a,$b,$c,$d,$e,$f,$g]')"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_FO_LISTING" >"$TMP/p384-flip.log" 2>&1
+p384_fo_out="$(cat "$TMP/p384-flip.log")"
+# 386 and 392. 387 has a PANELIST requested, so the panel HAS been asked and the
+# round is live — someone else's move. 388 carries no signal at all, which is
+# ordinary interrupted work on its existing path. 389's head is pending. 390 is
+# not a draft, so the request path can see it. 391's signal names a superseded
+# head. 392's only requested reviewer is OFF-panel, which BUILDER.md rules
+# advisory and never the ask, so that PR is still owed a panel.
+t p384-flip-owed-rows "$(printf '386\n392')" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+t p384-requested-panelist-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^387$')"
+t p384-unsignalled-draft-is-untouched 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^388$')"
+t p384-pending-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^389$')"
+t p384-non-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^390$')"
+t p384-stale-signal-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^391$')"
+t p384-advisory-reviewer-is-not-the-ask 1 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^392$')"
+# The ledger keys the gate is handed, head included so a push ends the episode.
+t p384-flip-owed-force-fresh-keys \
+  "$(printf 'o/r#386@%s\no/r#392@%s' "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$RESUME_FORCE_FRESH" | awk 'NF')"
+t p384-flip-warns-once-per-detection 2 "$(grep -c 'WARN' <<<"$p384_fo_out")"
+t p384-flip-warn-names-the-reason 2 \
+  "$(grep -c 'the handoff was consumed, not completed' <<<"$p384_fo_out")"
+t p384-flip-warn-carries-the-full-sha 2 "$(grep -c "$P384_HEAD" <<<"$p384_fo_out")"
+# DETECTED, NEVER HONOURED. The flip asserts the round was answered whole, which
+# BUILDER.md rules the one judgement its author cannot delegate — so the WARN
+# says so, and the predicate buys a session rather than performing the act.
+t p384-flip-warn-leaves-the-flip-to-the-builder 2 \
+  "$(grep -c 'The flip stays yours' <<<"$p384_fo_out")"
+if tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" \
+     | grep -Fq 'an engine may draft a PR but only the builder undrafts it'; then
+  r1=agreed
+else
+  r1=DIVERGED
+fi
+t p384-flip-doctrine-still-says-so agreed "$r1"
+# MUST FAIL — the engine flipping, requesting or labelling. Neither predicate
+# writes to the board at all: no undraft, no reviewer, no label. `gh` absence is
+# asserted beside the rollup count above; this pins the verbs themselves, so a
+# future edit reaching for a library helper instead of `gh` is caught too.
+p384_bodies="$(cat <(declare -f _green_head_resume_rows) <(declare -f _flip_owed_resume_rows))"
+t p384-predicates-never-flip 0 \
+  "$(grep -cE 'ready-for-review|--undraft|markPullRequestReadyForReview' <<<"$p384_bodies")"
+t p384-predicates-never-request 0 \
+  "$(grep -cE '_request_panel|--add-reviewer|requested_reviewers' <<<"$p384_bodies")"
+t p384-predicates-never-label 0 \
+  "$(grep -cE 'LABEL_|--add-label|/labels' <<<"$p384_bodies")"
+# FAIL-SOFT, the same contract as the green-head half.
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" 'not json' >"$TMP/p384-flip-fail.log" 2>&1
+t p384-flip-ungradeable-detects-nothing "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+t p384-flip-ungradeable-forces-nothing "" "$(printf '%s' "$RESUME_FORCE_FRESH" | awk 'NF')"
+t p384-flip-ungradeable-warns 1 \
+  "$(grep -c 'check rollup could not be graded' "$TMP/p384-flip-fail.log")"
+
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
 # will independently enter under its new id if it is red.
