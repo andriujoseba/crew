@@ -921,6 +921,12 @@ _resume_pr_comments() {
 # thread it would look unsignalled — accruing toward a resume the evidence does
 # not support — and a transient failure costing one restarted count is cheaper
 # than a resume session spent on a PR that signalled correctly.
+#
+# DRAFTS ARE READ TOO, since #384. The two predicates that filter drafts out do
+# so themselves, so nothing above changes; what needs the draft's thread is
+# _flip_owed_resume_rows, whose whole question is whether a DRAFT carries a
+# valid signal at its head. The cost is one paginated REST read per draft per
+# tick, beside the two _resume_newest_foreign already makes for the same draft.
 _resume_attach_comments() {
   local repo="$1" listing="$2" spliced num comments
   RESUME_LISTING=""
@@ -936,8 +942,70 @@ _resume_attach_comments() {
         'map(if .number == $num then . + {comments:null} else . end)')" || spliced=""
     fi
     if [ -n "$spliced" ]; then listing="$spliced"; fi
-  done < <(printf '%s' "$listing" | jq -r '.[] | select(.isDraft | not) | .number' 2>/dev/null)
+  done < <(printf '%s' "$listing" | jq -r '.[] | .number' 2>/dev/null)
   RESUME_LISTING="$listing"
+}
+
+# --- The check half of the resume evidence (#384) ---------------------------
+#
+# A session that parks waiting for CI is unwakeable by the event it is waiting
+# for: _resume_newest_foreign paginates comments and reviews, and a check-suite
+# conclusion is neither. PR #381 pushed d4b8035, held its signal for `ci-floor`,
+# and was still parked forty-six minutes after that check went green — there was
+# no wake to be had. The two helpers below are the missing read, and they answer
+# two different questions off the ONE listing the resume block already fetches:
+# WHEN the head last concluded (the fingerprint's new term) and WHAT it
+# concluded (the two due-predicates' evidence).
+
+# _resume_check_states REPO LISTING — one `<num>\t<green|red|pending|none>` row
+# per PR in LISTING, DRAFTS INCLUDED. Nonzero means the rollup could not be
+# graded and every caller must drop that half for the tick.
+#
+# It grades through head-checks.jq rather than restating the rule, which is what
+# _ci_red_rollup_settled already does for the same reason: `is_green` is a
+# whitelist whose fail-closed direction was bought with #64, and a second copy
+# of it in this file would be a second predicate. The shaping is the price —
+# head-checks.jq filters drafts out and joins the round-owed fact, so `isDraft`
+# is forced false and an empty `$panel` makes `round_owed` uniformly false. Only
+# field 4 is read here; the round-owed column stays the request path's.
+_resume_check_states() {
+  local repo="$1" listing="$2" shaped rows
+  shaped="$(printf '%s' "$listing" | jq -c 'map(. + {isDraft:false})' 2>/dev/null)" || return 1
+  [ -n "$shaped" ] || return 1
+  rows="$(printf '%s' "$shaped" | jq -r --argjson panel '[]' --arg repo "$repo" \
+    -f "$BUILDER_LIB_DIR/jq/head-checks.jq" 2>/dev/null)" || return 1
+  printf '%s\n' "$rows" \
+    | awk -F'\t' -v OFS='\t' 'NF { n = $1; sub(/^.*#/, "", n); print n, $4 }'
+}
+
+# _resume_newest_check LISTING NUM — the newest CONCLUSION stamp among the
+# checks at PR NUM's head, ISO-8601, or empty where nothing has concluded there.
+# Nonzero means the rollup could not be read and the answer is unknown.
+#
+# _resume_newest_foreign's shape, and its fail-soft contract: a lookup that
+# FAILS is not a lookup that found nothing, so the caller can warn and drop this
+# half of the fingerprint for the tick rather than fabricating a stamp. A
+# fabricated one would be worse than none — it advances the value, and an
+# advanced value is a wake spent on evidence that does not exist.
+#
+# A CONCLUSION, NEVER A START. A CheckRun carries `completedAt` only once it has
+# finished, so a queued or running check contributes nothing; a StatusContext
+# has no completedAt at all, so its `createdAt` stands in — but only where its
+# state is terminal, since a PENDING context's createdAt is when the wait began.
+# Reading a start time here would move the fingerprint when CI STARTS, which is
+# the tick the session is still working through, not the one it is waiting for.
+_resume_newest_check() {
+  local listing="$1" num="$2" out
+  out="$(printf '%s' "$listing" | jq -r --argjson num "$num" '
+      ([.[] | select(.number == $num)] | if length == 0 then error("no such pr") else .[0] end)
+      | [ (.statusCheckRollup // [])[]
+          | if ((.completedAt // "") != "") then .completedAt
+            elif ((["SUCCESS","FAILURE","ERROR"] | index(.state // "")) != null)
+              then (.createdAt // "")
+            else "" end ]
+      | map(select(. != "")) | max // ""
+    ' 2>/dev/null)" || return 1
+  printf '%s' "$out"
 }
 
 # _near_miss_resume_rows REPO ME MARK LISTING — LISTING is the same listing
@@ -1001,6 +1069,128 @@ _near_miss_resume_rows() {
     | jq -c '.[] | select((.isDraft | not) and .comments != null)')
 }
 
+# _green_head_resume_rows REPO ME MARK LISTING — _near_miss_resume_rows's
+# sibling on CHECK evidence instead of near-miss evidence. The answer comes back
+# in the global GREEN_HEAD_ROWS, one `<num>` line per non-draft PR of mine whose
+# head is GREEN and carries no valid signal, with one WARN per detection. A
+# global for the same reason the near-miss rows are one.
+#
+# THE BYPASS IS ABOUT EVIDENCE, NOT IMPATIENCE — the same argument #319 made,
+# reaching the same conclusion from the other datum. `_stranded_resume_due`'s
+# twelve ticks are the price of not knowing whether a session died before it
+# signalled or is still working. A green head with no signal answers that
+# question on sight: the checks have finished, the head is passing, and nothing
+# a session could still be waiting for is outstanding. There is nothing left to
+# wait for, so the PR is due now.
+#
+# PENDING AND RED STILL BUY THE FULL TWELVE, and that is the case the threshold
+# was measured against. A pending head has not answered the question the panel
+# will ask; a red one is the author's own next task and wakes ci-red instead.
+# `none` is deliberately not green here either, though the request gate admits
+# it: `none` is also what a head reads a few seconds after a push, before its
+# workflows register, so a bypass on `none` would fire one tick after every push
+# in a repo with CI. Waiting the twelve there is the status quo, not a
+# regression, and it is the fail-safe direction.
+#
+# DETECTED, NEVER HONOURED. Nothing here requests a panel, sets a label, or
+# writes to the board — it buys exactly one thing, a resume session that posts
+# the real signal. #133's rule that the engine acts only on the session's own
+# signal is not weakened by knowing the session should have posted one.
+_green_head_resume_rows() {
+  local repo="$1" me="$2" mark="$3" listing="$4"
+  local pr num head answered states state
+  GREEN_HEAD_ROWS=""
+  if ! states="$(_resume_check_states "$repo" "$listing")"; then
+    warn "$repo: the check rollup could not be graded; leaving every PR out of green-head resume detection this tick (#384)"
+    return 0
+  fi
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    num="$(printf '%s' "$pr" | jq -r '.number')"
+    head="$(printf '%s' "$pr" | jq -r '.headRefOid')"
+    state="$(printf '%s\n' "$states" | awk -F'\t' -v n="$num" '$1 == n {print $2; exit}')"
+    [ "$state" = green ] || continue
+    # The same parser the request gate is licensed by, for the same reason
+    # _stranded_resume_keys uses it: resume must classify the exact bodies the
+    # request gate does, or the two disagree about what a signal is.
+    answered="$(printf '%s' "$pr" \
+      | jq -c '{data:{repository:{pullRequest:{comments:{nodes:.comments}}}}}' \
+      | jq -r --arg me "$me" --arg mark "$mark" \
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
+      | jq -r '.sha // ""')"
+    [ "$answered" = "$head" ] && continue
+    warn "$repo#$num: the check at head $head is green and no signal names that head — nothing left to wait for, so resuming this tick instead of the twelfth (#384)"
+    GREEN_HEAD_ROWS="${GREEN_HEAD_ROWS}${num}"$'\n'
+  done < <(printf '%s' "$listing" \
+    | jq -c '.[] | select((.isDraft | not) and .comments != null)')
+}
+
+# _flip_owed_resume_rows REPO ME MARK PANEL LISTING — the third stuck state, and
+# the one neither engine path can leave. The answer comes back in the global
+# FLIP_OWED_ROWS, one `<num>` line per DRAFT of mine that carries a valid signal
+# at its CURRENT head, whose head is GREEN, and for which no panelist is
+# requested — with one WARN per detection. RESUME_FORCE_FRESH carries the same
+# PRs as `<repo>#<num>@<head>` ledger keys, which is how _resume_gate hears
+# about them.
+#
+# THE HOLE IS BETWEEN TWO CORRECT PATHS. PR #386 was ready, green, and carried a
+# valid current-head signal; the request pass was six seconds from running when
+# the PR was converted to draft. The handoff listing filters drafts out
+# (`select(.isDraft | not)`), so the request path stopped seeing it; the resume
+# ledger suppressed it, the head being unchanged and no foreign actor having
+# spoken. Both are individually right and together nothing in the engine could
+# leave that state — no panel was ever requested.
+#
+# A DUE-PREDICATE, NOT A FLIP. BUILDER.md rules that "an engine may draft a PR
+# but only the builder undrafts it": the flip asserts the round was answered
+# whole, which is the one judgement its author cannot delegate. So this buys
+# exactly what the other two predicates buy, one resume session, and the session
+# decides. Nothing here flips, requests, or labels.
+#
+# WHY THE OPERATOR'S DRAFT IS NOT THE DEFECT. Converting to draft is the fleet's
+# general unstick lever, and it is right for one failure mode and wrong for the
+# other: it re-armed #381's fingerprint and woke that builder in five minutes,
+# and it consumed #386's completed handoff. Nobody can tell those apart from
+# outside. With this predicate the lever is safe in both, which is the reason to
+# have it rather than a footnote to it.
+#
+# A DRAFT WITH NO VALID SIGNAL IS UNTOUCHED — that is ordinary interrupted work,
+# and it keeps the ledger-and-breaker path it already has.
+_flip_owed_resume_rows() {
+  local repo="$1" me="$2" mark="$3" panel="$4" listing="$5"
+  local pr num head answered states state requested
+  FLIP_OWED_ROWS=""
+  RESUME_FORCE_FRESH=""
+  if ! states="$(_resume_check_states "$repo" "$listing")"; then
+    warn "$repo: the check rollup could not be graded; leaving every draft out of flip-owed resume detection this tick (#384)"
+    return 0
+  fi
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    num="$(printf '%s' "$pr" | jq -r '.number')"
+    head="$(printf '%s' "$pr" | jq -r '.headRefOid')"
+    state="$(printf '%s\n' "$states" | awk -F'\t' -v n="$num" '$1 == n {print $2; exit}')"
+    [ "$state" = green ] || continue
+    answered="$(printf '%s' "$pr" \
+      | jq -c '{data:{repository:{pullRequest:{comments:{nodes:.comments}}}}}' \
+      | jq -r --arg me "$me" --arg mark "$mark" \
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
+      | jq -r '.sha // ""')"
+    [ "$answered" = "$head" ] || continue
+    # A panelist already requested means the panel HAS been asked and the round
+    # is live — someone else's move, and none of resume's business. The roster
+    # is the resolved one the whole repo tick shares; an off-panel reviewer is
+    # advisory (BUILDER.md) and never counts as the ask.
+    requested="$(printf '%s' "$pr" | jq -r --argjson panel "$panel" \
+      '[.reviewRequests[]? | .login // empty | select(. as $l | ($panel | index($l)) != null)] | length')"
+    [ "${requested:-0}" -eq 0 ] || continue
+    warn "$repo#$num: a draft carrying a valid signal at green head $head with no panelist requested — the handoff was consumed, not completed; resuming this tick (#384). The flip stays yours."
+    FLIP_OWED_ROWS="${FLIP_OWED_ROWS}${num}"$'\n'
+    RESUME_FORCE_FRESH="${RESUME_FORCE_FRESH}${repo}#${num}@${head}"$'\n'
+  done < <(printf '%s' "$listing" \
+    | jq -c '.[] | select(.isDraft and .comments != null)')
+}
+
 # _stranded_resume_keys REPO ME MARK — stdin is the authored open-PR listing
 # used by resume detection. Emit only ready PR heads whose latest signal from
 # this builder does not name the current head. Drafts already use the original
@@ -1053,7 +1243,13 @@ _stranded_resume_keys() {
 # a new head is an id never seen and always fires, which is the issue's "the
 # builder's own commits count: a push is progress" without asking a SHA to
 # compare. What remains in the value is then all ISO-8601 — foreign comment,
-# foreign review, referenced issue — so a lexical max is a chronological one.
+# foreign review, referenced issue, and since #384 the head's newest check
+# conclusion — so a lexical max is a chronological one.
+#
+# THE CHECK TERM BELONGS IN THE VALUE FOR EXACTLY THAT REASON. A conclusion
+# stamp is ISO-8601, so it joins the max without disturbing the invariant; and
+# it must NOT go in the id, where every re-run of the same check would mint an
+# id never seen and fire again on an unchanged tree.
 
 # _resume_pr_fingerprints REPO — stdin is the authored open-PR listing resume
 # detection already fetches. One tab-separated line per DRAFT:
@@ -1188,7 +1384,7 @@ _resume_breaker() {
 #                         re-dispatches next tick rather than losing its wake.
 _resume_gate() {
   local repo="$1" slug="$2" listing="$3"
-  local key foreign issue issue_ts lines="" fresh want verdict count num head
+  local key foreign issue issue_ts check_ts lines="" fresh want verdict count num head
   local dispatch_nums="" breaker=3 wake fingerprints
   local -A ts_by_key=() issue_by_key=()
   RESUME_COMMIT_LINES=""
@@ -1233,6 +1429,20 @@ _resume_gate() {
     # wants -gt, which would compare `2026-08-03T…` as arithmetic and abort.
     # shellcheck disable=SC2071  # ISO-8601 stamps; lexical is the whole scheme
     [ -n "$issue_ts" ] && [ "$issue_ts" \> "$foreign" ] && foreign="$issue_ts"
+    # THE CHECK HALF (#384). A session that parks waiting for CI is unwakeable
+    # by the event it is waiting for unless the conclusion is in this value:
+    # PR #381 held its signal for `ci-floor`, the check went green, and nothing
+    # in the fingerprint could move. Read off the listing the block already
+    # fetched, so it costs no call; fail-soft on the _resume_newest_foreign
+    # contract — a lookup that failed drops this half rather than inventing a
+    # stamp, since an invented one is a wake spent on evidence that is not there.
+    check_ts=""
+    if ! check_ts="$(_resume_newest_check "$listing" "$num")"; then
+      warn "$repo#$num: the check-conclusion lookup failed for the resume fingerprint; using the other halves this tick (#384)"
+      check_ts=""
+    fi
+    # shellcheck disable=SC2071  # ISO-8601 stamps; lexical is the whole scheme
+    [ -n "$check_ts" ] && [ "$check_ts" \> "$foreign" ] && foreign="$check_ts"
     ts_by_key["$key"]="$foreign"
     issue_by_key["$key"]="$issue"
     lines="$lines$key $foreign"$'\n'
@@ -1280,7 +1490,17 @@ _resume_gate() {
   done < <(
     while IFS= read -r key; do
       [ -n "$key" ] || continue
-      if printf '%s\n' "$fresh" | grep -qxF "$key ${ts_by_key[$key]}"; then
+      # RESUME_FORCE_FRESH IS THE LEDGER'S OVERRIDE, NOT ITS REPLACEMENT
+      # (#384). A draft owed a flip is terminal precisely because its head has
+      # not moved and nobody else has spoken — the two things the fingerprint is
+      # made of — so the ledger is right to hold it and would hold it forever.
+      # The override goes HERE rather than around the gate so the forced key
+      # still passes through _resume_breaker: an unbounded bypass would dispatch
+      # every five minutes for as long as the draft stands, and the zero-action
+      # bound is what stops that at three (#314).
+      if printf '%s\n' "${RESUME_FORCE_FRESH:-}" | grep -qxF "$key"; then
+        printf '%s\tfresh\n' "$key"
+      elif printf '%s\n' "$fresh" | grep -qxF "$key ${ts_by_key[$key]}"; then
         printf '%s\tfresh\n' "$key"
       else
         printf '%s\theld\n' "$key"
@@ -1347,17 +1567,27 @@ _builder_repo() {
   # mid-flight — that lock is what makes resume detection sound. ---
   local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
   local near_miss_rows="" near_miss_nums="" near_miss_desc="" _nm_num _nm_id
+  local green_head_nums="" flip_owed_nums="" _gh_num _fo_num
   local claimed_nums open_heads merged_heads N branch
   # `comments` and `reviews` are deliberately NOT requested: those nested
   # connections are generated as `first: 100` and never paginate, so reading the
   # foreign half from here caps it at the oldest hundred (_resume_pr_fingerprints).
   # The SIGNAL half needs the same depth from the other end of the thread and is
   # read per PR just below (_resume_attach_comments), never from here.
+  #
+  # `statusCheckRollup` and `reviewRequests` ARE requested, and neither is a
+  # capped connection in the sense above: the rollup is scoped to one head and
+  # the requests to one PR, both bounded by construction rather than by a
+  # thread's length. They are what the three #384 predicates read, and asking
+  # for them here is what keeps that whole feature at ZERO additional API calls
+  # — the same listing already being fetched now answers "when did this head
+  # last conclude", "what did it conclude", and "has anyone been asked".
   resume_json="$(gh pr list -R "$R" --state open --author "$ME" \
-    --json number,isDraft,headRefOid,body 2>/dev/null || echo err)"
+    --json number,isDraft,headRefOid,body,statusCheckRollup,reviewRequests 2>/dev/null || echo err)"
   if [ "$resume_json" = "err" ]; then
     draft_nums=err
     stranded_keys=err
+    RESUME_FORCE_FRESH=""
   else
     draft_nums="$(printf '%s' "$resume_json" | jq -r '.[] | select(.isDraft) | .number' \
       2>/dev/null | tr '\n' ' ' || echo err)"
@@ -1369,6 +1599,13 @@ _builder_repo() {
       | _stranded_resume_keys "$R" "$ME" "$MARK_ANSWERED" 2>/dev/null || echo err)"
     _near_miss_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"
     near_miss_rows="$NEAR_MISS_ROWS"
+    # The two check-evidence predicates (#384), each buying one resume session
+    # and nothing else. Both run before the gate below, because the flip-owed
+    # one hands it RESUME_FORCE_FRESH.
+    _green_head_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"
+    green_head_nums="$(printf '%s' "$GREEN_HEAD_ROWS" | tr '\n' ' ')"
+    _flip_owed_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$panel_json" "$resume_json"
+    flip_owed_nums="$(printf '%s' "$FLIP_OWED_ROWS" | tr '\n' ' ')"
   fi
   claimed_nums="$(gh issue list -R "$R" --state open --label "$LABEL_CLAIMED" \
     --assignee "$ME" --json number --jq '.[].number' 2>/dev/null || echo err)"
@@ -1409,6 +1646,14 @@ _builder_repo() {
       stranded_nums="$(printf '%s %s' "$stranded_nums" "$near_miss_nums" \
         | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
     fi
+    # The green-head bypass rides beside the threshold on the same terms (#384):
+    # a second, independent reason to be due, added to the stranded set without
+    # touching _stranded_resume_due's counters, threshold or state-file format.
+    # A fleet upgrading mid-run finds `.resume-unsignalled.<slug>` as it left it.
+    if [ -n "${green_head_nums// /}" ]; then
+      stranded_nums="$(printf '%s %s' "$stranded_nums" "$green_head_nums" \
+        | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+    fi
     for N in $claimed_nums; do
       branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
         --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
@@ -1434,13 +1679,14 @@ _builder_repo() {
     fi
   fi
   if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
-    log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none}; of those, signals that missed the wire: ${near_miss_desc:-none})"
+    log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none}; of those, signals that missed the wire: ${near_miss_desc:-none}, green heads owed a signal: ${green_head_nums:-none}; drafts owed a flip: ${flip_owed_nums:-none})"
     ensure_main_clone "$R" "$dir" || return 0
     RUN_SESSION_RC=1
     run_session resume "$R" "$dir" "$TIMEOUT_RESUME" \
       "$(render_prompt resume.txt ME="$ME" REPO="$R" NAME="$name" \
         DRAFTS="${draft_nums:-none}" ORPHANS="${orphan_nums:-none}" \
         STRANDED="${stranded_nums:-none}" NEAR_MISS="${near_miss_desc:-none}" \
+        GREEN_HEAD="${green_head_nums:-none}" FLIP_OWED="${flip_owed_nums:-none}" \
         MARK_RESUME="$MARK_RESUME" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules")"
     # Committed only on rc 0, exactly as .seen-build and .seen-ci-red are: a

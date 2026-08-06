@@ -5536,15 +5536,32 @@ BIN_DIR="$P168_BIN_SAVED"
 # --- wiring (#45/#17) --------------------------------------------------------
 if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
 t ci-red-rollup-fetched fetched "$r1"
-# The primary rollup rides the authored-PR listing. #243 deliberately adds one
-# post-ci-red `gh pr view` re-read so a session that exits while checks are
-# pending does not consume the head; no third rollup read belongs here.
-# Comment lines are stripped first. The block above EXPLAINS that the rollup
-# rides an existing call, so counting raw occurrences counts the explanation —
-# a detector tripping on its own documentation, which this repo has now managed
-# three separate times.
-t ci-red-rollup-list-plus-settle-reread 2 \
-  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'statusCheckRollup')"
+# The rollup rides listings that are fetched anyway; it never gets a call of its
+# own. THREE fetches, each named: the resume block's authored-PR listing (#384),
+# the round/ci-red authored-PR listing, and the one post-ci-red `gh pr view`
+# re-read #243 added so a session exiting while checks are pending does not
+# consume the head. The resume listing and the round listing are deliberately
+# NOT merged into one — the round listing is fetched AFTER the resume sessions
+# precisely so a session's own push is visible to it, and a merged snapshot
+# would grade ci-red and round-owed against a pre-session tree.
+#
+# COUNTED AS FETCHES, NOT AS OCCURRENCES OF THE WORD. The old form grepped the
+# whole module for the string and had to strip comment lines to keep from
+# counting its own explanation — "a detector tripping on its own documentation,
+# which this repo has now managed three separate times". It then counted
+# `_resume_newest_check`'s jq field READ as a fourth API call, which is the same
+# defect one layer down: parsing a field you already have is not fetching it.
+# Only a `--json` argument list can name a field to fetch, so that is what is
+# counted, and the explanation above can say `statusCheckRollup` freely.
+t ci-red-rollup-fetched-on-three-listings 3 \
+  "$(grep -c -- '--json [^ ]*statusCheckRollup' "$BMOD")"
+# The resume half of that count adds no CALL — the listing was already being
+# fetched, and #384 put two more fields on it. A `gh` call inside either new
+# predicate would be a per-PR-per-tick cost the issue explicitly priced out.
+t resume-check-read-adds-no-gh-call 0 \
+  "$(cat <(declare -f _resume_newest_check) <(declare -f _resume_check_states) \
+       <(declare -f _green_head_resume_rows) <(declare -f _flip_owed_resume_rows) \
+     | grep -c 'gh ')"
 if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
   r1=shared
 else
