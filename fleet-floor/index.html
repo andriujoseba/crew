@@ -1588,7 +1588,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1634,6 +1634,11 @@ function liveData(u){
   d.repo=u.repo||"";d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
   d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
   d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
+  /* #159's verdict about that stamp. Defaulted to "" like the fields below,
+     and for the same reason: a collector older than this field reports none,
+     and "not known" must render as no mark at all — never as `current`, which
+     would be the one wrong answer, and never as a crash mid-draw. */
+  d.integrity=u.integrity||"";
   /* The ping tier and the flow-reported credential state. Defaulted rather
      than assigned straight through: a collector older than these fields, or a
      unit built from the error path, must render as "not known" and never as a
