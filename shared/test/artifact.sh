@@ -522,15 +522,18 @@ if ra_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$SRC" -
 else
   bad "release-hook-builds (got '$ra_out')"
 fi
+asset_names() {  # <dir> -> its entries by name, sorted, space-separated
+  find "$1" -mindepth 1 -maxdepth 1 -exec basename {} \; 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//'
+}
 if [ -s "$ADIR/crew-$V.sh" ] && [ -s "$ADIR/crew-$V.sh.sha256" ]; then
   ok "release-hook-writes-artifact-and-sidecar"
 else
-  bad "release-hook-writes-artifact-and-sidecar (dir holds: $(ls "$ADIR" 2>/dev/null | tr '\n' ' '))"
+  bad "release-hook-writes-artifact-and-sidecar (dir holds: $(asset_names "$ADIR"))"
 fi
 # Only those two: every file in that directory becomes a release asset, so a
 # stray temp file here is a published one.
 same "release-hook-leaves-no-other-assets" "crew-$V.sh crew-$V.sh.sha256" \
-  "$(ls "$ADIR" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+  "$(asset_names "$ADIR")"
 # The sidecar names the asset ALONE — a path in it makes `sha256sum -c` fail for
 # every downloader, who has the file and not the runner's directory layout.
 same "release-hook-sidecar-names-the-asset-alone" "crew-$V.sh" \
@@ -598,8 +601,11 @@ else
 fi
 #      (iii) no assets directory at all. Silently building into the checkout
 #      would publish nothing and say nothing — the failure this issue is about.
-noassets_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$SRC" 2>&1)" \
-  && bad "no-assets-dir-refuses-nonzero (exit 0)" || ok "no-assets-dir-refuses-nonzero"
+if noassets_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$SRC" 2>&1)"; then
+  bad "no-assets-dir-refuses-nonzero (exit 0)"
+else
+  ok "no-assets-dir-refuses-nonzero"
+fi
 case "$noassets_out" in *RELEASE_ASSETS_DIR*) ok "no-assets-dir-says-why" ;;
   *) bad "no-assets-dir-says-why (got '$noassets_out')" ;; esac
 
