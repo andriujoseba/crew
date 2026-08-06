@@ -131,6 +131,8 @@ BUILDER_CLEANUP_AUTHOR=""
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
 . "$ROOT/drill/rehearsal-fixtures.sh"
+# shellcheck source=drill/review-order.sh
+. "$ROOT/drill/review-order.sh"
 cleanup_all() {
   local rc=$?
   if [ "$BOX_TOUCHED" -eq 1 ]; then
@@ -558,6 +560,8 @@ else
   verdicts_unchanged() { [ "$(verdicts)" = "$VREF" ]; }
   verdicts_grew()      { [ "$(verdicts)" -gt "$VREF" ]; }
   wait_for 1200 "review: verdict pinned to head" have_verdict
+  check "review: announce precedes verdict" \
+    rehearsal_review_announce_precedes_verdict "$SANDBOX" "$pr" "$ME2" "$head_sha"
 
   VREF="$(verdicts)"
   bx "~/duty/bin/tick.sh" || true
