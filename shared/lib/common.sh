@@ -161,6 +161,7 @@ run_session() {
   # ledger commits in duty-triage.sh) WITHOUT reintroducing the set -e abort a
   # failed session must never cause — return stays 0.
   RUN_SESSION_RC="$rc"
+  RUN_SESSION_LOG="$slog"
   return 0
 }
 

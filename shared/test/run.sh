@@ -2802,6 +2802,149 @@ t attention-out-of-scope-reported reported "$r1"
 if grep -q 'alert ' "$SHARED/lib/duty-attention.sh"; then r1=pinged; else r1=LOG-ONLY; fi
 t attention-out-of-scope-pings-operator pinged "$r1"
 
+# --- builder attention dispatch and timeout evidence (#301) -----------------
+# A builder pickup may finish an existing PR in this slot, but must hand a new
+# build to the normal duty tick. Pin the ruling in both render layers so a
+# route/prompt drift cannot silently restore the half-budget build lifecycle.
+if grep -q 'test whether it already has an open PR' "$ATT_MOD" &&
+   ! grep -q 'IS build work: do it now' "$ATT_MOD"; then r1=dispatched; else r1=BUILDING; fi
+t attention-builder-route-dispatches-new-build dispatched "$r1"
+if grep -q 'For a builder claim with no open PR, your output is board state, never code' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'when one exists, keep the issue claimed and assigned' "$ATT_MOD" &&
+   grep -q 'A pushed branch keeps the issue claimed and assigned for ORPHANS resume' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'If a directed hold remains, keep the issue claimed and assigned' "$ATT_MOD" &&
+   grep -q 'a standing hold keeps it claimed and assigned with its park re-stated' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'Only when no build branch exists and no hold remains' "$ATT_MOD" &&
+   grep -q 'Only genuinely unstarted work with no remaining hold is unassigned' \
+     "$SHARED/prompts/attention.txt"; then
+  r1=dispatched
+else
+  r1=MISSING
+fi
+t attention-prompt-dispatches-new-build dispatched "$r1"
+# Production run_session, not only the behavior stub below, must expose the
+# immutable log path consumed by the timeout evidence branch.
+# shellcheck disable=SC2016  # literal source assignment, not test expansion
+if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common.sh"; then
+  r1=exposed
+else
+  r1=MISSING
+fi
+t attention-run-session-exposes-log exposed "$r1"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+if grep -q 'fragment-round-rules.txt.*MARK_ANSWERED="\$MARK_ANSWERED"' "$ATT_MOD"; then
+  r1=whole
+else
+  r1=BROKEN
+fi
+t attention-builder-round-rules-still-whole whole "$r1"
+if grep -q '^TIMEOUT_ATTENTION=1800$' "$SHARED/conf/fleet.defaults.conf"; then
+  r1=1800
+else
+  r1=CHANGED
+fi
+t attention-timeout-budget-unchanged 1800 "$r1"
+# duty_attention and duty_builder are separate sessions in one normal tick;
+# builder follows attention and launches through the full build budget.
+attention_ln="$(grep -n '^duty_attention$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
+builder_ln="$(grep -n '^  duty_builder$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+if [ "$attention_ln" -lt "$builder_ln" ] &&
+   grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh" | grep -q '"\$TIMEOUT_BUILD"'; then
+  r1=full-budget
+else
+  r1=BROKEN
+fi
+t attention-dispatch-reaches-normal-build-session full-budget "$r1"
+
+# Drive the actual wake with a stubbed run_session. The output log records only
+# externally visible effects: COMMENT, ALERT and LEDGER. This distinguishes all
+# three outcomes and proves the timeout branch does not settle the seen ledger.
+ATT_BEHAVIOR="$TMP/attention-behavior"
+mkdir -p "$ATT_BEHAVIOR/bin" "$ATT_BEHAVIOR/work"
+cat >"$ATT_BEHAVIOR/bin/post-once.sh" <<'ATTPO'
+#!/usr/bin/env bash
+printf 'COMMENT %s#%s %s\n' "$1" "$2" "$3" >>"$ATT_CALLS"
+ATTPO
+chmod +x "$ATT_BEHAVIOR/bin/post-once.sh"
+attention_case() { # attention_case <run_session rc> <tag>
+  local case_rc="$1" tag="${2:-one}" calls
+  calls="$ATT_BEHAVIOR/calls-$case_rc-$tag"
+  : >"$calls"
+  ATT_CASE_RC="$case_rc" ATT_CASE_TAG="$tag" ATT_CALLS="$calls" \
+    bash -s -- "$SHARED" "$ATT_BEHAVIOR" <<'ATTCASE'
+set -u
+SHARED="$1"; ATT_BEHAVIOR="$2"
+export ATT_CALLS
+LABEL_ATTENTION=attention
+REPOS_FILE="$ATT_BEHAVIOR/repos.txt"
+DUTY_DIR="$ATT_BEHAVIOR/duty"
+WORK_DIR="$ATT_BEHAVIOR/work"
+TREES_DIR="$ATT_BEHAVIOR/trees"
+BIN_DIR="$ATT_BEHAVIOR/bin"
+ME=builder
+TIMEOUT_ATTENTION=1800
+DOCTRINE_TRIAGE=TRIAGE.md
+DOCTRINE_ENTRYPOINT=AGENTS.md
+DOCTRINE_BUILDER=BUILDER.md
+DOCTRINE_REVIEWER=REVIEWER.md
+FLEET_TRIAGE=triage
+FLEET_BENCH=bench
+MARK_ADDRESSING=addressing
+MARK_ANSWERED=answered
+MARK_PICKUP=pickup
+mkdir -p "$DUTY_DIR"
+gh() { printf 'GH %s\n' "$*" >>"$ATT_CALLS"; printf 'o/r 9 T1\n'; }
+read_repo_list() { printf 'o/r\n'; }
+report_suppressed() { cat >/dev/null; }
+ledger_filter() { cat; }
+ledger_suppressed() { cat >/dev/null; }
+ledger_commit() { cat >/dev/null; printf 'LEDGER\n' >>"$ATT_CALLS"; }
+has_role() { [ "$1" = builder ]; }
+ensure_main_clone() { mkdir -p "$2"; }
+render_prompt() { printf 'prompt'; }
+run_session() {
+  RUN_SESSION_RC="$ATT_CASE_RC"
+  mkdir -p "$ATT_BEHAVIOR/logs"
+  RUN_SESSION_LOG="$ATT_BEHAVIOR/logs/$ATT_CASE_TAG.log"
+  : >"$RUN_SESSION_LOG"
+}
+alert() { printf 'ALERT %s\n' "$1" >>"$ATT_CALLS"; }
+warn() { printf 'WARN %s\n' "$1" >>"$ATT_CALLS"; }
+log() { :; }
+# shellcheck disable=SC1090
+source "$SHARED/lib/duty-attention.sh"
+duty_attention
+ATTCASE
+  cat "$calls"
+}
+ATT_124="$(attention_case 124)"
+t attention-timeout-comments-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^COMMENT ' || true)"
+t attention-timeout-alerts-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^ALERT ' || true)"
+t attention-timeout-names-session-log named \
+  "$(printf '%s\n' "$ATT_124" | grep -q 'attention-o__r_9-latest.log' && echo named || echo MISSING)"
+t attention-timeout-does-not-commit 0 "$(printf '%s\n' "$ATT_124" | grep -c '^LEDGER$' || true)"
+t attention-timeout-gh-read-only 1 "$(printf '%s\n' "$ATT_124" | grep -c '^GH api /issues?' || true)"
+t attention-timeout-gh-makes-no-writes 0 \
+  "$(printf '%s\n' "$ATT_124" | grep '^GH ' | grep -Ec 'issue edit| -X (POST|PATCH|DELETE)|--add-|--remove-' || true)"
+# A retry has a different immutable run log but hands post-once a byte-identical
+# stable link, so its exact-body match suppresses duplicate board comments.
+ATT_124_RETRY="$(attention_case 124 retry)"
+t attention-timeout-comment-body-stable \
+  "$(printf '%s\n' "$ATT_124" | grep '^COMMENT ')" \
+  "$(printf '%s\n' "$ATT_124_RETRY" | grep '^COMMENT ')"
+ATT_0="$(attention_case 0)"
+t attention-success-no-comment 0 "$(printf '%s\n' "$ATT_0" | grep -c '^COMMENT ' || true)"
+t attention-success-no-alert 0 "$(printf '%s\n' "$ATT_0" | grep -c '^ALERT ' || true)"
+t attention-success-commits-ledger 1 "$(printf '%s\n' "$ATT_0" | grep -c '^LEDGER$' || true)"
+ATT_1="$(attention_case 1)"
+t attention-crash-no-comment 0 "$(printf '%s\n' "$ATT_1" | grep -c '^COMMENT ' || true)"
+t attention-crash-no-alert 0 "$(printf '%s\n' "$ATT_1" | grep -c '^ALERT ' || true)"
+t attention-crash-does-not-commit 0 "$(printf '%s\n' "$ATT_1" | grep -c '^LEDGER$' || true)"
+
 # The drill's separate check survives the ruling, with a changed job: it used
 # to be the ONLY containment for this module, and is now an independent
 # verification that the filter above actually holds. Keeping it is the

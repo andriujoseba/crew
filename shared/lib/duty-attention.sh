@@ -130,14 +130,16 @@ duty_attention() {
   fi
   rows="$fresh"
 
-  # Route the demand by role. Builders get the full build machinery rules:
-  # an authorization that unblocks a claimed issue's acceptance criterion IS
-  # build work, done in the pickup session.
+  # Route the demand by role. A builder continues work that already has an open
+  # PR here, but dispatches a not-yet-started build to the normal duty tick: the
+  # attention slot has half the build budget and runs before every other duty.
+  # A pushed build branch is started work even without a PR, and a directed hold
+  # is not an abandonment; both retain their claim for the resume/park doctrine.
   local route
   if has_role triage; then
     route="Act per $DOCTRINE_TRIAGE. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."
   elif has_role builder; then
-    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. An authorization or ruling that unblocks an acceptance criterion on an issue you have claimed IS build work: do it now."
+    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. Before doing build work on a claimed issue, test whether it already has an open PR. If it does, complete the in-flight work here under the round protocol and end in the exact-head signal. If it does not, dispatch without code. Check the builder fork for a build/<issue>-* branch: when one exists, keep the issue claimed and assigned, record that the next tick must resume it through ORPHANS, and exit. If a directed hold remains, keep the issue claimed and assigned and re-state the park. Only when no build branch exists and no hold remains, record the next build step, unassign yourself and swap claimed to ready so the normal duty tick can claim it, then exit without creating a branch, commit, or PR."
   else
     route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you ($DOCTRINE_REVIEWER for a verdict). Never spawn work off a bare @-mention."
   fi
@@ -162,11 +164,27 @@ duty_attention() {
       MARK_PICKUP="$MARK_PICKUP" LABEL_ATTENTION="$LABEL_ATTENTION" \
       ROLE_ROUTE="$route" EXTRA_RULES="$extra")"
     RUN_SESSION_RC=1
+    RUN_SESSION_LOG=""
     run_session attention "$repo#$num" "$dir" "$TIMEOUT_ATTENTION" "$prompt"
     # Per demand, not per sweep: each row is its own session, and one that
     # crashed must not be settled by a sibling that succeeded.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
       printf '%s %s\n' "$id" "$upd" | ledger_commit "$DUTY_DIR/.seen-attention"
+    elif [ "${RUN_SESSION_RC:-1}" -eq 124 ]; then
+      local timeout_note timeout_log timeout_link
+      timeout_log="${RUN_SESSION_LOG:-unknown}"
+      timeout_link="${timeout_log%/*}/attention-${slug}_${num}-latest.log"
+      # The timestamped source path changes on every retry, which defeats the
+      # exact-body dedup below. Keep a stable per-item link for the board while
+      # the operator alert names the immutable run log that it currently targets.
+      if [ "$timeout_log" != unknown ]; then
+        ln -sfn -- "${timeout_log##*/}" "$timeout_link" 2>/dev/null \
+          || warn "attention: stable timeout log link failed for $repo#$num"
+      fi
+      timeout_note="⏱️ attention pickup timed out; work may be incomplete. Session log: $timeout_link"
+      "$BIN_DIR/post-once.sh" "$repo" "$num" "$timeout_note" >/dev/null 2>&1 \
+        || warn "attention: timeout comment failed for $repo#$num"
+      alert "⏱️ $(hostname): attention pickup timed out for $repo#$num — session log: $timeout_log"
     fi
   done <<<"$rows"
 }
