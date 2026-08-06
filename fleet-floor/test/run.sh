@@ -239,12 +239,21 @@ if [ "$BROWSER" -eq 1 ]; then
     # stops asserting cannot still exit 0, and it caught that removal. 39 -> 53
     # with #203's fourteen: the disarmed box and the genuinely silent one across
     # four readouts each plus a reachability check, and the paused box's four,
-    # captured where the walk pauses one itself. 53 -> 60 with #190's seven: the
+    # captured where the walk pauses one itself. 53 -> 61 with #190's seven: the
     # engine tile's integrity verdict on any fleet, the three fixture verdicts
     # rendering distinctly with a reachability check for each of the two new
     # boxes, and the guard that keeps the rescoped gh check from retiring
     # itself — the gh check is rescoped, not added, so it counts zero.
-    walk "browser walk" 60 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    #
+    # Seven added to 53 is 60, and this says 61: the number is now the walk's
+    # EXACT green count, measured, and the one check of slack the old floor
+    # carried is spent on purpose. A tripwire a check can be deleted under is
+    # not one — with slack, removing an assertion still clears the floor, which
+    # is precisely the silent drain this number exists to catch (#190's test
+    # plan asks for that case by name). The count is deterministic in a green
+    # run: every conditional block here is guarded by a check that fails when
+    # its box is unreachable, so a run that asserts fewer than 61 is already red.
+    walk "browser walk" 61 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"
