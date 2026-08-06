@@ -6655,6 +6655,101 @@ t cli-hire-all-unknown-flag-is-2 2 "$(crewrc hire-all --dry-run)"
 t cli-up-unknown-flag-is-2       2 "$(crewrc up --bogus)"
 t cli-up-dry-run-still-works     0 "$(crewrc up --dry-run)"
 
+# `up --dry-run` must describe the hire that follows a create (#218). Drive a
+# mixed roster through the real CLI in both modes: the box shim records the
+# convergence probe at the top of every real hire_box call, giving the
+# equality property without copying cmd_up's roster arithmetic into the test.
+UPCONF="$TMP/up-dry-run-config"
+UPSHIM="$TMP/up-dry-run-bin"
+UPSTATE="$TMP/up-dry-run-state"
+UPCALLS="$TMP/up-dry-run-calls"
+mkdir -p "$UPCONF" "$UPSHIM"
+cp "$ROOT/examples/fleet.conf" "$ROOT/examples/repos.txt" \
+  "$ROOT/examples/notify-repos.txt" "$ROOT/examples/doctrine.conf" "$UPCONF/"
+cat >"$UPCONF/fleet.roster" <<'EOF'
+fresh claude builder
+running codex reviewer
+stopped kimi reviewer
+EOF
+cat >"$UPSHIM/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '[]\n'
+EOF
+cat >"$UPSHIM/box" <<'EOF'
+#!/usr/bin/env bash
+json_state() {
+  awk 'BEGIN { printf "[" } { printf "%s{\"name\":\"%s\",\"status\":\"%s\"}", sep, $1, $2; sep="," } END { print "]" }' "$UPSTATE"
+}
+case "$1" in
+  list) json_state ;;
+  info)
+    state="$(awk -v name="$2" '$1 == name { print $2; exit }' "$UPSTATE")"
+    printf '[{"name":"%s","status":"%s"}]\n' "$2" "$state"
+    ;;
+  new)
+    shift
+    while [ "$#" -gt 0 ]; do
+      case "$1" in --name) name="$2"; shift 2 ;; *) shift ;; esac
+    done
+    printf '%s running\n' "$name" >>"$UPSTATE"
+    printf 'mutate:new:%s\n' "$name" >>"$UPCALLS"
+    ;;
+  start)
+    printf 'mutate:start:%s\n' "$2" >>"$UPCALLS"
+    ;;
+  exec)
+    name="$2"
+    script="${*: -1}"
+    case "$script" in
+      *'/etc/rig/role'*)
+        printf 'hire:%s\n' "$name" >>"$UPCALLS"
+        printf 'probe=ok\nmarker=role=fixture tenant=yes host=no\n'
+        ;;
+      *'engine-manifest.sh'*)
+        printf 'engine:%s\n' "$name" >>"$UPCALLS"
+        printf 'state=current\nstamp=crew@0.1.2-dev fixture\nrecorded=crew@0.1.2-dev fixture\n'
+        ;;
+      *'repos.txt'*) printf 'fixture/operator-repo\n' ;;
+      *) printf 'exec:%s\n' "$name" >>"$UPCALLS" ;;
+    esac
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$UPSHIM/gh" "$UPSHIM/box"
+up_reset() {
+  printf 'running running\nstopped stopped\n' >"$UPSTATE"
+  : >"$UPCALLS"
+}
+up_run() {
+  env CREW_CONFIG_DIR="$UPCONF" UPSTATE="$UPSTATE" UPCALLS="$UPCALLS" \
+    PATH="$UPSHIM:$PATH" bash "$CLIBIN" up "$@"
+}
+
+up_reset
+if up_dry_out="$(up_run --dry-run 2>&1)"; then up_dry_rc=0; else up_dry_rc=$?; fi
+t cli-up-dry-run-mixed-exits-zero 0 "$up_dry_rc"
+t cli-up-dry-run-new-box-hires 1 \
+  "$(grep -c '^fresh: WOULD hire (new box — engine crew@0.1.2-dev, cron armed)$' <<<"$up_dry_out" || true)"
+t cli-up-dry-run-existing-wording 2 \
+  "$(grep -c ': WOULD hire (currently: crew@0.1.2-dev fixture)$' <<<"$up_dry_out" || true)"
+case "$up_dry_out" in
+  *'up --dry-run: 1 would be created, 1 started, 3 hired'*) r1=complete ;;
+  *) r1="$up_dry_out" ;;
+esac
+t cli-up-dry-run-summary complete "$r1"
+t cli-up-dry-run-does-not-mutate "" "$(grep '^mutate:' "$UPCALLS" || true)"
+t cli-up-dry-run-does-not-probe-new-box "" "$(grep ':fresh$' "$UPCALLS" || true)"
+dry_hires="$(grep -c ': WOULD hire ' <<<"$up_dry_out" || true)"
+
+up_reset
+if up_real_out="$(up_run 2>&1)"; then up_real_rc=0; else up_real_rc=$?; fi
+t cli-up-real-run-mixed-exits-zero 0 "$up_real_rc"
+t cli-up-dry-run-hire-count-matches-real "$dry_hires" \
+  "$(grep -c '^hire:' "$UPCALLS" || true)"
+t cli-up-real-run-still-creates-and-starts 'mutate:new:fresh
+mutate:start:stopped' "$(grep '^mutate:' "$UPCALLS" || true)"
+
 # create-all is a fleet convergence verb: one failed box must not prevent the
 # remaining roster rows from being attempted, and the final report is the
 # operator's record of the partial run (#219).
