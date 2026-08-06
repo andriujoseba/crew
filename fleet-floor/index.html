@@ -1529,6 +1529,17 @@ function stageCounts(){
   if(alerts)stat.unshift([alerts+" ALERT","#ff5147"]);
   return stat;
 }
+/* Every left-hand header label, as drawn. Kept as data so the browser walk can
+   assert canvas text without maintaining a test-only copy of it. */
+function floorHeaderLabels(){
+  var version=(LIVEMETA&&LIVEMETA.version)||"crew unknown";
+  return [
+    {text:"FLEET FLOOR",x:26,y:36,font:"700 15px ui-monospace,monospace",color:"#c7d4e4"},
+    {text:"heavy-duty/crew · fleet call",x:132,y:36,font:"11px ui-monospace,monospace",color:"#5fd6ff"},
+    {text:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#7f93aa"},
+    {text:"scroll · click a unit to zoom in",after:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#46566a"}
+  ];
+}
 function drawAlertBadge(cx,cy,u,cw){
   var a=alertOf(u);if(!a)return;
   X.save();
@@ -1549,9 +1560,12 @@ function drawAlertBadge(cx,cy,u,cw){
 function t2(){return Date.now();}
 function drawFloorHeader(t){
   X.textBaseline="alphabetic";X.textAlign="left";
-  X.font="700 15px ui-monospace,monospace";X.fillStyle="#c7d4e4";X.fillText("FLEET FLOOR",26,36);
-  X.font="11px ui-monospace,monospace";X.fillStyle="#5fd6ff";X.fillText("heavy-duty/crew · fleet call",132,36);
-  X.font="10px ui-monospace,monospace";X.fillStyle="#46566a";X.fillText("scroll · click a unit to zoom in",26,54);
+  floorHeaderLabels().forEach(function(h){
+    X.font=h.font;X.fillStyle=h.color;
+    var x=h.x;
+    if(h.after)x+=X.measureText(h.after).width+18;
+    X.fillText(h.text,x,h.y);
+  });
   var stat=stageCounts();
   X.textAlign="right";X.font="700 11px ui-monospace,monospace";var sxp=VW-26;
   stat.forEach(function(s){X.fillStyle=s[1];X.fillText("● "+s[0],sxp,36);sxp-=X.measureText("● "+s[0]).width+20;});
@@ -6426,6 +6440,8 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      header shouted SILENT at three boxes is the regression this exists to
      make assertable (#203). Same ethos as cam(): a hook, not a second copy. */
   stages:function(){return stageCounts();},
+  /* The floor header's left-hand labels, exactly as painted. */
+  header:function(){return floorHeaderLabels();},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
      real fleet (same ethos as guides: a claim should be a lookable-at).
      buildsLastSec MUST read 0 with a stable roster — a deterministic still

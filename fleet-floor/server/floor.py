@@ -160,6 +160,9 @@ def agent_conf_path(agent):
 # file and restore it on exit, which meant any killed run left the shipped
 # example roster clobbered in the working tree.
 ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CONFIG_DIR, "fleet.roster")
+# The launcher owns this string: it is the exact answer from `crew --version`,
+# not a second attempt by the server to find and interpret VERSION.
+FLOOR_VERSION = os.environ.get("CREW_FLOOR_VERSION", "crew unknown")
 
 # A tick is 5 minutes; the engine's own death rule is "no evidence for two tick
 # boundaries", so the floor uses the same number rather than inventing one.
@@ -819,7 +822,8 @@ class Fleet:
     def __init__(self, interval):
         self.interval = interval
         self.lock = threading.Lock()
-        self.snapshot = {"live": True, "generated": None, "units": [], "polling": True}
+        self.snapshot = {"live": True, "generated": None, "version": FLOOR_VERSION,
+                         "units": [], "polling": True}
         self._confs = {}
         # A poll is N concurrent `box exec` calls across the whole fleet. Every
         # control action wants a refresh afterwards, so without single-flight a
@@ -908,6 +912,7 @@ class Fleet:
         snap = {
             "live": True,
             "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "version": FLOOR_VERSION,
             "interval": self.interval,
             "ping_interval": PING_INTERVAL_S,
             "units": [u for u in units if u],
