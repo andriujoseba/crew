@@ -90,7 +90,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const fillText = CanvasRenderingContext2D.prototype.fillText;
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
       if (this.canvas && this.canvas.id === 'scene' && y <= 70) {
-        window.__floorHeaderPaint.push({ text: String(text), x, y });
+        const metrics = this.measureText(String(text));
+        window.__floorHeaderPaint.push({
+          text: String(text), x, y, align: this.textAlign,
+          width: metrics.width,
+          ascent: metrics.actualBoundingBoxAscent || 0,
+          descent: metrics.actualBoundingBoxDescent || 0,
+        });
         if (window.__floorHeaderPaint.length > 200) window.__floorHeaderPaint.shift();
       }
       return fillText.apply(this, arguments);
@@ -163,20 +169,55 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     let collision = '';
     for (const width of [1400, 1600]) {
       await page.setViewportSize({ width, height: 1000 });
-      const labels = await page.evaluate(() => window.FLOORDEV.header());
-      for (const y of [36, 54]) {
-        const left = labels.filter((h) => h.y === y && h.align === 'left');
-        const right = labels.filter((h) => h.y === y && h.align === 'right');
-        const leftEdge = Math.max(...left.map((h) => h.x + h.width));
-        const rightEdge = Math.min(...right.map((h) => h.x - h.width));
-        if (leftEdge + 12 > rightEdge) {
-          clearAtWalkWidths = false;
-          collision = `${width}px row ${y}: left ${leftEdge}, right ${rightEdge}`;
-        }
+      await page.waitForTimeout(100);
+      const composition = await page.evaluate((version) => {
+        const labels = window.FLOORDEV.header();
+        const expected = [version, 'scroll · click a unit to zoom in'];
+        const bar = document.querySelector('.fleetbar').getBoundingClientRect();
+        const dom = Array.from(document.querySelectorAll(
+          '.fleetbar > :not(.sp), .fleetbar .tiles > *, .fleetbar .filters > *'))
+          .filter((el) => {
+            const style = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden'
+              && rect.width > 0 && rect.height > 0;
+          })
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return { text: (el.textContent || '').trim(), left: r.left, right: r.right,
+              top: r.top, bottom: r.bottom };
+          });
+        const wanted = new Set(labels.map((h) => h.text));
+        const paints = window.__floorHeaderPaint
+          .filter((p) => wanted.has(p.text) && p.y >= bar.top && p.y <= bar.bottom)
+          .filter((p, i, all) => all.findIndex((q) => q.text === p.text && q.x === p.x && q.y === p.y) === i)
+          .map((p) => {
+            const left = p.align === 'right' ? p.x - p.width
+              : p.align === 'center' ? p.x - p.width / 2 : p.x;
+            return { text: p.text, left, right: left + p.width,
+              top: p.y - p.ascent, bottom: p.y + p.descent };
+          });
+        const overlaps = [];
+        paints.forEach((paint) => dom.forEach((el) => {
+          if (paint.left < el.right && paint.right > el.left
+              && paint.top < el.bottom && paint.bottom > el.top) {
+            overlaps.push(`${paint.text} <> ${el.text}`);
+          }
+        }));
+        return {
+          labels: labels.map((h) => h.text), expected,
+          painted: paints.map((p) => p.text), overlaps,
+        };
+      }, snapshot.version);
+      if (JSON.stringify(composition.labels) !== JSON.stringify(composition.expected)
+          || composition.expected.some((text) => !composition.painted.includes(text))
+          || composition.overlaps.length) {
+        clearAtWalkWidths = false;
+        collision = `${width}px: ${JSON.stringify(composition)}`;
       }
     }
     await page.setViewportSize({ width: 1600, height: 1000 });
-    ok('floor: version byline clears counters at browser-walk widths',
+    ok('floor: canvas byline clears the DOM fleetbar at browser-walk widths',
        clearAtWalkWidths, collision);
   }
   /* Not just "the word units appears": that is true of an empty fleet too,

@@ -1510,10 +1510,9 @@ function fleetCounts(){
   });
   return c;
 }
-/* The floor header's counters, as drawn. Split out so FLOORDEV can hand the
-   browser walk the same array drawFloorHeader paints — these are canvas text,
-   invisible to any DOM assertion, which is how "0 silent" in the collector's
-   own log sat next to a page shouting SILENT at three boxes for a week. */
+/* Keep the floor's stage summary as shared data for the DOM tiles and FLOORDEV.
+   The fixed DOM fleetbar superseded the old canvas counter run; painting both
+   in the same 70px band makes neither readable. */
 function stageCounts(){
   var c=fleetCounts();
   var stat=[[c.silent+" SILENT","#ff5147"],[c.idle+" IDLE","#5fce9b"],[c.working+" WORKING","#f7bd4e"]];
@@ -1522,9 +1521,7 @@ function stageCounts(){
      operator reading a calm fleet is entitled to see the alarm counter sitting
      at zero, not to infer it from an absence. */
   if(c.stopped)stat.splice(1,0,[c.stopped+" DISARMED","#8aa0b8"]);
-  /* Prepended so it reads outermost, ahead of the ordinary counts —
-     drawFloorHeader paints this array right-aligned from VW-26 and walks
-     leftward, so element 0 lands at the right edge — and only when
+  /* Prepended so it reads outermost in the DOM tile run, and only when
      non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
      counted as working or idle above — that is correct, they are, and the
      point of this counter is that the state they are in is not the whole
@@ -1533,13 +1530,13 @@ function stageCounts(){
   if(alerts)stat.unshift([alerts+" ALERT","#ff5147"]);
   return stat;
 }
-/* Every left-hand header label, as drawn. Kept as data so the browser walk can
-   assert canvas text without maintaining a test-only copy of it. */
+/* The canvas byline, exactly as drawn. The DOM fleetbar owns the brand, repo,
+   counters and unit count; repeating them here visibly double-paints its fixed
+   70px band. Kept as data so the browser walk can observe the live paint path
+   without maintaining a test-only copy. */
 function floorHeaderLabels(){
   var version=(LIVEMETA&&LIVEMETA.version)||"version unavailable";
   var labels=[
-    {text:"FLEET FLOOR",x:26,y:36,font:"700 15px ui-monospace,monospace",color:"#c7d4e4",align:"left"},
-    {text:"heavy-duty/crew · fleet call",x:132,y:36,font:"11px ui-monospace,monospace",color:"#5fd6ff",align:"left"},
     {text:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#7f93aa",align:"left"},
     {text:"scroll · click a unit to zoom in",after:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#46566a",align:"left"}
   ];
@@ -1548,16 +1545,6 @@ function floorHeaderLabels(){
     if(h.after)h.x+=X.measureText(h.after).width+18;
     h.width=X.measureText(h.text).width;
   });
-  X.font="700 11px ui-monospace,monospace";
-  var sxp=VW-26;
-  stageCounts().forEach(function(s){
-    var text="● "+s[0],width=X.measureText(text).width;
-    labels.push({text:text,x:sxp,y:36,font:"700 11px ui-monospace,monospace",color:s[1],align:"right",width:width});
-    sxp-=width+20;
-  });
-  X.font="10px ui-monospace,monospace";
-  var units=ROSTER.length+" UNITS";
-  labels.push({text:units,x:VW-26,y:54,font:"10px ui-monospace,monospace",color:"#46566a",align:"right",width:X.measureText(units).width});
   return labels;
 }
 function drawAlertBadge(cx,cy,u,cw){

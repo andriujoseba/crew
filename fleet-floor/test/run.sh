@@ -255,9 +255,9 @@ if [ "$BROWSER" -eq 1 ]; then
     # plan asks for that case by name). The count is deterministic in a green
     # run: every conditional block here is guarded by a check that fails when
     # its box is unreachable, so a run that asserts fewer than 61 is already red.
-    # 61 -> 64 with #347's API-to-canvas exact-version pair and its two-width
-    # collision guard.
-    walk "browser walk" 64 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # 61 -> 65 with #347's API-to-canvas exact-version pair, its two-width
+    # cross-layer collision guard, and the room-HUD exact-version assertion.
+    walk "browser walk" 65 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"

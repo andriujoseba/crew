@@ -157,10 +157,25 @@ case "$CL_FLOOR_FN" in
   *'CREW_FLOOR_VERSION="$(version)"'*) ok "cli: floor hands its exact version answer to the server" ;;
   *) fail "cli: floor hands its exact version answer to the server" "version handoff missing" ;;
 esac
-if grep -qE 'open\([^)]*VERSION|CREW_ROOT[^\n]*VERSION' "$CL_FLOOR/server/floor.py"; then
+collector_derives_version() {
+  grep -qE '(open|os\.path\.join|Path|pathlib).*VERSION|VERSION.*(read_text|read_bytes)|CREW_ROOT.*VERSION' "$1"
+}
+if collector_derives_version "$CL_FLOOR/server/floor.py"; then
   fail "collector: version stays launcher-owned" "floor.py reads VERSION itself"
 else
   ok "collector: version stays launcher-owned"
+fi
+printf '%s\n' 'value = (Path(ROOT) / "VERSION").read_text()' >"$CL_TMP/pathlib-version-reader.py"
+if collector_derives_version "$CL_TMP/pathlib-version-reader.py"; then
+  ok "collector: launcher-owned guard catches pathlib VERSION reads"
+else
+  fail "collector: launcher-owned guard catches pathlib VERSION reads" "pathlib read escaped the guard"
+fi
+printf '%s\n' 'value = open(os.path.join(ROOT, "VERSION")).read()' >"$CL_TMP/pathjoin-version-reader.py"
+if collector_derives_version "$CL_TMP/pathjoin-version-reader.py"; then
+  ok "collector: launcher-owned guard catches path-join VERSION reads"
+else
+  fail "collector: launcher-owned guard catches path-join VERSION reads" "path-join read escaped the guard"
 fi
 
 # --- the auth decision -----------------------------------------------------
