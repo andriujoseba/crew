@@ -172,6 +172,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       await page.waitForTimeout(100);
       const composition = await page.evaluate((version) => {
         const labels = window.FLOORDEV.header();
+        // This set is intentionally exact: the DOM fleetbar owns all other
+        // chrome, so reviving a legacy canvas brand or counter must fail.
         const expected = [version, 'scroll · click a unit to zoom in'];
         const bar = document.querySelector('.fleetbar').getBoundingClientRect();
         const wanted = new Set(labels.map((h) => h.text));
