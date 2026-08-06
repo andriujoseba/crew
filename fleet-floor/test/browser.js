@@ -473,7 +473,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const stamped = allSeen.filter((u) => /Engine\s*\d+\.\d+\.\d+/.test(u.vitals));
     ok('render: the engine tile carries its integrity verdict',
        stamped.length > 0 &&
-         stamped.every((u) => /Engine\s*\d+\.\d+\.\d+\s*[✓⚠~]\s*(?:current|MODIFIED|unverified)\b/.test(u.vitals)),
+         // No trailing \b: the grid's textContent runs one field straight into
+         // the next label ("…0.4.1✓ currentUptime25h 30m"), so a word boundary
+         // after the verdict never occurs and the check would red on a page
+         // that renders it perfectly.
+         stamped.every((u) => /Engine\s*\d+\.\d+\.\d+\s*[✓⚠~]\s*(?:current|MODIFIED|unverified)/.test(u.vitals)),
        stamped.map((u) => u.box + ': ' + (u.vitals.match(/Engine\s*(\S+ ?\S*)/) || [])[1]).join(' | '));
     /* ---- the gh check, SCOPED to boxes that could be flowing (#190) -------
        `flowing` — the ✓ — is a claim the collector makes only while the last
