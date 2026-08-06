@@ -2810,7 +2810,13 @@ if grep -q 'test whether it already has an open PR' "$ATT_MOD" &&
    ! grep -q 'IS build work: do it now' "$ATT_MOD"; then r1=dispatched; else r1=BUILDING; fi
 t attention-builder-route-dispatches-new-build dispatched "$r1"
 if grep -q 'For a builder claim with no open PR, your output is board state, never code' \
-     "$SHARED/prompts/attention.txt"; then r1=dispatched; else r1=MISSING; fi
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'unassign yourself and swap claimed to ready' "$ATT_MOD" &&
+   grep -q 'unassign yourself and swap claimed to ready' "$SHARED/prompts/attention.txt"; then
+  r1=dispatched
+else
+  r1=MISSING
+fi
 t attention-prompt-dispatches-new-build dispatched "$r1"
 # shellcheck disable=SC2016  # literal source wiring, not this test's expansion
 if grep -q 'fragment-round-rules.txt.*MARK_ANSWERED="\$MARK_ANSWERED"' "$ATT_MOD"; then
@@ -2825,6 +2831,18 @@ else
   r1=CHANGED
 fi
 t attention-timeout-budget-unchanged 1800 "$r1"
+# duty_attention and duty_builder are separate sessions in one normal tick;
+# builder follows attention and launches through the full build budget.
+attention_ln="$(grep -n '^duty_attention$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
+builder_ln="$(grep -n '^  duty_builder$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+if [ "$attention_ln" -lt "$builder_ln" ] &&
+   grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh" | grep -q '"\$TIMEOUT_BUILD"'; then
+  r1=full-budget
+else
+  r1=BROKEN
+fi
+t attention-dispatch-reaches-normal-build-session full-budget "$r1"
 
 # Drive the actual wake with a stubbed run_session. The output log records only
 # externally visible effects: COMMENT, ALERT and LEDGER. This distinguishes all

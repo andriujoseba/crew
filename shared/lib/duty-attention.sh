@@ -137,7 +137,7 @@ duty_attention() {
   if has_role triage; then
     route="Act per $DOCTRINE_TRIAGE. Touch the label only to remove it as your ack; set nothing, and never spawn work off a bare @-mention."
   elif has_role builder; then
-    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. Before doing build work on a claimed issue, test whether it already has an open PR. If it does, complete the in-flight work here under the round protocol and end in the exact-head signal. If it does not, dispatch: address the situation, leave the board claimable with the next build step recorded, and exit without creating a branch, commit, or PR; the normal duty tick owns that build."
+    route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you: $DOCTRINE_BUILDER for your claims (build in a worktree, never in the main clone), $DOCTRINE_REVIEWER for verdicts. Before doing build work on a claimed issue, test whether it already has an open PR. If it does, complete the in-flight work here under the round protocol and end in the exact-head signal. If it does not, dispatch: address the situation, record the next build step, unassign yourself and swap claimed to ready so the normal duty tick can claim it, then exit without creating a branch, commit, or PR."
   else
     route="Read $DOCTRINE_ENTRYPOINT at the repo root and follow where it routes you ($DOCTRINE_REVIEWER for a verdict). Never spawn work off a bare @-mention."
   fi
