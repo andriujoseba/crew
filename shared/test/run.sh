@@ -2492,11 +2492,10 @@ t triage253-newborn-signal-in-log named "$r1"
 if grep -q 'o/r#999' "$TRD/.seen-triage-board"; then r1=ledgered; else r1=MISSING; fi
 t triage253-newborn-signal-ledgered ledgered "$r1"
 
-# No extra reads. The rejected "poll twice" shape passes every behavioural case
-# above and fails here, which is the only reason this counts calls at all.
-# One tick reads notifications, needs-triage, strays, discussions and blocked
-# exactly once each — five calls, plus the two state-map reads only when the
-# blocked list is non-empty.
+# Before any triage session launches, each signal is still polled exactly once.
+# A successful session deliberately adds the #359 exit-state reads; a quiet
+# tick adds none. These counts distinguish that bounded re-read from polling
+# twice before the launch decision.
 tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
 tr_run 0
 t triage253-reads-notifications-once 1 "$(trc 'api notifications')"
@@ -2597,6 +2596,10 @@ t triage359-failed-session-commits-no-board withheld "$r1"
 # launching, and report_suppressed then quiets the unchanged warning.
 TR359_BLOCK_1='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:00:00Z"}]'
 TR359_BLOCK_2='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:05:00Z"}]'
+tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
+tr_run 1
+if [ -f "$TRD/.seen-unblockable" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage359-failed-session-commits-no-unblockable withheld "$r1"
 tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
 tr_run 0
 t triage359-unblockable-first-tick-launches 1 "$(trc '^SESSION triage$')"
