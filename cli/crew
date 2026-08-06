@@ -1766,19 +1766,32 @@ cmd_up() {
   # same "once, not per box" property.
   resolve_engine HEAD
   local name agent role from state failed=0 skipped=0 skipped_names="" rc conv
+  local new_box=0 would_create=0 would_start=0 would_hire=0
   foreign_actor_check
   while read -r name agent role from; do
     validate_profiles "$agent" "$role"
+    new_box=0
     if ! box_exists "$name"; then
-      if [ "$dry" -eq 1 ]; then echo "$name: WOULD create ($agent/$role${from:+ from $from})"; continue; fi
-      create_box "$name" "$agent" "$role" "$from"
+      new_box=1
+      if [ "$dry" -eq 1 ]; then
+        echo "$name: WOULD create ($agent/$role${from:+ from $from})"
+        would_create=$((would_create + 1))
+      else
+        create_box "$name" "$agent" "$role" "$from"
+      fi
     else
       state="$(box_state "$name")"
       if [ "$state" = "stopped" ]; then
         # `box start` in a roster loop gets the same /dev/null as bxn: any
         # `box` subcommand that inherits stdin can drain the FIFO this loop is
         # reading from (#48).
-        if [ "$dry" -eq 1 ]; then echo "$name: WOULD start"; else box start "$name" </dev/null; echo "$name: started"; fi
+        if [ "$dry" -eq 1 ]; then
+          echo "$name: WOULD start"
+          would_start=$((would_start + 1))
+        else
+          box start "$name" </dev/null
+          echo "$name: started"
+        fi
       fi
     fi
     if [ "$dry" -eq 0 ]; then
@@ -1796,14 +1809,25 @@ cmd_up() {
       # tells the same lie the NOTE column told, one verb over — and --dry-run
       # is precisely what an operator reads BEFORE the irreversible verb, so it
       # is the last place that lie can still be cheap to correct.
-      conv="$(convergence_of "$(rig_report "$name")")"
-      if [ "$conv" = converged ]; then
-        echo "$name: WOULD hire (currently: $(hired_at "$name"))" 2>/dev/null || echo "$name: WOULD hire"
+      if [ "$new_box" -eq 1 ]; then
+        echo "$name: WOULD hire (new box — engine crew@$ENGINE_VERSION, cron armed)"
+        would_hire=$((would_hire + 1))
       else
+        conv="$(convergence_of "$(rig_report "$name")")"
+      fi
+      if [ "$new_box" -eq 0 ] && [ "$conv" = converged ]; then
+        echo "$name: WOULD hire (currently: $(hired_at "$name"))" 2>/dev/null || echo "$name: WOULD hire"
+        would_hire=$((would_hire + 1))
+      elif [ "$new_box" -eq 0 ]; then
         echo "$name: WOULD SKIP — not converged; crew hire $name would refuse"
       fi
     fi
   done < <(read_roster)
+
+  if [ "$dry" -eq 1 ]; then
+    echo
+    echo "up --dry-run: $would_create would be created, $would_start started, $would_hire hired"
+  fi
 
   if [ "$dry" -eq 0 ] && [ "$skipped" -ne 0 ]; then
     echo
