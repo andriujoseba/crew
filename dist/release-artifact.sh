@@ -73,7 +73,7 @@ sidecar="$art.sha256"
 # packed as it is, there being no commit to prefer.
 pack="$root"
 top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)"
-[ -n "$top" ] && top="$(cd "$top" && pwd -P)"
+if [ -n "$top" ]; then top="$(cd "$top" && pwd -P)"; fi
 if [ "$top" = "$root" ]; then
   work="$(mktemp -d)"
   trap 'rm -rf "$work"' EXIT
