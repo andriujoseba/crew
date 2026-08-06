@@ -130,12 +130,14 @@ command -v tar >/dev/null 2>&1 || die "tar is required but was not found. Please
 #
 # ONE list, TWO enforcements. The paths are named once, each with its reason;
 # what follows derives both the `tar --exclude` array and prune_payload(). The
-# script acquires its tree two ways (a directory, or a tarball — the `gh` and
-# `curl` channels both hand it a file), and the rule has to be a property of
-# the TREE, not of the branch that got it: filtering only the tar left the
-# tarball channels installing 52M while this comment claimed otherwise
-# (claude-bot and codex-bot, round 1 on #365). So the prune runs on whatever
-# was acquired, and a third acquisition shape inherits the rule by
+# script acquires its tree two ways — a DIRECTORY (a checkout, the scp-able
+# artifact's unpacked temp dir, `dist/curl-install.sh`'s extracted tree) or a
+# TARBALL (`dist/fetch.sh` hands over the file `gh` streamed, and the README's
+# own `CREW_INSTALL_SOURCE=<a crew tree or tarball>` form) — and the rule has
+# to be a property of the TREE, not of the branch that got it: filtering only
+# the tar left the tarball branch installing 52M while this comment claimed
+# otherwise (claude-bot and codex-bot, round 1 on #365). So the prune runs on
+# whatever was acquired, and a third acquisition shape inherits the rule by
 # construction; the tar excludes stay as what they are — the optimisation that
 # keeps the directory branch from copying 30M in order to delete it.
 PAYLOAD_EXCLUDED_PATHS=(

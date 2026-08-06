@@ -87,12 +87,12 @@ fi
 # 3c. THE PAYLOAD, INHERITED (#365) — asserted per channel rather than assumed
 #     from test 4's tree comparison, which would go on passing if both channels
 #     regressed together. Every channel here ends in install.sh, and install.sh
-#     acquires its tree two ways: the artifact unpacks and hands over a
-#     DIRECTORY, while `dist/fetch.sh` (test 10) and `dist/curl-install.sh`
-#     (test 11) hand over a TARBALL — the branch that shipped the whole
-#     repository until round 1 of #365. So the same three assertions run at
-#     each channel's installed tree, and the helper is shared so a fourth
-#     channel is one line.
+#     acquires its tree two ways: the artifact and `dist/curl-install.sh` (test
+#     11) each unpack and hand over a DIRECTORY, while `dist/fetch.sh` (test
+#     10) hands over the TARBALL `gh` streamed — the branch that shipped the
+#     whole repository until round 1 of #365. So the same three assertions run
+#     at each channel's installed tree, whichever branch it lands on, and the
+#     helper is shared so a fourth channel is one line.
 #
 #     The artifact FILE stays the size of the repository, deliberately: it
 #     packs the whole tree and reimplements no install logic, so the payload
@@ -351,9 +351,13 @@ case "$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )" in
   "crew $V ("*) ok "curl-installed-crew-answers-version" ;;
   *) bad "curl-installed-crew-answers-version (got '$( cd "$WORK" && "$CURL_HOME/bin/crew" --version 2>&1 )')" ;;
 esac
-# The third caller of install.sh's tarball branch, and the one an operator
-# reaches for on a machine with no gh and no scp'd artifact — the same payload
-# rule, asserted at the same place in this channel (#365, round 1).
+# The anonymous channel was never the defect — it extracts the archive itself
+# and hands install.sh the resulting TREE (`curl-channel-hands-tree-to-install-sh`
+# above), so it took the directory branch and was minimised from the start.
+# Asserted anyway, and pinned here rather than left implied: it is the channel
+# a machine with no `gh` and no scp'd artifact reaches for, and the thing that
+# makes it safe — which branch it happens to hand to — is one line in
+# curl-install.sh away from changing.
 assert_payload curl-channel-payload "$CURL_HOME/share/current"
 same "curl-channel-records-resolved-tag-provenance" "curl:heavy-duty/crew ref:$CTAG" \
   "$(cat "$CURL_HOME/share/versions/$V/INSTALLED_FROM" 2>/dev/null)"
