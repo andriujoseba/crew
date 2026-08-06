@@ -1075,9 +1075,21 @@ _near_miss_resume_rows() {
 
 # _green_head_resume_rows REPO ME MARK LISTING — _near_miss_resume_rows's
 # sibling on CHECK evidence instead of near-miss evidence. The answer comes back
-# in the global GREEN_HEAD_ROWS, one `<num>` line per non-draft PR of mine whose
-# head is GREEN and carries no valid signal, with one WARN per detection. A
-# global for the same reason the near-miss rows are one.
+# in the global GREEN_HEAD_ROWS, one `<num>\t<head>` line per non-draft PR of
+# mine whose head is GREEN and carries no valid signal, with one WARN per
+# detection. A global for the same reason the near-miss rows are one.
+#
+# THE HEAD RIDES BESIDE THE NUMBER because the caller needs it to build the
+# `<repo>#<num>@<head>` key `_resume_breaker` counts by (_green_head_breaker).
+# Deriving it there from a second read of the listing would be a second chance
+# for the two to describe different heads, which is _near_miss_resume_rows's
+# reason for carrying its comment id in the row rather than re-reading it.
+#
+# DETECTION IS NOT DISPATCH, and this function only detects. The WARN below
+# therefore names the evidence and stops: whether this tick actually resumes is
+# the breaker's answer, said at the breaker's own site. An earlier cut of this
+# function ended its WARN with "so resuming this tick instead of the twelfth" —
+# a promise it does not get to make once a bypass can be suppressed.
 #
 # THE BYPASS IS ABOUT EVIDENCE, NOT IMPATIENCE — the same argument #319 made,
 # reaching the same conclusion from the other datum. `_stranded_resume_due`'s
@@ -1123,8 +1135,8 @@ _green_head_resume_rows() {
           -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
       | jq -r '.sha // ""')"
     [ "$answered" = "$head" ] && continue
-    warn "$repo#$num: the check at head $head is green and no signal names that head — nothing left to wait for, so resuming this tick instead of the twelfth (#384)"
-    GREEN_HEAD_ROWS="${GREEN_HEAD_ROWS}${num}"$'\n'
+    warn "$repo#$num: the check at head $head is green and no signal names that head — nothing left to wait for (#384)"
+    GREEN_HEAD_ROWS="${GREEN_HEAD_ROWS}${num}"$'\t'"${head}"$'\n'
   done < <(printf '%s' "$listing" \
     | jq -c '.[] | select((.isDraft | not) and .comments != null)')
 }
@@ -1423,6 +1435,77 @@ _resume_breaker() {
   mv "$tmp" "$state"
 }
 
+# _green_head_breaker REPO SLUG ROWS — ROWS is GREEN_HEAD_ROWS. The answer comes
+# back in the global GREEN_HEAD_DISPATCH_NUMS, the subset of those PRs the
+# green-head bypass may actually resume for this tick. A global for the reason
+# _resume_gate states: every report here is a log line and log writes to stdout.
+#
+# THE BYPASS IS BOUNDED, and this is where (#384, review round 1). The detection
+# above holds no state at all, so on its own it would name the same PR every
+# tick for as long as the head stood — a resume session every five minutes,
+# indefinitely, which is the #314 flood re-entering through the door built to
+# end it. That argument is the one this PR already made for the flip-owed lane
+# (_resume_gate's RESUME_FORCE_FRESH comment); it is no weaker here, and the
+# exposure is larger, because "non-draft, green head, no signal at that head" is
+# a shape every PR passes through on the ordinary path between CI concluding and
+# its builder signalling.
+#
+# `_resume_breaker` IS REUSED UNMODIFIED, on the key it already counts by:
+# `<repo>#<num>@<head>`, so a push resets the count to one with no separate
+# observation, and a PR that stops qualifying drops out of stdin and out of the
+# state file.
+#
+# ITS OWN STATE FILE IS NOT A DETAIL. `_resume_breaker` rebuilds its state from
+# stdin alone and `mv`s it into place, so keys absent from a given call are
+# pruned — deliberate, and pinned by `resume-breaker-state-prunes`. Two call
+# sites sharing `.resume-zero-action.<slug>` would therefore erase each other's
+# counters every tick: the gate's drafts are not in this call's stdin and this
+# call's PRs are not in the gate's. The lanes get one file each.
+#
+# SUPPRESSION ENDS THE BYPASS, NOT THE PR'S CLAIM ON RESUME. A suppressed PR is
+# still in `stranded_keys` and its twelve-tick counter is still advancing
+# untouched; what it loses is the shortcut. That is why the trip WARN says so.
+#
+# A TICK WITH NO ROWS RETURNS EARLY rather than rebuilding an empty state file,
+# which is _resume_gate's shape and the breaker's own rule: the count is of
+# consecutive DISPATCHES, not consecutive ticks, so a quiet tick in between must
+# not silently reset it. Stale keys are pruned by the next tick that has rows.
+_green_head_breaker() {
+  local repo="$1" slug="$2" rows="$3"
+  local key verdict count num head nums="" breaker=3
+  GREEN_HEAD_DISPATCH_NUMS=""
+  [ -n "${rows//[[:space:]]/}" ] || return 0
+  while IFS=$'\t' read -r key verdict count; do
+    [ -n "$key" ] || continue
+    num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
+    case "$verdict" in
+      dispatch)
+        nums="$nums $num"
+        log "$repo#$num: green head owed a signal — resuming this tick instead of the twelfth, dispatch $count of $breaker at $head (#384)"
+        if [ "$count" -eq "$breaker" ]; then
+          # ASSERT ONLY WHAT IS OBSERVED, exactly as the gate's trip does: the
+          # trip fires as the third dispatch goes out, so only the first two are
+          # known to have produced nothing.
+          warn "$repo#$num: green-head resume dispatch $count of $count at head ${head:0:12} — the previous $(( count - 1 )) produced no signal, and after this one the green-head bypass is suppressed at this head until it moves (#314); the twelve-tick counter is untouched and still runs"
+        fi
+        ;;
+      suppress)
+        log "no resume duty: $repo#$num green-head bypass suppressed at $head after $count zero-action dispatches — only a push clears it (#314); the twelve-tick counter still runs"
+        ;;
+      *) : ;;
+    esac
+  done < <(
+    printf '%s' "$rows" \
+      | while IFS=$'\t' read -r num head; do
+          [ -n "$num" ] || continue
+          [ -n "$head" ] || continue
+          printf '%s#%s@%s\tfresh\n' "$repo" "$num" "$head"
+        done \
+      | _resume_breaker "$DUTY_DIR/.resume-zero-action-green.$slug" "$breaker"
+  )
+  GREEN_HEAD_DISPATCH_NUMS="${nums# }"
+}
+
 # _resume_gate REPO SLUG LISTING — the whole doable-work decision for this
 # repo's drafts. It says out loud, once per tick, which drafts it withheld and
 # why: a ledger trades a burn for SILENCE, and silence is how the fleet starves
@@ -1622,7 +1705,7 @@ _builder_repo() {
   # mid-flight — that lock is what makes resume detection sound. ---
   local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
   local near_miss_rows="" near_miss_nums="" near_miss_desc="" _nm_num _nm_id
-  local green_head_nums="" flip_owed_nums="" _gh_num _fo_num
+  local green_head_rows="" green_head_nums="" flip_owed_nums=""
   local claimed_nums open_heads merged_heads N branch
   # `comments` and `reviews` are deliberately NOT requested: those nested
   # connections are generated as `first: 100` and never paginate, so reading the
@@ -1658,7 +1741,7 @@ _builder_repo() {
     # and nothing else. Both run before the gate below, because the flip-owed
     # one hands it RESUME_FORCE_FRESH.
     _green_head_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"
-    green_head_nums="$(printf '%s' "$GREEN_HEAD_ROWS" | tr '\n' ' ')"
+    green_head_rows="$GREEN_HEAD_ROWS"
     _flip_owed_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$panel_json" "$resume_json"
     flip_owed_nums="$(printf '%s' "$FLIP_OWED_ROWS" | tr '\n' ' ')"
   fi
@@ -1701,10 +1784,19 @@ _builder_repo() {
       stranded_nums="$(printf '%s %s' "$stranded_nums" "$near_miss_nums" \
         | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
     fi
-    # The green-head bypass rides beside the threshold on the same terms (#384):
+    # The green-head bypass rides BESIDE the threshold on the same terms (#384):
     # a second, independent reason to be due, added to the stranded set without
     # touching _stranded_resume_due's counters, threshold or state-file format.
     # A fleet upgrading mid-run finds `.resume-unsignalled.<slug>` as it left it.
+    #
+    # ...and THROUGH the breaker, which is the half #319's near-miss union does
+    # not have and this one must (review round 1 on #384). Beside answers "is
+    # this PR due at all"; through answers "how many times may being due buy a
+    # session before the evidence is that the sessions are producing nothing".
+    # _green_head_breaker holds the whole of that second question, including why
+    # it counts on a state file of its own.
+    _green_head_breaker "$R" "$slug" "$green_head_rows"
+    green_head_nums="$GREEN_HEAD_DISPATCH_NUMS"
     if [ -n "${green_head_nums// /}" ]; then
       stranded_nums="$(printf '%s %s' "$stranded_nums" "$green_head_nums" \
         | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
