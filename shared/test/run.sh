@@ -6726,6 +6726,21 @@ up_run() {
     PATH="$UPSHIM:$PATH" bash "$CLIBIN" up "$@"
 }
 
+: >"$UPSTATE"
+: >"$UPCALLS"
+if up_new_out="$(up_run --dry-run 2>&1)"; then up_new_rc=0; else up_new_rc=$?; fi
+t cli-up-dry-run-all-new-exits-zero 0 "$up_new_rc"
+t cli-up-dry-run-all-new-reports-every-create 3 \
+  "$(grep -c ': WOULD create ' <<<"$up_new_out" || true)"
+t cli-up-dry-run-all-new-reports-every-hire 3 \
+  "$(grep -c ': WOULD hire (new box — engine crew@0.1.2-dev, cron armed)$' <<<"$up_new_out" || true)"
+case "$up_new_out" in
+  *'up --dry-run: 3 would be created, 0 started, 3 hired'*) r1=complete ;;
+  *) r1="$up_new_out" ;;
+esac
+t cli-up-dry-run-all-new-summary complete "$r1"
+t cli-up-dry-run-all-new-touches-nothing "" "$(cat "$UPCALLS")"
+
 up_reset
 if up_dry_out="$(up_run --dry-run 2>&1)"; then up_dry_rc=0; else up_dry_rc=$?; fi
 t cli-up-dry-run-mixed-exits-zero 0 "$up_dry_rc"
