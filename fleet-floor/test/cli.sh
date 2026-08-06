@@ -581,6 +581,7 @@ else
   fail "crew status <box>: a stopped box still reads (unreachable)" \
        "$(cat "$CL_TMP/crew-out")"
 fi
+t "crew status <box>: the stopped detail view still costs three round trips" 3 "$CL_EXECN"
 
 # --- the normal case, unchanged --------------------------------------------
 crew_detail cli-hired
@@ -607,6 +608,23 @@ else
   fail "crew status <box>: the detail view still reads the last 5 lines" \
        "no 'tail -n 5 ~/duty/duty.log' in $CL_CLI"
 fi
+t "crew status <box>: the hired detail view still costs three round trips" 3 "$CL_EXECN"
+
+# A partial answer is not an absent engine: rig_report and the duty-log read
+# can both succeed even when engine_report fails. Reverting the duty-log branch
+# to key on an empty stamp would turn this reachable hired box into "not hired"
+# and hide the log, even though the state discriminator above remains correct.
+STUB_ENGINE_REPORT_FAIL=cli-hired crew_detail cli-hired
+t "crew status <box>: a box with only the engine probe silent still exits 0" 0 "$CL_RC"
+if grep -qx 'engine: unknown — the box did not answer' "$CL_TMP/crew-out" &&
+   grep -q 'stub log for cli-hired' "$CL_TMP/crew-out" &&
+   ! grep -qE 'unreachable|no ticks yet|not hired' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a silent engine probe does not hide a reachable duty log"
+else
+  fail "crew status <box>: a silent engine probe does not hide a reachable duty log" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+t "crew status <box>: a partly answered detail view still costs three round trips" 3 "$CL_EXECN"
 
 # --- an un-hired box -------------------------------------------------------
 # There is no engine here, so a missing duty log is not the news — and the

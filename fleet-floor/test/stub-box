@@ -492,6 +492,10 @@ case "${1:-}" in
         # to diverge from. `modified` and `unverified` are asserted end to end
         # in shared/test/run.sh, against a REAL installed tree, which is the
         # only place the hash can prove anything at all.
+        # A caller can silence just this probe while leaving rig_report and the
+        # duty-log read reachable. That mixed-answer fixture guards the detail
+        # view's state discriminator without inventing another fleet row.
+        [ "${STUB_ENGINE_REPORT_FAIL:-}" = "$name" ] && exit 1
         case "$sc" in nothired|unconverged|premanifest) _unhired=1 ;; *) _unhired=0 ;; esac
         if [ "$_unhired" = 1 ]; then
           printf 'state=absent\nstamp=\nrecorded=\n'
