@@ -84,6 +84,43 @@ else
   bad "artifact-success-cleans-temp-dir (installed=$([ -d "$DLA/share/versions/$V" ] && echo y || echo n) leftovers='$leftA')"
 fi
 
+# 3c. THE PAYLOAD, INHERITED (#365) — asserted here rather than assumed from
+#     test 4's tree comparison, which would go on passing if both channels
+#     regressed together. The artifact packs the WHOLE tree and reimplements no
+#     install logic: it unpacks to a temp dir and hands that dir to install.sh,
+#     so the exclude list applies on the way OUT of the stub, not on the way
+#     in. That is why the minimisation is a property of this channel too — and
+#     why the artifact FILE stays the size of the repository while the tree it
+#     installs does not.
+AVT="$DA/share/versions/$V"
+shipped=""
+for p in .git .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
+         dist drill drills postmortems protocols shared/test \
+         fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
+  [ -e "$AVT/$p" ] && shipped="$shipped $p"
+done
+if [ -z "$shipped" ]; then
+  ok "artifact-install-excludes-repository-furniture"
+else
+  bad "artifact-install-excludes-repository-furniture (still shipped:$shipped)"
+fi
+absent=""
+for p in cli/crew VERSION install.sh examples/fleet.roster shared/lib/common.sh \
+         fleet-floor/index.html fleet-floor/server/floor.py; do
+  [ -e "$AVT/$p" ] || absent="$absent $p"
+done
+if [ -z "$absent" ]; then
+  ok "artifact-install-keeps-what-the-tree-runs"
+else
+  bad "artifact-install-keeps-what-the-tree-runs (missing:$absent)"
+fi
+art_kb="$(du -skL "$DA/share/current" | cut -f1)"
+if [ "$art_kb" -lt 3072 ]; then
+  ok "artifact-install-under-3M ($art_kb KiB)"
+else
+  bad "artifact-install-under-3M (installed tree is $art_kb KiB)"
+fi
+
 # 4. byte-identical (bar provenance) to a CREW_INSTALL_SOURCE install of the
 #    same tree; provenance names the artifact, not a dead temp path.
 DB="$WORK/homeB"
