@@ -1618,7 +1618,7 @@ function populateDash(){
        shorter clock: Box is what the last evidence poll concluded up to a
        minute ago, Heartbeat is whether the guest answered seconds ago. */
     +'<span class="k">Heartbeat</span><span class="v" id="v-ping" style="color:'+pingColour(d)+'">'+pingText(d)+'</span>'
-    +'<span class="k">Engine</span><span class="v">'+(d.engine?esc(stampVersion(d.engine)):"—")+'</span>'
+    +'<span class="k">Engine</span><span class="v">'+(d.engine?esc(stampVersion(d.engine))+integrityMark(d.integrity):"—")+'</span>'
     +'<span class="k">Uptime</span><span class="v">'+(off&&!LIVE?"—":(d.up.h+"h "+pad2(d.up.m)+"m"))+'</span>'
     +'<span class="k">Cron</span><span class="v" style="color:'+(stw?"#8aa0b8":off?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
     +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'
@@ -1693,6 +1693,29 @@ function credGlyph(label,v){
      Rendering them alike told a minute-old hire it had gone silent (#265). */
   if(v==="waiting")return label+" …";
   return label+" ?";               /* unknown: no engine has run, so nothing is known */
+}
+/* The engine's INTEGRITY, rendered beside the version it claims (#159, #190).
+   The version alone is what install.sh wrote once; this is what the files on
+   the box hash to NOW, so a hand-edited engine says so here instead of showing
+   its shipped stamp forever. "Is my fleet running what I think it is?" was made
+   answerable by #159 and the answer never reached the operator looking at this
+   page.
+   The VERDICT, never the build provenance. stampVersion() strips `crew@` and
+   the commit on purpose and the walk asserts they stay stripped; rendering the
+   stamp here would red that check and tell the operator nothing about whether
+   the tree still matches it.
+   The words are `crew status`'s INTEGRITY column verbatim, not synonyms: a CLI
+   and a floor holding private vocabularies for one fact is what #38 was filed
+   about, and MODIFIED shouts here for the reason it shouts there — it is the
+   one value an operator must not skim past.
+   "" is a box that did not answer (a probe that could not run), and renders
+   nothing: an unhired box has no engine line at all, and an engine too old to
+   carry the tool still answers `unverified`. */
+function integrityMark(v){
+  if(v==="current")return '<span class="ig" style="color:#5fce9b" title="every engine file is what the recorded install shipped">✓ current</span>';
+  if(v==="modified")return '<span class="ig" style="color:#ff5147" title="the engine files diverge from the recorded install — crew status names them">⚠ MODIFIED</span>';
+  if(v==="unverified")return '<span class="ig" style="color:#f7bd4e" title="no readable manifest: hired before content stamping, or by another format — the next crew upgrade records one">~ unverified</span>';
+  return "";
 }
 function credColour(d){
   if(d.gh==="missing"||d.vendor==="missing")return "#ff5147";

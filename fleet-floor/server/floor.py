@@ -591,7 +591,7 @@ def unit_defaults():
     missing key would have fixed today's instance and left the next one.
     """
     return {
-        "state": "offline", "engine": "", "gh": "unknown", "vendor": "unknown",
+        "state": "offline", "engine": "", "integrity": "", "gh": "unknown", "vendor": "unknown",
         "queue": [], "sessions": [], "cur": None, "spark": [0.0] * 22,
         "up": {"h": 0, "m": 0}, "repo": "", "repos": [], "logs": [],
         "longest": 0, "avg": 0, "success": 0, "today": 0,
@@ -622,6 +622,15 @@ def build_unit(unit, state, agent_conf, now):
 
     meta, loglines = parse_probe(raw)
     u["engine"] = meta.get("engine", "")
+    # The engine stamp's provenance, in #159's vocabulary: current, modified,
+    # unverified, absent. Carried, never re-derived and never smoothed — the box
+    # holds the files, so the box is the only thing that can hash them, and a
+    # collector that turned an answer it did not like into a friendlier one
+    # would be the "consistent, wrong data" failure described further down.
+    # Empty means the box did not answer: an engine too old to ship the tool
+    # still answers `unverified` (probe.sh's fallback), so "" is a probe that
+    # could not run at all, and the page renders nothing rather than a verdict.
+    u["integrity"] = meta.get("integrity", "")
     u["gh"] = meta.get("gh", "unknown")
     u["vendor"] = meta.get("vendor", "unknown")
     u["paused"] = meta.get("paused", "0") != "0"

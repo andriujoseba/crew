@@ -28,6 +28,38 @@ conf=/tmp/.crew-floor-probe.conf
 if [ ! -t 0 ]; then cat >"$conf" 2>/dev/null; fi
 
 emit engine "$(head -1 "$DUTY_DIR/VERSION" 2>/dev/null | tr -d '\r')"
+
+# --- engine integrity: whether the box is running the engine it just named ---
+#
+# ~/duty/VERSION is a CLAIM (#159): install.sh writes it once and nothing since
+# looks at the files, so a hand-edited box reports its shipped stamp forever and
+# the line above carries that claim to an operator with nothing qualifying it.
+# engine-manifest.sh hashes the shipped tree and answers in one word; the floor
+# renders that word beside the version, which is the same question — and the
+# same script, and therefore the same answer — `crew status` puts in its
+# INTEGRITY column. Two readers holding private sources of truth is the defect
+# this console exists to end, so neither of them computes this itself.
+#
+# LOCAL and cheap, unlike the credential probes removed above: 43 files and
+# ~400 KB of sha256 on a current tree, ~25 ms, against a 60s poll whose
+# cheapest step is a `box exec` round trip. Nothing here touches the network.
+#
+# The fallback mirrors cli/crew's engine_report exactly, and the reason is
+# engine-manifest.sh's own: an engine installed before content stamping ships
+# no tool and recorded no manifest, and that is UNVERIFIED, never modified — a
+# fleet that reads modified everywhere on the day this lands has learned that
+# the word means nothing. One upgrade cures it.
+if [ -x "$DUTY_DIR/bin/engine-manifest.sh" ]; then
+  # An empty value is deliberate on failure: the script dies rather than guess
+  # when it cannot hash (no sha256sum), and a box that could not answer must
+  # render nothing, never `current`.
+  emit integrity "$("$DUTY_DIR/bin/engine-manifest.sh" --state 2>/dev/null | head -1 | tr -d '\r')"
+elif [ -s "$DUTY_DIR/VERSION" ]; then
+  emit integrity unverified
+else
+  emit integrity absent
+fi
+
 # The agent the box was ACTUALLY installed as, from the instance.conf
 # install.sh wrote — not what a roster claims about it.
 #
