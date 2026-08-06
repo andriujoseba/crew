@@ -87,6 +87,7 @@ fi
 # real roster clobbered in the working tree, one `git add -A` away from being
 # committed.
 export CREW_FLOOR_ROSTER="$HERE/fixtures/roster.txt"
+export FLOOR_TEST_VERSION="crew 9.8.7-fixture ($FLOOR)"
 
 # ...and the suite's own operator fleet DEFINITION, which is a different thing
 # (#244). `crew floor` and floor.py now refuse under the examples fallback,
@@ -151,6 +152,7 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
 CREW_FLOOR_PING_INTERVAL="${FLOOR_TEST_PING_INTERVAL:-2}" \
 CREW_FLOOR_PING_TIMEOUT="${FLOOR_TEST_PING_TIMEOUT:-4}" \
 CREW_FLOOR_PING_FAILS="${FLOOR_TEST_PING_FAILS:-2}" \
+CREW_FLOOR_VERSION="$FLOOR_TEST_VERSION" \
   python3 "$FLOOR/server/floor.py" >"$TMP/server.log" 2>&1 &
 SRV=$!
 
@@ -253,7 +255,9 @@ if [ "$BROWSER" -eq 1 ]; then
     # plan asks for that case by name). The count is deterministic in a green
     # run: every conditional block here is guarded by a check that fails when
     # its box is unreachable, so a run that asserts fewer than 61 is already red.
-    walk "browser walk" 61 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # 61 -> 64 with #347's API-to-canvas exact-version pair and its two-width
+    # collision guard.
+    walk "browser walk" 64 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"

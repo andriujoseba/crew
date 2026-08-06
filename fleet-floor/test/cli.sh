@@ -107,6 +107,61 @@ crew_floor --port 8898; CL_OUT="$(cl_out)"
 if printf '%s' "$CL_OUT" | grep -q "plain HTTP"; then ok "cli: warns that a bound port sends the password in clear"
 else fail "cli: warns that a bound port sends the password in clear" "$CL_OUT"; fi
 
+# The byline is the launcher's identity, not a value floor.py derives from its
+# own path. Start a scratch serving tree twice with VERSION changed between
+# starts: the API must carry the exact `crew --version` answer each time.
+CL_VERSION_ROOT="$CL_TMP/version-root"
+mkdir -p "$CL_VERSION_ROOT/cli"
+cp "$CL_ROOT/cli/crew" "$CL_VERSION_ROOT/cli/crew"
+ln -s "$CL_ROOT/shared" "$CL_VERSION_ROOT/shared"
+ln -s "$CL_ROOT/fleet-floor" "$CL_VERSION_ROOT/fleet-floor"
+CL_VERSION_PORT=8879
+cl_start_version_floor() {
+  PATH="$CL_TMP/bin:$PATH" CREW_CONFIG_DIR="$CREW_CONFIG_DIR" \
+  CREW_FLOOR_ROSTER="$CL_HERE/fixtures/roster.txt" CREW_FLOOR_PASS=version-test \
+    "$CL_VERSION_ROOT/cli/crew" floor --local --port "$CL_VERSION_PORT" \
+      >"$CL_TMP/version-floor.log" 2>&1 &
+  CL_VERSION_PID=$!
+  for _ in $(seq 1 40); do
+    curl -fsS -u operator:version-test \
+      "http://127.0.0.1:$CL_VERSION_PORT/api/fleet" >"$CL_TMP/version.json" 2>/dev/null && return 0
+    kill -0 "$CL_VERSION_PID" 2>/dev/null || return 1
+    sleep 0.25
+  done
+  return 1
+}
+cl_stop_version_floor() {
+  kill "$CL_VERSION_PID" 2>/dev/null || true
+  wait "$CL_VERSION_PID" 2>/dev/null || true
+}
+for CL_VERSION in 7.6.5-fixture 7.6.6-fixture; do
+  printf '%s\n' "$CL_VERSION" >"$CL_VERSION_ROOT/VERSION"
+  if cl_start_version_floor; then
+    CL_GOT_VERSION="$(jqf "d['version']" <"$CL_TMP/version.json")"
+    t "cli: floor restart serves exact crew --version output for $CL_VERSION" \
+      "crew $CL_VERSION ($CL_VERSION_ROOT)" "$CL_GOT_VERSION"
+    cl_stop_version_floor
+  else
+    fail "cli: floor restart serves exact crew --version output for $CL_VERSION" \
+      "collector did not start: $(cat "$CL_TMP/version-floor.log")"
+    kill "${CL_VERSION_PID:-}" 2>/dev/null || true
+    wait "${CL_VERSION_PID:-}" 2>/dev/null || true
+  fi
+done
+
+# This is a one-way handoff from the launcher. An absent private environment
+# value degrades visibly; floor.py must not grow a second VERSION reader.
+CL_FLOOR_FN="$(sed -n '/^cmd_floor()/,/^}/p' "$CL_ROOT/cli/crew")"
+case "$CL_FLOOR_FN" in
+  *'CREW_FLOOR_VERSION="$(version)"'*) ok "cli: floor hands its exact version answer to the server" ;;
+  *) fail "cli: floor hands its exact version answer to the server" "version handoff missing" ;;
+esac
+if grep -qE 'open\([^)]*VERSION|CREW_ROOT[^\n]*VERSION' "$CL_FLOOR/server/floor.py"; then
+  fail "collector: version stays launcher-owned" "floor.py reads VERSION itself"
+else
+  ok "collector: version stays launcher-owned"
+fi
+
 # --- the auth decision -----------------------------------------------------
 # A generated password must be generated, not a constant: two runs, two values.
 crew_floor --local --port 8897

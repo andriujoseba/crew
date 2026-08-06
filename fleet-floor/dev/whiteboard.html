@@ -1624,12 +1624,28 @@ function stageCounts(){
    assert canvas text without maintaining a test-only copy of it. */
 function floorHeaderLabels(){
   var version=(LIVEMETA&&LIVEMETA.version)||"crew unknown";
-  return [
-    {text:"FLEET FLOOR",x:26,y:36,font:"700 15px ui-monospace,monospace",color:"#c7d4e4"},
-    {text:"heavy-duty/crew · fleet call",x:132,y:36,font:"11px ui-monospace,monospace",color:"#5fd6ff"},
-    {text:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#7f93aa"},
-    {text:"scroll · click a unit to zoom in",after:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#46566a"}
+  var labels=[
+    {text:"FLEET FLOOR",x:26,y:36,font:"700 15px ui-monospace,monospace",color:"#c7d4e4",align:"left"},
+    {text:"heavy-duty/crew · fleet call",x:132,y:36,font:"11px ui-monospace,monospace",color:"#5fd6ff",align:"left"},
+    {text:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#7f93aa",align:"left"},
+    {text:"scroll · click a unit to zoom in",after:version,x:26,y:54,font:"10px ui-monospace,monospace",color:"#46566a",align:"left"}
   ];
+  labels.forEach(function(h){
+    X.font=h.font;
+    if(h.after)h.x+=X.measureText(h.after).width+18;
+    h.width=X.measureText(h.text).width;
+  });
+  X.font="700 11px ui-monospace,monospace";
+  var sxp=VW-26;
+  stageCounts().forEach(function(s){
+    var text="● "+s[0],width=X.measureText(text).width;
+    labels.push({text:text,x:sxp,y:36,font:"700 11px ui-monospace,monospace",color:s[1],align:"right",width:width});
+    sxp-=width+20;
+  });
+  X.font="10px ui-monospace,monospace";
+  var units=ROSTER.length+" UNITS";
+  labels.push({text:units,x:VW-26,y:54,font:"10px ui-monospace,monospace",color:"#46566a",align:"right",width:X.measureText(units).width});
+  return labels;
 }
 function drawAlertBadge(cx,cy,u,cw){
   var a=alertOf(u);if(!a)return;
@@ -1650,17 +1666,11 @@ function drawAlertBadge(cx,cy,u,cw){
 }
 function t2(){return Date.now();}
 function drawFloorHeader(t){
-  X.textBaseline="alphabetic";X.textAlign="left";
+  X.textBaseline="alphabetic";
   floorHeaderLabels().forEach(function(h){
-    X.font=h.font;X.fillStyle=h.color;
-    var x=h.x;
-    if(h.after)x+=X.measureText(h.after).width+18;
-    X.fillText(h.text,x,h.y);
+    X.textAlign=h.align;X.font=h.font;X.fillStyle=h.color;
+    X.fillText(h.text,h.x,h.y);
   });
-  var stat=stageCounts();
-  X.textAlign="right";X.font="700 11px ui-monospace,monospace";var sxp=VW-26;
-  stat.forEach(function(s){X.fillStyle=s[1];X.fillText("● "+s[0],sxp,36);sxp-=X.measureText("● "+s[0]).width+20;});
-  X.fillStyle="#46566a";X.font="10px ui-monospace,monospace";X.fillText(ROSTER.length+" UNITS",VW-26,54);
   X.textAlign="left";
 }
 function syncToggles(){

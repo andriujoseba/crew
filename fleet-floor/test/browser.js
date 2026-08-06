@@ -122,13 +122,45 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      the app: /api/fleet is the same list, in the same order, that the page
      laid the floor out from. In DEMO there is no collector, so there is
      nothing to compare against and the identity check is skipped. */
-  const roster = LIVE
+  const snapshot = LIVE
     ? await page.evaluate(async () => {
         const r = await fetch(location.origin + '/api/fleet');
-        return (await r.json()).units.map((u) => ({ box: u.box, agent: u.agent, room: u.room, state: u.state }));
+        return await r.json();
       })
+    : null;
+  const roster = LIVE
+    ? snapshot.units.map((u) => ({ box: u.box, agent: u.agent, room: u.room, state: u.state }))
     : Array.from({ length: 7 }, (_, i) => ({ box: null, agent: null, room: null, state: null }));
   ok('floor: roster rendered', roster.length > 0, roster.length + ' units');
+  if (LIVE) {
+    const header = await page.evaluate(() => window.FLOORDEV.header());
+    const paintedVersion = header.find((h) => h.y === 54 && /^crew /.test(h.text));
+    ok('floor: the canvas header paints the serving host version',
+       !!paintedVersion && paintedVersion.text === snapshot.version,
+       `header=${paintedVersion && paintedVersion.text}, api=${snapshot.version}`);
+    ok('floor: the serving version is not dropped or hardcoded',
+       snapshot.version === process.env.FLOOR_TEST_VERSION,
+       `expected ${process.env.FLOOR_TEST_VERSION}, got ${snapshot.version}`);
+    let clearAtWalkWidths = true;
+    let collision = '';
+    for (const width of [1400, 1600]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const labels = await page.evaluate(() => window.FLOORDEV.header());
+      for (const y of [36, 54]) {
+        const left = labels.filter((h) => h.y === y && h.align === 'left');
+        const right = labels.filter((h) => h.y === y && h.align === 'right');
+        const leftEdge = Math.max(...left.map((h) => h.x + h.width));
+        const rightEdge = Math.min(...right.map((h) => h.x - h.width));
+        if (leftEdge + 12 > rightEdge) {
+          clearAtWalkWidths = false;
+          collision = `${width}px row ${y}: left ${leftEdge}, right ${rightEdge}`;
+        }
+      }
+    }
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    ok('floor: version byline clears counters at browser-walk widths',
+       clearAtWalkWidths, collision);
+  }
   /* Not just "the word units appears": that is true of an empty fleet too,
      because the tiles always render. Assert the count matches the roster. */
   const tilesText = (await page.locator('#tiles').textContent()).replace(/\s+/g, '');
