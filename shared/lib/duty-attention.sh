@@ -70,17 +70,23 @@ _attention_audit_classify() {
 # hygiene slot in duty.sh. It observes malformed flags and reports them; it
 # never repairs the board or launches a session.
 duty_attention_audit() {
-  local R fetched rows="" classified malformed
+  local R fetched rows="" classified malformed sweep_complete=1
   while IFS= read -r R; do
     [ -n "$R" ] || continue
-    fetched="$(gh api "/repos/$R/issues?state=open&labels=$LABEL_ATTENTION&per_page=100" \
+    if ! fetched="$(gh api "/repos/$R/issues?state=open&labels=$LABEL_ATTENTION&per_page=100" \
       --jq '.[] | "\(.repository_url | split("/") | .[-2:] | join("/")) \(.number) \(if has("pull_request") then "pr" else "issue" end) \(.assignees | length)"' \
-      2>/dev/null)" || {
-        warn "$R: malformed attention audit fetch failed this tick"
-        return 0
-      }
+      2>/dev/null)"; then
+      warn "$R: malformed attention audit fetch failed this tick"
+      sweep_complete=0
+      continue
+    fi
     rows="${rows}${rows:+$'\n'}${fetched}"
   done < <(read_repo_list "$REPOS_FILE")
+
+  # A partial sweep cannot distinguish a repaired flag from an unread repo.
+  # Finish every bounded read for evidence, then preserve the last complete
+  # report rather than announcing a false shrink or clear.
+  [ "$sweep_complete" -eq 1 ] || return 0
 
   classified="$(printf '%s\n' "$rows" | _attention_audit_classify)"
   malformed="$(printf '%s\n' "$classified" \

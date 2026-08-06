@@ -2724,14 +2724,14 @@ t attention-audit-empty-input-is-empty "" \
 ATT_AUDIT="$TMP/attention-audit"
 mkdir -p "$ATT_AUDIT"
 # shellcheck disable=SC2034,SC2317  # variables/functions consumed by the sourced audit
-attention_audit_case() { # attention_audit_case <rows> [failed-repo]
-  local supplied="$1" failed="${2:-}" rc
+attention_audit_case() { # attention_audit_case <rows> [failed-repo] [registry]
+  local supplied="$1" failed="${2:-}" registry="${3:-heavy-duty/crew}" rc
   : >"$ATT_AUDIT/gh-calls"
   (
     DUTY_DIR="$ATT_AUDIT"
     REPOS_FILE="$ATT_AUDIT/repos.txt"
     LABEL_ATTENTION=attention
-    read_repo_list() { printf 'heavy-duty/crew\n'; }
+    read_repo_list() { printf '%s\n' "$registry"; }
     gh() {
       printf 'GH %s\n' "$*" >>"$ATT_AUDIT/gh-calls"
       case "$*" in *"/repos/$failed/issues?"*) return 1 ;; esac
@@ -2758,13 +2758,15 @@ t attention-audit-one-read-per-registry-repo 1 \
 # A fetch failure is evidence, not a failed tick, and leaves report state
 # untouched so a partial registry sweep cannot falsely announce a repair.
 printf 'heavy-duty/crew#293 PR\n' >"$ATT_AUDIT/.attention-malformed"
-ATT_AUDIT_FAIL="$(attention_audit_case '' heavy-duty/crew)"
+ATT_AUDIT_FAIL="$(attention_audit_case '' heavy-duty/crew "$(printf 'heavy-duty/crew\nother/repo\n')")"
 t attention-audit-fetch-failure-warns 1 \
   "$(printf '%s\n' "$ATT_AUDIT_FAIL" | grep -c '^WARN ' || true)"
 t attention-audit-fetch-failure-returns-zero 'RC 0' \
   "$(printf '%s\n' "$ATT_AUDIT_FAIL" | tail -1)"
 t attention-audit-fetch-failure-keeps-state 'heavy-duty/crew#293 PR' \
   "$(cat "$ATT_AUDIT/.attention-malformed")"
+t attention-audit-fetch-failure-still-reads-later-repos 2 \
+  "$(grep -c '^GH api /repos/' "$ATT_AUDIT/gh-calls" || true)"
 
 # report_suppressed makes a stable malformed set speak once, then re-arms
 # when the set changes. The operator alert follows exactly the same cadence.
