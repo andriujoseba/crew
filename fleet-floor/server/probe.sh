@@ -19,7 +19,10 @@
 # tick.sh's rc dispatch).
 set -u
 
-DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
+# Exported, not merely set: the integrity read below runs engine-manifest.sh,
+# which resolves the same variable, and it must measure the tree this file is
+# reporting on rather than the default.
+export DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 
 emit() { printf '::%s %s\n' "$1" "${2-}"; }
 
@@ -53,6 +56,10 @@ if [ -x "$DUTY_DIR/bin/engine-manifest.sh" ]; then
   # An empty value is deliberate on failure: the script dies rather than guess
   # when it cannot hash (no sha256sum), and a box that could not answer must
   # render nothing, never `current`.
+  #
+  # EXPORTED above, not inherited by luck: DUTY_DIR is a shell variable in this
+  # file, so a probe pointed at a non-default tree would read that tree's
+  # VERSION and hash `$HOME/duty` — two answers about two boxes on one record.
   emit integrity "$("$DUTY_DIR/bin/engine-manifest.sh" --state 2>/dev/null | head -1 | tr -d '\r')"
 elif [ -s "$DUTY_DIR/VERSION" ]; then
   emit integrity unverified
