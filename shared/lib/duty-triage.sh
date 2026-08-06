@@ -24,6 +24,36 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
 
+_triage_discussion_items() {  # _triage_discussion_items REPO OWNER NAME
+  local repo="$1" owner="$2" name="$3"
+  TR_ME="$ME" TR_R="$repo" gh api graphql -f owner="$owner" -f name="$name" -f query='
+    query($owner:String!,$name:String!){
+      repository(owner:$owner,name:$name){
+        discussions(first:50,states:OPEN){
+          nodes{ number updatedAt
+            comments(first:50){ nodes{ author{ login }
+              replies(first:20){ nodes{ author{ login } } } } } }
+        }
+      }
+    }' --jq '[.data.repository.discussions.nodes[]
+              | select( [ .comments.nodes[] | .author.login,
+                          .replies.nodes[].author.login ]
+                        | index(env.TR_ME) | not )
+              | "\(env.TR_R)#\(.number) \(.updatedAt)"] | .[]'
+}
+
+_triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUMSTATES
+  local repo="$1" blocked_json="$2" numstates="$3" numbers
+  numbers="$(jq -r --argjson S "$numstates" -f "$DUTY_DIR/lib/jq/blockers.jq" \
+    <<<"$blocked_json" 2>/dev/null)" || return 1
+  jq -r --arg repo "$repo" --arg numbers "$numbers" '
+    ($numbers | split(",")) as $due
+    | .[]
+    | select((.number | tostring) as $number | $due | index($number))
+    | "\($repo)#\(.number) \(.updatedAt)"
+  ' <<<"$blocked_json" 2>/dev/null
+}
+
 duty_triage() {
   local R
   while IFS= read -r R; do
@@ -176,20 +206,7 @@ _triage_repo() {
   # (50/50/20) truncate very busy threads — safe direction (re-wake), hygiene
   # is the backstop.
   local uncommented_disc
-  if ! uncommented_disc="$(TR_ME="$ME" TR_R="$R" gh api graphql -f owner="$owner" -f name="$name" -f query='
-    query($owner:String!,$name:String!){
-      repository(owner:$owner,name:$name){
-        discussions(first:50,states:OPEN){
-          nodes{ number updatedAt
-            comments(first:50){ nodes{ author{ login }
-              replies(first:20){ nodes{ author{ login } } } } } }
-        }
-      }
-    }' --jq '[.data.repository.discussions.nodes[]
-              | select( [ .comments.nodes[] | .author.login,
-                          .replies.nodes[].author.login ]
-                        | index(env.TR_ME) | not )
-              | "\(env.TR_R)#\(.number) \(.updatedAt)"] | .[]' 2>/dev/null)"; then
+  if ! uncommented_disc="$(_triage_discussion_items "$R" "$owner" "$name" 2>/dev/null)"; then
     warn "$R: discussion probe failed (discussions disabled?)"
     uncommented_disc=""
   else
@@ -202,17 +219,27 @@ _triage_repo() {
   # deliberately narrow (see lib/jq/blockers.jq — corpus-tested); issue and
   # PR numbering is shared, so the state map needs both lists. Fail-safe by
   # construction: an unknown number counts as still-open.
-  local blocked_json numstates
+  local blocked_json numstates unblockable_items="" fresh_unblockable=""
   blocked_json="$(gh issue list -R "$R" --state open --label "$LABEL_BLOCKED" \
-    --limit 200 --json number,body 2>/dev/null || echo '[]')"
+    --limit 200 --json number,body,updatedAt 2>/dev/null || echo '[]')"
   if [ "$(jq 'length' <<<"$blocked_json" 2>/dev/null || echo 0)" -gt 0 ]; then
     numstates="$( { gh issue list -R "$R" --state all --limit 500 --json number,state
                     gh pr    list -R "$R" --state all --limit 500 --json number,state; } 2>/dev/null \
       | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo '{}')"
-    unblockable="$(jq -r --argjson S "$numstates" -f "$DUTY_DIR/lib/jq/blockers.jq" \
-      <<<"$blocked_json" 2>/dev/null || echo "")"
+    if ! unblockable_items="$(_triage_unblockable_items "$R" "$blocked_json" "$numstates")"; then
+      warn "$R: unblockable parse failed"
+      unblockable_items=""
+    fi
   fi
+  fresh_unblockable="$(printf '%s\n' "$unblockable_items" \
+    | ledger_filter "$DUTY_DIR/.seen-unblockable")"
+  unblockable="$(printf '%s\n' "$fresh_unblockable" | awk 'NF {
+    number=$1; sub(/^.*#/, "", number); due = due sep number; sep="," }
+    END { print due }')"
   [ -n "$unblockable" ] && signals="$signals unblockable:${unblockable};"
+  printf '%s\n' "$unblockable_items" \
+    | ledger_suppressed "$DUTY_DIR/.seen-unblockable" \
+    | report_suppressed "$DUTY_DIR/.suppressed-unblockable.${R//\//_}" "$R: unblockable"
 
   if [ -z "$signals" ]; then
     if [ "$mcount" -eq 0 ]; then
@@ -233,16 +260,65 @@ _triage_repo() {
   prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" UNBLOCKABLE_NOTE="$unblock_note")"
   RUN_SESSION_RC=1
   run_session triage "$R" "$dir" "$TIMEOUT_TRIAGE" "$prompt"
-  # Mark every currently-uncommented discussion seen at its present state, so a
-  # held/needs-ruling one does not re-wake until it actually changes. Same for
-  # the board signals: an issue this session saw and left alone is recorded at
-  # the state it was seen in, and re-wakes only when it actually changes.
+  # Mark each signal at the state in which the session LEFT it, not the state
+  # that launched the session. That prevents the session's own comments from
+  # re-waking it next tick. A third-party write racing the re-read is swallowed
+  # in the safe direction: hourly hygiene remains the unconditional backstop,
+  # and every stable suppressed set is still reported. Never substitute now():
+  # the board's own timestamps are the evidence the next tick compares.
   #
   # Committed ONLY on rc 0, exactly as (c) is: a crashed or timed-out session
   # must leave its ids uncommitted so the next tick retries. That distinction —
   # declined vs never got there — is the whole reason this is safe.
   if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-    printf '%s\n' "$uncommented_disc" | ledger_commit "$DUTY_DIR/.seen-discussions"
-    printf '%s\n%s\n' "$nt_items" "$stray_items" | ledger_commit "$DUTY_DIR/.seen-triage-board"
+    local post_board_json post_nt="" post_stray="" post_discussions=""
+    local post_blocked post_numstates post_unblockable=""
+    post_board_json="$(gh issue list -R "$R" --state open --limit 200 \
+      --json number,body,labels,updatedAt 2>/dev/null || echo err)"
+    if [ "$post_board_json" = err ]; then
+      warn "$R: post-session board probe failed; ledgers left unchanged"
+    else
+      if ! post_nt="$(printf '%s' "$post_board_json" | jq -r --arg repo "$R" \
+          --arg n "$LABEL_NEEDS_TRIAGE" \
+          '.[] | select([.labels[].name] | index($n))
+            | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
+        warn "$R: post-session needs-triage parse failed"
+        post_nt=""
+      fi
+      if ! post_stray="$(printf '%s' "$post_board_json" \
+          | jq -r --arg repo "$R" --arg r "$LABEL_READY" --arg c "$LABEL_CLAIMED" \
+              --arg b "$LABEL_BLOCKED" --arg p "$LABEL_POST_MERGE" \
+              --arg e "$LABEL_EPIC" --arg n "$LABEL_NEEDS_TRIAGE" \
+            '.[] | select( ([.labels[].name]
+                | map(. == $r or . == $c or . == $b or . == $p or . == $e or . == $n) | any) | not )
+              | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
+        warn "$R: post-session stray parse failed"
+        post_stray=""
+      fi
+      printf '%s\n%s\n' "$post_nt" "$post_stray" \
+        | ledger_commit "$DUTY_DIR/.seen-triage-board"
+
+      post_blocked="$(printf '%s' "$post_board_json" | jq -c \
+        --arg b "$LABEL_BLOCKED" '[.[] | select([.labels[].name] | index($b))]' 2>/dev/null || echo err)"
+      if [ "$post_blocked" = err ]; then
+        warn "$R: post-session blocked parse failed"
+      elif [ "$(jq 'length' <<<"$post_blocked" 2>/dev/null || echo 0)" -gt 0 ]; then
+        post_numstates="$( { gh issue list -R "$R" --state all --limit 500 --json number,state
+                            gh pr    list -R "$R" --state all --limit 500 --json number,state; } 2>/dev/null \
+          | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo err)"
+        if [ "$post_numstates" = err ] || \
+           ! post_unblockable="$(_triage_unblockable_items "$R" "$post_blocked" "$post_numstates")"; then
+          warn "$R: post-session unblockable probe failed; ledger left unchanged"
+        else
+          printf '%s\n' "$post_unblockable" | ledger_commit "$DUTY_DIR/.seen-unblockable"
+        fi
+      fi
+    fi
+
+    if post_discussions="$(_triage_discussion_items "$R" "$owner" "$name" 2>/dev/null)"; then
+      printf '%s\n' "$post_discussions" | ledger_commit "$DUTY_DIR/.seen-discussions"
+    else
+      warn "$R: post-session discussion probe failed; ledger left unchanged"
+    fi
   fi
 }
