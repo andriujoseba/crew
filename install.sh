@@ -114,6 +114,46 @@ self="$(readlink -f "${BASH_SOURCE[0]}")"
 SRC="${CREW_INSTALL_SOURCE:-$(cd "$(dirname "$self")" && pwd)}"
 command -v tar >/dev/null 2>&1 || die "tar is required but was not found. Please install tar and re-run."
 
+# --- the payload -----------------------------------------------------------
+# THE INSTALLED TREE IS THE PRODUCT, NOT THE REPOSITORY (heavy-duty/crew#365).
+# One rule decides every line below: a path ships only if something an
+# installed tree RUNS reads it — `cli/crew`, the `shared/` engine it pushes to
+# boxes, or `fleet-floor/server/` serving the console. Everything else is
+# repository furniture: it is read in a checkout, by CI, by the release
+# ceremony or by a contributor, and on a host it is bytes every `crew upgrade`
+# moves for nothing.
+#
+# What that leaves, so the next person adding a directory can tell which side
+# it falls on: `cli/`, `shared/` (bar its suite), `examples/` (cli/crew's
+# config fallback), `VERSION`, `install.sh`, `README.md`, `CHANGELOG.md`, and
+# `fleet-floor/`'s pre-built `index.html` plus `server/`.
+#
+# Anchored patterns (`./x`), so an exclusion names one path at the tree ROOT
+# and can never match a like-named directory deeper in — a bare
+# `--exclude=test` would take any `test` at any depth, silently. `--anchored`
+# is GNU tar's, as are the `mv -Tf` and `readlink -f` this script already
+# depends on, so it adds no portability the installer did not already require.
+PAYLOAD_EXCLUDES=(
+  --anchored
+  --exclude=./.git             # a working checkout's VCS state, never the product's
+  --exclude=./.github          # CI workflows and labels.conf — GitHub reads them in the repo
+  --exclude=./.box             # the box bootstrap runbook, for an agent in a checkout
+  --exclude=./.ceremony        # vendored governance doctrine; agents read it in the repo they work in
+  --exclude=./AGENTS.md        # the same doctrine's router
+  --exclude=./CONTRIBUTING.md  # contributor doctrine for the checkout
+  --exclude=./changelog.d      # release-note fragments, assembled by the release PR
+  --exclude=./dist             # the installer builders; an installed tree is their output, not their input
+  --exclude=./drill            # the release rehearsal — it refuses a source with no git HEAD, so an install can never run it
+  --exclude=./drills           # the per-version drill records, a release-guard input
+  --exclude=./postmortems      # repo records
+  --exclude=./protocols        # repo records
+  --exclude=./shared/test      # the engine suite, run from a checkout — and `crew upgrade` pushes shared/ to every box
+  --exclude=./fleet-floor/dev  # the design-time asset map: 163 webp, 27 gif, 25 png, shipped only in dev/whiteboard.html
+  --exclude=./fleet-floor/src  # the page's sources; `crew floor` serves the committed index.html and CI asserts it fresh
+  --exclude=./fleet-floor/build.sh  # the src/ concatenator, whose only inputs are excluded above
+  --exclude=./fleet-floor/test # the collector + page suite, run from a checkout
+)
+
 confirm "Install crew from $SRC?" || die "cancelled — nothing was changed."
 
 # --- temp workspace --------------------------------------------------------
@@ -131,9 +171,9 @@ INSTALLED_FROM="${CREW_INSTALLED_FROM:-local:$SRC}"
 if [ -d "$SRC" ]; then
   log "copying local tree $SRC"
   mkdir -p "$TMPDIR/tree"
-  # tar, not cp -a: --exclude=.git, so a working checkout never carries its VCS
-  # state (or its size) into the install tree.
-  tar -C "$SRC" --exclude=.git -cf - . | tar -xf - -C "$TMPDIR/tree"
+  # tar, not cp -a: the exclude list above, so a working checkout carries
+  # neither its VCS state nor the repository furniture into the install tree.
+  tar -C "$SRC" "${PAYLOAD_EXCLUDES[@]}" -cf - . | tar -xf - -C "$TMPDIR/tree"
   EXTRACTED="$TMPDIR/tree"
 elif [ -f "$SRC" ]; then
   log "extracting local tarball $SRC"
