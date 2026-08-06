@@ -166,6 +166,7 @@ if has_role triage; then
   if [ $((now - last)) -ge "$HYGIENE_INTERVAL" ]; then
     # shellcheck source=../lib/duty-hygiene.sh disable=SC1091
     source "$DUTY_DIR/lib/duty-hygiene.sh"
+    duty_attention_audit
     duty_hygiene && echo "$now" >"$DUTY_DIR/.hygiene-last"
   fi
 fi
