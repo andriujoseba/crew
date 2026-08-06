@@ -6663,6 +6663,7 @@ UPCONF="$TMP/up-dry-run-config"
 UPSHIM="$TMP/up-dry-run-bin"
 UPSTATE="$TMP/up-dry-run-state"
 UPCALLS="$TMP/up-dry-run-calls"
+UP_VERSION="$(head -1 "$ROOT/VERSION" | tr -d '\r\n')"
 mkdir -p "$UPCONF" "$UPSHIM"
 cp "$ROOT/examples/fleet.conf" "$ROOT/examples/repos.txt" \
   "$ROOT/examples/notify-repos.txt" "$ROOT/examples/doctrine.conf" "$UPCONF/"
@@ -6707,7 +6708,7 @@ case "$1" in
         ;;
       *'engine-manifest.sh'*)
         printf 'engine:%s\n' "$name" >>"$UPCALLS"
-        printf 'state=current\nstamp=crew@0.1.2-dev fixture\nrecorded=crew@0.1.2-dev fixture\n'
+        printf 'state=current\nstamp=crew@%s fixture\nrecorded=crew@%s fixture\n' "$UP_VERSION" "$UP_VERSION"
         ;;
       *'repos.txt'*) printf 'fixture/operator-repo\n' ;;
       *) printf 'exec:%s\n' "$name" >>"$UPCALLS" ;;
@@ -6722,7 +6723,7 @@ up_reset() {
   : >"$UPCALLS"
 }
 up_run() {
-  env CREW_CONFIG_DIR="$UPCONF" UPSTATE="$UPSTATE" UPCALLS="$UPCALLS" \
+  env CREW_CONFIG_DIR="$UPCONF" UPSTATE="$UPSTATE" UPCALLS="$UPCALLS" UP_VERSION="$UP_VERSION" \
     PATH="$UPSHIM:$PATH" bash "$CLIBIN" up "$@"
 }
 
@@ -6733,7 +6734,7 @@ t cli-up-dry-run-all-new-exits-zero 0 "$up_new_rc"
 t cli-up-dry-run-all-new-reports-every-create 3 \
   "$(grep -c ': WOULD create ' <<<"$up_new_out" || true)"
 t cli-up-dry-run-all-new-reports-every-hire 3 \
-  "$(grep -c ': WOULD hire (new box — engine crew@0.1.2-dev, cron armed)$' <<<"$up_new_out" || true)"
+  "$(grep -c ": WOULD hire (new box — engine crew@$UP_VERSION, cron armed)$" <<<"$up_new_out" || true)"
 case "$up_new_out" in
   *'up --dry-run: 3 would be created, 0 started, 3 hired'*) r1=complete ;;
   *) r1="$up_new_out" ;;
@@ -6745,9 +6746,9 @@ up_reset
 if up_dry_out="$(up_run --dry-run 2>&1)"; then up_dry_rc=0; else up_dry_rc=$?; fi
 t cli-up-dry-run-mixed-exits-zero 0 "$up_dry_rc"
 t cli-up-dry-run-new-box-hires 1 \
-  "$(grep -c '^fresh: WOULD hire (new box — engine crew@0.1.2-dev, cron armed)$' <<<"$up_dry_out" || true)"
+  "$(grep -c "^fresh: WOULD hire (new box — engine crew@$UP_VERSION, cron armed)$" <<<"$up_dry_out" || true)"
 t cli-up-dry-run-existing-wording 2 \
-  "$(grep -c ': WOULD hire (currently: crew@0.1.2-dev fixture)$' <<<"$up_dry_out" || true)"
+  "$(grep -c ": WOULD hire (currently: crew@$UP_VERSION fixture)$" <<<"$up_dry_out" || true)"
 case "$up_dry_out" in
   *'up --dry-run: 1 would be created, 1 started, 3 hired'*) r1=complete ;;
   *) r1="$up_dry_out" ;;
