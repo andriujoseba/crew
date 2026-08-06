@@ -505,6 +505,134 @@ else
   ok "curl-channel-never-writes-install-sh"
 fi
 
+# 12. THE RELEASE HOOK'S OWN CONTRACT (#210) — what a release actually
+#     publishes, exercised offline. The hook ceremony invokes at both doors is a
+#     thin wrapper over `dist/release-artifact.sh`, so the script the release
+#     runs is the script this file drives: the deleted `artifact` job re-typed
+#     its own build, and nothing here could see that it was unreachable while
+#     two releases shipped no asset at all. The contract (ceremony
+#     docs/CONSUMERS.md): every file left in $RELEASE_ASSETS_DIR is uploaded,
+#     and a non-zero exit aborts the release.
+RA="$ROOT/dist/release-artifact.sh"
+ADIR="$WORK/assets"
+# --assets-dir with RELEASE_ASSETS_DIR deliberately unset: the flag is the
+# offline driver, the env var is the hook's, and neither may depend on the other.
+if ra_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$SRC" --assets-dir "$ADIR" 2>&1)"; then
+  ok "release-hook-builds"
+else
+  bad "release-hook-builds (got '$ra_out')"
+fi
+if [ -s "$ADIR/crew-$V.sh" ] && [ -s "$ADIR/crew-$V.sh.sha256" ]; then
+  ok "release-hook-writes-artifact-and-sidecar"
+else
+  bad "release-hook-writes-artifact-and-sidecar (dir holds: $(ls "$ADIR" 2>/dev/null | tr '\n' ' '))"
+fi
+# Only those two: every file in that directory becomes a release asset, so a
+# stray temp file here is a published one.
+same "release-hook-leaves-no-other-assets" "crew-$V.sh crew-$V.sh.sha256" \
+  "$(ls "$ADIR" 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+# The sidecar names the asset ALONE — a path in it makes `sha256sum -c` fail for
+# every downloader, who has the file and not the runner's directory layout.
+same "release-hook-sidecar-names-the-asset-alone" "crew-$V.sh" \
+  "$(awk '{print $2}' "$ADIR/crew-$V.sh.sha256" 2>/dev/null)"
+if ( cd "$ADIR" && sha256sum -c "crew-$V.sh.sha256" >/dev/null 2>&1 ); then
+  ok "release-hook-sidecar-verifies-the-published-file"
+else
+  bad "release-hook-sidecar-verifies-the-published-file"
+fi
+# The asset a release would publish is a working one: its own integrity check
+# passes, and it identifies itself as the version that was cut.
+if bash "$ADIR/crew-$V.sh" --check >/dev/null 2>&1; then
+  ok "release-hook-artifact-passes-its-own-check"
+else
+  bad "release-hook-artifact-passes-its-own-check"
+fi
+case "$(bash "$ADIR/crew-$V.sh" --version 2>&1)" in *"crew $V"*) ok "release-hook-artifact-names-the-release" ;;
+  *) bad "release-hook-artifact-names-the-release (got '$(bash "$ADIR/crew-$V.sh" --version 2>&1)')" ;; esac
+
+# 12a. RELEASE_ASSETS_DIR alone, no flag — the hook passes no --assets-dir, so
+#      this is the path the release itself takes.
+ADIR2="$WORK/assets-env"
+if RELEASE_ASSETS_DIR="$ADIR2" bash "$RA" --version "$V" --root "$SRC" >/dev/null 2>&1 \
+   && [ -s "$ADIR2/crew-$V.sh" ] && [ -s "$ADIR2/crew-$V.sh.sha256" ]; then
+  ok "release-hook-honours-RELEASE_ASSETS_DIR"
+else
+  bad "release-hook-honours-RELEASE_ASSETS_DIR"
+fi
+
+# 12b. THE MUST-FAIL CASES. Non-zero aborts the release with the tag created and
+#      nothing published — sharp on purpose, and the point of the whole change:
+#      a release whose primary install channel is missing should not exist. The
+#      old job could only fail silently.
+#      (i) a build that succeeds but produces an EMPTY artifact. Driven through a
+#      scratch dist/ whose make-installer.sh is a stub, because the production
+#      script takes no injection point: it resolves its builder beside itself.
+FD="$WORK/fakedist"; mkdir -p "$FD"
+cp "$RA" "$FD/release-artifact.sh"
+cat > "$FD/make-installer.sh" <<'MKSTUB'
+#!/usr/bin/env bash
+# stands in for a build that reports success and writes nothing usable
+out=""
+while [ $# -gt 0 ]; do case "$1" in --out) out="$2"; shift 2 ;; *) shift ;; esac; done
+: > "$out"
+MKSTUB
+EMPTYDIR="$WORK/assets-empty"
+if env -u RELEASE_ASSETS_DIR bash "$FD/release-artifact.sh" --version "$V" --root "$SRC" \
+     --assets-dir "$EMPTYDIR" >/dev/null 2>&1; then
+  bad "empty-build-refuses-nonzero (exit 0 — it would publish an empty asset)"
+else
+  ok "empty-build-refuses-nonzero"
+fi
+if [ -e "$EMPTYDIR/crew-$V.sh.sha256" ]; then
+  bad "empty-build-publishes-no-sidecar"
+else
+  ok "empty-build-publishes-no-sidecar"
+fi
+#      (ii) a build that fails outright — a --root that is not a crew tree.
+NOTATREE="$WORK/not-a-tree"; mkdir -p "$NOTATREE"
+if env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$NOTATREE" \
+     --assets-dir "$WORK/assets-bad" >/dev/null 2>&1; then
+  bad "failed-build-refuses-nonzero (exit 0)"
+else
+  ok "failed-build-refuses-nonzero"
+fi
+#      (iii) no assets directory at all. Silently building into the checkout
+#      would publish nothing and say nothing — the failure this issue is about.
+noassets_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$SRC" 2>&1)" \
+  && bad "no-assets-dir-refuses-nonzero (exit 0)" || ok "no-assets-dir-refuses-nonzero"
+case "$noassets_out" in *RELEASE_ASSETS_DIR*) ok "no-assets-dir-says-why" ;;
+  *) bad "no-assets-dir-says-why (got '$noassets_out')" ;; esac
+
+# 12c. THE ANTI-DRIFT ASSERTION, which is why the build is a script at all: the
+#      hook must CALL it and re-type no build of its own. A composite action
+#      cannot be invoked from here, so its shape is what this file can hold —
+#      and it is exactly the property whose absence let the old job rot.
+HOOK="$ROOT/.github/actions/release-artifact/action.yml"
+if [ -f "$HOOK" ]; then ok "release-hook-action-exists"; else bad "release-hook-action-exists"; fi
+if grep -q 'using: composite' "$HOOK" 2>/dev/null && grep -q '^  version:' "$HOOK" 2>/dev/null; then
+  ok "release-hook-action-is-composite-taking-version"
+else
+  bad "release-hook-action-is-composite-taking-version"
+fi
+if grep -q 'dist/release-artifact\.sh' "$HOOK" 2>/dev/null; then
+  ok "release-hook-action-calls-the-script"
+else
+  bad "release-hook-action-calls-the-script"
+fi
+if grep -q 'make-installer\.sh' "$HOOK" 2>/dev/null; then
+  bad "release-hook-action-retypes-no-build"
+else
+  ok "release-hook-action-retypes-no-build"
+fi
+# One publisher, not two: `gh release create` attaches the assets, and a second
+# upload path is how a --clobber race gets invented (#210's spec point 2).
+RELYML="$ROOT/.github/workflows/release.yml"
+if grep -q 'gh release upload\|gh release edit' "$RELYML" 2>/dev/null; then
+  bad "release-workflow-uploads-nothing-itself"
+else
+  ok "release-workflow-uploads-nothing-itself"
+fi
+
 echo
 echo "artifact: passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ]
