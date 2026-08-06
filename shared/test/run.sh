@@ -4655,6 +4655,96 @@ else
 fi
 t resume-prompt-quotes-the-doctrine agreed "$r1"
 
+# --- #384: three stuck states the resume gate could not leave ----------------
+# A session finished a fix round on PR #381, pushed d4b8035, and parked waiting
+# for `ci-floor` before signalling. `ci-floor` went green at ~07:52Z; the session
+# was still parked at 08:38Z and the operator unstuck it by hand. There was no
+# wake to be had: `_resume_newest_foreign` paginates comments and reviews, and a
+# check conclusion is neither, so nothing in the fingerprint could move.
+#
+# These fixtures are that timeline, plus PR #386's — a ready, green, correctly
+# signalled PR converted to draft six seconds into the request pass, which the
+# handoff listing then skipped and the resume ledger then suppressed.
+P384_HEAD=d4b8035d4b8035d4b8035d4b8035d4b8035d4b80
+P384_OLD=aa11bb22aa11bb22aa11bb22aa11bb22aa11bb22
+P384_START=2026-08-06T07:41:19Z
+P384_DONE=2026-08-06T07:52:18Z
+p384_run() {  # p384_run CONCLUSION [COMPLETED] — one CheckRun in a rollup
+  jq -cn --arg c "$1" --arg done "${2:-}" --arg started "$P384_START" \
+    '[{__typename:"CheckRun", name:"ci-floor", workflowName:"ci-floor",
+       status:(if $c == "" then "IN_PROGRESS" else "COMPLETED" end),
+       conclusion:(if $c == "" then null else $c end),
+       startedAt:$started, completedAt:(if $done == "" then null else $done end)}]'
+}
+P384_GREEN="$(p384_run SUCCESS "$P384_DONE")"
+P384_PENDING="$(p384_run "" "")"
+P384_RED="$(p384_run FAILURE "$P384_DONE")"
+p384_pr() {  # p384_pr NUM DRAFT ROLLUP SIGNAL-SHA REQUESTED-JSON
+  jq -cn --argjson num "$1" --argjson draft "$2" --argjson roll "$3" \
+    --arg head "$P384_HEAD" --arg sig "$4" --argjson req "${5:-[]}" \
+    '{number:$num, isDraft:$draft, headRefOid:$head, body:"Closes #290",
+      statusCheckRollup:$roll, reviewRequests:$req,
+      comments:(if $sig == "" then []
+                else [{author:{login:"me"}, body:("ANSWER " + $sig),
+                       createdAt:"2026-08-06T07:39:00Z", id:"9001"}] end)}'
+}
+
+# 1. THE CONCLUSION STAMP. A CheckRun contributes only once it has finished, so
+# a running check is no stamp at all — reading `startedAt` here would move the
+# fingerprint when CI STARTS, which is the tick the session is still working
+# through rather than the one it is waiting for.
+P384_ONE="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_GREEN" '' )" '[$pr]')"
+t p384-check-stamp-is-the-conclusion "$P384_DONE" "$(_resume_newest_check "$P384_ONE" 381)"
+P384_RUNNING="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_PENDING" '')" '[$pr]')"
+t p384-running-check-has-no-stamp "" "$(_resume_newest_check "$P384_RUNNING" 381)"
+t p384-running-check-does-not-leak-startedAt 0 \
+  "$(_resume_newest_check "$P384_RUNNING" 381 | grep -c "$P384_START")"
+# A RED check has concluded, and its stamp counts: the fingerprint's job is to
+# say the head answered, not that it passed. Whether green or red is the
+# due-predicates' question, two blocks down.
+P384_FAILED="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_RED" '')" '[$pr]')"
+t p384-red-check-still-concludes "$P384_DONE" "$(_resume_newest_check "$P384_FAILED" 381)"
+# The NEWEST across several checks, not the last one read.
+P384_MANY="$(jq -cn --arg h "$P384_HEAD" '[{number:381,isDraft:true,headRefOid:$h,body:"",
+  reviewRequests:[],comments:[],statusCheckRollup:[
+    {__typename:"CheckRun",name:"a",status:"COMPLETED",conclusion:"SUCCESS",
+     startedAt:"2026-08-06T07:00:00Z",completedAt:"2026-08-06T07:10:00Z"},
+    {__typename:"CheckRun",name:"b",status:"COMPLETED",conclusion:"SUCCESS",
+     startedAt:"2026-08-06T07:00:00Z",completedAt:"2026-08-06T07:52:18Z"}]}]')"
+t p384-check-stamp-is-the-newest "$P384_DONE" "$(_resume_newest_check "$P384_MANY" 381)"
+# A StatusContext has no completedAt at all, so its createdAt stands in — but
+# only where its state is TERMINAL. A PENDING context's createdAt is when the
+# wait began, and the rollup mixes the two shapes (head-checks.jq's header).
+P384_CTX="$(jq -cn --arg h "$P384_HEAD" --arg s "$P384_DONE" '[{number:381,isDraft:true,
+  headRefOid:$h,body:"",reviewRequests:[],comments:[],
+  statusCheckRollup:[{__typename:"StatusContext",context:"legacy",state:"SUCCESS",createdAt:$s}]}]')"
+t p384-status-context-concludes "$P384_DONE" "$(_resume_newest_check "$P384_CTX" 381)"
+P384_CTX_WAIT="$(printf '%s' "$P384_CTX" | jq -c '.[0].statusCheckRollup[0].state = "PENDING" | .')"
+t p384-pending-status-context-has-no-stamp "" "$(_resume_newest_check "$P384_CTX_WAIT" 381)"
+# No checks configured is not a conclusion either; the gate floors it to `0`.
+P384_NOCI="$(jq -cn --argjson pr "$(p384_pr 381 true '[]' '')" '[$pr]')"
+t p384-no-checks-no-stamp "" "$(_resume_newest_check "$P384_NOCI" 381)"
+# A lookup that FAILED is not a lookup that found nothing — the
+# _resume_newest_foreign contract, so the gate can warn rather than silently
+# flooring a half it could not read.
+t p384-check-lookup-failure-is-nonzero 1 \
+  "$(_resume_newest_check "$P384_ONE" 999 >/dev/null 2>&1; echo $?)"
+
+# 2. THE CHECK STATE, graded through head-checks.jq and never restated here.
+t p384-state-green "$(printf '381\tgreen')" "$(_resume_check_states o/r "$P384_ONE")"
+t p384-state-pending "$(printf '381\tpending')" "$(_resume_check_states o/r "$P384_RUNNING")"
+t p384-state-red "$(printf '381\tred')" "$(_resume_check_states o/r "$P384_FAILED")"
+# Drafts are graded too, which head-checks.jq alone will not do — the flip-owed
+# predicate's whole subject is a draft.
+t p384-state-grades-drafts 1 "$(_resume_check_states o/r "$P384_ONE" | grep -c green)"
+t p384-state-unreadable-is-nonzero 1 \
+  "$(_resume_check_states o/r 'not json' >/dev/null 2>&1; echo $?)"
+# MUST FAIL — a second copy of the green whitelist in this module. `is_green`
+# is fail-closed by construction (#64) and a restatement of it here would be a
+# second predicate that drifts the first time GitHub adds a conclusion.
+t p384-green-is-not-restated-in-the-engine 0 \
+  "$(grep -c 'SUCCESS.*NEUTRAL.*SKIPPED' "$SHARED/lib/duty-builder.sh")"
+
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
 # will independently enter under its new id if it is red.

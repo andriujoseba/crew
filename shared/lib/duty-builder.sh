@@ -999,8 +999,12 @@ _resume_newest_check() {
   out="$(printf '%s' "$listing" | jq -r --argjson num "$num" '
       ([.[] | select(.number == $num)] | if length == 0 then error("no such pr") else .[0] end)
       | [ (.statusCheckRollup // [])[]
+          # BOUND BEFORE THE LOOKUP, exactly as head-checks.jq warns: inside
+          # `["A"] | index(.state)` the `.` is the array literal, so `.state` is
+          # null and the test silently answers false rather than erroring.
+          | (.state // "") as $s
           | if ((.completedAt // "") != "") then .completedAt
-            elif ((["SUCCESS","FAILURE","ERROR"] | index(.state // "")) != null)
+            elif ((["SUCCESS","FAILURE","ERROR"] | index($s)) != null)
               then (.createdAt // "")
             else "" end ]
       | map(select(. != "")) | max // ""
