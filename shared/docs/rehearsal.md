@@ -187,7 +187,7 @@ just the driver's final line.
 |---|---|---|
 | triage | an open issue carrying **no** queue label (a "stray") | a ruling comment, and the issue lands in exactly one of ready/claimed/blocked/epic; a re-tick adds no second ruling |
 | builder | an issue labelled `ready` and **unassigned** | a `build/*` PR authored by the identity, referencing the issue; the issue leaves `ready`; a re-tick opens no duplicate |
-| reviewer | a PR with the identity as requested reviewer | `🔎 reviewing head <sha>`, a verdict pinned to that head, dedup on re-tick, a re-request queuing a real re-review with the auto-approval off, re-request auto-approve with it on, and the one-shot gates |
+| reviewer | a PR with the identity as requested reviewer | `🔎 reviewing head <sha>` before a verdict pinned to that head, dedup on re-tick, a re-request queuing a real re-review with the auto-approval off, re-request auto-approve with it on, and the one-shot gates |
 
 > The builder fixture must be **unassigned**. `ready` + assigned is
 > deliberately not pickable — an assignee means mid-claim, and counting
@@ -206,8 +206,9 @@ just the driver's final line.
 3. Review drill: a scratch PR in a sandbox repo with a review request to
    the identity. Expect in order: candidate in the sweep log; the
    `🔎 reviewing head <full-sha>` comment posted exactly once (via
-   post-once.sh); a verdict submitted via submit-verdict.sh pinned to that
-   head; next tick adds no second announce and no second verdict. (It logs
+   post-once.sh) and before the verdict by GitHub's `created_at` and
+   `submitted_at` timestamps; a verdict submitted via submit-verdict.sh pinned
+   to that head; next tick adds no second announce and no second verdict. (It logs
    no `already covers head` skip either — `requested_reviewers` self-clears
    on submit, so a reviewed PR is not a candidate at all.)
 4. Re-request rule, auto-approval OFF: append `AUTO_APPROVE_REREQUEST=0` to

@@ -285,6 +285,43 @@ t rehearsal-builder-teardown-closes-current 1 \
   "$(grep -cF 'repos/owner/sandbox/pulls/12' "$REHEARSAL_GH_CALLS")"
 unset -f gh
 
+# --- rehearsal reviewer announce ordering (#192) --------------------------
+# shellcheck source=drill/review-order.sh
+source "$ROOT/drill/review-order.sh"
+REVIEW_HEAD="$(printf 'a%.0s' {1..40})"
+REVIEW_BEFORE_COMMENTS='[{"user":{"login":"reviewer"},"body":"🔎 reviewing head '"$REVIEW_HEAD"'","created_at":"2026-07-30T10:00:00Z","guest_clock":"2099-01-01T00:00:00Z"}]'
+REVIEW_AFTER_COMMENTS='[{"user":{"login":"reviewer"},"body":"🔎 reviewing head '"$REVIEW_HEAD"'","created_at":"2026-07-30T10:06:00Z","guest_clock":"2000-01-01T00:00:00Z"}]'
+REVIEW_VERDICTS='[{"user":{"login":"reviewer"},"commit_id":"'"$REVIEW_HEAD"'","state":"APPROVED","submitted_at":"2026-07-30T10:05:00Z"}]'
+
+if rehearsal_review_announce_precedes_verdict_from_json \
+    reviewer "$REVIEW_HEAD" "$REVIEW_BEFORE_COMMENTS" "$REVIEW_VERDICTS"; then
+  review_order_rc=0
+else
+  review_order_rc=$?
+fi
+t rehearsal-review-announce-before-verdict-rc 0 "$review_order_rc"
+
+if review_order_out="$(rehearsal_review_announce_precedes_verdict_from_json \
+    reviewer "$REVIEW_HEAD" "$REVIEW_AFTER_COMMENTS" "$REVIEW_VERDICTS" 2>&1)"; then
+  review_order_rc=0
+else
+  review_order_rc=$?
+fi
+t rehearsal-review-announce-after-verdict-rc 5 "$review_order_rc"
+case "$review_order_out" in
+  *"review ordering: announce must precede verdict"*) r1=named ;;
+  *) r1=missing ;;
+esac
+t rehearsal-review-announce-after-verdict-names-ordering named "$r1"
+# The mutation leaves the two existing predicates satisfied: the announce is
+# still present at this head and still appears exactly once.
+t rehearsal-review-after-verdict-presence-still-passes 1 \
+  "$(jq -r --arg h "$REVIEW_HEAD" '[.[] | select(.body == ("🔎 reviewing head " + $h))] | length' \
+    <<<"$REVIEW_AFTER_COMMENTS")"
+t rehearsal-review-after-verdict-dedup-still-passes 1 \
+  "$(jq -r '[.[] | select(.body | startswith("🔎 reviewing head"))] | length' \
+    <<<"$REVIEW_AFTER_COMMENTS")"
+
 # --- install.sh: crontab preflight and convergence (#25) ----------------
 # A curated PATH makes "crontab absent" deterministic even on a workstation
 # that happens to have cron installed. Everything install.sh legitimately
