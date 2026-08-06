@@ -16,43 +16,15 @@ permissions:
   contents: write       # tag ref create + release create + the bump push
   pull-requests: write  # decide's label read; the bump-fallback `gh pr create`
   issues: write         # --label on that fallback PR rides the issues API
+# The scp-able installer (heavy-duty/crew#98) is built by ceremony's supported
+# artifact hook, `.github/actions/release-artifact/`, which BOTH doors invoke
+# after the tag exists and before the publish — so `gh release create` attaches
+# it and no follow-up upload exists to race the notes (#210). A bespoke
+# `artifact` job lived here until then, gated on `refs/tags/`: unreachable on
+# the merge door crew releases through, because that door creates the tag with
+# GITHUB_TOKEN and GitHub fires no workflow for a ref that token creates.
 jobs:
   release:
     uses: heavy-duty/ceremony/.github/workflows/release.yml@0.6.0
     with:
       version-source: file
-
-  # Build the self-contained, scp-able installer for the release and attach it
-  # as an asset, with its sha256 in the notes (heavy-duty/crew#98). Runs ONLY
-  # after a real release: a bare X.Y.Z TAG push whose release job succeeded —
-  # never the main-branch bump door (no tag ref) and never a wrong tag (the
-  # release job fails it, so `needs` skips this). The build is the same
-  # `dist/make-installer.sh` invocation shared/test/artifact.sh exercises.
-  artifact:
-    needs: release
-    if: ${{ startsWith(github.ref, 'refs/tags/') && needs.release.result == 'success' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: build crew-<version>.sh
-        id: build
-        run: |
-          ver="$GITHUB_REF_NAME"
-          out="crew-$ver.sh"
-          dist/make-installer.sh --name crew --version "$ver" --root . --out "$out"
-          echo "out=$out" >> "$GITHUB_OUTPUT"
-          echo "sha=$(sha256sum "$out" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: attach it and record the checksum in the notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OUT: ${{ steps.build.outputs.out }}
-          SHA: ${{ steps.build.outputs.sha }}
-        run: |
-          ver="$GITHUB_REF_NAME"
-          gh release upload "$ver" "$OUT" --clobber
-          # Append to the notes the ceremony already wrote — do not replace them.
-          body="$(gh release view "$ver" --json body --jq .body)"
-          # backticks below are literal markdown for the notes, not command subs
-          # shellcheck disable=SC2016
-          printf '%s\n\n### Installer\n\n- `%s` — sha256 `%s`; verify with `./%s --check`\n' \
-            "$body" "$OUT" "$SHA" "$OUT" | gh release edit "$ver" --notes-file -
