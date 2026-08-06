@@ -128,31 +128,59 @@ command -v tar >/dev/null 2>&1 || die "tar is required but was not found. Please
 # config fallback), `VERSION`, `install.sh`, `README.md`, `CHANGELOG.md`, and
 # `fleet-floor/`'s pre-built `index.html` plus `server/`.
 #
+# ONE list, TWO enforcements. The paths are named once, each with its reason;
+# what follows derives both the `tar --exclude` array and prune_payload(). The
+# script acquires its tree two ways (a directory, or a tarball — the `gh` and
+# `curl` channels both hand it a file), and the rule has to be a property of
+# the TREE, not of the branch that got it: filtering only the tar left the
+# tarball channels installing 52M while this comment claimed otherwise
+# (claude-bot and codex-bot, round 1 on #365). So the prune runs on whatever
+# was acquired, and a third acquisition shape inherits the rule by
+# construction; the tar excludes stay as what they are — the optimisation that
+# keeps the directory branch from copying 30M in order to delete it.
+PAYLOAD_EXCLUDED_PATHS=(
+  .git             # a working checkout's VCS state, never the product's
+  .github          # CI workflows and labels.conf — GitHub reads them in the repo
+  .box             # the box bootstrap runbook, for an agent in a checkout
+  .ceremony        # vendored governance doctrine; agents read it in the repo they work in
+  AGENTS.md        # the same doctrine's router
+  CONTRIBUTING.md  # contributor doctrine for the checkout
+  changelog.d      # release-note fragments, assembled by the release PR
+  dist             # the installer builders; an installed tree is their output, not their input
+  drill            # the release rehearsal — it refuses a source with no git HEAD, so an install can never run it
+  drills           # the per-version drill records, a release-guard input
+  postmortems      # repo records
+  protocols        # repo records
+  shared/test      # the engine suite, run from a checkout — and `crew upgrade` pushes shared/ to every box
+  fleet-floor/dev  # the design-time asset map: 163 webp, 27 gif, 25 png, shipped only in dev/whiteboard.html
+  fleet-floor/src  # the page's sources; `crew floor` serves the committed index.html and CI asserts it fresh
+  fleet-floor/build.sh  # the src/ concatenator, whose only inputs are excluded above
+  fleet-floor/test # the collector + page suite, run from a checkout
+)
+
 # Anchored patterns (`./x`), so an exclusion names one path at the tree ROOT
 # and can never match a like-named directory deeper in — a bare
 # `--exclude=test` would take any `test` at any depth, silently. `--anchored`
 # is GNU tar's, as are the `mv -Tf` and `readlink -f` this script already
 # depends on, so it adds no portability the installer did not already require.
-PAYLOAD_EXCLUDES=(
-  --anchored
-  --exclude=./.git             # a working checkout's VCS state, never the product's
-  --exclude=./.github          # CI workflows and labels.conf — GitHub reads them in the repo
-  --exclude=./.box             # the box bootstrap runbook, for an agent in a checkout
-  --exclude=./.ceremony        # vendored governance doctrine; agents read it in the repo they work in
-  --exclude=./AGENTS.md        # the same doctrine's router
-  --exclude=./CONTRIBUTING.md  # contributor doctrine for the checkout
-  --exclude=./changelog.d      # release-note fragments, assembled by the release PR
-  --exclude=./dist             # the installer builders; an installed tree is their output, not their input
-  --exclude=./drill            # the release rehearsal — it refuses a source with no git HEAD, so an install can never run it
-  --exclude=./drills           # the per-version drill records, a release-guard input
-  --exclude=./postmortems      # repo records
-  --exclude=./protocols        # repo records
-  --exclude=./shared/test      # the engine suite, run from a checkout — and `crew upgrade` pushes shared/ to every box
-  --exclude=./fleet-floor/dev  # the design-time asset map: 163 webp, 27 gif, 25 png, shipped only in dev/whiteboard.html
-  --exclude=./fleet-floor/src  # the page's sources; `crew floor` serves the committed index.html and CI asserts it fresh
-  --exclude=./fleet-floor/build.sh  # the src/ concatenator, whose only inputs are excluded above
-  --exclude=./fleet-floor/test # the collector + page suite, run from a checkout
-)
+PAYLOAD_EXCLUDES=(--anchored)
+for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do PAYLOAD_EXCLUDES+=("--exclude=./$p"); done
+unset p
+
+# The same list, applied to a tree that already exists. Rooted removals only —
+# each path is joined to the root the caller names, never globbed and never
+# resolved through a symlink argument — so this touches exactly the paths above
+# inside exactly that tree. The root is required and must be a directory: an
+# empty $1 would make every removal a bare relative path in $PWD.
+prune_payload() {  # $1 = tree root
+  local root="$1" p
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    die "prune_payload: not a tree: '${root:-<empty>}'"
+  fi
+  for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do
+    rm -rf -- "${root:?}/${p:?}"
+  done
+}
 
 confirm "Install crew from $SRC?" || die "cancelled — nothing was changed."
 
@@ -184,6 +212,12 @@ else
 fi
 [ -n "${EXTRACTED:-}" ] || die "could not find the source tree in $SRC"
 [ -f "$EXTRACTED/cli/crew" ] || die "source does not contain cli/crew — is $SRC a crew tree?"
+
+# The payload rule, on whatever was acquired. A no-op after the directory
+# branch (tar already dropped those paths); the whole of the minimisation after
+# the tarball branch, whose archive is packed elsewhere — by GitHub, by
+# `dist/make-installer.sh` — and arrives whole.
+prune_payload "$EXTRACTED"
 
 # The tree's own VERSION file names the directory it lands in — the version IS
 # the identity of what is being installed.
