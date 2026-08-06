@@ -4670,11 +4670,14 @@ P384_OLD=aa11bb22aa11bb22aa11bb22aa11bb22aa11bb22
 P384_START=2026-08-06T07:41:19Z
 P384_DONE=2026-08-06T07:52:18Z
 p384_run() {  # p384_run CONCLUSION [COMPLETED] — one CheckRun in a rollup
-  jq -cn --arg c "$1" --arg done "${2:-}" --arg started "$P384_START" \
+  # The jq arg is `fin`, not `done`: shellcheck reads a bare `done` after --arg
+  # as the loop keyword and warns (SC1010), and ci-shell runs it without a
+  # severity floor, so a warning is a red job.
+  jq -cn --arg c "$1" --arg fin "${2:-}" --arg started "$P384_START" \
     '[{__typename:"CheckRun", name:"ci-floor", workflowName:"ci-floor",
        status:(if $c == "" then "IN_PROGRESS" else "COMPLETED" end),
        conclusion:(if $c == "" then null else $c end),
-       startedAt:$started, completedAt:(if $done == "" then null else $done end)}]'
+       startedAt:$started, completedAt:(if $fin == "" then null else $fin end)}]'
 }
 P384_GREEN="$(p384_run SUCCESS "$P384_DONE")"
 P384_PENDING="$(p384_run "" "")"
@@ -4813,6 +4816,57 @@ t p384-green-ungradeable-warns 1 \
 # suppressed it (unchanged head, nobody foreign spoke). Both correct; together a
 # hole, and no panel was ever requested.
 P384_PANEL='["p1","p2"]'
+P384_SIG_AT=2026-08-06T09:54:56Z
+# The verdicts the stubbed GraphQL serves, one file per PR — a FILE for the same
+# reason the #314 block's speech files are: the call sites wrap this in a command
+# substitution and a subshell's variables die with it.
+P384_GQL="$TMP/p384-gql"; mkdir -p "$P384_GQL"
+p384_verdicts() {  # p384_verdicts NUM REQUESTED-JSON REVIEWS-JSON
+  jq -cn --argjson req "$2" --argjson rev "$3" \
+    '{requested:$req, reviews:$rev}' >"$P384_GQL/$1"
+}
+p384_review() {  # p384_review LOGIN STATE SUBMITTED [OID]
+  jq -cn --arg l "$1" --arg s "$2" --arg at "$3" --arg oid "${4:-$P384_HEAD}" \
+    '{author:{login:$l}, state:$s, submittedAt:$at, commit:{oid:$oid}}'
+}
+# shellcheck disable=SC2317  # called indirectly by _flip_owed_resume_rows
+gh() {
+  local args="$*" n f
+  n="${args##*num=}"; n="${n%% *}"
+  f="$P384_GQL/$n"
+  [ -f "$f" ] || return 1
+  jq -cn --arg head "$P384_HEAD" --arg sig "$P384_HEAD" --arg at "$P384_SIG_AT" \
+    --argjson v "$(cat "$f")" \
+    '{data:{repository:{pullRequest:{
+        headRefOid:$head,
+        comments:{nodes:[{author:{login:"me"}, body:("ANSWER " + $sig), createdAt:$at}]},
+        reviewRequests:{nodes:($v.requested | map({requestedReviewer:{login:.}}))},
+        latestOpinionatedReviews:{nodes:$v.reviews}}}}}'
+}
+p384_verdicts 386 '[]' '[]'
+p384_verdicts 387 '["p1"]' '[]'
+p384_verdicts 388 '[]' '[]'
+p384_verdicts 389 '[]' '[]'
+p384_verdicts 390 '[]' '[]'
+p384_verdicts 391 '[]' '[]'
+p384_verdicts 392 '["advisory-bot"]' '[]'
+# 393 is the case that rewrote this predicate: a draft the ENGINE made, because
+# a round closed against its author (_redraft_authored_pr), whose thread still
+# carries the signal that opened that round. Both panelists answered it with
+# CHANGES_REQUESTED at this head AFTER it was posted, and GitHub drops a
+# change-requester from requested_reviewers in the same instant — so "nobody is
+# on reviewRequests" is true of it, and it owes a ROUND REPLY, not a flip.
+p384_verdicts 393 '[]' "$(jq -cn --argjson a "$(p384_review p1 CHANGES_REQUESTED 2026-08-06T10:30:00Z)" \
+  --argjson b "$(p384_review p2 CHANGES_REQUESTED 2026-08-06T10:31:00Z)" '[$a,$b]')"
+# 394 is its control: the same shape with the verdicts PRECEDING the signal, so
+# the signal answers them and the panel is owed a re-read. #286's ordering rule,
+# reached through request-panel.jq rather than restated here.
+p384_verdicts 394 '[]' "$(jq -cn --argjson a "$(p384_review p1 CHANGES_REQUESTED 2026-08-06T09:00:00Z)" \
+  --argjson b "$(p384_review p2 CHANGES_REQUESTED 2026-08-06T09:01:00Z)" '[$a,$b]')"
+# 395: the whole panel already APPROVES this head. Nothing is owed of anyone, so
+# nothing is requestable and this is a converged draft, not a stranded one.
+p384_verdicts 395 '[]' "$(jq -cn --argjson a "$(p384_review p1 APPROVED 2026-08-06T10:30:00Z)" \
+  --argjson b "$(p384_review p2 APPROVED 2026-08-06T10:31:00Z)" '[$a,$b]')"
 P384_FO_LISTING="$(jq -cn \
   --argjson a "$(p384_pr 386 true "$P384_GREEN" "$P384_HEAD")" \
   --argjson b "$(p384_pr 387 true "$P384_GREEN" "$P384_HEAD" '[{"login":"p1"}]')" \
@@ -4821,34 +4875,58 @@ P384_FO_LISTING="$(jq -cn \
   --argjson e "$(p384_pr 390 false "$P384_GREEN" "$P384_HEAD")" \
   --argjson f "$(p384_pr 391 true "$P384_GREEN" "$P384_OLD")" \
   --argjson g "$(p384_pr 392 true "$P384_GREEN" "$P384_HEAD" '[{"login":"advisory-bot"}]')" \
-  '[$a,$b,$c,$d,$e,$f,$g]')"
+  --argjson h "$(p384_pr 393 true "$P384_GREEN" "$P384_HEAD")" \
+  --argjson i "$(p384_pr 394 true "$P384_GREEN" "$P384_HEAD")" \
+  --argjson j "$(p384_pr 395 true "$P384_GREEN" "$P384_HEAD")" \
+  '[$a,$b,$c,$d,$e,$f,$g,$h,$i,$j]')"
 _flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_FO_LISTING" >"$TMP/p384-flip.log" 2>&1
 p384_fo_out="$(cat "$TMP/p384-flip.log")"
-# 386 and 392. 387 has a PANELIST requested, so the panel HAS been asked and the
-# round is live — someone else's move. 388 carries no signal at all, which is
-# ordinary interrupted work on its existing path. 389's head is pending. 390 is
-# not a draft, so the request path can see it. 391's signal names a superseded
-# head. 392's only requested reviewer is OFF-panel, which BUILDER.md rules
-# advisory and never the ask, so that PR is still owed a panel.
-t p384-flip-owed-rows "$(printf '386\n392')" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+# 386, 392 and 394. 387 has a PANELIST requested, so the round is live and the
+# move is someone else's. 388 carries no signal at all — ordinary interrupted
+# work on its existing path. 389's head is pending. 390 is not a draft, so the
+# request path can see it. 391's signal names a superseded head. 392's only
+# requested reviewer is OFF-panel, which BUILDER.md rules advisory and never the
+# ask. 393's signal was SPENT by the verdicts that answered it. 395 is converged.
+t p384-flip-owed-rows "$(printf '386\n392\n394')" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+# 387 is deliberately PARTLY requested — p1 asked, p2 not. request-panel.jq
+# still names p2 there, which is why the "nobody was ever asked" gate is its own
+# test and not folded into that predicate: a panelist already reading the tree
+# is a live round, and the next move is theirs rather than resume's.
 t p384-requested-panelist-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^387$')"
 t p384-unsignalled-draft-is-untouched 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^388$')"
 t p384-pending-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^389$')"
 t p384-non-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^390$')"
 t p384-stale-signal-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^391$')"
 t p384-advisory-reviewer-is-not-the-ask 1 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^392$')"
+# MUST FAIL, and it is why this predicate asks request-panel.jq instead of
+# reading `reviewRequests` itself. A draft the ENGINE redrafted over a closed
+# round has no panelist requested and a current-head signal on its thread, so
+# the obvious predicate names it — and the session would then be told to mark an
+# UNANSWERED round ready-for-review. The spent-signal rule (#286) is what parts
+# it from #386, and 394 next door proves the rule is the ordering and not merely
+# "any verdict at the head".
+t p384-spent-signal-draft-is-not-owed-a-flip 0 \
+  "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^393$')"
+t p384-answered-verdicts-are-still-owed-a-panel 1 \
+  "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^394$')"
+t p384-converged-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^395$')"
 # The ledger keys the gate is handed, head included so a push ends the episode.
 t p384-flip-owed-force-fresh-keys \
-  "$(printf 'o/r#386@%s\no/r#392@%s' "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf 'o/r#386@%s\no/r#392@%s\no/r#394@%s' "$P384_HEAD" "$P384_HEAD" "$P384_HEAD")" \
   "$(printf '%s' "$RESUME_FORCE_FRESH" | awk 'NF')"
-t p384-flip-warns-once-per-detection 2 "$(grep -c 'WARN' <<<"$p384_fo_out")"
-t p384-flip-warn-names-the-reason 2 \
+t p384-flip-warns-once-per-detection 3 "$(grep -c 'WARN' <<<"$p384_fo_out")"
+t p384-flip-warn-names-the-reason 3 \
   "$(grep -c 'the handoff was consumed, not completed' <<<"$p384_fo_out")"
-t p384-flip-warn-carries-the-full-sha 2 "$(grep -c "$P384_HEAD" <<<"$p384_fo_out")"
+t p384-flip-warn-carries-the-full-sha 3 "$(grep -c "$P384_HEAD" <<<"$p384_fo_out")"
+# The WARN names the panel that is owed, which is the evidence a reader needs to
+# tell this state from a converged one without opening the PR.
+t p384-flip-warn-names-the-owed-panel 1 \
+  "$(grep -c 'WARN.*o/r#386.*owing a panel (p1 p2)' <<<"$p384_fo_out")"
 # DETECTED, NEVER HONOURED. The flip asserts the round was answered whole, which
 # BUILDER.md rules the one judgement its author cannot delegate — so the WARN
-# says so, and the predicate buys a session rather than performing the act.
-t p384-flip-warn-leaves-the-flip-to-the-builder 2 \
+# says so, and the predicate buys a session rather than performing the act. It
+# computes exactly whom the engine WOULD request, and requests nobody.
+t p384-flip-warn-leaves-the-flip-to-the-builder 3 \
   "$(grep -c 'The flip stays yours' <<<"$p384_fo_out")"
 if tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" \
      | grep -Fq 'an engine may draft a PR but only the builder undrafts it'; then
@@ -4858,9 +4936,8 @@ else
 fi
 t p384-flip-doctrine-still-says-so agreed "$r1"
 # MUST FAIL — the engine flipping, requesting or labelling. Neither predicate
-# writes to the board at all: no undraft, no reviewer, no label. `gh` absence is
-# asserted beside the rollup count above; this pins the verbs themselves, so a
-# future edit reaching for a library helper instead of `gh` is caught too.
+# writes to the board at all: no undraft, no reviewer, no label. The one GitHub
+# call the flip predicate makes is a READ, pinned below.
 p384_bodies="$(cat <(declare -f _green_head_resume_rows) <(declare -f _flip_owed_resume_rows))"
 t p384-predicates-never-flip 0 \
   "$(grep -cE 'ready-for-review|--undraft|markPullRequestReadyForReview' <<<"$p384_bodies")"
@@ -4868,12 +4945,25 @@ t p384-predicates-never-request 0 \
   "$(grep -cE '_request_panel|--add-reviewer|requested_reviewers' <<<"$p384_bodies")"
 t p384-predicates-never-label 0 \
   "$(grep -cE 'LABEL_|--add-label|/labels' <<<"$p384_bodies")"
-# FAIL-SOFT, the same contract as the green-head half.
+t p384-predicates-never-mutate 0 "$(grep -c 'mutation' <<<"$p384_bodies")"
+t p384-flip-makes-exactly-one-read 1 "$(grep -c 'gh api graphql' <<<"$p384_bodies")"
+# A verdict lookup that fails leaves that draft out for the tick rather than
+# guessing — the same fail-soft direction as everything else on this path.
+rm -f "$P384_GQL/386"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" \
+  "$(jq -cn --argjson a "$(p384_pr 386 true "$P384_GREEN" "$P384_HEAD")" '[$a]')" \
+  >"$TMP/p384-flip-gql-fail.log" 2>&1
+t p384-flip-verdict-failure-detects-nothing "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+t p384-flip-verdict-failure-warns 1 \
+  "$(grep -c 'verdict lookup failed' "$TMP/p384-flip-gql-fail.log")"
+p384_verdicts 386 '[]' '[]'
+# FAIL-SOFT on the rollup, the same contract as the green-head half.
 _flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" 'not json' >"$TMP/p384-flip-fail.log" 2>&1
 t p384-flip-ungradeable-detects-nothing "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
 t p384-flip-ungradeable-forces-nothing "" "$(printf '%s' "$RESUME_FORCE_FRESH" | awk 'NF')"
 t p384-flip-ungradeable-warns 1 \
   "$(grep -c 'check rollup could not be graded' "$TMP/p384-flip-fail.log")"
+unset -f gh
 
 # 5. THROUGH THE GATE. Its own DUTY_DIR and its own `gh` stub, in the shape the
 # #314 block above establishes: the foreign half is served from files so a
@@ -4888,6 +4978,19 @@ P384_ISSUE_TS="2026-08-01T00:00:00Z"
 gh() {
   local args="$*" n kind
   case "$args" in
+    *graphql*)
+      # The flip-owed predicate's one read. Only #386 is signalled here, and it
+      # is signalled with nobody requested and nobody having reviewed — the
+      # state that PR was actually in when the draft consumed its handoff.
+      n="${args##*num=}"; n="${n%% *}"
+      [ "$n" = 386 ] || return 1
+      jq -cn --arg head "$P384_HEAD" --arg at "$P384_SIG_AT" \
+        '{data:{repository:{pullRequest:{
+            headRefOid:$head,
+            comments:{nodes:[{author:{login:"me"}, body:("ANSWER " + $head), createdAt:$at}]},
+            reviewRequests:{nodes:[]},
+            latestOpinionatedReviews:{nodes:[]}}}}}'
+      return 0 ;;
     */comments*|*/reviews*)
       case "$args" in */comments*) kind=comments ;; *) kind=reviews ;; esac
       n="${args##*/issues/}"; n="${n##*/pulls/}"; n="${n%%/*}"
@@ -5054,7 +5157,7 @@ t p384-prompt-keeps-the-flip-with-the-builder owned "$r1"
 # assertions on _stranded_resume_due's call, threshold and state-file format
 # above run unmodified, and this pins the union that adds the second reason.
 # shellcheck disable=SC2016  # matching shell source literally
-if grep -Fq 'stranded_nums="$(printf '"'"'%s %s'"'"' "$stranded_nums" "$green_head_nums" \' "$SHARED/lib/duty-builder.sh"; then
+if grep -Fq '"$stranded_nums" "$green_head_nums"' "$SHARED/lib/duty-builder.sh"; then
   r1=beside
 else
   r1=THROUGH
@@ -5964,9 +6067,13 @@ t ci-red-rollup-fetched-on-three-listings 3 \
 # The resume half of that count adds no CALL — the listing was already being
 # fetched, and #384 put two more fields on it. A `gh` call inside either new
 # predicate would be a per-PR-per-tick cost the issue explicitly priced out.
+# _flip_owed_resume_rows is deliberately absent: it makes exactly one GraphQL
+# READ per green-headed signalled draft, because the verdicts it must weigh
+# cannot come off a listing (#147), and that read is pinned by
+# `p384-flip-makes-exactly-one-read` beside the assertions that it never writes.
 t resume-check-read-adds-no-gh-call 0 \
   "$(cat <(declare -f _resume_newest_check) <(declare -f _resume_check_states) \
-       <(declare -f _green_head_resume_rows) <(declare -f _flip_owed_resume_rows) \
+       <(declare -f _green_head_resume_rows) \
      | grep -c 'gh ')"
 if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
   r1=shared

@@ -1160,9 +1160,31 @@ _green_head_resume_rows() {
 #
 # A DRAFT WITH NO VALID SIGNAL IS UNTOUCHED — that is ordinary interrupted work,
 # and it keeps the ledger-and-breaker path it already has.
+#
+# "NO PANEL REQUESTED" IS REQUEST-PANEL.JQ'S ANSWER, NEVER A SECOND COPY OF IT,
+# and the difference is not academic. The obvious reading — nobody is on
+# `reviewRequests` — is true of a completely different PR: one the engine itself
+# redrafted because a round closed against its author (_redraft_authored_pr),
+# where the panel HAS answered, its requests are consumed, and a stale
+# current-head signal can still be sitting on the thread. That draft owes a
+# round reply, not a flip, and a predicate that named it would tell the session
+# to mark an unanswered round ready-for-review. request-panel.jq already draws
+# exactly the line that separates them, in the engine's only copy of it: a
+# signal SPENT by verdicts that answered it (#286) requests nobody, so the
+# redrafted PR returns empty and #386's untouched signal returns the panel. Ask
+# it, and the two cases part on the rule the request gate is already bound by.
+#
+# It costs one GraphQL read per GREEN-HEADED SIGNALLED draft per tick, which the
+# listing cannot serve: the verdicts must be `latestOpinionatedReviews` scoped to
+# the head, and `gh pr list --json latestReviews` is ruled out for this question
+# (COMMENTED masks a standing blocker and its commit.oid is empty, #147). The
+# listing-side gates above it — green, and a valid signal at the head — are what
+# keep that call off the ordinary interrupted draft, which is the common case.
 _flip_owed_resume_rows() {
   local repo="$1" me="$2" mark="$3" panel="$4" listing="$5"
-  local pr num head answered states state requested
+  local owner name pr num head answered states state
+  local payload gql_head signal_json to_request
+  owner="${repo%%/*}"; name="${repo##*/}"
   FLIP_OWED_ROWS=""
   RESUME_FORCE_FRESH=""
   if ! states="$(_resume_check_states "$repo" "$listing")"; then
@@ -1181,14 +1203,43 @@ _flip_owed_resume_rows() {
           -f "$BUILDER_LIB_DIR/jq/answered-head.jq" \
       | jq -r '.sha // ""')"
     [ "$answered" = "$head" ] || continue
-    # A panelist already requested means the panel HAS been asked and the round
-    # is live — someone else's move, and none of resume's business. The roster
-    # is the resolved one the whole repo tick shares; an off-panel reviewer is
-    # advisory (BUILDER.md) and never counts as the ask.
-    requested="$(printf '%s' "$pr" | jq -r --argjson panel "$panel" \
-      '[.reviewRequests[]? | .login // empty | select(. as $l | ($panel | index($l)) != null)] | length')"
-    [ "${requested:-0}" -eq 0 ] || continue
-    warn "$repo#$num: a draft carrying a valid signal at green head $head with no panelist requested — the handoff was consumed, not completed; resuming this tick (#384). The flip stays yours."
+    # NO PANEL REQUESTED, literally: not one panelist is on the request list.
+    # This is the state's own definition and it is not what request-panel.jq
+    # answers — that predicate says whether a panel is OWED, and it says yes of a
+    # partly-requested round too, where a panelist is already reading and the
+    # next move is theirs. Both gates are needed and each does one job: this one
+    # says nobody was ever asked, the one below says an ask is still owed. An
+    # off-panel reviewer is advisory (BUILDER.md) and is never the ask.
+    if [ "$(printf '%s' "$pr" | jq -r --argjson panel "$panel" \
+        '[.reviewRequests[]? | .login // empty
+          | select(. as $l | ($panel | index($l)) != null)] | length')" != 0 ]; then
+      continue
+    fi
+    if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+      repository(owner:$owner,name:$name){ pullRequest(number:$num){
+        headRefOid
+        comments(last:100){nodes{author{login} body createdAt}}
+        reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
+        latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}
+      } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
+      warn "$repo#$num: the verdict lookup failed; leaving this draft out of flip-owed resume detection this tick (#384)"
+      continue
+    fi
+    # The listing and this payload are two snapshots, and a push between them
+    # would grade one head and ask about another. Defer rather than guess — the
+    # same rule _request_panel applies to its own two snapshots.
+    gql_head="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null)"
+    [ "$gql_head" = "$head" ] || continue
+    signal_json="$(printf '%s' "$payload" \
+      | jq -c --arg me "$me" --arg mark "$mark" \
+          -f "$BUILDER_LIB_DIR/jq/answered-head.jq" 2>/dev/null)"
+    [ -n "$signal_json" ] || signal_json='{"sha":"","createdAt":""}'
+    [ "$(printf '%s' "$signal_json" | jq -r '.sha // ""')" = "$head" ] || continue
+    to_request="$(printf '%s' "$payload" \
+      | jq -r --argjson panel "$panel" --argjson signal "$signal_json" \
+          -f "$BUILDER_LIB_DIR/jq/request-panel.jq" 2>/dev/null)"
+    [ -n "${to_request//[[:space:]]/}" ] || continue
+    warn "$repo#$num: a draft carrying a valid signal at green head $head, owing a panel ($(printf '%s' "$to_request" | tr '\n' ' ')) that has never been asked — the handoff was consumed, not completed; resuming this tick (#384). The flip stays yours."
     FLIP_OWED_ROWS="${FLIP_OWED_ROWS}${num}"$'\n'
     RESUME_FORCE_FRESH="${RESUME_FORCE_FRESH}${repo}#${num}@${head}"$'\n'
   done < <(printf '%s' "$listing" \
