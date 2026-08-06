@@ -8,6 +8,7 @@ body{overflow:hidden;color:#c7d4e4;font-family:var(--mono)}
 .title{font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#8aa0b8;text-shadow:0 1px 6px #000}
 .title b{color:var(--cyan)}
 .title .sub{display:block;font-size:10px;letter-spacing:.14em;color:#556;margin-top:3px}
+.title .version{color:#7f93aa;text-transform:none;letter-spacing:.04em}
 .sp{flex:1}
 .grp{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .glab{font-size:9px;letter-spacing:.18em;color:#46566a;text-transform:uppercase;pointer-events:none}

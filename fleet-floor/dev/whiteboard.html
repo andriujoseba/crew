@@ -14,6 +14,7 @@ body{overflow:hidden;color:#c7d4e4;font-family:var(--mono)}
 .title{font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#8aa0b8;text-shadow:0 1px 6px #000}
 .title b{color:var(--cyan)}
 .title .sub{display:block;font-size:10px;letter-spacing:.14em;color:#556;margin-top:3px}
+.title .version{color:#7f93aa;text-transform:none;letter-spacing:.04em}
 .sp{flex:1}
 .grp{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .glab{font-size:9px;letter-spacing:.18em;color:#46566a;text-transform:uppercase;pointer-events:none}
@@ -195,7 +196,8 @@ body { margin: 0; background: #05080f; color: #cfe0f2; font-family: var(--mono);
   <div class="hud">
     <button id="back">◀ Fleet Floor</button>
     <div class="title"><b>CREW</b> · AGENT CONSOLE
-      <span class="sub" id="sub">claude · builder quarters</span></div>
+      <span class="sub" id="sub">claude · builder quarters</span>
+      <span class="sub version" id="room-version">version unavailable</span></div>
     <span class="demo-badge" title="Roster is real (crew examples/fleet.roster). Vitals, queue, sessions &amp; metrics are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
   </div>
   <div class="foot">
@@ -1546,6 +1548,8 @@ function drawFloor(t){
     X.fillStyle="rgba(255,255,255,0.08)";X.fillRect(VW-10,tr0,4,trh);
     X.fillStyle="rgba(120,200,255,0.65)";X.fillRect(VW-10,tp,4,tl);}
   var vg2=X.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(1,"rgba(0,0,0,0.5)");X.fillStyle=vg2;X.fillRect(0,0,VW,VH);
+  /* Fixed chrome is painted last so the scrolling floor can never erase it. */
+  drawFloorHeader(t);
 }
 /* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
    Order is severity, not alphabetical: a box that has stopped answering pings
@@ -6388,6 +6392,7 @@ function refreshChrome(){
   var stw=STATE==="offline"?stoppedWord(dataOf(BOX,ROOM)):"";
   document.getElementById("fl").textContent=UNIT()+" · "+(stw||(STATE==="offline"?"CRON SILENT":STATE))+" · sector-7";
   var sub=document.getElementById("sub");if(sub)sub.textContent=AGENT+" · "+ROLEWORD()+" quarters — detailed god-view cell";
+  var rv=document.getElementById("room-version");if(rv)rv.textContent=(LIVEMETA&&LIVEMETA.version)||"version unavailable";
 }
 var _un=document.getElementById("un");if(_un)_un.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;AGENT=b.dataset.a;[].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});refreshChrome();populateDash();});
 var _stg=document.getElementById("stg");if(_stg)_stg.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;STATE=b.dataset.s;[].forEach.call(this.querySelectorAll("button"),function(x){x.className=(x===b?"on "+(STATE==="working"?"w":STATE==="offline"?"o":""):"");});refreshChrome();populateDash();});

@@ -81,6 +81,22 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   });
   const page = await ctx.newPage();
 
+  /* Observe the shipped canvas call, not the label-producing helper. This is
+     installed before the page loads so removing drawFloorHeader() from the
+     frame path makes the browser assertion red even though FLOORDEV.header()
+     can still describe what the disconnected painter would have drawn. */
+  await page.addInitScript(() => {
+    window.__floorHeaderPaint = [];
+    const fillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
+      if (this.canvas && this.canvas.id === 'scene' && y <= 70) {
+        window.__floorHeaderPaint.push({ text: String(text), x, y });
+        if (window.__floorHeaderPaint.length > 200) window.__floorHeaderPaint.shift();
+      }
+      return fillText.apply(this, arguments);
+    };
+  });
+
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
@@ -135,9 +151,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   if (LIVE) {
     const header = await page.evaluate(() => window.FLOORDEV.header());
     const paintedVersion = header.find((h) => h.y === 54 && /^crew /.test(h.text));
+    const actualPaint = await page.evaluate((version) =>
+      window.__floorHeaderPaint.some((p) => p.y === 54 && p.text === version), snapshot.version);
     ok('floor: the canvas header paints the serving host version',
-       !!paintedVersion && paintedVersion.text === snapshot.version,
-       `header=${paintedVersion && paintedVersion.text}, api=${snapshot.version}`);
+       !!paintedVersion && paintedVersion.text === snapshot.version && actualPaint,
+       `header=${paintedVersion && paintedVersion.text}, painted=${actualPaint}, api=${snapshot.version}`);
     ok('floor: the serving version is not dropped or hardcoded',
        snapshot.version === process.env.FLOOR_TEST_VERSION,
        `expected ${process.env.FLOOR_TEST_VERSION}, got ${snapshot.version}`);
@@ -895,6 +913,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const l0 = await enterAt(visible[0]);
     ok('logs: console re-opened for the overlay check', l0 === visible[0].got,
        `expected ${visible[0].got}, got ${l0}`);
+    if (LIVE && l0 === visible[0].got) {
+      eq('room: the HUD shows the serving host version', snapshot.version,
+         (await page.locator('#room-version').textContent()).trim());
+    }
     if (LIVE && l0 === visible[0].got) {
       await page.click('#ac-logs');
       await settle(async () => await page.locator('#logov').isVisible().catch(() => false), 8000);

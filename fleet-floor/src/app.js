@@ -1234,6 +1234,8 @@ function drawFloor(t){
     X.fillStyle="rgba(255,255,255,0.08)";X.fillRect(VW-10,tr0,4,trh);
     X.fillStyle="rgba(120,200,255,0.65)";X.fillRect(VW-10,tp,4,tl);}
   var vg2=X.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(1,"rgba(0,0,0,0.5)");X.fillStyle=vg2;X.fillRect(0,0,VW,VH);
+  /* Fixed chrome is painted last so the scrolling floor can never erase it. */
+  drawFloorHeader(t);
 }
 /* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
    Order is severity, not alphabetical: a box that has stopped answering pings
@@ -6076,6 +6078,7 @@ function refreshChrome(){
   var stw=STATE==="offline"?stoppedWord(dataOf(BOX,ROOM)):"";
   document.getElementById("fl").textContent=UNIT()+" · "+(stw||(STATE==="offline"?"CRON SILENT":STATE))+" · sector-7";
   var sub=document.getElementById("sub");if(sub)sub.textContent=AGENT+" · "+ROLEWORD()+" quarters — detailed god-view cell";
+  var rv=document.getElementById("room-version");if(rv)rv.textContent=(LIVEMETA&&LIVEMETA.version)||"version unavailable";
 }
 var _un=document.getElementById("un");if(_un)_un.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;AGENT=b.dataset.a;[].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});refreshChrome();populateDash();});
 var _stg=document.getElementById("stg");if(_stg)_stg.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;STATE=b.dataset.s;[].forEach.call(this.querySelectorAll("button"),function(x){x.className=(x===b?"on "+(STATE==="working"?"w":STATE==="offline"?"o":""):"");});refreshChrome();populateDash();});
