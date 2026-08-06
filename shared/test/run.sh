@@ -2381,10 +2381,11 @@ printf '%s\n' "${*//$'\n'/ }" >>"$TR_CALLS"
 p=1; [ -f "$TR_PHASE" ] && p="$(cat "$TR_PHASE")"
 case "$*" in
   *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
-  *"api graphql"*)          : ;;  # --jq already applied: no uncommented discussions
+  *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
   *"--label blocked"*)      cat "$TR_FIX/blocked.$p.json" ;;
   *"--state all"*)          cat "$TR_FIX/numstates.json" ;;
+  *"number,body,labels,updatedAt"*) cat "$TR_FIX/board.$p.json" ;;
   *"issue list"*)           cat "$TR_FIX/stray.$p.json" ;;
   *)                        printf '[]\n' ;;
 esac
@@ -2403,35 +2404,56 @@ load_fleet_conf
 run_session() {
   printf 'SESSION %s\n' "$1" >>"$TR_CALLS"
   printf '%s' "$5" >"$TR_PROMPT.$1"
-  [ "$1" = mention ] && printf '2' >"$TR_PHASE"
+  # Phase 2 is the server state after either kind of session returns. The
+  # production success path must re-read this state rather than committing
+  # the phase-1 rows that launched it (#359).
+  printf '2' >"$TR_PHASE"
   RUN_SESSION_RC="${TR_SESSION_RC:-0}"
 }
 ensure_checkout() { return 0; }
 _triage_repo o/r
 TRRUN
 
-# The two stray arguments are optional and default to an empty board, so every
-# call written before #358 keeps its meaning.
-tr_fix() {  # tr_fix <notif json> <nt1> <nt2> <blocked1> <blocked2> <numstates> [stray1] [stray2]
+# Stray and discussion arguments are optional and default to an empty board,
+# so calls written before their fixtures keep their meaning.
+tr_fix() {  # notif nt1 nt2 blocked1 blocked2 numstates [stray1] [stray2] [disc1] [disc2]
+  local p nt_file blocked_file stray_file
   printf '%s' "$1" >"$TRF/notif.json"
   printf '%s' "$2" >"$TRF/nt.1.json";      printf '%s' "$3" >"$TRF/nt.2.json"
   printf '%s' "$4" >"$TRF/blocked.1.json"; printf '%s' "$5" >"$TRF/blocked.2.json"
   printf '%s' "$6" >"$TRF/numstates.json"
   printf '%s' "${7:-[]}" >"$TRF/stray.1.json"
   printf '%s' "${8:-${7:-[]}}" >"$TRF/stray.2.json"
+  printf '%s' "${9:-}" >"$TRF/disc.1.rows"
+  printf '%s' "${10:-${9:-}}" >"$TRF/disc.2.rows"
+  for p in 1 2; do
+    nt_file="$TRF/nt.$p.json"
+    blocked_file="$TRF/blocked.$p.json"
+    stray_file="$TRF/stray.$p.json"
+    jq -s '
+      (.[0] | map(. + {body:(.body // null), labels:[{name:"needs-triage"}]}))
+      + (.[1] | map(. + {updatedAt:(.updatedAt // "2026-08-01T00:00:00Z"),
+                         labels:[{name:"blocked"}]}))
+      + (.[2] | map(. + {body:(.body // null)}))
+    ' "$nt_file" "$blocked_file" "$stray_file" >"$TRF/board.$p.json"
+  done
 }
-tr_run() {  # tr_run <run_session rc>
+tr_tick() {  # tr_tick <run_session rc>, preserving ledgers from earlier ticks
   : >"$TR_CALLS"
-  rm -f "$TR_PHASE" "$TR_PROMPT".* "$TRD"/.seen-* "$TRD"/.suppressed-*
+  rm -f "$TR_PHASE" "$TR_PROMPT".*
   SHARED_DIR="$SHARED" TR_CALLS="$TR_CALLS" TR_PHASE="$TR_PHASE" TR_FIX="$TRF" \
   TR_PROMPT="$TR_PROMPT" TR_SESSION_RC="$1" DUTY_DIR="$TRD" ME=me-bot \
   TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 \
   PATH="$TRS:$PATH" bash "$TMP/tr-run.sh" >"$TR_LOG" 2>&1
 }
+tr_run() {  # tr_run <run_session rc>, starting with cold ledgers
+  rm -f "$TRD"/.seen-* "$TRD"/.suppressed-*
+  tr_tick "$1"
+}
 trc() { grep -c -- "$1" "$TR_CALLS"; }
 TR_MENTION='[{"id":"t1","reason":"mention","updated_at":"2026-08-01T15:40:00Z",
   "repository":{"full_name":"o/r"},"subject":{"url":"https://api/x"}}]'
-TR_LEAD='[{"number":244,"body":"Blocked by #216."}]'
+TR_LEAD='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-01T15:30:00Z"}]'
 TR_LANDED='[{"number":216,"state":"CLOSED"}]'
 
 # The reported case: the sweep clears #244 forty-four seconds after the poll,
@@ -2493,7 +2515,7 @@ t triage253-quiet-tick-log-unchanged said "$r1"
 # The state-map reads still ride the non-empty blocked list, and nothing else.
 tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
 tr_run 0
-t triage253-gh-calls-with-blocked-list 7 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-gh-calls-with-blocked-list 11 "$(grep -vc '^SESSION' "$TR_CALLS")"
 
 # The mention path itself is untouched — the regression that matters, since
 # this change moves code around that block. One session, kind mention, and the
@@ -2518,7 +2540,7 @@ tr_mention_ln="$(tr_ln 'run_session mention')"
 tr_decide_ln="$(tr_ln '[ -z "$signals" ]')"
 # shellcheck disable=SC2016  # ditto
 for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
-             'gh api graphql' '--label "$LABEL_BLOCKED"'; do
+             '_triage_discussion_items "$R"' '--label "$LABEL_BLOCKED"'; do
   probe_ln="$(tr_ln "$probe")"
   if [ -n "$probe_ln" ] && [ "$probe_ln" -gt "$tr_mention_ln" ]; then
     r1=after; else r1="BEFORE($probe_ln vs $tr_mention_ln)"; fi
@@ -2527,6 +2549,67 @@ for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
     r1=before; else r1="AFTER($probe_ln vs $tr_decide_ln)"; fi
   t "triage253-poll-before-decision:$probe" before "$r1"
 done
+
+# --- #359: successful triage sessions settle ledgers at their exit state ---
+TR359_T1='2026-08-05T10:00:00Z'
+TR359_T2='2026-08-05T10:05:00Z'
+TR359_T3='2026-08-05T10:10:00Z'
+tr359_nt() { jq -nc --arg s "$1" '[{number:116,updatedAt:$s}]'; }
+
+# A session comments on an item and leaves it needs-triage. The post-session
+# timestamp, not the launching timestamp, is committed; the following tick is
+# therefore quiet even though the item remains in the query.
+tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
+tr_run 0
+t triage359-self-write-first-tick-launches 1 "$(trc '^SESSION triage$')"
+if grep -q "o/r#116 $TR359_T2" "$TRD/.seen-triage-board"; then r1=post; else r1=STALE; fi
+t triage359-self-write-commits-post-session post "$r1"
+tr_fix '[]' "$(tr359_nt "$TR359_T2")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
+tr_tick 0
+t triage359-self-write-next-tick-quiet 0 "$(trc '^SESSION triage$')"
+
+# Genuine activity after that session advances the board beyond the committed
+# value and buys one new session. This is the side the safe re-read must retain.
+tr_fix '[]' "$(tr359_nt "$TR359_T3")" "$(tr359_nt "$TR359_T3")" '[]' '[]' '[]'
+tr_tick 0
+t triage359-third-party-later-write-rewakes 1 "$(trc '^SESSION triage$')"
+
+# Discussion rows use the same exit-state contract, with their own ledger.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
+  "o/r#8 $TR359_T1" "o/r#8 $TR359_T2"
+tr_run 0
+if grep -q "o/r#8 $TR359_T2" "$TRD/.seen-discussions"; then r1=post; else r1=STALE; fi
+t triage359-discussion-commits-post-session post "$r1"
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
+  "o/r#8 $TR359_T2" "o/r#8 $TR359_T2"
+tr_tick 0
+t triage359-discussion-next-tick-quiet 0 "$(trc '^SESSION triage$')"
+
+# A failed session commits none of the three ledgers. Crash-only retry remains
+# the distinction between "declined" and "never got there".
+tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
+tr_run 1
+if [ -f "$TRD/.seen-triage-board" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage359-failed-session-commits-no-board withheld "$r1"
+
+# A standing unblockable lead costs one session. Its exit timestamp settles
+# the dedicated ledger; subsequent ticks report the stable lead once without
+# launching, and report_suppressed then quiets the unchanged warning.
+TR359_BLOCK_1='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:00:00Z"}]'
+TR359_BLOCK_2='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:05:00Z"}]'
+tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
+tr_run 0
+t triage359-unblockable-first-tick-launches 1 "$(trc '^SESSION triage$')"
+if grep -q 'o/r#244 2026-08-05T11:05:00Z' "$TRD/.seen-unblockable"; then r1=post; else r1=MISSING; fi
+t triage359-unblockable-commits-post-session post "$r1"
+tr_fix '[]' '[]' '[]' "$TR359_BLOCK_2" "$TR359_BLOCK_2" "$TR_LANDED"
+tr_tick 0
+t triage359-unblockable-next-tick-spends-no-session 0 "$(trc '^SESSION triage$')"
+if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=warned; else r1=SILENT; fi
+t triage359-unblockable-suppression-reported warned "$r1"
+tr_tick 0
+if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=REPEATED; else r1=quiet; fi
+t triage359-unblockable-stable-warning-once quiet "$r1"
 
 # --- #358: post-merge is a queue label, and the engine's set is LABELS.md's -
 # LABELS.md declares a SIX-label board invariant; fleet.defaults.conf defined
