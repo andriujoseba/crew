@@ -30,6 +30,11 @@ mk_src() {  # <dir> <version> — the tree under test, with VERSION rewritten
   mkdir -p "$1"
   tar -C "$SRC" --exclude=.git -cf - . | tar -xf - -C "$1"
   printf '%s\n' "$2" > "$1/VERSION"
+  # A stand-in for the VCS state a real checkout carries. Without it the
+  # fixture is the one tree install.sh's oldest exclusion could never be
+  # observed on — the source has no .git to leave behind, so the assertion
+  # below would pass whether or not the installer still excludes it.
+  mkdir -p "$1/.git" && : > "$1/.git/HEAD"
 }
 SA="$WORK/src-a"; SB="$WORK/src-b"
 mk_src "$SA" "$VA"
@@ -86,7 +91,10 @@ else
 fi
 # The bound, not a target: a regression is a red test rather than a judgement
 # call. Measured with -L on `current` — a bare `du -sk` on a symlink reports
-# the link, which would pass on a tree of any size (#365).
+# the link, which would pass on a tree of any size (#365). This is also the
+# only assertion here that catches the OTHER direction of the same defect: the
+# list above reds when an entry is dropped, and a deny list says nothing about
+# the next fat directory somebody adds, which lands here instead.
 tree_kb="$(du -skL "$CREW_HOME/current" | cut -f1)"
 if [ "$tree_kb" -lt 3072 ]; then
   ok "payload-under-3M ($tree_kb KiB)"
