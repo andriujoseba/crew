@@ -39,3 +39,11 @@ ff-invalid-age running  invalid-tickage
 ff-missing-age running  missing-tickage
 ff-silent-behind running skew-silent-behind
 ff-silent-ahead  running skew-silent-ahead
+# Two healthy, ticking boxes that differ only in what their engine files hash
+# to (#159, #190). `modified` is the failure that instrument exists to catch —
+# a hotfix nobody told the fleet about, on a box whose every other reading is
+# fine — and `unverified` is the state every box is in on the day content
+# stamping ships. Both must render as themselves on the tile; a page that shows
+# either as a verified engine has added a word and no information.
+ff-modified    running  modified
+ff-unverified  running  unverified

@@ -70,7 +70,7 @@ import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 meta, lines = floor.parse_probe(open(sys.argv[1]).read())
-need = ("engine", "uptime", "now", "gh", "vendor", "cron", "paused", "repos", "sessionlogs")
+need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "cron", "paused", "repos", "sessionlogs")
 print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
@@ -90,6 +90,47 @@ t "probe.sh: log section delimited" 4 "$(bs_get LOGLINES)"
 t "probe.sh: sessions parse from real output" 1 "$(bs_get SESSIONS)"
 t "probe.sh: session key intact" "rig#12" "$(bs_get SESSKEY)"
 t "probe.sh: queue derived from real output" 1 "$(bs_get QUEUE)"
+
+# --- engine integrity, end to end (#159, #190) -----------------------------
+#
+# The collector suite asserts the wire VALUE of ::integrity and cannot assert
+# its truth: stub-box has no installed tree to hash, so it answers from the
+# fixture. Here the REAL engine-manifest.sh runs under the REAL probe.sh over a
+# tree this file controls, which is the only place the hash can prove anything
+# — the same division shared/test/run.sh makes for the `crew status` half.
+bs_integrity() {  # DUTY_DIR -> the one word this probe emitted
+  HOME="$BS_H" DUTY_DIR="$1" \
+    bash "$BS_FLOOR/server/probe.sh" < "$BS_ROOT/shared/conf/agents/claude.conf" 2>/dev/null \
+    | sed -n 's/^::integrity //p' | head -1
+}
+# The state every box is in on the day content stamping ships: an engine, and
+# no tool to check it with. UNVERIFIED, never modified — a fleet that reads
+# modified everywhere the day this lands has learned the word means nothing.
+t "probe.sh: an engine with no manifest tool is unverified, never modified" \
+  unverified "$(bs_integrity "$BS_H/duty")"
+
+mkdir -p "$BS_H/duty/bin"
+cp "$BS_ROOT/shared/bin/engine-manifest.sh" "$BS_H/duty/bin/engine-manifest.sh"
+chmod +x "$BS_H/duty/bin/engine-manifest.sh"
+DUTY_DIR="$BS_H/duty" "$BS_H/duty/bin/engine-manifest.sh" --record
+t "probe.sh: a recorded, untouched engine is current" current "$(bs_integrity "$BS_H/duty")"
+
+# The failure the instrument exists to catch: a hotfix applied by hand to a box
+# whose VERSION still names what it shipped with. A comment line, so the file it
+# lands in stays runnable — what is under test is the hash, not the syntax.
+printf '# hotfix applied by hand\n' >> "$BS_H/duty/bin/engine-manifest.sh"
+t "probe.sh: a hand-edited engine reports modified" modified "$(bs_integrity "$BS_H/duty")"
+# The half that makes the verdict worth rendering: the CLAIM does not move when
+# the files do, so a tile showing the version alone shows a box that was
+# hotfixed as though nothing had happened.
+t "probe.sh: the version claim does not move with the files" \
+  "crew@0.2.0 (deadbee)" "$(head -1 "$BS_H/duty/VERSION")"
+
+# A box with no engine at all: absent, and it must not borrow the fallback's
+# `unverified` — there is nothing installed to be unverified about.
+BS_BARE="$BS_TMP/barehome"
+mkdir -p "$BS_BARE/duty"
+t "probe.sh: a box with no engine reports absent" absent "$(bs_integrity "$BS_BARE/duty")"
 
 # --------------------------------------------------------------------------
 # the message script — the operator prompt must survive as ONE argv element
