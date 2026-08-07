@@ -20,8 +20,10 @@
 #
 # Every check prints `ok <name>` or `FAIL <name>`; the script exits
 # non-zero if anything failed. Fixtures and the drill box are LEFT IN
-# PLACE for inspection (re-runs reuse them), but the box is always left
-# disarmed and its pre-drill repo registry is restored.
+# PLACE for inspection, and the box is always left disarmed with its
+# pre-drill repo registry restored. Removing them is `drill/teardown.sh`,
+# which rehearsal-all.sh runs for you after a green round; a re-run against
+# a box that is still standing REFUSES unless you pass --reuse (#217).
 #
 # Companion prose: shared/docs/rehearsal.md (what each check means and why).
 # shellcheck disable=SC2088  # tildes in bx "…" strings expand in the BOX's
@@ -45,11 +47,18 @@ AGENT="claude"
 # a multi-role drill box would exercise a composite path nobody deploys.
 # drill/rehearsal-all.sh runs the three in sequence.
 ROLE="reviewer"
+# A pre-existing box is REFUSED, not silently reused. Reuse is what made the
+# 0.1.0 drill skip three pre-auth checks per role and leave the creds-free
+# half of phase 1 unexercised (#116) — a box that is already logged in cannot
+# prove what a fresh one proves. Reuse is still legitimate when the operator
+# means it, so it stays available and says so in the record (#217).
+REUSE=0
+REUSE_NOTE=""
 
 usage() {
   echo "usage: drill/rehearsal.sh [--agent <name>] [--role triage|builder|reviewer]"
   echo "         [--box <name>] [--tree <clean-git-checkout>] [--remote <url>] [--ref <git-ref>]"
-  echo "         [--sandbox <owner/repo>] [--quick]"
+  echo "         [--sandbox <owner/repo>] [--reuse] [--quick]"
 }
 
 while [ $# -gt 0 ]; do
@@ -61,6 +70,7 @@ while [ $# -gt 0 ]; do
     --remote)  REMOTE="$2"; shift 2 ;;
     --ref)     REF="$2"; shift 2 ;;
     --sandbox) SANDBOX="$2"; shift 2 ;;
+    --reuse)   REUSE=1; shift ;;
     --quick)   QUICK=1; shift ;;
     *) usage; exit 1 ;;
   esac
@@ -206,6 +216,28 @@ tar czf "$ENGINE_ARCHIVE" -C "$SOURCE_TREE" shared VERSION \
 if ! box list --json 2>/dev/null | jq -e --arg n "$BOX_NAME" '.[] | select(.name == $n)' >/dev/null; then
   echo "== minting $BOX_NAME from the $AGENT-box template"
   box new --name "$BOX_NAME" --template "$AGENT-box" --cpu 2 --memory 4GiB --disk 20GiB || exit 1
+elif [ "$REUSE" -eq 0 ]; then
+  # `box info --json` returns an ARRAY and its date field has moved before, so
+  # this degrades to "unknown" rather than killing the refusal it is only
+  # decorating (#47).
+  BOX_CREATED="$(box info "$BOX_NAME" --json 2>/dev/null \
+    | jq -r 'if type == "array" then (.[0] // {}) else . end
+             | .created_at // .createdAt // .created // "unknown"' 2>/dev/null \
+    | head -1 | tr -d '\r' || true)"
+  echo "phase 0: $BOX_NAME already exists (created ${BOX_CREATED:-unknown})." >&2
+  echo "phase 0: refusing to reuse it — a box that is already logged in cannot prove" >&2
+  echo "         the creds-free half of phase 1, and reusing one is why the 0.1.0 drill" >&2
+  echo "         skipped three pre-auth checks per role (#116). Two ways forward:" >&2
+  echo "           drill/teardown.sh --box $BOX_NAME     # then re-run for a clean drill" >&2
+  echo "           drill/rehearsal.sh … --reuse          # keep it, and record why" >&2
+  exit 1
+else
+  # Recorded here AND in the summary: a record is pasted from the tail of a
+  # run, and a caveat that scrolled past the top is a caveat nobody read.
+  REUSE_NOTE="reused the existing box $BOX_NAME (--reuse): the pre-auth checks
+   — login WARN, no .boot-id marker, no sessions spawned — SKIP on a box that is
+   already gh-authenticated, so the creds-free half of phase 1 is unexercised (#116)."
+  echo "== REUSE: $REUSE_NOTE"
 fi
 BOX_TOUCHED=1
 check "box reachable" bx "true"
@@ -651,6 +683,7 @@ fi
 check "teardown: drill remains disarmed" bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
 echo
 echo "== rehearsal summary [$ROLE]: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
+[ -n "$REUSE_NOTE" ] && echo "   REUSE: $REUSE_NOTE"
 if [ "${#FAILS[@]}" -gt 0 ]; then
   printf '  FAIL %s\n' "${FAILS[@]}"
   echo "Fixtures and box are left in place. Report findings on crew PR #16 with"
