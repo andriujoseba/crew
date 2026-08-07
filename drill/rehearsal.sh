@@ -189,7 +189,7 @@ if [ -n "$TREE" ]; then
     echo "phase 0: --tree '$TREE' has uncommitted changes:" >&2
     printf '%s\n' "$TREE_STATUS" >&2
     # shellcheck disable=SC2016  # explain the literal hire argument to the operator
-    echo 'phase 0: refusing because tar czf … shared VERSION archives working-tree content while crew hire --ref "$SOURCE_SHA" installs committed content' >&2
+    echo 'phase 0: refusing because SOURCE_SHA must name the tree the operator means to drill; phase 1 installs from crew hire --ref "$SOURCE_SHA"' >&2
     exit 1
   fi
 else
@@ -207,8 +207,11 @@ done
 SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
   || { echo "phase 0: $SOURCE_DESC is not a resolved git tree"; exit 1; }
 ENGINE_ARCHIVE="$ACQUIRE_TMP/crew-engine.tgz"
-tar czf "$ENGINE_ARCHIVE" -C "$SOURCE_TREE" shared VERSION \
-  || { echo "phase 0: could not archive the engine from $SOURCE_DESC at $SOURCE_SHA"; exit 1; }
+if ! git -C "$SOURCE_TREE" archive --format=tar "$SOURCE_SHA" \
+  -- . ':(exclude)fleet-floor/dev' | gzip >"$ENGINE_ARCHIVE"; then
+  echo "phase 0: could not archive the tracked tree from $SOURCE_DESC at $SOURCE_SHA"
+  exit 1
+fi
 
 # --- the drill box -------------------------------------------------------
 # Acquisition and the --tree clean-checkout guard stay above this line: an
@@ -275,9 +278,18 @@ bx '
   rm -rf "$stage"
   mkdir -p "$stage"
   tar xzf "$archive" -C "$stage"
+  # BEGIN phase-0 suite roots: shared/test/run.sh verifies this complete set.
+  test -d "$stage/.ceremony"
+  test -d "$stage/.github"
+  test -f "$stage/VERSION"
+  test -d "$stage/cli"
+  test -d "$stage/drill"
+  test -d "$stage/examples"
+  test -d "$stage/fleet-floor"
+  test -f "$stage/install.sh"
   test -f "$stage/shared/install.sh"
   test -f "$stage/shared/test/run.sh"
-  test -f "$stage/VERSION"
+  # END phase-0 suite roots
 ' || { echo "phase 0: transferred engine failed verification inside $BOX_NAME"; exit 1; }
 echo "== phase 0: shipped $SOURCE_SHA from $SOURCE_DESC (creds-free inside box)"
 check "fixture tests green" bx "~/.crew-engine-stage/shared/test/run.sh | grep -q 'failed 0'"
