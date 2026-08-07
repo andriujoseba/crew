@@ -6989,17 +6989,47 @@ printf 'checks: {{HEAD_CHECKS}}' >"$TMP/prompts/hc.txt"
 t head-checks-slot-substitutes "checks: o/q#2 (pending)" \
   "$(render_prompt hc.txt HEAD_CHECKS="o/q#2 (pending)")"
 
-# Pending-is-not-green is now the ENGINE's gate (head-checks.jq is_pending; the
-# request holds on anything but green/none — wait, do not abandon), and the
-# prompt still says a queued or running check has not answered, so the session
-# waits to signal until the check settles.
+# Pending-is-not-green is the ENGINE's gate (head-checks.jq is_pending), while
+# the builder declares as soon as the round is complete. Pin both actors so a
+# future prose edit cannot move the engine's wait back into the session.
 if grep -q 'def is_pending' "$SHARED/lib/jq/head-checks.jq" \
-  && grep -qi 'queued or running check has not answered' "$SHARED/prompts/fragment-round-rules.txt"; then
+  && grep -qi 'engine holds the request until it settles' "$SHARED/prompts/fragment-round-rules.txt" \
+  && grep -qi 'you do not wait to signal' "$SHARED/prompts/fragment-round-rules.txt"; then
   r1=ruled
 else
   r1=SILENT
 fi
 t round-rules-rule-pending ruled "$r1"
+# Each prompt carried its own form of the builder-side wait. These file-local
+# negatives keep a fixed shared fragment from hiding a stale local restatement.
+if ! grep -qiE 'check at your head green|ANSWER IS COMPLETE AND THE HEAD IS GREEN|WAIT for it to settle before you signal|signal once it is green' \
+     "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=clear
+else
+  r1=BUILDER-WAITS
+fi
+t round-rules-no-builder-check-wait-fragment clear "$r1"
+if ! grep -qiE 'round-answered SIGNAL at your green head|check at your head is green|final green head' \
+     "$SHARED/prompts/build.txt"; then
+  r1=clear
+else
+  r1=BUILDER-WAITS
+fi
+t round-rules-no-builder-check-wait-build clear "$r1"
+if ! grep -qiE 'final green head|wait for a green current head|current head is green, and if it is' \
+     "$SHARED/prompts/resume.txt"; then
+  r1=clear
+else
+  r1=BUILDER-WAITS
+fi
+t round-rules-no-builder-check-wait-resume clear "$r1"
+if ! grep -qiE "waiting for the new head.s check to settle before signalling" \
+     "$SHARED/prompts/ci-red.txt"; then
+  r1=clear
+else
+  r1=BUILDER-WAITS
+fi
+t round-rules-no-builder-check-wait-ci-red clear "$r1"
 # ...with the one carve-out that keeps a CI-less repo from waiting forever for
 # a check that is never coming — the same `none` case as the gate above.
 if grep -qi 'NO checks configured' "$SHARED/prompts/fragment-round-rules.txt"; then
