@@ -14,6 +14,7 @@ body{overflow:hidden;color:#c7d4e4;font-family:var(--mono)}
 .title{font-size:12px;letter-spacing:.24em;text-transform:uppercase;color:#8aa0b8;text-shadow:0 1px 6px #000}
 .title b{color:var(--cyan)}
 .title .sub{display:block;font-size:10px;letter-spacing:.14em;color:#556;margin-top:3px}
+.title .version{color:#7f93aa;text-transform:none;letter-spacing:.04em}
 .sp{flex:1}
 .grp{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .glab{font-size:9px;letter-spacing:.18em;color:#46566a;text-transform:uppercase;pointer-events:none}
@@ -195,7 +196,8 @@ body { margin: 0; background: #05080f; color: #cfe0f2; font-family: var(--mono);
   <div class="hud">
     <button id="back">◀ Fleet Floor</button>
     <div class="title"><b>CREW</b> · AGENT CONSOLE
-      <span class="sub" id="sub">claude · builder quarters</span></div>
+      <span class="sub" id="sub">claude · builder quarters</span>
+      <span class="sub version" id="room-version">version unavailable</span></div>
     <span class="demo-badge" title="Roster is real (crew examples/fleet.roster). Vitals, queue, sessions &amp; metrics are placeholder data — run `crew floor` to serve this page against the real fleet.">◈ DEMO DATA</span>
   </div>
   <div class="foot">
@@ -1486,7 +1488,10 @@ var ROSTER=[
    conference UI and every operator's mouse wheel already scrolls. */
 var floorCam=0, floorCamTarget=0, floorDrag=false, floorDragY=0, floorDragCam=0, floorMoved=false, floorMouse={x:-1,y:-1}, floorHits=[];
 function floorGrid(){
-  var mX=26, mT=74, gap=20;
+  /* The byline owns the lane immediately below the fixed fleetbar. Keep the
+     first row below that lane too, so solving the DOM collision cannot turn
+     into a canvas-on-tile collision. */
+  var mX=26, mT=floorHeaderY()+18, gap=20;
   var availW=VW-mX*2;
   var cols=Math.max(1,Math.min(4,Math.round(availW/500)));
   if(ROSTER.length&&ROSTER.length<cols)cols=ROSTER.length;
@@ -1546,6 +1551,8 @@ function drawFloor(t){
     X.fillStyle="rgba(255,255,255,0.08)";X.fillRect(VW-10,tr0,4,trh);
     X.fillStyle="rgba(120,200,255,0.65)";X.fillRect(VW-10,tp,4,tl);}
   var vg2=X.createRadialGradient(VW/2,VH/2,VH*0.42,VW/2,VH/2,VH*0.95);vg2.addColorStop(0,"rgba(0,0,0,0)");vg2.addColorStop(1,"rgba(0,0,0,0.5)");X.fillStyle=vg2;X.fillRect(0,0,VW,VH);
+  /* Fixed chrome is painted last so the scrolling floor can never erase it. */
+  drawFloorHeader(t);
 }
 /* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
    Order is severity, not alphabetical: a box that has stopped answering pings
@@ -1597,10 +1604,9 @@ function fleetCounts(){
   });
   return c;
 }
-/* The floor header's counters, as drawn. Split out so FLOORDEV can hand the
-   browser walk the same array drawFloorHeader paints — these are canvas text,
-   invisible to any DOM assertion, which is how "0 silent" in the collector's
-   own log sat next to a page shouting SILENT at three boxes for a week. */
+/* Keep the floor's stage summary as shared data for the DOM tiles and FLOORDEV.
+   The fixed DOM fleetbar superseded the old canvas counter run; painting both
+   in the same 70px band makes neither readable. */
 function stageCounts(){
   var c=fleetCounts();
   var stat=[[c.silent+" SILENT","#ff5147"],[c.idle+" IDLE","#5fce9b"],[c.working+" WORKING","#f7bd4e"]];
@@ -1609,9 +1615,7 @@ function stageCounts(){
      operator reading a calm fleet is entitled to see the alarm counter sitting
      at zero, not to infer it from an absence. */
   if(c.stopped)stat.splice(1,0,[c.stopped+" DISARMED","#8aa0b8"]);
-  /* Prepended so it reads outermost, ahead of the ordinary counts —
-     drawFloorHeader paints this array right-aligned from VW-26 and walks
-     leftward, so element 0 lands at the right edge — and only when
+  /* Prepended so it reads outermost in the DOM tile run, and only when
      non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
      counted as working or idle above — that is correct, they are, and the
      point of this counter is that the state they are in is not the whole
@@ -1619,6 +1623,36 @@ function stageCounts(){
   var alerts=LIVE?ROSTER.filter(function(u){return alertOf(u)!=="";}).length:0;
   if(alerts)stat.unshift([alerts+" ALERT","#ff5147"]);
   return stat;
+}
+/* The canvas byline, exactly as drawn. The DOM fleetbar owns the brand, repo,
+   counters and unit count; repeating them here visibly double-paints its fixed
+   70px band. Kept as data so the browser walk can observe the live paint path
+   without maintaining a test-only copy. */
+function floorHeaderLabels(){
+  var version=(LIVEMETA&&LIVEMETA.version)||"version unavailable";
+  var y=floorHeaderY();
+  var labels=[
+    {text:version,x:26,y:y,font:"10px ui-monospace,monospace",color:"#7f93aa",align:"left"},
+    {text:"scroll · click a unit to zoom in",after:version,x:26,y:y,font:"10px ui-monospace,monospace",color:"#46566a",align:"left"}
+  ];
+  labels.forEach(function(h){
+    X.font=h.font;
+    if(h.after)h.x+=X.measureText(h.after).width+18;
+    h.width=X.measureText(h.text).width;
+  });
+  return labels;
+}
+/* Reserve a canvas lane below every visible child of the responsive DOM bar.
+   Vertical separation makes the result independent of the install-root length
+   embedded in `crew --version`; a longer byline can never run back through the
+   badge or counter row. */
+function floorHeaderY(){
+  var bar=document.querySelector(".fleetbar"),bottom=70;
+  if(bar){[].forEach.call(bar.querySelectorAll("*"),function(el){
+    var r=el.getBoundingClientRect(),s=getComputedStyle(el);
+    if(r.width>0&&r.height>0&&s.display!=="none"&&s.visibility!=="hidden")bottom=Math.max(bottom,r.bottom);
+  });}
+  return Math.ceil(bottom)+18;
 }
 function drawAlertBadge(cx,cy,u,cw){
   var a=alertOf(u);if(!a)return;
@@ -1639,14 +1673,11 @@ function drawAlertBadge(cx,cy,u,cw){
 }
 function t2(){return Date.now();}
 function drawFloorHeader(t){
-  X.textBaseline="alphabetic";X.textAlign="left";
-  X.font="700 15px ui-monospace,monospace";X.fillStyle="#c7d4e4";X.fillText("FLEET FLOOR",26,36);
-  X.font="11px ui-monospace,monospace";X.fillStyle="#5fd6ff";X.fillText("heavy-duty/crew · fleet call",132,36);
-  X.font="10px ui-monospace,monospace";X.fillStyle="#46566a";X.fillText("scroll · click a unit to zoom in",26,54);
-  var stat=stageCounts();
-  X.textAlign="right";X.font="700 11px ui-monospace,monospace";var sxp=VW-26;
-  stat.forEach(function(s){X.fillStyle=s[1];X.fillText("● "+s[0],sxp,36);sxp-=X.measureText("● "+s[0]).width+20;});
-  X.fillStyle="#46566a";X.font="10px ui-monospace,monospace";X.fillText(ROSTER.length+" UNITS",VW-26,54);
+  X.textBaseline="alphabetic";
+  floorHeaderLabels().forEach(function(h){
+    X.textAlign=h.align;X.font=h.font;X.fillStyle=h.color;
+    X.fillText(h.text,h.x,h.y);
+  });
   X.textAlign="left";
 }
 function syncToggles(){
@@ -6364,6 +6395,7 @@ function refreshChrome(){
   var stw=STATE==="offline"?stoppedWord(dataOf(BOX,ROOM)):"";
   document.getElementById("fl").textContent=UNIT()+" · "+(stw||(STATE==="offline"?"CRON SILENT":STATE))+" · sector-7";
   var sub=document.getElementById("sub");if(sub)sub.textContent=AGENT+" · "+ROLEWORD()+" quarters — detailed god-view cell";
+  var rv=document.getElementById("room-version");if(rv)rv.textContent=(LIVEMETA&&LIVEMETA.version)||"version unavailable";
 }
 var _un=document.getElementById("un");if(_un)_un.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;AGENT=b.dataset.a;[].forEach.call(this.querySelectorAll("button"),function(x){x.classList.toggle("on",x===b);});refreshChrome();populateDash();});
 var _stg=document.getElementById("stg");if(_stg)_stg.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;STATE=b.dataset.s;[].forEach.call(this.querySelectorAll("button"),function(x){x.className=(x===b?"on "+(STATE==="working"?"w":STATE==="offline"?"o":""):"");});refreshChrome();populateDash();});
@@ -6517,6 +6549,8 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      header shouted SILENT at three boxes is the regression this exists to
      make assertable (#203). Same ethos as cam(): a hook, not a second copy. */
   stages:function(){return stageCounts();},
+  /* The floor header's left-hand labels, exactly as painted. */
+  header:function(){return floorHeaderLabels();},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
      real fleet (same ethos as guides: a claim should be a lookable-at).
      buildsLastSec MUST read 0 with a stable roster — a deterministic still

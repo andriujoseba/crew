@@ -13,6 +13,8 @@
 echo "== telemetry"
 t "fleet: every roster box present"  26 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "fleet: reports live"            True "$(body GET /api/fleet | jqf "d['live']")"
+t "fleet: carries the serving host's exact version string" "$FLOOR_TEST_VERSION" \
+  "$(body GET /api/fleet | jqf "d['version']")"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
 t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"

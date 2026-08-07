@@ -2386,7 +2386,7 @@ cmd_floor() {
 
   CREW_FLOOR_PORT="$port" CREW_FLOOR_BIND="$bind" CREW_FLOOR_USER="$user" \
   CREW_FLOOR_PASS="$pass" CREW_FLOOR_INTERVAL="$interval" \
-  CREW_FLOOR_ROSTER="$roster" \
+  CREW_FLOOR_ROSTER="$roster" CREW_FLOOR_VERSION="$(version)" \
     exec python3 "$CREW_ROOT/fleet-floor/server/floor.py"
 }
 

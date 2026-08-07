@@ -81,6 +81,28 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   });
   const page = await ctx.newPage();
 
+  /* Observe the shipped canvas call, not the label-producing helper. This is
+     installed before the page loads so removing drawFloorHeader() from the
+     frame path makes the browser assertion red even though FLOORDEV.header()
+     can still describe what the disconnected painter would have drawn. */
+  await page.addInitScript(() => {
+    window.__floorHeaderPaint = [];
+    const fillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
+      if (this.canvas && this.canvas.id === 'scene' && y <= 130) {
+        const metrics = this.measureText(String(text));
+        window.__floorHeaderPaint.push({
+          text: String(text), x, y, align: this.textAlign,
+          width: metrics.width,
+          ascent: metrics.actualBoundingBoxAscent || 0,
+          descent: metrics.actualBoundingBoxDescent || 0,
+        });
+        if (window.__floorHeaderPaint.length > 200) window.__floorHeaderPaint.shift();
+      }
+      return fillText.apply(this, arguments);
+    };
+  });
+
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
@@ -122,13 +144,97 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      the app: /api/fleet is the same list, in the same order, that the page
      laid the floor out from. In DEMO there is no collector, so there is
      nothing to compare against and the identity check is skipped. */
-  const roster = LIVE
+  const snapshot = LIVE
     ? await page.evaluate(async () => {
         const r = await fetch(location.origin + '/api/fleet');
-        return (await r.json()).units.map((u) => ({ box: u.box, agent: u.agent, room: u.room, state: u.state }));
+        return await r.json();
       })
+    : null;
+  const roster = LIVE
+    ? snapshot.units.map((u) => ({ box: u.box, agent: u.agent, room: u.room, state: u.state }))
     : Array.from({ length: 7 }, (_, i) => ({ box: null, agent: null, room: null, state: null }));
   ok('floor: roster rendered', roster.length > 0, roster.length + ' units');
+  if (LIVE) {
+    const header = await page.evaluate(() => window.FLOORDEV.header());
+    const paintedVersion = header.find((h) => /^crew /.test(h.text));
+    const actualPaint = await page.evaluate((label) =>
+      window.__floorHeaderPaint.some((p) => p.text === label.text
+        && p.x === label.x && p.y === label.y), paintedVersion);
+    ok('floor: the canvas header paints the serving host version',
+       !!paintedVersion && paintedVersion.text === snapshot.version && actualPaint,
+       `header=${paintedVersion && paintedVersion.text}, painted=${actualPaint}, api=${snapshot.version}`);
+    ok('floor: the serving version is not dropped or hardcoded',
+       snapshot.version === process.env.FLOOR_TEST_VERSION,
+       `expected ${process.env.FLOOR_TEST_VERSION}, got ${snapshot.version}`);
+    let clearAtWalkWidths = true;
+    let collision = '';
+    for (const width of [1400, 1600]) {
+      await page.evaluate(() => { window.__floorHeaderPaint = []; });
+      await page.setViewportSize({ width, height: 1000 });
+      await page.waitForTimeout(100);
+      const composition = await page.evaluate((version) => {
+        const labels = window.FLOORDEV.header();
+        // This set is intentionally exact: the DOM fleetbar owns all other
+        // chrome, so reviving a legacy canvas brand or counter must fail.
+        const expected = [version, 'scroll · click a unit to zoom in'];
+        const wanted = new Set(labels.map((h) => h.text));
+        const paints = window.__floorHeaderPaint
+          .filter((p) => wanted.has(p.text))
+          .filter((p, i, all) => all.findIndex((q) => q.text === p.text
+            && q.x === p.x && q.y === p.y) === i)
+          .map((p) => {
+            let left = p.x;
+            if (p.align === 'center') left -= p.width / 2;
+            if (p.align === 'right' || p.align === 'end') left -= p.width;
+            return {
+              text: p.text,
+              rect: { left, right: left + p.width,
+                top: p.y - p.ascent, bottom: p.y + p.descent },
+            };
+          });
+        const chrome = Array.from(document.querySelectorAll('.fleetbar *'))
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            const s = getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && s.display !== 'none'
+              && s.visibility !== 'hidden';
+          })
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return { name: el.id || el.className || el.tagName,
+              rect: { left: r.left, right: r.right, top: r.top, bottom: r.bottom } };
+          });
+        const overlaps = [];
+        for (const paint of paints) {
+          for (const el of chrome) {
+            const a = paint.rect, b = el.rect;
+            if (a.left < b.right && a.right > b.left
+                && a.top < b.bottom && a.bottom > b.top) {
+              overlaps.push({ paint: paint.text, element: String(el.name),
+                paintRect: a, elementRect: b });
+            }
+          }
+        }
+        const domChrome = document.querySelector('.fleetbar').textContent;
+        return {
+          labels: labels.map((h) => h.text), expected,
+          painted: paints.map((p) => p.text), overlaps,
+          domOwnsChrome: domChrome.includes('FLEET FLOOR')
+            && document.querySelectorAll('.fleetbar #tiles .tile').length > 0,
+        };
+      }, snapshot.version);
+      if (JSON.stringify(composition.labels) !== JSON.stringify(composition.expected)
+          || composition.expected.some((text) => !composition.painted.includes(text))
+          || composition.overlaps.length > 0
+          || !composition.domOwnsChrome) {
+        clearAtWalkWidths = false;
+        collision = `${width}px: ${JSON.stringify(composition)}`;
+      }
+    }
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    ok('floor: canvas byline does not duplicate DOM fleetbar chrome at browser-walk widths',
+       clearAtWalkWidths, collision);
+  }
   /* Not just "the word units appears": that is true of an empty fleet too,
      because the tiles always render. Assert the count matches the roster. */
   const tilesText = (await page.locator('#tiles').textContent()).replace(/\s+/g, '');
@@ -863,6 +969,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const l0 = await enterAt(visible[0]);
     ok('logs: console re-opened for the overlay check', l0 === visible[0].got,
        `expected ${visible[0].got}, got ${l0}`);
+    if (LIVE && l0 === visible[0].got) {
+      eq('room: the HUD shows the serving host version', snapshot.version,
+         (await page.locator('#room-version').textContent()).trim());
+    }
     if (LIVE && l0 === visible[0].got) {
       await page.click('#ac-logs');
       await settle(async () => await page.locator('#logov').isVisible().catch(() => false), 8000);
