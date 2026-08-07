@@ -1202,7 +1202,7 @@ function drawFloor(t){
   for(var i=0;i<ROSTER.length;i++){var col=i%Gd.cols,row=Math.floor(i/Gd.cols);
     var cx=Gd.mX+col*(Gd.tw+Gd.gap);var cy=Gd.mT+row*(Gd.th+Gd.gap)-floorCam;
     if(cy>-Gd.th-40&&cy<VH+40){
-      var u=ROSTER[i],match=(floorFilter.state==="all"||u.state===floorFilter.state)&&(floorFilter.role==="all"||u.room===floorFilter.role);
+      var u=ROSTER[i],match=matchesFloorFilter(u);
       drawCamCell(t,cx,cy,Gd.tw,Gd.th,u);
       if(!match){X.fillStyle="rgba(3,6,13,0.76)";rr(X,cx,cy,Gd.tw,Gd.th,11);X.fill();}
       /* A STUCK or UNREACHABLE unit must be visible from the god-view. Both
@@ -1274,6 +1274,21 @@ function stoppedWord(d){
   if(!LIVE||!d)return "";
   return d.paused?"PAUSED":d.disarmed?"DISARMED":"";
 }
+/* fleetState UNIT — the HUD vocabulary for one roster member. The collector's
+   state deliberately keeps every non-ticking box under `offline`; this is the
+   one client-side split both the counter tiles and their filter chips consume.
+   Keeping dataOf() here also keeps paused/disarmed out of the live ROSTER
+   projection, where those fields do not exist. */
+function fleetState(u){
+  if(u.state==="working")return "working";
+  if(u.state!=="offline")return "idle";
+  return stoppedWord(dataOf(UNITID(u),u.room))?"disarmed":"silent";
+}
+function matchesFloorFilter(u){
+  return (floorFilter.state==="all"||fleetState(u)===floorFilter.state)
+    &&(floorFilter.role==="all"||u.room===floorFilter.role);
+}
+function matchedFloorUnits(){return ROSTER.filter(matchesFloorFilter);}
 /* fleetCounts() — the roster split four ways instead of three. The fourth
    bucket is exactly stoppedWord above, so the page never invents a category
    /api/fleet does not already carry, and `silent` counts only what the alarm
@@ -1281,13 +1296,8 @@ function stoppedWord(d){
    that disagreed about what SILENT means would be worse than one that was
    wrong. */
 function fleetCounts(){
-  var c={working:0,idle:0,stopped:0,silent:0};
-  ROSTER.forEach(function(u){
-    if(u.state==="working")c.working++;
-    else if(u.state!=="offline")c.idle++;
-    else if(stoppedWord(dataOf(UNITID(u),u.room)))c.stopped++;
-    else c.silent++;
-  });
+  var c={working:0,idle:0,disarmed:0,silent:0};
+  ROSTER.forEach(function(u){c[fleetState(u)]++;});
   return c;
 }
 /* Keep the floor's stage summary as shared data for the DOM tiles and FLOORDEV.
@@ -1300,7 +1310,7 @@ function stageCounts(){
      "0 DISARMED" is furniture. SILENT stays unconditional either way — an
      operator reading a calm fleet is entitled to see the alarm counter sitting
      at zero, not to infer it from an absence. */
-  if(c.stopped)stat.splice(1,0,[c.stopped+" DISARMED","#8aa0b8"]);
+  if(c.disarmed)stat.splice(1,0,[c.disarmed+" DISARMED","#8aa0b8"]);
   /* Prepended so it reads outermost in the DOM tile run, and only when
      non-zero: a permanent "0 ALERT" is furniture. These units are ALSO
      counted as working or idle above — that is correct, they are, and the
@@ -1703,7 +1713,7 @@ function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dat
   var hire=hidden>0?tl(ROSTER.length,"hired","#8aa0b8",false,
     hidden+(hidden===1?" declared box has":" declared boxes have")
     +" no console: not hired — crew hire <box>"):"";
-  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.stopped,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
+  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
@@ -6317,6 +6327,10 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      header shouted SILENT at three boxes is the regression this exists to
      make assertable (#203). Same ethos as cam(): a hook, not a second copy. */
   stages:function(){return stageCounts();},
+  /* The filter scrim is painted on canvas, so the DOM can only say which chip
+     is active. Return the boxes the shipped predicate currently leaves
+     matched, not a test-side reconstruction of the classification. */
+  matched:function(){return matchedFloorUnits().map(UNITID);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
