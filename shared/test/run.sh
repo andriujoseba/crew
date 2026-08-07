@@ -3643,6 +3643,38 @@ t kimi-session-hooks 'terminal|terminal|transient|transient|yes|no' \
   "$(kimi_session_classification)"
 
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
+kimi_quoted_terminal_then_transient() (
+  local bdir="$TMP/terminal-breaker-kimi-quoted" i state
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  SESSION_TERMINAL_THRESHOLD=3
+  export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/kimi.conf"
+  BOT_CLI_CMD=(bash -c '
+    printf x >>"$BREAKER_CALLS"
+    printf "%s\n" "Used Shell (gh issue view 388)"
+    printf "%s\n" "Server: Error code: 403 - {'\''error'\'': {'\''message'\'': \"You'\''ve reached your usage limit for this billing cycle.\", '\''type'\'': '\''access_terminated_error'\''}}"
+    printf "%s\n" "transient network failure: dial tcp i/o timeout"
+    exit 1
+  ')
+  bot_cli_probe() { printf probe >>"$bdir/probes"; return 0; }
+  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
+  for i in $(seq 1 16); do
+    run_session review fixture/repo "$bdir/work" 5 prompt
+  done >"$bdir/output"
+  state="$(_session_terminal_state review)"
+  printf '%s|%s|%s|%s|%s' \
+    "$(wc -c <"$BREAKER_CALLS")" \
+    "$(grep -c 'outcome=FAILED' "$bdir/output" || true)" \
+    "$([ -e "$state" ] && echo tripped || echo clear)" \
+    "$([ -e "$bdir/alerts" ] && wc -l <"$bdir/alerts" || echo 0)" \
+    "$([ -e "$bdir/probes" ] && wc -c <"$bdir/probes" || echo 0)"
+)
+t kimi-quoted-terminal-payload-ending-transient-never-trips '16|16|clear|0|0' \
+  "$(kimi_quoted_terminal_then_transient)"
+
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
 terminal_breaker_case() ( # terminal_breaker_case terminal|transient|hookless
   local shape="$1" bdir="$TMP/terminal-breaker-$1" i
   mkdir -p "$bdir/logs" "$bdir/work"
