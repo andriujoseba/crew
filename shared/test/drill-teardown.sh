@@ -35,6 +35,12 @@ cat >"$STUB/box" <<'SHIM'
 printf 'box %s\n' "$*" >>"$STUB_CALLS"
 case "${1:-}" in
   list)
+    # STUB_BOX_LIST_RC is an inventory that cannot be answered at all;
+    # STUB_BOX_LIST_JUNK is one that answers with something that is not JSON.
+    # Two different causes of the same "could not tell", and teardown has to
+    # reach the same verdict from both.
+    [ -z "${STUB_BOX_LIST_RC:-}" ] || exit "$STUB_BOX_LIST_RC"
+    if [ -n "${STUB_BOX_LIST_JUNK:-}" ]; then printf 'box: cannot reach incus\n'; exit 0; fi
     printf '['
     sep=''
     for n in ${STUB_BOXES:-}; do printf '%s{"name":"%s"}' "$sep" "$n"; sep=','; done
@@ -66,19 +72,33 @@ SHIM
 
 cat >"$STUB/jq" <<'SHIM'
 #!/usr/bin/env bash
-# The two queries drill/teardown.sh makes, told apart by their flags:
+# The three queries drill/teardown.sh makes, told apart by their program:
+#   -e 'type == "array"'                            is the inventory readable
 #   -e --arg n <name> '.[] | select(.name == $n)'   presence, by exit status
 #   -r '…created_at // …'                           the creation date
-mode=presence name=''
+#
+# STUB_JQ_RC is jq itself failing — 127 is the no-jq-on-this-host case, which
+# real jq cannot simulate and which must NOT read as an empty inventory.
+[ -z "${STUB_JQ_RC:-}" ] || exit "$STUB_JQ_RC"
+mode=presence name='' prog=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --arg) name="$3"; shift 3 ;;
     -e) shift ;;
     -r) mode=field; shift ;;
-    *) shift ;;
+    *) prog="$1"; shift ;;
   esac
 done
 payload="$(cat)"
+# Matched exactly, not by substring: the creation-date program contains the
+# same `type == "array"` text and must not be answered as the probe.
+if [ "$prog" = 'type == "array"' ]; then
+  # Real jq exits 5 on unparseable input; only a JSON array answers `true`.
+  case "$payload" in
+    \[*) printf 'true\n'; exit 0 ;;
+    *) exit 5 ;;
+  esac
+fi
 if [ "$mode" = field ]; then
   case "$payload" in
     *'"created_at":"'*)
@@ -93,6 +113,17 @@ SHIM
 chmod +x "$STUB/box" "$STUB/gh" "$STUB/jq"
 PATH="$STUB:$PATH"; export PATH
 export STUB_CALLS="$CALLS"
+
+# A PATH with no `gh` on it at all — hermetic rather than subtractive, because
+# this suite also runs on hosts where the real gh sits in /usr/bin and simply
+# dropping $STUB would find it. Everything teardown.sh actually shells out to
+# is symlinked in; gh is the one thing deliberately missing.
+NOGH="$WORK/nogh"; mkdir -p "$NOGH"
+for c in bash grep awk paste head tr; do
+  ln -s "$(command -v "$c")" "$NOGH/$c" 2>/dev/null || true
+done
+ln -s "$STUB/box" "$NOGH/box"
+ln -s "$STUB/jq"  "$NOGH/jq"
 
 # A HOME and an XDG root of our own: roster resolution reads both, and a suite
 # whose answers depend on the developer's own fleet definition is not a test.
@@ -290,13 +321,91 @@ else
   bad "a-failed-removal-exits-non-zero-and-says-which (rc=$RC, got '$OUT')"
 fi
 
+# --- "could not tell" is never "absent" -----------------------------------
+# The whole point of the script is to end leftovers nobody knows about, so the
+# one answer it must never give is a clean host it did not measure. Every
+# class it was ASKED to clear is either inspected or declared, and a run that
+# could not look exits 2 (INCOMPLETE) — never 0, whatever else it managed.
+
 # A host with no gh identity cannot address the sandbox half. Say what was
-# left out: a shorter run nobody announced reads as a clean host.
+# left out, and do not call the round done: a shorter run nobody announced
+# reads as a clean host.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=" "STUB_REPOS=" -- --yes
-if says "NOT inspected"; then
+if [ "$RC" -eq 2 ] && says "NOT inspected"; then
   ok "says-so-when-the-sandbox-half-could-not-be-inspected"
 else
-  bad "says-so-when-the-sandbox-half-could-not-be-inspected (got '$OUT')"
+  bad "says-so-when-the-sandbox-half-could-not-be-inspected (rc=$RC, got '$OUT')"
+fi
+if says "nothing to do — no drill box"; then
+  bad "an-uninspected-sandbox-half-is-not-reported-as-a-clean-host"
+else
+  ok "an-uninspected-sandbox-half-is-not-reported-as-a-clean-host"
+fi
+
+# codex-bot's reproduction, as an assertion: gh cannot be asked who we are,
+# but a drill box IS standing. It gets removed — that half of the host really
+# is clean and there is no reason to leave it dirty — and the run still
+# refuses to return success, because the sandboxes were never looked at.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-reviewer" "STUB_LOGIN=" "STUB_REPOS=" -- --yes
+if [ "$RC" -eq 2 ] && called "box rm --force crew-drill-reviewer" && says "NOT inspected"; then
+  ok "an-uninspected-half-cannot-return-success-even-when-the-other-half-was-deleted"
+else
+  bad "an-uninspected-half-cannot-return-success-even-when-the-other-half-was-deleted (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# No gh on this host at all — the other way to be unable to read the sandbox
+# half, and it must land in the same place as a gh that cannot answer.
+run "CREW_ROSTER=$FLEET" "PATH=$NOGH" "STUB_BOXES=" -- --yes
+if [ "$RC" -eq 2 ] && says "no gh CLI"; then
+  ok "no-gh-cli-leaves-the-sandbox-half-uninspected-and-non-zero"
+else
+  bad "no-gh-cli-leaves-the-sandbox-half-uninspected-and-non-zero (rc=$RC, got '$OUT')"
+fi
+
+# The box half, from three different causes. The old shape asked
+# `box list --json | jq` per name and read every non-zero as "does not
+# exist", so all three printed a clean host and exited 0.
+run "CREW_ROSTER=$FLEET" "STUB_BOX_LIST_RC=1" "STUB_LOGIN=danmt" "STUB_REPOS=" -- --yes
+if [ "$RC" -eq 2 ] && says "NOT inspected" && says "could not be read"; then
+  ok "an-unanswerable-box-inventory-is-not-a-clean-host"
+else
+  bad "an-unanswerable-box-inventory-is-not-a-clean-host (rc=$RC, got '$OUT')"
+fi
+if called "box rm"; then
+  bad "an-unanswerable-box-inventory-deletes-no-box"
+else
+  ok "an-unanswerable-box-inventory-deletes-no-box"
+fi
+
+run "CREW_ROSTER=$FLEET" "STUB_BOX_LIST_JUNK=1" "STUB_LOGIN=danmt" "STUB_REPOS=" -- --yes
+if [ "$RC" -eq 2 ] && says "could not be read"; then
+  ok "an-inventory-that-is-not-json-is-not-a-clean-host"
+else
+  bad "an-inventory-that-is-not-json-is-not-a-clean-host (rc=$RC, got '$OUT')"
+fi
+
+run "CREW_ROSTER=$FLEET" "STUB_JQ_RC=127" "STUB_BOXES=crew-drill-builder" "STUB_LOGIN=danmt" "STUB_REPOS=" -- --yes
+if [ "$RC" -eq 2 ] && says "NOT inspected" && ! called "box rm"; then
+  ok "no-jq-to-read-the-inventory-with-is-not-a-clean-host"
+else
+  bad "no-jq-to-read-the-inventory-with-is-not-a-clean-host (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# 2 is INCOMPLETE and 1 is refused-or-failed: two different facts, and
+# rehearsal-all.sh reports them as two different summary rows.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=operator-scratch" "STUB_LOGIN=danmt" -- --box operator-scratch --yes
+if [ "$RC" -eq 1 ]; then
+  ok "a-refusal-is-status-1-not-the-INCOMPLETE-2"
+else
+  bad "a-refusal-is-status-1-not-the-INCOMPLETE-2 (rc=$RC, got '$OUT')"
+fi
+
+# --- an argument left off is an operator error, not a bash trace ----------
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" "STUB_LOGIN=danmt" -- --role
+if [ "$RC" -ne 0 ] && says "usage" && says "needs an argument" && ! called "box rm"; then
+  ok "a-flag-missing-its-argument-prints-usage-and-deletes-nothing"
+else
+  bad "a-flag-missing-its-argument-prints-usage-and-deletes-nothing (rc=$RC, got '$OUT')"
 fi
 
 echo
