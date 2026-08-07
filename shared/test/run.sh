@@ -4287,6 +4287,8 @@ done
 t stranded-resume-not-before-12 "" "$stranded_out"
 t stranded-resume-on-12 243 \
   "$(printf 'o/r#243@aaa\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
+t stranded-resume-state-file-format-byte-compatible \
+  $'o/r#243@aaa\t12' "$(cat "$STRANDED_STATE")"
 t stranded-resume-push-resets "" \
   "$(printf 'o/r#243@bbb\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
 t stranded-resume-new-head-count-is-one 1 \
@@ -4295,6 +4297,125 @@ t stranded-resume-new-head-count-is-one 1 \
 # fresh episode rather than inheriting the old count.
 printf '' | _stranded_resume_due "$STRANDED_STATE" 12 >/dev/null
 t stranded-resume-signal-clears-state 0 "$(wc -l <"$STRANDED_STATE" | tr -d ' ')"
+
+# #403: the near-miss bypass and the post-twelve stranded output each pass
+# through the same reporting adapter but own independent breaker state. Drive
+# ticks 1→5 at one head, then a push and ticks 6→8: a single call cannot prove
+# that the fourth and fifth attempts stay suppressed or that head movement is
+# the only reset.
+lane_tick() {
+  local lane="$1" state="$2" keys="$3" log_file="$4"
+  _resume_lane_breaker o/r "$lane" "$state" "$keys" >>"$log_file" 2>&1
+  LANE_OUT="$RESUME_LANE_DISPATCH_NUMS"
+}
+for lane in near-miss stranded; do
+  lane_state="$TMP/resume-zero-action-$lane"
+  lane_log="$TMP/resume-zero-action-$lane.log"
+  : >"$lane_log"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-dispatch-1" 403 "$LANE_OUT"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-dispatch-2" 403 "$LANE_OUT"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-dispatch-3" 403 "$LANE_OUT"
+  t "$lane-breaker-trip-at-3" 1 \
+    "$(grep -c "WARN: o/r#403: $lane resume dispatch 3 of 3 at head aaa — the previous 2 produced no commit" "$lane_log")"
+  t "$lane-breaker-trip-claims-no-third-result" 0 \
+    "$(grep -c 'previous 3 produced no commit' "$lane_log")"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-suppresses-4" "" "$LANE_OUT"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-suppresses-5" "" "$LANE_OUT"
+  t "$lane-breaker-suppression-speaks-every-tick" 2 \
+    "$(grep -c "o/r#403 $lane lane suppressed at aaa after 3 zero-action dispatches" "$lane_log")"
+  lane_tick "$lane" "$lane_state" 'o/r#403@bbb' "$lane_log"
+  t "$lane-breaker-push-resets-to-1" 403 "$LANE_OUT"
+  t "$lane-breaker-push-state-count" 1 \
+    "$(awk -F'\t' '$1 == "o/r#403@bbb" { print $2 }' "$lane_state")"
+  lane_tick "$lane" "$lane_state" 'o/r#403@bbb' "$lane_log"
+  lane_tick "$lane" "$lane_state" 'o/r#403@bbb' "$lane_log"
+  t "$lane-breaker-post-push-dispatch-3" 403 "$LANE_OUT"
+  t "$lane-breaker-logs-lane-pr-count-head" 1 \
+    "$(grep -c "o/r#403: $lane resume dispatch 3 of 3 at bbb" "$lane_log")"
+  lane_tick "$lane" "$lane_state" 'o/r#404@ccc' "$lane_log"
+  t "$lane-breaker-prunes-left-set" $'o/r#404@ccc\t1' "$(cat "$lane_state")"
+done
+
+# The concrete call sites and consumers are both part of the contract: sharing
+# either new file resets the other lane, while ignoring either verdict restores
+# the unbounded wiring without disturbing the helper-level breaker tests.
+# shellcheck disable=SC2016  # matching shell source literally
+if [ "$(grep -cF '.resume-zero-action-nearmiss.$slug' "$SHARED/lib/duty-builder.sh")" = 1 ] \
+  && grep -Fq 'near_miss_nums="$RESUME_LANE_DISPATCH_NUMS"' "$SHARED/lib/duty-builder.sh"; then
+  r1=bounded
+else
+  r1=UNBOUNDED-OR-SHARED
+fi
+t resume-lane-breaker-nearmiss-wiring bounded "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if [ "$(grep -cF '.resume-zero-action-stranded.$slug' "$SHARED/lib/duty-builder.sh")" = 1 ] \
+  && grep -Fq 'stranded_nums="$RESUME_LANE_DISPATCH_NUMS"' "$SHARED/lib/duty-builder.sh"; then
+  r1=bounded
+else
+  r1=UNBOUNDED-OR-SHARED
+fi
+t resume-lane-breaker-stranded-wiring bounded "$r1"
+ISO_NEAR="$TMP/resume-isolation-near"; ISO_STRANDED="$TMP/resume-isolation-stranded"
+lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
+lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
+lane_tick stranded "$ISO_STRANDED" 'o/r#403@same' "$TMP/resume-isolation.log"
+t resume-lane-breaker-state-files-do-not-touch $'2\t1' \
+  "$(paste <(cut -f2 "$ISO_NEAR") <(cut -f2 "$ISO_STRANDED"))"
+
+# A suppressed near miss must not hitchhike in the prompt when an unrelated PR
+# independently buys the session. Drive A past its breaker and B through the
+# real twelve-tick threshold, then build the same final dispatch union and
+# description the repository tick uses.
+MIXED_NEAR_STATE="$TMP/resume-mixed-near"
+MIXED_NEAR_LOG="$TMP/resume-mixed-near.log"
+for _tick in $(seq 1 4); do
+  lane_tick near-miss "$MIXED_NEAR_STATE" 'o/r#403@aaa' "$MIXED_NEAR_LOG"
+done
+MIXED_DUE_STATE="$TMP/resume-mixed-due"
+for _tick in $(seq 1 12); do
+  mixed_due_nums="$(printf 'o/r#404@bbb\n' | _stranded_resume_due "$MIXED_DUE_STATE" 12)"
+done
+mixed_stranded_nums="$(printf '%s %s' "$mixed_due_nums" "$LANE_OUT" \
+  | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+mixed_near_desc="$(_near_miss_dispatch_desc $'403\t9001' "$mixed_stranded_nums")"
+t resume-lane-mixed-unrelated-pr-still-wakes 404 "$(printf '%s' "$mixed_stranded_nums" | xargs)"
+t resume-lane-mixed-suppressed-near-miss-not-actionable "" "$mixed_near_desc"
+# If an independent lane admits the same PR, retain why its signal looked like
+# a near miss even though the near-miss lane itself is suppressed.
+t resume-lane-mixed-same-pr-keeps-near-miss-context '#403 (comment 9001)' \
+  "$(_near_miss_dispatch_desc $'403\t9001' '403')"
+
+# The post-twelve lane has two counters with different questions. Trip its
+# dispatch breaker after ticks 12–14, then move the head: the unsignalled
+# counter starts at one immediately, while the breaker starts at one when that
+# new head first becomes dispatchable on its twelfth tick.
+DUAL_DUE="$TMP/resume-dual-unsignalled"
+DUAL_BREAKER="$TMP/resume-dual-breaker"
+DUAL_LOG="$TMP/resume-dual.log"
+for _tick in $(seq 1 14); do
+  dual_num="$(printf 'o/r#403@aaa\n' | _stranded_resume_due "$DUAL_DUE" 12)"
+  dual_keys=""
+  [ -z "$dual_num" ] || dual_keys='o/r#403@aaa'
+  lane_tick stranded "$DUAL_BREAKER" "$dual_keys" "$DUAL_LOG"
+done
+t stranded-lane-trips-after-three-past-threshold-dispatches 3 \
+  "$(cut -f2 "$DUAL_BREAKER")"
+dual_num="$(printf 'o/r#403@bbb\n' | _stranded_resume_due "$DUAL_DUE" 12)"
+lane_tick stranded "$DUAL_BREAKER" "" "$DUAL_LOG"
+t stranded-lane-push-restarts-unsignalled-at-one $'o/r#403@bbb\t1' \
+  "$(cat "$DUAL_DUE")"
+for _tick in $(seq 2 12); do
+  dual_num="$(printf 'o/r#403@bbb\n' | _stranded_resume_due "$DUAL_DUE" 12)"
+done
+dual_keys=""; [ -z "$dual_num" ] || dual_keys='o/r#403@bbb'
+lane_tick stranded "$DUAL_BREAKER" "$dual_keys" "$DUAL_LOG"
+t stranded-lane-push-restarts-breaker-at-one $'o/r#403@bbb\t1' \
+  "$(cat "$DUAL_BREAKER")"
 
 # The no-signal hold speaks once for one repo/PR/head, then speaks again when a
 # push changes the key. report_suppressed writes through warn on stderr.

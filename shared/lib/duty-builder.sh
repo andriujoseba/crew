@@ -1453,6 +1453,60 @@ _resume_breaker() {
   mv "$tmp" "$state"
 }
 
+# _resume_lane_breaker REPO LANE STATE KEYS — bound one non-draft resume lane
+# (#403)
+# without changing what qualifies for that lane. KEYS is one repo#num@head per
+# dispatch the lane would otherwise buy this tick. The answer comes back in
+# RESUME_LANE_DISPATCH_NUMS because every report is deliberately written to the
+# tick log on stdout.
+#
+# Each caller owns STATE exclusively. `_resume_breaker` prunes absent keys from
+# the state it sees, so sharing a file between lanes would make their calls erase
+# one another's counters. An empty tick returns early because these counters are
+# consecutive dispatches, not consecutive ticks; the next non-empty tick prunes
+# stale keys.
+_resume_lane_breaker() {
+  local repo="$1" lane="$2" state="$3" keys="$4"
+  local key verdict count num head nums="" breaker=3
+  RESUME_LANE_DISPATCH_NUMS=""
+  [ -n "${keys//[[:space:]]/}" ] || return 0
+  while IFS=$'\t' read -r key verdict count; do
+    [ -n "$key" ] || continue
+    num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
+    case "$verdict" in
+      dispatch)
+        nums="$nums $num"
+        log "$repo#$num: $lane resume dispatch $count of $breaker at $head"
+        if [ "$count" -eq "$breaker" ]; then
+          warn "$repo#$num: $lane resume dispatch $count of $count at head ${head:0:12} — the previous $(( count - 1 )) produced no commit, and after this one the $lane lane is suppressed at this head until it moves (#314)"
+        fi
+        ;;
+      suppress)
+        log "no resume duty: $repo#$num $lane lane suppressed at $head after $count zero-action dispatches — only a push clears it (#314)"
+        ;;
+      *) : ;;
+    esac
+  done < <(printf '%s\n' "$keys" | awk 'NF { print $0 "\tfresh" }' \
+    | _resume_breaker "$state" "$breaker")
+  RESUME_LANE_DISPATCH_NUMS="${nums# }"
+}
+
+# _near_miss_dispatch_desc ROWS ACTIONABLE_NUMS — retain near-miss context only
+# for PRs the final dispatch union actually admits. A suppressed near-miss must
+# not ride an unrelated PR's session, but the context remains useful when the
+# same PR is independently admitted by the post-threshold or green-head lane.
+_near_miss_dispatch_desc() {
+  local rows="$1" actionable_nums="$2"
+  local num comment_id desc=""
+  while IFS=$'\t' read -r num comment_id; do
+    [ -n "$num" ] || continue
+    case " $actionable_nums " in
+      *" $num "*) desc="$desc; #$num (comment ${comment_id:-unknown})" ;;
+    esac
+  done <<<"$rows"
+  printf '%s\n' "${desc#; }"
+}
+
 # _green_head_breaker REPO SLUG ROWS — ROWS is GREEN_HEAD_ROWS. The answer comes
 # back in the global GREEN_HEAD_DISPATCH_NUMS, the subset of those PRs the
 # green-head bypass may actually resume for this tick. A global for the reason
@@ -1480,9 +1534,10 @@ _resume_breaker() {
 # counters every tick: the gate's drafts are not in this call's stdin and this
 # call's PRs are not in the gate's. The lanes get one file each.
 #
-# SUPPRESSION ENDS THE BYPASS, NOT THE PR'S CLAIM ON RESUME. A suppressed PR is
-# still in `stranded_keys` and its twelve-tick counter is still advancing
-# untouched; what it loses is the shortcut. That is why the trip WARN says so.
+# SUPPRESSION ENDS THIS BYPASS, NOT THE PR'S CLAIM ON RESUME. A suppressed PR is
+# still in `stranded_keys` and its twelve-tick counter still advances untouched,
+# but the post-threshold stranded lane now has its own breaker too. Either lane
+# may independently dispatch while its own breaker allows it.
 #
 # A TICK WITH NO ROWS RETURNS EARLY rather than rebuilding an empty state file,
 # which is _resume_gate's shape and the breaker's own rule: the count is of
@@ -1722,7 +1777,8 @@ _builder_repo() {
   # `gh pr create`). I hold the duty lock, so nothing else of mine can be
   # mid-flight — that lock is what makes resume detection sound. ---
   local resume_json draft_nums orphan_nums="" stranded_nums="" stranded_keys
-  local near_miss_rows="" near_miss_nums="" near_miss_desc="" _nm_num _nm_id
+  local stranded_due_nums="" stranded_due_keys="" _stranded_key _stranded_num
+  local near_miss_rows="" near_miss_nums="" near_miss_keys="" near_miss_desc="" _nm_num
   local green_head_rows="" green_head_nums="" flip_owed_nums=""
   local claimed_nums open_heads merged_heads N branch
   # `comments` and `reviews` are deliberately NOT requested: those nested
@@ -1782,9 +1838,19 @@ _builder_repo() {
     warn "$R: resume detection failed (a listing errored); skipping resume this tick"
     draft_nums=""
   else
-    stranded_nums="$(printf '%s\n' "$stranded_keys" \
+    stranded_due_nums="$(printf '%s\n' "$stranded_keys" \
       | _stranded_resume_due "$DUTY_DIR/.resume-unsignalled.$slug" 12 \
       | tr '\n' ' ')"
+    while IFS= read -r _stranded_key; do
+      [ -n "$_stranded_key" ] || continue
+      _stranded_num="${_stranded_key#*#}"; _stranded_num="${_stranded_num%@*}"
+      case " $stranded_due_nums " in
+        *" $_stranded_num "*) stranded_due_keys="$stranded_due_keys$_stranded_key"$'\n' ;;
+      esac
+    done <<<"$stranded_keys"
+    _resume_lane_breaker "$R" stranded \
+      "$DUTY_DIR/.resume-zero-action-stranded.$slug" "$stranded_due_keys"
+    stranded_nums="$RESUME_LANE_DISPATCH_NUMS"
     # THE BYPASS RIDES BESIDE THE THRESHOLD, NEVER THROUGH IT (#319). A
     # near-miss PR is in `stranded_keys` like any other unsignalled PR, so its
     # counter advances above exactly as it would have; what is added here is a
@@ -1792,12 +1858,18 @@ _builder_repo() {
     # keeps its threshold, its per-key counters and its state-file format —
     # nothing about genuine silence is collapsed, and a fleet upgrading mid-run
     # finds `.resume-unsignalled.<slug>` exactly as it left it.
-    while IFS=$'\t' read -r _nm_num _nm_id; do
+    while IFS=$'\t' read -r _nm_num _; do
       [ -n "$_nm_num" ] || continue
-      near_miss_nums="$near_miss_nums $_nm_num"
-      near_miss_desc="$near_miss_desc; #$_nm_num (comment ${_nm_id:-unknown})"
+      while IFS= read -r _stranded_key; do
+        [ -n "$_stranded_key" ] || continue
+        _stranded_num="${_stranded_key#*#}"; _stranded_num="${_stranded_num%@*}"
+        [ "$_stranded_num" = "$_nm_num" ] || continue
+        near_miss_keys="$near_miss_keys$_stranded_key"$'\n'
+      done <<<"$stranded_keys"
     done <<<"$near_miss_rows"
-    near_miss_desc="${near_miss_desc#; }"
+    _resume_lane_breaker "$R" near-miss \
+      "$DUTY_DIR/.resume-zero-action-nearmiss.$slug" "$near_miss_keys"
+    near_miss_nums="$RESUME_LANE_DISPATCH_NUMS"
     if [ -n "${near_miss_nums// /}" ]; then
       stranded_nums="$(printf '%s %s' "$stranded_nums" "$near_miss_nums" \
         | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
@@ -1819,6 +1891,7 @@ _builder_repo() {
       stranded_nums="$(printf '%s %s' "$stranded_nums" "$green_head_nums" \
         | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
     fi
+    near_miss_desc="$(_near_miss_dispatch_desc "$near_miss_rows" "$stranded_nums")"
     for N in $claimed_nums; do
       branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
         --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
