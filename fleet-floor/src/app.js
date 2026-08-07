@@ -1531,8 +1531,8 @@ function applyFleet(snap){
     /* Two ways to lose the box you are standing in, and they want different
        sentences. Removed from the roster is the phantom-box case above. Still
        declared but no longer deployed is the #204 filter closing a console the
-       operator has open — `crew fire`, or a box `crew new`-ed away and
-       re-created empty — and telling them it left the fleet would be false. */
+       operator has open — the box torn down and re-created empty, or an engine
+       removed by hand — and telling them it left the fleet would be false. */
     var still=snap.units.filter(function(u){return u.box===gone;})[0];
     toFloor();
     setStatus(still
@@ -1701,8 +1701,8 @@ function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dat
      a silent omission" the issue asks for. */
   var hidden=declared-ROSTER.length;
   var hire=hidden>0?tl(ROSTER.length,"hired","#8aa0b8",false,
-    hidden+" declared box"+(hidden===1?"":"es")+" "+(hidden===1?"is":"are")
-    +" not hired and has no console — crew hire <box>"):"";
+    hidden+(hidden===1?" declared box has":" declared boxes have")
+    +" no console: not hired — crew hire <box>"):"";
   var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.stopped,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
