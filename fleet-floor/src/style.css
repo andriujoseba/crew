@@ -117,6 +117,13 @@ body.floor .hud{display:none}
 .access{display:flex;flex-direction:column;gap:6px}
 .lbtn{font-family:var(--mono);font-size:10.5px;text-align:left;color:#8aa0b8;background:#0a1017;border:1px solid #142230;border-radius:7px;padding:8px 10px;cursor:pointer}
 .lbtn:hover{color:var(--cyan);border-color:#1d5772}
+/* the floor with no console on it (#204) — see syncEmptyFloor() */
+.emptyfloor{display:none}
+body.floor .emptyfloor.on{position:fixed;left:50%;top:46%;transform:translate(-50%,-50%);z-index:7;display:flex;flex-direction:column;align-items:center;gap:11px;max-width:560px;padding:26px 30px;text-align:center;background:#070c14bb;border:1px solid #16202c;border-radius:12px;pointer-events:auto}
+.emptyfloor .eh{font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#8aa0b8}
+.emptyfloor .eb{font-family:var(--mono);font-size:11.5px;line-height:1.65;color:#5a6a80}
+.emptyfloor .eb b{color:#c7d4e4}
+.emptyfloor .ec{font-family:var(--mono);font-size:12px;color:var(--cyan);background:#0a1017;border:1px solid #17313f;border-radius:7px;padding:7px 13px}
 .fleetbar,.opsbar,.rail,.console2{display:none}
 body.floor .fleetbar,body.floor .opsbar{display:flex}
 body.room .rail,body.room .console2{display:flex}

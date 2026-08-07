@@ -603,6 +603,23 @@ def unit_defaults():
         "lock": {"held": None, "stuck": False},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
+        # HIRED — "yes" / "no" / "unknown", and never an inference from the
+        # engine string. The page draws a console for what is DEPLOYED rather
+        # than for what the roster DECLARES (#204), and that filter needs a
+        # positive fact to fire on: `engine == ""` is true of a box that was
+        # never created, a box that is down, a box that did not answer, and a
+        # box that answered and has no engine — four different situations with
+        # two different answers. Inferring the filter from silence is the #308
+        # defect one reader over, so the collector — which already ranks those
+        # four apart with its own early returns — publishes the verdict and the
+        # page never re-derives it.
+        #
+        # "unknown" is the default because the two producers that never reach a
+        # probe (a stopped box, and build_unit's exception path in the poller)
+        # must land on the answer that KEEPS the console: a box whose hired
+        # state cannot be measured is exactly the hired-and-gone-dark box this
+        # page exists to show.
+        "hired": "unknown",
     }
 
 
@@ -612,14 +629,22 @@ def build_unit(unit, state, agent_conf, now):
     u.update(unit_defaults())
 
     if state is None:
+        # No box exists, so nothing was ever hired into it. This is a MEASURED
+        # "no", not a fallback: `box list` answered and this name was not in it.
+        u["hired"] = "no"
         u["note"] = "not created — crew new %s" % unit["box"]
         return u
     if state == "stopped":
+        # Keeps "unknown": the box exists and nobody can ask it anything while
+        # it is down. Hiring is not undone by `crew down`.
         u["note"] = "stopped — crew up starts it"
         return u
 
     raw, err = probe_box(unit, agent_conf)
     if raw is None:
+        # Also "unknown", and this is the one that matters most: a box that
+        # stopped answering is the hired-and-gone-dark case, and dropping its
+        # console would hide the failure the floor is for.
         u["note"] = "unreachable: %s" % err
         return u
 
@@ -703,6 +728,10 @@ def build_unit(unit, state, agent_conf, now):
     except ValueError:
         pass
 
+    # The box ANSWERED — every "cannot tell" path returned above — so its
+    # engine stamp is now evidence rather than silence, and this is the only
+    # place the empty string is allowed to mean "not hired".
+    u["hired"] = "yes" if u["engine"] else "no"
     if not u["engine"]:
         u["note"] = "not hired — crew hire %s" % unit["box"]
 
