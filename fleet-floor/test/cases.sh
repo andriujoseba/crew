@@ -143,6 +143,39 @@ print(','.join(sorted(x['box'] for x in u if x['hired']=='no')))")"
 t "wire: the payload still carries the boxes the page hides" \
   "ff-absent,ff-nothired" "$FF_UNHIRED"
 
+# ABSENCE MUST BE MEASURED BEFORE IT CAN HIDE A CONSOLE. `box list` failing
+# makes every box read absent — the ambiguity box_states' docstring is about —
+# and the grid filter would then turn a broken inventory into an empty floor
+# claiming nobody was ever hired. That is hiding on SILENCE, the one thing
+# #204's discriminator rule forbids. Called directly rather than through a
+# collector: the branch returns before it probes anything, so a fifth server
+# would cost CI a minute to assert what one import asserts here.
+FF_INV="$(python3 - "$FLOOR/server/floor.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("floormod", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+unit = {"box": "ff-x", "agent": "claude", "room": "builder"}
+asked = m.build_unit(dict(unit), None, "", 0, inventory_ok=True)
+silent = m.build_unit(dict(unit), None, "", 0, inventory_ok=False)
+print("%s|%s|%s" % (asked["hired"], silent["hired"],
+                    "named" if "inventory" in silent["note"] else silent["note"]))
+PY
+)"
+t "hired: a measured absence hides the console, an unreadable inventory does not" \
+  "no|unknown|named" "$FF_INV"
+# ...and the poller is the caller that has to ask strictly, or the branch above
+# is unreachable in production. Static, in the idiom this suite already uses
+# for the guards it cannot reach through HTTP: deleting the strict read is what
+# would silently empty a real floor.
+if grep -Fq 'states, states_ok = box_states(strict=True)' "$FLOOR/server/floor.py" &&
+   grep -Fq 'inventory_ok=states_ok' "$FLOOR/server/floor.py"; then
+  ok "hired: the poller reads the inventory strictly and passes the verdict on"
+else
+  fail "hired: the poller reads the inventory strictly and passes the verdict on" \
+       "a failed box list would empty the floor"
+fi
+
 echo "== sessions, queue, metrics"
 t "sessions: parsed"          1    "$(uf ff-working "len(u['sessions'])")"
 t "sessions: rc carried"      0    "$(uf ff-working "u['sessions'][0]['rc']")"

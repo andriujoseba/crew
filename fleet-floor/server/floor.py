@@ -623,12 +623,27 @@ def unit_defaults():
     }
 
 
-def build_unit(unit, state, agent_conf, now):
-    """Roster entry + live probe -> the record the page renders."""
+def build_unit(unit, state, agent_conf, now, inventory_ok=True):
+    """Roster entry + live probe -> the record the page renders.
+
+    `inventory_ok` is whether `box list` ANSWERED. It matters only where state
+    is None, which that one call is the sole evidence for: a failed listing
+    makes every box look absent, and #204's grid filter would then read a
+    broken inventory as a fleet nobody ever hired and draw an empty floor.
+    Absence has to be measured before it can hide anything.
+    """
     u = dict(unit)
     u.update(unit_defaults())
 
     if state is None:
+        if not inventory_ok:
+            # `box list` could not be asked, so this box's absence is silence
+            # rather than evidence, and `hired` stays "unknown" — the console
+            # is kept and says why. Hiding here would be the exact inference
+            # the verdict exists to refuse, on the one signal whose job is
+            # noticing that something stopped answering.
+            u["note"] = "box inventory unreadable — cannot tell what exists"
+            return u
         # No box exists, so nothing was ever hired into it. This is a MEASURED
         # "no", not a fallback: `box list` answered and this name was not in it.
         u["hired"] = "no"
@@ -913,7 +928,12 @@ class Fleet:
 
     def _poll_once_locked(self):
         roster = read_roster()
-        states = box_states()
+        # strict, because since #204 absence HIDES a console: an empty dict has
+        # always been ambiguous between "this host has no boxes" and "the
+        # question could not be asked", and the poller is now a caller that
+        # acts on absence. The ping tier already reads it this way; see
+        # box_states' docstring for the argument.
+        states, states_ok = box_states(strict=True)
         now = time.time()
 
         units = [None] * len(roster)
@@ -922,7 +942,8 @@ class Fleet:
         def work(i, unit):
             try:
                 units[i] = build_unit(unit, states.get(unit["box"]),
-                                      self.agent_conf(unit["agent"]), now)
+                                      self.agent_conf(unit["agent"]), now,
+                                      inventory_ok=states_ok)
             except Exception as e:                          # noqa: BLE001
                 u = dict(unit)
                 u.update(unit_defaults())
