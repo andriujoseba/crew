@@ -56,6 +56,10 @@ load_conf
 mkdir -p "$WORK_DIR" "$TREES_DIR" "$LOG_DIR"
 
 log "duty run start"
+# A stable identity for every run_session call in this process. Terminal
+# breakers use it to probe at most once per kind per tick after opening.
+# shellcheck disable=SC2034  # consumed dynamically by common.sh
+DUTY_TICK_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 
 # --- Once-per-boot sanity gate. The kernel boot id changes on every reboot;
 # the first tick after a restart probes auth and disk and prunes worktrees

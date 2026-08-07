@@ -131,6 +131,81 @@ ensure_main_clone() {
     || git -C "$dir" remote add fork "https://github.com/$ME/$name.git"
 }
 
+# _session_terminal_state KIND — one state file per dispatch lane. Keeping the
+# kind in the filename is what lets a dead review credential stop review work
+# without silencing an unrelated attention, build, or triage lane.
+_session_terminal_state() {
+  local kind="${1//[^[:alnum:]_-]/_}"
+  printf '%s/.session-terminal.%s' "$DUTY_DIR" "$kind"
+}
+
+# _session_terminal_gate KIND KEY — refuse an open lane before the CLI starts.
+# A later duty tick gets one cheap vendor probe: success clears the breaker and
+# dispatch resumes immediately; failure keeps every remaining item in that tick
+# suppressed. DUTY_TICK_ID is set by duty.sh, with $$ as a test/direct-call
+# fallback so repeated run_session calls in one process still form one tick.
+_session_terminal_gate() {
+  local kind="$1" key="$2" state count status last_tick tick tmp
+  state="$(_session_terminal_state "$kind")"
+  [ -s "$state" ] || return 0
+  IFS=$'\t' read -r count status last_tick <"$state" || return 0
+  [ "$status" = tripped ] || return 0
+  tick="${DUTY_TICK_ID:-$$}"
+  if [ "$last_tick" != "$tick" ]; then
+    if bot_cli_probe; then
+      rm -f "$state"
+      log "session breaker: kind=$kind recovered; dispatch resumed"
+      alert "✅ $(hostname): $kind session dispatch resumed after the vendor probe succeeded"
+      return 0
+    fi
+    tmp="$state.tmp.$$"
+    printf '%s\ttripped\t%s\n' "$count" "$tick" >"$tmp"
+    mv -f "$tmp" "$state"
+  fi
+  log "SESSION SKIP kind=$kind key=$key reason=terminal-breaker count=$count"
+  RUN_SESSION_RC=75
+  RUN_SESSION_LOG=""
+  return 1
+}
+
+# _session_terminal_record KIND TERMINAL ACTED LOG — count consecutive terminal
+# dispatches and alert exactly once, on the transition to the open breaker.
+# Any success, timeout, transient failure, or unclassified failure resets the
+# count: absent/uncertain hooks are deliberately fail-safe and keep working.
+_session_terminal_record() {
+  local kind="$1" terminal="$2" acted="$3" slog="$4"
+  local state count=0 status=closed last_tick="" tick tmp threshold
+  state="$(_session_terminal_state "$kind")"
+  if [ "$terminal" != yes ]; then
+    rm -f "$state"
+    return 0
+  fi
+  if [ -s "$state" ]; then
+    IFS=$'\t' read -r count status last_tick <"$state" || count=0
+  fi
+  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  count=$((count + 1))
+  threshold="${SESSION_TERMINAL_THRESHOLD:-3}"
+  case "$threshold" in ''|*[!0-9]*|0) threshold=3 ;; esac
+  tick="${DUTY_TICK_ID:-$$}"
+  status=closed
+  [ "$count" -lt "$threshold" ] || status=tripped
+  tmp="$state.tmp.$$"
+  printf '%s\t%s\t%s\n' "$count" "$status" "$tick" >"$tmp"
+  mv -f "$tmp" "$state"
+  if [ "$status" = tripped ]; then
+    warn "session breaker: kind=$kind tripped after $count consecutive terminal failures; log=$slog"
+    alert "🚨 $(hostname): $kind session dispatch stopped after $count terminal failures (acted=$acted) — $slog"
+  fi
+}
+
+session_terminal() {
+  local rc
+  declare -F bot_session_terminal >/dev/null 2>&1 || return 1
+  bot_session_terminal "$1" && rc=0 || rc=$?
+  [ "$rc" -eq 0 ]
+}
+
 # run_session KIND KEY DIR TIMEOUT PROMPT — the only way a duty launches the
 # box CLI. Adds what every hand-rolled variant lacked somewhere: a timeout (a
 # hung session used to hold the flock forever, invisibly), captured exit
@@ -138,7 +213,8 @@ ensure_main_clone() {
 # line in duty.log (the biggest logging gap in three of five metrics files).
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
-  local slog rc=0 start
+  local slog rc=0 start terminal=no
+  _session_terminal_gate "$kind" "$key" || return 0
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
   log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog"
@@ -154,9 +230,14 @@ run_session() {
   local dur=$((SECONDS - start)) verdict=ok acted reply_tail
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
+  if [ "$verdict" = FAILED ] && session_terminal "$slog"; then
+    verdict=TERMINAL
+    terminal=yes
+  fi
   acted="$(session_acted "$slog")"
   reply_tail="$(session_reply_tail "$slog")"
   log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail"
+  _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # Outcome exposed for callers that gate follow-up state on success (the seen-
   # ledger commits in duty-triage.sh) WITHOUT reintroducing the set -e abort a
   # failed session must never cause — return stays 0.
