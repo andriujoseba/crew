@@ -314,8 +314,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       });
     });
     let disarmedMatches = [];
-    for (let i = 0; i < 32; i++) {
-      await page.evaluate(() => pollFleet());
+    for (let i = 0; i < 80; i++) {
       await page.waitForTimeout(250);
       disarmedMatches = await stateMatches('disarmed');
       if (disarmedMatches.includes('ff-paused')) break;
