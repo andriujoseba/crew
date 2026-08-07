@@ -23,6 +23,41 @@ t() {  # t <name> <expected> <actual>
   fi
 }
 
+# Phase 0 stages the whole tracked tree except fleet-floor/dev, then verifies
+# the repository roots this suite names before running it. Keep that explicit
+# verifier from falling behind new literal $ROOT/<path> dependencies.
+phase0_suite_roots() {  # phase0_suite_roots <suite>
+  grep -oE '\$ROOT/[.[:alnum:]_-]+' "$1" \
+    | sed 's|^\$ROOT/||' \
+    | sort -u || true
+}
+
+phase0_verified_roots() {  # phase0_verified_roots <rehearsal>
+  sed -n '/BEGIN phase-0 suite roots/,/END phase-0 suite roots/p' "$1" \
+    | grep -oE '\$stage/[.[:alnum:]_-]+' \
+    | sed 's|^\$stage/||' \
+    | sort -u || true
+}
+
+phase0_coverage_result() {  # phase0_coverage_result <suite> <rehearsal>
+  local roots verified missing
+  roots="$(phase0_suite_roots "$1")"
+  [ -n "$roots" ] || { printf '%s\n' empty-suite-roots; return; }
+  verified="$(phase0_verified_roots "$2")"
+  [ -n "$verified" ] || { printf '%s\n' empty-verified-roots; return; }
+  missing="$(comm -23 \
+    <(printf '%s\n' "$roots") \
+    <(printf '%s\n' "$verified"))"
+  if [ -n "$missing" ]; then
+    printf 'missing:%s\n' "$(printf '%s\n' "$missing" | paste -sd, -)"
+  else
+    printf '%s\n' covered
+  fi
+}
+
+t phase0-verifier-covers-suite-roots covered \
+  "$(phase0_coverage_result "$HERE/run.sh" "$ROOT/drill/rehearsal.sh")"
+
 # Source common.sh against a scratch DUTY_DIR.
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -814,9 +849,9 @@ t rehearsal-bad-ref-no-tick 0 "$(grep -cF 'exec crew-drill -- bash -lc ~/duty/bi
 case "$p0out" in *"fixture tests green"*|*"FAIL install"*) r1=cascaded ;; *) r1=stopped ;; esac
 t rehearsal-bad-ref-no-cascade stopped "$r1"
 
-# --tree is a promise that phase 0's working-tree archive and crew hire's
-# committed ref describe one tree (#183). Refuse every dirty shape before the
-# first box operation, and show the paths plus both consumers in the error.
+# --tree is a promise that SOURCE_SHA identifies the tree the operator means
+# to drill, including the committed ref phase 1 installs (#183). Refuse every
+# dirty shape before the first box operation and show the paths and reason.
 P0TREE="$TMP/phase0-tree"
 mkdir -p "$P0TREE/shared/test" "$P0TREE/cli"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$P0TREE/shared/install.sh"
@@ -846,7 +881,7 @@ if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
   bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
 t rehearsal-dirty-shared-rc 1 "$r1"
 case "$p0out" in
-  *"shared/install.sh"*"tar czf"*"shared VERSION"*"crew hire --ref"*) r2=attributed ;;
+  *"shared/install.sh"*"SOURCE_SHA must name the tree"*"phase 1 installs"*"crew hire --ref"*) r2=attributed ;;
   *) r2=missing ;;
 esac
 t rehearsal-dirty-shared-attributed attributed "$r2"
@@ -979,6 +1014,69 @@ fi
 t rehearsal-invalid-tree-rc 1 "$r1"
 case "$p0out" in *"shared/install.sh"*"missing"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
 t rehearsal-invalid-tree-attributed attributed "$r1"
+
+# The suite/reference extraction and the phase-0 verifier are a pair: adding
+# a new repository root must fail here until the verifier names it, and an
+# empty input on either side must never look complete.
+P0COVER_SUITE="$TMP/phase0-cover-suite.sh"
+P0COVER_REHEARSAL="$TMP/phase0-cover-rehearsal.sh"
+cp "$HERE/run.sh" "$P0COVER_SUITE"
+cp "$ROOT/drill/rehearsal.sh" "$P0COVER_REHEARSAL"
+printf '%s%s\n' '$ROOT' '/postmortems' >>"$P0COVER_SUITE"
+t phase0-new-suite-root-needs-verification missing:postmortems \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+: >"$P0COVER_SUITE"
+t phase0-empty-suite-root-list-refused empty-suite-roots \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+: >"$P0COVER_REHEARSAL"
+t phase0-empty-verified-root-list-refused empty-verified-roots \
+  "$(phase0_coverage_result "$HERE/run.sh" "$P0COVER_REHEARSAL")"
+
+# Exercise the in-box verifier, not just its static root list. The fixture is
+# a valid clean git tree with one required root deliberately absent; phase 0
+# must attribute that truncation before it can run the staged suite.
+P0VERIFYTREE="$TMP/phase0-verify-tree"
+P0VERIFYHOME="$TMP/phase0-verify-home"
+P0VERIFYSHIM="$TMP/phase0-verify-bin"
+mkdir -p "$P0VERIFYTREE"/{.ceremony,.github,cli,drill,fleet-floor,shared/test} \
+  "$P0VERIFYHOME" "$P0VERIFYSHIM"
+printf 'fixture\n' >"$P0VERIFYTREE/.ceremony/marker"
+printf 'fixture\n' >"$P0VERIFYTREE/.github/marker"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$P0VERIFYTREE/cli/crew"
+printf 'fixture\n' >"$P0VERIFYTREE/drill/marker"
+printf 'fixture\n' >"$P0VERIFYTREE/fleet-floor/marker"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0VERIFYTREE/install.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0VERIFYTREE/shared/install.sh"
+printf '#!/usr/bin/env bash\nprintf "failed 0\\n"\n' >"$P0VERIFYTREE/shared/test/run.sh"
+printf '0.0.0-test\n' >"$P0VERIFYTREE/VERSION"
+chmod +x "$P0VERIFYTREE/cli/crew" "$P0VERIFYTREE/install.sh" \
+  "$P0VERIFYTREE/shared/install.sh" "$P0VERIFYTREE/shared/test/run.sh"
+git -C "$P0VERIFYTREE" init -q
+git -C "$P0VERIFYTREE" add .
+git -C "$P0VERIFYTREE" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm fixture
+# shellcheck disable=SC2016  # the shim receives and executes rehearsal's script argument
+printf '%s\n' '#!/usr/bin/env bash
+case "$1" in
+  list) printf "[]\n" ;;
+  new) exit 0 ;;
+  exec)
+    shift 5
+    HOME="$P0VERIFYHOME" bash -lc "$1" ;;
+  *) exit 2 ;;
+esac' >"$P0VERIFYSHIM/box"
+chmod +x "$P0VERIFYSHIM/box"
+if p0out="$(PATH="$P0VERIFYSHIM:$P0SHIM:$PATH" P0VERIFYHOME="$P0VERIFYHOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0VERIFYTREE" --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+t phase0-truncated-tree-rc 1 "$r1"
+case "$p0out" in *"transferred engine failed verification"*) r1=attributed ;; *) r1=missing ;; esac
+t phase0-truncated-tree-attributed attributed "$r1"
+case "$p0out" in *"fixture tests green"*) r1=ran-suite ;; *) r1=stopped-before-suite ;; esac
+t phase0-truncated-tree-stops-before-suite stopped-before-suite "$r1"
 
 # --- install-drill step 9: engine/cron/tick survival, both paths (#341) --
 # The tick leg used to demand an unchanged, NON-EMPTY last duty.log line. A box
