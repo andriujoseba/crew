@@ -62,9 +62,57 @@ triage, build and review the way the doctrine says. The legs
 - **Operator-config convergence** — the registry contract exercised against a
   real installed box.
 
-Fixtures and the drill box are left in place for inspection; the box is always
-left disarmed and its pre-drill repo registry restored. Companion prose:
+Within a run, fixtures and the drill box are left in place for inspection; the
+box is always left disarmed and its pre-drill repo registry restored. What
+happens to them *between* runs is the lifecycle below. Companion prose:
 [`shared/docs/rehearsal.md`](../shared/docs/rehearsal.md).
+
+## The round's lifecycle — create, reuse, teardown
+
+A round is real infrastructure, and it is the operator's machine and the
+operator's GitHub account that carry it.
+
+**A round creates**, per role in `--roles` (all three by default):
+
+- a **box** on the host, `crew-drill-<role>`, at 2 CPU / 4 GiB / 20 GiB;
+- a **public sandbox repository**, `<host-gh-identity>/crew-drill-<role>`,
+  which the round then fills with issues, PRs and review traffic.
+
+**A green round tears itself down.** `rehearsal-all.sh` runs
+[`drill/teardown.sh`](../drill/teardown.sh) when every leg passed, removing
+both. Nothing else on the host is touched, ever:
+
+    drill/teardown.sh [--roles "triage builder reviewer"] [--role <role>]
+                      [--box <name>] [--sandbox <owner/repo>]
+                      [--dry-run] [--yes]
+
+It names every box and repository with its creation date and asks once
+(`CREW_YES=1` or `--yes` for an unattended run), and it is idempotent — a
+second run over a clean host reports nothing to do and exits zero. A name is
+deletable only when it is **exactly** one of the drill's own names *and* is
+named by no roster on this host: a roster member is refused even when its name
+matches the drill pattern, and a name that merely starts with `crew-drill` is
+not a drill box. Every target is validated before any is deleted, so a command
+carrying one bad name removes nothing at all.
+
+**A round that did not pass keeps its boxes**, and so does `--keep`. A failed
+leg is the case where you need the box standing to find out why, so the run
+says the boxes are still there and prints the teardown command. `INCOMPLETE`
+— phase 2 never ran — counts as not passing here for the same reason.
+
+**Reuse is opt-in, and it weakens phase 1.** A rehearsal whose target box
+already exists **refuses**, naming the box, its creation date, and the two ways
+forward: tear it down, or pass `--reuse`. Reuse is legitimate when the operator
+means it, but a box that is already `gh`-authenticated cannot prove the
+creds-free half of phase 1 — the login WARN, the absent `.boot-id` marker and
+the un-spawned sessions all SKIP. That is what happened to the `0.1.0` round
+(#116), which is why the refusal is the default and why `--reuse` writes itself
+into the run's output, at the point of reuse and again in the summary. **A
+record of a reused round says so**, by carrying that line.
+
+Deleting a box does not revoke the GitHub identity it logged into. Identity
+lifecycle is a separate concern from drill fixtures, and teardown does not
+touch it.
 
 ## What a record should contain
 
