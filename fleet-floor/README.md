@@ -245,7 +245,7 @@ the two control scripts against a `crontab(1)` stand-in the test controls:
 armed, disarmed, no crontab at all, and a write that is refused.
 
 The page half (`test/browser.js`) needs `playwright-core` and a Chrome —
-`npm i playwright-core`, and `PW_CHROME` to point at one. It asserts the
+`npm i --no-save playwright-core`, and `PW_CHROME` to point at one. It asserts the
 things a screenshot cannot: that a control targeted the box the operator was
 looking at, that hostile log text stayed text, that a down box states its
 reason, that the log viewer is not a blockable popup. `test/stale.js` kills
