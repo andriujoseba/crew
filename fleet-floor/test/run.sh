@@ -271,10 +271,13 @@ if [ "$BROWSER" -eq 1 ]; then
     # they said "declared" — so they count zero, and the floor moves by the nine
     # that are new. The DEMO floor is untouched: every one of the nine is inside
     # `if (LIVE)`, because DEMO has no collector and so no hired verdict.
-    walk "browser walk" 74 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # 74 -> 80 with #312's chip vocabulary, the three named-fixture selections,
+    # and both chip-to-tile count agreements. The shared vocabulary check also
+    # runs in DEMO; its three mode-specific selections move that floor 10 -> 14.
+    walk "browser walk" 80 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
-    walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"
+    walk "browser walk (DEMO mode)" 14 "file://$FLOOR/index.html" "$TMP/shots-demo"
 
     # The #226 acceptance criteria: deterministic stills (zero steady-state
     # builds), bounded portrait motion, reproducible dev renders, reduced
