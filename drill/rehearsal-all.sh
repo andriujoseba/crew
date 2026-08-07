@@ -234,8 +234,15 @@ else
   # prompt nobody is sitting in front of. --keep is how they say no.
   "$HERE/teardown.sh" --roles "$ROLES" --yes
   rc=$?
+  # 2 is teardown's INCOMPLETE: a class it was asked to clear could not be
+  # inspected at all, so `ok teardown (boxes and sandbox repos removed)` would
+  # be a claim nobody measured. It gets its own row rather than collapsing
+  # into FAIL, because nothing went wrong with the cleanup — the host simply
+  # could not be read, and the operator needs to know which of the two it is.
   case "$rc" in
     0) SUMMARY+=("ok         teardown  (boxes and sandbox repos removed)") ;;
+    2) SUMMARY+=("INCOMPLETE teardown  (part of the round could NOT be inspected — it may still stand)")
+       overall=1 ;;
     *) SUMMARY+=("FAIL       teardown  (the round PASSED — this is cleanup, not the drill)")
        overall=1 ;;
   esac

@@ -27,6 +27,21 @@
 # Every target is validated BEFORE any of them is deleted, so a command
 # carrying one bad name removes nothing at all — a partial teardown that
 # stopped at the bad name would leave the operator guessing which half ran.
+#
+# Exit status, and the distinction it carries:
+#
+#   0  every resource class this run was asked to clear was INSPECTED, and
+#      whatever of it existed is gone. Only this answer means a clean host.
+#   1  refused (a name outside the deletable set), or a deletion failed.
+#   2  INCOMPLETE — at least one requested class could not be inspected at
+#      all, so what it holds is unknown and may still be standing.
+#
+# 2 exists because "absent" and "could not tell" must never collapse. A
+# teardown that could not read the box inventory, or had no gh identity to
+# address the sandboxes with, and reported a clean host anyway is the
+# leftovers-nobody-knows-about shape #217 was filed about — produced by the
+# script written to end it. An INCOMPLETE run still deletes everything it
+# COULD see; what it may not do is return success.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,12 +64,18 @@ usage() {
 
 die() { echo "teardown: $1" >&2; exit 1; }
 
+# A flag whose argument was left off is an operator error, and it gets the
+# usage line rather than `line 55: $2: unbound variable`. Nothing is deleted
+# on this path either way; a raw bash trace just makes a typo look like a bug
+# in the script the operator is about to trust with `box rm`.
+need() { [ "$1" -ge 2 ] || { usage >&2; die "$2 needs an argument"; }; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --roles)   ROLES="$ROLES $2"; shift 2 ;;
-    --role)    ROLES="$ROLES $2"; shift 2 ;;
-    --box)     BOXES+=("$2"); shift 2 ;;
-    --sandbox) REPOS+=("$2"); shift 2 ;;
+    --roles)   need $# --roles;   ROLES="$ROLES $2"; shift 2 ;;
+    --role)    need $# --role;    ROLES="$ROLES $2"; shift 2 ;;
+    --box)     need $# --box;     BOXES+=("$2"); shift 2 ;;
+    --sandbox) need $# --sandbox; REPOS+=("$2"); shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --yes|-y)  YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -139,6 +160,20 @@ roster_names() {
 ROSTER_NAMES="$(roster_names)"
 is_roster_member() { printf '%s\n' "$ROSTER_NAMES" | grep -qxF -- "$1"; }
 
+# --- which CLIs are here at all -------------------------------------------
+# Read before validation, because the sandbox half's names are derived from
+# the host identity and so the identity has to resolve before there is
+# anything to validate.
+have_box=0
+command -v box >/dev/null 2>&1 && have_box=1
+have_gh=0
+command -v gh >/dev/null 2>&1 && have_gh=1
+
+# Every class this run was asked to clear but could not READ, one entry each,
+# naming the class and the reason. A non-empty list is exit 2 and forbids the
+# clean-host claim, whatever else the run managed to delete.
+declare -a UNINSPECTED=()
+
 # --- validate every target, before touching anything ----------------------
 declare -a REFUSALS=()
 for role in $ROLES; do BOXES+=("crew-drill-$role"); done
@@ -158,16 +193,29 @@ done
 # derives it (`$HOST_ME/crew-drill-$ROLE`). No identity means the repo half
 # cannot be addressed at all — say so rather than quietly tearing down half a
 # round and reporting a clean host.
+#
+# The identity is a precondition for INSPECTING repositories, not only for
+# NAMING them, so it is required whenever any sandbox is in play — including
+# an explicit `--sandbox owner/repo`, which is surveyed by a `gh repo view`
+# that fails identically for "no such repository" and "not logged in". An
+# unauthenticated survey would answer "absent" for a repository standing in
+# plain sight.
+REPOS_REQUESTED=0
+[ -n "${ROLES// /}" ] && REPOS_REQUESTED=1
+[ "${#REPOS[@]}" -gt 0 ] && REPOS_REQUESTED=1
+
 REPO_OWNER=""
-REPO_HALF=1
-if [ -n "${ROLES// /}" ]; then
-  if command -v gh >/dev/null 2>&1; then
-    REPO_OWNER="$(gh api user --jq .login 2>/dev/null | tr -d '\r\n')"
-  fi
-  if [ -n "$REPO_OWNER" ]; then
-    for role in $ROLES; do REPOS+=("$REPO_OWNER/crew-drill-$role"); done
+REPO_INSPECT_FAIL=""
+if [ "$REPOS_REQUESTED" -eq 1 ]; then
+  if [ "$have_gh" -eq 0 ]; then
+    REPO_INSPECT_FAIL="no gh CLI on this host"
   else
-    REPO_HALF=0
+    REPO_OWNER="$(gh api user --jq .login 2>/dev/null | tr -d '\r\n')" || REPO_OWNER=""
+    [ -n "$REPO_OWNER" ] ||
+      REPO_INSPECT_FAIL="gh has no usable identity here (gh api user failed)"
+  fi
+  if [ -n "$REPO_OWNER" ] && [ -n "${ROLES// /}" ]; then
+    for role in $ROLES; do REPOS+=("$REPO_OWNER/crew-drill-$role"); done
   fi
 fi
 
@@ -189,14 +237,26 @@ if [ "${#REFUSALS[@]}" -gt 0 ]; then
 fi
 
 # --- survey: what of that actually exists, and when it was created --------
-have_box=0
-command -v box >/dev/null 2>&1 && have_box=1
-have_gh=0
-command -v gh >/dev/null 2>&1 && have_gh=1
+# The inventory is read ONCE and must PARSE before a single name is looked up
+# in it. The old shape asked `box list --json | jq` per name and read every
+# non-zero as "does not exist", so `box` installed with an unanswerable
+# inventory — or a missing or broken `jq` — answered "absent" for every name
+# and printed a clean host. `jq -e 'type == "array"'` is the whole gate: 0 on
+# a real array (`[]` included, which is a genuinely empty host), non-zero on
+# unparseable input and 127 when there is no jq to ask.
+BOX_LIST=""
+BOX_LIST_OK=0
+if [ "$have_box" -eq 1 ]; then
+  if BOX_LIST="$(box list --json 2>/dev/null)" &&
+     printf '%s' "$BOX_LIST" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    BOX_LIST_OK=1
+  fi
+fi
 
+# Only ever called behind BOX_LIST_OK, so its non-zero really does mean
+# "measured, and not there".
 box_exists() {
-  [ "$have_box" -eq 1 ] || return 1
-  box list --json 2>/dev/null | jq -e --arg n "$1" '.[] | select(.name == $n)' >/dev/null
+  printf '%s' "$BOX_LIST" | jq -e --arg n "$1" '.[] | select(.name == $n)' >/dev/null 2>&1
 }
 # `box info --json` returns an ARRAY, and its creation field has moved before;
 # every read here degrades to "unknown" rather than killing the survey (#47).
@@ -215,27 +275,47 @@ repo_created() {
 }
 
 declare -a DOOMED_BOXES=() DOOMED_REPOS=()
-for name in ${BOXES[@]+"${BOXES[@]}"}; do
-  box_exists "$name" && DOOMED_BOXES+=("$name")
-done
-if [ "$have_gh" -eq 1 ]; then
+if [ "${#BOXES[@]}" -gt 0 ]; then
+  if [ "$have_box" -eq 0 ]; then
+    UNINSPECTED+=("boxes (${BOXES[*]}) — no box CLI on this host")
+  elif [ "$BOX_LIST_OK" -eq 0 ]; then
+    UNINSPECTED+=("boxes (${BOXES[*]}) — 'box list --json' could not be read or parsed")
+  else
+    for name in "${BOXES[@]}"; do
+      box_exists "$name" && DOOMED_BOXES+=("$name")
+    done
+  fi
+fi
+
+if [ "$REPOS_REQUESTED" -eq 1 ] && [ -n "$REPO_INSPECT_FAIL" ]; then
+  UNINSPECTED+=("sandbox repositories of this round — $REPO_INSPECT_FAIL")
+else
   for repo in ${REPOS[@]+"${REPOS[@]}"}; do
     gh repo view "$repo" >/dev/null 2>&1 && DOOMED_REPOS+=("$repo")
   done
 fi
 
-if [ "$REPO_HALF" -eq 0 ]; then
-  echo "teardown: no gh identity on this host — the sandbox repositories were NOT inspected."
-  echo "          Re-run with a logged-in gh, or name them: --sandbox <owner>/crew-drill-<role>"
-fi
-if [ "$have_box" -eq 0 ]; then
-  echo "teardown: no box CLI on this host — the boxes were NOT inspected."
+# Said before anything is deleted and repeated in the exit status, because
+# this is the line that decides whether the host is clean. rehearsal-all.sh
+# turns the 2 into its own INCOMPLETE summary row rather than `ok teardown`.
+if [ "${#UNINSPECTED[@]}" -gt 0 ]; then
+  echo "teardown: INCOMPLETE — this run could not inspect everything it was asked to clear:" >&2
+  printf '  NOT inspected: %s\n' "${UNINSPECTED[@]}" >&2
+  echo "  Whatever those hold may still be standing. This is NOT a clean host." >&2
+  echo "  Re-run once they can be read (a logged-in gh, a box CLI with a readable" >&2
+  echo "  inventory, jq on PATH), or name the survivors: --box <name> / --sandbox <owner>/<repo>" >&2
 fi
 
 # Idempotence: a second run over a clean host has nothing to say and nothing
 # to ask. It reports so and exits zero, which is what makes teardown safe to
-# wire into rehearsal-all.sh unconditionally.
+# wire into rehearsal-all.sh unconditionally — but ONLY when every requested
+# class was actually inspected. "I found nothing" and "I could not look" are
+# the same sentence to an operator and must not be the same exit status.
 if [ "${#DOOMED_BOXES[@]}" -eq 0 ] && [ "${#DOOMED_REPOS[@]}" -eq 0 ]; then
+  if [ "${#UNINSPECTED[@]}" -gt 0 ]; then
+    echo "teardown: nothing to delete among what could be inspected — see NOT inspected above."
+    exit 2
+  fi
   echo "teardown: nothing to do — no drill box and no drill sandbox of this round exists."
   exit 0
 fi
@@ -250,6 +330,7 @@ done
 
 if [ "$DRY" -eq 1 ]; then
   echo "teardown: --dry-run, so nothing was deleted."
+  [ "${#UNINSPECTED[@]}" -eq 0 ] || exit 2
   exit 0
 fi
 
@@ -276,4 +357,11 @@ for repo in ${DOOMED_REPOS[@]+"${DOOMED_REPOS[@]}"}; do
     rc=1
   fi
 done
-exit "$rc"
+
+# An INCOMPLETE run still deleted everything it could see — that half of the
+# host really is clean and there is no reason to leave it dirty. What it may
+# not do is call the whole thing done. A deletion that FAILED is the louder
+# fact and keeps 1; only an otherwise-clean run degrades to 2.
+[ "$rc" -ne 0 ] && exit "$rc"
+[ "${#UNINSPECTED[@]}" -eq 0 ] || exit 2
+exit 0

@@ -228,7 +228,17 @@ elif [ "$REUSE" -eq 0 ]; then
   echo "phase 0: refusing to reuse it — a box that is already logged in cannot prove" >&2
   echo "         the creds-free half of phase 1, and reusing one is why the 0.1.0 drill" >&2
   echo "         skipped three pre-auth checks per role (#116). Two ways forward:" >&2
-  echo "           drill/teardown.sh --box $BOX_NAME     # then re-run for a clean drill" >&2
+  # teardown removes the drill's OWN names and nothing else, so hinting it for
+  # a `--box my-scratch` is printing a command that will be refused — the same
+  # complaint #217 makes about install.sh advertising `crew upgrade --all` for
+  # boxes that verb cannot reach. A custom box is the operator's to clear.
+  case "$BOX_NAME" in
+    crew-drill|crew-drill-triage|crew-drill-builder|crew-drill-reviewer)
+      echo "           drill/teardown.sh --box $BOX_NAME     # then re-run for a clean drill" >&2 ;;
+    *)
+      echo "           remove $BOX_NAME yourself (box rm $BOX_NAME) — teardown.sh clears only" >&2
+      echo "           the drill's own names and will refuse this one — then re-run" >&2 ;;
+  esac
   echo "           drill/rehearsal.sh … --reuse          # keep it, and record why" >&2
   exit 1
 else
