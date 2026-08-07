@@ -3720,9 +3720,16 @@ CHK_FAILURE_THEN_RUNNING='[
 SC_BAD='[{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
 SC_ERR='[{"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"}]'
 SC_MIX='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","context":"ci/legacy","state":"FAILURE"}]'
+# The status carries `startedAt`, not `createdAt`: `gh` requests GitHub's
+# `createdAt` for a StatusContext and serialises it under its own key, so
+# `createdAt` never reaches a caller. `latest_checks` reads `.startedAt //
+# .createdAt`, so the generation ordering this fixture pins is unchanged either
+# way — but the fiction is the one that went on to kill `_resume_newest_check`
+# one module over (#391 round 2), and a fixture file cannot hold a shape
+# contract while contradicting it here.
 SC_COLLISION_STATUS_LAST='[
   {"__typename":"CheckRun","name":"ci/build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-07-29T11:00:07Z","completedAt":"2026-07-29T11:00:17Z"},
-  {"__typename":"StatusContext","context":"ci/build","state":"FAILURE","createdAt":"2026-07-29T11:05:00Z"}]'
+  {"__typename":"StatusContext","context":"ci/build","state":"FAILURE","startedAt":"2026-07-29T11:05:00Z"}]'
 SC_COLLISION_STATUS_FIRST="$(printf '%s' "$SC_COLLISION_STATUS_LAST" | jq 'reverse')"
 
 state_of() { hc '[]' "$(mk_prc "$1")" | cut -f4; }
@@ -4655,6 +4662,710 @@ else
 fi
 t resume-prompt-quotes-the-doctrine agreed "$r1"
 
+# --- #384: three stuck states the resume gate could not leave ----------------
+# A session finished a fix round on PR #381, pushed d4b8035, and parked waiting
+# for `ci-floor` before signalling. `ci-floor` went green at ~07:52Z; the session
+# was still parked at 08:38Z and the operator unstuck it by hand. There was no
+# wake to be had: `_resume_newest_foreign` paginates comments and reviews, and a
+# check conclusion is neither, so nothing in the fingerprint could move.
+#
+# These fixtures are that timeline, plus PR #386's — a ready, green, correctly
+# signalled PR converted to draft six seconds into the request pass, which the
+# handoff listing then skipped and the resume ledger then suppressed.
+P384_HEAD=d4b8035d4b8035d4b8035d4b8035d4b8035d4b80
+P384_OLD=aa11bb22aa11bb22aa11bb22aa11bb22aa11bb22
+P384_START=2026-08-06T07:41:19Z
+P384_DONE=2026-08-06T07:52:18Z
+p384_run() {  # p384_run CONCLUSION [COMPLETED] — one CheckRun in a rollup
+  # The jq arg is `fin`, not `done`: shellcheck reads a bare `done` after --arg
+  # as the loop keyword and warns (SC1010), and ci-shell runs it without a
+  # severity floor, so a warning is a red job.
+  #
+  # THE RUNNING SHAPE IS `gh`'s, NOT A TIDIED ONE. A running CheckRun comes back
+  # with `conclusion:""` and Go's ZERO TIME in `completedAt` — neither key is
+  # ever absent, live on nodejs/node:
+  #   {"__typename":"CheckRun","completedAt":"0001-01-01T00:00:00Z",
+  #    "conclusion":"","name":"coverage-windows","status":"IN_PROGRESS",...}
+  # The first cut of this fixture omitted both, which is the only reason a
+  # `completedAt != ""` test for "has concluded" passed here while fabricating a
+  # stamp on every real running check (#391 round 2, claude).
+  jq -cn --arg c "$1" --arg fin "${2:-}" --arg started "$P384_START" \
+    '[{__typename:"CheckRun", name:"ci-floor", workflowName:"ci-floor",
+       status:(if $c == "" then "IN_PROGRESS" else "COMPLETED" end),
+       conclusion:$c, startedAt:$started,
+       completedAt:(if $fin == "" then "0001-01-01T00:00:00Z" else $fin end)}]'
+}
+P384_ZERO_TIME=0001-01-01T00:00:00Z
+P384_GREEN="$(p384_run SUCCESS "$P384_DONE")"
+P384_PENDING="$(p384_run "" "")"
+P384_RED="$(p384_run FAILURE "$P384_DONE")"
+p384_pr() {  # p384_pr NUM DRAFT ROLLUP SIGNAL-SHA REQUESTED-JSON
+  jq -cn --argjson num "$1" --argjson draft "$2" --argjson roll "$3" \
+    --arg head "$P384_HEAD" --arg sig "$4" --argjson req "${5:-[]}" \
+    '{number:$num, isDraft:$draft, headRefOid:$head, body:"Closes #290",
+      statusCheckRollup:$roll, reviewRequests:$req,
+      comments:(if $sig == "" then []
+                else [{author:{login:"me"}, body:("ANSWER " + $sig),
+                       createdAt:"2026-08-06T07:39:00Z", id:"9001"}] end)}'
+}
+
+# 1. THE CONCLUSION STAMP. A CheckRun contributes only once it has finished, so
+# a running check is no stamp at all — reading `startedAt` here would move the
+# fingerprint when CI STARTS, which is the tick the session is still working
+# through rather than the one it is waiting for.
+P384_ONE="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_GREEN" '' )" '[$pr]')"
+t p384-check-stamp-is-the-conclusion "$P384_DONE" "$(_resume_newest_check "$P384_ONE" 381)"
+P384_RUNNING="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_PENDING" '')" '[$pr]')"
+t p384-running-check-has-no-stamp "" "$(_resume_newest_check "$P384_RUNNING" 381)"
+t p384-running-check-does-not-leak-startedAt 0 \
+  "$(_resume_newest_check "$P384_RUNNING" 381 | grep -c "$P384_START")"
+# …and does not leak the ZERO TIME either. `completedAt` is present-but-zero
+# while a check runs, so "has concluded" is `.status == "COMPLETED"` and not a
+# non-empty string. The three assertions above are one contract read three ways:
+# a running check contributes NOTHING, neither a real start nor a fabricated
+# end. A fabricated one sorts below every genuine stamp so it would never mask a
+# conclusion — but it displaces the documented `0` floor, and the floor is what
+# the gate's own comment promises a reader.
+t p384-running-check-does-not-leak-the-zero-time 0 \
+  "$(_resume_newest_check "$P384_RUNNING" 381 | grep -c "$P384_ZERO_TIME")"
+t p384-running-fixture-carries-the-zero-time 1 \
+  "$(printf '%s' "$P384_RUNNING" | grep -c "$P384_ZERO_TIME")"
+# A RED check has concluded, and its stamp counts: the fingerprint's job is to
+# say the head answered, not that it passed. Whether green or red is the
+# due-predicates' question, two blocks down.
+P384_FAILED="$(jq -cn --argjson pr "$(p384_pr 381 true "$P384_RED" '')" '[$pr]')"
+t p384-red-check-still-concludes "$P384_DONE" "$(_resume_newest_check "$P384_FAILED" 381)"
+# The NEWEST across several checks, not the last one read.
+P384_MANY="$(jq -cn --arg h "$P384_HEAD" '[{number:381,isDraft:true,headRefOid:$h,body:"",
+  reviewRequests:[],comments:[],statusCheckRollup:[
+    {__typename:"CheckRun",name:"a",status:"COMPLETED",conclusion:"SUCCESS",
+     startedAt:"2026-08-06T07:00:00Z",completedAt:"2026-08-06T07:10:00Z"},
+    {__typename:"CheckRun",name:"b",status:"COMPLETED",conclusion:"SUCCESS",
+     startedAt:"2026-08-06T07:00:00Z",completedAt:"2026-08-06T07:52:18Z"}]}]')"
+t p384-check-stamp-is-the-newest "$P384_DONE" "$(_resume_newest_check "$P384_MANY" 381)"
+# A StatusContext has no completedAt at all, so its start stands in — but only
+# where its state is TERMINAL. A PENDING context's stamp is when the wait began,
+# and the rollup mixes the two shapes (head-checks.jq's header).
+#
+# THE KEY IS `startedAt`, WHICH GITHUB'S SCHEMA DOES NOT HAVE. `gh` requests
+# StatusContext.createdAt and serialises it under its own `startedAt`, so
+# `createdAt` never reaches a caller of `gh pr list --json statusCheckRollup`.
+# Live on python/cpython:
+#   {"__typename":"StatusContext","context":"CLA Signing",
+#    "startedAt":"2026-08-06T15:09:40Z","state":"SUCCESS","targetUrl":""}
+# The first cut of this fixture fabricated `createdAt`, so it passed against a
+# shape that does not occur while the branch was dead against every real rollup
+# — met for a repo whose checks are CheckRuns, crew's own among them, and unmet
+# exactly where a legacy status concludes. That is head-checks.jq's #50 (its
+# header, and `head-status-context-failure` above) transposed from grading to
+# stamping, which is why this fixture is now `gh`'s output key for key
+# (#391 round 2, codex and claude).
+P384_CTX="$(jq -cn --arg h "$P384_HEAD" --arg s "$P384_DONE" '[{number:381,isDraft:true,
+  headRefOid:$h,body:"",reviewRequests:[],comments:[],
+  statusCheckRollup:[{__typename:"StatusContext",context:"legacy",state:"SUCCESS",
+                      startedAt:$s,targetUrl:""}]}]')"
+t p384-status-context-concludes "$P384_DONE" "$(_resume_newest_check "$P384_CTX" 381)"
+# The negative was VACUOUS before the fix — there was no `createdAt` for the
+# terminal-state gate to reject, so it could not fail. It is a real assertion
+# for the first time here.
+P384_CTX_WAIT="$(printf '%s' "$P384_CTX" | jq -c '.[0].statusCheckRollup[0].state = "PENDING" | .')"
+t p384-pending-status-context-has-no-stamp "" "$(_resume_newest_check "$P384_CTX_WAIT" 381)"
+# The `//` form, not a bare swap to `.startedAt`: `head-checks.jq`'s own idiom
+# in `latest_checks`, so a fleet box whose `gh` serialises GitHub's key
+# unrenamed still stamps rather than going quietly dead a second time.
+P384_CTX_CREATED="$(printf '%s' "$P384_CTX" \
+  | jq -c '.[0].statusCheckRollup[0] |= (.createdAt = .startedAt | del(.startedAt))')"
+t p384-status-context-createdAt-still-concludes "$P384_DONE" \
+  "$(_resume_newest_check "$P384_CTX_CREATED" 381)"
+# No checks configured is not a conclusion either; the gate floors it to `0`.
+P384_NOCI="$(jq -cn --argjson pr "$(p384_pr 381 true '[]' '')" '[$pr]')"
+t p384-no-checks-no-stamp "" "$(_resume_newest_check "$P384_NOCI" 381)"
+# A lookup that FAILED is not a lookup that found nothing — the
+# _resume_newest_foreign contract, so the gate can warn rather than silently
+# flooring a half it could not read.
+t p384-check-lookup-failure-is-nonzero 1 \
+  "$(_resume_newest_check "$P384_ONE" 999 >/dev/null 2>&1; echo $?)"
+
+# MUST FAIL — a rollup fixture that is not the shape `gh` emits. Both halves of
+# the round-2 defect were fixtures, not code: the code was a correct reading of
+# a rollup nobody receives, and every test above passed against it. crew's own
+# CI is a single CheckRun, so this repo's CI can never catch either one — the
+# same reason head-checks.jq keeps `SC_BAD` and says so in its header. That
+# makes a shape guard the only thing standing between this class and its next
+# recurrence, and it is asserted on the fixtures as DATA rather than by reading
+# the source, so a fixture built by transform is covered like a literal one.
+p384_shape_lies() {  # p384_shape_lies ROLLUP — count nodes lying about `gh`
+  printf '%s' "$1" | jq '[ .[] | select(
+      # `gh` renames StatusContext.createdAt to `startedAt` on the way out, so a
+      # fixture carrying createdAt is asserting against a shape that never
+      # arrives — the dead branch, exactly.
+      (.__typename == "StatusContext" and has("createdAt"))
+      # A running CheckRun carries a present-but-zero completedAt, so a fixture
+      # omitting the key lets a non-empty test for "has concluded" pass here and
+      # fabricate a stamp in production — the half claude found, exactly.
+      or (.__typename == "CheckRun" and (.status // "") != "COMPLETED"
+          and ((has("completedAt") and .completedAt != null) | not))
+    )] | length'
+}
+p384_rollup_of() { printf '%s' "$1" | jq -c '.[0].statusCheckRollup'; }
+t p384-fixture-shape-green 0 "$(p384_shape_lies "$P384_GREEN")"
+t p384-fixture-shape-pending 0 "$(p384_shape_lies "$P384_PENDING")"
+t p384-fixture-shape-red 0 "$(p384_shape_lies "$P384_RED")"
+t p384-fixture-shape-many 0 "$(p384_shape_lies "$(p384_rollup_of "$P384_MANY")")"
+t p384-fixture-shape-status-context 0 "$(p384_shape_lies "$(p384_rollup_of "$P384_CTX")")"
+t p384-fixture-shape-pending-status-context 0 \
+  "$(p384_shape_lies "$(p384_rollup_of "$P384_CTX_WAIT")")"
+t p384-fixture-shape-collision 0 "$(p384_shape_lies "$SC_COLLISION_STATUS_LAST")"
+# The guard catches the shapes this round shipped broken, or it is decoration.
+t p384-shape-guard-catches-status-createdAt 1 \
+  "$(p384_shape_lies "$(p384_rollup_of "$P384_CTX_CREATED")")"
+t p384-shape-guard-catches-running-without-completedAt 1 \
+  "$(p384_shape_lies "$(printf '%s' "$P384_PENDING" | jq -c 'map(del(.completedAt))')")"
+# `P384_CTX_CREATED` is the ONE fixture that carries createdAt on purpose — it
+# asserts the `//` fallback for a `gh` that does not rename the field — so it is
+# named here rather than exempted quietly, and the assertion above is that the
+# guard does see it. Every other fixture in this file is `gh`'s shape, which a
+# literal scan says in one line and independently of the list above.
+# The pattern is split across two lines on purpose: written whole it would
+# match ITSELF and the guard would red on its own source.
+P384_SC_LITERAL='__typename":"StatusContext"'
+t p384-no-fixture-fabricates-status-createdAt 0 \
+  "$(grep -c "$P384_SC_LITERAL"'.*createdAt":' "$SHARED/test/run.sh")"
+
+# 2. THE CHECK STATE, graded through head-checks.jq and never restated here.
+t p384-state-green "$(printf '381\tgreen')" "$(_resume_check_states o/r "$P384_ONE")"
+t p384-state-pending "$(printf '381\tpending')" "$(_resume_check_states o/r "$P384_RUNNING")"
+t p384-state-red "$(printf '381\tred')" "$(_resume_check_states o/r "$P384_FAILED")"
+# Drafts are graded too, which head-checks.jq alone will not do — the flip-owed
+# predicate's whole subject is a draft.
+t p384-state-grades-drafts 1 "$(_resume_check_states o/r "$P384_ONE" | grep -c green)"
+t p384-state-unreadable-is-nonzero 1 \
+  "$(_resume_check_states o/r 'not json' >/dev/null 2>&1; echo $?)"
+# MUST FAIL — a second copy of the green whitelist in this module. `is_green`
+# is fail-closed by construction (#64) and a restatement of it here would be a
+# second predicate that drifts the first time GitHub adds a conclusion.
+t p384-green-is-not-restated-in-the-engine 0 \
+  "$(grep -c 'SUCCESS.*NEUTRAL.*SKIPPED' "$SHARED/lib/duty-builder.sh")"
+
+# 3. THE GREEN-HEAD DUE-PREDICATE. Its evidence is a check conclusion where
+# #319's is a near-miss comment, and it reaches the same conclusion from it: the
+# checks have finished, the head is passing, and there is nothing left to wait
+# for, so the twelve ticks are no longer buying information.
+P384_GH_LISTING="$(jq -cn \
+  --argjson a "$(p384_pr 381 false "$P384_GREEN" '')" \
+  --argjson b "$(p384_pr 382 false "$P384_PENDING" '')" \
+  --argjson c "$(p384_pr 383 false "$P384_RED" '')" \
+  --argjson d "$(p384_pr 384 false "$P384_GREEN" "$P384_HEAD")" \
+  --argjson e "$(p384_pr 385 false "$P384_GREEN" "$P384_OLD")" \
+  --argjson f "$(p384_pr 386 true "$P384_GREEN" '')" \
+  --argjson g "$(p384_pr 387 false '[]' '')" \
+  '[$a,$b,$c,$d,$e,$f,$g] | map(if .number == 388 then . else . end)')"
+# #388: a thread that could not be read is not an empty thread.
+P384_GH_LISTING="$(printf '%s' "$P384_GH_LISTING" | jq -c \
+  --argjson h "$(p384_pr 388 false "$P384_GREEN" '')" '. + [$h | .comments = null]')"
+_green_head_resume_rows o/r me ANSWER "$P384_GH_LISTING" >"$TMP/p384-green.log" 2>&1
+p384_gh_out="$(cat "$TMP/p384-green.log")"
+# 381 and 385 alone. 382 is PENDING and 383 is RED — the measured twelve-tick
+# case, untouched; 384 signalled its current head; 386 is a draft (the draft
+# path owns it); 387 has no checks configured, which is not green; 388's thread
+# could not be read.
+p384_gh_nums="$(printf '%s' "$GREEN_HEAD_ROWS" | awk -F'\t' 'NF{print $1}')"
+t p384-green-head-rows "$(printf '381\n385')" "$p384_gh_nums"
+# MUST FAIL, one per line — these are the regressions, and each is its own
+# assertion so a failure names which guarantee broke rather than "the set moved".
+t p384-pending-head-still-waits-twelve 0 "$(grep -c '^382$' <<<"$p384_gh_nums")"
+t p384-red-head-still-waits-twelve 0 "$(grep -c '^383$' <<<"$p384_gh_nums")"
+t p384-correct-signal-is-never-resumed 0 "$(grep -c '^384$' <<<"$p384_gh_nums")"
+t p384-draft-is-not-this-predicates-business 0 "$(grep -c '^386$' <<<"$p384_gh_nums")"
+t p384-no-checks-is-not-green 0 "$(grep -c '^387$' <<<"$p384_gh_nums")"
+t p384-unread-thread-is-not-a-detection 0 "$(grep -c '^388$' <<<"$p384_gh_nums")"
+# A signal naming a SUPERSEDED head is no signal at this head: 385 is due.
+t p384-stale-signal-is-still-unsignalled 1 "$(grep -c '^385$' <<<"$p384_gh_nums")"
+# THE HEAD RIDES WITH THE NUMBER, from this read and not a second one: the
+# caller builds the breaker's `<repo>#<num>@<head>` key out of this row, and two
+# reads of the listing are two chances to key a count to the wrong head.
+t p384-green-row-carries-the-head "$(printf '381\t%s\n385\t%s' "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
+# EXACTLY ONE WARN per detection, naming the head in full and the reason.
+t p384-green-warns-once-per-detection 2 "$(grep -c 'WARN' <<<"$p384_gh_out")"
+t p384-green-warn-names-the-head 2 "$(grep -c "green and no signal names that head" <<<"$p384_gh_out")"
+t p384-green-warn-carries-the-full-sha 2 "$(grep -c "$P384_HEAD" <<<"$p384_gh_out")"
+t p384-green-warn-names-the-pr 1 "$(grep -c 'WARN.*o/r#381' <<<"$p384_gh_out")"
+# DETECTION DOES NOT PROMISE A DISPATCH. Whether this tick actually resumes is
+# the breaker's answer, said at the breaker's site — so the detection WARN must
+# not carry the old "so resuming this tick instead of the twelfth" tail, which
+# would be a claim this function cannot make once a bypass can be suppressed.
+t p384-green-warn-does-not-promise-a-dispatch 0 \
+  "$(grep -c 'resuming this tick' <<<"$p384_gh_out")"
+# The bypass ADDS a reason to be due and removes none: both PRs it named are
+# still stranded the ordinary way, their counters advancing exactly as before,
+# and so are the three it declined to name. Five in total — 384 signalled its
+# head, 386 is a draft and 388's thread could not be read, and none of those
+# three was ever stranded.
+t p384-green-bypassed-are-still-stranded "$(printf 'o/r#381@%s\no/r#385@%s' \
+    "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$P384_GH_LISTING" | _stranded_resume_keys o/r me ANSWER \
+     | grep -E '#(381|385)@')"
+t p384-green-declined-are-still-stranded "$(printf 'o/r#382@%s\no/r#383@%s\no/r#387@%s' \
+    "$P384_HEAD" "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$P384_GH_LISTING" | _stranded_resume_keys o/r me ANSWER \
+     | grep -E '#(382|383|387)@')"
+t p384-green-strands-nothing-new 5 \
+  "$(printf '%s' "$P384_GH_LISTING" | _stranded_resume_keys o/r me ANSWER | wc -l | tr -d ' ')"
+# FAIL-SOFT: a rollup that cannot be graded warns and leaves every PR out for
+# the tick. It must NEVER fabricate a green — the whole predicate is an
+# assertion about evidence, and inventing the evidence inverts it.
+_green_head_resume_rows o/r me ANSWER 'not json' >"$TMP/p384-green-fail.log" 2>&1
+t p384-green-ungradeable-detects-nothing "" "$(printf '%s' "$GREEN_HEAD_ROWS" | awk 'NF')"
+t p384-green-ungradeable-warns 1 \
+  "$(grep -c 'check rollup could not be graded' "$TMP/p384-green-fail.log")"
+
+# 3b. THE GREEN-HEAD BOUND. Detection above answers "is this PR due"; the
+# breaker answers "how many times may being due buy a session before the
+# evidence is that the sessions produce nothing". The predicate holds no state
+# of its own, so unbounded it would name the same PR every tick for as long as
+# the head stood — a resume session every five minutes, indefinitely, which is
+# the #314 flood re-entering through the door built to end it. That is this
+# PR's own argument for bounding the flip-owed lane, and it is no weaker here:
+# "non-draft, green head, no signal at that head" is a shape every PR passes
+# through on the ordinary path between CI concluding and its builder signalling.
+P384_GB="$TMP/p384-green-breaker"; P384_GB_LOG="$TMP/p384-green-breaker.log"
+mkdir -p "$P384_GB"
+P384_GB_SAVED_DUTY="$DUTY_DIR"; DUTY_DIR="$P384_GB"
+p384_gb_tick() {  # p384_gb_tick ROWS — one tick of the bypass, caller side
+  GREEN_HEAD_DISPATCH_NUMS=""
+  _green_head_breaker o/r o__r "$1" >"$P384_GB_LOG" 2>&1 || true
+}
+P384_GB_ROWS="$(printf '381\t%s\n' "$P384_HEAD")"
+for _p384_i in 1 2 3; do
+  p384_gb_tick "$P384_GB_ROWS"
+  t "p384-green-bypass-dispatch-$_p384_i" 381 "$GREEN_HEAD_DISPATCH_NUMS"
+done
+t p384-green-bypass-dispatch-is-said 1 \
+  "$(grep -c "green head owed a signal .* dispatch 3 of 3 at $P384_HEAD" "$P384_GB_LOG")"
+# The trip fires as the THIRD dispatch goes out and asserts only what is
+# observed — the previous two produced nothing; the third has not run yet.
+t p384-green-bypass-trips-once 1 \
+  "$(grep -c 'the previous 2 produced no signal' "$P384_GB_LOG")"
+# AND NO FOURTH. This is the assertion the round asked for.
+p384_gb_tick "$P384_GB_ROWS"
+t p384-green-bypass-no-fourth-dispatch "" "$GREEN_HEAD_DISPATCH_NUMS"
+t p384-green-bypass-suppression-is-said 1 \
+  "$(grep -c "green-head bypass suppressed at $P384_HEAD after 3 zero-action dispatches" "$P384_GB_LOG")"
+# SUPPRESSION ENDS THE BYPASS, NOT THE PR'S CLAIM ON RESUME: the twelve-tick
+# counter is a different lane with a different state file, and the suppression
+# line says so rather than leaving a reader to infer the PR was abandoned.
+t p384-green-bypass-suppression-names-the-other-lane 1 \
+  "$(grep -c 'the twelve-tick counter still runs' "$P384_GB_LOG")"
+# A PUSH ENDS THE EPISODE, with no separate observation of "produced no commit":
+# the head is in the key, so a moved head is a key never seen.
+p384_gb_tick "$(printf '381\t%s\n' "$P384_OLD")"
+t p384-green-bypass-push-resets 381 "$GREEN_HEAD_DISPATCH_NUMS"
+t p384-green-bypass-count-restarts-at-one 1 \
+  "$(awk -F'\t' -v k="o/r#381@$P384_OLD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action-green.o__r")"
+t p384-green-bypass-prunes-the-old-head 0 \
+  "$(grep -c "@$P384_HEAD" "$P384_GB/.resume-zero-action-green.o__r")"
+# THE TWO LANES DO NOT SHARE A STATE FILE, and this is why. _resume_breaker
+# rebuilds its state from stdin alone and `mv`s it into place, so keys absent
+# from a call are pruned (`resume-breaker-state-prunes` pins it deliberately).
+# Two call sites on one file would therefore erase each other's counters every
+# tick — the gate's drafts are not in the bypass's stdin, and the bypass's PRs
+# are not in the gate's. Written through _resume_breaker itself, so this is the
+# gate's own state file in the gate's own format.
+printf 'o/r#999@%s\tfresh\n' "$P384_HEAD" \
+  | _resume_breaker "$P384_GB/.resume-zero-action.o__r" 3 >/dev/null
+p384_gb_tick "$(printf '381\t%s\n' "$P384_OLD")"
+t p384-green-bypass-leaves-the-gate-counters 1 \
+  "$(awk -F'\t' -v k="o/r#999@$P384_HEAD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action.o__r")"
+t p384-green-bypass-keeps-its-own-count 2 \
+  "$(awk -F'\t' -v k="o/r#381@$P384_OLD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action-green.o__r")"
+# A QUIET TICK DISPATCHES NOTHING AND RESETS NOTHING. The count is of
+# consecutive DISPATCHES, not consecutive ticks — the breaker's own rule — so a
+# tick with no rows returns early rather than rebuilding an empty state file.
+p384_gb_tick ""
+t p384-green-bypass-quiet-tick-is-empty "" "$GREEN_HEAD_DISPATCH_NUMS"
+t p384-green-bypass-quiet-tick-keeps-the-count 2 \
+  "$(awk -F'\t' -v k="o/r#381@$P384_OLD" '$1 == k {print $2}' "$P384_GB/.resume-zero-action-green.o__r")"
+DUTY_DIR="$P384_GB_SAVED_DUTY"
+unset -f p384_gb_tick
+
+# 4. THE FLIP-OWED DUE-PREDICATE — the terminal state neither path can leave.
+# PR #386 was ready, green and correctly signalled when it was converted to
+# draft six seconds into the request pass. The request path stopped seeing it
+# (the handoff listing is `select(.isDraft | not)`) and the resume ledger
+# suppressed it (unchanged head, nobody foreign spoke). Both correct; together a
+# hole, and no panel was ever requested.
+P384_PANEL='["p1","p2"]'
+P384_SIG_AT=2026-08-06T09:54:56Z
+# The verdicts the stubbed GraphQL serves, one file per PR — a FILE for the same
+# reason the #314 block's speech files are: the call sites wrap this in a command
+# substitution and a subshell's variables die with it.
+P384_GQL="$TMP/p384-gql"; mkdir -p "$P384_GQL"
+p384_verdicts() {  # p384_verdicts NUM REQUESTED-JSON REVIEWS-JSON
+  jq -cn --argjson req "$2" --argjson rev "$3" \
+    '{requested:$req, reviews:$rev}' >"$P384_GQL/$1"
+}
+p384_review() {  # p384_review LOGIN STATE SUBMITTED [OID]
+  jq -cn --arg l "$1" --arg s "$2" --arg at "$3" --arg oid "${4:-$P384_HEAD}" \
+    '{author:{login:$l}, state:$s, submittedAt:$at, commit:{oid:$oid}}'
+}
+# shellcheck disable=SC2317  # called indirectly by _flip_owed_resume_rows
+gh() {
+  local args="$*" n f
+  n="${args##*num=}"; n="${n%% *}"
+  f="$P384_GQL/$n"
+  [ -f "$f" ] || return 1
+  jq -cn --arg head "$P384_HEAD" --arg sig "$P384_HEAD" --arg at "$P384_SIG_AT" \
+    --argjson v "$(cat "$f")" \
+    '{data:{repository:{pullRequest:{
+        headRefOid:$head,
+        comments:{nodes:[{author:{login:"me"}, body:("ANSWER " + $sig), createdAt:$at}]},
+        reviewRequests:{nodes:($v.requested | map({requestedReviewer:{login:.}}))},
+        latestOpinionatedReviews:{nodes:$v.reviews}}}}}'
+}
+p384_verdicts 386 '[]' '[]'
+p384_verdicts 387 '["p1"]' '[]'
+p384_verdicts 388 '[]' '[]'
+p384_verdicts 389 '[]' '[]'
+p384_verdicts 390 '[]' '[]'
+p384_verdicts 391 '[]' '[]'
+p384_verdicts 392 '["advisory-bot"]' '[]'
+# 393 is the case that rewrote this predicate: a draft the ENGINE made, because
+# a round closed against its author (_redraft_authored_pr), whose thread still
+# carries the signal that opened that round. Both panelists answered it with
+# CHANGES_REQUESTED at this head AFTER it was posted, and GitHub drops a
+# change-requester from requested_reviewers in the same instant — so "nobody is
+# on reviewRequests" is true of it, and it owes a ROUND REPLY, not a flip.
+p384_verdicts 393 '[]' "$(jq -cn --argjson a "$(p384_review p1 CHANGES_REQUESTED 2026-08-06T10:30:00Z)" \
+  --argjson b "$(p384_review p2 CHANGES_REQUESTED 2026-08-06T10:31:00Z)" '[$a,$b]')"
+# 394 is its control: the same shape with the verdicts PRECEDING the signal, so
+# the signal answers them and the panel is owed a re-read. #286's ordering rule,
+# reached through request-panel.jq rather than restated here.
+p384_verdicts 394 '[]' "$(jq -cn --argjson a "$(p384_review p1 CHANGES_REQUESTED 2026-08-06T09:00:00Z)" \
+  --argjson b "$(p384_review p2 CHANGES_REQUESTED 2026-08-06T09:01:00Z)" '[$a,$b]')"
+# 395: the whole panel already APPROVES this head. Nothing is owed of anyone, so
+# nothing is requestable and this is a converged draft, not a stranded one.
+p384_verdicts 395 '[]' "$(jq -cn --argjson a "$(p384_review p1 APPROVED 2026-08-06T10:30:00Z)" \
+  --argjson b "$(p384_review p2 APPROVED 2026-08-06T10:31:00Z)" '[$a,$b]')"
+P384_FO_LISTING="$(jq -cn \
+  --argjson a "$(p384_pr 386 true "$P384_GREEN" "$P384_HEAD")" \
+  --argjson b "$(p384_pr 387 true "$P384_GREEN" "$P384_HEAD" '[{"login":"p1"}]')" \
+  --argjson c "$(p384_pr 388 true "$P384_GREEN" '')" \
+  --argjson d "$(p384_pr 389 true "$P384_PENDING" "$P384_HEAD")" \
+  --argjson e "$(p384_pr 390 false "$P384_GREEN" "$P384_HEAD")" \
+  --argjson f "$(p384_pr 391 true "$P384_GREEN" "$P384_OLD")" \
+  --argjson g "$(p384_pr 392 true "$P384_GREEN" "$P384_HEAD" '[{"login":"advisory-bot"}]')" \
+  --argjson h "$(p384_pr 393 true "$P384_GREEN" "$P384_HEAD")" \
+  --argjson i "$(p384_pr 394 true "$P384_GREEN" "$P384_HEAD")" \
+  --argjson j "$(p384_pr 395 true "$P384_GREEN" "$P384_HEAD")" \
+  '[$a,$b,$c,$d,$e,$f,$g,$h,$i,$j]')"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_FO_LISTING" >"$TMP/p384-flip.log" 2>&1
+p384_fo_out="$(cat "$TMP/p384-flip.log")"
+# 386, 392 and 394. 387 has a PANELIST requested, so the round is live and the
+# move is someone else's. 388 carries no signal at all — ordinary interrupted
+# work on its existing path. 389's head is pending. 390 is not a draft, so the
+# request path can see it. 391's signal names a superseded head. 392's only
+# requested reviewer is OFF-panel, which BUILDER.md rules advisory and never the
+# ask. 393's signal was SPENT by the verdicts that answered it. 395 is converged.
+t p384-flip-owed-rows "$(printf '386\n392\n394')" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+# 387 is deliberately PARTLY requested — p1 asked, p2 not. request-panel.jq
+# still names p2 there, which is why the "nobody was ever asked" gate is its own
+# test and not folded into that predicate: a panelist already reading the tree
+# is a live round, and the next move is theirs rather than resume's.
+t p384-requested-panelist-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^387$')"
+t p384-unsignalled-draft-is-untouched 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^388$')"
+t p384-pending-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^389$')"
+t p384-non-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^390$')"
+t p384-stale-signal-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^391$')"
+t p384-advisory-reviewer-is-not-the-ask 1 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^392$')"
+# MUST FAIL, and it is why this predicate asks request-panel.jq instead of
+# reading `reviewRequests` itself. A draft the ENGINE redrafted over a closed
+# round has no panelist requested and a current-head signal on its thread, so
+# the obvious predicate names it — and the session would then be told to mark an
+# UNANSWERED round ready-for-review. The spent-signal rule (#286) is what parts
+# it from #386, and 394 next door proves the rule is the ordering and not merely
+# "any verdict at the head".
+t p384-spent-signal-draft-is-not-owed-a-flip 0 \
+  "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^393$')"
+t p384-answered-verdicts-are-still-owed-a-panel 1 \
+  "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^394$')"
+t p384-converged-draft-is-not-owed 0 "$(printf '%s' "$FLIP_OWED_ROWS" | grep -c '^395$')"
+# The ledger keys the gate is handed, head included so a push ends the episode.
+t p384-flip-owed-force-fresh-keys \
+  "$(printf 'o/r#386@%s\no/r#392@%s\no/r#394@%s' "$P384_HEAD" "$P384_HEAD" "$P384_HEAD")" \
+  "$(printf '%s' "$RESUME_FORCE_FRESH" | awk 'NF')"
+t p384-flip-warns-once-per-detection 3 "$(grep -c 'WARN' <<<"$p384_fo_out")"
+t p384-flip-warn-names-the-reason 3 \
+  "$(grep -c 'the handoff was consumed, not completed' <<<"$p384_fo_out")"
+t p384-flip-warn-carries-the-full-sha 3 "$(grep -c "$P384_HEAD" <<<"$p384_fo_out")"
+# The WARN names the panel that is owed, which is the evidence a reader needs to
+# tell this state from a converged one without opening the PR.
+t p384-flip-warn-names-the-owed-panel 1 \
+  "$(grep -c 'WARN.*o/r#386.*owing a panel (p1 p2)' <<<"$p384_fo_out")"
+# DETECTED, NEVER HONOURED. The flip asserts the round was answered whole, which
+# BUILDER.md rules the one judgement its author cannot delegate — so the WARN
+# says so, and the predicate buys a session rather than performing the act. It
+# computes exactly whom the engine WOULD request, and requests nobody.
+t p384-flip-warn-leaves-the-flip-to-the-builder 3 \
+  "$(grep -c 'The flip stays yours' <<<"$p384_fo_out")"
+if tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" \
+     | grep -Fq 'an engine may draft a PR but only the builder undrafts it'; then
+  r1=agreed
+else
+  r1=DIVERGED
+fi
+t p384-flip-doctrine-still-says-so agreed "$r1"
+# MUST FAIL — the engine flipping, requesting or labelling. Neither predicate
+# writes to the board at all: no undraft, no reviewer, no label. The one GitHub
+# call the flip predicate makes is a READ, pinned below.
+p384_bodies="$(cat <(declare -f _green_head_resume_rows) <(declare -f _flip_owed_resume_rows))"
+t p384-predicates-never-flip 0 \
+  "$(grep -cE 'ready-for-review|--undraft|markPullRequestReadyForReview' <<<"$p384_bodies")"
+t p384-predicates-never-request 0 \
+  "$(grep -cE '_request_panel|--add-reviewer|requested_reviewers' <<<"$p384_bodies")"
+t p384-predicates-never-label 0 \
+  "$(grep -cE 'LABEL_|--add-label|/labels' <<<"$p384_bodies")"
+t p384-predicates-never-mutate 0 "$(grep -c 'mutation' <<<"$p384_bodies")"
+t p384-flip-makes-exactly-one-read 1 "$(grep -c 'gh api graphql' <<<"$p384_bodies")"
+# A verdict lookup that fails leaves that draft out for the tick rather than
+# guessing — the same fail-soft direction as everything else on this path.
+rm -f "$P384_GQL/386"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" \
+  "$(jq -cn --argjson a "$(p384_pr 386 true "$P384_GREEN" "$P384_HEAD")" '[$a]')" \
+  >"$TMP/p384-flip-gql-fail.log" 2>&1
+t p384-flip-verdict-failure-detects-nothing "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+t p384-flip-verdict-failure-warns 1 \
+  "$(grep -c 'verdict lookup failed' "$TMP/p384-flip-gql-fail.log")"
+p384_verdicts 386 '[]' '[]'
+# FAIL-SOFT on the rollup, the same contract as the green-head half.
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" 'not json' >"$TMP/p384-flip-fail.log" 2>&1
+t p384-flip-ungradeable-detects-nothing "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+t p384-flip-ungradeable-forces-nothing "" "$(printf '%s' "$RESUME_FORCE_FRESH" | awk 'NF')"
+t p384-flip-ungradeable-warns 1 \
+  "$(grep -c 'check rollup could not be graded' "$TMP/p384-flip-fail.log")"
+unset -f gh
+
+# 5. THROUGH THE GATE. Its own DUTY_DIR and its own `gh` stub, in the shape the
+# #314 block above establishes: the foreign half is served from files so a
+# command substitution cannot lose it, and the issue half from a variable.
+P384_DUTY="$TMP/p384-gate"; P384_LOG="$TMP/p384-gate.log"
+P384_SPEECH="$TMP/p384-speech"
+mkdir -p "$P384_DUTY" "$P384_SPEECH"
+: >"$P384_SPEECH/381.comments"; : >"$P384_SPEECH/381.reviews"
+: >"$P384_SPEECH/386.comments"; : >"$P384_SPEECH/386.reviews"
+P384_ISSUE_TS="2026-08-01T00:00:00Z"
+# shellcheck disable=SC2317  # called indirectly by _resume_gate
+gh() {
+  local args="$*" n kind
+  case "$args" in
+    *graphql*)
+      # The flip-owed predicate's one read. Only #386 is signalled here, and it
+      # is signalled with nobody requested and nobody having reviewed — the
+      # state that PR was actually in when the draft consumed its handoff.
+      n="${args##*num=}"; n="${n%% *}"
+      [ "$n" = 386 ] || return 1
+      jq -cn --arg head "$P384_HEAD" --arg at "$P384_SIG_AT" \
+        '{data:{repository:{pullRequest:{
+            headRefOid:$head,
+            comments:{nodes:[{author:{login:"me"}, body:("ANSWER " + $head), createdAt:$at}]},
+            reviewRequests:{nodes:[]},
+            latestOpinionatedReviews:{nodes:[]}}}}}'
+      return 0 ;;
+    */comments*|*/reviews*)
+      case "$args" in */comments*) kind=comments ;; *) kind=reviews ;; esac
+      n="${args##*/issues/}"; n="${n##*/pulls/}"; n="${n%%/*}"
+      [ -f "$P384_SPEECH/$n.$kind" ] && cat "$P384_SPEECH/$n.$kind"
+      return 0 ;;
+    *) printf '%s\n' "$P384_ISSUE_TS" ;;
+  esac
+  return 0
+}
+P384_SAVED_DUTY="$DUTY_DIR"; P384_SAVED_ME="${ME-}"; P384_ME_WAS_SET="${ME+x}"
+DUTY_DIR="$P384_DUTY"; ME=me
+p384_reset() {
+  rm -f "$P384_DUTY/.seen-resume" "$P384_DUTY/.resume-zero-action.o__r"
+  RESUME_FORCE_FRESH=""
+}
+p384_tick() {  # p384_tick LISTING — one duty tick, caller side included
+  RESUME_DISPATCH_NUMS=""; RESUME_COMMIT_LINES=""
+  _resume_gate o/r o__r "$1" >"$P384_LOG" 2>&1 || true
+  if [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then
+    printf '%s' "$RESUME_COMMIT_LINES" | ledger_commit "$P384_DUTY/.seen-resume"
+  fi
+}
+p384_draft() {  # p384_draft ROLLUP -> the one-draft listing #381 is
+  jq -cn --argjson roll "$1" --arg head "$P384_HEAD" \
+    '[{number:381,isDraft:true,headRefOid:$head,body:"Closes #290",
+       statusCheckRollup:$roll,reviewRequests:[],comments:[]}]'
+}
+
+# THE #381 REPLAY. The session pushed d4b8035 and parked on `ci-floor`. Tick one
+# is the cold ledger and dispatches; tick two is the same head with the check
+# still running and nobody foreign speaking, and is correctly suppressed. Then
+# `ci-floor` CONCLUDES at 07:52:18Z — and that is the tick the old engine could
+# not see, because a check conclusion is neither a comment nor a review. It
+# dispatches now, forty-six minutes and eleven ticks before the twelfth.
+p384_reset
+p384_tick "$(p384_draft "$P384_PENDING")"
+t p384-replay-cold-dispatches 381 "$RESUME_DISPATCH_NUMS"
+p384_tick "$(p384_draft "$P384_PENDING")"
+t p384-replay-parked-on-a-running-check-is-quiet "" "$RESUME_DISPATCH_NUMS"
+t p384-replay-quiet-tick-is-said 1 \
+  "$(grep -c "no resume duty: o/r#381 unchanged at $P384_HEAD" "$P384_LOG")"
+p384_tick "$(p384_draft "$P384_GREEN")"
+t p384-replay-the-conclusion-wakes-it 381 "$RESUME_DISPATCH_NUMS"
+# ...and the ledger advanced to the conclusion stamp, so the value is what fired
+# and not some coincidence of the other halves.
+t p384-replay-ledger-carries-the-conclusion 1 \
+  "$(grep -c "^o/r#381@$P384_HEAD $P384_DONE\$" "$P384_DUTY/.seen-resume")"
+# THE ID IS UNTOUCHED. A check term in the id would mint an id never seen on
+# every re-run and fire again on an unchanged tree; the head stays its whole
+# content, exactly as the ci-red scheme requires (#17).
+t p384-ledger-id-carries-only-the-head 1 \
+  "$(awk '{print $1}' "$P384_DUTY/.seen-resume" | grep -cx "o/r#381@$P384_HEAD")"
+# The value stays ALL ISO-8601, which is what makes a lexical max a
+# chronological one — the invariant the fingerprint block's header states.
+t p384-ledger-value-is-iso8601 1 \
+  "$(awk '{print $2}' "$P384_DUTY/.seen-resume" \
+     | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
+# A RE-RUN of the same check does not re-fire. Its conclusion stamp is not newer
+# than the one already committed, so the value does not sort greater and the
+# ledger holds — which is the difference between a term in the value and a term
+# in the id, asserted rather than argued.
+p384_tick "$(p384_draft "$P384_GREEN")"
+t p384-rerun-of-the-same-check-does-not-refire "" "$RESUME_DISPATCH_NUMS"
+# A LATER conclusion does: a rerun that finishes at a new time is new evidence.
+P384_RERUN="$(p384_run SUCCESS 2026-08-06T09:30:00Z)"
+p384_tick "$(p384_draft "$P384_RERUN")"
+t p384-a-later-conclusion-refires 381 "$RESUME_DISPATCH_NUMS"
+
+# FAIL-SOFT AT THE GATE. A check lookup that errors warns and drops that half
+# for the tick; the other halves still decide, and no green is fabricated.
+p384_reset
+P384_REAL_CHECK="$(declare -f _resume_newest_check)"
+# shellcheck disable=SC2317  # reinstated immediately below
+_resume_newest_check() { return 1; }
+p384_tick "$(p384_draft "$P384_GREEN")"
+t p384-check-failure-warns 1 \
+  "$(grep -c 'check-conclusion lookup failed for the resume fingerprint' "$P384_LOG")"
+t p384-check-failure-still-decides-on-the-rest 381 "$RESUME_DISPATCH_NUMS"
+t p384-check-failure-fabricates-no-stamp 0 \
+  "$(grep -c "$P384_DONE" "$P384_DUTY/.seen-resume")"
+eval "$P384_REAL_CHECK"
+
+# THE #386 REPLAY. A draft carrying a valid signal at a green head with no panel
+# requested: the head has not moved and nobody foreign has spoken, so the ledger
+# is right to hold it and would hold it forever. The force-fresh override is
+# what makes it due.
+P384_386="$(jq -cn --argjson roll "$P384_GREEN" --arg head "$P384_HEAD" \
+  '[{number:386,isDraft:true,headRefOid:$head,body:"Closes #291",
+     statusCheckRollup:$roll,reviewRequests:[],
+     comments:[{author:{login:"me"},body:("ANSWER " + $head),
+                createdAt:"2026-08-06T09:54:56Z",id:"9002"}]}]')"
+p384_reset
+p384_tick "$P384_386"
+t p384-386-cold-dispatches 386 "$RESUME_DISPATCH_NUMS"
+# THE CONTROL: without the override the second tick is suppressed, which is the
+# state #386 actually sat in. This assertion is what makes the next one mean
+# something — it shows the ledger genuinely holds this shape.
+p384_tick "$P384_386"
+t p384-386-ledger-would-hold-it-forever "" "$RESUME_DISPATCH_NUMS"
+t p384-386-hold-is-said 1 \
+  "$(grep -c "no resume duty: o/r#386 unchanged at $P384_HEAD" "$P384_LOG")"
+# Now the predicate speaks, and the same unchanged tick becomes due.
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386" >/dev/null 2>&1
+p384_tick "$P384_386"
+t p384-386-force-fresh-makes-it-due 386 "$RESUME_DISPATCH_NUMS"
+# BOUNDED. The override rides _resume_breaker rather than going around it: three
+# consecutive zero-action dispatches at one head and no fourth. An unbounded
+# bypass would dispatch every five minutes for as long as the draft stood, which
+# is the #314 flood re-entering through the door built to end it.
+#
+# The COUNTER is reset here and the LEDGER deliberately is not, so all three
+# dispatches below are the override's own — with the ledger left holding, a
+# dispatch can have no other cause, and the bound is measured on exactly the
+# path this PR adds rather than on the cold-start it inherits.
+rm -f "$P384_DUTY/.resume-zero-action.o__r"
+for _p384_i in 1 2 3; do
+  _flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386" >/dev/null 2>&1
+  p384_tick "$P384_386"
+  t "p384-386-override-dispatch-$_p384_i" 386 "$RESUME_DISPATCH_NUMS"
+done
+t p384-386-breaker-trips-once 1 \
+  "$(grep -c 'produced no commit, and after this one' "$P384_LOG")"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386" >/dev/null 2>&1
+p384_tick "$P384_386"
+t p384-386-no-fourth-dispatch "" "$RESUME_DISPATCH_NUMS"
+t p384-386-breaker-suppression-is-said 1 \
+  "$(grep -c "breaker-suppressed at $P384_HEAD after 3 zero-action dispatches" "$P384_LOG")"
+# A PUSH ends the episode: the signal at the old head is no longer at the head,
+# so the predicate stops naming it and the ordinary path takes over.
+P384_386_MOVED="$(printf '%s' "$P384_386" | jq -c --arg h "$P384_OLD" '.[0].headRefOid = $h | .')"
+_flip_owed_resume_rows o/r me ANSWER "$P384_PANEL" "$P384_386_MOVED" >/dev/null 2>&1
+t p384-386-push-ends-the-episode "" "$(printf '%s' "$FLIP_OWED_ROWS" | awk 'NF')"
+DUTY_DIR="$P384_SAVED_DUTY"
+if [ -n "$P384_ME_WAS_SET" ]; then ME="$P384_SAVED_ME"; else unset ME; fi
+unset -f gh
+RESUME_FORCE_FRESH=""
+
+# 6. THE WIRING. Helper-level tests stay green if the dispatch site stops
+# consulting either predicate, which is exactly how these stalls come back.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_green_head_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$resume_json"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '_flip_owed_resume_rows "$R" "$ME" "$MARK_ANSWERED" "$panel_json" "$resume_json"' "$SHARED/lib/duty-builder.sh"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t p384-predicates-wired-into-the-tick wired "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq 'GREEN_HEAD="${green_head_nums:-none}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '{{GREEN_HEAD}}' "$RG_PROMPT" \
+  && grep -Fq 'FLIP_OWED="${flip_owed_nums:-none}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq '{{FLIP_OWED}}' "$RG_PROMPT"; then
+  r1=wired
+else
+  r1=UNWIRED
+fi
+t p384-reasons-reach-the-resume-prompt wired "$r1"
+# The prompt must hand the flip BACK to the builder rather than instructing the
+# session to rubber-stamp it: the judgement is the whole reason a session is
+# bought instead of the engine acting.
+if grep -Fq 'THE FLIP IS YOURS AND ONLY YOURS' "$RG_PROMPT"; then r1=owned; else r1=DELEGATED; fi
+t p384-prompt-keeps-the-flip-with-the-builder owned "$r1"
+# The green-head reason rides BESIDE the threshold — #319's assertions on
+# _stranded_resume_due's call, threshold and state-file format above run
+# unmodified, and this pins the union that adds the second reason — and THROUGH
+# the breaker, which is the half a helper-level test cannot see. An earlier cut
+# of this PR had the union alone, and this assertion as written then pinned the
+# unbounded wiring rather than catching it; both halves are named now.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '"$stranded_nums" "$green_head_nums"' "$SHARED/lib/duty-builder.sh"; then
+  r1=beside
+else
+  r1=THROUGH
+fi
+t p384-green-rides-beside-the-threshold beside "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_green_head_breaker "$R" "$slug" "$green_head_rows"' "$SHARED/lib/duty-builder.sh" \
+  && grep -Fq 'green_head_nums="$GREEN_HEAD_DISPATCH_NUMS"' "$SHARED/lib/duty-builder.sh"; then
+  r1=bounded
+else
+  r1=UNBOUNDED
+fi
+t p384-green-also-rides-the-breaker bounded "$r1"
+# ...on a state file of its own. A second call site against the gate's file
+# would silently prune the gate's counters every tick, so the path is part of
+# the wiring and not an implementation detail.
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '_resume_breaker "$DUTY_DIR/.resume-zero-action-green.$slug"' "$SHARED/lib/duty-builder.sh" \
+  && [ "$(grep -cF '_resume_breaker "$DUTY_DIR/.resume-zero-action.$slug"' "$SHARED/lib/duty-builder.sh")" = 1 ]; then
+  r1=separate
+else
+  r1=SHARED
+fi
+t p384-green-breaker-has-its-own-state-file separate "$r1"
+
 # A ci-red session returning zero does not consume an unsettled same-head item.
 # Red is terminal and remains one-shot; a moved head settles the old key and
 # will independently enter under its new id if it is red.
@@ -5536,15 +6247,36 @@ BIN_DIR="$P168_BIN_SAVED"
 # --- wiring (#45/#17) --------------------------------------------------------
 if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
 t ci-red-rollup-fetched fetched "$r1"
-# The primary rollup rides the authored-PR listing. #243 deliberately adds one
-# post-ci-red `gh pr view` re-read so a session that exits while checks are
-# pending does not consume the head; no third rollup read belongs here.
-# Comment lines are stripped first. The block above EXPLAINS that the rollup
-# rides an existing call, so counting raw occurrences counts the explanation —
-# a detector tripping on its own documentation, which this repo has now managed
-# three separate times.
-t ci-red-rollup-list-plus-settle-reread 2 \
-  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'statusCheckRollup')"
+# The rollup rides listings that are fetched anyway; it never gets a call of its
+# own. THREE fetches, each named: the resume block's authored-PR listing (#384),
+# the round/ci-red authored-PR listing, and the one post-ci-red `gh pr view`
+# re-read #243 added so a session exiting while checks are pending does not
+# consume the head. The resume listing and the round listing are deliberately
+# NOT merged into one — the round listing is fetched AFTER the resume sessions
+# precisely so a session's own push is visible to it, and a merged snapshot
+# would grade ci-red and round-owed against a pre-session tree.
+#
+# COUNTED AS FETCHES, NOT AS OCCURRENCES OF THE WORD. The old form grepped the
+# whole module for the string and had to strip comment lines to keep from
+# counting its own explanation — "a detector tripping on its own documentation,
+# which this repo has now managed three separate times". It then counted
+# `_resume_newest_check`'s jq field READ as a fourth API call, which is the same
+# defect one layer down: parsing a field you already have is not fetching it.
+# Only a `--json` argument list can name a field to fetch, so that is what is
+# counted, and the explanation above can say `statusCheckRollup` freely.
+t ci-red-rollup-fetched-on-three-listings 3 \
+  "$(grep -c -- '--json [^ ]*statusCheckRollup' "$BMOD")"
+# The resume half of that count adds no CALL — the listing was already being
+# fetched, and #384 put two more fields on it. A `gh` call inside either new
+# predicate would be a per-PR-per-tick cost the issue explicitly priced out.
+# _flip_owed_resume_rows is deliberately absent: it makes exactly one GraphQL
+# READ per green-headed signalled draft, because the verdicts it must weigh
+# cannot come off a listing (#147), and that read is pinned by
+# `p384-flip-makes-exactly-one-read` beside the assertions that it never writes.
+t resume-check-read-adds-no-gh-call 0 \
+  "$(cat <(declare -f _resume_newest_check) <(declare -f _resume_check_states) \
+       <(declare -f _green_head_resume_rows) \
+     | grep -c 'gh ')"
 if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
   r1=shared
 else
