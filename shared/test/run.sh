@@ -4341,18 +4341,54 @@ for lane in near-miss stranded; do
   t "$lane-breaker-prunes-left-set" $'o/r#404@ccc\t1' "$(cat "$lane_state")"
 done
 
-# The concrete call sites are part of the contract: sharing either new file
-# makes `_resume_breaker`'s pruning silently reset the other lane every tick.
-t resume-lane-breaker-nearmiss-state-file 1 \
-  "$(grep -cF ".resume-zero-action-nearmiss.\$slug" "$SHARED/lib/duty-builder.sh")"
-t resume-lane-breaker-stranded-state-file 1 \
-  "$(grep -cF ".resume-zero-action-stranded.\$slug" "$SHARED/lib/duty-builder.sh")"
+# The concrete call sites and consumers are both part of the contract: sharing
+# either new file resets the other lane, while ignoring either verdict restores
+# the unbounded wiring without disturbing the helper-level breaker tests.
+# shellcheck disable=SC2016  # matching shell source literally
+if [ "$(grep -cF '.resume-zero-action-nearmiss.$slug' "$SHARED/lib/duty-builder.sh")" = 1 ] \
+  && grep -Fq 'near_miss_nums="$RESUME_LANE_DISPATCH_NUMS"' "$SHARED/lib/duty-builder.sh"; then
+  r1=bounded
+else
+  r1=UNBOUNDED-OR-SHARED
+fi
+t resume-lane-breaker-nearmiss-wiring bounded "$r1"
+# shellcheck disable=SC2016  # matching shell source literally
+if [ "$(grep -cF '.resume-zero-action-stranded.$slug' "$SHARED/lib/duty-builder.sh")" = 1 ] \
+  && grep -Fq 'stranded_nums="$RESUME_LANE_DISPATCH_NUMS"' "$SHARED/lib/duty-builder.sh"; then
+  r1=bounded
+else
+  r1=UNBOUNDED-OR-SHARED
+fi
+t resume-lane-breaker-stranded-wiring bounded "$r1"
 ISO_NEAR="$TMP/resume-isolation-near"; ISO_STRANDED="$TMP/resume-isolation-stranded"
 lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
 lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
 lane_tick stranded "$ISO_STRANDED" 'o/r#403@same' "$TMP/resume-isolation.log"
 t resume-lane-breaker-state-files-do-not-touch $'2\t1' \
   "$(paste <(cut -f2 "$ISO_NEAR") <(cut -f2 "$ISO_STRANDED"))"
+
+# A suppressed near miss must not hitchhike in the prompt when an unrelated PR
+# independently buys the session. Drive A past its breaker and B through the
+# real twelve-tick threshold, then build the same final dispatch union and
+# description the repository tick uses.
+MIXED_NEAR_STATE="$TMP/resume-mixed-near"
+MIXED_NEAR_LOG="$TMP/resume-mixed-near.log"
+for _tick in $(seq 1 4); do
+  lane_tick near-miss "$MIXED_NEAR_STATE" 'o/r#403@aaa' "$MIXED_NEAR_LOG"
+done
+MIXED_DUE_STATE="$TMP/resume-mixed-due"
+for _tick in $(seq 1 12); do
+  mixed_due_nums="$(printf 'o/r#404@bbb\n' | _stranded_resume_due "$MIXED_DUE_STATE" 12)"
+done
+mixed_stranded_nums="$(printf '%s %s' "$mixed_due_nums" "$LANE_OUT" \
+  | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+mixed_near_desc="$(_near_miss_dispatch_desc $'403\t9001' "$mixed_stranded_nums")"
+t resume-lane-mixed-unrelated-pr-still-wakes 404 "$(printf '%s' "$mixed_stranded_nums" | xargs)"
+t resume-lane-mixed-suppressed-near-miss-not-actionable "" "$mixed_near_desc"
+# If an independent lane admits the same PR, retain why its signal looked like
+# a near miss even though the near-miss lane itself is suppressed.
+t resume-lane-mixed-same-pr-keeps-near-miss-context '#403 (comment 9001)' \
+  "$(_near_miss_dispatch_desc $'403\t9001' '403')"
 
 # The post-twelve lane has two counters with different questions. Trip its
 # dispatch breaker after ticks 12–14, then move the head: the unsignalled
