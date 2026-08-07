@@ -366,7 +366,7 @@ t "fleet: snapshot advertises the poll interval" True \
 t "fleet: every unit has the full shape" True "$(body GET /api/fleet | jqf "
 all(set(('box','agent','room','state','engine','integrity','gh','vendor','queue','sessions',
          'cur','spark','up','repo','repos','logs','longest','avg','success',
-         'today','paused','disarmed','cron','note')) <= set(u) for u in d['units'])")"
+         'today','paused','disarmed','cron','note','hired')) <= set(u) for u in d['units'])")"
 t "fleet: cron sub-shape complete" True "$(body GET /api/fleet | jqf "
 all(set(('ok','last','age')) <= set(u['cron']) for u in d['units'])")"
 
