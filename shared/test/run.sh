@@ -4354,6 +4354,33 @@ lane_tick stranded "$ISO_STRANDED" 'o/r#403@same' "$TMP/resume-isolation.log"
 t resume-lane-breaker-state-files-do-not-touch $'2\t1' \
   "$(paste <(cut -f2 "$ISO_NEAR") <(cut -f2 "$ISO_STRANDED"))"
 
+# The post-twelve lane has two counters with different questions. Trip its
+# dispatch breaker after ticks 12–14, then move the head: the unsignalled
+# counter starts at one immediately, while the breaker starts at one when that
+# new head first becomes dispatchable on its twelfth tick.
+DUAL_DUE="$TMP/resume-dual-unsignalled"
+DUAL_BREAKER="$TMP/resume-dual-breaker"
+DUAL_LOG="$TMP/resume-dual.log"
+for _tick in $(seq 1 14); do
+  dual_num="$(printf 'o/r#403@aaa\n' | _stranded_resume_due "$DUAL_DUE" 12)"
+  dual_keys=""
+  [ -z "$dual_num" ] || dual_keys='o/r#403@aaa'
+  lane_tick stranded "$DUAL_BREAKER" "$dual_keys" "$DUAL_LOG"
+done
+t stranded-lane-trips-after-three-past-threshold-dispatches 3 \
+  "$(cut -f2 "$DUAL_BREAKER")"
+dual_num="$(printf 'o/r#403@bbb\n' | _stranded_resume_due "$DUAL_DUE" 12)"
+lane_tick stranded "$DUAL_BREAKER" "" "$DUAL_LOG"
+t stranded-lane-push-restarts-unsignalled-at-one $'o/r#403@bbb\t1' \
+  "$(cat "$DUAL_DUE")"
+for _tick in $(seq 2 12); do
+  dual_num="$(printf 'o/r#403@bbb\n' | _stranded_resume_due "$DUAL_DUE" 12)"
+done
+dual_keys=""; [ -z "$dual_num" ] || dual_keys='o/r#403@bbb'
+lane_tick stranded "$DUAL_BREAKER" "$dual_keys" "$DUAL_LOG"
+t stranded-lane-push-restarts-breaker-at-one $'o/r#403@bbb\t1' \
+  "$(cat "$DUAL_BREAKER")"
+
 # The no-signal hold speaks once for one repo/PR/head, then speaks again when a
 # push changes the key. report_suppressed writes through warn on stderr.
 hold1="$(_report_unsignalled_hold o/r 243 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 2>&1)"
