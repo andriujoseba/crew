@@ -54,6 +54,12 @@
       <button class="act2" id="a-pause">⏸ Pause</button><button class="act2" id="a-restart">↻ Restart</button><button class="act2" id="a-logs">▤ Logs</button></div>
   </div>
 
+  <!-- The floor with no console on it (#204): a roster written before the
+       first `crew hire` draws an empty grid on purpose, and an empty grid with
+       no words on it leaves a fresh operator with no next step. Populated by
+       syncEmptyFloor(); hidden in DEMO and whenever a console is drawn. -->
+  <div class="emptyfloor" id="emptyfloor"></div>
+
   <!-- fleet operations bar (floor view) -->
   <div class="opsbar">
     <div class="obox ops">

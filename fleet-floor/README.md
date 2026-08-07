@@ -41,6 +41,19 @@ crew floor --local               # loopback only
 
 Run it **on the box host**, over an **operator fleet definition**. It serves the
 page and polls every roster box every 60s, and the badge turns green **LIVE**.
+
+The grid draws what is **deployed**, not what is **declared** (#204). A roster
+written ahead of provisioning is a full floor of boxes that do not exist, and a
+never-hired console is indistinguishable at a glance from a hired box that has
+gone dark — so a box that has not been created, or that answered and reported no
+engine, is **counted but not drawn**, and the floor starts empty and fills as
+boxes are hired. A **stopped** or **unreachable** box keeps its console: its
+hired state cannot be measured while it is in that state, and the one that went
+dark is what the page is for. The collector decides this and publishes it as
+`hired: yes | no | unknown`; the page never infers it from an empty engine
+string, which is true of all four situations and right about only two. Nothing
+is filtered out of `/api/fleet`, so `crew status` and the drill's floor-vs-CLI
+agreement check still see every roster member.
 Because the page can power-cycle boxes and start sessions, HTTP Basic auth is
 mandatory — without `--pass` one is generated and printed once at startup.
 
@@ -276,4 +289,5 @@ fleet-floor/
   test/stale.js     # kills the collector, checks the page says so
   test/churn.js     # removes a box from the roster under an open console
   test/transition.js# takes a box down under an open console
+  test/hired.js     # the empty floor, and the first box hired into it (#204)
 ```

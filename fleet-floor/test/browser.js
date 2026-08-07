@@ -151,9 +151,49 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       })
     : null;
   const roster = LIVE
-    ? snapshot.units.map((u) => ({ box: u.box, agent: u.agent, room: u.room, state: u.state }))
+    ? snapshot.units.map((u) => ({ box: u.box, agent: u.agent, room: u.room, state: u.state,
+        hired: u.hired }))
     : Array.from({ length: 7 }, (_, i) => ({ box: null, agent: null, room: null, state: null }));
-  ok('floor: roster rendered', roster.length > 0, roster.length + ' units');
+  /* DECLARED vs DEPLOYED (#204). `roster` is what /api/fleet carries — every
+     member, hired or not — and `shown` is the subset that gets a console. The
+     two used to be the same list, and every assertion below that means "the
+     grid" said `roster`. They are now different, and which one an assertion
+     names is the difference between testing the filter and asserting it away:
+     the coverage checks want `shown`, and the payload checks want `roster`.
+
+     `hired === 'no'` and nothing else. Reading the engine string here would
+     re-implement the very inference the collector's verdict exists to stop, so
+     a page that started filtering on silence would still pass. */
+  const shown = LIVE ? roster.filter((u) => u.hired !== 'no') : roster;
+  const hiddenBoxes = LIVE ? roster.filter((u) => u.hired === 'no').map((u) => u.box) : [];
+  /* A fleet with nothing hired now draws NO console, deliberately, and the
+     drill reaches that state for real: rehearsal-app.sh skips its engine-version
+     block with "no box on this host is hired", so a host part-way through
+     provisioning has a legitimately empty floor. Before #204 that fleet still
+     rendered cells and every check below had something to stand on; now it does
+     not, and a walk that read the empty floor as a broken renderer would fail
+     the drill for doing the right thing.
+
+     So the emptiness is checked rather than assumed: an empty floor passes only
+     if the page SAYS it is empty and names the way out. Same assertion count
+     either way, because the floor in run.sh is exact. The stub fleet always has
+     boxes hired, so this run always takes the second branch. */
+  const emptyFloor = LIVE && !shown.length;
+  const emptyState = emptyFloor
+    ? await page.evaluate(() => {
+        const el = document.querySelector('#emptyfloor');
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { on: el.classList.contains('on'), visible: r.width > 0 && r.height > 0,
+                 text: el.textContent.replace(/\s+/g, ' ').trim() };
+      })
+    : null;
+  ok(emptyFloor ? 'floor: a fleet with nothing hired draws the empty state'
+                : 'floor: roster rendered',
+     emptyFloor
+       ? !!emptyState && emptyState.on && emptyState.visible && /crew hire/.test(emptyState.text)
+       : shown.length > 0,
+     emptyFloor ? JSON.stringify(emptyState) : shown.length + ' units');
   if (LIVE) {
     const header = await page.evaluate(() => window.FLOORDEV.header());
     const paintedVersion = header.find((h) => /^crew /.test(h.text));
@@ -236,12 +276,39 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        clearAtWalkWidths, collision);
   }
   /* Not just "the word units appears": that is true of an empty fleet too,
-     because the tiles always render. Assert the count matches the roster. */
+     because the tiles always render. Assert the count matches the roster.
+     DECLARED, deliberately: #204 filters the grid and must not shrink this
+     number, or the page and `crew status` stop agreeing about how big the
+     fleet is. So this assertion is now also the one that catches a filter
+     applied one layer too high. */
   const tilesText = (await page.locator('#tiles').textContent()).replace(/\s+/g, '');
   const tileUnits = (tilesText.match(/(\d+)units/) || [])[1];
-  ok('floor: the unit tile matches the fleet size',
+  ok('floor: the unit tile matches the DECLARED fleet size',
      LIVE ? String(roster.length) === tileUnits : /^[1-9]/.test(tileUnits || ''),
      `tile says ${tileUnits}, roster has ${roster.length}`);
+  /* ...and the hired tile is the "visible count rather than a silent omission"
+     half of #204: a box without a console is omitted from the grid and never
+     from the page. It appears only when the two numbers differ — a permanent
+     "26 hired" beside "26 units" is furniture — so the assertion is a
+     conditional with BOTH sides pinned, not a check that only runs when it
+     happens to be there. */
+  if (LIVE) {
+    const tileHired = (tilesText.match(/(\d+)hired/) || [])[1];
+    ok(hiddenBoxes.length ? 'floor: the hired tile counts the consoles drawn'
+                          : 'floor: no hired tile when every box is hired',
+       hiddenBoxes.length ? String(shown.length) === tileHired
+                          : tileHired === undefined,
+       `hired tile ${tileHired}, ${shown.length} of ${roster.length} deployed`);
+    const hiredTitle = hiddenBoxes.length
+      ? await page.evaluate(() => {
+          const t = Array.from(document.querySelectorAll('#tiles .tile'))
+            .find((e) => /hired/i.test(e.textContent));
+          return t ? t.getAttribute('title') || '' : null;
+        })
+      : 'crew hire';
+    ok('floor: the hired tile names the command that fills the gap',
+       /crew hire/.test(hiredTitle || ''), String(hiredTitle));
+  }
   await shot('01-floor');
 
   /* Cell geometry comes from the layout itself: FLOORDEV.grid() reports where
@@ -329,8 +396,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      `#c-target` still names the PREVIOUS box — so the settle reported success
      and the walk recorded a read of a box it had already seen, while the cell
      it was aiming at was never visited. That is `16 reads -> 16 distinct,
-     roster 17` with a DIFFERENT box missing each run (ff-nothired, ff-noauth,
-     ff-disarmed across four), and it gets likelier with every cell added,
+     roster 17` with a DIFFERENT box missing each run (ff-noauth, ff-disarmed
+     and two others across four), and it gets likelier with every cell added,
      because every cell is another chance for one settle to lose its race.
      Escape is idempotent on the floor, so this costs one DOM read per click
      and removes the class: whatever room appears after a click can only have
@@ -397,9 +464,12 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      code, so instead: click each on-screen SLOT, record whichever box actually
      opens, and assert the two properties that do not require knowing the
      camera —
-       coverage: every roster box is reachable, and
-       ordering: boxes read in layout order are consecutive in the roster,
-     which is what catches a cell rendering another unit's identity. */
+       coverage: every DEPLOYED box is reachable, and
+       ordering: boxes read in layout order are consecutive in that same list,
+     which is what catches a cell rendering another unit's identity.
+     Deployed, not declared, since #204: the grid no longer draws a console for
+     a box that was never hired, so `shown` — not `roster` — is what these two
+     properties are about. */
   const visible = [];
   const seenBox = new Map();          // box -> first {i-ish slot} we saw it at
   const orderViolations = [];
@@ -436,7 +506,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     }
     // Ordering: layout order must follow roster order. A cell rendering some
     // other unit's identity breaks this without needing the camera value.
-    const idx = readHere.map((r) => roster.findIndex((u) => u.box === r.box));
+    const idx = readHere.map((r) => shown.findIndex((u) => u.box === r.box));
     for (let k = 1; k < idx.length; k++) {
       // Increasing, not consecutive: a slot that failed to open is skipped,
       // which leaves a gap and is not a rendering fault. Going BACKWARDS or
@@ -445,7 +515,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         orderViolations.push(`${readHere[k - 1].box}(#${idx[k - 1]}) then ${readHere[k].box}(#${idx[k]})`);
       }
     }
-    if (seenBox.size >= roster.length) break;
+    if (seenBox.size >= shown.length) break;
     if (cam >= camMax) break;
   }
   await scrollTo(0);
@@ -453,27 +523,72 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   ok('nav: layout order follows roster order', orderViolations.length === 0,
      orderViolations.slice(0, 3).join('; '));
 
-  ok('nav: cells open', visible.length > 0, visible.length + ' distinct boxes entered');
+  /* On an all-unhired fleet the correct number of cells is zero, and the
+     assertion that the floor said so is above. Everywhere else, a floor whose
+     cells will not open is exactly the failure this line is for. */
+  ok('nav: cells open', emptyFloor ? visible.length === 0 : visible.length > 0,
+     visible.length + ' distinct boxes entered');
   // Scrolling is what makes this meaningful: without it the tail of the fleet
   // is never clicked, and the tail is where the odd states live.
   /* Name the boxes that were missed. "16/17" says a walk failed; it does not
      say whether the renderer dropped a cell, the cell would not open, or the
      scan never reached it — and those want three different fixes. */
-  const missed = roster.map((u) => u.box).filter((b) => !seenBox.has(b));
-  ok('nav: the whole fleet is reachable by scrolling', seenBox.size === roster.length,
-     `${seenBox.size}/${roster.length} boxes reached` +
+  const missed = shown.map((u) => u.box).filter((b) => !seenBox.has(b));
+  ok('nav: every deployed box is reachable by scrolling', seenBox.size === shown.length,
+     `${seenBox.size}/${shown.length} boxes reached` +
      (missed.length ? ` — never opened: ${missed.join(', ')}` : ''));
   if (LIVE) {
-    // Every roster box appears exactly once across the scan. Combined with the
-    // ordering check above, that is the identity property without needing to
-    // know where the camera actually is.
+    // Every deployed box appears exactly once across the scan. Combined with
+    // the ordering check above, that is the identity property without needing
+    // to know where the camera actually is.
     const distinct = new Set(visible.map((v) => v.got));
     ok('identity: every box appears exactly once', distinct.size === visible.length
-       && distinct.size === roster.length,
-       `${visible.length} reads → ${distinct.size} distinct, roster ${roster.length}`);
+       && distinct.size === shown.length,
+       `${visible.length} reads → ${distinct.size} distinct, deployed ${shown.length}`);
     const strays = visible.filter((v) => !roster.some((u) => u.box === v.got));
     ok('identity: no box outside the roster was rendered', strays.length === 0,
        strays.map((v) => v.got).join(','));
+    /* ---- the #204 filter, ON THE RENDERED PAGE ---------------------------
+       The scan above opened every cell the grid drew, so `seenBox` is the
+       page's own answer to "which boxes have a console" — read out of the DOM,
+       not out of /api/fleet. Every collector assertion for this feature can
+       stay green while the page draws the wrong grid; that is the regression
+       shape #203 recorded, and these two are what red it.
+
+       Both directions, because both are ways to get this exactly wrong. A
+       filter that hides nothing has not shipped; a filter that hides a stopped
+       or unreachable box has INVERTED the issue — the hired-and-gone-dark box
+       is the one an operator most needs on the page. */
+    const drawnButHidden = hiddenBoxes.filter((b) => seenBox.has(b));
+    ok('filter: an unhired box gets no console', drawnButHidden.length === 0,
+       hiddenBoxes.length
+         ? `hidden: ${hiddenBoxes.join(', ')}; wrongly drawn: ${drawnButHidden.join(', ') || 'none'}`
+         : 'no unhired box in this fleet');
+    const keptStates = roster.filter((u) => u.hired === 'unknown');
+    const droppedKeepers = keptStates.map((u) => u.box).filter((b) => !seenBox.has(b));
+    ok('filter: a box whose hired state cannot be measured keeps its console',
+       droppedKeepers.length === 0,
+       `unmeasurable: ${keptStates.map((u) => u.box).join(', ') || 'none'}` +
+       `; wrongly hidden: ${droppedKeepers.join(', ') || 'none'}`);
+  }
+  if (LIVE && FIXTURE) {
+    /* The exact fixture boxes, by name. The two assertions above are shape
+       checks that hold on any fleet — and on a fleet where nothing is unhired
+       and nothing is unmeasurable they are both vacuously true. Only this run
+       can name the four boxes that make each of the four table rows in #204
+       bite, so only this run gets to. */
+    const drew = (b) => seenBox.has(b);
+    ok('filter: ff-nothired — answered, no engine — is hidden', !drew('ff-nothired'));
+    ok('filter: ff-absent — no box exists yet — is hidden', !drew('ff-absent'));
+    ok('filter: ff-stopped keeps its console', drew('ff-stopped'));
+    ok('filter: ff-unreach keeps its console', drew('ff-unreach'));
+    // ...and the payload is untouched, read from the page's own fetch. The
+    // drill's agreement check fails a box outright with "not in /api/fleet",
+    // so a filter that reached the API would red a drill nothing in this suite
+    // can run.
+    ok('filter: the hidden boxes are still served by /api/fleet',
+       ['ff-nothired', 'ff-absent'].every((b) => roster.some((u) => u.box === b)),
+       roster.length + ' units in the payload');
   }
 
   if (LIVE && visible.length && !READONLY) {

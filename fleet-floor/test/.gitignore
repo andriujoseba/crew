@@ -3,6 +3,10 @@
 node_modules/
 node_modules
 package-lock.json
+# `npm i playwright-core` (rather than --no-save) writes one of these; CI and
+# the drill both install with --no-save and never do. It is the same developer
+# artifact as the lockfile above and reached a commit once, so it is named.
+package.json
 shots/
 
 # py_compile and importlib leave these behind; the fixtures ship as source

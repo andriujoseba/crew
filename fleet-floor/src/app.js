@@ -1373,7 +1373,7 @@ function syncToggles(){
   [].forEach.call(document.getElementById("stg").querySelectorAll("button"),function(b){b.className=(b.dataset.s===STATE?"on "+(STATE==="working"?"w":STATE==="offline"?"o":""):"");});
 }
 function focusUnit(i){var u=ROSTER[i];AGENT=u.agent;ROOM=u.room;STATE=u.state;BOX=UNITID(u);VIEW="room";syncToggles();refreshChrome();document.body.className="room";populateDash();}
-function toFloor(){VIEW="floor";document.body.className="floor";buildOps();}
+function toFloor(){VIEW="floor";document.body.className="floor";buildOps();syncEmptyFloor();}
 
 /* ---- fleet data + command-center HUD ---- */
 var VCOL={claude:"#ff9a3c",codex:"#37d4a6",grok:"#b07cff",kimi:"#ff72b6"};
@@ -1463,6 +1463,30 @@ function liveData(u){
   if(d.cur&&d.cur.kind)d.kind=d.cur.kind;
   return d;
 }
+/* DECLARED — how many boxes the fleet roster names, which is exactly
+   /api/fleet's length. ROSTER.length is how many get a console, and since #204
+   those are two different numbers: the grid draws what is DEPLOYED, the count
+   keeps saying what is DECLARED, and neither reader has to guess the other. */
+var DECLARED=0;
+/* deployed UNIT — does this roster member get a console?
+   Reads the collector's `hired` verdict and nothing else. The engine string is
+   deliberately NOT consulted here: it is empty for a never-created box, a
+   stopped box, an unreachable box and an unhired one, and only two of those
+   four are hidden. That inference is the defect #308 fixes in `crew status`,
+   and the whole point of the collector publishing a verdict is that this page
+   never has to repeat it (#204).
+
+   Hidden: `no` — the box does not exist, or it answered and reported no
+   engine. Kept: `yes`, and `unknown` — stopped and unreachable boxes, whose
+   hired state cannot be measured while they are in that state. Hiding the
+   unreachable one would drop the hired-and-gone-dark box, which is the single
+   thing this page most exists to show, so "cannot tell" keeps the console.
+
+   A collector older than #204 sends no `hired` at all. That is `undefined`,
+   not `"no"`, so it is kept — the same fail-safe direction as `disarmed`
+   above: an unknown field renders as "nothing to hide", never as a fleet that
+   silently empties itself against a stale server. */
+function deployed(u){return !u||u.hired!=="no";}
 function applyFleet(snap){
   if(!snap||!snap.units)return;
   if(!snap.units.length){
@@ -1471,20 +1495,24 @@ function applyFleet(snap){
        placeholder boxes while a real collector sat behind it reporting an
        empty roster. Once live, though, an empty poll keeps the last snapshot
        rather than blanking a fleet that was there a second ago. */
-    if(!LIVE){LIVE=true;LIVEMETA=snap;ROSTER=[];dataCache={};goLive();
-      buildTiles();buildOps();
+    if(!LIVE){LIVE=true;LIVEMETA=snap;ROSTER=[];dataCache={};DECLARED=0;goLive();
+      buildTiles();buildOps();syncEmptyFloor();
       setStatus("collector reports an empty fleet — check the resolved fleet roster",true);}
     return;
   }
   LIVEMETA=snap;
   var first=!LIVE;LIVE=true;LASTPOLL=Date.now();
   var roster=[],cache={};
+  DECLARED=snap.units.length;
   snap.units.forEach(function(u){
     /* working means "a session is open"; without one the cell has nothing to
        count up from, so it is standby however the probe was labelled. */
     var st=(u.state==="working"&&!u.cur)?"idle":u.state;
-    roster.push({agent:u.agent,room:u.room,state:st,box:u.box,note:u.note||""});
+    /* Cached for EVERY roster member, hidden or not: the cache is keyed by box
+       and read by the counts below, and a hidden box still contributes its
+       facts to them. Only the grid is filtered. */
     cache[u.box]=liveData(u);
+    if(deployed(u))roster.push({agent:u.agent,room:u.room,state:st,box:u.box,note:u.note||""});
   });
   ROSTER=roster;dataCache=cache;
   if(first)goLive();
@@ -1500,11 +1528,20 @@ function applyFleet(snap){
        — the phantom-box twin of a frozen fleet that looks calm. Say so and go
        back to the floor, which is the only view that is still true. */
     var gone=BOX;
+    /* Two ways to lose the box you are standing in, and they want different
+       sentences. Removed from the roster is the phantom-box case above. Still
+       declared but no longer deployed is the #204 filter closing a console the
+       operator has open — the box torn down and re-created empty, or an engine
+       removed by hand — and telling them it left the fleet would be false. */
+    var still=snap.units.filter(function(u){return u.box===gone;})[0];
     toFloor();
-    setStatus(gone+" is no longer in the fleet — returned to the floor",true);
+    setStatus(still
+      ? gone+" is not hired — returned to the floor"
+      : gone+" is no longer in the fleet — returned to the floor",true);
+    buildTiles();buildOps();syncEmptyFloor();
     return;
   }
-  buildTiles();buildOps();syncToggles();refreshChrome();
+  buildTiles();buildOps();syncToggles();refreshChrome();syncEmptyFloor();
   if(VIEW==="room")populateDash();
   liveTicker(snap);
 }
@@ -1613,15 +1650,60 @@ function cmd(action,extra){
 function esc(s){return String(s).replace(/[&<>]/g,function(c){return c==="&"?"&amp;":c==="<"?"&lt;":"&gt;";});}
 function stampVersion(s){var m=String(s||"").match(/^crew@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?)(?:\s|$)/);return m?m[1]:"unknown";}
 function clockStr(){var d=new Date();return pad2(d.getUTCHours())+":"+pad2(d.getUTCMinutes())+":"+pad2(d.getUTCSeconds());}
+/* The floor with nothing on it. #204 made an empty grid a state an operator
+   reaches on purpose — a roster written before the first `crew hire` draws no
+   console at all — and a blank stage with no words on it is the "fresh
+   operator sees a blank page and no next step" the issue names as a
+   requirement on the fix, not a side effect of it.
+
+   DOM, not canvas: the grid is painted every frame and this is not, so it
+   belongs with the rest of the chrome the fleetbar owns — and a rendered-page
+   assertion can read it, which is the regression shape #203 recorded, where
+   every collector assertion stayed green while the page said the wrong thing.
+
+   It says the two things the count alone cannot: how many boxes are declared,
+   and the command that turns one of them into a console. */
+function syncEmptyFloor(){
+  var el=document.getElementById("emptyfloor");if(!el)return;
+  var show=LIVE&&VIEW==="floor"&&!ROSTER.length;
+  el.classList.toggle("on",show);
+  if(!show){el.innerHTML="";return;}
+  el.innerHTML=DECLARED
+    ? '<div class="eh">NO BOX IS HIRED YET</div>'
+      +'<div class="eb">The fleet roster declares <b>'+DECLARED+'</b> box'
+      +(DECLARED===1?'':'es')+', and none of them is running an engine. '
+      +'A console appears here as its box is hired.</div>'
+      +'<div class="ec">crew hire &lt;box&gt;</div>'
+    : '<div class="eh">THE FLEET ROSTER IS EMPTY</div>'
+      +'<div class="eb">No box is declared, so there is nothing to hire yet. '
+      +'Add boxes to the fleet roster, then create and hire them.</div>'
+      +'<div class="ec">crew new &lt;box&gt;</div>';
+}
 function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dataOf(UNITID(u),u.room).queue.length;});
-  function tl(n,l,c,al){return '<div class="tile'+(al?' alert':'')+'"><span class="n" style="color:'+c+'">'+n+'</span><span class="l">'+l+'</span></div>';}
+  function tl(n,l,c,al,ti){return '<div class="tile'+(al?' alert':'')+'"'+(ti?' title="'+esc(ti)+'"':'')+'><span class="n" style="color:'+c+'">'+n+'</span><span class="l">'+l+'</span></div>';}
   /* `disarmed` sits between idle and silent because that is where it belongs
      on the operator's ladder: nothing is wrong, nothing is running. It is
      never given the alert class — the pulsing red border is the fleet's one
      "look at this now" mark, and a fleet the operator disarmed on purpose must
      not be able to trigger it (#189, #203). Five tiles became six rather than
      six meanings sharing five tiles. */
-  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(ROSTER.length,"units","#c7d4e4")+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.stopped,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
+  /* `units` counts what the fleet DECLARES, which is what /api/fleet carries
+     and what `crew status` lists — unchanged by #204's grid filter, so the two
+     readers still agree about how big the fleet is. In DEMO there is no
+     collector and no declared count, so the placeholder roster is its own
+     answer. */
+  var declared=LIVE?DECLARED:ROSTER.length;
+  /* ...and `hired` says how many of them got a console, ONLY when that is a
+     different number. A permanent "26 hired" beside "26 units" is furniture on
+     every healthy fleet — the same rule DISARMED and ALERT already follow —
+     while a fleet with boxes missing from the grid must never look like a
+     fleet that is simply smaller. This tile is the "visible count rather than
+     a silent omission" the issue asks for. */
+  var hidden=declared-ROSTER.length;
+  var hire=hidden>0?tl(ROSTER.length,"hired","#8aa0b8",false,
+    hidden+(hidden===1?" declared box has":" declared boxes have")
+    +" no console: not hired — crew hire <box>"):"";
+  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.stopped,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only

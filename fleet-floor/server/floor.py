@@ -603,23 +603,63 @@ def unit_defaults():
         "lock": {"held": None, "stuck": False},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
+        # HIRED — "yes" / "no" / "unknown", and never an inference from the
+        # engine string. The page draws a console for what is DEPLOYED rather
+        # than for what the roster DECLARES (#204), and that filter needs a
+        # positive fact to fire on: `engine == ""` is true of a box that was
+        # never created, a box that is down, a box that did not answer, and a
+        # box that answered and has no engine — four different situations with
+        # two different answers. Inferring the filter from silence is the #308
+        # defect one reader over, so the collector — which already ranks those
+        # four apart with its own early returns — publishes the verdict and the
+        # page never re-derives it.
+        #
+        # "unknown" is the default because the two producers that never reach a
+        # probe (a stopped box, and build_unit's exception path in the poller)
+        # must land on the answer that KEEPS the console: a box whose hired
+        # state cannot be measured is exactly the hired-and-gone-dark box this
+        # page exists to show.
+        "hired": "unknown",
     }
 
 
-def build_unit(unit, state, agent_conf, now):
-    """Roster entry + live probe -> the record the page renders."""
+def build_unit(unit, state, agent_conf, now, inventory_ok=True):
+    """Roster entry + live probe -> the record the page renders.
+
+    `inventory_ok` is whether `box list` ANSWERED. It matters only where state
+    is None, which that one call is the sole evidence for: a failed listing
+    makes every box look absent, and #204's grid filter would then read a
+    broken inventory as a fleet nobody ever hired and draw an empty floor.
+    Absence has to be measured before it can hide anything.
+    """
     u = dict(unit)
     u.update(unit_defaults())
 
     if state is None:
+        if not inventory_ok:
+            # `box list` could not be asked, so this box's absence is silence
+            # rather than evidence, and `hired` stays "unknown" — the console
+            # is kept and says why. Hiding here would be the exact inference
+            # the verdict exists to refuse, on the one signal whose job is
+            # noticing that something stopped answering.
+            u["note"] = "box inventory unreadable — cannot tell what exists"
+            return u
+        # No box exists, so nothing was ever hired into it. This is a MEASURED
+        # "no", not a fallback: `box list` answered and this name was not in it.
+        u["hired"] = "no"
         u["note"] = "not created — crew new %s" % unit["box"]
         return u
     if state == "stopped":
+        # Keeps "unknown": the box exists and nobody can ask it anything while
+        # it is down. Hiring is not undone by `crew down`.
         u["note"] = "stopped — crew up starts it"
         return u
 
     raw, err = probe_box(unit, agent_conf)
     if raw is None:
+        # Also "unknown", and this is the one that matters most: a box that
+        # stopped answering is the hired-and-gone-dark case, and dropping its
+        # console would hide the failure the floor is for.
         u["note"] = "unreachable: %s" % err
         return u
 
@@ -703,6 +743,10 @@ def build_unit(unit, state, agent_conf, now):
     except ValueError:
         pass
 
+    # The box ANSWERED — every "cannot tell" path returned above — so its
+    # engine stamp is now evidence rather than silence, and this is the only
+    # place the empty string is allowed to mean "not hired".
+    u["hired"] = "yes" if u["engine"] else "no"
     if not u["engine"]:
         u["note"] = "not hired — crew hire %s" % unit["box"]
 
@@ -884,7 +928,12 @@ class Fleet:
 
     def _poll_once_locked(self):
         roster = read_roster()
-        states = box_states()
+        # strict, because since #204 absence HIDES a console: an empty dict has
+        # always been ambiguous between "this host has no boxes" and "the
+        # question could not be asked", and the poller is now a caller that
+        # acts on absence. The ping tier already reads it this way; see
+        # box_states' docstring for the argument.
+        states, states_ok = box_states(strict=True)
         now = time.time()
 
         units = [None] * len(roster)
@@ -893,7 +942,8 @@ class Fleet:
         def work(i, unit):
             try:
                 units[i] = build_unit(unit, states.get(unit["box"]),
-                                      self.agent_conf(unit["agent"]), now)
+                                      self.agent_conf(unit["agent"]), now,
+                                      inventory_ok=states_ok)
             except Exception as e:                          # noqa: BLE001
                 u = dict(unit)
                 u.update(unit_defaults())

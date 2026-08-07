@@ -52,10 +52,15 @@ const ok = (name, cond, detail = '') => {
   ok('transition: found a working box to watch', !!target, target || 'none working');
   if (!target) { await browser.close(); process.exit(failed ? 1 : 0); }
 
-  // Walk the floor to that box's console.
+  /* Walk the floor to that box's console — by its GRID index, which since #204
+     is not its /api/fleet index. The payload carries every roster member and
+     the grid draws only the deployed ones, so a box declared after a hidden one
+     sits one cell to the left of where the payload puts it, and clicking
+     `cell[payloadIndex]` opens a neighbour. Filter here exactly as the page
+     does: `hired === 'no'` and nothing else. */
   const roster = await page.evaluate(async () => {
     const r = await fetch(location.origin + '/api/fleet');
-    return (await r.json()).units.map((u) => u.box);
+    return (await r.json()).units.filter((u) => u.hired !== 'no').map((u) => u.box);
   });
   /* Scroll to the target rather than assuming it is on screen. Which box is
      "working" depends on what ran before this test, so a fixed assumption here
