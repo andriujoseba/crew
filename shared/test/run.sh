@@ -27,12 +27,14 @@ t() {  # t <name> <expected> <actual>
 # the repository roots this suite names before running it. Keep that explicit
 # verifier from falling behind new literal $ROOT/<path> dependencies.
 phase0_suite_roots() {  # phase0_suite_roots <suite>
+  # shellcheck disable=SC2016  # match the literal root expression in the suite
   grep -oE '\$ROOT/[.[:alnum:]_-]+' "$1" \
     | sed 's|^\$ROOT/||' \
     | sort -u || true
 }
 
 phase0_verified_roots() {  # phase0_verified_roots <rehearsal>
+  # shellcheck disable=SC2016  # match the literal stage expression in rehearsal
   sed -n '/BEGIN phase-0 suite roots/,/END phase-0 suite roots/p' "$1" \
     | grep -oE '\$stage/[.[:alnum:]_-]+' \
     | sed 's|^\$stage/||' \
@@ -1022,6 +1024,7 @@ P0COVER_SUITE="$TMP/phase0-cover-suite.sh"
 P0COVER_REHEARSAL="$TMP/phase0-cover-rehearsal.sh"
 cp "$HERE/run.sh" "$P0COVER_SUITE"
 cp "$ROOT/drill/rehearsal.sh" "$P0COVER_REHEARSAL"
+# shellcheck disable=SC2016  # write a literal synthetic suite dependency
 printf '%s%s\n' '$ROOT' '/postmortems' >>"$P0COVER_SUITE"
 t phase0-new-suite-root-needs-verification missing:postmortems \
   "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
