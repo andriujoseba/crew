@@ -126,8 +126,24 @@ const ok = (name, cond, detail = '') => {
   const appeared = await settle(async () => (await cells()) === 1);
   ok('hired: hiring a box makes its console appear on the next poll', appeared,
      (await cells()) + ' cells after the flip');
-  const drawn = await page.evaluate(() => ROSTER.map((u) => u.box).join(','));
-  ok('hired: it is the box that was hired', drawn === 'hf-nothired', drawn);
+  /* ...and it is the RIGHT box, read the way an operator would find out: open
+     the one cell the grid drew and see whose console it is. `ROSTER` is inside
+     app.js's IIFE and deliberately not reachable from here, which is the right
+     shape — the page's answer to "whose console is this" is the console. */
+  const centre = await page.evaluate(() => {
+    const g = window.FLOORDEV.grid();
+    return { x: g.cell[0].x + g.tw / 2, y: g.cell[0].y + g.th / 2 };
+  });
+  await page.mouse.click(centre.x, centre.y);
+  const opened = await settle(async () =>
+    (await page.locator('body.room').count()) === 1, 8000);
+  const drawn = opened
+    ? (await page.locator('#c-target').textContent()).replace('▸ MESSAGE ', '').trim()
+    : null;
+  ok('hired: the console that appeared belongs to the box that was hired',
+     drawn === 'hf-nothired', String(drawn));
+  await page.keyboard.press('Escape');
+  await settle(async () => (await page.locator('body.floor').count()) === 1, 4000);
   /* The counts move with it, and only the right one moves: the fleet did not
      grow, so `units` still reads two. A declared count that tracked the grid
      would be the silent omission this issue exists to prevent. */
