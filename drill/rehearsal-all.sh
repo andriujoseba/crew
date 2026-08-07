@@ -247,7 +247,10 @@ echo "## fleet rehearsal summary ($AGENT)"
 printf '##   %s\n' "${SUMMARY[@]}"
 echo "############################################################"
 if [ "$KEEP" -eq 1 ] || [ "$overall" -ne 0 ]; then
-  echo "## the drill boxes and sandbox repositories are still on this host."
+  # "remain" rather than "were kept": this line also covers a teardown that
+  # ran and failed, where some of the round is gone and the rest is not. What
+  # exactly survived is named above, by the teardown's own FAIL lines.
+  echo "## drill boxes and sandbox repositories remain on this host."
   echo "## When you are done with them:  $TEARDOWN_HINT"
 fi
 if [ "$overall" -eq 2 ]; then
