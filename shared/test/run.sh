@@ -4411,6 +4411,7 @@ gh() {
   esac
   return 0
 }
+# shellcheck disable=SC2031  # breaker fixtures above intentionally isolate DUTY_DIR in subshells
 RG_SAVED_DUTY="$DUTY_DIR"; RG_SAVED_ME="${ME-}"; RG_ME_WAS_SET="${ME+x}"
 DUTY_DIR="$RG_DUTY"; ME=me
 rg_reset() { rm -f "$RG_DUTY/.seen-resume" "$RG_DUTY/.resume-zero-action.o__r"; }
