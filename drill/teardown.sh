@@ -37,11 +37,18 @@
 #      all, so what it holds is unknown and may still be standing.
 #
 # 2 exists because "absent" and "could not tell" must never collapse. A
-# teardown that could not read the box inventory, or had no gh identity to
-# address the sandboxes with, and reported a clean host anyway is the
-# leftovers-nobody-knows-about shape #217 was filed about — produced by the
-# script written to end it. An INCOMPLETE run still deletes everything it
-# COULD see; what it may not do is return success.
+# teardown that could not read the box inventory, had no gh identity to
+# address the sandboxes with, or asked after one sandbox and got no answer,
+# and reported a clean host anyway, is the leftovers-nobody-knows-about shape
+# #217 was filed about — produced by the script written to end it. An
+# INCOMPLETE run still deletes everything it COULD see; what it may not do is
+# return success.
+#
+# The distinction is enforced at BOTH grains, because it escapes through
+# either: per CLASS (no box, an unreadable inventory, no gh, no identity) and
+# per RESOURCE (one repository lookup that failed for a reason that is not a
+# measured 404). A live identity plus a dead network is the second kind, and
+# the class-level gates cannot see it.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -174,9 +181,38 @@ command -v gh >/dev/null 2>&1 && have_gh=1
 # clean-host claim, whatever else the run managed to delete.
 declare -a UNINSPECTED=()
 
+# Order-preserving dedupe of an array, through a scratch global. No `mapfile`
+# and no namerefs, so this stays where the rest of the drill scripts are, and
+# no round-trip through a newline-delimited stream, so a name carrying a
+# newline reaches the refusal loop intact rather than split into two.
+#
+# `sort -u` would do the job and reorder the confirmation listing while it was
+# there; the listing should read back in the order the operator named things.
+declare -a DEDUPED=()
+dedupe() {
+  local x y dup
+  DEDUPED=()
+  for x in ${@+"$@"}; do
+    dup=0
+    for y in ${DEDUPED[@]+"${DEDUPED[@]}"}; do
+      [ "$x" = "$y" ] && { dup=1; break; }
+    done
+    [ "$dup" -eq 1 ] || DEDUPED+=("$x")
+  done
+}
+
 # --- validate every target, before touching anything ----------------------
 declare -a REFUSALS=()
 for role in $ROLES; do BOXES+=("crew-drill-$role"); done
+
+# `--box crew-drill-builder --role builder` names one box twice, and the
+# duplicate is not merely noisy: it lists the box twice in the confirmation
+# and calls `box rm --force` on it twice. The second call — against a box the
+# first one just removed — will usually fail, turning a SUCCESSFUL teardown
+# into `FAIL could not remove box crew-drill-builder`. That is the one message
+# an operator has to be able to trust, so the duplicate dies here.
+dedupe ${BOXES[@]+"${BOXES[@]}"}
+BOXES=(${DEDUPED[@]+"${DEDUPED[@]}"})
 
 for name in ${BOXES[@]+"${BOXES[@]}"}; do
   if is_roster_member "$name"; then
@@ -196,10 +232,9 @@ done
 #
 # The identity is a precondition for INSPECTING repositories, not only for
 # NAMING them, so it is required whenever any sandbox is in play — including
-# an explicit `--sandbox owner/repo`, which is surveyed by a `gh repo view`
-# that fails identically for "no such repository" and "not logged in". An
-# unauthenticated survey would answer "absent" for a repository standing in
-# plain sight.
+# an explicit `--sandbox owner/repo`, whose survey would otherwise answer
+# "absent" for a repository standing in plain sight. It is also what the owner
+# half of the repo predicate is checked against, below.
 REPOS_REQUESTED=0
 [ -n "${ROLES// /}" ] && REPOS_REQUESTED=1
 [ "${#REPOS[@]}" -gt 0 ] && REPOS_REQUESTED=1
@@ -219,6 +254,9 @@ if [ "$REPOS_REQUESTED" -eq 1 ]; then
   fi
 fi
 
+dedupe ${REPOS[@]+"${REPOS[@]}"}
+REPOS=(${DEDUPED[@]+"${DEDUPED[@]}"})
+
 for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   case "$repo" in
     */*/*|/*|*/) REFUSALS+=("sandbox '$repo' is not an <owner>/<repo> slug"); continue ;;
@@ -227,6 +265,23 @@ for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   esac
   if ! is_drill_repo "${repo#*/}"; then
     REFUSALS+=("sandbox $repo is not a drill sandbox — teardown removes only: $(drill_repo_names | paste -sd' ' -)")
+  # The box half has TWO gates — the exact drill name AND named by no roster —
+  # and the repo half had one, on the `<repo>` component alone, so
+  # `--sandbox someone-else/crew-drill-builder` validated and could be deleted.
+  # A round's sandboxes are always `$REPO_OWNER/crew-drill-<role>` and the
+  # owner is already resolved by the time this loop runs, so the second gate is
+  # free: the owner must be this host's gh identity.
+  #
+  # When the owner is NOT known the gate cannot be evaluated, and does not need
+  # to be — that path has already put the whole repository class on UNINSPECTED
+  # and will exit 2 without deleting anything.
+  #
+  # A round created under a different identity than the one now logged in
+  # therefore REFUSES rather than deletes, naming the identity it expected.
+  # That is the right direction for a destructive command: refusing is
+  # recoverable by logging in as that identity, deleting is not.
+  elif [ -n "$REPO_OWNER" ] && [ "${repo%%/*}" != "$REPO_OWNER" ]; then
+    REFUSALS+=("sandbox $repo is owned by '${repo%%/*}', not by this host's gh identity '$REPO_OWNER' — a round's sandboxes are always $REPO_OWNER/crew-drill-<role>")
   fi
 done
 
@@ -270,8 +325,44 @@ box_created() {
 }
 repo_created() {
   local d
-  d="$(gh repo view "$1" --json createdAt --jq .createdAt 2>/dev/null | tr -d '\r\n' || true)"
+  d="$(gh api "repos/$1" --jq '.created_at // "unknown"' 2>/dev/null | tr -d '\r\n' || true)"
   printf '%s\n' "${d:-unknown}"
+}
+
+# `gh repo view` cannot tell "no such repository" from "the API did not
+# answer": it is GraphQL, and both come back as exit 1. Reading that non-zero
+# as absence is how a live identity and a dead network together reported a
+# clean host while every sandbox stood — the class-level gates above catch no
+# gh, no login and an unanswerable `gh api user`, and caught nothing at all
+# once the identity resolved and the per-repository lookup was the thing that
+# failed.
+#
+# The REST endpoint CAN tell them apart, so the probe answers three ways and
+# only ONE of them is absence:
+#
+#   0  it exists
+#   1  measured absent — HTTP 404, and nothing else reaches this
+#   2  could not tell — gh's own reason on stdout, for UNINSPECTED
+#
+# Worth writing down rather than papering over: GitHub answers 404 for a
+# PRIVATE repository the token cannot see, so a measured absence is really
+# "absent to this identity". That is the API's shape and not this script's,
+# and it is still the safe direction — a repository this identity cannot see
+# is not one this identity can delete either.
+repo_probe() {
+  local err rc=0
+  err="$(gh api "repos/$1" --jq .full_name 2>&1 >/dev/null)" || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  case "$err" in
+    *"HTTP 404"*|*"Not Found"*) return 1 ;;
+  esac
+  err="${err:-gh api repos/$1 exited $rc and said nothing}"
+  # One line, bounded: this reason is printed inside a NOT inspected list, and
+  # gh answers some failures with a whole JSON body.
+  err="${err//$'\n'/ }"
+  err="${err//$'\r'/ }"
+  printf '%.200s\n' "$err"
+  return 2
 }
 
 declare -a DOOMED_BOXES=() DOOMED_REPOS=()
@@ -291,7 +382,18 @@ if [ "$REPOS_REQUESTED" -eq 1 ] && [ -n "$REPO_INSPECT_FAIL" ]; then
   UNINSPECTED+=("sandbox repositories of this round — $REPO_INSPECT_FAIL")
 else
   for repo in ${REPOS[@]+"${REPOS[@]}"}; do
-    gh repo view "$repo" >/dev/null 2>&1 && DOOMED_REPOS+=("$repo")
+    # Per repository, not per class: the identity resolving says the API can be
+    # asked, not that it answered. An unanswered lookup names ITS OWN
+    # repository on the list, so the operator is told which one is unaccounted
+    # for rather than that "something" was not inspected.
+    probe_why=""
+    probe_rc=0
+    probe_why="$(repo_probe "$repo")" || probe_rc=$?
+    case "$probe_rc" in
+      0) DOOMED_REPOS+=("$repo") ;;
+      1) ;;  # measured absent — the only non-zero that may mean "not there"
+      *) UNINSPECTED+=("sandbox $repo — could not be looked up: $probe_why") ;;
+    esac
   done
 fi
 

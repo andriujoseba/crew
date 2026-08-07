@@ -61,10 +61,24 @@ case "${1:-} ${2:-}" in
   "api user")
     [ -n "${STUB_LOGIN:-}" ] || exit 1
     printf '%s\n' "$STUB_LOGIN" ;;
-  "repo view")
-    slug="${3:-}"
-    case " ${STUB_REPOS:-} " in *" $slug "*) ;; *) exit 1 ;; esac
-    case " $* " in *" --json "*) printf '2026-07-31T12:00:00Z\n' ;; esac ;;
+  "api repos/"*)
+    slug="${2#repos/}"
+    # STUB_REPO_LOOKUP_RC is the lookup failing for a reason that is NOT a
+    # 404 — codex's transport failure underneath a perfectly good identity.
+    # The message shape is gh's: a 404 says so in as many words and anything
+    # else does not, which is the whole of what repo_probe reads.
+    if [ -n "${STUB_REPO_LOOKUP_RC:-}" ]; then
+      printf 'error connecting to api.github.com: dial tcp: lookup failed\n' >&2
+      exit "$STUB_REPO_LOOKUP_RC"
+    fi
+    case " ${STUB_REPOS:-} " in
+      *" $slug "*) ;;
+      *) printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1 ;;
+    esac
+    case " $* " in
+      *created_at*) printf '2026-07-31T12:00:00Z\n' ;;
+      *) printf '%s\n' "$slug" ;;
+    esac ;;
   "repo delete") exit "${STUB_REPO_DELETE_RC:-0}" ;;
   *) exit 1 ;;
 esac
@@ -389,6 +403,92 @@ if [ "$RC" -eq 2 ] && says "NOT inspected" && ! called "box rm"; then
   ok "no-jq-to-read-the-inventory-with-is-not-a-clean-host"
 else
   bad "no-jq-to-read-the-inventory-with-is-not-a-clean-host (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# --- and never "absent" one grain further down either ---------------------
+# The gates above are per CLASS: no gh, no login, an unanswerable identity.
+# They all pass the moment `gh api user` answers, and the per-REPOSITORY
+# lookup was still reading every non-zero as absence — so a live identity plus
+# a dead network printed a clean host with the sandboxes standing. That is
+# codex-bot's second-round reproduction, and it is the same defect as the
+# first round's, one level down.
+
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPO_LOOKUP_RC=1" \
+    -- --sandbox danmt/crew-drill-reviewer --yes
+if [ "$RC" -eq 2 ] && says "NOT inspected" && says "danmt/crew-drill-reviewer"; then
+  ok "a-repository-lookup-that-failed-is-not-a-measured-absence"
+else
+  bad "a-repository-lookup-that-failed-is-not-a-measured-absence (rc=$RC, got '$OUT')"
+fi
+if says "nothing to do — no drill box"; then
+  bad "a-failed-repository-lookup-is-not-reported-as-a-clean-host"
+else
+  ok "a-failed-repository-lookup-is-not-reported-as-a-clean-host"
+fi
+if called "repo delete"; then
+  bad "a-repository-nobody-could-read-is-not-deleted"
+else
+  ok "a-repository-nobody-could-read-is-not-deleted"
+fi
+
+# The converse, and the reason it is asserted: a "fix" that made EVERY
+# repository uninspectable would satisfy the three above and quietly destroy
+# idempotence, so the measured absence has to be proved to still be one. A 404
+# is the only non-zero that means "not there".
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=" -- --yes
+if [ "$RC" -eq 0 ] && says "nothing to do" && ! says "NOT inspected"; then
+  ok "a-404-really-is-a-measured-absence-and-still-a-clean-host"
+else
+  bad "a-404-really-is-a-measured-absence-and-still-a-clean-host (rc=$RC, got '$OUT')"
+fi
+
+# INCOMPLETE still deletes what it COULD see, on the repository path as much
+# as on the identity one: the box half was read, so leave it clean.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" "STUB_LOGIN=danmt" "STUB_REPO_LOOKUP_RC=1" \
+    -- --role builder --yes
+if [ "$RC" -eq 2 ] && called "box rm --force crew-drill-builder" && says "NOT inspected"; then
+  ok "a-failed-repository-lookup-still-removes-the-box-it-could-read"
+else
+  bad "a-failed-repository-lookup-still-removes-the-box-it-could-read (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# --- naming one target twice deletes it once ------------------------------
+# `box rm --force` against a box the first call already removed will usually
+# fail, and that would turn a SUCCESSFUL teardown into `FAIL could not remove
+# box` for a box that WAS removed — the one message an operator has to trust.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=crew-drill-builder" "STUB_LOGIN=danmt" "STUB_REPOS=" \
+    -- --box crew-drill-builder --role builder --yes
+if [ "$RC" -eq 0 ] && [ "$(grep -cF 'box rm --force crew-drill-builder' "$CALLS")" -eq 1 ]; then
+  ok "a-target-named-twice-is-deleted-once"
+else
+  bad "a-target-named-twice-is-deleted-once (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+if [ "$(printf '%s\n' "$OUT" | grep -cF 'box   crew-drill-builder')" -eq 1 ]; then
+  ok "a-target-named-twice-is-listed-once-in-the-confirmation"
+else
+  bad "a-target-named-twice-is-listed-once-in-the-confirmation (got '$OUT')"
+fi
+
+# --- the repo predicate has two gates too ---------------------------------
+# The box half checks the exact name AND the roster; the repo half checked the
+# <repo> component alone, so a drill-shaped name under somebody else's account
+# validated. A round's sandboxes are always $REPO_OWNER/crew-drill-<role>.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=other/crew-drill-builder" \
+    -- --sandbox other/crew-drill-builder --yes
+if [ "$RC" -eq 1 ] && says "other/crew-drill-builder" && says "danmt" && ! called "repo delete"; then
+  ok "refuses-a-drill-shaped-sandbox-owned-by-someone-else"
+else
+  bad "refuses-a-drill-shaped-sandbox-owned-by-someone-else (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
+# The same gate must not refuse the round's own sandbox, or teardown clears
+# nothing at all.
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=danmt/crew-drill-builder" \
+    -- --sandbox danmt/crew-drill-builder --yes
+if [ "$RC" -eq 0 ] && called "repo delete danmt/crew-drill-builder"; then
+  ok "accepts-the-round-s-own-sandbox-under-this-identity"
+else
+  bad "accepts-the-round-s-own-sandbox-under-this-identity (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
 fi
 
 # 2 is INCOMPLETE and 1 is refused-or-failed: two different facts, and
