@@ -207,11 +207,13 @@ done
 SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
   || { echo "phase 0: $SOURCE_DESC is not a resolved git tree"; exit 1; }
 ENGINE_ARCHIVE="$ACQUIRE_TMP/crew-engine.tgz"
+# BEGIN phase-0 archive selection: shared/test/run.sh verifies this contract.
 if ! git -C "$SOURCE_TREE" archive --format=tar "$SOURCE_SHA" \
   -- . ':(exclude)fleet-floor/dev' | gzip >"$ENGINE_ARCHIVE"; then
   echo "phase 0: could not archive the tracked tree from $SOURCE_DESC at $SOURCE_SHA"
   exit 1
 fi
+# END phase-0 archive selection
 
 # --- the drill box -------------------------------------------------------
 # Acquisition and the --tree clean-checkout guard stay above this line: an

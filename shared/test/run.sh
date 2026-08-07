@@ -25,12 +25,16 @@ t() {  # t <name> <expected> <actual>
 
 # Phase 0 stages the whole tracked tree except fleet-floor/dev, then verifies
 # the repository roots this suite names before running it. Keep that explicit
-# verifier from falling behind new literal $ROOT/<path> dependencies.
-phase0_suite_roots() {  # phase0_suite_roots <suite>
-  # shellcheck disable=SC2016  # match the literal root expression in the suite
-  grep -oE '\$ROOT/[.[:alnum:]_-]+' "$1" \
-    | sed 's|^\$ROOT/||' \
+# verifier and archive selection from falling behind new literal root paths.
+phase0_suite_paths() {  # phase0_suite_paths <suite>
+  # shellcheck disable=SC2016  # match literal root expressions in the suite
+  grep -oE '\$(ROOT|\{ROOT\})/[.[:alnum:]_/-]+' "$1" \
+    | sed -E 's#^\$(ROOT|\{ROOT\})/##' \
     | sort -u || true
+}
+
+phase0_suite_roots() {  # phase0_suite_roots <suite>
+  phase0_suite_paths "$1" | cut -d/ -f1 | sort -u
 }
 
 phase0_verified_roots() {  # phase0_verified_roots <rehearsal>
@@ -41,10 +45,28 @@ phase0_verified_roots() {  # phase0_verified_roots <rehearsal>
     | sort -u || true
 }
 
+phase0_archive_result() {  # phase0_archive_result <rehearsal>
+  local selection archive_commands exclusions
+  selection="$(sed -n '/BEGIN phase-0 archive selection/,/END phase-0 archive selection/p' "$1")"
+  [ -n "$selection" ] || { printf '%s\n' empty-archive-selection; return; }
+  # shellcheck disable=SC2016  # match literal phase-0 variable references
+  archive_commands="$(printf '%s\n' "$selection" \
+    | grep -cF 'git -C "$SOURCE_TREE" archive --format=tar "$SOURCE_SHA"' || true)"
+  exclusions="$(printf '%s\n' "$selection" | grep -oF ':(exclude)' | wc -l)"
+  if [ "$archive_commands" -ne 1 ] \
+    || ! printf '%s\n' "$selection" | grep -Fq -- "-- . ':(exclude)fleet-floor/dev'" \
+    || [ "$exclusions" -ne 1 ]; then
+    printf '%s\n' archive-selection-mismatch
+  else
+    printf '%s\n' covered
+  fi
+}
+
 phase0_coverage_result() {  # phase0_coverage_result <suite> <rehearsal>
-  local roots verified missing
+  local paths roots verified missing archive_result
+  paths="$(phase0_suite_paths "$1")"
+  [ -n "$paths" ] || { printf '%s\n' empty-suite-roots; return; }
   roots="$(phase0_suite_roots "$1")"
-  [ -n "$roots" ] || { printf '%s\n' empty-suite-roots; return; }
   verified="$(phase0_verified_roots "$2")"
   [ -n "$verified" ] || { printf '%s\n' empty-verified-roots; return; }
   missing="$(comm -23 \
@@ -52,8 +74,13 @@ phase0_coverage_result() {  # phase0_coverage_result <suite> <rehearsal>
     <(printf '%s\n' "$verified"))"
   if [ -n "$missing" ]; then
     printf 'missing:%s\n' "$(printf '%s\n' "$missing" | paste -sd, -)"
+  elif printf '%s\n' "$paths" | grep -Eq '^fleet-floor/dev(/|$)'; then
+    printf '%s\n' excluded:fleet-floor/dev
   else
-    printf '%s\n' covered
+    archive_result="$(phase0_archive_result "$2")"
+    [ "$archive_result" = covered ] \
+      && printf '%s\n' covered \
+      || printf 'archive:%s\n' "$archive_result"
   fi
 }
 
@@ -1017,9 +1044,8 @@ t rehearsal-invalid-tree-rc 1 "$r1"
 case "$p0out" in *"shared/install.sh"*"missing"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
 t rehearsal-invalid-tree-attributed attributed "$r1"
 
-# The suite/reference extraction and the phase-0 verifier are a pair: adding
-# a new repository root must fail here until the verifier names it, and an
-# empty input on either side must never look complete.
+# The suite/reference extraction, archive selection and phase-0 verifier are
+# one contract: each can drift independently, and empty inputs never cover it.
 P0COVER_SUITE="$TMP/phase0-cover-suite.sh"
 P0COVER_REHEARSAL="$TMP/phase0-cover-rehearsal.sh"
 cp "$HERE/run.sh" "$P0COVER_SUITE"
@@ -1027,6 +1053,24 @@ cp "$ROOT/drill/rehearsal.sh" "$P0COVER_REHEARSAL"
 # shellcheck disable=SC2016  # write a literal synthetic suite dependency
 printf '%s%s\n' '$ROOT' '/postmortems' >>"$P0COVER_SUITE"
 t phase0-new-suite-root-needs-verification missing:postmortems \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+cp "$HERE/run.sh" "$P0COVER_SUITE"
+# shellcheck disable=SC2016  # write a literal brace-form suite dependency
+printf '%s%s\n' '${ROOT}' '/postmortems/report.md' >>"$P0COVER_SUITE"
+t phase0-braced-suite-root-needs-verification missing:postmortems \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+cp "$HERE/run.sh" "$P0COVER_SUITE"
+# shellcheck disable=SC2016  # write a dependency beneath the excluded subtree
+printf '%s%s\n' '$ROOT' '/fleet-floor/dev/assets.json' >>"$P0COVER_SUITE"
+t phase0-excluded-suite-path-refused excluded:fleet-floor/dev \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+cp "$HERE/run.sh" "$P0COVER_SUITE"
+# shellcheck disable=SC2016  # replace the block with the literal legacy command
+sed -i '/BEGIN phase-0 archive selection/,/END phase-0 archive selection/c\
+# BEGIN phase-0 archive selection\
+tar czf "$ENGINE_ARCHIVE" -C "$SOURCE_TREE" shared VERSION\
+# END phase-0 archive selection' "$P0COVER_REHEARSAL"
+t phase0-legacy-archive-selection-refused archive:archive-selection-mismatch \
   "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
 : >"$P0COVER_SUITE"
 t phase0-empty-suite-root-list-refused empty-suite-roots \
