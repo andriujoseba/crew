@@ -166,7 +166,34 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      a page that started filtering on silence would still pass. */
   const shown = LIVE ? roster.filter((u) => u.hired !== 'no') : roster;
   const hiddenBoxes = LIVE ? roster.filter((u) => u.hired === 'no').map((u) => u.box) : [];
-  ok('floor: roster rendered', shown.length > 0, shown.length + ' units');
+  /* A fleet with nothing hired now draws NO console, deliberately, and the
+     drill reaches that state for real: rehearsal-app.sh skips its engine-version
+     block with "no box on this host is hired", so a host part-way through
+     provisioning has a legitimately empty floor. Before #204 that fleet still
+     rendered cells and every check below had something to stand on; now it does
+     not, and a walk that read the empty floor as a broken renderer would fail
+     the drill for doing the right thing.
+
+     So the emptiness is checked rather than assumed: an empty floor passes only
+     if the page SAYS it is empty and names the way out. Same assertion count
+     either way, because the floor in run.sh is exact. The stub fleet always has
+     boxes hired, so this run always takes the second branch. */
+  const emptyFloor = LIVE && !shown.length;
+  const emptyState = emptyFloor
+    ? await page.evaluate(() => {
+        const el = document.querySelector('#emptyfloor');
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { on: el.classList.contains('on'), visible: r.width > 0 && r.height > 0,
+                 text: el.textContent.replace(/\s+/g, ' ').trim() };
+      })
+    : null;
+  ok(emptyFloor ? 'floor: a fleet with nothing hired draws the empty state'
+                : 'floor: roster rendered',
+     emptyFloor
+       ? !!emptyState && emptyState.on && emptyState.visible && /crew hire/.test(emptyState.text)
+       : shown.length > 0,
+     emptyFloor ? JSON.stringify(emptyState) : shown.length + ' units');
   if (LIVE) {
     const header = await page.evaluate(() => window.FLOORDEV.header());
     const paintedVersion = header.find((h) => /^crew /.test(h.text));
@@ -496,7 +523,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   ok('nav: layout order follows roster order', orderViolations.length === 0,
      orderViolations.slice(0, 3).join('; '));
 
-  ok('nav: cells open', visible.length > 0, visible.length + ' distinct boxes entered');
+  /* On an all-unhired fleet the correct number of cells is zero, and the
+     assertion that the floor said so is above. Everywhere else, a floor whose
+     cells will not open is exactly the failure this line is for. */
+  ok('nav: cells open', emptyFloor ? visible.length === 0 : visible.length > 0,
+     visible.length + ' distinct boxes entered');
   // Scrolling is what makes this meaningful: without it the tail of the fleet
   // is never clicked, and the tail is where the odd states live.
   /* Name the boxes that were missed. "16/17" says a walk failed; it does not
