@@ -3625,13 +3625,16 @@ kimi_session_classification() (
   source "$SHARED/conf/agents/kimi.conf"
   if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
   printf '|'
-  printf 'ToolCall(id=call_1 function=Shell)\n' >"$TERM_LOG.acted"
+  printf 'provider error: access_terminated_error\n' >"$TERM_LOG"
+  if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
+  printf '|'
+  printf 'Used Shell (gh api repos/o/r/pulls/1/reviews)\n' >"$TERM_LOG.acted"
   if bot_session_acted "$TERM_LOG.acted"; then printf yes; else printf no; fi
   printf '|'
   printf 'Final answer only\n' >"$TERM_LOG.acted"
   if bot_session_acted "$TERM_LOG.acted"; then printf yes; else printf no; fi
 )
-t kimi-session-hooks 'terminal|yes|no' "$(kimi_session_classification)"
+t kimi-session-hooks 'terminal|terminal|yes|no' "$(kimi_session_classification)"
 
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
 terminal_breaker_case() ( # terminal_breaker_case terminal|transient|hookless
@@ -3674,6 +3677,42 @@ t transient-failures-never-trip '16|0|0|0' \
   "$(terminal_breaker_case transient)"
 t hookless-failures-remain-transient '16|0|0|0' \
   "$(terminal_breaker_case hookless)"
+
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
+terminal_timeout_case() (
+  local bdir="$TMP/terminal-breaker-timeout" i
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  SESSION_TERMINAL_THRESHOLD=3
+  BOT_CLI_CMD=(bash -c 'exit 124')
+  bot_session_terminal() { return 0; }
+  bot_session_acted() { return 1; }
+  alert() { printf alert >>"$bdir/alerts"; }
+  for i in $(seq 1 16); do run_session review fixture/repo "$bdir/work" 5 prompt; done >"$bdir/output"
+  printf '%s|%s' "$(grep -c 'outcome=TIMEOUT' "$bdir/output")" \
+    "$([ -e "$(_session_terminal_state review)" ] && echo tripped || echo clear)"
+)
+t timeout-failures-never-trip '16|clear' "$(terminal_timeout_case)"
+
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
+terminal_kind_isolation() (
+  local bdir="$TMP/terminal-breaker-kind" i
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  SESSION_TERMINAL_THRESHOLD=3
+  export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
+  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf access_terminated_error; exit 1')
+  bot_session_terminal() { grep -q access_terminated_error "$1"; }
+  bot_session_acted() { return 1; }
+  bot_cli_probe() { return 1; }
+  alert() { :; }
+  for i in 1 2 3; do run_session review fixture/repo "$bdir/work" 5 prompt; done >/dev/null
+  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; exit 0')
+  run_session build fixture/repo "$bdir/work" 5 prompt >/dev/null
+  printf '%s|%s' "$(wc -c <"$BREAKER_CALLS")" \
+    "$([ -e "$(_session_terminal_state review)" ] && echo review-stopped || echo review-open)"
+)
+t terminal-breaker-is-keyed-by-kind '4|review-stopped' "$(terminal_kind_isolation)"
 
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
 terminal_breaker_recovery() (
