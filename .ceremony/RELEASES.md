@@ -86,6 +86,37 @@ edges rather than merely appending membership at the sink. It follows that
 every `ready` issue is a gate member. `epic` and `post-merge` issues are exempt
 because neither is claimable (#292).
 
+A member that lands `post-merge` releases nothing: that exemption is about
+claimability, while a `post-merge` issue is still open and an open predecessor
+holds its successors, so every successor declaring on it stays held and the
+window stops advancing along that edge (#329).
+
+**When a member reaches `post-merge` and any open declaration names it, triage
+splits the remainder**: mint a fresh issue carrying the outstanding criteria
+verbatim, naming its owner and its wake condition and citing the original, then
+close the original on what it delivered. Triage owns this because only triage
+mints issues and `post-merge` is its completion queue (#329).
+
+**The release edge is the original's close, never the remainder's.** Each
+successor's declaration names the original's number, so closing the new issue
+releases nothing (#329).
+
+**Split only when an open declaration names the issue.** The trigger is a check
+rather than a judgement — run the blocker parse over every open `blocked` body
+and see whether this number appears — because an issue that strands nothing is
+`post-merge` working as intended (#329).
+
+**Never close work out from under a builder.** Where the original is assigned,
+`claimed`, or carrying an open PR, amend its body to hand the outstanding
+criteria to the new issue and let its holder close it, so the release edge above
+is reached without taking the work from them (#329).
+
+**Do not instead teach the blocker parse that `post-merge` counts as landed.**
+That promotes a successor while its predecessor still owes acceptance criteria,
+inverts a parser whose deliberate error direction is to hold or flag a reference
+it cannot read rather than release it, and needs label data a reference-state
+lookup does not carry (#329).
+
 The operator may declare a parallel track at init when its footprint is
 disjoint from the primary window: another repository, another artifact, or
 provably non-overlapping clusters. The declaration names the boundary and any

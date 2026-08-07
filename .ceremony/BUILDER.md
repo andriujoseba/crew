@@ -33,7 +33,10 @@ triage bug, and the move is to say so on the issue, not to guess.
      re-requests posted, by head and not by verdict (steps 1–2). A red check
      at the head takes it out of this shape: the next move is yours;
   3. every remaining acceptance criterion is operator-owned, stated so by
-     triage on the issue;
+     triage on the issue. **An operator-owned remainder parks the claim and
+     never the handoff**: this shape is reached only from the far side of
+     shape 4, because it is the state finishing the work puts you in and
+     would otherwise excuse the handoff it should follow (#336);
   4. it is **handed off** — round passed, no `blocker:*` standing,
      `state:needs-human` set per Handoff, the merge the human's. Shapes 2
      and 4 are sequential and never overlap;
@@ -174,7 +177,9 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    blocking (#139, #276). **Then classify that entry by `conclusion`, never
    `status`**, which can disagree with it (#259). No conclusion is not
    green: a configured run in progress is waited on, and waiting is
-   compliance, not a stall. Cancelled or stale is not green, *stale* being a
+   compliance, not a stall — the wait is the **request's**, and never a
+   reason to withhold the declaration that a round was answered (step 2).
+   Cancelled or stale is not green, *stale* being a
    superseded head's check, which a head-scoped rollup never shows. Skipped
    or neutral is green, those being deliberate "passed / not applicable"
    conclusions. No checks configured is green — the third ruled case, not an
@@ -200,8 +205,19 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    head, and its mechanism is crew's to describe (#94). **The re-request
    carries the same green-check-at-head precondition**, argued exception
    included: a fix push whose check comes up red is your next fix, not the
-   panel's. Prefer verification over argument — add the test that settles
-   the doubt.
+   panel's. **Where an engine mediates the request, that precondition binds
+   the engine's act and not yours**: declaring a round answered is not
+   requesting the panel, so declare it as soon as the round's fixes are
+   pushed and stop. The engine holds the request while the head is pending
+   or red, so an early declaration cannot produce an early request while a
+   withheld one is indistinguishable from a session that died (#330).
+   **Never wait on an event you have no wake for** — where the engine is
+   what observes the check settling, the wait is the engine's to keep
+   (#330). **Never block on a producer you cannot prove alive either**:
+   where a job signals its own completion, that signal is the wake and the
+   finished output is read afterwards, because a follow on a file nothing is
+   writing cannot tell *not yet* from *never* (#336). Prefer verification
+   over argument — add the test that settles the doubt.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
@@ -218,8 +234,9 @@ may draft a PR but only the builder undrafts it. **Where a draft suppressed
 the checks, green is proven at the flip and the request still follows it** —
 marking ready runs the checks the draft held back, so the order is flip, let
 the head answer, then request, step 1's precondition and not a second one.
-Waiting there is compliance, and `blocker:unrequested` does not fire while a
-head's checks are pending or red (#236).
+Waiting there is compliance — again the request's wait, not the
+declaration's — and `blocker:unrequested` does not fire while a head's
+checks are pending or red (#236).
 
 ## The ruling ask
 
