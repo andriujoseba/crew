@@ -4287,6 +4287,8 @@ done
 t stranded-resume-not-before-12 "" "$stranded_out"
 t stranded-resume-on-12 243 \
   "$(printf 'o/r#243@aaa\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
+t stranded-resume-state-file-format-byte-compatible \
+  $'o/r#243@aaa\t12' "$(cat "$STRANDED_STATE")"
 t stranded-resume-push-resets "" \
   "$(printf 'o/r#243@bbb\n' | _stranded_resume_due "$STRANDED_STATE" 12)"
 t stranded-resume-new-head-count-is-one 1 \
@@ -4295,6 +4297,62 @@ t stranded-resume-new-head-count-is-one 1 \
 # fresh episode rather than inheriting the old count.
 printf '' | _stranded_resume_due "$STRANDED_STATE" 12 >/dev/null
 t stranded-resume-signal-clears-state 0 "$(wc -l <"$STRANDED_STATE" | tr -d ' ')"
+
+# #403: the near-miss bypass and the post-twelve stranded output each pass
+# through the same reporting adapter but own independent breaker state. Drive
+# ticks 1→5 at one head, then a push and ticks 6→8: a single call cannot prove
+# that the fourth and fifth attempts stay suppressed or that head movement is
+# the only reset.
+lane_tick() {
+  local lane="$1" state="$2" keys="$3" log_file="$4"
+  _resume_lane_breaker o/r "$lane" "$state" "$keys" >>"$log_file" 2>&1
+  LANE_OUT="$RESUME_LANE_DISPATCH_NUMS"
+}
+for lane in near-miss stranded; do
+  lane_state="$TMP/resume-zero-action-$lane"
+  lane_log="$TMP/resume-zero-action-$lane.log"
+  : >"$lane_log"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-dispatch-1" 403 "$LANE_OUT"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-dispatch-2" 403 "$LANE_OUT"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-dispatch-3" 403 "$LANE_OUT"
+  t "$lane-breaker-trip-at-3" 1 \
+    "$(grep -c "WARN: o/r#403: $lane resume dispatch 3 of 3 at head aaa — the previous 2 produced no commit" "$lane_log")"
+  t "$lane-breaker-trip-claims-no-third-result" 0 \
+    "$(grep -c 'previous 3 produced no commit' "$lane_log")"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-suppresses-4" "" "$LANE_OUT"
+  lane_tick "$lane" "$lane_state" 'o/r#403@aaa' "$lane_log"
+  t "$lane-breaker-suppresses-5" "" "$LANE_OUT"
+  t "$lane-breaker-suppression-speaks-every-tick" 2 \
+    "$(grep -c "o/r#403 $lane lane suppressed at aaa after 3 zero-action dispatches" "$lane_log")"
+  lane_tick "$lane" "$lane_state" 'o/r#403@bbb' "$lane_log"
+  t "$lane-breaker-push-resets-to-1" 403 "$LANE_OUT"
+  t "$lane-breaker-push-state-count" 1 \
+    "$(awk -F'\t' '$1 == "o/r#403@bbb" { print $2 }' "$lane_state")"
+  lane_tick "$lane" "$lane_state" 'o/r#403@bbb' "$lane_log"
+  lane_tick "$lane" "$lane_state" 'o/r#403@bbb' "$lane_log"
+  t "$lane-breaker-post-push-dispatch-3" 403 "$LANE_OUT"
+  t "$lane-breaker-logs-lane-pr-count-head" 1 \
+    "$(grep -c "o/r#403: $lane resume dispatch 3 of 3 at bbb" "$lane_log")"
+  lane_tick "$lane" "$lane_state" 'o/r#404@ccc' "$lane_log"
+  t "$lane-breaker-prunes-left-set" $'o/r#404@ccc\t1' "$(cat "$lane_state")"
+done
+
+# The concrete call sites are part of the contract: sharing either new file
+# makes `_resume_breaker`'s pruning silently reset the other lane every tick.
+t resume-lane-breaker-nearmiss-state-file 1 \
+  "$(grep -cF '.resume-zero-action-nearmiss.$slug' "$SHARED/lib/duty-builder.sh")"
+t resume-lane-breaker-stranded-state-file 1 \
+  "$(grep -cF '.resume-zero-action-stranded.$slug' "$SHARED/lib/duty-builder.sh")"
+ISO_NEAR="$TMP/resume-isolation-near"; ISO_STRANDED="$TMP/resume-isolation-stranded"
+lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
+lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
+lane_tick stranded "$ISO_STRANDED" 'o/r#403@same' "$TMP/resume-isolation.log"
+t resume-lane-breaker-state-files-do-not-touch $'2\t1' \
+  "$(paste <(cut -f2 "$ISO_NEAR") <(cut -f2 "$ISO_STRANDED"))"
 
 # The no-signal hold speaks once for one repo/PR/head, then speaks again when a
 # push changes the key. report_suppressed writes through warn on stderr.
