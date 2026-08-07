@@ -93,8 +93,8 @@ drill_box_names() {
 }
 drill_repo_names() { drill_box_names; printf '%s\n' crew-drill-sandbox; }
 
-is_drill_box()  { drill_box_names  | grep -qxF "$1"; }
-is_drill_repo() { drill_repo_names | grep -qxF "$1"; }
+is_drill_box()  { drill_box_names  | grep -qxF -- "$1"; }
+is_drill_repo() { drill_repo_names | grep -qxF -- "$1"; }
 
 # --- the roster, as protection rather than as selection -------------------
 # cli/crew RESOLVES one fleet definition: CREW_ROSTER, else CREW_CONFIG_DIR,
@@ -137,7 +137,7 @@ roster_names() {
   done
 }
 ROSTER_NAMES="$(roster_names)"
-is_roster_member() { printf '%s\n' "$ROSTER_NAMES" | grep -qxF "$1"; }
+is_roster_member() { printf '%s\n' "$ROSTER_NAMES" | grep -qxF -- "$1"; }
 
 # --- validate every target, before touching anything ----------------------
 declare -a REFUSALS=()
