@@ -92,8 +92,11 @@ second run over a clean host reports nothing to do and exits zero. A name is
 deletable only when it is **exactly** one of the drill's own names *and* is
 named by no roster on this host: a roster member is refused even when its name
 matches the drill pattern, and a name that merely starts with `crew-drill` is
-not a drill box. Every target is validated before any is deleted, so a command
-carrying one bad name removes nothing at all.
+not a drill box. A sandbox repository has the same two gates — the `<repo>`
+half must be a drill name *and* the owner must be this host's `gh` identity,
+since a round's sandboxes are always `<host-gh-identity>/crew-drill-<role>`.
+Every target is validated before any is deleted, so a command carrying one bad
+name removes nothing at all, and naming the same target twice deletes it once.
 
 **"I found nothing" and "I could not look" are different answers**, and the
 exit status is where teardown keeps them apart:
@@ -105,12 +108,22 @@ exit status is where teardown keeps them apart:
 | `2` | **INCOMPLETE** — a class could not be inspected at all, so what it holds is unknown and may still be standing. |
 
 A run is INCOMPLETE when there is no `gh` identity to address the sandbox
-repositories with, when there is no `box` CLI, or when `box list --json`
-cannot be read or parsed (no `jq` counts). It says which class and why, it
-still deletes everything it *could* see — that half of the host really is
-clean — and it does not report the round as done. `rehearsal-all.sh` gives it
-its own `INCOMPLETE teardown` summary row rather than `ok`, so a green round
-can never end with a cleanup line claiming more than was measured.
+repositories with, when there is no `box` CLI, when `box list --json` cannot
+be read or parsed (no `jq` counts), or when a **single repository lookup**
+does not answer. That last one is the same distinction at the other grain: an
+identity that resolves says the API can be *asked*, not that it *answered*, so
+a lookup that fails for anything other than a measured `HTTP 404` names its own
+repository as uninspected rather than being counted absent. It says which class
+or repository and why, it still deletes everything it *could* see — that half
+of the host really is clean — and it does not report the round as done.
+`rehearsal-all.sh` gives it its own `INCOMPLETE teardown` summary row rather
+than `ok`, so a green round can never end with a cleanup line claiming more
+than was measured.
+
+One caveat worth knowing rather than discovering: GitHub answers `404` for a
+private repository the token cannot see, so a measured absence is really
+"absent *to this identity*". That is the API's shape, and it is the safe
+direction — a repository this identity cannot see is not one it can delete.
 
 A custom `--box` name is the operator's own and teardown will refuse it; the
 rehearsal's reuse refusal says so rather than printing a teardown command that
