@@ -126,9 +126,8 @@ const ok = (name, cond, detail = '') => {
   const appeared = await settle(async () => (await cells()) === 1);
   ok('hired: hiring a box makes its console appear on the next poll', appeared,
      (await cells()) + ' cells after the flip');
-  ok('hired: it is the box that was hired',
-     (await page.evaluate(() => window.FLOORDEV && ROSTER.map((u) => u.box).join(','))) === 'hf-nothired',
-     await page.evaluate(() => ROSTER.map((u) => u.box).join(',')));
+  const drawn = await page.evaluate(() => ROSTER.map((u) => u.box).join(','));
+  ok('hired: it is the box that was hired', drawn === 'hf-nothired', drawn);
   /* The counts move with it, and only the right one moves: the fleet did not
      grow, so `units` still reads two. A declared count that tracked the grid
      would be the silent omission this issue exists to prevent. */
