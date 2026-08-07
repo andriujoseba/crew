@@ -24,6 +24,11 @@ set -uo pipefail
 ROLES="triage builder reviewer"
 PASSTHRU=()
 AGENT="claude"
+# A green round tears itself down. Four boxes at 2 CPU / 4 GiB / 20 GiB, still
+# armed and still ticking against their sandboxes, are what a rehearsal that
+# passed leaves behind for no reason; a rehearsal that FAILED usually needs
+# them, so a red round keeps them and says how to remove them (#217).
+KEEP=0
 # The fleet app is part of the rehearsal, not a separate errand: it is the
 # thing an operator will be looking at when they decide whether the fleet is
 # healthy, so a drill that proves the roles but never the console has only
@@ -62,6 +67,8 @@ while [ $# -gt 0 ]; do
     --ref)
       INSTALL_REF="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
     --quick) PASSTHRU+=(--quick); shift ;;
+    --reuse) PASSTHRU+=(--reuse); shift ;;
+    --keep) KEEP=1; shift ;;
     --no-app) APP=0; shift ;;
     --no-config-drill) CONFIG_DRILL=0; shift ;;
     --no-install-drill) INSTALL_DRILL=0; shift ;;
@@ -70,7 +77,7 @@ while [ $# -gt 0 ]; do
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--no-app] [--no-config-drill] [--no-install-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -205,11 +212,54 @@ if [ "$APP" -eq 1 ]; then
   esac
 fi
 
+# Teardown is decided by the WHOLE round's verdict, so it runs after every
+# phase and before the summary — and it gets its own summary line, because a
+# cleanup that failed must not hide under a green drill.
+#
+# overall=2 is INCOMPLETE, not a pass: phase 2 never ran, and that is exactly
+# the round whose boxes an operator needs standing to find out why. So it
+# keeps them, like a failure does.
+TEARDOWN_HINT="drill/teardown.sh --roles \"$ROLES\""
+if [ "$KEEP" -eq 1 ]; then
+  SUMMARY+=("keep       teardown  (--keep: boxes and sandbox repos RETAINED)")
+elif [ "$overall" -ne 0 ]; then
+  SUMMARY+=("kept       teardown  (round not green — boxes LEFT STANDING to inspect)")
+else
+  echo
+  echo "############################################################"
+  echo "## teardown — a green round removes what it created"
+  echo "############################################################"
+  # --yes because this ran unattended behind three role drills; the operator
+  # asked for the round, and a prompt at the end of a two-hour rehearsal is a
+  # prompt nobody is sitting in front of. --keep is how they say no.
+  "$HERE/teardown.sh" --roles "$ROLES" --yes
+  rc=$?
+  # 2 is teardown's INCOMPLETE: a class it was asked to clear could not be
+  # inspected at all, so `ok teardown (boxes and sandbox repos removed)` would
+  # be a claim nobody measured. It gets its own row rather than collapsing
+  # into FAIL, because nothing went wrong with the cleanup — the host simply
+  # could not be read, and the operator needs to know which of the two it is.
+  case "$rc" in
+    0) SUMMARY+=("ok         teardown  (boxes and sandbox repos removed)") ;;
+    2) SUMMARY+=("INCOMPLETE teardown  (part of the round could NOT be inspected — it may still stand)")
+       overall=1 ;;
+    *) SUMMARY+=("FAIL       teardown  (the round PASSED — this is cleanup, not the drill)")
+       overall=1 ;;
+  esac
+fi
+
 echo
 echo "############################################################"
 echo "## fleet rehearsal summary ($AGENT)"
 printf '##   %s\n' "${SUMMARY[@]}"
 echo "############################################################"
+if [ "$KEEP" -eq 1 ] || [ "$overall" -ne 0 ]; then
+  # "remain" rather than "were kept": this line also covers a teardown that
+  # ran and failed, where some of the round is gone and the rest is not. What
+  # exactly survived is named above, by the teardown's own FAIL lines.
+  echo "## drill boxes and sandbox repositories remain on this host."
+  echo "## When you are done with them:  $TEARDOWN_HINT"
+fi
 if [ "$overall" -eq 2 ]; then
   echo "## NOT a pass: at least one role never reached phase 2. Log those boxes"
   echo "## in and re-run before reporting anything on crew PR #16."

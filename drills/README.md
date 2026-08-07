@@ -62,9 +62,91 @@ triage, build and review the way the doctrine says. The legs
 - **Operator-config convergence** — the registry contract exercised against a
   real installed box.
 
-Fixtures and the drill box are left in place for inspection; the box is always
-left disarmed and its pre-drill repo registry restored. Companion prose:
+Within a run, fixtures and the drill box are left in place for inspection; the
+box is always left disarmed and its pre-drill repo registry restored. What
+happens to them *between* runs is the lifecycle below. Companion prose:
 [`shared/docs/rehearsal.md`](../shared/docs/rehearsal.md).
+
+## The round's lifecycle — create, reuse, teardown
+
+A round is real infrastructure, and it is the operator's machine and the
+operator's GitHub account that carry it.
+
+**A round creates**, per role in `--roles` (all three by default):
+
+- a **box** on the host, `crew-drill-<role>`, at 2 CPU / 4 GiB / 20 GiB;
+- a **public sandbox repository**, `<host-gh-identity>/crew-drill-<role>`,
+  which the round then fills with issues, PRs and review traffic.
+
+**A green round tears itself down.** `rehearsal-all.sh` runs
+[`drill/teardown.sh`](../drill/teardown.sh) when every leg passed, removing
+both. Nothing else on the host is touched, ever:
+
+    drill/teardown.sh [--roles "triage builder reviewer"] [--role <role>]
+                      [--box <name>] [--sandbox <owner/repo>]
+                      [--dry-run] [--yes]
+
+It names every box and repository with its creation date and asks once
+(`CREW_YES=1` or `--yes` for an unattended run), and it is idempotent — a
+second run over a clean host reports nothing to do and exits zero. A name is
+deletable only when it is **exactly** one of the drill's own names *and* is
+named by no roster on this host: a roster member is refused even when its name
+matches the drill pattern, and a name that merely starts with `crew-drill` is
+not a drill box. A sandbox repository has the same two gates — the `<repo>`
+half must be a drill name *and* the owner must be this host's `gh` identity,
+since a round's sandboxes are always `<host-gh-identity>/crew-drill-<role>`.
+Every target is validated before any is deleted, so a command carrying one bad
+name removes nothing at all, and naming the same target twice deletes it once.
+
+**"I found nothing" and "I could not look" are different answers**, and the
+exit status is where teardown keeps them apart:
+
+| exit | meaning |
+| --- | --- |
+| `0` | every class it was asked to clear was **inspected**, and whatever existed is gone. Only this means a clean host. |
+| `1` | **refused** — a name outside the deletable set — or a deletion failed. |
+| `2` | **INCOMPLETE** — a class could not be inspected at all, so what it holds is unknown and may still be standing. |
+
+A run is INCOMPLETE when there is no `gh` identity to address the sandbox
+repositories with, when there is no `box` CLI, when `box list --json` cannot
+be read or parsed (no `jq` counts), or when a **single repository lookup**
+does not answer. That last one is the same distinction at the other grain: an
+identity that resolves says the API can be *asked*, not that it *answered*, so
+a lookup that fails for anything other than a measured `HTTP 404` names its own
+repository as uninspected rather than being counted absent. It says which class
+or repository and why, it still deletes everything it *could* see — that half
+of the host really is clean — and it does not report the round as done.
+`rehearsal-all.sh` gives it its own `INCOMPLETE teardown` summary row rather
+than `ok`, so a green round can never end with a cleanup line claiming more
+than was measured.
+
+One caveat worth knowing rather than discovering: GitHub answers `404` for a
+private repository the token cannot see, so a measured absence is really
+"absent *to this identity*". That is the API's shape, and it is the safe
+direction — a repository this identity cannot see is not one it can delete.
+
+A custom `--box` name is the operator's own and teardown will refuse it; the
+rehearsal's reuse refusal says so rather than printing a teardown command that
+cannot work.
+
+**A round that did not pass keeps its boxes**, and so does `--keep`. A failed
+leg is the case where you need the box standing to find out why, so the run
+says the boxes are still there and prints the teardown command. `INCOMPLETE`
+— phase 2 never ran — counts as not passing here for the same reason.
+
+**Reuse is opt-in, and it weakens phase 1.** A rehearsal whose target box
+already exists **refuses**, naming the box, its creation date, and the two ways
+forward: tear it down, or pass `--reuse`. Reuse is legitimate when the operator
+means it, but a box that is already `gh`-authenticated cannot prove the
+creds-free half of phase 1 — the login WARN, the absent `.boot-id` marker and
+the un-spawned sessions all SKIP. That is what happened to the `0.1.0` round
+(#116), which is why the refusal is the default and why `--reuse` writes itself
+into the run's output, at the point of reuse and again in the summary. **A
+record of a reused round says so**, by carrying that line.
+
+Deleting a box does not revoke the GitHub identity it logged into. Identity
+lifecycle is a separate concern from drill fixtures, and teardown does not
+touch it.
 
 ## What a record should contain
 
