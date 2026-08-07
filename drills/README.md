@@ -95,6 +95,27 @@ matches the drill pattern, and a name that merely starts with `crew-drill` is
 not a drill box. Every target is validated before any is deleted, so a command
 carrying one bad name removes nothing at all.
 
+**"I found nothing" and "I could not look" are different answers**, and the
+exit status is where teardown keeps them apart:
+
+| exit | meaning |
+| --- | --- |
+| `0` | every class it was asked to clear was **inspected**, and whatever existed is gone. Only this means a clean host. |
+| `1` | **refused** — a name outside the deletable set — or a deletion failed. |
+| `2` | **INCOMPLETE** — a class could not be inspected at all, so what it holds is unknown and may still be standing. |
+
+A run is INCOMPLETE when there is no `gh` identity to address the sandbox
+repositories with, when there is no `box` CLI, or when `box list --json`
+cannot be read or parsed (no `jq` counts). It says which class and why, it
+still deletes everything it *could* see — that half of the host really is
+clean — and it does not report the round as done. `rehearsal-all.sh` gives it
+its own `INCOMPLETE teardown` summary row rather than `ok`, so a green round
+can never end with a cleanup line claiming more than was measured.
+
+A custom `--box` name is the operator's own and teardown will refuse it; the
+rehearsal's reuse refusal says so rather than printing a teardown command that
+cannot work.
+
 **A round that did not pass keeps its boxes**, and so does `--keep`. A failed
 leg is the case where you need the box standing to find out why, so the run
 says the boxes are still there and prints the teardown command. `INCOMPLETE`
