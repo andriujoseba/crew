@@ -3625,8 +3625,13 @@ kimi_session_classification() (
   source "$SHARED/conf/agents/kimi.conf"
   if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
   printf '|'
-  printf 'provider error: access_terminated_error\n' >"$TERM_LOG"
+  printf "provider error: {'type': 'access_terminated_error'}\n" >"$TERM_LOG"
   if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
+  printf '|'
+  printf 'provider error: access_terminated_error; reached your usage limit\n' >"$TERM_LOG"
+  if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
+  printf '|'
+  if bot_session_terminal "$SHARED/conf/agents/kimi.conf"; then printf terminal; else printf transient; fi
   printf '|'
   printf 'Used Shell (gh api repos/o/r/pulls/1/reviews)\n' >"$TERM_LOG.acted"
   if bot_session_acted "$TERM_LOG.acted"; then printf yes; else printf no; fi
@@ -3634,7 +3639,8 @@ kimi_session_classification() (
   printf 'Final answer only\n' >"$TERM_LOG.acted"
   if bot_session_acted "$TERM_LOG.acted"; then printf yes; else printf no; fi
 )
-t kimi-session-hooks 'terminal|terminal|yes|no' "$(kimi_session_classification)"
+t kimi-session-hooks 'terminal|terminal|transient|transient|yes|no' \
+  "$(kimi_session_classification)"
 
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
 terminal_breaker_case() ( # terminal_breaker_case terminal|transient|hookless
@@ -3677,6 +3683,35 @@ t transient-failures-never-trip '16|0|0|0' \
   "$(terminal_breaker_case transient)"
 t hookless-failures-remain-transient '16|0|0|0' \
   "$(terminal_breaker_case hookless)"
+
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
+terminal_breaker_resets_sequence() (
+  local bdir="$TMP/terminal-breaker-reset" state
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  SESSION_TERMINAL_THRESHOLD=3
+  BOT_CLI_CMD=(bash -c 'printf "%s\n" "$BREAK_TEXT"; exit 1')
+  bot_session_terminal() { grep -q access_terminated_error "$1"; }
+  bot_session_acted() { return 1; }
+  alert() { :; }
+  export BREAK_TEXT=access_terminated_error
+  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
+  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
+  BREAK_TEXT=transient-network-failure
+  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
+  BREAK_TEXT=access_terminated_error
+  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
+  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
+  state="$(_session_terminal_state review)"
+  if [ -s "$state" ]; then
+    IFS=$'\t' read -r count status _ <"$state"
+    printf '%s|%s' "$count" "$status"
+  else
+    printf missing
+  fi
+)
+t terminal-breaker-transient-resets-consecutive-count '2|closed' \
+  "$(terminal_breaker_resets_sequence)"
 
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
 terminal_timeout_case() (
