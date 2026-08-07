@@ -4344,9 +4344,9 @@ done
 # The concrete call sites are part of the contract: sharing either new file
 # makes `_resume_breaker`'s pruning silently reset the other lane every tick.
 t resume-lane-breaker-nearmiss-state-file 1 \
-  "$(grep -cF '.resume-zero-action-nearmiss.$slug' "$SHARED/lib/duty-builder.sh")"
+  "$(grep -cF ".resume-zero-action-nearmiss.\$slug" "$SHARED/lib/duty-builder.sh")"
 t resume-lane-breaker-stranded-state-file 1 \
-  "$(grep -cF '.resume-zero-action-stranded.$slug' "$SHARED/lib/duty-builder.sh")"
+  "$(grep -cF ".resume-zero-action-stranded.\$slug" "$SHARED/lib/duty-builder.sh")"
 ISO_NEAR="$TMP/resume-isolation-near"; ISO_STRANDED="$TMP/resume-isolation-stranded"
 lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
 lane_tick near-miss "$ISO_NEAR" 'o/r#403@same' "$TMP/resume-isolation.log"
