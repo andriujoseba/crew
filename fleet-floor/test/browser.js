@@ -286,6 +286,74 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   ok('floor: the unit tile matches the DECLARED fleet size',
      LIVE ? String(roster.length) === tileUnits : /^[1-9]/.test(tileUnits || ''),
      `tile says ${tileUnits}, roster has ${roster.length}`);
+
+  /* The state chips filter the CANVAS by painting a scrim, so an active DOM
+     class says only which button was clicked. FLOORDEV.matched() reports the
+     set left undimmed by the shipped predicate. The adjacent tiles consume
+     that same predicate, and comparing their totals makes a second copy on
+     either side fail this walk as soon as the split changes. */
+  const stateMatches = async (state) => {
+    await page.locator(`.fchip[data-f="state"][data-v="${state}"]`).click();
+    return await page.evaluate(() => window.FLOORDEV.matched().slice().sort());
+  };
+  const stateChipWords = await page.locator('.fchip[data-f="state"]').evaluateAll((chips) =>
+    chips.map((c) => c.textContent.trim()));
+  eq('filter: state chips mirror the tile vocabulary',
+     JSON.stringify(['All', 'Working', 'Idle', 'Disarmed', 'Silent']),
+     JSON.stringify(stateChipWords));
+
+  if (LIVE && FIXTURE) {
+    /* cases.sh proves wake-silent resumes ff-paused. Put that fixture back in
+       its deliberately-stopped state so the three named boxes exercise both
+       sides of this page split together, then pull the refreshed snapshot
+       into the page rather than waiting for the ordinary 15-second poll. */
+    await page.evaluate(async () => {
+      await fetch(location.origin + '/api/command', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'pause', box: 'ff-paused' }),
+      });
+    });
+    let disarmedMatches = [];
+    for (let i = 0; i < 32; i++) {
+      await page.evaluate(() => pollFleet());
+      await page.waitForTimeout(250);
+      disarmedMatches = await stateMatches('disarmed');
+      if (disarmedMatches.includes('ff-paused')) break;
+    }
+    const silentMatches = await stateMatches('silent');
+    const allMatches = await stateMatches('all');
+    const trio = ['ff-disarmed', 'ff-paused', 'ff-silent'];
+    const amongTrio = (set) => set.filter((box) => trio.includes(box));
+    eq('filter: Disarmed selects the two deliberately-stopped fixtures',
+       JSON.stringify(['ff-disarmed', 'ff-paused']),
+       JSON.stringify(amongTrio(disarmedMatches)));
+    eq('filter: Silent reserves the alarm for the silent fixture',
+       JSON.stringify(['ff-silent']), JSON.stringify(amongTrio(silentMatches)));
+    eq('filter: All keeps all three offline fixtures reachable',
+       JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));
+    const stateTiles = await page.locator('#tiles .tile').evaluateAll((tiles) =>
+      tiles.map((t) => ({
+        label: t.querySelector('.l').textContent.trim(),
+        n: Number(t.querySelector('.n').textContent.trim()),
+      })));
+    const tileNumber = (label) => (stateTiles.find((t) => t.label === label) || {}).n;
+    eq('filter: Disarmed chip and tile count the same boxes',
+       disarmedMatches.length, tileNumber('disarmed'));
+    eq('filter: Silent chip and tile count the same boxes',
+       silentMatches.length, tileNumber('silent'));
+    /* The setup command is not part of the later control-target assertion,
+       which expects the next recorded command to come from the open room. */
+    await page.evaluate(() => { window.__sent = []; });
+  } else if (!LIVE) {
+    const disarmedMatches = await stateMatches('disarmed');
+    const silentMatches = await stateMatches('silent');
+    const allMatches = await stateMatches('all');
+    eq('demo: Disarmed selects no preview unit', JSON.stringify([]),
+       JSON.stringify(disarmedMatches));
+    eq('demo: Silent selects every offline preview unit',
+       JSON.stringify(['kimi-reviewer']), JSON.stringify(silentMatches));
+    eq('demo: All restores every preview unit', 7, allMatches.length);
+  }
   /* ...and the hired tile is the "visible count rather than a silent omission"
      half of #204: a box without a console is omitted from the grid and never
      from the page. It appears only when the two numbers differ — a permanent
