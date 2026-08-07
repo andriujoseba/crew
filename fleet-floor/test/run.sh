@@ -38,7 +38,11 @@ command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
 # which reads like the collector is broken rather than like another copy of
 # this suite is already running. Say so plainly, and name the way out.
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3<&- 3>&-; return 0; }; return 1; }
-for _p in "${FLOOR_TEST_PORT:-8791}" $(( ${FLOOR_TEST_PORT:-8791} + 1 )) $(( ${FLOOR_TEST_PORT:-8791} + 2 )); do
+# Every port this suite binds: the main collector, the collector-death one, the
+# fast-polling churn one, and #204's empty-floor one. Checked up front, because
+# a busy port discovered four minutes in reads as a broken collector.
+for _p in "${FLOOR_TEST_PORT:-8791}" $(( ${FLOOR_TEST_PORT:-8791} + 1 )) \
+          $(( ${FLOOR_TEST_PORT:-8791} + 2 )) $(( ${FLOOR_TEST_PORT:-8791} + 3 )); do
   if port_busy "$_p"; then
     echo "port $_p is already in use — another run of this suite is probably still going." >&2
     echo "  re-run with a different base:  FLOOR_TEST_PORT=8891 $0 $*" >&2
@@ -115,6 +119,7 @@ cleanup() {
   [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null
   [ -n "${SRV2:-}" ] && kill "$SRV2" 2>/dev/null
   [ -n "${SRV3:-}" ] && kill "$SRV3" 2>/dev/null
+  [ -n "${SRV4:-}" ] && kill "$SRV4" 2>/dev/null
   rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
@@ -257,7 +262,16 @@ if [ "$BROWSER" -eq 1 ]; then
     # its box is unreachable, so a run that asserts fewer than 61 is already red.
     # 61 -> 65 with #347's API-to-canvas exact-version pair, its two-width
     # cross-layer collision guard, and the room-HUD exact-version assertion.
-    walk "browser walk" 65 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # 65 -> 74 with #204's nine: the hired tile's count and its command, the two
+    # shape checks that hold on any fleet (nothing unhired is drawn, nothing
+    # unmeasurable is dropped), the four fixture boxes that make the decision
+    # table's rows bite by name, and the payload guard that keeps the filter
+    # page-side. Three assertions were RENAMED rather than added — the roster
+    # count, the unit tile and the reachability sweep now say "deployed" where
+    # they said "declared" — so they count zero, and the floor moves by the nine
+    # that are new. The DEMO floor is untouched: every one of the nine is inside
+    # `if (LIVE)`, because DEMO has no collector and so no hired verdict.
+    walk "browser walk" 74 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 10 "file://$FLOOR/index.html" "$TMP/shots-demo"
@@ -394,6 +408,42 @@ sys.exit(0 if len(u)==2 and all(x['disarmed'] for x in u) and any(x['paused'] fo
       fail "a disarmed fleet raises no alarm" "see output above"
     fi
     kill "$SRV3" 2>/dev/null
+
+    # An all-unhired fleet, and the first box hired into it (#204). Its own
+    # collector, because it is the one test here that owns BOTH halves of the
+    # stub's input: a roster of two, and a private copy of the fleet fixture it
+    # rewrites mid-run to hire a box. Reusing the churn collector would have
+    # meant editing the fixture every other test in this suite reads.
+    #
+    # Fast interval: the acceptance criterion is that a console appears on the
+    # NEXT POLL with no restart, so the poll is the thing being waited on.
+    echo
+    echo "== the empty floor, and the first box hired into it (#204)"
+    HPORT=$((PORT + 3))
+    printf 'hf-nothired   kimi    builder\nhf-absent     kimi    triage\n' \
+      > "$TMP/hired-roster.txt"
+    printf 'hf-nothired    running  nothired\nhf-absent      absent   working\n' \
+      > "$TMP/hired-fixture.txt"
+    FLOOR_FIXTURE="$TMP/hired-fixture.txt" \
+    CREW_FLOOR_ROSTER="$TMP/hired-roster.txt" \
+    CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$HPORT" \
+    CREW_FLOOR_BIND=127.0.0.1 CREW_FLOOR_INTERVAL=4 \
+    CREW_FLOOR_PROBE_TIMEOUT="${FLOOR_TEST_PROBE_TIMEOUT:-6}" \
+    CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
+      python3 "$FLOOR/server/floor.py" >"$TMP/server4.log" 2>&1 &
+    SRV4=$!
+    for _ in $(seq 1 120); do
+      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$HPORT/api/fleet" 2>/dev/null \
+        | grep -q '"hf-nothired"' && break
+      sleep 0.5
+    done
+    if SHOT_DIR="$TMP" node "$HERE/hired.js" "http://127.0.0.1:$HPORT/" \
+         "$TMP/hired-fixture.txt" "$USER" "$PASSWD"; then
+      ok "the empty floor, and the first box hired into it"
+    else
+      fail "the empty floor, and the first box hired into it" "see output above"
+    fi
+    kill "$SRV4" 2>/dev/null
   fi
 fi
 
