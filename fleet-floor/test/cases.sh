@@ -91,11 +91,57 @@ case "$(uf ff-stopped "u['note']")" in *"crew up"*) ok "note: stopped names the 
 case "$(uf ff-nothired "u['note']")" in *"crew hire"*) ok "note: unhired names the fix" ;;
   *) fail "note: unhired names the fix" "$(uf ff-nothired "u['note']")" ;; esac
 
-# A box absent from `box list` is not created yet — it must still appear on the
-# floor, or a half-built fleet looks complete.
+# A box absent from `box list` is not created yet — it must still be in
+# /api/fleet, or a half-built fleet looks complete to every reader of the API.
+# Since #204 it gets no CONSOLE, which is a page decision asserted in
+# browser.js; the payload below is what keeps `crew status` and the drill's
+# agreement check able to see it at all.
 t "absent box still rendered"  offline "$(uf ff-absent "u['state']")"
 case "$(uf ff-absent "u['note']")" in *"crew new"*) ok "note: absent names the fix" ;;
   *) fail "note: absent names the fix" "$(uf ff-absent "u['note']")" ;; esac
+
+# ---------------------------------------------------------------------------
+# hired — the console filter's discriminator (#204)
+#
+# The page draws a console for what is DEPLOYED, not for what the roster
+# DECLARES, and it fires on this field alone. The field exists because the
+# obvious test — `engine == ""` — is true of FOUR different boxes with TWO
+# different answers, and inferring the filter from that silence is the #308
+# defect one reader over. The collector already ranks the four apart with its
+# own early returns, so it publishes the verdict and the page never re-derives
+# it. All five shapes are pinned here: the two that hide a console, the two
+# that must not, and the healthy one.
+# ---------------------------------------------------------------------------
+t "hired: a box with an engine says yes"        yes     "$(uf ff-working  "u['hired']")"
+t "hired: an answered box with no engine says no" no    "$(uf ff-nothired "u['hired']")"
+t "hired: a box that does not exist says no"    no      "$(uf ff-absent   "u['hired']")"
+# The two that must stay UNKNOWN. A stopped box cannot be asked, and hiring is
+# not undone by `crew down`; an unreachable box is the hired-and-gone-dark case,
+# and hiding it is the failure this page exists to prevent. Either one grading
+# as `no` silently drops a console the operator most needs.
+t "hired: a stopped box cannot be measured"     unknown "$(uf ff-stopped  "u['hired']")"
+t "hired: an unreachable box cannot be measured" unknown "$(uf ff-unreach  "u['hired']")"
+# The whole payload, not a sample: `hired` is on every unit and is always one
+# of the three words, so a box added to the fixture cannot arrive without it
+# and a typo cannot reach the page as a value it will silently keep.
+FF_HIRED="$(body GET /api/fleet | python3 -c "
+import json,sys
+u=json.load(sys.stdin)['units']
+bad=[x['box'] for x in u if x.get('hired') not in ('yes','no','unknown')]
+print(','.join(bad))")"
+t "hired: every unit carries one of the three verdicts" "" "$FF_HIRED"
+# THE criterion the filter must not break. Hiding a box is the PAGE's decision;
+# dropping it from the payload would red the drill's floor-vs-CLI agreement
+# check outright ("not in /api/fleet") and would disagree with `crew status`.
+# The roster's full length is pinned by "fleet: every roster box present" at the
+# top of this file; what that assertion cannot see is WHICH boxes, so this names
+# the two the page hides and asserts they are still served.
+FF_UNHIRED="$(body GET /api/fleet | python3 -c "
+import json,sys
+u=json.load(sys.stdin)['units']
+print(','.join(sorted(x['box'] for x in u if x['hired']=='no')))")"
+t "wire: the payload still carries the boxes the page hides" \
+  "ff-absent,ff-nothired" "$FF_UNHIRED"
 
 echo "== sessions, queue, metrics"
 t "sessions: parsed"          1    "$(uf ff-working "len(u['sessions'])")"
