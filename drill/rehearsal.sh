@@ -545,9 +545,9 @@ else
   # -- triage: a stray (no queue label) must draw a ruling --
   # duty-triage.sh detects two signals; the STRAY is the one a fixture can
   # create without presupposing triage's own vocabulary: an open issue
-  # carrying none of ready/claimed/blocked/epic/needs-triage. The module
-  # only DETECTS — the session does the labelling — so the assertion is on
-  # what the session leaves behind, not on the signal.
+  # carrying none of the installed queue labels. The module only DETECTS —
+  # the session does the labelling — so the assertion is on what the session
+  # leaves behind, not on the signal.
   tnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage stray $(date -u +%H%M%S)" \
     -f body="Drill fixture: an unlabelled open issue. Rule on it — leave one short ruling comment and put it in exactly one of ready/claimed/blocked (or epic). Do not open PRs." \
     --jq .number)"
