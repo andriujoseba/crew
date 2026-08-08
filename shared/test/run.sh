@@ -598,6 +598,7 @@ fi
 t rehearsal-hygiene-removed-failure-precedence-reds red "$r1"
 
 HYG_ROUND_MUTATED="$TMP/rehearsal-hygiene-without-round-failure.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation of the failure fold
 sed 's/if \[ "$hygiene_result" -eq 1 \]; then/if false; then/' \
   "$ROOT/drill/rehearsal-hygiene.sh" >"$HYG_ROUND_MUTATED"
 if bash -c '. "$1"; [ "$(rehearsal_hygiene_round_result 0 1)" -eq 1 ]' \
