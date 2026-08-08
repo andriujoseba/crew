@@ -534,8 +534,11 @@ t rehearsal-builder-disabled-draft-return-reds 1 \
 BUILDER_LIVE_BLOCK="$(sed -n '/builder_head=.*pulls.*head.sha/,/panel request issued after head settles/p' \
   "$ROOT/drill/rehearsal.sh")"
 while IFS='|' read -r builder_live_case builder_live_token; do
-  if grep -Fq "$builder_live_token" <<<"$BUILDER_LIVE_BLOCK"; then r1=wired; else r1=MISSING; fi
-  t "rehearsal-builder-live-fix-round-$builder_live_case" wired "$r1"
+  if grep -Fq "$builder_live_token" <<<"$BUILDER_LIVE_BLOCK"; then
+    t "rehearsal-builder-live-fix-round-$builder_live_case" wired wired
+  else
+    t "rehearsal-builder-live-fix-round-$builder_live_case" wired MISSING
+  fi
 done <<'EOF'
 1|event=REQUEST_CHANGES
 2|state=pending
