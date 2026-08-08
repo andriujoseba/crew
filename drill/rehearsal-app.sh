@@ -496,6 +496,15 @@ echo "== the operator's view (0.1.2 floor surfaces)"
 FLEET_JSON="$TMP/fleet-surfaces.json"
 body GET /api/fleet > "$FLEET_JSON"
 
+# Every box read this section makes is CAPPED, for the reason floor.py caps its
+# own probes (server/floor.py's PROBE_TIMEOUT_S): `box exec` into a wedged box
+# can block forever, and one sick box must not stall the leg — an uncapped read
+# here would hang the whole drill where the collector under it merely reports a
+# timeout. Same default and same override as the collector's, so the drill and
+# the floor wait the same amount of time for the same box.
+BOX_READ_TIMEOUT="${CREW_FLOOR_PROBE_TIMEOUT:-45}"
+box_read() { timeout "$BOX_READ_TIMEOUT" box exec "$@"; }
+
 # --- #347: the header names the version of the crew that is SERVING the page -
 API_VERSION="$(jqf "d.get('version') or ''" < "$FLEET_JSON")"
 if [ -z "$CREW_VERSION_FILE" ]; then
@@ -521,7 +530,7 @@ fi
 # is why only boxes reporting an engine are compared.
 # shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's, expanded there
 box_integrity() {
-  box exec "$1" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
+  box_read "$1" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
     [ -x "$d/bin/engine-manifest.sh" ] || exit 9
     "$d/bin/engine-manifest.sh" --state 2>/dev/null | head -1' 2>/dev/null | tr -d '\r\n'
 }
@@ -703,7 +712,7 @@ fleet_fingerprint() {
   while read -r b _agent _role _from; do
     [ -z "$b" ] && continue
     printf 'cron %s %s\n' "$b" \
-      "$(box exec "$b" -- bash -lc 'crontab -l 2>/dev/null || true' 2>/dev/null | sha256sum | awk '{print $1}')"
+      "$(box_read "$b" -- bash -lc 'crontab -l 2>/dev/null || true' 2>/dev/null | sha256sum | awk '{print $1}')"
   done < <(roster_rows)
 }
 fleet_fingerprint > "$TMP/fleet-before.fp"
@@ -785,7 +794,7 @@ NBD_LINES="$TMP/no-build-duty.txt"
 while read -r name _agent _role _from; do
   [ -z "$name" ] && continue
   # shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's
-  box exec "$name" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
+  box_read "$name" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
     grep -h "no build duty" "$d/duty.log" 2>/dev/null | tail -20' 2>/dev/null \
     | sed "s/^/$name /" >> "$NBD_LINES" || true
 done < <(roster_rows)
@@ -1036,7 +1045,6 @@ const [, , url, user, pass] = process.argv;
   }
   const live = (await page.locator('.demo-badge.live').count()) > 0;
   const tiles = (await page.locator('#tiles').textContent()).replace(/\s+/g, '');
-  const header = await page.evaluate(() => window.FLOORDEV.header().map((h) => h.text));
   const group = async (v) => {
     await page.locator(`.fchip[data-f="state"][data-v="${v}"]`).click();
     return (await page.evaluate(() => window.FLOORDEV.matched().slice())).sort();
@@ -1044,7 +1052,7 @@ const [, , url, user, pass] = process.argv;
   const disarmed = await group('disarmed');
   const silent = await group('silent');
   await page.locator('.fchip[data-f="state"][data-v="all"]').click();
-  console.log(JSON.stringify({ live, tiles, header, disarmed, silent }));
+  console.log(JSON.stringify({ live, tiles, disarmed, silent }));
   await browser.close();
 })().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });
 JS
