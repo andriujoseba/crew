@@ -595,6 +595,12 @@ t notify-candidate-refusal-names-the-repo named "$r1"
 # --- the leg, driven under a stubbed bx() ---------------------------------
 NOTIFY_BX_CALLS="$TMP/rehearsal-notify-bx-calls"
 NOTIFY_READS="$TMP/rehearsal-notify-work-reads"
+# Box-side paths: these tildes are expanded by the BOX's login shell inside
+# bx(), which is the whole reason the drill stores them unexpanded.
+# shellcheck disable=SC2088
+NOTIFY_BACKUP_PATH='~/duty/notify-repos.txt.pre-drill-99'
+# shellcheck disable=SC2088
+NOTIFY_WORK_BACKUP_PATH='~/duty/repos.txt.pre-drill-99'
 notify_stub_bx() {  # $1 the box command, $2 how the second repos.txt read answers
   local n
   printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"
@@ -676,7 +682,7 @@ t notify-opt-out-skips-the-leg 1 \
 # Restore is by pre-drill STATE, not by rewriting a default: a file the leg
 # created is removed, one it replaced is moved back.
 : >"$NOTIFY_BX_CALLS"
-REHEARSAL_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+REHEARSAL_NOTIFY_BACKUP="$NOTIFY_BACKUP_PATH"
 REHEARSAL_NOTIFY_ABSENT=1
 bx() { printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"; }
 rehearsal_notify_restore_registry
@@ -684,7 +690,7 @@ t notify-restore-removes-a-file-the-leg-created 1 \
   "$(grep -cF 'rm -f ~/duty/notify-repos.txt' "$NOTIFY_BX_CALLS")"
 t notify-restore-clears-its-backup-handle "" "$REHEARSAL_NOTIFY_BACKUP"
 : >"$NOTIFY_BX_CALLS"
-REHEARSAL_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+REHEARSAL_NOTIFY_BACKUP="$NOTIFY_BACKUP_PATH"
 REHEARSAL_NOTIFY_ABSENT=0
 rehearsal_notify_restore_registry
 t notify-restore-moves-the-pre-drill-file-back 1 \
@@ -702,8 +708,8 @@ t notify-restore-is-a-noop-when-the-leg-never-wrote 0 \
   # shellcheck source=drill/rehearsal-safety.sh
   source "$ROOT/drill/rehearsal-safety.sh"
   BOX_NAME=crew-drill-reviewer
-  REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
-  REHEARSAL_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+  REPOS_BACKUP="$NOTIFY_WORK_BACKUP_PATH"
+  REHEARSAL_NOTIFY_BACKUP="$NOTIFY_BACKUP_PATH"
   REHEARSAL_NOTIFY_ABSENT=0
   bx() { printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"; }
   rehearsal_cleanup 0
@@ -748,6 +754,7 @@ else
   notify_wiring=MISSING
 fi
 t notify-all-opt-out-and-summary-wired wired "$notify_wiring"
+# shellcheck disable=SC2016  # match teardown.sh's literal role-expansion text
 if grep -Fq 'crew-drill-%s-notify' "$ROOT/drill/teardown.sh" \
     && grep -Fq 'crew-drill-$role-notify' "$ROOT/drill/teardown.sh"; then
   notify_wiring=wired
