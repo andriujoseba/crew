@@ -1841,7 +1841,7 @@ if grep -RIn 'state:building' "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then
 t addressing-never-writes-state-building absent "$r1"
 # The predicate keys approvals/reviews on the head, same as converged.jq — a
 # stale verdict at an old head is not a closed round.
-# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t addressing-keys-on-head head-keyed "$r1"
 
@@ -7161,7 +7161,7 @@ t round-rules-state-exception stated "$r1"
 # push is guaranteed. Asserting the invariant rather than the prose: the
 # predicate keys on the head, so the prompts that tell a builder whom to
 # re-request must say head.
-# shellcheck disable=SC2016  # the jq literal converged.jq contains
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/converged.jq"; then
   r1=head-keyed
 else
@@ -7172,7 +7172,7 @@ t converged-counts-approvals-at-head head-keyed "$r1"
 # verdict" now lives in request-panel.jq, which returns every panelist not
 # approving the CURRENT head (approvers included after a push) — so the
 # head-keying that used to have to survive in prompt prose survives as code.
-# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/request-panel.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t requestpanel-keys-on-head head-keyed "$r1"
 # The prompts must tell the builder the ENGINE requests — a builder still told to
