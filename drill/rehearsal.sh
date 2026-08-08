@@ -572,14 +572,13 @@ else
     -f body="Drill fixture: this issue is already in post-merge. Do not comment on it or change its labels." \
     -f "labels[]=post-merge" --jq .number)"
   TRIAGE_CLEANUP_ISSUES="$TRIAGE_CLEANUP_ISSUES $pnum"
-  PCOMMENTS="$(gh api "repos/$SANDBOX/issues/$pnum/comments" --jq \
-    "[.[] | select(.user.login == \"$ME2\")] | length")"
+  PCOMMENTS="$(gh api "repos/$SANDBOX/issues/$pnum/comments" --jq 'length')"
   PLABELS="$(gh api "repos/$SANDBOX/issues/$pnum" --jq '[.labels[].name] | sort | join(" ")')"
   DUTY_LOG_LINES="$(bx "wc -l < ~/duty/duty.log")"
   bx "~/duty/bin/tick.sh" || true
   sleep 20
-  check "triage: post-merge drew no box-identity comment" bash -c \
-    "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length')\" = '$PCOMMENTS' ]"
+  check "triage: post-merge drew no comment" bash -c \
+    "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum/comments' --jq 'length')\" = '$PCOMMENTS' ]"
   check "triage: post-merge kept its single label" bash -c \
     "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum' --jq '[.labels[].name] | sort | join(\" \")')\" = '$PLABELS' ] && [ '$PLABELS' = 'post-merge' ]"
   check "triage: post-merge-only tick launched no session" bx \
