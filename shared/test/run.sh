@@ -2555,7 +2555,11 @@ payload_unmeasurable_dir="$(payload_tree unmeasurable - 64)"
 ln -s missing-target "$payload_unmeasurable_dir/cli/orphan"
 r1="$(payload_run "$PHOME/src" "$payload_unmeasurable_dir")"
 t payload-unmeasurable-tree-reds red "$(payload_verdict "$r1")"
-case "$r1" in *"PASS payload: installed tree carries none"*) r2=roots-still-green ;; *) r2="$r1" ;; esac
+# The verdict word is quoted, unlike its neighbours. install-payload.sh declares
+# a `local roots`, and a sourced file's locals stay in scope for the linter,
+# which reads a bare hyphenated word starting in one of them as arithmetic
+# (SC2100). Quoting says "literal" and is immune to which names it has seen.
+case "$r1" in *"PASS payload: installed tree carries none"*) r2='roots-still-green' ;; *) r2="$r1" ;; esac
 t payload-unmeasurable-tree-is-not-a-root-finding roots-still-green "$r2"
 # and it reports du's own status and words, not a bound verdict: "could not
 # measure" and "too big" are different facts for whoever reads the drill record.
