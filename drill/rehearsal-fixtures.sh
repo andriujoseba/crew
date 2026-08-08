@@ -69,6 +69,92 @@ rehearsal_builder_pr_for_issue() {
   rehearsal_builder_pr_for_issue_from_json "$issue" "$pulls_json"
 }
 
+rehearsal_builder_fixture_panel_content() {
+  local author="$1" reviewer="$2"
+  printf 'panel[%s]=%s\n' "$author" "$reviewer"
+}
+
+rehearsal_install_builder_fixture_panel() {
+  local repo="$1" author="$2" reviewer="$3" path=.github/labels.conf
+  local content current_sha=""
+  content="$(rehearsal_builder_fixture_panel_content "$author" "$reviewer")"
+  current_sha="$(gh api "repos/$repo/contents/$path" --jq .sha 2>/dev/null || true)"
+  if [ -n "$current_sha" ]; then
+    gh api -X PUT "repos/$repo/contents/$path" \
+      -f message="drill: set builder fixture panel" \
+      -f content="$(printf '%s' "$content" | base64 -w0)" \
+      -f sha="$current_sha" >/dev/null
+  else
+    gh api -X PUT "repos/$repo/contents/$path" \
+      -f message="drill: set builder fixture panel" \
+      -f content="$(printf '%s' "$content" | base64 -w0)" >/dev/null
+  fi
+}
+
+rehearsal_builder_is_draft_from_json() {
+  jq -e '.draft == true' >/dev/null <<<"$1"
+}
+
+rehearsal_builder_has_answer_signal_from_json() {
+  local author="$1" head="$2" comments_json="$3"
+  jq -e --arg author "$author" --arg head "$head" '
+    any(.[];
+      .user.login == $author
+      and (.body // "") == ("📣 round answered at head " + $head)
+    )
+  ' >/dev/null <<<"$comments_json"
+}
+
+rehearsal_builder_check_state_from_json() {
+  local context="$1" status_json="$2"
+  jq -r --arg context "$context" '
+    [.statuses[] | select(.context == $context)]
+    | sort_by(.created_at)
+    | last
+    | .state // ""
+  ' <<<"$status_json"
+}
+
+rehearsal_builder_requested_from_json() {
+  local reviewer="$1" requested_json="$2"
+  jq -e --arg reviewer "$reviewer" \
+    'any(.users[]; .login == $reviewer)' >/dev/null <<<"$requested_json"
+}
+
+rehearsal_builder_pr_is_draft() {
+  local repo="$1" pr="$2" pull_json
+  pull_json="$(gh api "repos/$repo/pulls/$pr")" || return
+  rehearsal_builder_is_draft_from_json "$pull_json"
+}
+
+rehearsal_builder_has_answer_signal() {
+  local repo="$1" pr="$2" author="$3" head="$4" comments_json
+  comments_json="$(gh api "repos/$repo/issues/$pr/comments?per_page=100" --paginate | jq -s 'add')" || return
+  rehearsal_builder_has_answer_signal_from_json "$author" "$head" "$comments_json"
+}
+
+rehearsal_builder_check_state() {
+  local repo="$1" head="$2" context="$3" status_json
+  status_json="$(gh api "repos/$repo/commits/$head/status")" || return
+  rehearsal_builder_check_state_from_json "$context" "$status_json"
+}
+
+rehearsal_builder_requested() {
+  local repo="$1" pr="$2" reviewer="$3" requested_json
+  requested_json="$(gh api "repos/$repo/pulls/$pr/requested_reviewers")" || return
+  rehearsal_builder_requested_from_json "$reviewer" "$requested_json"
+}
+
+rehearsal_builder_not_requested() {
+  ! rehearsal_builder_requested "$@"
+}
+
+rehearsal_builder_answered_at_pending_head() {
+  local repo="$1" pr="$2" author="$3" head="$4" context="$5"
+  rehearsal_builder_has_answer_signal "$repo" "$pr" "$author" "$head" \
+    && [ "$(rehearsal_builder_check_state "$repo" "$head" "$context")" = pending ]
+}
+
 rehearsal_report_occupied_builder_slot() {
   local author="$1"
   fail "builder: opened a PR for the ready issue"

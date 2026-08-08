@@ -596,6 +596,12 @@ else
   if [ "$builder_slot_clear" -eq 0 ]; then
     rehearsal_report_occupied_builder_slot "$ME2"
   else
+    # The dedicated sandbox has no repository roster of its own. Give this
+    # fixture author one requestable panelist: the host account that owns the
+    # sandbox and will close the round. This is test data in the sandbox, not a
+    # roster authored in crew.
+    check "builder: fixture panel names the host reviewer" \
+      rehearsal_install_builder_fixture_panel "$SANDBOX" "$ME2" "$HOST_ME"
     bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
       -f "labels[]=ready" --jq .number)"
@@ -626,6 +632,50 @@ else
       ok "builder: no duplicate PR on re-tick"
     else
       fail "builder: no duplicate PR on re-tick"
+    fi
+
+    if [ -n "$bpr" ]; then
+      wait_for 300 "builder: initial PR is ready for its fixture panel" bash -c \
+        "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .draft | grep -qx false"
+      wait_for 300 "builder: host reviewer requested for initial round" \
+        rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
+
+      builder_head="$(gh api "repos/$SANDBOX/pulls/$bpr" --jq .head.sha)"
+      builder_check_context="drill/builder-head-settle"
+      gh api "repos/$SANDBOX/pulls/$bpr/reviews" \
+        -f body="Drill-only blocking point: answer with evidence that drill-build.txt satisfies the fixture. Do not change the tree; push nothing." \
+        -f event=REQUEST_CHANGES -f commit_id="$builder_head" >/dev/null
+      gh api "repos/$SANDBOX/statuses/$builder_head" \
+        -f state=pending -f context="$builder_check_context" \
+        -f description="drill holds the panel request until the host settles this status" >/dev/null
+
+      # Observe the author-owned conversion while the tick is alive. The same
+      # tick may resume the draft and mark it ready again after answering, so a
+      # post-tick-only read can miss the visible state #139 shipped.
+      bx "~/duty/bin/tick.sh" &
+      builder_tick_pid=$!
+      wait_for 900 "builder: changes-requested round returns PR to draft" \
+        rehearsal_builder_pr_is_draft "$SANDBOX" "$bpr"
+      wait_for 1800 "builder: round answer is signalled while head check is pending" \
+        rehearsal_builder_answered_at_pending_head \
+          "$SANDBOX" "$bpr" "$ME2" "$builder_head" "$builder_check_context"
+      check "builder: panel request withheld while head check is pending" \
+        rehearsal_builder_not_requested "$SANDBOX" "$bpr" "$HOST_ME"
+      wait "$builder_tick_pid" || true
+
+      gh api "repos/$SANDBOX/statuses/$builder_head" \
+        -f state=success -f context="$builder_check_context" \
+        -f description="drill releases the settled-head panel request" >/dev/null
+      bx "~/duty/bin/tick.sh" || true
+      wait_for 300 "builder: panel request issued after head settles" \
+        rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
+    else
+      skip "builder: initial PR is ready for its fixture panel"
+      skip "builder: host reviewer requested for initial round"
+      skip "builder: changes-requested round returns PR to draft"
+      skip "builder: round answer is signalled while head check is pending"
+      skip "builder: panel request withheld while head check is pending"
+      skip "builder: panel request issued after head settles"
     fi
   fi
 
