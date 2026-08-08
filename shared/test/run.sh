@@ -434,6 +434,7 @@ t rehearsal-resume-post-suppression-session-mutation-reds refused "$resume_predi
 
 t rehearsal-resume-threshold-not-retyped-in-drill 0 \
   "$(grep -R -E 'breaker=[0-9]+' "$ROOT/drill" | wc -l | tr -d ' ')"
+# shellcheck disable=SC2016  # match literal builder-block source text
 if sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
     "$ROOT/drill/rehearsal.sh" | grep -Fq '. "$ROOT/drill/rehearsal-resume.sh"'; then
   resume_wiring=wired
@@ -5790,7 +5791,7 @@ t near-miss-not-a-branch-of-the-signal-parser 0 \
 # box at upgrade. The bypass rides BESIDE _stranded_resume_due, never through
 # it: same threshold, same call, same two-column state file, and its tests above
 # run unmodified.
-# shellcheck disable=SC2016  # matching shell source literally
+# shellcheck disable=SC2016,SC2100  # matching shell source literally
 if grep -Fq '_stranded_resume_due "$DUTY_DIR/.resume-unsignalled.$slug" 12' \
      "$SHARED/lib/duty-builder.sh"; then r1=threshold-intact; else r1=DISTURBED; fi
 t near-miss-threshold-call-unchanged threshold-intact "$r1"
