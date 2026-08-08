@@ -2472,10 +2472,22 @@ payload_verdict() { case "$1" in *FAIL*) printf 'red\n' ;; *) printf 'green\n' ;
 CLEAN_ROOTS='.git drill shared/test fleet-floor/dev fleet-floor/test'
 
 # A tree that ships none of them, well under the bound.
+#
+# The expectation for the reported size is `du -skL`'s own reading of this
+# tree, never a hard-coded window: du charges directory inodes per filesystem,
+# so the two directories below cost 0 blocks on the tmpfs a box's $TMP usually
+# is and 4 KiB each on a runner's ext4 — 64 KiB here and 72 KiB there, for the
+# same fixture. A band is green on one and red on the other for a reason that
+# is not the predicate's. Equality against du is also the stronger assertion:
+# it pins the line to the measurement rather than to a range a constant could
+# sit in, and payload-two-trees-report-different-sizes below closes the last
+# way a constant could still satisfy it.
 payload_src "$CLEAN_ROOTS" 3072 3072
-r1="$(payload_run "$PHOME/src" "$(payload_tree clean - 64)")"
+payload_dir="$(payload_tree clean - 64)"
+payload_kb="$(du -skL "$payload_dir" | cut -f1)"
+r1="$(payload_run "$PHOME/src" "$payload_dir")"
 t payload-clean-tree-passes green "$(payload_verdict "$r1")"
-case "$r1" in *"is 6"[0-9]" KiB, within the 3072 KiB bound"*) r2=measured ;; *) r2="$r1" ;; esac
+case "$r1" in *"is $payload_kb KiB, within the 3072 KiB bound"*) r2=measured ;; *) r2="$r1" ;; esac
 t payload-pass-line-carries-the-measured-size measured "$r2"
 case "$r1" in *"none of the installer's 5 excluded roots"*) r2=counted ;; *) r2="$r1" ;; esac
 t payload-pass-line-counts-the-roots-it-walked counted "$r2"
@@ -2500,10 +2512,18 @@ t payload-test-root-under-budget-names-the-path named "$r2"
 
 # …and the mirror: no excluded root anywhere, and fat. The bound is the only
 # thing that catches the next big directory nobody thought to exclude.
-r1="$(payload_run "$PHOME/src" "$(payload_tree fat-clean - 4096)")"
+payload_fat_dir="$(payload_tree fat-clean - 4096)"
+payload_fat_kb="$(du -skL "$payload_fat_dir" | cut -f1)"
+r1="$(payload_run "$PHOME/src" "$payload_fat_dir")"
 t payload-over-bound-reds red "$(payload_verdict "$r1")"
-case "$r1" in *"within the 3072 KiB bound — measured 4"*) r2=says-both ;; *) r2="$r1" ;; esac
+case "$r1" in *"within the 3072 KiB bound — measured $payload_fat_kb KiB"*) r2=says-both ;; *) r2="$r1" ;; esac
 t payload-over-bound-names-bound-and-measurement says-both "$r2"
+# Two trees, two different readings: whatever the filesystem charges for the
+# directories, a 4096 KiB tree cannot measure the same as a 64 KiB one. This is
+# what stops a predicate that printed a constant from satisfying both cases
+# above, which is the force the removed band was carrying.
+if [ "$payload_fat_kb" -gt "$payload_kb" ]; then r2=differ; else r2="$payload_kb vs $payload_fat_kb"; fi
+t payload-two-trees-report-different-sizes differ "$r2"
 
 # MUST FAIL: a fat artifact tree reds where the checkout tree is clean. The
 # channels are asserted separately for exactly this reason — one verdict per
