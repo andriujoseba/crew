@@ -44,12 +44,14 @@ command -v jq >/dev/null || { echo "jq not found — the duty engine requires it
 # not guaranteed on a minimal box image, so fall back to a ps scan; the caller
 # only ever uses this to choose between two messages.
 cron_daemon_running() {
+  local processes
   if command -v pgrep >/dev/null 2>&1; then
     pgrep -x cron >/dev/null 2>&1 || pgrep -x crond >/dev/null 2>&1
   else
     # shellcheck disable=SC2009  # the pgrep branch above is preferred; this is
     # the fallback for an image that has no pgrep, so it cannot use pgrep
-    ps -e 2>/dev/null | grep -qE '[[:space:]](cron|crond)$'
+    processes="$(ps -e 2>/dev/null)"
+    grep -qE '[[:space:]](cron|crond)$' <<<"$processes"
   fi
 }
 

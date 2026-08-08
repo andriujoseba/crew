@@ -542,7 +542,8 @@ elif [ -z "$BOXES" ]; then
   skip "control verbs" "--allow-control needs --boxes to name what may be touched"
 else
   for b in $BOXES; do
-    roster_rows | grep -qE "^$b " || { fail "control $b" "not in $ROSTER"; continue; }
+    control_roster_rows="$(roster_rows)"
+    grep -qE "^$b " <<<"$control_roster_rows" || { fail "control $b" "not in $ROSTER"; continue; }
 
     # ARM FIRST, and record the intent BEFORE acting so a half-applied arm is
     # still disarmed by the trap. Every drill box is disarmed for its whole run
