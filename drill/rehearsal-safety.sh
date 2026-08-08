@@ -52,6 +52,14 @@ rehearsal_attention_is_clear() {
 
 rehearsal_cleanup() {
   local rc="${1:-$?}"
+  # Both registries, one step. The notifier half is restored FIRST because a
+  # box left watching a sandbox that teardown then deletes is the same class
+  # of leftover as a box left working one — and the pairing is why #423 put
+  # the restore here rather than in a leg that only runs when it runs.
+  if declare -F rehearsal_notify_restore_registry >/dev/null 2>&1; then
+    rehearsal_notify_restore_registry \
+      || echo "WARNING: could not restore the pre-drill notify-repos.txt; stop the box: box down $BOX_NAME" >&2
+  fi
   if [ -n "${REPOS_BACKUP:-}" ]; then
     bx "if [ -f $REPOS_BACKUP ]; then mv $REPOS_BACKUP ~/duty/repos.txt; fi" \
       || echo "WARNING: could not restore the pre-drill repos.txt; stop the box: box down $BOX_NAME" >&2

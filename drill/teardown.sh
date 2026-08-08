@@ -6,7 +6,8 @@
 #                     [--dry-run] [--yes]
 #
 # The rehearsal mints real infrastructure — one box per role on the host, and
-# one PUBLIC sandbox repository per role under the host's gh identity — and
+# two PUBLIC sandbox repositories per role under the host's gh identity (the
+# work sandbox, plus the notifier union leg's watch-only one, #423) — and
 # nothing in the tree removed either, so rounds accreted. Four boxes at 2 CPU
 # / 4 GiB / 20 GiB with two snapshots apiece, still ARMED and still ticking
 # against their sandboxes for a rehearsal that ended days ago, and four public
@@ -121,7 +122,16 @@ drill_box_names() {
   printf '%s\n' crew-drill
   for role in $KNOWN_ROLES; do printf 'crew-drill-%s\n' "$role"; done
 }
-drill_repo_names() { drill_box_names; printf '%s\n' crew-drill-sandbox; }
+# The repository set carries one name the box set never can: the notifier
+# union leg mints a SECOND sandbox per role, `crew-drill-<role>-notify`, so
+# the watch set can be widened without widening the work set (#423). It is a
+# repository and never a box, and it is enumerated exactly, like the rest.
+drill_repo_names() {
+  local role
+  drill_box_names
+  printf '%s\n' crew-drill-sandbox
+  for role in $KNOWN_ROLES; do printf 'crew-drill-%s-notify\n' "$role"; done
+}
 
 is_drill_box()  { local names; names="$(drill_box_names)"; grep -qxF -- "$1" <<<"$names"; }
 is_drill_repo() { local names; names="$(drill_repo_names)"; grep -qxF -- "$1" <<<"$names"; }
@@ -254,7 +264,9 @@ if [ "$REPOS_REQUESTED" -eq 1 ]; then
       REPO_INSPECT_FAIL="gh has no usable identity here (gh api user failed)"
   fi
   if [ -n "$REPO_OWNER" ] && [ -n "${ROLES// /}" ]; then
-    for role in $ROLES; do REPOS+=("$REPO_OWNER/crew-drill-$role"); done
+    for role in $ROLES; do
+      REPOS+=("$REPO_OWNER/crew-drill-$role" "$REPO_OWNER/crew-drill-$role-notify")
+    done
   fi
 fi
 
@@ -285,7 +297,7 @@ for repo in ${REPOS[@]+"${REPOS[@]}"}; do
   # That is the right direction for a destructive command: refusing is
   # recoverable by logging in as that identity, deleting is not.
   elif [ -n "$REPO_OWNER" ] && [ "${repo%%/*}" != "$REPO_OWNER" ]; then
-    REFUSALS+=("sandbox $repo is owned by '${repo%%/*}', not by this host's gh identity '$REPO_OWNER' — a round's sandboxes are always $REPO_OWNER/crew-drill-<role>")
+    REFUSALS+=("sandbox $repo is owned by '${repo%%/*}', not by this host's gh identity '$REPO_OWNER' — a round's sandboxes are always $REPO_OWNER/crew-drill-<role> or $REPO_OWNER/crew-drill-<role>-notify")
   fi
 done
 

@@ -54,6 +54,11 @@ INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESUME_DRILL=1
+# The notifier union leg runs inside every role's phase 2, so its verdict is
+# the ROUND's, not one role's: a summary row that named a single role would
+# hide a half the other two boxes also exercised.
+NOTIFY_DRILL=1
+NOTIFY_RC=""
 BUILDER_RC=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
@@ -75,12 +80,13 @@ while [ $# -gt 0 ]; do
     --no-config-drill) CONFIG_DRILL=0; shift ;;
     --no-install-drill) INSTALL_DRILL=0; shift ;;
     --no-resume-drill) RESUME_DRILL=0; shift ;;
+    --no-notify-drill) NOTIFY_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-notify-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -99,9 +105,16 @@ for role in $ROLES; do
   echo "## $role — box crew-drill-$role"
   echo "############################################################"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
+  REHEARSAL_NOTIFY_DRILL="$NOTIFY_DRILL" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
   [ "$role" != builder ] || BUILDER_RC="$rc"
+  # Worst verdict across the roles that ran: the leg is role-independent, so
+  # one red box is the round's red however green the others were.
+  case "$NOTIFY_RC" in
+    ''|0) NOTIFY_RC="$rc" ;;
+    2) [ "$rc" -eq 1 ] && NOTIFY_RC=1 ;;
+  esac
   # Roles whose box the drill actually REACHED, for the app phase below. rc=0
   # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
   # not "no box"); rc=1 can be a failure from before the box existed at all.
@@ -138,6 +151,19 @@ elif [ "$BUILDER_RC" -eq 2 ]; then
   SUMMARY+=("INCOMPLETE resume  (builder phase 2 skipped)")
 else
   SUMMARY+=("FAIL       resume")
+fi
+
+if [ "$NOTIFY_DRILL" -eq 0 ]; then
+  SUMMARY+=("skip       notify  (--no-notify-drill)")
+elif [ -z "$NOTIFY_RC" ]; then
+  SUMMARY+=("INCOMPLETE notify  (no role reached a box)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ "$NOTIFY_RC" -eq 0 ]; then
+  SUMMARY+=("ok         notify  (repos.txt + notify-repos.txt union)")
+elif [ "$NOTIFY_RC" -eq 2 ]; then
+  SUMMARY+=("INCOMPLETE notify  (phase 2 skipped)")
+else
+  SUMMARY+=("FAIL       notify")
 fi
 
 if [ "$INSTALL_DRILL" -eq 1 ]; then

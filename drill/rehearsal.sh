@@ -143,6 +143,8 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
 . "$ROOT/drill/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-notify.sh
+. "$ROOT/drill/rehearsal-notify.sh"
 # shellcheck source=drill/review-order.sh
 . "$ROOT/drill/review-order.sh"
 cleanup_all() {
@@ -507,6 +509,20 @@ else
     exit 1
   fi
   ok "safety interlock: no attention demand parked outside the sandbox"
+
+  # -- the operator's watch set: repos.txt ∪ notify-repos.txt (#316) --
+  # Here and not in a role block: the notifier is role-independent, and the
+  # leg's own precondition is the interlock immediately above — it widens the
+  # WATCH set while re-asserting that the WORK set stayed at one sandbox.
+  rehearsal_notify_drill "$SANDBOX" "$HOST_ME" "$ROLE"
+  notify_rc=$?
+  if [ "$notify_rc" -eq 2 ]; then
+    echo
+    echo "REFUSING to continue: repos.txt moved while the notify union was being"
+    echo "staged. The union must widen notifications and nothing else, so a work"
+    echo "registry nobody can vouch for aborts the round rather than ticking on."
+    exit 1
+  fi
 
   # -- attention wake --
   inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \

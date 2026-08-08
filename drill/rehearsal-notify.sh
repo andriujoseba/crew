@@ -23,7 +23,6 @@
 # rehearsal_cleanup, which restores both registries in one step.
 REHEARSAL_NOTIFY_BACKUP=""
 REHEARSAL_NOTIFY_ABSENT=0
-REHEARSAL_NOTIFY_SANDBOX=""
 
 # --- pure predicates ------------------------------------------------------
 
@@ -180,10 +179,11 @@ rehearsal_notify_load_installed_handoff_label() {
 rehearsal_notify_read_work_registry() { bx "cat ~/duty/repos.txt 2>/dev/null || true"; }
 
 # Everything the host pointed this box at before the drill: the interlock's
-# backup of repos.txt plus whatever notify-repos.txt shipped with. Both are
-# forbidden as the notify half.
+# backup of repos.txt plus whatever notify-repos.txt shipped with — which on a
+# real box names the fleet. Both are forbidden as the notify half, and this
+# must be read before either file is written.
 rehearsal_notify_pre_drill_registry() {
-  bx "cat $REHEARSAL_NOTIFY_BACKUP ~/duty/notify-repos.txt 2>/dev/null || true"
+  bx "cat ${REPOS_BACKUP:-/dev/null} ~/duty/notify-repos.txt 2>/dev/null || true"
 }
 
 # Back up notify-repos.txt and REPLACE it with the one sandbox. Replace, not
@@ -199,7 +199,6 @@ rehearsal_notify_write_registry() {
   else
     REHEARSAL_NOTIFY_ABSENT=1
   fi
-  REHEARSAL_NOTIFY_SANDBOX="$sandbox"
   bx "printf '%s\n' '$sandbox' > ~/duty/notify-repos.txt" \
     && bx "[ \"\$(wc -l < ~/duty/notify-repos.txt)\" -eq 1 ] && grep -qxF '$sandbox' ~/duty/notify-repos.txt"
 }
@@ -218,9 +217,10 @@ rehearsal_notify_restore_registry() {
   return 0
 }
 
-# rehearsal_notify_registries_restored SANDBOX — asserted by comparison, not
-# by having called the restore: the pre-drill notify-repos.txt must be back
-# byte for byte (or gone, where there was none), and repos.txt untouched.
+# rehearsal_notify_registries_restored WORK_SANDBOX PRE_DRILL_NOTIFY_TEXT —
+# asserted by comparison, not by having called the restore: the pre-drill
+# notify-repos.txt must be back byte for byte (or gone, where there was none),
+# and repos.txt must still be the interlock's one line.
 rehearsal_notify_registries_restored() {
   local sandbox="$1" expected="$2" actual
   if [ "$REHEARSAL_NOTIFY_ABSENT" -eq 1 ]; then
@@ -309,10 +309,7 @@ rehearsal_notify_drill() {
 
   pre_notify_text="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
   before="$(rehearsal_notify_read_work_registry)"
-  # The pre-drill registry is the interlock's backup of repos.txt plus the
-  # notify list the box shipped with — read BEFORE either is written.
-  pre_drill="$(bx "cat ${REPOS_BACKUP:-/dev/null} 2>/dev/null || true"
-    printf '%s\n' "$pre_notify_text")"
+  pre_drill="$(rehearsal_notify_pre_drill_registry)"
   if rehearsal_notify_candidate_is_safe "$notify_sandbox" "$work" "$pre_drill"; then
     ok "notify: the notify half is a sandbox this run minted, not a repository the fleet works"
   else
