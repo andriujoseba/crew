@@ -119,6 +119,26 @@ source "$SHARED/lib/common.sh"
 # shellcheck disable=SC1091
 source "$SHARED/lib/duty-builder.sh"
 
+# #411: force the box-existence producer to pause after its matching line.
+# The stub is deliberately `box list`, so this exercises the predicate's
+# contract at its real boundary. The former pipeline returns 141 when the
+# producer wakes and writes the final name after grep has exited successfully.
+box_exists_source="$(sed -n '/^box_exists()/p' "$ROOT/cli/crew")"
+eval "$box_exists_source"
+box() {
+  [ "${1:-}" = list ] || return 2
+  printf '%s\n' crew-drill crew-drill-triage
+  sleep 0.05
+  printf '%s\n' crew-drill-builder
+}
+box_names() { box list; }
+if box_exists crew-drill-triage; then r1=found; else r1=MISSED; fi
+t box-exists-survives-a-descheduled-producer found "$r1"
+if box_exists someone-elses-box; then r1=FALSE-POSITIVE; else r1=absent; fi
+t box-exists-keeps-the-negative-direction absent "$r1"
+unset -f box box_names box_exists
+unset box_exists_source
+
 # Keep ambient operator configuration out of fixture resolution. These static
 # assertions make removing either half of the suite guard fail visibly.
 if grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
