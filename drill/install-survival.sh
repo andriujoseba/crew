@@ -14,8 +14,8 @@
 # the console was gone (#341).
 #
 # "After the removal" is meant literally. The tick assertion measures its wait
-# against a baseline taken once the removal has RETURNED, not the read taken
-# before it: a boundary striking
+# against a baseline taken once the removal has RETURNED, not the pre-removal
+# read: a boundary striking
 # while the uninstall runs writes a line that proves nothing about survival, and
 # a wait that accepts the first non-empty line it sees would pass on it at zero
 # elapsed time. Same reasoning for engine and cron, which are re-read after the
@@ -126,7 +126,7 @@ install_survival_diff_engine_cron() {
 # was read for it; the removal's own transcript says nothing about any of them
 # and is never the evidence here (#341).
 install_survival_check() {
-  local budget=0 waited=ok read_as
+  local budget=0 waited=ok read_as arrival_context
   INSTALL_SURVIVAL_MISSED=()
   INSTALL_SURVIVAL_ENGINE_SEEN=ok
   INSTALL_SURVIVAL_CRON_SEEN=ok
@@ -145,7 +145,9 @@ install_survival_check() {
   if [ -z "$INSTALL_SURVIVAL_CRON" ]; then
     # Not waited for, and said so: with the line gone no boundary can strike,
     # so a ${budget}s wait would only relabel the cron failure as a tick one.
-    INSTALL_SURVIVAL_MISSED+=("tick: not waited for, the box's schedule being gone, so no boundary can strike")
+    arrival_context="the box arrived with no duty.log"
+    [ -z "$INSTALL_SURVIVAL_TICK_PRE" ] || arrival_context="the box arrived with '$INSTALL_SURVIVAL_TICK_PRE'"
+    INSTALL_SURVIVAL_MISSED+=("tick: not waited for, the box's schedule being gone, so no boundary can strike — $arrival_context")
   else
     install_survival_wait_for_tick "$budget" "$INSTALL_SURVIVAL_TICK_POST" || waited=no
     # Both outcomes re-read engine and cron: a surviving box that lost one of

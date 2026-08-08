@@ -1451,6 +1451,8 @@ t survival-cron-removed-says-what-it-read says-what-it-read "$r1"
 t survival-borrowed-box-cron-removed-does-not-wait 0 "$SURVIVAL_CLOCK"
 case "$INSTALL_SURVIVAL_DETAIL" in *"tick: not waited for"*) r1=says-no-wait ;; *) r1=OPAQUE ;; esac
 t survival-borrowed-box-cron-removed-says-no-wait says-no-wait "$r1"
+case "$INSTALL_SURVIVAL_DETAIL" in *"2026-08-03T15:14:01Z duty run end"*) r1=names-arrival-tick ;; *) r1=OPAQUE ;; esac
+t survival-borrowed-box-cron-removed-retains-pre-removal-tick names-arrival-tick "$r1"
 
 # The same removal on a fresh box: no boundary can strike, so the wait is not
 # entered at all and the report says so rather than blaming the tick alone.
