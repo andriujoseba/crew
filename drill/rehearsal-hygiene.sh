@@ -247,7 +247,7 @@ rehearsal_hygiene_drill() {
   second_refusal="$(rehearsal_hygiene_release "$repo" "$bad_branch" "$bad_wt" \
     "$bad_pr" "\$HOME/duty/.rehearsal-hygiene-refusal-ledger" 2>&1 || true)"
   after="$(rehearsal_hygiene_box_snapshot "$bad_wt")" || after="snapshot-failed-after"
-  check "hygiene: failed push keeps worktree and every dirty byte, reported once" \
+  check "hygiene: failed push keeps README.md, hygiene-root-untracked.txt and hygiene-untracked/nested.txt, reported once" \
     rehearsal_hygiene_refusal_is_intact \
       "$before" "$after" "$first_refusal" "$second_refusal"
   check "hygiene: failed push lands no wip ref" bx \

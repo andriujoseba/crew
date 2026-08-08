@@ -320,6 +320,8 @@ t rehearsal-unknown-agent-list listed "$r1"
 # --- rehearsal builder fixtures: tie checks to this run (#179) -----------
 # shellcheck source=drill/rehearsal-fixtures.sh
 source "$ROOT/drill/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-hygiene.sh
+source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
 
@@ -449,6 +451,52 @@ else
   resume_wiring=MISSING
 fi
 t rehearsal-resume-all-opt-out-and-summary-wired wired "$resume_wiring"
+
+# #422: the real-host hygiene leg reads remote trees, the durable PR comment,
+# and duty.log ordering. Keep those reads as sourceable predicates so their
+# must-fail mutations run here without a host, a remote or a drill box.
+HYG_TREE=$'README.md\nhygiene-fixture.txt\nhygiene-root-untracked.txt\nhygiene-untracked/nested.txt'
+if rehearsal_hygiene_tip_has_all_dirt "$HYG_TREE"; then r1=complete; else r1=MISSING; fi
+t rehearsal-hygiene-tip-has-all-dirt complete "$r1"
+if rehearsal_hygiene_tip_has_all_dirt "${HYG_TREE%$'\n'*}"; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-missing-nested-file-reds red "$r1"
+
+HYG_RECORD=$'🗃️ Uncommitted work preserved before this branch\x27s worktree was removed\n`build/hygiene-builder`\x27s worktree was dirty. The work is on the `origin` remote as `wip/build/hygiene-builder`, holding 1 modified, 2 untracked file(s).\nPart of that work was **staged and differed from the working tree**, so the index has its own snapshot one commit below the tip — reach it with `git checkout FETCH_HEAD^`.'
+if rehearsal_hygiene_record_names_payload "$HYG_RECORD" origin \
+    wip/build/hygiene-builder; then r1=complete; else r1=MISSING; fi
+t rehearsal-hygiene-record-names-payload complete "$r1"
+if rehearsal_hygiene_record_names_payload \
+    "${HYG_RECORD/1 modified, 2 untracked/1 modified, 1 untracked}" \
+    origin wip/build/hygiene-builder; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-miscounted-record-reds red "$r1"
+
+HYG_ORDER=$'engine: branch done\ndrill hygiene: preservation push landed\ndrill hygiene: forced removal invoked\nengine: branch removed'
+if rehearsal_hygiene_push_precedes_removal "$HYG_ORDER"; then r1=ordered; else r1=WRONG; fi
+t rehearsal-hygiene-push-precedes-removal ordered "$r1"
+HYG_REVERSED=$'engine: branch done\ndrill hygiene: forced removal invoked\ndrill hygiene: preservation push landed\nengine: branch removed'
+if rehearsal_hygiene_push_precedes_removal "$HYG_REVERSED"; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-removal-before-push-reds red "$r1"
+
+HYG_SNAPSHOT=$' MM README.md\n?? hygiene-root-untracked.txt\n?? hygiene-untracked/nested.txt\nbytes for all three paths\nstaged bytes'
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
+    'WARN: preservation failed; keeping worktree' ''; then r1=intact; else r1=LOST; fi
+t rehearsal-hygiene-refusal-keeps-bytes-and-reports-once intact "$r1"
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" \
+    "${HYG_SNAPSHOT/hygiene-untracked\/nested.txt/REMOVED}" \
+    'WARN: preservation failed; keeping worktree' ''; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-failed-push-removal-reds red "$r1"
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
+    'WARN: preservation failed; keeping worktree' \
+    'WARN: preservation failed again'; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-repeated-report-reds red "$r1"
+
+hygiene_wiring=missing
+if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'hygiene  (preservation + refusal)' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ME2"' "$ROOT/drill/rehearsal.sh"; then
+  hygiene_wiring=wired
+fi
+t rehearsal-hygiene-opt-out-summary-and-live-leg-wired wired "$hygiene_wiring"
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
