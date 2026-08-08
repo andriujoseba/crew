@@ -466,7 +466,7 @@ app_surface_empty_floor() {
   local page="$1" drawn="$2" roster_n="$3" present shown text want
   if [ "${drawn:-0}" -ne 0 ]; then
     skip "page: an all-undeployed floor names the repair verb (#204)" \
-         "$drawn of the $roster_n roster boxes is drawn — this fleet is not in the empty-floor state, and the drill will not un-hire one to reach it"
+         "this fleet draws $drawn of its $roster_n roster boxes — it is not in the empty-floor state, and the drill will not un-hire one to reach it"
     return 0
   fi
   present="$(jqf "str(d['empty']['present'])" < "$page")"
