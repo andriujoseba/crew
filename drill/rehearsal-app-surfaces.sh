@@ -216,17 +216,23 @@ app_surface_silent_box() {
 # hire`, `unknown — the box did not answer` says find out why the box is not
 # talking. Inferring the first from silence sends them to the wrong repair.
 # app_surface_status_unknown <box> <crew status output> <rc>
+#
+# The local is `name` and not `box` deliberately. A file this one is sourced
+# into shares its variable namespace with shellcheck, and declaring `box` there
+# makes `box` a KNOWN variable everywhere — which turns shared/test/run.sh's
+# long-standing `r1=box-keyed` into what looks like arithmetic on it and reds
+# ci-shell with SC2100, in a file this change never touched.
 app_surface_status_unknown() {
-  local box="$1" out="$2" rc="$3" engine_line
+  local name="$1" out="$2" rc="$3" engine_line
   engine_line="$(grep -m1 '^engine: ' "$out" || true)"
   case "$engine_line" in
     *"unknown"*"did not answer"*)
-      ok "crew status $box: an unanswered probe reads unknown, not never-hired" ;;
+      ok "crew status $name: an unanswered probe reads unknown, not never-hired" ;;
     *"not hired"*)
-      fail "crew status $box: an unanswered probe reads unknown, not never-hired" \
+      fail "crew status $name: an unanswered probe reads unknown, not never-hired" \
            "the box exists and did not answer, and the CLI inferred it was never hired: '$engine_line'" ;;
     *)
-      fail "crew status $box: an unanswered probe reads unknown, not never-hired" \
+      fail "crew status $name: an unanswered probe reads unknown, not never-hired" \
            "rc=$rc, engine line: '${engine_line:-none printed}'" ;;
   esac
 }
