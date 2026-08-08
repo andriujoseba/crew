@@ -525,23 +525,8 @@ else
 
   if [ "$ROLE" = "triage" ]; then
   TRIAGE_CLEANUP_REPO="$SANDBOX"
-  # shellcheck disable=SC2016  # the label variables expand inside the box
-  QUEUE_LABELS="$(bx '
-    set -a
-    . ~/duty/conf/fleet.defaults.conf
-    printf "%s\n" \
-      "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
-      "$LABEL_POST_MERGE" "$LABEL_EPIC" "$LABEL_NEEDS_TRIAGE"
-  ' | sed '/^$/d' | sort -u)"
-  QUEUE_LABEL_COUNT="$(printf '%s\n' "$QUEUE_LABELS" | sed '/^$/d' | wc -l | tr -d ' ')"
-  if [ "$QUEUE_LABEL_COUNT" -eq 6 ]; then
-    ok "triage: installed queue-label set resolves six names"
-  else
-    echo "triage: installed queue-label set resolved $QUEUE_LABEL_COUNT name(s):"
-    printf '%s\n' "$QUEUE_LABELS" | sed 's/^/  /'
-    fail "triage: installed queue-label set resolves six names"
-  fi
-  QUEUE_LABEL_PATTERN="$(printf '%s\n' "$QUEUE_LABELS" | paste -sd'|' -)"
+  rehearsal_load_installed_queue_labels || true
+  QUEUE_LABEL_PATTERN="$(printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | paste -sd'|' -)"
   # -- triage: a stray (no queue label) must draw a ruling --
   # duty-triage.sh detects two signals; the STRAY is the one a fixture can
   # create without presupposing triage's own vocabulary: an open issue
