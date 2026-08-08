@@ -23,16 +23,18 @@ t() {  # t <name> <expected> <actual>
   fi
 }
 
-assert_doctrine_quote() {  # assert_doctrine_quote <prompt-file> <substring> <name>
-  local prompt_file="$1" substring="$2" name="$3" prompt_text doctrine_text result
+assert_doctrine_quote() {  # <prompt-file> <substring> <name> [doctrine-heading]
+  local prompt_file="$1" substring="$2" name="$3" doctrine_heading="${4-}"
+  local prompt_text doctrine_text result
   prompt_text="$(tr -s '[:space:]' ' ' <"$prompt_file")"
   doctrine_text="$(tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md")"
   result=DIVERGED
   if grep -Fq -- "$substring" <<<"$prompt_text"; then
-    if [ "$substring" = Claiming ]; then
-      # The prompt cites a section name; require the cited Markdown heading,
-      # rather than accepting an unrelated prose occurrence in the doctrine.
-      grep -Fxq '## Claiming' "$ROOT/.ceremony/BUILDER.md" && result=agreed
+    if [ -n "$doctrine_heading" ]; then
+      # A cited section must be an exact Markdown heading. This deliberate
+      # line-based exception distinguishes a heading from matching prose.
+      grep -Fxq -- "$doctrine_heading" "$ROOT/.ceremony/BUILDER.md" \
+        && result=agreed
     elif grep -Fq -- "$substring" <<<"$doctrine_text"; then
       result=agreed
     fi
@@ -5128,13 +5130,14 @@ t resume-prompt-marker-gated-on-acting gated "$r1"
 assert_doctrine_quote "$RG_PROMPT" \
   'a resumption finding nothing changed posts nothing' \
   resume-prompt-quotes-the-doctrine
-# This clause stops before the Markdown issue citation following it.
+# This clause stops before the Markdown emphasis around `no open PR`.
 assert_doctrine_quote "$RG_PROMPT" \
   'Each change owes one comment — the wait resolves or changes hands, the shape changes, the claim unparks.' \
   resume-prompt-quotes-each-change-doctrine
-# The prompt uses the section name as prose, while the doctrine side must be
-# the exact heading; the substring contains no Markdown syntax itself.
-assert_doctrine_quote "$RG_PROMPT" Claiming resume-prompt-cites-claiming-heading
+# The prompt citation includes its prose context, while the doctrine side must
+# be the exact heading; neither asserted substring contains emphasis syntax.
+assert_doctrine_quote "$RG_PROMPT" 'under Claiming:' \
+  resume-prompt-cites-claiming-heading '## Claiming'
 
 # Count every direct BUILDER doctrine slot in every prompt. In resume.txt the
 # four occurrences are: bare opening reference; quotation attribution for the
@@ -5606,11 +5609,18 @@ t p384-flip-warn-names-the-owed-panel 1 \
 # computes exactly whom the engine WOULD request, and requests nobody.
 t p384-flip-warn-leaves-the-flip-to-the-builder 3 \
   "$(grep -c 'The flip stays yours' <<<"$p384_fo_out")"
+if tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" \
+     | grep -Fq 'an engine may draft a PR but only the builder undrafts it'; then
+  r1=agreed
+else
+  r1=DIVERGED
+fi
+t p384-flip-doctrine-still-says-so agreed "$r1"
 # This complete clause contains no Markdown syntax, so it is the longest safe
-# comparison on both sides of the attribution.
+# prompt-side comparison to pair beside the existing doctrine-only assertion.
 assert_doctrine_quote "$RG_PROMPT" \
   'an engine may draft a PR but only the builder undrafts it' \
-  p384-flip-doctrine-still-says-so
+  resume-prompt-quotes-undraft-doctrine
 # MUST FAIL — the engine flipping, requesting or labelling. Neither predicate
 # writes to the board at all: no undraft, no reviewer, no label. The one GitHub
 # call the flip predicate makes is a READ, pinned below.
