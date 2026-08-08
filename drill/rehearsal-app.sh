@@ -621,16 +621,31 @@ echo "== the operator's view (0.1.2 CLI surfaces)"
 # does not match it — probe.sh reads the crontab on every poll, so matching it
 # would red every read-only walk there has ever been.
 # shellcheck disable=SC2016  # the crontab belongs to the BOX, read inside it
+# Every line is `<key> <value>`, and the value is the literal `UNREADABLE` when
+# the component did not answer. That marker is the whole repair codex-bot asked
+# for: a failed `box_read` used to be piped straight into sha256sum, so an
+# unreachable box and a timed-out box both fingerprinted as the hash of the
+# empty string and compared EQUAL to each other — "unchanged" over two reads
+# that never happened. The distinction is available and was being thrown away:
+# the inner `crontab -l 2>/dev/null || true` returns 0 for a box that genuinely
+# has no crontab, so only a transport failure trips the else.
 fleet_fingerprint() {
-  local b
-  sha256sum "$ROSTER" 2>/dev/null | awk '{print "roster " $1}'
+  local b cron_out
+  if [ -r "$ROSTER" ]; then
+    sha256sum "$ROSTER" | awk '{print "roster " $1}'
+  else
+    echo "roster UNREADABLE"
+  fi
   box list --json 2>/dev/null | python3 -c \
-    "import json,sys;print('boxes ' + ','.join(sorted(str(b.get('name','')) + ':' + str(b.get('status','')) for b in json.load(sys.stdin))))" \
+    "import json,sys;print('boxes ' + (','.join(sorted(str(b.get('name','')) + ':' + str(b.get('status','')) for b in json.load(sys.stdin))) or 'none'))" \
     2>/dev/null || echo "boxes UNREADABLE"
   while read -r b _agent _role _from; do
     [ -z "$b" ] && continue
-    printf 'cron %s %s\n' "$b" \
-      "$(box_read "$b" -- bash -lc 'crontab -l 2>/dev/null || true' 2>/dev/null | sha256sum | awk '{print $1}')"
+    if cron_out="$(box_read "$b" -- bash -lc 'crontab -l 2>/dev/null || true' 2>/dev/null)"; then
+      printf 'cron %s %s\n' "$b" "$(printf '%s' "$cron_out" | sha256sum | awk '{print $1}')"
+    else
+      printf 'cron %s UNREADABLE\n' "$b"
+    fi
   done < <(roster_rows)
 }
 fleet_fingerprint > "$TMP/fleet-before.fp"
@@ -866,48 +881,24 @@ if [ "$BROWSER" -eq 1 ]; then
     # Read-only by construction: this clicks the two filter chips, which paint a
     # canvas scrim. It issues no request to /api/command and appears in the
     # receipt slice checked below alongside the walk.
-    cat > "$TMP/page-read.js" <<'JS'
-const { chromium } = require('playwright-core');
-const [, , url, user, pass] = process.argv;
-(async () => {
-  const browser = await chromium.launch({
-    executablePath: process.env.PW_CHROME, headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
-  });
-  const ctx = await browser.newContext({
-    viewport: { width: 1600, height: 1000 },
-    httpCredentials: user ? { username: user, password: pass } : undefined,
-  });
-  const page = await ctx.newPage();
-  await page.goto(url, { waitUntil: 'load' });
-  // Poll for the LIVE flip rather than guessing how long the first poll takes,
-  // the same way the walk does: a fixed wait that expires early reads the demo
-  // payload and every comparison below is then about the wrong fleet.
-  for (let w = 0; w < 12000; w += 250) {
-    if ((await page.locator('.demo-badge.live').count()) > 0) break;
-    await page.waitForTimeout(250);
-  }
-  const live = (await page.locator('.demo-badge.live').count()) > 0;
-  const tiles = (await page.locator('#tiles').textContent()).replace(/\s+/g, '');
-  const group = async (v) => {
-    await page.locator(`.fchip[data-f="state"][data-v="${v}"]`).click();
-    return (await page.evaluate(() => window.FLOORDEV.matched().slice())).sort();
-  };
-  const disarmed = await group('disarmed');
-  const silent = await group('silent');
-  await page.locator('.fchip[data-f="state"][data-v="all"]').click();
-  console.log(JSON.stringify({ live, tiles, disarmed, silent }));
-  await browser.close();
-})().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });
-JS
-    if node "$TMP/page-read.js" "http://127.0.0.1:$PORT/" "$USER" "$PASSWD" \
+    #
+    # The reader is `drill/rehearsal-page-read.js`, IN THE TREE. It was a
+    # heredoc into "$TMP" and it could never have passed: node resolves a
+    # require from the script's own directory upward, so playwright-core at
+    # $ROOT/node_modules — where this repo says to install it — is unreachable
+    # from /tmp, and the failure lands as two hard FAILs rather than a skip.
+    # The precondition above cannot catch it because `node -e` resolves from
+    # the cwd instead. Beside the file it is run with, resolution is ordinary.
+    if node "$ROOT/drill/rehearsal-page-read.js" "http://127.0.0.1:$PORT/" "$USER" "$PASSWD" \
          > "$TMP/page-read.json" 2>"$TMP/page-read.err"; then
       app_surface_page_groups "$TMP/page-read.json" "$TMP/status.txt" \
-                              "$ROSTER_N" "$SURF_NOT_DEPLOYED" "$SURF_DRAWN"
+                              "$ROSTER_N" "$SURF_NOT_DEPLOYED" "$SURF_DRAWN" "$FLEET_JSON"
     else
       fail "page: the state filter separates disarmed from silent (#312)" \
            "the page reader did not complete: $(tr '\n' ' ' < "$TMP/page-read.err" | head -c 150)"
       fail "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" \
+           "the page reader did not complete — see above"
+      fail "page: an all-undeployed floor names the repair verb (#204)" \
            "the page reader did not complete — see above"
     fi
 

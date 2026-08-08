@@ -33,6 +33,7 @@ app_surface_page_skips() {
   skip "page: the engine tile renders its integrity verdict (#190)" "$1"
   skip "page: the state filter separates disarmed from silent (#312)" "$1"
   skip "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" "$1"
+  skip "page: an all-undeployed floor names the repair verb (#204)" "$1"
 }
 
 # --- #347: the header names the version of the crew that is SERVING the page -
@@ -187,18 +188,54 @@ app_surface_dry_run() {
     fail "crew up --dry-run summarises what it would do" \
          "no 'up --dry-run: N would be created, N started, N hired' line — got: $(tail -1 "$out")"
   fi
-  if grep -q '^boxes UNREADABLE$' "$before"; then
-    # Half the fingerprint could not be taken, so "unchanged" is not a claim
-    # this run may make. The other two thirds still are, and saying so is the
-    # honest split rather than a pass on a comparison that compared less than
-    # it says.
-    skip "crew up --dry-run left the box list unchanged" "box list --json did not answer"
-  fi
-  if diff -q "$before" "$after" >/dev/null 2>&1; then
-    ok "crew up --dry-run changed nothing: same roster, same boxes, same crontabs"
-  else
+  # ---- and it touched nothing, component by component --------------------
+  # `diff -q` over the two files was the wrong instrument, and codex-bot caught
+  # what it costs: with `boxes UNREADABLE` on both sides the files are IDENTICAL
+  # and the run reported `changed nothing: same roster, same boxes, same
+  # crontabs` — over a box list it never read. Equality of two failures is not
+  # evidence of anything, and that is precisely the silent pass on an absent
+  # precondition this issue's third criterion forbids.
+  #
+  # So readability is part of the verdict. Each line is one component keyed by
+  # everything but its last field (`roster`, `boxes`, `cron <box>`), and a
+  # component is COMPARED only when both reads answered. What answered and
+  # matched is an `ok` that names how much it covered; what did not answer is a
+  # `skip` that names the components by key; and a component present on one
+  # side and absent from the other counts as movement, not as agreement.
+  local fp_report fp_bad fp_moved fp_n
+  fp_report="$(awk '
+    function key(s) { sub(/[ ][^ ]*$/, "", s); return s }
+    FNR==NR { B[key($0)] = $NF; next }
+            { A[key($0)] = $NF }
+    END {
+      for (k in B) {
+        if (!(k in A))                                  { moved = moved s2 k " (gone after)"; s2 = ", " }
+        else if (B[k] == "UNREADABLE" || A[k] == "UNREADABLE") { bad = bad s1 k; s1 = ", " }
+        else if (B[k] != A[k])                          { moved = moved s2 k; s2 = ", " }
+        else                                            { n++ }
+      }
+      for (k in A) if (!(k in B))                       { moved = moved s2 k " (appeared after)"; s2 = ", " }
+      print "unreadable " bad
+      print "moved " moved
+      print "compared " n+0
+    }' "$before" "$after")"
+  fp_bad="$(printf '%s\n' "$fp_report"  | sed -n 's/^unreadable //p')"
+  fp_moved="$(printf '%s\n' "$fp_report" | sed -n 's/^moved //p')"
+  fp_n="$(printf '%s\n' "$fp_report"    | sed -n 's/^compared //p')"
+  if [ -n "$fp_moved" ]; then
     fail "crew up --dry-run changed nothing: same roster, same boxes, same crontabs" \
-         "$(diff "$before" "$after" | head -4 | tr '\n' ' ')"
+         "these moved across the dry run: $fp_moved"
+  elif [ "${fp_n:-0}" -eq 0 ]; then
+    # Nothing answered on either side. There is no partial claim to make here,
+    # and making the full one would be the defect above with extra steps.
+    skip "crew up --dry-run changed nothing: same roster, same boxes, same crontabs" \
+         "no component of the fleet fingerprint could be read${fp_bad:+: $fp_bad}"
+  elif [ -n "$fp_bad" ]; then
+    ok "crew up --dry-run moved none of the $fp_n fleet components that answered"
+    skip "crew up --dry-run changed nothing: same roster, same boxes, same crontabs" \
+         "these did not answer before or after, so no comparison was made: $fp_bad"
+  else
+    ok "crew up --dry-run changed nothing: same roster, same boxes, same crontabs"
   fi
 }
 
@@ -283,36 +320,122 @@ app_surface_walk_asserted() {
 # `crew status`, box by box, in the agreement block's shape — the two readers
 # answer "is this box armed?" from one set of crontab patterns since #189, so a
 # disagreement here means one of them is lying to an operator.
-# app_surface_filter <page-read.json> <crew status output>
+# Asserted in BOTH directions, which is the correction codex-bot found: every
+# loop here once walked the PAGE's groups, so a page that dropped a genuinely
+# silent box had no member to be wrong about and passed. Membership alone is
+# half a claim — the other half is that nobody is MISSING — so the groups are
+# compared as SETS against the fields the page classifies from.
+#
+# Where the expected sets come from matters. `fleetState` (fleet-floor/src/
+# app.js:1282-1285) puts a drawn unit with state "offline" in Disarmed when the
+# payload's `paused` or `disarmed` is set and in Silent otherwise, and both
+# fields are per-unit in /api/fleet (server/floor.py:679,692). So the expected
+# sets are read off the same two flags the page reads, not reconstructed from
+# something adjacent to them: what is asserted is that the CHIP renders the
+# classification the payload already carries, which is the #312 shipped.
+#
+# The CLI comparison stays, and is what makes it an operator-truth claim rather
+# than an internal-consistency one. It is asked only of boxes `crew status` can
+# actually classify — see the credential note below.
+# app_surface_filter <page-read.json> <crew status output> <fleet.json>
 app_surface_filter() {
-  local page="$1" status="$2" disarmed silent both b line bad=""
-  disarmed="$(jqf "' '.join(d['disarmed'])" < "$page")"
-  silent="$(jqf "' '.join(d['silent'])" < "$page")"
-  if [ -z "$disarmed" ] && [ -z "$silent" ]; then
+  local page="$1" status="$2" fleet="$3"
+  local pg_dis pg_sil ex_dis ex_sil both b line bad="" blind="" cli_dis=""
+  pg_dis="$(jqf "' '.join(sorted(d['disarmed']))" < "$page")"
+  pg_sil="$(jqf "' '.join(sorted(d['silent']))" < "$page")"
+  ex_dis="$(jqf "' '.join(sorted(u['box'] for u in d['units'] if u.get('hired')!='no' and u.get('state')=='offline' and (u.get('paused') or u.get('disarmed'))))" < "$fleet")"
+  ex_sil="$(jqf "' '.join(sorted(u['box'] for u in d['units'] if u.get('hired')!='no' and u.get('state')=='offline' and not (u.get('paused') or u.get('disarmed'))))" < "$fleet")"
+  if [ -z "$pg_dis$pg_sil$ex_dis$ex_sil" ]; then
     skip "page: the state filter separates disarmed from silent (#312)" \
          "no box on this fleet is disarmed or silent — neither group has a member to classify"
     return 0
   fi
-  for b in $disarmed; do
-    line="$(grep -E "^$b " "$status" | head -1 || true)"
-    case "$line" in
-      *disarmed*|*"paused by operator"*|*paused*) ;;
-      "") bad="${bad:+$bad, }$b: grouped Disarmed, crew status printed no row" ;;
-      *)  bad="${bad:+$bad, }$b: grouped Disarmed, crew status says '$line'" ;;
-    esac
-  done
-  for b in $silent; do
-    # The load-bearing direction: a box the operator deliberately stopped must
-    # not be counted in the alarm group. #312 exists because it was.
-    line="$(grep -E "^$b " "$status" | head -1 || true)"
-    case "$line" in
-      *disarmed*|*"paused by operator"*)
-        bad="${bad:+$bad, }$b: grouped Silent while crew status says it is deliberately stopped — '$line'" ;;
-    esac
-  done
+  # Both directions, both groups. A dropped member reds here; so does an
+  # invented one.
+  [ "$pg_dis" = "$ex_dis" ] || bad="${bad:+$bad, }Disarmed is '${pg_dis:-empty}', the payload's disarmed boxes are '${ex_dis:-none}'"
+  [ "$pg_sil" = "$ex_sil" ] || bad="${bad:+$bad, }Silent is '${pg_sil:-empty}', the payload's silent boxes are '${ex_sil:-none}'"
   both="$(jqf "' '.join(sorted(set(d['disarmed']) & set(d['silent'])))" < "$page")"
   [ -z "$both" ] || bad="${bad:+$bad, }in both groups at once: $both"
+  # ---- and now against `crew status`, box by box -------------------------
+  # Only the boxes the CLI can answer for. Armed-ness is not a column in that
+  # table (MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE, cli/crew:2047) —
+  # it is only ever the NOTE, and the note has other claimants: a missing
+  # credential wins outright at cli/crew:2123 and an unconverged box's advice
+  # overwrites at :2179, so a hired, un-armed, LOGGED-OUT box reads
+  # `⚠ log in: box shell <name>` and never the disarmed word. Creds-free is the
+  # normal starting state on a drill host, so counting that as a disagreement
+  # would red a correct page (claude-bot, #428). It is not a disagreement — it
+  # is a reader that cannot see. Named in its own skip rather than dropped, and
+  # the payload comparison above still covers those boxes.
+  for b in $ex_dis $ex_sil; do
+    line="$(grep -E "^$b " "$status" | head -1 || true)"
+    case "$line" in
+      # MODIFIED prepends to the note rather than replacing it, so the disarmed
+      # word survives as a suffix and this test still sees it.
+      *disarmed*|*"paused by operator"*) cli_dis="${cli_dis:+$cli_dis }$b" ;;
+      *"⚠ log in:"*|*"probing the WRONG vendor"*|*"convergence unknown"*|*"INCOMPLETE —"*)
+        blind="${blind:+$blind, }$b" ;;
+      "") bad="${bad:+$bad, }$b: classified by the page, crew status printed no row" ;;
+    esac
+  done
+  # Cross-reader, both ways, over the boxes both readers can speak about: the
+  # floor and the CLI answer "is this box armed?" from one set of cron patterns
+  # since #189, so a box one calls disarmed and the other calls silent is one
+  # of them lying to an operator.
+  for b in $cli_dis; do
+    case " $ex_dis " in
+      *" $b "*) ;;
+      *) bad="${bad:+$bad, }$b: crew status says it is deliberately stopped, the payload does not" ;;
+    esac
+  done
+  for b in $ex_dis; do
+    case " $blind $cli_dis " in
+      *" $b "*) ;;
+      *) bad="${bad:+$bad, }$b: the payload says disarmed, crew status's note does not — '$(grep -E "^$b " "$status" | head -1 || true)'" ;;
+    esac
+  done
   t "page: the state filter separates disarmed from silent (#312)" "" "$bad"
+  [ -z "$blind" ] || \
+    skip "page: the state filter agrees with crew status for every box" \
+         "crew status cannot classify these boxes — a credential or convergence note holds the column armed-ness would be in: $blind"
+}
+
+# --- #204's other half: the floor with nothing on it ------------------------
+# The issue asks for it in as many words — "a floor with none of them names
+# `crew hire`" — and it was the half this leg did not read. `syncEmptyFloor`
+# (fleet-floor/src/app.js:1675-1691) paints #emptyfloor when the fleet is LIVE,
+# the floor view is up and NO console is drawn; the panel names `crew hire`
+# when the roster declares boxes and `crew new` when it declares none, which is
+# the difference between "hire one of these" and "there is nothing to hire".
+#
+# Never constructed: the drill does not destroy a fleet member to reach this
+# state (issue decision 3), so a floor with any console drawn SKIPS by name.
+# app_surface_empty_floor <page-read.json> <drawn> <roster count>
+app_surface_empty_floor() {
+  local page="$1" drawn="$2" roster_n="$3" present shown text want
+  if [ "${drawn:-0}" -ne 0 ]; then
+    skip "page: an all-undeployed floor names the repair verb (#204)" \
+         "$drawn of the $roster_n roster boxes is drawn — this fleet is not in the empty-floor state, and the drill will not un-hire one to reach it"
+    return 0
+  fi
+  present="$(jqf "str(d['empty']['present'])" < "$page")"
+  shown="$(jqf "str(d['empty']['shown'])" < "$page")"
+  text="$(jqf "d['empty']['text']" < "$page")"
+  # `crew new` is the right verb only when there is nothing declared to hire.
+  if [ "${roster_n:-0}" -eq 0 ]; then want="crew new"; else want="crew hire"; fi
+  if [ "$present" != "True" ]; then
+    fail "page: an all-undeployed floor names the repair verb (#204)" \
+         "no console is drawn and the page has no #emptyfloor panel at all — a fresh operator gets a blank stage"
+  elif [ "$shown" != "True" ]; then
+    fail "page: an all-undeployed floor names the repair verb (#204)" \
+         "no console is drawn and #emptyfloor is not shown — the panel exists but the operator cannot see it"
+  else
+    case "$text" in
+      *"$want"*) ok "page: an all-undeployed floor names the repair verb (#204)" ;;
+      *) fail "page: an all-undeployed floor names the repair verb (#204)" \
+              "the empty floor does not name '$want' — it says '$text'" ;;
+    esac
+  fi
 }
 
 # --- #204 on the page: the count is the roster, the consoles the deployed ----
@@ -343,9 +466,12 @@ app_surface_tiles() {
   fi
 }
 
-# The two page halves that need the page to have flipped LIVE, gated on it once.
+# The three page halves that need the page to have flipped LIVE, gated on it
+# once. #emptyfloor is among them for the same reason as the groups:
+# syncEmptyFloor paints nothing at all unless LIVE, so a demo page would read as
+# a floor whose panel is missing.
 # app_surface_page_groups <page-read.json> <crew status output> <roster count>
-#                         <not-deployed names> <drawn>
+#                         <not-deployed names> <drawn> <fleet.json>
 app_surface_page_groups() {
   local page="$1"
   if [ "$(jqf "str(d['live'])" < "$page")" != "True" ]; then
@@ -355,8 +481,11 @@ app_surface_page_groups() {
          "the page did not flip LIVE within 12s — it is rendering the demo payload"
     skip "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" \
          "the page did not flip LIVE within 12s"
+    skip "page: an all-undeployed floor names the repair verb (#204)" \
+         "the page did not flip LIVE within 12s"
     return 0
   fi
-  app_surface_filter "$page" "$2"
+  app_surface_filter "$page" "$2" "$6"
   app_surface_tiles "$page" "$3" "$4" "$5"
+  app_surface_empty_floor "$page" "$5" "$3"
 }
