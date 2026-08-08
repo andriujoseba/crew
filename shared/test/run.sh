@@ -739,7 +739,38 @@ t notify-cleanup-restores-the-notify-registry 1 \
   "$(grep -cF 'mv ~/duty/notify-repos.txt.pre-drill-99 ~/duty/notify-repos.txt' "$NOTIFY_BX_CALLS")"
 t notify-cleanup-still-restores-the-work-registry 1 \
   "$(grep -cF 'mv ~/duty/repos.txt.pre-drill-99 ~/duty/repos.txt' "$NOTIFY_BX_CALLS")"
-unset -f bx notify_stub_bx notify_run_leg notify_union
+# The leg writes its OWN verdict where the round summary reads it — the first
+# review round found the summary reading the ROLE's exit code, which is 0 both
+# for a union asserted and for a channel-unreachable skip (#423).
+NOTIFY_STATUS_FILE="$TMP/notify-verdicts"
+notify_leg_verdicts() {  # $1 how the post-write repos.txt read answers
+  NOTIFY_SECOND_READ="$1"
+  : >"$NOTIFY_BX_CALLS"
+  : >"$NOTIFY_STATUS_FILE"
+  printf '0\n' >"$NOTIFY_READS"
+  REHEARSAL_NOTIFY_BACKUP=""
+  REHEARSAL_NOTIFY_ABSENT=0
+  REHEARSAL_NOTIFY_CAPTURED=0
+  (
+    export REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
+    ROLE=reviewer
+    bx() { notify_stub_bx "$1"; }
+    gh() { case "$1 $2" in "repo view") return 0 ;; *) return 2 ;; esac; }
+    ok() { :; }; fail() { :; }; skip() { :; }
+    rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer >/dev/null 2>&1
+  )
+  cat "$NOTIFY_STATUS_FILE"
+}
+notify_out="$(notify_leg_verdicts widened)"
+t notify-verdict-widened-registry-is-a-fail 1 \
+  "$(grep -cF 'reviewer fail repos.txt widened while the union was being staged' <<<"$notify_out")"
+t notify-verdict-widened-registry-records-no-pass 0 "$(grep -c ' ok ' <<<"$notify_out")"
+notify_out="$(notify_leg_verdicts same)"
+t notify-verdict-unstageable-fixture-is-a-fail 1 \
+  "$(grep -cF "reviewer fail the repos.txt half's handoff fixture could not be staged" <<<"$notify_out")"
+t notify-verdict-unstageable-fixture-records-no-pass 0 "$(grep -c ' ok ' <<<"$notify_out")"
+
+unset -f bx notify_stub_bx notify_run_leg notify_union notify_leg_verdicts
 
 # --- wiring: where the leg runs, and what clears up after it --------------
 # shellcheck disable=SC2016  # match the literal source line in rehearsal.sh
@@ -793,6 +824,243 @@ t notify-fixtures-closed-on-every-exit-path wired "$notify_wiring"
 # The handoff label is the engine's, never retyped in the drill.
 t notify-handoff-label-not-retyped-in-drill 0 \
   "$(grep -R -F 'state:needs-human' "$ROOT/drill" | wc -l | tr -d ' ')"
+
+# --- the leg's own verdict, and the round summary that reads it (#423) -----
+#
+# The first review round found that rehearsal-all.sh read the leg's outcome
+# off rehearsal.sh's exit code, which is 0 for a union asserted AND for a
+# channel-unreachable skip — so a round that asserted nothing reported
+# `ok notify`, and a role that failed elsewhere reported `FAIL notify`. The
+# leg now writes its own verdict; these drive both halves.
+: >"$NOTIFY_STATUS_FILE"
+
+# The pure fold, first: worst wins across the roles that wrote a line.
+t notify-verdict-fold-ok "ok both halves on one tick" \
+  "$(rehearsal_notify_worst_verdict 'reviewer ok both halves on one tick')"
+t notify-verdict-fold-skip-outranks-ok "skip operator channel unreachable: no-credentials" \
+  "$(rehearsal_notify_worst_verdict 'triage ok both halves on one tick
+reviewer skip operator channel unreachable: no-credentials')"
+t notify-verdict-fold-fail-outranks-skip "fail the union was not delivered on one tick" \
+  "$(rehearsal_notify_worst_verdict 'triage skip operator channel unreachable: no-credentials
+reviewer fail the union was not delivered on one tick')"
+t notify-verdict-fold-fail-outranks-a-later-ok "fail the union was not delivered on one tick" \
+  "$(rehearsal_notify_worst_verdict 'triage fail the union was not delivered on one tick
+reviewer ok both halves on one tick')"
+# No line at all is not a verdict: the summary must not be able to read one.
+rehearsal_notify_worst_verdict '' >/dev/null 2>&1 && r1=read || r1=none
+t notify-verdict-fold-empty-is-no-verdict none "$r1"
+# A token the summary cannot classify grades as fail, never as a pass.
+t notify-verdict-fold-unreadable-token-is-a-fail "fail wat" \
+  "$(rehearsal_notify_worst_verdict 'reviewer sideways wat')"
+
+# The two the round summary turns on: an unreachable channel, and the opt-out.
+: >"$NOTIFY_STATUS_FILE"
+(
+  export REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
+  ROLE=reviewer
+  bx() { printf 'no-credentials\n'; }
+  ok() { :; }; fail() { :; }; skip() { :; }
+  rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer >/dev/null 2>&1
+)
+t notify-verdict-unreachable-channel-is-a-skip-naming-it \
+  "reviewer skip operator channel unreachable: no-credentials" \
+  "$(cat "$NOTIFY_STATUS_FILE")"
+: >"$NOTIFY_STATUS_FILE"
+(
+  export REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
+  export REHEARSAL_NOTIFY_DRILL=0
+  ROLE=reviewer
+  bx() { :; }
+  ok() { :; }; fail() { :; }; skip() { :; }
+  rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer >/dev/null 2>&1
+)
+t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" \
+  "$(cat "$NOTIFY_STATUS_FILE")"
+
+# The aggregation, executable: a real rehearsal-all.sh with stubbed siblings.
+AGG="$TMP/notify-agg"
+mkdir -p "$AGG"
+cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" "$AGG/"
+cat >"$AGG/rehearsal.sh" <<'AGGSH'
+#!/usr/bin/env bash
+# Stub role drill: writes the verdict the case asked for — the way the leg
+# does, into REHEARSAL_NOTIFY_STATUS — and exits with the case's rc. The two
+# are independent on purpose: that independence is what is under test.
+role=""
+while [ $# -gt 0 ]; do case "$1" in --role) role="$2"; shift 2 ;; *) shift ;; esac; done
+v="$(cat "$AGG_DIR/$role.verdict" 2>/dev/null || true)"
+[ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_NOTIFY_STATUS"
+exit "$(cat "$AGG_DIR/$role.rc" 2>/dev/null || echo 0)"
+AGGSH
+printf '#!/usr/bin/env bash\nexit 0\n' >"$AGG/teardown.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$AGG/rehearsal-app.sh"
+chmod +x "$AGG/rehearsal.sh" "$AGG/teardown.sh" "$AGG/rehearsal-app.sh"
+agg_case() {  # $1 role, $2 verdict (empty for none), $3 rc
+  printf '%s' "$2" >"$AGG/$1.verdict"
+  printf '%s\n' "$3" >"$AGG/$1.rc"
+}
+agg_run() {  # $1 roles, then extra flags
+  local roles="$1"; shift
+  AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
+    --no-app --no-config-drill --no-install-drill --no-resume-drill \
+    ${1+"$@"} 2>&1
+}
+
+# The criterion: an unreachable operator channel produces a skip naming it and
+# NEVER a pass — in the round summary too, which is where a round's verdict is
+# actually read. The role exits 0, exactly as it did when this reported `ok`.
+agg_case reviewer 'skip operator channel unreachable: no-credentials' 0
+if agg_out="$(agg_run reviewer)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-unreachable-channel-emits-no-ok-row 0 \
+  "$(grep -c 'ok         notify' <<<"$agg_out")"
+t notify-agg-unreachable-channel-names-the-reason 1 \
+  "$(grep -cF 'INCOMPLETE notify  (leg skipped: operator channel unreachable: no-credentials — union UNPROVEN)' <<<"$agg_out")"
+t notify-agg-unreachable-channel-is-not-a-green-round 2 "$agg_rc"
+
+# The union actually asserted is the one thing that prints `ok notify`.
+agg_case reviewer 'ok both halves on one tick' 0
+if agg_out="$(agg_run reviewer)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-asserted-union-is-a-pass 1 \
+  "$(grep -cF 'ok         notify  (repos.txt + notify-repos.txt union)' <<<"$agg_out")"
+t notify-agg-asserted-union-rc 0 "$agg_rc"
+
+# The inverse conflation: a role that failed for its own reasons must not be
+# able to red the notify row, and must not hide the leg's own pass.
+agg_case triage '' 1
+agg_case reviewer 'ok both halves on one tick' 0
+if agg_out="$(agg_run "triage reviewer")"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-unrelated-role-failure-is-not-a-notify-fail 0 \
+  "$(grep -c 'FAIL       notify' <<<"$agg_out")"
+t notify-agg-unrelated-role-failure-keeps-the-leg-pass 1 \
+  "$(grep -c 'ok         notify' <<<"$agg_out")"
+t notify-agg-unrelated-role-failure-still-reds-its-role 1 \
+  "$(grep -c 'FAIL       triage' <<<"$agg_out")"
+t notify-agg-unrelated-role-failure-rc 1 "$agg_rc"
+
+# And the other direction: the leg's own failure reds the round even where
+# every role exited 0 — under the old wiring this printed `ok notify`.
+agg_case triage '' 0
+agg_case reviewer 'fail the union was not delivered on one tick (rc 5)' 0
+if agg_out="$(agg_run reviewer)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-leg-failure-reds-the-round 1 \
+  "$(grep -cF 'FAIL       notify  (the union was not delivered on one tick (rc 5))' <<<"$agg_out")"
+t notify-agg-leg-failure-rc 1 "$agg_rc"
+
+# No verdict at all is phase 2 never reaching the leg: INCOMPLETE, never ok.
+agg_case reviewer '' 0
+if agg_out="$(agg_run reviewer)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-no-verdict-is-incomplete 1 \
+  "$(grep -cF 'INCOMPLETE notify  (phase 2 never reached the leg — union UNPROVEN)' <<<"$agg_out")"
+t notify-agg-no-verdict-emits-no-ok-row 0 "$(grep -c 'ok         notify' <<<"$agg_out")"
+t notify-agg-no-verdict-rc 2 "$agg_rc"
+agg_case reviewer '' 1
+if agg_out="$(agg_run reviewer)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-no-box-reached-says-so 1 \
+  "$(grep -cF 'INCOMPLETE notify  (no role reached a box — union UNPROVEN)' <<<"$agg_out")"
+
+# The announced omission stays a skip and keeps the round green: an operator
+# who says their host has no channel gets a clean round; nobody else does.
+agg_case reviewer '' 0
+if agg_out="$(agg_run reviewer --no-notify-drill)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-opt-out-is-an-announced-skip 1 \
+  "$(grep -cF 'skip       notify  (--no-notify-drill)' <<<"$agg_out")"
+t notify-agg-opt-out-rc 0 "$agg_rc"
+
+# --- teardown compares BOTH registries against their pre-drill bytes ------
+#
+# A restore that exits 0 having moved the wrong bytes leaves the box working
+# or watching a set nobody chose, while the round reports a clean teardown.
+# So the comparison is after both restores, and it controls the verdict.
+cleanup_run() {  # $1 rc handed in
+  (
+    # shellcheck source=drill/rehearsal-safety.sh
+    source "$ROOT/drill/rehearsal-safety.sh"
+    # shellcheck disable=SC2088  # the tilde expands in the box's login shell
+    REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
+    BOX_NAME=fixture
+    REHEARSAL_NOTIFY_BACKUP=""
+    rehearsal_disarm_cron() { return 0; }
+    bx() {
+      case "$1" in
+        *"test -f ~/duty/repos.txt.pre-drill"*) return "$CLEAN_REPOS_BACKED_UP" ;;
+        *"cat ~/duty/repos.txt.pre-drill"*) printf '%s\n' "$CLEAN_REPOS_PRE" ;;
+        *"cat ~/duty/repos.txt"*) printf '%s\n' "$CLEAN_REPOS_AFTER" ;;
+        *"! test -e ~/duty/notify-repos.txt"*) return "$CLEAN_NOTIFY_GONE" ;;
+        *"cat ~/duty/notify-repos.txt"*) printf '%s\n' "$CLEAN_NOTIFY_AFTER" ;;
+        *) return 0 ;;
+      esac
+    }
+    rehearsal_cleanup "$1"
+    printf 'rc=%s\n' "$?"
+  ) 2>&1
+}
+CLEAN_REPOS_BACKED_UP=0
+CLEAN_REPOS_PRE='owner/one
+owner/two'
+CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
+CLEAN_NOTIFY_GONE=1
+CLEAN_NOTIFY_AFTER='owner/watched'
+REHEARSAL_NOTIFY_CAPTURED=1
+REHEARSAL_NOTIFY_ABSENT=0
+REHEARSAL_NOTIFY_PRE_TEXT='owner/watched'
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-matching-registries-pass "rc=0" "$(tail -n 1 <<<"$clean_out")"
+# Only ever worsens: an rc it was handed survives a clean comparison.
+t notify-cleanup-passes-the-handed-rc-through "rc=2" "$(tail -n 1 <<<"$(cleanup_run 2)")"
+
+# Must fail: the work registry restored with the wrong bytes.
+CLEAN_REPOS_AFTER='owner/one'
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-wrong-work-registry-bytes-red "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-wrong-work-registry-names-the-file 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/repos.txt differs from its pre-drill contents' <<<"$clean_out")"
+CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
+
+# Must fail: the notify registry restored with the wrong bytes.
+CLEAN_NOTIFY_AFTER='heavy-duty/ceremony'
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-wrong-notify-registry-bytes-red "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-wrong-notify-registry-names-the-file 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/notify-repos.txt differs from its pre-drill contents' <<<"$clean_out")"
+CLEAN_NOTIFY_AFTER='owner/watched'
+
+# Absent before the drill means absent after it — both ways round.
+REHEARSAL_NOTIFY_ABSENT=1
+CLEAN_NOTIFY_GONE=0
+t notify-cleanup-absent-before-and-gone-after-passes "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+CLEAN_NOTIFY_GONE=1
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-file-left-behind-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-file-left-behind-says-there-was-none 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/notify-repos.txt is still in place; the box had none before the drill' <<<"$clean_out")"
+REHEARSAL_NOTIFY_ABSENT=0
+
+# A leg that never captured has nothing to vouch for: the notify half is not
+# asserted, and the work half still is.
+REHEARSAL_NOTIFY_CAPTURED=0
+CLEAN_NOTIFY_AFTER='heavy-duty/ceremony'
+t notify-cleanup-uncaptured-leg-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+CLEAN_REPOS_AFTER='owner/one'
+t notify-cleanup-uncaptured-leg-still-checks-the-work-registry "rc=1" \
+  "$(tail -n 1 <<<"$(cleanup_run 0)")"
+CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
+# Nothing backed up is nothing to vouch for either.
+CLEAN_REPOS_BACKED_UP=1
+CLEAN_REPOS_AFTER='whatever the box has'
+t notify-cleanup-no-backup-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+CLEAN_REPOS_BACKED_UP=0
+CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
+REHEARSAL_NOTIFY_CAPTURED=1
+
+# The verdict has to reach the EXIT trap's status, or the comparison above is
+# a warning nobody reads.
+# shellcheck disable=SC2016  # match the literal line in rehearsal.sh
+if grep -Fq 'rehearsal_cleanup "$rc" || rc=$?' "$ROOT/drill/rehearsal.sh"; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-cleanup-verdict-reaches-the-exit-status wired "$notify_wiring"
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
