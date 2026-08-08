@@ -529,7 +529,8 @@ t rehearsal-hygiene-summary-failure-stays-failure \
 hygiene_wiring=missing
 # shellcheck disable=SC2016  # these are literal wiring strings, not expansions
 if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
-    && grep -Fq 'hygiene  (preservation + refusal)' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'hygiene  (preservation + refusal)' \
+      "$ROOT/drill/rehearsal-hygiene.sh" \
     && grep -Fq '"$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2"' \
       "$ROOT/drill/rehearsal-hygiene.sh" \
     && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ROLE"' "$ROOT/drill/rehearsal.sh"; then
