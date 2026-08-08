@@ -125,12 +125,14 @@ source "$SHARED/lib/duty-builder.sh"
 # producer wakes and writes the final name after grep has exited successfully.
 box_exists_source="$(sed -n '/^box_exists()/p' "$ROOT/cli/crew")"
 eval "$box_exists_source"
+# shellcheck disable=SC2317  # called by the box_exists body loaded through eval
 box() {
   [ "${1:-}" = list ] || return 2
   printf '%s\n' crew-drill crew-drill-triage
   sleep 0.05
   printf '%s\n' crew-drill-builder
 }
+# shellcheck disable=SC2317  # called by the box_exists body loaded through eval
 box_names() { box list; }
 if box_exists crew-drill-triage; then r1=found; else r1=MISSED; fi
 t box-exists-survives-a-descheduled-producer found "$r1"

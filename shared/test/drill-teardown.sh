@@ -175,11 +175,13 @@ called() { grep -qF "$1" "$CALLS"; }
 predicate_function() { sed -n "/^$1()/p" "$TEARDOWN"; }
 eval "$(predicate_function is_drill_box)"
 eval "$(predicate_function is_drill_repo)"
+# shellcheck disable=SC2317  # called by the predicates loaded through eval
 drill_box_names() {
   printf '%s\n' crew-drill crew-drill-triage
   sleep 0.05
   printf '%s\n' crew-drill-builder
 }
+# shellcheck disable=SC2317  # called by the predicates loaded through eval
 drill_repo_names() {
   printf '%s\n' crew-drill crew-drill-triage
   sleep 0.05
