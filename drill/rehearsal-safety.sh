@@ -50,8 +50,29 @@ rehearsal_attention_is_clear() {
       | grep -vxF '$sandbox' || true"
 }
 
+# rehearsal_work_registry_matches_pre_drill HAD_BACKUP PRE_TEXT — repos.txt on
+# the box, after the restore, against the bytes the backup held before it was
+# moved. Nothing was backed up ⇒ nothing to vouch for.
+rehearsal_work_registry_matches_pre_drill() {
+  local had="$1" expected="$2" actual
+  [ "$had" -eq 1 ] || return 0
+  actual="$(bx "cat ~/duty/repos.txt 2>/dev/null || true")"
+  [ "$actual" = "$expected" ] && return 0
+  echo "TEARDOWN: ~/duty/repos.txt differs from its pre-drill contents" >&2
+  return 1
+}
+
 rehearsal_cleanup() {
   local rc="${1:-$?}"
+  local repos_had=0 repos_pre=""
+  # The pre-drill bytes, read BEFORE the restore moves the backup away. The
+  # restore is then asserted by COMPARISON and never by having exited 0: a
+  # command that succeeds against the wrong bytes leaves the box working or
+  # watching a set nobody chose, while the round reports a clean teardown.
+  if [ -n "${REPOS_BACKUP:-}" ] && bx "test -f $REPOS_BACKUP"; then
+    repos_had=1
+    repos_pre="$(bx "cat $REPOS_BACKUP 2>/dev/null || true")"
+  fi
   # Both registries, one step. The notifier half is restored FIRST because a
   # box left watching a sandbox that teardown then deletes is the same class
   # of leftover as a box left working one — and the pairing is why #423 put
@@ -63,6 +84,20 @@ rehearsal_cleanup() {
   if [ -n "${REPOS_BACKUP:-}" ]; then
     bx "if [ -f $REPOS_BACKUP ]; then mv $REPOS_BACKUP ~/duty/repos.txt; fi" \
       || echo "WARNING: could not restore the pre-drill repos.txt; stop the box: box down $BOX_NAME" >&2
+  fi
+  # Both compared, after both restores have run, absent-before ⇒ absent-after
+  # included. A mismatch controls the drill's verdict: cleanup_all takes this
+  # return into the EXIT trap's exit status, so a box left holding the wrong
+  # registry reds the round instead of being a warning nobody reads.
+  if ! rehearsal_work_registry_matches_pre_drill "$repos_had" "$repos_pre"; then
+    rc=1
+    declare -F rehearsal_notify_verdict >/dev/null 2>&1 \
+      && rehearsal_notify_verdict fail "teardown left repos.txt unlike its pre-drill contents"
+  fi
+  if declare -F rehearsal_notify_registry_matches_pre_drill >/dev/null 2>&1 \
+      && ! rehearsal_notify_registry_matches_pre_drill; then
+    rc=1
+    rehearsal_notify_verdict fail "teardown left notify-repos.txt unlike its pre-drill contents"
   fi
   rehearsal_disarm_cron \
     || echo "WARNING: could not disarm the drill cron; stop the box: box down $BOX_NAME" >&2

@@ -27,6 +27,59 @@ REHEARSAL_NOTIFY_ABSENT=0
 # fixture open — the builder block's slot check reads open PRs, and on a host
 # whose gh identity is also the box's these would occupy it.
 REHEARSAL_NOTIFY_FIXTURES=""
+# The pre-drill notify-repos.txt, captured before the leg writes over it, so
+# rehearsal_cleanup can compare the RESTORED file against it rather than
+# trusting that the restore command exited 0. CAPTURED distinguishes "the file
+# was empty before the drill" from "the leg never got far enough to look",
+# which an empty PRE_TEXT cannot: only the first is something to vouch for.
+REHEARSAL_NOTIFY_PRE_TEXT=""
+REHEARSAL_NOTIFY_CAPTURED=0
+
+# --- the leg's own verdict ------------------------------------------------
+
+# The round summary cannot read this leg's outcome off the role's exit code.
+# rehearsal_notify_drill returns 0 both when the union is asserted and when the
+# operator channel is unreachable and the leg skips, and the role's rc moves
+# for reasons that have nothing to do with the leg — so rehearsal-all.sh
+# printed `ok notify` for a round that asserted nothing, and `FAIL notify` for
+# a role that failed somewhere else entirely. The leg writes its own verdict
+# where the summary reads it, and the summary folds THAT.
+#
+# rehearsal_notify_verdict <ok|skip|fail> [reason] — appended, never
+# overwritten: worst-wins across the lines is what the fold below is for, and
+# an append cannot lose an earlier failure to a later assertion's pass.
+rehearsal_notify_verdict() {
+  local verdict="$1" reason="${2:-}"
+  [ -n "${REHEARSAL_NOTIFY_STATUS:-}" ] || return 0
+  printf '%s %s %s\n' "${ROLE:-unknown}" "$verdict" "$reason" \
+    >>"$REHEARSAL_NOTIFY_STATUS" 2>/dev/null || true
+  return 0
+}
+
+# rehearsal_notify_worst_verdict VERDICT_TEXT — the ROUND's notify verdict,
+# folded from the per-role lines. Worst wins: the leg is role-independent, so
+# one box that could not assert the union is the round's answer however green
+# the others were, exactly as the role loop already treats one red box.
+# Prints "<verdict> <reason>"; returns 1 when no role wrote a verdict at all,
+# which is phase 2 never reaching the leg and is reported as INCOMPLETE, never
+# as a pass. An unreadable verdict token grades as `fail` for the same reason:
+# a line the summary cannot classify is not evidence that anything passed.
+rehearsal_notify_worst_verdict() {
+  local role verdict reason rank best="" best_reason="" best_rank=0
+  while read -r role verdict reason; do
+    [ -n "$verdict" ] || continue
+    case "$verdict" in
+      ok)   rank=1 ;;
+      skip) rank=2 ;;
+      *)    rank=3; verdict=fail ;;
+    esac
+    if [ "$rank" -gt "$best_rank" ]; then
+      best_rank="$rank"; best="$verdict"; best_reason="$reason"
+    fi
+  done <<<"$1"
+  [ -n "$best" ] || return 1
+  printf '%s %s\n' "$best" "$best_reason"
+}
 
 # --- pure predicates ------------------------------------------------------
 
@@ -237,6 +290,28 @@ rehearsal_notify_registries_restored() {
   [ "$(grep -c . <<<"$actual")" -eq 1 ] && grep -qxF "$sandbox" <<<"$actual"
 }
 
+# rehearsal_notify_registry_matches_pre_drill — notify-repos.txt AFTER
+# rehearsal_cleanup's restore, compared with the bytes it carried before the
+# leg wrote over it. The in-leg rehearsal_notify_registries_restored above runs
+# where the leg still can report; this one runs where the round actually ends,
+# and it exists because a restore command that exits 0 having moved the wrong
+# bytes leaves a box watching a set nobody chose while the drill reports a
+# clean teardown. Absent before the drill means absent after it. A leg that
+# never captured has nothing to vouch for and passes.
+rehearsal_notify_registry_matches_pre_drill() {
+  local actual
+  [ "${REHEARSAL_NOTIFY_CAPTURED:-0}" -eq 1 ] || return 0
+  if [ "${REHEARSAL_NOTIFY_ABSENT:-0}" -eq 1 ]; then
+    bx "! test -e ~/duty/notify-repos.txt" && return 0
+    echo "TEARDOWN: ~/duty/notify-repos.txt is still in place; the box had none before the drill" >&2
+    return 1
+  fi
+  actual="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
+  [ "$actual" = "$REHEARSAL_NOTIFY_PRE_TEXT" ] && return 0
+  echo "TEARDOWN: ~/duty/notify-repos.txt differs from its pre-drill contents" >&2
+  return 1
+}
+
 rehearsal_notify_tick() { bx "~/duty/bin/tick.sh notify"; }
 
 rehearsal_notify_log() {
@@ -306,17 +381,20 @@ rehearsal_notify_drill() {
 
   if [ "${REHEARSAL_NOTIFY_DRILL:-1}" -eq 0 ]; then
     skip "notify: union over repos.txt and notify-repos.txt (--no-notify-drill)"
+    rehearsal_notify_verdict skip "--no-notify-drill"
     return 0
   fi
 
   channel="$(rehearsal_notify_channel_status)"
   if [ "$channel" != ok ]; then
     skip "notify: union over repos.txt and notify-repos.txt (operator channel unreachable on this host: ${channel:-unknown})"
+    rehearsal_notify_verdict skip "operator channel unreachable: ${channel:-unknown}"
     return 0
   fi
   ok "notify: operator channel reachable from the drill box"
 
-  rehearsal_notify_load_installed_handoff_label || return 0
+  rehearsal_notify_load_installed_handoff_label \
+    || { rehearsal_notify_verdict fail "installed handoff label does not resolve"; return 0; }
   label="$REHEARSAL_NOTIFY_LABEL"
 
   # `crew-drill-<role>-notify`, which teardown.sh removes by exact name. A
@@ -327,17 +405,21 @@ rehearsal_notify_drill() {
     echo "notify: $notify_sandbox stands from an earlier round — reusing it; teardown removes it"
   elif ! gh repo create "$notify_sandbox" --public --add-readme >/dev/null; then
     fail "notify: the drill's own second sandbox is in place for the notify half"
+    rehearsal_notify_verdict fail "the notify half's sandbox could not be minted"
     return 0
   fi
   ok "notify: the drill's own second sandbox is in place for the notify half"
 
   pre_notify_text="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
+  REHEARSAL_NOTIFY_PRE_TEXT="$pre_notify_text"
+  REHEARSAL_NOTIFY_CAPTURED=1
   before="$(rehearsal_notify_read_work_registry)"
   pre_drill="$(rehearsal_notify_pre_drill_registry)"
   if rehearsal_notify_candidate_is_safe "$notify_sandbox" "$work" "$pre_drill"; then
     ok "notify: the notify half is a sandbox this run minted, not a repository the fleet works"
   else
     fail "notify: the notify half is a sandbox this run minted, not a repository the fleet works"
+    rehearsal_notify_verdict fail "the notify candidate is not a sandbox this run may name"
     return 0
   fi
 
@@ -345,6 +427,7 @@ rehearsal_notify_drill() {
     ok "notify: notify-repos.txt names only the second sandbox"
   else
     fail "notify: notify-repos.txt names only the second sandbox"
+    rehearsal_notify_verdict fail "notify-repos.txt could not be narrowed to the second sandbox"
     return 0
   fi
 
@@ -353,6 +436,7 @@ rehearsal_notify_drill() {
     ok "notify: repos.txt unchanged — the union widened the watch set and not the work set"
   else
     fail "notify: repos.txt unchanged — the union widened the watch set and not the work set"
+    rehearsal_notify_verdict fail "repos.txt widened while the union was being staged"
     return 2
   fi
 
@@ -363,6 +447,7 @@ rehearsal_notify_drill() {
   else
     work_pr=""
     fail "notify: handoff fixture staged in the repos.txt sandbox"
+    rehearsal_notify_verdict fail "the repos.txt half's handoff fixture could not be staged"
   fi
   if notify_pr="$(rehearsal_notify_stage_handoff_pr "$notify_sandbox" "extra-$(date -u +%H%M%S)" "$label")" \
       && [ -n "$notify_pr" ]; then
@@ -371,9 +456,12 @@ rehearsal_notify_drill() {
   else
     notify_pr=""
     fail "notify: handoff fixture staged in the notify-repos.txt sandbox"
+    rehearsal_notify_verdict fail "the notify-repos.txt half's handoff fixture could not be staged"
   fi
 
   if [ -z "$work_pr" ] || [ -z "$notify_pr" ]; then
+    # Not a skip verdict: the fixture failure above already recorded `fail`,
+    # and these two lines are what that failure cost, not a reason of their own.
     skip "notify: the watch set swept is exactly the two sandboxes"
     skip "notify: both halves of the union reached the operator on one tick"
   else
@@ -384,14 +472,20 @@ rehearsal_notify_drill() {
       ok "notify: the watch set swept is exactly the two sandboxes"
     else
       fail "notify: the watch set swept is exactly the two sandboxes"
+      rehearsal_notify_verdict fail "the swept watch set was not exactly the two sandboxes"
     fi
     rehearsal_notify_union_from_log \
       "$work" "$work_pr" "$notify_sandbox" "$notify_pr" "$log_text"
     union_rc=$?
     if [ "$union_rc" -eq 0 ]; then
+      # The one place the leg records a pass: `ok notify` in the round summary
+      # means a role actually read both halves out of one notify run, and
+      # nothing weaker.
       ok "notify: both halves of the union reached the operator on one tick"
+      rehearsal_notify_verdict ok "both halves on one tick"
     else
       fail "notify: both halves of the union reached the operator on one tick"
+      rehearsal_notify_verdict fail "the union was not delivered on one tick (rc $union_rc)"
     fi
   fi
 
@@ -410,6 +504,7 @@ rehearsal_notify_drill() {
     ok "notify: teardown restored both registries to their pre-drill contents"
   else
     fail "notify: teardown restored both registries to their pre-drill contents"
+    rehearsal_notify_verdict fail "the registries were not as expected after the leg's restore"
   fi
   return 0
 }

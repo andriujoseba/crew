@@ -166,7 +166,12 @@ cleanup_all() {
       rehearsal_close_issue_fixtures \
         "$TRIAGE_CLEANUP_REPO" "$TRIAGE_CLEANUP_ISSUES" || true
     fi
-    rehearsal_cleanup "$rc"
+    # The cleanup's own verdict, not just the run's: it compares both
+    # registries against their pre-drill contents and returns non-zero when a
+    # restore left the wrong bytes, which is a red round and not a warning
+    # (#423). rehearsal_cleanup returns the rc it was handed otherwise, so
+    # this only ever worsens.
+    rehearsal_cleanup "$rc" || rc=$?
     if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
       bx "rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz" >/dev/null 2>&1 || true
     fi
