@@ -575,8 +575,10 @@ if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
 fi
 t rehearsal-hygiene-opt-out-summary-and-live-leg-wired wired "$hygiene_wiring"
 HYG_ALL_MUTATED="$TMP/rehearsal-all-without-hygiene-source.sh"
+# shellcheck disable=SC2016  # deliberate literal source-line mutation
 sed '/\. "$HERE\/rehearsal-hygiene.sh"/d' \
   "$ROOT/drill/rehearsal-all.sh" >"$HYG_ALL_MUTATED"
+# shellcheck disable=SC2016  # the removed source line is deliberately literal
 if grep -Fq '. "$HERE/rehearsal-hygiene.sh"' "$HYG_ALL_MUTATED"; then
   r1=FALSE_PASS
 else
