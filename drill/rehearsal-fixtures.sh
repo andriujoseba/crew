@@ -25,6 +25,22 @@ rehearsal_load_installed_queue_labels() {
   return 1
 }
 
+rehearsal_load_installed_answer_mark() {
+  local mark
+  # shellcheck disable=SC2016  # the wire variable expands inside the box
+  if ! mark="$(bx '
+    set -a
+    . ~/duty/conf/fleet.defaults.conf
+    printf "%s\n" "$MARK_ANSWERED"
+  ')" || [ -z "$mark" ]; then
+    fail "builder: installed round-answer mark resolves"
+    return 1
+  fi
+  # shellcheck disable=SC2034  # sourced global consumed by rehearsal.sh
+  REHEARSAL_MARK_ANSWERED="$mark"
+  ok "builder: installed round-answer mark resolves"
+}
+
 rehearsal_builder_slot_prs_from_json() {
   jq -r '.[].number' <<<"$1"
 }
@@ -95,12 +111,20 @@ rehearsal_builder_is_draft_from_json() {
   jq -e '.draft == true' >/dev/null <<<"$1"
 }
 
+rehearsal_builder_head_is_from_json() {
+  local expected="$1" pull_json="$2"
+  jq -e --arg expected "$expected" '.head.sha == $expected' \
+    >/dev/null <<<"$pull_json"
+}
+
 rehearsal_builder_has_answer_signal_from_json() {
-  local author="$1" head="$2" comments_json="$3"
-  jq -e --arg author "$author" --arg head "$head" '
+  local mark="$1" author="$2" head="$3" comments_json="$4"
+  jq -e --arg mark "$mark" --arg author "$author" --arg head "$head" '
     any(.[];
       .user.login == $author
-      and (.body // "") == ("📣 round answered at head " + $head)
+      and ((.body // "") | startswith($mark))
+      and (((.body // "") | ltrimstr($mark)
+        | try capture("(?<sha>[0-9a-f]{40})").sha catch "") == $head)
     )
   ' >/dev/null <<<"$comments_json"
 }
@@ -127,10 +151,17 @@ rehearsal_builder_pr_is_draft() {
   rehearsal_builder_is_draft_from_json "$pull_json"
 }
 
+rehearsal_builder_head_is() {
+  local repo="$1" pr="$2" expected="$3" pull_json
+  pull_json="$(gh api "repos/$repo/pulls/$pr")" || return
+  rehearsal_builder_head_is_from_json "$expected" "$pull_json"
+}
+
 rehearsal_builder_has_answer_signal() {
-  local repo="$1" pr="$2" author="$3" head="$4" comments_json
+  local repo="$1" pr="$2" mark="$3" author="$4" head="$5" comments_json
   comments_json="$(gh api "repos/$repo/issues/$pr/comments?per_page=100" --paginate | jq -s 'add')" || return
-  rehearsal_builder_has_answer_signal_from_json "$author" "$head" "$comments_json"
+  rehearsal_builder_has_answer_signal_from_json \
+    "$mark" "$author" "$head" "$comments_json"
 }
 
 rehearsal_builder_check_state() {
@@ -146,12 +177,15 @@ rehearsal_builder_requested() {
 }
 
 rehearsal_builder_not_requested() {
-  ! rehearsal_builder_requested "$@"
+  local repo="$1" pr="$2" reviewer="$3" requested_json
+  requested_json="$(gh api "repos/$repo/pulls/$pr/requested_reviewers")" || return
+  ! rehearsal_builder_requested_from_json "$reviewer" "$requested_json"
 }
 
 rehearsal_builder_signal_window_from_json() {
-  local author="$1" head="$2" context="$3" comments_json="$4" status_json="$5" state
-  if ! rehearsal_builder_has_answer_signal_from_json "$author" "$head" "$comments_json"; then
+  local mark="$1" author="$2" head="$3" context="$4" comments_json="$5" status_json="$6" state
+  if ! rehearsal_builder_has_answer_signal_from_json \
+      "$mark" "$author" "$head" "$comments_json"; then
     printf 'waiting\n'
     return 0
   fi
@@ -164,13 +198,13 @@ rehearsal_builder_signal_window_from_json() {
 }
 
 rehearsal_wait_builder_signal_window() {
-  local seconds="$1" repo="$2" pr="$3" author="$4" head="$5" context="$6"
+  local seconds="$1" repo="$2" pr="$3" mark="$4" author="$5" head="$6" context="$7"
   local end=$((SECONDS + seconds)) comments_json status_json result
   while [ "$SECONDS" -lt "$end" ]; do
     comments_json="$(gh api "repos/$repo/issues/$pr/comments?per_page=100" --paginate | jq -s 'add')" || comments_json='[]'
     status_json="$(gh api "repos/$repo/commits/$head/status")" || status_json='{"statuses":[]}'
     result="$(rehearsal_builder_signal_window_from_json \
-      "$author" "$head" "$context" "$comments_json" "$status_json")"
+      "$mark" "$author" "$head" "$context" "$comments_json" "$status_json")"
     case "$result" in
       caught)
         ok "builder: round answer is signalled while head check is pending"
@@ -193,6 +227,14 @@ rehearsal_report_occupied_builder_slot() {
   skip "builder: PR branch is build/*"
   skip "builder: issue moved off ready (claimed)"
   skip "builder: no duplicate PR on re-tick"
+  skip "builder: fixture panel names the host reviewer"
+  skip "builder: initial PR is ready for its fixture panel"
+  skip "builder: host reviewer requested for initial round"
+  skip "builder: changes-requested round returns PR to draft"
+  skip "builder: round answer is signalled while head check is pending"
+  skip "builder: fix round kept the fixture head stable"
+  skip "builder: panel request withheld while head check is pending"
+  skip "builder: panel request issued after head settles"
 }
 
 rehearsal_close_builder_fixture_prs() {

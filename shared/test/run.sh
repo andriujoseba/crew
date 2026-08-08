@@ -324,9 +324,11 @@ source "$ROOT/drill/rehearsal-fixtures.sh"
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
 QUEUE_LABEL_FIVE_HOME="$TMP/queue-label-five-home"
+ANSWER_MARK_HOME="$TMP/answer-mark-home"
 mkdir -p \
   "$QUEUE_LABEL_SIX_HOME/duty/conf" \
-  "$QUEUE_LABEL_FIVE_HOME/duty/conf"
+  "$QUEUE_LABEL_FIVE_HOME/duty/conf" \
+  "$ANSWER_MARK_HOME/duty/conf"
 printf '%s\n' \
   'LABEL_READY=ready' \
   'LABEL_CLAIMED=claimed' \
@@ -342,6 +344,8 @@ printf '%s\n' \
   'LABEL_EPIC=epic' \
   'LABEL_NEEDS_TRIAGE=needs-triage' \
   >"$QUEUE_LABEL_FIVE_HOME/duty/conf/fleet.defaults.conf"
+printf '%s\n' 'MARK_ANSWERED="fixture answered at head"' \
+  >"$ANSWER_MARK_HOME/duty/conf/fleet.defaults.conf"
 
 bx() { HOME="$QUEUE_LABEL_FIXTURE_HOME" bash -c "$1"; }
 ok() { printf 'ok   %s\n' "$1"; }
@@ -370,6 +374,15 @@ t rehearsal-queue-label-five-records-fail 1 \
     <<<"$queue_label_five_out")"
 t rehearsal-queue-label-five-names-values 'blocked claimed epic needs-triage ready' \
   "$(sed -n 's/^  //p' <<<"$queue_label_five_out" | paste -sd' ' -)"
+QUEUE_LABEL_FIXTURE_HOME="$ANSWER_MARK_HOME"
+if rehearsal_load_installed_answer_mark >/dev/null; then
+  answer_mark_rc=0
+else
+  answer_mark_rc=$?
+fi
+t rehearsal-answer-mark-load-rc 0 "$answer_mark_rc"
+t rehearsal-answer-mark-loads-installed-value 'fixture answered at head' \
+  "$REHEARSAL_MARK_ANSWERED"
 unset -f bx ok fail
 
 REHEARSAL_ISSUE_GH_CALLS="$TMP/rehearsal-issue-gh-calls"
@@ -443,6 +456,7 @@ t rehearsal-builder-duplicate-current-prs-lookup-fails 1 "$duplicate_builder_rc"
 
 BUILDER_HEAD="$(printf 'b%.0s' {1..40})"
 BUILDER_OTHER_HEAD="$(printf 'c%.0s' {1..40})"
+BUILDER_MARK='📣 round answered at head'
 BUILDER_PANEL_CONTENT="$(rehearsal_builder_fixture_panel_content builder host-reviewer)"
 t rehearsal-builder-fixture-panel-is-author-specific \
   'panel[builder]=host-reviewer' "$BUILDER_PANEL_CONTENT"
@@ -457,11 +471,32 @@ BUILDER_COMMENTS='[
   {"user":{"login":"somebody-else"},"body":"📣 round answered at head '"$BUILDER_OTHER_HEAD"'"}
 ]'
 if rehearsal_builder_has_answer_signal_from_json \
-    builder "$BUILDER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=found; else builder_signal_result=missing; fi
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=found; else builder_signal_result=missing; fi
 t rehearsal-builder-current-head-signal-found found "$builder_signal_result"
 if rehearsal_builder_has_answer_signal_from_json \
-    builder "$BUILDER_OTHER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=WRONG; else builder_signal_result=refused; fi
+    "$BUILDER_MARK" builder "$BUILDER_OTHER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=WRONG; else builder_signal_result=refused; fi
 t rehearsal-builder-other-author-signal-refused refused "$builder_signal_result"
+BUILDER_TRAILING_SIGNALS="$(jq -cn \
+  --arg head "$BUILDER_HEAD" --arg mark "$BUILDER_MARK" '[
+    {user:{login:"builder"},body:($mark + " " + $head + " — all points answered")},
+    {user:{login:"builder"},body:($mark + " " + $head + "\n")}
+  ]')"
+if rehearsal_builder_has_answer_signal_from_json \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_TRAILING_SIGNALS"; then
+  builder_signal_result=found
+else
+  builder_signal_result=missing
+fi
+t rehearsal-builder-engine-compatible-trailing-signal-found found \
+  "$builder_signal_result"
+
+if rehearsal_builder_head_is_from_json \
+    "$BUILDER_HEAD" '{"head":{"sha":"'"$BUILDER_HEAD"'"}}'; then
+  builder_head_result=stable
+else
+  builder_head_result=moved
+fi
+t rehearsal-builder-fixture-head-stability-read stable "$builder_head_result"
 
 BUILDER_PENDING_STATUS='{"statuses":[
   {"context":"drill/builder-head-settle","state":"success","created_at":"2026-08-08T12:00:00Z"},
@@ -481,19 +516,35 @@ t rehearsal-builder-settled-head-request-found requested "$builder_request_resul
 if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_UNREQUESTED"; then builder_request_result=EARLY; else builder_request_result=withheld; fi
 t rehearsal-builder-pending-head-request-withheld withheld "$builder_request_result"
 
+gh() {
+  case "$*" in
+    *pulls/9/requested_reviewers*) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+if rehearsal_builder_not_requested owner/sandbox 9 host-reviewer; then
+  builder_request_result=FAIL_OPEN
+else
+  builder_request_result=refused
+fi
+t rehearsal-builder-request-fetch-error-fails-closed refused \
+  "$builder_request_result"
+unset -f gh
+
 t rehearsal-builder-signal-window-waits-before-signal waiting \
   "$(rehearsal_builder_signal_window_from_json \
-    builder "$BUILDER_HEAD" drill/builder-head-settle '[]' "$BUILDER_PENDING_STATUS")"
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" drill/builder-head-settle \
+    '[]' "$BUILDER_PENDING_STATUS")"
 t rehearsal-builder-signal-window-caught-at-pending caught \
   "$(rehearsal_builder_signal_window_from_json \
-    builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" drill/builder-head-settle \
     "$BUILDER_COMMENTS" "$BUILDER_PENDING_STATUS")"
 BUILDER_SETTLED_STATUS='{"statuses":[
   {"context":"drill/builder-head-settle","state":"success","created_at":"2026-08-08T12:03:00Z"}
 ]}'
 t rehearsal-builder-immediate-check-conclusion-is-named-skip-state closed:success \
   "$(rehearsal_builder_signal_window_from_json \
-    builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" drill/builder-head-settle \
     "$BUILDER_COMMENTS" "$BUILDER_SETTLED_STATUS")"
 gh() {
   case "$*" in
@@ -507,7 +558,8 @@ BUILDER_WINDOW_SKIP_OUT="$({
   skip() { printf 'skip %s\n' "$1"; }
   fail() { printf 'FAIL %s\n' "$1"; }
   rehearsal_wait_builder_signal_window \
-    1 owner/sandbox 9 builder "$BUILDER_HEAD" drill/builder-head-settle
+    1 owner/sandbox 9 "$BUILDER_MARK" builder "$BUILDER_HEAD" \
+    drill/builder-head-settle
 })"
 t rehearsal-builder-immediate-check-conclusion-names-window 1 \
   "$(grep -cFx \
@@ -529,6 +581,27 @@ t rehearsal-builder-disabled-draft-return-reds 1 \
   "$(grep -cFx 'FAIL builder: changes-requested round returns PR to draft' \
     <<<"$BUILDER_DRAFT_MUTATION_OUT")"
 
+# A premature request at the unsettled head must red the same assertion the
+# live leg runs after the builder tick has completed.
+gh() {
+  case "$*" in
+    *pulls/9/requested_reviewers*) printf '%s\n' "$BUILDER_REQUESTED" ;;
+    *) return 2 ;;
+  esac
+}
+BUILDER_REQUEST_MUTATION_OUT="$({
+  ok() { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  check() { local name="$1"; shift; if "$@"; then ok "$name"; else fail "$name"; fi; }
+  check "builder: panel request withheld while head check is pending" \
+    rehearsal_builder_not_requested owner/sandbox 9 host-reviewer
+})"
+t rehearsal-builder-premature-request-reds 1 \
+  "$(grep -cFx \
+    'FAIL builder: panel request withheld while head check is pending' \
+    <<<"$BUILDER_REQUEST_MUTATION_OUT")"
+unset -f gh
+
 # Pin the live sequence too: host verdict, pending status, concurrent draft
 # observation, signal-at-pending assertion, withheld request, success, request.
 BUILDER_LIVE_BLOCK="$(sed -n '/builder_head=.*pulls.*head.sha/,/panel request issued after head settles/p' \
@@ -549,6 +622,13 @@ done <<'EOF'
 7|state=success
 8|panel request issued after head settles
 EOF
+case "$BUILDER_LIVE_BLOCK" in
+  *'wait "$builder_tick_pid"'*'panel request withheld while head check is pending'*'state=success'*)
+    builder_gate_order=ordered ;;
+  *) builder_gate_order=WRONG ;;
+esac
+t rehearsal-builder-pending-gate-probed-after-tick ordered \
+  "$builder_gate_order"
 
 OCCUPIED_BUILDER_OUT="$({
   fail() { printf 'FAIL %s\n' "$1"; }
@@ -560,7 +640,7 @@ t rehearsal-builder-occupied-slot-fails-opened-pr 1 \
 t rehearsal-builder-occupied-slot-fails-run-specific-authorship 1 \
   "$(grep -cFx "FAIL builder: PR authored by builder for this run's fixture issue" \
     <<<"$OCCUPIED_BUILDER_OUT")"
-t rehearsal-builder-occupied-slot-skips-unreachable-checks 4 \
+t rehearsal-builder-occupied-slot-skips-unreachable-checks 12 \
   "$(grep -c '^skip ' <<<"$OCCUPIED_BUILDER_OUT")"
 
 REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
@@ -1841,7 +1921,7 @@ if grep -RIn 'state:building' "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then
 t addressing-never-writes-state-building absent "$r1"
 # The predicate keys approvals/reviews on the head, same as converged.jq — a
 # stale verdict at an old head is not a closed round.
-# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
+# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t addressing-keys-on-head head-keyed "$r1"
 
@@ -7161,7 +7241,7 @@ t round-rules-state-exception stated "$r1"
 # push is guaranteed. Asserting the invariant rather than the prose: the
 # predicate keys on the head, so the prompts that tell a builder whom to
 # re-request must say head.
-# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
+# shellcheck disable=SC2016  # the jq literal converged.jq contains
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/converged.jq"; then
   r1=head-keyed
 else
@@ -7172,7 +7252,7 @@ t converged-counts-approvals-at-head head-keyed "$r1"
 # verdict" now lives in request-panel.jq, which returns every panelist not
 # approving the CURRENT head (approvers included after a push) — so the
 # head-keying that used to have to survive in prompt prose survives as code.
-# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
+# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/request-panel.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t requestpanel-keys-on-head head-keyed "$r1"
 # The prompts must tell the builder the ENGINE requests — a builder still told to
