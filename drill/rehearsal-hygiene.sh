@@ -50,6 +50,17 @@ rehearsal_hygiene_refusal_is_intact() {
     && [ "$(grep -c 'WARN:' <<<"$second_log" || true)" -eq 0 ]
 }
 
+rehearsal_hygiene_reset_refusal_ledger() {
+  local ledger="$1"
+  rehearsal_hygiene_box_path_is_resolved "$ledger" || return 1
+  bx "rm -f '$ledger'"
+}
+
+rehearsal_hygiene_record_result() {
+  local result="$1" result_file="${REHEARSAL_HYGIENE_RESULT_FILE:-}"
+  [ -z "$result_file" ] || printf '%s\n' "$result" >"$result_file"
+}
+
 rehearsal_hygiene_box_path_is_resolved() {
   local path="$1"
   [ "${path#/}" != "$path" ] && [[ "$path" != *'$'* ]]
@@ -82,10 +93,12 @@ rehearsal_hygiene_summary() {
   local enabled="$1" drilled="$2" hygiene_result="$3"
   if [ "$enabled" -eq 0 ]; then
     printf '%s\n' "skip       hygiene  (--no-hygiene-drill)"
-  elif [ -z "${drilled// /}" ]; then
-    printf '%s\n' "INCOMPLETE hygiene  (no role reached a box)"
   elif [ "$hygiene_result" -eq 0 ]; then
     printf '%s\n' "ok         hygiene  (preservation + refusal)"
+  elif [ "$hygiene_result" -eq 1 ]; then
+    printf '%s\n' "FAIL       hygiene"
+  elif [ -z "${drilled// /}" ]; then
+    printf '%s\n' "INCOMPLETE hygiene  (no role reached a box)"
   elif [ "$hygiene_result" -eq 2 ]; then
     printf '%s\n' "INCOMPLETE hygiene  (phase 2 skipped)"
   else
@@ -231,7 +244,7 @@ rehearsal_hygiene_release() {
 rehearsal_hygiene_drill() {
   local repo="$1" role="$2" slug stamp box_home good_branch bad_branch good_wt bad_wt
   local good_ref bad_ref good_pr bad_pr first_line good_log tree tip_contents staged record
-  local before after first_refusal second_refusal preserve_remote fork_url
+  local before after first_refusal second_refusal preserve_remote fork_url refusal_ledger
   local preserve_refs origin_branches good_wt_exists bad_wt_exists
   if [ "${REHEARSAL_HYGIENE_DRILL:-1}" -eq 0 ]; then
     skip "hygiene: dirty worktree preservation and refusal (--no-hygiene-drill)"
@@ -242,6 +255,7 @@ rehearsal_hygiene_drill() {
   stamp="$(date -u +%Y%m%d%H%M%S)-$$"
   # shellcheck disable=SC2016  # HOME belongs to the box
   box_home="$(bx 'printf %s "$HOME"')" || return 1
+  refusal_ledger="$box_home/duty/.rehearsal-hygiene-refusal-ledger"
   good_branch="build/hygiene-$role"
   bad_branch="build/hygiene-refusal-$role"
   good_ref="wip/$good_branch"
@@ -267,6 +281,11 @@ rehearsal_hygiene_drill() {
     return 1
   fi
   ok "hygiene: selected preservation remote '$preserve_remote' is reachable"
+  if ! rehearsal_hygiene_reset_refusal_ledger "$refusal_ledger"; then
+    fail "hygiene: refusal ledger starts fresh for this run"
+    return 1
+  fi
+  ok "hygiene: refusal ledger starts fresh for this run"
   rehearsal_hygiene_cleanup
   REHEARSAL_HYGIENE_CLONE="$box_home/duty/work/$slug"
   REHEARSAL_HYGIENE_REFS="$good_ref $bad_ref"
@@ -334,9 +353,9 @@ rehearsal_hygiene_drill() {
     REHEARSAL_HYGIENE_FORK_TEMP=1
   fi
   first_refusal="$(rehearsal_hygiene_release "$repo" "$bad_branch" "$bad_wt" \
-    "$bad_pr" "$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2" 2>&1 || true)"
+    "$bad_pr" "$refusal_ledger" "$ME2" 2>&1 || true)"
   second_refusal="$(rehearsal_hygiene_release "$repo" "$bad_branch" "$bad_wt" \
-    "$bad_pr" "$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2" 2>&1 || true)"
+    "$bad_pr" "$refusal_ledger" "$ME2" 2>&1 || true)"
   after="$(rehearsal_hygiene_box_snapshot "$bad_wt")" || after="snapshot-failed-after"
   check "hygiene: failed push keeps README.md, hygiene-root-untracked.txt and hygiene-untracked/nested.txt, reported once" \
     rehearsal_hygiene_refusal_is_intact \

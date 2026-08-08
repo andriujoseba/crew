@@ -503,6 +503,15 @@ if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
     'WARN: preservation failed; keeping worktree' \
     'WARN: preservation failed again'; then r1=FALSE_PASS; else r1=red; fi
 t rehearsal-hygiene-repeated-report-reds red "$r1"
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
+    'WARN: fresh run one' '' \
+    && rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
+      'WARN: fresh run two' ''; then
+  r1=fresh
+else
+  r1=SUPPRESSED
+fi
+t rehearsal-hygiene-repeat-run-warns-once-per-fresh-run fresh "$r1"
 
 if rehearsal_hygiene_box_path_is_resolved \
     /home/box-user/duty/.rehearsal-hygiene-refusal-ledger; then
@@ -519,6 +528,18 @@ else
   r1=red
 fi
 t rehearsal-hygiene-unexpanded-ledger-path-reds red "$r1"
+
+HYG_RESET_COMMAND=""
+bx() { HYG_RESET_COMMAND="$1"; }
+if rehearsal_hygiene_reset_refusal_ledger \
+    /home/box-user/duty/.rehearsal-hygiene-refusal-ledger \
+    && [ "$HYG_RESET_COMMAND" = \
+      "rm -f '/home/box-user/duty/.rehearsal-hygiene-refusal-ledger'" ]; then
+  r1=fresh
+else
+  r1=STALE
+fi
+t rehearsal-hygiene-refusal-ledger-reset-at-run-boundary fresh "$r1"
 
 bx() {
   case "$1" in
@@ -555,11 +576,32 @@ t rehearsal-hygiene-summary-skipped-phase-incomplete \
 t rehearsal-hygiene-summary-failure-stays-failure \
   "FAIL       hygiene" "$(rehearsal_hygiene_summary 1 ' builder' 1)"
 t rehearsal-hygiene-mixed-fail-then-skip-stays-failure 1 \
+    "$(rehearsal_hygiene_combine_result \
+      "$(rehearsal_hygiene_combine_result 2 1)" 2)"
+t rehearsal-hygiene-mixed-fail-then-pass-stays-failure 1 \
   "$(rehearsal_hygiene_combine_result \
-    "$(rehearsal_hygiene_combine_result 2 1)" 2)"
+    "$(rehearsal_hygiene_combine_result 2 1)" 0)"
 t rehearsal-hygiene-mixed-skip-then-pass-is-ok 0 \
-  "$(rehearsal_hygiene_combine_result \
-    "$(rehearsal_hygiene_combine_result 2 2)" 0)"
+    "$(rehearsal_hygiene_combine_result \
+      "$(rehearsal_hygiene_combine_result 2 2)" 0)"
+t rehearsal-hygiene-phase1-failure-does-not-red-green-leg \
+  "ok         hygiene  (preservation + refusal)" \
+  "$(rehearsal_hygiene_summary 1 '' 0)"
+HYG_RESULT_FILE="$TMP/rehearsal-hygiene-result"
+REHEARSAL_HYGIENE_RESULT_FILE="$HYG_RESULT_FILE" rehearsal_hygiene_record_result 1
+t rehearsal-hygiene-role-result-is-explicit 1 "$(cat "$HYG_RESULT_FILE")"
+
+HYG_COMBINE_MUTATED="$TMP/rehearsal-hygiene-without-failure-precedence.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation of the precedence clause
+sed 's/\[ "$current" -eq 1 \] || //' \
+  "$ROOT/drill/rehearsal-hygiene.sh" >"$HYG_COMBINE_MUTATED"
+if bash -c '. "$1"; [ "$(rehearsal_hygiene_combine_result 1 0)" -eq 1 ]' \
+    _ "$HYG_COMBINE_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-removed-failure-precedence-reds red "$r1"
 
 hygiene_wiring=missing
 # shellcheck disable=SC2016  # these are literal wiring strings, not expansions
@@ -568,8 +610,12 @@ if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
       "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'hygiene  (preservation + refusal)' \
       "$ROOT/drill/rehearsal-hygiene.sh" \
-    && grep -Fq '"$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2"' \
+    && grep -Fq '"$bad_pr" "$refusal_ledger" "$ME2"' \
       "$ROOT/drill/rehearsal-hygiene.sh" \
+    && grep -Fq 'rehearsal_hygiene_reset_refusal_ledger "$refusal_ledger"' \
+      "$ROOT/drill/rehearsal-hygiene.sh" \
+    && grep -Fq 'REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file"' \
+      "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ROLE"' "$ROOT/drill/rehearsal.sh"; then
   hygiene_wiring=wired
 fi

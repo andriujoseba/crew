@@ -103,11 +103,18 @@ for role in $ROLES; do
   echo "############################################################"
   echo "## $role — box crew-drill-$role"
   echo "############################################################"
+  role_hygiene_file="$(mktemp)"
+  printf '2\n' >"$role_hygiene_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
+  REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
-  hygiene_result="$(rehearsal_hygiene_combine_result "$hygiene_result" "$rc")"
+  role_hygiene_result="$(cat "$role_hygiene_file" 2>/dev/null || printf '2\n')"
+  rm -f -- "$role_hygiene_file"
+  case "$role_hygiene_result" in 0|1|2) ;; *) role_hygiene_result=2 ;; esac
+  hygiene_result="$(rehearsal_hygiene_combine_result \
+    "$hygiene_result" "$role_hygiene_result")"
   [ "$role" != builder ] || BUILDER_RC="$rc"
   # Roles whose box the drill actually REACHED, for the app phase below. rc=0
   # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",

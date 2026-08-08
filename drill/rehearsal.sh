@@ -145,6 +145,7 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-fixtures.sh"
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$ROOT/drill/rehearsal-hygiene.sh"
+rehearsal_hygiene_record_result 2
 # shellcheck source=drill/review-order.sh
 . "$ROOT/drill/review-order.sh"
 cleanup_all() {
@@ -807,7 +808,18 @@ fi
 # Role-independent: exercise the worktree hygiene that runs on every role box
 # only after that role's own phase-2 fixtures have finished.
 if [ "$PHASE2_RAN" -eq 1 ]; then
-  rehearsal_hygiene_drill "$SANDBOX" "$ROLE"
+  hygiene_failures_before="${#FAILS[@]}"
+  if rehearsal_hygiene_drill "$SANDBOX" "$ROLE"; then
+    hygiene_drill_rc=0
+  else
+    hygiene_drill_rc=1
+  fi
+  if [ "$hygiene_drill_rc" -ne 0 ] \
+      || [ "${#FAILS[@]}" -gt "$hygiene_failures_before" ]; then
+    rehearsal_hygiene_record_result 1
+  else
+    rehearsal_hygiene_record_result 0
+  fi
 fi
 
 if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
