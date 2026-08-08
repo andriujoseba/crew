@@ -666,7 +666,7 @@ else
       builder_tick_pid=$!
       wait_for 900 "builder: changes-requested round returns PR to draft" \
         rehearsal_builder_pr_is_draft "$SANDBOX" "$bpr"
-      rehearsal_wait_builder_signal_window \
+      rehearsal_wait_builder_signal_window_with_prereqs \
         1800 "$SANDBOX" "$bpr" "$REHEARSAL_MARK_ANSWERED" \
         "$ME2" "$builder_head" "$builder_round_started_at" \
         "$builder_check_context"
@@ -676,25 +676,25 @@ else
         ok "builder: fix round kept the fixture head stable"
         check "builder: panel request withheld while head check is pending" \
           rehearsal_builder_not_requested "$SANDBOX" "$bpr" "$HOST_ME"
-        gh api "repos/$SANDBOX/statuses/$builder_head" \
-          -f state=success -f context="$builder_check_context" \
-          -f description="drill releases the settled-head panel request" >/dev/null
-        bx "~/duty/bin/tick.sh" || true
-        wait_for 300 "builder: panel request issued after head settles" \
-          rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
+        if rehearsal_set_builder_head_status \
+            "$SANDBOX" "$builder_head" "$builder_check_context" success \
+            "drill releases the settled-head panel request"; then
+          ok "builder: settled head status established"
+          bx "~/duty/bin/tick.sh" || true
+          wait_for 300 "builder: panel request issued after head settles" \
+            rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
+        else
+          fail "builder: settled head status established"
+          skip "builder: panel request issued after head settles"
+        fi
       else
         fail "builder: fix round kept the fixture head stable"
         skip "builder: panel request withheld while head check is pending"
+        skip "builder: settled head status established"
         skip "builder: panel request issued after head settles"
       fi
     else
-      skip "builder: initial PR is ready for its fixture panel"
-      skip "builder: host reviewer requested for initial round"
-      skip "builder: changes-requested round returns PR to draft"
-      skip "builder: round answer is signalled while head check is pending"
-      skip "builder: fix round kept the fixture head stable"
-      skip "builder: panel request withheld while head check is pending"
-      skip "builder: panel request issued after head settles"
+      rehearsal_report_missing_builder_pr
     fi
   fi
 

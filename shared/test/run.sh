@@ -581,6 +581,36 @@ t rehearsal-builder-immediate-check-conclusion-names-window 1 \
     <<<"$BUILDER_WINDOW_SKIP_OUT")"
 unset -f gh
 
+for builder_prereq_case in mark boundary; do
+  builder_prereq_mark="$BUILDER_MARK"
+  builder_prereq_after="$BUILDER_ROUND_STARTED_AT"
+  builder_prereq_reason='changes-requested review boundary unresolved'
+  if [ "$builder_prereq_case" = mark ]; then
+    builder_prereq_mark=''
+    builder_prereq_reason='installed answer mark unresolved'
+  else
+    builder_prereq_after=''
+  fi
+  gh() { printf 'unexpected gh call\n'; return 1; }
+  BUILDER_PREREQ_OUT="$({
+    ok() { printf 'ok   %s\n' "$1"; }
+    skip() { printf 'skip %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    rehearsal_wait_builder_signal_window_with_prereqs \
+      1 owner/sandbox 9 "$builder_prereq_mark" builder "$BUILDER_HEAD" \
+      "$builder_prereq_after" drill/builder-head-settle
+  })"
+  t "rehearsal-builder-$builder_prereq_case-prereq-skips-window" 1 \
+    "$(grep -cFx \
+      "skip builder: round answer signal window unavailable ($builder_prereq_reason)" \
+      <<<"$BUILDER_PREREQ_OUT")"
+  t "rehearsal-builder-$builder_prereq_case-prereq-cannot-pass-window" 0 \
+    "$(grep -c '^ok   builder: round answer' <<<"$BUILDER_PREREQ_OUT")"
+  t "rehearsal-builder-$builder_prereq_case-prereq-does-not-query" 0 \
+    "$(grep -cFx 'unexpected gh call' <<<"$BUILDER_PREREQ_OUT")"
+  unset -f gh
+done
+
 # Mutation required by #418: stage the disabled draft-return path as the PR
 # object the sourceable assertion reads. It must name the live leg assertion,
 # never silently pass a ready PR as if conversion happened.
@@ -617,6 +647,23 @@ t rehearsal-builder-premature-request-reds 1 \
     <<<"$BUILDER_REQUEST_MUTATION_OUT")"
 unset -f gh
 
+# A failed drill-owned success status must red at setup rather than waiting on
+# the downstream request assertion for a transition that never happened.
+# shellcheck disable=SC2317  # gh is invoked indirectly through the sourced helper
+gh() { return 1; }
+BUILDER_SETTLE_MUTATION_OUT="$({
+  ok() { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  check() { local name="$1"; shift; if "$@"; then ok "$name"; else fail "$name"; fi; }
+  check "builder: settled head status established" \
+    rehearsal_set_builder_head_status owner/sandbox "$BUILDER_HEAD" \
+    drill/builder-head-settle success 'drill releases the settled-head panel request'
+})"
+t rehearsal-builder-settle-write-failure-reds-at-setup 1 \
+  "$(grep -cFx 'FAIL builder: settled head status established' \
+    <<<"$BUILDER_SETTLE_MUTATION_OUT")"
+unset -f gh
+
 # Pin the live sequence too: host verdict, pending status, concurrent draft
 # observation, signal-at-pending assertion, withheld request, success, request.
 BUILDER_LIVE_BLOCK="$(sed -n '/builder_head=.*pulls.*head.sha/,/panel request issued after head settles/p' \
@@ -634,15 +681,16 @@ done <<'EOF'
 4|pending head status established
 5|builder_tick_pid=$!
 6|changes-requested round returns PR to draft
-7|rehearsal_wait_builder_signal_window
+7|rehearsal_wait_builder_signal_window_with_prereqs
 8|builder_round_started_at
 9|panel request withheld while head check is pending
-10|state=success
-11|panel request issued after head settles
+10|rehearsal_set_builder_head_status
+11|settled head status established
+12|panel request issued after head settles
 EOF
 # shellcheck disable=SC2016  # match the literal background-pid wait in the drill
 case "$BUILDER_LIVE_BLOCK" in
-  *'wait "$builder_tick_pid"'*'panel request withheld while head check is pending'*'state=success'*)
+  *'wait "$builder_tick_pid"'*'panel request withheld while head check is pending'*'rehearsal_set_builder_head_status'*)
     builder_gate_order=ordered ;;
   *) builder_gate_order=WRONG ;;
 esac
@@ -659,8 +707,17 @@ t rehearsal-builder-occupied-slot-fails-opened-pr 1 \
 t rehearsal-builder-occupied-slot-fails-run-specific-authorship 1 \
   "$(grep -cFx "FAIL builder: PR authored by builder for this run's fixture issue" \
     <<<"$OCCUPIED_BUILDER_OUT")"
-t rehearsal-builder-occupied-slot-skips-unreachable-checks 13 \
-  "$(grep -c '^skip ' <<<"$OCCUPIED_BUILDER_OUT")"
+t rehearsal-builder-occupied-slot-skips-unreachable-checks \
+  'builder fixture is unassigned (ready+assigned is not pickable)|builder: PR branch is build/*|builder: issue moved off ready (claimed)|builder: no duplicate PR on re-tick|builder: fixture panel names the host reviewer|builder: initial PR is ready for its fixture panel|builder: host reviewer requested for initial round|builder: installed round-answer mark resolves|builder: host changes-requested review submitted|builder: pending head status established|builder: changes-requested round returns PR to draft|builder: round answer is signalled while head check is pending|builder: fix round kept the fixture head stable|builder: panel request withheld while head check is pending|builder: settled head status established|builder: panel request issued after head settles' \
+  "$(sed -n 's/^skip //p' <<<"$OCCUPIED_BUILDER_OUT" | paste -sd'|' -)"
+
+MISSING_BUILDER_PR_OUT="$({
+  skip() { printf 'skip %s\n' "$1"; }
+  rehearsal_report_missing_builder_pr
+})"
+t rehearsal-builder-missing-pr-skips-unreachable-checks \
+  'builder: initial PR is ready for its fixture panel|builder: host reviewer requested for initial round|builder: installed round-answer mark resolves|builder: host changes-requested review submitted|builder: pending head status established|builder: changes-requested round returns PR to draft|builder: round answer is signalled while head check is pending|builder: fix round kept the fixture head stable|builder: panel request withheld while head check is pending|builder: settled head status established|builder: panel request issued after head settles' \
+  "$(sed -n 's/^skip //p' <<<"$MISSING_BUILDER_PR_OUT" | paste -sd'|' -)"
 
 REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
 gh() {

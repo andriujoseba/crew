@@ -187,6 +187,13 @@ rehearsal_builder_not_requested() {
   ! rehearsal_builder_requested_from_json "$reviewer" "$requested_json"
 }
 
+rehearsal_set_builder_head_status() {
+  local repo="$1" head="$2" context="$3" state="$4" description="$5"
+  gh api "repos/$repo/statuses/$head" \
+    -f state="$state" -f context="$context" \
+    -f description="$description" >/dev/null
+}
+
 rehearsal_builder_signal_window_from_json() {
   local mark="$1" author="$2" head="$3" after="$4" context="$5" comments_json="$6" status_json="$7" state
   if ! rehearsal_builder_has_answer_signal_from_json \
@@ -224,6 +231,33 @@ rehearsal_wait_builder_signal_window() {
   return 1
 }
 
+rehearsal_wait_builder_signal_window_with_prereqs() {
+  local mark="$4" after="$7"
+  if [ -z "$mark" ]; then
+    skip "builder: round answer signal window unavailable (installed answer mark unresolved)"
+    return 0
+  fi
+  if [ -z "$after" ]; then
+    skip "builder: round answer signal window unavailable (changes-requested review boundary unresolved)"
+    return 0
+  fi
+  rehearsal_wait_builder_signal_window "$@"
+}
+
+rehearsal_report_missing_builder_pr() {
+  skip "builder: initial PR is ready for its fixture panel"
+  skip "builder: host reviewer requested for initial round"
+  skip "builder: installed round-answer mark resolves"
+  skip "builder: host changes-requested review submitted"
+  skip "builder: pending head status established"
+  skip "builder: changes-requested round returns PR to draft"
+  skip "builder: round answer is signalled while head check is pending"
+  skip "builder: fix round kept the fixture head stable"
+  skip "builder: panel request withheld while head check is pending"
+  skip "builder: settled head status established"
+  skip "builder: panel request issued after head settles"
+}
+
 rehearsal_report_occupied_builder_slot() {
   local author="$1"
   fail "builder: opened a PR for the ready issue"
@@ -236,10 +270,13 @@ rehearsal_report_occupied_builder_slot() {
   skip "builder: initial PR is ready for its fixture panel"
   skip "builder: host reviewer requested for initial round"
   skip "builder: installed round-answer mark resolves"
+  skip "builder: host changes-requested review submitted"
+  skip "builder: pending head status established"
   skip "builder: changes-requested round returns PR to draft"
   skip "builder: round answer is signalled while head check is pending"
   skip "builder: fix round kept the fixture head stable"
   skip "builder: panel request withheld while head check is pending"
+  skip "builder: settled head status established"
   skip "builder: panel request issued after head settles"
 }
 
