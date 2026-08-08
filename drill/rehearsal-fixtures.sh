@@ -74,3 +74,17 @@ rehearsal_close_builder_fixture_prs() {
   done <<<"$prs"
   return "$failed"
 }
+
+rehearsal_close_issue_fixtures() {
+  local repo="$1" issues="$2" issue failed=0
+  for issue in $issues; do
+    [ -n "$issue" ] || continue
+    if gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed >/dev/null; then
+      echo "teardown: closed triage fixture issue #$issue"
+    else
+      echo "teardown: WARNING — could not close triage fixture issue #$issue" >&2
+      failed=1
+    fi
+  done
+  return "$failed"
+}

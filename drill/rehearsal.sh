@@ -137,6 +137,8 @@ ACQUIRE_TMP=""
 BOX_TOUCHED=0
 BUILDER_CLEANUP_REPO=""
 BUILDER_CLEANUP_AUTHOR=""
+TRIAGE_CLEANUP_REPO=""
+TRIAGE_CLEANUP_ISSUES=""
 # shellcheck source=drill/rehearsal-safety.sh
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
@@ -149,6 +151,10 @@ cleanup_all() {
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
         "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
+    fi
+    if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
+      rehearsal_close_issue_fixtures \
+        "$TRIAGE_CLEANUP_REPO" "$TRIAGE_CLEANUP_ISSUES" || true
     fi
     rehearsal_cleanup "$rc"
     if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
@@ -461,7 +467,7 @@ else
   # The whole board vocabulary: triage keys on needs-triage and on strays
   # carrying none of ready/claimed/blocked/epic, and the builder keys on
   # ready. A missing label makes a fixture silently unbuildable.
-  for _lbl in attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 epic:5319e7; do
+  for _lbl in attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7; do
     gh api "repos/$SANDBOX/labels" -f name="${_lbl%%:*}" -f color="${_lbl##*:}" >/dev/null 2>&1 || true
   done
   if ! gh api "repos/$SANDBOX/collaborators/$ME2" >/dev/null 2>&1; then
@@ -518,6 +524,24 @@ else
   # role rather than one box carrying all three.
 
   if [ "$ROLE" = "triage" ]; then
+  TRIAGE_CLEANUP_REPO="$SANDBOX"
+  # shellcheck disable=SC2016  # the label variables expand inside the box
+  QUEUE_LABELS="$(bx '
+    set -a
+    . ~/duty/conf/fleet.defaults.conf
+    printf "%s\n" \
+      "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
+      "$LABEL_POST_MERGE" "$LABEL_EPIC" "$LABEL_NEEDS_TRIAGE"
+  ' | sed '/^$/d' | sort -u)"
+  QUEUE_LABEL_COUNT="$(printf '%s\n' "$QUEUE_LABELS" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$QUEUE_LABEL_COUNT" -eq 6 ]; then
+    ok "triage: installed queue-label set resolves six names"
+  else
+    echo "triage: installed queue-label set resolved $QUEUE_LABEL_COUNT name(s):"
+    printf '%s\n' "$QUEUE_LABELS" | sed 's/^/  /'
+    fail "triage: installed queue-label set resolves six names"
+  fi
+  QUEUE_LABEL_PATTERN="$(printf '%s\n' "$QUEUE_LABELS" | paste -sd'|' -)"
   # -- triage: a stray (no queue label) must draw a ruling --
   # duty-triage.sh detects two signals; the STRAY is the one a fixture can
   # create without presupposing triage's own vocabulary: an open issue
@@ -527,18 +551,39 @@ else
   tnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage stray $(date -u +%H%M%S)" \
     -f body="Drill fixture: an unlabelled open issue. Rule on it — leave one short ruling comment and put it in exactly one of ready/claimed/blocked (or epic). Do not open PRs." \
     --jq .number)"
+  TRIAGE_CLEANUP_ISSUES="$tnum"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "triage: stray drew a ruling comment" bash -c \
     "gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qE '^[1-9][0-9]*$'"
   # The board invariant: no open issue may remain queue-unlabelled.
   wait_for 300 "triage: stray left the unlabelled queue" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$tnum' --jq '[.labels[].name] | any(. == \"ready\" or . == \"claimed\" or . == \"blocked\" or . == \"epic\" or . == \"needs-triage\")' | grep -qx true"
+    "gh api 'repos/$SANDBOX/issues/$tnum' --jq '.labels[].name' | grep -qxE '$QUEUE_LABEL_PATTERN'"
   # Same tick, second time: triage must not re-rule a settled issue.
   TCOMMENTS="$(gh api "repos/$SANDBOX/issues/$tnum/comments" --jq 'length')"
   bx "~/duty/bin/tick.sh" || true
   sleep 20
   check "triage: no second ruling on re-tick" bash -c \
     "[ \"\$(gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq 'length')\" = '$TCOMMENTS' ]"
+
+  # A post-merge issue is already in a valid terminal queue state. Leave it
+  # as the only non-conforming-looking fixture, then prove a complete tick
+  # neither spends a session on it nor mutates it.
+  pnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage post-merge $(date -u +%H%M%S)" \
+    -f body="Drill fixture: this issue is already in post-merge. Do not comment on it or change its labels." \
+    -f "labels[]=post-merge" --jq .number)"
+  TRIAGE_CLEANUP_ISSUES="$TRIAGE_CLEANUP_ISSUES $pnum"
+  PCOMMENTS="$(gh api "repos/$SANDBOX/issues/$pnum/comments" --jq \
+    "[.[] | select(.user.login == \"$ME2\")] | length")"
+  PLABELS="$(gh api "repos/$SANDBOX/issues/$pnum" --jq '[.labels[].name] | sort | join(" ")')"
+  DUTY_LOG_LINES="$(bx "wc -l < ~/duty/duty.log")"
+  bx "~/duty/bin/tick.sh" || true
+  sleep 20
+  check "triage: post-merge drew no box-identity comment" bash -c \
+    "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length')\" = '$PCOMMENTS' ]"
+  check "triage: post-merge kept its single label" bash -c \
+    "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum' --jq '[.labels[].name] | sort | join(\" \")')\" = '$PLABELS' ] && [ '$PLABELS' = 'post-merge' ]"
+  check "triage: post-merge-only tick launched no session" bx \
+    "tail -n +$((DUTY_LOG_LINES + 1)) ~/duty/duty.log | grep -Fq '$SANDBOX: quiet — no mentions, no triage signals, no session launched'"
 
   elif [ "$ROLE" = "builder" ]; then
   # -- builder: an unassigned `ready` issue must become a PR --
@@ -682,6 +727,17 @@ else
     ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' '$head_sha' approve /tmp/drill-body 2>&1 | grep -q 'already present'"
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
+  fi
+fi
+
+if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
+  if rehearsal_close_issue_fixtures \
+      "$TRIAGE_CLEANUP_REPO" "$TRIAGE_CLEANUP_ISSUES"; then
+    ok "teardown: close triage fixtures"
+    TRIAGE_CLEANUP_REPO=""
+    TRIAGE_CLEANUP_ISSUES=""
+  else
+    fail "teardown: close triage fixtures"
   fi
 fi
 
