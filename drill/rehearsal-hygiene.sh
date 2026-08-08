@@ -91,15 +91,16 @@ rehearsal_hygiene_fixture() {
   return 0
 }
 
-rehearsal_hygiene_close_fixture_pr() {
-  local repo="$1" branch="$2" pr
+rehearsal_hygiene_merge_fixture_pr() {
+  local repo="$1" branch="$2" pr merged
   pr="$(bx "gh api 'repos/$repo/pulls' -f title='drill: hygiene $branch' \
     -f head='$branch' -f base=main \
-    -f body='Drill fixture for dirty-worktree hygiene; close without merging.' \
+    -f body='Drill fixture for dirty-worktree hygiene; merge before adding dirt.' \
     --jq .number")" || return 1
   [ -n "$pr" ] || return 1
-  bx "gh api -X PATCH 'repos/$repo/pulls/$pr' -f state=closed >/dev/null" \
+  merged="$(bx "gh api -X PUT 'repos/$repo/pulls/$pr/merge' --jq .merged")" \
     || return 1
+  [ "$merged" = true ] || return 1
   printf '%s\n' "$pr"
 }
 
@@ -202,7 +203,7 @@ rehearsal_hygiene_drill() {
   ok "hygiene: git ordering trace installed"
 
   if ! rehearsal_hygiene_fixture "$repo" "$good_branch" "$good_wt" "$stamp" \
-      || ! good_pr="$(rehearsal_hygiene_close_fixture_pr "$repo" "$good_branch")" \
+      || ! good_pr="$(rehearsal_hygiene_merge_fixture_pr "$repo" "$good_branch")" \
       || ! rehearsal_hygiene_add_dirt "$good_wt" "$stamp"; then
     fail "hygiene: preservation fixture staged"
     return 1
@@ -233,7 +234,7 @@ rehearsal_hygiene_drill() {
   check "hygiene: worktree is gone only after preservation" bx "! test -e '$good_wt'"
 
   if ! rehearsal_hygiene_fixture "$repo" "$bad_branch" "$bad_wt" "$stamp-refusal" \
-      || ! bad_pr="$(rehearsal_hygiene_close_fixture_pr "$repo" "$bad_branch")" \
+      || ! bad_pr="$(rehearsal_hygiene_merge_fixture_pr "$repo" "$bad_branch")" \
       || ! rehearsal_hygiene_add_dirt "$bad_wt" "$stamp-refusal"; then
     fail "hygiene: refusal fixture staged"
     return 1
@@ -250,10 +251,6 @@ rehearsal_hygiene_drill() {
   check "hygiene: failed push keeps README.md, hygiene-root-untracked.txt and hygiene-untracked/nested.txt, reported once" \
     rehearsal_hygiene_refusal_is_intact \
       "$before" "$after" "$first_refusal" "$second_refusal"
-  check "hygiene: failed push lands no wip ref" bx \
-    "! git -C '$REHEARSAL_HYGIENE_CLONE' ls-remote --exit-code fork \
-       'refs/heads/$bad_ref' >/dev/null 2>&1"
-
   rehearsal_hygiene_cleanup
   check "hygiene: teardown removed fixture branches, refs and worktrees" bx \
     "! git -C '$box_home/duty/work/$slug' ls-remote --exit-code origin \

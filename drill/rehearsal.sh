@@ -807,7 +807,7 @@ fi
 # Role-independent: exercise the worktree hygiene that runs on every role box
 # only after that role's own phase-2 fixtures have finished.
 if [ "$PHASE2_RAN" -eq 1 ]; then
-  rehearsal_hygiene_drill "$SANDBOX" "$ME2"
+  rehearsal_hygiene_drill "$SANDBOX" "$ROLE"
 fi
 
 if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
