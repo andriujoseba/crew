@@ -162,7 +162,7 @@ def agent_conf_path(agent):
 ROSTER = os.environ.get("CREW_FLOOR_ROSTER") or os.path.join(CONFIG_DIR, "fleet.roster")
 # The launcher owns this string: it is the exact answer from `crew --version`,
 # not a second attempt by the server to find and interpret VERSION.
-FLOOR_VERSION = "crew 9.9.9 (/staged/wrong/answer)"
+FLOOR_VERSION = os.environ.get("CREW_FLOOR_VERSION", "version unavailable")
 
 # A tick is 5 minutes; the engine's own death rule is "no evidence for two tick
 # boundaries", so the floor uses the same number rather than inventing one.

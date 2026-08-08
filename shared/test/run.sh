@@ -957,6 +957,9 @@ SURF_INTEG="$SURF/integrity"
 # The leg's reporters, in a SUBSHELL so run.sh's own t() survives the stubbing:
 # each verdict comes back as one "<ok|FAIL|skip> <label>" line on stdout, which
 # is the whole interface the assertions below match against.
+# shellcheck disable=SC2317  # the stubs are reached through "$@", which is an
+# indirection shellcheck cannot follow — every one of them is called by the
+# sourced assertions below.
 surf() {  # surf <fn> [args...] → one verdict line per assertion the fn makes
   (
     ok()   { printf 'ok %s\n' "$1"; }

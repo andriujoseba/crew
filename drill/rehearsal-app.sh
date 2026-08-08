@@ -504,11 +504,21 @@ BOX_READ_TIMEOUT="${CREW_FLOOR_PROBE_TIMEOUT:-45}"
 box_read() { timeout "$BOX_READ_TIMEOUT" box exec "$@"; }
 
 # The box's own answer to the integrity question, asked over its own transport.
+# `--state` prints ONE bare word — absent, unverified, current or modified
+# (shared/bin/engine-manifest.sh's state()) — and probe.sh takes it with the
+# same `head -1`, so the two readers ask for the same thing the same way.
+#
+# The answer is fenced by a marker on BOTH sides of the transport, for the
+# reason the `no build duty` read below states: `bash -lc` is a LOGIN shell, so
+# a profile that echoes anything puts its line ahead of the verdict, and an
+# unfenced `head -1` would then report a banner as the box's integrity. Fenced,
+# a talkative box can only make the answer absent, never wrong.
 # shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's, expanded there
 box_integrity() {
   box_read "$1" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
     [ -x "$d/bin/engine-manifest.sh" ] || exit 9
-    "$d/bin/engine-manifest.sh" --state 2>/dev/null | head -1' 2>/dev/null | tr -d '\r\n'
+    "$d/bin/engine-manifest.sh" --state 2>/dev/null | head -1 | sed "s/^/::state /"' 2>/dev/null \
+    | sed -n 's/^::state //p' | head -1 | tr -d '\r\n'
 }
 
 app_surface_version    "$FLEET_JSON" "$HOST_VERSION" "$CREW_VERSION_FILE"
