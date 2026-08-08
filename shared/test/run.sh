@@ -976,6 +976,562 @@ heavy-duty/rig" "$(cat "$RDUTY/repos.txt")"
 t rehearsal-disarms-tick 0 "$(grep -cF "$RDUTY/bin/tick.sh" "$RCRON")"
 t rehearsal-preserves-unrelated-cron 1 "$(grep -cF unrelated-job "$RCRON")"
 
+
+# --- the 0.1.2 operator surfaces: every assertion red on a staged answer -
+# drill/rehearsal-app-surfaces.sh holds the seven assertions drill/rehearsal-
+# app.sh makes about what 0.1.2 shipped into the operator's view (#420). They
+# run on a drill HOST, which CI does not have — so they are exercised the way
+# the other rehearsal helpers already are here: the leg's reporters stubbed,
+# the file sourced, and a WRONG answer staged into the input each assertion
+# reads. An assertion nobody can red is an assertion nobody has checked, which
+# is #50's defect stated once more.
+SURF="$TMP/app-surfaces"
+mkdir -p "$SURF"
+
+# One truthful fleet, four boxes: two hired and answering, one never created,
+# one deployed but not talking. Every payload below is this one with exactly
+# one field moved, so a red is attributable to that field and nothing else.
+surf_payload() {  # surf_payload '<python mutating p>' → the fleet payload
+  python3 - "$1" <<'PY'
+import json, sys
+p = {
+    "version": "crew 0.1.2 (/opt/crew)",
+    # `state`, `paused` and `disarmed` are the three fields fleetState() reads
+    # (fleet-floor/src/app.js:1282-1285): a DRAWN unit that is offline lands in
+    # Disarmed when either flag is set and in Silent when neither is. They are
+    # here because the filter assertion compares the page's groups against the
+    # sets they imply — crew-b disarmed, crew-d silent — rather than only
+    # against whoever the page happened to list.
+    "units": [
+        {"box": "crew-a", "engine": "0.1.2", "integrity": "current",
+         "hired": "yes", "note": "", "state": "idle",
+         "paused": False, "disarmed": False},
+        {"box": "crew-b", "engine": "0.1.2", "integrity": "modified",
+         "hired": "yes", "note": "", "state": "offline",
+         "paused": False, "disarmed": True},
+        {"box": "crew-c", "engine": "", "integrity": "",
+         "hired": "no", "note": "not created — crew new crew-c",
+         "state": "offline", "paused": False, "disarmed": False},
+        {"box": "crew-d", "engine": "0.1.2", "integrity": "unverified",
+         "hired": "unknown", "note": "stopped", "state": "offline",
+         "paused": False, "disarmed": False},
+    ],
+}
+u = {b["box"]: b for b in p["units"]}
+exec(sys.argv[1])
+print(json.dumps(p))
+PY
+}
+surf_payload 'pass'                                     >"$SURF/fleet.json"
+surf_payload 'p["version"] = "crew 9.9.9 (/staged)"'    >"$SURF/fleet-wrong-version.json"
+surf_payload 'p["version"] = "version unavailable"'     >"$SURF/fleet-no-version.json"
+surf_payload 'u["crew-b"]["integrity"] = "current"'     >"$SURF/fleet-integrity-lie.json"
+surf_payload 'u["crew-c"]["note"] = "not created"'      >"$SURF/fleet-no-repair-verb.json"
+surf_payload 'p["units"] = [b for b in p["units"] if b["box"] != "crew-d"]' \
+                                                        >"$SURF/fleet-drops-a-box.json"
+# The same drop, of the one box that IS a measured absence — so the payload is
+# short AND nothing in it carries `hired=no`, which is the pair that used to
+# read as "every roster box is deployed".
+surf_payload 'p["units"] = [b for b in p["units"] if b["box"] != "crew-c"]' \
+                                                        >"$SURF/fleet-drops-the-undeployed-box.json"
+surf_payload 'u["crew-c"]["note"] = "box inventory unreadable: box list failed"' \
+                                                        >"$SURF/fleet-inventory-unreadable.json"
+# Short BECAUSE the inventory failed: an unmeasured fleet, which must keep
+# skipping rather than being read as the dropped-box regression.
+surf_payload '
+u["crew-b"]["note"] = "box inventory unreadable: box list failed"
+p["units"] = [b for b in p["units"] if b["box"] != "crew-c"]
+'                                                       >"$SURF/fleet-inventory-unreadable-and-short.json"
+surf_payload 'u["crew-c"].update(hired="yes", engine="0.1.2", integrity="current", note="")' \
+                                                        >"$SURF/fleet-all-deployed.json"
+surf_payload 'u["crew-d"]["note"] = ""'                 >"$SURF/fleet-all-answered.json"
+# Every declared box undeployed — #204's empty floor, the state the panel
+# naming `crew hire` exists for.
+surf_payload '
+for b in p["units"]:
+    b.update(hired="no", engine="", integrity="", state="offline",
+             note="not hired — crew hire " + b["box"])
+'                                                       >"$SURF/fleet-all-undeployed.json"
+# The floor and the CLI disagreeing about one box: the payload says crew-b is
+# deliberately stopped and `crew status` does not.
+surf_payload 'u["crew-b"]["disarmed"] = False'          >"$SURF/fleet-b-not-disarmed.json"
+# Two boxes deliberately stopped — an ordinary fleet, and the one that puts two
+# members into the disarmed direction's blind set.
+surf_payload 'u["crew-d"]["disarmed"] = True'           >"$SURF/fleet-two-disarmed.json"
+# Nothing quiet at all: every drawn box is ticking, so neither state group has
+# a member and the filter has nothing to classify.
+surf_payload '
+for b in p["units"]:
+    b["state"] = "idle"
+'                                                       >"$SURF/fleet-none-quiet.json"
+
+printf 'crew-a claude builder\ncrew-b codex reviewer\ncrew-c grok triage\ncrew-d kimi builder\n' \
+  >"$SURF/roster"
+SURF_ROSTER="$SURF/roster"
+# What each box answers to `engine-manifest.sh --state`, standing in for the
+# `box exec` the leg does — the second reader #190's assertion cross-checks the
+# floor against.
+printf 'crew-a current\ncrew-b modified\ncrew-d unverified\n' >"$SURF/integrity"
+printf 'crew-a current\ncrew-b tampered\ncrew-d unverified\n' >"$SURF/integrity-fourth-word"
+: >"$SURF/integrity-silent"
+SURF_INTEG="$SURF/integrity"
+
+# The leg's reporters, in a SUBSHELL so run.sh's own t() survives the stubbing:
+# each verdict comes back as one "<ok|FAIL|skip> <label> <reason>" line on
+# stdout, which is the whole interface the assertions below match against.
+# The REASON is on the line and not only the label, because criterion 3 is
+# about the reason: "no assertion silently passes when its precondition is
+# absent" is a claim about what the skip SAYS, and a skip whose stated reason
+# is not true is the defect the #204 gate below exists to close. Newlines are
+# flattened so one verdict stays one line.
+# shellcheck disable=SC2317  # the stubs are reached through "$@", which is an
+# indirection shellcheck cannot follow — every one of them is called by the
+# sourced assertions below.
+surf() {  # surf <fn> [args...] → one verdict line per assertion the fn makes
+  (
+    emit() { local v="$1" m; shift; m="$*"; printf '%s %s\n' "$v" "${m//$'\n'/ }"; }
+    ok()   { emit ok "$@"; }
+    fail() { emit FAIL "$@"; }
+    skip() { emit skip "$@"; }
+    t()    { if [ "$2" = "$3" ]; then printf 'ok %s\n' "$1"; else printf 'FAIL %s\n' "$1"; fi; }
+    jqf()  { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
+    roster_rows()   { grep -vE '^[[:space:]]*(#|$)' "$SURF_ROSTER"; }
+    # The caller supplies this reader, and on a real host it shells into a box.
+    # SURF_GREEDY_READER makes it behave like the one that does — `box exec`
+    # inherits the loop's stdin and drains it — which truncated the roster loop
+    # to its first box on the host, silently, while the label kept claiming the
+    # fleet.
+    box_integrity() {
+      # Bounded, because the drain must not outlive the thing it is draining:
+      # once the roster moved to fd 3 this `cat` no longer meets the loop's
+      # pipe at all, it meets whatever stdin the suite was STARTED with — and
+      # an unbounded read of a socket that nobody is going to close hangs the
+      # whole suite forever. It reaches EOF instantly against a pipe or
+      # /dev/null (which is CI, and is the pre-fix code path this case reds
+      # on), so the bound costs nothing where it is not needed.
+      [ -n "${SURF_GREEDY_READER:-}" ] && { timeout 1 cat >/dev/null 2>&1 || true; }
+      awk -v b="$1" '$1 == b { print $2 }' "$SURF_INTEG"
+    }
+    # shellcheck source=drill/rehearsal-app-surfaces.sh
+    source "$ROOT/drill/rehearsal-app-surfaces.sh"
+    "$@"
+  )
+}
+surf_says() {  # surf_says <verdict lines> <label substring> → ok|FAIL|skip|absent
+  local line
+  line="$(printf '%s\n' "$1" | grep -F -- "$2" | head -1)"
+  [ -n "$line" ] || { printf 'absent'; return 0; }
+  printf '%s' "${line%% *}"
+}
+
+# --- #347: the header names the version of the crew SERVING the page -----
+SURF_V="floor: the API names the serving host"
+r1="$(surf app_surface_version "$SURF/fleet.json" "crew 0.1.2 (/opt/crew)" 0.1.2)"
+t app-surface-347-truthful-header ok "$(surf_says "$r1" "$SURF_V")"
+r1="$(surf app_surface_version "$SURF/fleet-wrong-version.json" "crew 0.1.2 (/opt/crew)" 0.1.2)"
+t app-surface-347-staged-wrong-version FAIL "$(surf_says "$r1" "$SURF_V")"
+# The server dropped what the launcher passed and served its placeholder.
+r1="$(surf app_surface_version "$SURF/fleet-no-version.json" "crew 0.1.2 (/opt/crew)" 0.1.2)"
+t app-surface-347-placeholder-served FAIL "$(surf_says "$r1" "$SURF_V")"
+# The launcher and the page agree on a version this tree is not: the half that
+# stops the assertion being a fixture comparing itself to itself.
+r1="$(surf app_surface_version "$SURF/fleet.json" "crew 0.1.2 (/opt/crew)" 0.1.1)"
+t app-surface-347-stale-release-named FAIL "$(surf_says "$r1" "$SURF_V")"
+r1="$(surf app_surface_version "$SURF/fleet.json" "crew 0.1.2 (/opt/crew)" '')"
+t app-surface-347-no-version-file FAIL "$(surf_says "$r1" "$SURF_V")"
+
+# --- #190: the verdict on the tile is the BOX's own word -----------------
+SURF_I="floor: every hired box's integrity verdict"
+SURF_IV="floor: every integrity verdict is one of the three words"
+r1="$(surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-truthful-verdicts ok "$(surf_says "$r1" "$SURF_I")"
+t app-surface-190-truthful-vocabulary ok "$(surf_says "$r1" "$SURF_IV")"
+# The label names how many boxes were compared, and it must be all three that
+# answered — not the one the loop happened to reach.
+t app-surface-190-compares-every-box ok "$(surf_says "$r1" "verdict is the box's own answer (3 boxes)")"
+# The reader that shells into a box drains the loop's stdin. Reading the roster
+# on fd 3 is what keeps that from truncating the loop to its first member — a
+# real host defect, found by running the leg, invisible to a stub reader that
+# does not touch stdin.
+r1="$(SURF_GREEDY_READER=1 surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-greedy-reader-visits-every-box ok "$(surf_says "$r1" "verdict is the box's own answer (3 boxes)")"
+# The floor prints `current` for a box whose own manifest says `modified` —
+# exactly the reassurance #190 exists to stop the page inventing.
+r1="$(surf app_surface_integrity "$SURF/fleet-integrity-lie.json")"
+t app-surface-190-staged-floor-lie FAIL "$(surf_says "$r1" "$SURF_I")"
+SURF_INTEG="$SURF/integrity-fourth-word"
+r1="$(surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-fourth-word-red FAIL "$(surf_says "$r1" "$SURF_IV")"
+SURF_INTEG="$SURF/integrity-silent"
+r1="$(surf app_surface_integrity "$SURF/fleet.json")"
+# No box answered the second reader, so there is nothing to compare — and the
+# precondition is NAMED rather than passing quietly.
+t app-surface-190-unanswerable-skips skip "$(surf_says "$r1" "$SURF_I")"
+t app-surface-190-names-the-silent-box skip "$(surf_says "$r1" "integrity: crew-a")"
+SURF_INTEG="$SURF/integrity"
+
+# --- #204: not deployed is COUNTED and not DRAWN -------------------------
+SURF_ND="floor: a roster box that is not deployed is counted"
+SURF_NC="floor: the not-deployed boxes are counted but not drawn"
+r1="$(surf app_surface_not_deployed "$SURF/fleet.json" 4)"
+t app-surface-204-truthful-repair-verb ok "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-truthful-counts ok "$(surf_says "$r1" "$SURF_NC")"
+r1="$(surf app_surface_not_deployed "$SURF/fleet-no-repair-verb.json" 4)"
+t app-surface-204-staged-silent-note FAIL "$(surf_says "$r1" "$SURF_ND")"
+# The filter applied one layer too high: the box is gone from the payload, so
+# the fleet silently shrinks instead of keeping its declared size. Reds at the
+# completeness gate now, which owns this direction and names the missing box —
+# so the arithmetic assertion downstream is never reached and is `absent`.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-drops-a-box.json" 4)"
+t app-surface-204-staged-shrunk-fleet FAIL "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-shrunk-fleet-names-the-box FAIL "$(surf_says "$r1" "never reported: crew-d")"
+t app-surface-204-shrunk-fleet-stops-at-the-gate absent "$(surf_says "$r1" "$SURF_NC")"
+# The same drop, of the box that is the fleet's ONLY measured absence. This is
+# the direction the mutation above cannot reach: with `crew-c` gone no unit
+# carries `hired=no`, so the empty-set branch used to conclude "every one of
+# the 4 roster boxes is deployed" over a three-unit payload — #204's own
+# regression reported as a fleet that does not exercise it. It must FAIL, not
+# skip (codex-bot at 4bde9ce; triage's Must-fail in #420's test plan).
+r1="$(surf app_surface_not_deployed "$SURF/fleet-drops-the-undeployed-box.json" 4)"
+t app-surface-204-drops-the-undeployed-box FAIL "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-drops-the-undeployed-box-named FAIL "$(surf_says "$r1" "never reported: crew-c")"
+r1="$(surf app_surface_not_deployed "$SURF/fleet-inventory-unreadable.json" 4)"
+t app-surface-204-unmeasured-absence-skips skip "$(surf_says "$r1" "$SURF_ND")"
+# ...and it keeps that precedence when the failed inventory ALSO cost the
+# payload a unit: an unmeasured fleet is not the dropped-box regression, so it
+# must still skip by its own reason rather than red at the gate.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-inventory-unreadable-and-short.json" 4)"
+t app-surface-204-unreadable-outranks-the-gate skip "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-unreadable-names-its-reason skip "$(surf_says "$r1" "the box inventory did not answer for: crew-b")"
+# The gate must not red a correct fleet: a complete payload with no measured
+# absence still skips, with the one reason that is now true of it.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-all-deployed.json" 4)"
+t app-surface-204-no-such-box-skips skip "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-complete-fleet-skip-reason skip "$(surf_says "$r1" "every one of the 4 roster boxes is deployed")"
+
+# --- #218: `crew up --dry-run` names every box and touches nothing -------
+printf 'crew-a: WOULD hire (currently: 2026-08-01T00:00Z)\ncrew-b: WOULD hire (currently: 2026-08-01T00:00Z)\ncrew-c: WOULD create (grok/triage)\ncrew-c: WOULD hire (new box — engine crew@0.1.2, cron armed)\ncrew-d: WOULD start\ncrew-d: WOULD SKIP — not converged; crew hire crew-d would refuse\n\nup --dry-run: 1 would be created, 1 started, 3 hired\n' \
+  >"$SURF/up-dry.txt"
+grep -v '^crew-d: ' "$SURF/up-dry.txt" >"$SURF/up-dry-silent.txt"
+grep -v '^up --dry-run: ' "$SURF/up-dry.txt" >"$SURF/up-dry-no-summary.txt"
+printf 'roster deadbeef\nboxes crew-a:running,crew-b:running,crew-d:stopped\ncron crew-a c0ffee\ncron crew-b c0ffee\ncron crew-d c0ffee\n' \
+  >"$SURF/before.fp"
+cp "$SURF/before.fp" "$SURF/after.fp"
+# The one thing --dry-run promises never to do: a box that did not exist before
+# the command exists after it.
+sed 's/^boxes .*/boxes crew-a:running,crew-b:running,crew-c:running,crew-d:stopped/' \
+  "$SURF/before.fp" >"$SURF/after-created.fp"
+sed 's/^boxes .*/boxes UNREADABLE/' "$SURF/before.fp" >"$SURF/before-unreadable.fp"
+# A component that did not answer, marked as such rather than hashed. Both of
+# these used to be INVISIBLE: a failed `box_read` was piped straight into
+# sha256sum, so two failed reads produced the same hash of the empty string and
+# compared equal — "unchanged" over a crontab nobody read.
+sed 's/^cron crew-d .*/cron crew-d UNREADABLE/' "$SURF/before.fp" \
+  >"$SURF/before-cron-unreadable.fp"
+awk '{ $NF = "UNREADABLE"; print }' "$SURF/before.fp" \
+  >"$SURF/before-all-unreadable.fp"
+# ...and the box that answered and genuinely has no crontab. Its read succeeded,
+# so it is a measured fact and must still compare: the fix must not turn every
+# un-armed box into an unreadable one.
+EMPTY_SHA='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+sed "s/^cron crew-d .*/cron crew-d $EMPTY_SHA/" "$SURF/before.fp" \
+  >"$SURF/before-cron-empty.fp"
+# One side read it, the other did not: there is no comparison to make, and the
+# side that answered is not evidence about the side that did not.
+sed 's/^cron crew-d .*/cron crew-d UNREADABLE/' "$SURF/before.fp" \
+  >"$SURF/after-cron-unreadable.fp"
+# A component that was there before and is gone after is movement, not silence.
+grep -v '^cron crew-d ' "$SURF/before.fp" >"$SURF/after-box-gone.fp"
+
+SURF_D0="crew up --dry-run exits 0"
+SURF_DN="crew up --dry-run names a planned action"
+SURF_DS="crew up --dry-run summarises"
+SURF_DC="crew up --dry-run changed nothing"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after.fp" 0)"
+t app-surface-218-truthful-rc ok "$(surf_says "$r1" "$SURF_D0")"
+t app-surface-218-truthful-per-box ok "$(surf_says "$r1" "$SURF_DN")"
+t app-surface-218-truthful-summary ok "$(surf_says "$r1" "$SURF_DS")"
+t app-surface-218-truthful-unchanged ok "$(surf_says "$r1" "$SURF_DC")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after-created.fp" 0)"
+t app-surface-218-staged-created-a-box FAIL "$(surf_says "$r1" "$SURF_DC")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry-silent.txt" "$SURF/before.fp" "$SURF/after.fp" 0)"
+t app-surface-218-staged-unnamed-box FAIL "$(surf_says "$r1" "$SURF_DN")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry-no-summary.txt" "$SURF/before.fp" "$SURF/after.fp" 0)"
+t app-surface-218-staged-no-summary FAIL "$(surf_says "$r1" "$SURF_DS")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after.fp" 1)"
+t app-surface-218-nonzero-rc-red FAIL "$(surf_says "$r1" "$SURF_D0")"
+# Half the fingerprint was never taken, so "unchanged" is split rather than
+# claimed over a comparison that compared less than it says. Both fingerprints
+# are the SAME FILE here, which is the point: identical failures are identical,
+# and `diff` called that agreement.
+SURF_DP="crew up --dry-run moved none of the"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-unreadable.fp" "$SURF/before-unreadable.fp" 0)"
+t app-surface-218-unreadable-inventory-skips skip "$(surf_says "$r1" "$SURF_DC")"
+t app-surface-218-unreadable-inventory-still-compares ok "$(surf_says "$r1" "$SURF_DP")"
+# The crontab half of the same defect, and the one with no marker at all before
+# this: an unreachable box and a timed-out box both hashed to the empty string.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-cron-unreadable.fp" "$SURF/before-cron-unreadable.fp" 0)"
+t app-surface-218-unreadable-crontab-skips skip "$(surf_says "$r1" "$SURF_DC")"
+t app-surface-218-unreadable-crontab-still-compares ok "$(surf_says "$r1" "$SURF_DP")"
+# Nothing answered on either side. There is no partial claim left to make, so
+# the partial `ok` must not be printed either.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-all-unreadable.fp" "$SURF/before-all-unreadable.fp" 0)"
+t app-surface-218-nothing-readable-skips skip "$(surf_says "$r1" "$SURF_DC")"
+t app-surface-218-nothing-readable-claims-nothing absent "$(surf_says "$r1" "$SURF_DP")"
+# One side answered and the other did not: still no comparison, and the side
+# that answered is not evidence about the side that did not.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after-cron-unreadable.fp" 0)"
+t app-surface-218-one-sided-read-skips skip "$(surf_says "$r1" "$SURF_DC")"
+# ...but a box that ANSWERED and has no crontab is a measured fact, and must
+# still compare. The repair must not turn every un-armed box into an unread one.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-cron-empty.fp" "$SURF/before-cron-empty.fp" 0)"
+t app-surface-218-empty-crontab-still-compares ok "$(surf_says "$r1" "$SURF_DC")"
+# A component present before and absent after is movement, not silence — the
+# shape a dry run that deleted something would leave.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after-box-gone.fp" 0)"
+t app-surface-218-component-vanished FAIL "$(surf_says "$r1" "$SURF_DC")"
+
+# --- #308: an unanswered probe is unknown, never never-hired -------------
+t app-surface-308-picks-the-silent-box crew-d \
+  "$(surf app_surface_silent_box "$SURF/fleet.json")"
+t app-surface-308-no-silent-box-to-ask '' \
+  "$(surf app_surface_silent_box "$SURF/fleet-all-answered.json")"
+printf 'box: crew-d\nengine: unknown — the box did not answer\n' >"$SURF/status-unknown.txt"
+printf 'box: crew-d\nengine: not hired (no engine)\n'            >"$SURF/status-never-hired.txt"
+printf 'box: crew-d\n'                                          >"$SURF/status-no-engine-line.txt"
+SURF_S="an unanswered probe reads unknown"
+r1="$(surf app_surface_status_unknown crew-d "$SURF/status-unknown.txt" 0)"
+t app-surface-308-truthful-unknown ok "$(surf_says "$r1" "$SURF_S")"
+# The wrong repair: the operator is sent to `crew hire` for a box that is
+# hired and not talking.
+r1="$(surf app_surface_status_unknown crew-d "$SURF/status-never-hired.txt" 0)"
+t app-surface-308-staged-never-hired FAIL "$(surf_says "$r1" "$SURF_S")"
+r1="$(surf app_surface_status_unknown crew-d "$SURF/status-no-engine-line.txt" 2)"
+t app-surface-308-no-engine-line-red FAIL "$(surf_says "$r1" "$SURF_S")"
+
+# --- #345: `no build duty` names a cause and a count ---------------------
+{ printf 'crew-a 12:00 heavy-duty/crew: no build duty (board empty)\n'
+  printf 'crew-b 12:00 heavy-duty/crew: no build duty (slot held by #402; board holds 3 ready)\n'
+  printf 'crew-d 12:00 heavy-duty/crew: no build duty (2 ready, 1 round(s) held by seen-ledger)\n'
+} >"$SURF/nbd.txt"
+printf 'crew-a 12:00 heavy-duty/crew: no build duty\n' >"$SURF/nbd-bare.txt"
+: >"$SURF/nbd-empty.txt"
+SURF_N="duty.log: every no build duty line names a cause"
+r1="$(surf app_surface_no_build_duty "$SURF/nbd.txt")"
+t app-surface-345-truthful-causes ok "$(surf_says "$r1" "$SURF_N")"
+# The bare line #345 replaced: indistinguishable from the burial bug.
+r1="$(surf app_surface_no_build_duty "$SURF/nbd-bare.txt")"
+t app-surface-345-staged-bare-line FAIL "$(surf_says "$r1" "$SURF_N")"
+r1="$(surf app_surface_no_build_duty "$SURF/nbd-empty.txt")"
+t app-surface-345-nothing-logged-skips skip "$(surf_says "$r1" "no build duty names a cause")"
+
+# --- the page halves: the walk's own named lines ------------------------
+{ printf '  ok   floor: the canvas header paints the serving host version\n'
+  printf '  ok   render: the engine tile carries its integrity verdict\n'
+} >"$SURF/walk.out"
+printf '  FAIL floor: the canvas header paints the serving host version\n' >"$SURF/walk-failed.out"
+: >"$SURF/walk-never-reached.out"
+SURF_W="page: the header renders"
+r1="$(surf app_surface_walk_asserted "page: the header renders it" \
+        "floor: the canvas header paints the serving host version" "$SURF/walk.out")"
+t app-surface-walk-line-present ok "$(surf_says "$r1" "$SURF_W")"
+r1="$(surf app_surface_walk_asserted "page: the header renders it" \
+        "floor: the canvas header paints the serving host version" "$SURF/walk-failed.out")"
+t app-surface-walk-line-failed FAIL "$(surf_says "$r1" "$SURF_W")"
+# A walk that exits 0 having never reached the check proves nothing about it.
+r1="$(surf app_surface_walk_asserted "page: the header renders it" \
+        "floor: the canvas header paints the serving host version" "$SURF/walk-never-reached.out")"
+t app-surface-walk-never-reached FAIL "$(surf_says "$r1" "$SURF_W")"
+
+# --- #312: disarmed is a decision, silent is an alarm --------------------
+surf_page() {  # surf_page '<python mutating q>' → the page reader's payload
+  python3 - "$1" <<'PY'
+import json, sys
+# `empty` is what drill/rehearsal-page-read.js reads off #emptyfloor: whether
+# the panel is in the DOM at all, whether syncEmptyFloor has it shown, and its
+# text. On a fleet with consoles drawn it is present and not shown, which is
+# the shape the truthful fixture below carries.
+q = {"live": True, "tiles": "4units3hired",
+     "disarmed": ["crew-b"], "silent": ["crew-d"],
+     "empty": {"present": True, "shown": False, "text": ""}}
+exec(sys.argv[1])
+print(json.dumps(q))
+PY
+}
+# The empty floor as the page actually paints it (app.js:1681-1686), and the
+# tile row that goes with a fleet where nothing is deployed: `hidden` is 4, so
+# the hired tile renders, reading 0.
+EMPTY_TEXT='NO BOX IS HIRED YET The fleet roster declares 4 boxes, and none of them is running an engine. A console appears here as its box is hired. crew hire <box>'
+surf_page 'pass'                                     >"$SURF/page.json"
+surf_page 'q["disarmed"], q["silent"] = [], ["crew-b"]' >"$SURF/page-alarms-a-decision.json"
+surf_page 'q["silent"] = ["crew-b"]'                 >"$SURF/page-both-groups.json"
+surf_page 'q["disarmed"] = ["crew-z"]'               >"$SURF/page-unknown-box.json"
+surf_page 'q["disarmed"], q["silent"] = [], []'      >"$SURF/page-no-members.json"
+surf_page 'q["live"] = False'                        >"$SURF/page-demo.json"
+surf_page 'q["tiles"] = "3units3hired"'              >"$SURF/page-shrunk.json"
+surf_page 'q["tiles"] = "4units"'                    >"$SURF/page-no-hired-tile.json"
+surf_page 'q["tiles"] = "4units4hired"'              >"$SURF/page-furniture.json"
+# The two dropped-member stages: a page that lists nobody wrongly, by listing
+# nobody at all. Before both directions were asserted these PASSED.
+surf_page 'q["silent"] = []'                         >"$SURF/page-drops-silent.json"
+surf_page 'q["disarmed"] = []'                       >"$SURF/page-drops-disarmed.json"
+# The page agreeing with a payload that calls crew-b silent, so the only thing
+# left to disagree is `crew status`.
+surf_page 'q["disarmed"], q["silent"] = [], ["crew-b", "crew-d"]' \
+                                                     >"$SURF/page-b-silent.json"
+# Two boxes the operator deliberately stopped, correctly grouped: the fleet the
+# blind-set arity defect reds falsely when both are also logged out.
+surf_page 'q["disarmed"], q["silent"] = ["crew-b", "crew-d"], []' \
+                                                     >"$SURF/page-two-disarmed.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': True, 'text': '''$EMPTY_TEXT'''}" \
+                                                     >"$SURF/page-empty.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': False, 'shown': False, 'text': ''}" \
+                                                     >"$SURF/page-empty-no-panel.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': False, 'text': '''$EMPTY_TEXT'''}" \
+                                                     >"$SURF/page-empty-hidden.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': True,
+              'text': 'NO BOX IS HIRED YET The fleet roster declares 4 boxes.'}" \
+                                                     >"$SURF/page-empty-no-verb.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': True,
+              'text': 'THE FLEET ROSTER IS EMPTY No box is declared. crew new <box>'}" \
+                                                     >"$SURF/page-empty-wrong-verb.json"
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  disarmed\n'
+  printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
+} >"$SURF/status.txt"
+# The same fleet, logged out. cli/crew:2123 gives a missing credential the note
+# column outright, so the disarmed word never reaches it — the normal starting
+# state on a drill host, and it must not read as a disagreement.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
+} >"$SURF/status-logged-out.txt"
+# TWO boxes logged out, which is the arity that matters: the blind set was
+# accumulated as a display string (`crew-b, crew-d`) and then tested token-wise,
+# so every member but the last kept a comma and read as NOT blind — a false
+# FAIL on a correct page, invisible with the one-box fixture above (codex-bot,
+# claude-bot, #428). Creds-free is the normal starting state on a drill host and
+# two quiet boxes is an ordinary fleet, so this is the shape that reds #400's
+# round against a page that is right.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   convergence unknown\n'
+} >"$SURF/status-both-blind.txt"
+# ...and the same, with both blind boxes DISARMED rather than one of each, so
+# the members that must not red are the ones the disarmed direction iterates.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   ⚠ log in: box shell crew-d\n'
+} >"$SURF/status-two-disarmed-blind.txt"
+# ...and the same fleet where the CLI simply does not agree: crew-b is armed
+# and ticking as far as `crew status` can tell.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  2026-08-08T11:04Z reviewed #428\n'
+  printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
+} >"$SURF/status-b-armed.txt"
+
+SURF_F="page: the state filter separates disarmed from silent"
+SURF_T="page: the unit tile counts the declared roster"
+SURF_E="page: an all-undeployed floor names the repair verb"
+SURF_FC="page: the state filter agrees with crew status for every box"
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-truthful-split ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-204-page-truthful-tiles ok "$(surf_says "$r1" "$SURF_T")"
+# Nothing was blind to `crew status`, so the reader's own caveat is not raised.
+t app-surface-312-nothing-unclassifiable absent "$(surf_says "$r1" "$SURF_FC")"
+# The load-bearing direction, and the whole of #312: a box the operator
+# deliberately stopped counted in the alarm group.
+r1="$(surf app_surface_page_groups "$SURF/page-alarms-a-decision.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-staged-decision-as-alarm FAIL "$(surf_says "$r1" "$SURF_F")"
+r1="$(surf app_surface_page_groups "$SURF/page-both-groups.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-both-groups-at-once FAIL "$(surf_says "$r1" "$SURF_F")"
+r1="$(surf app_surface_page_groups "$SURF/page-unknown-box.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-grouped-box-cli-never-saw FAIL "$(surf_says "$r1" "$SURF_F")"
+# The other direction, which is the correction: a page that drops a genuinely
+# silent box — or a genuinely disarmed one — has no member to be wrong about,
+# and passed until the groups were compared as sets.
+r1="$(surf app_surface_page_groups "$SURF/page-drops-silent.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-page-drops-a-silent-box FAIL "$(surf_says "$r1" "$SURF_F")"
+r1="$(surf app_surface_page_groups "$SURF/page-drops-disarmed.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-page-drops-a-disarmed-box FAIL "$(surf_says "$r1" "$SURF_F")"
+# The two readers disagreeing, each way round. The payload calls crew-b
+# disarmed and the CLI shows it ticking...
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-b-armed.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-cli-does-not-confirm-disarmed FAIL "$(surf_says "$r1" "$SURF_F")"
+# ...and the CLI calls crew-b deliberately stopped while the payload has it in
+# the alarm group, which is #312's original defect read from the other reader.
+r1="$(surf app_surface_page_groups "$SURF/page-b-silent.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet-b-not-disarmed.json")"
+t app-surface-312-cli-says-stopped-payload-does-not FAIL "$(surf_says "$r1" "$SURF_F")"
+# A logged-out box: `crew status` cannot answer for it, so it is named in its
+# own skip and the page-side verdict still stands. Counting it as a
+# disagreement would red a correct page on every creds-free host.
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-logged-out.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-credential-note-does-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-credential-note-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# TWO blind boxes, one from each group — the cheaper reproduction, since the
+# blind set is filled from the disarmed boxes before the silent ones, so the
+# disarmed member is the one that carried the comma.
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-both-blind.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-two-blind-boxes-do-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-two-blind-boxes-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# ...and both of them DISARMED, which is the case put directly to the loop that
+# tests blind membership. A correct page must skip here and not FAIL.
+r1="$(surf app_surface_page_groups "$SURF/page-two-disarmed.json" "$SURF/status-two-disarmed-blind.txt" 4 crew-c 3 "$SURF/fleet-two-disarmed.json")"
+t app-surface-312-two-blind-disarmed-do-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-two-blind-disarmed-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# The set is machine-readable and the message is a copy of it: both boxes are
+# named, comma-joined, and neither naming nor membership depends on the other.
+t app-surface-312-blind-skip-names-both skip "$(surf_says "$r1" "armed-ness would be in: crew-b, crew-d")"
+r1="$(surf app_surface_page_groups "$SURF/page-no-members.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet-none-quiet.json")"
+t app-surface-312-no-member-to-classify skip "$(surf_says "$r1" "$SURF_F")"
+# The demo payload is not this host, so neither group may be read off it.
+r1="$(surf app_surface_page_groups "$SURF/page-demo.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-demo-payload-skips skip "$(surf_says "$r1" "$SURF_F")"
+t app-surface-204-demo-payload-skips skip "$(surf_says "$r1" "$SURF_T")"
+t app-surface-204-demo-payload-skips-empty-floor skip "$(surf_says "$r1" "$SURF_E")"
+r1="$(surf app_surface_page_groups "$SURF/page-shrunk.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-204-staged-shrunk-tile FAIL "$(surf_says "$r1" "$SURF_T")"
+# Fully deployed: the count half still holds, and the hired tile is furniture.
+r1="$(surf app_surface_page_groups "$SURF/page-no-hired-tile.json" "$SURF/status.txt" 4 '' 4 "$SURF/fleet.json")"
+t app-surface-204-page-fully-deployed ok "$(surf_says "$r1" "$SURF_T")"
+r1="$(surf app_surface_page_groups "$SURF/page-furniture.json" "$SURF/status.txt" 4 '' 4 "$SURF/fleet.json")"
+t app-surface-204-page-permanent-hired-tile FAIL "$(surf_says "$r1" "$SURF_T")"
+# A floor with a console drawn is not the empty-floor state, and the drill will
+# not un-hire a box to reach it: skipped by name, never quietly passed.
+t app-surface-204-empty-floor-skips-when-drawn skip "$(surf_says "$r1" "$SURF_E")"
+
+# --- #204's other half: the floor with nothing on it ---------------------
+# Four declared boxes, none deployed. The issue asks for this floor to name
+# `crew hire` in as many words, and nothing here read it before.
+SURF_ALLND="crew-a crew-b crew-c crew-d"
+r1="$(surf app_surface_page_groups "$SURF/page-empty.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-names-crew-hire ok "$(surf_says "$r1" "$SURF_E")"
+# The count half still holds on that floor: 4 declared, 0 with a console.
+t app-surface-204-empty-floor-tiles ok "$(surf_says "$r1" "$SURF_T")"
+# A blank stage with no words on it is the state #204 named as the defect.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-no-panel.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-no-panel FAIL "$(surf_says "$r1" "$SURF_E")"
+# In the DOM but never shown is the same blank stage to an operator.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-hidden.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-hidden FAIL "$(surf_says "$r1" "$SURF_E")"
+# It says how many boxes are declared and stops — the count without the next
+# step, which is the half the issue calls a requirement on the fix.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-no-verb.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-no-repair-verb FAIL "$(surf_says "$r1" "$SURF_E")"
+# `crew new` is the wrong verb for a roster that DOES declare boxes: they exist
+# to be hired, and telling the operator to create more is the wrong repair.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-wrong-verb.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-wrong-verb FAIL "$(surf_says "$r1" "$SURF_E")"
+# ...and it is the RIGHT verb when the roster declares nothing at all, which is
+# the other branch syncEmptyFloor renders.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-wrong-verb.json" "$SURF/status.txt" 0 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-roster-names-crew-new ok "$(surf_says "$r1" "$SURF_E")"
+
 # --- rehearsal phase 0: acquisition failures abort before checks (#27) --
 P0SHIM="$TMP/phase0-bin"
 P0HOME="$TMP/phase0-home"

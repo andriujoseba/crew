@@ -128,6 +128,16 @@ fail() { echo "FAIL $1${2:+  — $2}"; FAILS+=("$1"); }
 skip() { echo "skip $1${2:+  — $2}"; SKIP=$((SKIP + 1)); }
 t()    { if [ "$2" = "$3" ]; then ok "$1"; else fail "$1" "expected [$2] got [$3]"; fi; }
 
+# The 0.1.2 operator surfaces (#420) are asserted by functions over the inputs
+# they read, sourced from beside this file. Sourced rather than inlined so
+# shared/test/run.sh can drive them with a staged wrong answer and prove each
+# one reds — an assertion reachable only from a drill host is one nobody has
+# checked. Sourced HERE, after ok/fail/skip/t and roster_rows and before jqf,
+# which is fine: bash resolves the callees at call time, and every call is far
+# below.
+# shellcheck source=drill/rehearsal-app-surfaces.sh disable=SC1091
+source "$HERE/rehearsal-app-surfaces.sh"
+
 command -v box     >/dev/null || { echo "drill/rehearsal-app.sh runs on a box HOST — no 'box' on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
 
@@ -264,8 +274,23 @@ chmod +x "$TMP/bin/box"
 export PATH="$TMP/bin:$PATH"
 
 # ---- collector -----------------------------------------------------------
+# The LAUNCHER owns the version string, not the server: floor.py's
+# FLOOR_VERSION is `os.environ.get("CREW_FLOOR_VERSION", "version unavailable")`
+# on purpose, so the page never makes a second attempt to find and interpret
+# VERSION (server/floor.py). `crew floor` passes `crew --version`; a drill that
+# starts floor.py directly and omits it serves the placeholder — and then #347's
+# whole surface is untestable here, because the header has nothing real to name.
+# So the drill launches the collector the way the operator's launcher does.
+#
+# The assertion that follows is NOT against this string: it is against the
+# tree's own VERSION file, which is the fact an operator is reading the header
+# for. A drill comparing a value it exported to itself asserts its own fixture,
+# which is #50's defect in one line.
+HOST_VERSION="$("$ROOT/cli/crew" --version)"
+CREW_VERSION_FILE="$(head -1 "$ROOT/VERSION" 2>/dev/null | tr -d '\r\n')"
 CREW_FLOOR_PASS="$PASSWD" CREW_FLOOR_USER="$USER" CREW_FLOOR_PORT="$PORT" \
 CREW_FLOOR_BIND=127.0.0.1 CREW_FLOOR_INTERVAL=3600 \
+CREW_FLOOR_VERSION="$HOST_VERSION" \
   python3 "$ROOT/fleet-floor/server/floor.py" >"$TMP/floor.log" 2>&1 &
 SRV=$!
 
@@ -449,6 +474,70 @@ else
   skip "engine version reported" "no box on this host is hired"
 fi
 
+# ---- the operator's view this window shipped (#420) -----------------------
+# Six 0.1.2 changes landed in the view an operator opens to decide the fleet is
+# healthy, and this leg read none of them. They are asserted HERE, on the same
+# grounds :453 already states for the ping tier: every one is a read of a REAL
+# box's state. stub-box can answer `modified`, or decline to answer at all; it
+# cannot demonstrate that a real guest produces the answer the floor prints.
+#
+# Each assertion is made against the BOX's own answer wherever the box has one,
+# never against a constant here — a drill comparing a value it exported to
+# itself asserts its own fixture (#50).
+echo
+echo "== the operator's view (0.1.2 floor surfaces)"
+
+# ONE snapshot for this whole section. Several assertions below read more than
+# one field per box and cross-check two of them against the box itself;
+# re-polling between reads lets a state change straddle a comparison and
+# manufacture a disagreement neither reader ever held.
+FLEET_JSON="$TMP/fleet-surfaces.json"
+body GET /api/fleet > "$FLEET_JSON"
+
+# Every box read this section makes is CAPPED, for the reason floor.py caps its
+# own probes (server/floor.py's PROBE_TIMEOUT_S): `box exec` into a wedged box
+# can block forever, and one sick box must not stall the leg — an uncapped read
+# here would hang the whole drill where the collector under it merely reports a
+# timeout. Same default and same override as the collector's, so the drill and
+# the floor wait the same amount of time for the same box.
+BOX_READ_TIMEOUT="${CREW_FLOOR_PROBE_TIMEOUT:-45}"
+#
+# `</dev/null` is LOAD-BEARING, and it was found by running this leg rather
+# than by reading it. Every caller below sits inside `while read … done <
+# <(roster_rows)`, and `box exec` inherits that loop's stdin and DRAINS it — so
+# the loop ran exactly once, for the first roster box, and the remaining boxes
+# were never asked at all. Silently: the fingerprint carried one `cron` line
+# instead of five and compared equal to itself, the integrity comparison
+# reported agreement over one box while claiming the fleet, and #345's log
+# collection read one duty.log. That is the same defect codex-bot named in the
+# dry-run verdict — a claim wider than the read behind it — one layer further
+# down, and it makes "every roster box's crontab" true rather than aspirational.
+box_read() { timeout "$BOX_READ_TIMEOUT" box exec "$@" </dev/null; }
+
+# The box's own answer to the integrity question, asked over its own transport.
+# `--state` prints ONE bare word — absent, unverified, current or modified
+# (shared/bin/engine-manifest.sh's state()) — and probe.sh takes it with the
+# same `head -1`, so the two readers ask for the same thing the same way.
+#
+# The answer is fenced by a marker on BOTH sides of the transport, for the
+# reason the `no build duty` read below states: `bash -lc` is a LOGIN shell, so
+# a profile that echoes anything puts its line ahead of the verdict, and an
+# unfenced `head -1` would then report a banner as the box's integrity. Fenced,
+# a talkative box can only make the answer absent, never wrong.
+# shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's, expanded there
+box_integrity() {
+  box_read "$1" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
+    [ -x "$d/bin/engine-manifest.sh" ] || exit 9
+    "$d/bin/engine-manifest.sh" --state 2>/dev/null | head -1 | sed "s/^/::state /"' 2>/dev/null \
+    | sed -n 's/^::state //p' | head -1 | tr -d '\r\n'
+}
+
+app_surface_version    "$FLEET_JSON" "$HOST_VERSION" "$CREW_VERSION_FILE"
+app_surface_integrity  "$FLEET_JSON"
+# Publishes SURF_NOT_DEPLOYED and SURF_DRAWN, which the page half re-asserts as
+# the two numbers the unit and hired tiles render.
+app_surface_not_deployed "$FLEET_JSON" "$ROSTER_N"
+
 # ---- the ping tier, against boxes that really answer ----------------------
 # stub-box can fake a probe's OUTPUT; it cannot demonstrate that `box exec
 # <box> -- true` is a real round-trip into a running guest, which is the whole
@@ -525,6 +614,83 @@ t "no box reports the retired 'ok' credential state" "" "$OKS"
 # and why widening this set must not stop it biting on `unknown`.
 BLANK="$(body GET /api/fleet | jqf "','.join(u['box'] for u in d['units'] if u['engine'] and u['gh'] not in ('flowing','waiting','stale','missing'))")"
 t "every hired box reports a gh credential state" "" "$BLANK"
+
+# ---- the operator's view in the CLI (0.1.2 surfaces, #420) -----------------
+# The other half of the same window: two `crew` reads and one duty.log line an
+# operator acts on, none of them asserted anywhere a real box exists. All three
+# are READS — nothing here needs --allow-control, and the fingerprint below is
+# what proves the dry run kept that promise.
+echo
+echo "== the operator's view (0.1.2 CLI surfaces)"
+
+# The fleet as three facts: the roster it read, the boxes that exist, and every
+# roster box's crontab. Taken before and after the dry run, so #218's "touches
+# nothing" is asserted against the FLEET and not against the command's own
+# account of itself.
+#
+# `crontab -l` is a read, and the read-only receipt guard below deliberately
+# does not match it — probe.sh reads the crontab on every poll, so matching it
+# would red every read-only walk there has ever been.
+# shellcheck disable=SC2016  # the crontab belongs to the BOX, read inside it
+# Every line is `<key> <value>`, and the value is the literal `UNREADABLE` when
+# the component did not answer. That marker is the whole repair codex-bot asked
+# for: a failed `box_read` used to be piped straight into sha256sum, so an
+# unreachable box and a timed-out box both fingerprinted as the hash of the
+# empty string and compared EQUAL to each other — "unchanged" over two reads
+# that never happened. The distinction is available and was being thrown away:
+# the inner `crontab -l 2>/dev/null || true` returns 0 for a box that genuinely
+# has no crontab, so only a transport failure trips the else.
+fleet_fingerprint() {
+  local b cron_out
+  if [ -r "$ROSTER" ]; then
+    sha256sum "$ROSTER" | awk '{print "roster " $1}'
+  else
+    echo "roster UNREADABLE"
+  fi
+  box list --json 2>/dev/null | python3 -c \
+    "import json,sys;print('boxes ' + (','.join(sorted(str(b.get('name','')) + ':' + str(b.get('status','')) for b in json.load(sys.stdin))) or 'none'))" \
+    2>/dev/null || echo "boxes UNREADABLE"
+  while read -r b _agent _role _from; do
+    [ -z "$b" ] && continue
+    if cron_out="$(box_read "$b" -- bash -lc 'crontab -l 2>/dev/null || true' 2>/dev/null)"; then
+      printf 'cron %s %s\n' "$b" "$(printf '%s' "$cron_out" | sha256sum | awk '{print $1}')"
+    else
+      printf 'cron %s UNREADABLE\n' "$b"
+    fi
+  done < <(roster_rows)
+}
+fleet_fingerprint > "$TMP/fleet-before.fp"
+DRY_RC=0
+"$ROOT/cli/crew" up --dry-run > "$TMP/up-dry.txt" 2>&1 || DRY_RC=$?
+fleet_fingerprint > "$TMP/fleet-after.fp"
+app_surface_dry_run "$TMP/up-dry.txt" "$TMP/fleet-before.fp" "$TMP/fleet-after.fp" "$DRY_RC"
+
+# --- #308: a box that does not ANSWER is unknown, never never-hired ---------
+SILENT_BOX="$(app_surface_silent_box "$FLEET_JSON")"
+if [ -z "$SILENT_BOX" ]; then
+  skip "crew status <box>: an unanswered probe reads unknown, not never-hired" \
+       "every box on this fleet answered its probe — no stopped or unreachable box to ask about"
+else
+  ST_RC=0
+  "$ROOT/cli/crew" status "$SILENT_BOX" > "$TMP/status-one.txt" 2>&1 || ST_RC=$?
+  app_surface_status_unknown "$SILENT_BOX" "$TMP/status-one.txt" "$ST_RC"
+fi
+
+# --- #345: `no build duty` names a cause and a count -----------------------
+# The phrase is required on BOTH sides of the transport: the box greps its own
+# log, and the host keeps only the lines that carry the phrase. A login shell
+# inside a guest may print a banner, an MOTD or a warning of its own, and a line
+# this assertion never claimed anything about must not be able to fail it.
+NBD_LINES="$TMP/no-build-duty.txt"
+: > "$NBD_LINES"
+while read -r name _agent _role _from; do
+  [ -z "$name" ] && continue
+  # shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's
+  box_read "$name" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
+    grep -h "no build duty" "$d/duty.log" 2>/dev/null | tail -20' 2>/dev/null \
+    | grep -F 'no build duty' | sed "s/^/$name /" >> "$NBD_LINES" || true
+done < <(roster_rows)
+app_surface_no_build_duty "$NBD_LINES"
 
 # Auth is not optional on a page that can power-cycle boxes.
 echo
@@ -647,10 +813,12 @@ if [ "$BROWSER" -eq 1 ]; then
   fi
   if ! node -e "require('playwright-core')" >/dev/null 2>&1; then
     skip "browser walk" "playwright-core not installed (npm i --no-save playwright-core)"
+    app_surface_page_skips "playwright-core not installed"
   elif [ -z "${PW_CHROME:-}" ] || [ ! -x "${PW_CHROME:-}" ]; then
     # Named as its own skip: a missing BROWSER is a different repair from a
     # missing module, and the message has to say which one is missing.
     skip "browser walk" "no browser found — install Chrome/Chromium, or set PW_CHROME=/path/to/chrome"
+    app_surface_page_skips "no browser found"
   else
     # ALWAYS read-only — including under --allow-control. Gating it on that
     # flag only moved the hazard: --allow-control without --boxes skips the
@@ -673,7 +841,14 @@ if [ "$BROWSER" -eq 1 ]; then
     # NOT FLOOR_TEST_FIXTURE: this is a real fleet. The walk's fixture-only
     # demands (a hostile-log box, a box in its first session, something offline)
     # are guarantees of test/fixtures/roster.txt, not of a healthy host.
-    if FLOOR_TEST_READONLY=1 \
+    # FLOOR_TEST_VERSION is the walk's expected header string, the same pairing
+    # fleet-floor/test/run.sh makes with CREW_FLOOR_VERSION: the walk asserts the
+    # page did not drop or hardcode what the launcher passed. Unset, that
+    # assertion compares against `undefined` and can never pass, which is why
+    # #347's rendered half has been unreachable from this leg. It is not
+    # circular — the drill's own assertion above pins the same string to this
+    # tree's VERSION file, so a wrong version fails there.
+    if FLOOR_TEST_READONLY=1 FLOOR_TEST_VERSION="$HOST_VERSION" \
        node "$ROOT/fleet-floor/test/browser.js" "http://127.0.0.1:$PORT/" "$SHOTS" "$USER" "$PASSWD" \
        2>&1 | tee "$TMP/walk.out"; then
       ok "browser walk against the real fleet (read-only)"
@@ -692,6 +867,50 @@ if [ "$BROWSER" -eq 1 ]; then
       ok "browser walk reported its assertion count (${WALK_N} checks on this fleet)"
     else
       fail "browser walk reported its assertion count" "no '-- browser: N ok' line — it exited without a summary"
+    fi
+
+    # ---- the 0.1.2 surfaces, on the PAGE -------------------------------
+    # Two of the four are already asserted by the walk on a live fleet, so they
+    # are read out of its output rather than re-implemented here: duplicating
+    # the canvas paint interception would put a second copy of the hardest part
+    # of browser.js in drill/, and the copy would be the one that rots.
+    app_surface_walk_asserted "page: the header renders the serving host's version (#347)" \
+                              "floor: the canvas header paints the serving host version" \
+                              "$TMP/walk.out"
+    app_surface_walk_asserted "page: the engine tile renders its integrity verdict (#190)" \
+                              "render: the engine tile carries its integrity verdict" \
+                              "$TMP/walk.out"
+
+
+    # #312 and #204's page halves have no live-fleet assertion in the walk —
+    # browser.js pins the filter split to three named fixture boxes under
+    # FLOOR_TEST_FIXTURE, which a real host does not have and must not be asked
+    # for. So the drill reads the shipped predicate itself: FLOORDEV.matched()
+    # reports the set the state chip leaves undimmed, which is the page's own
+    # classification rather than a reconstruction of it.
+    #
+    # Read-only by construction: this clicks the two filter chips, which paint a
+    # canvas scrim. It issues no request to /api/command and appears in the
+    # receipt slice checked below alongside the walk.
+    #
+    # The reader is `drill/rehearsal-page-read.js`, IN THE TREE. It was a
+    # heredoc into "$TMP" and it could never have passed: node resolves a
+    # require from the script's own directory upward, so playwright-core at
+    # $ROOT/node_modules — where this repo says to install it — is unreachable
+    # from /tmp, and the failure lands as two hard FAILs rather than a skip.
+    # The precondition above cannot catch it because `node -e` resolves from
+    # the cwd instead. Beside the file it is run with, resolution is ordinary.
+    if node "$ROOT/drill/rehearsal-page-read.js" "http://127.0.0.1:$PORT/" "$USER" "$PASSWD" \
+         > "$TMP/page-read.json" 2>"$TMP/page-read.err"; then
+      app_surface_page_groups "$TMP/page-read.json" "$TMP/status.txt" \
+                              "$ROSTER_N" "$SURF_NOT_DEPLOYED" "$SURF_DRAWN" "$FLEET_JSON"
+    else
+      fail "page: the state filter separates disarmed from silent (#312)" \
+           "the page reader did not complete: $(tr '\n' ' ' < "$TMP/page-read.err" | head -c 150)"
+      fail "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" \
+           "the page reader did not complete — see above"
+      fail "page: an all-undeployed floor names the repair verb (#204)" \
+           "the page reader did not complete — see above"
     fi
 
     # ---- the read-only walk must have touched NOTHING --------------------
@@ -747,6 +966,8 @@ if [ "$BROWSER" -eq 1 ]; then
            "nothing recorded — the logging wrapper is not on PATH, so the no-control check above proves nothing"
     fi
   fi
+else
+  app_surface_page_skips "--no-browser"
 fi
 
 echo
