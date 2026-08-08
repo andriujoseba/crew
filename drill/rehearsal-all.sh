@@ -88,6 +88,8 @@ while [ $# -gt 0 ]; do
 done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=drill/rehearsal-hygiene.sh
+. "$HERE/rehearsal-hygiene.sh"
 declare -a SUMMARY=()
 overall=0
 
@@ -130,15 +132,9 @@ for role in $ROLES; do
   esac
 done
 
-if [ "$HYGIENE_DRILL" -eq 0 ]; then
-  SUMMARY+=("skip       hygiene  (--no-hygiene-drill)")
-elif [ -z "${DRILLED// /}" ]; then
-  SUMMARY+=("INCOMPLETE hygiene  (no role reached a box)")
+SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$overall")")
+if [ "$HYGIENE_DRILL" -ne 0 ] && [ -z "${DRILLED// /}" ]; then
   [ "$overall" -eq 1 ] || overall=2
-elif [ "$overall" -eq 0 ]; then
-  SUMMARY+=("ok         hygiene  (preservation + refusal)")
-else
-  SUMMARY+=("FAIL       hygiene")
 fi
 
 if [ "$RESUME_DRILL" -eq 0 ]; then

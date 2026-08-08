@@ -504,10 +504,34 @@ if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
     'WARN: preservation failed again'; then r1=FALSE_PASS; else r1=red; fi
 t rehearsal-hygiene-repeated-report-reds red "$r1"
 
+if rehearsal_hygiene_box_path_is_resolved \
+    /home/box-user/duty/.rehearsal-hygiene-refusal-ledger; then
+  r1=resolved
+else
+  r1=WRONG
+fi
+t rehearsal-hygiene-ledger-is-absolute-box-path resolved "$r1"
+# shellcheck disable=SC2016  # deliberate pre-fix mutation
+if rehearsal_hygiene_box_path_is_resolved \
+    '$HOME/duty/.rehearsal-hygiene-refusal-ledger'; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-unexpanded-ledger-path-reds red "$r1"
+
+t rehearsal-hygiene-summary-skipped-phase-incomplete \
+  "INCOMPLETE hygiene  (phase 2 skipped)" \
+  "$(rehearsal_hygiene_summary 1 ' builder' 2)"
+t rehearsal-hygiene-summary-failure-stays-failure \
+  "FAIL       hygiene" "$(rehearsal_hygiene_summary 1 ' builder' 1)"
+
 hygiene_wiring=missing
 # shellcheck disable=SC2016  # these are literal wiring strings, not expansions
 if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'hygiene  (preservation + refusal)' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq '"$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2"' \
+      "$ROOT/drill/rehearsal-hygiene.sh" \
     && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ROLE"' "$ROOT/drill/rehearsal.sh"; then
   hygiene_wiring=wired
 fi

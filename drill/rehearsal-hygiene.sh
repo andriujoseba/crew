@@ -7,6 +7,9 @@ REHEARSAL_HYGIENE_CLONE=""
 REHEARSAL_HYGIENE_WORKTREES=""
 REHEARSAL_HYGIENE_BRANCHES=""
 REHEARSAL_HYGIENE_REFS=""
+REHEARSAL_HYGIENE_PRESERVE_REMOTE=""
+REHEARSAL_HYGIENE_FORK_URL=""
+REHEARSAL_HYGIENE_FORK_TEMP=0
 
 rehearsal_hygiene_tip_has_all_dirt() {
   local tree="$1"
@@ -47,6 +50,26 @@ rehearsal_hygiene_refusal_is_intact() {
     && [ "$(grep -c 'WARN:' <<<"$second_log" || true)" -eq 0 ]
 }
 
+rehearsal_hygiene_box_path_is_resolved() {
+  local path="$1"
+  [ "${path#/}" != "$path" ] && [[ "$path" != *'$'* ]]
+}
+
+rehearsal_hygiene_summary() {
+  local enabled="$1" drilled="$2" overall="$3"
+  if [ "$enabled" -eq 0 ]; then
+    printf '%s\n' "skip       hygiene  (--no-hygiene-drill)"
+  elif [ -z "${drilled// /}" ]; then
+    printf '%s\n' "INCOMPLETE hygiene  (no role reached a box)"
+  elif [ "$overall" -eq 0 ]; then
+    printf '%s\n' "ok         hygiene  (preservation + refusal)"
+  elif [ "$overall" -eq 2 ]; then
+    printf '%s\n' "INCOMPLETE hygiene  (phase 2 skipped)"
+  else
+    printf '%s\n' "FAIL       hygiene"
+  fi
+}
+
 rehearsal_hygiene_box_snapshot() {
   local path="$1"
   bx "set -e
@@ -60,6 +83,12 @@ rehearsal_hygiene_box_snapshot() {
 rehearsal_hygiene_cleanup() {
   local wt branch ref
   [ -n "$REHEARSAL_HYGIENE_CLONE" ] || return 0
+  if [ "$REHEARSAL_HYGIENE_FORK_TEMP" -eq 1 ]; then
+    bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote remove fork >/dev/null 2>&1 || true"
+  elif [ -n "$REHEARSAL_HYGIENE_FORK_URL" ]; then
+    bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote set-url fork \
+      '$REHEARSAL_HYGIENE_FORK_URL' >/dev/null 2>&1 || true"
+  fi
   for wt in $REHEARSAL_HYGIENE_WORKTREES; do
     bx "git -C '$REHEARSAL_HYGIENE_CLONE' worktree remove --force '$wt' >/dev/null 2>&1 || true"
   done
@@ -68,14 +97,18 @@ rehearsal_hygiene_cleanup() {
         git -C '$REHEARSAL_HYGIENE_CLONE' push -q origin --delete '$branch' >/dev/null 2>&1 || true"
   done
   for ref in $REHEARSAL_HYGIENE_REFS; do
-    bx "git -C '$REHEARSAL_HYGIENE_CLONE' push -q origin --delete '$ref' >/dev/null 2>&1 || true"
+    [ -n "$REHEARSAL_HYGIENE_PRESERVE_REMOTE" ] || continue
+    bx "git -C '$REHEARSAL_HYGIENE_CLONE' push -q \
+      '$REHEARSAL_HYGIENE_PRESERVE_REMOTE' --delete '$ref' >/dev/null 2>&1 || true"
   done
-  bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote remove fork >/dev/null 2>&1 || true
-      rm -rf ~/duty/.rehearsal-hygiene-shim" >/dev/null 2>&1 || true
+  bx "rm -rf ~/duty/.rehearsal-hygiene-shim" >/dev/null 2>&1 || true
   REHEARSAL_HYGIENE_CLONE=""
   REHEARSAL_HYGIENE_WORKTREES=""
   REHEARSAL_HYGIENE_BRANCHES=""
   REHEARSAL_HYGIENE_REFS=""
+  REHEARSAL_HYGIENE_PRESERVE_REMOTE=""
+  REHEARSAL_HYGIENE_FORK_URL=""
+  REHEARSAL_HYGIENE_FORK_TEMP=0
 }
 
 rehearsal_hygiene_fixture() {
@@ -159,12 +192,13 @@ EOF
 }
 
 rehearsal_hygiene_release() {
-  local repo="$1" branch="$2" path="$3" pr="$4" ledger="$5"
+  local repo="$1" branch="$2" path="$3" pr="$4" ledger="$5" identity="$6"
+  rehearsal_hygiene_box_path_is_resolved "$ledger" || return 1
   bx "set -uo pipefail
     DUTY_DIR=\"\$HOME/duty\"
     source \"\$DUTY_DIR/lib/common.sh\"
     load_conf
-    ME=\"$(gh api user --jq .login)\"
+    ME='$identity'
     source \"\$DUTY_DIR/lib/duty-builder.sh\"
     PATH=\"\$DUTY_DIR/.rehearsal-hygiene-shim:\$PATH\"
     _wt_release '$REHEARSAL_HYGIENE_CLONE' '$repo' '$branch' '$path' '$pr' '$ledger'
@@ -174,7 +208,7 @@ rehearsal_hygiene_release() {
 rehearsal_hygiene_drill() {
   local repo="$1" role="$2" slug stamp box_home good_branch bad_branch good_wt bad_wt
   local good_ref bad_ref good_pr bad_pr first_line good_log tree tip_contents staged record
-  local before after first_refusal second_refusal
+  local before after first_refusal second_refusal preserve_remote fork_url
   if [ "${REHEARSAL_HYGIENE_DRILL:-1}" -eq 0 ]; then
     skip "hygiene: dirty worktree preservation and refusal (--no-hygiene-drill)"
     return 0
@@ -198,11 +232,18 @@ rehearsal_hygiene_drill() {
     return 1
   fi
   ok "hygiene: sandbox main clone available"
+  preserve_remote="$(bx "if git -C '$REHEARSAL_HYGIENE_CLONE' remote get-url fork >/dev/null 2>&1; then printf fork; else printf origin; fi")" \
+    || return 1
+  fork_url="$(bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote get-url fork 2>/dev/null || true")"
+  REHEARSAL_HYGIENE_PRESERVE_REMOTE="$preserve_remote"
+  REHEARSAL_HYGIENE_FORK_URL="$fork_url"
   rehearsal_hygiene_cleanup
   REHEARSAL_HYGIENE_CLONE="$box_home/duty/work/$slug"
   REHEARSAL_HYGIENE_REFS="$good_ref $bad_ref"
+  REHEARSAL_HYGIENE_PRESERVE_REMOTE="$preserve_remote"
+  REHEARSAL_HYGIENE_FORK_URL="$fork_url"
   check "hygiene: prior fixture refs and worktrees are absent" bx \
-    "! git -C '$REHEARSAL_HYGIENE_CLONE' ls-remote --exit-code origin \
+    "! git -C '$REHEARSAL_HYGIENE_CLONE' ls-remote --exit-code '$preserve_remote' \
        'refs/heads/$good_ref' 'refs/heads/$bad_ref' >/dev/null 2>&1 \
      && ! test -e '$good_wt' && ! test -e '$bad_wt'"
   rehearsal_hygiene_install_git_trace \
@@ -218,13 +259,13 @@ rehearsal_hygiene_drill() {
   ok "hygiene: preservation fixture carries tracked, root-untracked, nested-untracked and distinct staged work"
   first_line="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
   if rehearsal_hygiene_release "$repo" "$good_branch" "$good_wt" "$good_pr" \
-      "\$HOME/duty/.rehearsal-hygiene-ledger" >/dev/null; then
+      "$box_home/duty/.rehearsal-hygiene-ledger" "$ME2" >/dev/null; then
     ok "hygiene: preserved dirty worktree released"
   else
     fail "hygiene: preserved dirty worktree released"
   fi
   good_log="$(bx "tail -n +$first_line ~/duty/duty.log")"
-  tree="$(bx "git -C '$REHEARSAL_HYGIENE_CLONE' fetch -q origin \
+  tree="$(bx "git -C '$REHEARSAL_HYGIENE_CLONE' fetch -q '$preserve_remote' \
       'refs/heads/$good_ref' \
     && git -C '$REHEARSAL_HYGIENE_CLONE' ls-tree -r --name-only FETCH_HEAD")" || tree=""
   check "hygiene: wip tip carries all three dirty-work shapes" \
@@ -241,7 +282,7 @@ rehearsal_hygiene_drill() {
   record="$(bx "gh api 'repos/$repo/issues/$good_pr/comments' --jq \
     '[.[] | select(.body | startswith(\"🗃️ Uncommitted work preserved\"))] | last | .body // \"\"'")" || record=""
   check "hygiene: upstream record names remote, ref and every dirty-work class" \
-    rehearsal_hygiene_record_names_payload "$record" origin "$good_ref"
+    rehearsal_hygiene_record_names_payload "$record" "$preserve_remote" "$good_ref"
   check "hygiene: confirmed push precedes forced removal in duty.log" \
     rehearsal_hygiene_push_precedes_removal "$good_log"
   check "hygiene: worktree is gone only after preservation" bx "! test -e '$good_wt'"
@@ -254,19 +295,25 @@ rehearsal_hygiene_drill() {
   fi
   ok "hygiene: refusal fixture staged"
   before="$(rehearsal_hygiene_box_snapshot "$bad_wt")" || before="snapshot-failed"
-  bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote add fork \
+  if [ -n "$fork_url" ]; then
+    bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote set-url fork \
       'file:///rehearsal-hygiene-unwritable/$stamp.git'"
+  else
+    bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote add fork \
+      'file:///rehearsal-hygiene-unwritable/$stamp.git'"
+    REHEARSAL_HYGIENE_FORK_TEMP=1
+  fi
   first_refusal="$(rehearsal_hygiene_release "$repo" "$bad_branch" "$bad_wt" \
-    "$bad_pr" "\$HOME/duty/.rehearsal-hygiene-refusal-ledger" 2>&1 || true)"
+    "$bad_pr" "$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2" 2>&1 || true)"
   second_refusal="$(rehearsal_hygiene_release "$repo" "$bad_branch" "$bad_wt" \
-    "$bad_pr" "\$HOME/duty/.rehearsal-hygiene-refusal-ledger" 2>&1 || true)"
+    "$bad_pr" "$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2" 2>&1 || true)"
   after="$(rehearsal_hygiene_box_snapshot "$bad_wt")" || after="snapshot-failed-after"
   check "hygiene: failed push keeps README.md, hygiene-root-untracked.txt and hygiene-untracked/nested.txt, reported once" \
     rehearsal_hygiene_refusal_is_intact \
       "$before" "$after" "$first_refusal" "$second_refusal"
   rehearsal_hygiene_cleanup
   check "hygiene: teardown removed fixture branches, refs and worktrees" bx \
-    "! git -C '$box_home/duty/work/$slug' ls-remote --exit-code origin \
+    "! git -C '$box_home/duty/work/$slug' ls-remote --exit-code '$preserve_remote' \
        'refs/heads/$good_ref' 'refs/heads/$bad_ref' \
        'refs/heads/$good_branch' 'refs/heads/$bad_branch' >/dev/null 2>&1 \
      && ! test -e '$good_wt' && ! test -e '$bad_wt'"
