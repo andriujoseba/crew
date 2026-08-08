@@ -450,6 +450,315 @@ else
 fi
 t rehearsal-resume-all-opt-out-and-summary-wired wired "$resume_wiring"
 
+# --- rehearsal notify leg: the watch-set union, both halves (#423) ---------
+# shellcheck source=drill/rehearsal-notify.sh
+source "$ROOT/drill/rehearsal-notify.sh"
+
+NOTIFY_WORK=owner/crew-drill-reviewer
+NOTIFY_EXTRA=owner/crew-drill-reviewer-notify
+NOTIFY_WORK_PR=31
+NOTIFY_EXTRA_PR=7
+NOTIFY_WORK_LINE="2026-08-08T12:00:01Z $NOTIFY_WORK#$NOTIFY_WORK_PR: notified needs-human at abc1234 (msg 5501)"
+NOTIFY_EXTRA_LINE="2026-08-08T12:00:02Z $NOTIFY_EXTRA#$NOTIFY_EXTRA_PR: notified needs-human at def5678 (msg 5502)"
+NOTIFY_RUN_LOG="2026-08-08T12:00:00Z notify run start
+$NOTIFY_WORK_LINE
+$NOTIFY_EXTRA_LINE
+2026-08-08T12:00:03Z sweep done — 2 repos, 2 flagged, 2 pending
+2026-08-08T12:00:03Z notify run end"
+
+notify_union() {
+  rehearsal_notify_union_from_log \
+    "$NOTIFY_WORK" "$NOTIFY_WORK_PR" "$NOTIFY_EXTRA" "$NOTIFY_EXTRA_PR" "$1"
+}
+
+notify_out="$(notify_union "$NOTIFY_RUN_LOG" 2>&1)"
+notify_rc=$?
+t notify-union-both-halves-on-one-run-rc 0 "$notify_rc"
+t notify-union-both-halves-say-nothing "" "$notify_out"
+
+# THE required mutation: the pre-#316 shadowing behaviour, staged against the
+# input the assertion reads. notify-repos.txt used to REPLACE repos.txt, so
+# the half that disappears is the work registry's — and a leg asserting only
+# the notify half would pass the bug unchanged.
+NOTIFY_SHADOW_LOG="${NOTIFY_RUN_LOG/"$NOTIFY_WORK_LINE"$'\n'/}"
+notify_out="$(notify_union "$NOTIFY_SHADOW_LOG" 2>&1)"
+notify_rc=$?
+t notify-union-pre-316-shadow-mutation-reds 5 "$notify_rc"
+case "$notify_out" in
+  *"$NOTIFY_WORK#$NOTIFY_WORK_PR (repos.txt half)"*) r1=named ;;
+  *) r1=missing ;;
+esac
+t notify-union-shadow-failure-names-the-missing-repo named "$r1"
+
+NOTIFY_EXTRA_DROPPED_LOG="${NOTIFY_RUN_LOG/"$NOTIFY_EXTRA_LINE"$'\n'/}"
+notify_out="$(notify_union "$NOTIFY_EXTRA_DROPPED_LOG" 2>&1)"
+notify_rc=$?
+t notify-union-notify-half-dropped-reds 6 "$notify_rc"
+case "$notify_out" in
+  *"$NOTIFY_EXTRA#$NOTIFY_EXTRA_PR (notify-repos.txt half)"*) r1=named ;;
+  *) r1=missing ;;
+esac
+t notify-union-notify-half-failure-names-the-missing-repo named "$r1"
+
+notify_rc=0
+notify_union "2026-08-08T12:00:00Z notify run start
+2026-08-08T12:00:03Z sweep done — 2 repos, 0 flagged, 0 pending
+2026-08-08T12:00:03Z notify run end" >/dev/null 2>&1 || notify_rc=$?
+t notify-union-neither-half-reds 7 "$notify_rc"
+
+# "On the same tick" is the assertion, not "eventually both". Two runs a tick
+# apart satisfy every per-repo grep and are exactly what a shadowing notifier
+# alternating its watch set would produce.
+NOTIFY_TWO_RUN_LOG="2026-08-08T12:00:00Z notify run start
+$NOTIFY_WORK_LINE
+2026-08-08T12:00:03Z sweep done — 1 repos, 1 flagged, 1 pending
+2026-08-08T12:00:03Z notify run end
+2026-08-08T12:05:00Z notify run start
+$NOTIFY_EXTRA_LINE
+2026-08-08T12:05:03Z sweep done — 1 repos, 1 flagged, 2 pending
+2026-08-08T12:05:03Z notify run end"
+notify_out="$(notify_union "$NOTIFY_TWO_RUN_LOG" 2>&1)"
+notify_rc=$?
+t notify-union-split-across-two-ticks-reds 5 "$notify_rc"
+
+# A send that failed still writes the sweep's line, with no message id. The
+# criterion is that the notification REACHED the operator.
+notify_rc=0
+notify_union "${NOTIFY_RUN_LOG/(msg 5501)/(msg none)}" >/dev/null 2>&1 || notify_rc=$?
+t notify-union-unsent-message-is-not-a-delivery 5 "$notify_rc"
+
+notify_rc=0
+notify_union "2026-08-08T12:00:00Z notify run start
+$NOTIFY_WORK_LINE
+$NOTIFY_EXTRA_LINE" >/dev/null 2>&1 || notify_rc=$?
+t notify-union-unterminated-run-is-no-run 7 "$notify_rc"
+
+t notify-last-run-is-the-last-complete-one "$NOTIFY_EXTRA_LINE" \
+  "$(rehearsal_notify_last_run_from_log "$NOTIFY_TWO_RUN_LOG" | sed -n '2p')"
+
+# Containment, read off the notifier's own count of what it swept: a fleet
+# repository surviving in notify-repos.txt shows up here and nowhere else.
+if rehearsal_notify_watch_set_is_from_log 2 "$NOTIFY_RUN_LOG"; then r1=contained; else r1=WRONG; fi
+t notify-watch-set-is-the-two-sandboxes contained "$r1"
+if rehearsal_notify_watch_set_is_from_log 2 \
+    "${NOTIFY_RUN_LOG/sweep done — 2 repos,/sweep done — 7 repos,}"; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t notify-watch-set-fleet-leak-mutation-reds refused "$r1"
+
+# The interlock, re-asserted: the union widens the watch set and never the
+# work set.
+if rehearsal_notify_work_registry_intact "$NOTIFY_WORK" "$NOTIFY_WORK" "$NOTIFY_WORK"; then
+  r1=intact
+else
+  r1=WRONG
+fi
+t notify-work-registry-intact intact "$r1"
+notify_rc=0
+rehearsal_notify_work_registry_intact "$NOTIFY_WORK" "$NOTIFY_WORK" \
+  "$NOTIFY_WORK
+heavy-duty/crew" >/dev/null 2>&1 || notify_rc=$?
+t notify-work-registry-moved-reds 5 "$notify_rc"
+notify_rc=0
+rehearsal_notify_work_registry_intact "$NOTIFY_WORK" \
+  "$NOTIFY_WORK
+heavy-duty/crew" "$NOTIFY_WORK
+heavy-duty/crew" >/dev/null 2>&1 || notify_rc=$?
+t notify-work-registry-already-wide-reds 6 "$notify_rc"
+
+# The interlock's rule applied to the second file.
+NOTIFY_PRE_DRILL="heavy-duty/crew
+heavy-duty/ceremony"
+if rehearsal_notify_candidate_is_safe "$NOTIFY_EXTRA" "$NOTIFY_WORK" "$NOTIFY_PRE_DRILL"; then
+  r1=safe
+else
+  r1=WRONG
+fi
+t notify-candidate-minted-sandbox-is-safe safe "$r1"
+notify_rc=0
+rehearsal_notify_candidate_is_safe not-a-slug "$NOTIFY_WORK" "$NOTIFY_PRE_DRILL" >/dev/null 2>&1 || notify_rc=$?
+t notify-candidate-malformed-refused 5 "$notify_rc"
+notify_rc=0
+rehearsal_notify_candidate_is_safe "$NOTIFY_WORK" "$NOTIFY_WORK" "$NOTIFY_PRE_DRILL" >/dev/null 2>&1 || notify_rc=$?
+t notify-candidate-work-sandbox-refused 6 "$notify_rc"
+notify_out="$(rehearsal_notify_candidate_is_safe heavy-duty/ceremony "$NOTIFY_WORK" "$NOTIFY_PRE_DRILL" 2>&1)"
+notify_rc=$?
+t notify-candidate-pre-drill-registry-refused 7 "$notify_rc"
+case "$notify_out" in
+  *"heavy-duty/ceremony is named in this host's pre-drill registry"*) r1=named ;;
+  *) r1=missing ;;
+esac
+t notify-candidate-refusal-names-the-repo named "$r1"
+
+# --- the leg, driven under a stubbed bx() ---------------------------------
+NOTIFY_BX_CALLS="$TMP/rehearsal-notify-bx-calls"
+NOTIFY_READS="$TMP/rehearsal-notify-work-reads"
+notify_stub_bx() {  # $1 the box command, $2 how the second repos.txt read answers
+  local n
+  printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"
+  case "$1" in
+    *getMe*)               printf 'ok\n' ;;
+    *fleet.defaults.conf*) printf 'state:needs-human\n' ;;
+    *"cat ~/duty/repos.txt"*)
+      n="$(( $(cat "$NOTIFY_READS") + 1 ))"
+      printf '%s\n' "$n" >"$NOTIFY_READS"
+      if [ "$n" -le 1 ] || [ "$NOTIFY_SECOND_READ" = same ]; then
+        printf '%s\n' "$NOTIFY_WORK"
+      else
+        printf '%s\nheavy-duty/crew\n' "$NOTIFY_WORK"
+      fi ;;
+    *) : ;;
+  esac
+}
+notify_run_leg() {  # $1 how the post-write repos.txt read answers
+  NOTIFY_SECOND_READ="$1"
+  : >"$NOTIFY_BX_CALLS"
+  printf '0\n' >"$NOTIFY_READS"
+  REHEARSAL_NOTIFY_BACKUP=""
+  REHEARSAL_NOTIFY_ABSENT=0
+  (
+    bx() { notify_stub_bx "$1"; }
+    gh() { case "$1 $2" in "repo view") return 0 ;; *) return 2 ;; esac; }
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    skip() { printf 'skip %s\n' "$1"; }
+    rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer 2>&1
+    printf 'rc=%s\n' "$?"
+  )
+}
+
+# Must fail: a leg that widened repos.txt reds and ABORTS — the interlock
+# outranks the coverage, so the round never reaches the union it came for.
+notify_out="$(notify_run_leg widened)"
+t notify-widened-work-registry-aborts-the-round "rc=2" "$(tail -n 1 <<<"$notify_out")"
+t notify-widened-work-registry-reds-by-name 1 \
+  "$(grep -cF 'FAIL notify: repos.txt unchanged' <<<"$notify_out")"
+t notify-widened-work-registry-never-reaches-the-union 0 \
+  "$(grep -cF 'notify: both halves of the union' <<<"$notify_out")"
+t notify-widened-work-registry-runs-no-notify-tick 0 \
+  "$(grep -cF 'tick.sh notify' "$NOTIFY_BX_CALLS")"
+
+# The same leg with a stable registry gets past the interlock and restores
+# both files on the way out.
+notify_out="$(notify_run_leg same)"
+t notify-stable-work-registry-passes-the-interlock 1 \
+  "$(grep -cF 'ok   notify: repos.txt unchanged' <<<"$notify_out")"
+t notify-stable-work-registry-restores-both 1 \
+  "$(grep -cF 'ok   notify: teardown restored both registries' <<<"$notify_out")"
+t notify-write-replaces-the-fleet-notify-list 1 \
+  "$(grep -cF "printf '%s\\n' '$NOTIFY_WORK-notify' > ~/duty/notify-repos.txt" "$NOTIFY_BX_CALLS")"
+
+# Must fail (recorded, not hidden): an unreachable channel is a visible skip
+# naming the reason, and never an ok.
+notify_out="$(
+  bx() { printf 'no-credentials\n'; }
+  ok()   { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  skip() { printf 'skip %s\n' "$1"; }
+  rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer 2>&1
+  printf 'rc=%s\n' "$?"
+)"
+t notify-unreachable-channel-rc "rc=0" "$(tail -n 1 <<<"$notify_out")"
+t notify-unreachable-channel-skips-with-its-reason 1 \
+  "$(grep -cF 'skip notify: union over repos.txt and notify-repos.txt (operator channel unreachable on this host: no-credentials)' <<<"$notify_out")"
+t notify-unreachable-channel-is-never-a-pass 0 "$(grep -c '^ok   ' <<<"$notify_out")"
+
+notify_out="$(
+  bx() { printf 'ok\n'; }
+  skip() { printf 'skip %s\n' "$1"; }
+  REHEARSAL_NOTIFY_DRILL=0 rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer 2>&1
+)"
+t notify-opt-out-skips-the-leg 1 \
+  "$(grep -cF 'skip notify: union over repos.txt and notify-repos.txt (--no-notify-drill)' <<<"$notify_out")"
+
+# Restore is by pre-drill STATE, not by rewriting a default: a file the leg
+# created is removed, one it replaced is moved back.
+: >"$NOTIFY_BX_CALLS"
+REHEARSAL_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+REHEARSAL_NOTIFY_ABSENT=1
+bx() { printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"; }
+rehearsal_notify_restore_registry
+t notify-restore-removes-a-file-the-leg-created 1 \
+  "$(grep -cF 'rm -f ~/duty/notify-repos.txt' "$NOTIFY_BX_CALLS")"
+t notify-restore-clears-its-backup-handle "" "$REHEARSAL_NOTIFY_BACKUP"
+: >"$NOTIFY_BX_CALLS"
+REHEARSAL_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+REHEARSAL_NOTIFY_ABSENT=0
+rehearsal_notify_restore_registry
+t notify-restore-moves-the-pre-drill-file-back 1 \
+  "$(grep -cF 'mv ~/duty/notify-repos.txt.pre-drill-99 ~/duty/notify-repos.txt' "$NOTIFY_BX_CALLS")"
+: >"$NOTIFY_BX_CALLS"
+REHEARSAL_NOTIFY_BACKUP=""
+rehearsal_notify_restore_registry
+t notify-restore-is-a-noop-when-the-leg-never-wrote 0 \
+  "$(wc -l <"$NOTIFY_BX_CALLS" | tr -d ' ')"
+
+# Both registries in ONE step: rehearsal_cleanup restores the notify half too,
+# so an abnormal exit cannot leave a box watching a torn-down sandbox.
+: >"$NOTIFY_BX_CALLS"
+(
+  # shellcheck source=drill/rehearsal-safety.sh
+  source "$ROOT/drill/rehearsal-safety.sh"
+  BOX_NAME=crew-drill-reviewer
+  REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
+  REHEARSAL_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+  REHEARSAL_NOTIFY_ABSENT=0
+  bx() { printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"; }
+  rehearsal_cleanup 0
+) >/dev/null 2>&1
+t notify-cleanup-restores-the-notify-registry 1 \
+  "$(grep -cF 'mv ~/duty/notify-repos.txt.pre-drill-99 ~/duty/notify-repos.txt' "$NOTIFY_BX_CALLS")"
+t notify-cleanup-still-restores-the-work-registry 1 \
+  "$(grep -cF 'mv ~/duty/repos.txt.pre-drill-99 ~/duty/repos.txt' "$NOTIFY_BX_CALLS")"
+unset -f bx notify_stub_bx notify_run_leg notify_union
+
+# --- wiring: where the leg runs, and what clears up after it --------------
+# shellcheck disable=SC2016  # match the literal source line in rehearsal.sh
+if grep -Fq '. "$ROOT/drill/rehearsal-notify.sh"' "$ROOT/drill/rehearsal.sh"; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-helper-sourced-in-rehearsal wired "$notify_wiring"
+# Positional, because "after the safety interlock and before the role blocks"
+# is the criterion: the call has to sit between the interlock's last ok and
+# the first thing phase 2 does with a tick.
+# shellcheck disable=SC2016  # match the literal call in rehearsal.sh
+if sed -n '/ok "safety interlock: no attention demand parked outside the sandbox"/,/-- attention wake --/p' \
+    "$ROOT/drill/rehearsal.sh" | grep -Fq 'rehearsal_notify_drill "$SANDBOX"'; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-leg-called-after-the-interlock wired "$notify_wiring"
+# shellcheck disable=SC2016  # match the literal call site in rehearsal.sh
+if sed -n '/rehearsal_notify_drill "\$SANDBOX"/,/^  fi$/p' "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq 'exit 1'; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-abort-return-stops-the-round wired "$notify_wiring"
+if grep -Fq -- '--no-notify-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'notify  (repos.txt + notify-repos.txt union)' "$ROOT/drill/rehearsal-all.sh"; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-all-opt-out-and-summary-wired wired "$notify_wiring"
+if grep -Fq 'crew-drill-%s-notify' "$ROOT/drill/teardown.sh" \
+    && grep -Fq 'crew-drill-$role-notify' "$ROOT/drill/teardown.sh"; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-second-sandbox-torn-down wired "$notify_wiring"
+# The handoff label is the engine's, never retyped in the drill.
+t notify-handoff-label-not-retyped-in-drill 0 \
+  "$(grep -R -F 'state:needs-human' "$ROOT/drill" | wc -l | tr -d ' ')"
+
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
 QUEUE_LABEL_FIVE_HOME="$TMP/queue-label-five-home"
