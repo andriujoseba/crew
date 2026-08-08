@@ -1,7 +1,29 @@
 #!/usr/bin/env bash
-# GitHub fixture bookkeeping for drill/rehearsal.sh. The JSON predicates stay
-# separate so the stale-PR cases can be exercised without credentials or a
+# Sourceable fixture and invariant helpers for drill/rehearsal.sh. These stay
+# separate so their failure cases can be exercised without credentials or a
 # host-side drill box.
+
+rehearsal_load_installed_queue_labels() {
+  local count
+  # shellcheck disable=SC2016  # the label variables expand inside the box
+  REHEARSAL_QUEUE_LABELS="$(bx '
+    set -a
+    . ~/duty/conf/fleet.defaults.conf
+    printf "%s\n" \
+      "$LABEL_READY" "$LABEL_CLAIMED" "$LABEL_BLOCKED" \
+      "$LABEL_POST_MERGE" "$LABEL_EPIC" "$LABEL_NEEDS_TRIAGE"
+  ' | sed '/^$/d' | sort -u)"
+  count="$(printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$count" -eq 6 ]; then
+    ok "triage: installed queue-label set resolves six names"
+    return 0
+  fi
+
+  echo "triage: installed queue-label set resolved $count name(s):"
+  printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | sed 's/^/  /'
+  fail "triage: installed queue-label set resolves six names"
+  return 1
+}
 
 rehearsal_builder_slot_prs_from_json() {
   jq -r '.[].number' <<<"$1"
@@ -72,5 +94,19 @@ rehearsal_close_builder_fixture_prs() {
       failed=1
     fi
   done <<<"$prs"
+  return "$failed"
+}
+
+rehearsal_close_issue_fixtures() {
+  local repo="$1" issues="$2" issue failed=0
+  for issue in $issues; do
+    [ -n "$issue" ] || continue
+    if gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed >/dev/null; then
+      echo "teardown: closed triage fixture issue #$issue"
+    else
+      echo "teardown: WARNING — could not close triage fixture issue #$issue" >&2
+      failed=1
+    fi
+  done
   return "$failed"
 }
