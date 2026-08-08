@@ -947,8 +947,19 @@ surf_payload 'u["crew-b"]["integrity"] = "current"'     >"$SURF/fleet-integrity-
 surf_payload 'u["crew-c"]["note"] = "not created"'      >"$SURF/fleet-no-repair-verb.json"
 surf_payload 'p["units"] = [b for b in p["units"] if b["box"] != "crew-d"]' \
                                                         >"$SURF/fleet-drops-a-box.json"
+# The same drop, of the one box that IS a measured absence — so the payload is
+# short AND nothing in it carries `hired=no`, which is the pair that used to
+# read as "every roster box is deployed".
+surf_payload 'p["units"] = [b for b in p["units"] if b["box"] != "crew-c"]' \
+                                                        >"$SURF/fleet-drops-the-undeployed-box.json"
 surf_payload 'u["crew-c"]["note"] = "box inventory unreadable: box list failed"' \
                                                         >"$SURF/fleet-inventory-unreadable.json"
+# Short BECAUSE the inventory failed: an unmeasured fleet, which must keep
+# skipping rather than being read as the dropped-box regression.
+surf_payload '
+u["crew-b"]["note"] = "box inventory unreadable: box list failed"
+p["units"] = [b for b in p["units"] if b["box"] != "crew-c"]
+'                                                       >"$SURF/fleet-inventory-unreadable-and-short.json"
 surf_payload 'u["crew-c"].update(hired="yes", engine="0.1.2", integrity="current", note="")' \
                                                         >"$SURF/fleet-all-deployed.json"
 surf_payload 'u["crew-d"]["note"] = ""'                 >"$SURF/fleet-all-answered.json"
@@ -962,6 +973,9 @@ for b in p["units"]:
 # The floor and the CLI disagreeing about one box: the payload says crew-b is
 # deliberately stopped and `crew status` does not.
 surf_payload 'u["crew-b"]["disarmed"] = False'          >"$SURF/fleet-b-not-disarmed.json"
+# Two boxes deliberately stopped — an ordinary fleet, and the one that puts two
+# members into the disarmed direction's blind set.
+surf_payload 'u["crew-d"]["disarmed"] = True'           >"$SURF/fleet-two-disarmed.json"
 # Nothing quiet at all: every drawn box is ticking, so neither state group has
 # a member and the filter has nothing to classify.
 surf_payload '
@@ -981,16 +995,22 @@ printf 'crew-a current\ncrew-b tampered\ncrew-d unverified\n' >"$SURF/integrity-
 SURF_INTEG="$SURF/integrity"
 
 # The leg's reporters, in a SUBSHELL so run.sh's own t() survives the stubbing:
-# each verdict comes back as one "<ok|FAIL|skip> <label>" line on stdout, which
-# is the whole interface the assertions below match against.
+# each verdict comes back as one "<ok|FAIL|skip> <label> <reason>" line on
+# stdout, which is the whole interface the assertions below match against.
+# The REASON is on the line and not only the label, because criterion 3 is
+# about the reason: "no assertion silently passes when its precondition is
+# absent" is a claim about what the skip SAYS, and a skip whose stated reason
+# is not true is the defect the #204 gate below exists to close. Newlines are
+# flattened so one verdict stays one line.
 # shellcheck disable=SC2317  # the stubs are reached through "$@", which is an
 # indirection shellcheck cannot follow — every one of them is called by the
 # sourced assertions below.
 surf() {  # surf <fn> [args...] → one verdict line per assertion the fn makes
   (
-    ok()   { printf 'ok %s\n' "$1"; }
-    fail() { printf 'FAIL %s\n' "$1"; }
-    skip() { printf 'skip %s\n' "$1"; }
+    emit() { local v="$1" m; shift; m="$*"; printf '%s %s\n' "$v" "${m//$'\n'/ }"; }
+    ok()   { emit ok "$@"; }
+    fail() { emit FAIL "$@"; }
+    skip() { emit skip "$@"; }
     t()    { if [ "$2" = "$3" ]; then printf 'ok %s\n' "$1"; else printf 'FAIL %s\n' "$1"; fi; }
     jqf()  { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
     roster_rows()   { grep -vE '^[[:space:]]*(#|$)' "$SURF_ROSTER"; }
@@ -1070,13 +1090,35 @@ t app-surface-204-truthful-counts ok "$(surf_says "$r1" "$SURF_NC")"
 r1="$(surf app_surface_not_deployed "$SURF/fleet-no-repair-verb.json" 4)"
 t app-surface-204-staged-silent-note FAIL "$(surf_says "$r1" "$SURF_ND")"
 # The filter applied one layer too high: the box is gone from the payload, so
-# the fleet silently shrinks instead of keeping its declared size.
+# the fleet silently shrinks instead of keeping its declared size. Reds at the
+# completeness gate now, which owns this direction and names the missing box —
+# so the arithmetic assertion downstream is never reached and is `absent`.
 r1="$(surf app_surface_not_deployed "$SURF/fleet-drops-a-box.json" 4)"
-t app-surface-204-staged-shrunk-fleet FAIL "$(surf_says "$r1" "$SURF_NC")"
+t app-surface-204-staged-shrunk-fleet FAIL "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-shrunk-fleet-names-the-box FAIL "$(surf_says "$r1" "never reported: crew-d")"
+t app-surface-204-shrunk-fleet-stops-at-the-gate absent "$(surf_says "$r1" "$SURF_NC")"
+# The same drop, of the box that is the fleet's ONLY measured absence. This is
+# the direction the mutation above cannot reach: with `crew-c` gone no unit
+# carries `hired=no`, so the empty-set branch used to conclude "every one of
+# the 4 roster boxes is deployed" over a three-unit payload — #204's own
+# regression reported as a fleet that does not exercise it. It must FAIL, not
+# skip (codex-bot at 4bde9ce; triage's Must-fail in #420's test plan).
+r1="$(surf app_surface_not_deployed "$SURF/fleet-drops-the-undeployed-box.json" 4)"
+t app-surface-204-drops-the-undeployed-box FAIL "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-drops-the-undeployed-box-named FAIL "$(surf_says "$r1" "never reported: crew-c")"
 r1="$(surf app_surface_not_deployed "$SURF/fleet-inventory-unreadable.json" 4)"
 t app-surface-204-unmeasured-absence-skips skip "$(surf_says "$r1" "$SURF_ND")"
+# ...and it keeps that precedence when the failed inventory ALSO cost the
+# payload a unit: an unmeasured fleet is not the dropped-box regression, so it
+# must still skip by its own reason rather than red at the gate.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-inventory-unreadable-and-short.json" 4)"
+t app-surface-204-unreadable-outranks-the-gate skip "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-unreadable-names-its-reason skip "$(surf_says "$r1" "the box inventory did not answer for: crew-b")"
+# The gate must not red a correct fleet: a complete payload with no measured
+# absence still skips, with the one reason that is now true of it.
 r1="$(surf app_surface_not_deployed "$SURF/fleet-all-deployed.json" 4)"
 t app-surface-204-no-such-box-skips skip "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-complete-fleet-skip-reason skip "$(surf_says "$r1" "every one of the 4 roster boxes is deployed")"
 
 # --- #218: `crew up --dry-run` names every box and touches nothing -------
 printf 'crew-a: WOULD hire (currently: 2026-08-01T00:00Z)\ncrew-b: WOULD hire (currently: 2026-08-01T00:00Z)\ncrew-c: WOULD create (grok/triage)\ncrew-c: WOULD hire (new box — engine crew@0.1.2, cron armed)\ncrew-d: WOULD start\ncrew-d: WOULD SKIP — not converged; crew hire crew-d would refuse\n\nup --dry-run: 1 would be created, 1 started, 3 hired\n' \
@@ -1248,6 +1290,10 @@ surf_page 'q["disarmed"] = []'                       >"$SURF/page-drops-disarmed
 # left to disagree is `crew status`.
 surf_page 'q["disarmed"], q["silent"] = [], ["crew-b", "crew-d"]' \
                                                      >"$SURF/page-b-silent.json"
+# Two boxes the operator deliberately stopped, correctly grouped: the fleet the
+# blind-set arity defect reds falsely when both are also logged out.
+surf_page 'q["disarmed"], q["silent"] = ["crew-b", "crew-d"], []' \
+                                                     >"$SURF/page-two-disarmed.json"
 surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
 q['empty'] = {'present': True, 'shown': True, 'text': '''$EMPTY_TEXT'''}" \
                                                      >"$SURF/page-empty.json"
@@ -1276,6 +1322,23 @@ q['empty'] = {'present': True, 'shown': True,
   printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
   printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
 } >"$SURF/status-logged-out.txt"
+# TWO boxes logged out, which is the arity that matters: the blind set was
+# accumulated as a display string (`crew-b, crew-d`) and then tested token-wise,
+# so every member but the last kept a comma and read as NOT blind — a false
+# FAIL on a correct page, invisible with the one-box fixture above (codex-bot,
+# claude-bot, #428). Creds-free is the normal starting state on a drill host and
+# two quiet boxes is an ordinary fleet, so this is the shape that reds #400's
+# round against a page that is right.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   convergence unknown\n'
+} >"$SURF/status-both-blind.txt"
+# ...and the same, with both blind boxes DISARMED rather than one of each, so
+# the members that must not red are the ones the disarmed direction iterates.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   ⚠ log in: box shell crew-d\n'
+} >"$SURF/status-two-disarmed-blind.txt"
 # ...and the same fleet where the CLI simply does not agree: crew-b is armed
 # and ticking as far as `crew status` can tell.
 { printf 'crew-a  claude  builder   armed\n'
@@ -1321,6 +1384,20 @@ t app-surface-312-cli-says-stopped-payload-does-not FAIL "$(surf_says "$r1" "$SU
 r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-logged-out.txt" 4 crew-c 3 "$SURF/fleet.json")"
 t app-surface-312-credential-note-does-not-red ok "$(surf_says "$r1" "$SURF_F")"
 t app-surface-312-credential-note-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# TWO blind boxes, one from each group — the cheaper reproduction, since the
+# blind set is filled from the disarmed boxes before the silent ones, so the
+# disarmed member is the one that carried the comma.
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-both-blind.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-two-blind-boxes-do-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-two-blind-boxes-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# ...and both of them DISARMED, which is the case put directly to the loop that
+# tests blind membership. A correct page must skip here and not FAIL.
+r1="$(surf app_surface_page_groups "$SURF/page-two-disarmed.json" "$SURF/status-two-disarmed-blind.txt" 4 crew-c 3 "$SURF/fleet-two-disarmed.json")"
+t app-surface-312-two-blind-disarmed-do-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-two-blind-disarmed-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# The set is machine-readable and the message is a copy of it: both boxes are
+# named, comma-joined, and neither naming nor membership depends on the other.
+t app-surface-312-blind-skip-names-both skip "$(surf_says "$r1" "armed-ness would be in: crew-b, crew-d")"
 r1="$(surf app_surface_page_groups "$SURF/page-no-members.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet-none-quiet.json")"
 t app-surface-312-no-member-to-classify skip "$(surf_says "$r1" "$SURF_F")"
 # The demo payload is not this host, so neither group may be read off it.

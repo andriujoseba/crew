@@ -130,6 +130,7 @@ app_surface_integrity() {
 # the same two numbers as they are rendered.
 app_surface_not_deployed() {
   local fleet="$1" roster_n="$2" unreadable_inv nd note nd_bad="" nd_n
+  local units_n payload_boxes rname missing=""
   SURF_NOT_DEPLOYED="$(jqf "' '.join(u['box'] for u in d['units'] if u.get('hired')=='no')" < "$fleet")"
   SURF_DRAWN="$(jqf "sum(1 for u in d['units'] if u.get('hired')!='no')" < "$fleet")"
   unreadable_inv="$(jqf "' '.join(u['box'] for u in d['units'] if (u.get('note') or '').startswith('box inventory unreadable'))" < "$fleet")"
@@ -137,11 +138,44 @@ app_surface_not_deployed() {
     # `box list` did not answer, so absence was never MEASURED for these boxes —
     # and #204's filter is precisely a claim about measured absence. Asserting
     # through a failed inventory is the inference the verdict exists to refuse.
+    # This branch keeps its precedence over the completeness gate below: a
+    # payload short BECAUSE the inventory failed is an unmeasured fleet, not
+    # the dropped-box regression.
     skip "floor: a roster box that is not deployed is counted and not drawn" \
          "the box inventory did not answer for: $unreadable_inv"
     return 0
   fi
+  # ---- completeness FIRST, before either verdict below claims a roster -----
+  # Both verdicts below are claims about the DECLARED roster, and both used to
+  # be reached from `d['units']` alone — which never read it. The empty-set
+  # branch in particular said "every one of the $roster_n roster boxes is
+  # deployed" whenever no unit carried `hired=no`, so a payload that DROPPED
+  # the undeployed box instead of marking it reported a fully deployed fleet
+  # one box short of the roster. That is #204's own regression — the filter
+  # applied one layer too high — reached and answered wrongly, not a fleet
+  # where the case cannot be reached, so it REDS (triage ruling on #428,
+  # recorded as a Must-fail in #420's test plan). Same argument the inventory
+  # branch above already makes for the other source: do not conclude anything
+  # about a roster from a payload that is not the roster.
+  units_n="$(jqf "len(d['units'])" < "$fleet")"
+  if [ "${units_n:-0}" -ne "${roster_n:-0}" ]; then
+    payload_boxes="$(jqf "' '.join(u['box'] for u in d['units'])" < "$fleet")"
+    # fd 3: `roster_rows` is the caller's, and on a host a reader inside this
+    # loop would drain the loop's own stdin — the defect fixed at :96.
+    while read -r rname _ <&3; do
+      [ -z "$rname" ] && continue
+      case " $payload_boxes " in
+        *" $rname "*) ;;
+        *) missing="${missing:+$missing, }$rname" ;;
+      esac
+    done 3< <(roster_rows)
+    fail "floor: a roster box that is not deployed is counted and not drawn" \
+         "the payload carries $units_n units for a roster of $roster_n${missing:+ — never reported: $missing}: a roster box missing from the payload altogether is not counted, which is the filter-too-high regression itself"
+    return 0
+  fi
   if [ -z "$SURF_NOT_DEPLOYED" ]; then
+    # Now the only branch left whose stated reason is true: the payload IS the
+    # roster, and none of it is a measured absence.
     skip "floor: a roster box that is not deployed is counted and not drawn" \
          "every one of the $roster_n roster boxes is deployed — nothing on this fleet exercises the grid filter"
     return 0
@@ -159,8 +193,12 @@ app_surface_not_deployed() {
   t "floor: a roster box that is not deployed is counted and names its repair verb" \
     "" "$nd_bad"
   # ...and it is not drawn: the consoles are the deployed boxes, while the
-  # count stays the declared roster. Both numbers pinned, so a filter applied
-  # one layer too high fails here rather than shrinking the fleet silently.
+  # count stays the declared roster. Both numbers pinned, and the label states
+  # them, so the good fleet says out loud which arithmetic it checked.
+  # The shrunk-fleet direction is the completeness gate's now, not this line's:
+  # `SURF_DRAWN` is `units_n - nd_n` by construction, so this comparison can
+  # only disagree when `units_n != roster_n`, which never reaches here. The
+  # gate reds that earlier and names the boxes; this stays the positive claim.
   nd_n="$(printf '%s\n' "$SURF_NOT_DEPLOYED" | wc -w | tr -d ' ')"
   t "floor: the not-deployed boxes are counted but not drawn ($nd_n of $roster_n)" \
     "$((roster_n - nd_n))" "$SURF_DRAWN"
@@ -380,8 +418,14 @@ app_surface_filter() {
       # MODIFIED prepends to the note rather than replacing it, so the disarmed
       # word survives as a suffix and this test still sees it.
       *disarmed*|*"paused by operator"*) cli_dis="${cli_dis:+$cli_dis }$b" ;;
+      # Space-delimited, like `cli_dis` beside it, because the membership probe
+      # below is token-wise. This accumulated a DISPLAY string once (`, `) and
+      # was then tested with `case " $blind " in *" $b "*`, so every member but
+      # the last kept a comma and read as not-blind — a false FAIL on a correct
+      # fleet, and invisible with one member (codex-bot, claude-bot, #428). The
+      # message formats its own copy; the set is never the display string.
       *"⚠ log in:"*|*"probing the WRONG vendor"*|*"convergence unknown"*|*"INCOMPLETE —"*)
-        blind="${blind:+$blind, }$b" ;;
+        blind="${blind:+$blind }$b" ;;
       "") bad="${bad:+$bad, }$b: classified by the page, crew status printed no row" ;;
     esac
   done
@@ -404,7 +448,7 @@ app_surface_filter() {
   t "page: the state filter separates disarmed from silent (#312)" "" "$bad"
   [ -z "$blind" ] || \
     skip "page: the state filter agrees with crew status for every box" \
-         "crew status cannot classify these boxes — a credential or convergence note holds the column armed-ness would be in: $blind"
+         "crew status cannot classify these boxes — a credential or convergence note holds the column armed-ness would be in: ${blind// /, }"
 }
 
 # --- #204's other half: the floor with nothing on it ------------------------
