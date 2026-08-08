@@ -108,7 +108,7 @@ rehearsal_builder_has_answer_signal_from_json() {
 rehearsal_builder_check_state_from_json() {
   local context="$1" status_json="$2"
   jq -r --arg context "$context" '
-    [.statuses[] | select(.context == $context)]
+    [(.statuses // [])[] | select(.context == $context)]
     | sort_by(.created_at)
     | last
     | .state // ""
@@ -118,7 +118,7 @@ rehearsal_builder_check_state_from_json() {
 rehearsal_builder_requested_from_json() {
   local reviewer="$1" requested_json="$2"
   jq -e --arg reviewer "$reviewer" \
-    'any(.users[]; .login == $reviewer)' >/dev/null <<<"$requested_json"
+    'any((.users // [])[]; .login == $reviewer)' >/dev/null <<<"$requested_json"
 }
 
 rehearsal_builder_pr_is_draft() {

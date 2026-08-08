@@ -441,6 +441,77 @@ fi
 t rehearsal-builder-duplicate-current-prs-refused '' "$duplicate_builder_out"
 t rehearsal-builder-duplicate-current-prs-lookup-fails 1 "$duplicate_builder_rc"
 
+BUILDER_HEAD="$(printf 'b%.0s' {1..40})"
+BUILDER_OTHER_HEAD="$(printf 'c%.0s' {1..40})"
+BUILDER_PANEL_CONTENT="$(rehearsal_builder_fixture_panel_content builder host-reviewer)"
+t rehearsal-builder-fixture-panel-is-author-specific \
+  'panel[builder]=host-reviewer' "$BUILDER_PANEL_CONTENT"
+
+if rehearsal_builder_is_draft_from_json '{"draft":true}'; then r1=draft; else r1=ready; fi
+t rehearsal-builder-draft-object-read draft "$r1"
+if rehearsal_builder_is_draft_from_json '{"draft":false}'; then r1=DRAFT; else r1=refused; fi
+t rehearsal-builder-ready-object-refused refused "$r1"
+
+BUILDER_COMMENTS='[
+  {"user":{"login":"builder"},"body":"📣 round answered at head '"$BUILDER_HEAD"'"},
+  {"user":{"login":"somebody-else"},"body":"📣 round answered at head '"$BUILDER_OTHER_HEAD"'"}
+]'
+if rehearsal_builder_has_answer_signal_from_json \
+    builder "$BUILDER_HEAD" "$BUILDER_COMMENTS"; then r1=found; else r1=missing; fi
+t rehearsal-builder-current-head-signal-found found "$r1"
+if rehearsal_builder_has_answer_signal_from_json \
+    builder "$BUILDER_OTHER_HEAD" "$BUILDER_COMMENTS"; then r1=WRONG; else r1=refused; fi
+t rehearsal-builder-other-author-signal-refused refused "$r1"
+
+BUILDER_PENDING_STATUS='{"statuses":[
+  {"context":"drill/builder-head-settle","state":"success","created_at":"2026-08-08T12:00:00Z"},
+  {"context":"drill/builder-head-settle","state":"pending","created_at":"2026-08-08T12:01:00Z"},
+  {"context":"other","state":"failure","created_at":"2026-08-08T12:02:00Z"}
+]}'
+t rehearsal-builder-latest-check-state-is-pending pending \
+  "$(rehearsal_builder_check_state_from_json \
+    drill/builder-head-settle "$BUILDER_PENDING_STATUS")"
+t rehearsal-builder-missing-check-context-is-empty '' \
+  "$(rehearsal_builder_check_state_from_json missing "$BUILDER_PENDING_STATUS")"
+
+BUILDER_REQUESTED='{"users":[{"login":"host-reviewer"}],"teams":[]}'
+BUILDER_UNREQUESTED='{"users":[],"teams":[]}'
+if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_REQUESTED"; then r1=requested; else r1=missing; fi
+t rehearsal-builder-settled-head-request-found requested "$r1"
+if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_UNREQUESTED"; then r1=EARLY; else r1=withheld; fi
+t rehearsal-builder-pending-head-request-withheld withheld "$r1"
+
+# Mutation required by #418: stage the disabled draft-return path as the PR
+# object the sourceable assertion reads. It must name the live leg assertion,
+# never silently pass a ready PR as if conversion happened.
+BUILDER_DRAFT_MUTATION_OUT="$({
+  ok() { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  check() { local name="$1"; shift; if "$@"; then ok "$name"; else fail "$name"; fi; }
+  check "builder: changes-requested round returns PR to draft" \
+    rehearsal_builder_is_draft_from_json '{"draft":false}'
+})"
+t rehearsal-builder-disabled-draft-return-reds 1 \
+  "$(grep -cFx 'FAIL builder: changes-requested round returns PR to draft' \
+    <<<"$BUILDER_DRAFT_MUTATION_OUT")"
+
+# Pin the live sequence too: host verdict, pending status, concurrent draft
+# observation, signal-at-pending assertion, withheld request, success, request.
+BUILDER_LIVE_BLOCK="$(sed -n '/builder_head=.*pulls.*head.sha/,/panel request issued after head settles/p' \
+  "$ROOT/drill/rehearsal.sh")"
+for builder_live_token in \
+    'event=REQUEST_CHANGES' \
+    'state=pending' \
+    'builder_tick_pid=$!' \
+    'changes-requested round returns PR to draft' \
+    'round answer is signalled while head check is pending' \
+    'panel request withheld while head check is pending' \
+    'state=success' \
+    'panel request issued after head settles'; do
+  if grep -Fq "$builder_live_token" <<<"$BUILDER_LIVE_BLOCK"; then r1=wired; else r1=MISSING; fi
+  t "rehearsal-builder-live-fix-round-${builder_live_token//[^a-zA-Z0-9]/-}" wired "$r1"
+done
+
 OCCUPIED_BUILDER_OUT="$({
   fail() { printf 'FAIL %s\n' "$1"; }
   skip() { printf 'skip %s\n' "$1"; }
