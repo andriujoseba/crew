@@ -533,6 +533,7 @@ t rehearsal-builder-disabled-draft-return-reds 1 \
 # observation, signal-at-pending assertion, withheld request, success, request.
 BUILDER_LIVE_BLOCK="$(sed -n '/builder_head=.*pulls.*head.sha/,/panel request issued after head settles/p' \
   "$ROOT/drill/rehearsal.sh")"
+builder_live_case=0
 for builder_live_token in \
     'event=REQUEST_CHANGES' \
     'state=pending' \
@@ -542,8 +543,9 @@ for builder_live_token in \
     'panel request withheld while head check is pending' \
     'state=success' \
     'panel request issued after head settles'; do
+  builder_live_case=$((builder_live_case + 1))
   if grep -Fq "$builder_live_token" <<<"$BUILDER_LIVE_BLOCK"; then r1=wired; else r1=MISSING; fi
-  t "rehearsal-builder-live-fix-round-${builder_live_token//[^a-zA-Z0-9]/-}" wired "$r1"
+  t "rehearsal-builder-live-fix-round-$builder_live_case" wired "$r1"
 done
 
 OCCUPIED_BUILDER_OUT="$({
