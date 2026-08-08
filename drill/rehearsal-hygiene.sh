@@ -89,6 +89,15 @@ rehearsal_hygiene_combine_result() {
   fi
 }
 
+rehearsal_hygiene_round_result() {
+  local current="$1" hygiene_result="$2"
+  if [ "$hygiene_result" -eq 1 ]; then
+    printf '1\n'
+  else
+    printf '%s\n' "$current"
+  fi
+}
+
 rehearsal_hygiene_summary() {
   local enabled="$1" drilled="$2" hygiene_result="$3"
   if [ "$enabled" -eq 0 ]; then

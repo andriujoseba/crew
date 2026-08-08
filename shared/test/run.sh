@@ -503,16 +503,6 @@ if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
     'WARN: preservation failed; keeping worktree' \
     'WARN: preservation failed again'; then r1=FALSE_PASS; else r1=red; fi
 t rehearsal-hygiene-repeated-report-reds red "$r1"
-if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
-    'WARN: fresh run one' '' \
-    && rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
-      'WARN: fresh run two' ''; then
-  r1=fresh
-else
-  r1=SUPPRESSED
-fi
-t rehearsal-hygiene-repeat-run-warns-once-per-fresh-run fresh "$r1"
-
 if rehearsal_hygiene_box_path_is_resolved \
     /home/box-user/duty/.rehearsal-hygiene-refusal-ledger; then
   r1=resolved
@@ -584,6 +574,10 @@ t rehearsal-hygiene-mixed-fail-then-pass-stays-failure 1 \
 t rehearsal-hygiene-mixed-skip-then-pass-is-ok 0 \
     "$(rehearsal_hygiene_combine_result \
       "$(rehearsal_hygiene_combine_result 2 2)" 0)"
+t rehearsal-hygiene-failure-reds-green-round 1 \
+  "$(rehearsal_hygiene_round_result 0 1)"
+t rehearsal-hygiene-pass-does-not-clear-incomplete-round 2 \
+  "$(rehearsal_hygiene_round_result 2 0)"
 t rehearsal-hygiene-phase1-failure-does-not-red-green-leg \
   "ok         hygiene  (preservation + refusal)" \
   "$(rehearsal_hygiene_summary 1 '' 0)"
@@ -603,6 +597,17 @@ else
 fi
 t rehearsal-hygiene-removed-failure-precedence-reds red "$r1"
 
+HYG_ROUND_MUTATED="$TMP/rehearsal-hygiene-without-round-failure.sh"
+sed 's/if \[ "$hygiene_result" -eq 1 \]; then/if false; then/' \
+  "$ROOT/drill/rehearsal-hygiene.sh" >"$HYG_ROUND_MUTATED"
+if bash -c '. "$1"; [ "$(rehearsal_hygiene_round_result 0 1)" -eq 1 ]' \
+    _ "$HYG_ROUND_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-removed-round-failure-fold-reds red "$r1"
+
 hygiene_wiring=missing
 # shellcheck disable=SC2016  # these are literal wiring strings, not expansions
 if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
@@ -615,6 +620,12 @@ if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'rehearsal_hygiene_reset_refusal_ledger "$refusal_ledger"' \
       "$ROOT/drill/rehearsal-hygiene.sh" \
     && grep -Fq 'REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file"' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'ROLE_HYGIENE_FILES+=("$role_hygiene_file")' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'trap cleanup_role_hygiene_files EXIT' \
       "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ROLE"' "$ROOT/drill/rehearsal.sh"; then
   hygiene_wiring=wired

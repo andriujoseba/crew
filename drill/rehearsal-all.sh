@@ -91,8 +91,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$HERE/rehearsal-hygiene.sh"
 declare -a SUMMARY=()
+declare -a ROLE_HYGIENE_FILES=()
 overall=0
 hygiene_result=2
+
+# shellcheck disable=SC2317  # invoked indirectly by the EXIT trap
+cleanup_role_hygiene_files() {
+  local result_file
+  for result_file in "${ROLE_HYGIENE_FILES[@]}"; do
+    rm -f -- "$result_file"
+  done
+}
+trap cleanup_role_hygiene_files EXIT
 
 for role in $ROLES; do
   case "$role" in
@@ -104,6 +114,7 @@ for role in $ROLES; do
   echo "## $role — box crew-drill-$role"
   echo "############################################################"
   role_hygiene_file="$(mktemp)"
+  ROLE_HYGIENE_FILES+=("$role_hygiene_file")
   printf '2\n' >"$role_hygiene_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
@@ -143,6 +154,7 @@ for role in $ROLES; do
 done
 
 SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result")")
+overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"
 if [ "$HYGIENE_DRILL" -ne 0 ] && [ -z "${DRILLED// /}" ]; then
   [ "$overall" -eq 1 ] || overall=2
 fi
