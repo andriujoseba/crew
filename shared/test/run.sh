@@ -1020,7 +1020,14 @@ surf() {  # surf <fn> [args...] → one verdict line per assertion the fn makes
     # to its first box on the host, silently, while the label kept claiming the
     # fleet.
     box_integrity() {
-      [ -n "${SURF_GREEDY_READER:-}" ] && cat >/dev/null
+      # Bounded, because the drain must not outlive the thing it is draining:
+      # once the roster moved to fd 3 this `cat` no longer meets the loop's
+      # pipe at all, it meets whatever stdin the suite was STARTED with — and
+      # an unbounded read of a socket that nobody is going to close hangs the
+      # whole suite forever. It reaches EOF instantly against a pipe or
+      # /dev/null (which is CI, and is the pre-fix code path this case reds
+      # on), so the bound costs nothing where it is not needed.
+      [ -n "${SURF_GREEDY_READER:-}" ] && { timeout 1 cat >/dev/null 2>&1 || true; }
       awk -v b="$1" '$1 == b { print $2 }' "$SURF_INTEG"
     }
     # shellcheck source=drill/rehearsal-app-surfaces.sh
