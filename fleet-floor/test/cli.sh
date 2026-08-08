@@ -2142,6 +2142,34 @@ else
   ok "docs: .gitignore makes no claim about playwright"
 fi
 
+# CI and the drill install playwright-core from the repository root. Ignore
+# that generated dependency tree there (and at every future depth), not only
+# beneath fleet-floor/test.
+if grep -Fqx 'node_modules/' "$CL_ROOT/.gitignore"; then
+  ok "docs: root .gitignore names node_modules"
+else
+  fail "docs: root .gitignore names node_modules" \
+       "node_modules/ is not ignored repository-wide"
+fi
+
+# Checking the tracked set catches the actual failure: an ignored dependency
+# tree that was force-added. Prove the listing is non-empty first so running
+# this test outside a checkout cannot turn the absence of evidence into green.
+CL_TRACKED="$(git -C "$CL_ROOT" ls-files 2>/dev/null || true)"
+if [ -n "$CL_TRACKED" ]; then
+  ok "docs: found tracked paths to check for node_modules"
+  CL_TRACKED_NODE_MODULES="$(printf '%s\n' "$CL_TRACKED" | grep -E '(^|/)node_modules/' || true)"
+  if [ -z "$CL_TRACKED_NODE_MODULES" ]; then
+    ok "docs: no tracked path is under node_modules"
+  else
+    fail "docs: no tracked path is under node_modules" \
+         "tracked dependency paths: $CL_TRACKED_NODE_MODULES"
+  fi
+else
+  fail "docs: found tracked paths to check for node_modules" \
+       "git ls-files returned nothing; the tracked-path check would be vacuous"
+fi
+
 # ---------------------------------------------------------------------------
 # crew init: a fresh operator definition, never an overwrite (#76)
 # ---------------------------------------------------------------------------

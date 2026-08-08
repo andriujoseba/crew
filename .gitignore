@@ -7,3 +7,8 @@
 # hire registry guard keys on roster membership, so a drill box listed there is
 # a fleet member as far as every safety check is concerned (#51).
 *.roster.local
+
+# npm install --no-save playwright-core, run from the repository root by
+# ci-floor.yml and by the drill, writes this dependency tree. It is rebuilt
+# for each run and never committed.
+node_modules/
