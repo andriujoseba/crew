@@ -2525,6 +2525,45 @@ t payload-over-bound-names-bound-and-measurement says-both "$r2"
 if [ "$payload_fat_kb" -gt "$payload_kb" ]; then r2=differ; else r2="$payload_kb vs $payload_fat_kb"; fi
 t payload-two-trees-report-different-sizes differ "$r2"
 
+# MUST FAIL: a DANGLING SYMLINK at an excluded root (#431 round 2, codex). One
+# planted link used to produce two PASS lines on the tree that most needs a
+# finding: `-e` is false for it, so the root walk did not see it, and `du -skL`
+# then could not walk the tree — exiting non-zero and printing a partial total
+# of 0, which is under any bound. Both halves are asserted here, because either
+# one alone still lets a fat `fleet-floor/dev` arrive behind a broken link.
+payload_dangling_dir="$(payload_tree dangling-root - 64)"
+mkdir -p "$payload_dangling_dir/fleet-floor"
+ln -s missing-target "$payload_dangling_dir/fleet-floor/dev"
+r1="$(payload_run "$PHOME/src" "$payload_dangling_dir")"
+t payload-dangling-excluded-root-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"still shipped: fleet-floor/dev"*) r2=named ;; *) r2="$r1" ;; esac
+t payload-dangling-excluded-root-names-the-path named "$r2"
+# The exact false green, pinned out by its own text: a failed measurement must
+# never be reported as a small tree.
+case "$r1" in
+  *"is 0 KiB, within"*) r2=FALSE-GREEN ;;
+  *"size measured"*)    r2=measurement-red ;;
+  *)                    r2="$r1" ;;
+esac
+t payload-dangling-root-is-not-a-zero-kib-pass measurement-red "$r2"
+
+# MUST FAIL: the measurement guard STANDS ALONE. A dangling symlink at a path
+# that is not an excluded root leaves the root walk correctly green, so the
+# only thing that can red this tree is du's own status — which is the proof
+# that the size assertion is not being carried by the root finding beside it.
+payload_unmeasurable_dir="$(payload_tree unmeasurable - 64)"
+ln -s missing-target "$payload_unmeasurable_dir/cli/orphan"
+r1="$(payload_run "$PHOME/src" "$payload_unmeasurable_dir")"
+t payload-unmeasurable-tree-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"PASS payload: installed tree carries none"*) r2=roots-still-green ;; *) r2="$r1" ;; esac
+t payload-unmeasurable-tree-is-not-a-root-finding roots-still-green "$r2"
+# and it reports du's own status and words, not a bound verdict: "could not
+# measure" and "too big" are different facts for whoever reads the drill record.
+case "$r1" in *"size measured — du -skL exited 1"*) r2=says-du ;; *) r2="$r1" ;; esac
+t payload-unmeasurable-tree-carries-dus-own-status says-du "$r2"
+case "$r1" in *"within the 3072 KiB bound"*) r2=BOUND-VERDICT ;; *) r2=not-a-bound-verdict ;; esac
+t payload-unmeasurable-tree-is-not-a-bound-finding not-a-bound-verdict "$r2"
+
 # MUST FAIL: a fat artifact tree reds where the checkout tree is clean. The
 # channels are asserted separately for exactly this reason — one verdict per
 # installed tree, never one inferred from another.

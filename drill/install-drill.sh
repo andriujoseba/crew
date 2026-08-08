@@ -2,9 +2,13 @@
 # install-drill.sh — Section A of the release rehearsal.
 #
 # The offline install and artifact assertions stay in their CI harnesses. This
-# driver invokes them, then adds only the observations that require a real box:
+# driver invokes them, then adds the observations a CI harness cannot make:
 # switch skew, hire/skip from a git-less install, no box-side crew repository,
-# full-uninstall refusal, and engine survival after the console is removed.
+# full-uninstall refusal, and engine survival after the console is removed —
+# each of which requires a real box. It also builds a real offline artifact and
+# installs it here, and measures what every tree it installs actually holds
+# (install-payload.sh, #421): that measurement needs no box, but it does need
+# the real installs and the real unpack this driver already performs.
 #
 # It borrows a box the role rehearsal installed, and gives it back unchanged:
 # its fixture roster is built from the identity that box already carries, so

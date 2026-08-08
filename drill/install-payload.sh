@@ -98,7 +98,7 @@ install_payload_excluded_roots() {  # <source tree>
 # other, and #365's own guards split them the same way.
 install_payload_assert() {
   local prefix="$1" src="$2" tree="$3"
-  local roots bound root shipped="" count kb rc=0
+  local roots bound root shipped="" count kb du_out du_rc rc=0
 
   if ! roots="$(install_payload_excluded_roots "$src" 2>&1)"; then
     fail "$prefix: excluded roots read from the installer" "$roots"
@@ -116,7 +116,12 @@ install_payload_assert() {
   count="$(printf '%s\n' "$roots" | grep -c . || true)"
   while IFS= read -r root; do
     [ -n "$root" ] || continue
-    if [ -e "$tree/$root" ]; then shipped="$shipped $root"; fi
+    # -e OR -L: an excluded root is a directory entry at that path, whatever it
+    # points at. -e alone is false for a dangling symlink, which is a shipped
+    # `fleet-floor/dev` by every reading that matters — it occupies the path,
+    # it is what an operator's tree carries, and du then cannot measure the
+    # tree either. Reported by name, not resolved (#431 round 2).
+    if [ -e "$tree/$root" ] || [ -L "$tree/$root" ]; then shipped="$shipped $root"; fi
   done <<<"$roots"
   if [ -z "$shipped" ]; then
     pass "$prefix: installed tree carries none of the installer's $count excluded roots"
@@ -130,7 +135,21 @@ install_payload_assert() {
   # resolves to: a bare `du -sk` there reports the link and would pass on a
   # tree of any size (#365). The number goes in the PASS line either way, so
   # the drill record carries it and the next window can read the trend.
-  kb="$(du -skL "$tree" | cut -f1)"
+  #
+  # A MEASUREMENT THAT FAILED IS NOT A SMALL MEASUREMENT. du exits non-zero and
+  # still prints a total when it could not walk everything — a dangling symlink
+  # under -L, an unreadable child — and that partial total is typically 0, which
+  # is under any bound. Taking it would turn "could not measure this tree" into
+  # "this tree is fine", the one direction this leg must never fail in. So du's
+  # own status is checked, the total is required to be a number, and either way
+  # out is a finding carrying du's own words (#431 round 2).
+  du_out="$(du -skL "$tree" 2>&1)"; du_rc=$?
+  kb="$(printf '%s\n' "$du_out" | sed -n 's/^\([0-9]\{1,\}\)[[:space:]].*/\1/p' | tail -1)"
+  if [ "$du_rc" -ne 0 ] || [ -z "$kb" ]; then
+    fail "$prefix: installed tree size measured" \
+      "du -skL exited $du_rc: $(printf '%s' "$du_out" | tr '\n' ';')"
+    return 1
+  fi
   if [ "$kb" -lt "$bound" ]; then
     pass "$prefix: installed tree is $kb KiB, within the $bound KiB bound"
   else
