@@ -505,6 +505,7 @@ if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
 t rehearsal-hygiene-repeated-report-reds red "$r1"
 
 hygiene_wiring=missing
+# shellcheck disable=SC2016  # these are literal wiring strings, not expansions
 if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'hygiene  (preservation + refusal)' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ROLE"' "$ROOT/drill/rehearsal.sh"; then
