@@ -319,14 +319,17 @@ rehearsal_notify_drill() {
   rehearsal_notify_load_installed_handoff_label || return 0
   label="$REHEARSAL_NOTIFY_LABEL"
 
+  # `crew-drill-<role>-notify`, which teardown.sh removes by exact name. A
+  # round on a fresh box mints it; a --reuse round finds the previous round's
+  # and says so rather than reporting a mint that did not happen.
   notify_sandbox="$host/crew-drill-$role-notify"
-  if ! gh repo view "$notify_sandbox" >/dev/null 2>&1; then
-    if ! gh repo create "$notify_sandbox" --public --add-readme >/dev/null; then
-      fail "notify: second sandbox minted for the notify half"
-      return 0
-    fi
+  if gh repo view "$notify_sandbox" >/dev/null 2>&1; then
+    echo "notify: $notify_sandbox stands from an earlier round — reusing it; teardown removes it"
+  elif ! gh repo create "$notify_sandbox" --public --add-readme >/dev/null; then
+    fail "notify: the drill's own second sandbox is in place for the notify half"
+    return 0
   fi
-  ok "notify: second sandbox minted for the notify half"
+  ok "notify: the drill's own second sandbox is in place for the notify half"
 
   pre_notify_text="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
   before="$(rehearsal_notify_read_work_registry)"
