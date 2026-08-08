@@ -701,6 +701,27 @@ rehearsal_notify_restore_registry
 t notify-restore-is-a-noop-when-the-leg-never-wrote 0 \
   "$(wc -l <"$NOTIFY_BX_CALLS" | tr -d ' ')"
 
+# A handoff fixture is recorded by the CALLER, because the stager is read
+# through a command substitution and a subshell's list would be lost exactly
+# where a killed run needs it. Left open, these occupy the builder slot on a
+# host whose gh identity is also the box's.
+REHEARSAL_NOTIFY_FIXTURES=""
+rehearsal_notify_record_fixture "$NOTIFY_WORK" "$NOTIFY_WORK_PR"
+rehearsal_notify_record_fixture "$NOTIFY_EXTRA" "$NOTIFY_EXTRA_PR"
+: >"$NOTIFY_BX_CALLS"
+gh() { case "$1 $2" in "api -X") printf '%s\n' "$*" >>"$NOTIFY_BX_CALLS" ;; *) return 2 ;; esac; }
+rehearsal_notify_close_fixtures
+t notify-fixture-teardown-closes-both 2 "$(wc -l <"$NOTIFY_BX_CALLS" | tr -d ' ')"
+t notify-fixture-teardown-closes-the-work-half 1 \
+  "$(grep -cF "repos/$NOTIFY_WORK/pulls/$NOTIFY_WORK_PR" "$NOTIFY_BX_CALLS")"
+t notify-fixture-teardown-closes-the-notify-half 1 \
+  "$(grep -cF "repos/$NOTIFY_EXTRA/pulls/$NOTIFY_EXTRA_PR" "$NOTIFY_BX_CALLS")"
+t notify-fixture-teardown-clears-the-list "" "$REHEARSAL_NOTIFY_FIXTURES"
+: >"$NOTIFY_BX_CALLS"
+rehearsal_notify_close_fixtures
+t notify-fixture-teardown-is-idempotent 0 "$(wc -l <"$NOTIFY_BX_CALLS" | tr -d ' ')"
+unset -f gh
+
 # Both registries in ONE step: rehearsal_cleanup restores the notify half too,
 # so an abnormal exit cannot leave a box watching a torn-down sandbox.
 : >"$NOTIFY_BX_CALLS"
@@ -762,6 +783,13 @@ else
   notify_wiring=MISSING
 fi
 t notify-second-sandbox-torn-down wired "$notify_wiring"
+# shellcheck disable=SC2016  # match the literal guard in rehearsal.sh
+if grep -Fq 'rehearsal_notify_close_fixtures' "$ROOT/drill/rehearsal.sh"; then
+  notify_wiring=wired
+else
+  notify_wiring=MISSING
+fi
+t notify-fixtures-closed-on-every-exit-path wired "$notify_wiring"
 # The handoff label is the engine's, never retyped in the drill.
 t notify-handoff-label-not-retyped-in-drill 0 \
   "$(grep -R -F 'state:needs-human' "$ROOT/drill" | wc -l | tr -d ' ')"

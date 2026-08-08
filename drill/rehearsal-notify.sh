@@ -23,6 +23,10 @@
 # rehearsal_cleanup, which restores both registries in one step.
 REHEARSAL_NOTIFY_BACKUP=""
 REHEARSAL_NOTIFY_ABSENT=0
+# "<repo> <pr>" per line, so a run killed mid-leg does not leave a handoff
+# fixture open — the builder block's slot check reads open PRs, and on a host
+# whose gh identity is also the box's these would occupy it.
+REHEARSAL_NOTIFY_FIXTURES=""
 
 # --- pure predicates ------------------------------------------------------
 
@@ -264,10 +268,27 @@ rehearsal_notify_stage_handoff_pr() {
   printf '%s\n' "$pr"
 }
 
-rehearsal_notify_close_fixture_pr() {
-  local repo="$1" pr="$2"
-  [ -n "$pr" ] || return 0
-  gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null
+# The caller records the fixture, never this function: it is read through a
+# command substitution, and a subshell's assignment to the cleanup list would
+# be lost exactly where the cleanup matters.
+rehearsal_notify_record_fixture() {
+  REHEARSAL_NOTIFY_FIXTURES="$REHEARSAL_NOTIFY_FIXTURES$1 $2
+"
+}
+
+# Closing the fixtures is also what resolves them in the operator's chat: the
+# next pass edits each 🟣 row to its ✖ CLOSED form, so the leg leaves no live
+# handoff behind in a channel a human reads.
+rehearsal_notify_close_fixtures() {
+  local repo pr failed=0
+  [ -n "$REHEARSAL_NOTIFY_FIXTURES" ] || return 0
+  while read -r repo pr; do
+    [ -n "$pr" ] || continue
+    gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null \
+      || { echo "notify: WARNING — could not close handoff fixture $repo#$pr" >&2; failed=1; }
+  done <<<"$REHEARSAL_NOTIFY_FIXTURES"
+  REHEARSAL_NOTIFY_FIXTURES=""
+  return "$failed"
 }
 
 # --- the leg --------------------------------------------------------------
@@ -334,6 +355,7 @@ rehearsal_notify_drill() {
 
   if work_pr="$(rehearsal_notify_stage_handoff_pr "$work" "work-$(date -u +%H%M%S)" "$label")" \
       && [ -n "$work_pr" ]; then
+    rehearsal_notify_record_fixture "$work" "$work_pr"
     ok "notify: handoff fixture staged in the repos.txt sandbox"
   else
     work_pr=""
@@ -341,6 +363,7 @@ rehearsal_notify_drill() {
   fi
   if notify_pr="$(rehearsal_notify_stage_handoff_pr "$notify_sandbox" "extra-$(date -u +%H%M%S)" "$label")" \
       && [ -n "$notify_pr" ]; then
+    rehearsal_notify_record_fixture "$notify_sandbox" "$notify_pr"
     ok "notify: handoff fixture staged in the notify-repos.txt sandbox"
   else
     notify_pr=""
@@ -369,12 +392,10 @@ rehearsal_notify_drill() {
     fi
   fi
 
-  # Resolve what the leg put in the operator's chat: closing the fixtures and
-  # running one more pass edits both messages to their closed form, so the
-  # drill leaves no live 🟣 row behind. Best effort — the assertions above are
-  # the leg, this is manners.
-  rehearsal_notify_close_fixture_pr "$work" "$work_pr" || true
-  rehearsal_notify_close_fixture_pr "$notify_sandbox" "$notify_pr" || true
+  # One more pass after the fixtures close edits both messages to their ✖ form,
+  # so the drill leaves no live 🟣 row in a channel a human reads. Best effort —
+  # the assertions above are the leg, this is manners.
+  rehearsal_notify_close_fixtures || true
   rehearsal_notify_tick || true
 
   if rehearsal_notify_restore_registry; then

@@ -155,6 +155,9 @@ cleanup_all() {
       rehearsal_resume_restore_cli \
         || echo "WARNING: could not restore the builder CLI after the resume drill; stop the box: box down $BOX_NAME" >&2
     fi
+    if [ -n "${REHEARSAL_NOTIFY_FIXTURES:-}" ]; then
+      rehearsal_notify_close_fixtures || true
+    fi
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
         "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
