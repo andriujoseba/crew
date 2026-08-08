@@ -447,21 +447,21 @@ BUILDER_PANEL_CONTENT="$(rehearsal_builder_fixture_panel_content builder host-re
 t rehearsal-builder-fixture-panel-is-author-specific \
   'panel[builder]=host-reviewer' "$BUILDER_PANEL_CONTENT"
 
-if rehearsal_builder_is_draft_from_json '{"draft":true}'; then r1=draft; else r1=ready; fi
-t rehearsal-builder-draft-object-read draft "$r1"
-if rehearsal_builder_is_draft_from_json '{"draft":false}'; then r1=DRAFT; else r1=refused; fi
-t rehearsal-builder-ready-object-refused refused "$r1"
+if rehearsal_builder_is_draft_from_json '{"draft":true}'; then builder_draft_result=draft; else builder_draft_result=ready; fi
+t rehearsal-builder-draft-object-read draft "$builder_draft_result"
+if rehearsal_builder_is_draft_from_json '{"draft":false}'; then builder_draft_result=DRAFT; else builder_draft_result=refused; fi
+t rehearsal-builder-ready-object-refused refused "$builder_draft_result"
 
 BUILDER_COMMENTS='[
   {"user":{"login":"builder"},"body":"📣 round answered at head '"$BUILDER_HEAD"'"},
   {"user":{"login":"somebody-else"},"body":"📣 round answered at head '"$BUILDER_OTHER_HEAD"'"}
 ]'
 if rehearsal_builder_has_answer_signal_from_json \
-    builder "$BUILDER_HEAD" "$BUILDER_COMMENTS"; then r1=found; else r1=missing; fi
-t rehearsal-builder-current-head-signal-found found "$r1"
+    builder "$BUILDER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=found; else builder_signal_result=missing; fi
+t rehearsal-builder-current-head-signal-found found "$builder_signal_result"
 if rehearsal_builder_has_answer_signal_from_json \
-    builder "$BUILDER_OTHER_HEAD" "$BUILDER_COMMENTS"; then r1=WRONG; else r1=refused; fi
-t rehearsal-builder-other-author-signal-refused refused "$r1"
+    builder "$BUILDER_OTHER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=WRONG; else builder_signal_result=refused; fi
+t rehearsal-builder-other-author-signal-refused refused "$builder_signal_result"
 
 BUILDER_PENDING_STATUS='{"statuses":[
   {"context":"drill/builder-head-settle","state":"success","created_at":"2026-08-08T12:00:00Z"},
@@ -476,10 +476,10 @@ t rehearsal-builder-missing-check-context-is-empty '' \
 
 BUILDER_REQUESTED='{"users":[{"login":"host-reviewer"}],"teams":[]}'
 BUILDER_UNREQUESTED='{"users":[],"teams":[]}'
-if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_REQUESTED"; then r1=requested; else r1=missing; fi
-t rehearsal-builder-settled-head-request-found requested "$r1"
-if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_UNREQUESTED"; then r1=EARLY; else r1=withheld; fi
-t rehearsal-builder-pending-head-request-withheld withheld "$r1"
+if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_REQUESTED"; then builder_request_result=requested; else builder_request_result=missing; fi
+t rehearsal-builder-settled-head-request-found requested "$builder_request_result"
+if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_UNREQUESTED"; then builder_request_result=EARLY; else builder_request_result=withheld; fi
+t rehearsal-builder-pending-head-request-withheld withheld "$builder_request_result"
 
 t rehearsal-builder-signal-window-waits-before-signal waiting \
   "$(rehearsal_builder_signal_window_from_json \
