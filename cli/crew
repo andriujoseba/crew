@@ -935,7 +935,7 @@ box_names() {
   box list --json 2>/dev/null | jq -r '.[].name' 2>/dev/null \
     || box list 2>/dev/null | awk 'NR>1 {print $1}'
 }
-box_exists() { box_names | grep -qx "$1"; }
+box_exists() { local names; names="$(box_names)"; grep -qx -- "$1" <<<"$names"; }
 
 # box_state NAME — the box's lifecycle state, lowercased; "?" when the payload
 # cannot be read.
@@ -967,7 +967,9 @@ read_roster() { grep -vE '^[[:space:]]*(#|$)' "$ROSTER"; }
 roster_line() { read_roster | awk -v n="$1" '$1 == n {print $2, $3, $4; exit}'; }
 roster_names() { read_roster | awk '{print $1}'; }
 install_identity_args() { # NAME AGENT ROLE — shell words for remote install.sh
-  if roster_names | grep -qx "$1"; then
+  local names
+  names="$(roster_names)"
+  if grep -qx -- "$1" <<<"$names"; then
     printf "%s" "--box '$1'"
   else
     printf "%s" "--agent '$2' --role '$3'"
@@ -1165,7 +1167,7 @@ rig_report() {
 # mid-convergence is exactly what this refuses.
 convergence_of() {
   local report="$1" marker
-  printf '%s\n' "$report" | grep -qx 'probe=ok' || { printf 'unknown\n'; return 0; }
+  grep -qx 'probe=ok' <<<"$report" || { printf 'unknown\n'; return 0; }
   marker="$(report_field marker "$report")"
   [ -n "$marker" ] || { printf 'incomplete\n'; return 0; }
   case "$(marker_fault "$marker")" in
@@ -1204,7 +1206,7 @@ marker_fault() {
 # "not converged" would throw away the only part of this that is actionable.
 convergence_detail() {
   local report="$1" marker
-  printf '%s\n' "$report" | grep -qx 'probe=ok' ||
+  grep -qx 'probe=ok' <<<"$report" ||
     { printf 'the box did not answer: /etc/rig/role could not be read\n'; return 0; }
   marker="$(report_field marker "$report")"
   if [ -z "$marker" ]; then
@@ -1440,7 +1442,7 @@ foreign_actor_check() {
 # drill/rehearsal.sh leaves it in while it runs. `crew upgrade --all` already
 # draws this same line for the same reason (#37).
 hire_guard() {
-  local name="$1" allow="$2" reg prod
+  local name="$1" allow="$2" reg prod names
   prod="$(production_registry)"
   reg="$(box_registry "$name")"
   if [ -z "$reg" ]; then
@@ -1449,7 +1451,8 @@ hire_guard() {
   else
     echo "  registry: $(printf '%s' "$reg" | tr '\n' ' ')"
   fi
-  if roster_names | grep -qx "$name"; then return 0; fi
+  names="$(roster_names)"
+  if grep -qx -- "$name" <<<"$names"; then return 0; fi
   if [ "$reg" != "$prod" ]; then return 0; fi
   if [ "$allow" -eq 1 ]; then
     echo "  NOTE: $name is off-roster and carries the PRODUCTION registry — arming anyway (--allow-offroster)"

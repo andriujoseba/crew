@@ -114,6 +114,8 @@ fi
 # predicate agree to delete anything an operator happened to name that way —
 # and the operator's own scratch box is exactly the thing this script must not
 # reach. Refusing a near-miss costs one flag; deleting one costs a machine.
+# Materialise this multi-line producer before matching: grep -q under pipefail
+# can close its pipe early and turn a successful membership test into SIGPIPE.
 drill_box_names() {
   local role
   printf '%s\n' crew-drill
@@ -121,8 +123,8 @@ drill_box_names() {
 }
 drill_repo_names() { drill_box_names; printf '%s\n' crew-drill-sandbox; }
 
-is_drill_box()  { drill_box_names  | grep -qxF -- "$1"; }
-is_drill_repo() { drill_repo_names | grep -qxF -- "$1"; }
+is_drill_box()  { local names; names="$(drill_box_names)"; grep -qxF -- "$1" <<<"$names"; }
+is_drill_repo() { local names; names="$(drill_repo_names)"; grep -qxF -- "$1" <<<"$names"; }
 
 # --- the roster, as protection rather than as selection -------------------
 # cli/crew RESOLVES one fleet definition: CREW_ROSTER, else CREW_CONFIG_DIR,
@@ -165,7 +167,9 @@ roster_names() {
   done
 }
 ROSTER_NAMES="$(roster_names)"
-is_roster_member() { printf '%s\n' "$ROSTER_NAMES" | grep -qxF -- "$1"; }
+# Prophylactic: keep every membership predicate in the materialised form so a
+# future multi-line producer cannot reintroduce the pipefail/SIGPIPE race.
+is_roster_member() { grep -qxF -- "$1" <<<"$ROSTER_NAMES"; }
 
 # --- which CLIs are here at all -------------------------------------------
 # Read before validation, because the sandbox half's names are derived from

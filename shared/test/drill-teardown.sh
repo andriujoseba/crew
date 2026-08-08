@@ -169,6 +169,36 @@ run() {  # run <env-assignments…> -- <args…>  → OUT, RC
 says()   { case "$OUT" in *"$1"*) return 0 ;; esac; return 1; }
 called() { grep -qF "$1" "$CALLS"; }
 
+# Force the race that exposed #411 instead of hoping scheduler load happens to
+# reproduce it. The old `producer | grep -q` predicate returns 141 here: grep
+# exits after the matching line, then the producer wakes and writes again.
+predicate_function() { sed -n "/^$1()/p" "$TEARDOWN"; }
+eval "$(predicate_function is_drill_box)"
+eval "$(predicate_function is_drill_repo)"
+# shellcheck disable=SC2317  # called by the predicates loaded through eval
+drill_box_names() {
+  printf '%s\n' crew-drill crew-drill-triage
+  sleep 0.05
+  printf '%s\n' crew-drill-builder
+}
+# shellcheck disable=SC2317  # called by the predicates loaded through eval
+drill_repo_names() {
+  printf '%s\n' crew-drill crew-drill-triage
+  sleep 0.05
+  printf '%s\n' crew-drill-builder crew-drill-sandbox
+}
+if is_drill_box crew-drill-triage && ! is_drill_box someone-elses-box; then
+  ok "drill-box-membership-survives-a-descheduled-producer"
+else
+  bad "drill-box-membership-survives-a-descheduled-producer"
+fi
+if is_drill_repo crew-drill-triage && ! is_drill_repo someone-elses-box; then
+  ok "drill-repo-membership-survives-a-descheduled-producer"
+else
+  bad "drill-repo-membership-survives-a-descheduled-producer"
+fi
+unset -f is_drill_box is_drill_repo drill_box_names drill_repo_names predicate_function
+
 # --- the refusal set ------------------------------------------------------
 # Each refusal is asserted BY NAME: a teardown that refuses without saying
 # which name it refused sends the operator back to guess.
