@@ -49,25 +49,45 @@ install_payload_budget_kb() {  # <source tree>
   printf '%s\n' "$bound"
 }
 
-# The excluded roots, read from the installer's own list.
+# The one root #365 was minted on — 29M of that tree's 32M. It is spelled here,
+# and it is the only path that is, for a reason the parse cannot cover on its
+# own: THE MUTATION THIS LEG EXISTS TO CATCH REMOVES IT FROM THE LIST BEING
+# PARSED. An assertion that only ever walks what install.sh still names would
+# go green on exactly the regression it was written for — the root stops being
+# excluded, so it stops being checked, so the fat tree walks past. So this one
+# is asserted by path whether or not the installer still names it, and the
+# installer no longer naming it is its own separate finding below. A path is
+# not the rule: the bound and the other seventeen roots are still read.
+INSTALL_PAYLOAD_SENTINEL_ROOT=fleet-floor/dev
+
+# PAYLOAD_EXCLUDED_PATHS exactly as install.sh declares it — the list the
+# installer derives both its tar excludes and prune_payload() from.
+install_payload_declared_roots() {  # <source tree>
+  sed -n '/^PAYLOAD_EXCLUDED_PATHS=(/,/^)/p' "$1/install.sh" 2>/dev/null |
+    sed -e '1d' -e '$d' -e 's/#.*$//' -e 's/[[:space:]]//g' -e '/^$/d'
+}
+
+# Whether the installer still names the sentinel. Asserted once by the caller,
+# against the source tree: it is a property of install.sh and not of any one
+# installed tree, so it earns one line in the record rather than three.
+install_payload_installer_names_sentinel() {  # <source tree>
+  install_payload_declared_roots "$1" | grep -qx "$INSTALL_PAYLOAD_SENTINEL_ROOT"
+}
+
+# What every installed tree is walked against: the declared list, unioned with
+# the sentinel so removing it from the declaration cannot remove it from here.
 install_payload_excluded_roots() {  # <source tree>
   local tree="$1" roots
   if [ ! -f "$tree/install.sh" ]; then
     echo "install-payload: install.sh is missing from '$tree'" >&2
     return 1
   fi
-  roots="$(sed -n '/^PAYLOAD_EXCLUDED_PATHS=(/,/^)/p' "$tree/install.sh" |
-    sed -e '1d' -e '$d' -e 's/#.*$//' -e 's/[[:space:]]//g' -e '/^$/d')"
-  # A parse that silently returned a SHORT list would pass a fat tree while
-  # reporting the same green line, so the read is checked against the one root
-  # #365 was minted on. That also gives the check its second edge: a
-  # fleet-floor/dev quietly dropped from install.sh reds here, on the drill,
-  # rather than on every operator's next upgrade.
-  if ! printf '%s\n' "$roots" | grep -qx 'fleet-floor/dev'; then
-    echo "install-payload: install.sh's PAYLOAD_EXCLUDED_PATHS does not name fleet-floor/dev" >&2
+  roots="$(install_payload_declared_roots "$tree")"
+  if [ -z "$roots" ]; then
+    echo "install-payload: install.sh's PAYLOAD_EXCLUDED_PATHS did not parse" >&2
     return 1
   fi
-  printf '%s\n' "$roots"
+  printf '%s\n%s\n' "$roots" "$INSTALL_PAYLOAD_SENTINEL_ROOT" | sort -u
 }
 
 # install_payload_assert <case prefix> <source tree> <installed tree>

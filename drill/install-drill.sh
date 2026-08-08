@@ -227,6 +227,17 @@ case "$(PATH="$CREW_BIN:$PATH" command -v crew)" in
   "$CREW_BIN/crew") pass "\`command -v crew\` selects the scratch install when its bin directory is first" ;;
   *) fail "\`command -v crew\` agrees with installer PATH warning" ;;
 esac
+# Read once, against the source: the drill walks every installed tree below
+# against this root whether or not the installer still declares it, so a
+# declaration that quietly lost it is reported here rather than inferred from
+# three identical reds.
+if install_payload_installer_names_sentinel "$TREE"; then
+  pass "payload: the installer still excludes \`$INSTALL_PAYLOAD_SENTINEL_ROOT\`"
+else
+  fail "payload: the installer still excludes \`$INSTALL_PAYLOAD_SENTINEL_ROOT\`" \
+    "\`PAYLOAD_EXCLUDED_PATHS\` no longer names it"
+fi
+
 # THE PAYLOAD (#365), on the tree this host just installed. Asserted at the
 # versioned directory rather than at `current`, because `current` is about to
 # move: this is the FIRST install's tree, and the second one below is the
