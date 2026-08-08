@@ -383,6 +383,15 @@ fi
 t rehearsal-answer-mark-load-rc 0 "$answer_mark_rc"
 t rehearsal-answer-mark-loads-installed-value 'fixture answered at head' \
   "$REHEARSAL_MARK_ANSWERED"
+REHEARSAL_MARK_ANSWERED=stale-value
+QUEUE_LABEL_FIXTURE_HOME="$QUEUE_LABEL_SIX_HOME"
+if rehearsal_load_installed_answer_mark >/dev/null; then
+  answer_mark_missing_rc=0
+else
+  answer_mark_missing_rc=$?
+fi
+t rehearsal-answer-mark-missing-rc 1 "$answer_mark_missing_rc"
+t rehearsal-answer-mark-missing-clears-output '' "$REHEARSAL_MARK_ANSWERED"
 unset -f bx ok fail
 
 REHEARSAL_ISSUE_GH_CALLS="$TMP/rehearsal-issue-gh-calls"
@@ -457,6 +466,7 @@ t rehearsal-builder-duplicate-current-prs-lookup-fails 1 "$duplicate_builder_rc"
 BUILDER_HEAD="$(printf 'b%.0s' {1..40})"
 BUILDER_OTHER_HEAD="$(printf 'c%.0s' {1..40})"
 BUILDER_MARK='📣 round answered at head'
+BUILDER_ROUND_STARTED_AT='2026-08-08T12:01:00Z'
 BUILDER_PANEL_CONTENT="$(rehearsal_builder_fixture_panel_content builder host-reviewer)"
 t rehearsal-builder-fixture-panel-is-author-specific \
   'panel[builder]=host-reviewer' "$BUILDER_PANEL_CONTENT"
@@ -467,22 +477,22 @@ if rehearsal_builder_is_draft_from_json '{"draft":false}'; then builder_draft_re
 t rehearsal-builder-ready-object-refused refused "$builder_draft_result"
 
 BUILDER_COMMENTS='[
-  {"user":{"login":"builder"},"body":"📣 round answered at head '"$BUILDER_HEAD"'"},
-  {"user":{"login":"somebody-else"},"body":"📣 round answered at head '"$BUILDER_OTHER_HEAD"'"}
+  {"user":{"login":"builder"},"body":"📣 round answered at head '"$BUILDER_HEAD"'","created_at":"2026-08-08T12:02:00Z"},
+  {"user":{"login":"somebody-else"},"body":"📣 round answered at head '"$BUILDER_OTHER_HEAD"'","created_at":"2026-08-08T12:02:00Z"}
 ]'
 if rehearsal_builder_has_answer_signal_from_json \
-    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=found; else builder_signal_result=missing; fi
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_ROUND_STARTED_AT" "$BUILDER_COMMENTS"; then builder_signal_result=found; else builder_signal_result=missing; fi
 t rehearsal-builder-current-head-signal-found found "$builder_signal_result"
 if rehearsal_builder_has_answer_signal_from_json \
-    "$BUILDER_MARK" builder "$BUILDER_OTHER_HEAD" "$BUILDER_COMMENTS"; then builder_signal_result=WRONG; else builder_signal_result=refused; fi
+    "$BUILDER_MARK" builder "$BUILDER_OTHER_HEAD" "$BUILDER_ROUND_STARTED_AT" "$BUILDER_COMMENTS"; then builder_signal_result=WRONG; else builder_signal_result=refused; fi
 t rehearsal-builder-other-author-signal-refused refused "$builder_signal_result"
 BUILDER_TRAILING_SIGNALS="$(jq -cn \
   --arg head "$BUILDER_HEAD" --arg mark "$BUILDER_MARK" '[
-    {user:{login:"builder"},body:($mark + " " + $head + " — all points answered")},
-    {user:{login:"builder"},body:($mark + " " + $head + "\n")}
+    {user:{login:"builder"},body:($mark + " " + $head + " — all points answered"),created_at:"2026-08-08T12:02:00Z"},
+    {user:{login:"builder"},body:($mark + " " + $head + "\n"),created_at:"2026-08-08T12:02:00Z"}
   ]')"
 if rehearsal_builder_has_answer_signal_from_json \
-    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_TRAILING_SIGNALS"; then
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_ROUND_STARTED_AT" "$BUILDER_TRAILING_SIGNALS"; then
   builder_signal_result=found
 else
   builder_signal_result=missing
@@ -533,18 +543,22 @@ unset -f gh
 
 t rehearsal-builder-signal-window-waits-before-signal waiting \
   "$(rehearsal_builder_signal_window_from_json \
-    "$BUILDER_MARK" builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_ROUND_STARTED_AT" drill/builder-head-settle \
     '[]' "$BUILDER_PENDING_STATUS")"
 t rehearsal-builder-signal-window-caught-at-pending caught \
   "$(rehearsal_builder_signal_window_from_json \
-    "$BUILDER_MARK" builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_ROUND_STARTED_AT" drill/builder-head-settle \
+    "$BUILDER_COMMENTS" "$BUILDER_PENDING_STATUS")"
+t rehearsal-builder-stale-same-head-signal-waits waiting \
+  "$(rehearsal_builder_signal_window_from_json \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" '2026-08-08T12:03:00Z' drill/builder-head-settle \
     "$BUILDER_COMMENTS" "$BUILDER_PENDING_STATUS")"
 BUILDER_SETTLED_STATUS='{"statuses":[
   {"context":"drill/builder-head-settle","state":"success","created_at":"2026-08-08T12:03:00Z"}
 ]}'
 t rehearsal-builder-immediate-check-conclusion-is-named-skip-state closed:success \
   "$(rehearsal_builder_signal_window_from_json \
-    "$BUILDER_MARK" builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_MARK" builder "$BUILDER_HEAD" "$BUILDER_ROUND_STARTED_AT" drill/builder-head-settle \
     "$BUILDER_COMMENTS" "$BUILDER_SETTLED_STATUS")"
 gh() {
   case "$*" in
@@ -559,7 +573,7 @@ BUILDER_WINDOW_SKIP_OUT="$({
   fail() { printf 'FAIL %s\n' "$1"; }
   rehearsal_wait_builder_signal_window \
     1 owner/sandbox 9 "$BUILDER_MARK" builder "$BUILDER_HEAD" \
-    drill/builder-head-settle
+    "$BUILDER_ROUND_STARTED_AT" drill/builder-head-settle
 })"
 t rehearsal-builder-immediate-check-conclusion-names-window 1 \
   "$(grep -cFx \
@@ -615,13 +629,16 @@ while IFS='|' read -r builder_live_case builder_live_token; do
   fi
 done <<'EOF'
 1|event=REQUEST_CHANGES
-2|state=pending
-3|builder_tick_pid=$!
-4|changes-requested round returns PR to draft
-5|rehearsal_wait_builder_signal_window
-6|panel request withheld while head check is pending
-7|state=success
-8|panel request issued after head settles
+2|host changes-requested review submitted
+3|state=pending
+4|pending head status established
+5|builder_tick_pid=$!
+6|changes-requested round returns PR to draft
+7|rehearsal_wait_builder_signal_window
+8|builder_round_started_at
+9|panel request withheld while head check is pending
+10|state=success
+11|panel request issued after head settles
 EOF
 # shellcheck disable=SC2016  # match the literal background-pid wait in the drill
 case "$BUILDER_LIVE_BLOCK" in
@@ -642,7 +659,7 @@ t rehearsal-builder-occupied-slot-fails-opened-pr 1 \
 t rehearsal-builder-occupied-slot-fails-run-specific-authorship 1 \
   "$(grep -cFx "FAIL builder: PR authored by builder for this run's fixture issue" \
     <<<"$OCCUPIED_BUILDER_OUT")"
-t rehearsal-builder-occupied-slot-skips-unreachable-checks 12 \
+t rehearsal-builder-occupied-slot-skips-unreachable-checks 13 \
   "$(grep -c '^skip ' <<<"$OCCUPIED_BUILDER_OUT")"
 
 REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"

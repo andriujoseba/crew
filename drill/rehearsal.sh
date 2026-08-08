@@ -643,12 +643,21 @@ else
 
       builder_head="$(gh api "repos/$SANDBOX/pulls/$bpr" --jq .head.sha)"
       builder_check_context="drill/builder-head-settle"
-      gh api "repos/$SANDBOX/pulls/$bpr/reviews" \
-        -f body="Drill-only blocking point: answer with evidence that drill-build.txt satisfies the fixture. Do not change the tree; push nothing." \
-        -f event=REQUEST_CHANGES -f commit_id="$builder_head" >/dev/null
-      gh api "repos/$SANDBOX/statuses/$builder_head" \
-        -f state=pending -f context="$builder_check_context" \
-        -f description="drill holds the panel request until the host settles this status" >/dev/null
+      if builder_round_started_at="$(gh api "repos/$SANDBOX/pulls/$bpr/reviews" \
+          -f body="Drill-only blocking point: answer with evidence that drill-build.txt satisfies the fixture. Do not change the tree; push nothing." \
+          -f event=REQUEST_CHANGES -f commit_id="$builder_head" --jq .submitted_at)" && \
+          [ -n "$builder_round_started_at" ]; then
+        ok "builder: host changes-requested review submitted"
+      else
+        fail "builder: host changes-requested review submitted"
+      fi
+      if gh api "repos/$SANDBOX/statuses/$builder_head" \
+          -f state=pending -f context="$builder_check_context" \
+          -f description="drill holds the panel request until the host settles this status" >/dev/null; then
+        ok "builder: pending head status established"
+      else
+        fail "builder: pending head status established"
+      fi
 
       # Observe the author-owned conversion while the tick is alive. The same
       # tick may resume the draft and mark it ready again after answering, so a
@@ -659,7 +668,8 @@ else
         rehearsal_builder_pr_is_draft "$SANDBOX" "$bpr"
       rehearsal_wait_builder_signal_window \
         1800 "$SANDBOX" "$bpr" "$REHEARSAL_MARK_ANSWERED" \
-        "$ME2" "$builder_head" "$builder_check_context"
+        "$ME2" "$builder_head" "$builder_round_started_at" \
+        "$builder_check_context"
       wait "$builder_tick_pid" || true
 
       if rehearsal_builder_head_is "$SANDBOX" "$bpr" "$builder_head"; then
