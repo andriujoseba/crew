@@ -520,15 +520,52 @@ else
 fi
 t rehearsal-hygiene-unexpanded-ledger-path-reds red "$r1"
 
+bx() {
+  case "$1" in
+    *"'fork' HEAD"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if rehearsal_hygiene_remote_is_reachable /home/box/duty/work/owner__repo fork; then
+  r1=reachable
+else
+  r1=WRONG
+fi
+t rehearsal-hygiene-selected-remote-reachable reachable "$r1"
+if rehearsal_hygiene_remote_is_reachable /home/box/duty/work/owner__repo origin; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-unreachable-selected-remote-reds red "$r1"
+
+if rehearsal_hygiene_resources_are_absent '' '' 0 0; then r1=clean; else r1=WRONG; fi
+t rehearsal-hygiene-two-remote-teardown-clean clean "$r1"
+if rehearsal_hygiene_resources_are_absent '' \
+    $'deadbeef\trefs/heads/build/hygiene-builder' 0 0; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-origin-fixture-branch-left-behind-reds red "$r1"
+
 t rehearsal-hygiene-summary-skipped-phase-incomplete \
   "INCOMPLETE hygiene  (phase 2 skipped)" \
   "$(rehearsal_hygiene_summary 1 ' builder' 2)"
 t rehearsal-hygiene-summary-failure-stays-failure \
   "FAIL       hygiene" "$(rehearsal_hygiene_summary 1 ' builder' 1)"
+t rehearsal-hygiene-mixed-fail-then-skip-stays-failure 1 \
+  "$(rehearsal_hygiene_combine_result \
+    "$(rehearsal_hygiene_combine_result 2 1)" 2)"
+t rehearsal-hygiene-mixed-skip-then-pass-is-ok 0 \
+  "$(rehearsal_hygiene_combine_result \
+    "$(rehearsal_hygiene_combine_result 2 2)" 0)"
 
 hygiene_wiring=missing
 # shellcheck disable=SC2016  # these are literal wiring strings, not expansions
 if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq '. "$HERE/rehearsal-hygiene.sh"' \
+      "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'hygiene  (preservation + refusal)' \
       "$ROOT/drill/rehearsal-hygiene.sh" \
     && grep -Fq '"$box_home/duty/.rehearsal-hygiene-refusal-ledger" "$ME2"' \
@@ -537,6 +574,15 @@ if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
   hygiene_wiring=wired
 fi
 t rehearsal-hygiene-opt-out-summary-and-live-leg-wired wired "$hygiene_wiring"
+HYG_ALL_MUTATED="$TMP/rehearsal-all-without-hygiene-source.sh"
+sed '/\. "$HERE\/rehearsal-hygiene.sh"/d' \
+  "$ROOT/drill/rehearsal-all.sh" >"$HYG_ALL_MUTATED"
+if grep -Fq '. "$HERE/rehearsal-hygiene.sh"' "$HYG_ALL_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-missing-helper-source-reds red "$r1"
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"

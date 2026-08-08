@@ -55,15 +55,38 @@ rehearsal_hygiene_box_path_is_resolved() {
   [ "${path#/}" != "$path" ] && [[ "$path" != *'$'* ]]
 }
 
+rehearsal_hygiene_remote_is_reachable() {
+  local clone="$1" remote="$2"
+  bx "git -C '$clone' ls-remote '$remote' HEAD >/dev/null 2>&1"
+}
+
+rehearsal_hygiene_resources_are_absent() {
+  local preserve_refs="$1" origin_branches="$2"
+  local good_wt_exists="$3" bad_wt_exists="$4"
+  [ -z "$preserve_refs" ] && [ -z "$origin_branches" ] \
+    && [ "$good_wt_exists" -eq 0 ] && [ "$bad_wt_exists" -eq 0 ]
+}
+
+rehearsal_hygiene_combine_result() {
+  local current="$1" role_rc="$2"
+  if [ "$current" -eq 1 ] || { [ "$role_rc" -ne 0 ] && [ "$role_rc" -ne 2 ]; }; then
+    printf '1\n'
+  elif [ "$role_rc" -eq 0 ]; then
+    printf '0\n'
+  else
+    printf '%s\n' "$current"
+  fi
+}
+
 rehearsal_hygiene_summary() {
-  local enabled="$1" drilled="$2" overall="$3"
+  local enabled="$1" drilled="$2" hygiene_result="$3"
   if [ "$enabled" -eq 0 ]; then
     printf '%s\n' "skip       hygiene  (--no-hygiene-drill)"
   elif [ -z "${drilled// /}" ]; then
     printf '%s\n' "INCOMPLETE hygiene  (no role reached a box)"
-  elif [ "$overall" -eq 0 ]; then
+  elif [ "$hygiene_result" -eq 0 ]; then
     printf '%s\n' "ok         hygiene  (preservation + refusal)"
-  elif [ "$overall" -eq 2 ]; then
+  elif [ "$hygiene_result" -eq 2 ]; then
     printf '%s\n' "INCOMPLETE hygiene  (phase 2 skipped)"
   else
     printf '%s\n' "FAIL       hygiene"
@@ -209,6 +232,7 @@ rehearsal_hygiene_drill() {
   local repo="$1" role="$2" slug stamp box_home good_branch bad_branch good_wt bad_wt
   local good_ref bad_ref good_pr bad_pr first_line good_log tree tip_contents staged record
   local before after first_refusal second_refusal preserve_remote fork_url
+  local preserve_refs origin_branches good_wt_exists bad_wt_exists
   if [ "${REHEARSAL_HYGIENE_DRILL:-1}" -eq 0 ]; then
     skip "hygiene: dirty worktree preservation and refusal (--no-hygiene-drill)"
     return 0
@@ -237,6 +261,12 @@ rehearsal_hygiene_drill() {
   fork_url="$(bx "git -C '$REHEARSAL_HYGIENE_CLONE' remote get-url fork 2>/dev/null || true")"
   REHEARSAL_HYGIENE_PRESERVE_REMOTE="$preserve_remote"
   REHEARSAL_HYGIENE_FORK_URL="$fork_url"
+  if ! rehearsal_hygiene_remote_is_reachable \
+      "$REHEARSAL_HYGIENE_CLONE" "$preserve_remote"; then
+    fail "hygiene: selected preservation remote '$preserve_remote' is reachable"
+    return 1
+  fi
+  ok "hygiene: selected preservation remote '$preserve_remote' is reachable"
   rehearsal_hygiene_cleanup
   REHEARSAL_HYGIENE_CLONE="$box_home/duty/work/$slug"
   REHEARSAL_HYGIENE_REFS="$good_ref $bad_ref"
@@ -312,9 +342,13 @@ rehearsal_hygiene_drill() {
     rehearsal_hygiene_refusal_is_intact \
       "$before" "$after" "$first_refusal" "$second_refusal"
   rehearsal_hygiene_cleanup
-  check "hygiene: teardown removed fixture branches, refs and worktrees" bx \
-    "! git -C '$box_home/duty/work/$slug' ls-remote --exit-code '$preserve_remote' \
-       'refs/heads/$good_ref' 'refs/heads/$bad_ref' \
-       'refs/heads/$good_branch' 'refs/heads/$bad_branch' >/dev/null 2>&1 \
-     && ! test -e '$good_wt' && ! test -e '$bad_wt'"
+  preserve_refs="$(bx "git -C '$box_home/duty/work/$slug' ls-remote '$preserve_remote' \
+    'refs/heads/$good_ref' 'refs/heads/$bad_ref'")" || preserve_refs=query-failed
+  origin_branches="$(bx "git -C '$box_home/duty/work/$slug' ls-remote origin \
+    'refs/heads/$good_branch' 'refs/heads/$bad_branch'")" || origin_branches=query-failed
+  if bx "test -e '$good_wt'"; then good_wt_exists=1; else good_wt_exists=0; fi
+  if bx "test -e '$bad_wt'"; then bad_wt_exists=1; else bad_wt_exists=0; fi
+  check "hygiene: teardown removed fixture branches, refs and worktrees" \
+    rehearsal_hygiene_resources_are_absent \
+      "$preserve_refs" "$origin_branches" "$good_wt_exists" "$bad_wt_exists"
 }

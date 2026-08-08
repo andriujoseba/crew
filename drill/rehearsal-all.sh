@@ -92,6 +92,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/rehearsal-hygiene.sh"
 declare -a SUMMARY=()
 overall=0
+hygiene_result=2
 
 for role in $ROLES; do
   case "$role" in
@@ -106,6 +107,7 @@ for role in $ROLES; do
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
+  hygiene_result="$(rehearsal_hygiene_combine_result "$hygiene_result" "$rc")"
   [ "$role" != builder ] || BUILDER_RC="$rc"
   # Roles whose box the drill actually REACHED, for the app phase below. rc=0
   # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
@@ -127,12 +129,13 @@ for role in $ROLES; do
   # tested nothing gets reported as clearing the rollout.
   case "$rc" in
     0) SUMMARY+=("ok         $role  (phase 2 ran)") ;;
-    2) SUMMARY+=("INCOMPLETE $role  (phase 2 skipped — loop UNPROVEN)"); overall=2 ;;
+    2) SUMMARY+=("INCOMPLETE $role  (phase 2 skipped — loop UNPROVEN)")
+       [ "$overall" -eq 1 ] || overall=2 ;;
     *) SUMMARY+=("FAIL       $role"); overall=1 ;;
   esac
 done
 
-SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$overall")")
+SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result")")
 if [ "$HYGIENE_DRILL" -ne 0 ] && [ -z "${DRILLED// /}" ]; then
   [ "$overall" -eq 1 ] || overall=2
 fi
