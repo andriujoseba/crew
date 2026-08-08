@@ -574,6 +574,8 @@ else
     "tail -n +$((DUTY_LOG_LINES + 1)) ~/duty/duty.log | grep -Fq '$SANDBOX: quiet — no mentions, no triage signals, no session launched'"
 
   elif [ "$ROLE" = "builder" ]; then
+  # shellcheck source=drill/rehearsal-resume.sh
+  . "$ROOT/drill/rehearsal-resume.sh"
   # -- builder: an unassigned `ready` issue must become a PR --
   # ready+ASSIGNED is deliberately NOT pickable (an assignee means mid-claim;
   # counting those launched sessions with nothing to do). The fixture must
@@ -693,8 +695,13 @@ else
         skip "builder: settled head status established"
         skip "builder: panel request issued after head settles"
       fi
+      # Pending/red heads deliberately keep the ordinary twelve-tick path: an
+      # hour of wall clock would re-prove unchanged behaviour. This leg covers
+      # the new discriminators — the conclusion wake and bounded bypasses.
+      rehearsal_resume_drill "$SANDBOX" "$bpr"
     else
       rehearsal_report_missing_builder_pr
+      rehearsal_resume_drill "$SANDBOX" ""
     fi
   fi
 
