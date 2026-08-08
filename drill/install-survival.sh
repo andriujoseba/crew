@@ -5,21 +5,17 @@
 # rehearsal-safety.sh does for the isolation interlocks.
 #
 # Step 9 proves the engine outlives its console. Engine and cron are diffed
-# across the removal in every case. The TICK leg cannot be: a box hired
-# seconds earlier has no ~/duty/duty.log at all — the first line is written at
-# the first cron boundary — so a history diff there asserts history the box
-# cannot have and reds on a box whose survival is not in doubt. Observed live
-# on crew-drill-011, 2026-08-03: the drill read an empty tail and redded, and
-# the box's first tick fired 14 seconds later, after the console was gone
-# (#341).
+# across the removal, while both tick contexts wait for a line written after
+# the removal returned. A box hired seconds earlier has no ~/duty/duty.log at
+# all — the first line is written at the first cron boundary — which is why the
+# record still distinguishes a box arriving with history from one arriving
+# without it. Observed live on crew-drill-011, 2026-08-03: the drill read an
+# empty tail and redded, and the box's first tick fired 14 seconds later, after
+# the console was gone (#341).
 #
-# So the leg splits by what the box has, and the fresh side is the stronger
-# assertion of the two: not "the last line I saw is still there" but "the
-# engine wrote a new one, with its console removed".
-#
-# "After the removal" is meant literally, and that is what the two baselines
-# are for. The fresh leg measures its wait against a tick read taken once the
-# removal has RETURNED, not the empty read taken before it: a boundary striking
+# "After the removal" is meant literally. The tick assertion measures its wait
+# against a baseline taken once the removal has RETURNED, not the read taken
+# before it: a boundary striking
 # while the uninstall runs writes a line that proves nothing about survival, and
 # a wait that accepts the first non-empty line it sees would pass on it at zero
 # elapsed time. Same reasoning for engine and cron, which are re-read after the
@@ -59,7 +55,7 @@ install_survival_budget() {
 }
 
 # install_survival_before — read the three surfaces the removal must not
-# disturb, and choose the tick leg's form from what the box actually has.
+# disturb, and record whether the box arrived with tick history.
 # shellcheck disable=SC2034  # PATH_LABEL is read by the caller's pass line
 install_survival_before() {
   INSTALL_SURVIVAL_ENGINE_PRE="$(install_survival_read_engine)"
@@ -67,10 +63,10 @@ install_survival_before() {
   INSTALL_SURVIVAL_TICK_PRE="$(install_survival_read_tick)"
   if [ -n "$INSTALL_SURVIVAL_TICK_PRE" ]; then
     INSTALL_SURVIVAL_PATH=history
-    INSTALL_SURVIVAL_PATH_LABEL="history diff — the box arrived with tick history"
+    INSTALL_SURVIVAL_PATH_LABEL="the box arrived with tick history"
   else
     INSTALL_SURVIVAL_PATH=fresh
-    INSTALL_SURVIVAL_PATH_LABEL="post-removal tick wait — the box had no duty.log before the removal"
+    INSTALL_SURVIVAL_PATH_LABEL="the box arrived with no duty.log"
   fi
 }
 
@@ -138,41 +134,33 @@ install_survival_check() {
   INSTALL_SURVIVAL_TICK_POST=""
   INSTALL_SURVIVAL_DETAIL=""
 
-  # First read of all, before engine and cron: on the fresh leg this is the
-  # baseline the wait excludes, so the narrower the window between the removal
+  # First read of all, before engine and cron: this is the baseline the wait
+  # excludes, so the narrower the window between the removal
   # returning and this read, the less of the uninstall it can swallow.
-  [ "$INSTALL_SURVIVAL_PATH" = history ] ||
-    INSTALL_SURVIVAL_TICK_POST="$(install_survival_read_tick)"
+  INSTALL_SURVIVAL_TICK_POST="$(install_survival_read_tick)"
 
   install_survival_diff_engine_cron "after the removal"
 
-  if [ "$INSTALL_SURVIVAL_PATH" = history ]; then
-    INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
-    if [ -z "$INSTALL_SURVIVAL_TICK" ]; then
-      INSTALL_SURVIVAL_MISSED+=("tick: read nothing at ~/duty/duty.log, where the box's last line was '$INSTALL_SURVIVAL_TICK_PRE' before the removal")
-    elif [ "$INSTALL_SURVIVAL_TICK" != "$INSTALL_SURVIVAL_TICK_PRE" ]; then
-      INSTALL_SURVIVAL_MISSED+=("tick: read '$INSTALL_SURVIVAL_TICK' at ~/duty/duty.log, where the box's last line was '$INSTALL_SURVIVAL_TICK_PRE' before the removal")
-    fi
+  budget="$(install_survival_budget "$INSTALL_SURVIVAL_CRON_PRE")"
+  if [ -z "$INSTALL_SURVIVAL_CRON" ]; then
+    # Not waited for, and said so: with the line gone no boundary can strike,
+    # so a ${budget}s wait would only relabel the cron failure as a tick one.
+    INSTALL_SURVIVAL_MISSED+=("tick: not waited for, the box's schedule being gone, so no boundary can strike")
   else
-    budget="$(install_survival_budget "$INSTALL_SURVIVAL_CRON_PRE")"
-    if [ -z "$INSTALL_SURVIVAL_CRON" ]; then
-      # Not waited for, and said so: with the line gone no boundary can strike,
-      # so a ${budget}s wait would only relabel the cron failure as a tick one.
-      INSTALL_SURVIVAL_MISSED+=("tick: not waited for, the box's schedule being gone, so no boundary can strike — and it had no duty.log to diff")
-    else
-      install_survival_wait_for_tick "$budget" "$INSTALL_SURVIVAL_TICK_POST" || waited=no
-      # Both outcomes re-read engine and cron: a surviving box that lost one of
-      # them inside the wait window did not survive, and on a failed wait the
-      # second read is often the reason the tick never came.
-      install_survival_diff_engine_cron "after the ${budget}s tick wait"
-      if [ "$waited" = no ]; then
-        read_as="read '$INSTALL_SURVIVAL_TICK'"
-        [ -n "$INSTALL_SURVIVAL_TICK" ] || read_as="read nothing"
-        if [ -n "$INSTALL_SURVIVAL_TICK_POST" ]; then
-          INSTALL_SURVIVAL_MISSED+=("tick: $read_as at ~/duty/duty.log through the ${budget}s after the removal, where the removal completed with '$INSTALL_SURVIVAL_TICK_POST' already there — one schedule period plus grace, and no boundary struck after the removal itself")
-        else
-          INSTALL_SURVIVAL_MISSED+=("tick: $read_as at ~/duty/duty.log through the ${budget}s after the removal — one schedule period plus grace, the box having arrived with no duty.log to diff")
-        fi
+    install_survival_wait_for_tick "$budget" "$INSTALL_SURVIVAL_TICK_POST" || waited=no
+    # Both outcomes re-read engine and cron: a surviving box that lost one of
+    # them inside the wait window did not survive, and on a failed wait the
+    # second read is often the reason the tick never came.
+    install_survival_diff_engine_cron "after the ${budget}s tick wait"
+    if [ "$waited" = no ]; then
+      read_as="read '$INSTALL_SURVIVAL_TICK'"
+      [ -n "$INSTALL_SURVIVAL_TICK" ] || read_as="read nothing"
+      if [ -n "$INSTALL_SURVIVAL_TICK_PRE" ]; then
+        INSTALL_SURVIVAL_MISSED+=("tick: $read_as at ~/duty/duty.log through the ${budget}s after the removal, where the box arrived with '$INSTALL_SURVIVAL_TICK_PRE' and the removal completed with '$INSTALL_SURVIVAL_TICK_POST' — one schedule period plus grace, and no boundary struck after the removal itself")
+      elif [ -n "$INSTALL_SURVIVAL_TICK_POST" ]; then
+        INSTALL_SURVIVAL_MISSED+=("tick: $read_as at ~/duty/duty.log through the ${budget}s after the removal, where the removal completed with '$INSTALL_SURVIVAL_TICK_POST' already there — one schedule period plus grace, and no boundary struck after the removal itself")
+      else
+        INSTALL_SURVIVAL_MISSED+=("tick: $read_as at ~/duty/duty.log through the ${budget}s after the removal — one schedule period plus grace, the box having arrived with no duty.log")
       fi
     fi
   fi
