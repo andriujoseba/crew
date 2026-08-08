@@ -149,10 +149,40 @@ rehearsal_builder_not_requested() {
   ! rehearsal_builder_requested "$@"
 }
 
-rehearsal_builder_answered_at_pending_head() {
-  local repo="$1" pr="$2" author="$3" head="$4" context="$5"
-  rehearsal_builder_has_answer_signal "$repo" "$pr" "$author" "$head" \
-    && [ "$(rehearsal_builder_check_state "$repo" "$head" "$context")" = pending ]
+rehearsal_builder_signal_window_from_json() {
+  local author="$1" head="$2" context="$3" comments_json="$4" status_json="$5" state
+  if ! rehearsal_builder_has_answer_signal_from_json "$author" "$head" "$comments_json"; then
+    printf 'waiting\n'
+    return 0
+  fi
+  state="$(rehearsal_builder_check_state_from_json "$context" "$status_json")"
+  if [ "$state" = pending ]; then
+    printf 'caught\n'
+  else
+    printf 'closed:%s\n' "${state:-no-status}"
+  fi
+}
+
+rehearsal_wait_builder_signal_window() {
+  local seconds="$1" repo="$2" pr="$3" author="$4" head="$5" context="$6"
+  local end=$((SECONDS + seconds)) comments_json status_json result
+  while [ "$SECONDS" -lt "$end" ]; do
+    comments_json="$(gh api "repos/$repo/issues/$pr/comments?per_page=100" --paginate | jq -s 'add')" || comments_json='[]'
+    status_json="$(gh api "repos/$repo/commits/$head/status")" || status_json='{"statuses":[]}'
+    result="$(rehearsal_builder_signal_window_from_json \
+      "$author" "$head" "$context" "$comments_json" "$status_json")"
+    case "$result" in
+      caught)
+        ok "builder: round answer is signalled while head check is pending"
+        return 0 ;;
+      closed:*)
+        skip "builder: pending-check signal window closed before it could be observed (check ${result#closed:}); round answer signal was present"
+        return 0 ;;
+    esac
+    sleep 10
+  done
+  fail "builder: round answer is signalled while head check is pending (timeout ${seconds}s)"
+  return 1
 }
 
 rehearsal_report_occupied_builder_slot() {

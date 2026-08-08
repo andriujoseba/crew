@@ -481,6 +481,40 @@ t rehearsal-builder-settled-head-request-found requested "$r1"
 if rehearsal_builder_requested_from_json host-reviewer "$BUILDER_UNREQUESTED"; then r1=EARLY; else r1=withheld; fi
 t rehearsal-builder-pending-head-request-withheld withheld "$r1"
 
+t rehearsal-builder-signal-window-waits-before-signal waiting \
+  "$(rehearsal_builder_signal_window_from_json \
+    builder "$BUILDER_HEAD" drill/builder-head-settle '[]' "$BUILDER_PENDING_STATUS")"
+t rehearsal-builder-signal-window-caught-at-pending caught \
+  "$(rehearsal_builder_signal_window_from_json \
+    builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_COMMENTS" "$BUILDER_PENDING_STATUS")"
+BUILDER_SETTLED_STATUS='{"statuses":[
+  {"context":"drill/builder-head-settle","state":"success","created_at":"2026-08-08T12:03:00Z"}
+]}'
+t rehearsal-builder-immediate-check-conclusion-is-named-skip-state closed:success \
+  "$(rehearsal_builder_signal_window_from_json \
+    builder "$BUILDER_HEAD" drill/builder-head-settle \
+    "$BUILDER_COMMENTS" "$BUILDER_SETTLED_STATUS")"
+gh() {
+  case "$*" in
+    *issues/9/comments*) printf '%s\n' "$BUILDER_COMMENTS" ;;
+    *commits/"$BUILDER_HEAD"/status*) printf '%s\n' "$BUILDER_SETTLED_STATUS" ;;
+    *) return 2 ;;
+  esac
+}
+BUILDER_WINDOW_SKIP_OUT="$({
+  ok() { printf 'ok   %s\n' "$1"; }
+  skip() { printf 'skip %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  rehearsal_wait_builder_signal_window \
+    1 owner/sandbox 9 builder "$BUILDER_HEAD" drill/builder-head-settle
+})"
+t rehearsal-builder-immediate-check-conclusion-names-window 1 \
+  "$(grep -cFx \
+    'skip builder: pending-check signal window closed before it could be observed (check success); round answer signal was present' \
+    <<<"$BUILDER_WINDOW_SKIP_OUT")"
+unset -f gh
+
 # Mutation required by #418: stage the disabled draft-return path as the PR
 # object the sourceable assertion reads. It must name the live leg assertion,
 # never silently pass a ready PR as if conversion happened.
@@ -504,7 +538,7 @@ for builder_live_token in \
     'state=pending' \
     'builder_tick_pid=$!' \
     'changes-requested round returns PR to draft' \
-    'round answer is signalled while head check is pending' \
+    'rehearsal_wait_builder_signal_window' \
     'panel request withheld while head check is pending' \
     'state=success' \
     'panel request issued after head settles'; do

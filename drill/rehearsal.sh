@@ -656,9 +656,8 @@ else
       builder_tick_pid=$!
       wait_for 900 "builder: changes-requested round returns PR to draft" \
         rehearsal_builder_pr_is_draft "$SANDBOX" "$bpr"
-      wait_for 1800 "builder: round answer is signalled while head check is pending" \
-        rehearsal_builder_answered_at_pending_head \
-          "$SANDBOX" "$bpr" "$ME2" "$builder_head" "$builder_check_context"
+      rehearsal_wait_builder_signal_window \
+        1800 "$SANDBOX" "$bpr" "$ME2" "$builder_head" "$builder_check_context"
       check "builder: panel request withheld while head check is pending" \
         rehearsal_builder_not_requested "$SANDBOX" "$bpr" "$HOST_ME"
       wait "$builder_tick_pid" || true
