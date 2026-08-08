@@ -128,17 +128,15 @@ fail() { echo "FAIL $1${2:+  — $2}"; FAILS+=("$1"); }
 skip() { echo "skip $1${2:+  — $2}"; SKIP=$((SKIP + 1)); }
 t()    { if [ "$2" = "$3" ]; then ok "$1"; else fail "$1" "expected [$2] got [$3]"; fi; }
 
-# The PAGE-side halves of the 0.1.2 surfaces, skipped BY NAME wherever the walk
-# cannot run — no browser, no module, --no-browser. An API-only pass would be
-# the wrong verdict: the payload can carry a version and a verdict the page
-# drops. A precondition that silently retires an assertion instead of naming it
-# is how this leg once reported `0 failed` while asserting nothing (#50).
-page_surface_skips() {
-  skip "page: the header renders the serving host's version (#347)" "$1"
-  skip "page: the engine tile renders its integrity verdict (#190)" "$1"
-  skip "page: the state filter separates disarmed from silent (#312)" "$1"
-  skip "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" "$1"
-}
+# The 0.1.2 operator surfaces (#420) are asserted by functions over the inputs
+# they read, sourced from beside this file. Sourced rather than inlined so
+# shared/test/run.sh can drive them with a staged wrong answer and prove each
+# one reds — an assertion reachable only from a drill host is one nobody has
+# checked. Sourced HERE, after ok/fail/skip/t and roster_rows and before jqf,
+# which is fine: bash resolves the callees at call time, and every call is far
+# below.
+# shellcheck source=drill/rehearsal-app-surfaces.sh disable=SC1091
+source "$HERE/rehearsal-app-surfaces.sh"
 
 command -v box     >/dev/null || { echo "drill/rehearsal-app.sh runs on a box HOST — no 'box' on PATH"; exit 1; }
 command -v python3 >/dev/null || { echo "python3 required"; exit 1; }
@@ -505,118 +503,19 @@ body GET /api/fleet > "$FLEET_JSON"
 BOX_READ_TIMEOUT="${CREW_FLOOR_PROBE_TIMEOUT:-45}"
 box_read() { timeout "$BOX_READ_TIMEOUT" box exec "$@"; }
 
-# --- #347: the header names the version of the crew that is SERVING the page -
-API_VERSION="$(jqf "d.get('version') or ''" < "$FLEET_JSON")"
-if [ -z "$CREW_VERSION_FILE" ]; then
-  fail "floor: the API names the serving host's own crew version" \
-       "no readable VERSION at $ROOT/VERSION — the drill cannot say what the header should name"
-elif [ "$API_VERSION" = "$HOST_VERSION" ] \
-     && [ "${API_VERSION#*"$CREW_VERSION_FILE"}" != "$API_VERSION" ]; then
-  # Both halves, and the second is the load-bearing one: the string is what the
-  # launcher passed AND it contains this tree's own VERSION. A server that
-  # dropped the value serves "version unavailable", which fails the first; a
-  # launcher naming a stale or hardcoded release fails the second.
-  ok "floor: the API names the serving host's own crew version ($CREW_VERSION_FILE)"
-else
-  fail "floor: the API names the serving host's own crew version ($CREW_VERSION_FILE)" \
-       "VERSION says '$CREW_VERSION_FILE', crew --version says '$HOST_VERSION', the API serves '$API_VERSION'"
-fi
-
-# --- #190: the integrity verdict is the box's own, not a word the floor made -
-# probe.sh runs engine-manifest.sh --state inside the guest and passes the word
-# through; this asks the same box the same question over its own transport and
-# requires the two to agree. The vocabulary is engine-manifest.sh's:
-# current | modified | unverified, and `absent` for a box with no engine, which
-# is why only boxes reporting an engine are compared.
+# The box's own answer to the integrity question, asked over its own transport.
 # shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's, expanded there
 box_integrity() {
   box_read "$1" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
     [ -x "$d/bin/engine-manifest.sh" ] || exit 9
     "$d/bin/engine-manifest.sh" --state 2>/dev/null | head -1' 2>/dev/null | tr -d '\r\n'
 }
-INTEG_N=0 INTEG_BAD="" INTEG_VOCAB=""
-while read -r name _agent _role _from; do
-  [ -z "$name" ] && continue
-  [ -n "$(jqf "([u.get('engine') or '' for u in d['units'] if u['box']=='$name'] or [''])[0]" < "$FLEET_JSON")" ] || continue
-  api_integ="$(jqf "([u.get('integrity') or '' for u in d['units'] if u['box']=='$name'] or [''])[0]" < "$FLEET_JSON")"
-  own_integ="$(box_integrity "$name")"
-  if [ -z "$own_integ" ]; then
-    # Not a pass and not a failure of the floor: the box would not answer the
-    # second reader, so there is nothing to compare. Named, so it cannot be
-    # mistaken for agreement.
-    skip "integrity: $name" "the box did not answer engine-manifest.sh --state"
-    continue
-  fi
-  INTEG_N=$((INTEG_N + 1))
-  case "$own_integ" in
-    current|modified|unverified) ;;
-    *) INTEG_VOCAB="${INTEG_VOCAB:+$INTEG_VOCAB, }$name said '$own_integ'" ;;
-  esac
-  [ "$api_integ" = "$own_integ" ] \
-    || INTEG_BAD="${INTEG_BAD:+$INTEG_BAD, }$name: floor '$api_integ' vs box '$own_integ'"
-done < <(roster_rows)
-if [ "$INTEG_N" -eq 0 ]; then
-  skip "floor: every hired box's integrity verdict is the box's own answer" \
-       "no hired box on this fleet answered engine-manifest.sh --state"
-else
-  t "floor: every hired box's integrity verdict is the box's own answer ($INTEG_N boxes)" \
-    "" "$INTEG_BAD"
-  # The words are engine-manifest.sh's contract, and the page renders them as
-  # current / MODIFIED / unverified. A fourth word reaching the tile is a
-  # rendering the operator has never been taught to read.
-  t "floor: every integrity verdict is one of the three words the tile renders" \
-    "" "$INTEG_VOCAB"
-fi
 
-# --- #204: a roster box that is not deployed is COUNTED and not DRAWN -------
-# The count is the DECLARED roster, so an operator never loses a box by not
-# having created it; the console is what absence closes. Asserted by
-# construction, never by luck: where this fleet has no such box the case is
-# skipped by name, and the drill never creates or destroys a fleet member to
-# manufacture one.
-# `hired` is a three-valued verdict the collector publishes so the page never
-# re-derives it from silence, and only ONE of the three hides a console:
-#   no       measured absence — never created, or answered and has no engine
-#   unknown  could not be measured (stopped, unreachable, inventory unreadable)
-#            and therefore KEEPS its console: that is the hired-and-gone-dark
-#            box this page exists to show
-#   yes      an engine answered
-# So "drawn" is everything that is not a measured `no`, which is the same
-# partition the page's own walk makes (`u.hired !== 'no'`). Counting only `yes`
-# as drawn would call every stopped box hidden and red a correct page.
-NOT_DEPLOYED="$(jqf "' '.join(u['box'] for u in d['units'] if u.get('hired')=='no')" < "$FLEET_JSON")"
-DRAWN="$(jqf "sum(1 for u in d['units'] if u.get('hired')!='no')" < "$FLEET_JSON")"
-UNREADABLE_INV="$(jqf "' '.join(u['box'] for u in d['units'] if (u.get('note') or '').startswith('box inventory unreadable'))" < "$FLEET_JSON")"
-if [ -n "$UNREADABLE_INV" ]; then
-  # `box list` did not answer, so absence was never MEASURED for these boxes —
-  # and #204's filter is precisely a claim about measured absence. Asserting
-  # through a failed inventory is the inference the verdict exists to refuse.
-  skip "floor: a roster box that is not deployed is counted and not drawn" \
-       "the box inventory did not answer for: $UNREADABLE_INV"
-elif [ -z "$NOT_DEPLOYED" ]; then
-  skip "floor: a roster box that is not deployed is counted and not drawn" \
-       "every one of the $ROSTER_N roster boxes is deployed — nothing on this fleet exercises the grid filter"
-else
-  ND_BAD=""
-  for _nd in $NOT_DEPLOYED; do
-    _note="$(jqf "([u.get('note') or '' for u in d['units'] if u['box']=='$_nd'] or [''])[0]" < "$FLEET_JSON")"
-    # Counted: it is IN the payload at all, which is what keeps the unit tile at
-    # the declared size. And it names the way out — the repair verb is the whole
-    # point of drawing a box nobody can open a console on.
-    case "$_note" in
-      *"crew new $_nd"*|*"crew hire $_nd"*) ;;
-      *) ND_BAD="${ND_BAD:+$ND_BAD, }$_nd: note '$_note' names no repair verb" ;;
-    esac
-  done
-  t "floor: a roster box that is not deployed is counted and names its repair verb" \
-    "" "$ND_BAD"
-  # ...and it is not drawn: the consoles are the deployed boxes, while the
-  # count stays the declared roster. Both numbers pinned, so a filter applied
-  # one layer too high fails here rather than shrinking the fleet silently.
-  ND_N="$(printf '%s\n' "$NOT_DEPLOYED" | wc -w | tr -d ' ')"
-  t "floor: the not-deployed boxes are counted but not drawn ($ND_N of $ROSTER_N)" \
-    "$((ROSTER_N - ND_N))" "$DRAWN"
-fi
+app_surface_version    "$FLEET_JSON" "$HOST_VERSION" "$CREW_VERSION_FILE"
+app_surface_integrity  "$FLEET_JSON"
+# Publishes SURF_NOT_DEPLOYED and SURF_DRAWN, which the page half re-asserts as
+# the two numbers the unit and hired tiles render.
+app_surface_not_deployed "$FLEET_JSON" "$ROSTER_N"
 
 # ---- the ping tier, against boxes that really answer ----------------------
 # stub-box can fake a probe's OUTPUT; it cannot demonstrate that `box exec
@@ -703,11 +602,10 @@ t "every hired box reports a gh credential state" "" "$BLANK"
 echo
 echo "== the operator's view (0.1.2 CLI surfaces)"
 
-# --- #218: `crew up --dry-run` says what it WOULD do and touches nothing -----
-# The last clause is the point of the flag, so it is asserted against the FLEET
-# rather than against the command's own output: the roster it read, the boxes
-# that exist, and every roster box's crontab, before and after. A dry run that
-# creates or arms anything moves one of the three.
+# The fleet as three facts: the roster it read, the boxes that exist, and every
+# roster box's crontab. Taken before and after the dry run, so #218's "touches
+# nothing" is asserted against the FLEET and not against the command's own
+# account of itself.
 #
 # `crontab -l` is a read, and the read-only receipt guard below deliberately
 # does not match it — probe.sh reads the crontab on every poll, so matching it
@@ -728,77 +626,21 @@ fleet_fingerprint() {
 fleet_fingerprint > "$TMP/fleet-before.fp"
 DRY_RC=0
 "$ROOT/cli/crew" up --dry-run > "$TMP/up-dry.txt" 2>&1 || DRY_RC=$?
-if [ "$DRY_RC" -eq 0 ]; then
-  ok "crew up --dry-run exits 0"
-else
-  fail "crew up --dry-run exits 0" "rc=$DRY_RC — $(tail -3 "$TMP/up-dry.txt" | tr '\n' ' ')"
-fi
-# One planned action per roster box, named for the box. Every branch of the dry
-# run prints `<name>: WOULD ...` — create, start, hire, or SKIP with the reason
-# the real verb would refuse — so a box with no line at all is a box the
-# operator was not told about.
-DRY_SILENT=""
-while read -r name _agent _role _from; do
-  [ -z "$name" ] && continue
-  grep -qE "^$name: WOULD " "$TMP/up-dry.txt" || DRY_SILENT="${DRY_SILENT:+$DRY_SILENT, }$name"
-done < <(roster_rows)
-t "crew up --dry-run names a planned action for every roster box" "" "$DRY_SILENT"
-if grep -qE '^up --dry-run: [0-9]+ would be created, [0-9]+ started, [0-9]+ hired$' "$TMP/up-dry.txt"; then
-  ok "crew up --dry-run summarises what it would do"
-else
-  fail "crew up --dry-run summarises what it would do" \
-       "no 'up --dry-run: N would be created, N started, N hired' line — got: $(tail -1 "$TMP/up-dry.txt")"
-fi
 fleet_fingerprint > "$TMP/fleet-after.fp"
-if grep -q '^boxes UNREADABLE$' "$TMP/fleet-before.fp"; then
-  # Half the fingerprint could not be taken, so "unchanged" is not a claim this
-  # run may make. The other two thirds still are, and saying so is the honest
-  # split rather than a pass on a comparison that compared less than it says.
-  skip "crew up --dry-run left the box list unchanged" "box list --json did not answer"
-fi
-if diff -q "$TMP/fleet-before.fp" "$TMP/fleet-after.fp" >/dev/null 2>&1; then
-  ok "crew up --dry-run changed nothing: same roster, same boxes, same crontabs"
-else
-  fail "crew up --dry-run changed nothing: same roster, same boxes, same crontabs" \
-       "$(diff "$TMP/fleet-before.fp" "$TMP/fleet-after.fp" | head -4 | tr '\n' ' ')"
-fi
+app_surface_dry_run "$TMP/up-dry.txt" "$TMP/fleet-before.fp" "$TMP/fleet-after.fp" "$DRY_RC"
 
 # --- #308: a box that does not ANSWER is unknown, never never-hired ---------
-# The distinction an operator acts on: `not hired (no engine)` says run `crew
-# hire`, `unknown — the box did not answer` says find out why the box is not
-# talking. Inferring the first from silence sends them to the wrong repair.
-#
-# The box is chosen read-only, from the floor's own note: `stopped` and
-# `unreachable` are boxes the inventory KNOWS about and the probe could not
-# reach. A `not created` box is a different case — `crew status <box>` refuses
-# it outright — and is deliberately not used here.
-SILENT_BOX="$(jqf "([u['box'] for u in d['units'] if (u.get('note') or '').startswith(('stopped','unreachable'))] or [''])[0]" < "$FLEET_JSON")"
+SILENT_BOX="$(app_surface_silent_box "$FLEET_JSON")"
 if [ -z "$SILENT_BOX" ]; then
   skip "crew status <box>: an unanswered probe reads unknown, not never-hired" \
        "every box on this fleet answered its probe — no stopped or unreachable box to ask about"
 else
   ST_RC=0
   "$ROOT/cli/crew" status "$SILENT_BOX" > "$TMP/status-one.txt" 2>&1 || ST_RC=$?
-  ENGINE_LINE="$(grep -m1 '^engine: ' "$TMP/status-one.txt" || true)"
-  case "$ENGINE_LINE" in
-    *"unknown"*"did not answer"*)
-      ok "crew status $SILENT_BOX: an unanswered probe reads unknown, not never-hired" ;;
-    *"not hired"*)
-      fail "crew status $SILENT_BOX: an unanswered probe reads unknown, not never-hired" \
-           "the box exists and did not answer, and the CLI inferred it was never hired: '$ENGINE_LINE'" ;;
-    *)
-      fail "crew status $SILENT_BOX: an unanswered probe reads unknown, not never-hired" \
-           "rc=$ST_RC, engine line: '${ENGINE_LINE:-none printed}'" ;;
-  esac
+  app_surface_status_unknown "$SILENT_BOX" "$TMP/status-one.txt" "$ST_RC"
 fi
 
 # --- #345: `no build duty` names a cause and a count -----------------------
-# The bare line was indistinguishable from the burial bug #264 exists to
-# prevent: an operator read `build duty (ready unclaimed=8)`, then `no build
-# duty` ten minutes later, and it cost an hour of ledger reads to learn the slot
-# was held. The parenthetical is the whole repair, so the assertion is that
-# every one of these lines carries one — and that it is one of the causes
-# _no_build_duty_reason can actually produce, not any prose at all.
 # The phrase is required on BOTH sides of the transport: the box greps its own
 # log, and the host keeps only the lines that carry the phrase. A login shell
 # inside a guest may print a banner, an MOTD or a warning of its own, and a line
@@ -812,18 +654,7 @@ while read -r name _agent _role _from; do
     grep -h "no build duty" "$d/duty.log" 2>/dev/null | tail -20' 2>/dev/null \
     | grep -F 'no build duty' | sed "s/^/$name /" >> "$NBD_LINES" || true
 done < <(roster_rows)
-NBD_N="$(grep -c . "$NBD_LINES" || true)"
-if [ "${NBD_N:-0}" -eq 0 ]; then
-  skip "duty.log: no build duty names a cause and a count" \
-       "no box on this fleet has logged a no-build-duty tick yet"
-else
-  # A cause the reason function can produce. `board empty` and `board unread`
-  # carry no count on purpose — there is nothing to count — so requiring digits
-  # of every line would red a correct log.
-  NBD_CAUSE='no build duty \((slot held by .+; board holds [0-9]+ ready|[0-9]+ ready, [0-9]+ round\(s\) held by seen-ledger|[0-9]+ ready held by seen-ledger|[0-9]+ round\(s\) held by seen-ledger|board empty|board unread)\)'
-  NBD_BAD="$(grep -vE "$NBD_CAUSE" "$NBD_LINES" | head -3 | tr '\n' ' ' || true)"
-  t "duty.log: every no build duty line names a cause ($NBD_N lines)" "" "$NBD_BAD"
-fi
+app_surface_no_build_duty "$NBD_LINES"
 
 # Auth is not optional on a page that can power-cycle boxes.
 echo
@@ -946,12 +777,12 @@ if [ "$BROWSER" -eq 1 ]; then
   fi
   if ! node -e "require('playwright-core')" >/dev/null 2>&1; then
     skip "browser walk" "playwright-core not installed (npm i --no-save playwright-core)"
-    page_surface_skips "playwright-core not installed"
+    app_surface_page_skips "playwright-core not installed"
   elif [ -z "${PW_CHROME:-}" ] || [ ! -x "${PW_CHROME:-}" ]; then
     # Named as its own skip: a missing BROWSER is a different repair from a
     # missing module, and the message has to say which one is missing.
     skip "browser walk" "no browser found — install Chrome/Chromium, or set PW_CHROME=/path/to/chrome"
-    page_surface_skips "no browser found"
+    app_surface_page_skips "no browser found"
   else
     # ALWAYS read-only — including under --allow-control. Gating it on that
     # flag only moved the hazard: --allow-control without --boxes skips the
@@ -1007,24 +838,13 @@ if [ "$BROWSER" -eq 1 ]; then
     # are read out of its output rather than re-implemented here: duplicating
     # the canvas paint interception would put a second copy of the hardest part
     # of browser.js in drill/, and the copy would be the one that rots.
-    #
-    # What is read is the NAMED ok line, not the walk's exit status. A walk that
-    # exits 0 having never reached a check proves nothing about that check —
-    # exactly the shape of #50 — and the version and integrity assertions are
-    # both conditional on the page having flipped LIVE.
-    walk_asserted() {
-      if grep -qxF "  ok   $2" "$TMP/walk.out"; then
-        ok "$1"
-      elif grep -qF "  FAIL $2" "$TMP/walk.out"; then
-        fail "$1" "the walk reached it and it failed — see the walk output above"
-      else
-        fail "$1" "the walk never reached '$2', so nothing asserted it"
-      fi
-    }
-    walk_asserted "page: the header renders the serving host's version (#347)" \
-                  "floor: the canvas header paints the serving host version"
-    walk_asserted "page: the engine tile renders its integrity verdict (#190)" \
-                  "render: the engine tile carries its integrity verdict"
+    app_surface_walk_asserted "page: the header renders the serving host's version (#347)" \
+                              "floor: the canvas header paints the serving host version" \
+                              "$TMP/walk.out"
+    app_surface_walk_asserted "page: the engine tile renders its integrity verdict (#190)" \
+                              "render: the engine tile carries its integrity verdict" \
+                              "$TMP/walk.out"
+
 
     # #312 and #204's page halves have no live-fleet assertion in the walk —
     # browser.js pins the filter split to three named fixture boxes under
@@ -1072,78 +892,8 @@ const [, , url, user, pass] = process.argv;
 JS
     if node "$TMP/page-read.js" "http://127.0.0.1:$PORT/" "$USER" "$PASSWD" \
          > "$TMP/page-read.json" 2>"$TMP/page-read.err"; then
-      PAGE_LIVE="$(jqf "str(d['live'])" < "$TMP/page-read.json")"
-      if [ "$PAGE_LIVE" != "True" ]; then
-        # The page never flipped LIVE, so every group below describes the
-        # bundled demo fleet. Nothing about this host can be read off it.
-        skip "page: the state filter separates disarmed from silent (#312)" \
-             "the page did not flip LIVE within 12s — it is rendering the demo payload"
-        skip "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" \
-             "the page did not flip LIVE within 12s"
-      else
-        # --- #312: deliberately stopped is not the same alarm as silent -----
-        # The split is what an operator triages by: a disarmed box is a decision
-        # somebody made, a silent one is a box that stopped answering. Compared
-        # against `crew status`, box by box, in the agreement block's shape —
-        # the two readers answer "is this box armed?" from one set of crontab
-        # patterns since #189, so a disagreement here means one of them is
-        # lying to an operator.
-        PAGE_DISARMED="$(jqf "' '.join(d['disarmed'])" < "$TMP/page-read.json")"
-        PAGE_SILENT="$(jqf "' '.join(d['silent'])" < "$TMP/page-read.json")"
-        if [ -z "$PAGE_DISARMED" ] && [ -z "$PAGE_SILENT" ]; then
-          skip "page: the state filter separates disarmed from silent (#312)" \
-               "no box on this fleet is disarmed or silent — neither group has a member to classify"
-        else
-          FILTER_BAD=""
-          for _b in $PAGE_DISARMED; do
-            _line="$(grep -E "^$_b " "$TMP/status.txt" | head -1 || true)"
-            case "$_line" in
-              *disarmed*|*"paused by operator"*|*paused*) ;;
-              "") FILTER_BAD="${FILTER_BAD:+$FILTER_BAD, }$_b: grouped Disarmed, crew status printed no row" ;;
-              *)  FILTER_BAD="${FILTER_BAD:+$FILTER_BAD, }$_b: grouped Disarmed, crew status says '$_line'" ;;
-            esac
-          done
-          for _b in $PAGE_SILENT; do
-            # The load-bearing direction: a box the operator deliberately
-            # stopped must not be counted in the alarm group. #312 exists
-            # because it was.
-            _line="$(grep -E "^$_b " "$TMP/status.txt" | head -1 || true)"
-            case "$_line" in
-              *disarmed*|*"paused by operator"*)
-                FILTER_BAD="${FILTER_BAD:+$FILTER_BAD, }$_b: grouped Silent while crew status says it is deliberately stopped — '$_line'" ;;
-            esac
-          done
-          BOTH="$(jqf "' '.join(sorted(set(d['disarmed']) & set(d['silent'])))" < "$TMP/page-read.json")"
-          [ -z "$BOTH" ] \
-            || FILTER_BAD="${FILTER_BAD:+$FILTER_BAD, }in both groups at once: $BOTH"
-          t "page: the state filter separates disarmed from silent (#312)" "" "$FILTER_BAD"
-        fi
-
-        # --- #204: the count is the roster, the consoles are the deployed ---
-        # Both numbers pinned. The unit tile must stay the DECLARED size or the
-        # page and `crew status` stop agreeing about how big the fleet is, and
-        # the hired tile appears only when the two differ — a permanent
-        # "N hired" beside "N units" is furniture.
-        PAGE_TILES="$(jqf "d['tiles']" < "$TMP/page-read.json")"
-        PAGE_UNITS="$(printf '%s' "$PAGE_TILES" | sed -n 's/.*[^0-9]\([0-9]\+\)units.*/\1/p;s/^\([0-9]\+\)units.*/\1/p' | head -1)"
-        PAGE_HIRED="$(printf '%s' "$PAGE_TILES" | sed -n 's/.*[^0-9]\([0-9]\+\)hired.*/\1/p;s/^\([0-9]\+\)hired.*/\1/p' | head -1)"
-        if [ -z "$NOT_DEPLOYED" ]; then
-          # Nothing is hidden, so #204's own case is absent — but the count
-          # half still holds and is asserted, and the missing half is named
-          # rather than dropped.
-          if [ "$PAGE_UNITS" = "$ROSTER_N" ] && [ -z "$PAGE_HIRED" ]; then
-            ok "page: the unit tile counts the declared roster, and no hired tile on a fully deployed fleet (#204)"
-          else
-            fail "page: the unit tile counts the declared roster, and no hired tile on a fully deployed fleet (#204)" \
-                 "roster $ROSTER_N, tile says '${PAGE_UNITS:-none}' units and '${PAGE_HIRED:-no}' hired"
-          fi
-        elif [ "$PAGE_UNITS" = "$ROSTER_N" ] && [ "$PAGE_HIRED" = "$DRAWN" ]; then
-          ok "page: the unit tile counts the declared roster and the hired tile the consoles (#204)"
-        else
-          fail "page: the unit tile counts the declared roster and the hired tile the consoles (#204)" \
-               "roster $ROSTER_N with $DRAWN deployed; tile says '${PAGE_UNITS:-none}' units, '${PAGE_HIRED:-none}' hired"
-        fi
-      fi
+      app_surface_page_groups "$TMP/page-read.json" "$TMP/status.txt" \
+                              "$ROSTER_N" "$SURF_NOT_DEPLOYED" "$SURF_DRAWN"
     else
       fail "page: the state filter separates disarmed from silent (#312)" \
            "the page reader did not complete: $(tr '\n' ' ' < "$TMP/page-read.err" | head -c 150)"
@@ -1205,7 +955,7 @@ JS
     fi
   fi
 else
-  page_surface_skips "--no-browser"
+  app_surface_page_skips "--no-browser"
 fi
 
 echo
