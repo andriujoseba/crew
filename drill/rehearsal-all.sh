@@ -54,6 +54,7 @@ INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESUME_DRILL=1
+HYGIENE_DRILL=1
 BUILDER_RC=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
@@ -75,12 +76,13 @@ while [ $# -gt 0 ]; do
     --no-config-drill) CONFIG_DRILL=0; shift ;;
     --no-install-drill) INSTALL_DRILL=0; shift ;;
     --no-resume-drill) RESUME_DRILL=0; shift ;;
+    --no-hygiene-drill) HYGIENE_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-hygiene-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -99,6 +101,7 @@ for role in $ROLES; do
   echo "## $role — box crew-drill-$role"
   echo "############################################################"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
+  REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
   [ "$role" != builder ] || BUILDER_RC="$rc"
@@ -126,6 +129,17 @@ for role in $ROLES; do
     *) SUMMARY+=("FAIL       $role"); overall=1 ;;
   esac
 done
+
+if [ "$HYGIENE_DRILL" -eq 0 ]; then
+  SUMMARY+=("skip       hygiene  (--no-hygiene-drill)")
+elif [ -z "${DRILLED// /}" ]; then
+  SUMMARY+=("INCOMPLETE hygiene  (no role reached a box)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ "$overall" -eq 0 ]; then
+  SUMMARY+=("ok         hygiene  (preservation + refusal)")
+else
+  SUMMARY+=("FAIL       hygiene")
+fi
 
 if [ "$RESUME_DRILL" -eq 0 ]; then
   SUMMARY+=("skip       resume  (--no-resume-drill)")

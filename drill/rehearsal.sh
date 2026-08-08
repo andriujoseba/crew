@@ -143,6 +143,8 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
 . "$ROOT/drill/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-hygiene.sh
+. "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/review-order.sh
 . "$ROOT/drill/review-order.sh"
 cleanup_all() {
@@ -797,6 +799,12 @@ else
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
   fi
+fi
+
+# Role-independent: exercise the worktree hygiene that runs on every role box
+# only after that role's own phase-2 fixtures have finished.
+if [ "$PHASE2_RAN" -eq 1 ]; then
+  rehearsal_hygiene_drill "$SANDBOX" "$ME2"
 fi
 
 if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
