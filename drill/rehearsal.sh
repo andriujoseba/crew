@@ -596,6 +596,12 @@ else
   if [ "$builder_slot_clear" -eq 0 ]; then
     rehearsal_report_occupied_builder_slot "$ME2"
   else
+    # The dedicated sandbox has no repository roster of its own. Give this
+    # fixture author one requestable panelist: the host account that owns the
+    # sandbox and will close the round. This is test data in the sandbox, not a
+    # roster authored in crew.
+    check "builder: fixture panel names the host reviewer" \
+      rehearsal_install_builder_fixture_panel "$SANDBOX" "$ME2" "$HOST_ME"
     bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
       -f "labels[]=ready" --jq .number)"
@@ -626,6 +632,69 @@ else
       ok "builder: no duplicate PR on re-tick"
     else
       fail "builder: no duplicate PR on re-tick"
+    fi
+
+    if [ -n "$bpr" ]; then
+      wait_for 300 "builder: initial PR is ready for its fixture panel" bash -c \
+        "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .draft | grep -qx false"
+      wait_for 300 "builder: host reviewer requested for initial round" \
+        rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
+      rehearsal_load_installed_answer_mark
+
+      builder_head="$(gh api "repos/$SANDBOX/pulls/$bpr" --jq .head.sha)"
+      builder_check_context="drill/builder-head-settle"
+      if builder_round_started_at="$(gh api "repos/$SANDBOX/pulls/$bpr/reviews" \
+          -f body="Drill-only blocking point: answer with evidence that drill-build.txt satisfies the fixture. Do not change the tree; push nothing." \
+          -f event=REQUEST_CHANGES -f commit_id="$builder_head" --jq .submitted_at)" && \
+          [ -n "$builder_round_started_at" ]; then
+        ok "builder: host changes-requested review submitted"
+      else
+        fail "builder: host changes-requested review submitted"
+      fi
+      if gh api "repos/$SANDBOX/statuses/$builder_head" \
+          -f state=pending -f context="$builder_check_context" \
+          -f description="drill holds the panel request until the host settles this status" >/dev/null; then
+        ok "builder: pending head status established"
+      else
+        fail "builder: pending head status established"
+      fi
+
+      # Observe the author-owned conversion while the tick is alive. The same
+      # tick may resume the draft and mark it ready again after answering, so a
+      # post-tick-only read can miss the visible state #139 shipped.
+      bx "~/duty/bin/tick.sh" </dev/null &
+      builder_tick_pid=$!
+      wait_for 900 "builder: changes-requested round returns PR to draft" \
+        rehearsal_builder_pr_is_draft "$SANDBOX" "$bpr"
+      rehearsal_wait_builder_signal_window_with_prereqs \
+        1800 "$SANDBOX" "$bpr" "$REHEARSAL_MARK_ANSWERED" \
+        "$ME2" "$builder_head" "$builder_round_started_at" \
+        "$builder_check_context"
+      wait "$builder_tick_pid" || true
+
+      if rehearsal_builder_head_is "$SANDBOX" "$bpr" "$builder_head"; then
+        ok "builder: fix round kept the fixture head stable"
+        check "builder: panel request withheld while head check is pending" \
+          rehearsal_builder_not_requested "$SANDBOX" "$bpr" "$HOST_ME"
+        if rehearsal_set_builder_head_status \
+            "$SANDBOX" "$builder_head" "$builder_check_context" success \
+            "drill releases the settled-head panel request"; then
+          ok "builder: settled head status established"
+          bx "~/duty/bin/tick.sh" || true
+          wait_for 300 "builder: panel request issued after head settles" \
+            rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
+        else
+          fail "builder: settled head status established"
+          skip "builder: panel request issued after head settles"
+        fi
+      else
+        fail "builder: fix round kept the fixture head stable"
+        skip "builder: panel request withheld while head check is pending"
+        skip "builder: settled head status established"
+        skip "builder: panel request issued after head settles"
+      fi
+    else
+      rehearsal_report_missing_builder_pr
     fi
   fi
 
