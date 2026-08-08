@@ -148,6 +148,11 @@ TRIAGE_CLEANUP_ISSUES=""
 cleanup_all() {
   local rc=$?
   if [ "$BOX_TOUCHED" -eq 1 ]; then
+    if declare -F rehearsal_resume_restore_cli >/dev/null 2>&1 \
+        && [ "${REHEARSAL_RESUME_NOOP_SET:-0}" -eq 1 ]; then
+      rehearsal_resume_restore_cli \
+        || echo "WARNING: could not restore the builder CLI after the resume drill; stop the box: box down $BOX_NAME" >&2
+    fi
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
         "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true

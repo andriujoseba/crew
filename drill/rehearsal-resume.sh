@@ -3,6 +3,8 @@
 # authenticated builder block; the log predicates stay here so CI can mutate
 # their inputs without a drill host.
 
+REHEARSAL_RESUME_NOOP_SET=0
+
 rehearsal_resume_load_installed_threshold() {
   local threshold
   REHEARSAL_RESUME_THRESHOLD=""
@@ -62,15 +64,23 @@ rehearsal_resume_noop_cli() {
   # The override is deliberately last in the builder role profile, which is
   # sourced after the agent profile. It makes a real resume session perform no
   # board or git action, the condition the breaker is meant to bound.
-  bx "cat >> ~/duty/conf/roles/builder.conf <<'EOF'
+  if bx "cat >> ~/duty/conf/roles/builder.conf <<'EOF'
 # rehearsal-resume-noop begin
 BOT_CLI_CMD=(true)
 # rehearsal-resume-noop end
-EOF"
+EOF"; then
+    REHEARSAL_RESUME_NOOP_SET=1
+    return 0
+  fi
+  return 1
 }
 
 rehearsal_resume_restore_cli() {
-  bx "sed -i '/^# rehearsal-resume-noop begin$/,/^# rehearsal-resume-noop end$/d' ~/duty/conf/roles/builder.conf"
+  if bx "sed -i '/^# rehearsal-resume-noop begin$/,/^# rehearsal-resume-noop end$/d' ~/duty/conf/roles/builder.conf"; then
+    REHEARSAL_RESUME_NOOP_SET=0
+    return 0
+  fi
+  return 1
 }
 
 rehearsal_resume_advance_fixture_head() {
@@ -87,7 +97,7 @@ rehearsal_resume_advance_fixture_head() {
 
 rehearsal_resume_drill() {
   local repo="$1" pr="$2" context head old_head new_head first log_text comment_id
-  local attempt threshold noop_set=0
+  local attempt threshold
   context=drill/resume-head-settle
 
   if [ "${REHEARSAL_RESUME_DRILL:-1}" -eq 0 ]; then
@@ -124,7 +134,6 @@ rehearsal_resume_drill() {
     return 1
   fi
   if rehearsal_resume_noop_cli; then
-    noop_set=1
     ok "resume: zero-action session fixture installed"
   else
     fail "resume: zero-action session fixture installed"
@@ -176,7 +185,7 @@ rehearsal_resume_drill() {
     rehearsal_resume_suppressed_tick_from_log \
       "$repo" "$pr" "$head" "$threshold" "$log_text"
 
-  if [ "$noop_set" -eq 1 ] && rehearsal_resume_restore_cli; then
+  if [ "$REHEARSAL_RESUME_NOOP_SET" -eq 1 ] && rehearsal_resume_restore_cli; then
     ok "resume: normal builder CLI restored"
   else
     fail "resume: normal builder CLI restored"
