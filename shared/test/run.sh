@@ -1486,6 +1486,9 @@ if grep -qF 'install_survival_before' "$ROOT/drill/install-drill.sh" &&
    grep -qF 'install_survival_check' "$ROOT/drill/install-drill.sh"; then r1=wired; else r1=MISSING; fi
 t survival-driver-uses-the-shared-predicate wired "$r1"
 # shellcheck disable=SC2016  # the driver's literal line is the pattern
+if grep -qF '($INSTALL_SURVIVAL_PATH_LABEL)' "$ROOT/drill/install-drill.sh"; then r1=context; else r1=LOST; fi
+t survival-driver-pass-line-keeps-arrival-context context "$r1"
+# shellcheck disable=SC2016  # the driver's literal line is the pattern
 if grep -qF 'fail "step 9: positive engine/cron/tick survival observation" "$INSTALL_SURVIVAL_DETAIL"' \
      "$ROOT/drill/install-drill.sh"; then r1=surfaces; else r1=TRANSCRIPT; fi
 t survival-driver-fails-with-the-surfaces surfaces "$r1"

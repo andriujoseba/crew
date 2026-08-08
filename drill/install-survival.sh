@@ -92,8 +92,8 @@ install_survival_wait_for_tick() {
 
 # install_survival_diff_engine_cron WHEN — read the two surfaces that must be
 # byte-identical across the removal and append a line per miss to
-# INSTALL_SURVIVAL_MISSED, WHEN naming the read that saw it. Called twice on the
-# fresh leg, before and after the wait; a surface is reported once, at the read
+# INSTALL_SURVIVAL_MISSED, WHEN naming the read that saw it. Called before and
+# after the tick wait; a surface is reported once, at the read
 # where it first missed, so the second pass adds only what the first did not see.
 install_survival_diff_engine_cron() {
   local when="$1"
