@@ -583,6 +583,7 @@ t rehearsal-builder-disabled-draft-return-reds 1 \
 
 # A premature request at the unsettled head must red the same assertion the
 # live leg runs after the builder tick has completed.
+# shellcheck disable=SC2317  # gh is invoked indirectly through the sourced helper
 gh() {
   case "$*" in
     *pulls/9/requested_reviewers*) printf '%s\n' "$BUILDER_REQUESTED" ;;
@@ -622,6 +623,7 @@ done <<'EOF'
 7|state=success
 8|panel request issued after head settles
 EOF
+# shellcheck disable=SC2016  # match the literal background-pid wait in the drill
 case "$BUILDER_LIVE_BLOCK" in
   *'wait "$builder_tick_pid"'*'panel request withheld while head check is pending'*'state=success'*)
     builder_gate_order=ordered ;;
@@ -1921,7 +1923,7 @@ if grep -RIn 'state:building' "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then
 t addressing-never-writes-state-building absent "$r1"
 # The predicate keys approvals/reviews on the head, same as converged.jq — a
 # stale verdict at an old head is not a closed round.
-# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t addressing-keys-on-head head-keyed "$r1"
 
@@ -7241,7 +7243,7 @@ t round-rules-state-exception stated "$r1"
 # push is guaranteed. Asserting the invariant rather than the prose: the
 # predicate keys on the head, so the prompts that tell a builder whom to
 # re-request must say head.
-# shellcheck disable=SC2016  # the jq literal converged.jq contains
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/converged.jq"; then
   r1=head-keyed
 else
@@ -7252,7 +7254,7 @@ t converged-counts-approvals-at-head head-keyed "$r1"
 # verdict" now lives in request-panel.jq, which returns every panelist not
 # approving the CURRENT head (approvers included after a push) — so the
 # head-keying that used to have to survive in prompt prose survives as code.
-# shellcheck disable=SC2016  # the jq literal contains $pr.headRefOid
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/request-panel.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t requestpanel-keys-on-head head-keyed "$r1"
 # The prompts must tell the builder the ENGINE requests — a builder still told to
