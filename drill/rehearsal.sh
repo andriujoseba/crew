@@ -464,9 +464,9 @@ else
     BUILDER_CLEANUP_REPO="$SANDBOX"
     BUILDER_CLEANUP_AUTHOR="$ME2"
   fi
-  # The whole board vocabulary: triage keys on needs-triage and on strays
-  # carrying none of ready/claimed/blocked/epic, and the builder keys on
-  # ready. A missing label makes a fixture silently unbuildable.
+  # Create the whole board vocabulary. Triage reads its queue-label set from
+  # the installed configuration below, while the builder keys on ready. A
+  # missing label makes a fixture silently unbuildable.
   for _lbl in attention:d93f0b needs-triage:fbca04 ready:0e8a16 claimed:1d76db blocked:b60205 post-merge:006b75 epic:5319e7; do
     gh api "repos/$SANDBOX/labels" -f name="${_lbl%%:*}" -f color="${_lbl##*:}" >/dev/null 2>&1 || true
   done
@@ -525,7 +525,11 @@ else
 
   if [ "$ROLE" = "triage" ]; then
   TRIAGE_CLEANUP_REPO="$SANDBOX"
-  rehearsal_load_installed_queue_labels || true
+  if ! rehearsal_load_installed_queue_labels \
+      && [ -z "$REHEARSAL_QUEUE_LABELS" ]; then
+    echo "triage: installed queue-label set is empty — refusing before the fixture wait" >&2
+    exit 1
+  fi
   QUEUE_LABEL_PATTERN="$(printf '%s\n' "$REHEARSAL_QUEUE_LABELS" | paste -sd'|' -)"
   # -- triage: a stray (no queue label) must draw a ruling --
   # duty-triage.sh detects two signals; the STRAY is the one a fixture can

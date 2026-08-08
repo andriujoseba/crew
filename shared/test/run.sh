@@ -320,6 +320,88 @@ t rehearsal-unknown-agent-list listed "$r1"
 # --- rehearsal builder fixtures: tie checks to this run (#179) -----------
 # shellcheck source=drill/rehearsal-fixtures.sh
 source "$ROOT/drill/rehearsal-fixtures.sh"
+
+# --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
+QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
+QUEUE_LABEL_FIVE_HOME="$TMP/queue-label-five-home"
+mkdir -p \
+  "$QUEUE_LABEL_SIX_HOME/duty/conf" \
+  "$QUEUE_LABEL_FIVE_HOME/duty/conf"
+printf '%s\n' \
+  'LABEL_READY=ready' \
+  'LABEL_CLAIMED=claimed' \
+  'LABEL_BLOCKED=blocked' \
+  'LABEL_POST_MERGE=post-merge' \
+  'LABEL_EPIC=epic' \
+  'LABEL_NEEDS_TRIAGE=needs-triage' \
+  >"$QUEUE_LABEL_SIX_HOME/duty/conf/fleet.defaults.conf"
+printf '%s\n' \
+  'LABEL_READY=ready' \
+  'LABEL_CLAIMED=claimed' \
+  'LABEL_BLOCKED=blocked' \
+  'LABEL_EPIC=epic' \
+  'LABEL_NEEDS_TRIAGE=needs-triage' \
+  >"$QUEUE_LABEL_FIVE_HOME/duty/conf/fleet.defaults.conf"
+
+bx() { HOME="$QUEUE_LABEL_FIXTURE_HOME" bash -c "$1"; }
+ok() { printf 'ok   %s\n' "$1"; }
+fail() { printf 'FAIL %s\n' "$1"; }
+
+QUEUE_LABEL_FIXTURE_HOME="$QUEUE_LABEL_SIX_HOME"
+if queue_label_six_out="$(rehearsal_load_installed_queue_labels 2>&1)"; then
+  queue_label_six_rc=0
+else
+  queue_label_six_rc=$?
+fi
+t rehearsal-queue-label-six-rc 0 "$queue_label_six_rc"
+t rehearsal-queue-label-six-records-ok 1 \
+  "$(grep -cFx 'ok   triage: installed queue-label set resolves six names' \
+    <<<"$queue_label_six_out")"
+
+QUEUE_LABEL_FIXTURE_HOME="$QUEUE_LABEL_FIVE_HOME"
+if queue_label_five_out="$(rehearsal_load_installed_queue_labels 2>&1)"; then
+  queue_label_five_rc=0
+else
+  queue_label_five_rc=$?
+fi
+t rehearsal-queue-label-five-rc 1 "$queue_label_five_rc"
+t rehearsal-queue-label-five-records-fail 1 \
+  "$(grep -cFx 'FAIL triage: installed queue-label set resolves six names' \
+    <<<"$queue_label_five_out")"
+t rehearsal-queue-label-five-names-values 'blocked claimed epic needs-triage ready' \
+  "$(sed -n 's/^  //p' <<<"$queue_label_five_out" | paste -sd' ' -)"
+unset -f bx ok fail
+
+REHEARSAL_ISSUE_GH_CALLS="$TMP/rehearsal-issue-gh-calls"
+gh() { printf '%s\n' "$*" >>"$REHEARSAL_ISSUE_GH_CALLS"; }
+if rehearsal_close_issue_fixtures owner/sandbox '41 42' >/dev/null; then
+  issue_cleanup_rc=0
+else
+  issue_cleanup_rc=$?
+fi
+t rehearsal-issue-teardown-success-rc 0 "$issue_cleanup_rc"
+t rehearsal-issue-teardown-success-attempts-both 2 \
+  "$(wc -l <"$REHEARSAL_ISSUE_GH_CALLS")"
+
+: >"$REHEARSAL_ISSUE_GH_CALLS"
+gh() {
+  printf '%s\n' "$*" >>"$REHEARSAL_ISSUE_GH_CALLS"
+  [[ "$*" != *repos/owner/sandbox/issues/41* ]]
+}
+if rehearsal_close_issue_fixtures owner/sandbox '41 42' >/dev/null 2>&1; then
+  issue_cleanup_rc=0
+else
+  issue_cleanup_rc=$?
+fi
+t rehearsal-issue-teardown-partial-failure-rc 1 "$issue_cleanup_rc"
+t rehearsal-issue-teardown-partial-failure-attempts-both 2 \
+  "$(wc -l <"$REHEARSAL_ISSUE_GH_CALLS")"
+t rehearsal-issue-teardown-partial-failure-attempts-first 1 \
+  "$(grep -cF 'repos/owner/sandbox/issues/41' "$REHEARSAL_ISSUE_GH_CALLS")"
+t rehearsal-issue-teardown-partial-failure-attempts-second 1 \
+  "$(grep -cF 'repos/owner/sandbox/issues/42' "$REHEARSAL_ISSUE_GH_CALLS")"
+unset -f gh
+
 EMPTY_BUILDER_PRS='[]'
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
 RIGHT_BUILDER_PRS='[{"number":6,"body":"Closes #5"},{"number":12,"body":"Closes #179"}]'
