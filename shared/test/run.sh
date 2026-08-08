@@ -743,6 +743,7 @@ t notify-cleanup-still-restores-the-work-registry 1 \
 # review round found the summary reading the ROLE's exit code, which is 0 both
 # for a union asserted and for a channel-unreachable skip (#423).
 NOTIFY_STATUS_FILE="$TMP/notify-verdicts"
+REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
 notify_leg_verdicts() {  # $1 how the post-write repos.txt read answers
   NOTIFY_SECOND_READ="$1"
   : >"$NOTIFY_BX_CALLS"
@@ -752,7 +753,6 @@ notify_leg_verdicts() {  # $1 how the post-write repos.txt read answers
   REHEARSAL_NOTIFY_ABSENT=0
   REHEARSAL_NOTIFY_CAPTURED=0
   (
-    export REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
     ROLE=reviewer
     bx() { notify_stub_bx "$1"; }
     gh() { case "$1 $2" in "repo view") return 0 ;; *) return 2 ;; esac; }
@@ -847,7 +847,7 @@ t notify-verdict-fold-fail-outranks-a-later-ok "fail the union was not delivered
   "$(rehearsal_notify_worst_verdict 'triage fail the union was not delivered on one tick
 reviewer ok both halves on one tick')"
 # No line at all is not a verdict: the summary must not be able to read one.
-rehearsal_notify_worst_verdict '' >/dev/null 2>&1 && r1=read || r1=none
+if rehearsal_notify_worst_verdict '' >/dev/null 2>&1; then r1='a verdict'; else r1=none; fi
 t notify-verdict-fold-empty-is-no-verdict none "$r1"
 # A token the summary cannot classify grades as fail, never as a pass.
 t notify-verdict-fold-unreadable-token-is-a-fail "fail wat" \
@@ -856,7 +856,6 @@ t notify-verdict-fold-unreadable-token-is-a-fail "fail wat" \
 # The two the round summary turns on: an unreachable channel, and the opt-out.
 : >"$NOTIFY_STATUS_FILE"
 (
-  export REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
   ROLE=reviewer
   bx() { printf 'no-credentials\n'; }
   ok() { :; }; fail() { :; }; skip() { :; }
@@ -867,8 +866,7 @@ t notify-verdict-unreachable-channel-is-a-skip-naming-it \
   "$(cat "$NOTIFY_STATUS_FILE")"
 : >"$NOTIFY_STATUS_FILE"
 (
-  export REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
-  export REHEARSAL_NOTIFY_DRILL=0
+  REHEARSAL_NOTIFY_DRILL=0
   ROLE=reviewer
   bx() { :; }
   ok() { :; }; fail() { :; }; skip() { :; }
@@ -971,28 +969,41 @@ t notify-agg-opt-out-rc 0 "$agg_rc"
 # A restore that exits 0 having moved the wrong bytes leaves the box working
 # or watching a set nobody chose, while the round reports a clean teardown.
 # So the comparison is after both restores, and it controls the verdict.
+# Driven in its own process rather than a (..) group: rehearsal_cleanup reads
+# BOX_NAME and REPOS_BACKUP from the round's scope, and a fixture that shadows
+# them in a subshell makes every one of those reads a subshell read.
+CLEANUP_DRIVER="$TMP/notify-cleanup-driver.sh"
+cat >"$CLEANUP_DRIVER" <<'CLEANSH'
+#!/usr/bin/env bash
+set -uo pipefail
+. "$ROOT/drill/rehearsal-notify.sh"
+. "$ROOT/drill/rehearsal-safety.sh"
+BOX_NAME=fixture
+REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
+REHEARSAL_NOTIFY_BACKUP=""
+# After the sources: sourcing rehearsal-notify.sh resets these to their
+# start-of-round defaults, which is the state the case is choosing.
+REHEARSAL_NOTIFY_CAPTURED="$CLEAN_CAPTURED"
+REHEARSAL_NOTIFY_ABSENT="$CLEAN_ABSENT"
+REHEARSAL_NOTIFY_PRE_TEXT="$CLEAN_NOTIFY_PRE"
+rehearsal_disarm_cron() { return 0; }
+bx() {
+  case "$1" in
+    *"test -f ~/duty/repos.txt.pre-drill"*) return "$CLEAN_REPOS_BACKED_UP" ;;
+    *"cat ~/duty/repos.txt.pre-drill"*) printf '%s\n' "$CLEAN_REPOS_PRE" ;;
+    *"cat ~/duty/repos.txt"*) printf '%s\n' "$CLEAN_REPOS_AFTER" ;;
+    *"! test -e ~/duty/notify-repos.txt"*) return "$CLEAN_NOTIFY_GONE" ;;
+    *"cat ~/duty/notify-repos.txt"*) printf '%s\n' "$CLEAN_NOTIFY_AFTER" ;;
+    *) return 0 ;;
+  esac
+}
+rehearsal_cleanup "$1"
+printf 'rc=%s\n' "$?"
+CLEANSH
+export ROOT CLEAN_REPOS_BACKED_UP CLEAN_REPOS_PRE CLEAN_REPOS_AFTER
+export CLEAN_NOTIFY_GONE CLEAN_NOTIFY_AFTER CLEAN_CAPTURED CLEAN_ABSENT CLEAN_NOTIFY_PRE
 cleanup_run() {  # $1 rc handed in
-  (
-    # shellcheck source=drill/rehearsal-safety.sh
-    source "$ROOT/drill/rehearsal-safety.sh"
-    # shellcheck disable=SC2088  # the tilde expands in the box's login shell
-    REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
-    BOX_NAME=fixture
-    REHEARSAL_NOTIFY_BACKUP=""
-    rehearsal_disarm_cron() { return 0; }
-    bx() {
-      case "$1" in
-        *"test -f ~/duty/repos.txt.pre-drill"*) return "$CLEAN_REPOS_BACKED_UP" ;;
-        *"cat ~/duty/repos.txt.pre-drill"*) printf '%s\n' "$CLEAN_REPOS_PRE" ;;
-        *"cat ~/duty/repos.txt"*) printf '%s\n' "$CLEAN_REPOS_AFTER" ;;
-        *"! test -e ~/duty/notify-repos.txt"*) return "$CLEAN_NOTIFY_GONE" ;;
-        *"cat ~/duty/notify-repos.txt"*) printf '%s\n' "$CLEAN_NOTIFY_AFTER" ;;
-        *) return 0 ;;
-      esac
-    }
-    rehearsal_cleanup "$1"
-    printf 'rc=%s\n' "$?"
-  ) 2>&1
+  bash "$CLEANUP_DRIVER" "$1" 2>&1
 }
 CLEAN_REPOS_BACKED_UP=0
 CLEAN_REPOS_PRE='owner/one
@@ -1000,9 +1011,9 @@ owner/two'
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
 CLEAN_NOTIFY_GONE=1
 CLEAN_NOTIFY_AFTER='owner/watched'
-REHEARSAL_NOTIFY_CAPTURED=1
-REHEARSAL_NOTIFY_ABSENT=0
-REHEARSAL_NOTIFY_PRE_TEXT='owner/watched'
+CLEAN_CAPTURED=1
+CLEAN_ABSENT=0
+CLEAN_NOTIFY_PRE='owner/watched'
 clean_out="$(cleanup_run 0)"
 t notify-cleanup-matching-registries-pass "rc=0" "$(tail -n 1 <<<"$clean_out")"
 # Only ever worsens: an rc it was handed survives a clean comparison.
@@ -1025,7 +1036,7 @@ t notify-cleanup-wrong-notify-registry-names-the-file 1 \
 CLEAN_NOTIFY_AFTER='owner/watched'
 
 # Absent before the drill means absent after it — both ways round.
-REHEARSAL_NOTIFY_ABSENT=1
+CLEAN_ABSENT=1
 CLEAN_NOTIFY_GONE=0
 t notify-cleanup-absent-before-and-gone-after-passes "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
 CLEAN_NOTIFY_GONE=1
@@ -1033,11 +1044,11 @@ clean_out="$(cleanup_run 0)"
 t notify-cleanup-file-left-behind-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
 t notify-cleanup-file-left-behind-says-there-was-none 1 \
   "$(grep -cF 'TEARDOWN: ~/duty/notify-repos.txt is still in place; the box had none before the drill' <<<"$clean_out")"
-REHEARSAL_NOTIFY_ABSENT=0
+CLEAN_ABSENT=0
 
 # A leg that never captured has nothing to vouch for: the notify half is not
 # asserted, and the work half still is.
-REHEARSAL_NOTIFY_CAPTURED=0
+CLEAN_CAPTURED=0
 CLEAN_NOTIFY_AFTER='heavy-duty/ceremony'
 t notify-cleanup-uncaptured-leg-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
 CLEAN_REPOS_AFTER='owner/one'
@@ -1050,7 +1061,7 @@ CLEAN_REPOS_AFTER='whatever the box has'
 t notify-cleanup-no-backup-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
 CLEAN_REPOS_BACKED_UP=0
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
-REHEARSAL_NOTIFY_CAPTURED=1
+CLEAN_CAPTURED=1
 
 # The verdict has to reach the EXIT trap's status, or the comparison above is
 # a warning nobody reads.
