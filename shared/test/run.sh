@@ -2428,6 +2428,17 @@ t survival-driver-keeps-no-inline-copy extracted "$r1"
 # trees built by hand. No bx() is needed at all here, because the thing under
 # assertion is an ordinary directory: install-drill.sh's installs are
 # host-side, into its own scratch CREW_HOME.
+#
+# One convention departs from the rest of this file: every hyphenated verdict
+# word assigned below is QUOTED. shellcheck reads `r2=a-b` as arithmetic
+# (SC2100) once it has seen `a` as a variable name, and under -x it keeps the
+# names of every file this one sources — so whether a bare word here parses
+# depends on a declaration in some other file. `roots-still-green` was armed by
+# this block's own `local roots`; `first-upgrade-artifact` was armed from
+# outside the branch entirely, when #432 landed a `first=` in
+# drill/rehearsal-resume.sh, which line 324 sources. ci-shell runs shellcheck
+# unfiltered, so an info-level finding is a red build. Quoting says "literal"
+# and cannot be armed by a name this file never mentions.
 PHOME="$TMP/payload"
 
 # payload_src <declared roots, space separated> <bound in guard A> <bound in B>
@@ -2500,7 +2511,7 @@ r1="$(payload_run "$PHOME/src" "$(payload_tree fat-dev fleet-floor/dev 64)")"
 t payload-dev-root-reds red "$(payload_verdict "$r1")"
 case "$r1" in *"still shipped: fleet-floor/dev"*) r2=named ;; *) r2="$r1" ;; esac
 t payload-dev-root-names-the-path named "$r2"
-case "$r1" in *"PASS payload: installed tree is"*) r2=size-still-green ;; *) r2="$r1" ;; esac
+case "$r1" in *"PASS payload: installed tree is"*) r2='size-still-green' ;; *) r2="$r1" ;; esac
 t payload-dev-root-is-not-a-size-finding size-still-green "$r2"
 
 # MUST FAIL: under the bound and still carrying a test root. This is the case a
@@ -2516,7 +2527,7 @@ payload_fat_dir="$(payload_tree fat-clean - 4096)"
 payload_fat_kb="$(du -skL "$payload_fat_dir" | cut -f1)"
 r1="$(payload_run "$PHOME/src" "$payload_fat_dir")"
 t payload-over-bound-reds red "$(payload_verdict "$r1")"
-case "$r1" in *"within the 3072 KiB bound — measured $payload_fat_kb KiB"*) r2=says-both ;; *) r2="$r1" ;; esac
+case "$r1" in *"within the 3072 KiB bound — measured $payload_fat_kb KiB"*) r2='says-both' ;; *) r2="$r1" ;; esac
 t payload-over-bound-names-bound-and-measurement says-both "$r2"
 # Two trees, two different readings: whatever the filesystem charges for the
 # directories, a 4096 KiB tree cannot measure the same as a 64 KiB one. This is
@@ -2541,8 +2552,8 @@ t payload-dangling-excluded-root-names-the-path named "$r2"
 # The exact false green, pinned out by its own text: a failed measurement must
 # never be reported as a small tree.
 case "$r1" in
-  *"is 0 KiB, within"*) r2=FALSE-GREEN ;;
-  *"size measured"*)    r2=measurement-red ;;
+  *"is 0 KiB, within"*) r2='FALSE-GREEN' ;;
+  *"size measured"*)    r2='measurement-red' ;;
   *)                    r2="$r1" ;;
 esac
 t payload-dangling-root-is-not-a-zero-kib-pass measurement-red "$r2"
@@ -2555,17 +2566,13 @@ payload_unmeasurable_dir="$(payload_tree unmeasurable - 64)"
 ln -s missing-target "$payload_unmeasurable_dir/cli/orphan"
 r1="$(payload_run "$PHOME/src" "$payload_unmeasurable_dir")"
 t payload-unmeasurable-tree-reds red "$(payload_verdict "$r1")"
-# The verdict word is quoted, unlike its neighbours. install-payload.sh declares
-# a `local roots`, and a sourced file's locals stay in scope for the linter,
-# which reads a bare hyphenated word starting in one of them as arithmetic
-# (SC2100). Quoting says "literal" and is immune to which names it has seen.
 case "$r1" in *"PASS payload: installed tree carries none"*) r2='roots-still-green' ;; *) r2="$r1" ;; esac
 t payload-unmeasurable-tree-is-not-a-root-finding roots-still-green "$r2"
 # and it reports du's own status and words, not a bound verdict: "could not
 # measure" and "too big" are different facts for whoever reads the drill record.
-case "$r1" in *"size measured — du -skL exited 1"*) r2=says-du ;; *) r2="$r1" ;; esac
+case "$r1" in *"size measured — du -skL exited 1"*) r2='says-du' ;; *) r2="$r1" ;; esac
 t payload-unmeasurable-tree-carries-dus-own-status says-du "$r2"
-case "$r1" in *"within the 3072 KiB bound"*) r2=BOUND-VERDICT ;; *) r2=not-a-bound-verdict ;; esac
+case "$r1" in *"within the 3072 KiB bound"*) r2='BOUND-VERDICT' ;; *) r2='not-a-bound-verdict' ;; esac
 t payload-unmeasurable-tree-is-not-a-bound-finding not-a-bound-verdict "$r2"
 
 # MUST FAIL: a fat artifact tree reds where the checkout tree is clean. The
@@ -2601,30 +2608,30 @@ t payload-bound-read-from-the-guards 3072 "$(install_payload_budget_kb "$PHOME/s
 payload_src "$CLEAN_ROOTS" 3072 4096
 r1="$(payload_run "$PHOME/src" "$(payload_tree disagree - 64)")"
 t payload-guards-disagreeing-on-the-bound-reds red "$(payload_verdict "$r1")"
-case "$r1" in *"disagree on the size bound"*) r2=says-so ;; *) r2="$r1" ;; esac
+case "$r1" in *"disagree on the size bound"*) r2='says-so' ;; *) r2="$r1" ;; esac
 t payload-guards-disagreeing-says-so says-so "$r2"
 payload_src "$CLEAN_ROOTS" - -
 r1="$(payload_run "$PHOME/src" "$(payload_tree nobound - 64)")"
 t payload-no-bound-in-the-guards-reds red "$(payload_verdict "$r1")"
-case "$r1" in *"no installed-tree size bound"*) r2=says-so ;; *) r2="$r1" ;; esac
+case "$r1" in *"no installed-tree size bound"*) r2='says-so' ;; *) r2="$r1" ;; esac
 t payload-no-bound-says-so says-so "$r2"
 payload_src "$CLEAN_ROOTS" 3072 3072
 rm -f "$PHOME/src/shared/test/artifact.sh"
 r1="$(payload_run "$PHOME/src" "$(payload_tree noguard - 64)")"
-case "$r1" in *"artifact.sh is missing"*) r2=names-the-guard ;; *) r2="$r1" ;; esac
+case "$r1" in *"artifact.sh is missing"*) r2='names-the-guard' ;; *) r2="$r1" ;; esac
 t payload-missing-guard-names-it names-the-guard "$r2"
 
 # An installer whose list stopped parsing is a red, never an empty walk.
 payload_src '' 3072 3072
 r1="$(payload_run "$PHOME/src" "$(payload_tree noparse - 64)")"
 t payload-unparsable-exclusion-list-reds red "$(payload_verdict "$r1")"
-case "$r1" in *"did not parse"*) r2=says-so ;; *) r2="$r1" ;; esac
+case "$r1" in *"did not parse"*) r2='says-so' ;; *) r2="$r1" ;; esac
 t payload-unparsable-exclusion-list-says-so says-so "$r2"
 # …and a tree that is not there is its own finding, reached only once the two
 # reads above have succeeded — which is why the source is restored first.
 payload_src "$CLEAN_ROOTS" 3072 3072
 r1="$(payload_run "$PHOME/src" "$PHOME/trees/does-not-exist")"
-case "$r1" in *"nothing at"*) r2=says-so ;; *) r2="$r1" ;; esac
+case "$r1" in *"nothing at"*) r2='says-so' ;; *) r2="$r1" ;; esac
 t payload-absent-installed-tree-says-so says-so "$r2"
 
 # The rule the shipped tree actually carries, read through the same predicate
@@ -2640,7 +2647,7 @@ t payload-shipped-installer-excludes-the-sentinel named "$r1"
 
 # CRITERION: no size constant is spelled in drill/. Asserted against the bound
 # as read, so it keeps holding after the number moves.
-if grep -rqF "$PAYLOAD_SHIPPED_BOUND" "$ROOT/drill/"; then r1=SPELLED; else r1=read-not-typed; fi
+if grep -rqF "$PAYLOAD_SHIPPED_BOUND" "$ROOT/drill/"; then r1=SPELLED; else r1='read-not-typed'; fi
 t payload-drill-spells-no-size-constant read-not-typed "$r1"
 
 # The driver reads the predicate from here, at all three installed trees.
@@ -2654,7 +2661,7 @@ t payload-driver-asserts-three-installed-trees 3 "$r1"
 if grep -qF 'versions/$VA' "$ROOT/drill/install-drill.sh" &&
    grep -qF 'CREW_HOME/current' "$ROOT/drill/install-drill.sh" &&
    grep -qF 'ARTIFACT_HOME/share/current' "$ROOT/drill/install-drill.sh"; then
-  r1=first-upgrade-artifact; else r1=INCOMPLETE; fi
+  r1='first-upgrade-artifact'; else r1=INCOMPLETE; fi
 t payload-driver-covers-first-upgrade-and-artifact first-upgrade-artifact "$r1"
 
 # --- validate_sha
