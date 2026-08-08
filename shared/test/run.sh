@@ -994,7 +994,15 @@ surf() {  # surf <fn> [args...] → one verdict line per assertion the fn makes
     t()    { if [ "$2" = "$3" ]; then printf 'ok %s\n' "$1"; else printf 'FAIL %s\n' "$1"; fi; }
     jqf()  { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
     roster_rows()   { grep -vE '^[[:space:]]*(#|$)' "$SURF_ROSTER"; }
-    box_integrity() { awk -v b="$1" '$1 == b { print $2 }' "$SURF_INTEG"; }
+    # The caller supplies this reader, and on a real host it shells into a box.
+    # SURF_GREEDY_READER makes it behave like the one that does — `box exec`
+    # inherits the loop's stdin and drains it — which truncated the roster loop
+    # to its first box on the host, silently, while the label kept claiming the
+    # fleet.
+    box_integrity() {
+      [ -n "${SURF_GREEDY_READER:-}" ] && cat >/dev/null
+      awk -v b="$1" '$1 == b { print $2 }' "$SURF_INTEG"
+    }
     # shellcheck source=drill/rehearsal-app-surfaces.sh
     source "$ROOT/drill/rehearsal-app-surfaces.sh"
     "$@"
@@ -1029,6 +1037,15 @@ SURF_IV="floor: every integrity verdict is one of the three words"
 r1="$(surf app_surface_integrity "$SURF/fleet.json")"
 t app-surface-190-truthful-verdicts ok "$(surf_says "$r1" "$SURF_I")"
 t app-surface-190-truthful-vocabulary ok "$(surf_says "$r1" "$SURF_IV")"
+# The label names how many boxes were compared, and it must be all three that
+# answered — not the one the loop happened to reach.
+t app-surface-190-compares-every-box ok "$(surf_says "$r1" "verdict is the box's own answer (3 boxes)")"
+# The reader that shells into a box drains the loop's stdin. Reading the roster
+# on fd 3 is what keeps that from truncating the loop to its first member — a
+# real host defect, found by running the leg, invisible to a stub reader that
+# does not touch stdin.
+r1="$(SURF_GREEDY_READER=1 surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-greedy-reader-visits-every-box ok "$(surf_says "$r1" "verdict is the box's own answer (3 boxes)")"
 # The floor prints `current` for a box whose own manifest says `modified` —
 # exactly the reassurance #190 exists to stop the page inventing.
 r1="$(surf app_surface_integrity "$SURF/fleet-integrity-lie.json")"

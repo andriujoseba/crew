@@ -67,7 +67,14 @@ app_surface_version() {
 app_surface_integrity() {
   local fleet="$1" name api_integ own_integ
   local integ_n=0 integ_bad="" integ_vocab=""
-  while read -r name _ _ _; do
+  # The roster is read on fd 3, not on stdin, because `box_integrity` is a
+  # CALLER-SUPPLIED reader that shells into a box — and a reader that inherits
+  # this loop's stdin drains it, so the loop runs once and the assertion covers
+  # the first roster box while its label claims the fleet. That is exactly what
+  # this leg did on a stub host until it was run. The caller's own reader is
+  # fixed too (rehearsal-app.sh's box_read); this makes the loop safe whatever
+  # the caller hands it, which is the only thing this file can guarantee.
+  while read -r name _ _ _ <&3; do
     [ -z "$name" ] && continue
     [ -n "$(jqf "([u.get('engine') or '' for u in d['units'] if u['box']=='$name'] or [''])[0]" < "$fleet")" ] || continue
     api_integ="$(jqf "([u.get('integrity') or '' for u in d['units'] if u['box']=='$name'] or [''])[0]" < "$fleet")"
@@ -86,7 +93,7 @@ app_surface_integrity() {
     esac
     [ "$api_integ" = "$own_integ" ] \
       || integ_bad="${integ_bad:+$integ_bad, }$name: floor '$api_integ' vs box '$own_integ'"
-  done < <(roster_rows)
+  done 3< <(roster_rows)
   if [ "$integ_n" -eq 0 ]; then
     skip "floor: every hired box's integrity verdict is the box's own answer" \
          "no hired box on this fleet answered engine-manifest.sh --state"

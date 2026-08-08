@@ -501,7 +501,18 @@ body GET /api/fleet > "$FLEET_JSON"
 # timeout. Same default and same override as the collector's, so the drill and
 # the floor wait the same amount of time for the same box.
 BOX_READ_TIMEOUT="${CREW_FLOOR_PROBE_TIMEOUT:-45}"
-box_read() { timeout "$BOX_READ_TIMEOUT" box exec "$@"; }
+#
+# `</dev/null` is LOAD-BEARING, and it was found by running this leg rather
+# than by reading it. Every caller below sits inside `while read … done <
+# <(roster_rows)`, and `box exec` inherits that loop's stdin and DRAINS it — so
+# the loop ran exactly once, for the first roster box, and the remaining boxes
+# were never asked at all. Silently: the fingerprint carried one `cron` line
+# instead of five and compared equal to itself, the integrity comparison
+# reported agreement over one box while claiming the fleet, and #345's log
+# collection read one duty.log. That is the same defect codex-bot named in the
+# dry-run verdict — a claim wider than the read behind it — one layer further
+# down, and it makes "every roster box's crontab" true rather than aspirational.
+box_read() { timeout "$BOX_READ_TIMEOUT" box exec "$@" </dev/null; }
 
 # The box's own answer to the integrity question, asked over its own transport.
 # `--state` prints ONE bare word — absent, unverified, current or modified
