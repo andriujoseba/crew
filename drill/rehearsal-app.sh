@@ -574,15 +574,25 @@ fi
 # construction, never by luck: where this fleet has no such box the case is
 # skipped by name, and the drill never creates or destroys a fleet member to
 # manufacture one.
+# `hired` is a three-valued verdict the collector publishes so the page never
+# re-derives it from silence, and only ONE of the three hides a console:
+#   no       measured absence — never created, or answered and has no engine
+#   unknown  could not be measured (stopped, unreachable, inventory unreadable)
+#            and therefore KEEPS its console: that is the hired-and-gone-dark
+#            box this page exists to show
+#   yes      an engine answered
+# So "drawn" is everything that is not a measured `no`, which is the same
+# partition the page's own walk makes (`u.hired !== 'no'`). Counting only `yes`
+# as drawn would call every stopped box hidden and red a correct page.
 NOT_DEPLOYED="$(jqf "' '.join(u['box'] for u in d['units'] if u.get('hired')=='no')" < "$FLEET_JSON")"
-DRAWN="$(jqf "sum(1 for u in d['units'] if u.get('hired')=='yes')" < "$FLEET_JSON")"
-UNKNOWN_HIRE="$(jqf "' '.join(u['box'] for u in d['units'] if u.get('hired') not in ('yes','no'))" < "$FLEET_JSON")"
-if [ -n "$UNKNOWN_HIRE" ]; then
-  # `hired: unknown` is floor.py's answer when `box list` could not be asked at
-  # all. Nothing about #204 can be asserted through it, and reading it as "not
-  # deployed" would invent a fleet fact out of a failed inventory.
+DRAWN="$(jqf "sum(1 for u in d['units'] if u.get('hired')!='no')" < "$FLEET_JSON")"
+UNREADABLE_INV="$(jqf "' '.join(u['box'] for u in d['units'] if (u.get('note') or '').startswith('box inventory unreadable'))" < "$FLEET_JSON")"
+if [ -n "$UNREADABLE_INV" ]; then
+  # `box list` did not answer, so absence was never MEASURED for these boxes —
+  # and #204's filter is precisely a claim about measured absence. Asserting
+  # through a failed inventory is the inference the verdict exists to refuse.
   skip "floor: a roster box that is not deployed is counted and not drawn" \
-       "the box inventory did not answer for: $UNKNOWN_HIRE"
+       "the box inventory did not answer for: $UNREADABLE_INV"
 elif [ -z "$NOT_DEPLOYED" ]; then
   skip "floor: a roster box that is not deployed is counted and not drawn" \
        "every one of the $ROSTER_N roster boxes is deployed — nothing on this fleet exercises the grid filter"
@@ -789,6 +799,10 @@ fi
 # was held. The parenthetical is the whole repair, so the assertion is that
 # every one of these lines carries one — and that it is one of the causes
 # _no_build_duty_reason can actually produce, not any prose at all.
+# The phrase is required on BOTH sides of the transport: the box greps its own
+# log, and the host keeps only the lines that carry the phrase. A login shell
+# inside a guest may print a banner, an MOTD or a warning of its own, and a line
+# this assertion never claimed anything about must not be able to fail it.
 NBD_LINES="$TMP/no-build-duty.txt"
 : > "$NBD_LINES"
 while read -r name _agent _role _from; do
@@ -796,7 +810,7 @@ while read -r name _agent _role _from; do
   # shellcheck disable=SC2016  # $DUTY_DIR and $HOME are the BOX's
   box_read "$name" -- bash -lc 'd="${DUTY_DIR:-$HOME/duty}"
     grep -h "no build duty" "$d/duty.log" 2>/dev/null | tail -20' 2>/dev/null \
-    | sed "s/^/$name /" >> "$NBD_LINES" || true
+    | grep -F 'no build duty' | sed "s/^/$name /" >> "$NBD_LINES" || true
 done < <(roster_rows)
 NBD_N="$(grep -c . "$NBD_LINES" || true)"
 if [ "${NBD_N:-0}" -eq 0 ]; then
