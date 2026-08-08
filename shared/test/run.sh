@@ -1218,6 +1218,7 @@ t survival-budget-default-when-cron-empty 390 "$(install_survival_budget '')"
 survival_reset 'crew@0.0.0-drill-b' armed ''
 install_survival_before
 t survival-fresh-box-takes-the-wait-path fresh "$INSTALL_SURVIVAL_PATH"
+t survival-fresh-box-label-describes-arrival "the box arrived with no duty.log" "$INSTALL_SURVIVAL_PATH_LABEL"
 SURVIVAL_TICK_AT=305
 install_survival_check && r1=survived || r1=red
 t survival-fresh-box-passes-on-the-observed-tick survived "$r1"
@@ -1342,21 +1343,30 @@ install_survival_check && r1=survived || r1=red
 t survival-fresh-box-engine-gone-reds red "$r1"
 t survival-fresh-box-engine-gone-reported-once engine "$(survival_surfaces)"
 
-# --- the borrowed-box path: history, so the diff form, byte-identical
+# --- the borrowed-box context: history, with the same post-removal wait
 survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
 install_survival_before
-t survival-borrowed-box-takes-the-diff-path history "$INSTALL_SURVIVAL_PATH"
+t survival-borrowed-box-records-history-context history "$INSTALL_SURVIVAL_PATH"
+t survival-borrowed-box-label-describes-arrival "the box arrived with tick history" "$INSTALL_SURVIVAL_PATH_LABEL"
+SURVIVAL_TICK_AT=305
 install_survival_check && r1=survived || r1=red
-t survival-borrowed-box-passes survived "$r1"
-t survival-borrowed-box-never-waits 0 "$SURVIVAL_CLOCK"
+t survival-borrowed-box-newer-post-removal-line-passes survived "$r1"
+t survival-borrowed-box-reports-the-new-tick "tick 305 duty run end" "$INSTALL_SURVIVAL_TICK"
+[ "$SURVIVAL_CLOCK" -le 390 ] && r1=bounded || r1=OVERRAN
+t survival-borrowed-wait-stops-at-one-boundary-plus-grace bounded "$r1"
 
-# …and the diff is not weakened by the fresh path existing beside it.
+# A borrowed box whose engine dies with its console spends the full budget and
+# reds. This explicitly inverts the old borrowed-box pass on an unchanged log.
 survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
 install_survival_before
-printf '2026-08-03T15:19:01Z duty run end\n' >>"$SDUTY/duty.log"
 install_survival_check && r1=survived || r1=red
-t survival-borrowed-box-changed-log-still-reds red "$r1"
-t survival-borrowed-box-changed-log-names-tick tick "$(survival_surfaces)"
+t survival-borrowed-box-unchanged-log-now-reds red "$r1"
+t survival-borrowed-box-unchanged-log-names-tick tick "$(survival_surfaces)"
+t survival-borrowed-box-unchanged-log-waits-the-budget 390 "$SURVIVAL_CLOCK"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"2026-08-03T15:14:01Z duty run end"*"box arrived with"*) r1=names-arrival-tick ;; *) r1=OPAQUE ;;
+esac
+t survival-borrowed-box-failure-retains-pre-removal-tick names-arrival-tick "$r1"
 
 survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
 install_survival_before
@@ -1364,15 +1374,85 @@ rm -f "$SDUTY/duty.log"
 install_survival_check && r1=survived || r1=red
 t survival-borrowed-box-emptied-log-still-reds red "$r1"
 
+# A tick written during uninstall is the post-removal baseline, not survival
+# evidence. The borrowed context must exclude it exactly as the fresh one does.
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-tick-during-uninstall-alone-reds red "$r1"
+t survival-borrowed-tick-during-uninstall-names-tick tick "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"2026-08-03T15:14:01Z duty run end"*"2026-08-03T15:19:01Z tick during uninstall"*) r1=says-both-lines ;; *) r1=OPAQUE ;;
+esac
+t survival-borrowed-tick-during-uninstall-says-both-lines says-both-lines "$r1"
+
+# …and that same borrowed box passes once a later boundary proves survival.
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-tick-during-uninstall-then-real-tick-passes survived "$r1"
+
+# Restore the old byte-identical borrowed-path comparison. It reds the healthy
+# fixture above as soon as it sees the uninstall-boundary line and never waits
+# for the later proof. This is the reported flake's negative mutation.
+SURVIVAL_WAIT_HISTORY="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+SURVIVAL_TICK_AT=305
+install_survival_wait_for_tick() {
+  INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
+  [ -n "$INSTALL_SURVIVAL_TICK" ] && [ "$INSTALL_SURVIVAL_TICK" = "$INSTALL_SURVIVAL_TICK_PRE" ]
+}
+install_survival_check && r1=survived || r1=red
+t survival-restoring-borrowed-byte-identical-compare-reds red "$r1"
+eval "$SURVIVAL_WAIT_HISTORY"
+
+# Pointing the wait at TICK_PRE instead of the post-removal read accepts the
+# during-uninstall line at zero elapsed time. The correct baseline reds it.
+SURVIVAL_WAIT_POST="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+install_survival_wait_for_tick() {
+  local budget="$1" deadline
+  deadline=$(( $(install_survival_now) + budget ))
+  while :; do
+    INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
+    if [ -n "$INSTALL_SURVIVAL_TICK" ] && [ "$INSTALL_SURVIVAL_TICK" != "$INSTALL_SURVIVAL_TICK_PRE" ]; then
+      return 0
+    fi
+    [ "$(install_survival_now)" -lt "$deadline" ] || return 1
+    install_survival_sleep "$INSTALL_SURVIVAL_POLL"
+  done
+}
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-pre-removal-baseline-false-passes survived "$r1"
+t survival-borrowed-pre-removal-baseline-spends-nothing 0 "$SURVIVAL_CLOCK"
+eval "$SURVIVAL_WAIT_POST"
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-restoring-borrowed-post-removal-baseline-reds red "$r1"
+
 # --- the real survival failures, on the surfaces they happened to
 survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
 install_survival_before
 : >"$SCRON"
 install_survival_check && r1=survived || r1=red
 t survival-cron-removed-by-hand-reds red "$r1"
-t survival-cron-removed-by-hand-names-cron cron "$(survival_surfaces)"
+t survival-cron-removed-by-hand-names-cron-first cron,tick "$(survival_surfaces)"
 case "$INSTALL_SURVIVAL_DETAIL" in *"tick.sh"*) r1=says-what-it-read ;; *) r1=OPAQUE ;; esac
 t survival-cron-removed-says-what-it-read says-what-it-read "$r1"
+t survival-borrowed-box-cron-removed-does-not-wait 0 "$SURVIVAL_CLOCK"
+case "$INSTALL_SURVIVAL_DETAIL" in *"tick: not waited for"*) r1=says-no-wait ;; *) r1=OPAQUE ;; esac
+t survival-borrowed-box-cron-removed-says-no-wait says-no-wait "$r1"
+case "$INSTALL_SURVIVAL_DETAIL" in *"2026-08-03T15:14:01Z duty run end"*) r1=names-arrival-tick ;; *) r1=OPAQUE ;; esac
+t survival-borrowed-box-cron-removed-retains-pre-removal-tick names-arrival-tick "$r1"
 
 # The same removal on a fresh box: no boundary can strike, so the wait is not
 # entered at all and the report says so rather than blaming the tick alone.
@@ -1390,7 +1470,7 @@ install_survival_before
 printf 'crew@9.9.9-someone-elses\n' >"$SDUTY/VERSION"
 install_survival_check && r1=survived || r1=red
 t survival-engine-restamped-reds red "$r1"
-t survival-engine-restamped-names-engine engine "$(survival_surfaces)"
+t survival-engine-restamped-names-engine-first engine,tick "$(survival_surfaces)"
 case "$INSTALL_SURVIVAL_DETAIL" in
   *"crew@9.9.9-someone-elses"*"crew@0.0.0-drill-b"*) r1=says-both ;; *) r1=OPAQUE ;;
 esac
@@ -1400,13 +1480,16 @@ survival_reset '' armed '2026-08-03T15:14:01Z duty run end'
 install_survival_before
 install_survival_check && r1=survived || r1=red
 t survival-engine-gone-reds red "$r1"
-t survival-engine-gone-names-engine engine "$(survival_surfaces)"
+t survival-engine-gone-names-engine-first engine,tick "$(survival_surfaces)"
 
 # The driver reads the predicate from here and reports the surfaces, so the
 # transcript that misled #341 cannot come back as the evidence.
 if grep -qF 'install_survival_before' "$ROOT/drill/install-drill.sh" &&
    grep -qF 'install_survival_check' "$ROOT/drill/install-drill.sh"; then r1=wired; else r1=MISSING; fi
 t survival-driver-uses-the-shared-predicate wired "$r1"
+# shellcheck disable=SC2016  # the driver's literal line is the pattern
+if grep -qF '($INSTALL_SURVIVAL_PATH_LABEL)' "$ROOT/drill/install-drill.sh"; then r1=context; else r1=LOST; fi
+t survival-driver-pass-line-keeps-arrival-context context "$r1"
 # shellcheck disable=SC2016  # the driver's literal line is the pattern
 if grep -qF 'fail "step 9: positive engine/cron/tick survival observation" "$INSTALL_SURVIVAL_DETAIL"' \
      "$ROOT/drill/install-drill.sh"; then r1=surfaces; else r1=TRANSCRIPT; fi
