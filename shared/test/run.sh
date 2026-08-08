@@ -460,6 +460,20 @@ if rehearsal_hygiene_tip_has_all_dirt "$HYG_TREE"; then r1=complete; else r1=MIS
 t rehearsal-hygiene-tip-has-all-dirt complete "$r1"
 if rehearsal_hygiene_tip_has_all_dirt "${HYG_TREE%$'\n'*}"; then r1=FALSE_PASS; else r1=red; fi
 t rehearsal-hygiene-missing-nested-file-reds red "$r1"
+HYG_CONTENTS=$'working fixture-1\nroot fixture-1\nnested fixture-1'
+if rehearsal_hygiene_tip_has_expected_contents "$HYG_CONTENTS" fixture-1; then
+  r1=complete
+else
+  r1=MISSING
+fi
+t rehearsal-hygiene-tip-has-all-dirty-bytes complete "$r1"
+if rehearsal_hygiene_tip_has_expected_contents \
+    "${HYG_CONTENTS/root fixture-1/wrong bytes}" fixture-1; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-wrong-tip-bytes-red red "$r1"
 
 HYG_RECORD=$'🗃️ Uncommitted work preserved before this branch\x27s worktree was removed\n`build/hygiene-builder`\x27s worktree was dirty. The work is on the `origin` remote as `wip/build/hygiene-builder`, holding 1 modified, 2 untracked file(s).\nPart of that work was **staged and differed from the working tree**, so the index has its own snapshot one commit below the tip — reach it with `git checkout FETCH_HEAD^`.'
 if rehearsal_hygiene_record_names_payload "$HYG_RECORD" origin \

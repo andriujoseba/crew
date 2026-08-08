@@ -15,6 +15,13 @@ rehearsal_hygiene_tip_has_all_dirt() {
     && grep -qxF hygiene-untracked/nested.txt <<<"$tree"
 }
 
+rehearsal_hygiene_tip_has_expected_contents() {
+  local contents="$1" stamp="$2"
+  [ "$contents" = "working $stamp
+root $stamp
+nested $stamp" ]
+}
+
 rehearsal_hygiene_record_names_payload() {
   local body="$1" remote="$2" ref="$3"
   grep -Fq "\`$remote\` remote as \`$ref\`" <<<"$body" \
@@ -44,7 +51,7 @@ rehearsal_hygiene_box_snapshot() {
   local path="$1"
   bx "set -e
     git -C '$path' status --porcelain --untracked-files=all
-    sha256sum '$path/README.md' '$path/hygiene-root-untracked.txt' \
+    git hash-object '$path/README.md' '$path/hygiene-root-untracked.txt' \
       '$path/hygiene-untracked/nested.txt'
     git -C '$path' show :README.md
   "
@@ -166,7 +173,7 @@ rehearsal_hygiene_release() {
 
 rehearsal_hygiene_drill() {
   local repo="$1" role="$2" slug stamp box_home good_branch bad_branch good_wt bad_wt
-  local good_ref bad_ref good_pr bad_pr first_line good_log tree staged record
+  local good_ref bad_ref good_pr bad_pr first_line good_log tree tip_contents staged record
   local before after first_refusal second_refusal
   if [ "${REHEARSAL_HYGIENE_DRILL:-1}" -eq 0 ]; then
     skip "hygiene: dirty worktree preservation and refusal (--no-hygiene-drill)"
@@ -222,6 +229,12 @@ rehearsal_hygiene_drill() {
     && git -C '$REHEARSAL_HYGIENE_CLONE' ls-tree -r --name-only FETCH_HEAD")" || tree=""
   check "hygiene: wip tip carries all three dirty-work shapes" \
     rehearsal_hygiene_tip_has_all_dirt "$tree"
+  tip_contents="$(bx "git -C '$REHEARSAL_HYGIENE_CLONE' show FETCH_HEAD:README.md
+    git -C '$REHEARSAL_HYGIENE_CLONE' show FETCH_HEAD:hygiene-root-untracked.txt
+    git -C '$REHEARSAL_HYGIENE_CLONE' show FETCH_HEAD:hygiene-untracked/nested.txt")" \
+    || tip_contents=""
+  check "hygiene: wip tip carries the working, root-untracked and nested-untracked bytes" \
+    rehearsal_hygiene_tip_has_expected_contents "$tip_contents" "$stamp"
   staged="$(bx "git -C '$REHEARSAL_HYGIENE_CLONE' show FETCH_HEAD^:README.md")" || staged=""
   check "hygiene: staged snapshot is the commit below the tip" bash -c \
     "[ \"\$1\" = 'staged $stamp' ]" _ "$staged"
