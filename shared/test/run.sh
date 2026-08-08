@@ -23,6 +23,23 @@ t() {  # t <name> <expected> <actual>
   fi
 }
 
+assert_doctrine_quote() {  # assert_doctrine_quote <prompt-file> <substring> <name>
+  local prompt_file="$1" substring="$2" name="$3" prompt_text doctrine_text result
+  prompt_text="$(tr -s '[:space:]' ' ' <"$prompt_file")"
+  doctrine_text="$(tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md")"
+  result=DIVERGED
+  if grep -Fq -- "$substring" <<<"$prompt_text"; then
+    if [ "$substring" = Claiming ]; then
+      # The prompt cites a section name; require the cited Markdown heading,
+      # rather than accepting an unrelated prose occurrence in the doctrine.
+      grep -Fxq '## Claiming' "$ROOT/.ceremony/BUILDER.md" && result=agreed
+    elif grep -Fq -- "$substring" <<<"$doctrine_text"; then
+      result=agreed
+    fi
+  fi
+  t "$name" agreed "$result"
+}
+
 # Phase 0 stages the whole tracked tree except fleet-floor/dev, then verifies
 # the repository roots this suite names before running it. Keep that explicit
 # verifier and archive selection from falling behind new literal root paths.
@@ -5096,8 +5113,8 @@ t resume-prompt-marker-not-unconditional conditional "$r1"
 if grep -Fq 'ONLY WHEN YOU ARE GOING TO ACT' "$RG_PROMPT" \
   && grep -Fq 'POST NOTHING AT ALL' "$RG_PROMPT"; then r1=gated; else r1=MISSING; fi
 t resume-prompt-marker-gated-on-acting gated "$r1"
-# The doctrine sentence itself, quoted rather than paraphrased, so the two can
-# be read side by side.
+# The doctrine sentences themselves, quoted rather than paraphrased, so the
+# two files can be read side by side.
 #
 # Compared on whitespace-NORMALISED text, never line by line. `.ceremony/` is
 # machine-written by `docs-sync --fix` at whatever pin is vendored, so its
@@ -5107,14 +5124,41 @@ t resume-prompt-marker-gated-on-acting gated "$r1"
 # changed wording, so re-syncing the prompt alone would still have failed here
 # and invited the assertion to be gutted instead. Normalising costs nothing and
 # leaves the real contract — same words, both files — exactly as strict.
-RG_SENTENCE='a resumption finding nothing changed posts nothing'
-if tr -s '[:space:]' ' ' <"$RG_PROMPT" | grep -Fq -- "$RG_SENTENCE" \
-  && tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" | grep -Fq -- "$RG_SENTENCE"; then
-  r1=agreed
-else
-  r1=DIVERGED
-fi
-t resume-prompt-quotes-the-doctrine agreed "$r1"
+# This clause stops before the Markdown emphasis around the preceding words.
+assert_doctrine_quote "$RG_PROMPT" \
+  'a resumption finding nothing changed posts nothing' \
+  resume-prompt-quotes-the-doctrine
+# This clause stops before the Markdown issue citation following it.
+assert_doctrine_quote "$RG_PROMPT" \
+  'Each change owes one comment — the wait resolves or changes hands, the shape changes, the claim unparks.' \
+  resume-prompt-quotes-each-change-doctrine
+# The prompt uses the section name as prose, while the doctrine side must be
+# the exact heading; the substring contains no Markdown syntax itself.
+assert_doctrine_quote "$RG_PROMPT" Claiming resume-prompt-cites-claiming-heading
+
+# Count every direct BUILDER doctrine slot in every prompt. In resume.txt the
+# four occurrences are: bare opening reference; quotation attribution for the
+# declaration/Claiming passage; bare acceptance reference; quotation
+# attribution for the draft-flip passage. build.txt's two occurrences are bare
+# governing/acceptance references. fragment-round-rules.txt's two occurrences
+# are bare green-head/panel references. attention.txt, ci-red.txt,
+# fragment-floor-envelope.txt, fragment-oneshot-rules.txt,
+# fragment-unblockable.txt, fragment-wt-rules.txt, hygiene.txt, mention.txt,
+# rebase.txt, review.txt, and triage.txt contain no direct occurrence.
+declare -A doctrine_builder_occurrences=(
+  [attention.txt]=0 [build.txt]=2 [ci-red.txt]=0
+  [fragment-floor-envelope.txt]=0 [fragment-oneshot-rules.txt]=0
+  [fragment-round-rules.txt]=2 [fragment-unblockable.txt]=0
+  [fragment-wt-rules.txt]=0 [hygiene.txt]=0 [mention.txt]=0
+  [rebase.txt]=0 [resume.txt]=4 [review.txt]=0 [triage.txt]=0
+)
+for doctrine_prompt in "$SHARED"/prompts/*.txt; do
+  doctrine_prompt_name="$(basename "$doctrine_prompt")"
+  doctrine_actual_count="$(grep -oF '{{DOCTRINE_BUILDER}}' "$doctrine_prompt" | wc -l)"
+  t "doctrine-builder-occurrences-$doctrine_prompt_name" \
+    "${doctrine_builder_occurrences[$doctrine_prompt_name]-UNCLASSIFIED}" \
+    "$doctrine_actual_count"
+done
 
 # --- #384: three stuck states the resume gate could not leave ----------------
 # A session finished a fix round on PR #381, pushed d4b8035, and parked waiting
@@ -5562,13 +5606,11 @@ t p384-flip-warn-names-the-owed-panel 1 \
 # computes exactly whom the engine WOULD request, and requests nobody.
 t p384-flip-warn-leaves-the-flip-to-the-builder 3 \
   "$(grep -c 'The flip stays yours' <<<"$p384_fo_out")"
-if tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" \
-     | grep -Fq 'an engine may draft a PR but only the builder undrafts it'; then
-  r1=agreed
-else
-  r1=DIVERGED
-fi
-t p384-flip-doctrine-still-says-so agreed "$r1"
+# This complete clause contains no Markdown syntax, so it is the longest safe
+# comparison on both sides of the attribution.
+assert_doctrine_quote "$RG_PROMPT" \
+  'an engine may draft a PR but only the builder undrafts it' \
+  p384-flip-doctrine-still-says-so
 # MUST FAIL — the engine flipping, requesting or labelling. Neither predicate
 # writes to the board at all: no undraft, no reviewer, no label. The one GitHub
 # call the flip predicate makes is a READ, pinned below.
