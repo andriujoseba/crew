@@ -38,6 +38,24 @@ that skipping the drill is a deliberate, reviewable commit rather than a
 silence. **A failed drill is still a valid record**: the gate wants evidence,
 not success.
 
+## Adapting the drill to the window
+
+**A release window's drill is adapted to what that window shipped, and the
+release issue carries the audit that says so.** At release-init, triage adds one
+row for every fragment in `changelog.d/` at the cut's merge base, naming the
+issue and surface and assigning exactly one disposition:
+
+- **`drilled`** — an existing leg reads the surface; name the assertion.
+- **`new leg`** — the window needs another leg; name the issue minted for it.
+- **`not a drill surface`** — no real-host assertion belongs in this drill;
+  state why. An empty reason leaves the audit incomplete.
+
+The audit is a table in the release issue, not another repository file. Triage
+owns it because release-init already reads the window membership, and completes
+it then so every required leg can land before the operator runs the round. A
+leg that lands after the drill round changes the candidate the record describes
+and forces a re-drill.
+
 ## The drill
 
 crew asserts the **duty lifecycle** — that the engine, installed on a real box,
