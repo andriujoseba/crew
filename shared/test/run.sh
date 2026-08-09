@@ -984,6 +984,153 @@ rehearsal_notify_close_fixtures
 t notify-fixture-teardown-is-idempotent 0 "$(wc -l <"$NOTIFY_BX_CALLS" | tr -d ' ')"
 unset -f gh
 
+# --- a fixture that exists survives whatever failed after it ---------------
+#
+# Two ways the round-4 review found an open handoff PR escaping the list that
+# exists to close it (codex-bot):
+#
+#   1. the stager printed its number only after the label steps, so a label
+#      application that failed returned empty — the caller recorded nothing
+#      and the PR created a moment earlier was open with nobody holding it;
+#   2. close_fixtures cleared the WHOLE list even when a PATCH failed, so the
+#      EXIT pass inherited an empty list and retried nothing.
+#
+# Both are driven here with a gh stub that fails exactly one step.
+NOTIFY_GH_CALLS="$TMP/notify-gh-calls"
+NOTIFY_GH_PR_SEQ="$TMP/notify-gh-pr-seq"
+NOTIFY_GH_FAIL_AT=""
+NOTIFY_GH_CLOSE_FAIL=""
+printf '0\n' >"$NOTIFY_GH_PR_SEQ"
+notify_gh_stub() {
+  local n
+  printf '%s\n' "$*" >>"$NOTIFY_GH_CALLS"
+  case "$*" in
+    "repo view "*|"repo create "*) return 0 ;;
+    *" -X PATCH "*)
+      if [ -n "$NOTIFY_GH_CLOSE_FAIL" ]; then
+        case "$*" in *"$NOTIFY_GH_CLOSE_FAIL"*) return 1 ;; esac
+      fi
+      return 0 ;;
+    *git/ref/heads/main*) printf 'deadbeefdeadbeefdeadbeef\n'; return 0 ;;
+    # Matched before the repository-level label creation below, whose pattern
+    # is a prefix of this one.
+    *issues/*/labels*)
+      [ "$NOTIFY_GH_FAIL_AT" = label ] && return 1
+      return 0 ;;
+    *"/pulls -f title="*)
+      n="$(( $(cat "$NOTIFY_GH_PR_SEQ") + 1 ))"
+      printf '%s\n' "$n" >"$NOTIFY_GH_PR_SEQ"
+      [ "$NOTIFY_GH_FAIL_AT" = create ] && return 1
+      printf '%s\n' "$n"
+      return 0 ;;
+    *) return 0 ;;
+  esac
+}
+
+# The stager itself: a number the caller can act on, and a status that still
+# says the fixture is not usable as a notifiable event.
+(
+  NOTIFY_GH_FAIL_AT=label
+  : >"$NOTIFY_GH_CALLS"
+  printf '0\n' >"$NOTIFY_GH_PR_SEQ"
+  gh() { notify_gh_stub "$@"; }
+  notify_staged="$(rehearsal_notify_stage_handoff_pr owner/sandbox slug state:needs-human)"
+  printf 'rc=%s pr=[%s]\n' "$?" "$notify_staged"
+) >"$TMP/notify-stage-label-failure" 2>&1
+t notify-stage-label-failure-still-yields-the-number 'rc=1 pr=[1]' \
+  "$(cat "$TMP/notify-stage-label-failure")"
+(
+  NOTIFY_GH_FAIL_AT=create
+  : >"$NOTIFY_GH_CALLS"
+  printf '0\n' >"$NOTIFY_GH_PR_SEQ"
+  gh() { notify_gh_stub "$@"; }
+  notify_staged="$(rehearsal_notify_stage_handoff_pr owner/sandbox slug state:needs-human)"
+  printf 'rc=%s pr=[%s]\n' "$?" "$notify_staged"
+) >"$TMP/notify-stage-create-failure" 2>&1
+t notify-stage-create-failure-has-nothing-to-track 'rc=1 pr=[]' \
+  "$(cat "$TMP/notify-stage-create-failure")"
+
+# The leg around it: a labelling failure grades the staging red AND closes the
+# PR it created. Under the round-4 code the PATCH below never happened.
+notify_stage_run() {  # $1 the gh step that fails, $2 the close that fails
+  NOTIFY_SECOND_READ=same
+  NOTIFY_PRE_STATE=present
+  NOTIFY_PRE_TEXT=""
+  NOTIFY_WORK_BACKUP_STATE=present
+  NOTIFY_WORK_BACKUP_TEXT="$NOTIFY_PRE_DRILL"
+  NOTIFY_POST_STATE=present
+  NOTIFY_POST_TEXT=""
+  : >"$NOTIFY_BX_CALLS"
+  : >"$NOTIFY_GH_CALLS"
+  printf '0\n' >"$NOTIFY_READS"
+  printf '0\n' >"$NOTIFY_NOTIFY_READS"
+  printf '0\n' >"$NOTIFY_GH_PR_SEQ"
+  REHEARSAL_NOTIFY_BACKUP=""
+  REHEARSAL_NOTIFY_ABSENT=0
+  REHEARSAL_NOTIFY_FIXTURES=""
+  (
+    REPOS_BACKUP="$NOTIFY_WORK_BACKUP_PATH"
+    NOTIFY_GH_FAIL_AT="${1:-}"
+    NOTIFY_GH_CLOSE_FAIL="${2:-}"
+    bx() { notify_stub_bx "$1"; }
+    gh() { notify_gh_stub "$@"; }
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    skip() { printf 'skip %s\n' "$1"; }
+    rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer >/dev/null 2>&1
+    printf 'fixture-rows=%s\n' "$(grep -c . <<<"$REHEARSAL_NOTIFY_FIXTURES")"
+    printf 'fixtures=[%s]\n' \
+      "$(grep . <<<"$REHEARSAL_NOTIFY_FIXTURES" | paste -sd';' -)"
+  )
+}
+
+notify_out="$(notify_stage_run label)"
+t notify-fixture-unlabelled-pr-is-closed-by-the-leg 1 \
+  "$(grep -cF "api -X PATCH repos/$NOTIFY_WORK/pulls/1 -f state=closed" "$NOTIFY_GH_CALLS")"
+t notify-fixture-unlabelled-pr-in-the-notify-half-is-closed-too 1 \
+  "$(grep -cF "api -X PATCH repos/$NOTIFY_EXTRA/pulls/2 -f state=closed" "$NOTIFY_GH_CALLS")"
+t notify-fixture-unlabelled-pr-leaves-nothing-open 'fixture-rows=0' \
+  "$(grep -F 'fixture-rows=' <<<"$notify_out")"
+
+# A PR that was never created is not tracked and not closed: the list holds
+# objects that exist, and nothing else.
+notify_out="$(notify_stage_run create)"
+t notify-fixture-uncreated-pr-is-never-closed 0 \
+  "$(grep -cF 'api -X PATCH' "$NOTIFY_GH_CALLS")"
+t notify-fixture-uncreated-pr-is-not-tracked 'fixture-rows=0' \
+  "$(grep -F 'fixture-rows=' <<<"$notify_out")"
+
+# A close that failed leaves its row behind for the EXIT pass, which is the
+# only thing that can still retry it.
+notify_out="$(notify_stage_run "" "pulls/2")"
+t notify-fixture-failed-close-survives-the-leg 'fixture-rows=1' \
+  "$(grep -F 'fixture-rows=' <<<"$notify_out")"
+t notify-fixture-failed-close-survives-by-name "fixtures=[$NOTIFY_EXTRA 2]" \
+  "$(grep -F 'fixtures=' <<<"$notify_out")"
+
+# …and the retry itself, at the level of the closer: the row that failed is
+# re-attempted and the rows that closed are not re-closed.
+REHEARSAL_NOTIFY_FIXTURES=""
+rehearsal_notify_record_fixture "$NOTIFY_WORK" "$NOTIFY_WORK_PR"
+rehearsal_notify_record_fixture "$NOTIFY_EXTRA" "$NOTIFY_EXTRA_PR"
+: >"$NOTIFY_GH_CALLS"
+NOTIFY_GH_CLOSE_FAIL="pulls/$NOTIFY_EXTRA_PR"
+gh() { notify_gh_stub "$@"; }
+rehearsal_notify_close_fixtures 2>/dev/null
+notify_close_rc=$?
+t notify-fixture-failed-close-is-reported 1 "$notify_close_rc"
+t notify-fixture-failed-close-stays-on-the-list "$NOTIFY_EXTRA $NOTIFY_EXTRA_PR" \
+  "$(grep . <<<"$REHEARSAL_NOTIFY_FIXTURES")"
+: >"$NOTIFY_GH_CALLS"
+NOTIFY_GH_CLOSE_FAIL=""
+rehearsal_notify_close_fixtures 2>/dev/null
+t notify-fixture-failed-close-is-retried 1 \
+  "$(grep -cF "repos/$NOTIFY_EXTRA/pulls/$NOTIFY_EXTRA_PR" "$NOTIFY_GH_CALLS")"
+t notify-fixture-retry-does-not-reclose-the-closed-half 0 \
+  "$(grep -cF "repos/$NOTIFY_WORK/pulls/$NOTIFY_WORK_PR" "$NOTIFY_GH_CALLS")"
+t notify-fixture-retry-empties-the-list "" "$REHEARSAL_NOTIFY_FIXTURES"
+unset -f gh notify_stage_run
+
 # Both registries in ONE step: rehearsal_cleanup restores the notify half too,
 # so an abnormal exit cannot leave a box watching a torn-down sandbox.
 : >"$NOTIFY_BX_CALLS"
