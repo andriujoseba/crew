@@ -28,6 +28,10 @@ if ! declare -F rehearsal_registry_snapshot >/dev/null 2>&1; then
   # shellcheck source=drill/rehearsal-safety.sh
   . "$(dirname "${BASH_SOURCE[0]}")/rehearsal-safety.sh"
 fi
+if ! declare -F rehearsal_verdict_record >/dev/null 2>&1; then
+  # shellcheck source=drill/rehearsal-verdict.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/rehearsal-verdict.sh"
+fi
 
 # Set by rehearsal_notify_write_registry, read by the restore below and by
 # rehearsal_cleanup, which restores both registries in one step.
@@ -59,11 +63,7 @@ REHEARSAL_NOTIFY_CAPTURED=0
 # overwritten: worst-wins across the lines is what the fold below is for, and
 # an append cannot lose an earlier failure to a later assertion's pass.
 rehearsal_notify_verdict() {
-  local verdict="$1" reason="${2:-}"
-  [ -n "${REHEARSAL_NOTIFY_STATUS:-}" ] || return 0
-  printf '%s %s %s\n' "${ROLE:-unknown}" "$verdict" "$reason" \
-    >>"$REHEARSAL_NOTIFY_STATUS" 2>/dev/null || true
-  return 0
+  rehearsal_verdict_record "${REHEARSAL_NOTIFY_STATUS:-}" "$@"
 }
 
 # rehearsal_notify_worst_verdict VERDICT_TEXT — the ROUND's notify verdict,
@@ -75,20 +75,7 @@ rehearsal_notify_verdict() {
 # as a pass. An unreadable verdict token grades as `fail` for the same reason:
 # a line the summary cannot classify is not evidence that anything passed.
 rehearsal_notify_worst_verdict() {
-  local role verdict reason rank best="" best_reason="" best_rank=0
-  while read -r role verdict reason; do
-    [ -n "$verdict" ] || continue
-    case "$verdict" in
-      ok)   rank=1 ;;
-      skip) rank=2 ;;
-      *)    rank=3; verdict=fail ;;
-    esac
-    if [ "$rank" -gt "$best_rank" ]; then
-      best_rank="$rank"; best="$verdict"; best_reason="$reason"
-    fi
-  done <<<"$1"
-  [ -n "$best" ] || return 1
-  printf '%s %s\n' "$best" "$best_reason"
+  rehearsal_worst_verdict "$1"
 }
 
 # --- pure predicates ------------------------------------------------------

@@ -3,7 +3,16 @@
 # authenticated builder block; the log predicates stay here so CI can mutate
 # their inputs without a drill host.
 
+if ! declare -F rehearsal_verdict_record >/dev/null 2>&1; then
+  # shellcheck source=drill/rehearsal-verdict.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/rehearsal-verdict.sh"
+fi
+
 REHEARSAL_RESUME_NOOP_SET=0
+
+rehearsal_resume_verdict() {
+  rehearsal_verdict_record "${REHEARSAL_RESUME_STATUS:-}" "$@"
+}
 
 rehearsal_resume_load_installed_threshold() {
   local threshold
@@ -97,32 +106,43 @@ rehearsal_resume_advance_fixture_head() {
 
 rehearsal_resume_drill() {
   local repo="$1" pr="$2" context head old_head new_head first log_text comment_id
-  local attempt threshold
+  local attempt threshold wake_asserted=0 stop_asserted=0
   context=drill/resume-head-settle
 
   if [ "${REHEARSAL_RESUME_DRILL:-1}" -eq 0 ]; then
     skip "resume: check-conclusion wake and zero-action stop (--no-resume-drill)"
+    rehearsal_resume_verdict skip "--no-resume-drill"
     return 0
   fi
   if [ -z "$pr" ]; then
     skip "resume: check-conclusion wake and zero-action stop (builder fixture PR unavailable)"
+    rehearsal_resume_verdict skip "builder fixture PR unavailable"
     return 0
   fi
-  rehearsal_resume_load_installed_threshold || return 1
+  if ! rehearsal_resume_load_installed_threshold; then
+    rehearsal_resume_verdict fail "installed zero-action threshold does not resolve"
+    return 1
+  fi
   threshold="$REHEARSAL_RESUME_THRESHOLD"
 
-  old_head="$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)" || return 1
+  if ! old_head="$(gh api "repos/$repo/pulls/$pr" --jq .head.sha)"; then
+    rehearsal_resume_verdict fail "fixture head could not be read"
+    return 1
+  fi
   if ! new_head="$(rehearsal_resume_advance_fixture_head "$repo" "$pr")" \
       || [ -z "$new_head" ]; then
     fail "resume: fixture head advances"
+    rehearsal_resume_verdict fail "fixture head did not advance"
     return 1
   fi
   if [ "$new_head" = "$old_head" ]; then
     fail "resume: fixture head advances"
+    rehearsal_resume_verdict fail "fixture head did not advance"
     return 1
   fi
   if ! wait_for 60 "resume: fixture head advances" \
       rehearsal_builder_head_is "$repo" "$pr" "$new_head"; then
+    rehearsal_resume_verdict fail "fixture head did not settle"
     return 1
   fi
   head="$new_head"
@@ -131,38 +151,51 @@ rehearsal_resume_drill() {
     ok "resume: pending head status established"
   else
     fail "resume: pending head status established"
+    rehearsal_resume_verdict fail "pending head status could not be established"
     return 1
   fi
   if rehearsal_resume_noop_cli; then
     ok "resume: zero-action session fixture installed"
   else
     fail "resume: zero-action session fixture installed"
+    rehearsal_resume_verdict fail "zero-action session fixture could not be installed"
     return 1
   fi
 
   first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
   rehearsal_resume_tick || true
   log_text="$(rehearsal_resume_tick_log "$first")"
-  check "resume: pending head remains unresumed for its tick" \
-    rehearsal_resume_pending_tick_from_log "$repo" "$pr" "$log_text"
+  if rehearsal_resume_pending_tick_from_log "$repo" "$pr" "$log_text"; then
+    ok "resume: pending head remains unresumed for its tick"
+  else
+    fail "resume: pending head remains unresumed for its tick"
+    rehearsal_resume_verdict fail "pending head resumed before check conclusion"
+  fi
 
   if rehearsal_set_builder_head_status "$repo" "$head" "$context" success \
       'drill releases the check-conclusion wake'; then
     ok "resume: green head status established"
   else
     fail "resume: green head status established"
+    rehearsal_resume_verdict fail "green head status could not be established"
   fi
   first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
   rehearsal_resume_tick || true
   log_text="$(rehearsal_resume_tick_log "$first")"
-  check "resume: first tick after green resumes the parked PR" \
-    rehearsal_resume_wake_tick_from_log "$repo" "$pr" "$head" "$log_text"
+  if rehearsal_resume_wake_tick_from_log "$repo" "$pr" "$head" "$log_text"; then
+    ok "resume: first tick after green resumes the parked PR"
+    wake_asserted=1
+  else
+    fail "resume: first tick after green resumes the parked PR"
+    rehearsal_resume_verdict fail "check-conclusion wake was not observed"
+  fi
 
   comment_id="$(bx "gh api 'repos/$repo/issues/$pr/comments' -f body='{{MARK_ANSWERED}} $head' --jq .id")" || comment_id=""
   if [ -n "$comment_id" ]; then
     ok "resume: unrendered-marker fixture comment posted"
   else
     fail "resume: unrendered-marker fixture comment posted"
+    rehearsal_resume_verdict fail "unrendered-marker fixture comment could not be posted"
   fi
 
   attempt=1
@@ -171,9 +204,13 @@ rehearsal_resume_drill() {
     rehearsal_resume_tick || true
     log_text="$(rehearsal_resume_tick_log "$first")"
     if [ "$attempt" -eq 1 ]; then
-      check "resume: unrendered marker warns with its comment and wakes next tick" \
-        rehearsal_resume_near_miss_tick_from_log \
-          "$repo" "$pr" "$head" "$comment_id" "$log_text"
+      if rehearsal_resume_near_miss_tick_from_log \
+          "$repo" "$pr" "$head" "$comment_id" "$log_text"; then
+        ok "resume: unrendered marker warns with its comment and wakes next tick"
+      else
+        fail "resume: unrendered marker warns with its comment and wakes next tick"
+        rehearsal_resume_verdict fail "unrendered-marker near-miss wake was not observed"
+      fi
     fi
     attempt=$(( attempt + 1 ))
   done
@@ -181,13 +218,23 @@ rehearsal_resume_drill() {
   first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
   rehearsal_resume_tick || true
   log_text="$(rehearsal_resume_tick_log "$first")"
-  check "resume: unchanged head stops after the installed zero-action threshold" \
-    rehearsal_resume_suppressed_tick_from_log \
-      "$repo" "$pr" "$head" "$threshold" "$log_text"
+  if rehearsal_resume_suppressed_tick_from_log \
+      "$repo" "$pr" "$head" "$threshold" "$log_text"; then
+    ok "resume: unchanged head stops after the installed zero-action threshold"
+    stop_asserted=1
+  else
+    fail "resume: unchanged head stops after the installed zero-action threshold"
+    rehearsal_resume_verdict fail "zero-action stop was not observed"
+  fi
 
   if [ "$REHEARSAL_RESUME_NOOP_SET" -eq 1 ] && rehearsal_resume_restore_cli; then
     ok "resume: normal builder CLI restored"
   else
     fail "resume: normal builder CLI restored"
+    rehearsal_resume_verdict fail "normal builder CLI was not restored"
   fi
+  if [ "$wake_asserted" -eq 1 ] && [ "$stop_asserted" -eq 1 ]; then
+    rehearsal_resume_verdict ok "wake + zero-action stop"
+  fi
+  return 0
 }
