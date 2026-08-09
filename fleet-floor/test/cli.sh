@@ -66,7 +66,7 @@ cl_out() { cat "$CL_TMP/out"; }
 
 # --- argument errors must be refused, loudly and before anything starts -----
 crew_floor --bogus; CL_OUT="$(cl_out)"
-if [ "$CL_RC" -ne 0 ] && printf '%s' "$CL_OUT" | grep -q "unknown option"; then
+if [ "$CL_RC" -ne 0 ] && grep -q "unknown option" <<<"$CL_OUT"; then
   ok "cli: unknown option refused"
 else
   fail "cli: unknown option refused" "rc=$CL_RC out=$CL_OUT"
@@ -83,28 +83,29 @@ else fail "cli: --pass with no value refused" "rc=0, out=$CL_OUT"; fi
 # --- help ------------------------------------------------------------------
 crew_floor --help; CL_OUT="$(cl_out)"
 t "cli: --help exits 0" 0 "$CL_RC"
-if printf '%s' "$CL_OUT" | grep -q "IP:PORT"; then ok "cli: --help explains what it serves"
+if grep -q "IP:PORT" <<<"$CL_OUT"; then ok "cli: --help explains what it serves"
 else fail "cli: --help explains what it serves" "$CL_OUT"; fi
 # The help must not stop mid-sentence — this block is extracted by a sed range,
 # which is exactly the kind of thing that silently truncates when edited.
-if printf '%s' "$CL_OUT" | tail -1 | grep -q '\.$'; then ok "cli: --help is not truncated"
+CL_OUT_LAST="$(tail -1 <<<"$CL_OUT")"
+if grep -q '\.$' <<<"$CL_OUT_LAST"; then ok "cli: --help is not truncated"
 else fail "cli: --help is not truncated" "last line: $(printf '%s' "$CL_OUT" | tail -1)"; fi
-if printf '%s' "$CL_OUT" | grep -q "^cmd_floor"; then
+if grep -q "^cmd_floor" <<<"$CL_OUT"; then
   fail "cli: --help stops before the code" "the function body leaked into help"
 else ok "cli: --help stops before the code"; fi
 
 # --- the banner an operator reads -----------------------------------------
 crew_floor --local --port 8899; CL_OUT="$(cl_out)"
-if printf '%s' "$CL_OUT" | grep -q "http://127.0.0.1:8899/"; then ok "cli: --local prints a loopback URL"
+if grep -q "http://127.0.0.1:8899/" <<<"$CL_OUT"; then ok "cli: --local prints a loopback URL"
 else fail "cli: --local prints a loopback URL" "$CL_OUT"; fi
-if printf '%s' "$CL_OUT" | grep -qi "loopback only"; then ok "cli: --local says it is loopback only"
+if grep -qi "loopback only" <<<"$CL_OUT"; then ok "cli: --local says it is loopback only"
 else fail "cli: --local says it is loopback only" "$CL_OUT"; fi
-if printf '%s' "$CL_OUT" | grep -q "plain HTTP"; then
+if grep -q "plain HTTP" <<<"$CL_OUT"; then
   fail "cli: no cleartext warning on loopback" "warned about the network for a loopback bind"
 else ok "cli: no cleartext warning on loopback"; fi
 
 crew_floor --port 8898; CL_OUT="$(cl_out)"
-if printf '%s' "$CL_OUT" | grep -q "plain HTTP"; then ok "cli: warns that a bound port sends the password in clear"
+if grep -q "plain HTTP" <<<"$CL_OUT"; then ok "cli: warns that a bound port sends the password in clear"
 else fail "cli: warns that a bound port sends the password in clear" "$CL_OUT"; fi
 
 # The byline is the launcher's identity, not a value floor.py derives from its
@@ -193,7 +194,7 @@ if [ "${#CL_P1}" -ge 16 ]; then ok "cli: generated password is long enough (${#C
 else fail "cli: generated password is long enough" "${#CL_P1} chars"; fi
 
 crew_floor --local --port 8895 --pass hunter2; CL_OUT="$(cl_out)"
-if printf '%s' "$CL_OUT" | grep -q "hunter2"; then
+if grep -q "hunter2" <<<"$CL_OUT"; then
   fail "cli: an explicit password is not echoed" "the password was printed back"
 else ok "cli: an explicit password is not echoed"; fi
 
@@ -498,7 +499,7 @@ CL_TICK_GUARD="$(awk '
   /^cmd_status\(\)/ { inf = 1 }
   inf && /tail -n 1 ~\/duty\/duty\.log/ { print; exit }
 ' "$CL_CLI")"
-if printf '%s' "$CL_TICK_GUARD" | grep -q '|| true'; then
+if grep -q '|| true' <<<"$CL_TICK_GUARD"; then
   ok "crew status: the duty-log read is guarded, as box_state/box_agent/box_registry are"
 else
   fail "crew status: the duty-log read is guarded, as box_state/box_agent/box_registry are" \
@@ -598,7 +599,8 @@ fi
 # stamp came back appended. The only stamp within reach is the engine VERSION,
 # which the `engine:` line two rows up already prints — repeating it here reads
 # as a hire TIME, which it is not. `crew@` catches it in any phrasing.
-if ! grep 'no ticks yet' "$CL_TMP/crew-out" | grep -qE 'hired at|crew@'; then
+CL_NO_TICKS="$(grep 'no ticks yet' "$CL_TMP/crew-out")"
+if ! grep -qE 'hired at|crew@' <<<"$CL_NO_TICKS"; then
   ok "crew status <box>: the wait asserts no hire time"
 else
   fail "crew status <box>: the wait asserts no hire time" \
@@ -617,8 +619,9 @@ t "crew status <box>: the detail view still costs three round trips" 3 "$CL_EXEC
 # behind a reassuring sentence. cli-unreachable answers nothing at all.
 crew_detail cli-unreachable
 t "crew status <box>: an unreachable box still exits 0" 0 "$CL_RC"
+CL_ENGINE_LINES="$(grep '^engine:' "$CL_TMP/crew-out")"
 if grep -qx 'engine: unknown — the box did not answer' "$CL_TMP/crew-out" &&
-   ! grep '^engine:' "$CL_TMP/crew-out" | grep -q 'hired'; then
+   ! grep -q 'hired' <<<"$CL_ENGINE_LINES"; then
   ok "crew status <box>: an unanswered engine report is unknown, not un-hired"
 else
   fail "crew status <box>: an unanswered engine report is unknown, not un-hired" \
@@ -771,8 +774,8 @@ CL_D5="$(awk '
   /^cmd_status\(\)/ { inf = 1 }
   inf && /tail -n 5 ~\/duty\/duty\.log/ { print; getline; print; exit }
 ' "$CL_CLI")"
-if printf '%s' "$CL_D5" | grep -q '|| true' &&
-   ! printf '%s' "$CL_D5" | grep -q 'unreachable'; then
+if grep -q '|| true' <<<"$CL_D5" &&
+   ! grep -q 'unreachable' <<<"$CL_D5"; then
   ok "crew status <box>: the duty-log read is guarded and decides no reachability"
 else
   fail "crew status <box>: the duty-log read is guarded and decides no reachability" \
@@ -848,7 +851,7 @@ t "crew: box info is read only inside box_state" 1 "${CL_RAWINFO:-0}"
 # command substitution is what turned a jq error into a dead command, so the
 # fallback is the load-bearing half of the fix, not decoration.
 CL_BS="$(sed -n '/^box_state()/,/^}/p' "$CL_ROOT/cli/crew")"
-if printf '%s' "$CL_BS" | grep -q '|| true' && printf '%s' "$CL_BS" | grep -q '{s:-?}'; then
+if grep -q '|| true' <<<"$CL_BS" && grep -q '{s:-?}' <<<"$CL_BS"; then
   ok "crew: box_state degrades to '?' instead of killing the command"
 else
   fail "crew: box_state degrades to '?' instead of killing the command" \
@@ -1216,7 +1219,7 @@ crew_cmd status
 CL_UNCONV="$(grep '^cli-unconverged ' "$CL_TMP/crew-out" || true)"
 
 # 1. The reported case: it must READ as broken.
-if printf '%s' "$CL_UNCONV" | grep -q 'INCOMPLETE'; then
+if grep -q 'INCOMPLETE' <<<"$CL_UNCONV"; then
   ok "crew status: an unconverged box reads INCOMPLETE"
 else
   fail "crew status: an unconverged box reads INCOMPLETE" "${CL_UNCONV:-no row at all}"
@@ -1225,8 +1228,8 @@ fi
 # 2. …and the NOTE must stop advising the verb that breaks the fleet. This is
 #    the half that cost the operator: the table did not merely fail to warn,
 #    it actively pointed at `crew hire`.
-if printf '%s' "$CL_UNCONV" | grep -q 'rig bootstrap' &&
-   ! printf '%s' "$CL_UNCONV" | grep -q 'crew hire cli-unconverged'; then
+if grep -q 'rig bootstrap' <<<"$CL_UNCONV" &&
+   ! grep -q 'crew hire cli-unconverged' <<<"$CL_UNCONV"; then
   ok "crew status: the note names the bootstrap recovery, not crew hire"
 else
   fail "crew status: the note names the bootstrap recovery, not crew hire" "$CL_UNCONV"
@@ -1234,7 +1237,7 @@ fi
 
 # 3. The recovery names the box's OWN tenant, not a generic one — the roster
 #    says kimi, so the command an operator pastes has to say kimi-box.
-if printf '%s' "$CL_UNCONV" | grep -q 'rig bootstrap kimi-box'; then
+if grep -q 'rig bootstrap kimi-box' <<<"$CL_UNCONV"; then
   ok "crew status: the recovery names the box's own tenant role"
 else
   fail "crew status: the recovery names the box's own tenant role" "$CL_UNCONV"
@@ -1244,8 +1247,8 @@ fi
 #    box must be untouched: still `crew hire`, no INCOMPLETE, no new noise. A
 #    fix that refuses real boxes is a fleet outage, not a safety feature.
 CL_NOTHIRED="$(grep '^cli-nothired ' "$CL_TMP/crew-out" || true)"
-if printf '%s' "$CL_NOTHIRED" | grep -q 'crew hire cli-nothired' &&
-   ! printf '%s' "$CL_NOTHIRED" | grep -qE 'INCOMPLETE|unknown —'; then
+if grep -q 'crew hire cli-nothired' <<<"$CL_NOTHIRED" &&
+   ! grep -qE 'INCOMPLETE|unknown —' <<<"$CL_NOTHIRED"; then
   ok "crew status: a converged un-hired box is unchanged"
 else
   fail "crew status: a converged un-hired box is unchanged" "${CL_NOTHIRED:-no row at all}"
@@ -1255,7 +1258,7 @@ fi
 #    collapse into either neighbour: not into INCOMPLETE (crew did not observe
 #    a failed bootstrap, it observed nothing) and certainly not into converged.
 CL_UNREACH="$(grep '^cli-unreachable ' "$CL_TMP/crew-out" || true)"
-if printf '%s' "$CL_UNREACH" | grep -q 'convergence unknown'; then
+if grep -q 'convergence unknown' <<<"$CL_UNREACH"; then
   ok "crew status: an unreachable box reports convergence unknown"
 else
   fail "crew status: an unreachable box reports convergence unknown" "${CL_UNREACH:-no row at all}"
@@ -1335,14 +1338,15 @@ fi
 # is merely switched off has not failed a bootstrap, and sending an operator to
 # `rig bootstrap` for it is a new wrong answer in place of the old one.
 CL_SKIPLINE="$(grep '^  not confirmed converged' "$CL_TMP/crew-out" || true)"
-if [ -n "$CL_SKIPLINE" ] && ! printf '%s' "$CL_SKIPLINE" | grep -q 'rig bootstrap'; then
+if [ -n "$CL_SKIPLINE" ] && ! grep -q 'rig bootstrap' <<<"$CL_SKIPLINE"; then
   ok "crew hire-all: the summary does not blame a bootstrap it did not observe"
 else
   fail "crew hire-all: the summary does not blame a bootstrap it did not observe" \
        "${CL_SKIPLINE:-no summary line at all}"
 fi
 # …and the stopped box's own reason is the honest one.
-if grep -A2 '^cli-stopped: REFUSED' "$CL_TMP/crew-out" | grep -q 'did not answer'; then
+CL_STOPPED_REFUSAL="$(grep -A2 '^cli-stopped: REFUSED' "$CL_TMP/crew-out")"
+if grep -q 'did not answer' <<<"$CL_STOPPED_REFUSAL"; then
   ok "crew hire-all: a stopped box is refused for being unreadable, not unbootstrapped"
 else
   fail "crew hire-all: a stopped box is refused for being unreadable, not unbootstrapped" \
@@ -1440,8 +1444,8 @@ fi
 # hire, because this box is genuinely fine.
 crew_cmd status
 CL_PREMAN="$(grep '^cli-premanifest ' "$CL_TMP/crew-out" || true)"
-if printf '%s' "$CL_PREMAN" | grep -q 'crew hire cli-premanifest' &&
-   ! printf '%s' "$CL_PREMAN" | grep -qE 'INCOMPLETE|unknown —'; then
+if grep -q 'crew hire cli-premanifest' <<<"$CL_PREMAN" &&
+   ! grep -qE 'INCOMPLETE|unknown —' <<<"$CL_PREMAN"; then
   ok "crew status: a box with no rig manifest is not refused in the table"
 else
   fail "crew status: a box with no rig manifest is not refused in the table" \
@@ -1556,19 +1560,19 @@ echo
 echo "== roster overrides (drilling without touching fleet.roster)"
 
 crew_floor --local --port 8892 --roster "$CL_CREW_ROSTER"; CL_OUT="$(cl_out)"
-if printf '%s' "$CL_OUT" | grep -qF "$CL_CREW_ROSTER"; then
+if grep -qF "$CL_CREW_ROSTER" <<<"$CL_OUT"; then
   ok "cli: crew floor --roster is echoed in the banner"
 else
   fail "cli: crew floor --roster is echoed in the banner" "$CL_OUT"
 fi
 crew_floor --local --port 8891 --roster /nonexistent/roster.txt; CL_OUT="$(cl_out)"
-if [ "$CL_RC" -ne 0 ] && printf '%s' "$CL_OUT" | grep -q "no roster at"; then
+if [ "$CL_RC" -ne 0 ] && grep -q "no roster at" <<<"$CL_OUT"; then
   ok "cli: a missing --roster is named at startup"
 else
   fail "cli: a missing --roster is named at startup" "rc=$CL_RC out=$CL_OUT"
 fi
 crew_floor --local --port 8890; CL_OUT="$(cl_out)"
-if printf '%s' "$CL_OUT" | grep -q '^  roster '; then
+if grep -q '^  roster ' <<<"$CL_OUT"; then
   ok "cli: crew floor always prints the roster it watches"
 else
   fail "cli: crew floor always prints the roster it watches" "$CL_OUT"
@@ -1604,8 +1608,8 @@ fi
 # has ever had one — the same never-exercised path as #47 and #48.
 # shellcheck disable=SC2016  # matching the literal source text, not expanding it
 CL_FROM="$(sed -n '/if \[ -n "\$from" \]; then/,/^  else/p' "$CL_ROOT/cli/crew")"
-if printf '%s' "$CL_FROM" | grep -q 'box new --name' &&
-   ! printf '%s' "$CL_FROM" | grep -q -- '--cpu'; then
+if grep -q 'box new --name' <<<"$CL_FROM" &&
+   ! grep -q -- '--cpu' <<<"$CL_FROM"; then
   ok "crew: a --from clone is created without the sizing flags"
 else
   fail "crew: a --from clone is created without the sizing flags" \
@@ -1614,7 +1618,7 @@ fi
 # The role profile's sizing does not apply to a clone, and that must be SAID —
 # a builder minted from a reviewer-sized gold comes up undersized either way,
 # but silently is how it gets discovered under load.
-if printf '%s' "$CL_FROM" | grep -qi 'inherits'; then
+if grep -qi 'inherits' <<<"$CL_FROM"; then
   ok "crew: a clone says its resources are inherited, not from the role profile"
 else
   fail "crew: a clone says its resources are inherited, not from the role profile" \
@@ -1716,7 +1720,8 @@ fi
 # Comments stripped: the drill EXPLAINS why the old check was removed, and a
 # bare grep matched that explanation — a detector tripping on its own
 # documentation, which this file has now been caught by three times.
-if grep -vE '^[[:space:]]*#' "$CL_APP" | grep -q "read-only walk still exercised the real fleet"; then
+CL_APP_CODE="$(grep -vE '^[[:space:]]*#' "$CL_APP")"
+if grep -q "read-only walk still exercised the real fleet" <<<"$CL_APP_CODE"; then
   fail "drill: no-vacuity check does not count probes that cannot happen" \
        "the probe-window check is back; it cannot pass at CREW_FLOOR_INTERVAL=3600"
 else
@@ -1964,7 +1969,8 @@ fi
 # bare `grep FLOOR_TEST_FIXTURE` matched that explanation -- a detector tripping
 # on its own documentation, which is the same bug as the read-only detector that
 # once matched a string probe.sh itself contained.
-if grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'FLOOR_TEST_FIXTURE='; then
+CL_DRILL_CODE="$(grep -vE '^[[:space:]]*#' "$CL_DRILL")"
+if grep -q 'FLOOR_TEST_FIXTURE=' <<<"$CL_DRILL_CODE"; then
   fail "fixture gate: the drill does NOT claim the fixture fleet" \
        "the drill sets FLOOR_TEST_FIXTURE; the walk will demand boxes a real fleet has no reason to have"
 else
@@ -2072,7 +2078,7 @@ fi
 # first: this file is allowed to describe the check it replaced.
 # shellcheck disable=SC2016  # matching the literal source text
 if grep -q 'teardown \$b: left disarmed' "$CL_DRILL" &&
-   ! grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'left armed'; then
+   ! grep -q 'left armed' <<<"$CL_DRILL_CODE"; then
   ok "drill: teardown asserts the box was left disarmed"
 else
   fail "drill: teardown asserts the box was left disarmed" \
@@ -2082,7 +2088,7 @@ fi
 # A failing control must report what the BOX said. `command refused` was the
 # drill's own guess, and it was wrong for five runs: nothing was refusing.
 if grep -q 'no reason in the response' "$CL_DRILL" &&
-   ! grep -vE '^[[:space:]]*#' "$CL_DRILL" | grep -q 'command refused'; then
+   ! grep -q 'command refused' <<<"$CL_DRILL_CODE"; then
   ok "drill: a failing control reports the reason the box gave"
 else
   fail "drill: a failing control reports the reason the box gave" \
@@ -2262,7 +2268,8 @@ if grep -qE '^  claude .*operator override.*\[operator\]' "$CL_TMP/prof-out"; th
 else
   fail "crew profiles: a same-name clash shows the operator's line" "$(grep '^  claude' "$CL_TMP/prof-out")"
 fi
-if grep -E '^  grok ' "$CL_TMP/prof-out" | grep -qv '\[operator\]'; then
+CL_GROK_PROFILE="$(grep -E '^  grok ' "$CL_TMP/prof-out")"
+if grep -qv '\[operator\]' <<<"$CL_GROK_PROFILE"; then
   ok "crew profiles: a shipped-only name still resolves shipped"
 else
   fail "crew profiles: a shipped-only name still resolves shipped" "$(grep '^  grok' "$CL_TMP/prof-out")"

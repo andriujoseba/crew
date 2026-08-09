@@ -234,7 +234,8 @@ case "$(sed -n '2p' "$WOUT" 2>/dev/null)" in
   *) bad "generic-provenance-var-derived-from-name (got '$(sed -n '2p' "$WOUT" 2>/dev/null)')" ;;
 esac
 # the stub half (above the marker) of a non-crew artifact carries no 'crew'.
-if sed '/^__SELF_INSTALLER_PAYLOAD__$/q' "$WART" | grep -qi crew; then
+WART_HEADER="$(sed '/^__SELF_INSTALLER_PAYLOAD__$/q' "$WART")"
+if grep -qi crew <<<"$WART_HEADER"; then
   bad "widget-stub-has-no-crew-string"
 else
   ok "widget-stub-has-no-crew-string"

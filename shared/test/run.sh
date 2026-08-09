@@ -58,13 +58,13 @@ pipefail_grep_q_sites() {  # [files...]
     function qgrep(s) { return s ~ /grep[[:space:]]+-[[:alnum:]-]*q/ }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
-    index($0, "|") && qgrep(substr($0, index($0, "|") + 1)) {
+    $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]+-[[:alnum:]-]*q/ {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
     pipe_line && qgrep($0) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
-    { pipe_line = ($0 ~ /\|[[:space:]\\]*$/) }
+    { pipe_line = ($0 ~ /(^|[^|])[|][[:space:]\\]*$/) }
   ' "${files[@]}"
 }
 
@@ -118,7 +118,7 @@ phase0_archive_result() {  # phase0_archive_result <rehearsal>
     | grep -cF 'git -C "$SOURCE_TREE" archive --format=tar "$SOURCE_SHA"' || true)"
   exclusions="$(printf '%s\n' "$selection" | grep -oF ':(exclude)' | wc -l)"
   if [ "$archive_commands" -ne 1 ] \
-    || ! printf '%s\n' "$selection" | grep -Fq -- "-- . ':(exclude)fleet-floor/dev'" \
+    || ! grep -Fq -- "-- . ':(exclude)fleet-floor/dev'" <<<"$selection" \
     || [ "$exclusions" -ne 1 ]; then
     printf '%s\n' archive-selection-mismatch
   else
@@ -138,7 +138,7 @@ phase0_coverage_result() {  # phase0_coverage_result <suite> <rehearsal>
     <(printf '%s\n' "$verified"))"
   if [ -n "$missing" ]; then
     printf 'missing:%s\n' "$(printf '%s\n' "$missing" | paste -sd, -)"
-  elif printf '%s\n' "$paths" | grep -Eq '^fleet-floor/dev(/|$)'; then
+  elif grep -Eq '^fleet-floor/dev(/|$)' <<<"$paths"; then
     printf '%s\n' excluded:fleet-floor/dev
   else
     archive_result="$(phase0_archive_result "$2")"
@@ -180,7 +180,9 @@ t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
 # after its match. The old predicate is assembled so the source guard itself
 # does not carry the prohibited spelling.
 slow_awk() { printf '%s\n' MATCH; sleep 0.05; printf '%s\n' more; }
-if eval 'slow_awk | grep -q MATCH'; then old_predicate_rc=0; else old_predicate_rc=$?; fi
+old_pipe='slow_awk | '
+old_match='grep -q MATCH'
+if eval "$old_pipe$old_match"; then old_predicate_rc=0; else old_predicate_rc=$?; fi
 t pipefail-awk-range-old-shape-reds 141 "$old_predicate_rc"
 awk() { slow_awk; }
 if awk_range_grep_q ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
@@ -190,7 +192,7 @@ t pipefail-awk-range-fixed-survives-race matched "$r1"
 if awk_range_grep_q ignored ignored ABSENT; then r1=FALSE-POSITIVE; else r1=absent; fi
 t pipefail-awk-range-keeps-negative-direction absent "$r1"
 unset -f awk slow_awk
-unset old_predicate_rc guard_findings guard_mutation PIPE_GUARD_FIXTURE
+unset old_match old_pipe old_predicate_rc guard_findings guard_mutation PIPE_GUARD_FIXTURE
 
 # #411: force the box-existence producer to pause after its matching line.
 # The stub is deliberately `box list`, so this exercises the predicate's
@@ -370,7 +372,8 @@ for profile in "$SHARED"/conf/agents/*.conf; do
     r1=broken
   fi
   t "agent-conf-$agent-standalone" sourceable "$r1"
-  if sed -n '/^AGENT_LOGIN_HINT=.*${/p' "$profile" | grep -q .; then
+  profile_login_hints="$(sed -n '/^AGENT_LOGIN_HINT=.*${/p' "$profile")"
+  if grep -q . <<<"$profile_login_hints"; then
     r1=deferred
   else
     r1=literal
@@ -771,8 +774,9 @@ t rehearsal-resume-post-suppression-session-mutation-reds refused "$resume_predi
 t rehearsal-resume-threshold-not-retyped-in-drill 0 \
   "$(grep -R -E 'breaker=[0-9]+' "$ROOT/drill" | wc -l | tr -d ' ')"
 # shellcheck disable=SC2016  # match literal builder-block source text
-if sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
-    "$ROOT/drill/rehearsal.sh" | grep -Fq '. "$ROOT/drill/rehearsal-resume.sh"'; then
+resume_builder_block="$(sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
+    "$ROOT/drill/rehearsal.sh")"
+if grep -Fq '. "$ROOT/drill/rehearsal-resume.sh"' <<<"$resume_builder_block"; then
   resume_wiring=wired
 else
   resume_wiring=MISSING
@@ -1519,9 +1523,9 @@ t attention-leg-names-no-agent-or-box 0 \
 # Wiring: the leg is sourced and called in the builder block, and it runs
 # AFTER the two wake rows it sits beside, which are unchanged.
 # shellcheck disable=SC2016  # match literal builder-block source text
-if sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
-    "$ROOT/drill/rehearsal.sh" \
-    | grep -Fq '. "$ROOT/drill/rehearsal-attention.sh"'; then
+attention_builder_block="$(sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
+    "$ROOT/drill/rehearsal.sh")"
+if grep -Fq '. "$ROOT/drill/rehearsal-attention.sh"' <<<"$attention_builder_block"; then
   r1=wired
 else
   r1=MISSING
@@ -2343,9 +2347,9 @@ t attention-audit-leg-names-no-agent-or-box 0 \
 # Wiring: sourced and called in the TRIAGE block — the hygiene slot is
 # triage-only — and after the existing triage assertions, which are unchanged.
 # shellcheck disable=SC2016  # match literal triage-block source text
-if sed -n '/if \[ "$ROLE" = "triage" \]/,/^[[:space:]]*elif /p' \
-    "$ROOT/drill/rehearsal.sh" \
-    | grep -Fq '. "$ROOT/drill/rehearsal-attention-audit.sh"'; then
+attention_audit_triage_block="$(sed -n '/if \[ "$ROLE" = "triage" \]/,/^[[:space:]]*elif /p' \
+    "$ROOT/drill/rehearsal.sh")"
+if grep -Fq '. "$ROOT/drill/rehearsal-attention-audit.sh"' <<<"$attention_audit_triage_block"; then
   r1=wired
 else
   r1=MISSING
@@ -2547,14 +2551,16 @@ if ! grep -Fq "$boot_skip_probe" "$ROOT/drill/rehearsal.sh"; then
   r1=PROBE-ROW-MISSING
 elif ! grep -Fq "$boot_skip_warn" "$ROOT/drill/rehearsal.sh"; then
   r1=WARN-ROW-MISSING
-elif ! grep -F "$boot_skip_probe" "$ROOT/drill/rehearsal.sh" \
-    | grep -Fq 'correct pre-auth verdict'; then
-  r1=PROBE-REASON-UNPINNED
-elif ! grep -F "$boot_skip_warn" "$ROOT/drill/rehearsal.sh" \
-    | grep -Fq 'declined to vouch'; then
-  r1=WARN-REASON-UNPINNED
 else
+  boot_probe_row="$(grep -F "$boot_skip_probe" "$ROOT/drill/rehearsal.sh")"
+  boot_warn_row="$(grep -F "$boot_skip_warn" "$ROOT/drill/rehearsal.sh")"
+  if ! grep -Fq 'correct pre-auth verdict' <<<"$boot_probe_row"; then
+  r1=PROBE-REASON-UNPINNED
+  elif ! grep -Fq 'declined to vouch' <<<"$boot_warn_row"; then
+  r1=WARN-REASON-UNPINNED
+  else
   r1=skipped
+  fi
 fi
 t rehearsal-boot-preauth-arm-skips-both-with-reasons skipped "$r1"
 
@@ -2565,8 +2571,8 @@ t rehearsal-boot-preauth-arm-skips-both-with-reasons skipped "$r1"
 # so the contradiction the old reason cited was never possible. Neither skip
 # reason may name a file its assertion does not read; the rest of this block
 # keeps saying `login WARN` legitimately, so the scan is the skip rows only.
-if grep -F 'skip "boot check: ' "$ROOT/drill/rehearsal.sh" \
-    | grep -Eq 'login WARN|duty\.log'; then
+boot_skip_rows="$(grep -F 'skip "boot check: ' "$ROOT/drill/rehearsal.sh")"
+if grep -Eq 'login WARN|duty\.log' <<<"$boot_skip_rows"; then
   r1=REASON-CITES-A-FILE-IT-DOES-NOT-READ
 else
   r1=own-file
@@ -3556,16 +3562,17 @@ t notify-helper-sourced-in-rehearsal wired "$notify_wiring"
 # is the criterion: the call has to sit between the interlock's last ok and
 # the first thing phase 2 does with a tick.
 # shellcheck disable=SC2016  # match the literal call in rehearsal.sh
-if sed -n '/ok "safety interlock: no attention demand parked outside the sandbox"/,/-- attention wake --/p' \
-    "$ROOT/drill/rehearsal.sh" | grep -Fq 'rehearsal_notify_drill "$SANDBOX"'; then
+notify_interlock_block="$(sed -n '/ok "safety interlock: no attention demand parked outside the sandbox"/,/-- attention wake --/p' \
+    "$ROOT/drill/rehearsal.sh")"
+if grep -Fq 'rehearsal_notify_drill "$SANDBOX"' <<<"$notify_interlock_block"; then
   notify_wiring=wired
 else
   notify_wiring=MISSING
 fi
 t notify-leg-called-after-the-interlock wired "$notify_wiring"
 # shellcheck disable=SC2016  # match the literal call site in rehearsal.sh
-if sed -n '/rehearsal_notify_drill "\$SANDBOX"/,/^  fi$/p' "$ROOT/drill/rehearsal.sh" \
-    | grep -Fq 'exit 1'; then
+notify_call_block="$(sed -n '/rehearsal_notify_drill "\$SANDBOX"/,/^  fi$/p' "$ROOT/drill/rehearsal.sh")"
+if grep -Fq 'exit 1' <<<"$notify_call_block"; then
   notify_wiring=wired
 else
   notify_wiring=MISSING
@@ -4960,17 +4967,17 @@ t duty-lock-sentinel-message message "$r1"
 # — the check went green when the API call failed. Same defect class as the
 # null check in #29: a predicate whose failure mode looks like success.
 for _in in '' '0' '{"message":"Not Found","status":"404"}'; do
-  if printf '%s' "$_in" | grep -qE '^[1-9][0-9]*$'; then r1=passed; else r1=refused; fi
+if grep -qE '^[1-9][0-9]*$' <<<"$_in"; then r1=passed; else r1=refused; fi
   t "count-predicate-refuses-${_in:-empty}" refused "$r1"
 done
-if printf '3' | grep -qE '^[1-9][0-9]*$'; then r1=passed; else r1=refused; fi
+if grep -qE '^[1-9][0-9]*$' <<<'3'; then r1=passed; else r1=refused; fi
 t count-predicate-accepts-real-count passed "$r1"
 # The shape it replaced, pinned so nobody reintroduces it. Uses gh's error
 # JSON, not empty input: -v on an empty stream is shell/grep dependent, but
 # ANY non-"0" line — which is what a failed gh call prints to stdout — makes
 # the old predicate return 0. That is the realistic failure and it is
 # deterministic everywhere.
-if printf '%s' '{"message":"Not Found","status":"404"}' | grep -qv '^0$'; then r1=fail-open; else r1=fail-closed; fi
+if grep -qv '^0$' <<<'{"message":"Not Found","status":"404"}'; then r1=fail-open; else r1=fail-closed; fi
 t count-predicate-old-shape-was-fail-open fail-open "$r1"
 
 # --- notify.sh lock sentinel: same set -e trap as duty.sh (#30) ----------
@@ -6530,7 +6537,8 @@ t payload-absent-installed-tree-says-so says-so "$r2"
 PAYLOAD_SHIPPED_BOUND="$(install_payload_budget_kb "$ROOT")"
 case "$PAYLOAD_SHIPPED_BOUND" in [1-9]*) r1=numeric ;; *) r1="$PAYLOAD_SHIPPED_BOUND" ;; esac
 t payload-shipped-bound-is-readable numeric "$r1"
-install_payload_excluded_roots "$ROOT" | grep -qx 'shared/test' && r1=walked || r1=MISSING
+payload_excluded_roots="$(install_payload_excluded_roots "$ROOT")"
+grep -qx 'shared/test' <<<"$payload_excluded_roots" && r1=walked || r1=MISSING
 t payload-shipped-list-names-the-test-root walked "$r1"
 install_payload_installer_names_sentinel "$ROOT" && r1=named || r1=dropped
 t payload-shipped-installer-excludes-the-sentinel named "$r1"
@@ -7609,8 +7617,7 @@ case "$(printf '%s' "$NBD_LINE" | cut -c1-60)" in
   *) r1=TRUNCATED_AWAY ;;
 esac
 t nbd-note-column-keeps-prefix survives "$r1"
-if printf '%s\n' "$NBD_LINE" \
-  | grep -qE ' (\S+): build duty \(ready unclaimed=([0-9]+), whole rounds owed=([0-9]+)\)'; then
+if grep -qE ' (\S+): build duty \(ready unclaimed=([0-9]+), whole rounds owed=([0-9]+)\)' <<<"$NBD_LINE"; then
   r1=MATCHED_POSITIVE
 else
   r1=distinct
@@ -7987,7 +7994,8 @@ t triage358-post-merge-tick-is-quiet quiet "$r1"
 # The fixture analogue of this issue's post-merge criterion: the suppression
 # report must not name it either. A signal that is merely ledgered still WARNs
 # every tick, which is the cost this issue is about.
-if cat "$TRD"/.suppressed-triage-board.* 2>/dev/null | grep -q 'o/r#100'; then
+suppressed_triage_board="$(cat "$TRD"/.suppressed-triage-board.* 2>/dev/null)"
+if grep -q 'o/r#100' <<<"$suppressed_triage_board"; then
   r1=NAMED; else r1=absent; fi
 t triage358-post-merge-not-in-suppressed absent "$r1"
 
@@ -8216,14 +8224,14 @@ t attention-audit-shrunk-set-alerts 1 \
 # role and interval guards, before hygiene; no board write or model launch.
 DUTYSH="$SHARED/bin/duty.sh"
 AUDIT_BLOCK="$(awk '/if has_role triage; then/{b=$0 ORS; next} b!=""{b=b $0 ORS} /duty_hygiene &&/{print b; exit}' "$DUTYSH")"
-if printf '%s\n' "$AUDIT_BLOCK" | grep -q 'HYGIENE_INTERVAL' &&
-   printf '%s\n' "$AUDIT_BLOCK" | grep -q 'duty_attention_audit' &&
-   printf '%s\n' "$AUDIT_BLOCK" | grep -q 'duty_hygiene'; then r1=gated; else r1=UNGATED; fi
+if grep -q 'HYGIENE_INTERVAL' <<<"$AUDIT_BLOCK" &&
+   grep -q 'duty_attention_audit' <<<"$AUDIT_BLOCK" &&
+   grep -q 'duty_hygiene' <<<"$AUDIT_BLOCK"; then r1=gated; else r1=UNGATED; fi
 t attention-audit-is-triage-hygiene-gated gated "$r1"
 t attention-audit-has-one-call-site 1 \
   "$(grep -c '^[[:space:]]*duty_attention_audit$' "$DUTYSH")"
 AUDIT_SOURCE="$(awk '/^duty_attention_audit\(\)/,/^}/' "$ATT_MOD")"
-if printf '%s\n' "$AUDIT_SOURCE" | grep -Eq 'gh api -X|--method|gh issue edit|run_session'; then
+if grep -Eq 'gh api -X|--method|gh issue edit|run_session' <<<"$AUDIT_SOURCE"; then
   r1=WRITES
 else
   r1=read-only
@@ -8305,13 +8313,13 @@ t attention-acted-set-comes-from-the-partition wired "$r1"
 # out-of-scope demand was never actionable by this box and no session ever saw
 # it. The default phrase stays for the three ledger callers.
 RSW="$TMP/rsw-state"
+report_suppressed_out="$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" 2>&1)"
 t report-suppressed-default-phrase reported \
-  "$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" 2>&1 \
-     | grep -q 'unactioned since a previous session' && echo reported || echo MISSING)"
+  "$(grep -q 'unactioned since a previous session' <<<"$report_suppressed_out" && echo reported || echo MISSING)"
 rm -f "$RSW"
+report_suppressed_out="$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" "never actionable here" 2>&1)"
 t report-suppressed-custom-phrase reported \
-  "$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" "never actionable here" 2>&1 \
-     | grep -q 'never actionable here' && echo reported || echo MISSING)"
+  "$(grep -q 'never actionable here' <<<"$report_suppressed_out" && echo reported || echo MISSING)"
 rm -f "$RSW"
 if grep -q 'report_suppressed .*sc_state.*\\$' "$ATT_MOD" &&
    grep -q 'this box does not carry' "$ATT_MOD"; then r1=distinct; else r1=BORROWED; fi
@@ -8383,8 +8391,9 @@ t attention-timeout-budget-unchanged 1800 "$r1"
 attention_ln="$(grep -n '^duty_attention$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
 builder_ln="$(grep -n '^  duty_builder$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
 # shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+builder_session_block="$(grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh")"
 if [ "$attention_ln" -lt "$builder_ln" ] &&
-   grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh" | grep -q '"\$TIMEOUT_BUILD"'; then
+   grep -q '"\$TIMEOUT_BUILD"' <<<"$builder_session_block"; then
   r1=full-budget
 else
   r1=BROKEN
@@ -8456,7 +8465,7 @@ ATT_124="$(attention_case 124)"
 t attention-timeout-comments-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^COMMENT ' || true)"
 t attention-timeout-alerts-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^ALERT ' || true)"
 t attention-timeout-names-session-log named \
-  "$(printf '%s\n' "$ATT_124" | grep -q 'attention-o__r_9-latest.log' && echo named || echo MISSING)"
+  "$(grep -q 'attention-o__r_9-latest.log' <<<"$ATT_124" && echo named || echo MISSING)"
 t attention-timeout-does-not-commit 0 "$(printf '%s\n' "$ATT_124" | grep -c '^LEDGER$' || true)"
 t attention-timeout-gh-read-only 1 "$(printf '%s\n' "$ATT_124" | grep -c '^GH api /issues?' || true)"
 t attention-timeout-gh-makes-no-writes 0 \
@@ -9150,7 +9159,8 @@ t nevertick-floor-emits-waiting emitted "$r1"
 # ...and the box must hold no threshold of its own. Comments and the log-tail
 # line count are stripped before looking, so only real code counts.
 PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
-if sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH" | grep -qE '\b(600|SILENT_AFTER)\b'; then
+probe_code="$(sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH")"
+if grep -qE '\b(600|SILENT_AFTER)\b' <<<"$probe_code"; then
   r1=BAKED
 else
   r1=clean
@@ -10184,9 +10194,9 @@ if grep -Fq '_resume_gate "$R" "$slug" "$resume_json"' "$SHARED/lib/duty-builder
 t resume-gate-wired-into-dispatch wired "$r1"
 # The commit must stay rc-gated at the call site, not merely inside the helper.
 # shellcheck disable=SC2016  # matching shell source literally
-if grep -F -A2 'if [ "${RUN_SESSION_RC:-1}" -eq 0 ] && [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then' \
-       "$SHARED/lib/duty-builder.sh" \
-     | grep -Fq 'ledger_commit "$DUTY_DIR/.seen-resume"'; then
+resume_commit_block="$(grep -F -A2 'if [ "${RUN_SESSION_RC:-1}" -eq 0 ] && [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then' \
+       "$SHARED/lib/duty-builder.sh")"
+if grep -Fq 'ledger_commit "$DUTY_DIR/.seen-resume"' <<<"$resume_commit_block"; then
   r1='rc-gated'
 else
   r1=UNCONDITIONAL
@@ -10749,8 +10759,8 @@ t p384-flip-warn-names-the-owed-panel 1 \
 # computes exactly whom the engine WOULD request, and requests nobody.
 t p384-flip-warn-leaves-the-flip-to-the-builder 3 \
   "$(grep -c 'The flip stays yours' <<<"$p384_fo_out")"
-if tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md" \
-     | grep -Fq 'an engine may draft a PR but only the builder undrafts it'; then
+builder_doctrine_flat="$(tr -s '[:space:]' ' ' <"$ROOT/.ceremony/BUILDER.md")"
+if grep -Fq 'an engine may draft a PR but only the builder undrafts it' <<<"$builder_doctrine_flat"; then
   r1=agreed
 else
   r1=DIVERGED
@@ -12267,9 +12277,9 @@ AR_LABELS_REF="$(sed -n 's|.*heavy-duty/ceremony/.github/workflows/labels.yml@||
   "$ROOT/.github/workflows/labels.yml")"
 AR_OLDEST="$(printf '%s\n%s\n' 0.5.0 "$AR_LABELS_REF" | sort -V | head -n1)"
 # shellcheck disable=SC2016  # literal doctrine text contains backticks
+labels_doctrine_flat="$(tr -s '[:space:]' ' ' <"$ROOT/.ceremony/LABELS.md")"
 if [ "$AR_OLDEST" = 0.5.0 ] \
-  && tr -s '[:space:]' ' ' <"$ROOT/.ceremony/LABELS.md" \
-     | grep -Fq 'Draft is evidence for it, not the definition of it: a draft carrying a standing non-approving verdict is a fix round and reads `state:addressing`'; then
+  && grep -Fq 'Draft is evidence for it, not the definition of it: a draft carrying a standing non-approving verdict is a fix round and reads `state:addressing`' <<<"$labels_doctrine_flat"; then
   r1=present
 else
   r1=MISSING
@@ -12548,10 +12558,10 @@ doctrine_unresolved=""
 for prompt_path in "$SHARED"/prompts/*.txt; do
   prompt_name="$(basename "$prompt_path")"
   rendered="$(render_prompt "$prompt_name")"
-  if printf '%s' "$rendered" | grep -Eq 'AGENTS\.md|TRIAGE\.md|BUILDER\.md|REVIEWER\.md'; then
+  if grep -Eq 'AGENTS\.md|TRIAGE\.md|BUILDER\.md|REVIEWER\.md' <<<"$rendered"; then
     doctrine_leaks="$doctrine_leaks $prompt_name"
   fi
-  if printf '%s' "$rendered" | grep -q '{{DOCTRINE_'; then
+  if grep -q '{{DOCTRINE_' <<<"$rendered"; then
     doctrine_unresolved="$doctrine_unresolved $prompt_name"
   fi
 done
@@ -13069,7 +13079,8 @@ t convergence-reads-rigs-own-paths rigs "$r1"
 # never acquire one. A `sudo` in a NON-INTERACTIVE `box exec` prompts, or fails,
 # and either way turns a converged box into a false INCOMPLETE: the refusal
 # would then be crew's own doing, on a box that was fine.
-if cv_extract "$ROOT/cli/crew" rig_report | grep -q 'sudo'; then
+rig_report_source="$(cv_extract "$ROOT/cli/crew" rig_report)"
+if grep -q 'sudo' <<<"$rig_report_source"; then
   r1=ESCALATES
 else
   r1=unprivileged
@@ -13079,8 +13090,8 @@ t convergence-reads-the-marker-without-sudo unprivileged "$r1"
 # inside `while read … done < <(read_roster)` in status, hire-all and up, and a
 # raw exec there drains the roster FIFO and converges ONE box out of N with
 # rc=0 (#48). bxn is the only shape that pins stdin to /dev/null.
-if cv_extract "$ROOT/cli/crew" rig_report | grep -qE '^[[:space:]]*bxn ' &&
-   ! cv_extract "$ROOT/cli/crew" rig_report | grep -q 'box exec'; then
+if grep -qE '^[[:space:]]*bxn ' <<<"$rig_report_source" &&
+   ! grep -q 'box exec' <<<"$rig_report_source"; then
   r1=bxn
 else
   r1=RAW_EXEC
@@ -13743,7 +13754,7 @@ t floor-named-crew-verb-roster-is-complete "$CI_CONSOLE_VERBS" \
 CI_COMMAND_ROWS="$(sed -n '/^CMDS=(/,/^)/p' "$CI_CREW")"
 for verb in $CI_CONSOLE_VERBS; do
   if grep -q "crew $verb" "$ROOT/fleet-floor/server/floor.py" "$ROOT/fleet-floor/src/app.js" &&
-     printf '%s\n' "$CI_COMMAND_ROWS" | grep -q "^  \"$verb\\^"; then
+     grep -q "^  \"$verb\\^" <<<"$CI_COMMAND_ROWS"; then
     r1=dispatchable
   else
     r1=MISSING
