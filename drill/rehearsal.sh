@@ -145,6 +145,8 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-fixtures.sh"
 # shellcheck source=drill/rehearsal-notify.sh
 . "$ROOT/drill/rehearsal-notify.sh"
+# shellcheck source=drill/rehearsal-boot.sh
+. "$ROOT/drill/rehearsal-boot.sh"
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
@@ -442,6 +444,26 @@ bx "~/duty/bin/tick.sh" || true
 check "tick evidence: run start"   bx "grep -q 'duty run start' ~/duty/duty.log"
 check "tick evidence: run end"     bx "grep -q 'duty run end' ~/duty/duty.log"
 check "boot check ran"             bx "test -s ~/duty/boot-check.log"
+# `test -s` above says the gate ran. What it SAID is the question #240 left:
+# that check passes on a log whose probe line reads FAILED and on a log full
+# of WARN. Both assertions read the LAST boot block, from one read of the
+# box, and both name the agent the round was given — never a name spelled
+# here (#427).
+#
+# The authenticated arm only. On a creds-free box `cli probe: FAILED` is the
+# CORRECT verdict (shared/docs/rehearsal.md, "one boot block") and the login
+# WARN is expected and asserted below, so an unconditional assertion of
+# either would contradict the three checks under it. They fire on the
+# operator's re-run, once the box is logged in — the same box state every
+# other assertion in this block partitions on.
+rehearsal_boot_load
+if [ "$GH_AUTHED" -eq 1 ]; then
+  rehearsal_boot_probe_ok "$AGENT"
+  rehearsal_boot_warn_free "$AGENT"
+else
+  skip "boot check: cli probe verdict is ok for $AGENT (box is not gh-authenticated — a FAILED probe is the correct pre-auth verdict)"
+  skip "boot check: no WARN for $AGENT (box is not gh-authenticated — the expected login WARN is asserted below)"
+fi
 if [ "$GH_AUTHED" -eq 0 ]; then
   check "pre-auth: login WARN logged"   bx "grep -q 'cannot resolve own login' ~/duty/duty.log"
   check "pre-auth: no .boot-id marker"  bx "! test -f ~/duty/.boot-id"
