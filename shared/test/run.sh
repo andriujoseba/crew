@@ -55,10 +55,13 @@ pipefail_grep_q_sites() {  # [files...]
     "$SHARED/bin/engine-manifest.sh"
   )
   awk '
-    function qgrep(s) { return s ~ /grep[[:space:]]+-[[:alnum:]-]*q/ }
+    function qgrep(s) {
+      return s ~ /grep[[:space:]]/ \
+        && s ~ /(^|[[:space:]])-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
+    }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
-    $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]+-[[:alnum:]-]*q/ {
+    $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep($0) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
     pipe_line && qgrep($0) {
