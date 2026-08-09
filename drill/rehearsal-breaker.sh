@@ -193,7 +193,8 @@ rehearsal_breaker_recovered_from_log() {
 }
 
 rehearsal_breaker_alert_count_is_one() {
-  [ "$1" = 1 ]
+  local kind="$1" alerts="$2"
+  [ "$(grep -cF ": $kind session dispatch stopped after" <<<"$alerts" || true)" -eq 1 ]
 }
 
 rehearsal_breaker_tick_log() {
@@ -271,9 +272,9 @@ rehearsal_breaker_drill() {
   check "breaker: following ticks skip the stopped lane" \
     rehearsal_breaker_suppressed_from_log \
       "$kind" "$threshold" "$stopped_ticks" "$stopped_log"
-  alerts="$(bx "wc -l < '$REHEARSAL_BREAKER_DIR/alerts.log' 2>/dev/null || printf '0\n'")"
-  check "breaker: operator alert emitted exactly once while stopped (read '$alerts')" \
-    rehearsal_breaker_alert_count_is_one "$alerts"
+  alerts="$(bx "cat '$REHEARSAL_BREAKER_DIR/alerts.log' 2>/dev/null || true")"
+  check "breaker: $kind operator alert emitted exactly once while stopped" \
+    rehearsal_breaker_alert_count_is_one "$kind" "$alerts"
 
   if rehearsal_breaker_restore_cli_for_recovery; then
     ok "breaker: real $AGENT CLI restored"

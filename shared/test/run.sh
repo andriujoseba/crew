@@ -404,10 +404,22 @@ else
 fi
 t rehearsal-breaker-dispatch-past-threshold-mutation-reds red "$r1"
 
-if rehearsal_breaker_alert_count_is_one 1; then r1=once; else r1=WRONG; fi
+BREAKER_ALERT="🚨 crew-drill: $BREAKER_KIND session dispatch stopped after $BREAKER_THRESHOLD terminal failures (acted=no) — /tmp/session.log"
+if rehearsal_breaker_alert_count_is_one "$BREAKER_KIND" \
+    "$BREAKER_ALERT"; then r1=once; else r1=WRONG; fi
 t rehearsal-breaker-single-alert-counted once "$r1"
-if rehearsal_breaker_alert_count_is_one 2; then r1=WRONG; else r1=red; fi
+if rehearsal_breaker_alert_count_is_one "$BREAKER_KIND" \
+    "$BREAKER_ALERT
+$BREAKER_ALERT"; then r1=WRONG; else r1=red; fi
 t rehearsal-breaker-second-alert-mutation-reds red "$r1"
+if rehearsal_breaker_alert_count_is_one "$BREAKER_KIND" \
+    "$BREAKER_ALERT
+🚨 crew-drill: review session dispatch stopped after $BREAKER_THRESHOLD terminal failures (acted=no) — /tmp/other.log"; then
+  r1=once
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-unrelated-lane-alert-ignored once "$r1"
 
 BREAKER_RECOVERY_LOG="2026-08-09T00:00:07Z session breaker: kind=$BREAKER_KIND recovered; dispatch resumed
 2026-08-09T00:00:07Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/recovered"
@@ -440,7 +452,6 @@ t rehearsal-breaker-mixed-fail-then-pass-stays-failure 1 \
 t rehearsal-breaker-mixed-skip-then-pass-is-ok 0 \
   "$(rehearsal_breaker_combine_result \
     "$(rehearsal_breaker_combine_result 2 2)" 0)"
-
 if rehearsal_breaker_attention_is_clear_from_json \
     '{"labels":[{"name":"claimed"}]}'; then
   r1=clear
