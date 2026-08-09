@@ -789,21 +789,33 @@ t attention-branch-sources-are-sandbox-and-fork "$ATT_REPO $ATT_FORK" \
 # The collector is where "the fork does not exist" and "the fork exists and
 # will not list" are told apart, and getting that wrong is how reading two
 # sources becomes silently blinder than reading one. Staged under a stubbed gh.
-# ATT_SB / ATT_FK are each a branch-list JSON, X (exists, will not list) or
-# 404 (no such repo). Prints "<branches>|<unreadable>".
+#
+# ATT_SB / ATT_FK are each a branch-list JSON or one of three failures the
+# collector must NOT confuse: X (the repo is there and will not list its
+# branches), 404 (no such repo), ERR (auth, rate limit, 5xx, network — fails
+# exactly like the other two at the exit-code level and establishes nothing).
+# The probe writes gh's own message to STDERR, because that message is the only
+# place the difference between 404 and ERR actually exists.
+# Prints "<branches>|<unreadable>".
+att_probe() {  # att_probe <state> — `gh api repos/<src>` as the collector sees it
+  case "$1" in
+    404) echo 'gh: Not Found (HTTP 404)' >&2; return 1 ;;
+    ERR) echo 'error connecting to api.github.com' >&2; return 1 ;;
+    *)   return 0 ;;
+  esac
+}
 att_collect() {
   (
     gh() {
       case "$*" in
         *"repos/$ATT_REPO/branches"*)
-          [ "$ATT_SB" = X ] && return 1
+          case "$ATT_SB" in X|404|ERR) return 1 ;; esac
           printf '%s\n' "$ATT_SB" ;;
         *"repos/$ATT_FORK/branches"*)
-          case "$ATT_FK" in X|404) return 1 ;; esac
+          case "$ATT_FK" in X|404|ERR) return 1 ;; esac
           printf '%s\n' "$ATT_FK" ;;
-        "api repos/$ATT_FORK")
-          [ "$ATT_FK" = 404 ] && return 1
-          return 0 ;;
+        "api repos/$ATT_REPO") att_probe "$ATT_SB" ;;
+        "api repos/$ATT_FORK") att_probe "$ATT_FK" ;;
         *) return 1 ;;
       esac
     }
@@ -819,11 +831,69 @@ t attention-collector-unions-both-sources-and-names-each \
 ATT_SB='[]'; ATT_FK=X
 t attention-collector-flags-a-source-that-exists-and-will-not-list \
   '[]|drill-identity/sandbox' "$(att_collect)"
-# A fork that has not been created cannot hold a pushed branch: skipped.
+# A fork that has not been created cannot hold a pushed branch: skipped. This
+# is the ONLY failure that may be skipped, and only because the 404 says so.
 ATT_SB='[]'; ATT_FK=404
 t attention-collector-skips-a-fork-that-does-not-exist '[]|' "$(att_collect)"
 ATT_SB='[]'; ATT_FK='[]'
 t attention-collector-empty-source-is-not-unreadable '[]|' "$(att_collect)"
+# Absence is a POSITIVE finding. An auth/rate-limit/network failure fails the
+# probe too and proves nothing, so the fork is unread, not absent — reading the
+# two alike is how the load-bearing branch row greened without a source read.
+ATT_SB='[]'; ATT_FK=ERR
+t attention-collector-non-404-fork-failure-is-unreadable \
+  '[]|drill-identity/sandbox' "$(att_collect)"
+# The sandbox is the one source known to exist: this leg filed its fixture
+# there. Its branch read failing is ALWAYS unreadable...
+ATT_SB=X; ATT_FK='[]'
+t attention-collector-unlistable-sandbox-is-unreadable '[]|owner/sandbox' \
+  "$(att_collect)"
+# ...including when the probe answers 404, which for the sandbox means the
+# world is broken, not that there is nothing to read.
+ATT_SB=404; ATT_FK='[]'
+t attention-collector-sandbox-is-never-skipped '[]|owner/sandbox' "$(att_collect)"
+# Both sources down at once — the reviewed defect exactly: `branches=[]` with
+# `unreadable=''`, which graded PASS having read neither source.
+ATT_SB=ERR; ATT_FK=ERR
+t attention-collector-total-failure-is-not-an-empty-board \
+  '[]|owner/sandbox drill-identity/sandbox' "$(att_collect)"
+# ...and that state now reds the row it feeds, which is the point of all of it.
+ATT_OUT="$(att_row 'attention: dispatch pushed no build branch' \
+  rehearsal_attention_build_branches_from_json "$ATT_ISSUE" '[]' \
+  "$ATT_REPO $ATT_FORK")"
+t attention-unread-sources-red-the-branch-row 1 \
+  "$(grep -cFx 'FAIL attention: dispatch pushed no build branch' <<<"$ATT_OUT")"
+
+# The probe on its own: only a matched 404 is absence.
+att_absent() {  # att_absent <state>
+  local state="$1"
+  (
+    gh() { att_probe "$state"; }
+    if rehearsal_attention_repo_absent "$ATT_FORK"; then echo absent; else echo present; fi
+  )
+}
+t attention-repo-absent-on-a-404 absent "$(att_absent 404)"
+t attention-repo-absent-refuses-a-connection-failure present "$(att_absent ERR)"
+t attention-repo-absent-refuses-a-reachable-repo present "$(att_absent OK)"
+
+# A failed union is not a clean read either: it would leave the list at its
+# previous value with nothing recorded, so a stale list grades as an empty one.
+att_collect_broken_union() {
+  (
+    gh() {
+      case "$*" in
+        *"repos/$ATT_REPO/branches"*) printf '%s\n' '[{"name":"main"}]' ;;
+        *"repos/$ATT_FORK/branches"*) printf '%s\n' '[]' ;;
+        *) return 0 ;;
+      esac
+    }
+    jq() { case "$*" in "-s add") return 5 ;; *) command jq "$@" ;; esac; }
+    rehearsal_attention_collect_branches "$ATT_REPO" "$ATT_FORK"
+    printf '%s\n' "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE"
+  )
+}
+t attention-collector-failed-union-is-unreadable \
+  'owner/sandbox drill-identity/sandbox' "$(att_collect_broken_union)"
 
 # Both reads in the dispatch half — the fixture precondition and the graded row
 # — go through the collector, so neither can drift back to the sandbox alone.
