@@ -778,6 +778,7 @@ t rehearsal-resume-threshold-not-retyped-in-drill 0 \
 # shellcheck disable=SC2016  # match literal builder-block source text
 resume_builder_block="$(sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
     "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # match literal builder-block source text
 if grep -Fq '. "$ROOT/drill/rehearsal-resume.sh"' <<<"$resume_builder_block"; then
   resume_wiring=wired
 else
@@ -1527,6 +1528,7 @@ t attention-leg-names-no-agent-or-box 0 \
 # shellcheck disable=SC2016  # match literal builder-block source text
 attention_builder_block="$(sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
     "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # match literal builder-block source text
 if grep -Fq '. "$ROOT/drill/rehearsal-attention.sh"' <<<"$attention_builder_block"; then
   r1=wired
 else
@@ -2351,6 +2353,7 @@ t attention-audit-leg-names-no-agent-or-box 0 \
 # shellcheck disable=SC2016  # match literal triage-block source text
 attention_audit_triage_block="$(sed -n '/if \[ "$ROLE" = "triage" \]/,/^[[:space:]]*elif /p' \
     "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # match literal triage-block source text
 if grep -Fq '. "$ROOT/drill/rehearsal-attention-audit.sh"' <<<"$attention_audit_triage_block"; then
   r1=wired
 else
@@ -3566,6 +3569,7 @@ t notify-helper-sourced-in-rehearsal wired "$notify_wiring"
 # shellcheck disable=SC2016  # match the literal call in rehearsal.sh
 notify_interlock_block="$(sed -n '/ok "safety interlock: no attention demand parked outside the sandbox"/,/-- attention wake --/p' \
     "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # match the literal call in rehearsal.sh
 if grep -Fq 'rehearsal_notify_drill "$SANDBOX"' <<<"$notify_interlock_block"; then
   notify_wiring=wired
 else
@@ -8394,6 +8398,7 @@ attention_ln="$(grep -n '^duty_attention$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
 builder_ln="$(grep -n '^  duty_builder$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
 # shellcheck disable=SC2016  # literal source wiring, not this test's expansion
 builder_session_block="$(grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh")"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
 if [ "$attention_ln" -lt "$builder_ln" ] &&
    grep -q '"\$TIMEOUT_BUILD"' <<<"$builder_session_block"; then
   r1=full-budget
@@ -10198,6 +10203,7 @@ t resume-gate-wired-into-dispatch wired "$r1"
 # shellcheck disable=SC2016  # matching shell source literally
 resume_commit_block="$(grep -F -A2 'if [ "${RUN_SESSION_RC:-1}" -eq 0 ] && [ -n "${RESUME_COMMIT_LINES//[[:space:]]/}" ]; then' \
        "$SHARED/lib/duty-builder.sh")"
+# shellcheck disable=SC2016  # matching shell source literally
 if grep -Fq 'ledger_commit "$DUTY_DIR/.seen-resume"' <<<"$resume_commit_block"; then
   r1='rc-gated'
 else
@@ -12280,6 +12286,7 @@ AR_LABELS_REF="$(sed -n 's|.*heavy-duty/ceremony/.github/workflows/labels.yml@||
 AR_OLDEST="$(printf '%s\n%s\n' 0.5.0 "$AR_LABELS_REF" | sort -V | head -n1)"
 # shellcheck disable=SC2016  # literal doctrine text contains backticks
 labels_doctrine_flat="$(tr -s '[:space:]' ' ' <"$ROOT/.ceremony/LABELS.md")"
+# shellcheck disable=SC2016  # literal doctrine text contains backticks
 if [ "$AR_OLDEST" = 0.5.0 ] \
   && grep -Fq 'Draft is evidence for it, not the definition of it: a draft carrying a standing non-approving verdict is a fix round and reads `state:addressing`' <<<"$labels_doctrine_flat"; then
   r1=present
@@ -14574,6 +14581,7 @@ fi
 t gitid-converge-precedes-the-first-duty before "$r1"
 
 # And the refusal ends the tick rather than logging and carrying on.
+# shellcheck disable=SC2016  # match the literal duty.sh awk range
 if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" 'exit 0'; then
   r1=exits
 else
