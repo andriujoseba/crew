@@ -1710,7 +1710,7 @@ t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" 
 AGG="$TMP/notify-agg"
 mkdir -p "$AGG"
 cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
-  "$ROOT/drill/rehearsal-hygiene.sh" "$AGG/"
+  "$ROOT/drill/rehearsal-hygiene.sh" "$ROOT/drill/rehearsal-breaker.sh" "$AGG/"
 cat >"$AGG/rehearsal.sh" <<'AGGSH'
 #!/usr/bin/env bash
 # Stub role drill: writes the verdict the case asked for — the way the leg
@@ -1732,13 +1732,14 @@ agg_case() {  # $1 role, $2 verdict (empty for none), $3 rc
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   # Every sibling leg the notify fold is not under test with is switched off,
-  # --no-hygiene-drill (#422) included: these cases assert what the NOTIFY
+  # --no-hygiene-drill (#422) and --no-breaker-drill (#424) included: these
+  # cases assert what the NOTIFY
   # verdict does to `overall`, and a neighbour's row moving it would red them
   # for a reason that is not theirs. The composition of the two folds gets its
   # own case below, with the hygiene leg deliberately left on.
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-hygiene-drill ${1+"$@"} 2>&1
+    --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
 }
 
 # The criterion: an unreachable operator channel produces a skip naming it and
@@ -1821,7 +1822,8 @@ t notify-agg-opt-out-failed-role-rc 1 "$agg_rc"
 agg_hygiene_run() {  # $1 roles, $2 the hygiene result the role box records
   local roles="$1" hyg="$2"
   AGG_DIR="$AGG" AGG_HYGIENE="$hyg" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
-    --no-app --no-config-drill --no-install-drill --no-resume-drill 2>&1
+    --no-app --no-config-drill --no-install-drill --no-resume-drill \
+    --no-breaker-drill 2>&1
 }
 # The stub writes the hygiene result the way the live leg does — into the file
 # rehearsal-all.sh hands it, per role — on top of the notify verdict it already
