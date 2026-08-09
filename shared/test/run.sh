@@ -7383,7 +7383,9 @@ t ready-commit-whole-id "" \
 # matching line. The awareness pass must wait for the complete repo list and
 # therefore emit no false out-of-scope warning.
 p447_registry_out="$(
+  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
   read_repo_list() { printf '%s\n' heavy-duty/crew; sleep 0.05; printf '%s\n' other/repo; }
+  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
   gh() { printf '%s\n' 'heavy-duty/crew#447'; }
   ME=andriujoseba REPOS_FILE=unused
   _warn_unscoped_authored
@@ -7400,6 +7402,7 @@ P447_MERGED_HEADS="$(awk 'BEGIN {
 if [ "${#P447_MERGED_HEADS}" -gt "$P447_PIPE_BUF" ]; then r1=large; else r1=TOO-SMALL; fi
 t p447-merged-heads-exceeds-pipe-buf large "$r1"
 P447_OPEN_HEADS=build/901-open
+# shellcheck disable=SC2317  # invoked indirectly by _orphan_claim_nums
 gh() {
   case "$*" in
     *build/900-*) printf '%s\n' build/900-merged ;;
