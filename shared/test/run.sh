@@ -1152,6 +1152,149 @@ t attention-unresolved-budget-is-its-own-cause unresolved "$r1"
 if rehearsal_attention_timeout_unresolved 1800 1; then r1=WRONG; else r1=leak; fi
 t attention-lowered-budget-is-not-an-unresolved-one leak "$r1"
 
+# --- the halves' own bookkeeping: a red row must reach the verdict ----------
+#
+# rehearsal-all.sh reads this leg's summary row off the drill's return code,
+# which is read off the two halves' return codes. So a red row that cannot
+# reach a half's return code prints `ok attention` into the round summary and
+# drills/<version>.md for a round that asserted nothing — the #423 defect (see
+# the notify leg above) relocated into this leg's own bookkeeping, and the
+# reason drill/rehearsal-resume.sh pairs every `fail` with a verdict.
+#
+# Staged as the halves actually run, with the filer, the invoker, gh and bx
+# stubbed; each mutation is one realistic blip, not a broken engine.
+ATT_SESSION_OUT2="2026-08-09T11:00:04Z SESSION START kind=attention key=$ATT_REPO#$ATT_ISSUE timeout=1s log=$ATT_RUNLOG2
+2026-08-09T11:00:06Z SESSION END kind=attention key=$ATT_REPO#$ATT_ISSUE rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+ATT_ALERTS_FIRST="⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG"
+
+att_half_stubs() {
+  ok()   { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  # rehearsal.sh's wait_for, minus the sleeping.
+  wait_for() {
+    local name="$2"; shift 2
+    if "$@" >/dev/null 2>&1; then ok "$name"; return 0; fi
+    fail "$name (timeout)"; return 1
+  }
+  rehearsal_attention_file_fixture() { REHEARSAL_ATTENTION_NUM="$ATT_ISSUE"; }
+  rehearsal_attention_close_fixture() { return 0; }
+  rehearsal_attention_demand_visible() { return "${ATT_VISIBLE:-0}"; }
+}
+
+att_dispatch_half() {  # rows on stdout, the half's rc as the exit status
+  (
+    att_half_stubs
+    rehearsal_attention_dispatch_invoke() { printf '%s\n' "$ATT_WAKE"; }
+    rehearsal_attention_open_prs_json() { printf '%s\n' "$ATT_PULLS_CLEAN"; }
+    rehearsal_attention_settled_issue_json() { printf '%s\n' "$ATT_ISSUE_READY"; }
+    rehearsal_attention_collect_branches() {
+      REHEARSAL_ATTENTION_BRANCHES="$ATT_BRANCHES_CLEAN"
+      REHEARSAL_ATTENTION_BRANCH_UNREADABLE=""
+    }
+    gh() {
+      case "$*" in
+        *"/comments"*) printf '%s\n' "$ATT_COMMENTS_STEP" ;;
+        *) printf '%s\n' "$ATT_FILED" ;;
+      esac
+    }
+    rehearsal_attention_dispatch_half "$ATT_REPO" "$ATT_IDENTITY" "$ATT_PICKUP"
+  )
+}
+
+att_timeout_half() {  # rows on stdout, the half's rc as the exit status
+  printf '0' >"$TMP/att-invoke-n"
+  (
+    att_half_stubs
+    rehearsal_attention_stable_log_readable() { return 0; }
+    # Called in a command substitution, so the counter cannot live in a shell
+    # variable — the subshell would take each increment with it.
+    rehearsal_attention_timeout_invoke() {
+      local n
+      n=$(( $(cat "$TMP/att-invoke-n") + 1 ))
+      printf '%s' "$n" >"$TMP/att-invoke-n"
+      if [ "$n" -eq 1 ]; then printf '%s\n' "$ATT_FIRST"; else printf '%s\n' "$ATT_SECOND"; fi
+    }
+    bx() { case "$1" in cat*) printf '%s\n' "$ATT_ALERTS_FIRST" ;; *) return 0 ;; esac; }
+    gh() { printf '%s\n' "$ATT_TIMEOUT_ONE"; }
+    rehearsal_attention_timeout_half "$ATT_REPO" "$ATT_IDENTITY" "$ATT_PHRASE" \
+      "$TMP/att-capture" 1
+  )
+}
+
+# Control: every row green, both halves return 0.
+ATT_WAKE="$ATT_SESSION_OUT"
+ATT_FIRST="$ATT_SESSION_OUT"; ATT_SECOND="$ATT_SESSION_OUT2"
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+t attention-dispatch-half-green-returns-0 "0|0" \
+  "$r1|$(grep -c '^FAIL' <<<"$ATT_OUT" | tr -d ' ')"
+ATT_OUT="$(att_timeout_half)"; r1=$?
+t attention-timeout-half-green-returns-0 "0|0" \
+  "$r1|$(grep -c '^FAIL' <<<"$ATT_OUT" | tr -d ' ')"
+
+# Mutation: the wake launched no pickup session. The row reds; before the fix
+# the half still returned 0 and the round summary said `ok attention`.
+ATT_WAKE="2026-08-09T11:00:00Z attention: none"
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+ATT_WAKE="$ATT_SESSION_OUT"
+t attention-dispatch-wake-red-reaches-the-halfs-verdict 1 "$r1"
+t attention-dispatch-wake-red-is-a-red-row 1 \
+  "$(grep -cFx 'FAIL attention: dispatch wake launched a pickup session' <<<"$ATT_OUT")"
+
+# Mutation: the SECOND lowered invocation never ran — duty_attention took its
+# `attention fetch failed this tick` return and never reached the timeout
+# branch. The row that must red is the invocation one, and the row that stays
+# green is why it matters: "posted exactly once" is TRIVIALLY true with one
+# invocation, so a half returning 0 here reports `ok` on a round in which
+# post-once.sh was never asked to dedup at all.
+ATT_SECOND="attention: none new in registry"
+ATT_OUT="$(att_timeout_half)"; r1=$?
+t attention-timeout-invocation-red-reaches-the-halfs-verdict 1 "$r1"
+t attention-timeout-second-invocation-red-is-a-red-row 1 \
+  "$(grep -cFx 'FAIL attention: both lowered invocations timed out' <<<"$ATT_OUT")"
+t attention-dedup-row-greens-alone-which-is-the-point 1 \
+  "$(grep -cFx 'ok   attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
+# And that red stays legible: bare "$first$second" ran the first invocation's
+# last line into the second's first, in the one place an operator has to tell
+# the two apart.
+t attention-invocation-red-does-not-glue-the-two-captures 0 \
+  "$(grep -c 'TIMEOUTattention' <<<"$ATT_OUT" | tr -d ' ')"
+ATT_SECOND="$ATT_SESSION_OUT2"
+
+# Mutation: the run log does not resolve. Its own row reds and reaches the
+# verdict — and the alert row must red WITH it rather than grepping for ""
+# and matching any line, which greened §5's "the operator alert fired naming
+# the run log" on an alert nothing had checked.
+ATT_FIRST="2026-08-09T11:00:02Z SESSION END kind=attention key=$ATT_REPO#$ATT_ISSUE rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+ATT_OUT="$(att_timeout_half)"; r1=$?
+ATT_FIRST="$ATT_SESSION_OUT"
+t attention-run-log-red-reaches-the-halfs-verdict 1 "$r1"
+t attention-no-run-log-reds-the-alert-row 1 \
+  "$(grep -cFx 'FAIL attention: operator alert named the run log' <<<"$ATT_OUT")"
+t attention-no-run-log-alert-red-says-why 1 \
+  "$(grep -cF 'read: no run log resolved to check the alert against' <<<"$ATT_OUT")"
+# The guard on its own, beside its twin on the derived link.
+if rehearsal_attention_alert_names_run_log \
+    "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" '' "$ATT_ALERTS" >/dev/null; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-empty-run-log-refuses-rather-than-matching-anything refused "$r1"
+
+# The index the wake reads is cross-repo and lags the assignment that fills it,
+# so both halves wait for their own demand to appear in it before invoking —
+# otherwise the wake row reds on a correct engine.
+ATT_VISIBLE=1
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+t attention-dispatch-waits-for-the-demand-index 1 \
+  "$(grep -cF 'FAIL attention: dispatch demand visible to the identity' <<<"$ATT_OUT")"
+t attention-invisible-demand-reaches-the-dispatch-verdict 1 "$r1"
+ATT_OUT="$(att_timeout_half)"; r1=$?
+t attention-timeout-waits-for-the-demand-index 1 \
+  "$(grep -cF 'FAIL attention: timeout demand visible to the identity' <<<"$ATT_OUT")"
+t attention-invisible-demand-reaches-the-timeout-verdict 1 "$r1"
+ATT_VISIBLE=0
+
 # The fixture registry the EXIT trap reads (rehearsal.sh). It is written by the
 # filer, so the filer must not be called in a command substitution: bash runs
 # one in a subshell and the registry dies with it, leaving an open assigned
