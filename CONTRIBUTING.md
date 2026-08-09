@@ -118,6 +118,9 @@ convergence, and cast asserts promotion. The full meaning — the per-version
 record files, the waiver rule — is [`drills/README.md`](drills/README.md); the
 `drill-recorded` guard enforces the record on every release tree.
 
+The per-window procedure is [Adapting the drill to the
+window](drills/README.md#adapting-the-drill-to-the-window).
+
 ## Labels — who sets what
 
 The taxonomy and state machine are
