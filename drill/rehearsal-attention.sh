@@ -37,6 +37,9 @@ fi
 
 REHEARSAL_ATTENTION_REPO=""
 REHEARSAL_ATTENTION_ISSUES=""
+REHEARSAL_ATTENTION_NUM=""
+REHEARSAL_ATTENTION_BRANCHES="[]"
+REHEARSAL_ATTENTION_BRANCH_UNREADABLE=""
 
 rehearsal_attention_verdict() {
   rehearsal_verdict_record "${REHEARSAL_ATTENTION_STATUS:-}" "$@"
@@ -69,10 +72,29 @@ rehearsal_attention_prs_for_issue_from_json() {
   return 0
 }
 
+# Entries are {repo, name}, because the branch this row exists to catch is not
+# on the sandbox. The route being drilled says so — shared/prompts/attention.txt
+# reads "check the builder fork for a build/{{NUM}}-* branch" — and so does the
+# engine's ORPHANS, duty-builder.sh reading repos/$ME/$name with fork pointed at
+# https://github.com/$ME/$name.git (common.sh). A dispatch that did push would
+# push there (git push -u fork), so reading only the sandbox is green on the one
+# mutation the row is for.
+#
+# `unreadable` is the third input rather than a silent empty list: a source that
+# exists and still will not list its branches must red here, not read as "no
+# branches". A fork that does not exist yet is not in it — it cannot hold a
+# pushed branch — and the collector drops it.
 rehearsal_attention_build_branches_from_json() {
-  local issue="$1" branches_json="$2" offenders
+  local issue="$1" branches_json="$2" unreadable="${3:-}" offenders
+  if [ -n "$unreadable" ]; then
+    printf 'could not list branches of: %s\n' "$unreadable"
+    return 1
+  fi
   offenders="$(jq -r --arg issue "$issue" '
-    [ .[] | select(startswith("build/" + $issue + "-")) ] | .[]
+    [ .[]
+      | select(((.name // "") | startswith("build/" + $issue + "-")))
+      | "\(.repo // "?") \(.name // "?")"
+    ] | .[]
   ' <<<"$branches_json")" || return 2
   [ -z "$offenders" ] || { printf '%s\n' "$offenders"; return 1; }
   return 0
@@ -150,6 +172,13 @@ rehearsal_attention_timeout_comment_once_from_json() {
 
 rehearsal_attention_timeout_names_link_from_json() {
   local mark="$1" link="$2" comments_json="$3" body
+  # An empty link would make the grep below match any body at all — a vacuous
+  # pass standing beside the run-log row that is already red for the same
+  # reason. The two rows stay independent.
+  if [ -z "$link" ]; then
+    printf 'no stable link derived to check the comment against\n'
+    return 1
+  fi
   body="$(jq -r --arg mark "$mark" \
     '[ .[] | select((.body // "") | contains($mark)) | .body ] | .[0] // ""' \
     <<<"$comments_json")" || return 2
@@ -197,6 +226,15 @@ rehearsal_attention_timeout_restored() {
   [ "$before" = "${after:-}" ] && [ "$before" -gt "$lowered" ]
 }
 
+# Why the row above is red, when it is: a budget that never resolved is not a
+# budget that was left lowered, and the aggregate summary names one cause.
+rehearsal_attention_timeout_unresolved() {
+  local before="$1" after="$2"
+  case "${before:-}" in ''|*[!0-9]*) return 0 ;; esac
+  case "${after:-}" in ''|*[!0-9]*) return 0 ;; esac
+  return 1
+}
+
 # --- box and board reads ---------------------------------------------------
 
 rehearsal_attention_open_prs_json() {
@@ -208,9 +246,32 @@ rehearsal_attention_open_prs_json() {
       '[add[] | select(.user.login == $author) | {number, body, head: .head.ref}]'
 }
 
-rehearsal_attention_branches_json() {
-  local repo="$1"
-  gh api "repos/$repo/branches?per_page=100" --paginate | jq -s '[add[].name]'
+# The two places a build/<issue>-* branch can be after a dispatch: the sandbox
+# the demand lives on, and the builder fork the route names and a push targets.
+rehearsal_attention_branch_sources() {
+  local repo="$1" identity="$2"
+  printf '%s\n%s/%s\n' "$repo" "$identity" "${repo##*/}"
+}
+
+# Fills REHEARSAL_ATTENTION_BRANCHES / _BRANCH_UNREADABLE rather than printing,
+# so a source that fails to list is distinguishable from one with no branches.
+rehearsal_attention_collect_branches() {
+  local src part
+  REHEARSAL_ATTENTION_BRANCHES="[]"
+  REHEARSAL_ATTENTION_BRANCH_UNREADABLE=""
+  for src in "$@"; do
+    if part="$(gh api "repos/$src/branches?per_page=100" --paginate 2>/dev/null \
+        | jq -s --arg r "$src" '[add[] | {repo: $r, name: .name}]' 2>/dev/null)" \
+        && [ -n "$part" ]; then
+      REHEARSAL_ATTENTION_BRANCHES="$(jq -s 'add' \
+        <<<"$REHEARSAL_ATTENTION_BRANCHES"$'\n'"$part")" || return 1
+    elif gh api "repos/$src" >/dev/null 2>&1; then
+      REHEARSAL_ATTENTION_BRANCH_UNREADABLE="${REHEARSAL_ATTENTION_BRANCH_UNREADABLE:+$REHEARSAL_ATTENTION_BRANCH_UNREADABLE }$src"
+    fi
+    # A fork that does not exist yet cannot hold a pushed branch: skipped, not
+    # recorded as unreadable.
+  done
+  return 0
 }
 
 rehearsal_attention_installed_timeout() {
@@ -249,6 +310,12 @@ rehearsal_attention_dispatch_invoke() {
 # edited, so no exit path can leave a lowered budget behind. The stand-in CLI
 # hangs rather than failing, which is what makes rc 124 deterministic instead
 # of a race against a real CLI's startup.
+#
+# One backslash on the alert override's `$*`, not two. bx is a single shell
+# layer (box exec … bash -lc "$1"), so the box's bash is the CONSUMER of this
+# text: it wants to parse `"$*"`, and `\$` here is what survives to become it.
+# rehearsal-breaker.sh's `\\$*` is the right count for its own context — that
+# one sits inside a quoted heredoc, where the box's bash is the writer.
 rehearsal_attention_timeout_invoke() {
   local identity="$1" budget="$2" capture="$3"
   bx "set -uo pipefail
@@ -259,19 +326,34 @@ rehearsal_attention_timeout_invoke() {
     source \"\$DUTY_DIR/lib/duty-attention.sh\"
     TIMEOUT_ATTENTION=$budget
     BOT_CLI_CMD=(sh -c 'sleep 600' drill-attention-timeout)
-    alert() { printf '%s\n' \"\\\$*\" >>'$capture'; }
+    alert() { printf '%s\n' \"\$*\" >>'$capture'; }
     duty_attention
   " 2>&1
 }
 
+# The registry the EXIT trap reads (rehearsal.sh:175). Split out from the filer
+# so the cleanup path can be exercised without an API call.
+rehearsal_attention_register_fixture() {
+  local repo="$1" num="$2"
+  REHEARSAL_ATTENTION_REPO="$repo"
+  REHEARSAL_ATTENTION_ISSUES="${REHEARSAL_ATTENTION_ISSUES:+$REHEARSAL_ATTENTION_ISSUES }$num"
+}
+
+# The number comes back in a GLOBAL, not on stdout, and callers must not wrap
+# this in a command substitution: bash runs one in a subshell, so a registry
+# written there dies with it and the EXIT trap inherits an empty list. That
+# leaves an open assigned claimed+attention fixture on the sandbox for the next
+# duty tick to pick up — the exact state an interrupt, or the fixture
+# precondition's early return, has to be able to unwind.
 rehearsal_attention_file_fixture() {
   local repo="$1" identity="$2" title="$3" body="$4" num
+  REHEARSAL_ATTENTION_NUM=""
   num="$(gh api "repos/$repo/issues" -f title="$title" -f body="$body" \
     -f "assignees[]=$identity" -f "labels[]=claimed" -f "labels[]=attention" \
     --jq .number)" || return 1
-  REHEARSAL_ATTENTION_REPO="$repo"
-  REHEARSAL_ATTENTION_ISSUES="${REHEARSAL_ATTENTION_ISSUES:+$REHEARSAL_ATTENTION_ISSUES }$num"
-  printf '%s\n' "$num"
+  [ -n "$num" ] || return 1
+  rehearsal_attention_register_fixture "$repo" "$num"
+  REHEARSAL_ATTENTION_NUM="$num"
 }
 
 rehearsal_attention_close_fixture() {
@@ -349,20 +431,27 @@ rehearsal_attention_graded() {
 
 rehearsal_attention_dispatch_half() {
   local repo="$1" identity="$2" mark="$3"
-  local num filed_at issue_json pulls_json branches_json comments_json out
-  num="$(rehearsal_attention_file_fixture "$repo" "$identity" \
+  local num filed_at issue_json pulls_json comments_json out
+  local sources
+  # NOT a command substitution: the registry the EXIT trap reads is written by
+  # this call, and a subshell would discard it.
+  rehearsal_attention_file_fixture "$repo" "$identity" \
     "drill: attention dispatch $(date -u +%H%M%S)" \
-    "Drill demand: this claim has not started. Add a file named drill-attention.txt at the repo root containing one line, and open a pull request for it.")" \
+    "Drill demand: this claim has not started. Add a file named drill-attention.txt at the repo root containing one line, and open a pull request for it." \
     || { fail "attention: dispatch fixture filed"; return 1; }
+  num="$REHEARSAL_ATTENTION_NUM"
   ok "attention: dispatch fixture filed"
   filed_at="$(gh api "repos/$repo/issues/$num" --jq .created_at)" || filed_at=""
+  mapfile -t sources < <(rehearsal_attention_branch_sources "$repo" "$identity")
 
   # Fixture validity, not one of §4's five: the route branches on exactly these
   # two absences, so a fixture that already carried either would prove nothing.
   pulls_json="$(rehearsal_attention_open_prs_json "$repo" "$identity")" || pulls_json='[]'
-  branches_json="$(rehearsal_attention_branches_json "$repo")" || branches_json='[]'
+  rehearsal_attention_collect_branches "${sources[@]}"
   if rehearsal_attention_prs_for_issue_from_json "$num" "$pulls_json" >/dev/null \
-      && rehearsal_attention_build_branches_from_json "$num" "$branches_json" >/dev/null; then
+      && rehearsal_attention_build_branches_from_json "$num" \
+           "$REHEARSAL_ATTENTION_BRANCHES" \
+           "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE" >/dev/null; then
     ok "attention: dispatch fixture starts with no PR and no build branch"
   else
     fail "attention: dispatch fixture starts with no PR and no build branch"
@@ -381,7 +470,7 @@ rehearsal_attention_dispatch_half() {
     || issue_json=""
   [ -n "$issue_json" ] || issue_json='{}'
   pulls_json="$(rehearsal_attention_open_prs_json "$repo" "$identity")" || pulls_json='[]'
-  branches_json="$(rehearsal_attention_branches_json "$repo")" || branches_json='[]'
+  rehearsal_attention_collect_branches "${sources[@]}"
   comments_json="$(gh api "repos/$repo/issues/$num/comments?per_page=100" --paginate \
     | jq -s 'add // []')" || comments_json='[]'
 
@@ -392,7 +481,9 @@ rehearsal_attention_dispatch_half() {
   rehearsal_attention_graded "attention: dispatch opened no PR for the claim" \
     rehearsal_attention_prs_for_issue_from_json "$num" "$pulls_json" || dispatch_ok=1
   rehearsal_attention_graded "attention: dispatch pushed no build/$num-* branch" \
-    rehearsal_attention_build_branches_from_json "$num" "$branches_json" || dispatch_ok=1
+    rehearsal_attention_build_branches_from_json "$num" \
+      "$REHEARSAL_ATTENTION_BRANCHES" "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE" \
+    || dispatch_ok=1
   rehearsal_attention_graded "attention: dispatch left the issue ready" \
     rehearsal_attention_is_ready_from_json "$issue_json" || dispatch_ok=1
   rehearsal_attention_graded "attention: dispatch unassigned the identity" \
@@ -412,18 +503,28 @@ rehearsal_attention_dispatch_half() {
 rehearsal_attention_timeout_half() {
   local repo="$1" identity="$2" phrase="$3" capture="$4" budget="$5"
   local num first second run_log link comments_json alerts
-  num="$(rehearsal_attention_file_fixture "$repo" "$identity" \
+  # One capture PER INVOCATION. run_session stamps the log at second
+  # granularity (common.sh), so the two invocations name two different run
+  # logs; a shared capture graded with tail -1 would check the second
+  # invocation's alert against the first invocation's run log and red on a
+  # correct engine. The pair has to come from one invocation, and the first is
+  # the one the rest of this half already reads: post-once.sh dedups, so the
+  # comment left on the board — and the stable link derived from it — is its.
+  local capture_first="$capture.1" capture_second="$capture.2"
+  # NOT a command substitution — see rehearsal_attention_file_fixture.
+  rehearsal_attention_file_fixture "$repo" "$identity" \
     "drill: attention timeout $(date -u +%H%M%S)" \
-    "Drill demand: this pickup is expected to exceed its budget. No action is required of a reader.")" \
+    "Drill demand: this pickup is expected to exceed its budget. No action is required of a reader." \
     || { fail "attention: timeout fixture filed"; return 1; }
+  num="$REHEARSAL_ATTENTION_NUM"
   ok "attention: timeout fixture filed"
-  bx "rm -f '$capture'" >/dev/null 2>&1 || true
+  bx "rm -f '$capture_first' '$capture_second'" >/dev/null 2>&1 || true
 
   # Twice on purpose. rc 124 never commits the seen-ledger, so the demand is
   # still fresh the second time round — which is the only way to read whether
   # post-once.sh actually held the comment to one.
-  first="$(rehearsal_attention_timeout_invoke "$identity" "$budget" "$capture")" || true
-  second="$(rehearsal_attention_timeout_invoke "$identity" "$budget" "$capture")" || true
+  first="$(rehearsal_attention_timeout_invoke "$identity" "$budget" "$capture_first")" || true
+  second="$(rehearsal_attention_timeout_invoke "$identity" "$budget" "$capture_second")" || true
   if grep -Fq "outcome=TIMEOUT" <<<"$first" && grep -Fq "outcome=TIMEOUT" <<<"$second"; then
     ok "attention: both lowered invocations timed out"
   else
@@ -441,7 +542,8 @@ rehearsal_attention_timeout_half() {
 
   comments_json="$(gh api "repos/$repo/issues/$num/comments?per_page=100" --paginate \
     | jq -s 'add // []')" || comments_json='[]'
-  alerts="$(bx "cat '$capture' 2>/dev/null || true")" || alerts=""
+  # The FIRST invocation's alerts only — $run_log above is the first's.
+  alerts="$(bx "cat '$capture_first' 2>/dev/null || true")" || alerts=""
 
   local timeout_ok=0
   # §5, four rows.
@@ -462,7 +564,7 @@ rehearsal_attention_timeout_half() {
     rehearsal_attention_alert_names_run_log \
       "$phrase for $repo#$num" "$run_log" "$alerts" || timeout_ok=1
 
-  bx "rm -f '$capture'" >/dev/null 2>&1 || true
+  bx "rm -f '$capture_first' '$capture_second'" >/dev/null 2>&1 || true
   rehearsal_attention_close_fixture "$repo" "$num" || true
   return "$timeout_ok"
 }
@@ -499,7 +601,15 @@ rehearsal_attention_drill() {
   after="$(rehearsal_attention_installed_timeout | tr -d '\r')" || after=""
   if ! rehearsal_attention_graded "attention: installed pickup budget survives the lowered run" \
       rehearsal_attention_timeout_restored "$before" "$after" "$budget"; then
-    rehearsal_attention_verdict fail "the lowered pickup budget was not restored"
+    # Two different causes behind one red row: a budget that did not resolve at
+    # all is not a budget that was left lowered, and the summary line has to
+    # name the one that happened.
+    if rehearsal_attention_timeout_unresolved "$before" "$after"; then
+      rehearsal_attention_verdict fail \
+        "the installed pickup budget did not resolve (before=${before:-<unset>} after=${after:-<unset>})"
+    else
+      rehearsal_attention_verdict fail "the lowered pickup budget was not restored"
+    fi
     return 1
   fi
 
