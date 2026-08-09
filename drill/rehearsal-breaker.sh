@@ -26,9 +26,13 @@ rehearsal_breaker_combine_result() {
 }
 
 rehearsal_breaker_round_result() {
-  local current="$1" breaker_result="$2"
-  if [ "$breaker_result" -eq 1 ]; then
+  local current="$1" enabled="$2" breaker_result="$3"
+  if [ "$enabled" -eq 0 ]; then
+    printf '%s\n' "$current"
+  elif [ "$breaker_result" -eq 1 ]; then
     printf '1\n'
+  elif [ "$breaker_result" -eq 2 ] && [ "$current" -ne 1 ]; then
+    printf '2\n'
   else
     printf '%s\n' "$current"
   fi

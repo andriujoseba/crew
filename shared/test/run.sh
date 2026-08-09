@@ -453,13 +453,17 @@ t rehearsal-breaker-mixed-skip-then-pass-is-ok 0 \
   "$(rehearsal_breaker_combine_result \
     "$(rehearsal_breaker_combine_result 2 2)" 0)"
 t rehearsal-breaker-failure-reds-green-round 1 \
-  "$(rehearsal_breaker_round_result 0 1)"
+  "$(rehearsal_breaker_round_result 0 1 1)"
 t rehearsal-breaker-failure-keeps-red-round-red 1 \
-  "$(rehearsal_breaker_round_result 1 1)"
+  "$(rehearsal_breaker_round_result 1 1 1)"
+t rehearsal-breaker-incomplete-makes-green-round-incomplete 2 \
+  "$(rehearsal_breaker_round_result 0 1 2)"
 t rehearsal-breaker-pass-does-not-clear-incomplete-round 2 \
-  "$(rehearsal_breaker_round_result 2 0)"
+  "$(rehearsal_breaker_round_result 2 1 0)"
 t rehearsal-breaker-skip-does-not-clear-incomplete-round 2 \
-  "$(rehearsal_breaker_round_result 2 2)"
+  "$(rehearsal_breaker_round_result 2 1 2)"
+t rehearsal-breaker-opt-out-keeps-green-round-green 0 \
+  "$(rehearsal_breaker_round_result 0 0 2)"
 if rehearsal_breaker_attention_is_clear_from_json \
     '{"labels":[{"name":"claimed"}]}'; then
   r1=clear
@@ -517,7 +521,7 @@ if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
       "$ROOT/drill/rehearsal-breaker.sh" \
     && grep -Fq "rehearsal_breaker_drill \"\$SANDBOX\" \"\$inum\" \"\$ROLE\"" \
       "$ROOT/drill/rehearsal.sh" \
-    && grep -Fq 'overall="$(rehearsal_breaker_round_result "$overall" "$breaker_result")"' \
+    && grep -Fq '"$overall" "$BREAKER_DRILL" "$breaker_result")"' \
       "$ROOT/drill/rehearsal-all.sh"; then
   r1=wired
 else
@@ -1741,6 +1745,23 @@ agg_run() {  # $1 roles, then extra flags
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
     --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
 }
+
+# The breaker has its own enabled/incomplete partition: an enabled leg that no
+# role reached is INCOMPLETE and cannot leave a green exit status, while the
+# operator's explicit opt-out remains an announced green skip.
+agg_breaker_run() {
+  AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles '' \
+    --no-app --no-config-drill --no-install-drill --no-resume-drill \
+    --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
+}
+if agg_out="$(agg_breaker_run)"; then agg_rc=0; else agg_rc=$?; fi
+t breaker-agg-enabled-no-role-is-incomplete 1 \
+  "$(grep -cF 'INCOMPLETE breaker  (no role reached a box)' <<<"$agg_out")"
+t breaker-agg-enabled-no-role-rc 2 "$agg_rc"
+if agg_out="$(agg_breaker_run --no-breaker-drill)"; then agg_rc=0; else agg_rc=$?; fi
+t breaker-agg-opt-out-is-an-announced-skip 1 \
+  "$(grep -cF 'skip       breaker  (--no-breaker-drill)' <<<"$agg_out")"
+t breaker-agg-opt-out-rc 0 "$agg_rc"
 
 # The criterion: an unreachable operator channel produces a skip naming it and
 # NEVER a pass — in the round summary too, which is where a round's verdict is
