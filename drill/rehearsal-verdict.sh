@@ -16,8 +16,8 @@ rehearsal_verdict_record() {
 # Print "<verdict> <reason>" for the worst recorded line. No input returns 1;
 # an unknown token is evidence of a broken report and therefore grades fail.
 rehearsal_worst_verdict() {
-  local role verdict reason rank best="" best_reason="" best_rank=0
-  while read -r role verdict reason; do
+  local _role verdict reason rank best="" best_reason="" best_rank=0
+  while read -r _role verdict reason; do
     [ -n "$verdict" ] || continue
     case "$verdict" in
       ok)   rank=1 ;;

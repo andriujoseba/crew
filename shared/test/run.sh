@@ -351,6 +351,7 @@ REHEARSAL_RESUME_STATUS="$TMP/resume-leg-verdicts"
 (
   ROLE=builder
   REHEARSAL_RESUME_DRILL=1
+  skip() { :; }
   rehearsal_resume_drill owner/repo "" >/dev/null
 )
 t resume-verdict-unavailable-fixture-is-a-skip \
@@ -360,6 +361,7 @@ t resume-verdict-unavailable-fixture-is-a-skip \
 (
   ROLE=builder
   REHEARSAL_RESUME_DRILL=0
+  skip() { :; }
   rehearsal_resume_drill owner/repo 1 >/dev/null
 )
 t resume-verdict-opt-out-is-a-skip "builder skip --no-resume-drill" \
