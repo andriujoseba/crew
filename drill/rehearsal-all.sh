@@ -55,6 +55,10 @@ INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESUME_DRILL=1
 ATTENTION_DRILL=1
+# The board-audit leg is TRIAGE-role, unlike the two above it: the hygiene slot
+# it belongs to is triage-only (duty.sh), so its aggregate row is gated on the
+# triage role having run, never the builder's.
+ATTENTION_AUDIT_DRILL=1
 HYGIENE_DRILL=1
 BREAKER_DRILL=1
 # The notifier union leg runs inside every role's phase 2, so its verdict is
@@ -71,6 +75,7 @@ NOTIFY_STATUS=""
 # code also covers every other builder assertion and cannot classify this leg.
 RESUME_STATUS=""
 ATTENTION_STATUS=""
+ATTENTION_AUDIT_STATUS=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
 
@@ -92,6 +97,7 @@ while [ $# -gt 0 ]; do
     --no-install-drill) INSTALL_DRILL=0; shift ;;
     --no-resume-drill) RESUME_DRILL=0; shift ;;
     --no-attention-drill) ATTENTION_DRILL=0; shift ;;
+    --no-attention-audit-drill) ATTENTION_AUDIT_DRILL=0; shift ;;
     --no-hygiene-drill) HYGIENE_DRILL=0; shift ;;
     --no-breaker-drill) BREAKER_DRILL=0; shift ;;
     --no-notify-drill) NOTIFY_DRILL=0; shift ;;
@@ -100,7 +106,7 @@ while [ $# -gt 0 ]; do
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-attention-drill] [--no-hygiene-drill] [--no-notify-drill] [--no-breaker-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-attention-drill] [--no-attention-audit-drill] [--no-hygiene-drill] [--no-notify-drill] [--no-breaker-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -117,6 +123,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NOTIFY_STATUS="$(mktemp)"
 RESUME_STATUS="$(mktemp)"
 ATTENTION_STATUS="$(mktemp)"
+ATTENTION_AUDIT_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -140,6 +147,7 @@ cleanup_role_hygiene_files() {
   [ -z "${NOTIFY_STATUS:-}" ] || rm -f -- "$NOTIFY_STATUS"
   [ -z "${RESUME_STATUS:-}" ] || rm -f -- "$RESUME_STATUS"
   [ -z "${ATTENTION_STATUS:-}" ] || rm -f -- "$ATTENTION_STATUS"
+  [ -z "${ATTENTION_AUDIT_STATUS:-}" ] || rm -f -- "$ATTENTION_AUDIT_STATUS"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -162,6 +170,8 @@ for role in $ROLES; do
   REHEARSAL_RESUME_STATUS="$RESUME_STATUS" \
   REHEARSAL_ATTENTION_DRILL="$ATTENTION_DRILL" \
   REHEARSAL_ATTENTION_STATUS="$ATTENTION_STATUS" \
+  REHEARSAL_ATTENTION_AUDIT_DRILL="$ATTENTION_AUDIT_DRILL" \
+  REHEARSAL_ATTENTION_AUDIT_STATUS="$ATTENTION_AUDIT_STATUS" \
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
   REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
   REHEARSAL_BREAKER_DRILL="$BREAKER_DRILL" \
@@ -256,6 +266,31 @@ elif [ "$ATTENTION_VERDICT" = skip ]; then
   [ "$overall" -eq 1 ] || overall=2
 else
   SUMMARY+=("FAIL       attention  ($ATTENTION_WHY)")
+  overall=1
+fi
+
+# The triage-role board-audit leg (#441). Same partition as every row above:
+# `skip` is an omission the OPERATOR asked for, INCOMPLETE is one the round
+# merely discovered, and a leg that never ran is never an `ok`.
+ATTENTION_AUDIT_VERDICT="$(rehearsal_worst_verdict "$(cat "$ATTENTION_AUDIT_STATUS" 2>/dev/null)")" \
+  || ATTENTION_AUDIT_VERDICT=""
+ATTENTION_AUDIT_WHY="${ATTENTION_AUDIT_VERDICT#* }"
+ATTENTION_AUDIT_VERDICT="${ATTENTION_AUDIT_VERDICT%% *}"
+if [ "$ATTENTION_AUDIT_DRILL" -eq 0 ]; then
+  SUMMARY+=("skip       attention-audit  (--no-attention-audit-drill)")
+elif [[ " $ROLES " != *" triage "* ]]; then
+  SUMMARY+=("INCOMPLETE attention-audit  (triage role omitted)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ -z "$ATTENTION_AUDIT_VERDICT" ]; then
+  SUMMARY+=("INCOMPLETE attention-audit  (triage phase 2 never reached the leg)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ "$ATTENTION_AUDIT_VERDICT" = ok ]; then
+  SUMMARY+=("ok         attention-audit  (both shapes reported, not repaired, alerts on transition)")
+elif [ "$ATTENTION_AUDIT_VERDICT" = skip ]; then
+  SUMMARY+=("INCOMPLETE attention-audit  (leg skipped: $ATTENTION_AUDIT_WHY)")
+  [ "$overall" -eq 1 ] || overall=2
+else
+  SUMMARY+=("FAIL       attention-audit  ($ATTENTION_AUDIT_WHY)")
   overall=1
 fi
 
