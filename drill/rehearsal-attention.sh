@@ -161,7 +161,11 @@ rehearsal_attention_timeout_names_link_from_json() {
 # assertion that read the path from the body it is checking would only prove
 # the body agrees with itself.
 rehearsal_attention_stable_link_for() {
-  local repo="$1" num="$2" run_log="$3" slug="${1//\//__}"
+  local repo="$1" num="$2" run_log="$3" slug
+  # Its own statement: a name declared by `local` is not yet readable by a
+  # later assignment in the same `local`, so folding this in silently derived
+  # `attention-_77-latest.log` and the row compared two wrong paths.
+  slug="${repo//\//__}"
   [ -n "$run_log" ] || return 1
   printf '%s/attention-%s_%s-latest.log\n' "${run_log%/*}" "$slug" "$num"
 }

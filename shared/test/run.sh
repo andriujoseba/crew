@@ -1003,6 +1003,36 @@ else
 fi
 t attention-all-opt-out-and-summary-wired wired "$r1"
 
+# Neither mark is retyped in the leg. Staged against the real engine source
+# with bx() pointed at it in place of the installed tree: a rename in the
+# module or the conf must move this leg's subject with it, and the loader is
+# the row that says so.
+# shellcheck disable=SC2088  # a literal box path, matched not expanded
+ATT_BOXPATH='~/duty/'
+bx() { bash -c "${1//$ATT_BOXPATH/$ROOT/shared/}"; }
+ok() { :; }
+fail() { :; }
+rehearsal_attention_load_installed_marks
+t attention-marks-resolve-from-the-engine-source "present present" \
+  "$([ -n "$REHEARSAL_ATTENTION_MARK_PICKUP" ] && printf present || printf MISSING) $([ -n "$REHEARSAL_ATTENTION_TIMEOUT_PHRASE" ] && printf present || printf MISSING)"
+t attention-pickup-mark-is-the-confs-own 1 \
+  "$(grep -cF "MARK_PICKUP=\"$REHEARSAL_ATTENTION_MARK_PICKUP\"" \
+    "$ROOT/shared/conf/fleet.defaults.conf")"
+t attention-timeout-phrase-is-the-modules-own 1 \
+  "$(grep -cF "$REHEARSAL_ATTENTION_TIMEOUT_PHRASE;" \
+    "$ROOT/shared/lib/duty-attention.sh")"
+unset -f bx ok fail
+# An engine this leg can no longer read is a red row, never a silent pass on
+# an empty needle that every body would then contain.
+ATT_OUT="$(
+  bx() { printf '\n'; }
+  ok() { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  rehearsal_attention_load_installed_marks
+)"
+t attention-unreadable-marks-red 1 \
+  "$(grep -cFx 'FAIL attention: installed pickup mark and timeout phrase resolve' <<<"$ATT_OUT")"
+
 # --- rehearsal boot-check verdict: what the gate SAID, not that it ran (#427) ---
 # The drill's assertion was `test -s ~/duty/boot-check.log`, which passes on a
 # FAILED probe line and on a log full of WARN. Every mutation below is staged
