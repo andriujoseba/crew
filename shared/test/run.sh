@@ -1774,6 +1774,44 @@ AUD_OUT="$(aud_row 'attention-audit: both fixtures removed from the board' \
 t attention-audit-closed-but-flagged-reds 1 \
   "$(grep -cFx 'FAIL attention-audit: both fixtures removed from the board' <<<"$AUD_OUT")"
 
+# §7 in the rc=2 branch: an UNREADABLE read is the case where naming what was
+# read matters most, and a predicate that returned 2 with no stdout printed a
+# bare red there — a row whose read is the suspect, saying nothing about it.
+AUD_JUNK='{"labels":[' # a truncated response, the realistic shape of the fault
+AUD_OUT="$(aud_row 'attention-audit: both flags still set' \
+  rehearsal_attention_audit_flags_intact "$AUD_MARK" "$AUD_JUNK" "$AUD_ISSUE_FLAGGED")"
+t attention-audit-unreadable-pr-json-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: both flags still set' <<<"$AUD_OUT")"
+t attention-audit-unreadable-pr-json-red-names-what-it-had 1 \
+  "$(grep -cF 'read: unreadable pull request JSON: {"labels":[' <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: both flags still set' \
+  rehearsal_attention_audit_flags_intact "$AUD_MARK" "$AUD_PR_FLAGGED" "$AUD_JUNK")"
+t attention-audit-unreadable-issue-json-red-names-which-read-failed 1 \
+  "$(grep -cF 'read: unreadable unassigned issue JSON: {"labels":[' <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: the unassigned issue is still unassigned' \
+  rehearsal_attention_audit_still_unassigned "$AUD_JUNK")"
+t attention-audit-unreadable-assignee-read-names-what-it-had 1 \
+  "$(grep -cF 'read: unreadable unassigned issue JSON: {"labels":[' <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: no comment by the identity on either fixture' \
+  rehearsal_attention_audit_no_identity_comment "$AUD_IDENTITY" '[{' '[]')"
+t attention-audit-unreadable-comments-red-names-what-it-had 1 \
+  "$(grep -cF 'read: unreadable pull request comments: [{' <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: both fixtures removed from the board' \
+  rehearsal_attention_audit_fixtures_removed "$AUD_MARK" "$AUD_JUNK" "$AUD_GONE")"
+t attention-audit-unreadable-re-read-red-names-what-it-had 1 \
+  "$(grep -cF 'read: unreadable pull request JSON: {"labels":[' <<<"$AUD_OUT")"
+# The flattening is what keeps the line a name and not a payload: an API
+# response arrives pretty-printed, and one `read:` line per JSON line would
+# bury the row it belongs to.
+AUD_OUT="$(rehearsal_attention_audit_unreadable 'pull request JSON' \
+  "$(printf '{\n  "labels": [\n')")"
+t attention-audit-unreadable-flattens-onto-one-line 1 \
+  "$(wc -l <<<"$AUD_OUT" | tr -d ' ')"
+# jq's own parse error goes to a terminal where nothing correlates it with a
+# row; the `read:` line above is the report the row carries.
+AUD_OUT="$(rehearsal_attention_audit_labels_from_json "$AUD_JUNK" 2>&1 >/dev/null)"
+t attention-audit-unreadable-read-is-quiet-on-stderr '' "$AUD_OUT"
+
 # The cleanup CALLS, staged under a stubbed gh(): both flags dropped, both
 # objects closed, the fixture branch deleted. This is the EXIT-trap path, which
 # no drill host is needed to exercise.
@@ -1905,6 +1943,124 @@ t attention-audit-a-moved-clock-reds 1 \
   "$(grep -cFx "FAIL attention-audit: the hourly slot's clock is handed back" <<<"$AUD_OUT")"
 t attention-audit-moved-clock-red-quotes-both-readings 1 \
   "$(grep -cF 'read: hygiene clock before=1754740000 after=1754743600' <<<"$AUD_OUT")"
+
+# --- the clock's FAILURE path: an interrupted round hands it back too -------
+#
+# The leg's own returns are not the only way out. rehearsal.sh runs under a
+# trap and its INT/TERM path exits through cleanup_all, which reaches this
+# leg only via rehearsal_attention_audit_cleanup — so a round killed between
+# the deferral and the leg's restore would otherwise leave the retained triage
+# box carrying a clock stamped into this round, postponing its next hourly
+# hygiene slot by up to one HYGIENE_INTERVAL. Every case below drives the REAL
+# cleanup, with bx() recording the box-side script it is handed.
+AUD_CLOCK_CALLS="$TMP/attention-audit-clock-calls"
+: >"$AUD_CLOCK_CALLS"
+(
+  bx() { printf '%s\n' "$1" >>"$AUD_CLOCK_CALLS"; }
+  # EMPTY registry, deliberately: the clock is armed before the board is read
+  # and long before any fixture exists, so this is the state the interrupt
+  # window actually opens in — and a restore placed behind the cleanup's
+  # empty-registry return would answer 0 here and hand the clock back never.
+  # shellcheck disable=SC2030  # the empty registry is this subshell's fixture
+  REHEARSAL_ATTENTION_AUDIT_REPO=""
+  rehearsal_attention_audit_arm_clock 1754740000
+  rehearsal_attention_audit_defer_hygiene >/dev/null
+  rehearsal_attention_audit_cleanup
+)
+t attention-audit-an-interrupt-after-the-deferral-restores-the-clock 1 \
+  "$(grep -cF "printf '%s\\n' '1754740000'" "$AUD_CLOCK_CALLS" | tr -d ' ')"
+# ...and the box that had NO clock is handed back no clock, on this path too:
+# writing an empty file where there was none is its own mutation of the slot.
+: >"$AUD_CLOCK_CALLS"
+(
+  bx() { printf '%s\n' "$1" >>"$AUD_CLOCK_CALLS"; }
+  # shellcheck disable=SC2030  # the empty registry is this subshell's fixture
+  REHEARSAL_ATTENTION_AUDIT_REPO=""
+  rehearsal_attention_audit_arm_clock ''
+  rehearsal_attention_audit_defer_hygiene >/dev/null
+  rehearsal_attention_audit_cleanup
+)
+# shellcheck disable=SC2016  # the needle is box-side source text, not an expansion
+t attention-audit-an-interrupt-restores-an-absent-clock-by-removing-it 1 \
+  "$(grep -cF 'rm -f "$HOME/duty/.hygiene-last"' "$AUD_CLOCK_CALLS" | tr -d ' ')"
+# Idempotent, because BOTH doors are used on a normal round: the leg restores
+# on its way out and the trap fires afterwards. A second write would land on a
+# clock the box may legitimately have re-stamped in between, which is the
+# defect this fix exists to remove, arriving from the other side.
+: >"$AUD_CLOCK_CALLS"
+(
+  bx() { printf '%s\n' "$1" >>"$AUD_CLOCK_CALLS"; }
+  # shellcheck disable=SC2030  # the empty registry is this subshell's fixture
+  REHEARSAL_ATTENTION_AUDIT_REPO=""
+  rehearsal_attention_audit_arm_clock 1754740000
+  rehearsal_attention_audit_restore_clock
+  rehearsal_attention_audit_cleanup
+  rehearsal_attention_audit_cleanup
+)
+t attention-audit-the-clock-is-handed-back-once-however-many-unwinds 1 \
+  "$(grep -cF "printf '%s\\n' '1754740000'" "$AUD_CLOCK_CALLS" | tr -d ' ')"
+# A round that never reached the leg must not write a clock at all. The trap
+# fires on EVERY round, including the builder's and the reviewer's, and an
+# unconditional restore would stamp `.hygiene-last` on a box this leg never
+# touched — a scheduling mutation invented by the cleanup itself.
+: >"$AUD_CLOCK_CALLS"
+(
+  bx() { printf '%s\n' "$1" >>"$AUD_CLOCK_CALLS"; }
+  # shellcheck disable=SC2030  # the empty registry is this subshell's fixture
+  REHEARSAL_ATTENTION_AUDIT_REPO=""
+  REHEARSAL_ATTENTION_AUDIT_CLOCK_ARMED=0
+  rehearsal_attention_audit_cleanup
+)
+t attention-audit-an-unarmed-cleanup-touches-no-clock 0 \
+  "$(wc -l <"$AUD_CLOCK_CALLS" | tr -d ' ')"
+# A restore that FAILED stays armed, so the trap's call is a retry and not a
+# no-op. Disarming on the attempt rather than on the result would hand the box
+# back a moved clock and say nothing about it.
+: >"$AUD_CLOCK_CALLS"
+(
+  # shellcheck disable=SC2317  # invoked indirectly, by the restore under test
+  bx() { printf '%s\n' "$1" >>"$AUD_CLOCK_CALLS"; return 1; }
+  # shellcheck disable=SC2030  # the empty registry is this subshell's fixture
+  REHEARSAL_ATTENTION_AUDIT_REPO=""
+  rehearsal_attention_audit_arm_clock 1754740000
+  rehearsal_attention_audit_restore_clock >/dev/null 2>&1 || true
+  rehearsal_attention_audit_cleanup
+)
+t attention-audit-a-failed-restore-is-retried-by-the-trap 2 \
+  "$(grep -cF "printf '%s\\n' '1754740000'" "$AUD_CLOCK_CALLS" | tr -d ' ')"
+# The arming precedes the WRITE it unwinds, in the leg's own source order. An
+# arm placed after the deferral leaves a window whose whole width is the write
+# the unwind exists for.
+# shellcheck disable=SC2016  # match the literal call site in the leg's source
+AUD_ARM_LINE="$(grep -nF 'rehearsal_attention_audit_arm_clock "$clock_before"' \
+  "$ROOT/drill/rehearsal-attention-audit.sh" | head -1 | cut -d: -f1)"
+AUD_DEFER_CALL_LINE="$(grep -nF 'rehearsal_attention_audit_defer_hygiene >/dev/null' \
+  "$ROOT/drill/rehearsal-attention-audit.sh" | head -1 | cut -d: -f1)"
+if [ -n "$AUD_ARM_LINE" ] && [ -n "$AUD_DEFER_CALL_LINE" ] \
+    && [ "$AUD_ARM_LINE" -lt "$AUD_DEFER_CALL_LINE" ]; then
+  r1=armed-first
+else
+  r1=WRONG
+fi
+t attention-audit-the-clock-is-armed-before-it-is-deferred armed-first "$r1"
+# ...and the unwind sits ahead of the cleanup's empty-registry return, which is
+# the state the interrupt window opens in.
+AUD_CLEANUP_SRC="$TMP/attention-audit-cleanup-src"
+awk '/^rehearsal_attention_audit_cleanup\(\) \{$/,/^\}$/' \
+  "$ROOT/drill/rehearsal-attention-audit.sh" >"$AUD_CLEANUP_SRC"
+AUD_RESTORE_LINE="$(grep -nF 'rehearsal_attention_audit_restore_clock' \
+  "$AUD_CLEANUP_SRC" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal guard text, not an expansion
+AUD_GUARD_LINE="$(grep -nF '[ -n "$repo" ] || return 0' \
+  "$AUD_CLEANUP_SRC" | head -1 | cut -d: -f1)"
+if [ -n "$AUD_RESTORE_LINE" ] && [ -n "$AUD_GUARD_LINE" ] \
+    && [ "$AUD_RESTORE_LINE" -lt "$AUD_GUARD_LINE" ]; then
+  r1=ahead
+else
+  r1=WRONG
+fi
+t attention-audit-the-unwind-precedes-the-empty-registry-return ahead "$r1"
+
 # The state file the transition rows read is cleared before call 1, or a stale
 # non-empty set makes call 1 emit ✅ and the clean-board row reds on a correct
 # engine.
