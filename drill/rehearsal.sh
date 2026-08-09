@@ -172,6 +172,9 @@ cleanup_all() {
     if declare -F rehearsal_breaker_cleanup >/dev/null 2>&1; then
       rehearsal_breaker_cleanup || true
     fi
+    if declare -F rehearsal_attention_cleanup >/dev/null 2>&1; then
+      rehearsal_attention_cleanup || true
+    fi
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
         "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
@@ -655,6 +658,8 @@ else
   elif [ "$ROLE" = "builder" ]; then
   # shellcheck source=drill/rehearsal-resume.sh
   . "$ROOT/drill/rehearsal-resume.sh"
+  # shellcheck source=drill/rehearsal-attention.sh
+  . "$ROOT/drill/rehearsal-attention.sh"
   # -- builder: an unassigned `ready` issue must become a PR --
   # ready+ASSIGNED is deliberately NOT pickable (an assignee means mid-claim;
   # counting those launched sessions with nothing to do). The fixture must
@@ -783,6 +788,15 @@ else
       rehearsal_resume_drill "$SANDBOX" ""
     fi
   fi
+
+  # -- attention: dispatch without code, and the timed-out pickup report --
+  # Beside the wake rows above, not instead of them: those read the ACK, this
+  # reads what #301 shipped behind it. Last in the builder block and outside
+  # the build-slot branch — it needs the fork and the builder route, not the
+  # fixture PR, and it files a claim it expects the engine to RELEASE, so an
+  # earlier position would leave a ready unassigned fixture standing across
+  # every leg above it.
+  rehearsal_attention_drill "$SANDBOX" "$ME2"
 
   else
   # -- review round through the gates --

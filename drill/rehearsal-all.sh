@@ -54,6 +54,7 @@ INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESUME_DRILL=1
+ATTENTION_DRILL=1
 HYGIENE_DRILL=1
 BREAKER_DRILL=1
 # The notifier union leg runs inside every role's phase 2, so its verdict is
@@ -69,6 +70,7 @@ NOTIFY_STATUS=""
 # The builder-only resume leg writes its own verdict here. Its role's exit
 # code also covers every other builder assertion and cannot classify this leg.
 RESUME_STATUS=""
+ATTENTION_STATUS=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
 
@@ -89,6 +91,7 @@ while [ $# -gt 0 ]; do
     --no-config-drill) CONFIG_DRILL=0; shift ;;
     --no-install-drill) INSTALL_DRILL=0; shift ;;
     --no-resume-drill) RESUME_DRILL=0; shift ;;
+    --no-attention-drill) ATTENTION_DRILL=0; shift ;;
     --no-hygiene-drill) HYGIENE_DRILL=0; shift ;;
     --no-breaker-drill) BREAKER_DRILL=0; shift ;;
     --no-notify-drill) NOTIFY_DRILL=0; shift ;;
@@ -97,7 +100,7 @@ while [ $# -gt 0 ]; do
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-hygiene-drill] [--no-notify-drill] [--no-breaker-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-attention-drill] [--no-hygiene-drill] [--no-notify-drill] [--no-breaker-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -113,6 +116,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/rehearsal-notify.sh"
 NOTIFY_STATUS="$(mktemp)"
 RESUME_STATUS="$(mktemp)"
+ATTENTION_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -135,6 +139,7 @@ cleanup_role_hygiene_files() {
   # its temp file every round. One handler, both legs' temporaries.
   [ -z "${NOTIFY_STATUS:-}" ] || rm -f -- "$NOTIFY_STATUS"
   [ -z "${RESUME_STATUS:-}" ] || rm -f -- "$RESUME_STATUS"
+  [ -z "${ATTENTION_STATUS:-}" ] || rm -f -- "$ATTENTION_STATUS"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -155,6 +160,8 @@ for role in $ROLES; do
   printf '2\n' >"$role_breaker_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
   REHEARSAL_RESUME_STATUS="$RESUME_STATUS" \
+  REHEARSAL_ATTENTION_DRILL="$ATTENTION_DRILL" \
+  REHEARSAL_ATTENTION_STATUS="$ATTENTION_STATUS" \
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
   REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
   REHEARSAL_BREAKER_DRILL="$BREAKER_DRILL" \
@@ -227,6 +234,28 @@ elif [ "$RESUME_VERDICT" = skip ]; then
   [ "$overall" -eq 1 ] || overall=2
 else
   SUMMARY+=("FAIL       resume  ($RESUME_WHY)")
+  overall=1
+fi
+
+ATTENTION_VERDICT="$(rehearsal_worst_verdict "$(cat "$ATTENTION_STATUS" 2>/dev/null)")" \
+  || ATTENTION_VERDICT=""
+ATTENTION_WHY="${ATTENTION_VERDICT#* }"
+ATTENTION_VERDICT="${ATTENTION_VERDICT%% *}"
+if [ "$ATTENTION_DRILL" -eq 0 ]; then
+  SUMMARY+=("skip       attention  (--no-attention-drill)")
+elif [[ " $ROLES " != *" builder "* ]]; then
+  SUMMARY+=("INCOMPLETE attention  (builder role omitted)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ -z "$ATTENTION_VERDICT" ]; then
+  SUMMARY+=("INCOMPLETE attention  (builder phase 2 never reached the leg)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ "$ATTENTION_VERDICT" = ok ]; then
+  SUMMARY+=("ok         attention  (dispatch without code + timeout report)")
+elif [ "$ATTENTION_VERDICT" = skip ]; then
+  SUMMARY+=("INCOMPLETE attention  (leg skipped: $ATTENTION_WHY)")
+  [ "$overall" -eq 1 ] || overall=2
+else
+  SUMMARY+=("FAIL       attention  ($ATTENTION_WHY)")
   overall=1
 fi
 
