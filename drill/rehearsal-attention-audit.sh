@@ -45,6 +45,13 @@ REHEARSAL_ATTENTION_AUDIT_REPO=""
 REHEARSAL_ATTENTION_AUDIT_PR=""
 REHEARSAL_ATTENTION_AUDIT_ISSUE=""
 REHEARSAL_ATTENTION_AUDIT_BRANCH=""
+# The hourly slot's clock is registry state too, for the same reason the
+# fixtures are: the leg MOVES it, so an interrupted round has to be able to
+# hand it back from the trap, and a function-local can only be read by the
+# returns the function itself reaches. Armed flag separate from the value,
+# because the value a box legitimately has is sometimes the empty string.
+REHEARSAL_ATTENTION_AUDIT_CLOCK_BEFORE=""
+REHEARSAL_ATTENTION_AUDIT_CLOCK_ARMED=0
 
 rehearsal_attention_audit_verdict() {
   rehearsal_verdict_record "${REHEARSAL_ATTENTION_AUDIT_STATUS:-}" "$@"
@@ -158,8 +165,23 @@ rehearsal_attention_audit_alert_names_both() {
 # forbids — and a repaired board reports its malformed set correctly on the way
 # past, so §3 alone cannot see it.
 
+# An UNPARSEABLE read still names what it had. §7 says a red names what it
+# read, and the rc=2 branches below are precisely the case where the read is
+# the suspect — a row that reds there with no `read:` line at all degrades in
+# the one place the line is worth most. Flattened onto one line and bounded,
+# because the raw bytes are a whole API response and the reader wants the
+# shape, not the payload.
+rehearsal_attention_audit_unreadable() {
+  local what="$1" raw="$2" flat
+  flat="$(printf '%s' "$raw" | tr '\n\t' '  ')"
+  printf 'unreadable %s: %.200s\n' "$what" "${flat:-<empty>}"
+}
+
+# jq's own stderr is suppressed throughout: the parse error goes to the round's
+# terminal where nothing correlates it with a row, and the line above is the
+# report the row actually carries.
 rehearsal_attention_audit_labels_from_json() {
-  jq -r '[.labels[].name] | sort | join(" ")' <<<"$1"
+  jq -r '[.labels[].name] | sort | join(" ")' 2>/dev/null <<<"$1"
 }
 
 # Membership through jq, never a grep over the joined list: `grep -w attention`
@@ -168,13 +190,15 @@ rehearsal_attention_audit_labels_from_json() {
 # read as intact, which is the one direction this row must not be wrong in.
 rehearsal_attention_audit_has_flag_from_json() {
   jq -e --arg mark "$1" '([.labels[].name] | index($mark)) != null' \
-    >/dev/null <<<"$2"
+    >/dev/null 2>&1 <<<"$2"
 }
 
 rehearsal_attention_audit_flags_intact() {
   local mark="$1" pr_json="$2" issue_json="$3" pr_labels issue_labels
-  pr_labels="$(rehearsal_attention_audit_labels_from_json "$pr_json")" || return 2
-  issue_labels="$(rehearsal_attention_audit_labels_from_json "$issue_json")" || return 2
+  pr_labels="$(rehearsal_attention_audit_labels_from_json "$pr_json")" || {
+    rehearsal_attention_audit_unreadable 'pull request JSON' "$pr_json"; return 2; }
+  issue_labels="$(rehearsal_attention_audit_labels_from_json "$issue_json")" || {
+    rehearsal_attention_audit_unreadable 'unassigned issue JSON' "$issue_json"; return 2; }
   printf 'pull request: %s\n' "${pr_labels:-<no labels>}"
   printf 'unassigned issue: %s\n' "${issue_labels:-<no labels>}"
   rehearsal_attention_audit_has_flag_from_json "$mark" "$pr_json" \
@@ -183,7 +207,8 @@ rehearsal_attention_audit_flags_intact() {
 
 rehearsal_attention_audit_still_unassigned() {
   local issue_json="$1" assignees
-  assignees="$(jq -r '[.assignees[].login] | sort | join(" ")' <<<"$issue_json")" || return 2
+  assignees="$(jq -r '[.assignees[].login] | sort | join(" ")' 2>/dev/null <<<"$issue_json")" || {
+    rehearsal_attention_audit_unreadable 'unassigned issue JSON' "$issue_json"; return 2; }
   printf '%s\n' "${assignees:-<unassigned>}"
   [ -z "$assignees" ]
 }
@@ -196,13 +221,15 @@ rehearsal_attention_audit_still_unassigned() {
 rehearsal_attention_audit_comment_count() {
   local identity="$1" comments_json="$2"
   jq -r --arg identity "$identity" \
-    '[ .[] | select(.user.login == $identity) ] | length' <<<"$comments_json"
+    '[ .[] | select(.user.login == $identity) ] | length' 2>/dev/null <<<"$comments_json"
 }
 
 rehearsal_attention_audit_no_identity_comment() {
   local identity="$1" pr_comments="$2" issue_comments="$3" on_pr on_issue
-  on_pr="$(rehearsal_attention_audit_comment_count "$identity" "$pr_comments")" || return 2
-  on_issue="$(rehearsal_attention_audit_comment_count "$identity" "$issue_comments")" || return 2
+  on_pr="$(rehearsal_attention_audit_comment_count "$identity" "$pr_comments")" || {
+    rehearsal_attention_audit_unreadable 'pull request comments' "$pr_comments"; return 2; }
+  on_issue="$(rehearsal_attention_audit_comment_count "$identity" "$issue_comments")" || {
+    rehearsal_attention_audit_unreadable 'unassigned issue comments' "$issue_comments"; return 2; }
   printf '%s comment(s) on the pull request, %s on the unassigned issue\n' \
     "${on_pr:-0}" "${on_issue:-0}"
   [ "${on_pr:-0}" -eq 0 ] && [ "${on_issue:-0}" -eq 0 ]
@@ -215,10 +242,17 @@ rehearsal_attention_audit_no_identity_comment() {
 rehearsal_attention_audit_fixtures_removed() {
   local mark="$1" pr_json="$2" issue_json="$3" pr_state issue_state
   local pr_labels issue_labels bad=""
-  pr_state="$(jq -r '.state // "?"' <<<"$pr_json")" || return 2
-  issue_state="$(jq -r '.state // "?"' <<<"$issue_json")" || return 2
-  pr_labels="$(rehearsal_attention_audit_labels_from_json "$pr_json")" || return 2
-  issue_labels="$(rehearsal_attention_audit_labels_from_json "$issue_json")" || return 2
+  # Same §7 treatment as the three §4 predicates above: this row's whole job is
+  # to prove the cleanup off the board, so a red on an unreadable re-read that
+  # named nothing would be the least legible red in the leg.
+  pr_state="$(jq -r '.state // "?"' 2>/dev/null <<<"$pr_json")" || {
+    rehearsal_attention_audit_unreadable 'pull request JSON' "$pr_json"; return 2; }
+  issue_state="$(jq -r '.state // "?"' 2>/dev/null <<<"$issue_json")" || {
+    rehearsal_attention_audit_unreadable 'unassigned issue JSON' "$issue_json"; return 2; }
+  pr_labels="$(rehearsal_attention_audit_labels_from_json "$pr_json")" || {
+    rehearsal_attention_audit_unreadable 'pull request JSON' "$pr_json"; return 2; }
+  issue_labels="$(rehearsal_attention_audit_labels_from_json "$issue_json")" || {
+    rehearsal_attention_audit_unreadable 'unassigned issue JSON' "$issue_json"; return 2; }
   printf 'pull request: %s [%s]\n' "$pr_state" "${pr_labels:-<no labels>}"
   printf 'unassigned issue: %s [%s]\n' "$issue_state" "${issue_labels:-<no labels>}"
   [ "$pr_state" = closed ] || bad="pull request still $pr_state"
@@ -257,6 +291,12 @@ rehearsal_attention_audit_hygiene_clock_restored() {
 # leave the interval moved. Nothing on the box is edited — .hygiene-last is
 # runtime state duty.sh writes on every hygiene run — and the restore is proved
 # by re-reading it, not asserted.
+#
+# "Does not leave the interval moved" includes the rounds this leg never
+# finishes. The saved value lives in the registry above and is handed back from
+# rehearsal_attention_audit_cleanup, so rehearsal.sh's INT/TERM path unwinds it
+# through the same door it removes the fixtures through — see
+# rehearsal_attention_audit_restore_clock.
 rehearsal_attention_audit_hygiene_clock() {
   # shellcheck disable=SC2016  # HOME belongs to the box
   bx 'cat "$HOME/duty/.hygiene-last" 2>/dev/null || true' | tr -d '\r\n'
@@ -280,6 +320,33 @@ rehearsal_attention_audit_restore_hygiene() {
     return 0
   fi
   bx "printf '%s\n' '$before' > \"\$HOME/duty/.hygiene-last\""
+}
+
+# Arm the unwind BEFORE the deferral writes, never after. An interrupt landing
+# inside the write itself is then covered too, and arming on a clock the leg
+# has not yet moved costs one restore of the value the box already holds.
+rehearsal_attention_audit_arm_clock() {
+  REHEARSAL_ATTENTION_AUDIT_CLOCK_BEFORE="$1"
+  REHEARSAL_ATTENTION_AUDIT_CLOCK_ARMED=1
+}
+
+# The unwind, idempotent by the armed flag: the leg's own returns and the EXIT
+# trap both call it, and whichever gets there first is the one that writes.
+# Without this the clock's guarantee is narrower than the fixtures': an INT/TERM
+# between the deferral and the leg's restore leaves a retained triage box
+# carrying a clock stamped into this round, postponing its next hourly hygiene
+# slot by up to one HYGIENE_INTERVAL — the leg mutating the very scheduling §1
+# puts outside its subject.
+#
+# Disarmed only on a restore that SUCCEEDED. A failed bx leaves the flag up so
+# the trap's later call is a retry rather than a no-op; the alternative hands
+# the box back a moved clock and says nothing about it.
+rehearsal_attention_audit_restore_clock() {
+  [ "${REHEARSAL_ATTENTION_AUDIT_CLOCK_ARMED:-0}" -eq 1 ] || return 0
+  rehearsal_attention_audit_restore_hygiene \
+    "${REHEARSAL_ATTENTION_AUDIT_CLOCK_BEFORE:-}" || return 1
+  REHEARSAL_ATTENTION_AUDIT_CLOCK_ARMED=0
+  return 0
 }
 
 # The suppression state the transition rows read. Removed before call 1 so the
@@ -426,9 +493,15 @@ rehearsal_attention_audit_neither_visible() {
 
 # Every exit path, including a red: called from the leg on its way out AND from
 # rehearsal.sh's EXIT trap. Idempotent — the second call finds the objects
-# already closed and the ref already gone, and says nothing about it.
+# already closed, the ref already gone and the clock already handed back, and
+# says nothing about it.
 rehearsal_attention_audit_cleanup() {
   local repo="${REHEARSAL_ATTENTION_AUDIT_REPO:-}" num
+  # FIRST, and ahead of the empty-registry return below. The clock is armed
+  # before the board is even read, so the interrupt window opens while the
+  # fixture registry is still empty — a restore behind that return would miss
+  # exactly the window it exists for.
+  rehearsal_attention_audit_restore_clock >/dev/null 2>&1 || true
   [ -n "$repo" ] || return 0
   rehearsal_attention_audit_clear_flags
   for num in "${REHEARSAL_ATTENTION_AUDIT_PR:-}" "${REHEARSAL_ATTENTION_AUDIT_ISSUE:-}"; do
@@ -472,6 +545,10 @@ rehearsal_attention_audit_drill() {
   bx "rm -f '$capture'.[1-4]" >/dev/null 2>&1 || true
 
   clock_before="$(rehearsal_attention_audit_hygiene_clock)"
+  # Registered before the write it unwinds, so cleanup_all's EXIT path can hand
+  # the clock back from anywhere after this line. NOT a command substitution:
+  # the registry would go with the subshell, same as the fixtures'.
+  rehearsal_attention_audit_arm_clock "$clock_before"
   rehearsal_attention_audit_defer_hygiene >/dev/null 2>&1 || true
   rehearsal_attention_audit_clear_state >/dev/null 2>&1 || true
 
@@ -483,7 +560,7 @@ rehearsal_attention_audit_drill() {
   else
     echo "  read: $(rehearsal_attention_audit_flagged_numbers "$repo" | tr '\n' ' ')"
     fail "attention-audit: sandbox starts with no flagged object"
-    rehearsal_attention_audit_restore_hygiene "$clock_before" >/dev/null 2>&1 || true
+    rehearsal_attention_audit_restore_clock >/dev/null 2>&1 || true
     rehearsal_attention_audit_verdict fail "the sandbox already carried a flagged object"
     return 1
   fi
@@ -505,7 +582,7 @@ rehearsal_attention_audit_drill() {
   else
     fail "attention-audit: flagged pull request and unassigned issue filed"
     rehearsal_attention_audit_cleanup || true
-    rehearsal_attention_audit_restore_hygiene "$clock_before" >/dev/null 2>&1 || true
+    rehearsal_attention_audit_restore_clock >/dev/null 2>&1 || true
     rehearsal_attention_audit_verdict fail "the fixtures could not be filed"
     return 1
   fi
@@ -577,7 +654,7 @@ rehearsal_attention_audit_drill() {
   rehearsal_attention_audit_graded "attention-audit: both fixtures removed from the board" \
     rehearsal_attention_audit_fixtures_removed attention "$pr_json" "$issue_json" || audit_ok=1
 
-  rehearsal_attention_audit_restore_hygiene "$clock_before" >/dev/null 2>&1 || true
+  rehearsal_attention_audit_restore_clock >/dev/null 2>&1 || true
   clock_after="$(rehearsal_attention_audit_hygiene_clock)"
   rehearsal_attention_audit_graded "attention-audit: the hourly slot's clock is handed back" \
     rehearsal_attention_audit_hygiene_clock_restored "$clock_before" "$clock_after" \
