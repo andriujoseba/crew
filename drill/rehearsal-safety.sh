@@ -10,6 +10,13 @@ REHEARSAL_NL=$'\n'
 # Set beside each refusal so the notify verdict reports the actual state — a
 # box that never answered is not a box that restored the wrong bytes.
 REHEARSAL_TEARDOWN_REASON=""
+# 1 once the pre-drill ~/duty/repos.txt has actually been copied aside. This is
+# NOT the same fact as "REPOS_BACKUP is set": the handle is assigned before the
+# copy runs, so a round whose `cp` failed carries one too. Teardown needs the
+# copy, not the handle — a backup that was made and is then missing is a
+# teardown failure, while a backup that was never made is nothing to vouch for,
+# and only this flag tells those two apart (#423, round 3).
+REHEARSAL_BACKUP_TAKEN=0
 
 rehearsal_disarm_cron() {
   bx "if command -v crontab >/dev/null 2>&1; then
@@ -21,9 +28,16 @@ rehearsal_disarm_cron() {
       fi"
 }
 
+# The copy and the truncate are two box calls, not one `cp && : >`, so the
+# round can record that the copy succeeded BEFORE anything overwrites the file
+# it copied. Nothing truncates ~/duty/repos.txt until REHEARSAL_BACKUP_TAKEN is
+# 1, which is the invariant rehearsal_cleanup reads.
 rehearsal_begin_isolation() {
   REPOS_BACKUP="~/duty/repos.txt.pre-drill-$$"
-  bx "cp ~/duty/repos.txt $REPOS_BACKUP && : > ~/duty/repos.txt" &&
+  REHEARSAL_BACKUP_TAKEN=0
+  bx "cp ~/duty/repos.txt $REPOS_BACKUP" || return 1
+  REHEARSAL_BACKUP_TAKEN=1
+  bx ": > ~/duty/repos.txt" &&
     bx "test ! -s ~/duty/repos.txt"
 }
 
@@ -98,7 +112,9 @@ rehearsal_snapshot_text() {
 # repos.txt on the box, after the restore, against the bytes the backup held
 # before it was moved. Nothing was backed up ⇒ nothing to vouch for; anything
 # the box would not answer ⇒ NOT a pass, because the criterion is a comparison
-# and a comparison nobody could make is not one.
+# and a comparison nobody could make is not one. A backup this round MADE and
+# cannot now find is the third thing again: the box was left holding whatever
+# the drill put there, and no pre-drill bytes survive to compare it with.
 rehearsal_work_registry_matches_pre_drill() {
   local state="$1" expected="$2" restore_failed="${3:-0}" snap
   REHEARSAL_TEARDOWN_REASON=""
@@ -108,6 +124,11 @@ rehearsal_work_registry_matches_pre_drill() {
       [ "$restore_failed" -eq 0 ] && return 0
       REHEARSAL_TEARDOWN_REASON="teardown could not restore repos.txt"
       echo "TEARDOWN: ~/duty/repos.txt could not be restored" >&2
+      return 1
+      ;;
+    lost)
+      REHEARSAL_TEARDOWN_REASON="teardown could not find the pre-drill repos.txt backup this round made"
+      echo "TEARDOWN: the pre-drill repos.txt backup this round made is gone; ~/duty/repos.txt is unvouched for" >&2
       return 1
       ;;
     unanswerable)
@@ -149,11 +170,19 @@ rehearsal_cleanup() {
   # Three states, not two. This probe used to be `bx "test -f $REPOS_BACKUP"`,
   # so a box that stopped answering mid-teardown read as "there was no backup"
   # and the comparison below returned success having compared nothing.
+  #
+  # And the `absent` answer is itself two facts, told apart by whether the copy
+  # was ever taken. A round that copied the fleet registry aside and truncated
+  # the original has a backup by construction; the box answering "not there"
+  # then measures a LOSS, and vouching for repos.txt on that answer is the same
+  # fail-open in a state the box positively reported (#423, round 3).
   if [ -n "${REPOS_BACKUP:-}" ]; then
     if snap="$(rehearsal_registry_snapshot "$REPOS_BACKUP")"; then
       if rehearsal_snapshot_present "$snap"; then
         repos_state=present
         repos_pre="$(rehearsal_snapshot_text "$snap")"
+      elif [ "${REHEARSAL_BACKUP_TAKEN:-0}" -eq 1 ]; then
+        repos_state=lost
       else
         repos_state=absent
       fi

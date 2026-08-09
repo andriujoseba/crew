@@ -595,18 +595,33 @@ t notify-candidate-refusal-names-the-repo named "$r1"
 # --- the leg, driven under a stubbed bx() ---------------------------------
 NOTIFY_BX_CALLS="$TMP/rehearsal-notify-bx-calls"
 NOTIFY_READS="$TMP/rehearsal-notify-work-reads"
+NOTIFY_NOTIFY_READS="$TMP/rehearsal-notify-watch-reads"
 # Box-side paths: these tildes are expanded by the BOX's login shell inside
 # bx(), which is the whole reason the drill stores them unexpanded.
 # shellcheck disable=SC2088
 NOTIFY_BACKUP_PATH='~/duty/notify-repos.txt.pre-drill-99'
 # shellcheck disable=SC2088
 NOTIFY_WORK_BACKUP_PATH='~/duty/repos.txt.pre-drill-99'
+notify_snap_reply() {  # $1 present|absent|<anything else = the box did not answer>, $2 contents
+  case "$1" in
+    present) printf 'present\n'; [ -n "$2" ] && printf '%s\n' "$2"; return 0 ;;
+    absent)  printf 'absent\n'; return 0 ;;
+    *)       return 255 ;;
+  esac
+}
 notify_stub_bx() {  # $1 the box command, $2 how the second repos.txt read answers
   local n
   printf '%s\n' "$1" >>"$NOTIFY_BX_CALLS"
   case "$1" in
     *getMe*)               printf 'ok\n' ;;
     *fleet.defaults.conf*) printf 'state:needs-human\n' ;;
+    # The interlock's backup of the work registry, read through the same
+    # three-state snapshot as everything else — this is the read the notify
+    # half's safety check is made of. Matched BEFORE the plain repos.txt read
+    # below, whose pattern the snapshot's own `cat ~/duty/repos.txt.pre-drill-99`
+    # would otherwise match first.
+    *"-e ~/duty/repos.txt.pre-drill"*)
+      notify_snap_reply "$NOTIFY_WORK_BACKUP_STATE" "$NOTIFY_WORK_BACKUP_TEXT" ;;
     *"cat ~/duty/repos.txt"*)
       n="$(( $(cat "$NOTIFY_READS") + 1 ))"
       printf '%s\n' "$n" >"$NOTIFY_READS"
@@ -618,12 +633,22 @@ notify_stub_bx() {  # $1 the box command, $2 how the second repos.txt read answe
     # The three-state read of notify-repos.txt, answered as a real box would:
     # `present` with the contents, `present` alone for a file that exists and
     # is empty, `absent`, or a box that does not answer at all.
+    #
+    # Counted, because the leg reads this file on both sides of its own write:
+    # reads 1 (the pre-drill capture) and 2 (the writer's absence probe) are
+    # the pre-drill box, and the read-back in the restore check is the box
+    # AFTER teardown. The stub restores nothing, so the default post state is a
+    # file that is present and empty — which is exactly what the old
+    # `cat … || true` read-back reported on every path, and what the two
+    # capture cases below are asserting against.
     *"-e ~/duty/notify-repos.txt"*)
-      case "$NOTIFY_PRE_STATE" in
-        present) printf 'present\n'; [ -n "$NOTIFY_PRE_TEXT" ] && printf '%s\n' "$NOTIFY_PRE_TEXT"; return 0 ;;
-        absent)  printf 'absent\n'; return 0 ;;
-        *)       return 255 ;;
-      esac ;;
+      n="$(( $(cat "$NOTIFY_NOTIFY_READS") + 1 ))"
+      printf '%s\n' "$n" >"$NOTIFY_NOTIFY_READS"
+      if [ "$n" -le 2 ]; then
+        notify_snap_reply "$NOTIFY_PRE_STATE" "$NOTIFY_PRE_TEXT"
+      else
+        notify_snap_reply "$NOTIFY_POST_STATE" "$NOTIFY_POST_TEXT"
+      fi ;;
     *) : ;;
   esac
 }
@@ -631,11 +656,17 @@ notify_run_leg() {  # $1 how the post-write repos.txt read answers
   NOTIFY_SECOND_READ="$1"
   NOTIFY_PRE_STATE="${2:-present}"
   NOTIFY_PRE_TEXT="${3:-}"
+  NOTIFY_WORK_BACKUP_STATE="${4:-present}"
+  NOTIFY_WORK_BACKUP_TEXT="$NOTIFY_PRE_DRILL"
+  NOTIFY_POST_STATE=present
+  NOTIFY_POST_TEXT=""
   : >"$NOTIFY_BX_CALLS"
   printf '0\n' >"$NOTIFY_READS"
+  printf '0\n' >"$NOTIFY_NOTIFY_READS"
   REHEARSAL_NOTIFY_BACKUP=""
   REHEARSAL_NOTIFY_ABSENT=0
   (
+    REPOS_BACKUP="$NOTIFY_WORK_BACKUP_PATH"
     bx() { notify_stub_bx "$1"; }
     gh() { case "$1 $2" in "repo view") return 0 ;; *) return 2 ;; esac; }
     ok()   { printf 'ok   %s\n' "$1"; }
@@ -692,6 +723,66 @@ t notify-unreadable-pre-drill-registry-writes-nothing 0 \
   "$(grep -cF "> ~/duty/notify-repos.txt" "$NOTIFY_BX_CALLS")"
 t notify-unreadable-pre-drill-registry-runs-no-notify-tick 0 \
   "$(grep -cF 'tick.sh notify' "$NOTIFY_BX_CALLS")"
+
+# Must fail: the guard that refuses fleet repositories cannot read the half of
+# the host's watch set that the interlock put aside. The read was
+# `cat $REPOS_BACKUP ~/duty/notify-repos.txt 2>/dev/null || true` with a caller
+# that took the output and no status, so a missing or unreadable backup handed
+# the check a SHORTER list at rc 0 — and a check that silently narrows to what
+# it can still read is not the refusal the criterion asks for. Nothing may be
+# written on this path: the refusal has to land before the registry write.
+for notify_backup_state in unanswerable absent; do
+  notify_out="$(notify_run_leg same present '' "$notify_backup_state")"
+  t "notify-unvouched-work-backup-$notify_backup_state-reds" 1 \
+    "$(grep -cF "FAIL notify: the host's pre-drill registries can be read before the notify half is chosen" <<<"$notify_out")"
+  t "notify-unvouched-work-backup-$notify_backup_state-writes-nothing" 0 \
+    "$(grep -cF "> ~/duty/notify-repos.txt" "$NOTIFY_BX_CALLS")"
+  t "notify-unvouched-work-backup-$notify_backup_state-runs-no-notify-tick" 0 \
+    "$(grep -cF 'tick.sh notify' "$NOTIFY_BX_CALLS")"
+  t "notify-unvouched-work-backup-$notify_backup_state-emits-no-ok-union" 0 \
+    "$(grep -cF 'notify: both halves of the union' <<<"$notify_out")"
+  t "notify-unvouched-work-backup-$notify_backup_state-mints-no-second-sandbox-write" 0 \
+    "$(grep -cF "printf '%s\\n' '$NOTIFY_WORK-notify' > ~/duty/notify-repos.txt" "$NOTIFY_BX_CALLS")"
+done
+# The round says which, in the verdict block below where the leg's own verdicts
+# are read: notify-verdict-unvouched-work-backup-is-a-fail.
+
+# The list the guard reads is really BOTH halves. A repository named only in
+# the pre-drill repos.txt backup is refused as the notify candidate, which is
+# the half a partial read used to drop.
+notify_pre_drill_probe() {  # $1 candidate, $2 backup state, $3 handle: set|unset
+  local cand="$1" state="$2" handle="${3:-set}" notify_pre
+  (
+    NOTIFY_PROBE_STATE="$state"
+    REPOS_BACKUP=""
+    [ "$handle" = set ] && REPOS_BACKUP="$NOTIFY_WORK_BACKUP_PATH"
+    bx() {
+      case "$1" in
+        *"-e ~/duty/repos.txt.pre-drill"*) notify_snap_reply "$NOTIFY_PROBE_STATE" 'heavy-duty/rig' ;;
+        *) return 255 ;;
+      esac
+    }
+    if ! notify_pre="$(rehearsal_notify_pre_drill_registry 'heavy-duty/ceremony' 2>/dev/null)"; then
+      printf 'refused\n'
+      exit 0
+    fi
+    rehearsal_notify_candidate_is_safe "$cand" "$NOTIFY_WORK" "$notify_pre" >/dev/null 2>&1
+    printf 'rc=%s\n' "$?"
+  )
+}
+t notify-pre-drill-union-refuses-the-work-half "rc=7" \
+  "$(notify_pre_drill_probe heavy-duty/rig present)"
+t notify-pre-drill-union-refuses-the-notify-half "rc=7" \
+  "$(notify_pre_drill_probe heavy-duty/ceremony present)"
+t notify-pre-drill-union-passes-a-minted-sandbox "rc=0" \
+  "$(notify_pre_drill_probe "$NOTIFY_EXTRA" present)"
+t notify-pre-drill-union-refuses-to-answer-unvouched refused \
+  "$(notify_pre_drill_probe heavy-duty/rig unanswerable)"
+t notify-pre-drill-union-refuses-to-answer-when-the-backup-is-gone refused \
+  "$(notify_pre_drill_probe heavy-duty/rig absent)"
+t notify-pre-drill-union-refuses-to-answer-with-no-handle refused \
+  "$(notify_pre_drill_probe heavy-duty/rig present unset)"
+unset -f notify_pre_drill_probe
 
 # The same refusal at the level of the writer itself, which is where the
 # `rm -f` is decided: an unanswerable probe leaves no backup path behind, so
@@ -798,14 +889,20 @@ notify_leg_verdicts() {  # $1 how the post-write repos.txt read answers
   NOTIFY_SECOND_READ="$1"
   NOTIFY_PRE_STATE="${2:-present}"
   NOTIFY_PRE_TEXT="${3:-}"
+  NOTIFY_WORK_BACKUP_STATE="${4:-present}"
+  NOTIFY_WORK_BACKUP_TEXT="$NOTIFY_PRE_DRILL"
+  NOTIFY_POST_STATE=present
+  NOTIFY_POST_TEXT=""
   : >"$NOTIFY_BX_CALLS"
   : >"$NOTIFY_STATUS_FILE"
   printf '0\n' >"$NOTIFY_READS"
+  printf '0\n' >"$NOTIFY_NOTIFY_READS"
   REHEARSAL_NOTIFY_BACKUP=""
   REHEARSAL_NOTIFY_ABSENT=0
   REHEARSAL_NOTIFY_CAPTURED=0
   (
     ROLE=reviewer
+    REPOS_BACKUP="$NOTIFY_WORK_BACKUP_PATH"
     bx() { notify_stub_bx "$1"; }
     gh() { case "$1 $2" in "repo view") return 0 ;; *) return 2 ;; esac; }
     ok() { :; }; fail() { :; }; skip() { :; }
@@ -827,6 +924,13 @@ notify_out="$(notify_leg_verdicts same unanswerable)"
 t notify-verdict-unreadable-pre-drill-registry-is-a-fail 1 \
   "$(grep -cF 'reviewer fail the pre-drill notify-repos.txt could not be read' <<<"$notify_out")"
 t notify-verdict-unreadable-pre-drill-registry-records-no-pass 0 "$(grep -c ' ok ' <<<"$notify_out")"
+# ...and so is a box that will not say what the interlock put aside: the guard
+# on the notify half cannot run, so the leg stops and the round says why rather
+# than reporting a leg that simply passed.
+notify_out="$(notify_leg_verdicts same present '' unanswerable)"
+t notify-verdict-unvouched-work-backup-is-a-fail 1 \
+  "$(grep -cF "reviewer fail the host's pre-drill work registry could not be read; the notify half was never written" <<<"$notify_out")"
+t notify-verdict-unvouched-work-backup-records-no-pass 0 "$(grep -c ' ok ' <<<"$notify_out")"
 
 unset -f bx notify_stub_bx notify_run_leg notify_union notify_leg_verdicts
 
@@ -1052,6 +1156,10 @@ set -uo pipefail
 . "$ROOT/drill/rehearsal-safety.sh"
 BOX_NAME=fixture
 REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
+# Whether this round's `cp` actually ran. The handle above is set BEFORE that
+# copy in rehearsal_begin_isolation, so it is not the same fact and the case
+# chooses it separately.
+REHEARSAL_BACKUP_TAKEN="$CLEAN_BACKUP_TAKEN"
 REHEARSAL_NOTIFY_BACKUP="$CLEAN_NOTIFY_BACKUP"
 # After the sources: sourcing rehearsal-notify.sh resets these to their
 # start-of-round defaults, which is the state the case is choosing.
@@ -1085,7 +1193,7 @@ CLEANSH
 export ROOT CLEAN_BACKUP_STATE CLEAN_REPOS_PRE CLEAN_REPOS_STATE CLEAN_REPOS_AFTER
 export CLEAN_NOTIFY_STATE CLEAN_NOTIFY_AFTER CLEAN_CAPTURED CLEAN_ABSENT CLEAN_NOTIFY_PRE
 export CLEAN_REPOS_RESTORE_RC CLEAN_NOTIFY_RESTORE_RC CLEAN_NOTIFY_BACKUP
-export REHEARSAL_NOTIFY_STATUS
+export REHEARSAL_NOTIFY_STATUS CLEAN_BACKUP_TAKEN
 CLEANUP_VERDICTS="$TMP/notify-cleanup-verdicts"
 cleanup_run() {  # $1 rc handed in
   REHEARSAL_NOTIFY_STATUS="$CLEANUP_VERDICTS"
@@ -1093,6 +1201,7 @@ cleanup_run() {  # $1 rc handed in
   bash "$CLEANUP_DRIVER" "$1" 2>&1
 }
 CLEAN_BACKUP_STATE=present
+CLEAN_BACKUP_TAKEN=1
 CLEAN_REPOS_PRE='owner/one
 owner/two'
 CLEAN_REPOS_STATE=present
@@ -1147,10 +1256,29 @@ t notify-cleanup-uncaptured-leg-still-checks-the-work-registry "rc=1" \
   "$(tail -n 1 <<<"$(cleanup_run 0)")"
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
 # Nothing backed up is nothing to vouch for either — but only when the box
-# SAID so. See the unanswerable-probe cases below for the difference.
+# SAID so, AND this round never made a copy. See the unanswerable-probe cases
+# below for the first difference and the deleted-backup case for the second.
 CLEAN_BACKUP_STATE=absent
+CLEAN_BACKUP_TAKEN=0
 CLEAN_REPOS_AFTER='whatever the box has'
-t notify-cleanup-no-backup-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+t notify-cleanup-backup-never-taken-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+
+# Must fail: the copy WAS made — so ~/duty/repos.txt was truncated and the only
+# pre-drill bytes on the box were in that backup — and the box now says the
+# backup is not there. This is a positively MEASURED loss, and it used to take
+# the same branch as "there was nothing to back up": rc 0, comparing nothing,
+# with the box left holding whatever the drill wrote (#423, round 3).
+CLEAN_BACKUP_TAKEN=1
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-deleted-backup-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-deleted-backup-says-so 1 \
+  "$(grep -cF 'TEARDOWN: the pre-drill repos.txt backup this round made is gone' <<<"$clean_out")"
+t notify-cleanup-deleted-backup-verdict-names-the-state 1 \
+  "$(grep -cF 'fail teardown could not find the pre-drill repos.txt backup this round made' "$CLEANUP_VERDICTS")"
+# ...and it is not confused with the box that would not answer at all, which
+# has its own reason string.
+t notify-cleanup-deleted-backup-is-not-the-unanswerable-reason 0 \
+  "$(grep -cF 'the box did not say whether the pre-drill repos.txt backup was there' <<<"$clean_out")"
 CLEAN_BACKUP_STATE=present
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
 CLEAN_CAPTURED=1
@@ -2190,6 +2318,37 @@ source "$ROOT/drill/rehearsal-safety.sh"
 rehearsal_begin_isolation && r1=isolated || r1=failed
 t rehearsal-isolates-before-tick isolated "$r1"
 t rehearsal-isolation-empty 0 "$(wc -l <"$RDUTY/repos.txt")"
+t rehearsal-isolation-records-the-copy 1 "$REHEARSAL_BACKUP_TAKEN"
+
+# Must fail: the copy did not happen. The flag teardown reads is the COPY, not
+# the handle — the handle is assigned first, so a round whose `cp` failed
+# carries one too, and reading it as "a backup exists" is what let a deleted
+# backup pass as "nothing to vouch for". Nothing may truncate the registry on
+# this path either.
+ISO_CALLS="$TMP/rehearsal-isolation-calls"
+: >"$ISO_CALLS"
+(
+  bx() {
+    printf '%s\n' "$1" >>"$ISO_CALLS"
+    case "$1" in *"cp ~/duty/repos.txt"*) return 1 ;; esac
+  }
+  rehearsal_begin_isolation
+  printf 'rc=%s taken=%s\n' "$?" "$REHEARSAL_BACKUP_TAKEN"
+) >"$TMP/rehearsal-isolation-failed-copy"
+t rehearsal-isolation-failed-copy-refuses 'rc=1 taken=0' \
+  "$(cat "$TMP/rehearsal-isolation-failed-copy")"
+t rehearsal-isolation-failed-copy-truncates-nothing 0 \
+  "$(grep -cF ': > ~/duty/repos.txt' "$ISO_CALLS")"
+# ...and on the path that does work, the copy is the FIRST thing the box is
+# asked to do, so the flag is set before anything can overwrite what it names.
+: >"$ISO_CALLS"
+(
+  bx() { printf '%s\n' "$1" >>"$ISO_CALLS"; }
+  rehearsal_begin_isolation
+) >/dev/null 2>&1
+t rehearsal-isolation-copies-first 'cp' "$(head -1 "$ISO_CALLS" | cut -c1-2)"
+t rehearsal-isolation-truncates-after 1 \
+  "$(grep -cF ': > ~/duty/repos.txt' "$ISO_CALLS")"
 rehearsal_narrow_to_sandbox owner/sandbox && r1=narrowed || r1=failed
 t rehearsal-narrow-success narrowed "$r1"
 t rehearsal-narrow-exact owner/sandbox "$(cat "$RDUTY/repos.txt")"

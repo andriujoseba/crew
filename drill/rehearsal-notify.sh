@@ -245,12 +245,36 @@ rehearsal_notify_load_installed_handoff_label() {
 
 rehearsal_notify_read_work_registry() { bx "cat ~/duty/repos.txt 2>/dev/null || true"; }
 
-# Everything the host pointed this box at before the drill: the interlock's
-# backup of repos.txt plus whatever notify-repos.txt shipped with — which on a
-# real box names the fleet. Both are forbidden as the notify half, and this
-# must be read before either file is written.
+# rehearsal_notify_pre_drill_registry PRE_DRILL_NOTIFY_TEXT — everything the
+# host pointed this box at before the drill: the interlock's backup of
+# repos.txt plus whatever notify-repos.txt shipped with, which on a real box
+# names the fleet. Both are forbidden as the notify half, and this must be read
+# before either file is written.
+#
+# The work half goes through the three-state read, and a read that cannot be
+# vouched for is a REFUSAL rather than a shorter list. This was
+# `cat $REPOS_BACKUP ~/duty/notify-repos.txt 2>/dev/null || true` whose caller
+# took the output and no status: a missing or unreadable backup then produced a
+# partial watch set at rc 0, and the safety check below could not refuse a
+# repository only the omitted half named — the guard silently narrowing to the
+# thing it could still read (#423, round 3). The notify half is the snapshot
+# the leg has already captured through the same reader, passed in rather than
+# re-read, so both sources are vouched for exactly once.
 rehearsal_notify_pre_drill_registry() {
-  bx "cat ${REPOS_BACKUP:-/dev/null} ~/duty/notify-repos.txt 2>/dev/null || true"
+  local pre_notify="${1:-}" snap
+  if [ -z "${REPOS_BACKUP:-}" ]; then
+    echo "notify: the interlock's pre-drill repos.txt backup is not on hand; the notify half cannot be checked against the host's work registry" >&2
+    return 1
+  fi
+  if ! snap="$(rehearsal_registry_snapshot "$REPOS_BACKUP")"; then
+    echo "notify: the box did not say whether the pre-drill repos.txt backup was there; the notify half cannot be checked against the host's work registry" >&2
+    return 1
+  fi
+  if ! rehearsal_snapshot_present "$snap"; then
+    echo "notify: the pre-drill repos.txt backup is gone; the notify half cannot be checked against the host's work registry" >&2
+    return 1
+  fi
+  printf '%s\n%s\n' "$(rehearsal_snapshot_text "$snap")" "$pre_notify"
 }
 
 # Back up notify-repos.txt and REPLACE it with the one sandbox. Replace, not
@@ -297,11 +321,20 @@ rehearsal_notify_restore_registry() {
 # notify-repos.txt must be back byte for byte (or gone, where there was none),
 # and repos.txt must still be the interlock's one line.
 rehearsal_notify_registries_restored() {
-  local sandbox="$1" expected="$2" actual
+  local sandbox="$1" expected="$2" actual snap
+  # Through the snapshot on both branches, so "the box did not answer" cannot
+  # arrive here as an absent file or as empty bytes that compare equal to an
+  # empty pre-drill registry. The authoritative comparison is the one in
+  # rehearsal_cleanup; this one runs where the leg can still report, and it
+  # should not be the weaker read of the two.
+  if ! snap="$(rehearsal_registry_snapshot "~/duty/notify-repos.txt")"; then
+    return 1
+  fi
   if [ "$REHEARSAL_NOTIFY_ABSENT" -eq 1 ]; then
-    bx "! test -e ~/duty/notify-repos.txt" || return 1
+    rehearsal_snapshot_present "$snap" && return 1
   else
-    actual="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
+    rehearsal_snapshot_present "$snap" || return 1
+    actual="$(rehearsal_snapshot_text "$snap")"
     [ "$actual" = "$expected" ] || return 1
   fi
   actual="$(rehearsal_notify_read_work_registry)"
@@ -459,7 +492,15 @@ rehearsal_notify_drill() {
   REHEARSAL_NOTIFY_PRE_TEXT="$pre_notify_text"
   REHEARSAL_NOTIFY_CAPTURED=1
   before="$(rehearsal_notify_read_work_registry)"
-  pre_drill="$(rehearsal_notify_pre_drill_registry)"
+  # Checked, and checked HERE: the refusal below is the only thing standing
+  # between this run and a notify-repos.txt naming a repository the fleet
+  # works, and a guard that cannot read what it is guarding against must stop
+  # the leg rather than pass a shorter list to it.
+  if ! pre_drill="$(rehearsal_notify_pre_drill_registry "$pre_notify_text")"; then
+    fail "notify: the host's pre-drill registries can be read before the notify half is chosen"
+    rehearsal_notify_verdict fail "the host's pre-drill work registry could not be read; the notify half was never written"
+    return 0
+  fi
   if rehearsal_notify_candidate_is_safe "$notify_sandbox" "$work" "$pre_drill"; then
     ok "notify: the notify half is a sandbox this run minted, not a repository the fleet works"
   else
