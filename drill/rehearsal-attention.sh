@@ -209,7 +209,16 @@ rehearsal_attention_run_log_from_output() {
 
 rehearsal_attention_alert_names_run_log() {
   local needle="$1" run_log="$2" alerts="$3" line
+  # An empty run log makes the grep below match ANY line — a vacuous pass on
+  # §5's "the operator alert fired naming the run log", standing beside a
+  # run-log row already red for the reason this one would hide. Same guard the
+  # derived-link row above carries, for the same reason.
+  if [ -z "$run_log" ]; then
+    printf 'no run log resolved to check the alert against\n'
+    return 1
+  fi
   line="$(grep -F "$needle" <<<"$alerts" | tail -1)"
+  # Which of the two was missing, not just that the row is red.
   printf '%s\n' "${line:-<no timeout alert>}"
   [ -n "$line" ] && grep -Fq -- "$run_log" <<<"$line"
 }
@@ -253,25 +262,69 @@ rehearsal_attention_branch_sources() {
   printf '%s\n%s/%s\n' "$repo" "$identity" "${repo##*/}"
 }
 
+# Absence is a POSITIVE finding or it is nothing. A repository that is not
+# there answers `gh: Not Found (HTTP 404)`; an auth, rate-limit, 5xx or network
+# failure fails this probe too, and says no such thing. Reading the second as
+# the first is exactly how a source goes unread and still grades clean, so only
+# a matched 404 counts — every other outcome, success included, is "not absent".
+rehearsal_attention_repo_absent() {
+  local src="$1" err
+  err="$(gh api "repos/$src" 2>&1 >/dev/null)" && return 1
+  grep -q 'HTTP 404' <<<"$err"
+}
+
+# rehearsal_attention_collect_branches SANDBOX [FORK...]
+#
 # Fills REHEARSAL_ATTENTION_BRANCHES / _BRANCH_UNREADABLE rather than printing,
 # so a source that fails to list is distinguishable from one with no branches.
+#
+# The FIRST source is the sandbox, and it is the one source KNOWN to exist:
+# this leg filed its fixture there before calling here. So a failed read of it
+# is always unreadable, never absence, whatever the probe says. Only a later
+# source — the builder fork, which need not have been created yet — may be
+# skipped, and only on a positively identified 404.
 rehearsal_attention_collect_branches() {
-  local src part
+  local src part merged known_present=1
   REHEARSAL_ATTENTION_BRANCHES="[]"
   REHEARSAL_ATTENTION_BRANCH_UNREADABLE=""
   for src in "$@"; do
+    # The union is graded too: a failed `jq -s add` would otherwise leave the
+    # list at its previous value with nothing recorded, and a stale list grades
+    # as a clean one.
     if part="$(gh api "repos/$src/branches?per_page=100" --paginate 2>/dev/null \
         | jq -s --arg r "$src" '[add[] | {repo: $r, name: .name}]' 2>/dev/null)" \
-        && [ -n "$part" ]; then
-      REHEARSAL_ATTENTION_BRANCHES="$(jq -s 'add' \
-        <<<"$REHEARSAL_ATTENTION_BRANCHES"$'\n'"$part")" || return 1
-    elif gh api "repos/$src" >/dev/null 2>&1; then
+        && [ -n "$part" ] \
+        && merged="$(jq -s 'add' \
+          <<<"$REHEARSAL_ATTENTION_BRANCHES"$'\n'"$part" 2>/dev/null)" \
+        && [ -n "$merged" ]; then
+      REHEARSAL_ATTENTION_BRANCHES="$merged"
+    elif [ "$known_present" -eq 0 ] && rehearsal_attention_repo_absent "$src"; then
+      : # A fork that does not exist yet cannot hold a pushed branch: skipped.
+    else
       REHEARSAL_ATTENTION_BRANCH_UNREADABLE="${REHEARSAL_ATTENTION_BRANCH_UNREADABLE:+$REHEARSAL_ATTENTION_BRANCH_UNREADABLE }$src"
     fi
-    # A fork that does not exist yet cannot hold a pushed branch: skipped, not
-    # recorded as unreadable.
+    known_present=0
   done
   return 0
+}
+
+# duty_attention does not read the fixture's repo: it reads the cross-repo
+# `/issues?filter=assigned` index (shared/lib/duty-attention.sh), and that index
+# lags the assignment that fills it. Invoking before it has caught up makes the
+# wake row red on a CORRECT engine, so both halves wait for their demand to
+# appear in it first. Asked through the box on purpose — the index is scoped to
+# the authenticated assignee, so the host's token would answer a different
+# question about a different user.
+rehearsal_attention_demand_visible() {
+  local repo="$1" num="$2"
+  # shellcheck disable=SC2016  # HOME and the label resolve in the box
+  bx 'set -uo pipefail
+    DUTY_DIR="$HOME/duty"
+    source "$DUTY_DIR/lib/common.sh"
+    load_conf
+    gh api "/issues?filter=assigned&state=open&labels=$LABEL_ATTENTION&per_page=100" \
+      --jq ".[] | \"\(.repository.full_name) \(.number)\"" 2>/dev/null
+  ' | grep -Fqx "$repo $num"
 }
 
 rehearsal_attention_installed_timeout() {
@@ -433,6 +486,11 @@ rehearsal_attention_dispatch_half() {
   local repo="$1" identity="$2" mark="$3"
   local num filed_at issue_json pulls_json comments_json out
   local sources
+  # Declared HERE, above the half's first `fail`. Below its first `fail` this
+  # is a re-initialisation: the row reds, the half still returns 0, and
+  # rehearsal-all.sh prints `ok attention` for a round that asserted nothing —
+  # the #423 defect (shared/test/run.sh) in this leg's own bookkeeping.
+  local dispatch_ok=0
   # NOT a command substitution: the registry the EXIT trap reads is written by
   # this call, and a subshell would discard it.
   rehearsal_attention_file_fixture "$repo" "$identity" \
@@ -458,12 +516,18 @@ rehearsal_attention_dispatch_half() {
     return 1
   fi
 
+  if ! wait_for 900 "attention: dispatch demand visible to the identity" \
+      rehearsal_attention_demand_visible "$repo" "$num"; then
+    dispatch_ok=1
+  fi
+
   out="$(rehearsal_attention_dispatch_invoke "$identity")" || true
   if grep -Fq "SESSION START kind=attention key=$repo#$num " <<<"$out"; then
     ok "attention: dispatch wake launched a pickup session"
   else
     echo "  read: $(printf '%s\n' "$out" | tail -3 | tr '\n' ' ')"
     fail "attention: dispatch wake launched a pickup session"
+    dispatch_ok=1
   fi
 
   issue_json="$(rehearsal_attention_settled_issue_json "$repo" "$num" "$identity")" \
@@ -474,7 +538,6 @@ rehearsal_attention_dispatch_half() {
   comments_json="$(gh api "repos/$repo/issues/$num/comments?per_page=100" --paginate \
     | jq -s 'add // []')" || comments_json='[]'
 
-  local dispatch_ok=0
   # §4, five rows. The two absence rows come first: they are what #301 exists
   # to prevent, and a leg checking only the label swap would pass a session
   # that dispatched AND built.
@@ -503,6 +566,12 @@ rehearsal_attention_dispatch_half() {
 rehearsal_attention_timeout_half() {
   local repo="$1" identity="$2" phrase="$3" capture="$4" budget="$5"
   local num first second run_log link comments_json alerts
+  # Above this half's first `fail` — see the dispatch half. The stake is larger
+  # here: "timeout comment posted exactly once" is §5's dedup criterion and is
+  # TRIVIALLY true if only one invocation ran, so a lost red on the invocation
+  # row turns the whole half green on a round post-once.sh was never asked to
+  # dedup.
+  local timeout_ok=0
   # One capture PER INVOCATION. run_session stamps the log at second
   # granularity (common.sh), so the two invocations name two different run
   # logs; a shared capture graded with tail -1 would check the second
@@ -520,6 +589,11 @@ rehearsal_attention_timeout_half() {
   ok "attention: timeout fixture filed"
   bx "rm -f '$capture_first' '$capture_second'" >/dev/null 2>&1 || true
 
+  if ! wait_for 900 "attention: timeout demand visible to the identity" \
+      rehearsal_attention_demand_visible "$repo" "$num"; then
+    timeout_ok=1
+  fi
+
   # Twice on purpose. rc 124 never commits the seen-ledger, so the demand is
   # still fresh the second time round — which is the only way to read whether
   # post-once.sh actually held the comment to one.
@@ -528,8 +602,13 @@ rehearsal_attention_timeout_half() {
   if grep -Fq "outcome=TIMEOUT" <<<"$first" && grep -Fq "outcome=TIMEOUT" <<<"$second"; then
     ok "attention: both lowered invocations timed out"
   else
-    echo "  read: $(grep -F 'SESSION END kind=attention' <<<"$first$second" | tr '\n' ' ')"
+    # Newline-joined: this red is the one place an operator has to tell the two
+    # invocations apart, and bare concatenation ran the first's last line into
+    # the second's first ("outcome=TIMEOUTattention: none new in registry").
+    echo "  read: $(grep -F 'SESSION END kind=attention' \
+      <<<"$first"$'\n'"$second" | tr '\n' ' ')"
     fail "attention: both lowered invocations timed out"
+    timeout_ok=1
   fi
 
   if run_log="$(rehearsal_attention_run_log_from_output "$repo" "$num" "$first")"; then
@@ -537,6 +616,7 @@ rehearsal_attention_timeout_half() {
   else
     fail "attention: timeout run log resolved from the session record"
     run_log=""
+    timeout_ok=1
   fi
   link="$(rehearsal_attention_stable_link_for "$repo" "$num" "$run_log")" || link=""
 
@@ -545,7 +625,6 @@ rehearsal_attention_timeout_half() {
   # The FIRST invocation's alerts only — $run_log above is the first's.
   alerts="$(bx "cat '$capture_first' 2>/dev/null || true")" || alerts=""
 
-  local timeout_ok=0
   # §5, four rows.
   rehearsal_attention_graded "attention: timeout comment posted exactly once" \
     rehearsal_attention_timeout_comment_once_from_json "$phrase" "$comments_json" \
