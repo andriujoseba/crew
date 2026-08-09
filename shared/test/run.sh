@@ -324,6 +324,8 @@ source "$ROOT/drill/rehearsal-fixtures.sh"
 source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
+# shellcheck source=drill/rehearsal-attention.sh
+source "$ROOT/drill/rehearsal-attention.sh"
 # shellcheck source=drill/rehearsal-boot.sh
 source "$ROOT/drill/rehearsal-boot.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
@@ -708,6 +710,813 @@ else
   resume_wiring=MISSING
 fi
 t rehearsal-resume-all-opt-out-and-summary-wired wired "$resume_wiring"
+
+# --- rehearsal attention leg: dispatch without code, timeout report (#440) --
+# Every input here is the value the live row reads — board JSON, session
+# output, a box path under a stubbed bx() — so each mutation is the decision
+# boundary itself and needs no drill host.
+ATT_REPO=owner/sandbox
+ATT_ISSUE=77
+ATT_IDENTITY=drill-identity
+ATT_FILED=2026-08-09T10:00:00Z
+ATT_PICKUP='📌 picked up'
+ATT_PHRASE='attention pickup timed out'
+ATT_RUNLOG=/home/drill/duty/logs/20260809T110000Z-attention-owner__sandbox_77.log
+ATT_LINK=/home/drill/duty/logs/attention-owner__sandbox_77-latest.log
+
+att_row() {  # att_row <row name> <predicate...> — the live grading, captured
+  (
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    rehearsal_attention_graded "$@"
+  )
+}
+
+# §4.1 no PR authored for the dispatched claim.
+ATT_PULLS_CLEAN='[{"number":5,"body":"Closes #12","head":"build/12-elsewhere"}]'
+ATT_PULLS_BUILT='[{"number":9,"body":"Closes #77 for the demand","head":"build/77-oops"}]'
+if rehearsal_attention_prs_for_issue_from_json "$ATT_ISSUE" "$ATT_PULLS_CLEAN" >/dev/null; then
+  r1=absent
+else
+  r1=WRONG
+fi
+t attention-dispatch-no-pr-holds absent "$r1"
+ATT_OUT="$(att_row 'attention: dispatch opened no PR for the claim' \
+  rehearsal_attention_prs_for_issue_from_json "$ATT_ISSUE" "$ATT_PULLS_BUILT")"
+t attention-dispatch-also-built-a-pr-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
+t attention-dispatch-pr-red-quotes-the-pr 1 \
+  "$(grep -cF 'read: #9 (build/77-oops)' <<<"$ATT_OUT")"
+# "Opened no PR" is an absence, and an absence that could not read its source
+# is not one. A pulls endpoint that would not list reds this row naming itself,
+# exactly as an unlistable branch source reds its twin below — the row used to
+# take a failed read as an empty board and print `ok`.
+ATT_OUT="$(att_row 'attention: dispatch opened no PR for the claim' \
+  rehearsal_attention_prs_for_issue_from_json "$ATT_ISSUE" '[]' "$ATT_REPO")"
+t attention-dispatch-unreadable-pulls-source-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
+t attention-dispatch-unreadable-pulls-source-named 1 \
+  "$(grep -cF "read: could not list pull requests of: $ATT_REPO" <<<"$ATT_OUT")"
+
+# The read that feeds it. It reports gh's OWN status rather than the pipeline's,
+# because the helper is sourceable and its caller's shell options are not its
+# guarantee: through `gh | jq -s`, a `--paginate` that dies after page one hands
+# back a SHORT list under a zero status, which is a false absence. Staged with
+# pipefail off, which is where the difference between the two shapes lives.
+att_pulls_read() {  # att_pulls_read <state> — prints "<rc>|<entries read>"
+  local state="$1" out rc=0
+  out="$(
+    set +o pipefail
+    gh() {
+      case "$state" in
+        empty) printf '%s\n' '[]' ;;
+        one)   printf '%s\n' "[{\"user\":{\"login\":\"$ATT_IDENTITY\"},\"number\":9,
+                 \"body\":\"Closes #$ATT_ISSUE\",\"head\":{\"ref\":\"build/$ATT_ISSUE-oops\"}}]" ;;
+        fail)  echo 'gh: API rate limit exceeded (HTTP 403)' >&2; return 1 ;;
+        short) printf '%s\n' '[]'; return 1 ;;
+      esac
+    }
+    rehearsal_attention_open_prs_json "$ATT_REPO" "$ATT_IDENTITY"
+  )" || rc=$?
+  # `-` is "nothing came back", told apart from a legitimately empty board:
+  # `jq length` reads null as 0 and would spell the two the same way.
+  printf '%s|%s\n' "$([ "$rc" -eq 0 ] && echo 0 || echo nonzero)" \
+    "$([ -n "$out" ] && jq -r 'length' <<<"$out" 2>/dev/null || echo -)"
+}
+t attention-pulls-read-of-an-empty-board-is-clean '0|0' "$(att_pulls_read empty)"
+t attention-pulls-read-sees-the-authors-pr '0|1' "$(att_pulls_read one)"
+t attention-pulls-read-fails-on-an-api-failure 'nonzero|-' "$(att_pulls_read fail)"
+# The one the pipeline shape passed: valid JSON out, non-zero status.
+t attention-truncated-pulls-pagination-is-not-a-clean-read 'nonzero|-' \
+  "$(att_pulls_read short)"
+
+# §4.2 no build/<issue>-* branch — on the BUILDER FORK as well as the sandbox.
+# The route says fork (shared/prompts/attention.txt) and a builder pushes there
+# (git push -u fork), so a row reading only the sandbox is green on the one
+# mutation it exists for. Entries carry the repo they were read from.
+ATT_FORK="$ATT_IDENTITY/${ATT_REPO##*/}"
+ATT_BRANCHES_CLEAN='[{"repo":"owner/sandbox","name":"main"},
+  {"repo":"drill-identity/sandbox","name":"build/12-elsewhere"}]'
+ATT_BRANCHES_ON_FORK='[{"repo":"owner/sandbox","name":"main"},
+  {"repo":"drill-identity/sandbox","name":"build/77-oops"}]'
+ATT_BRANCHES_ON_SANDBOX='[{"repo":"owner/sandbox","name":"build/77-oops"}]'
+if rehearsal_attention_build_branches_from_json \
+    "$ATT_ISSUE" "$ATT_BRANCHES_CLEAN" '' >/dev/null; then
+  r1=absent
+else
+  r1=WRONG
+fi
+t attention-dispatch-no-build-branch-holds absent "$r1"
+ATT_OUT="$(att_row 'attention: dispatch pushed no build branch' \
+  rehearsal_attention_build_branches_from_json "$ATT_ISSUE" "$ATT_BRANCHES_ON_FORK" '')"
+t attention-dispatch-build-branch-on-the-fork-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch pushed no build branch' <<<"$ATT_OUT")"
+t attention-dispatch-branch-red-names-the-fork 1 \
+  "$(grep -cF "read: $ATT_FORK build/77-oops" <<<"$ATT_OUT")"
+ATT_OUT="$(att_row 'attention: dispatch pushed no build branch' \
+  rehearsal_attention_build_branches_from_json "$ATT_ISSUE" "$ATT_BRANCHES_ON_SANDBOX" '')"
+t attention-dispatch-build-branch-on-the-sandbox-reds 1 \
+  "$(grep -cF "read: $ATT_REPO build/77-oops" <<<"$ATT_OUT")"
+# A source that exists and will not list its branches must not read as "none".
+ATT_OUT="$(att_row 'attention: dispatch pushed no build branch' \
+  rehearsal_attention_build_branches_from_json "$ATT_ISSUE" '[]' "$ATT_FORK")"
+t attention-dispatch-unreadable-branch-source-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch pushed no build branch' <<<"$ATT_OUT")"
+t attention-dispatch-unreadable-source-named 1 \
+  "$(grep -cF "read: could not list branches of: $ATT_FORK" <<<"$ATT_OUT")"
+# Both sources are asked for, and the fork is derived, never typed.
+t attention-branch-sources-are-sandbox-and-fork "$ATT_REPO $ATT_FORK" \
+  "$(rehearsal_attention_branch_sources "$ATT_REPO" "$ATT_IDENTITY" | tr '\n' ' ' \
+    | sed 's/ $//')"
+# The collector is where "the fork does not exist" and "the fork exists and
+# will not list" are told apart, and getting that wrong is how reading two
+# sources becomes silently blinder than reading one. Staged under a stubbed gh.
+#
+# ATT_SB / ATT_FK are each a branch-list JSON or one of three failures the
+# collector must NOT confuse: X (the repo is there and will not list its
+# branches), 404 (no such repo), ERR (auth, rate limit, 5xx, network — fails
+# exactly like the other two at the exit-code level and establishes nothing).
+# The probe writes gh's own message to STDERR, because that message is the only
+# place the difference between 404 and ERR actually exists.
+# Prints "<branches>|<unreadable>".
+att_probe() {  # att_probe <state> — `gh api repos/<src>` as the collector sees it
+  case "$1" in
+    404) echo 'gh: Not Found (HTTP 404)' >&2; return 1 ;;
+    ERR) echo 'error connecting to api.github.com' >&2; return 1 ;;
+    *)   return 0 ;;
+  esac
+}
+att_collect() {
+  (
+    gh() {
+      case "$*" in
+        *"repos/$ATT_REPO/branches"*)
+          case "$ATT_SB" in X|404|ERR) return 1 ;; esac
+          printf '%s\n' "$ATT_SB" ;;
+        *"repos/$ATT_FORK/branches"*)
+          case "$ATT_FK" in X|404|ERR) return 1 ;; esac
+          printf '%s\n' "$ATT_FK" ;;
+        "api repos/$ATT_REPO") att_probe "$ATT_SB" ;;
+        "api repos/$ATT_FORK") att_probe "$ATT_FK" ;;
+        *) return 1 ;;
+      esac
+    }
+    rehearsal_attention_collect_branches "$ATT_REPO" "$ATT_FORK"
+    printf '%s|%s\n' "$(jq -c . <<<"$REHEARSAL_ATTENTION_BRANCHES")" \
+      "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE"
+  )
+}
+ATT_SB='[{"name":"main"}]'; ATT_FK='[{"name":"build/77-oops"}]'
+t attention-collector-unions-both-sources-and-names-each \
+  '[{"repo":"owner/sandbox","name":"main"},{"repo":"drill-identity/sandbox","name":"build/77-oops"}]|' \
+  "$(att_collect)"
+ATT_SB='[]'; ATT_FK=X
+t attention-collector-flags-a-source-that-exists-and-will-not-list \
+  '[]|drill-identity/sandbox' "$(att_collect)"
+# A fork that has not been created cannot hold a pushed branch: skipped. This
+# is the ONLY failure that may be skipped, and only because the 404 says so.
+ATT_SB='[]'; ATT_FK=404
+t attention-collector-skips-a-fork-that-does-not-exist '[]|' "$(att_collect)"
+ATT_SB='[]'; ATT_FK='[]'
+t attention-collector-empty-source-is-not-unreadable '[]|' "$(att_collect)"
+# Absence is a POSITIVE finding. An auth/rate-limit/network failure fails the
+# probe too and proves nothing, so the fork is unread, not absent — reading the
+# two alike is how the load-bearing branch row greened without a source read.
+ATT_SB='[]'; ATT_FK=ERR
+t attention-collector-non-404-fork-failure-is-unreadable \
+  '[]|drill-identity/sandbox' "$(att_collect)"
+# The sandbox is the one source known to exist: this leg filed its fixture
+# there. Its branch read failing is ALWAYS unreadable...
+ATT_SB=X; ATT_FK='[]'
+t attention-collector-unlistable-sandbox-is-unreadable '[]|owner/sandbox' \
+  "$(att_collect)"
+# ...including when the probe answers 404, which for the sandbox means the
+# world is broken, not that there is nothing to read.
+ATT_SB=404; ATT_FK='[]'
+t attention-collector-sandbox-is-never-skipped '[]|owner/sandbox' "$(att_collect)"
+# Both sources down at once — the reviewed defect exactly: `branches=[]` with
+# `unreadable=''`, which graded PASS having read neither source.
+ATT_SB=ERR; ATT_FK=ERR
+t attention-collector-total-failure-is-not-an-empty-board \
+  '[]|owner/sandbox drill-identity/sandbox' "$(att_collect)"
+# ...and that state now reds the row it feeds, which is the point of all of it.
+ATT_OUT="$(att_row 'attention: dispatch pushed no build branch' \
+  rehearsal_attention_build_branches_from_json "$ATT_ISSUE" '[]' \
+  "$ATT_REPO $ATT_FORK")"
+t attention-unread-sources-red-the-branch-row 1 \
+  "$(grep -cFx 'FAIL attention: dispatch pushed no build branch' <<<"$ATT_OUT")"
+
+# The probe on its own: only a matched 404 is absence.
+att_absent() {  # att_absent <state>
+  local state="$1"
+  (
+    gh() { att_probe "$state"; }
+    if rehearsal_attention_repo_absent "$ATT_FORK"; then echo absent; else echo present; fi
+  )
+}
+t attention-repo-absent-on-a-404 absent "$(att_absent 404)"
+t attention-repo-absent-refuses-a-connection-failure present "$(att_absent ERR)"
+t attention-repo-absent-refuses-a-reachable-repo present "$(att_absent OK)"
+
+# A failed union is not a clean read either: it would leave the list at its
+# previous value with nothing recorded, so a stale list grades as an empty one.
+att_collect_broken_union() {
+  (
+    gh() {
+      case "$*" in
+        *"repos/$ATT_REPO/branches"*) printf '%s\n' '[{"name":"main"}]' ;;
+        *"repos/$ATT_FORK/branches"*) printf '%s\n' '[]' ;;
+        *) return 0 ;;
+      esac
+    }
+    jq() { case "$*" in "-s add") return 5 ;; *) command jq "$@" ;; esac; }
+    rehearsal_attention_collect_branches "$ATT_REPO" "$ATT_FORK"
+    printf '%s\n' "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE"
+  )
+}
+t attention-collector-failed-union-is-unreadable \
+  'owner/sandbox drill-identity/sandbox' "$(att_collect_broken_union)"
+
+# Both reads in the dispatch half — the fixture precondition and the graded row
+# — go through the collector, so neither can drift back to the sandbox alone.
+# shellcheck disable=SC2016  # the needle is source text, not an expansion
+t attention-branch-reads-all-go-through-the-collector 2 \
+  "$(grep -cF 'rehearsal_attention_collect_branches "${sources[@]}"' \
+    "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
+
+# §4.3 the claim is released to ready — the swap, not merely the addition.
+ATT_ISSUE_READY='{"labels":[{"name":"ready"}],"assignees":[]}'
+ATT_ISSUE_CLAIMED='{"labels":[{"name":"claimed"},{"name":"ready"}],"assignees":[]}'
+ATT_ISSUE_ASSIGNED='{"labels":[{"name":"ready"}],"assignees":[{"login":"drill-identity"}]}'
+if rehearsal_attention_is_ready_from_json "$ATT_ISSUE_READY" >/dev/null; then
+  r1=released
+else
+  r1=WRONG
+fi
+t attention-dispatch-ready-holds released "$r1"
+ATT_OUT="$(att_row 'attention: dispatch left the issue ready' \
+  rehearsal_attention_is_ready_from_json "$ATT_ISSUE_CLAIMED")"
+t attention-dispatch-still-claimed-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch left the issue ready' <<<"$ATT_OUT")"
+t attention-dispatch-label-red-quotes-the-set 1 \
+  "$(grep -cF 'read: claimed ready' <<<"$ATT_OUT")"
+
+# §4.4 the identity is unassigned.
+if rehearsal_attention_identity_released_from_json "$ATT_IDENTITY" "$ATT_ISSUE_READY" >/dev/null; then
+  r1=unassigned
+else
+  r1=WRONG
+fi
+t attention-dispatch-unassigned-holds unassigned "$r1"
+ATT_OUT="$(att_row 'attention: dispatch unassigned the identity' \
+  rehearsal_attention_identity_released_from_json "$ATT_IDENTITY" "$ATT_ISSUE_ASSIGNED")"
+t attention-dispatch-still-assigned-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch unassigned the identity' <<<"$ATT_OUT")"
+t attention-dispatch-assignee-red-quotes-the-login 1 \
+  "$(grep -cF "read: $ATT_IDENTITY" <<<"$ATT_OUT")"
+
+# §4.5 the next build step is recorded — a comment by the identity that is not
+# the ack. An ack-only thread is the mutation: the route released a claim
+# without recording where it got to.
+ATT_COMMENTS_STEP='[{"user":{"login":"drill-identity"},"created_at":"2026-08-09T10:01:00Z","body":"📌 picked up"},{"user":{"login":"drill-identity"},"created_at":"2026-08-09T10:02:00Z","body":"Next build step: add drill-attention.txt and open the PR."}]'
+ATT_COMMENTS_ACK='[{"user":{"login":"drill-identity"},"created_at":"2026-08-09T10:01:00Z","body":"📌 picked up"}]'
+if rehearsal_attention_records_next_step_from_json \
+    "$ATT_PICKUP" "$ATT_IDENTITY" "$ATT_FILED" "$ATT_COMMENTS_STEP" >/dev/null; then
+  r1=recorded
+else
+  r1=WRONG
+fi
+t attention-dispatch-next-step-holds recorded "$r1"
+ATT_OUT="$(att_row 'attention: dispatch recorded the next build step' \
+  rehearsal_attention_records_next_step_from_json \
+  "$ATT_PICKUP" "$ATT_IDENTITY" "$ATT_FILED" "$ATT_COMMENTS_ACK")"
+t attention-dispatch-ack-only-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch recorded the next build step' <<<"$ATT_OUT")"
+t attention-dispatch-next-step-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 0 non-ack comment' <<<"$ATT_OUT")"
+# A comment posted before this run's fixture is not this run's evidence.
+t attention-dispatch-next-step-window-is-this-run 0 \
+  "$(rehearsal_attention_next_step_count_from_json "$ATT_PICKUP" "$ATT_IDENTITY" \
+    2026-08-09T23:00:00Z "$ATT_COMMENTS_STEP")"
+
+# §5.1 the ⏱️ comment lands exactly once across two lowered invocations.
+ATT_TIMEOUT_BODY="⏱️ $ATT_PHRASE; work may be incomplete. Session log: $ATT_LINK"
+ATT_TIMEOUT_ONE="$(jq -n --arg b "$ATT_TIMEOUT_BODY" '[{body:$b}]')"
+ATT_TIMEOUT_TWICE="$(jq -n --arg b "$ATT_TIMEOUT_BODY" '[{body:$b},{body:$b}]')"
+ATT_TIMEOUT_NONE='[{"body":"📌 picked up"}]'
+if rehearsal_attention_timeout_comment_once_from_json "$ATT_PHRASE" "$ATT_TIMEOUT_ONE" >/dev/null; then
+  r1=once
+else
+  r1=WRONG
+fi
+t attention-timeout-comment-once-holds once "$r1"
+ATT_OUT="$(att_row 'attention: timeout comment posted exactly once' \
+  rehearsal_attention_timeout_comment_once_from_json "$ATT_PHRASE" "$ATT_TIMEOUT_TWICE")"
+t attention-timeout-comment-duplicated-reds 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
+t attention-timeout-duplicate-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 2 timeout comment' <<<"$ATT_OUT")"
+ATT_OUT="$(att_row 'attention: timeout comment posted exactly once' \
+  rehearsal_attention_timeout_comment_once_from_json "$ATT_PHRASE" "$ATT_TIMEOUT_NONE")"
+t attention-timeout-comment-absent-reds 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
+
+# §5.2 that comment names the STABLE link, which is what survives a retry.
+ATT_TIMEOUT_STAMPED="$(jq -n --arg b "⏱️ $ATT_PHRASE; work may be incomplete. Session log: $ATT_RUNLOG" '[{body:$b}]')"
+if rehearsal_attention_timeout_names_link_from_json \
+    "$ATT_PHRASE" "$ATT_LINK" "$ATT_TIMEOUT_ONE" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-timeout-comment-names-stable-link named "$r1"
+ATT_OUT="$(att_row 'attention: timeout comment names the stable log link' \
+  rehearsal_attention_timeout_names_link_from_json \
+  "$ATT_PHRASE" "$ATT_LINK" "$ATT_TIMEOUT_STAMPED")"
+t attention-timeout-timestamped-path-reds 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment names the stable log link' <<<"$ATT_OUT")"
+# An empty link would grep for "" and match any body at all — a vacuous pass
+# standing beside a run-log row already red for the same reason.
+ATT_OUT="$(att_row 'attention: timeout comment names the stable log link' \
+  rehearsal_attention_timeout_names_link_from_json \
+  "$ATT_PHRASE" '' "$ATT_TIMEOUT_STAMPED")"
+t attention-no-derived-link-reds-rather-than-matching-anything 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment names the stable log link' <<<"$ATT_OUT")"
+t attention-no-derived-link-red-says-why 1 \
+  "$(grep -cF 'read: no stable link derived to check the comment against' <<<"$ATT_OUT")"
+
+# §5.3 the stable link exists and resolves to a readable file. Staged for real
+# against a stubbed bx(), so the three states an operator can find are read
+# rather than argued: present, dangling, absent.
+ATT_LINKDIR="$TMP/attention-link"
+mkdir -p "$ATT_LINKDIR"
+printf 'session\n' >"$ATT_LINKDIR/run.log"
+ln -sfn run.log "$ATT_LINKDIR/latest.log"
+bx() { bash -c "$1"; }
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=readable
+else
+  r1=WRONG
+fi
+t attention-stable-link-readable-holds readable "$r1"
+rm -f "$ATT_LINKDIR/run.log"
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=WRONG
+else
+  r1=dangling
+fi
+t attention-stable-link-dangling-reds dangling "$r1"
+rm -f "$ATT_LINKDIR/latest.log"
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=WRONG
+else
+  r1=absent
+fi
+t attention-stable-link-absent-reds absent "$r1"
+# A regular file in the link's place is not the link the engine plants.
+printf 'not a link\n' >"$ATT_LINKDIR/latest.log"
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-stable-link-plain-file-reds refused "$r1"
+unset -f bx
+
+# §5.4 the operator alert names the IMMUTABLE run log, not the stable link:
+# the two paths are deliberately different subjects and swapping them is the
+# mutation that would go unnoticed.
+ATT_SESSION_OUT="2026-08-09T11:00:00Z SESSION START kind=attention key=$ATT_REPO#$ATT_ISSUE timeout=1s log=$ATT_RUNLOG
+2026-08-09T11:00:02Z SESSION END kind=attention key=$ATT_REPO#$ATT_ISSUE rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+t attention-run-log-read-from-the-session-record "$ATT_RUNLOG" \
+  "$(rehearsal_attention_run_log_from_output "$ATT_REPO" "$ATT_ISSUE" "$ATT_SESSION_OUT")"
+t attention-stable-link-derived-not-parsed "$ATT_LINK" \
+  "$(rehearsal_attention_stable_link_for "$ATT_REPO" "$ATT_ISSUE" "$ATT_RUNLOG")"
+if rehearsal_attention_run_log_from_output "$ATT_REPO" "$ATT_ISSUE" \
+    "2026-08-09T11:00:00Z SESSION START kind=attention key=other/repo#1 timeout=1s log=/tmp/other" >/dev/null; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-run-log-of-another-key-refused refused "$r1"
+ATT_ALERTS="⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG"
+if rehearsal_attention_alert_names_run_log \
+    "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" "$ATT_ALERTS" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-alert-names-run-log-holds named "$r1"
+ATT_OUT="$(att_row 'attention: operator alert named the run log' \
+  rehearsal_attention_alert_names_run_log \
+  "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" \
+  "⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_LINK")"
+t attention-alert-naming-the-link-reds 1 \
+  "$(grep -cFx 'FAIL attention: operator alert named the run log' <<<"$ATT_OUT")"
+ATT_OUT="$(att_row 'attention: operator alert named the run log' \
+  rehearsal_attention_alert_names_run_log \
+  "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" '')"
+t attention-alert-absent-reds 1 \
+  "$(grep -cF 'read: <no timeout alert>' <<<"$ATT_OUT")"
+
+# The capture path EXECUTED, not a prebuilt alert string handed to the
+# predicate. The override is generated by the leg, run by a shell the way the
+# box's bash runs it, and read back — which is the only shape that catches an
+# escaping level: a definition one backslash too deep captures the literal $*
+# and no alert can ever match, so the row reds against a correct engine.
+ATT_CAPTURE="$TMP/attention-alert-capture"
+: >"$ATT_CAPTURE"
+ATT_ALERT_DEF="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_timeout_invoke "$ATT_IDENTITY" 1 "$ATT_CAPTURE"
+)"
+ATT_ALERT_DEF="$(grep -F 'alert()' <<<"$ATT_ALERT_DEF")"
+bash -c "$ATT_ALERT_DEF; alert '⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG'"
+t attention-generated-alert-expands-its-arguments 0 \
+  "$(grep -cFx '$*' "$ATT_CAPTURE" | tr -d ' ')"
+if rehearsal_attention_alert_names_run_log \
+    "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" \
+    "$(cat "$ATT_CAPTURE")" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-generated-alert-capture-feeds-the-row named "$r1"
+
+# The graded pair must come from ONE invocation. run_session stamps the log at
+# second granularity, so two lowered invocations name two run logs; grading the
+# last alert against the first run log reds on a correct engine. This is the
+# capture the row used to see.
+ATT_RUNLOG2=/home/drill/duty/logs/20260809T110004Z-attention-owner__sandbox_77.log
+ATT_ALERTS_BOTH="⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG
+⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG2"
+ATT_OUT="$(att_row 'attention: operator alert named the run log' \
+  rehearsal_attention_alert_names_run_log \
+  "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" "$ATT_ALERTS_BOTH")"
+t attention-alert-of-another-invocation-reds 1 \
+  "$(grep -cFx 'FAIL attention: operator alert named the run log' <<<"$ATT_OUT")"
+t attention-mixed-invocation-red-quotes-the-other-log 1 \
+  "$(grep -cF "read: ⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG2" \
+    <<<"$ATT_OUT")"
+# So the half gives each invocation its own capture and grades the first's.
+# shellcheck disable=SC2016  # the needle is source text, not an expansion
+t attention-each-invocation-has-its-own-capture 2 \
+  "$(grep -cE 'rehearsal_attention_timeout_invoke "\$identity" "\$budget" "\$capture_(first|second)"' \
+    "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
+t attention-graded-alert-comes-from-the-first-capture 1 \
+  "$(grep -cF "cat '\$capture_first'" "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
+
+# The restore. The lowered budget lives in one box shell, so the proof is that
+# a fresh load_conf still resolves the installed number — an after that equals
+# the lowered value is exactly the leak this row exists to catch.
+if rehearsal_attention_timeout_restored 1800 1800 1 >/dev/null; then
+  r1=restored
+else
+  r1=WRONG
+fi
+t attention-installed-budget-restored-holds restored "$r1"
+ATT_OUT="$(att_row 'attention: installed pickup budget survives the lowered run' \
+  rehearsal_attention_timeout_restored 1800 1 1)"
+t attention-lowered-budget-leaked-reds 1 \
+  "$(grep -cFx 'FAIL attention: installed pickup budget survives the lowered run' <<<"$ATT_OUT")"
+t attention-budget-red-quotes-both-readings 1 \
+  "$(grep -cF 'read: installed TIMEOUT_ATTENTION before=1800 after=1' <<<"$ATT_OUT")"
+if rehearsal_attention_timeout_restored '' '' 1 >/dev/null; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-unresolvable-budget-refused refused "$r1"
+# One red row, two causes: a budget that never resolved is not one left lowered,
+# and the aggregate summary line names the one that happened.
+if rehearsal_attention_timeout_unresolved '' ''; then r1=unresolved; else r1=WRONG; fi
+t attention-unresolved-budget-is-its-own-cause unresolved "$r1"
+if rehearsal_attention_timeout_unresolved 1800 1; then r1=WRONG; else r1=leak; fi
+t attention-lowered-budget-is-not-an-unresolved-one leak "$r1"
+
+# --- the halves' own bookkeeping: a red row must reach the verdict ----------
+#
+# rehearsal-all.sh reads this leg's summary row off the drill's return code,
+# which is read off the two halves' return codes. So a red row that cannot
+# reach a half's return code prints `ok attention` into the round summary and
+# drills/<version>.md for a round that asserted nothing — the #423 defect (see
+# the notify leg above) relocated into this leg's own bookkeeping, and the
+# reason drill/rehearsal-resume.sh pairs every `fail` with a verdict.
+#
+# Staged as the halves actually run, with the filer, the invoker, gh and bx
+# stubbed; each mutation is one realistic blip, not a broken engine.
+ATT_SESSION_OUT2="2026-08-09T11:00:04Z SESSION START kind=attention key=$ATT_REPO#$ATT_ISSUE timeout=1s log=$ATT_RUNLOG2
+2026-08-09T11:00:06Z SESSION END kind=attention key=$ATT_REPO#$ATT_ISSUE rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+ATT_ALERTS_FIRST="⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG"
+
+att_half_stubs() {
+  ok()   { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  # rehearsal.sh's wait_for, minus the sleeping.
+  wait_for() {
+    local name="$2"; shift 2
+    if "$@" >/dev/null 2>&1; then ok "$name"; return 0; fi
+    fail "$name (timeout)"; return 1
+  }
+  rehearsal_attention_file_fixture() { REHEARSAL_ATTENTION_NUM="$ATT_ISSUE"; }
+  rehearsal_attention_close_fixture() { return 0; }
+  # shellcheck disable=SC2317  # invoked indirectly, by the half under test
+  rehearsal_attention_demand_visible() { return "${ATT_VISIBLE:-0}"; }
+}
+
+att_dispatch_half() {  # rows on stdout, the half's rc as the exit status
+  # The half reads pulls TWICE — the fixture precondition, then the graded row
+  # minutes later — and either read can blip on its own. Counted in a file for
+  # the same reason the timeout half's invocations are: the reads happen inside
+  # command substitutions, and a shell variable would go with the subshell.
+  printf '0' >"$TMP/att-pulls-n"
+  (
+    att_half_stubs
+    rehearsal_attention_dispatch_invoke() { printf '%s\n' "$ATT_WAKE"; }
+    rehearsal_attention_open_prs_json() {
+      local n
+      n=$(( $(cat "$TMP/att-pulls-n") + 1 ))
+      printf '%s' "$n" >"$TMP/att-pulls-n"
+      case "${ATT_PULLS_FAIL:-none}" in
+        first)  if [ "$n" -eq 1 ]; then return 1; fi ;;
+        second) if [ "$n" -eq 2 ]; then return 1; fi ;;
+      esac
+      printf '%s\n' "$ATT_PULLS_CLEAN"
+    }
+    rehearsal_attention_settled_issue_json() { printf '%s\n' "$ATT_ISSUE_READY"; }
+    rehearsal_attention_collect_branches() {
+      REHEARSAL_ATTENTION_BRANCHES="$ATT_BRANCHES_CLEAN"
+      REHEARSAL_ATTENTION_BRANCH_UNREADABLE=""
+    }
+    gh() {
+      case "$*" in
+        *"/comments"*) printf '%s\n' "$ATT_COMMENTS_STEP" ;;
+        *) printf '%s\n' "$ATT_FILED" ;;
+      esac
+    }
+    rehearsal_attention_dispatch_half "$ATT_REPO" "$ATT_IDENTITY" "$ATT_PICKUP"
+  )
+}
+
+att_timeout_half() {  # rows on stdout, the half's rc as the exit status
+  printf '0' >"$TMP/att-invoke-n"
+  (
+    att_half_stubs
+    rehearsal_attention_stable_log_readable() { return 0; }
+    # Called in a command substitution, so the counter cannot live in a shell
+    # variable — the subshell would take each increment with it.
+    rehearsal_attention_timeout_invoke() {
+      local n
+      n=$(( $(cat "$TMP/att-invoke-n") + 1 ))
+      printf '%s' "$n" >"$TMP/att-invoke-n"
+      if [ "$n" -eq 1 ]; then printf '%s\n' "$ATT_FIRST"; else printf '%s\n' "$ATT_SECOND"; fi
+    }
+    bx() { case "$1" in cat*) printf '%s\n' "$ATT_ALERTS_FIRST" ;; *) return 0 ;; esac; }
+    gh() { printf '%s\n' "$ATT_TIMEOUT_ONE"; }
+    rehearsal_attention_timeout_half "$ATT_REPO" "$ATT_IDENTITY" "$ATT_PHRASE" \
+      "$TMP/att-capture" 1
+  )
+}
+
+# Control: every row green, both halves return 0.
+ATT_WAKE="$ATT_SESSION_OUT"
+ATT_FIRST="$ATT_SESSION_OUT"; ATT_SECOND="$ATT_SESSION_OUT2"
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+t attention-dispatch-half-green-returns-0 "0|0" \
+  "$r1|$(grep -c '^FAIL' <<<"$ATT_OUT" | tr -d ' ')"
+ATT_OUT="$(att_timeout_half)"; r1=$?
+t attention-timeout-half-green-returns-0 "0|0" \
+  "$r1|$(grep -c '^FAIL' <<<"$ATT_OUT" | tr -d ' ')"
+
+# Mutation: the wake launched no pickup session. The row reds; before the fix
+# the half still returned 0 and the round summary said `ok attention`.
+ATT_WAKE="2026-08-09T11:00:00Z attention: none"
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+ATT_WAKE="$ATT_SESSION_OUT"
+t attention-dispatch-wake-red-reaches-the-halfs-verdict 1 "$r1"
+t attention-dispatch-wake-red-is-a-red-row 1 \
+  "$(grep -cFx 'FAIL attention: dispatch wake launched a pickup session' <<<"$ATT_OUT")"
+
+# Mutation: the SECOND lowered invocation never ran — duty_attention took its
+# `attention fetch failed this tick` return and never reached the timeout
+# branch. The row that must red is the invocation one, and the row that stays
+# green is why it matters: "posted exactly once" is TRIVIALLY true with one
+# invocation, so a half returning 0 here reports `ok` on a round in which
+# post-once.sh was never asked to dedup at all.
+ATT_SECOND="attention: none new in registry"
+ATT_OUT="$(att_timeout_half)"; r1=$?
+t attention-timeout-invocation-red-reaches-the-halfs-verdict 1 "$r1"
+t attention-timeout-second-invocation-red-is-a-red-row 1 \
+  "$(grep -cFx 'FAIL attention: both lowered invocations timed out' <<<"$ATT_OUT")"
+t attention-dedup-row-greens-alone-which-is-the-point 1 \
+  "$(grep -cFx 'ok   attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
+# And that red stays legible: bare "$first$second" ran the first invocation's
+# last line into the second's first, in the one place an operator has to tell
+# the two apart. The needle is the glue itself — this fixture's first capture
+# ends at `reply_tail=` and the second opens with the registry line, so the two
+# meet inside the SESSION END row the red quotes.
+t attention-invocation-red-does-not-glue-the-two-captures 0 \
+  "$(grep -c 'reply_tail=attention: none new in registry' <<<"$ATT_OUT" | tr -d ' ')"
+ATT_SECOND="$ATT_SESSION_OUT2"
+
+# Mutation: the run log does not resolve. Its own row reds and reaches the
+# verdict — and the alert row must red WITH it rather than grepping for ""
+# and matching any line, which greened §5's "the operator alert fired naming
+# the run log" on an alert nothing had checked.
+ATT_FIRST="2026-08-09T11:00:02Z SESSION END kind=attention key=$ATT_REPO#$ATT_ISSUE rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+ATT_OUT="$(att_timeout_half)"; r1=$?
+ATT_FIRST="$ATT_SESSION_OUT"
+t attention-run-log-red-reaches-the-halfs-verdict 1 "$r1"
+t attention-no-run-log-reds-the-alert-row 1 \
+  "$(grep -cFx 'FAIL attention: operator alert named the run log' <<<"$ATT_OUT")"
+t attention-no-run-log-alert-red-says-why 1 \
+  "$(grep -cF 'read: no run log resolved to check the alert against' <<<"$ATT_OUT")"
+# The guard on its own, beside its twin on the derived link.
+if rehearsal_attention_alert_names_run_log \
+    "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" '' "$ATT_ALERTS" >/dev/null; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-empty-run-log-refuses-rather-than-matching-anything refused "$r1"
+
+# The index the wake reads is cross-repo and lags the assignment that fills it,
+# so both halves wait for their own demand to appear in it before invoking —
+# otherwise the wake row reds on a correct engine.
+ATT_VISIBLE=1
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+t attention-dispatch-waits-for-the-demand-index 1 \
+  "$(grep -cF 'FAIL attention: dispatch demand visible to the identity' <<<"$ATT_OUT")"
+t attention-invisible-demand-reaches-the-dispatch-verdict 1 "$r1"
+ATT_OUT="$(att_timeout_half)"; r1=$?
+t attention-timeout-waits-for-the-demand-index 1 \
+  "$(grep -cF 'FAIL attention: timeout demand visible to the identity' <<<"$ATT_OUT")"
+t attention-invisible-demand-reaches-the-timeout-verdict 1 "$r1"
+ATT_VISIBLE=0
+
+# Mutation: ONLY the pulls endpoint blips. The branch reads are clean, the wake
+# is correct, the board is correct — this is one `repos/<sandbox>/pulls` call
+# meeting a secondary rate limit, and it is the likelier of the half's two
+# board reads to do so, being the `--paginate` listing over the sandbox the
+# builder legs above have been opening PRs into. The half reads it twice, at
+# two separate moments, so each read is failed on its own.
+#
+# Before the fix both fell back to `[]`: the precondition passed on a fixture
+# it had not checked, and `attention: dispatch opened no PR for the claim` —
+# the row #440 §4 calls load-bearing FIRST — printed `ok` having read nothing.
+ATT_PULLS_FAIL=first
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+t attention-unread-pulls-reds-the-fixture-precondition 1 \
+  "$(grep -cFx 'FAIL attention: dispatch fixture starts with no PR and no build branch' \
+    <<<"$ATT_OUT")"
+t attention-unread-pulls-precondition-reaches-the-verdict 1 "$r1"
+ATT_PULLS_FAIL=second
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+ATT_PULLS_FAIL=none
+# The precondition is not a backstop for the graded row: the first read was
+# clean and passed it, and the second read failed minutes later.
+t attention-unread-pulls-precondition-passes-on-the-clean-first-read 1 \
+  "$(grep -cFx 'ok   attention: dispatch fixture starts with no PR and no build branch' \
+    <<<"$ATT_OUT")"
+t attention-unread-pulls-reds-the-graded-absence-row 1 \
+  "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
+t attention-unread-pulls-red-names-the-source 1 \
+  "$(grep -cF "read: could not list pull requests of: $ATT_REPO" <<<"$ATT_OUT")"
+t attention-unread-pulls-reaches-the-halfs-verdict 1 "$r1"
+
+# The fixture registry the EXIT trap reads (rehearsal.sh). It is written by the
+# filer, so the filer must not be called in a command substitution: bash runs
+# one in a subshell and the registry dies with it, leaving an open assigned
+# claimed+attention issue on the sandbox for the next duty tick.
+(
+  REHEARSAL_ATTENTION_REPO=""
+  REHEARSAL_ATTENTION_ISSUES=""
+  gh() { printf '%s\n' 91; }
+  rehearsal_attention_file_fixture "$ATT_REPO" "$ATT_IDENTITY" title body
+  gh() { printf '%s\n' 92; }
+  rehearsal_attention_file_fixture "$ATT_REPO" "$ATT_IDENTITY" title body
+  printf '%s|%s|%s\n' "$REHEARSAL_ATTENTION_REPO" \
+    "$REHEARSAL_ATTENTION_ISSUES" "$REHEARSAL_ATTENTION_NUM"
+) >"$TMP/attention-registry" 2>/dev/null
+t attention-fixture-registers-in-the-callers-shell "$ATT_REPO|91 92|92" \
+  "$(cat "$TMP/attention-registry")"
+t attention-fixture-filer-is-never-command-substituted 0 \
+  "$(grep -cE '\$\(rehearsal_attention_file_fixture' \
+    "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
+# And the registry survives an early return, which is the path that strands a
+# fixture: the precondition red at the top of the dispatch half.
+(
+  REHEARSAL_ATTENTION_REPO=""
+  REHEARSAL_ATTENTION_ISSUES=""
+  gh() { printf '%s\n' 93; }
+  rehearsal_attention_file_fixture "$ATT_REPO" "$ATT_IDENTITY" title body
+  # The fixture precondition's own `return 1` path: filed, nothing closed yet.
+  gh() { printf '%s\n' "$*" >>"$TMP/attention-cleanup-calls"; }
+  rehearsal_attention_cleanup
+) 2>/dev/null
+t attention-cleanup-closes-the-fixture-after-an-early-return 1 \
+  "$(grep -cF "api -X PATCH repos/$ATT_REPO/issues/93 -f state=closed" \
+    "$TMP/attention-cleanup-calls" | tr -d ' ')"
+t attention-cleanup-clears-the-fixtures-demand 1 \
+  "$(grep -cF "api -X DELETE repos/$ATT_REPO/issues/93/labels/attention" \
+    "$TMP/attention-cleanup-calls" | tr -d ' ')"
+
+# The opt-out is a skip with a reason, never a silent pass.
+REHEARSAL_ATTENTION_STATUS="$TMP/attention-leg-verdicts"
+: >"$REHEARSAL_ATTENTION_STATUS"
+(
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
+  ROLE=builder
+  REHEARSAL_ATTENTION_DRILL=0
+  skip() { :; }
+  rehearsal_attention_drill "$ATT_REPO" "$ATT_IDENTITY" >/dev/null
+)
+t attention-verdict-opt-out-is-a-skip "builder skip --no-attention-drill" \
+  "$(cat "$REHEARSAL_ATTENTION_STATUS")"
+unset REHEARSAL_ATTENTION_STATUS
+
+# No agent or box name in the leg: the identity reaches every assertion from
+# the round's own variables.
+t attention-leg-names-no-agent-or-box 0 \
+  "$(grep -ciE 'claude|codex|grok|kimi|crew-drill' \
+    "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
+
+# Wiring: the leg is sourced and called in the builder block, and it runs
+# AFTER the two wake rows it sits beside, which are unchanged.
+# shellcheck disable=SC2016  # match literal builder-block source text
+if sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
+    "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq '. "$ROOT/drill/rehearsal-attention.sh"'; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t attention-helper-sourced-in-builder-block wired "$r1"
+ATT_WAKE_LINE="$(grep -nF 'attention: 📌 pickup comment' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+ATT_ACK_LINE="$(grep -nF 'attention: label removed (ack re-arms)' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal call site in rehearsal.sh
+ATT_LEG_LINE="$(grep -nF 'rehearsal_attention_drill "$SANDBOX"' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+if [ -n "$ATT_WAKE_LINE" ] && [ -n "$ATT_ACK_LINE" ] && [ -n "$ATT_LEG_LINE" ] \
+    && [ "$ATT_WAKE_LINE" -lt "$ATT_ACK_LINE" ] && [ "$ATT_ACK_LINE" -lt "$ATT_LEG_LINE" ]; then
+  r1=after
+else
+  r1=WRONG
+fi
+t attention-leg-follows-the-existing-wake-rows after "$r1"
+if grep -Fq -- '--no-attention-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'attention  (dispatch without code + timeout report)' \
+      "$ROOT/drill/rehearsal-all.sh"; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t attention-all-opt-out-and-summary-wired wired "$r1"
+
+# Neither mark is retyped in the leg. Staged against the real engine source
+# with bx() pointed at it in place of the installed tree: a rename in the
+# module or the conf must move this leg's subject with it, and the loader is
+# the row that says so.
+# shellcheck disable=SC2088  # a literal box path, matched not expanded
+ATT_BOXPATH='~/duty/'
+bx() { bash -c "${1//$ATT_BOXPATH/$ROOT/shared/}"; }
+ok() { :; }
+fail() { :; }
+rehearsal_attention_load_installed_marks
+t attention-marks-resolve-from-the-engine-source "present present" \
+  "$([ -n "$REHEARSAL_ATTENTION_MARK_PICKUP" ] && printf present || printf MISSING) $([ -n "$REHEARSAL_ATTENTION_TIMEOUT_PHRASE" ] && printf present || printf MISSING)"
+t attention-pickup-mark-is-the-confs-own 1 \
+  "$(grep -cF "MARK_PICKUP=\"$REHEARSAL_ATTENTION_MARK_PICKUP\"" \
+    "$ROOT/shared/conf/fleet.defaults.conf")"
+t attention-timeout-phrase-is-the-modules-own 1 \
+  "$(grep -cF "$REHEARSAL_ATTENTION_TIMEOUT_PHRASE;" \
+    "$ROOT/shared/lib/duty-attention.sh")"
+unset -f bx ok fail
+# An engine this leg can no longer read is a red row, never a silent pass on
+# an empty needle that every body would then contain.
+ATT_OUT="$(
+  bx() { printf '\n'; }
+  ok() { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  rehearsal_attention_load_installed_marks
+)"
+t attention-unreadable-marks-red 1 \
+  "$(grep -cFx 'FAIL attention: installed pickup mark and timeout phrase resolve' <<<"$ATT_OUT")"
+
+# The lowering is confined to one box shell, which is why no exit path can
+# leave it behind. Both halves of that claim are read off the script the leg
+# actually sends: the assignment lands AFTER load_conf, in the process that
+# calls duty_attention, and nothing under the installed conf or lib is written.
+ATT_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_timeout_invoke drill-identity 1 /tmp/attention-capture
+)"
+t attention-lowering-follows-load-conf 1 \
+  "$(awk '/load_conf/ { seen = 1 } seen && /^ *TIMEOUT_ATTENTION=1$/ { print; exit }' \
+    <<<"$ATT_SCRIPT" | wc -l | tr -d ' ')"
+t attention-lowered-run-writes-no-installed-file 0 \
+  "$(grep -cE '(>>?|tee |sed -i|cp ).*duty/(conf|lib)' <<<"$ATT_SCRIPT" | tr -d ' ')"
+t attention-lowered-run-calls-the-module-directly 1 \
+  "$(grep -cx ' *duty_attention' <<<"$ATT_SCRIPT" | tr -d ' ')"
 
 # --- rehearsal boot-check verdict: what the gate SAID, not that it ran (#427) ---
 # The drill's assertion was `test -s ~/duty/boot-check.log`, which passes on a
@@ -2006,14 +2815,15 @@ agg_case() {  # $1 role, $2 notify verdict, $3 rc, $4 resume verdict
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   # Every sibling leg the notify fold is not under test with is switched off,
-  # --no-hygiene-drill (#422) and --no-breaker-drill (#424) included: these
+  # --no-hygiene-drill (#422), --no-breaker-drill (#424) and
+  # --no-attention-drill (#440) included: these
   # cases assert what the NOTIFY
   # verdict does to `overall`, and a neighbour's row moving it would red them
   # for a reason that is not theirs. The composition of the two folds gets its
   # own case below, with the hygiene leg deliberately left on.
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
 }
 
 # The breaker has its own enabled/incomplete partition: an enabled leg that no
@@ -2022,7 +2832,7 @@ agg_run() {  # $1 roles, then extra flags
 agg_breaker_run() {
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles '' \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
 }
 if agg_out="$(agg_breaker_run)"; then agg_rc=0; else agg_rc=$?; fi
 t breaker-agg-enabled-no-role-is-incomplete 1 \
@@ -2108,7 +2918,7 @@ resume_agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-hygiene-drill \
-    --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
 }
 
 # Reported defect: the builder leg skipped while the role exited 0. The row
@@ -2165,7 +2975,7 @@ agg_hygiene_run() {  # $1 roles, $2 the hygiene result the role box records
   local roles="$1" hyg="$2"
   AGG_DIR="$AGG" AGG_HYGIENE="$hyg" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-breaker-drill 2>&1
+    --no-attention-drill --no-breaker-drill 2>&1
 }
 # The stub writes the hygiene result the way the live leg does — into the file
 # rehearsal-all.sh hands it, per role — on top of the notify verdict it already
