@@ -615,11 +615,22 @@ notify_stub_bx() {  # $1 the box command, $2 how the second repos.txt read answe
       else
         printf '%s\nheavy-duty/crew\n' "$NOTIFY_WORK"
       fi ;;
+    # The three-state read of notify-repos.txt, answered as a real box would:
+    # `present` with the contents, `present` alone for a file that exists and
+    # is empty, `absent`, or a box that does not answer at all.
+    *"-e ~/duty/notify-repos.txt"*)
+      case "$NOTIFY_PRE_STATE" in
+        present) printf 'present\n'; [ -n "$NOTIFY_PRE_TEXT" ] && printf '%s\n' "$NOTIFY_PRE_TEXT"; return 0 ;;
+        absent)  printf 'absent\n'; return 0 ;;
+        *)       return 255 ;;
+      esac ;;
     *) : ;;
   esac
 }
 notify_run_leg() {  # $1 how the post-write repos.txt read answers
   NOTIFY_SECOND_READ="$1"
+  NOTIFY_PRE_STATE="${2:-present}"
+  NOTIFY_PRE_TEXT="${3:-}"
   : >"$NOTIFY_BX_CALLS"
   printf '0\n' >"$NOTIFY_READS"
   REHEARSAL_NOTIFY_BACKUP=""
@@ -655,6 +666,45 @@ t notify-stable-work-registry-restores-both 1 \
   "$(grep -cF 'ok   notify: teardown restored both registries' <<<"$notify_out")"
 t notify-write-replaces-the-fleet-notify-list 1 \
   "$(grep -cF "printf '%s\\n' '$NOTIFY_WORK-notify' > ~/duty/notify-repos.txt" "$NOTIFY_BX_CALLS")"
+
+# A box that shipped a real notify-repos.txt is captured as those bytes, not
+# as the empty string a `cat … || true` used to hand back. Proven where it
+# matters: the leg's own restore comparison, whose stub puts nothing back, now
+# NOTICES — under the old capture it compared "" against "" and passed.
+notify_out="$(notify_run_leg same present 'heavy-duty/ceremony')"
+t notify-pre-drill-capture-keeps-the-fleet-bytes 1 \
+  "$(grep -cF 'FAIL notify: teardown restored both registries' <<<"$notify_out")"
+notify_out="$(notify_run_leg same present)"
+t notify-pre-drill-capture-empty-file-is-not-a-mismatch 1 \
+  "$(grep -cF 'ok   notify: teardown restored both registries' <<<"$notify_out")"
+
+# Must fail: the box does not answer when asked what notify-repos.txt held.
+# The old read was `cat … 2>/dev/null || true`, so this arrived as empty bytes
+# with CAPTURED=1 — and teardown then compared the restored fleet registry
+# against "" and passed. Nothing may be written on this path: the absence
+# branch of the probe is what licenses teardown's `rm -f`.
+notify_out="$(notify_run_leg same unanswerable)"
+t notify-unreadable-pre-drill-registry-reds 1 \
+  "$(grep -cF 'FAIL notify: the box could not be asked what notify-repos.txt held before the drill' <<<"$notify_out")"
+t notify-unreadable-pre-drill-registry-emits-no-ok-union 0 \
+  "$(grep -cF 'notify: both halves of the union' <<<"$notify_out")"
+t notify-unreadable-pre-drill-registry-writes-nothing 0 \
+  "$(grep -cF "> ~/duty/notify-repos.txt" "$NOTIFY_BX_CALLS")"
+t notify-unreadable-pre-drill-registry-runs-no-notify-tick 0 \
+  "$(grep -cF 'tick.sh notify' "$NOTIFY_BX_CALLS")"
+
+# The same refusal at the level of the writer itself, which is where the
+# `rm -f` is decided: an unanswerable probe leaves no backup path behind, so
+# teardown has nothing to restore and nothing to delete.
+(
+  bx() { return 255; }
+  REHEARSAL_NOTIFY_ABSENT=0
+  rehearsal_notify_write_registry "$NOTIFY_EXTRA" >/dev/null 2>&1
+  printf 'rc=%s absent=%s backup=[%s]\n' \
+    "$?" "$REHEARSAL_NOTIFY_ABSENT" "$REHEARSAL_NOTIFY_BACKUP"
+) >"$TMP/notify-write-unanswerable"
+t notify-write-unanswerable-probe-refuses 'rc=1 absent=0 backup=[]' \
+  "$(cat "$TMP/notify-write-unanswerable")"
 
 # Must fail (recorded, not hidden): an unreachable channel is a visible skip
 # naming the reason, and never an ok.
@@ -746,6 +796,8 @@ NOTIFY_STATUS_FILE="$TMP/notify-verdicts"
 REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS_FILE"
 notify_leg_verdicts() {  # $1 how the post-write repos.txt read answers
   NOTIFY_SECOND_READ="$1"
+  NOTIFY_PRE_STATE="${2:-present}"
+  NOTIFY_PRE_TEXT="${3:-}"
   : >"$NOTIFY_BX_CALLS"
   : >"$NOTIFY_STATUS_FILE"
   printf '0\n' >"$NOTIFY_READS"
@@ -769,6 +821,12 @@ notify_out="$(notify_leg_verdicts same)"
 t notify-verdict-unstageable-fixture-is-a-fail 1 \
   "$(grep -cF "reviewer fail the repos.txt half's handoff fixture could not be staged" <<<"$notify_out")"
 t notify-verdict-unstageable-fixture-records-no-pass 0 "$(grep -c ' ok ' <<<"$notify_out")"
+# A box that will not say what its notify-repos.txt held is a fail, not a
+# silent empty capture that teardown then vouches for.
+notify_out="$(notify_leg_verdicts same unanswerable)"
+t notify-verdict-unreadable-pre-drill-registry-is-a-fail 1 \
+  "$(grep -cF 'reviewer fail the pre-drill notify-repos.txt could not be read' <<<"$notify_out")"
+t notify-verdict-unreadable-pre-drill-registry-records-no-pass 0 "$(grep -c ' ok ' <<<"$notify_out")"
 
 unset -f bx notify_stub_bx notify_run_leg notify_union notify_leg_verdicts
 
@@ -964,6 +1022,15 @@ t notify-agg-opt-out-is-an-announced-skip 1 \
   "$(grep -cF 'skip       notify  (--no-notify-drill)' <<<"$agg_out")"
 t notify-agg-opt-out-rc 0 "$agg_rc"
 
+# ...but the flag switches off the notify VERDICT, not the round. With the
+# leg's verdict as its only escalation route, a teardown that left the wrong
+# bytes disappeared under --no-notify-drill; the role's own rc has to carry
+# it, which is what cleanup_all's `exit "$rc"` restores.
+agg_case reviewer '' 1
+if agg_out="$(agg_run reviewer --no-notify-drill)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-opt-out-still-reds-a-failed-role 1 "$(grep -c '^## *FAIL *reviewer' <<<"$agg_out")"
+t notify-agg-opt-out-failed-role-rc 1 "$agg_rc"
+
 # --- teardown compares BOTH registries against their pre-drill bytes ------
 #
 # A restore that exits 0 having moved the wrong bytes leaves the box working
@@ -973,6 +1040,11 @@ t notify-agg-opt-out-rc 0 "$agg_rc"
 # BOX_NAME and REPOS_BACKUP from the round's scope, and a fixture that shadows
 # them in a subshell makes every one of those reads a subshell read.
 CLEANUP_DRIVER="$TMP/notify-cleanup-driver.sh"
+#
+# The stub answers as a box does, in three states and not two: `present` with
+# the contents, `absent`, or nothing at all because the box has gone away. The
+# last one is what round 2 was about — it used to read as "there was no
+# backup", and the comparison then returned success having compared nothing.
 cat >"$CLEANUP_DRIVER" <<'CLEANSH'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -980,37 +1052,56 @@ set -uo pipefail
 . "$ROOT/drill/rehearsal-safety.sh"
 BOX_NAME=fixture
 REPOS_BACKUP='~/duty/repos.txt.pre-drill-99'
-REHEARSAL_NOTIFY_BACKUP=""
+REHEARSAL_NOTIFY_BACKUP="$CLEAN_NOTIFY_BACKUP"
 # After the sources: sourcing rehearsal-notify.sh resets these to their
 # start-of-round defaults, which is the state the case is choosing.
 REHEARSAL_NOTIFY_CAPTURED="$CLEAN_CAPTURED"
 REHEARSAL_NOTIFY_ABSENT="$CLEAN_ABSENT"
 REHEARSAL_NOTIFY_PRE_TEXT="$CLEAN_NOTIFY_PRE"
 rehearsal_disarm_cron() { return 0; }
+snap_reply() {  # $1 present|absent|unanswerable, $2 the contents
+  case "$1" in
+    present) printf 'present\n'; [ -n "$2" ] && printf '%s\n' "$2"; return 0 ;;
+    absent)  printf 'absent\n'; return 0 ;;
+    *)       return 255 ;;
+  esac
+}
 bx() {
   case "$1" in
-    *"test -f ~/duty/repos.txt.pre-drill"*) return "$CLEAN_REPOS_BACKED_UP" ;;
-    *"cat ~/duty/repos.txt.pre-drill"*) printf '%s\n' "$CLEAN_REPOS_PRE" ;;
-    *"cat ~/duty/repos.txt"*) printf '%s\n' "$CLEAN_REPOS_AFTER" ;;
-    *"! test -e ~/duty/notify-repos.txt"*) return "$CLEAN_NOTIFY_GONE" ;;
-    *"cat ~/duty/notify-repos.txt"*) printf '%s\n' "$CLEAN_NOTIFY_AFTER" ;;
+    # The restores, matched before the probes: their command names the same
+    # paths, and what a case is choosing there is whether the mv/rm worked.
+    *"mv ~/duty/repos.txt.pre-drill"*)        return "$CLEAN_REPOS_RESTORE_RC" ;;
+    *"mv ~/duty/notify-repos.txt.pre-drill"*) return "$CLEAN_NOTIFY_RESTORE_RC" ;;
+    *"rm -f ~/duty/notify-repos.txt"*)        return "$CLEAN_NOTIFY_RESTORE_RC" ;;
+    *"-e ~/duty/repos.txt.pre-drill"*) snap_reply "$CLEAN_BACKUP_STATE" "$CLEAN_REPOS_PRE" ;;
+    *"-e ~/duty/notify-repos.txt"*)    snap_reply "$CLEAN_NOTIFY_STATE" "$CLEAN_NOTIFY_AFTER" ;;
+    *"-e ~/duty/repos.txt"*)           snap_reply "$CLEAN_REPOS_STATE" "$CLEAN_REPOS_AFTER" ;;
     *) return 0 ;;
   esac
 }
 rehearsal_cleanup "$1"
 printf 'rc=%s\n' "$?"
 CLEANSH
-export ROOT CLEAN_REPOS_BACKED_UP CLEAN_REPOS_PRE CLEAN_REPOS_AFTER
-export CLEAN_NOTIFY_GONE CLEAN_NOTIFY_AFTER CLEAN_CAPTURED CLEAN_ABSENT CLEAN_NOTIFY_PRE
+export ROOT CLEAN_BACKUP_STATE CLEAN_REPOS_PRE CLEAN_REPOS_STATE CLEAN_REPOS_AFTER
+export CLEAN_NOTIFY_STATE CLEAN_NOTIFY_AFTER CLEAN_CAPTURED CLEAN_ABSENT CLEAN_NOTIFY_PRE
+export CLEAN_REPOS_RESTORE_RC CLEAN_NOTIFY_RESTORE_RC CLEAN_NOTIFY_BACKUP
+export REHEARSAL_NOTIFY_STATUS
+CLEANUP_VERDICTS="$TMP/notify-cleanup-verdicts"
 cleanup_run() {  # $1 rc handed in
+  REHEARSAL_NOTIFY_STATUS="$CLEANUP_VERDICTS"
+  : >"$CLEANUP_VERDICTS"
   bash "$CLEANUP_DRIVER" "$1" 2>&1
 }
-CLEAN_REPOS_BACKED_UP=0
+CLEAN_BACKUP_STATE=present
 CLEAN_REPOS_PRE='owner/one
 owner/two'
+CLEAN_REPOS_STATE=present
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
-CLEAN_NOTIFY_GONE=1
+CLEAN_REPOS_RESTORE_RC=0
+CLEAN_NOTIFY_STATE=present
 CLEAN_NOTIFY_AFTER='owner/watched'
+CLEAN_NOTIFY_RESTORE_RC=0
+CLEAN_NOTIFY_BACKUP=''
 CLEAN_CAPTURED=1
 CLEAN_ABSENT=0
 CLEAN_NOTIFY_PRE='owner/watched'
@@ -1037,9 +1128,9 @@ CLEAN_NOTIFY_AFTER='owner/watched'
 
 # Absent before the drill means absent after it — both ways round.
 CLEAN_ABSENT=1
-CLEAN_NOTIFY_GONE=0
+CLEAN_NOTIFY_STATE=absent
 t notify-cleanup-absent-before-and-gone-after-passes "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
-CLEAN_NOTIFY_GONE=1
+CLEAN_NOTIFY_STATE=present
 clean_out="$(cleanup_run 0)"
 t notify-cleanup-file-left-behind-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
 t notify-cleanup-file-left-behind-says-there-was-none 1 \
@@ -1055,23 +1146,142 @@ CLEAN_REPOS_AFTER='owner/one'
 t notify-cleanup-uncaptured-leg-still-checks-the-work-registry "rc=1" \
   "$(tail -n 1 <<<"$(cleanup_run 0)")"
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
-# Nothing backed up is nothing to vouch for either.
-CLEAN_REPOS_BACKED_UP=1
+# Nothing backed up is nothing to vouch for either — but only when the box
+# SAID so. See the unanswerable-probe cases below for the difference.
+CLEAN_BACKUP_STATE=absent
 CLEAN_REPOS_AFTER='whatever the box has'
 t notify-cleanup-no-backup-asserts-nothing "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
-CLEAN_REPOS_BACKED_UP=0
+CLEAN_BACKUP_STATE=present
 CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
 CLEAN_CAPTURED=1
+CLEAN_NOTIFY_AFTER='owner/watched'
 
-# The verdict has to reach the EXIT trap's status, or the comparison above is
-# a warning nobody reads.
-# shellcheck disable=SC2016  # match the literal line in rehearsal.sh
-if grep -Fq 'rehearsal_cleanup "$rc" || rc=$?' "$ROOT/drill/rehearsal.sh"; then
-  notify_wiring=wired
-else
-  notify_wiring=MISSING
-fi
-t notify-cleanup-verdict-reaches-the-exit-status wired "$notify_wiring"
+# --- the box that stops answering, and the restore that does not run ------
+#
+# Every case below passed before round 2: each one ends in a `cat … || true`
+# or a `test -f` whose failure was indistinguishable from an absent file, so
+# teardown vouched for a registry nobody had looked at.
+
+# Must fail: the backup probe is unanswerable. "The box did not say" is not
+# "there was no backup", and the second reading is the one that returns 0.
+CLEAN_BACKUP_STATE=unanswerable
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-unanswerable-backup-probe-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-unanswerable-backup-probe-says-so 1 \
+  "$(grep -cF 'TEARDOWN: the box did not say whether the pre-drill repos.txt backup was there' <<<"$clean_out")"
+t notify-cleanup-unanswerable-backup-probe-verdict-names-the-state 1 \
+  "$(grep -cF 'fail teardown could not read the pre-drill repos.txt backup' "$CLEANUP_VERDICTS")"
+CLEAN_BACKUP_STATE=present
+
+# Must fail: the restore itself did not run. It used to print a warning and
+# leave the comparison to a probe that had already decided there was nothing
+# to compare.
+CLEAN_REPOS_RESTORE_RC=255
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-failed-work-restore-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-failed-work-restore-names-the-file 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/repos.txt could not be restored' <<<"$clean_out")"
+t notify-cleanup-failed-work-restore-verdict-says-restore 1 \
+  "$(grep -cF 'fail teardown could not restore repos.txt' "$CLEANUP_VERDICTS")"
+CLEAN_REPOS_RESTORE_RC=0
+
+# Must fail: the read-back after the restore is unanswerable. The pre-drill
+# bytes here are EMPTY, which is the exact shape the old `cat … || true` let
+# through — an unreadable file came back as "" and compared equal.
+CLEAN_REPOS_PRE=''
+CLEAN_REPOS_STATE=unanswerable
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-unreadable-work-registry-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-unreadable-work-registry-is-not-empty-bytes 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/repos.txt could not be read back after the restore' <<<"$clean_out")"
+# ...and a box that really did have an empty repos.txt still passes.
+CLEAN_REPOS_STATE=present
+CLEAN_REPOS_AFTER=''
+t notify-cleanup-empty-work-registry-restored-passes "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+# ...while one the restore left missing entirely does not.
+CLEAN_REPOS_STATE=absent
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-missing-work-registry-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-missing-work-registry-says-so 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/repos.txt is not there after the restore' <<<"$clean_out")"
+CLEAN_REPOS_STATE=present
+CLEAN_REPOS_PRE='owner/one
+owner/two'
+CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
+
+# The same three, on the notify half. A backup path is set so the restore is
+# actually attempted — that is the call whose failure is under test.
+CLEAN_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
+CLEAN_NOTIFY_RESTORE_RC=255
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-failed-notify-restore-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-failed-notify-restore-names-the-file 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/notify-repos.txt could not be restored' <<<"$clean_out")"
+t notify-cleanup-failed-notify-restore-verdict-says-restore 1 \
+  "$(grep -cF 'fail teardown could not restore notify-repos.txt' "$CLEANUP_VERDICTS")"
+CLEAN_NOTIFY_RESTORE_RC=0
+CLEAN_NOTIFY_BACKUP=''
+
+CLEAN_NOTIFY_PRE=''
+CLEAN_NOTIFY_STATE=unanswerable
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-unreadable-notify-registry-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-unreadable-notify-registry-is-not-empty-bytes 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/notify-repos.txt could not be read back after the restore' <<<"$clean_out")"
+CLEAN_NOTIFY_STATE=present
+CLEAN_NOTIFY_AFTER=''
+t notify-cleanup-empty-notify-registry-restored-passes "rc=0" "$(tail -n 1 <<<"$(cleanup_run 0)")"
+CLEAN_NOTIFY_STATE=absent
+clean_out="$(cleanup_run 0)"
+t notify-cleanup-missing-notify-registry-reds "rc=1" "$(tail -n 1 <<<"$clean_out")"
+t notify-cleanup-missing-notify-registry-says-so 1 \
+  "$(grep -cF 'TEARDOWN: ~/duty/notify-repos.txt is not there after the restore' <<<"$clean_out")"
+# An unanswerable read is not the absence the ABSENT branch asserts either:
+# the box that shipped no notify-repos.txt must still be READ to say so.
+CLEAN_ABSENT=1
+CLEAN_NOTIFY_STATE=unanswerable
+t notify-cleanup-unanswerable-read-is-not-the-absence-asserted "rc=1" \
+  "$(tail -n 1 <<<"$(cleanup_run 0)")"
+CLEAN_ABSENT=0
+CLEAN_NOTIFY_STATE=present
+CLEAN_NOTIFY_PRE='owner/watched'
+CLEAN_NOTIFY_AFTER='owner/watched'
+
+# --- the verdict has to reach the EXIT trap's exit status -----------------
+#
+# It did not. drill/rehearsal.sh runs under `set -uo pipefail` with no -e, and
+# a `return` from an EXIT-trap function does not change the shell's exit
+# status — so the comparison above was computed, printed, and discarded, and a
+# standalone `--role X` round exited 0 on a registry left holding the wrong
+# bytes. This case used to grep for the wiring line, which is exactly why it
+# passed while the property did not hold; it now runs rehearsal.sh's REAL
+# cleanup_all, extracted from the file, and reads the status.
+CLEANUP_ALL_SRC="$TMP/notify-cleanup-all.sh"
+awk '/^cleanup_all\(\) \{$/,/^\}$/' "$ROOT/drill/rehearsal.sh" >"$CLEANUP_ALL_SRC"
+t notify-cleanup-all-extracted-from-the-real-file 1 \
+  "$(grep -c '^cleanup_all() {$' "$CLEANUP_ALL_SRC")"
+CLEANUP_ALL_DRIVER="$TMP/notify-cleanup-all-driver.sh"
+cat >"$CLEANUP_ALL_DRIVER" <<'EXITSH'
+#!/usr/bin/env bash
+set -uo pipefail
+CLEANUP_RETURNS="$1"   # what the case makes the teardown comparison say
+BOX_TOUCHED=1
+BOX_NAME=""
+ACQUIRE_TMP=""
+REHEARSAL_NOTIFY_FIXTURES=""
+BUILDER_CLEANUP_REPO=""; BUILDER_CLEANUP_AUTHOR=""
+TRIAGE_CLEANUP_REPO=""; TRIAGE_CLEANUP_ISSUES=""
+bx() { return 0; }
+rehearsal_cleanup() { return "$CLEANUP_RETURNS"; }
+. "$CLEANUP_ALL_SRC"
+trap cleanup_all EXIT
+exit 0
+EXITSH
+export CLEANUP_ALL_SRC
+bash "$CLEANUP_ALL_DRIVER" 1 >/dev/null 2>&1
+t notify-cleanup-verdict-reaches-the-exit-status 1 "$?"
+bash "$CLEANUP_ALL_DRIVER" 0 >/dev/null 2>&1
+t notify-cleanup-clean-teardown-keeps-the-exit-status 0 "$?"
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
