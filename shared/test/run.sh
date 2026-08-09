@@ -7382,14 +7382,13 @@ t ready-commit-whole-id "" \
 # Drive the converted registry call site with a producer that pauses after the
 # matching line. The awareness pass must wait for the complete repo list and
 # therefore emit no false out-of-scope warning.
-P447_REAL_READ_REPO_LIST="$(declare -f read_repo_list)"
-read_repo_list() { printf '%s\n' heavy-duty/crew; sleep 0.05; printf '%s\n' other/repo; }
-gh() { printf '%s\n' 'heavy-duty/crew#447'; }
-ME=andriujoseba REPOS_FILE=unused
-p447_registry_out="$(_warn_unscoped_authored 2>&1)"
+p447_registry_out="$(
+  read_repo_list() { printf '%s\n' heavy-duty/crew; sleep 0.05; printf '%s\n' other/repo; }
+  gh() { printf '%s\n' 'heavy-duty/crew#447'; }
+  ME=andriujoseba REPOS_FILE=unused
+  _warn_unscoped_authored
+)"
 t p447-registry-forced-race-stays-in-scope "" "$p447_registry_out"
-unset -f gh read_repo_list
-eval "$P447_REAL_READ_REPO_LIST"
 
 # The orphan scan consumes head listings larger than PIPE_BUF. A merged branch
 # and an open branch must never become orphans; only the absent branch is due.
