@@ -69,10 +69,10 @@ This is a worked example at snapshot
 Its fragment names are exactly the 42 fragments returned by
 `git ls-tree -r --name-only 07bb0f3473d1a35a39fdf8d9ab93ac7d99ec3d74 -- changelog.d/`,
 excluding `changelog.d/README.md`. Triage re-derives the audit of record at
-release-init against the actual cut. The owed `425.md` and `427.md` fragments
-are absent at this snapshot and therefore have no rows below. A disposition
-records the decision at audit time, so a `new leg` row keeps the issue it caused
-even when that issue has since landed.
+release-init against the actual cut. The owed `425.md`, `427.md`, `440.md`,
+and `441.md` fragments are absent at this snapshot and therefore have no rows
+below. A disposition records the decision at audit time, so a `new leg` row
+keeps the issue it caused even when that issue has since landed.
 
 | Fragment | Surface | Disposition and evidence |
 | --- | --- | --- |
