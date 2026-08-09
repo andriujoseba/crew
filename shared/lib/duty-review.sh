@@ -142,12 +142,13 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
   # an operator signal ("should this box carry that repo?"), not a licence to
   # write to it. Cheap by construction: one search call, and the index's lag
   # is acceptable for a hint in a way it never was for the queue itself.
-  local outside cand unscoped=""
+  local outside cand repo_list unscoped=""
   outside="$(gh search prs --review-requested="$ME" --state open --limit 50 \
     --json repository,number --jq '.[] | "\(.repository.nameWithOwner)#\(.number)"' 2>/dev/null || true)"
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
-    if ! read_repo_list "$REPOS_FILE" | grep -qxF "${cand%%#*}"; then
+    repo_list="$(read_repo_list "$REPOS_FILE")"
+    if ! grep -qxF "${cand%%#*}" <<<"$repo_list"; then
       unscoped="$unscoped $cand"
     fi
   done <<<"$outside"

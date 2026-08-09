@@ -43,7 +43,7 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
 # #447 can extend the same derivation to shared/lib without duplicating it.
 pipefail_grep_q_candidates() {
   find "$HERE" "$ROOT/drill" "$ROOT/fleet-floor/test" -type f -name '*.sh' -print
-  printf '%s\n' "$SHARED/bin/engine-manifest.sh"
+  find "$SHARED/bin" "$SHARED/lib" -type f -name '*.sh' -print
 }
 
 pipefail_grep_q_population() {
@@ -63,6 +63,9 @@ pipefail_grep_q_population() {
       [ -z "${included[$file]+x}" ] || continue
       leaf="${file##*/}"
       for parent in "${!included[@]}"; do
+        # Source edges are matched by basename, so duplicate leaves can only
+        # over-include candidates. Every duplicate today is already seeded by
+        # its own pipefail setting; keep the conservative failure direction.
         if awk -v leaf="$leaf" '
           /^[[:space:]]*(source|\.)[[:space:]]/ && index($0, "/" leaf) { found=1 }
           END { exit !found }

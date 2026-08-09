@@ -39,7 +39,7 @@ _attention_partition() {
   local registry="$1" repo num upd
   while read -r repo num upd; do
     [ -n "${num:-}" ] || continue
-    if printf '%s\n' "$registry" | grep -qxF "$repo"; then
+    if grep -qxF "$repo" <<<"$registry"; then
       printf 'IN %s %s %s\n' "$repo" "$num" "$upd"
     else
       printf 'OUT %s %s %s\n' "$repo" "$num" "$upd"
