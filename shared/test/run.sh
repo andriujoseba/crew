@@ -331,6 +331,7 @@ source "$ROOT/drill/rehearsal-breaker.sh"
 VERDICT_STATUS_FILE="$TMP/drill-verdicts"
 : >"$VERDICT_STATUS_FILE"
 (
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
   ROLE=builder
   rehearsal_verdict_record "$VERDICT_STATUS_FILE" skip "fixture unavailable"
   rehearsal_verdict_record "$VERDICT_STATUS_FILE" fail "later failure"
