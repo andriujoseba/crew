@@ -324,6 +324,8 @@ source "$ROOT/drill/rehearsal-fixtures.sh"
 source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
+# shellcheck source=drill/rehearsal-boot.sh
+source "$ROOT/drill/rehearsal-boot.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
 source "$ROOT/drill/rehearsal-breaker.sh"
 
@@ -706,6 +708,226 @@ else
   resume_wiring=MISSING
 fi
 t rehearsal-resume-all-opt-out-and-summary-wired wired "$resume_wiring"
+
+# --- rehearsal boot-check verdict: what the gate SAID, not that it ran (#427) ---
+# The drill's assertion was `test -s ~/duty/boot-check.log`, which passes on a
+# FAILED probe line and on a log full of WARN. Every mutation below is staged
+# against the input the assertion actually reads — a fixture boot-check.log
+# under a stubbed bx() — so the decision boundary runs here without a drill
+# host, a box or a credential.
+BOOT_LOG=""
+boot_run() {  # boot_run <agent> <boot-check.log text>
+  BOOT_LOG="$2"
+  (
+    bx() { printf '%s\n' "$BOOT_LOG"; }
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    rehearsal_boot_load
+    rehearsal_boot_probe_ok "$1"
+    rehearsal_boot_warn_free "$1"
+  ) 2>&1
+}
+
+BOOT_OK_LOG="== boot check 2026-08-09T10:00:00+00:00 ==
+github.com
+  - Logged in to github.com account drill-bot (oauth_token)
+/dev/root  49G  8.5G  38G  19% /
+cli probe: ok"
+BOOT_WARN_LINE='2026-08-09T10:00:00Z WARN: boot gate: auth probe failed — duty continues degraded'
+
+# A logged-in box's boot block: both assertions green, and both rows named.
+boot_out="$(boot_run kimi "$BOOT_OK_LOG")"
+t rehearsal-boot-ok-verdict-passes 1 \
+  "$(grep -cFx 'ok   boot check: cli probe verdict is ok for kimi' <<<"$boot_out")"
+t rehearsal-boot-warn-free-passes 1 \
+  "$(grep -cFx 'ok   boot check: no WARN for kimi' <<<"$boot_out")"
+
+# Must fail: a `cli probe` verdict other than `ok` reds, naming the verdict
+# and quoting the line — the two things `boot check ran` could never say.
+boot_out="$(boot_run kimi "${BOOT_OK_LOG/cli probe: ok/cli probe: FAILED}")"
+t rehearsal-boot-failed-verdict-mutation-reds 1 \
+  "$(grep -cFx 'FAIL boot check: cli probe verdict is ok for kimi' <<<"$boot_out")"
+t rehearsal-boot-failed-verdict-quotes-the-line 1 \
+  "$(grep -cFx '  read: cli probe: FAILED' <<<"$boot_out")"
+t rehearsal-boot-failed-verdict-names-the-verdict 1 \
+  "$(grep -cFx "  verdict 'FAILED' for kimi, expected 'ok'" <<<"$boot_out")"
+t rehearsal-boot-failed-verdict-leaves-warn-free-green 1 \
+  "$(grep -cFx 'ok   boot check: no WARN for kimi' <<<"$boot_out")"
+
+# Must fail: a WARN in the boot check reds, quoted — and the agent is the one
+# the assertion was given, which is why this case is drilled under a second
+# name. Neither assertion is spelled for an agent.
+boot_out="$(boot_run grok "$BOOT_OK_LOG
+$BOOT_WARN_LINE")"
+t rehearsal-boot-warn-mutation-reds 1 \
+  "$(grep -cFx 'FAIL boot check: no WARN for grok' <<<"$boot_out")"
+t rehearsal-boot-warn-mutation-quotes-the-line 1 \
+  "$(grep -cFx "    $BOOT_WARN_LINE" <<<"$boot_out")"
+t rehearsal-boot-warn-mutation-names-the-agent 1 \
+  "$(grep -cFx '  read: 1 WARN line(s) in the last boot block for grok, first:' <<<"$boot_out")"
+t rehearsal-boot-warn-mutation-leaves-probe-green 1 \
+  "$(grep -cFx 'ok   boot check: cli probe verdict is ok for grok' <<<"$boot_out")"
+
+# The log is APPENDED to, one block per boot. A box drilled creds-free, logged
+# in and re-drilled carries the pre-auth block forever: a whole-file read
+# would answer for a boot other than the one under test, in both directions.
+boot_out="$(boot_run kimi "== boot check 2026-08-09T09:00:00+00:00 ==
+$BOOT_WARN_LINE
+cli probe: FAILED
+$BOOT_OK_LOG")"
+t rehearsal-boot-stale-preauth-block-does-not-red 2 \
+  "$(grep -c '^ok   boot check' <<<"$boot_out")"
+boot_out="$(boot_run kimi "$BOOT_OK_LOG
+== boot check 2026-08-09T11:00:00+00:00 ==
+cli probe: FAILED")"
+t rehearsal-boot-stale-ok-block-does-not-vouch 1 \
+  "$(grep -cFx 'FAIL boot check: cli probe verdict is ok for kimi' <<<"$boot_out")"
+
+# A block with no probe line at all reds naming that, rather than passing on
+# the absence of a verdict it never read.
+boot_out="$(boot_run codex "== boot check 2026-08-09T10:00:00+00:00 ==
+/dev/root  49G  8.5G  38G  19% /")"
+t rehearsal-boot-missing-probe-line-reds 1 \
+  "$(grep -cFx 'FAIL boot check: cli probe verdict is ok for codex' <<<"$boot_out")"
+t rehearsal-boot-missing-probe-line-says-what-it-read 1 \
+  "$(grep -cFx "  read: no 'cli probe:' line in the last boot block for codex" <<<"$boot_out")"
+
+# A box that stopped answering leaves the block empty. BOTH rows red on that —
+# an unreadable log is not a verdict, and it is not a clean boot either: the
+# WARN-free row greening here would score the box's silence as proof, which is
+# the `test -s` mistake this whole block exists to undo. Both name the read
+# rather than the log's shape, so the operator chases the box and not a boot
+# log that was fine. `boot check ran` cannot cover this: it is a separate box
+# request, and a box can stop answering between the two.
+boot_out="$(
+  (
+    bx() { return 1; }
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    rehearsal_boot_load
+    rehearsal_boot_probe_ok claude
+    rehearsal_boot_warn_free claude
+  ) 2>&1
+)"
+t rehearsal-boot-unreadable-log-reds 1 \
+  "$(grep -cFx 'FAIL boot check: cli probe verdict is ok for claude' <<<"$boot_out")"
+t rehearsal-boot-unreadable-log-reds-the-warn-free-row 1 \
+  "$(grep -cFx 'FAIL boot check: no WARN for claude' <<<"$boot_out")"
+t rehearsal-boot-unreadable-log-greens-neither-row 0 \
+  "$(grep -c '^ok   boot check' <<<"$boot_out")"
+t rehearsal-boot-unreadable-log-names-the-read-on-both-rows 2 \
+  "$(grep -cFx '  read: nothing — ~/duty/boot-check.log did not come back from the box for claude' <<<"$boot_out")"
+
+# A read that SUCCEEDED and came back empty is a different fact from a box that
+# never answered, and the WARN-free row may not green on it either: `grep`
+# finding no WARN in an empty block certifies a boot it never saw.
+boot_out="$(boot_run claude "")"
+t rehearsal-boot-empty-block-reds-the-warn-free-row 1 \
+  "$(grep -cFx 'FAIL boot check: no WARN for claude' <<<"$boot_out")"
+t rehearsal-boot-empty-block-says-what-it-read 1 \
+  "$(grep -cFx '  read: an empty last boot block for claude — no WARN in nothing is not a clean boot' <<<"$boot_out")"
+
+# No agent name appears in the assertions: the agent is the argument, and the
+# call site passes $AGENT.
+boot_names=0
+for boot_profile in "$SHARED"/conf/agents/*.conf; do
+  if grep -Fqi "$(basename "$boot_profile" .conf)" "$ROOT/drill/rehearsal-boot.sh"; then
+    boot_names=$((boot_names + 1))
+  fi
+done
+t rehearsal-boot-no-agent-name-in-the-assertions 0 "$boot_names"
+
+# `boot check ran` survives and still fires first, so an empty log keeps
+# reading the way it does today.
+boot_ran_line="$(grep -n 'check "boot check ran"' "$ROOT/drill/rehearsal.sh" \
+  | head -1 | cut -d: -f1)"
+boot_load_line="$(grep -n 'rehearsal_boot_load' "$ROOT/drill/rehearsal.sh" \
+  | head -1 | cut -d: -f1)"
+if [ -n "$boot_ran_line" ] && [ -n "$boot_load_line" ] \
+    && [ "$boot_ran_line" -lt "$boot_load_line" ]; then
+  r1=first
+else
+  r1=MISORDERED
+fi
+t rehearsal-boot-ran-still-fires-first first "$r1"
+
+# shellcheck disable=SC2016  # match the literal source line and the $AGENT rows
+if grep -Fq '. "$ROOT/drill/rehearsal-boot.sh"' "$ROOT/drill/rehearsal.sh" \
+    && grep -Fq 'rehearsal_boot_probe_ok "$AGENT"' "$ROOT/drill/rehearsal.sh" \
+    && grep -Fq 'rehearsal_boot_warn_free "$AGENT"' "$ROOT/drill/rehearsal.sh"; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t rehearsal-boot-helper-sourced-and-called-with-the-drilled-agent wired "$r1"
+
+# The pre-auth arm records both as skips with their reasons, never as passes —
+# and each reason must be TRUE of the file its assertion reads. Pin the reasons
+# and not the prefix: `(box is not gh-authenticated` is shared by every wording
+# a row could carry, including the one triage struck at `09:2xZ`, so a case
+# grepping only that far passes on a false explanation as readily as on the
+# right one. Distinctive substring per row, so a reword stays free and a
+# reason swap does not.
+# shellcheck disable=SC2016  # match the literal $AGENT skip rows
+boot_skip_probe='skip "boot check: cli probe verdict is ok for $AGENT (box is not gh-authenticated'
+# shellcheck disable=SC2016
+boot_skip_warn='skip "boot check: no WARN for $AGENT (box is not gh-authenticated'
+if ! grep -Fq "$boot_skip_probe" "$ROOT/drill/rehearsal.sh"; then
+  r1=PROBE-ROW-MISSING
+elif ! grep -Fq "$boot_skip_warn" "$ROOT/drill/rehearsal.sh"; then
+  r1=WARN-ROW-MISSING
+elif ! grep -F "$boot_skip_probe" "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq 'correct pre-auth verdict'; then
+  r1=PROBE-REASON-UNPINNED
+elif ! grep -F "$boot_skip_warn" "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq 'declined to vouch'; then
+  r1=WARN-REASON-UNPINNED
+else
+  r1=skipped
+fi
+t rehearsal-boot-preauth-arm-skips-both-with-reasons skipped "$r1"
+
+# And the mechanism triage measured away: the WARN-free row's reason was `the
+# expected login WARN is asserted below` until `09:2xZ` proved that WARN is
+# written to ~/duty/duty.log — the file `pre-auth: login WARN logged` reads —
+# and never to the ~/duty/boot-check.log this row reads. Two different files,
+# so the contradiction the old reason cited was never possible. Neither skip
+# reason may name a file its assertion does not read; the rest of this block
+# keeps saying `login WARN` legitimately, so the scan is the skip rows only.
+if grep -F 'skip "boot check: ' "$ROOT/drill/rehearsal.sh" \
+    | grep -Eq 'login WARN|duty\.log'; then
+  r1=REASON-CITES-A-FILE-IT-DOES-NOT-READ
+else
+  r1=own-file
+fi
+t rehearsal-boot-preauth-skip-reasons-name-only-the-file-they-read own-file "$r1"
+
+# The gate itself. The case above greps only that the two skip rows EXIST, so
+# it survives an `if true` — the skips live on in an `else` nothing reaches —
+# and the `08:3xZ` gate would regress silently into the shape that reds every
+# creds-free round. Pin the arm instead: scan up from each call to the nearest
+# `if` and require it to be the gate, with nothing closing that arm in
+# between. The `in between` half matters because the isolation gate above is
+# spelled identically, so a deleted gate would otherwise re-anchor onto it and
+# pass.
+boot_arm=ok
+# shellcheck disable=SC2016  # match the literal gate line, unexpanded
+boot_gate='if [ "$GH_AUTHED" -eq 1 ]; then'
+for boot_call in rehearsal_boot_load rehearsal_boot_probe_ok rehearsal_boot_warn_free; do
+  boot_call_line="$(grep -n "^[[:space:]]*$boot_call\\b" "$ROOT/drill/rehearsal.sh" \
+    | head -1 | cut -d: -f1)"
+  if [ -z "$boot_call_line" ]; then boot_arm="$boot_call:UNCALLED"; break; fi
+  boot_if_line="$(head -n "$boot_call_line" "$ROOT/drill/rehearsal.sh" \
+    | grep -n '^[[:space:]]*if ' | tail -1 | cut -d: -f1)"
+  if [ -z "$boot_if_line" ]; then boot_arm="$boot_call:UNGATED"; break; fi
+  if [ "$(sed -n "${boot_if_line}p" "$ROOT/drill/rehearsal.sh")" != "$boot_gate" ]; then
+    boot_arm="$boot_call:WRONG-GATE"; break
+  fi
+  boot_closers="$(sed -n "$((boot_if_line + 1)),$((boot_call_line - 1))p" \
+    "$ROOT/drill/rehearsal.sh" | grep -cE '^[[:space:]]*(fi|else)[[:space:]]*$')"
+  if [ "$boot_closers" -ne 0 ]; then boot_arm="$boot_call:OUTSIDE-THE-ARM"; break; fi
+done
+t rehearsal-boot-calls-sit-inside-the-gh-authed-arm ok "$boot_arm"
 
 # #422: the real-host hygiene leg reads remote trees, the durable PR comment,
 # and duty.log ordering. Keep those reads as sourceable predicates so their
