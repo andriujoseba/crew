@@ -71,19 +71,26 @@ rehearsal_breaker_terminal_fixture_is_classified() {
   bx "set -a
     . ~/duty/conf/agents/$AGENT.conf
     printf '%s\n' \"Server: Error code: 403 - {'error': {'message': \\\"You've reached your usage limit for this billing cycle.\\\", 'type': 'access_terminated_error'}}\" > /tmp/crew-breaker-terminal.log
-    bot_session_terminal /tmp/crew-breaker-terminal.log
+    rc=0
+    bot_session_terminal /tmp/crew-breaker-terminal.log || rc=\$?
+    rm -f /tmp/crew-breaker-terminal.log
+    exit \$rc
   "
 }
 
 rehearsal_breaker_install_fixture() {
-  local role="$1" encoded box_home
+  local role="$1" encoded box_home fixture_dir role_conf
   box_home="$(bx 'printf %s "$HOME"')" || return 1
   [ -n "$box_home" ] || return 1
-  REHEARSAL_BREAKER_DIR="$box_home/.crew-breaker-drill"
-  REHEARSAL_BREAKER_ROLE_CONF="$box_home/duty/conf/roles/$role.conf"
+  fixture_dir="$box_home/.crew-breaker-drill"
+  role_conf="$box_home/duty/conf/roles/$role.conf"
+  # Refuse a stale fixture before arming cleanup with its old backup. Restoring
+  # an unknown prior run over today's installed profile would be destructive.
+  bx "test ! -e '$fixture_dir'" || return 1
+  REHEARSAL_BREAKER_DIR="$fixture_dir"
+  REHEARSAL_BREAKER_ROLE_CONF="$role_conf"
   encoded="$(printf '%s\n' "Server: Error code: 403 - {'error': {'message': \"You've reached your usage limit for this billing cycle.\", 'type': 'access_terminated_error'}}" | base64 -w0)"
   bx "set -e
-    test ! -e '$REHEARSAL_BREAKER_DIR'
     mkdir -p '$REHEARSAL_BREAKER_DIR/bin'
     cp '$REHEARSAL_BREAKER_ROLE_CONF' '$REHEARSAL_BREAKER_DIR/role.conf'
     printf '%s' '$encoded' | base64 -d > '$REHEARSAL_BREAKER_DIR/terminal.txt'
