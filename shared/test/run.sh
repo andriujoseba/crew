@@ -56,8 +56,7 @@ pipefail_grep_q_sites() {  # [files...]
   )
   awk '
     function qgrep(s) {
-      return s ~ /grep[[:space:]]/ \
-        && s ~ /(^|[[:space:]])-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
+      return s ~ /grep[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
     }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
@@ -168,7 +167,7 @@ source "$SHARED/lib/common.sh"
 source "$SHARED/lib/duty-builder.sh"
 
 PIPE_GUARD_FIXTURE="$TMP/pipefail-grep-q.fixture"
-printf '%s%s\n' 'if producer | ' 'grep -q MATCH; then :; fi' >"$PIPE_GUARD_FIXTURE"
+printf '%s%s\n' 'if producer | ' 'grep --binary-files=text -Fq MATCH; then :; fi' >"$PIPE_GUARD_FIXTURE"
 guard_mutation="$(pipefail_grep_q_sites "$PIPE_GUARD_FIXTURE")"
 case "$guard_mutation" in
   *"$PIPE_GUARD_FIXTURE:1:"*) r1=red ;; *) r1=MISSED ;;
