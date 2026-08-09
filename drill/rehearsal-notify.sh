@@ -205,7 +205,23 @@ rehearsal_notify_candidate_is_safe() {
 
 # The operator channel, probed where the engine writes it rather than by
 # intercepting a network call. Prints one word: ok, no-credentials,
-# unreachable, or rejected.
+# unreachable, rejected, or chat-unreachable.
+#
+# Both halves are probed, because they fail apart. `getMe` answers "is this
+# token a bot" and nothing more; what the leg actually needs is that the bot
+# can reach the chat the operator configured, which is where
+# shared/bin/notify.sh sends (`CHAT="$(cat "$HOME/.tg_chat_id")"`). A valid
+# token pointed at a missing, wrong, or inaccessible chat used to answer `ok`
+# here — the leg then staged both PRs, the deliveries came back `(msg none)`,
+# and the union assertion graded an unreachable channel as a LEG FAILURE.
+# #423 says that case is a named skip and never anything else.
+#
+# `getChat` is the probe because it is a read: the preflight must not put a
+# message in a human's channel to discover it can. The two reasons stay
+# distinct — `rejected` is the token refused, `chat-unreachable` is a good
+# token that cannot see the configured chat — so the summary names which half
+# of the credential pair is wrong. A credential file that is readable but
+# empty is `no-credentials`, not an empty id carried into a request.
 rehearsal_notify_channel_status() {
   # shellcheck disable=SC2016  # every expansion below is the box's
   bx '
@@ -213,13 +229,25 @@ rehearsal_notify_channel_status() {
       printf "no-credentials\n"; exit 0
     fi
     tok="$(cat "$HOME/.tg_bot_token")"
+    chat="$(cat "$HOME/.tg_chat_id")"
+    if [ -z "$tok" ] || [ -z "$chat" ]; then
+      printf "no-credentials\n"; exit 0
+    fi
     if ! resp="$(curl -sS -m 15 "https://api.telegram.org/bot${tok}/getMe" 2>/dev/null)"; then
+      printf "unreachable\n"; exit 0
+    fi
+    if ! printf "%s" "$resp" | jq -e ".ok == true" >/dev/null 2>&1; then
+      printf "rejected\n"; exit 0
+    fi
+    if ! resp="$(curl -sS -m 15 --get \
+        --data-urlencode "chat_id=${chat}" \
+        "https://api.telegram.org/bot${tok}/getChat" 2>/dev/null)"; then
       printf "unreachable\n"; exit 0
     fi
     if printf "%s" "$resp" | jq -e ".ok == true" >/dev/null 2>&1; then
       printf "ok\n"
     else
-      printf "rejected\n"
+      printf "chat-unreachable\n"
     fi
   ' 2>/dev/null | tr -d '\r' | tail -n 1
 }
@@ -387,6 +415,12 @@ rehearsal_notify_log() {
   bx "tail -n +$first_line ~/duty/notify.log 2>/dev/null || true"
 }
 
+# The line count taken before the tick, which rehearsal_notify_log above slices
+# from. Sound only on a log that cannot rotate between the two calls: tick.sh
+# rotates notify.log past 5 MiB, and a rotation in that window would renumber
+# the file and hand the slice the wrong lines. A drill box's notify.log is
+# minutes old and kilobytes long, so the window is unreachable there — stated
+# here so the next reader does not have to re-derive it.
 rehearsal_notify_log_lines() { bx "wc -l < ~/duty/notify.log 2>/dev/null || echo 0"; }
 
 # --- the fixtures ---------------------------------------------------------
@@ -404,11 +438,17 @@ rehearsal_notify_stage_handoff_pr() {
   pr="$(gh api "repos/$repo/pulls" -f title="drill: handoff fixture" -f head="$branch" \
     -f base=main -f body="Drill fixture for the notifier union. Nobody reviews this." \
     --jq .number)" || return 1
+  # Printed HERE, before the label steps that can still fail: from this line on
+  # there is an open PR in the sandbox, and the caller's cleanup list is the
+  # only thing that closes it. A number withheld until the whole sequence
+  # succeeds leaves a labelling failure holding an open handoff nobody tracks.
+  # The non-zero return below still grades the staging as failed; the caller
+  # reads the number and the status separately.
+  printf '%s\n' "$pr"
   # The label must exist before it can be applied; the sandbox vocabulary is
   # created by hand for exactly this reason.
   gh api "repos/$repo/labels" -f name="$label" -f color=0e8a16 >/dev/null 2>&1 || true
   gh api "repos/$repo/issues/$pr/labels" -f "labels[]=$label" >/dev/null || return 1
-  printf '%s\n' "$pr"
 }
 
 # The caller records the fixture, never this function: it is read through a
@@ -422,15 +462,25 @@ rehearsal_notify_record_fixture() {
 # Closing the fixtures is also what resolves them in the operator's chat: the
 # next pass edits each 🟣 row to its ✖ CLOSED form, so the leg leaves no live
 # handoff behind in a channel a human reads.
+#
+# A row survives its own failure. The rows that closed leave the list and the
+# rows whose PATCH failed stay on it, so the EXIT cleanup's pass retries
+# exactly those and nothing else: clearing the list wholesale reported the
+# failure and then threw away the only handle on the PR still open. A pass in
+# which everything closed still empties the list, so the second call remains a
+# no-op.
 rehearsal_notify_close_fixtures() {
-  local repo pr failed=0
+  local repo pr failed=0 remaining=""
   [ -n "$REHEARSAL_NOTIFY_FIXTURES" ] || return 0
   while read -r repo pr; do
     [ -n "$pr" ] || continue
-    gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null \
-      || { echo "notify: WARNING — could not close handoff fixture $repo#$pr" >&2; failed=1; }
+    gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null && continue
+    echo "notify: WARNING — could not close handoff fixture $repo#$pr" >&2
+    failed=1
+    remaining="$remaining$repo $pr
+"
   done <<<"$REHEARSAL_NOTIFY_FIXTURES"
-  REHEARSAL_NOTIFY_FIXTURES=""
+  REHEARSAL_NOTIFY_FIXTURES="$remaining"
   return "$failed"
 }
 
@@ -445,6 +495,7 @@ rehearsal_notify_drill() {
   local work="$1" host="$2" role="$3"
   local notify_sandbox channel pre_drill before after label
   local work_pr="" notify_pr="" first log_text pre_notify_text="" notify_snap=""
+  local stage_rc=0
   local union_rc
 
   if [ "${REHEARSAL_NOTIFY_DRILL:-1}" -eq 0 ]; then
@@ -526,18 +577,28 @@ rehearsal_notify_drill() {
     return 2
   fi
 
-  if work_pr="$(rehearsal_notify_stage_handoff_pr "$work" "work-$(date -u +%H%M%S)" "$label")" \
-      && [ -n "$work_pr" ]; then
-    rehearsal_notify_record_fixture "$work" "$work_pr"
+  # The number and the status are read separately, because they answer two
+  # different questions: the number says an open PR now exists and must be
+  # closed whatever else happened, the status says whether the fixture is
+  # usable as a notifiable event. A staging that created the PR and then failed
+  # to label it answers yes to the first and no to the second, and the
+  # recording below is what keeps that PR from outliving the round.
+  work_pr="$(rehearsal_notify_stage_handoff_pr "$work" "work-$(date -u +%H%M%S)" "$label")"
+  stage_rc=$?
+  work_pr="$(sed -n '/./{p;q;}' <<<"$work_pr")"
+  [ -n "$work_pr" ] && rehearsal_notify_record_fixture "$work" "$work_pr"
+  if [ "$stage_rc" -eq 0 ] && [ -n "$work_pr" ]; then
     ok "notify: handoff fixture staged in the repos.txt sandbox"
   else
     work_pr=""
     fail "notify: handoff fixture staged in the repos.txt sandbox"
     rehearsal_notify_verdict fail "the repos.txt half's handoff fixture could not be staged"
   fi
-  if notify_pr="$(rehearsal_notify_stage_handoff_pr "$notify_sandbox" "extra-$(date -u +%H%M%S)" "$label")" \
-      && [ -n "$notify_pr" ]; then
-    rehearsal_notify_record_fixture "$notify_sandbox" "$notify_pr"
+  notify_pr="$(rehearsal_notify_stage_handoff_pr "$notify_sandbox" "extra-$(date -u +%H%M%S)" "$label")"
+  stage_rc=$?
+  notify_pr="$(sed -n '/./{p;q;}' <<<"$notify_pr")"
+  [ -n "$notify_pr" ] && rehearsal_notify_record_fixture "$notify_sandbox" "$notify_pr"
+  if [ "$stage_rc" -eq 0 ] && [ -n "$notify_pr" ]; then
     ok "notify: handoff fixture staged in the notify-repos.txt sandbox"
   else
     notify_pr=""
