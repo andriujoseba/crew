@@ -796,17 +796,46 @@ else
 fi
 t rehearsal-boot-helper-sourced-and-called-with-the-drilled-agent wired "$r1"
 
-# The pre-auth arm records both as skips with their reasons, never as passes.
+# The pre-auth arm records both as skips with their reasons, never as passes —
+# and each reason must be TRUE of the file its assertion reads. Pin the reasons
+# and not the prefix: `(box is not gh-authenticated` is shared by every wording
+# a row could carry, including the one triage struck at `09:2xZ`, so a case
+# grepping only that far passes on a false explanation as readily as on the
+# right one. Distinctive substring per row, so a reword stays free and a
+# reason swap does not.
 # shellcheck disable=SC2016  # match the literal $AGENT skip rows
-if grep -Fq 'skip "boot check: cli probe verdict is ok for $AGENT (box is not gh-authenticated' \
-      "$ROOT/drill/rehearsal.sh" \
-    && grep -Fq 'skip "boot check: no WARN for $AGENT (box is not gh-authenticated' \
-      "$ROOT/drill/rehearsal.sh"; then
-  r1=skipped
+boot_skip_probe='skip "boot check: cli probe verdict is ok for $AGENT (box is not gh-authenticated'
+# shellcheck disable=SC2016
+boot_skip_warn='skip "boot check: no WARN for $AGENT (box is not gh-authenticated'
+if ! grep -Fq "$boot_skip_probe" "$ROOT/drill/rehearsal.sh"; then
+  r1=PROBE-ROW-MISSING
+elif ! grep -Fq "$boot_skip_warn" "$ROOT/drill/rehearsal.sh"; then
+  r1=WARN-ROW-MISSING
+elif ! grep -F "$boot_skip_probe" "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq 'correct pre-auth verdict'; then
+  r1=PROBE-REASON-UNPINNED
+elif ! grep -F "$boot_skip_warn" "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq 'declined to vouch'; then
+  r1=WARN-REASON-UNPINNED
 else
-  r1=MISSING
+  r1=skipped
 fi
 t rehearsal-boot-preauth-arm-skips-both-with-reasons skipped "$r1"
+
+# And the mechanism triage measured away: the WARN-free row's reason was `the
+# expected login WARN is asserted below` until `09:2xZ` proved that WARN is
+# written to ~/duty/duty.log — the file `pre-auth: login WARN logged` reads —
+# and never to the ~/duty/boot-check.log this row reads. Two different files,
+# so the contradiction the old reason cited was never possible. Neither skip
+# reason may name a file its assertion does not read; the rest of this block
+# keeps saying `login WARN` legitimately, so the scan is the skip rows only.
+if grep -F 'skip "boot check: ' "$ROOT/drill/rehearsal.sh" \
+    | grep -Eq 'login WARN|duty\.log'; then
+  r1=REASON-CITES-A-FILE-IT-DOES-NOT-READ
+else
+  r1=own-file
+fi
+t rehearsal-boot-preauth-skip-reasons-name-only-the-file-they-read own-file "$r1"
 
 # The gate itself. The case above greps only that the two skip rows EXIST, so
 # it survives an `if true` — the skips live on in an `else` nothing reaches —

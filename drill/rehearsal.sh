@@ -450,19 +450,28 @@ check "boot check ran"             bx "test -s ~/duty/boot-check.log"
 # box, and both name the agent the round was given — never a name spelled
 # here (#427).
 #
-# The authenticated arm only. On a creds-free box `cli probe: FAILED` is the
-# CORRECT verdict (shared/docs/rehearsal.md, "one boot block") and the login
-# WARN is expected and asserted below, so an unconditional assertion of
-# either would contradict the three checks under it. They fire on the
-# operator's re-run, once the box is logged in — the same box state every
-# other assertion in this block partitions on.
+# The authenticated arm only, and the two rows partition on GH_AUTHED
+# together. On a creds-free box `cli probe: FAILED` is the CORRECT verdict
+# (shared/docs/rehearsal.md, "one boot block"), so the probe row has no defect
+# to assert there. The WARN-free row skips for a reason of a different kind:
+# that block is a known-degraded boot whose FAILED probe the row above has
+# just declined to vouch for, so a WARN-free green read off it would be a pass
+# reported about a boot no other row in the arm stands behind.
+#
+# Neither reason is the login WARN asserted below. That WARN goes to
+# ~/duty/duty.log, which is the file `pre-auth: login WARN logged` reads — a
+# different file from the ~/duty/boot-check.log these two read, so no
+# contradiction between the rows was ever possible (#427 §5, measured by
+# triage 2026-08-09). They fire on the operator's re-run, once the box is
+# logged in — the same box state every other assertion in this block
+# partitions on.
 if [ "$GH_AUTHED" -eq 1 ]; then
   rehearsal_boot_load
   rehearsal_boot_probe_ok "$AGENT"
   rehearsal_boot_warn_free "$AGENT"
 else
   skip "boot check: cli probe verdict is ok for $AGENT (box is not gh-authenticated — a FAILED probe is the correct pre-auth verdict)"
-  skip "boot check: no WARN for $AGENT (box is not gh-authenticated — the expected login WARN is asserted below)"
+  skip "boot check: no WARN for $AGENT (box is not gh-authenticated — the row above has just declined to vouch for this degraded boot block's FAILED probe, so a WARN-free read off it stands behind nothing)"
 fi
 if [ "$GH_AUTHED" -eq 0 ]; then
   check "pre-auth: login WARN logged"   bx "grep -q 'cannot resolve own login' ~/duty/duty.log"
