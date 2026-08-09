@@ -350,6 +350,7 @@ t drill-verdict-empty-has-no-answer none "$r1"
 REHEARSAL_RESUME_STATUS="$TMP/resume-leg-verdicts"
 : >"$REHEARSAL_RESUME_STATUS"
 (
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
   ROLE=builder
   REHEARSAL_RESUME_DRILL=1
   skip() { :; }
@@ -360,6 +361,7 @@ t resume-verdict-unavailable-fixture-is-a-skip \
   "$(cat "$REHEARSAL_RESUME_STATUS")"
 : >"$REHEARSAL_RESUME_STATUS"
 (
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
   ROLE=builder
   REHEARSAL_RESUME_DRILL=0
   skip() { :; }
