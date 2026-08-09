@@ -66,7 +66,9 @@ NOTIFY_DRILL=1
 # skips, so reading the role's rc printed `ok notify` for a round that asserted
 # nothing — and `FAIL notify` for a role that failed somewhere else entirely.
 NOTIFY_STATUS=""
-BUILDER_RC=""
+# The builder-only resume leg writes its own verdict here. Its role's exit
+# code also covers every other builder assertion and cannot classify this leg.
+RESUME_STATUS=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
 
@@ -110,6 +112,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=drill/rehearsal-notify.sh
 . "$HERE/rehearsal-notify.sh"
 NOTIFY_STATUS="$(mktemp)"
+RESUME_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -131,6 +134,7 @@ cleanup_role_hygiene_files() {
   # silently REPLACES the earlier one and whichever leg lost the race leaks
   # its temp file every round. One handler, both legs' temporaries.
   [ -z "${NOTIFY_STATUS:-}" ] || rm -f -- "$NOTIFY_STATUS"
+  [ -z "${RESUME_STATUS:-}" ] || rm -f -- "$RESUME_STATUS"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -150,6 +154,7 @@ for role in $ROLES; do
   printf '2\n' >"$role_hygiene_file"
   printf '2\n' >"$role_breaker_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
+  REHEARSAL_RESUME_STATUS="$RESUME_STATUS" \
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
   REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
   REHEARSAL_BREAKER_DRILL="$BREAKER_DRILL" \
@@ -168,7 +173,6 @@ for role in $ROLES; do
   case "$role_breaker_result" in 0|1|2) ;; *) role_breaker_result=2 ;; esac
   breaker_result="$(rehearsal_breaker_combine_result \
     "$breaker_result" "$role_breaker_result")"
-  [ "$role" != builder ] || BUILDER_RC="$rc"
   # Roles whose box the drill actually REACHED, for the app phase below. rc=0
   # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
   # not "no box"); rc=1 can be a failure from before the box existed at all.
@@ -204,17 +208,26 @@ if [ "$HYGIENE_DRILL" -ne 0 ] && [ -z "${DRILLED// /}" ]; then
   [ "$overall" -eq 1 ] || overall=2
 fi
 
+RESUME_VERDICT="$(rehearsal_worst_verdict "$(cat "$RESUME_STATUS" 2>/dev/null)")" \
+  || RESUME_VERDICT=""
+RESUME_WHY="${RESUME_VERDICT#* }"
+RESUME_VERDICT="${RESUME_VERDICT%% *}"
 if [ "$RESUME_DRILL" -eq 0 ]; then
   SUMMARY+=("skip       resume  (--no-resume-drill)")
-elif [ -z "$BUILDER_RC" ]; then
+elif [[ " $ROLES " != *" builder "* ]]; then
   SUMMARY+=("INCOMPLETE resume  (builder role omitted)")
   [ "$overall" -eq 1 ] || overall=2
-elif [ "$BUILDER_RC" -eq 0 ]; then
+elif [ -z "$RESUME_VERDICT" ]; then
+  SUMMARY+=("INCOMPLETE resume  (builder phase 2 never reached the leg)")
+  [ "$overall" -eq 1 ] || overall=2
+elif [ "$RESUME_VERDICT" = ok ]; then
   SUMMARY+=("ok         resume  (wake + zero-action stop)")
-elif [ "$BUILDER_RC" -eq 2 ]; then
-  SUMMARY+=("INCOMPLETE resume  (builder phase 2 skipped)")
+elif [ "$RESUME_VERDICT" = skip ]; then
+  SUMMARY+=("INCOMPLETE resume  (leg skipped: $RESUME_WHY)")
+  [ "$overall" -eq 1 ] || overall=2
 else
-  SUMMARY+=("FAIL       resume")
+  SUMMARY+=("FAIL       resume  ($RESUME_WHY)")
+  overall=1
 fi
 
 # The leg's own verdict, folded across the roles that wrote one — never the

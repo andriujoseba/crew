@@ -327,6 +327,50 @@ source "$ROOT/drill/rehearsal-resume.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
 source "$ROOT/drill/rehearsal-breaker.sh"
 
+# --- leg-neutral drill verdict helpers (#435) -----------------------------
+VERDICT_STATUS_FILE="$TMP/drill-verdicts"
+: >"$VERDICT_STATUS_FILE"
+(
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
+  ROLE=builder
+  rehearsal_verdict_record "$VERDICT_STATUS_FILE" skip "fixture unavailable"
+  rehearsal_verdict_record "$VERDICT_STATUS_FILE" fail "later failure"
+)
+t drill-verdict-record-appends "$(printf 'builder skip fixture unavailable\nbuilder fail later failure')" \
+  "$(cat "$VERDICT_STATUS_FILE")"
+t drill-verdict-worst-is-leg-neutral "fail later failure" \
+  "$(rehearsal_worst_verdict "$(cat "$VERDICT_STATUS_FILE")")"
+t drill-verdict-unreadable-token-grades-fail "fail unreadable" \
+  "$(rehearsal_worst_verdict 'builder sideways unreadable')"
+if rehearsal_worst_verdict '' >/dev/null 2>&1; then r1=verdict; else r1=none; fi
+t drill-verdict-empty-has-no-answer none "$r1"
+
+# The two early successful returns are omissions, not passes. The unavailable
+# fixture is the reported mutation: role rc 0 must still aggregate INCOMPLETE.
+REHEARSAL_RESUME_STATUS="$TMP/resume-leg-verdicts"
+: >"$REHEARSAL_RESUME_STATUS"
+(
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
+  ROLE=builder
+  REHEARSAL_RESUME_DRILL=1
+  skip() { :; }
+  rehearsal_resume_drill owner/repo "" >/dev/null
+)
+t resume-verdict-unavailable-fixture-is-a-skip \
+  "builder skip builder fixture PR unavailable" \
+  "$(cat "$REHEARSAL_RESUME_STATUS")"
+: >"$REHEARSAL_RESUME_STATUS"
+(
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
+  ROLE=builder
+  REHEARSAL_RESUME_DRILL=0
+  skip() { :; }
+  rehearsal_resume_drill owner/repo 1 >/dev/null
+)
+t resume-verdict-opt-out-is-a-skip "builder skip --no-resume-drill" \
+  "$(cat "$REHEARSAL_RESUME_STATUS")"
+unset REHEARSAL_RESUME_STATUS
+
 # --- rehearsal terminal-breaker leg: sourceable mutations (#424) ---------
 BREAKER_KIND=attention
 BREAKER_THRESHOLD=3
@@ -1714,6 +1758,7 @@ t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" 
 AGG="$TMP/notify-agg"
 mkdir -p "$AGG"
 cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
+  "$ROOT/drill/rehearsal-verdict.sh" \
   "$ROOT/drill/rehearsal-hygiene.sh" "$ROOT/drill/rehearsal-breaker.sh" "$AGG/"
 cat >"$AGG/rehearsal.sh" <<'AGGSH'
 #!/usr/bin/env bash
@@ -1724,14 +1769,17 @@ role=""
 while [ $# -gt 0 ]; do case "$1" in --role) role="$2"; shift 2 ;; *) shift ;; esac; done
 v="$(cat "$AGG_DIR/$role.verdict" 2>/dev/null || true)"
 [ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_NOTIFY_STATUS"
+v="$(cat "$AGG_DIR/$role.resume" 2>/dev/null || true)"
+[ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_RESUME_STATUS"
 exit "$(cat "$AGG_DIR/$role.rc" 2>/dev/null || echo 0)"
 AGGSH
 printf '#!/usr/bin/env bash\nexit 0\n' >"$AGG/teardown.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$AGG/rehearsal-app.sh"
 chmod +x "$AGG/rehearsal.sh" "$AGG/teardown.sh" "$AGG/rehearsal-app.sh"
-agg_case() {  # $1 role, $2 verdict (empty for none), $3 rc
+agg_case() {  # $1 role, $2 notify verdict, $3 rc, $4 resume verdict
   printf '%s' "$2" >"$AGG/$1.verdict"
   printf '%s\n' "$3" >"$AGG/$1.rc"
+  printf '%s' "${4:-}" >"$AGG/$1.resume"
 }
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
@@ -1831,6 +1879,57 @@ agg_case reviewer '' 1
 if agg_out="$(agg_run reviewer --no-notify-drill)"; then agg_rc=0; else agg_rc=$?; fi
 t notify-agg-opt-out-still-reds-a-failed-role 1 "$(grep -c '^## *FAIL *reviewer' <<<"$agg_out")"
 t notify-agg-opt-out-failed-role-rc 1 "$agg_rc"
+
+# The resume fold uses the same executable aggregator, with the other legs
+# opted out so every mutation below grades the resume row alone.
+resume_agg_run() {  # $1 roles, then extra flags
+  local roles="$1"; shift
+  AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
+    --no-app --no-config-drill --no-install-drill --no-hygiene-drill \
+    --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
+}
+
+# Reported defect: the builder leg skipped while the role exited 0. The row
+# must name the omission and the round must be incomplete, never `ok resume`.
+agg_case builder '' 0 'skip builder fixture PR unavailable'
+if agg_out="$(resume_agg_run builder)"; then agg_rc=0; else agg_rc=$?; fi
+t resume-agg-unavailable-fixture-emits-no-ok-row 0 \
+  "$(grep -c 'ok         resume' <<<"$agg_out")"
+t resume-agg-unavailable-fixture-names-row 1 \
+  "$(grep -cF 'INCOMPLETE resume  (leg skipped: builder fixture PR unavailable)' <<<"$agg_out")"
+t resume-agg-unavailable-fixture-rc 2 "$agg_rc"
+
+# The inverse: an unrelated builder assertion can red its role without
+# rewriting a successful resume verdict as `FAIL resume`.
+agg_case builder '' 1 'ok wake + zero-action stop'
+if agg_out="$(resume_agg_run builder)"; then agg_rc=0; else agg_rc=$?; fi
+t resume-agg-unrelated-builder-failure-emits-no-resume-fail 0 \
+  "$(grep -c 'FAIL       resume' <<<"$agg_out")"
+t resume-agg-unrelated-builder-failure-keeps-resume-ok 1 \
+  "$(grep -cF 'ok         resume  (wake + zero-action stop)' <<<"$agg_out")"
+t resume-agg-unrelated-builder-failure-still-reds-round 1 "$agg_rc"
+
+# Missing, malformed, and omitted verdicts cover the remaining enabled rows.
+agg_case builder '' 0
+if agg_out="$(resume_agg_run builder)"; then agg_rc=0; else agg_rc=$?; fi
+t resume-agg-no-verdict-is-incomplete 1 \
+  "$(grep -cF 'INCOMPLETE resume  (builder phase 2 never reached the leg)' <<<"$agg_out")"
+t resume-agg-no-verdict-rc 2 "$agg_rc"
+agg_case builder '' 0 'sideways unreadable'
+if agg_out="$(resume_agg_run builder)"; then agg_rc=0; else agg_rc=$?; fi
+t resume-agg-unreadable-token-is-fail 1 \
+  "$(grep -cF 'FAIL       resume  (unreadable)' <<<"$agg_out")"
+t resume-agg-unreadable-token-rc 1 "$agg_rc"
+agg_case triage '' 0
+if agg_out="$(resume_agg_run triage)"; then agg_rc=0; else agg_rc=$?; fi
+t resume-agg-builder-omitted-is-incomplete 1 \
+  "$(grep -cF 'INCOMPLETE resume  (builder role omitted)' <<<"$agg_out")"
+t resume-agg-builder-omitted-rc 2 "$agg_rc"
+agg_case builder '' 0
+if agg_out="$(resume_agg_run builder --no-resume-drill)"; then agg_rc=0; else agg_rc=$?; fi
+t resume-agg-opt-out-is-the-only-skip-row 1 \
+  "$(grep -cF 'skip       resume  (--no-resume-drill)' <<<"$agg_out")"
+t resume-agg-opt-out-rc 0 "$agg_rc"
 
 # --- the two legs' folds compose, they do not overwrite each other (#422) --
 #
