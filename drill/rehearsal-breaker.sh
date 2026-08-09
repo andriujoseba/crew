@@ -6,6 +6,8 @@
 REHEARSAL_BREAKER_DIR=""
 REHEARSAL_BREAKER_ROLE_CONF=""
 REHEARSAL_BREAKER_STATE=""
+REHEARSAL_BREAKER_REPO=""
+REHEARSAL_BREAKER_ISSUE=""
 
 rehearsal_breaker_record_result() {
   local result="$1" result_file="${REHEARSAL_BREAKER_RESULT_FILE:-}"
@@ -124,9 +126,41 @@ rehearsal_breaker_restore_cli() {
   return 1
 }
 
+rehearsal_breaker_restore_cli_for_recovery() {
+  [ -n "$REHEARSAL_BREAKER_DIR" ] || return 1
+  bx "set -e
+    cp '$REHEARSAL_BREAKER_DIR/role.conf' '$REHEARSAL_BREAKER_ROLE_CONF'
+    cat >> '$REHEARSAL_BREAKER_ROLE_CONF' <<'EOF'
+# rehearsal-breaker recovery begin
+alert() { printf '%s\n' \"\$*\" >>\"$REHEARSAL_BREAKER_DIR/alerts.log\"; }
+# rehearsal-breaker recovery end
+EOF
+  "
+}
+
+rehearsal_breaker_attention_is_clear_from_json() {
+  jq -e '[.labels[].name] | index("attention") == null' >/dev/null <<<"$1"
+}
+
+rehearsal_breaker_attention_is_clear() {
+  local repo="$1" issue="$2" issue_json
+  issue_json="$(gh api "repos/$repo/issues/$issue")" || return 1
+  rehearsal_breaker_attention_is_clear_from_json "$issue_json"
+}
+
+rehearsal_breaker_profile_is_restored() {
+  [ -n "$REHEARSAL_BREAKER_ROLE_CONF" ] || return 1
+  bx "! grep -qF '# rehearsal-breaker ' '$REHEARSAL_BREAKER_ROLE_CONF'"
+}
+
 rehearsal_breaker_cleanup() {
   rehearsal_breaker_restore_cli || true
   [ -z "$REHEARSAL_BREAKER_STATE" ] || bx "rm -f '$REHEARSAL_BREAKER_STATE'" >/dev/null 2>&1 || true
+  if [ -n "$REHEARSAL_BREAKER_REPO" ] && [ -n "$REHEARSAL_BREAKER_ISSUE" ]; then
+    gh api -X DELETE \
+      "repos/$REHEARSAL_BREAKER_REPO/issues/$REHEARSAL_BREAKER_ISSUE/labels/attention" \
+      >/dev/null 2>&1 || true
+  fi
 }
 
 rehearsal_breaker_below_threshold_from_log() {
@@ -143,9 +177,12 @@ rehearsal_breaker_trip_from_log() {
 }
 
 rehearsal_breaker_suppressed_from_log() {
-  local kind="$1" threshold="$2" expected="$3" log_text="$4"
-  [ "$(grep -cF "SESSION SKIP kind=$kind" <<<"$log_text")" -eq "$expected" ] \
-    && [ "$(grep -cF "reason=terminal-breaker count=$threshold" <<<"$log_text")" -eq "$expected" ] \
+  local kind="$1" threshold="$2" expected="$3" log_text="$4" matching_skips
+  matching_skips="$(
+    grep -F "SESSION SKIP kind=$kind" <<<"$log_text" \
+      | grep -cF "reason=terminal-breaker count=$threshold" || true
+  )"
+  [ "$matching_skips" -eq "$expected" ] \
     && ! grep -Fq "SESSION START kind=$kind" <<<"$log_text"
 }
 
@@ -173,6 +210,8 @@ rehearsal_breaker_drill() {
     return 0
   fi
   failures_before="${#FAILS[@]}"
+  REHEARSAL_BREAKER_REPO="$repo"
+  REHEARSAL_BREAKER_ISSUE="$issue"
   rehearsal_breaker_load_installed_facts || return 1
   threshold="$REHEARSAL_BREAKER_THRESHOLD"
   kind="$REHEARSAL_BREAKER_KIND"
@@ -236,7 +275,7 @@ rehearsal_breaker_drill() {
   check "breaker: operator alert emitted exactly once while stopped (read '$alerts')" \
     rehearsal_breaker_alert_count_is_one "$alerts"
 
-  if rehearsal_breaker_restore_cli; then
+  if rehearsal_breaker_restore_cli_for_recovery; then
     ok "breaker: real $AGENT CLI restored"
   else
     fail "breaker: real $AGENT CLI restored"
@@ -247,7 +286,17 @@ rehearsal_breaker_drill() {
   log_text="$(rehearsal_breaker_tick_log "$first")"
   check "breaker: later tick recovers and launches a session" \
     rehearsal_breaker_recovered_from_log "$kind" "$log_text"
+  wait_for 300 "breaker: attention label removed after recovered session" \
+    rehearsal_breaker_attention_is_clear "$repo" "$issue"
   check "breaker: state is cleared after recovery" bx "test ! -e '$REHEARSAL_BREAKER_STATE'"
+  if rehearsal_breaker_restore_cli; then
+    ok "breaker: recovery alert interceptor removed"
+  else
+    fail "breaker: recovery alert interceptor removed"
+    return 1
+  fi
   check "breaker: teardown leaves no staged CLI" bx "test ! -e '$fixture_dir'"
+  check "breaker: teardown restores the role profile" \
+    rehearsal_breaker_profile_is_restored
   if [ "${#FAILS[@]}" -gt "$failures_before" ]; then return 1; fi
 }

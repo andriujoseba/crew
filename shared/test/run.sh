@@ -386,6 +386,15 @@ else
   r1=WRONG
 fi
 t rehearsal-breaker-stopped-tick-skips-session suppressed "$r1"
+BREAKER_SPLIT_SKIP_LOG="2026-08-09T00:00:05Z SESSION SKIP kind=$BREAKER_KIND key=owner/repo#1 reason=some-other-gate count=$BREAKER_THRESHOLD
+2026-08-09T00:00:05Z diagnostic reason=terminal-breaker count=$BREAKER_THRESHOLD"
+if rehearsal_breaker_suppressed_from_log "$BREAKER_KIND" \
+    "$BREAKER_THRESHOLD" 1 "$BREAKER_SPLIT_SKIP_LOG"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-split-skip-reason-mutation-reds red "$r1"
 if rehearsal_breaker_suppressed_from_log "$BREAKER_KIND" \
     "$BREAKER_THRESHOLD" 1 "$BREAKER_SKIP_LOG
 2026-08-09T00:00:06Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/four"; then
@@ -417,6 +426,36 @@ else
 fi
 t rehearsal-breaker-hand-resume-mutation-reds red "$r1"
 
+t rehearsal-breaker-summary-skipped-phase-incomplete \
+  "INCOMPLETE breaker  (phase 2 skipped)" \
+  "$(rehearsal_breaker_summary 1 ' builder' 2)"
+t rehearsal-breaker-summary-failure-stays-failure \
+  "FAIL       breaker" "$(rehearsal_breaker_summary 1 ' builder' 1)"
+t rehearsal-breaker-mixed-fail-then-skip-stays-failure 1 \
+  "$(rehearsal_breaker_combine_result \
+    "$(rehearsal_breaker_combine_result 2 1)" 2)"
+t rehearsal-breaker-mixed-fail-then-pass-stays-failure 1 \
+  "$(rehearsal_breaker_combine_result \
+    "$(rehearsal_breaker_combine_result 2 1)" 0)"
+t rehearsal-breaker-mixed-skip-then-pass-is-ok 0 \
+  "$(rehearsal_breaker_combine_result \
+    "$(rehearsal_breaker_combine_result 2 2)" 0)"
+
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"claimed"}]}'; then
+  r1=clear
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-recovered-session-acks-attention clear "$r1"
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"attention"}]}'; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-standing-attention-mutation-reds red "$r1"
+
 BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
 mkdir -p "$BREAKER_FIXTURE_HOME/duty/conf/roles"
 printf 'TIMEOUT_REVIEW=1\n' >"$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
@@ -425,12 +464,26 @@ if rehearsal_breaker_install_fixture reviewer; then r1=installed; else r1=WRONG;
 t rehearsal-breaker-cli-fixture-installs installed "$r1"
 t rehearsal-breaker-cli-fixture-overrides-command 1 \
   "$(grep -cF '# rehearsal-breaker begin' "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+if rehearsal_breaker_restore_cli_for_recovery; then r1=restored; else r1=WRONG; fi
+t rehearsal-breaker-recovery-restores-real-cli restored "$r1"
+t rehearsal-breaker-recovery-keeps-alert-interceptor 1 \
+  "$(grep -cF '# rehearsal-breaker recovery begin' "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+t rehearsal-breaker-recovery-keeps-fixture-until-teardown present \
+  "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
+bx() { return 1; }
+if rehearsal_breaker_restore_cli; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-failed-teardown-mutation-reds red "$r1"
+t rehearsal-breaker-failed-teardown-keeps-fixture present \
+  "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
+bx() { HOME="$BREAKER_FIXTURE_HOME" bash -c "$1"; }
 if rehearsal_breaker_restore_cli; then r1=restored; else r1=WRONG; fi
 t rehearsal-breaker-cli-fixture-restores-profile restored "$r1"
 t rehearsal-breaker-cli-fixture-removes-directory absent \
   "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
 t rehearsal-breaker-cli-fixture-restores-content 'TIMEOUT_REVIEW=1' \
   "$(cat "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+if rehearsal_breaker_profile_is_restored; then r1=restored; else r1=WRONG; fi
+t rehearsal-breaker-cli-fixture-removes-role-overrides restored "$r1"
 unset -f bx
 
 if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
