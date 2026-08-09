@@ -786,6 +786,45 @@ t attention-dispatch-unreadable-source-named 1 \
 t attention-branch-sources-are-sandbox-and-fork "$ATT_REPO $ATT_FORK" \
   "$(rehearsal_attention_branch_sources "$ATT_REPO" "$ATT_IDENTITY" | tr '\n' ' ' \
     | sed 's/ $//')"
+# The collector is where "the fork does not exist" and "the fork exists and
+# will not list" are told apart, and getting that wrong is how reading two
+# sources becomes silently blinder than reading one. Staged under a stubbed gh.
+# ATT_SB / ATT_FK are each a branch-list JSON, X (exists, will not list) or
+# 404 (no such repo). Prints "<branches>|<unreadable>".
+att_collect() {
+  (
+    gh() {
+      case "$*" in
+        *"repos/$ATT_REPO/branches"*)
+          [ "$ATT_SB" = X ] && return 1
+          printf '%s\n' "$ATT_SB" ;;
+        *"repos/$ATT_FORK/branches"*)
+          case "$ATT_FK" in X|404) return 1 ;; esac
+          printf '%s\n' "$ATT_FK" ;;
+        "api repos/$ATT_FORK")
+          [ "$ATT_FK" = 404 ] && return 1
+          return 0 ;;
+        *) return 1 ;;
+      esac
+    }
+    rehearsal_attention_collect_branches "$ATT_REPO" "$ATT_FORK"
+    printf '%s|%s\n' "$(jq -c . <<<"$REHEARSAL_ATTENTION_BRANCHES")" \
+      "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE"
+  )
+}
+ATT_SB='[{"name":"main"}]'; ATT_FK='[{"name":"build/77-oops"}]'
+t attention-collector-unions-both-sources-and-names-each \
+  '[{"repo":"owner/sandbox","name":"main"},{"repo":"drill-identity/sandbox","name":"build/77-oops"}]|' \
+  "$(att_collect)"
+ATT_SB='[]'; ATT_FK=X
+t attention-collector-flags-a-source-that-exists-and-will-not-list \
+  '[]|drill-identity/sandbox' "$(att_collect)"
+# A fork that has not been created cannot hold a pushed branch: skipped.
+ATT_SB='[]'; ATT_FK=404
+t attention-collector-skips-a-fork-that-does-not-exist '[]|' "$(att_collect)"
+ATT_SB='[]'; ATT_FK='[]'
+t attention-collector-empty-source-is-not-unreadable '[]|' "$(att_collect)"
+
 # Both reads in the dispatch half — the fixture precondition and the graded row
 # — go through the collector, so neither can drift back to the sandbox alone.
 # shellcheck disable=SC2016  # the needle is source text, not an expansion
