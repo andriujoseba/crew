@@ -810,6 +810,114 @@ unset -f notify_pre_drill_probe
 t notify-write-unanswerable-probe-refuses 'rc=1 absent=0 backup=[]' \
   "$(cat "$TMP/notify-write-unanswerable")"
 
+# --- the operator-channel preflight, against a stubbed Telegram -----------
+#
+# The preflight has two halves and they fail apart. `getMe` answers "is this
+# token a bot"; what the leg needs is that the bot can reach the chat the
+# engine actually sends to (`CHAT="$(cat "$HOME/.tg_chat_id")"`,
+# shared/bin/notify.sh:64). Probing only the first meant a valid token on a
+# missing, wrong, or inaccessible chat returned `ok`, staged both fixtures,
+# and had its `(msg none)` deliveries graded as a LEG FAILURE — where #423
+# says an unreachable operator channel is a named skip and nothing else
+# (codex-bot, round 4).
+#
+# Driven by EXECUTING the box-side script under a fake HOME with `curl`
+# shimmed, not by grepping its text: the question is which requests it makes
+# and what it concludes from each answer. Still no network — the shim is on
+# PATH ahead of the real binary and every reply is local.
+NOTIFY_CHAN_HOME="$TMP/notify-channel-home"
+NOTIFY_CHAN_SHIM="$TMP/notify-channel-shim"
+NOTIFY_CHAN_CURL="$TMP/notify-channel-curl-calls"
+mkdir -p "$NOTIFY_CHAN_HOME" "$NOTIFY_CHAN_SHIM"
+cat >"$NOTIFY_CHAN_SHIM/curl" <<'NOTIFY_CURL_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$NOTIFY_CHAN_CURL"
+url=""
+for arg in "$@"; do case "$arg" in https://*) url="$arg" ;; esac; done
+case "$url" in
+  *getMe*)   state="$NOTIFY_CHAN_GETME" ;;
+  *getChat*) state="$NOTIFY_CHAN_GETCHAT" ;;
+  *)         state=ok ;;
+esac
+case "$state" in
+  transport) exit 7 ;;
+  refused)   printf '{"ok":false,"description":"stub refusal"}\n' ;;
+  *)         printf '{"ok":true,"result":{"id":-100200}}\n' ;;
+esac
+NOTIFY_CURL_STUB
+chmod +x "$NOTIFY_CHAN_SHIM/curl"
+export NOTIFY_CHAN_CURL
+NOTIFY_CHAN_ID='-1002003004'
+notify_channel_probe() {  # $1 token bytes|missing, $2 chat bytes|missing, $3 getMe, $4 getChat
+  if [ "$1" = missing ]; then rm -f "$NOTIFY_CHAN_HOME/.tg_bot_token"
+  else printf '%s' "$1" >"$NOTIFY_CHAN_HOME/.tg_bot_token"; fi
+  if [ "$2" = missing ]; then rm -f "$NOTIFY_CHAN_HOME/.tg_chat_id"
+  else printf '%s' "$2" >"$NOTIFY_CHAN_HOME/.tg_chat_id"; fi
+  : >"$NOTIFY_CHAN_CURL"
+  (
+    export NOTIFY_CHAN_GETME="${3:-ok}" NOTIFY_CHAN_GETCHAT="${4:-ok}"
+    bx() { HOME="$NOTIFY_CHAN_HOME" PATH="$NOTIFY_CHAN_SHIM:$PATH" bash -c "$1"; }
+    rehearsal_notify_channel_status
+  )
+}
+
+notify_chan="$(notify_channel_probe tok-abc "$NOTIFY_CHAN_ID" ok ok)"
+t notify-channel-token-and-chat-both-good ok "$notify_chan"
+t notify-channel-probes-the-configured-chat 1 \
+  "$(grep -cF "chat_id=$NOTIFY_CHAN_ID" "$NOTIFY_CHAN_CURL")"
+t notify-channel-chat-probe-is-a-read 0 \
+  "$(grep -cF sendMessage "$NOTIFY_CHAN_CURL")"
+
+# The case the whole point turns on: the token is unimpeachable and the chat
+# is not. `getMe` alone cannot tell this from a healthy channel.
+notify_chan="$(notify_channel_probe tok-abc "$NOTIFY_CHAN_ID" ok refused)"
+t notify-channel-valid-token-unreachable-chat-is-not-ok chat-unreachable "$notify_chan"
+t notify-channel-valid-token-unreachable-chat-asked-both 2 \
+  "$(grep -c . "$NOTIFY_CHAN_CURL")"
+
+# …and its converse, so the two reasons keep distinct subjects: a refused
+# token is `rejected`, and the chat is never probed with a token already known
+# to be bad.
+notify_chan="$(notify_channel_probe tok-abc "$NOTIFY_CHAN_ID" refused ok)"
+t notify-channel-refused-token-is-rejected rejected "$notify_chan"
+t notify-channel-refused-token-never-probes-the-chat 0 \
+  "$(grep -cF getChat "$NOTIFY_CHAN_CURL")"
+
+t notify-channel-transport-failure-is-unreachable unreachable \
+  "$(notify_channel_probe tok-abc "$NOTIFY_CHAN_ID" transport ok)"
+t notify-channel-chat-transport-failure-is-unreachable unreachable \
+  "$(notify_channel_probe tok-abc "$NOTIFY_CHAN_ID" ok transport)"
+t notify-channel-missing-token-is-no-credentials no-credentials \
+  "$(notify_channel_probe missing "$NOTIFY_CHAN_ID" ok ok)"
+t notify-channel-missing-chat-id-is-no-credentials no-credentials \
+  "$(notify_channel_probe tok-abc missing ok ok)"
+
+# A readable file holding nothing is not a credential: carried into the
+# request it would have asked Telegram about the empty chat id and read the
+# refusal as `chat-unreachable`, which names the wrong fault.
+notify_chan="$(notify_channel_probe tok-abc "" ok ok)"
+t notify-channel-empty-chat-id-is-no-credentials no-credentials "$notify_chan"
+t notify-channel-empty-chat-id-asks-nothing 0 "$(grep -c . "$NOTIFY_CHAN_CURL")"
+notify_chan="$(notify_channel_probe "" "$NOTIFY_CHAN_ID" ok ok)"
+t notify-channel-empty-token-is-no-credentials no-credentials "$notify_chan"
+t notify-channel-empty-token-asks-nothing 0 "$(grep -c . "$NOTIFY_CHAN_CURL")"
+unset -f notify_channel_probe
+
+# The new reason travels the same road as the old ones: a skip naming it, no
+# ok row anywhere in the leg, and no tick.
+notify_out="$(
+  bx() { printf 'chat-unreachable\n'; }
+  ok()   { printf 'ok   %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; }
+  skip() { printf 'skip %s\n' "$1"; }
+  rehearsal_notify_drill "$NOTIFY_WORK" owner reviewer 2>&1
+  printf 'rc=%s\n' "$?"
+)"
+t notify-unreachable-chat-rc "rc=0" "$(tail -n 1 <<<"$notify_out")"
+t notify-unreachable-chat-skips-with-its-reason 1 \
+  "$(grep -cF 'skip notify: union over repos.txt and notify-repos.txt (operator channel unreachable on this host: chat-unreachable)' <<<"$notify_out")"
+t notify-unreachable-chat-is-never-a-pass 0 "$(grep -c '^ok   ' <<<"$notify_out")"
+
 # Must fail (recorded, not hidden): an unreachable channel is a visible skip
 # naming the reason, and never an ok.
 notify_out="$(
