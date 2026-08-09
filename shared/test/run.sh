@@ -1033,6 +1033,22 @@ ATT_OUT="$(
 t attention-unreadable-marks-red 1 \
   "$(grep -cFx 'FAIL attention: installed pickup mark and timeout phrase resolve' <<<"$ATT_OUT")"
 
+# The lowering is confined to one box shell, which is why no exit path can
+# leave it behind. Both halves of that claim are read off the script the leg
+# actually sends: the assignment lands AFTER load_conf, in the process that
+# calls duty_attention, and nothing under the installed conf or lib is written.
+ATT_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_timeout_invoke drill-identity 1 /tmp/attention-capture
+)"
+t attention-lowering-follows-load-conf 1 \
+  "$(awk '/load_conf/ { seen = 1 } seen && /^ *TIMEOUT_ATTENTION=1$/ { print; exit }' \
+    <<<"$ATT_SCRIPT" | wc -l | tr -d ' ')"
+t attention-lowered-run-writes-no-installed-file 0 \
+  "$(grep -cE '(>>?|tee |sed -i|cp ).*duty/(conf|lib)' <<<"$ATT_SCRIPT" | tr -d ' ')"
+t attention-lowered-run-calls-the-module-directly 1 \
+  "$(grep -cx ' *duty_attention' <<<"$ATT_SCRIPT" | tr -d ' ')"
+
 # --- rehearsal boot-check verdict: what the gate SAID, not that it ran (#427) ---
 # The drill's assertion was `test -s ~/duty/boot-check.log`, which passes on a
 # FAILED probe line and on a log full of WARN. Every mutation below is staged
