@@ -175,6 +175,9 @@ cleanup_all() {
     if declare -F rehearsal_attention_cleanup >/dev/null 2>&1; then
       rehearsal_attention_cleanup || true
     fi
+    if declare -F rehearsal_attention_audit_cleanup >/dev/null 2>&1; then
+      rehearsal_attention_audit_cleanup || true
+    fi
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
         "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
@@ -606,6 +609,8 @@ else
   # role rather than one box carrying all three.
 
   if [ "$ROLE" = "triage" ]; then
+  # shellcheck source=drill/rehearsal-attention-audit.sh
+  . "$ROOT/drill/rehearsal-attention-audit.sh"
   TRIAGE_CLEANUP_REPO="$SANDBOX"
   if ! rehearsal_load_installed_queue_labels \
       && [ -z "$REHEARSAL_QUEUE_LABELS" ]; then
@@ -654,6 +659,14 @@ else
     "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum' --jq '[.labels[].name] | sort | join(\" \")')\" = '$PLABELS' ] && [ '$PLABELS' = 'post-merge' ]"
   check "triage: post-merge-only tick launched no session" bx \
     "tail -n +$((DUTY_LOG_LINES + 1)) ~/duty/duty.log | grep -Fq '$SANDBOX: quiet — no mentions, no triage signals, no session launched'"
+
+  # -- the hygiene slot's board audit: both malformed shapes, not repaired --
+  # Last in the triage block, after the existing assertions, which are
+  # unchanged. The slot is triage-only (duty.sh), so this is the one role block
+  # it can run in — and it goes last because its own fixtures are two objects
+  # the board invariant calls malformed, which every assertion above would
+  # otherwise have to be read against.
+  rehearsal_attention_audit_drill "$SANDBOX" "$ME2"
 
   elif [ "$ROLE" = "builder" ]; then
   # shellcheck source=drill/rehearsal-resume.sh

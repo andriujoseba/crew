@@ -2815,15 +2815,17 @@ agg_case() {  # $1 role, $2 notify verdict, $3 rc, $4 resume verdict
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   # Every sibling leg the notify fold is not under test with is switched off,
-  # --no-hygiene-drill (#422), --no-breaker-drill (#424) and
-  # --no-attention-drill (#440) included: these
+  # --no-hygiene-drill (#422), --no-breaker-drill (#424),
+  # --no-attention-drill (#440) and --no-attention-audit-drill (#441)
+  # included: these
   # cases assert what the NOTIFY
   # verdict does to `overall`, and a neighbour's row moving it would red them
   # for a reason that is not theirs. The composition of the two folds gets its
   # own case below, with the hygiene leg deliberately left on.
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-attention-drill --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-attention-audit-drill \
+    --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
 }
 
 # The breaker has its own enabled/incomplete partition: an enabled leg that no
@@ -2832,7 +2834,8 @@ agg_run() {  # $1 roles, then extra flags
 agg_breaker_run() {
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles '' \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-attention-drill --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-attention-audit-drill \
+    --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
 }
 if agg_out="$(agg_breaker_run)"; then agg_rc=0; else agg_rc=$?; fi
 t breaker-agg-enabled-no-role-is-incomplete 1 \
