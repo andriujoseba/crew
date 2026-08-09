@@ -1502,7 +1502,8 @@ t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" 
 # The aggregation, executable: a real rehearsal-all.sh with stubbed siblings.
 AGG="$TMP/notify-agg"
 mkdir -p "$AGG"
-cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" "$AGG/"
+cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
+  "$ROOT/drill/rehearsal-hygiene.sh" "$AGG/"
 cat >"$AGG/rehearsal.sh" <<'AGGSH'
 #!/usr/bin/env bash
 # Stub role drill: writes the verdict the case asked for — the way the leg
@@ -1523,9 +1524,14 @@ agg_case() {  # $1 role, $2 verdict (empty for none), $3 rc
 }
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
+  # Every sibling leg the notify fold is not under test with is switched off,
+  # --no-hygiene-drill (#422) included: these cases assert what the NOTIFY
+  # verdict does to `overall`, and a neighbour's row moving it would red them
+  # for a reason that is not theirs. The composition of the two folds gets its
+  # own case below, with the hygiene leg deliberately left on.
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    ${1+"$@"} 2>&1
+    --no-hygiene-drill ${1+"$@"} 2>&1
 }
 
 # The criterion: an unreachable operator channel produces a skip naming it and
@@ -1596,6 +1602,79 @@ agg_case reviewer '' 1
 if agg_out="$(agg_run reviewer --no-notify-drill)"; then agg_rc=0; else agg_rc=$?; fi
 t notify-agg-opt-out-still-reds-a-failed-role 1 "$(grep -c '^## *FAIL *reviewer' <<<"$agg_out")"
 t notify-agg-opt-out-failed-role-rc 1 "$agg_rc"
+
+# --- the two legs' folds compose, they do not overwrite each other (#422) --
+#
+# #422's hygiene leg and this one both fold a verdict into the same `overall`,
+# in that order. Both are worst-wins, so neither may talk the other's failure
+# back down to a pass — an `ok notify` beside a red hygiene round must still
+# exit 1, and a red notify leg beside a hygiene round that says nothing must
+# still exit 1. `agg_run` above switches the sibling off precisely so this is
+# the one place the interaction is asserted rather than assumed.
+agg_hygiene_run() {  # $1 roles, $2 the hygiene result the role box records
+  local roles="$1" hyg="$2"
+  AGG_DIR="$AGG" AGG_HYGIENE="$hyg" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
+    --no-app --no-config-drill --no-install-drill --no-resume-drill 2>&1
+}
+# The stub writes the hygiene result the way the live leg does — into the file
+# rehearsal-all.sh hands it, per role — on top of the notify verdict it already
+# writes. The two channels stay independent, which is the property under test.
+cat >"$AGG/rehearsal.sh" <<'AGGSH'
+#!/usr/bin/env bash
+role=""
+while [ $# -gt 0 ]; do case "$1" in --role) role="$2"; shift 2 ;; *) shift ;; esac; done
+v="$(cat "$AGG_DIR/$role.verdict" 2>/dev/null || true)"
+[ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_NOTIFY_STATUS"
+[ -z "${AGG_HYGIENE:-}" ] || printf '%s\n' "$AGG_HYGIENE" >"$REHEARSAL_HYGIENE_RESULT_FILE"
+exit "$(cat "$AGG_DIR/$role.rc" 2>/dev/null || echo 0)"
+AGGSH
+chmod +x "$AGG/rehearsal.sh"
+
+agg_case reviewer 'ok both halves on one tick' 0
+if agg_out="$(agg_hygiene_run reviewer 1)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-hygiene-failure-does-not-clear-the-round 1 "$agg_rc"
+t notify-agg-hygiene-failure-keeps-the-notify-pass 1 \
+  "$(grep -c 'ok         notify' <<<"$agg_out")"
+
+agg_case reviewer 'fail the notify-repos.txt half never arrived' 0
+if agg_out="$(agg_hygiene_run reviewer 0)"; then agg_rc=0; else agg_rc=$?; fi
+t notify-agg-hygiene-pass-does-not-clear-the-notify-failure 1 "$agg_rc"
+t notify-agg-hygiene-pass-keeps-the-notify-fail-row 1 \
+  "$(grep -c 'FAIL       notify' <<<"$agg_out")"
+
+# Both legs mint a temp file per round and bash keeps exactly ONE EXIT handler,
+# so a second `trap … EXIT` here would silently replace the first and leak the
+# losing leg's file every round. One handler; it removes both.
+t notify-all-installs-one-exit-trap 1 \
+  "$(grep -c '^trap .* EXIT$' "$ROOT/drill/rehearsal-all.sh")"
+# shellcheck disable=SC2016  # the handler line is deliberately literal
+if grep -Fq 'rm -f -- "$NOTIFY_STATUS"' "$ROOT/drill/rehearsal-all.sh"; then
+  r1=removed
+else
+  r1=LEAKED
+fi
+t notify-status-file-removed-by-the-one-exit-handler removed "$r1"
+AGG_TRAP_MUTATED="$TMP/rehearsal-all-two-traps.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation of the handler body
+sed '/rm -f -- "\$NOTIFY_STATUS"/d' "$ROOT/drill/rehearsal-all.sh" >"$AGG_TRAP_MUTATED"
+# shellcheck disable=SC2016  # the removed line is deliberately literal
+if grep -Fq 'rm -f -- "$NOTIFY_STATUS"' "$AGG_TRAP_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t notify-status-left-unremoved-reds red "$r1"
+
+# Restore the plain stub for anything downstream that drives it.
+cat >"$AGG/rehearsal.sh" <<'AGGSH'
+#!/usr/bin/env bash
+role=""
+while [ $# -gt 0 ]; do case "$1" in --role) role="$2"; shift 2 ;; *) shift ;; esac; done
+v="$(cat "$AGG_DIR/$role.verdict" 2>/dev/null || true)"
+[ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_NOTIFY_STATUS"
+exit "$(cat "$AGG_DIR/$role.rc" 2>/dev/null || echo 0)"
+AGGSH
+chmod +x "$AGG/rehearsal.sh"
 
 # --- teardown compares BOTH registries against their pre-drill bytes ------
 #
