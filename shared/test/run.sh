@@ -436,7 +436,7 @@ unset -f bx
 if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'breaker  (trip + single alert + recovery)' \
       "$ROOT/drill/rehearsal-breaker.sh" \
-    && grep -Fq 'rehearsal_breaker_drill "$SANDBOX" "$inum" "$ROLE"' \
+    && grep -Fq "rehearsal_breaker_drill \"\$SANDBOX\" \"\$inum\" \"\$ROLE\"" \
       "$ROOT/drill/rehearsal.sh"; then
   r1=wired
 else
