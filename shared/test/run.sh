@@ -181,7 +181,7 @@ t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
 # Drive the two converted awk-range call sites with a producer that pauses
 # after its match. The old predicate is assembled so the source guard itself
 # does not carry the prohibited spelling.
-slow_awk() { printf '%s\n' MATCH; sleep 0.05; printf '%s\n' more; }
+slow_awk() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
 old_pipe='slow_awk | '
 old_match='grep -q MATCH'
 if eval "$old_pipe$old_match"; then old_predicate_rc=0; else old_predicate_rc=$?; fi
