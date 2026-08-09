@@ -41,7 +41,8 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 source "$FLOOR/../drill/agreement.sh"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
-if awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor.py" | grep -q 'now - last_ts'; then
+build_unit_source="$(awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor.py")"
+if grep -q 'now - last_ts' <<<"$build_unit_source"; then
   fail "clock: unit building never mixes host now with a box timestamp" \
        "found the skew-sensitive subtraction 'now - last_ts'"
 else
@@ -427,7 +428,7 @@ t "first-run box: has NO history"       0    "$(uf ff-firstrun "len(u['sessions'
 status POST /api/command '{"action":"start-all"}' >/dev/null
 WS_BODY="$(body POST /api/command '{"action":"wake-silent"}')"
 WS_CODE="$(status POST /api/command '{"action":"wake-silent"}')"
-if [ "$WS_CODE" = "200" ] || printf '%s' "$WS_BODY" | grep -q '"results"'; then
+if [ "$WS_CODE" = "200" ] || grep -q '"results"' <<<"$WS_BODY"; then
   ok "wake-silent always reports per-box results"
 else
   fail "wake-silent always reports per-box results" "$WS_CODE $WS_BODY"
@@ -685,7 +686,8 @@ fi
 # communicate() against a wedged box will later write into whatever dict the
 # closure holds. If that dict is the live one, the late writer sets fails back
 # to 0 from a stale prev and masks the wedge that made it late.
-if awk '/def ping_once/,/return published/' "$CS_SRC" | grep -q 'published = dict(results)'; then
+ping_once_source="$(awk '/def ping_once/,/return published/' "$CS_SRC")"
+if grep -q 'published = dict(results)' <<<"$ping_once_source"; then
   ok "ping: publishes a copy, so a late thread lands on an orphan"
 else
   fail "ping: publishes a copy, so a late thread lands on an orphan" \
@@ -699,7 +701,8 @@ fi
 # `waiting` joins the forbidden list for the same reason (#265): the box knows
 # its own tick age is absent and could "helpfully" name the state itself, and
 # that is the same third copy of the rule wearing a friendlier word.
-if awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh" | grep -q 'flowing\|waiting\|stale'; then
+credential_probe_source="$(awk '/^for svc in gh vendor/,/^done/' "$FLOOR/server/probe.sh")"
+if grep -q 'flowing\|waiting\|stale' <<<"$credential_probe_source"; then
   fail "creds: the box reports a fact, not a verdict" \
        "probe.sh decides flowing/waiting/stale itself — that is a third copy of the host's rule"
 else

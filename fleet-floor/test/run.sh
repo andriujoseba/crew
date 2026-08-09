@@ -306,8 +306,8 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
     # collector with no snapshot yet sees an empty fleet, and the stale test
     # would then be asserting against a page that never went live.
     for _ in $(seq 1 120); do
-      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$SPORT/api/fleet" 2>/dev/null \
-        | grep -q '"box"' && break
+      floor_snapshot="$(curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$SPORT/api/fleet" 2>/dev/null)"
+      grep -q '"box"' <<<"$floor_snapshot" && break
       sleep 0.5
     done
     if node "$HERE/stale.js" "http://127.0.0.1:$SPORT/" "$SRV2" "$USER" "$PASSWD"; then
@@ -331,8 +331,8 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
       python3 "$FLOOR/server/floor.py" >"$TMP/server3.log" 2>&1 &
     SRV3=$!
     for _ in $(seq 1 120); do
-      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null \
-        | grep -q '"box"' && break
+      floor_snapshot="$(curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null)"
+      grep -q '"box"' <<<"$floor_snapshot" && break
       sleep 0.5
     done
     if SHOT_DIR="$TMP" node "$HERE/churn.js" "http://127.0.0.1:$CPORT/" \
@@ -365,8 +365,8 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
     # other side of the poll, finds no working box at all. Wait for the
     # restored fleet to be back in the snapshot before standing on it.
     for _ in $(seq 1 40); do
-      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null \
-        | grep -q '"ff-working"' && break
+      floor_snapshot="$(curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$CPORT/api/fleet" 2>/dev/null)"
+      grep -q '"ff-working"' <<<"$floor_snapshot" && break
       sleep 0.5
     done
     echo
@@ -436,8 +436,8 @@ sys.exit(0 if len(u)==2 and all(x['disarmed'] for x in u) and any(x['paused'] fo
       python3 "$FLOOR/server/floor.py" >"$TMP/server4.log" 2>&1 &
     SRV4=$!
     for _ in $(seq 1 120); do
-      curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$HPORT/api/fleet" 2>/dev/null \
-        | grep -q '"hf-nothired"' && break
+      floor_snapshot="$(curl -fsS -u "$USER:$PASSWD" "http://127.0.0.1:$HPORT/api/fleet" 2>/dev/null)"
+      grep -q '"hf-nothired"' <<<"$floor_snapshot" && break
       sleep 0.5
     done
     if SHOT_DIR="$TMP" node "$HERE/hired.js" "http://127.0.0.1:$HPORT/" \

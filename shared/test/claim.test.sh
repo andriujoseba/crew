@@ -54,7 +54,7 @@ if [ "$1 $2" = "issue view" ]; then
   esac
 elif [ "$1 $2" = "issue edit" ]; then
   printf '%s\n' "$*" >>"$log"
-  if [ "${CLAIM_MODE:?}" = mutation-fail ] && printf '%s\n' "$*" | grep -q -- '--add-assignee'; then
+  if [ "${CLAIM_MODE:?}" = mutation-fail ] && grep -q -- '--add-assignee' <<<"$*"; then
     exit 1
   fi
 elif [ "$1" = api ]; then

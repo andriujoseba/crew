@@ -575,12 +575,13 @@ rm -f "$BS_FLOW/duty/.duty.lock.since"
 # match condemned `for svc in gh vendor`. Comments are stripped first so the
 # rationale above each check cannot trip the check.
 BS_NETRE='(^|[;&|(]|\bif |\bthen |\belse )[[:space:]]*(gh|bot_cli_probe|claude|codex|kimi)([[:space:]]|$)'
-if sed 's/#.*//' "$BS_FLOOR/server/probe.sh" | grep -qE "$BS_NETRE"; then
+BS_PROBE_CODE="$(sed 's/#.*//' "$BS_FLOOR/server/probe.sh")"
+if grep -qE "$BS_NETRE" <<<"$BS_PROBE_CODE"; then
   fail "flow: probe.sh invokes no network command" \
        "$(sed 's/#.*//' "$BS_FLOOR/server/probe.sh" | grep -nE "$BS_NETRE")"
 else ok "flow: probe.sh invokes no network command"; fi
 # ...and the guard is worth nothing if it cannot see the thing it forbids.
-if printf 'if gh auth status; then :; fi\n' | grep -qE "$BS_NETRE"; then
+if grep -qE "$BS_NETRE" <<<'if gh auth status; then :; fi'; then
   ok "flow: the no-network guard detects a reintroduced gh call"
 else fail "flow: the no-network guard detects a reintroduced gh call" "guard is blind"; fi
 

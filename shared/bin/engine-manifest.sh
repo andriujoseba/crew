@@ -192,8 +192,12 @@ recorded_body() { tail -n +2 "$RECORD" 2>/dev/null; }
 recorded_stamp() { sed -n "1s/^# $FORMAT //p" "$RECORD" 2>/dev/null | head -1; }
 
 record_is_readable() {
+  local record_header
   [ -f "$RECORD" ] || return 1
-  head -1 "$RECORD" 2>/dev/null | grep -q "^# $FORMAT" || return 1
+  # Prophylactic: materialise even this one-line producer so the prohibited
+  # predicate shape cannot grow back into a multi-write SIGPIPE race.
+  record_header="$(head -1 "$RECORD" 2>/dev/null)"
+  grep -q "^# $FORMAT" <<<"$record_header" || return 1
 }
 
 # state — the whole point, in one word.

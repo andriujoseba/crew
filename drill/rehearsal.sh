@@ -342,7 +342,7 @@ bx '
   # END phase-0 suite roots
 ' || { echo "phase 0: transferred engine failed verification inside $BOX_NAME"; exit 1; }
 echo "== phase 0: shipped $SOURCE_SHA from $SOURCE_DESC (creds-free inside box)"
-check "fixture tests green" bx "~/.crew-engine-stage/shared/test/run.sh | grep -q 'failed 0'"
+check "fixture tests green" bx "out=\$(~/.crew-engine-stage/shared/test/run.sh); grep -q 'failed 0' <<<\"\$out\""
 
 echo "== phase 1: pre-auth engine install ($AGENT $ROLE)"
 # Every drill tick is explicit. Arming cron here created an autonomous
@@ -408,12 +408,12 @@ box exec "$BOX_NAME" -- bash -lc '
 rm -rf "$DRILL_TMP"
 rehearsal_disarm_cron || { echo "cannot disarm drill cron — refusing before any tick"; exit 1; }
 version="$(bx "head -1 ~/.crew-engine-stage/VERSION" | tr -d '\r\n')"
-check "VERSION stamps crew@$version" bx "head -1 ~/duty/VERSION | grep -q '^crew@$version\\( \\|$\\)'"
+check "VERSION stamps crew@$version" bx "out=\$(head -1 ~/duty/VERSION); grep -q '^crew@$version\\( \\|$\\)' <<<\"\$out\""
 check "instance.conf $AGENT/$ROLE" bx "grep -q 'BOT_AGENT=$AGENT' ~/duty/conf/instance.conf && grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
-check "drill is not cron-armed"    bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "drill is not cron-armed"    bx "out=\$(crontab -l 2>/dev/null); ! grep -q ~/duty/bin/tick.sh <<<\"\$out\""
 # Reinstall with the same explicit drill identity and assert the role survived
 # rather than trusting it.
-check "reinstall stays disarmed"   bx "~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role '$ROLE' && ! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "reinstall stays disarmed"   bx "~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role '$ROLE' && { out=\$(crontab -l 2>/dev/null); ! grep -q ~/duty/bin/tick.sh <<<\"\$out\"; }"
 check "reinstall keeps role"       bx "grep -q 'BOT_ROLES=\"$ROLE\"' ~/duty/conf/instance.conf"
 check "bad role refused"           bx "! ~/.crew-engine-stage/shared/install.sh --agent '$AGENT' --role nosuchrole"
 
@@ -433,7 +433,7 @@ bx "gh auth status >/dev/null 2>&1" && GH_AUTHED=1
 if [ "$GH_AUTHED" -eq 1 ]; then
   DRILL_BOX_ME="$(bx "gh api user --jq .login" | tr -d '\r\n')"
   check "hired box bylines itself as $DRILL_BOX_ME, before its first tick" \
-    bx "git config --global user.email | grep -qiE '^([0-9]+\\+)?$DRILL_BOX_ME@users\\.noreply\\.github\\.com\$'"
+    bx "out=\$(git config --global user.email); grep -qiE '^([0-9]+\\+)?$DRILL_BOX_ME@users\\.noreply\\.github\\.com\$' <<<\"\$out\""
 else
   skip "hired box bylines itself (box is not gh-authenticated — no identity to copy yet)"
 fi
@@ -482,7 +482,7 @@ fi
 if [ "$GH_AUTHED" -eq 0 ]; then
   check "pre-auth: login WARN logged"   bx "grep -q 'cannot resolve own login' ~/duty/duty.log"
   check "pre-auth: no .boot-id marker"  bx "! test -f ~/duty/.boot-id"
-  check "pre-auth: no sessions spawned" bx "! ls ~/duty/logs/*.log 2>/dev/null | grep -q ."
+  check "pre-auth: no sessions spawned" bx "out=\$(ls ~/duty/logs/*.log 2>/dev/null); ! grep -q . <<<\"\$out\""
 else
   skip "pre-auth: login WARN check (box was already gh-authenticated)"
   skip "pre-auth: no .boot-id marker check (box was already gh-authenticated)"
@@ -494,7 +494,7 @@ check "lock contention -> 199 + message" bx "
   sleep 1
   out=\$(~/duty/bin/duty.sh 2>&1); rc=\$?
   wait
-  [ \$rc -eq 199 ] && echo \"\$out\" | grep -q 'already holds'"
+  [ \$rc -eq 199 ] && grep -q 'already holds' <<<\"\$out\""
 
 if [ "$QUICK" -eq 0 ]; then
   echo "== scheduled-boundary check omitted: rehearsal ticks are explicit and cron stays disarmed (#26)"
@@ -594,13 +594,13 @@ else
     -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qE '^[1-9][0-9]*$'"
+    "out=\$(gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
   # `gh api --jq` prints NOTHING when the filter yields null (real jq prints
   # "null"), so testing for the literal string could never match: label
   # present emitted "0", label absent emitted "". The check failed in BOTH
   # states. Compare inside the filter so a token reaches the shell either way.
   wait_for 300 "attention: label removed (ack re-arms)" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null' | grep -qx true"
+    "out=\$(gh api 'repos/$SANDBOX/issues/$inum' --jq '[.labels[].name] | index(\"attention\") == null'); grep -qx true <<<\"\$out\""
 
   # ---- role-specific loops ---------------------------------------------
   # duty_attention above is role-independent and already ran. What follows
@@ -630,10 +630,10 @@ else
   TRIAGE_CLEANUP_ISSUES="$tnum"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "triage: stray drew a ruling comment" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length' | grep -qE '^[1-9][0-9]*$'"
+    "out=\$(gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
   # The board invariant: no open issue may remain queue-unlabelled.
   wait_for 300 "triage: stray left the unlabelled queue" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$tnum' --jq '.labels[].name' | grep -qxE '$QUEUE_LABEL_PATTERN'"
+    "out=\$(gh api 'repos/$SANDBOX/issues/$tnum' --jq '.labels[].name'); grep -qxE '$QUEUE_LABEL_PATTERN' <<<\"\$out\""
   # Same tick, second time: triage must not re-rule a settled issue.
   TCOMMENTS="$(gh api "repos/$SANDBOX/issues/$tnum/comments" --jq 'length')"
   bx "~/duty/bin/tick.sh" || true
@@ -658,7 +658,7 @@ else
   check "triage: post-merge kept its single label" bash -c \
     "[ \"\$(gh api 'repos/$SANDBOX/issues/$pnum' --jq '[.labels[].name] | sort | join(\" \")')\" = '$PLABELS' ] && [ '$PLABELS' = 'post-merge' ]"
   check "triage: post-merge-only tick launched no session" bx \
-    "tail -n +$((DUTY_LOG_LINES + 1)) ~/duty/duty.log | grep -Fq '$SANDBOX: quiet — no mentions, no triage signals, no session launched'"
+    "out=\$(tail -n +$((DUTY_LOG_LINES + 1)) ~/duty/duty.log); grep -Fq '$SANDBOX: quiet — no mentions, no triage signals, no session launched' <<<\"\$out\""
 
   # -- the hygiene slot's board audit: both malformed shapes, not repaired --
   # Last in the triage block, after the existing assertions, which are
@@ -705,7 +705,7 @@ else
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
       -f "labels[]=ready" --jq .number)"
     check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
-      "gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length' | grep -qx 0"
+      "out=\$(gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length'); grep -qx 0 <<<\"\$out\""
     bx "~/duty/bin/tick.sh" || true
     wait_for 1800 "builder: opened a PR for the ready issue" \
       rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum"
@@ -714,13 +714,13 @@ else
       echo "builder: resolved PR #$bpr for fixture issue #$bnum"
       ok "builder: PR authored by $ME2 for this run's fixture issue"
       check "builder: PR branch is build/*" bash -c \
-        "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .head.ref | grep -q '^build/'"
+        "out=\$(gh api 'repos/$SANDBOX/pulls/$bpr' --jq .head.ref); grep -q '^build/' <<<\"\$out\""
     else
       fail "builder: PR authored by $ME2 for this run's fixture issue"
     fi
     # The claim must be visible on the board, not just in the PR.
     wait_for 300 "builder: issue moved off ready (claimed)" bash -c \
-      "gh api 'repos/$SANDBOX/issues/$bnum' --jq '[.labels[].name] | index(\"ready\") == null' | grep -qx true"
+      "out=\$(gh api 'repos/$SANDBOX/issues/$bnum' --jq '[.labels[].name] | index(\"ready\") == null'); grep -qx true <<<\"\$out\""
     # Re-tick must not phantom-rebuild: this issue still resolves to one PR.
     BPR="$bpr"
     bx "~/duty/bin/tick.sh" || true
@@ -735,7 +735,7 @@ else
 
     if [ -n "$bpr" ]; then
       wait_for 300 "builder: initial PR is ready for its fixture panel" bash -c \
-        "gh api 'repos/$SANDBOX/pulls/$bpr' --jq .draft | grep -qx false"
+        "out=\$(gh api 'repos/$SANDBOX/pulls/$bpr' --jq .draft); grep -qx false <<<\"\$out\""
       wait_for 300 "builder: host reviewer requested for initial round" \
         rehearsal_builder_requested "$SANDBOX" "$bpr" "$HOST_ME"
       rehearsal_load_installed_answer_mark
@@ -824,7 +824,7 @@ else
   head_sha="$(gh api "repos/$SANDBOX/pulls/$pr" --jq .head.sha)"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "review: 🔎 announce at head" bash -c \
-    "gh api 'repos/$SANDBOX/issues/$pr/comments' --jq '.[] | select(.user.login == \"$ME2\") | .body' | grep -q '🔎 reviewing head $head_sha'"
+    "out=\$(gh api 'repos/$SANDBOX/issues/$pr/comments' --jq '.[] | select(.user.login == \"$ME2\") | .body'); grep -q '🔎 reviewing head $head_sha' <<<\"\$out\""
   verdicts() { gh api "repos/$SANDBOX/pulls/$pr/reviews" --paginate | jq -s --arg m "$ME2" --arg h "$head_sha" \
     '[add[] | select(.user.login == $m and .commit_id == $h and (.state == "APPROVED" or .state == "CHANGES_REQUESTED"))] | length'; }
   have_verdict()      { [ "$(verdicts)" -ge 1 ]; }
@@ -894,7 +894,7 @@ else
   VREF="$(verdicts)"
   check "gate: duplicate submit refused, exit 0" bx "
     printf 'drill duplicate probe' > /tmp/drill-body
-    ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' '$head_sha' approve /tmp/drill-body 2>&1 | grep -q 'already present'"
+    out=\$(~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' '$head_sha' approve /tmp/drill-body 2>&1); grep -q 'already present' <<<\"\$out\""
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
   fi
@@ -964,7 +964,7 @@ if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
   fi
 fi
 
-check "teardown: drill remains disarmed" bx "! crontab -l 2>/dev/null | grep -q ~/duty/bin/tick.sh"
+check "teardown: drill remains disarmed" bx "out=\$(crontab -l 2>/dev/null); ! grep -q ~/duty/bin/tick.sh <<<\"\$out\""
 echo
 echo "== rehearsal summary [$ROLE]: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed"
 [ -n "$REUSE_NOTE" ] && echo "   REUSE: $REUSE_NOTE"

@@ -344,15 +344,16 @@ rehearsal_attention_collect_branches() {
 # 1800 are for an agent session doing work, which this is not. So the leg's
 # worst case before its invocations start is 10 minutes, not 30.
 rehearsal_attention_demand_visible() {
-  local repo="$1" num="$2"
+  local repo="$1" num="$2" assigned
   # shellcheck disable=SC2016  # HOME and the label resolve in the box
-  bx 'set -uo pipefail
+  assigned="$(bx 'set -uo pipefail
     DUTY_DIR="$HOME/duty"
     source "$DUTY_DIR/lib/common.sh"
     load_conf
     gh api "/issues?filter=assigned&state=open&labels=$LABEL_ATTENTION&per_page=100" \
       --jq ".[] | \"\(.repository.full_name) \(.number)\"" 2>/dev/null
-  ' | grep -Fqx "$repo $num"
+  ')" || return 1
+  grep -Fqx "$repo $num" <<<"$assigned"
 }
 
 rehearsal_attention_installed_timeout() {
