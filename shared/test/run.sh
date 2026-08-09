@@ -185,7 +185,8 @@ slow_awk() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
 old_pipe='slow_awk | '
 old_match='grep -q MATCH'
 if eval "$old_pipe$old_match"; then old_predicate_rc=0; else old_predicate_rc=$?; fi
-t pipefail-awk-range-old-shape-reds 141 "$old_predicate_rc"
+case "$old_predicate_rc" in 0) r1=FALSE-GREEN ;; *) r1=red ;; esac
+t pipefail-awk-range-old-shape-reds red "$r1"
 awk() { slow_awk; }
 if awk_range_grep_q ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
 t pipefail-awk-range-basic-survives-race matched "$r1"
