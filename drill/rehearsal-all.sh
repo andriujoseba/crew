@@ -55,6 +55,16 @@ INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESUME_DRILL=1
 HYGIENE_DRILL=1
+# The notifier union leg runs inside every role's phase 2, so its verdict is
+# the ROUND's, not one role's: a summary row that named a single role would
+# hide a half the other two boxes also exercised.
+NOTIFY_DRILL=1
+# The leg writes its OWN verdict here, one line per role. It cannot travel on
+# rehearsal.sh's exit code: rehearsal_notify_drill returns 0 both when the
+# union is asserted and when the operator channel is unreachable and the leg
+# skips, so reading the role's rc printed `ok notify` for a round that asserted
+# nothing — and `FAIL notify` for a role that failed somewhere else entirely.
+NOTIFY_STATUS=""
 BUILDER_RC=""
 # Roles whose drill actually reached a box, for the app phase.
 DRILLED=""
@@ -77,12 +87,13 @@ while [ $# -gt 0 ]; do
     --no-install-drill) INSTALL_DRILL=0; shift ;;
     --no-resume-drill) RESUME_DRILL=0; shift ;;
     --no-hygiene-drill) HYGIENE_DRILL=0; shift ;;
+    --no-notify-drill) NOTIFY_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-hygiene-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-hygiene-drill] [--no-notify-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
@@ -90,6 +101,11 @@ done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$HERE/rehearsal-hygiene.sh"
+# Sourced for rehearsal_notify_worst_verdict alone — the fold belongs beside
+# the leg that writes the lines, not retyped here where the two could drift.
+# shellcheck source=drill/rehearsal-notify.sh
+. "$HERE/rehearsal-notify.sh"
+NOTIFY_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 overall=0
@@ -101,6 +117,11 @@ cleanup_role_hygiene_files() {
   for result_file in "${ROLE_HYGIENE_FILES[@]}"; do
     rm -f -- "$result_file"
   done
+  # The notify leg's verdict file goes here too, and not under a second
+  # `trap … EXIT`: bash keeps exactly ONE EXIT handler, so the later trap
+  # silently REPLACES the earlier one and whichever leg lost the race leaks
+  # its temp file every round. One handler, both legs' temporaries.
+  [ -z "${NOTIFY_STATUS:-}" ] || rm -f -- "$NOTIFY_STATUS"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -119,6 +140,8 @@ for role in $ROLES; do
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
   REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
   REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
+  REHEARSAL_NOTIFY_DRILL="$NOTIFY_DRILL" \
+  REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
   role_hygiene_result="$(cat "$role_hygiene_file" 2>/dev/null || printf '2\n')"
@@ -170,6 +193,40 @@ elif [ "$BUILDER_RC" -eq 2 ]; then
   SUMMARY+=("INCOMPLETE resume  (builder phase 2 skipped)")
 else
   SUMMARY+=("FAIL       resume")
+fi
+
+# The leg's own verdict, folded across the roles that wrote one — never the
+# role's exit code, which says nothing about this leg either way.
+NOTIFY_VERDICT="$(rehearsal_notify_worst_verdict "$(cat "$NOTIFY_STATUS" 2>/dev/null)")" \
+  || NOTIFY_VERDICT=""
+NOTIFY_WHY="${NOTIFY_VERDICT#* }"
+NOTIFY_VERDICT="${NOTIFY_VERDICT%% *}"
+if [ "$NOTIFY_DRILL" -eq 0 ]; then
+  # An omission the OPERATOR asked for is a skip; one the round merely
+  # discovered is INCOMPLETE. That is this file's own partition — `skip` rows
+  # are `--no-*-drill` flags and nothing else — and the distinction is the
+  # whole point: the operator who knows their host has no channel says so and
+  # gets a clean round, and nobody else gets one by accident.
+  SUMMARY+=("skip       notify  (--no-notify-drill)")
+elif [ -z "$NOTIFY_VERDICT" ]; then
+  if [ -z "${DRILLED// /}" ]; then
+    SUMMARY+=("INCOMPLETE notify  (no role reached a box — union UNPROVEN)")
+  else
+    SUMMARY+=("INCOMPLETE notify  (phase 2 never reached the leg — union UNPROVEN)")
+  fi
+  [ "$overall" -eq 1 ] || overall=2
+elif [ "$NOTIFY_VERDICT" = ok ]; then
+  SUMMARY+=("ok         notify  (repos.txt + notify-repos.txt union)")
+elif [ "$NOTIFY_VERDICT" = skip ]; then
+  # Reached only where the leg skipped for a reason nobody asked for — the
+  # operator channel. It is NOT a pass: the union was never asserted, and a
+  # round that reported one anyway is the invisible regression #423 exists to
+  # end, the same shape as the INCOMPLETE role rows above.
+  SUMMARY+=("INCOMPLETE notify  (leg skipped: $NOTIFY_WHY — union UNPROVEN)")
+  [ "$overall" -eq 1 ] || overall=2
+else
+  SUMMARY+=("FAIL       notify  ($NOTIFY_WHY)")
+  overall=1
 fi
 
 if [ "$INSTALL_DRILL" -eq 1 ]; then
