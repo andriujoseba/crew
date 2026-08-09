@@ -1211,6 +1211,7 @@ CLEAN_REPOS_AFTER="$CLEAN_REPOS_PRE"
 
 # The same three, on the notify half. A backup path is set so the restore is
 # actually attempted — that is the call whose failure is under test.
+# shellcheck disable=SC2088  # a box-side path: the tilde expands in the box
 CLEAN_NOTIFY_BACKUP='~/duty/notify-repos.txt.pre-drill-99'
 CLEAN_NOTIFY_RESTORE_RC=255
 clean_out="$(cleanup_run 0)"
