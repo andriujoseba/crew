@@ -77,12 +77,26 @@ even when that issue has since landed.
 | Fragment | Surface | Disposition and evidence |
 | --- | --- | --- |
 | `139.md` | Fix rounds return to draft | **`new leg`** — #418 |
-| `168.md` | Dirty-worktree preservation | **`new leg`** — #422 |
+| `168.md` | Dirty worktrees preserve tracked and untracked work on a remote `wip/` ref before removal | **`new leg`** — #422 |
+| `168.md` | Preservation writes an upstream recovery comment naming the remote, ref and contents | **`new leg`** — #422 |
+| `168.md` | A failed preservation push or record retains the worktree | **`new leg`** — #422 |
+| `168.md` | Removal logs the recovery remote, ref and fetch command | **`new leg`** — #422 |
+| `168.md` | Preservation records every file and retains unreadable worktrees | **`new leg`** — #422 |
+| `168.md` | Index-only content remains reachable below the `wip/` tip | **`new leg`** — #422 |
+| `168.md` | Staged-only work reverted in the tree can be preserved and released | **`new leg`** — #422 |
 | `190.md` | Floor integrity verdict | **`new leg`** — #420 |
 | `190.md` | Browser walk checks `gh ✓` only for armed, ticking boxes and reports when none qualify | **`drilled`** — `render: the fixture offers an armed, ticking box...`, `render: healthy boxes show gh ✓...`, and the no-candidate report in `fleet-floor/test/browser.js` read it. |
 | `204.md` | Consoles only for deployed boxes | **`new leg`** — #420 |
-| `210.md` | Tagged installer assets and checksums | **`not a drill surface`** — assets exist only after the tag; #210 owns their post-merge verification. The installed tree is covered by #421. |
-| `217.md` | Round teardown, retention and reuse | **`drilled`** — the `teardown` summary rows and `drill/teardown.sh` refusal, inspection and cleanup assertions read it. |
+| `210.md` | Tagged release publishes the scp-able installer asset | **`not a drill surface`** — the asset exists only after the tag; #210 owns its post-merge verification. The installed tree is covered by #421. |
+| `210.md` | Tagged release publishes and verifies the installer checksum | **`not a drill surface`** — the checksum exists only after the tag and belongs to #210's post-merge verification. |
+| `217.md` | Teardown names, confirms and removes round boxes and sandboxes, and a clean rerun is a no-op | **`drilled`** — the `teardown` summary row and `teardown: nothing to do` assertion read it. |
+| `217.md` | Teardown refuses non-drill names, roster members and an all-or-nothing set containing either | **`drilled`** — `drill/teardown.sh`'s name, roster and `teardown: REFUSING — nothing was deleted` assertions read it. |
+| `217.md` | Sandbox deletion requires the host GitHub identity | **`drilled`** — `drill/teardown.sh`'s owner-identity refusal reads it. |
+| `217.md` | Inspection failures report `INCOMPLETE` rather than a clean host | **`drilled`** — the `teardown: INCOMPLETE` summary row and per-probe diagnostics read it. |
+| `217.md` | Duplicate teardown targets are deleted once | **`drilled`** — `drill/teardown.sh`'s deduplicated target assertions read it. |
+| `217.md` | Green rounds auto-teardown while `--keep`, failed rounds and phase-1-only rounds retain their fixtures | **`drilled`** — the `teardown` summary rows in `rehearsal-all.sh` read each outcome. |
+| `217.md` | An incomplete teardown reds the rehearsal summary | **`drilled`** — the `INCOMPLETE teardown` summary assertion reads it. |
+| `217.md` | Existing boxes are refused unless `--reuse` is explicit | **`drilled`** — the existing-box refusal and reuse/pre-auth-skip assertions read it. |
 | `218.md` | `crew up --dry-run` | **`new leg`** — #420 |
 | `240.md` | Boot-check probe verdict | **`new leg`** — #427 |
 | `301.md` | Attention pickup comment and acknowledgement | **`drilled`** — the pickup-comment and `attention`-removal assertions in `rehearsal.sh` read it. |
@@ -90,35 +104,78 @@ even when that issue has since landed.
 | `303.md` | Hygiene reporting of malformed `attention` | **`new leg`** — #441 |
 | `308.md` | Unknown `crew status` probe | **`new leg`** — #420 |
 | `312.md` | Disarmed versus silent floor states | **`new leg`** — #420 |
-| `316.md` | Union of work and notification repositories | **`new leg`** — #423 |
-| `319.md` | Malformed-signal detection and fresh comment reads | **`new leg`** — #419 |
-| `323.md` | Release-tree floor CLI test | **`not a drill surface`** — this fixes the repository's `ci-floor` suite; no installed real-host behavior changed. |
-| `341.md` | Post-removal tick wait and diagnostics | **`drilled`** — `step 9: positive engine/cron/tick survival observation` reads it. |
+| `316.md` | Operator notifications cover every work repository | **`new leg`** — #423 |
+| `316.md` | `notify-repos.txt` adds handoff targets without replacing the work registry | **`new leg`** — #423 |
+| `319.md` | An unrendered round-signal marker is diagnosed and resumed on the next tick | **`new leg`** — #419 |
+| `319.md` | Resume rereads ready-PR comments before deciding a correct signal is absent | **`new leg`** — #419 |
+| `323.md` | The release-tree floor CLI fixture accepts the already-hired skip | **`not a drill surface`** — this changes the repository's `ci-floor` suite, not installed real-host behavior. |
+| `323.md` | The release-tree floor CLI failure names the expected box | **`not a drill surface`** — this is a CI fixture diagnostic, not installed behavior. |
+| `341.md` | A newly hired box waits a cron boundary for a post-removal tick | **`drilled`** — `step 9: positive engine/cron/tick survival observation` reads it. |
+| `341.md` | Step 9 diagnoses the missing engine, cron or tick and names what it read | **`drilled`** — the same step-9 failure assertions read each component and its observed value. |
 | `345.md` | `no build duty` cause | **`new leg`** — #420 |
 | `347.md` | Serving crew version in the floor | **`new leg`** — #420 |
-| `350.md` | Ceremony pin, guards and board reconciliation | **`not a drill surface`** — GitHub Actions runs these repository guards and board workflows; a drill box does not. |
+| `350.md` | `.ceremony/RELEASES.md` joins the vendored mirror | **`not a drill surface`** — this is repository doctrine mirrored and checked in CI, not installed real-host behavior. |
+| `350.md` | Ceremony workflow and action pins move to `0.6.0` | **`not a drill surface`** — GitHub Actions consumes these pins; a drill box does not. |
+| `350.md` | `changelog-armed` requires a final issue citation | **`not a drill surface`** — the repository release guard enforces this in CI. |
+| `350.md` | Issue sweeps report collision, window-member and starved-`post-merge` conditions | **`not a drill surface`** — GitHub Actions runs these board sweeps, not the installed duty drill. |
+| `350.md` | `blocker:unrequested` waits while head checks are pending or failing | **`not a drill surface`** — the repository labels workflow owns this state. |
+| `350.md` | `blocker:unrequested` waits for a stable head and verdict | **`not a drill surface`** — the repository labels workflow owns this state. |
 | `358.md` | `post-merge` in the queue-label set | **`new leg`** — #417 |
 | `359.md` | Quiet post-session triage state | **`new leg`** — #417 |
-| `363.md` | Doctrine-quotation and docs-sync CI guards | **`not a drill surface`** — these compare repository files in CI, not behavior on an installed host. |
+| `363.md` | Resume prompt quotes the current parked-resume sentence | **`not a drill surface`** — this is a repository prompt/doctrine comparison in CI. |
+| `363.md` | Doctrine quotation comparison ignores wrapping-only differences | **`not a drill surface`** — this is a repository fixture guard. |
+| `363.md` | `shared-ci` runs when `.ceremony/**` changes | **`not a drill surface`** — this is a GitHub Actions trigger. |
 | `365.md` | Installed payload roots and size | **`new leg`** — #421 |
-| `384.md` | Check-conclusion resume wake | **`new leg`** — #419 |
-| `388.md` | Terminal-lane trip, alert and recovery | **`new leg`** — #424 |
-| `398.md` | Ceremony pin and vendored doctrine | **`not a drill surface`** — a dependency pin and mirrored prose have no installed real-host surface. |
+| `384.md` | Check conclusion joins the resume fingerprint and wakes a parked builder | **`new leg`** — #419 |
+| `384.md` | Green ready PRs with no current-head signal resume on the next tick | **`new leg`** — #419 |
+| `384.md` | Green signalled drafts with no panel request resume for the builder-owned flip | **`new leg`** — #419 |
+| `388.md` | Terminal failures trip a lane, suppress dispatch, alert once and recover automatically | **`new leg`** — #424 |
+| `388.md` | Agent profiles classify terminal quota output and expose whether a session acted | **`new leg`** — #424 |
+| `398.md` | Ceremony workflow and action pins move to `0.6.2` | **`not a drill surface`** — GitHub Actions consumes these dependency pins. |
+| `398.md` | Vendored doctrine declares rounds answered before pending-check settlement | **`not a drill surface`** — this is mirrored prose, not installed behavior. |
+| `398.md` | Vendored release doctrine advances windows past `post-merge` members | **`not a drill surface`** — this is mirrored triage doctrine, not installed behavior. |
 | `402.md` | Pending-check round signal and request gate | **`new leg`** — #418 |
 | `403.md` | Zero-action resume stop | **`new leg`** — #419 |
 | `405.md` | Development dependency and manifest hygiene | **`not a drill surface`** — repository development furniture is not shipped into the installed tree. |
 | `406.md` | Attributed-doctrine quotation guard | **`not a drill surface`** — this is a repository fixture guard, not installed behavior. |
 | `407.md` | Phase-0 tracked-tree staging | **`drilled`** — `fixture tests green` runs from the staged tree before the live legs. |
 | `408.md` | Reused-box post-removal tick | **`drilled`** — `step 9: positive engine/cron/tick survival observation` reads it. |
-| `411.md` | Membership predicates under load | **`drilled`** — teardown's roster/sandbox refusals and the install leg's `crew hire` / `crew up` assertions read them. |
+| `411.md` | Existing-box membership remains correct under load | **`drilled`** — the install leg's `crew hire` / `crew up` assertions read it. |
+| `411.md` | Roster membership remains correct under load | **`drilled`** — teardown's roster-member refusal assertion reads it. |
+| `411.md` | Drill-sandbox membership remains correct under load | **`drilled`** — teardown's sandbox refusal assertion reads it. |
+| `411.md` | Cron membership remains correct under load | **`drilled`** — the install leg's engine/cron survival assertion reads it. |
 | `417.md` | `post-merge` triage invariant | **`drilled`** — `triage: post-merge drew no comment`, `kept its single label`, and `launched no session` read it. |
-| `418.md` | Live builder fix round | **`drilled`** — the builder assertions read draft return, the pending-check signal and withheld request, then the request after settle. |
-| `419.md` | Resume wake, malformed marker and zero-action stop | **`drilled`** — the `resume:` assertions name all three outcomes. |
-| `420.md` | Operator-view release surfaces | **`drilled`** — the `floor:`, `integrity:`, `crew status`, `crew up --dry-run`, and `no build duty` assertions read them. |
-| `421.md` | Installed-tree exclusions and budget | **`drilled`** — the three `payload:` measurements read exclusions and size from the first install, upgrade and offline artifact. |
-| `422.md` | Dirty-worktree preservation and refusal | **`drilled`** — the `hygiene:` assertions read the remote `wip/` tree, durable record, push-before-removal order and refusal retention. |
-| `423.md` | Notification-union leg and cleanup | **`drilled`** — the notifier assertions read both halves of the watch set, and its safety/teardown assertions read restoration and cleanup. |
-| `424.md` | Terminal-session breaker | **`drilled`** — the `breaker:` assertions read the threshold trip, suppressed ticks, one alert and recovered dispatch. |
+| `418.md` | A completed non-approving round returns the builder PR to draft | **`drilled`** — `builder: changes-requested round returns PR to draft` reads it. |
+| `418.md` | A pending-head fix round signals immediately, withholds requests, then requests after settlement | **`drilled`** — `builder: round answer is signalled while head check is pending`, `panel request withheld while head check is pending`, and `panel request issued after head settles` read it. |
+| `419.md` | A settled check conclusion wakes a parked builder | **`drilled`** — `resume: first tick after green resumes the parked PR` reads it. |
+| `419.md` | An unrendered signal marker warns and wakes on the next tick | **`drilled`** — `resume: unrendered marker warns with its comment and wakes next tick` reads it. |
+| `419.md` | Consecutive unchanged zero-action attempts stop the resume lane | **`drilled`** — `resume: unchanged head stops after the installed zero-action threshold` reads it. |
+| `420.md` | Floor API names the serving host's crew version | **`drilled`** — `floor: the API names the serving host's own crew version` and the canvas-header assertion read it. |
+| `420.md` | Each engine integrity verdict is the box's own valid answer | **`drilled`** — `floor: every hired box's integrity verdict is the box's own answer` and `every integrity verdict is one of the three words the tile renders` read it. |
+| `420.md` | Undeployed roster boxes are counted but not drawn | **`drilled`** — `floor: the not-deployed boxes are counted but not drawn` reads it. |
+| `420.md` | A floor with nothing hired names the repair verb | **`drilled`** — `floor: a roster box that is not deployed is counted and names its repair verb` reads it. |
+| `420.md` | Deliberately disarmed boxes remain distinct from silent boxes | **`drilled`** — the `floor:` disarmed/silent state assertions read it. |
+| `420.md` | `crew up --dry-run` reports its plan without changing the fleet | **`drilled`** — the `crew up --dry-run` no-change and plan assertions read it. |
+| `420.md` | An unanswered engine probe reports `unknown` | **`drilled`** — the `crew status` unknown-probe assertion reads it. |
+| `420.md` | `no build duty` names its cause and live count | **`drilled`** — the `no build duty` cause/count assertions read it. |
+| `421.md` | First install, upgrade and offline artifact exclude every non-shipped root and stay under budget | **`drilled`** — the three `payload:` measurements read exclusions and size for all three channels. |
+| `421.md` | Drill records measured size and reads exclusions and budget from shipped sources | **`drilled`** — the `payload:` source-parity and measurement assertions read it. |
+| `422.md` | Dirty merged worktrees are pushed and recorded before removal | **`drilled`** — `hygiene: wip tip carries all three dirty-work shapes`, `upstream record names...`, and `confirmed push precedes forced removal` read it. |
+| `422.md` | Failed preservation retains the worktree and reports it once | **`drilled`** — `hygiene: failed push keeps... reported once` reads it. |
+| `423.md` | The operator watch set is `repos.txt` union `notify-repos.txt` and both halves notify on one tick | **`drilled`** — `notify: the watch set swept is exactly the two sandboxes` and `both halves of the union reached the operator on one tick` read it. |
+| `423.md` | `--no-notify-drill` opts out of the notifier leg | **`drilled`** — `notify: union over repos.txt and notify-repos.txt (--no-notify-drill)` reads it. |
+| `423.md` | Writing `notify-repos.txt` leaves `repos.txt` unchanged | **`drilled`** — `notify: repos.txt unchanged — the union widened the watch set and not the work set` reads it. |
+| `423.md` | Teardown removes the per-role notify sandbox | **`drilled`** — the notifier-sandbox cleanup assertion reads it. |
+| `423.md` | Teardown reds when either repository registry cannot be restored | **`drilled`** — `notify: teardown restored both registries to their pre-drill contents` reads it. |
+| `423.md` | A missing pre-drill registry backup reds rather than vouching for unknown contents | **`drilled`** — the `notify: the pre-drill repos.txt backup is gone` refusal reads it. |
+| `423.md` | The notifier refuses to choose a second sandbox when the pre-drill work registry is unreadable | **`drilled`** — `notify: the host's pre-drill registries can be read before the notify half is chosen` reads it. |
+| `423.md` | The handoff fixture is tracked from creation and closed reliably | **`drilled`** — the handoff-fixture staging and teardown-close assertions read it. |
+| `423.md` | An unreachable operator chat skips the notifier leg | **`drilled`** — `notify: union over repos.txt and notify-repos.txt (operator channel unreachable...)` reads it. |
+| `423.md` | Teardown removes notifier and hygiene temporary files | **`drilled`** — the notifier and hygiene teardown assertions read it. |
+| `424.md` | Terminal dispatches remain live below the installed threshold and trip once at it | **`drilled`** — `breaker: terminal dispatch ... remains below installed threshold` and `lane trips once at installed threshold` read it. |
+| `424.md` | Ticks after the trip skip the stopped lane | **`drilled`** — `breaker: following ticks skip the stopped lane` reads it. |
+| `424.md` | The stopped lane emits exactly one operator alert | **`drilled`** — `breaker: <kind> operator alert emitted exactly once while stopped` reads it. |
+| `424.md` | Restoring the real CLI recovers dispatch without hand intervention | **`drilled`** — `breaker: later tick recovers and launches a session` and the state/fixture teardown assertions read it. |
 | `435.md` | Resume leg's independent summary verdict | **`drilled`** — the resume verdict file and `rehearsal_worst_verdict` feed the `resume` summary row independently of the builder exit. |
 
 ## The drill
