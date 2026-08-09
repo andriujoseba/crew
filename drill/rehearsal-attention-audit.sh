@@ -160,13 +160,23 @@ rehearsal_attention_audit_labels_from_json() {
   jq -r '[.labels[].name] | sort | join(" ")' <<<"$1"
 }
 
+# Membership through jq, never a grep over the joined list: `grep -w attention`
+# also matches a label named `attention-needed`, because `-` is not a word
+# character — so a board carrying a LOOK-ALIKE label and not the flag would
+# read as intact, which is the one direction this row must not be wrong in.
+rehearsal_attention_audit_has_flag_from_json() {
+  jq -e --arg mark "$1" '([.labels[].name] | index($mark)) != null' \
+    >/dev/null <<<"$2"
+}
+
 rehearsal_attention_audit_flags_intact() {
   local mark="$1" pr_json="$2" issue_json="$3" pr_labels issue_labels
   pr_labels="$(rehearsal_attention_audit_labels_from_json "$pr_json")" || return 2
   issue_labels="$(rehearsal_attention_audit_labels_from_json "$issue_json")" || return 2
   printf 'pull request: %s\n' "${pr_labels:-<no labels>}"
   printf 'unassigned issue: %s\n' "${issue_labels:-<no labels>}"
-  grep -qw -- "$mark" <<<"$pr_labels" && grep -qw -- "$mark" <<<"$issue_labels"
+  rehearsal_attention_audit_has_flag_from_json "$mark" "$pr_json" \
+    && rehearsal_attention_audit_has_flag_from_json "$mark" "$issue_json"
 }
 
 rehearsal_attention_audit_still_unassigned() {
@@ -211,8 +221,10 @@ rehearsal_attention_audit_fixtures_removed() {
   printf 'unassigned issue: %s [%s]\n' "$issue_state" "${issue_labels:-<no labels>}"
   [ "$pr_state" = closed ] || bad="pull request still $pr_state"
   [ "$issue_state" = closed ] || bad="${bad:+$bad; }unassigned issue still $issue_state"
-  grep -qw -- "$mark" <<<"$pr_labels" && bad="${bad:+$bad; }pull request still flagged"
-  grep -qw -- "$mark" <<<"$issue_labels" && bad="${bad:+$bad; }unassigned issue still flagged"
+  ! rehearsal_attention_audit_has_flag_from_json "$mark" "$pr_json" \
+    || bad="${bad:+$bad; }pull request still flagged"
+  ! rehearsal_attention_audit_has_flag_from_json "$mark" "$issue_json" \
+    || bad="${bad:+$bad; }unassigned issue still flagged"
   [ -z "$bad" ] || { printf '%s\n' "$bad"; return 1; }
   return 0
 }
@@ -248,19 +260,24 @@ rehearsal_attention_audit_hygiene_clock() {
   bx 'cat "$HOME/duty/.hygiene-last" 2>/dev/null || true' | tr -d '\r\n'
 }
 
+#
+# The three writers below do NOT swallow bx's output inside themselves: the
+# script they send is the only readable statement of what they do to the box,
+# and a helper that redirects its own bx call cannot be read back under a stub.
+# The leg quiets them at the call site instead.
 rehearsal_attention_audit_defer_hygiene() {
   # shellcheck disable=SC2016  # HOME and date resolve in the box
-  bx 'date +%s > "$HOME/duty/.hygiene-last"' >/dev/null 2>&1
+  bx 'date +%s > "$HOME/duty/.hygiene-last"'
 }
 
 rehearsal_attention_audit_restore_hygiene() {
   local before="$1"
   if [ -z "$before" ]; then
     # shellcheck disable=SC2016  # HOME belongs to the box
-    bx 'rm -f "$HOME/duty/.hygiene-last"' >/dev/null 2>&1
+    bx 'rm -f "$HOME/duty/.hygiene-last"'
     return 0
   fi
-  bx "printf '%s\n' '$before' > \"\$HOME/duty/.hygiene-last\"" >/dev/null 2>&1
+  bx "printf '%s\n' '$before' > \"\$HOME/duty/.hygiene-last\""
 }
 
 # The suppression state the transition rows read. Removed before call 1 so the
@@ -269,7 +286,7 @@ rehearsal_attention_audit_restore_hygiene() {
 # call 1 emit ✅ and the row would red on a correct engine.
 rehearsal_attention_audit_clear_state() {
   # shellcheck disable=SC2016  # HOME belongs to the box
-  bx 'rm -f "$HOME/duty/.attention-malformed"' >/dev/null 2>&1
+  bx 'rm -f "$HOME/duty/.attention-malformed"'
 }
 
 # The audit's OWN read, asked through the box: the endpoint is repo-scoped but
@@ -450,8 +467,8 @@ rehearsal_attention_audit_drill() {
   bx "rm -f '$capture'.[1-4]" >/dev/null 2>&1 || true
 
   clock_before="$(rehearsal_attention_audit_hygiene_clock)"
-  rehearsal_attention_audit_defer_hygiene || true
-  rehearsal_attention_audit_clear_state || true
+  rehearsal_attention_audit_defer_hygiene >/dev/null 2>&1 || true
+  rehearsal_attention_audit_clear_state >/dev/null 2>&1 || true
 
   # Call 1's precondition, asserted rather than assumed: a sandbox already
   # carrying a flag would make "silent on a clean board" a statement about a
@@ -461,7 +478,7 @@ rehearsal_attention_audit_drill() {
   else
     echo "  read: $(rehearsal_attention_audit_flagged_numbers "$repo" | tr '\n' ' ')"
     fail "attention-audit: sandbox starts with no flagged object"
-    rehearsal_attention_audit_restore_hygiene "$clock_before" || true
+    rehearsal_attention_audit_restore_hygiene "$clock_before" >/dev/null 2>&1 || true
     rehearsal_attention_audit_verdict fail "the sandbox already carried a flagged object"
     return 1
   fi
@@ -483,7 +500,7 @@ rehearsal_attention_audit_drill() {
   else
     fail "attention-audit: flagged pull request and unassigned issue filed"
     rehearsal_attention_audit_cleanup || true
-    rehearsal_attention_audit_restore_hygiene "$clock_before" || true
+    rehearsal_attention_audit_restore_hygiene "$clock_before" >/dev/null 2>&1 || true
     rehearsal_attention_audit_verdict fail "the fixtures could not be filed"
     return 1
   fi
@@ -547,7 +564,7 @@ rehearsal_attention_audit_drill() {
   rehearsal_attention_audit_graded "attention-audit: both fixtures removed from the board" \
     rehearsal_attention_audit_fixtures_removed attention "$pr_json" "$issue_json" || audit_ok=1
 
-  rehearsal_attention_audit_restore_hygiene "$clock_before" || true
+  rehearsal_attention_audit_restore_hygiene "$clock_before" >/dev/null 2>&1 || true
   clock_after="$(rehearsal_attention_audit_hygiene_clock)"
   rehearsal_attention_audit_graded "attention-audit: the hourly slot's clock is handed back" \
     rehearsal_attention_audit_hygiene_clock_restored "$clock_before" "$clock_after" \

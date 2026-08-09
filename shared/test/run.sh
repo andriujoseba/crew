@@ -326,6 +326,8 @@ source "$ROOT/drill/rehearsal-hygiene.sh"
 source "$ROOT/drill/rehearsal-resume.sh"
 # shellcheck source=drill/rehearsal-attention.sh
 source "$ROOT/drill/rehearsal-attention.sh"
+# shellcheck source=drill/rehearsal-attention-audit.sh
+source "$ROOT/drill/rehearsal-attention-audit.sh"
 # shellcheck source=drill/rehearsal-boot.sh
 source "$ROOT/drill/rehearsal-boot.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
@@ -1517,6 +1519,615 @@ t attention-lowered-run-writes-no-installed-file 0 \
   "$(grep -cE '(>>?|tee |sed -i|cp ).*duty/(conf|lib)' <<<"$ATT_SCRIPT" | tr -d ' ')"
 t attention-lowered-run-calls-the-module-directly 1 \
   "$(grep -cx ' *duty_attention' <<<"$ATT_SCRIPT" | tr -d ' ')"
+
+
+# --- rehearsal attention-AUDIT leg: the hygiene slot's board audit (#441) ---
+# Every input here is the value the live row reads — the invocation's own
+# report text, the alert capture, board JSON, the script sent through a stubbed
+# bx() — so each mutation is the decision boundary itself and needs no drill
+# host. The one mutation that does is named in the PR body with its reason.
+AUD_REPO=owner/sandbox
+AUD_PR=91
+AUD_ISSUE=92
+AUD_IDENTITY=drill-identity
+AUD_MARK=attention
+# report_suppressed's rendering, verbatim: "<repo>#<num>(<CLASS>)".
+AUD_REPORT_BOTH="2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 2 item(s) on pull requests or unassigned issues; audit only, not repaired — $AUD_REPO#$AUD_PR(PR) $AUD_REPO#$AUD_ISSUE(UNASSIGNED) "
+AUD_REPORT_PR_ONLY="2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 1 item(s) on pull requests or unassigned issues; audit only, not repaired — $AUD_REPO#$AUD_PR(PR) "
+AUD_REPORT_ISSUE_ONLY="2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 1 item(s) on pull requests or unassigned issues; audit only, not repaired — $AUD_REPO#$AUD_ISSUE(UNASSIGNED) "
+# The alert's rendering is the OTHER one: square brackets, not parentheses.
+AUD_ALERT_BOTH="🚨 host: malformed attention flag(s) — $AUD_REPO#$AUD_PR[PR] $AUD_REPO#$AUD_ISSUE[UNASSIGNED] — move each flag to the assigned issue that owns the claim"
+AUD_ALERT_PR_ONLY="🚨 host: malformed attention flag(s) — $AUD_REPO#$AUD_PR[PR] — move each flag to the assigned issue that owns the claim"
+AUD_ALERT_CLEAR="✅ host: malformed attention flags cleared"
+
+aud_row() {  # aud_row <row name> <predicate...> — the live grading, captured
+  (
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    rehearsal_attention_audit_graded "$@"
+  )
+}
+
+# §3 the report names BOTH shapes. The classifier has two branches; a leg that
+# reads one proves half of it, and the half it drops is the one #303 was minted
+# for — a ruling's flag on a PR.
+if rehearsal_attention_audit_report_names_both \
+    "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" "$AUD_REPORT_BOTH" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-audit-report-naming-both-holds named "$r1"
+AUD_OUT="$(aud_row 'attention-audit: report names both malformed shapes' \
+  rehearsal_attention_audit_report_names_both \
+  "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" "$AUD_REPORT_PR_ONLY")"
+t attention-audit-report-naming-only-the-pr-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: report names both malformed shapes' <<<"$AUD_OUT")"
+t attention-audit-report-pr-only-red-names-what-is-missing 1 \
+  "$(grep -cF "not named: $AUD_REPO#$AUD_ISSUE(UNASSIGNED)" <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: report names both malformed shapes' \
+  rehearsal_attention_audit_report_names_both \
+  "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" "$AUD_REPORT_ISSUE_ONLY")"
+t attention-audit-report-naming-only-the-issue-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: report names both malformed shapes' <<<"$AUD_OUT")"
+t attention-audit-report-issue-only-red-names-what-is-missing 1 \
+  "$(grep -cF "not named: $AUD_REPO#$AUD_PR(PR)" <<<"$AUD_OUT")"
+# §7: the red quotes the report LINE it read, not a transcript.
+t attention-audit-report-red-quotes-the-line-it-read 1 \
+  "$(grep -cF "read: $AUD_REPORT_ISSUE_ONLY" <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: report names both malformed shapes' \
+  rehearsal_attention_audit_report_names_both \
+  "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" '2026-08-09T12:00:00Z hygiene sweep starting')"
+t attention-audit-missing-report-reds 1 \
+  "$(grep -cF 'read: no "attention: malformed flag(s)" report in the invocation output' \
+    <<<"$AUD_OUT")"
+# A report naming two OTHER objects is not this leg's report. Without the
+# round's own numbers in the needles the row would pass on any malformed board
+# at all — including one a previous run left behind.
+AUD_OUT="$(aud_row 'attention-audit: report names both malformed shapes' \
+  rehearsal_attention_audit_report_names_both "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" \
+  "2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 2 item(s) on pull requests or unassigned issues; audit only, not repaired — $AUD_REPO#7(PR) $AUD_REPO#8(UNASSIGNED) ")"
+t attention-audit-report-of-other-objects-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: report names both malformed shapes' <<<"$AUD_OUT")"
+
+# The clean-board call writes NO report. An empty one would be
+# report_suppressed writing state for nothing, and the transition rows below
+# read that state as their `previous`.
+if rehearsal_attention_audit_no_report \
+    '2026-08-09T12:00:00Z hygiene sweep starting' >/dev/null; then
+  r1=silent
+else
+  r1=WRONG
+fi
+t attention-audit-clean-board-silence-holds silent "$r1"
+AUD_OUT="$(aud_row 'attention-audit: clean board writes no malformed report' \
+  rehearsal_attention_audit_no_report "$AUD_REPORT_BOTH")"
+t attention-audit-report-on-a-clean-board-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: clean board writes no malformed report' <<<"$AUD_OUT")"
+
+# §5 the transitions, by COUNT. "🚨 appeared" is also true of a board that
+# alerted on every call — the #59 defect the suppression exists to prevent —
+# so only the count can tell the two apart.
+t attention-audit-alert-count-of-none 0 \
+  "$(rehearsal_attention_audit_alert_count '🚨' '')"
+t attention-audit-alert-count-of-one 1 \
+  "$(rehearsal_attention_audit_alert_count '🚨' "$AUD_ALERT_BOTH")"
+t attention-audit-alert-count-of-two 2 \
+  "$(rehearsal_attention_audit_alert_count '🚨' "$AUD_ALERT_BOTH
+$AUD_ALERT_BOTH")"
+# A ✅ in the capture is not a 🚨: the two marks are counted apart, or the
+# clear would satisfy the row that says the transition fired.
+t attention-audit-clear-does-not-count-as-a-raise 0 \
+  "$(rehearsal_attention_audit_alert_count '🚨' "$AUD_ALERT_CLEAR")"
+AUD_OUT="$(aud_row 'attention-audit: the transition alerts exactly once' \
+  rehearsal_attention_audit_alert_count_is 1 '🚨' "$AUD_ALERT_BOTH
+$AUD_ALERT_BOTH")"
+t attention-audit-two-alerts-on-the-transition-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: the transition alerts exactly once' <<<"$AUD_OUT")"
+t attention-audit-transition-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 2 🚨 alert(s), wanted 1' <<<"$AUD_OUT")"
+# The must-fail the whole suppression exists for: a SECOND 🚨 while the board
+# has not changed.
+AUD_OUT="$(aud_row 'attention-audit: an unchanged board adds no further alert' \
+  rehearsal_attention_audit_alert_count_is 0 '🚨' "$AUD_ALERT_BOTH")"
+t attention-audit-second-alert-on-an-unchanged-board-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: an unchanged board adds no further alert' <<<"$AUD_OUT")"
+t attention-audit-unchanged-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 1 🚨 alert(s), wanted 0' <<<"$AUD_OUT")"
+# ...and its twin: a MISSING ✅ on the clear.
+AUD_OUT="$(aud_row 'attention-audit: clearing the set alerts exactly once' \
+  rehearsal_attention_audit_alert_count_is 1 '✅' '')"
+t attention-audit-missing-clear-alert-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: clearing the set alerts exactly once' <<<"$AUD_OUT")"
+t attention-audit-missing-clear-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 0 ✅ alert(s), wanted 1' <<<"$AUD_OUT")"
+# A silent clean board is the count the first call wants.
+AUD_OUT="$(aud_row 'attention-audit: clean board raises no alert' \
+  rehearsal_attention_audit_alert_count_is 0 '🚨' '')"
+t attention-audit-silent-clean-board-passes 1 \
+  "$(grep -cFx 'ok   attention-audit: clean board raises no alert' <<<"$AUD_OUT")"
+
+# The 🚨 names both shapes too, in its own rendering. Two renderings of one
+# set, each read in its own shape rather than assumed to agree with the other.
+if rehearsal_attention_audit_alert_names_both \
+    '🚨' "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" "$AUD_ALERT_BOTH" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-audit-alert-naming-both-holds named "$r1"
+AUD_OUT="$(aud_row 'attention-audit: the alert names both malformed shapes' \
+  rehearsal_attention_audit_alert_names_both \
+  '🚨' "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" "$AUD_ALERT_PR_ONLY")"
+t attention-audit-alert-naming-only-the-pr-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: the alert names both malformed shapes' <<<"$AUD_OUT")"
+t attention-audit-alert-pr-only-red-names-what-is-missing 1 \
+  "$(grep -cF "not named: $AUD_REPO#$AUD_ISSUE[UNASSIGNED]" <<<"$AUD_OUT")"
+# The report's parenthesised rendering must not satisfy the alert row: they are
+# different renderings, and a row that accepted either would pass on a board
+# where only one of the two ever fired.
+AUD_OUT="$(aud_row 'attention-audit: the alert names both malformed shapes' \
+  rehearsal_attention_audit_alert_names_both \
+  '🚨' "$AUD_REPO" "$AUD_PR" "$AUD_ISSUE" "🚨 host: $AUD_REPO#$AUD_PR(PR) $AUD_REPO#$AUD_ISSUE(UNASSIGNED)")"
+t attention-audit-report-rendering-does-not-satisfy-the-alert-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: the alert names both malformed shapes' <<<"$AUD_OUT")"
+
+# §4 NON-REPAIR — the load-bearing half. A repaired board still reports its
+# malformed set correctly on the way past, so §3 alone cannot see it.
+AUD_PR_FLAGGED='{"state":"open","labels":[{"name":"attention"}],"assignees":[]}'
+AUD_ISSUE_FLAGGED='{"state":"open","labels":[{"name":"attention"},{"name":"blocked"}],"assignees":[]}'
+AUD_ISSUE_REPAIRED='{"state":"open","labels":[{"name":"blocked"}],"assignees":[]}'
+AUD_ISSUE_ASSIGNED='{"state":"open","labels":[{"name":"attention"},{"name":"blocked"}],"assignees":[{"login":"drill-identity"}]}'
+if rehearsal_attention_audit_flags_intact "$AUD_MARK" \
+    "$AUD_PR_FLAGGED" "$AUD_ISSUE_FLAGGED" >/dev/null; then
+  r1=intact
+else
+  r1=WRONG
+fi
+t attention-audit-flags-intact-holds intact "$r1"
+AUD_OUT="$(aud_row 'attention-audit: both flags still set' \
+  rehearsal_attention_audit_flags_intact "$AUD_MARK" \
+  "$AUD_PR_FLAGGED" "$AUD_ISSUE_REPAIRED")"
+t attention-audit-a-cleared-flag-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: both flags still set' <<<"$AUD_OUT")"
+t attention-audit-cleared-flag-red-quotes-both-label-sets 2 \
+  "$(grep -cE 'read: (pull request|unassigned issue): ' <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: both flags still set' \
+  rehearsal_attention_audit_flags_intact "$AUD_MARK" \
+  '{"state":"open","labels":[],"assignees":[]}' "$AUD_ISSUE_FLAGGED")"
+t attention-audit-a-cleared-pr-flag-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: both flags still set' <<<"$AUD_OUT")"
+# A look-alike label is not the flag. `grep -w attention` matches
+# `attention-needed` — `-` is not a word character — so the membership test is
+# jq's, and this is the row that says so.
+AUD_OUT="$(aud_row 'attention-audit: both flags still set' \
+  rehearsal_attention_audit_flags_intact "$AUD_MARK" \
+  '{"state":"open","labels":[{"name":"attention-needed"}],"assignees":[]}' \
+  "$AUD_ISSUE_FLAGGED")"
+t attention-audit-a-look-alike-label-is-not-the-flag 1 \
+  "$(grep -cFx 'FAIL attention-audit: both flags still set' <<<"$AUD_OUT")"
+
+if rehearsal_attention_audit_still_unassigned "$AUD_ISSUE_FLAGGED" >/dev/null; then
+  r1=unassigned
+else
+  r1=WRONG
+fi
+t attention-audit-still-unassigned-holds unassigned "$r1"
+AUD_OUT="$(aud_row 'attention-audit: the unassigned issue is still unassigned' \
+  rehearsal_attention_audit_still_unassigned "$AUD_ISSUE_ASSIGNED")"
+t attention-audit-an-assigned-fixture-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: the unassigned issue is still unassigned' <<<"$AUD_OUT")"
+t attention-audit-assigned-red-quotes-the-assignee 1 \
+  "$(grep -cF "read: $AUD_IDENTITY" <<<"$AUD_OUT")"
+
+AUD_NO_COMMENTS='[]'
+AUD_OTHERS_COMMENT='[{"user":{"login":"someone-else"}}]'
+AUD_IDENTITY_COMMENT='[{"user":{"login":"drill-identity"}}]'
+if rehearsal_attention_audit_no_identity_comment "$AUD_IDENTITY" \
+    "$AUD_NO_COMMENTS" "$AUD_NO_COMMENTS" >/dev/null; then
+  r1=silent
+else
+  r1=WRONG
+fi
+t attention-audit-no-comment-holds silent "$r1"
+# Somebody else's comment is not the audit's: the identity comes from the
+# round's own variable, and the row must not red on a board a human touched.
+if rehearsal_attention_audit_no_identity_comment "$AUD_IDENTITY" \
+    "$AUD_OTHERS_COMMENT" "$AUD_OTHERS_COMMENT" >/dev/null; then
+  r1=silent
+else
+  r1=WRONG
+fi
+t attention-audit-another-actors-comment-is-not-the-audits silent "$r1"
+AUD_OUT="$(aud_row 'attention-audit: no comment by the identity on either fixture' \
+  rehearsal_attention_audit_no_identity_comment "$AUD_IDENTITY" \
+  "$AUD_IDENTITY_COMMENT" "$AUD_NO_COMMENTS")"
+t attention-audit-a-comment-on-the-pr-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: no comment by the identity on either fixture' <<<"$AUD_OUT")"
+t attention-audit-comment-red-quotes-both-counts 1 \
+  "$(grep -cF 'read: 1 comment(s) on the pull request, 0 on the unassigned issue' <<<"$AUD_OUT")"
+AUD_OUT="$(aud_row 'attention-audit: no comment by the identity on either fixture' \
+  rehearsal_attention_audit_no_identity_comment "$AUD_IDENTITY" \
+  "$AUD_NO_COMMENTS" "$AUD_IDENTITY_COMMENT")"
+t attention-audit-a-comment-on-the-issue-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: no comment by the identity on either fixture' <<<"$AUD_OUT")"
+
+# The cleanup, PROVED off the board rather than asserted in a comment.
+AUD_GONE='{"state":"closed","labels":[],"assignees":[]}'
+if rehearsal_attention_audit_fixtures_removed "$AUD_MARK" "$AUD_GONE" "$AUD_GONE" >/dev/null; then
+  r1=removed
+else
+  r1=WRONG
+fi
+t attention-audit-fixtures-removed-holds removed "$r1"
+AUD_OUT="$(aud_row 'attention-audit: both fixtures removed from the board' \
+  rehearsal_attention_audit_fixtures_removed "$AUD_MARK" "$AUD_GONE" "$AUD_ISSUE_FLAGGED")"
+t attention-audit-a-surviving-fixture-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: both fixtures removed from the board' <<<"$AUD_OUT")"
+t attention-audit-surviving-fixture-red-names-both-faults 1 \
+  "$(grep -cF 'read: unassigned issue still open; unassigned issue still flagged' <<<"$AUD_OUT")"
+# Closed but still flagged is still a survival: the flag is what the audit
+# reads, and a closed object carrying it is a fixture left in the board's way.
+AUD_OUT="$(aud_row 'attention-audit: both fixtures removed from the board' \
+  rehearsal_attention_audit_fixtures_removed "$AUD_MARK" \
+  '{"state":"closed","labels":[{"name":"attention"}],"assignees":[]}' "$AUD_GONE")"
+t attention-audit-closed-but-flagged-reds 1 \
+  "$(grep -cFx 'FAIL attention-audit: both fixtures removed from the board' <<<"$AUD_OUT")"
+
+# The cleanup CALLS, staged under a stubbed gh(): both flags dropped, both
+# objects closed, the fixture branch deleted. This is the EXIT-trap path, which
+# no drill host is needed to exercise.
+AUD_CALLS="$TMP/attention-audit-cleanup-calls"
+: >"$AUD_CALLS"
+(
+  gh() { printf '%s\n' "$*" >>"$AUD_CALLS"; }
+  REHEARSAL_ATTENTION_AUDIT_REPO="$AUD_REPO"
+  REHEARSAL_ATTENTION_AUDIT_PR="$AUD_PR"
+  REHEARSAL_ATTENTION_AUDIT_ISSUE="$AUD_ISSUE"
+  REHEARSAL_ATTENTION_AUDIT_BRANCH=drill-attention-audit-120000
+  rehearsal_attention_audit_cleanup
+)
+t attention-audit-cleanup-drops-both-flags 2 \
+  "$(grep -cE "api -X DELETE repos/$AUD_REPO/issues/(91|92)/labels/attention" \
+    "$AUD_CALLS" | tr -d ' ')"
+t attention-audit-cleanup-closes-both-objects 2 \
+  "$(grep -cE "api -X PATCH repos/$AUD_REPO/issues/(91|92) -f state=closed" \
+    "$AUD_CALLS" | tr -d ' ')"
+t attention-audit-cleanup-deletes-the-fixture-branch 1 \
+  "$(grep -cF "api -X DELETE repos/$AUD_REPO/git/refs/heads/drill-attention-audit-120000" \
+    "$AUD_CALLS" | tr -d ' ')"
+# Nothing registered, nothing called: the trap fires on every round, including
+# the ones that never reached the leg.
+: >"$AUD_CALLS"
+(
+  gh() { printf '%s\n' "$*" >>"$AUD_CALLS"; }
+  REHEARSAL_ATTENTION_AUDIT_REPO=""
+  rehearsal_attention_audit_cleanup
+)
+t attention-audit-cleanup-without-a-registry-calls-nothing 0 \
+  "$(wc -l <"$AUD_CALLS" | tr -d ' ')"
+# The filer registers each object THE MOMENT it exists. A creation that fails
+# after the issue is filed must still leave that issue in the trap's registry,
+# or the round leaks a flagged issue onto the sandbox.
+(
+  # shellcheck disable=SC2317  # invoked indirectly, by the filer under test
+  gh() {
+    case "$*" in
+      *"repos/$AUD_REPO/issues -f title"*) printf '%s\n' "$AUD_ISSUE" ;;
+      *) return 1 ;;
+    esac
+  }
+  REHEARSAL_ATTENTION_AUDIT_ISSUE=""
+  rehearsal_attention_audit_file_fixtures "$AUD_REPO" 120000 >/dev/null 2>&1
+  printf '%s %s\n' "$REHEARSAL_ATTENTION_AUDIT_REPO" \
+    "$REHEARSAL_ATTENTION_AUDIT_ISSUE" >"$TMP/attention-audit-partial"
+)
+t attention-audit-partial-filing-still-registers-the-issue "$AUD_REPO $AUD_ISSUE" \
+  "$(cat "$TMP/attention-audit-partial")"
+
+# The invocation SCRIPT, read off the text the leg actually sends through bx().
+# §1: the module is sourced and the function called directly, after load_conf,
+# and nothing under the installed conf or lib is written — the leg observes the
+# hourly slot's behaviour without becoming a second writer of its scheduling.
+AUD_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_audit_invoke /tmp/attention-audit-capture
+)"
+t attention-audit-invocation-calls-the-module-directly 1 \
+  "$(grep -cx ' *duty_attention_audit' <<<"$AUD_SCRIPT" | tr -d ' ')"
+t attention-audit-invocation-follows-load-conf 1 \
+  "$(awk '/load_conf/ { seen = 1 } seen && /duty-attention\.sh/ { print; exit }' \
+    <<<"$AUD_SCRIPT" | wc -l | tr -d ' ')"
+t attention-audit-invocation-writes-no-installed-file 0 \
+  "$(grep -cE '(>>?|tee |sed -i|cp ).*duty/(conf|lib)' <<<"$AUD_SCRIPT" | tr -d ' ')"
+# It does NOT tick: a tick would run the wake, the sweep and whatever else the
+# role carries, and the rows below would then be reading somebody else's work.
+t attention-audit-invocation-does-not-tick 0 \
+  "$(grep -cF 'tick.sh' <<<"$AUD_SCRIPT" | tr -d ' ')"
+# The alert override EXECUTED, not a prebuilt string handed to the predicate.
+# One escaping level too deep captures the literal $* and no alert can ever
+# match, so every transition row would red against a correct engine.
+AUD_CAPTURE="$TMP/attention-audit-alert-capture"
+: >"$AUD_CAPTURE"
+AUD_ALERT_DEF="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_audit_invoke "$AUD_CAPTURE"
+)"
+AUD_ALERT_DEF="$(grep -F 'alert()' <<<"$AUD_ALERT_DEF")"
+bash -c "$AUD_ALERT_DEF; alert '$AUD_ALERT_BOTH'"
+t attention-audit-generated-alert-expands-its-arguments 0 \
+  "$(grep -cFx '$*' "$AUD_CAPTURE" | tr -d ' ')"
+if rehearsal_attention_audit_alert_count_is 1 '🚨' "$(cat "$AUD_CAPTURE")" >/dev/null; then
+  r1=counted
+else
+  r1=WRONG
+fi
+t attention-audit-generated-alert-capture-feeds-the-row counted "$r1"
+
+# The hourly slot's clock: deferred for the leg's duration, handed back after.
+# duty.sh's own hygiene slot calls duty_attention_audit and shares ONE state
+# file with this leg, so a cron tick landing between two calls would write the
+# malformed set first and the leg's 🚨 would be correctly suppressed — a red on
+# a working engine, in the row whose whole subject is suppression.
+AUD_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_audit_defer_hygiene
+)"
+t attention-audit-deferral-stamps-the-hygiene-clock 1 \
+  "$(grep -cF 'date +%s > "$HOME/duty/.hygiene-last"' <<<"$AUD_SCRIPT" | tr -d ' ')"
+AUD_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_audit_restore_hygiene 1754740000
+)"
+t attention-audit-restore-writes-back-the-value-it-found 1 \
+  "$(grep -cF "printf '%s\\n' '1754740000'" <<<"$AUD_SCRIPT" | tr -d ' ')"
+# A box that had no clock file must be handed back no clock file, not a zero.
+AUD_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_audit_restore_hygiene ''
+)"
+t attention-audit-restore-of-an-absent-clock-removes-it 1 \
+  "$(grep -cF 'rm -f "$HOME/duty/.hygiene-last"' <<<"$AUD_SCRIPT" | tr -d ' ')"
+if rehearsal_attention_audit_hygiene_clock_restored 1754740000 1754740000 >/dev/null; then
+  r1=restored
+else
+  r1=WRONG
+fi
+t attention-audit-clock-restored-holds restored "$r1"
+AUD_OUT="$(aud_row "attention-audit: the hourly slot's clock is handed back" \
+  rehearsal_attention_audit_hygiene_clock_restored 1754740000 1754743600)"
+t attention-audit-a-moved-clock-reds 1 \
+  "$(grep -cFx "FAIL attention-audit: the hourly slot's clock is handed back" <<<"$AUD_OUT")"
+t attention-audit-moved-clock-red-quotes-both-readings 1 \
+  "$(grep -cF 'read: hygiene clock before=1754740000 after=1754743600' <<<"$AUD_OUT")"
+# The state file the transition rows read is cleared before call 1, or a stale
+# non-empty set makes call 1 emit ✅ and the clean-board row reds on a correct
+# engine.
+AUD_SCRIPT="$(
+  bx() { printf '%s' "$1"; }
+  rehearsal_attention_audit_clear_state
+)"
+t attention-audit-state-cleared-before-the-first-call 1 \
+  "$(grep -cF 'rm -f "$HOME/duty/.attention-malformed"' <<<"$AUD_SCRIPT" | tr -d ' ')"
+
+# --- the leg's own bookkeeping: a red row must reach the verdict ------------
+#
+# rehearsal-all.sh reads this leg's summary row off its return code. A red row
+# that cannot reach that return code prints `ok attention-audit` into the round
+# summary and into drills/<version>.md for a round that asserted nothing — the
+# #423 defect, relocated into this leg's bookkeeping.
+#
+# Staged as the leg actually runs, with the filer, the invoker, the board reads
+# and bx() stubbed; each mutation is one realistic blip, not a broken engine.
+aud_leg() {  # rows on stdout, the leg's rc as the exit status
+  (
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    skip() { printf 'skip %s\n' "$1"; }
+    # rehearsal.sh's wait_for, minus the sleeping.
+    wait_for() {
+      local name="$2"; shift 2
+      if "$@" >/dev/null 2>&1; then ok "$name"; return 0; fi
+      fail "$name (timeout)"; return 1
+    }
+    bx() { printf '/home/drill\n'; }
+    rehearsal_attention_audit_board_clean() { return "${AUD_BOARD_DIRTY:-0}"; }
+    rehearsal_attention_audit_flagged_numbers() { printf '%s\n' "${AUD_FLAGGED:-}"; }
+    rehearsal_attention_audit_both_visible() { return 0; }
+    rehearsal_attention_audit_neither_visible() { return 0; }
+    rehearsal_attention_audit_defer_hygiene() { return 0; }
+    rehearsal_attention_audit_restore_hygiene() { return 0; }
+    rehearsal_attention_audit_clear_state() { return 0; }
+    rehearsal_attention_audit_clear_flags() { return 0; }
+    # The stubbed cleanup leaves a MARKER rather than doing nothing: the board
+    # is read once before it (the non-repair rows) and once after it (the
+    # removal row), and a stub that answered both reads identically would make
+    # one of the two rows unfalsifiable.
+    rehearsal_attention_audit_cleanup() { printf 'done' >"$TMP/aud-cleaned"; }
+    rehearsal_attention_audit_hygiene_clock() { printf '1754740000\n'; }
+    rehearsal_attention_audit_file_fixtures() {
+      REHEARSAL_ATTENTION_AUDIT_REPO="$AUD_REPO"
+      REHEARSAL_ATTENTION_AUDIT_PR="$AUD_PR"
+      REHEARSAL_ATTENTION_AUDIT_ISSUE="$AUD_ISSUE"
+      return "${AUD_FILE_RC:-0}"
+    }
+    # One call per invocation, counted in a FILE: the calls happen inside
+    # command substitutions and a shell variable would go with the subshell.
+    rehearsal_attention_audit_invoke() {
+      local n
+      n=$(( $(cat "$TMP/aud-calls") + 1 ))
+      printf '%s' "$n" >"$TMP/aud-calls"
+      case "$n" in
+        2) printf '%s\n' "${AUD_OUT_2:-$AUD_REPORT_BOTH}" ;;
+        *) printf '2026-08-09T12:00:00Z attention audit\n' ;;
+      esac
+    }
+    rehearsal_attention_audit_read_capture() {
+      local n
+      n="$(cat "$TMP/aud-calls")"
+      case "$n" in
+        2) printf '%s\n' "${AUD_CAP_2:-$AUD_ALERT_BOTH}" ;;
+        3) printf '%s\n' "${AUD_CAP_3:-}" ;;
+        # `-`, not `:-`: the missing-✅ mutation IS the empty capture, and a
+        # colon default would silently hand it the passing one instead.
+        4) printf '%s\n' "${AUD_CAP_4-$AUD_ALERT_CLEAR}" ;;
+        *) printf '%s\n' "${AUD_CAP_1:-}" ;;
+      esac
+    }
+    gh() {
+      local cleaned=0
+      [ -f "$TMP/aud-cleaned" ] && cleaned=1
+      case "$*" in
+        *"/comments"*) printf '%s\n' "${AUD_COMMENTS:-[]}" ;;
+        *"issues/$AUD_PR")
+          if [ "$cleaned" -eq 1 ]; then
+            printf '%s\n' "${AUD_PR_AFTER:-$AUD_GONE}"
+          else
+            printf '%s\n' "${AUD_PR_READ:-$AUD_PR_FLAGGED}"
+          fi ;;
+        *"issues/$AUD_ISSUE")
+          if [ "$cleaned" -eq 1 ]; then
+            printf '%s\n' "${AUD_ISSUE_AFTER:-$AUD_GONE}"
+          else
+            printf '%s\n' "${AUD_ISSUE_READ:-$AUD_ISSUE_FLAGGED}"
+          fi ;;
+        *) printf '%s\n' '{}' ;;
+      esac
+    }
+    jq() { command jq "$@"; }
+    rehearsal_attention_audit_drill "$AUD_REPO" "$AUD_IDENTITY"
+  )
+}
+aud_run() {  # aud_run — reset the call counter and the cleanup marker
+  printf '0' >"$TMP/aud-calls"
+  rm -f "$TMP/aud-cleaned"
+  aud_leg
+}
+
+# The control: every stub green, and the leg is an all-ok round.
+if AUD_OUT="$(aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-control-is-green 0 "$aud_rc"
+t attention-audit-leg-control-has-no-red-row 0 \
+  "$(grep -c '^FAIL ' <<<"$AUD_OUT")"
+# Every §3/§4/§5 row present, and each its OWN summary row so
+# drills/<version>.md records them separately.
+t attention-audit-leg-control-row-count 16 \
+  "$(grep -c '^ok   attention-audit: ' <<<"$AUD_OUT")"
+
+# The three acceptance mutations, run against the LEG rather than a predicate:
+# each must reach the leg's return code, not just print a red row.
+if AUD_OUT="$(AUD_OUT_2="$AUD_REPORT_PR_ONLY" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-report-naming-only-the-pr-reds-the-leg 1 "$aud_rc"
+t attention-audit-leg-report-mutation-names-its-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: report names both malformed shapes' <<<"$AUD_OUT")"
+if AUD_OUT="$(AUD_ISSUE_READ="$AUD_ISSUE_REPAIRED" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-repaired-flag-reds-the-leg 1 "$aud_rc"
+t attention-audit-leg-repair-mutation-names-its-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: both flags still set' <<<"$AUD_OUT")"
+if AUD_OUT="$(AUD_CAP_3="$AUD_ALERT_BOTH" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-second-alert-reds-the-leg 1 "$aud_rc"
+t attention-audit-leg-second-alert-mutation-names-its-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: an unchanged board adds no further alert' <<<"$AUD_OUT")"
+# ...and the rest of the test plan's must-fail list.
+if AUD_OUT="$(AUD_ISSUE_READ="$AUD_ISSUE_ASSIGNED" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-an-assigned-fixture-reds-the-leg 1 "$aud_rc"
+if AUD_OUT="$(AUD_COMMENTS="$AUD_IDENTITY_COMMENT" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-comment-reds-the-leg 1 "$aud_rc"
+if AUD_OUT="$(AUD_CAP_4='' aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-missing-clear-alert-reds-the-leg 1 "$aud_rc"
+if AUD_OUT="$(AUD_CAP_1="$AUD_ALERT_BOTH" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-an-alert-on-a-clean-board-reds-the-leg 1 "$aud_rc"
+
+# A fixture that survives the cleanup reds the leg, which is the row that makes
+# the cleanup a proof rather than a claim.
+if AUD_OUT="$(AUD_PR_AFTER="$AUD_PR_FLAGGED" AUD_ISSUE_AFTER="$AUD_ISSUE_FLAGGED" aud_run)"; then
+  aud_rc=0
+else
+  aud_rc=$?
+fi
+t attention-audit-leg-a-surviving-fixture-reds-the-leg 1 "$aud_rc"
+t attention-audit-leg-surviving-fixture-names-its-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: both fixtures removed from the board' <<<"$AUD_OUT")"
+
+# A sandbox that already carries a flagged object is a refused round, not a
+# green one: "silent on a clean board" would otherwise be a statement about a
+# board that was never clean.
+if AUD_OUT="$(AUD_BOARD_DIRTY=1 AUD_FLAGGED=7 aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-dirty-sandbox-refuses 1 "$aud_rc"
+t attention-audit-leg-dirty-sandbox-names-what-it-read 1 \
+  "$(grep -cF 'read: 7' <<<"$AUD_OUT")"
+# ...and it hands the clock back on the way out, exactly as the green path does.
+if AUD_OUT="$(AUD_FILE_RC=1 aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-an-unfiled-fixture-refuses 1 "$aud_rc"
+
+# The verdict lines the aggregate row is folded from.
+AUD_VERDICTS="$TMP/attention-audit-leg-verdicts"
+: >"$AUD_VERDICTS"
+REHEARSAL_ATTENTION_AUDIT_STATUS="$AUD_VERDICTS" aud_run >/dev/null
+t attention-audit-green-leg-records-an-ok-verdict 1 \
+  "$(grep -c ' ok ' "$AUD_VERDICTS" | tr -d ' ')"
+: >"$AUD_VERDICTS"
+REHEARSAL_ATTENTION_AUDIT_STATUS="$AUD_VERDICTS" AUD_CAP_3="$AUD_ALERT_BOTH" \
+  aud_run >/dev/null
+t attention-audit-red-leg-records-a-fail-verdict 1 \
+  "$(grep -c ' fail ' "$AUD_VERDICTS" | tr -d ' ')"
+# The opt-out is a skip with a reason, never a silent pass.
+: >"$AUD_VERDICTS"
+(
+  ROLE=triage
+  REHEARSAL_ATTENTION_AUDIT_STATUS="$AUD_VERDICTS"
+  REHEARSAL_ATTENTION_AUDIT_DRILL=0
+  skip() { :; }
+  rehearsal_attention_audit_drill "$AUD_REPO" "$AUD_IDENTITY" >/dev/null
+)
+t attention-audit-verdict-opt-out-is-a-skip "triage skip --no-attention-audit-drill" \
+  "$(cat "$AUD_VERDICTS")"
+
+# No agent or box name in the leg: the identity and the sandbox reach every
+# assertion from the round's own variables.
+t attention-audit-leg-names-no-agent-or-box 0 \
+  "$(grep -ciE 'claude|codex|grok|kimi|crew-drill' \
+    "$ROOT/drill/rehearsal-attention-audit.sh" | tr -d ' ')"
+
+# Wiring: sourced and called in the TRIAGE block — the hygiene slot is
+# triage-only — and after the existing triage assertions, which are unchanged.
+# shellcheck disable=SC2016  # match literal triage-block source text
+if sed -n '/if \[ "$ROLE" = "triage" \]/,/^[[:space:]]*elif /p' \
+    "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq '. "$ROOT/drill/rehearsal-attention-audit.sh"'; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t attention-audit-helper-sourced-in-triage-block wired "$r1"
+AUD_PM_LINE="$(grep -nF 'triage: post-merge-only tick launched no session' \
+  "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal call site in rehearsal.sh
+AUD_LEG_LINE="$(grep -nF 'rehearsal_attention_audit_drill "$SANDBOX"' \
+  "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+if [ -n "$AUD_PM_LINE" ] && [ -n "$AUD_LEG_LINE" ] && [ "$AUD_PM_LINE" -lt "$AUD_LEG_LINE" ]; then
+  r1=after
+else
+  r1=WRONG
+fi
+t attention-audit-leg-follows-the-existing-triage-rows after "$r1"
+# The EXIT trap reaches this leg's registry too, or a red round leaks a flagged
+# pull request and a flagged unassigned issue onto the sandbox.
+t attention-audit-cleanup-armed-in-the-exit-trap 1 \
+  "$(grep -cF 'rehearsal_attention_audit_cleanup || true' "$ROOT/drill/rehearsal.sh" | tr -d ' ')"
+if grep -Fq -- '--no-attention-audit-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'attention-audit  (both shapes reported, not repaired, alerts on transition)' \
+      "$ROOT/drill/rehearsal-all.sh"; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t attention-audit-all-opt-out-and-summary-wired wired "$r1"
+# The aggregate row is gated on the TRIAGE role, not the builder's: this leg
+# runs in the only role block whose duty carries the hourly slot.
+t attention-audit-aggregate-row-gates-on-the-triage-role 1 \
+  "$(grep -cF 'INCOMPLETE attention-audit  (triage role omitted)' \
+    "$ROOT/drill/rehearsal-all.sh" | tr -d ' ')"
 
 # --- rehearsal boot-check verdict: what the gate SAID, not that it ran (#427) ---
 # The drill's assertion was `test -s ~/duty/boot-check.log`, which passes on a
@@ -2921,7 +3532,8 @@ resume_agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-hygiene-drill \
-    --no-attention-drill --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-attention-audit-drill \
+    --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
 }
 
 # Reported defect: the builder leg skipped while the role exited 0. The row
@@ -2978,7 +3590,7 @@ agg_hygiene_run() {  # $1 roles, $2 the hygiene result the role box records
   local roles="$1" hyg="$2"
   AGG_DIR="$AGG" AGG_HYGIENE="$hyg" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-attention-drill --no-breaker-drill 2>&1
+    --no-attention-drill --no-attention-audit-drill --no-breaker-drill 2>&1
 }
 # The stub writes the hygiene result the way the live leg does — into the file
 # rehearsal-all.sh hands it, per role — on top of the notify verdict it already
