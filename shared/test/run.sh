@@ -495,6 +495,12 @@ t rehearsal-breaker-cli-fixture-restores-content 'TIMEOUT_REVIEW=1' \
   "$(cat "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
 if rehearsal_breaker_profile_is_restored; then r1=restored; else r1=WRONG; fi
 t rehearsal-breaker-cli-fixture-removes-role-overrides restored "$r1"
+mv "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf" \
+  "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf.missing"
+if rehearsal_breaker_profile_is_restored; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-missing-restored-profile-mutation-reds red "$r1"
+mv "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf.missing" \
+  "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
 unset -f bx
 
 if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \

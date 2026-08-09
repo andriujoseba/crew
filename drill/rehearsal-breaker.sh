@@ -150,7 +150,7 @@ rehearsal_breaker_attention_is_clear() {
 
 rehearsal_breaker_profile_is_restored() {
   [ -n "$REHEARSAL_BREAKER_ROLE_CONF" ] || return 1
-  bx "! grep -qF '# rehearsal-breaker ' '$REHEARSAL_BREAKER_ROLE_CONF'"
+  bx "test -f '$REHEARSAL_BREAKER_ROLE_CONF' && ! grep -qF '# rehearsal-breaker ' '$REHEARSAL_BREAKER_ROLE_CONF'"
 }
 
 rehearsal_breaker_cleanup() {
