@@ -23,6 +23,51 @@ t() {  # t <name> <expected> <actual>
   fi
 }
 
+# A predicate must consume a completed producer. These two helpers preserve the
+# match modes used by the two awk-range assertions while ensuring awk is reaped
+# before grep can exit early.
+awk_range_grep_q() {  # <range> <file> <pattern>
+  local output
+  output="$(awk "$1" "$2")"
+  grep -q -- "$3" <<<"$output"
+}
+
+awk_range_grep_Fq() {  # <range> <file> <pattern>
+  local output
+  output="$(awk "$1" "$2")"
+  grep -Fq -- "$3" <<<"$output"
+}
+
+# #443: exceptionless source guard for the files whose shells enable pipefail.
+# cli/crew:2243 and drill/rehearsal-app.sh:182,184,188 are deliberately absent:
+# their four pipelines are payloads for fresh remote shells without pipefail.
+pipefail_grep_q_sites() {  # [files...]
+  local files=("$@")
+  [ "${#files[@]}" -gt 0 ] || files=(
+    "$HERE/run.sh"
+    "$ROOT/drill/rehearsal.sh"
+    "$ROOT/fleet-floor/test/cli.sh"
+    "$ROOT/fleet-floor/test/run.sh"
+    "$ROOT/fleet-floor/test/boxside.sh"
+    "$HERE/drill-teardown.sh"
+    "$HERE/artifact.sh"
+    "$HERE/claim.test.sh"
+    "$SHARED/bin/engine-manifest.sh"
+  )
+  awk '
+    function qgrep(s) { return s ~ /grep[[:space:]]+-[[:alnum:]-]*q/ }
+    FNR == 1 { pipe_line = 0 }
+    /^[[:space:]]*#/ { pipe_line = 0; next }
+    index($0, "|") && qgrep(substr($0, index($0, "|") + 1)) {
+      printf "%s:%d:%s\n", FILENAME, FNR, $0
+    }
+    pipe_line && qgrep($0) {
+      printf "%s:%d:%s\n", FILENAME, FNR, $0
+    }
+    { pipe_line = ($0 ~ /\|[[:space:]\\]*$/) }
+  ' "${files[@]}"
+}
+
 assert_doctrine_quote() {  # <prompt-file> <substring> <name> [doctrine-heading]
   local prompt_file="$1" substring="$2" name="$3" doctrine_heading="${4-}"
   local prompt_text doctrine_text result
@@ -118,6 +163,34 @@ export HOME="${HOME:-$TMP}"
 source "$SHARED/lib/common.sh"
 # shellcheck disable=SC1091
 source "$SHARED/lib/duty-builder.sh"
+
+PIPE_GUARD_FIXTURE="$TMP/pipefail-grep-q.fixture"
+printf '%s%s\n' 'if producer | ' 'grep -q MATCH; then :; fi' >"$PIPE_GUARD_FIXTURE"
+guard_mutation="$(pipefail_grep_q_sites "$PIPE_GUARD_FIXTURE")"
+case "$guard_mutation" in
+  *"$PIPE_GUARD_FIXTURE:1:"*) r1=red ;; *) r1=MISSED ;;
+esac
+t pipefail-grep-q-guard-reds-on-reintroduction red "$r1"
+rm -f "$PIPE_GUARD_FIXTURE"
+
+guard_findings="$(pipefail_grep_q_sites)"
+t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
+
+# Drive the two converted awk-range call sites with a producer that pauses
+# after its match. The old predicate is assembled so the source guard itself
+# does not carry the prohibited spelling.
+slow_awk() { printf '%s\n' MATCH; sleep 0.05; printf '%s\n' more; }
+if eval 'slow_awk | grep -q MATCH'; then old_predicate_rc=0; else old_predicate_rc=$?; fi
+t pipefail-awk-range-old-shape-reds 141 "$old_predicate_rc"
+awk() { slow_awk; }
+if awk_range_grep_q ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
+t pipefail-awk-range-basic-survives-race matched "$r1"
+if awk_range_grep_Fq ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
+t pipefail-awk-range-fixed-survives-race matched "$r1"
+if awk_range_grep_q ignored ignored ABSENT; then r1=FALSE-POSITIVE; else r1=absent; fi
+t pipefail-awk-range-keeps-negative-direction absent "$r1"
+unset -f awk slow_awk
+unset old_predicate_rc guard_findings guard_mutation PIPE_GUARD_FIXTURE
 
 # #411: force the box-existence producer to pause after its matching line.
 # The stub is deliberately `box list`, so this exercises the predicate's
@@ -12443,7 +12516,7 @@ done
 # Handoff is deliberately NOT gated on a green head, and the reason has to sit
 # where the "obvious improvement" would be typed (grok, #64): ci-red fires once
 # per head, so a green-gated handoff strands exactly ceremony#163 again.
-if awk '/--- HANDOFF/,/--- REBASE/' "$BMOD" | grep -q 'NOT GATED ON A GREEN HEAD'; then
+if awk_range_grep_q '/--- HANDOFF/,/--- REBASE/' "$BMOD" 'NOT GATED ON A GREEN HEAD'; then
   r1=called-out
 else
   r1=SILENT
@@ -14488,7 +14561,7 @@ fi
 t gitid-converge-precedes-the-first-duty before "$r1"
 
 # And the refusal ends the tick rather than logging and carrying on.
-if awk '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" | grep -Fq 'exit 0'; then
+if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" 'exit 0'; then
   r1=exits
 else
   r1=CONTINUES
