@@ -808,6 +808,33 @@ else
 fi
 t rehearsal-boot-preauth-arm-skips-both-with-reasons skipped "$r1"
 
+# The gate itself. The case above greps only that the two skip rows EXIST, so
+# it survives an `if true` — the skips live on in an `else` nothing reaches —
+# and the `08:3xZ` gate would regress silently into the shape that reds every
+# creds-free round. Pin the arm instead: scan up from each call to the nearest
+# `if` and require it to be the gate, with nothing closing that arm in
+# between. The `in between` half matters because the isolation gate above is
+# spelled identically, so a deleted gate would otherwise re-anchor onto it and
+# pass.
+boot_arm=ok
+# shellcheck disable=SC2016  # match the literal gate line, unexpanded
+boot_gate='if [ "$GH_AUTHED" -eq 1 ]; then'
+for boot_call in rehearsal_boot_load rehearsal_boot_probe_ok rehearsal_boot_warn_free; do
+  boot_call_line="$(grep -n "^[[:space:]]*$boot_call\\b" "$ROOT/drill/rehearsal.sh" \
+    | head -1 | cut -d: -f1)"
+  if [ -z "$boot_call_line" ]; then boot_arm="$boot_call:UNCALLED"; break; fi
+  boot_if_line="$(head -n "$boot_call_line" "$ROOT/drill/rehearsal.sh" \
+    | grep -n '^[[:space:]]*if ' | tail -1 | cut -d: -f1)"
+  if [ -z "$boot_if_line" ]; then boot_arm="$boot_call:UNGATED"; break; fi
+  if [ "$(sed -n "${boot_if_line}p" "$ROOT/drill/rehearsal.sh")" != "$boot_gate" ]; then
+    boot_arm="$boot_call:WRONG-GATE"; break
+  fi
+  boot_closers="$(sed -n "$((boot_if_line + 1)),$((boot_call_line - 1))p" \
+    "$ROOT/drill/rehearsal.sh" | grep -cE '^[[:space:]]*(fi|else)[[:space:]]*$')"
+  if [ "$boot_closers" -ne 0 ]; then boot_arm="$boot_call:OUTSIDE-THE-ARM"; break; fi
+done
+t rehearsal-boot-calls-sit-inside-the-gh-authed-arm ok "$boot_arm"
+
 # #422: the real-host hygiene leg reads remote trees, the durable PR comment,
 # and duty.log ordering. Keep those reads as sourceable predicates so their
 # must-fail mutations run here without a host, a remote or a drill box.
