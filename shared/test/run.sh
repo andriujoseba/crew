@@ -1536,8 +1536,8 @@ AUD_REPORT_BOTH="2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 2 item
 AUD_REPORT_PR_ONLY="2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 1 item(s) on pull requests or unassigned issues; audit only, not repaired — $AUD_REPO#$AUD_PR(PR) "
 AUD_REPORT_ISSUE_ONLY="2026-08-09T12:00:00Z WARN: attention: malformed flag(s): 1 item(s) on pull requests or unassigned issues; audit only, not repaired — $AUD_REPO#$AUD_ISSUE(UNASSIGNED) "
 # The alert's rendering is the OTHER one: square brackets, not parentheses.
-AUD_ALERT_BOTH="🚨 host: malformed attention flag(s) — $AUD_REPO#$AUD_PR[PR] $AUD_REPO#$AUD_ISSUE[UNASSIGNED] — move each flag to the assigned issue that owns the claim"
-AUD_ALERT_PR_ONLY="🚨 host: malformed attention flag(s) — $AUD_REPO#$AUD_PR[PR] — move each flag to the assigned issue that owns the claim"
+AUD_ALERT_BOTH="🚨 host: malformed attention flag(s) — $AUD_REPO#${AUD_PR}[PR] $AUD_REPO#${AUD_ISSUE}[UNASSIGNED] — move each flag to the assigned issue that owns the claim"
+AUD_ALERT_PR_ONLY="🚨 host: malformed attention flag(s) — $AUD_REPO#${AUD_PR}[PR] — move each flag to the assigned issue that owns the claim"
 AUD_ALERT_CLEAR="✅ host: malformed attention flags cleared"
 
 aud_row() {  # aud_row <row name> <predicate...> — the live grading, captured
@@ -1662,7 +1662,7 @@ AUD_OUT="$(aud_row 'attention-audit: the alert names both malformed shapes' \
 t attention-audit-alert-naming-only-the-pr-reds 1 \
   "$(grep -cFx 'FAIL attention-audit: the alert names both malformed shapes' <<<"$AUD_OUT")"
 t attention-audit-alert-pr-only-red-names-what-is-missing 1 \
-  "$(grep -cF "not named: $AUD_REPO#$AUD_ISSUE[UNASSIGNED]" <<<"$AUD_OUT")"
+  "$(grep -cF "not named: $AUD_REPO#${AUD_ISSUE}[UNASSIGNED]" <<<"$AUD_OUT")"
 # The report's parenthesised rendering must not satisfy the alert row: they are
 # different renderings, and a row that accepted either would pass on a board
 # where only one of the two ever fired.
@@ -1801,6 +1801,7 @@ t attention-audit-cleanup-deletes-the-fixture-branch 1 \
 : >"$AUD_CALLS"
 (
   gh() { printf '%s\n' "$*" >>"$AUD_CALLS"; }
+  # shellcheck disable=SC2030  # the empty registry is this subshell's fixture
   REHEARSAL_ATTENTION_AUDIT_REPO=""
   rehearsal_attention_audit_cleanup
 )
@@ -1817,8 +1818,10 @@ t attention-audit-cleanup-without-a-registry-calls-nothing 0 \
       *) return 1 ;;
     esac
   }
+  # shellcheck disable=SC2030  # the registry is read inside this subshell
   REHEARSAL_ATTENTION_AUDIT_ISSUE=""
   rehearsal_attention_audit_file_fixtures "$AUD_REPO" 120000 >/dev/null 2>&1
+  # shellcheck disable=SC2031  # ...and printed from it, before it is lost
   printf '%s %s\n' "$REHEARSAL_ATTENTION_AUDIT_REPO" \
     "$REHEARSAL_ATTENTION_AUDIT_ISSUE" >"$TMP/attention-audit-partial"
 )
@@ -1873,6 +1876,7 @@ AUD_SCRIPT="$(
   bx() { printf '%s' "$1"; }
   rehearsal_attention_audit_defer_hygiene
 )"
+# shellcheck disable=SC2016  # the needle is box-side source text, not an expansion
 t attention-audit-deferral-stamps-the-hygiene-clock 1 \
   "$(grep -cF 'date +%s > "$HOME/duty/.hygiene-last"' <<<"$AUD_SCRIPT" | tr -d ' ')"
 AUD_SCRIPT="$(
@@ -1886,6 +1890,7 @@ AUD_SCRIPT="$(
   bx() { printf '%s' "$1"; }
   rehearsal_attention_audit_restore_hygiene ''
 )"
+# shellcheck disable=SC2016  # the needle is box-side source text, not an expansion
 t attention-audit-restore-of-an-absent-clock-removes-it 1 \
   "$(grep -cF 'rm -f "$HOME/duty/.hygiene-last"' <<<"$AUD_SCRIPT" | tr -d ' ')"
 if rehearsal_attention_audit_hygiene_clock_restored 1754740000 1754740000 >/dev/null; then
@@ -1907,6 +1912,7 @@ AUD_SCRIPT="$(
   bx() { printf '%s' "$1"; }
   rehearsal_attention_audit_clear_state
 )"
+# shellcheck disable=SC2016  # the needle is box-side source text, not an expansion
 t attention-audit-state-cleared-before-the-first-call 1 \
   "$(grep -cF 'rm -f "$HOME/duty/.attention-malformed"' <<<"$AUD_SCRIPT" | tr -d ' ')"
 
@@ -1933,7 +1939,9 @@ aud_leg() {  # rows on stdout, the leg's rc as the exit status
     bx() { printf '/home/drill\n'; }
     rehearsal_attention_audit_board_clean() { return "${AUD_BOARD_DIRTY:-0}"; }
     rehearsal_attention_audit_flagged_numbers() { printf '%s\n' "${AUD_FLAGGED:-}"; }
+    # shellcheck disable=SC2317  # invoked indirectly, by the leg under test
     rehearsal_attention_audit_both_visible() { return 0; }
+    # shellcheck disable=SC2317  # invoked indirectly, by the leg under test
     rehearsal_attention_audit_neither_visible() { return 0; }
     rehearsal_attention_audit_defer_hygiene() { return 0; }
     rehearsal_attention_audit_restore_hygiene() { return 0; }
@@ -1959,6 +1967,8 @@ aud_leg() {  # rows on stdout, the leg's rc as the exit status
       printf '%s' "$n" >"$TMP/aud-calls"
       case "$n" in
         2) printf '%s\n' "${AUD_OUT_2:-$AUD_REPORT_BOTH}" ;;
+        3) printf '%s\n' "${AUD_OUT_3:-2026-08-09T12:00:00Z attention audit}" ;;
+        4) printf '%s\n' "${AUD_OUT_4:-2026-08-09T12:00:00Z attention audit}" ;;
         *) printf '2026-08-09T12:00:00Z attention audit\n' ;;
       esac
     }
@@ -2011,7 +2021,7 @@ t attention-audit-leg-control-has-no-red-row 0 \
   "$(grep -c '^FAIL ' <<<"$AUD_OUT")"
 # Every §3/§4/§5 row present, and each its OWN summary row so
 # drills/<version>.md records them separately.
-t attention-audit-leg-control-row-count 16 \
+t attention-audit-leg-control-row-count 18 \
   "$(grep -c '^ok   attention-audit: ' <<<"$AUD_OUT")"
 
 # The three acceptance mutations, run against the LEG rather than a predicate:
@@ -2037,6 +2047,17 @@ if AUD_OUT="$(AUD_CAP_4='' aud_run)"; then aud_rc=0; else aud_rc=$?; fi
 t attention-audit-leg-a-missing-clear-alert-reds-the-leg 1 "$aud_rc"
 if AUD_OUT="$(AUD_CAP_1="$AUD_ALERT_BOTH" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
 t attention-audit-leg-an-alert-on-a-clean-board-reds-the-leg 1 "$aud_rc"
+# #59's other half, the one that lands in duty.log: a standing malformed set
+# re-reported every hour is the loud-and-expensive bug the suppression replaced,
+# and the alert rows cannot see it — the two suppressions are separate.
+if AUD_OUT="$(AUD_OUT_3="$AUD_REPORT_BOTH" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-repeated-report-reds-the-leg 1 "$aud_rc"
+t attention-audit-leg-repeated-report-names-its-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: an unchanged board writes no further report' <<<"$AUD_OUT")"
+if AUD_OUT="$(AUD_OUT_4="$AUD_REPORT_BOTH" aud_run)"; then aud_rc=0; else aud_rc=$?; fi
+t attention-audit-leg-a-report-on-the-clear-reds-the-leg 1 "$aud_rc"
+t attention-audit-leg-report-on-the-clear-names-its-row 1 \
+  "$(grep -cFx 'FAIL attention-audit: the cleared board writes no report' <<<"$AUD_OUT")"
 
 # A fixture that survives the cleanup reds the leg, which is the row that makes
 # the cleanup a proof rather than a claim.
@@ -2074,6 +2095,7 @@ t attention-audit-red-leg-records-a-fail-verdict 1 \
 # The opt-out is a skip with a reason, never a silent pass.
 : >"$AUD_VERDICTS"
 (
+  # shellcheck disable=SC2030  # the fixture role is intentionally local
   ROLE=triage
   REHEARSAL_ATTENTION_AUDIT_STATUS="$AUD_VERDICTS"
   REHEARSAL_ATTENTION_AUDIT_DRILL=0

@@ -141,9 +141,11 @@ rehearsal_attention_audit_alert_names_both() {
     printf 'no %s alert to read\n' "$mark"
     return 1
   fi
-  grep -Fq -- "$repo#$pr[PR]" <<<"$line" || missing="$repo#$pr[PR]"
-  grep -Fq -- "$repo#$issue[UNASSIGNED]" <<<"$line" \
-    || missing="${missing:+$missing }$repo#$issue[UNASSIGNED]"
+  # Braced: `$pr[PR]` reads as an array subscript to shellcheck (SC1087), and
+  # the needle is a literal `#<num>[<CLASS>]` either way.
+  grep -Fq -- "$repo#${pr}[PR]" <<<"$line" || missing="$repo#${pr}[PR]"
+  grep -Fq -- "$repo#${issue}[UNASSIGNED]" <<<"$line" \
+    || missing="${missing:+$missing }$repo#${issue}[UNASSIGNED]"
   printf '%s\n' "$line"
   [ -z "$missing" ] || { printf 'not named: %s\n' "$missing"; return 1; }
   return 0
@@ -303,16 +305,19 @@ rehearsal_attention_audit_flagged_numbers() {
   " 2>/dev/null | tr -d '\r'
 }
 
+# `flagged`, not `rows`. shellcheck resolves a sourced file's locals into the
+# sourcing file's namespace, and `rows` there turns run.sh's own `r1=rows-only`
+# into an arithmetic suggestion (SC2100) in a line this leg never touched.
 rehearsal_attention_audit_board_clean() {
-  local repo="$1" rows
-  rows="$(rehearsal_attention_audit_flagged_numbers "$repo")" || return 1
-  [ -z "${rows//[[:space:]]/}" ]
+  local repo="$1" flagged
+  flagged="$(rehearsal_attention_audit_flagged_numbers "$repo")" || return 1
+  [ -z "${flagged//[[:space:]]/}" ]
 }
 
 rehearsal_attention_audit_both_visible() {
-  local repo="$1" pr="$2" issue="$3" rows
-  rows="$(rehearsal_attention_audit_flagged_numbers "$repo")" || return 1
-  grep -qx -- "$pr" <<<"$rows" && grep -qx -- "$issue" <<<"$rows"
+  local repo="$1" pr="$2" issue="$3" flagged
+  flagged="$(rehearsal_attention_audit_flagged_numbers "$repo")" || return 1
+  grep -qx -- "$pr" <<<"$flagged" && grep -qx -- "$issue" <<<"$flagged"
 }
 
 # The direct invocation of §1. `alert` is overridden AFTER the module is
@@ -414,9 +419,9 @@ rehearsal_attention_audit_clear_flags() {
 }
 
 rehearsal_attention_audit_neither_visible() {
-  local repo="$1" pr="$2" issue="$3" rows
-  rows="$(rehearsal_attention_audit_flagged_numbers "$repo")" || return 1
-  ! grep -qx -- "$pr" <<<"$rows" && ! grep -qx -- "$issue" <<<"$rows"
+  local repo="$1" pr="$2" issue="$3" flagged
+  flagged="$(rehearsal_attention_audit_flagged_numbers "$repo")" || return 1
+  ! grep -qx -- "$pr" <<<"$flagged" && ! grep -qx -- "$issue" <<<"$flagged"
 }
 
 # Every exit path, including a red: called from the leg on its way out AND from
@@ -529,6 +534,12 @@ rehearsal_attention_audit_drill() {
   alerts_unchanged="$(rehearsal_attention_audit_read_capture "$capture.3")" || alerts_unchanged=""
   rehearsal_attention_audit_graded "attention-audit: an unchanged board adds no further alert" \
     rehearsal_attention_audit_alert_count_is 0 "🚨" "$alerts_unchanged" || audit_ok=1
+  # The other half of #59's rule, and the half that lands in duty.log: a
+  # standing malformed set must not write an hourly line forever either. The
+  # alert row above cannot see this one — report_suppressed and the alert are
+  # two separate suppressions over the same set.
+  rehearsal_attention_audit_graded "attention-audit: an unchanged board writes no further report" \
+    rehearsal_attention_audit_no_report "$unchanged_out" || audit_ok=1
 
   # -- non-repair (§4), read after the audit has seen the board twice --
   pr_json="$(gh api "repos/$repo/issues/$pr")" || pr_json='{}'
@@ -555,6 +566,8 @@ rehearsal_attention_audit_drill() {
   alerts_cleared="$(rehearsal_attention_audit_read_capture "$capture.4")" || alerts_cleared=""
   rehearsal_attention_audit_graded "attention-audit: clearing the set alerts exactly once" \
     rehearsal_attention_audit_alert_count_is 1 "✅" "$alerts_cleared" || audit_ok=1
+  rehearsal_attention_audit_graded "attention-audit: the cleared board writes no report" \
+    rehearsal_attention_audit_no_report "$cleared_out" || audit_ok=1
 
   # -- cleanup, proved off the board rather than asserted --
   bx "rm -f '$capture'.[1-4]" >/dev/null 2>&1 || true
