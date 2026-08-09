@@ -2269,7 +2269,7 @@ else
   fail "crew profiles: a same-name clash shows the operator's line" "$(grep '^  claude' "$CL_TMP/prof-out")"
 fi
 CL_GROK_PROFILE="$(grep -E '^  grok ' "$CL_TMP/prof-out")"
-if grep -qv '\[operator\]' <<<"$CL_GROK_PROFILE"; then
+if [ -n "$CL_GROK_PROFILE" ] && grep -qv '\[operator\]' <<<"$CL_GROK_PROFILE"; then
   ok "crew profiles: a shipped-only name still resolves shipped"
 else
   fail "crew profiles: a shipped-only name still resolves shipped" "$(grep '^  grok' "$CL_TMP/prof-out")"
