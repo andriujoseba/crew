@@ -747,6 +747,48 @@ t attention-dispatch-also-built-a-pr-reds 1 \
   "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
 t attention-dispatch-pr-red-quotes-the-pr 1 \
   "$(grep -cF 'read: #9 (build/77-oops)' <<<"$ATT_OUT")"
+# "Opened no PR" is an absence, and an absence that could not read its source
+# is not one. A pulls endpoint that would not list reds this row naming itself,
+# exactly as an unlistable branch source reds its twin below — the row used to
+# take a failed read as an empty board and print `ok`.
+ATT_OUT="$(att_row 'attention: dispatch opened no PR for the claim' \
+  rehearsal_attention_prs_for_issue_from_json "$ATT_ISSUE" '[]' "$ATT_REPO")"
+t attention-dispatch-unreadable-pulls-source-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
+t attention-dispatch-unreadable-pulls-source-named 1 \
+  "$(grep -cF "read: could not list pull requests of: $ATT_REPO" <<<"$ATT_OUT")"
+
+# The read that feeds it. It reports gh's OWN status rather than the pipeline's,
+# because the helper is sourceable and its caller's shell options are not its
+# guarantee: through `gh | jq -s`, a `--paginate` that dies after page one hands
+# back a SHORT list under a zero status, which is a false absence. Staged with
+# pipefail off, which is where the difference between the two shapes lives.
+att_pulls_read() {  # att_pulls_read <state> — prints "<rc>|<entries read>"
+  local state="$1" out rc=0
+  out="$(
+    set +o pipefail
+    gh() {
+      case "$state" in
+        empty) printf '%s\n' '[]' ;;
+        one)   printf '%s\n' "[{\"user\":{\"login\":\"$ATT_IDENTITY\"},\"number\":9,
+                 \"body\":\"Closes #$ATT_ISSUE\",\"head\":{\"ref\":\"build/$ATT_ISSUE-oops\"}}]" ;;
+        fail)  echo 'gh: API rate limit exceeded (HTTP 403)' >&2; return 1 ;;
+        short) printf '%s\n' '[]'; return 1 ;;
+      esac
+    }
+    rehearsal_attention_open_prs_json "$ATT_REPO" "$ATT_IDENTITY"
+  )" || rc=$?
+  # `-` is "nothing came back", told apart from a legitimately empty board:
+  # `jq length` reads null as 0 and would spell the two the same way.
+  printf '%s|%s\n' "$([ "$rc" -eq 0 ] && echo 0 || echo nonzero)" \
+    "$([ -n "$out" ] && jq -r 'length' <<<"$out" 2>/dev/null || echo -)"
+}
+t attention-pulls-read-of-an-empty-board-is-clean '0|0' "$(att_pulls_read empty)"
+t attention-pulls-read-sees-the-authors-pr '0|1' "$(att_pulls_read one)"
+t attention-pulls-read-fails-on-an-api-failure 'nonzero|-' "$(att_pulls_read fail)"
+# The one the pipeline shape passed: valid JSON out, non-zero status.
+t attention-truncated-pulls-pagination-is-not-a-clean-read 'nonzero|-' \
+  "$(att_pulls_read short)"
 
 # §4.2 no build/<issue>-* branch — on the BUILDER FORK as well as the sandbox.
 # The route says fork (shared/prompts/attention.txt) and a builder pushes there
@@ -1183,10 +1225,24 @@ att_half_stubs() {
 }
 
 att_dispatch_half() {  # rows on stdout, the half's rc as the exit status
+  # The half reads pulls TWICE — the fixture precondition, then the graded row
+  # minutes later — and either read can blip on its own. Counted in a file for
+  # the same reason the timeout half's invocations are: the reads happen inside
+  # command substitutions, and a shell variable would go with the subshell.
+  printf '0' >"$TMP/att-pulls-n"
   (
     att_half_stubs
     rehearsal_attention_dispatch_invoke() { printf '%s\n' "$ATT_WAKE"; }
-    rehearsal_attention_open_prs_json() { printf '%s\n' "$ATT_PULLS_CLEAN"; }
+    rehearsal_attention_open_prs_json() {
+      local n
+      n=$(( $(cat "$TMP/att-pulls-n") + 1 ))
+      printf '%s' "$n" >"$TMP/att-pulls-n"
+      case "${ATT_PULLS_FAIL:-none}" in
+        first)  if [ "$n" -eq 1 ]; then return 1; fi ;;
+        second) if [ "$n" -eq 2 ]; then return 1; fi ;;
+      esac
+      printf '%s\n' "$ATT_PULLS_CLEAN"
+    }
     rehearsal_attention_settled_issue_json() { printf '%s\n' "$ATT_ISSUE_READY"; }
     rehearsal_attention_collect_branches() {
       REHEARSAL_ATTENTION_BRANCHES="$ATT_BRANCHES_CLEAN"
@@ -1297,6 +1353,36 @@ t attention-timeout-waits-for-the-demand-index 1 \
   "$(grep -cF 'FAIL attention: timeout demand visible to the identity' <<<"$ATT_OUT")"
 t attention-invisible-demand-reaches-the-timeout-verdict 1 "$r1"
 ATT_VISIBLE=0
+
+# Mutation: ONLY the pulls endpoint blips. The branch reads are clean, the wake
+# is correct, the board is correct — this is one `repos/<sandbox>/pulls` call
+# meeting a secondary rate limit, and it is the likelier of the half's two
+# board reads to do so, being the `--paginate` listing over the sandbox the
+# builder legs above have been opening PRs into. The half reads it twice, at
+# two separate moments, so each read is failed on its own.
+#
+# Before the fix both fell back to `[]`: the precondition passed on a fixture
+# it had not checked, and `attention: dispatch opened no PR for the claim` —
+# the row #440 §4 calls load-bearing FIRST — printed `ok` having read nothing.
+ATT_PULLS_FAIL=first
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+t attention-unread-pulls-reds-the-fixture-precondition 1 \
+  "$(grep -cFx 'FAIL attention: dispatch fixture starts with no PR and no build branch' \
+    <<<"$ATT_OUT")"
+t attention-unread-pulls-precondition-reaches-the-verdict 1 "$r1"
+ATT_PULLS_FAIL=second
+ATT_OUT="$(att_dispatch_half)"; r1=$?
+ATT_PULLS_FAIL=none
+# The precondition is not a backstop for the graded row: the first read was
+# clean and passed it, and the second read failed minutes later.
+t attention-unread-pulls-precondition-passes-on-the-clean-first-read 1 \
+  "$(grep -cFx 'ok   attention: dispatch fixture starts with no PR and no build branch' \
+    <<<"$ATT_OUT")"
+t attention-unread-pulls-reds-the-graded-absence-row 1 \
+  "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
+t attention-unread-pulls-red-names-the-source 1 \
+  "$(grep -cF "read: could not list pull requests of: $ATT_REPO" <<<"$ATT_OUT")"
+t attention-unread-pulls-reaches-the-halfs-verdict 1 "$r1"
 
 # The fixture registry the EXIT trap reads (rehearsal.sh). It is written by the
 # filer, so the filer must not be called in a command substitution: bash runs
