@@ -53,8 +53,17 @@ rehearsal_attention_verdict() {
 # The engine's own link between a PR and the issue it serves: a closing keyword
 # in the body, or a build branch named for the issue. A dispatch that also
 # built is caught by either, and #301 exists to prevent both.
+#
+# `unreadable` is the third input for the same reason the branch predicate
+# below takes one: "opened no PR" is an absence, and an absence is established
+# by reading the source, never by failing to. A pulls endpoint that could not
+# be listed reds here rather than arriving as an empty list.
 rehearsal_attention_prs_for_issue_from_json() {
-  local issue="$1" pulls_json="$2" offenders
+  local issue="$1" pulls_json="$2" unreadable="${3:-}" offenders
+  if [ -n "$unreadable" ]; then
+    printf 'could not list pull requests of: %s\n' "$unreadable"
+    return 1
+  fi
   offenders="$(jq -r --arg issue "$issue" '
     [ .[]
       | select(
@@ -246,13 +255,21 @@ rehearsal_attention_timeout_unresolved() {
 
 # --- box and board reads ---------------------------------------------------
 
+# The pulls endpoint reflects a new PR immediately; search-backed listings lag
+# behind the invocation this leg is measuring.
+#
+# `gh`'s status is read on its own rather than through the pipeline, because
+# the pipeline's is not a fact about the board: it says non-zero today only
+# because `pipefail` is set in rehearsal.sh AND `jq -s add` happens to error on
+# the empty input a dead `gh` leaves. A `--paginate` that dies after page one
+# satisfies both and still hands back a SHORT list, which is a false absence —
+# the thing this whole predicate exists to refuse.
 rehearsal_attention_open_prs_json() {
-  local repo="$1" author="$2"
-  # The pulls endpoint reflects a new PR immediately; search-backed listings
-  # lag behind the invocation this leg is measuring.
-  gh api "repos/$repo/pulls?state=open&per_page=100" --paginate \
-    | jq -s --arg author "$author" \
-      '[add[] | select(.user.login == $author) | {number, body, head: .head.ref}]'
+  local repo="$1" author="$2" raw
+  raw="$(gh api "repos/$repo/pulls?state=open&per_page=100" --paginate)" || return 1
+  jq -s --arg author "$author" \
+    '[add[] | select(.user.login == $author) | {number, body, head: .head.ref}]' \
+    <<<"$raw"
 }
 
 # The two places a build/<issue>-* branch can be after a dispatch: the sandbox
@@ -267,6 +284,11 @@ rehearsal_attention_branch_sources() {
 # failure fails this probe too, and says no such thing. Reading the second as
 # the first is exactly how a source goes unread and still grades clean, so only
 # a matched 404 counts — every other outcome, success included, is "not absent".
+#
+# That literal is a coupling to gh's wording, on the record deliberately: if it
+# ever moves, no source is skippable any more and the branch row reds naming
+# the fork. Failing closed is the direction this predicate is FOR, so it is not
+# widened with a second matcher — a looser match is a bigger absence claim.
 rehearsal_attention_repo_absent() {
   local src="$1" err
   err="$(gh api "repos/$src" 2>&1 >/dev/null)" && return 1
@@ -315,6 +337,12 @@ rehearsal_attention_collect_branches() {
 # appear in it first. Asked through the box on purpose — the index is scoped to
 # the authenticated assignee, so the host's token would answer a different
 # question about a different user.
+#
+# Both waits are bounded at 300s, the number rehearsal.sh already spends on THE
+# BOARD REFLECTING A CHANGE JUST MADE (:599 the label coming off, :709 the issue
+# leaving ready, :770 the panel request after the head settles); its 900/1200/
+# 1800 are for an agent session doing work, which this is not. So the leg's
+# worst case before its invocations start is 10 minutes, not 30.
 rehearsal_attention_demand_visible() {
   local repo="$1" num="$2"
   # shellcheck disable=SC2016  # HOME and the label resolve in the box
@@ -484,7 +512,7 @@ rehearsal_attention_graded() {
 
 rehearsal_attention_dispatch_half() {
   local repo="$1" identity="$2" mark="$3"
-  local num filed_at issue_json pulls_json comments_json out
+  local num filed_at issue_json pulls_json pulls_unreadable comments_json out
   local sources
   # Declared HERE, above the half's first `fail`. Below its first `fail` this
   # is a re-initialisation: the row reds, the half still returns 0, and
@@ -504,9 +532,14 @@ rehearsal_attention_dispatch_half() {
 
   # Fixture validity, not one of §4's five: the route branches on exactly these
   # two absences, so a fixture that already carried either would prove nothing.
-  pulls_json="$(rehearsal_attention_open_prs_json "$repo" "$identity")" || pulls_json='[]'
+  # An unread pulls endpoint fails the precondition for the same reason it reds
+  # the graded row below — it has not shown the fixture starts clean.
+  pulls_unreadable=""
+  pulls_json="$(rehearsal_attention_open_prs_json "$repo" "$identity")" \
+    || { pulls_json='[]'; pulls_unreadable="$repo"; }
   rehearsal_attention_collect_branches "${sources[@]}"
-  if rehearsal_attention_prs_for_issue_from_json "$num" "$pulls_json" >/dev/null \
+  if rehearsal_attention_prs_for_issue_from_json "$num" "$pulls_json" \
+        "$pulls_unreadable" >/dev/null \
       && rehearsal_attention_build_branches_from_json "$num" \
            "$REHEARSAL_ATTENTION_BRANCHES" \
            "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE" >/dev/null; then
@@ -516,7 +549,7 @@ rehearsal_attention_dispatch_half() {
     return 1
   fi
 
-  if ! wait_for 900 "attention: dispatch demand visible to the identity" \
+  if ! wait_for 300 "attention: dispatch demand visible to the identity" \
       rehearsal_attention_demand_visible "$repo" "$num"; then
     dispatch_ok=1
   fi
@@ -533,7 +566,9 @@ rehearsal_attention_dispatch_half() {
   issue_json="$(rehearsal_attention_settled_issue_json "$repo" "$num" "$identity")" \
     || issue_json=""
   [ -n "$issue_json" ] || issue_json='{}'
-  pulls_json="$(rehearsal_attention_open_prs_json "$repo" "$identity")" || pulls_json='[]'
+  pulls_unreadable=""
+  pulls_json="$(rehearsal_attention_open_prs_json "$repo" "$identity")" \
+    || { pulls_json='[]'; pulls_unreadable="$repo"; }
   rehearsal_attention_collect_branches "${sources[@]}"
   comments_json="$(gh api "repos/$repo/issues/$num/comments?per_page=100" --paginate \
     | jq -s 'add // []')" || comments_json='[]'
@@ -542,7 +577,8 @@ rehearsal_attention_dispatch_half() {
   # to prevent, and a leg checking only the label swap would pass a session
   # that dispatched AND built.
   rehearsal_attention_graded "attention: dispatch opened no PR for the claim" \
-    rehearsal_attention_prs_for_issue_from_json "$num" "$pulls_json" || dispatch_ok=1
+    rehearsal_attention_prs_for_issue_from_json "$num" "$pulls_json" \
+      "$pulls_unreadable" || dispatch_ok=1
   rehearsal_attention_graded "attention: dispatch pushed no build/$num-* branch" \
     rehearsal_attention_build_branches_from_json "$num" \
       "$REHEARSAL_ATTENTION_BRANCHES" "$REHEARSAL_ATTENTION_BRANCH_UNREADABLE" \
@@ -589,7 +625,7 @@ rehearsal_attention_timeout_half() {
   ok "attention: timeout fixture filed"
   bx "rm -f '$capture_first' '$capture_second'" >/dev/null 2>&1 || true
 
-  if ! wait_for 900 "attention: timeout demand visible to the identity" \
+  if ! wait_for 300 "attention: timeout demand visible to the identity" \
       rehearsal_attention_demand_visible "$repo" "$num"; then
     timeout_ok=1
   fi
