@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Sourceable terminal-breaker drill helpers. The live leg runs last in phase 2;
 # the log predicates stay here so CI can mutate their inputs without a box host.
+# shellcheck disable=SC2016  # quoted commands expand HOME inside the drill box
 
 REHEARSAL_BREAKER_DIR=""
 REHEARSAL_BREAKER_ROLE_CONF=""
@@ -41,7 +42,7 @@ rehearsal_breaker_load_installed_facts() {
   local threshold kind state
   threshold="$(bx "sed -n 's/^SESSION_TERMINAL_THRESHOLD=\([0-9][0-9]*\)$/\1/p' ~/duty/conf/fleet.defaults.conf | head -1")" \
     || threshold=""
-  kind="$(bx "sed -n '/run_session attention /{s/.*run_session \([^ ]*\) .*/\1/p;q;}' ~/duty/lib/duty-attention.sh")" \
+  kind="$(bx "sed -n 's/^[[:space:]]*run_session \([^ ]*\) .*/\1/p' ~/duty/lib/duty-attention.sh | head -1")" \
     || kind=""
   case "$threshold" in ''|*[!0-9]*|0) threshold="" ;; esac
   case "$kind" in ''|*[!A-Za-z0-9_-]*) kind="" ;; esac
@@ -130,7 +131,8 @@ rehearsal_breaker_below_threshold_from_log() {
 
 rehearsal_breaker_trip_from_log() {
   local kind="$1" threshold="$2" log_text="$3"
-  [ "$(grep -cF "session breaker: kind=$kind tripped after $threshold consecutive terminal failures" <<<"$log_text")" -eq 1 ]
+  [ "$(grep -cF "SESSION START kind=$kind" <<<"$log_text")" -eq "$threshold" ] \
+    && [ "$(grep -cF "session breaker: kind=$kind tripped after $threshold consecutive terminal failures" <<<"$log_text")" -eq 1 ]
 }
 
 rehearsal_breaker_suppressed_from_log() {
@@ -146,6 +148,10 @@ rehearsal_breaker_recovered_from_log() {
     && grep -Fq "SESSION START kind=$kind" <<<"$log_text"
 }
 
+rehearsal_breaker_alert_count_is_one() {
+  [ "$1" = 1 ]
+}
+
 rehearsal_breaker_tick_log() {
   local first="$1"
   bx "tail -n +$first ~/duty/duty.log"
@@ -153,6 +159,7 @@ rehearsal_breaker_tick_log() {
 
 rehearsal_breaker_drill() {
   local repo="$1" issue="$2" role="$3" first log_text all_log="" attempt
+  local fixture_dir
   local threshold kind alerts failures_before
   if [ "${REHEARSAL_BREAKER_DRILL:-1}" -eq 0 ]; then
     skip "breaker: terminal lane trip and recovery (--no-breaker-drill)"
@@ -179,6 +186,7 @@ rehearsal_breaker_drill() {
     fail "breaker: staged $AGENT CLI installed"
     return 1
   fi
+  fixture_dir="$REHEARSAL_BREAKER_DIR"
   if gh api -X POST "repos/$repo/issues/$issue/labels" -f 'labels[]=attention' >/dev/null; then
     ok "breaker: attention lane fixture armed"
   else
@@ -207,11 +215,8 @@ rehearsal_breaker_drill() {
   check "breaker: following tick skips the stopped lane" \
     rehearsal_breaker_suppressed_from_log "$kind" "$threshold" "$log_text"
   alerts="$(bx "wc -l < '$REHEARSAL_BREAKER_DIR/alerts.log' 2>/dev/null || printf '0\n'")"
-  if [ "$alerts" = 1 ]; then
-    ok "breaker: operator alert emitted exactly once while stopped"
-  else
-    fail "breaker: operator alert emitted exactly once while stopped (read '$alerts')"
-  fi
+  check "breaker: operator alert emitted exactly once while stopped (read '$alerts')" \
+    rehearsal_breaker_alert_count_is_one "$alerts"
 
   if rehearsal_breaker_restore_cli; then
     ok "breaker: real $AGENT CLI restored"
@@ -225,6 +230,6 @@ rehearsal_breaker_drill() {
   check "breaker: later tick recovers and launches a session" \
     rehearsal_breaker_recovered_from_log "$kind" "$log_text"
   check "breaker: state is cleared after recovery" bx "test ! -e '$REHEARSAL_BREAKER_STATE'"
-  check "breaker: teardown leaves no staged CLI" bx "test ! -e '$REHEARSAL_BREAKER_DIR'"
+  check "breaker: teardown leaves no staged CLI" bx "test ! -e '$fixture_dir'"
   if [ "${#FAILS[@]}" -gt "$failures_before" ]; then return 1; fi
 }

@@ -324,6 +324,132 @@ source "$ROOT/drill/rehearsal-fixtures.sh"
 source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
+# shellcheck source=drill/rehearsal-breaker.sh
+source "$ROOT/drill/rehearsal-breaker.sh"
+
+# --- rehearsal terminal-breaker leg: sourceable mutations (#424) ---------
+BREAKER_KIND=attention
+BREAKER_THRESHOLD=3
+BREAKER_TERMINAL_LOG="2026-08-09T00:00:01Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/one
+2026-08-09T00:00:02Z SESSION END kind=$BREAKER_KIND key=owner/repo#1 rc=1 dur=1s outcome=TERMINAL acted=no"
+if rehearsal_breaker_below_threshold_from_log \
+    "$BREAKER_KIND" "$BREAKER_TERMINAL_LOG"; then
+  r1=accepted
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-below-threshold-terminal-counts accepted "$r1"
+if rehearsal_breaker_below_threshold_from_log "$BREAKER_KIND" \
+    "$BREAKER_TERMINAL_LOG
+2026-08-09T00:00:03Z WARN: session breaker: kind=$BREAKER_KIND tripped after $BREAKER_THRESHOLD consecutive terminal failures"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-below-threshold-trip-mutation-reds red "$r1"
+
+BREAKER_TRIP_LOG="$BREAKER_TERMINAL_LOG
+$BREAKER_TERMINAL_LOG
+$BREAKER_TERMINAL_LOG
+2026-08-09T00:00:03Z WARN: session breaker: kind=$BREAKER_KIND tripped after $BREAKER_THRESHOLD consecutive terminal failures; log=/tmp/three"
+if rehearsal_breaker_trip_from_log \
+    "$BREAKER_KIND" "$BREAKER_THRESHOLD" "$BREAKER_TRIP_LOG"; then
+  r1=tripped
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-trip-at-installed-threshold tripped "$r1"
+# Required mutation: disabling the breaker removes its trip line from the
+# exact log input the sourceable live assertion reads. The trip assertion must
+# red even though all terminal dispatches still happened.
+if rehearsal_breaker_trip_from_log "$BREAKER_KIND" "$BREAKER_THRESHOLD" \
+    "${BREAKER_TRIP_LOG%$'\n'*}"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-disabled-mutation-reds-trip red "$r1"
+if rehearsal_breaker_trip_from_log "$BREAKER_KIND" "$BREAKER_THRESHOLD" \
+    "$BREAKER_TRIP_LOG
+2026-08-09T00:00:04Z WARN: session breaker: kind=$BREAKER_KIND tripped after $BREAKER_THRESHOLD consecutive terminal failures; log=/tmp/four"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-second-trip-mutation-reds red "$r1"
+
+BREAKER_SKIP_LOG="2026-08-09T00:00:05Z SESSION SKIP kind=$BREAKER_KIND key=owner/repo#1 reason=terminal-breaker count=$BREAKER_THRESHOLD"
+if rehearsal_breaker_suppressed_from_log \
+    "$BREAKER_KIND" "$BREAKER_THRESHOLD" "$BREAKER_SKIP_LOG"; then
+  r1=suppressed
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-stopped-tick-skips-session suppressed "$r1"
+if rehearsal_breaker_suppressed_from_log "$BREAKER_KIND" \
+    "$BREAKER_THRESHOLD" "$BREAKER_SKIP_LOG
+2026-08-09T00:00:06Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/four"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-dispatch-past-threshold-mutation-reds red "$r1"
+
+if rehearsal_breaker_alert_count_is_one 1; then r1=once; else r1=WRONG; fi
+t rehearsal-breaker-single-alert-counted once "$r1"
+if rehearsal_breaker_alert_count_is_one 2; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-second-alert-mutation-reds red "$r1"
+
+BREAKER_RECOVERY_LOG="2026-08-09T00:00:07Z session breaker: kind=$BREAKER_KIND recovered; dispatch resumed
+2026-08-09T00:00:07Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/recovered"
+if rehearsal_breaker_recovered_from_log \
+    "$BREAKER_KIND" "$BREAKER_RECOVERY_LOG"; then
+  r1=recovered
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-restored-cli-recovers-next-tick recovered "$r1"
+if rehearsal_breaker_recovered_from_log "$BREAKER_KIND" \
+    "${BREAKER_RECOVERY_LOG%$'\n'*}"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-hand-resume-mutation-reds red "$r1"
+
+BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
+mkdir -p "$BREAKER_FIXTURE_HOME/duty/conf/roles"
+printf 'TIMEOUT_REVIEW=1\n' >"$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
+bx() { HOME="$BREAKER_FIXTURE_HOME" bash -c "$1"; }
+if rehearsal_breaker_install_fixture reviewer; then r1=installed; else r1=WRONG; fi
+t rehearsal-breaker-cli-fixture-installs installed "$r1"
+t rehearsal-breaker-cli-fixture-overrides-command 1 \
+  "$(grep -cF '# rehearsal-breaker begin' "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+if rehearsal_breaker_restore_cli; then r1=restored; else r1=WRONG; fi
+t rehearsal-breaker-cli-fixture-restores-profile restored "$r1"
+t rehearsal-breaker-cli-fixture-removes-directory absent \
+  "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
+t rehearsal-breaker-cli-fixture-restores-content 'TIMEOUT_REVIEW=1' \
+  "$(cat "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+unset -f bx
+
+if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'breaker  (trip + single alert + recovery)' \
+      "$ROOT/drill/rehearsal-breaker.sh" \
+    && grep -Fq 'rehearsal_breaker_drill "$SANDBOX" "$inum" "$ROLE"' \
+      "$ROOT/drill/rehearsal.sh"; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t rehearsal-breaker-live-leg-and-opt-out-wired wired "$r1"
+if grep -Eq 'SESSION_TERMINAL_THRESHOLD=[0-9]|run_session attention' \
+    "$ROOT/drill/rehearsal-breaker.sh"; then
+  r1=HARDCODED
+else
+  r1=derived
+fi
+t rehearsal-breaker-threshold-and-kind-not-hardcoded derived "$r1"
 
 # --- rehearsal resume leg: next-tick wake and bounded zero action (#419) ---
 RESUME_HEAD="$(printf 'd%.0s' {1..40})"
