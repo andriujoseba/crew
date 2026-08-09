@@ -25,13 +25,33 @@ rehearsal_boot_last_block() {
   '
 }
 
-# One read of the box feeds both assertions. A box that cannot be read leaves
-# the block empty, which each assertion reports as what it read — the file
-# missing or empty is already `boot check ran`, which fires first.
+# One read of the box feeds both assertions, so whether that read SUCCEEDED is
+# a fact both of them need: a box that stopped answering and a box whose boot
+# check is clean both arrive here as an empty block, and an assertion that
+# cannot tell them apart scores silence as proof — the `test -s` mistake this
+# file exists to undo, one level down. The read's own exit status is the only
+# thing that separates them (`boot check ran` is a SEPARATE box request, and a
+# box can stop answering between the two), so keep it out of the pipeline,
+# where the status would be `awk`'s and always 0, and publish it.
 rehearsal_boot_load() {
+  local raw
+  REHEARSAL_BOOT_BLOCK=""
+  REHEARSAL_BOOT_READ_OK=0
+  raw="$(bx "cat ~/duty/boot-check.log" 2>/dev/null)" || return 1
+  REHEARSAL_BOOT_READ_OK=1
   # shellcheck disable=SC2034  # sourced global consumed by the assertions below
-  REHEARSAL_BOOT_BLOCK="$(bx "cat ~/duty/boot-check.log" 2>/dev/null \
-    | rehearsal_boot_last_block)"
+  REHEARSAL_BOOT_BLOCK="$(printf '%s\n' "$raw" | rehearsal_boot_last_block)"
+}
+
+# The one thing neither assertion may answer: a box that did not come back.
+# Both call this first, so an unreadable log is reported as an unreadable log
+# in both rows, rather than as whatever the empty block happens to look like
+# to each of them.
+rehearsal_boot_read_failed() {  # rehearsal_boot_read_failed <agent> <name>
+  [ "${REHEARSAL_BOOT_READ_OK:-0}" -eq 1 ] && return 1
+  echo "  read: nothing — ~/duty/boot-check.log did not come back from the box for $1"
+  fail "$2"
+  return 0
 }
 
 # The verdict, not the transcript: name the agent the round was given and
@@ -39,6 +59,7 @@ rehearsal_boot_load() {
 rehearsal_boot_probe_ok() {  # rehearsal_boot_probe_ok <agent>
   local agent="$1" name line verdict
   name="boot check: cli probe verdict is ok for $agent"
+  rehearsal_boot_read_failed "$agent" "$name" && return 1
   line="$(printf '%s\n' "${REHEARSAL_BOOT_BLOCK:-}" \
     | grep -E '^cli probe:' | tail -1)"
   if [ -z "$line" ]; then
@@ -64,6 +85,14 @@ rehearsal_boot_probe_ok() {  # rehearsal_boot_probe_ok <agent>
 rehearsal_boot_warn_free() {  # rehearsal_boot_warn_free <agent>
   local agent="$1" name hits count
   name="boot check: no WARN for $agent"
+  rehearsal_boot_read_failed "$agent" "$name" && return 1
+  # A read that succeeded and returned nothing is still nothing: `grep` finding
+  # no WARN in an empty block certifies the box, and it never saw one.
+  if [ -z "${REHEARSAL_BOOT_BLOCK:-}" ]; then
+    echo "  read: an empty last boot block for $agent — no WARN in nothing is not a clean boot"
+    fail "$name"
+    return 1
+  fi
   hits="$(printf '%s\n' "${REHEARSAL_BOOT_BLOCK:-}" | grep -F WARN)" || hits=""
   if [ -z "$hits" ]; then
     ok "$name"

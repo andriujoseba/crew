@@ -748,8 +748,13 @@ t rehearsal-boot-missing-probe-line-reds 1 \
 t rehearsal-boot-missing-probe-line-says-what-it-read 1 \
   "$(grep -cFx "  read: no 'cli probe:' line in the last boot block for codex" <<<"$boot_out")"
 
-# A box that stopped answering leaves the block empty. That reds too — an
-# unreadable log is not a verdict.
+# A box that stopped answering leaves the block empty. BOTH rows red on that —
+# an unreadable log is not a verdict, and it is not a clean boot either: the
+# WARN-free row greening here would score the box's silence as proof, which is
+# the `test -s` mistake this whole block exists to undo. Both name the read
+# rather than the log's shape, so the operator chases the box and not a boot
+# log that was fine. `boot check ran` cannot cover this: it is a separate box
+# request, and a box can stop answering between the two.
 boot_out="$(
   (
     bx() { return 1; }
@@ -757,10 +762,26 @@ boot_out="$(
     fail() { printf 'FAIL %s\n' "$1"; }
     rehearsal_boot_load
     rehearsal_boot_probe_ok claude
+    rehearsal_boot_warn_free claude
   ) 2>&1
 )"
 t rehearsal-boot-unreadable-log-reds 1 \
   "$(grep -cFx 'FAIL boot check: cli probe verdict is ok for claude' <<<"$boot_out")"
+t rehearsal-boot-unreadable-log-reds-the-warn-free-row 1 \
+  "$(grep -cFx 'FAIL boot check: no WARN for claude' <<<"$boot_out")"
+t rehearsal-boot-unreadable-log-greens-neither-row 0 \
+  "$(grep -c '^ok   boot check' <<<"$boot_out")"
+t rehearsal-boot-unreadable-log-names-the-read-on-both-rows 2 \
+  "$(grep -cFx '  read: nothing — ~/duty/boot-check.log did not come back from the box for claude' <<<"$boot_out")"
+
+# A read that SUCCEEDED and came back empty is a different fact from a box that
+# never answered, and the WARN-free row may not green on it either: `grep`
+# finding no WARN in an empty block certifies a boot it never saw.
+boot_out="$(boot_run claude "")"
+t rehearsal-boot-empty-block-reds-the-warn-free-row 1 \
+  "$(grep -cFx 'FAIL boot check: no WARN for claude' <<<"$boot_out")"
+t rehearsal-boot-empty-block-says-what-it-read 1 \
+  "$(grep -cFx '  read: an empty last boot block for claude — no WARN in nothing is not a clean boot' <<<"$boot_out")"
 
 # No agent name appears in the assertions: the agent is the argument, and the
 # call site passes $AGENT.
