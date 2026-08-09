@@ -1256,9 +1256,11 @@ t attention-dedup-row-greens-alone-which-is-the-point 1 \
   "$(grep -cFx 'ok   attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
 # And that red stays legible: bare "$first$second" ran the first invocation's
 # last line into the second's first, in the one place an operator has to tell
-# the two apart.
+# the two apart. The needle is the glue itself — this fixture's first capture
+# ends at `reply_tail=` and the second opens with the registry line, so the two
+# meet inside the SESSION END row the red quotes.
 t attention-invocation-red-does-not-glue-the-two-captures 0 \
-  "$(grep -c 'TIMEOUTattention' <<<"$ATT_OUT" | tr -d ' ')"
+  "$(grep -c 'reply_tail=attention: none new in registry' <<<"$ATT_OUT" | tr -d ' ')"
 ATT_SECOND="$ATT_SESSION_OUT2"
 
 # Mutation: the run log does not resolve. Its own row reds and reaches the
