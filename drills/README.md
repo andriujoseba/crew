@@ -56,6 +56,58 @@ it then so every required leg can land before the operator runs the round. A
 leg that lands after the drill round changes the candidate the record describes
 and forces a re-drill.
 
+### Worked example: `0.1.2`
+
+TODO-SNAPSHOT. The disposition records the decision at audit time, so a `new
+leg` row keeps the issue it caused even when that issue has since landed.
+
+| Fragment | Surface | Disposition and evidence |
+| --- | --- | --- |
+| `139.md` | Fix rounds return to draft | **`new leg`** — #418 |
+| `168.md` | Dirty-worktree preservation | **`new leg`** — #422 |
+| `190.md` | Floor integrity verdict and armed-box check | **`new leg`** — #420 |
+| `204.md` | Consoles only for deployed boxes | **`new leg`** — #420 |
+| `210.md` | Tagged installer assets and checksums | **`not a drill surface`** — assets exist only after the tag; #210 owns their post-merge verification. The installed tree is covered by #421. |
+| `217.md` | Round teardown, retention and reuse | **`drilled`** — the `teardown` summary rows and `drill/teardown.sh` refusal, inspection and cleanup assertions read it. |
+| `218.md` | `crew up --dry-run` | **`new leg`** — #420 |
+| `240.md` | Boot-check probe verdict | **`new leg`** — #427 |
+| `301.md` | Attention dispatch and timeout reporting | **TODO-DISPOSITION-301** |
+| `303.md` | Hygiene reporting of malformed `attention` | **TODO-DISPOSITION-303** |
+| `308.md` | Unknown `crew status` probe | **`new leg`** — #420 |
+| `312.md` | Disarmed versus silent floor states | **`new leg`** — #420 |
+| `316.md` | Union of work and notification repositories | **`new leg`** — #423 |
+| `319.md` | Malformed-signal detection and fresh comment reads | **`new leg`** — #419 |
+| `323.md` | Release-tree floor CLI test | **`not a drill surface`** — this fixes the repository's `ci-floor` suite; no installed real-host behavior changed. |
+| `341.md` | Post-removal tick wait and diagnostics | **`drilled`** — `step 9: positive engine/cron/tick survival observation` reads it. |
+| `345.md` | `no build duty` cause | **`new leg`** — #420 |
+| `347.md` | Serving crew version in the floor | **`new leg`** — #420 |
+| `350.md` | Ceremony pin, guards and board reconciliation | **`not a drill surface`** — GitHub Actions runs these repository guards and board workflows; a drill box does not. |
+| `358.md` | `post-merge` in the queue-label set | **`new leg`** — #417 |
+| `359.md` | Quiet post-session triage state | **`new leg`** — #417 |
+| `363.md` | Doctrine-quotation and docs-sync CI guards | **`not a drill surface`** — these compare repository files in CI, not behavior on an installed host. |
+| `365.md` | Installed payload roots and size | **`new leg`** — #421 |
+| `384.md` | Check-conclusion resume wake | **`new leg`** — #419 |
+| `388.md` | Terminal-lane trip, alert and recovery | **`new leg`** — #424 |
+| `398.md` | Ceremony pin and vendored doctrine | **`not a drill surface`** — a dependency pin and mirrored prose have no installed real-host surface. |
+| `402.md` | Pending-check round signal and request gate | **`new leg`** — #418 |
+| `403.md` | Zero-action resume stop | **`new leg`** — #419 |
+| `405.md` | Development dependency and manifest hygiene | **`not a drill surface`** — repository development furniture is not shipped into the installed tree. |
+| `406.md` | Attributed-doctrine quotation guard | **`not a drill surface`** — this is a repository fixture guard, not installed behavior. |
+| `407.md` | Phase-0 tracked-tree staging | **`drilled`** — `fixture tests green` runs from the staged tree before the live legs. |
+| `408.md` | Reused-box post-removal tick | **`drilled`** — `step 9: positive engine/cron/tick survival observation` reads it. |
+| `411.md` | Membership predicates under load | **`drilled`** — teardown's roster/sandbox refusals and the install leg's `crew hire` / `crew up` assertions read them. |
+| `417.md` | `post-merge` triage invariant | **`drilled`** — `triage: post-merge drew no comment`, `kept its single label`, and `launched no session` read it. |
+| `418.md` | Live builder fix round | **`drilled`** — the builder assertions read draft return, the pending-check signal and withheld request, then the request after settle. |
+| `419.md` | Resume wake, malformed marker and zero-action stop | **`drilled`** — the `resume:` assertions name all three outcomes. |
+| `420.md` | Operator-view release surfaces | **`drilled`** — the `floor:`, `integrity:`, `crew status`, `crew up --dry-run`, and `no build duty` assertions read them. |
+| `421.md` | Installed-tree exclusions and budget | **`drilled`** — the three `payload:` measurements read exclusions and size from the first install, upgrade and offline artifact. |
+| `422.md` | Dirty-worktree preservation and refusal | **`drilled`** — the `hygiene:` assertions read the remote `wip/` tree, durable record, push-before-removal order and refusal retention. |
+| `423.md` | Notification-union leg and cleanup | **`drilled`** — the notifier assertions read both halves of the watch set, and its safety/teardown assertions read restoration and cleanup. |
+| `424.md` | Terminal-session breaker | **`drilled`** — the `breaker:` assertions read the threshold trip, suppressed ticks, one alert and recovered dispatch. |
+| `425.md` | Release-window audit doctrine | **`not a drill surface`** — this changes the repository's release-init procedure, not installed duty behavior. |
+| `427.md` | Boot-check verdict and warning content | **`drilled`** — `boot check: cli probe verdict is ok for <agent>` and `boot check: no WARN for <agent>` read the last boot block. |
+| `435.md` | Resume leg's independent summary verdict | **`drilled`** — the resume verdict file and `rehearsal_worst_verdict` feed the `resume` summary row independently of the builder exit. |
+
 ## The drill
 
 crew asserts the **duty lifecycle** — that the engine, installed on a real box,
