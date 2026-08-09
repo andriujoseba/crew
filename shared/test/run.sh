@@ -788,6 +788,7 @@ t attention-branch-sources-are-sandbox-and-fork "$ATT_REPO $ATT_FORK" \
     | sed 's/ $//')"
 # Both reads in the dispatch half — the fixture precondition and the graded row
 # — go through the collector, so neither can drift back to the sandbox alone.
+# shellcheck disable=SC2016  # the needle is source text, not an expansion
 t attention-branch-reads-all-go-through-the-collector 2 \
   "$(grep -cF 'rehearsal_attention_collect_branches "${sources[@]}"' \
     "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
@@ -1007,6 +1008,7 @@ t attention-mixed-invocation-red-quotes-the-other-log 1 \
   "$(grep -cF "read: ⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG2" \
     <<<"$ATT_OUT")"
 # So the half gives each invocation its own capture and grades the first's.
+# shellcheck disable=SC2016  # the needle is source text, not an expansion
 t attention-each-invocation-has-its-own-capture 2 \
   "$(grep -cE 'rehearsal_attention_timeout_invoke "\$identity" "\$budget" "\$capture_(first|second)"' \
     "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
