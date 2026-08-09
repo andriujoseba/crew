@@ -42,8 +42,9 @@ not success.
 
 **A release window's drill is adapted to what that window shipped, and the
 release issue carries the audit that says so.** At release-init, triage adds one
-row for every surface shipped by the fragments in `changelog.d/` at the cut's
-merge base, naming the issue and surface and assigning exactly one disposition.
+row for every surface shipped by the fragments in `changelog.d/` on `main` when
+the release issue is minted, naming the issue and surface and assigning exactly
+one disposition.
 Every fragment contributes at least one row; a fragment that ships more than
 one surface contributes a row for each:
 
@@ -51,6 +52,9 @@ one surface contributes a row for each:
 - **`new leg`** — the window needs another leg; name the issue minted for it.
 - **`not a drill surface`** — no real-host assertion belongs in this drill;
   state why. An empty reason leaves the audit incomplete.
+
+Those three dispositions are exhaustive. `Partly drilled` is not a fourth: it
+means a fragment shipped separate surfaces that need separate rows.
 
 The audit is a table in the release issue, not another repository file. Triage
 owns it because release-init already reads the window membership, and completes
@@ -74,7 +78,8 @@ even when that issue has since landed.
 | --- | --- | --- |
 | `139.md` | Fix rounds return to draft | **`new leg`** — #418 |
 | `168.md` | Dirty-worktree preservation | **`new leg`** — #422 |
-| `190.md` | Floor integrity verdict and armed-box check | **`new leg`** — #420 |
+| `190.md` | Floor integrity verdict | **`new leg`** — #420 |
+| `190.md` | Browser walk checks `gh ✓` only for armed, ticking boxes and reports when none qualify | **`drilled`** — `render: the fixture offers an armed, ticking box...`, `render: healthy boxes show gh ✓...`, and the no-candidate report in `fleet-floor/test/browser.js` read it. |
 | `204.md` | Consoles only for deployed boxes | **`new leg`** — #420 |
 | `210.md` | Tagged installer assets and checksums | **`not a drill surface`** — assets exist only after the tag; #210 owns their post-merge verification. The installed tree is covered by #421. |
 | `217.md` | Round teardown, retention and reuse | **`drilled`** — the `teardown` summary rows and `drill/teardown.sh` refusal, inspection and cleanup assertions read it. |
