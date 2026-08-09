@@ -847,8 +847,8 @@ t notify-verdict-fold-fail-outranks-a-later-ok "fail the union was not delivered
   "$(rehearsal_notify_worst_verdict 'triage fail the union was not delivered on one tick
 reviewer ok both halves on one tick')"
 # No line at all is not a verdict: the summary must not be able to read one.
-if rehearsal_notify_worst_verdict '' >/dev/null 2>&1; then r1='a verdict'; else r1=none; fi
-t notify-verdict-fold-empty-is-no-verdict none "$r1"
+if rehearsal_notify_worst_verdict '' >/dev/null 2>&1; then fold_out='a verdict'; else fold_out=none; fi
+t notify-verdict-fold-empty-is-no-verdict none "$fold_out"
 # A token the summary cannot classify grades as fail, never as a pass.
 t notify-verdict-fold-unreadable-token-is-a-fail "fail wat" \
   "$(rehearsal_notify_worst_verdict 'reviewer sideways wat')"
@@ -3539,7 +3539,7 @@ t addressing-conflicting-still-addresses true "$(mk_pr "$H" CONFLICTING '[]' '[]
 if grep -q '_mark_addressing' "$SHARED/lib/duty-review.sh"; then r1=wired; else r1=MISSING; fi
 t addressing-wired-after-verdict wired "$r1"
 # shellcheck disable=SC2016  # the grep literal contains $LABEL_ADDRESSING on purpose
-if grep -q 'could not set \$LABEL_ADDRESSING' "$SHARED/lib/duty-review.sh"; then r1=best-effort; else r1=GATING; fi
+if grep -q 'could not set \$LABEL_ADDRESSING' "$SHARED/lib/duty-review.sh"; then r1='best-effort'; else r1=GATING; fi
 t addressing-write-is-best-effort best-effort "$r1"
 # The addressing writer never touches state:building (out of scope) or
 # state:needs-human (the handoff's, not the reviewer's).
@@ -3826,7 +3826,7 @@ fi
 t graphql-error-gates-request-and-handoff gated "$r1"
 # bots-reviewing is best-effort (|| warn), never gating.
 # shellcheck disable=SC2016
-if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh"; then r1=best-effort; else r1=GATING; fi
+if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh"; then r1='best-effort'; else r1=GATING; fi
 t engine-bots-reviewing-best-effort best-effort "$r1"
 # MARK_ANSWERED is defined and wire-protected against operator override.
 if grep -q '^MARK_ANSWERED=' "$SHARED/conf/fleet.defaults.conf" \
