@@ -456,8 +456,8 @@ check "boot check ran"             bx "test -s ~/duty/boot-check.log"
 # either would contradict the three checks under it. They fire on the
 # operator's re-run, once the box is logged in — the same box state every
 # other assertion in this block partitions on.
-rehearsal_boot_load
 if [ "$GH_AUTHED" -eq 1 ]; then
+  rehearsal_boot_load
   rehearsal_boot_probe_ok "$AGENT"
   rehearsal_boot_warn_free "$AGENT"
 else

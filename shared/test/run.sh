@@ -776,7 +776,7 @@ t rehearsal-boot-no-agent-name-in-the-assertions 0 "$boot_names"
 # reading the way it does today.
 boot_ran_line="$(grep -n 'check "boot check ran"' "$ROOT/drill/rehearsal.sh" \
   | head -1 | cut -d: -f1)"
-boot_load_line="$(grep -n '^rehearsal_boot_load$' "$ROOT/drill/rehearsal.sh" \
+boot_load_line="$(grep -n 'rehearsal_boot_load' "$ROOT/drill/rehearsal.sh" \
   | head -1 | cut -d: -f1)"
 if [ -n "$boot_ran_line" ] && [ -n "$boot_load_line" ] \
     && [ "$boot_ran_line" -lt "$boot_load_line" ]; then
