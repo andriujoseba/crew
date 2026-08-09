@@ -143,9 +143,9 @@ rehearsal_breaker_trip_from_log() {
 }
 
 rehearsal_breaker_suppressed_from_log() {
-  local kind="$1" threshold="$2" log_text="$3"
-  grep -Fq "SESSION SKIP kind=$kind" <<<"$log_text" \
-    && grep -Fq "reason=terminal-breaker count=$threshold" <<<"$log_text" \
+  local kind="$1" threshold="$2" expected="$3" log_text="$4"
+  [ "$(grep -cF "SESSION SKIP kind=$kind" <<<"$log_text")" -eq "$expected" ] \
+    && [ "$(grep -cF "reason=terminal-breaker count=$threshold" <<<"$log_text")" -eq "$expected" ] \
     && ! grep -Fq "SESSION START kind=$kind" <<<"$log_text"
 }
 
@@ -166,7 +166,7 @@ rehearsal_breaker_tick_log() {
 
 rehearsal_breaker_drill() {
   local repo="$1" issue="$2" role="$3" first log_text all_log="" attempt
-  local fixture_dir
+  local fixture_dir stopped_log="" stopped_ticks=0
   local threshold kind alerts failures_before
   if [ "${REHEARSAL_BREAKER_DRILL:-1}" -eq 0 ]; then
     skip "breaker: terminal lane trip and recovery (--no-breaker-drill)"
@@ -176,6 +176,12 @@ rehearsal_breaker_drill() {
   rehearsal_breaker_load_installed_facts || return 1
   threshold="$REHEARSAL_BREAKER_THRESHOLD"
   kind="$REHEARSAL_BREAKER_KIND"
+  if bx "test ! -e '$REHEARSAL_BREAKER_STATE'"; then
+    ok "breaker: $kind lane starts closed for $AGENT"
+  else
+    fail "breaker: $kind lane starts closed for $AGENT"
+    return 1
+  fi
   check "breaker: $AGENT profile defines bot_session_terminal" \
     rehearsal_breaker_profile_has_hook bot_session_terminal
   check "breaker: $AGENT profile defines bot_session_acted" \
@@ -216,11 +222,16 @@ rehearsal_breaker_drill() {
   check "breaker: lane trips once at installed threshold for $AGENT" \
     rehearsal_breaker_trip_from_log "$kind" "$threshold" "$all_log"
 
-  first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
-  bx '$HOME/duty/bin/tick.sh' || true
-  log_text="$(rehearsal_breaker_tick_log "$first")"
-  check "breaker: following tick skips the stopped lane" \
-    rehearsal_breaker_suppressed_from_log "$kind" "$threshold" "$log_text"
+  while [ "$stopped_ticks" -lt 2 ]; do
+    first="$(( $(bx "wc -l < ~/duty/duty.log") + 1 ))"
+    bx '$HOME/duty/bin/tick.sh' || true
+    log_text="$(rehearsal_breaker_tick_log "$first")"
+    stopped_log="$stopped_log${stopped_log:+$'\n'}$log_text"
+    stopped_ticks=$((stopped_ticks + 1))
+  done
+  check "breaker: following ticks skip the stopped lane" \
+    rehearsal_breaker_suppressed_from_log \
+      "$kind" "$threshold" "$stopped_ticks" "$stopped_log"
   alerts="$(bx "wc -l < '$REHEARSAL_BREAKER_DIR/alerts.log' 2>/dev/null || printf '0\n'")"
   check "breaker: operator alert emitted exactly once while stopped (read '$alerts')" \
     rehearsal_breaker_alert_count_is_one "$alerts"

@@ -380,14 +380,14 @@ t rehearsal-breaker-second-trip-mutation-reds red "$r1"
 
 BREAKER_SKIP_LOG="2026-08-09T00:00:05Z SESSION SKIP kind=$BREAKER_KIND key=owner/repo#1 reason=terminal-breaker count=$BREAKER_THRESHOLD"
 if rehearsal_breaker_suppressed_from_log \
-    "$BREAKER_KIND" "$BREAKER_THRESHOLD" "$BREAKER_SKIP_LOG"; then
+    "$BREAKER_KIND" "$BREAKER_THRESHOLD" 1 "$BREAKER_SKIP_LOG"; then
   r1=suppressed
 else
   r1=WRONG
 fi
 t rehearsal-breaker-stopped-tick-skips-session suppressed "$r1"
 if rehearsal_breaker_suppressed_from_log "$BREAKER_KIND" \
-    "$BREAKER_THRESHOLD" "$BREAKER_SKIP_LOG
+    "$BREAKER_THRESHOLD" 1 "$BREAKER_SKIP_LOG
 2026-08-09T00:00:06Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/four"; then
   r1=WRONG
 else
