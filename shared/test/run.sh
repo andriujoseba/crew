@@ -320,6 +320,8 @@ t rehearsal-unknown-agent-list listed "$r1"
 # --- rehearsal builder fixtures: tie checks to this run (#179) -----------
 # shellcheck source=drill/rehearsal-fixtures.sh
 source "$ROOT/drill/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-hygiene.sh
+source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
 
@@ -449,6 +451,198 @@ else
   resume_wiring=MISSING
 fi
 t rehearsal-resume-all-opt-out-and-summary-wired wired "$resume_wiring"
+
+# #422: the real-host hygiene leg reads remote trees, the durable PR comment,
+# and duty.log ordering. Keep those reads as sourceable predicates so their
+# must-fail mutations run here without a host, a remote or a drill box.
+HYG_TREE=$'README.md\nhygiene-fixture.txt\nhygiene-root-untracked.txt\nhygiene-untracked/nested.txt'
+if rehearsal_hygiene_tip_has_all_dirt "$HYG_TREE"; then r1=complete; else r1=MISSING; fi
+t rehearsal-hygiene-tip-has-all-dirt complete "$r1"
+if rehearsal_hygiene_tip_has_all_dirt "${HYG_TREE%$'\n'*}"; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-missing-nested-file-reds red "$r1"
+HYG_CONTENTS=$'working fixture-1\nroot fixture-1\nnested fixture-1'
+if rehearsal_hygiene_tip_has_expected_contents "$HYG_CONTENTS" fixture-1; then
+  r1=complete
+else
+  r1=MISSING
+fi
+t rehearsal-hygiene-tip-has-all-dirty-bytes complete "$r1"
+if rehearsal_hygiene_tip_has_expected_contents \
+    "${HYG_CONTENTS/root fixture-1/wrong bytes}" fixture-1; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-wrong-tip-bytes-red red "$r1"
+
+HYG_RECORD=$'🗃️ Uncommitted work preserved before this branch\x27s worktree was removed\n`build/hygiene-builder`\x27s worktree was dirty. The work is on the `origin` remote as `wip/build/hygiene-builder`, holding 1 modified, 2 untracked file(s).\nPart of that work was **staged and differed from the working tree**, so the index has its own snapshot one commit below the tip — reach it with `git checkout FETCH_HEAD^`.'
+if rehearsal_hygiene_record_names_payload "$HYG_RECORD" origin \
+    wip/build/hygiene-builder; then r1=complete; else r1=MISSING; fi
+t rehearsal-hygiene-record-names-payload complete "$r1"
+if rehearsal_hygiene_record_names_payload \
+    "${HYG_RECORD/1 modified, 2 untracked/1 modified, 1 untracked}" \
+    origin wip/build/hygiene-builder; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-miscounted-record-reds red "$r1"
+
+HYG_ORDER=$'engine: branch done\ndrill hygiene: preservation push landed\ndrill hygiene: forced removal invoked\nengine: branch removed'
+if rehearsal_hygiene_push_precedes_removal "$HYG_ORDER"; then r1=ordered; else r1=WRONG; fi
+t rehearsal-hygiene-push-precedes-removal ordered "$r1"
+HYG_REVERSED=$'engine: branch done\ndrill hygiene: forced removal invoked\ndrill hygiene: preservation push landed\nengine: branch removed'
+if rehearsal_hygiene_push_precedes_removal "$HYG_REVERSED"; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-removal-before-push-reds red "$r1"
+
+HYG_SNAPSHOT=$' MM README.md\n?? hygiene-root-untracked.txt\n?? hygiene-untracked/nested.txt\nbytes for all three paths\nstaged bytes'
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
+    'WARN: preservation failed; keeping worktree' ''; then r1=intact; else r1=LOST; fi
+t rehearsal-hygiene-refusal-keeps-bytes-and-reports-once intact "$r1"
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" \
+    "${HYG_SNAPSHOT/hygiene-untracked\/nested.txt/REMOVED}" \
+    'WARN: preservation failed; keeping worktree' ''; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-failed-push-removal-reds red "$r1"
+if rehearsal_hygiene_refusal_is_intact "$HYG_SNAPSHOT" "$HYG_SNAPSHOT" \
+    'WARN: preservation failed; keeping worktree' \
+    'WARN: preservation failed again'; then r1=FALSE_PASS; else r1=red; fi
+t rehearsal-hygiene-repeated-report-reds red "$r1"
+if rehearsal_hygiene_box_path_is_resolved \
+    /home/box-user/duty/.rehearsal-hygiene-refusal-ledger; then
+  r1=resolved
+else
+  r1=WRONG
+fi
+t rehearsal-hygiene-ledger-is-absolute-box-path resolved "$r1"
+# shellcheck disable=SC2016  # deliberate pre-fix mutation
+if rehearsal_hygiene_box_path_is_resolved \
+    '$HOME/duty/.rehearsal-hygiene-refusal-ledger'; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-unexpanded-ledger-path-reds red "$r1"
+
+HYG_RESET_COMMAND=""
+bx() { HYG_RESET_COMMAND="$1"; }
+if rehearsal_hygiene_reset_refusal_ledger \
+    /home/box-user/duty/.rehearsal-hygiene-refusal-ledger \
+    && [ "$HYG_RESET_COMMAND" = \
+      "rm -f '/home/box-user/duty/.rehearsal-hygiene-refusal-ledger'" ]; then
+  r1=fresh
+else
+  r1=STALE
+fi
+t rehearsal-hygiene-refusal-ledger-reset-at-run-boundary fresh "$r1"
+
+bx() {
+  case "$1" in
+    *"'fork' HEAD"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if rehearsal_hygiene_remote_is_reachable /home/box/duty/work/owner__repo fork; then
+  r1=reachable
+else
+  r1=WRONG
+fi
+t rehearsal-hygiene-selected-remote-reachable reachable "$r1"
+if rehearsal_hygiene_remote_is_reachable /home/box/duty/work/owner__repo origin; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-unreachable-selected-remote-reds red "$r1"
+
+if rehearsal_hygiene_resources_are_absent '' '' 0 0; then r1=clean; else r1=WRONG; fi
+t rehearsal-hygiene-two-remote-teardown-clean clean "$r1"
+if rehearsal_hygiene_resources_are_absent '' \
+    $'deadbeef\trefs/heads/build/hygiene-builder' 0 0; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-origin-fixture-branch-left-behind-reds red "$r1"
+
+t rehearsal-hygiene-summary-skipped-phase-incomplete \
+  "INCOMPLETE hygiene  (phase 2 skipped)" \
+  "$(rehearsal_hygiene_summary 1 ' builder' 2)"
+t rehearsal-hygiene-summary-failure-stays-failure \
+  "FAIL       hygiene" "$(rehearsal_hygiene_summary 1 ' builder' 1)"
+t rehearsal-hygiene-mixed-fail-then-skip-stays-failure 1 \
+    "$(rehearsal_hygiene_combine_result \
+      "$(rehearsal_hygiene_combine_result 2 1)" 2)"
+t rehearsal-hygiene-mixed-fail-then-pass-stays-failure 1 \
+  "$(rehearsal_hygiene_combine_result \
+    "$(rehearsal_hygiene_combine_result 2 1)" 0)"
+t rehearsal-hygiene-mixed-skip-then-pass-is-ok 0 \
+    "$(rehearsal_hygiene_combine_result \
+      "$(rehearsal_hygiene_combine_result 2 2)" 0)"
+t rehearsal-hygiene-failure-reds-green-round 1 \
+  "$(rehearsal_hygiene_round_result 0 1)"
+t rehearsal-hygiene-pass-does-not-clear-incomplete-round 2 \
+  "$(rehearsal_hygiene_round_result 2 0)"
+t rehearsal-hygiene-phase1-failure-does-not-red-green-leg \
+  "ok         hygiene  (preservation + refusal)" \
+  "$(rehearsal_hygiene_summary 1 '' 0)"
+HYG_RESULT_FILE="$TMP/rehearsal-hygiene-result"
+REHEARSAL_HYGIENE_RESULT_FILE="$HYG_RESULT_FILE" rehearsal_hygiene_record_result 1
+t rehearsal-hygiene-role-result-is-explicit 1 "$(cat "$HYG_RESULT_FILE")"
+
+HYG_COMBINE_MUTATED="$TMP/rehearsal-hygiene-without-failure-precedence.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation of the precedence clause
+sed 's/\[ "$current" -eq 1 \] || //' \
+  "$ROOT/drill/rehearsal-hygiene.sh" >"$HYG_COMBINE_MUTATED"
+if bash -c '. "$1"; [ "$(rehearsal_hygiene_combine_result 1 0)" -eq 1 ]' \
+    _ "$HYG_COMBINE_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-removed-failure-precedence-reds red "$r1"
+
+HYG_ROUND_MUTATED="$TMP/rehearsal-hygiene-without-round-failure.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation of the failure fold
+sed 's/if \[ "$hygiene_result" -eq 1 \]; then/if false; then/' \
+  "$ROOT/drill/rehearsal-hygiene.sh" >"$HYG_ROUND_MUTATED"
+if bash -c '. "$1"; [ "$(rehearsal_hygiene_round_result 0 1)" -eq 1 ]' \
+    _ "$HYG_ROUND_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-removed-round-failure-fold-reds red "$r1"
+
+hygiene_wiring=missing
+# shellcheck disable=SC2016  # these are literal wiring strings, not expansions
+if grep -Fq -- '--no-hygiene-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq '. "$HERE/rehearsal-hygiene.sh"' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'hygiene  (preservation + refusal)' \
+      "$ROOT/drill/rehearsal-hygiene.sh" \
+    && grep -Fq '"$bad_pr" "$refusal_ledger" "$ME2"' \
+      "$ROOT/drill/rehearsal-hygiene.sh" \
+    && grep -Fq 'rehearsal_hygiene_reset_refusal_ledger "$refusal_ledger"' \
+      "$ROOT/drill/rehearsal-hygiene.sh" \
+    && grep -Fq 'REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file"' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'ROLE_HYGIENE_FILES+=("$role_hygiene_file")' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'trap cleanup_role_hygiene_files EXIT' \
+      "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'rehearsal_hygiene_drill "$SANDBOX" "$ROLE"' "$ROOT/drill/rehearsal.sh"; then
+  hygiene_wiring=wired
+fi
+t rehearsal-hygiene-opt-out-summary-and-live-leg-wired wired "$hygiene_wiring"
+HYG_ALL_MUTATED="$TMP/rehearsal-all-without-hygiene-source.sh"
+# shellcheck disable=SC2016  # deliberate literal source-line mutation
+sed '/\. "$HERE\/rehearsal-hygiene.sh"/d' \
+  "$ROOT/drill/rehearsal-all.sh" >"$HYG_ALL_MUTATED"
+# shellcheck disable=SC2016  # the removed source line is deliberately literal
+if grep -Fq '. "$HERE/rehearsal-hygiene.sh"' "$HYG_ALL_MUTATED"; then
+  r1=FALSE_PASS
+else
+  r1=red
+fi
+t rehearsal-hygiene-missing-helper-source-reds red "$r1"
 
 # --- rehearsal notify leg: the watch-set union, both halves (#423) ---------
 # shellcheck source=drill/rehearsal-notify.sh

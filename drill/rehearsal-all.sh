@@ -54,6 +54,7 @@ INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESUME_DRILL=1
+HYGIENE_DRILL=1
 # The notifier union leg runs inside every role's phase 2, so its verdict is
 # the ROUND's, not one role's: a summary row that named a single role would
 # hide a half the other two boxes also exercised.
@@ -85,26 +86,44 @@ while [ $# -gt 0 ]; do
     --no-config-drill) CONFIG_DRILL=0; shift ;;
     --no-install-drill) INSTALL_DRILL=0; shift ;;
     --no-resume-drill) RESUME_DRILL=0; shift ;;
+    --no-hygiene-drill) HYGIENE_DRILL=0; shift ;;
     --no-notify-drill) NOTIFY_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
     --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
-       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-notify-drill] [--app-boxes \"a b\"] [--app-allow-control]"
+       echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-hygiene-drill] [--no-notify-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=drill/rehearsal-hygiene.sh
+. "$HERE/rehearsal-hygiene.sh"
 # Sourced for rehearsal_notify_worst_verdict alone — the fold belongs beside
 # the leg that writes the lines, not retyped here where the two could drift.
 # shellcheck source=drill/rehearsal-notify.sh
 . "$HERE/rehearsal-notify.sh"
 NOTIFY_STATUS="$(mktemp)"
-trap 'rm -f "$NOTIFY_STATUS"' EXIT
 declare -a SUMMARY=()
+declare -a ROLE_HYGIENE_FILES=()
 overall=0
+hygiene_result=2
+
+# shellcheck disable=SC2317  # invoked indirectly by the EXIT trap
+cleanup_role_hygiene_files() {
+  local result_file
+  for result_file in "${ROLE_HYGIENE_FILES[@]}"; do
+    rm -f -- "$result_file"
+  done
+  # The notify leg's verdict file goes here too, and not under a second
+  # `trap … EXIT`: bash keeps exactly ONE EXIT handler, so the later trap
+  # silently REPLACES the earlier one and whichever leg lost the race leaks
+  # its temp file every round. One handler, both legs' temporaries.
+  [ -z "${NOTIFY_STATUS:-}" ] || rm -f -- "$NOTIFY_STATUS"
+}
+trap cleanup_role_hygiene_files EXIT
 
 for role in $ROLES; do
   case "$role" in
@@ -115,11 +134,21 @@ for role in $ROLES; do
   echo "############################################################"
   echo "## $role — box crew-drill-$role"
   echo "############################################################"
+  role_hygiene_file="$(mktemp)"
+  ROLE_HYGIENE_FILES+=("$role_hygiene_file")
+  printf '2\n' >"$role_hygiene_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
+  REHEARSAL_HYGIENE_DRILL="$HYGIENE_DRILL" \
+  REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
   REHEARSAL_NOTIFY_DRILL="$NOTIFY_DRILL" \
   REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
+  role_hygiene_result="$(cat "$role_hygiene_file" 2>/dev/null || printf '2\n')"
+  rm -f -- "$role_hygiene_file"
+  case "$role_hygiene_result" in 0|1|2) ;; *) role_hygiene_result=2 ;; esac
+  hygiene_result="$(rehearsal_hygiene_combine_result \
+    "$hygiene_result" "$role_hygiene_result")"
   [ "$role" != builder ] || BUILDER_RC="$rc"
   # Roles whose box the drill actually REACHED, for the app phase below. rc=0
   # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
@@ -141,10 +170,17 @@ for role in $ROLES; do
   # tested nothing gets reported as clearing the rollout.
   case "$rc" in
     0) SUMMARY+=("ok         $role  (phase 2 ran)") ;;
-    2) SUMMARY+=("INCOMPLETE $role  (phase 2 skipped — loop UNPROVEN)"); overall=2 ;;
+    2) SUMMARY+=("INCOMPLETE $role  (phase 2 skipped — loop UNPROVEN)")
+       [ "$overall" -eq 1 ] || overall=2 ;;
     *) SUMMARY+=("FAIL       $role"); overall=1 ;;
   esac
 done
+
+SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result")")
+overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"
+if [ "$HYGIENE_DRILL" -ne 0 ] && [ -z "${DRILLED// /}" ]; then
+  [ "$overall" -eq 1 ] || overall=2
+fi
 
 if [ "$RESUME_DRILL" -eq 0 ]; then
   SUMMARY+=("skip       resume  (--no-resume-drill)")

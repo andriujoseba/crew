@@ -145,6 +145,9 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-fixtures.sh"
 # shellcheck source=drill/rehearsal-notify.sh
 . "$ROOT/drill/rehearsal-notify.sh"
+# shellcheck source=drill/rehearsal-hygiene.sh
+. "$ROOT/drill/rehearsal-hygiene.sh"
+rehearsal_hygiene_record_result 2
 # shellcheck source=drill/review-order.sh
 . "$ROOT/drill/review-order.sh"
 cleanup_all() {
@@ -157,6 +160,9 @@ cleanup_all() {
     fi
     if [ -n "${REHEARSAL_NOTIFY_FIXTURES:-}" ]; then
       rehearsal_notify_close_fixtures || true
+    fi
+    if declare -F rehearsal_hygiene_cleanup >/dev/null 2>&1; then
+      rehearsal_hygiene_cleanup || true
     fi
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
@@ -827,6 +833,23 @@ else
     ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' '$head_sha' approve /tmp/drill-body 2>&1 | grep -q 'already present'"
   check "gate: verdict count unchanged" verdicts_unchanged
   check "gate: short SHA refused" bx "! ~/duty/bin/submit-verdict.sh '$SANDBOX' '$pr' abc123 approve /tmp/drill-body"
+  fi
+fi
+
+# Role-independent: exercise the worktree hygiene that runs on every role box
+# only after that role's own phase-2 fixtures have finished.
+if [ "$PHASE2_RAN" -eq 1 ]; then
+  hygiene_failures_before="${#FAILS[@]}"
+  if rehearsal_hygiene_drill "$SANDBOX" "$ROLE"; then
+    hygiene_drill_rc=0
+  else
+    hygiene_drill_rc=1
+  fi
+  if [ "$hygiene_drill_rc" -ne 0 ] \
+      || [ "${#FAILS[@]}" -gt "$hygiene_failures_before" ]; then
+    rehearsal_hygiene_record_result 1
+  else
+    rehearsal_hygiene_record_result 0
   fi
 fi
 
