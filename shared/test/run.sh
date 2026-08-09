@@ -511,6 +511,7 @@ mv "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf.missing" \
   "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
 unset -f bx
 
+# shellcheck disable=SC2016  # literal wiring string; expansions must remain intact
 if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'breaker  (trip + single alert + recovery)' \
       "$ROOT/drill/rehearsal-breaker.sh" \
