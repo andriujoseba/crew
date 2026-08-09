@@ -1178,6 +1178,7 @@ att_half_stubs() {
   }
   rehearsal_attention_file_fixture() { REHEARSAL_ATTENTION_NUM="$ATT_ISSUE"; }
   rehearsal_attention_close_fixture() { return 0; }
+  # shellcheck disable=SC2317  # invoked indirectly, by the half under test
   rehearsal_attention_demand_visible() { return "${ATT_VISIBLE:-0}"; }
 }
 
