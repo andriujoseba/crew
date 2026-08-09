@@ -324,6 +324,217 @@ source "$ROOT/drill/rehearsal-fixtures.sh"
 source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
+# shellcheck source=drill/rehearsal-breaker.sh
+source "$ROOT/drill/rehearsal-breaker.sh"
+
+# --- rehearsal terminal-breaker leg: sourceable mutations (#424) ---------
+BREAKER_KIND=attention
+BREAKER_THRESHOLD=3
+BREAKER_TERMINAL_LOG="2026-08-09T00:00:01Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/one
+2026-08-09T00:00:02Z SESSION END kind=$BREAKER_KIND key=owner/repo#1 rc=1 dur=1s outcome=TERMINAL acted=no"
+if rehearsal_breaker_below_threshold_from_log \
+    "$BREAKER_KIND" "$BREAKER_TERMINAL_LOG"; then
+  r1=accepted
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-below-threshold-terminal-counts accepted "$r1"
+if rehearsal_breaker_below_threshold_from_log "$BREAKER_KIND" \
+    "$BREAKER_TERMINAL_LOG
+2026-08-09T00:00:03Z WARN: session breaker: kind=$BREAKER_KIND tripped after $BREAKER_THRESHOLD consecutive terminal failures"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-below-threshold-trip-mutation-reds red "$r1"
+
+BREAKER_TRIP_LOG="$BREAKER_TERMINAL_LOG
+$BREAKER_TERMINAL_LOG
+$BREAKER_TERMINAL_LOG
+2026-08-09T00:00:03Z WARN: session breaker: kind=$BREAKER_KIND tripped after $BREAKER_THRESHOLD consecutive terminal failures; log=/tmp/three"
+if rehearsal_breaker_trip_from_log \
+    "$BREAKER_KIND" "$BREAKER_THRESHOLD" "$BREAKER_TRIP_LOG"; then
+  r1=tripped
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-trip-at-installed-threshold tripped "$r1"
+# Required mutation: disabling the breaker removes its trip line from the
+# exact log input the sourceable live assertion reads. The trip assertion must
+# red even though all terminal dispatches still happened.
+if rehearsal_breaker_trip_from_log "$BREAKER_KIND" "$BREAKER_THRESHOLD" \
+    "${BREAKER_TRIP_LOG%$'\n'*}"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-disabled-mutation-reds-trip red "$r1"
+if rehearsal_breaker_trip_from_log "$BREAKER_KIND" "$BREAKER_THRESHOLD" \
+    "$BREAKER_TRIP_LOG
+2026-08-09T00:00:04Z WARN: session breaker: kind=$BREAKER_KIND tripped after $BREAKER_THRESHOLD consecutive terminal failures; log=/tmp/four"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-second-trip-mutation-reds red "$r1"
+
+BREAKER_SKIP_LOG="2026-08-09T00:00:05Z SESSION SKIP kind=$BREAKER_KIND key=owner/repo#1 reason=terminal-breaker count=$BREAKER_THRESHOLD"
+if rehearsal_breaker_suppressed_from_log \
+    "$BREAKER_KIND" "$BREAKER_THRESHOLD" 1 "$BREAKER_SKIP_LOG"; then
+  r1=suppressed
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-stopped-tick-skips-session suppressed "$r1"
+BREAKER_SPLIT_SKIP_LOG="2026-08-09T00:00:05Z SESSION SKIP kind=$BREAKER_KIND key=owner/repo#1 reason=some-other-gate count=$BREAKER_THRESHOLD
+2026-08-09T00:00:05Z diagnostic reason=terminal-breaker count=$BREAKER_THRESHOLD"
+if rehearsal_breaker_suppressed_from_log "$BREAKER_KIND" \
+    "$BREAKER_THRESHOLD" 1 "$BREAKER_SPLIT_SKIP_LOG"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-split-skip-reason-mutation-reds red "$r1"
+if rehearsal_breaker_suppressed_from_log "$BREAKER_KIND" \
+    "$BREAKER_THRESHOLD" 1 "$BREAKER_SKIP_LOG
+2026-08-09T00:00:06Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/four"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-dispatch-past-threshold-mutation-reds red "$r1"
+
+BREAKER_ALERT="🚨 crew-drill: $BREAKER_KIND session dispatch stopped after $BREAKER_THRESHOLD terminal failures (acted=no) — /tmp/session.log"
+if rehearsal_breaker_alert_count_is_one "$BREAKER_KIND" \
+    "$BREAKER_ALERT"; then r1=once; else r1=WRONG; fi
+t rehearsal-breaker-single-alert-counted once "$r1"
+if rehearsal_breaker_alert_count_is_one "$BREAKER_KIND" \
+    "$BREAKER_ALERT
+$BREAKER_ALERT"; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-second-alert-mutation-reds red "$r1"
+if rehearsal_breaker_alert_count_is_one "$BREAKER_KIND" \
+    "$BREAKER_ALERT
+🚨 crew-drill: review session dispatch stopped after $BREAKER_THRESHOLD terminal failures (acted=no) — /tmp/other.log"; then
+  r1=once
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-unrelated-lane-alert-ignored once "$r1"
+
+BREAKER_RECOVERY_LOG="2026-08-09T00:00:07Z session breaker: kind=$BREAKER_KIND recovered; dispatch resumed
+2026-08-09T00:00:07Z SESSION START kind=$BREAKER_KIND key=owner/repo#1 timeout=5s log=/tmp/recovered"
+if rehearsal_breaker_recovered_from_log \
+    "$BREAKER_KIND" "$BREAKER_RECOVERY_LOG"; then
+  r1=recovered
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-restored-cli-recovers-next-tick recovered "$r1"
+if rehearsal_breaker_recovered_from_log "$BREAKER_KIND" \
+    "${BREAKER_RECOVERY_LOG%$'\n'*}"; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-hand-resume-mutation-reds red "$r1"
+
+t rehearsal-breaker-summary-skipped-phase-incomplete \
+  "INCOMPLETE breaker  (phase 2 skipped)" \
+  "$(rehearsal_breaker_summary 1 ' builder' 2)"
+t rehearsal-breaker-summary-failure-stays-failure \
+  "FAIL       breaker" "$(rehearsal_breaker_summary 1 ' builder' 1)"
+t rehearsal-breaker-mixed-fail-then-skip-stays-failure 1 \
+  "$(rehearsal_breaker_combine_result \
+    "$(rehearsal_breaker_combine_result 2 1)" 2)"
+t rehearsal-breaker-mixed-fail-then-pass-stays-failure 1 \
+  "$(rehearsal_breaker_combine_result \
+    "$(rehearsal_breaker_combine_result 2 1)" 0)"
+t rehearsal-breaker-mixed-skip-then-pass-is-ok 0 \
+  "$(rehearsal_breaker_combine_result \
+    "$(rehearsal_breaker_combine_result 2 2)" 0)"
+t rehearsal-breaker-failure-reds-green-round 1 \
+  "$(rehearsal_breaker_round_result 0 1 1)"
+t rehearsal-breaker-failure-keeps-red-round-red 1 \
+  "$(rehearsal_breaker_round_result 1 1 1)"
+t rehearsal-breaker-incomplete-makes-green-round-incomplete 2 \
+  "$(rehearsal_breaker_round_result 0 1 2)"
+t rehearsal-breaker-pass-does-not-clear-incomplete-round 2 \
+  "$(rehearsal_breaker_round_result 2 1 0)"
+t rehearsal-breaker-skip-does-not-clear-incomplete-round 2 \
+  "$(rehearsal_breaker_round_result 2 1 2)"
+t rehearsal-breaker-opt-out-keeps-green-round-green 0 \
+  "$(rehearsal_breaker_round_result 0 0 2)"
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"claimed"}]}'; then
+  r1=clear
+else
+  r1=WRONG
+fi
+t rehearsal-breaker-recovered-session-acks-attention clear "$r1"
+if rehearsal_breaker_attention_is_clear_from_json \
+    '{"labels":[{"name":"attention"}]}'; then
+  r1=WRONG
+else
+  r1=red
+fi
+t rehearsal-breaker-standing-attention-mutation-reds red "$r1"
+
+BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
+mkdir -p "$BREAKER_FIXTURE_HOME/duty/conf/roles"
+printf 'TIMEOUT_REVIEW=1\n' >"$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
+bx() { HOME="$BREAKER_FIXTURE_HOME" bash -c "$1"; }
+if rehearsal_breaker_install_fixture reviewer; then r1=installed; else r1=WRONG; fi
+t rehearsal-breaker-cli-fixture-installs installed "$r1"
+t rehearsal-breaker-cli-fixture-overrides-command 1 \
+  "$(grep -cF '# rehearsal-breaker begin' "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+if rehearsal_breaker_restore_cli_for_recovery; then r1=restored; else r1=WRONG; fi
+t rehearsal-breaker-recovery-restores-real-cli restored "$r1"
+t rehearsal-breaker-recovery-keeps-alert-interceptor 1 \
+  "$(grep -cF '# rehearsal-breaker recovery begin' "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+t rehearsal-breaker-recovery-keeps-fixture-until-teardown present \
+  "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
+bx() { return 1; }
+if rehearsal_breaker_restore_cli; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-failed-teardown-mutation-reds red "$r1"
+t rehearsal-breaker-failed-teardown-keeps-fixture present \
+  "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
+bx() { HOME="$BREAKER_FIXTURE_HOME" bash -c "$1"; }
+if rehearsal_breaker_restore_cli; then r1=restored; else r1=WRONG; fi
+t rehearsal-breaker-cli-fixture-restores-profile restored "$r1"
+t rehearsal-breaker-cli-fixture-removes-directory absent \
+  "$([ -e "$BREAKER_FIXTURE_HOME/.crew-breaker-drill" ] && printf present || printf absent)"
+t rehearsal-breaker-cli-fixture-restores-content 'TIMEOUT_REVIEW=1' \
+  "$(cat "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
+if rehearsal_breaker_profile_is_restored; then r1=restored; else r1=WRONG; fi
+t rehearsal-breaker-cli-fixture-removes-role-overrides restored "$r1"
+mv "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf" \
+  "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf.missing"
+if rehearsal_breaker_profile_is_restored; then r1=WRONG; else r1=red; fi
+t rehearsal-breaker-missing-restored-profile-mutation-reds red "$r1"
+mv "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf.missing" \
+  "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
+unset -f bx
+
+# shellcheck disable=SC2016  # literal wiring string; expansions must remain intact
+if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'breaker  (trip + single alert + recovery)' \
+      "$ROOT/drill/rehearsal-breaker.sh" \
+    && grep -Fq "rehearsal_breaker_drill \"\$SANDBOX\" \"\$inum\" \"\$ROLE\"" \
+      "$ROOT/drill/rehearsal.sh" \
+    && grep -Fq '"$overall" "$BREAKER_DRILL" "$breaker_result")"' \
+      "$ROOT/drill/rehearsal-all.sh"; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t rehearsal-breaker-live-leg-and-opt-out-wired wired "$r1"
+if grep -Eq 'SESSION_TERMINAL_THRESHOLD=[0-9]|run_session attention' \
+    "$ROOT/drill/rehearsal-breaker.sh"; then
+  r1=HARDCODED
+else
+  r1=derived
+fi
+t rehearsal-breaker-threshold-and-kind-not-hardcoded derived "$r1"
 
 # --- rehearsal resume leg: next-tick wake and bounded zero action (#419) ---
 RESUME_HEAD="$(printf 'd%.0s' {1..40})"
@@ -1503,7 +1714,7 @@ t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" 
 AGG="$TMP/notify-agg"
 mkdir -p "$AGG"
 cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
-  "$ROOT/drill/rehearsal-hygiene.sh" "$AGG/"
+  "$ROOT/drill/rehearsal-hygiene.sh" "$ROOT/drill/rehearsal-breaker.sh" "$AGG/"
 cat >"$AGG/rehearsal.sh" <<'AGGSH'
 #!/usr/bin/env bash
 # Stub role drill: writes the verdict the case asked for — the way the leg
@@ -1525,14 +1736,32 @@ agg_case() {  # $1 role, $2 verdict (empty for none), $3 rc
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   # Every sibling leg the notify fold is not under test with is switched off,
-  # --no-hygiene-drill (#422) included: these cases assert what the NOTIFY
+  # --no-hygiene-drill (#422) and --no-breaker-drill (#424) included: these
+  # cases assert what the NOTIFY
   # verdict does to `overall`, and a neighbour's row moving it would red them
   # for a reason that is not theirs. The composition of the two folds gets its
   # own case below, with the hygiene leg deliberately left on.
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-hygiene-drill ${1+"$@"} 2>&1
+    --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
 }
+
+# The breaker has its own enabled/incomplete partition: an enabled leg that no
+# role reached is INCOMPLETE and cannot leave a green exit status, while the
+# operator's explicit opt-out remains an announced green skip.
+agg_breaker_run() {
+  AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles '' \
+    --no-app --no-config-drill --no-install-drill --no-resume-drill \
+    --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
+}
+if agg_out="$(agg_breaker_run)"; then agg_rc=0; else agg_rc=$?; fi
+t breaker-agg-enabled-no-role-is-incomplete 1 \
+  "$(grep -cF 'INCOMPLETE breaker  (no role reached a box)' <<<"$agg_out")"
+t breaker-agg-enabled-no-role-rc 2 "$agg_rc"
+if agg_out="$(agg_breaker_run --no-breaker-drill)"; then agg_rc=0; else agg_rc=$?; fi
+t breaker-agg-opt-out-is-an-announced-skip 1 \
+  "$(grep -cF 'skip       breaker  (--no-breaker-drill)' <<<"$agg_out")"
+t breaker-agg-opt-out-rc 0 "$agg_rc"
 
 # The criterion: an unreachable operator channel produces a skip naming it and
 # NEVER a pass — in the round summary too, which is where a round's verdict is
@@ -1614,7 +1843,8 @@ t notify-agg-opt-out-failed-role-rc 1 "$agg_rc"
 agg_hygiene_run() {  # $1 roles, $2 the hygiene result the role box records
   local roles="$1" hyg="$2"
   AGG_DIR="$AGG" AGG_HYGIENE="$hyg" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
-    --no-app --no-config-drill --no-install-drill --no-resume-drill 2>&1
+    --no-app --no-config-drill --no-install-drill --no-resume-drill \
+    --no-breaker-drill 2>&1
 }
 # The stub writes the hygiene result the way the live leg does — into the file
 # rehearsal-all.sh hands it, per role — on top of the notify verdict it already

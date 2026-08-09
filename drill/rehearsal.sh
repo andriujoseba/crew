@@ -147,7 +147,10 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-notify.sh"
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$ROOT/drill/rehearsal-hygiene.sh"
+# shellcheck source=drill/rehearsal-breaker.sh
+. "$ROOT/drill/rehearsal-breaker.sh"
 rehearsal_hygiene_record_result 2
+rehearsal_breaker_record_result 2
 # shellcheck source=drill/review-order.sh
 . "$ROOT/drill/review-order.sh"
 cleanup_all() {
@@ -163,6 +166,9 @@ cleanup_all() {
     fi
     if declare -F rehearsal_hygiene_cleanup >/dev/null 2>&1; then
       rehearsal_hygiene_cleanup || true
+    fi
+    if declare -F rehearsal_breaker_cleanup >/dev/null 2>&1; then
+      rehearsal_breaker_cleanup || true
     fi
     if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
       rehearsal_close_builder_fixture_prs \
@@ -850,6 +856,23 @@ if [ "$PHASE2_RAN" -eq 1 ]; then
     rehearsal_hygiene_record_result 1
   else
     rehearsal_hygiene_record_result 0
+  fi
+fi
+
+# Deliberately last among phase-2 legs: it stops a real session lane before
+# restoring it, so no unrelated fixture may depend on dispatch while it runs.
+if [ "$PHASE2_RAN" -eq 1 ]; then
+  breaker_failures_before="${#FAILS[@]}"
+  if rehearsal_breaker_drill "$SANDBOX" "$inum" "$ROLE"; then
+    breaker_drill_rc=0
+  else
+    breaker_drill_rc=1
+  fi
+  if [ "$breaker_drill_rc" -ne 0 ] \
+      || [ "${#FAILS[@]}" -gt "$breaker_failures_before" ]; then
+    rehearsal_breaker_record_result 1
+  else
+    rehearsal_breaker_record_result 0
   fi
 fi
 
