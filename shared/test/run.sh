@@ -658,7 +658,7 @@ notify_run_leg() {  # $1 how the post-write repos.txt read answers
   NOTIFY_PRE_TEXT="${3:-}"
   NOTIFY_WORK_BACKUP_STATE="${4:-present}"
   NOTIFY_WORK_BACKUP_TEXT="$NOTIFY_PRE_DRILL"
-  NOTIFY_POST_STATE=present
+  NOTIFY_POST_STATE="${5:-present}"
   NOTIFY_POST_TEXT=""
   : >"$NOTIFY_BX_CALLS"
   printf '0\n' >"$NOTIFY_READS"
@@ -707,6 +707,19 @@ t notify-pre-drill-capture-keeps-the-fleet-bytes 1 \
   "$(grep -cF 'FAIL notify: teardown restored both registries' <<<"$notify_out")"
 notify_out="$(notify_run_leg same present)"
 t notify-pre-drill-capture-empty-file-is-not-a-mismatch 1 \
+  "$(grep -cF 'ok   notify: teardown restored both registries' <<<"$notify_out")"
+
+# Must fail: the box stops answering when the leg reads notify-repos.txt back
+# after its own restore. The pre-drill file here was present and EMPTY, which
+# is the one shape the old `cat … || true` read-back could not tell from
+# silence — "" compared equal to "" and the leg reported both registries
+# restored, on a box nobody had heard from. The authoritative comparison is
+# rehearsal_cleanup's, but this one runs where the leg can still report and it
+# should not be the weaker read of the two (claude-bot, round 3).
+notify_out="$(notify_run_leg same present '' present unanswerable)"
+t notify-in-leg-restore-unanswerable-read-is-not-empty-bytes 1 \
+  "$(grep -cF 'FAIL notify: teardown restored both registries' <<<"$notify_out")"
+t notify-in-leg-restore-unanswerable-read-is-never-a-pass 0 \
   "$(grep -cF 'ok   notify: teardown restored both registries' <<<"$notify_out")"
 
 # Must fail: the box does not answer when asked what notify-repos.txt held.
