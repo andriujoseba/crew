@@ -175,7 +175,7 @@ done
 SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result")")
 SUMMARY+=("$(rehearsal_breaker_summary "$BREAKER_DRILL" "$DRILLED" "$breaker_result")")
 overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"
-[ "$breaker_result" -ne 1 ] || overall=1
+overall="$(rehearsal_breaker_round_result "$overall" "$breaker_result")"
 if [ "$HYGIENE_DRILL" -ne 0 ] && [ -z "${DRILLED// /}" ]; then
   [ "$overall" -eq 1 ] || overall=2
 fi

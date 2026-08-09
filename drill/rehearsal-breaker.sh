@@ -25,6 +25,15 @@ rehearsal_breaker_combine_result() {
   fi
 }
 
+rehearsal_breaker_round_result() {
+  local current="$1" breaker_result="$2"
+  if [ "$breaker_result" -eq 1 ]; then
+    printf '1\n'
+  else
+    printf '%s\n' "$current"
+  fi
+}
+
 rehearsal_breaker_summary() {
   local enabled="$1" drilled="$2" result="$3"
   if [ "$enabled" -eq 0 ]; then

@@ -452,6 +452,14 @@ t rehearsal-breaker-mixed-fail-then-pass-stays-failure 1 \
 t rehearsal-breaker-mixed-skip-then-pass-is-ok 0 \
   "$(rehearsal_breaker_combine_result \
     "$(rehearsal_breaker_combine_result 2 2)" 0)"
+t rehearsal-breaker-failure-reds-green-round 1 \
+  "$(rehearsal_breaker_round_result 0 1)"
+t rehearsal-breaker-failure-keeps-red-round-red 1 \
+  "$(rehearsal_breaker_round_result 1 1)"
+t rehearsal-breaker-pass-does-not-clear-incomplete-round 2 \
+  "$(rehearsal_breaker_round_result 2 0)"
+t rehearsal-breaker-skip-does-not-clear-incomplete-round 2 \
+  "$(rehearsal_breaker_round_result 2 2)"
 if rehearsal_breaker_attention_is_clear_from_json \
     '{"labels":[{"name":"claimed"}]}'; then
   r1=clear
@@ -507,7 +515,9 @@ if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
     && grep -Fq 'breaker  (trip + single alert + recovery)' \
       "$ROOT/drill/rehearsal-breaker.sh" \
     && grep -Fq "rehearsal_breaker_drill \"\$SANDBOX\" \"\$inum\" \"\$ROLE\"" \
-      "$ROOT/drill/rehearsal.sh"; then
+      "$ROOT/drill/rehearsal.sh" \
+    && grep -Fq 'overall="$(rehearsal_breaker_round_result "$overall" "$breaker_result")"' \
+      "$ROOT/drill/rehearsal-all.sh"; then
   r1=wired
 else
   r1=MISSING
