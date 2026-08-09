@@ -143,6 +143,8 @@ TRIAGE_CLEANUP_ISSUES=""
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
 . "$ROOT/drill/rehearsal-fixtures.sh"
+# shellcheck source=drill/rehearsal-notify.sh
+. "$ROOT/drill/rehearsal-notify.sh"
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
@@ -159,6 +161,9 @@ cleanup_all() {
       rehearsal_resume_restore_cli \
         || echo "WARNING: could not restore the builder CLI after the resume drill; stop the box: box down $BOX_NAME" >&2
     fi
+    if [ -n "${REHEARSAL_NOTIFY_FIXTURES:-}" ]; then
+      rehearsal_notify_close_fixtures || true
+    fi
     if declare -F rehearsal_hygiene_cleanup >/dev/null 2>&1; then
       rehearsal_hygiene_cleanup || true
     fi
@@ -173,7 +178,12 @@ cleanup_all() {
       rehearsal_close_issue_fixtures \
         "$TRIAGE_CLEANUP_REPO" "$TRIAGE_CLEANUP_ISSUES" || true
     fi
-    rehearsal_cleanup "$rc"
+    # The cleanup's own verdict, not just the run's: it compares both
+    # registries against their pre-drill contents and returns non-zero when a
+    # restore left the wrong bytes, which is a red round and not a warning
+    # (#423). rehearsal_cleanup returns the rc it was handed otherwise, so
+    # this only ever worsens.
+    rehearsal_cleanup "$rc" || rc=$?
     if command -v box >/dev/null 2>&1 && [ -n "$BOX_NAME" ]; then
       bx "rm -rf ~/.crew-engine-stage ~/.crew-engine.tgz" >/dev/null 2>&1 || true
     fi
@@ -181,7 +191,14 @@ cleanup_all() {
   if [ -n "$ACQUIRE_TMP" ] && [ -d "$ACQUIRE_TMP" ]; then
     rm -rf -- "$ACQUIRE_TMP"
   fi
-  return "$rc"
+  # exit, not return. This script runs under `set -uo pipefail` with no -e,
+  # and a `return` from an EXIT-trap function does not change the shell's
+  # exit status — so rehearsal_cleanup's verdict was computed, printed, and
+  # then discarded, and a standalone `--role X` round exited 0 on a registry
+  # left holding the wrong bytes. `exit` sets it, and does not re-enter the
+  # trap. Without this the teardown comparison's only escalation route is the
+  # notify verdict, which `--no-notify-drill` switches off first.
+  exit "$rc"
 }
 
 command -v box >/dev/null || { echo "box CLI not found — this runs on a box host"; exit 1; }
@@ -519,6 +536,20 @@ else
     exit 1
   fi
   ok "safety interlock: no attention demand parked outside the sandbox"
+
+  # -- the operator's watch set: repos.txt ∪ notify-repos.txt (#316) --
+  # Here and not in a role block: the notifier is role-independent, and the
+  # leg's own precondition is the interlock immediately above — it widens the
+  # WATCH set while re-asserting that the WORK set stayed at one sandbox.
+  rehearsal_notify_drill "$SANDBOX" "$HOST_ME" "$ROLE"
+  notify_rc=$?
+  if [ "$notify_rc" -eq 2 ]; then
+    echo
+    echo "REFUSING to continue: repos.txt moved while the notify union was being"
+    echo "staged. The union must widen notifications and nothing else, so a work"
+    echo "registry nobody can vouch for aborts the round rather than ticking on."
+    exit 1
+  fi
 
   # -- attention wake --
   inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
