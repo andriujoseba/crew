@@ -4,6 +4,13 @@
 # fixture-testable without a box or credentials.
 # shellcheck disable=SC2088  # stored tildes expand inside the box via bx()
 
+# A newline, named so the snapshot patterns below read as patterns.
+REHEARSAL_NL=$'\n'
+# Why the teardown comparison said no, in the words the round summary carries.
+# Set beside each refusal so the notify verdict reports the actual state — a
+# box that never answered is not a box that restored the wrong bytes.
+REHEARSAL_TEARDOWN_REASON=""
+
 rehearsal_disarm_cron() {
   bx "if command -v crontab >/dev/null 2>&1; then
         tmp=\$(mktemp)
@@ -50,54 +57,144 @@ rehearsal_attention_is_clear() {
       | grep -vxF '$sandbox' || true"
 }
 
-# rehearsal_work_registry_matches_pre_drill HAD_BACKUP PRE_TEXT — repos.txt on
-# the box, after the restore, against the bytes the backup held before it was
-# moved. Nothing was backed up ⇒ nothing to vouch for.
+# --- reading a registry off the box, in the three states it can be in ------
+
+# rehearsal_registry_snapshot PATH — read a file on the box and say which of
+# the three things is true, because telling them apart is teardown's whole job:
+#
+#   prints `absent`               — the box says the file is not there
+#   prints `present` + contents   — the box read it
+#   returns non-zero              — the box did not answer at all
+#
+# The third state is why this exists. `bx "test -f X"` is a two-state read of
+# a three-state world: a box that has gone away returns non-zero exactly like
+# a box reporting an absent file, and the caller then takes the absent branch
+# and vouches for a registry nobody looked at. Likewise `cat X || true` turns
+# an unreadable file into the empty string, which compares equal to an empty
+# pre-drill file. "The box did not say" is not "the file was not there", and
+# neither of them is "read, and it was empty" (#423, round 2).
+rehearsal_registry_snapshot() {
+  local path="$1" out
+  out="$(bx "if [ -e $path ]; then printf 'present\n'; cat $path; else printf 'absent\n'; fi")" \
+    || return 1
+  case "$out" in
+    absent | present | present"$REHEARSAL_NL"*) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$out"
+}
+
+# The two readers for a snapshot. A file that exists and is empty snapshots as
+# exactly `present`, so the text is taken by stripping the marker line and
+# never by anything that reads an empty remainder as a failure.
+rehearsal_snapshot_present() { [ "${1%%"$REHEARSAL_NL"*}" = present ]; }
+rehearsal_snapshot_text() {
+  case "$1" in
+    present"$REHEARSAL_NL"*) printf '%s' "${1#present"$REHEARSAL_NL"}" ;;
+  esac
+}
+
+# rehearsal_work_registry_matches_pre_drill STATE PRE_TEXT RESTORE_FAILED —
+# repos.txt on the box, after the restore, against the bytes the backup held
+# before it was moved. Nothing was backed up ⇒ nothing to vouch for; anything
+# the box would not answer ⇒ NOT a pass, because the criterion is a comparison
+# and a comparison nobody could make is not one.
 rehearsal_work_registry_matches_pre_drill() {
-  local had="$1" expected="$2" actual
-  [ "$had" -eq 1 ] || return 0
-  actual="$(bx "cat ~/duty/repos.txt 2>/dev/null || true")"
-  [ "$actual" = "$expected" ] && return 0
+  local state="$1" expected="$2" restore_failed="${3:-0}" snap
+  REHEARSAL_TEARDOWN_REASON=""
+  case "$state" in
+    none) return 0 ;;
+    absent)
+      [ "$restore_failed" -eq 0 ] && return 0
+      REHEARSAL_TEARDOWN_REASON="teardown could not restore repos.txt"
+      echo "TEARDOWN: ~/duty/repos.txt could not be restored" >&2
+      return 1
+      ;;
+    unanswerable)
+      REHEARSAL_TEARDOWN_REASON="teardown could not read the pre-drill repos.txt backup"
+      echo "TEARDOWN: the box did not say whether the pre-drill repos.txt backup was there; ~/duty/repos.txt is unvouched for" >&2
+      return 1
+      ;;
+  esac
+  if [ "$restore_failed" -ne 0 ]; then
+    REHEARSAL_TEARDOWN_REASON="teardown could not restore repos.txt"
+    echo "TEARDOWN: ~/duty/repos.txt could not be restored" >&2
+    return 1
+  fi
+  if ! snap="$(rehearsal_registry_snapshot "~/duty/repos.txt")"; then
+    REHEARSAL_TEARDOWN_REASON="teardown could not read repos.txt back"
+    echo "TEARDOWN: ~/duty/repos.txt could not be read back after the restore" >&2
+    return 1
+  fi
+  if ! rehearsal_snapshot_present "$snap"; then
+    REHEARSAL_TEARDOWN_REASON="teardown left no repos.txt at all"
+    echo "TEARDOWN: ~/duty/repos.txt is not there after the restore" >&2
+    return 1
+  fi
+  [ "$(rehearsal_snapshot_text "$snap")" = "$expected" ] && return 0
+  REHEARSAL_TEARDOWN_REASON="teardown left repos.txt unlike its pre-drill contents"
   echo "TEARDOWN: ~/duty/repos.txt differs from its pre-drill contents" >&2
   return 1
 }
 
 rehearsal_cleanup() {
   local rc="${1:-$?}"
-  local repos_had=0 repos_pre=""
+  local repos_state=none repos_pre="" snap
+  local repos_restore_failed=0 notify_restore_failed=0
   # The pre-drill bytes, read BEFORE the restore moves the backup away. The
   # restore is then asserted by COMPARISON and never by having exited 0: a
   # command that succeeds against the wrong bytes leaves the box working or
   # watching a set nobody chose, while the round reports a clean teardown.
-  if [ -n "${REPOS_BACKUP:-}" ] && bx "test -f $REPOS_BACKUP"; then
-    repos_had=1
-    repos_pre="$(bx "cat $REPOS_BACKUP 2>/dev/null || true")"
+  #
+  # Three states, not two. This probe used to be `bx "test -f $REPOS_BACKUP"`,
+  # so a box that stopped answering mid-teardown read as "there was no backup"
+  # and the comparison below returned success having compared nothing.
+  if [ -n "${REPOS_BACKUP:-}" ]; then
+    if snap="$(rehearsal_registry_snapshot "$REPOS_BACKUP")"; then
+      if rehearsal_snapshot_present "$snap"; then
+        repos_state=present
+        repos_pre="$(rehearsal_snapshot_text "$snap")"
+      else
+        repos_state=absent
+      fi
+    else
+      repos_state=unanswerable
+    fi
   fi
   # Both registries, one step. The notifier half is restored FIRST because a
   # box left watching a sandbox that teardown then deletes is the same class
   # of leftover as a box left working one — and the pairing is why #423 put
   # the restore here rather than in a leg that only runs when it runs.
+  #
+  # A failed restore is recorded, not merely printed: it is the strongest
+  # evidence there is that the registry is NOT back, and the comparison below
+  # takes it as an input. A warning on stderr reaches nobody.
   if declare -F rehearsal_notify_restore_registry >/dev/null 2>&1; then
-    rehearsal_notify_restore_registry \
-      || echo "WARNING: could not restore the pre-drill notify-repos.txt; stop the box: box down $BOX_NAME" >&2
+    rehearsal_notify_restore_registry || {
+      notify_restore_failed=1
+      echo "WARNING: could not restore the pre-drill notify-repos.txt; stop the box: box down $BOX_NAME" >&2
+    }
   fi
   if [ -n "${REPOS_BACKUP:-}" ]; then
-    bx "if [ -f $REPOS_BACKUP ]; then mv $REPOS_BACKUP ~/duty/repos.txt; fi" \
-      || echo "WARNING: could not restore the pre-drill repos.txt; stop the box: box down $BOX_NAME" >&2
+    bx "if [ -f $REPOS_BACKUP ]; then mv $REPOS_BACKUP ~/duty/repos.txt; fi" || {
+      repos_restore_failed=1
+      echo "WARNING: could not restore the pre-drill repos.txt; stop the box: box down $BOX_NAME" >&2
+    }
   fi
   # Both compared, after both restores have run, absent-before ⇒ absent-after
   # included. A mismatch controls the drill's verdict: cleanup_all takes this
   # return into the EXIT trap's exit status, so a box left holding the wrong
   # registry reds the round instead of being a warning nobody reads.
-  if ! rehearsal_work_registry_matches_pre_drill "$repos_had" "$repos_pre"; then
+  if ! rehearsal_work_registry_matches_pre_drill \
+      "$repos_state" "$repos_pre" "$repos_restore_failed"; then
     rc=1
     declare -F rehearsal_notify_verdict >/dev/null 2>&1 \
-      && rehearsal_notify_verdict fail "teardown left repos.txt unlike its pre-drill contents"
+      && rehearsal_notify_verdict fail "${REHEARSAL_TEARDOWN_REASON:-teardown left repos.txt unlike its pre-drill contents}"
   fi
   if declare -F rehearsal_notify_registry_matches_pre_drill >/dev/null 2>&1 \
-      && ! rehearsal_notify_registry_matches_pre_drill; then
+      && ! rehearsal_notify_registry_matches_pre_drill "$notify_restore_failed"; then
     rc=1
-    rehearsal_notify_verdict fail "teardown left notify-repos.txt unlike its pre-drill contents"
+    rehearsal_notify_verdict fail "${REHEARSAL_TEARDOWN_REASON:-teardown left notify-repos.txt unlike its pre-drill contents}"
   fi
   rehearsal_disarm_cron \
     || echo "WARNING: could not disarm the drill cron; stop the box: box down $BOX_NAME" >&2

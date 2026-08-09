@@ -179,7 +179,14 @@ cleanup_all() {
   if [ -n "$ACQUIRE_TMP" ] && [ -d "$ACQUIRE_TMP" ]; then
     rm -rf -- "$ACQUIRE_TMP"
   fi
-  return "$rc"
+  # exit, not return. This script runs under `set -uo pipefail` with no -e,
+  # and a `return` from an EXIT-trap function does not change the shell's
+  # exit status — so rehearsal_cleanup's verdict was computed, printed, and
+  # then discarded, and a standalone `--role X` round exited 0 on a registry
+  # left holding the wrong bytes. `exit` sets it, and does not re-enter the
+  # trap. Without this the teardown comparison's only escalation route is the
+  # notify verdict, which `--no-notify-drill` switches off first.
+  exit "$rc"
 }
 
 command -v box >/dev/null || { echo "box CLI not found — this runs on a box host"; exit 1; }

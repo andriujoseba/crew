@@ -19,6 +19,16 @@
 # shellcheck disable=SC2088  # tildes in bx "…" strings expand in the BOX's
 # login shell, which is exactly where those paths live
 
+# rehearsal_registry_snapshot and its two readers live in rehearsal-safety.sh,
+# which rehearsal.sh sources first. Sourced on its own — CI's fixtures do that,
+# and so does anyone reading this file — pull it in rather than let a missing
+# helper be the reason this file cannot be exercised alone. Definitions only,
+# so a second source is a no-op.
+if ! declare -F rehearsal_registry_snapshot >/dev/null 2>&1; then
+  # shellcheck source=drill/rehearsal-safety.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/rehearsal-safety.sh"
+fi
+
 # Set by rehearsal_notify_write_registry, read by the restore below and by
 # rehearsal_cleanup, which restores both registries in one step.
 REHEARSAL_NOTIFY_BACKUP=""
@@ -248,9 +258,17 @@ rehearsal_notify_pre_drill_registry() {
 # left those lines standing would sweep production repositories on its own
 # tick.
 rehearsal_notify_write_registry() {
-  local sandbox="$1"
+  local sandbox="$1" snap
   REHEARSAL_NOTIFY_BACKUP="~/duty/notify-repos.txt.pre-drill-$$"
-  if bx "test -f ~/duty/notify-repos.txt"; then
+  # Three-state, because the absent branch becomes an `rm -f` at teardown: a
+  # probe the box did not answer must never license deleting the operator's
+  # real notify-repos.txt. Unanswerable ⇒ write nothing and say so; there is
+  # then no backup to restore and nothing for teardown to vouch for.
+  if ! snap="$(rehearsal_registry_snapshot "~/duty/notify-repos.txt")"; then
+    REHEARSAL_NOTIFY_BACKUP=""
+    return 1
+  fi
+  if rehearsal_snapshot_present "$snap"; then
     REHEARSAL_NOTIFY_ABSENT=0
     bx "cp ~/duty/notify-repos.txt $REHEARSAL_NOTIFY_BACKUP" || return 1
   else
@@ -299,15 +317,32 @@ rehearsal_notify_registries_restored() {
 # clean teardown. Absent before the drill means absent after it. A leg that
 # never captured has nothing to vouch for and passes.
 rehearsal_notify_registry_matches_pre_drill() {
-  local actual
+  local restore_failed="${1:-0}" snap
+  REHEARSAL_TEARDOWN_REASON=""
   [ "${REHEARSAL_NOTIFY_CAPTURED:-0}" -eq 1 ] || return 0
+  if [ "$restore_failed" -ne 0 ]; then
+    REHEARSAL_TEARDOWN_REASON="teardown could not restore notify-repos.txt"
+    echo "TEARDOWN: ~/duty/notify-repos.txt could not be restored" >&2
+    return 1
+  fi
+  if ! snap="$(rehearsal_registry_snapshot "~/duty/notify-repos.txt")"; then
+    REHEARSAL_TEARDOWN_REASON="teardown could not read notify-repos.txt back"
+    echo "TEARDOWN: ~/duty/notify-repos.txt could not be read back after the restore" >&2
+    return 1
+  fi
   if [ "${REHEARSAL_NOTIFY_ABSENT:-0}" -eq 1 ]; then
-    bx "! test -e ~/duty/notify-repos.txt" && return 0
+    rehearsal_snapshot_present "$snap" || return 0
+    REHEARSAL_TEARDOWN_REASON="teardown left notify-repos.txt behind; the box had none before the drill"
     echo "TEARDOWN: ~/duty/notify-repos.txt is still in place; the box had none before the drill" >&2
     return 1
   fi
-  actual="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
-  [ "$actual" = "$REHEARSAL_NOTIFY_PRE_TEXT" ] && return 0
+  if ! rehearsal_snapshot_present "$snap"; then
+    REHEARSAL_TEARDOWN_REASON="teardown left no notify-repos.txt where the box had one"
+    echo "TEARDOWN: ~/duty/notify-repos.txt is not there after the restore" >&2
+    return 1
+  fi
+  [ "$(rehearsal_snapshot_text "$snap")" = "$REHEARSAL_NOTIFY_PRE_TEXT" ] && return 0
+  REHEARSAL_TEARDOWN_REASON="teardown left notify-repos.txt unlike its pre-drill contents"
   echo "TEARDOWN: ~/duty/notify-repos.txt differs from its pre-drill contents" >&2
   return 1
 }
@@ -376,7 +411,7 @@ rehearsal_notify_close_fixtures() {
 rehearsal_notify_drill() {
   local work="$1" host="$2" role="$3"
   local notify_sandbox channel pre_drill before after label
-  local work_pr="" notify_pr="" first log_text pre_notify_text=""
+  local work_pr="" notify_pr="" first log_text pre_notify_text="" notify_snap=""
   local union_rc
 
   if [ "${REHEARSAL_NOTIFY_DRILL:-1}" -eq 0 ]; then
@@ -410,7 +445,17 @@ rehearsal_notify_drill() {
   fi
   ok "notify: the drill's own second sandbox is in place for the notify half"
 
-  pre_notify_text="$(bx "cat ~/duty/notify-repos.txt 2>/dev/null || true")"
+  # Captured through the three-state read, so an unreadable file cannot enter
+  # the round as empty bytes: teardown would then compare the restored fleet
+  # registry against "" and pass. CAPTURED is set only once the box has
+  # actually answered — it is the flag that says there is something to vouch
+  # for, and it must not be set by a read that failed.
+  if ! notify_snap="$(rehearsal_registry_snapshot "~/duty/notify-repos.txt")"; then
+    fail "notify: the box could not be asked what notify-repos.txt held before the drill"
+    rehearsal_notify_verdict fail "the pre-drill notify-repos.txt could not be read"
+    return 0
+  fi
+  pre_notify_text="$(rehearsal_snapshot_text "$notify_snap")"
   REHEARSAL_NOTIFY_PRE_TEXT="$pre_notify_text"
   REHEARSAL_NOTIFY_CAPTURED=1
   before="$(rehearsal_notify_read_work_registry)"
