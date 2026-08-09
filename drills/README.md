@@ -42,8 +42,10 @@ not success.
 
 **A release window's drill is adapted to what that window shipped, and the
 release issue carries the audit that says so.** At release-init, triage adds one
-row for every fragment in `changelog.d/` at the cut's merge base, naming the
-issue and surface and assigning exactly one disposition:
+row for every surface shipped by the fragments in `changelog.d/` at the cut's
+merge base, naming the issue and surface and assigning exactly one disposition.
+Every fragment contributes at least one row; a fragment that ships more than
+one surface contributes a row for each:
 
 - **`drilled`** — an existing leg reads the surface; name the assertion.
 - **`new leg`** — the window needs another leg; name the issue minted for it.
@@ -58,8 +60,15 @@ and forces a re-drill.
 
 ### Worked example: `0.1.2`
 
-TODO-SNAPSHOT. The disposition records the decision at audit time, so a `new
-leg` row keeps the issue it caused even when that issue has since landed.
+This is a worked example at snapshot
+`07bb0f3473d1a35a39fdf8d9ab93ac7d99ec3d74`, not `0.1.2`'s audit of record.
+Its fragment names are exactly the 42 fragments returned by
+`git ls-tree -r --name-only 07bb0f3473d1a35a39fdf8d9ab93ac7d99ec3d74 -- changelog.d/`,
+excluding `changelog.d/README.md`. Triage re-derives the audit of record at
+release-init against the actual cut. The owed `425.md` and `427.md` fragments
+are absent at this snapshot and therefore have no rows below. A disposition
+records the decision at audit time, so a `new leg` row keeps the issue it caused
+even when that issue has since landed.
 
 | Fragment | Surface | Disposition and evidence |
 | --- | --- | --- |
@@ -71,8 +80,9 @@ leg` row keeps the issue it caused even when that issue has since landed.
 | `217.md` | Round teardown, retention and reuse | **`drilled`** — the `teardown` summary rows and `drill/teardown.sh` refusal, inspection and cleanup assertions read it. |
 | `218.md` | `crew up --dry-run` | **`new leg`** — #420 |
 | `240.md` | Boot-check probe verdict | **`new leg`** — #427 |
-| `301.md` | Attention dispatch and timeout reporting | **TODO-DISPOSITION-301** |
-| `303.md` | Hygiene reporting of malformed `attention` | **TODO-DISPOSITION-303** |
+| `301.md` | Attention pickup comment and acknowledgement | **`drilled`** — the pickup-comment and `attention`-removal assertions in `rehearsal.sh` read it. |
+| `301.md` | Attention dispatch and timed-out pickup reporting | **`new leg`** — #440 |
+| `303.md` | Hygiene reporting of malformed `attention` | **`new leg`** — #441 |
 | `308.md` | Unknown `crew status` probe | **`new leg`** — #420 |
 | `312.md` | Disarmed versus silent floor states | **`new leg`** — #420 |
 | `316.md` | Union of work and notification repositories | **`new leg`** — #423 |
@@ -104,8 +114,6 @@ leg` row keeps the issue it caused even when that issue has since landed.
 | `422.md` | Dirty-worktree preservation and refusal | **`drilled`** — the `hygiene:` assertions read the remote `wip/` tree, durable record, push-before-removal order and refusal retention. |
 | `423.md` | Notification-union leg and cleanup | **`drilled`** — the notifier assertions read both halves of the watch set, and its safety/teardown assertions read restoration and cleanup. |
 | `424.md` | Terminal-session breaker | **`drilled`** — the `breaker:` assertions read the threshold trip, suppressed ticks, one alert and recovered dispatch. |
-| `425.md` | Release-window audit doctrine | **`not a drill surface`** — this changes the repository's release-init procedure, not installed duty behavior. |
-| `427.md` | Boot-check verdict and warning content | **`drilled`** — `boot check: cli probe verdict is ok for <agent>` and `boot check: no WARN for <agent>` read the last boot block. |
 | `435.md` | Resume leg's independent summary verdict | **`drilled`** — the resume verdict file and `rehearsal_worst_verdict` feed the `resume` summary row independently of the builder exit. |
 
 ## The drill
