@@ -324,6 +324,8 @@ source "$ROOT/drill/rehearsal-fixtures.sh"
 source "$ROOT/drill/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-resume.sh
 source "$ROOT/drill/rehearsal-resume.sh"
+# shellcheck source=drill/rehearsal-attention.sh
+source "$ROOT/drill/rehearsal-attention.sh"
 # shellcheck source=drill/rehearsal-boot.sh
 source "$ROOT/drill/rehearsal-boot.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
@@ -708,6 +710,298 @@ else
   resume_wiring=MISSING
 fi
 t rehearsal-resume-all-opt-out-and-summary-wired wired "$resume_wiring"
+
+# --- rehearsal attention leg: dispatch without code, timeout report (#440) --
+# Every input here is the value the live row reads — board JSON, session
+# output, a box path under a stubbed bx() — so each mutation is the decision
+# boundary itself and needs no drill host.
+ATT_REPO=owner/sandbox
+ATT_ISSUE=77
+ATT_IDENTITY=drill-identity
+ATT_FILED=2026-08-09T10:00:00Z
+ATT_PICKUP='📌 picked up'
+ATT_PHRASE='attention pickup timed out'
+ATT_RUNLOG=/home/drill/duty/logs/20260809T110000Z-attention-owner__sandbox_77.log
+ATT_LINK=/home/drill/duty/logs/attention-owner__sandbox_77-latest.log
+
+att_row() {  # att_row <row name> <predicate...> — the live grading, captured
+  (
+    ok()   { printf 'ok   %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; }
+    rehearsal_attention_graded "$@"
+  )
+}
+
+# §4.1 no PR authored for the dispatched claim.
+ATT_PULLS_CLEAN='[{"number":5,"body":"Closes #12","head":"build/12-elsewhere"}]'
+ATT_PULLS_BUILT='[{"number":9,"body":"Closes #77 for the demand","head":"build/77-oops"}]'
+if rehearsal_attention_prs_for_issue_from_json "$ATT_ISSUE" "$ATT_PULLS_CLEAN" >/dev/null; then
+  r1=absent
+else
+  r1=WRONG
+fi
+t attention-dispatch-no-pr-holds absent "$r1"
+ATT_OUT="$(att_row 'attention: dispatch opened no PR for the claim' \
+  rehearsal_attention_prs_for_issue_from_json "$ATT_ISSUE" "$ATT_PULLS_BUILT")"
+t attention-dispatch-also-built-a-pr-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch opened no PR for the claim' <<<"$ATT_OUT")"
+t attention-dispatch-pr-red-quotes-the-pr 1 \
+  "$(grep -cF 'read: #9 (build/77-oops)' <<<"$ATT_OUT")"
+
+# §4.2 no build/<issue>-* branch on the fork.
+ATT_BRANCHES_CLEAN='["main","build/12-elsewhere"]'
+ATT_BRANCHES_BUILT='["main","build/77-oops"]'
+if rehearsal_attention_build_branches_from_json "$ATT_ISSUE" "$ATT_BRANCHES_CLEAN" >/dev/null; then
+  r1=absent
+else
+  r1=WRONG
+fi
+t attention-dispatch-no-build-branch-holds absent "$r1"
+ATT_OUT="$(att_row 'attention: dispatch pushed no build branch' \
+  rehearsal_attention_build_branches_from_json "$ATT_ISSUE" "$ATT_BRANCHES_BUILT")"
+t attention-dispatch-build-branch-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch pushed no build branch' <<<"$ATT_OUT")"
+t attention-dispatch-branch-red-quotes-the-branch 1 \
+  "$(grep -cF 'read: build/77-oops' <<<"$ATT_OUT")"
+
+# §4.3 the claim is released to ready — the swap, not merely the addition.
+ATT_ISSUE_READY='{"labels":[{"name":"ready"}],"assignees":[]}'
+ATT_ISSUE_CLAIMED='{"labels":[{"name":"claimed"},{"name":"ready"}],"assignees":[]}'
+ATT_ISSUE_ASSIGNED='{"labels":[{"name":"ready"}],"assignees":[{"login":"drill-identity"}]}'
+if rehearsal_attention_is_ready_from_json "$ATT_ISSUE_READY" >/dev/null; then
+  r1=released
+else
+  r1=WRONG
+fi
+t attention-dispatch-ready-holds released "$r1"
+ATT_OUT="$(att_row 'attention: dispatch left the issue ready' \
+  rehearsal_attention_is_ready_from_json "$ATT_ISSUE_CLAIMED")"
+t attention-dispatch-still-claimed-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch left the issue ready' <<<"$ATT_OUT")"
+t attention-dispatch-label-red-quotes-the-set 1 \
+  "$(grep -cF 'read: claimed ready' <<<"$ATT_OUT")"
+
+# §4.4 the identity is unassigned.
+if rehearsal_attention_identity_released_from_json "$ATT_IDENTITY" "$ATT_ISSUE_READY" >/dev/null; then
+  r1=unassigned
+else
+  r1=WRONG
+fi
+t attention-dispatch-unassigned-holds unassigned "$r1"
+ATT_OUT="$(att_row 'attention: dispatch unassigned the identity' \
+  rehearsal_attention_identity_released_from_json "$ATT_IDENTITY" "$ATT_ISSUE_ASSIGNED")"
+t attention-dispatch-still-assigned-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch unassigned the identity' <<<"$ATT_OUT")"
+t attention-dispatch-assignee-red-quotes-the-login 1 \
+  "$(grep -cF "read: $ATT_IDENTITY" <<<"$ATT_OUT")"
+
+# §4.5 the next build step is recorded — a comment by the identity that is not
+# the ack. An ack-only thread is the mutation: the route released a claim
+# without recording where it got to.
+ATT_COMMENTS_STEP='[{"user":{"login":"drill-identity"},"created_at":"2026-08-09T10:01:00Z","body":"📌 picked up"},{"user":{"login":"drill-identity"},"created_at":"2026-08-09T10:02:00Z","body":"Next build step: add drill-attention.txt and open the PR."}]'
+ATT_COMMENTS_ACK='[{"user":{"login":"drill-identity"},"created_at":"2026-08-09T10:01:00Z","body":"📌 picked up"}]'
+if rehearsal_attention_records_next_step_from_json \
+    "$ATT_PICKUP" "$ATT_IDENTITY" "$ATT_FILED" "$ATT_COMMENTS_STEP" >/dev/null; then
+  r1=recorded
+else
+  r1=WRONG
+fi
+t attention-dispatch-next-step-holds recorded "$r1"
+ATT_OUT="$(att_row 'attention: dispatch recorded the next build step' \
+  rehearsal_attention_records_next_step_from_json \
+  "$ATT_PICKUP" "$ATT_IDENTITY" "$ATT_FILED" "$ATT_COMMENTS_ACK")"
+t attention-dispatch-ack-only-reds 1 \
+  "$(grep -cFx 'FAIL attention: dispatch recorded the next build step' <<<"$ATT_OUT")"
+t attention-dispatch-next-step-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 0 non-ack comment' <<<"$ATT_OUT")"
+# A comment posted before this run's fixture is not this run's evidence.
+t attention-dispatch-next-step-window-is-this-run 0 \
+  "$(rehearsal_attention_next_step_count_from_json "$ATT_PICKUP" "$ATT_IDENTITY" \
+    2026-08-09T23:00:00Z "$ATT_COMMENTS_STEP")"
+
+# §5.1 the ⏱️ comment lands exactly once across two lowered invocations.
+ATT_TIMEOUT_BODY="⏱️ $ATT_PHRASE; work may be incomplete. Session log: $ATT_LINK"
+ATT_TIMEOUT_ONE="$(jq -n --arg b "$ATT_TIMEOUT_BODY" '[{body:$b}]')"
+ATT_TIMEOUT_TWICE="$(jq -n --arg b "$ATT_TIMEOUT_BODY" '[{body:$b},{body:$b}]')"
+ATT_TIMEOUT_NONE='[{"body":"📌 picked up"}]'
+if rehearsal_attention_timeout_comment_once_from_json "$ATT_PHRASE" "$ATT_TIMEOUT_ONE" >/dev/null; then
+  r1=once
+else
+  r1=WRONG
+fi
+t attention-timeout-comment-once-holds once "$r1"
+ATT_OUT="$(att_row 'attention: timeout comment posted exactly once' \
+  rehearsal_attention_timeout_comment_once_from_json "$ATT_PHRASE" "$ATT_TIMEOUT_TWICE")"
+t attention-timeout-comment-duplicated-reds 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
+t attention-timeout-duplicate-red-quotes-the-count 1 \
+  "$(grep -cF 'read: 2 timeout comment' <<<"$ATT_OUT")"
+ATT_OUT="$(att_row 'attention: timeout comment posted exactly once' \
+  rehearsal_attention_timeout_comment_once_from_json "$ATT_PHRASE" "$ATT_TIMEOUT_NONE")"
+t attention-timeout-comment-absent-reds 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment posted exactly once' <<<"$ATT_OUT")"
+
+# §5.2 that comment names the STABLE link, which is what survives a retry.
+ATT_TIMEOUT_STAMPED="$(jq -n --arg b "⏱️ $ATT_PHRASE; work may be incomplete. Session log: $ATT_RUNLOG" '[{body:$b}]')"
+if rehearsal_attention_timeout_names_link_from_json \
+    "$ATT_PHRASE" "$ATT_LINK" "$ATT_TIMEOUT_ONE" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-timeout-comment-names-stable-link named "$r1"
+ATT_OUT="$(att_row 'attention: timeout comment names the stable log link' \
+  rehearsal_attention_timeout_names_link_from_json \
+  "$ATT_PHRASE" "$ATT_LINK" "$ATT_TIMEOUT_STAMPED")"
+t attention-timeout-timestamped-path-reds 1 \
+  "$(grep -cFx 'FAIL attention: timeout comment names the stable log link' <<<"$ATT_OUT")"
+
+# §5.3 the stable link exists and resolves to a readable file. Staged for real
+# against a stubbed bx(), so the three states an operator can find are read
+# rather than argued: present, dangling, absent.
+ATT_LINKDIR="$TMP/attention-link"
+mkdir -p "$ATT_LINKDIR"
+printf 'session\n' >"$ATT_LINKDIR/run.log"
+ln -sfn run.log "$ATT_LINKDIR/latest.log"
+bx() { bash -c "$1"; }
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=readable
+else
+  r1=WRONG
+fi
+t attention-stable-link-readable-holds readable "$r1"
+rm -f "$ATT_LINKDIR/run.log"
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=WRONG
+else
+  r1=dangling
+fi
+t attention-stable-link-dangling-reds dangling "$r1"
+rm -f "$ATT_LINKDIR/latest.log"
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=WRONG
+else
+  r1=absent
+fi
+t attention-stable-link-absent-reds absent "$r1"
+# A regular file in the link's place is not the link the engine plants.
+printf 'not a link\n' >"$ATT_LINKDIR/latest.log"
+if rehearsal_attention_stable_log_readable "$ATT_LINKDIR/latest.log"; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-stable-link-plain-file-reds refused "$r1"
+unset -f bx
+
+# §5.4 the operator alert names the IMMUTABLE run log, not the stable link:
+# the two paths are deliberately different subjects and swapping them is the
+# mutation that would go unnoticed.
+ATT_SESSION_OUT="2026-08-09T11:00:00Z SESSION START kind=attention key=$ATT_REPO#$ATT_ISSUE timeout=1s log=$ATT_RUNLOG
+2026-08-09T11:00:02Z SESSION END kind=attention key=$ATT_REPO#$ATT_ISSUE rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+t attention-run-log-read-from-the-session-record "$ATT_RUNLOG" \
+  "$(rehearsal_attention_run_log_from_output "$ATT_REPO" "$ATT_ISSUE" "$ATT_SESSION_OUT")"
+t attention-stable-link-derived-not-parsed "$ATT_LINK" \
+  "$(rehearsal_attention_stable_link_for "$ATT_REPO" "$ATT_ISSUE" "$ATT_RUNLOG")"
+if rehearsal_attention_run_log_from_output "$ATT_REPO" "$ATT_ISSUE" \
+    "2026-08-09T11:00:00Z SESSION START kind=attention key=other/repo#1 timeout=1s log=/tmp/other" >/dev/null; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-run-log-of-another-key-refused refused "$r1"
+ATT_ALERTS="⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_RUNLOG"
+if rehearsal_attention_alert_names_run_log \
+    "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" "$ATT_ALERTS" >/dev/null; then
+  r1=named
+else
+  r1=WRONG
+fi
+t attention-alert-names-run-log-holds named "$r1"
+ATT_OUT="$(att_row 'attention: operator alert named the run log' \
+  rehearsal_attention_alert_names_run_log \
+  "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" \
+  "⏱️ host: $ATT_PHRASE for $ATT_REPO#$ATT_ISSUE — session log: $ATT_LINK")"
+t attention-alert-naming-the-link-reds 1 \
+  "$(grep -cFx 'FAIL attention: operator alert named the run log' <<<"$ATT_OUT")"
+ATT_OUT="$(att_row 'attention: operator alert named the run log' \
+  rehearsal_attention_alert_names_run_log \
+  "$ATT_PHRASE for $ATT_REPO#$ATT_ISSUE" "$ATT_RUNLOG" '')"
+t attention-alert-absent-reds 1 \
+  "$(grep -cF 'read: <no timeout alert>' <<<"$ATT_OUT")"
+
+# The restore. The lowered budget lives in one box shell, so the proof is that
+# a fresh load_conf still resolves the installed number — an after that equals
+# the lowered value is exactly the leak this row exists to catch.
+if rehearsal_attention_timeout_restored 1800 1800 1 >/dev/null; then
+  r1=restored
+else
+  r1=WRONG
+fi
+t attention-installed-budget-restored-holds restored "$r1"
+ATT_OUT="$(att_row 'attention: installed pickup budget survives the lowered run' \
+  rehearsal_attention_timeout_restored 1800 1 1)"
+t attention-lowered-budget-leaked-reds 1 \
+  "$(grep -cFx 'FAIL attention: installed pickup budget survives the lowered run' <<<"$ATT_OUT")"
+t attention-budget-red-quotes-both-readings 1 \
+  "$(grep -cF 'read: installed TIMEOUT_ATTENTION before=1800 after=1' <<<"$ATT_OUT")"
+if rehearsal_attention_timeout_restored '' '' 1 >/dev/null; then
+  r1=WRONG
+else
+  r1=refused
+fi
+t attention-unresolvable-budget-refused refused "$r1"
+
+# The opt-out is a skip with a reason, never a silent pass.
+REHEARSAL_ATTENTION_STATUS="$TMP/attention-leg-verdicts"
+: >"$REHEARSAL_ATTENTION_STATUS"
+(
+  # shellcheck disable=SC2030  # the fixture identity is intentionally local
+  ROLE=builder
+  REHEARSAL_ATTENTION_DRILL=0
+  skip() { :; }
+  rehearsal_attention_drill "$ATT_REPO" "$ATT_IDENTITY" >/dev/null
+)
+t attention-verdict-opt-out-is-a-skip "builder skip --no-attention-drill" \
+  "$(cat "$REHEARSAL_ATTENTION_STATUS")"
+unset REHEARSAL_ATTENTION_STATUS
+
+# No agent or box name in the leg: the identity reaches every assertion from
+# the round's own variables.
+t attention-leg-names-no-agent-or-box 0 \
+  "$(grep -ciE 'claude|codex|grok|kimi|crew-drill' \
+    "$ROOT/drill/rehearsal-attention.sh" | tr -d ' ')"
+
+# Wiring: the leg is sourced and called in the builder block, and it runs
+# AFTER the two wake rows it sits beside, which are unchanged.
+# shellcheck disable=SC2016  # match literal builder-block source text
+if sed -n '/elif \[ "$ROLE" = "builder" \]/,/^[[:space:]]*else$/p' \
+    "$ROOT/drill/rehearsal.sh" \
+    | grep -Fq '. "$ROOT/drill/rehearsal-attention.sh"'; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t attention-helper-sourced-in-builder-block wired "$r1"
+ATT_WAKE_LINE="$(grep -nF 'attention: 📌 pickup comment' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+ATT_ACK_LINE="$(grep -nF 'attention: label removed (ack re-arms)' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal call site in rehearsal.sh
+ATT_LEG_LINE="$(grep -nF 'rehearsal_attention_drill "$SANDBOX"' "$ROOT/drill/rehearsal.sh" | head -1 | cut -d: -f1)"
+if [ -n "$ATT_WAKE_LINE" ] && [ -n "$ATT_ACK_LINE" ] && [ -n "$ATT_LEG_LINE" ] \
+    && [ "$ATT_WAKE_LINE" -lt "$ATT_ACK_LINE" ] && [ "$ATT_ACK_LINE" -lt "$ATT_LEG_LINE" ]; then
+  r1=after
+else
+  r1=WRONG
+fi
+t attention-leg-follows-the-existing-wake-rows after "$r1"
+if grep -Fq -- '--no-attention-drill' "$ROOT/drill/rehearsal-all.sh" \
+    && grep -Fq 'attention  (dispatch without code + timeout report)' \
+      "$ROOT/drill/rehearsal-all.sh"; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t attention-all-opt-out-and-summary-wired wired "$r1"
 
 # --- rehearsal boot-check verdict: what the gate SAID, not that it ran (#427) ---
 # The drill's assertion was `test -s ~/duty/boot-check.log`, which passes on a
@@ -2006,14 +2300,15 @@ agg_case() {  # $1 role, $2 notify verdict, $3 rc, $4 resume verdict
 agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   # Every sibling leg the notify fold is not under test with is switched off,
-  # --no-hygiene-drill (#422) and --no-breaker-drill (#424) included: these
+  # --no-hygiene-drill (#422), --no-breaker-drill (#424) and
+  # --no-attention-drill (#440) included: these
   # cases assert what the NOTIFY
   # verdict does to `overall`, and a neighbour's row moving it would red them
   # for a reason that is not theirs. The composition of the two folds gets its
   # own case below, with the hygiene leg deliberately left on.
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-hygiene-drill --no-breaker-drill ${1+"$@"} 2>&1
 }
 
 # The breaker has its own enabled/incomplete partition: an enabled leg that no
@@ -2022,7 +2317,7 @@ agg_run() {  # $1 roles, then extra flags
 agg_breaker_run() {
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles '' \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-hygiene-drill --no-notify-drill ${1+"$@"} 2>&1
 }
 if agg_out="$(agg_breaker_run)"; then agg_rc=0; else agg_rc=$?; fi
 t breaker-agg-enabled-no-role-is-incomplete 1 \
@@ -2108,7 +2403,7 @@ resume_agg_run() {  # $1 roles, then extra flags
   local roles="$1"; shift
   AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-hygiene-drill \
-    --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
+    --no-attention-drill --no-breaker-drill --no-notify-drill ${1+"$@"} 2>&1
 }
 
 # Reported defect: the builder leg skipped while the role exited 0. The row
@@ -2165,7 +2460,7 @@ agg_hygiene_run() {  # $1 roles, $2 the hygiene result the role box records
   local roles="$1" hyg="$2"
   AGG_DIR="$AGG" AGG_HYGIENE="$hyg" bash "$AGG/rehearsal-all.sh" --roles "$roles" \
     --no-app --no-config-drill --no-install-drill --no-resume-drill \
-    --no-breaker-drill 2>&1
+    --no-attention-drill --no-breaker-drill 2>&1
 }
 # The stub writes the hygiene result the way the live leg does — into the file
 # rehearsal-all.sh hands it, per role — on top of the notify verdict it already
