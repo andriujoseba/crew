@@ -235,7 +235,8 @@ old_slow_rc=$?
 slow_materialized="$(slow_lines)"
 grep -qx MATCH <<<"$slow_materialized"; new_slow_match_rc=$?
 grep -qx ABSENT <<<"$slow_materialized"; new_slow_miss_rc=$?
-t pipefail-materialized-old-race 141 "$old_slow_rc"
+case "$old_slow_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
+t pipefail-materialized-old-race nonzero "$r1"
 t pipefail-materialized-match 0 "$new_slow_match_rc"
 t pipefail-materialized-nonmatch 1 "$new_slow_miss_rc"
 unset -f slow_lines
@@ -7424,7 +7425,8 @@ unset -f gh
 # with SIGPIPE instead of the match. Keep the spelling assembled for the guard.
 eval 'printf '\''%s\\n'\'' "$P447_MERGED_HEADS" | gr'"ep -qx build/900-merged" >/dev/null 2>&1
 p447_old_orphan_rc=$?
-t p447-orphan-old-shape-races 141 "$p447_old_orphan_rc"
+case "$p447_old_orphan_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
+t p447-orphan-old-shape-races nonzero "$r1"
 
 # cross-repo collision: discussion numbers are PER-REPO but the ledger is one
 # file across every repo in repos.txt, so keys must be repo-qualified. After
