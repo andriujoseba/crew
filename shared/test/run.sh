@@ -38,28 +38,59 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
   grep -Fq -- "$3" <<<"$output"
 }
 
-# #443: exceptionless source guard for the files whose shells enable pipefail.
-# cli/crew:2243 and drill/rehearsal-app.sh:182,184,188 are deliberately absent:
-# their four pipelines are payloads for fresh remote shells without pipefail.
+# #443: derive the guarded population from both file-scope pipefail settings
+# and source edges. The candidate surfaces are the issue's declared scope;
+# #447 can extend the same derivation to shared/lib without duplicating it.
+pipefail_grep_q_candidates() {
+  find "$HERE" "$ROOT/drill" "$ROOT/fleet-floor/test" -type f -name '*.sh' -print
+  printf '%s\n' "$SHARED/bin/engine-manifest.sh"
+}
+
+pipefail_grep_q_population() {
+  local file parent leaf changed
+  local -a candidates=()
+  local -A included=()
+  mapfile -t candidates < <(pipefail_grep_q_candidates | sort -u)
+  for file in "${candidates[@]}"; do
+    if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$file"; then
+      included["$file"]=1
+    fi
+  done
+  changed=1
+  while [ "$changed" -eq 1 ]; do
+    changed=0
+    for file in "${candidates[@]}"; do
+      [ -z "${included[$file]+x}" ] || continue
+      leaf="${file##*/}"
+      for parent in "${!included[@]}"; do
+        if awk -v leaf="$leaf" '
+          /^[[:space:]]*(source|\.)[[:space:]]/ && index($0, "/" leaf) { found=1 }
+          END { exit !found }
+        ' "$parent"; then
+          included["$file"]=1
+          changed=1
+          break
+        fi
+      done
+    done
+  done
+  printf '%s\n' "${!included[@]}" | sort
+}
+
+# cli/crew:2243 is outside the declared surfaces. The three rehearsal-app.sh
+# lines are in a derived file but are box-exec payloads for fresh remote shells
+# that do not inherit the file's pipefail; only those payload lines are skipped.
 pipefail_grep_q_sites() {  # [files...]
   local files=("$@")
-  [ "${#files[@]}" -gt 0 ] || files=(
-    "$HERE/run.sh"
-    "$ROOT/drill/rehearsal.sh"
-    "$ROOT/fleet-floor/test/cli.sh"
-    "$ROOT/fleet-floor/test/run.sh"
-    "$ROOT/fleet-floor/test/boxside.sh"
-    "$HERE/drill-teardown.sh"
-    "$HERE/artifact.sh"
-    "$HERE/claim.test.sh"
-    "$SHARED/bin/engine-manifest.sh"
-  )
+  [ "${#files[@]}" -gt 0 ] || mapfile -t files < <(pipefail_grep_q_population)
   awk '
     function qgrep(s) {
       return s ~ /grep[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
     }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
+    FILENAME ~ /\/drill\/rehearsal-app[.]sh$/ &&
+        /box exec/ && /bash -lc/ && /crontab -l/ { pipe_line = 0; next }
     $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep($0) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
@@ -178,6 +209,16 @@ rm -f "$PIPE_GUARD_FIXTURE"
 guard_findings="$(pipefail_grep_q_sites)"
 t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
 
+pipefail_population="$(pipefail_grep_q_population)"
+for inherited in \
+    "$ROOT/fleet-floor/test/cases.sh" \
+    "$ROOT/drill/rehearsal-attention.sh" \
+    "$ROOT/drill/install-payload.sh"; do
+  case "$pipefail_population" in
+    *"$inherited"*) r1=inherited ;; *) r1=MISSING ;; esac
+  t "pipefail-population-inherits-${inherited##*/}" inherited "$r1"
+done
+
 # Drive the two converted awk-range call sites with a producer that pauses
 # after its match. The old predicate is assembled so the source guard itself
 # does not carry the prohibited spelling.
@@ -195,7 +236,8 @@ t pipefail-awk-range-fixed-survives-race matched "$r1"
 if awk_range_grep_q ignored ignored ABSENT; then r1=FALSE-POSITIVE; else r1=absent; fi
 t pipefail-awk-range-keeps-negative-direction absent "$r1"
 unset -f awk slow_awk
-unset old_match old_pipe old_predicate_rc guard_findings guard_mutation PIPE_GUARD_FIXTURE
+unset old_match old_pipe old_predicate_rc guard_findings guard_mutation
+unset pipefail_population inherited PIPE_GUARD_FIXTURE
 
 # #411: force the box-existence producer to pause after its matching line.
 # The stub is deliberately `box list`, so this exercises the predicate's

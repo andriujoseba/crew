@@ -71,7 +71,9 @@ install_payload_declared_roots() {  # <source tree>
 # against the source tree: it is a property of install.sh and not of any one
 # installed tree, so it earns one line in the record rather than three.
 install_payload_installer_names_sentinel() {  # <source tree>
-  install_payload_declared_roots "$1" | grep -qx "$INSTALL_PAYLOAD_SENTINEL_ROOT"
+  local declared_roots
+  declared_roots="$(install_payload_declared_roots "$1")"
+  grep -qx "$INSTALL_PAYLOAD_SENTINEL_ROOT" <<<"$declared_roots"
 }
 
 # What every installed tree is walked against: the declared list, unioned with
