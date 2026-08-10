@@ -247,6 +247,81 @@ for inherited in \
   t "pipefail-population-inherits-${inherited##*/}" inherited "$r1"
 done
 
+# #449: the live pipefail-setting entrypoints, and the one file that can only
+# arrive behind them. Deleting the widened candidate lines reds every row.
+for admitted in \
+    "$ROOT/cli/crew" \
+    "$ROOT/install.sh" \
+    "$SHARED/install.sh" \
+    "$ROOT/dist/curl-install.sh" \
+    "$ROOT/dist/fetch.sh" \
+    "$ROOT/dist/make-installer.sh" \
+    "$ROOT/dist/release-artifact.sh" \
+    "$SHARED/lib/version-skew.sh"; do
+  case "$pipefail_population" in
+    *"$admitted"*) r1=admitted ;; *) r1=MISSING ;; esac
+  t "pipefail-population-admits-${admitted#"$ROOT"/}" admitted "$r1"
+done
+
+# The membership above is only worth its criterion if version-skew.sh arrived
+# through a parent. It seeds nothing of its own, and both parents carry the
+# literal source edge the derivation matches and are in the population
+# themselves — a run that seeded it by name would pass the row above and fail
+# these three.
+if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/lib/version-skew.sh"
+then r1=SEEDS-ITSELF; else r1=by-edge; fi
+t pipefail-version-skew-seeds-nothing by-edge "$r1"
+for parent in "$ROOT/cli/crew" "$ROOT/install.sh"; do
+  r1=MISSING-EDGE
+  if grep -Eq '^[[:space:]]*(source|\.)[[:space:]].*/version-skew\.sh' "$parent"; then
+    case "$pipefail_population" in *"$parent"*) r1=parent ;; *) r1=PARENT-OUTSIDE ;; esac
+  fi
+  t "pipefail-version-skew-parent-${parent#"$ROOT"/}" parent "$r1"
+done
+
+# Criterion 6: tick.sh is a candidate the derivation reaches and declines. The
+# exclusion must be its missing pipefail, not the candidate set's reach — so
+# assert both halves, or a future widening could satisfy this vacuously.
+pipefail_candidates="$(pipefail_grep_q_candidates | sort -u)"
+if grep -qxF "$SHARED/bin/tick.sh" <<<"$pipefail_candidates"
+then r1=candidate; else r1=UNREACHED; fi
+t pipefail-tick-is-a-candidate candidate "$r1"
+if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/bin/tick.sh"
+then r1=SETS-PIPEFAIL; else r1=sets-none; fi
+t pipefail-tick-sets-no-pipefail sets-none "$r1"
+case "$pipefail_population" in
+  *"$SHARED/bin/tick.sh"*) r1=INCLUDED ;; *) r1=excluded ;; esac
+t pipefail-population-excludes-tick.sh excluded "$r1"
+
+# #449: the payload exemption is a shape, not a path. This fixture carries the
+# four live payload spellings under a filename no clause names — under the old
+# rehearsal-app.sh clause every one of them flags. The control on line 5 is
+# assembled rather than written so this suite does not carry the live shape,
+# and it proves the fixture is exempt by that shape and not inert.
+PAYLOAD_FIXTURE="$TMP/remote-payload.fixture"
+cat >"$PAYLOAD_FIXTURE" <<'PAYLOADS'
+if bxn "$b" 'crontab -l 2>/dev/null | grep -qE "^[^#].*tick\.sh"' 2>/dev/null; then :; fi
+armed()   { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -qE '^[^#].*tick\.sh'" >/dev/null 2>&1; }
+paused()  { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -q '^#CREW-FLOOR-PAUSED'" >/dev/null 2>&1; }
+present() { box exec "$1" -- bash -lc 'crontab -l 2>/dev/null | grep -qF "$HOME/duty/bin/tick.sh"' >/dev/null 2>&1; }
+PAYLOADS
+printf '%s%s\n' 'if producer | ' 'grep -q CONTROL; then :; fi' >>"$PAYLOAD_FIXTURE"
+payload_findings="$(pipefail_grep_q_sites "$PAYLOAD_FIXTURE")"
+payload_exempt="$(awk -F: '$2 < 5 { print }' <<<"$payload_findings")"
+t pipefail-payload-exempt-by-shape "" "$payload_exempt"
+payload_control="$(awk -F: '$2 == 5 { print $2 }' <<<"$payload_findings")"
+t pipefail-payload-fixture-control-flags 5 "$payload_control"
+rm -f "$PAYLOAD_FIXTURE"
+
+# The four live sites: present, so this cannot pass by their disappearance, and
+# unflagged now that cli/crew is in the population.
+payload_live="$(awk '
+  /(bxn|bash[[:space:]]+-lc)/ && /[|][[:space:]]*grep[[:space:]]+-[[:alnum:]]*q/ { n++ }
+  END { print n+0 }' "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
+t pipefail-payload-live-sites-present 4 "$payload_live"
+payload_live_findings="$(pipefail_grep_q_sites "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
+t pipefail-payload-live-sites-unflagged "" "$payload_live_findings"
+
 # The old predicate is deliberately assembled so the guard does not mistake
 # this regression fixture for a live site. Its producer writes a match, pauses,
 # then writes again: pipefail exposes grep -q closing the pipe as rc 141.
@@ -282,6 +357,8 @@ t pipefail-awk-range-keeps-negative-direction absent "$r1"
 unset -f awk slow_awk
 unset old_match old_pipe old_predicate_rc guard_findings guard_mutation
 unset pipefail_population inherited PIPE_GUARD_FIXTURE
+unset admitted parent pipefail_candidates PAYLOAD_FIXTURE
+unset payload_findings payload_exempt payload_control payload_live payload_live_findings
 
 # #411: force the box-existence producer to pause after its matching line.
 # The stub is deliberately `box list`, so this exercises the predicate's
