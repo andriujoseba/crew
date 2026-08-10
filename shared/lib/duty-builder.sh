@@ -93,7 +93,7 @@ _ready_lines_to_commit() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     id="${line%% *}"
-    printf '%s\n' "$post_ids" | grep -qxF "$id" || return 0
+    grep -qxF "$id" <<<"$post_ids" || return 0
   done <<<"$pre_lines"
   printf '%s\n' "$pre_lines"
 }
@@ -108,6 +108,25 @@ _repair_seen_build_264() {
   find "$DUTY_DIR" -maxdepth 1 -type f -name '.suppressed-build.*' -delete 2>/dev/null || true
   : >"$marker"
   log "builder: repaired build ledgers for #264; cleared .seen-build and suppression state once"
+}
+
+# _orphan_claim_nums REPO-NAME CLAIMED MERGED-HEADS OPEN-HEADS — return the
+# claimed issue numbers whose build branch is neither merged nor attached to an
+# open PR. The head listings are complete before matching starts: under the
+# caller's pipefail setting, an early-exiting grep must never race their writer.
+_orphan_claim_nums() {
+  local name="$1" claimed_nums="$2" merged_heads="$3" open_heads="$4"
+  local N branch orphan_nums=""
+  for N in $claimed_nums; do
+    branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
+      --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
+    [ -z "$branch" ] && continue
+    if grep -qx "$branch" <<<"$merged_heads"; then continue; fi
+    if ! grep -qx "$branch" <<<"$open_heads"; then
+      orphan_nums="$orphan_nums $N"
+    fi
+  done
+  printf '%s' "$orphan_nums"
 }
 
 # Author-side duty repos are repos.txt-scoped, like every other module
@@ -137,12 +156,13 @@ _discover_my_pr_repos() {
 # PR I authored in a repo outside the registry is an operator signal, not
 # licence to work it.
 _warn_unscoped_authored() {
-  local mine cand unscoped=""
+  local mine cand repo_list unscoped=""
   mine="$(gh search prs --author="$ME" --state open --limit 50 \
     --json repository,number --jq '.[] | "\(.repository.nameWithOwner)#\(.number)"' 2>/dev/null || true)"
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
-    if ! read_repo_list "$REPOS_FILE" | grep -qxF "${cand%%#*}"; then
+    repo_list="$(read_repo_list "$REPOS_FILE")"
+    if ! grep -qxF "${cand%%#*}" <<<"$repo_list"; then
       unscoped="$unscoped $cand"
     fi
   done <<<"$mine"
@@ -1709,9 +1729,9 @@ _resume_gate() {
       # still passes through _resume_breaker: an unbounded bypass would dispatch
       # every five minutes for as long as the draft stands, and the zero-action
       # bound is what stops that at three (#314).
-      if printf '%s\n' "${RESUME_FORCE_FRESH:-}" | grep -qxF "$key"; then
+      if grep -qxF "$key" <<<"${RESUME_FORCE_FRESH:-}"; then
         printf '%s\tfresh\n' "$key"
-      elif printf '%s\n' "$fresh" | grep -qxF "$key ${ts_by_key[$key]}"; then
+      elif grep -qxF "$key ${ts_by_key[$key]}" <<<"$fresh"; then
         printf '%s\tfresh\n' "$key"
       else
         printf '%s\theld\n' "$key"
@@ -1780,7 +1800,7 @@ _builder_repo() {
   local stranded_due_nums="" stranded_due_keys="" _stranded_key _stranded_num
   local near_miss_rows="" near_miss_nums="" near_miss_keys="" near_miss_desc="" _nm_num
   local green_head_rows="" green_head_nums="" flip_owed_nums=""
-  local claimed_nums open_heads merged_heads N branch
+  local claimed_nums open_heads merged_heads
   # `comments` and `reviews` are deliberately NOT requested: those nested
   # connections are generated as `first: 100` and never paginate, so reading the
   # foreign half from here caps it at the oldest hundred (_resume_pr_fingerprints).
@@ -1892,18 +1912,9 @@ _builder_repo() {
         | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
     fi
     near_miss_desc="$(_near_miss_dispatch_desc "$near_miss_rows" "$stranded_nums")"
-    for N in $claimed_nums; do
-      branch="$(gh api "repos/$ME/$name/git/matching-refs/heads/build/$N-" \
-        --jq '.[0].ref // "" | sub("^refs/heads/"; "")' 2>/dev/null || echo "")"
-      [ -z "$branch" ] && continue
-      # Post-merge wait, not an orphan: the branch already merged. Never resume
-      # it — re-entry for any residue is a fresh branch off current main, by
-      # a builder claiming the re-readied issue normally (#172), not this one.
-      if printf '%s\n' "$merged_heads" | grep -qx "$branch"; then continue; fi
-      if ! printf '%s\n' "$open_heads" | grep -qx "$branch"; then
-        orphan_nums="$orphan_nums $N"
-      fi
-    done
+    # Post-merge wait, not an orphan: a merged branch never resumes. Re-entry
+    # for residue is a fresh branch from main after triage re-readies it (#172).
+    orphan_nums="$(_orphan_claim_nums "$name" "$claimed_nums" "$merged_heads" "$open_heads")"
     # THE DOABLE-WORK GATE (#314). Every other wake in this engine is
     # ledger-filtered; resume was the one that was not, and a park is invisible
     # to a bare "is there a draft" test. Applied to DRAFTS only: an orphaned

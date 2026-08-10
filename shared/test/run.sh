@@ -43,7 +43,7 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
 # #447 can extend the same derivation to shared/lib without duplicating it.
 pipefail_grep_q_candidates() {
   find "$HERE" "$ROOT/drill" "$ROOT/fleet-floor/test" -type f -name '*.sh' -print
-  printf '%s\n' "$SHARED/bin/engine-manifest.sh"
+  find "$SHARED/bin" "$SHARED/lib" -type f -name '*.sh' -print
 }
 
 pipefail_grep_q_population() {
@@ -63,6 +63,9 @@ pipefail_grep_q_population() {
       [ -z "${included[$file]+x}" ] || continue
       leaf="${file##*/}"
       for parent in "${!included[@]}"; do
+        # Source edges are matched by basename, so duplicate leaves can only
+        # over-include candidates. Every duplicate today is already seeded by
+        # its own pipefail setting; keep the conservative failure direction.
         if awk -v leaf="$leaf" '
           /^[[:space:]]*(source|\.)[[:space:]]/ && index($0, "/" leaf) { found=1 }
           END { exit !found }
@@ -213,11 +216,30 @@ pipefail_population="$(pipefail_grep_q_population)"
 for inherited in \
     "$ROOT/fleet-floor/test/cases.sh" \
     "$ROOT/drill/rehearsal-attention.sh" \
-    "$ROOT/drill/install-payload.sh"; do
+    "$ROOT/drill/install-payload.sh" \
+    "$SHARED/lib/duty-builder.sh" \
+    "$SHARED/lib/duty-review.sh" \
+    "$SHARED/lib/duty-attention.sh"; do
   case "$pipefail_population" in
     *"$inherited"*) r1=inherited ;; *) r1=MISSING ;; esac
   t "pipefail-population-inherits-${inherited##*/}" inherited "$r1"
 done
+
+# The old predicate is deliberately assembled so the guard does not mistake
+# this regression fixture for a live site. Its producer writes a match, pauses,
+# then writes again: pipefail exposes grep -q closing the pipe as rc 141.
+slow_lines() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
+set -o pipefail
+eval 'slow_lines | gr'"ep -qx MATCH" >/dev/null 2>&1
+old_slow_rc=$?
+slow_materialized="$(slow_lines)"
+grep -qx MATCH <<<"$slow_materialized"; new_slow_match_rc=$?
+grep -qx ABSENT <<<"$slow_materialized"; new_slow_miss_rc=$?
+case "$old_slow_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
+t pipefail-materialized-old-race nonzero "$r1"
+t pipefail-materialized-match 0 "$new_slow_match_rc"
+t pipefail-materialized-nonmatch 1 "$new_slow_miss_rc"
+unset -f slow_lines
 
 # Drive the two converted awk-range call sites with a producer that pauses
 # after its match. The old predicate is assembled so the source guard itself
@@ -7357,6 +7379,54 @@ t ready-commit-none-left "" "$(_ready_lines_to_commit "$READY3" '')"
 t ready-commit-empty "" "$(_ready_lines_to_commit '' 'heavy-duty/crew#2')"
 t ready-commit-whole-id "" \
   "$(_ready_lines_to_commit 'heavy-duty/crew#2 T2' 'heavy-duty/crew#25')"
+
+# Drive the converted registry call site with a producer that pauses after the
+# matching line. The awareness pass must wait for the complete repo list and
+# therefore emit no false out-of-scope warning.
+p447_registry_out="$(
+  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
+  read_repo_list() { printf '%s\n' heavy-duty/crew; sleep 0.05; printf '%s\n' other/repo; }
+  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
+  gh() { printf '%s\n' 'heavy-duty/crew#447'; }
+  ME=andriujoseba REPOS_FILE=unused
+  _warn_unscoped_authored
+)"
+t p447-registry-forced-race-stays-in-scope "" "$p447_registry_out"
+
+# The orphan scan consumes head listings larger than PIPE_BUF. A merged branch
+# and an open branch must never become orphans; only the absent branch is due.
+P447_PIPE_BUF="$(getconf PIPE_BUF /)"
+P447_MERGED_HEADS="$(awk 'BEGIN {
+  print "build/900-merged"
+  for (i=1; i<=10000; i++) print "build/filler-" i
+}')"
+if [ "${#P447_MERGED_HEADS}" -gt "$P447_PIPE_BUF" ]; then r1=large; else r1=TOO-SMALL; fi
+t p447-merged-heads-exceeds-pipe-buf large "$r1"
+P447_OPEN_HEADS=build/901-open
+# shellcheck disable=SC2317  # invoked indirectly by _orphan_claim_nums
+gh() {
+  case "$*" in
+    *build/900-*) printf '%s\n' build/900-merged ;;
+    *build/901-*) printf '%s\n' build/901-open ;;
+    *build/902-*) printf '%s\n' build/902-orphan ;;
+    *) return 1 ;;
+  esac
+}
+ME=andriujoseba p447_orphan_failures=0
+for _p447_i in $(seq 1 400); do
+  p447_orphans="$(_orphan_claim_nums crew '900 901 902' "$P447_MERGED_HEADS" "$P447_OPEN_HEADS")"
+  [ "$p447_orphans" = " 902" ] || p447_orphan_failures=$((p447_orphan_failures+1))
+done
+t p447-orphan-scan-400-runs 0 "$p447_orphan_failures"
+unset -f gh
+
+# Against the pre-conversion spelling, the same large fixture makes the early
+# match close the pipe while printf still has output: the predicate answers
+# with SIGPIPE instead of the match. Keep the spelling assembled for the guard.
+eval 'printf '\''%s\\n'\'' "$P447_MERGED_HEADS" | gr'"ep -qx build/900-merged" >/dev/null 2>&1
+p447_old_orphan_rc=$?
+case "$p447_old_orphan_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
+t p447-orphan-old-shape-races nonzero "$r1"
 
 # cross-repo collision: discussion numbers are PER-REPO but the ledger is one
 # file across every repo in repos.txt, so keys must be repo-qualified. After
