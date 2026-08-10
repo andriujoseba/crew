@@ -90,17 +90,28 @@ pipefail_grep_q_population() {
 
 # A pipeline inside a quoted payload handed to a remote shell — bxn, or box
 # exec … bash -lc — runs where this file's pipefail is not in effect, so grep's
-# status is the pipeline's status and the shape is outside the class. #449
-# keys that exemption to the shape rather than to a filename: cli/crew is a
+# status is the pipeline's status and the shape is outside the class. #449 keys
+# that exemption to the shape rather than to a filename: cli/crew is a
 # candidate now, and its payload site is exempt for the reason the
 # rehearsal-app.sh ones are, not for where it lives.
 #
-# The exemption ends where the payload does. Rather than asking whether a line
-# carrying a payload has a pipe somewhere after it, blank the payload bodies
-# out and read what is left: that residue is what this file's own shell runs,
-# and this file's pipefail is the one the guard is about. A local pipeline
-# sharing a line with a payload — before it, after its closing quote, or
-# wrapped around it — therefore stays in the class (#451 round 1).
+# The exemption is bounded twice, and both bounds are load-bearing.
+#
+# It ends where the payload does. Rather than asking whether a line carrying a
+# payload has a pipe somewhere after it, blank the payload bodies out and read
+# what is left: that residue is what this file's own shell runs, and this
+# file's pipefail is the one the guard is about. A local pipeline sharing a
+# line with a payload — before it, after its closing quote, or wrapped around
+# it — therefore stays in the class.
+#
+# It begins only at a real invocation. The residue is built by one left-to-
+# right scan that tracks quote state, so the only quotes ever tested as payload
+# openers are the ones at an unquoted position, and a quote can open a payload
+# only when the text scanned before it ends in bash -lc or bxn <arg>. Matching
+# opener-shaped text anywhere on the line would read the " in
+# `echo 'bash -lc "'` as an opener, find no mate, and swallow that line's
+# actual pipeline as an unterminated payload — the silent pass this guard
+# exists to prevent (#451 rounds 1 and 2).
 pipefail_grep_q_sites() {  # [files...]
   local files=("$@")
   [ "${#files[@]}" -gt 0 ] || mapfile -t files < <(pipefail_grep_q_population)
@@ -108,34 +119,41 @@ pipefail_grep_q_sites() {  # [files...]
     function qgrep(s) {
       return s ~ /grep[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
     }
-    # Offset just past the quote opening the LEFTMOST remote shell command
-    # string, or 0. Both spellings are measured and the earlier one wins, so a
-    # line carrying both is walked in source order.
-    function payload_open(s,   bs, be) {
-      bs = 0
-      if (match(s, "bash[[:space:]]+-lc[[:space:]]*[" Q "]")) {
-        bs = RSTART; be = RSTART + RLENGTH
-      }
-      if (match(s, "(^|[^[:alnum:]_-])bxn[[:space:]]+[^[:space:]]+[[:space:]]+[" Q "]")) {
-        if (!bs || RSTART < bs) { bs = RSTART; be = RSTART + RLENGTH }
-      }
-      return bs ? be : 0
+    # Whether the text scanned so far puts the next quote in an invocation
+    # context — i.e. that quote opens a command string handed to a remote
+    # shell. Both spellings, anchored at the end of the prefix rather than
+    # searched for anywhere in the line. The prefix is the line as written, so
+    # the bxn argument may itself be a quoted word.
+    function payload_opener_prefix(pre) {
+      return pre ~ /(^|[^[:alnum:]_-])bash[[:space:]]+-lc[[:space:]]*$/ ||
+             pre ~ /(^|[^[:alnum:]_-])bxn[[:space:]]+[^[:space:]]+[[:space:]]+$/
     }
-    # The line with every payload body removed and its quotes kept. An opener
-    # whose quote does not close on this line takes the remainder with it: the
-    # payload really does continue, and the lines it continues onto are then
-    # read as local, which is the over-flagging direction this guard prefers.
-    function strip_payloads(s,   out, p, q, rest, e) {
-      out = ""
-      while ((p = payload_open(s)) > 0) {
-        q = substr(s, p - 1, 1)
-        out = out substr(s, 1, p - 1)
-        rest = substr(s, p)
-        e = index(rest, q)
-        if (!e) return out
-        s = substr(rest, e)
+    # The line with every payload body removed and its quotes kept. One pass,
+    # left to right: quotes are only significant outside an open string, so a
+    # quote character inside one is data and is copied through. An ordinary
+    # quoted string is kept verbatim — a local pipeline is still a local
+    # pipeline when it shares a line with one. A payload whose quote does not
+    # close on this line takes the remainder with it: the payload really does
+    # continue, and the lines it continues onto are then read as local, which
+    # is the over-flagging direction this guard prefers.
+    function strip_payloads(s,   out, seen, i, n, c, e) {
+      out = ""; seen = ""; n = length(s)
+      for (i = 1; i <= n; ) {
+        c = substr(s, i, 1)
+        if (!index(Q, c)) { out = out c; seen = seen c; i++; continue }
+        e = index(substr(s, i + 1), c)   # offset of the mate, or 0
+        if (payload_opener_prefix(seen)) {
+          out = out c
+          if (!e) return out
+          out = out c
+        } else {
+          if (!e) return out substr(s, i)
+          out = out substr(s, i, e + 1)
+        }
+        seen = seen substr(s, i, e + 1)
+        i += e + 1
       }
-      return out s
+      return out
     }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
@@ -342,14 +360,29 @@ box exec "\$1" -- bash -lc 'crontab -l' | $payload_gq OUTSIDE
 out=\$(bxn "\$b" 'echo hi'); printf '%s\n' "\$out" | $payload_gq OUTSIDE
 box exec "\$1" -- bash -lc 'crontab -l | $payload_gq INSIDE' | $payload_gq OUTSIDE
 PAYLOAD_LOCALS
+# Lines 9-12 are the negative the invocation-context bound owes: opener-shaped
+# text that is data, not an invocation, because it sits inside an ordinary
+# quoted string. Its apparent quote has no mate, so a matcher that looks for
+# opener shapes anywhere on the line reads the rest of the line as an
+# unterminated payload and erases the local pipeline — a silent pass. Both
+# spellings, and both quote pairings, because the lookalike works either way.
+cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOOKALIKES
+echo 'bash -lc "' | $payload_gq OUTSIDE
+note='bxn box "'; producer | $payload_gq OUTSIDE
+echo "bash -lc '" | $payload_gq OUTSIDE
+note="bxn box '"; producer | $payload_gq OUTSIDE
+PAYLOAD_LOOKALIKES
 payload_findings="$(pipefail_grep_q_sites "$PAYLOAD_FIXTURE")"
 payload_exempt="$(awk -F: '$2 < 5 { print }' <<<"$payload_findings")"
 t pipefail-payload-exempt-by-shape "" "$payload_exempt"
 payload_control="$(awk -F: '$2 == 5 { print $2 }' <<<"$payload_findings")"
 t pipefail-payload-fixture-control-flags 5 "$payload_control"
-payload_local="$(awk -F: '$2 > 5 { print $2 }' <<<"$payload_findings" \
+payload_local="$(awk -F: '$2 > 5 && $2 < 9 { print $2 }' <<<"$payload_findings" \
   | sort -n | paste -sd' ' -)"
 t pipefail-payload-local-pipe-flags "6 7 8" "$payload_local"
+payload_lookalike="$(awk -F: '$2 > 8 { print $2 }' <<<"$payload_findings" \
+  | sort -n | paste -sd' ' -)"
+t pipefail-payload-lookalike-flags "9 10 11 12" "$payload_lookalike"
 rm -f "$PAYLOAD_FIXTURE"
 
 # The four live sites: present, so this cannot pass by their disappearance, and
