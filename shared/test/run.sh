@@ -40,10 +40,18 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
 
 # #443: derive the guarded population from both file-scope pipefail settings
 # and source edges. The candidate surfaces are the issue's declared scope;
-# #447 can extend the same derivation to shared/lib without duplicating it.
+# #447 extended the same derivation to shared/lib without duplicating it, and
+# #449 adds the live pipefail-setting entrypoints. Over-inclusion is the
+# deliberate error direction: a candidate that runs under no pipefail costs one
+# scanned file, a missing one costs a silent pass. shared/lib/version-skew.sh
+# is the reason the entrypoints belong here — it sets nothing itself and enters
+# only through the source edges in cli/crew and install.sh.
 pipefail_grep_q_candidates() {
   find "$HERE" "$ROOT/drill" "$ROOT/fleet-floor/test" -type f -name '*.sh' -print
   find "$SHARED/bin" "$SHARED/lib" -type f -name '*.sh' -print
+  find "$ROOT/dist" -type f -name '*.sh' -print
+  find "$ROOT/cli" -type f -name 'crew' -print
+  find "$ROOT" "$SHARED" -maxdepth 1 -type f -name 'install.sh' -print
 }
 
 pipefail_grep_q_population() {
@@ -80,20 +88,34 @@ pipefail_grep_q_population() {
   printf '%s\n' "${!included[@]}" | sort
 }
 
-# cli/crew:2243 is outside the declared surfaces. The three rehearsal-app.sh
-# lines are in a derived file but are box-exec payloads for fresh remote shells
-# that do not inherit the file's pipefail; only those payload lines are skipped.
+# A pipeline inside a quoted payload handed to a remote shell — bxn, or box
+# exec … bash -lc — runs where this file's pipefail is not in effect, so grep's
+# status is the pipeline's status and the shape is outside the class. #449
+# keys that exemption to the shape rather than to a filename: cli/crew is a
+# candidate now, and its payload site is exempt for the reason the
+# rehearsal-app.sh ones are, not for where it lives.
 pipefail_grep_q_sites() {  # [files...]
   local files=("$@")
   [ "${#files[@]}" -gt 0 ] || mapfile -t files < <(pipefail_grep_q_population)
-  awk '
+  awk -v Q="\"'" '
     function qgrep(s) {
       return s ~ /grep[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
     }
+    # Offset just past the quote opening a remote shell command string, or 0.
+    function payload_open(s,   p) {
+      p = match(s, "bash[[:space:]]+-lc[[:space:]]*[" Q "]")
+      if (p) return p + RLENGTH
+      p = match(s, "(^|[^[:alnum:]_-])bxn[[:space:]]+[^[:space:]]+[[:space:]]+[" Q "]")
+      if (p) return p + RLENGTH
+      return 0
+    }
+    function remote_payload(s,   p) {
+      p = payload_open(s)
+      return p > 0 && substr(s, p) ~ /[|][[:space:]]*grep[[:space:]]/
+    }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
-    FILENAME ~ /\/drill\/rehearsal-app[.]sh$/ &&
-        /box exec/ && /bash -lc/ && /crontab -l/ { pipe_line = 0; next }
+    remote_payload($0) { pipe_line = 0; next }
     $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep($0) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
