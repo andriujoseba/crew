@@ -94,6 +94,13 @@ pipefail_grep_q_population() {
 # keys that exemption to the shape rather than to a filename: cli/crew is a
 # candidate now, and its payload site is exempt for the reason the
 # rehearsal-app.sh ones are, not for where it lives.
+#
+# The exemption ends where the payload does. Rather than asking whether a line
+# carrying a payload has a pipe somewhere after it, blank the payload bodies
+# out and read what is left: that residue is what this file's own shell runs,
+# and this file's pipefail is the one the guard is about. A local pipeline
+# sharing a line with a payload — before it, after its closing quote, or
+# wrapped around it — therefore stays in the class (#451 round 1).
 pipefail_grep_q_sites() {  # [files...]
   local files=("$@")
   [ "${#files[@]}" -gt 0 ] || mapfile -t files < <(pipefail_grep_q_population)
@@ -101,28 +108,45 @@ pipefail_grep_q_sites() {  # [files...]
     function qgrep(s) {
       return s ~ /grep[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
     }
-    # Offset just past the quote opening a remote shell command string, or 0.
-    function payload_open(s,   p) {
-      p = match(s, "bash[[:space:]]+-lc[[:space:]]*[" Q "]")
-      if (p) return p + RLENGTH
-      p = match(s, "(^|[^[:alnum:]_-])bxn[[:space:]]+[^[:space:]]+[[:space:]]+[" Q "]")
-      if (p) return p + RLENGTH
-      return 0
+    # Offset just past the quote opening the LEFTMOST remote shell command
+    # string, or 0. Both spellings are measured and the earlier one wins, so a
+    # line carrying both is walked in source order.
+    function payload_open(s,   bs, be) {
+      bs = 0
+      if (match(s, "bash[[:space:]]+-lc[[:space:]]*[" Q "]")) {
+        bs = RSTART; be = RSTART + RLENGTH
+      }
+      if (match(s, "(^|[^[:alnum:]_-])bxn[[:space:]]+[^[:space:]]+[[:space:]]+[" Q "]")) {
+        if (!bs || RSTART < bs) { bs = RSTART; be = RSTART + RLENGTH }
+      }
+      return bs ? be : 0
     }
-    function remote_payload(s,   p) {
-      p = payload_open(s)
-      return p > 0 && substr(s, p) ~ /[|][[:space:]]*grep[[:space:]]/
+    # The line with every payload body removed and its quotes kept. An opener
+    # whose quote does not close on this line takes the remainder with it: the
+    # payload really does continue, and the lines it continues onto are then
+    # read as local, which is the over-flagging direction this guard prefers.
+    function strip_payloads(s,   out, p, q, rest, e) {
+      out = ""
+      while ((p = payload_open(s)) > 0) {
+        q = substr(s, p - 1, 1)
+        out = out substr(s, 1, p - 1)
+        rest = substr(s, p)
+        e = index(rest, q)
+        if (!e) return out
+        s = substr(rest, e)
+      }
+      return out s
     }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
-    remote_payload($0) { pipe_line = 0; next }
-    $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep($0) {
+    { local_line = strip_payloads($0) }
+    local_line ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep(local_line) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
-    pipe_line && qgrep($0) {
+    pipe_line && qgrep(local_line) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
-    { pipe_line = ($0 ~ /(^|[^|])[|][[:space:]\\]*$/) }
+    { pipe_line = (local_line ~ /(^|[^|])[|][[:space:]\\]*$/) }
   ' "${files[@]}"
 }
 
@@ -306,11 +330,26 @@ paused()  { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -q '^#CREW-
 present() { box exec "$1" -- bash -lc 'crontab -l 2>/dev/null | grep -qF "$HOME/duty/bin/tick.sh"' >/dev/null 2>&1; }
 PAYLOADS
 printf '%s%s\n' 'if producer | ' 'grep -q CONTROL; then :; fi' >>"$PAYLOAD_FIXTURE"
+# Lines 6-8 are the negative the shape rule owes: a payload opener whose grep
+# sits OUTSIDE the payload quote is a local pipeline under this file's own
+# pipefail, so it must flag. One line per payload spelling, plus a local
+# pipeline wrapped around a payload that has a pipe of its own — the case a
+# body-contains-a-pipe test cannot separate. Assembled for the same reason the
+# control is: written literally they would flag this suite.
+payload_gq='grep -q'
+cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOCALS
+box exec "\$1" -- bash -lc 'crontab -l' | $payload_gq OUTSIDE
+out=\$(bxn "\$b" 'echo hi'); printf '%s\n' "\$out" | $payload_gq OUTSIDE
+box exec "\$1" -- bash -lc 'crontab -l | $payload_gq INSIDE' | $payload_gq OUTSIDE
+PAYLOAD_LOCALS
 payload_findings="$(pipefail_grep_q_sites "$PAYLOAD_FIXTURE")"
 payload_exempt="$(awk -F: '$2 < 5 { print }' <<<"$payload_findings")"
 t pipefail-payload-exempt-by-shape "" "$payload_exempt"
 payload_control="$(awk -F: '$2 == 5 { print $2 }' <<<"$payload_findings")"
 t pipefail-payload-fixture-control-flags 5 "$payload_control"
+payload_local="$(awk -F: '$2 > 5 { print $2 }' <<<"$payload_findings" \
+  | sort -n | paste -sd' ' -)"
+t pipefail-payload-local-pipe-flags "6 7 8" "$payload_local"
 rm -f "$PAYLOAD_FIXTURE"
 
 # The four live sites: present, so this cannot pass by their disappearance, and
