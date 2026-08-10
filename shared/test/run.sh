@@ -40,10 +40,18 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
 
 # #443: derive the guarded population from both file-scope pipefail settings
 # and source edges. The candidate surfaces are the issue's declared scope;
-# #447 can extend the same derivation to shared/lib without duplicating it.
+# #447 extended the same derivation to shared/lib without duplicating it, and
+# #449 adds the live pipefail-setting entrypoints. Over-inclusion is the
+# deliberate error direction: a candidate that runs under no pipefail costs one
+# scanned file, a missing one costs a silent pass. shared/lib/version-skew.sh
+# is the reason the entrypoints belong here — it sets nothing itself and enters
+# only through the source edges in cli/crew and install.sh.
 pipefail_grep_q_candidates() {
   find "$HERE" "$ROOT/drill" "$ROOT/fleet-floor/test" -type f -name '*.sh' -print
   find "$SHARED/bin" "$SHARED/lib" -type f -name '*.sh' -print
+  find "$ROOT/dist" -type f -name '*.sh' -print
+  find "$ROOT/cli" -type f -name 'crew' -print
+  find "$ROOT" "$SHARED" -maxdepth 1 -type f -name 'install.sh' -print
 }
 
 pipefail_grep_q_population() {
@@ -80,27 +88,83 @@ pipefail_grep_q_population() {
   printf '%s\n' "${!included[@]}" | sort
 }
 
-# cli/crew:2243 is outside the declared surfaces. The three rehearsal-app.sh
-# lines are in a derived file but are box-exec payloads for fresh remote shells
-# that do not inherit the file's pipefail; only those payload lines are skipped.
+# A pipeline inside a quoted payload handed to a remote shell — bxn, or box
+# exec … bash -lc — runs where this file's pipefail is not in effect, so grep's
+# status is the pipeline's status and the shape is outside the class. #449 keys
+# that exemption to the shape rather than to a filename: cli/crew is a
+# candidate now, and its payload site is exempt for the reason the
+# rehearsal-app.sh ones are, not for where it lives.
+#
+# The exemption is bounded twice, and both bounds are load-bearing.
+#
+# It ends where the payload does. Rather than asking whether a line carrying a
+# payload has a pipe somewhere after it, blank the payload bodies out and read
+# what is left: that residue is what this file's own shell runs, and this
+# file's pipefail is the one the guard is about. A local pipeline sharing a
+# line with a payload — before it, after its closing quote, or wrapped around
+# it — therefore stays in the class.
+#
+# It begins only at a real invocation. The residue is built by one left-to-
+# right scan that tracks quote state, so the only quotes ever tested as payload
+# openers are the ones at an unquoted position, and a quote can open a payload
+# only when the text scanned before it ends in bash -lc or bxn <arg>. Matching
+# opener-shaped text anywhere on the line would read the " in
+# `echo 'bash -lc "'` as an opener, find no mate, and swallow that line's
+# actual pipeline as an unterminated payload — the silent pass this guard
+# exists to prevent (#451 rounds 1 and 2).
 pipefail_grep_q_sites() {  # [files...]
   local files=("$@")
   [ "${#files[@]}" -gt 0 ] || mapfile -t files < <(pipefail_grep_q_population)
-  awk '
+  awk -v Q="\"'" '
     function qgrep(s) {
       return s ~ /grep[[:space:]]+(-[^[:space:]]+[[:space:]]+)*-[[:alnum:]-]*q[[:alnum:]-]*([[:space:]]|$)/
     }
+    # Whether the text scanned so far puts the next quote in an invocation
+    # context — i.e. that quote opens a command string handed to a remote
+    # shell. Both spellings, anchored at the end of the prefix rather than
+    # searched for anywhere in the line. The prefix is the line as written, so
+    # the bxn argument may itself be a quoted word.
+    function payload_opener_prefix(pre) {
+      return pre ~ /(^|[^[:alnum:]_-])bash[[:space:]]+-lc[[:space:]]*$/ ||
+             pre ~ /(^|[^[:alnum:]_-])bxn[[:space:]]+[^[:space:]]+[[:space:]]+$/
+    }
+    # The line with every payload body removed and its quotes kept. One pass,
+    # left to right: quotes are only significant outside an open string, so a
+    # quote character inside one is data and is copied through. An ordinary
+    # quoted string is kept verbatim — a local pipeline is still a local
+    # pipeline when it shares a line with one. A payload whose quote does not
+    # close on this line takes the remainder with it: the payload really does
+    # continue, and the lines it continues onto are then read as local, which
+    # is the over-flagging direction this guard prefers.
+    function strip_payloads(s,   out, seen, i, n, c, e) {
+      out = ""; seen = ""; n = length(s)
+      for (i = 1; i <= n; ) {
+        c = substr(s, i, 1)
+        if (!index(Q, c)) { out = out c; seen = seen c; i++; continue }
+        e = index(substr(s, i + 1), c)   # offset of the mate, or 0
+        if (payload_opener_prefix(seen)) {
+          out = out c
+          if (!e) return out
+          out = out c
+        } else {
+          if (!e) return out substr(s, i)
+          out = out substr(s, i, e + 1)
+        }
+        seen = seen substr(s, i, e + 1)
+        i += e + 1
+      }
+      return out
+    }
     FNR == 1 { pipe_line = 0 }
     /^[[:space:]]*#/ { pipe_line = 0; next }
-    FILENAME ~ /\/drill\/rehearsal-app[.]sh$/ &&
-        /box exec/ && /bash -lc/ && /crontab -l/ { pipe_line = 0; next }
-    $0 ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep($0) {
+    { local_line = strip_payloads($0) }
+    local_line ~ /(^|[^|])[|][[:space:]]*grep[[:space:]]/ && qgrep(local_line) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
-    pipe_line && qgrep($0) {
+    pipe_line && qgrep(local_line) {
       printf "%s:%d:%s\n", FILENAME, FNR, $0
     }
-    { pipe_line = ($0 ~ /(^|[^|])[|][[:space:]\\]*$/) }
+    { pipe_line = (local_line ~ /(^|[^|])[|][[:space:]\\]*$/) }
   ' "${files[@]}"
 }
 
@@ -225,6 +289,111 @@ for inherited in \
   t "pipefail-population-inherits-${inherited##*/}" inherited "$r1"
 done
 
+# #449: the live pipefail-setting entrypoints, and the one file that can only
+# arrive behind them. Deleting the widened candidate lines reds every row.
+for admitted in \
+    "$ROOT/cli/crew" \
+    "$ROOT/install.sh" \
+    "$SHARED/install.sh" \
+    "$ROOT/dist/curl-install.sh" \
+    "$ROOT/dist/fetch.sh" \
+    "$ROOT/dist/make-installer.sh" \
+    "$ROOT/dist/release-artifact.sh" \
+    "$SHARED/lib/version-skew.sh"; do
+  case "$pipefail_population" in
+    *"$admitted"*) r1=admitted ;; *) r1=MISSING ;; esac
+  t "pipefail-population-admits-${admitted#"$ROOT"/}" admitted "$r1"
+done
+
+# The membership above is only worth its criterion if version-skew.sh arrived
+# through a parent. It seeds nothing of its own, and both parents carry the
+# literal source edge the derivation matches and are in the population
+# themselves — a run that seeded it by name would pass the row above and fail
+# these three.
+if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/lib/version-skew.sh"
+then r1=SEEDS-ITSELF; else r1=by-edge; fi
+t pipefail-version-skew-seeds-nothing by-edge "$r1"
+for parent in "$ROOT/cli/crew" "$ROOT/install.sh"; do
+  r1=MISSING-EDGE
+  if grep -Eq '^[[:space:]]*(source|\.)[[:space:]].*/version-skew\.sh' "$parent"; then
+    case "$pipefail_population" in *"$parent"*) r1=parent ;; *) r1=PARENT-OUTSIDE ;; esac
+  fi
+  t "pipefail-version-skew-parent-${parent#"$ROOT"/}" parent "$r1"
+done
+
+# Criterion 6: tick.sh is a candidate the derivation reaches and declines. The
+# exclusion must be its missing pipefail, not the candidate set's reach — so
+# assert both halves, or a future widening could satisfy this vacuously.
+pipefail_candidates="$(pipefail_grep_q_candidates | sort -u)"
+if grep -qxF "$SHARED/bin/tick.sh" <<<"$pipefail_candidates"
+then r1=candidate; else r1=UNREACHED; fi
+t pipefail-tick-is-a-candidate candidate "$r1"
+if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/bin/tick.sh"
+then r1=SETS-PIPEFAIL; else r1=sets-none; fi
+t pipefail-tick-sets-no-pipefail sets-none "$r1"
+case "$pipefail_population" in
+  *"$SHARED/bin/tick.sh"*) r1=INCLUDED ;; *) r1=excluded ;; esac
+t pipefail-population-excludes-tick.sh excluded "$r1"
+
+# #449: the payload exemption is a shape, not a path. This fixture carries the
+# four live payload spellings under a filename no clause names — under the old
+# rehearsal-app.sh clause every one of them flags. The control on line 5 is
+# assembled rather than written so this suite does not carry the live shape,
+# and it proves the fixture is exempt by that shape and not inert.
+PAYLOAD_FIXTURE="$TMP/remote-payload.fixture"
+cat >"$PAYLOAD_FIXTURE" <<'PAYLOADS'
+if bxn "$b" 'crontab -l 2>/dev/null | grep -qE "^[^#].*tick\.sh"' 2>/dev/null; then :; fi
+armed()   { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -qE '^[^#].*tick\.sh'" >/dev/null 2>&1; }
+paused()  { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -q '^#CREW-FLOOR-PAUSED'" >/dev/null 2>&1; }
+present() { box exec "$1" -- bash -lc 'crontab -l 2>/dev/null | grep -qF "$HOME/duty/bin/tick.sh"' >/dev/null 2>&1; }
+PAYLOADS
+printf '%s%s\n' 'if producer | ' 'grep -q CONTROL; then :; fi' >>"$PAYLOAD_FIXTURE"
+# Lines 6-8 are the negative the shape rule owes: a payload opener whose grep
+# sits OUTSIDE the payload quote is a local pipeline under this file's own
+# pipefail, so it must flag. One line per payload spelling, plus a local
+# pipeline wrapped around a payload that has a pipe of its own — the case a
+# body-contains-a-pipe test cannot separate. Assembled for the same reason the
+# control is: written literally they would flag this suite.
+payload_gq='grep -q'
+cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOCALS
+box exec "\$1" -- bash -lc 'crontab -l' | $payload_gq OUTSIDE
+out=\$(bxn "\$b" 'echo hi'); printf '%s\n' "\$out" | $payload_gq OUTSIDE
+box exec "\$1" -- bash -lc 'crontab -l | $payload_gq INSIDE' | $payload_gq OUTSIDE
+PAYLOAD_LOCALS
+# Lines 9-12 are the negative the invocation-context bound owes: opener-shaped
+# text that is data, not an invocation, because it sits inside an ordinary
+# quoted string. Its apparent quote has no mate, so a matcher that looks for
+# opener shapes anywhere on the line reads the rest of the line as an
+# unterminated payload and erases the local pipeline — a silent pass. Both
+# spellings, and both quote pairings, because the lookalike works either way.
+cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOOKALIKES
+echo 'bash -lc "' | $payload_gq OUTSIDE
+note='bxn box "'; producer | $payload_gq OUTSIDE
+echo "bash -lc '" | $payload_gq OUTSIDE
+note="bxn box '"; producer | $payload_gq OUTSIDE
+PAYLOAD_LOOKALIKES
+payload_findings="$(pipefail_grep_q_sites "$PAYLOAD_FIXTURE")"
+payload_exempt="$(awk -F: '$2 < 5 { print }' <<<"$payload_findings")"
+t pipefail-payload-exempt-by-shape "" "$payload_exempt"
+payload_control="$(awk -F: '$2 == 5 { print $2 }' <<<"$payload_findings")"
+t pipefail-payload-fixture-control-flags 5 "$payload_control"
+payload_local="$(awk -F: '$2 > 5 && $2 < 9 { print $2 }' <<<"$payload_findings" \
+  | sort -n | paste -sd' ' -)"
+t pipefail-payload-local-pipe-flags "6 7 8" "$payload_local"
+payload_lookalike="$(awk -F: '$2 > 8 { print $2 }' <<<"$payload_findings" \
+  | sort -n | paste -sd' ' -)"
+t pipefail-payload-lookalike-flags "9 10 11 12" "$payload_lookalike"
+rm -f "$PAYLOAD_FIXTURE"
+
+# The four live sites: present, so this cannot pass by their disappearance, and
+# unflagged now that cli/crew is in the population.
+payload_live="$(awk '
+  /(bxn|bash[[:space:]]+-lc)/ && /[|][[:space:]]*grep[[:space:]]+-[[:alnum:]]*q/ { n++ }
+  END { print n+0 }' "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
+t pipefail-payload-live-sites-present 4 "$payload_live"
+payload_live_findings="$(pipefail_grep_q_sites "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
+t pipefail-payload-live-sites-unflagged "" "$payload_live_findings"
+
 # The old predicate is deliberately assembled so the guard does not mistake
 # this regression fixture for a live site. Its producer writes a match, pauses,
 # then writes again: pipefail exposes grep -q closing the pipe as rc 141.
@@ -260,6 +429,8 @@ t pipefail-awk-range-keeps-negative-direction absent "$r1"
 unset -f awk slow_awk
 unset old_match old_pipe old_predicate_rc guard_findings guard_mutation
 unset pipefail_population inherited PIPE_GUARD_FIXTURE
+unset admitted parent pipefail_candidates PAYLOAD_FIXTURE
+unset payload_findings payload_exempt payload_control payload_live payload_live_findings
 
 # #411: force the box-existence producer to pause after its matching line.
 # The stub is deliberately `box list`, so this exercises the predicate's

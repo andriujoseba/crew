@@ -333,6 +333,7 @@ bx '
   test -d "$stage/.github"
   test -f "$stage/VERSION"
   test -d "$stage/cli"
+  test -d "$stage/dist"
   test -d "$stage/drill"
   test -d "$stage/examples"
   test -d "$stage/fleet-floor"
