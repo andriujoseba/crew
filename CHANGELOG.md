@@ -13,6 +13,195 @@ ledger at 0.1.0**, do not backfill.
 <!-- Release sections land below this line, newest first, each stamped by the
 release PR from the fragments in changelog.d/. -->
 
+## 0.1.2 — 2026-08-10
+
+### Added
+
+- The rehearsal drills the triage hygiene slot's board audit: it reports
+  `attention` on a pull request and on an unassigned issue, naming both with
+  their class (#441).
+- The rehearsal drills that the board audit never repairs — both flags stay
+  set, the unassigned issue stays unassigned, and neither fixture draws a
+  comment (#441).
+- The rehearsal drills the audit's alert transitions by count: silent on a
+  clean board, one `🚨` when the malformed set appears, none while it is
+  unchanged, one `✅` when it clears (#441).
+- `drill/rehearsal-all.sh` takes `--no-attention-audit-drill` and records the
+  leg's outcome in the round summary (#441).
+- The rehearsal drills what the builder attention wake does after its ack: a
+  claim with no open PR and no build branch is dispatched to the normal duty
+  tick, leaving no PR and no `build/<issue>-*` branch behind (#440).
+- The rehearsal drills the timed-out pickup report — one `⏱️` comment naming a
+  stable log link, that link resolving to a readable file, and the operator
+  alert naming the immutable run log (#440).
+- `drill/rehearsal-all.sh` takes `--no-attention-drill` and records the leg's
+  outcome in the round summary (#440).
+- The drill asserts the boot check's `cli probe` verdict is `ok` and that the
+  boot block carries no `WARN`, for the agent the round was given (#427, #240).
+- Release drills now trip, suppress, alert once, and recover a staged terminal session lane for the drilled agent (#424).
+- The drill asserts the operator watch set is `repos.txt` ∪ `notify-repos.txt`,
+  both halves reaching the operator on one notify tick (#423, #316).
+- `drill/rehearsal-all.sh --no-notify-drill` opts out of the notifier-union
+  leg (#423).
+- The real-host rehearsal now proves dirty merged-branch worktrees are preserved remotely before removal and retained when preservation fails (#422).
+- The install rehearsal now measures the installed tree on a real host: the first install, the upgrade and the offline artifact each carry none of the installer's excluded roots, by path, and stay within the shipped size bound (#365, #421).
+- The drill record now carries each installed tree's measured size rather than a bare pass, and reads both the excluded roots and the bound from their shipped sources instead of spelling them (#365, #421).
+- The app rehearsal now reads the floor surfaces this release shipped: the serving host's own version, and each engine's integrity verdict taken from the box's own answer (#420).
+- The app rehearsal now asserts the roster boxes counted but not drawn, the repair verb a floor with nothing hired names, and the split between deliberately disarmed and genuinely silent boxes (#420).
+- The app rehearsal now asserts `crew up --dry-run` changes nothing, that an unanswered engine probe reads `unknown` rather than never-hired, and that `no build duty` names a cause and a count (#420).
+- The release rehearsal now proves the check-conclusion resume wake, malformed-signal warning and zero-action stop on consecutive real ticks. (#419).
+- The builder drill now exercises draft return and the settled-head panel-request gate through a live fix round (#418).
+- `.ceremony/RELEASES.md` joins the vendored doctrine mirror (#350).
+- The fleet-floor header shows the serving host's exact crew version (#347).
+- The triage hygiene slot reports `attention` flags on pull requests or unassigned issues without repairing them. (#303).
+- `drill/teardown.sh` removes what a drill round created — its boxes and its
+  public sandbox repositories — naming each with its creation date and asking
+  once, and doing nothing on an already-clean host (#217).
+- Teardown deletes only names that are exactly the drill's own and that no
+  roster on the host claims; a fleet member is refused even where its name
+  matches the drill pattern, and one bad name in a run deletes nothing (#217).
+- A sandbox repository is deletable only when its owner is the host's own gh
+  identity as well as its name being a drill name, so a drill-shaped
+  repository under another account is refused (#217).
+- Teardown tells "found nothing" from "could not look": what it cannot
+  inspect — no gh identity, no box CLI, an unreadable `box list`, or a single
+  repository lookup that fails for anything but a measured 404 — exits 2
+  INCOMPLETE, naming it, instead of reporting a clean host (#217).
+- Naming the same box or sandbox twice in one teardown deletes it once,
+  instead of a second removal failing and reporting a box that *was* removed
+  as a failure (#217).
+- Each release publishes `crew-<version>.sh.sha256` beside the installer, which
+  `sha256sum -c` verifies (#210).
+- The floor's unit tile renders the engine's integrity verdict beside its
+  version: `current`, `MODIFIED` or `unverified` (#159, #190).
+
+### Changed
+
+- The drill's boot-check failures quote the line they read and name the agent,
+  instead of reporting only that the log was non-empty (#427).
+- Release initialization now audits every window fragment against the real-host drill before the round runs (#425).
+- The drill re-asserts `repos.txt` after writing `notify-repos.txt` and aborts
+  the round if the work set widened (#423).
+- `drill/teardown.sh` removes the per-role `crew-drill-<role>-notify` sandbox
+  (#423).
+- Builder sessions declare complete rounds without waiting for checks; the engine gates panel requests until the head settles (#402).
+- Adopt ceremony `0.6.2`: every pin moves off `0.6.0`, across `release.yml`, `release-guards.yml`, `labels.yml` and `labels-sweep.yml` (#398).
+- The vendored doctrine carries ceremony `0.6.1` and `0.6.2`: a round is declared answered as soon as its fixes are pushed, the pending-check wait belonging to whatever mediates the request (#398).
+- `.ceremony/RELEASES.md` now says how a release window advances past a member that lands `post-merge` — triage splits the remainder, and the original's close is the release edge (#398).
+- Every install channel ships only what an installed tree runs:
+  `fleet-floor/dev/`, the page sources, the test suites, the drill and the
+  repository's own furniture are no longer installed, leaving the tree under 2M
+  whether it came from a checkout, the scp-able artifact, `gh` or `curl`
+  (#365).
+- Adopt ceremony `0.6.0`: every pin moves off `0.5.0`, across `release.yml`, `release-guards.yml`, `labels.yml` and `labels-sweep.yml` (#350).
+- A changelog fragment entry must now end with its issue citation — one parenthesised group, then the final `.` — and the `changelog-armed` guard refuses anything else (ceremony#262, #350).
+- The issue sweep now comments on undeclared collision edges, on an unblocked non-member during a standing release window, and on a `post-merge` item starved of wake evidence for 7 days (#350).
+- The builder's `no build duty` line now names its cause: an empty board, a seen-ledger suppression with its count, or the slot held by an open PR — named, with the board's live ready count beside it (#345).
+- `drill/rehearsal-all.sh` tears the round down when every leg passed; `--keep`
+  retains it, and a round that failed or never reached phase 2 keeps its boxes
+  and prints the teardown command (#217).
+- A teardown that could not inspect part of the round gets its own
+  `INCOMPLETE` row in the rehearsal summary and reds the round, rather than
+  reporting `ok teardown (boxes and sandbox repos removed)` (#217).
+- A rehearsal whose target box already exists refuses, naming the box, its
+  creation date, and the two ways forward. `--reuse` keeps it and records that
+  the pre-auth checks skip and why (#116, #217).
+- The fleet floor draws a console only for boxes that are deployed: one never
+  created or never hired is counted but not drawn, a stopped or unreachable one
+  keeps its console, and a floor with none of them names `crew hire` (#204).
+- The hygiene sweep pushes a dirty merged-branch worktree's uncommitted work —
+  untracked files included — to a `wip/<branch>` ref before removing it, and
+  removes it only once that push has landed (#168).
+- The preservation is also recorded upstream, as a comment on the PR the
+  worktree belonged to naming the remote, the ref and what it holds: the ref
+  lives on a fork, which an org-level action can take away, and the comment
+  cannot (#168).
+- A push or a record that fails leaves the worktree and its work untouched,
+  reported once as before (#168).
+- The removal log names the ref, the remote and the `git fetch` that gets the
+  work back (#168).
+- The counts in that record list every preserved file, including files under a
+  directory nobody had committed yet, and a worktree whose state cannot be read
+  at all is kept rather than described as empty (#168).
+- Staged content is preserved too: where the index holds a different version of
+  a file than the working tree, it is kept as the commit below the `wip/` ref's
+  tip, named in the record and reachable with `git checkout FETCH_HEAD^` (#168).
+- A worktree whose only uncommitted work was staged and then reverted in the
+  tree is now preserved and released, instead of being refused on every sweep
+  forever (#168).
+- Fix rounds return to draft when the panel closes a round without full approval (#139).
+
+### Fixed
+
+- The `pipefail`/`grep -q` guard now reads `cli/crew`, `install.sh`, `shared/install.sh`, `dist/*.sh` and `shared/lib/version-skew.sh`, so a regression in them can no longer pass with the suite green (#449).
+- Remote-shell payloads are exempt from that guard by their shape rather than by filename (#449).
+- Duty predicates now match completed producer output without `pipefail` race failures. (#447).
+- Predicate checks no longer intermittently misread successful output under `pipefail` when `grep -q` exits early (#443).
+- The rehearsal summary now reports the resume leg's own verdict instead of inferring it from the builder role's exit code (#435).
+- The drill exits non-zero when teardown could not restore `repos.txt` or
+  `notify-repos.txt`, including when the box stopped answering (#423).
+- The drill's teardown reds when the pre-drill `repos.txt` backup the round
+  made is gone, instead of reading a measured loss as "nothing was backed up"
+  and vouching for a registry nobody compared (#423).
+- The drill's notifier leg refuses to choose its second sandbox when the
+  host's pre-drill work registry cannot be read, instead of checking the
+  candidate against a watch set silently short of that half (#423).
+- The drill's notifier leg tracks a handoff fixture from the moment its PR is
+  created, and retries a close that failed, so neither a labelling failure nor
+  a failed close leaves an open handoff PR occupying a later builder slot
+  (#423).
+- The drill skips the notifier leg when the configured operator chat is
+  unreachable, instead of grading a valid bot token with an unusable chat as a
+  leg failure (#423).
+- The rehearsal round removes both the notifier leg's and the worktree-hygiene
+  leg's per-round temporary files (#423, #422).
+- The triage drill now proves post-merge issues remain untouched and launch no session (#417).
+- Membership predicates no longer misread existing boxes, roster entries, drill sandboxes, or cron daemons under load (#411).
+- Make reused-box install drills require a tick written after console removal (#408).
+- Phase 0 stages the tracked source tree required by the repository fixture suite while excluding the unused fleet-floor development assets (#407).
+- Guard every attributed builder-doctrine quotation in prompts against drift in either file (#406).
+- Playwright dependencies installed at any repository depth are ignored, and the documented setup no longer creates package manifests (#405).
+- Near-miss and post-threshold stranded resume lanes stop dispatching repeatedly after three zero-action attempts at one head (#403).
+- Terminal agent failures stop their session lane after three attempts, alert the operator once, and resume automatically after recovery. (#388).
+- Kimi sessions distinguish quota termination from transient failures and report whether they used tools. (#388).
+- A builder session parked on a running check is now woken by that check finishing: the head's newest check conclusion joins the resume fingerprint (#384).
+- A ready PR at a green head with no round-answered signal naming it is resumed on the next tick instead of the twelfth; pending and red heads still wait the full twelve (#384).
+- A draft carrying a valid current-head signal at a green head with no panel requested is resumed rather than suppressed. The engine buys the session; the flip stays the builder's (#384).
+- The resume prompt quotes ceremony `0.6.0`'s parked-resume sentence again, so it no longer attributes wording to `.ceremony/BUILDER.md` that the vendored doctrine does not contain (#363).
+- `resume-prompt-quotes-the-doctrine` compares whitespace-normalised text, so a re-vendor that only rewraps the vendored prose can no longer red `main` while every word still agrees (#363).
+- `shared-ci` runs on `.ceremony/**`, so a doctrine re-vendor is checked in its own PR instead of surfacing against the next unrelated merge (#363).
+- Triage duty records post-session board state and suppresses unchanged unblockable leads instead of waking itself again. (#359).
+- The triage engine's board scan counts `post-merge` as a queue label, so an
+  issue in that state is no longer reported as a stray on every tick (#358).
+- `blocker:unrequested` is no longer written while the head's checks are pending or failing, so a builder waiting out a run is not flagged for not requesting (#350).
+- `blocker:unrequested` now waits for the head and the round's newest verdict to stand still, so a round still in motion is not flagged (#350).
+- `drill/install-drill.sh` step 9 no longer reds on a box hired minutes
+  earlier: with no tick history to diff, it waits one cron boundary plus grace
+  for a tick to land after the console removal (#341).
+- Step 9's failure names which of engine, cron or tick went missing and what
+  was read for it, instead of printing the removal's transcript (#341).
+- `fleet-floor/test/cli.sh` no longer reds on a release tree: the `crew up`
+  post-skip assertion accepts the already-hired skip as well as the re-bake
+  (#323).
+- The same case's failure message now names the box that was expected past the
+  skip, instead of claiming the roster loop stopped (#323).
+- A round-answered signal posted with its marker slot unrendered is now detected:
+  the engine warns naming the comment, and the PR becomes due for resume on the
+  next tick instead of the twelfth (#319).
+- Resume reads each ready PR's comments again, so a PR that signalled correctly
+  is no longer counted as unsignalled (#314, #319).
+- Operator notifications now cover every repository the fleet works in (#316).
+- `notify-repos.txt` now adds cross-repo handoff targets instead of replacing the work registry (#316).
+- Fleet Floor state filters now separate deliberately disarmed boxes from genuinely silent ones. (#312).
+- `crew status <box>` now reports an unanswered engine probe as unknown instead of inferring that the box was never hired (#308).
+- Builder attention wakes dispatch new builds to the normal duty tick and report timed-out pickups on the issue and operator channel (#301).
+- Kimi boot checks now use the guarded non-interactive command and resolved credential home used by duty sessions (#240).
+- `crew up --dry-run` now reports hires for new boxes and summarizes every planned fleet action. (#218).
+- Every release publishes the scp-able installer `crew-<version>.sh` as an
+  asset, whichever door cut it (#98, #210).
+- The browser walk's `gh ✓` check runs only over armed, ticking boxes, and
+  reports that it did not run where there are none (#190).
+
 ## 0.1.1 — 2026-08-03
 
 ### Added
