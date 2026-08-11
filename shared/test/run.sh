@@ -9884,7 +9884,7 @@ t round-siblings-human-block-answered-converges true \
 # licence program the request path uses. A predicate nobody passes $human to is
 # a fix that ships inert.
 # shellcheck disable=SC2016
-if grep -q 'arg human "\$FLEET_HUMAN"' "$SHARED/lib/duty-builder.sh" \
+if grep -q 'arg human "\${FLEET_HUMAN:-}"' "$SHARED/lib/duty-builder.sh" \
   && grep -q 'argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh" \
   && grep -q 'jq/answered-head.jq' "$SHARED/lib/duty-builder.sh"; then
   r1=wired
@@ -9892,6 +9892,15 @@ else
   r1=INERT
 fi
 t engine-handoff-reads-the-human wired "$r1"
+# ...and it is read GUARDED. duty.sh runs `set -euo pipefail`, FLEET_HUMAN has
+# no entry in fleet.defaults.conf, and the round-detection call site above runs
+# on every tick for every repo — a bare deref there turns "the operator never
+# set FLEET_HUMAN" from a handoff that fails into a builder that does not run at
+# all. Both new sites take `${FLEET_HUMAN:-}`; empty is the predicates'
+# documented "matches nobody", which is exactly today's behaviour.
+# shellcheck disable=SC2016
+t engine-human-arg-is-set-u-safe 0 \
+  "$(grep -c -- '--arg human "\$FLEET_HUMAN"' "$SHARED/lib/duty-builder.sh" || true)"
 # Every head-checks.jq and converged.jq invocation passes $human — jq aborts on
 # an undefined argument, so a missed call site is a silently empty row or an
 # `err` branch, not a loud failure.

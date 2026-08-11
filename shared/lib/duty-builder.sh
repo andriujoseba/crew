@@ -2001,9 +2001,16 @@ _builder_repo() {
           | jq -c '.data.repository.pullRequest.latestOpinionatedReviews.nodes')" \
         'map(if .number == $num then . + {latestOpinionatedReviews:$reviews} else . end)')"
     done
+    # `${FLEET_HUMAN:-}`, not a bare deref: this file runs under `set -u` and
+    # FLEET_HUMAN has no shipped default — fleet.defaults.conf does not carry
+    # it, only the operator's fleet.conf does. _handoff_finalize can deref it
+    # bare because it runs once a round; this line runs on every tick for every
+    # repo, so an operator who never set it would lose the whole builder tick
+    # rather than just the handoff. Empty is the predicates' documented "matches
+    # nobody", so such a fleet degrades to exactly today's behaviour.
     mine_rows="$(printf '%s' "$mine_json" \
       | jq -r --argjson panel "$panel_json" --arg repo "$R" \
-        --arg human "$FLEET_HUMAN" \
+        --arg human "${FLEET_HUMAN:-}" \
         -f "$DUTY_DIR/lib/jq/head-checks.jq" 2>/dev/null || echo err)"
   fi
 
@@ -2352,7 +2359,7 @@ _builder_repo() {
       [ -n "$handoff_signal" ] || handoff_signal='{"sha":"","createdAt":""}'
       converged="$(printf '%s' "$pr_payload" \
         | jq -r --argjson panel "$panel_json" --arg needs_human "$LABEL_NEEDS_HUMAN" \
-            --arg human "$FLEET_HUMAN" --argjson signal "$handoff_signal" \
+            --arg human "${FLEET_HUMAN:-}" --argjson signal "$handoff_signal" \
             -f "$DUTY_DIR/lib/jq/converged.jq" 2>/dev/null || echo err)"
       case "$converged" in
         true)  handoff_prs="$handoff_prs $N" ;;
