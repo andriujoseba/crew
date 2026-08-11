@@ -9,7 +9,9 @@
 # Input: the `gh pr list --json number,isDraft,reviewRequests,updatedAt,
 # headRefOid,statusCheckRollup` array, augmented by the caller with
 # latestOpinionatedReviews from its per-PR GraphQL payload.
-# Args: $panel (JSON array of logins, author already subtracted), $repo.
+# Args: $panel (JSON array of logins, author already subtracted), $repo,
+# $human (the maintainer's login — FLEET_HUMAN; "" from a caller that reads
+# only the check column).
 #
 # Output, one TAB-delimited row per PR:
 #
@@ -99,13 +101,39 @@ def check_state:
 # are answered whole (BUILDER.md). Computed from latestOpinionatedReviews,
 # never latestReviews (COMMENTED can mask a standing blocker) and never
 # reviewDecision (empty without branch protection; ceremony#26/#39).
+#
+# THE HUMAN IS THE SECOND CLAUSE (#452). BUILDER.md's Handoff ends "address
+# what comes back and re-hand-off the same way", and until this clause existed
+# nothing woke the builder to do it: the panel clause requires the
+# change-requester to be in $panel, and the maintainer is off-panel by
+# construction, so a human CHANGES_REQUESTED reached no wake in the engine at
+# all — not ci-red (a failing check only), not rebase (CONFLICTING only), not
+# resume (every path wants the latest signal NOT to name the head, and after a
+# completed handoff it does).
+#
+# The "not currently requested" guard is the exact mirror of the panel clause's
+# "no panel review request is still outstanding", and it is what SPENDS the
+# wake: the handoff re-requests the human, and the clause goes false. A
+# declined session is handled by the existing .seen-build ledger keyed on
+# updatedAt, the same way it already handles a declined panel round.
+#
+# $human ALONE, never "not in $panel" (D3), and head-scoped like every verdict
+# here: an advisory off-panel reviewer stays advisory (BUILDER.md) and triage
+# does not vote on PRs, so keying on panel membership would wake the builder
+# for every off-panel opinion on the board. An empty $human matches nobody.
 def round_owed:
   .headRefOid as $head
-  | ([.latestOpinionatedReviews[]?
-    | select(.state == "CHANGES_REQUESTED" and .commit.oid == $head)
-    | .author.login | select(. as $l | ($panel | index($l)) != null)] | length > 0)
-  and (([.reviewRequests[]? | .login // empty
-         | select(. as $l | ($panel | index($l)) != null)] | length) == 0);
+  | (([.latestOpinionatedReviews[]?
+      | select(.state == "CHANGES_REQUESTED" and .commit.oid == $head)
+      | .author.login | select(. as $l | ($panel | index($l)) != null)] | length > 0)
+     and (([.reviewRequests[]? | .login // empty
+            | select(. as $l | ($panel | index($l)) != null)] | length) == 0))
+  or (($human // "") != ""
+      and ([.latestOpinionatedReviews[]?
+            | select(.state == "CHANGES_REQUESTED" and .commit.oid == $head)
+            | select((.author.login // "") == $human)] | length > 0)
+      and (([.reviewRequests[]? | .login // empty
+             | select(. == $human)] | length) == 0));
 
 def failing_names:
   [latest_checks[] | select(is_blocking)
