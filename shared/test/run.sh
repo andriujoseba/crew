@@ -7242,16 +7242,26 @@ t engine-request-passes-the-whole-signal one-object "$r1"
 # shellcheck disable=SC2016  # the grep literal contains $mark on purpose
 t engine-has-one-signal-parser 1 \
   "$(grep -l 'startswith(\$mark)' "$SHARED"/lib/jq/*.jq | wc -l | tr -d ' ')"
-# Every consumer reads the licence as the OBJECT it now is. One `.sha` read per
-# call site: a consumer left comparing the raw output to a head would classify
-# every PR as unsignalled — resume would re-answer finished rounds forever and
-# the request gate would never open (#286).
+# Every consumer reads the licence as the OBJECT it now is: a consumer left
+# comparing the raw output to a head would classify every PR as unsignalled —
+# resume would re-answer finished rounds forever and the request gate would
+# never open (#286).
+#
+# #452 adds the first consumer that reads it WHOLE: converged.jq is handed the
+# same {sha, createdAt} object request-panel.jq gets, and spends the human's
+# block with its createdAt. So "one `.sha` read per call site" stops being the
+# shape of the property — it was always a proxy — while the property itself is
+# unchanged. Every call site is accounted for by exactly one consumption, a
+# `.sha` read or a whole-object pass, and the two must still add up: a new call
+# site that does neither is a raw output nobody read as an object.
 ah_calls="$(grep -c -- '-f "\$[A-Z_]*DIR[A-Za-z_/]*/jq/answered-head\.jq"' "$SHARED/lib/duty-builder.sh")"
 ah_sha_reads="$(grep -c "jq -r '\.sha // \"\"'" "$SHARED/lib/duty-builder.sh")"
-if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$ah_sha_reads" ]; then
+# shellcheck disable=SC2016  # the grep literal contains $handoff_signal
+ah_whole_reads="$(grep -c -- '--argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh")"
+if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$((ah_sha_reads + ah_whole_reads))" ]; then
   r1=object-read
 else
-  r1="MISMATCH($ah_calls/$ah_sha_reads)"
+  r1="MISMATCH($ah_calls/$ah_sha_reads+$ah_whole_reads)"
 fi
 t engine-signal-consumers-read-the-object object-read "$r1"
 # Green-head precondition, mechanical half only: request on green|none, hold else.
@@ -9885,12 +9895,20 @@ t engine-handoff-reads-the-human wired "$r1"
 # Every head-checks.jq and converged.jq invocation passes $human — jq aborts on
 # an undefined argument, so a missed call site is a silently empty row or an
 # `err` branch, not a loud failure.
-missing_human="$(grep -n 'jq/head-checks.jq\|jq/converged.jq' "$SHARED/lib/duty-builder.sh" \
-  | grep -v '^[0-9]*:#' | while IFS=: read -r ln _; do
-      sed -n "$((ln > 6 ? ln - 6 : 1)),${ln}p" "$SHARED/lib/duty-builder.sh" \
-        | grep -q -- '--arg human' || printf '%s\n' "$ln"
-    done)"
-t engine-every-predicate-call-passes-human "" "$missing_human"
+# `case` over the captured context, not a `| grep -q`: this file runs under
+# pipefail and an early-exiting grep at the end of a pipe is the SIGPIPE red
+# the guard above exists to keep out (#443, #449).
+missing_human=""
+for _ph_ln in $(grep -n 'jq/head-checks\.jq\|jq/converged\.jq' \
+    "$SHARED/lib/duty-builder.sh" | cut -d: -f1); do
+  _ph_ctx="$(sed -n "$((_ph_ln > 6 ? _ph_ln - 6 : 1)),${_ph_ln}p" \
+    "$SHARED/lib/duty-builder.sh")"
+  case "$_ph_ctx" in
+    *"--arg human"*) : ;;
+    *) missing_human="${missing_human}${_ph_ln} " ;;
+  esac
+done
+t engine-every-predicate-call-passes-human "" "${missing_human% }"
 
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
 # #243: a ready PR missing its current-head signal becomes resume work only on
