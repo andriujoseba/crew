@@ -326,8 +326,16 @@ _handoff_comment() {
 # $not_handed): a box that dies before it refires next tick, and every write
 # above is a no-op on the retry (post-once dedup, an already-requested
 # reviewer, an already-present round marker). Requesting the human does not
-# suppress the refire — converged.jq counts only PANEL requests, and the human
-# is off-panel.
+# suppress the refire on its own — converged.jq's $no_panel_reqs counts only
+# PANEL requests, and the human is off-panel.
+#
+# What the human's request DOES spend is round_owed's second clause (#452): the
+# builder wake for a human CHANGES_REQUESTED is "blocking at the head and not
+# currently requested", so this line is where a wake that was answered stops
+# firing — the mirror of the panel clause's outstanding-request guard. The
+# label is still the refire guard, and converged.jq's own human disqualifier is
+# what stops the reconciler taking that label back off and bouncing the PR
+# between the two.
 _handoff_finalize() {
   local repo="$1" num="$2" comment
   _mirror_rounds "$repo" "$num" true   # finalize the live round: the PR is converging
@@ -986,13 +994,16 @@ _resume_attach_comments() {
 # whitelist whose fail-closed direction was bought with #64, and a second copy
 # of it in this file would be a second predicate. The shaping is the price —
 # head-checks.jq filters drafts out and joins the round-owed fact, so `isDraft`
-# is forced false and an empty `$panel` makes `round_owed` uniformly false. Only
-# field 4 is read here; the round-owed column stays the request path's.
+# is forced false and an empty `$panel` makes `round_owed`'s panel clause
+# uniformly false — with an empty `$human` doing the same to its human clause
+# (#452). Only field 4 is read here; the round-owed column stays the request
+# path's, and neutering both clauses is how this caller says so.
 _resume_check_states() {
   local repo="$1" listing="$2" shaped rows
   shaped="$(printf '%s' "$listing" | jq -c 'map(. + {isDraft:false})' 2>/dev/null)" || return 1
   [ -n "$shaped" ] || return 1
   rows="$(printf '%s' "$shaped" | jq -r --argjson panel '[]' --arg repo "$repo" \
+    --arg human '' \
     -f "$BUILDER_LIB_DIR/jq/head-checks.jq" 2>/dev/null)" || return 1
   printf '%s\n' "$rows" \
     | awk -F'\t' -v OFS='\t' 'NF { n = $1; sub(/^.*#/, "", n); print n, $4 }'
@@ -1754,7 +1765,7 @@ _ci_red_rollup_settled() {
   [ "$head" != "$expected_head" ] && return 0
   state="$(printf '%s' "$snapshot" \
     | jq -c '[. + {reviewRequests:[], latestOpinionatedReviews:[]}]' 2>/dev/null \
-    | jq -r --argjson panel '[]' --arg repo _ \
+    | jq -r --argjson panel '[]' --arg repo _ --arg human '' \
         -f "$BUILDER_LIB_DIR/jq/head-checks.jq" 2>/dev/null | cut -f4)"
   [ -n "$state" ] && [ "$state" != "pending" ]
 }
@@ -1968,6 +1979,12 @@ _builder_repo() {
     # substitute: COMMENTED masks a standing blocker there, and its commit.oid
     # is empty (#147). Handoff deliberately fetches again after the sessions:
     # this early snapshot can be an hour old by then.
+    #
+    # The same nodes carry the HUMAN's verdict, which is why round_owed's second
+    # clause costs no call (#452): the maintainer is off-panel, so nothing else
+    # in the engine was reading it, and a human CHANGES_REQUESTED woke no
+    # builder at all. `reviewRequests` is already on the listing above, which is
+    # the other half of that clause — the request is what spends the wake.
     for N in $(printf '%s' "$mine_json" \
       | jq -r '.[] | select(.isDraft | not) | .number'); do
       pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
@@ -1984,8 +2001,16 @@ _builder_repo() {
           | jq -c '.data.repository.pullRequest.latestOpinionatedReviews.nodes')" \
         'map(if .number == $num then . + {latestOpinionatedReviews:$reviews} else . end)')"
     done
+    # `${FLEET_HUMAN:-}`, not a bare deref: this file runs under `set -u` and
+    # FLEET_HUMAN has no shipped default — fleet.defaults.conf does not carry
+    # it, only the operator's fleet.conf does. _handoff_finalize can deref it
+    # bare because it runs once a round; this line runs on every tick for every
+    # repo, so an operator who never set it would lose the whole builder tick
+    # rather than just the handoff. Empty is the predicates' documented "matches
+    # nobody", so such a fleet degrades to exactly today's behaviour.
     mine_rows="$(printf '%s' "$mine_json" \
       | jq -r --argjson panel "$panel_json" --arg repo "$R" \
+        --arg human "${FLEET_HUMAN:-}" \
         -f "$DUTY_DIR/lib/jq/head-checks.jq" 2>/dev/null || echo err)"
   fi
 
@@ -2245,8 +2270,21 @@ _builder_repo() {
   # --- HANDOFF: a converged round of mine that owes the human. Convergence
   # computed directly: every panelist's latest opinionated review APPROVES
   # the CURRENT head, no panel request outstanding, PR mergeable RIGHT NOW,
-  # and state:needs-human not already set (the human is off-panel — without
-  # the refire guard this wake fires forever after a successful handoff).
+  # state:needs-human not already set (the human is off-panel — without the
+  # refire guard this wake fires forever after a successful handoff), and no
+  # standing unanswered CHANGES_REQUESTED from the human at that head (#452).
+  #
+  # THAT LAST TERM IS WHY THE LABEL WAS NOT ENOUGH. The refire guard reads a
+  # label the RECONCILER owns, and the reconciler takes it off the moment the
+  # human blocks — correctly, the ball is the builder's. Convergence then read
+  # true again on the next tick (the panel still approves the head; a verdict
+  # does not move mergeable), the handoff re-requested the human and re-set the
+  # label, and the reconciler's "an explicit human request outranks the
+  # remaining bot outcomes" clause made it stick. The change request never
+  # reached the builder and the PR parked back on the human with a fresh nag —
+  # the withdrawn-then-re-nagged pair notify.sh shows. The disqualifier is
+  # spent by the builder's signal at that head, so an argued answer still
+  # converges and still reaches the human.
   #
   # HANDOFF IS DELIBERATELY NOT GATED ON A GREEN HEAD, and the obvious
   # improvement is the bug (grok, #64). Adding `&& check_state == "green"`
@@ -2259,7 +2297,7 @@ _builder_repo() {
   # is the incident #17 was filed from. A converged PR reaching the human with
   # a red check is a human's call to make; a converged PR reaching nobody is
   # the failure this module exists to end. ---
-  local my_open converged handoff_prs=""
+  local my_open converged handoff_signal handoff_prs=""
   if [ "$mine_json" = "err" ]; then
     warn "$R: handoff detection failed; skipping"
   else
@@ -2311,8 +2349,17 @@ _builder_repo() {
       # fire — no continue needed.
       _request_panel "$R" "$N" "$pr_payload" "$panel_json" \
         "${check_by_num[$N]:-}" "${head_by_num[$N]:-}"
+      # The SAME licence object _request_panel reads, off the same payload and
+      # through the same program (#452). converged.jq spends the human's block
+      # with it exactly as request-panel.jq spends a panelist's: one predicate
+      # for "what did the session signal, and when", never a second copy.
+      handoff_signal="$(printf '%s' "$pr_payload" \
+        | jq -c --arg me "$ME" --arg mark "$MARK_ANSWERED" \
+            -f "$DUTY_DIR/lib/jq/answered-head.jq" 2>/dev/null)"
+      [ -n "$handoff_signal" ] || handoff_signal='{"sha":"","createdAt":""}'
       converged="$(printf '%s' "$pr_payload" \
         | jq -r --argjson panel "$panel_json" --arg needs_human "$LABEL_NEEDS_HUMAN" \
+            --arg human "${FLEET_HUMAN:-}" --argjson signal "$handoff_signal" \
             -f "$DUTY_DIR/lib/jq/converged.jq" 2>/dev/null || echo err)"
       case "$converged" in
         true)  handoff_prs="$handoff_prs $N" ;;

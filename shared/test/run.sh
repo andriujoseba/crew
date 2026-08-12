@@ -6861,26 +6861,107 @@ mk_pr() {  # head mergeable labels requests reviews
       latestOpinionatedReviews:{nodes:$revs}}}}}'
 }
 H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+CJ_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 REVS_OK='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
-REVS_STALE='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]'
+REVS_STALE='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$CJ_OLD'"}}]'
+# The maintainer (#452). Off-panel by construction — that is the whole reason
+# the human's verdict needed its own term here — and the ONE off-panel identity
+# this predicate reads.
+CJ_HUMAN="danmt"
+# The clock D1's ordering is read against, #286's rule applied to the human's
+# verdict: CJ_T_BLOCK is when the block landed, CJ_T_SIG_NEW a signal that
+# ANSWERS it, CJ_T_SIG_OLD one that merely PREDATES it.
+CJ_T_SIG_OLD="2026-08-11T09:00:00Z"
+CJ_T_BLOCK="2026-08-11T10:00:00Z"
+CJ_T_SIG_NEW="2026-08-11T11:00:00Z"
+# No signal posted — the shape answered-head.jq returns when the session has
+# never declared a round answered on this PR, and the default here because most
+# of these fixtures are indifferent to it.
+CJ_NO_SIG='{"sha":"","createdAt":""}'
+cj() {  # cj [signal-json] [panel-json] [human]
+  jq -r --argjson panel "${2:-$PANEL}" --arg needs_human state:needs-human \
+    --arg human "${3-$CJ_HUMAN}" --argjson signal "${1:-$CJ_NO_SIG}" -f "$CJQ"
+}
 
 t converged-true true \
-  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_OK" | cj)"
 t converged-outstanding-req false \
-  "$(mk_pr "$H" MERGEABLE '[]' '["rev-b"]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" MERGEABLE '[]' '["rev-b"]' "$REVS_OK" | cj)"
 t converged-offpanel-req-ignored true \
-  "$(mk_pr "$H" MERGEABLE '[]' '["danmt"]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" MERGEABLE '[]' '["danmt"]' "$REVS_OK" | cj)"
 t converged-stale-approval false \
-  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_STALE" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_STALE" | cj)"
 t converged-already-handed false \
-  "$(mk_pr "$H" MERGEABLE '["state:needs-human"]' '[]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" MERGEABLE '["state:needs-human"]' '[]' "$REVS_OK" | cj)"
 t converged-unknown-mergeable defer-unknown \
-  "$(mk_pr "$H" UNKNOWN '[]' '[]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" UNKNOWN '[]' '[]' "$REVS_OK" | cj)"
 t converged-conflicting false \
-  "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_OK" | jq -r --argjson panel "$PANEL" --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_OK" | cj)"
 # An empty panel must never converge vacuously (bare panel= line).
 t converged-empty-panel false \
-  "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | jq -r --argjson panel '[]' --arg needs_human state:needs-human -f "$CJQ")"
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | cj '' '[]')"
+
+# --- #452: the HUMAN's own verdict disqualifies convergence -------------------
+# BUILDER.md's Handoff ends "address what comes back and re-hand-off the same
+# way", and this predicate is what made that impossible: every wake is scoped to
+# $panel and the maintainer is off-panel, so a human CHANGES_REQUESTED left this
+# true — the panel still approved the head, and a review does not move
+# mergeable. The reconciler took state:needs-human off, the next tick refired
+# the handoff, re-requested the human and re-set the label, and the reconciler's
+# human-request clause made it stick. The PR bounced back at the human carrying
+# a fresh nag and the change request never reached the builder.
+CJ_BLOCK_AT_HEAD='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"'$CJ_HUMAN'"},"state":"CHANGES_REQUESTED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$H'"}}]'
+CJ_BLOCK_SUPERSEDED='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"'$CJ_HUMAN'"},"state":"CHANGES_REQUESTED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$CJ_OLD'"}}]'
+CJ_HUMAN_APPROVED='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"'$CJ_HUMAN'"},"state":"APPROVED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$H'"}}]'
+cj_sig() { jq -cn --arg sha "$1" --arg at "$2" '{sha:$sha,createdAt:$at}'; }
+
+# The headline: a standing human block at the head, never answered.
+t converged-human-block-at-head false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj)"
+# D1's SPEND, and the reason the disqualifier is not simply permanent: an answer
+# with argument moves no head, so request-panel.jq finds nobody to re-request —
+# the panel already approves this tree — and only the handoff can put the PR back
+# in front of the human. A signal at this head, posted after the block, converges.
+t converged-human-block-answered true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$H" "$CJ_T_SIG_NEW")")"
+# MUST-FAIL, the #286 ordering: a signal that PREDATES the block did not answer
+# it. Reading the sha alone — the licence before #286 gave it a createdAt — would
+# let one signal posted before the human ever reviewed cancel every later block.
+t converged-human-block-stale-signal false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$H" "$CJ_T_SIG_OLD")")"
+# An equal-second tie holds, exactly as it does in request-panel.jq: fail-closed
+# costs one tick and the next signal clears it.
+t converged-human-block-tied-signal false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$H" "$CJ_T_BLOCK")")"
+# A signal for some OTHER head is not a signal at this one, however new it is.
+t converged-human-block-signal-other-head false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$CJ_OLD" "$CJ_T_SIG_NEW")")"
+# MUST-FAIL, D1's HEAD SCOPING. The block sits at a superseded head and the panel
+# approves the current one — the builder pushed the fix. This MUST converge: the
+# handoff is the only thing that re-requests the human, so an any-head
+# disqualifier would stop the very act that clears it. Deadlock, not caution.
+t converged-human-block-superseded-head true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_SUPERSEDED" | cj)"
+# The human approving changes nothing — only CHANGES_REQUESTED closes a round.
+t converged-human-approved true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_HUMAN_APPROVED" | cj)"
+# MUST-FAIL, D3: $human ALONE, never "not in $panel". An advisory off-panel
+# reviewer stays advisory (BUILDER.md) and triage does not vote on PRs. Keying on
+# panel membership passes every other case here and blocks every handoff on the
+# board the first time anyone off-panel leaves a verdict.
+CJ_ADVISORY_BLOCK='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$H'"}}]'
+t converged-advisory-block-ignored true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_ADVISORY_BLOCK" | cj)"
+# An empty $human matches nobody: what a caller that is not asking about a round
+# passes, and the guard that keeps a fleet with no FLEET_HUMAN configured from
+# matching a review whose author.login the API returned as null.
+t converged-empty-human-arg-ignores-block true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj '' '' '')"
+# A block with NO submittedAt holds, the same fail-closed direction: an absent
+# timestamp cannot prove the signal answered it.
+CJ_BLOCK_UNTIMED="$(printf '%s' "$CJ_BLOCK_AT_HEAD" | jq -c 'map(del(.submittedAt))')"
+t converged-human-block-untimed-holds false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_UNTIMED" | cj "$(cj_sig "$H" "$CJ_T_SIG_NEW")")"
 
 # --- addressing.jq: round-close predicate, the MIRROR of converged.jq (#130) --
 # Same payload builder (mk_pr), same panel, same head-scoping — the point is
@@ -7161,16 +7242,26 @@ t engine-request-passes-the-whole-signal one-object "$r1"
 # shellcheck disable=SC2016  # the grep literal contains $mark on purpose
 t engine-has-one-signal-parser 1 \
   "$(grep -l 'startswith(\$mark)' "$SHARED"/lib/jq/*.jq | wc -l | tr -d ' ')"
-# Every consumer reads the licence as the OBJECT it now is. One `.sha` read per
-# call site: a consumer left comparing the raw output to a head would classify
-# every PR as unsignalled — resume would re-answer finished rounds forever and
-# the request gate would never open (#286).
+# Every consumer reads the licence as the OBJECT it now is: a consumer left
+# comparing the raw output to a head would classify every PR as unsignalled —
+# resume would re-answer finished rounds forever and the request gate would
+# never open (#286).
+#
+# #452 adds the first consumer that reads it WHOLE: converged.jq is handed the
+# same {sha, createdAt} object request-panel.jq gets, and spends the human's
+# block with its createdAt. So "one `.sha` read per call site" stops being the
+# shape of the property — it was always a proxy — while the property itself is
+# unchanged. Every call site is accounted for by exactly one consumption, a
+# `.sha` read or a whole-object pass, and the two must still add up: a new call
+# site that does neither is a raw output nobody read as an object.
 ah_calls="$(grep -c -- '-f "\$[A-Z_]*DIR[A-Za-z_/]*/jq/answered-head\.jq"' "$SHARED/lib/duty-builder.sh")"
 ah_sha_reads="$(grep -c "jq -r '\.sha // \"\"'" "$SHARED/lib/duty-builder.sh")"
-if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$ah_sha_reads" ]; then
+# shellcheck disable=SC2016  # the grep literal contains $handoff_signal
+ah_whole_reads="$(grep -c -- '--argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh")"
+if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$((ah_sha_reads + ah_whole_reads))" ]; then
   r1=object-read
 else
-  r1="MISMATCH($ah_calls/$ah_sha_reads)"
+  r1="MISMATCH($ah_calls/$ah_sha_reads+$ah_whole_reads)"
 fi
 t engine-signal-consumers-read-the-object object-read "$r1"
 # Green-head precondition, mechanical half only: request on green|none, hold else.
@@ -7203,8 +7294,7 @@ payload_usable() {
 t graphql-error-body-is-unusable unusable "$(printf '%s' "$GQL_EXCESSIVE" | payload_usable)"
 t graphql-long-thread-payload-is-usable usable "$(printf '%s' "$GQL_LONG_OK" | payload_usable)"
 t graphql-long-thread-converges true \
-  "$(printf '%s' "$GQL_LONG_OK" | jq -r --argjson panel "$PANEL" \
-      --arg needs_human state:needs-human -f "$CJQ")"
+  "$(printf '%s' "$GQL_LONG_OK" | cj)"
 if grep -q "jq -e '.data.repository.pullRequest != null'" "$SHARED/lib/duty-builder.sh" \
   && grep -q 'PR state payload unusable; skipping request and handoff' "$SHARED/lib/duty-builder.sh"; then
   r1=gated
@@ -9464,8 +9554,9 @@ t probe-emits-tickage emitted "$r1"
 # The engine never read statusCheckRollup at all, which is both bugs at once: a
 # fix round opened on a red head (#45) and a red head that woke nothing (#17).
 HC="$SHARED/lib/jq/head-checks.jq"
-hc() {  # hc <panel-json> <pr-array-json> -> rows
-  printf '%s' "$2" | jq -r --argjson panel "$1" --arg repo "o/r" -f "$HC"
+hc() {  # hc <panel-json> <pr-array-json> [human] -> rows
+  printf '%s' "$2" | jq -r --argjson panel "$1" --arg repo "o/r" \
+    --arg human "${3-$CJ_HUMAN}" -f "$HC"
 }
 mk_prc() {  # mk_prc <rollup> [opinionated-reviews] [requests] [isDraft]
   jq -cn --argjson c "$1" --argjson lr "${2:-[]}" --argjson rr "${3:-[]}" \
@@ -9617,6 +9708,53 @@ ALL_APPROVED='[
 ]'
 t head-round-all-approved - \
   "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$ALL_APPROVED")" | cut -f5)"
+# --- #452: the HUMAN is round_owed's second clause ---------------------------
+# Until it existed, a maintainer's CHANGES_REQUESTED reached no wake in this
+# engine at all: the panel clause above requires the change-requester to be in
+# $panel and the maintainer is off-panel by construction, ci-red wants a failing
+# check, rebase wants CONFLICTING, and every resume path wants the latest signal
+# NOT to name the current head — which, after a completed handoff, it does.
+HC_HUMAN_ROUND='[
+  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
+  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"abc1234"}}
+]'
+HC_HUMAN_STALE='[
+  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
+  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"oldhead"}}
+]'
+# The headline: the panel approves this head, the human blocks it, and the human
+# is not on the request list — the ball is the builder's.
+t head-round-human-block-owed owed \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND")" | cut -f5)"
+# ...and the SPEND. The handoff re-requests the human, and the clause goes false
+# — the exact mirror of the panel clause's outstanding-request guard. Without it
+# the wake would be permanent and the builder would be re-dispatched every tick
+# for a round it has already answered.
+t head-round-human-block-requested-is-spent - \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND" '[{"login":"'$CJ_HUMAN'"}]')" | cut -f5)"
+# Head-scoped like every verdict in this file: a block on a tree the builder has
+# already moved past is not a wake.
+t head-round-human-block-superseded - \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_STALE")" | cut -f5)"
+# MUST-FAIL, D3: $human ALONE, never "not in $panel". An implementation keying on
+# panel membership passes every other case in this block and wakes the builder
+# for every advisory or triage verdict on the board.
+HC_ADVISORY='[
+  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
+  {"state":"CHANGES_REQUESTED","author":{"login":"dan-claude-bot"},"commit":{"oid":"abc1234"}}
+]'
+t head-round-advisory-block-not-owed - \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_ADVISORY")" | cut -f5)"
+# An empty $human matches nobody — what the two callers that read only the check
+# column pass, beside the empty $panel that neuters the other clause.
+t head-round-empty-human-arg-not-owed - \
+  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND")" '' | cut -f5)"
+# The two clauses are independent: an outstanding PANEL request does not hold
+# back a human round, and vice versa. p2 still owes a first verdict, yet the
+# human's block at the head is the builder's to answer.
+t head-round-human-block-with-panel-request-owed owed \
+  "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND" '[{"login":"p2"}]')" | cut -f5)"
+
 # ceremony#207: two current-head blockers and one approval, with the whole
 # requested panel returned, produces one owed row (and therefore one wake).
 CEREMONY_207='[
@@ -9651,8 +9789,7 @@ t round-siblings-addressing true \
 t round-siblings-round-owed owed \
   "$(hc '["p1","p2","p3"]' "$(mk_prc "$CHK_OK" "$CEREMONY_207")" | cut -f5)"
 t round-siblings-converged false \
-  "$(printf '%s' "$CROSS_PR" | jq -r --argjson panel '["p1","p2","p3"]' \
-    --arg needs_human state:needs-human -f "$SHARED/lib/jq/converged.jq")"
+  "$(printf '%s' "$CROSS_PR" | cj '' '["p1","p2","p3"]')"
 
 # #286: the same agreement extended to the REQUEST side, on the #281 snapshot as
 # it reads once the signal is spent — every verdict in, no request outstanding,
@@ -9685,8 +9822,7 @@ t round-siblings-281-addressing true \
   "$(printf '%s' "$PR281_GQL" | jq -r --argjson panel "$PR281_PANEL" \
     --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
 t round-siblings-281-converged false \
-  "$(printf '%s' "$PR281_GQL" | jq -r --argjson panel "$PR281_PANEL" \
-    --arg needs_human state:needs-human -f "$CJQ")"
+  "$(printf '%s' "$PR281_GQL" | cj "$PR281_SIG" "$PR281_PANEL")"
 # The live-round half of the same agreement, and the reason state:bots-reviewing
 # is true only while a request awaits a verdict: with p2 still requested, the
 # round is the panel's — addressing.jq holds off, and request-panel.jq's
@@ -9700,6 +9836,93 @@ t round-siblings-281-mid-round-addressing false \
 t round-siblings-281-mid-round-requests-none "" \
   "$(mk_rp abc1234 '["p2"]' "$PR281_REVIEWS" '[]' \
     | rp "$(sig abc1234 2026-08-02T11:12:27Z)" "$PR281_PANEL")"
+
+# --- #452: THE BOUNCE IS GONE — the two predicates on ONE human-block payload -
+# The siblings' agreement extended to the round the human owns. This is the
+# whole defect in one snapshot: the panel approves the head, the maintainer
+# blocks it, nothing is requested. Before the fix round_owed said `-` and
+# converged said true, so the tick handed off — re-requesting the human and
+# re-setting state:needs-human over the very block that had just come in, while
+# the builder was never woken. The ball has to land on exactly one of these two,
+# and asserting both against one payload is what makes that a test rather than a
+# claim. Read again with the human RE-REQUESTED, both flip: the wake is spent
+# and the PR is legitimately the human's.
+HB_PANEL='["p1"]'
+HB_REVIEWS='[
+  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-11T09:30:00Z"},
+  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-11T10:00:00Z"}]'
+HB_GQL="$(jq -cn --argjson reviews "$HB_REVIEWS" '{
+  data:{repository:{pullRequest:{
+    headRefOid:"abc1234",mergeable:"MERGEABLE",
+    labels:{nodes:[]},reviewRequests:{nodes:[]},
+    latestOpinionatedReviews:{nodes:$reviews}
+  }}}
+}')"
+t round-siblings-human-block-owed owed \
+  "$(hc "$HB_PANEL" "$(mk_prc "$CHK_OK" "$HB_REVIEWS")" | cut -f5)"
+t round-siblings-human-block-not-converged false \
+  "$(printf '%s' "$HB_GQL" | cj '' "$HB_PANEL")"
+# Requested: state:needs-human stands, the builder is not re-woken, and the
+# handoff does not refire either — nothing re-requests a human already on the
+# list, and the label is already set.
+HB_REQUESTED="$(printf '%s' "$HB_GQL" \
+  | jq -c --arg h "$CJ_HUMAN" '.data.repository.pullRequest.reviewRequests.nodes
+             = [{requestedReviewer:{login:$h}}]')"
+t round-siblings-human-block-requested-not-owed - \
+  "$(hc "$HB_PANEL" "$(mk_prc "$CHK_OK" "$HB_REVIEWS" '[{"login":"'$CJ_HUMAN'"}]')" | cut -f5)"
+t round-siblings-human-block-requested-still-not-converged false \
+  "$(printf '%s' "$HB_REQUESTED" | cj '' "$HB_PANEL")"
+# And the answered round, at the same unchanged head: converged again, so the
+# argument reaches the human — while round_owed has NOT re-fired, the human
+# still being off the request list until the handoff puts them back on it. The
+# builder answering is what moves this, never the engine deciding on its own.
+t round-siblings-human-block-answered-converges true \
+  "$(printf '%s' "$HB_GQL" | cj "$(sig abc1234 2026-08-11T11:00:00Z)" "$HB_PANEL")"
+
+# The wiring, not just the predicates: both facts must actually reach both
+# programs at the handoff call site, off the SAME payload and through the same
+# licence program the request path uses. A predicate nobody passes $human to is
+# a fix that ships inert.
+# shellcheck disable=SC2016
+if grep -q 'arg human "\${FLEET_HUMAN:-}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'jq/answered-head.jq' "$SHARED/lib/duty-builder.sh"; then
+  r1=wired
+else
+  r1=INERT
+fi
+t engine-handoff-reads-the-human wired "$r1"
+# ...and it is read GUARDED. duty.sh runs `set -euo pipefail`, FLEET_HUMAN has
+# no entry in fleet.defaults.conf, and the round-detection call site above runs
+# on every tick for every repo — a bare deref there turns "the operator never
+# set FLEET_HUMAN" from a handoff that fails into a builder that does not run at
+# all. Both new sites take `${FLEET_HUMAN:-}`; empty is the predicates'
+# documented "matches nobody", which is exactly today's behaviour.
+# shellcheck disable=SC2016
+t engine-human-arg-is-set-u-safe 0 \
+  "$(grep -c -- '--arg human "\$FLEET_HUMAN"' "$SHARED/lib/duty-builder.sh" || true)"
+# Every head-checks.jq and converged.jq invocation passes $human — jq aborts on
+# an undefined argument, so a missed call site is a silently empty row or an
+# `err` branch, not a loud failure.
+# `case` over the captured context, not a `| grep -q`: this file runs under
+# pipefail and an early-exiting grep at the end of a pipe is the SIGPIPE red
+# the guard above exists to keep out (#443, #449).
+# The line numbers arrive by process substitution rather than by a pipe into
+# the loop, and the loop reads them one line at a time (SC2013): `missing_human`
+# accumulates in the loop BODY, so a `grep | while read` would spend every hit
+# in a subshell and leave this guard passing vacuously. `cut` drains its input,
+# so nothing at the end of that feeding pipe exits early either.
+missing_human=""
+while read -r _ph_ln; do
+  _ph_ctx="$(sed -n "$((_ph_ln > 6 ? _ph_ln - 6 : 1)),${_ph_ln}p" \
+    "$SHARED/lib/duty-builder.sh")"
+  case "$_ph_ctx" in
+    *"--arg human"*) : ;;
+    *) missing_human="${missing_human}${_ph_ln} " ;;
+  esac
+done < <(grep -n 'jq/head-checks\.jq\|jq/converged\.jq' \
+  "$SHARED/lib/duty-builder.sh" | cut -d: -f1)
+t engine-every-predicate-call-passes-human "" "${missing_human% }"
 
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
 # #243: a ready PR missing its current-head signal becomes resume work only on
