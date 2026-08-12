@@ -9907,16 +9907,21 @@ t engine-human-arg-is-set-u-safe 0 \
 # `case` over the captured context, not a `| grep -q`: this file runs under
 # pipefail and an early-exiting grep at the end of a pipe is the SIGPIPE red
 # the guard above exists to keep out (#443, #449).
+# The line numbers arrive by process substitution rather than by a pipe into
+# the loop, and the loop reads them one line at a time (SC2013): `missing_human`
+# accumulates in the loop BODY, so a `grep | while read` would spend every hit
+# in a subshell and leave this guard passing vacuously. `cut` drains its input,
+# so nothing at the end of that feeding pipe exits early either.
 missing_human=""
-for _ph_ln in $(grep -n 'jq/head-checks\.jq\|jq/converged\.jq' \
-    "$SHARED/lib/duty-builder.sh" | cut -d: -f1); do
+while read -r _ph_ln; do
   _ph_ctx="$(sed -n "$((_ph_ln > 6 ? _ph_ln - 6 : 1)),${_ph_ln}p" \
     "$SHARED/lib/duty-builder.sh")"
   case "$_ph_ctx" in
     *"--arg human"*) : ;;
     *) missing_human="${missing_human}${_ph_ln} " ;;
   esac
-done
+done < <(grep -n 'jq/head-checks\.jq\|jq/converged\.jq' \
+  "$SHARED/lib/duty-builder.sh" | cut -d: -f1)
 t engine-every-predicate-call-passes-human "" "${missing_human% }"
 
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
