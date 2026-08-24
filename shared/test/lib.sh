@@ -258,10 +258,15 @@ phase0_suite_roots() {  # phase0_suite_roots <suite>...
 }
 
 phase0_split_coverage_result() {  # phase0_split_coverage_result <rehearsal>
-  local rehearsal="$1"
-  phase0_coverage_result \
-    <(sed -n '1,$p' "$HERE"/{common,triage,builder,hygiene,conf}.sh) \
-    "$rehearsal"
+  local rehearsal="$1" merged rc suite
+  merged="$(mktemp)"
+  for suite in "${SUITES[@]}"; do
+    sed -n '1,$p' "$HERE/$suite.sh" >>"$merged"
+  done
+  phase0_coverage_result "$merged" "$rehearsal"
+  rc=$?
+  rm -f "$merged"
+  return "$rc"
 }
 
 phase0_verified_roots() {  # phase0_verified_roots <rehearsal>

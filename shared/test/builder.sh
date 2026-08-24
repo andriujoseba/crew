@@ -22,7 +22,6 @@ source "$SHARED/lib/duty-attention.sh"
 source "$SHARED/lib/duty-review.sh"
 ATT_MOD="$SHARED/lib/duty-attention.sh"
 mkdir -p "$TMP/prompts"
-mkdir -p "$TMP/prompts"
 
 # --- #285: per-author repository panels ------------------------------------
 PANEL_REPO="$TMP/panel-repo"
@@ -441,6 +440,84 @@ t strand-fix-ready-with-signal-has-signal "$H" \
 if grep -qi 'MARK_ANSWERED' "$SHARED/prompts/rebase.txt" \
   && ! grep -qi 're-request every panel reviewer' "$SHARED/prompts/rebase.txt"; then r1=aligned; else r1=RACES; fi
 t rebase-posts-signal-not-request aligned "$r1"
+
+BUILDER_MOD="$SHARED/lib/duty-builder.sh"
+builder_commit_block="$(sed -n '/# Record what this session SAW/,/# --- HANDOFF:/p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '_ready_lines_to_commit "$ready_items" "$post_ready_ids"' <<<"$builder_commit_block" &&
+   ! grep -Fq '"$ready_items" "$cr_items" | ledger_commit' <<<"$builder_commit_block"; then
+  r1=narrowed
+else
+  r1=WHOLE_SET
+fi
+t builder-ready-commit-routed-through-helper narrowed "$r1"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_commit_block"; then
+  r1=preserved
+else
+  r1=DROPPED
+fi
+t builder-round-items-preserved preserved "$r1"
+# The build ledger commit must stay inside this call site's success guard. A
+# whole-module grep can accidentally match the independent ci-red guard.
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+builder_rc_block="$(sed -n '/^    if \[ "${RUN_SESSION_RC:-1}" -eq 0 \]; then$/,/^    fi$/p' "$BUILDER_MOD")"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_rc_block"; then
+  r1=gated
+else
+  r1=UNGATED
+fi
+t builder-ready-commit-gated-by-session-rc gated "$r1"
+# A failed re-query must stay visible and fail open toward another session,
+# never burying the whole pre-session ready set (#264 D4).
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if [ "$(grep -Fc 'post-session ready re-query failed; committing no ready lines (#264)' \
+     <<<"$builder_commit_block")" -eq 1 ] &&
+   ! grep -Fq 'ready_commit="$ready_items"' <<<"$builder_commit_block"; then
+  r1=safe
+else
+  r1=WHOLE_SET
+fi
+t builder-ready-requery-failure-commits-none safe "$r1"
+# shellcheck disable=SC2016  # Match literal shell source, not test variables.
+if grep -Fq '[ -e "$marker" ] && return 0' "$BUILDER_MOD" &&
+   grep -Fq '_repair_seen_build_264' "$BUILDER_MOD"; then
+  r1=gated
+else
+  r1=UNGATED
+fi
+t builder-ledger-repair-marker-gated gated "$r1"
+# The repair is box-wide, so it runs once before duty_builder enters its
+# per-repository loop rather than once from _builder_repo (#264 D5).
+builder_entry_block="$(sed -n '/^duty_builder() {/,/^_builder_repo() {/p' "$BUILDER_MOD")"
+if [ "$(grep -Fc '_repair_seen_build_264' <<<"$builder_entry_block")" -eq 1 ]; then
+  r1=once-per-box
+else
+  r1=PER_REPO
+fi
+t builder-ledger-repair-call-site once-per-box "$r1"
+
+# The repair clears both state classes once, names #264, and leaves files
+# created after its marker untouched on later invocations.
+REPAIR_DIR="$TMP/repair-264"
+mkdir -p "$REPAIR_DIR"
+printf old >"$REPAIR_DIR/.seen-build"
+printf old >"$REPAIR_DIR/.suppressed-build.one"
+repair_log="$(DUTY_DIR="$REPAIR_DIR" _repair_seen_build_264)"
+[ -e "$REPAIR_DIR/.seen-build" ] && r1=kept || r1=deleted
+t builder-ledger-repair-seen deleted "$r1"
+[ -e "$REPAIR_DIR/.suppressed-build.one" ] && r1=kept || r1=deleted
+t builder-ledger-repair-suppressed deleted "$r1"
+[ -e "$REPAIR_DIR/.seen-build.repair-264" ] && r1=created || r1=missing
+t builder-ledger-repair-marker created "$r1"
+case "$repair_log" in *'#264'*) r1=named ;; *) r1=missing ;; esac
+t builder-ledger-repair-log-names-issue named "$r1"
+printf later >"$REPAIR_DIR/.seen-build"
+printf later >"$REPAIR_DIR/.suppressed-build.two"
+t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_build_264)"
+t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
+t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
 
 # --- builder attention dispatch and timeout evidence (#301) -----------------
 # A builder pickup may finish an existing PR in this slot, but must hand a new

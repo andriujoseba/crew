@@ -19,9 +19,8 @@ source "$SHARED/lib/duty-builder.sh"
 
 # Shared installer fixture used by the configuration and profile cases below.
 ISHIM="$TMP/install-bin"
-IHOME="$TMP/install-home"
 CRON_STATE="$TMP/crontab"
-mkdir -p "$ISHIM" "$IHOME"
+mkdir -p "$ISHIM"
 for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
   ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
 done
@@ -50,104 +49,6 @@ for profile in "$SHARED"/conf/agents/*.conf; do
   fi
   t "agent-conf-$agent-login-hint-literal" literal "$r1"
 done
-
-if unknown_out="$(bash "$ROOT/drill/rehearsal.sh" --agent nosuchagent 2>&1)"; then
-  unknown_rc=0
-else
-  unknown_rc=$?
-fi
-t rehearsal-unknown-agent-rc 1 "$unknown_rc"
-case "$unknown_out" in
-  *"unknown agent 'nosuchagent'"*"claude"*"codex"*"grok"*"kimi"*) r1=listed ;;
-  *) r1=missing ;;
-esac
-t rehearsal-unknown-agent-list listed "$r1"
-
-# --- credential state reported by the flow (replaces the polled probes) ----
-# These run against the REAL common.sh sourced above, with DUTY_DIR pointed at
-# a scratch dir, so the marker contract the floor reads is asserted here and
-# not merely described in a comment.
-
-# alert() would try to curl Telegram from a unit test; the token files do not
-# exist so it returns early, but stub it anyway — a test that depends on the
-# absence of a file in $HOME is a test that fails on somebody's laptop.
-alert() { :; }
-
-AUTHDIR="$TMP/authstate"; mkdir -p "$AUTHDIR"
-DUTY_DIR="$AUTHDIR"
-
-note_auth_failure gh "401 Bad credentials"
-t authfail-file-per-service present "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo present || echo MISSING)"
-t authfail-does-not-touch-other-service absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo LEAKED || echo absent)"
-t authfail-records-reason found \
-  "$(grep -q '401 Bad credentials' "$AUTHDIR/.auth-fail.gh" && echo found || echo MISSING)"
-
-# The first failure must win. Rewriting every tick resets mtime, so a
-# credential that died on Monday reads as having died just now — and "when did
-# this break" is the only question the file exists to answer.
-FIRST="$(cat "$AUTHDIR/.auth-fail.gh")"
-sleep 1
-note_auth_failure gh "403 something else entirely"
-t authfail-first-failure-wins "$FIRST" "$(cat "$AUTHDIR/.auth-fail.gh")"
-
-clear_auth_failure gh
-t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
-clear_auth_failure gh   # must be idempotent, not an error under set -e
-t authfail-clear-idempotent 0 "$?"
-
-# Cross the file-contract boundary instead of testing only its writer. The
-# floor probe must read the exact marker common.sh writes, including the
-# service-specific filename and its single-line reason (#138, edge 3).
-printf 'crew@fixture\n' >"$AUTHDIR/VERSION"
-note_auth_failure gh "fixture rejection"
-AUTH_PROBE="$(DUTY_DIR="$AUTHDIR" bash "$ROOT/fleet-floor/server/probe.sh" </dev/null)"
-case "$AUTH_PROBE" in *$'::gh missing\n'*) r1=missing ;; *) r1=UNREAD ;; esac
-t authfail-common-to-probe-state missing "$r1"
-case "$AUTH_PROBE" in *'::authfail-gh '*'fixture rejection'*) r1=reason ;; *) r1=LOST ;; esac
-t authfail-common-to-probe-reason reason "$r1"
-clear_auth_failure gh
-
-# Multi-line reasons: gh's errors routinely are, and one record must stay one
-# line or probe.sh's ::key contract silently gains phantom keys.
-note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
-t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
-clear_auth_failure vendor
-
-# check_vendor_credential's tri-state. 2 means "this profile cannot tell from
-# local state" and MUST change nothing: neither raise an alarm nor clear a
-# real failure someone still has to fix.
-# shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
-AGENT_LOGIN_HINT="run the thing"
-# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
-bot_cli_present() { return 0; }
-check_vendor_credential
-t vendor-present-no-failure absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
-
-# shellcheck disable=SC2317
-bot_cli_present() { return 1; }
-check_vendor_credential
-t vendor-absent-raises present \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
-
-# shellcheck disable=SC2317
-bot_cli_present() { return 2; }
-check_vendor_credential
-t vendor-unknown-does-not-clear present \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo CLEARED)"
-rm -f "$AUTHDIR/.auth-fail.vendor"
-check_vendor_credential
-t vendor-unknown-does-not-raise absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
-unset -f bot_cli_present
-
-# An older agent profile with neither function must be a no-op, not a failure:
-# install.sh does not upgrade confs in place, so mid-rollout boxes will have
-# exactly this shape.
-check_vendor_credential
-t vendor-legacy-profile-silent absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
 
 # --- each agent profile reads its OWN credential store, locally -------------
 # Driven against the real conf files with a fabricated HOME, because the whole

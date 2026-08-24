@@ -82,6 +82,7 @@ t phase0-verifier-covers-suite-roots covered \
   "$(phase0_split_coverage_result "$ROOT/drill/rehearsal.sh")"
 
 # Source common.sh against a scratch DUTY_DIR.
+rm -rf "$TMP"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
@@ -319,6 +320,18 @@ has_role builder && r1=yes || r1=no
 has_role triage && r2=yes || r2=no
 t has-role-yes yes "$r1"
 t has-role-no no "$r2"
+
+if unknown_out="$(bash "$ROOT/drill/rehearsal.sh" --agent nosuchagent 2>&1)"; then
+  unknown_rc=0
+else
+  unknown_rc=$?
+fi
+t rehearsal-unknown-agent-rc 1 "$unknown_rc"
+case "$unknown_out" in
+  *"unknown agent 'nosuchagent'"*"claude"*"codex"*"grok"*"kimi"*) r1=listed ;;
+  *) r1=missing ;;
+esac
+t rehearsal-unknown-agent-list listed "$r1"
 
 # --- rehearsal builder fixtures: tie checks to this run (#179) -----------
 # shellcheck source=drill/rehearsal-fixtures.sh
@@ -7119,6 +7132,57 @@ t report-after-partial-still-settled "" \
   "$(printf 'o/a#1 T1\no/b#1 T1\n' \
       | report_suppressed_if_complete 1 "$ST_PART" "review")"
 
+# --- suppression state must be PER REPO (#60 review) ------------------------
+# Both duty modules call report_suppressed inside a per-repo loop. With ONE
+# shared state file, repo B's set replaces repo A's, and a repo with nothing
+# suppressed rm -f's the file outright — so A's unchanged set looks new on the
+# next tick and warns again, every tick, on exactly the 3-repo production box
+# this was written to protect. codex-bot and grok-bot both caught it; grok-bot
+# reproduced the flip-flop with these helpers.
+sup_says() { if grep -q 'item(s)'; then echo warned; else echo silent; fi; }
+SUP_A='o/a#1 2026-07-27T10:00:00Z'
+SUP_B='o/b#1 2026-07-27T10:00:00Z'
+
+# Per-repo files: each repo settles independently and stays quiet.
+STA="$TMP/sup.o_a"; STB="$TMP/sup.o_b"
+printf '%s\n' "$SUP_A" | report_suppressed "$STA" "o/a: board" >/dev/null
+printf '%s\n' "$SUP_B" | report_suppressed "$STB" "o/b: board" >/dev/null
+t report-perrepo-a-settles silent "$(printf '%s\n' "$SUP_A" | report_suppressed "$STA" "o/a: board" | sup_says)"
+t report-perrepo-b-settles silent "$(printf '%s\n' "$SUP_B" | report_suppressed "$STB" "o/b: board" | sup_says)"
+
+# The shape that was wrong, kept as a negative control: sharing one file makes
+# A speak again after B has been through it. If this ever reads `silent` the
+# helper has changed and the per-repo keying above may no longer be load-bearing.
+SUP_SHARED="$TMP/sup.shared"
+printf '%s\n' "$SUP_A" | report_suppressed "$SUP_SHARED" "o/a: board" >/dev/null
+printf '%s\n' "$SUP_B" | report_suppressed "$SUP_SHARED" "o/b: board" >/dev/null
+t report-shared-state-refires warned "$(printf '%s\n' "$SUP_A" | report_suppressed "$SUP_SHARED" "o/a: board" | sup_says)"
+
+# ...and the modules must actually key by repo, not just be capable of it.
+for pair in "duty-triage.sh:suppressed-triage-board" "duty-builder.sh:suppressed-build"; do
+  mod="${pair%%:*}"; sfile="${pair##*:}"
+  if grep -qE "$sfile\.\\\$\{?(R|slug)" "$SHARED/lib/$mod"; then r1=perrepo; else r1=SHARED; fi
+  t "suppression-state-perrepo-$mod" perrepo "$r1"
+done
+
+# --- every state signal is ledgered (#59) -----------------------------------
+# The engine had TWO ledgers, both in triage, while builder and reviewer had
+# none — so any signal cleared by an in-session action the agent may DECLINE
+# re-fired a model session every tick forever. These pin the wiring: a new
+# signal site added without a ledger is the regression.
+for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" \
+            "duty-review.sh:.seen-review" "duty-attention.sh:.seen-attention"; do
+  mod="${pair%%:*}"; led="${pair##*:}"
+  if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
+  t "signal-ledgered-$mod" ledgered "$r1"
+  # ...and committed only after a session that actually completed.
+  if grep -q 'RUN_SESSION_RC:-1}" -eq 0' "$SHARED/lib/$mod"; then r1=gated; else r1=UNGATED; fi
+  t "ledger-commit-gated-$mod" gated "$r1"
+  # ...and what it hides must be reported.
+  if grep -q 'report_suppressed' "$SHARED/lib/$mod"; then r1=reported; else r1=SILENT; fi
+  t "suppression-reported-$mod" reported "$r1"
+done
+
 # --- `no build duty` names its cause (#345) --------------------------------
 # One spelling for three causes cost the operator an hour on 2026-08-03: the
 # line was indistinguishable from #264's burial bug and the answer was the
@@ -7462,6 +7526,92 @@ t duty-end-on-every-exit "" "$(awk '
 # boxes reported armed and one ticked.
 if grep -q 'cron_daemon_running' "$SHARED/install.sh"; then r1=checked; else r1=ASSUMED; fi
 t install-verifies-cron-daemon checked "$r1"
+
+# --- credential state reported by the flow (replaces the polled probes) ----
+# These run against the REAL common.sh sourced above, with DUTY_DIR pointed at
+# a scratch dir, so the marker contract the floor reads is asserted here and
+# not merely described in a comment.
+
+# alert() would try to curl Telegram from a unit test; the token files do not
+# exist so it returns early, but stub it anyway — a test that depends on the
+# absence of a file in $HOME is a test that fails on somebody's laptop.
+alert() { :; }
+
+AUTHDIR="$TMP/authstate"; mkdir -p "$AUTHDIR"
+DUTY_DIR="$AUTHDIR"
+
+note_auth_failure gh "401 Bad credentials"
+t authfail-file-per-service present "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo present || echo MISSING)"
+t authfail-does-not-touch-other-service absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo LEAKED || echo absent)"
+t authfail-records-reason found \
+  "$(grep -q '401 Bad credentials' "$AUTHDIR/.auth-fail.gh" && echo found || echo MISSING)"
+
+# The first failure must win. Rewriting every tick resets mtime, so a
+# credential that died on Monday reads as having died just now — and "when did
+# this break" is the only question the file exists to answer.
+FIRST="$(cat "$AUTHDIR/.auth-fail.gh")"
+sleep 1
+note_auth_failure gh "403 something else entirely"
+t authfail-first-failure-wins "$FIRST" "$(cat "$AUTHDIR/.auth-fail.gh")"
+
+clear_auth_failure gh
+t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
+clear_auth_failure gh   # must be idempotent, not an error under set -e
+t authfail-clear-idempotent 0 "$?"
+
+# Cross the file-contract boundary instead of testing only its writer. The
+# floor probe must read the exact marker common.sh writes, including the
+# service-specific filename and its single-line reason (#138, edge 3).
+printf 'crew@fixture\n' >"$AUTHDIR/VERSION"
+note_auth_failure gh "fixture rejection"
+AUTH_PROBE="$(DUTY_DIR="$AUTHDIR" bash "$ROOT/fleet-floor/server/probe.sh" </dev/null)"
+case "$AUTH_PROBE" in *$'::gh missing\n'*) r1=missing ;; *) r1=UNREAD ;; esac
+t authfail-common-to-probe-state missing "$r1"
+case "$AUTH_PROBE" in *'::authfail-gh '*'fixture rejection'*) r1=reason ;; *) r1=LOST ;; esac
+t authfail-common-to-probe-reason reason "$r1"
+clear_auth_failure gh
+
+# Multi-line reasons: gh's errors routinely are, and one record must stay one
+# line or probe.sh's ::key contract silently gains phantom keys.
+note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
+t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
+clear_auth_failure vendor
+
+# check_vendor_credential's tri-state. 2 means "this profile cannot tell from
+# local state" and MUST change nothing: neither raise an alarm nor clear a
+# real failure someone still has to fix.
+# shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
+AGENT_LOGIN_HINT="run the thing"
+# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
+bot_cli_present() { return 0; }
+check_vendor_credential
+t vendor-present-no-failure absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
+
+# shellcheck disable=SC2317
+bot_cli_present() { return 1; }
+check_vendor_credential
+t vendor-absent-raises present \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
+
+# shellcheck disable=SC2317
+bot_cli_present() { return 2; }
+check_vendor_credential
+t vendor-unknown-does-not-clear present \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo CLEARED)"
+rm -f "$AUTHDIR/.auth-fail.vendor"
+check_vendor_credential
+t vendor-unknown-does-not-raise absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
+unset -f bot_cli_present
+
+# An older agent profile with neither function must be a no-op, not a failure:
+# install.sh does not upgrade confs in place, so mid-rollout boxes will have
+# exactly this shape.
+check_vendor_credential
+t vendor-legacy-profile-silent absent \
+  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
 
 # --- the per-tick path must not have reacquired a network auth probe -------
 # `gh auth status` in the tick is the exact cost this change removed; it would
