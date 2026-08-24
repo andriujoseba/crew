@@ -291,9 +291,9 @@ for suite in "${SUITES[@]}"; do
   grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/$suite.sh" || r1=MISSING
 done
 t suite-unsets-ambient-crew-config guarded "$r1"
-# shellcheck disable=SC2016  # Match the literal assignment in this file.
 r1=guarded
 for suite in "${SUITES[@]}"; do
+  # shellcheck disable=SC2016  # Match the literal assignment in this file.
   grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/$suite.sh" || r1=MISSING
 done
 t suite-pins-empty-xdg-config guarded "$r1"
@@ -7664,7 +7664,7 @@ t kimi-session-hooks 'terminal|terminal|transient|transient|yes|no' \
 kimi_quoted_terminal_then_transient() (
   local bdir="$TMP/terminal-breaker-kimi-quoted" i state
   mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID="tick-1"
   SESSION_TERMINAL_THRESHOLD=3
   export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
   # shellcheck disable=SC1091
@@ -7698,7 +7698,7 @@ terminal_breaker_case() ( # terminal_breaker_case terminal|transient|hookless
   mkdir -p "$bdir/logs" "$bdir/work"
   DUTY_DIR="$bdir"
   LOG_DIR="$bdir/logs"
-  DUTY_TICK_ID=tick-1
+  DUTY_TICK_ID="tick-1"
   SESSION_TERMINAL_THRESHOLD=3
   export BREAKER_CALLS="$bdir/calls"
   : >"$BREAKER_CALLS"
@@ -7738,7 +7738,7 @@ t hookless-failures-remain-transient '16|0|0|0' \
 terminal_breaker_resets_sequence() (
   local bdir="$TMP/terminal-breaker-reset" state
   mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID="tick-1"
   SESSION_TERMINAL_THRESHOLD=3
   BOT_CLI_CMD=(bash -c 'printf "%s\n" "$BREAK_TEXT"; exit 1')
   bot_session_terminal() { grep -q access_terminated_error "$1"; }
@@ -7767,7 +7767,7 @@ t terminal-breaker-transient-resets-consecutive-count '2|closed' \
 terminal_timeout_case() (
   local bdir="$TMP/terminal-breaker-timeout" i
   mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID="tick-1"
   SESSION_TERMINAL_THRESHOLD=3
   BOT_CLI_CMD=(bash -c 'exit 124')
   bot_session_terminal() { return 0; }
@@ -7783,7 +7783,7 @@ t timeout-failures-never-trip '16|clear' "$(terminal_timeout_case)"
 terminal_kind_isolation() (
   local bdir="$TMP/terminal-breaker-kind" i
   mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID="tick-1"
   SESSION_TERMINAL_THRESHOLD=3
   export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
   BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf access_terminated_error; exit 1')
@@ -7803,7 +7803,7 @@ t terminal-breaker-is-keyed-by-kind '4|review-stopped' "$(terminal_kind_isolatio
 terminal_breaker_recovery() (
   local bdir="$TMP/terminal-breaker-recovery" i
   mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID="tick-1"
   SESSION_TERMINAL_THRESHOLD=3
   export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
   BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf access_terminated_error; exit 1')
@@ -7812,7 +7812,7 @@ terminal_breaker_recovery() (
   bot_cli_probe() { return 1; }
   alert() { :; }
   for i in 1 2 3; do run_session review fixture/repo "$bdir/work" 5 prompt; done >/dev/null
-  DUTY_TICK_ID=tick-2
+  DUTY_TICK_ID="tick-2"
   bot_cli_probe() { return 0; }
   BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; exit 0')
   run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
@@ -9017,7 +9017,7 @@ fb_stdout="$( (cd "$FBPWD" && env -u CREW_CONFIG_DIR -u XDG_CONFIG_HOME -u CREW_
   HOME="$FBHOME" PATH="$CLISHIM:$PATH" bash "$CLIBIN" status 2>/dev/null) )"
 case "$fb_stdout" in
   *"NO operator fleet definition"*) r1=ON_STDOUT ;;
-  *MEMBER*) r1=rows-only ;;
+  *MEMBER*) r1="rows-only" ;;
   *) r1="$fb_stdout" ;;
 esac
 t cli-fallback-banner-is-on-stderr rows-only "$r1"
@@ -9198,7 +9198,7 @@ for ci_yml in "$CI_SHELL" "$CI_FLOOR"; do
   ci_if="$(awk '/^  check:/{p=1} p && /^    if:/{print; exit}' "$ci_yml")"
   case "$ci_if" in *github.event.pull_request.draft*) r1=payload ;; *) r1=MISSING ;; esac
   t "$ci_name-gates-on-draft-payload" payload "$r1"
-  case "$ci_if" in *state:*|*label*) r1=LABEL ;; *) r1=payload-only ;; esac
+  case "$ci_if" in *state:*|*label*) r1=LABEL ;; *) r1="payload-only" ;; esac
   t "$ci_name-gate-is-not-label" payload-only "$r1"
   case "$ci_if" in *github.event_name*) r1=explicit ;; *) r1=COERCION ;; esac
   t "$ci_name-push-exemption-is-explicit" explicit "$r1"
