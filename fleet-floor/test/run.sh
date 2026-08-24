@@ -180,10 +180,24 @@ export PORT USER PASSWD TMP
 # share this collector and this file's reporters rather than each booting their
 # own: eight servers would cost CI eight first polls to assert what one does.
 #
-# The ORDER is the one cases.sh ran these blocks in, and it is load-bearing —
-# the control verbs mutate stub state that the ping tier then reads, and
-# `wake-silent` deliberately runs after the fixture's stopped box has been
-# started. Read-only suites first, the mutating ones after, ping last.
+# The ORDER is load-bearing: read-only suites first, the mutating ones after,
+# ping last. The control verbs mutate stub state that the ping tier then reads,
+# and `wake-silent` deliberately runs after the fixture's stopped box has been
+# started.
+#
+# What this does NOT preserve is cases.sh's exact interleaving, and it cannot:
+# grouping by module is the whole of D2, and cases.sh ran each module's blocks
+# scattered through the file. Measured at the split, branch against 394bdad:
+# the 707 assertion names are identical as a SET, and 13 of them changed side
+# of the mutating tier — the five `ping:`/`creds:` ones that are static greps
+# over collector and probe source (no live state to be ordered against), and
+# the eight `integrity:` ones that read a snapshot field the control verbs do
+# not write. Both trees run all 707 green, which is the two-sided evidence for
+# that last claim: those eight assert the same value before the control verbs
+# that they asserted after them.
+#
+# So the invariant to keep when adding a suite is the TIER, not a position:
+# a suite that mutates stub state belongs at or after actions.sh, never before.
 # shellcheck source=floor/units.sh
 source "$HERE/floor/units.sh"
 # shellcheck source=floor/roster.sh
