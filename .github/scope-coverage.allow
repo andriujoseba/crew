@@ -9,4 +9,4 @@
 # Prefer a mapping. This list is for a path no scope OWNS, not for one whose
 # owner is merely inconvenient to decide.
 
-.gitignore  # Repository furniture: it governs the working tree for every scope at once and is the deliverable of none. Its entries today are a drill artifact, a drill roster and a CI dependency tree — mapping it to any one of those would mislabel the next change made for another.
+.gitignore  # Repository furniture: it governs the working tree for every scope at once and is the deliverable of none, so a mapping to any one scope would mislabel the next change made for another. Deliberately not an inventory of its entries — that list changes with every scope that adds a producer, and a reason that has to be re-read to stay true is a reason that quietly stops being one.
