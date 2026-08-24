@@ -71,12 +71,17 @@ printf '\n*.conf\n' >>"$PARITY_SRC/.gitignore"
 VP=0.0.0-lifecycle-parity
 printf '%s\n' "$VP" >"$PARITY_SRC/VERSION"
 PARITY_HOME="$WORK/parity-home"
+parity_installed=0 parity_conf=""
 if HOME="$PARITY_HOME" CREW_HOME="$PARITY_HOME/share" CREW_BIN="$PARITY_HOME/bin" \
-   CREW_INSTALL_SOURCE="$PARITY_SRC" bash "$INSTALL" >/dev/null 2>&1 &&
-   ! find "$PARITY_HOME/share/versions/$VP" -name '*.conf' -print -quit | grep -q .; then
+   CREW_INSTALL_SOURCE="$PARITY_SRC" bash "$INSTALL" >/dev/null 2>&1; then
+  parity_installed=1
+  parity_conf="$(find "$PARITY_HOME/share/versions/$VP" -name '*.conf' -print -quit)"
+fi
+if [ "$parity_installed" -eq 1 ] && [ -z "$parity_conf" ] &&
+   [ -d "$PARITY_HOME/share/versions/$VP" ]; then
   ok "root-installer-applies-parity-fixture"
 else
-  bad "root-installer-applies-parity-fixture"
+  bad "root-installer-applies-parity-fixture (still shipped: ${parity_conf:-<install failed>})"
 fi
 PARITY_DUTY="$WORK/parity-duty"
 if parity_out="$(DUTY_DIR="$PARITY_DUTY" bash "$PARITY_SRC/shared/install.sh" \
