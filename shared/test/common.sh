@@ -225,10 +225,14 @@ unset box_exists_source
 
 # Keep ambient operator configuration out of fixture resolution. These static
 # assertions make removing either half of the suite guard fail visibly.
-if grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
+if for suite in common triage builder hygiene conf; do
+     grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/$suite.sh" || exit 1
+   done; then r1=guarded; else r1=MISSING; fi
 t suite-unsets-ambient-crew-config guarded "$r1"
 # shellcheck disable=SC2016  # Match the literal assignment in this file.
-if grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/run.sh"; then r1=guarded; else r1=MISSING; fi
+if for suite in common triage builder hygiene conf; do
+     grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/$suite.sh" || exit 1
+   done; then r1=guarded; else r1=MISSING; fi
 t suite-pins-empty-xdg-config guarded "$r1"
 
 # --- #285: per-author repository panels ------------------------------------
@@ -5438,23 +5442,23 @@ t rehearsal-invalid-tree-attributed attributed "$r1"
 # one contract: each can drift independently, and empty inputs never cover it.
 P0COVER_SUITE="$TMP/phase0-cover-suite.sh"
 P0COVER_REHEARSAL="$TMP/phase0-cover-rehearsal.sh"
-cp "$HERE/run.sh" "$P0COVER_SUITE"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
 cp "$ROOT/drill/rehearsal.sh" "$P0COVER_REHEARSAL"
 # shellcheck disable=SC2016  # write a literal synthetic suite dependency
 printf '%s%s\n' '$ROOT' '/postmortems' >>"$P0COVER_SUITE"
 t phase0-new-suite-root-needs-verification missing:postmortems \
   "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
-cp "$HERE/run.sh" "$P0COVER_SUITE"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
 # shellcheck disable=SC2016  # write a literal brace-form suite dependency
 printf '%s%s\n' '${ROOT}' '/postmortems/report.md' >>"$P0COVER_SUITE"
 t phase0-braced-suite-root-needs-verification missing:postmortems \
   "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
-cp "$HERE/run.sh" "$P0COVER_SUITE"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
 # shellcheck disable=SC2016  # write a dependency beneath the excluded subtree
 printf '%s%s\n' '$ROOT' '/fleet-floor/dev/assets.json' >>"$P0COVER_SUITE"
 t phase0-excluded-suite-path-refused excluded:fleet-floor/dev \
   "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
-cp "$HERE/run.sh" "$P0COVER_SUITE"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
 # shellcheck disable=SC2016  # replace the block with the literal legacy command
 sed -i '/BEGIN phase-0 archive selection/,/END phase-0 archive selection/c\
 # BEGIN phase-0 archive selection\
