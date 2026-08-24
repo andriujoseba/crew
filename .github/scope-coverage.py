@@ -137,10 +137,16 @@ def unquote(value, where):
 
 
 def parse_inline(text, where):
+    """Read `["a", "b"]`. Matched by quoted run, never split on the comma — a
+    glob may legally contain one, and splitting first turns a glob this guard
+    would have refused by name into an unreadable half of itself."""
     inner = text[1:-1].strip()
     if not inner:
         die("%s: empty glob list" % where)
-    return [unquote(v.strip(), where) for v in inner.split(",")]
+    globs = re.findall(r'"[^"]*"', inner)
+    if re.sub(r'"[^"]*"', "", inner).strip(", \t"):
+        die("%s: %r is not a list of quoted globs" % (where, text))
+    return [unquote(g, where) for g in globs]
 
 
 def read_allow(path):
