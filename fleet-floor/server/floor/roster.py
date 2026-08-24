@@ -1,7 +1,12 @@
 """Where the fleet is DEFINED, and what boxes actually exist.
 
-The definition half resolves the same directory cli/crew resolves and refuses
-the same fallbacks it refuses; the inventory half asks the host what is there.
+The definition half resolves the same directory the CLI does and refuses the
+same fallbacks it refuses; the inventory half asks the host what is there.
+
+Careful with prose here: `shared/test/run.sh`'s
+floor-named-crew-verb-roster-is-complete greps `crew <word>` out of every
+collector source, comments included, so the word after a literal "crew " in
+this file mints a console verb that does not exist. Say "the CLI".
 """
 
 import json
