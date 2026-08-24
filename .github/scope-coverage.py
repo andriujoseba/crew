@@ -91,7 +91,7 @@ def read_config(path):
     silently ignored would read here as paths going unmapped, and a row it
     silently mis-read would read as paths being mapped when they are not.
     """
-    rows, label, collecting = {}, None, False
+    rows, opened, label, collecting = {}, {}, None, False
     for n, raw in enumerate(open(path, encoding="utf-8"), 1):
         line = raw.rstrip("\n")
         where = "%s:%d" % (path, n)
@@ -101,7 +101,21 @@ def read_config(path):
         top = re.match(r'^"([^"]+)":$', line)
         if top:
             label, collecting = top.group(1), False
-            rows.setdefault(label, [])
+            # A repeated label is not a second helping of globs. The scope job
+            # normalizes this config through `yq -o=json | jq`, where a repeated
+            # object key REPLACES the earlier one — measured against the pinned
+            # 0.6.2 `parse_labeler_config`, two `"scope:x"` blocks yield only
+            # the last. Merging them here would call the shadowed block's paths
+            # covered while the job derives nothing for them. Refused rather
+            # than last-wins: a shadowed block is never what the author meant,
+            # and refusing is the stricter side of the consumer either way.
+            if label in opened:
+                die("%s: %r is opened again here; %s opened it first. The scope "
+                    "job keeps only the LAST block for a repeated label, so one "
+                    "of these two derives nothing while reading like a mapping. "
+                    "Merge them into a single block" % (where, label, opened[label]))
+            opened[label] = where
+            rows[label] = []
             continue
         if label is None:
             die("%s: %r before any label" % (where, bare))
@@ -201,35 +215,53 @@ def main():
     if not paths:
         die("no tracked paths under %s — nothing was checked" % os.path.abspath(root))
 
-    mapped, declared, unmapped = set(), {}, []
+    mapped, bare = set(), []
     for path in paths:
-        hit = [label for label, _, rx in patterns if rx.match(path)]
-        if hit:
+        if any(rx.match(path) for _, _, rx in patterns):
             mapped.add(path)
-            continue
-        for glob, _, _, rx in allow:
-            if rx.match(path):
-                declared.setdefault(glob, []).append(path)
-                break
         else:
-            unmapped.append(path)
+            bare.append(path)
 
-    # A declared exception that has stopped applying is rot of the same kind
-    # this guard was written against: it reads as covered and covers nothing.
+    # Each exception is judged on ITS OWN, never on where it sits in the list or
+    # on what another entry already claimed: what it declares and what it hides
+    # are both properties of the entry alone. Computing the overlap only for
+    # entries that turned out to declare nothing was the hole itself — an entry
+    # that also caught a bare path escaped the test, so one broad glob with a
+    # reason silenced every path after it, permanently (round 1 on #513).
+    declares = [[p for p in bare if rx.match(p)] for _, _, _, rx in allow]
+    hides = [[p for p in sorted(mapped) if rx.match(p)] for _, _, _, rx in allow]
+    unmapped = [p for p in bare
+                if not any(rx.match(p) for _, _, _, rx in allow)]
+
+    # An exception that has stopped applying is rot of the same kind this guard
+    # was written against: it reads as covered and covers nothing.
     stale = []
-    for glob, reason, where, rx in allow:
-        if glob in declared:
+    for i, (glob, reason, where, rx) in enumerate(allow):
+        if hides[i]:
+            stale.append("%s: %r is already matched by a scope row, so the "
+                         "exception hides the mapping of %s"
+                         % (where, glob, ", ".join(hides[i][:3])))
             continue
-        covered = [p for p in mapped if rx.match(p)]
-        stale.append("%s: %r %s" % (where, glob, (
-            "is already matched by a scope row, so the exception hides the "
-            "mapping" if covered else "matches no tracked path")))
+        if not declares[i]:
+            stale.append("%s: %r matches no tracked path" % (where, glob))
+            continue
+        # Said only when it is true: a path is recorded under EVERY entry that
+        # matches it, so an entry is never blamed for a path a neighbour got to
+        # first. What is left over is real redundancy, and it gets its own
+        # sentence rather than borrowing the one above.
+        others = set().union(*(set(declares[j]) for j in range(len(allow)) if j != i)) \
+            if len(allow) > 1 else set()
+        if not set(declares[i]) - others:
+            twin = next(where2 for j, (_, _, where2, _) in enumerate(allow)
+                        if j != i and set(declares[i]) & set(declares[j]))
+            stale.append("%s: %r declares only paths %s already declares (%s)"
+                         % (where, glob, twin, ", ".join(sorted(declares[i])[:3])))
 
     if unmapped or stale:
         for path in unmapped:
             print("scope-coverage: unmapped: %s" % path, file=sys.stderr)
         for line in stale:
-            print("scope-coverage: stale exception: %s" % line, file=sys.stderr)
+            print("scope-coverage: exception: %s" % line, file=sys.stderr)
         if unmapped:
             print("scope-coverage: %d tracked path(s) match no row in %s. Map each "
                   "to the scope that owns it, or declare it in %s with a reason."
