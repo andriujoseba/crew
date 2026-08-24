@@ -128,7 +128,8 @@ def read_config(path):
         die("%s: no scope rows at all — the map cannot be empty" % path)
     empty = sorted(l for l, g in rows.items() if not g)
     if empty:
-        die("%s: %s match nothing at all" % (path, ", ".join(empty)))
+        die("%s: %s declare no globs, so they can never derive a label"
+            % (path, ", ".join(empty)))
     return rows
 
 
