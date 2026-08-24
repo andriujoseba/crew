@@ -3,8 +3,8 @@
 #
 # Sourced by ../run.sh, which provides ok/fail/t/api/body/status/unit/uf and a
 # running collector on $PORT backed by stub-box. One suite per module at the
-# mirrored path (#508 D2): the source split buys nothing if the twelve members
-# that edit these files still queue behind one test file.
+# mirrored path (#508 D2): the source split buys nothing if the seven members
+# of this window that edit the collector still queue behind one test file.
 #
 # Subject: the fast tier — the heartbeat, its lock-age passenger, and the
 # credential ageing that reads the same boundary the SILENT rule does.
