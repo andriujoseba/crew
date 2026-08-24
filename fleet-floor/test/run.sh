@@ -12,9 +12,9 @@
 #
 # The browser half needs playwright-core; it is SKIPPED, loudly, when absent,
 # because a silently-skipped UI test reads exactly like a passing one.
-# The directive below makes `source "$HERE/cases.sh"` resolve for shellcheck,
-# so it can see that the helpers defined here ARE called (from cases.sh) and
-# stops reporting every one of them as unreachable.
+# The directive below makes `source "$HERE/floor/<m>.sh"` resolve for
+# shellcheck, so it can see that the helpers defined here ARE called (from
+# the module suites) and stops reporting every one of them as unreachable.
 # shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 
@@ -174,8 +174,30 @@ for _ in $(seq 1 80); do
 done
 
 export PORT USER PASSWD TMP
-# shellcheck source=cases.sh
-source "$HERE/cases.sh"
+# One suite per collector module, at the path that mirrors it (#508 D2). They
+# share this collector and this file's reporters rather than each booting their
+# own: eight servers would cost CI eight first polls to assert what one does.
+#
+# The ORDER is the one cases.sh ran these blocks in, and it is load-bearing —
+# the control verbs mutate stub state that the ping tier then reads, and
+# `wake-silent` deliberately runs after the fixture's stopped box has been
+# started. Read-only suites first, the mutating ones after, ping last.
+# shellcheck source=floor/units.sh
+source "$HERE/floor/units.sh"
+# shellcheck source=floor/roster.sh
+source "$HERE/floor/roster.sh"
+# shellcheck source=floor/fleet.sh
+source "$HERE/floor/fleet.sh"
+# shellcheck source=floor/server.sh
+source "$HERE/floor/server.sh"
+# shellcheck source=floor/actions.sh
+source "$HERE/floor/actions.sh"
+# shellcheck source=floor/ping.sh
+source "$HERE/floor/ping.sh"
+# alerts.py is the seam #481 fills and carries no code yet; its mirror is
+# sourced anyway, so the day it gains a case nothing here has to change.
+# shellcheck source=floor/alerts.sh
+source "$HERE/floor/alerts.sh"
 # The two scripts that normally only run inside a box, executed for real —
 # without this the collector assertions above are circular (they validate the
 # parser against stub-box's imitation of probe.sh, not against probe.sh).
@@ -385,7 +407,7 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
     # thing. LAST, for the same reason: it leaves that roster at two boxes.
     #
     # ff-paused is re-paused by hand here. `wake-silent` in the collector cases
-    # resumes it (test/cases.sh), and the stub keeps that decision in a state
+    # resumes it (test/floor/actions.sh), and the stub keeps that decision in a state
     # file, so by this point in the suite the fixture's paused box is not one.
     echo
     echo "== a disarmed fleet raises no alarm (#203)"

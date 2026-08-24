@@ -1881,8 +1881,8 @@ fi
 # Run probe.sh for real against a scratch DUTY_DIR, rather than grepping for
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
-# Deliberately not added to fixtures/fleet.txt — three assertions in cases.sh
-# hardcode a 15-box fleet and browser.js's scroll walk has been destabilised by
+# Deliberately not added to fixtures/fleet.txt — three assertions under
+# test/floor/ hardcode a 15-box fleet and browser.js's scroll walk has been destabilised by
 # fleet size before (browser.js:246). A 16th row is not worth that risk.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
@@ -2103,7 +2103,7 @@ fi
 # Nothing may point at a test file that is not there.
 #
 # kimi-bot caught this on #40 by hand: after the page walk was lifted out,
-# cases.sh still called test/stale.js "the browser side of this" and the test
+# the collector suite still called test/stale.js "the browser side of this" and the test
 # .gitignore still explained a playwright-core install, both describing files
 # that had just left the tree. Nobody was wrong -- there was simply no check,
 # so a reader had to notice. This PR puts those files back, which makes both
@@ -2117,7 +2117,7 @@ echo
 echo "== docs point at files that exist"
 
 CL_REFS="$(grep -rhoE 'test/[a-z][a-z-]*\.js' \
-             "$CL_HERE"/*.sh "$CL_FLOOR/README.md" "$CL_ROOT/drill"/*.sh \
+             "$CL_HERE"/*.sh "$CL_HERE"/floor/*.sh "$CL_FLOOR/README.md" "$CL_ROOT/drill"/*.sh \
              "$CL_ROOT/.github/workflows"/*.yml 2>/dev/null | sort -u)"
 
 # A grep that finds nothing would make every assertion below vacuous.

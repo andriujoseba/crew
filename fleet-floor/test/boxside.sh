@@ -518,7 +518,7 @@ if [ -n "$BS_OLD" ] && [ "$BS_OLD" -gt 600 ]; then
   ok "flow: a long-dead engine reports an age past the death rule ($BS_OLD s)"
 else fail "flow: a long-dead engine reports an age past the death rule" "got '$BS_OLD'"; fi
 # The BOX still says nofail — it does not decide. floor.py ages this into
-# `stale`, and cases.sh asserts that it does.
+# `stale`, and floor/ping.sh asserts that it does.
 t "flow: the box reports a fact, not a verdict" nofail "$(bs_key gh)"
 # A recorded rejection still outranks staleness: it is a fact, not an absence.
 echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"

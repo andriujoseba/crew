@@ -281,7 +281,7 @@ fleet-floor/
   server/floor.py   # the collector: serves the page, polls the fleet, applies actions
   server/probe.sh   # read-only duty evidence reader, run inside a box via box exec
   test/run.sh       # collector + box-side + CLI + page, against a stub box CLI
-  test/cases.sh     # collector assertions, grouped by the round that found them
+  test/floor/       # collector assertions, one suite per server/floor/ module
   test/boxside.sh   # runs probe.sh and the message script FOR REAL
   test/cli.sh       # `crew floor` arguments, the auth decision, the #244 refusal
   test/stub-box     # fake `box`, driven by test/fixtures/fleet.txt

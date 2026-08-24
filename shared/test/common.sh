@@ -109,7 +109,7 @@ t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
 
 pipefail_population="$(pipefail_grep_q_population)"
 for inherited in \
-    "$ROOT/fleet-floor/test/cases.sh" \
+    "$ROOT/fleet-floor/test/floor/units.sh" \
     "$ROOT/drill/rehearsal-attention.sh" \
     "$ROOT/drill/install-payload.sh" \
     "$SHARED/lib/duty-builder.sh" \

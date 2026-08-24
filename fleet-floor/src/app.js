@@ -1264,7 +1264,7 @@ var PING_FAILS_SHOWN=3;
 
    Paused outranks disarmed for the same reason the collector's note does:
    pausing comments the tick line out, so a paused box IS disarmed (`wire:
-   paused implies disarmed`, test/cases.sh) — and "the operator did this, the
+   paused implies disarmed`, test/floor/units.sh) — and "the operator did this, the
    console undoes it" is the more useful sentence than "nothing is armed".
 
    "" for a genuinely silent box, and for every DEMO unit: reserving the alarm

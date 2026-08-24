@@ -303,7 +303,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
      JSON.stringify(stateChipWords));
 
   if (LIVE && FIXTURE) {
-    /* cases.sh proves wake-silent resumes ff-paused. Put that fixture back in
+    /* floor/actions.sh proves wake-silent resumes ff-paused. Put that fixture back in
        its deliberately-stopped state so the three named boxes exercise both
        sides of this page split together, then pull the refreshed snapshot
        into the page rather than waiting for the ordinary 15-second poll. */
@@ -714,7 +714,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     await leave();
   }
   // ---- the three tiers must be VISIBLE, not merely served ----------------
-  // Every field below is in /api/fleet and asserted in cases.sh. That proves
+  // Every field below is in /api/fleet and asserted in floor/units.sh. That proves
   // the collector computed it; it says nothing about whether an operator can
   // see it. The gh column regressed exactly this way — probe.sh stopped
   // emitting "ok", the page still tested for it, and every healthy box
@@ -869,7 +869,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   }
 
   /* ---- SILENT is an alarm, and the page must spend it on nothing else -----
-     #189 taught the COLLECTOR the difference and cases.sh pins it: `wire:
+     #189 taught the COLLECTOR the difference and floor/units.sh pins it: `wire:
      disarmed box carries the flag`, `note: disarmed names crew hire, not
      SILENT`. The page was never taught, and every one of those green
      assertions stayed green while an operator looked at three disarmed boxes
