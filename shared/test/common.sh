@@ -8012,7 +8012,7 @@ t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
 # shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
 if grep -q 'printf -v "$_v" waiting' "$CREW_CLI"; then r1=emitted; else r1=MISSING; fi
 t nevertick-cli-emits-waiting emitted "$r1"
-if grep -q 'u\[svc\] = "waiting"' "$FLOOR_PY"; then r1=emitted; else r1=MISSING; fi
+if grep -q 'u\[svc\] = "waiting"' "${FLOOR_PY[@]}"; then r1=emitted; else r1=MISSING; fi
 t nevertick-floor-emits-waiting emitted "$r1"
 
 # ...and the box must hold no threshold of its own. Comments and the log-tail
