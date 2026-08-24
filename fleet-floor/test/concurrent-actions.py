@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "server"))
 # Rebinding them on the package would leave the real ones in place and this
 # regression would drive a real `box` (#508).
 from floor import actions as floor            # noqa: E402  (sys.path first)
-REAL_LOG = floor.log
+from floor import ping                        # noqa: E402  (log lives here)
+REAL_LOG = ping.log
 floor.log = lambda _message: None
 
 BOXES = ["box-a", "box-b", "box-c"]
@@ -291,18 +292,18 @@ class SlowStream:
 
 
 stream = SlowStream()
-real_stdout = floor.sys.stdout
-floor.sys.stdout = stream
-floor.log = REAL_LOG
+# ping's `sys`, because that is the module log() resolves the stream through.
+real_stdout = ping.sys.stdout
+ping.sys.stdout = stream
 threads = [
-    threading.Thread(target=floor.log, args=("box-%02d complete" % n,))
+    threading.Thread(target=REAL_LOG, args=("box-%02d complete" % n,))
     for n in range(24)
 ]
 for thread in threads:
     thread.start()
 for thread in threads:
     thread.join()
-floor.sys.stdout = real_stdout
+ping.sys.stdout = real_stdout
 assert stream.peak == 1, ("overlapping log writes", stream.peak)
 assert len(stream.writes) == len(threads), ("torn log writes", stream.writes)
 assert all(line.endswith(" complete\n") for line in stream.writes), stream.writes
