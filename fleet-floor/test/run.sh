@@ -12,9 +12,11 @@
 #
 # The browser half needs playwright-core; it is SKIPPED, loudly, when absent,
 # because a silently-skipped UI test reads exactly like a passing one.
-# The directive below makes `source "$HERE/floor/<m>.sh"` resolve for
-# shellcheck, so it can see that the helpers defined here ARE called (from
-# the module suites) and stops reporting every one of them as unreachable.
+# The source-path directive below makes each `source "$HERE/floor/<m>.sh"`
+# resolve, so shellcheck can see that the helpers defined here ARE called
+# from the module suites and stops reporting every one as unreachable.
+# A line must never OPEN with the word after a `#` being `shellcheck`: that
+# parses as a directive and reds the whole file (SC1073).
 # shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 
