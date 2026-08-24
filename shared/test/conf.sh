@@ -14,9 +14,6 @@ export DUTY_DIR="$TMP"
 export HOME="${HOME:-$TMP}"
 # shellcheck source=shared/lib/common.sh
 source "$SHARED/lib/common.sh"
-# shellcheck source=shared/lib/duty-builder.sh
-source "$SHARED/lib/duty-builder.sh"
-
 # Shared installer fixture used by the configuration and profile cases below.
 ISHIM="$TMP/install-bin"
 CRON_STATE="$TMP/crontab"

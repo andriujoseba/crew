@@ -519,6 +519,52 @@ t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_bui
 t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
 t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
 
+# The reviewer must carry updated_at from the existing pulls page, partition
+# before assembling per-repo prompts, and commit that repo's exact fresh set.
+REVIEW_MOD="$SHARED/lib/duty-review.sh"
+if grep -Fq "\\(.updated_at) \\(\$sr) \\(.number)" "$REVIEW_MOD"; then r1=carried; else r1=MISSING; fi
+t review-carries-updated-at carried "$r1"
+if grep -q 'fresh_items=.*ledger_filter.*seen-review' "$REVIEW_MOD" &&
+   grep -q 'suppressed=.*ledger_suppressed.*seen-review' "$REVIEW_MOD"; then
+  r1=partitioned
+else
+  r1=UNPARTITIONED
+fi
+t review-partitions-before-prompt partitioned "$r1"
+commit_block="$(awk '
+  /if \[ "\$\{RUN_SESSION_RC:-1\}" -eq 0 \]; then/ { inside=1 }
+  inside { print }
+  inside && /^[[:space:]]*fi$/ { exit }
+' "$REVIEW_MOD")"
+if grep -Fq "\${repo_items[\$SR]}" <<<"$commit_block" &&
+   grep -Fq "ledger_commit \"\$DUTY_DIR/.seen-review\"" <<<"$commit_block"; then
+  r1=exact
+else
+  r1=MISMATCH
+fi
+t review-commits-prompted-set exact "$r1"
+if grep -q 'report_suppressed_if_complete.*sweep_complete' "$REVIEW_MOD"; then
+  r1=guarded
+else
+  r1=UNGUARDED
+fi
+t review-partial-sweep-preserves-report-state guarded "$r1"
+
+# Behavioral mixed case: #5 is unchanged and suppressed; #6 in the same repo
+# is fresh. Only #6 enters the prompted/committed set. After that successful
+# commit both are settled; advancing #5's updated_at wakes it again.
+RLG="$TMP/review-ledger"
+printf 'o/r#5 T1\n' | ledger_commit "$RLG"
+RQ="$(printf 'o/r#5 T1\no/r#6 T1\n')"
+RP="$(printf '%s\n' "$RQ" | ledger_filter "$RLG")"
+RS="$(printf '%s\n' "$RQ" | ledger_suppressed "$RLG")"
+t review-mixed-prompt-only-fresh "o/r#6 T1" "$RP"
+t review-mixed-report-only-suppressed "o/r#5 T1" "$RS"
+printf '%s\n' "$RP" | ledger_commit "$RLG"
+t review-mixed-commit-settles-both 0 "$(printf '%s\n' "$RQ" | ledger_filter "$RLG" | n)"
+t review-advanced-suppressed-rewakes "o/r#5 T2" \
+  "$(printf 'o/r#5 T2\n' | ledger_filter "$RLG")"
+
 # --- builder attention dispatch and timeout evidence (#301) -----------------
 # A builder pickup may finish an existing PR in this slot, but must hand a new
 # build to the normal duty tick. Pin the ruling in both render layers so a
