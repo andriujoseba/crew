@@ -146,7 +146,7 @@ YAML
 )"
 track "$D" mapped/covered.md
 run_guard "$D"
-t_says 2 "a-glob-syntax-the-translator-does-not-implement-is-refused" '*does not evaluate*'
+t_says 2 "a-glob-syntax-the-scope-job-reads-as-literal-is-refused" '*labeler.yml:3:*reads as literal characters*'
 
 D="$(fixture emptyrow <<'YAML'
 "scope:mapped":
@@ -196,8 +196,9 @@ track "$D" dirt/sibling.md
 run_guard "$D"
 t_says 1 "globstar-does-not-leak-into-a-sibling-with-the-same-prefix" '*dirt/sibling.md*'
 
-# dot: true — actions/labeler matches dotfiles, and four of this repo's rows are
-# dotted paths. A translator that dropped that would report them unmapped.
+# A leading dot is not special to the scope job, and four of this repo's rows
+# are dotted paths. A translator that treated it as special would report them
+# unmapped.
 D="$(fixture dotfiles <<'YAML'
 "scope:mapped":
   - changed-files:
@@ -209,7 +210,7 @@ track "$D" .ceremony/AGENTS.md
 run_guard "$D"
 t_rc 0 "dotted-paths-match-their-rows"
 
-# Both config spellings mean the same thing: this repo's file uses each.
+# Both list spellings mean the same thing: this repo's file uses each.
 D="$(fixture blocklist <<'YAML'
 "scope:mapped":
   - changed-files:
@@ -222,6 +223,30 @@ track "$D" dir/one.md
 track "$D" top.md
 run_guard "$D"
 t_rc 0 "a-block-glob-list-reads-the-same-as-an-inline-one"
+
+# And the scope job accepts a bare glob where a list would do, so this guard
+# has to read that spelling too rather than call the row unreadable.
+D="$(fixture bareglob <<'YAML'
+"scope:mapped":
+  - changed-files:
+      - any-glob-to-any-file: "dir/**"
+YAML
+)"
+track "$D" dir/one.md
+run_guard "$D"
+t_rc 0 "a-bare-glob-reads-the-same-as-a-one-item-list"
+
+# A backslash is what the scope job itself refuses by name; a row carrying one
+# fails the whole job, so this guard must not report the tree covered.
+D="$(fixture backslash <<'YAML'
+"scope:mapped":
+  - changed-files:
+      - any-glob-to-any-file: ["dir/a\\.md"]
+YAML
+)"
+track "$D" dir/one.md
+run_guard "$D"
+t_rc 2 "a-backslash-escape-is-refused"
 
 echo
 echo "scope-coverage: $PASS ok, $FAIL failed"

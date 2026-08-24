@@ -4,7 +4,7 @@
 `.github/labeler.yml` is the PR half of the scope story, and it is enumerated
 by hand. The tree grows; the map does not follow on its own. When it falls
 behind, a PR touching only the unmapped paths is labelled with nothing — and
-nothing about that is loud: the labeler succeeds, the PR just arrives bare.
+nothing about that is loud: the scope job succeeds, the PR just arrives bare.
 Twice now that drift has been found by a hand census (#238, then #500), which
 is the cost this file exists to stop paying.
 
@@ -12,6 +12,16 @@ So the map is checked by construction instead: run its own globs over the
 tracked tree, and fail naming every path no row matched. What is deliberately
 unmapped is declared in `.github/scope-coverage.allow` with a reason, so the
 exceptions are readable rather than the check being silenced wholesale.
+
+THE CONSUMER IS NOT actions/labeler. The file keeps that project's config
+format, but what reads it is ceremony's `labels-scope` job — a replacement
+adopted at ceremony#130 because labeler writes its labels with a full-replace
+PUT and ate a label applied in the window. Its glob dialect is that job's, and
+this file mirrors it rather than minimatch, because the only question worth
+answering here is whether THAT job would derive a label. Being stricter than
+the consumer is safe — a false red costs one author a minute. Being looser is
+the failure this guard exists to prevent: reporting a path covered that the job
+leaves bare is the original defect wearing a green check.
 
 Run it from anywhere:  .github/scope-coverage.py [--root DIR]
 
@@ -28,15 +38,16 @@ import sys
 CONFIG = ".github/labeler.yml"
 ALLOW = ".github/scope-coverage.allow"
 
-# actions/labeler's only match key in this repo's config. Any other one — a
-# negation, an all-globs form, a base-branch clause — changes what a row
-# matches in ways this file does not evaluate, so it is refused rather than
-# guessed at: a guard that quietly stops guarding is the failure shape the
-# guard exists to refuse.
+# The scope job's only match key: it refuses any other one by name, so a row
+# carrying one derives nothing at all. Refused here for the same reason it is
+# refused there — this parser exists to say what a row matches, not to guess.
 MATCH_KEY = "any-glob-to-any-file"
-# Brace expansion, extglob and negation are minimatch features this translator
-# does not implement. Refuse them at the door for the same reason.
-UNSUPPORTED = "{}()!+@|["
+# Bytes the scope job's translator passes through as LITERAL characters. A row
+# using them as glob syntax matches, in practice, nothing — so it reads here as
+# a mapping and derives no label, which is the exact shape of the defect this
+# guard was written against. Refused at the door, named, rather than silently
+# honoured as a filename nobody has. A backslash the job refuses outright.
+UNSUPPORTED = "{}()!+@|[\\"
 
 
 def die(msg):
@@ -45,39 +56,30 @@ def die(msg):
 
 
 def glob_to_re(glob, where):
-    """Translate one labeler glob to a regex, minimatch semantics, dot: true.
+    """Translate one glob exactly as the scope job's `glob_to_regex` does.
 
-    `*` and `?` stop at a separator; a `**` segment spans whole segments, and
-    a trailing one requires at least one (minimatch matches `a/b` against
-    `a/**`, but not `a` itself).
+    `**` crosses `/`; `*` and `?` do not; a leading dot is not special; the
+    whole path must match, so `README` matches README and never docs/README.
+    Deliberately byte-for-byte the consumer's rule and not minimatch's — the
+    two disagree about a `**` that is not a whole segment, and the answer that
+    matters is the one that decides whether a label gets derived.
     """
     if not glob or glob.startswith("/") or glob.endswith("/"):
         die("%s: %r is not a path glob" % (where, glob))
     bad = [c for c in UNSUPPORTED if c in glob]
     if bad:
-        die("%s: %r uses %s, which this guard does not evaluate — express it as "
-            "a plain path or a `dir/**` glob" % (where, glob, ", ".join(bad)))
-    parts = glob.split("/")
-    out = ""
-    # A `**` swallows the separator that follows it, so the segment after one
-    # opens the pattern exactly as the first segment does.
-    at_start = True
-    for i, part in enumerate(parts):
-        sep = "" if at_start else "/"
-        if part == "**":
-            if i == len(parts) - 1:
-                out += sep + "(?:[^/]+/)*[^/]+"
-                at_start = False
-            else:
-                out += sep + "(?:[^/]+/)*"
-                at_start = True
+        die("%s: %r uses %s, which the scope job reads as literal characters "
+            "rather than glob syntax — so the row would derive nothing. Express "
+            "it as a plain path or a `dir/**` glob" % (where, glob, ", ".join(bad)))
+    out, i = "", 0
+    while i < len(glob):
+        if glob[i:i + 2] == "**":
+            out += ".*"
+            i += 2
             continue
-        if "**" in part:
-            die("%s: %r has a `**` that is not a whole path segment" % (where, glob))
-        out += sep
-        for ch in part:
-            out += "[^/]*" if ch == "*" else "[^/]" if ch == "?" else re.escape(ch)
-        at_start = False
+        ch = glob[i]
+        out += "[^/]*" if ch == "*" else "[^/]" if ch == "?" else re.escape(ch)
+        i += 1
     return re.compile("^" + out + "$")
 
 
@@ -112,13 +114,14 @@ def read_config(path):
                 die("%s: `%s:` is not `%s:` — this guard evaluates only the "
                     "latter, so it cannot say what that row matches" % (where, name, MATCH_KEY))
             collecting = not rest
-            if rest:
-                if not (rest.startswith("[") and rest.endswith("]")):
-                    die("%s: %r is neither an inline list nor a block one" % (where, rest))
-                rows[label] += parse_inline(rest, where)
+            if rest.startswith("[") and rest.endswith("]"):
+                rows[label] += [(g, where) for g in parse_inline(rest, where)]
+            elif rest:
+                # The scope job accepts a bare glob where a list would do.
+                rows[label].append((unquote(rest, where), where))
             continue
         if collecting and bare.startswith("- "):
-            rows[label].append(unquote(bare[2:].strip(), where))
+            rows[label].append((unquote(bare[2:].strip(), where), where))
             continue
         die("%s: %r is a shape this guard does not read" % (where, bare))
     if not rows:
@@ -189,8 +192,8 @@ def main():
         die("%s does not exist" % config)
 
     rows = read_config(config)
-    patterns = [(label, glob, glob_to_re(glob, config))
-                for label, globs in rows.items() for glob in globs]
+    patterns = [(label, glob, glob_to_re(glob, where))
+                for label, globs in rows.items() for glob, where in globs]
     allow = [(glob, reason, where, glob_to_re(glob, where))
              for glob, reason, where in read_allow(allow_path)]
     paths = tracked(root)
