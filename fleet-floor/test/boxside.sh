@@ -233,6 +233,12 @@ t "message: final reply tail parses for the floor" "$BS_PROMPT" "$(sed -n 's/^RE
 BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
+# The one call site here that does NOT use the pre-split `import floor`, and
+# the reason is worth the line: this case REBINDS module globals, and the
+# compatibility block restores reading the surface, not writing it. Assigning
+# floor.FLOOR_ENVELOPE sets a package attribute do_command never reads, so the
+# 394bdad form of this test would quietly stop testing the envelope and start
+# reporting 'unknown box'. floor/init.sh pins that seam as a declared limit.
 import floor.actions
 floor.actions.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
 floor.actions.read_roster = lambda: [{"box": "test-box"}]

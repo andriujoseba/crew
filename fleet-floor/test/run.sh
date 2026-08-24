@@ -223,6 +223,12 @@ export PORT USER PASSWD TMP
 # So the invariant to keep when adding a suite is the read: place it after
 # whatever writes the state it reads, and if nothing it reads is written here,
 # position is free.
+# init.sh reads no stub state at all — it imports the package and asks what is
+# on it — so by the rule above its position is free. It goes first because it
+# is the package root, and because if the compatibility block is broken the
+# clearest possible report is the first suite saying so.
+# shellcheck source=floor/init.sh
+source "$HERE/floor/init.sh"
 # shellcheck source=floor/units.sh
 source "$HERE/floor/units.sh"
 # shellcheck source=floor/roster.sh
