@@ -42,7 +42,9 @@ genuinely crew's.
      with a reason. Also on **every** PR with no paths filter, drafts included,
      and for the same reason as the guards above: what it checks is the whole
      tree, so a filter would silence it on exactly the PR that adds an unmapped
-     directory (#500). Add the row in the same PR as the directory.
+     directory (#500). Add the row in the same PR as the directory — the scope
+     job reads the map at the **base** branch, never the head, so the row you
+     add labels the PRs that come after it, not the one adding it.
 5. **Feature PRs land their changelog entry as part of the PR**: write
    `changelog.d/<issue>.md` — the release PR assembles those fragments into
    the release notes verbatim.
