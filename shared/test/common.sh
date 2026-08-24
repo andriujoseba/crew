@@ -18,7 +18,7 @@ source "$SHARED/lib/common.sh"
 source "$SHARED/lib/duty-builder.sh"
 
 t phase0-verifier-covers-suite-roots covered \
-  "$(phase0_coverage_result "$HERE/run.sh" "$ROOT/drill/rehearsal.sh")"
+  "$(phase0_split_coverage_result "$ROOT/drill/rehearsal.sh")"
 
 # Source common.sh against a scratch DUTY_DIR.
 TMP="$(mktemp -d)"
@@ -301,52 +301,6 @@ t panel-reviewer-resolution author_aware "$r1"
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
     ! grep -Fq 'repos/$SRa/pulls/$Na' "$SHARED/lib/duty-review.sh"; then r1=payload-author; else r1=EXTRA-FETCH; fi
 t panel-reviewer-reuses-payload-author payload-author "$r1"
-
-# List prompt slots omitted by engine render sites. Calls are folded to one
-# logical line first; advancing past only the opening "$(`` also finds nested
-# render_prompt calls such as review.txt's ONESHOT_RULES argument.
-render_site_missing_slots() {  # render_site_missing_slots PROMPTS SOURCE...
-  local prompts="$1" source site call rest prompt slot supplied
-  shift
-  for source in "$@"; do
-    while IFS='|' read -r site call; do
-      [ -n "$call" ] || continue
-      rest="${call#*render_prompt }"
-      prompt="${rest%%[[:space:]]*}"
-      [ -f "$prompts/$prompt" ] || continue
-      supplied="$(printf '%s\n' "$call" | grep -oE '[A-Z_][A-Z_]*=' | tr -d '=' | sort -u)"
-      while read -r slot; do
-        [ -n "$slot" ] || continue
-        case "$slot" in
-          DOCTRINE_ENTRYPOINT|DOCTRINE_TRIAGE|DOCTRINE_BUILDER|DOCTRINE_REVIEWER) continue ;;
-        esac
-        if ! grep -qx "$slot" <<<"$supplied"; then
-          printf '%s:%s: %s missing %s\n' "$source" "$site" "$prompt" "$slot"
-        fi
-      done < <(grep -oE '\{\{[A-Z_][A-Z_]*\}\}' "$prompts/$prompt" \
-        | tr -d '{}' | sort -u)
-    done < <(awk '
-      function calls(text, line, rest, tail, endpos, call) {
-        rest = text
-        while (match(rest, /\$\(render_prompt[[:space:]]+/)) {
-          tail = substr(rest, RSTART)
-          endpos = index(tail, ")")
-          call = endpos ? substr(tail, 1, endpos) : tail
-          print line "|" call
-          rest = substr(rest, RSTART + 2)
-        }
-      }
-      {
-        if (buf == "") start = NR
-        buf = buf $0
-        if (sub(/\\[[:space:]]*$/, "", buf)) next
-        calls(buf, start)
-        buf = ""
-      }
-      END { if (buf != "") calls(buf, start) }
-    ' "$source")
-  done
-}
 
 # --- read_repo_list: comments (incl. inline), blanks, whitespace, missing
 # trailing newline
@@ -5513,7 +5467,7 @@ t phase0-empty-suite-root-list-refused empty-suite-roots \
   "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
 : >"$P0COVER_REHEARSAL"
 t phase0-empty-verified-root-list-refused empty-verified-roots \
-  "$(phase0_coverage_result "$HERE/run.sh" "$P0COVER_REHEARSAL")"
+  "$(phase0_coverage_result "$HERE/common.sh" "$P0COVER_REHEARSAL")"
 
 # Exercise the in-box verifier, not just its static root list. The fixture is
 # a valid clean git tree with one required root deliberately absent; phase 0

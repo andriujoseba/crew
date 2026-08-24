@@ -4,18 +4,8 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SHARED="$(dirname "$HERE")"
-PASS=0
-FAIL=0
-
-t() {
-  if [ "$2" = "$3" ]; then
-    PASS=$((PASS + 1))
-  else
-    FAIL=$((FAIL + 1))
-    printf 'FAIL %s\n  expected: %s\n  actual:   %s\n' "$1" "$2" "$3"
-  fi
-}
+# shellcheck source=shared/test/lib.sh
+source "$HERE/lib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

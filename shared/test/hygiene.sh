@@ -17,6 +17,9 @@ source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
 
+n() { awk 'NF{c++} END{print c+0}'; }
+BMOD="$SHARED/lib/duty-builder.sh"
+
 # --- #167: the dirty-worktree WARN, once per (worktree, dirt state) ----------
 # Leaving a dirty worktree alone is right; saying so every five minutes for a
 # week is not — that is how a WARN becomes wallpaper. Driven against a REAL

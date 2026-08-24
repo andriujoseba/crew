@@ -16,6 +16,8 @@ export HOME="${HOME:-$TMP}"
 source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
+# shellcheck source=drill/rehearsal-fixtures.sh
+source "$ROOT/drill/rehearsal-fixtures.sh"
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"

@@ -17,6 +17,23 @@ source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
 
+# Shared installer fixture used by the configuration and profile cases below.
+ISHIM="$TMP/install-bin"
+IHOME="$TMP/install-home"
+IDUTY="$IHOME/duty"
+CRON_STATE="$TMP/crontab"
+mkdir -p "$ISHIM" "$IHOME"
+for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
+  ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
+done
+printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
+chmod +x "$ISHIM/hostname"
+ln -s "$(command -v jq)" "$ISHIM/jq"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
+# shellcheck disable=SC2016  # expanded when the fixture shim runs
+printf '#!/usr/bin/env bash\n[ "${FIXTURE_GITLESS:-0}" != 1 ] || exit 1\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
+chmod +x "$ISHIM/gh" "$ISHIM/git"
+
 # --- crew host: one repo belongs to one fleet (#70) ----------------------
 # The check consumes GitHub's shared board state, never another fleet's
 # machine. Exercise it through `up --dry-run`: no box or registry mutation is

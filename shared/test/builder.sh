@@ -16,6 +16,26 @@ export HOME="${HOME:-$TMP}"
 source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
+mkdir -p "$TMP/prompts"
+
+H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+PANEL='["rev-a","rev-b"]'
+REVS_OK='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
+CJQ="$SHARED/lib/jq/converged.jq"
+CJ_HUMAN="danmt"
+CJ_NO_SIG='{"sha":"","createdAt":""}'
+mk_pr() {  # head mergeable labels requests reviews
+  jq -n --arg head "$1" --arg m "$2" --argjson labels "$3" --argjson reqs "$4" --argjson revs "$5" \
+    '{data:{repository:{pullRequest:{
+      headRefOid:$head, mergeable:$m,
+      labels:{nodes:($labels|map({name:.}))},
+      reviewRequests:{nodes:($reqs|map({requestedReviewer:{login:.}}))},
+      latestOpinionatedReviews:{nodes:$revs}}}}}'
+}
+cj() {  # cj [signal-json] [panel-json] [human]
+  jq -r --argjson panel "${2:-$PANEL}" --arg needs_human state:needs-human \
+    --arg human "${3-$CJ_HUMAN}" --argjson signal "${1:-$CJ_NO_SIG}" -f "$CJQ"
+}
 
 # --- #133: engine (re-)requests the panel, keyed off the session's SIGNAL -----
 # request-panel.jq answers "whom, given the engine already holds the licence";

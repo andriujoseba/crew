@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# test/run.sh — fixture tests for the duty engine's pure logic. No gh, no
-# network: everything here runs on bash+jq alone, in CI and on any box.
+# test/lib.sh — shared harness for the duty engine fixture suites. No gh, no
+# network: the suites run on bash+jq alone, in CI and on any box.
 #
 # These exist because three of five bots' self-assessments asked for exactly
 # this ("fixture tests for detection predicates", "contract tests for the
@@ -21,6 +21,12 @@ t() {  # t <name> <expected> <actual>
     FAIL=$((FAIL+1))
     printf 'FAIL %s\n  expected: %s\n  actual:   %s\n' "$1" "$2" "$3"
   fi
+}
+
+suite_finish() {
+  echo
+  echo "passed $PASS, failed $FAIL"
+  [ "$FAIL" -eq 0 ]
 }
 
 # A predicate must consume a completed producer. These two helpers preserve the
@@ -187,18 +193,71 @@ assert_doctrine_quote() {  # <prompt-file> <substring> <name> [doctrine-heading]
   t "$name" agreed "$result"
 }
 
+# List prompt slots omitted by engine render sites. Calls are folded to one
+# logical line first; advancing past only the opening "$(`` also finds nested
+# render_prompt calls such as review.txt's ONESHOT_RULES argument.
+render_site_missing_slots() {  # render_site_missing_slots PROMPTS SOURCE...
+  local prompts="$1" source site call rest prompt slot supplied
+  shift
+  for source in "$@"; do
+    while IFS='|' read -r site call; do
+      [ -n "$call" ] || continue
+      rest="${call#*render_prompt }"
+      prompt="${rest%%[[:space:]]*}"
+      [ -f "$prompts/$prompt" ] || continue
+      supplied="$(printf '%s\n' "$call" | grep -oE '[A-Z_][A-Z_]*=' | tr -d '=' | sort -u)"
+      while read -r slot; do
+        [ -n "$slot" ] || continue
+        case "$slot" in
+          DOCTRINE_ENTRYPOINT|DOCTRINE_TRIAGE|DOCTRINE_BUILDER|DOCTRINE_REVIEWER) continue ;;
+        esac
+        if ! grep -qx "$slot" <<<"$supplied"; then
+          printf '%s:%s: %s missing %s\n' "$source" "$site" "$prompt" "$slot"
+        fi
+      done < <(grep -oE '\{\{[A-Z_][A-Z_]*\}\}' "$prompts/$prompt" \
+        | tr -d '{}' | sort -u)
+    done < <(awk '
+      function calls(text, line, rest, tail, endpos, call) {
+        rest = text
+        while (match(rest, /\$\(render_prompt[[:space:]]+/)) {
+          tail = substr(rest, RSTART)
+          endpos = index(tail, ")")
+          call = endpos ? substr(tail, 1, endpos) : tail
+          print line "|" call
+          rest = substr(rest, RSTART + 2)
+        }
+      }
+      {
+        if (buf == "") start = NR
+        buf = buf $0
+        if (sub(/\\[[:space:]]*$/, "", buf)) next
+        calls(buf, start)
+        buf = ""
+      }
+      END { if (buf != "") calls(buf, start) }
+    ' "$source")
+  done
+}
+
 # Phase 0 stages the whole tracked tree except fleet-floor/dev, then verifies
 # the repository roots this suite names before running it. Keep that explicit
 # verifier and archive selection from falling behind new literal root paths.
-phase0_suite_paths() {  # phase0_suite_paths <suite>
+phase0_suite_paths() {  # phase0_suite_paths <suite>...
   # shellcheck disable=SC2016  # match literal root expressions in the suite
-  grep -oE '\$(ROOT|\{ROOT\})/[.[:alnum:]_/-]+' "$1" \
+  grep -hoE '\$(ROOT|\{ROOT\})/[.[:alnum:]_/-]+' "$@" \
     | sed -E 's#^\$(ROOT|\{ROOT\})/##' \
     | sort -u || true
 }
 
-phase0_suite_roots() {  # phase0_suite_roots <suite>
-  phase0_suite_paths "$1" | cut -d/ -f1 | sort -u
+phase0_suite_roots() {  # phase0_suite_roots <suite>...
+  phase0_suite_paths "$@" | cut -d/ -f1 | sort -u
+}
+
+phase0_split_coverage_result() {  # phase0_split_coverage_result <rehearsal>
+  local rehearsal="$1"
+  phase0_coverage_result \
+    <(sed -n '1,$p' "$HERE"/{common,triage,builder,hygiene,conf}.sh) \
+    "$rehearsal"
 }
 
 phase0_verified_roots() {  # phase0_verified_roots <rehearsal>
@@ -247,4 +306,3 @@ phase0_coverage_result() {  # phase0_coverage_result <suite> <rehearsal>
       || printf 'archive:%s\n' "$archive_result"
   fi
 }
-
