@@ -59,12 +59,35 @@ fallback_root="$WORK/fallback-root"; mkdir -p "$fallback_root"
 install_payload_load_ignore_patterns "$fallback_root"
 fallback_patterns="$(printf '%s\n' "${INSTALL_PAYLOAD_IGNORE_PATTERNS[@]}")"
 same "checkout-and-installed-policy-agree" "$derived_patterns" "$fallback_patterns"
-# shellcheck disable=SC2016  # match the installers' literal source expressions
-if grep -Fq 'source "$HERE/lib/install-payload.sh"' "$ROOT/shared/install.sh" &&
-   grep -Fq 'source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/shared/lib/install-payload.sh"' "$ROOT/install.sh"; then
-  ok "both-installers-source-one-exclusion-policy"
+
+# Feed both installers one extra repository-wide ignore rule. The root
+# installer must omit matching payload files, while the shared installer must
+# refuse when its explicit copy surface selects one. This is behavioral parity:
+# deleting either installer's enforcement makes one of these cases fail.
+PARITY_SRC="$WORK/parity-src"
+mkdir -p "$PARITY_SRC"
+tar -C "$SC" -cf - . | tar -xf - -C "$PARITY_SRC"
+printf '\n*.conf\n' >>"$PARITY_SRC/.gitignore"
+VP=0.0.0-lifecycle-parity
+printf '%s\n' "$VP" >"$PARITY_SRC/VERSION"
+PARITY_HOME="$WORK/parity-home"
+if HOME="$PARITY_HOME" CREW_HOME="$PARITY_HOME/share" CREW_BIN="$PARITY_HOME/bin" \
+   CREW_INSTALL_SOURCE="$PARITY_SRC" bash "$INSTALL" >/dev/null 2>&1 &&
+   ! find "$PARITY_HOME/share/versions/$VP" -name '*.conf' -print -quit | grep -q .; then
+  ok "root-installer-applies-parity-fixture"
 else
-  bad "both-installers-source-one-exclusion-policy"
+  bad "root-installer-applies-parity-fixture"
+fi
+PARITY_DUTY="$WORK/parity-duty"
+if parity_out="$(DUTY_DIR="$PARITY_DUTY" bash "$PARITY_SRC/shared/install.sh" \
+    --agent claude --role reviewer 2>&1)"; then
+  bad "shared-installer-refuses-parity-fixture"
+elif grep -Fq \
+     'refusing payload: known-excluded path selected for install: shared/conf/agents/claude.conf' \
+     <<<"$parity_out" && [ ! -e "$PARITY_DUTY/conf/agents/claude.conf" ]; then
+  ok "shared-installer-refuses-parity-fixture"
+else
+  bad "shared-installer-refuses-parity-fixture (got '$parity_out')"
 fi
 
 # THE PAYLOAD (#365) — the installed tree is the product, not the repository.
@@ -167,8 +190,8 @@ fi
 REFUSE_SRC="$WORK/refuse-src"
 mkdir -p "$REFUSE_SRC"
 tar -C "$SC" -cf - . | tar -xf - -C "$REFUSE_SRC"
-mkdir -p "$REFUSE_SRC/node_modules/survivor"
-printf 'must be refused\n' >"$REFUSE_SRC/node_modules/survivor/index.js"
+mkdir -p "$REFUSE_SRC/shared/lib/node_modules/survivor"
+printf 'must be refused\n' >"$REFUSE_SRC/shared/lib/node_modules/survivor/index.js"
 # shellcheck disable=SC2016  # mutate the copied invocation, not this fixture's variable
 sed -i 's/^prune_payload "\$EXTRACTED"$/# fixture: leave the payload unpruned/' "$REFUSE_SRC/install.sh"
 REFUSE_TARBALL="$WORK/refuse.tgz"
@@ -177,7 +200,9 @@ REFUSE_HOME="$WORK/refuse-home"
 if refuse_out="$(HOME="$REFUSE_HOME" CREW_HOME="$REFUSE_HOME/share" CREW_BIN="$REFUSE_HOME/bin" \
   CREW_INSTALL_SOURCE="$REFUSE_TARBALL" bash "$REFUSE_SRC/install.sh" 2>&1)"; then
   bad "surviving-known-exclusion-is-refused"
-elif grep -Fq 'known-excluded path survived construction: node_modules' <<<"$refuse_out" &&
+elif grep -Fq \
+     'known-excluded path survived construction: shared/lib/node_modules' \
+     <<<"$refuse_out" &&
      [ ! -e "$REFUSE_HOME/share/versions/$VA" ]; then
   ok "surviving-known-exclusion-is-refused"
 else

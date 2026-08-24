@@ -5,7 +5,9 @@
 # shared installer runs from that tree during `crew upgrade`, so these are the
 # literal fallback for the only source that cannot derive them. Keep this list
 # byte-equivalent to the repository's simple, repository-wide ignore rules;
-# checkout installs derive the live list below and the tests enforce parity.
+# checkout installs derive the live list below and the tests enforce parity. An
+# existing .gitignore with no simple repository-wide rules is not a minimised
+# tree: derivation fails closed instead of silently substituting this fallback.
 INSTALL_PAYLOAD_IGNORE_FALLBACK=(
   .drill-shots
   '*.roster.local'
