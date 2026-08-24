@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # shared/test/builder.sh — standalone builder subject suite.
-# shellcheck disable=SC2100  # tick-N fixture identifiers are strings, not arithmetic
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -18,6 +17,297 @@ source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
 mkdir -p "$TMP/prompts"
+
+t phase0-verifier-covers-suite-roots covered \
+  "$(phase0_split_coverage_result "$ROOT/drill/rehearsal.sh")"
+
+# Source common.sh against a scratch DUTY_DIR.
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
+export DUTY_DIR="$TMP"
+export HOME="${HOME:-$TMP}"
+# shellcheck disable=SC1091
+source "$SHARED/lib/common.sh"
+# shellcheck disable=SC1091
+source "$SHARED/lib/duty-builder.sh"
+
+PIPE_GUARD_FIXTURE="$TMP/pipefail-grep-q.fixture"
+printf '%s%s\n' 'if producer | ' 'grep --binary-files=text -Fq MATCH; then :; fi' >"$PIPE_GUARD_FIXTURE"
+guard_mutation="$(pipefail_grep_q_sites "$PIPE_GUARD_FIXTURE")"
+case "$guard_mutation" in
+  *"$PIPE_GUARD_FIXTURE:1:"*) r1=red ;; *) r1=MISSED ;;
+esac
+t pipefail-grep-q-guard-reds-on-reintroduction red "$r1"
+rm -f "$PIPE_GUARD_FIXTURE"
+
+guard_findings="$(pipefail_grep_q_sites)"
+t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
+
+pipefail_population="$(pipefail_grep_q_population)"
+for inherited in \
+    "$ROOT/fleet-floor/test/cases.sh" \
+    "$ROOT/drill/rehearsal-attention.sh" \
+    "$ROOT/drill/install-payload.sh" \
+    "$SHARED/lib/duty-builder.sh" \
+    "$SHARED/lib/duty-review.sh" \
+    "$SHARED/lib/duty-attention.sh"; do
+  case "$pipefail_population" in
+    *"$inherited"*) r1=inherited ;; *) r1=MISSING ;; esac
+  t "pipefail-population-inherits-${inherited##*/}" inherited "$r1"
+done
+
+# #449: the live pipefail-setting entrypoints, and the one file that can only
+# arrive behind them. Deleting the widened candidate lines reds every row.
+for admitted in \
+    "$ROOT/cli/crew" \
+    "$ROOT/install.sh" \
+    "$SHARED/install.sh" \
+    "$ROOT/dist/curl-install.sh" \
+    "$ROOT/dist/fetch.sh" \
+    "$ROOT/dist/make-installer.sh" \
+    "$ROOT/dist/release-artifact.sh" \
+    "$SHARED/lib/version-skew.sh"; do
+  case "$pipefail_population" in
+    *"$admitted"*) r1=admitted ;; *) r1=MISSING ;; esac
+  t "pipefail-population-admits-${admitted#"$ROOT"/}" admitted "$r1"
+done
+
+# The membership above is only worth its criterion if version-skew.sh arrived
+# through a parent. It seeds nothing of its own, and both parents carry the
+# literal source edge the derivation matches and are in the population
+# themselves — a run that seeded it by name would pass the row above and fail
+# these three.
+if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/lib/version-skew.sh"
+then r1=SEEDS-ITSELF; else r1=by-edge; fi
+t pipefail-version-skew-seeds-nothing by-edge "$r1"
+for parent in "$ROOT/cli/crew" "$ROOT/install.sh"; do
+  r1=MISSING-EDGE
+  if grep -Eq '^[[:space:]]*(source|\.)[[:space:]].*/version-skew\.sh' "$parent"; then
+    case "$pipefail_population" in *"$parent"*) r1=parent ;; *) r1=PARENT-OUTSIDE ;; esac
+  fi
+  t "pipefail-version-skew-parent-${parent#"$ROOT"/}" parent "$r1"
+done
+
+# Criterion 6: tick.sh is a candidate the derivation reaches and declines. The
+# exclusion must be its missing pipefail, not the candidate set's reach — so
+# assert both halves, or a future widening could satisfy this vacuously.
+pipefail_candidates="$(pipefail_grep_q_candidates | sort -u)"
+if grep -qxF "$SHARED/bin/tick.sh" <<<"$pipefail_candidates"
+then r1=candidate; else r1=UNREACHED; fi
+t pipefail-tick-is-a-candidate candidate "$r1"
+if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/bin/tick.sh"
+then r1=SETS-PIPEFAIL; else r1=sets-none; fi
+t pipefail-tick-sets-no-pipefail sets-none "$r1"
+case "$pipefail_population" in
+  *"$SHARED/bin/tick.sh"*) r1=INCLUDED ;; *) r1=excluded ;; esac
+t pipefail-population-excludes-tick.sh excluded "$r1"
+
+# #449: the payload exemption is a shape, not a path. This fixture carries the
+# four live payload spellings under a filename no clause names — under the old
+# rehearsal-app.sh clause every one of them flags. The control on line 5 is
+# assembled rather than written so this suite does not carry the live shape,
+# and it proves the fixture is exempt by that shape and not inert.
+PAYLOAD_FIXTURE="$TMP/remote-payload.fixture"
+cat >"$PAYLOAD_FIXTURE" <<'PAYLOADS'
+if bxn "$b" 'crontab -l 2>/dev/null | grep -qE "^[^#].*tick\.sh"' 2>/dev/null; then :; fi
+armed()   { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -qE '^[^#].*tick\.sh'" >/dev/null 2>&1; }
+paused()  { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -q '^#CREW-FLOOR-PAUSED'" >/dev/null 2>&1; }
+present() { box exec "$1" -- bash -lc 'crontab -l 2>/dev/null | grep -qF "$HOME/duty/bin/tick.sh"' >/dev/null 2>&1; }
+PAYLOADS
+printf '%s%s\n' 'if producer | ' 'grep -q CONTROL; then :; fi' >>"$PAYLOAD_FIXTURE"
+# Lines 6-8 are the negative the shape rule owes: a payload opener whose grep
+# sits OUTSIDE the payload quote is a local pipeline under this file's own
+# pipefail, so it must flag. One line per payload spelling, plus a local
+# pipeline wrapped around a payload that has a pipe of its own — the case a
+# body-contains-a-pipe test cannot separate. Assembled for the same reason the
+# control is: written literally they would flag this suite.
+payload_gq='grep -q'
+cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOCALS
+box exec "\$1" -- bash -lc 'crontab -l' | $payload_gq OUTSIDE
+out=\$(bxn "\$b" 'echo hi'); printf '%s\n' "\$out" | $payload_gq OUTSIDE
+box exec "\$1" -- bash -lc 'crontab -l | $payload_gq INSIDE' | $payload_gq OUTSIDE
+PAYLOAD_LOCALS
+# Lines 9-12 are the negative the invocation-context bound owes: opener-shaped
+# text that is data, not an invocation, because it sits inside an ordinary
+# quoted string. Its apparent quote has no mate, so a matcher that looks for
+# opener shapes anywhere on the line reads the rest of the line as an
+# unterminated payload and erases the local pipeline — a silent pass. Both
+# spellings, and both quote pairings, because the lookalike works either way.
+cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOOKALIKES
+echo 'bash -lc "' | $payload_gq OUTSIDE
+note='bxn box "'; producer | $payload_gq OUTSIDE
+echo "bash -lc '" | $payload_gq OUTSIDE
+note="bxn box '"; producer | $payload_gq OUTSIDE
+PAYLOAD_LOOKALIKES
+payload_findings="$(pipefail_grep_q_sites "$PAYLOAD_FIXTURE")"
+payload_exempt="$(awk -F: '$2 < 5 { print }' <<<"$payload_findings")"
+t pipefail-payload-exempt-by-shape "" "$payload_exempt"
+payload_control="$(awk -F: '$2 == 5 { print $2 }' <<<"$payload_findings")"
+t pipefail-payload-fixture-control-flags 5 "$payload_control"
+payload_local="$(awk -F: '$2 > 5 && $2 < 9 { print $2 }' <<<"$payload_findings" \
+  | sort -n | paste -sd' ' -)"
+t pipefail-payload-local-pipe-flags "6 7 8" "$payload_local"
+payload_lookalike="$(awk -F: '$2 > 8 { print $2 }' <<<"$payload_findings" \
+  | sort -n | paste -sd' ' -)"
+t pipefail-payload-lookalike-flags "9 10 11 12" "$payload_lookalike"
+rm -f "$PAYLOAD_FIXTURE"
+
+# The four live sites: present, so this cannot pass by their disappearance, and
+# unflagged now that cli/crew is in the population.
+payload_live="$(awk '
+  /(bxn|bash[[:space:]]+-lc)/ && /[|][[:space:]]*grep[[:space:]]+-[[:alnum:]]*q/ { n++ }
+  END { print n+0 }' "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
+t pipefail-payload-live-sites-present 4 "$payload_live"
+payload_live_findings="$(pipefail_grep_q_sites "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
+t pipefail-payload-live-sites-unflagged "" "$payload_live_findings"
+
+# The old predicate is deliberately assembled so the guard does not mistake
+# this regression fixture for a live site. Its producer writes a match, pauses,
+# then writes again: pipefail exposes grep -q closing the pipe as rc 141.
+slow_lines() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
+set -o pipefail
+eval 'slow_lines | gr'"ep -qx MATCH" >/dev/null 2>&1
+old_slow_rc=$?
+slow_materialized="$(slow_lines)"
+grep -qx MATCH <<<"$slow_materialized"; new_slow_match_rc=$?
+grep -qx ABSENT <<<"$slow_materialized"; new_slow_miss_rc=$?
+case "$old_slow_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
+t pipefail-materialized-old-race nonzero "$r1"
+t pipefail-materialized-match 0 "$new_slow_match_rc"
+t pipefail-materialized-nonmatch 1 "$new_slow_miss_rc"
+unset -f slow_lines
+
+# Drive the two converted awk-range call sites with a producer that pauses
+# after its match. The old predicate is assembled so the source guard itself
+# does not carry the prohibited spelling.
+slow_awk() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
+old_pipe='slow_awk | '
+old_match='grep -q MATCH'
+if eval "$old_pipe$old_match"; then old_predicate_rc=0; else old_predicate_rc=$?; fi
+case "$old_predicate_rc" in 0) r1=FALSE-GREEN ;; *) r1=red ;; esac
+t pipefail-awk-range-old-shape-reds red "$r1"
+awk() { slow_awk; }
+if awk_range_grep_q ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
+t pipefail-awk-range-basic-survives-race matched "$r1"
+if awk_range_grep_Fq ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
+t pipefail-awk-range-fixed-survives-race matched "$r1"
+if awk_range_grep_q ignored ignored ABSENT; then r1=FALSE-POSITIVE; else r1=absent; fi
+t pipefail-awk-range-keeps-negative-direction absent "$r1"
+unset -f awk slow_awk
+unset old_match old_pipe old_predicate_rc guard_findings guard_mutation
+unset pipefail_population inherited PIPE_GUARD_FIXTURE
+unset admitted parent pipefail_candidates PAYLOAD_FIXTURE
+unset payload_findings payload_exempt payload_control payload_live payload_live_findings
+
+# #411: force the box-existence producer to pause after its matching line.
+# The stub is deliberately `box list`, so this exercises the predicate's
+# contract at its real boundary. The former pipeline returns 141 when the
+# producer wakes and writes the final name after grep has exited successfully.
+box_exists_source="$(sed -n '/^box_exists()/p' "$ROOT/cli/crew")"
+eval "$box_exists_source"
+# shellcheck disable=SC2317  # called by the box_exists body loaded through eval
+box() {
+  [ "${1:-}" = list ] || return 2
+  printf '%s\n' crew-drill crew-drill-triage
+  sleep 0.05
+  printf '%s\n' crew-drill-builder
+}
+# shellcheck disable=SC2317  # called by the box_exists body loaded through eval
+box_names() { box list; }
+if box_exists crew-drill-triage; then r1=found; else r1=MISSED; fi
+t box-exists-survives-a-descheduled-producer found "$r1"
+if box_exists someone-elses-box; then r1=FALSE-POSITIVE; else r1=absent; fi
+t box-exists-keeps-the-negative-direction absent "$r1"
+unset -f box box_names box_exists
+unset box_exists_source
+
+# Keep ambient operator configuration out of fixture resolution. These static
+# assertions make removing either half of the suite guard fail visibly.
+r1=guarded
+for suite in "${SUITES[@]}"; do
+  grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/$suite.sh" || r1=MISSING
+done
+t suite-unsets-ambient-crew-config guarded "$r1"
+# shellcheck disable=SC2016  # Match the literal assignment in this file.
+r1=guarded
+for suite in "${SUITES[@]}"; do
+  grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/$suite.sh" || r1=MISSING
+done
+t suite-pins-empty-xdg-config guarded "$r1"
+
+# --- #285: per-author repository panels ------------------------------------
+PANEL_REPO="$TMP/panel-repo"
+git init -q "$PANEL_REPO"
+mkdir -p "$PANEL_REPO/.github"
+cat >"$PANEL_REPO/.github/labels.conf" <<'EOF'
+panel=full-a full-b builder-one
+panel[builder-one]=author-a author-b builder-one
+panel[hyphen-builder]=hyphen-a hyphen-b
+EOF
+git -C "$PANEL_REPO" add .github/labels.conf
+git -C "$PANEL_REPO" -c user.name=test -c user.email=test@example.invalid commit -qm fixture
+git -C "$PANEL_REPO" update-ref refs/remotes/origin/main HEAD
+t panel-author-line-preferred '["author-a","author-b","builder-one"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" builder-one)"
+t panel-author-safety-subtraction '["author-a","author-b"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" builder-one | jq -c --arg me builder-one '. - [$me]')"
+t panel-hyphen-author-literal '["hyphen-a","hyphen-b"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" hyphen-builder)"
+t panel-missing-author-falls-back '["full-a","full-b","builder-one"]' \
+  "$(panel_for_repo owner/repo "$PANEL_REPO" unknown-builder)"
+
+# A repo absent locally must choose the same author line from the contents API.
+PANEL_API_CONF="$(base64 -w0 "$PANEL_REPO/.github/labels.conf")"
+# shellcheck disable=SC2317  # called indirectly by panel_for_repo
+gh() { printf '%s\n' "$PANEL_API_CONF"; }
+t panel-api-author-line '["author-a","author-b","builder-one"]' \
+  "$(panel_for_repo owner/api "$TMP/not-cloned" builder-one)"
+unset -f gh
+
+# A stale/local config with no panel row retains the old contents-API fallback.
+PANEL_EMPTY_REPO="$TMP/panel-empty-repo"
+git init -q "$PANEL_EMPTY_REPO"
+mkdir -p "$PANEL_EMPTY_REPO/.github"
+printf '%s\n' 'scope:test|C5DEF5|fixture' >"$PANEL_EMPTY_REPO/.github/labels.conf"
+git -C "$PANEL_EMPTY_REPO" add .github/labels.conf
+git -C "$PANEL_EMPTY_REPO" -c user.name=test -c user.email=test@example.invalid commit -qm fixture
+git -C "$PANEL_EMPTY_REPO" update-ref refs/remotes/origin/main HEAD
+# shellcheck disable=SC2317  # called indirectly by panel_for_repo
+gh() { printf '%s\n' "$PANEL_API_CONF"; }
+t panel-local-without-panel-uses-api '["full-a","full-b","builder-one"]' \
+  "$(panel_for_repo owner/stale "$PANEL_EMPTY_REPO" unknown-builder)"
+unset -f gh
+
+# With neither repository config path available, the fleet bench is unchanged.
+# shellcheck disable=SC2034  # consumed dynamically by sourced panel_for_repo
+PANEL_SAVED_BENCH="${FLEET_BENCH-}"
+PANEL_BENCH_WAS_SET="${FLEET_BENCH+x}"
+FLEET_BENCH='bench-a bench-b'
+# shellcheck disable=SC2317  # called indirectly by panel_for_repo
+gh() { return 1; }
+t panel-bench-fallback '["bench-a","bench-b"]' \
+  "$(panel_for_repo owner/missing "$TMP/not-cloned" builder-one)"
+unset -f gh
+if [ -n "$PANEL_BENCH_WAS_SET" ]; then
+  FLEET_BENCH="$PANEL_SAVED_BENCH"
+else
+  unset FLEET_BENCH
+fi
+
+# Both request and convergence paths must receive an author-aware roster.
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
+t panel-builder-resolution author_aware "$r1"
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
+t panel-reviewer-resolution author_aware "$r1"
+# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
+    ! grep -Fq 'repos/$SRa/pulls/$Na' "$SHARED/lib/duty-review.sh"; then r1=payload-author; else r1=EXTRA-FETCH; fi
+t panel-reviewer-reuses-payload-author payload-author "$r1"
 
 H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 PANEL='["rev-a","rev-b"]'
@@ -118,314 +408,6 @@ t rp-already-requested-none "" \
 RP_TRIAGE_REV='[{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$RP_OLD'"}}]'
 t rp-never-targets-triage "rev-a rev-b" \
   "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_TRIAGE_REV" '[]' | rp "$RP_SIG_LATE")"
-
-# --- #286: ONE SIGNAL OPENS ONE ROUND ----------------------------------------
-# The licence is spent by the verdicts that answer it. Every case below was
-# inexpressible before the fixtures had a clock.
-#
-# THE #281 LOOP, in one fixture. Signal opens the round; both panelists answer
-# it at the head, one blocking; GitHub has dropped them from requested_reviewers
-# the instant they submitted. Before the fix this returned the change-requester
-# and did so on every tick, forever, on a tree nobody had changed.
-RP_281='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"},
-         {"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"},"submittedAt":"2026-08-02T10:29:40Z"}]'
-# The same blocking verdict with rev-b's approval removed: rev-b now owes a
-# first verdict at this head, so it rides through every hold that binds rev-a
-# and each fixture below shows WHICH panelist was held rather than an empty set
-# that two different rules could have produced.
-RP_CR_A_ONLY='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
-t rp-286-closed-round-requests-none "" \
-  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
-# ...and the no-push resolution still works: the builder answers with argument,
-# pushes nothing, re-signals — a signal NEWER than the blocking verdict — and
-# exactly the change-requester is re-requested. The pair is the boundary: revert
-# the predicate and the fixture above goes red while this one stays green.
-t rp-286-newer-signal-requests-cr-er "rev-a" \
-  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
-# An equal-second tie HOLDS — fail-closed. A signal posted in the same second as
-# the verdict cannot be shown to have read it, and the cost of guessing wrong is
-# the loop above; the cost of holding is one tick, cleared by the next signal.
-t rp-286-same-second-tie-holds "" \
-  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_VERDICT")")"
-# Absent times hold for the same reason — an unstamped verdict is not evidence
-# that the signal came after it. (An engine reading a payload from before the
-# query carried submittedAt would see exactly this.)
-RP_CR_UNSTAMPED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":null}]'
-t rp-286-unstamped-verdict-holds "rev-b" \
-  "$(mk_rp "$H" '[]' "$RP_CR_UNSTAMPED" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
-t rp-286-unstamped-signal-holds "rev-b" \
-  "$(mk_rp "$H" '[]' "$RP_CR_A_ONLY" '[]' | rp "$(sig "$H" "")")"
-# THE COHERENCE GATE (ruled 2026-08-02, danmt). A `📣` posted mid-round is inert
-# until the round closes: rev-a blocked and the builder re-signalled, but rev-b
-# still owes a first verdict, so the round is still the panel's and rev-a is not
-# re-requested under a signal that would blur two rounds into one head.
-t rp-286-coherence-holds-mid-round "" \
-  "$(mk_rp "$H" '["rev-b"]' "$RP_CR_A_ONLY" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
-# ...and it is the PANEL's round that holds it open, not any request: an
-# off-panel reviewer's outstanding request (triage, a human, an advisory
-# reviewer) is not the panel's verdict to wait for. Same scoping as
-# addressing.jq's $no_panel_reqs, so the two never disagree about whose ball it
-# is.
-t rp-286-offpanel-request-does-not-hold-the-round "rev-a" \
-  "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_CR_AT_HEAD" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
-# The gate is narrow BY DESIGN: it binds verdict-holders only. A panelist who
-# owes a first verdict at this head is requested even while another request is
-# outstanding — otherwise the first round, where the whole panel is requested at
-# once and each request lands beside the others, could never complete. Three
-# panelists, because that is the smallest set where the two rules can be told
-# apart: rev-a is held by the gate, rev-b holds the round open, rev-c rides
-# through untouched.
-t rp-286-coherence-spares-first-verdicts "rev-c" \
-  "$(mk_rp "$H" '["rev-b"]' "$RP_CR_A_ONLY" '[]' \
-    | rp "$(sig "$H" "$RP_T_SIG_ANSWER")" '["rev-a","rev-b","rev-c"]')"
-# No reviewer is requested twice at one head under one signal: the engine's own
-# request puts them back on the list, and the next tick sees that and holds.
-t rp-286-requested-not-requested-again "" \
-  "$(mk_rp "$H" '["rev-a"]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
-# The hold is scoped to CHANGES_REQUESTED, the only state that closes a round
-# against the builder. A DISMISSED verdict at the head is a WITHDRAWN opinion:
-# round_owed does not count it, addressing.jq calls the round closed and
-# converged.jq calls it unapproved, so if this predicate held it too the
-# panelist would owe a verdict nobody would ever ask for — the stall this issue
-# exists to end, arriving through its own fix. An unknown future state takes the
-# same door for the same reason.
-RP_DISMISSED='[{"author":{"login":"rev-a"},"state":"DISMISSED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
-RP_FUTURE_STATE='[{"author":{"login":"rev-a"},"state":"PONDERED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
-t rp-286-dismissed-verdict-is-re-requested "rev-a rev-b" \
-  "$(mk_rp "$H" '[]' "$RP_DISMISSED" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
-t rp-286-unknown-state-is-re-requested "rev-a rev-b" \
-  "$(mk_rp "$H" '[]' "$RP_FUTURE_STATE" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
-
-# answered-head.jq — the signal. This is the WIP-safety property: a mid-fix push
-# moves the head away from the last signalled one, so the engine holds.
-RP_SIG_H='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
-RP_SIG_OLD='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"}]'
-RP_SIG_TWO='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"},{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
-t ah-signal-at-head "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_H" | ah_sha)"
-t ah-no-signal-empty "" "$(mk_rp "$H" '[]' '[]' '[]' | ah_sha)"
-t ah-latest-signal-wins "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO" | ah_sha)"
-# The must-fail made concrete: a WIP push after the last signal (signal at OLD,
-# head now H) yields a signalled head != current head, so the engine's
-# `answered_head = gql_head` gate is false — it does NOT request. No commit
-# inference.
-t ah-wip-push-stales-signal "$RP_OLD" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OLD" | ah_sha)"
-# Another user's MARK_ANSWERED is not my signal.
-RP_SIG_OTHER='[{"author":{"login":"someone"},"body":"'"$RP_MARK"' '"$H"'"}]'
-t ah-other-user-signal-ignored "" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OTHER" | ah_sha)"
-# #286: the licence carries its TIME, and it is the time of the signal it
-# returned — the latest one, not the first. Both halves come out of one program
-# so no caller can pair a sha with another signal's clock.
-RP_SIG_TWO_TIMED='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'","createdAt":"'$RP_T_SIG_OPEN'"},
-                   {"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'","createdAt":"'$RP_T_SIG_ANSWER'"}]'
-t ah-carries-the-signal-time "$RP_T_SIG_ANSWER" \
-  "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO_TIMED" | ah | jq -r '.createdAt')"
-t ah-pairs-sha-with-its-own-time "$H $RP_T_SIG_ANSWER" \
-  "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO_TIMED" | ah | jq -r '"\(.sha) \(.createdAt)"')"
-# No signal is the empty OBJECT, never null: _request_panel reads .sha off it
-# unconditionally, and request-panel.jq reads .createdAt, so the shape has to
-# survive the absence.
-t ah-no-signal-is-an-empty-object '{"sha":"","createdAt":""}' \
-  "$(mk_rp "$H" '[]' '[]' '[]' | ah)"
-
-# Structural gates (#133 test plan, must-fails).
-# The engine acts on the signal, not commits: _request_panel gates on
-# answered-head == current head before requesting.
-# shellcheck disable=SC2016  # the grep literal contains $gql_head on purpose
-if grep -q 'answered-head.jq' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'answered_head" != "\$gql_head"' "$SHARED/lib/duty-builder.sh"; then r1=signal-gated; else r1=UNGATED; fi
-t engine-request-requires-signal signal-gated "$r1"
-# #286: a predicate can only read what the query asks for, and the handoff query
-# carried neither timestamp — which is why the ordering bug was invisible to
-# every fixture in this file. Pin both fields at the query.
-if grep -q 'comments(last:100){nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}' \
-       "$SHARED/lib/duty-builder.sh"; then r1=timestamped; else r1=UNTIMED; fi
-t engine-request-fetches-ordering-evidence timestamped "$r1"
-# The licence crosses into jq as ONE object: request-panel.jq is HANDED the
-# signal and reads its time, rather than parsing MARK_ANSWERED out of the
-# comments a second time. Two parsers would be two copies of the predicate, and
-# the copies drift — head-checks.jq's header is the standing warning. Pinned on
-# the wire string, not on prose: a second parser needs $mark to find a signal at
-# all, so its absence here is the property.
-# shellcheck disable=SC2016  # the grep literals contain $signal_json / $mark
-if grep -q -- '--argjson signal "\$signal_json"' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'signal\.createdAt' "$SHARED/lib/jq/request-panel.jq" \
-  && ! grep -q 'mark' "$SHARED/lib/jq/request-panel.jq"; then r1=one-object; else r1=RE-DERIVED; fi
-t engine-request-passes-the-whole-signal one-object "$r1"
-# And exactly one PROGRAM parses the signal, for the same reason. Not one call
-# site: #243's resume scan is a second legitimate consumer, and it deliberately
-# reuses this parser rather than keeping its own definition of MARK_ANSWERED —
-# fleet comments wrap the SHA in backticks or trail punctuation after the
-# marker, and resume must classify the exact bodies the request gate does.
-# shellcheck disable=SC2016  # the grep literal contains $mark on purpose
-t engine-has-one-signal-parser 1 \
-  "$(grep -l 'startswith(\$mark)' "$SHARED"/lib/jq/*.jq | wc -l | tr -d ' ')"
-# Every consumer reads the licence as the OBJECT it now is: a consumer left
-# comparing the raw output to a head would classify every PR as unsignalled —
-# resume would re-answer finished rounds forever and the request gate would
-# never open (#286).
-#
-# #452 adds the first consumer that reads it WHOLE: converged.jq is handed the
-# same {sha, createdAt} object request-panel.jq gets, and spends the human's
-# block with its createdAt. So "one `.sha` read per call site" stops being the
-# shape of the property — it was always a proxy — while the property itself is
-# unchanged. Every call site is accounted for by exactly one consumption, a
-# `.sha` read or a whole-object pass, and the two must still add up: a new call
-# site that does neither is a raw output nobody read as an object.
-ah_calls="$(grep -c -- '-f "\$[A-Z_]*DIR[A-Za-z_/]*/jq/answered-head\.jq"' "$SHARED/lib/duty-builder.sh")"
-ah_sha_reads="$(grep -c "jq -r '\.sha // \"\"'" "$SHARED/lib/duty-builder.sh")"
-# shellcheck disable=SC2016  # the grep literal contains $handoff_signal
-ah_whole_reads="$(grep -c -- '--argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh")"
-if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$((ah_sha_reads + ah_whole_reads))" ]; then
-  r1=object-read
-else
-  r1="MISMATCH($ah_calls/$ah_sha_reads+$ah_whole_reads)"
-fi
-t engine-signal-consumers-read-the-object object-read "$r1"
-# Green-head precondition, mechanical half only: request on green|none, hold else.
-# shellcheck disable=SC2016  # the shell literal contains $check_state
-if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh"; then r1=green-gated; else r1=UNGATED; fi
-t engine-request-green-gated green-gated "$r1"
-# Drafts excluded: the request rides the my_open list, built non-draft.
-# shellcheck disable=SC2016
-if grep -q 'select(.isDraft | not)' "$SHARED/lib/duty-builder.sh"; then r1=draft-excluded; else r1=EXPOSED; fi
-t engine-request-excludes-drafts draft-excluded "$r1"
-# #155: GitHub rejects connection pages above 100 instead of truncating them.
-# Pin the live API ceiling across shared/, not only the query that exposed it.
-oversized_connections="$(grep -REho '(first|last):[0-9]+' "$SHARED" \
-  | awk -F: '$2 > 100 { print }')"
-t graphql-connection-pages-live-valid "" "$oversized_connections"
-# A GraphQL error can be non-empty stdout with a non-zero status and a null PR.
-# The handoff sweep must validate the object before either _request_panel or
-# converged.jq sees it; non-empty is not evidence of a successful fetch.
-GQL_EXCESSIVE='{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"EXCESSIVE_PAGINATION"}]}'
-GQL_LONG_OK="$(mk_rp "$H" '[]' "$REVS_OK" '[]' | jq --arg mark "$RP_MARK $H" '
-  .data.repository.pullRequest += {
-    mergeable:"MERGEABLE", labels:{nodes:[]},
-    comments:{nodes:([range(0;99) | {author:{login:"someone"},body:"thread"}]
-      + [{author:{login:"me-bot"},body:$mark}])}
-  }')"
-payload_usable() {
-  jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1 \
-    && printf usable || printf unusable
-}
-t graphql-error-body-is-unusable unusable "$(printf '%s' "$GQL_EXCESSIVE" | payload_usable)"
-t graphql-long-thread-payload-is-usable usable "$(printf '%s' "$GQL_LONG_OK" | payload_usable)"
-t graphql-long-thread-converges true \
-  "$(printf '%s' "$GQL_LONG_OK" | cj)"
-if grep -q "jq -e '.data.repository.pullRequest != null'" "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'PR state payload unusable; skipping request and handoff' "$SHARED/lib/duty-builder.sh"; then
-  r1=gated
-else
-  r1=EXPOSED
-fi
-t graphql-error-gates-request-and-handoff gated "$r1"
-# bots-reviewing is best-effort (|| warn), never gating.
-# shellcheck disable=SC2016
-if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh"; then r1='best-effort'; else r1=GATING; fi
-t engine-bots-reviewing-best-effort best-effort "$r1"
-# MARK_ANSWERED is defined and wire-protected against operator override.
-if grep -q '^MARK_ANSWERED=' "$SHARED/conf/fleet.defaults.conf" \
-  && grep -q 'wire_answered' "$SHARED/lib/common.sh"; then r1=wire; else r1=UNPROTECTED; fi
-t mark-answered-is-wire-protocol wire "$r1"
-# The session posts the signal and no longer requests; the argued-exception and
-# the resume re-signal survive.
-if grep -q 'MARK_ANSWERED' "$SHARED/prompts/fragment-round-rules.txt" \
-  && grep -qi 'YOU DO NOT REQUEST' "$SHARED/prompts/fragment-round-rules.txt"; then r1=signals; else r1=STILL-REQUESTS; fi
-t round-rules-session-signals signals "$r1"
-if grep -qi 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=kept; else r1=LOST; fi
-t round-rules-argued-exception-kept kept "$r1"
-if grep -qi 'round-answered signal' "$SHARED/prompts/resume.txt"; then r1=resignals; else r1=MISSING; fi
-t resume-re-signals-after-death resignals "$r1"
-
-# THE ROUND-1 FIX (codex/grok/kimi): the ready→signal death window. The cure is
-# ordering — SIGNAL THEN READY, with the signal posted while the PR is still a
-# DRAFT (harmless, the engine ignores drafts), so every death lands where resume
-# recovers it. Pinned structurally, not by prose grep, in both prompts that flip
-# a draft to ready.
-for p in build.txt resume.txt; do
-  if grep -qiE 'signal[^.]*then[^.]*mark the PR ready-for-review' "$SHARED/prompts/$p"; then r1=signal-first; else r1=WRONG-ORDER; fi
-  t "signal-before-ready-$p" signal-first "$r1"
-done
-# End-to-end of the covered transition: a PR flipped ready with the signal
-# already at its head → the engine requests (die-after-ready is safe). The
-# die-before-ready arm is a still-draft PR, excluded by my_open
-# (engine-request-excludes-drafts) and recovered by resume — proven above.
-#
-# The two programs are wired together here exactly as _request_panel wires them
-# — answered-head.jq's object is what request-panel.jq is handed — so this case
-# also pins that the licence survives the trip between them (#286).
-RP_READY_SIGNALLED="$(mk_rp "$H" '[]' '[]' "$RP_SIG_H")"
-t strand-fix-ready-with-signal-requests "rev-a rev-b" \
-  "$(printf '%s' "$RP_READY_SIGNALLED" \
-    | rp "$(printf '%s' "$RP_READY_SIGNALLED" | ah)")"
-t strand-fix-ready-with-signal-has-signal "$H" \
-  "$(printf '%s' "$RP_READY_SIGNALLED" | ah_sha)"
-# rebase.txt aligns with the engine: it posts the signal, it does not re-request.
-if grep -qi 'MARK_ANSWERED' "$SHARED/prompts/rebase.txt" \
-  && ! grep -qi 're-request every panel reviewer' "$SHARED/prompts/rebase.txt"; then r1=aligned; else r1=RACES; fi
-t rebase-posts-signal-not-request aligned "$r1"
-
-# --- round-log.jq: mirror each whole round into the PR body (#91) ------------
-# Input is the GraphQL pullRequest payload; output is the NEW body when a round
-# is un-recorded, or "" when every round is already marked (the crash-retry
-# no-op). A round is a head SHA with an opinionated verdict; its reply is the
-# author's comments after that round's newest verdict and before the next
-# round's first. Each entry is keyed `<!-- round:<sha> -->` for idempotency.
-RLJQ="$SHARED/lib/jq/round-log.jq"
-RL_ME="me-bot"
-RL_O1="1111111111111111111111111111111111111111"
-RL_O2="2222222222222222222222222222222222222222"
-mk_rl() {  # <body> <reviews-json> <comments-json> [commits-json] [head-oid-json]
-  jq -n --arg body "$1" --argjson reviews "$2" --argjson comments "$3" \
-    --argjson commits "${4:-[]}" --argjson head "${5:-null}" \
-    '{data:{repository:{pullRequest:{
-      body:$body, headRefOid:$head, commits:{nodes:$commits},
-      reviews:{nodes:$reviews}, comments:{nodes:$comments}}}}}'
-}
-RL_REVS="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T03:00:00Z"}]' "$RL_O1" "$RL_O2")"
-RL_REVS1="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]' "$RL_O1")"
-RL_COMS='[{"author":{"login":"me-bot"},"body":"answering round one","createdAt":"2026-01-01T02:00:00Z"},{"author":{"login":"me-bot"},"body":"answering round two","createdAt":"2026-01-01T04:00:00Z"}]'
-# rl = handoff/record-all mode ($final=true): finalize every round including the
-# live last one — the record-all semantics these fixtures assert. rl_live =
-# per-tick mode ($final=false): defer the live round, record only superseded ones.
-rl() { jq -r --arg me "$RL_ME" --argjson final true -f "$RLJQ"; }
-rl_live() { jq -r --arg me "$RL_ME" --argjson final false -f "$RLJQ"; }
-
-# Two rounds, both answered, no markers in body → both mirrored, oldest first.
-RL_OUT="$(mk_rl "Body preamble." "$RL_REVS" "$RL_COMS" | rl)"
-case "$RL_OUT" in *"## Round log"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-appends-section yes "$r1"
-case "$RL_OUT" in *"round:$RL_O1"*"round:$RL_O2"*) r1=ordered ;; *) r1=no ;; esac
-t roundlog-markers-oldest-first ordered "$r1"
-case "$RL_OUT" in *"answering round one"*"answering round two"*) r1=both ;; *) r1=no ;; esac
-t roundlog-both-replies-present both "$r1"
-case "$RL_OUT" in *"Round at 11111111"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-short-sha-heading yes "$r1"
-
-# Both markers already in the body → nothing to add (the retried-tick no-op).
-RL_OUT2="$(mk_rl "preamble <!-- round:$RL_O1 --> and <!-- round:$RL_O2 -->" "$RL_REVS" "$RL_COMS" | rl)"
-t roundlog-idempotent-empty "" "$RL_OUT2"
-
-# A round with a verdict but no author reply is recorded, not skipped.
-RL_OUT3="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
-case "$RL_OUT3" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-no-reply-recorded yes "$r1"
-
-# An existing `## Round log` section is extended; sibling sections are kept.
-RL_BODY_SEC="$(printf 'Intro.\n\n## Round log\n\nolder entry\n\n## Worklog\n\n- [x] a')"
-RL_OUT4="$(mk_rl "$RL_BODY_SEC" "$RL_REVS1" "$RL_COMS" | rl)"
-case "$RL_OUT4" in *"## Worklog"*"- [x] a"*) r1=kept ;; *) r1=LOST ;; esac
-t roundlog-preserves-sibling-sections kept "$r1"
-case "$RL_OUT4" in *"older entry"*"round:$RL_O1"*"## Worklog"*) r1=in-section ;; *) r1=no ;; esac
-t roundlog-inserts-into-existing-section in-section "$r1"
-
-# Round 1 already recorded, round 2 not → only round 2 appended (no dup).
-RL_OUT5="$(mk_rl "has <!-- round:$RL_O1 --> already" "$RL_REVS" "$RL_COMS" | rl)"
-case "$RL_OUT5" in *"round:$RL_O2"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-partial-appends-missing yes "$r1"
-case "$RL_OUT5" in *"answering round one"*) r1=DUP ;; *) r1=clean ;; esac
-t roundlog-partial-skips-recorded clean "$r1"
 
 # --- Live-round deferral (per-tick, $final=false): the regression codex found
 # on the mirror-every-tick change. Because the mirror now runs every tick, a
@@ -616,1958 +598,6 @@ hf_run 1
 t handoff-request-attempted-on-fail 1 "$(hfc REQUEST)"
 t handoff-label-set-even-if-request-fails 1 "$(hfc LABEL)"
 
-# --- rotate_log
-printf 'x' >"$TMP/small.log"
-rotate_log "$TMP/small.log"
-[ -f "$TMP/small.log" ] && r1=kept || r1=gone
-t rotate-small kept "$r1"
-
-# --- seen-ledgers: ledger_filter / ledger_commit (the refire fix) ---------
-# A wake whose signal is present but UNCHANGED must not re-launch a session;
-# it may only wake on new-or-advanced activity. This is what stops the mention
-# and held-discussion refire that burned the triage box's Fable quota.
-LG="$TMP/ledger"
-n() { awk 'NF{c++} END{print c+0}'; }
-# cold ledger (first look): everything is new
-t ledger-cold 2 "$(printf '111 2026-07-24T19:00:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_filter "$LG" | n)"
-printf '111 2026-07-24T19:00:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_commit "$LG"
-# same state again: SUPPRESSED (the burn fix)
-t ledger-suppress 0 "$(printf '111 2026-07-24T19:00:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_filter "$LG" | n)"
-# one timestamp advanced: only that id re-wakes
-t ledger-advance "111 2026-07-24T20:30:00Z" "$(printf '111 2026-07-24T20:30:00Z\n222 2026-07-24T19:05:00Z\n' | ledger_filter "$LG")"
-# brand-new id wakes
-t ledger-newid 1 "$(printf '333 2026-07-25T01:00:00Z\n' | ledger_filter "$LG" | n)"
-# commit is monotonic: a stale (older) commit must not lower the mark
-printf '111 2026-07-24T20:30:00Z\n' | ledger_commit "$LG"
-printf '111 2026-07-01T00:00:00Z\n' | ledger_commit "$LG"
-t ledger-monotonic 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG" | n)"
-# empty input is safe and preserves the ledger (no session -> nothing to commit)
-printf '' | ledger_commit "$LG"
-t ledger-empty-safe 0 "$(printf '111 2026-07-24T20:30:00Z\n' | ledger_filter "$LG" | n)"
-
-# Build ready lines are committed only when the post-session board proves the
-# whole enumerated set was declined. IDs compare as whole keys (#264).
-READY3='heavy-duty/crew#2 T2
-heavy-duty/crew#25 T25
-heavy-duty/crew#30 T30'
-t ready-commit-whole-decline "$READY3" \
-  "$(_ready_lines_to_commit "$READY3" $'heavy-duty/crew#2\nheavy-duty/crew#25\nheavy-duty/crew#30')"
-t ready-commit-one-claimed "" \
-  "$(_ready_lines_to_commit "$READY3" $'heavy-duty/crew#2\nheavy-duty/crew#30')"
-t ready-commit-none-left "" "$(_ready_lines_to_commit "$READY3" '')"
-t ready-commit-empty "" "$(_ready_lines_to_commit '' 'heavy-duty/crew#2')"
-t ready-commit-whole-id "" \
-  "$(_ready_lines_to_commit 'heavy-duty/crew#2 T2' 'heavy-duty/crew#25')"
-
-# Drive the converted registry call site with a producer that pauses after the
-# matching line. The awareness pass must wait for the complete repo list and
-# therefore emit no false out-of-scope warning.
-p447_registry_out="$(
-  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
-  read_repo_list() { printf '%s\n' heavy-duty/crew; sleep 0.05; printf '%s\n' other/repo; }
-  # shellcheck disable=SC2317  # invoked indirectly by _warn_unscoped_authored
-  gh() { printf '%s\n' 'heavy-duty/crew#447'; }
-  ME=andriujoseba REPOS_FILE=unused
-  _warn_unscoped_authored
-)"
-t p447-registry-forced-race-stays-in-scope "" "$p447_registry_out"
-
-# The orphan scan consumes head listings larger than PIPE_BUF. A merged branch
-# and an open branch must never become orphans; only the absent branch is due.
-P447_PIPE_BUF="$(getconf PIPE_BUF /)"
-P447_MERGED_HEADS="$(awk 'BEGIN {
-  print "build/900-merged"
-  for (i=1; i<=10000; i++) print "build/filler-" i
-}')"
-if [ "${#P447_MERGED_HEADS}" -gt "$P447_PIPE_BUF" ]; then r1=large; else r1=TOO-SMALL; fi
-t p447-merged-heads-exceeds-pipe-buf large "$r1"
-P447_OPEN_HEADS=build/901-open
-# shellcheck disable=SC2317  # invoked indirectly by _orphan_claim_nums
-gh() {
-  case "$*" in
-    *build/900-*) printf '%s\n' build/900-merged ;;
-    *build/901-*) printf '%s\n' build/901-open ;;
-    *build/902-*) printf '%s\n' build/902-orphan ;;
-    *) return 1 ;;
-  esac
-}
-ME=andriujoseba p447_orphan_failures=0
-for _p447_i in $(seq 1 400); do
-  p447_orphans="$(_orphan_claim_nums crew '900 901 902' "$P447_MERGED_HEADS" "$P447_OPEN_HEADS")"
-  [ "$p447_orphans" = " 902" ] || p447_orphan_failures=$((p447_orphan_failures+1))
-done
-t p447-orphan-scan-400-runs 0 "$p447_orphan_failures"
-unset -f gh
-
-# Against the pre-conversion spelling, the same large fixture makes the early
-# match close the pipe while printf still has output: the predicate answers
-# with SIGPIPE instead of the match. Keep the spelling assembled for the guard.
-eval 'printf '\''%s\\n'\'' "$P447_MERGED_HEADS" | gr'"ep -qx build/900-merged" >/dev/null 2>&1
-p447_old_orphan_rc=$?
-case "$p447_old_orphan_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
-t p447-orphan-old-shape-races nonzero "$r1"
-
-# cross-repo collision: discussion numbers are PER-REPO but the ledger is one
-# file across every repo in repos.txt, so keys must be repo-qualified. After
-# committing ceremony#1, an unchanged/older rig#1 must still wake — a bare "1"
-# key would shadow it and triage would never see rig's discussion (codex, #16).
-LG2="$TMP/ledger-disc"
-printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_commit "$LG2"
-t ledger-crossrepo-distinct 1 "$(printf 'heavy-duty/rig#1 2026-07-20T00:00:00Z\n' | ledger_filter "$LG2" | n)"
-t ledger-crossrepo-samekey  0 "$(printf 'heavy-duty/ceremony#1 2026-07-24T19:00:00Z\n' | ledger_filter "$LG2" | n)"
-
-# --- ledger_suppressed: the exact inverse of ledger_filter (#59) ------------
-# The two must partition the input between them. If they can ever disagree, the
-# engine either pays for work it meant to suppress or goes quiet about work it
-# meant to report — and the second is the dangerous one.
-LG3="$TMP/ledger-inv"
-printf 'o/r#1 2026-07-27T10:00:00Z\no/r#2 2026-07-27T10:00:00Z\n' | ledger_commit "$LG3"
-IN3="$(printf 'o/r#1 2026-07-27T10:00:00Z\no/r#2 2026-07-27T11:00:00Z\no/r#3 2026-07-27T09:00:00Z\n')"
-# #1 unchanged -> suppressed; #2 advanced -> fresh; #3 unseen -> fresh
-t suppressed-unchanged "o/r#1 2026-07-27T10:00:00Z" "$(printf '%s\n' "$IN3" | ledger_suppressed "$LG3")"
-t suppressed-fresh-count 2 "$(printf '%s\n' "$IN3" | ledger_filter "$LG3" | n)"
-# Partition: filter + suppressed together account for every input line, exactly
-# once. Asserted rather than assumed — the set-arithmetic version of this that
-# I wrote first reported NOTHING suppressed whenever the fresh list was empty.
-t suppressed-partitions 3 "$(printf '%s\n' "$IN3" | { ledger_filter "$LG3"; printf '%s\n' "$IN3" | ledger_suppressed "$LG3"; } | n)"
-t suppressed-disjoint 0 "$(comm -12 \
-  <(printf '%s\n' "$IN3" | ledger_filter "$LG3" | sort) \
-  <(printf '%s\n' "$IN3" | ledger_suppressed "$LG3" | sort) | n)"
-# A cold ledger hides nothing.
-t suppressed-cold 0 "$(printf 'o/r#9 2026-07-27T10:00:00Z\n' | ledger_suppressed "$TMP/nope" | n)"
-
-# --- report_suppressed: stop paying, do NOT stop saying (#59) ---------------
-# A ledger converts a burn into silence. An unactioned item is still a live
-# board-invariant violation, so the suppressed set has to surface — but at one
-# tick per five minutes, a line every tick would bury the log it informs. So:
-# warn when the SET CHANGES, and again from scratch after it clears.
-ST="$TMP/suppressed-state"
-r1="$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
-case "$r1" in *"1 item(s)"*"o/r#1"*) r2=warned ;; *) r2="$r1" ;; esac
-t report-first warned "$r2"
-# Same set again: silent.
-t report-repeat "" "$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
-# Set grows: speaks again.
-r3="$(printf 'o/r#1 2026-07-27T10:00:00Z\no/r#2 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
-case "$r3" in *"2 item(s)"*) r4=warned ;; *) r4="$r3" ;; esac
-t report-grew warned "$r4"
-# Emptied: silent, and the state file goes, so a recurrence is reported afresh
-# rather than being swallowed as "same as last time".
-t report-cleared "" "$(printf '' | report_suppressed "$ST" "o/r: board")"
-if [ -f "$ST" ]; then r5=kept; else r5=removed; fi
-t report-state-removed removed "$r5"
-r6="$(printf 'o/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$ST" "o/r: board")"
-case "$r6" in *"1 item(s)"*) r7=warned ;; *) r7="$r6" ;; esac
-t report-recurrence-speaks warned "$r7"
-# Blank lines are not items and must not render as the malformed `()`.
-r8="$(printf '\no/r#1 2026-07-27T10:00:00Z\n' | report_suppressed "$TMP/sup-blank" "review")"
-case "$r8" in *'()'*) r9=MALFORMED ;; *) r9=clean ;; esac
-t report-blank-line-format clean "$r9"
-
-# An incomplete sweep cannot compare its partial set with the previous complete
-# set. Preserve the state byte-for-byte; otherwise one flaky repo makes every
-# healthy repo's standing suppression look changed twice (drop + return).
-ST_PART="$TMP/sup-partial"
-printf 'o/a#1 T1\no/b#1 T1\n' | report_suppressed "$ST_PART" "review" >/dev/null
-before_part="$(cat "$ST_PART")"
-printf 'o/a#1 T1\n' \
-  | report_suppressed_if_complete 0 "$ST_PART" "review" >/dev/null
-t report-partial-preserves-state "$before_part" "$(cat "$ST_PART")"
-# The next complete steady set remains silent, proving the partial tick did not
-# replace the state and manufacture a second warning when repo B returns.
-t report-after-partial-still-settled "" \
-  "$(printf 'o/a#1 T1\no/b#1 T1\n' \
-      | report_suppressed_if_complete 1 "$ST_PART" "review")"
-
-# --- suppression state must be PER REPO (#60 review) ------------------------
-# Both duty modules call report_suppressed inside a per-repo loop. With ONE
-# shared state file, repo B's set replaces repo A's, and a repo with nothing
-# suppressed rm -f's the file outright — so A's unchanged set looks new on the
-# next tick and warns again, every tick, on exactly the 3-repo production box
-# this was written to protect. codex-bot and grok-bot both caught it; grok-bot
-# reproduced the flip-flop with these helpers.
-sup_says() { if grep -q 'item(s)'; then echo warned; else echo silent; fi; }
-SUP_A='o/a#1 2026-07-27T10:00:00Z'
-SUP_B='o/b#1 2026-07-27T10:00:00Z'
-
-# Per-repo files: each repo settles independently and stays quiet.
-STA="$TMP/sup.o_a"; STB="$TMP/sup.o_b"
-printf '%s\n' "$SUP_A" | report_suppressed "$STA" "o/a: board" >/dev/null
-printf '%s\n' "$SUP_B" | report_suppressed "$STB" "o/b: board" >/dev/null
-t report-perrepo-a-settles silent "$(printf '%s\n' "$SUP_A" | report_suppressed "$STA" "o/a: board" | sup_says)"
-t report-perrepo-b-settles silent "$(printf '%s\n' "$SUP_B" | report_suppressed "$STB" "o/b: board" | sup_says)"
-
-# The shape that was wrong, kept as a negative control: sharing one file makes
-# A speak again after B has been through it. If this ever reads `silent` the
-# helper has changed and the per-repo keying above may no longer be load-bearing.
-SUP_SHARED="$TMP/sup.shared"
-printf '%s\n' "$SUP_A" | report_suppressed "$SUP_SHARED" "o/a: board" >/dev/null
-printf '%s\n' "$SUP_B" | report_suppressed "$SUP_SHARED" "o/b: board" >/dev/null
-t report-shared-state-refires warned "$(printf '%s\n' "$SUP_A" | report_suppressed "$SUP_SHARED" "o/a: board" | sup_says)"
-
-# ...and the modules must actually key by repo, not just be capable of it.
-for pair in "duty-triage.sh:suppressed-triage-board" "duty-builder.sh:suppressed-build"; do
-  mod="${pair%%:*}"; sfile="${pair##*:}"
-  if grep -qE "$sfile\.\\\$\{?(R|slug)" "$SHARED/lib/$mod"; then r1=perrepo; else r1=SHARED; fi
-  t "suppression-state-perrepo-$mod" perrepo "$r1"
-done
-
-# --- every state signal is ledgered (#59) -----------------------------------
-# The engine had TWO ledgers, both in triage, while builder and reviewer had
-# none — so any signal cleared by an in-session action the agent may DECLINE
-# re-fired a model session every tick forever. These pin the wiring: a new
-# signal site added without a ledger is the regression.
-for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" \
-            "duty-review.sh:.seen-review" "duty-attention.sh:.seen-attention"; do
-  mod="${pair%%:*}"; led="${pair##*:}"
-  if grep -q "$led" "$SHARED/lib/$mod"; then r1=ledgered; else r1=UNGUARDED; fi
-  t "signal-ledgered-$mod" ledgered "$r1"
-  # ...and committed only after a session that actually completed.
-  if grep -q 'RUN_SESSION_RC:-1}" -eq 0' "$SHARED/lib/$mod"; then r1=gated; else r1=UNGATED; fi
-  t "ledger-commit-gated-$mod" gated "$r1"
-  # ...and what it hides must be reported.
-  if grep -q 'report_suppressed' "$SHARED/lib/$mod"; then r1=reported; else r1=SILENT; fi
-  t "suppression-reported-$mod" reported "$r1"
-done
-
-BUILDER_MOD="$SHARED/lib/duty-builder.sh"
-builder_commit_block="$(sed -n '/# Record what this session SAW/,/# --- HANDOFF:/p' "$BUILDER_MOD")"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq '_ready_lines_to_commit "$ready_items" "$post_ready_ids"' <<<"$builder_commit_block" &&
-   ! grep -Fq '"$ready_items" "$cr_items" | ledger_commit' <<<"$builder_commit_block"; then
-  r1=narrowed
-else
-  r1=WHOLE_SET
-fi
-t builder-ready-commit-routed-through-helper narrowed "$r1"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_commit_block"; then
-  r1=preserved
-else
-  r1=DROPPED
-fi
-t builder-round-items-preserved preserved "$r1"
-# The build ledger commit must stay inside this call site's success guard. A
-# whole-module grep can accidentally match the independent ci-red guard.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-builder_rc_block="$(sed -n '/^    if \[ "${RUN_SESSION_RC:-1}" -eq 0 \]; then$/,/^    fi$/p' "$BUILDER_MOD")"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq '"$ready_commit" "$cr_items" | ledger_commit' <<<"$builder_rc_block"; then
-  r1=gated
-else
-  r1=UNGATED
-fi
-t builder-ready-commit-gated-by-session-rc gated "$r1"
-# A failed re-query must stay visible and fail open toward another session,
-# never burying the whole pre-session ready set (#264 D4).
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if [ "$(grep -Fc 'post-session ready re-query failed; committing no ready lines (#264)' \
-     <<<"$builder_commit_block")" -eq 1 ] &&
-   ! grep -Fq 'ready_commit="$ready_items"' <<<"$builder_commit_block"; then
-  r1=safe
-else
-  r1=WHOLE_SET
-fi
-t builder-ready-requery-failure-commits-none safe "$r1"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq '[ -e "$marker" ] && return 0' "$BUILDER_MOD" &&
-   grep -Fq '_repair_seen_build_264' "$BUILDER_MOD"; then
-  r1=gated
-else
-  r1=UNGATED
-fi
-t builder-ledger-repair-marker-gated gated "$r1"
-# The repair is box-wide, so it runs once before duty_builder enters its
-# per-repository loop rather than once from _builder_repo (#264 D5).
-builder_entry_block="$(sed -n '/^duty_builder() {/,/^_builder_repo() {/p' "$BUILDER_MOD")"
-if [ "$(grep -Fc '_repair_seen_build_264' <<<"$builder_entry_block")" -eq 1 ]; then
-  r1=once-per-box
-else
-  r1=PER_REPO
-fi
-t builder-ledger-repair-call-site once-per-box "$r1"
-
-# The repair clears both state classes once, names #264, and leaves files
-# created after its marker untouched on later invocations.
-REPAIR_DIR="$TMP/repair-264"
-mkdir -p "$REPAIR_DIR"
-printf old >"$REPAIR_DIR/.seen-build"
-printf old >"$REPAIR_DIR/.suppressed-build.one"
-repair_log="$(DUTY_DIR="$REPAIR_DIR" _repair_seen_build_264)"
-[ -e "$REPAIR_DIR/.seen-build" ] && r1=kept || r1=deleted
-t builder-ledger-repair-seen deleted "$r1"
-[ -e "$REPAIR_DIR/.suppressed-build.one" ] && r1=kept || r1=deleted
-t builder-ledger-repair-suppressed deleted "$r1"
-[ -e "$REPAIR_DIR/.seen-build.repair-264" ] && r1=created || r1=missing
-t builder-ledger-repair-marker created "$r1"
-case "$repair_log" in *'#264'*) r1=named ;; *) r1=missing ;; esac
-t builder-ledger-repair-log-names-issue named "$r1"
-printf later >"$REPAIR_DIR/.seen-build"
-printf later >"$REPAIR_DIR/.suppressed-build.two"
-t builder-ledger-repair-second-log "" "$(DUTY_DIR="$REPAIR_DIR" _repair_seen_build_264)"
-t builder-ledger-repair-second-seen later "$(cat "$REPAIR_DIR/.seen-build")"
-t builder-ledger-repair-second-suppressed later "$(cat "$REPAIR_DIR/.suppressed-build.two")"
-
-# --- `no build duty` names its cause (#345) --------------------------------
-# One spelling for three causes cost the operator an hour on 2026-08-03: the
-# line was indistinguishable from #264's burial bug and the answer was the
-# boring one (the slot was held). These drive the module's own variables in the
-# module's own order — enumerate, ledger-filter, gate, name the cause — because
-# the gate WIPES ready_items, so a reason read off anything but the pre-gate
-# snapshot collapses every scenario below onto `board empty`.
-# Two ledgers, chosen per scenario rather than mutated in place: the ONLY
-# difference between the slot-held and the seen-ledger cause is whether the
-# board survived the filter, so a single ledger would make the scenarios
-# order-dependent and the mutation count below would silently drop.
-NBD_LG_COLD="$TMP/ledger-nbd-cold"
-NBD_LG_HOT="$TMP/ledger-nbd-hot"
-NBD_LG="$NBD_LG_COLD"
-nbd() {  # nbd READY_LINES CR_LINES MINE_JSON [BOARD_READ]
-  local R=heavy-duty/crew
-  local ready_items="$1" cr_items="$2" mine_json="$3" board_read="${4:-1}"
-  local ready_board ledgered_rounds ready_count cr_count open_pr_count
-  local slot_prs="" open_pr_ids=""
-  ready_board="$(printf '%s\n' "$ready_items" | awk 'NF{c++} END{print c+0}')"
-  ready_count="$(printf '%s\n' "$ready_items" \
-    | ledger_filter "$NBD_LG" | awk 'NF{c++} END{print c+0}')"
-  ledgered_rounds="$(printf '%s\n' "$cr_items" | awk 'NF{c++} END{print c+0}')"
-  cr_count="$(printf '%s\n' "$cr_items" \
-    | ledger_filter "$NBD_LG" | awk 'NF{c++} END{print c+0}')"
-  # shellcheck disable=SC2034  # read by _gate_ready_for_open_pr through bash's
-  # dynamic scoping, exactly as _builder_repo hands them over.
-  open_pr_count="$(printf '%s' "$mine_json" | jq 'length')"
-  # shellcheck disable=SC2034  # same: the gate reads this, then writes slot_prs.
-  open_pr_ids="$(printf '%s' "$mine_json" \
-    | jq -r --arg repo "$R" '[.[].number] | sort | map("\($repo)#\(.)") | join(", ")')"
-  _gate_ready_for_open_pr >/dev/null || true
-  if [ "$ready_count" -gt 0 ] || [ "$cr_count" -gt 0 ]; then
-    printf 'BUILD_DUTY'
-    return 0
-  fi
-  _no_build_duty_reason "$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read"
-}
-NBD_READY="$(printf 'heavy-duty/crew#2 T2\nheavy-duty/crew#25 T25\nheavy-duty/crew#30 T30')"
-NBD_CR="$(printf 'heavy-duty/crew#40 T40')"
-
-# (a) BOARD EMPTY — nothing enumerated on either side.
-t nbd-board-empty 'board empty' "$(nbd '' '' '[]')"
-
-# (c) SLOT HELD — a non-empty, unledgered board and an open authored PR. The
-# board count is the pre-gate one: the gate has emptied ready_items by the time
-# the line is written, and 3 is what the operator sees on the queue.
-t nbd-slot-held 'slot held by heavy-duty/crew#231; board holds 3 ready' \
-  "$(nbd "$NBD_READY" '' '[{"number":231}]')"
-# The count is READ, never hardcoded: a different board gives a different N,
-# which is the number #264's discriminating read depends on.
-t nbd-slot-count-is-live 'slot held by heavy-duty/crew#231; board holds 1 ready' \
-  "$(nbd 'heavy-duty/crew#2 T2' '' '[{"number":231}]')"
-# Every PR occupying the slot is named, in numeric order, whatever order the
-# listing returned — the line has to be stable across ticks.
-t nbd-slot-names-all-prs \
-  'slot held by heavy-duty/crew#9, heavy-duty/crew#40; board holds 3 ready' \
-  "$(nbd "$NBD_READY" '' '[{"number":40},{"number":9}]')"
-# (b) SEEN-LEDGER — enumerated, then hidden whole. N is the pre-filter count.
-printf '%s\n%s\n' "$NBD_READY" "$NBD_CR" | ledger_commit "$NBD_LG_HOT"
-NBD_LG="$NBD_LG_HOT"
-t nbd-seen-ledger-ready '3 ready held by seen-ledger' "$(nbd "$NBD_READY" '' '[]')"
-# An open PR does NOT claim the tick when the gate never fired: with the board
-# ledgered to zero the ledger is what zeroed it, and the slot is not the news.
-t nbd-slot-not-claimed-when-gate-idle '3 ready held by seen-ledger' \
-  "$(nbd "$NBD_READY" '' '[{"number":231}]')"
-# cr_count runs the SAME filter over a different set, so the noun follows the
-# count it came from. An empty board with a ledgered round is not `board empty`.
-t nbd-seen-ledger-rounds '1 round(s) held by seen-ledger' "$(nbd '' "$NBD_CR" '[{"number":40}]')"
-t nbd-seen-ledger-both '3 ready, 1 round(s) held by seen-ledger' \
-  "$(nbd "$NBD_READY" "$NBD_CR" '[{"number":40}]')"
-# Fresh work on either side is duty, not a cause — the no-duty branch is never
-# reached, so no spelling may claim it.
-t nbd-fresh-ready-is-duty BUILD_DUTY "$(nbd 'heavy-duty/crew#77 T77' '' '[]')"
-t nbd-fresh-round-is-duty BUILD_DUTY "$(nbd '' 'heavy-duty/crew#78 T78' '[{"number":78}]')"
-
-# (d) BOARD UNREAD — the issue listing failed, so neither of the two above may
-# be asserted. Narrower than both; it claims only that nobody read the board.
-t nbd-board-unread 'board unread' "$(nbd '' '' '[]' 0)"
-
-# MUTATION — the property that makes this issue worth building. Merge any two
-# causes back into one spelling and this count drops below 4. Each scenario
-# picks its own ledger, because the ledger IS the discriminator between two of
-# them.
-NBD_LG="$NBD_LG_COLD"; nbd_slot="$(nbd "$NBD_READY" '' '[{"number":231}]')"
-NBD_LG="$NBD_LG_HOT"
-NBD_ALL="$(printf '%s\n%s\n%s\n%s\n' \
-  "$(nbd '' '' '[]')" \
-  "$(nbd "$NBD_READY" '' '[]')" \
-  "$nbd_slot" \
-  "$(nbd '' '' '[]' 0)" | sort -u | awk 'NF{c++} END{print c+0}')"
-t nbd-causes-are-distinct 4 "$NBD_ALL"
-
-# CONSUMERS — the prefix is the contract. `crew status` renders the newest duty
-# line as its NOTE through `cut -c1-60`, and the floor's RE_BUILD_DUTY matches
-# the POSITIVE line only; a parenthetical must reach neither.
-NBD_LINE="$(log "heavy-duty/crew: no build duty ($nbd_slot)")"
-case "$NBD_LINE" in
-  *'heavy-duty/crew: no build duty (slot held by'*) r1=prefixed ;;
-  *) r1="$NBD_LINE" ;;
-esac
-t nbd-grep-prefix-unchanged prefixed "$r1"
-case "$(printf '%s' "$NBD_LINE" | cut -c1-60)" in
-  *'no build duty'*) r1=survives ;;
-  *) r1=TRUNCATED_AWAY ;;
-esac
-t nbd-note-column-keeps-prefix survives "$r1"
-if grep -qE ' (\S+): build duty \(ready unclaimed=([0-9]+), whole rounds owed=([0-9]+)\)' <<<"$NBD_LINE"; then
-  r1=MATCHED_POSITIVE
-else
-  r1=distinct
-fi
-t nbd-not-mistaken-for-positive-line distinct "$r1"
-
-# WIRING — the fixtures above prove the spellings; these pin them to the module.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-nbd_board_assign="$(grep -F 'ready_board="$(' "$BUILDER_MOD")"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-case "$nbd_board_assign" in
-  *ledger_filter*)  r1=LEDGERED ;;
-  *'"$ready_items"'*) r1=pre-filter ;;
-  *)                r1=MISSING ;;
-esac
-t nbd-board-count-is-pre-ledger pre-filter "$r1"
-# ...and taken before the gate empties the set it counts.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-nbd_board_ln="$(grep -nF 'ready_board="$(' "$BUILDER_MOD" | head -n1 | cut -d: -f1)"
-nbd_gate_ln="$(grep -nF '_gate_ready_for_open_pr || true' "$BUILDER_MOD" | head -n1 | cut -d: -f1)"
-if [ -n "$nbd_board_ln" ] && [ -n "$nbd_gate_ln" ] && [ "$nbd_board_ln" -lt "$nbd_gate_ln" ]; then
-  r1=before
-else
-  r1=AFTER_GATE
-fi
-t nbd-board-count-taken-before-gate before "$r1"
-# Why that order is load-bearing, stated as behaviour rather than left to the
-# line numbers: fed the post-gate set, the same scenario reports an empty board
-# it does not have — the stale count #264's read cannot survive.
-t nbd-post-gate-count-would-lie 'slot held by heavy-duty/crew#231; board holds 0 ready' \
-  "$(_no_build_duty_reason 0 0 'heavy-duty/crew#231' 1)"
-# The line names the cause, and names it from the board facts rather than from
-# the survivors, every one of which is zero by then.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-nbd_call="$(sed -n '/log "\$R: no build duty (\$(_no_build_duty_reason/,+1p' "$BUILDER_MOD")"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq '"$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read"' <<<"$nbd_call"; then
-  r1=named
-else
-  r1=BARE
-fi
-t nbd-call-site-passes-board-facts named "$r1"
-# The gate is what knows the slot fired; nothing downstream can re-derive it.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-nbd_gate_body="$(sed -n '/^_gate_ready_for_open_pr() {/,/^}/p' "$BUILDER_MOD")"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq 'slot_prs="${open_pr_ids' <<<"$nbd_gate_body"; then r1=recorded; else r1=SILENT; fi
-t nbd-gate-records-that-it-fired recorded "$r1"
-# And records it UNCONDITIONALLY: the fallback makes the record independent of
-# the id render, so an empty open_pr_ids cannot make the line blame the ledger
-# for what the slot did. Text here, behaviour in claim.test.sh, which drives the
-# production gate with an empty render (gate-record-survives-empty-ids).
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq 'slot_prs="${open_pr_ids:-' <<<"$nbd_gate_body"; then r1=always; else r1=CONDITIONAL; fi
-t nbd-gate-record-is-unconditional always "$r1"
-# One listing, several derived facts (the comment at the top of the block). A
-# second ready listing would let the board count disagree with the set it
-# describes. Two are expected and neither is new: the pre-session enumeration
-# and #264's post-session re-query.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-nbd_ready_listings="$(grep -Fc 'gh issue list -R "$R" --state open --label "$LABEL_READY"' "$BUILDER_MOD")"
-t nbd-no-second-ready-listing 2 "$nbd_ready_listings"
-# Spec decision 3: a single-cause line stays exactly as it was, and no new log
-# lines are added. Only the build kind has three causes to tell apart.
-for nbd_kind in resume ci-red handoff rebase; do
-  # shellcheck disable=SC2016  # Match literal shell source, not test variables.
-  if grep -Fq "log \"\$R: no $nbd_kind duty\"" "$BUILDER_MOD"; then r1=plain; else r1=CHANGED; fi
-  t "nbd-other-kind-untouched-$nbd_kind" plain "$r1"
-done
-# Must-not-change: the positive line and the board-anomaly NOTE.
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq 'log "$R: build duty (ready unclaimed=$ready_count, whole rounds owed=$cr_count)"' \
-     "$BUILDER_MOD"; then r1=intact; else r1=CHANGED; fi
-t nbd-positive-line-intact intact "$r1"
-# shellcheck disable=SC2016  # Match literal shell source, not test variables.
-if grep -Fq 'ready issue(s) WITH an assignee (board anomaly; hygiene'"'"'s to fix)' \
-     "$BUILDER_MOD"; then r1=intact; else r1=CHANGED; fi
-t nbd-anomaly-note-intact intact "$r1"
-
-# --- the triage board poll follows the mention session (#253) ---------------
-# _triage_repo used to compute all four board signals, THEN run the mention
-# session (ceiling TIMEOUT_MENTION=1500), THEN decide on the values it had
-# computed up to 25 minutes earlier — so a lead that died during the session
-# still spent a full triage session, and a signal born during it waited a
-# whole tick. These drive the real module under a stateful `gh` shim whose
-# answers change when the mention session runs, in the shape _handoff_finalize
-# is tested in above.
-TRD="$TMP/tr-duty"; TRS="$TMP/tr-shim"; TRF="$TMP/tr-fix"
-mkdir -p "$TRD/lib/jq" "$TRD/work" "$TRD/conf" "$TRS" "$TRF"
-cp "$SHARED/lib/jq/blockers.jq" "$TRD/lib/jq/"
-cp -r "$SHARED/prompts" "$TRD/prompts"
-# The label vocabulary comes from the SHIPPED conf, not from assignments in
-# this file (#358). The runner calls load_fleet_conf against this copy, so a
-# queue label the engine's config does not define is a label these fixtures
-# cannot silently supply on its behalf.
-cp "$SHARED/conf/fleet.defaults.conf" "$TRD/conf/"
-TR_CALLS="$TMP/tr-calls.log"; TR_PHASE="$TMP/tr-phase"
-TR_LOG="$TMP/tr-log.txt"; TR_PROMPT="$TMP/tr-prompt"
-
-# Phase 1 is the board before the mention session, phase 2 the board after it;
-# the runner's run_session override flips the phase file. Every invocation is
-# recorded, so the call log doubles as the "no extra reads" guard.
-cat >"$TRS/gh" <<'TRGH'
-#!/usr/bin/env bash
-set -eu
-# One line per invocation — the GraphQL query argument is multi-line, and the
-# call log is counted, not just grepped.
-printf '%s\n' "${*//$'\n'/ }" >>"$TR_CALLS"
-p=1; [ -f "$TR_PHASE" ] && p="$(cat "$TR_PHASE")"
-case "$*" in
-  *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
-  *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
-  *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
-  *"--label blocked"*)      cat "$TR_FIX/blocked.$p.json" ;;
-  *"--state all"*)          cat "$TR_FIX/numstates.json" ;;
-  *"number,body,labels,updatedAt"*) cat "$TR_FIX/board.$p.json" ;;
-  *"issue list"*)           cat "$TR_FIX/stray.$p.json" ;;
-  *)                        printf '[]\n' ;;
-esac
-exit 0
-TRGH
-chmod +x "$TRS/gh"
-
-cat >"$TMP/tr-run.sh" <<'TRRUN'
-#!/usr/bin/env bash
-set -uo pipefail
-# shellcheck disable=SC1091
-. "$SHARED_DIR/lib/common.sh"
-# shellcheck disable=SC1091
-. "$SHARED_DIR/lib/duty-triage.sh"
-load_fleet_conf
-run_session() {
-  printf 'SESSION %s\n' "$1" >>"$TR_CALLS"
-  printf '%s' "$5" >"$TR_PROMPT.$1"
-  # Phase 2 is the server state after either kind of session returns. The
-  # production success path must re-read this state rather than committing
-  # the phase-1 rows that launched it (#359).
-  printf '2' >"$TR_PHASE"
-  RUN_SESSION_RC="${TR_SESSION_RC:-0}"
-}
-ensure_checkout() { return 0; }
-_triage_repo o/r
-TRRUN
-
-# Stray and discussion arguments are optional and default to an empty board,
-# so calls written before their fixtures keep their meaning.
-tr_fix() {  # notif nt1 nt2 blocked1 blocked2 numstates [stray1] [stray2] [disc1] [disc2]
-  local p nt_file blocked_file stray_file
-  printf '%s' "$1" >"$TRF/notif.json"
-  printf '%s' "$2" >"$TRF/nt.1.json";      printf '%s' "$3" >"$TRF/nt.2.json"
-  printf '%s' "$4" >"$TRF/blocked.1.json"; printf '%s' "$5" >"$TRF/blocked.2.json"
-  printf '%s' "$6" >"$TRF/numstates.json"
-  printf '%s' "${7:-[]}" >"$TRF/stray.1.json"
-  printf '%s' "${8:-${7:-[]}}" >"$TRF/stray.2.json"
-  printf '%s' "${9:-}" >"$TRF/disc.1.rows"
-  printf '%s' "${10:-${9:-}}" >"$TRF/disc.2.rows"
-  for p in 1 2; do
-    nt_file="$TRF/nt.$p.json"
-    blocked_file="$TRF/blocked.$p.json"
-    stray_file="$TRF/stray.$p.json"
-    jq -s '
-      (.[0] | map(. + {body:(.body // null), labels:[{name:"needs-triage"}]}))
-      + (.[1] | map(. + {updatedAt:(.updatedAt // "2026-08-01T00:00:00Z"),
-                         labels:[{name:"blocked"}]}))
-      + (.[2] | map(. + {body:(.body // null)}))
-    ' "$nt_file" "$blocked_file" "$stray_file" >"$TRF/board.$p.json"
-  done
-}
-tr_tick() {  # tr_tick <run_session rc>, preserving ledgers from earlier ticks
-  : >"$TR_CALLS"
-  rm -f "$TR_PHASE" "$TR_PROMPT".*
-  SHARED_DIR="$SHARED" TR_CALLS="$TR_CALLS" TR_PHASE="$TR_PHASE" TR_FIX="$TRF" \
-  TR_PROMPT="$TR_PROMPT" TR_SESSION_RC="$1" DUTY_DIR="$TRD" ME=me-bot \
-  TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 \
-  PATH="$TRS:$PATH" bash "$TMP/tr-run.sh" >"$TR_LOG" 2>&1
-}
-tr_run() {  # tr_run <run_session rc>, starting with cold ledgers
-  rm -f "$TRD"/.seen-* "$TRD"/.suppressed-*
-  tr_tick "$1"
-}
-trc() { grep -c -- "$1" "$TR_CALLS"; }
-TR_MENTION='[{"id":"t1","reason":"mention","updated_at":"2026-08-01T15:40:00Z",
-  "repository":{"full_name":"o/r"},"subject":{"url":"https://api/x"}}]'
-TR_LEAD='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-01T15:30:00Z"}]'
-TR_LANDED='[{"number":216,"state":"CLOSED"}]'
-
-# The reported case: the sweep clears #244 forty-four seconds after the poll,
-# and the session that would have been launched on it starts nineteen minutes
-# later. Polled after the mention session, the lead is simply gone.
-tr_fix "$TR_MENTION" '[]' '[]' "$TR_LEAD" '[]' "$TR_LANDED"
-tr_run 0
-t triage253-dead-lead-spends-no-triage-session 0 "$(trc '^SESSION triage$')"
-t triage253-dead-lead-still-runs-the-mention 1 "$(trc '^SESSION mention$')"
-if grep -q 'no triage signals — mention session was the only wake' "$TR_LOG"; then
-  r1=said; else r1="$(cat "$TR_LOG")"; fi
-t triage253-dead-lead-logs-mention-only said "$r1"
-# Asserted on the prompt text, not only the session count: the two differ the
-# moment another signal is live.
-if [ -f "$TR_PROMPT.triage" ] && grep -q '244' "$TR_PROMPT.triage"; then
-  r1=STALE_LEAD; else r1=none; fi
-t triage253-dead-lead-not-in-prompt none "$r1"
-
-# The positive control that keeps the assertion above from being vacuous: a
-# lead that is STILL live after the mention session reaches the prompt.
-tr_fix "$TR_MENTION" '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
-tr_run 0
-t triage253-live-lead-launches-triage 1 "$(trc '^SESSION triage$')"
-if grep -q 'unblockable' "$TR_PROMPT.triage" && grep -q '244' "$TR_PROMPT.triage"; then
-  r1=named; else r1=MISSING; fi
-t triage253-live-lead-named-in-prompt named "$r1"
-
-# The inverse: a signal BORN during the mention session is seen by the same
-# tick instead of waiting for the next one.
-tr_fix "$TR_MENTION" '[]' '[{"number":999,"updatedAt":"2026-08-01T15:50:00Z"}]' \
-  '[]' '[]' '[]'
-tr_run 0
-t triage253-newborn-signal-wakes-same-tick 1 "$(trc '^SESSION triage$')"
-if grep -q '1x needs-triage' "$TR_LOG"; then r1=named; else r1="$(cat "$TR_LOG")"; fi
-t triage253-newborn-signal-in-log named "$r1"
-if grep -q 'o/r#999' "$TRD/.seen-triage-board"; then r1=ledgered; else r1=MISSING; fi
-t triage253-newborn-signal-ledgered ledgered "$r1"
-
-# Before any triage session launches, each signal is still polled exactly once.
-# A successful session deliberately adds the #359 exit-state reads; a quiet
-# tick adds none. These counts distinguish that bounded re-read from polling
-# twice before the launch decision.
-tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
-tr_run 0
-t triage253-reads-notifications-once 1 "$(trc 'api notifications')"
-t triage253-reads-needs-triage-once   1 "$(trc '--label needs-triage')"
-t triage253-reads-strays-once         1 "$(trc 'number,labels,updatedAt')"
-t triage253-reads-discussions-once    1 "$(trc 'api graphql')"
-t triage253-reads-blocked-once        1 "$(trc '--label blocked')"
-t triage253-gh-calls-with-mention     5 "$(grep -vc '^SESSION' "$TR_CALLS")"
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
-tr_run 0
-t triage253-gh-calls-without-mention  5 "$(grep -vc '^SESSION' "$TR_CALLS")"
-t triage253-quiet-tick-spends-nothing 0 "$(trc '^SESSION')"
-if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
-  r1=said; else r1="$(cat "$TR_LOG")"; fi
-t triage253-quiet-tick-log-unchanged said "$r1"
-# The state-map reads still ride the non-empty blocked list, and nothing else.
-tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
-tr_run 0
-t triage253-gh-calls-with-blocked-list 11 "$(grep -vc '^SESSION' "$TR_CALLS")"
-
-# The mention path itself is untouched — the regression that matters, since
-# this change moves code around that block. One session, kind mention, and the
-# ledger committed only on rc 0.
-tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
-tr_run 0
-t triage253-mention-only-one-session 1 "$(trc '^SESSION')"
-t triage253-mention-only-kind        1 "$(trc '^SESSION mention$')"
-if grep -q '^t1 ' "$TRD/.seen-mentions"; then r1=committed; else r1=MISSING; fi
-t triage253-mention-ledger-on-rc0 committed "$r1"
-tr_run 1
-if [ -f "$TRD/.seen-mentions" ]; then r1=COMMITTED; else r1=withheld; fi
-t triage253-mention-ledger-not-on-rcfail withheld "$r1"
-
-# Static ordering, in the style of the module-wiring checks above: every board
-# read must sit BELOW the mention call site, and the launch decision below all
-# of them. Cheap, and it fails loudly if a later edit hoists a poll back up.
-TRIAGE_MOD="$SHARED/lib/duty-triage.sh"
-tr_ln() { grep -Fn -- "$1" "$TRIAGE_MOD" | head -1 | cut -d: -f1; }
-tr_mention_ln="$(tr_ln 'run_session mention')"
-# shellcheck disable=SC2016  # matching the module's literal source text
-tr_decide_ln="$(tr_ln '[ -z "$signals" ]')"
-# shellcheck disable=SC2016  # ditto
-for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
-             '_triage_discussion_items "$R"' '--label "$LABEL_BLOCKED"'; do
-  probe_ln="$(tr_ln "$probe")"
-  if [ -n "$probe_ln" ] && [ "$probe_ln" -gt "$tr_mention_ln" ]; then
-    r1=after; else r1="BEFORE($probe_ln vs $tr_mention_ln)"; fi
-  t "triage253-poll-after-mention:$probe" after "$r1"
-  if [ -n "$probe_ln" ] && [ "$probe_ln" -lt "$tr_decide_ln" ]; then
-    r1=before; else r1="AFTER($probe_ln vs $tr_decide_ln)"; fi
-  t "triage253-poll-before-decision:$probe" before "$r1"
-done
-
-# --- #359: successful triage sessions settle ledgers at their exit state ---
-TR359_T1='2026-08-05T10:00:00Z'
-TR359_T2='2026-08-05T10:05:00Z'
-TR359_T3='2026-08-05T10:10:00Z'
-tr359_nt() { jq -nc --arg s "$1" '[{number:116,updatedAt:$s}]'; }
-
-# A session comments on an item and leaves it needs-triage. The post-session
-# timestamp, not the launching timestamp, is committed; the following tick is
-# therefore quiet even though the item remains in the query.
-tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
-tr_run 0
-t triage359-self-write-first-tick-launches 1 "$(trc '^SESSION triage$')"
-if grep -q "o/r#116 $TR359_T2" "$TRD/.seen-triage-board"; then r1=post; else r1=STALE; fi
-t triage359-self-write-commits-post-session post "$r1"
-tr_fix '[]' "$(tr359_nt "$TR359_T2")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
-tr_tick 0
-t triage359-self-write-next-tick-quiet 0 "$(trc '^SESSION triage$')"
-
-# Genuine activity after that session advances the board beyond the committed
-# value and buys one new session. This is the side the safe re-read must retain.
-tr_fix '[]' "$(tr359_nt "$TR359_T3")" "$(tr359_nt "$TR359_T3")" '[]' '[]' '[]'
-tr_tick 0
-t triage359-third-party-later-write-rewakes 1 "$(trc '^SESSION triage$')"
-
-# Discussion rows use the same exit-state contract, with their own ledger.
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
-  "o/r#8 $TR359_T1" "o/r#8 $TR359_T2"
-tr_run 0
-if grep -q "o/r#8 $TR359_T2" "$TRD/.seen-discussions"; then r1=post; else r1=STALE; fi
-t triage359-discussion-commits-post-session post "$r1"
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
-  "o/r#8 $TR359_T2" "o/r#8 $TR359_T2"
-tr_tick 0
-t triage359-discussion-next-tick-quiet 0 "$(trc '^SESSION triage$')"
-
-# A failed session commits none of the three ledgers. Crash-only retry remains
-# the distinction between "declined" and "never got there".
-tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
-tr_run 1
-if [ -f "$TRD/.seen-triage-board" ]; then r1=COMMITTED; else r1=withheld; fi
-t triage359-failed-session-commits-no-board withheld "$r1"
-
-# A standing unblockable lead costs one session. Its exit timestamp settles
-# the dedicated ledger; subsequent ticks report the stable lead once without
-# launching, and report_suppressed then quiets the unchanged warning.
-TR359_BLOCK_1='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:00:00Z"}]'
-TR359_BLOCK_2='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:05:00Z"}]'
-tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
-tr_run 1
-if [ -f "$TRD/.seen-unblockable" ]; then r1=COMMITTED; else r1=withheld; fi
-t triage359-failed-session-commits-no-unblockable withheld "$r1"
-tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
-tr_run 0
-t triage359-unblockable-first-tick-launches 1 "$(trc '^SESSION triage$')"
-if grep -q 'o/r#244 2026-08-05T11:05:00Z' "$TRD/.seen-unblockable"; then r1=post; else r1=MISSING; fi
-t triage359-unblockable-commits-post-session post "$r1"
-tr_fix '[]' '[]' '[]' "$TR359_BLOCK_2" "$TR359_BLOCK_2" "$TR_LANDED"
-tr_tick 0
-t triage359-unblockable-next-tick-spends-no-session 0 "$(trc '^SESSION triage$')"
-if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=warned; else r1=SILENT; fi
-t triage359-unblockable-suppression-reported warned "$r1"
-tr_tick 0
-if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=REPEATED; else r1=quiet; fi
-t triage359-unblockable-stable-warning-once quiet "$r1"
-
-# --- #358: post-merge is a queue label, and the engine's set is LABELS.md's -
-# LABELS.md declares a SIX-label board invariant; fleet.defaults.conf defined
-# five and signal (b) selected on those five. So the moment triage did its job
-# — a Refs-linked PR merges, the issue moves claimed -> post-merge — it turned
-# that issue into a permanent violation of the engine's own invariant, one no
-# session could ever clear because post-merge is the correct terminal state.
-# All four live matches on this board were that false positive.
-#
-# Both directions are driven through the real module and the same shim: the
-# select is proven by what it selects, never by reading it. The label values
-# reach the module from the SHIPPED conf (see the TRD/conf copy above), so a
-# label the engine's config does not define cannot pass here.
-TR358_STAMP='2026-08-05T00:00:00Z'
-tr358_board() {  # tr358_board <label|-> ... — one open issue per argument
-  printf '%s\n' "$@" | jq -R . | jq -cs --arg s "$TR358_STAMP" \
-    'to_entries | map({number: (100 + .key),
-                       labels: (if .value == "-" then [] else [{name: .value}] end),
-                       updatedAt: $s})'
-}
-
-# Direction one — an issue whose only queue label is post-merge is not a stray.
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$(tr358_board post-merge)"
-tr_run 0
-t triage358-post-merge-spends-no-session 0 "$(trc '^SESSION')"
-if grep -q 'queue-unlabeled' "$TR_LOG"; then r1="$(cat "$TR_LOG")"; else r1=silent; fi
-t triage358-post-merge-raises-no-signal silent "$r1"
-if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
-  r1=quiet; else r1="$(cat "$TR_LOG")"; fi
-t triage358-post-merge-tick-is-quiet quiet "$r1"
-# The fixture analogue of this issue's post-merge criterion: the suppression
-# report must not name it either. A signal that is merely ledgered still WARNs
-# every tick, which is the cost this issue is about.
-suppressed_triage_board="$(cat "$TRD"/.suppressed-triage-board.* 2>/dev/null)"
-if grep -q 'o/r#100' <<<"$suppressed_triage_board"; then
-  r1=NAMED; else r1=absent; fi
-t triage358-post-merge-not-in-suppressed absent "$r1"
-
-# Direction two — an issue carrying none of the six still is one. The detector
-# is narrowed to the truth, not silenced; a select widened until it is quiet is
-# the failure mode this half exists to prevent.
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$(tr358_board -)"
-tr_run 0
-t triage358-unlabeled-still-a-stray 1 "$(trc '^SESSION triage$')"
-if grep -q '1x queue-unlabeled' "$TR_LOG"; then r1=named; else r1="$(cat "$TR_LOG")"; fi
-t triage358-unlabeled-signal-named named "$r1"
-# ...and a label outside the queue vocabulary does not stand in for one.
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$(tr358_board bug)"
-tr_run 0
-t triage358-non-queue-label-still-a-stray 1 "$(trc '^SESSION triage$')"
-
-# The doctrine's own sentence, parsed rather than restated: from its opening
-# clause to the end of that sentence, which is the first backtick-then-period
-# — the full stop closing the last backticked label.
-tr358_doctrine="$(awk '
-  /invariant a board scan relies on/ { on = 1 }
-  on { printf "%s ", $0 }
-  on && /`\./ { exit }
-' "$ROOT/.ceremony/LABELS.md")"
-tr358_doctrine="${tr358_doctrine%%\`.*}\`"
-# shellcheck disable=SC2016  # a grep pattern: the backticks are LABELS.md's
-tr358_doctrine_set="$(printf '%s' "$tr358_doctrine" | grep -o '`[a-z][a-z-]*`' \
-  | tr -d '`' | sort -u | tr '\n' ' ')"
-# Anti-vacuity guard, and the only place a count is written down: without it a
-# parse that silently stops matching compares an empty set to an empty set and
-# passes. It asserts cardinality, never membership — the comparison below is
-# what asserts which labels, and it is derived on both sides.
-t triage358-doctrine-set-nonvacuous 6 "$(printf '%s' "$tr358_doctrine_set" | wc -w | tr -d ' ')"
-
-# The engine's set, taken from signal (b)'s own --arg list and resolved through
-# the shipped conf. A label added to LABELS.md and not to the engine fails
-# here, and so does one added to the engine and not to LABELS.md.
-tr358_select="$(awk '/elif ! stray_items=/,/stray parse failed/' "$SHARED/lib/duty-triage.sh")"
-# shellcheck disable=SC2016  # a grep pattern: the $LABEL_ is the module's text
-tr358_pairs="$(printf '%s\n' "$tr358_select" \
-  | grep -o -- '--arg [a-z_]* "\$LABEL_[A-Z_]*"' \
-  | sed 's/--arg \([a-z_]*\) "\$\(LABEL_[A-Z_]*\)"/\1 \2/')"
-tr358_engine_set=""
-while read -r tr358_arg tr358_var; do
-  [ -n "${tr358_arg:-}" ] || continue
-  # Declared is not consulted: an --arg the select never tests is a label the
-  # engine does not actually accept, so it is reported rather than counted.
-  case "$tr358_select" in
-    *". == \$$tr358_arg"*) ;;
-    *) tr358_engine_set="$tr358_engine_set UNCONSULTED-$tr358_arg"; continue ;;
-  esac
-  tr358_engine_set="$tr358_engine_set $(sed -n "s/^$tr358_var=\"\(.*\)\"\$/\1/p" \
-    "$SHARED/conf/fleet.defaults.conf" | head -1)"
-done <<TR358PAIRS
-$tr358_pairs
-TR358PAIRS
-# shellcheck disable=SC2086  # deliberate word-splitting: these are set members
-tr358_engine_set="$(printf '%s\n' $tr358_engine_set | sort -u | tr '\n' ' ')"
-t triage358-engine-set-is-the-doctrine-set "$tr358_doctrine_set" "$tr358_engine_set"
-# Named separately so the conf's own omission — the whole defect — reads as
-# itself rather than as a set diff.
-if grep -q '^LABEL_POST_MERGE="post-merge"$' "$SHARED/conf/fleet.defaults.conf"; then
-  r1=defined; else r1=MISSING; fi
-t triage358-conf-defines-post-merge defined "$r1"
-
-# The reviewer must carry updated_at from the existing pulls page, partition
-# before assembling per-repo prompts, and commit that repo's exact fresh set.
-REVIEW_MOD="$SHARED/lib/duty-review.sh"
-if grep -Fq "\\(.updated_at) \\(\$sr) \\(.number)" "$REVIEW_MOD"; then r1=carried; else r1=MISSING; fi
-t review-carries-updated-at carried "$r1"
-if grep -q 'fresh_items=.*ledger_filter.*seen-review' "$REVIEW_MOD" &&
-   grep -q 'suppressed=.*ledger_suppressed.*seen-review' "$REVIEW_MOD"; then
-  r1=partitioned
-else
-  r1=UNPARTITIONED
-fi
-t review-partitions-before-prompt partitioned "$r1"
-commit_block="$(awk '
-  /if \[ "\$\{RUN_SESSION_RC:-1\}" -eq 0 \]; then/ { inside=1 }
-  inside { print }
-  inside && /^[[:space:]]*fi$/ { exit }
-' "$REVIEW_MOD")"
-if grep -Fq "\${repo_items[\$SR]}" <<<"$commit_block" &&
-   grep -Fq "ledger_commit \"\$DUTY_DIR/.seen-review\"" <<<"$commit_block"; then
-  r1=exact
-else
-  r1=MISMATCH
-fi
-t review-commits-prompted-set exact "$r1"
-if grep -q 'report_suppressed_if_complete.*sweep_complete' "$REVIEW_MOD"; then
-  r1=guarded
-else
-  r1=UNGUARDED
-fi
-t review-partial-sweep-preserves-report-state guarded "$r1"
-
-# Behavioral mixed case: #5 is unchanged and suppressed; #6 in the same repo
-# is fresh. Only #6 enters the prompted/committed set. After that successful
-# commit both are settled; advancing #5's updated_at wakes it again.
-RLG="$TMP/review-ledger"
-printf 'o/r#5 T1\n' | ledger_commit "$RLG"
-RQ="$(printf 'o/r#5 T1\no/r#6 T1\n')"
-RP="$(printf '%s\n' "$RQ" | ledger_filter "$RLG")"
-RS="$(printf '%s\n' "$RQ" | ledger_suppressed "$RLG")"
-t review-mixed-prompt-only-fresh "o/r#6 T1" "$RP"
-t review-mixed-report-only-suppressed "o/r#5 T1" "$RS"
-printf '%s\n' "$RP" | ledger_commit "$RLG"
-t review-mixed-commit-settles-both 0 "$(printf '%s\n' "$RQ" | ledger_filter "$RLG" | n)"
-t review-advanced-suppressed-rewakes "o/r#5 T2" \
-  "$(printf 'o/r#5 T2\n' | ledger_filter "$RLG")"
-
-# --- the registry bounds EVERY module, attention included (#52, #66) ------
-# drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to
-# tick if it cannot. That is containment only for modules which actually
-# consult the file, so it is asserted rather than believed.
-#
-# The list was review, builder, triage, hygiene. The reviewer was the exception
-# until 2026-07-25 (an org-wide requested_reviewers sweep no registry could
-# bound) — which is what #52 was filed doubting — and the attention wake was
-# the exception until 2026-07-27, when danmt ruled on #66 that the registry
-# bounds it too. `examples/repos.txt` asserted the universal for two days longer
-# than the engine honoured it, and that header is what an operator reads when
-# deciding whether narrowing the file contains a box.
-for mod in review builder triage hygiene attention; do
-  if grep -q 'REPOS_FILE' "$SHARED/lib/duty-$mod.sh"; then r1=scoped; else r1=UNSCOPED; fi
-  t "registry-scoped-$mod" scoped "$r1"
-done
-
-# ...and scoped BEHAVIOURALLY, not just by mentioning the file. The partition
-# is the ruling, so it is exercised directly: a grep for REPOS_FILE would pass
-# against a module that read the registry and then ignored it.
-# Definition-only at the top level, so sourcing costs nothing and runs nothing.
-# shellcheck disable=SC1091
-source "$SHARED/lib/duty-attention.sh"
-ATT_MOD="$SHARED/lib/duty-attention.sh"
-ATT_REG="$(printf 'heavy-duty/ceremony\nheavy-duty/rig\n')"
-ATT_ROWS="$(printf 'heavy-duty/ceremony 12 T1\nouter/thing 7 T2\nheavy-duty/rig 3 T3\n')"
-ATT_OUT="$(printf '%s\n' "$ATT_ROWS" | _attention_partition "$ATT_REG")"
-t attention-in-registry-acted "IN heavy-duty/ceremony 12 T1
-IN heavy-duty/rig 3 T3" "$(printf '%s\n' "$ATT_OUT" | grep '^IN ')"
-t attention-outside-registry-not-acted "OUT outer/thing 7 T2" \
-  "$(printf '%s\n' "$ATT_OUT" | grep '^OUT ')"
-# A prefix must not count as membership: `heavy-duty/rig` in the registry must
-# not authorize `heavy-duty/rig-fork`. grep -qxF, never a substring match.
-t attention-prefix-is-not-membership "OUT heavy-duty/rig-fork 9 T4" \
-  "$(printf 'heavy-duty/rig-fork 9 T4\n' | _attention_partition "$ATT_REG" | grep '^OUT ')"
-# An empty registry authorizes nothing — it must not read as "no filter".
-t attention-empty-registry-acts-on-nothing "" \
-  "$(printf '%s\n' "$ATT_ROWS" | _attention_partition "" | grep '^IN ' || true)"
-
-# --- malformed attention audit (#303) --------------------------------------
-ATT_AUDIT_ROWS="$(printf 'heavy-duty/crew 285 issue 1\nheavy-duty/crew 310 issue 0\nheavy-duty/crew 293 pr 0\nheavy-duty/crew 294 pr 1\n')"
-t attention-audit-classifies-all-shapes "OK heavy-duty/crew 285 issue 1
-UNASSIGNED heavy-duty/crew 310 issue 0
-PR heavy-duty/crew 293 pr 0
-PR heavy-duty/crew 294 pr 1" \
-  "$(printf '%s\n' "$ATT_AUDIT_ROWS" | _attention_audit_classify)"
-t attention-audit-empty-input-is-empty "" \
-  "$(printf '' | _attention_audit_classify)"
-
-ATT_AUDIT="$TMP/attention-audit"
-mkdir -p "$ATT_AUDIT"
-# shellcheck disable=SC2034,SC2317  # variables/functions consumed by the sourced audit
-attention_audit_case() { # attention_audit_case <rows> [failed-repo] [registry]
-  local supplied="$1" failed="${2:-}" registry="${3:-heavy-duty/crew}" rc
-  : >"$ATT_AUDIT/gh-calls"
-  (
-    DUTY_DIR="$ATT_AUDIT"
-    REPOS_FILE="$ATT_AUDIT/repos.txt"
-    LABEL_ATTENTION=attention
-    read_repo_list() { printf '%s\n' "$registry"; }
-    gh() {
-      printf 'GH %s\n' "$*" >>"$ATT_AUDIT/gh-calls"
-      case "$*" in *"/repos/$failed/issues?"*) return 1 ;; esac
-      printf '%s\n' "$supplied"
-    }
-    warn() { printf 'WARN %s\n' "$*"; }
-    alert() { printf 'ALERT %s\n' "$*"; }
-    duty_attention_audit
-    rc=$?
-    printf 'RC %s\n' "$rc"
-  )
-}
-
-# A valid board is silent apart from its single bounded read.
-rm -f "$ATT_AUDIT/.attention-malformed"
-ATT_AUDIT_OK="$(attention_audit_case 'heavy-duty/crew 285 issue 1')"
-t attention-audit-valid-board-has-no-warning 0 \
-  "$(printf '%s\n' "$ATT_AUDIT_OK" | grep -c '^WARN ' || true)"
-t attention-audit-valid-board-has-no-alert 0 \
-  "$(printf '%s\n' "$ATT_AUDIT_OK" | grep -c '^ALERT ' || true)"
-t attention-audit-one-read-per-registry-repo 1 \
-  "$(grep -c '^GH api /repos/heavy-duty/crew/issues?' "$ATT_AUDIT/gh-calls" || true)"
-
-# A fetch failure is evidence, not a failed tick, and leaves report state
-# untouched so a partial registry sweep cannot falsely announce a repair.
-printf 'heavy-duty/crew#293 PR\n' >"$ATT_AUDIT/.attention-malformed"
-ATT_AUDIT_FAIL="$(attention_audit_case '' heavy-duty/crew "$(printf 'heavy-duty/crew\nother/repo\n')")"
-t attention-audit-fetch-failure-warns 1 \
-  "$(printf '%s\n' "$ATT_AUDIT_FAIL" | grep -c '^WARN ' || true)"
-t attention-audit-fetch-failure-returns-zero 'RC 0' \
-  "$(printf '%s\n' "$ATT_AUDIT_FAIL" | tail -1)"
-t attention-audit-fetch-failure-keeps-state 'heavy-duty/crew#293 PR' \
-  "$(cat "$ATT_AUDIT/.attention-malformed")"
-t attention-audit-fetch-failure-still-reads-later-repos 2 \
-  "$(grep -c '^GH api /repos/' "$ATT_AUDIT/gh-calls" || true)"
-
-# report_suppressed makes a stable malformed set speak once, then re-arms
-# when the set changes. The operator alert follows exactly the same cadence.
-rm -f "$ATT_AUDIT/.attention-malformed"
-ATT_AUDIT_TWO="$(attention_audit_case "$(printf 'heavy-duty/crew 293 pr 0\nheavy-duty/crew 310 issue 0\n')")"
-ATT_AUDIT_SAME="$(attention_audit_case "$(printf 'heavy-duty/crew 293 pr 0\nheavy-duty/crew 310 issue 0\n')")"
-ATT_AUDIT_ONE="$(attention_audit_case 'heavy-duty/crew 293 pr 0')"
-t attention-audit-first-set-reports 1 \
-  "$(printf '%s\n' "$ATT_AUDIT_TWO" | grep -c '^WARN ' || true)"
-t attention-audit-first-set-alerts 1 \
-  "$(printf '%s\n' "$ATT_AUDIT_TWO" | grep -c '^ALERT ' || true)"
-t attention-audit-unchanged-set-is-silent 0 \
-  "$(printf '%s\n' "$ATT_AUDIT_SAME" | grep -Ec '^(WARN|ALERT) ' || true)"
-t attention-audit-shrunk-set-reports 1 \
-  "$(printf '%s\n' "$ATT_AUDIT_ONE" | grep -c '^WARN ' || true)"
-t attention-audit-shrunk-set-alerts 1 \
-  "$(printf '%s\n' "$ATT_AUDIT_ONE" | grep -c '^ALERT ' || true)"
-
-# Pin the wiring and the negative contract: one call, inside both the triage
-# role and interval guards, before hygiene; no board write or model launch.
-DUTYSH="$SHARED/bin/duty.sh"
-AUDIT_BLOCK="$(awk '/if has_role triage; then/{b=$0 ORS; next} b!=""{b=b $0 ORS} /duty_hygiene &&/{print b; exit}' "$DUTYSH")"
-if grep -q 'HYGIENE_INTERVAL' <<<"$AUDIT_BLOCK" &&
-   grep -q 'duty_attention_audit' <<<"$AUDIT_BLOCK" &&
-   grep -q 'duty_hygiene' <<<"$AUDIT_BLOCK"; then r1=gated; else r1=UNGATED; fi
-t attention-audit-is-triage-hygiene-gated gated "$r1"
-t attention-audit-has-one-call-site 1 \
-  "$(grep -c '^[[:space:]]*duty_attention_audit$' "$DUTYSH")"
-AUDIT_SOURCE="$(awk '/^duty_attention_audit\(\)/,/^}/' "$ATT_MOD")"
-if grep -Eq 'gh api -X|--method|gh issue edit|run_session' <<<"$AUDIT_SOURCE"; then
-  r1=WRITES
-else
-  r1=read-only
-fi
-t attention-audit-is-read-only read-only "$r1"
-# shellcheck disable=SC2016  # matching the literal query, not expanding it
-if grep -Fq '/issues?filter=assigned&state=open&labels=$LABEL_ATTENTION&per_page=100' "$ATT_MOD"; then
-  r1=unchanged
-else
-  r1=CHANGED
-fi
-t attention-wake-query-unchanged unchanged "$r1"
-# shellcheck disable=SC2016  # matching the prompt's literal Markdown
-if grep -Fq 'put `attention` on the assigned issue that owns the claim — never on a pull request or an unassigned issue' \
-     "$SHARED/prompts/triage.txt"; then r1=named; else r1=MISSING; fi
-t triage-prompt-names-attention-target named "$r1"
-
-# --- the attention wake is ledgered too (#59's last site) --------------------
-# It looked exempt: the pickup session acks by REMOVING the label, so the
-# signal self-clears, and the module documents a deliberate crash-only retry.
-# Both true, and neither covers a session that COMPLETES and correctly declines
-# to ack — needs a ruling, not this box's to answer, already handled. Nothing
-# removes the label and the wake re-fires every tick.
-#
-# It is the worst place in the engine for that: TIMEOUT_ATTENTION is 1800s,
-# duty_attention runs FIRST, and it runs for EVERY role on EVERY box, where
-# every other signal site is confined to one role.
-ALG="$TMP/attention-ledger"
-ATT_IN="$(printf 'o/r#4 T1\no/r#9 T1\n')"
-t attention-first-tick-both-fire 2 "$(printf '%s\n' "$ATT_IN" | ledger_filter "$ALG" | n)"
-# #4's session completed and acked (the row is gone from the query next tick);
-# #9's completed and declined, so only #9's id was committed.
-printf 'o/r#9 T1\n' | ledger_commit "$ALG"
-t attention-declined-does-not-refire 0 "$(printf 'o/r#9 T1\n' | ledger_filter "$ALG" | n)"
-# ...but it is still SAID, once per change to the set.
-t attention-declined-is-reported "o/r#9" \
-  "$(printf 'o/r#9 T1\n' | ledger_suppressed "$ALG" | cut -d' ' -f1)"
-# A comment, an edit or a re-label advances updated_at — look again, which is
-# exactly when the box should.
-t attention-touched-demand-rewakes 1 "$(printf 'o/r#9 T2\n' | ledger_filter "$ALG" | n)"
-# A CRASHED session commits nothing, so the same id is still fresh next tick:
-# the module's documented crash-only retry has to survive the ledger.
-t attention-crashed-session-retries 1 "$(printf 'o/r#4 T1\n' | ledger_filter "$ALG" | n)"
-# The commit is gated on the session's own rc, per demand — a sibling that
-# succeeded must not settle one that died.
-if grep -q 'RUN_SESSION_RC:-1}" -eq 0' "$SHARED/lib/duty-attention.sh"; then r1=gated; else r1=UNGATED; fi
-t attention-ledger-commit-gated gated "$r1"
-# ...and the WAKE PATH must be the filtered set, which everything above this
-# line fails to prove: the assertions exercise ledger_filter, and the module
-# would still mention .seen-attention (in the suppression report) with the
-# filter deleted from the wake. Ripping `ledger_filter` out of the assignment
-# left all of them green. So the structure is pinned too — the same shape
-# duty-review.sh's `review-partitions-before-prompt` pins, and for the same
-# reason.
-ATT_MOD="$SHARED/lib/duty-attention.sh"
-# The SAME hole, one level up, and this one shipped to review: the behavioural
-# assertions call _attention_partition directly, so they cannot see a wake path
-# that computes the partition and then ignores it. kimi ran exactly that
-# mutation against d849f16 —
-#
-#   inside="$(printf '%s\n' "$rows" | awk '{ print $1 "#" $2, $3 }')"
-#
-# keeping the registry read and the partition function intact, and the suite
-# stayed 185 ok / 0 failed. So the wiring is pinned too: the acted set and the
-# reported set must both come from $partitioned, and $outside must be what
-# feeds the suppression report the operator alert keys on.
-# shellcheck disable=SC2016  # the literals the module contains, not expansions
-if grep -q 'inside=.*\$partitioned' "$ATT_MOD" &&
-   grep -q 'outside=.*\$partitioned' "$ATT_MOD" &&
-   grep -q 'printf .* "\$outside" *\\*$' "$ATT_MOD"; then
-  r1=wired
-else
-  r1=UNWIRED
-fi
-t attention-acted-set-comes-from-the-partition wired "$r1"
-
-# The two withheld sets are different events and must not read alike in
-# duty.log: a ledger suppression is an item a session SAW and declined; an
-# out-of-scope demand was never actionable by this box and no session ever saw
-# it. The default phrase stays for the three ledger callers.
-RSW="$TMP/rsw-state"
-report_suppressed_out="$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" 2>&1)"
-t report-suppressed-default-phrase reported \
-  "$(grep -q 'unactioned since a previous session' <<<"$report_suppressed_out" && echo reported || echo MISSING)"
-rm -f "$RSW"
-report_suppressed_out="$(printf 'x#1 T1\n' | report_suppressed "$RSW" "lbl" "never actionable here" 2>&1)"
-t report-suppressed-custom-phrase reported \
-  "$(grep -q 'never actionable here' <<<"$report_suppressed_out" && echo reported || echo MISSING)"
-rm -f "$RSW"
-if grep -q 'report_suppressed .*sc_state.*\\$' "$ATT_MOD" &&
-   grep -q 'this box does not carry' "$ATT_MOD"; then r1=distinct; else r1=BORROWED; fi
-t attention-scope-report-has-its-own-phrase distinct "$r1"
-# shellcheck disable=SC2016  # the literal the module contains, not an expansion
-if grep -q 'fresh=.*ledger_filter.*\.seen-attention' "$ATT_MOD" &&
-   grep -q 'rows="\$fresh"' "$ATT_MOD"; then
-  r1=filtered
-else
-  r1=UNFILTERED
-fi
-t attention-wake-set-is-the-filtered-set filtered "$r1"
-
-# The bound must not be silent, and for THIS module not only in duty.log: an
-# attention demand is somebody deliberately handing this box work, so a bound
-# that only logged would read to them as the box ignoring them.
-if grep -q 'report_suppressed' "$SHARED/lib/duty-attention.sh"; then r1=reported; else r1=SILENT; fi
-t attention-out-of-scope-reported reported "$r1"
-if grep -q 'alert ' "$SHARED/lib/duty-attention.sh"; then r1=pinged; else r1=LOG-ONLY; fi
-t attention-out-of-scope-pings-operator pinged "$r1"
-
-# --- builder attention dispatch and timeout evidence (#301) -----------------
-# A builder pickup may finish an existing PR in this slot, but must hand a new
-# build to the normal duty tick. Pin the ruling in both render layers so a
-# route/prompt drift cannot silently restore the half-budget build lifecycle.
-if grep -q 'test whether it already has an open PR' "$ATT_MOD" &&
-   ! grep -q 'IS build work: do it now' "$ATT_MOD"; then r1=dispatched; else r1=BUILDING; fi
-t attention-builder-route-dispatches-new-build dispatched "$r1"
-if grep -q 'For a builder claim with no open PR, your output is board state, never code' \
-     "$SHARED/prompts/attention.txt" &&
-   grep -q 'when one exists, keep the issue claimed and assigned' "$ATT_MOD" &&
-   grep -q 'A pushed branch keeps the issue claimed and assigned for ORPHANS resume' \
-     "$SHARED/prompts/attention.txt" &&
-   grep -q 'If a directed hold remains, keep the issue claimed and assigned' "$ATT_MOD" &&
-   grep -q 'a standing hold keeps it claimed and assigned with its park re-stated' \
-     "$SHARED/prompts/attention.txt" &&
-   grep -q 'Only when no build branch exists and no hold remains' "$ATT_MOD" &&
-   grep -q 'Only genuinely unstarted work with no remaining hold is unassigned' \
-     "$SHARED/prompts/attention.txt"; then
-  r1=dispatched
-else
-  r1=MISSING
-fi
-t attention-prompt-dispatches-new-build dispatched "$r1"
-# Production run_session, not only the behavior stub below, must expose the
-# immutable log path consumed by the timeout evidence branch.
-# shellcheck disable=SC2016  # literal source assignment, not test expansion
-if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common.sh"; then
-  r1=exposed
-else
-  r1=MISSING
-fi
-t attention-run-session-exposes-log exposed "$r1"
-# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
-if grep -q 'fragment-round-rules.txt.*MARK_ANSWERED="\$MARK_ANSWERED"' "$ATT_MOD"; then
-  r1=whole
-else
-  r1=BROKEN
-fi
-t attention-builder-round-rules-still-whole whole "$r1"
-if grep -q '^TIMEOUT_ATTENTION=1800$' "$SHARED/conf/fleet.defaults.conf"; then
-  r1=1800
-else
-  r1=CHANGED
-fi
-t attention-timeout-budget-unchanged 1800 "$r1"
-# duty_attention and duty_builder are separate sessions in one normal tick;
-# builder follows attention and launches through the full build budget.
-attention_ln="$(grep -n '^duty_attention$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
-builder_ln="$(grep -n '^  duty_builder$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
-# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
-builder_session_block="$(grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh")"
-# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
-if [ "$attention_ln" -lt "$builder_ln" ] &&
-   grep -q '"\$TIMEOUT_BUILD"' <<<"$builder_session_block"; then
-  r1=full-budget
-else
-  r1=BROKEN
-fi
-t attention-dispatch-reaches-normal-build-session full-budget "$r1"
-
-# Drive the actual wake with a stubbed run_session. The output log records only
-# externally visible effects: COMMENT, ALERT and LEDGER. This distinguishes all
-# three outcomes and proves the timeout branch does not settle the seen ledger.
-ATT_BEHAVIOR="$TMP/attention-behavior"
-mkdir -p "$ATT_BEHAVIOR/bin" "$ATT_BEHAVIOR/work"
-cat >"$ATT_BEHAVIOR/bin/post-once.sh" <<'ATTPO'
-#!/usr/bin/env bash
-printf 'COMMENT %s#%s %s\n' "$1" "$2" "$3" >>"$ATT_CALLS"
-ATTPO
-chmod +x "$ATT_BEHAVIOR/bin/post-once.sh"
-attention_case() { # attention_case <run_session rc> <tag>
-  local case_rc="$1" tag="${2:-one}" calls
-  calls="$ATT_BEHAVIOR/calls-$case_rc-$tag"
-  : >"$calls"
-  ATT_CASE_RC="$case_rc" ATT_CASE_TAG="$tag" ATT_CALLS="$calls" \
-    bash -s -- "$SHARED" "$ATT_BEHAVIOR" <<'ATTCASE'
-set -u
-SHARED="$1"; ATT_BEHAVIOR="$2"
-export ATT_CALLS
-LABEL_ATTENTION=attention
-REPOS_FILE="$ATT_BEHAVIOR/repos.txt"
-DUTY_DIR="$ATT_BEHAVIOR/duty"
-WORK_DIR="$ATT_BEHAVIOR/work"
-TREES_DIR="$ATT_BEHAVIOR/trees"
-BIN_DIR="$ATT_BEHAVIOR/bin"
-ME=builder
-TIMEOUT_ATTENTION=1800
-DOCTRINE_TRIAGE=TRIAGE.md
-DOCTRINE_ENTRYPOINT=AGENTS.md
-DOCTRINE_BUILDER=BUILDER.md
-DOCTRINE_REVIEWER=REVIEWER.md
-FLEET_TRIAGE=triage
-FLEET_BENCH=bench
-MARK_ADDRESSING=addressing
-MARK_ANSWERED=answered
-MARK_PICKUP=pickup
-mkdir -p "$DUTY_DIR"
-gh() { printf 'GH %s\n' "$*" >>"$ATT_CALLS"; printf 'o/r 9 T1\n'; }
-read_repo_list() { printf 'o/r\n'; }
-report_suppressed() { cat >/dev/null; }
-ledger_filter() { cat; }
-ledger_suppressed() { cat >/dev/null; }
-ledger_commit() { cat >/dev/null; printf 'LEDGER\n' >>"$ATT_CALLS"; }
-has_role() { [ "$1" = builder ]; }
-ensure_main_clone() { mkdir -p "$2"; }
-render_prompt() { printf 'prompt'; }
-run_session() {
-  RUN_SESSION_RC="$ATT_CASE_RC"
-  mkdir -p "$ATT_BEHAVIOR/logs"
-  RUN_SESSION_LOG="$ATT_BEHAVIOR/logs/$ATT_CASE_TAG.log"
-  : >"$RUN_SESSION_LOG"
-}
-alert() { printf 'ALERT %s\n' "$1" >>"$ATT_CALLS"; }
-warn() { printf 'WARN %s\n' "$1" >>"$ATT_CALLS"; }
-log() { :; }
-# shellcheck disable=SC1090
-source "$SHARED/lib/duty-attention.sh"
-duty_attention
-ATTCASE
-  cat "$calls"
-}
-ATT_124="$(attention_case 124)"
-t attention-timeout-comments-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^COMMENT ' || true)"
-t attention-timeout-alerts-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^ALERT ' || true)"
-t attention-timeout-names-session-log named \
-  "$(grep -q 'attention-o__r_9-latest.log' <<<"$ATT_124" && echo named || echo MISSING)"
-t attention-timeout-does-not-commit 0 "$(printf '%s\n' "$ATT_124" | grep -c '^LEDGER$' || true)"
-t attention-timeout-gh-read-only 1 "$(printf '%s\n' "$ATT_124" | grep -c '^GH api /issues?' || true)"
-t attention-timeout-gh-makes-no-writes 0 \
-  "$(printf '%s\n' "$ATT_124" | grep '^GH ' | grep -Ec 'issue edit| -X (POST|PATCH|DELETE)|--add-|--remove-' || true)"
-# A retry has a different immutable run log but hands post-once a byte-identical
-# stable link, so its exact-body match suppresses duplicate board comments.
-ATT_124_RETRY="$(attention_case 124 retry)"
-t attention-timeout-comment-body-stable \
-  "$(printf '%s\n' "$ATT_124" | grep '^COMMENT ')" \
-  "$(printf '%s\n' "$ATT_124_RETRY" | grep '^COMMENT ')"
-ATT_0="$(attention_case 0)"
-t attention-success-no-comment 0 "$(printf '%s\n' "$ATT_0" | grep -c '^COMMENT ' || true)"
-t attention-success-no-alert 0 "$(printf '%s\n' "$ATT_0" | grep -c '^ALERT ' || true)"
-t attention-success-commits-ledger 1 "$(printf '%s\n' "$ATT_0" | grep -c '^LEDGER$' || true)"
-ATT_1="$(attention_case 1)"
-t attention-crash-no-comment 0 "$(printf '%s\n' "$ATT_1" | grep -c '^COMMENT ' || true)"
-t attention-crash-no-alert 0 "$(printf '%s\n' "$ATT_1" | grep -c '^ALERT ' || true)"
-t attention-crash-does-not-commit 0 "$(printf '%s\n' "$ATT_1" | grep -c '^LEDGER$' || true)"
-
-# The drill's separate check survives the ruling, with a changed job: it used
-# to be the ONLY containment for this module, and is now an independent
-# verification that the filter above actually holds. Keeping it is the
-# difference between testing the invariant and trusting it.
-if grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal-safety.sh" &&
-   grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
-t "drill-checks-attention-outside-sandbox" checked "$r1"
-
-# --- an idle tick is not a silent one (#53) -------------------------------
-# The floor's SILENT rule is "no duty.log line for two tick boundaries", which
-# is sound only if a tick that finds no work still writes. duty.sh logs
-# `duty run start` before any role dispatch and `duty run end` on every exit
-# path, and tick.sh covers the rest (skipped, FAILED) — so a duty.log with
-# nothing new means no tick RAN, which is a cron problem, never a healthy idle
-# box. That is the diagnosis #53 needed, and this keeps it true: an early
-# `exit` added between the two lines would turn an idle box into an offline one
-# on the console, and a silent box into an ambiguous one.
-t duty-start-unconditional 1 "$(grep -c '^log "duty run start"' "$SHARED/bin/duty.sh")"
-# Every exit path after the start line must have logged the end line first.
-# A linear scan, deliberately: it is an approximation of control flow, but it
-# catches the shape that actually regresses — a new early `exit` on a branch
-# that forgot the evidence line.
-t duty-end-on-every-exit "" "$(awk '
-  /^log "duty run start"/ { started = 1; next }
-  !started { next }
-  /log "duty run end"/    { ended = 1 }
-  /^[[:space:]]*exit / && !ended { print "line " NR; exit }
-' "$SHARED/bin/duty.sh")"
-# `crontab armed` must not be the last word: the crontab holding a line says
-# nothing about a cron daemon existing to run it, and that gap is why three
-# boxes reported armed and one ticked.
-if grep -q 'cron_daemon_running' "$SHARED/install.sh"; then r1=checked; else r1=ASSUMED; fi
-t install-verifies-cron-daemon checked "$r1"
-
-# --- credential state reported by the flow (replaces the polled probes) ----
-# These run against the REAL common.sh sourced above, with DUTY_DIR pointed at
-# a scratch dir, so the marker contract the floor reads is asserted here and
-# not merely described in a comment.
-
-# alert() would try to curl Telegram from a unit test; the token files do not
-# exist so it returns early, but stub it anyway — a test that depends on the
-# absence of a file in $HOME is a test that fails on somebody's laptop.
-alert() { :; }
-
-AUTHDIR="$TMP/authstate"; mkdir -p "$AUTHDIR"
-DUTY_DIR="$AUTHDIR"
-
-note_auth_failure gh "401 Bad credentials"
-t authfail-file-per-service present "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo present || echo MISSING)"
-t authfail-does-not-touch-other-service absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo LEAKED || echo absent)"
-t authfail-records-reason found \
-  "$(grep -q '401 Bad credentials' "$AUTHDIR/.auth-fail.gh" && echo found || echo MISSING)"
-
-# The first failure must win. Rewriting every tick resets mtime, so a
-# credential that died on Monday reads as having died just now — and "when did
-# this break" is the only question the file exists to answer.
-FIRST="$(cat "$AUTHDIR/.auth-fail.gh")"
-sleep 1
-note_auth_failure gh "403 something else entirely"
-t authfail-first-failure-wins "$FIRST" "$(cat "$AUTHDIR/.auth-fail.gh")"
-
-clear_auth_failure gh
-t authfail-cleared absent "$([ -f "$AUTHDIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
-clear_auth_failure gh   # must be idempotent, not an error under set -e
-t authfail-clear-idempotent 0 "$?"
-
-# Cross the file-contract boundary instead of testing only its writer. The
-# floor probe must read the exact marker common.sh writes, including the
-# service-specific filename and its single-line reason (#138, edge 3).
-printf 'crew@fixture\n' >"$AUTHDIR/VERSION"
-note_auth_failure gh "fixture rejection"
-AUTH_PROBE="$(DUTY_DIR="$AUTHDIR" bash "$ROOT/fleet-floor/server/probe.sh" </dev/null)"
-case "$AUTH_PROBE" in *$'::gh missing\n'*) r1=missing ;; *) r1=UNREAD ;; esac
-t authfail-common-to-probe-state missing "$r1"
-case "$AUTH_PROBE" in *'::authfail-gh '*'fixture rejection'*) r1=reason ;; *) r1=LOST ;; esac
-t authfail-common-to-probe-reason reason "$r1"
-clear_auth_failure gh
-
-# Multi-line reasons: gh's errors routinely are, and one record must stay one
-# line or probe.sh's ::key contract silently gains phantom keys.
-note_auth_failure vendor "$(printf 'line one\nline two\nline three')"
-t authfail-single-line 1 "$(wc -l < "$AUTHDIR/.auth-fail.vendor")"
-clear_auth_failure vendor
-
-# check_vendor_credential's tri-state. 2 means "this profile cannot tell from
-# local state" and MUST change nothing: neither raise an alarm nor clear a
-# real failure someone still has to fix.
-# shellcheck disable=SC2034  # read by check_vendor_credential in common.sh
-AGENT_LOGIN_HINT="run the thing"
-# shellcheck disable=SC2317  # invoked indirectly, by check_vendor_credential
-bot_cli_present() { return 0; }
-check_vendor_credential
-t vendor-present-no-failure absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo PRESENT || echo absent)"
-
-# shellcheck disable=SC2317
-bot_cli_present() { return 1; }
-check_vendor_credential
-t vendor-absent-raises present \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo MISSING)"
-
-# shellcheck disable=SC2317
-bot_cli_present() { return 2; }
-check_vendor_credential
-t vendor-unknown-does-not-clear present \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo present || echo CLEARED)"
-rm -f "$AUTHDIR/.auth-fail.vendor"
-check_vendor_credential
-t vendor-unknown-does-not-raise absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
-unset -f bot_cli_present
-
-# An older agent profile with neither function must be a no-op, not a failure:
-# install.sh does not upgrade confs in place, so mid-rollout boxes will have
-# exactly this shape.
-check_vendor_credential
-t vendor-legacy-profile-silent absent \
-  "$([ -f "$AUTHDIR/.auth-fail.vendor" ] && echo RAISED || echo absent)"
-
-# --- each agent profile reads its OWN credential store, locally -------------
-# Driven against the real conf files with a fabricated HOME, because the whole
-# claim of bot_cli_present is that it needs nothing but local disk.
-
-CREDH="$TMP/credhome"; mkdir -p "$CREDH"
-cred_rc() {  # cred_rc <agent> <home> [KIMI_CODE_HOME] -> rc of bot_cli_present
-  local rc=0
-  # Every vendor env override is cleared, not just the one under test: these
-  # are read by the sourced profile, and inheriting the RUNNER's credentials
-  # would make the result depend on whose machine ran the suite. KIMI_CODE_HOME
-  # is the one a caller may set back, in $3, because kimi's home resolver gives
-  # it precedence over both probed homes and that precedence is under test.
-  # shellcheck disable=SC2034  # consumed inside the conf sourced below
-  ( HOME="$2" KIMI_CODE_HOME="${3:-}" CODEX_HOME="" GROK_HOME="" \
-    ANTHROPIC_API_KEY="" XAI_API_KEY=""
-    # shellcheck disable=SC1090
-    source "$SHARED/conf/agents/$1.conf"; bot_cli_present ) >/dev/null 2>&1 || rc=$?
-  echo "$rc"
-}
-# base64url with the padding stripped, the way a JWT actually arrives.
-b64url() { base64 -w0 | tr '/+' '_-' | tr -d '='; }
-
-# -- claude: refreshTokenExpiresAt, in MILLISECONDS
-CH="$CREDH/claude"; mkdir -p "$CH/.claude"
-CLAUDE_EXP_MS=$(( ($(date +%s) + 20 * 86400) * 1000 ))
-jq -n --argjson r "$CLAUDE_EXP_MS" \
-  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
-  > "$CH/.claude/.credentials.json"
-t cred-claude-present 0 "$(cred_rc claude "$CH")"
-
-# THE trap, and the reason this profile reads refreshTokenExpiresAt: an access
-# token that lapsed hours ago while the refresh token is still good is the
-# ordinary steady state, refreshed silently on next use. A profile testing
-# `expiresAt` would call a perfectly healthy box logged out three times a day.
-jq -n --argjson r "$CLAUDE_EXP_MS" --argjson a "$(( ($(date +%s) - 3600) * 1000 ))" \
-  '{claudeAiOauth:{accessToken:"a",expiresAt:$a,refreshTokenExpiresAt:$r}}' \
-  > "$CH/.claude/.credentials.json"
-t cred-claude-stale-access-token-is-fine 0 "$(cred_rc claude "$CH")"
-
-# An expired REFRESH token is the real logout: nothing can renew it but a human.
-jq -n --argjson r "$(( ($(date +%s) - 86400) * 1000 ))" \
-  '{claudeAiOauth:{accessToken:"a",expiresAt:1,refreshTokenExpiresAt:$r}}' \
-  > "$CH/.claude/.credentials.json"
-t cred-claude-expired-refresh 1 "$(cred_rc claude "$CH")"
-t cred-claude-no-file 1 "$(cred_rc claude "$CREDH/nothing")"
-
-# -- kimi: the refresh token is a JWT; its exp claim is the relogin deadline
-KH="$CREDH/kimi"; mkdir -p "$KH/.kimi-code/credentials"
-KIMI_EXP=$(( $(date +%s) + 30 * 86400 ))
-# A payload sized so base64url PADDING is required — the case a naive decoder
-# silently fails on.
-KJWT="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code","sub":"u"}' "$KIMI_EXP" | b64url).sig"
-jq -n --arg rt "$KJWT" \
-  '{access_token:"a",refresh_token:$rt,expires_at:1,token_type:"Bearer"}' \
-  > "$KH/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-present 0 "$(cred_rc kimi "$KH")"
-t cred-kimi-no-file 1 "$(cred_rc kimi "$CREDH/nothing")"
-# An expired refresh JWT is a logout, not merely "cannot tell".
-KJWT_OLD="$(printf '{"alg":"HS256"}' | b64url).$(printf '{"exp":%d,"scope":"kimi-code"}' "$(( $(date +%s) - 86400 ))" | b64url).sig"
-jq -n --arg rt "$KJWT_OLD" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
-  > "$KH/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-expired-refresh 1 "$(cred_rc kimi "$KH")"
-# Garbage in the JWT slot must be "cannot tell" (2), never a confident logout.
-jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
-  > "$KH/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-unparseable-is-unknown 2 "$(cred_rc kimi "$KH")"
-
-# -- kimi, the second home. The shipped CLI keeps the same credential at
-# ~/.kimi, not ~/.kimi-code, so the profile resolves the home instead of
-# assuming it (#240): the fleet's kimi box reported a dead vendor credential
-# on every tick while being perfectly logged in. cred_rc clears
-# KIMI_CODE_HOME by design, so these four are the unset case.
-KH2="$CREDH/kimialt"; mkdir -p "$KH2/.kimi/credentials"
-jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
-  > "$KH2/.kimi/credentials/kimi-code.json"
-t cred-kimi-alt-home-present 0 "$(cred_rc kimi "$KH2")"
-# A wider search must reach the SAME parser, not a second, dumber one.
-jq -n '{access_token:"a",refresh_token:"not-a-jwt",expires_at:1}' \
-  > "$KH2/.kimi/credentials/kimi-code.json"
-t cred-kimi-alt-home-unparseable-is-unknown 2 "$(cred_rc kimi "$KH2")"
-# Neither home holds anything: still a CONFIDENT logout. A resolver that fell
-# back to a path it never checked would answer 2 here and silence a real one.
-KH0="$CREDH/kiminone"; mkdir -p "$KH0/.kimi/credentials" "$KH0/.kimi-code/credentials"
-t cred-kimi-neither-home 1 "$(cred_rc kimi "$KH0")"
-
-# KIMI_CODE_HOME is explicit operator intent and outranks both probes. Proven
-# by pointing it at a home with NO credential while BOTH known homes hold a
-# good one: a resolver that probed first would answer 0. cred_rc's third
-# argument is the only vendor override it does not clear, for exactly this.
-KHO="$CREDH/kimiover"; mkdir -p "$KHO/.kimi/credentials" "$KHO/.kimi-code/credentials" "$KHO/elsewhere/credentials"
-jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
-  > "$KHO/.kimi/credentials/kimi-code.json"
-cp "$KHO/.kimi/credentials/kimi-code.json" "$KHO/.kimi-code/credentials/kimi-code.json"
-t cred-kimi-override-outranks-probe 1 "$(cred_rc kimi "$KHO" "$KHO/elsewhere")"
-# ...and it reaches a credential neither probe would ever find.
-jq -n --arg rt "$KJWT" '{access_token:"a",refresh_token:$rt,expires_at:1}' \
-  > "$KHO/elsewhere/credentials/kimi-code.json"
-t cred-kimi-override-reaches-elsewhere 0 "$(cred_rc kimi "$KH0" "$KHO/elsewhere")"
-
-# -- the SAME resolution drives PATH, and until now nothing asserted that half
-# of #240's D2: BOT_PATH_PREPEND is an assignment evaluated when the profile is
-# sourced, so reading it back also proves the resolver is defined ABOVE it.
-# The resolved home's bin comes first, then every other known home's — a
-# non-existent PATH entry costs nothing, which is why the fallbacks are cheaper
-# than guessing right. Only PRESENCE of the credential picks the home here, not
-# whether its JWT parses, so the fixtures above are reused exactly as they lie.
-path_prepend() {  # path_prepend <home> [KIMI_CODE_HOME] -> BOT_PATH_PREPEND
-  # shellcheck disable=SC2034  # consumed inside the conf sourced below
-  ( HOME="$1" KIMI_CODE_HOME="${2:-}"
-    # shellcheck disable=SC1091
-    source "$SHARED/conf/agents/kimi.conf"; printf '%s' "$BOT_PATH_PREPEND" ) 2>/dev/null
-}
-t path-kimi-alt-home-first "$KH2/.kimi/bin:$KH2/.kimi-code/bin" "$(path_prepend "$KH2")"
-t path-kimi-old-home-first "$KH/.kimi-code/bin:$KH/.kimi/bin" "$(path_prepend "$KH")"
-# No credential anywhere: the ~/.kimi-code fallback leads, and the other home
-# is still on PATH — the CLI may be installed where the credential is not.
-t path-kimi-neither-home-falls-back "$KH0/.kimi-code/bin:$KH0/.kimi/bin" "$(path_prepend "$KH0")"
-# Explicit operator intent leads here too, even though both probes would hit.
-t path-kimi-override-first "$KHO/elsewhere/bin:$KHO/.kimi/bin:$KHO/.kimi-code/bin" \
-  "$(path_prepend "$KHO" "$KHO/elsewhere")"
-
-# -- codex: file-backed vs keyring-backed, and NO expiry at all
-DH="$CREDH/codex"; mkdir -p "$DH/.codex"
-jq -n '{auth_mode:"chatgpt",tokens:{access_token:"a.b.c",refresh_token:"opaque"}}' > "$DH/.codex/auth.json"
-t cred-codex-present 0 "$(cred_rc codex "$DH")"
-t cred-codex-no-file-is-logout 1 "$(cred_rc codex "$CREDH/nothing")"
-# ...unless the box keeps its credential in the desktop keyring, where a
-# missing auth.json is normal and must not be reported as a logout.
-KB="$CREDH/codexkeyring"; mkdir -p "$KB/.codex"
-echo 'cli_auth_credentials_store = "keyring"' > "$KB/.codex/config.toml"
-t cred-codex-keyring-is-unknown 2 "$(cred_rc codex "$KB")"
-
-# -- grok: its probe was already a local file test, so it is authoritative
-# -- grok: a MAP of "<issuer>::<client_id>" slots, refresh token opaque
-GH_="$CREDH/grok"; mkdir -p "$GH_/.grok"
-jq -n '{"https://auth.x.ai::abc":{key:"j.w.t",refresh_token:"opaque",expires_at:"2026-07-27T19:54:18Z"}}' \
-  > "$GH_/.grok/auth.json"
-t cred-grok-present 0 "$(cred_rc grok "$GH_")"
-t cred-grok-no-file 1 "$(cred_rc grok "$CREDH/nothing")"
-# An empty map is a non-empty FILE. The old `[ -s ]` test called this logged
-# in; it is a failed login, and the honest answer is "cannot tell".
-echo '{}' > "$GH_/.grok/auth.json"
-t cred-grok-empty-map-is-unknown 2 "$(cred_rc grok "$GH_")"
-
-# No profile may define bot_cli_expiry: the floor tracks no expiry dates, and
-# a profile still exporting one would be dead code drifting out of sync.
-for agent in claude codex grok kimi; do
-  r1=absent
-  # shellcheck disable=SC1090
-  ( source "$SHARED/conf/agents/$agent.conf"; command -v bot_cli_expiry >/dev/null ) 2>/dev/null && r1=DEFINED
-  t "cred-$agent-defines-no-expiry" absent "$r1"
-done
-
-# --- the per-tick path must not have reacquired a network auth probe -------
-# `gh auth status` in the tick is the exact cost this change removed; it would
-# pass every assertion above while restoring 7k requests/day.
-# The boot gate ABOVE the identity call may still pay for a real probe once
-# per boot — certainty is worth one round-trip there. What must never come
-# back is a probe in the per-tick path, so the assertion is positional:
-# nothing after `ME="$(gh_identity)"` may call it.
-r1="$(awk '
-  /ME="\$\(gh_identity\)"/ { after = 1 }
-  after && /^[^#]*gh auth status/ { print "POLLED"; exit }
-' "$SHARED/bin/duty.sh")"
-r1="${r1:-clean}"
-t tick-does-not-poll-gh-auth clean "$r1"
-# ...and the identity call must be the one that harvests the expiry header.
-if grep -q 'gh_identity' "$SHARED/bin/duty.sh"; then r1=wired; else r1=MISSING; fi
-t tick-uses-gh-identity wired "$r1"
-# No expiry date is tracked anywhere any more: four providers express it four
-# ways and two cannot answer locally at all, so the countdown was the flaky
-# half of the idea. A reintroduced record_token_expiry would put it back.
-if grep -q 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh"; then r1=TRACKED; else r1=clean; fi
-t no-expiry-date-tracked clean "$r1"
-
-# Every agent profile must define bot_cli_present, or its box silently never
-# reports vendor credential state at all.
-missing=""
-for agent in claude codex grok kimi; do
-  grep -q 'bot_cli_present()' "$SHARED/conf/agents/$agent.conf" || missing="$missing $agent"
-done
-t agent-profiles-define-present "" "$missing"
-
-# ...and every profile must launch its CLI NON-INTERACTIVELY. run_session runs
-# each CLI with </dev/null, deliberately, so a tool-approval prompt has no
-# stdin to read and no human to answer it: the session blocks until the role
-# budget kills it and writes rc=124 outcome=TIMEOUT — no verdict, no comment,
-# 45 minutes spent. kimi shipped with no flag at all and did exactly that on
-# every session, which kept every PR in this repo one panel verdict short
-# (#240). Nothing here read BOT_CLI_CMD before, so the only detector was a
-# 45-minute silence on one box. The flag's SPELLING is the vendor's; that one
-# is present is crew's, and this is where crew says so.
-for pair in \
-  "claude:--dangerously-skip-permissions" \
-  "codex:--dangerously-bypass-approvals-and-sandbox" \
-  "grok:--permission-mode bypassPermissions" \
-  "kimi:--afk"; do
-  agent="${pair%%:*}"; want="${pair#*:}"
-  # The array is joined and matched with surrounding spaces so a multi-token
-  # flag is pinned whole and a longer flag that merely starts the same cannot
-  # pass for it.
-  # shellcheck disable=SC1090
-  got="$( source "$SHARED/conf/agents/$agent.conf"; printf '%s' "${BOT_CLI_CMD[*]}" )"
-  case " $got " in *" $want "*) r1=present ;; *) r1=MISSING ;; esac
-  t "agent-conf-$agent-non-interactive" present "$r1"
-done
-
-# The boot gate must exercise the same Kimi command shape as a real session.
-# `kimi doctor` looked plausible but bypassed both --afk and the resolved
-# credential home, so the upgraded Kimi box warned on every tick while real
-# review sessions succeeded at the same minutes (#240). This fixture accepts
-# only the command/environment pair that makes sessions work on that box.
-KIMI_PROBE_HOME="$TMP/kimi-probe-home"
-mkdir -p "$KIMI_PROBE_HOME/.kimi/bin" "$KIMI_PROBE_HOME/.kimi/credentials"
-printf '%s\n' '{"refresh_token":"fixture"}' \
-  >"$KIMI_PROBE_HOME/.kimi/credentials/kimi-code.json"
-cat >"$KIMI_PROBE_HOME/.kimi/bin/kimi" <<'EOF'
-#!/usr/bin/env bash
-[ "${KIMI_CODE_HOME:-}" = "$HOME/.kimi" ] || exit 21
-[ "${KIMI_PROBE_AUTH:-accept}" != reject ] || exit 23
-[ "${KIMI_PROBE_EXPECT_GUARDS:-0}" != 1 ] || {
-  [ -z "${DUTY_LOCKED+x}${NOTIFY_LOCKED+x}${DUTY_SNAPSHOT+x}" ] || exit 24
-}
-[ "${KIMI_PROBE_READ_STDIN:-0}" != 1 ] || cat >/dev/null
-[ "${KIMI_PROBE_HANG:-0}" != 1 ] || while :; do sleep 10; done
-case " $* " in
-  *" --afk -p "*) exit 0 ;;
-  *) exit 22 ;;
-esac
-EOF
-chmod +x "$KIMI_PROBE_HOME/.kimi/bin/kimi"
-
-KIMI_TIMEOUT_BIN="$TMP/kimi-timeout-bin"
-KIMI_TIMEOUT_CAPTURE="$TMP/kimi-timeout-args"
-mkdir -p "$KIMI_TIMEOUT_BIN"
-cat >"$KIMI_TIMEOUT_BIN/timeout" <<'EOF'
-#!/usr/bin/env bash
-printf '%s %s %s\n' "${1:-}" "${2:-}" "${3:-}" >"$KIMI_TIMEOUT_CAPTURE"
-shift 3
-exec /usr/bin/timeout -k 1 1 "$@"
-EOF
-chmod +x "$KIMI_TIMEOUT_BIN/timeout"
-
-kimi_probe_rc() {  # kimi_probe_rc [working|interactive|logged-out|stdin|guards|bound]
-  local shape="${1:-working}" auth=accept read_stdin=0 expect_guards=0 hang=0 rc=0
-  [ "$shape" != logged-out ] || auth=reject
-  [ "$shape" != stdin ] || read_stdin=1
-  [ "$shape" != guards ] || expect_guards=1
-  [ "$shape" != bound ] || hang=1
-  # shellcheck disable=SC2016  # expansion belongs to the fixture shell
-  /usr/bin/timeout -k 1 3 \
-    env HOME="$KIMI_PROBE_HOME" SHARED="$SHARED" KIMI_PROBE_SHAPE="$shape" \
-    KIMI_PROBE_AUTH="$auth" KIMI_PROBE_READ_STDIN="$read_stdin" \
-    KIMI_PROBE_EXPECT_GUARDS="$expect_guards" KIMI_PROBE_HANG="$hang" \
-    KIMI_TIMEOUT_BIN="$KIMI_TIMEOUT_BIN" \
-    KIMI_TIMEOUT_CAPTURE="$KIMI_TIMEOUT_CAPTURE" \
-    DUTY_LOCKED=1 NOTIFY_LOCKED=1 DUTY_SNAPSHOT=fixture \
-    bash -c '
-      unset KIMI_CODE_HOME
-      source "$SHARED/conf/agents/kimi.conf"
-      export PATH="$BOT_PATH_PREPEND:$KIMI_TIMEOUT_BIN:/usr/bin:/bin"
-      [ "$KIMI_PROBE_SHAPE" != interactive ] || \
-        BOT_CLI_CMD=(env "KIMI_CODE_HOME=$(_kimi_home)" kimi -p)
-      bot_cli_probe
-    ' >/dev/null 2>&1 || rc=$?
-  printf '%s' "$rc"
-}
-t kimi-boot-probe-matches-working-session 0 "$(kimi_probe_rc working)"
-if [ "$(kimi_probe_rc interactive)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
-t kimi-boot-probe-rejects-interactive-session failed "$r1"
-if [ "$(kimi_probe_rc logged-out)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
-t kimi-boot-probe-rejects-logged-out-session failed "$r1"
-KIMI_STDIN_FIFO="$TMP/kimi-probe-stdin"
-mkfifo "$KIMI_STDIN_FIFO"
-( sleep 5 >"$KIMI_STDIN_FIFO" ) & kimi_stdin_writer=$!
-t kimi-boot-probe-closes-inherited-stdin 0 "$(kimi_probe_rc stdin <"$KIMI_STDIN_FIFO")"
-kill "$kimi_stdin_writer" 2>/dev/null || true
-wait "$kimi_stdin_writer" 2>/dev/null || true
-t kimi-boot-probe-clears-lock-environment 0 "$(kimi_probe_rc guards)"
-rm -f "$KIMI_TIMEOUT_CAPTURE"
-if [ "$(kimi_probe_rc bound)" -eq 0 ]; then r1=PASSED; else r1=failed; fi
-t kimi-boot-probe-bounds-hung-cli failed "$r1"
-t kimi-boot-probe-timeout-arguments "-k 10 60" \
-  "$(cat "$KIMI_TIMEOUT_CAPTURE" 2>/dev/null)"
-
-# --- session action telemetry is best-effort and additive (#256) ----------
-SA_LOG="$TMP/session-action.log"
-printf 'OpenAI Codex\nfinal answer: Please connect a plugin.\n' >"$SA_LOG"
-t session-hookless-is-unknown unknown "$(session_acted "$SA_LOG")"
-t session-reply-tail-captured 'final answer: Please connect a plugin.' \
-  "$(session_reply_tail "$SA_LOG" | base64 -d)"
-
-codex_acted() {
-  # shellcheck disable=SC1091
-  source "$SHARED/conf/agents/codex.conf"
-  bot_session_acted "$SA_LOG" && printf yes || printf no
-}
-t session-codex-no-tool-is-no no "$(codex_acted)"
-printf 'OpenAI Codex\nexec\n/bin/bash -lc git status\nfinal answer: done\n' >"$SA_LOG"
-t session-codex-exec-is-yes yes "$(codex_acted)"
-
-claude_acted() {
-  # shellcheck disable=SC1091
-  source "$SHARED/conf/agents/claude.conf"
-  session_acted "$SA_LOG"
-}
-printf 'Claude Code\nfinal answer: I need more information.\n' >"$SA_LOG"
-t session-claude-print-log-is-unknown unknown "$(claude_acted)"
-
-# Exercise run_session itself so a helper-only implementation cannot pass.
-SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
-BOT_CLI_CMD=(bash -c 'printf "exec\ncommand output\nfinal reply\n"')
-# shellcheck disable=SC2317  # invoked indirectly by session_acted
-bot_session_acted() { grep -qx exec "$1"; }
-sa_end="$(run_session build fixture/test "$SA_WORK" 5 prompt | tail -1)"
-case "$sa_end" in
-  *'outcome=ok acted=yes reply_tail='*) r1=present ;;
-  *) r1=MISSING ;;
-esac
-t session-end-fields-written present "$r1"
-t session-end-outcome-token-unchanged ok \
-  "$(printf '%s\n' "$sa_end" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
-unset -f bot_session_acted
-
-# --- terminal session classification and per-kind breaker (#388) ----------
-TERM_LOG="$TMP/session-terminal.log"
-printf '%s\n' "Server: Error code: 403 - {'error': {'message': \"You've reached your usage limit for this billing cycle.\", 'type': 'access_terminated_error'}}" >"$TERM_LOG"
-
-kimi_session_classification() (
-  # shellcheck disable=SC1091
-  source "$SHARED/conf/agents/kimi.conf"
-  if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
-  printf '|'
-  printf "provider error: {'type': 'access_terminated_error'}\n" >"$TERM_LOG"
-  if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
-  printf '|'
-  printf 'provider error: access_terminated_error; reached your usage limit\n' >"$TERM_LOG"
-  if bot_session_terminal "$TERM_LOG"; then printf terminal; else printf transient; fi
-  printf '|'
-  if bot_session_terminal "$SHARED/conf/agents/kimi.conf"; then printf terminal; else printf transient; fi
-  printf '|'
-  printf 'Used Shell (gh api repos/o/r/pulls/1/reviews)\n' >"$TERM_LOG.acted"
-  if bot_session_acted "$TERM_LOG.acted"; then printf yes; else printf no; fi
-  printf '|'
-  printf 'Final answer only\n' >"$TERM_LOG.acted"
-  if bot_session_acted "$TERM_LOG.acted"; then printf yes; else printf no; fi
-)
-t kimi-session-hooks 'terminal|terminal|transient|transient|yes|no' \
-  "$(kimi_session_classification)"
-
-# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-kimi_quoted_terminal_then_transient() (
-  local bdir="$TMP/terminal-breaker-kimi-quoted" i state
-  mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
-  SESSION_TERMINAL_THRESHOLD=3
-  export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
-  # shellcheck disable=SC1091
-  source "$SHARED/conf/agents/kimi.conf"
-  BOT_CLI_CMD=(bash -c '
-    printf x >>"$BREAKER_CALLS"
-    printf "%s\n" "Used Shell (gh issue view 388)"
-    printf "%s\n" "Server: Error code: 403 - {'\''error'\'': {'\''message'\'': \"You'\''ve reached your usage limit for this billing cycle.\", '\''type'\'': '\''access_terminated_error'\''}}"
-    printf "%s\n" "transient network failure: dial tcp i/o timeout"
-    exit 1
-  ')
-  bot_cli_probe() { printf probe >>"$bdir/probes"; return 0; }
-  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
-  for i in $(seq 1 16); do
-    run_session review fixture/repo "$bdir/work" 5 prompt
-  done >"$bdir/output"
-  state="$(_session_terminal_state review)"
-  printf '%s|%s|%s|%s|%s' \
-    "$(wc -c <"$BREAKER_CALLS")" \
-    "$(grep -c 'outcome=FAILED' "$bdir/output" || true)" \
-    "$([ -e "$state" ] && echo tripped || echo clear)" \
-    "$([ -e "$bdir/alerts" ] && wc -l <"$bdir/alerts" || echo 0)" \
-    "$([ -e "$bdir/probes" ] && wc -c <"$bdir/probes" || echo 0)"
-)
-t kimi-quoted-terminal-payload-ending-transient-never-trips '16|16|clear|0|0' \
-  "$(kimi_quoted_terminal_then_transient)"
-
-# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-terminal_breaker_case() ( # terminal_breaker_case terminal|transient|hookless
-  local shape="$1" bdir="$TMP/terminal-breaker-$1" i
-  mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"
-  LOG_DIR="$bdir/logs"
-  DUTY_TICK_ID=tick-1
-  SESSION_TERMINAL_THRESHOLD=3
-  export BREAKER_CALLS="$bdir/calls"
-  : >"$BREAKER_CALLS"
-  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf "%s\n" "$BREAK_TEXT"; exit 1')
-  export BREAK_TEXT=transient-network-failure
-  if [ "$shape" = terminal ]; then
-    BREAK_TEXT=access_terminated_error
-    export BREAK_TEXT
-    bot_session_terminal() { grep -q access_terminated_error "$1"; }
-  elif [ "$shape" = transient ]; then
-    bot_session_terminal() { grep -q access_terminated_error "$1"; }
-  else
-    unset -f bot_session_terminal
-  fi
-  bot_session_acted() { return 1; }
-  bot_cli_probe() { return 1; }
-  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
-  for i in $(seq 1 16); do
-    run_session review fixture/repo "$bdir/work" 5 prompt
-  done >"$bdir/output"
-  local alert_count=0
-  [ ! -f "$bdir/alerts" ] || alert_count="$(wc -l <"$bdir/alerts")"
-  printf '%s|%s|%s|%s' \
-    "$(wc -c <"$BREAKER_CALLS")" \
-    "$alert_count" \
-    "$(grep -c 'outcome=TERMINAL' "$bdir/output" || true)" \
-    "$(grep -c 'SESSION SKIP.*terminal-breaker' "$bdir/output" || true)"
-)
-t terminal-breaker-replays-sixteen-as-three-dispatches '3|1|3|13' \
-  "$(terminal_breaker_case terminal)"
-t transient-failures-never-trip '16|0|0|0' \
-  "$(terminal_breaker_case transient)"
-t hookless-failures-remain-transient '16|0|0|0' \
-  "$(terminal_breaker_case hookless)"
-
-# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-terminal_breaker_resets_sequence() (
-  local bdir="$TMP/terminal-breaker-reset" state
-  mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
-  SESSION_TERMINAL_THRESHOLD=3
-  BOT_CLI_CMD=(bash -c 'printf "%s\n" "$BREAK_TEXT"; exit 1')
-  bot_session_terminal() { grep -q access_terminated_error "$1"; }
-  bot_session_acted() { return 1; }
-  alert() { :; }
-  export BREAK_TEXT=access_terminated_error
-  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
-  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
-  BREAK_TEXT=transient-network-failure
-  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
-  BREAK_TEXT=access_terminated_error
-  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
-  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
-  state="$(_session_terminal_state review)"
-  if [ -s "$state" ]; then
-    IFS=$'\t' read -r count status _ <"$state"
-    printf '%s|%s' "$count" "$status"
-  else
-    printf missing
-  fi
-)
-t terminal-breaker-transient-resets-consecutive-count '2|closed' \
-  "$(terminal_breaker_resets_sequence)"
-
-# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-terminal_timeout_case() (
-  local bdir="$TMP/terminal-breaker-timeout" i
-  mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
-  SESSION_TERMINAL_THRESHOLD=3
-  BOT_CLI_CMD=(bash -c 'exit 124')
-  bot_session_terminal() { return 0; }
-  bot_session_acted() { return 1; }
-  alert() { printf alert >>"$bdir/alerts"; }
-  for i in $(seq 1 16); do run_session review fixture/repo "$bdir/work" 5 prompt; done >"$bdir/output"
-  printf '%s|%s' "$(grep -c 'outcome=TIMEOUT' "$bdir/output")" \
-    "$([ -e "$(_session_terminal_state review)" ] && echo tripped || echo clear)"
-)
-t timeout-failures-never-trip '16|clear' "$(terminal_timeout_case)"
-
-# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-terminal_kind_isolation() (
-  local bdir="$TMP/terminal-breaker-kind" i
-  mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
-  SESSION_TERMINAL_THRESHOLD=3
-  export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
-  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf access_terminated_error; exit 1')
-  bot_session_terminal() { grep -q access_terminated_error "$1"; }
-  bot_session_acted() { return 1; }
-  bot_cli_probe() { return 1; }
-  alert() { :; }
-  for i in 1 2 3; do run_session review fixture/repo "$bdir/work" 5 prompt; done >/dev/null
-  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; exit 0')
-  run_session build fixture/repo "$bdir/work" 5 prompt >/dev/null
-  printf '%s|%s' "$(wc -c <"$BREAKER_CALLS")" \
-    "$([ -e "$(_session_terminal_state review)" ] && echo review-stopped || echo review-open)"
-)
-t terminal-breaker-is-keyed-by-kind '4|review-stopped' "$(terminal_kind_isolation)"
-
-# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-terminal_breaker_recovery() (
-  local bdir="$TMP/terminal-breaker-recovery" i
-  mkdir -p "$bdir/logs" "$bdir/work"
-  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=tick-1
-  SESSION_TERMINAL_THRESHOLD=3
-  export BREAKER_CALLS="$bdir/calls"; : >"$BREAKER_CALLS"
-  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; printf access_terminated_error; exit 1')
-  bot_session_terminal() { grep -q access_terminated_error "$1"; }
-  bot_session_acted() { return 1; }
-  bot_cli_probe() { return 1; }
-  alert() { :; }
-  for i in 1 2 3; do run_session review fixture/repo "$bdir/work" 5 prompt; done >/dev/null
-  DUTY_TICK_ID=tick-2
-  bot_cli_probe() { return 0; }
-  BOT_CLI_CMD=(bash -c 'printf x >>"$BREAKER_CALLS"; exit 0')
-  run_session review fixture/repo "$bdir/work" 5 prompt >/dev/null
-  state="$(_session_terminal_state review)"
-  printf '%s|%s' "$(wc -c <"$BREAKER_CALLS")" "$([ -e "$state" ] && echo present || echo cleared)"
-)
-t terminal-breaker-recovers-on-next-tick '4|cleared' "$(terminal_breaker_recovery)"
-
-# --- the two-boundary rule must exist once, not once per reader -----------
-# floor.py derives it (2 * TICK_S), cli/crew names it, and probe.sh must not
-# hold it at all: the box ships ::tickage and the HOST decides. A third copy
-# inside the box, in a second language, meant changing TICK_S would leave the
-# floor calling a box SILENT while both credential readers still said flowing
-# — and rehearsal-app.sh asserts those two readers agree, so the drill would
-# fail for a reason nobody would trace to a constant.
-CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
-FLOOR_PY="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/floor.py"
-
-FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
-FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
-# shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
-CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
-t silent-rule-floor-derived 600 "$FL_SILENT"
-t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
-
-# The never-ticked boundary is the same kind of shared rule and pinned the same
-# way (#265). SILENT_AFTER_S was never the only number the two readers had to
-# agree on — it was only the only one that EXISTED. `waiting` adds a second
-# boundary, and a verdict living in one reader alone is precisely the
-# disagreement auth_from_flow was written to remove: `crew status` would say a
-# fresh hire is waiting while the floor called it stale, in front of the same
-# operator, about the same box. Extracted rather than grepped for, so that
-# moving the boundary in one reader fails HERE rather than silently.
-# shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
-CL_NEVER="$(sed -n 's/^ *if \[ "$tickage" -lt \(-*[0-9][0-9]*\) \]; then.*/\1/p' "$CREW_CLI" | head -1)"
-FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
-t nevertick-rule-floor-boundary 0 "$FL_NEVER"
-t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
-# ...and it must be a verdict BOTH readers can actually produce. The boundary
-# matching proves they agree on WHEN; these prove they agree on what to CALL it,
-# which is the half a numeric compare cannot see: two readers could share the
-# boundary exactly and still print different words at it.
-# shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
-if grep -q 'printf -v "$_v" waiting' "$CREW_CLI"; then r1=emitted; else r1=MISSING; fi
-t nevertick-cli-emits-waiting emitted "$r1"
-if grep -q 'u\[svc\] = "waiting"' "$FLOOR_PY"; then r1=emitted; else r1=MISSING; fi
-t nevertick-floor-emits-waiting emitted "$r1"
-
-# ...and the box must hold no threshold of its own. Comments and the log-tail
-# line count are stripped before looking, so only real code counts.
-PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
-probe_code="$(sed -e 's/#.*//' -e '/tail -n/d' "$PROBE_SH")"
-if grep -qE '\b(600|SILENT_AFTER)\b' <<<"$probe_code"; then
-  r1=BAKED
-else
-  r1=clean
-fi
-t probe-holds-no-threshold clean "$r1"
-# The datum it ships instead:
-if grep -q 'emit tickage' "$PROBE_SH"; then r1=emitted; else r1=MISSING; fi
-t probe-emits-tickage emitted "$r1"
 # --- head-checks.jq: the check at the head, and the round it gates (#45/#17) --
 # The engine never read statusCheckRollup at all, which is both bugs at once: a
 # fix round opened on a red head (#45) and a red head that woke nothing (#17).
@@ -2726,222 +756,6 @@ ALL_APPROVED='[
 ]'
 t head-round-all-approved - \
   "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$ALL_APPROVED")" | cut -f5)"
-# --- #452: the HUMAN is round_owed's second clause ---------------------------
-# Until it existed, a maintainer's CHANGES_REQUESTED reached no wake in this
-# engine at all: the panel clause above requires the change-requester to be in
-# $panel and the maintainer is off-panel by construction, ci-red wants a failing
-# check, rebase wants CONFLICTING, and every resume path wants the latest signal
-# NOT to name the current head — which, after a completed handoff, it does.
-HC_HUMAN_ROUND='[
-  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
-  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"abc1234"}}
-]'
-HC_HUMAN_STALE='[
-  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
-  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"oldhead"}}
-]'
-# The headline: the panel approves this head, the human blocks it, and the human
-# is not on the request list — the ball is the builder's.
-t head-round-human-block-owed owed \
-  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND")" | cut -f5)"
-# ...and the SPEND. The handoff re-requests the human, and the clause goes false
-# — the exact mirror of the panel clause's outstanding-request guard. Without it
-# the wake would be permanent and the builder would be re-dispatched every tick
-# for a round it has already answered.
-t head-round-human-block-requested-is-spent - \
-  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND" '[{"login":"'$CJ_HUMAN'"}]')" | cut -f5)"
-# Head-scoped like every verdict in this file: a block on a tree the builder has
-# already moved past is not a wake.
-t head-round-human-block-superseded - \
-  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_STALE")" | cut -f5)"
-# MUST-FAIL, D3: $human ALONE, never "not in $panel". An implementation keying on
-# panel membership passes every other case in this block and wakes the builder
-# for every advisory or triage verdict on the board.
-HC_ADVISORY='[
-  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
-  {"state":"CHANGES_REQUESTED","author":{"login":"dan-claude-bot"},"commit":{"oid":"abc1234"}}
-]'
-t head-round-advisory-block-not-owed - \
-  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_ADVISORY")" | cut -f5)"
-# An empty $human matches nobody — what the two callers that read only the check
-# column pass, beside the empty $panel that neuters the other clause.
-t head-round-empty-human-arg-not-owed - \
-  "$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND")" '' | cut -f5)"
-# The two clauses are independent: an outstanding PANEL request does not hold
-# back a human round, and vice versa. p2 still owes a first verdict, yet the
-# human's block at the head is the builder's to answer.
-t head-round-human-block-with-panel-request-owed owed \
-  "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$HC_HUMAN_ROUND" '[{"login":"p2"}]')" | cut -f5)"
-
-# ceremony#207: two current-head blockers and one approval, with the whole
-# requested panel returned, produces one owed row (and therefore one wake).
-CEREMONY_207='[
-  {"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"abc1234"}},
-  {"state":"CHANGES_REQUESTED","author":{"login":"p2"},"commit":{"oid":"abc1234"}},
-  {"state":"APPROVED","author":{"login":"p3"},"commit":{"oid":"abc1234"}}
-]'
-t head-round-ceremony-207-one-wake 1 \
-  "$(hc '["p1","p2","p3"]' "$(mk_prc "$CHK_OK" "$CEREMONY_207")" \
-    | awk -F'\t' '$5 == "owed" {n++} END {print n+0}')"
-# The row's existing number+updatedAt identity remains ledger-compatible: once
-# a completed session acknowledges this exact round, the next tick is quiet.
-ACK_ROUND="$TMP/head-round-ack"
-ACK_ITEM="$(hc '["p1"]' "$(mk_prc "$CHK_OK" "$CR_REQ")" \
-  | awk -F'\t' '$5 == "owed" {print $1, $2}')"
-printf '%s\n' "$ACK_ITEM" | ledger_commit "$ACK_ROUND"
-t head-round-already-acknowledged 0 \
-  "$(printf '%s\n' "$ACK_ITEM" | ledger_filter "$ACK_ROUND" | n)"
-
-# The three round-close siblings agree on the same closed, non-approved round.
-# addressing=true, round_owed=owed, converged=false.
-CROSS_PR="$(jq -cn --argjson reviews "$CEREMONY_207" '{
-  data:{repository:{pullRequest:{
-    headRefOid:"abc1234",mergeable:"MERGEABLE",
-    labels:{nodes:[]},reviewRequests:{nodes:[]},
-    latestOpinionatedReviews:{nodes:$reviews}
-  }}}
-}')"
-t round-siblings-addressing true \
-  "$(printf '%s' "$CROSS_PR" | jq -r --argjson panel '["p1","p2","p3"]' \
-    --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
-t round-siblings-round-owed owed \
-  "$(hc '["p1","p2","p3"]' "$(mk_prc "$CHK_OK" "$CEREMONY_207")" | cut -f5)"
-t round-siblings-converged false \
-  "$(printf '%s' "$CROSS_PR" | cj '' '["p1","p2","p3"]')"
-
-# #286: the same agreement extended to the REQUEST side, on the #281 snapshot as
-# it reads once the signal is spent — every verdict in, no request outstanding,
-# and the only signal older than the blocking verdicts it supposedly answered.
-# The bug was never that one of these predicates was wrong. round_owed and
-# addressing.jq were both right and both held false by the engine's own request,
-# so the ball landed nowhere: request-panel.jq has to agree with its siblings on
-# the same payload or the round has no owner at all. Asserting the four together
-# is what makes "the ball provably lands somewhere" a test rather than a claim.
-PR281_PANEL='["p1","p2","p3"]'
-PR281_REVIEWS='[
-  {"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-02T10:32:33Z"},
-  {"state":"CHANGES_REQUESTED","author":{"login":"p2"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-02T10:35:14Z"},
-  {"state":"APPROVED","author":{"login":"p3"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-02T10:29:40Z"}]'
-# The signal that opened round 1 at 10:08:12Z — older than every verdict above,
-# and the only one #281 ever carried.
-PR281_SIG="$(sig abc1234 2026-08-02T10:08:12Z)"
-PR281_GQL="$(jq -cn --argjson reviews "$PR281_REVIEWS" '{
-  data:{repository:{pullRequest:{
-    headRefOid:"abc1234",mergeable:"MERGEABLE",
-    labels:{nodes:[]},reviewRequests:{nodes:[]},
-    latestOpinionatedReviews:{nodes:$reviews}
-  }}}
-}')"
-t round-siblings-281-requests-none "" \
-  "$(mk_rp abc1234 '[]' "$PR281_REVIEWS" '[]' | rp "$PR281_SIG" "$PR281_PANEL")"
-t round-siblings-281-round-owed owed \
-  "$(hc "$PR281_PANEL" "$(mk_prc "$CHK_OK" "$PR281_REVIEWS")" | cut -f5)"
-t round-siblings-281-addressing true \
-  "$(printf '%s' "$PR281_GQL" | jq -r --argjson panel "$PR281_PANEL" \
-    --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
-t round-siblings-281-converged false \
-  "$(printf '%s' "$PR281_GQL" | cj "$PR281_SIG" "$PR281_PANEL")"
-# The live-round half of the same agreement, and the reason state:bots-reviewing
-# is true only while a request awaits a verdict: with p2 still requested, the
-# round is the panel's — addressing.jq holds off, and request-panel.jq's
-# coherence gate holds p1 rather than opening a second round at one head.
-PR281_MID="$(printf '%s' "$PR281_GQL" \
-  | jq -c '.data.repository.pullRequest.reviewRequests.nodes
-             = [{requestedReviewer:{login:"p2"}}]')"
-t round-siblings-281-mid-round-addressing false \
-  "$(printf '%s' "$PR281_MID" | jq -r --argjson panel "$PR281_PANEL" \
-    --arg addressing state:addressing -f "$SHARED/lib/jq/addressing.jq")"
-t round-siblings-281-mid-round-requests-none "" \
-  "$(mk_rp abc1234 '["p2"]' "$PR281_REVIEWS" '[]' \
-    | rp "$(sig abc1234 2026-08-02T11:12:27Z)" "$PR281_PANEL")"
-
-# --- #452: THE BOUNCE IS GONE — the two predicates on ONE human-block payload -
-# The siblings' agreement extended to the round the human owns. This is the
-# whole defect in one snapshot: the panel approves the head, the maintainer
-# blocks it, nothing is requested. Before the fix round_owed said `-` and
-# converged said true, so the tick handed off — re-requesting the human and
-# re-setting state:needs-human over the very block that had just come in, while
-# the builder was never woken. The ball has to land on exactly one of these two,
-# and asserting both against one payload is what makes that a test rather than a
-# claim. Read again with the human RE-REQUESTED, both flip: the wake is spent
-# and the PR is legitimately the human's.
-HB_PANEL='["p1"]'
-HB_REVIEWS='[
-  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-11T09:30:00Z"},
-  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-11T10:00:00Z"}]'
-HB_GQL="$(jq -cn --argjson reviews "$HB_REVIEWS" '{
-  data:{repository:{pullRequest:{
-    headRefOid:"abc1234",mergeable:"MERGEABLE",
-    labels:{nodes:[]},reviewRequests:{nodes:[]},
-    latestOpinionatedReviews:{nodes:$reviews}
-  }}}
-}')"
-t round-siblings-human-block-owed owed \
-  "$(hc "$HB_PANEL" "$(mk_prc "$CHK_OK" "$HB_REVIEWS")" | cut -f5)"
-t round-siblings-human-block-not-converged false \
-  "$(printf '%s' "$HB_GQL" | cj '' "$HB_PANEL")"
-# Requested: state:needs-human stands, the builder is not re-woken, and the
-# handoff does not refire either — nothing re-requests a human already on the
-# list, and the label is already set.
-HB_REQUESTED="$(printf '%s' "$HB_GQL" \
-  | jq -c --arg h "$CJ_HUMAN" '.data.repository.pullRequest.reviewRequests.nodes
-             = [{requestedReviewer:{login:$h}}]')"
-t round-siblings-human-block-requested-not-owed - \
-  "$(hc "$HB_PANEL" "$(mk_prc "$CHK_OK" "$HB_REVIEWS" '[{"login":"'$CJ_HUMAN'"}]')" | cut -f5)"
-t round-siblings-human-block-requested-still-not-converged false \
-  "$(printf '%s' "$HB_REQUESTED" | cj '' "$HB_PANEL")"
-# And the answered round, at the same unchanged head: converged again, so the
-# argument reaches the human — while round_owed has NOT re-fired, the human
-# still being off the request list until the handoff puts them back on it. The
-# builder answering is what moves this, never the engine deciding on its own.
-t round-siblings-human-block-answered-converges true \
-  "$(printf '%s' "$HB_GQL" | cj "$(sig abc1234 2026-08-11T11:00:00Z)" "$HB_PANEL")"
-
-# The wiring, not just the predicates: both facts must actually reach both
-# programs at the handoff call site, off the SAME payload and through the same
-# licence program the request path uses. A predicate nobody passes $human to is
-# a fix that ships inert.
-# shellcheck disable=SC2016
-if grep -q 'arg human "\${FLEET_HUMAN:-}"' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'jq/answered-head.jq' "$SHARED/lib/duty-builder.sh"; then
-  r1=wired
-else
-  r1=INERT
-fi
-t engine-handoff-reads-the-human wired "$r1"
-# ...and it is read GUARDED. duty.sh runs `set -euo pipefail`, FLEET_HUMAN has
-# no entry in fleet.defaults.conf, and the round-detection call site above runs
-# on every tick for every repo — a bare deref there turns "the operator never
-# set FLEET_HUMAN" from a handoff that fails into a builder that does not run at
-# all. Both new sites take `${FLEET_HUMAN:-}`; empty is the predicates'
-# documented "matches nobody", which is exactly today's behaviour.
-# shellcheck disable=SC2016
-t engine-human-arg-is-set-u-safe 0 \
-  "$(grep -c -- '--arg human "\$FLEET_HUMAN"' "$SHARED/lib/duty-builder.sh" || true)"
-# Every head-checks.jq and converged.jq invocation passes $human — jq aborts on
-# an undefined argument, so a missed call site is a silently empty row or an
-# `err` branch, not a loud failure.
-# `case` over the captured context, not a `| grep -q`: this file runs under
-# pipefail and an early-exiting grep at the end of a pipe is the SIGPIPE red
-# the guard above exists to keep out (#443, #449).
-# The line numbers arrive by process substitution rather than by a pipe into
-# the loop, and the loop reads them one line at a time (SC2013): `missing_human`
-# accumulates in the loop BODY, so a `grep | while read` would spend every hit
-# in a subshell and leave this guard passing vacuously. `cut` drains its input,
-# so nothing at the end of that feeding pipe exits early either.
-missing_human=""
-while read -r _ph_ln; do
-  _ph_ctx="$(sed -n "$((_ph_ln > 6 ? _ph_ln - 6 : 1)),${_ph_ln}p" \
-    "$SHARED/lib/duty-builder.sh")"
-  case "$_ph_ctx" in
-    *"--arg human"*) : ;;
-    *) missing_human="${missing_human}${_ph_ln} " ;;
-  esac
-done < <(grep -n 'jq/head-checks\.jq\|jq/converged\.jq' \
-  "$SHARED/lib/duty-builder.sh" | cut -d: -f1)
-t engine-every-predicate-call-passes-human "" "${missing_human% }"
-
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
 # #243: a ready PR missing its current-head signal becomes resume work only on
 # the twelfth consecutive tick. The state is keyed by head, so a push resets
@@ -4675,203 +2489,602 @@ t head-cancelled-wakes-ci-red "o/r#1@abc1234" \
   "$(awk -F'\t' "$AWK_RED" <<<"$CANCEL_ROW" | cut -f1)"
 t head-cancelled-named-in-the-wake "check (CANCELLED)" "$(cut -f6 <<<"$CANCEL_ROW")"
 
-# --- the ceremony#163 regression case (#17's last acceptance criterion) ------
-# The incident this issue was filed from, modelled end to end: a PR with
-# current-head approvals from the full panel, mergeable, no changes requested,
-# no conflict, no outstanding review request — and `release-exercise /
-# fixture-chain` failed during job SETUP on an HTTP 429 fetching
-# actions/checkout, so none of the PR's code ever ran. Every wake condition the
-# builder had looked past it, and the PR sat.
-C163_REVIEWS='[
-  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"deadbee"}},
-  {"state":"APPROVED","author":{"login":"p2"},"commit":{"oid":"deadbee"}}
-]'
-C163="$(jq -cn --argjson lr "$C163_REVIEWS" --argjson c "$CHK_BAD" \
-  '[{number:163, isDraft:false, updatedAt:"T9", headRefOid:"deadbee",
-     statusCheckRollup:$c, latestOpinionatedReviews:$lr, reviewRequests:[]}]')"
-C163_ROW="$(hc '["p1","p2"]' "$C163")"
-# It owes no round — which is precisely why nothing woke for it before.
-t c163-no-round-owed - "$(cut -f5 <<<"$C163_ROW")"
-# It is red, so it wakes now.
-t c163-head-is-red red "$(cut -f4 <<<"$C163_ROW")"
-t c163-wakes-the-author "o/r#163@deadbee" \
-  "$(awk -F'\t' "$AWK_RED" <<<"$C163_ROW" | cut -f1)"
-t c163-names-the-failing-job "release-exercise / fixture-chain (FAILURE)" \
-  "$(cut -f6 <<<"$C163_ROW")"
-# ...and it must NOT become a build wake: claiming a new issue is the thing
-# that was wrong to do while this PR sat red.
-t c163-not-a-build-wake "" "$(awk -F'\t' "$AWK_ROUNDS" <<<"$C163_ROW")"
-# One session per head, then quiet. A second tick on the same red head must not
-# buy a second rerun — the "no blind-rerun loop" criterion, as data.
-C163_LG="$TMP/c163"
-C163_ITEM="$(awk -F'\t' "$AWK_RED" <<<"$C163_ROW")"
-t c163-first-tick-fires 1 "$(printf '%s\n' "$C163_ITEM" | ledger_filter "$C163_LG" | n)"
-printf '%s\n' "$C163_ITEM" | ledger_commit "$C163_LG"
-t c163-second-tick-quiet 0 "$(printf '%s\n' "$C163_ITEM" | ledger_filter "$C163_LG" | n)"
-# A corrective push is a new head, and wakes regardless of how the oid sorts.
-t c163-corrective-push-wakes 1 \
-  "$(printf 'o/r#163@0000001\thead\n' | ledger_filter "$C163_LG" | n)"
+n() { awk 'NF{c++} END{print c+0}'; }
+BMOD="$SHARED/lib/duty-builder.sh"
 
-# --- wiring (#45/#17) --------------------------------------------------------
-if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
-t ci-red-rollup-fetched fetched "$r1"
-# The rollup rides listings that are fetched anyway; it never gets a call of its
-# own. THREE fetches, each named: the resume block's authored-PR listing (#384),
-# the round/ci-red authored-PR listing, and the one post-ci-red `gh pr view`
-# re-read #243 added so a session exiting while checks are pending does not
-# consume the head. The resume listing and the round listing are deliberately
-# NOT merged into one — the round listing is fetched AFTER the resume sessions
-# precisely so a session's own push is visible to it, and a merged snapshot
-# would grade ci-red and round-owed against a pre-session tree.
-#
-# COUNTED AS FETCHES, NOT AS OCCURRENCES OF THE WORD. The old form grepped the
-# whole module for the string and had to strip comment lines to keep from
-# counting its own explanation — "a detector tripping on its own documentation,
-# which this repo has now managed three separate times". It then counted
-# `_resume_newest_check`'s jq field READ as a fourth API call, which is the same
-# defect one layer down: parsing a field you already have is not fetching it.
-# Only a `--json` argument list can name a field to fetch, so that is what is
-# counted, and the explanation above can say `statusCheckRollup` freely.
-t ci-red-rollup-fetched-on-three-listings 3 \
-  "$(grep -c -- '--json [^ ]*statusCheckRollup' "$BMOD")"
-# The resume half of that count adds no CALL — the listing was already being
-# fetched, and #384 put two more fields on it. A `gh` call inside either new
-# predicate would be a per-PR-per-tick cost the issue explicitly priced out.
-# _flip_owed_resume_rows is deliberately absent: it makes exactly one GraphQL
-# READ per green-headed signalled draft, because the verdicts it must weigh
-# cannot come off a listing (#147), and that read is pinned by
-# `p384-flip-makes-exactly-one-read` beside the assertions that it never writes.
-t resume-check-read-adds-no-gh-call 0 \
-  "$(cat <(declare -f _resume_newest_check) <(declare -f _resume_check_states) \
-       <(declare -f _green_head_resume_rows) \
-     | grep -c 'gh ')"
-if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
-  r1=shared
-else
-  r1=SEPARATE
-fi
-t ci-red-rollup-on-the-round-call shared "$r1"
-# GitHub GraphQL connections cap first/last at 100. The later payload carries
-# comments for round-answer detection; pin its live-valid page size.
-if grep -q 'comments(last:100)' "$BMOD" \
-  && ! grep -Eq 'comments\\((first|last):([1-9][0-9]{2,}|[2-9][0-9]{2})\\)' "$BMOD"; then
-  r1=bounded
-else
-  r1=EXCESSIVE
-fi
-t builder-comments-page-live-valid bounded "$r1"
-# round_owed reads before sessions, while request/convergence reads fresh
-# afterward. Two GraphQL snapshots encode that separation; the meaningful
-# hc_head/gql_head guard then catches a push between them.
-t builder-review-payload-has-early-and-late-snapshots 2 \
-  "$(grep -c 'pr_payload=.*gh api graphql' "$BMOD")"
-# shellcheck disable=SC2016  # matching shell source literally
-if grep -Fq '[ "$hc_head" = "$gql_head" ]' "$BMOD"; then r1=guarded; else r1=MISSING; fi
-t builder-late-head-drift-defers-request guarded "$r1"
-if grep -q '.seen-ci-red' "$BMOD"; then r1=ledgered; else r1=UNGUARDED; fi
-t ci-red-signal-ledgered ledgered "$r1"
+# --- #167: the dirty-worktree WARN, once per (worktree, dirt state) ----------
+# Leaving a dirty worktree alone is right; saying so every five minutes for a
+# week is not — that is how a WARN becomes wallpaper. Driven against a REAL
+# linked worktree, because the fingerprint is `git status --porcelain` read
+# inside one, and a fixture that only feeds text would not prove that.
+WTBASE="$TMP/wt-base"
+mkdir -p "$WTBASE"
+git -C "$WTBASE" init -q
+printf 'engine\n' >"$WTBASE/README.md"
+git -C "$WTBASE" add README.md
+git -C "$WTBASE" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+WTDIR="$TMP/wt-build-9"
+git -C "$WTBASE" worktree add "$WTDIR" -b build/9-x >/dev/null 2>&1
+printf 'scratch\n' >"$WTDIR/untracked.txt"
+WTLG="$TMP/seen-wt-dirty"
+
+# The two assertions are each other's must-fail. A fix that keeps warning every
+# tick fails the second; a fix that goes permanently silent after the first
+# emission fails wt-dirty-new-dirt-rewarns below — and silence is the worse of
+# the two, which is why both directions are pinned here.
+W1="$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+W2="$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+t wt-dirty-first-pass-warns 1 "$(printf '%s\n' "$W1" | grep -c 'WARN')"
+t wt-dirty-second-pass-silent "" "$W2"
+# The message names the branch and the price, not just the state: the worktree
+# holds its branch, and the failure lands later, on somebody else's build.
+case "$W1" in *"build/9-x"*)             r1=named ;; *) r1=MISSING ;; esac
+t wt-dirty-warn-names-branch named "$r1"
+case "$W1" in *"already checked out"*)   r1=named ;; *) r1=MISSING ;; esac
+t wt-dirty-warn-names-consequence named "$r1"
+case "$W1" in *"0 modified, 1 untracked"*) r1=counted ;; *) r1=MISSING ;; esac
+t wt-dirty-warn-names-the-dirt counted "$r1"
+
+# Dirty in a NEW way is a new condition and is reported again.
+printf 'more\n' >"$WTDIR/second.txt"
+W3="$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+t wt-dirty-new-dirt-rewarns 1 "$(printf '%s\n' "$W3" | grep -c 'WARN')"
+t wt-dirty-new-dirt-then-silent "" "$(_wt_hygiene_report "$WTLG" o/r build/9-x "$WTDIR")"
+# One worktree's silence is not another's: branch and repo are both in the key,
+# so a second stale worktree is not swallowed by the first one's report.
+t wt-dirty-other-branch-still-warns 1 \
+  "$(_wt_hygiene_report "$WTLG" o/r build/10-y "$WTDIR" | grep -c 'WARN')"
+t wt-dirty-other-repo-still-warns 1 \
+  "$(_wt_hygiene_report "$WTLG" o/other build/9-x "$WTDIR" | grep -c 'WARN')"
+
+# The id carries the dirt and the value is a fixed sentinel — the ci-red scheme
+# (#17), for the same reason. This is the negative control for the scheme NOT
+# used: keyed the ordinary way, a new dirt state whose fingerprint sorts below
+# the old one is suppressed, losing the report exactly when the condition
+# changed.
+WTNAIVE="$TMP/wt-naive"
+printf 'o/r:build/9-x 999-77\n' | ledger_commit "$WTNAIVE"
+t wt-dirt-naive-value-loses-new-dirt 0 \
+  "$(printf 'o/r:build/9-x 111-88\n' | ledger_filter "$WTNAIVE" | n)"
+t wt-dirt-id-distinguishes-dirt-shapes 2 \
+  "$(printf '%s\n%s\n' "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" \
+                       "$(_wt_dirt_id o/r build/9-x '?? b.txt')" | sort -u | n)"
+t wt-dirt-id-stable-for-the-same-dirt 1 \
+  "$(printf '%s\n%s\n' "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" \
+                       "$(_wt_dirt_id o/r build/9-x 'M  a.txt')" | sort -u | n)"
+
+# Wiring: the hygiene block reports through the ledger rather than warning flat,
+# now by way of _wt_release, which owns the whole clean/preserve/force order.
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
-if grep -Fq '.suppressed-ci-red.$slug' "$BMOD"; then r1=perrepo; else r1=SHARED; fi
-t ci-red-suppression-perrepo perrepo "$r1"
-# An idle tick must still write a line (#53): a block that logs only when it
-# fires makes a quiet box and a busy box look identical.
-if grep -q 'no ci-red duty' "$BMOD"; then r1=logged; else r1=SILENT; fi
-t ci-red-idle-logs logged "$r1"
-# #17's first acceptance criterion: the builder wakes for its own red PR BEFORE
-# claiming another issue. Ordering in the file is the ordering in the tick.
-ci_at="$(grep -n -- '--- CI-RED' "$BMOD" | head -1 | cut -d: -f1)"
-build_at="$(grep -n -- '--- BUILD' "$BMOD" | head -1 | cut -d: -f1)"
-if [ -n "$ci_at" ] && [ -n "$build_at" ] && [ "$ci_at" -lt "$build_at" ]; then
-  r1=before
+if grep -Fq '_wt_hygiene_report "$ledger" "$repo" "$branch" "$path"' "$BMOD"; then
+  r1=ledgered
 else
-  r1=AFTER
+  r1=UNGUARDED
 fi
-t ci-red-wakes-before-build before "$r1"
-t ci-red-prompt-exists yes "$([ -f "$SHARED/prompts/ci-red.txt" ] && echo yes || echo NO)"
-t ci-red-budget-defined yes \
-  "$(grep -q '^TIMEOUT_CIRED=' "$SHARED/conf/roles/builder.conf" && echo yes || echo NO)"
-# The doctrine half of #45, now the request half of #133: the green-check
-# precondition is enforced by the ENGINE (_request_panel requests only on a
-# green or absent head) and the prompt keeps green as a ruled term for the
-# argued-exception the session still owns.
-# shellcheck disable=SC2016  # the shell literal contains $check_state
-if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'GREEN IS A RULED TERM' "$SHARED/prompts/fragment-round-rules.txt"; then
-  r1=stated
+t wt-dirty-warn-is-ledgered-in-module ledgered "$r1"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq '_wt_release "$dir" "$R" "$wt_branch" "$wt_path" "$pr_num" "$DUTY_DIR/.seen-wt-dirty"' "$BMOD"; then
+  r1=wired
 else
-  r1=SILENT
+  r1=UNWIRED
 fi
-t round-rules-state-green-head stated "$r1"
-# ...including the exception, or the rule becomes one agents route around
-# silently instead of arguing with in the open.
-if grep -q 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=stated; else r1=SILENT; fi
-t round-rules-state-exception stated "$r1"
+t wt-hygiene-block-calls-release wired "$r1"
+# The PR the record goes on comes from the lookup that decided the branch was
+# done — one query, so the record can never name a different PR than the removal
+# was decided on, and the rare refusal path costs no second API call.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq -- '--state all --json state,number' "$BMOD"; then r1=joined; else r1=SPLIT; fi
+t wt-hygiene-lookup-carries-the-pr-number joined "$r1"
+# #167's must-fail, in the amended form #168 gives it: not "no --force" but
+# "no --force except as the confirmed consequence of a successful preservation
+# push". One occurrence, and the ordering assertions below pin it to that one
+# place. Comments are stripped first: the block above SAYS why the force is
+# earned rather than reached for, and counting raw occurrences counts that
+# sentence — a detector tripping on its own documentation, which this repo has
+# now managed four separate times.
+t wt-hygiene-force-removes-exactly-once 1 \
+  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c -- '--force')"
+# ...and the clean path is untouched: removed, branch deleted, no warning.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq 'git -C "$dir" branch -D "$branch"' "$BMOD"; then r1=intact; else r1=MISSING; fi
+t wt-clean-removal-path-intact intact "$r1"
 
-# --- re-request by head, not by verdict (danmt, #64 round) -------------------
-# BUILDER.md and build.txt both said to re-request "exactly the non-approvers",
-# while converged.jq counts an approval ONLY at the current head:
+# --- the index is uncommitted work too (@codex-bot-andresmgsl, #376) ----------
 #
-#   map(select(.state == "APPROVED" and .commit.oid == $pr.headRefOid) | ...)
-#     as $head_approvers
-#   | (($panel - $head_approvers) | length == 0) as $panel_approves
+# A capture built from the working tree alone answers the wrong question. For a
+# partially staged path the index holds ONE version and the working tree
+# ANOTHER, and both are uncommitted: preserving the second and forcing the
+# worktree away destroys the first, which is this issue's own failure mode
+# reached through its own fix. Driven end to end through `_wt_release` because
+# that is the level that decides a `--force`, and read from the BARE remote
+# after the worktree is gone, because "still retrievable" is the claim.
 #
-# So the moment a fix round pushes a commit, an earlier approver goes stale, is
-# not re-requested, never re-approves, and $panel - $head_approvers is never
-# empty — the handoff wake cannot fire and the PR stalls looking finished. The
-# same silent-stall shape as the reviewDecision bug (ceremony#26/#39). This PR
-# was itself a live instance: grok approved at e13b0dd, the rebase onto #57
-# moved the head, and re-requesting only the two change-requesters would have
-# left it unconvergeable.
-#
-# rebase.txt already had the principle right — it is the one prompt where a
-# push is guaranteed. Asserting the invariant rather than the prose: the
-# predicate keys on the head, so the prompts that tell a builder whom to
-# re-request must say head.
-# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
-if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/converged.jq"; then
-  r1=head-keyed
+# THE ASSERTIONS GO PAST THE TIP. A suite that checks only
+# `refs/heads/wip/<branch>:<file>` passes on the defective capture — the tip is
+# the half that survives it. The staged version's own assertion is what bites.
+_p168_fixture partial-stage
+printf 'carefully-staged\n' >"$P_WT/README.md"
+git -C "$P_WT" add README.md
+printf 'later-working-edit\n' >"$P_WT/README.md"
+t p168-partial-stage-is-partially-staged 'MM README.md' \
+  "$(git -C "$P_WT" status --porcelain --untracked-files=all)"
+# The chain is idempotent as the single commit was: a second pass finds its own
+# tip AND its own parent already on the remote and confirms rather than minting
+# a duplicate pair.
+P_PS1="$(_wt_preserve "$P_WT" build/partial-stage)"
+P_PS2="$(_wt_preserve "$P_WT" build/partial-stage)"
+t p168-partial-stage-rerun-confirms-the-chain "$P_PS1" "$P_PS2"
+t p168-partial-stage-rerun-leaves-one-ref 1 "$(_p168_wip_refs "$P_BARE")"
+P_LG="$P168/ledger-partial"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/partial-stage "$P_WT" 50 "$P_LG")"; then
+  r1=released
 else
-  r1=CHANGED
+  r1=KEPT
 fi
-t converged-counts-approvals-at-head head-keyed "$r1"
-# The invariant is unchanged; #133 MOVED the actor. "Re-request by head, not by
-# verdict" now lives in request-panel.jq, which returns every panelist not
-# approving the CURRENT head (approvers included after a push) — so the
-# head-keying that used to have to survive in prompt prose survives as code.
-# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
-if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/request-panel.jq"; then r1=head-keyed; else r1=CHANGED; fi
-t requestpanel-keys-on-head head-keyed "$r1"
-# The prompts must tell the builder the ENGINE requests — a builder still told to
-# re-request would race the engine and the reconciler.
-for p in build.txt fragment-round-rules.txt; do
-  if grep -qi 'engine' "$SHARED/prompts/$p" && grep -qiE 'do not request|engine requests|engine (does|then requests)' "$SHARED/prompts/$p"; then
-    r1=stated
-  else
-    r1=SILENT
-  fi
-  t "rerequest-moved-to-engine-$p" stated "$r1"
-done
-# The no-push half survives, now engine-side: request-panel.jq re-requests a
-# change-requester still AT the current head once the round is signalled answered
-# (proved by rp-no-push-cr-at-head-requests-cr-er above), and the prompt names
-# that case so the builder knows an argument-only answer still reaches the panel.
-if grep -qi 'pushed nothing' "$SHARED/prompts/fragment-round-rules.txt"; then r1=carved; else r1=MISSING; fi
-t rerequest-no-push-half-engine-side carved "$r1"
-if grep -q 'AUTO_APPROVE_REREQUEST' "$SHARED/conf/fleet.defaults.conf"; then r1=present; else r1=GONE; fi
-t auto-approve-rerequest-still-backs-the-carveout present "$r1"
+t p168-partial-stage-released released "$r1"
+t p168-partial-stage-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+# The tip is the working tree, which is what `checkout FETCH_HEAD` should land
+# somebody on...
+t p168-partial-stage-tip-is-the-working-tree later-working-edit \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/partial-stage:README.md)"
+# ...and the staged bytes are the commit below it, on the remote, after the only
+# copy that was ever local has been forced away.
+t p168-partial-stage-parent-is-the-index carefully-staged \
+  "$(git -C "$P_BARE" show 'refs/heads/wip/build/partial-stage^:README.md')"
+P_PS_SEEN="$(for P_PS_C in refs/heads/wip/build/partial-stage \
+  'refs/heads/wip/build/partial-stage^'; do
+  git -C "$P_BARE" show "$P_PS_C:README.md"
+done | sort -u | tr '\n' ' ')"
+t p168-partial-stage-both-versions-survive 'carefully-staged later-working-edit ' \
+  "$P_PS_SEEN"
+# The record is the durable half, so it names the half nobody would think to
+# look for — the sha, and the ref-relative way to reach it.
+P_REC="$(cat "$P168_PO_BODY")"
+P_PS_STAGED="$(git -C "$P_BARE" rev-parse 'refs/heads/wip/build/partial-stage^')"
+case "$P_REC" in *"$P_PS_STAGED"*) r1=named ;; *) r1=MISSING ;; esac
+t p168-record-names-the-staged-snapshot named "$r1"
+case "$P_REC" in *'FETCH_HEAD^'*) r1=reachable ;; *) r1=MISSING ;; esac
+t p168-record-carries-the-staged-recovery reachable "$r1"
+case "$P_OUT" in *'FETCH_HEAD^'*) r1=named ;; *) r1=MISSING ;; esac
+t p168-log-names-the-staged-snapshot named "$r1"
 
-# --- #114: the auto-approve must read the verdict's STATE, not just its head -
-# The re-request rule (ceremony#94) existed to stop a STALE verdict blocking a
-# tree that has not changed. It never consulted the verdict's state, so a
-# re-request over a standing CHANGES_REQUESTED at an unchanged head was answered
-# with a boilerplate approval — 3 of its 4 recorded fires rubber-stamped a live
-# block. rereq_decision is that policy as a pure function; pin every transition.
-# A live block (CHANGES_REQUESTED / DISMISSED) queues a real review; only a
-# standing APPROVED still auto-approves. Definition-only at the top level, so
-# sourcing costs nothing and runs nothing.
-# shellcheck disable=SC1091
-source "$SHARED/lib/duty-review.sh"
+# The shape the working-tree capture cannot see AT ALL: content staged and then
+# put back in the tree. `git status` calls it dirty (`MM`), so the removal
+# refuses — and the capture equalled HEAD's tree, so the preservation refused
+# too, and the worktree was stuck on every five-minute tick for the life of the
+# box with nothing preserved and nothing said. The refusal now reads "neither
+# half holds anything", which is what releases this one.
+_p168_fixture staged-only
+printf 'staged-then-reverted\n' >"$P_WT/README.md"
+git -C "$P_WT" add README.md
+printf 'engine\n' >"$P_WT/README.md"
+t p168-staged-only-worktree-matches-head "" \
+  "$(git -C "$P_WT" diff HEAD --name-only)"
+P_LG="$P168/ledger-staged-only"
+if _wt_release "$P_CLONE" o/r build/staged-only "$P_WT" 51 "$P_LG" >/dev/null; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-staged-only-released released "$r1"
+t p168-staged-only-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+t p168-staged-only-pushes-a-ref 1 "$(_p168_wip_refs "$P_BARE")"
+t p168-staged-only-preserves-the-staged-bytes staged-then-reverted \
+  "$(git -C "$P_BARE" show 'refs/heads/wip/build/staged-only^:README.md')"
 
+# A ref already on the remote from a pass that knew nothing about indexes — the
+# upgrade case, and the must-fail for checking the chain rather than the tip.
+# The tip matches what this pass captured (the working tree did not change), so
+# a confirmation on the tip alone would return "already preserved" and force the
+# worktree away with the staged bytes on no remote at all.
+_p168_fixture stage-after-preserve
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_SAP1="$(_wt_preserve "$P_WT" build/stage-after-preserve)"
+read -r _ _ _ _ P_SAP_STAGED1 <<<"$P_SAP1"
+t p168-plain-dirt-has-no-staged-snapshot - "$P_SAP_STAGED1"
+t p168-plain-dirt-is-one-commit 1 \
+  "$(git -C "$P_BARE" rev-list --count refs/heads/wip/build/stage-after-preserve \
+    ^"$(git -C "$P_WT" rev-parse HEAD)")"
+P_SAP_TIP1="$(git -C "$P_BARE" rev-parse refs/heads/wip/build/stage-after-preserve)"
+printf 'now-staged\n' >"$P_WT/README.md"
+git -C "$P_WT" add README.md
+printf 'engine\n' >"$P_WT/README.md"
+if _wt_preserve "$P_WT" build/stage-after-preserve >/dev/null; then
+  r1=pushed
+else
+  r1=REFUSED
+fi
+t p168-stage-after-preserve-pushes pushed "$r1"
+# Measured on the REMOTE, never on what the function printed: a tip-only
+# confirmation returns a different line (it now has a parent to name) while the
+# ref stands still, which is the false pass this assertion exists to refuse.
+case "$(git -C "$P_BARE" rev-parse refs/heads/wip/build/stage-after-preserve)" in
+  "$P_SAP_TIP1") r1=CONFIRMED_STALE ;; *) r1=advanced ;;
+esac
+t p168-stage-after-preserve-advances-the-ref advanced "$r1"
+t p168-stage-after-preserve-carries-the-index now-staged \
+  "$(git -C "$P_BARE" show 'refs/heads/wip/build/stage-after-preserve^:README.md')"
+
+# An index that cannot be read is not an empty one. Corrupted here because that
+# is deterministic wherever this runs (a chmod proves nothing under root), and
+# the shape is the same either way: what is staged is unknown, and unknown must
+# not be summarised as nothing on the way to a `--force`. No capture, no push,
+# no removal — every byte still on disk.
+_p168_fixture unreadable-index
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+printf 'not-an-index-at-all' >"$(git -C "$P_WT" rev-parse --git-path index)"
+if _wt_index_tree "$P_WT" >/dev/null 2>&1; then r1=CLAIMED; else r1=refused; fi
+t p168-index-read-fails-closed refused "$r1"
+if _wt_preserve "$P_WT" build/unreadable-index >/dev/null 2>&1; then
+  r1=CLAIMED
+else
+  r1=refused
+fi
+t p168-unreadable-index-capture-refuses refused "$r1"
+t p168-unreadable-index-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+t p168-unreadable-index-keeps-the-work 'rescue me' \
+  "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+
+# 2. Only-ignored dirt: removed, and nothing pushed. Nothing was at risk, so
+# there is no ref to explain and no force to earn — the clean removal already
+# succeeds, which is why the preservation path is reached only by a refusal.
+_p168_fixture ignored-only
+mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
+P_LG="$P168/ledger-ignored"
+if _wt_release "$P_CLONE" o/r build/ignored-only "$P_WT" 41 "$P_LG" >/dev/null; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-ignored-only-released released "$r1"
+t p168-ignored-only-worktree-gone gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+t p168-ignored-only-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+# ...and nothing was recorded either: there is no ref to point a reader at.
+t p168-ignored-only-records-nothing 0 "$(grep -c 'o/r#41' "$P168_PO_CALLS")"
+# ...and a second sweep has nothing left to re-remove: the released worktree is
+# out of `worktree list`, which is what the hygiene block enumerates.
+t p168-released-worktree-off-the-list 0 \
+  "$(git -C "$P_CLONE" worktree list --porcelain | grep -c "$P_WT\$")"
+
+# 3. A failed push is a hard stop. No preservation, no removal — today's
+# behaviour, including #167's once-per-dirt WARN, and the worktree still
+# holding every byte of the work.
+_p168_fixture push-fails
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+git -C "$P_CLONE" remote set-url origin "$P168/nowhere-at-all.git"
+git -C "$P_WT" remote set-url origin "$P168/nowhere-at-all.git"
+P_LG="$P168/ledger-nopush"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" 42 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+t p168-failed-push-refuses-release kept "$r1"
+t p168-failed-push-keeps-worktree present \
+  "$([ -d "$P_WT" ] && echo present || echo GONE)"
+t p168-failed-push-keeps-the-work 'rescue me' "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+t p168-failed-push-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+t p168-failed-push-then-silent "" "$(_wt_release "$P_CLONE" o/r build/push-fails "$P_WT" 42 "$P_LG")"
+# Nothing landed, so nothing is recorded: a comment naming a ref that does not
+# exist is worse than no comment, because the reader stops looking.
+t p168-failed-push-records-nothing 0 "$(grep -c 'o/r#42' "$P168_PO_CALLS")"
+
+# 4. The whole order, end to end: a worktree holding real work is released
+# only because the push landed, and the work is retrievable from the remote
+# afterwards. This is the acceptance criterion as data — and the must-fail it
+# carries is the reordering that would look harmless, a --force reached before
+# the confirmation.
+_p168_fixture released
+printf 'changed\n' >"$P_WT/README.md"
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_LG="$P168/ledger-released"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/released "$P_WT" 43 "$P_LG")"; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-release-succeeds released "$r1"
+t p168-release-removed-the-worktree gone "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+t p168-release-left-the-work-on-the-remote 'rescue me' \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/released:untracked.txt)"
+# The log line is the whole recovery instruction: whoever reads it a week later
+# is not holding this box, and the worktree it names no longer exists.
+case "$P_OUT" in *"wip/build/released"*) r1=named ;; *) r1=MISSING ;; esac
+t p168-log-names-the-ref named "$r1"
+case "$P_OUT" in *"git fetch $P168/released.git wip/build/released"*) r1=recoverable ;; *) r1=MISSING ;; esac
+t p168-log-carries-the-recovery-command recoverable "$r1"
+# A released branch is deleted the same way the clean path deletes it — the two
+# removals differ in what they preserved first, not in what they leave behind.
+t p168-release-deletes-the-branch 0 \
+  "$(git -C "$P_CLONE" branch --list build/released | n)"
+
+# 5. The record, which is the half that survives losing the other one. It goes
+# on the PR the worktree belonged to, and it names the remote, the ref, what it
+# holds and how to get it back — enough to decide the work is worthless without
+# fetching it, and enough to fetch it where it is not.
+t p168-record-goes-to-the-pr 'o/r#43' "$(tail -1 "$P168_PO_CALLS")"
+P_REC="$(cat "$P168_PO_BODY")"
+case "$P_REC" in *'wip/build/released'*) r1=named ;; *) r1=MISSING ;; esac
+t p168-record-names-the-ref named "$r1"
+# shellcheck disable=SC2016  # the markdown the record contains, not an expansion
+case "$P_REC" in *'`origin`'*) r1=named ;; *) r1=MISSING ;; esac
+t p168-record-names-the-remote named "$r1"
+# What it holds, in the counts the criterion asks for: one modified tracked
+# file (README.md) and one untracked (untracked.txt).
+case "$P_REC" in *'1 modified, 1 untracked'*) r1=counted ;; *) r1=MISSING ;; esac
+t p168-record-carries-the-counts counted "$r1"
+case "$P_REC" in
+  *"git fetch $P168/released.git wip/build/released"*) r1=recoverable ;;
+  *) r1=MISSING ;;
+esac
+t p168-record-carries-the-recovery-command recoverable "$r1"
+# The sha ties the record to what was actually pushed — and is what makes the
+# body stable, which is the property post-once.sh's exact-body dedup runs on.
+P_REC_SHA="$(git -C "$P_BARE" rev-parse refs/heads/wip/build/released)"
+case "$P_REC" in *"$P_REC_SHA"*) r1=pinned ;; *) r1=MISSING ;; esac
+t p168-record-names-the-sha pinned "$r1"
+
+# Dedup, from this module's side: the same preservation asked for twice hands
+# post-once.sh a byte-identical body, so its exact-body match suppresses the
+# second. A body carrying a timestamp or a run id would pass every assertion
+# above and post a fresh comment every tick — which is the shape #167 exists to
+# prevent, moved upstream where it is louder.
+_p168_fixture record-stable
+printf 'changed\n' >"$P_WT/README.md"
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_PRES="$(_wt_preserve "$P_WT" build/record-stable)"
+read -r P_RM P_RF P_RS P_RU <<<"$P_PRES"
+_wt_record o/r 44 build/record-stable "$P_WT" "$P_RM" "$P_RF" "$P_RS" "$P_RU"
+P_REC1="$(cat "$P168_PO_BODY")"
+_wt_record o/r 44 build/record-stable "$P_WT" "$P_RM" "$P_RF" "$P_RS" "$P_RU"
+t p168-record-body-is-stable "$P_REC1" "$(cat "$P168_PO_BODY")"
+
+# The counts describe the REF, and the shape that made them lie is the common
+# one: an untracked DIRECTORY. `git status --porcelain` with its default
+# untracked mode collapses `newdir/a` and `newdir/b` into a single `?? newdir/`
+# row, so the record said "1 untracked" over a ref holding two files — and a
+# whole uncommitted `bin/` or `test/`, which is exactly what #168 exists to
+# save, is the case that reads as one stray file to whoever decides not to
+# fetch it. Asserted against the ref's own file count rather than a literal, so
+# the record is checked against the payload and not against itself. Every
+# earlier fixture puts its untracked file at the root, where the defect is
+# invisible.
+_p168_fixture nested-untracked
+printf 'changed\n' >"$P_WT/README.md"
+mkdir -p "$P_WT/newdir"
+printf 'a\n' >"$P_WT/newdir/a"
+printf 'b\n' >"$P_WT/newdir/b"
+P_LG="$P168/ledger-nested"
+_wt_release "$P_CLONE" o/r build/nested-untracked "$P_WT" 49 "$P_LG" >/dev/null
+P_NESTED_N="$(git -C "$P_BARE" ls-tree -r --name-only \
+  refs/heads/wip/build/nested-untracked -- newdir | n)"
+t p168-nested-ref-carries-both-files 2 "$P_NESTED_N"
+P_REC="$(cat "$P168_PO_BODY")"
+case "$P_REC" in
+  *"1 modified, $P_NESTED_N untracked"*) r1=counted ;;
+  *) r1="MISCOUNTED: $P_REC" ;;
+esac
+t p168-record-counts-nested-untracked counted "$r1"
+
+# The same read, failing. Two shapes, because they arrive differently: the
+# worktree's directory gone out from under the sweep, and a git that cannot
+# answer where the directory is still there.
+#
+# The failure has to be LOUD, and the reason is the `if !` it is called inside:
+# `set -e` is disarmed over the whole condition, so a swallowed exit status is
+# not caught anywhere downstream. A status that returned nothing summarises as
+# "0 modified, 0 untracked" — a record that reads like a triviality over content
+# nobody has seen, and a `--force` earned on it. The must-fail is a `_wt_record`
+# that returns 0 here.
+if _wt_record o/r 48 build/vanished "$P168/vanished" origin wip/build/vanished \
+  deadbeef "$P_BARE" >/dev/null 2>&1; then r1=CLAIMED; else r1=refused; fi
+t p168-record-refuses-unreadable-status refused "$r1"
+t p168-record-refuses-before-posting 0 "$(grep -c 'o/r#48' "$P168_PO_CALLS")"
+
+# 6. A record that does not land is a hard stop on the removal, exactly as a
+# failed push is. The payload is the deletable half and the comment the durable
+# one (#168, amended 2026-08-05), so a worktree forced away with the ref pushed
+# and nothing upstream saying where it went ships the gap the amendment closes.
+# Self-healing by construction: the worktree stays, and the next pass
+# re-preserves to the same sha and retries the record.
+_p168_fixture record-fails
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_LG="$P168/ledger-norecord"
+P168_PO_RC=1
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/record-fails "$P_WT" 45 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+t p168-failed-record-refuses-release kept "$r1"
+t p168-failed-record-keeps-worktree present \
+  "$([ -d "$P_WT" ] && echo present || echo GONE)"
+t p168-failed-record-keeps-the-work 'rescue me' "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+t p168-failed-record-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+t p168-failed-record-then-silent 0 \
+  "$(_wt_release "$P_CLONE" o/r build/record-fails "$P_WT" 45 "$P_LG" | grep -c 'WARN')"
+# The payload is still on the remote — the stop is about the pointer, never
+# about the work, and the second pass mints no second ref for it.
+t p168-failed-record-keeps-the-ref 1 "$(_p168_wip_refs "$P_BARE")"
+# ...and once the record does land, the same worktree releases.
+P168_PO_RC=0
+if _wt_release "$P_CLONE" o/r build/record-fails "$P_WT" 45 "$P_LG" >/dev/null; then
+  r1=released
+else
+  r1=KEPT
+fi
+t p168-record-recovered-releases released "$r1"
+t p168-record-recovered-removed-the-worktree gone \
+  "$([ -d "$P_WT" ] && echo THERE || echo gone)"
+
+# ...and the same refusal reached through `_wt_release`, which is where it has
+# to hold: a `git` on PATH that fails only `status` (73, so nothing can mistake
+# it for a clean exit) and passes everything else through to the real one. The
+# push still lands — `_wt_preserve` never reads a status — so this pins the
+# exact division the amendment draws: the payload is safe, the pointer is not,
+# and it is the pointer that gates the force.
+_p168_fixture status-unreadable
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+P_LG="$P168/ledger-nostatus"
+P168_REAL_GIT="$(command -v git)"
+export P168_REAL_GIT
+cat >"$P168_BIN/git" <<'P168GIT'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$a" = status ] && exit 73; done
+exec "$P168_REAL_GIT" "$@"
+P168GIT
+chmod +x "$P168_BIN/git"
+P_PATH_SAVED="$PATH"
+PATH="$P168_BIN:$PATH"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/status-unreadable "$P_WT" 47 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+PATH="$P_PATH_SAVED"
+rm -f "$P168_BIN/git"
+t p168-unreadable-status-refuses-release kept "$r1"
+t p168-unreadable-status-keeps-worktree present \
+  "$([ -d "$P_WT" ] && echo present || echo GONE)"
+t p168-unreadable-status-keeps-the-work 'rescue me' \
+  "$(cat "$P_WT/untracked.txt" 2>/dev/null)"
+t p168-unreadable-status-records-nothing 0 "$(grep -c 'o/r#47' "$P168_PO_CALLS")"
+t p168-unreadable-status-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+# The payload landed before the record was ever attempted, and it stays: the
+# stop is about the pointer, never about the work.
+t p168-unreadable-status-keeps-the-ref 1 "$(_p168_wip_refs "$P_BARE")"
+
+# One read, in one place, listing every file. Both properties are structural
+# because both are invisible to a suite whose fixtures happen to have flat
+# untracked files and a working git — which is what the fixtures above were
+# until this round. Comment lines are stripped first: the helper DOCUMENTS the
+# bare form it exists to replace, and a detector that counts its own
+# explanation is a mistake this repo has now made five separate times.
+P_STATUS_READS="$(grep -v '^[[:space:]]*#' "$BMOD" | grep 'status --porcelain')"
+t p168-one-status-read 1 "$(printf '%s\n' "$P_STATUS_READS" | n)"
+t p168-status-lists-every-file 0 \
+  "$(printf '%s\n' "$P_STATUS_READS" | grep -vc -- '--untracked-files=all')"
+# ...and it fails closed rather than returning an empty listing that summarises
+# as "0 modified, 0 untracked".
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_DIRTFN="$(awk '/^_wt_dirt\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+case "$P_DIRTFN" in *'|| return 1'*) r1=closed ;; *) r1=OPEN ;; esac
+t p168-dirt-read-fails-closed closed "$r1"
+
+# 7. A worktree that survives the forced removal is reported ONCE, not on every
+# tick: the same discipline #167 bought for the dirty-worktree warning, on the
+# path that bypassed it. A lock is the reachable way to make `remove --force`
+# refuse; the engine never locks a worktree itself, so this needs a human lock
+# or a filesystem refusal in the wild — which is exactly why it repeated
+# unnoticed on a five-minute unattended loop.
+_p168_fixture force-survives
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+git -C "$P_CLONE" worktree lock "$P_WT"
+P_LG="$P168/ledger-locked"
+if P_OUT="$(_wt_release "$P_CLONE" o/r build/force-survives "$P_WT" 46 "$P_LG")"; then
+  r1=RELEASED
+else
+  r1=kept
+fi
+t p168-locked-force-refuses-release kept "$r1"
+t p168-locked-force-warns-once 1 "$(printf '%s\n' "$P_OUT" | grep -c 'WARN')"
+t p168-locked-force-then-silent 0 \
+  "$(_wt_release "$P_CLONE" o/r build/force-survives "$P_WT" 46 "$P_LG" | grep -c 'WARN')"
+# Silence is not amnesia: the work is still on the remote, still one ref, still
+# one commit, however many ticks pass over it.
+t p168-locked-force-keeps-one-ref 1 "$(_p168_wip_refs "$P_BARE")"
+t p168-locked-force-keeps-the-work 'rescue me' \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/force-survives:untracked.txt)"
+# New dirt is new news, and says so once again: the ledger id carries the
+# preserved sha, so a changed worktree is never swallowed by the last one's
+# silence. Must-fail: key it on the worktree alone and this goes quiet.
+printf 'later\n' >"$P_WT/second.txt"
+t p168-locked-force-rewarns-on-new-dirt 1 \
+  "$(_wt_release "$P_CLONE" o/r build/force-survives "$P_WT" 46 "$P_LG" | grep -c 'WARN')"
+git -C "$P_CLONE" worktree unlock "$P_WT"
+
+# The ordering, read as an ordering. Every one of these is a real defect that
+# passes a behavioural suite on a good day: a force before the push confirms
+# discards work only when the remote is down, and a `git stash` capture drops
+# untracked files only when there are some.
+P_REL="$(awk '/^_wt_release\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_CLEAN_LN="$(printf '%s\n' "$P_REL" | grep -n 'worktree remove "\$path"' | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_PRES_LN="$(printf '%s\n' "$P_REL" | grep -n '_wt_preserve "\$path"' | head -1 | cut -d: -f1)"
+P_FORCE_LN="$(printf '%s\n' "$P_REL" | grep -n -- '--force' | head -1 | cut -d: -f1)"
+t p168-clean-attempt-precedes-capture yes \
+  "$([ -n "$P_CLEAN_LN" ] && [ -n "$P_PRES_LN" ] && [ "$P_CLEAN_LN" -lt "$P_PRES_LN" ] && echo yes || echo NO)"
+t p168-capture-precedes-force yes \
+  "$([ -n "$P_PRES_LN" ] && [ -n "$P_FORCE_LN" ] && [ "$P_PRES_LN" -lt "$P_FORCE_LN" ] && echo yes || echo NO)"
+# The record is between them, and reads the worktree while there still is one:
+# the counts it carries come from `git status` on a path the force is about to
+# take away, so a record moved below the force names nothing at all.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_RECORD_LN="$(printf '%s\n' "$P_REL" | grep -n '_wt_record "\$repo"' | head -1 | cut -d: -f1)"
+t p168-capture-precedes-record yes \
+  "$([ -n "$P_PRES_LN" ] && [ -n "$P_RECORD_LN" ] && [ "$P_PRES_LN" -lt "$P_RECORD_LN" ] && echo yes || echo NO)"
+t p168-record-precedes-force yes \
+  "$([ -n "$P_RECORD_LN" ] && [ -n "$P_FORCE_LN" ] && [ "$P_RECORD_LN" -lt "$P_FORCE_LN" ] && echo yes || echo NO)"
+# The force is inside the branch the preservation's success opens, not beside
+# it: the guard is `if preserved=...`, so a force outside it cannot exist.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+case "$P_REL" in *'if preserved="$(_wt_preserve'*) r1=guarded ;; *) r1=UNGUARDED ;; esac
+t p168-force-is-inside-the-push-guard guarded "$r1"
+# The capture never goes through `git stash`: without --include-untracked it
+# silently drops exactly the files this issue was filed over, and with it, it
+# mutates the worktree it is supposed to leave alone.
+t p168-capture-never-stashes 0 "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'git stash\|stash push\|stash create')"
+# ...it writes a scratch index instead, which is what leaves the tree untouched.
+# All three index-touching commands are under it — read-tree, add, write-tree —
+# and the one that got left out would be the one that stages the build's work
+# into the real index on its way past.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+t p168-capture-uses-a-scratch-index 3 \
+  "$(grep -v '^[[:space:]]*#' "$BMOD" | grep -c 'GIT_INDEX_FILE="\$idx"')"
+# The REAL index is read the same way: through a copy, never in place. This is
+# not fussiness — `git write-tree` rewrites the cache-tree extension into
+# whichever index it is handed, so a read that pointed GIT_INDEX_FILE at the
+# worktree's own index would modify the worktree this module promises to leave
+# byte-identical. The copy is the only thing standing between those two, and it
+# is one line somebody would delete as redundant.
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_IDXFN="$(awk '/^_wt_index_tree\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+case "$P_IDXFN" in *'cp "$real" "$copy"'*) r1=copied ;; *) r1=IN_PLACE ;; esac
+t p168-index-read-through-a-copy copied "$r1"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+t p168-index-read-never-in-place 0 \
+  "$(printf '%s\n' "$P_IDXFN" | grep -v '^[[:space:]]*#' | grep -c 'GIT_INDEX_FILE="\$real"')"
+# ...and it fails closed, exactly as the status read does: an index that cannot
+# be written to a tree is unknown content, and unknown is not empty.
+case "$P_IDXFN" in *'|| return 1'*) r1=closed ;; *) r1=OPEN ;; esac
+t p168-index-fn-fails-closed closed "$r1"
+# The staged snapshot is the tip's PARENT, never the tip: whoever runs the
+# recovery command lands on the working tree, which is what they were told they
+# would get. Read as an ordering, since both commits are built the same way and
+# the swap would pass every "both versions survive" assertion.
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_PRESFN="$(awk '/^_wt_preserve\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_STAGED_LN="$(printf '%s\n' "$P_PRESFN" | grep -n 'staged_commit="\$(_wt_commit' | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # the literals the module contains, not expansions
+P_TIP_LN="$(printf '%s\n' "$P_PRESFN" | grep -n 'commit="\$(_wt_commit "\$path" "\$tree"' | head -1 | cut -d: -f1)"
+t p168-staged-commit-precedes-the-tip yes \
+  "$([ -n "$P_STAGED_LN" ] && [ -n "$P_TIP_LN" ] && [ "$P_STAGED_LN" -lt "$P_TIP_LN" ] && echo yes || echo NO)"
+# The record goes through post-once.sh rather than a bare POST: its dedup is an
+# exact body match against the comments endpoint, so a tick that dies between
+# the push and the removal re-records nothing. A local ledger cannot promise
+# that — it dies with the box, and this whole issue is about a box dying.
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+P_RECFN="$(awk '/^_wt_record\(\)/{p=1} p{print} p&&/^}$/{exit}' "$BMOD")"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+case "$P_RECFN" in *'"$BIN_DIR/post-once.sh"'*) r1=post_once ;; *) r1=RAW ;; esac
+t p168-record-uses-post-once post_once "$r1"
+t p168-record-never-posts-raw 0 \
+  "$(printf '%s\n' "$P_RECFN" | grep -v '^[[:space:]]*#' | grep -c 'issues/.*comments')"
+
+BIN_DIR="$P168_BIN_SAVED"
 # --- #139: a closed fix round returns to draft ------------------------------
 # GitHub preserves pending review requests across conversion (crew#110 is the
 # live trace), so the existing addressing predicate's no-panel-request gate is
@@ -5123,101 +3336,6 @@ t rereq-moved-head-queues                queue        "$(rereq_decision "$RR_OLD
 t rereq-covered-no-newer-request-skips   skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T2" "$RR_T1" 1)"
 t rereq-covered-no-request-at-all-skips  skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" - 1)"
 
-# --- #151: AUTO_APPROVE_REREQUEST gates the APPROVE, never the re-request -----
-# The flag sat in front of the whole timestamp comparison, so auto=0 collapsed
-# both branches to skip: a standing block plus a newer re-request at an
-# unchanged head was answered `skip` every tick, forever, and the round could
-# not converge (ceremony#207, 37 minutes, cleared by hand). The suite had the
-# hole too — five transitions pinned at auto=1 and exactly one at auto=0, and
-# that one was the APPROVED case, so nothing asked what a live block did with
-# the flag off. The flag now decides one thing only: approve, or queue a real
-# review. Whether a newer re-request is consulted at all is not its business.
-t rereq-auto-off-block-queues-not-skips  queue        "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T1" "$RR_T2" 0)"
-t rereq-auto-off-dismissed-queues        queue        "$(rereq_decision "$RR_H" "$RR_H" DISMISSED "$RR_T1" "$RR_T2" 0)"
-t rereq-auto-off-never-approves          queue        "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 0)"
-# Double-submit protection is untouched at BOTH flag values (#26/#29/#39): a
-# request no newer than my verdict is the genuine mid-clear/stale-index case.
-t rereq-auto-off-no-newer-request-skips  skip         "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T2" "$RR_T1" 0)"
-t rereq-auto-off-no-request-at-all-skips skip         "$(rereq_decision "$RR_H" "$RR_H" CHANGES_REQUESTED "$RR_T1" - 0)"
-t rereq-auto-off-moved-head-queues       queue        "$(rereq_decision "$RR_OLD" "$RR_H" CHANGES_REQUESTED "$RR_T1" "$RR_T2" 0)"
-
-# --- #114: submit-verdict admits the queued round's verdict, still refuses a
-# bare re-post. The compounding half of the bug: once duty-review routes a
-# post-CHANGES_REQUESTED re-request to a real review session, that session's
-# considered verdict is at the SAME head my old verdict already covers, so the
-# (me, PR, head) coverage gate refused it — a WRONG approval became a SILENTLY
-# dropped verdict. The gate is now keyed (me, PR, head, round). A stateful gh
-# shim exercises the real gate end-to-end: GET reviews cats a JSON array, POST
-# appends to it so mine_at_head's post-count rises, graphql returns the round's
-# "<mine_at> <req_at>", the head is fixed. This block is ALSO the regression
-# guard the issue names as "must fail": revert submit-verdict's re-key and
-# Scenario 1 refuses the verdict (count stays 1) and goes red.
-SV="$SHARED/bin/submit-verdict.sh"
-SVSHIM="$TMP/sv-shim"; mkdir -p "$SVSHIM"
-cat >"$SVSHIM/gh" <<'SHIM'
-#!/usr/bin/env bash
-set -eu
-[ "$1" = api ] || exit 3
-sub="$2"
-case "$sub" in
-  user)    printf '%s\n' "$SVSHIM_ME";    exit 0 ;;
-  graphql) printf '%s\n' "$SVSHIM_ROUND"; exit 0 ;;
-esac
-is_post=0; cid=""; event=""
-for a in "$@"; do
-  [ "$a" = POST ] && is_post=1
-  case "$a" in commit_id=*) cid="${a#commit_id=}" ;; event=*) event="${a#event=}" ;; esac
-done
-case "$sub" in
-  */reviews)
-    if [ "$is_post" = 1 ]; then
-      case "$event" in APPROVE) st=APPROVED ;; REQUEST_CHANGES) st=CHANGES_REQUESTED ;; *) st="$event" ;; esac
-      tmp="$(mktemp)"
-      jq --arg me "$SVSHIM_ME" --arg st "$st" --arg cid "$cid" \
-        '. + [{user:{login:$me},state:$st,commit_id:$cid}]' "$SVSHIM_REVIEWS" >"$tmp"
-      mv "$tmp" "$SVSHIM_REVIEWS"
-      printf '{}\n'; exit 0
-    fi
-    cat "$SVSHIM_REVIEWS"; exit 0 ;;
-  repos/*/pulls/*) printf '%s\n' "$SVSHIM_HEAD"; exit 0 ;;
-esac
-exit 3
-SHIM
-chmod +x "$SVSHIM/gh"
-SV_H="cccccccccccccccccccccccccccccccccccccccc"
-SV_BODY="$TMP/sv-body.txt"; printf 'considered verdict\n' >"$SV_BODY"
-sv_reviews() { printf '%s' "$1" >"$TMP/sv-reviews.json"; }
-sv_count()   { jq 'length' "$TMP/sv-reviews.json"; }
-sv_run() {  # <round-ts "mine req"> <verdict> [--supersede-own]
-  local round="$1" verdict="$2"; shift 2
-  SVSHIM_ME=kimi-bot SVSHIM_HEAD="$SV_H" SVSHIM_ROUND="$round" \
-  SVSHIM_REVIEWS="$TMP/sv-reviews.json" PATH="$SVSHIM:$PATH" DUTY_DIR="$TMP" \
-    bash "$SV" o/r 1 "$SV_H" "$verdict" "$SV_BODY" "$@" >/dev/null 2>&1
-}
-SV_CR="[{\"user\":{\"login\":\"kimi-bot\"},\"state\":\"CHANGES_REQUESTED\",\"commit_id\":\"$SV_H\"}]"
-SV_AP="[{\"user\":{\"login\":\"kimi-bot\"},\"state\":\"APPROVED\",\"commit_id\":\"$SV_H\"}]"
-
-# Scenario 1 (AC3): a standing CR at head + a re-request NEWER than it → the
-# queued round's verdict is ADMITTED and lands (count 1 → 2), exit 0.
-sv_reviews "$SV_CR"
-if sv_run "2026-07-28T10:00:00Z 2026-07-28T11:00:00Z" request-changes; then r1=0; else r1=$?; fi
-t submit-newround-admitted-rc 0 "$r1"
-t submit-newround-verdict-landed 2 "$(sv_count)"
-
-# Scenario 2 (AC4): a standing CR at head + NO newer re-request (my review is
-# newer than the last request) → refused as already-present, no post (count 1).
-sv_reviews "$SV_CR"
-if sv_run "2026-07-28T11:00:00Z 2026-07-28T10:00:00Z" request-changes; then r1=0; else r1=$?; fi
-t submit-bare-repost-rc 0 "$r1"
-t submit-bare-repost-no-verdict 1 "$(sv_count)"
-
-# Scenario 3: --supersede-own (the auto-approve path) never reaches the new
-# gate — it still supersedes and lands regardless of round state (count 1 → 2).
-sv_reviews "$SV_AP"
-if sv_run "2026-07-28T11:00:00Z 2026-07-28T10:00:00Z" approve --supersede-own; then r1=0; else r1=$?; fi
-t submit-supersede-still-lands-rc 0 "$r1"
-t submit-supersede-still-lands 2 "$(sv_count)"
-
 # --- the gate is a whitelist: green or none (danmt's ruling, #64) ------------
 # Codex asked for `$4 == "green"`. The ruling took the pending half of that and
 # refused the `none` half, because the two are not the same fact: pending is
@@ -5441,6 +3559,5 @@ else
 fi
 t doctrine-templates-have-no-hardcoded-paths slotted "$r1"
 PROMPTS_DIR="$saved_prompts_dir"
-
 
 suite_finish
