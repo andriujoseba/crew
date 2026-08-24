@@ -12,3 +12,8 @@
 # ci-floor.yml and by the drill, writes this dependency tree. It is rebuilt
 # for each run and never committed.
 node_modules/
+
+# `python3 -m py_compile` writes these — ci-floor.yml on the collector,
+# scope-coverage.yml on the scope-map guard, and a builder running either by
+# hand. Build artifacts of a check, never committed.
+__pycache__/
