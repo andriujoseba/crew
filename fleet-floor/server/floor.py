@@ -39,6 +39,14 @@ import sys
 # caller to arrange it.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# The fleet definition resolves FIRST, before the server drags in the modules
+# that parse their own CREW_FLOOR_* configuration. This file used to hold both
+# and ran them in this order by line number (:116 against :175); the package
+# does not get that for free, because floor.server reaches floor.ping through
+# floor.actions before floor.roster is ever named. Without this line an
+# invalid CREW_FLOOR_PROBE_TIMEOUT answers before the refusal for an invalid
+# CREW_CONFIG_DIR does, and the paragraph above stops being true.
+import floor.roster  # noqa: E402,F401  (imported for its resolution, not a name)
 from floor.server import main  # noqa: E402  (the path above must precede it)
 
 if __name__ == "__main__":

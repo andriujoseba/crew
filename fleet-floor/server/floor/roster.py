@@ -14,7 +14,10 @@ import os
 import sys
 
 from floor import AGENTS_DIR, CREW_ROOT
-from floor.ping import log, run
+
+# `from floor.ping import log, run` is NOT here: it sits below the resolution,
+# at the seam between this module's two halves, and that position is asserted.
+# See the note there.
 
 def fleet_config_dir():
     """The same directory-atomic fleet selection cli/crew makes (#74/#75).
@@ -122,6 +125,23 @@ FLOOR_VERSION = os.environ.get("CREW_FLOOR_VERSION", "version unavailable")
 # --------------------------------------------------------------------------
 # roster + box inventory
 # --------------------------------------------------------------------------
+
+# Imported HERE, not at the top of the file, and this position is load-bearing.
+#
+# floor.ping parses six CREW_FLOOR_* timeouts at ITS module level, and an
+# int() of a bad one raises. Before the split those parses sat at floor.py:175
+# and the resolution above sat at :116, so the fleet-definition refusal always
+# won a race against them: every refusal came before every configuration
+# parse. A top-of-file import here runs ping's whole body first and reverses
+# that — `CREW_CONFIG_DIR=/missing CREW_FLOOR_PROBE_TIMEOUT=bad` answered with
+# a ValueError traceback instead of the refusal. This line sits at exactly the
+# seam floor.py had: definition half, then ping, then inventory half.
+#
+# floor.py imports this module before floor.server for the same reason and
+# will not hold the order without this; both are asserted together by
+# test/cli.sh's "floor refusal order" cases.
+from floor.ping import log, run  # noqa: E402
+
 
 def read_roster():
     """<name> <agent> <role> [<from>] — the same reader crew's bash uses."""
