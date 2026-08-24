@@ -180,24 +180,49 @@ export PORT USER PASSWD TMP
 # share this collector and this file's reporters rather than each booting their
 # own: eight servers would cost CI eight first polls to assert what one does.
 #
-# The ORDER is load-bearing: read-only suites first, the mutating ones after,
-# ping last. The control verbs mutate stub state that the ping tier then reads,
-# and `wake-silent` deliberately runs after the fixture's stopped box has been
-# started.
+# The ORDER is load-bearing, and what it constrains is READS, not writes: a
+# suite belongs after whatever writes the stub state it reads. ping.sh is last
+# because the ping tier reads state the control verbs write; `wake-silent`
+# runs after the fixture's stopped box has been started, same rule, same
+# direction.
+#
+# "A suite that mutates stub state belongs at or after actions.sh" would be a
+# tidier rule and it is FALSE one file away: floor/server.sh's concurrency
+# block fires five real `pause` commands at ff-idle and is sourced before
+# actions.sh. That is fine, and why it is fine is the actual rule — `pause`
+# writes ff-idle.cron, the only assertions that read ff-idle read .state
+# (actions.sh's power verbs), and nothing downstream reads ff-idle's paused
+# flag at all. No read to order against, so no constraint. In cases.sh that
+# block ran AFTER those power verbs (line 379 against 247) and here it runs
+# before them; both trees green is the evidence that the distinction is real
+# and not a story.
 #
 # What this does NOT preserve is cases.sh's exact interleaving, and it cannot:
 # grouping by module is the whole of D2, and cases.sh ran each module's blocks
-# scattered through the file. Measured at the split, branch against 394bdad:
-# the 707 assertion names are identical as a SET, and 13 of them changed side
-# of the mutating tier — the five `ping:`/`creds:` ones that are static greps
-# over collector and probe source (no live state to be ordered against), and
-# the eight `integrity:` ones that read a snapshot field the control verbs do
-# not write. Both trees run all 707 green, which is the two-sided evidence for
-# that last claim: those eight assert the same value before the control verbs
-# that they asserted after them.
+# scattered through the file. Measured at the split on the --no-browser set,
+# branch against 394bdad, pivoting on the first actions.sh assertion
+# (`cmd: pause ok`) in each tree:
 #
-# So the invariant to keep when adding a suite is the TIER, not a position:
-# a suite that mutates stub state belongs at or after actions.sh, never before.
+#   after -> before   51 names
+#   before -> after    0 names
+#
+# One direction, all of it. Nothing that ran before the control verbs now runs
+# after them, so no assertion reads state that is MORE mutated than it used to
+# be; the 51 read state that is less. They are `server.sh`'s HTTP/`logs:`/
+# concurrency rows, `fleet.sh`'s wedged-and-garbage rows, `units.sh`'s
+# snapshot-shape rows, and the `integrity:`/`ping:`/`creds:` rows that are
+# static greps or read fields the control verbs do not write. Both trees run
+# all of them green, which is the two-sided evidence: each asserts the same
+# value before the control verbs that it asserted after them.
+#
+# Re-measuring this needs one normalisation. `flow: a fresh tick is reported
+# as an age (N s)` puts a MEASURED duration in the assertion name, so two runs
+# of the same tree can differ by that one name; strip the parenthetical before
+# comparing the sets or it reports a difference that is a clock, not an order.
+#
+# So the invariant to keep when adding a suite is the read: place it after
+# whatever writes the state it reads, and if nothing it reads is written here,
+# position is free.
 # shellcheck source=floor/units.sh
 source "$HERE/floor/units.sh"
 # shellcheck source=floor/roster.sh
