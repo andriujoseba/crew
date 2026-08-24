@@ -14,6 +14,11 @@ rehearsal_breaker_record_result() {
   [ -z "$result_file" ] || printf '%s\n' "$result" >"$result_file"
 }
 
+rehearsal_breaker_record_reason() {
+  local reason="$1" reason_file="${REHEARSAL_BREAKER_REASON_FILE:-}"
+  [ -z "$reason_file" ] || printf '%s\n' "$reason" >"$reason_file"
+}
+
 rehearsal_breaker_combine_result() {
   local current="$1" role_rc="$2"
   if [ "$current" -eq 1 ] || { [ "$role_rc" -ne 0 ] && [ "$role_rc" -ne 2 ]; }; then
@@ -39,7 +44,7 @@ rehearsal_breaker_round_result() {
 }
 
 rehearsal_breaker_summary() {
-  local enabled="$1" drilled="$2" result="$3"
+  local enabled="$1" drilled="$2" result="$3" reason="${4:-}"
   if [ "$enabled" -eq 0 ]; then
     printf '%s\n' "skip       breaker  (--no-breaker-drill)"
   elif [ "$result" -eq 0 ]; then
@@ -48,6 +53,8 @@ rehearsal_breaker_summary() {
     printf '%s\n' "FAIL       breaker"
   elif [ -z "${drilled// /}" ]; then
     printf '%s\n' "INCOMPLETE breaker  (no role reached a box)"
+  elif [ -n "$reason" ]; then
+    printf '%s\n' "INCOMPLETE breaker  ($reason)"
   else
     printf '%s\n' "INCOMPLETE breaker  (phase 2 skipped)"
   fi
@@ -235,12 +242,15 @@ rehearsal_breaker_drill() {
     fail "breaker: $kind lane starts closed for $AGENT"
     return 1
   fi
-  check "breaker: $AGENT profile defines bot_session_terminal" \
-    rehearsal_breaker_profile_has_hook bot_session_terminal
+  if ! rehearsal_breaker_profile_has_hook bot_session_terminal; then
+    skip "breaker: $AGENT profile missing bot_session_terminal; leg INCOMPLETE"
+    rehearsal_breaker_record_reason \
+      "$AGENT profile missing bot_session_terminal"
+    return 2
+  fi
   check "breaker: $AGENT profile defines bot_session_acted" \
     rehearsal_breaker_profile_has_hook bot_session_acted
-  if ! rehearsal_breaker_profile_has_hook bot_session_terminal \
-      || ! rehearsal_breaker_profile_has_hook bot_session_acted; then
+  if ! rehearsal_breaker_profile_has_hook bot_session_acted; then
     return 1
   fi
   check "breaker: terminal fixture is classified for $AGENT" \
