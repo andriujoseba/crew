@@ -15,8 +15,8 @@ execs. This package holds what that file used to hold, one module per section
 
 This file carries only what the move itself breaks — the paths, which were
 anchored on the old file's own directory and are now anchored on this
-package's parent so they resolve to the same three directories as before —
-plus the one time constant more than one module derives from.
+package's parent so they resolve to exactly what they resolved to before —
+plus the two-boundary time rule, which units and ping both derive from.
 """
 
 import os
@@ -27,7 +27,7 @@ import os
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CREW_ROOT = os.path.dirname(os.path.dirname(HERE))
 # INDEX is the app, not the fleet: it keeps resolving from the checkout even
-# though the fleet definition below no longer does (#75).
+# though the fleet definition (roster.py) no longer does (#75).
 INDEX = os.path.join(CREW_ROOT, "fleet-floor", "index.html")
 PROBE = os.path.join(HERE, "probe.sh")
 AGENTS_DIR = os.path.join(CREW_ROOT, "shared", "conf", "agents")
