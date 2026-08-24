@@ -12,6 +12,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SHARED="$(dirname "$HERE")"
 ROOT="$(dirname "$SHARED")"
+# shellcheck disable=SC2034  # consumed by run.sh and suite-level roster guards
 SUITES=(common triage builder hygiene conf)
 PASS=0 FAIL=0
 

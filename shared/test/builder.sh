@@ -90,7 +90,7 @@ t panel-builder-resolution author_aware "$r1"
 # shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
 if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
 t panel-reviewer-resolution author_aware "$r1"
-# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
+# shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
     ! grep -Fq 'repos/$SRa/pulls/$Na' "$SHARED/lib/duty-review.sh"; then r1=payload-author; else r1=EXTRA-FETCH; fi
 t panel-reviewer-reuses-payload-author payload-author "$r1"

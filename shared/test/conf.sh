@@ -20,7 +20,6 @@ source "$SHARED/lib/duty-builder.sh"
 # Shared installer fixture used by the configuration and profile cases below.
 ISHIM="$TMP/install-bin"
 IHOME="$TMP/install-home"
-IDUTY="$IHOME/duty"
 CRON_STATE="$TMP/crontab"
 mkdir -p "$ISHIM" "$IHOME"
 for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
