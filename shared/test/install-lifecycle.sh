@@ -36,10 +36,36 @@ mk_src() {  # <dir> <version> — the tree under test, with VERSION rewritten
   # below would pass whether or not the installer still excludes it.
   mkdir -p "$1/.git" && : > "$1/.git/HEAD"
 }
-SA="$WORK/src-a"; SB="$WORK/src-b"
+SA="$WORK/src-a"; SB="$WORK/src-b"; SC="$WORK/src-clean"
 mk_src "$SA" "$VA"
 mk_src "$SB" "$VB"
+mk_src "$SC" "$VA"
+# The builder checkout differs from the clean one only by ignored dependency
+# trees. Both a root dependency and one below a shipped directory exercise the
+# repository-wide rule rather than an anchored root-only tar exclusion.
+mkdir -p "$SA/node_modules/root-dep" "$SA/shared/lib/node_modules/nested-dep"
+printf 'root dependency\n' >"$SA/node_modules/root-dep/index.js"
+printf 'nested dependency\n' >"$SA/shared/lib/node_modules/nested-dep/index.js"
 install_from() { CREW_INSTALL_SOURCE="$1" bash "$INSTALL" >/dev/null 2>&1; }
+
+# The checkout and the minimised product tree load the same exclusion set:
+# the former derives it from .gitignore, while the latter uses the documented
+# fallback because .gitignore is itself repository furniture.
+# shellcheck disable=SC1091
+source "$ROOT/shared/lib/install-payload.sh"
+install_payload_load_ignore_patterns "$ROOT"
+derived_patterns="$(printf '%s\n' "${INSTALL_PAYLOAD_IGNORE_PATTERNS[@]}")"
+fallback_root="$WORK/fallback-root"; mkdir -p "$fallback_root"
+install_payload_load_ignore_patterns "$fallback_root"
+fallback_patterns="$(printf '%s\n' "${INSTALL_PAYLOAD_IGNORE_PATTERNS[@]}")"
+same "checkout-and-installed-policy-agree" "$derived_patterns" "$fallback_patterns"
+# shellcheck disable=SC2016  # match the installers' literal source expressions
+if grep -Fq 'source "$HERE/lib/install-payload.sh"' "$ROOT/shared/install.sh" &&
+   grep -Fq 'source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/shared/lib/install-payload.sh"' "$ROOT/install.sh"; then
+  ok "both-installers-source-one-exclusion-policy"
+else
+  bad "both-installers-source-one-exclusion-policy"
+fi
 
 # THE PAYLOAD (#365) — the installed tree is the product, not the repository.
 # Every assertion here reads the INSTALLED TREE, never install.sh's exclude
@@ -117,6 +143,46 @@ fi
 #     `current`, the path an operator's `crew` actually resolves.
 VTREE="$CREW_HOME/versions/$VA"
 assert_payload payload "$CREW_HOME/current"
+node_modules_path="$(find "$VTREE" -name node_modules -print -quit)"
+if [ -z "$node_modules_path" ]; then
+  ok "payload-excludes-node-modules-at-every-depth"
+else
+  bad "payload-excludes-node-modules-at-every-depth (still shipped: ${node_modules_path#"$VTREE"/})"
+fi
+
+# The ignored dependency trees are the only source difference, so the product
+# trees must be byte-identical (provenance is source-dependent by contract).
+CLEAN_HOME="$WORK/clean-home"
+HOME="$CLEAN_HOME" CREW_HOME="$CLEAN_HOME/share" CREW_BIN="$CLEAN_HOME/bin" \
+  CREW_INSTALL_SOURCE="$SC" bash "$INSTALL" >/dev/null 2>&1
+if diff -r --exclude=INSTALLED_FROM "$VTREE" "$CLEAN_HOME/share/versions/$VA" >/dev/null 2>&1; then
+  ok "builder-and-clean-checkouts-install-byte-identically"
+else
+  bad "builder-and-clean-checkouts-install-byte-identically"
+fi
+
+# Pruning is not the trust boundary. Disable only the copied installer's prune
+# invocation, feed it a tarball carrying node_modules, and require the
+# independent validator to refuse before installation with the path named.
+REFUSE_SRC="$WORK/refuse-src"
+mkdir -p "$REFUSE_SRC"
+tar -C "$SC" -cf - . | tar -xf - -C "$REFUSE_SRC"
+mkdir -p "$REFUSE_SRC/node_modules/survivor"
+printf 'must be refused\n' >"$REFUSE_SRC/node_modules/survivor/index.js"
+# shellcheck disable=SC2016  # mutate the copied invocation, not this fixture's variable
+sed -i 's/^prune_payload "\$EXTRACTED"$/# fixture: leave the payload unpruned/' "$REFUSE_SRC/install.sh"
+REFUSE_TARBALL="$WORK/refuse.tgz"
+tar -C "$WORK" -czf "$REFUSE_TARBALL" "${REFUSE_SRC##*/}"
+REFUSE_HOME="$WORK/refuse-home"
+if refuse_out="$(HOME="$REFUSE_HOME" CREW_HOME="$REFUSE_HOME/share" CREW_BIN="$REFUSE_HOME/bin" \
+  CREW_INSTALL_SOURCE="$REFUSE_TARBALL" bash "$REFUSE_SRC/install.sh" 2>&1)"; then
+  bad "surviving-known-exclusion-is-refused"
+elif grep -Fq 'known-excluded path survived construction: node_modules' <<<"$refuse_out" &&
+     [ ! -e "$REFUSE_HOME/share/versions/$VA" ]; then
+  ok "surviving-known-exclusion-is-refused"
+else
+  bad "surviving-known-exclusion-is-refused (got '$refuse_out')"
+fi
 
 # The read-only verbs still answer from the minimised tree — `--version` off
 # VERSION, `profiles` off shared/conf/{roles,agents}.

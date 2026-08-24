@@ -232,15 +232,15 @@ prune_payload() {  # $1 = tree root
 # a future omission is diagnosed before a version tree is installed.
 validate_payload() {  # $1 = payload tree
   local root="$1" p found
+  found=""
+  while IFS= read -r found; do break; done < <(install_payload_find_ignored "$root")
+  [ -z "$found" ] || die \
+    "refusing payload: known-excluded path survived construction: $found"
   for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do
     if [ -e "$root/$p" ] || [ -L "$root/$p" ]; then
       die "refusing payload: known-excluded path survived construction: $p"
     fi
   done
-  found=""
-  while IFS= read -r found; do break; done < <(install_payload_find_ignored "$root")
-  [ -z "$found" ] || die \
-    "refusing payload: known-excluded path survived construction: $found"
 }
 
 confirm "Install crew from $SRC?" || die "cancelled — nothing was changed."

@@ -98,12 +98,14 @@ fi
 #     packs the whole tree and reimplements no install logic, so the payload
 #     rule applies on the way OUT of the stub, not on the way in.
 assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
-  local prefix="$1" tree="$2" p shipped="" absent="" kb
+  local prefix="$1" tree="$2" p shipped="" absent="" kb ignored
   for p in .git .gitignore .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
            dist drill drills postmortems protocols shared/test \
            fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
     [ -e "$tree/$p" ] && shipped="$shipped $p"
   done
+  ignored="$(find -L "$tree" -name node_modules -print -quit 2>/dev/null)"
+  [ -z "$ignored" ] || shipped="$shipped ${ignored#"$tree"/}"
   if [ -z "$shipped" ]; then
     ok "$prefix-excludes-repository-furniture"
   else
