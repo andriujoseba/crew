@@ -127,6 +127,35 @@ printf 'loose.txt  # the reason\nmapped/covered.md  # already owned\n' >"$D/.git
 run_guard "$D"
 t_says 1 "an-exception-a-row-already-covers-is-red-and-named" '*mapped/covered.md*hides the mapping*'
 
+# ...and it is still red when the SAME entry also declares an unmapped path.
+# The overlap is a property of the entry, never of whether it happened to be
+# useful too: an exception exempted from the test by also catching something
+# is one reasoned broad glob away from silencing D2 for every future path.
+printf '**  # broad, and with a reason\n' >"$D/.github/scope-coverage.allow"
+run_guard "$D"
+t_says 1 "an-exception-hitting-both-mapped-and-unmapped-is-still-red" '*hides the mapping*mapped/covered.md*'
+
+# And it stays red as the tree grows under it — the permanence is the harm.
+track "$D" brand/new/thing.md
+run_guard "$D"
+t_rc 1 "a-broad-exception-does-not-turn-a-later-path-green"
+
+# Two entries on one path: each declares something, so the guard must not say
+# either "matches no tracked path" — that sentence is true of neither. Real
+# redundancy, said accurately, naming the twin.
+D="$(fixture twice <<'YAML'
+"scope:mapped":
+  - changed-files:
+      - any-glob-to-any-file: ["mapped/**"]
+YAML
+)"
+track "$D" mapped/covered.md
+track "$D" loose.txt
+printf 'loose.txt  # the reason\nloose.*  # the same path, said twice\n' >"$D/.github/scope-coverage.allow"
+run_guard "$D"
+t_says 1 "a-redundant-exception-is-named-as-redundant" '*declares only paths*already declares*'
+t_mute 1 "a-redundant-exception-is-not-called-unmatched" '*matches no tracked path*'
+
 # --- refusals: the guard says so rather than guessing -------------------------
 D="$(fixture badkey <<'YAML'
 "scope:mapped":
@@ -137,6 +166,29 @@ YAML
 track "$D" mapped/covered.md
 run_guard "$D"
 t_says 2 "a-match-key-the-guard-does-not-evaluate-is-refused" '*any-glob-to-all-files*'
+
+# A label opened twice. The scope job normalizes through `yq -o=json | jq`,
+# where the repeat REPLACES the earlier block — driven against the pinned 0.6.2
+# `parse_labeler_config`, these two blocks emit `live/**` alone. A guard that
+# merged them would call `old/`'s paths covered while the job derives nothing
+# for them: this issue's defect wearing a green check, from inside the map.
+D="$(fixture dupkey <<'YAML'
+"scope:x":
+  - changed-files:
+      - any-glob-to-any-file: ["old/**"]
+"scope:x":
+  - changed-files:
+      - any-glob-to-any-file: ["live/**"]
+YAML
+)"
+track "$D" old/a.md
+track "$D" live/b.md
+run_guard "$D"
+t_rc 2 "a-label-opened-twice-is-refused"
+# Both ends of it, or the author is left hunting the other block by hand.
+t_says 2 "the-repeat-and-the-first-block-are-both-named" '*labeler.yml:4*labeler.yml:1*'
+# And the shadowed block's path is never reported covered on the way out.
+t_mute 2 "a-shadowed-block-is-not-quietly-honoured" '*all covered*'
 
 D="$(fixture badglob <<'YAML'
 "scope:mapped":
@@ -247,6 +299,49 @@ YAML
 track "$D" dir/one.md
 run_guard "$D"
 t_rc 2 "a-backslash-escape-is-refused"
+
+# The other half of the dialect — the half only a LOOSER translator breaks, and
+# so the half a suite full of red cases never notices going. `*` and `?` stop at
+# `/`, and the whole path must match; the docstring says all three and, until
+# this round, none of them had a test. No row uses `*`, `?` or an unanchored
+# form today, which is the argument FOR pinning them rather than against: what
+# holds the design up is that this guard is never looser than the scope job, and
+# a property held by prose is not a property CI runs. Each case below was driven
+# against the mutation that removes it (round 1 on #513).
+D="$(fixture narrow <<'YAML'
+"scope:mapped":
+  - changed-files:
+      - any-glob-to-any-file: ["a/*", "b/?", "c?d", "top.md"]
+YAML
+)"
+track "$D" a/one.md
+track "$D" b/c
+track "$D" top.md
+run_guard "$D"
+t_rc 0 "one-segment-globs-cover-their-own-segment"
+
+# `*` → `[^/]*`, not `.*`: a/* is a/ONE segment, whatever the depth below.
+track "$D" a/deeper/two.md
+run_guard "$D"
+t_says 1 "a-single-star-does-not-cross-a-slash" '*unmapped: a/deeper/two.md*'
+
+# `?` → `[^/]`: exactly one byte, and never the separator. Two cases, because
+# they die to different mutations — `?`→`.` still matches one byte and is caught
+# only by the slash; `?`→`.*` crosses nothing and is caught only by the length.
+track "$D" b/cd
+track "$D" c/d
+run_guard "$D"
+t_says 1 "a-question-mark-matches-one-byte-not-two" '*unmapped: b/cd*'
+t_says 1 "a-question-mark-does-not-cross-a-slash" '*unmapped: c/d*'
+
+# Anchored at BOTH ends: `README` matches README and never docs/README, and
+# never README.bak either. A prefix match is the loosest mutation of the three
+# and the quietest — every row in this repo would still pass.
+track "$D" top.md.bak
+track "$D" nested/top.md
+run_guard "$D"
+t_says 1 "a-literal-row-does-not-match-a-longer-path" '*unmapped: top.md.bak*'
+t_says 1 "a-literal-row-does-not-match-a-path-below" '*unmapped: nested/top.md*'
 
 echo
 echo "scope-coverage: $PASS ok, $FAIL failed"
