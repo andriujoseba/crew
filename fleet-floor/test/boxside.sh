@@ -233,10 +233,16 @@ t "message: final reply tail parses for the floor" "$BS_PROMPT" "$(sed -n 's/^RE
 BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
-floor.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
-floor.read_roster = lambda: [{"box": "test-box"}]
-status, result = floor.do_command(
+# The one call site here that does NOT use the pre-split `import floor`, and
+# the reason is worth the line: this case REBINDS module globals, and the
+# compatibility block restores reading the surface, not writing it. Assigning
+# floor.FLOOR_ENVELOPE sets a package attribute do_command never reads, so the
+# 394bdad form of this test would quietly stop testing the envelope and start
+# reporting 'unknown box'. floor/init.sh pins that seam as a declared limit.
+import floor.actions
+floor.actions.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
+floor.actions.read_roster = lambda: [{"box": "test-box"}]
+status, result = floor.actions.do_command(
     [], {"action": "message", "box": "test-box", "prompt": "operator text"})
 if status != 500 or "floor message envelope unavailable" not in result.get("error", ""):
     raise SystemExit("missing envelope did not fail the message action loudly")
@@ -518,7 +524,7 @@ if [ -n "$BS_OLD" ] && [ "$BS_OLD" -gt 600 ]; then
   ok "flow: a long-dead engine reports an age past the death rule ($BS_OLD s)"
 else fail "flow: a long-dead engine reports an age past the death rule" "got '$BS_OLD'"; fi
 # The BOX still says nofail — it does not decide. floor.py ages this into
-# `stale`, and cases.sh asserts that it does.
+# `stale`, and floor/ping.sh asserts that it does.
 t "flow: the box reports a fact, not a verdict" nofail "$(bs_key gh)"
 # A recorded rejection still outranks staleness: it is a fact, not an absence.
 echo "$BS_NOW 401 Bad credentials" > "$BS_FLOW/duty/.auth-fail.gh"

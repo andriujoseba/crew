@@ -12,9 +12,11 @@
 #
 # The browser half needs playwright-core; it is SKIPPED, loudly, when absent,
 # because a silently-skipped UI test reads exactly like a passing one.
-# The directive below makes `source "$HERE/cases.sh"` resolve for shellcheck,
-# so it can see that the helpers defined here ARE called (from cases.sh) and
-# stops reporting every one of them as unreachable.
+# The source-path directive below makes each `source "$HERE/floor/<m>.sh"`
+# resolve, so shellcheck can see that the helpers defined here ARE called
+# from the module suites and stops reporting every one as unreachable.
+# A line must never OPEN with the word after a `#` being `shellcheck`: that
+# parses as a directive and reds the whole file (SC1073).
 # shellcheck source-path=SCRIPTDIR
 set -uo pipefail
 
@@ -174,8 +176,75 @@ for _ in $(seq 1 80); do
 done
 
 export PORT USER PASSWD TMP
-# shellcheck source=cases.sh
-source "$HERE/cases.sh"
+# One suite per collector module, at the path that mirrors it (#508 D2). They
+# share this collector and this file's reporters rather than each booting their
+# own: eight servers would cost CI eight first polls to assert what one does.
+#
+# The ORDER is load-bearing, and what it constrains is READS, not writes: a
+# suite belongs after whatever writes the stub state it reads. ping.sh is last
+# because the ping tier reads state the control verbs write; `wake-silent`
+# runs after the fixture's stopped box has been started, same rule, same
+# direction.
+#
+# "A suite that mutates stub state belongs at or after actions.sh" would be a
+# tidier rule and it is FALSE one file away: floor/server.sh's concurrency
+# block fires five real `pause` commands at ff-idle and is sourced before
+# actions.sh. That is fine, and why it is fine is the actual rule — `pause`
+# writes ff-idle.cron, the only assertions that read ff-idle read .state
+# (actions.sh's power verbs), and nothing downstream reads ff-idle's paused
+# flag at all. No read to order against, so no constraint. In cases.sh that
+# block ran AFTER those power verbs (line 379 against 247) and here it runs
+# before them; both trees green is the evidence that the distinction is real
+# and not a story.
+#
+# What this does NOT preserve is cases.sh's exact interleaving, and it cannot:
+# grouping by module is the whole of D2, and cases.sh ran each module's blocks
+# scattered through the file. Measured at the split on the --no-browser set,
+# branch against 394bdad, pivoting on the first actions.sh assertion
+# (`cmd: pause ok`) in each tree:
+#
+#   after -> before   51 names
+#   before -> after    0 names
+#
+# One direction, all of it. Nothing that ran before the control verbs now runs
+# after them, so no assertion reads state that is MORE mutated than it used to
+# be; the 51 read state that is less. They are `server.sh`'s HTTP/`logs:`/
+# concurrency rows, `fleet.sh`'s wedged-and-garbage rows, `units.sh`'s
+# snapshot-shape rows, and the `integrity:`/`ping:`/`creds:` rows that are
+# static greps or read fields the control verbs do not write. Both trees run
+# all of them green, which is the two-sided evidence: each asserts the same
+# value before the control verbs that it asserted after them.
+#
+# Re-measuring this needs one normalisation. `flow: a fresh tick is reported
+# as an age (N s)` puts a MEASURED duration in the assertion name, so two runs
+# of the same tree can differ by that one name; strip the parenthetical before
+# comparing the sets or it reports a difference that is a clock, not an order.
+#
+# So the invariant to keep when adding a suite is the read: place it after
+# whatever writes the state it reads, and if nothing it reads is written here,
+# position is free.
+# init.sh reads no stub state at all — it imports the package and asks what is
+# on it — so by the rule above its position is free. It goes first because it
+# is the package root, and because if the compatibility block is broken the
+# clearest possible report is the first suite saying so.
+# shellcheck source=floor/init.sh
+source "$HERE/floor/init.sh"
+# shellcheck source=floor/units.sh
+source "$HERE/floor/units.sh"
+# shellcheck source=floor/roster.sh
+source "$HERE/floor/roster.sh"
+# shellcheck source=floor/fleet.sh
+source "$HERE/floor/fleet.sh"
+# shellcheck source=floor/server.sh
+source "$HERE/floor/server.sh"
+# shellcheck source=floor/actions.sh
+source "$HERE/floor/actions.sh"
+# shellcheck source=floor/ping.sh
+source "$HERE/floor/ping.sh"
+# alerts.py is the seam #481 fills and carries no code yet; its mirror is
+# sourced anyway, so the day it gains a case nothing here has to change.
+# shellcheck source=floor/alerts.sh
+source "$HERE/floor/alerts.sh"
 # The two scripts that normally only run inside a box, executed for real —
 # without this the collector assertions above are circular (they validate the
 # parser against stub-box's imitation of probe.sh, not against probe.sh).
@@ -385,7 +454,7 @@ CREW_FLOOR_ACTION_TIMEOUT="${FLOOR_TEST_ACTION_TIMEOUT:-8}" \
     # thing. LAST, for the same reason: it leaves that roster at two boxes.
     #
     # ff-paused is re-paused by hand here. `wake-silent` in the collector cases
-    # resumes it (test/cases.sh), and the stub keeps that decision in a state
+    # resumes it (test/floor/actions.sh), and the stub keeps that decision in a state
     # file, so by this point in the suite the fixture's paused box is not one.
     echo
     echo "== a disarmed fleet raises no alarm (#203)"

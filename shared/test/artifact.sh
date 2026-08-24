@@ -114,7 +114,8 @@ assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
   # pass every assertion here (claude-bot, round 1).
   for p in cli/crew VERSION install.sh examples/fleet.roster shared/lib/common.sh \
            shared/bin/engine-manifest.sh shared/bin/tick.sh shared/bin/duty.sh \
-           fleet-floor/index.html fleet-floor/server/floor.py; do
+           fleet-floor/index.html fleet-floor/server/floor.py \
+           fleet-floor/server/floor/server.py; do
     [ -e "$tree/$p" ] || absent="$absent $p"
   done
   if [ -z "$absent" ]; then

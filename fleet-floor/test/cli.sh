@@ -158,11 +158,14 @@ case "$CL_FLOOR_FN" in
   *'CREW_FLOOR_VERSION="$(version)"'*) ok "cli: floor hands its exact version answer to the server" ;;
   *) fail "cli: floor hands its exact version answer to the server" "version handoff missing" ;;
 esac
+# Takes every collector source, because the split put them in a package and a
+# guard that reads only the entry point would pass on a VERSION read anywhere
+# else in it (#508).
 collector_derives_version() {
-  grep -qE '(open|os\.path\.join|Path|pathlib).*VERSION|VERSION.*(read_text|read_bytes)|CREW_ROOT.*VERSION' "$1"
+  grep -qE '(open|os\.path\.join|Path|pathlib).*VERSION|VERSION.*(read_text|read_bytes)|CREW_ROOT.*VERSION' "$@"
 }
-if collector_derives_version "$CL_FLOOR/server/floor.py"; then
-  fail "collector: version stays launcher-owned" "floor.py reads VERSION itself"
+if collector_derives_version "$CL_FLOOR/server/floor.py" "$CL_FLOOR"/server/floor/*.py; then
+  fail "collector: version stays launcher-owned" "the collector reads VERSION itself"
 else
   ok "collector: version stays launcher-owned"
 fi
@@ -217,10 +220,10 @@ CREW_FLOOR_PASS=x CREW_FLOOR_PORT=8893 CREW_FLOOR_INDEX=/nonexistent/index.html 
 import os, sys
 sys.argv = ['floor.py']
 sys.path.insert(0, '$CL_FLOOR/server')
-import floor
-floor.INDEX = '/nonexistent/index.html'
+import floor.server
+floor.server.INDEX = '/nonexistent/index.html'
 try:
-    floor.main()
+    floor.server.main()
 except SystemExit as e:
     print(e); sys.exit(1)
 " > "$CL_TMP/noindex.out" 2>&1 || CL_RC3=$?
@@ -1878,9 +1881,10 @@ fi
 # Run probe.sh for real against a scratch DUTY_DIR, rather than grepping for
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
-# Deliberately not added to fixtures/fleet.txt — three assertions in cases.sh
-# hardcode a 15-box fleet and browser.js's scroll walk has been destabilised by
-# fleet size before (browser.js:246). A 16th row is not worth that risk.
+# Deliberately not added to fixtures/fleet.txt — three assertions under
+# test/floor/ hardcode the fixture's 26 boxes (floor/{roster,fleet,server}.sh)
+# and browser.js's scroll walk has been destabilised by fleet size before
+# (browser.js:246). A 27th row is not worth that risk.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
 CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"
@@ -1890,7 +1894,7 @@ t "probe: reports the agent the box was actually installed as" codex "$CL_PA"
 CL_PD2="$CL_TMP/probe-duty-bare"; mkdir -p "$CL_PD2"
 CL_PA2="$(DUTY_DIR="$CL_PD2" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | grep -c '^::agent' || true)"
 t "probe: an unhired box still emits the key, empty" 1 "${CL_PA2:-0}"
-if grep -q 'agent_actual' "$CL_FLOOR/server/floor.py"; then
+if grep -q 'agent_actual' "$CL_FLOOR/server/floor/units.py"; then
   ok "floor: compares the roster's agent claim against the box"
 else
   fail "floor: compares the roster's agent claim against the box" "the claim is still taken on faith"
@@ -2100,7 +2104,7 @@ fi
 # Nothing may point at a test file that is not there.
 #
 # kimi-bot caught this on #40 by hand: after the page walk was lifted out,
-# cases.sh still called test/stale.js "the browser side of this" and the test
+# the collector suite still called test/stale.js "the browser side of this" and the test
 # .gitignore still explained a playwright-core install, both describing files
 # that had just left the tree. Nobody was wrong -- there was simply no check,
 # so a reader had to notice. This PR puts those files back, which makes both
@@ -2114,7 +2118,7 @@ echo
 echo "== docs point at files that exist"
 
 CL_REFS="$(grep -rhoE 'test/[a-z][a-z-]*\.js' \
-             "$CL_HERE"/*.sh "$CL_FLOOR/README.md" "$CL_ROOT/drill"/*.sh \
+             "$CL_HERE"/*.sh "$CL_HERE"/floor/*.sh "$CL_FLOOR/README.md" "$CL_ROOT/drill"/*.sh \
              "$CL_ROOT/.github/workflows"/*.yml 2>/dev/null | sort -u)"
 
 # A grep that finds nothing would make every assertion below vacuous.
@@ -2338,17 +2342,18 @@ else
        "a stale seed could resurrect a deleted profile"
 fi
 
-# The console's reading must be the SAME answer. runpy executes floor.py's
-# module level without starting the server (run_name is not __main__), so
-# the resolved values themselves are asserted — not a grep for wiring.
+# The console's reading must be the SAME answer. Importing floor.roster runs
+# the resolution at its module level without starting the server, so the
+# resolved values themselves are asserted — not a grep for wiring.
 CL_FLOOR_ANS="$(cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_OPCONF" \
   env -u CREW_FLOOR_ROSTER python3 - <<'PY' 2>&1
-import runpy
-ns = runpy.run_path("floor.py", run_name="floor")
-print(ns["ROSTER"])
-print(ns["agent_conf_path"]("vendorx"))
-print(ns["agent_conf_path"]("claude"))
-print(ns["agent_conf_path"]("grok"))
+import sys
+sys.path.insert(0, ".")
+from floor import roster
+print(roster.ROSTER)
+print(roster.agent_conf_path("vendorx"))
+print(roster.agent_conf_path("claude"))
+print(roster.agent_conf_path("grok"))
 PY
 )"
 t "floor: roster resolves from the config dir" \
@@ -2555,6 +2560,7 @@ fi
 CL_FBROOT="$CL_TMP/fb-root"
 mkdir -p "$CL_FBROOT/fleet-floor/server"
 cp "$CL_FLOOR/server/floor.py" "$CL_FBROOT/fleet-floor/server/floor.py"
+cp -R "$CL_FLOOR/server/floor" "$CL_FBROOT/fleet-floor/server/floor"
 cp -R "$CL_ROOT/examples" "$CL_FBROOT/examples"
 rm -f "$CL_FBROOT/examples/repos.txt"
 CL_RC=0
@@ -2579,6 +2585,95 @@ if [ "$CL_RC" -ne 0 ] && grep -q 'is incomplete; missing: repos.txt' "$CL_TMP/op
 else
   fail "floor: an incomplete OPERATOR definition reports identically" \
        "rc=$CL_RC $(cat "$CL_TMP/op-incomplete.out")"
+fi
+
+# EVERY REFUSAL PRECEDES EVERY CONFIGURATION PARSE, and it takes two competing
+# inputs to see it. The collector parses six CREW_FLOOR_* timeouts at module
+# level and an int() of a bad one raises, so a tree that resolves the fleet
+# definition too late answers an unconfigured host with a ValueError traceback
+# from a timeout it should never have reached. One invalid input cannot catch
+# that — with only a bad CREW_CONFIG_DIR the refusal fires whatever the order
+# is, and with only a bad timeout there is nothing for it to race.
+#
+# Before #508 the order was a line number: fleet_config_dir() at floor.py:116,
+# the int(os.environ...) block at :175. The package has to arrange it, and did
+# not: floor.server reaches floor.ping through floor.actions before floor.roster
+# is named, so ping's parses ran first and this exact command changed its answer
+# between 394bdad and 6eeb311.
+#
+# TWO LINES CARRY THE ORDER, and neither is in floor.py. Importing any floor.*
+# name runs floor/__init__.py first, so the compatibility block's own import
+# order is the outer carrier — floor.roster ahead of floor.ping — and roster.py's
+# import of floor.ping at the seam below its resolution is the inner one.
+# floor.py arranges nothing; that is measured below, not assumed.
+#
+# Drawn from BOTH parsing modules on purpose: CREW_FLOOR_PROBE_TIMEOUT and
+# CREW_FLOOR_PING_INTERVAL are floor.ping's, CREW_FLOOR_ACTION_TIMEOUT is
+# floor.actions', so the assertion is the invariant and not one variable's
+# import position.
+#
+# EVERY ROW BELOW WAS DRIVEN AGAINST EVERY MUTATION, and each names the tree
+# it was applied to, because two of them are inert alone and only red in
+# combination — a table that omits the base is not re-derivable:
+#
+#   mutation                                  applied to      PROBE PING ACTION
+#   ---------------------------------------------------------------------------
+#   A  floor.py's `import floor.roster`       unmutated        ok   ok   ok
+#      deleted
+#   B  roster.py's ping import hoisted        unmutated        RED  RED  ok
+#      to the top of the file
+#   C  __init__.py's block reordered, any     unmutated        RED  RED  ok
+#      module ahead of floor.roster
+#   E  actions.py's own ACTION_TIMEOUT_S      unmutated        ok   ok   ok
+#      parse hoisted above its roster import
+#   E  the same hoist                         on top of C,     RED  RED  RED
+#                                             actions first
+#
+# Read the two `ok` rows, they are the point:
+#
+# A is inert — which is why floor.py no longer carries that line. `from
+# floor.server import main` runs __init__.py, and its block, on the way in, so
+# deleting a roster import from floor.py changes nothing at all. C reds where
+# A does not, and that is the whole reason the guard lives in __init__.py.
+#
+# E is inert ALONE and reds only on top of C. With floor.roster imported first
+# by the block, actions.py's internal order cannot be reached in time to
+# matter; hoist floor.actions ahead of floor.roster in the block AND hoist the
+# parse inside actions.py, and the actions row finally reds. So that row is
+# not a third copy of the ping rows — it is the guard for a reordering inside
+# actions.py, and it needs both halves to fire. C alone never reds it,
+# whichever module is hoisted: ping, units, fleet, actions and server were
+# each driven to the front of the block and all five give RED RED ok.
+for CL_VAR in CREW_FLOOR_PROBE_TIMEOUT CREW_FLOOR_PING_INTERVAL CREW_FLOOR_ACTION_TIMEOUT; do
+  CL_LABEL="floor: the fleet-definition refusal beats \$$CL_VAR parsing"
+  CL_RC=0
+  (cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_TMP/definitely-missing" \
+    env -u CREW_FLOOR_ROSTER "$CL_VAR=bad" CREW_FLOOR_PASS=x timeout 10 python3 floor.py) \
+    >"$CL_TMP/order-$CL_VAR.out" 2>&1 || CL_RC=$?
+  if [ "$CL_RC" -eq 0 ]; then
+    fail "$CL_LABEL" "exited 0 with no fleet definition at all"
+  elif grep -q 'invalid literal for int' "$CL_TMP/order-$CL_VAR.out"; then
+    fail "$CL_LABEL" "the timeout parsed first: $(cat "$CL_TMP/order-$CL_VAR.out")"
+  elif grep -q "is not a fleet definition" "$CL_TMP/order-$CL_VAR.out"; then
+    ok "$CL_LABEL"
+  else
+    fail "$CL_LABEL" "neither answer: rc=$CL_RC $(cat "$CL_TMP/order-$CL_VAR.out")"
+  fi
+done
+
+# ...and the row that keeps the three above honest. They would all pass on a
+# tree that stopped parsing those timeouts at import, which is a different
+# change wearing the same green. With the definition resolving cleanly, the
+# bad timeout must still raise, from the module that owns it.
+CL_RC=0
+cl_fb env CREW_FLOOR_PROBE_TIMEOUT=bad CREW_FLOOR_PASS=x timeout 10 \
+  python3 "$CL_FLOOR/server/floor.py" >"$CL_TMP/order-still-parses.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'invalid literal for int' "$CL_TMP/order-still-parses.out" &&
+   grep -q 'floor/ping.py' "$CL_TMP/order-still-parses.out"; then
+  ok "floor: past the refusal, an invalid timeout still raises where it is parsed"
+else
+  fail "floor: past the refusal, an invalid timeout still raises where it is parsed" \
+       "rc=$CL_RC $(cat "$CL_TMP/order-still-parses.out")"
 fi
 
 # --- operator-config real-host rehearsal contract (#82) -------------------

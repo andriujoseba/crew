@@ -74,7 +74,8 @@ assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
            shared/install.sh shared/lib/common.sh shared/conf/roles \
            shared/conf/agents shared/prompts \
            shared/bin/engine-manifest.sh shared/bin/tick.sh shared/bin/duty.sh \
-           fleet-floor/index.html fleet-floor/server/floor.py; do
+           fleet-floor/index.html fleet-floor/server/floor.py \
+           fleet-floor/server/floor/server.py; do
     [ -e "$tree/$p" ] || absent="$absent $p"
   done
   if [ -z "$absent" ]; then
