@@ -2586,6 +2586,59 @@ else
        "rc=$CL_RC $(cat "$CL_TMP/op-incomplete.out")"
 fi
 
+# EVERY REFUSAL PRECEDES EVERY CONFIGURATION PARSE, and it takes two competing
+# inputs to see it. The collector parses six CREW_FLOOR_* timeouts at module
+# level and an int() of a bad one raises, so a tree that resolves the fleet
+# definition too late answers an unconfigured host with a ValueError traceback
+# from a timeout it should never have reached. One invalid input cannot catch
+# that — with only a bad CREW_CONFIG_DIR the refusal fires whatever the order
+# is, and with only a bad timeout there is nothing for it to race.
+#
+# Before #508 the order was a line number: fleet_config_dir() at floor.py:116,
+# the int(os.environ...) block at :175. The package has to arrange it, and did
+# not: floor.server reaches floor.ping through floor.actions before floor.roster
+# is named, so ping's parses ran first and this exact command changed its answer
+# between 394bdad and 6eeb311. Two lines carry the order now — floor.py's
+# import of floor.roster ahead of floor.server, and roster.py's import of
+# floor.ping at the seam below its resolution — and reverting either one reds
+# the rows below rather than anything louder.
+#
+# Drawn from BOTH parsing modules on purpose: CREW_FLOOR_PROBE_TIMEOUT and
+# CREW_FLOOR_PING_INTERVAL are floor.ping's, CREW_FLOOR_ACTION_TIMEOUT is
+# floor.actions', so the assertion is the invariant and not one variable's
+# import position.
+for CL_VAR in CREW_FLOOR_PROBE_TIMEOUT CREW_FLOOR_PING_INTERVAL CREW_FLOOR_ACTION_TIMEOUT; do
+  CL_LABEL="floor: the fleet-definition refusal beats \$$CL_VAR parsing"
+  CL_RC=0
+  (cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_TMP/definitely-missing" \
+    env -u CREW_FLOOR_ROSTER "$CL_VAR=bad" CREW_FLOOR_PASS=x timeout 10 python3 floor.py) \
+    >"$CL_TMP/order-$CL_VAR.out" 2>&1 || CL_RC=$?
+  if [ "$CL_RC" -eq 0 ]; then
+    fail "$CL_LABEL" "exited 0 with no fleet definition at all"
+  elif grep -q 'invalid literal for int' "$CL_TMP/order-$CL_VAR.out"; then
+    fail "$CL_LABEL" "the timeout parsed first: $(cat "$CL_TMP/order-$CL_VAR.out")"
+  elif grep -q "is not a fleet definition" "$CL_TMP/order-$CL_VAR.out"; then
+    ok "$CL_LABEL"
+  else
+    fail "$CL_LABEL" "neither answer: rc=$CL_RC $(cat "$CL_TMP/order-$CL_VAR.out")"
+  fi
+done
+
+# ...and the row that keeps the three above honest. They would all pass on a
+# tree that stopped parsing those timeouts at import, which is a different
+# change wearing the same green. With the definition resolving cleanly, the
+# bad timeout must still raise, from the module that owns it.
+CL_RC=0
+cl_fb env CREW_FLOOR_PROBE_TIMEOUT=bad CREW_FLOOR_PASS=x timeout 10 \
+  python3 "$CL_FLOOR/server/floor.py" >"$CL_TMP/order-still-parses.out" 2>&1 || CL_RC=$?
+if [ "$CL_RC" -ne 0 ] && grep -q 'invalid literal for int' "$CL_TMP/order-still-parses.out" &&
+   grep -q 'floor/ping.py' "$CL_TMP/order-still-parses.out"; then
+  ok "floor: past the refusal, an invalid timeout still raises where it is parsed"
+else
+  fail "floor: past the refusal, an invalid timeout still raises where it is parsed" \
+       "rc=$CL_RC $(cat "$CL_TMP/order-still-parses.out")"
+fi
+
 # --- operator-config real-host rehearsal contract (#82) -------------------
 # CI has no real boxes, so it cannot honestly run the drill's hardware cases.
 # It can and must keep the harness from becoming vacuous: operator mode is an
