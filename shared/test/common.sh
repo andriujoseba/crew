@@ -7979,9 +7979,13 @@ t terminal-breaker-recovers-on-next-tick '4|cleared' "$(terminal_breaker_recover
 # — and rehearsal-app.sh asserts those two readers agree, so the drill would
 # fail for a reason nobody would trace to a constant.
 CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
-FLOOR_PY="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/floor.py"
+# Every collector source, not just the entry point: #508 split floor.py into
+# a package, so a rule pinned by a `sed` over one file would silently stop
+# being pinned the moment its owning section moved into a module.
+FLOOR_SRV="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server"
+FLOOR_PY=("$FLOOR_SRV/floor.py" "$FLOOR_SRV"/floor/*.py)
 
-FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
+FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
 FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
 # shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
 CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
@@ -7998,7 +8002,7 @@ t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 # moving the boundary in one reader fails HERE rather than silently.
 # shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
 CL_NEVER="$(sed -n 's/^ *if \[ "$tickage" -lt \(-*[0-9][0-9]*\) \]; then.*/\1/p' "$CREW_CLI" | head -1)"
-FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "$FLOOR_PY" | head -1)"
+FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
 t nevertick-rule-floor-boundary 0 "$FL_NEVER"
 t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
 # ...and it must be a verdict BOTH readers can actually produce. The boundary
@@ -9386,14 +9390,16 @@ t cli-floor-server-contract bridged "$r1"
 CI_CONSOLE_VERBS='down floor hire init new profiles status up upgrade'
 CI_CONSOLE_PROSE_VERBS='and cut hangs makes on reads stopped would'
 CI_CONSOLE_CANDIDATES="$(grep -ohE 'crew [a-z][a-z-]*' \
-  "$ROOT/fleet-floor/server/floor.py" "$ROOT/fleet-floor/src/app.js" \
+  "$ROOT/fleet-floor/server/floor.py" "$ROOT"/fleet-floor/server/floor/*.py \
+  "$ROOT/fleet-floor/src/app.js" \
   | sed 's/^crew //' | sort -u \
   | grep -Ev "^($(printf '%s' "$CI_CONSOLE_PROSE_VERBS" | tr ' ' '|'))$")"
 t floor-named-crew-verb-roster-is-complete "$CI_CONSOLE_VERBS" \
   "$(printf '%s\n' "$CI_CONSOLE_CANDIDATES" | paste -sd ' ' -)"
 CI_COMMAND_ROWS="$(sed -n '/^CMDS=(/,/^)/p' "$CI_CREW")"
 for verb in $CI_CONSOLE_VERBS; do
-  if grep -q "crew $verb" "$ROOT/fleet-floor/server/floor.py" "$ROOT/fleet-floor/src/app.js" &&
+  if grep -q "crew $verb" "$ROOT/fleet-floor/server/floor.py" \
+       "$ROOT"/fleet-floor/server/floor/*.py "$ROOT/fleet-floor/src/app.js" &&
      grep -q "^  \"$verb\\^" <<<"$CI_COMMAND_ROWS"; then
     r1=dispatchable
   else

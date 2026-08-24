@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Regression for #44: one slow box must not serialize a fleet-wide action."""
 
-import importlib.util
 import os
+import sys
 import threading
 import time
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FLOOR_PATH = os.path.join(os.path.dirname(HERE), "server", "floor.py")
-SPEC = importlib.util.spec_from_file_location("crew_floor", FLOOR_PATH)
-floor = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(floor)
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "server"))
+# The module UNDER TEST, not the package: do_command reads `run`, `read_roster`
+# and `box_states` as its own globals, so the stubs below have to land there.
+# Rebinding them on the package would leave the real ones in place and this
+# regression would drive a real `box` (#508).
+from floor import actions as floor            # noqa: E402  (sys.path first)
 REAL_LOG = floor.log
 floor.log = lambda _message: None
 

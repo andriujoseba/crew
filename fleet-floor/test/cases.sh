@@ -41,7 +41,7 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 source "$FLOOR/../drill/agreement.sh"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
-build_unit_source="$(awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor.py")"
+build_unit_source="$(awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor/units.py")"
 if grep -q 'now - last_ts' <<<"$build_unit_source"; then
   fail "clock: unit building never mixes host now with a box timestamp" \
        "found the skew-sensitive subtraction 'now - last_ts'"
@@ -151,14 +151,13 @@ t "wire: the payload still carries the boxes the page hides" \
 # #204's discriminator rule forbids. Called directly rather than through a
 # collector: the branch returns before it probes anything, so a fifth server
 # would cost CI a minute to assert what one import asserts here.
-FF_INV="$(python3 - "$FLOOR/server/floor.py" <<'PY'
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location("floormod", sys.argv[1])
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
+FF_INV="$(python3 - "$FLOOR/server" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from floor.units import build_unit
 unit = {"box": "ff-x", "agent": "claude", "room": "builder"}
-asked = m.build_unit(dict(unit), None, "", 0, inventory_ok=True)
-silent = m.build_unit(dict(unit), None, "", 0, inventory_ok=False)
+asked = build_unit(dict(unit), None, "", 0, inventory_ok=True)
+silent = build_unit(dict(unit), None, "", 0, inventory_ok=False)
 print("%s|%s|%s" % (asked["hired"], silent["hired"],
                     "named" if "inventory" in silent["note"] else silent["note"]))
 PY
@@ -169,8 +168,8 @@ t "hired: a measured absence hides the console, an unreadable inventory does not
 # is unreachable in production. Static, in the idiom this suite already uses
 # for the guards it cannot reach through HTTP: deleting the strict read is what
 # would silently empty a real floor.
-if grep -Fq 'states, states_ok = box_states(strict=True)' "$FLOOR/server/floor.py" &&
-   grep -Fq 'inventory_ok=states_ok' "$FLOOR/server/floor.py"; then
+if grep -Fq 'states, states_ok = box_states(strict=True)' "$FLOOR/server/floor/fleet.py" &&
+   grep -Fq 'inventory_ok=states_ok' "$FLOOR/server/floor/fleet.py"; then
   ok "hired: the poller reads the inventory strictly and passes the verdict on"
 else
   fail "hired: the poller reads the inventory strictly and passes the verdict on" \
@@ -673,7 +672,7 @@ t "creds: a waiting box is not flowing"             False "$(uf ff-neverticked '
 # treating the second as the first empties the roster, issues zero pings, and
 # clears every consecutive-miss counter — fail-open, on the signal whose job is
 # noticing that something stopped answering.
-CS_SRC="$FLOOR/server/floor.py"
+CS_SRC="$FLOOR/server/floor/fleet.py"
 if grep -q 'box_states(strict=True)' "$CS_SRC"; then
   ok "ping: distinguishes a failed box list from an empty fleet"
 else
@@ -708,7 +707,7 @@ if grep -q 'flowing\|waiting\|stale' <<<"$credential_probe_source"; then
 else
   ok "creds: the box reports a fact, not a verdict"
 fi
-if grep -q 'fresh = 0 <= tick_age < SILENT_AFTER_S' "$FLOOR/server/floor.py"; then
+if grep -q 'fresh = 0 <= tick_age < SILENT_AFTER_S' "$FLOOR/server/floor/units.py"; then
   ok "creds: the host ages nofail with the same rule it calls SILENT"
 else
   fail "creds: the host ages nofail with the same rule it calls SILENT" \
@@ -719,7 +718,7 @@ fi
 # they cannot see whether it came from the boundary the CLI also uses, and a
 # reader that agreed by coincidence is what shared/test's cross-reader
 # invariant exists to refuse.
-if grep -q 'never_ticked = tick_age < 0' "$FLOOR/server/floor.py"; then
+if grep -q 'never_ticked = tick_age < 0' "$FLOOR/server/floor/units.py"; then
   ok "creds: the host names the never-ticked case rather than falling through"
 else
   fail "creds: the host names the never-ticked case rather than falling through" \
@@ -754,7 +753,7 @@ else
   fail "integrity: the verdict comes from #159's script, not a second copy of it" \
        "probe.sh does not consult engine-manifest.sh"
 fi
-if grep -qE 'u\["integrity"\] = meta\.get\("integrity"' "$FLOOR/server/floor.py"; then
+if grep -qE 'u\["integrity"\] = meta\.get\("integrity"' "$FLOOR/server/floor/units.py"; then
   ok "integrity: the collector carries the box's word"
 else
   fail "integrity: the collector carries the box's word" \

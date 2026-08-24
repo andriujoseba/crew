@@ -25,15 +25,15 @@ jobs:
       - name: bash -n (floor syntax)
         run: |
           set -e
-          for f in fleet-floor/build.sh fleet-floor/server/probe.sh fleet-floor/test/run.sh fleet-floor/test/*.sh fleet-floor/test/stub-box; do
+          for f in fleet-floor/build.sh fleet-floor/server/probe.sh fleet-floor/test/run.sh fleet-floor/test/*.sh fleet-floor/test/floor/*.sh fleet-floor/test/stub-box; do
             bash -n "$f"
           done
       - name: shellcheck (floor)
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x fleet-floor/build.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box
+          shellcheck -x fleet-floor/build.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/floor/*.sh fleet-floor/test/stub-box
       - name: python syntax (collector)
-        run: python3 -m py_compile fleet-floor/server/floor.py
+        run: python3 -m py_compile fleet-floor/server/floor.py fleet-floor/server/floor/*.py
       - name: fleet-floor tests (collector + page)
         run: |
           npm install --no-save playwright-core >/dev/null

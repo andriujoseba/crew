@@ -158,11 +158,14 @@ case "$CL_FLOOR_FN" in
   *'CREW_FLOOR_VERSION="$(version)"'*) ok "cli: floor hands its exact version answer to the server" ;;
   *) fail "cli: floor hands its exact version answer to the server" "version handoff missing" ;;
 esac
+# Takes every collector source, because the split put them in a package and a
+# guard that reads only the entry point would pass on a VERSION read anywhere
+# else in it (#508).
 collector_derives_version() {
-  grep -qE '(open|os\.path\.join|Path|pathlib).*VERSION|VERSION.*(read_text|read_bytes)|CREW_ROOT.*VERSION' "$1"
+  grep -qE '(open|os\.path\.join|Path|pathlib).*VERSION|VERSION.*(read_text|read_bytes)|CREW_ROOT.*VERSION' "$@"
 }
-if collector_derives_version "$CL_FLOOR/server/floor.py"; then
-  fail "collector: version stays launcher-owned" "floor.py reads VERSION itself"
+if collector_derives_version "$CL_FLOOR/server/floor.py" "$CL_FLOOR"/server/floor/*.py; then
+  fail "collector: version stays launcher-owned" "the collector reads VERSION itself"
 else
   ok "collector: version stays launcher-owned"
 fi
@@ -217,10 +220,10 @@ CREW_FLOOR_PASS=x CREW_FLOOR_PORT=8893 CREW_FLOOR_INDEX=/nonexistent/index.html 
 import os, sys
 sys.argv = ['floor.py']
 sys.path.insert(0, '$CL_FLOOR/server')
-import floor
-floor.INDEX = '/nonexistent/index.html'
+import floor.server
+floor.server.INDEX = '/nonexistent/index.html'
 try:
-    floor.main()
+    floor.server.main()
 except SystemExit as e:
     print(e); sys.exit(1)
 " > "$CL_TMP/noindex.out" 2>&1 || CL_RC3=$?
@@ -1890,7 +1893,7 @@ t "probe: reports the agent the box was actually installed as" codex "$CL_PA"
 CL_PD2="$CL_TMP/probe-duty-bare"; mkdir -p "$CL_PD2"
 CL_PA2="$(DUTY_DIR="$CL_PD2" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | grep -c '^::agent' || true)"
 t "probe: an unhired box still emits the key, empty" 1 "${CL_PA2:-0}"
-if grep -q 'agent_actual' "$CL_FLOOR/server/floor.py"; then
+if grep -q 'agent_actual' "$CL_FLOOR/server/floor/units.py"; then
   ok "floor: compares the roster's agent claim against the box"
 else
   fail "floor: compares the roster's agent claim against the box" "the claim is still taken on faith"
@@ -2338,17 +2341,18 @@ else
        "a stale seed could resurrect a deleted profile"
 fi
 
-# The console's reading must be the SAME answer. runpy executes floor.py's
-# module level without starting the server (run_name is not __main__), so
-# the resolved values themselves are asserted — not a grep for wiring.
+# The console's reading must be the SAME answer. Importing floor.roster runs
+# the resolution at its module level without starting the server, so the
+# resolved values themselves are asserted — not a grep for wiring.
 CL_FLOOR_ANS="$(cd "$CL_FLOOR/server" && CREW_CONFIG_DIR="$CL_OPCONF" \
   env -u CREW_FLOOR_ROSTER python3 - <<'PY' 2>&1
-import runpy
-ns = runpy.run_path("floor.py", run_name="floor")
-print(ns["ROSTER"])
-print(ns["agent_conf_path"]("vendorx"))
-print(ns["agent_conf_path"]("claude"))
-print(ns["agent_conf_path"]("grok"))
+import sys
+sys.path.insert(0, ".")
+from floor import roster
+print(roster.ROSTER)
+print(roster.agent_conf_path("vendorx"))
+print(roster.agent_conf_path("claude"))
+print(roster.agent_conf_path("grok"))
 PY
 )"
 t "floor: roster resolves from the config dir" \
@@ -2555,6 +2559,7 @@ fi
 CL_FBROOT="$CL_TMP/fb-root"
 mkdir -p "$CL_FBROOT/fleet-floor/server"
 cp "$CL_FLOOR/server/floor.py" "$CL_FBROOT/fleet-floor/server/floor.py"
+cp -R "$CL_FLOOR/server/floor" "$CL_FBROOT/fleet-floor/server/floor"
 cp -R "$CL_ROOT/examples" "$CL_FBROOT/examples"
 rm -f "$CL_FBROOT/examples/repos.txt"
 CL_RC=0

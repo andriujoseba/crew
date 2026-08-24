@@ -68,18 +68,18 @@ t "probe.sh exits 0" 0 "$?"
 BS_SERVER="$BS_FLOOR/server" python3 - "$BS_TMP/probe.out" > "$BS_TMP/probe.parsed" 2>&1 <<'PY'
 import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
-meta, lines = floor.parse_probe(open(sys.argv[1]).read())
+import floor.units
+meta, lines = floor.units.parse_probe(open(sys.argv[1]).read())
 need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "cron", "paused", "repos", "sessionlogs")
 print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
 print("REPOS=%d" % len(meta.get("repos", "").split()))
 print("LOGLINES=%d" % len(lines))
-sess, cur = floor.derive_sessions(lines, time.time())
+sess, cur = floor.units.derive_sessions(lines, time.time())
 print("SESSIONS=%d" % len(sess))
 print("SESSKEY=%s" % (sess[0]["key"] if sess else ""))
-print("QUEUE=%d" % len(floor.derive_queue(lines)))
+print("QUEUE=%d" % len(floor.units.derive_queue(lines)))
 PY
 bs_get() { sed -n "s/^$1=//p" "$BS_TMP/probe.parsed"; }
 t "probe.sh: parser gets every key it reads" "" "$(bs_get MISSING)"
@@ -166,9 +166,9 @@ BS_SERVER="$BS_FLOOR/server" BS_TOK="$BS_TOK" BS_PROMPT="$BS_PROMPT" \
   python3 - "$BS_SH" "$BS_TMP/expected-floor-prompt" <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
-prompt = floor.floor_message_prompt(os.environ["BS_PROMPT"])
-open(sys.argv[1], "w").write(floor.MESSAGE_SH.replace("__TOK__", os.environ["BS_TOK"]))
+import floor.actions
+prompt = floor.actions.floor_message_prompt(os.environ["BS_PROMPT"])
+open(sys.argv[1], "w").write(floor.actions.MESSAGE_SH.replace("__TOK__", os.environ["BS_TOK"]))
 open(sys.argv[2], "w").write(prompt)
 open(os.environ["BS_PROMPT_FILE"], "w").write(prompt)
 PY
@@ -215,8 +215,8 @@ fi
 BS_SERVER="$BS_FLOOR/server" python3 - "$BS_M/duty/duty.log" > "$BS_TMP/msg.parsed" 2>&1 <<'PY'
 import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
-sess, cur = floor.derive_sessions(open(sys.argv[1]).read().splitlines(), time.time())
+import floor.units
+sess, cur = floor.units.derive_sessions(open(sys.argv[1]).read().splitlines(), time.time())
 print("N=%d" % len(sess))
 print("KIND=%s" % (sess[0]["kind"] if sess else ""))
 print("OUT=%s" % (sess[0]["out"] if sess else ""))
@@ -233,10 +233,10 @@ t "message: final reply tail parses for the floor" "$BS_PROMPT" "$(sed -n 's/^RE
 BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
-floor.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
-floor.read_roster = lambda: [{"box": "test-box"}]
-status, result = floor.do_command(
+import floor.actions
+floor.actions.FLOOR_ENVELOPE = "/definitely/missing/fragment-floor-envelope.txt"
+floor.actions.read_roster = lambda: [{"box": "test-box"}]
+status, result = floor.actions.do_command(
     [], {"action": "message", "box": "test-box", "prompt": "operator text"})
 if status != 500 or "floor message envelope unavailable" not in result.get("error", ""):
     raise SystemExit("missing envelope did not fail the message action loudly")
@@ -329,10 +329,10 @@ chmod +x "$BS_C/crontab"
 BS_SERVER="$BS_FLOOR/server" BS_OUT="$BS_TMP" python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
+import floor.actions
 out = os.environ["BS_OUT"]
-open(os.path.join(out, "pause.sh"), "w").write(floor.PAUSE_SH)
-open(os.path.join(out, "resume.sh"), "w").write(floor.RESUME_SH)
+open(os.path.join(out, "pause.sh"), "w").write(floor.actions.PAUSE_SH)
+open(os.path.join(out, "resume.sh"), "w").write(floor.actions.RESUME_SH)
 PY
 
 # bs_ctl <pause|resume> -> writes $BS_TMP/ctl.out and $BS_TMP/ctl.err, echoes rc
@@ -456,9 +456,9 @@ else ok "degraded: CRLF stripped from duty.log"; fi
 BS_SERVER="$BS_FLOOR/server" python3 - "$BS_TMP/deg.out" > "$BS_TMP/crlf.parsed" 2>&1 <<'PY'
 import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
-import floor
-meta, lines = floor.parse_probe(open(sys.argv[1]).read())
-sess, _ = floor.derive_sessions(lines, time.time())
+import floor.units
+meta, lines = floor.units.parse_probe(open(sys.argv[1]).read())
+sess, _ = floor.units.derive_sessions(lines, time.time())
 print("N=%d" % len(sess))
 PY
 t "degraded: CRLF log still parses a session" 1 "$(sed -n 's/^N=//p' "$BS_TMP/crlf.parsed")"
@@ -603,7 +603,7 @@ fi
 # exits 1, and a non-zero rc is what the ping tier reads as "this guest is
 # dead". Get it wrong and a healthy fleet renders UNREACHABLE.
 # --------------------------------------------------------------------------
-BS_PING="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; sys.stdout.write(floor.PING_SH)')"
+BS_PING="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor.ping; sys.stdout.write(floor.ping.PING_SH)')"
 if [ -n "$BS_PING" ]; then ok "ping: the script could be extracted from floor.py"
 else fail "ping: the script could be extracted from floor.py" "PING_SH is empty"; fi
 
@@ -642,7 +642,7 @@ fi
 date +%s > "$BS_PH/duty/.duty.lock.since"
 bs_ping "$BS_PH" >/dev/null
 BS_FRESH="$(bs_ping_key l)"
-BS_STUCK_AT="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; print(floor.STUCK_AFTER_S)')"
+BS_STUCK_AT="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor.ping; print(floor.ping.STUCK_AFTER_S)')"
 if [ -n "$BS_FRESH" ] && [ "$BS_FRESH" -ge 0 ] && [ "$BS_FRESH" -lt "$BS_STUCK_AT" ]; then
   ok "ping: a run that just started is NOT stuck ($BS_FRESH s < $BS_STUCK_AT)"
 else
@@ -682,5 +682,5 @@ t "ping: a box with no duty dir exits 0" 0 "$(bs_ping "$BS_TMP/nosuchhome")"
 # ...and floor.py must parse what the script REALLY emits, not what it is
 # believed to emit — the circularity this file exists to break.
 bs_ping "$BS_PH" >/dev/null
-BS_PARSED="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor; f = floor.parse_ping(open(sys.argv[1]).read()); print("uptime=%s lockheld=%s" % (f["uptime"] is not None, f["lockheld"]))' "$BS_TMP/ping.out")"
+BS_PARSED="$(BS_SERVER="$BS_FLOOR/server" python3 -c 'import os, sys; sys.path.insert(0, os.environ["BS_SERVER"]); import floor.ping; f = floor.ping.parse_ping(open(sys.argv[1]).read()); print("uptime=%s lockheld=%s" % (f["uptime"] is not None, f["lockheld"]))' "$BS_TMP/ping.out")"
 t "ping: floor.py parses the real script's output" "uptime=True lockheld=None" "$BS_PARSED"
