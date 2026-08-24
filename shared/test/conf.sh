@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shared/test/conf.sh — standalone conf subject suite.
+# shellcheck disable=SC2100  # fixture result labels containing hyphens are strings
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -16,23 +17,6 @@ export HOME="${HOME:-$TMP}"
 source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
-
-# Shared installer fixture used by the configuration and profile cases below.
-ISHIM="$TMP/install-bin"
-IHOME="$TMP/install-home"
-IDUTY="$IHOME/duty"
-CRON_STATE="$TMP/crontab"
-mkdir -p "$ISHIM" "$IHOME"
-for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
-  ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
-done
-printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
-chmod +x "$ISHIM/hostname"
-ln -s "$(command -v jq)" "$ISHIM/jq"
-printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
-# shellcheck disable=SC2016  # expanded when the fixture shim runs
-printf '#!/usr/bin/env bash\n[ "${FIXTURE_GITLESS:-0}" != 1 ] || exit 1\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
-chmod +x "$ISHIM/gh" "$ISHIM/git"
 
 # --- crew host: one repo belongs to one fleet (#70) ----------------------
 # The check consumes GitHub's shared board state, never another fleet's
@@ -1993,6 +1977,2182 @@ t gitid-install-uses-the-shared-helper derived "$r1"
 
 if "$SHARED/test/claim.test.sh"; then r1=0; else r1=$?; fi
 t claim-regression-suite 0 "$r1"
+
+
+# --- rehearsal reviewer announce ordering (#192) --------------------------
+# shellcheck source=drill/review-order.sh
+source "$ROOT/drill/review-order.sh"
+REVIEW_HEAD="$(printf 'a%.0s' {1..40})"
+REVIEW_BEFORE_COMMENTS='[{"user":{"login":"reviewer"},"body":"🔎 reviewing head '"$REVIEW_HEAD"'","created_at":"2026-07-30T10:00:00Z","guest_clock":"2099-01-01T00:00:00Z"}]'
+REVIEW_AFTER_COMMENTS='[{"user":{"login":"reviewer"},"body":"🔎 reviewing head '"$REVIEW_HEAD"'","created_at":"2026-07-30T10:06:00Z","guest_clock":"2000-01-01T00:00:00Z"}]'
+REVIEW_VERDICTS='[{"user":{"login":"reviewer"},"commit_id":"'"$REVIEW_HEAD"'","state":"APPROVED","submitted_at":"2026-07-30T10:05:00Z"}]'
+
+if rehearsal_review_announce_precedes_verdict_from_json \
+    reviewer "$REVIEW_HEAD" "$REVIEW_BEFORE_COMMENTS" "$REVIEW_VERDICTS"; then
+  review_order_rc=0
+else
+  review_order_rc=$?
+fi
+t rehearsal-review-announce-before-verdict-rc 0 "$review_order_rc"
+
+if review_order_out="$(rehearsal_review_announce_precedes_verdict_from_json \
+    reviewer "$REVIEW_HEAD" "$REVIEW_AFTER_COMMENTS" "$REVIEW_VERDICTS" 2>&1)"; then
+  review_order_rc=0
+else
+  review_order_rc=$?
+fi
+t rehearsal-review-announce-after-verdict-rc 5 "$review_order_rc"
+case "$review_order_out" in
+  *"review ordering: announce must precede verdict"*) r1=named ;;
+  *) r1=missing ;;
+esac
+t rehearsal-review-announce-after-verdict-names-ordering named "$r1"
+# The mutation leaves the two existing predicates satisfied: the announce is
+# still present at this head and still appears exactly once.
+t rehearsal-review-after-verdict-presence-still-passes 1 \
+  "$(jq -r --arg h "$REVIEW_HEAD" '[.[] | select(.body == ("🔎 reviewing head " + $h))] | length' \
+    <<<"$REVIEW_AFTER_COMMENTS")"
+t rehearsal-review-after-verdict-dedup-still-passes 1 \
+  "$(jq -r '[.[] | select(.body | startswith("🔎 reviewing head"))] | length' \
+    <<<"$REVIEW_AFTER_COMMENTS")"
+
+# --- install.sh: crontab preflight and convergence (#25) ----------------
+# A curated PATH makes "crontab absent" deterministic even on a workstation
+# that happens to have cron installed. Everything install.sh legitimately
+# needs is linked in; gh and git are fixture shims.
+ISHIM="$TMP/install-bin"
+IHOME="$TMP/install-home"
+IDUTY="$IHOME/duty"
+CRON_STATE="$TMP/crontab"
+mkdir -p "$ISHIM" "$IHOME"
+# find/sort/tail/xargs joined the list with #159's engine manifest: the curated
+# PATH is the box's whole world here, and a tool missing from it degrades the
+# install to `unverified` instead of failing, which would hide the very thing
+# these fixtures assert.
+for cmd in awk bash basename cat chmod cp date dirname env find grep head mkdir mktemp mv readlink rm sed sha256sum sort tail tr wc xargs; do
+  ln -s "$(command -v "$cmd")" "$ISHIM/$cmd"
+done
+# If install.sh ever infers from hostname again, make the regression reproduce
+# the dangerous case deterministically rather than depend on this test host.
+printf '#!/usr/bin/env bash\nprintf "claude-builder\\n"\n' >"$ISHIM/hostname"
+chmod +x "$ISHIM/hostname"
+ln -s "$(command -v jq)" "$ISHIM/jq"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$ISHIM/gh"
+# shellcheck disable=SC2016  # expanded when the fixture shim runs
+printf '#!/usr/bin/env bash\n[ "${FIXTURE_GITLESS:-0}" != 1 ] || exit 1\nprintf "fixture-sha\\n"\n' >"$ISHIM/git"
+chmod +x "$ISHIM/gh" "$ISHIM/git"
+
+install_fixture() {
+  env HOME="$IHOME" DUTY_DIR="$IDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" --agent claude --role reviewer "$@"
+}
+
+if install_out="$(install_fixture 2>&1)"; then r1=0; else r1=$?; fi
+t install-no-cron-no-arm-rc 0 "$r1"
+case "$install_out" in *"REPLACE the crontab"*) r1=manual ;; *) r1=missing ;; esac
+t install-no-cron-no-arm-instructions manual "$r1"
+case "$install_out" in *"command not found"*) r1=leaked ;; *) r1=clean ;; esac
+t install-no-cron-no-arm-clean clean "$r1"
+t install-version-with-provenance \
+  "crew@$(head -1 "$ROOT/VERSION") (fixture-sha)" "$(head -1 "$IDUTY/VERSION")"
+
+# The installed package shape has no .git. Run that actual shape, rather than
+# trusting the Git shim used by the rest of the installer fixtures.
+GITLESS_ROOT="$TMP/gitless-crew"
+GITLESS_HOME="$TMP/gitless-home"
+mkdir -p "$GITLESS_ROOT" "$GITLESS_HOME"
+cp -R "$SHARED" "$GITLESS_ROOT/shared"
+cp -R "$ROOT/examples" "$GITLESS_ROOT/examples"
+cp "$ROOT/VERSION" "$GITLESS_ROOT/VERSION"
+if FIXTURE_GITLESS=1 HOME="$GITLESS_HOME" DUTY_DIR="$GITLESS_HOME/duty" \
+  PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+  /bin/bash "$GITLESS_ROOT/shared/install.sh" --agent claude --role reviewer \
+  >"$TMP/gitless-install.out" 2>&1; then r1=0; else r1=$?; fi
+t install-gitless-rc 0 "$r1"
+t install-gitless-stamps-version \
+  "crew@$(head -1 "$ROOT/VERSION")" "$(head -1 "$GITLESS_HOME/duty/VERSION")"
+case "$(head -1 "$GITLESS_HOME/duty/VERSION")" in
+  *unknown*) r1=unknown ;;
+  *) r1=versioned ;;
+esac
+t install-gitless-never-unknown versioned "$r1"
+
+printf '15 3 * * * unrelated-job\n' >"$CRON_STATE"
+before_cron="$(cat "$CRON_STATE")"
+if install_out="$(install_fixture --arm-cron 2>&1)"; then r1=0; else r1=$?; fi
+t install-no-cron-arm-rc 1 "$r1"
+case "$install_out" in
+  *"engine installed, but cron is not armed"*"administrator"*"sudo apt-get install cron"*"install.sh --arm-cron"*) r1=actionable ;;
+  *) r1=missing ;;
+esac
+t install-no-cron-arm-message actionable "$r1"
+case "$install_out" in *"command not found"*) r1=leaked ;; *) r1=clean ;; esac
+t install-no-cron-arm-attributed clean "$r1"
+t install-no-cron-arm-untouched "$before_cron" "$(cat "$CRON_STATE")"
+[ -f "$IDUTY/VERSION" ] && r1=installed || r1=missing
+t install-no-cron-arm-files-remain installed "$r1"
+
+# shellcheck disable=SC2016  # fixture script expands these at execution time
+printf '#!/usr/bin/env bash\ncase "${1:-}" in\n  -l) [ ! -f "$CRON_STATE" ] || cat "$CRON_STATE" ;;\n  -) tmp="$CRON_STATE.new"; cat >"$tmp"; mv "$tmp" "$CRON_STATE" ;;\n  *) tmp="$CRON_STATE.new"; cat "$1" >"$tmp"; mv "$tmp" "$CRON_STATE" ;;\nesac\n' >"$ISHIM/crontab"
+chmod +x "$ISHIM/crontab"
+if install_out="$(install_fixture --arm-cron 2>&1)"; then r1=0; else r1=$?; fi
+t install-with-cron-arm-rc 0 "$r1"
+case "$install_out" in *"crontab armed"*) r1=armed ;; *) r1=missing ;; esac
+t install-with-cron-arm-output armed "$r1"
+t install-with-cron-preserves-existing 1 "$(grep -cF 'unrelated-job' "$CRON_STATE")"
+t install-with-cron-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
+install_fixture --arm-cron >/dev/null 2>&1
+t install-with-cron-rerun-one-tick 1 "$(grep -cF "$IDUTY/bin/tick.sh" "$CRON_STATE")"
+
+# --- install.sh: fleet.roster is the one agent/role declaration (#35) ----
+RHOME="$TMP/roster-home"
+RDUTY="$RHOME/duty"
+mkdir -p "$RHOME"
+roster_install() {
+  case " $* " in
+    *" --converge-registries "*)
+      [ -f "$RDUTY/.crew-seed-repos.txt" ] ||
+        cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-seed-repos.txt"
+      [ -f "$RDUTY/.crew-example-repos.txt" ] ||
+        cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-example-repos.txt"
+      [ -f "$RDUTY/.crew-example-notify-repos.txt" ] ||
+        cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-example-notify-repos.txt"
+      [ -f "$RDUTY/.crew-seed-notify-repos.txt" ] ||
+        cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-seed-notify-repos.txt"
+      ;;
+  esac
+  env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+    /bin/bash "$SHARED/install.sh" "$@"
+}
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-hire-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-roster-upgrade-keeps-role 'BOT_ROLES="builder"' "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+t install-roster-agent 'BOT_AGENT=claude' "$(grep '^BOT_AGENT=' "$RDUTY/conf/instance.conf")"
+
+# Flagless means preserve, never infer from a production-looking hostname.
+roster_install --agent claude --role reviewer >/dev/null 2>&1
+roster_install >/dev/null 2>&1
+t install-flagless-keeps-explicit-role 'BOT_ROLES="reviewer"' \
+  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+
+while read -r roster_box roster_agent roster_role _roster_from; do
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  hire_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  roster_install --box "$roster_box" >/dev/null 2>&1
+  upgrade_conf="$(grep -E '^BOT_(AGENT|ROLES)=' "$RDUTY/conf/instance.conf")"
+  t "install-hire-upgrade-stable-$roster_box" "$hire_conf" "$upgrade_conf"
+  t "install-roster-declares-$roster_box" \
+    "BOT_AGENT=$roster_agent
+BOT_ROLES=\"$roster_role\"" "$upgrade_conf"
+done < <(grep -vE '^[[:space:]]*(#|$)' "$ROOT/examples/fleet.roster")
+
+# A roster staged by the host beats the shipped fallback.
+printf 'claude-builder claude reviewer\n' >"$RDUTY/fleet.roster"
+roster_install --box claude-builder >/dev/null 2>&1
+t install-staged-roster-wins 'BOT_ROLES="reviewer"' \
+  "$(grep '^BOT_ROLES=' "$RDUTY/conf/instance.conf")"
+
+# Operator config and untouched registries converge; local divergence vetoes.
+printf 'FLEET_HUMAN="fixture-human"\nMARK_PICKUP="not-the-protocol"\n' >"$RDUTY/conf/fleet.conf"
+rm -f "$RDUTY/repos.txt" "$RDUTY/notify-repos.txt"
+printf 'fixture/first\n' >"$RDUTY/.crew-seed-repos.txt"
+printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-operator-conf-transport 'FLEET_HUMAN="fixture-human"' \
+  "$(grep '^FLEET_HUMAN=' "$RDUTY/conf/fleet.conf")"
+t install-registry-first-convergence fixture/first "$(cat "$RDUTY/repos.txt")"
+t install-builder-notify-triage-only absent \
+  "$([ -f "$RDUTY/notify-repos.txt" ] && printf present || printf absent)"
+t install-seed-payload-discarded absent \
+  "$([ -e "$RDUTY/.crew-seed-repos.txt" ] || [ -e "$RDUTY/.crew-seed-notify-repos.txt" ] && printf present || printf absent)"
+
+printf 'fixture/second\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-converges-untouched fixture/second "$(cat "$RDUTY/repos.txt")"
+printf 'fixture/contained\n' >"$RDUTY/repos.txt"
+printf 'fixture/third\n' >"$RDUTY/.crew-seed-repos.txt"
+veto_out="$(roster_install --box claude-builder --converge-registries 2>&1)"
+t install-registry-vetoes-divergence fixture/contained "$(cat "$RDUTY/repos.txt")"
+case "$veto_out" in *"claude-builder: repos.txt diverged"*"LEFT UNCHANGED"*) r1=named ;; *) r1=silent ;; esac
+t install-registry-veto-is-loud named "$r1"
+
+# The documented adoption path must work even when provenance records the
+# older transported value: manually matching the incoming bytes adopts it.
+printf 'fixture/third\n' >"$RDUTY/repos.txt"
+printf 'fixture/third\n' >"$RDUTY/.crew-seed-repos.txt"
+adopt_out="$(roster_install --box claude-builder --converge-registries 2>&1)"
+t install-registry-adopts-manual-match fixture/third "$(cat "$RDUTY/repos.txt")"
+case "$adopt_out" in *"adopted and converged"*) r1=adopted ;; *) r1=missing ;; esac
+t install-registry-adoption-is-visible adopted "$r1"
+
+# A current-fleet copy matching the shipped example can be adopted without
+# provenance; an unknown local copy cannot.
+rm -f "$RDUTY/.repos.txt.crew-provenance"
+printf 'fixture/shipped-example\n' >"$RDUTY/repos.txt"
+printf 'fixture/shipped-example\n' >"$RDUTY/.crew-example-repos.txt"
+printf 'fixture/migrated\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-migration-adopts-example fixture/migrated "$(cat "$RDUTY/repos.txt")"
+t install-transported-example-discarded absent \
+  "$([ -e "$RDUTY/.crew-example-repos.txt" ] && printf present || printf absent)"
+rm -f "$RDUTY/.repos.txt.crew-provenance"
+printf 'fixture/unknown-local\n' >"$RDUTY/repos.txt"
+printf 'fixture/incoming\n' >"$RDUTY/.crew-seed-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-registry-migration-vetoes-unknown fixture/unknown-local "$(cat "$RDUTY/repos.txt")"
+
+# Convergence must fail closed when any one-shot transport leg is absent.
+# Call install.sh directly: roster_install deliberately backfills the payloads
+# so the ordinary convergence cases exercise the complete host transport.
+printf 'fixture/notify-contained\n' >"$RDUTY/notify-repos.txt"
+for missing_payload in \
+  .crew-seed-repos.txt \
+  .crew-seed-notify-repos.txt \
+  .crew-example-repos.txt \
+  .crew-example-notify-repos.txt; do
+  cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-seed-repos.txt"
+  cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-seed-notify-repos.txt"
+  cp "$ROOT/examples/repos.txt" "$RDUTY/.crew-example-repos.txt"
+  cp "$ROOT/examples/notify-repos.txt" "$RDUTY/.crew-example-notify-repos.txt"
+  rm -f "$RDUTY/$missing_payload"
+  before_repos="$(cat "$RDUTY/repos.txt")"
+  before_notify_repos="$(cat "$RDUTY/notify-repos.txt")"
+  if refusal_out="$(env HOME="$RHOME" DUTY_DIR="$RDUTY" PATH="$ISHIM" \
+    CRON_STATE="$CRON_STATE" /bin/bash "$SHARED/install.sh" \
+    --box claude-builder --converge-registries 2>&1)"; then
+    r1=0
+  else
+    r1=$?
+  fi
+  t "install-incomplete-$missing_payload-refused" 1 "$r1"
+  case "$refusal_out" in
+    *"missing transported registry payload $missing_payload"*) r1=named ;;
+    *) r1="missing: $refusal_out" ;;
+  esac
+  t "install-incomplete-$missing_payload-named" named "$r1"
+  t "install-incomplete-$missing_payload-keeps-repos" \
+    "$before_repos" "$(cat "$RDUTY/repos.txt")"
+  t "install-incomplete-$missing_payload-keeps-notify-repos" \
+    "$before_notify_repos" "$(cat "$RDUTY/notify-repos.txt")"
+done
+rm -f "$RDUTY/notify-repos.txt"
+
+runtime_fleet="$(DUTY_DIR="$RDUTY" bash -c \
+  '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s|%s" "$FLEET_HUMAN" "$MARK_PICKUP"')"
+t install-loads-defaults-then-operator 'fixture-human|📌 picked up' "$runtime_fleet"
+# MARK_HANDOFF is a protocol mark like the others: an operator fleet.conf must
+# not be able to override it (post-once.sh's dedup keys on the first line, so a
+# drifted mark would silently double-post the handoff). Same wire-pin (#91).
+printf 'MARK_HANDOFF="not-the-protocol"\n' >>"$RDUTY/conf/fleet.conf"
+t handoff-mark-wire-pinned '🤝 handed off at head' \
+  "$(DUTY_DIR="$RDUTY" bash -c '. "$DUTY_DIR/lib/common.sh"; load_fleet_conf; printf "%s" "$MARK_HANDOFF"')"
+printf 'claude-builder claude triage\n' >"$RDUTY/fleet.roster"
+printf 'fixture/wide\n' >"$RDUTY/.crew-seed-notify-repos.txt"
+roster_install --box claude-builder --converge-registries >/dev/null 2>&1
+t install-triage-notify-seed fixture/wide "$(cat "$RDUTY/notify-repos.txt")"
+
+# The role registry is conf/roles/*.conf and nothing else; a second list — a
+# "role manifest" — is what this refuses. Two unrelated manifests have since
+# turned up, so rather than delete the guard it subtracts exactly those two
+# uses: the content hash of the installed ENGINE tree (#159), and rig's
+# PROVENANCE file (#220 — /etc/rig/manifest, which rig owns and crew only
+# reads; crew declares no roles in it and could not, since it never writes it).
+# A `manifest` that is neither is still a duplicated registry, and the
+# subtraction is per LINE, so the qualified phrase has to be written out every
+# time it appears in these files.
+manifest_hits="$(grep -Rsinw 'manifest' "$SHARED/docs" "$SHARED/README.md" "$SHARED/conf" \
+    "$SHARED/lib" "$SHARED/install.sh" "$ROOT/examples/fleet.roster" "$ROOT/cli/crew" \
+    "$ROOT/drill" 2>/dev/null \
+    | grep -vi 'engine[ ._-]manifest' | grep -vi 'rig[ /._-]manifest' || true)"
+if [ -n "$manifest_hits" ]; then
+  r1="DUPLICATED: $manifest_hits"
+else
+  r1=single-source
+fi
+t install-no-second-role-registry single-source "$r1"
+if grep -q -- "--box '\$b'" "$ROOT/cli/crew" || grep -q "install_identity_args.*\\\$b" "$ROOT/cli/crew"; then
+  r1=box-keyed
+else
+  r1=UNKEYED
+fi
+t upgrade-passes-roster-box-key box-keyed "$r1"
+
+# #283 — every reader of the armed state must agree that only a live tick
+# line counts. A paused line contains tick.sh too, so an unanchored probe makes
+# routine maintenance silently resume a box the operator deliberately paused.
+status_tick_pattern="$(sed -n 's/.*grep -cE "\([^"]*tick\\\.sh\)".*/\1/p' "$ROOT/cli/crew" | head -1)"
+upgrade_tick_pattern="$(sed -n 's/.*grep -qE "\([^"]*tick\\\.sh\)".*/\1/p' "$ROOT/cli/crew" | tail -1)"
+floor_tick_pattern="$(sed -n "s/.*grep -cE '\([^']*tick\\\\\.sh\)'.*/\1/p" "$ROOT/fleet-floor/server/probe.sh" | head -1)"
+t upgrade-status-armed-pattern-is-present present "$([ -n "$status_tick_pattern" ] && printf present || printf MISSING)"
+t upgrade-armed-pattern-is-present present "$([ -n "$upgrade_tick_pattern" ] && printf present || printf MISSING)"
+t upgrade-floor-armed-pattern-is-present present "$([ -n "$floor_tick_pattern" ] && printf present || printf MISSING)"
+t upgrade-armed-pattern-matches-status "$status_tick_pattern" "$upgrade_tick_pattern"
+t upgrade-armed-pattern-matches-floor "$floor_tick_pattern" "$upgrade_tick_pattern"
+
+# --- crew upgrade --all is roster-scoped, not host-wide (#37) ------------
+# `--all` used to mean box_names(): every box on the host, each installed
+# with --arm-cron. That reached off-roster boxes -- a drill box between runs
+# carries a real identity and a production registry and is deliberately
+# disarmed -- and armed them by routine maintenance.
+UROSTER="$TMP/upgrade-roster"
+printf '# comment\nclaude-triage    claude  triage\nclaude-builder   claude  builder\n\n' >"$UROSTER"
+roster_names_fixture() { grep -vE '^[[:space:]]*(#|$)' "$UROSTER" | awk '{print $1}'; }
+host_boxes_fixture() { printf 'claude-triage\ncrew-drill-reviewer\nclaude-builder\nsome-other-box\n'; }
+t upgrade-roster-names "claude-triage
+claude-builder" "$(roster_names_fixture)"
+t upgrade-targets-are-roster-and-host "claude-builder
+claude-triage" \
+  "$(comm -12 <(roster_names_fixture | sort) <(host_boxes_fixture | sort))"
+t upgrade-skips-off-roster "crew-drill-reviewer
+some-other-box" \
+  "$(comm -23 <(host_boxes_fixture | sort) <(roster_names_fixture | sort))"
+# The drill box is the case that matters: present on the host, absent from
+# the roster, and therefore never touched by --all.
+case "$(comm -12 <(roster_names_fixture | sort) <(host_boxes_fixture | sort))" in
+  *crew-drill*) r1=reached ;; *) r1=untouched ;;
+esac
+t upgrade-never-reaches-drill-box untouched "$r1"
+
+# --- duty.sh lock sentinel: 199 AND the message --------------------------
+# A bare non-zero `flock` under `set -euo pipefail` exited duty.sh AT the
+# flock line, so the 199 branch never ran and a contended manual invocation
+# printed nothing at all. Both halves are asserted: the exit code alone was
+# always correct, which is why this survived unnoticed — only the drill's
+# "lock contention -> 199 + message" check saw the silence.
+LHOME="$TMP/lock-home"
+mkdir -p "$LHOME"
+env HOME="$LHOME" DUTY_DIR="$LHOME/duty" PATH="$ISHIM" CRON_STATE="$CRON_STATE" \
+  /bin/bash "$SHARED/install.sh" --agent claude --role reviewer >/dev/null 2>&1
+flock -n "$LHOME/duty/.duty.lock" -c 'sleep 3' >/dev/null 2>&1 &
+lock_bg=$!
+sleep 1
+if lock_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" /bin/bash "$LHOME/duty/bin/duty.sh" 2>&1)"; then
+  lock_rc=0
+else
+  lock_rc=$?
+fi
+wait "$lock_bg" 2>/dev/null || true
+t duty-lock-sentinel-rc 199 "$lock_rc"
+case "$lock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
+t duty-lock-sentinel-message message "$r1"
+
+# --- count predicates must fail CLOSED on empty and on error output ------
+# `grep -qv '^0$'` reads as "the count is not zero", but -v selects lines
+# that do NOT match, so it returns 0 for EMPTY input and for gh's error JSON
+# — the check went green when the API call failed. Same defect class as the
+# null check in #29: a predicate whose failure mode looks like success.
+for _in in '' '0' '{"message":"Not Found","status":"404"}'; do
+if grep -qE '^[1-9][0-9]*$' <<<"$_in"; then r1=passed; else r1=refused; fi
+  t "count-predicate-refuses-${_in:-empty}" refused "$r1"
+done
+if grep -qE '^[1-9][0-9]*$' <<<'3'; then r1=passed; else r1=refused; fi
+t count-predicate-accepts-real-count passed "$r1"
+# The shape it replaced, pinned so nobody reintroduces it. Uses gh's error
+# JSON, not empty input: -v on an empty stream is shell/grep dependent, but
+# ANY non-"0" line — which is what a failed gh call prints to stdout — makes
+# the old predicate return 0. That is the realistic failure and it is
+# deterministic everywhere.
+if grep -qv '^0$' <<<'{"message":"Not Found","status":"404"}'; then r1=fail-open; else r1=fail-closed; fi
+t count-predicate-old-shape-was-fail-open fail-open "$r1"
+
+# --- notify.sh lock sentinel: same set -e trap as duty.sh (#30) ----------
+# duty.sh was fixed for this; notify.sh has the identical preamble and was
+# missed. Asserted the same way: the exit code alone was always right, so
+# only the message distinguishes fixed from broken.
+flock -n "$LHOME/duty/.notify.lock" -c 'sleep 3' >/dev/null 2>&1 &
+nlock_bg=$!
+sleep 1
+if nlock_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" /bin/bash "$LHOME/duty/bin/notify.sh" 2>&1)"; then
+  nlock_rc=0
+else
+  nlock_rc=$?
+fi
+wait "$nlock_bg" 2>/dev/null || true
+t notify-lock-sentinel-rc 199 "$nlock_rc"
+case "$nlock_out" in *"already holds"*) r1=message ;; *) r1=silent ;; esac
+t notify-lock-sentinel-message message "$r1"
+
+# --- notify repo set: work repos union additive handoff targets (#316) ----
+# Run the real notifier with an empty-board gh shim. This observes every
+# repository it queries without network access or duplicating its set logic in
+# the test. A repo in repos.txt is always covered; notify-repos.txt only adds
+# cross-repo targets; overlap is queried once.
+NSHIM="$TMP/notify-bin"
+NLOG="$TMP/notify-gh.log"
+mkdir -p "$NSHIM"
+cat >"$NSHIM/gh" <<'EOF'
+#!/usr/bin/env bash
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-R" ]; then printf '%s\n' "$2" >>"$NLOG"; break; fi
+  shift
+done
+printf '[]\n'
+EOF
+chmod +x "$NSHIM/gh"
+printf '\nBOT_PATH_PREPEND=%q\n' "$NSHIM" >>"$LHOME/duty/conf/agents/claude.conf"
+printf 'fixture/work-only\nfixture/both\n' >"$LHOME/duty/repos.txt"
+printf 'fixture/notify-only\nfixture/both\n' >"$LHOME/duty/notify-repos.txt"
+printf 'fixture-token\n' >"$LHOME/.tg_bot_token"
+printf 'fixture-chat\n' >"$LHOME/.tg_chat_id"
+: >"$NLOG"
+env HOME="$LHOME" DUTY_DIR="$LHOME/duty" NLOG="$NLOG" \
+  /bin/bash "$LHOME/duty/bin/notify.sh" >/dev/null
+t notify-repos-union "fixture/both
+fixture/notify-only
+fixture/work-only" "$(sort "$NLOG")"
+t notify-repos-overlap-once 1 "$(grep -cxF fixture/both "$NLOG")"
+
+# A present but unreadable additive registry takes the same explicit fallback
+# path: the work set remains covered, the sweep succeeds, and the operator is
+# told that only repos.txt participated.
+chmod 000 "$LHOME/duty/notify-repos.txt"
+: >"$NLOG"
+if notify_unreadable_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" NLOG="$NLOG" \
+  /bin/bash "$LHOME/duty/bin/notify.sh")"; then
+  notify_unreadable_rc=0
+else
+  notify_unreadable_rc=$?
+fi
+t notify-repos-unreadable-rc 0 "$notify_unreadable_rc"
+t notify-repos-unreadable-fallback "fixture/both
+fixture/work-only" "$(sort "$NLOG")"
+case "$notify_unreadable_out" in
+  *"notify-repos.txt missing — falling back to repos.txt"*) r1=logged ;;
+  *) r1=SILENT ;;
+esac
+t notify-repos-unreadable-fallback-is-logged logged "$r1"
+chmod 600 "$LHOME/duty/notify-repos.txt"
+
+# With no additive registry the work set is still watched, and the existing
+# fallback log remains explicit.
+rm -f "$LHOME/duty/notify-repos.txt"
+: >"$NLOG"
+notify_fallback_out="$(env HOME="$LHOME" DUTY_DIR="$LHOME/duty" NLOG="$NLOG" \
+  /bin/bash "$LHOME/duty/bin/notify.sh")"
+t notify-repos-fallback "fixture/both
+fixture/work-only" "$(sort "$NLOG")"
+case "$notify_fallback_out" in
+  *"notify-repos.txt missing — falling back to repos.txt"*) r1=logged ;;
+  *) r1=SILENT ;;
+esac
+t notify-repos-fallback-is-logged logged "$r1"
+
+# --- attention label predicate: never let a null reach the shell ---------
+# `gh api --jq` prints NOTHING for a null result (real jq prints "null"), so
+# `index("attention") | grep -q null` matched in NEITHER state: present
+# emitted "0", absent emitted "". The predicate must emit a token both ways.
+t label-predicate-gone    true  "$(printf '{"labels":[]}\n' | jq -r '[.labels[].name] | index("attention") == null')"
+t label-predicate-present false "$(printf '{"labels":[{"name":"attention"}]}\n' | jq -r '[.labels[].name] | index("attention") == null')"
+
+# --- rehearsal safety: isolate, fail closed, restore, disarm (#26) -------
+RHOME="$TMP/rehearsal-home"
+RDUTY="$RHOME/duty"
+RCRON="$TMP/rehearsal-crontab"
+mkdir -p "$RDUTY"
+printf 'heavy-duty/ceremony\nheavy-duty/incubator\nheavy-duty/rig\n' >"$RDUTY/repos.txt"
+printf '*/5 * * * * %s/bin/tick.sh\n17 2 * * * unrelated-job\n' "$RDUTY" >"$RCRON"
+# shellcheck disable=SC2034  # consumed by sourced rehearsal safety functions
+BOX_NAME=fixture
+# shellcheck disable=SC2034  # consumed by sourced rehearsal safety functions
+REPOS_BACKUP=""
+BX_FAIL_WRITE=0
+bx() {
+  case "$1" in
+    "printf "*" > ~/duty/repos.txt") [ "$BX_FAIL_WRITE" -eq 0 ] || return 1 ;;
+  esac
+  HOME="$RHOME" PATH="$ISHIM" CRON_STATE="$RCRON" bash -c "$1"
+}
+# shellcheck source=drill/rehearsal-safety.sh
+source "$ROOT/drill/rehearsal-safety.sh"
+
+rehearsal_begin_isolation && r1=isolated || r1=failed
+t rehearsal-isolates-before-tick isolated "$r1"
+t rehearsal-isolation-empty 0 "$(wc -l <"$RDUTY/repos.txt")"
+t rehearsal-isolation-records-the-copy 1 "$REHEARSAL_BACKUP_TAKEN"
+
+# Must fail: the copy did not happen. The flag teardown reads is the COPY, not
+# the handle — the handle is assigned first, so a round whose `cp` failed
+# carries one too, and reading it as "a backup exists" is what let a deleted
+# backup pass as "nothing to vouch for". Nothing may truncate the registry on
+# this path either.
+ISO_CALLS="$TMP/rehearsal-isolation-calls"
+: >"$ISO_CALLS"
+(
+  bx() {
+    printf '%s\n' "$1" >>"$ISO_CALLS"
+    case "$1" in *"cp ~/duty/repos.txt"*) return 1 ;; esac
+  }
+  rehearsal_begin_isolation
+  printf 'rc=%s taken=%s\n' "$?" "$REHEARSAL_BACKUP_TAKEN"
+) >"$TMP/rehearsal-isolation-failed-copy"
+t rehearsal-isolation-failed-copy-refuses 'rc=1 taken=0' \
+  "$(cat "$TMP/rehearsal-isolation-failed-copy")"
+t rehearsal-isolation-failed-copy-truncates-nothing 0 \
+  "$(grep -cF ': > ~/duty/repos.txt' "$ISO_CALLS")"
+# ...and on the path that does work, the copy is the FIRST thing the box is
+# asked to do, so the flag is set before anything can overwrite what it names.
+: >"$ISO_CALLS"
+(
+  bx() { printf '%s\n' "$1" >>"$ISO_CALLS"; }
+  rehearsal_begin_isolation
+) >/dev/null 2>&1
+t rehearsal-isolation-copies-first 'cp' "$(head -1 "$ISO_CALLS" | cut -c1-2)"
+t rehearsal-isolation-truncates-after 1 \
+  "$(grep -cF ': > ~/duty/repos.txt' "$ISO_CALLS")"
+rehearsal_narrow_to_sandbox owner/sandbox && r1=narrowed || r1=failed
+t rehearsal-narrow-success narrowed "$r1"
+t rehearsal-narrow-exact owner/sandbox "$(cat "$RDUTY/repos.txt")"
+BX_FAIL_WRITE=1
+rehearsal_narrow_to_sandbox owner/other && r1=continued || r1=refused
+t rehearsal-narrow-fails-closed refused "$r1"
+BX_FAIL_WRITE=0
+rehearsal_cleanup 0
+t rehearsal-restores-registry "heavy-duty/ceremony
+heavy-duty/incubator
+heavy-duty/rig" "$(cat "$RDUTY/repos.txt")"
+t rehearsal-disarms-tick 0 "$(grep -cF "$RDUTY/bin/tick.sh" "$RCRON")"
+t rehearsal-preserves-unrelated-cron 1 "$(grep -cF unrelated-job "$RCRON")"
+
+
+# --- the 0.1.2 operator surfaces: every assertion red on a staged answer -
+# drill/rehearsal-app-surfaces.sh holds the seven assertions drill/rehearsal-
+# app.sh makes about what 0.1.2 shipped into the operator's view (#420). They
+# run on a drill HOST, which CI does not have — so they are exercised the way
+# the other rehearsal helpers already are here: the leg's reporters stubbed,
+# the file sourced, and a WRONG answer staged into the input each assertion
+# reads. An assertion nobody can red is an assertion nobody has checked, which
+# is #50's defect stated once more.
+SURF="$TMP/app-surfaces"
+mkdir -p "$SURF"
+
+# One truthful fleet, four boxes: two hired and answering, one never created,
+# one deployed but not talking. Every payload below is this one with exactly
+# one field moved, so a red is attributable to that field and nothing else.
+surf_payload() {  # surf_payload '<python mutating p>' → the fleet payload
+  python3 - "$1" <<'PY'
+import json, sys
+p = {
+    "version": "crew 0.1.2 (/opt/crew)",
+    # `state`, `paused` and `disarmed` are the three fields fleetState() reads
+    # (fleet-floor/src/app.js:1282-1285): a DRAWN unit that is offline lands in
+    # Disarmed when either flag is set and in Silent when neither is. They are
+    # here because the filter assertion compares the page's groups against the
+    # sets they imply — crew-b disarmed, crew-d silent — rather than only
+    # against whoever the page happened to list.
+    "units": [
+        {"box": "crew-a", "engine": "0.1.2", "integrity": "current",
+         "hired": "yes", "note": "", "state": "idle",
+         "paused": False, "disarmed": False},
+        {"box": "crew-b", "engine": "0.1.2", "integrity": "modified",
+         "hired": "yes", "note": "", "state": "offline",
+         "paused": False, "disarmed": True},
+        {"box": "crew-c", "engine": "", "integrity": "",
+         "hired": "no", "note": "not created — crew new crew-c",
+         "state": "offline", "paused": False, "disarmed": False},
+        {"box": "crew-d", "engine": "0.1.2", "integrity": "unverified",
+         "hired": "unknown", "note": "stopped", "state": "offline",
+         "paused": False, "disarmed": False},
+    ],
+}
+u = {b["box"]: b for b in p["units"]}
+exec(sys.argv[1])
+print(json.dumps(p))
+PY
+}
+surf_payload 'pass'                                     >"$SURF/fleet.json"
+surf_payload 'p["version"] = "crew 9.9.9 (/staged)"'    >"$SURF/fleet-wrong-version.json"
+surf_payload 'p["version"] = "version unavailable"'     >"$SURF/fleet-no-version.json"
+surf_payload 'u["crew-b"]["integrity"] = "current"'     >"$SURF/fleet-integrity-lie.json"
+surf_payload 'u["crew-c"]["note"] = "not created"'      >"$SURF/fleet-no-repair-verb.json"
+surf_payload 'p["units"] = [b for b in p["units"] if b["box"] != "crew-d"]' \
+                                                        >"$SURF/fleet-drops-a-box.json"
+# The same drop, of the one box that IS a measured absence — so the payload is
+# short AND nothing in it carries `hired=no`, which is the pair that used to
+# read as "every roster box is deployed".
+surf_payload 'p["units"] = [b for b in p["units"] if b["box"] != "crew-c"]' \
+                                                        >"$SURF/fleet-drops-the-undeployed-box.json"
+surf_payload 'u["crew-c"]["note"] = "box inventory unreadable: box list failed"' \
+                                                        >"$SURF/fleet-inventory-unreadable.json"
+# Short BECAUSE the inventory failed: an unmeasured fleet, which must keep
+# skipping rather than being read as the dropped-box regression.
+surf_payload '
+u["crew-b"]["note"] = "box inventory unreadable: box list failed"
+p["units"] = [b for b in p["units"] if b["box"] != "crew-c"]
+'                                                       >"$SURF/fleet-inventory-unreadable-and-short.json"
+surf_payload 'u["crew-c"].update(hired="yes", engine="0.1.2", integrity="current", note="")' \
+                                                        >"$SURF/fleet-all-deployed.json"
+surf_payload 'u["crew-d"]["note"] = ""'                 >"$SURF/fleet-all-answered.json"
+# Every declared box undeployed — #204's empty floor, the state the panel
+# naming `crew hire` exists for.
+surf_payload '
+for b in p["units"]:
+    b.update(hired="no", engine="", integrity="", state="offline",
+             note="not hired — crew hire " + b["box"])
+'                                                       >"$SURF/fleet-all-undeployed.json"
+# The floor and the CLI disagreeing about one box: the payload says crew-b is
+# deliberately stopped and `crew status` does not.
+surf_payload 'u["crew-b"]["disarmed"] = False'          >"$SURF/fleet-b-not-disarmed.json"
+# Two boxes deliberately stopped — an ordinary fleet, and the one that puts two
+# members into the disarmed direction's blind set.
+surf_payload 'u["crew-d"]["disarmed"] = True'           >"$SURF/fleet-two-disarmed.json"
+# Nothing quiet at all: every drawn box is ticking, so neither state group has
+# a member and the filter has nothing to classify.
+surf_payload '
+for b in p["units"]:
+    b["state"] = "idle"
+'                                                       >"$SURF/fleet-none-quiet.json"
+
+printf 'crew-a claude builder\ncrew-b codex reviewer\ncrew-c grok triage\ncrew-d kimi builder\n' \
+  >"$SURF/roster"
+SURF_ROSTER="$SURF/roster"
+# What each box answers to `engine-manifest.sh --state`, standing in for the
+# `box exec` the leg does — the second reader #190's assertion cross-checks the
+# floor against.
+printf 'crew-a current\ncrew-b modified\ncrew-d unverified\n' >"$SURF/integrity"
+printf 'crew-a current\ncrew-b tampered\ncrew-d unverified\n' >"$SURF/integrity-fourth-word"
+: >"$SURF/integrity-silent"
+SURF_INTEG="$SURF/integrity"
+
+# The leg's reporters, in a SUBSHELL so run.sh's own t() survives the stubbing:
+# each verdict comes back as one "<ok|FAIL|skip> <label> <reason>" line on
+# stdout, which is the whole interface the assertions below match against.
+# The REASON is on the line and not only the label, because criterion 3 is
+# about the reason: "no assertion silently passes when its precondition is
+# absent" is a claim about what the skip SAYS, and a skip whose stated reason
+# is not true is the defect the #204 gate below exists to close. Newlines are
+# flattened so one verdict stays one line.
+# shellcheck disable=SC2317  # the stubs are reached through "$@", which is an
+# indirection shellcheck cannot follow — every one of them is called by the
+# sourced assertions below.
+surf() {  # surf <fn> [args...] → one verdict line per assertion the fn makes
+  (
+    emit() { local v="$1" m; shift; m="$*"; printf '%s %s\n' "$v" "${m//$'\n'/ }"; }
+    ok()   { emit ok "$@"; }
+    fail() { emit FAIL "$@"; }
+    skip() { emit skip "$@"; }
+    t()    { if [ "$2" = "$3" ]; then printf 'ok %s\n' "$1"; else printf 'FAIL %s\n' "$1"; fi; }
+    jqf()  { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
+    roster_rows()   { grep -vE '^[[:space:]]*(#|$)' "$SURF_ROSTER"; }
+    # The caller supplies this reader, and on a real host it shells into a box.
+    # SURF_GREEDY_READER makes it behave like the one that does — `box exec`
+    # inherits the loop's stdin and drains it — which truncated the roster loop
+    # to its first box on the host, silently, while the label kept claiming the
+    # fleet.
+    box_integrity() {
+      # Bounded, because the drain must not outlive the thing it is draining:
+      # once the roster moved to fd 3 this `cat` no longer meets the loop's
+      # pipe at all, it meets whatever stdin the suite was STARTED with — and
+      # an unbounded read of a socket that nobody is going to close hangs the
+      # whole suite forever. It reaches EOF instantly against a pipe or
+      # /dev/null (which is CI, and is the pre-fix code path this case reds
+      # on), so the bound costs nothing where it is not needed.
+      [ -n "${SURF_GREEDY_READER:-}" ] && { timeout 1 cat >/dev/null 2>&1 || true; }
+      awk -v b="$1" '$1 == b { print $2 }' "$SURF_INTEG"
+    }
+    # shellcheck source=drill/rehearsal-app-surfaces.sh
+    source "$ROOT/drill/rehearsal-app-surfaces.sh"
+    "$@"
+  )
+}
+surf_says() {  # surf_says <verdict lines> <label substring> → ok|FAIL|skip|absent
+  local line
+  line="$(printf '%s\n' "$1" | grep -F -- "$2" | head -1)"
+  [ -n "$line" ] || { printf 'absent'; return 0; }
+  printf '%s' "${line%% *}"
+}
+
+# --- #347: the header names the version of the crew SERVING the page -----
+SURF_V="floor: the API names the serving host"
+r1="$(surf app_surface_version "$SURF/fleet.json" "crew 0.1.2 (/opt/crew)" 0.1.2)"
+t app-surface-347-truthful-header ok "$(surf_says "$r1" "$SURF_V")"
+r1="$(surf app_surface_version "$SURF/fleet-wrong-version.json" "crew 0.1.2 (/opt/crew)" 0.1.2)"
+t app-surface-347-staged-wrong-version FAIL "$(surf_says "$r1" "$SURF_V")"
+# The server dropped what the launcher passed and served its placeholder.
+r1="$(surf app_surface_version "$SURF/fleet-no-version.json" "crew 0.1.2 (/opt/crew)" 0.1.2)"
+t app-surface-347-placeholder-served FAIL "$(surf_says "$r1" "$SURF_V")"
+# The launcher and the page agree on a version this tree is not: the half that
+# stops the assertion being a fixture comparing itself to itself.
+r1="$(surf app_surface_version "$SURF/fleet.json" "crew 0.1.2 (/opt/crew)" 0.1.1)"
+t app-surface-347-stale-release-named FAIL "$(surf_says "$r1" "$SURF_V")"
+r1="$(surf app_surface_version "$SURF/fleet.json" "crew 0.1.2 (/opt/crew)" '')"
+t app-surface-347-no-version-file FAIL "$(surf_says "$r1" "$SURF_V")"
+
+# --- #190: the verdict on the tile is the BOX's own word -----------------
+SURF_I="floor: every hired box's integrity verdict"
+SURF_IV="floor: every integrity verdict is one of the three words"
+r1="$(surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-truthful-verdicts ok "$(surf_says "$r1" "$SURF_I")"
+t app-surface-190-truthful-vocabulary ok "$(surf_says "$r1" "$SURF_IV")"
+# The label names how many boxes were compared, and it must be all three that
+# answered — not the one the loop happened to reach.
+t app-surface-190-compares-every-box ok "$(surf_says "$r1" "verdict is the box's own answer (3 boxes)")"
+# The reader that shells into a box drains the loop's stdin. Reading the roster
+# on fd 3 is what keeps that from truncating the loop to its first member — a
+# real host defect, found by running the leg, invisible to a stub reader that
+# does not touch stdin.
+r1="$(SURF_GREEDY_READER=1 surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-greedy-reader-visits-every-box ok "$(surf_says "$r1" "verdict is the box's own answer (3 boxes)")"
+# The floor prints `current` for a box whose own manifest says `modified` —
+# exactly the reassurance #190 exists to stop the page inventing.
+r1="$(surf app_surface_integrity "$SURF/fleet-integrity-lie.json")"
+t app-surface-190-staged-floor-lie FAIL "$(surf_says "$r1" "$SURF_I")"
+SURF_INTEG="$SURF/integrity-fourth-word"
+r1="$(surf app_surface_integrity "$SURF/fleet.json")"
+t app-surface-190-fourth-word-red FAIL "$(surf_says "$r1" "$SURF_IV")"
+SURF_INTEG="$SURF/integrity-silent"
+r1="$(surf app_surface_integrity "$SURF/fleet.json")"
+# No box answered the second reader, so there is nothing to compare — and the
+# precondition is NAMED rather than passing quietly.
+t app-surface-190-unanswerable-skips skip "$(surf_says "$r1" "$SURF_I")"
+t app-surface-190-names-the-silent-box skip "$(surf_says "$r1" "integrity: crew-a")"
+SURF_INTEG="$SURF/integrity"
+
+# --- #204: not deployed is COUNTED and not DRAWN -------------------------
+SURF_ND="floor: a roster box that is not deployed is counted"
+SURF_NC="floor: the not-deployed boxes are counted but not drawn"
+r1="$(surf app_surface_not_deployed "$SURF/fleet.json" 4)"
+t app-surface-204-truthful-repair-verb ok "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-truthful-counts ok "$(surf_says "$r1" "$SURF_NC")"
+r1="$(surf app_surface_not_deployed "$SURF/fleet-no-repair-verb.json" 4)"
+t app-surface-204-staged-silent-note FAIL "$(surf_says "$r1" "$SURF_ND")"
+# The filter applied one layer too high: the box is gone from the payload, so
+# the fleet silently shrinks instead of keeping its declared size. Reds at the
+# completeness gate now, which owns this direction and names the missing box —
+# so the arithmetic assertion downstream is never reached and is `absent`.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-drops-a-box.json" 4)"
+t app-surface-204-staged-shrunk-fleet FAIL "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-shrunk-fleet-names-the-box FAIL "$(surf_says "$r1" "never reported: crew-d")"
+t app-surface-204-shrunk-fleet-stops-at-the-gate absent "$(surf_says "$r1" "$SURF_NC")"
+# The same drop, of the box that is the fleet's ONLY measured absence. This is
+# the direction the mutation above cannot reach: with `crew-c` gone no unit
+# carries `hired=no`, so the empty-set branch used to conclude "every one of
+# the 4 roster boxes is deployed" over a three-unit payload — #204's own
+# regression reported as a fleet that does not exercise it. It must FAIL, not
+# skip (codex-bot at 4bde9ce; triage's Must-fail in #420's test plan).
+r1="$(surf app_surface_not_deployed "$SURF/fleet-drops-the-undeployed-box.json" 4)"
+t app-surface-204-drops-the-undeployed-box FAIL "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-drops-the-undeployed-box-named FAIL "$(surf_says "$r1" "never reported: crew-c")"
+r1="$(surf app_surface_not_deployed "$SURF/fleet-inventory-unreadable.json" 4)"
+t app-surface-204-unmeasured-absence-skips skip "$(surf_says "$r1" "$SURF_ND")"
+# ...and it keeps that precedence when the failed inventory ALSO cost the
+# payload a unit: an unmeasured fleet is not the dropped-box regression, so it
+# must still skip by its own reason rather than red at the gate.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-inventory-unreadable-and-short.json" 4)"
+t app-surface-204-unreadable-outranks-the-gate skip "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-unreadable-names-its-reason skip "$(surf_says "$r1" "the box inventory did not answer for: crew-b")"
+# The gate must not red a correct fleet: a complete payload with no measured
+# absence still skips, with the one reason that is now true of it.
+r1="$(surf app_surface_not_deployed "$SURF/fleet-all-deployed.json" 4)"
+t app-surface-204-no-such-box-skips skip "$(surf_says "$r1" "$SURF_ND")"
+t app-surface-204-complete-fleet-skip-reason skip "$(surf_says "$r1" "every one of the 4 roster boxes is deployed")"
+
+# --- #218: `crew up --dry-run` names every box and touches nothing -------
+printf 'crew-a: WOULD hire (currently: 2026-08-01T00:00Z)\ncrew-b: WOULD hire (currently: 2026-08-01T00:00Z)\ncrew-c: WOULD create (grok/triage)\ncrew-c: WOULD hire (new box — engine crew@0.1.2, cron armed)\ncrew-d: WOULD start\ncrew-d: WOULD SKIP — not converged; crew hire crew-d would refuse\n\nup --dry-run: 1 would be created, 1 started, 3 hired\n' \
+  >"$SURF/up-dry.txt"
+grep -v '^crew-d: ' "$SURF/up-dry.txt" >"$SURF/up-dry-silent.txt"
+grep -v '^up --dry-run: ' "$SURF/up-dry.txt" >"$SURF/up-dry-no-summary.txt"
+printf 'roster deadbeef\nboxes crew-a:running,crew-b:running,crew-d:stopped\ncron crew-a c0ffee\ncron crew-b c0ffee\ncron crew-d c0ffee\n' \
+  >"$SURF/before.fp"
+cp "$SURF/before.fp" "$SURF/after.fp"
+# The one thing --dry-run promises never to do: a box that did not exist before
+# the command exists after it.
+sed 's/^boxes .*/boxes crew-a:running,crew-b:running,crew-c:running,crew-d:stopped/' \
+  "$SURF/before.fp" >"$SURF/after-created.fp"
+sed 's/^boxes .*/boxes UNREADABLE/' "$SURF/before.fp" >"$SURF/before-unreadable.fp"
+# A component that did not answer, marked as such rather than hashed. Both of
+# these used to be INVISIBLE: a failed `box_read` was piped straight into
+# sha256sum, so two failed reads produced the same hash of the empty string and
+# compared equal — "unchanged" over a crontab nobody read.
+sed 's/^cron crew-d .*/cron crew-d UNREADABLE/' "$SURF/before.fp" \
+  >"$SURF/before-cron-unreadable.fp"
+awk '{ $NF = "UNREADABLE"; print }' "$SURF/before.fp" \
+  >"$SURF/before-all-unreadable.fp"
+# ...and the box that answered and genuinely has no crontab. Its read succeeded,
+# so it is a measured fact and must still compare: the fix must not turn every
+# un-armed box into an unreadable one.
+EMPTY_SHA='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+sed "s/^cron crew-d .*/cron crew-d $EMPTY_SHA/" "$SURF/before.fp" \
+  >"$SURF/before-cron-empty.fp"
+# One side read it, the other did not: there is no comparison to make, and the
+# side that answered is not evidence about the side that did not.
+sed 's/^cron crew-d .*/cron crew-d UNREADABLE/' "$SURF/before.fp" \
+  >"$SURF/after-cron-unreadable.fp"
+# A component that was there before and is gone after is movement, not silence.
+grep -v '^cron crew-d ' "$SURF/before.fp" >"$SURF/after-box-gone.fp"
+
+SURF_D0="crew up --dry-run exits 0"
+SURF_DN="crew up --dry-run names a planned action"
+SURF_DS="crew up --dry-run summarises"
+SURF_DC="crew up --dry-run changed nothing"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after.fp" 0)"
+t app-surface-218-truthful-rc ok "$(surf_says "$r1" "$SURF_D0")"
+t app-surface-218-truthful-per-box ok "$(surf_says "$r1" "$SURF_DN")"
+t app-surface-218-truthful-summary ok "$(surf_says "$r1" "$SURF_DS")"
+t app-surface-218-truthful-unchanged ok "$(surf_says "$r1" "$SURF_DC")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after-created.fp" 0)"
+t app-surface-218-staged-created-a-box FAIL "$(surf_says "$r1" "$SURF_DC")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry-silent.txt" "$SURF/before.fp" "$SURF/after.fp" 0)"
+t app-surface-218-staged-unnamed-box FAIL "$(surf_says "$r1" "$SURF_DN")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry-no-summary.txt" "$SURF/before.fp" "$SURF/after.fp" 0)"
+t app-surface-218-staged-no-summary FAIL "$(surf_says "$r1" "$SURF_DS")"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after.fp" 1)"
+t app-surface-218-nonzero-rc-red FAIL "$(surf_says "$r1" "$SURF_D0")"
+# Half the fingerprint was never taken, so "unchanged" is split rather than
+# claimed over a comparison that compared less than it says. Both fingerprints
+# are the SAME FILE here, which is the point: identical failures are identical,
+# and `diff` called that agreement.
+SURF_DP="crew up --dry-run moved none of the"
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-unreadable.fp" "$SURF/before-unreadable.fp" 0)"
+t app-surface-218-unreadable-inventory-skips skip "$(surf_says "$r1" "$SURF_DC")"
+t app-surface-218-unreadable-inventory-still-compares ok "$(surf_says "$r1" "$SURF_DP")"
+# The crontab half of the same defect, and the one with no marker at all before
+# this: an unreachable box and a timed-out box both hashed to the empty string.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-cron-unreadable.fp" "$SURF/before-cron-unreadable.fp" 0)"
+t app-surface-218-unreadable-crontab-skips skip "$(surf_says "$r1" "$SURF_DC")"
+t app-surface-218-unreadable-crontab-still-compares ok "$(surf_says "$r1" "$SURF_DP")"
+# Nothing answered on either side. There is no partial claim left to make, so
+# the partial `ok` must not be printed either.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-all-unreadable.fp" "$SURF/before-all-unreadable.fp" 0)"
+t app-surface-218-nothing-readable-skips skip "$(surf_says "$r1" "$SURF_DC")"
+t app-surface-218-nothing-readable-claims-nothing absent "$(surf_says "$r1" "$SURF_DP")"
+# One side answered and the other did not: still no comparison, and the side
+# that answered is not evidence about the side that did not.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after-cron-unreadable.fp" 0)"
+t app-surface-218-one-sided-read-skips skip "$(surf_says "$r1" "$SURF_DC")"
+# ...but a box that ANSWERED and has no crontab is a measured fact, and must
+# still compare. The repair must not turn every un-armed box into an unread one.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before-cron-empty.fp" "$SURF/before-cron-empty.fp" 0)"
+t app-surface-218-empty-crontab-still-compares ok "$(surf_says "$r1" "$SURF_DC")"
+# A component present before and absent after is movement, not silence — the
+# shape a dry run that deleted something would leave.
+r1="$(surf app_surface_dry_run "$SURF/up-dry.txt" "$SURF/before.fp" "$SURF/after-box-gone.fp" 0)"
+t app-surface-218-component-vanished FAIL "$(surf_says "$r1" "$SURF_DC")"
+
+# --- #308: an unanswered probe is unknown, never never-hired -------------
+t app-surface-308-picks-the-silent-box crew-d \
+  "$(surf app_surface_silent_box "$SURF/fleet.json")"
+t app-surface-308-no-silent-box-to-ask '' \
+  "$(surf app_surface_silent_box "$SURF/fleet-all-answered.json")"
+printf 'box: crew-d\nengine: unknown — the box did not answer\n' >"$SURF/status-unknown.txt"
+printf 'box: crew-d\nengine: not hired (no engine)\n'            >"$SURF/status-never-hired.txt"
+printf 'box: crew-d\n'                                          >"$SURF/status-no-engine-line.txt"
+SURF_S="an unanswered probe reads unknown"
+r1="$(surf app_surface_status_unknown crew-d "$SURF/status-unknown.txt" 0)"
+t app-surface-308-truthful-unknown ok "$(surf_says "$r1" "$SURF_S")"
+# The wrong repair: the operator is sent to `crew hire` for a box that is
+# hired and not talking.
+r1="$(surf app_surface_status_unknown crew-d "$SURF/status-never-hired.txt" 0)"
+t app-surface-308-staged-never-hired FAIL "$(surf_says "$r1" "$SURF_S")"
+r1="$(surf app_surface_status_unknown crew-d "$SURF/status-no-engine-line.txt" 2)"
+t app-surface-308-no-engine-line-red FAIL "$(surf_says "$r1" "$SURF_S")"
+
+# --- #345: `no build duty` names a cause and a count ---------------------
+{ printf 'crew-a 12:00 heavy-duty/crew: no build duty (board empty)\n'
+  printf 'crew-b 12:00 heavy-duty/crew: no build duty (slot held by #402; board holds 3 ready)\n'
+  printf 'crew-d 12:00 heavy-duty/crew: no build duty (2 ready, 1 round(s) held by seen-ledger)\n'
+} >"$SURF/nbd.txt"
+printf 'crew-a 12:00 heavy-duty/crew: no build duty\n' >"$SURF/nbd-bare.txt"
+: >"$SURF/nbd-empty.txt"
+SURF_N="duty.log: every no build duty line names a cause"
+r1="$(surf app_surface_no_build_duty "$SURF/nbd.txt")"
+t app-surface-345-truthful-causes ok "$(surf_says "$r1" "$SURF_N")"
+# The bare line #345 replaced: indistinguishable from the burial bug.
+r1="$(surf app_surface_no_build_duty "$SURF/nbd-bare.txt")"
+t app-surface-345-staged-bare-line FAIL "$(surf_says "$r1" "$SURF_N")"
+r1="$(surf app_surface_no_build_duty "$SURF/nbd-empty.txt")"
+t app-surface-345-nothing-logged-skips skip "$(surf_says "$r1" "no build duty names a cause")"
+
+# --- the page halves: the walk's own named lines ------------------------
+{ printf '  ok   floor: the canvas header paints the serving host version\n'
+  printf '  ok   render: the engine tile carries its integrity verdict\n'
+} >"$SURF/walk.out"
+printf '  FAIL floor: the canvas header paints the serving host version\n' >"$SURF/walk-failed.out"
+: >"$SURF/walk-never-reached.out"
+SURF_W="page: the header renders"
+r1="$(surf app_surface_walk_asserted "page: the header renders it" \
+        "floor: the canvas header paints the serving host version" "$SURF/walk.out")"
+t app-surface-walk-line-present ok "$(surf_says "$r1" "$SURF_W")"
+r1="$(surf app_surface_walk_asserted "page: the header renders it" \
+        "floor: the canvas header paints the serving host version" "$SURF/walk-failed.out")"
+t app-surface-walk-line-failed FAIL "$(surf_says "$r1" "$SURF_W")"
+# A walk that exits 0 having never reached the check proves nothing about it.
+r1="$(surf app_surface_walk_asserted "page: the header renders it" \
+        "floor: the canvas header paints the serving host version" "$SURF/walk-never-reached.out")"
+t app-surface-walk-never-reached FAIL "$(surf_says "$r1" "$SURF_W")"
+
+# --- #312: disarmed is a decision, silent is an alarm --------------------
+surf_page() {  # surf_page '<python mutating q>' → the page reader's payload
+  python3 - "$1" <<'PY'
+import json, sys
+# `empty` is what drill/rehearsal-page-read.js reads off #emptyfloor: whether
+# the panel is in the DOM at all, whether syncEmptyFloor has it shown, and its
+# text. On a fleet with consoles drawn it is present and not shown, which is
+# the shape the truthful fixture below carries.
+q = {"live": True, "tiles": "4units3hired",
+     "disarmed": ["crew-b"], "silent": ["crew-d"],
+     "empty": {"present": True, "shown": False, "text": ""}}
+exec(sys.argv[1])
+print(json.dumps(q))
+PY
+}
+# The empty floor as the page actually paints it (app.js:1681-1686), and the
+# tile row that goes with a fleet where nothing is deployed: `hidden` is 4, so
+# the hired tile renders, reading 0.
+EMPTY_TEXT='NO BOX IS HIRED YET The fleet roster declares 4 boxes, and none of them is running an engine. A console appears here as its box is hired. crew hire <box>'
+surf_page 'pass'                                     >"$SURF/page.json"
+surf_page 'q["disarmed"], q["silent"] = [], ["crew-b"]' >"$SURF/page-alarms-a-decision.json"
+surf_page 'q["silent"] = ["crew-b"]'                 >"$SURF/page-both-groups.json"
+surf_page 'q["disarmed"] = ["crew-z"]'               >"$SURF/page-unknown-box.json"
+surf_page 'q["disarmed"], q["silent"] = [], []'      >"$SURF/page-no-members.json"
+surf_page 'q["live"] = False'                        >"$SURF/page-demo.json"
+surf_page 'q["tiles"] = "3units3hired"'              >"$SURF/page-shrunk.json"
+surf_page 'q["tiles"] = "4units"'                    >"$SURF/page-no-hired-tile.json"
+surf_page 'q["tiles"] = "4units4hired"'              >"$SURF/page-furniture.json"
+# The two dropped-member stages: a page that lists nobody wrongly, by listing
+# nobody at all. Before both directions were asserted these PASSED.
+surf_page 'q["silent"] = []'                         >"$SURF/page-drops-silent.json"
+surf_page 'q["disarmed"] = []'                       >"$SURF/page-drops-disarmed.json"
+# The page agreeing with a payload that calls crew-b silent, so the only thing
+# left to disagree is `crew status`.
+surf_page 'q["disarmed"], q["silent"] = [], ["crew-b", "crew-d"]' \
+                                                     >"$SURF/page-b-silent.json"
+# Two boxes the operator deliberately stopped, correctly grouped: the fleet the
+# blind-set arity defect reds falsely when both are also logged out.
+surf_page 'q["disarmed"], q["silent"] = ["crew-b", "crew-d"], []' \
+                                                     >"$SURF/page-two-disarmed.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': True, 'text': '''$EMPTY_TEXT'''}" \
+                                                     >"$SURF/page-empty.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': False, 'shown': False, 'text': ''}" \
+                                                     >"$SURF/page-empty-no-panel.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': False, 'text': '''$EMPTY_TEXT'''}" \
+                                                     >"$SURF/page-empty-hidden.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': True,
+              'text': 'NO BOX IS HIRED YET The fleet roster declares 4 boxes.'}" \
+                                                     >"$SURF/page-empty-no-verb.json"
+surf_page "q['tiles'], q['disarmed'], q['silent'] = '4units0hired', [], []
+q['empty'] = {'present': True, 'shown': True,
+              'text': 'THE FLEET ROSTER IS EMPTY No box is declared. crew new <box>'}" \
+                                                     >"$SURF/page-empty-wrong-verb.json"
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  disarmed\n'
+  printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
+} >"$SURF/status.txt"
+# The same fleet, logged out. cli/crew:2123 gives a missing credential the note
+# column outright, so the disarmed word never reaches it — the normal starting
+# state on a drill host, and it must not read as a disagreement.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
+} >"$SURF/status-logged-out.txt"
+# TWO boxes logged out, which is the arity that matters: the blind set was
+# accumulated as a display string (`crew-b, crew-d`) and then tested token-wise,
+# so every member but the last kept a comma and read as NOT blind — a false
+# FAIL on a correct page, invisible with the one-box fixture above (codex-bot,
+# claude-bot, #428). Creds-free is the normal starting state on a drill host and
+# two quiet boxes is an ordinary fleet, so this is the shape that reds #400's
+# round against a page that is right.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   convergence unknown\n'
+} >"$SURF/status-both-blind.txt"
+# ...and the same, with both blind boxes DISARMED rather than one of each, so
+# the members that must not red are the ones the disarmed direction iterates.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  ⚠ log in: box shell crew-b\n'
+  printf 'crew-d  kimi    builder   ⚠ log in: box shell crew-d\n'
+} >"$SURF/status-two-disarmed-blind.txt"
+# ...and the same fleet where the CLI simply does not agree: crew-b is armed
+# and ticking as far as `crew status` can tell.
+{ printf 'crew-a  claude  builder   armed\n'
+  printf 'crew-b  codex   reviewer  2026-08-08T11:04Z reviewed #428\n'
+  printf 'crew-d  kimi    builder   silent — no tick in 3 ticks\n'
+} >"$SURF/status-b-armed.txt"
+
+SURF_F="page: the state filter separates disarmed from silent"
+SURF_T="page: the unit tile counts the declared roster"
+SURF_E="page: an all-undeployed floor names the repair verb"
+SURF_FC="page: the state filter agrees with crew status for every box"
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-truthful-split ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-204-page-truthful-tiles ok "$(surf_says "$r1" "$SURF_T")"
+# Nothing was blind to `crew status`, so the reader's own caveat is not raised.
+t app-surface-312-nothing-unclassifiable absent "$(surf_says "$r1" "$SURF_FC")"
+# The load-bearing direction, and the whole of #312: a box the operator
+# deliberately stopped counted in the alarm group.
+r1="$(surf app_surface_page_groups "$SURF/page-alarms-a-decision.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-staged-decision-as-alarm FAIL "$(surf_says "$r1" "$SURF_F")"
+r1="$(surf app_surface_page_groups "$SURF/page-both-groups.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-both-groups-at-once FAIL "$(surf_says "$r1" "$SURF_F")"
+r1="$(surf app_surface_page_groups "$SURF/page-unknown-box.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-grouped-box-cli-never-saw FAIL "$(surf_says "$r1" "$SURF_F")"
+# The other direction, which is the correction: a page that drops a genuinely
+# silent box — or a genuinely disarmed one — has no member to be wrong about,
+# and passed until the groups were compared as sets.
+r1="$(surf app_surface_page_groups "$SURF/page-drops-silent.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-page-drops-a-silent-box FAIL "$(surf_says "$r1" "$SURF_F")"
+r1="$(surf app_surface_page_groups "$SURF/page-drops-disarmed.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-page-drops-a-disarmed-box FAIL "$(surf_says "$r1" "$SURF_F")"
+# The two readers disagreeing, each way round. The payload calls crew-b
+# disarmed and the CLI shows it ticking...
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-b-armed.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-cli-does-not-confirm-disarmed FAIL "$(surf_says "$r1" "$SURF_F")"
+# ...and the CLI calls crew-b deliberately stopped while the payload has it in
+# the alarm group, which is #312's original defect read from the other reader.
+r1="$(surf app_surface_page_groups "$SURF/page-b-silent.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet-b-not-disarmed.json")"
+t app-surface-312-cli-says-stopped-payload-does-not FAIL "$(surf_says "$r1" "$SURF_F")"
+# A logged-out box: `crew status` cannot answer for it, so it is named in its
+# own skip and the page-side verdict still stands. Counting it as a
+# disagreement would red a correct page on every creds-free host.
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-logged-out.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-credential-note-does-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-credential-note-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# TWO blind boxes, one from each group — the cheaper reproduction, since the
+# blind set is filled from the disarmed boxes before the silent ones, so the
+# disarmed member is the one that carried the comma.
+r1="$(surf app_surface_page_groups "$SURF/page.json" "$SURF/status-both-blind.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-two-blind-boxes-do-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-two-blind-boxes-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# ...and both of them DISARMED, which is the case put directly to the loop that
+# tests blind membership. A correct page must skip here and not FAIL.
+r1="$(surf app_surface_page_groups "$SURF/page-two-disarmed.json" "$SURF/status-two-disarmed-blind.txt" 4 crew-c 3 "$SURF/fleet-two-disarmed.json")"
+t app-surface-312-two-blind-disarmed-do-not-red ok "$(surf_says "$r1" "$SURF_F")"
+t app-surface-312-two-blind-disarmed-named-as-skip skip "$(surf_says "$r1" "$SURF_FC")"
+# The set is machine-readable and the message is a copy of it: both boxes are
+# named, comma-joined, and neither naming nor membership depends on the other.
+t app-surface-312-blind-skip-names-both skip "$(surf_says "$r1" "armed-ness would be in: crew-b, crew-d")"
+r1="$(surf app_surface_page_groups "$SURF/page-no-members.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet-none-quiet.json")"
+t app-surface-312-no-member-to-classify skip "$(surf_says "$r1" "$SURF_F")"
+# The demo payload is not this host, so neither group may be read off it.
+r1="$(surf app_surface_page_groups "$SURF/page-demo.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-312-demo-payload-skips skip "$(surf_says "$r1" "$SURF_F")"
+t app-surface-204-demo-payload-skips skip "$(surf_says "$r1" "$SURF_T")"
+t app-surface-204-demo-payload-skips-empty-floor skip "$(surf_says "$r1" "$SURF_E")"
+r1="$(surf app_surface_page_groups "$SURF/page-shrunk.json" "$SURF/status.txt" 4 crew-c 3 "$SURF/fleet.json")"
+t app-surface-204-staged-shrunk-tile FAIL "$(surf_says "$r1" "$SURF_T")"
+# Fully deployed: the count half still holds, and the hired tile is furniture.
+r1="$(surf app_surface_page_groups "$SURF/page-no-hired-tile.json" "$SURF/status.txt" 4 '' 4 "$SURF/fleet.json")"
+t app-surface-204-page-fully-deployed ok "$(surf_says "$r1" "$SURF_T")"
+r1="$(surf app_surface_page_groups "$SURF/page-furniture.json" "$SURF/status.txt" 4 '' 4 "$SURF/fleet.json")"
+t app-surface-204-page-permanent-hired-tile FAIL "$(surf_says "$r1" "$SURF_T")"
+# A floor with a console drawn is not the empty-floor state, and the drill will
+# not un-hire a box to reach it: skipped by name, never quietly passed.
+t app-surface-204-empty-floor-skips-when-drawn skip "$(surf_says "$r1" "$SURF_E")"
+
+# --- #204's other half: the floor with nothing on it ---------------------
+# Four declared boxes, none deployed. The issue asks for this floor to name
+# `crew hire` in as many words, and nothing here read it before.
+SURF_ALLND="crew-a crew-b crew-c crew-d"
+r1="$(surf app_surface_page_groups "$SURF/page-empty.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-names-crew-hire ok "$(surf_says "$r1" "$SURF_E")"
+# The count half still holds on that floor: 4 declared, 0 with a console.
+t app-surface-204-empty-floor-tiles ok "$(surf_says "$r1" "$SURF_T")"
+# A blank stage with no words on it is the state #204 named as the defect.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-no-panel.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-no-panel FAIL "$(surf_says "$r1" "$SURF_E")"
+# In the DOM but never shown is the same blank stage to an operator.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-hidden.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-hidden FAIL "$(surf_says "$r1" "$SURF_E")"
+# It says how many boxes are declared and stops — the count without the next
+# step, which is the half the issue calls a requirement on the fix.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-no-verb.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-no-repair-verb FAIL "$(surf_says "$r1" "$SURF_E")"
+# `crew new` is the wrong verb for a roster that DOES declare boxes: they exist
+# to be hired, and telling the operator to create more is the wrong repair.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-wrong-verb.json" "$SURF/status.txt" 4 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-floor-wrong-verb FAIL "$(surf_says "$r1" "$SURF_E")"
+# ...and it is the RIGHT verb when the roster declares nothing at all, which is
+# the other branch syncEmptyFloor renders.
+r1="$(surf app_surface_page_groups "$SURF/page-empty-wrong-verb.json" "$SURF/status.txt" 0 "$SURF_ALLND" 0 "$SURF/fleet-all-undeployed.json")"
+t app-surface-204-empty-roster-names-crew-new ok "$(surf_says "$r1" "$SURF_E")"
+
+# --- rehearsal phase 0: acquisition failures abort before checks (#27) --
+P0SHIM="$TMP/phase0-bin"
+P0HOME="$TMP/phase0-home"
+P0LOG="$TMP/phase0-box.log"
+mkdir -p "$P0SHIM" "$P0HOME"
+# shellcheck disable=SC2016  # fixture expands state at execution time
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0LOG"\ncase "$1" in\n  list) printf "[]\\n" ;;\n  new|exec) exit 0 ;;\n  *) exit 2 ;;\nesac\n' >"$P0SHIM/box"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$P0SHIM/gh"
+chmod +x "$P0SHIM/box" "$P0SHIM/gh"
+: >"$P0LOG"
+
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --remote "$TMP/no-such-remote" \
+    --ref nosuchbranch --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+t rehearsal-bad-ref-rc 1 "$r1"
+case "$p0out" in *"remote '$TMP/no-such-remote'"*"ref 'nosuchbranch'"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
+t rehearsal-bad-ref-attributed attributed "$r1"
+t rehearsal-bad-ref-no-tick 0 "$(grep -cF 'exec crew-drill -- bash -lc ~/duty/bin/tick.sh' "$P0LOG" || true)"
+case "$p0out" in *"fixture tests green"*|*"FAIL install"*) r1=cascaded ;; *) r1=stopped ;; esac
+t rehearsal-bad-ref-no-cascade stopped "$r1"
+
+# --tree is a promise that SOURCE_SHA identifies the tree the operator means
+# to drill, including the committed ref phase 1 installs (#183). Refuse every
+# dirty shape before the first box operation and show the paths and reason.
+P0TREE="$TMP/phase0-tree"
+mkdir -p "$P0TREE/shared/test" "$P0TREE/cli"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0TREE/shared/install.sh"
+printf '#!/usr/bin/env bash\nprintf "failed 0\\n"\n' >"$P0TREE/shared/test/run.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$P0TREE/cli/crew"
+printf '0.0.0-test\n' >"$P0TREE/VERSION"
+chmod +x "$P0TREE/shared/install.sh" "$P0TREE/shared/test/run.sh" "$P0TREE/cli/crew"
+git -C "$P0TREE" init -q
+git -C "$P0TREE" add .
+git -C "$P0TREE" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+case "$p0out" in *"has uncommitted changes"*) r2=refused ;; *) r2=passed-guard ;; esac
+t rehearsal-clean-tree-passes-guard passed-guard "$r2"
+if grep -Eq '^(list|new) ' "$P0LOG"; then r2=reached-box; else r2=stopped-early; fi
+t rehearsal-clean-tree-reaches-box reached-box "$r2"
+
+printf '# dirty shared\n' >>"$P0TREE/shared/install.sh"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-shared-rc 1 "$r1"
+case "$p0out" in
+  *"shared/install.sh"*"SOURCE_SHA must name the tree"*"phase 1 installs"*"crew hire --ref"*) r2=attributed ;;
+  *) r2=missing ;;
+esac
+t rehearsal-dirty-shared-attributed attributed "$r2"
+t rehearsal-dirty-shared-before-box 0 "$(wc -l <"$P0LOG")"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal-all.sh" --roles reviewer --tree "$P0TREE" \
+    --quick --no-app --no-config-drill --no-install-drill 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-all-passes-dirty-refusal-rc 1 "$r1"
+case "$p0out" in *"has uncommitted changes"*"FAIL       reviewer"*) r2=passed ;; *) r2=swallowed ;; esac
+t rehearsal-all-passes-dirty-refusal passed "$r2"
+
+git -C "$P0TREE" restore shared/install.sh
+printf '# dirty cli\n' >>"$P0TREE/cli/crew"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-cli-rc 1 "$r1"
+case "$p0out" in *"cli/crew"*) r2=named ;; *) r2=missing ;; esac
+t rehearsal-dirty-cli-names-path named "$r2"
+t rehearsal-dirty-cli-before-box 0 "$(wc -l <"$P0LOG")"
+
+git -C "$P0TREE" restore cli/crew
+printf '0.0.1-staged\n' >"$P0TREE/VERSION"
+git -C "$P0TREE" add VERSION
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-staged-rc 1 "$r1"
+case "$p0out" in *"VERSION"*) r2=named ;; *) r2=missing ;; esac
+t rehearsal-dirty-staged-names-path named "$r2"
+t rehearsal-dirty-staged-before-box 0 "$(wc -l <"$P0LOG")"
+
+git -C "$P0TREE" restore --staged --worktree VERSION
+printf 'untracked\n' >"$P0TREE/NEW-FILE"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-dirty-untracked-rc 1 "$r1"
+case "$p0out" in *"NEW-FILE"*) r2=named ;; *) r2=missing ;; esac
+t rehearsal-dirty-untracked-names-path named "$r2"
+t rehearsal-dirty-untracked-before-box 0 "$(wc -l <"$P0LOG")"
+rm -f "$P0TREE/NEW-FILE"
+
+P0NONGIT="$TMP/phase0-not-git"
+mkdir -p "$P0NONGIT/shared/test"
+printf 'fixture\n' >"$P0NONGIT/shared/install.sh"
+printf 'fixture\n' >"$P0NONGIT/shared/test/run.sh"
+printf 'fixture\n' >"$P0NONGIT/VERSION"
+: >"$P0LOG"
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0NONGIT" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-non-git-tree-rc 1 "$r1"
+case "$p0out" in *"must be a git checkout with a clean working tree"*) r2=owned ;; *) r2=raw ;; esac
+t rehearsal-non-git-tree-owned-error owned "$r2"
+t rehearsal-non-git-tree-before-box 0 "$(wc -l <"$P0LOG")"
+
+# A missing host git gets its own preflight reason, before the source guard or
+# any box operation can turn it into a misleading checkout error.
+P0NOGITSHIM="$TMP/phase0-no-git-bin"
+mkdir -p "$P0NOGITSHIM"
+ln -s "$(command -v dirname)" "$P0NOGITSHIM/dirname"
+ln -s "$P0SHIM/box" "$P0NOGITSHIM/box"
+ln -s "$P0SHIM/gh" "$P0NOGITSHIM/gh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0NOGITSHIM/jq"
+chmod +x "$P0NOGITSHIM/jq"
+: >"$P0LOG"
+if p0out="$(PATH="$P0NOGITSHIM" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  /usr/bin/bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-missing-git-rc 1 "$r1"
+case "$p0out" in *"git not found on the host"*) r2=owned ;; *) r2=misattributed ;; esac
+t rehearsal-missing-git-owned-error owned "$r2"
+t rehearsal-missing-git-before-box 0 "$(wc -l <"$P0LOG")"
+
+# Remote/ref acquisition already uses git clone, but must not inherit the
+# --tree-only clean-status probe.
+P0GSHIM="$TMP/phase0-git-bin"
+P0GITLOG="$TMP/phase0-git.log"
+REAL_GIT="$(command -v git)"
+mkdir -p "$P0GSHIM"
+# shellcheck disable=SC2016  # expanded by the shim at execution time
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$P0GITLOG"\ncase " $* " in\n  *" status "*)\n    if [ "${P0GIT_FAIL_STATUS:-0}" -eq 1 ]; then echo "fixture status failure" >&2; exit 42; fi\n    if [ "${P0GIT_WARN_STATUS:-0}" -eq 1 ]; then echo "fixture status warning" >&2; fi ;;\nesac\nexec "$REAL_GIT" "$@"\n' >"$P0GSHIM/git"
+chmod +x "$P0GSHIM/git"
+
+# A warning from a successful status is not a dirty path and must not make a
+# clean checkout refuse. A failed status retains its stderr in crew's error.
+: >"$P0GITLOG"
+: >"$P0LOG"
+if p0out="$(PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" P0GIT_WARN_STATUS=1 \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+case "$p0out" in *"has uncommitted changes"*) r2=refused ;; *) r2=passed-guard ;; esac
+t rehearsal-status-warning-is-not-dirty passed-guard "$r2"
+if grep -Eq '^(list|new) ' "$P0LOG"; then r2=reached-box; else r2=stopped-early; fi
+t rehearsal-status-warning-reaches-box reached-box "$r2"
+
+: >"$P0GITLOG"
+: >"$P0LOG"
+if p0out="$(PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" P0GIT_FAIL_STATUS=1 \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0TREE" --quick 2>&1)"; then r1=0; else r1=$?; fi
+t rehearsal-status-failure-rc 1 "$r1"
+case "$p0out" in *"could not inspect"*"fixture status failure"*) r2=owned ;; *) r2=missing ;; esac
+t rehearsal-status-failure-owned-error owned "$r2"
+t rehearsal-status-failure-before-box 0 "$(wc -l <"$P0LOG")"
+
+P0REMOTE="$TMP/phase0-remote.git"
+P0REF="$(git -C "$P0TREE" branch --show-current)"
+git clone -q --bare "$P0TREE" "$P0REMOTE"
+: >"$P0GITLOG"
+: >"$P0LOG"
+PATH="$P0GSHIM:$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  P0GITLOG="$P0GITLOG" REAL_GIT="$REAL_GIT" \
+  bash "$ROOT/drill/rehearsal.sh" --remote "$P0REMOTE" \
+    --ref "$P0REF" --quick >/dev/null 2>&1 || true
+if grep -Eq '(^|[[:space:]])status([[:space:]]|$)' "$P0GITLOG"; then r2=probed; else r2=untouched; fi
+t rehearsal-remote-skips-clean-tree-probe untouched "$r2"
+
+BADTREE="$TMP/bad-tree"
+mkdir -p "$BADTREE"
+git -C "$BADTREE" init -q
+printf 'not the engine\n' >"$BADTREE/README.md"
+git -C "$BADTREE" add README.md
+git -C "$BADTREE" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm fixture
+if p0out="$(PATH="$P0SHIM:$PATH" P0LOG="$P0LOG" P0HOME="$P0HOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$BADTREE" --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+t rehearsal-invalid-tree-rc 1 "$r1"
+case "$p0out" in *"shared/install.sh"*"missing"*"aborted before checks"*) r1=attributed ;; *) r1=missing ;; esac
+t rehearsal-invalid-tree-attributed attributed "$r1"
+
+# The suite/reference extraction, archive selection and phase-0 verifier are
+# one contract: each can drift independently, and empty inputs never cover it.
+P0COVER_SUITE="$TMP/phase0-cover-suite.sh"
+P0COVER_REHEARSAL="$TMP/phase0-cover-rehearsal.sh"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
+cp "$ROOT/drill/rehearsal.sh" "$P0COVER_REHEARSAL"
+# shellcheck disable=SC2016  # write a literal synthetic suite dependency
+printf '%s%s\n' '$ROOT' '/postmortems' >>"$P0COVER_SUITE"
+t phase0-new-suite-root-needs-verification missing:postmortems \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
+# shellcheck disable=SC2016  # write a literal brace-form suite dependency
+printf '%s%s\n' '${ROOT}' '/postmortems/report.md' >>"$P0COVER_SUITE"
+t phase0-braced-suite-root-needs-verification missing:postmortems \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
+# shellcheck disable=SC2016  # write a dependency beneath the excluded subtree
+printf '%s%s\n' '$ROOT' '/fleet-floor/dev/assets.json' >>"$P0COVER_SUITE"
+t phase0-excluded-suite-path-refused excluded:fleet-floor/dev \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+cp "$HERE/common.sh" "$P0COVER_SUITE"
+# shellcheck disable=SC2016  # replace the block with the literal legacy command
+sed -i '/BEGIN phase-0 archive selection/,/END phase-0 archive selection/c\
+# BEGIN phase-0 archive selection\
+tar czf "$ENGINE_ARCHIVE" -C "$SOURCE_TREE" shared VERSION\
+# END phase-0 archive selection' "$P0COVER_REHEARSAL"
+t phase0-legacy-archive-selection-refused archive:archive-selection-mismatch \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+: >"$P0COVER_SUITE"
+t phase0-empty-suite-root-list-refused empty-suite-roots \
+  "$(phase0_coverage_result "$P0COVER_SUITE" "$P0COVER_REHEARSAL")"
+: >"$P0COVER_REHEARSAL"
+t phase0-empty-verified-root-list-refused empty-verified-roots \
+  "$(phase0_coverage_result "$HERE/common.sh" "$P0COVER_REHEARSAL")"
+
+# Exercise the in-box verifier, not just its static root list. The fixture is
+# a valid clean git tree with one required root deliberately absent; phase 0
+# must attribute that truncation before it can run the staged suite.
+P0VERIFYTREE="$TMP/phase0-verify-tree"
+P0VERIFYHOME="$TMP/phase0-verify-home"
+P0VERIFYSHIM="$TMP/phase0-verify-bin"
+mkdir -p "$P0VERIFYTREE"/{.ceremony,.github,cli,drill,fleet-floor,shared/test} \
+  "$P0VERIFYHOME" "$P0VERIFYSHIM"
+printf 'fixture\n' >"$P0VERIFYTREE/.ceremony/marker"
+printf 'fixture\n' >"$P0VERIFYTREE/.github/marker"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$P0VERIFYTREE/cli/crew"
+printf 'fixture\n' >"$P0VERIFYTREE/drill/marker"
+printf 'fixture\n' >"$P0VERIFYTREE/fleet-floor/marker"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0VERIFYTREE/install.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$P0VERIFYTREE/shared/install.sh"
+printf '#!/usr/bin/env bash\nprintf "failed 0\\n"\n' >"$P0VERIFYTREE/shared/test/run.sh"
+printf '0.0.0-test\n' >"$P0VERIFYTREE/VERSION"
+chmod +x "$P0VERIFYTREE/cli/crew" "$P0VERIFYTREE/install.sh" \
+  "$P0VERIFYTREE/shared/install.sh" "$P0VERIFYTREE/shared/test/run.sh"
+git -C "$P0VERIFYTREE" init -q
+git -C "$P0VERIFYTREE" add .
+git -C "$P0VERIFYTREE" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm fixture
+# shellcheck disable=SC2016  # the shim receives and executes rehearsal's script argument
+printf '%s\n' '#!/usr/bin/env bash
+case "$1" in
+  list) printf "[]\n" ;;
+  new) exit 0 ;;
+  exec)
+    shift 5
+    HOME="$P0VERIFYHOME" bash -lc "$1" ;;
+  *) exit 2 ;;
+esac' >"$P0VERIFYSHIM/box"
+chmod +x "$P0VERIFYSHIM/box"
+if p0out="$(PATH="$P0VERIFYSHIM:$P0SHIM:$PATH" P0VERIFYHOME="$P0VERIFYHOME" \
+  bash "$ROOT/drill/rehearsal.sh" --tree "$P0VERIFYTREE" --quick 2>&1)"; then
+  r1=0
+else
+  r1=$?
+fi
+t phase0-truncated-tree-rc 1 "$r1"
+case "$p0out" in *"transferred engine failed verification"*) r1=attributed ;; *) r1=missing ;; esac
+t phase0-truncated-tree-attributed attributed "$r1"
+case "$p0out" in *"fixture tests green"*) r1=ran-suite ;; *) r1=stopped-before-suite ;; esac
+t phase0-truncated-tree-stops-before-suite stopped-before-suite "$r1"
+
+# --- install-drill step 9: engine/cron/tick survival, both paths (#341) --
+# The tick leg used to demand an unchanged, NON-EMPTY last duty.log line. A box
+# hired seconds earlier has no duty.log at all — it is written at the first
+# cron boundary — so on the drill's own standalone path the assertion failed by
+# construction. Observed on crew-drill-011, 2026-08-03: the drill read an empty
+# tail and redded, and the box's first tick fired 14s later, AFTER the console
+# removal.
+#
+# These fixtures drive the predicate itself, not a host: a fake box home, the
+# crontab shim above, and a clock the wait spends instead of the suite's wall
+# time. As with the rehearsal-safety block above, the caller's bx() is what
+# makes that possible; each block defines its own and nothing after either one
+# calls it.
+SHOME="$TMP/survival-home"
+SDUTY="$SHOME/duty"
+SCRON="$TMP/survival-crontab"
+SURVIVAL_CLOCK=0
+SURVIVAL_TICK_AT=""
+SURVIVAL_RESTAMP_AT=""
+SURVIVAL_DISARM_AT=""
+
+# survival_reset <engine> <armed|disarmed> [last duty.log line]
+# The third argument is the whole difference between the two paths: a borrowed
+# box arrives with tick history, a freshly hired one does not.
+survival_reset() {
+  rm -rf "$SHOME"; mkdir -p "$SDUTY/bin"
+  printf '%s\n' "$1" >"$SDUTY/VERSION"
+  : >"$SCRON"
+  if [ "$2" = armed ]; then
+    printf '*/5 * * * * %s/bin/tick.sh\n17 2 * * * unrelated-job\n' "$SDUTY" >"$SCRON"
+  fi
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >"$SDUTY/duty.log"
+  SURVIVAL_CLOCK=0
+  SURVIVAL_TICK_AT=""
+  SURVIVAL_RESTAMP_AT=""
+  SURVIVAL_DISARM_AT=""
+}
+
+bx() { HOME="$SHOME" PATH="$ISHIM" CRON_STATE="$SCRON" bash -c "$1"; }
+# shellcheck source=drill/install-survival.sh
+source "$ROOT/drill/install-survival.sh"
+# The two seams, taken over: the clock only moves when the predicate sleeps, so
+# the real 300+90s budget is exercised in no wall time at all — and the tick
+# lands when the fixture's boundary strikes, the way a surviving engine's does.
+# The two *_AT breakages are how a box is made to lose engine or cron INSIDE the
+# wait window, which is the only place the second engine/cron read can see them.
+install_survival_now() { printf '%s\n' "$SURVIVAL_CLOCK"; }
+install_survival_sleep() {
+  SURVIVAL_CLOCK=$((SURVIVAL_CLOCK + $1))
+  if [ -n "$SURVIVAL_TICK_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_TICK_AT" ]; then
+    printf 'tick %s duty run end\n' "$SURVIVAL_TICK_AT" >>"$SDUTY/duty.log"
+  fi
+  if [ -n "$SURVIVAL_RESTAMP_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_RESTAMP_AT" ]; then
+    printf 'crew@9.9.9-someone-elses\n' >"$SDUTY/VERSION"
+  fi
+  if [ -n "$SURVIVAL_DISARM_AT" ] && [ "$SURVIVAL_CLOCK" -ge "$SURVIVAL_DISARM_AT" ]; then
+    : >"$SCRON"
+  fi
+}
+# Which surfaces the detail blames, as a list — the D2 assertion in one line.
+survival_surfaces() {
+  printf '%s' "$INSTALL_SURVIVAL_DETAIL" | tr ';' '\n' |
+    sed 's/^ *//;s/:.*//' | tr '\n' ',' | sed 's/,$//'
+}
+
+# The budget is the box's own schedule, not a constant this file guesses at.
+t survival-budget-reads-the-cron-period 150 "$(install_survival_budget '*/1 * * * * /h/duty/bin/tick.sh')"
+t survival-budget-default-when-unparsable 390 "$(install_survival_budget '17 2 * * * /h/duty/bin/tick.sh')"
+t survival-budget-default-when-cron-empty 390 "$(install_survival_budget '')"
+
+# --- the fresh-box path: no duty.log before the removal
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+t survival-fresh-box-takes-the-wait-path fresh "$INSTALL_SURVIVAL_PATH"
+t survival-fresh-box-label-describes-arrival "the box arrived with no duty.log" "$INSTALL_SURVIVAL_PATH_LABEL"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-passes-on-the-observed-tick survived "$r1"
+t survival-fresh-box-reports-the-new-tick "tick 305 duty run end" "$INSTALL_SURVIVAL_TICK"
+[ "$SURVIVAL_CLOCK" -le 390 ] && r1=bounded || r1=OVERRAN
+t survival-fresh-wait-stops-at-one-boundary-plus-grace bounded "$r1"
+
+# The mutation #192's precedent requires: step 9's leg as it read before this
+# fix — one read, no wait — against the same fixture that just passed.
+SURVIVAL_WAIT="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+install_survival_wait_for_tick() {
+  INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"; [ -n "$INSTALL_SURVIVAL_TICK" ]
+}
+install_survival_check && r1=survived || r1=red
+t survival-deleting-the-wait-reds-the-fresh-box red "$r1"
+t survival-deleting-the-wait-still-names-tick tick "$(survival_surfaces)"
+eval "$SURVIVAL_WAIT"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-restoring-the-wait-passes-the-same-fixture survived "$r1"
+
+# A fresh box whose engine never ticks again is the failure this path exists to
+# catch, and it must be reported as the tick — not as the removal transcript.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-with-no-tick-reds red "$r1"
+t survival-fresh-box-with-no-tick-names-tick tick "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in *"duty.log"*"390s"*) r1=says-what-it-read ;; *) r1=OPAQUE ;; esac
+t survival-fresh-box-with-no-tick-says-what-it-read says-what-it-read "$r1"
+t survival-fresh-box-with-no-tick-waited-the-budget 390 "$SURVIVAL_CLOCK"
+
+# --- a tick that lands DURING the uninstall proves nothing
+# The wait measures against the log as the COMPLETED removal left it, not the
+# empty read taken before it. A boundary striking while `crew uninstall` runs
+# writes a line the console was still installed for; accepting it would pass
+# step 9 at zero elapsed time on a box whose engine never ticked again.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+t survival-uninstall-tick-still-takes-the-wait-path fresh "$INSTALL_SURVIVAL_PATH"
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-tick-during-uninstall-alone-reds red "$r1"
+t survival-tick-during-uninstall-names-tick tick "$(survival_surfaces)"
+t survival-tick-during-uninstall-waits-the-budget 390 "$SURVIVAL_CLOCK"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"tick during uninstall"*"already there"*) r1=says-the-stale-line ;; *) r1=OPAQUE ;;
+esac
+t survival-tick-during-uninstall-says-the-stale-line says-the-stale-line "$r1"
+
+# …and that same box passes the moment the engine ticks after the removal.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-tick-during-uninstall-then-a-real-tick-passes survived "$r1"
+t survival-tick-during-uninstall-reports-the-later-tick "tick 305 duty run end" "$INSTALL_SURVIVAL_TICK"
+
+# The mutation the case exists for: the baseline-blind wait — first non-empty
+# line wins — takes the during-uninstall line as its evidence and concludes in
+# no time at all, which is the false pass this fixture must catch.
+SURVIVAL_WAIT_PRE="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+install_survival_wait_for_tick() {
+  local budget="$1" deadline
+  deadline=$(( $(install_survival_now) + budget ))
+  while :; do
+    INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
+    [ -z "$INSTALL_SURVIVAL_TICK" ] || return 0
+    [ "$(install_survival_now)" -lt "$deadline" ] || return 1
+    install_survival_sleep "$INSTALL_SURVIVAL_POLL"
+  done
+}
+install_survival_check && r1=survived || r1=red
+t survival-baseline-blind-wait-false-passes-the-uninstall-tick survived "$r1"
+t survival-baseline-blind-wait-spends-nothing 0 "$SURVIVAL_CLOCK"
+eval "$SURVIVAL_WAIT_PRE"
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+printf 'tick during uninstall duty run end\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-restoring-the-baseline-reds-the-same-fixture red "$r1"
+
+# --- the wait window is not a blind spot
+# Up to a whole cron period passes inside the wait, so engine and cron are read
+# again on the other side of it: a box that loses either one in there did not
+# outlive its console, and the detail names the read that saw it go.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+SURVIVAL_RESTAMP_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-engine-restamped-inside-the-wait-reds red "$r1"
+t survival-engine-restamped-inside-the-wait-names-engine engine "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"after the 390s tick wait"*) r1=says-which-read ;; *) r1=OPAQUE ;;
+esac
+t survival-engine-restamped-inside-the-wait-says-which-read says-which-read "$r1"
+
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+SURVIVAL_DISARM_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-cron-disarmed-inside-the-wait-reds red "$r1"
+t survival-cron-disarmed-inside-the-wait-names-cron cron "$(survival_surfaces)"
+
+# A surface that missed before the wait is reported once, at the read that saw
+# it — the second pass must not double it into the detail.
+survival_reset '' armed ''
+install_survival_before
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-engine-gone-reds red "$r1"
+t survival-fresh-box-engine-gone-reported-once engine "$(survival_surfaces)"
+
+# --- the borrowed-box context: history, with the same post-removal wait
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+t survival-borrowed-box-records-history-context history "$INSTALL_SURVIVAL_PATH"
+t survival-borrowed-box-label-describes-arrival "the box arrived with tick history" "$INSTALL_SURVIVAL_PATH_LABEL"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-box-newer-post-removal-line-passes survived "$r1"
+t survival-borrowed-box-reports-the-new-tick "tick 305 duty run end" "$INSTALL_SURVIVAL_TICK"
+[ "$SURVIVAL_CLOCK" -le 390 ] && r1=bounded || r1=OVERRAN
+t survival-borrowed-wait-stops-at-one-boundary-plus-grace bounded "$r1"
+
+# A borrowed box whose engine dies with its console spends the full budget and
+# reds. This explicitly inverts the old borrowed-box pass on an unchanged log.
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-box-unchanged-log-now-reds red "$r1"
+t survival-borrowed-box-unchanged-log-names-tick tick "$(survival_surfaces)"
+t survival-borrowed-box-unchanged-log-waits-the-budget 390 "$SURVIVAL_CLOCK"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"2026-08-03T15:14:01Z duty run end"*"box arrived with"*) r1=names-arrival-tick ;; *) r1=OPAQUE ;;
+esac
+t survival-borrowed-box-failure-retains-pre-removal-tick names-arrival-tick "$r1"
+
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+rm -f "$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-box-emptied-log-still-reds red "$r1"
+
+# A tick written during uninstall is the post-removal baseline, not survival
+# evidence. The borrowed context must exclude it exactly as the fresh one does.
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-tick-during-uninstall-alone-reds red "$r1"
+t survival-borrowed-tick-during-uninstall-names-tick tick "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"2026-08-03T15:14:01Z duty run end"*"2026-08-03T15:19:01Z tick during uninstall"*) r1=says-both-lines ;; *) r1=OPAQUE ;;
+esac
+t survival-borrowed-tick-during-uninstall-says-both-lines says-both-lines "$r1"
+
+# …and that same borrowed box passes once a later boundary proves survival.
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-tick-during-uninstall-then-real-tick-passes survived "$r1"
+
+# Restore the old byte-identical borrowed-path comparison. It reds the healthy
+# fixture above as soon as it sees the uninstall-boundary line and never waits
+# for the later proof. This is the reported flake's negative mutation.
+SURVIVAL_WAIT_HISTORY="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+SURVIVAL_TICK_AT=305
+install_survival_wait_for_tick() {
+  INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
+  [ -n "$INSTALL_SURVIVAL_TICK" ] && [ "$INSTALL_SURVIVAL_TICK" = "$INSTALL_SURVIVAL_TICK_PRE" ]
+}
+install_survival_check && r1=survived || r1=red
+t survival-restoring-borrowed-byte-identical-compare-reds red "$r1"
+eval "$SURVIVAL_WAIT_HISTORY"
+
+# Pointing the wait at TICK_PRE instead of the post-removal read accepts the
+# during-uninstall line at zero elapsed time. The correct baseline reds it.
+SURVIVAL_WAIT_POST="$(declare -f install_survival_wait_for_tick)"
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+install_survival_wait_for_tick() {
+  local budget="$1" deadline
+  deadline=$(( $(install_survival_now) + budget ))
+  while :; do
+    INSTALL_SURVIVAL_TICK="$(install_survival_read_tick)"
+    if [ -n "$INSTALL_SURVIVAL_TICK" ] && [ "$INSTALL_SURVIVAL_TICK" != "$INSTALL_SURVIVAL_TICK_PRE" ]; then
+      return 0
+    fi
+    [ "$(install_survival_now)" -lt "$deadline" ] || return 1
+    install_survival_sleep "$INSTALL_SURVIVAL_POLL"
+  done
+}
+install_survival_check && r1=survived || r1=red
+t survival-borrowed-pre-removal-baseline-false-passes survived "$r1"
+t survival-borrowed-pre-removal-baseline-spends-nothing 0 "$SURVIVAL_CLOCK"
+eval "$SURVIVAL_WAIT_POST"
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf '2026-08-03T15:19:01Z tick during uninstall\n' >>"$SDUTY/duty.log"
+install_survival_check && r1=survived || r1=red
+t survival-restoring-borrowed-post-removal-baseline-reds red "$r1"
+
+# --- the real survival failures, on the surfaces they happened to
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+: >"$SCRON"
+install_survival_check && r1=survived || r1=red
+t survival-cron-removed-by-hand-reds red "$r1"
+t survival-cron-removed-by-hand-names-cron-first cron,tick "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in *"tick.sh"*) r1=says-what-it-read ;; *) r1=OPAQUE ;; esac
+t survival-cron-removed-says-what-it-read says-what-it-read "$r1"
+t survival-borrowed-box-cron-removed-does-not-wait 0 "$SURVIVAL_CLOCK"
+case "$INSTALL_SURVIVAL_DETAIL" in *"tick: not waited for"*) r1=says-no-wait ;; *) r1=OPAQUE ;; esac
+t survival-borrowed-box-cron-removed-says-no-wait says-no-wait "$r1"
+case "$INSTALL_SURVIVAL_DETAIL" in *"2026-08-03T15:14:01Z duty run end"*) r1=names-arrival-tick ;; *) r1=OPAQUE ;; esac
+t survival-borrowed-box-cron-removed-retains-pre-removal-tick names-arrival-tick "$r1"
+
+# The same removal on a fresh box: no boundary can strike, so the wait is not
+# entered at all and the report says so rather than blaming the tick alone.
+survival_reset 'crew@0.0.0-drill-b' armed ''
+install_survival_before
+: >"$SCRON"
+SURVIVAL_TICK_AT=305
+install_survival_check && r1=survived || r1=red
+t survival-fresh-box-cron-removed-reds red "$r1"
+t survival-fresh-box-cron-removed-names-cron-first cron,tick "$(survival_surfaces)"
+t survival-fresh-box-cron-removed-does-not-wait 0 "$SURVIVAL_CLOCK"
+
+survival_reset 'crew@0.0.0-drill-b' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+printf 'crew@9.9.9-someone-elses\n' >"$SDUTY/VERSION"
+install_survival_check && r1=survived || r1=red
+t survival-engine-restamped-reds red "$r1"
+t survival-engine-restamped-names-engine-first engine,tick "$(survival_surfaces)"
+case "$INSTALL_SURVIVAL_DETAIL" in
+  *"crew@9.9.9-someone-elses"*"crew@0.0.0-drill-b"*) r1=says-both ;; *) r1=OPAQUE ;;
+esac
+t survival-engine-restamped-says-read-and-expected says-both "$r1"
+
+survival_reset '' armed '2026-08-03T15:14:01Z duty run end'
+install_survival_before
+install_survival_check && r1=survived || r1=red
+t survival-engine-gone-reds red "$r1"
+t survival-engine-gone-names-engine-first engine,tick "$(survival_surfaces)"
+
+# The driver reads the predicate from here and reports the surfaces, so the
+# transcript that misled #341 cannot come back as the evidence.
+if grep -qF 'install_survival_before' "$ROOT/drill/install-drill.sh" &&
+   grep -qF 'install_survival_check' "$ROOT/drill/install-drill.sh"; then r1=wired; else r1=MISSING; fi
+t survival-driver-uses-the-shared-predicate wired "$r1"
+# shellcheck disable=SC2016  # the driver's literal line is the pattern
+if grep -qF '($INSTALL_SURVIVAL_PATH_LABEL)' "$ROOT/drill/install-drill.sh"; then r1=context; else r1=LOST; fi
+t survival-driver-pass-line-keeps-arrival-context context "$r1"
+# shellcheck disable=SC2016  # the driver's literal line is the pattern
+if grep -qF 'fail "step 9: positive engine/cron/tick survival observation" "$INSTALL_SURVIVAL_DETAIL"' \
+     "$ROOT/drill/install-drill.sh"; then r1=surfaces; else r1=TRANSCRIPT; fi
+t survival-driver-fails-with-the-surfaces surfaces "$r1"
+if grep -qE 'tick_(pre_remove|after)' "$ROOT/drill/install-drill.sh"; then r1=INLINE; else r1=extracted; fi
+t survival-driver-keeps-no-inline-copy extracted "$r1"
+
+# --- drill/install-payload.sh: #365's payload rule, per channel (#421) ----
+# Same shape as the survival block above: the predicate is driven against
+# fixtures rather than a host — a stub installer, stub guards, and installed
+# trees built by hand. No bx() is needed at all here, because the thing under
+# assertion is an ordinary directory: install-drill.sh's installs are
+# host-side, into its own scratch CREW_HOME.
+#
+# One convention departs from the rest of this file: every hyphenated verdict
+# word assigned below is QUOTED. shellcheck reads `r2=a-b` as arithmetic
+# (SC2100) once it has seen `a` as a variable name, and under -x it keeps the
+# names of every file this one sources — so whether a bare word here parses
+# depends on a declaration in some other file. `roots-still-green` was armed by
+# this block's own `local roots`; `first-upgrade-artifact` was armed from
+# outside the branch entirely, when #432 landed a `first=` in
+# drill/rehearsal-resume.sh, which line 324 sources. ci-shell runs shellcheck
+# unfiltered, so an info-level finding is a red build. Quoting says "literal"
+# and cannot be armed by a name this file never mentions.
+PHOME="$TMP/payload"
+
+# payload_src <declared roots, space separated> <bound in guard A> <bound in B>
+# A stub source tree: the installer's list and the two offline guards that
+# spell the size bound, in the shape install-payload.sh reads them.
+payload_src() {
+  local roots p; read -ra roots <<<"$1"
+  rm -rf "$PHOME/src"; mkdir -p "$PHOME/src/shared/test"
+  { printf 'PAYLOAD_EXCLUDED_PATHS=(\n'
+    for p in "${roots[@]}"; do [ -z "$p" ] || printf '  %s  # a reason\n' "$p"; done
+    printf ')\n'
+  } >"$PHOME/src/install.sh"
+  # shellcheck disable=SC2016  # `$kb` is the guard's literal text
+  [ "$2" = - ] || printf 'if [ "$kb" -lt %s ]; then\n' "$2" >"$PHOME/src/shared/test/install-lifecycle.sh"
+  [ "$2" = - ] && : >"$PHOME/src/shared/test/install-lifecycle.sh"
+  # shellcheck disable=SC2016  # same
+  [ "$3" = - ] || printf 'if [ "$kb" -lt %s ]; then\n' "$3" >"$PHOME/src/shared/test/artifact.sh"
+  [ "$3" = - ] && : >"$PHOME/src/shared/test/artifact.sh"
+  return 0
+}
+
+# payload_tree <name> <root to plant, or -> <filler KiB> → echoes the path
+payload_tree() {
+  local dir="$PHOME/trees/$1"
+  rm -rf "$dir"; mkdir -p "$dir/cli"
+  [ "$2" = - ] || mkdir -p "$dir/$2"
+  head -c "$(( $3 * 1024 ))" /dev/zero >"$dir/filler"
+  printf '%s\n' "$dir"
+}
+
+# The predicate's own report, captured. A subshell supplies the pass()/fail()
+# the caller owes it, so neither name escapes into the suite around it.
+payload_run() {  # <source tree> <installed tree>
+  ( pass() { printf 'PASS %s\n' "$1"; }
+    fail() { printf 'FAIL %s%s\n' "$1" "${2:+ — $2}"; }
+    # shellcheck source=drill/install-payload.sh
+    . "$ROOT/drill/install-payload.sh"
+    install_payload_assert payload "$1" "$2" )
+}
+payload_verdict() { case "$1" in *FAIL*) printf 'red\n' ;; *) printf 'green\n' ;; esac; }
+
+CLEAN_ROOTS='.git drill shared/test fleet-floor/dev fleet-floor/test'
+
+# A tree that ships none of them, well under the bound.
+#
+# The expectation for the reported size is `du -skL`'s own reading of this
+# tree, never a hard-coded window: du charges directory inodes per filesystem,
+# so the two directories below cost 0 blocks on the tmpfs a box's $TMP usually
+# is and 4 KiB each on a runner's ext4 — 64 KiB here and 72 KiB there, for the
+# same fixture. A band is green on one and red on the other for a reason that
+# is not the predicate's. Equality against du is also the stronger assertion:
+# it pins the line to the measurement rather than to a range a constant could
+# sit in, and payload-two-trees-report-different-sizes below closes the last
+# way a constant could still satisfy it.
+payload_src "$CLEAN_ROOTS" 3072 3072
+payload_dir="$(payload_tree clean - 64)"
+payload_kb="$(du -skL "$payload_dir" | cut -f1)"
+r1="$(payload_run "$PHOME/src" "$payload_dir")"
+t payload-clean-tree-passes green "$(payload_verdict "$r1")"
+case "$r1" in *"is $payload_kb KiB, within the 3072 KiB bound"*) r2=measured ;; *) r2="$r1" ;; esac
+t payload-pass-line-carries-the-measured-size measured "$r2"
+case "$r1" in *"none of the installer's 5 excluded roots"*) r2=counted ;; *) r2="$r1" ;; esac
+t payload-pass-line-counts-the-roots-it-walked counted "$r2"
+
+# MUST FAIL: a tree carrying fleet-floor/dev reds, NAMING that path — and it is
+# not a size finding, so the size assertion beside it still passes. A leg that
+# only redded on the bound would report "over budget" and leave the operator to
+# work out which root came back.
+r1="$(payload_run "$PHOME/src" "$(payload_tree fat-dev fleet-floor/dev 64)")"
+t payload-dev-root-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"still shipped: fleet-floor/dev"*) r2=named ;; *) r2="$r1" ;; esac
+t payload-dev-root-names-the-path named "$r2"
+case "$r1" in *"PASS payload: installed tree is"*) r2='size-still-green' ;; *) r2="$r1" ;; esac
+t payload-dev-root-is-not-a-size-finding size-still-green "$r2"
+
+# MUST FAIL: under the bound and still carrying a test root. This is the case a
+# size-only check passes.
+r1="$(payload_run "$PHOME/src" "$(payload_tree small-test shared/test 64)")"
+t payload-test-root-under-budget-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"still shipped: shared/test"*) r2=named ;; *) r2="$r1" ;; esac
+t payload-test-root-under-budget-names-the-path named "$r2"
+
+# …and the mirror: no excluded root anywhere, and fat. The bound is the only
+# thing that catches the next big directory nobody thought to exclude.
+payload_fat_dir="$(payload_tree fat-clean - 4096)"
+payload_fat_kb="$(du -skL "$payload_fat_dir" | cut -f1)"
+r1="$(payload_run "$PHOME/src" "$payload_fat_dir")"
+t payload-over-bound-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"within the 3072 KiB bound — measured $payload_fat_kb KiB"*) r2='says-both' ;; *) r2="$r1" ;; esac
+t payload-over-bound-names-bound-and-measurement says-both "$r2"
+# Two trees, two different readings: whatever the filesystem charges for the
+# directories, a 4096 KiB tree cannot measure the same as a 64 KiB one. This is
+# what stops a predicate that printed a constant from satisfying both cases
+# above, which is the force the removed band was carrying.
+if [ "$payload_fat_kb" -gt "$payload_kb" ]; then r2=differ; else r2="$payload_kb vs $payload_fat_kb"; fi
+t payload-two-trees-report-different-sizes differ "$r2"
+
+# MUST FAIL: a DANGLING SYMLINK at an excluded root (#431 round 2, codex). One
+# planted link used to produce two PASS lines on the tree that most needs a
+# finding: `-e` is false for it, so the root walk did not see it, and `du -skL`
+# then could not walk the tree — exiting non-zero and printing a partial total
+# of 0, which is under any bound. Both halves are asserted here, because either
+# one alone still lets a fat `fleet-floor/dev` arrive behind a broken link.
+payload_dangling_dir="$(payload_tree dangling-root - 64)"
+mkdir -p "$payload_dangling_dir/fleet-floor"
+ln -s missing-target "$payload_dangling_dir/fleet-floor/dev"
+r1="$(payload_run "$PHOME/src" "$payload_dangling_dir")"
+t payload-dangling-excluded-root-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"still shipped: fleet-floor/dev"*) r2=named ;; *) r2="$r1" ;; esac
+t payload-dangling-excluded-root-names-the-path named "$r2"
+# The exact false green, pinned out by its own text: a failed measurement must
+# never be reported as a small tree.
+case "$r1" in
+  *"is 0 KiB, within"*) r2='FALSE-GREEN' ;;
+  *"size measured"*)    r2='measurement-red' ;;
+  *)                    r2="$r1" ;;
+esac
+t payload-dangling-root-is-not-a-zero-kib-pass measurement-red "$r2"
+
+# MUST FAIL: the measurement guard STANDS ALONE. A dangling symlink at a path
+# that is not an excluded root leaves the root walk correctly green, so the
+# only thing that can red this tree is du's own status — which is the proof
+# that the size assertion is not being carried by the root finding beside it.
+payload_unmeasurable_dir="$(payload_tree unmeasurable - 64)"
+ln -s missing-target "$payload_unmeasurable_dir/cli/orphan"
+r1="$(payload_run "$PHOME/src" "$payload_unmeasurable_dir")"
+t payload-unmeasurable-tree-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"PASS payload: installed tree carries none"*) r2='roots-still-green' ;; *) r2="$r1" ;; esac
+t payload-unmeasurable-tree-is-not-a-root-finding roots-still-green "$r2"
+# and it reports du's own status and words, not a bound verdict: "could not
+# measure" and "too big" are different facts for whoever reads the drill record.
+case "$r1" in *"size measured — du -skL exited 1"*) r2='says-du' ;; *) r2="$r1" ;; esac
+t payload-unmeasurable-tree-carries-dus-own-status says-du "$r2"
+case "$r1" in *"within the 3072 KiB bound"*) r2='BOUND-VERDICT' ;; *) r2='not-a-bound-verdict' ;; esac
+t payload-unmeasurable-tree-is-not-a-bound-finding not-a-bound-verdict "$r2"
+
+# MUST FAIL: a fat artifact tree reds where the checkout tree is clean. The
+# channels are asserted separately for exactly this reason — one verdict per
+# installed tree, never one inferred from another.
+r1="$(payload_run "$PHOME/src" "$(payload_tree channel-checkout - 64)")"
+r2="$(payload_run "$PHOME/src" "$(payload_tree channel-artifact fleet-floor/dev 4096)")"
+t payload-per-channel-verdicts-are-independent "green red" \
+  "$(payload_verdict "$r1") $(payload_verdict "$r2")"
+
+# THE MUTATION THAT DELETES ITS OWN CHECK. Reverting #365 takes fleet-floor/dev
+# out of PAYLOAD_EXCLUDED_PATHS, so a walk over only what the installer still
+# names would go green on the very regression this leg exists for. The sentinel
+# is unioned in, so the tree is still walked against it — and the installer
+# having dropped it is a separate finding, not a silence.
+payload_src '.git drill shared/test fleet-floor/test' 3072 3072
+r1="$(payload_run "$PHOME/src" "$(payload_tree reverted fleet-floor/dev 4096)")"
+t payload-reverted-exclusion-still-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"still shipped: fleet-floor/dev"*) r2=named ;; *) r2="$r1" ;; esac
+t payload-reverted-exclusion-still-names-the-root named "$r2"
+# shellcheck source=drill/install-payload.sh
+. "$ROOT/drill/install-payload.sh"
+install_payload_installer_names_sentinel "$PHOME/src" && r1=named || r1=dropped
+t payload-reverted-exclusion-reported-against-the-source dropped "$r1"
+payload_src "$CLEAN_ROOTS" 3072 3072
+install_payload_installer_names_sentinel "$PHOME/src" && r1=named || r1=dropped
+t payload-declared-sentinel-is-reported-named named "$r1"
+
+# The bound is READ, and reading it doubles as a drift check between the two
+# guards that both spell it: disagreement is a defect this drill will not pick
+# a winner for.
+t payload-bound-read-from-the-guards 3072 "$(install_payload_budget_kb "$PHOME/src")"
+payload_src "$CLEAN_ROOTS" 3072 4096
+r1="$(payload_run "$PHOME/src" "$(payload_tree disagree - 64)")"
+t payload-guards-disagreeing-on-the-bound-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"disagree on the size bound"*) r2='says-so' ;; *) r2="$r1" ;; esac
+t payload-guards-disagreeing-says-so says-so "$r2"
+payload_src "$CLEAN_ROOTS" - -
+r1="$(payload_run "$PHOME/src" "$(payload_tree nobound - 64)")"
+t payload-no-bound-in-the-guards-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"no installed-tree size bound"*) r2='says-so' ;; *) r2="$r1" ;; esac
+t payload-no-bound-says-so says-so "$r2"
+payload_src "$CLEAN_ROOTS" 3072 3072
+rm -f "$PHOME/src/shared/test/artifact.sh"
+r1="$(payload_run "$PHOME/src" "$(payload_tree noguard - 64)")"
+case "$r1" in *"artifact.sh is missing"*) r2='names-the-guard' ;; *) r2="$r1" ;; esac
+t payload-missing-guard-names-it names-the-guard "$r2"
+
+# An installer whose list stopped parsing is a red, never an empty walk.
+payload_src '' 3072 3072
+r1="$(payload_run "$PHOME/src" "$(payload_tree noparse - 64)")"
+t payload-unparsable-exclusion-list-reds red "$(payload_verdict "$r1")"
+case "$r1" in *"did not parse"*) r2='says-so' ;; *) r2="$r1" ;; esac
+t payload-unparsable-exclusion-list-says-so says-so "$r2"
+# …and a tree that is not there is its own finding, reached only once the two
+# reads above have succeeded — which is why the source is restored first.
+payload_src "$CLEAN_ROOTS" 3072 3072
+r1="$(payload_run "$PHOME/src" "$PHOME/trees/does-not-exist")"
+case "$r1" in *"nothing at"*) r2='says-so' ;; *) r2="$r1" ;; esac
+t payload-absent-installed-tree-says-so says-so "$r2"
+
+# The rule the shipped tree actually carries, read through the same predicate
+# the drill uses — so a guard reworded past the read reds here and not on a
+# release night.
+PAYLOAD_SHIPPED_BOUND="$(install_payload_budget_kb "$ROOT")"
+case "$PAYLOAD_SHIPPED_BOUND" in [1-9]*) r1=numeric ;; *) r1="$PAYLOAD_SHIPPED_BOUND" ;; esac
+t payload-shipped-bound-is-readable numeric "$r1"
+payload_excluded_roots="$(install_payload_excluded_roots "$ROOT")"
+grep -qx 'shared/test' <<<"$payload_excluded_roots" && r1=walked || r1=MISSING
+t payload-shipped-list-names-the-test-root walked "$r1"
+install_payload_installer_names_sentinel "$ROOT" && r1=named || r1=dropped
+t payload-shipped-installer-excludes-the-sentinel named "$r1"
+
+# CRITERION: no size constant is spelled in drill/. Asserted against the bound
+# as read, so it keeps holding after the number moves.
+if grep -rqF "$PAYLOAD_SHIPPED_BOUND" "$ROOT/drill/"; then r1=SPELLED; else r1='read-not-typed'; fi
+t payload-drill-spells-no-size-constant read-not-typed "$r1"
+
+# The driver reads the predicate from here, at all three installed trees.
+# shellcheck disable=SC2016  # the driver's literal lines are the patterns
+if grep -qF '. "$ROOT/drill/install-payload.sh"' "$ROOT/drill/install-drill.sh"; then
+  r1=sourced; else r1=MISSING; fi
+t payload-driver-sources-the-shared-predicate sourced "$r1"
+r1="$(grep -c 'install_payload_assert ' "$ROOT/drill/install-drill.sh")"
+t payload-driver-asserts-three-installed-trees 3 "$r1"
+# shellcheck disable=SC2016  # same
+if grep -qF 'versions/$VA' "$ROOT/drill/install-drill.sh" &&
+   grep -qF 'CREW_HOME/current' "$ROOT/drill/install-drill.sh" &&
+   grep -qF 'ARTIFACT_HOME/share/current' "$ROOT/drill/install-drill.sh"; then
+  r1='first-upgrade-artifact'; else r1=INCOMPLETE; fi
+t payload-driver-covers-first-upgrade-and-artifact first-upgrade-artifact "$r1"
+
+# --- validate_sha
+validate_sha "0123456789abcdef0123456789abcdef01234567" && r1=ok || r1=bad
+validate_sha "0123456" && r2=ok || r2=bad
+validate_sha "g123456789abcdef0123456789abcdef01234567" && r3=ok || r3=bad
+t sha-full ok "$r1"
+t sha-short bad "$r2"
+t sha-nonhex bad "$r3"
+
+# --- blockers.jq: corpus-shaped fixtures --------------------------------
+BJQ="$SHARED/lib/jq/blockers.jq"
+S='{"5":"CLOSED","6":"MERGED","10":"CLOSED","7":"OPEN"}'
+
+# The canonical body shape from the triage contract, all blockers landed —
+# including one inside the clause's parentheses; "Blocks #13" is the inverse
+# relation and must not parse.
+b1='[{"number":21,"body":"Part of #1. Blocked by #5, #6 (and #10 for the bootstrap). Blocks #13 (needs a tag)."}]'
+t blockers-landed "21" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b1")"
+
+# One blocker still open → stays blocked.
+b2='[{"number":22,"body":"Blocked by #5 and #7."}]'
+t blockers-open "" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b2")"
+
+# Unknown number → fail-safe: counts as still-open.
+b3='[{"number":23,"body":"Blocked by #999."}]'
+t blockers-unknown "" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b3")"
+
+# Cross-repo blocker must NOT resolve against the local number map — triage
+# flips those by hand (TRIAGE.md). #5 is CLOSED locally, but this "#5" is
+# other-org/other-repo#5.
+b4='[{"number":24,"body":"Blocked by other-org/other-repo#5."}]'
+t blockers-crossrepo "" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b4")"
+
+# Lowercase clause, sentence-final stop honored: #7 after the period is not
+# part of the clause.
+b5='[{"number":25,"body":"blocked by #5. Also mentions #7 later."}]'
+t blockers-lowercase "25" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b5")"
+
+# No clause at all → no lead.
+b6='[{"number":26,"body":"Depends on vibes."},{"number":27,"body":null}]'
+t blockers-none "" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b6")"
+
+# Two issues, one unblockable → only that one reported.
+b7='[{"number":28,"body":"Blocked by #5."},{"number":29,"body":"Blocked by #7."}]'
+t blockers-mixed "28" "$(jq -r --argjson S "$S" -f "$BJQ" <<<"$b7")"
+
+# --- converged.jq: handoff predicate ------------------------------------
+CJQ="$SHARED/lib/jq/converged.jq"
+PANEL='["rev-a","rev-b"]'
+mk_pr() {  # head mergeable labels requests reviews
+  jq -n --arg head "$1" --arg m "$2" --argjson labels "$3" --argjson reqs "$4" --argjson revs "$5" \
+    '{data:{repository:{pullRequest:{
+      headRefOid:$head, mergeable:$m,
+      labels:{nodes:($labels|map({name:.}))},
+      reviewRequests:{nodes:($reqs|map({requestedReviewer:{login:.}}))},
+      latestOpinionatedReviews:{nodes:$revs}}}}}'
+}
+H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+CJ_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+REVS_OK='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
+REVS_STALE='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$CJ_OLD'"}}]'
+# The maintainer (#452). Off-panel by construction — that is the whole reason
+# the human's verdict needed its own term here — and the ONE off-panel identity
+# this predicate reads.
+CJ_HUMAN="danmt"
+# The clock D1's ordering is read against, #286's rule applied to the human's
+# verdict: CJ_T_BLOCK is when the block landed, CJ_T_SIG_NEW a signal that
+# ANSWERS it, CJ_T_SIG_OLD one that merely PREDATES it.
+CJ_T_SIG_OLD="2026-08-11T09:00:00Z"
+CJ_T_BLOCK="2026-08-11T10:00:00Z"
+CJ_T_SIG_NEW="2026-08-11T11:00:00Z"
+# No signal posted — the shape answered-head.jq returns when the session has
+# never declared a round answered on this PR, and the default here because most
+# of these fixtures are indifferent to it.
+CJ_NO_SIG='{"sha":"","createdAt":""}'
+cj() {  # cj [signal-json] [panel-json] [human]
+  jq -r --argjson panel "${2:-$PANEL}" --arg needs_human state:needs-human \
+    --arg human "${3-$CJ_HUMAN}" --argjson signal "${1:-$CJ_NO_SIG}" -f "$CJQ"
+}
+
+t converged-true true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_OK" | cj)"
+t converged-outstanding-req false \
+  "$(mk_pr "$H" MERGEABLE '[]' '["rev-b"]' "$REVS_OK" | cj)"
+t converged-offpanel-req-ignored true \
+  "$(mk_pr "$H" MERGEABLE '[]' '["danmt"]' "$REVS_OK" | cj)"
+t converged-stale-approval false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_STALE" | cj)"
+t converged-already-handed false \
+  "$(mk_pr "$H" MERGEABLE '["state:needs-human"]' '[]' "$REVS_OK" | cj)"
+t converged-unknown-mergeable defer-unknown \
+  "$(mk_pr "$H" UNKNOWN '[]' '[]' "$REVS_OK" | cj)"
+t converged-conflicting false \
+  "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_OK" | cj)"
+# An empty panel must never converge vacuously (bare panel= line).
+t converged-empty-panel false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | cj '' '[]')"
+
+# --- #452: the HUMAN's own verdict disqualifies convergence -------------------
+# BUILDER.md's Handoff ends "address what comes back and re-hand-off the same
+# way", and this predicate is what made that impossible: every wake is scoped to
+# $panel and the maintainer is off-panel, so a human CHANGES_REQUESTED left this
+# true — the panel still approved the head, and a review does not move
+# mergeable. The reconciler took state:needs-human off, the next tick refired
+# the handoff, re-requested the human and re-set the label, and the reconciler's
+# human-request clause made it stick. The PR bounced back at the human carrying
+# a fresh nag and the change request never reached the builder.
+CJ_BLOCK_AT_HEAD='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"'$CJ_HUMAN'"},"state":"CHANGES_REQUESTED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$H'"}}]'
+CJ_BLOCK_SUPERSEDED='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"'$CJ_HUMAN'"},"state":"CHANGES_REQUESTED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$CJ_OLD'"}}]'
+CJ_HUMAN_APPROVED='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"'$CJ_HUMAN'"},"state":"APPROVED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$H'"}}]'
+cj_sig() { jq -cn --arg sha "$1" --arg at "$2" '{sha:$sha,createdAt:$at}'; }
+
+# The headline: a standing human block at the head, never answered.
+t converged-human-block-at-head false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj)"
+# D1's SPEND, and the reason the disqualifier is not simply permanent: an answer
+# with argument moves no head, so request-panel.jq finds nobody to re-request —
+# the panel already approves this tree — and only the handoff can put the PR back
+# in front of the human. A signal at this head, posted after the block, converges.
+t converged-human-block-answered true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$H" "$CJ_T_SIG_NEW")")"
+# MUST-FAIL, the #286 ordering: a signal that PREDATES the block did not answer
+# it. Reading the sha alone — the licence before #286 gave it a createdAt — would
+# let one signal posted before the human ever reviewed cancel every later block.
+t converged-human-block-stale-signal false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$H" "$CJ_T_SIG_OLD")")"
+# An equal-second tie holds, exactly as it does in request-panel.jq: fail-closed
+# costs one tick and the next signal clears it.
+t converged-human-block-tied-signal false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$H" "$CJ_T_BLOCK")")"
+# A signal for some OTHER head is not a signal at this one, however new it is.
+t converged-human-block-signal-other-head false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj "$(cj_sig "$CJ_OLD" "$CJ_T_SIG_NEW")")"
+# MUST-FAIL, D1's HEAD SCOPING. The block sits at a superseded head and the panel
+# approves the current one — the builder pushed the fix. This MUST converge: the
+# handoff is the only thing that re-requests the human, so an any-head
+# disqualifier would stop the very act that clears it. Deadlock, not caution.
+t converged-human-block-superseded-head true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_SUPERSEDED" | cj)"
+# The human approving changes nothing — only CHANGES_REQUESTED closes a round.
+t converged-human-approved true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_HUMAN_APPROVED" | cj)"
+# MUST-FAIL, D3: $human ALONE, never "not in $panel". An advisory off-panel
+# reviewer stays advisory (BUILDER.md) and triage does not vote on PRs. Keying on
+# panel membership passes every other case here and blocks every handoff on the
+# board the first time anyone off-panel leaves a verdict.
+CJ_ADVISORY_BLOCK='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}},{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED","submittedAt":"'$CJ_T_BLOCK'","commit":{"oid":"'$H'"}}]'
+t converged-advisory-block-ignored true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_ADVISORY_BLOCK" | cj)"
+# An empty $human matches nobody: what a caller that is not asking about a round
+# passes, and the guard that keeps a fleet with no FLEET_HUMAN configured from
+# matching a review whose author.login the API returned as null.
+t converged-empty-human-arg-ignores-block true \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_AT_HEAD" | cj '' '' '')"
+# A block with NO submittedAt holds, the same fail-closed direction: an absent
+# timestamp cannot prove the signal answered it.
+CJ_BLOCK_UNTIMED="$(printf '%s' "$CJ_BLOCK_AT_HEAD" | jq -c 'map(del(.submittedAt))')"
+t converged-human-block-untimed-holds false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' "$CJ_BLOCK_UNTIMED" | cj "$(cj_sig "$H" "$CJ_T_SIG_NEW")")"
+
+# --- addressing.jq: round-close predicate, the MIRROR of converged.jq (#130) --
+# Same payload builder (mk_pr), same panel, same head-scoping — the point is
+# that the two predicates agree on every input and differ only in the
+# conclusion. Reuses H / REVS_OK from the converged block above.
+AJQ="$SHARED/lib/jq/addressing.jq"
+OLDH="cccccccccccccccccccccccccccccccccccccccc"
+# A closed round without full approval: rev-a requests changes AT the head,
+# rev-b approves AT the head. Every panelist opinionated, one is not an approval.
+REVS_ADDR='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"}}]'
+# The ceremony#136 mixed round: one approval staled by a push (rev-a at an OLD
+# head), the other panelist yet to review at all. NOT closed — still awaiting.
+REVS_MIXED_OPEN='[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"'$OLDH'"}}]'
+addr() { jq -r --argjson panel "$PANEL" --arg addressing state:addressing -f "$AJQ"; }
+
+# The core: a landed non-approving verdict with the whole panel opinionated at
+# the head → state:addressing. This is the exact inverse of converged-true.
+t addressing-closed-without-approval true "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_ADDR" | addr)"
+# All approved at head → converged, NOT addressing (the two never both fire).
+t addressing-all-approved-is-false false "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_OK" | addr)"
+# The #136 mixed round: a stale approval + an unreviewed panelist is a round
+# still OPEN (bots-reviewing), not a closed one — addressing must not fire.
+t addressing-mixed-open-round-false false "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_MIXED_OPEN" | addr)"
+# A stale approval + a head change-request (rev-a CR@head, rev-b approved OLD
+# head) is not all-reviewed-at-head → not closed yet.
+REVS_ADDR_STALE='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$OLDH'"}}]'
+t addressing-not-all-at-head-false false "$(mk_pr "$H" MERGEABLE '[]' '[]' "$REVS_ADDR_STALE" | addr)"
+# Idempotent: the label already stands → writes nothing (re-tick no-op).
+t addressing-already-set-false false "$(mk_pr "$H" MERGEABLE '["state:addressing"]' '[]' "$REVS_ADDR" | addr)"
+# A live panel request means the round is still open — do not stamp addressing
+# over a head that was just (re-)requested; the reconciler would flip it back.
+t addressing-live-request-false false "$(mk_pr "$H" MERGEABLE '[]' '["rev-a"]' "$REVS_ADDR" | addr)"
+# An empty panel never closes a round vacuously (mirror of converged-empty-panel).
+t addressing-empty-panel-false false \
+  "$(mk_pr "$H" MERGEABLE '[]' '[]' '[]' | jq -r --argjson panel '[]' --arg addressing state:addressing -f "$AJQ")"
+# Mergeability is irrelevant to addressing: a conflicting PR can still owe a fix.
+t addressing-conflicting-still-addresses true "$(mk_pr "$H" CONFLICTING '[]' '[]' "$REVS_ADDR" | addr)"
+
+# --- #130 must-fail guards (the issue's test plan, addressing-scoped) ---------
+# The engine write is optimistic, the reconciler authoritative: nothing in the
+# addressing path may gate a verdict or write a state it does not own.
+# state:addressing must never be written before the verdict lands, and the write
+# is best-effort — the marker is the `|| warn` trailing the add-label.
+if grep -q '_mark_addressing' "$SHARED/lib/duty-review.sh"; then r1=wired; else r1=MISSING; fi
+t addressing-wired-after-verdict wired "$r1"
+# shellcheck disable=SC2016  # the grep literal contains $LABEL_ADDRESSING on purpose
+if grep -q 'could not set \$LABEL_ADDRESSING' "$SHARED/lib/duty-review.sh"; then r1='best-effort'; else r1=GATING; fi
+t addressing-write-is-best-effort best-effort "$r1"
+# The addressing writer never touches state:building (out of scope) or
+# state:needs-human (the handoff's, not the reviewer's).
+if grep -RIn 'state:building' "$SHARED/lib/duty-review.sh" >/dev/null 2>&1; then r1=WRITES-IT; else r1=absent; fi
+t addressing-never-writes-state-building absent "$r1"
+# The predicate keys approvals/reviews on the head, same as converged.jq — a
+# stale verdict at an old head is not a closed round.
+# shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
+if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
+t addressing-keys-on-head head-keyed "$r1"
 
 
 suite_finish

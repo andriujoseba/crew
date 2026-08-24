@@ -33,7 +33,9 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          shellcheck -x install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/*.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf
+          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/*.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf; do
+            shellcheck -x "$f"
+          done
       - name: fixture tests
         run: shared/test/run.sh
       - name: install lifecycle (offline — layout, root-resolution, interrupt-safe reinstall)

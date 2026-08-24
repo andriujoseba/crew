@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shared/test/builder.sh — standalone builder subject suite.
+# shellcheck disable=SC2100  # tick-N fixture identifiers are strings, not arithmetic
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
