@@ -226,14 +226,16 @@ unset box_exists_source
 
 # Keep ambient operator configuration out of fixture resolution. These static
 # assertions make removing either half of the suite guard fail visibly.
-if for suite in common triage builder hygiene conf; do
-     grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/$suite.sh" || exit 1
-   done; then r1=guarded; else r1=MISSING; fi
+r1=guarded
+for suite in "${SUITES[@]}"; do
+  grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/$suite.sh" || r1=MISSING
+done
 t suite-unsets-ambient-crew-config guarded "$r1"
 # shellcheck disable=SC2016  # Match the literal assignment in this file.
-if for suite in common triage builder hygiene conf; do
-     grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/$suite.sh" || exit 1
-   done; then r1=guarded; else r1=MISSING; fi
+r1=guarded
+for suite in "${SUITES[@]}"; do
+  grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/$suite.sh" || r1=MISSING
+done
 t suite-pins-empty-xdg-config guarded "$r1"
 
 # --- #285: per-author repository panels ------------------------------------

@@ -12,6 +12,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SHARED="$(dirname "$HERE")"
 ROOT="$(dirname "$SHARED")"
+SUITES=(common triage builder hygiene conf)
 PASS=0 FAIL=0
 
 t() {  # t <name> <expected> <actual>

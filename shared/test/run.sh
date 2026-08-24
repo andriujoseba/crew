@@ -3,9 +3,8 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(common triage builder hygiene conf)
-PASS=0
-FAIL=0
+# shellcheck source=shared/test/lib.sh
+source "$HERE/lib.sh"
 suite_failed=0
 
 for suite in "${SUITES[@]}"; do
