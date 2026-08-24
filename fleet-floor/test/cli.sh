@@ -1882,8 +1882,9 @@ fi
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
 # Deliberately not added to fixtures/fleet.txt — three assertions under
-# test/floor/ hardcode a 15-box fleet and browser.js's scroll walk has been destabilised by
-# fleet size before (browser.js:246). A 16th row is not worth that risk.
+# test/floor/ hardcode the fixture's 26 boxes (floor/{roster,fleet,server}.sh)
+# and browser.js's scroll walk has been destabilised by fleet size before
+# (browser.js:246). A 27th row is not worth that risk.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
 CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"
@@ -2606,7 +2607,17 @@ fi
 # Drawn from BOTH parsing modules on purpose: CREW_FLOOR_PROBE_TIMEOUT and
 # CREW_FLOOR_PING_INTERVAL are floor.ping's, CREW_FLOOR_ACTION_TIMEOUT is
 # floor.actions', so the assertion is the invariant and not one variable's
-# import position.
+# import position. Each row was driven against the mutation it exists for,
+# and they do not all catch the same one:
+#
+#   floor.py's roster import deleted          ping rows red, actions row does not
+#   roster.py's ping import moved to the top  ping rows red, actions row does not
+#   ...plus actions.py's own parse hoisted
+#   above its `from floor.roster` import      all three red
+#
+# The actions row survives the first two because actions.py resolves roster on
+# its way to its own parse. It is the guard for the reordering INSIDE that
+# module, which the other two cannot see — not a third copy of their case.
 for CL_VAR in CREW_FLOOR_PROBE_TIMEOUT CREW_FLOOR_PING_INTERVAL CREW_FLOOR_ACTION_TIMEOUT; do
   CL_LABEL="floor: the fleet-definition refusal beats \$$CL_VAR parsing"
   CL_RC=0
