@@ -16,227 +16,13 @@ export HOME="${HOME:-$TMP}"
 source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
+# shellcheck source=shared/lib/duty-attention.sh
+source "$SHARED/lib/duty-attention.sh"
+# shellcheck source=shared/lib/duty-review.sh
+source "$SHARED/lib/duty-review.sh"
+ATT_MOD="$SHARED/lib/duty-attention.sh"
 mkdir -p "$TMP/prompts"
-
-t phase0-verifier-covers-suite-roots covered \
-  "$(phase0_split_coverage_result "$ROOT/drill/rehearsal.sh")"
-
-# Source common.sh against a scratch DUTY_DIR.
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
-export XDG_CONFIG_HOME="$TMP/xdg-empty"
-mkdir -p "$XDG_CONFIG_HOME"
-export DUTY_DIR="$TMP"
-export HOME="${HOME:-$TMP}"
-# shellcheck disable=SC1091
-source "$SHARED/lib/common.sh"
-# shellcheck disable=SC1091
-source "$SHARED/lib/duty-builder.sh"
-
-PIPE_GUARD_FIXTURE="$TMP/pipefail-grep-q.fixture"
-printf '%s%s\n' 'if producer | ' 'grep --binary-files=text -Fq MATCH; then :; fi' >"$PIPE_GUARD_FIXTURE"
-guard_mutation="$(pipefail_grep_q_sites "$PIPE_GUARD_FIXTURE")"
-case "$guard_mutation" in
-  *"$PIPE_GUARD_FIXTURE:1:"*) r1=red ;; *) r1=MISSED ;;
-esac
-t pipefail-grep-q-guard-reds-on-reintroduction red "$r1"
-rm -f "$PIPE_GUARD_FIXTURE"
-
-guard_findings="$(pipefail_grep_q_sites)"
-t pipefail-grep-q-guard-finds-zero "" "$guard_findings"
-
-pipefail_population="$(pipefail_grep_q_population)"
-for inherited in \
-    "$ROOT/fleet-floor/test/cases.sh" \
-    "$ROOT/drill/rehearsal-attention.sh" \
-    "$ROOT/drill/install-payload.sh" \
-    "$SHARED/lib/duty-builder.sh" \
-    "$SHARED/lib/duty-review.sh" \
-    "$SHARED/lib/duty-attention.sh"; do
-  case "$pipefail_population" in
-    *"$inherited"*) r1=inherited ;; *) r1=MISSING ;; esac
-  t "pipefail-population-inherits-${inherited##*/}" inherited "$r1"
-done
-
-# #449: the live pipefail-setting entrypoints, and the one file that can only
-# arrive behind them. Deleting the widened candidate lines reds every row.
-for admitted in \
-    "$ROOT/cli/crew" \
-    "$ROOT/install.sh" \
-    "$SHARED/install.sh" \
-    "$ROOT/dist/curl-install.sh" \
-    "$ROOT/dist/fetch.sh" \
-    "$ROOT/dist/make-installer.sh" \
-    "$ROOT/dist/release-artifact.sh" \
-    "$SHARED/lib/version-skew.sh"; do
-  case "$pipefail_population" in
-    *"$admitted"*) r1=admitted ;; *) r1=MISSING ;; esac
-  t "pipefail-population-admits-${admitted#"$ROOT"/}" admitted "$r1"
-done
-
-# The membership above is only worth its criterion if version-skew.sh arrived
-# through a parent. It seeds nothing of its own, and both parents carry the
-# literal source edge the derivation matches and are in the population
-# themselves — a run that seeded it by name would pass the row above and fail
-# these three.
-if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/lib/version-skew.sh"
-then r1=SEEDS-ITSELF; else r1=by-edge; fi
-t pipefail-version-skew-seeds-nothing by-edge "$r1"
-for parent in "$ROOT/cli/crew" "$ROOT/install.sh"; do
-  r1=MISSING-EDGE
-  if grep -Eq '^[[:space:]]*(source|\.)[[:space:]].*/version-skew\.sh' "$parent"; then
-    case "$pipefail_population" in *"$parent"*) r1=parent ;; *) r1=PARENT-OUTSIDE ;; esac
-  fi
-  t "pipefail-version-skew-parent-${parent#"$ROOT"/}" parent "$r1"
-done
-
-# Criterion 6: tick.sh is a candidate the derivation reaches and declines. The
-# exclusion must be its missing pipefail, not the candidate set's reach — so
-# assert both halves, or a future widening could satisfy this vacuously.
-pipefail_candidates="$(pipefail_grep_q_candidates | sort -u)"
-if grep -qxF "$SHARED/bin/tick.sh" <<<"$pipefail_candidates"
-then r1=candidate; else r1=UNREACHED; fi
-t pipefail-tick-is-a-candidate candidate "$r1"
-if grep -Eq '^[[:space:]]*set[[:space:]]+[^#]*pipefail' "$SHARED/bin/tick.sh"
-then r1=SETS-PIPEFAIL; else r1=sets-none; fi
-t pipefail-tick-sets-no-pipefail sets-none "$r1"
-case "$pipefail_population" in
-  *"$SHARED/bin/tick.sh"*) r1=INCLUDED ;; *) r1=excluded ;; esac
-t pipefail-population-excludes-tick.sh excluded "$r1"
-
-# #449: the payload exemption is a shape, not a path. This fixture carries the
-# four live payload spellings under a filename no clause names — under the old
-# rehearsal-app.sh clause every one of them flags. The control on line 5 is
-# assembled rather than written so this suite does not carry the live shape,
-# and it proves the fixture is exempt by that shape and not inert.
-PAYLOAD_FIXTURE="$TMP/remote-payload.fixture"
-cat >"$PAYLOAD_FIXTURE" <<'PAYLOADS'
-if bxn "$b" 'crontab -l 2>/dev/null | grep -qE "^[^#].*tick\.sh"' 2>/dev/null; then :; fi
-armed()   { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -qE '^[^#].*tick\.sh'" >/dev/null 2>&1; }
-paused()  { box exec "$1" -- bash -lc "crontab -l 2>/dev/null | grep -q '^#CREW-FLOOR-PAUSED'" >/dev/null 2>&1; }
-present() { box exec "$1" -- bash -lc 'crontab -l 2>/dev/null | grep -qF "$HOME/duty/bin/tick.sh"' >/dev/null 2>&1; }
-PAYLOADS
-printf '%s%s\n' 'if producer | ' 'grep -q CONTROL; then :; fi' >>"$PAYLOAD_FIXTURE"
-# Lines 6-8 are the negative the shape rule owes: a payload opener whose grep
-# sits OUTSIDE the payload quote is a local pipeline under this file's own
-# pipefail, so it must flag. One line per payload spelling, plus a local
-# pipeline wrapped around a payload that has a pipe of its own — the case a
-# body-contains-a-pipe test cannot separate. Assembled for the same reason the
-# control is: written literally they would flag this suite.
-payload_gq='grep -q'
-cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOCALS
-box exec "\$1" -- bash -lc 'crontab -l' | $payload_gq OUTSIDE
-out=\$(bxn "\$b" 'echo hi'); printf '%s\n' "\$out" | $payload_gq OUTSIDE
-box exec "\$1" -- bash -lc 'crontab -l | $payload_gq INSIDE' | $payload_gq OUTSIDE
-PAYLOAD_LOCALS
-# Lines 9-12 are the negative the invocation-context bound owes: opener-shaped
-# text that is data, not an invocation, because it sits inside an ordinary
-# quoted string. Its apparent quote has no mate, so a matcher that looks for
-# opener shapes anywhere on the line reads the rest of the line as an
-# unterminated payload and erases the local pipeline — a silent pass. Both
-# spellings, and both quote pairings, because the lookalike works either way.
-cat >>"$PAYLOAD_FIXTURE" <<PAYLOAD_LOOKALIKES
-echo 'bash -lc "' | $payload_gq OUTSIDE
-note='bxn box "'; producer | $payload_gq OUTSIDE
-echo "bash -lc '" | $payload_gq OUTSIDE
-note="bxn box '"; producer | $payload_gq OUTSIDE
-PAYLOAD_LOOKALIKES
-payload_findings="$(pipefail_grep_q_sites "$PAYLOAD_FIXTURE")"
-payload_exempt="$(awk -F: '$2 < 5 { print }' <<<"$payload_findings")"
-t pipefail-payload-exempt-by-shape "" "$payload_exempt"
-payload_control="$(awk -F: '$2 == 5 { print $2 }' <<<"$payload_findings")"
-t pipefail-payload-fixture-control-flags 5 "$payload_control"
-payload_local="$(awk -F: '$2 > 5 && $2 < 9 { print $2 }' <<<"$payload_findings" \
-  | sort -n | paste -sd' ' -)"
-t pipefail-payload-local-pipe-flags "6 7 8" "$payload_local"
-payload_lookalike="$(awk -F: '$2 > 8 { print $2 }' <<<"$payload_findings" \
-  | sort -n | paste -sd' ' -)"
-t pipefail-payload-lookalike-flags "9 10 11 12" "$payload_lookalike"
-rm -f "$PAYLOAD_FIXTURE"
-
-# The four live sites: present, so this cannot pass by their disappearance, and
-# unflagged now that cli/crew is in the population.
-payload_live="$(awk '
-  /(bxn|bash[[:space:]]+-lc)/ && /[|][[:space:]]*grep[[:space:]]+-[[:alnum:]]*q/ { n++ }
-  END { print n+0 }' "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
-t pipefail-payload-live-sites-present 4 "$payload_live"
-payload_live_findings="$(pipefail_grep_q_sites "$ROOT/cli/crew" "$ROOT/drill/rehearsal-app.sh")"
-t pipefail-payload-live-sites-unflagged "" "$payload_live_findings"
-
-# The old predicate is deliberately assembled so the guard does not mistake
-# this regression fixture for a live site. Its producer writes a match, pauses,
-# then writes again: pipefail exposes grep -q closing the pipe as rc 141.
-slow_lines() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
-set -o pipefail
-eval 'slow_lines | gr'"ep -qx MATCH" >/dev/null 2>&1
-old_slow_rc=$?
-slow_materialized="$(slow_lines)"
-grep -qx MATCH <<<"$slow_materialized"; new_slow_match_rc=$?
-grep -qx ABSENT <<<"$slow_materialized"; new_slow_miss_rc=$?
-case "$old_slow_rc" in 0) r1=MATCHED ;; *) r1=nonzero ;; esac
-t pipefail-materialized-old-race nonzero "$r1"
-t pipefail-materialized-match 0 "$new_slow_match_rc"
-t pipefail-materialized-nonmatch 1 "$new_slow_miss_rc"
-unset -f slow_lines
-
-# Drive the two converted awk-range call sites with a producer that pauses
-# after its match. The old predicate is assembled so the source guard itself
-# does not carry the prohibited spelling.
-slow_awk() { env printf '%s\n' MATCH; sleep 0.05; env printf '%s\n' more; }
-old_pipe='slow_awk | '
-old_match='grep -q MATCH'
-if eval "$old_pipe$old_match"; then old_predicate_rc=0; else old_predicate_rc=$?; fi
-case "$old_predicate_rc" in 0) r1=FALSE-GREEN ;; *) r1=red ;; esac
-t pipefail-awk-range-old-shape-reds red "$r1"
-awk() { slow_awk; }
-if awk_range_grep_q ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
-t pipefail-awk-range-basic-survives-race matched "$r1"
-if awk_range_grep_Fq ignored ignored MATCH; then r1=matched; else r1=MISSED; fi
-t pipefail-awk-range-fixed-survives-race matched "$r1"
-if awk_range_grep_q ignored ignored ABSENT; then r1=FALSE-POSITIVE; else r1=absent; fi
-t pipefail-awk-range-keeps-negative-direction absent "$r1"
-unset -f awk slow_awk
-unset old_match old_pipe old_predicate_rc guard_findings guard_mutation
-unset pipefail_population inherited PIPE_GUARD_FIXTURE
-unset admitted parent pipefail_candidates PAYLOAD_FIXTURE
-unset payload_findings payload_exempt payload_control payload_live payload_live_findings
-
-# #411: force the box-existence producer to pause after its matching line.
-# The stub is deliberately `box list`, so this exercises the predicate's
-# contract at its real boundary. The former pipeline returns 141 when the
-# producer wakes and writes the final name after grep has exited successfully.
-box_exists_source="$(sed -n '/^box_exists()/p' "$ROOT/cli/crew")"
-eval "$box_exists_source"
-# shellcheck disable=SC2317  # called by the box_exists body loaded through eval
-box() {
-  [ "${1:-}" = list ] || return 2
-  printf '%s\n' crew-drill crew-drill-triage
-  sleep 0.05
-  printf '%s\n' crew-drill-builder
-}
-# shellcheck disable=SC2317  # called by the box_exists body loaded through eval
-box_names() { box list; }
-if box_exists crew-drill-triage; then r1=found; else r1=MISSED; fi
-t box-exists-survives-a-descheduled-producer found "$r1"
-if box_exists someone-elses-box; then r1=FALSE-POSITIVE; else r1=absent; fi
-t box-exists-keeps-the-negative-direction absent "$r1"
-unset -f box box_names box_exists
-unset box_exists_source
-
-# Keep ambient operator configuration out of fixture resolution. These static
-# assertions make removing either half of the suite guard fail visibly.
-r1=guarded
-for suite in "${SUITES[@]}"; do
-  grep -Fqx 'unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG' "$HERE/$suite.sh" || r1=MISSING
-done
-t suite-unsets-ambient-crew-config guarded "$r1"
-# shellcheck disable=SC2016  # Match the literal assignment in this file.
-r1=guarded
-for suite in "${SUITES[@]}"; do
-  grep -Fqx 'export XDG_CONFIG_HOME="$TMP/xdg-empty"' "$HERE/$suite.sh" || r1=MISSING
-done
-t suite-pins-empty-xdg-config guarded "$r1"
+mkdir -p "$TMP/prompts"
 
 # --- #285: per-author repository panels ------------------------------------
 PANEL_REPO="$TMP/panel-repo"
@@ -409,194 +195,405 @@ RP_TRIAGE_REV='[{"author":{"login":"dan-claude-bot"},"state":"CHANGES_REQUESTED"
 t rp-never-targets-triage "rev-a rev-b" \
   "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_TRIAGE_REV" '[]' | rp "$RP_SIG_LATE")"
 
-# --- Live-round deferral (per-tick, $final=false): the regression codex found
-# on the mirror-every-tick change. Because the mirror now runs every tick, a
-# round's FIRST verdict would otherwise stamp `<!-- round:<head> -->` with "no
-# written reply" while the round is still live — and the already-recorded skip
-# then locks the real reply out forever. Per-tick records only SUPERSEDED
-# rounds; the live last round is deferred to a later tick or to the handoff.
+# --- #286: ONE SIGNAL OPENS ONE ROUND ----------------------------------------
+# The licence is spent by the verdicts that answer it. Every case below was
+# inexpressible before the fixtures had a clock.
+#
+# THE #281 LOOP, in one fixture. Signal opens the round; both panelists answer
+# it at the head, one blocking; GitHub has dropped them from requested_reviewers
+# the instant they submitted. Before the fix this returned the change-requester
+# and did so on every tick, forever, on a tree nobody had changed.
+RP_281='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"},
+         {"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"'$H'"},"submittedAt":"2026-08-02T10:29:40Z"}]'
+# The same blocking verdict with rev-b's approval removed: rev-b now owes a
+# first verdict at this head, so it rides through every hold that binds rev-a
+# and each fixture below shows WHICH panelist was held rather than an empty set
+# that two different rules could have produced.
+RP_CR_A_ONLY='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
+t rp-286-closed-round-requests-none "" \
+  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
+# ...and the no-push resolution still works: the builder answers with argument,
+# pushes nothing, re-signals — a signal NEWER than the blocking verdict — and
+# exactly the change-requester is re-requested. The pair is the boundary: revert
+# the predicate and the fixture above goes red while this one stays green.
+t rp-286-newer-signal-requests-cr-er "rev-a" \
+  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# An equal-second tie HOLDS — fail-closed. A signal posted in the same second as
+# the verdict cannot be shown to have read it, and the cost of guessing wrong is
+# the loop above; the cost of holding is one tick, cleared by the next signal.
+t rp-286-same-second-tie-holds "" \
+  "$(mk_rp "$H" '[]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_VERDICT")")"
+# Absent times hold for the same reason — an unstamped verdict is not evidence
+# that the signal came after it. (An engine reading a payload from before the
+# query carried submittedAt would see exactly this.)
+RP_CR_UNSTAMPED='[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"'$H'"},"submittedAt":null}]'
+t rp-286-unstamped-verdict-holds "rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_CR_UNSTAMPED" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+t rp-286-unstamped-signal-holds "rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_CR_A_ONLY" '[]' | rp "$(sig "$H" "")")"
+# THE COHERENCE GATE (ruled 2026-08-02, danmt). A `📣` posted mid-round is inert
+# until the round closes: rev-a blocked and the builder re-signalled, but rev-b
+# still owes a first verdict, so the round is still the panel's and rev-a is not
+# re-requested under a signal that would blur two rounds into one head.
+t rp-286-coherence-holds-mid-round "" \
+  "$(mk_rp "$H" '["rev-b"]' "$RP_CR_A_ONLY" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# ...and it is the PANEL's round that holds it open, not any request: an
+# off-panel reviewer's outstanding request (triage, a human, an advisory
+# reviewer) is not the panel's verdict to wait for. Same scoping as
+# addressing.jq's $no_panel_reqs, so the two never disagree about whose ball it
+# is.
+t rp-286-offpanel-request-does-not-hold-the-round "rev-a" \
+  "$(mk_rp "$H" '["dan-claude-bot"]' "$RP_CR_AT_HEAD" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# The gate is narrow BY DESIGN: it binds verdict-holders only. A panelist who
+# owes a first verdict at this head is requested even while another request is
+# outstanding — otherwise the first round, where the whole panel is requested at
+# once and each request lands beside the others, could never complete. Three
+# panelists, because that is the smallest set where the two rules can be told
+# apart: rev-a is held by the gate, rev-b holds the round open, rev-c rides
+# through untouched.
+t rp-286-coherence-spares-first-verdicts "rev-c" \
+  "$(mk_rp "$H" '["rev-b"]' "$RP_CR_A_ONLY" '[]' \
+    | rp "$(sig "$H" "$RP_T_SIG_ANSWER")" '["rev-a","rev-b","rev-c"]')"
+# No reviewer is requested twice at one head under one signal: the engine's own
+# request puts them back on the list, and the next tick sees that and holds.
+t rp-286-requested-not-requested-again "" \
+  "$(mk_rp "$H" '["rev-a"]' "$RP_281" '[]' | rp "$(sig "$H" "$RP_T_SIG_ANSWER")")"
+# The hold is scoped to CHANGES_REQUESTED, the only state that closes a round
+# against the builder. A DISMISSED verdict at the head is a WITHDRAWN opinion:
+# round_owed does not count it, addressing.jq calls the round closed and
+# converged.jq calls it unapproved, so if this predicate held it too the
+# panelist would owe a verdict nobody would ever ask for — the stall this issue
+# exists to end, arriving through its own fix. An unknown future state takes the
+# same door for the same reason.
+RP_DISMISSED='[{"author":{"login":"rev-a"},"state":"DISMISSED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
+RP_FUTURE_STATE='[{"author":{"login":"rev-a"},"state":"PONDERED","commit":{"oid":"'$H'"},"submittedAt":"'$RP_T_VERDICT'"}]'
+t rp-286-dismissed-verdict-is-re-requested "rev-a rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_DISMISSED" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
+t rp-286-unknown-state-is-re-requested "rev-a rev-b" \
+  "$(mk_rp "$H" '[]' "$RP_FUTURE_STATE" '[]' | rp "$(sig "$H" "$RP_T_SIG_OPEN")")"
 
-# Tick 1: the live round has one verdict and no reply yet → deferred → nothing
-# written. Crucially, NO `<!-- round:O1 -->` marker to lock the reply out.
-RL_LIVE1="$(mk_rl "Body." "$RL_REVS1" '[]' | rl_live)"
-t roundlog-live-round-no-premature-marker "" "$RL_LIVE1"
+# answered-head.jq — the signal. This is the WIP-safety property: a mid-fix push
+# moves the head away from the last signalled one, so the engine holds.
+RP_SIG_H='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
+RP_SIG_OLD='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"}]'
+RP_SIG_TWO='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'"},{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'"}]'
+t ah-signal-at-head "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_H" | ah_sha)"
+t ah-no-signal-empty "" "$(mk_rp "$H" '[]' '[]' '[]' | ah_sha)"
+t ah-latest-signal-wins "$H" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO" | ah_sha)"
+# The must-fail made concrete: a WIP push after the last signal (signal at OLD,
+# head now H) yields a signalled head != current head, so the engine's
+# `answered_head = gql_head` gate is false — it does NOT request. No commit
+# inference.
+t ah-wip-push-stales-signal "$RP_OLD" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OLD" | ah_sha)"
+# Another user's MARK_ANSWERED is not my signal.
+RP_SIG_OTHER='[{"author":{"login":"someone"},"body":"'"$RP_MARK"' '"$H"'"}]'
+t ah-other-user-signal-ignored "" "$(mk_rp "$H" '[]' '[]' "$RP_SIG_OTHER" | ah_sha)"
+# #286: the licence carries its TIME, and it is the time of the signal it
+# returned — the latest one, not the first. Both halves come out of one program
+# so no caller can pair a sha with another signal's clock.
+RP_SIG_TWO_TIMED='[{"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$RP_OLD"'","createdAt":"'$RP_T_SIG_OPEN'"},
+                   {"author":{"login":"me-bot"},"body":"'"$RP_MARK"' '"$H"'","createdAt":"'$RP_T_SIG_ANSWER'"}]'
+t ah-carries-the-signal-time "$RP_T_SIG_ANSWER" \
+  "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO_TIMED" | ah | jq -r '.createdAt')"
+t ah-pairs-sha-with-its-own-time "$H $RP_T_SIG_ANSWER" \
+  "$(mk_rp "$H" '[]' '[]' "$RP_SIG_TWO_TIMED" | ah | jq -r '"\(.sha) \(.createdAt)"')"
+# No signal is the empty OBJECT, never null: _request_panel reads .sha off it
+# unconditionally, and request-panel.jq reads .createdAt, so the shape has to
+# survive the absence.
+t ah-no-signal-is-an-empty-object '{"sha":"","createdAt":""}' \
+  "$(mk_rp "$H" '[]' '[]' '[]' | ah)"
 
-# Same live round, now WITH the whole-round reply, still the last round →
-# still deferred per-tick (no next round has closed its window yet).
-RL_ONECOM='[{"author":{"login":"me-bot"},"body":"the whole-round reply","createdAt":"2026-01-01T02:00:00Z"}]'
-RL_LIVE2="$(mk_rl "Body." "$RL_REVS1" "$RL_ONECOM" | rl_live)"
-t roundlog-live-round-with-reply-still-deferred "" "$RL_LIVE2"
+# Structural gates (#133 test plan, must-fails).
+# The engine acts on the signal, not commits: _request_panel gates on
+# answered-head == current head before requesting.
+# shellcheck disable=SC2016  # the grep literal contains $gql_head on purpose
+if grep -q 'answered-head.jq' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'answered_head" != "\$gql_head"' "$SHARED/lib/duty-builder.sh"; then r1=signal-gated; else r1=UNGATED; fi
+t engine-request-requires-signal signal-gated "$r1"
+# #286: a predicate can only read what the query asks for, and the handoff query
+# carried neither timestamp — which is why the ordering bug was invisible to
+# every fixture in this file. Pin both fields at the query.
+if grep -q 'comments(last:100){nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}' \
+       "$SHARED/lib/duty-builder.sh"; then r1=timestamped; else r1=UNTIMED; fi
+t engine-request-fetches-ordering-evidence timestamped "$r1"
+# The licence crosses into jq as ONE object: request-panel.jq is HANDED the
+# signal and reads its time, rather than parsing MARK_ANSWERED out of the
+# comments a second time. Two parsers would be two copies of the predicate, and
+# the copies drift — head-checks.jq's header is the standing warning. Pinned on
+# the wire string, not on prose: a second parser needs $mark to find a signal at
+# all, so its absence here is the property.
+# shellcheck disable=SC2016  # the grep literals contain $signal_json / $mark
+if grep -q -- '--argjson signal "\$signal_json"' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'signal\.createdAt' "$SHARED/lib/jq/request-panel.jq" \
+  && ! grep -q 'mark' "$SHARED/lib/jq/request-panel.jq"; then r1=one-object; else r1=RE-DERIVED; fi
+t engine-request-passes-the-whole-signal one-object "$r1"
+# And exactly one PROGRAM parses the signal, for the same reason. Not one call
+# site: #243's resume scan is a second legitimate consumer, and it deliberately
+# reuses this parser rather than keeping its own definition of MARK_ANSWERED —
+# fleet comments wrap the SHA in backticks or trail punctuation after the
+# marker, and resume must classify the exact bodies the request gate does.
+# shellcheck disable=SC2016  # the grep literal contains $mark on purpose
+t engine-has-one-signal-parser 1 \
+  "$(grep -l 'startswith(\$mark)' "$SHARED"/lib/jq/*.jq | wc -l | tr -d ' ')"
+# Every consumer reads the licence as the OBJECT it now is: a consumer left
+# comparing the raw output to a head would classify every PR as unsignalled —
+# resume would re-answer finished rounds forever and the request gate would
+# never open (#286).
+#
+# #452 adds the first consumer that reads it WHOLE: converged.jq is handed the
+# same {sha, createdAt} object request-panel.jq gets, and spends the human's
+# block with its createdAt. So "one `.sha` read per call site" stops being the
+# shape of the property — it was always a proxy — while the property itself is
+# unchanged. Every call site is accounted for by exactly one consumption, a
+# `.sha` read or a whole-object pass, and the two must still add up: a new call
+# site that does neither is a raw output nobody read as an object.
+ah_calls="$(grep -c -- '-f "\$[A-Z_]*DIR[A-Za-z_/]*/jq/answered-head\.jq"' "$SHARED/lib/duty-builder.sh")"
+ah_sha_reads="$(grep -c "jq -r '\.sha // \"\"'" "$SHARED/lib/duty-builder.sh")"
+# shellcheck disable=SC2016  # the grep literal contains $handoff_signal
+ah_whole_reads="$(grep -c -- '--argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh")"
+if [ "$ah_calls" -gt 0 ] && [ "$ah_calls" -eq "$((ah_sha_reads + ah_whole_reads))" ]; then
+  r1=object-read
+else
+  r1="MISMATCH($ah_calls/$ah_sha_reads+$ah_whole_reads)"
+fi
+t engine-signal-consumers-read-the-object object-read "$r1"
+# Green-head precondition, mechanical half only: request on green|none, hold else.
+# shellcheck disable=SC2016  # the shell literal contains $check_state
+if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh"; then r1=green-gated; else r1=UNGATED; fi
+t engine-request-green-gated green-gated "$r1"
+# Drafts excluded: the request rides the my_open list, built non-draft.
+# shellcheck disable=SC2016
+if grep -q 'select(.isDraft | not)' "$SHARED/lib/duty-builder.sh"; then r1=draft-excluded; else r1=EXPOSED; fi
+t engine-request-excludes-drafts draft-excluded "$r1"
+# #155: GitHub rejects connection pages above 100 instead of truncating them.
+# Pin the live API ceiling across shared/, not only the query that exposed it.
+oversized_connections="$(grep -REho '(first|last):[0-9]+' "$SHARED" \
+  | awk -F: '$2 > 100 { print }')"
+t graphql-connection-pages-live-valid "" "$oversized_connections"
+# A GraphQL error can be non-empty stdout with a non-zero status and a null PR.
+# The handoff sweep must validate the object before either _request_panel or
+# converged.jq sees it; non-empty is not evidence of a successful fetch.
+GQL_EXCESSIVE='{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"EXCESSIVE_PAGINATION"}]}'
+GQL_LONG_OK="$(mk_rp "$H" '[]' "$REVS_OK" '[]' | jq --arg mark "$RP_MARK $H" '
+  .data.repository.pullRequest += {
+    mergeable:"MERGEABLE", labels:{nodes:[]},
+    comments:{nodes:([range(0;99) | {author:{login:"someone"},body:"thread"}]
+      + [{author:{login:"me-bot"},body:$mark}])}
+  }')"
+payload_usable() {
+  jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1 \
+    && printf usable || printf unusable
+}
+t graphql-error-body-is-unusable unusable "$(printf '%s' "$GQL_EXCESSIVE" | payload_usable)"
+t graphql-long-thread-payload-is-usable usable "$(printf '%s' "$GQL_LONG_OK" | payload_usable)"
+t graphql-long-thread-converges true \
+  "$(printf '%s' "$GQL_LONG_OK" | cj)"
+if grep -q "jq -e '.data.repository.pullRequest != null'" "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'PR state payload unusable; skipping request and handoff' "$SHARED/lib/duty-builder.sh"; then
+  r1=gated
+else
+  r1=EXPOSED
+fi
+t graphql-error-gates-request-and-handoff gated "$r1"
+# bots-reviewing is best-effort (|| warn), never gating.
+# shellcheck disable=SC2016
+if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh"; then r1='best-effort'; else r1=GATING; fi
+t engine-bots-reviewing-best-effort best-effort "$r1"
+# MARK_ANSWERED is defined and wire-protected against operator override.
+if grep -q '^MARK_ANSWERED=' "$SHARED/conf/fleet.defaults.conf" \
+  && grep -q 'wire_answered' "$SHARED/lib/common.sh"; then r1=wire; else r1=UNPROTECTED; fi
+t mark-answered-is-wire-protocol wire "$r1"
+# The session posts the signal and no longer requests; the argued-exception and
+# the resume re-signal survive.
+if grep -q 'MARK_ANSWERED' "$SHARED/prompts/fragment-round-rules.txt" \
+  && grep -qi 'YOU DO NOT REQUEST' "$SHARED/prompts/fragment-round-rules.txt"; then r1=signals; else r1=STILL-REQUESTS; fi
+t round-rules-session-signals signals "$r1"
+if grep -qi 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=kept; else r1=LOST; fi
+t round-rules-argued-exception-kept kept "$r1"
+if grep -qi 'round-answered signal' "$SHARED/prompts/resume.txt"; then r1=resignals; else r1=MISSING; fi
+t resume-re-signals-after-death resignals "$r1"
 
-# Once a NEWER round supersedes it (a verdict on O2), the closed round O1 is
-# recorded per-tick WITH its real reply — not "no written reply" — while the
-# new live round O2 stays deferred. Proves the reply is never lost, only timed.
-RL_SUP="$(mk_rl "Body." "$RL_REVS" "$RL_COMS" | rl_live)"
-case "$RL_SUP" in *"round:$RL_O1"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-superseded-round-recorded-per-tick yes "$r1"
-case "$RL_SUP" in *"answering round one"*) r1=real ;; *) r1=no ;; esac
-t roundlog-superseded-round-keeps-real-reply real "$r1"
-case "$RL_SUP" in *"round:$RL_O2"*) r1=LEAKED ;; *) r1=deferred ;; esac
-t roundlog-live-round-deferred-when-superseded deferred "$r1"
-case "$RL_SUP" in *"no written reply"*) r1=PREMATURE ;; *) r1=clean ;; esac
-t roundlog-superseded-no-premature-noreply clean "$r1"
+# THE ROUND-1 FIX (codex/grok/kimi): the ready→signal death window. The cure is
+# ordering — SIGNAL THEN READY, with the signal posted while the PR is still a
+# DRAFT (harmless, the engine ignores drafts), so every death lands where resume
+# recovers it. Pinned structurally, not by prose grep, in both prompts that flip
+# a draft to ready.
+for p in build.txt resume.txt; do
+  if grep -qiE 'signal[^.]*then[^.]*mark the PR ready-for-review' "$SHARED/prompts/$p"; then r1=signal-first; else r1=WRONG-ORDER; fi
+  t "signal-before-ready-$p" signal-first "$r1"
+done
+# End-to-end of the covered transition: a PR flipped ready with the signal
+# already at its head → the engine requests (die-after-ready is safe). The
+# die-before-ready arm is a still-draft PR, excluded by my_open
+# (engine-request-excludes-drafts) and recovered by resume — proven above.
+#
+# The two programs are wired together here exactly as _request_panel wires them
+# — answered-head.jq's object is what request-panel.jq is handed — so this case
+# also pins that the licence survives the trip between them (#286).
+RP_READY_SIGNALLED="$(mk_rp "$H" '[]' '[]' "$RP_SIG_H")"
+t strand-fix-ready-with-signal-requests "rev-a rev-b" \
+  "$(printf '%s' "$RP_READY_SIGNALLED" \
+    | rp "$(printf '%s' "$RP_READY_SIGNALLED" | ah)")"
+t strand-fix-ready-with-signal-has-signal "$H" \
+  "$(printf '%s' "$RP_READY_SIGNALLED" | ah_sha)"
+# rebase.txt aligns with the engine: it posts the signal, it does not re-request.
+if grep -qi 'MARK_ANSWERED' "$SHARED/prompts/rebase.txt" \
+  && ! grep -qi 're-request every panel reviewer' "$SHARED/prompts/rebase.txt"; then r1=aligned; else r1=RACES; fi
+t rebase-posts-signal-not-request aligned "$r1"
 
-# The sequential two-tick regression codex reproduced: after tick 1 defers the
-# live round (writing NO marker, above), the round completes and the builder
-# replies; the handoff straggler ($final=true) then records the REAL reply —
-# not the premature "no written reply" the old code locked in.
-RL_HANDOFF="$(mk_rl "Body." "$RL_REVS1" "$RL_ONECOM" | rl)"
-case "$RL_HANDOFF" in *"the whole-round reply"*) r1=real ;; *) r1=no ;; esac
-t roundlog-handoff-finalizes-real-reply real "$r1"
-case "$RL_HANDOFF" in *"no written reply"*) r1=PREMATURE ;; *) r1=clean ;; esac
-t roundlog-handoff-not-premature-noreply clean "$r1"
-
-# The terminal no-comment case survives the deferral: a round that genuinely
-# passed with no reply is still recorded at handoff ($final=true).
-RL_TERM="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
-case "$RL_TERM" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-terminal-no-comment-at-handoff yes "$r1"
-
-# #249: GitHub can re-point an existing verdict to a base-merge commit made
-# after the verdict. Repair only that impossible key to the newest commit that
-# existed when the verdict was submitted.
-RL_OLD="6bb9f61000000000000000000000000000000000"
-RL_HEAD="bfb1f3a4dc313b370981f75e0034d7c0ec720324"
-RL_227_COMMITS="$(printf '[{"commit":{"oid":"%s","committedDate":"2026-01-01T13:39:23Z"}},{"commit":{"oid":"%s","committedDate":"2026-01-01T14:56:52Z"}}]' "$RL_OLD" "$RL_HEAD")"
-RL_227_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T14:46:20Z"},{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T14:48:02Z"},{"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T14:54:22Z"}]' "$RL_HEAD" "$RL_HEAD" "$RL_OLD")"
-RL_227_FINAL="$(mk_rl "Body." "$RL_227_REVS" '[]' "$RL_227_COMMITS" "\"$RL_HEAD\"" | rl)"
-case "$RL_227_FINAL" in *"round:$RL_OLD"*) r1=old ;; *) r1=WRONG ;; esac
-t roundlog-repointed-verdicts-use-original-head old "$r1"
-case "$RL_227_FINAL" in *"round:$RL_HEAD"*) r1=LEAKED ;; *) r1=one-round ;; esac
-t roundlog-repointed-verdicts-form-one-round one-round "$r1"
-RL_227_LIVE="$(mk_rl "Body." "$RL_227_REVS" '[]' "$RL_227_COMMITS" "\"$RL_HEAD\"" | rl_live)"
-t roundlog-repointed-live-payload-stays-empty "" "$RL_227_LIVE"
-
-# A possible reported key stays put even when a newer commit exists: this is
-# not a blanket timestamp-based forward re-key.
-RL_STALE_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T16:00:00Z"}]' "$RL_OLD")"
-RL_STALE="$(mk_rl "Body." "$RL_STALE_REVS" '[]' "$RL_227_COMMITS" null | rl)"
-case "$RL_STALE" in *"round:$RL_OLD"*) r1=kept ;; *) r1=MOVED ;; esac
-t roundlog-possible-stale-key-is-preserved kept "$r1"
-
-# If the verdict predates every returned commit, retain and render its reported
-# key: truncated or rewritten history is not evidence for a guessed repair.
-RL_PRE="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-RL_PRE_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T12:00:00Z"}]' "$RL_PRE")"
-RL_PRE_OUT="$(mk_rl "Body." "$RL_PRE_REVS" '[]' "$RL_227_COMMITS" null | rl)"
-case "$RL_PRE_OUT" in *"round:$RL_PRE"*) r1=rendered ;; *) r1=DROPPED ;; esac
-t roundlog-prehistory-verdict-keeps-reported-key rendered "$r1"
-
-# The current-head guard is independent of sort position: defer a current head
-# even when a later round exists, but finalize it at handoff.
-RL_HEAD_FIRST_REVS="$(printf '[{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"state":"APPROVED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T02:00:00Z"}]' "$RL_O1" "$RL_O2")"
-RL_HEAD_FIRST_LIVE="$(mk_rl "Body." "$RL_HEAD_FIRST_REVS" '[]' '[]' "\"$RL_O1\"" | rl_live)"
-case "$RL_HEAD_FIRST_LIVE" in *"round:$RL_O1"*) r1=LEAKED ;; *) r1=deferred ;; esac
-t roundlog-current-head-deferred-out-of-sort-position deferred "$r1"
-RL_HEAD_FIRST_FINAL="$(mk_rl "Body." "$RL_HEAD_FIRST_REVS" '[]' '[]' "\"$RL_O1\"" | rl)"
-case "$RL_HEAD_FIRST_FINAL" in *"round:$RL_O1"*) r1=finalized ;; *) r1=MISSING ;; esac
-t roundlog-current-head-finalized-at-handoff finalized "$r1"
-
-# The live GraphQL query carries the repair inputs and stays at GitHub's
-# connection ceiling.
-if grep -q 'headRefOid' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'commits(last:100){nodes{commit{oid committedDate}}}' "$SHARED/lib/duty-builder.sh"; then
-  r1=present
+# --- builder attention dispatch and timeout evidence (#301) -----------------
+# A builder pickup may finish an existing PR in this slot, but must hand a new
+# build to the normal duty tick. Pin the ruling in both render layers so a
+# route/prompt drift cannot silently restore the half-budget build lifecycle.
+if grep -q 'test whether it already has an open PR' "$ATT_MOD" &&
+   ! grep -q 'IS build work: do it now' "$ATT_MOD"; then r1=dispatched; else r1=BUILDING; fi
+t attention-builder-route-dispatches-new-build dispatched "$r1"
+if grep -q 'For a builder claim with no open PR, your output is board state, never code' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'when one exists, keep the issue claimed and assigned' "$ATT_MOD" &&
+   grep -q 'A pushed branch keeps the issue claimed and assigned for ORPHANS resume' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'If a directed hold remains, keep the issue claimed and assigned' "$ATT_MOD" &&
+   grep -q 'a standing hold keeps it claimed and assigned with its park re-stated' \
+     "$SHARED/prompts/attention.txt" &&
+   grep -q 'Only when no build branch exists and no hold remains' "$ATT_MOD" &&
+   grep -q 'Only genuinely unstarted work with no remaining hold is unassigned' \
+     "$SHARED/prompts/attention.txt"; then
+  r1=dispatched
 else
   r1=MISSING
 fi
-t roundlog-query-carries-head-and-commits present "$r1"
-
-# B1 (#91): mirroring must be wired into the per-tick `my_open` builder sweep,
-# not only into `_handoff_finalize` — else the Round log fills only at
-# convergence and a never-converging PR never mirrors. The sweep call is
-# `_mirror_rounds "$R" "$N"` (the handoff call uses the function's own
-# repo/num locals), so its presence pins the timing fix against a regression to
-# handoff-only. shellcheck-disable: matching the literal call, not expanding it.
-# shellcheck disable=SC2016
-if grep -q '_mirror_rounds "\$R" "\$N"' "$SHARED/lib/duty-builder.sh"; then r1=per-tick; else r1=handoff-only; fi
-t roundlog-mirrored-in-per-tick-sweep per-tick "$r1"
-
-# --- _handoff_finalize under a gh shim: one comment, one request, one label,
-# ZERO sessions/clones (#91). The stateful shim answers the two GraphQL reads
-# (round-log payload and handoff-comment payload), records the REST writes, and
-# a post-once.sh stub records the comment. run_session / ensure_main_clone are
-# overridden to tripwire the log — if the handoff ever spends a session or a
-# clone the test goes red. This is the issue's must-fail floor: the session/
-# clone controls, and the label-not-gated-on-a-failing-request control below.
-# post-once.sh lives at $DUTY_DIR/bin — common.sh derives BIN_DIR from DUTY_DIR
-# at source time, so an env BIN_DIR would be clobbered; place the stub where the
-# engine will look.
-HFSHIM="$TMP/hf-shim"; HFDUTY="$TMP/hf-duty"
-mkdir -p "$HFSHIM" "$HFDUTY/bin" "$HFDUTY/lib/jq"
-cp "$SHARED/lib/jq/round-log.jq" "$HFDUTY/lib/jq/"
-HF_CALLS="$TMP/hf-calls.log"
-HFP_RL="$TMP/hf-rl-payload.json"; HFP_HC="$TMP/hf-hc-payload.json"
-# Round-log payload: a body with no marker and one answered round → non-empty
-# newbody → the body PATCH fires (exercises _mirror_rounds end to end).
-printf '{"data":{"repository":{"pullRequest":{"body":"Body.","reviews":{"nodes":[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]},"comments":{"nodes":[{"author":{"login":"me-bot"},"body":"my round reply","createdAt":"2026-01-01T02:00:00Z"}]}}}}}' "$RL_O1" >"$HFP_RL"
-# Handoff-comment payload: both panelists approve the current head.
-printf '{"data":{"repository":{"pullRequest":{"headRefOid":"%s","latestOpinionatedReviews":{"nodes":[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"%s"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"%s"}}]}}}}}' "$RL_O2" "$RL_O2" "$RL_O2" >"$HFP_HC"
-cat >"$HFSHIM/gh" <<'HFGH'
-#!/usr/bin/env bash
-set -eu
-if [ "${1:-}" = api ] && [ "${2:-}" = graphql ]; then
-  case "$*" in
-    *latestOpinionatedReviews*) cat "$HF_HCPAYLOAD" ;;
-    *) cat "$HF_RLPAYLOAD" ;;
-  esac
-  exit 0
+t attention-prompt-dispatches-new-build dispatched "$r1"
+# Production run_session, not only the behavior stub below, must expose the
+# immutable log path consumed by the timeout evidence branch.
+# shellcheck disable=SC2016  # literal source assignment, not test expansion
+if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common.sh"; then
+  r1=exposed
+else
+  r1=MISSING
 fi
-is_patch=0 is_reqrev=0 is_label=0
-for a in "$@"; do
-  [ "$a" = PATCH ] && is_patch=1
-  [ "$a" = --add-label ] && is_label=1
-  case "$a" in */requested_reviewers) is_reqrev=1 ;; esac
-done
-if [ "$is_patch" = 1 ]; then cat >/dev/null; printf 'PATCH\n' >>"$HF_CALLS"; exit 0; fi
-if [ "$is_reqrev" = 1 ]; then printf 'REQUEST\n' >>"$HF_CALLS"; [ "${HF_REQ_FAIL:-0}" = 1 ] && exit 1; exit 0; fi
-if [ "$is_label" = 1 ]; then printf 'LABEL\n' >>"$HF_CALLS"; exit 0; fi
-exit 0
-HFGH
-cat >"$HFDUTY/bin/post-once.sh" <<'HFPO'
+t attention-run-session-exposes-log exposed "$r1"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+if grep -q 'fragment-round-rules.txt.*MARK_ANSWERED="\$MARK_ANSWERED"' "$ATT_MOD"; then
+  r1=whole
+else
+  r1=BROKEN
+fi
+t attention-builder-round-rules-still-whole whole "$r1"
+if grep -q '^TIMEOUT_ATTENTION=1800$' "$SHARED/conf/fleet.defaults.conf"; then
+  r1=1800
+else
+  r1=CHANGED
+fi
+t attention-timeout-budget-unchanged 1800 "$r1"
+# duty_attention and duty_builder are separate sessions in one normal tick;
+# builder follows attention and launches through the full build budget.
+attention_ln="$(grep -n '^duty_attention$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
+builder_ln="$(grep -n '^  duty_builder$' "$SHARED/bin/duty.sh" | cut -d: -f1)"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+builder_session_block="$(grep -A2 'run_session build ' "$SHARED/lib/duty-builder.sh")"
+# shellcheck disable=SC2016  # literal source wiring, not this test's expansion
+if [ "$attention_ln" -lt "$builder_ln" ] &&
+   grep -q '"\$TIMEOUT_BUILD"' <<<"$builder_session_block"; then
+  r1=full-budget
+else
+  r1=BROKEN
+fi
+t attention-dispatch-reaches-normal-build-session full-budget "$r1"
+
+# Drive the actual wake with a stubbed run_session. The output log records only
+# externally visible effects: COMMENT, ALERT and LEDGER. This distinguishes all
+# three outcomes and proves the timeout branch does not settle the seen ledger.
+ATT_BEHAVIOR="$TMP/attention-behavior"
+mkdir -p "$ATT_BEHAVIOR/bin" "$ATT_BEHAVIOR/work"
+cat >"$ATT_BEHAVIOR/bin/post-once.sh" <<'ATTPO'
 #!/usr/bin/env bash
-printf 'COMMENT\n' >>"$HF_CALLS"
-exit 0
-HFPO
-cat >"$TMP/hf-run.sh" <<'HFRUN'
-#!/usr/bin/env bash
-set -uo pipefail
-# shellcheck disable=SC1091
-. "$SHARED_DIR/lib/common.sh"
-# shellcheck disable=SC1091
-. "$SHARED_DIR/lib/duty-builder.sh"
-run_session(){ printf 'SESSION\n' >>"$HF_CALLS"; }
-ensure_main_clone(){ printf 'CLONE\n' >>"$HF_CALLS"; }
-_handoff_finalize "$1" "$2"
-HFRUN
-chmod +x "$HFSHIM/gh" "$HFDUTY/bin/post-once.sh"
-hf_run() {  # <req-fail 0|1>
-  : >"$HF_CALLS"
-  SHARED_DIR="$SHARED" HF_CALLS="$HF_CALLS" HF_RLPAYLOAD="$HFP_RL" HF_HCPAYLOAD="$HFP_HC" \
-  HF_REQ_FAIL="$1" DUTY_DIR="$HFDUTY" ME=me-bot FLEET_HUMAN=the-human \
-  LABEL_NEEDS_HUMAN=state:needs-human MARK_HANDOFF='🤝 handed off at head' \
-  PATH="$HFSHIM:$PATH" bash "$TMP/hf-run.sh" the/repo 7 >/dev/null 2>&1
+printf 'COMMENT %s#%s %s\n' "$1" "$2" "$3" >>"$ATT_CALLS"
+ATTPO
+chmod +x "$ATT_BEHAVIOR/bin/post-once.sh"
+attention_case() { # attention_case <run_session rc> <tag>
+  local case_rc="$1" tag="${2:-one}" calls
+  calls="$ATT_BEHAVIOR/calls-$case_rc-$tag"
+  : >"$calls"
+  ATT_CASE_RC="$case_rc" ATT_CASE_TAG="$tag" ATT_CALLS="$calls" \
+    bash -s -- "$SHARED" "$ATT_BEHAVIOR" <<'ATTCASE'
+set -u
+SHARED="$1"; ATT_BEHAVIOR="$2"
+export ATT_CALLS
+LABEL_ATTENTION=attention
+REPOS_FILE="$ATT_BEHAVIOR/repos.txt"
+DUTY_DIR="$ATT_BEHAVIOR/duty"
+WORK_DIR="$ATT_BEHAVIOR/work"
+TREES_DIR="$ATT_BEHAVIOR/trees"
+BIN_DIR="$ATT_BEHAVIOR/bin"
+ME=builder
+TIMEOUT_ATTENTION=1800
+DOCTRINE_TRIAGE=TRIAGE.md
+DOCTRINE_ENTRYPOINT=AGENTS.md
+DOCTRINE_BUILDER=BUILDER.md
+DOCTRINE_REVIEWER=REVIEWER.md
+FLEET_TRIAGE=triage
+FLEET_BENCH=bench
+MARK_ADDRESSING=addressing
+MARK_ANSWERED=answered
+MARK_PICKUP=pickup
+mkdir -p "$DUTY_DIR"
+gh() { printf 'GH %s\n' "$*" >>"$ATT_CALLS"; printf 'o/r 9 T1\n'; }
+read_repo_list() { printf 'o/r\n'; }
+report_suppressed() { cat >/dev/null; }
+ledger_filter() { cat; }
+ledger_suppressed() { cat >/dev/null; }
+ledger_commit() { cat >/dev/null; printf 'LEDGER\n' >>"$ATT_CALLS"; }
+has_role() { [ "$1" = builder ]; }
+ensure_main_clone() { mkdir -p "$2"; }
+render_prompt() { printf 'prompt'; }
+run_session() {
+  RUN_SESSION_RC="$ATT_CASE_RC"
+  mkdir -p "$ATT_BEHAVIOR/logs"
+  RUN_SESSION_LOG="$ATT_BEHAVIOR/logs/$ATT_CASE_TAG.log"
+  : >"$RUN_SESSION_LOG"
 }
-hfc() { grep -c "^$1\$" "$HF_CALLS"; }
+alert() { printf 'ALERT %s\n' "$1" >>"$ATT_CALLS"; }
+warn() { printf 'WARN %s\n' "$1" >>"$ATT_CALLS"; }
+log() { :; }
+# shellcheck disable=SC1090
+source "$SHARED/lib/duty-attention.sh"
+duty_attention
+ATTCASE
+  cat "$calls"
+}
+ATT_124="$(attention_case 124)"
+t attention-timeout-comments-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^COMMENT ' || true)"
+t attention-timeout-alerts-once 1 "$(printf '%s\n' "$ATT_124" | grep -c '^ALERT ' || true)"
+t attention-timeout-names-session-log named \
+  "$(grep -q 'attention-o__r_9-latest.log' <<<"$ATT_124" && echo named || echo MISSING)"
+t attention-timeout-does-not-commit 0 "$(printf '%s\n' "$ATT_124" | grep -c '^LEDGER$' || true)"
+t attention-timeout-gh-read-only 1 "$(printf '%s\n' "$ATT_124" | grep -c '^GH api /issues?' || true)"
+t attention-timeout-gh-makes-no-writes 0 \
+  "$(printf '%s\n' "$ATT_124" | grep '^GH ' | grep -Ec 'issue edit| -X (POST|PATCH|DELETE)|--add-|--remove-' || true)"
+# A retry has a different immutable run log but hands post-once a byte-identical
+# stable link, so its exact-body match suppresses duplicate board comments.
+ATT_124_RETRY="$(attention_case 124 retry)"
+t attention-timeout-comment-body-stable \
+  "$(printf '%s\n' "$ATT_124" | grep '^COMMENT ')" \
+  "$(printf '%s\n' "$ATT_124_RETRY" | grep '^COMMENT ')"
+ATT_0="$(attention_case 0)"
+t attention-success-no-comment 0 "$(printf '%s\n' "$ATT_0" | grep -c '^COMMENT ' || true)"
+t attention-success-no-alert 0 "$(printf '%s\n' "$ATT_0" | grep -c '^ALERT ' || true)"
+t attention-success-commits-ledger 1 "$(printf '%s\n' "$ATT_0" | grep -c '^LEDGER$' || true)"
+ATT_1="$(attention_case 1)"
+t attention-crash-no-comment 0 "$(printf '%s\n' "$ATT_1" | grep -c '^COMMENT ' || true)"
+t attention-crash-no-alert 0 "$(printf '%s\n' "$ATT_1" | grep -c '^ALERT ' || true)"
+t attention-crash-does-not-commit 0 "$(printf '%s\n' "$ATT_1" | grep -c '^LEDGER$' || true)"
 
-hf_run 0
-t handoff-posts-one-comment 1 "$(hfc COMMENT)"
-t handoff-requests-human-once 1 "$(hfc REQUEST)"
-t handoff-sets-label-once 1 "$(hfc LABEL)"
-t handoff-writes-body-once 1 "$(hfc PATCH)"
-t handoff-spends-no-session 0 "$(hfc SESSION)"
-t handoff-spends-no-clone 0 "$(hfc CLONE)"
-
-# The label is notify.sh's poll signal, so it must NOT be gated on a review
-# request that can fail — a failed request with the label set still pings the
-# human. Must-fail: gate the label on the request and this goes red.
-hf_run 1
-t handoff-request-attempted-on-fail 1 "$(hfc REQUEST)"
-t handoff-label-set-even-if-request-fails 1 "$(hfc LABEL)"
+# The drill's separate check survives the ruling, with a changed job: it used
+# to be the ONLY containment for this module, and is now an independent
+# verification that the filter above actually holds. Keeping it is the
+# difference between testing the invariant and trusting it.
+if grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal-safety.sh" &&
+   grep -q 'rehearsal_attention_is_clear' "$ROOT/drill/rehearsal.sh"; then r1=checked; else r1=ASSUMED; fi
+t "drill-checks-attention-outside-sandbox" checked "$r1"
 
 # --- head-checks.jq: the check at the head, and the round it gates (#45/#17) --
 # The engine never read statusCheckRollup at all, which is both bugs at once: a
@@ -756,6 +753,93 @@ ALL_APPROVED='[
 ]'
 t head-round-all-approved - \
   "$(hc '["p1","p2"]' "$(mk_prc "$CHK_OK" "$ALL_APPROVED")" | cut -f5)"
+# --- #452: THE BOUNCE IS GONE — the two predicates on ONE human-block payload -
+# The siblings' agreement extended to the round the human owns. This is the
+# whole defect in one snapshot: the panel approves the head, the maintainer
+# blocks it, nothing is requested. Before the fix round_owed said `-` and
+# converged said true, so the tick handed off — re-requesting the human and
+# re-setting state:needs-human over the very block that had just come in, while
+# the builder was never woken. The ball has to land on exactly one of these two,
+# and asserting both against one payload is what makes that a test rather than a
+# claim. Read again with the human RE-REQUESTED, both flip: the wake is spent
+# and the PR is legitimately the human's.
+HB_PANEL='["p1"]'
+HB_REVIEWS='[
+  {"state":"APPROVED","author":{"login":"p1"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-11T09:30:00Z"},
+  {"state":"CHANGES_REQUESTED","author":{"login":"'$CJ_HUMAN'"},"commit":{"oid":"abc1234"},"submittedAt":"2026-08-11T10:00:00Z"}]'
+HB_GQL="$(jq -cn --argjson reviews "$HB_REVIEWS" '{
+  data:{repository:{pullRequest:{
+    headRefOid:"abc1234",mergeable:"MERGEABLE",
+    labels:{nodes:[]},reviewRequests:{nodes:[]},
+    latestOpinionatedReviews:{nodes:$reviews}
+  }}}
+}')"
+t round-siblings-human-block-owed owed \
+  "$(hc "$HB_PANEL" "$(mk_prc "$CHK_OK" "$HB_REVIEWS")" | cut -f5)"
+t round-siblings-human-block-not-converged false \
+  "$(printf '%s' "$HB_GQL" | cj '' "$HB_PANEL")"
+# Requested: state:needs-human stands, the builder is not re-woken, and the
+# handoff does not refire either — nothing re-requests a human already on the
+# list, and the label is already set.
+HB_REQUESTED="$(printf '%s' "$HB_GQL" \
+  | jq -c --arg h "$CJ_HUMAN" '.data.repository.pullRequest.reviewRequests.nodes
+             = [{requestedReviewer:{login:$h}}]')"
+t round-siblings-human-block-requested-not-owed - \
+  "$(hc "$HB_PANEL" "$(mk_prc "$CHK_OK" "$HB_REVIEWS" '[{"login":"'$CJ_HUMAN'"}]')" | cut -f5)"
+t round-siblings-human-block-requested-still-not-converged false \
+  "$(printf '%s' "$HB_REQUESTED" | cj '' "$HB_PANEL")"
+# And the answered round, at the same unchanged head: converged again, so the
+# argument reaches the human — while round_owed has NOT re-fired, the human
+# still being off the request list until the handoff puts them back on it. The
+# builder answering is what moves this, never the engine deciding on its own.
+t round-siblings-human-block-answered-converges true \
+  "$(printf '%s' "$HB_GQL" | cj "$(sig abc1234 2026-08-11T11:00:00Z)" "$HB_PANEL")"
+
+# The wiring, not just the predicates: both facts must actually reach both
+# programs at the handoff call site, off the SAME payload and through the same
+# licence program the request path uses. A predicate nobody passes $human to is
+# a fix that ships inert.
+# shellcheck disable=SC2016
+if grep -q 'arg human "\${FLEET_HUMAN:-}"' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'argjson signal "\$handoff_signal"' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'jq/answered-head.jq' "$SHARED/lib/duty-builder.sh"; then
+  r1=wired
+else
+  r1=INERT
+fi
+t engine-handoff-reads-the-human wired "$r1"
+# ...and it is read GUARDED. duty.sh runs `set -euo pipefail`, FLEET_HUMAN has
+# no entry in fleet.defaults.conf, and the round-detection call site above runs
+# on every tick for every repo — a bare deref there turns "the operator never
+# set FLEET_HUMAN" from a handoff that fails into a builder that does not run at
+# all. Both new sites take `${FLEET_HUMAN:-}`; empty is the predicates'
+# documented "matches nobody", which is exactly today's behaviour.
+# shellcheck disable=SC2016
+t engine-human-arg-is-set-u-safe 0 \
+  "$(grep -c -- '--arg human "\$FLEET_HUMAN"' "$SHARED/lib/duty-builder.sh" || true)"
+# Every head-checks.jq and converged.jq invocation passes $human — jq aborts on
+# an undefined argument, so a missed call site is a silently empty row or an
+# `err` branch, not a loud failure.
+# `case` over the captured context, not a `| grep -q`: this file runs under
+# pipefail and an early-exiting grep at the end of a pipe is the SIGPIPE red
+# the guard above exists to keep out (#443, #449).
+# The line numbers arrive by process substitution rather than by a pipe into
+# the loop, and the loop reads them one line at a time (SC2013): `missing_human`
+# accumulates in the loop BODY, so a `grep | while read` would spend every hit
+# in a subshell and leave this guard passing vacuously. `cut` drains its input,
+# so nothing at the end of that feeding pipe exits early either.
+missing_human=""
+while read -r _ph_ln; do
+  _ph_ctx="$(sed -n "$((_ph_ln > 6 ? _ph_ln - 6 : 1)),${_ph_ln}p" \
+    "$SHARED/lib/duty-builder.sh")"
+  case "$_ph_ctx" in
+    *"--arg human"*) : ;;
+    *) missing_human="${missing_human}${_ph_ln} " ;;
+  esac
+done < <(grep -n 'jq/head-checks\.jq\|jq/converged\.jq' \
+  "$SHARED/lib/duty-builder.sh" | cut -d: -f1)
+t engine-every-predicate-call-passes-human "" "${missing_human% }"
+
 # --- the ci-red ledger key: why the head is the ID, not the value (#17) -------
 # #243: a ready PR missing its current-head signal becomes resume work only on
 # the twelfth consecutive tick. The state is keyed by head, so a push resets
@@ -2489,7 +2573,6 @@ t head-cancelled-wakes-ci-red "o/r#1@abc1234" \
   "$(awk -F'\t' "$AWK_RED" <<<"$CANCEL_ROW" | cut -f1)"
 t head-cancelled-named-in-the-wake "check (CANCELLED)" "$(cut -f6 <<<"$CANCEL_ROW")"
 
-n() { awk 'NF{c++} END{print c+0}'; }
 BMOD="$SHARED/lib/duty-builder.sh"
 
 # --- #167: the dirty-worktree WARN, once per (worktree, dirt state) ----------
@@ -2588,6 +2671,133 @@ t wt-hygiene-force-removes-exactly-once 1 \
 # shellcheck disable=SC2016  # the literal the module contains, not an expansion
 if grep -Fq 'git -C "$dir" branch -D "$branch"' "$BMOD"; then r1=intact; else r1=MISSING; fi
 t wt-clean-removal-path-intact intact "$r1"
+
+# --- #168: preserve before removing ------------------------------------------
+# Driven against real repositories — a real bare remote, a real clone, a real
+# linked worktree — because every claim here is about what git actually did:
+# what the pushed tree contains, whether the ref reached the REMOTE, and
+# whether the worktree survived a push that failed. A text fixture proves none
+# of that, and the defect this issue exists to prevent (a --force reached
+# before the push confirms) is invisible to one.
+P168="$TMP/p168"
+mkdir -p "$P168"
+P_BARE="" P_CLONE="" P_WT=""
+
+_p168_fixture() { # $1=name -> a bare remote, a clone with origin, a worktree
+  local name="$1"
+  P_BARE="$P168/$name.git"; P_CLONE="$P168/$name"; P_WT="$P168/$name-wt"
+  git init -q --bare "$P_BARE"
+  git init -q "$P_CLONE"
+  printf 'engine\n' >"$P_CLONE/README.md"
+  printf 'ignored/\n' >"$P_CLONE/.gitignore"
+  git -C "$P_CLONE" add -A
+  git -C "$P_CLONE" -c user.name=fixture -c user.email=fixture@example.invalid \
+    commit -qm fixture
+  git -C "$P_CLONE" remote add origin "$P_BARE"
+  git -C "$P_CLONE" worktree add "$P_WT" -b "build/$name" >/dev/null 2>&1
+}
+
+_p168_wip_refs() { git -C "$1" for-each-ref --format='%(refname)' refs/heads/wip | n; }
+
+# The record's transport is post-once.sh, so the suite stubs it where the engine
+# looks: BIN_DIR, pointed at this block's own bin and restored at the end. The
+# stub records the (repo, number) it was called with and the exact body, which
+# is what the dedup assertion below reads — post-once.sh's own idempotence is
+# tested at post-once.sh; what is this module's to prove is that it hands over a
+# body that does not change when nothing changed.
+P168_BIN="$P168/bin"; mkdir -p "$P168_BIN"
+export P168_PO_CALLS="$P168/po-calls" P168_PO_BODY="$P168/po-body" P168_PO_RC=0
+: >"$P168_PO_CALLS"; : >"$P168_PO_BODY"
+cat >"$P168_BIN/post-once.sh" <<'P168PO'
+#!/usr/bin/env bash
+printf '%s#%s\n' "$1" "$2" >>"$P168_PO_CALLS"
+printf '%s' "$3" >"$P168_PO_BODY"
+exit "${P168_PO_RC:-0}"
+P168PO
+chmod +x "$P168_BIN/post-once.sh"
+P168_BIN_SAVED="$BIN_DIR"
+BIN_DIR="$P168_BIN"
+
+# The remote a preservation goes to. `fork` where the clone has one — the bot
+# cannot write to upstream, and a push that is always refused earns no force
+# and preserves nothing — else `origin`, the single-remote case, which the
+# amended spec still describes ("a remote the pushing identity can actually
+# write to"). Triage ruled the preference in on 2026-08-05: `origin` on a fleet
+# box is unwritable, so the criterion as first written was unsatisfiable.
+_p168_fixture remote-choice
+t p168-remote-origin-when-alone origin "$(_wt_preserve_remote "$P_CLONE")"
+git -C "$P_CLONE" remote add fork "$P168/fork.git"
+t p168-remote-prefers-fork fork "$(_wt_preserve_remote "$P_CLONE")"
+git -C "$P_CLONE" remote remove fork
+git -C "$P_CLONE" remote remove origin
+if _wt_preserve_remote "$P_CLONE" >/dev/null; then r1=CLAIMED; else r1=refused; fi
+t p168-remote-none-refuses refused "$r1"
+
+# 1. Real uncommitted work: modified tracked AND untracked, ignored dirt left
+# out. Asserted from the BARE repo throughout — the must-fail is a
+# preservation that lands only locally, and reading the clone's own objects
+# would pass while the remote holds nothing.
+_p168_fixture dirty
+printf 'changed\n' >"$P_WT/README.md"
+printf 'rescue me\n' >"$P_WT/untracked.txt"
+mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
+P_STATUS_BEFORE="$(git -C "$P_WT" status --porcelain | sort)"
+if P_OUT="$(_wt_preserve "$P_WT" build/dirty)"; then r1=pushed; else r1=REFUSED; fi
+t p168-dirty-preserved pushed "$r1"
+t p168-ref-is-on-the-remote 1 "$(_p168_wip_refs "$P_BARE")"
+P_REMOTE_TREE="$(git -C "$P_BARE" ls-tree -r --name-only refs/heads/wip/build/dirty | sort)"
+case "$P_REMOTE_TREE" in *untracked.txt*) r1=carried ;; *) r1=DROPPED ;; esac
+t p168-ref-carries-untracked carried "$r1"
+t p168-ref-carries-modified changed \
+  "$(git -C "$P_BARE" show refs/heads/wip/build/dirty:README.md)"
+case "$P_REMOTE_TREE" in *ignored/x*) r1=LEAKED ;; *) r1=excluded ;; esac
+t p168-ref-excludes-ignored excluded "$r1"
+# The capture is built in a scratch index, so the worktree it captured is
+# byte-identical afterwards: nothing staged, nothing stashed, nothing checked
+# out. A push that fails must leave the tree exactly as it was found, and this
+# is the property that makes that true.
+t p168-capture-leaves-worktree-untouched "$P_STATUS_BEFORE" \
+  "$(git -C "$P_WT" status --porcelain | sort)"
+t p168-capture-leaves-content-untouched 'rescue me' "$(cat "$P_WT/untracked.txt")"
+
+# Idempotence: the same dirt preserved twice is one ref at one sha. The second
+# pass reads the remote, finds its own tree already there, and treats that as
+# the confirmation it is — never a second commit, and never the
+# non-fast-forward such a commit would be refused as.
+if P_OUT2="$(_wt_preserve "$P_WT" build/dirty)"; then r1=confirmed; else r1=REFUSED; fi
+t p168-rerun-still-confirms confirmed "$r1"
+t p168-rerun-pushes-nothing-new "$P_OUT" "$P_OUT2"
+t p168-rerun-leaves-one-ref 1 "$(_p168_wip_refs "$P_BARE")"
+
+# Dirt that CHANGED between passes is new work, and the ref moves to it — the
+# new commit is parented on what the remote already holds, so the push is a
+# fast-forward rather than a rejection that would strand the worktree.
+printf 'later\n' >"$P_WT/second.txt"
+if P_OUT3="$(_wt_preserve "$P_WT" build/dirty)"; then r1=pushed; else r1=REFUSED; fi
+t p168-new-dirt-preserved pushed "$r1"
+case "$P_OUT3" in "$P_OUT") r1=STALE ;; *) r1=advanced ;; esac
+t p168-new-dirt-advances-the-ref advanced "$r1"
+case "$(git -C "$P_BARE" ls-tree -r --name-only refs/heads/wip/build/dirty)" in
+  *second.txt*) r1=carried ;; *) r1=DROPPED ;;
+esac
+t p168-new-dirt-carries-the-new-file carried "$r1"
+
+# The capture's own refusal, reached directly. `_wt_preserve` refuses when what
+# it captured is HEAD's own tree — nothing was at risk — and that path is
+# otherwise only reachable when a removal refuses for a reason that leaves the
+# tree unchanged (a locked worktree), so it is exercised here rather than left
+# to the one shape that happens to reach it. The refusal is what denies the
+# caller its force, and a refusal that pushed anyway would earn a force it
+# cannot explain: both halves are asserted.
+_p168_fixture nothing-at-risk
+mkdir -p "$P_WT/ignored"; printf 'noise\n' >"$P_WT/ignored/x"
+if _wt_preserve "$P_WT" build/nothing-at-risk >/dev/null; then r1=CLAIMED; else r1=refused; fi
+t p168-ignored-only-capture-refuses refused "$r1"
+t p168-ignored-only-capture-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
+rm -rf "$P_WT/ignored"
+if _wt_preserve "$P_WT" build/nothing-at-risk >/dev/null; then r1=CLAIMED; else r1=refused; fi
+t p168-clean-capture-refuses refused "$r1"
+t p168-clean-capture-pushes-nothing 0 "$(_p168_wip_refs "$P_BARE")"
 
 # --- the index is uncommitted work too (@codex-bot-andresmgsl, #376) ----------
 #
@@ -3085,6 +3295,101 @@ t p168-record-never-posts-raw 0 \
   "$(printf '%s\n' "$P_RECFN" | grep -v '^[[:space:]]*#' | grep -c 'issues/.*comments')"
 
 BIN_DIR="$P168_BIN_SAVED"
+# --- wiring (#45/#17) --------------------------------------------------------
+if grep -q 'statusCheckRollup' "$BMOD"; then r1=fetched; else r1=MISSING; fi
+t ci-red-rollup-fetched fetched "$r1"
+# The rollup rides listings that are fetched anyway; it never gets a call of its
+# own. THREE fetches, each named: the resume block's authored-PR listing (#384),
+# the round/ci-red authored-PR listing, and the one post-ci-red `gh pr view`
+# re-read #243 added so a session exiting while checks are pending does not
+# consume the head. The resume listing and the round listing are deliberately
+# NOT merged into one — the round listing is fetched AFTER the resume sessions
+# precisely so a session's own push is visible to it, and a merged snapshot
+# would grade ci-red and round-owed against a pre-session tree.
+#
+# COUNTED AS FETCHES, NOT AS OCCURRENCES OF THE WORD. The old form grepped the
+# whole module for the string and had to strip comment lines to keep from
+# counting its own explanation — "a detector tripping on its own documentation,
+# which this repo has now managed three separate times". It then counted
+# `_resume_newest_check`'s jq field READ as a fourth API call, which is the same
+# defect one layer down: parsing a field you already have is not fetching it.
+# Only a `--json` argument list can name a field to fetch, so that is what is
+# counted, and the explanation above can say `statusCheckRollup` freely.
+t ci-red-rollup-fetched-on-three-listings 3 \
+  "$(grep -c -- '--json [^ ]*statusCheckRollup' "$BMOD")"
+# The resume half of that count adds no CALL — the listing was already being
+# fetched, and #384 put two more fields on it. A `gh` call inside either new
+# predicate would be a per-PR-per-tick cost the issue explicitly priced out.
+# _flip_owed_resume_rows is deliberately absent: it makes exactly one GraphQL
+# READ per green-headed signalled draft, because the verdicts it must weigh
+# cannot come off a listing (#147), and that read is pinned by
+# `p384-flip-makes-exactly-one-read` beside the assertions that it never writes.
+t resume-check-read-adds-no-gh-call 0 \
+  "$(cat <(declare -f _resume_newest_check) <(declare -f _resume_check_states) \
+       <(declare -f _green_head_resume_rows) \
+     | grep -c 'gh ')"
+if grep -q 'number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup' "$BMOD"; then
+  r1=shared
+else
+  r1=SEPARATE
+fi
+t ci-red-rollup-on-the-round-call shared "$r1"
+# GitHub GraphQL connections cap first/last at 100. The later payload carries
+# comments for round-answer detection; pin its live-valid page size.
+if grep -q 'comments(last:100)' "$BMOD" \
+  && ! grep -Eq 'comments\\((first|last):([1-9][0-9]{2,}|[2-9][0-9]{2})\\)' "$BMOD"; then
+  r1=bounded
+else
+  r1=EXCESSIVE
+fi
+t builder-comments-page-live-valid bounded "$r1"
+# round_owed reads before sessions, while request/convergence reads fresh
+# afterward. Two GraphQL snapshots encode that separation; the meaningful
+# hc_head/gql_head guard then catches a push between them.
+t builder-review-payload-has-early-and-late-snapshots 2 \
+  "$(grep -c 'pr_payload=.*gh api graphql' "$BMOD")"
+# shellcheck disable=SC2016  # matching shell source literally
+if grep -Fq '[ "$hc_head" = "$gql_head" ]' "$BMOD"; then r1=guarded; else r1=MISSING; fi
+t builder-late-head-drift-defers-request guarded "$r1"
+if grep -q '.seen-ci-red' "$BMOD"; then r1=ledgered; else r1=UNGUARDED; fi
+t ci-red-signal-ledgered ledgered "$r1"
+# shellcheck disable=SC2016  # the literal the module contains, not an expansion
+if grep -Fq '.suppressed-ci-red.$slug' "$BMOD"; then r1=perrepo; else r1=SHARED; fi
+t ci-red-suppression-perrepo perrepo "$r1"
+# An idle tick must still write a line (#53): a block that logs only when it
+# fires makes a quiet box and a busy box look identical.
+if grep -q 'no ci-red duty' "$BMOD"; then r1=logged; else r1=SILENT; fi
+t ci-red-idle-logs logged "$r1"
+# #17's first acceptance criterion: the builder wakes for its own red PR BEFORE
+# claiming another issue. Ordering in the file is the ordering in the tick.
+ci_at="$(grep -n -- '--- CI-RED' "$BMOD" | head -1 | cut -d: -f1)"
+build_at="$(grep -n -- '--- BUILD' "$BMOD" | head -1 | cut -d: -f1)"
+if [ -n "$ci_at" ] && [ -n "$build_at" ] && [ "$ci_at" -lt "$build_at" ]; then
+  r1=before
+else
+  r1=AFTER
+fi
+t ci-red-wakes-before-build before "$r1"
+t ci-red-prompt-exists yes "$([ -f "$SHARED/prompts/ci-red.txt" ] && echo yes || echo NO)"
+t ci-red-budget-defined yes \
+  "$(grep -q '^TIMEOUT_CIRED=' "$SHARED/conf/roles/builder.conf" && echo yes || echo NO)"
+# The doctrine half of #45, now the request half of #133: the green-check
+# precondition is enforced by the ENGINE (_request_panel requests only on a
+# green or absent head) and the prompt keeps green as a ruled term for the
+# argued-exception the session still owns.
+# shellcheck disable=SC2016  # the shell literal contains $check_state
+if grep -q 'green|none)' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'GREEN IS A RULED TERM' "$SHARED/prompts/fragment-round-rules.txt"; then
+  r1=stated
+else
+  r1=SILENT
+fi
+t round-rules-state-green-head stated "$r1"
+# ...including the exception, or the rule becomes one agents route around
+# silently instead of arguing with in the open.
+if grep -q 'argued exception' "$SHARED/prompts/fragment-round-rules.txt"; then r1=stated; else r1=SILENT; fi
+t round-rules-state-exception stated "$r1"
+
 # --- #139: a closed fix round returns to draft ------------------------------
 # GitHub preserves pending review requests across conversion (crew#110 is the
 # live trace), so the existing addressing predicate's no-panel-request gate is

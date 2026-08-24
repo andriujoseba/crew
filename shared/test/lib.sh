@@ -30,6 +30,8 @@ suite_finish() {
   [ "$FAIL" -eq 0 ]
 }
 
+n() { awk 'NF{c++} END{print c+0}'; }
+
 # A predicate must consume a completed producer. These two helpers preserve the
 # match modes used by the two awk-range assertions while ensuring awk is reaped
 # before grep can exit early.

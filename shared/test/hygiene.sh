@@ -16,6 +16,11 @@ export HOME="${HOME:-$TMP}"
 source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
+# shellcheck source=shared/lib/duty-attention.sh
+source "$SHARED/lib/duty-attention.sh"
+# shellcheck source=shared/lib/duty-hygiene.sh
+source "$SHARED/lib/duty-hygiene.sh"
+ATT_MOD="$SHARED/lib/duty-attention.sh"
 
 # --- malformed attention audit (#303) --------------------------------------
 ATT_AUDIT_ROWS="$(printf 'heavy-duty/crew 285 issue 1\nheavy-duty/crew 310 issue 0\nheavy-duty/crew 293 pr 0\nheavy-duty/crew 294 pr 1\n')"
