@@ -1,0 +1,12 @@
+# Tracked paths deliberately left out of the scope map (#500).
+#
+# One `<glob>  # <reason>` per line, same glob dialect as .github/labeler.yml.
+# The reason is not decoration: `.github/scope-coverage.py` refuses an entry
+# without one, refuses one that has stopped matching any tracked path, and
+# refuses one a scope row already covers. An exception here stays true or it
+# goes red — the point is that the check is never silenced wholesale.
+#
+# Prefer a mapping. This list is for a path no scope OWNS, not for one whose
+# owner is merely inconvenient to decide.
+
+.gitignore  # Repository furniture: it governs the working tree for every scope at once and is the deliverable of none. Its entries today are a drill artifact, a drill roster and a CI dependency tree — mapping it to any one of those would mislabel the next change made for another.

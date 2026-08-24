@@ -3,12 +3,21 @@
 # hand-scoped at triage; paths only exist on PRs). Additive only: sync-labels
 # stays off in the reusable labels workflow, so a hand-applied scope survives
 # a later push.
+#
+# Every tracked path must match at least one row here, or be declared in
+# .github/scope-coverage.allow with a reason. `.github/scope-coverage.py`
+# enforces that on every PR (.github/workflows/scope-coverage.yml) and names
+# what it found, so the next new directory is loud at CI time instead of after
+# a PR that got labelled with nothing (#500).
 "scope:cli":
   - changed-files:
       - any-glob-to-any-file: ["cli/crew"]
 "scope:duty":
   - changed-files:
-      - any-glob-to-any-file: ["shared/bin/**", "shared/lib/**", "shared/test/**"]
+      # crontab.example is the tick's schedule, not operator scaffolding: it is
+      # the one file that says how often shared/bin/tick.sh runs, so it belongs
+      # with the engine it schedules rather than with examples/.
+      - any-glob-to-any-file: ["shared/bin/**", "shared/lib/**", "shared/test/**", "shared/crontab.example"]
 "scope:prompts":
   - changed-files:
       - any-glob-to-any-file: ["shared/prompts/**"]
@@ -42,6 +51,13 @@
           - "shared/README.md"
           - "shared/docs/**"
           - "fleet-floor/README.md"
+          # The bootstrap runbook an agent reads on arrival: prose, named file
+          # by file like its sibling READMEs, so a `.box/` that grows something
+          # that is not prose comes back through the guard.
+          - ".box/README.md"
+          # Postmortems are prose and the directory holds nothing else, so the
+          # glob covers each new one without an edit here.
+          - "postmortems/**"
           - ".github/ISSUE_TEMPLATE/**"
           - ".github/DISCUSSION_TEMPLATE/**"
           - ".github/pull_request_template.md"
@@ -51,11 +67,24 @@
           - ".github/labels.conf"
           - ".github/labeler.yml"
           - ".github/workflows/labels.yml"
+          # The sweep caller: relocated out of labels.yml at ceremony 0.4.1
+          # (#259) and unmapped ever since — same subject, same owner.
+          - ".github/workflows/labels-sweep.yml"
+          # The guard on this file, its suite and its gate.
+          - ".github/scope-coverage.py"
+          - ".github/scope-coverage.allow"
+          - ".github/scope-coverage.test.sh"
+          - ".github/workflows/scope-coverage.yml"
 "scope:release":
   - changed-files:
       - any-glob-to-any-file:
           - ".github/workflows/release.yml"
           - ".github/workflows/release-guards.yml"
+          # The ceremony artifact hook both release doors invoke. It is release
+          # wiring, not the install channel: the build it calls is
+          # dist/release-artifact.sh, which scope:installer already owns, and
+          # the action says so itself ("THE BUILD ITSELF IS NOT HERE").
+          - ".github/actions/release-artifact/**"
           - "CHANGELOG.md"
           - "changelog.d/**"
           - "VERSION"
