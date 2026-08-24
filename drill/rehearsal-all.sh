@@ -127,9 +127,11 @@ ATTENTION_AUDIT_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
+declare -a ROLE_BREAKER_REASON_FILES=()
 overall=0
 hygiene_result=2
 breaker_result=2
+breaker_reason=""
 
 # shellcheck disable=SC2317  # invoked indirectly by the EXIT trap
 cleanup_role_hygiene_files() {
@@ -138,6 +140,9 @@ cleanup_role_hygiene_files() {
     rm -f -- "$result_file"
   done
   for result_file in "${ROLE_BREAKER_FILES[@]}"; do
+    rm -f -- "$result_file"
+  done
+  for result_file in "${ROLE_BREAKER_REASON_FILES[@]}"; do
     rm -f -- "$result_file"
   done
   # The notify leg's verdict file goes here too, and not under a second
@@ -162,8 +167,10 @@ for role in $ROLES; do
   echo "############################################################"
   role_hygiene_file="$(mktemp)"
   role_breaker_file="$(mktemp)"
+  role_breaker_reason_file="$(mktemp)"
   ROLE_HYGIENE_FILES+=("$role_hygiene_file")
   ROLE_BREAKER_FILES+=("$role_breaker_file")
+  ROLE_BREAKER_REASON_FILES+=("$role_breaker_reason_file")
   printf '2\n' >"$role_hygiene_file"
   printf '2\n' >"$role_breaker_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
@@ -176,20 +183,26 @@ for role in $ROLES; do
   REHEARSAL_HYGIENE_RESULT_FILE="$role_hygiene_file" \
   REHEARSAL_BREAKER_DRILL="$BREAKER_DRILL" \
   REHEARSAL_BREAKER_RESULT_FILE="$role_breaker_file" \
+  REHEARSAL_BREAKER_REASON_FILE="$role_breaker_reason_file" \
   REHEARSAL_NOTIFY_DRILL="$NOTIFY_DRILL" \
   REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
   role_hygiene_result="$(cat "$role_hygiene_file" 2>/dev/null || printf '2\n')"
   role_breaker_result="$(cat "$role_breaker_file" 2>/dev/null || printf '2\n')"
+  role_breaker_reason="$(cat "$role_breaker_reason_file" 2>/dev/null || true)"
   rm -f -- "$role_hygiene_file"
   rm -f -- "$role_breaker_file"
+  rm -f -- "$role_breaker_reason_file"
   case "$role_hygiene_result" in 0|1|2) ;; *) role_hygiene_result=2 ;; esac
   hygiene_result="$(rehearsal_hygiene_combine_result \
     "$hygiene_result" "$role_hygiene_result")"
   case "$role_breaker_result" in 0|1|2) ;; *) role_breaker_result=2 ;; esac
   breaker_result="$(rehearsal_breaker_combine_result \
     "$breaker_result" "$role_breaker_result")"
+  if [ -z "$breaker_reason" ] && [ -n "$role_breaker_reason" ]; then
+    breaker_reason="$role_breaker_reason"
+  fi
   # Roles whose box the drill actually REACHED, for the app phase below. rc=0
   # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
   # not "no box"); rc=1 can be a failure from before the box existed at all.
@@ -217,7 +230,8 @@ for role in $ROLES; do
 done
 
 SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result")")
-SUMMARY+=("$(rehearsal_breaker_summary "$BREAKER_DRILL" "$DRILLED" "$breaker_result")")
+SUMMARY+=("$(rehearsal_breaker_summary \
+  "$BREAKER_DRILL" "$DRILLED" "$breaker_result" "$breaker_reason")")
 overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"
 overall="$(rehearsal_breaker_round_result \
   "$overall" "$BREAKER_DRILL" "$breaker_result")"

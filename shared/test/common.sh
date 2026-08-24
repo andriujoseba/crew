@@ -507,6 +507,10 @@ t rehearsal-breaker-hand-resume-mutation-reds red "$r1"
 t rehearsal-breaker-summary-skipped-phase-incomplete \
   "INCOMPLETE breaker  (phase 2 skipped)" \
   "$(rehearsal_breaker_summary 1 ' builder' 2)"
+t rehearsal-breaker-summary-unhooked-profile-named \
+  "INCOMPLETE breaker  (claude profile missing bot_session_terminal)" \
+  "$(rehearsal_breaker_summary \
+    1 ' builder' 2 'claude profile missing bot_session_terminal')"
 t rehearsal-breaker-summary-failure-stays-failure \
   "FAIL       breaker" "$(rehearsal_breaker_summary 1 ' builder' 1)"
 t rehearsal-breaker-mixed-fail-then-skip-stays-failure 1 \
@@ -580,6 +584,105 @@ t rehearsal-breaker-missing-restored-profile-mutation-reds red "$r1"
 mv "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf.missing" \
   "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
 unset -f bx
+
+BREAKER_UNHOOKED_RESULT="$TMP/rehearsal-breaker-unhooked.result"
+BREAKER_UNHOOKED_REASON="$TMP/rehearsal-breaker-unhooked.reason"
+breaker_unhooked_out="$({
+  AGENT=claude
+  FAILS=(existing)
+  REHEARSAL_BREAKER_RESULT_FILE="$BREAKER_UNHOOKED_RESULT"
+  REHEARSAL_BREAKER_REASON_FILE="$BREAKER_UNHOOKED_REASON"
+  rehearsal_breaker_load_installed_facts() {
+    REHEARSAL_BREAKER_THRESHOLD=3
+    REHEARSAL_BREAKER_KIND=attention
+    REHEARSAL_BREAKER_STATE=/tmp/breaker-state
+  }
+  rehearsal_breaker_profile_has_hook() { return 1; }
+  bx() { return 0; }
+  ok() { :; }
+  fail() { FAILS+=("$1"); }
+  skip() { printf 'skip %s\n' "$1"; }
+  before="${#FAILS[@]}"
+  breaker_rc=0
+  rehearsal_breaker_drill owner/repo 1 reviewer || breaker_rc=$?
+  printf 'result=%s failures=%s:%s\n' \
+    "$breaker_rc" "$before" "${#FAILS[@]}"
+} 2>&1)"
+t rehearsal-breaker-unhooked-profile-returns-incomplete \
+  'result=2 failures=1:1' "$(tail -1 <<<"$breaker_unhooked_out")"
+t rehearsal-breaker-unhooked-profile-emits-named-skip 1 \
+  "$(grep -cF \
+    'skip breaker: claude profile missing bot_session_terminal; leg INCOMPLETE' \
+    <<<"$breaker_unhooked_out")"
+t rehearsal-breaker-unhooked-profile-records-reason \
+  'claude profile missing bot_session_terminal' \
+  "$(cat "$BREAKER_UNHOOKED_REASON")"
+
+breaker_acted_missing_out="$({
+  AGENT=claude
+  FAILS=()
+  rehearsal_breaker_load_installed_facts() {
+    REHEARSAL_BREAKER_THRESHOLD=3
+    REHEARSAL_BREAKER_KIND=attention
+    REHEARSAL_BREAKER_STATE=/tmp/breaker-state
+  }
+  rehearsal_breaker_profile_has_hook() {
+    [ "$1" = bot_session_terminal ]
+  }
+  bx() { return 0; }
+  ok() { :; }
+  fail() { FAILS+=("$1"); printf 'FAIL %s\n' "$1"; }
+  skip() { :; }
+  check() {
+    local name="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then ok "$name"; else fail "$name"; fi
+  }
+  breaker_rc=0
+  rehearsal_breaker_drill owner/repo 1 reviewer || breaker_rc=$?
+  printf 'result=%s failures=%s\n' "$breaker_rc" "${#FAILS[@]}"
+} 2>&1)"
+t rehearsal-breaker-acted-hook-still-required \
+  'result=1 failures=1' "$(tail -1 <<<"$breaker_acted_missing_out")"
+t rehearsal-breaker-acted-hook-failure-still-named 1 \
+  "$(grep -cF \
+    'FAIL breaker: claude profile defines bot_session_acted' \
+    <<<"$breaker_acted_missing_out")"
+
+breaker_hooked_out="$({
+  AGENT=kimi
+  FAILS=()
+  rehearsal_breaker_load_installed_facts() {
+    REHEARSAL_BREAKER_THRESHOLD=1
+    REHEARSAL_BREAKER_KIND=attention
+    REHEARSAL_BREAKER_STATE=/tmp/breaker-state
+  }
+  rehearsal_breaker_profile_has_hook() { return 0; }
+  rehearsal_breaker_terminal_fixture_is_classified() { return 0; }
+  rehearsal_breaker_install_fixture() {
+    REHEARSAL_BREAKER_DIR=/tmp/breaker-fixture
+    return 0
+  }
+  rehearsal_breaker_tick_log() { :; }
+  rehearsal_breaker_restore_cli_for_recovery() { return 0; }
+  rehearsal_breaker_restore_cli() { return 0; }
+  bx() { return 0; }
+  gh() { return 0; }
+  ok() { :; }
+  fail() { FAILS+=("$1"); }
+  skip() { :; }
+  check() { printf 'check %s\n' "$1"; return 0; }
+  wait_for() { return 0; }
+  breaker_rc=0
+  rehearsal_breaker_drill owner/repo 1 reviewer || breaker_rc=$?
+  printf 'result=%s failures=%s\n' "$breaker_rc" "${#FAILS[@]}"
+} 2>&1)"
+t rehearsal-breaker-fully-hooked-profile-still-runs \
+  'result=0 failures=0' "$(tail -1 <<<"$breaker_hooked_out")"
+t rehearsal-breaker-fully-hooked-profile-reaches-threshold-probe 1 \
+  "$(grep -cF \
+    'check breaker: lane trips once at installed threshold for kimi' \
+    <<<"$breaker_hooked_out")"
 
 # shellcheck disable=SC2016  # literal wiring string; expansions must remain intact
 if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
@@ -3615,6 +3718,10 @@ v="$(cat "$AGG_DIR/$role.verdict" 2>/dev/null || true)"
 [ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_NOTIFY_STATUS"
 v="$(cat "$AGG_DIR/$role.resume" 2>/dev/null || true)"
 [ -z "$v" ] || printf '%s %s\n' "$role" "$v" >>"$REHEARSAL_RESUME_STATUS"
+v="$(cat "$AGG_DIR/$role.breaker" 2>/dev/null || true)"
+[ -z "$v" ] || printf '%s\n' "$v" >"$REHEARSAL_BREAKER_RESULT_FILE"
+v="$(cat "$AGG_DIR/$role.breaker-reason" 2>/dev/null || true)"
+[ -z "$v" ] || printf '%s\n' "$v" >"$REHEARSAL_BREAKER_REASON_FILE"
 exit "$(cat "$AGG_DIR/$role.rc" 2>/dev/null || echo 0)"
 AGGSH
 printf '#!/usr/bin/env bash\nexit 0\n' >"$AGG/teardown.sh"
@@ -3658,6 +3765,23 @@ if agg_out="$(agg_breaker_run --no-breaker-drill)"; then agg_rc=0; else agg_rc=$
 t breaker-agg-opt-out-is-an-announced-skip 1 \
   "$(grep -cF 'skip       breaker  (--no-breaker-drill)' <<<"$agg_out")"
 t breaker-agg-opt-out-rc 0 "$agg_rc"
+printf '2\n' >"$AGG/reviewer.breaker"
+printf 'claude profile missing bot_session_terminal\n' \
+  >"$AGG/reviewer.breaker-reason"
+if agg_out="$(AGG_DIR="$AGG" bash "$AGG/rehearsal-all.sh" \
+    --roles reviewer --no-app --no-config-drill --no-install-drill \
+    --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+    --no-hygiene-drill --no-notify-drill 2>&1)"; then
+  agg_rc=0
+else
+  agg_rc=$?
+fi
+t breaker-agg-unhooked-profile-names-reason 1 \
+  "$(grep -cF \
+    'INCOMPLETE breaker  (claude profile missing bot_session_terminal)' \
+    <<<"$agg_out")"
+t breaker-agg-unhooked-profile-is-not-a-green-round 2 "$agg_rc"
+rm -f -- "$AGG/reviewer.breaker" "$AGG/reviewer.breaker-reason"
 
 # The criterion: an unreachable operator channel produces a skip naming it and
 # NEVER a pass — in the round summary too, which is where a round's verdict is

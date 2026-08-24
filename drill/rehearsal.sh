@@ -922,16 +922,17 @@ fi
 # restoring it, so no unrelated fixture may depend on dispatch while it runs.
 if [ "$PHASE2_RAN" -eq 1 ]; then
   breaker_failures_before="${#FAILS[@]}"
-  if rehearsal_breaker_drill "$SANDBOX" "$inum" "$ROLE"; then
-    breaker_drill_rc=0
-  else
-    breaker_drill_rc=1
-  fi
-  if [ "$breaker_drill_rc" -ne 0 ] \
-      || [ "${#FAILS[@]}" -gt "$breaker_failures_before" ]; then
+  breaker_drill_rc=0
+  rehearsal_breaker_drill "$SANDBOX" "$inum" "$ROLE" \
+    || breaker_drill_rc=$?
+  if [ "${#FAILS[@]}" -gt "$breaker_failures_before" ]; then
     rehearsal_breaker_record_result 1
   else
-    rehearsal_breaker_record_result 0
+    case "$breaker_drill_rc" in
+      0) rehearsal_breaker_record_result 0 ;;
+      2) rehearsal_breaker_record_result 2 ;;
+      *) rehearsal_breaker_record_result 1 ;;
+    esac
   fi
 fi
 
