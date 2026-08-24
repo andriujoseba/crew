@@ -25,7 +25,14 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+CREW_TREE="$(cd "$HERE/.." && pwd)"
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
+# shellcheck disable=SC1091
+source "$HERE/lib/install-payload.sh"
+install_payload_load_ignore_patterns "$CREW_TREE" || {
+  echo "crew: could not load the installer payload exclusion policy" >&2
+  exit 1
+}
 
 # Seed payloads are a one-install transport, never a second registry source.
 # Register cleanup before any validation or sourced operator file can fail.
@@ -293,7 +300,16 @@ declare -A INSTALLED_PATHS=()
 
 # Atomic per-file install: new inode, then rename over the old name.
 put() {  # put SRC DESTDIR
-  local src="$1" destdir="$2" tmp
+  local src="$1" destdir="$2" tmp rel
+  case "$src" in
+    "$CREW_TREE"/*)
+      rel="${src#"$CREW_TREE"/}"
+      if install_payload_path_is_ignored "$rel"; then
+        echo "crew: refusing payload: known-excluded path selected for install: $rel" >&2
+        exit 1
+      fi
+      ;;
+  esac
   tmp="$(mktemp "$destdir/.install.XXXXXX")"
   cp "$src" "$tmp"
   chmod --reference="$src" "$tmp" 2>/dev/null || chmod 644 "$tmp"
