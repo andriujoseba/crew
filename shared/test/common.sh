@@ -690,6 +690,8 @@ if grep -Fq -- '--no-breaker-drill' "$ROOT/drill/rehearsal-all.sh" \
       "$ROOT/drill/rehearsal-breaker.sh" \
     && grep -Fq "rehearsal_breaker_drill \"\$SANDBOX\" \"\$inum\" \"\$ROLE\"" \
       "$ROOT/drill/rehearsal.sh" \
+    && grep -Fq '2) rehearsal_breaker_record_result 2 ;;' \
+      "$ROOT/drill/rehearsal.sh" \
     && grep -Fq '"$overall" "$BREAKER_DRILL" "$breaker_result")"' \
       "$ROOT/drill/rehearsal-all.sh"; then
   r1=wired
