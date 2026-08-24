@@ -71,17 +71,23 @@ FF_INIT_RC=0
 FF_INIT_OUT="$( (cd "$FLOOR/server" && CREW_CONFIG_DIR=/definitely/missing \
   env -u CREW_FLOOR_ROSTER CREW_FLOOR_PROBE_TIMEOUT=bad python3 -c \
   'import sys; sys.path.insert(0, "."); import floor') 2>&1 )" || FF_INIT_RC=$?
+# Matched with `case` rather than `printf | grep -q`: #449's guard forbids that
+# pipeline under `set -o pipefail`, where grep -q's early exit SIGPIPEs the
+# writer and reds a passing assertion. The needle is a literal either way.
 if [ "$FF_INIT_RC" -eq 0 ]; then
   fail "init: a bare \`import floor\` still refuses an invalid definition" \
        "the import succeeded; at 394bdad it exited the importing process"
-elif printf '%s' "$FF_INIT_OUT" | grep -q 'invalid literal for int'; then
-  fail "init: a bare \`import floor\` still refuses an invalid definition" \
-       "the timeout parsed first: $FF_INIT_OUT"
-elif printf '%s' "$FF_INIT_OUT" | grep -q 'is not a fleet definition'; then
-  ok "init: a bare \`import floor\` still refuses an invalid definition"
 else
-  fail "init: a bare \`import floor\` still refuses an invalid definition" \
-       "neither answer: rc=$FF_INIT_RC $FF_INIT_OUT"
+  case "$FF_INIT_OUT" in
+    *"invalid literal for int"*)
+      fail "init: a bare \`import floor\` still refuses an invalid definition" \
+           "the timeout parsed first: $FF_INIT_OUT" ;;
+    *"is not a fleet definition"*)
+      ok "init: a bare \`import floor\` still refuses an invalid definition" ;;
+    *)
+      fail "init: a bare \`import floor\` still refuses an invalid definition" \
+           "neither answer: rc=$FF_INIT_RC $FF_INIT_OUT" ;;
+  esac
 fi
 
 # --- what the block does NOT restore, pinned so it stays declared ------------
