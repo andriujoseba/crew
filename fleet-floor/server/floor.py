@@ -28,6 +28,10 @@ the `floor` package beside it, one module per section it already drew (#508);
 this path, `python3 fleet-floor/server/floor.py` serves, and the refusals fire
 in the same order — the fleet definition resolves at import, then main()
 checks the operator config, then the password.
+
+That includes the door this file is not: `import floor` off this directory
+still answers with the whole collector surface and still refuses at import,
+because `floor/__init__.py` restores it (#508 D4).
 """
 
 import os
@@ -39,15 +43,16 @@ import sys
 # caller to arrange it.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# The fleet definition resolves FIRST, before the server drags in the modules
-# that parse their own CREW_FLOOR_* configuration. This file used to hold both
-# and ran them in this order by line number (:116 against :175); the package
-# does not get that for free, because floor.server reaches floor.ping through
-# floor.actions before floor.roster is ever named. Without this line an
-# invalid CREW_FLOOR_PROBE_TIMEOUT answers before the refusal for an invalid
-# CREW_CONFIG_DIR does, and the paragraph above stops being true.
-import floor.roster  # noqa: E402,F401  (imported for its resolution, not a name)
-from floor.server import main  # noqa: E402  (the path above must precede it)
+# The fleet definition resolves FIRST, before anything parses its own
+# CREW_FLOOR_* configuration — this file used to hold both and ran them in
+# that order by line number (:116 against :175). That order is NOT arranged
+# here: importing any floor.* name runs floor/__init__.py, whose compatibility
+# block imports floor.roster ahead of the parsing modules, so both entry doors
+# get it from the same place. An `import floor.roster` on this line would be
+# inert, which is measured rather than assumed — deleting it changes none of
+# the three refusal-order rows in fleet-floor/test/cli.sh, and reversing
+# __init__.py's block reds them. The carrier is asserted where it lives.
+from floor.server import main  # noqa: E402  (the sys.path line must precede it)
 
 if __name__ == "__main__":
     main()

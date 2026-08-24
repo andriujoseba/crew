@@ -2599,25 +2599,51 @@ fi
 # the int(os.environ...) block at :175. The package has to arrange it, and did
 # not: floor.server reaches floor.ping through floor.actions before floor.roster
 # is named, so ping's parses ran first and this exact command changed its answer
-# between 394bdad and 6eeb311. Two lines carry the order now — floor.py's
-# import of floor.roster ahead of floor.server, and roster.py's import of
-# floor.ping at the seam below its resolution — and reverting either one reds
-# the rows below rather than anything louder.
+# between 394bdad and 6eeb311.
+#
+# TWO LINES CARRY THE ORDER, and neither is in floor.py. Importing any floor.*
+# name runs floor/__init__.py first, so the compatibility block's own import
+# order is the outer carrier — floor.roster ahead of floor.ping — and roster.py's
+# import of floor.ping at the seam below its resolution is the inner one.
+# floor.py arranges nothing; that is measured below, not assumed.
 #
 # Drawn from BOTH parsing modules on purpose: CREW_FLOOR_PROBE_TIMEOUT and
 # CREW_FLOOR_PING_INTERVAL are floor.ping's, CREW_FLOOR_ACTION_TIMEOUT is
 # floor.actions', so the assertion is the invariant and not one variable's
-# import position. Each row was driven against the mutation it exists for,
-# and they do not all catch the same one:
+# import position.
 #
-#   floor.py's roster import deleted          ping rows red, actions row does not
-#   roster.py's ping import moved to the top  ping rows red, actions row does not
-#   ...plus actions.py's own parse hoisted
-#   above its `from floor.roster` import      all three red
+# EVERY ROW BELOW WAS DRIVEN AGAINST EVERY MUTATION, and each names the tree
+# it was applied to, because two of them are inert alone and only red in
+# combination — a table that omits the base is not re-derivable:
 #
-# The actions row survives the first two because actions.py resolves roster on
-# its way to its own parse. It is the guard for the reordering INSIDE that
-# module, which the other two cannot see — not a third copy of their case.
+#   mutation                                  applied to      PROBE PING ACTION
+#   ---------------------------------------------------------------------------
+#   A  floor.py's `import floor.roster`       unmutated        ok   ok   ok
+#      deleted
+#   B  roster.py's ping import hoisted        unmutated        RED  RED  ok
+#      to the top of the file
+#   C  __init__.py's block reordered, any     unmutated        RED  RED  ok
+#      module ahead of floor.roster
+#   E  actions.py's own ACTION_TIMEOUT_S      unmutated        ok   ok   ok
+#      parse hoisted above its roster import
+#   E  the same hoist                         on top of C,     RED  RED  RED
+#                                             actions first
+#
+# Read the two `ok` rows, they are the point:
+#
+# A is inert — which is why floor.py no longer carries that line. `from
+# floor.server import main` runs __init__.py, and its block, on the way in, so
+# deleting a roster import from floor.py changes nothing at all. C reds where
+# A does not, and that is the whole reason the guard lives in __init__.py.
+#
+# E is inert ALONE and reds only on top of C. With floor.roster imported first
+# by the block, actions.py's internal order cannot be reached in time to
+# matter; hoist floor.actions ahead of floor.roster in the block AND hoist the
+# parse inside actions.py, and the actions row finally reds. So that row is
+# not a third copy of the ping rows — it is the guard for a reordering inside
+# actions.py, and it needs both halves to fire. C alone never reds it,
+# whichever module is hoisted: ping, units, fleet, actions and server were
+# each driven to the front of the block and all five give RED RED ok.
 for CL_VAR in CREW_FLOOR_PROBE_TIMEOUT CREW_FLOOR_PING_INTERVAL CREW_FLOOR_ACTION_TIMEOUT; do
   CL_LABEL="floor: the fleet-definition refusal beats \$$CL_VAR parsing"
   CL_RC=0
