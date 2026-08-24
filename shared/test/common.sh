@@ -17,6 +17,52 @@ source "$SHARED/lib/common.sh"
 # shellcheck source=shared/lib/duty-builder.sh
 source "$SHARED/lib/duty-builder.sh"
 BUILDER_MOD="$SHARED/lib/duty-builder.sh"
+# shellcheck source=shared/lib/duty-review.sh
+source "$SHARED/lib/duty-review.sh"
+
+# Shared fixture constructors used by the generic round predicates below.
+RPJQ="$SHARED/lib/jq/request-panel.jq"
+RP_T_VERDICT="2026-08-02T10:32:33Z"
+RP_T_SIG_ANSWER="2026-08-02T11:12:27Z"
+mk_rp() {
+  jq -n --arg head "$1" --argjson reqs "$2" --argjson revs "$3" --argjson coms "$4" \
+    --arg rev_at "$RP_T_VERDICT" --arg com_at "$RP_T_SIG_ANSWER" \
+    '{data:{repository:{pullRequest:{
+      headRefOid:$head,
+      reviewRequests:{nodes:($reqs|map({requestedReviewer:{login:.}}))},
+      latestOpinionatedReviews:{nodes:($revs|map(
+        if has("submittedAt") then . else . + {submittedAt:$rev_at} end))},
+      comments:{nodes:($coms|map(
+        if has("createdAt") then . else . + {createdAt:$com_at} end))}}}}}'
+}
+sig() { jq -cn --arg sha "$1" --arg at "$2" '{sha:$sha,createdAt:$at}'; }
+rp() {
+  jq -r --argjson panel "${2:-$PANEL}" --argjson signal "$1" -f "$RPJQ" \
+    | tr '\n' ' ' | sed 's/ $//'
+}
+
+HC="$SHARED/lib/jq/head-checks.jq"
+hc() {
+  printf '%s' "$2" | jq -r --argjson panel "$1" --arg repo "o/r" \
+    --arg human "${3-$CJ_HUMAN}" -f "$HC"
+}
+mk_prc() {
+  jq -cn --argjson c "$1" --argjson lr "${2:-[]}" --argjson rr "${3:-[]}" \
+     --argjson d "${4:-false}" \
+     '[{number:1, isDraft:$d, updatedAt:"T1", headRefOid:"abc1234",
+        statusCheckRollup:$c, latestOpinionatedReviews:$lr, reviewRequests:$rr}]'
+}
+CHK_OK='[{"__typename":"CheckRun","name":"check","status":"COMPLETED","conclusion":"SUCCESS"}]'
+CHK_BAD='[{"__typename":"CheckRun","name":"release-exercise / fixture-chain","status":"COMPLETED","conclusion":"FAILURE"}]'
+CR_REQ='[{"state":"CHANGES_REQUESTED","author":{"login":"p1"},"commit":{"oid":"abc1234"}}]'
+# shellcheck disable=SC2016
+AWK_ROUNDS='$5 == "owed" && ($4 == "green" || $4 == "none") { print $1, $2 }'
+# shellcheck disable=SC2016
+AWK_RED='$4 == "red" { print $1 "@" $3 "\thead\t" $6 }'
+RR_H="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+RR_OLD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+RR_T1="2026-07-28T10:00:00Z"
+RR_T2="2026-07-28T11:00:00Z"
 # shellcheck source=drill/rehearsal-fixtures.sh
 source "$ROOT/drill/rehearsal-fixtures.sh"
 # shellcheck source=drill/rehearsal-hygiene.sh
@@ -7259,71 +7305,6 @@ t nbd-positive-line-intact intact "$r1"
 if grep -Fq 'ready issue(s) WITH an assignee (board anomaly; hygiene'"'"'s to fix)' \
      "$BUILDER_MOD"; then r1=intact; else r1=CHANGED; fi
 t nbd-anomaly-note-intact intact "$r1"
-
-# --- #359: successful triage sessions settle ledgers at their exit state ---
-TR359_T1='2026-08-05T10:00:00Z'
-TR359_T2='2026-08-05T10:05:00Z'
-TR359_T3='2026-08-05T10:10:00Z'
-tr359_nt() { jq -nc --arg s "$1" '[{number:116,updatedAt:$s}]'; }
-
-# A session comments on an item and leaves it needs-triage. The post-session
-# timestamp, not the launching timestamp, is committed; the following tick is
-# therefore quiet even though the item remains in the query.
-tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
-tr_run 0
-t triage359-self-write-first-tick-launches 1 "$(trc '^SESSION triage$')"
-if grep -q "o/r#116 $TR359_T2" "$TRD/.seen-triage-board"; then r1=post; else r1=STALE; fi
-t triage359-self-write-commits-post-session post "$r1"
-tr_fix '[]' "$(tr359_nt "$TR359_T2")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
-tr_tick 0
-t triage359-self-write-next-tick-quiet 0 "$(trc '^SESSION triage$')"
-
-# Genuine activity after that session advances the board beyond the committed
-# value and buys one new session. This is the side the safe re-read must retain.
-tr_fix '[]' "$(tr359_nt "$TR359_T3")" "$(tr359_nt "$TR359_T3")" '[]' '[]' '[]'
-tr_tick 0
-t triage359-third-party-later-write-rewakes 1 "$(trc '^SESSION triage$')"
-
-# Discussion rows use the same exit-state contract, with their own ledger.
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
-  "o/r#8 $TR359_T1" "o/r#8 $TR359_T2"
-tr_run 0
-if grep -q "o/r#8 $TR359_T2" "$TRD/.seen-discussions"; then r1=post; else r1=STALE; fi
-t triage359-discussion-commits-post-session post "$r1"
-tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
-  "o/r#8 $TR359_T2" "o/r#8 $TR359_T2"
-tr_tick 0
-t triage359-discussion-next-tick-quiet 0 "$(trc '^SESSION triage$')"
-
-# A failed session commits none of the three ledgers. Crash-only retry remains
-# the distinction between "declined" and "never got there".
-tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
-tr_run 1
-if [ -f "$TRD/.seen-triage-board" ]; then r1=COMMITTED; else r1=withheld; fi
-t triage359-failed-session-commits-no-board withheld "$r1"
-
-# A standing unblockable lead costs one session. Its exit timestamp settles
-# the dedicated ledger; subsequent ticks report the stable lead once without
-# launching, and report_suppressed then quiets the unchanged warning.
-TR359_BLOCK_1='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:00:00Z"}]'
-TR359_BLOCK_2='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:05:00Z"}]'
-tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
-tr_run 1
-if [ -f "$TRD/.seen-unblockable" ]; then r1=COMMITTED; else r1=withheld; fi
-t triage359-failed-session-commits-no-unblockable withheld "$r1"
-tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
-tr_run 0
-t triage359-unblockable-first-tick-launches 1 "$(trc '^SESSION triage$')"
-if grep -q 'o/r#244 2026-08-05T11:05:00Z' "$TRD/.seen-unblockable"; then r1=post; else r1=MISSING; fi
-t triage359-unblockable-commits-post-session post "$r1"
-tr_fix '[]' '[]' '[]' "$TR359_BLOCK_2" "$TR359_BLOCK_2" "$TR_LANDED"
-tr_tick 0
-t triage359-unblockable-next-tick-spends-no-session 0 "$(trc '^SESSION triage$')"
-if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=warned; else r1=SILENT; fi
-t triage359-unblockable-suppression-reported warned "$r1"
-tr_tick 0
-if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=REPEATED; else r1=quiet; fi
-t triage359-unblockable-stable-warning-once quiet "$r1"
 
 # --- the registry bounds EVERY module, attention included (#52, #66) ------
 # drill/rehearsal.sh narrows repos.txt to a single sandbox repo and REFUSES to

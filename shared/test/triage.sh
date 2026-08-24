@@ -348,6 +348,71 @@ for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
   t "triage253-poll-before-decision:$probe" before "$r1"
 done
 
+# --- #359: successful triage sessions settle ledgers at their exit state ---
+TR359_T1='2026-08-05T10:00:00Z'
+TR359_T2='2026-08-05T10:05:00Z'
+TR359_T3='2026-08-05T10:10:00Z'
+tr359_nt() { jq -nc --arg s "$1" '[{number:116,updatedAt:$s}]'; }
+
+# A session comments on an item and leaves it needs-triage. The post-session
+# timestamp, not the launching timestamp, is committed; the following tick is
+# therefore quiet even though the item remains in the query.
+tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
+tr_run 0
+t triage359-self-write-first-tick-launches 1 "$(trc '^SESSION triage$')"
+if grep -q "o/r#116 $TR359_T2" "$TRD/.seen-triage-board"; then r1=post; else r1=STALE; fi
+t triage359-self-write-commits-post-session post "$r1"
+tr_fix '[]' "$(tr359_nt "$TR359_T2")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
+tr_tick 0
+t triage359-self-write-next-tick-quiet 0 "$(trc '^SESSION triage$')"
+
+# Genuine activity after that session advances the board beyond the committed
+# value and buys one new session. This is the side the safe re-read must retain.
+tr_fix '[]' "$(tr359_nt "$TR359_T3")" "$(tr359_nt "$TR359_T3")" '[]' '[]' '[]'
+tr_tick 0
+t triage359-third-party-later-write-rewakes 1 "$(trc '^SESSION triage$')"
+
+# Discussion rows use the same exit-state contract, with their own ledger.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
+  "o/r#8 $TR359_T1" "o/r#8 $TR359_T2"
+tr_run 0
+if grep -q "o/r#8 $TR359_T2" "$TRD/.seen-discussions"; then r1=post; else r1=STALE; fi
+t triage359-discussion-commits-post-session post "$r1"
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
+  "o/r#8 $TR359_T2" "o/r#8 $TR359_T2"
+tr_tick 0
+t triage359-discussion-next-tick-quiet 0 "$(trc '^SESSION triage$')"
+
+# A failed session commits none of the three ledgers. Crash-only retry remains
+# the distinction between "declined" and "never got there".
+tr_fix '[]' "$(tr359_nt "$TR359_T1")" "$(tr359_nt "$TR359_T2")" '[]' '[]' '[]'
+tr_run 1
+if [ -f "$TRD/.seen-triage-board" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage359-failed-session-commits-no-board withheld "$r1"
+
+# A standing unblockable lead costs one session. Its exit timestamp settles
+# the dedicated ledger; subsequent ticks report the stable lead once without
+# launching, and report_suppressed then quiets the unchanged warning.
+TR359_BLOCK_1='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:00:00Z"}]'
+TR359_BLOCK_2='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-05T11:05:00Z"}]'
+tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
+tr_run 1
+if [ -f "$TRD/.seen-unblockable" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage359-failed-session-commits-no-unblockable withheld "$r1"
+tr_fix '[]' '[]' '[]' "$TR359_BLOCK_1" "$TR359_BLOCK_2" "$TR_LANDED"
+tr_run 0
+t triage359-unblockable-first-tick-launches 1 "$(trc '^SESSION triage$')"
+if grep -q 'o/r#244 2026-08-05T11:05:00Z' "$TRD/.seen-unblockable"; then r1=post; else r1=MISSING; fi
+t triage359-unblockable-commits-post-session post "$r1"
+tr_fix '[]' '[]' '[]' "$TR359_BLOCK_2" "$TR359_BLOCK_2" "$TR_LANDED"
+tr_tick 0
+t triage359-unblockable-next-tick-spends-no-session 0 "$(trc '^SESSION triage$')"
+if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=warned; else r1=SILENT; fi
+t triage359-unblockable-suppression-reported warned "$r1"
+tr_tick 0
+if grep -q 'o/r: unblockable: 1 item(s)' "$TR_LOG"; then r1=REPEATED; else r1=quiet; fi
+t triage359-unblockable-stable-warning-once quiet "$r1"
+
 # --- #358: post-merge is a queue label, and the engine's set is LABELS.md's -
 # LABELS.md declares a SIX-label board invariant; fleet.defaults.conf defined
 # five and signal (b) selected on those five. So the moment triage did its job
