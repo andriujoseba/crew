@@ -26,6 +26,11 @@ const [, , URL_ARG, OUT_ARG, USER, PASS] = process.argv;
    box and start stopped ones, so the drill runs us in this mode unless the
    operator explicitly opted into control. */
 const READONLY = process.env.FLOOR_TEST_READONLY === '1';
+/* Re-run the frame-sensitive byline check without redoing the whole collector
+   suite. The default remains one assertion per browser-walk width; #489's
+   loaded-machine verification sets this to 20. */
+const BYLINE_REPEATS = Math.max(1,
+  Number.parseInt(process.env.FLOOR_TEST_BYLINE_REPEATS || '1', 10) || 1);
 /* Whether the fleet under the page is the STUB fixture or a real one.
    test/run.sh drives fixtures/roster.txt, whose contents are guaranteed: there
    IS a box with hostile log text, one inside its first session, and several
@@ -207,21 +212,22 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('floor: the serving version is not dropped or hardcoded',
        snapshot.version === process.env.FLOOR_TEST_VERSION,
        `expected ${process.env.FLOOR_TEST_VERSION}, got ${snapshot.version}`);
-    for (const width of [1400, 1600]) {
-      await page.setViewportSize({ width, height: 1000 });
-      /* Plant a paint from the other width after the resize request. This is
+    for (let repeat = 1; repeat <= BYLINE_REPEATS; repeat++) {
+      for (const width of [1400, 1600]) {
+        await page.setViewportSize({ width, height: 1000 });
+        /* Plant a paint from the other width after the resize request. This is
          the mutation that makes the ordering below bite: clearing before the
          resize, or not clearing at all, mixes it into the measured frame and
          fails the viewport-width check instead of depending on scheduler luck. */
-      await page.evaluate(({ text, staleWidth }) => {
-        const label = window.FLOORDEV.header().find((h) => h.text === text);
-        window.__floorHeaderPaint.push({
-          text: label.text, x: label.x, y: label.y, align: label.align,
-          viewportWidth: staleWidth, width: label.width, ascent: 8, descent: 2,
-        });
-      }, { text: snapshot.version, staleWidth: width === 1400 ? 1600 : 1400 });
-      const composition = await page.evaluate(({ version, width: targetWidth }) =>
-        new Promise((resolve) => requestAnimationFrame(() => {
+        await page.evaluate(({ text, staleWidth }) => {
+          const label = window.FLOORDEV.header().find((h) => h.text === text);
+          window.__floorHeaderPaint.push({
+            text: label.text, x: label.x, y: label.y, align: label.align,
+            viewportWidth: staleWidth, width: label.width, ascent: 8, descent: 2,
+          });
+        }, { text: snapshot.version, staleWidth: width === 1400 ? 1600 : 1400 });
+        const composition = await page.evaluate(({ version, width: targetWidth }) =>
+          new Promise((resolve) => requestAnimationFrame(() => {
           // The first resized frame settles layout. Clear only after it has
           // painted, then read both canvas observations and DOM rectangles in
           // the following frame so two viewport geometries cannot mix.
@@ -279,15 +285,17 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
                 && document.querySelectorAll('.fleetbar #tiles .tile').length > 0,
             });
           });
-        })), { version: snapshot.version, width });
-      ok(`floor: canvas byline does not duplicate DOM fleetbar chrome at ${width}px`,
-         composition.measuredWidth === width
-           && composition.paintWidths.every((paintWidth) => paintWidth === width)
-           && JSON.stringify(composition.labels) === JSON.stringify(composition.expected)
-           && composition.expected.every((text) => composition.painted.includes(text))
-           && composition.overlaps.length === 0
-           && composition.domOwnsChrome,
-         JSON.stringify(composition));
+          })), { version: snapshot.version, width });
+        const repetition = BYLINE_REPEATS > 1 ? ` (run ${repeat}/${BYLINE_REPEATS})` : '';
+        ok(`floor: canvas byline does not duplicate DOM fleetbar chrome at ${width}px${repetition}`,
+           composition.measuredWidth === width
+             && composition.paintWidths.every((paintWidth) => paintWidth === width)
+             && JSON.stringify(composition.labels) === JSON.stringify(composition.expected)
+             && composition.expected.every((text) => composition.painted.includes(text))
+             && composition.overlaps.length === 0
+             && composition.domOwnsChrome,
+           JSON.stringify(composition));
+      }
     }
     await page.setViewportSize({ width: 1600, height: 1000 });
   }
