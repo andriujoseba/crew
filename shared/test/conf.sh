@@ -310,6 +310,17 @@ acted_word() {  # acted_word <agent> <log> -> the field as duty.log spells it
   # shellcheck disable=SC1090
   ( source "$SHARED/conf/agents/$1.conf"; session_acted "$2" )
 }
+acted_verdict_line() {  # acted_verdict_line <agent> <line> -> yes|no
+  # Asks the verdict pattern directly, about ONE line. Used only where the
+  # whole transcript that line came from is not available to paste, so an rc
+  # case on a one-line file would answer `yes` from D3's default no matter
+  # what the pattern said — a case no mutation could kill. This asks the
+  # question the rendering actually poses.
+  # shellcheck disable=SC1090
+  if ( source "$SHARED/conf/agents/$1.conf"
+       av_re="${1^^}_ACTED_VERDICT_RE"
+       printf '%s\n' "$2" | grep -Eiq "${!av_re}" ); then echo yes; else echo no; fi
+}
 
 # an `attention` session that posted two comments and removed a label
 # captured: ~/duty/logs/20260802T130504Z-attention-heavy-duty_crew_286.log
@@ -371,36 +382,88 @@ API Error: Server error mid-response. The response above may be incomplete.
 ACTED_EOF
 
 
-# A `review` session reporting its own verdict.
+# THE REVIEW DUTY, on two transcripts a reviewer session actually emitted.
 #
-# There is no captured `review` transcript in this box's 1065 logs — 577
-# resume, 312 build, 131 attention, 36 ci-red, and not one review — and that
-# absence is itself the defect this fixture exists for: the first cut of this
-# detector was tuned on that corpus, so it could not see the review duty's
-# acts and booked 25 reviewer sessions that had written a verdict to GitHub as
-# idle. The text below is claude-bot's minimal reproduction, verbatim from its
-# review of PR #522 at head `d98ccd41`, where it was run against 1260 captured
-# review logs. It is quoted rather than invented, and where it came from is
-# said here rather than left to be assumed.
+# There is no captured `review` transcript in this box's 1066 logs — 578
+# resume, 312 build, 131 attention, 36 ci-red, 3 rebase, 6 operator-floor, and
+# not one review — and that absence is the defect these fixtures exist for.
+# The first cut of this detector was tuned on that corpus, so it could not see
+# the review duty's acts at all and booked 25 reviewer sessions that had
+# written a verdict to GitHub as idle. The second cut fixed 20 of the 25 and
+# was still fitted to ONE string, a minimal reproduction someone wrote down —
+# which is exactly what #467 criterion 1 forbids, and the remaining five real
+# reports render the marker four other ways.
+#
+# So both fixtures below are whole captured transcripts, byte for byte, from
+# the reviewer box that holds 1261 of them. They were pasted verbatim by
+# claude-bot into its round-2 review of PR #522 at head `57eea8e1` precisely
+# so that nothing here has to be taken on trust, and each session's act is
+# confirmed against GitHub — `pulls/N/reviews` and `issues/N/comments` — and
+# not against the reply's own text.
+#
+# captured: 20260807T104505Z-review-heavy-duty_crew.log (2704 bytes)
+# GitHub:   heavy-duty/crew#394 APPROVED at `c489f4f`, 10:51:56Z
+#
+# Rendering: `PR 394 (heavy-duty/crew) — approved` — the reference carries no
+# `#` at all and the repository sits in parentheses between it and the dash,
+# so a pattern wanting `#N` beside the verdict could not see it.
+#
+# Its no-op claim is load-bearing and is NOT a report about itself: the idle
+# net hits `still running` in prose about a suite and `is still on disk` about
+# someone else's stale worktree. That is what drags a session which plainly
+# acted onto the residue path, where the verdict pattern has to answer for it.
 cat >"$ALOG/verdict.log" <<'ACTED_EOF'
-**heavy-duty/crew#999 — approved** at head `abc1234`.
+**PR 394 (heavy-duty/crew) — approved at `c489f4f`.**
 
-The announce for this head was already present, so I posted nothing new.
-Reviewed in a detached worktree; the full suite is still running on the
-follow-up branch. Verdict submitted via the wrapper (exit 0), verified landed.
+Why it was in scope: my last verdict covered `5bcb8d0`, the head moved to `c489f4f`, and a re-request for me (10:44:08Z) postdates it. Announced once via `post-once.sh`, reviewed in a detached throwaway worktree, removed after.
+
+What the round turned on: codex blocked on the per-repository grain of "could not inspect ≠ absent" — a live `gh` identity plus a dead network still surveyed sandboxes as absent and printed a clean host. This head replaces `gh repo view` (GraphQL, one exit code for both facts) with `gh api repos/...` (REST, 404 distinguishable), and routes anything that isn't a measured 404 into the `UNINSPECTED` list.
+
+I verified rather than read:
+
+- Rebuilt codex's repro in my own harness (my `box`/`gh` doubles, my roster) — exit 2, the specific repo named, no delete, no clean-host sentence. Also drove the precedence edges: failed deletion still beats INCOMPLETE (rc 1), `--dry-run` carries the 2, and a 404 is still a measured absence so idempotence survives.
+- Asked the **real** `gh` binary, since the fix rests entirely on its stderr shape: 404 → `gh: Not Found (HTTP 404)`; invalid token → `Bad credentials (HTTP 401)`; bad host → `error connecting to…`. All land on the right arm. End-to-end with real `gh` and only `box` doubled: own-owner 404 → rc 0, wrong-owner slug → refused, invalid token → rc 2.
+- My two other nits from last round also landed: the sandbox owner gate (repo half now has two gates like the box half) and the dedupe (a target named twice is deleted once).
+- Suites: `drill-teardown.sh` 44/0, `shared/test/run.sh` 1536/1, per-file `shellcheck -x` and CI's exact `bash -n` list clean. The single failure is `floor-named-crew-verb-roster-is-complete`, which lives on `main` in `fleet-floor/server/floor.py:654` — a directory this PR does not touch.
+
+Stated in the verdict as unverified: the five POST-MERGE real-host criteria (no nested box possible from in here — heavy-duty/box#80), all `box` CLI interactions still going through doubles, and the aggregate `shellcheck` invocation that OOM-killed in this box.
+
+Three non-blocking nits carried, the substantive one being that `roster_files` tests `-f` but never `-r` — I reproduced a `chmod 000` roster silently dropping the roster gate and letting a drill-named fleet member be removed. Remote (needs an unreadable roster *and* a collision-named member) and consistent with `cli/crew`'s existing idiom, so a nit rather than a block, with the one-line fix named.
+
+One unrelated observation: a stale worktree from an earlier session, `trees/heavy-duty__crew/review-385`, is still on disk. Not this PR's, so I left it alone.
 ACTED_EOF
 
-# The same duty in its passive voice, which is the half a verb list cannot
-# reach: no first-person subject anywhere near any of the three acts.
+# The subjectless half, also whole and also captured — and a better fixture on
+# every axis than the invented one it replaces, because here the trap and the
+# act are both real and both in the same file.
 #
-# The no-op claim at the end is load-bearing, not decoration. Without one the
-# reply never reaches the residue path at all — it returns `yes` on D3's
-# default, and the case would pass just as well with the verdict pattern
-# deleted. It did, in the first cut of this file, and the mutation is what
-# said so.
+# captured: 20260818T013513Z-review-heavy-duty_incubator.log (2482 bytes)
+# GitHub:   heavy-duty/incubator#293 APPROVED at `7e6d617`, 01:52:26Z
+#
+# Two renderings at once. The marker is `#293 — <title> → approved`: the
+# reference is right, but a backticked title span sits between it and the
+# verdict and the separator is an arrow rather than a dash. And the opening
+# summary is form B MID-SENTENCE — `Both PRs reviewed at their current heads,
+# verdicts submitted, worktrees removed` — where the pattern had required the
+# verdict noun to open its sentence.
+#
+# Its last line is the trap the invented fixture was built for, in the wild,
+# which is why that one is not missed: the `🔎` announce for #293 was already
+# present, `so I posted nothing there` — a GENUINE first-person no-op claim
+# about a suppressed duplicate, in a session that had already landed two
+# verdicts on GitHub.
 cat >"$ALOG/passive.log" <<'ACTED_EOF'
-Both PRs reviewed and approved. Announcements posted once each.
-Both verdicts submitted and the worktrees are cleaned up; I pushed nothing and I made no comments.
+Both PRs reviewed at their current heads, verdicts submitted, worktrees removed, clone clean.
+
+**#293 — `feat: localize application emails by deployer language` → approved** (head `7e6d617`)
+
+My round-1 blocker was that the named must-fail case ("any applicant-facing English string reachable from a `["es"]` deployment") didn't fail. The new structural leaf-equivalence guard does: I planted all three of my original mutations at once and the suite failed naming all three, then passed 29/29 restored. I re-proved byte-identity at this head rather than carrying the old proof forward — 11 messages rendered through worktrees at merge base `af3af6c` and at head, 40,720 bytes, `diff` clean — and re-ran the fail-closed type mutations against the changed type alias (`Record<Locale, ApplicationEmailCopy>`, the full union, so it no longer leans on the generator's widening). Full Core suite 124 files / 1111 tests green, Biome clean over 537 files, same-head CI green. One non-blocking note carried forward: `sender-roles.test.ts` pins the no-reply invariant against the English constant, which will break the day an ES template becomes the build template — not this PR's work.
+
+**#295 — La Familia's accountability set → changes requested** (head `9efc63c`)
+
+The set is strong and every criterion is met on its face; the code claims check out individually (cohort map, consent-is-withholding, cadence ordering constraint, `quit`/#198, the portability gap and the notice that promises it, nothing served by the content collection, all 44 open-decision counts). The blocker is that `RETENTION_ENABLED` gates more than the sweep: with it off — the default, and the state `21` §6 tells the deployer to hold — the erasure route answers `404 retention_disabled` and the alumni consent write is refused, so four of the nine rights in `22` are described as served by a route that isn't there. That's the issue's own must-fail case, one flag away from the portability case the document handles correctly. The sharper half: `21` §6's precondition ("the consent is actually being asked and recorded" before enabling) can't be met, because recording the consent requires the flag it gates. Both fixes are documentary — a caveat at the named sites and an executable ordering in `21` §6.
+
+One thing to mention rather than act on: the `🔎` announce for #293 was already present when I ran `post-once.sh`, from an earlier pass at this same head, so I posted nothing there.
 ACTED_EOF
 
 # THE OTHER HALF OF THAT TRAP, and the reason the verdict pattern anchors to
@@ -479,12 +542,46 @@ for agent in claude grok; do
   t "acted-$agent-subaction-claim-is-yes" 0 "$(acted_rc "$agent" "$ALOG/trap.log")"
   # Waiting on someone else's verdict is doing nothing, and says so.
   t "acted-$agent-waiting-only-is-no"  1 "$(acted_rc "$agent" "$ALOG/wait.log")"
-  # THE REVIEW DUTY. Both of these open with a no-op claim and both acted: one
-  # in the engine's marker shape, one in the passive voice with no subject
-  # anywhere near the verb. A detector tuned on builder transcripts alone
-  # answers `no` to both, which is what it did to 25 real reviewer sessions.
+  # THE REVIEW DUTY, on whole captured transcripts. Both carry a real no-op
+  # claim and both sessions submitted a verdict that is confirmed on GitHub:
+  # one renders the marker as `PR N (repo) — approved`, the other as
+  # `#N — <title> → approved` with a mid-sentence `verdicts submitted`. A
+  # detector tuned on builder transcripts answered `no` to both, which is what
+  # it did to 25 real reviewer sessions, and a detector fitted to one written
+  # -down example still answered `no` to both, which is what it did to 5.
   t "acted-$agent-review-verdict-is-yes"   0 "$(acted_rc "$agent" "$ALOG/verdict.log")"
   t "acted-$agent-subjectless-verdict-is-yes" 0 "$(acted_rc "$agent" "$ALOG/passive.log")"
+  # The three renderings whose whole transcript is not on this box. Each line
+  # is verbatim from claude-bot's round-2 table on PR #522, where it was read
+  # out of the named log and its act confirmed against the GitHub API; the
+  # session ids are recorded so a later round can swap in the whole file. They
+  # are asserted against the pattern rather than against an rc, because a
+  # one-line fixture would answer `yes` from D3's default whatever the pattern
+  # did — the vacuous shape a mutation caught in round 1.
+  #
+  # 20260818T195008Z-review-heavy-duty_lafamilia-site — APPROVED @ `901a672`.
+  # No `#`, and a backticked title between the dash and the verdict. The title
+  # holds a version number, so a span matched as "anything up to a full stop"
+  # ends early on `0.7.4` and misses — the defect claude-bot named in its own
+  # probe of this fix, which is why the span is matched as a delimited one.
+  t "acted-$agent-rendering-title-span-is-verdict" yes "$(acted_verdict_line "$agent" \
+    '**PR 30 — `chore: bump ceremony to 0.7.4` — approved** at head `901a672`')"
+  # 20260806T144555Z-operator-floor-2fb41ac8 — CHANGES_REQUESTED @ `b05c2a9`.
+  # No reference and no verdict noun as subject: the verb leads, and its
+  # object is the verdict.
+  t "acted-$agent-rendering-submitted-verdict-is-verdict" yes "$(acted_verdict_line "$agent" \
+    'submitted `request-changes` via `submit-verdict.sh`')"
+  # 20260818T122010Z-review-heavy-duty_incubator — announce comment posted.
+  # Form B with the noun singular and unlisted.
+  t "acted-$agent-rendering-announce-posted-is-verdict" yes "$(acted_verdict_line "$agent" \
+    'Announce posted and verified.')"
+  # And the same helper on the quoting forms, which must stay refused: this is
+  # where the widening above would have cost the idle column if the anchor had
+  # slipped from "clause boundary" to "anywhere".
+  t "acted-$agent-rendering-quoted-panel-is-not-verdict" no "$(acted_verdict_line "$agent" \
+    '- All three panelists — claude-bot, codex-bot, kimi-bot — APPROVED **at that exact head**')"
+  t "acted-$agent-rendering-zero-verdicts-is-not-verdict" no "$(acted_verdict_line "$agent" \
+    'The round is not answered: zero verdicts submitted at that head, and no verdict submitted since.')"
   # ...and the guard that stops that widening eating the idle column: a
   # resumption QUOTING a panel's approvals, its own earlier signal and a
   # handoff, having done nothing. Position, not proximity to a SHA.
