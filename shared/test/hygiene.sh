@@ -447,8 +447,8 @@ HYG_NOWRITE="$(hygiene_case "$BOARD_A" 43200 0 "$HYG/no-such-dir" 2>/dev/null)"
 t hygiene-unwritable-ledger-still-sweeps 1 "$(hyg_count "$HYG_NOWRITE" '^SESSION ')"
 t hygiene-unwritable-ledger-warns-by-repo 1 \
   "$(hyg_count "$HYG_NOWRITE" '^WARN heavy-duty/crew: the hygiene ledger row could not be written')"
-t hygiene-unwritable-ledger-writes-no-ledger 0 \
-  "$(ls "$HYG/no-such-dir" 2>/dev/null | wc -l | tr -d ' ')"
+if [ -e "$HYG/no-such-dir" ]; then r1=CREATED; else r1=absent; fi
+t hygiene-unwritable-ledger-writes-no-ledger absent "$r1"
 
 # The rewrite's own failure mode, one layer down: if the pass that copies every
 # OTHER repo's row fails, the half-built file must not be moved into place. A
