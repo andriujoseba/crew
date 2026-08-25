@@ -223,6 +223,24 @@ t triage466-permissionless-prompt-omits-titles absent "$r1"
 if [ -s "$TR_CHECKOUT" ]; then r1=CREATED; else r1=none; fi
 t triage466-mention-batch-creates-no-checkout none "$r1"
 
+# The neutral session gets no checkout doctrine. Each thread must first resolve
+# its own repository's entrypoint over the API and follow that router, rather
+# than treating a bare role filename as relative to DUTY_DIR.
+# shellcheck disable=SC2016  # the rendered prompt deliberately carries $repo
+if grep -Fq 'gh api "repos/$repo/contents/AGENTS.md"' "$TR_PROMPT.mention" &&
+   grep -Fq 'same repository-qualified contents API' "$TR_PROMPT.mention"; then
+  r1=qualified; else r1=MISSING; fi
+t triage466-doctrine-entrypoint-is-repository-qualified qualified "$r1"
+doctrine_line="$(grep -n 'default-branch entrypoint' "$TR_PROMPT.mention" | head -1 | cut -d: -f1)"
+thread_line="$(grep -n 'subject URL to fetch' "$TR_PROMPT.mention" | head -1 | cut -d: -f1)"
+if [ -n "$doctrine_line" ] && [ -n "$thread_line" ] && [ "$doctrine_line" -lt "$thread_line" ]; then
+  r1=before; else r1=WRONG_ORDER; fi
+t triage466-doctrine-is-read-before-thread before "$r1"
+if grep -Fq 'answer per TRIAGE.md' "$TR_PROMPT.mention" ||
+   ! grep -Fq 'Do not resolve doctrine from the working directory' "$TR_PROMPT.mention"; then
+  r1=RELATIVE; else r1=neutral-safe; fi
+t triage466-doctrine-has-no-working-directory-relative-path neutral-safe "$r1"
+
 # Crash and timeout are distinct exits but share the transaction boundary:
 # neither may commit even one thread from the selected batch.
 tr_run 1
