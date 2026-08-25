@@ -108,16 +108,28 @@ _hygiene_ledger_commit() {
 # one row per repo forever rather than one per state ever seen. The floor needs
 # a second field on that row anyway, which the two-field ledger cannot carry.
 _hygiene_gate() {
-  local repo="$1" line listing digest now age
-  local prev_digest="" prev_ts="" prev_repo=""
+  local repo="$1" line rest listing digest now age
+  local prev_digest="" prev_ts=""
   local floor="${HYGIENE_FLOOR:-$HYGIENE_FLOOR_DEFAULT}"
   HYGIENE_DIGEST=""
   HYGIENE_SWEEP_REASON=""
   line="$(_hygiene_ledger_line "$repo")"
   if [ -n "$line" ]; then
-    read -r prev_repo prev_digest prev_ts <<<"$line"
-    if [ -z "$prev_digest" ] || [ -z "$prev_ts" ] || \
-       ! printf '%s' "$prev_ts" | grep -Eq '^[0-9]+$'; then
+    # Split by expansion rather than `read`, which would need a discard
+    # variable for the repo field it already matched on. A row short of three
+    # fields collapses to a non-numeric timestamp and falls into the malformed
+    # branch below, which is where a short row belongs.
+    rest="${line#* }"
+    prev_digest="${rest%% *}"
+    prev_ts="${rest#* }"
+    # `case`, not `printf | grep -Eq`: this file sets no pipefail of its own but
+    # is sourced by one that does, and a `grep -q` that exits on its first match
+    # SIGPIPEs its producer into a 141 the pipeline then adopts. The repo guards
+    # that shape (#449); pure bash has neither the pipeline nor the dependency.
+    case "$prev_ts" in
+      ''|*[!0-9]*) prev_ts="" ;;
+    esac
+    if [ -z "$prev_digest" ] || [ -z "$prev_ts" ]; then
       warn "$repo: the hygiene ledger row is malformed ($line); sweeping this interval and rewriting it (#465)"
       prev_digest=""
       prev_ts=""
