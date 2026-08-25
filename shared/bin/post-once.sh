@@ -3,7 +3,7 @@
 # sanctioned path for board marker comments (the 🔎 announce, and anything
 # else that must appear at most once).
 #
-#   post-once.sh <owner/repo> <number> <exact-body>
+#   post-once.sh <owner/repo> <number> <exact-body> [<marker-line>]
 #
 # Exit 0 = the comment is present (posted now, or already there); 1 = hard
 # failure after one identical retry.
@@ -14,6 +14,20 @@
 # as submit-verdict.sh: the endpoint decides, the CLI's exit status doesn't;
 # an existing double is left alone — never a third, and no comment about it.
 # (Incident: ceremony#32, grok + kimi double-announce.)
+#
+# WITH A MARKER, dedup is an exact WHOLE-LINE match on that marker instead —
+# still never a substring, so ceremony#32's finding stands: a line compare
+# cannot false-match the way contains() could, because the delimiters are the
+# line ends and a caller cannot widen them. This exists for a body whose
+# identity is narrower than its text: the builder's decline comment is keyed on
+# the issue and the reason, but must also carry the one fact that decided it,
+# and that sentence is written by a model — two boxes reaching the SAME
+# conclusion phrase it differently, so an exact-body match would post both and
+# a changed conclusion has to still post (crew#462). The marker must itself be
+# a line of the body, checked here rather than trusted: a key that is not in
+# what gets posted can never match the comment it just wrote, which is a
+# double-post on every single call and the exact failure this script exists to
+# prevent. Fail closed on that, as on a failed pre-check.
 set -euo pipefail
 
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
@@ -24,12 +38,19 @@ glog() {
   printf '%s post-once: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG" 2>/dev/null || true
 }
 
-if [ $# -ne 3 ]; then
-  glog "usage: post-once.sh <owner/repo> <number> <exact-body>"
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+  glog "usage: post-once.sh <owner/repo> <number> <exact-body> [<marker-line>]"
   exit 1
 fi
-REPO="$1" NUM="$2" BODY="$3"
+REPO="$1" NUM="$2" BODY="$3" MARKER="${4:-}"
 [ -n "$BODY" ] || { glog "refusing an empty body"; exit 1; }
+if [ -n "$MARKER" ]; then
+  case "$MARKER" in
+    *$'\n'*) glog "refusing a multi-line marker; the key is one whole line"; exit 1 ;;
+  esac
+  printf '%s' "$BODY" | grep -qxF -- "$MARKER" \
+    || { glog "refusing: the marker is not a line of the body (it could never match)"; exit 1; }
+fi
 
 ME="$(gh api user --jq .login)"
 
@@ -37,8 +58,12 @@ ME="$(gh api user --jq .login)"
 # and lies past 100 comments (see submit-verdict.sh).
 mine_matching() {
   gh api "repos/$REPO/issues/$NUM/comments" --paginate \
-    | jq -s --arg me "$ME" --arg body "$BODY" \
-      '[add[] | select(.user.login == $me) | select(.body == $body)] | length'
+    | jq -s --arg me "$ME" --arg body "$BODY" --arg marker "$MARKER" \
+      '[add[] | select(.user.login == $me)
+        | select(if $marker == ""
+                 then .body == $body
+                 else (.body | split("\n") | map(sub("\r$"; "")) | index($marker) != null)
+                 end)] | length'
 }
 
 attempt=0

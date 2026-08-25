@@ -36,8 +36,124 @@ _gate_ready_for_open_pr() {
   return 1
 }
 
-# _no_build_duty_reason BOARD_READY LEDGERED_ROUNDS SLOT_PRS BOARD_READ — the
-# parenthetical on `no build duty`.
+# --- The decline: a ready issue the session judged unbuildable ---------------
+#
+# The BUILD block below has told whoever reads this source, since #59, that a
+# ready issue clears its signal only on a claim "which is an action the session
+# may correctly decline (out of scope, unbuildable, needs a ruling)". Nothing
+# carried that to the session — it is handed build.txt, which said claim it and
+# build it — and nothing carried the decision back: _ready_lines_to_commit
+# reduces the whole discovery to an id and a timestamp in a per-box dotfile that
+# dies with the box. So the board, the only memory that outlives a box, learned
+# nothing; every sibling box re-derived the same refusal from scratch, and
+# triage, which OWES the repair (TRIAGE.md's claim-time clause, ceremony#487),
+# never got the input. What stopped the claim in practice was a hand-written
+# paragraph in the consumer repo's issue body, absent by default, and where it
+# was absent it did not hold — box#180 was claimed against `df`-on-a-host
+# criteria and caught only afterwards (#462).
+#
+# FOUR reasons, not the three that comment names. #461 removes `operator-owned`
+# as a cause by keeping such an issue off `ready` at all; until it ships the
+# session still meets one, and the other three are spec defects no label
+# prevents. The set is CLOSED and revalidated on read-back: an unrecognised
+# token is not a reason and is never reported as one, because the line an
+# operator reads must not be writable by a session's free text.
+_DECLINE_MARK='🚫 build declined'
+_DECLINE_REASONS='out-of-scope unbuildable needs-ruling operator-owned'
+
+# _decline_marker_key REPO NUM — the marker line's fixed prefix, up to and
+# including the separator before the reason. One renderer for the reader here
+# and, through {{DECLINE_MARK}}, for the prompt that writes it: two literals
+# that must agree is how the writer and the reader drift apart.
+_decline_marker_key() { printf '%s — %s#%s — ' "$_DECLINE_MARK" "$1" "$2"; }
+
+# _decline_reason REPO NUM — the reason MY OWN decline marker names on that
+# issue, or empty. Two rules, both load-bearing:
+#
+#   my comments only, and an exact marker LINE. Never a substring of a body:
+#   this issue, a reviewer quoting the marker, or a human pasting it would
+#   otherwise become a fact the engine reports. post-once.sh ruled the same way
+#   after ceremony#32, where a contains() match let a short SHA false-match a
+#   different announce; a whole-line compare is the form that keeps the
+#   precedent while still keying on something narrower than a whole body.
+#
+#   newest wins. A session declining for a different one of the four is a
+#   CHANGED conclusion, which D2 says posts — so it must also govern, or the
+#   engine would keep reporting the superseded reason forever.
+#
+# Empty on any failure: no reason is reported, the ledger branch says what it
+# always said, and nothing is invented from a listing that did not load.
+_decline_reason() {
+  local repo="$1" num="$2"
+  gh api "repos/$repo/issues/$num/comments" --paginate 2>/dev/null \
+    | jq -rs --arg me "$ME" --arg key "$(_decline_marker_key "$repo" "$num")" \
+        --arg reasons "$_DECLINE_REASONS" '
+      ($reasons | split(" ")) as $ok
+      | [ add[]
+          | . as $c
+          | select($c.user.login == $me)
+          | ($c.body | split("\n") | map(sub("\r$"; "")))[]
+          | select(startswith($key))
+          | ltrimstr($key)
+          | select(IN($ok[]))
+          | {reason: ., at: $c.created_at} ]
+      | sort_by(.at) | last | .reason // ""
+    ' 2>/dev/null || true
+}
+
+# _record_declines REPO SLUG LINES — write the reasons behind the ready lines
+# this tick is about to ledger, one `<repo>#<n> <reason>` per declined id.
+#
+# Keyed to the ledger commit, not to the enumerated board: the caller passes
+# exactly what ledger_commit is given, so the two records can never disagree
+# about which ids the session left behind. Whole-set, replacing the file — a
+# ready line that left the board has no decline to report and must not linger.
+# Per repo for the reason every other builder state file is (#345): _builder_repo
+# runs once per repo and one shared file makes each clobber the last.
+_record_declines() {
+  local repo="$1" slug="$2" lines="$3" line id reason out=""
+  while IFS= read -r line; do
+    [ -n "${line//[[:space:]]/}" ] || continue
+    id="${line%% *}"
+    reason="$(_decline_reason "$repo" "${id#*#}")"
+    [ -n "$reason" ] || continue
+    out="$out$id $reason"$'\n'
+  done <<<"$lines"
+  if [ -n "${out//[[:space:]]/}" ]; then
+    printf '%s' "$out" >"$DUTY_DIR/.declined-build.$slug"
+  else
+    rm -f "$DUTY_DIR/.declined-build.$slug"
+  fi
+}
+
+# _declined_for_board SLUG READY_LINES — the recorded reasons, one per line,
+# for the ids still enumerated on the board right now. The intersection is what
+# keeps a closed or claimed issue from being counted as a live decline on a tick
+# where no session ran to refresh the record.
+_declined_for_board() {
+  local slug="$1" ready_lines="$2"
+  local file="$DUTY_DIR/.declined-build.$slug"
+  [ -s "$file" ] || return 0
+  [ -n "${ready_lines//[[:space:]]/}" ] || return 0
+  awk 'NR==FNR { if (NF>=1) board[$1]=1; next } NF>=2 { if ($1 in board) print $2 }' \
+    <(printf '%s\n' "$ready_lines") "$file"
+}
+
+# _declined_summary REASONS — `unbuildable (3), needs-ruling (1)`. Rendered in
+# the canonical reason order rather than by count, so the same board reads the
+# same way on every tick and a diff of two log lines means something changed.
+_declined_summary() {
+  local reasons="$1" r n out=""
+  for r in $_DECLINE_REASONS; do
+    n="$(awk -v r="$r" '$1 == r { c++ } END { print c+0 }' <<<"$reasons")"
+    [ "$n" -gt 0 ] || continue
+    out="$out${out:+, }$r ($n)"
+  done
+  printf '%s' "$out"
+}
+
+# _no_build_duty_reason BOARD_READY LEDGERED_ROUNDS SLOT_PRS BOARD_READ DECLINED
+# — the parenthetical on `no build duty`.
 #
 # One spelling for three causes is a diagnosis tax on every reader. On
 # 2026-08-03 the operator read `build duty (ready unclaimed=8)` → claim → `no
@@ -63,13 +179,40 @@ _gate_ready_for_open_pr() {
 # failed, so which of the two above holds is unknown and neither may be
 # asserted. The warn at that call site names the failure; this says only that
 # the board behind the line was never read.
+#
+# `declined` is not a fifth cause either — it is the ledger branch finally able
+# to name what it is holding. `N ready held by seen-ledger` was honest and it
+# was the wrong noun: it named the MECHANISM and never the cause, so an operator
+# could not tell a spec defect from a box that ran out of context, and could not
+# tell that the refusal would be identical on every box forever. Where the
+# record has a reason for some of the held ready lines, the two halves are
+# reported separately: a decline is triage's to repair, a plain ledger hold is
+# not, and one number covering both is a number nobody can act on (#462). It
+# ranks under the slot for the reason the slot outranks the ledger — the slot is
+# the answer to "why did the claim not happen" whenever it fired.
 _no_build_duty_reason() {
   local board_ready="$1" ledgered_rounds="$2" slot_prs="$3" board_read="$4"
+  local declined="${5:-}"
+  local d_count=0 d_summary="" held_ready="$board_ready"
+  if [ -n "${declined//[[:space:]]/}" ]; then
+    d_count="$(awk 'NF{c++} END{print c+0}' <<<"$declined")"
+    d_summary="$(_declined_summary "$declined")"
+    held_ready=$((board_ready - d_count))
+    [ "$held_ready" -lt 0 ] && held_ready=0
+  fi
   if [ -n "$slot_prs" ]; then
     # The board count is the pre-ledger, pre-gate one on purpose: it is the
     # board's own fact, the number an operator sees on the queue, and it is what
     # makes #264's discriminating read work from a single tick's log.
     printf 'slot held by %s; board holds %s ready' "$slot_prs" "$board_ready"
+  elif [ "$d_count" -gt 0 ]; then
+    if [ "$held_ready" -gt 0 ]; then
+      printf '%s ready held by seen-ledger, ' "$held_ready"
+    fi
+    printf '%s ready declined: %s' "$d_count" "$d_summary"
+    if [ "$ledgered_rounds" -gt 0 ]; then
+      printf ', %s round(s) held by seen-ledger' "$ledgered_rounds"
+    fi
   elif [ "$board_ready" -gt 0 ] && [ "$ledgered_rounds" -gt 0 ]; then
     printf '%s ready, %s round(s) held by seen-ledger' "$board_ready" "$ledgered_rounds"
   elif [ "$board_ready" -gt 0 ]; then
@@ -2242,6 +2385,8 @@ _builder_repo() {
     run_session build "$R" "$dir" "$TIMEOUT_BUILD" \
       "$(render_prompt build.txt ME="$ME" REPO="$R" TRIAGE="$FLEET_TRIAGE" \
         CLAIM="$BIN_DIR/claim-issue.sh" \
+        POST_ONCE="$BIN_DIR/post-once.sh" \
+        DECLINE_MARK="$_DECLINE_MARK" DECLINE_REASONS="$_DECLINE_REASONS" \
         HEAD_CHECKS="$head_checks" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules" ONESHOT_RULES="$oneshot_rules")"
     # Record what this session SAW, at the state it saw it in — but only if the
@@ -2260,11 +2405,20 @@ _builder_repo() {
           warn "$R: post-session ready re-query failed; committing no ready lines (#264)"
         fi
       fi
+      # The reason travels with the ids, from the board and not from the
+      # session's exit: what the session left behind is a comment on the issue,
+      # and reading it back here is the only step that turns a per-box ledger
+      # entry into something the operator's next no-duty line can name (#462).
+      # Only the lines actually being ledgered — a set the session ACTED on
+      # commits nothing (#264), and a decline recorded against an id that will
+      # re-wake next tick would be reported as held when it is not.
+      _record_declines "$R" "$slug" "$ready_commit"
       printf '%s\n%s\n' "$ready_commit" "$cr_items" | ledger_commit "$DUTY_DIR/.seen-build"
     fi
   else
     log "$R: no build duty ($(_no_build_duty_reason \
-      "$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read"))"
+      "$ready_board" "$ledgered_rounds" "$slot_prs" "$board_read" \
+      "$(_declined_for_board "$slug" "$ready_items")"))"
   fi
 
   # --- HANDOFF: a converged round of mine that owes the human. Convergence
