@@ -156,6 +156,65 @@ t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
 t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"
+
+# #528 — the tick-wide mention batch has no repository. Its old line shape
+# satisfied RE_MENTION and invented a repository named `fleet`, which then
+# became the card's repository link. Exercise the parser directly so all four
+# protocol shapes are explicit without teaching stub-box a one-issue scenario.
+ff_queue_case() {
+  FF_SERVER="$FLOOR/server" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_queue
+
+print(json.dumps(derive_queue(sys.argv[1:]), separators=(",", ":"), sort_keys=True))
+PY
+}
+
+FF_AGGREGATE="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z fleet: 4 unread mention(s) — launching one mention session')"
+t "queue: aggregate mention is one repository-less item" \
+  '[{"key":"4 mentions","repo":null}]' "$FF_AGGREGATE"
+
+FF_LEGACY="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z heavy-duty/crew: 3 unread mention(s)')"
+t "queue: legacy repository mention keeps its repository" \
+  '[{"key":"3 mention","repo":"heavy-duty/crew"}]' "$FF_LEGACY"
+
+FF_MIXED="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z fleet: 4 unread mention(s) — launching one mention session' \
+  '2026-08-25T20:00:02Z heavy-duty/crew: 3 unread mention(s)')"
+t "queue: aggregate and repository mentions stay distinct" \
+  '[{"key":"4 mentions","repo":null},{"key":"3 mention","repo":"heavy-duty/crew"}]' "$FF_MIXED"
+
+FF_REAL_FLEET="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z fleet: 2 unread mention(s)')"
+t "queue: a real fleet repository is not the aggregate" \
+  '[{"key":"2 mention","repo":"fleet"}]' "$FF_REAL_FLEET"
+
+# Execute the page's small selector in isolation. This pins what the card
+# opens without coupling the assertion to generated index.html or requiring a
+# browser: a repository-less first item yields the next repository, then crew.
+FF_QUEUE_REPO_SOURCE="$(sed -n '/^function queueRepo(/,/^}/p' "$FLOOR/src/app.js")"
+FF_QUEUE_REPO_RESULT="$(node - "$FF_QUEUE_REPO_SOURCE" <<'JS'
+const source = process.argv[2];
+if (!source) process.exit(2);
+eval(source);
+console.log([
+  queueRepo([{repo:null,key:"4 mentions"},{repo:"heavy-duty/crew",key:"3 mentions"}], "crew"),
+  queueRepo([{repo:null,key:"4 mentions"}], "crew")
+].join(","));
+JS
+)"
+t "card: repository-less queue items cannot become repository targets" \
+  'heavy-duty/crew,crew' "$FF_QUEUE_REPO_RESULT"
 t "metrics: success%"         100  "$(uf ff-working "u['success']")"
 t "metrics: failing box"      0    "$(uf ff-failing "u['success']")"
 t "spark: always 22 buckets"  22   "$(uf ff-working "len(u['spark'])")"
