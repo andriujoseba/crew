@@ -352,7 +352,19 @@ if [ "$BROWSER" -eq 1 ]; then
     # inside `if (LIVE)` — the first three read the payload this collector
     # serves at CREW_FLOOR_PING_FAILS=2, which DEMO has no collector for — so
     # the DEMO floor below is unmoved.
-    walk "browser walk" 86 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    #
+    # 86 -> 95 with #486's round 2, which closes the gap between the sentence
+    # and the request. Six on the mode: the wedged box authorising the force
+    # path it was shown and the reachable one authorising only the gentle path
+    # (a pair, because a plan whose words and mode disagree is the bug itself),
+    # the console re-opened to drive the SHIPPED click rather than the hook,
+    # that click putting a mode on the wire at all, and a refusal arriving as
+    # the collector's words rather than as "HTTP 409" or as a failure. Three
+    # more on the status line's failure path: a restart that killed the guest
+    # and then could not start it saying so, a gentle failure claiming no kill,
+    # and a force stop that itself failed not being reported as one. All nine
+    # are inside `if (LIVE)`, so the DEMO floor below is again unmoved.
+    walk "browser walk" 95 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 14 "file://$FLOOR/index.html" "$TMP/shots-demo"

@@ -1200,10 +1200,10 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         return {
           wedged: served ? served.wedged : null,
           fails: served ? served.fails : null,
-          ask: window.FLOORDEV.restartAsk('ff-wedged', { ping: served }),
+          plan: window.FLOORDEV.restartPlan('ff-wedged', { ping: served }),
           /* Served as NOT wedged, with nine misses on the counter. Any
              threshold the page kept for itself would call this unreachable. */
-          gentle: window.FLOORDEV.restartAsk('ff-other', {
+          gentle: window.FLOORDEV.restartPlan('ff-other', {
             ping: { ok: false, fails: 9, stale: false, wedged: false },
           }),
         };
@@ -1214,10 +1214,94 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok("force: the collector's wedge verdict reaches the page",
        say && say.wedged === true, JSON.stringify(say));
     ok('force: the restart confirm names the force path from that verdict',
-       !!say && /FORCE-STOPPED/.test(say.ask), say && say.ask);
+       !!say && /FORCE-STOPPED/.test(say.plan.ask), say && say.plan.ask);
     ok('force: a box the collector calls reachable is never told it will be killed',
-       !!say && !/FORCE/.test(say.gentle) && /stopped and started again/.test(say.gentle),
-       say && say.gentle);
+       !!say && !/FORCE/.test(say.gentle.ask) && /stopped and started again/.test(say.gentle.ask),
+       say && say.gentle.ask);
+
+    /* ROUND 2 — the sentence is a promise about the path, and the mode is what
+       makes it keepable. The page reads a snapshot up to POLL_MS old while the
+       collector re-reads the ping map when the POST lands, so the words alone
+       guarantee nothing: what has to hold is that the mode the page puts ON
+       THE WIRE is the one those exact words promised. Asserted as a pair from
+       one call, because they come from one evaluation — a `restartPlan` that
+       returned the force sentence beside a graceful mode is precisely the bug,
+       and it would be invisible to either half checked alone. */
+    ok('mode: the wedged box authorises the force path it was shown',
+       !!say && say.plan.mode === 'force' && /FORCE-STOPPED/.test(say.plan.ask),
+       say && JSON.stringify(say.plan));
+    ok('mode: the reachable box authorises only the gentle path',
+       !!say && say.gentle.mode === 'graceful' && !/FORCE/.test(say.gentle.ask),
+       say && JSON.stringify(say.gentle));
+
+    /* ...and that the mode actually reaches the collector. The two above are
+       about the page's own answer; this is about the request, which is the
+       thing the collector adjudicates. Driven through the SHIPPED click
+       handler, because "the page decides well and then posts something else"
+       is a shape the hook alone cannot rule out — and the console has to be
+       open for that handler to have a box.
+
+       The POST is intercepted, not fired: the walk must not restart a fixture
+       box the cases after this one read. */
+    const first = visible.length ? visible[0] : null;
+    const opened = first ? await enterAt(first) : null;
+    ok('mode: console re-opened to drive the shipped restart click',
+       !!first && opened === first.got,
+       `expected ${first ? first.got : '(no visible unit)'}, got ${opened}`);
+    const wire = !first || opened !== first.got ? null : await page.evaluate(async () => {
+      const real = window.fetch;
+      let sent = null;
+      window.fetch = function (u, o) {
+        if (String(u).indexOf('/api/command') >= 0) {
+          sent = JSON.parse(o.body);
+          return Promise.resolve(new Response('{"ok":true,"results":[]}',
+            { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        }
+        return real.apply(this, arguments);
+      };
+      const conf = window.confirm;
+      window.confirm = () => true;
+      try {
+        document.getElementById('a-restart').click();
+        await new Promise((r) => setTimeout(r, 200));
+      } finally { window.fetch = real; window.confirm = conf; }
+      return sent;
+    });
+    ok('mode: the shipped click puts a restart mode on the wire',
+       !!wire && wire.action === 'restart'
+         && (wire.mode === 'force' || wire.mode === 'graceful'),
+       JSON.stringify(wire));
+
+    /* A refusal has to arrive as words. 409 carries the operator's next step in
+       its body and nothing else does — no per-box rows exist, because nothing
+       ran — so a page that threw on the status code would replace the one
+       sentence that says which way the box moved with "HTTP 409". */
+    const refused = wire === null ? '' : await page.evaluate(async () => {
+      const real = window.fetch;
+      window.fetch = function (u) {
+        if (String(u).indexOf('/api/command') >= 0) {
+          return Promise.resolve(new Response(JSON.stringify({
+            ok: false, refused: true, confirmed: 'graceful', verdict: 'force',
+            error: 'ff-wedged has stopped answering since that dialog. '
+                 + 'Nothing was done — confirm again.',
+          }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+        }
+        return real.apply(this, arguments);
+      };
+      const conf = window.confirm;
+      window.confirm = () => true;
+      try {
+        document.getElementById('a-restart').click();
+        await new Promise((r) => setTimeout(r, 300));
+      } finally { window.fetch = real; window.confirm = conf; }
+      const s = document.getElementById('livestat');
+      return s ? s.textContent : '';
+    });
+    ok('mode: a refused restart reaches the operator as words, not a status code',
+       /refused/.test(refused) && /confirm again/.test(refused), refused);
+    ok('mode: ...and is not reported as a failure, because nothing ran',
+       !/FAILED/.test(refused) && !/HTTP 409/.test(refused), refused);
+    if (wire !== null) await leave();
 
     /* The disclosure AFTER the click. A restart that escalated and one that
        did not both end `restart ok`, so the status line was the one place the
@@ -1234,6 +1318,22 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
         { box: 'ff-idle', ok: true, step: 'start' }]),
       own: window.FLOORDEV.cmdSay('force-stop', [
         { box: 'ff-wedged', ok: true, step: 'force-stop' }]),
+      /* N6 — the failure path. The guest WAS killed and then would not come
+         back: the row that failed is `start`, the row that says so is the
+         force-stop beside it, and this sentence used to carry neither. */
+      failedAfterForce: window.FLOORDEV.cmdSayFail('restart', [
+        { box: 'ff-wedged', ok: true, step: 'force-stop' },
+        { box: 'ff-wedged', ok: false, step: 'start' }], 'ff-wedged: boom'),
+      /* ...and the gentle failure must not grow the claim. */
+      failedGently: window.FLOORDEV.cmdSayFail('restart', [
+        { box: 'ff-idle', ok: true, step: 'down' },
+        { box: 'ff-idle', ok: false, step: 'start' }], 'ff-idle: boom'),
+      /* A force stop that FAILED killed nothing, and the error already names
+         it. Claiming the kill here would be the disclosure lying the other
+         way — worse than silence, because an operator would write the session
+         off. */
+      failedToForce: window.FLOORDEV.cmdSayFail('restart', [
+        { box: 'ff-wedged', ok: false, step: 'force-stop' }], 'ff-wedged: boom'),
     }));
     ok('force: a restart that escalated says so afterwards',
        /force-stopped ff-wedged/.test(said.forced), said.forced);
@@ -1241,6 +1341,13 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        said.graceful === 'restart ok', said.graceful);
     ok('force: the force-stop verb does not narrate itself twice',
        said.own === 'force-stop ok', said.own);
+    ok('force: a restart that killed the guest and then FAILED still says so',
+       /force-stopped ff-wedged/.test(said.failedAfterForce)
+         && /ff-wedged: boom/.test(said.failedAfterForce), said.failedAfterForce);
+    ok('force: a gentle failure claims no kill',
+       said.failedGently === 'restart FAILED — ff-idle: boom', said.failedGently);
+    ok('force: a force stop that itself failed is not reported as a kill',
+       !/force-stopped/.test(said.failedToForce), said.failedToForce);
   }
 
   /* Checked HERE, before the fleet-wide action below: that action deliberately

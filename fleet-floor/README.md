@@ -124,6 +124,16 @@ on it, and `ping.wedged` carries it to the console beside the evidence. A stale
 heartbeat is *unmeasured*, not unreachable, and takes the graceful path: the
 cost of being wrong there is a killed session.
 
+**And the console confirms the mode it then asks for.** One rule read at two
+times is still two answers: the page confirms from a snapshot up to one poll
+old, and the collector re-reads the ping map when the POST lands. So a restart
+carries `mode` — `graceful` or `force`, whichever the confirmation named — as
+the operator's *authorisation*, not as an instruction. The collector decides
+for itself as before, compares, and **refuses `409` having fired nothing** if
+the box moved in between. A request naming no mode means `graceful`, a bare
+restart's meaning before all this, so nothing can escalate without having shown
+a human the word.
+
 **Credentials are reported, never polled.** `gh auth status` inside every box
 on every poll was ~7,000 api.github.com requests a day to re-derive a fact
 that changes when a token expires, and at ~450ms it was the slowest thing in a

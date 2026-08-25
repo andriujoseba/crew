@@ -97,7 +97,7 @@ t "force: the fixture's wedged box is unreachable to the collector" True \
 # with the box neither stopped nor started.
 FS_M=$(fs_mark)
 FS_T0=$(date +%s)
-FS_R="$(api POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+FS_R="$(api POST /api/command '{"action":"restart","box":"ff-wedged","mode":"force"}')"
 FS_EL=$(( $(date +%s) - FS_T0 ))
 FS_SEEN="$(fs_calls_since "$FS_M")"
 t "force: restart on an unreachable box succeeds" 200 "$(printf '%s' "$FS_R" | tail -1)"
@@ -148,6 +148,96 @@ else fail "force: a reachable box still gets the graceful stop" "$FS_SEEN"; fi
 if grep -q '^start ff-idle$' <<<"$FS_SEEN"; then
   ok "force: a reachable box is started again afterwards"
 else fail "force: a reachable box is started again afterwards" "$FS_SEEN"; fi
+
+# --- D1/D4: the confirmed path and the executed path are ONE decision -------
+# The round-1 fix put the wedge rule in one place and served it. That is still
+# one rule evaluated at TWO TIMES: the page confirms from a fleet snapshot up
+# to one poll old, and the collector re-reads the ping map when the POST
+# lands. A box crossing the boundary in between let an operator confirm the
+# gentle sentence over a host that then ran `stop --force` — D1's silent
+# escalation through time-of-check/time-of-use rather than a duplicated
+# constant, and no assertion in this suite could see it, because every case
+# above posts and executes at the same instant.
+#
+# So the confirmed mode travels with the request and a disagreement REFUSES.
+# The transition is driven here by posting the mode the OTHER path would have
+# authorised — which is exactly what a stale page sends, and is the only way
+# to hold the two verdicts apart in one process without sleeping through a
+# poll interval and hoping.
+#
+# MUST FAIL, and it is the whole point of the block: a refusal that still
+# touched the host. `409` alone is equally true of a collector that refused
+# after stopping the box, so every case asks $FLOOR_CALLS what the host was
+# told to do. Patterns are anchored per box rather than asserting the log is
+# empty: the refusal asks for a fleet refresh on purpose, so the poller's own
+# calls land in this window and an emptiness check would read them as fired.
+echo "== restart mode (#486 round 2)"
+
+# 1. A GENTLE confirmation over a box that has gone wedged. The destructive
+#    direction: this is the one that must never authorise a kill.
+FS_M=$(fs_mark)
+FS_X="$(api POST /api/command '{"action":"restart","box":"ff-wedged","mode":"graceful"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "mode: a graceful confirmation over a wedged box is refused" 409 \
+  "$(printf '%s' "$FS_X" | tail -1)"
+t "mode: ...and says which way the box moved" force \
+  "$(printf '%s' "$FS_X" | sed '$d' | jqf "d.get('verdict','')")"
+t "mode: ...and what was confirmed against it" graceful \
+  "$(printf '%s' "$FS_X" | sed '$d' | jqf "d.get('confirmed','')")"
+# REFUSED is not FAILED: the page renders them differently because nothing ran.
+t "mode: ...and marks itself refused rather than failed" True \
+  "$(printf '%s' "$FS_X" | sed '$d' | jqf "d.get('refused',False)")"
+case "$FS_X" in
+  *"confirm again"*) ok "mode: ...and tells the operator what to do next" ;;
+  *) fail "mode: ...and tells the operator what to do next" "$FS_X" ;;
+esac
+if grep -qE '^(down|start) ff-wedged$|^incus ff-wedged ' <<<"$FS_SEEN"; then
+  fail "mode: a refused restart fires NOTHING at the host" "$FS_SEEN"
+else ok "mode: a refused restart fires NOTHING at the host"; fi
+t "mode: ...and the box is left exactly as it was" running \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+
+# 2. The same rule the other way. Harmless in outcome — a gentler path than
+#    the operator authorised — but an operator told "any running session is
+#    lost" who got something else still met a console that does not do what it
+#    says, and one predicate with two behaviours is what this issue is about.
+FS_M=$(fs_mark)
+FS_X="$(api POST /api/command '{"action":"restart","box":"ff-idle","mode":"force"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "mode: a force confirmation over a box that answers is refused too" 409 \
+  "$(printf '%s' "$FS_X" | tail -1)"
+t "mode: ...naming the verdict that now holds" graceful \
+  "$(printf '%s' "$FS_X" | sed '$d' | jqf "d.get('verdict','')")"
+if grep -qE '^(down|start) ff-idle$|^incus ff-idle ' <<<"$FS_SEEN"; then
+  fail "mode: the harmless direction fires nothing either" "$FS_SEEN"
+else ok "mode: the harmless direction fires nothing either"; fi
+
+# 3. A request that names NO mode means graceful — a bare restart's meaning
+#    before this issue existed. So the old request shape keeps its old
+#    semantics and cannot become a kill by arriving at the wrong moment: the
+#    escalation is reachable only from a client that showed a human the word.
+FS_M=$(fs_mark)
+t "mode: a restart naming no mode never escalates" 409 \
+  "$(status POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+if grep -q '^incus ff-wedged ' <<<"$FS_SEEN"; then
+  fail "mode: ...and did not kill the guest on the way" "$FS_SEEN"
+else ok "mode: ...and did not kill the guest on the way"; fi
+t "mode: an unknown mode is refused as a bad request" 400 \
+  "$(status POST /api/command '{"action":"restart","box":"ff-idle","mode":"kill"}')"
+
+# 4. Agreement still executes, on both paths, with the argv unchanged. Without
+#    these the block above is satisfied by a collector that refuses everything.
+FS_M=$(fs_mark)
+t "mode: an agreeing graceful confirmation still restarts" 200 \
+  "$(status POST /api/command '{"action":"restart","box":"ff-idle","mode":"graceful"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+if grep -q '^down ff-idle$' <<<"$FS_SEEN" && grep -q '^start ff-idle$' <<<"$FS_SEEN"; then
+  ok "mode: ...with today's argv, both halves"
+else fail "mode: ...with today's argv, both halves" "$FS_SEEN"; fi
+if grep -q '^incus ' <<<"$FS_SEEN"; then
+  fail "mode: ...and no escalation on the agreeing gentle path" "$FS_SEEN"
+else ok "mode: ...and no escalation on the agreeing gentle path"; fi
 
 # --- D1: a graceful stop never escalates on its own -------------------------
 # MUST FAIL: a graceful stop silently succeeding against the hanging arm. This
