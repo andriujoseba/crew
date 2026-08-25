@@ -1648,6 +1648,18 @@ function goLive(){
    shutdown — `box incus <box> -- stop --force` (#486); the reply carries
    per-box rc so a refused or failed action is reported instead of being
    animated as success, and a `step` naming which of those paths it took. */
+/* cmdSay ACTION RESULTS — the status line for an action that SUCCEEDED.
+   An action that escalated says so after the fact, not only in the confirm
+   before it: `restart ok` alone hides that this guest was killed where it
+   stood rather than asked to stop, and this line is the one place an operator
+   looks afterwards (#486). Read off the reply's own `step` — the collector's
+   record of the path it took — never re-derived from the fleet's state here,
+   which is the mistake this round fixed one function over. Silent for
+   `force-stop` itself, where the verb the operator fired is the disclosure. */
+function cmdSay(action,results){
+  var forced=action==="force-stop"?[]:(results||[]).filter(function(x){return x.step==="force-stop";});
+  return action+" ok"+(forced.length?" — force-stopped "+forced.map(function(x){return x.box;}).join(", "):"");
+}
 function cmd(action,extra){
   var body=Object.assign({action:action},extra||{});
   setStatus(action+"…",false);
@@ -1660,15 +1672,7 @@ function cmd(action,extra){
       /* Name the box that refused. On a fleet-wide action "start-all FAILED"
          alone tells the operator nothing about which box needs a look. */
       var why=bad.length?(bad[0].box+": "+bad[0].out+(bad.length>1?" (+"+(bad.length-1)+" more)":"")):(r.error||"?");
-      /* #486 — an action that ESCALATED says so after the fact, not only in
-         the confirm before it. `restart ok` alone hides that this guest was
-         killed where it stood rather than asked to stop, and the one place an
-         operator looks afterwards is this line. Read off the reply's own
-         `step` — the collector's record of the path it took — never
-         re-derived here, which is the mistake this round fixed once already.
-         Not said for `force-stop` itself: the verb is already the disclosure. */
-      var forced=action==="force-stop"?[]:(r.results||[]).filter(function(x){return x.step==="force-stop";});
-      setStatus(r.ok?action+" ok"+(forced.length?" — force-stopped "+forced.map(function(x){return x.box;}).join(", "):""):action+" FAILED — "+why,!r.ok);
+      setStatus(r.ok?cmdSay(action,r.results):action+" FAILED — "+why,!r.ok);
       pollFleet();
       return r;
     })
@@ -6396,6 +6400,11 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      a test would otherwise write is exactly the independent threshold this
      round deleted. */
   restartAsk:function(box,d){return restartAsk(box,d);},
+  /* ...and its other half: the sentence an operator is left with AFTER the
+     action, over a reply this walk can name exactly. The escalation is
+     disclosed twice — before the click and after it — so both sentences are
+     assertable, and neither is reconstructed test-side. */
+  cmdSay:function(action,results){return cmdSay(action,results);},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
      real fleet (same ethos as guides: a claim should be a lookable-at).
      buildsLastSec MUST read 0 with a stable roster — a deterministic still

@@ -1218,6 +1218,29 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('force: a box the collector calls reachable is never told it will be killed',
        !!say && !/FORCE/.test(say.gentle) && /stopped and started again/.test(say.gentle),
        say && say.gentle);
+
+    /* The disclosure AFTER the click. A restart that escalated and one that
+       did not both end `restart ok`, so the status line was the one place the
+       operator could not tell what had happened to their box. Driven over
+       replies named here rather than by firing a restart: the reply's `step`
+       is the collector's record, floor/actions.sh already proves the collector
+       writes it, and this asserts the page says it. */
+    const said = await page.evaluate(() => ({
+      forced: window.FLOORDEV.cmdSay('restart', [
+        { box: 'ff-wedged', ok: true, step: 'force-stop' },
+        { box: 'ff-wedged', ok: true, step: 'start' }]),
+      graceful: window.FLOORDEV.cmdSay('restart', [
+        { box: 'ff-idle', ok: true, step: 'down' },
+        { box: 'ff-idle', ok: true, step: 'start' }]),
+      own: window.FLOORDEV.cmdSay('force-stop', [
+        { box: 'ff-wedged', ok: true, step: 'force-stop' }]),
+    }));
+    ok('force: a restart that escalated says so afterwards',
+       /force-stopped ff-wedged/.test(said.forced), said.forced);
+    ok('force: a graceful restart claims nothing of the kind',
+       said.graceful === 'restart ok', said.graceful);
+    ok('force: the force-stop verb does not narrate itself twice',
+       said.own === 'force-stop ok', said.own);
   }
 
   /* Checked HERE, before the fleet-wide action below: that action deliberately
