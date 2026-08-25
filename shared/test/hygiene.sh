@@ -397,15 +397,21 @@ t hygiene-non-numeric-epoch-warns-by-repo 1 \
 # is not a refusal for root, and the suite runs as root on some boxes — the case
 # would then read the file happily and assert nothing. Stubbing the one external
 # command the read makes is the same seam every other outside call in these
-# cases is already stubbed at, and it is the same answer on every box. The gate
-# returns before it reaches any other `awk`, so the stub's reach is exactly the
-# ledger read.
+# cases is already stubbed at, and it is the same answer on every box.
+#
+# The stub fails ONLY the ledger read and delegates every other awk. That is
+# what makes these cases discriminating: with the whole command stubbed out the
+# digest would fail too, the gate would reach `fail-open` by the other road, and
+# a version that discarded the read status would pass anyway.
 # shellcheck disable=SC2317  # the stubs run inside the sourced module
 hyg_unreadable_ledger_case() {
   (
     DUTY_DIR="$HYG"
     HYGIENE_FLOOR=43200
-    awk() { return 2; }
+    awk() {
+      case "$*" in *.seen-hygiene*) return 2 ;; esac
+      command awk "$@"
+    }
     log() { printf 'LOG %s\n' "$*"; }
     warn() { printf 'WARN %s\n' "$*"; }
     gh() { printf '[]\n'; }
@@ -443,6 +449,27 @@ t hygiene-unwritable-ledger-warns-by-repo 1 \
   "$(hyg_count "$HYG_NOWRITE" '^WARN heavy-duty/crew: the hygiene ledger row could not be written')"
 t hygiene-unwritable-ledger-writes-no-ledger 0 \
   "$(ls "$HYG/no-such-dir" 2>/dev/null | wc -l | tr -d ' ')"
+
+# The rewrite's own failure mode, one layer down: if the pass that copies every
+# OTHER repo's row fails, the half-built file must not be moved into place. A
+# ledger truncated to one row is worse than a rewrite that did not happen — the
+# repos it dropped lose their floor timestamps and read as never swept.
+# shellcheck disable=SC2317  # the stub runs inside the sourced module
+hyg_commit_rebuild_fails_case() {
+  (
+    DUTY_DIR="$HYG"
+    awk() { return 1; }
+    _hygiene_ledger_commit heavy-duty/crew deadbeef-1 1756000000
+    printf 'RC %s\n' "$?"
+  )
+}
+hyg_reset
+printf 'heavy-duty/ceremony aaaa-1 1756000000\nheavy-duty/crew bbbb-2 1756000001\n' >"$HYG/.seen-hygiene"
+HYG_LEDGER_INTACT="$(cat "$HYG/.seen-hygiene")"
+t hygiene-failed-rewrite-reports-failure 'RC 1' "$(hyg_commit_rebuild_fails_case)"
+t hygiene-failed-rewrite-leaves-the-ledger-whole "$HYG_LEDGER_INTACT" "$(cat "$HYG/.seen-hygiene")"
+t hygiene-failed-rewrite-leaves-no-temp-file 0 \
+  "$(find "$HYG" -maxdepth 1 -name '.seen-hygiene.*' | wc -l | tr -d ' ')"
 
 # The row is earned by the session, the rule .seen-build and .seen-resume
 # already follow: a crashed sweep must not buy a digest it never acted on.

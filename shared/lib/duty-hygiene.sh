@@ -80,16 +80,18 @@ _hygiene_digest() {
 # _hygiene_ledger_line REPO — this repo's row of .seen-hygiene, or nothing.
 #
 # rc 0 means the ledger was READ: the row is on stdout, and empty stdout means
-# this repo has no row yet. rc 2 means it could not be read at all. The two must
-# not collapse into "no row": an unreadable ledger would then report itself as a
-# first sweep — the right ACTION, since a first sweep sweeps, but silently, and
-# a gate that cannot read its own state must say so like every other fail-open
-# branch here (#59). No row and no ledger are both rc 0; only a file that exists
-# and will not open is rc 2.
+# this repo has no row yet. NONZERO means it could not be read at all — awk's
+# own status, propagated rather than translated, since the caller only asks
+# whether the read happened. The two must not collapse into "no row": an
+# unreadable ledger would then report itself as a first sweep — the right
+# ACTION, since a first sweep sweeps, but silently, and a gate that cannot read
+# its own state must say so like every other fail-open branch here (#59). No row
+# and no ledger at all are both rc 0; only a file that exists and will not open
+# is nonzero.
 _hygiene_ledger_line() {
   local ledger="$DUTY_DIR/.seen-hygiene"
   [ -f "$ledger" ] || return 0
-  awk -v r="$1" '$1 == r { print; exit }' "$ledger" || return 2
+  awk -v r="$1" '$1 == r { print; exit }' "$ledger"
 }
 
 # _hygiene_ledger_commit REPO DIGEST EPOCH — replace this repo's row, keep every
