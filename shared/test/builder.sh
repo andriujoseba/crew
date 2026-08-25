@@ -34,12 +34,14 @@ else
   r1=MISSING
 fi
 t d530-rendered-review-names-self-matching-hazard named "$r1"
+# shellcheck disable=SC2016  # rendered shell syntax is matched literally
 if grep -Fq 'Prefer these mechanisms in order: `wait "$pid"` for a child of the current shell → `while kill -0 "$pid" 2>/dev/null; do sleep 5; done` for a known PID → a sentinel the command itself writes.' <<<"$D530_RENDERED"; then
   r1=ordered
 else
   r1=CHANGED
 fi
 t d530-rendered-review-orders-wait-mechanisms ordered "$r1"
+# shellcheck disable=SC2016  # prompt backticks are matched literally
 if grep -Fq 'Bound every wait with `timeout`' <<<"$D530_RENDERED" &&
    grep -Fq 'never run an unbounded `until` or `while`' <<<"$D530_RENDERED"; then
   r1=bounded
@@ -47,6 +49,7 @@ else
   r1=UNBOUNDED
 fi
 t d530-rendered-review-bounds-every-wait bounded "$r1"
+# shellcheck disable=SC2016  # wrapper variables are prompt text, not test vars
 if grep -Fq '{ <command>; echo "EXIT=$?"; } >"$log" 2>&1 &' <<<"$D530_RENDERED" &&
    grep -Fq 'poll `$log` for `EXIT=`' <<<"$D530_RENDERED"; then
   r1=sentinel
@@ -54,6 +57,7 @@ else
   r1=MISSING
 fi
 t d530-rendered-review-gives-sentinel-wrapper sentinel "$r1"
+# shellcheck disable=SC2016  # prompt backticks are matched literally
 if [ "$(grep -Fo 'pgrep -f' <<<"$D530_RENDERED" | wc -l)" -eq 1 ] &&
    grep -Fq 'never use `pgrep -f` as a wait mechanism' <<<"$D530_RENDERED"; then
   r1=forbidden
