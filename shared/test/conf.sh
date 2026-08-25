@@ -367,6 +367,71 @@ API Error: Server error mid-response. The response above may be incomplete.
 ACTED_EOF
 
 
+# A `review` session reporting its own verdict.
+#
+# There is no captured `review` transcript in this box's 1065 logs — 577
+# resume, 312 build, 131 attention, 36 ci-red, and not one review — and that
+# absence is itself the defect this fixture exists for: the first cut of this
+# detector was tuned on that corpus, so it could not see the review duty's
+# acts and booked 25 reviewer sessions that had written a verdict to GitHub as
+# idle. The text below is claude-bot's minimal reproduction, verbatim from its
+# review of PR #522 at head `d98ccd41`, where it was run against 1260 captured
+# review logs. It is quoted rather than invented, and where it came from is
+# said here rather than left to be assumed.
+cat >"$ALOG/verdict.log" <<'ACTED_EOF'
+**heavy-duty/crew#999 — approved** at head `abc1234`.
+
+The announce for this head was already present, so I posted nothing new.
+Reviewed in a detached worktree; the full suite is still running on the
+follow-up branch. Verdict submitted via the wrapper (exit 0), verified landed.
+ACTED_EOF
+
+# The same duty in its passive voice, which is the half a verb list cannot
+# reach: no first-person subject anywhere near the act, and an idle claim
+# ("I made no other changes") in front of it.
+cat >"$ALOG/passive.log" <<'ACTED_EOF'
+Both PRs reviewed and approved. Announcements posted once each.
+Both verdicts submitted and the worktrees are cleaned up; I made no other changes.
+ACTED_EOF
+
+# THE OTHER HALF OF THAT TRAP, and the reason the verdict pattern anchors to
+# position rather than to a head SHA. This is a `resume` session that did
+# nothing and says so — while quoting a whole panel's approvals, its own
+# signal marker from a PREVIOUS session, and a handoff. An earlier draft of
+# the review-duty widening accepted `approved at <sha>` and flipped 45 corpus
+# sessions of exactly this shape to `yes`; every one was false.
+# captured: ~/duty/logs/20260806T055009Z-resume-heavy-duty_crew.log
+cat >"$ALOG/quoted.log" <<'ACTED_EOF'
+No action taken, and nothing posted — correctly so.
+
+**PR #376 is finished, not stranded.** The resume wake named it, but the thread shows the round is complete and handed off:
+
+- Head `019db9b` (last commit 2026-08-05T23:57:23Z, unchanged since)
+- My `📣 round answered at head 019db9b4c85485910ee1c4b6adc429650dcd924e` posted at 01:01:31Z
+- All three panelists — claude-bot, codex-bot, kimi-bot — APPROVED **at that exact head** (01:10Z / 01:13Z / 01:19Z)
+- `🤝 handed off at head 019db9b…` posted 01:21:50Z, `state:needs-human` set, `requested_reviewers` now just `danmt`
+- Rollup green at head: `guards` success, `ci-shell` success, `labels / scope` success, `labels / trigger` success
+
+Re-signalling here would re-request an already-unanimous panel on a PR the human now owns — the exact marker flood #145/#311 forbid.
+
+No other work was outstanding: no draft PRs, no orphaned claimed issues. Session exits silent.
+ACTED_EOF
+
+# D4's THIRD state — "a transcript the profile does not recognise" — on the
+# only log in 1065 that is one. Fifty-eight bytes of a session cut off after a
+# probe result: it names nothing this engine does, so whether it acted is not
+# ambiguous, it is absent. D3 governs ambiguity; this is not that.
+# captured: ~/duty/logs/20260815T080517Z-build-heavy-duty_ceremony.log
+cat >"$ALOG/frag.log" <<'ACTED_EOF'
+Probe 4 passed (tags 1→1, releases 1→1). Four remain.
+ACTED_EOF
+
+# And a transcript from a different runtime altogether, which is the same
+# state arriving the other way: prose, first-person, and about nothing this
+# profile reads. It is the fixture `shared/test/common/session.sh` used to
+# assert `unknown` with, kept here now that the stub it relied on is gone.
+printf 'Claude Code\nfinal answer: I need more information.\n' >"$ALOG/foreign.log"
+
 # `Execution error` is what the CLI prints when it dies before the model
 # speaks: fifteen bytes and NO trailing newline. All 26 in the corpus.
 printf 'Execution error' >"$ALOG/fault.log"
@@ -405,6 +470,22 @@ for agent in claude grok; do
   t "acted-$agent-subaction-claim-is-yes" 0 "$(acted_rc "$agent" "$ALOG/trap.log")"
   # Waiting on someone else's verdict is doing nothing, and says so.
   t "acted-$agent-waiting-only-is-no"  1 "$(acted_rc "$agent" "$ALOG/wait.log")"
+  # THE REVIEW DUTY. Both of these open with a no-op claim and both acted: one
+  # in the engine's marker shape, one in the passive voice with no subject
+  # anywhere near the verb. A detector tuned on builder transcripts alone
+  # answers `no` to both, which is what it did to 25 real reviewer sessions.
+  t "acted-$agent-review-verdict-is-yes"   0 "$(acted_rc "$agent" "$ALOG/verdict.log")"
+  t "acted-$agent-subjectless-verdict-is-yes" 0 "$(acted_rc "$agent" "$ALOG/passive.log")"
+  # ...and the guard that stops that widening eating the idle column: a
+  # resumption QUOTING a panel's approvals, its own earlier signal and a
+  # handoff, having done nothing. Position, not proximity to a SHA.
+  t "acted-$agent-quoted-verdict-is-no"    1 "$(acted_rc "$agent" "$ALOG/quoted.log")"
+  # D4's third clause, both doors: a fragment that names nothing this engine
+  # does, and a transcript from another runtime. Neither is `no` — the
+  # session's acts are not undecided here, they are unstated — and neither is
+  # `yes`, which is where an un-gated D3 default put them.
+  t "acted-$agent-fragment-is-unknown"     2 "$(acted_rc "$agent" "$ALOG/frag.log")"
+  t "acted-$agent-foreign-log-is-unknown"  2 "$(acted_rc "$agent" "$ALOG/foreign.log")"
 done
 
 # The three states survive session_acted's mapping and reach duty.log as the
@@ -454,7 +535,7 @@ AGG="$TMP/acted-duty.log"; : >"$AGG"
 (
   # shellcheck disable=SC1091
   source "$SHARED/conf/agents/claude.conf"
-  for f in push read trap wait ambi empty fault quota; do
+  for f in push read trap wait ambi verdict quoted empty fault quota; do
     # The stub IS the CLI: it replays one captured transcript verbatim. $0 is
     # the fixture because run_session appends the prompt as the final argument.
     # shellcheck disable=SC2016  # $0 is the shim's own argument, not this shell's
@@ -471,12 +552,12 @@ agg_idle() { awk '/SESSION END/ {
   } END { for (k in n) printf "%s sessions=%d idle=%d\n", k, n[k], idle[k] + 0 }' "$1"
 }
 agg="$(agg_idle "$AGG")"
-t acted-aggregate-counts-every-session "sessions=8" \
+t acted-aggregate-counts-every-session "sessions=10" \
   "$(printf '%s\n' "$agg" | sed -n 's/.*\(sessions=[0-9]*\).*/\1/p')"
 # The whole point. `idle=0` across 4150 sessions was a disabled detector; an
 # `idle` equal to the session count would be a detector stuck the other way.
 idle_n="$(printf '%s\n' "$agg" | sed -n 's/.*idle=\([0-9]*\).*/\1/p')"
-[ "${idle_n:-0}" -gt 0 ] && [ "${idle_n:-8}" -lt 8 ] && r1=non-degenerate || r1="degenerate(idle=$idle_n)"
+[ "${idle_n:-0}" -gt 0 ] && [ "${idle_n:-10}" -lt 10 ] && r1=non-degenerate || r1="degenerate(idle=$idle_n)"
 t acted-aggregate-idle-is-non-degenerate non-degenerate "$r1"
 
 
