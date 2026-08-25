@@ -10,6 +10,7 @@ from floor.ping import (PING_FAILS_TO_WEDGE, PING_INTERVAL_S,
 from floor.roster import FLOOR_VERSION, agent_conf_path, box_states, read_roster
 from floor.units import build_unit, fmt_dur, unit_defaults
 
+
 def wedged(ping, now):
     """Has this box stopped answering RIGHT NOW? One definition (#486).
 
