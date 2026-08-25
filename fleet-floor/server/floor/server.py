@@ -13,9 +13,10 @@ from urllib.parse import parse_qs, urlparse
 
 from floor import INDEX
 from floor.actions import do_command
+from floor.alerts import alert_command_from_config
 from floor.fleet import Fleet
 from floor.ping import PING_INTERVAL_S, log, run
-from floor.roster import read_roster, require_operator_config
+from floor.roster import CONFIG_DIR, read_roster, require_operator_config
 
 # --------------------------------------------------------------------------
 # HTTP
@@ -165,7 +166,10 @@ def serve(bind, port, user, password, interval):
                  "in a repository checkout, or reinstall (an installed tree "
                  "carries the built page, not the builder)" % INDEX)
 
-    fleet = Fleet(interval)
+    alert_command, alert_error = alert_command_from_config(CONFIG_DIR)
+    if alert_error:
+        log(alert_error)
+    fleet = Fleet(interval, alert_command)
     Handler.fleet = fleet
     Handler.auth_token = base64.b64encode(("%s:%s" % (user, password)).encode()).decode()
 
