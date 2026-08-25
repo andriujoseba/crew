@@ -338,7 +338,15 @@ app_surface_no_build_duty() {
   # A cause the reason function can produce. `board empty` and `board unread`
   # carry no count on purpose — there is nothing to count — so requiring digits
   # of every line would red a correct log.
-  cause='no build duty \((slot held by .+; board holds [0-9]+ ready|[0-9]+ ready, [0-9]+ round\(s\) held by seen-ledger|[0-9]+ ready held by seen-ledger|[0-9]+ round\(s\) held by seen-ledger|board empty|board unread)\)'
+  #
+  # This is a WHITELIST of what the function emits, so it moves whenever the
+  # function learns a new cause. #462 added the declined form, which carries a
+  # parenthesised count per reason and may be preceded by the ledger half and
+  # followed by the rounds half — and, unlike the others, appears only after a
+  # session has actually declined something, so an unupdated whitelist here reds
+  # a correct log on the first box that meets one.
+  local declined='[0-9]+ ready declined: [a-z-]+ \([0-9]+\)(, [a-z-]+ \([0-9]+\))*'
+  cause='no build duty \((slot held by .+; board holds [0-9]+ ready|([0-9]+ ready held by seen-ledger, )?'"$declined"'(, [0-9]+ round\(s\) held by seen-ledger)?|[0-9]+ ready, [0-9]+ round\(s\) held by seen-ledger|[0-9]+ ready held by seen-ledger|[0-9]+ round\(s\) held by seen-ledger|board empty|board unread)\)'
   bad="$(grep -vE "$cause" "$lines" | head -3 | tr '\n' ' ' || true)"
   t "duty.log: every no build duty line names a cause ($n lines)" "" "$bad"
 }

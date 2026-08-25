@@ -5523,6 +5523,11 @@ t app-surface-308-no-engine-line-red FAIL "$(surf_says "$r1" "$SURF_S")"
 { printf 'crew-a 12:00 heavy-duty/crew: no build duty (board empty)\n'
   printf 'crew-b 12:00 heavy-duty/crew: no build duty (slot held by #402; board holds 3 ready)\n'
   printf 'crew-d 12:00 heavy-duty/crew: no build duty (2 ready, 1 round(s) held by seen-ledger)\n'
+  # #462's cause: the ledger branch finally naming what it holds. Both halves,
+  # because the declined half may be flanked by the plain ledger hold and by
+  # the rounds hold on the same line.
+  printf 'crew-e 12:00 heavy-duty/crew: no build duty (4 ready declined: unbuildable (3), needs-ruling (1))\n'
+  printf 'crew-f 12:00 heavy-duty/crew: no build duty (1 ready held by seen-ledger, 1 ready declined: out-of-scope (1), 2 round(s) held by seen-ledger)\n'
 } >"$SURF/nbd.txt"
 printf 'crew-a 12:00 heavy-duty/crew: no build duty\n' >"$SURF/nbd-bare.txt"
 : >"$SURF/nbd-empty.txt"
