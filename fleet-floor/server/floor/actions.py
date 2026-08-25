@@ -248,7 +248,56 @@ def do_command(fleet, body):
         # rather than re-derived here: what the console paints UNREACHABLE and
         # what this escalates on have to be one fact, or an operator meets two
         # answers about the same box mid-incident.
-        if fleet.box_unreachable(box):
+        #
+        # ONE FACT IS NOT ENOUGH; IT HAS TO BE ONE DECISION. Publishing
+        # `ping.wedged` stopped the page spelling a rule of its own, but the
+        # page still read it from a snapshot up to one poll old while this
+        # asked the ping map again on arrival. One rule evaluated at two times
+        # is two answers: a box crossing the wedge boundary inside that window
+        # let an operator confirm "it is stopped and started again" over a
+        # host that then ran `stop --force`. Disclosing the kill afterwards is
+        # not the same thing as being authorised to do it.
+        #
+        # So the confirmed path travels WITH the request. `mode` is not an
+        # instruction — the collector still decides, exactly as above — it is
+        # the operator's authorisation, a record of which sentence they were
+        # shown. The two are compared, and a disagreement REFUSES rather than
+        # picking a winner: nothing is fired at the host, in either direction.
+        #
+        # Absent means "graceful", which is what a bare restart meant before
+        # this issue existed. That keeps the old request shape's old meaning
+        # and makes the escalation reachable only from something that showed a
+        # human the word FORCE-STOPPED — a client that names no mode cannot
+        # kill a guest by arriving at the wrong moment.
+        mode = str(body.get("mode", "graceful"))
+        if mode not in ("graceful", "force"):
+            return 400, {"ok": False, "error": "unknown restart mode %r" % mode}
+        verdict = "force" if fleet.box_unreachable(box) else "graceful"
+        if mode != verdict:
+            # Refuse SYMMETRICALLY. Recovering into a gentler path is the
+            # harmless direction, but an operator who was told "any running
+            # session is lost" and got something else still met a console that
+            # does not do what it says. One predicate, one behaviour.
+            became = ("has stopped answering since that dialog, so restarting "
+                      "it now would FORCE-STOP it"
+                      if verdict == "force" else
+                      "is answering again since that dialog, so restarting it "
+                      "now would stop it gracefully")
+            log("restart %s refused (confirmed %s, now %s)" % (box, mode, verdict))
+            # Re-poll so the operator's next click carries the new verdict
+            # rather than the snapshot that just went stale under them.
+            fleet.request_refresh()
+            return 409, {
+                "ok": False,
+                # REFUSED is not FAILED, and the page must be able to tell them
+                # apart without parsing prose: nothing ran, so no per-box rows
+                # exist to carry the news the way a failed action's do.
+                "refused": True,
+                "confirmed": mode,
+                "verdict": verdict,
+                "error": "%s %s. Nothing was done — confirm again." % (box, became),
+            }
+        if verdict == "force":
             results.append(one(box, force_stop_argv(box), step="force-stop"))
         else:
             results.append(one(box, ["box", "down", box], step="down"))
