@@ -2537,7 +2537,10 @@ t ci-red-ledger-commit-is-settle-gated gated "$r1"
 # `attention` remains a hand-written demand. Reads in duty-attention.sh are the
 # wake mechanism and are allowed; engine label writes are not. Fold continued
 # shell lines before looking for add/remove-label or labels[]= writes so moving
-# an argument onto the next source line cannot evade the guard.
+# an argument onto the next source line cannot evade the guard. The library
+# half of the population is walked, not globbed: shared/lib/common/ is engine
+# source and a non-descending glob would exempt it (#507).
+mapfile -t attention_sources < <(engine_lib_sources)
 attention_writes="$(awk '
   FNR == 1 { logical = "" }
   {
@@ -2553,7 +2556,7 @@ attention_writes="$(awk '
         line ~ /(--add-label|--remove-label|labels\[\])/ &&
         line ~ /(LABEL_ATTENTION|attention)/) print FILENAME ":" FNR ":" line
   }
-' "$SHARED"/lib/*.sh "$SHARED"/bin/* 2>/dev/null)"
+' "${attention_sources[@]}" "$SHARED"/bin/* 2>/dev/null)"
 t engine-never-writes-attention-label "" "$attention_writes"
 
 # ledger_filter re-fires when the value sorts GREATER, and a SHA has no order.
@@ -3865,7 +3868,10 @@ t doctrine-custom-no-unresolved-slots "" "$doctrine_unresolved"
 # unknown slots literal deliberately, so this belongs in CI rather than the
 # runtime tick. The fixture mutations prove both missing-argument failure
 # shapes and the built-in doctrine exemption.
-render_sources=("$SHARED"/lib/*.sh "$SHARED"/bin/*.sh)
+# Walked, not globbed, for the same reason as the attention guard above: the
+# seven shared/lib/common/ modules are render sites too (#507).
+mapfile -t render_sources < <(engine_lib_sources)
+render_sources+=("$SHARED"/bin/*.sh)
 t render-sites-supply-every-prompt-slot "" \
   "$(render_site_missing_slots "$SHARED/prompts" "${render_sources[@]}")"
 

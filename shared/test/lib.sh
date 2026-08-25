@@ -56,6 +56,17 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
   grep -Fq -- "$3" <<<"$output"
 }
 
+# The engine's shell source, derived recursively rather than globbed. A guard
+# spelled "$SHARED"/lib/*.sh stops above shared/lib/common/, so #507's split
+# took seven engine modules out of two guard populations at once without a
+# single assertion going red — the failure mode a glob has and a walk does not.
+# Every guard whose population is "the engine's library source" derives it
+# here, so the next shared/lib/<dir>/ costs nothing. Sorted for a stable
+# report across boxes; callers add their own bin/ half.
+engine_lib_sources() {
+  find "$SHARED/lib" -type f -name '*.sh' -print | sort
+}
+
 # #443: derive the guarded population from both file-scope pipefail settings
 # and source edges. The candidate surfaces are the issue's declared scope;
 # #447 extended the same derivation to shared/lib without duplicating it, and
