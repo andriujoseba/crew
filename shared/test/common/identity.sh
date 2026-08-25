@@ -127,7 +127,11 @@ t tick-uses-gh-identity wired "$r1"
 # No expiry date is tracked anywhere any more: four providers express it four
 # ways and two cannot answer locally at all, so the countdown was the flaky
 # half of the idea. A reintroduced record_token_expiry would put it back.
-if grep -q 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh"; then r1=TRACKED; else r1=clean; fi
+#
+# Read over the whole module tree, not the entry point. common.sh is 45 lines
+# of `source` since #507, so a grep pinned there passes whatever the modules
+# say — a guard that cannot fail, which is worse than no guard.
+if grep -rq 'record_token_expiry\|token-expiry' "$SHARED/lib/common.sh" "$SHARED/lib/common/"; then r1=TRACKED; else r1=clean; fi
 t no-expiry-date-tracked clean "$r1"
 
 # --- git identity: the second carrier of the box's login (#294) -------------

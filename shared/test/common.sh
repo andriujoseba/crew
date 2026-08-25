@@ -9627,6 +9627,37 @@ case "$status_out" in *unverified*) r1=unverified ;; *MODIFIED*) r1=MODIFIED ;; 
 t status-pre-existing-box-reads-unverified unverified "$r1"
 
 
+# --- the suite tree mirrors the source tree (#507) --------------------------
+# D2 is an invariant about the LAYOUT, not about the seven modules this split
+# happened to produce: every shared/lib/common/<m>.sh is covered by a
+# shared/test/common/<m>.sh, and the runner is told about it. Stated in
+# shared/README.md and enforced here, because a documented invariant nothing
+# reads is the next module's silent coverage hole.
+#
+# Both directions. A module with no suite is the failure D2 names; a suite
+# with no module is a file the split left behind and nobody runs against
+# anything.
+mirror_missing_suite=""
+mirror_missing_module=""
+mirror_unregistered=""
+for mirror_mod in "$SHARED"/lib/common/*.sh; do
+  mirror_name="$(basename "$mirror_mod" .sh)"
+  [ -f "$HERE/common/$mirror_name.sh" ] \
+    || mirror_missing_suite="$mirror_missing_suite $mirror_name"
+  case " ${SUITES[*]} " in
+    *" common/$mirror_name "*) ;;
+    *) mirror_unregistered="$mirror_unregistered $mirror_name" ;;
+  esac
+done
+for mirror_suite in "$HERE"/common/*.sh; do
+  mirror_name="$(basename "$mirror_suite" .sh)"
+  [ -f "$SHARED/lib/common/$mirror_name.sh" ] \
+    || mirror_missing_module="$mirror_missing_module $mirror_name"
+done
+t common-module-has-mirrored-suite "" "$mirror_missing_suite"
+t common-suite-has-mirrored-module "" "$mirror_missing_module"
+t common-module-suite-registered "" "$mirror_unregistered"
+
 if "$SHARED/test/claim.test.sh"; then r1=0; else r1=$?; fi
 t claim-regression-suite 0 "$r1"
 

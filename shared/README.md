@@ -21,7 +21,9 @@ shared/
   bin/submit-verdict.sh  one-shot verdict gate (sessions may not gh pr review directly)
   bin/post-once.sh       idempotent exact-body comment (the 🔎 announce, etc.)
   bin/notify.sh          operator merge queue over Telegram (fleet singleton, triage box)
-  lib/common.sh          config, logging, checkouts, session runner, panel resolution
+  lib/common.sh          the entry point: path constants, then every common/ module
+  lib/common/*.sh        one module per subject: logging / conf / checkout / session
+                         / breaker / ledger / identity
   lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
   conf/fleet.defaults.conf shipped label vocabulary, wire marks and defaults
@@ -31,9 +33,24 @@ shared/
   ../examples/           fallback roster, operator config and registry seeds
   prompts/*.txt          role prompts as versioned templates ({{VAR}} slots)
   test/run.sh            fixture tests (bash+jq only, no network) — run by ci-shell
+  test/common/*.sh       one suite per lib/common/ module, at the mirrored path
   install.sh             deploy to ~/duty; identity comes from the box's fleet.roster row
   crontab.example        one line per box
 ```
+
+**The suite tree mirrors the source tree, one suite per module at the same
+relative path.** `lib/common/identity.sh` is covered by
+`test/common/identity.sh`, and by that file alone. This is an invariant rather
+than a description of today's seven modules: a module added under `lib/`
+brings its mirrored suite with it in the same change, and registers it in
+`test/lib.sh`'s `SUITES`. `test/common.sh` asserts all three directions, so a
+module that arrives without its suite is a red check and not a coverage hole
+discovered later (#507).
+
+Why it is a rule and not a preference: a single suite per subsystem is what
+serialises unrelated work. Twelve members of one release window edited
+`lib/common.sh`, and splitting only the source would have moved that queue
+into `test/common.sh` unchanged.
 
 ## Architecture in one paragraph
 
