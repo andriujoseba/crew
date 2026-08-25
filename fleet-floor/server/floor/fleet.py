@@ -10,6 +10,27 @@ from floor.ping import (PING_FAILS_TO_WEDGE, PING_INTERVAL_S,
 from floor.roster import FLOOR_VERSION, agent_conf_path, box_states, read_roster
 from floor.units import build_unit, fmt_dur, unit_defaults
 
+def wedged(ping, now):
+    """Has this box stopped answering RIGHT NOW? One definition (#486).
+
+    `get()` below paints UNREACHABLE on exactly this condition, and restart's
+    force-then-start recovery escalates on it. Two spellings of one rule would
+    let the page and the control disagree about which boxes are wedged — and
+    the operator would meet that disagreement mid-incident, which is the one
+    moment the console has to be believable.
+
+    A STALE ping is not wedged. The tier has not run recently enough for
+    either answer to be a claim about now, and "unmeasured" must not become a
+    reason to kill a guest: the cost of being wrong here is a lost session,
+    against a graceful restart that merely times out.
+    """
+    if not ping:
+        return False
+    if int(now - ping["ts"]) > PING_STALE_AFTER_S:
+        return False
+    return not ping["ok"] and ping["fails"] >= PING_FAILS_TO_WEDGE
+
+
 # --------------------------------------------------------------------------
 # poller
 # --------------------------------------------------------------------------
@@ -47,6 +68,19 @@ class Fleet:
             except OSError:
                 self._confs[agent] = ""
         return self._confs[agent]
+
+    def box_unreachable(self, name):
+        """The control plane's read of the fast tier (#486 D3).
+
+        Kept here rather than in actions.py because the ping map is this
+        object's, and reading it without `_ping_lock` would race a round that
+        is replacing it wholesale. A box with no published ping — never
+        pinged, stopped, or skipped because `box list` failed — is not
+        unreachable; it is unmeasured, and `wedged` ranks those apart.
+        """
+        with self._ping_lock:
+            p = self.pings.get(name)
+        return wedged(p, time.time())
 
     def request_refresh(self):
         """Refresh after a control action, coalescing a burst into one poll.
@@ -289,7 +323,7 @@ class Fleet:
             # to a minute ago. This overrides "working" on purpose: a session
             # that was running when we last looked cannot be progressing
             # inside a guest that no longer answers an exec.
-            if not p["ok"] and p["fails"] >= PING_FAILS_TO_WEDGE:
+            if wedged(p, now):
                 u["state"] = "offline"
                 # PREPENDED to whatever the evidence poll concluded, never
                 # substituted for it. A wedged box's probe note is

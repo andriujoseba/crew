@@ -19,6 +19,24 @@ ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
 ACTION_WORKERS = 8
 
 
+def force_stop_argv(box):
+    """The host command that stops a guest which cannot stop itself (#486).
+
+    Every stop the floor could fire was graceful: `box down` is `incus stop`
+    with neither `--force` nor a timeout, so against a guest that can no
+    longer schedule its own shutdown it runs out ACTION_TIMEOUT_S and the
+    action reports failure. The one box state that needs stopping was the one
+    state the console could not stop.
+
+    Deliberately box's own non-interactive incus passthrough and NOT a new
+    `box down --force`: heavy-duty/box#11's ownership rule puts that flag
+    outside box, so this carries no cross-repo dependency (D2). One definition
+    because two call sites fire it — the `force-stop` action and restart's
+    recovery — and a second spelling is a second thing to keep in step.
+    """
+    return ["box", "incus", box, "--", "stop", "--force"]
+
+
 def floor_message_prompt(operator_text):
     """Wrap an operator message in the shared one-shot environment contract."""
     try:
@@ -154,11 +172,20 @@ def do_command(fleet, body):
         if box not in roster:
             return 400, {"ok": False, "error": "unknown box %r" % box}
 
-    def one(name, argv, timeout=ACTION_TIMEOUT_S, stdin_data=None):
+    def one(name, argv, timeout=ACTION_TIMEOUT_S, stdin_data=None, step=None):
         rc, out, err = run(argv, timeout, stdin_data)
         ok = rc == 0
-        log("%s %s -> rc %d" % (action, name, rc))
-        return {"box": name, "ok": ok, "out": (out or err).strip()[-400:]}
+        # `step` names WHICH call this row is, for the actions that now have
+        # more than one shape: restart reaches its box gracefully or by force
+        # depending on whether the box still answers, and "the action records
+        # what it did" is worthless if the record cannot say which (#486 D4).
+        # Additive and only where a caller passes one, so every row this
+        # module wrote before carries exactly the keys it carried before.
+        log("%s %s%s -> rc %d" % (action, name, " (%s)" % step if step else "", rc))
+        row = {"box": name, "ok": ok, "out": (out or err).strip()[-400:]}
+        if step:
+            row["step"] = step
+        return row
 
     def in_box(name, script, stdin_data=None):
         return one(name, ["box", "exec", name, "--", "bash", "-lc", script],
@@ -211,9 +238,28 @@ def do_command(fleet, body):
     elif action == "resume":
         results.append(in_box(box, RESUME_SH))
     elif action == "restart":
-        r = one(box, ["box", "down", box])
-        results.append(r)
-        results.append(one(box, ["box", "start", box]))
+        # Force-then-start recovery WHEN THE BOX IS UNREACHABLE, and only then
+        # (#486 D3). A box that still answers is restarted exactly as it was
+        # before this branch existed — `box down`, then `box start` — because
+        # a restart that quietly became a kill is the escalation D1 refuses,
+        # one verb over.
+        #
+        # The predicate is the ping tier's own wedge rule, asked of the fleet
+        # rather than re-derived here: what the console paints UNREACHABLE and
+        # what this escalates on have to be one fact, or an operator meets two
+        # answers about the same box mid-incident.
+        if fleet.box_unreachable(box):
+            results.append(one(box, force_stop_argv(box), step="force-stop"))
+        else:
+            results.append(one(box, ["box", "down", box], step="down"))
+        results.append(one(box, ["box", "start", box], step="start"))
+    elif action == "force-stop":
+        # ITS OWN ACTION, never an escalation from a graceful one (#486 D1):
+        # an operator who fired Power off must not discover it became a kill.
+        # That is also why nothing here checks reachability first — force is
+        # what was asked for, and a control that second-guessed the operator
+        # would be as surprising in the other direction.
+        results.append(one(box, force_stop_argv(box), step="force-stop"))
     elif action == "power-off":
         results.append(one(box, ["box", "down", box]))
     elif action == "power-on":
