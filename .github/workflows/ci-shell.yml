@@ -26,14 +26,16 @@ jobs:
       - name: bash -n (syntax)
         run: |
           set -e
-          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/*.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
+          # shared/lib/*.sh and shared/test/*.sh do not descend, so each module
+          # directory is named: an unlisted one is silently unchecked (#507).
+          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/lib/common/*.sh shared/install.sh shared/test/*.sh shared/test/common/*.sh cli/crew drill/*.sh fleet-floor/build.sh fleet-floor/server/probe.sh \
                    fleet-floor/test/run.sh fleet-floor/test/stub-box; do
             bash -n "$f"
           done
       - name: shellcheck
         run: |
           sudo apt-get install -y shellcheck >/dev/null
-          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/install.sh shared/test/*.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf; do
+          for f in install.sh dist/*.sh shared/bin/*.sh shared/lib/*.sh shared/lib/common/*.sh shared/install.sh shared/test/*.sh shared/test/common/*.sh cli/crew drill/*.sh fleet-floor/server/probe.sh fleet-floor/test/*.sh fleet-floor/test/stub-box shared/conf/fleet.defaults.conf examples/fleet.conf shared/conf/agents/*.conf shared/conf/roles/*.conf; do
             shellcheck -x "$f"
           done
       - name: fixture tests

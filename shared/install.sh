@@ -290,7 +290,8 @@ normalize_redirects() {
 }
 normalize_redirects
 
-mkdir -p "$DUTY_DIR/bin" "$DUTY_DIR/lib/jq" "$DUTY_DIR/conf/agents" \
+mkdir -p "$DUTY_DIR/bin" "$DUTY_DIR/lib/jq" "$DUTY_DIR/lib/common" \
+         "$DUTY_DIR/conf/agents" \
          "$DUTY_DIR/conf/roles" "$DUTY_DIR/prompts" \
          "$DUTY_DIR/work" "$DUTY_DIR/trees" "$DUTY_DIR/logs"
 
@@ -319,6 +320,9 @@ put() {  # put SRC DESTDIR
 
 for f in "$HERE"/bin/*.sh; do put "$f" "$DUTY_DIR/bin"; chmod +x "$DUTY_DIR/bin/$(basename "$f")"; done
 for f in "$HERE"/lib/*.sh; do put "$f" "$DUTY_DIR/lib"; done
+# lib/common/ is not reached by the glob above, and lib/common.sh sources it at
+# runtime: an installed box whose modules did not ship has no engine at all.
+for f in "$HERE"/lib/common/*.sh; do put "$f" "$DUTY_DIR/lib/common"; done
 for f in "$HERE"/lib/jq/*.jq; do put "$f" "$DUTY_DIR/lib/jq"; done
 for f in "$HERE"/prompts/*.txt; do put "$f" "$DUTY_DIR/prompts"; done
 for f in "$HERE"/conf/agents/*.conf; do put "$f" "$DUTY_DIR/conf/agents"; done

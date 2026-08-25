@@ -23,72 +23,6 @@ source "$SHARED/lib/duty-review.sh"
 ATT_MOD="$SHARED/lib/duty-attention.sh"
 mkdir -p "$TMP/prompts"
 
-# --- #285: per-author repository panels ------------------------------------
-PANEL_REPO="$TMP/panel-repo"
-git init -q "$PANEL_REPO"
-mkdir -p "$PANEL_REPO/.github"
-cat >"$PANEL_REPO/.github/labels.conf" <<'EOF'
-panel=full-a full-b builder-one
-panel[builder-one]=author-a author-b builder-one
-panel[hyphen-builder]=hyphen-a hyphen-b
-EOF
-git -C "$PANEL_REPO" add .github/labels.conf
-git -C "$PANEL_REPO" -c user.name=test -c user.email=test@example.invalid commit -qm fixture
-git -C "$PANEL_REPO" update-ref refs/remotes/origin/main HEAD
-t panel-author-line-preferred '["author-a","author-b","builder-one"]' \
-  "$(panel_for_repo owner/repo "$PANEL_REPO" builder-one)"
-t panel-author-safety-subtraction '["author-a","author-b"]' \
-  "$(panel_for_repo owner/repo "$PANEL_REPO" builder-one | jq -c --arg me builder-one '. - [$me]')"
-t panel-hyphen-author-literal '["hyphen-a","hyphen-b"]' \
-  "$(panel_for_repo owner/repo "$PANEL_REPO" hyphen-builder)"
-t panel-missing-author-falls-back '["full-a","full-b","builder-one"]' \
-  "$(panel_for_repo owner/repo "$PANEL_REPO" unknown-builder)"
-
-# A repo absent locally must choose the same author line from the contents API.
-PANEL_API_CONF="$(base64 -w0 "$PANEL_REPO/.github/labels.conf")"
-# shellcheck disable=SC2317  # called indirectly by panel_for_repo
-gh() { printf '%s\n' "$PANEL_API_CONF"; }
-t panel-api-author-line '["author-a","author-b","builder-one"]' \
-  "$(panel_for_repo owner/api "$TMP/not-cloned" builder-one)"
-unset -f gh
-
-# A stale/local config with no panel row retains the old contents-API fallback.
-PANEL_EMPTY_REPO="$TMP/panel-empty-repo"
-git init -q "$PANEL_EMPTY_REPO"
-mkdir -p "$PANEL_EMPTY_REPO/.github"
-printf '%s\n' 'scope:test|C5DEF5|fixture' >"$PANEL_EMPTY_REPO/.github/labels.conf"
-git -C "$PANEL_EMPTY_REPO" add .github/labels.conf
-git -C "$PANEL_EMPTY_REPO" -c user.name=test -c user.email=test@example.invalid commit -qm fixture
-git -C "$PANEL_EMPTY_REPO" update-ref refs/remotes/origin/main HEAD
-# shellcheck disable=SC2317  # called indirectly by panel_for_repo
-gh() { printf '%s\n' "$PANEL_API_CONF"; }
-t panel-local-without-panel-uses-api '["full-a","full-b","builder-one"]' \
-  "$(panel_for_repo owner/stale "$PANEL_EMPTY_REPO" unknown-builder)"
-unset -f gh
-
-# With neither repository config path available, the fleet bench is unchanged.
-# shellcheck disable=SC2034  # consumed dynamically by sourced panel_for_repo
-PANEL_SAVED_BENCH="${FLEET_BENCH-}"
-PANEL_BENCH_WAS_SET="${FLEET_BENCH+x}"
-FLEET_BENCH='bench-a bench-b'
-# shellcheck disable=SC2317  # called indirectly by panel_for_repo
-gh() { return 1; }
-t panel-bench-fallback '["bench-a","bench-b"]' \
-  "$(panel_for_repo owner/missing "$TMP/not-cloned" builder-one)"
-unset -f gh
-if [ -n "$PANEL_BENCH_WAS_SET" ]; then
-  FLEET_BENCH="$PANEL_SAVED_BENCH"
-else
-  unset FLEET_BENCH
-fi
-
-# Both request and convergence paths must receive an author-aware roster.
-# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
-if grep -Fq 'panel_for_repo "$R" "$dir" "$ME"' "$SHARED/lib/duty-builder.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
-t panel-builder-resolution author_aware "$r1"
-# shellcheck disable=SC2016  # grep literals intentionally contain shell syntax
-if grep -Fq 'panel_for_repo "$repo" "$WORK_DIR/${repo//\//__}-review" "$author"' "$SHARED/lib/duty-review.sh"; then r1=author_aware; else r1=FULL_PANEL; fi
-t panel-reviewer-resolution author_aware "$r1"
 # shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
     ! grep -Fq 'repos/$SRa/pulls/$Na' "$SHARED/lib/duty-review.sh"; then r1=payload-author; else r1=EXTRA-FETCH; fi
@@ -401,7 +335,7 @@ if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh";
 t engine-bots-reviewing-best-effort best-effort "$r1"
 # MARK_ANSWERED is defined and wire-protected against operator override.
 if grep -q '^MARK_ANSWERED=' "$SHARED/conf/fleet.defaults.conf" \
-  && grep -q 'wire_answered' "$SHARED/lib/common.sh"; then r1=wire; else r1=UNPROTECTED; fi
+  && grep -q 'wire_answered' "$SHARED/lib/common/conf.sh"; then r1=wire; else r1=UNPROTECTED; fi
 t mark-answered-is-wire-protocol wire "$r1"
 # The session posts the signal and no longer requests; the argued-exception and
 # the resume re-signal survive.
@@ -591,7 +525,7 @@ t attention-prompt-dispatches-new-build dispatched "$r1"
 # Production run_session, not only the behavior stub below, must expose the
 # immutable log path consumed by the timeout evidence branch.
 # shellcheck disable=SC2016  # literal source assignment, not test expansion
-if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common.sh"; then
+if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common/session.sh"; then
   r1=exposed
 else
   r1=MISSING
@@ -2603,7 +2537,10 @@ t ci-red-ledger-commit-is-settle-gated gated "$r1"
 # `attention` remains a hand-written demand. Reads in duty-attention.sh are the
 # wake mechanism and are allowed; engine label writes are not. Fold continued
 # shell lines before looking for add/remove-label or labels[]= writes so moving
-# an argument onto the next source line cannot evade the guard.
+# an argument onto the next source line cannot evade the guard. The library
+# half of the population is walked, not globbed: shared/lib/common/ is engine
+# source and a non-descending glob would exempt it (#507).
+mapfile -t attention_sources < <(engine_lib_sources)
 attention_writes="$(awk '
   FNR == 1 { logical = "" }
   {
@@ -2619,7 +2556,7 @@ attention_writes="$(awk '
         line ~ /(--add-label|--remove-label|labels\[\])/ &&
         line ~ /(LABEL_ATTENTION|attention)/) print FILENAME ":" FNR ":" line
   }
-' "$SHARED"/lib/*.sh "$SHARED"/bin/* 2>/dev/null)"
+' "${attention_sources[@]}" "$SHARED"/bin/* 2>/dev/null)"
 t engine-never-writes-attention-label "" "$attention_writes"
 
 # ledger_filter re-fires when the value sorts GREATER, and a SHA has no order.
@@ -3931,7 +3868,10 @@ t doctrine-custom-no-unresolved-slots "" "$doctrine_unresolved"
 # unknown slots literal deliberately, so this belongs in CI rather than the
 # runtime tick. The fixture mutations prove both missing-argument failure
 # shapes and the built-in doctrine exemption.
-render_sources=("$SHARED"/lib/*.sh "$SHARED"/bin/*.sh)
+# Walked, not globbed, for the same reason as the attention guard above: the
+# seven shared/lib/common/ modules are render sites too (#507).
+mapfile -t render_sources < <(engine_lib_sources)
+render_sources+=("$SHARED"/bin/*.sh)
 t render-sites-supply-every-prompt-slot "" \
   "$(render_site_missing_slots "$SHARED/prompts" "${render_sources[@]}")"
 

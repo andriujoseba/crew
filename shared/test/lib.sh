@@ -9,11 +9,19 @@
 # tolerate real issue-body prose, not parser-shaped strings.
 set -uo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
+# Derived from this file rather than from "$0": a suite under shared/test/
+# and a module suite under shared/test/common/ must resolve the same HERE, or
+# the mirrored tree would put SHARED one directory too deep.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED="$(dirname "$HERE")"
 ROOT="$(dirname "$SHARED")"
+# The module suites mirror shared/lib/common/ one-for-one and are named at
+# that relative path, which is the invariant, not this list's contents: a
+# module added to shared/lib/common/ brings its suite here in the same change.
 # shellcheck disable=SC2034  # consumed by run.sh and suite-level roster guards
-SUITES=(common triage builder hygiene conf)
+SUITES=(common common/logging common/conf common/checkout common/session
+        common/breaker common/ledger common/identity
+        triage builder hygiene conf)
 PASS=0 FAIL=0
 
 t() {  # t <name> <expected> <actual>
@@ -46,6 +54,17 @@ awk_range_grep_Fq() {  # <range> <file> <pattern>
   local output
   output="$(awk "$1" "$2")"
   grep -Fq -- "$3" <<<"$output"
+}
+
+# The engine's shell source, derived recursively rather than globbed. A guard
+# spelled "$SHARED"/lib/*.sh stops above shared/lib/common/, so #507's split
+# took seven engine modules out of two guard populations at once without a
+# single assertion going red — the failure mode a glob has and a walk does not.
+# Every guard whose population is "the engine's library source" derives it
+# here, so the next shared/lib/<dir>/ costs nothing. Sorted for a stable
+# report across boxes; callers add their own bin/ half.
+engine_lib_sources() {
+  find "$SHARED/lib" -type f -name '*.sh' -print | sort
 }
 
 # #443: derive the guarded population from both file-scope pipefail settings
