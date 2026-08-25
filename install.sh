@@ -56,6 +56,8 @@ warn() { printf 'crew-install: WARNING: %s\n' "$*" >&2; }
 die() { printf 'crew-install: ERROR: %s\n' "$*" >&2; exit 1; }
 # shellcheck disable=SC1091
 source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/shared/lib/version-skew.sh"
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/shared/lib/install-payload.sh"
 
 # Ask a yes/no question. Under a piped invocation THIS SCRIPT may be stdin, so
 # prompts read /dev/tty directly. No terminal (CI, a pipe with no tty) → there
@@ -222,6 +224,23 @@ prune_payload() {  # $1 = tree root
   for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do
     rm -rf -- "${root:?}/${p:?}"
   done
+  install_payload_prune_ignored "$root"
+}
+
+# Pruning is an optimisation, never the trust boundary. Refuse the constructed
+# payload if any known exclusion survived, naming the first offending path so
+# a future omission is diagnosed before a version tree is installed.
+validate_payload() {  # $1 = payload tree
+  local root="$1" p found
+  found=""
+  while IFS= read -r found; do break; done < <(install_payload_find_ignored "$root")
+  [ -z "$found" ] || die \
+    "refusing payload: known-excluded path survived construction: $found"
+  for p in "${PAYLOAD_EXCLUDED_PATHS[@]}"; do
+    if [ -e "$root/$p" ] || [ -L "$root/$p" ]; then
+      die "refusing payload: known-excluded path survived construction: $p"
+    fi
+  done
 }
 
 confirm "Install crew from $SRC?" || die "cancelled — nothing was changed."
@@ -240,10 +259,16 @@ trap cleanup EXIT
 INSTALLED_FROM="${CREW_INSTALLED_FROM:-local:$SRC}"
 if [ -d "$SRC" ]; then
   log "copying local tree $SRC"
+  install_payload_load_ignore_patterns "$SRC" || die \
+    "could not derive repository-wide payload exclusions from $SRC/.gitignore"
+  SOURCE_PAYLOAD_EXCLUDES=("${PAYLOAD_EXCLUDES[@]}")
+  for p in "${INSTALL_PAYLOAD_IGNORE_PATTERNS[@]}"; do
+    SOURCE_PAYLOAD_EXCLUDES+=("--exclude=$p")
+  done
   mkdir -p "$TMPDIR/tree"
   # tar, not cp -a: the exclude list above, so a working checkout carries
   # neither its VCS state nor the repository furniture into the install tree.
-  tar -C "$SRC" "${PAYLOAD_EXCLUDES[@]}" -cf - . | tar -xf - -C "$TMPDIR/tree"
+  tar -C "$SRC" "${SOURCE_PAYLOAD_EXCLUDES[@]}" -cf - . | tar -xf - -C "$TMPDIR/tree"
   EXTRACTED="$TMPDIR/tree"
 elif [ -f "$SRC" ]; then
   log "extracting local tarball $SRC"
@@ -254,12 +279,17 @@ else
 fi
 [ -n "${EXTRACTED:-}" ] || die "could not find the source tree in $SRC"
 [ -f "$EXTRACTED/cli/crew" ] || die "source does not contain cli/crew — is $SRC a crew tree?"
+if [ -f "$SRC" ]; then
+  install_payload_load_ignore_patterns "$EXTRACTED" || die \
+    "could not derive repository-wide payload exclusions from $SRC"
+fi
 
 # The payload rule, on whatever was acquired. A no-op after the directory
 # branch (tar already dropped those paths); the whole of the minimisation after
 # the tarball branch, whose archive is packed elsewhere — by GitHub, by
 # `dist/make-installer.sh` — and arrives whole.
 prune_payload "$EXTRACTED"
+validate_payload "$EXTRACTED"
 
 # The tree's own VERSION file names the directory it lands in — the version IS
 # the identity of what is being installed.
