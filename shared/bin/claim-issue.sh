@@ -21,15 +21,23 @@ withdraw_self() {
 
 restore_ready_if_unowned() {
   local current
-  current="$(issue_json)" || return 0
-  if jq -e '
+  if ! current="$(issue_json)"; then
+    echo "$REPO#$NUM: cannot inspect failed claim repair; ready could not be restored and the board needs a hand" >&2
+    return 0
+  fi
+  if jq -e --argjson before "$before" '
     .state == "OPEN"
-    and ([.labels[].name] | index("claimed")) != null
+    and ([$before.labels[].name] | index("ready")) != null
     and ([.labels[].name] | index("ready")) == null
     and (.assignees | length) == 0
   ' >/dev/null <<<"$current"; then
-    gh issue edit "$NUM" -R "$REPO" \
-      --remove-label claimed --add-label ready >/dev/null 2>&1 || true
+    local -a label_args=(--add-label ready)
+    if jq -e '([.labels[].name] | index("claimed")) != null' >/dev/null <<<"$current"; then
+      label_args=(--remove-label claimed --add-label ready)
+    fi
+    if ! gh issue edit "$NUM" -R "$REPO" "${label_args[@]}" >/dev/null 2>&1; then
+      echo "$REPO#$NUM: failed claim repair; ready could not be restored and the board needs a hand" >&2
+    fi
   fi
 }
 
@@ -59,6 +67,11 @@ before="$(issue_json)" || {
 }
 if ! claimable <<<"$before"; then
   echo "$REPO#$NUM: no longer open, ready, unclaimed, and unassigned; not claiming" >&2
+  exit 1
+fi
+
+if ! gh api "repos/$REPO/labels/claimed" >/dev/null 2>&1; then
+  echo "$REPO#$NUM: required label 'claimed' is missing or unreadable; not claiming" >&2
   exit 1
 fi
 
