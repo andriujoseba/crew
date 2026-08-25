@@ -4212,8 +4212,26 @@ t d462-nbd-unchanged-slot 'slot held by fx/repo#12; board holds 3 ready' \
 t d462-nbd-empty-declined-is-none '3 ready held by seen-ledger' \
   "$(_no_build_duty_reason 3 0 "" 1 '')"
 
+# 27. AND THE READER IS WIRED TO IT. Every assertion above calls the renderer
+# with a hand-built argument; none of them observes the engine supplying one.
+# Replacing the 5th argument at the call site with "" left the whole suite
+# green while D3 vanished from the running engine — the operator back to
+# reading `2 ready held by seen-ledger`, the wrong noun this issue exists to
+# remove, and 2605 assertions saying nothing was wrong. The write side has had
+# this guard since test 18; the read side is the operator-facing half.
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+if awk_range_grep_Fq '/no build duty \(\$\(_no_build_duty_reason/,/\)\)"$/' "$BMOD" \
+  '_declined_for_board "$slug" "$ready_items"'; then r1=wired; else r1=DETACHED; fi
+t d462-nbd-call-site-passes-the-declines wired "$r1"
+# The guard above says "the call site" — a fact it does not itself hold. A
+# SECOND, unwired invocation added later leaves it green and puts the wrong
+# noun back in front of the operator on whichever branch reaches it; pinning
+# the cardinality is what makes the assertion mean what it reads as.
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
+t d462-nbd-has-one-call-site 1 "$(grep -c '\$(_no_build_duty_reason' "$BMOD")"
+
 # --- the prompt: the decline has a WRITTEN ROUTE (D1/D5) -------------------
-# 27. The four reasons reach the session. Before this change they existed only
+# 28. The four reasons reach the session. Before this change they existed only
 # in a source comment addressed to whoever reads duty-builder.sh, in a file the
 # session never opens — which is the defect, so this is the first must-fail.
 D462_PROMPT="$SHARED/prompts/build.txt"
@@ -4238,13 +4256,13 @@ if grep -Fq '{{DECLINE_REASONS}}' "$D462_PROMPT" \
   && grep -Fq '{{DECLINE_MARK}}' "$D462_PROMPT"; then r1=slotted; else r1=HARDCODED; fi
 t d462-prompt-mark-and-reasons-are-slots slotted "$r1"
 
-# 28. The route is post-once.sh with a MARKER — the 4-argument form. A decline
+# 29. The route is post-once.sh with a MARKER — the 4-argument form. A decline
 # told to post with a bare `gh` would be the spam case of test 4 on every box.
 if grep -Fq '{{POST_ONCE}} {{REPO}} <issue-number> "<body>" "<marker>"' "$D462_PROMPT"
 then r1='marker-form'; else r1=UNKEYED; fi
 t d462-prompt-routes-through-post-once-with-marker marker-form "$r1"
 
-# 29. The marker the prompt tells the session to write is the prefix the engine
+# 30. The marker the prompt tells the session to write is the prefix the engine
 # reads back. Two literals that must agree is how a writer and a reader drift,
 # so the reader's own renderer is asserted against the prompt's template.
 t d462-marker-key-matches-prompt-template "$_DECLINE_MARK — fx/repo#7 — " \
@@ -4259,7 +4277,7 @@ if grep -Fq "$(_decline_marker_key fx/repo '<issue-number>')<reason>" <<<"$D462_
 then r1=agreed; else r1=DRIFTED; fi
 t d462-rendered-marker-is-the-readers-key agreed "$r1"
 
-# 30. D4 reaches the session too: a decline is not a claim and moves no label.
+# 31. D4 reaches the session too: a decline is not a claim and moves no label.
 r1=stated
 grep -Fq 'DECLINE IS NOT A CLAIM AND MOVES NO LABEL' "$D462_PROMPT" || r1=SILENT
 grep -Fq 'assigns nobody' "$D462_PROMPT" || r1=SILENT
@@ -4269,7 +4287,7 @@ t d462-prompt-says-decline-moves-no-label stated "$r1"
 if grep -Fq '@-mention {{TRIAGE}}' "$D462_PROMPT"; then r1=mentions; else r1=SILENT; fi
 t d462-prompt-decline-mentions-triage mentions "$r1"
 
-# 31. D5: the clause must not make declining attractive. The claim imperative
+# 32. D5: the clause must not make declining attractive. The claim imperative
 # survives, and shopping the board is refused by name.
 if grep -Fq 'pick ONE ready unclaimed issue, claim it' "$D462_PROMPT"
 then r1=intact; else r1=WEAKENED; fi
@@ -4278,7 +4296,7 @@ if grep -Fq 'I would rather do a different one' "$D462_PROMPT"
 then r1=refused; else r1=OPEN; fi
 t d462-prompt-shopping-refused-by-name refused "$r1"
 
-# 32. D6/D4: the claim path does not change. The decline never runs it, and no
+# 33. D6/D4: the claim path does not change. The decline never runs it, and no
 # label or assignee write appears anywhere in the decline machinery.
 if awk_range_grep_Fq '/^_record_declines\(\)/,/^}/' "$BMOD" 'claim-issue.sh'; then
   r1=CLAIMS
@@ -4289,7 +4307,7 @@ else
 fi
 t d462-decline-machinery-never-claims no-claim-path "$r1"
 
-# 33. THE LEDGER STILL RECORDS THE DECLINE. The board comment is the record
+# 34. THE LEDGER STILL RECORDS THE DECLINE. The board comment is the record
 # that survives the box; the ledger is what stops the engine PAYING for the
 # same discovery every five minutes, and #462 replaces neither with the other.
 # A declined id — still pickable after the session — is still committed.
@@ -4301,7 +4319,7 @@ d462_record fx/repo "$D462_SLUG" "$D462_LEDGER_LINES"
 t d462-ledger-and-reason-agree "fx/repo#7 unbuildable" \
   "$(cat "$D462/.declined-build.$D462_SLUG" 2>/dev/null)"
 
-# 34. A CLAIM STILL WORKS UNCHANGED, and leaves no decline anywhere. A claimed
+# 35. A CLAIM STILL WORKS UNCHANGED, and leaves no decline anywhere. A claimed
 # id is no longer pickable, so #264's rule commits nothing — and the reason
 # record follows the commit, so a stale decline from a previous tick is cleared
 # rather than left to be reported against an issue now being built.
