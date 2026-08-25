@@ -35,7 +35,10 @@ box_ago() {
 
 rows()         { grep -vE '^[[:space:]]*(#|$)' "$FIXTURE"; }
 fixture_line() { rows | awk -v n="$1" '$1==n {print; exit}'; }
-scenario_of()  { fixture_line "$1" | awk '{print $3}'; }
+scenario_of()  {
+  if [ -f "$STATEDIR/$1.scenario" ]; then cat "$STATEDIR/$1.scenario"
+  else fixture_line "$1" | awk '{print $3}'; fi
+}
 # The agent the ROSTER claims for this box, so a healthy stub box agrees with
 # its own roster row and only the 'wrongagent' scenario disagrees. The floor
 # now compares the two, and a stub that always said "claude" would have made

@@ -108,6 +108,13 @@ mkdir -p "$CREW_CONFIG_DIR"
 cp "$HERE/fixtures/roster.txt" "$CREW_CONFIG_DIR/fleet.roster"
 printf 'FLEET_HUMAN=fixture\n' >"$CREW_CONFIG_DIR/fleet.conf"
 printf 'heavy-duty/crew\n' >"$CREW_CONFIG_DIR/repos.txt"
+# The alert sink is a host command from fleet.conf. `tee` is deliberately
+# boring: it makes every delivered stdin message observable without a network
+# service, credential, or box-side helper.
+export FLOOR_ALERT_LOG="$TMP/reachability-alerts.log"
+: >"$FLOOR_ALERT_LOG"
+printf 'FLEET_FLOOR_ALERT_CHANNEL="tee -a %s"\n' "$FLOOR_ALERT_LOG" \
+  >>"$CREW_CONFIG_DIR/fleet.conf"
 if [ -f "$CREW_CONFIG_DIR/fleet.roster" ] && [ "$CREW_CONFIG_DIR" = "$TMP/opconfig" ]; then
   ok "suite serves its own operator fleet definition, not the shipped examples"
 else
@@ -241,8 +248,10 @@ source "$HERE/floor/server.sh"
 source "$HERE/floor/actions.sh"
 # shellcheck source=floor/ping.sh
 source "$HERE/floor/ping.sh"
-# alerts.py is the seam #481 fills and carries no code yet; its mirror is
-# sourced anyway, so the day it gains a case nothing here has to change.
+# Reachability transitions ride the ping tier and are asserted last, after the
+# earlier suites have left that tier running through many unchanged rounds.
+# That ordering is what makes alerts.sh's one-edge assertion a deduplication
+# test rather than a single-poll happy path.
 # shellcheck source=floor/alerts.sh
 source "$HERE/floor/alerts.sh"
 # The two scripts that normally only run inside a box, executed for real —
@@ -343,7 +352,9 @@ if [ "$BROWSER" -eq 1 ]; then
     # 74 -> 80 with #312's chip vocabulary, the three named-fixture selections,
     # and both chip-to-tile count agreements. The shared vocabulary check also
     # runs in DEMO; its three mode-specific selections move that floor 10 -> 14.
-    # 80 -> 86 with #486's cross-layer six. Three on the sentence BEFORE the
+    # 80 -> 81 with #489's one assertion per browser-walk width replacing the
+    # old aggregate verdict. A missing width can no longer hide behind the other.
+    # 81 -> 87 with #486's cross-layer six. Three on the sentence BEFORE the
     # click: the collector's wedge verdict reaching the page, the restart
     # confirmation naming the force path from it, and the reachable box that
     # must not be told it will be killed. Three on the sentence AFTER it: a
@@ -353,7 +364,7 @@ if [ "$BROWSER" -eq 1 ]; then
     # serves at CREW_FLOOR_PING_FAILS=2, which DEMO has no collector for — so
     # the DEMO floor below is unmoved.
     #
-    # 86 -> 95 with #486's round 2, which closes the gap between the sentence
+    # 87 -> 96 with #486's round 2, which closes the gap between the sentence
     # and the request. Six on the mode: the wedged box authorising the force
     # path it was shown and the reachable one authorising only the gentle path
     # (a pair, because a plan whose words and mode disagree is the bug itself),
@@ -364,7 +375,7 @@ if [ "$BROWSER" -eq 1 ]; then
     # and then could not start it saying so, a gentle failure claiming no kill,
     # and a force stop that itself failed not being reported as one. All nine
     # are inside `if (LIVE)`, so the DEMO floor below is again unmoved.
-    walk "browser walk" 95 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    walk "browser walk" 96 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 14 "file://$FLOOR/index.html" "$TMP/shots-demo"
