@@ -577,7 +577,15 @@ case "${1:-}" in
   # unmatched arm below is the assertion that the floor fires exactly the
   # passthrough the issue ruled and not a near neighbour.
   incus)
-    [ "$#" -ge 4 ] || { echo "stub-box: malformed incus passthrough '$*'" >&2; exit 2; }
+    # `--` is checked WHERE IT IS, not assumed. `shift 3` past an argv that
+    # put the separator somewhere else would silently reinterpret the call as
+    # a different passthrough, and the unmatched arm below — which is where
+    # this stub does its real assertion work, by refusing anything but the
+    # ruled command — would never see it. It is also the load-bearing token:
+    # box's global option loop consumes it, which is what stops `--force`
+    # being eaten by box's own `--force`.
+    [ "$#" -ge 4 ] && [ "$3" = "--" ] || {
+      echo "stub-box: malformed incus passthrough '$*'" >&2; exit 2; }
     _iname="$2"; shift 3
     case "$*" in
       "stop --force")

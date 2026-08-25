@@ -1571,16 +1571,23 @@ function drawFloor(t){
 /* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
    Order is severity, not alphabetical: a box that has stopped answering pings
    is a worse fact than a stuck lock, and a stuck lock is worse than a dead
-   credential, because each one makes the next impossible to act on. */
+   credential, because each one makes the next impossible to act on.
+
+   UNREACHABLE is the COLLECTOR's verdict, read off `ping.wedged`, never a
+   count this page compares itself. It used to be the miss count against a
+   constant of this page's own with 3 baked into it, while the collector
+   wedges at `CREW_FLOOR_PING_FAILS` —
+   2 in this repo's own suite — so the badge and the control that escalates
+   on the same fact could disagree, and did (#486). There is deliberately no
+   threshold constant left in this file to drift again. */
 function alertOf(u){
   if(!LIVE)return "";
   var d=dataOf(UNITID(u),u.room);
-  if(d.ping&&!d.ping.ok&&d.ping.fails>=PING_FAILS_SHOWN)return "UNREACHABLE";
+  if(d.ping&&d.ping.wedged)return "UNREACHABLE";
   if(d.lock&&d.lock.stuck)return "STUCK";
   if(d.authfail&&d.authfail.length)return "AUTH";
   return "";
 }
-var PING_FAILS_SHOWN=3;
 /* stoppedWord DATA — why this box is not ticking, or "" if nobody stopped it.
    SILENT is an alarm: "this box should be ticking and is not". #189 taught the
    COLLECTOR to rank paused, disarmed and silent apart, and it does — but it
@@ -1965,8 +1972,10 @@ function goLive(){
   var s=document.getElementById("stream");if(s)s.innerHTML="";
 }
 /* Operator actions (#39). Every one is applied by the host with `box exec`,
-   `box down` or `box start`; the reply carries per-box rc so a refused or
-   failed action is reported instead of being animated as success. */
+   `box down`, `box start` or — for a guest that can no longer schedule its own
+   shutdown — `box incus <box> -- stop --force` (#486); the reply carries
+   per-box rc so a refused or failed action is reported instead of being
+   animated as success, and a `step` naming which of those paths it took. */
 function cmd(action,extra){
   var body=Object.assign({action:action},extra||{});
   setStatus(action+"…",false);
@@ -1979,7 +1988,15 @@ function cmd(action,extra){
       /* Name the box that refused. On a fleet-wide action "start-all FAILED"
          alone tells the operator nothing about which box needs a look. */
       var why=bad.length?(bad[0].box+": "+bad[0].out+(bad.length>1?" (+"+(bad.length-1)+" more)":"")):(r.error||"?");
-      setStatus(r.ok?action+" ok":action+" FAILED — "+why,!r.ok);
+      /* #486 — an action that ESCALATED says so after the fact, not only in
+         the confirm before it. `restart ok` alone hides that this guest was
+         killed where it stood rather than asked to stop, and the one place an
+         operator looks afterwards is this line. Read off the reply's own
+         `step` — the collector's record of the path it took — never
+         re-derived here, which is the mistake this round fixed once already.
+         Not said for `force-stop` itself: the verb is already the disclosure. */
+      var forced=action==="force-stop"?[]:(r.results||[]).filter(function(x){return x.step==="force-stop";});
+      setStatus(r.ok?action+" ok"+(forced.length?" — force-stopped "+forced.map(function(x){return x.box;}).join(", "):""):action+" FAILED — "+why,!r.ok);
       pollFleet();
       return r;
     })
@@ -2091,8 +2108,14 @@ function populateDash(){
        line below the graceful pair rather than inside their row: an operator
        reaching for Power off must not be one mis-click from a kill. The label
        says what it DOES, not what it is called, and it is the only red-on-red
-       button on the panel. */
-    +'<button class="lbtn'+(LIVE?'':' woff')+'" id="ac-force"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="text-align:center;color:#ff5147;border-color:#3a1c1c">&#10006; &nbsp;Force stop &middot; kills the guest</button></div>';
+       button on the panel.
+
+       Dimmed on a box somebody STOPPED, lit on one that stopped ANSWERING.
+       The two are the same `state:"offline"` on the wire — the collector
+       serves a wedged box offline on purpose — so dimming on `off` alone
+       would grey out precisely the box this control exists for. The wedge
+       carve-out is what makes the dim safe. */
+    +'<button class="lbtn'+(LIVE?'':' woff')+'" id="ac-force"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="text-align:center;color:#ff5147;border-color:#3a1c1c'+(off&&!unreachableBox(d)?';opacity:.5':'')+'">&#10006; &nbsp;Force stop &middot; kills the guest</button></div>';
   var cs='<div class="wt"><span class="dot"></span>CURRENT SESSION</div><div class="cursess">';
   /* The note under the big card always named the real reason, so an operator
      who read the sub-text was never blind — but the word in 40px type above it
@@ -2209,15 +2232,20 @@ function pingColour(d){
 function ab(id,label){return '<button class="lbtn'+(LIVE?'':' woff')+'" id="'+id+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>'+label+'</button>';}
 /* unreachableBox DATA — has this box stopped answering, for the WORDS on a
    control (#486). The collector decides what actually happens: floor/fleet.py's
-   wedged() is the rule, and restart asks it there. This is the page's read of
-   the same published facts, so the confirm an operator gets describes the path
-   the host will take rather than a friendlier one.
+   wedged() is the rule, restart asks it there, and `ping.wedged` is that same
+   answer served. So this is not the page's opinion of the same evidence — it
+   is the collector's verdict, which is the only way the confirm an operator
+   reads can be a promise about the path the host will take.
 
-   `stale` is excluded here and not in alertOf above, deliberately: a tier that
-   has not run recently enough is unmeasured, and telling an operator their box
-   is about to be killed on an unmeasured hunch is the one direction this
-   sentence must not be wrong in. */
-function unreachableBox(d){return !!(LIVE&&d&&d.ping&&!d.ping.ok&&!d.ping.stale&&d.ping.fails>=PING_FAILS_SHOWN);}
+   Re-deriving it here from the miss count and a constant of our own was the
+   first shape and it was wrong: a page-side 3 against a configurable
+   `CREW_FLOOR_PING_FAILS` meant that at a threshold of 2 — what this repo's
+   own suite runs — the collector force-stopped a guest the dialog described
+   as a graceful restart. Staleness is folded into wedged() for the same
+   reason it belongs there: a tier that has not run recently is unmeasured,
+   and "about to be killed" is the one direction this sentence must not be
+   wrong in. One rule, one place, one answer on the wire. */
+function unreachableBox(d){return !!(LIVE&&d&&d.ping&&d.ping.wedged);}
 /* The confirm text for Restart, which is one control with two paths. Naming
    only the gentle one would be the "graceful stop that silently became a force
    stop" #486 D1 refuses, moved from the code into the sentence. */

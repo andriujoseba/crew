@@ -142,6 +142,12 @@ else ok "force: a reachable box is never force-stopped"; fi
 if grep -q '^down ff-idle$' <<<"$FS_SEEN"; then
   ok "force: a reachable box still gets the graceful stop"
 else fail "force: a reachable box still gets the graceful stop" "$FS_SEEN"; fi
+# Both halves of the restart, on both paths. The unreachable case asserts its
+# `start` and this one did not — an asymmetry that would have let a graceful
+# path which stopped the box and never started it pass here.
+if grep -q '^start ff-idle$' <<<"$FS_SEEN"; then
+  ok "force: a reachable box is started again afterwards"
+else fail "force: a reachable box is started again afterwards" "$FS_SEEN"; fi
 
 # --- D1: a graceful stop never escalates on its own -------------------------
 # MUST FAIL: a graceful stop silently succeeding against the hanging arm. This
@@ -184,6 +190,23 @@ t "force: force-stop records its path too" force-stop \
   "$(printf '%s' "$FS_F" | sed '$d' | jqf "d['results'][0].get('step','')")"
 t "force: an unknown box is still refused" 400 \
   "$(status POST /api/command '{"action":"force-stop","box":"nope"}')"
+
+# The stub's refusal, driven directly. Every argv assertion above leans on the
+# unmatched arm — "it fires exactly the ruled passthrough and not a near
+# neighbour" is only true because anything else exits 2 — and an arm that
+# shifted past the separator without checking where it was would quietly
+# reinterpret a malformed call as the ruled one instead. Written to /dev/null
+# so this probe does not appear in the call log the cases above read.
+if FLOOR_CALLS=/dev/null "$HERE/stub-box" incus ff-idle stop --force >/dev/null 2>&1; then
+  fail "force: the stub refuses a passthrough with the separator missing" "exit 0"
+else
+  ok "force: the stub refuses a passthrough with the separator missing"
+fi
+if FLOOR_CALLS=/dev/null "$HERE/stub-box" incus ff-idle -- restart >/dev/null 2>&1; then
+  fail "force: the stub refuses an incus verb it does not model" "exit 0"
+else
+  ok "force: the stub refuses an incus verb it does not model"
+fi
 
 # Put ff-wedged back the way this suite found it, and prove it is back: the
 # ping tier skips a stopped box, so leaving it down would empty its heartbeat

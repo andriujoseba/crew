@@ -14,11 +14,19 @@ from floor.units import build_unit, fmt_dur, unit_defaults
 def wedged(ping, now):
     """Has this box stopped answering RIGHT NOW? One definition (#486).
 
-    `get()` below paints UNREACHABLE on exactly this condition, and restart's
-    force-then-start recovery escalates on it. Two spellings of one rule would
-    let the page and the control disagree about which boxes are wedged — and
-    the operator would meet that disagreement mid-incident, which is the one
-    moment the console has to be believable.
+    `get()` below paints UNREACHABLE on exactly this condition, restart's
+    force-then-start recovery escalates on it, and `get()` SERVES the answer
+    as `ping.wedged` so the page spells no threshold of its own. Two
+    spellings of one rule would let the page and the control disagree about
+    which boxes are wedged — and the operator would meet that disagreement
+    mid-incident, which is the one moment the console has to be believable.
+
+    The page had exactly that bug: `PING_FAILS_SHOWN=3` against a
+    `CREW_FLOOR_PING_FAILS` an operator may set to anything. At this repo's
+    own test threshold of 2 the collector force-stopped a box the confirm
+    dialog still described as a graceful restart. A published classification
+    is the fix rather than a published threshold: the rule can grow a term —
+    staleness already is one — without every reader having to grow it too.
 
     A STALE ping is not wedged. The tier has not run recently enough for
     either answer to be a claim about now, and "unmeasured" must not become a
@@ -283,8 +291,16 @@ class Fleet:
             # host — an assertion that could only fail, for a reason nobody
             # would trace to a missing dict key. Publishing them also makes the
             # fast tier's own reading visible to an operator.
+            # `wedged` is the DECISION, not the ingredients. `fails` and
+            # `stale` are served beside it because an operator reading the
+            # payload deserves the evidence, but no reader is expected to
+            # recombine them: the page that tried had `>= 3` hard-coded
+            # against a threshold this repo's own suite sets to 2, so the
+            # confirm dialog promised a graceful restart while the collector
+            # force-stopped the guest. One rule, decided here (#486).
             u["ping"] = {"ok": p["ok"], "ms": p["ms"], "age": age,
                          "fails": p["fails"], "stale": stale,
+                         "wedged": wedged(p, now),
                          "lockheld": p.get("lockheld"), "uptime": p.get("uptime")}
             # The passenger: a lock age read on the ping's own 10s clock,
             # rather than waiting up to 60s for the next evidence poll. This
