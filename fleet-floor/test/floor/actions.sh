@@ -57,6 +57,145 @@ t "cmd: power-on applied" running "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev/nul
 t "cmd: restart ok"   200 "$(status POST /api/command '{"action":"restart","box":"ff-idle"}')"
 t "cmd: restart ends running" running "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev/null)"
 
+# ===========================================================================
+# #486 — the one box state that needs stopping could not be stopped. `box
+# down` is `incus stop` with no force and no timeout, so against a guest that
+# cannot schedule its own shutdown every graceful verb runs out the floor's
+# own ACTION_TIMEOUT_S and reports failure. stub-box's `wedged` arm now hangs
+# on `down` the way that guest does, which is why these cases can exist at
+# all: until it did, stopping always worked here.
+#
+# ff-wedged is borrowed and PUT BACK. A 27th fixture row is the tidier shape
+# and test/cli.sh:1885 records why it is refused — three suites hardcode the
+# fixture's 26 boxes and the browser scroll walk has been destabilised by
+# fleet size before. So this block ends by restoring the box AND waiting for
+# the console to call it unreachable again, because floor/ping.sh reads
+# exactly that and reading it is not this suite's to break.
+# ===========================================================================
+echo "== force stop (#486)"
+
+# calls_since MARK — the stub's own call log from line MARK on. Every case
+# below asks what the HOST was told to do, not what the reply said: "restart
+# force-stops an unreachable box" is a claim about argv, and a 200 with a
+# per-box `ok` is equally true of a graceful stop that happened to succeed.
+fs_mark()        { wc -l < "$FLOOR_CALLS"; }
+fs_calls_since() { tail -n "+$(( $1 + 1 ))" "$FLOOR_CALLS"; }
+
+# The predicate the collector escalates on is the ping tier's wedge rule, so
+# wait for the tier to have reached it rather than assuming the suites sourced
+# before this one took long enough. Without this the whole block would pass or
+# fail on how fast the machine is.
+FS_DL=$(( $(date +%s) + 60 ))
+while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
+      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
+t "force: the fixture's wedged box is unreachable to the collector" True \
+  "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')"
+
+# --- D3: restart on an UNREACHABLE box force-stops, then starts -------------
+# MUST FAIL: the action timing out where force was available. A restart that
+# still reached for `box down` here would hang the full action timeout and end
+# with the box neither stopped nor started.
+FS_M=$(fs_mark)
+FS_T0=$(date +%s)
+FS_R="$(api POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+FS_EL=$(( $(date +%s) - FS_T0 ))
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "force: restart on an unreachable box succeeds" 200 "$(printf '%s' "$FS_R" | tail -1)"
+# Anchored at the line start, because every line in $FLOOR_CALLS is one
+# stub-box invocation's whole argv and an `exec` line carries a page-long
+# script: an unanchored "incus " would eventually match somebody's comment.
+# A here-string and not `printf | grep -q`, per #449 — this suite sets
+# pipefail and grep -q exits on the first match, so the producer takes
+# SIGPIPE and reds the assertion.
+if grep -q '^incus ff-wedged -- stop --force$' <<<"$FS_SEEN"; then
+  ok "force: restart fires the ruled passthrough"
+else fail "force: restart fires the ruled passthrough" "$FS_SEEN"; fi
+if grep -q '^down ff-wedged$' <<<"$FS_SEEN"; then
+  fail "force: restart does not try the graceful stop first" "$FS_SEEN"
+else ok "force: restart does not try the graceful stop first"; fi
+if grep -q '^start ff-wedged$' <<<"$FS_SEEN"; then
+  ok "force: restart starts the box afterwards"
+else fail "force: restart starts the box afterwards" "$FS_SEEN"; fi
+t "force: restart ends with the box running" running \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+if [ "$FS_EL" -lt "${FLOOR_TEST_ACTION_TIMEOUT:-8}" ]; then
+  ok "force: restart lands inside the action timeout"
+else
+  fail "force: restart lands inside the action timeout" "${FS_EL}s"
+fi
+# The record, not the outcome: which path a two-step lifecycle action took is
+# the thing an operator reads afterwards, and "it worked" does not carry it.
+t "force: the reply records which path it took" force-stop \
+  "$(printf '%s' "$FS_R" | sed '$d' | jqf "d['results'][0].get('step','')")"
+
+# --- D3, the other half: a REACHABLE box restarts exactly as before ---------
+# MUST FAIL: force firing on a reachable box. Asserted on argv for the same
+# reason as above — both paths end with the box running, so an outcome check
+# cannot tell them apart.
+FS_M=$(fs_mark)
+t "force: restart on a reachable box succeeds" 200 \
+  "$(status POST /api/command '{"action":"restart","box":"ff-idle"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+if grep -q '^incus ' <<<"$FS_SEEN"; then
+  fail "force: a reachable box is never force-stopped" "$FS_SEEN"
+else ok "force: a reachable box is never force-stopped"; fi
+if grep -q '^down ff-idle$' <<<"$FS_SEEN"; then
+  ok "force: a reachable box still gets the graceful stop"
+else fail "force: a reachable box still gets the graceful stop" "$FS_SEEN"; fi
+
+# --- D1: a graceful stop never escalates on its own -------------------------
+# MUST FAIL: a graceful stop silently succeeding against the hanging arm. This
+# is the case the old stub could not express — `down` always wrote `stopped`
+# and answered 0, so the floor reported success for a box it had not stopped.
+FS_M=$(fs_mark)
+FS_OFF="$(api POST /api/command '{"action":"power-off","box":"ff-wedged"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "force: a graceful stop against a wedged guest is reported failed" 500 \
+  "$(printf '%s' "$FS_OFF" | tail -1)"
+case "$FS_OFF" in
+  *"timed out"*) ok "force: ...and the failure names the timeout" ;;
+  *) fail "force: ...and the failure names the timeout" "$FS_OFF" ;;
+esac
+if grep -q '^incus ' <<<"$FS_SEEN"; then
+  fail "force: a graceful stop never escalates to force" "$FS_SEEN"
+else ok "force: a graceful stop never escalates to force"; fi
+t "force: a hung stop does not claim the box stopped" running \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+
+# --- D1/D2: force-stop is its own verb, and it works -----------------------
+FS_M=$(fs_mark)
+FS_T0=$(date +%s)
+FS_F="$(api POST /api/command '{"action":"force-stop","box":"ff-wedged"}')"
+FS_EL=$(( $(date +%s) - FS_T0 ))
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "force: force-stop succeeds where the graceful stop hung" 200 \
+  "$(printf '%s' "$FS_F" | tail -1)"
+t "force: the wedged guest is actually stopped" stopped \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+if grep -q '^incus ff-wedged -- stop --force$' <<<"$FS_SEEN"; then
+  ok "force: it fires exactly the ruled command"
+else fail "force: it fires exactly the ruled command" "$FS_SEEN"; fi
+if [ "$FS_EL" -lt "${FLOOR_TEST_ACTION_TIMEOUT:-8}" ]; then
+  ok "force: a wedged box is stopped inside the action timeout"
+else
+  fail "force: a wedged box is stopped inside the action timeout" "${FS_EL}s"
+fi
+t "force: force-stop records its path too" force-stop \
+  "$(printf '%s' "$FS_F" | sed '$d' | jqf "d['results'][0].get('step','')")"
+t "force: an unknown box is still refused" 400 \
+  "$(status POST /api/command '{"action":"force-stop","box":"nope"}')"
+
+# Put ff-wedged back the way this suite found it, and prove it is back: the
+# ping tier skips a stopped box, so leaving it down would empty its heartbeat
+# and floor/ping.sh — which waits on exactly that fact — would spend its
+# timeout and then fail for a reason nobody would trace to this block.
+status POST /api/command '{"action":"power-on","box":"ff-wedged"}' >/dev/null
+FS_DL=$(( $(date +%s) + 60 ))
+while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
+      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
+t "force: the fixture box is restored for the suites that read it" True \
+  "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')"
+
 # The prompt must reach the box as stdin bytes, never as part of a command
 # line. This is the one that must never regress.
 # The payload goes to python through the ENVIRONMENT, never through a

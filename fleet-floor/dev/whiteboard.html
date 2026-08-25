@@ -2086,7 +2086,13 @@ function populateDash(){
     +'<div class="wt" style="margin-top:16px"><span class="dot"></span>ACCESS</div><div class="access">'
     +ab("ac-repo","⎇ &nbsp;Open repo · "+esc(d.repo||"—"))+ab("ac-term","◱ &nbsp;Copy box shell command")
     +ab("ac-logs","▤ &nbsp;Raw session logs")+ab("ac-restart","↻ &nbsp;Restart box")
-    +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div></div>';
+    +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div>'
+    /* #486 D4 — a DISTINCT control that names its own violence, on its own
+       line below the graceful pair rather than inside their row: an operator
+       reaching for Power off must not be one mis-click from a kill. The label
+       says what it DOES, not what it is called, and it is the only red-on-red
+       button on the panel. */
+    +'<button class="lbtn'+(LIVE?'':' woff')+'" id="ac-force"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="text-align:center;color:#ff5147;border-color:#3a1c1c">&#10006; &nbsp;Force stop &middot; kills the guest</button></div>';
   var cs='<div class="wt"><span class="dot"></span>CURRENT SESSION</div><div class="cursess">';
   /* The note under the big card always named the real reason, so an operator
      who read the sub-text was never blind — but the word in 40px type above it
@@ -2201,6 +2207,23 @@ function pingColour(d){
 /* Access-panel button: live ones are real, demo ones keep the .woff tooltip
    that says why they do nothing. */
 function ab(id,label){return '<button class="lbtn'+(LIVE?'':' woff')+'" id="'+id+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>'+label+'</button>';}
+/* unreachableBox DATA — has this box stopped answering, for the WORDS on a
+   control (#486). The collector decides what actually happens: floor/fleet.py's
+   wedged() is the rule, and restart asks it there. This is the page's read of
+   the same published facts, so the confirm an operator gets describes the path
+   the host will take rather than a friendlier one.
+
+   `stale` is excluded here and not in alertOf above, deliberately: a tier that
+   has not run recently enough is unmeasured, and telling an operator their box
+   is about to be killed on an unmeasured hunch is the one direction this
+   sentence must not be wrong in. */
+function unreachableBox(d){return !!(LIVE&&d&&d.ping&&!d.ping.ok&&!d.ping.stale&&d.ping.fails>=PING_FAILS_SHOWN);}
+/* The confirm text for Restart, which is one control with two paths. Naming
+   only the gentle one would be the "graceful stop that silently became a force
+   stop" #486 D1 refuses, moved from the code into the sentence. */
+function restartAsk(box,d){return unreachableBox(d)
+  ?"Restart "+box+"? It has stopped answering, so it is FORCE-STOPPED — killed outright — and then started. Any running session is lost."
+  :"Restart "+box+"? It is stopped and started again.";}
 function buildOps(){var list=document.getElementById("opslist");if(!list)return;var working=ROSTER.filter(function(u){return u.state==="working"&&dataOf(UNITID(u),u.room).cur;});
   var cc=document.getElementById("ops-count");if(cc)cc.textContent="· "+working.length;
   list.innerHTML=working.length?working.map(function(u){var d=dataOf(UNITID(u),u.room),vc=VENDORCOL(u.agent),kc=u.room==="builder"?"#f7bd4e":u.room==="reviewer"?"#5cb4ff":"#c98bff";
@@ -6535,7 +6558,10 @@ if(_railL)_railL.addEventListener("click",function(e){
     cmd(on?"power-on":"power-off",{box:box});return;
   }
   var b=e.target.closest(".lbtn");if(!b)return;
-  if(b.id==="ac-restart"){if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});}
+  if(b.id==="ac-restart"){if(confirm(restartAsk(box,d)))cmd("restart",{box:box});}
+  /* Its own verb on the wire too, not a flag on power-off: the collector must
+     never be able to reach a force stop except by being asked for one. */
+  else if(b.id==="ac-force"){if(confirm("Force stop "+box+"? The guest is KILLED where it stands — this is `incus stop --force`, not a shutdown, and any running session is lost. Use it when a graceful stop has hung."))cmd("force-stop",{box:box});}
   else if(b.id==="ac-repo"){if(d.repo)window.open(repoURL(d.repo),"_blank","noopener");}
   else if(b.id==="ac-term"){
     /* A browser cannot open a shell into a box. Hand over the command the
@@ -6582,7 +6608,7 @@ document.getElementById("a-pause").addEventListener("click",function(){
 });
 document.getElementById("a-restart").addEventListener("click",function(){
   if(!LIVE)return;var box=BOX;
-  if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});
+  if(confirm(restartAsk(box,dataOf(BOX,ROOM))))cmd("restart",{box:box});
 });
 document.getElementById("a-logs").addEventListener("click",function(){
   if(LIVE)return openLogs(BOX,"");
