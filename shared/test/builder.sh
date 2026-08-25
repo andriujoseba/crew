@@ -4012,8 +4012,8 @@ PO="$SHARED/bin/post-once.sh"
 # subshell rather than assigned here: this suite's earlier blocks already set ME
 # inside subshells, and a top-level assignment would make every one of those a
 # lost-modification finding — info-level, which crew's shellcheck job fails on.
-d462_reason() { ( ME="$D462_ME"; DUTY_DIR="$D462"; _decline_reason "$@" ); }
-d462_record() { ( ME="$D462_ME"; DUTY_DIR="$D462"; _record_declines "$@" ); }
+d462_reason() { ( PATH="$D462/bin:$D462_PATH"; ME="$D462_ME"; DUTY_DIR="$D462"; _decline_reason "$@" ); }
+d462_record() { ( PATH="$D462/bin:$D462_PATH"; ME="$D462_ME"; DUTY_DIR="$D462"; _record_declines "$@" ); }
 
 # 1. THE DECLINE LANDS ON THE BOARD. Asserted from the store, which is the
 # issue — the criterion says so in as many words.
@@ -4288,5 +4288,29 @@ else
   r1='no-claim-path'
 fi
 t d462-decline-machinery-never-claims no-claim-path "$r1"
+
+# 33. THE LEDGER STILL RECORDS THE DECLINE. The board comment is the record
+# that survives the box; the ledger is what stops the engine PAYING for the
+# same discovery every five minutes, and #462 replaces neither with the other.
+# A declined id — still pickable after the session — is still committed.
+d462_reset
+d462_seed "$D462_ME" "$D462_BODY_A"
+t d462-declined-id-still-ledgered "fx/repo#7 2026-08-25T00:00:00Z" \
+  "$(_ready_lines_to_commit "$D462_LEDGER_LINES" "fx/repo#7")"
+d462_record fx/repo "$D462_SLUG" "$D462_LEDGER_LINES"
+t d462-ledger-and-reason-agree "fx/repo#7 unbuildable" \
+  "$(cat "$D462/.declined-build.$D462_SLUG" 2>/dev/null)"
+
+# 34. A CLAIM STILL WORKS UNCHANGED, and leaves no decline anywhere. A claimed
+# id is no longer pickable, so #264's rule commits nothing — and the reason
+# record follows the commit, so a stale decline from a previous tick is cleared
+# rather than left to be reported against an issue now being built.
+d462_reset
+t d462-claimed-id-commits-nothing "" \
+  "$(_ready_lines_to_commit "$D462_LEDGER_LINES" "")"
+d462_record fx/repo "$D462_SLUG" ""
+if [ -e "$D462/.declined-build.$D462_SLUG" ]; then r1=STALE; else r1=cleared; fi
+t d462-claim-clears-the-decline-record cleared "$r1"
+t d462-claim-leaves-no-decline-comment 0 "$(d462_count)"
 
 suite_finish

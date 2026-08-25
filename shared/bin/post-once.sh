@@ -48,7 +48,10 @@ if [ -n "$MARKER" ]; then
   case "$MARKER" in
     *$'\n'*) glog "refusing a multi-line marker; the key is one whole line"; exit 1 ;;
   esac
-  printf '%s' "$BODY" | grep -qxF -- "$MARKER" \
+  # A here-string, never `printf … | grep -q`: under this file's pipefail an
+  # early-exiting grep SIGPIPEs its writer and the pipeline's status is the
+  # writer's (#449, and the guard that reds the shape on sight).
+  grep -qxF -- "$MARKER" <<<"$BODY" \
     || { glog "refusing: the marker is not a line of the body (it could never match)"; exit 1; }
 fi
 
