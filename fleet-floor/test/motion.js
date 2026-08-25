@@ -33,6 +33,11 @@ const ok = (name, cond, detail = '') => {
   if (!cond) failed++;
 };
 
+const waitForWarmPortraits = (page) => page.waitForFunction(() => {
+  const stats = window.FLOORDEV.camstats();
+  return stats.cacheSize >= window.FLOORDEV.grid().n && stats.buildsLastSec === 0;
+}, undefined, { timeout: 15000 });
+
 (async () => {
   const browser = await chromium.launch({
     executablePath: CHROME, args: ['--no-sandbox', '--disable-dev-shm-usage'],
@@ -42,8 +47,9 @@ const ok = (name, cond, detail = '') => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await page.goto(url, { waitUntil: 'load' });
-  // Warm: every visible still builds within a few frames (CAM_BUDGET-throttled).
-  await page.waitForTimeout(2500);
+  // Warm: every DEMO still has landed and the last build has aged out of the
+  // one-second activity window. A fixed delay raced CAM_BUDGET on loaded CI.
+  await waitForWarmPortraits(page);
 
   // ---- 1. zero steady-state builds ----
   const builds = await page.evaluate(() => new Promise((res) => {
@@ -157,7 +163,9 @@ const ok = (name, cond, detail = '') => {
   });
   const rpage = await rctx.newPage();
   await rpage.goto(url, { waitUntil: 'load' });
-  await rpage.waitForTimeout(2500);
+  // Do not begin comparing frames while a late portrait can still replace its
+  // backdrop. Reduced motion pins animation; it does not make cache fills free.
+  await waitForWarmPortraits(rpage);
   // Working tile 0 (bob + beats must be off) and offline tile 6 (the roll
   // and grain must be pinned, not wandering).
   const still = await rpage.evaluate(() => new Promise((res) => {

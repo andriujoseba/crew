@@ -352,7 +352,9 @@ if [ "$BROWSER" -eq 1 ]; then
     # 74 -> 80 with #312's chip vocabulary, the three named-fixture selections,
     # and both chip-to-tile count agreements. The shared vocabulary check also
     # runs in DEMO; its three mode-specific selections move that floor 10 -> 14.
-    walk "browser walk" 80 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
+    # 80 -> 81 with #489's one assertion per browser-walk width replacing the
+    # old aggregate verdict. A missing width can no longer hide behind the other.
+    walk "browser walk" 81 "http://127.0.0.1:$PORT/" "$TMP/shots" "$USER" "$PASSWD"
     # DEMO is a shipped mode, not a fallback: `open index.html` must still work
     # with no collector, no network and every control visibly disabled.
     walk "browser walk (DEMO mode)" 14 "file://$FLOOR/index.html" "$TMP/shots-demo"
