@@ -316,10 +316,13 @@ acted_verdict_line() {  # acted_verdict_line <agent> <line> -> yes|no
   # case on a one-line file would answer `yes` from D3's default no matter
   # what the pattern said — a case no mutation could kill. This asks the
   # question the rendering actually poses.
+  # A here-string, not `printf | grep -q`: this file sets pipefail, and #449's
+  # guard puts that shape in the class where grep's early exit reds the suite
+  # by SIGPIPE. There is no producer to reap here anyway.
   # shellcheck disable=SC1090
   if ( source "$SHARED/conf/agents/$1.conf"
        av_re="${1^^}_ACTED_VERDICT_RE"
-       printf '%s\n' "$2" | grep -Eiq "${!av_re}" ); then echo yes; else echo no; fi
+       grep -Eiq "${!av_re}" <<<"$2" ); then echo yes; else echo no; fi
 }
 
 # an `attention` session that posted two comments and removed a label
@@ -611,11 +614,13 @@ for agent in claude grok; do
   # holds a version number, so a span matched as "anything up to a full stop"
   # ends early on `0.7.4` and misses — the defect claude-bot named in its own
   # probe of this fix, which is why the span is matched as a delimited one.
+  # shellcheck disable=SC2016  # backticks are the captured marker's own
   t "acted-$agent-rendering-title-span-is-verdict" yes "$(acted_verdict_line "$agent" \
     '**PR 30 — `chore: bump ceremony to 0.7.4` — approved** at head `901a672`')"
   # 20260806T144555Z-operator-floor-2fb41ac8 — CHANGES_REQUESTED @ `b05c2a9`.
   # No reference and no verdict noun as subject: the verb leads, and its
   # object is the verdict.
+  # shellcheck disable=SC2016  # backticks are the captured marker's own
   t "acted-$agent-rendering-submitted-verdict-is-verdict" yes "$(acted_verdict_line "$agent" \
     'submitted `request-changes` via `submit-verdict.sh`')"
   # 20260818T122010Z-review-heavy-duty_incubator — announce comment posted.
