@@ -108,6 +108,13 @@ mkdir -p "$CREW_CONFIG_DIR"
 cp "$HERE/fixtures/roster.txt" "$CREW_CONFIG_DIR/fleet.roster"
 printf 'FLEET_HUMAN=fixture\n' >"$CREW_CONFIG_DIR/fleet.conf"
 printf 'heavy-duty/crew\n' >"$CREW_CONFIG_DIR/repos.txt"
+# The alert sink is a host command from fleet.conf. `tee` is deliberately
+# boring: it makes every delivered stdin message observable without a network
+# service, credential, or box-side helper.
+export FLOOR_ALERT_LOG="$TMP/reachability-alerts.log"
+: >"$FLOOR_ALERT_LOG"
+printf 'FLEET_FLOOR_ALERT_CHANNEL="tee -a %s"\n' "$FLOOR_ALERT_LOG" \
+  >>"$CREW_CONFIG_DIR/fleet.conf"
 if [ -f "$CREW_CONFIG_DIR/fleet.roster" ] && [ "$CREW_CONFIG_DIR" = "$TMP/opconfig" ]; then
   ok "suite serves its own operator fleet definition, not the shipped examples"
 else
@@ -241,8 +248,10 @@ source "$HERE/floor/server.sh"
 source "$HERE/floor/actions.sh"
 # shellcheck source=floor/ping.sh
 source "$HERE/floor/ping.sh"
-# alerts.py is the seam #481 fills and carries no code yet; its mirror is
-# sourced anyway, so the day it gains a case nothing here has to change.
+# Reachability transitions ride the ping tier and are asserted last, after the
+# earlier suites have left that tier running through many unchanged rounds.
+# That ordering is what makes alerts.sh's one-edge assertion a deduplication
+# test rather than a single-poll happy path.
 # shellcheck source=floor/alerts.sh
 source "$HERE/floor/alerts.sh"
 # The two scripts that normally only run inside a box, executed for real —

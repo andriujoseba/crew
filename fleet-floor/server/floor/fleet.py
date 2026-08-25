@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from floor.alerts import ReachabilityAlerts
 from floor.ping import (PING_FAILS_TO_WEDGE, PING_INTERVAL_S,
                         PING_STALE_AFTER_S, PING_TIMEOUT_S, PROBE_TIMEOUT_S,
                         STUCK_AFTER_S, log, ping_box)
@@ -17,7 +18,7 @@ from floor.units import build_unit, fmt_dur, unit_defaults
 class Fleet:
     """The telemetry snapshot, refreshed by one background thread."""
 
-    def __init__(self, interval):
+    def __init__(self, interval, alert_command=""):
         self.interval = interval
         self.lock = threading.Lock()
         self.snapshot = {"live": True, "generated": None, "version": FLOOR_VERSION,
@@ -38,6 +39,7 @@ class Fleet:
         self._ping_lock = threading.Lock()
         self.pings = {}                      # box -> {ok, ms, ts, fails, err}
         self._last_fails = {}                # previous round, for transition logging
+        self.alerts = ReachabilityAlerts(alert_command, PING_FAILS_TO_WEDGE)
 
     def agent_conf(self, agent):
         if agent not in self._confs:
@@ -166,6 +168,12 @@ class Fleet:
                 # Consecutive misses, not a rate: one dropped ping is noise,
                 # a run of them is a wedge. Reset on any success.
                 "fails": 0 if ok else int(prev.get("fails", 0)) + 1,
+                # Kept across the whole failed run so both alert edges can say
+                # how long the box was unreachable without estimating from a
+                # poll count whose cadence stretches under a wedged guest.
+                "down_since": (None if ok else
+                               (prev.get("down_since")
+                                if prev.get("down_since") is not None else now)),
             }
 
         threads = [threading.Thread(target=work, args=(u["box"],), daemon=True)
@@ -211,6 +219,9 @@ class Fleet:
                                       >= PING_FAILS_TO_WEDGE):
                         log("ping: %s is answering again (%dms)" % (name, p["ms"]))
                 self._last_fails = {n: p["fails"] for n, p in res.items()}
+                with self.lock:
+                    units = list(self.snapshot.get("units", []))
+                self.alerts.observe(res, read_roster(), units)
             except Exception as e:                          # noqa: BLE001
                 log("ping round failed: %s" % e)
             time.sleep(max(2, PING_INTERVAL_S - (time.time() - t0)))
