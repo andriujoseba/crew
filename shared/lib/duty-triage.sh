@@ -1,6 +1,6 @@
 # duty-triage.sh — the triage wake signals, per repo in repos.txt, in the
 # order they run:
-#   (d) unread mentions (own session, and it goes FIRST)
+#   (d) unread mentions (one tick-wide session, and it goes FIRST)
 #   (a) needs-triage issues        (b) queue-unlabeled strays
 #   (c) discussions without my voice
 #   (e) blocked issues whose named blockers all landed (a LEAD, not a verdict)
@@ -17,9 +17,10 @@
 # (e)'s unknown blocker counts as still-open, and the hourly hygiene sweep
 # is the unconditional backstop for anything detection misses.
 #
-# Every gh read is isolated per signal per repo: one transient API failure
+# Every board read is isolated per signal per repo: one transient API failure
 # degrades to a logged skip, never an aborted tick (the old duty.sh died
-# mid-queue on the first failure, silently skipping every later repo).
+# mid-queue on the first failure, silently skipping every later repo). The
+# notifications read is deliberately tick-wide: one snapshot feeds every repo.
 #
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
@@ -55,62 +56,68 @@ _triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUM
 }
 
 duty_triage() {
-  local R
-  while IFS= read -r R; do
-    [ -z "$R" ] && continue
-    _triage_repo "$R"
-  done < <(read_repo_list "$REPOS_FILE")
-}
+  local R notification_pages all_mentions repo_json keep_threads keep_json mentions
+  local mcount mention_rc
+  local -a repos=()
+  mapfile -t repos < <(read_repo_list "$REPOS_FILE")
 
-_triage_repo() {
-  local R="$1"
-  local owner="${R%%/*}" name="${R##*/}"
-  local signals="" nt stray undisc unblockable="" dir prompt
-
-  # (d) unread mentions — a separate wake with its own session, so a builder
-  # blocked on a question is answered even when the board is clean. Only the
-  # thread ids and API subject URLs travel in the prompt (never titles —
-  # anyone on GitHub writes those, and this is a permissionless session).
-  # Idempotency is the seen-ledger, NOT mark-read alone: a mention the session
-  # reads but correctly does not act on (an FYI, an already-answered thread, a
-  # PR I don't own) used to stay unread and re-fire a full session every tick.
-  # A thread now re-wakes only when its notification updated_at advances.
-  #
-  # This block runs FIRST, and everything below it polls the board afterwards
-  # (#253). Nothing here reads any board signal — mention.txt is rendered from
-  # ME, REPO and MENTIONS alone — so the two are independent in that direction
-  # only, and the order is the one that makes the poll fresh where it is used.
-  local all_mentions keep_threads keep_json mentions mcount
-  all_mentions="$(gh api notifications --paginate 2>/dev/null | jq -c -s --arg repo "$R" 'add
-    | [ .[] | select(.repository.full_name == $repo
-                and (.reason == "mention" or .reason == "team_mention"))
-      | {thread: .id, subject: .subject.url, updated: .updated_at} ]' 2>/dev/null || echo '[]')"
+  # (d) unread mentions — one notifications snapshot and one session for the
+  # whole tick. The session remains first, so every per-repo board poll below
+  # observes changes made while answering a mention (#253).
+  repo_json="$(printf '%s\n' "${repos[@]}" | jq -R . | jq -cs .)"
+  if notification_pages="$(gh api notifications --paginate 2>/dev/null)" &&
+     all_mentions="$(printf '%s\n' "$notification_pages" | jq -c -s --argjson repos "$repo_json" '
+       add
+       | [ .[]
+           | select((.reason == "mention" or .reason == "team_mention")
+                    and (.repository.full_name as $repo | $repos | index($repo)))
+           | {repo: .repository.full_name, thread: .id,
+              subject: .subject.url, updated: .updated_at} ]
+     ' 2>/dev/null)"; then
+    :
+  else
+    warn "notifications probe failed; mention wake skipped this tick"
+    all_mentions='[]'
+  fi
   keep_threads="$(printf '%s\n' "$all_mentions" \
     | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
-    | ledger_filter "$DUTY_DIR/.seen-mentions" | awk '{print $1}')"
+    | ledger_filter "$DUTY_DIR/.seen-mentions" \
+    | head -n "$MENTION_THREAD_CEILING" | awk '{print $1}')"
   if [ -n "$keep_threads" ]; then
     keep_json="$(printf '%s\n' "$keep_threads" | jq -R . | jq -cs .)"
     mentions="$(jq -c --argjson keep "$keep_json" \
-      '[ .[] | select(.thread as $t | $keep | index($t)) ]' <<<"$all_mentions")"
+      '[ .[] | select(.thread as $thread | $keep | index($thread)) ]' <<<"$all_mentions")"
   else
     mentions='[]'
   fi
   mcount="$(jq 'length' <<<"$mentions" 2>/dev/null || echo 0)"
+  mention_rc=1
   if [ "$mcount" -gt 0 ]; then
-    log "$R: ${mcount} unread mention(s) — launching mention session"
-    dir="$WORK_DIR/${R//\//__}"
-    if ensure_checkout "$R" "$dir"; then
-      RUN_SESSION_RC=1
-      run_session mention "$R" "$dir" "$TIMEOUT_MENTION" \
-        "$(render_prompt mention.txt ME="$ME" REPO="$R" MENTIONS="$mentions")"
-      # Commit only on success: a crashed/timed-out session leaves these
-      # uncommitted and retries next tick (crash-only), as before.
-      if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-        printf '%s\n' "$all_mentions" | jq -r '.[] | "\(.thread) \(.updated)"' \
-          | ledger_commit "$DUTY_DIR/.seen-mentions"
-      fi
+    log "fleet: ${mcount} unread mention(s) — launching one mention session"
+    RUN_SESSION_RC=1
+    run_session mention fleet "$DUTY_DIR" "$TIMEOUT_MENTION" \
+      "$(render_prompt mention.txt ME="$ME" MENTIONS="$mentions")"
+    mention_rc="${RUN_SESSION_RC:-1}"
+    # One transaction for the batch: a crash or timeout commits none, so every
+    # thread retries next tick. The ceiling's remainder was never selected and
+    # therefore remains uncommitted too.
+    if [ "$mention_rc" -eq 0 ]; then
+      printf '%s\n' "$mentions" | jq -r '.[] | "\(.thread) \(.updated)"' \
+        | ledger_commit "$DUTY_DIR/.seen-mentions"
     fi
   fi
+
+  for R in "${repos[@]}"; do
+    _triage_repo "$R" "$(jq --arg repo "$R" '[.[] | select(.repo == $repo)] | length' \
+      <<<"$mentions" 2>/dev/null || echo 0)"
+  done
+}
+
+_triage_repo() {
+  local R="$1"
+  local mention_count="${2:-0}"
+  local owner="${R%%/*}" name="${R##*/}"
+  local signals="" nt stray undisc unblockable="" dir prompt
 
   # (a) and (b) are BOARD-STATE signals, and both are enumerated rather than
   # counted so they can be compared against what a previous session already
@@ -242,7 +249,7 @@ _triage_repo() {
     | report_suppressed "$DUTY_DIR/.suppressed-unblockable.${R//\//_}" "$R: unblockable"
 
   if [ -z "$signals" ]; then
-    if [ "$mcount" -eq 0 ]; then
+    if [ "$mention_count" -eq 0 ]; then
       log "$R: quiet — no mentions, no triage signals, no session launched"
     else
       log "$R: no triage signals — mention session was the only wake"
