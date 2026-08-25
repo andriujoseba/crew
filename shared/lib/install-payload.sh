@@ -12,6 +12,7 @@ INSTALL_PAYLOAD_IGNORE_FALLBACK=(
   .drill-shots
   '*.roster.local'
   node_modules
+  __pycache__
 )
 
 INSTALL_PAYLOAD_IGNORE_PATTERNS=()
