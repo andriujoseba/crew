@@ -622,6 +622,14 @@ for agent in claude grok; do
   # Form B with the noun singular and unlisted.
   t "acted-$agent-rendering-announce-posted-is-verdict" yes "$(acted_verdict_line "$agent" \
     'Announce posted and verified.')"
+  # The fourth rendering, and the ONE arm the rc cases cannot speak for: the
+  # `passive.log` session leads with `verdicts submitted` mid-sentence, but it
+  # also carries the `#293 — <title> → approved` marker, so its rc is already
+  # `yes` from the marker arm and a mutation removing the clause anchor left
+  # every case green. That is the vacuous shape again, one arm lower down.
+  # Asked of the line, it is the clause anchor or nothing.
+  t "acted-$agent-rendering-midsentence-verdicts-is-verdict" yes "$(acted_verdict_line "$agent" \
+    'Both PRs reviewed at their current heads, verdicts submitted, worktrees removed, clone clean.')"
   # And the same helper on the quoting forms, which must stay refused: this is
   # where the widening above would have cost the idle column if the anchor had
   # slipped from "clause boundary" to "anywhere".
