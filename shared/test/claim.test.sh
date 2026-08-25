@@ -23,7 +23,7 @@ if [ "$1 $2" = "issue view" ]; then
   n=$((n + 1))
   echo "$n" >"$calls"
   case "${CLAIM_MODE:?}:$n" in
-    success:1|historical:1|timeline-fail:1|cross-winner:1|cross-loser:1|orphan-loser:1|verify-fail:1|mutation-fail:1)
+    success:1|historical:1|timeline-fail:1|cross-winner:1|cross-loser:1|orphan-loser:1|verify-fail:1|mutation-fail:1|missing-label:1|repair-edit-fail:1|repair-read-fail:1|withdraw-fail:1)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"ready"}],"assignees":[]}' ;;
     success:2|historical:2|timeline-fail:2)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-a"}]}' ;;
@@ -31,8 +31,13 @@ if [ "$1 $2" = "issue view" ]; then
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-a"},{"login":"bot-b"}]}' ;;
     cross-loser:3)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-b"}]}' ;;
-    orphan-loser:3|timeline-fail:3|verify-fail:3|mutation-fail:2)
+    orphan-loser:3|timeline-fail:3|verify-fail:3)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[]}' ;;
+    mutation-fail:2|repair-edit-fail:2)
+      printf '%s\n' '{"state":"OPEN","labels":[],"assignees":[]}' ;;
+    withdraw-fail:2)
+      printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-a"}]}' ;;
+    repair-read-fail:2) exit 1 ;;
     verify-fail:2) exit 1 ;;
     lost:1)
       printf '%s\n' '{"state":"OPEN","labels":[{"name":"claimed"}],"assignees":[{"login":"bot-b"}]}' ;;
@@ -44,10 +49,19 @@ if [ "$1 $2" = "issue view" ]; then
   esac
 elif [ "$1 $2" = "issue edit" ]; then
   printf '%s\n' "$*" >>"$log"
-  if [ "${CLAIM_MODE:?}" = mutation-fail ] && grep -q -- '--add-assignee' <<<"$*"; then
-    exit 1
-  fi
+  case "${CLAIM_MODE:?}:$*" in
+    mutation-fail:*--add-assignee*|repair-edit-fail:*--add-assignee*|repair-read-fail:*--add-assignee*|withdraw-fail:*--add-assignee*) exit 1 ;;
+    repair-edit-fail:*--add-label\ ready*) exit 1 ;;
+    withdraw-fail:*--remove-assignee*) exit 1 ;;
+  esac
 elif [ "$1" = api ]; then
+  if [ "$2" = "repos/o/r/labels/claimed" ]; then
+    if [ "${CLAIM_MODE:?}" = missing-label ]; then
+      exit 1
+    fi
+    printf '%s\n' '{"name":"claimed"}'
+    exit 0
+  fi
   case "${CLAIM_MODE:?}" in
     success)
       printf '%s\n' '[{"event":"assigned","created_at":"2026-07-29T10:00:00Z","assignee":{"login":"bot-a"}}]' ;;
@@ -132,7 +146,25 @@ t timeline-failure-restores-ready 1 "$(grep -c -- '--remove-label claimed --add-
 run_claim mutation-fail; rc=$?
 t mutation-failure-rc 1 "$rc"
 t mutation-failure-cleans-self 1 "$(grep -c -- '--remove-assignee bot-a' "$TMP/log")"
-t mutation-failure-restores-ready 1 "$(grep -c -- '--remove-label claimed --add-label ready' "$TMP/log")"
+t mutation-failure-restores-ready 1 "$(grep -c -- 'issue edit 7 -R o/r --add-label ready' "$TMP/log")"
+
+run_claim missing-label; rc=$?
+t missing-label-rc 1 "$rc"
+t missing-label-does-not-mutate 0 "$(wc -l <"$TMP/log" | tr -d ' ')"
+t missing-label-reported 1 "$(grep -c "required label 'claimed' is missing or unreadable" "$TMP/err")"
+
+run_claim repair-edit-fail; rc=$?
+t repair-edit-failure-rc 1 "$rc"
+t repair-edit-failure-reported 1 "$(grep -c 'o/r#7: failed claim repair.*board needs a hand' "$TMP/err")"
+
+run_claim repair-read-fail; rc=$?
+t repair-read-failure-rc 1 "$rc"
+t repair-read-failure-reported 1 "$(grep -c 'o/r#7: cannot inspect failed claim repair.*board needs a hand' "$TMP/err")"
+
+run_claim withdraw-fail; rc=$?
+t failed-withdrawal-rc 1 "$rc"
+t failed-withdrawal-does-not-restore-ready 0 "$(grep -c -- '--add-label ready' "$TMP/log")"
+t failed-withdrawal-is-reported 1 "$(grep -c 'o/r#7: failed to withdraw @bot-a after a lost claim; the board needs a hand' "$TMP/err")"
 
 run_claim closed; rc=$?
 t closed-issue-rc 1 "$rc"
