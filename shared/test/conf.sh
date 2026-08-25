@@ -489,6 +489,48 @@ Re-signalling here would re-request an already-unanimous panel on a PR the human
 No other work was outstanding: no draft PRs, no orphaned claimed issues. Session exits silent.
 ACTED_EOF
 
+# The two false `no`s claude-bot recorded OUTSIDE the review duty are on its
+# box, not this one — but the same verb gap has a third victim here, and this
+# one is captured locally and confirmed against the API.
+#
+# captured: ~/duty/logs/20260821T171004Z-attention-heavy-duty_incubator_368.log
+# GitHub:   heavy-duty/incubator comments 5373060777 (17:21:30Z) and
+#           5373073792 (17:22:46Z), commits 5e05c607 and 44d11ae2
+#
+# It posted an ack, removed a label, pushed two commits, posted three comments
+# including its own round-answered signal — and read as `no`, because the idle
+# net hits `test` STILL RUNNING and none of its act reports is in a shape the
+# act pattern could see. `**The ack.** Posted ...` is not sentence-initial: the
+# anchor wants a full stop followed by a SPACE, and here the stop is inside the
+# bold run. What rescues it is `which I declared explicitly`, one of the two
+# verbs claude-bot offered as cheap and non-blocking. It is the only verdict in
+# 1066 that either verb moves, and it is true.
+cat >"$ALOG/declared.log" <<'ACTED_EOF'
+Done — here's where #368 and PR #378 stand.
+
+**The ack.** Posted `📌 picked up` on #368 and removed the `attention` label (it re-arms the wake).
+
+**What the demand was.** Triage's 17:05:09Z correction left exactly one item on my side — *"the mutation proof of conditions (a) and (b) against the must-fail bullet"* — plus the instruction not to invert the two `indexOf` ordering assertions. While reading the thread I found a **completed panel round** at head `5931c44f`: kimi approve, codex approve, claude-bot **changes requested**. So the tick carried both.
+
+**1. The mutation proof** ([comment](https://github.com/heavy-duty/incubator/pull/378#issuecomment-5373073792)) — 28 mutants plus a baseline control, each applied and reverted, head unmoved and tree clean throughout:
+
+- **(a)** all **21** inverted `(assertion, subject)` pairs reached and red, each from its own Spanish sentence injected into the English copy string that renders in its place. That includes the two that were silently deleted at `3c4312c`. Nine pairs are shadowed by an earlier assertion in the same test (html legs behind their body sibling; `emails.test.ts` ll. 289/292 behind the byte-exact `toBe`; l. 59's `questions` iteration behind `confirmation`) — those runs scaffold the shadowing assertion out, which I declared explicitly rather than glossing.
+- **(b)** three single-character mutants each red exactly their own body; two end-of-body append mutants red **only** the three `toBe` tests while all 30 substring assertions stay green — which is the discriminator the must-fail bullet is actually about.
+- Collateral worth having: the injected multi-locale ordering tests and the hash-based byte-identity test red on the copy mutants, so the relocated coverage is live.
+
+**2. The round** — agreed with every point, disputed none ([pickup + analysis](https://github.com/heavy-duty/incubator/pull/378#issuecomment-5373060777)):
+
+- 🔴 **Criterion 5 was genuinely violated.** My `legalCopy.test.ts` comment stated the jurisdiction outright, at the exact site the deleted sentence occupied, while three other sites in the same diff carry the discipline. Re-cut to *"the operator's own record contradicts the denial"* (`5e05c607`). I also swept the whole diff's added lines for a fourth site — exactly one existed, and `template-dist.test.ts`'s registered-address comment correctly stays.
+- 🟡 The `templates/_fixture` comment claimed `legalCopy.test.ts` drives the fixture; verified it doesn't and re-cut it (`44d11ae2`), with PR body position 2 corrected.
+- 🟡 Criterion 6's stale `[⚠️]` needed no change — it has been `[x]` since the 17:08 re-signal.
+
+Both commits are comment-only: no assertion, source file or shipped copy string moved. `npm run check` (554 files), `intake-web` (254), `ui-core` (`tsc` + 55) and the two admitted `apps/core` files (33) all green locally; PR body carries the round-2 worklog and round-log entry; `📣 round answered at head 44d11ae262d511032f69ce26406268f9f1cd2cf6` posted. I did not request the panel — the engine does that from the signal.
+
+**Open.** CI at the new head: `check`, `guards`, `refs-not-closing`, both `labels` jobs green; `test` still running (started 17:24Z) — a watcher will bring me back when it settles, and if it reds on comment-only commits I'll treat it as mine to diagnose first.
+
+**One thing for you, outside this PR:** `docs/brain/STATE.md`'s #368 row still reads *"Blocked, operator-owned — a second-episode `needs-ruling` hard block stands"*. That has been false since the 14:32:47Z ruling; the row now describes a build in flight. I left it alone rather than opening a second PR mid-round, but it will mislead the next orientation until the merge record runs.
+ACTED_EOF
+
 # D4's THIRD state — "a transcript the profile does not recognise" — on the
 # only log in 1065 that is one. Fifty-eight bytes of a session cut off after a
 # probe result: it names nothing this engine does, so whether it acted is not
@@ -542,6 +584,11 @@ for agent in claude grok; do
   t "acted-$agent-subaction-claim-is-yes" 0 "$(acted_rc "$agent" "$ALOG/trap.log")"
   # Waiting on someone else's verdict is doing nothing, and says so.
   t "acted-$agent-waiting-only-is-no"  1 "$(acted_rc "$agent" "$ALOG/wait.log")"
+  # The verb tail, outside the review duty: a session that acked, pushed twice
+  # and commented three times, held on `no` by `still running` until `declared`
+  # entered the list. Non-blocking in review; it is a case because a widening
+  # nobody can red is a widening nobody can remove safely.
+  t "acted-$agent-declared-is-yes"     0 "$(acted_rc "$agent" "$ALOG/declared.log")"
   # THE REVIEW DUTY, on whole captured transcripts. Both carry a real no-op
   # claim and both sessions submitted a verdict that is confirmed on GitHub:
   # one renders the marker as `PR N (repo) — approved`, the other as
