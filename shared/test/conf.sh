@@ -282,4 +282,202 @@ profile_install --agent vendorz --role nosuchrole >/dev/null 2>&1 || true
 t operator-profile-seed-consumed-on-failure consumed "$r1"
 
 
+# --- bot_session_acted: the idle detector on the two -p profiles (#467) -----
+#
+# THE FIXTURES BELOW ARE VERBATIM CAPTURED SESSION LOGS, byte for byte, from
+# the 1064 `claude -p` transcripts this engine wrote on a real builder box.
+# Nothing here was composed to be detected. That is the point of #467's
+# acceptance criteria: a detector tested only against strings someone imagined
+# is a detector that fails on the first real session, and the two corrections
+# this suite pins hardest — the sub-action claim and the quota banner — were
+# both invisible until the whole corpus was run through it.
+#
+# Each fixture names the log it came from, so the claim is checkable.
+
+ALOG="$TMP/acted"; mkdir -p "$ALOG"
+
+acted_rc() {  # acted_rc <agent> <log> -> raw rc of the profile hook
+  local rc=0
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; bot_session_acted "$2" ) >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+acted_word() {  # acted_word <agent> <log> -> the field as duty.log spells it
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; session_acted "$2" )
+}
+
+# an `attention` session that posted two comments and removed a label
+# captured: ~/duty/logs/20260802T130504Z-attention-heavy-duty_crew_286.log
+cat >"$ALOG/push.log" <<'ACTED_EOF'
+Done. The demand on #286 was a single recovery act, and it's complete.
+
+**What the thread demanded:** my 12:48:59Z signal named `d664faf3`, then I pushed `4a8a86e3` (triage's amended must-fail item) *after* it. The head therefore carried no signal, `_request_panel` was correctly holding, and the PR would have held forever — #241's shape, with the recovery duty not deployed to the boxes.
+
+**What I did:**
+- Posted `📌 picked up` on #286 and removed the `attention` label ([comment](https://github.com/heavy-duty/crew/issues/286#issuecomment-5158076189)).
+- Verified head `4a8a86e378fe990092097fdc283a02f0b70ee712` is green — rollup `SUCCESS`, all four checks (`check`, `guards`, `labels / scope`, `labels / trigger`) completed successful, nothing queued, cancelled, or stale. Worktree clean at that exact SHA, nothing unpushed.
+- Confirmed the round is answered whole: every worklog checkbox and acceptance criterion in the PR body is checked, and no reviews are outstanding at any head.
+- Posted the signal on [#292](https://github.com/heavy-duty/crew/pull/292#issuecomment-5158080889): `📣 round answered at head 4a8a86e378fe990092097fdc283a02f0b70ee712`, with the green table, the two judgement calls flagged for the panel (task 3 scoped to `CHANGES_REQUESTED`; `answered-head.jq` serving both callers with stranded detection reading no time), and an explicit acknowledgement that the post-signal push was mine to re-signal regardless of why the head moved.
+
+No exception was argued — the head is genuinely green. The engine now requests the panel; that is not mine to do.
+ACTED_EOF
+
+# a `resume` session that read the whole PR thread and wrote nothing
+# captured: ~/duty/logs/20260806T053009Z-resume-heavy-duty_crew.log
+cat >"$ALOG/read.log" <<'ACTED_EOF'
+**PR #376 needs no action — it is already fully converged. I posted nothing.**
+
+The resume wake named it, but the REST thread shows the work is complete:
+
+| check | state |
+|---|---|
+| head | `019db9b4c85485910ee1c4b6adc429650dcd924e` |
+| round-answered signal at that head | posted 01:01:31Z |
+| panel verdicts at that head | kimi ✅ 01:10, codex ✅ 01:13, claude ✅ 01:19 — all three, full bench minus me |
+| handoff | `🤝 handed off at head 019db9b…` posted 01:21:50Z |
+| label | `state:needs-human` |
+| checks at head | ci-shell SUCCESS, guards SUCCESS, labels/scope SUCCESS (+ SKIPPED reruns), labels/trigger SUCCESS — green |
+| worktree `build-168-wip-refs` | clean, HEAD == `fork` branch tip, nothing stranded |
+
+This is the known false positive: the 12-tick counter runs from the *push* (23:59Z), and round 3's reply→signal gap ran to 01:01Z, so the counter tripped on a PR that had in fact answered its round, been approved by the whole panel, and been handed to the human. Per BUILDER.md — "a resumption that finds nothing changed posts nothing" — re-posting a signal or a ⟲ marker here would be pure flood on a PR that is already at `state:needs-human` and waiting only on a human merge.
+
+No draft PRs and no orphaned claimed issues were outstanding, so the duty is discharged with no writes to GitHub.
+ACTED_EOF
+
+# a `resume` session that opens with TWO no-op claims and then writes a memory file
+# captured: ~/duty/logs/20260806T010509Z-resume-heavy-duty_crew.log
+cat >"$ALOG/trap.log" <<'ACTED_EOF'
+Nothing to do on PR 376, and I posted nothing to it. The standing record is correct: signalled at the current head, green, panel requested, one reviewer mid-round. Per BUILDER.md's Claiming rule — *"a resumption that finds nothing changed posts nothing"* — silence here is the compliant act, and a duplicate marker would have been the `#145`/`#311` flood.
+
+I updated my memory of the resume wake: the cause it recorded (`#360`'s comment-blindness) merged yesterday, but the wake tripped anyway for a different reason worth carrying forward — the twelve-tick counter runs from the push, not from the whole-round reply, so a long gap between posting the reply and posting the `📣` signal burns the budget on its own. The fix is on my side: close that gap.
+ACTED_EOF
+
+# a session that is only waiting on a verdict
+# captured: ~/duty/logs/20260824T220003Z-attention-heavy-duty_ceremony_499.log
+cat >"$ALOG/wait.log" <<'ACTED_EOF'
+Round 2's third verdict hasn't landed yet. I'll pick this back up the moment it does — the poll wakes me either on the verdict or in ~13 minutes, whichever comes first, so a long wait produces a worklog update on the PR rather than silence.
+ACTED_EOF
+
+# a session cut off mid-flight, one clause short of saying whether it posted
+# captured: ~/duty/logs/20260809T022011Z-build-heavy-duty_crew.log
+cat >"$ALOG/ambi.log" <<'ACTED_EOF'
+No tests drive the log helpers directly, so claude's NB#3 is cheap to take. Posting the plan of record now, before touching code.
+API Error: Server error mid-response. The response above may be incomplete.
+ACTED_EOF
+
+
+# `Execution error` is what the CLI prints when it dies before the model
+# speaks: fifteen bytes and NO trailing newline. All 26 in the corpus.
+printf 'Execution error' >"$ALOG/fault.log"
+# The vendor's refusal banners. A session that hit the weekly cap or a dead
+# login never reached the model at all — 40 of the 1064 are one of these.
+printf "You've hit your session limit \xc2\xb7 resets 1:20am (UTC)\n" >"$ALOG/quota.log"
+printf "Not logged in \xc2\xb7 Please run /login\n" >"$ALOG/nologin.log"
+: >"$ALOG/empty.log"
+
+# The contract, on BOTH profiles, case for case. grok.conf carries the same
+# detector as a second copy because a profile is transported one file at a
+# time; this loop is what stops the copies drifting, and it is the only reason
+# the duplication is safe.
+for agent in claude grok; do
+  # A session that wrote something: two comments posted and a label removed.
+  t "acted-$agent-wrote-is-yes"        0 "$(acted_rc "$agent" "$ALOG/push.log")"
+  # A session that only read: it says so, and nothing else in it says otherwise.
+  t "acted-$agent-read-only-is-no"     1 "$(acted_rc "$agent" "$ALOG/read.log")"
+  # D4, both halves, and neither folded into `no`.
+  t "acted-$agent-empty-is-unknown"    2 "$(acted_rc "$agent" "$ALOG/empty.log")"
+  t "acted-$agent-fault-is-unknown"    2 "$(acted_rc "$agent" "$ALOG/fault.log")"
+  # A cap or a dead login is a session that never spoke, NOT one that did
+  # nothing. Reading it as idle would have booked 40 of this box's sessions as
+  # waste that no duty ever incurred.
+  t "acted-$agent-quota-is-unknown"    2 "$(acted_rc "$agent" "$ALOG/quota.log")"
+  t "acted-$agent-nologin-is-unknown"  2 "$(acted_rc "$agent" "$ALOG/nologin.log")"
+  # D3, pinned by a real borderline transcript rather than by a paragraph: the
+  # session was cut off one clause short of saying whether it posted. That is
+  # the ambiguity the bias exists for, and it answers ACTED.
+  t "acted-$agent-ambiguous-is-yes"    0 "$(acted_rc "$agent" "$ALOG/ambi.log")"
+  # THE TRAP. This reply opens "Nothing to do on PR 376, and I posted nothing
+  # to it" — and then updates a memory file. A no-op claim is about one
+  # sub-action until the rest of the reply is read, so the claim is deleted
+  # from the text BEFORE the evidence is looked for. A detector that stopped
+  # at the first phrase books this session as idle; it was not.
+  t "acted-$agent-subaction-claim-is-yes" 0 "$(acted_rc "$agent" "$ALOG/trap.log")"
+  # Waiting on someone else's verdict is doing nothing, and says so.
+  t "acted-$agent-waiting-only-is-no"  1 "$(acted_rc "$agent" "$ALOG/wait.log")"
+done
+
+# The three states survive session_acted's mapping and reach duty.log as the
+# words the operator's aggregate greps for. `unknown` is the one that must
+# still be reachable: before this change it was the ONLY reachable value.
+t acted-word-yes     yes     "$(acted_word claude "$ALOG/push.log")"
+t acted-word-no      no      "$(acted_word claude "$ALOG/read.log")"
+t acted-word-unknown unknown "$(acted_word claude "$ALOG/empty.log")"
+
+# codex and kimi are out of scope (#467 D6) and stay byte-identical. Pinned by
+# content rather than by `git diff`, which would assert nothing the moment this
+# branch merges: these two lines ARE the two detectors, and a suite that reds
+# when they move is the durable form of "unchanged".
+t acted-codex-detector-untouched \
+  "grep -Eq '(^|[[:space:]])(exec|apply_patch)([[:space:]]|\$)|^tool (call|result)' \"\$1\"" \
+  "$(sed -n '/^bot_session_acted()/,/^}/p' "$SHARED/conf/agents/codex.conf" | sed -n '2p' | sed 's/^  //')"
+t acted-kimi-detector-untouched \
+  "grep -Eq '(^|[^[:alpha:]])(Using|Used) Shell[[:space:]]*\\(' \"\$1\"" \
+  "$(sed -n '/^bot_session_acted()/,/^}/p' "$SHARED/conf/agents/kimi.conf" | sed -n '2p' | sed 's/^  //')"
+
+# D5: this issue makes an existing field truthful and gates nothing on it. The
+# tempting one-liner is a dispatch gate keyed on the PREVIOUS session's
+# `acted`, and it is a separate decision — so the absence is asserted, not
+# promised. run_session must reach the CLI whatever the last session reported.
+printf '%s SESSION END kind=mention key=r/x rc=0 dur=9s outcome=ok acted=no reply_tail=\n' \
+  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$TMP/duty-prior.log"
+AWORK="$TMP/acted-work"; mkdir -p "$AWORK"
+BOT_CLI_CMD=(bash -c 'printf "I posted nothing.\n"')
+DUTY_LOG="$TMP/duty-prior.log" run_session mention r/x "$AWORK" 5 p >"$TMP/acted-gate.out" 2>&1
+grep -q 'SESSION START' "$TMP/acted-gate.out" && r1=dispatched || r1=GATED
+t acted-no-dispatch-gate-on-prior-acted dispatched "$r1"
+unset BOT_CLI_CMD
+
+# --- the operator's own aggregate, end to end (#467) ------------------------
+#
+# The criterion is stated as the command @danmt ran, not as a call into the
+# library: real transcripts -> run_session -> duty.log -> awk. Every SESSION
+# END line below is written by the engine, from a fixture the CLI actually
+# emitted, so nothing between the detector and the `idle` column is stubbed.
+AGG="$TMP/acted-duty.log"; : >"$AGG"
+# The profile is sourced for real here, in a subshell so the suite's own scope
+# stays as the cases above found it. Sourcing it is not a detail: session_acted
+# resolves the hook through `declare -F`, so a box whose profile defines none
+# answers `unknown` for every session it ever runs — which is grok's half of
+# this bug, and running the aggregate without the source would reproduce
+# `idle=0` here for exactly that reason.
+(
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/claude.conf"
+  for f in push read trap wait ambi empty fault quota; do
+    # The stub IS the CLI: it replays one captured transcript verbatim. $0 is
+    # the fixture because run_session appends the prompt as the final argument.
+    # shellcheck disable=SC2016  # $0 is the shim's own argument, not this shell's
+    BOT_CLI_CMD=(bash -c 'cat -- "$0"' "$ALOG/$f.log")
+    run_session mention "r/$f" "$AWORK" 10 p >>"$AGG" 2>/dev/null
+  done
+)
+
+# The aggregate, as it was run: sessions, minutes, and idle by duty.
+agg_idle() { awk '/SESSION END/ {
+    for (i = 1; i <= NF; i++) { split($i, kv, "="); f[kv[1]] = kv[2] }
+    if (f["acted"] == "no") idle[f["kind"]]++
+    n[f["kind"]]++
+  } END { for (k in n) printf "%s sessions=%d idle=%d\n", k, n[k], idle[k] + 0 }' "$1"
+}
+agg="$(agg_idle "$AGG")"
+t acted-aggregate-counts-every-session "sessions=8" \
+  "$(printf '%s\n' "$agg" | sed -n 's/.*\(sessions=[0-9]*\).*/\1/p')"
+# The whole point. `idle=0` across 4150 sessions was a disabled detector; an
+# `idle` equal to the session count would be a detector stuck the other way.
+idle_n="$(printf '%s\n' "$agg" | sed -n 's/.*idle=\([0-9]*\).*/\1/p')"
+[ "${idle_n:-0}" -gt 0 ] && [ "${idle_n:-8}" -lt 8 ] && r1=non-degenerate || r1="degenerate(idle=$idle_n)"
+t acted-aggregate-idle-is-non-degenerate non-degenerate "$r1"
+
+
 suite_finish

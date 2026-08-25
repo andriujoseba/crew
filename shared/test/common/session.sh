@@ -41,8 +41,21 @@ claude_acted() {
   source "$SHARED/conf/agents/claude.conf"
   session_acted "$SA_LOG"
 }
-printf 'Claude Code\nfinal answer: I need more information.\n' >"$SA_LOG"
-t session-claude-print-log-is-unknown unknown "$(claude_acted)"
+# What this case asserts is session_acted's MAPPING — that a hook answering
+# "cannot tell" reaches duty.log as `unknown` and is not folded into `no`. It
+# used to reach that state through claude.conf's stub, which returned 2 for
+# every transcript ever written; #467 replaced the stub with a real detector,
+# so the fixture is now a transcript that genuinely cannot be read: fifteen
+# bytes of CLI fault, no reply, no trailing newline. The subject of the case
+# is unchanged, and the profile's own three states are covered case for case
+# in shared/test/conf.sh.
+printf 'Execution error' >"$SA_LOG"
+t session-claude-unreadable-log-is-unknown unknown "$(claude_acted)"
+# ...and the same profile, on a transcript that IS a reply, no longer answers
+# `unknown` for everything. Without this line the case above passes just as
+# well against a stub, which is how the stub survived four thousand sessions.
+printf 'Claude Code\nI pushed the fix and posted the signal.\n' >"$SA_LOG"
+t session-claude-real-reply-is-not-unknown yes "$(claude_acted)"
 
 # Exercise run_session itself so a helper-only implementation cannot pass.
 SA_WORK="$TMP/session-work"; mkdir -p "$SA_WORK"
