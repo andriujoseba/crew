@@ -302,6 +302,10 @@ acted_rc() {  # acted_rc <agent> <log> -> raw rc of the profile hook
   ( source "$SHARED/conf/agents/$1.conf"; bot_session_acted "$2" ) >/dev/null 2>&1 || rc=$?
   echo "$rc"
 }
+acted_prose() {  # acted_prose <agent> <log> -> what the detector actually reads
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; "_${1}_reply_prose" "$2" ) 2>/dev/null
+}
 acted_word() {  # acted_word <agent> <log> -> the field as duty.log spells it
   # shellcheck disable=SC1090
   ( source "$SHARED/conf/agents/$1.conf"; session_acted "$2" )
@@ -491,6 +495,14 @@ for agent in claude grok; do
   # `yes`, which is where an un-gated D3 default put them.
   t "acted-$agent-fragment-is-unknown"     2 "$(acted_rc "$agent" "$ALOG/frag.log")"
   t "acted-$agent-foreign-log-is-unknown"  2 "$(acted_rc "$agent" "$ALOG/foreign.log")"
+  # The banner filter is asserted on the PROSE, not on the verdict, because
+  # the verdict no longer distinguishes it: the recognition gate answers
+  # `unknown` for a banner-only log with the filter removed, and does so
+  # identically on all 1065 captured logs. Its remaining guarantee is the
+  # narrower one — that a vendor banner never enters the text the patterns
+  # read, however loose those patterns grow — so that is where it is pinned.
+  # A case on the rc here would be a case no mutation can kill.
+  t "acted-$agent-banner-leaves-no-prose" "" "$(acted_prose "$agent" "$ALOG/quota.log")"
 done
 
 # The three states survive session_acted's mapping and reach duty.log as the
