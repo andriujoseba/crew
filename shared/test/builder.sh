@@ -3928,4 +3928,365 @@ fi
 t doctrine-templates-have-no-hardcoded-paths slotted "$r1"
 PROMPTS_DIR="$saved_prompts_dir"
 
+# --- #462: a declined ready issue becomes a fact on the BOARD ---------------
+#
+# The defect is a lost discovery, so almost every assertion here is made
+# against the board — the fixture's comment store — and never against
+# $DUTY_DIR. A ledger entry proving a decline happened is exactly what already
+# existed and exactly what was not a record: per box, two fields, no reason,
+# dead when the box is.
+#
+# The fixture GitHub keeps a comment store AND a log of every call it was
+# handed. The log is what D4 is asserted from: "moves no label and assigns
+# nobody" read off a final label set would pass on a path that set a label and
+# put it back, so the question asked is whether a mutation was ever ISSUED.
+D462="$TMP/d462"; mkdir -p "$D462/bin"
+export D462_STORE="$D462/comments.json" D462_CALLS="$D462/gh-calls" \
+       D462_SEQ="$D462/seq" D462_ME="fixture-builder"
+cat >"$D462/bin/gh" <<'D462GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$D462_CALLS"
+[ -s "$D462_STORE" ] || printf '[]' >"$D462_STORE"
+[ "${1:-}" = api ] || exit 1
+if [ "${2:-}" = user ]; then printf '%s\n' "$D462_ME"; exit 0; fi
+path="$2"; method=GET; body=""
+shift 2
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method="$2"; shift 2 ;;
+    -f) case "$2" in body=*) body="${2#body=}" ;; esac; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$method:$path" in
+  GET:*/comments) cat "$D462_STORE"; exit 0 ;;
+  POST:*/comments)
+    # A strictly increasing stamp: two comments in the same wall-clock second
+    # would tie, and "newest wins" is a real rule being tested.
+    seq_n=$(( $(cat "$D462_SEQ" 2>/dev/null || echo 0) + 1 ))
+    printf '%s' "$seq_n" >"$D462_SEQ"
+    jq --arg me "$D462_ME" --arg b "$body" \
+       --arg at "$(printf '2026-08-25T00:00:%02dZ' "$seq_n")" \
+       '. + [{user:{login:$me}, body:$b, created_at:$at}]' "$D462_STORE" >"$D462_STORE.tmp" \
+      && mv "$D462_STORE.tmp" "$D462_STORE"
+    exit 0 ;;
+esac
+exit 1
+D462GH
+chmod +x "$D462/bin/gh"
+
+d462_reset() { printf '[]' >"$D462_STORE"; : >"$D462_CALLS"; : >"$D462_SEQ"; }
+d462_count() { jq 'length' "$D462_STORE"; }
+# A comment attributed to someone else, or to me with a body of my choosing —
+# how the "never mistaken for the engine's" cases are staged.
+d462_seed() {  # d462_seed <login> <body>
+  jq --arg u "$1" --arg b "$2" --arg at "2026-08-24T00:00:00Z" \
+    '. + [{user:{login:$u}, body:$b, created_at:$at}]' "$D462_STORE" >"$D462_STORE.tmp"
+  mv "$D462_STORE.tmp" "$D462_STORE"
+}
+D462_MARK_A="$_DECLINE_MARK — fx/repo#7 — unbuildable"
+D462_MARK_B="$_DECLINE_MARK — fx/repo#7 — needs-ruling"
+# Two bodies that differ only in the sentence a MODEL wrote. This is the whole
+# reason an exact-body key could not be reused: two boxes reaching the same
+# conclusion never phrase the deciding fact the same way.
+D462_BODY_A="@triage this is not buildable as written.
+
+$D462_MARK_A
+
+The criterion asks for \`df\` output from a host no builder can reach."
+D462_BODY_A2="@triage I cannot build this one.
+
+$D462_MARK_A
+
+Acceptance needs disk figures from the operator's own machine."
+D462_BODY_B="@triage this needs a ruling first.
+
+$D462_MARK_B
+
+Which of the two payload paths ships is not decided anywhere on the board."
+
+D462_PATH="$PATH"
+PATH="$D462/bin:$PATH"
+PO="$SHARED/bin/post-once.sh"
+# ME is the engine's own login, set by duty.sh. It is supplied per call in a
+# subshell rather than assigned here: this suite's earlier blocks already set ME
+# inside subshells, and a top-level assignment would make every one of those a
+# lost-modification finding — info-level, which crew's shellcheck job fails on.
+d462_reason() { ( ME="$D462_ME"; DUTY_DIR="$D462"; _decline_reason "$@" ); }
+d462_record() { ( ME="$D462_ME"; DUTY_DIR="$D462"; _record_declines "$@" ); }
+
+# 1. THE DECLINE LANDS ON THE BOARD. Asserted from the store, which is the
+# issue — the criterion says so in as many words.
+d462_reset
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
+t d462-decline-lands-on-the-board 1 "$(d462_count)"
+
+# 2. A SECOND BOX ADDS NOTHING — same conclusion, a body a different model
+# wrote. The marker is the key, so this is one comment.
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A2" "$D462_MARK_A" >/dev/null 2>&1
+t d462-second-box-adds-nothing 1 "$(d462_count)"
+
+# 3. A CHANGED CONCLUSION IS NOT SUPPRESSED. A different one of the four is a
+# different key and posts.
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_B" "$D462_MARK_B" >/dev/null 2>&1
+t d462-changed-conclusion-posts 2 "$(d462_count)"
+
+# 4. MUST FAIL: THE MARKER DROPPED. The same two bodies through the 3-argument
+# exact-body form is the spam case — two boxes, two comments — and it is why
+# post-once.sh was extended rather than called as it stood.
+d462_reset
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" >/dev/null 2>&1
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A2" >/dev/null 2>&1
+t d462-unmarked-differing-bodies-double-post 2 "$(d462_count)"
+
+# 5. The 3-argument form is otherwise UNCHANGED: an identical body still
+# dedups. Every existing caller keys on this.
+d462_reset
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" >/dev/null 2>&1
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" >/dev/null 2>&1
+t d462-exact-body-form-still-dedups 1 "$(d462_count)"
+
+# 6. An UNMARKED comment of mine — the same prose, no marker line — does not
+# suppress. The marker is what suppresses it, which is what keeps a human's
+# comment from being mistaken for the engine's.
+d462_reset
+d462_seed "$D462_ME" "@triage this is not buildable as written. I cannot get that evidence."
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
+t d462-unmarked-comment-does-not-suppress 2 "$(d462_count)"
+
+# 7. The marker match is a WHOLE LINE, never a substring: ceremony#32's finding
+# survives. A comment quoting the marker inside a sentence is not a decline.
+d462_reset
+d462_seed "$D462_ME" "I read \`$D462_MARK_A\` on a sibling board and disagree."
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
+t d462-marker-is-a-line-not-a-substring 2 "$(d462_count)"
+
+# 8. FAIL CLOSED on a marker that is not a line of the body: a key absent from
+# what gets posted matches nothing it wrote, which is a double-post on every
+# call — the exact failure the script exists to prevent.
+d462_reset
+if DUTY_DIR="$D462" "$PO" fx/repo 7 "no marker in here" "$D462_MARK_A" >/dev/null 2>&1
+then r1=POSTED; else r1=refused; fi
+t d462-marker-absent-from-body-refused refused "$r1"
+t d462-marker-absent-posts-nothing 0 "$(d462_count)"
+
+# --- the engine reading the reason back ------------------------------------
+# 9. My marker, one of the four: the reason travels off the board.
+d462_reset
+d462_seed "$D462_ME" "$D462_BODY_A"
+t d462-reason-read-back unbuildable "$(d462_reason fx/repo 7)"
+
+# 10. Someone else's marker is not my decline. A reviewer or a human writing
+# the line must never become a fact the engine reports.
+d462_reset
+d462_seed other-bot "$D462_BODY_A"
+t d462-foreign-marker-is-not-mine "" "$(d462_reason fx/repo 7)"
+
+# 11. The reason set is CLOSED. A token outside the four is not a reason, so
+# the operator's line can never be written by a session's free text.
+d462_reset
+d462_seed "$D462_ME" "x
+
+$_DECLINE_MARK — fx/repo#7 — i-would-rather-do-another-one
+
+y"
+t d462-unknown-reason-token-rejected "" "$(d462_reason fx/repo 7)"
+
+# 12. The marker is keyed on the ISSUE too: another issue's decline is not
+# this one's.
+d462_reset
+d462_seed "$D462_ME" "$_DECLINE_MARK — fx/repo#9 — unbuildable"
+t d462-other-issues-marker-not-read "" "$(d462_reason fx/repo 7)"
+
+# 13. NEWEST WINS. A changed conclusion posts (case 3), so it must also
+# govern, or the engine reports the superseded reason forever.
+d462_reset
+d462_seed "$D462_ME" "$D462_BODY_A"
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_B" "$D462_MARK_B" >/dev/null 2>&1
+t d462-newest-conclusion-governs needs-ruling "$(d462_reason fx/repo 7)"
+
+# 14. No marker at all: no reason, and nothing invented.
+d462_reset
+d462_seed "$D462_ME" "just a normal comment"
+t d462-no-marker-no-reason "" "$(d462_reason fx/repo 7)"
+
+# --- _record_declines, beside the ledger commit ----------------------------
+D462_SLUG="fx__repo"
+D462_LEDGER_LINES="fx/repo#7 2026-08-25T00:00:00Z"
+d462_reset
+d462_seed "$D462_ME" "$D462_BODY_A"
+: >"$D462_CALLS"
+d462_record fx/repo "$D462_SLUG" "$D462_LEDGER_LINES"
+t d462-record-writes-id-and-reason "fx/repo#7 unbuildable" \
+  "$(cat "$D462/.declined-build.$D462_SLUG" 2>/dev/null)"
+
+# 15. MUST FAIL: THE LEDGER WITHOUT THE COMMENT. An id being ledgered with no
+# decline on the board records nothing — the whole finding is that a per-box
+# file is not a record, so the ledger entry alone must satisfy nothing.
+d462_reset
+d462_record fx/repo "$D462_SLUG" "$D462_LEDGER_LINES"
+if [ -e "$D462/.declined-build.$D462_SLUG" ]; then r1=WROTE; else r1=nothing; fi
+t d462-ledger-without-comment-records-nothing nothing "$r1"
+
+# 16. MUST FAIL: A DECLINE THAT MOVES THE LABEL. Asserted from the calls the
+# path ISSUED, not from a final label set: a path that set a label and put it
+# back would pass that reading, and this is the tempting implementation.
+d462_reset
+d462_seed "$D462_ME" "$D462_BODY_A"
+: >"$D462_CALLS"
+d462_record fx/repo "$D462_SLUG" "$D462_LEDGER_LINES" >/dev/null
+t d462-decline-issues-no-mutation "" \
+  "$(grep -E -- '-X (POST|PATCH|PUT|DELETE)|/labels|/assignees' "$D462_CALLS" | tr '\n' ' ')"
+t d462-decline-reads-only 1 "$(grep -c 'issues/7/comments' "$D462_CALLS")"
+
+# 17. The record is per repo, for the reason every other builder state file is:
+# _builder_repo runs once per repo and one shared file makes each clobber the
+# last (#345).
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
+if grep -q '\.declined-build\.\$slug' "$BMOD"; then r1='per-repo'; else r1=SHARED; fi
+t d462-record-file-is-per-repo per-repo "$r1"
+
+# 18. It is keyed to the LEDGER COMMIT, not to the enumerated board: the caller
+# hands over exactly what ledger_commit is given, so the two records can never
+# disagree about which ids the session left behind (#264).
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+if awk_range_grep_Fq '/_record_declines "\$R" "\$slug" "\$ready_commit"/,/ledger_commit "\$DUTY_DIR\/.seen-build"/' \
+  "$BMOD" 'ledger_commit'; then r1='beside-the-commit'; else r1=DETACHED; fi
+t d462-record-keyed-to-ledger-commit beside-the-commit "$r1"
+
+# 19. A recorded id that has left the board is not a live decline. Without the
+# intersection the last session's record would outlive the issue itself.
+printf 'fx/repo#7 unbuildable\nfx/repo#8 needs-ruling\n' >"$D462/.declined-build.$D462_SLUG"
+t d462-declines-intersect-the-board "unbuildable" \
+  "$(DUTY_DIR="$D462"; _declined_for_board "$D462_SLUG" "fx/repo#7 2026-08-25T00:00:00Z" | tr '\n' ' ' | sed 's/ $//')"
+t d462-declines-empty-board-none "" \
+  "$(DUTY_DIR="$D462" _declined_for_board "$D462_SLUG" "")"
+rm -f "$D462/.declined-build.$D462_SLUG"
+
+PATH="$D462_PATH"
+
+# --- the no-duty line names the CAUSE, not the mechanism (D3) --------------
+# 20. One declined and one genuinely ledger-held: the line distinguishes them,
+# because a decline is triage's to repair and a ledger hold is not.
+t d462-nbd-declined-and-held \
+  '1 ready held by seen-ledger, 1 ready declined: unbuildable (1)' \
+  "$(_no_build_duty_reason 2 0 "" 1 'unbuildable')"
+# 21. Everything declined: no ledger half to report.
+t d462-nbd-all-declined \
+  '4 ready declined: unbuildable (3), needs-ruling (1)' \
+  "$(_no_build_duty_reason 4 0 "" 1 'unbuildable
+needs-ruling
+unbuildable
+unbuildable')"
+# 22. Canonical reason order, not input order and not count order, so two log
+# lines differ only when something actually changed.
+t d462-nbd-summary-canonical-order \
+  '2 ready declined: out-of-scope (1), operator-owned (1)' \
+  "$(_no_build_duty_reason 2 0 "" 1 'operator-owned
+out-of-scope')"
+# 23. The rounds half is not lost when a decline is reported.
+t d462-nbd-declined-keeps-rounds \
+  '1 ready declined: unbuildable (1), 2 round(s) held by seen-ledger' \
+  "$(_no_build_duty_reason 1 2 "" 1 'unbuildable')"
+# 24. The slot still outranks it: the slot is the answer to "why did the claim
+# not happen" whenever it fired (#345), and D3 leaves that branch alone.
+t d462-nbd-slot-still-outranks \
+  'slot held by fx/repo#12; board holds 3 ready' \
+  "$(_no_build_duty_reason 3 0 "fx/repo#12" 1 'unbuildable')"
+
+# 25. WITH NONE DECLINED THE WORDING IS BYTE-IDENTICAL TO TODAY'S. Every
+# existing branch, spelled out — the criterion is byte-identity, so the
+# assertion is the bytes and not a shape.
+t d462-nbd-unchanged-ready-and-rounds '2 ready, 1 round(s) held by seen-ledger' \
+  "$(_no_build_duty_reason 2 1 "" 1)"
+t d462-nbd-unchanged-ready '3 ready held by seen-ledger' \
+  "$(_no_build_duty_reason 3 0 "" 1)"
+t d462-nbd-unchanged-rounds '1 round(s) held by seen-ledger' \
+  "$(_no_build_duty_reason 0 1 "" 1)"
+t d462-nbd-unchanged-board-empty 'board empty' "$(_no_build_duty_reason 0 0 "" 1)"
+t d462-nbd-unchanged-board-unread 'board unread' "$(_no_build_duty_reason 0 0 "" 0)"
+t d462-nbd-unchanged-slot 'slot held by fx/repo#12; board holds 3 ready' \
+  "$(_no_build_duty_reason 3 0 "fx/repo#12" 1)"
+# 26. An EMPTY declined argument is the same as none: the read side hands over
+# whatever the intersection produced, which is routinely nothing.
+t d462-nbd-empty-declined-is-none '3 ready held by seen-ledger' \
+  "$(_no_build_duty_reason 3 0 "" 1 '')"
+
+# --- the prompt: the decline has a WRITTEN ROUTE (D1/D5) -------------------
+# 27. The four reasons reach the session. Before this change they existed only
+# in a source comment addressed to whoever reads duty-builder.sh, in a file the
+# session never opens — which is the defect, so this is the first must-fail.
+D462_PROMPT="$SHARED/prompts/build.txt"
+# Read as RENDERED, not as the template: the session is handed the filled text,
+# and a slot that is never supplied is a prompt that names nothing. (The render
+# site's own slot coverage is the guard above; this reads what comes out of it.)
+D462_RENDERED="$(PROMPTS_DIR="$SHARED/prompts" render_prompt build.txt \
+  ME=fixture-builder REPO=fx/repo TRIAGE=fixture-triage CLAIM=/duty/bin/claim-issue.sh \
+  POST_ONCE=/duty/bin/post-once.sh \
+  DECLINE_MARK="$_DECLINE_MARK" DECLINE_REASONS="$_DECLINE_REASONS" \
+  HEAD_CHECKS=- WT_RULES=- ROUND_RULES=- ONESHOT_RULES=-)"
+r1=all
+for reason in out-of-scope unbuildable needs-ruling operator-owned; do
+  grep -Fq -- "$reason" <<<"$D462_RENDERED" || r1="MISSING:$reason"
+done
+t d462-prompt-names-all-four-reasons all "$r1"
+# The set the prompt is handed is the set the reader validates against: one
+# constant, rendered into the prompt, so the writer and the reader cannot drift.
+t d462-prompt-reasons-are-the-engines-set "out-of-scope unbuildable needs-ruling operator-owned" \
+  "$_DECLINE_REASONS"
+if grep -Fq '{{DECLINE_REASONS}}' "$D462_PROMPT" \
+  && grep -Fq '{{DECLINE_MARK}}' "$D462_PROMPT"; then r1=slotted; else r1=HARDCODED; fi
+t d462-prompt-mark-and-reasons-are-slots slotted "$r1"
+
+# 28. The route is post-once.sh with a MARKER — the 4-argument form. A decline
+# told to post with a bare `gh` would be the spam case of test 4 on every box.
+if grep -Fq '{{POST_ONCE}} {{REPO}} <issue-number> "<body>" "<marker>"' "$D462_PROMPT"
+then r1='marker-form'; else r1=UNKEYED; fi
+t d462-prompt-routes-through-post-once-with-marker marker-form "$r1"
+
+# 29. The marker the prompt tells the session to write is the prefix the engine
+# reads back. Two literals that must agree is how a writer and a reader drift,
+# so the reader's own renderer is asserted against the prompt's template.
+t d462-marker-key-matches-prompt-template "$_DECLINE_MARK — fx/repo#7 — " \
+  "$(_decline_marker_key fx/repo 7)"
+if grep -Fq '{{DECLINE_MARK}} — {{REPO}}#<issue-number> — <reason>' "$D462_PROMPT"
+then r1=agreed; else r1=DRIFTED; fi
+t d462-prompt-marker-template-matches-reader agreed "$r1"
+# And the same thing end to end: the line the RENDERED prompt tells the session
+# to write, with the issue number filled in, is byte-identical to the prefix
+# _decline_reason keys on. This is the assertion that actually catches a drift.
+if grep -Fq "$(_decline_marker_key fx/repo '<issue-number>')<reason>" <<<"$D462_RENDERED"
+then r1=agreed; else r1=DRIFTED; fi
+t d462-rendered-marker-is-the-readers-key agreed "$r1"
+
+# 30. D4 reaches the session too: a decline is not a claim and moves no label.
+r1=stated
+grep -Fq 'DECLINE IS NOT A CLAIM AND MOVES NO LABEL' "$D462_PROMPT" || r1=SILENT
+grep -Fq 'assigns nobody' "$D462_PROMPT" || r1=SILENT
+t d462-prompt-says-decline-moves-no-label stated "$r1"
+# The comment is the deliverable, so the mention that makes it triage's input
+# is not optional either.
+if grep -Fq '@-mention {{TRIAGE}}' "$D462_PROMPT"; then r1=mentions; else r1=SILENT; fi
+t d462-prompt-decline-mentions-triage mentions "$r1"
+
+# 31. D5: the clause must not make declining attractive. The claim imperative
+# survives, and shopping the board is refused by name.
+if grep -Fq 'pick ONE ready unclaimed issue, claim it' "$D462_PROMPT"
+then r1=intact; else r1=WEAKENED; fi
+t d462-prompt-claim-imperative-intact intact "$r1"
+if grep -Fq 'I would rather do a different one' "$D462_PROMPT"
+then r1=refused; else r1=OPEN; fi
+t d462-prompt-shopping-refused-by-name refused "$r1"
+
+# 32. D6/D4: the claim path does not change. The decline never runs it, and no
+# label or assignee write appears anywhere in the decline machinery.
+if awk_range_grep_Fq '/^_record_declines\(\)/,/^}/' "$BMOD" 'claim-issue.sh'; then
+  r1=CLAIMS
+elif awk_range_grep_Fq '/^_decline_reason\(\)/,/^}/' "$BMOD" 'claim-issue.sh'; then
+  r1=CLAIMS
+else
+  r1='no-claim-path'
+fi
+t d462-decline-machinery-never-claims no-claim-path "$r1"
+
 suite_finish
