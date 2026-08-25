@@ -1,12 +1,110 @@
 # shellcheck shell=bash  # sourced by ../run.sh, so it has no shebang of its own
-# fleet-floor/test/floor/alerts.sh — the suite for fleet-floor/server/floor/alerts.py.
-#
-# Both files are empty, and deliberately so. #508's D1 draws the seam that
-# #481 fills — the floor sees a dead box and tells nobody who is not looking at
-# the page — and D2 says the suite tree mirrors the source tree. The mirror is
-# drawn here at the same moment, so #481 is an edit to two named files rather
-# than a decision about where its assertions go.
-#
-# It asserts nothing because there is nothing to assert yet: inventing a case
-# for behaviour this PR did not add would be the rewrite D5 forbids, and a
-# passing assertion about an empty module is worse than no file at all.
+# fleet-floor/test/floor/alerts.sh — reachability alert transitions (#481).
+
+echo "== reachability alerts"
+
+# The main collector is configured through its real fleet.conf and drives the
+# real ff-wedged stub. By the time this module runs, many heartbeat rounds have
+# crossed the threshold; there must still be exactly one alert for that edge.
+for _ in $(seq 1 80); do
+  grep -q 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" && break
+  sleep 0.25
+done
+t "alerts: a wedged roster box emits one unreachable edge" 1 \
+  "$(grep -c 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" || true)"
+
+case "$(grep 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" | head -1)" in
+  *'unreachable for '*'last observed tick '*)
+    ok "alerts: unreachable names box, role, duration, and last tick" ;;
+  *)
+    fail "alerts: unreachable names box, role, duration, and last tick" \
+      "$(grep 'ff-wedged' "$FLOOR_ALERT_LOG" || true)" ;;
+esac
+
+# Ten explicit observations of the same down state exercise the state holder
+# without paying ten real ping timeouts. This uses the production class and a
+# real command sink; replacing edge state with per-poll delivery makes it ten.
+FF_ALERT_UNIT_LOG="$TMP/reachability-alerts-unit.log"
+export FF_ALERT_UNIT_LOG
+: >"$FF_ALERT_UNIT_LOG"
+FF_SRV="$FLOOR/server" python3 - <<'PY'
+import os, shlex, sys
+sys.path.insert(0, os.environ["FF_SRV"])
+from floor.alerts import ReachabilityAlerts
+
+sink = "tee -a %s" % shlex.quote(os.environ["FF_ALERT_UNIT_LOG"])
+alerts = ReachabilityAlerts(sink, 2)
+roster = [{"box": "ff-wedged", "room": "builder"}]
+units = [{"box": "ff-wedged", "room": "builder",
+          "cron": {"last": "2026-08-25T16:00:00Z"}}]
+for i in range(10):
+    alerts.observe({"ff-wedged": {
+        "ok": False, "fails": 2 + i, "ts": 100 + i,
+        "down_since": 90,
+    }}, roster, units)
+alerts.observe({"ff-wedged": {
+    "ok": True, "fails": 0, "ts": 120, "down_since": None,
+}}, roster, units)
+PY
+t "alerts: ten down polls emit one alert" 1 \
+  "$(grep -c 'unreachable for' "$FF_ALERT_UNIT_LOG" || true)"
+t "alerts: recovery emits one alert" 1 \
+  "$(grep -c 'recovered after' "$FF_ALERT_UNIT_LOG" || true)"
+
+# No channel is the shipped default. Exercise both edges and require literal
+# silence — no command attempt, warning, traceback, or log line.
+FF_NO_CHANNEL="$(FF_SRV="$FLOOR/server" python3 - <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["FF_SRV"])
+from floor.alerts import ReachabilityAlerts
+
+alerts = ReachabilityAlerts("", 2)
+roster = [{"box": "ff-wedged", "room": "builder"}]
+units = [{"box": "ff-wedged", "cron": {"last": None}}]
+alerts.observe({"ff-wedged": {
+    "ok": False, "fails": 2, "ts": 10, "down_since": 0,
+}}, roster, units)
+alerts.observe({"ff-wedged": {
+    "ok": True, "fails": 0, "ts": 20, "down_since": None,
+}}, roster, units)
+PY
+)"
+t "alerts: an unconfigured channel is a silent no-op" "" "$FF_NO_CHANNEL"
+
+# Return the real fixture to health, then to its declared wedged scenario.
+# The first edge proves recovery. A post-recovery refresh records a concrete
+# last tick before the second outage, so the next alert proves the actionable
+# context is carried rather than merely printing the field name.
+printf 'idle\n' >"$FLOOR_STATE/ff-wedged.scenario"
+for _ in $(seq 1 80); do
+  grep -q 'ff-wedged (builder) recovered' "$FLOOR_ALERT_LOG" && break
+  sleep 0.25
+done
+t "alerts: the same box returning emits one recovery edge" 1 \
+  "$(grep -c 'ff-wedged (builder) recovered' "$FLOOR_ALERT_LOG" || true)"
+
+status POST /api/command '{"action":"power-on","box":"ff-wedged"}' >/dev/null
+for _ in $(seq 1 80); do
+  [ "$(uf ff-wedged 'u["cron"]["last"] is not None')" = "True" ] && break
+  sleep 0.25
+done
+t "alerts: recovery refresh observes a concrete last tick" True \
+  "$(uf ff-wedged 'u["cron"]["last"] is not None')"
+
+FF_WEDGED_BEFORE="$(grep -c 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" || true)"
+rm -f "$FLOOR_STATE/ff-wedged.scenario"
+for _ in $(seq 1 120); do
+  FF_WEDGED_NOW="$(grep -c 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" || true)"
+  [ "$FF_WEDGED_NOW" -gt "$FF_WEDGED_BEFORE" ] && break
+  sleep 0.25
+done
+t "alerts: a later outage emits one new unreachable edge" \
+  "$((FF_WEDGED_BEFORE + 1))" \
+  "$(grep -c 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" || true)"
+case "$(grep 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" | tail -1)" in
+  *'last observed tick 20'??-*)
+    ok "alerts: the outage carries the last observed tick value" ;;
+  *)
+    fail "alerts: the outage carries the last observed tick value" \
+      "$(grep 'ff-wedged (builder) unreachable' "$FLOOR_ALERT_LOG" | tail -1)" ;;
+esac

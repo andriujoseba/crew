@@ -171,7 +171,9 @@ class Fleet:
                 # Kept across the whole failed run so both alert edges can say
                 # how long the box was unreachable without estimating from a
                 # poll count whose cadence stretches under a wedged guest.
-                "down_since": None if ok else prev.get("down_since", now),
+                "down_since": (None if ok else
+                               (prev.get("down_since")
+                                if prev.get("down_since") is not None else now)),
             }
 
         threads = [threading.Thread(target=work, args=(u["box"],), daemon=True)
