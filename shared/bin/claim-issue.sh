@@ -16,7 +16,9 @@ issue_json() {
 }
 
 withdraw_self() {
-  gh issue edit "$NUM" -R "$REPO" --remove-assignee "$ME" >/dev/null 2>&1 || true
+  if ! gh issue edit "$NUM" -R "$REPO" --remove-assignee "$ME" >/dev/null 2>&1; then
+    echo "$REPO#$NUM: failed to withdraw @$ME after a lost claim; the board needs a hand" >&2
+  fi
 }
 
 restore_ready_if_unowned() {
@@ -25,6 +27,8 @@ restore_ready_if_unowned() {
     echo "$REPO#$NUM: cannot inspect failed claim repair; ready could not be restored and the board needs a hand" >&2
     return 0
   fi
+  # The before term records that this process owned the ready-label mutation;
+  # keep that provenance with the post-state guards even after claimable passed.
   if jq -e --argjson before "$before" '
     .state == "OPEN"
     and ([$before.labels[].name] | index("ready")) != null

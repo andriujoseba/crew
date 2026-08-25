@@ -164,7 +164,7 @@ t repair-read-failure-reported 1 "$(grep -c 'o/r#7: cannot inspect failed claim 
 run_claim withdraw-fail; rc=$?
 t failed-withdrawal-rc 1 "$rc"
 t failed-withdrawal-does-not-restore-ready 0 "$(grep -c -- '--add-label ready' "$TMP/log")"
-t failed-withdrawal-is-reported 1 "$(grep -c 'o/r#7: claim mutation failed' "$TMP/err")"
+t failed-withdrawal-is-reported 1 "$(grep -c 'o/r#7: failed to withdraw @bot-a after a lost claim; the board needs a hand' "$TMP/err")"
 
 run_claim closed; rc=$?
 t closed-issue-rc 1 "$rc"
