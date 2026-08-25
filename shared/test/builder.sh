@@ -4131,12 +4131,20 @@ t d462-ledger-without-comment-records-nothing nothing "$r1"
 # 16. MUST FAIL: A DECLINE THAT MOVES THE LABEL. Asserted from the calls the
 # path ISSUED, not from a final label set: a path that set a label and put it
 # back would pass that reading, and this is the tempting implementation.
+#
+# The pattern must cover the idiom THIS module demotes with, not just the raw
+# REST shapes: duty-builder.sh moves a label as `gh issue edit --add-label`
+# (:512, :612), which matches no `-X VERB` and no `/labels` path, so a predicate
+# spelled only in REST reads a demotion as silence. It is the same widening
+# attention-timeout-gh-makes-no-writes already carries, plus PUT and the two
+# REST paths, so nothing this predicate used to catch is dropped.
 d462_reset
 d462_seed "$D462_ME" "$D462_BODY_A"
 : >"$D462_CALLS"
 d462_record fx/repo "$D462_SLUG" "$D462_LEDGER_LINES" >/dev/null
 t d462-decline-issues-no-mutation "" \
-  "$(grep -E -- '-X (POST|PATCH|PUT|DELETE)|/labels|/assignees' "$D462_CALLS" | tr '\n' ' ')"
+  "$(grep -E -- 'issue edit| -X (POST|PATCH|PUT|DELETE)|--add-|--remove-|/labels|/assignees' \
+    "$D462_CALLS" | tr '\n' ' ')"
 t d462-decline-reads-only 1 "$(grep -c 'issues/7/comments' "$D462_CALLS")"
 
 # 17. The record is per repo, for the reason every other builder state file is:
@@ -4296,8 +4304,8 @@ if grep -Fq 'I would rather do a different one' "$D462_PROMPT"
 then r1=refused; else r1=OPEN; fi
 t d462-prompt-shopping-refused-by-name refused "$r1"
 
-# 33. D6/D4: the claim path does not change. The decline never runs it, and no
-# label or assignee write appears anywhere in the decline machinery.
+# 33. D6/D4: the claim path does not change. The decline never runs it — this
+# half is the claim path only; the label half is 33b, below.
 if awk_range_grep_Fq '/^_record_declines\(\)/,/^}/' "$BMOD" 'claim-issue.sh'; then
   r1=CLAIMS
 elif awk_range_grep_Fq '/^_decline_reason\(\)/,/^}/' "$BMOD" 'claim-issue.sh'; then
@@ -4306,6 +4314,22 @@ else
   r1='no-claim-path'
 fi
 t d462-decline-machinery-never-claims no-claim-path "$r1"
+
+# 33b. D4's other half, read as SOURCE rather than as issued calls. Test 16 asks
+# whether a mutation was handed to gh on the path the fixture drives, which is
+# the right question and the only one that catches a write the source spells
+# indirectly — but it can only see a branch `d462_record` actually walks. A
+# demotion behind a condition the fixture never reaches stays invisible to it.
+# So the two guards are a pair, and neither means what it says alone.
+r1='no-label-write'
+for d462_range in '/^_record_declines\(\)/,/^}/' '/^_decline_reason\(\)/,/^}/'; do
+  for d462_needle in '--add-label' '--remove-label' '--add-assignee' '/labels' '/assignees'; do
+    if awk_range_grep_Fq "$d462_range" "$BMOD" "$d462_needle"; then
+      r1="WRITES:$d462_needle"
+    fi
+  done
+done
+t d462-decline-machinery-writes-no-label no-label-write "$r1"
 
 # 34. THE LEDGER STILL RECORDS THE DECLINE. The board comment is the record
 # that survives the box; the ledger is what stops the engine PAYING for the
