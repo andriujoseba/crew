@@ -4015,6 +4015,17 @@ PO="$SHARED/bin/post-once.sh"
 d462_reason() { ( PATH="$D462/bin:$D462_PATH"; ME="$D462_ME"; DUTY_DIR="$D462"; _decline_reason "$@" ); }
 d462_record() { ( PATH="$D462/bin:$D462_PATH"; ME="$D462_ME"; DUTY_DIR="$D462"; _record_declines "$@" ); }
 
+# INVOCATIONS of a module function, not occurrences of its name: every line
+# carrying it, less its own definition and less the comment lines that document
+# it. The cardinality guards below are what let a bounded-region assertion mean
+# "the call site" rather than "a call site", so what they count has to be the
+# thing that can move the region — and a name in a comment cannot.
+d462_uses() {  # d462_uses <function-name> — how many times $BMOD calls it
+  grep -Fn -- "$1" "$BMOD" \
+    | grep -v '^[0-9]*:[[:space:]]*#' \
+    | grep -vc "^[0-9]*:$1() {"
+}
+
 # 1. THE DECLINE LANDS ON THE BOARD. Asserted from the store, which is the
 # issue — the criterion says so in as many words.
 d462_reset
@@ -4235,8 +4246,14 @@ t d462-nbd-call-site-passes-the-declines wired "$r1"
 # SECOND, unwired invocation added later leaves it green and puts the wrong
 # noun back in front of the operator on whichever branch reaches it; pinning
 # the cardinality is what makes the assertion mean what it reads as.
-# shellcheck disable=SC2016  # matching the module's literal, not expanding it
-t d462-nbd-has-one-call-site 1 "$(grep -c '\$(_no_build_duty_reason' "$BMOD")"
+#
+# Counted as invocations, not as command substitutions. Spelled `$(_no_build…`
+# — the form this guard shipped with — it held "appears as a substitution
+# once", which is narrower than the sentence above it: a forwarding wrapper
+# (`_w() { _no_build_duty_reason "$@"; }`) walked past it at 715/0
+# (claude-bot, round 3). Same overstatement the rounds keep finding, so it is
+# closed here rather than left standing beside its blocking twin at 33c.
+t d462-nbd-has-one-call-site 1 "$(d462_uses _no_build_duty_reason)"
 
 # --- the prompt: the decline has a WRITTEN ROUTE (D1/D5) -------------------
 # 28. The four reasons reach the session. Before this change they existed only
@@ -4320,7 +4337,12 @@ t d462-decline-machinery-never-claims no-claim-path "$r1"
 # the right question and the only one that catches a write the source spells
 # indirectly — but it can only see a branch `d462_record` actually walks. A
 # demotion behind a condition the fixture never reaches stays invisible to it.
-# So the two guards are a pair, and neither means what it says alone.
+# So 16 and 33b are a pair, and neither means what it says alone.
+#
+# What 33b holds is bounded by its POPULATION: the two function bodies below,
+# and nothing else. The engine's own decline block is a third site and 33c is
+# what covers it — say "the decline machinery" of these two guards together,
+# never of either one (codex-bot, round 3).
 r1='no-label-write'
 for d462_range in '/^_record_declines\(\)/,/^}/' '/^_decline_reason\(\)/,/^}/'; do
   for d462_needle in '--add-label' '--remove-label' '--add-assignee' '/labels' '/assignees'; do
@@ -4330,6 +4352,52 @@ for d462_range in '/^_record_declines\(\)/,/^}/' '/^_decline_reason\(\)/,/^}/'; 
   done
 done
 t d462-decline-machinery-writes-no-label no-label-write "$r1"
+
+# 33c. D4's THIRD site — the engine's own decline block, which 16 and 33b both
+# structurally miss. Test 16 drives `_record_declines` directly (`d462_record`),
+# so the fixture's gh never sees a call `_builder_repo` issues; 33b reads source
+# over a hand-listed pair of function bodies, and the block that CALLS them is
+# in neither. A `gh issue edit --remove-label ready --add-label needs-spec`
+# dropped immediately after `_record_declines` is a decline-path demotion in
+# the very idiom round 2 widened test 16 to catch, and the suite stayed at
+# 715 passed / 0 failed (codex-bot, round 3).
+#
+# The region is the one the reviewer named: the post-session ready re-query and
+# the decline recording, through the ledger commit they are keyed to. Its start
+# anchor is the block's `local` line rather than its `if`, because
+# `[ "${RUN_SESSION_RC:-1}" -eq 0 ]` occurs three times in the module and an
+# awk range opening on the earliest would swallow the rounds branch — coverage
+# bought by asserting over code this criterion says nothing about.
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+D462_CALL_SITE='/local ready_commit="" ready_reread=1/,/ledger_commit "\$DUTY_DIR\/\.seen-build"/'
+r1='no-label-write'
+for d462_needle in '--add-label' '--remove-label' '--add-assignee' '/labels' '/assignees'; do
+  if awk_range_grep_Fq "$D462_CALL_SITE" "$BMOD" "$d462_needle"; then
+    r1="WRITES:$d462_needle"
+  fi
+done
+t d462-decline-call-site-writes-no-label no-label-write "$r1"
+
+# 33d. AND THE REGION HAS TO BE A REGION. An awk range whose start anchor drifts
+# matches nothing, a grep over nothing finds nothing, and 33c reports
+# no-label-write over an empty string — this round's defect wearing a different
+# hat, and the reason a silent guard is worse than an absent one. So assert the
+# region actually contains the call it claims to bound.
+# shellcheck disable=SC2016  # matching the module's literal, not expanding it
+if awk_range_grep_Fq "$D462_CALL_SITE" "$BMOD" '_record_declines "$R" "$slug"'; then
+  r1=bounded
+else
+  r1=EMPTY
+fi
+t d462-decline-call-site-region-holds-the-call bounded "$r1"
+
+# 33e. And 33c reads as "the decline call site" — a fact it does not itself
+# hold. A SECOND `_record_declines` invocation elsewhere in the module sits
+# outside that bounded region, so 33c would stay green over a region that no
+# longer covers the machinery, and 33d would still find its call. Pinning the
+# cardinality is what makes the other two mean what they read as — the same
+# logic as test 27's, applied to the write side.
+t d462-record-declines-has-one-call-site 1 "$(d462_uses _record_declines)"
 
 # 34. THE LEDGER STILL RECORDS THE DECLINE. The board comment is the record
 # that survives the box; the ledger is what stops the engine PAYING for the
