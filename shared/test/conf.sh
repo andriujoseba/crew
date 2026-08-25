@@ -282,4 +282,457 @@ profile_install --agent vendorz --role nosuchrole >/dev/null 2>&1 || true
 t operator-profile-seed-consumed-on-failure consumed "$r1"
 
 
+# --- bot_session_acted: the idle detector on the two -p profiles (#467) -----
+#
+# THE FIXTURES BELOW ARE VERBATIM CAPTURED SESSION LOGS, byte for byte, from
+# the 1064 `claude -p` transcripts this engine wrote on a real builder box.
+# Nothing here was composed to be detected. That is the point of #467's
+# acceptance criteria: a detector tested only against strings someone imagined
+# is a detector that fails on the first real session, and the two corrections
+# this suite pins hardest — the sub-action claim and the quota banner — were
+# both invisible until the whole corpus was run through it.
+#
+# Each fixture names the log it came from, so the claim is checkable.
+
+ALOG="$TMP/acted"; mkdir -p "$ALOG"
+
+acted_rc() {  # acted_rc <agent> <log> -> raw rc of the profile hook
+  local rc=0
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; bot_session_acted "$2" ) >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+acted_prose() {  # acted_prose <agent> <log> -> what the detector actually reads
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; "_${1}_reply_prose" "$2" ) 2>/dev/null
+}
+acted_word() {  # acted_word <agent> <log> -> the field as duty.log spells it
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; session_acted "$2" )
+}
+acted_verdict_line() {  # acted_verdict_line <agent> <line> -> yes|no
+  # Asks the verdict pattern directly, about ONE line. Used only where the
+  # whole transcript that line came from is not available to paste, so an rc
+  # case on a one-line file would answer `yes` from D3's default no matter
+  # what the pattern said — a case no mutation could kill. This asks the
+  # question the rendering actually poses.
+  # A here-string, not `printf | grep -q`: this file sets pipefail, and #449's
+  # guard puts that shape in the class where grep's early exit reds the suite
+  # by SIGPIPE. There is no producer to reap here anyway.
+  # shellcheck disable=SC1090
+  if ( source "$SHARED/conf/agents/$1.conf"
+       av_re="${1^^}_ACTED_VERDICT_RE"
+       grep -Eiq "${!av_re}" <<<"$2" ); then echo yes; else echo no; fi
+}
+
+# an `attention` session that posted two comments and removed a label
+# captured: ~/duty/logs/20260802T130504Z-attention-heavy-duty_crew_286.log
+cat >"$ALOG/push.log" <<'ACTED_EOF'
+Done. The demand on #286 was a single recovery act, and it's complete.
+
+**What the thread demanded:** my 12:48:59Z signal named `d664faf3`, then I pushed `4a8a86e3` (triage's amended must-fail item) *after* it. The head therefore carried no signal, `_request_panel` was correctly holding, and the PR would have held forever — #241's shape, with the recovery duty not deployed to the boxes.
+
+**What I did:**
+- Posted `📌 picked up` on #286 and removed the `attention` label ([comment](https://github.com/heavy-duty/crew/issues/286#issuecomment-5158076189)).
+- Verified head `4a8a86e378fe990092097fdc283a02f0b70ee712` is green — rollup `SUCCESS`, all four checks (`check`, `guards`, `labels / scope`, `labels / trigger`) completed successful, nothing queued, cancelled, or stale. Worktree clean at that exact SHA, nothing unpushed.
+- Confirmed the round is answered whole: every worklog checkbox and acceptance criterion in the PR body is checked, and no reviews are outstanding at any head.
+- Posted the signal on [#292](https://github.com/heavy-duty/crew/pull/292#issuecomment-5158080889): `📣 round answered at head 4a8a86e378fe990092097fdc283a02f0b70ee712`, with the green table, the two judgement calls flagged for the panel (task 3 scoped to `CHANGES_REQUESTED`; `answered-head.jq` serving both callers with stranded detection reading no time), and an explicit acknowledgement that the post-signal push was mine to re-signal regardless of why the head moved.
+
+No exception was argued — the head is genuinely green. The engine now requests the panel; that is not mine to do.
+ACTED_EOF
+
+# a `resume` session that read the whole PR thread and wrote nothing
+# captured: ~/duty/logs/20260806T053009Z-resume-heavy-duty_crew.log
+cat >"$ALOG/read.log" <<'ACTED_EOF'
+**PR #376 needs no action — it is already fully converged. I posted nothing.**
+
+The resume wake named it, but the REST thread shows the work is complete:
+
+| check | state |
+|---|---|
+| head | `019db9b4c85485910ee1c4b6adc429650dcd924e` |
+| round-answered signal at that head | posted 01:01:31Z |
+| panel verdicts at that head | kimi ✅ 01:10, codex ✅ 01:13, claude ✅ 01:19 — all three, full bench minus me |
+| handoff | `🤝 handed off at head 019db9b…` posted 01:21:50Z |
+| label | `state:needs-human` |
+| checks at head | ci-shell SUCCESS, guards SUCCESS, labels/scope SUCCESS (+ SKIPPED reruns), labels/trigger SUCCESS — green |
+| worktree `build-168-wip-refs` | clean, HEAD == `fork` branch tip, nothing stranded |
+
+This is the known false positive: the 12-tick counter runs from the *push* (23:59Z), and round 3's reply→signal gap ran to 01:01Z, so the counter tripped on a PR that had in fact answered its round, been approved by the whole panel, and been handed to the human. Per BUILDER.md — "a resumption that finds nothing changed posts nothing" — re-posting a signal or a ⟲ marker here would be pure flood on a PR that is already at `state:needs-human` and waiting only on a human merge.
+
+No draft PRs and no orphaned claimed issues were outstanding, so the duty is discharged with no writes to GitHub.
+ACTED_EOF
+
+# a `resume` session that opens with TWO no-op claims and then writes a memory file
+# captured: ~/duty/logs/20260806T010509Z-resume-heavy-duty_crew.log
+cat >"$ALOG/trap.log" <<'ACTED_EOF'
+Nothing to do on PR 376, and I posted nothing to it. The standing record is correct: signalled at the current head, green, panel requested, one reviewer mid-round. Per BUILDER.md's Claiming rule — *"a resumption that finds nothing changed posts nothing"* — silence here is the compliant act, and a duplicate marker would have been the `#145`/`#311` flood.
+
+I updated my memory of the resume wake: the cause it recorded (`#360`'s comment-blindness) merged yesterday, but the wake tripped anyway for a different reason worth carrying forward — the twelve-tick counter runs from the push, not from the whole-round reply, so a long gap between posting the reply and posting the `📣` signal burns the budget on its own. The fix is on my side: close that gap.
+ACTED_EOF
+
+# a session that is only waiting on a verdict
+# captured: ~/duty/logs/20260824T220003Z-attention-heavy-duty_ceremony_499.log
+cat >"$ALOG/wait.log" <<'ACTED_EOF'
+Round 2's third verdict hasn't landed yet. I'll pick this back up the moment it does — the poll wakes me either on the verdict or in ~13 minutes, whichever comes first, so a long wait produces a worklog update on the PR rather than silence.
+ACTED_EOF
+
+# a session cut off mid-flight, one clause short of saying whether it posted
+# captured: ~/duty/logs/20260809T022011Z-build-heavy-duty_crew.log
+cat >"$ALOG/ambi.log" <<'ACTED_EOF'
+No tests drive the log helpers directly, so claude's NB#3 is cheap to take. Posting the plan of record now, before touching code.
+API Error: Server error mid-response. The response above may be incomplete.
+ACTED_EOF
+
+
+# THE REVIEW DUTY, on two transcripts a reviewer session actually emitted.
+#
+# There is no captured `review` transcript in this box's 1066 logs — 578
+# resume, 312 build, 131 attention, 36 ci-red, 3 rebase, 6 operator-floor, and
+# not one review — and that absence is the defect these fixtures exist for.
+# The first cut of this detector was tuned on that corpus, so it could not see
+# the review duty's acts at all and booked 25 reviewer sessions that had
+# written a verdict to GitHub as idle. The second cut fixed 20 of the 25 and
+# was still fitted to ONE string, a minimal reproduction someone wrote down —
+# which is exactly what #467 criterion 1 forbids, and the remaining five real
+# reports render the marker four other ways.
+#
+# So both fixtures below are whole captured transcripts, byte for byte, from
+# the reviewer box that holds 1261 of them. They were pasted verbatim by
+# claude-bot into its round-2 review of PR #522 at head `57eea8e1` precisely
+# so that nothing here has to be taken on trust, and each session's act is
+# confirmed against GitHub — `pulls/N/reviews` and `issues/N/comments` — and
+# not against the reply's own text.
+#
+# captured: 20260807T104505Z-review-heavy-duty_crew.log (2704 bytes)
+# GitHub:   heavy-duty/crew#394 APPROVED at `c489f4f`, 10:51:56Z
+#
+# Rendering: `PR 394 (heavy-duty/crew) — approved` — the reference carries no
+# `#` at all and the repository sits in parentheses between it and the dash,
+# so a pattern wanting `#N` beside the verdict could not see it.
+#
+# Its no-op claim is load-bearing and is NOT a report about itself: the idle
+# net hits `still running` in prose about a suite and `is still on disk` about
+# someone else's stale worktree. That is what drags a session which plainly
+# acted onto the residue path, where the verdict pattern has to answer for it.
+cat >"$ALOG/verdict.log" <<'ACTED_EOF'
+**PR 394 (heavy-duty/crew) — approved at `c489f4f`.**
+
+Why it was in scope: my last verdict covered `5bcb8d0`, the head moved to `c489f4f`, and a re-request for me (10:44:08Z) postdates it. Announced once via `post-once.sh`, reviewed in a detached throwaway worktree, removed after.
+
+What the round turned on: codex blocked on the per-repository grain of "could not inspect ≠ absent" — a live `gh` identity plus a dead network still surveyed sandboxes as absent and printed a clean host. This head replaces `gh repo view` (GraphQL, one exit code for both facts) with `gh api repos/...` (REST, 404 distinguishable), and routes anything that isn't a measured 404 into the `UNINSPECTED` list.
+
+I verified rather than read:
+
+- Rebuilt codex's repro in my own harness (my `box`/`gh` doubles, my roster) — exit 2, the specific repo named, no delete, no clean-host sentence. Also drove the precedence edges: failed deletion still beats INCOMPLETE (rc 1), `--dry-run` carries the 2, and a 404 is still a measured absence so idempotence survives.
+- Asked the **real** `gh` binary, since the fix rests entirely on its stderr shape: 404 → `gh: Not Found (HTTP 404)`; invalid token → `Bad credentials (HTTP 401)`; bad host → `error connecting to…`. All land on the right arm. End-to-end with real `gh` and only `box` doubled: own-owner 404 → rc 0, wrong-owner slug → refused, invalid token → rc 2.
+- My two other nits from last round also landed: the sandbox owner gate (repo half now has two gates like the box half) and the dedupe (a target named twice is deleted once).
+- Suites: `drill-teardown.sh` 44/0, `shared/test/run.sh` 1536/1, per-file `shellcheck -x` and CI's exact `bash -n` list clean. The single failure is `floor-named-crew-verb-roster-is-complete`, which lives on `main` in `fleet-floor/server/floor.py:654` — a directory this PR does not touch.
+
+Stated in the verdict as unverified: the five POST-MERGE real-host criteria (no nested box possible from in here — heavy-duty/box#80), all `box` CLI interactions still going through doubles, and the aggregate `shellcheck` invocation that OOM-killed in this box.
+
+Three non-blocking nits carried, the substantive one being that `roster_files` tests `-f` but never `-r` — I reproduced a `chmod 000` roster silently dropping the roster gate and letting a drill-named fleet member be removed. Remote (needs an unreadable roster *and* a collision-named member) and consistent with `cli/crew`'s existing idiom, so a nit rather than a block, with the one-line fix named.
+
+One unrelated observation: a stale worktree from an earlier session, `trees/heavy-duty__crew/review-385`, is still on disk. Not this PR's, so I left it alone.
+ACTED_EOF
+
+# The subjectless half, also whole and also captured — and a better fixture on
+# every axis than the invented one it replaces, because here the trap and the
+# act are both real and both in the same file.
+#
+# captured: 20260818T013513Z-review-heavy-duty_incubator.log (2482 bytes)
+# GitHub:   heavy-duty/incubator#293 APPROVED at `7e6d617`, 01:52:26Z
+#
+# Two renderings at once. The marker is `#293 — <title> → approved`: the
+# reference is right, but a backticked title span sits between it and the
+# verdict and the separator is an arrow rather than a dash. And the opening
+# summary is form B MID-SENTENCE — `Both PRs reviewed at their current heads,
+# verdicts submitted, worktrees removed` — where the pattern had required the
+# verdict noun to open its sentence.
+#
+# Its last line is the trap the invented fixture was built for, in the wild,
+# which is why that one is not missed: the `🔎` announce for #293 was already
+# present, `so I posted nothing there` — a GENUINE first-person no-op claim
+# about a suppressed duplicate, in a session that had already landed two
+# verdicts on GitHub.
+cat >"$ALOG/passive.log" <<'ACTED_EOF'
+Both PRs reviewed at their current heads, verdicts submitted, worktrees removed, clone clean.
+
+**#293 — `feat: localize application emails by deployer language` → approved** (head `7e6d617`)
+
+My round-1 blocker was that the named must-fail case ("any applicant-facing English string reachable from a `["es"]` deployment") didn't fail. The new structural leaf-equivalence guard does: I planted all three of my original mutations at once and the suite failed naming all three, then passed 29/29 restored. I re-proved byte-identity at this head rather than carrying the old proof forward — 11 messages rendered through worktrees at merge base `af3af6c` and at head, 40,720 bytes, `diff` clean — and re-ran the fail-closed type mutations against the changed type alias (`Record<Locale, ApplicationEmailCopy>`, the full union, so it no longer leans on the generator's widening). Full Core suite 124 files / 1111 tests green, Biome clean over 537 files, same-head CI green. One non-blocking note carried forward: `sender-roles.test.ts` pins the no-reply invariant against the English constant, which will break the day an ES template becomes the build template — not this PR's work.
+
+**#295 — La Familia's accountability set → changes requested** (head `9efc63c`)
+
+The set is strong and every criterion is met on its face; the code claims check out individually (cohort map, consent-is-withholding, cadence ordering constraint, `quit`/#198, the portability gap and the notice that promises it, nothing served by the content collection, all 44 open-decision counts). The blocker is that `RETENTION_ENABLED` gates more than the sweep: with it off — the default, and the state `21` §6 tells the deployer to hold — the erasure route answers `404 retention_disabled` and the alumni consent write is refused, so four of the nine rights in `22` are described as served by a route that isn't there. That's the issue's own must-fail case, one flag away from the portability case the document handles correctly. The sharper half: `21` §6's precondition ("the consent is actually being asked and recorded" before enabling) can't be met, because recording the consent requires the flag it gates. Both fixes are documentary — a caveat at the named sites and an executable ordering in `21` §6.
+
+One thing to mention rather than act on: the `🔎` announce for #293 was already present when I ran `post-once.sh`, from an earlier pass at this same head, so I posted nothing there.
+ACTED_EOF
+
+# THE OTHER HALF OF THAT TRAP, and the reason the verdict pattern anchors to
+# position rather than to a head SHA. This is a `resume` session that did
+# nothing and says so — while quoting a whole panel's approvals, its own
+# signal marker from a PREVIOUS session, and a handoff. An earlier draft of
+# the review-duty widening accepted `approved at <sha>` and flipped 45 corpus
+# sessions of exactly this shape to `yes`; every one was false.
+# captured: ~/duty/logs/20260806T055009Z-resume-heavy-duty_crew.log
+cat >"$ALOG/quoted.log" <<'ACTED_EOF'
+No action taken, and nothing posted — correctly so.
+
+**PR #376 is finished, not stranded.** The resume wake named it, but the thread shows the round is complete and handed off:
+
+- Head `019db9b` (last commit 2026-08-05T23:57:23Z, unchanged since)
+- My `📣 round answered at head 019db9b4c85485910ee1c4b6adc429650dcd924e` posted at 01:01:31Z
+- All three panelists — claude-bot, codex-bot, kimi-bot — APPROVED **at that exact head** (01:10Z / 01:13Z / 01:19Z)
+- `🤝 handed off at head 019db9b…` posted 01:21:50Z, `state:needs-human` set, `requested_reviewers` now just `danmt`
+- Rollup green at head: `guards` success, `ci-shell` success, `labels / scope` success, `labels / trigger` success
+
+Re-signalling here would re-request an already-unanimous panel on a PR the human now owns — the exact marker flood #145/#311 forbid.
+
+No other work was outstanding: no draft PRs, no orphaned claimed issues. Session exits silent.
+ACTED_EOF
+
+# The two false `no`s claude-bot recorded OUTSIDE the review duty are on its
+# box, not this one — but the same verb gap has a third victim here, and this
+# one is captured locally and confirmed against the API.
+#
+# captured: ~/duty/logs/20260821T171004Z-attention-heavy-duty_incubator_368.log
+# GitHub:   heavy-duty/incubator comments 5373060777 (17:21:30Z) and
+#           5373073792 (17:22:46Z), commits 5e05c607 and 44d11ae2
+#
+# It posted an ack, removed a label, pushed two commits, posted three comments
+# including its own round-answered signal — and read as `no`, because the idle
+# net hits `test` STILL RUNNING and none of its act reports is in a shape the
+# act pattern could see. `**The ack.** Posted ...` is not sentence-initial: the
+# anchor wants a full stop followed by a SPACE, and here the stop is inside the
+# bold run. What rescues it is `which I declared explicitly`, one of the two
+# verbs claude-bot offered as cheap and non-blocking. It is the only verdict in
+# 1066 that either verb moves, and it is true.
+cat >"$ALOG/declared.log" <<'ACTED_EOF'
+Done — here's where #368 and PR #378 stand.
+
+**The ack.** Posted `📌 picked up` on #368 and removed the `attention` label (it re-arms the wake).
+
+**What the demand was.** Triage's 17:05:09Z correction left exactly one item on my side — *"the mutation proof of conditions (a) and (b) against the must-fail bullet"* — plus the instruction not to invert the two `indexOf` ordering assertions. While reading the thread I found a **completed panel round** at head `5931c44f`: kimi approve, codex approve, claude-bot **changes requested**. So the tick carried both.
+
+**1. The mutation proof** ([comment](https://github.com/heavy-duty/incubator/pull/378#issuecomment-5373073792)) — 28 mutants plus a baseline control, each applied and reverted, head unmoved and tree clean throughout:
+
+- **(a)** all **21** inverted `(assertion, subject)` pairs reached and red, each from its own Spanish sentence injected into the English copy string that renders in its place. That includes the two that were silently deleted at `3c4312c`. Nine pairs are shadowed by an earlier assertion in the same test (html legs behind their body sibling; `emails.test.ts` ll. 289/292 behind the byte-exact `toBe`; l. 59's `questions` iteration behind `confirmation`) — those runs scaffold the shadowing assertion out, which I declared explicitly rather than glossing.
+- **(b)** three single-character mutants each red exactly their own body; two end-of-body append mutants red **only** the three `toBe` tests while all 30 substring assertions stay green — which is the discriminator the must-fail bullet is actually about.
+- Collateral worth having: the injected multi-locale ordering tests and the hash-based byte-identity test red on the copy mutants, so the relocated coverage is live.
+
+**2. The round** — agreed with every point, disputed none ([pickup + analysis](https://github.com/heavy-duty/incubator/pull/378#issuecomment-5373060777)):
+
+- 🔴 **Criterion 5 was genuinely violated.** My `legalCopy.test.ts` comment stated the jurisdiction outright, at the exact site the deleted sentence occupied, while three other sites in the same diff carry the discipline. Re-cut to *"the operator's own record contradicts the denial"* (`5e05c607`). I also swept the whole diff's added lines for a fourth site — exactly one existed, and `template-dist.test.ts`'s registered-address comment correctly stays.
+- 🟡 The `templates/_fixture` comment claimed `legalCopy.test.ts` drives the fixture; verified it doesn't and re-cut it (`44d11ae2`), with PR body position 2 corrected.
+- 🟡 Criterion 6's stale `[⚠️]` needed no change — it has been `[x]` since the 17:08 re-signal.
+
+Both commits are comment-only: no assertion, source file or shipped copy string moved. `npm run check` (554 files), `intake-web` (254), `ui-core` (`tsc` + 55) and the two admitted `apps/core` files (33) all green locally; PR body carries the round-2 worklog and round-log entry; `📣 round answered at head 44d11ae262d511032f69ce26406268f9f1cd2cf6` posted. I did not request the panel — the engine does that from the signal.
+
+**Open.** CI at the new head: `check`, `guards`, `refs-not-closing`, both `labels` jobs green; `test` still running (started 17:24Z) — a watcher will bring me back when it settles, and if it reds on comment-only commits I'll treat it as mine to diagnose first.
+
+**One thing for you, outside this PR:** `docs/brain/STATE.md`'s #368 row still reads *"Blocked, operator-owned — a second-episode `needs-ruling` hard block stands"*. That has been false since the 14:32:47Z ruling; the row now describes a build in flight. I left it alone rather than opening a second PR mid-round, but it will mislead the next orientation until the merge record runs.
+ACTED_EOF
+
+# D4's THIRD state — "a transcript the profile does not recognise" — on the
+# only log in 1065 that is one. Fifty-eight bytes of a session cut off after a
+# probe result: it names nothing this engine does, so whether it acted is not
+# ambiguous, it is absent. D3 governs ambiguity; this is not that.
+# captured: ~/duty/logs/20260815T080517Z-build-heavy-duty_ceremony.log
+cat >"$ALOG/frag.log" <<'ACTED_EOF'
+Probe 4 passed (tags 1→1, releases 1→1). Four remain.
+ACTED_EOF
+
+# And a transcript from a different runtime altogether, which is the same
+# state arriving the other way: prose, first-person, and about nothing this
+# profile reads. It is the fixture `shared/test/common/session.sh` used to
+# assert `unknown` with, kept here now that the stub it relied on is gone.
+printf 'Claude Code\nfinal answer: I need more information.\n' >"$ALOG/foreign.log"
+
+# `Execution error` is what the CLI prints when it dies before the model
+# speaks: fifteen bytes and NO trailing newline. All 26 in the corpus.
+printf 'Execution error' >"$ALOG/fault.log"
+# The vendor's refusal banners. A session that hit the weekly cap or a dead
+# login never reached the model at all — 40 of the 1064 are one of these.
+printf "You've hit your session limit \xc2\xb7 resets 1:20am (UTC)\n" >"$ALOG/quota.log"
+printf "Not logged in \xc2\xb7 Please run /login\n" >"$ALOG/nologin.log"
+: >"$ALOG/empty.log"
+
+# The contract, on BOTH profiles, case for case. grok.conf carries the same
+# detector as a second copy because a profile is transported one file at a
+# time; this loop is what stops the copies drifting, and it is the only reason
+# the duplication is safe.
+for agent in claude grok; do
+  # A session that wrote something: two comments posted and a label removed.
+  t "acted-$agent-wrote-is-yes"        0 "$(acted_rc "$agent" "$ALOG/push.log")"
+  # A session that only read: it says so, and nothing else in it says otherwise.
+  t "acted-$agent-read-only-is-no"     1 "$(acted_rc "$agent" "$ALOG/read.log")"
+  # D4, both halves, and neither folded into `no`.
+  t "acted-$agent-empty-is-unknown"    2 "$(acted_rc "$agent" "$ALOG/empty.log")"
+  t "acted-$agent-fault-is-unknown"    2 "$(acted_rc "$agent" "$ALOG/fault.log")"
+  # A cap or a dead login is a session that never spoke, NOT one that did
+  # nothing. Reading it as idle would have booked 40 of this box's sessions as
+  # waste that no duty ever incurred.
+  t "acted-$agent-quota-is-unknown"    2 "$(acted_rc "$agent" "$ALOG/quota.log")"
+  t "acted-$agent-nologin-is-unknown"  2 "$(acted_rc "$agent" "$ALOG/nologin.log")"
+  # D3, pinned by a real borderline transcript rather than by a paragraph: the
+  # session was cut off one clause short of saying whether it posted. That is
+  # the ambiguity the bias exists for, and it answers ACTED.
+  t "acted-$agent-ambiguous-is-yes"    0 "$(acted_rc "$agent" "$ALOG/ambi.log")"
+  # THE TRAP. This reply opens "Nothing to do on PR 376, and I posted nothing
+  # to it" — and then updates a memory file. A no-op claim is about one
+  # sub-action until the rest of the reply is read, so the claim is deleted
+  # from the text BEFORE the evidence is looked for. A detector that stopped
+  # at the first phrase books this session as idle; it was not.
+  t "acted-$agent-subaction-claim-is-yes" 0 "$(acted_rc "$agent" "$ALOG/trap.log")"
+  # Waiting on someone else's verdict is doing nothing, and says so.
+  t "acted-$agent-waiting-only-is-no"  1 "$(acted_rc "$agent" "$ALOG/wait.log")"
+  # The verb tail, outside the review duty: a session that acked, pushed twice
+  # and commented three times, held on `no` by `still running` until `declared`
+  # entered the list. Non-blocking in review; it is a case because a widening
+  # nobody can red is a widening nobody can remove safely.
+  t "acted-$agent-declared-is-yes"     0 "$(acted_rc "$agent" "$ALOG/declared.log")"
+  # THE REVIEW DUTY, on whole captured transcripts. Both carry a real no-op
+  # claim and both sessions submitted a verdict that is confirmed on GitHub:
+  # one renders the marker as `PR N (repo) — approved`, the other as
+  # `#N — <title> → approved` with a mid-sentence `verdicts submitted`. A
+  # detector tuned on builder transcripts answered `no` to both, which is what
+  # it did to 25 real reviewer sessions, and a detector fitted to one written
+  # -down example still answered `no` to both, which is what it did to 5.
+  t "acted-$agent-review-verdict-is-yes"   0 "$(acted_rc "$agent" "$ALOG/verdict.log")"
+  t "acted-$agent-subjectless-verdict-is-yes" 0 "$(acted_rc "$agent" "$ALOG/passive.log")"
+  # The three renderings whose whole transcript is not on this box. Each line
+  # is verbatim from claude-bot's round-2 table on PR #522, where it was read
+  # out of the named log and its act confirmed against the GitHub API; the
+  # session ids are recorded so a later round can swap in the whole file. They
+  # are asserted against the pattern rather than against an rc, because a
+  # one-line fixture would answer `yes` from D3's default whatever the pattern
+  # did — the vacuous shape a mutation caught in round 1.
+  #
+  # 20260818T195008Z-review-heavy-duty_lafamilia-site — APPROVED @ `901a672`.
+  # No `#`, and a backticked title between the dash and the verdict. The title
+  # holds a version number, so a span matched as "anything up to a full stop"
+  # ends early on `0.7.4` and misses — the defect claude-bot named in its own
+  # probe of this fix, which is why the span is matched as a delimited one.
+  # shellcheck disable=SC2016  # backticks are the captured marker's own
+  t "acted-$agent-rendering-title-span-is-verdict" yes "$(acted_verdict_line "$agent" \
+    '**PR 30 — `chore: bump ceremony to 0.7.4` — approved** at head `901a672`')"
+  # 20260806T144555Z-operator-floor-2fb41ac8 — CHANGES_REQUESTED @ `b05c2a9`.
+  # No reference and no verdict noun as subject: the verb leads, and its
+  # object is the verdict.
+  # shellcheck disable=SC2016  # backticks are the captured marker's own
+  t "acted-$agent-rendering-submitted-verdict-is-verdict" yes "$(acted_verdict_line "$agent" \
+    'submitted `request-changes` via `submit-verdict.sh`')"
+  # 20260818T122010Z-review-heavy-duty_incubator — announce comment posted.
+  # Form B with the noun singular and unlisted.
+  t "acted-$agent-rendering-announce-posted-is-verdict" yes "$(acted_verdict_line "$agent" \
+    'Announce posted and verified.')"
+  # The fourth rendering, and the ONE arm the rc cases cannot speak for: the
+  # `passive.log` session leads with `verdicts submitted` mid-sentence, but it
+  # also carries the `#293 — <title> → approved` marker, so its rc is already
+  # `yes` from the marker arm and a mutation removing the clause anchor left
+  # every case green. That is the vacuous shape again, one arm lower down.
+  # Asked of the line, it is the clause anchor or nothing.
+  t "acted-$agent-rendering-midsentence-verdicts-is-verdict" yes "$(acted_verdict_line "$agent" \
+    'Both PRs reviewed at their current heads, verdicts submitted, worktrees removed, clone clean.')"
+  # And the same helper on the quoting forms, which must stay refused: this is
+  # where the widening above would have cost the idle column if the anchor had
+  # slipped from "clause boundary" to "anywhere".
+  t "acted-$agent-rendering-quoted-panel-is-not-verdict" no "$(acted_verdict_line "$agent" \
+    '- All three panelists — claude-bot, codex-bot, kimi-bot — APPROVED **at that exact head**')"
+  t "acted-$agent-rendering-zero-verdicts-is-not-verdict" no "$(acted_verdict_line "$agent" \
+    'The round is not answered: zero verdicts submitted at that head, and no verdict submitted since.')"
+  # ...and the guard that stops that widening eating the idle column: a
+  # resumption QUOTING a panel's approvals, its own earlier signal and a
+  # handoff, having done nothing. Position, not proximity to a SHA.
+  t "acted-$agent-quoted-verdict-is-no"    1 "$(acted_rc "$agent" "$ALOG/quoted.log")"
+  # D4's third clause, both doors: a fragment that names nothing this engine
+  # does, and a transcript from another runtime. Neither is `no` — the
+  # session's acts are not undecided here, they are unstated — and neither is
+  # `yes`, which is where an un-gated D3 default put them.
+  t "acted-$agent-fragment-is-unknown"     2 "$(acted_rc "$agent" "$ALOG/frag.log")"
+  t "acted-$agent-foreign-log-is-unknown"  2 "$(acted_rc "$agent" "$ALOG/foreign.log")"
+  # The banner filter is asserted on the PROSE, not on the verdict, because
+  # the verdict no longer distinguishes it: the recognition gate answers
+  # `unknown` for a banner-only log with the filter removed, and does so
+  # identically on all 1065 captured logs. Its remaining guarantee is the
+  # narrower one — that a vendor banner never enters the text the patterns
+  # read, however loose those patterns grow — so that is where it is pinned.
+  # A case on the rc here would be a case no mutation can kill.
+  t "acted-$agent-banner-leaves-no-prose" "" "$(acted_prose "$agent" "$ALOG/quota.log")"
+done
+
+# The three states survive session_acted's mapping and reach duty.log as the
+# words the operator's aggregate greps for. `unknown` is the one that must
+# still be reachable: before this change it was the ONLY reachable value.
+t acted-word-yes     yes     "$(acted_word claude "$ALOG/push.log")"
+t acted-word-no      no      "$(acted_word claude "$ALOG/read.log")"
+t acted-word-unknown unknown "$(acted_word claude "$ALOG/empty.log")"
+
+# codex and kimi are out of scope (#467 D6) and stay byte-identical. Pinned by
+# content rather than by `git diff`, which would assert nothing the moment this
+# branch merges: these two lines ARE the two detectors, and a suite that reds
+# when they move is the durable form of "unchanged".
+t acted-codex-detector-untouched \
+  "grep -Eq '(^|[[:space:]])(exec|apply_patch)([[:space:]]|\$)|^tool (call|result)' \"\$1\"" \
+  "$(sed -n '/^bot_session_acted()/,/^}/p' "$SHARED/conf/agents/codex.conf" | sed -n '2p' | sed 's/^  //')"
+t acted-kimi-detector-untouched \
+  "grep -Eq '(^|[^[:alpha:]])(Using|Used) Shell[[:space:]]*\\(' \"\$1\"" \
+  "$(sed -n '/^bot_session_acted()/,/^}/p' "$SHARED/conf/agents/kimi.conf" | sed -n '2p' | sed 's/^  //')"
+
+# D5: this issue makes an existing field truthful and gates nothing on it. The
+# tempting one-liner is a dispatch gate keyed on the PREVIOUS session's
+# `acted`, and it is a separate decision — so the absence is asserted, not
+# promised. run_session must reach the CLI whatever the last session reported.
+printf '%s SESSION END kind=mention key=r/x rc=0 dur=9s outcome=ok acted=no reply_tail=\n' \
+  "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$TMP/duty-prior.log"
+AWORK="$TMP/acted-work"; mkdir -p "$AWORK"
+BOT_CLI_CMD=(bash -c 'printf "I posted nothing.\n"')
+DUTY_LOG="$TMP/duty-prior.log" run_session mention r/x "$AWORK" 5 p >"$TMP/acted-gate.out" 2>&1
+grep -q 'SESSION START' "$TMP/acted-gate.out" && r1=dispatched || r1=GATED
+t acted-no-dispatch-gate-on-prior-acted dispatched "$r1"
+unset BOT_CLI_CMD
+
+# --- the operator's own aggregate, end to end (#467) ------------------------
+#
+# The criterion is stated as the command @danmt ran, not as a call into the
+# library: real transcripts -> run_session -> duty.log -> awk. Every SESSION
+# END line below is written by the engine, from a fixture the CLI actually
+# emitted, so nothing between the detector and the `idle` column is stubbed.
+AGG="$TMP/acted-duty.log"; : >"$AGG"
+# The profile is sourced for real here, in a subshell so the suite's own scope
+# stays as the cases above found it. Sourcing it is not a detail: session_acted
+# resolves the hook through `declare -F`, so a box whose profile defines none
+# answers `unknown` for every session it ever runs — which is grok's half of
+# this bug, and running the aggregate without the source would reproduce
+# `idle=0` here for exactly that reason.
+(
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/claude.conf"
+  for f in push read trap wait ambi verdict quoted empty fault quota; do
+    # The stub IS the CLI: it replays one captured transcript verbatim. $0 is
+    # the fixture because run_session appends the prompt as the final argument.
+    # shellcheck disable=SC2016  # $0 is the shim's own argument, not this shell's
+    BOT_CLI_CMD=(bash -c 'cat -- "$0"' "$ALOG/$f.log")
+    run_session mention "r/$f" "$AWORK" 10 p >>"$AGG" 2>/dev/null
+  done
+)
+
+# The aggregate, as it was run: sessions, minutes, and idle by duty.
+agg_idle() { awk '/SESSION END/ {
+    for (i = 1; i <= NF; i++) { split($i, kv, "="); f[kv[1]] = kv[2] }
+    if (f["acted"] == "no") idle[f["kind"]]++
+    n[f["kind"]]++
+  } END { for (k in n) printf "%s sessions=%d idle=%d\n", k, n[k], idle[k] + 0 }' "$1"
+}
+agg="$(agg_idle "$AGG")"
+t acted-aggregate-counts-every-session "sessions=10" \
+  "$(printf '%s\n' "$agg" | sed -n 's/.*\(sessions=[0-9]*\).*/\1/p')"
+# The whole point. `idle=0` across 4150 sessions was a disabled detector; an
+# `idle` equal to the session count would be a detector stuck the other way.
+idle_n="$(printf '%s\n' "$agg" | sed -n 's/.*idle=\([0-9]*\).*/\1/p')"
+[ "${idle_n:-0}" -gt 0 ] && [ "${idle_n:-10}" -lt 10 ] && r1=non-degenerate || r1="degenerate(idle=$idle_n)"
+t acted-aggregate-idle-is-non-degenerate non-degenerate "$r1"
+
+
 suite_finish
