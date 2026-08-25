@@ -387,11 +387,16 @@ follow-up branch. Verdict submitted via the wrapper (exit 0), verified landed.
 ACTED_EOF
 
 # The same duty in its passive voice, which is the half a verb list cannot
-# reach: no first-person subject anywhere near the act, and an idle claim
-# ("I made no other changes") in front of it.
+# reach: no first-person subject anywhere near any of the three acts.
+#
+# The no-op claim at the end is load-bearing, not decoration. Without one the
+# reply never reaches the residue path at all — it returns `yes` on D3's
+# default, and the case would pass just as well with the verdict pattern
+# deleted. It did, in the first cut of this file, and the mutation is what
+# said so.
 cat >"$ALOG/passive.log" <<'ACTED_EOF'
 Both PRs reviewed and approved. Announcements posted once each.
-Both verdicts submitted and the worktrees are cleaned up; I made no other changes.
+Both verdicts submitted and the worktrees are cleaned up; I pushed nothing and I made no comments.
 ACTED_EOF
 
 # THE OTHER HALF OF THAT TRAP, and the reason the verdict pattern anchors to
