@@ -584,8 +584,9 @@ case "${1:-}" in
     # ruled command — would never see it. It is also the load-bearing token:
     # box's global option loop consumes it, which is what stops `--force`
     # being eaten by box's own `--force`.
-    [ "$#" -ge 4 ] && [ "$3" = "--" ] || {
-      echo "stub-box: malformed incus passthrough '$*'" >&2; exit 2; }
+    if [ "$#" -lt 4 ] || [ "$3" != "--" ]; then
+      echo "stub-box: malformed incus passthrough '$*'" >&2; exit 2
+    fi
     _iname="$2"; shift 3
     case "$*" in
       "stop --force")

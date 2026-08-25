@@ -116,6 +116,14 @@ tier would run at the slow tier's cadence — and is overlaid onto the snapshot
 at read time, so it is never served up to a minute stale. Three consecutive
 misses declare a box unreachable; one dropped ping is scheduler noise.
 
+**The wedge verdict is the collector's, and it is served.** `CREW_FLOOR_PING_FAILS`
+moves that three, so anything that re-derives "unreachable" from the miss count
+is holding a number the operator may have changed. `fleet.wedged()` decides it
+once — the page paints `UNREACHABLE` from it, restart escalates to a force stop
+on it, and `ping.wedged` carries it to the console beside the evidence. A stale
+heartbeat is *unmeasured*, not unreachable, and takes the graceful path: the
+cost of being wrong there is a killed session.
+
 **Credentials are reported, never polled.** `gh auth status` inside every box
 on every poll was ~7,000 api.github.com requests a day to re-derive a fact
 that changes when a token expires, and at ~450ms it was the slowest thing in a

@@ -6387,6 +6387,15 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   matched:function(){return matchedFloorUnits().map(UNITID);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
+  /* The SHIPPED confirm sentence for Restart, over whatever unit data it is
+     handed (#486). A confirm() dialog is unreadable to a walk until it has
+     already been answered, and the thing that has to be asserted is not that
+     a dialog appeared but that its WORDS match the path the collector will
+     take — so hand the walk the sentence itself, over the payload the
+     collector actually served. A hook, not a second copy: the reconstruction
+     a test would otherwise write is exactly the independent threshold this
+     round deleted. */
+  restartAsk:function(box,d){return restartAsk(box,d);},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
      real fleet (same ethos as guides: a claim should be a lookable-at).
      buildsLastSec MUST read 0 with a stable roster — a deterministic still

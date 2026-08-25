@@ -1178,6 +1178,48 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     await leave();
   }
 
+  /* ---- #486: the words and the path are one decision -----------------------
+     THE CROSS-LAYER CASE, and it is only meaningful at a NON-DEFAULT
+     threshold: run.sh starts this collector at CREW_FLOOR_PING_FAILS=2, the
+     page used to carry a 3 of its own, and in that gap the floor force-stopped
+     a guest whose restart confirmation still promised a graceful stop. So this
+     asserts the page's shipped sentence over the payload the collector
+     actually served, not over a fixture written here.
+
+     Both directions, because only the pair rules out a page-side threshold:
+     the box the collector calls wedged must get the force wording, and a box
+     it calls reachable must NOT — even with a miss count above any constant
+     the page could plausibly have kept. */
+  if (LIVE) {
+    let say = null;
+    for (let i = 0; i < 20; i++) {
+      say = await page.evaluate(async () => {
+        const r = await fetch(location.origin + '/api/fleet');
+        const u = (await r.json()).units.find((x) => x.box === 'ff-wedged');
+        const served = u && u.ping ? u.ping : null;
+        return {
+          wedged: served ? served.wedged : null,
+          fails: served ? served.fails : null,
+          ask: window.FLOORDEV.restartAsk('ff-wedged', { ping: served }),
+          /* Served as NOT wedged, with nine misses on the counter. Any
+             threshold the page kept for itself would call this unreachable. */
+          gentle: window.FLOORDEV.restartAsk('ff-other', {
+            ping: { ok: false, fails: 9, stale: false, wedged: false },
+          }),
+        };
+      });
+      if (say.wedged === true) break;
+      await page.waitForTimeout(1500);
+    }
+    ok("force: the collector's wedge verdict reaches the page",
+       say && say.wedged === true, JSON.stringify(say));
+    ok('force: the restart confirm names the force path from that verdict',
+       !!say && /FORCE-STOPPED/.test(say.ask), say && say.ask);
+    ok('force: a box the collector calls reachable is never told it will be killed',
+       !!say && !/FORCE/.test(say.gentle) && /stopped and started again/.test(say.gentle),
+       say && say.gentle);
+  }
+
   /* Checked HERE, before the fleet-wide action below: that action deliberately
      targets an unreachable box, and the 500 it earns is a correct answer the
      browser always logs. Asserting cleanliness afterwards would mean either a
