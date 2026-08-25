@@ -1633,13 +1633,17 @@ function pad2(n){return (n<10?"0":"")+n;}
 function ri2(a,b){return a+Math.floor(Math.random()*(b-a+1));}
 function kindOf(room){return room==="builder"?"build":room==="reviewer"?"review":"triage";}
 function outcomeFor(k){return k==="build"?["opened PR","pushed fixups","needs-human","resumed"][ri2(0,3)]:k==="review"?["approved","changes-requested","commented"][ri2(0,2)]:["labeled ready","routed to builder","marked blocked","ruling posted"][ri2(0,3)];}
+function queueRepo(q,fallback){
+  var item=(q||[]).find(function(x){return x&&x.repo;});
+  return item?item.repo:fallback;
+}
 function fmtDur(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
 function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k++)q.push({repo:REPONAMES[ri2(0,5)],key:ri2(11,148)});
   var sess=[],ago=ri2(1,5),cap=kind==="triage"?2400:7200;for(var s=0;s<11;s++){var rc=Math.random()<0.12?1:0;sess.push({ago:ago,kind:kind,rc:rc,dur:ri2(45,cap),out:rc?"aborted (budget)":outcomeFor(kind)});ago+=ri2(4,11);}
   var durs=sess.map(function(x){return x.dur;}),ok=sess.filter(function(x){return !x.rc;}).length;
   var spark=[];for(var sp=0;sp<22;sp++)spark.push(0.14+Math.random()*0.86);
   var nowS=Math.floor(Date.now()/1000),cur={key:(kind==="triage"?"board":REPONAMES[ri2(0,5)]+"#"+ri2(11,148)),start:nowS-ri2(20,Math.min(cap,5200))};
-  return {kind:kind,queue:q,sessions:sess,up:{h:ri2(1,71),m:ri2(0,59)},repo:q[0]?q[0].repo:"crew",spark:spark,
+  return {kind:kind,queue:q,sessions:sess,up:{h:ri2(1,71),m:ri2(0,59)},repo:queueRepo(q,"crew"),spark:spark,
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
@@ -1686,7 +1690,7 @@ function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
 function liveData(u){
   var d=emptyData(u.room);
   d.box=u.box;d.queue=u.queue||[];d.sessions=u.sessions||[];d.up=u.up||{h:0,m:0};
-  d.repo=u.repo||"";d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
+  d.repo=queueRepo(d.queue,u.repo||"");d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
   d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
   d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
   /* #159's verdict about that stamp. Defaulted to "" like the fields below,
