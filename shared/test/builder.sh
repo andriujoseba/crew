@@ -401,7 +401,7 @@ if grep -q 'could not set \$LABEL_BOTS_REVIEWING' "$SHARED/lib/duty-builder.sh";
 t engine-bots-reviewing-best-effort best-effort "$r1"
 # MARK_ANSWERED is defined and wire-protected against operator override.
 if grep -q '^MARK_ANSWERED=' "$SHARED/conf/fleet.defaults.conf" \
-  && grep -q 'wire_answered' "$SHARED/lib/common.sh"; then r1=wire; else r1=UNPROTECTED; fi
+  && grep -q 'wire_answered' "$SHARED/lib/common/conf.sh"; then r1=wire; else r1=UNPROTECTED; fi
 t mark-answered-is-wire-protocol wire "$r1"
 # The session posts the signal and no longer requests; the argued-exception and
 # the resume re-signal survive.
@@ -591,7 +591,7 @@ t attention-prompt-dispatches-new-build dispatched "$r1"
 # Production run_session, not only the behavior stub below, must expose the
 # immutable log path consumed by the timeout evidence branch.
 # shellcheck disable=SC2016  # literal source assignment, not test expansion
-if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common.sh"; then
+if grep -q 'RUN_SESSION_LOG="\$slog"' "$SHARED/lib/common/session.sh"; then
   r1=exposed
 else
   r1=MISSING
