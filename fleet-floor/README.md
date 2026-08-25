@@ -173,8 +173,12 @@ minutes before `run_session`'s own timeout resolves it.
 - **Control** — every action is applied by the host: pause/resume comment and
   restore the box's crontab line — and a box with no armed `tick.sh` line
   answers **`nothing to pause`** at 200, because an action with nothing to do
-  is not a refusal (#188) — power/restart are `box down`/`box start`, and
-  a message starts a real one-shot session of that box's own vendor CLI, logged
+  is not a refusal (#188) — power/restart are `box down`/`box start`, with
+  one exception: **force stop** is `box incus <box> -- stop --force`, its own
+  action and never an escalation from a graceful one, and **restart** takes
+  that same path *only* where the box has stopped answering the heartbeat, so
+  a guest that cannot schedule its own shutdown can still be stopped (#486).
+  A message starts a real one-shot session of that box's own vendor CLI, logged
   to `duty/logs/` and marked in `duty.log` like any other session. The prompt
   travels as **stdin bytes** and is read from a file inside the box, so it never
   enters a shell command line.
@@ -189,7 +193,7 @@ no build step, no dependencies.
 |---|---|---|
 | `/` | GET | the page |
 | `/api/fleet` | GET | latest telemetry snapshot |
-| `/api/command` | POST | `message`, `pause`, `resume`, `restart`, `power-on/off`, `start-all`, `stop-all`, `wake-silent` |
+| `/api/command` | POST | `message`, `pause`, `resume`, `restart`, `power-on/off`, `force-stop`, `start-all`, `stop-all`, `wake-silent` |
 | `/api/logs` | GET | tail `duty.log` or one session log |
 | `/healthz` | GET | liveness |
 
