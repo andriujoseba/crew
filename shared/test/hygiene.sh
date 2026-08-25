@@ -151,15 +151,19 @@ hyg_board() {  # hyg_board "<number>|<updatedAt>|<labels csv>|<assignees csv>"..
   done | jq -cs '.'
 }
 
-# hygiene_case BOARD [FLOOR|unset] [SESSION-RC] — one interval over a one-repo
-# registry. BOARD is the listing JSON, or the literal ERR for a gh that cannot
-# answer. Everything the duty reaches outside itself is stubbed, so the only
-# things under test are the gate's decision and what it says about it.
+# hygiene_case BOARD [FLOOR|unset] [SESSION-RC] [DUTY_DIR] — one interval over a
+# one-repo registry. BOARD is the listing JSON, or the literal ERR for a gh that
+# cannot answer. Everything the duty reaches outside itself is stubbed, so the
+# only things under test are the gate's decision and what it says about it.
+# DUTY_DIR defaults to the shared fixture dir; the fourth argument exists for
+# the one case that needs the ledger to be UNWRITABLE, which is expressed as a
+# directory that is not there rather than as a mode: the suite runs as root on
+# some boxes and `chmod 000` is not a refusal there.
 # shellcheck disable=SC2317  # the stubs run inside the sourced duty
 hygiene_case() {
-  local board="$1" floor="${2:-43200}" srun="${3:-0}"
+  local board="$1" floor="${2:-43200}" srun="${3:-0}" ddir="${4:-$HYG}"
   (
-    DUTY_DIR="$HYG"
+    DUTY_DIR="$ddir"
     WORK_DIR="$HYG/work"
     REPOS_FILE="$HYG/repos.txt"
     TIMEOUT_HYGIENE=10
@@ -227,6 +231,21 @@ BOARD_ASSIGNEE="$(hyg_board '10|2026-08-25T00:00:00Z|ready|' '11|2026-08-25T01:0
 BOARD_TS="$(hyg_board '10|2026-08-25T09:00:00Z|ready|' '11|2026-08-25T01:00:00Z|claimed|cndgrr')"
 BOARD_EMPTY="$(hyg_board)"
 
+# The injectivity pair (#520 round 1). hyg_board splits its label field on the
+# comma, so these two cannot be spelled through it: one board carries ONE label
+# whose name contains a comma, the other carries TWO labels whose names are its
+# halves. `updatedAt` and the issue number are held IDENTICAL across the pair on
+# purpose — that is what makes them a test of the label field alone, and a
+# digest that flattens labels with `join(",")` produces the same value for both.
+BOARD_COMMA_ONE="$(jq -cn '[{number: 10, updatedAt: "2026-08-25T00:00:00Z",
+  labels: [{name: "needs,ruling"}], assignees: []}]')"
+BOARD_COMMA_TWO="$(jq -cn '[{number: 10, updatedAt: "2026-08-25T00:00:00Z",
+  labels: [{name: "needs"}, {name: "ruling"}], assignees: []}]')"
+BOARD_COMMA_ASSIGNEE_ONE="$(jq -cn '[{number: 10, updatedAt: "2026-08-25T00:00:00Z",
+  labels: [], assignees: [{login: "ann,bob"}]}]')"
+BOARD_COMMA_ASSIGNEE_TWO="$(jq -cn '[{number: 10, updatedAt: "2026-08-25T00:00:00Z",
+  labels: [], assignees: [{login: "ann"}, {login: "bob"}]}]')"
+
 # The defect, reproduced and then closed: two intervals over a board that did
 # not move used to buy two sessions.
 hyg_reset
@@ -254,6 +273,12 @@ hyg_changed() {  # hyg_changed <variant board> -> sessions launched
   hygiene_case "$BOARD_A" >/dev/null
   hyg_count "$(hygiene_case "$1")" '^SESSION '
 }
+# The same, for a pair whose baseline is not BOARD_A.
+hyg_changed_from() {  # hyg_changed_from <baseline board> <variant board>
+  hyg_reset
+  hygiene_case "$1" >/dev/null
+  hyg_count "$(hygiene_case "$2")" '^SESSION '
+}
 t hygiene-new-issue-sweeps 1 "$(hyg_changed "$BOARD_NEW")"
 t hygiene-closed-issue-sweeps 1 "$(hyg_changed "$BOARD_CLOSED")"
 t hygiene-label-change-sweeps 1 "$(hyg_changed "$BOARD_LABEL")"
@@ -264,6 +289,16 @@ hyg_reset
 hygiene_case "$BOARD_A" >/dev/null
 t hygiene-changed-board-names-its-reason 1 \
   "$(hyg_count "$(hygiene_case "$BOARD_LABEL")" 'launching hygiene sweep (changed)')"
+
+# The same per-field property, at the one place a separator join loses it. This
+# is the end-to-end half: a board that re-partitions its label NAMES around the
+# comma, with nothing else on the row moving, must still launch a session. Under
+# `join(",")` it does not — the digest is byte-identical and the sweep is
+# suppressed on a board that changed.
+t hygiene-comma-bearing-label-change-sweeps 1 \
+  "$(hyg_changed_from "$BOARD_COMMA_ONE" "$BOARD_COMMA_TWO")"
+t hygiene-comma-bearing-assignee-change-sweeps 1 \
+  "$(hyg_changed_from "$BOARD_COMMA_ASSIGNEE_ONE" "$BOARD_COMMA_ASSIGNEE_TWO")"
 
 # D2. The floor is what keeps the gate a saving rather than a hole: without it
 # a board that never changes is never swept again, and the 48h reclaim and the
@@ -291,6 +326,37 @@ hyg_reset
 hygiene_case "$BOARD_A" unset >/dev/null
 t hygiene-unset-floor-does-not-abort-the-sweep 0 \
   "$(hyg_count "$(hygiene_case "$BOARD_A" unset)" '^SESSION ')"
+
+# An ABSENT floor and a WRONG one are different inputs and `:-` only answers the
+# first. Left unguarded, `HYGIENE_FLOOR=12h` makes the age comparison an
+# `integer expression expected` error, the floor branch cannot fire, and the
+# skip line then reports `50000s of the 12hs floor elapsed — no session this
+# interval`: the module declaring the floor exceeded in the act of declining to
+# sweep. That is the one place the gate would fail CLOSED, on the single value
+# whose whole job is to make the sweep more frequent — so it degrades to the
+# default and says so, like every other input this file cannot read.
+hyg_reset
+hygiene_case "$BOARD_A" >/dev/null
+hyg_age_ledger 50000
+HYG_BADFLOOR="$(hygiene_case "$BOARD_A" 12h 2>/dev/null)"
+t hygiene-non-numeric-floor-warns-by-repo 1 \
+  "$(hyg_count "$HYG_BADFLOOR" '^WARN heavy-duty/crew: HYGIENE_FLOOR is not a whole number of seconds')"
+t hygiene-non-numeric-floor-does-not-suppress-the-sweep 1 "$(hyg_count "$HYG_BADFLOOR" '^SESSION ')"
+t hygiene-non-numeric-floor-falls-back-to-the-default 1 \
+  "$(hyg_count "$HYG_BADFLOOR" 'launching hygiene sweep (floor)')"
+# The fallback is a FLOOR, not an always-sweep: inside the default it still
+# skips, so a bad value cannot quietly buy back the unconditional hourly sweep
+# this whole change exists to end.
+hyg_reset
+hygiene_case "$BOARD_A" >/dev/null
+hyg_age_ledger 40000
+t hygiene-non-numeric-floor-still-honours-the-default 0 \
+  "$(hyg_count "$(hygiene_case "$BOARD_A" 12h 2>/dev/null)" '^SESSION ')"
+# And the skip line it does print names the floor actually in force, not the
+# string that was rejected — the self-contradicting line is the reason this
+# guard exists at all.
+t hygiene-non-numeric-floor-skip-line-names-the-real-floor 1 \
+  "$(hyg_count "$(hygiene_case "$BOARD_A" 12h 2>/dev/null)" 'of the 43200s floor elapsed')"
 
 # D3. Everything the gate cannot read sweeps anyway and says which repo.
 hyg_reset
@@ -322,6 +388,62 @@ printf 'heavy-duty/crew 12345-678 not-an-epoch\n' >"$HYG/.seen-hygiene"
 t hygiene-non-numeric-epoch-warns-by-repo 1 \
   "$(hyg_count "$(hygiene_case "$BOARD_A")" '^WARN heavy-duty/crew: the hygiene ledger row is malformed')"
 
+# A ledger that EXISTS and will not open is not the same as a repo with no row
+# yet, and the gate must not report the second when it met the first: the action
+# is the same (sweep) but the silence is the #59 failure, and changelog.d/465.md
+# promises a warn by repo for everything this gate cannot read.
+#
+# The failure is injected at `awk` rather than expressed as a mode. `chmod 000`
+# is not a refusal for root, and the suite runs as root on some boxes — the case
+# would then read the file happily and assert nothing. Stubbing the one external
+# command the read makes is the same seam every other outside call in these
+# cases is already stubbed at, and it is the same answer on every box. The gate
+# returns before it reaches any other `awk`, so the stub's reach is exactly the
+# ledger read.
+# shellcheck disable=SC2317  # the stubs run inside the sourced module
+hyg_unreadable_ledger_case() {
+  (
+    DUTY_DIR="$HYG"
+    HYGIENE_FLOOR=43200
+    awk() { return 2; }
+    log() { printf 'LOG %s\n' "$*"; }
+    warn() { printf 'WARN %s\n' "$*"; }
+    gh() { printf '[]\n'; }
+    _hygiene_gate heavy-duty/crew
+    printf 'RC %s\n' "$?"
+    printf 'REASON %s\n' "$HYGIENE_SWEEP_REASON"
+    printf 'DIGEST %s\n' "$HYGIENE_DIGEST"
+  )
+}
+hyg_reset
+printf 'heavy-duty/crew 12345-678 1756000000\n' >"$HYG/.seen-hygiene"
+HYG_UNREADABLE="$(hyg_unreadable_ledger_case)"
+t hygiene-unreadable-ledger-sweeps-anyway 'RC 0' \
+  "$(printf '%s\n' "$HYG_UNREADABLE" | grep '^RC ')"
+t hygiene-unreadable-ledger-warns-by-repo 1 \
+  "$(hyg_count "$HYG_UNREADABLE" '^WARN heavy-duty/crew: the hygiene ledger could not be read')"
+t hygiene-unreadable-ledger-names-fail-open 'REASON fail-open' \
+  "$(printf '%s\n' "$HYG_UNREADABLE" | grep '^REASON ')"
+# Empty digest is what stops duty_hygiene committing a row over a ledger the
+# gate never managed to read.
+t hygiene-unreadable-ledger-commits-no-digest 'DIGEST ' \
+  "$(printf '%s\n' "$HYG_UNREADABLE" | grep '^DIGEST ')"
+t hygiene-unreadable-ledger-does-not-claim-a-first-sweep 0 \
+  "$(hyg_count "$HYG_UNREADABLE" 'REASON first')"
+
+# The other end of the same ledger: a row that cannot be WRITTEN. The sweep has
+# already happened by then, so the digest simply goes uncommitted and the board
+# re-sweeps next interval — safe, and previously silent. Expressed as a DUTY_DIR
+# that is not there, so `mktemp` fails for root too; its stderr is dropped for
+# the reason the unparseable-listing case drops jq's.
+hyg_reset
+HYG_NOWRITE="$(hygiene_case "$BOARD_A" 43200 0 "$HYG/no-such-dir" 2>/dev/null)"
+t hygiene-unwritable-ledger-still-sweeps 1 "$(hyg_count "$HYG_NOWRITE" '^SESSION ')"
+t hygiene-unwritable-ledger-warns-by-repo 1 \
+  "$(hyg_count "$HYG_NOWRITE" '^WARN heavy-duty/crew: the hygiene ledger row could not be written')"
+t hygiene-unwritable-ledger-writes-no-ledger 0 \
+  "$(ls "$HYG/no-such-dir" 2>/dev/null | wc -l | tr -d ' ')"
+
 # The row is earned by the session, the rule .seen-build and .seen-resume
 # already follow: a crashed sweep must not buy a digest it never acted on.
 hyg_reset
@@ -348,6 +470,22 @@ for hyg_pair in "label:$BOARD_LABEL" "assignee:$BOARD_ASSIGNEE" "new:$BOARD_NEW"
   if [ "$HYG_D_A" = "$(printf '%s' "${hyg_pair#*:}" | _hygiene_digest)" ]; then r1=SAME; else r1=differs; fi
   t "hygiene-digest-separates-a-${hyg_pair%%:*}-change" differs "$r1"
 done
+# Injectivity, asserted on the digest itself and not only through a sweep. A
+# multi-value field joined on a separator its own values may contain is not a
+# fingerprint: these pairs differ in nothing but where the boundary between two
+# label (assignee) names falls, and a digest that cannot tell them apart is one
+# that reports a changed board as unchanged.
+if [ "$(printf '%s' "$BOARD_COMMA_ONE" | _hygiene_digest)" \
+   = "$(printf '%s' "$BOARD_COMMA_TWO" | _hygiene_digest)" ]; then r1=SAME; else r1=differs; fi
+t hygiene-digest-separates-a-comma-bearing-label differs "$r1"
+if [ "$(printf '%s' "$BOARD_COMMA_ASSIGNEE_ONE" | _hygiene_digest)" \
+   = "$(printf '%s' "$BOARD_COMMA_ASSIGNEE_TWO" | _hygiene_digest)" ]; then r1=SAME; else r1=differs; fi
+t hygiene-digest-separates-a-comma-bearing-assignee differs "$r1"
+# …and the property the pair is a special case of: the digest is a function of
+# the label SET, not of a string that set happens to flatten to.
+if [ "$(printf '%s' "$BOARD_COMMA_ONE" | _hygiene_digest)" \
+   = "$(printf '%s' "$BOARD_COMMA_ONE" | jq -c '.' | _hygiene_digest)" ]; then r1=stable; else r1=UNSTABLE; fi
+t hygiene-digest-of-a-comma-bearing-label-is-stable stable "$r1"
 HYG_AT_CAP="$(jq -cn --argjson n "$HYGIENE_LISTING_LIMIT" \
   '[range($n) | {number: ., updatedAt: "2026-08-25T00:00:00Z", labels: [], assignees: []}]')"
 HYG_UNDER_CAP="$(jq -cn --argjson n "$((HYGIENE_LISTING_LIMIT - 1))" \

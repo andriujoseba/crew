@@ -51,6 +51,17 @@ _hygiene_listing() { # $1=repo -> listing JSON on stdout, nonzero if gh could no
 # engine gains no new dependency on a fleet whose boxes differ in what is
 # installed. Rows are sorted before hashing so the digest is a property of the
 # BOARD and not of the order gh happened to return it in.
+#
+# THE MULTI-VALUE FIELDS ARE `tojson`, NOT `join(",")`. A separator join is not
+# injective over names that may contain the separator: one label named `a,b` and
+# two labels named `a` and `b` flatten to the identical field, so two different
+# boards digest the same and a real change is suppressed. `updatedAt` sits in
+# the same row and GitHub bumps it on every label event, so no live board can
+# reach the collision today — but that is a fact about GitHub, not about this
+# function, and a fingerprint must not borrow its injectivity from a neighbour.
+# `tojson` quotes and escapes each element, so the array is recoverable from the
+# field and distinct arrays give distinct fields. Assignees get the same
+# treatment: a login cannot contain a comma, and this should not depend on it.
 _hygiene_digest() {
   local json rows count
   json="$(cat)"
@@ -58,8 +69,8 @@ _hygiene_digest() {
   rows="$(printf '%s' "$json" | jq -r '
       .[] | [ (.number|tostring),
               .updatedAt,
-              ([.labels[].name]      | sort | join(",")),
-              ([.assignees[].login]  | sort | join(",")) ] | @tsv
+              ([.labels[].name]      | sort | tojson),
+              ([.assignees[].login]  | sort | tojson) ] | @tsv
     ')" || return 1
   count="$(printf '%s\n' "$rows" | awk 'NF{c++} END{print c+0}')"
   [ "$count" -lt "$HYGIENE_LISTING_LIMIT" ] || return 1
@@ -67,21 +78,38 @@ _hygiene_digest() {
 }
 
 # _hygiene_ledger_line REPO — this repo's row of .seen-hygiene, or nothing.
+#
+# rc 0 means the ledger was READ: the row is on stdout, and empty stdout means
+# this repo has no row yet. rc 2 means it could not be read at all. The two must
+# not collapse into "no row": an unreadable ledger would then report itself as a
+# first sweep — the right ACTION, since a first sweep sweeps, but silently, and
+# a gate that cannot read its own state must say so like every other fail-open
+# branch here (#59). No row and no ledger are both rc 0; only a file that exists
+# and will not open is rc 2.
 _hygiene_ledger_line() {
   local ledger="$DUTY_DIR/.seen-hygiene"
   [ -f "$ledger" ] || return 0
-  awk -v r="$1" '$1 == r { print; exit }' "$ledger"
+  awk -v r="$1" '$1 == r { print; exit }' "$ledger" || return 2
 }
 
 # _hygiene_ledger_commit REPO DIGEST EPOCH — replace this repo's row, keep every
-# other, atomically. Same mv-into-place discipline as ledger_commit.
+# other, atomically. Same mv-into-place discipline as ledger_commit. Nonzero if
+# the row did not land, and the caller says so: a rewrite that fails silently
+# leaves the digest uncommitted, which re-sweeps next interval and is safe, but
+# a ledger that has stopped accepting writes is an operator's problem and the
+# only place it can surface is the log.
+#
+# The rebuild runs in a SUBSHELL so a failed `awk` can abort before the `mv`:
+# in a `{ }` group the `exit` would take the whole duty tick with it, and
+# without one a truncated rebuild would be moved into place, dropping every
+# other repo's row.
 _hygiene_ledger_commit() {
   local ledger="$DUTY_DIR/.seen-hygiene" tmp
   tmp="$(mktemp "${ledger}.XXXXXX")" || return 1
-  {
-    if [ -f "$ledger" ]; then awk -v r="$1" '$1 != r' "$ledger"; fi
+  (
+    if [ -f "$ledger" ]; then awk -v r="$1" '$1 != r' "$ledger" || exit 1; fi
     printf '%s %s %s\n' "$1" "$2" "$3"
-  } >"$tmp"
+  ) >"$tmp" || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$ledger"
 }
 
@@ -108,12 +136,31 @@ _hygiene_ledger_commit() {
 # one row per repo forever rather than one per state ever seen. The floor needs
 # a second field on that row anyway, which the two-field ledger cannot carry.
 _hygiene_gate() {
-  local repo="$1" line rest listing digest now age
+  local repo="$1" line rest listing digest now age line_rc=0
   local prev_digest="" prev_ts=""
   local floor="${HYGIENE_FLOOR:-$HYGIENE_FLOOR_DEFAULT}"
   HYGIENE_DIGEST=""
   HYGIENE_SWEEP_REASON=""
-  line="$(_hygiene_ledger_line "$repo")"
+  # The `:-` above supplies a value for an ABSENT conf; this supplies one for a
+  # conf that set the wrong thing. Without it `HYGIENE_FLOOR=12h` makes the
+  # comparison below an `integer expression expected` error, the floor branch
+  # never fires, and the skip line reports `999999s of the 12hs floor elapsed —
+  # no session this interval`: the module declaring the floor exceeded in the
+  # act of declining to sweep. That is fail-CLOSED on the one value whose whole
+  # job is to make the sweep more frequent, and it is the inverse of what the
+  # rest of this file does with input it cannot read.
+  case "$floor" in
+    ''|*[!0-9]*)
+      warn "$repo: HYGIENE_FLOOR is not a whole number of seconds ($floor); using the ${HYGIENE_FLOOR_DEFAULT}s default this interval (#465)"
+      floor="$HYGIENE_FLOOR_DEFAULT"
+      ;;
+  esac
+  line="$(_hygiene_ledger_line "$repo")" || line_rc=$?
+  if [ "$line_rc" -ne 0 ]; then
+    warn "$repo: the hygiene ledger could not be read; sweeping ungated this interval and committing nothing over it (#59)"
+    HYGIENE_SWEEP_REASON=fail-open
+    return 0
+  fi
   if [ -n "$line" ]; then
     # Split by expansion rather than `read`, which would need a discard
     # variable for the repo field it already matched on. A row short of three
@@ -179,10 +226,13 @@ duty_hygiene() {
     log "$R: launching hygiene sweep ($HYGIENE_SWEEP_REASON)"
     dir="$WORK_DIR/${R//\//__}"
     ensure_checkout "$R" "$dir" || continue
-    # Reset before the call, not after: run_session returns 0 without touching
-    # RUN_SESSION_RC when the terminal gate holds a session back, and a stale
-    # success from the PREVIOUS repo in this loop would then commit a digest no
-    # session ever swept.
+    # Reset before the call, not after, the discipline duty-attention, -builder
+    # and -review already follow. RUN_SESSION_RC is a global that outlives one
+    # iteration, so an iteration whose session never ran would otherwise be
+    # judged on the PREVIOUS repo's result and commit a digest nothing swept.
+    # (The terminal breaker is not that case — it sets 75 itself, at
+    # shared/lib/common/breaker.sh:44 — but it is not the only path that can
+    # decline, and a reset that assumes failure costs nothing and cannot lie.)
     RUN_SESSION_RC=1
     run_session hygiene "$R" "$dir" "$TIMEOUT_HYGIENE" \
       "$(render_prompt hygiene.txt ME="$ME" REPO="$R")"
@@ -191,7 +241,8 @@ duty_hygiene() {
     # and re-sweeps next interval rather than losing its wake to a digest it
     # never acted on.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ] && [ -n "$HYGIENE_DIGEST" ]; then
-      _hygiene_ledger_commit "$R" "$HYGIENE_DIGEST" "$(date +%s)"
+      _hygiene_ledger_commit "$R" "$HYGIENE_DIGEST" "$(date +%s)" ||
+        warn "$R: the hygiene ledger row could not be written; the board re-sweeps next interval (#465)"
     fi
   done < <(read_repo_list "$REPOS_FILE")
   return 0
