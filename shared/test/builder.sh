@@ -4324,11 +4324,45 @@ t d462-ledger-and-reason-agree "fx/repo#7 unbuildable" \
 # record follows the commit, so a stale decline from a previous tick is cleared
 # rather than left to be reported against an issue now being built.
 d462_reset
+# Seeded with a PREVIOUS box's decline on this very issue, so the comment count
+# below can tell a path that posts from one that does not: against a store
+# d462_reset has just emptied, `0` is also what an assertion that never ran
+# reads, which is coverage it is not (claude-bot, round 1). Seeded, the claim
+# path reads 1 and a path that posted would read 2.
+d462_seed "$D462_ME" "$D462_BODY_A"
 t d462-claimed-id-commits-nothing "" \
   "$(_ready_lines_to_commit "$D462_LEDGER_LINES" "")"
 d462_record fx/repo "$D462_SLUG" ""
 if [ -e "$D462/.declined-build.$D462_SLUG" ]; then r1=STALE; else r1=cleared; fi
 t d462-claim-clears-the-decline-record cleared "$r1"
-t d462-claim-leaves-no-decline-comment 0 "$(d462_count)"
+t d462-claim-leaves-no-decline-comment 1 "$(d462_count)"
+
+# 36. COULD NOT LOOK IS NOT NOTHING TO RECORD — the contrast with the clearing
+# directly above. Same empty set, but #264's re-query-failed path reaches it
+# without having read the board, and unlinking there costs the reasons for the
+# ids EARLIER ticks already ledgered: those stay held, the marker dedup will
+# not re-post an unchanged conclusion, and the operator silently drops back to
+# `N ready held by seen-ledger` — this issue's own defect, fired by an API blip
+# rather than a missing wire. The record survives; the intersection with the
+# live board, not this write, is what stops it going stale (claude-bot, r1).
+printf 'fx/repo#7 unbuildable\n' >"$D462/.declined-build.$D462_SLUG"
+d462_record fx/repo "$D462_SLUG" "" 0
+t d462-unread-board-keeps-the-record "fx/repo#7 unbuildable" \
+  "$(cat "$D462/.declined-build.$D462_SLUG" 2>/dev/null)"
+# And a board that WAS read still clears on the empty set: the whole-set write
+# is the reason a stale reason cannot linger, and 36 must not buy 35's job.
+d462_record fx/repo "$D462_SLUG" "" 1
+if [ -e "$D462/.declined-build.$D462_SLUG" ]; then r1=STALE; else r1=cleared; fi
+t d462-read-board-with-nothing-still-clears cleared "$r1"
+# The flag is only worth having if the call site sets it from the re-query it
+# actually performed, and says 0 on exactly the branch that could not look.
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+if awk_range_grep_Fq '/_record_declines "\$R" "\$slug" "\$ready_commit"/,/ledger_commit "\$DUTY_DIR\/.seen-build"/' \
+  "$BMOD" '"$ready_reread"'; then r1=told; else r1=UNTOLD; fi
+t d462-record-told-whether-the-board-was-read told "$r1"
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+if awk_range_grep_Fq '/if post_ready_json=/,/post-session ready re-query failed/' \
+  "$BMOD" 'ready_reread=0'; then r1=marked; else r1=SILENT; fi
+t d462-failed-reread-marks-itself marked "$r1"
 
 suite_finish

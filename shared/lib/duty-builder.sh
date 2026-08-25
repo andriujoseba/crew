@@ -101,8 +101,9 @@ _decline_reason() {
     ' 2>/dev/null || true
 }
 
-# _record_declines REPO SLUG LINES — write the reasons behind the ready lines
-# this tick is about to ledger, one `<repo>#<n> <reason>` per declined id.
+# _record_declines REPO SLUG LINES [BOARD_REREAD] — write the reasons behind
+# the ready lines this tick is about to ledger, one `<repo>#<n> <reason>` per
+# declined id.
 #
 # Keyed to the ledger commit, not to the enumerated board: the caller passes
 # exactly what ledger_commit is given, so the two records can never disagree
@@ -110,8 +111,23 @@ _decline_reason() {
 # ready line that left the board has no decline to report and must not linger.
 # Per repo for the reason every other builder state file is (#345): _builder_repo
 # runs once per repo and one shared file makes each clobber the last.
+#
+# BOARD_REREAD=0 MEANS COULD NOT LOOK, WHICH IS NOT NOTHING TO RECORD, and it
+# is why the whole-set write needs a fourth argument rather than reading the
+# empty set at face value. On #264's re-query-failed path the caller has no
+# lines to commit but also no knowledge, and unlinking there would cost the
+# reasons for the ids EARLIER ticks already ledgered — permanently, because the
+# marker dedup is working as designed and will not re-post an unchanged
+# conclusion, so nothing puts them back. The operator silently drops to
+# `N ready held by seen-ledger`, the wrong noun this issue removes: the same
+# fact-never-reaches-the-reader defect, triggered by an API blip instead of a
+# missing wire. Returning early keeps the last known-good record, and what
+# stops that record going stale is _declined_for_board's intersection with the
+# live board — never this write. Default 1 so a caller that genuinely read the
+# board says nothing extra, and the empty set keeps clearing the file (#462).
 _record_declines() {
-  local repo="$1" slug="$2" lines="$3" line id reason out=""
+  local repo="$1" slug="$2" lines="$3" board_reread="${4:-1}" line id reason out=""
+  [ "$board_reread" -eq 1 ] || return 0
   while IFS= read -r line; do
     [ -n "${line//[[:space:]]/}" ] || continue
     id="${line%% *}"
@@ -2394,7 +2410,7 @@ _builder_repo() {
     # uncommitted so the next tick retries: declined and never-got-there must
     # not look the same to the ledger.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-      local ready_commit="" post_ready_json post_ready_ids
+      local ready_commit="" ready_reread=1 post_ready_json post_ready_ids
       if [ -n "${ready_items//[[:space:]]/}" ]; then
         if post_ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
           --json number,assignees 2>/dev/null)"; then
@@ -2402,6 +2418,7 @@ _builder_repo() {
             '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number)"' 2>/dev/null || true)"
           ready_commit="$(_ready_lines_to_commit "$ready_items" "$post_ready_ids")"
         else
+          ready_reread=0
           warn "$R: post-session ready re-query failed; committing no ready lines (#264)"
         fi
       fi
@@ -2412,7 +2429,10 @@ _builder_repo() {
       # Only the lines actually being ledgered — a set the session ACTED on
       # commits nothing (#264), and a decline recorded against an id that will
       # re-wake next tick would be reported as held when it is not.
-      _record_declines "$R" "$slug" "$ready_commit"
+      #
+      # The re-read flag travels with the lines because an empty set is
+      # ambiguous without it: see _record_declines (claude-bot, round 1).
+      _record_declines "$R" "$slug" "$ready_commit" "$ready_reread"
       printf '%s\n%s\n' "$ready_commit" "$cr_items" | ledger_commit "$DUTY_DIR/.seen-build"
     fi
   else
