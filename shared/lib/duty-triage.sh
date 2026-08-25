@@ -56,18 +56,21 @@ _triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUM
 }
 
 duty_triage() {
-  local R notification_pages all_mentions repo_json keep_threads keep_json mentions
-  local mcount mention_rc
+  local R notification_pages all_mentions repo_json fresh_threads fresh_json fresh_mentions
+  local keep_threads keep_json mentions mcount mention_rc
   local -a repos=()
   mapfile -t repos < <(read_repo_list "$REPOS_FILE")
 
   # (d) unread mentions — one notifications snapshot and one session for the
   # whole tick. The session remains first, so every per-repo board poll below
   # observes changes made while answering a mention (#253).
-  repo_json="$(printf '%s\n' "${repos[@]}" | jq -R . | jq -cs .)"
-  if notification_pages="$(gh api notifications --paginate 2>/dev/null)" &&
+  all_mentions='[]'
+  repo_json="$(printf '%s\n' "${repos[@]}" | awk 'NF' | jq -R . | jq -cs .)"
+  if [ "${#repos[@]}" -eq 0 ]; then
+    :
+  elif notification_pages="$(gh api notifications --paginate 2>/dev/null)" &&
      all_mentions="$(printf '%s\n' "$notification_pages" | jq -c -s --argjson repos "$repo_json" '
-       add
+       (add // [])
        | [ .[]
            | select((.reason == "mention" or .reason == "team_mention")
                     and (.repository.full_name as $repo | $repos | index($repo)))
@@ -79,9 +82,17 @@ duty_triage() {
     warn "notifications probe failed; mention wake skipped this tick"
     all_mentions='[]'
   fi
-  keep_threads="$(printf '%s\n' "$all_mentions" \
+  fresh_threads="$(printf '%s\n' "$all_mentions" \
     | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
-    | ledger_filter "$DUTY_DIR/.seen-mentions" \
+    | ledger_filter "$DUTY_DIR/.seen-mentions")"
+  if [ -n "$fresh_threads" ]; then
+    fresh_json="$(printf '%s\n' "$fresh_threads" | awk 'NF { print $1 }' | jq -R . | jq -cs .)"
+    fresh_mentions="$(jq -c --argjson fresh "$fresh_json" \
+      '[ .[] | select(.thread as $thread | $fresh | index($thread)) ]' <<<"$all_mentions")"
+  else
+    fresh_mentions='[]'
+  fi
+  keep_threads="$(printf '%s\n' "$fresh_threads" \
     | awk -v ceiling="$MENTION_THREAD_CEILING" 'NF && selected < ceiling {
         print $1; selected++
       }')"
@@ -93,7 +104,6 @@ duty_triage() {
     mentions='[]'
   fi
   mcount="$(jq 'length' <<<"$mentions" 2>/dev/null || echo 0)"
-  mention_rc=1
   if [ "$mcount" -gt 0 ]; then
     log "fleet: ${mcount} unread mention(s) — launching one mention session"
     RUN_SESSION_RC=1
@@ -110,14 +120,18 @@ duty_triage() {
   fi
 
   for R in "${repos[@]}"; do
-    _triage_repo "$R" "$(jq --arg repo "$R" '[.[] | select(.repo == $repo)] | length' \
-      <<<"$mentions" 2>/dev/null || echo 0)"
+    _triage_repo "$R" \
+      "$(jq --arg repo "$R" '[.[] | select(.repo == $repo)] | length' \
+        <<<"$fresh_mentions" 2>/dev/null || echo 0)" \
+      "$(jq --arg repo "$R" '[.[] | select(.repo == $repo)] | length' \
+        <<<"$mentions" 2>/dev/null || echo 0)"
   done
 }
 
 _triage_repo() {
   local R="$1"
   local mention_count="${2:-0}"
+  local selected_mention_count="${3:-0}"
   local owner="${R%%/*}" name="${R##*/}"
   local signals="" nt stray undisc unblockable="" dir prompt
 
@@ -253,6 +267,8 @@ _triage_repo() {
   if [ -z "$signals" ]; then
     if [ "$mention_count" -eq 0 ]; then
       log "$R: quiet — no mentions, no triage signals, no session launched"
+    elif [ "$selected_mention_count" -eq 0 ]; then
+      log "$R: mentions deferred by fleet ceiling — no triage signals, no repo session launched"
     else
       log "$R: no triage signals — mention session was the only wake"
     fi

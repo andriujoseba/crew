@@ -238,6 +238,11 @@ TR_CEILING=2
 tr_run 0
 t triage466-ceiling-first-tick-commits-two 2 "$(awk 'NF{n++} END{print n+0}' "$TRD/.seen-mentions")"
 t triage466-ceiling-first-tick-one-session 1 "$(trc '^SESSION mention$')"
+t triage466-ceiling-deferred-repos-not-quiet 2 \
+  "$(grep -c 'mentions deferred by fleet ceiling' "$TR_LOG")"
+if grep -E '^(c/three|d/four): quiet — no mentions' "$TR_LOG" >/dev/null; then
+  r1=QUIET; else r1=deferred; fi
+t triage466-ceiling-deferred-repos-state-named deferred "$r1"
 tr_tick 0
 t triage466-ceiling-second-tick-commits-remainder 4 "$(awk 'NF{n++} END{print n+0}' "$TRD/.seen-mentions")"
 t triage466-ceiling-second-tick-one-session 1 "$(trc '^SESSION mention$')"
@@ -257,6 +262,25 @@ t triage466-quiet-four-repo-fetch-once 1 "$(trc 'api notifications')"
 t triage466-quiet-four-repo-no-session 0 "$(trc '^SESSION')"
 if [ -s "$TR_CHECKOUT" ]; then r1=CREATED; else r1=none; fi
 t triage466-quiet-four-repo-no-checkout none "$r1"
+
+# A successful notifications request may produce no pagination documents at
+# all. That is an empty snapshot, not a probe failure.
+tr_fix '' '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage466-empty-response-fetch-once 1 "$(trc 'api notifications')"
+t triage466-empty-response-no-session 0 "$(trc '^SESSION')"
+if grep -q 'notifications probe failed' "$TR_LOG"; then r1=WARNED; else r1=empty; fi
+t triage466-empty-response-is-not-probe-failure empty "$r1"
+
+# With no configured repositories there is nothing to partition, so the tick
+# does not spend an otherwise-useless notifications pagination or create work.
+: >"$TRD/repos.txt"
+tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage466-empty-repo-list-fetches-nothing 0 "$(trc 'api notifications')"
+t triage466-empty-repo-list-launches-nothing 0 "$(trc '^SESSION')"
+if [ -s "$TR_CHECKOUT" ]; then r1=CREATED; else r1=none; fi
+t triage466-empty-repo-list-creates-no-checkout none "$r1"
 
 # Restore the single-repo fixture used by the pre-existing signal cases.
 printf 'o/r\n' >"$TRD/repos.txt"
