@@ -22,7 +22,7 @@ genuinely crew's.
    `claude-bot-andresmgsl`, `codex-bot-andresmgsl`,  `kimi-bot-andresmgsl`.
    The required verdicts are the resolved panel minus the author.
    The maintainer (`danmt`) takes the last word and merges.
-4. **Checks must be green.** crew runs three CI workflows:
+4. **Checks must be green.** crew runs four CI workflows:
    - `ci-shell.yml` — shell syntax and lint, the engine suites, and the
      fleet-floor suite without its browser walk. It runs for `shared/`, `cli/`
      and other engine paths.
@@ -37,6 +37,14 @@ genuinely crew's.
      `runner-isolated`, `docs-sync`), run as ceremony's pinned actions on
      **every** PR with no paths filter, so a furniture PR still carries a real
      green check.
+   - `scope-coverage.yml` — every tracked path matches a `scope:*` row in
+     `.github/labeler.yml`, or is declared in `.github/scope-coverage.allow`
+     with a reason. Also on **every** PR with no paths filter, drafts included,
+     and for the same reason as the guards above: what it checks is the whole
+     tree, so a filter would silence it on exactly the PR that adds an unmapped
+     directory (#500). Add the row in the same PR as the directory — the scope
+     job reads the map at the **base** branch, never the head, so the row you
+     add labels the PRs that come after it, not the one adding it.
 5. **Feature PRs land their changelog entry as part of the PR**: write
    `changelog.d/<issue>.md` — the release PR assembles those fragments into
    the release notes verbatim.

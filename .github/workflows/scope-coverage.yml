@@ -1,0 +1,45 @@
+name: scope-coverage
+# The scope map covers the tracked tree — run on EVERY PR, with NO paths filter,
+# and a workflow of its own for release-guards.yml's reason rather than a step
+# in ci-shell.yml (crew#500).
+#
+# The subject this guards is the WHOLE TREE, so a paths filter is precisely what
+# would make it silent on the trees it must guard. The drift it catches arrives
+# as a PR adding a directory nobody thought to map, and such a PR need touch no
+# filtered path at all: ci-shell.yml's filter does not name .github/labeler.yml,
+# and ci-floor.yml's names only fleet-floor/. Folding this in behind either
+# would leave it looking green on exactly the change that breaks it.
+#
+# No draft gate either, unlike the two CI workflows. Their suites are minutes;
+# this reads the index and returns, and a mapping fixed at draft time is one
+# nobody has to notice at review time.
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: scope-coverage-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  scope-coverage:
+    name: scope-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: bash -n (syntax)
+        run: bash -n .github/scope-coverage.test.sh
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y shellcheck >/dev/null
+          shellcheck -x .github/scope-coverage.test.sh
+      - name: python syntax (the guard)
+        run: python3 -m py_compile .github/scope-coverage.py
+      # The suite runs the guard over this checkout as its first case, so a red
+      # map is caught here too; the step below is what NAMES it in the log
+      # without the fixtures around it.
+      - name: guard contract tests (offline — fixture trees, the refusals, the glob dialect)
+        run: .github/scope-coverage.test.sh
+      - name: every tracked path matches a scope row
+        run: .github/scope-coverage.py
