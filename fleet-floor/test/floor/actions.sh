@@ -193,16 +193,26 @@ t "force: an unknown box is still refused" 400 \
 
 # The stub's refusal, driven directly. Every argv assertion above leans on the
 # unmatched arm — "it fires exactly the ruled passthrough and not a near
-# neighbour" is only true because anything else exits 2 — and an arm that
-# shifted past the separator without checking where it was would quietly
-# reinterpret a malformed call as the ruled one instead. Written to /dev/null
-# so this probe does not appear in the call log the cases above read.
-if FLOOR_CALLS=/dev/null "$HERE/stub-box" incus ff-idle stop --force >/dev/null 2>&1; then
-  fail "force: the stub refuses a passthrough with the separator missing" "exit 0"
+# neighbour" is only true because anything else exits 2.
+#
+# `incus ff-idle stop stop --force` is the argv that makes the point, and it
+# is chosen rather than any old malformed call: an arm that shifted three
+# without checking WHERE the separator is reads this as `stop --force` and
+# quietly force-stops the box, so the case that is supposed to be refused
+# succeeds instead. A shorter malformed call exits 2 under both spellings and
+# would assert nothing. Both the log and the state dir are pointed elsewhere,
+# so a probe that IS silently reinterpreted cannot mutate the fleet the cases
+# above read.
+FS_PROBE_ENV=(FLOOR_CALLS=/dev/null FLOOR_STATE="$TMP/stub-probe")
+if env "${FS_PROBE_ENV[@]}" "$HERE/stub-box" incus ff-idle stop stop --force >/dev/null 2>&1; then
+  fail "force: the stub refuses a passthrough with the separator misplaced" \
+       "shifted past it blind and reinterpreted the call as the ruled one"
 else
-  ok "force: the stub refuses a passthrough with the separator missing"
+  ok "force: the stub refuses a passthrough with the separator misplaced"
 fi
-if FLOOR_CALLS=/dev/null "$HERE/stub-box" incus ff-idle -- restart >/dev/null 2>&1; then
+t "force: ...and did not stop the box on the way" "" \
+  "$(cat "$TMP/stub-probe/ff-idle.state" 2>/dev/null)"
+if env "${FS_PROBE_ENV[@]}" "$HERE/stub-box" incus ff-idle -- restart >/dev/null 2>&1; then
   fail "force: the stub refuses an incus verb it does not model" "exit 0"
 else
   ok "force: the stub refuses an incus verb it does not model"
