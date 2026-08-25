@@ -82,7 +82,9 @@ duty_triage() {
   keep_threads="$(printf '%s\n' "$all_mentions" \
     | jq -r '.[] | "\(.thread) \(.updated)"' 2>/dev/null \
     | ledger_filter "$DUTY_DIR/.seen-mentions" \
-    | head -n "$MENTION_THREAD_CEILING" | awk '{print $1}')"
+    | awk -v ceiling="$MENTION_THREAD_CEILING" 'NF && selected < ceiling {
+        print $1; selected++
+      }')"
   if [ -n "$keep_threads" ]; then
     keep_json="$(printf '%s\n' "$keep_threads" | jq -R . | jq -cs .)"
     mentions="$(jq -c --argjson keep "$keep_json" \

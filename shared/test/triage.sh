@@ -31,8 +31,9 @@ cp -r "$SHARED/prompts" "$TRD/prompts"
 # queue label the engine's config does not define is a label these fixtures
 # cannot silently supply on its behalf.
 cp "$SHARED/conf/fleet.defaults.conf" "$TRD/conf/"
+printf 'o/r\n' >"$TRD/repos.txt"
 TR_CALLS="$TMP/tr-calls.log"; TR_PHASE="$TMP/tr-phase"
-TR_LOG="$TMP/tr-log.txt"; TR_PROMPT="$TMP/tr-prompt"
+TR_LOG="$TMP/tr-log.txt"; TR_PROMPT="$TMP/tr-prompt"; TR_CHECKOUT="$TMP/tr-checkout"
 
 # Phase 1 is the board before the mention session, phase 2 the board after it;
 # the runner's run_session override flips the phase file. Every invocation is
@@ -75,8 +76,8 @@ run_session() {
   printf '2' >"$TR_PHASE"
   RUN_SESSION_RC="${TR_SESSION_RC:-0}"
 }
-ensure_checkout() { return 0; }
-_triage_repo o/r
+ensure_checkout() { printf '%s\n' "$*" >>"$TR_CHECKOUT"; return 0; }
+duty_triage
 TRRUN
 
 # Stray and discussion arguments are optional and default to an empty board,
@@ -105,10 +106,12 @@ tr_fix() {  # notif nt1 nt2 blocked1 blocked2 numstates [stray1] [stray2] [disc1
 }
 tr_tick() {  # tr_tick <run_session rc>, preserving ledgers from earlier ticks
   : >"$TR_CALLS"
+  : >"$TR_CHECKOUT"
   rm -f "$TR_PHASE" "$TR_PROMPT".*
   SHARED_DIR="$SHARED" TR_CALLS="$TR_CALLS" TR_PHASE="$TR_PHASE" TR_FIX="$TRF" \
-  TR_PROMPT="$TR_PROMPT" TR_SESSION_RC="$1" DUTY_DIR="$TRD" ME=me-bot \
-  TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 \
+  TR_PROMPT="$TR_PROMPT" TR_CHECKOUT="$TR_CHECKOUT" TR_SESSION_RC="$1" \
+  DUTY_DIR="$TRD" ME=me-bot \
+  TIMEOUT_MENTION=1 TIMEOUT_TRIAGE=1 MENTION_THREAD_CEILING="${TR_CEILING:-50}" \
   PATH="$TRS:$PATH" bash "$TMP/tr-run.sh" >"$TR_LOG" 2>&1
 }
 tr_run() {  # tr_run <run_session rc>, starting with cold ledgers
@@ -193,6 +196,70 @@ t triage253-mention-ledger-on-rc0 committed "$r1"
 tr_run 1
 if [ -f "$TRD/.seen-mentions" ]; then r1=COMMITTED; else r1=withheld; fi
 t triage253-mention-ledger-not-on-rcfail withheld "$r1"
+
+# --- #466: one tick-wide mention batch across every configured repository --
+tr466_mentions="$(jq -nc '[
+  {id:"t1",reason:"mention",updated_at:"2026-08-24T10:01:00Z",
+   repository:{full_name:"a/one"},subject:{url:"https://api/x/1",title:"SECRET-TITLE-ONE"}},
+  {id:"t2",reason:"team_mention",updated_at:"2026-08-24T10:02:00Z",
+   repository:{full_name:"b/two"},subject:{url:"https://api/x/2",title:"SECRET-TITLE-TWO"}},
+  {id:"t3",reason:"mention",updated_at:"2026-08-24T10:03:00Z",
+   repository:{full_name:"c/three"},subject:{url:"https://api/x/3",title:"SECRET-TITLE-THREE"}},
+  {id:"t4",reason:"mention",updated_at:"2026-08-24T10:04:00Z",
+   repository:{full_name:"d/four"},subject:{url:"https://api/x/4",title:"SECRET-TITLE-FOUR"}}
+]')"
+printf '%s\n' a/one b/two c/three d/four >"$TRD/repos.txt"
+tr_fix "$tr466_mentions" '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage466-four-repos-one-mention-session 1 "$(trc '^SESSION mention$')"
+t triage466-four-repos-one-notifications-fetch 1 "$(trc 'api notifications')"
+for repo in a/one b/two c/three d/four; do
+  if grep -q "\"repo\":\"$repo\"" "$TR_PROMPT.mention"; then r1=qualified; else r1=MISSING; fi
+  t "triage466-prompt-qualifies:$repo" qualified "$r1"
+done
+t triage466-success-commits-whole-batch 4 "$(awk 'NF{n++} END{print n+0}' "$TRD/.seen-mentions")"
+if grep -q 'SECRET-TITLE' "$TR_PROMPT.mention"; then r1=LEAKED; else r1=absent; fi
+t triage466-permissionless-prompt-omits-titles absent "$r1"
+if [ -s "$TR_CHECKOUT" ]; then r1=CREATED; else r1=none; fi
+t triage466-mention-batch-creates-no-checkout none "$r1"
+
+# Crash and timeout are distinct exits but share the transaction boundary:
+# neither may commit even one thread from the selected batch.
+tr_run 1
+if [ -f "$TRD/.seen-mentions" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage466-crash-commits-none withheld "$r1"
+tr_run 124
+if [ -f "$TRD/.seen-mentions" ]; then r1=COMMITTED; else r1=withheld; fi
+t triage466-timeout-commits-none withheld "$r1"
+
+# The ceiling is delivery control, not truncation: only the selected prefix is
+# committed, and the remainder is the sole wake on the following tick.
+TR_CEILING=2
+tr_run 0
+t triage466-ceiling-first-tick-commits-two 2 "$(awk 'NF{n++} END{print n+0}' "$TRD/.seen-mentions")"
+t triage466-ceiling-first-tick-one-session 1 "$(trc '^SESSION mention$')"
+tr_tick 0
+t triage466-ceiling-second-tick-commits-remainder 4 "$(awk 'NF{n++} END{print n+0}' "$TRD/.seen-mentions")"
+t triage466-ceiling-second-tick-one-session 1 "$(trc '^SESSION mention$')"
+if grep -q '"thread":"t1"\|"thread":"t2"' "$TR_PROMPT.mention"; then r1=REPEATED; else r1=remainder-only; fi
+t triage466-ceiling-second-prompt-is-remainder remainder-only "$r1"
+unset TR_CEILING
+# shellcheck disable=SC2016  # matching the module's literal variable reference
+if grep -q '^MENTION_THREAD_CEILING=[0-9][0-9]*$' "$SHARED/conf/roles/triage.conf" &&
+   grep -q 'ceiling="$MENTION_THREAD_CEILING"' "$SHARED/lib/duty-triage.sh"; then
+  r1=wired; else r1=MISSING; fi
+t triage466-configurable-thread-ceiling-wired wired "$r1"
+
+# A quiet snapshot is still one bounded fetch, with no model or checkout.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage466-quiet-four-repo-fetch-once 1 "$(trc 'api notifications')"
+t triage466-quiet-four-repo-no-session 0 "$(trc '^SESSION')"
+if [ -s "$TR_CHECKOUT" ]; then r1=CREATED; else r1=none; fi
+t triage466-quiet-four-repo-no-checkout none "$r1"
+
+# Restore the single-repo fixture used by the pre-existing signal cases.
+printf 'o/r\n' >"$TRD/repos.txt"
 
 # Static ordering, in the style of the module-wiring checks above: every board
 # read must sit BELOW the mention call site, and the launch decision below all
