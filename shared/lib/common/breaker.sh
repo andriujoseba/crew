@@ -228,7 +228,11 @@ _session_budget_save() {
       "$_BUDGET_WINDOW" "$_BUDGET_SESSIONS" "$_BUDGET_MINUTES" \
       "$_BUDGET_WARNED" "$_BUDGET_TRIPPED"
     printf '%s' "$_BUDGET_KEPT"
-  } >"$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  # 2>/dev/null FIRST: redirections apply left to right, so a $tmp that
+  # cannot be opened (an unwritable or non-directory DUTY_DIR, which is D4's
+  # own case) must find stderr already silenced, or the shell reports it on
+  # the duty log's stderr and the fail-closed path grows a stray line.
+  } 2>/dev/null >"$tmp" || { rm -f "$tmp" 2>/dev/null; return 1; }
   mv -f "$tmp" "$state" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
 }
 
