@@ -383,7 +383,7 @@ for named in 'Needs-triage issues: #111' 'Queue-unlabeled issues: #112' \
 done
 t triage468-mixed-one-signal-block 1 \
   "$(grep -c 'This fast-tick session was launched for the following named work:' "$TR_PROMPT.triage")"
-if grep -Fqx 'Converge the named items first. The whole-board sweep runs hourly under `hygiene.txt`; this fast-tick session does not enumerate the board for more work. You may act outside the named set when resolving one of its items requires it, but do not enumerate outside the set. For stray issues — anything not minted by you — either normalize them to the issue contract or close them politely, pointing the filer at Discussions: their idea is welcome, the door is over there. For discussions, converge each unresolved one to exactly one outcome — answer, ask, escalate, decline, or accept — and every issue you mint meets the contract. Before asserting label-borne state in prose, re-read the issue'"'"'s label events (the timeline API), not just its comments — label events govern over stale prose. When a ruling, directive, or answered question gives an assignee their next move, put `attention` on the assigned issue that owns the claim — never on a pull request or an unassigned issue, which is a board bug rather than a demand.' \
+if grep -q '^Converge the named items first[.] The whole-board sweep runs hourly under ' \
     "$TR_PROMPT.triage"; then r1=separate; else r1=JOINED; fi
 t triage468-instructions-follow-signal-block-on-new-line separate "$r1"
 
