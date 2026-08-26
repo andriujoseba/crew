@@ -182,7 +182,11 @@ model_run() ( # model_run KIND [MODEL_VAR=VALUE ...] — one dispatch, argv capt
 
 # The profile's translation, for the arms that have one. Mirrors what
 # claude.conf ships: built FROM BOT_CLI_CMD, spliced ahead of a trailing -p.
-# shellcheck disable=SC2317
+#
+# SC2031: BOT_CLI_CMD is set by model_run inside its own subshell, and this
+# hook is CALLED from there — reading it is the point, not a lost write. That
+# is the same reason the runners above carry the disable.
+# shellcheck disable=SC2317,SC2031
 model_hook() {
   bot_cli_model_cmd() {
     local tier="${1:-}"
