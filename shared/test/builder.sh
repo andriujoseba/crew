@@ -4529,6 +4529,18 @@ printf '%s\n' "$*" >>"$D479_CALLS"
 D479GH
 chmod +x "$D479/bin/gh"
 export D479_ALERTS="$D479/alerts"
+# The receipt half of the escalation (AC5). BIN_DIR is $DUTY_DIR/bin, and
+# d479_run sets DUTY_DIR here, so the real post-once.sh is replaced by a
+# recorder without the module being told anything: a stub that RECORDS is what
+# keeps d479-structural-writes-no-label's zero-gh-calls reading meaning what it
+# says — the real script would call gh twice for its own dedup and that count
+# would stop being about label writes at all.
+export D479_RECEIPTS="$D479/receipts"
+cat >"$D479/bin/post-once.sh" <<'D479PO'
+#!/usr/bin/env bash
+printf 'post-once %s %s %s\n' "$1" "$2" "$3" >>"$D479_RECEIPTS"
+D479PO
+chmod +x "$D479/bin/post-once.sh"
 
 d479_listing() {  # d479_listing <head> <body>
   jq -cn --arg head "$1" --arg body "$2" \
@@ -4572,10 +4584,11 @@ d479_run() {  # d479_run <mode> <listing> <log> -> the spliced listing on stdout
       printf "%s" "$RESUME_LISTING"' \
     d479_run "$SHARED" "$d479_pr" "$d479_log"
 }
-d479_reset() { : >"$D479_CALLS"; : >"$D479_ALERTS"
+d479_reset() { : >"$D479_CALLS"; : >"$D479_ALERTS"; : >"$D479_RECEIPTS"
   rm -f "$D479"/.seen-resume-structural "$D479"/.suppressed-resume-structural.*; }
 d479_calls() { awk 'NF' "$D479_CALLS" | wc -l | tr -d ' '; }
 d479_alerts() { awk 'NF' "$D479_ALERTS" | wc -l | tr -d ' '; }
+d479_receipts() { awk 'NF' "$D479_RECEIPTS" | wc -l | tr -d ' '; }
 
 # AC1 — the 200 KiB thread is spliced whole and reaches the predicates present.
 d479_reset
@@ -4627,11 +4640,17 @@ t d479-transient-warns warned "$r1"
 # reaching the operator is the over-correction this classification exists to
 # refuse, and zero alerts is the only reading of it.
 t d479-transient-escalates-nothing 0 "$(d479_alerts)"
+# ...and posts NOTHING, which is the half of AC5 that keeps the receipt
+# affordable: a comment on every transient `gh` hiccup would be its own defect,
+# and the discriminator is the only thing standing between the two.
+t d479-transient-posts-no-receipt 0 "$(d479_receipts)"
 
-# AC4 (as answered) — a structural failure warns and escalates to the operator,
-# naming the PR's AUTHORIZING ISSUE as where a human would set `attention`. The
-# engine does not write that label itself: see engine-never-writes-attention-label
-# above, and the ruling asked of triage on #479.
+# AC4 (as ruled by triage, 2026-08-26) — a structural failure warns and escalates
+# to the operator on the alert channel, naming the PR, the head and the
+# AUTHORIZING ISSUE as where a human would set `attention`. The engine does not
+# write that label anywhere on this path: the demand flag is hand-set doctrine
+# (LABELS.md, shared/prompts/attention.txt) held by
+# engine-never-writes-attention-label above.
 d479_reset
 D479_ST="$(d479_run structural "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/st.log")"
 t d479-structural-skips-the-pr null \
@@ -4645,16 +4664,37 @@ if grep -Fq 'set attention on fx/repo#479' <<<"$(cat "$D479_ALERTS")" &&
    grep -Fq 'fx/repo#311' <<<"$(cat "$D479_ALERTS")"; then r1=named; else r1=VAGUE; fi
 t d479-structural-alert-names-the-issue named "$r1"
 
+# AC5 (@danmt, 2026-08-26) — THE ALERT IS THE WAKE, THE RECEIPT IS THE RECORD.
+# alert() is a silent no-op returning success with no token file and a
+# ten-second best-effort with one, so nothing downstream can tell a delivered
+# escalation from a dropped one. Survivable for every other alert in the tree,
+# because those name conditions that re-fire; not here, where the ledger's
+# once-per-head makes one lost message a permanently lost escalation.
+t d479-structural-posts-a-receipt 1 "$(d479_receipts)"
+# It carries the SAME facts as the alert, on the PR: the number acted on, the
+# head it is about — full, because that is what post-once.sh's exact-body dedup
+# keys on — and where a human would set the demand.
+D479_RC="$(cat "$D479_RECEIPTS")"
+if grep -Fq 'post-once fx/repo 311 ' <<<"$D479_RC" &&
+   grep -Fq "$D479_HEAD" <<<"$D479_RC" &&
+   grep -Fq 'set attention on fx/repo#479' <<<"$D479_RC"; then r1=named; else r1=VAGUE; fi
+t d479-receipt-names-the-pr-the-head-and-the-issue named "$r1"
+
 # ONCE PER HEAD — #167's rule: an escalation that repeats every five minutes is
 # wallpaper, and it is the operator's channel being spent.
 d479_run structural "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/st2.log" >/dev/null
 t d479-structural-does-not-re-escalate-the-same-head 1 "$(d479_alerts)"
+# The receipt is gated by the same ledger and not by post-once.sh's dedup: the
+# call is never made a second time at this head, so the durable half costs one
+# comment per head even where the exact-body check is not what stops it.
+t d479-receipt-is-not-reposted-at-the-same-head 1 "$(d479_receipts)"
 # The quiet is not a silence: the standing condition is still reported.
 if grep -Fq 'still standing at head' "$D479/st2.log"; then r1=reported; else r1=SILENT; fi
 t d479-structural-suppression-is-reported reported "$r1"
 # A new head is a tree that changed, so the condition is re-asserted against it.
 d479_run structural "$(d479_listing "$D479_HEAD2" "$D479_BODY")" "$D479/st3.log" >/dev/null
 t d479-structural-re-escalates-on-a-new-head 2 "$(d479_alerts)"
+t d479-receipt-follows-the-new-head 2 "$(d479_receipts)"
 
 # A body naming no authorizing issue still escalates — the PR number is enough to
 # act on — and says that the reference is missing rather than going quiet or
@@ -4664,6 +4704,17 @@ d479_run structural "$(d479_listing "$D479_HEAD" "no reference here")" "$D479/st
 t d479-structural-without-an-issue-still-escalates 1 "$(d479_alerts)"
 if grep -Fq 'names no authorizing issue' "$D479/st4.log"; then r1=said; else r1=SILENT; fi
 t d479-structural-without-an-issue-says-so said "$r1"
+# The receipt reaches that branch too, and says the same thing the alert does —
+# the operator named this branch explicitly, and it is covered by construction:
+# both messages interpolate the one `where` clause, so there is no second code
+# path here to drift.
+t d479-receipt-without-an-issue-is-still-posted 1 "$(d479_receipts)"
+if grep -Fq 'names no authorizing issue' <<<"$(cat "$D479_RECEIPTS")"; then
+  r1=said
+else
+  r1=SILENT
+fi
+t d479-receipt-without-an-issue-says-so said "$r1"
 
 # D2 — EVERY failure branch on this path warns, including the fallback that
 # cannot even mark the thread unread. That third branch is not reachable from a

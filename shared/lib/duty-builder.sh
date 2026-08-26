@@ -1142,9 +1142,11 @@ _resume_pr_comments() {
 # that only ever grow. That will not clear on its own, and a permanent condition
 # is not a per-tick skip: it escalates to the operator through `alert`, naming
 # the PR, the head and the issue a human should flag, rather than waiting for
-# someone to notice a board that looks clean. Why that channel and not the
-# `attention` label the issue asks for is _resume_structural_escalate's own
-# header, below.
+# someone to notice a board that looks clean — and posts that same fact on the PR
+# through post-once.sh, because an alert nothing acknowledges can be dropped
+# without trace and this escalation fires only once per head. Why that channel
+# and not a label write, and why the record is a separate object from the wake,
+# is _resume_structural_escalate's own header, below.
 #
 # EVERY BRANCH WARNS, including the one that cannot even mark the thread unread.
 # A swallow with no warn is what turned a stall into a clean board, so the
@@ -1184,21 +1186,39 @@ _resume_attach_comments() {
 # _resume_structural_escalate REPO NUM LISTING — put a structural splice failure
 # in front of the operator, once per head.
 #
-# THE CHANNEL IS `alert`, NOT THE `attention` LABEL, and that is this function's
-# one substantive departure from #479's D3. The issue asks for `attention`; this
-# repo holds a test-enforced invariant that the engine never writes that label —
+# THE CHANNEL IS `alert`, NOT THE `attention` LABEL, and #479's D3 says so since
+# triage ruled it on 2026-08-26. The label is hand-set doctrine — LABELS.md:99
+# and 185-187 ("the machine never sets `attention`"), shared/prompts/attention.txt
+# from the other end ("never set it yourself"), and the enforcement in
+# engine-never-writes-attention-label (shared/test/builder.sh, since 9fb7e3d):
 # "`attention` remains a hand-written demand. Reads in duty-attention.sh are the
-# wake mechanism and are allowed; engine label writes are not"
-# (engine-never-writes-attention-label, shared/test/builder.sh, since 9fb7e3d).
-# Setting it here would make the engine able to spawn a pickup model session on
-# its own initiative, which is the authority crew#66's ruling deliberately kept
-# on the operator's side of the line. `alert` is the channel the engine already
-# owns for exactly this class: duty_attention_audit uses it to report a board
-# invariant it observes and does not fix. The escalation therefore NAMES the
-# issue a human should flag rather than flagging it, and D3's purpose — a
-# permanent condition is never a per-tick skip, and never waits to be noticed —
-# is met without the engine taking the label write. Asked of triage on #479; the
-# swap is one line if the ruling goes the other way.
+# wake mechanism and are allowed; engine label writes are not". `alert` is the
+# channel the engine already owns for exactly this class: duty_attention_audit
+# uses it to report a board invariant it observes and does not fix, and crew#66's
+# implemented close is the precedent for the shape — a module that observes a
+# condition it may not act on pings the operator rather than only logging, which
+# is what made its bound affordable. (#66 ruled repos.txt scope, NOT who writes
+# the label; the doctrine above is what forecloses the label write. Triage's
+# correction, 2026-08-26, recorded here because this header was quoted for it.)
+# The escalation therefore NAMES the issue a human should flag rather than
+# flagging it, and D3's purpose — a permanent condition is never a per-tick skip,
+# and never waits to be noticed — is met without the engine taking the write.
+#
+# THE ALERT CARRIES A RECEIPT, and the receipt is not decoration (@danmt, via
+# #479, 2026-08-26). `alert` is fire-and-forget: with no token file it is a
+# silent no-op RETURNING SUCCESS, with one it is a ten-second best-effort with no
+# retry whose failure is explicitly non-fatal (common.sh). Every other alert in
+# the tree survives that because the condition it names re-fires next tick. THIS
+# ONE DOES NOT — the once-per-head ledger below is exactly what makes a single
+# dropped message a permanently lost escalation, which is this issue's own
+# board-looks-clean failure moved one layer out. So the alert is the wake and the
+# post-once.sh comment is the record, the pairing duty-attention.sh:246-248
+# already ships in this subsystem. The body carries the full head, so post-once's
+# exact-body dedup is once-per-head for free and no second suppression scheme is
+# owed; it carries the same `where` clause as the alert, so the branch where the
+# body names no authorizing issue gets its receipt by construction and not by a
+# second code path. A receipt that does not post warns, like every other failure
+# on this path: the alert is then the only copy and that is worth saying.
 #
 # The authorizing issue comes from the body through _RESUME_ISSUE_RE, the one
 # pattern _resume_pr_fingerprints reads, so the two can never disagree about
@@ -1215,7 +1235,7 @@ _resume_attach_comments() {
 # only on the ticks that did NOT alert — reporting a suppression on the very tick
 # the alert fired would say "still standing" about its own first occurrence.
 _resume_structural_escalate() {
-  local repo="$1" num="$2" listing="$3" head issue where item fresh state
+  local repo="$1" num="$2" listing="$3" head issue where item fresh state receipt
   head="$(printf '%s' "$listing" | jq -r --argjson num "$num" \
     'first(.[] | select(.number == $num) | (.headRefOid // "")) // ""' 2>/dev/null)"
   issue="$(printf '%s' "$listing" | jq -r --argjson num "$num" --arg re "$_RESUME_ISSUE_RE" \
@@ -1233,6 +1253,11 @@ _resume_structural_escalate() {
     printf '%s\n' "$fresh" | ledger_commit "$DUTY_DIR/.seen-resume-structural"
     warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — out of stranded-resume detection until it clears; $where"
     alert "🚨 $(hostname): $repo#$num is out of stranded-resume detection at head ${head:0:12} — its comment thread reads but will not splice, and that will not clear on its own; $where"
+    # The durable half. Full head in the body, which is what makes the exact-body
+    # dedup once-per-head; no marker, so the comment's identity IS its text.
+    receipt="🚨 This PR is out of stranded-resume detection at head \`$head\` — its comment thread reads but will not splice, and that will not clear on its own; $where. Posted beside an operator alert, which is fire-and-forget, so this comment is the record that survives one being dropped (#479)."
+    "$BIN_DIR/post-once.sh" "$repo" "$num" "$receipt" >/dev/null 2>&1 \
+      || warn "$repo#$num: structural escalation receipt did not post at head ${head:0:12}; the alert is the only copy"
     rm -f "$state"
     return 0
   fi
