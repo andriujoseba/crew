@@ -5,9 +5,9 @@ on:
   pull_request_target:
     types: [labeled]
 permissions:
-  contents: read        # .github/labels.conf and the implementation, never the PR head
-  actions: write        # rerun the failed check a fork PR author cannot start
-  pull-requests: write  # remove rerun-owed and post the outcome
+  contents: read        # .github/labels.conf (the fleet roster) and the implementation — never the head
+  actions: write        # the rerun no fork PR author can start; the whole reason this exists
+  pull-requests: write  # remove rerun-owed, post the outcome
 jobs:
   ci-rerun:
     uses: heavy-duty/ceremony/.github/workflows/ci-rerun.yml@0.7.6
