@@ -63,6 +63,35 @@ if grep -Fq 'doctrine checkout recovered' <<<"$RECOVERY_LOG"; then r1=recovered;
 t checkout-recovery-speaks-once recovered "$r1"
 t checkout-recovery-stays-quiet "" "$(ensure_checkout owner/repo "$CHECKOUT")"
 
+mkdir "$CHECKOUT/growing"
+GROWING_LOG=""
+for tick in $(seq 1 10); do
+  printf '%s\n' "$tick" >"$CHECKOUT/growing/$tick"
+  GROWING_LOG+="$(ensure_checkout owner/repo "$CHECKOUT")"$'\n'
+done
+t checkout-growing-untracked-dir-warns-once 1 \
+  "$(grep -c 'WARN: checkout: .* is dirty on main' <<<"$GROWING_LOG")"
+rm -rf "$CHECKOUT/growing"
+ensure_checkout owner/repo "$CHECKOUT" >/dev/null
+
+DETACHED_HEAD="$(git -C "$CHECKOUT" rev-parse HEAD)"
+git -C "$CHECKOUT" switch -q --detach
+DETACHED_LOG=""
+for _ in $(seq 1 10); do
+  DETACHED_LOG+="$(ensure_checkout owner/repo "$CHECKOUT")"$'\n'
+  DETACHED_RC="$?"
+done
+t checkout-detached-warns-once 1 \
+  "$(grep -c 'WARN: checkout: .* is detached at HEAD' <<<"$DETACHED_LOG")"
+if grep -Eq 'detached at HEAD \(age=[0-9]+s\)' <<<"$DETACHED_LOG"; then r1=aged; else r1=MISSING; fi
+t checkout-detached-warning-names-age aged "$r1"
+t checkout-detached-does-not-move-head "$DETACHED_HEAD" "$(git -C "$CHECKOUT" rev-parse HEAD)"
+t checkout-detached-return-unchanged 0 "$DETACHED_RC"
+git -C "$CHECKOUT" switch -q main
+DETACHED_RECOVERY="$(ensure_checkout owner/repo "$CHECKOUT")"
+if grep -Fq 'doctrine checkout recovered' <<<"$DETACHED_RECOVERY"; then r1=recovered; else r1=SILENT; fi
+t checkout-detached-recovery-speaks-once recovered "$r1"
+
 git -C "$CHECKOUT" switch -qc topic
 MISSING_LOG="$(ensure_checkout owner/repo "$CHECKOUT")"
 MISSING_LOG+=$'\n'"$(ensure_checkout owner/repo "$CHECKOUT")"
@@ -80,5 +109,36 @@ if grep -Fq 'WARN: checkout:' <<<"$RESTART_LOG"; then r1=reannounced; else r1=SI
 t checkout-engine-state-restart-reannounces reannounced "$r1"
 t checkout-restarted-engine-settles "" "$(ensure_checkout owner/repo "$CHECKOUT")"
 
+git -C "$CHECKOUT" switch -q main
+ensure_checkout owner/repo "$CHECKOUT" >/dev/null
+git -C "$CHECKOUT" config user.name fixture
+git -C "$CHECKOUT" config user.email fixture@example.invalid
+printf 'upstream\n' >>"$UPSTREAM/doctrine"
+git -C "$UPSTREAM" commit -qam upstream
+printf 'local\n' >>"$CHECKOUT/doctrine"
+git -C "$CHECKOUT" commit -qam local
+DIVERGED_HEAD="$(git -C "$CHECKOUT" rev-parse HEAD)"
+DIVERGED_LOG=""
+for _ in $(seq 1 10); do
+  DIVERGED_LOG+="$(ensure_checkout owner/repo "$CHECKOUT")"$'\n'
+  DIVERGED_RC="$?"
+done
+t checkout-diverged-warns-once 1 \
+  "$(grep -c 'WARN: checkout: .* histories diverged' <<<"$DIVERGED_LOG")"
+if grep -Eq 'HEAD age=[0-9]+s, histories diverged' <<<"$DIVERGED_LOG"; then r1=aged; else r1=MISSING; fi
+t checkout-diverged-warning-names-age aged "$r1"
+t checkout-diverged-does-not-move-head "$DIVERGED_HEAD" "$(git -C "$CHECKOUT" rev-parse HEAD)"
+t checkout-diverged-return-unchanged 0 "$DIVERGED_RC"
+git -C "$CHECKOUT" reset -q --hard origin/main
+DIVERGED_RECOVERY="$(ensure_checkout owner/repo "$CHECKOUT")"
+if grep -Fq 'doctrine checkout recovered' <<<"$DIVERGED_RECOVERY"; then r1=recovered; else r1=SILENT; fi
+t checkout-diverged-recovery-speaks-once recovered "$r1"
+t checkout-diverged-recovery-stays-quiet "" "$(ensure_checkout owner/repo "$CHECKOUT")"
+
+EMPTY_COMMITTED="$(
+  git() { return 0; }
+  _checkout_head_age ignored
+)"
+t checkout-empty-commit-time-is-unknown unknown "$EMPTY_COMMITTED"
 
 suite_finish

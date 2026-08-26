@@ -25,6 +25,7 @@ _checkout_head_age() { # $1=dir — age of the doctrine commit the clone serves
   }
   now="$(date +%s)"
   case "$committed:$now" in
+    :*) printf 'unknown'; return 0 ;;
     *[!0-9:]*) printf 'unknown'; return 0 ;;
   esac
   age=$((now - committed))
@@ -61,7 +62,7 @@ ensure_checkout() {
   else
     git -C "$dir" fetch --quiet --all --prune || warn "fetch failed in $dir"
     br="$(git -C "$dir" symbolic-ref --short -q HEAD || true)"
-    dirt="$(git -C "$dir" status --porcelain --untracked-files=all 2>/dev/null || true)"
+    dirt="$(git -C "$dir" status --porcelain 2>/dev/null || true)"
     age="$(_checkout_head_age "$dir")"
     if [ -z "$br" ]; then
       _checkout_report "$state" "detached:$(git -C "$dir" rev-parse HEAD 2>/dev/null || printf unknown)" \
