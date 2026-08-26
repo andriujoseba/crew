@@ -218,7 +218,6 @@ trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-echo "== phase 0: crew at $REF, static checks"
 ACQUIRE_TMP="$(mktemp -d)"
 if [ -n "$TREE" ]; then
   SOURCE_TREE="$(cd "$TREE" 2>/dev/null && pwd)" \
@@ -243,8 +242,13 @@ if [ -n "$TREE" ]; then
 else
   SOURCE_TREE="$ACQUIRE_TMP/source"
   SOURCE_DESC="remote $REMOTE ref $REF"
-  if ! GIT_TERMINAL_PROMPT=0 git clone --quiet --branch "$REF" --single-branch "$REMOTE" "$SOURCE_TREE"; then
+  git -C "$ACQUIRE_TMP" init -q source
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$SOURCE_TREE" fetch --quiet --depth=1 "$REMOTE" "$REF"; then
     echo "phase 0: cannot resolve remote '$REMOTE' ref '$REF'; acquisition aborted before checks" >&2
+    exit 1
+  fi
+  if ! git -C "$SOURCE_TREE" checkout --quiet --detach FETCH_HEAD; then
+    echo "phase 0: remote '$REMOTE' ref '$REF' was fetched but could not be checked out; acquisition aborted before checks" >&2
     exit 1
   fi
 fi
@@ -254,6 +258,7 @@ for required in shared/install.sh shared/test/run.sh VERSION; do
 done
 SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
   || { echo "phase 0: $SOURCE_DESC is not a resolved git tree"; exit 1; }
+echo "== phase 0: crew at $SOURCE_SHA ($SOURCE_DESC), static checks"
 ENGINE_ARCHIVE="$ACQUIRE_TMP/crew-engine.tgz"
 # BEGIN phase-0 archive selection: shared/test/run.sh verifies this contract.
 if ! git -C "$SOURCE_TREE" archive --format=tar "$SOURCE_SHA" \

@@ -3684,10 +3684,23 @@ t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" 
 
 # The aggregation, executable: a real rehearsal-all.sh with stubbed siblings.
 AGG="$TMP/notify-agg"
-mkdir -p "$AGG"
+mkdir -p "$AGG/source"
+git -C "$AGG/source" init -q
+git -C "$AGG/source" config user.name fixture
+git -C "$AGG/source" config user.email fixture@example.invalid
+git -C "$AGG/source" commit -qm fixture --allow-empty
 cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
   "$ROOT/drill/rehearsal-verdict.sh" \
   "$ROOT/drill/rehearsal-hygiene.sh" "$ROOT/drill/rehearsal-breaker.sh" "$AGG/"
+# These aggregation cases stub the role drill and grade only summary folding.
+# Give that copied orchestrator a local tree so the real phase-0 resolver does
+# not fetch the default remote once per fixture before reaching the stub.
+# shellcheck disable=SC2016  # inject the literal fixture environment lookup
+sed -i 's|^INSTALL_TREE=""$|INSTALL_TREE="${AGG_DIR:-.}/source"|' \
+  "$AGG/rehearsal-all.sh"
+# shellcheck disable=SC2016  # verify the literal fixture environment lookup
+grep -q 'INSTALL_TREE="${AGG_DIR:-.}/source"' "$AGG/rehearsal-all.sh" ||
+  { echo "fixture setup failed: rehearsal-all tree injection did not apply" >&2; exit 1; }
 cat >"$AGG/rehearsal.sh" <<'AGGSH'
 #!/usr/bin/env bash
 # Stub role drill: writes the verdict the case asked for — the way the leg

@@ -54,8 +54,14 @@ cleanup() { rm -rf -- "$WORK"; }
 trap cleanup EXIT
 if [ "$ACQUIRE" -eq 1 ]; then
   TREE="$WORK/source"
-  GIT_TERMINAL_PROMPT=0 git clone --quiet --branch "$REF" --single-branch "$REMOTE" "$TREE" ||
+  git -C "$WORK" init -q source
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$TREE" fetch --quiet --depth=1 "$REMOTE" "$REF"; then
     { echo "cannot resolve remote '$REMOTE' ref '$REF'" >&2; exit 1; }
+  fi
+  if ! git -C "$TREE" checkout --quiet --detach FETCH_HEAD; then
+    echo "remote '$REMOTE' ref '$REF' was fetched but could not be checked out" >&2
+    exit 1
+  fi
 else
   TREE="$(cd "$TREE" 2>/dev/null && pwd)" ||
     { echo "tree '$TREE' is not a readable directory" >&2; exit 1; }
