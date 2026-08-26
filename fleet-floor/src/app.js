@@ -1127,7 +1127,7 @@ function drawCamCell(t,x,y,w,h,unit){
     X.font="700 11px ui-monospace,monospace";X.textAlign="center";
     var slw=X.measureText("SIGNAL LOST — RECONNECTING").width;
     X.fillStyle="rgba(8,3,3,0.72)";rr(X,x+(w-slw)/2-10,y+h*0.5-11,slw+20,22,4);X.fill();
-    X.fillStyle="rgba(255,124,114,"+(0.75+0.25*Math.sin(t*3))+")";
+    X.fillStyle="rgba(255,124,114,"+(reduced?0.85:(0.75+0.25*Math.sin(t*3)))+")";
     X.fillText("SIGNAL LOST — RECONNECTING",x+w/2,y+h*0.5);
     X.textAlign="left";
   }
