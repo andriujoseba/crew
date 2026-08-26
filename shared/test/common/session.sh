@@ -284,8 +284,8 @@ t model-hook-that-writes-nothing-warns 1 \
 # directory rather than two calls to model_run, which deliberately gets a fresh
 # DUTY_DIR each time.
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
-model_budget_pair() (
-  local mdir="$TMP/model-budget" i
+model_budget_pair() ( # model_budget_pair hook|nohook
+  local mdir="$TMP/model-budget-$1" i
   mkdir -p "$mdir/logs" "$mdir/work"
   DUTY_DIR="$mdir"; LOG_DIR="$mdir/logs"; DUTY_TICK_ID="tick-1"
   export MODEL_CAPTURE="$mdir/argv"; : >"$MODEL_CAPTURE"
@@ -295,7 +295,7 @@ model_budget_pair() (
   alert() { :; }
   MODEL_HYGIENE=cheapo BUDGET_SESSIONS_HYGIENE=1 BUDGET_MINUTES_HYGIENE=0
   export MODEL_HYGIENE BUDGET_SESSIONS_HYGIENE BUDGET_MINUTES_HYGIENE
-  model_hook
+  [ "$1" = nohook ] || model_hook
   for i in 1 2; do
     run_session hygiene "fixture/h$i" "$mdir/work" 5 theprompt \
       | sed -e 's/^[0-9-]*T[0-9:]*Z //'
@@ -303,7 +303,7 @@ model_budget_pair() (
   printf -- '--argv--\n'
   cat "$MODEL_CAPTURE"
 )
-model_budget="$(model_budget_pair)"
+model_budget="$(model_budget_pair hook)"
 # The first is bought at the override; the second is refused by the budget.
 t model-budget-gate-still-fires-first 1 \
   "$(printf '%s\n' "$model_budget" | grep -c 'SESSION SKIP kind=hygiene .* reason=budget' || true)"
@@ -311,6 +311,23 @@ t model-budget-refused-dispatch-invokes-nothing 1 \
   "$(printf '%s\n' "$model_budget" | sed -n '/^--argv--$/,$p' | grep -c '^theprompt$' || true)"
 t model-budget-refused-dispatch-says-nothing-about-models 0 \
   "$(printf '%s\n' "$model_budget" | sed -n '/^--argv--$/q;p' \
+     | grep -c '^WARN: session model:' || true)"
+# THE ORDER ITSELF, and it needs a HOOKLESS profile to be observable at all.
+#
+# The case above passes whether the invocation is resolved before or after the
+# gate, because a profile that CAN express the tier resolves it silently either
+# way — a mutation moving _session_cli_cmd ahead of _session_budget_gate reds
+# nothing in it. Measured, not assumed: that mutation was run and it was the
+# one that killed no assertion.
+#
+# With no translation on the profile, resolving is no longer silent — it warns
+# — so the count separates the two orders. Two dispatches, a ceiling of 1: the
+# first runs and warns, the second is refused by the budget and must warn about
+# NOTHING, because a dispatch that never happens has no invocation to resolve
+# and no tier to fail to buy. One warn, not two.
+model_budget_nohook="$(model_budget_pair nohook)"
+t model-tier-resolved-only-for-a-dispatch-that-happens 1 \
+  "$(printf '%s\n' "$model_budget_nohook" | sed -n '/^--argv--$/q;p' \
      | grep -c '^WARN: session model:' || true)"
 # The one session that DID run was bought at the override, so the gate and the
 # override are independent rather than one silencing the other.
