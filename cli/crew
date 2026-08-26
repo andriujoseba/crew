@@ -1081,12 +1081,12 @@ engine_report() {
 # `converged_at=` and a family read answers with the first one it meets.
 report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 
-# budget_report NAME — the armed session budgets on one box (#464 D7), as the
-# engine's own `key=value` lines. ONE exec, and it asks the box rather than
-# reading a role conf here: the ceilings are written into the state file by
-# the gate that enforces them, so this host never has to resolve a conf it
-# does not have — and can never disagree with the box about what the ceiling
-# is, which is the whole reason the state file is self-describing.
+# budget_report NAME — the armed session budgets on one box (#464 D7). ONE
+# exec, and it asks the box for FINISHED ROWS rather than for numbers to
+# render here: the ceilings are written into the state file by the gate that
+# enforces them, so a renderer on this host could disagree with the box about
+# what the bound is. `crew status` prints what comes back verbatim, exactly as
+# it already does with the duty.log tail two screens down.
 #
 # Silence on every failure path, deliberately. An engine older than the budget
 # has no session_budget_report, and a box with no armed lane prints nothing;
@@ -1099,47 +1099,6 @@ budget_report() {
     env DUTY_DIR="$HOME/duty" bash -c \
       ". \"$HOME/duty/lib/common.sh\"; session_budget_report" 2>/dev/null
   ' 2>/dev/null | tr -d '\r' || true
-}
-
-# budget_rows REPORT — render budget_report's lines for a human. Pure: takes
-# the captured text and prints, so the wire format and the rendering can be
-# read side by side and neither needs a box to exercise.
-#
-# `sessions=` and `minutes=` carry `<spent>/<ceiling>`, with `-` for a
-# ceiling that is not armed — a lane may run on one metric alone (D1), and a
-# fabricated second number would read as a bound that does not exist.
-budget_rows() {
-  printf '%s\n' "$1" | awk '
-    function human(s,   d, h, m) {
-      if (s <= 0) return "now"
-      d = int(s / 86400); h = int((s % 86400) / 3600); m = int((s % 3600) / 60)
-      if (d > 0) return d "d" h "h"
-      if (h > 0) return h "h" m "m"
-      return m "m"
-    }
-    $1 != "budget" { next }
-    {
-      kind = ""; sessions = ""; minutes = ""; window = ""; rolls = ""; state = ""
-      for (i = 2; i <= NF; i++) {
-        split($i, kv, "=")
-        if (kv[1] == "kind") kind = kv[2]
-        else if (kv[1] == "sessions") sessions = kv[2]
-        else if (kv[1] == "minutes") minutes = kv[2]
-        else if (kv[1] == "window") window = kv[2]
-        else if (kv[1] == "rolls_in") rolls = kv[2]
-        else if (kv[1] == "state") state = kv[2]
-      }
-      if (kind == "") next
-      # An unreadable counter is the one budget state that must not read as a
-      # balance: the gate is refusing every dispatch on this lane right now,
-      # and saying so here is what connects the silent box to its cause.
-      if (state != "") {
-        printf "  %-10s %s — dispatch is refused until it is repaired or removed\n", kind, state
-        next
-      }
-      printf "  %-10s %s sessions, %s min spent in %s (oldest ages out %s)\n", \
-        kind, sessions, minutes, human(window + 0), human(rolls + 0)
-    }'
 }
 
 # rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and
@@ -2066,7 +2025,7 @@ cmd_status() {
     budget="$(budget_report "$b")"
     if [ -n "$budget" ]; then
       echo "budget:"
-      budget_rows "$budget"
+      printf '%s\n' "$budget"
     fi
     local log
     log="$(bxn "$b" 'tail -n 5 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' || true)"

@@ -332,13 +332,24 @@ _session_budget_record() {
     || warn "session budget: kind=$kind could not record this session; the next dispatch fails closed"
 }
 
-# session_budget_report — every armed lane's balance, one `key=value` line per
-# kind, read from the self-describing state files alone. D7's data half: this
-# runs ON THE BOX and cli/crew renders what it prints, so the operator's host
-# never resolves a role conf it does not have.
+# session_budget_report — every armed lane's balance, one finished row per
+# kind, read from the self-describing state files alone (D7).
 #
-# Prints nothing when no lane is armed, which is what lets `crew status` omit
-# the section entirely rather than print an empty heading.
+# The ROW is rendered here, on the box, and `crew status` prints it verbatim
+# — the same thing it already does with the duty.log tail. Two reasons, and
+# neither is laziness: the ceilings are written into the state file by the
+# gate that enforces them, so a host-side renderer could disagree with the box
+# about what the bound is; and a renderer on the host is a renderer no offline
+# suite can reach, while this one is exercised by shared/test/common/breaker.sh
+# beside the gate whose balance it prints.
+#
+# Prints NOTHING when no lane is armed, which is what lets `crew status` omit
+# the section entirely rather than print an empty heading. The default is off,
+# so on most boxes the honest report is no report.
+#
+# Deliberately not telemetry (#327), which owns per-session accounting,
+# outcomes and vendor spend: this is the balance the gate is already keeping,
+# displayed, and nothing else.
 session_budget_report() {
   local state kind now
   now="$(date -u +%s)"
@@ -347,25 +358,41 @@ session_budget_report() {
     case "$state" in *.tmp.*) continue ;; esac
     kind="${state##*/.session-budget.}"
     awk -F'\t' -v kind="$kind" -v now="$now" '
+      function human(s,   d, h, m) {
+        if (s <= 0) return "now"
+        d = int(s / 86400); h = int((s % 86400) / 3600); m = int((s % 3600) / 60)
+        if (d > 0) return d "d" h "h"
+        if (h > 0) return h "h" m "m"
+        return m "m"
+      }
       NR == 1 {
         if ($1 != "budget" || NF != 6) { bad = 1; exit }
         window = $2; sessions = $3; minutes = $4
         next
       }
-      NF == 2 && $1 ~ /^[0-9]+$/ {
+      NF == 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
         if ($1 + 0 < now - window) next
         n++; s += $2
         if (oldest == 0 || $1 + 0 < oldest) oldest = $1 + 0
       }
       END {
-        if (bad) { printf "budget kind=%s state=unreadable\n", kind; exit }
-        # rolls_in: when the OLDEST surviving entry ages out — the moment this
-        # lane next gains headroom. 0 when nothing is being counted.
+        # An unreadable counter is the one state that must not read as a
+        # balance: the gate is refusing every dispatch on this lane right now,
+        # and saying so here is what connects a silent box to its cause.
+        if (bad) {
+          printf "  %-10s unreadable — dispatch is refused until it is repaired or removed\n", kind
+          exit
+        }
+        # A lane may run on ONE metric alone (D1), so an unarmed ceiling
+        # prints `-`: a fabricated second number would read as a bound that
+        # does not exist. "ages out" is when the OLDEST surviving entry drops
+        # out — the moment this lane next gains headroom.
         rolls = 0
         if (oldest > 0) { rolls = oldest + window - now; if (rolls < 0) rolls = 0 }
-        printf "budget kind=%s sessions=%d/%s minutes=%d/%s window=%d rolls_in=%d\n", \
+        printf "  %-10s %d/%s sessions, %d/%s min spent in %s (oldest ages out %s)\n", \
           kind, n, (sessions + 0 > 0 ? sessions : "-"), \
-          int(s / 60), (minutes + 0 > 0 ? minutes : "-"), window, rolls
+          int(s / 60), (minutes + 0 > 0 ? minutes : "-"), \
+          human(window + 0), human(rolls + 0)
       }' "$state"
   done
 }
