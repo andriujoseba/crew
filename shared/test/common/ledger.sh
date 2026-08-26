@@ -201,7 +201,7 @@ orph_end() {  # orph_end <dir> <ts> <kind> <key>
 # shellcheck disable=SC2317  # alert is reached from inside the library
 orph_pass() (
   local dir="$1" mutant="${2:-}" alerts="$1/alerts"
-  DUTY_DIR="$dir"; LOG_DIR="$dir/logs"; DUTY_TICK_ID=tick-orphan
+  DUTY_DIR="$dir"; LOG_DIR="$dir/logs"; DUTY_TICK_ID='tick-orphan'
   SESSION_TERMINAL_THRESHOLD=3
   alert() { printf '%s\n' "$*" >>"$alerts"; }
   # shellcheck disable=SC1090
@@ -213,15 +213,20 @@ orph_lines() { grep -F "outcome=$SESSION_ORPHAN_OUTCOME" "$1/duty.log" || true; 
 orph_count() { orph_lines "$1" | n; }
 orph_kv() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
 
-# orph_mutant <name> <sed-expr> — a mutated copy of the module under test, and
-# a case asserting the sed BIT. A mutation probe that silently matched nothing
-# would run the production code and report a kill it never made.
+# orph_mutant <name> <sed-expr> — write a mutated copy of the module under test
+# to $TMP/ledger-mutant-<name>.sh, and assert the sed BIT. A mutation probe
+# that silently matched nothing would run the production code and report a kill
+# it never made.
+#
+# The path is derived by the caller rather than printed here, and that is not a
+# style choice: `$(orph_mutant …)` would run this in a subshell, where the `t`
+# below increments a FAIL nobody ever reads and prints its diagnosis into the
+# captured path. An inert probe would then be inert AND silent.
 orph_mutant() {
-  local name="$1" expr="$2" out="$TMP/ledger-mutant-$1.sh"
+  local name="$1" expr="$2" out="$TMP/ledger-mutant-$1.sh" applied
   sed "$expr" "$SHARED/lib/common/ledger.sh" >"$out"
-  if cmp -s "$out" "$SHARED/lib/common/ledger.sh"; then r1=INERT; else r1=applied; fi
-  t "orphan-mutation-$name-applies" applied "$r1"
-  printf '%s\n' "$out"
+  if cmp -s "$out" "$SHARED/lib/common/ledger.sh"; then applied=INERT; else applied=applied; fi
+  t "orphan-mutation-$name-applies" applied "$applied"
 }
 
 # The three shapes the test plan names, in one log: an orphaned start, a
@@ -325,14 +330,17 @@ t orphan-idle-pass-does-not-count 3 "$(cut -f1 <"$ORPH5/.session-terminal.build"
 # exactly that defect, and the case must come out the other way.
 
 # Must fail: reconciling a live session.
-ORPH_M1="$(orph_mutant live 's/^  kill -0 "\$pid" 2>\/dev\/null$/  return 1/' | tail -1)"
+# shellcheck disable=SC2016  # the sed matches the module's literal $pid
+orph_mutant live 's/^  kill -0 "\$pid" 2>\/dev\/null$/  return 1/'
+ORPH_M1="$TMP/ledger-mutant-live.sh"
 ORPH6="$TMP/orphan-mut-live"; orph_fixture "$ORPH6"
 orph_start "$ORPH6" 2026-08-14T06:00:00Z review o/r#2 "$$.$ORPH_BOOT"
 orph_pass "$ORPH6" "$ORPH_M1"
 t orphan-mutation-live-reconciles-a-running-session 1 "$(orph_count "$ORPH6")"
 
 # Must fail: a reconstructed line carrying a fabricated dur.
-ORPH_M2="$(orph_mutant dur 's/rc=- dur=-/rc=0 dur=0s/' | tail -1)"
+orph_mutant dur 's/rc=- dur=-/rc=0 dur=0s/'
+ORPH_M2="$TMP/ledger-mutant-dur.sh"
 ORPH7="$TMP/orphan-mut-dur"; orph_fixture "$ORPH7"
 orph_start "$ORPH7" 2026-08-14T07:00:00Z build o/r#4 "$ORPH_DEAD.$ORPH_BOOT"
 orph_pass "$ORPH7" "$ORPH_M2"
@@ -340,9 +348,9 @@ t orphan-mutation-dur-fabricates-a-measurement 0s "$(orph_kv "$(orph_lines "$ORP
 
 # Must fail: double reconciliation on a second tick. The defect is a scanner
 # that does not accept its OWN reconstructed terminal as the start's answer.
-ORPH_M3="$(orph_mutant double \
-  's/if (depth\[q\] > 0) { delete open/if (f["outcome"] != ORPHAN \&\& depth[q] > 0) { delete open/' \
-  | tail -1)"
+orph_mutant double \
+  's/if (depth\[q\] > 0) { delete open/if (f["outcome"] != ORPHAN \&\& depth[q] > 0) { delete open/'
+ORPH_M3="$TMP/ledger-mutant-double.sh"
 ORPH8="$TMP/orphan-mut-double"; orph_fixture "$ORPH8"
 orph_start "$ORPH8" 2026-08-14T08:00:00Z build o/r#5 "$ORPH_DEAD.$ORPH_BOOT"
 orph_pass "$ORPH8" "$ORPH_M3"
@@ -366,6 +374,7 @@ t orphan-reconciler-runs-before-any-dispatch before \
           END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
       "$SHARED/bin/duty.sh")"
 # ...and the start it reads has to carry the holder it asks about.
+# shellcheck disable=SC2016  # match the module's literal $(_session_holder)
 if grep -q 'SESSION START .*holder=\$(_session_holder)' "$SHARED/lib/common/session.sh"; then
   r1=stamped
 else
