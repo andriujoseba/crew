@@ -59,6 +59,8 @@ _triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUM
 _triage_graph_edges() {  # _triage_graph_edges REPO ISSUES_JSON
   local repo="$1" issues_json="$2"
   jq -c --arg repo "$repo" '
+    # Keep byte-identical with lib/jq/blockers.jq: signal (e) and signal (f)
+    # deliberately recognize the same declaration grammar.
     def blockers:
       [ match("[Bb]locked by([^.]*)"; "g").captures[0].string ] | join(" ")
       | [ scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0] ];
@@ -220,13 +222,17 @@ _triage_repo() {
   # warn swallowed. The list being short is harmless (absent items re-appear
   # next tick, the safe direction); losing the warn is not, because a probe that
   # cannot tell must say so. That is this whole issue's argument.
-  local nt_items="" stray_items="" nt_json stray_json
-  nt_json="$(gh issue list -R "$R" --state open --label "$LABEL_NEEDS_TRIAGE" \
-    --json number,updatedAt 2>/dev/null || echo err)"
-  if [ "$nt_json" = err ]; then
-    warn "$R: needs-triage probe failed"
-  elif ! nt_items="$(printf '%s' "$nt_json" \
-      | jq -r --arg r "$R" '.[] | "\($r)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
+  local nt_items="" stray_items="" issue_json
+  issue_json="$(gh issue list -R "$R" --state open --limit 200 \
+    --json number,body,updatedAt,labels 2>/dev/null || echo err)"
+  if [ "$issue_json" = err ]; then
+    warn "$R: open-board probe failed"
+    issue_json='[]'
+  fi
+  if ! nt_items="$(printf '%s' "$issue_json" \
+      | jq -r --arg r "$R" --arg n "$LABEL_NEEDS_TRIAGE" \
+        '.[] | select([.labels[].name] | index($n))
+          | "\($r)#\(.number) \(.updatedAt)"' 2>/dev/null)"; then
     warn "$R: needs-triage parse failed"
     nt_items=""
   else
@@ -247,11 +253,7 @@ _triage_repo() {
   # question — does this issue carry a queue label — and the composition rules
   # (post-merge never composes with blocked or attention, an assigned
   # post-merge issue is flagged) are the sweep's, not this signal's.
-  stray_json="$(gh issue list -R "$R" --state open --limit 200 \
-    --json number,labels,updatedAt 2>/dev/null || echo err)"
-  if [ "$stray_json" = err ]; then
-    warn "$R: stray probe failed"
-  elif ! stray_items="$(printf '%s' "$stray_json" \
+  if ! stray_items="$(printf '%s' "$issue_json" \
       | jq -r --arg repo "$R" --arg r "$LABEL_READY" --arg c "$LABEL_CLAIMED" --arg b "$LABEL_BLOCKED" \
            --arg p "$LABEL_POST_MERGE" --arg e "$LABEL_EPIC" --arg n "$LABEL_NEEDS_TRIAGE" \
         '.[] | select( ([.labels[].name]
@@ -308,10 +310,8 @@ _triage_repo() {
   # deliberately narrow (see lib/jq/blockers.jq — corpus-tested); issue and
   # PR numbering is shared, so the state map needs both lists. Fail-safe by
   # construction: an unknown number counts as still-open.
-  local issue_json blocked_json numstates graph_edges='[]' graph_items=""
+  local blocked_json numstates graph_edges='[]' graph_items=""
   local unblockable_items="" fresh_unblockable=""
-  issue_json="$(gh issue list -R "$R" --state open --limit 200 \
-    --json number,body,updatedAt,labels 2>/dev/null || echo '[]')"
   blocked_json="$(jq -c --arg b "$LABEL_BLOCKED" \
     '[.[] | select([.labels[].name] | index($b))]' <<<"$issue_json" 2>/dev/null || echo '[]')"
   graph_edges="$(_triage_graph_edges "$R" "$issue_json" || echo '[]')"
@@ -377,7 +377,7 @@ _triage_repo() {
   if [ -n "$graph_changes" ]; then
     graph_lines="$(printf '%s\n' "$graph_changes" | awk 'NF>=3 {
       split($1, edge, "#")
-      printf "  - #%s depends on #%s: %s -> %s\\n", edge[2], edge[3], $2, $3
+      printf "  - #%s depends on #%s: %s -> %s\n", edge[2], edge[3], $2, $3
     }')"
     graph_item="$(render_prompt fragment-graph-changed.txt EDGES="$graph_lines")"
     signal_items="${signal_items:+$signal_items
@@ -437,7 +437,7 @@ _triage_repo() {
           | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo err)"
         if [ "$post_numstates" = err ] || ! post_graph="$(_triage_graph_items \
              "$post_graph_edges" "$post_numstates")"; then
-          warn "$R: post-session dependency graph probe failed; ledger left unchanged"
+          warn "$R: post-session dependency graph probe failed; graph and unblockable ledgers left unchanged"
         else
           printf '%s\n' "$post_graph" | _triage_graph_commit
           if [ "$post_blocked" != err ] && \
