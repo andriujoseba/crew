@@ -199,6 +199,44 @@ FF_REAL_FLEET="$(ff_queue_case \
 t "queue: a real fleet repository is not the aggregate" \
   '[{"key":"2 mention","repo":"fleet"}]' "$FF_REAL_FLEET"
 
+# Exercise the collector record, not only the page selector: configured repos
+# must not replace crew as the last resort when every queue item lacks a repo.
+FF_AGGREGATE_UNIT="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+probe = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+::repos heavy-duty/ceremony heavy-duty/box
+::logstart
+2026-08-25T20:00:00Z duty run start
+2026-08-25T20:00:01Z fleet: 4 unread mention(s) — launching one mention session
+::logend
+"""
+units.probe_box = lambda unit, agent_conf: (probe, "")
+unit = units.build_unit(
+    {"box": "ff-aggregate", "agent": "claude", "room": "builder"},
+    "running", {}, 1756152002,
+)
+print(json.dumps(
+    {"queue": unit["queue"], "repo": unit["repo"], "repos": unit["repos"]},
+    separators=(",", ":"), sort_keys=True,
+))
+PY
+)"
+t "card: aggregate-only live unit keeps crew fallback with configured repos" \
+  '{"queue":[{"key":"4 mentions","repo":null}],"repo":"crew","repos":["heavy-duty/ceremony","heavy-duty/box"]}' \
+  "$FF_AGGREGATE_UNIT"
+
 # Execute the page's small selector in isolation. This pins what the card
 # opens without coupling the assertion to generated index.html or requiring a
 # browser: a repository-less first item yields the next repository, then crew.
@@ -215,6 +253,24 @@ JS
 )"
 t "card: repository-less queue items cannot become repository targets" \
   'heavy-duty/crew,crew' "$FF_QUEUE_REPO_RESULT"
+
+# The queue item remains visible, but absence is not a printable repository.
+FF_QUEUE_CHIP_SOURCE="$(sed -n '/^function queueChip(/,/^}/p' "$FLOOR/src/app.js")"
+FF_QUEUE_CHIP_RESULT="$(node - "$FF_QUEUE_CHIP_SOURCE" <<'JS'
+const source = process.argv[2];
+if (!source) process.exit(2);
+const REPOC = {"heavy-duty/crew":"#123456"};
+function esc(s) { return String(s); }
+eval(source);
+console.log([
+  queueChip({repo:null,key:"4 mentions"}),
+  queueChip({repo:"heavy-duty/crew",key:"3 mentions"})
+].join("\n"));
+JS
+)"
+t "queue chip: repository-less items render their key without null" \
+  $'<span class="qc" style="border-color:#3a4a60">4 mentions</span>\n<span class="qc" style="border-color:#123456">heavy-duty/crew 3 mentions</span>' \
+  "$FF_QUEUE_CHIP_RESULT"
 t "metrics: success%"         100  "$(uf ff-working "u['success']")"
 t "metrics: failing box"      0    "$(uf ff-failing "u['success']")"
 t "spark: always 22 buckets"  22   "$(uf ff-working "len(u['spark'])")"

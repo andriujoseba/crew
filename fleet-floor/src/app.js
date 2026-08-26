@@ -1400,6 +1400,10 @@ function queueRepo(q,fallback){
   var item=(q||[]).find(function(x){return x&&x.repo;});
   return item?item.repo:fallback;
 }
+function queueChip(q){
+  var repo=q.repo;
+  return '<span class="qc" style="border-color:'+(REPOC[repo]||"#3a4a60")+'">'+(repo?esc(repo)+' ':"")+(/^\d+$/.test(q.key)?"#":"")+esc(q.key)+'</span>';
+}
 function fmtDur(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
 function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k++)q.push({repo:REPONAMES[ri2(0,5)],key:ri2(11,148)});
   var sess=[],ago=ri2(1,5),cap=kind==="triage"?2400:7200;for(var s=0;s<11;s++){var rc=Math.random()<0.12?1:0;sess.push({ago:ago,kind:kind,rc:rc,dur:ri2(45,cap),out:rc?"aborted (budget)":outcomeFor(kind)});ago+=ri2(4,11);}
@@ -1453,7 +1457,7 @@ function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
 function liveData(u){
   var d=emptyData(u.room);
   d.box=u.box;d.queue=u.queue||[];d.sessions=u.sessions||[];d.up=u.up||{h:0,m:0};
-  d.repo=queueRepo(d.queue,u.repo||"");d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
+  d.repo=queueRepo(d.queue,u.repo||"crew");d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
   d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
   d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
   /* #159's verdict about that stamp. Defaulted to "" like the fields below,
@@ -1758,7 +1762,7 @@ function populateDash(){
     /* Live keys are whatever the duty modules logged — an issue number, but
        also "ready 2", "resume", "3 mention". Only number them when they are
        numbers. */
-    +(d.queue.length?d.queue.map(function(q){return '<span class="qc" style="border-color:'+(REPOC[q.repo]||"#3a4a60")+'">'+esc(q.repo)+' '+(/^\d+$/.test(q.key)?"#":"")+esc(q.key)+'</span>';}).join(''):'<span style="color:#46566a;font-family:var(--mono);font-size:10px">— empty —</span>')+'</div>'
+    +(d.queue.length?d.queue.map(queueChip).join(''):'<span style="color:#46566a;font-family:var(--mono);font-size:10px">— empty —</span>')+'</div>'
     +'<div class="wt" style="margin-top:16px"><span class="dot"></span>ACCESS</div><div class="access">'
     +ab("ac-repo","⎇ &nbsp;Open repo · "+esc(d.repo||"—"))+ab("ac-term","◱ &nbsp;Copy box shell command")
     +ab("ac-logs","▤ &nbsp;Raw session logs")+ab("ac-restart","↻ &nbsp;Restart box")
