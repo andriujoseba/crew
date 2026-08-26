@@ -81,14 +81,16 @@ budget_off_run() ( # budget_off_run absent|explicit
   BOT_CLI_CMD=(bash -c 'printf "exec\nfinal reply\n"')
   bot_session_acted() { grep -qx exec "$1"; }
   alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
-  # Normalised on exactly three tokens, all of which move between any two runs
-  # of anything: the leading UTC stamp, the session log's timestamped path, and
-  # the measured duration. Everything else is compared verbatim, which is where
-  # a stray budget line would show up.
+  # Normalised on exactly four tokens, all of which move between any two runs
+  # of anything: the leading UTC stamp, the session log's timestamped path, the
+  # measured duration, and the dispatching process's identity (#478).
+  # Everything else is compared verbatim, which is where a stray budget line
+  # would show up.
   for i in 1 2 3; do run_session build "fixture/test$i" "$bdir/work" 5 prompt; done \
     | sed -e 's/^[0-9-]*T[0-9:]*Z //' \
           -e 's#log=[^ ]*/[0-9TZ]*-build#log=<slog>-build#' \
-          -e 's/ dur=[0-9]*s / dur=<n>s /'
+          -e 's/ dur=[0-9]*s / dur=<n>s /' \
+          -e 's/ holder=[^ ]*$/ holder=<holder>/'
   printf 'state-files=%s alerts=%s\n' \
     "$(find "$bdir" -name '.session-budget.*' | wc -l)" \
     "$([ -e "$bdir/alerts" ] && wc -l <"$bdir/alerts" || echo 0)"
@@ -113,13 +115,19 @@ t budget-off-says-nothing-about-budgets 0 \
 #
 # Nothing in it is budget-specific on purpose. It is what run_session said
 # before #464 and must go on saying after it.
+#
+# It moved once, for #478: SESSION START gained `holder=`, the identity of the
+# process the orphan reconciler asks about later. That is a deliberate change
+# to what run_session says and so belongs in the golden — which is exactly the
+# tripwire working, and the reason the field is normalised above rather than
+# quietly excluded from the comparison.
 budget_off_golden() {
   cat <<'GOLDEN'
-SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log
+SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log holder=<holder>
 SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
-SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log
+SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log holder=<holder>
 SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
-SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log
+SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log holder=<holder>
 SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
 GOLDEN
 }

@@ -165,5 +165,330 @@ for pair in "duty-triage.sh:.seen-triage-board" "duty-builder.sh:.seen-build" \
   t "suppression-reported-$mod" reported "$r1"
 done
 
+# --- the fourth session shape: a session that died with its box (#478) -------
+#
+# run_session writes SESSION END on every path its own process survives. A
+# session killed WITH the box survives none of them, so duty.log keeps a start
+# nothing answers and every reader counts it as still running. These drive the
+# reconciler over fixture logs, appending its output to the log it read exactly
+# as tick.sh appends duty.sh's stdout — which is what makes the second pass
+# below a real second pass rather than a re-read.
+
+ORPH_BOOT="$(_session_boot_id)"
+# A pid that is certainly not running: a child, reaped. Asserted rather than
+# assumed. If this box ever handed the pid straight back out, every case below
+# would read `live` and red for a reason that has nothing to do with the
+# reconciler, so the fixture states its own precondition first.
+: & ORPH_DEAD=$!
+wait "$ORPH_DEAD" 2>/dev/null
+if kill -0 "$ORPH_DEAD" 2>/dev/null; then r1=STILL-LIVE; else r1=dead; fi
+t orphan-fixture-dead-pid-is-dead dead "$r1"
+
+orph_fixture() { mkdir -p "$1/logs"; : >"$1/duty.log"; }
+
+orph_start() {  # orph_start <dir> <ts> <kind> <key> <holder>
+  printf '%s SESSION START kind=%s key=%s timeout=7200s log=%s/logs/%s.log%s\n' \
+    "$2" "$3" "$4" "$1" "$3" "${5:+ holder=$5}" >>"$1/duty.log"
+}
+
+orph_end() {  # orph_end <dir> <ts> <kind> <key>
+  printf '%s SESSION END kind=%s key=%s rc=0 dur=12s outcome=ok acted=yes reply_tail=\n' \
+    "$2" "$3" "$4" >>"$1/duty.log"
+}
+
+# orph_pass <dir> [mutant] — one reconciler pass. `alert` is captured rather
+# than sent; everything else is the library.
+#
+# Stdout goes where tick.sh sends duty.sh's — into duty.log — because that is
+# the shape a real tick has, and $ORPH_STDOUT overrides it for the cases that
+# drive a HAND run. The redirect no longer delivers the reconciler's answer:
+# the module appends the reconstructed terminal to the log by path, and what
+# stdout carries here is only the human-facing summary. That is the whole point
+# of the override below — with the answer riding stdout, `orph_pass` was wiring
+# for the function the very contract under test.
+# shellcheck disable=SC2317  # alert is reached from inside the library
+orph_pass() (
+  local dir="$1" mutant="${2:-}" alerts="$1/alerts" out="${ORPH_STDOUT:-$1/duty.log}"
+  DUTY_DIR="$dir"; LOG_DIR="$dir/logs"; DUTY_TICK_ID='tick-orphan'
+  SESSION_TERMINAL_THRESHOLD=3
+  alert() { printf '%s\n' "$*" >>"$alerts"; }
+  # shellcheck disable=SC1090
+  [ -z "$mutant" ] || source "$mutant"
+  session_reconcile_orphans >>"$out" 2>&1
+)
+
+orph_lines() { grep -F "outcome=$SESSION_ORPHAN_OUTCOME" "$1/duty.log" || true; }
+orph_count() { orph_lines "$1" | n; }
+orph_kv() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
+
+# orph_mutant <name> <sed-expr> — write a mutated copy of the module under test
+# to $TMP/ledger-mutant-<name>.sh, and assert the sed BIT. A mutation probe
+# that silently matched nothing would run the production code and report a kill
+# it never made.
+#
+# The path is derived by the caller rather than printed here, and that is not a
+# style choice: `$(orph_mutant …)` would run this in a subshell, where the `t`
+# below increments a FAIL nobody ever reads and prints its diagnosis into the
+# captured path. An inert probe would then be inert AND silent.
+orph_mutant() {
+  local name="$1" expr="$2" out="$TMP/ledger-mutant-$1.sh" applied
+  sed "$expr" "$SHARED/lib/common/ledger.sh" >"$out"
+  if cmp -s "$out" "$SHARED/lib/common/ledger.sh"; then applied=INERT; else applied=applied; fi
+  t "orphan-mutation-$name-applies" applied "$applied"
+}
+
+# The three shapes the test plan names, in one log: an orphaned start, a
+# live-held start, and a well-formed pair. Exactly one reconstruction is owed.
+#
+# Interleaved with what a real duty.log is mostly made of — tick markers, a
+# WARN, and a SESSION SKIP. The SKIP is the one that has to be got right on
+# purpose: it names the same kind and key as a start and is not an end, so a
+# scanner reading "a SESSION line mentioning this key" instead of the two
+# verbs would silently answer the orphan with it.
+ORPH1="$TMP/orphan-basic"; orph_fixture "$ORPH1"
+{
+  printf '2026-08-14T03:00:00Z duty run start\n'
+} >>"$ORPH1/duty.log"
+orph_start "$ORPH1" 2026-08-14T03:00:01Z build  o/r#1  "$ORPH_DEAD.$ORPH_BOOT"
+{
+  printf '2026-08-14T03:05:00Z duty run start\n'
+  printf '2026-08-14T03:05:00Z SESSION SKIP kind=build key=o/r#1 reason=budget over=sessions\n'
+  printf '2026-08-14T03:05:00Z WARN: session budget: kind=build reached its ceiling\n'
+} >>"$ORPH1/duty.log"
+orph_start "$ORPH1" 2026-08-14T03:05:01Z review o/r#2  "$$.$ORPH_BOOT"
+orph_start "$ORPH1" 2026-08-14T03:10:00Z triage board  "$ORPH_DEAD.$ORPH_BOOT"
+orph_end   "$ORPH1" 2026-08-14T03:12:00Z triage board
+orph_pass "$ORPH1"
+ORPH1_LINE="$(orph_lines "$ORPH1")"
+
+t orphan-reconciles-exactly-one 1 "$(orph_count "$ORPH1")"
+t orphan-closes-the-dead-session "build|o/r#1" \
+  "$(orph_kv "$ORPH1_LINE" kind)|$(orph_kv "$ORPH1_LINE" key)"
+# The other half of D1, and the one an age threshold gets wrong: a build may
+# legitimately run for two hours, so the live-held start must survive a
+# reconciler that has no idea how old it is.
+t orphan-live-holder-untouched 0 \
+  "$(grep -cF "kind=review key=o/r#2 rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME" \
+      "$ORPH1/duty.log" || true)"
+t orphan-complete-pair-untouched 0 \
+  "$(grep -cF "kind=triage key=board rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME" \
+      "$ORPH1/duty.log" || true)"
+
+# D2. The reconciler knows the session started and knows nobody is running it;
+# it knows nothing whatever about how the session exited or how long it took.
+t orphan-claims-no-rc  '-' "$(orph_kv "$ORPH1_LINE" rc)"
+t orphan-claims-no-dur '-' "$(orph_kv "$ORPH1_LINE" dur)"
+t orphan-names-the-start-it-answers 2026-08-14T03:00:01Z \
+  "$(orph_kv "$ORPH1_LINE" started)"
+t orphan-acted-is-unknown-not-no unknown "$(orph_kv "$ORPH1_LINE" acted)"
+# "Distinguishable by its outcome ALONE" is a claim about the token, not about
+# the rest of the line: no verdict run_session can reach may spell it. Read off
+# session.sh's own assignments so a fourth observed verdict added there without
+# a thought for this one reds here.
+t orphan-outcome-is-no-observed-verdict 0 \
+  "$(grep -c "verdict=$SESSION_ORPHAN_OUTCOME" "$SHARED/lib/common/session.sh" || true)"
+
+# AC5. The reconstructed terminal answers the start, so a second tick finds
+# nothing owed — and it does so without the reconstructed line becoming a
+# read-back bound, which is what D4 words as "newest OBSERVED".
+orph_pass "$ORPH1"
+t orphan-second-pass-adds-nothing 1 "$(orph_count "$ORPH1")"
+
+# D4. A kind's newest observed terminal is where its history is settled, and
+# nothing at or before it is read again. The start below that line is older
+# than the bound and stays open; the one above it is reconciled.
+ORPH2="$TMP/orphan-bound"; orph_fixture "$ORPH2"
+orph_start "$ORPH2" 2026-08-14T01:00:00Z build o/r#7 "$ORPH_DEAD.$ORPH_BOOT"
+orph_end   "$ORPH2" 2026-08-14T02:00:00Z build o/r#8
+orph_start "$ORPH2" 2026-08-14T03:00:00Z build o/r#9 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH2"
+t orphan-bounded-read-back-reconciles-one 1 "$(orph_count "$ORPH2")"
+t orphan-bounded-read-back-stops-at-the-newest-observed-end o/r#9 \
+  "$(orph_kv "$(orph_lines "$ORPH2")" key)"
+
+# The boot qualifier does the work the pid cannot. This holder's pid is THIS
+# process — as live as a pid gets — and the session is still correctly read as
+# gone, because it was dispatched on a boot that has ended.
+ORPH3="$TMP/orphan-reboot"; orph_fixture "$ORPH3"
+orph_start "$ORPH3" 2026-08-14T04:00:00Z build o/r#3 "$$.0000dead"
+orph_pass "$ORPH3"
+t orphan-previous-boot-is-gone-though-the-pid-lives 1 "$(orph_count "$ORPH3")"
+
+# A start carrying no holder cannot be asked the question, and D1 requires both
+# halves — so it is left open rather than answered on a guess. That covers both
+# an engine older than this reconciler and the floor's own `operator` sessions,
+# which fleet-floor/server/floor/actions.py writes into duty.log by hand.
+ORPH4="$TMP/orphan-holderless"; orph_fixture "$ORPH4"
+orph_start "$ORPH4" 2026-08-14T05:00:00Z operator floor ''
+orph_pass "$ORPH4"
+t orphan-holderless-start-is-never-answered 0 "$(orph_count "$ORPH4")"
+# ...and it is the emptiness check that spares it, not something downstream of
+# a guard that never fired. The record used to be tab-separated, and tab is IFS
+# *whitespace*: `IFS=$'\t' read` collapsed the run of separators, so `log=` bound
+# to `holder`, `holder` was never empty, and what actually spared the line was
+# _session_holder_live's non-numeric-pid fallback (claude-bot, round 1). The
+# outcome was right for a reason the comment did not claim. Assert the FIELD
+# BINDING, so the guard has a case that dies with it.
+ORPH4_REC="$(_session_orphan_scan "$ORPH4/duty.log")"
+IFS=$'\037' read -r o4_kind o4_key o4_holder o4_log o4_started <<<"$ORPH4_REC"
+t orphan-holderless-record-keeps-its-empty-field \
+  "operator|floor||$ORPH4/logs/operator.log|2026-08-14T05:00:00Z" \
+  "$o4_kind|$o4_key|$o4_holder|$o4_log|$o4_started"
+
+# AC4/D3. Three box-kills on one lane over three ticks trip that lane's
+# breaker, through the counter an observed TERMINAL already feeds and no second
+# mechanism. Driven as three passes rather than one log carrying three orphans,
+# because that is the shape the incident has: a box that kills itself, comes
+# back, and does it again.
+ORPH5="$TMP/orphan-breaker"; orph_fixture "$ORPH5"
+for i in 1 2 3; do
+  orph_start "$ORPH5" "2026-08-14T0$i:00:00Z" build "o/r#$i" "$ORPH_DEAD.$ORPH_BOOT"
+  orph_pass "$ORPH5"
+done
+t orphan-breaker-counts-three 3 "$(orph_count "$ORPH5")"
+t orphan-breaker-trips-the-kind tripped \
+  "$(cut -f2 <"$ORPH5/.session-terminal.build" 2>/dev/null || echo NONE)"
+t orphan-breaker-alerts-once 1 "$([ -e "$ORPH5/alerts" ] && wc -l <"$ORPH5/alerts" || echo 0)"
+# ...and only that kind. A box that dies under review must not silence build.
+t orphan-breaker-spares-other-kinds absent \
+  "$([ -e "$ORPH5/.session-terminal.review" ] && echo PRESENT || echo absent)"
+# A fourth tick with nothing new neither reconstructs nor counts, so the
+# threshold measures box-kills and not reconciler passes.
+orph_pass "$ORPH5"
+t orphan-idle-pass-does-not-count 3 "$(cut -f1 <"$ORPH5/.session-terminal.build")"
+
+# ...and that holds for callers who do NOT redirect stdout into duty.log, which
+# is the qualification the case above used to carry silently (claude-bot, round
+# 1). The reconciler reads the log by path and its side effect — the breaker's
+# counter — is written by path too, so the answering line must land by path as
+# well or the two disagree. duty.sh is a supported hand-run target: its own
+# flock and 199 sentinel at duty.sh:24-40 exist for exactly that path, and on
+# it stdout is a terminal. Answering to stdout there would count a single
+# box-kill again on every run and discard D2's evidence line to a tty.
+ORPH_STDOUT=/dev/null
+ORPHU="$TMP/orphan-unredirected"; orph_fixture "$ORPHU"
+orph_start "$ORPHU" 2026-08-14T10:00:00Z build o/r#10 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPHU"
+orph_pass "$ORPHU"
+ORPH_STDOUT=
+t orphan-answers-the-log-not-the-callers-stdout 1 "$(orph_count "$ORPHU")"
+t orphan-unredirected-counts-one-box-kill 1 \
+  "$(cut -f1 <"$ORPHU/.session-terminal.build" 2>/dev/null || echo NONE)"
+
+# --- the three must-fail cases, each run against its own mutation ------------
+#
+# A case that cannot red under the defect it names proves nothing, so each of
+# the test plan's three is re-driven here with the module mutated to reintroduce
+# exactly that defect, and the case must come out the other way.
+
+# Must fail: reconciling a live session.
+# shellcheck disable=SC2016  # the sed matches the module's literal $pid
+orph_mutant live 's/^  kill -0 "\$pid" 2>\/dev\/null$/  return 1/'
+ORPH_M1="$TMP/ledger-mutant-live.sh"
+ORPH6="$TMP/orphan-mut-live"; orph_fixture "$ORPH6"
+orph_start "$ORPH6" 2026-08-14T06:00:00Z review o/r#2 "$$.$ORPH_BOOT"
+orph_pass "$ORPH6" "$ORPH_M1"
+t orphan-mutation-live-reconciles-a-running-session 1 "$(orph_count "$ORPH6")"
+
+# Must fail: a reconstructed line carrying a fabricated dur.
+orph_mutant dur 's/rc=- dur=-/rc=0 dur=0s/'
+ORPH_M2="$TMP/ledger-mutant-dur.sh"
+ORPH7="$TMP/orphan-mut-dur"; orph_fixture "$ORPH7"
+orph_start "$ORPH7" 2026-08-14T07:00:00Z build o/r#4 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH7" "$ORPH_M2"
+t orphan-mutation-dur-fabricates-a-measurement 0s "$(orph_kv "$(orph_lines "$ORPH7")" dur)"
+
+# Must fail: double reconciliation on a second tick. The defect is a scanner
+# that does not accept its OWN reconstructed terminal as the start's answer.
+orph_mutant double \
+  's/if (depth\[q\] > 0) { delete open/if (f["outcome"] != ORPHAN \&\& depth[q] > 0) { delete open/'
+ORPH_M3="$TMP/ledger-mutant-double.sh"
+ORPH8="$TMP/orphan-mut-double"; orph_fixture "$ORPH8"
+orph_start "$ORPH8" 2026-08-14T08:00:00Z build o/r#5 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH8" "$ORPH_M3"
+orph_pass "$ORPH8" "$ORPH_M3"
+t orphan-mutation-double-reconciles-twice 2 "$(orph_count "$ORPH8")"
+
+# Must fail: the answer written to the caller's stdout instead of to the log
+# the scan read. Round 1's blocking finding, given the same treatment as the
+# other three — the case that pins it is worth nothing unless it reds under the
+# defect it names. Stdout goes to /dev/null, as it effectively does on a hand
+# run of duty.sh, and the two passes below are two separate box-kill counts of
+# one box-kill.
+# shellcheck disable=SC2016  # the sed matches the module's literal $logfile
+orph_mutant stdout 's/" >>"\$logfile"$/"/'
+ORPH_M4="$TMP/ledger-mutant-stdout.sh"
+ORPH10="$TMP/orphan-mut-stdout"; orph_fixture "$ORPH10"
+orph_start "$ORPH10" 2026-08-14T11:00:00Z build o/r#11 "$ORPH_DEAD.$ORPH_BOOT"
+ORPH_STDOUT=/dev/null
+orph_pass "$ORPH10" "$ORPH_M4"
+orph_pass "$ORPH10" "$ORPH_M4"
+ORPH_STDOUT=
+t orphan-mutation-stdout-loses-the-answer 0 "$(orph_count "$ORPH10")"
+t orphan-mutation-stdout-recounts-one-box-kill 2 \
+  "$(cut -f1 <"$ORPH10/.session-terminal.build" 2>/dev/null || echo NONE)"
+
+# Must fail: the record separator back to a tab, which is IFS whitespace. Both
+# `037`s go — the scan's OFS and the reader's IFS — because the defect is the
+# two of them agreeing on a separator that collapses. Read the holderless
+# record the way the mutant's own reader would, and watch `log=` bind to
+# `holder`: that is the shift that made the emptiness guard unreachable.
+orph_mutant tab 's/037/t/g'
+ORPH_M5="$TMP/ledger-mutant-tab.sh"
+# shellcheck disable=SC1090
+ORPH4_TAB="$(source "$ORPH_M5" >/dev/null 2>&1; _session_orphan_scan "$ORPH4/duty.log")"
+# shellcheck disable=SC2034  # m4_rest is the tail the shift produced, not read
+IFS=$'\t' read -r m4_kind m4_key m4_holder m4_rest <<<"$ORPH4_TAB"
+t orphan-mutation-tab-shifts-log-into-holder \
+  "operator|floor|$ORPH4/logs/operator.log" "$m4_kind|$m4_key|$m4_holder"
+
+# --- the wiring, which no fixture above can reach ---------------------------
+# The reconciler is worth nothing unless a tick calls it, and it must be called
+# before any dispatch: that ordering is what makes an unanswered start mean
+# "left by a previous run" rather than "started a moment ago by this one".
+if grep -q '^session_reconcile_orphans$' "$SHARED/bin/duty.sh"; then r1=called; else r1=UNWIRED; fi
+t orphan-reconciler-runs-at-tick-time called "$r1"
+# Ordered against the duty module invocations themselves — the only things in
+# this file that dispatch — and not against the string `run_session`, which
+# duty.sh mentions in a comment above the call site and would score a pass on
+# any placement at all.
+t orphan-reconciler-runs-before-any-dispatch before \
+  "$(awk '/^[[:space:]]*#/ { next }
+          /^session_reconcile_orphans$/ { rec = NR }
+          /(^|[^[:alnum:]_])duty_[a-z]+/ { if (!disp) disp = NR }
+          END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
+      "$SHARED/bin/duty.sh")"
+# duty.sh runs under `set -euo pipefail`, and this is called before the boot
+# gate, so a non-zero return anywhere in it does not degrade the tick — it ENDS
+# the tick, and a box whose duty.log has nothing to reconcile is the common
+# case. Driven under the caller's own flags, in each state it can meet.
+# shellcheck disable=SC2317  # alert is reached from inside the library
+orph_strict() (  # orph_strict <dir>
+  set -euo pipefail
+  DUTY_DIR="$1"; LOG_DIR="$1/logs"; DUTY_TICK_ID='tick-strict'
+  # Stubbed even though nothing here reaches the threshold that alerts: the
+  # suite exports the box's real HOME, and the real `alert` reads a Telegram
+  # token out of it. A case must not be one edit away from paging the operator.
+  alert() { :; }
+  session_reconcile_orphans >/dev/null 2>&1
+  printf survived
+)
+ORPH9="$TMP/orphan-strict"; orph_fixture "$ORPH9"
+t orphan-strict-empty-log survived "$(orph_strict "$ORPH9" || printf 'ABORTED(%s)' "$?")"
+printf '2026-08-14T09:00:00Z duty run start\n' >>"$ORPH9/duty.log"
+t orphan-strict-nothing-owed survived "$(orph_strict "$ORPH9" || printf 'ABORTED(%s)' "$?")"
+orph_start "$ORPH9" 2026-08-14T09:00:01Z build o/r#6 "$ORPH_DEAD.$ORPH_BOOT"
+t orphan-strict-with-an-orphan survived "$(orph_strict "$ORPH9" || printf 'ABORTED(%s)' "$?")"
+t orphan-strict-missing-log survived \
+  "$(orph_strict "$TMP/orphan-no-such-dir" || printf 'ABORTED(%s)' "$?")"
+
+# ...and the start it reads has to carry the holder it asks about.
+# shellcheck disable=SC2016  # match the module's literal $(_session_holder)
+if grep -q 'SESSION START .*holder=\$(_session_holder)' "$SHARED/lib/common/session.sh"; then
+  r1=stamped
+else
+  r1=UNSTAMPED
+fi
+t orphan-session-start-carries-its-holder stamped "$r1"
 
 suite_finish

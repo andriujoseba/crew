@@ -1,6 +1,12 @@
 # common/ledger.sh — ledger_filter, ledger_suppressed, report_suppressed,
 # report_suppressed_if_complete, ledger_commit — the seen-ledgers and the
-# reporting that keeps a suppression from becoming a silence.
+# reporting that keeps a suppression from becoming a silence; and
+# session_reconcile_orphans, which answers the one duty.log record nothing else
+# ever closes.
+#
+# The two subjects share a module because they share a shape: each reads a
+# ledger of what has already happened and decides what the engine still owes on
+# it. duty.log is the session ledger, and #478 put its cases here.
 #
 # A module of shared/lib/common.sh, which is the entry point: nothing sources
 # this file directly.
@@ -86,4 +92,219 @@ ledger_commit() { # $1=ledger; stdin "id ts" lines; merge keeping max ts, atomic
     END { for (k in seen) print k, seen[k] }
   ' > "$tmp"
   mv -f "$tmp" "$ledger"
+}
+
+# --- The fourth session shape: a session that died with its box (#478) -------
+#
+# run_session writes SESSION END on every path ITS OWN PROCESS survives — ok,
+# TIMEOUT, FAILED, TERMINAL. A session killed WITH the box survives none of
+# them and leaves a SESSION START that nothing ever answers. The evidence
+# contract names no shape for it, so every reader of duty.log counts that
+# session as still running for as long as the log generation lives, and a box
+# that kills itself repeatedly is uncountable: each incident leaves a dangling
+# start attributed to nothing, and the terminal breaker is never told that a
+# dispatch failed at all.
+#
+# The reconciliation runs at the next tick, the first thing the box does when
+# it is back. It APPENDS and never edits: one reconstructed terminal per
+# orphan, reading back no further than each kind's newest observed terminal.
+# It is not a log rewriter.
+
+# The outcome token that says "this line was reconstructed". It is the only
+# thing that distinguishes a reconstructed terminal from an observed one, so it
+# lives in one place: the writer below stamps it and the read-back bound reads
+# it, and the two can never disagree about which lines the engine WATCHED and
+# which it inferred.
+SESSION_ORPHAN_OUTCOME=ORPHANED
+
+# _session_boot_id — the kernel's boot id, first field only.
+#
+# Trimmed rather than whole because the comparison is only ever against THIS
+# box's current boot id: a holder is written on one boot and read on the next,
+# and the question is "same boot or not". A trimmed collision reads a dead
+# holder's boot as the live one, which falls back to the pid check below — the
+# safe direction, since it can only MISS a reconciliation, never manufacture
+# one. A box with no /proc answers `unknown` on every boot, which is the same
+# fallback stated as a value rather than as an error.
+_session_boot_id() {
+  local id
+  id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || id=""
+  [ -n "$id" ] || id=unknown
+  printf '%s' "${id%%-*}"
+}
+
+# _session_holder — who to ask, later, whether a session is still running.
+#
+# The duty process that dispatched it. If that process is alive the session is
+# alive, because run_session writes SESSION END on every path it survives; if
+# it is gone, the session went with it. `$$` and not `$BASHPID`: the tick is
+# the holder even where a duty module calls run_session from a subshell.
+#
+# The pid is qualified by the boot id because a pid means nothing across a
+# reboot, and a reboot is this feature's headline case: without it, the first
+# process to inherit a dead session's pid would read as that session.
+_session_holder() {
+  printf '%s.%s' "$$" "$(_session_boot_id)"
+}
+
+# _session_holder_live HOLDER — 0 when that holder is still running.
+#
+# This is D1's second half, and its whole point is that it is not a clock. An
+# age threshold cannot answer the question: a build legitimately runs for two
+# hours, so any threshold short enough to reconcile promptly also reconciles
+# live sessions, and any threshold safe enough to spare them waits out the
+# longest timeout the fleet allows before saying anything.
+#
+# Every unreadable answer is `live`, so an orphan is missed rather than
+# invented. A reconstructed terminal is evidence and feeds a breaker; a wrong
+# one is a lie about a session that ran.
+_session_holder_live() {
+  local holder="$1" pid boot
+  case "$holder" in *.*) ;; *) return 0 ;; esac
+  pid="${holder%%.*}"
+  boot="${holder#*.}"
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  [ "$pid" -gt 0 ] || return 0
+  # A different boot is decisive on its own: whatever holds that pid today, it
+  # is not the process that dispatched this session.
+  [ "$boot" = "$(_session_boot_id)" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+# _session_orphan_scan LOGFILE — the unanswered starts, oldest first, one
+# `kind<US>key<US>holder<US>log<US>started` record per line, where <US> is the
+# ASCII unit separator, 0x1f.
+#
+# NOT a tab, and that is a correctness choice rather than a taste one. Tab is
+# IFS *whitespace*, so `IFS=$'\t' read` collapses a run of separators instead
+# of yielding the empty field between them: a record whose `holder` is empty
+# arrived at the reader with `log=` shifted into `holder`, and the emptiness
+# check the caller makes on it could never fire. 0x1f is not IFS whitespace, so
+# an empty field stays an empty field — and it cannot occur in a duty.log line,
+# which a tab could.
+#
+# Two passes over the same file. The first is D4's bound: a kind's newest
+# OBSERVED terminal is where that kind's history is settled, and no line at or
+# before it is read again — which bounds what the pass ANSWERS. The read itself
+# is the whole file, twice; the log rotates at 5 MB, so that is bounded I/O by
+# the rotation rather than by anything here.
+#
+# Reconstructed terminals are deliberately NOT bounds while still being
+# matches. That asymmetry is what makes a second run produce nothing: the
+# orphan's own reconstructed terminal is inside the window, pairs with the
+# start, and the start is no longer unanswered — while the bound itself stays a
+# statement about what the engine watched, as D4 words it.
+#
+# Starts are matched against ends per kind AND key, most-recent-first, so an
+# interleaving cannot answer one session's start with another's end. A start
+# carrying no holder is matched like any other and dropped at emission time,
+# not here: leaving it out of the matching would let its end pop a start that
+# genuinely is an orphan.
+_session_orphan_scan() {
+  local logfile="$1"
+  awk -v ORPHAN="$SESSION_ORPHAN_OUTCOME" -v US=$'\037' '
+    function fields(   i, p) {
+      delete f
+      for (i = 4; i <= NF; i++) {
+        p = index($i, "=")
+        if (p > 1) f[substr($i, 1, p - 1)] = substr($i, p + 1)
+      }
+    }
+    NR == FNR {
+      if ($2 == "SESSION" && $3 == "END") {
+        fields()
+        if (f["outcome"] != ORPHAN) bound[f["kind"]] = FNR
+      }
+      next
+    }
+    $2 != "SESSION" { next }
+    $3 == "START" {
+      fields()
+      if (FNR <= bound[f["kind"]]) next
+      q = f["kind"] SUBSEP f["key"]
+      depth[q]++
+      open[q SUBSEP depth[q]] = FNR SUBSEP f["kind"] SUBSEP f["key"] \
+        SUBSEP f["holder"] SUBSEP f["log"] SUBSEP $1
+      next
+    }
+    $3 == "END" {
+      fields()
+      if (FNR <= bound[f["kind"]]) next
+      q = f["kind"] SUBSEP f["key"]
+      if (depth[q] > 0) { delete open[q SUBSEP depth[q]]; depth[q]-- }
+      next
+    }
+    END {
+      for (o in open) {
+        split(open[o], p, SUBSEP)
+        keep[p[1] + 0] = p[2] US p[3] US p[4] US p[5] US p[6]
+      }
+      # Emitted in log order rather than in the hash order `for (o in open)`
+      # gives, so the reconstructed lines land in the order the sessions
+      # started and the log reads as a history.
+      for (i = 1; i <= FNR; i++) if (i in keep) print keep[i]
+    }
+  ' "$logfile" "$logfile"
+}
+
+# session_reconcile_orphans — bounded RECONCILIATION, at tick time.
+#
+# Bounded in what it acts on, which is what D4 bounds: the scan below reads the
+# file end to end, twice, and D4's bound decides which records that read is
+# allowed to answer. It is not an I/O bound and nothing here claims one.
+#
+# Called by duty.sh before any dispatch, which is what makes the answer simple:
+# the only unanswered starts in the log belong to a previous run, never to this
+# one.
+#
+# It reads duty.log by path and it ANSWERS by path, into that same file. The
+# breaker's counter and the answering line are one transaction in two writes,
+# and a function that took its input from a path and returned its output to the
+# caller's stdout could have them land in different places — see the write
+# below.
+#
+# The reconstructed terminal carries `rc=-` and `dur=-`. It is the one thing
+# this line must not fake: the reconciler knows the session started and knows
+# nobody is running it, and knows nothing whatever about how it exited or how
+# long it took. `-` for a number the engine does not have is this codebase's
+# existing spelling (_session_budget_ceiling), so it needs no new vocabulary,
+# and `started=` names the start being answered because this line's own stamp
+# is the reconcile time and not the death.
+session_reconcile_orphans() {
+  local logfile="$DUTY_DIR/duty.log" records kind key holder slog started closed=0
+  [ -s "$logfile" ] || return 0
+  records="$(_session_orphan_scan "$logfile")" || records=""
+  [ -n "$records" ] || return 0
+  # A here-string and not a pipe: the loop must run in THIS shell to keep its
+  # count, and `scan | while` under pipefail is the shape #449 exists about.
+  # IFS is the scan's 0x1f and not a tab, so an empty `holder` reaches the
+  # guard below as an empty field rather than pulling `log` into its place.
+  while IFS=$'\037' read -r kind key holder slog started; do
+    [ -n "$kind" ] || continue
+    # No holder field, no reconciliation. D1 requires BOTH halves, and a start
+    # written by an engine older than this one — or by a writer that is not
+    # run_session, as the floor's `operator` sessions are — carries nobody to
+    # ask. Answering it anyway would be the fabrication this refuses to make,
+    # so those starts stay open and this feature is forward-looking by
+    # construction.
+    [ -n "$holder" ] || continue
+    ! _session_holder_live "$holder" || continue
+    # Appended to the file the scan READ, and not to this caller's stdout.
+    # Those are the same place only under tick.sh, which redirects duty.sh's
+    # stdout into duty.log (tick.sh:41) — a contract duty.sh never states and a
+    # hand run does not honour; duty.sh's own flock and 199 sentinel exist
+    # precisely to make the hand run a supported path. Answering to stdout
+    # there would move the breaker's counter while discarding the line that
+    # makes the start answered, so one box-kill would be counted again on every
+    # run and D2's evidence would go to a terminal. Both writers open O_APPEND,
+    # so this fd is safe beside the tick's inherited one.
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= started=$started" >>"$logfile"
+    # D3: the same per-kind counter an observed TERMINAL feeds, and no second
+    # mechanism. A box that kills itself on every review session has a dead
+    # review lane, whether the vendor said so or the kernel did.
+    _session_terminal_record "$kind" yes unknown "$slog"
+    closed=$((closed + 1))
+  done <<<"$records"
+  [ "$closed" -eq 0 ] \
+    || warn "session reconcile: $closed session(s) died with the box and were closed as $SESSION_ORPHAN_OUTCOME"
 }

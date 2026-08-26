@@ -23,7 +23,12 @@ run_session() {
   _session_terminal_gate "$kind" "$key" || return 0
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
-  log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog"
+  # holder=: who to ask, at a later tick, whether this session is still
+  # running. Nothing below this line runs if the box dies under the CLI, so
+  # the start has to carry the liveness question with it — and it has to be a
+  # question about a PROCESS, because a build may legitimately run for two
+  # hours and no clock can tell that from a death (#478, common/ledger.sh).
+  log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog holder=$(_session_holder)"
   start=$SECONDS
   # </dev/null: the CLI reads piped stdin to EOF as context, and stdin here
   # is the caller's while-read work list — without this, the first session
