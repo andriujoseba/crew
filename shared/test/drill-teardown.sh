@@ -521,6 +521,173 @@ else
   bad "accepts-the-round-s-own-sandbox-under-this-identity (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
 fi
 
+# --- the round's OTHER sandbox: the notify one ----------------------------
+# The notifier union leg mints a SECOND sandbox per role — watch-only, so the
+# watch set can be widened without widening the work set (#423). Everything
+# above drives teardown.sh over the WORK sandboxes alone, so the delete set,
+# the ownership refusal and prefix-is-not-membership were all enforced for
+# one of the round's two sandboxes and unenforced for the other. The gap was
+# the POPULATION and not the rules, so the rules are re-run here over the
+# sandbox that was outside it (#496 D1).
+#
+# The names are READ OUT OF teardown.sh rather than restated: its refusal
+# message prints its own whole enumeration, for the box half and the repo
+# half alike. A case spelling `crew-drill-<role>-notify` here would keep
+# passing the day the round renames its sandboxes, green against a name
+# nothing mints — so what is asserted below is membership and ownership, and
+# every fixture derives (#496 D2).
+name_set() {  # the enumeration teardown.sh prints when it refuses a name
+  printf '%s\n' "$OUT" | sed -n 's/.*teardown removes only: //p' | head -1
+}
+run "CREW_ROSTER=$FLEET" -- --box zzz-outside-every-drill-name --yes
+BOX_NAMES=" $(name_set) "
+run "CREW_ROSTER=$FLEET" "STUB_LOGIN=danmt" -- --sandbox danmt/zzz-outside-every-drill-name --yes
+read -r -a REPO_NAMES <<<"$(name_set)"
+# teardown.sh's roles, read the same way rather than restated here.
+eval "$(grep -m1 '^KNOWN_ROLES=' "$TEARDOWN")"
+read -r -a ROLES_KNOWN <<<"${KNOWN_ROLES:-}"
+
+# The two sandboxes of a role, told apart by the membership rule itself
+# rather than by their spelling: the WORK one is the name that is both a box
+# and a repository, and the NOTIFY one is the name the repository set holds
+# that the box set does not — "a repository and never a box", one per role.
+work_for_role() {
+  local n
+  for n in ${REPO_NAMES[@]+"${REPO_NAMES[@]}"}; do
+    case "$BOX_NAMES" in *" $n "*) ;; *) continue ;; esac
+    case "$n" in *"$1"*) printf '%s\n' "$n"; return 0 ;; esac
+  done
+  return 1
+}
+notify_for_role() {
+  local n
+  for n in ${REPO_NAMES[@]+"${REPO_NAMES[@]}"}; do
+    case "$BOX_NAMES" in *" $n "*) continue ;; esac
+    case "$n" in *"$1"*) printf '%s\n' "$n"; return 0 ;; esac
+  done
+  return 1
+}
+
+# The guard that keeps every case below from passing by running zero times.
+# A derivation that stops finding its subject has to say so: a `for` loop
+# over an empty set is the one way a coverage fix quietly un-covers itself,
+# and this whole section is a coverage fix.
+NOTIFY_FOUND=0
+for role in ${ROLES_KNOWN[@]+"${ROLES_KNOWN[@]}"}; do
+  notify_for_role "$role" >/dev/null && NOTIFY_FOUND=$((NOTIFY_FOUND + 1))
+done
+if [ "${#ROLES_KNOWN[@]}" -gt 0 ] && [ "$NOTIFY_FOUND" -eq "${#ROLES_KNOWN[@]}" ]; then
+  ok "every-role-has-a-repository-only-sandbox-in-the-name-set"
+else
+  bad "every-role-has-a-repository-only-sandbox-in-the-name-set (roles=${#ROLES_KNOWN[@]}, found=$NOTIFY_FOUND, repo set='${REPO_NAMES[*]}')"
+fi
+
+# `repo delete danmt/crew-drill-triage` is a PREFIX of the notify sandbox's
+# own delete call, so the substring `called` cannot tell the round's two
+# sandboxes apart — the work half's assertion would be satisfied by the
+# notify half's deletion, and a teardown that deleted only the notify one
+# would read as a clean round. Widening the population is what makes the
+# difference matter, so the cases below match the whole recorded call line.
+called_line() { grep -qxF -- "$1" "$CALLS"; }
+
+# The delete set: a whole round clears BOTH sandboxes of every role, in one
+# run, and neither at the other's expense.
+WORK_SLUGS="" NOTIFY_SLUGS=""
+for role in ${ROLES_KNOWN[@]+"${ROLES_KNOWN[@]}"}; do
+  WORK_SLUGS="$WORK_SLUGS danmt/$(work_for_role "$role")"
+  NOTIFY_SLUGS="$NOTIFY_SLUGS danmt/$(notify_for_role "$role")"
+done
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" \
+    "STUB_REPOS=$WORK_SLUGS$NOTIFY_SLUGS" -- --yes
+if [ "$RC" -eq 0 ]; then
+  ok "a-round-carrying-both-sandboxes-per-role-exits-zero"
+else
+  bad "a-round-carrying-both-sandboxes-per-role-exits-zero (rc=$RC, got '$OUT')"
+fi
+for role in ${ROLES_KNOWN[@]+"${ROLES_KNOWN[@]}"}; do
+  notify="$(notify_for_role "$role")"
+  work="$(work_for_role "$role")"
+  if called_line "gh repo delete danmt/$notify --yes"; then
+    ok "deletes-notify-sandbox-$notify"
+  else
+    bad "deletes-notify-sandbox-$notify (calls='$(cat "$CALLS")')"
+  fi
+  if called_line "gh repo delete danmt/$work --yes"; then
+    ok "still-deletes-work-sandbox-$work-alongside-it"
+  else
+    bad "still-deletes-work-sandbox-$work-alongside-it (calls='$(cat "$CALLS")')"
+  fi
+done
+
+# Then the two gates and the exactness rule, per role, over the sandbox that
+# was outside the population.
+for role in ${ROLES_KNOWN[@]+"${ROLES_KNOWN[@]}"}; do
+  notify="$(notify_for_role "$role")"
+
+  # A repository and never a box: the box name set must not have grown the
+  # notify name along with the repository set. Asserted in both directions
+  # like every other double in this file, because a widening that leaked
+  # into the box half would delete a box the drill never minted.
+  run "CREW_ROSTER=$FLEET" "STUB_BOXES=$notify" -- --box "$notify" --yes
+  if [ "$RC" -ne 0 ] && says "$notify" && says "not a drill box" && ! called "box rm"; then
+    ok "notify-sandbox-$notify-is-a-repository-and-never-a-box"
+  else
+    bad "notify-sandbox-$notify-is-a-repository-and-never-a-box (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+  fi
+
+  # The ownership gate. A drill-shaped notify name under somebody else's
+  # account is refused, naming both the owner it has and the identity it
+  # would need — refusing is recoverable by logging in as that identity,
+  # deleting is not.
+  run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=other/$notify" \
+      -- --sandbox "other/$notify" --yes
+  if [ "$RC" -eq 1 ] && says "other/$notify" && says "danmt" && ! called "repo delete"; then
+    ok "refuses-notify-sandbox-$notify-owned-by-someone-else"
+  else
+    bad "refuses-notify-sandbox-$notify-owned-by-someone-else (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+  fi
+
+  # And the converse, for the same reason the work half asserts it: a gate
+  # that refused the round's own notify sandbox would clear nothing.
+  run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=danmt/$notify" \
+      -- --sandbox "danmt/$notify" --yes
+  if [ "$RC" -eq 0 ] && called_line "gh repo delete danmt/$notify --yes"; then
+    ok "accepts-notify-sandbox-$notify-under-this-identity"
+  else
+    bad "accepts-notify-sandbox-$notify-under-this-identity (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+  fi
+
+  # Prefix is not membership, in the two directions a near-miss arrives
+  # from. Both fixtures EXIST and are owned by this identity, so the exact
+  # set is the only thing standing between them and `gh repo delete` — which
+  # is the whole reason the set is exact.
+  longer="$notify-2"
+  run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=danmt/$longer" \
+      -- --sandbox "danmt/$longer" --yes
+  if [ "$RC" -eq 1 ] && says "$longer" && says "not a drill sandbox" && ! called "repo delete"; then
+    ok "refuses-$longer-which-merely-extends-a-notify-sandbox-name"
+  else
+    bad "refuses-$longer-which-merely-extends-a-notify-sandbox-name (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+  fi
+
+done
+
+# The operator's own scratch repository, named in the drill's family for a
+# role the drill does not know — the repository twin of the
+# `crew-drill-experiment` box the box half already protects. Derived from one
+# role rather than looped: substituting the role out of the name collapses to
+# the same fixture whichever role it came from, and three runs of one case
+# under one label is noise, not coverage.
+foreign="$(notify_for_role "${ROLES_KNOWN[0]}")"
+foreign="${foreign/${ROLES_KNOWN[0]}/experiment}"
+run "CREW_ROSTER=$FLEET" "STUB_BOXES=" "STUB_LOGIN=danmt" "STUB_REPOS=danmt/$foreign" \
+    -- --sandbox "danmt/$foreign" --yes
+if [ "$RC" -eq 1 ] && says "$foreign" && says "not a drill sandbox" && ! called "repo delete"; then
+  ok "refuses-$foreign-a-notify-shaped-name-for-a-role-the-drill-does-not-know"
+else
+  bad "refuses-$foreign-a-notify-shaped-name-for-a-role-the-drill-does-not-know (rc=$RC, calls='$(cat "$CALLS")', got '$OUT')"
+fi
+
 # 2 is INCOMPLETE and 1 is refused-or-failed: two different facts, and
 # rehearsal-all.sh reports them as two different summary rows.
 run "CREW_ROSTER=$FLEET" "STUB_BOXES=operator-scratch" "STUB_LOGIN=danmt" -- --box operator-scratch --yes
