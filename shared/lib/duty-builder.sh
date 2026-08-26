@@ -1114,23 +1114,158 @@ _resume_pr_comments() {
 # _flip_owed_resume_rows, whose whole question is whether a DRAFT carries a
 # valid signal at its head. The cost is one paginated REST read per draft per
 # tick, beside the two _resume_newest_foreign already makes for the same draft.
+# THE THREAD DOES NOT TRAVEL ON ARGV (#479). `--argjson comments "$comments"`
+# made the whole thread ONE argv element, and a single element is bounded by
+# MAX_ARG_STRLEN — 32 pages, 131,072 bytes — not by the ARG_MAX everyone quotes.
+# Past that, `execve` fails with E2BIG, `|| spliced=""` swallowed it, the listing
+# went through unchanged, and the PR reached the predicates with `.comments`
+# ABSENT, which they read as null and skip. A thread never shrinks, so the
+# condition never cleared: the guarantee this file states above — "a missing
+# marker only delays to the next tick, it never stalls forever" — was void above
+# the limit, and every downstream safety net (_green_head_breaker, the #384
+# green-head bypass, _stranded_resume_due's counter) sits BELOW the splice, so
+# nothing reasoning about the stranded set could reach the PR at all. It read as
+# `no resume duty` — a clean board — for 86 minutes.
+#
+# `--slurpfile` from a process substitution is the fix: argv carries `/dev/fd/N`
+# and the payload travels down a pipe, so the bound that applies is the one that
+# scales. A temp file would do the same, and is not used, because allocating one
+# introduces a failure mode of its own — a full `TMPDIR` — on the exact path
+# whose job is to classify failures; the substitution has nothing to allocate.
+#
+# TRANSIENT AND STRUCTURAL ARE NOT THE SAME SKIP, and the discriminator is which
+# half failed. The READ is a network call, so `gh` returning nonzero is the
+# transient class the original swallow was written for: it skips the PR for the
+# tick, forfeits its counter, and is retried unchanged next tick. The SPLICE is a
+# local deterministic fold of two values already in hand — no network, no API, no
+# rate limit — so a splice that fails will fail identically next tick on inputs
+# that only ever grow. That will not clear on its own, and a permanent condition
+# is not a per-tick skip: it escalates to the operator through `alert`, naming
+# the PR, the head and the issue a human should flag, rather than waiting for
+# someone to notice a board that looks clean — and posts that same fact on the PR
+# through post-once.sh, because an alert nothing acknowledges can be dropped
+# without trace and this escalation fires only once per head. Why that channel
+# and not a label write, and why the record is a separate object from the wake,
+# is _resume_structural_escalate's own header, below.
+#
+# EVERY BRANCH WARNS, including the one that cannot even mark the thread unread.
+# A swallow with no warn is what turned a stall into a clean board, so the
+# absence of a log line is the defect being fixed here and not an omission.
 _resume_attach_comments() {
   local repo="$1" listing="$2" spliced num comments
   RESUME_LISTING=""
   while IFS= read -r num; do
     [ -n "$num" ] || continue
+    spliced=""
     if comments="$(_resume_pr_comments "$repo" "$num")"; then
       spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
-        --argjson comments "$comments" \
-        'map(if .number == $num then . + {comments:$comments} else . end)')" || spliced=""
+        --slurpfile comments <(printf '%s' "$comments") \
+        'map(if .number == $num then . + {comments:$comments[0]} else . end)')" || spliced=""
+      if [ -z "$spliced" ]; then
+        warn "$repo#$num: comment splice failed on a thread that read cleanly; leaving it out of stranded-resume detection this tick (structural)"
+        _resume_structural_escalate "$repo" "$num" "$listing"
+      fi
     else
       warn "$repo#$num: comment read failed; leaving it out of stranded-resume detection this tick"
+    fi
+    if [ -z "$spliced" ]; then
+      # The explicit null, for both failures. The predicates skip a null and the
+      # PR leaves the stranded set for this tick, forfeiting its counter — the
+      # safe direction, because an absent field read as an empty thread would
+      # look UNSIGNALLED and accrue toward a resume the evidence does not support.
       spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
-        'map(if .number == $num then . + {comments:null} else . end)')" || spliced=""
+        'map(if .number == $num then . + {comments:null} else . end)')" \
+        || { spliced=""
+             warn "$repo#$num: could not mark the thread unread in the listing either; it reaches the predicates with .comments absent" ; }
     fi
     if [ -n "$spliced" ]; then listing="$spliced"; fi
   done < <(printf '%s' "$listing" | jq -r '.[] | .number' 2>/dev/null)
   RESUME_LISTING="$listing"
+}
+
+# _resume_structural_escalate REPO NUM LISTING — put a structural splice failure
+# in front of the operator, once per head.
+#
+# THE CHANNEL IS `alert`, NOT THE `attention` LABEL, and #479's D3 says so since
+# triage ruled it on 2026-08-26. The label is hand-set doctrine — LABELS.md:99
+# and 185-187 ("the machine never sets `attention`"), shared/prompts/attention.txt
+# from the other end ("never set it yourself"), and the enforcement in
+# engine-never-writes-attention-label (shared/test/builder.sh, since 9fb7e3d):
+# "`attention` remains a hand-written demand. Reads in duty-attention.sh are the
+# wake mechanism and are allowed; engine label writes are not". `alert` is the
+# channel the engine already owns for exactly this class: duty_attention_audit
+# uses it to report a board invariant it observes and does not fix, and crew#66's
+# implemented close is the precedent for the shape — a module that observes a
+# condition it may not act on pings the operator rather than only logging, which
+# is what made its bound affordable. (#66 ruled repos.txt scope, NOT who writes
+# the label; the doctrine above is what forecloses the label write. Triage's
+# correction, 2026-08-26, recorded here because this header was quoted for it.)
+# The escalation therefore NAMES the issue a human should flag rather than
+# flagging it, and D3's purpose — a permanent condition is never a per-tick skip,
+# and never waits to be noticed — is met without the engine taking the write.
+#
+# THE ALERT CARRIES A RECEIPT, and the receipt is not decoration (@danmt, via
+# #479, 2026-08-26). `alert` is fire-and-forget: with no token file it is a
+# silent no-op RETURNING SUCCESS, with one it is a ten-second best-effort with no
+# retry whose failure is explicitly non-fatal (common.sh). Every other alert in
+# the tree survives that because the condition it names re-fires next tick. THIS
+# ONE DOES NOT — the once-per-head ledger below is exactly what makes a single
+# dropped message a permanently lost escalation, which is this issue's own
+# board-looks-clean failure moved one layer out. So the alert is the wake and the
+# post-once.sh comment is the record, the pairing duty-attention.sh:246-248
+# already ships in this subsystem. The body carries the full head, so post-once's
+# exact-body dedup is once-per-head for free and no second suppression scheme is
+# owed; it carries the same `where` clause as the alert, so the branch where the
+# body names no authorizing issue gets its receipt by construction and not by a
+# second code path. A receipt that does not post warns, like every other failure
+# on this path: the alert is then the only copy and that is worth saying.
+#
+# The authorizing issue comes from the body through _RESUME_ISSUE_RE, the one
+# pattern _resume_pr_fingerprints reads, so the two can never disagree about
+# which issue a PR answers. A body naming none still escalates — the PR number is
+# enough to act on, and a missing reference is itself worth saying.
+#
+# ONCE PER HEAD, on the ci-red scheme (#17): the head goes in the ledger's ID and
+# never in its value, because ledger_filter re-fires when the value sorts greater
+# and a SHA has no order. A new head is an id never seen, so a corrective push
+# re-escalates — right, the condition being re-asserted against a tree that
+# changed — while an unchanged head does not alert the operator every five
+# minutes. #167's rule: a warning that repeats forever is wallpaper. The
+# suppressed report is what keeps that quiet from becoming a silence, and it runs
+# only on the ticks that did NOT alert — reporting a suppression on the very tick
+# the alert fired would say "still standing" about its own first occurrence.
+_resume_structural_escalate() {
+  local repo="$1" num="$2" listing="$3" head issue where item fresh state receipt
+  head="$(printf '%s' "$listing" | jq -r --argjson num "$num" \
+    'first(.[] | select(.number == $num) | (.headRefOid // "")) // ""' 2>/dev/null)"
+  issue="$(printf '%s' "$listing" | jq -r --argjson num "$num" --arg re "$_RESUME_ISSUE_RE" \
+    'first(.[] | select(.number == $num)
+       | first((.body // "") | capture($re; "i") | .n)) // ""' 2>/dev/null)"
+  if [ -n "$issue" ]; then
+    where="set $LABEL_ATTENTION on $repo#$issue to hand it to a session"
+  else
+    where="the body names no authorizing issue, so there is nowhere to set $LABEL_ATTENTION"
+  fi
+  item="$repo#$num@$head structural"
+  state="$DUTY_DIR/.suppressed-resume-structural.${repo//\//__}.$num"
+  fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-resume-structural")"
+  if [ -n "$fresh" ]; then
+    printf '%s\n' "$fresh" | ledger_commit "$DUTY_DIR/.seen-resume-structural"
+    warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — out of stranded-resume detection until it clears; $where"
+    alert "🚨 $(hostname): $repo#$num is out of stranded-resume detection at head ${head:0:12} — its comment thread reads but will not splice, and that will not clear on its own; $where"
+    # The durable half. Full head in the body, which is what makes the exact-body
+    # dedup once-per-head; no marker, so the comment's identity IS its text.
+    receipt="🚨 This PR is out of stranded-resume detection at head \`$head\` — its comment thread reads but will not splice, and that will not clear on its own; $where. Posted beside an operator alert, which is fire-and-forget, so this comment is the record that survives one being dropped (#479)."
+    "$BIN_DIR/post-once.sh" "$repo" "$num" "$receipt" >/dev/null 2>&1 \
+      || warn "$repo#$num: structural escalation receipt did not post at head ${head:0:12}; the alert is the only copy"
+    rm -f "$state"
+    return 0
+  fi
+  printf '%s\n' "$item" \
+    | ledger_suppressed "$DUTY_DIR/.seen-resume-structural" \
+    | report_suppressed "$state" \
+        "$repo#$num: structural comment-splice failure still standing at head ${head:0:12}" \
+        "already escalated at this head"
 }
 
 # --- The check half of the resume evidence (#384) ---------------------------
@@ -1553,13 +1688,23 @@ _stranded_resume_keys() {
 # mention is not the authorizing one. The leading `(^|[^a-z])` is a word
 # boundary: without it `the operator discloses #99 in passing` yields issue 99,
 # costing a gh call per tick and a WARN naming a wake nobody declared.
+#
+# THE PATTERN IS A CONSTANT BECAUSE IT HAS TWO CONSUMERS (#479). The structural
+# escalation below names the PR's authorizing issue in its operator alert — the
+# issue a human should flag `attention` on, which the engine does not write
+# itself — and needs the same answer this function derives; a second copy of a
+# regex whose every clause was bought by a named failure is a second thing to
+# keep true, and the drift would be silent — both copies parse, and only one of
+# them is right. It is passed with `--arg` rather than inlined, so each jq
+# program stays single-quoted and the pattern is one string in one place.
+# shellcheck disable=SC2016  # a regex, not a shell expansion
+_RESUME_ISSUE_RE='(^|[^a-z])(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)'
+
 _resume_pr_fingerprints() {
   local repo="$1"
-  jq -r --arg repo "$repo" '
+  jq -r --arg repo "$repo" --arg re "$_RESUME_ISSUE_RE" '
     .[] | select(.isDraft)
-    | ( first( (.body // "")
-               | capture("(^|[^a-z])(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)"; "i")
-               | .n ) // "" ) as $issue
+    | ( first( (.body // "") | capture($re; "i") | .n ) // "" ) as $issue
     | "\($repo)#\(.number)@\(.headRefOid)\t\($issue)"
   '
 }
