@@ -556,7 +556,48 @@ case "${1:-}" in
     esac
     ;;
 
-  down)  echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
+  # A guest that cannot schedule its own shutdown does not answer `box down`
+  # either. `box down` is `incus stop` with no force and no timeout, so the
+  # call blocks until the CALLER's deadline — the floor's ACTION_TIMEOUT_S —
+  # and then reports failure. That is the 2026-08-14 state #486 exists for,
+  # and a stub whose `down` always succeeded instantly is what let the floor
+  # claim it had stopped a box it had not: every graceful-stop assertion in
+  # this suite was written against a fleet where stopping always works.
+  #
+  # Same scenario as the hanging `exec` above, because it is the same guest:
+  # one that has stopped being able to run anything cannot run its own
+  # shutdown. `sleep 120` rather than a hang forever, so a suite that loses
+  # its collector still terminates.
+  down)
+    [ "$(scenario_of "$2")" = "wedged" ] && { sleep 120; exit 1; }
+    echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
+  # `box incus <box> -- <argv>` — box's non-interactive passthrough, and the
+  # way through to a force stop (#486 D2: the flag belongs to incus, not to a
+  # new `box down --force`, per heavy-duty/box#11's ownership rule).
+  #
+  # Only `stop --force` is modelled. A stub that answered every incus verb
+  # would be inventing a contract nothing in this repo relies on, and the
+  # unmatched arm below is the assertion that the floor fires exactly the
+  # passthrough the issue ruled and not a near neighbour.
+  incus)
+    # `--` is checked WHERE IT IS, not assumed. `shift 3` past an argv that
+    # put the separator somewhere else would silently reinterpret the call as
+    # a different passthrough, and the unmatched arm below — which is where
+    # this stub does its real assertion work, by refusing anything but the
+    # ruled command — would never see it. It is also the load-bearing token:
+    # box's global option loop consumes it, which is what stops `--force`
+    # being eaten by box's own `--force`.
+    if [ "$#" -lt 4 ] || [ "$3" != "--" ]; then
+      echo "stub-box: malformed incus passthrough '$*'" >&2; exit 2
+    fi
+    _iname="$2"; shift 3
+    case "$*" in
+      "stop --force")
+        # Kills the guest whatever it is doing — which is the whole point, so
+        # it answers on the box the graceful verb hangs against.
+        echo stopped > "$STATEDIR/$_iname.state"; echo "force-stopped $_iname" ;;
+      *) echo "stub-box: unhandled incus passthrough '$*'" >&2; exit 2 ;;
+    esac ;;
   start) echo running > "$STATEDIR/$2.state"; echo "started $2" ;;
   snapshot) echo "snapshotted $2 as $3" ;;
   # `crew new` mints infrastructure only; the stub records the mint so a test

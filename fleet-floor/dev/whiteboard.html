@@ -1571,16 +1571,23 @@ function drawFloor(t){
 /* alertOf UNIT — the one word this unit needs shouted on the grid, or "".
    Order is severity, not alphabetical: a box that has stopped answering pings
    is a worse fact than a stuck lock, and a stuck lock is worse than a dead
-   credential, because each one makes the next impossible to act on. */
+   credential, because each one makes the next impossible to act on.
+
+   UNREACHABLE is the COLLECTOR's verdict, read off `ping.wedged`, never a
+   count this page compares itself. It used to be the miss count against a
+   constant of this page's own with 3 baked into it, while the collector
+   wedges at `CREW_FLOOR_PING_FAILS` —
+   2 in this repo's own suite — so the badge and the control that escalates
+   on the same fact could disagree, and did (#486). There is deliberately no
+   threshold constant left in this file to drift again. */
 function alertOf(u){
   if(!LIVE)return "";
   var d=dataOf(UNITID(u),u.room);
-  if(d.ping&&!d.ping.ok&&d.ping.fails>=PING_FAILS_SHOWN)return "UNREACHABLE";
+  if(d.ping&&d.ping.wedged)return "UNREACHABLE";
   if(d.lock&&d.lock.stuck)return "STUCK";
   if(d.authfail&&d.authfail.length)return "AUTH";
   return "";
 }
-var PING_FAILS_SHOWN=3;
 /* stoppedWord DATA — why this box is not ticking, or "" if nobody stopped it.
    SILENT is an alarm: "this box should be ticking and is not". #189 taught the
    COLLECTOR to rank paused, disarmed and silent apart, and it does — but it
@@ -1769,7 +1776,10 @@ function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
      body. Throwing on !ok would discard exactly the part worth showing and
      leave the operator with a bare status code. */
   return r.json().then(function(j){
-    if(!r.ok&&!(j&&j.results))throw new Error((j&&j.error)||("HTTP "+r.status));
+    /* `j.refused` rides beside `j.results` for the same reason: a refused
+       restart (409, #486) carries the operator's next step in its body, and
+       throwing would replace that sentence with a status code. */
+    if(!r.ok&&!(j&&(j.results||j.refused)))throw new Error((j&&j.error)||("HTTP "+r.status));
     return j;
   },function(){throw new Error("HTTP "+r.status);});});}
 /* Server unit -> the record every panel already reads, so nothing downstream
@@ -1965,8 +1975,37 @@ function goLive(){
   var s=document.getElementById("stream");if(s)s.innerHTML="";
 }
 /* Operator actions (#39). Every one is applied by the host with `box exec`,
-   `box down` or `box start`; the reply carries per-box rc so a refused or
-   failed action is reported instead of being animated as success. */
+   `box down`, `box start` or — for a guest that can no longer schedule its own
+   shutdown — `box incus <box> -- stop --force` (#486); the reply carries
+   per-box rc so a refused or failed action is reported instead of being
+   animated as success, and a `step` naming which of those paths it took. */
+/* cmdSay ACTION RESULTS — the status line for an action that SUCCEEDED.
+   An action that escalated says so after the fact, not only in the confirm
+   before it: `restart ok` alone hides that this guest was killed where it
+   stood rather than asked to stop, and this line is the one place an operator
+   looks afterwards (#486). Read off the reply's own `step` — the collector's
+   record of the path it took — never re-derived from the fleet's state here,
+   which is the mistake this round fixed one function over. Silent for
+   `force-stop` itself, where the verb the operator fired is the disclosure. */
+function forcedBoxes(action,results){
+  /* `&& x.ok`: a force stop that itself FAILED did not kill anything, and the
+     failed row is already named in the error text. Inert on the success path,
+     where every row is ok by construction. */
+  return action==="force-stop"?[]:(results||[]).filter(function(x){return x.step==="force-stop"&&x.ok;}).map(function(x){return x.box;});
+}
+function cmdSay(action,results){
+  var forced=forcedBoxes(action,results);
+  return action+" ok"+(forced.length?" — force-stopped "+forced.join(", "):"");
+}
+/* ...and the same disclosure when the action FAILED. A restart that force-
+   stopped and then could not start the box rendered `restart FAILED — box:
+   …` with no word that the guest had already been killed: mute in exactly the
+   case the disclosure exists for, and the case where an operator most needs
+   to know the session is gone rather than merely interrupted. */
+function cmdSayFail(action,results,why){
+  var forced=forcedBoxes(action,results);
+  return action+" FAILED — "+(forced.length?"force-stopped "+forced.join(", ")+", then ":"")+why;
+}
 function cmd(action,extra){
   var body=Object.assign({action:action},extra||{});
   setStatus(action+"…",false);
@@ -1979,7 +2018,14 @@ function cmd(action,extra){
       /* Name the box that refused. On a fleet-wide action "start-all FAILED"
          alone tells the operator nothing about which box needs a look. */
       var why=bad.length?(bad[0].box+": "+bad[0].out+(bad.length>1?" (+"+(bad.length-1)+" more)":"")):(r.error||"?");
-      setStatus(r.ok?action+" ok":action+" FAILED — "+why,!r.ok);
+      /* REFUSED is not FAILED. The collector answers 409 when what the operator
+         confirmed and what the box is now have come apart (#486): nothing ran,
+         so saying the action failed would describe a host that was never
+         touched. The sentence the collector wrote is the whole message — it
+         names which way the box moved and that nothing was done — and the
+         pollFleet() below reloads the verdict, so the next click confirms the
+         path that is true now. */
+      setStatus(r.refused?(action+" refused — "+(r.error||"?")):(r.ok?cmdSay(action,r.results):cmdSayFail(action,r.results,why)),!r.ok);
       pollFleet();
       return r;
     })
@@ -2086,7 +2132,19 @@ function populateDash(){
     +'<div class="wt" style="margin-top:16px"><span class="dot"></span>ACCESS</div><div class="access">'
     +ab("ac-repo","⎇ &nbsp;Open repo · "+esc(d.repo||"—"))+ab("ac-term","◱ &nbsp;Copy box shell command")
     +ab("ac-logs","▤ &nbsp;Raw session logs")+ab("ac-restart","↻ &nbsp;Restart box")
-    +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div></div>';
+    +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div>'
+    /* #486 D4 — a DISTINCT control that names its own violence, on its own
+       line below the graceful pair rather than inside their row: an operator
+       reaching for Power off must not be one mis-click from a kill. The label
+       says what it DOES, not what it is called, and it is the only red-on-red
+       button on the panel.
+
+       Dimmed on a box somebody STOPPED, lit on one that stopped ANSWERING.
+       The two are the same `state:"offline"` on the wire — the collector
+       serves a wedged box offline on purpose — so dimming on `off` alone
+       would grey out precisely the box this control exists for. The wedge
+       carve-out is what makes the dim safe. */
+    +'<button class="lbtn'+(LIVE?'':' woff')+'" id="ac-force"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="text-align:center;color:#ff5147;border-color:#3a1c1c'+(off&&!unreachableBox(d)?';opacity:.5':'')+'">&#10006; &nbsp;Force stop &middot; kills the guest</button></div>';
   var cs='<div class="wt"><span class="dot"></span>CURRENT SESSION</div><div class="cursess">';
   /* The note under the big card always named the real reason, so an operator
      who read the sub-text was never blind — but the word in 40px type above it
@@ -2201,6 +2259,46 @@ function pingColour(d){
 /* Access-panel button: live ones are real, demo ones keep the .woff tooltip
    that says why they do nothing. */
 function ab(id,label){return '<button class="lbtn'+(LIVE?'':' woff')+'" id="'+id+'"'+(LIVE?'':' title="'+CTL_TIP+'"')+'>'+label+'</button>';}
+/* unreachableBox DATA — has this box stopped answering, for the WORDS on a
+   control (#486). The collector decides what actually happens: floor/fleet.py's
+   wedged() is the rule, restart asks it there, and `ping.wedged` is that same
+   answer served. So this is not the page's opinion of the same evidence — it
+   is the collector's verdict, which is the only way the confirm an operator
+   reads can be a promise about the path the host will take.
+
+   Re-deriving it here from the miss count and a constant of our own was the
+   first shape and it was wrong: a page-side 3 against a configurable
+   `CREW_FLOOR_PING_FAILS` meant that at a threshold of 2 — what this repo's
+   own suite runs — the collector force-stopped a guest the dialog described
+   as a graceful restart. Staleness is folded into wedged() for the same
+   reason it belongs there: a tier that has not run recently is unmeasured,
+   and "about to be killed" is the one direction this sentence must not be
+   wrong in. One rule, one place, one answer on the wire. */
+function unreachableBox(d){return !!(LIVE&&d&&d.ping&&d.ping.wedged);}
+/* restartPlan — the confirm text for Restart, which is one control with two
+   paths, AND the mode that text promised, from ONE evaluation of the verdict.
+
+   Naming only the gentle path would be the "graceful stop that silently became
+   a force stop" #486 D1 refuses, moved from the code into the sentence. But
+   the sentence alone cannot keep that promise: this fleet snapshot is up to
+   one poll old (POLL_MS), and the collector re-reads the ping map when the
+   POST lands. A box crossing the wedge boundary in that window let an operator
+   confirm the gentle sentence over a host that then ran `stop --force` — one
+   rule, still, but evaluated at two times, which is two answers.
+
+   So `mode` rides along on the request as the operator's AUTHORISATION: not an
+   instruction to the collector, which still decides for itself, but a record
+   of which sentence was on screen. The collector compares the two and refuses
+   if they disagree, having fired nothing. Both fields come out of one `u`
+   here for the reason the whole round exists — read the verdict twice and the
+   words and the mode could themselves drift apart. */
+function restartPlan(box,d){var u=unreachableBox(d);return{mode:u?"force":"graceful",
+  ask:u
+  ?"Restart "+box+"? It has stopped answering, so it is FORCE-STOPPED — killed outright — and then started. Any running session is lost."
+  :"Restart "+box+"? It is stopped and started again."};}
+/* Ask, then fire what was asked. One helper so both entry points — the access
+   panel and the detail view — cannot drift into posting different bodies. */
+function restartClick(box,d){var p=restartPlan(box,d);if(confirm(p.ask))cmd("restart",{box:box,mode:p.mode});}
 function buildOps(){var list=document.getElementById("opslist");if(!list)return;var working=ROSTER.filter(function(u){return u.state==="working"&&dataOf(UNITID(u),u.room).cur;});
   var cc=document.getElementById("ops-count");if(cc)cc.textContent="· "+working.length;
   list.innerHTML=working.length?working.map(function(u){var d=dataOf(UNITID(u),u.room),vc=VENDORCOL(u.agent),kc=u.room==="builder"?"#f7bd4e":u.room==="reviewer"?"#5cb4ff":"#c98bff";
@@ -6535,7 +6633,10 @@ if(_railL)_railL.addEventListener("click",function(e){
     cmd(on?"power-on":"power-off",{box:box});return;
   }
   var b=e.target.closest(".lbtn");if(!b)return;
-  if(b.id==="ac-restart"){if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});}
+  if(b.id==="ac-restart"){restartClick(box,d);}
+  /* Its own verb on the wire too, not a flag on power-off: the collector must
+     never be able to reach a force stop except by being asked for one. */
+  else if(b.id==="ac-force"){if(confirm("Force stop "+box+"? The guest is KILLED where it stands — this is `incus stop --force`, not a shutdown, and any running session is lost. Use it when a graceful stop has hung."))cmd("force-stop",{box:box});}
   else if(b.id==="ac-repo"){if(d.repo)window.open(repoURL(d.repo),"_blank","noopener");}
   else if(b.id==="ac-term"){
     /* A browser cannot open a shell into a box. Hand over the command the
@@ -6582,7 +6683,7 @@ document.getElementById("a-pause").addEventListener("click",function(){
 });
 document.getElementById("a-restart").addEventListener("click",function(){
   if(!LIVE)return;var box=BOX;
-  if(confirm("Restart "+box+"? It is stopped and started again."))cmd("restart",{box:box});
+  restartClick(box,dataOf(BOX,ROOM));
 });
 document.getElementById("a-logs").addEventListener("click",function(){
   if(LIVE)return openLogs(BOX,"");
@@ -6661,6 +6762,25 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   matched:function(){return matchedFloorUnits().map(UNITID);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
+  /* The SHIPPED confirm sentence for Restart AND the mode it authorises, over
+     whatever unit data it is handed (#486). A confirm() dialog is unreadable
+     to a walk until it has already been answered, and the thing that has to be
+     asserted is not that a dialog appeared but that its WORDS match the path
+     the collector will take — and now, that the mode put on the wire is the
+     one those words promised, which is the whole of round 2's fix. Both come
+     back from one call because they come from one evaluation.
+
+     A hook, not a second copy: the reconstruction
+     a test would otherwise write is exactly the independent threshold this
+     round deleted. */
+  restartPlan:function(box,d){return restartPlan(box,d);},
+  /* ...and its other half: the sentence an operator is left with AFTER the
+     action, over a reply this walk can name exactly. The escalation is
+     disclosed twice — before the click and after it — so both sentences are
+     assertable, and neither is reconstructed test-side. */
+  cmdSay:function(action,results){return cmdSay(action,results);},
+  /* ...and the failure sentence, which is the half N6 found mute. */
+  cmdSayFail:function(action,results,why){return cmdSayFail(action,results,why);},
   /* camstats() — the portrait pipeline's stated behavior, checkable on a
      real fleet (same ethos as guides: a claim should be a lookable-at).
      buildsLastSec MUST read 0 with a stable roster — a deterministic still

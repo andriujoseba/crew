@@ -62,6 +62,93 @@ t "fleet: cron sub-shape complete" True "$(body GET /api/fleet | jqf "
 all(set(('ok','last','age')) <= set(u['cron']) for u in d['units'])")"
 
 
+# ===========================================================================
+# #486 — ONE WEDGE RULE, decided here and SERVED. The page used to re-derive
+# it from the miss count against a 3 of its own while this module wedges at
+# CREW_FLOOR_PING_FAILS, so at this suite's own threshold of 2 the collector
+# force-stopped a guest whose restart confirmation still promised a graceful
+# stop. These assert the rule at a NON-DEFAULT threshold — the drift is
+# invisible at 3, which is exactly why it survived the first build.
+# ===========================================================================
+echo "== the wedge rule (#486)"
+
+# ff_wedged THRESHOLD FAILS fresh|stale ok|no — wedged() itself, under an
+# operator's chosen CREW_FLOOR_PING_FAILS. A child process per call because
+# ping.py reads the environment at import, which is the same thing that makes
+# the threshold unknowable to a constant written into the page.
+#
+# `stale` is taken from the module rather than written here as a number: the
+# stale window is derived from the threshold, so a literal would be wrong for
+# some of the very thresholds these cases exist to vary.
+ff_wedged() {
+  CREW_FLOOR_PING_FAILS="$1" FF_SRV="$FLOOR/server" FF_PING="$2 $3 $4" python3 - <<'PY'
+import os
+import sys
+import time
+sys.path.insert(0, os.environ["FF_SRV"])
+from floor.fleet import wedged
+from floor.ping import PING_STALE_AFTER_S
+fails, age, ok = os.environ["FF_PING"].split()
+now = time.time()
+print(wedged({"ok": ok == "ok", "fails": int(fails), "err": "",
+              "ts": now - (0 if age == "fresh" else PING_STALE_AFTER_S + 1)},
+             now))
+PY
+}
+# THE case the round turned on: two misses, at a floor configured for two.
+# The page's old constant said "still fine" here while the collector killed
+# the guest.
+t "wedge: two misses at a threshold of two is wedged" True "$(ff_wedged 2 2 fresh no)"
+# The same ping, at the 3 the page used to bake in — proving the verdict
+# tracks the operator's setting and not a number written anywhere in crew.
+t "wedge: the same ping at a threshold of three is not" False "$(ff_wedged 3 2 fresh no)"
+t "wedge: a threshold of one wedges on the first miss" True "$(ff_wedged 1 1 fresh no)"
+# A box that ANSWERED is never wedged, however the counter got there.
+t "wedge: a box that answers is never wedged" False "$(ff_wedged 2 9 fresh ok)"
+# Unmeasured is not unreachable. The cost of being wrong in this direction is
+# a killed session, against a graceful restart that merely times out.
+t "wedge: a stale ping is unmeasured, not wedged" False "$(ff_wedged 2 9 stale no)"
+
+# ...and the verdict is SERVED, so no reader has to recombine the evidence.
+# The collector under this suite runs at CREW_FLOOR_PING_FAILS=2 (run.sh), so
+# these are read at a non-default threshold too.
+#
+# This suite is sourced fourth, well before the tier has had its two rounds,
+# so wait for the fact rather than for the machine to be fast enough — the
+# same deadline idiom floor/ping.sh uses on the same box.
+FF_WD=$(( $(date +%s) + 60 ))
+while [ "$(uf ff-wedged 'u["ping"] is not None and u["ping"]["wedged"]')" != "True" ] \
+      && [ "$(date +%s)" -lt "$FF_WD" ]; do sleep 1; done
+t "wedge: the verdict reaches the wire" True "$(uf ff-wedged 'u["ping"]["wedged"] is True')"
+t "wedge: a healthy box is served not-wedged" False "$(uf ff-working 'u["ping"]["wedged"]')"
+# Served BESIDE the evidence, not instead of it: an operator reading the
+# payload still sees why, and the page still has nothing to recombine.
+t "wedge: the evidence is served beside the verdict" True \
+  "$(uf ff-wedged 'isinstance(u["ping"]["fails"], int) and "stale" in u["ping"]')"
+# The seam the whole fix rests on: the thing served, the thing the page paints
+# and the thing restart escalates on must be ONE call. Pinned at the source
+# because a payload assertion cannot see whether the value came from wedged()
+# or from a second spelling that happens to agree today.
+if grep -q '"wedged": wedged(p, now)' "$FLOOR/server/floor/fleet.py"; then
+  ok "wedge: the served verdict is wedged() itself"
+else
+  fail "wedge: the served verdict is wedged() itself" \
+       "Fleet.get publishes something other than the rule the control asks"
+fi
+if grep -q 'return wedged(p, time.time())' "$FLOOR/server/floor/fleet.py"; then
+  ok "wedge: the control escalates on the same call"
+else
+  fail "wedge: the control escalates on the same call" \
+       "box_unreachable does not ask wedged()"
+fi
+# The page holds NO threshold. Asserted on all three copies — the source and
+# both generated pages — as an absence, because absence is what has to hold:
+# any comparison of the served miss count against a number is the bug this
+# round fixed, whatever it is spelled.
+FF_PAGE_THRESH="$(grep -n 'ping\.fails *>' "$FLOOR/src/app.js" "$FLOOR/index.html" \
+                       "$FLOOR/dev/whiteboard.html" || true)"
+t "wedge: no page-side threshold survives anywhere" "" "$FF_PAGE_THRESH"
+
 # --- source invariants for the two fail-open paths ------------------------
 # Both are conditions a stub fleet cannot stage — a `box list` that fails only
 # sometimes, and a ping thread that outlives its join — so they are pinned at

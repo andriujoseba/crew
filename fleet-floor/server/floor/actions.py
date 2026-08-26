@@ -19,6 +19,24 @@ ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
 ACTION_WORKERS = 8
 
 
+def force_stop_argv(box):
+    """The host command that stops a guest which cannot stop itself (#486).
+
+    Every stop the floor could fire was graceful: `box down` is `incus stop`
+    with neither `--force` nor a timeout, so against a guest that can no
+    longer schedule its own shutdown it runs out ACTION_TIMEOUT_S and the
+    action reports failure. The one box state that needs stopping was the one
+    state the console could not stop.
+
+    Deliberately box's own non-interactive incus passthrough and NOT a new
+    `box down --force`: heavy-duty/box#11's ownership rule puts that flag
+    outside box, so this carries no cross-repo dependency (D2). One definition
+    because two call sites fire it — the `force-stop` action and restart's
+    recovery — and a second spelling is a second thing to keep in step.
+    """
+    return ["box", "incus", box, "--", "stop", "--force"]
+
+
 def floor_message_prompt(operator_text):
     """Wrap an operator message in the shared one-shot environment contract."""
     try:
@@ -154,11 +172,20 @@ def do_command(fleet, body):
         if box not in roster:
             return 400, {"ok": False, "error": "unknown box %r" % box}
 
-    def one(name, argv, timeout=ACTION_TIMEOUT_S, stdin_data=None):
+    def one(name, argv, timeout=ACTION_TIMEOUT_S, stdin_data=None, step=None):
         rc, out, err = run(argv, timeout, stdin_data)
         ok = rc == 0
-        log("%s %s -> rc %d" % (action, name, rc))
-        return {"box": name, "ok": ok, "out": (out or err).strip()[-400:]}
+        # `step` names WHICH call this row is, for the actions that now have
+        # more than one shape: restart reaches its box gracefully or by force
+        # depending on whether the box still answers, and "the action records
+        # what it did" is worthless if the record cannot say which (#486 D4).
+        # Additive and only where a caller passes one, so every row this
+        # module wrote before carries exactly the keys it carried before.
+        log("%s %s%s -> rc %d" % (action, name, " (%s)" % step if step else "", rc))
+        row = {"box": name, "ok": ok, "out": (out or err).strip()[-400:]}
+        if step:
+            row["step"] = step
+        return row
 
     def in_box(name, script, stdin_data=None):
         return one(name, ["box", "exec", name, "--", "bash", "-lc", script],
@@ -211,9 +238,77 @@ def do_command(fleet, body):
     elif action == "resume":
         results.append(in_box(box, RESUME_SH))
     elif action == "restart":
-        r = one(box, ["box", "down", box])
-        results.append(r)
-        results.append(one(box, ["box", "start", box]))
+        # Force-then-start recovery WHEN THE BOX IS UNREACHABLE, and only then
+        # (#486 D3). A box that still answers is restarted exactly as it was
+        # before this branch existed — `box down`, then `box start` — because
+        # a restart that quietly became a kill is the escalation D1 refuses,
+        # one verb over.
+        #
+        # The predicate is the ping tier's own wedge rule, asked of the fleet
+        # rather than re-derived here: what the console paints UNREACHABLE and
+        # what this escalates on have to be one fact, or an operator meets two
+        # answers about the same box mid-incident.
+        #
+        # ONE FACT IS NOT ENOUGH; IT HAS TO BE ONE DECISION. Publishing
+        # `ping.wedged` stopped the page spelling a rule of its own, but the
+        # page still read it from a snapshot up to one poll old while this
+        # asked the ping map again on arrival. One rule evaluated at two times
+        # is two answers: a box crossing the wedge boundary inside that window
+        # let an operator confirm "it is stopped and started again" over a
+        # host that then ran `stop --force`. Disclosing the kill afterwards is
+        # not the same thing as being authorised to do it.
+        #
+        # So the confirmed path travels WITH the request. `mode` is not an
+        # instruction — the collector still decides, exactly as above — it is
+        # the operator's authorisation, a record of which sentence they were
+        # shown. The two are compared, and a disagreement REFUSES rather than
+        # picking a winner: nothing is fired at the host, in either direction.
+        #
+        # Absent means "graceful", which is what a bare restart meant before
+        # this issue existed. That keeps the old request shape's old meaning
+        # and makes the escalation reachable only from something that showed a
+        # human the word FORCE-STOPPED — a client that names no mode cannot
+        # kill a guest by arriving at the wrong moment.
+        mode = str(body.get("mode", "graceful"))
+        if mode not in ("graceful", "force"):
+            return 400, {"ok": False, "error": "unknown restart mode %r" % mode}
+        verdict = "force" if fleet.box_unreachable(box) else "graceful"
+        if mode != verdict:
+            # Refuse SYMMETRICALLY. Recovering into a gentler path is the
+            # harmless direction, but an operator who was told "any running
+            # session is lost" and got something else still met a console that
+            # does not do what it says. One predicate, one behaviour.
+            became = ("has stopped answering since that dialog, so restarting "
+                      "it now would FORCE-STOP it"
+                      if verdict == "force" else
+                      "is answering again since that dialog, so restarting it "
+                      "now would stop it gracefully")
+            log("restart %s refused (confirmed %s, now %s)" % (box, mode, verdict))
+            # Re-poll so the operator's next click carries the new verdict
+            # rather than the snapshot that just went stale under them.
+            fleet.request_refresh()
+            return 409, {
+                "ok": False,
+                # REFUSED is not FAILED, and the page must be able to tell them
+                # apart without parsing prose: nothing ran, so no per-box rows
+                # exist to carry the news the way a failed action's do.
+                "refused": True,
+                "confirmed": mode,
+                "verdict": verdict,
+                "error": "%s %s. Nothing was done — confirm again." % (box, became),
+            }
+        if verdict == "force":
+            results.append(one(box, force_stop_argv(box), step="force-stop"))
+        else:
+            results.append(one(box, ["box", "down", box], step="down"))
+        results.append(one(box, ["box", "start", box], step="start"))
+    elif action == "force-stop":
+        # ITS OWN ACTION, never an escalation from a graceful one (#486 D1):
+        # an operator who fired Power off must not discover it became a kill.
+        # That is also why nothing here checks reachability first — force is
+        # what was asked for, and a control that second-guessed the operator
+        # would be as surprising in the other direction.
+        results.append(one(box, force_stop_argv(box), step="force-stop"))
     elif action == "power-off":
         results.append(one(box, ["box", "down", box]))
     elif action == "power-on":

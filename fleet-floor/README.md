@@ -116,6 +116,24 @@ tier would run at the slow tier's cadence — and is overlaid onto the snapshot
 at read time, so it is never served up to a minute stale. Three consecutive
 misses declare a box unreachable; one dropped ping is scheduler noise.
 
+**The wedge verdict is the collector's, and it is served.** `CREW_FLOOR_PING_FAILS`
+moves that three, so anything that re-derives "unreachable" from the miss count
+is holding a number the operator may have changed. `fleet.wedged()` decides it
+once — the page paints `UNREACHABLE` from it, restart escalates to a force stop
+on it, and `ping.wedged` carries it to the console beside the evidence. A stale
+heartbeat is *unmeasured*, not unreachable, and takes the graceful path: the
+cost of being wrong there is a killed session.
+
+**And the console confirms the mode it then asks for.** One rule read at two
+times is still two answers: the page confirms from a snapshot up to one poll
+old, and the collector re-reads the ping map when the POST lands. So a restart
+carries `mode` — `graceful` or `force`, whichever the confirmation named — as
+the operator's *authorisation*, not as an instruction. The collector decides
+for itself as before, compares, and **refuses `409` having fired nothing** if
+the box moved in between. A request naming no mode means `graceful`, a bare
+restart's meaning before all this, so nothing can escalate without having shown
+a human the word.
+
 **Credentials are reported, never polled.** `gh auth status` inside every box
 on every poll was ~7,000 api.github.com requests a day to re-derive a fact
 that changes when a token expires, and at ~450ms it was the slowest thing in a
@@ -173,8 +191,12 @@ minutes before `run_session`'s own timeout resolves it.
 - **Control** — every action is applied by the host: pause/resume comment and
   restore the box's crontab line — and a box with no armed `tick.sh` line
   answers **`nothing to pause`** at 200, because an action with nothing to do
-  is not a refusal (#188) — power/restart are `box down`/`box start`, and
-  a message starts a real one-shot session of that box's own vendor CLI, logged
+  is not a refusal (#188) — power/restart are `box down`/`box start`, with
+  one exception: **force stop** is `box incus <box> -- stop --force`, its own
+  action and never an escalation from a graceful one, and **restart** takes
+  that same path *only* where the box has stopped answering the heartbeat, so
+  a guest that cannot schedule its own shutdown can still be stopped (#486).
+  A message starts a real one-shot session of that box's own vendor CLI, logged
   to `duty/logs/` and marked in `duty.log` like any other session. The prompt
   travels as **stdin bytes** and is read from a file inside the box, so it never
   enters a shell command line.
@@ -189,7 +211,7 @@ no build step, no dependencies.
 |---|---|---|
 | `/` | GET | the page |
 | `/api/fleet` | GET | latest telemetry snapshot |
-| `/api/command` | POST | `message`, `pause`, `resume`, `restart`, `power-on/off`, `start-all`, `stop-all`, `wake-silent` |
+| `/api/command` | POST | `message`, `pause`, `resume`, `restart`, `power-on/off`, `force-stop`, `start-all`, `stop-all`, `wake-silent` |
 | `/api/logs` | GET | tail `duty.log` or one session log |
 | `/healthz` | GET | liveness |
 
