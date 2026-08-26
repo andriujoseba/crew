@@ -49,7 +49,7 @@ case "$*" in
   *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
   *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
-  *"--label blocked"*)      cat "$TR_FIX/blocked.$p.json" ;;
+  *"number,body,updatedAt,labels"*) cat "$TR_FIX/board.$p.json" ;;
   *"--state all"*)          cat "$TR_FIX/numstates.json" ;;
   *"number,body,labels,updatedAt"*) cat "$TR_FIX/board.$p.json" ;;
   *"issue list"*)           cat "$TR_FIX/stray.$p.json" ;;
@@ -170,7 +170,7 @@ t triage253-reads-notifications-once 1 "$(trc 'api notifications')"
 t triage253-reads-needs-triage-once   1 "$(trc '--label needs-triage')"
 t triage253-reads-strays-once         1 "$(trc 'number,labels,updatedAt')"
 t triage253-reads-discussions-once    1 "$(trc 'api graphql')"
-t triage253-reads-blocked-once        1 "$(trc '--label blocked')"
+t triage253-reads-declarations-once   1 "$(trc 'number,body,updatedAt,labels')"
 t triage253-gh-calls-with-mention     5 "$(grep -vc '^SESSION' "$TR_CALLS")"
 tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
 tr_run 0
@@ -313,7 +313,7 @@ tr_mention_ln="$(tr_ln 'run_session mention')"
 tr_decide_ln="$(tr_ln '[ -z "$signals" ]')"
 # shellcheck disable=SC2016  # ditto
 for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
-             '_triage_discussion_items "$R"' '--label "$LABEL_BLOCKED"'; do
+             '_triage_discussion_items "$R"' 'number,body,updatedAt,labels'; do
   probe_ln="$(tr_ln "$probe")"
   if [ -n "$probe_ln" ] && [ "$probe_ln" -gt "$tr_mention_ln" ]; then
     r1=after; else r1="BEFORE($probe_ln vs $tr_mention_ln)"; fi
@@ -407,6 +407,99 @@ tr_run 0
 t triage468-empty-set-launches-nothing 0 "$(trc '^SESSION triage$')"
 if [ -f "$TR_PROMPT.triage" ]; then r1=RENDERED; else r1=absent; fi
 t triage468-empty-set-renders-no-prompt absent "$r1"
+
+# --- #471: declared predecessor state changes wake a scoped re-read --------
+tr471_issue() {  # tr471_issue NUMBER BODY
+  jq -nc --argjson n "$1" --arg body "$2" \
+    '[{number:$n,body:$body,labels:[{name:"ready"}],updatedAt:"2026-08-26T09:00:00Z"}]'
+}
+tr471_states() {  # tr471_states NUMBER STATE [NUMBER STATE ...]
+  local rows='[]' number state
+  while [ "$#" -gt 0 ]; do
+    number="$1"; state="$2"; shift 2
+    rows="$(jq -c --argjson n "$number" --arg s "$state" \
+      '. + [{number:$n,state:$s}]' <<<"$rows")"
+  done
+  printf '%s\n' "$rows"
+}
+
+TR471_ONE="$(tr471_issue 471 'Blocked by #900. This discharged declaration remains as prose.')"
+
+# A cold edge is work once, including the historical-prose shape where the
+# predecessor landed before this ledger existed. The successful session
+# records the exact edge state, so an unchanged second tick is silent.
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 CLOSED)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_run 0
+t triage471-closed-prose-wakes-once 1 "$(trc '^SESSION triage$')"
+if grep -Fq '#471 depends on #900: UNSEEN -> CLOSED' "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage471-closed-prose-names-transition named "$r1"
+if grep -q '^o/r#471#900 CLOSED$' "$TRD/.seen-graph"; then r1=edge-keyed; else r1=MISSING; fi
+t triage471-ledger-keys-on-edge edge-keyed "$r1"
+tr_tick 0
+t triage471-closed-prose-second-tick-quiet 0 "$(trc '^SESSION triage$')"
+
+# The #159 shape: a predecessor moves from OPEN to MERGED while the dependant
+# remains open. The prompt names both ends, the transition, and the bounded
+# body re-read; the engine itself performs no board write.
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 OPEN)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_run 0
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 MERGED)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_tick 0
+t triage471-merged-predecessor-wakes 1 "$(trc '^SESSION triage$')"
+if grep -Fq '#471 depends on #900: OPEN -> MERGED' "$TR_PROMPT.triage" && \
+   grep -Fq "Re-read each dependant's body" "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage471-merged-prompt-names-edge-and-action named "$r1"
+if grep -Eq 'issue (edit|comment)|api .*(POST|PATCH)|--add-label|--remove-label' "$TR_CALLS"; then
+  r1=MUTATED; else r1=read-only; fi
+t triage471-path-writes-no-label-or-comment read-only "$r1"
+t triage471-reuses-existing-api-call-count 11 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage471-reads-open-issues-once 1 "$(trc 'number,body,updatedAt,labels')"
+if grep -Fq 'These are leads, not verdicts' "$TR_PROMPT.triage"; then
+  r1=present; else r1=MISSING; fi
+t triage471-lead-not-verdict-caveat present "$r1"
+
+# Reopening is a state change too: comparison is exact, not an assumed
+# one-way ordering of GitHub's state words.
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 OPEN)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_tick 0
+if grep -Fq '#471 depends on #900: MERGED -> OPEN' "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage471-reopened-predecessor-wakes named "$r1"
+
+# Three edges on one dependant are independent ledger keys. Advancing one per
+# tick must produce one named transition per tick rather than collapsing the
+# whole dependant after the first wake.
+TR471_THREE="$(tr471_issue 472 'Blocked by #901, #902, #903.')"
+tr_fix '[]' '[]' '[]' '[]' '[]' \
+  "$(tr471_states 901 OPEN 902 OPEN 903 OPEN)" "$TR471_THREE" "$TR471_THREE"
+tr_run 0
+t triage471-three-edges-recorded 3 "$(grep -c '^o/r#472#90[123] OPEN$' "$TRD/.seen-graph")"
+for landed in 901 902 903; do
+  s901=OPEN; s902=OPEN; s903=OPEN
+  [ "$landed" -ge 901 ] && s901=MERGED
+  [ "$landed" -ge 902 ] && s902=MERGED
+  [ "$landed" -ge 903 ] && s903=MERGED
+  tr_fix '[]' '[]' '[]' '[]' '[]' \
+    "$(tr471_states 901 "$s901" 902 "$s902" 903 "$s903")" \
+    "$TR471_THREE" "$TR471_THREE"
+  tr_tick 0
+  t "triage471-three-edges-tick-$landed-wakes-once" 1 \
+    "$(grep -c 'depends on' "$TR_PROMPT.triage")"
+done
+
+# Signal (e) still consumes the blocked subset from the widened read and
+# renders its established lead alongside (f); no existing verdict moved.
+tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
+tr_run 0
+if grep -Fq 'Possibly unblockable issues: #244' "$TR_PROMPT.triage"; then
+  r1=unchanged; else r1=MISSING; fi
+t triage471-signal-e-unblockable-verdict-unchanged unchanged "$r1"
 
 # --- #359: successful triage sessions settle ledgers at their exit state ---
 TR359_T1='2026-08-05T10:00:00Z'

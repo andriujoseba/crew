@@ -56,18 +56,26 @@ _triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUM
   ' <<<"$blocked_json" 2>/dev/null
 }
 
-_triage_graph_items() {  # _triage_graph_items REPO ISSUES_JSON NUMSTATES
-  local repo="$1" issues_json="$2" numstates="$3"
-  jq -r --arg repo "$repo" --argjson S "$numstates" '
+_triage_graph_edges() {  # _triage_graph_edges REPO ISSUES_JSON
+  local repo="$1" issues_json="$2"
+  jq -c --arg repo "$repo" '
     def blockers:
       [ match("[Bb]locked by([^.]*)"; "g").captures[0].string ] | join(" ")
       | [ scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0] ];
-    .[] as $issue
-    | (($issue.body // "") | blockers[]) as $predecessor
-    | ($S[$predecessor] // "UNKNOWN") as $state
-    | select($state == "OPEN" or $state == "CLOSED" or $state == "MERGED")
-    | "\($repo)#\($issue.number)#\($predecessor) \($state)"
+    [ .[] as $issue
+      | (($issue.body // "") | blockers[]) as $predecessor
+      | {edge:"\($repo)#\($issue.number)#\($predecessor)", predecessor:$predecessor} ]
   ' <<<"$issues_json" 2>/dev/null
+}
+
+_triage_graph_items() {  # _triage_graph_items EDGES_JSON NUMSTATES
+  local edges_json="$1" numstates="$2"
+  jq -r --argjson S "$numstates" '
+    .[]
+    | ($S[.predecessor] // "UNKNOWN") as $state
+    | select($state == "OPEN" or $state == "CLOSED" or $state == "MERGED")
+    | "\(.edge) \($state)"
+  ' <<<"$edges_json" 2>/dev/null
 }
 
 _triage_graph_changes() {  # _triage_graph_changes LEDGER; stdin: EDGE STATE
@@ -300,20 +308,18 @@ _triage_repo() {
   # deliberately narrow (see lib/jq/blockers.jq — corpus-tested); issue and
   # PR numbering is shared, so the state map needs both lists. Fail-safe by
   # construction: an unknown number counts as still-open.
-  local issue_json blocked_json numstates graph_seed="" graph_items=""
+  local issue_json blocked_json numstates graph_edges='[]' graph_items=""
   local unblockable_items="" fresh_unblockable=""
   issue_json="$(gh issue list -R "$R" --state open --limit 200 \
     --json number,body,updatedAt,labels 2>/dev/null || echo '[]')"
   blocked_json="$(jq -c --arg b "$LABEL_BLOCKED" \
     '[.[] | select([.labels[].name] | index($b))]' <<<"$issue_json" 2>/dev/null || echo '[]')"
-  graph_seed="$(_triage_graph_items "$R" "$issue_json" \
-    "$(jq -c '[.[] | (.body // "") | [scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0]]]
-      | add // [] | unique | map({key:.,value:"OPEN"}) | from_entries' <<<"$issue_json" 2>/dev/null || echo '{}')")"
-  if [ -n "$graph_seed" ]; then
+  graph_edges="$(_triage_graph_edges "$R" "$issue_json" || echo '[]')"
+  if [ "$(jq 'length' <<<"$graph_edges" 2>/dev/null || echo 0)" -gt 0 ]; then
     numstates="$( { gh issue list -R "$R" --state all --limit 500 --json number,state
                     gh pr    list -R "$R" --state all --limit 500 --json number,state; } 2>/dev/null \
       | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo '{}')"
-    if ! graph_items="$(_triage_graph_items "$R" "$issue_json" "$numstates")"; then
+    if ! graph_items="$(_triage_graph_items "$graph_edges" "$numstates")"; then
       warn "$R: dependency graph parse failed"
       graph_items=""
     fi
@@ -393,7 +399,7 @@ _triage_repo() {
   # declined vs never got there — is the whole reason this is safe.
   if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
     local post_board_json post_nt="" post_stray="" post_discussions=""
-    local post_blocked post_numstates post_unblockable="" post_graph="" post_graph_seed=""
+    local post_blocked post_numstates post_unblockable="" post_graph="" post_graph_edges='[]'
     post_board_json="$(gh issue list -R "$R" --state open --limit 200 \
       --json number,body,labels,updatedAt 2>/dev/null || echo err)"
     if [ "$post_board_json" = err ]; then
@@ -424,15 +430,13 @@ _triage_repo() {
       if [ "$post_blocked" = err ]; then
         warn "$R: post-session blocked parse failed"
       fi
-      post_graph_seed="$(_triage_graph_items "$R" "$post_board_json" \
-        "$(jq -c '[.[] | (.body // "") | [scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0]]]
-          | add // [] | unique | map({key:.,value:"OPEN"}) | from_entries' <<<"$post_board_json" 2>/dev/null || echo '{}')")"
-      if [ -n "$post_graph_seed" ]; then
+      post_graph_edges="$(_triage_graph_edges "$R" "$post_board_json" || echo '[]')"
+      if [ "$(jq 'length' <<<"$post_graph_edges" 2>/dev/null || echo 0)" -gt 0 ]; then
         post_numstates="$( { gh issue list -R "$R" --state all --limit 500 --json number,state
                             gh pr    list -R "$R" --state all --limit 500 --json number,state; } 2>/dev/null \
           | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo err)"
         if [ "$post_numstates" = err ] || ! post_graph="$(_triage_graph_items \
-             "$R" "$post_board_json" "$post_numstates")"; then
+             "$post_graph_edges" "$post_numstates")"; then
           warn "$R: post-session dependency graph probe failed; ledger left unchanged"
         else
           printf '%s\n' "$post_graph" | _triage_graph_commit
