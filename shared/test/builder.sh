@@ -1827,12 +1827,14 @@ assert_doctrine_quote "$RG_PROMPT" 'under Claiming:' \
 # governing/acceptance references. fragment-round-rules.txt's two occurrences
 # are bare green-head/panel references. attention.txt, ci-red.txt,
 # fragment-floor-envelope.txt, fragment-oneshot-rules.txt,
-# fragment-signals.txt, fragment-unblockable.txt, fragment-wt-rules.txt,
+# fragment-graph-changed.txt, fragment-signals.txt, fragment-unblockable.txt,
+# fragment-wt-rules.txt,
 # hygiene.txt, mention.txt,
 # rebase.txt, review.txt, and triage.txt contain no direct occurrence.
 declare -A doctrine_builder_occurrences=(
   [attention.txt]=0 [build.txt]=2 [ci-red.txt]=0
   [fragment-floor-envelope.txt]=0 [fragment-oneshot-rules.txt]=0
+  [fragment-graph-changed.txt]=0
   [fragment-round-rules.txt]=2 [fragment-signals.txt]=0
   [fragment-unblockable.txt]=0
   [fragment-wt-rules.txt]=0 [hygiene.txt]=0 [mention.txt]=0
