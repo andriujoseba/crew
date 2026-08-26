@@ -4668,9 +4668,17 @@ t d479-structural-without-an-issue-says-so said "$r1"
 # D2 — EVERY failure branch on this path warns, including the fallback that
 # cannot even mark the thread unread. That third branch is not reachable from a
 # fixture without breaking jq itself, so the region is counted: three failure
-# warns, and a fourth swallow cannot be added without failing this.
+# warns, and a warn removed from any of them fails this.
 t d479-every-failure-branch-warns 3 \
   "$(awk '/^_resume_attach_comments\(\) \{$/,/^\}$/' "$BMOD" | grep -c 'warn "')"
+# ...and the swallows are counted beside them, because the warn count alone does
+# NOT close the property the pair is here for. Counting warns catches a warn
+# taken away; it cannot catch one that was never written, since an appended
+# `|| spliced=""` with no warn leaves the count at three and passes. Pinning
+# both numbers is what makes a silent fourth swallow impossible: adding one
+# moves this count, and warning about it moves the other.
+t d479-no-swallow-goes-unwarned 2 \
+  "$(awk '/^_resume_attach_comments\(\) \{$/,/^\}$/' "$BMOD" | grep -c '||.*=""')"
 
 # THE ISSUE-REF PATTERN HAS ONE DEFINITION. The escalation and the fingerprints
 # must agree about which issue a PR answers, and a second copy would drift
