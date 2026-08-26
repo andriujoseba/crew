@@ -381,6 +381,7 @@ t triage468-mixed-one-signal-block 1 \
 
 # Scope changes, not quality changes: the old issue contract, outcome list and
 # label-event rule remain exact substrings, behind the newly named work.
+# shellcheck disable=SC2016  # the backticks are literal prompt prose
 for required in \
   'The whole-board sweep runs hourly under `hygiene.txt`; this fast-tick session does not enumerate the board for more work.' \
   'You may act outside the named set when resolving one of its items requires it, but do not enumerate outside the set.' \
