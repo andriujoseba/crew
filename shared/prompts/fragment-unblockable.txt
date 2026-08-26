@@ -1,2 +1,1 @@
-This fast-tick session was launched for the following named work:
-{{SIGNAL_ITEMS}}
+- Possibly unblockable issues: {{NUMS}}. Treat these as leads, not verdicts: every issue or PR named in their "Blocked by" clause must now read CLOSED or MERGED. Re-read each body yourself, confirm the blockers really are the ones named and really did land, then flip to ready per {{DOCTRINE_TRIAGE}}. If a flag is wrong, leave the label alone and say why in your summary — a false lead here is a parser bug worth knowing about.

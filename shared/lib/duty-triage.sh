@@ -289,7 +289,7 @@ _triage_repo() {
   log "$R: signals:$signals launching triage session"
   dir="$WORK_DIR/${R//\//__}"
   ensure_checkout "$R" "$dir" || return 0
-  local signal_items="" signal_block=""
+  local signal_items="" signal_block="" unblockable_item=""
   if [ -n "$fresh_nt" ]; then
     signal_items="- Needs-triage issues: $(printf '%s\n' "$fresh_nt" | _triage_signal_numbers)"
   fi
@@ -302,10 +302,12 @@ _triage_repo() {
 }- Unresolved discussions without your voice: $(printf '%s\n' "$fresh_discussions" | _triage_signal_numbers)"
   fi
   if [ -n "$unblockable" ]; then
+    unblockable_item="$(render_prompt fragment-unblockable.txt \
+      NUMS="#${unblockable//,/, #}")"
     signal_items="${signal_items:+$signal_items
-}- Possibly unblockable issues: #${unblockable//,/, #}. Treat these as leads, not verdicts: re-read each body yourself, confirm the blockers really are the ones named and really did land, then flip to ready per {{DOCTRINE_TRIAGE}}. If a flag is wrong, leave the label alone and say why in your summary — a false lead here is a parser bug worth knowing about."
+}$unblockable_item"
   fi
-  signal_block="$(render_prompt fragment-unblockable.txt SIGNAL_ITEMS="$signal_items")"
+  signal_block="$(render_prompt fragment-signals.txt SIGNAL_ITEMS="$signal_items")"
   prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" SIGNAL_BLOCK="$signal_block")"
   RUN_SESSION_RC=1
   run_session triage "$R" "$dir" "$TIMEOUT_TRIAGE" "$prompt"
