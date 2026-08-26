@@ -131,12 +131,20 @@ fi
 # already tried, so reaching here means git would demonstrably commit under
 # another droid's name. Running anyway is how the record got corrupted.
 if ! converge_git_identity "$ME"; then
-  warn "git identity does not name $ME and could not be repaired — no session this tick"
+  identity_failure="$(git_identity_failure_message)"
+  warn "$identity_failure — no session this tick"
+  case "${GIT_IDENTITY_FAILURE_KIND:-identity}" in
+    credential)
+      note_auth_failure gh "$GIT_IDENTITY_FAILURE_EVIDENCE"
+      log "duty run end"
+      exit 0
+      ;;
+  esac
   # Once per boot, on the channel the auth watchdog already uses: this is a
   # by-hand repair (git config --global user.email), so re-alerting every five
   # minutes would train the operator to ignore the one channel that matters.
   if [ "$(cat "$DUTY_DIR/.identity-alerted" 2>/dev/null)" != "$boot_id" ]; then
-    alert "🪪 $(hostname): git identity does not name $ME — refusing to run sessions that would commit as somebody else"
+    alert "🪪 $(hostname): $identity_failure — refusing to run sessions that would commit as somebody else"
     echo "$boot_id" >"$DUTY_DIR/.identity-alerted"
   fi
   log "duty run end"
