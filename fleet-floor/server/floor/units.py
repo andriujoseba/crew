@@ -377,7 +377,10 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     u["sessions"] = [{k: s[k] for k in ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply")}
                      for s in sessions[:11]]
     u["spark"] = spark_24h(sessions, now)
-    u["repo"] = next((item["repo"] for item in u["queue"] if item["repo"]), "crew")
+    repo_fallback = ("crew" if u["queue"]
+                     else (u["repos"][0] if u["repos"] else ""))
+    u["repo"] = next((item["repo"] for item in u["queue"] if item["repo"]),
+                     repo_fallback)
 
     if sessions:
         durs = [s["dur"] for s in sessions]

@@ -237,6 +237,48 @@ t "card: aggregate-only live unit keeps crew fallback with configured repos" \
   '{"queue":[{"key":"4 mentions","repo":null}],"repo":"crew","repos":["heavy-duty/ceremony","heavy-duty/box"]}' \
   "$FF_AGGREGATE_UNIT"
 
+# An absent queue is a different state from a repository-less queue item. Keep
+# the established configured-repository target, and keep no target at all when
+# the box advertises no repositories.
+FF_EMPTY_UNITS="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+probe_template = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+{repos}::logstart
+2026-08-25T20:00:00Z duty run start
+::logend
+"""
+
+def build(box, repos):
+    probe = probe_template.format(repos=("::repos %s\n" % repos) if repos else "")
+    units.probe_box = lambda unit, agent_conf: (probe, "")
+    unit = units.build_unit(
+        {"box": box, "agent": "claude", "room": "builder"},
+        "running", {}, 1756152002,
+    )
+    return {"box": box, "queue": unit["queue"], "repo": unit["repo"], "repos": unit["repos"]}
+
+print(json.dumps([
+    build("ff-empty-configured", "heavy-duty/box heavy-duty/ceremony"),
+    build("ff-empty-unconfigured", ""),
+], separators=(",", ":"), sort_keys=True))
+PY
+)"
+t "card: empty queues preserve configured and absent repository fallbacks" \
+  '[{"box":"ff-empty-configured","queue":[],"repo":"heavy-duty/box","repos":["heavy-duty/box","heavy-duty/ceremony"]},{"box":"ff-empty-unconfigured","queue":[],"repo":"","repos":[]}]' \
+  "$FF_EMPTY_UNITS"
+
 # Execute the page's small selector in isolation. This pins what the card
 # opens without coupling the assertion to generated index.html or requiring a
 # browser: a repository-less first item yields the next repository, then crew.
