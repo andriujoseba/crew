@@ -22,7 +22,7 @@ genuinely crew's.
    `claude-bot-andresmgsl`, `codex-bot-andresmgsl`,  `kimi-bot-andresmgsl`.
    The required verdicts are the resolved panel minus the author.
    The maintainer (`danmt`) takes the last word and merges.
-4. **Checks must be green.** crew runs four CI workflows:
+4. **Checks must be green.** crew runs five CI workflows:
    - `ci-shell.yml` — shell syntax and lint, the engine suites, and the
      fleet-floor suite without its browser walk. It runs for `shared/`, `cli/`
      and other engine paths.
@@ -45,6 +45,9 @@ genuinely crew's.
      directory (#500). Add the row in the same PR as the directory — the scope
      job reads the map at the **base** branch, never the head, so the row you
      add labels the PRs that come after it, not the one adding it.
+   - `ci-rerun.yml` — a privileged, label-triggered service for evidenced red
+     checks that fork PR authors cannot rerun themselves. It checks out only
+     the default branch and runs no PR-authored code.
 5. **Feature PRs land their changelog entry as part of the PR**: write
    `changelog.d/<issue>.md` — the release PR assembles those fragments into
    the release notes verbatim.
