@@ -9,6 +9,11 @@ source "$HERE/lib.sh"
 TMP="$(mktemp -d)"
 cleanup() { rm -rf -- "$TMP"; }
 trap cleanup EXIT
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
+export DUTY_DIR="$TMP"
+export HOME="${HOME:-$TMP}"
 
 SOURCE="$TMP/source"
 REMOTE="$TMP/canonical.git"
