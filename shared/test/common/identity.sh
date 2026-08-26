@@ -338,6 +338,49 @@ t gitid-non-numeric-id-writes-nothing 'claude-bot-andresmgsl@users.noreply.githu
 t gitid-incomplete-response-is-not-git-identity api-response "$GIT_IDENTITY_FAILURE_KIND"
 case "$(git_identity_failure_message)" in *'git identity '*) r1=CONFUSED ;; *'GitHub identity response'*) r1=response ;; *) r1=WRONG ;; esac
 t gitid-incomplete-response-message-names-response response "$r1"
+
+# Drive duty.sh's real refusal block twice. gh_identity has already accepted
+# the credential at this point in a tick, so clear_auth_failure models that
+# successful first call before converge_git_identity receives an incomplete
+# login/id pair from its second call. That state is an identity-response
+# failure, not rejected authentication: it must use the once-per-boot identity
+# alert without creating an auth marker or flapping restored/failed alerts on
+# the next tick. Extracting the production block keeps the regression pinned
+# to its actual case routing rather than a test-side copy of it.
+IDENTITY_TICK_DIR="$TMP/incomplete-response-ticks"
+IDENTITY_TICK="$TMP/incomplete-response-tick.sh"
+IDENTITY_ALERTS="$IDENTITY_TICK_DIR/alerts"
+mkdir -p "$IDENTITY_TICK_DIR"
+{
+  printf '%s\n' '#!/usr/bin/env bash' 'set -uo pipefail'
+  # shellcheck disable=SC2016  # writing literal fixture source
+  printf '%s\n' 'source "$SHARED/lib/common.sh"'
+  # shellcheck disable=SC2016  # writing literal fixture source
+  printf '%s\n' 'alert() { printf "%s\n" "$*" >>"$IDENTITY_ALERTS"; }'
+  printf '%s\n' 'warn() { :; }' 'log() { :; }' 'hostname() { printf fixture; }'
+  printf '%s\n' 'converge_git_identity() {'
+  printf '%s\n' '  GIT_IDENTITY_FAILURE_KIND=api-response'
+  printf '%s\n' '  GIT_IDENTITY_FAILURE_EVIDENCE="gh api user returned an incomplete login/id response"'
+  printf '%s\n' '  GIT_IDENTITY_FAILURE_LOGIN=cndgrr'
+  printf '%s\n' '  return 1' '}'
+  printf '%s\n' 'git_identity_failure_message() { printf "GitHub identity response from gh api user failed"; }'
+  printf '%s\n' 'ME=cndgrr' 'boot_id=fixture-boot' 'clear_auth_failure gh'
+  awk '
+    /^if ! converge_git_identity "\$ME"; then$/ { keep=1 }
+    keep && /^# shellcheck source=\.\.\/lib\/duty-attention\.sh/ { exit }
+    keep { print }
+  ' "$DUTYSH"
+} >"$IDENTITY_TICK"
+for _tick in 1 2; do
+  DUTY_DIR="$IDENTITY_TICK_DIR" SHARED="$SHARED" IDENTITY_ALERTS="$IDENTITY_ALERTS" \
+    bash "$IDENTITY_TICK"
+done
+t gitid-incomplete-response-alerts-once-per-boot 1 \
+  "$(grep -c '^🪪 ' "$IDENTITY_ALERTS")"
+t gitid-incomplete-response-does-not-use-auth-alerts 0 \
+  "$(grep -Ec '^🔑 |^✅ ' "$IDENTITY_ALERTS" || true)"
+t gitid-incomplete-response-does-not-write-auth-marker absent \
+  "$([ -f "$IDENTITY_TICK_DIR/.auth-fail.gh" ] && echo PRESENT || echo absent)"
 unset -f gh
 unset GIT_CONFIG_GLOBAL
 

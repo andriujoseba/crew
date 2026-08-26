@@ -298,7 +298,7 @@ converge_git_identity() {
        "$(printf '%s' "$expect" | tr '[:upper:]' '[:lower:]')" ]; then
     GIT_IDENTITY_FAILURE_KIND="identity"
     GIT_IDENTITY_FAILURE_EVIDENCE="gh api user names '$want' after the tick identity was resolved"
-    warn "git identity: the gh credential now names '$want', but differs from the login resolved earlier this tick — the credential rotated mid-tick; git config left untouched"
+    warn "$(git_identity_failure_message) — git config left untouched"
     return 1
   fi
   # Re-checked against the login gh just reported rather than the caller's:
