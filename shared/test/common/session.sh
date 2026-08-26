@@ -99,9 +99,34 @@ t budget-off-writes-no-state-and-raises-nothing 'state-files=0 alerts=0' \
   "$(budget_off_run absent | sed -n '$p')"
 # The gate is silent, not merely harmless: an "off" implementation that logged
 # `reason=budget over=no` every tick would pass the diff above and still change
-# every duty log in the fleet.
+# every duty log in the fleet. Case-INSENSITIVE, because `BUDGET` and `Budget`
+# are the same new line in a duty log and only one of the three spellings would
+# have been caught.
 t budget-off-says-nothing-about-budgets 0 \
-  "$(budget_off_run absent | grep -c budget || true)"
+  "$(budget_off_run absent | grep -ci budget || true)"
+
+# THE BASELINE, which the diff above is not: two off-shapes of the same build
+# agree with each other even when both are wrong, because a line emitted on the
+# off path appears in BOTH arms and the diff stays clean. This is the log three
+# sessions produce when no budget exists at all, written down — so a line the
+# off path grows, in any spelling the grep above might miss, moves this instead.
+#
+# Nothing in it is budget-specific on purpose. It is what run_session said
+# before #464 and must go on saying after it.
+budget_off_golden() {
+  cat <<'GOLDEN'
+SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log
+SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
+SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log
+SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
+SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log
+SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
+GOLDEN
+}
+# The last line is the state-file/alert tally the case above reads; everything
+# before it is the log itself.
+t budget-off-log-output-matches-its-golden "$(budget_off_golden)" \
+  "$(budget_off_run absent | sed '$d')"
 
 
 suite_finish
