@@ -1081,25 +1081,13 @@ engine_report() {
 # `converged_at=` and a family read answers with the first one it meets.
 report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 
-# budget_report NAME — the armed session budgets on one box (#464 D7). ONE
-# exec, and it asks the box for FINISHED ROWS rather than for numbers to
-# render here: the ceilings are written into the state file by the gate that
-# enforces them, so a renderer on this host could disagree with the box about
-# what the bound is. `crew status` prints what comes back verbatim, exactly as
-# it already does with the duty.log tail two screens down.
-#
-# Silence on every failure path, deliberately. An engine older than the budget
-# has no session_budget_report, and a box with no armed lane prints nothing;
-# both are "no section", which is exactly what D7 asks for. Same shape as
-# engine_report's fallback: absence of evidence is not an alarm.
-budget_report() {
-  # shellcheck disable=SC2016  # $HOME must expand INSIDE the box
-  bxn "$1" '
-    [ -r "$HOME/duty/lib/common.sh" ] || exit 0
-    env DUTY_DIR="$HOME/duty" bash -c \
-      ". \"$HOME/duty/lib/common.sh\"; session_budget_report" 2>/dev/null
-  ' 2>/dev/null | tr -d '\r' || true
-}
+# The marker that lets the session budget (#464 D7) ride along with the detail
+# view's duty-log read instead of buying a round trip of its own. See
+# status_probe: #221 fixed the detail view's cost at THREE execs and
+# fleet-floor/test/cli.sh asserts the number, so a fourth question is a
+# different and more expensive change than the one D7 asked for.
+STATUS_PROBE_MARK="::crew-budget-end::"
+
 
 # rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and
 # which rig did it (#220). Read BEFORE hiring, which is the whole point — every
@@ -2010,6 +1998,45 @@ cmd_status() {
     # Stopped and unreachable keep printing "(unreachable)" and keep returning
     # 0, per the narrowness comment at the top of this branch: stopped is a
     # normal state, and #97's failure is reserved for a box that does not exist.
+    # ONE exec for both of this view's box reads — #221's round-trip budget is
+    # THREE and fleet-floor/test/cli.sh asserts the number, so the session
+    # budget rides along with the duty-log tail rather than buying a fourth.
+    #
+    # A box that answers nothing yields no mark, and both halves come back
+    # empty: `log` is then exactly what it was before this, so the unreachable
+    # branch below still rests on the two probes already made and never on
+    # this read's exit status.
+    local probe budget log
+    # The read is INLINE and not a helper: fleet-floor/test/cli.sh pins this
+    # `tail` inside cmd_status and requires the `|| true` beside it, because
+    # the defect it guards is the duty-log read's exit status deciding
+    # reachability. Extracting it would move the guard's subject out from
+    # under it while leaving the property true and unasserted.
+    #
+    # The budget half asks the box for FINISHED ROWS rather than for numbers
+    # to render here. The ceilings are written into the state file by the gate
+    # that enforces them, so a renderer on this host could disagree with the
+    # box about what the bound is — and could not be reached by any offline
+    # suite, while shared/test/common/breaker.sh drives the box-side one
+    # beside the gate.
+    #
+    # Silence on every failure path, deliberately. An engine older than the
+    # budget has no session_budget_report, a box with no armed lane prints
+    # nothing, and a box that answers nothing yields no mark at all — both
+    # halves come back empty, so `log` is exactly what it was before this.
+    # shellcheck disable=SC2016  # $HOME must expand INSIDE the box
+    probe="$(bxn "$b" '
+      [ -r "$HOME/duty/lib/common.sh" ] &&
+        env DUTY_DIR="$HOME/duty" bash -c \
+          ". \"$HOME/duty/lib/common.sh\"; session_budget_report" 2>/dev/null
+      echo "'"$STATUS_PROBE_MARK"'"
+      tail -n 5 ~/duty/duty.log 2>/dev/null
+    ' 2>/dev/null | tr -d '\r' || true)"
+    budget="${probe%%"$STATUS_PROBE_MARK"*}"
+    log="${probe#*"$STATUS_PROBE_MARK"}"
+    [ "$probe" != "$budget" ] || budget=""   # no mark: nothing answered
+    budget="${budget%$'\n'}"
+    log="${log#$'\n'}"
     # #464 D7 — the balance the gate is already keeping, displayed. A budget
     # nobody can read without opening a dotfile is a budget nobody reads, and
     # this is the view an operator opens when a lane has gone quiet.
@@ -2021,14 +2048,10 @@ cmd_status() {
     #
     # NOT telemetry (#327), which owns per-session accounting, outcomes and
     # vendor spend. This is one balance per lane and nothing else.
-    local budget
-    budget="$(budget_report "$b")"
     if [ -n "$budget" ]; then
       echo "budget:"
       printf '%s\n' "$budget"
     fi
-    local log
-    log="$(bxn "$b" 'tail -n 5 ~/duty/duty.log 2>/dev/null' 2>/dev/null | tr -d '\r' || true)"
     if [ -z "$state" ] && [ "$rconv" = unknown ]; then
       echo "  (unreachable)"
     elif [ "$state" = absent ]; then
