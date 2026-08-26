@@ -40,6 +40,8 @@ git -C "$UPSTREAM" add doctrine
 GIT_AUTHOR_DATE=2020-01-01T00:00:00Z GIT_COMMITTER_DATE=2020-01-01T00:00:00Z \
   git -C "$UPSTREAM" commit -qm initial
 git clone -q "$UPSTREAM" "$CHECKOUT"
+TEST_ENGINE_ID=engine_one
+_checkout_engine_id() { printf '%s' "$TEST_ENGINE_ID"; }
 
 printf 'dirty\n' >"$CHECKOUT/local"
 DIRTY_LOG=""
@@ -69,13 +71,14 @@ t checkout-missing-origin-warns-once 1 \
 if grep -Eq 'HEAD age=[0-9]+s' <<<"$MISSING_LOG"; then r1=aged; else r1=MISSING; fi
 t checkout-missing-origin-names-age aged "$r1"
 
-# The marker is engine-owned state. Recreating that working state (as an
-# engine reinstall/restart does) re-arms one announcement; it does not silence
-# a condition forever merely because an older engine observed it.
-rm -f "$(_checkout_state_file "$CHECKOUT")"
+# The marker survives in the box working area, while the boot identity changes
+# when the engine restarts with the box. That re-arms exactly one announcement;
+# an older engine observing the condition never silences it forever.
+TEST_ENGINE_ID=engine_two
 RESTART_LOG="$(ensure_checkout owner/repo "$CHECKOUT")"
 if grep -Fq 'WARN: checkout:' <<<"$RESTART_LOG"; then r1=reannounced; else r1=SILENT; fi
 t checkout-engine-state-restart-reannounces reannounced "$r1"
+t checkout-restarted-engine-settles "" "$(ensure_checkout owner/repo "$CHECKOUT")"
 
 
 suite_finish

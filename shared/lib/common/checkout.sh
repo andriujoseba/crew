@@ -32,8 +32,14 @@ _checkout_head_age() { # $1=dir — age of the doctrine commit the clone serves
   printf '%ss' "$age"
 }
 
+_checkout_engine_id() {
+  cat /proc/sys/kernel/random/boot_id 2>/dev/null || printf 'unknown'
+}
+
 _checkout_report() { # $1=state-file $2=condition-id $3=message
-  local state="$1" condition="$2" message="$3"
+  local state="$1" condition="$2" message="$3" engine
+  engine="$(_checkout_engine_id)"
+  condition="$engine:$condition"
   [ "$condition" = "$(cat "$state" 2>/dev/null)" ] && return 0
   warn "$message"
   printf '%s\n' "$condition" >"$state"
