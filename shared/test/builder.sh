@@ -4500,4 +4500,193 @@ if awk_range_grep_Fq '/if post_ready_json=/,/post-session ready re-query failed/
   "$BMOD" 'ready_reread=0'; then r1=marked; else r1=SILENT; fi
 t d462-failed-reread-marks-itself marked "$r1"
 
+# --- #479: the resume comment splice does not travel on argv --------------
+#
+# _resume_attach_comments handed a PR's whole thread to jq as ONE argv element,
+# bounded by MAX_ARG_STRLEN (131,072) and not by ARG_MAX. Past that the execve
+# failed, the swallow left the listing unchanged, and the PR reached the
+# predicates with `.comments` ABSENT — a skip that never cleared, because a
+# thread never shrinks. Fixtures, never a live box: no gh, no network.
+D479="$TMP/d479"; mkdir -p "$D479/bin"
+export D479_CALLS="$D479/gh-calls"
+D479_BIG="$D479/big-thread.json"
+export D479_BIG
+# 120 comments of 2 KiB. The size is the point, so it is asserted rather than
+# assumed: a fixture that drifted under the limit would still pass every
+# assertion below while testing nothing.
+jq -cn '[range(0;120) as $i
+         | {author:{login:"me"}, body:("x"*2000),
+            createdAt:"2026-08-01T00:00:00Z", id:($i|tostring)}]' >"$D479_BIG"
+D479_SIZE="$(wc -c <"$D479_BIG" | tr -d ' ')"
+if [ "$D479_SIZE" -gt 131072 ]; then r1=over; else r1=UNDER; fi
+t d479-fixture-exceeds-the-argv-limit over "$r1"
+
+# Every gh call recorded rather than made, so a label write on this path would
+# be visible even though the guard above already forbids one.
+cat >"$D479/bin/gh" <<'D479GH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$D479_CALLS"
+D479GH
+chmod +x "$D479/bin/gh"
+export D479_ALERTS="$D479/alerts"
+
+d479_listing() {  # d479_listing <head> <body>
+  jq -cn --arg head "$1" --arg body "$2" \
+    '[{number:311, isDraft:false, headRefOid:$head, body:$body}]'
+}
+D479_HEAD="cafebabecafebabecafebabecafebabecafebabe"
+D479_HEAD2="feedfacefeedfacefeedfacefeedfacefeedface"
+D479_BODY="Closes #479
+
+The splice is the subject."
+D479_PATH="$PATH"
+
+# Driven in a child shell with the stub first on PATH, the near-miss block's
+# reason: a fixture calling an engine function directly drags the engine's own
+# dataflow into this file's static analysis. `_resume_pr_comments` is overridden
+# there rather than stubbed through gh, because the classification under test is
+# exactly "the read succeeded and the fold did not", which no gh exit code can
+# express — `ok` reads the fixture, `transient` fails the read, `structural`
+# returns cleanly with a payload jq cannot fold.
+d479_run() {  # d479_run <mode> <listing> <log> -> the spliced listing on stdout
+  local d479_mode="$1" d479_pr="$2" d479_log="$3"
+  : >"$d479_log"
+  PATH="$D479/bin:$D479_PATH" D479_MODE="$d479_mode" DUTY_DIR="$D479" \
+    LABEL_ATTENTION=attention \
+    bash -c 'set -uo pipefail
+      # shellcheck disable=SC1090
+      source "$1/lib/common.sh"
+      # shellcheck disable=SC1090
+      source "$1/lib/duty-builder.sh"
+      _resume_pr_comments() {
+        case "$D479_MODE" in
+          ok) cat "$D479_BIG" ;;
+          transient) return 1 ;;
+          structural) printf "not json" ;;
+        esac
+      }
+      # The breaker module suite shape: alert is a function here, so the
+      # operator channel is observable without a token, a chat id, or curl.
+      alert() { printf "%s\n" "$1" >>"$D479_ALERTS"; }
+      _resume_attach_comments fx/repo "$2" >"$3" 2>&1
+      printf "%s" "$RESUME_LISTING"' \
+    d479_run "$SHARED" "$d479_pr" "$d479_log"
+}
+d479_reset() { : >"$D479_CALLS"; : >"$D479_ALERTS"
+  rm -f "$D479"/.seen-resume-structural "$D479"/.suppressed-resume-structural.*; }
+d479_calls() { awk 'NF' "$D479_CALLS" | wc -l | tr -d ' '; }
+d479_alerts() { awk 'NF' "$D479_ALERTS" | wc -l | tr -d ' '; }
+
+# AC1 — the 200 KiB thread is spliced whole and reaches the predicates present.
+d479_reset
+D479_OK="$(d479_run ok "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/ok.log")"
+t d479-large-thread-splices-whole 120 \
+  "$(printf '%s' "$D479_OK" | jq -r '.[0].comments | length')"
+if [ "$(printf '%s' "$D479_OK" | jq -r '.[0].comments | type')" = array ]; then
+  r1=present
+else
+  r1=DROPPED
+fi
+t d479-large-thread-reaches-predicates-present present "$r1"
+t d479-large-thread-warns-about-nothing 0 "$(grep -c 'WARN' "$D479/ok.log")"
+t d479-large-thread-escalates-nothing 0 "$(d479_alerts)"
+
+# The premise, measured rather than asserted: the OLD argv route refuses this
+# same fixture. This is what gives the case above teeth — reinstate --argjson
+# and the splice goes empty, which is the test plan's first must-fail.
+if printf '%s' "$(d479_listing "$D479_HEAD" "$D479_BODY")" \
+   | jq -c --argjson num 311 --argjson comments "$(cat "$D479_BIG")" \
+       'map(if .number == $num then . + {comments:$comments} else . end)' \
+       >/dev/null 2>&1; then
+  r1=SPLICED
+else
+  r1=refused
+fi
+t d479-argv-route-refuses-the-same-fixture refused "$r1"
+# ...and the module does not use that route. A behavioural case cannot see a
+# payload that happens to fit, so the shape is asserted too. CODE, not prose: the
+# header above the function names the old form in order to explain it, and a
+# guard that read comments would be satisfied by deleting the explanation.
+d479_code() { grep -v '^[[:space:]]*#' "$BMOD"; }
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+if grep -Fq -- '--argjson comments' <<<"$(d479_code)"; then r1=ON-ARGV; else r1=off-argv; fi
+t d479-splice-payload-is-not-on-argv off-argv "$r1"
+# shellcheck disable=SC2016  # matching the module's literals, not expanding them
+if grep -Fq -- '--slurpfile comments' <<<"$(d479_code)"; then r1=slurped; else r1=MISSING; fi
+t d479-splice-payload-is-slurped slurped "$r1"
+
+# AC2 — a transient read failure still skips the PR for the tick, unchanged...
+d479_reset
+D479_TR="$(d479_run transient "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/tr.log")"
+t d479-transient-skips-the-pr null \
+  "$(printf '%s' "$D479_TR" | jq -r '.[0].comments')"
+# ...and says so...
+if grep -Fq 'comment read failed' "$D479/tr.log"; then r1=warned; else r1=SILENT; fi
+t d479-transient-warns warned "$r1"
+# ...and is NEVER escalated. The test plan's third must-fail: a transient failure
+# reaching the operator is the over-correction this classification exists to
+# refuse, and zero alerts is the only reading of it.
+t d479-transient-escalates-nothing 0 "$(d479_alerts)"
+
+# AC4 (as answered) — a structural failure warns and escalates to the operator,
+# naming the PR's AUTHORIZING ISSUE as where a human would set `attention`. The
+# engine does not write that label itself: see engine-never-writes-attention-label
+# above, and the ruling asked of triage on #479.
+d479_reset
+D479_ST="$(d479_run structural "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/st.log")"
+t d479-structural-skips-the-pr null \
+  "$(printf '%s' "$D479_ST" | jq -r '.[0].comments')"
+if grep -Fq 'comment splice failed' "$D479/st.log"; then r1=warned; else r1=SILENT; fi
+t d479-structural-warns warned "$r1"
+t d479-structural-escalates-once 1 "$(d479_alerts)"
+t d479-structural-writes-no-label 0 "$(d479_calls)"
+# The alert names the issue a human would flag, and the PR it is about.
+if grep -Fq 'set attention on fx/repo#479' <<<"$(cat "$D479_ALERTS")" &&
+   grep -Fq 'fx/repo#311' <<<"$(cat "$D479_ALERTS")"; then r1=named; else r1=VAGUE; fi
+t d479-structural-alert-names-the-issue named "$r1"
+
+# ONCE PER HEAD — #167's rule: an escalation that repeats every five minutes is
+# wallpaper, and it is the operator's channel being spent.
+d479_run structural "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/st2.log" >/dev/null
+t d479-structural-does-not-re-escalate-the-same-head 1 "$(d479_alerts)"
+# The quiet is not a silence: the standing condition is still reported.
+if grep -Fq 'still standing at head' "$D479/st2.log"; then r1=reported; else r1=SILENT; fi
+t d479-structural-suppression-is-reported reported "$r1"
+# A new head is a tree that changed, so the condition is re-asserted against it.
+d479_run structural "$(d479_listing "$D479_HEAD2" "$D479_BODY")" "$D479/st3.log" >/dev/null
+t d479-structural-re-escalates-on-a-new-head 2 "$(d479_alerts)"
+
+# A body naming no authorizing issue still escalates — the PR number is enough to
+# act on — and says that the reference is missing rather than going quiet or
+# guessing an issue.
+d479_reset
+d479_run structural "$(d479_listing "$D479_HEAD" "no reference here")" "$D479/st4.log" >/dev/null
+t d479-structural-without-an-issue-still-escalates 1 "$(d479_alerts)"
+if grep -Fq 'names no authorizing issue' "$D479/st4.log"; then r1=said; else r1=SILENT; fi
+t d479-structural-without-an-issue-says-so said "$r1"
+
+# D2 — EVERY failure branch on this path warns, including the fallback that
+# cannot even mark the thread unread. That third branch is not reachable from a
+# fixture without breaking jq itself, so the region is counted: three failure
+# warns, and a fourth swallow cannot be added without failing this.
+t d479-every-failure-branch-warns 3 \
+  "$(awk '/^_resume_attach_comments\(\) \{$/,/^\}$/' "$BMOD" | grep -c 'warn "')"
+
+# THE ISSUE-REF PATTERN HAS ONE DEFINITION. The escalation and the fingerprints
+# must agree about which issue a PR answers, and a second copy would drift
+# silently — both parse, only one is right.
+t d479-issue-ref-pattern-defined-once 1 \
+  "$(grep -Fc -- 'closes|refs|fixes|resolves' "$BMOD")"
+# ...and the hoist did not change what it answers. The tab form and the
+# `discloses #99` word boundary are the two cases the original comment names.
+D479_FP="$(jq -cn '[{number:1,isDraft:true,headRefOid:"aaa",body:"Closes #479"},
+                    {number:2,isDraft:true,headRefOid:"bbb",body:"Refs\t#480"},
+                    {number:3,isDraft:true,headRefOid:"ccc",body:"the operator discloses #99 in passing"},
+                    {number:4,isDraft:true,headRefOid:"ddd",body:"Part of owner/repo#77"}]' \
+  | _resume_pr_fingerprints fx/repo | awk -F'\t' '{printf "%s ", ($2 == "" ? "-" : $2)}')"
+t d479-issue-ref-hoist-preserves-answers "479 480 - - " "$D479_FP"
+
+PATH="$D479_PATH"
+unset D479_MODE
+
 suite_finish

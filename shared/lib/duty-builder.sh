@@ -1158,7 +1158,7 @@ _resume_attach_comments() {
         'map(if .number == $num then . + {comments:$comments[0]} else . end)')" || spliced=""
       if [ -z "$spliced" ]; then
         warn "$repo#$num: comment splice failed on a thread that read cleanly; leaving it out of stranded-resume detection this tick (structural)"
-        _resume_structural_attention "$repo" "$num" "$listing"
+        _resume_structural_escalate "$repo" "$num" "$listing"
       fi
     else
       warn "$repo#$num: comment read failed; leaving it out of stranded-resume detection this tick"
@@ -1178,53 +1178,66 @@ _resume_attach_comments() {
   RESUME_LISTING="$listing"
 }
 
-# _resume_structural_attention REPO NUM LISTING — escalate a structural splice
-# failure to the board, once per head.
+# _resume_structural_escalate REPO NUM LISTING — put a structural splice failure
+# in front of the operator, once per head.
 #
-# `attention` goes on the PR's AUTHORIZING ISSUE, never on the PR: the wake reads
-# `filter=assigned` over issues, and _attention_audit_classify calls a flag
-# anywhere else malformed — "`attention` belongs to the issue that owns the
-# claim". The issue number comes from the body through _RESUME_ISSUE_RE, the one
+# THE CHANNEL IS `alert`, NOT THE `attention` LABEL, and that is this function's
+# one substantive departure from #479's D3. The issue asks for `attention`; this
+# repo holds a test-enforced invariant that the engine never writes that label —
+# "`attention` remains a hand-written demand. Reads in duty-attention.sh are the
+# wake mechanism and are allowed; engine label writes are not"
+# (engine-never-writes-attention-label, shared/test/builder.sh, since 9fb7e3d).
+# Setting it here would make the engine able to spawn a pickup model session on
+# its own initiative, which is the authority crew#66's ruling deliberately kept
+# on the operator's side of the line. `alert` is the channel the engine already
+# owns for exactly this class: duty_attention_audit uses it to report a board
+# invariant it observes and does not fix. The escalation therefore NAMES the
+# issue a human should flag rather than flagging it, and D3's purpose — a
+# permanent condition is never a per-tick skip, and never waits to be noticed —
+# is met without the engine taking the label write. Asked of triage on #479; the
+# swap is one line if the ruling goes the other way.
+#
+# The authorizing issue comes from the body through _RESUME_ISSUE_RE, the one
 # pattern _resume_pr_fingerprints reads, so the two can never disagree about
-# which issue a PR answers.
+# which issue a PR answers. A body naming none still escalates — the PR number is
+# enough to act on, and a missing reference is itself worth saying.
 #
 # ONCE PER HEAD, on the ci-red scheme (#17): the head goes in the ledger's ID and
-# never in its value, because ledger_filter re-fires when the value sorts
-# greater and a SHA has no order. A new head is an id never seen, so a corrective
-# push re-flags — which is right, the condition being re-asserted against a tree
-# that changed — while an unchanged head does not re-flag every five minutes.
-# That matters more here than for a log line: the session's ack REMOVES the
-# label, and a flag re-set on the same head would re-launch the pickup session
-# the ack just closed. #167's rule, applied to a label: a demand that repeats
-# forever is not a demand. The suppressed report is what keeps the quiet from
-# becoming a silence.
-_resume_structural_attention() {
-  local repo="$1" num="$2" listing="$3" head issue item fresh state
+# never in its value, because ledger_filter re-fires when the value sorts greater
+# and a SHA has no order. A new head is an id never seen, so a corrective push
+# re-escalates — right, the condition being re-asserted against a tree that
+# changed — while an unchanged head does not alert the operator every five
+# minutes. #167's rule: a warning that repeats forever is wallpaper. The
+# suppressed report is what keeps that quiet from becoming a silence, and it runs
+# only on the ticks that did NOT alert — reporting a suppression on the very tick
+# the alert fired would say "still standing" about its own first occurrence.
+_resume_structural_escalate() {
+  local repo="$1" num="$2" listing="$3" head issue where item fresh state
   head="$(printf '%s' "$listing" | jq -r --argjson num "$num" \
     'first(.[] | select(.number == $num) | (.headRefOid // "")) // ""' 2>/dev/null)"
   issue="$(printf '%s' "$listing" | jq -r --argjson num "$num" --arg re "$_RESUME_ISSUE_RE" \
     'first(.[] | select(.number == $num)
        | first((.body // "") | capture($re; "i") | .n)) // ""' 2>/dev/null)"
-  if [ -z "$issue" ]; then
-    warn "$repo#$num: structural comment-splice failure and no authorizing issue in the body; cannot set $LABEL_ATTENTION"
-    return 0
+  if [ -n "$issue" ]; then
+    where="set $LABEL_ATTENTION on $repo#$issue to hand it to a session"
+  else
+    where="the body names no authorizing issue, so there is nowhere to set $LABEL_ATTENTION"
   fi
   item="$repo#$num@$head structural"
+  state="$DUTY_DIR/.suppressed-resume-structural.${repo//\//__}.$num"
   fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-resume-structural")"
   if [ -n "$fresh" ]; then
     printf '%s\n' "$fresh" | ledger_commit "$DUTY_DIR/.seen-resume-structural"
-    if gh issue edit "$issue" -R "$repo" --add-label "$LABEL_ATTENTION" >/dev/null 2>&1; then
-      warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — $LABEL_ATTENTION set on $repo#$issue"
-    else
-      warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — could not set $LABEL_ATTENTION on $repo#$issue"
-    fi
+    warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — out of stranded-resume detection until it clears; $where"
+    alert "🚨 $(hostname): $repo#$num is out of stranded-resume detection at head ${head:0:12} — its comment thread reads but will not splice, and that will not clear on its own; $where"
+    rm -f "$state"
+    return 0
   fi
-  state="$DUTY_DIR/.suppressed-resume-structural.${repo//\//__}.$num"
   printf '%s\n' "$item" \
     | ledger_suppressed "$DUTY_DIR/.seen-resume-structural" \
     | report_suppressed "$state" \
         "$repo#$num: structural comment-splice failure still standing at head ${head:0:12}" \
-        "already flagged on $repo#$issue at this head"
+        "already escalated at this head"
 }
 
 # --- The check half of the resume evidence (#384) ---------------------------
