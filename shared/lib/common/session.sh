@@ -16,6 +16,10 @@
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
   local slog rc=0 start terminal=no
+  # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
+  # terminal gate's recovery path makes a live vendor probe, and a lane that
+  # has spent its window must not be able to buy one.
+  _session_budget_gate "$kind" "$key" || return 0
   _session_terminal_gate "$kind" "$key" || return 0
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
@@ -40,6 +44,11 @@ run_session() {
   reply_tail="$(session_reply_tail "$slog")"
   log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
+  # The rolling counter is written alongside the line that carries the same
+  # duration, so the budget and the log can never disagree about what a
+  # session cost. Every outcome counts: a TIMEOUT and a TERMINAL spent the
+  # vendor's clock exactly as an ok did.
+  _session_budget_record "$kind" "$dur"
   # Outcome exposed for callers that gate follow-up state on success (the seen-
   # ledger commits in duty-triage.sh) WITHOUT reintroducing the set -e abort a
   # failed session must never cause — return stays 0.
