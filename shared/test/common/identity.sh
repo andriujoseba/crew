@@ -281,7 +281,8 @@ git config --global user.email 'claude-bot-andresmgsl@users.noreply.github.com'
 # shellcheck disable=SC2317
 gh() { echo "$*" >>"$GHLOG"; printf '%s\n' 'gh: HTTP 401: Bad credentials' >&2; return 1; }
 : >"$GHLOG"
-converge_git_identity cndgrr >/dev/null 2>&1
+dead_warn="$TMP/dead-credential.warn"
+converge_git_identity cndgrr >"$dead_warn" 2>/dev/null
 t gitid-dead-credential-refuses 1 "$?"
 t gitid-dead-credential-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
   "$(git config --global user.email)"
@@ -289,11 +290,13 @@ t gitid-dead-credential-is-classified credential "$GIT_IDENTITY_FAILURE_KIND"
 case "$GIT_IDENTITY_FAILURE_EVIDENCE" in *'401'*'Bad credentials'*) r1=carried ;; *) r1=LOST ;; esac
 t gitid-dead-credential-carries-api-response carried "$r1"
 t gitid-dead-credential-spends-one-gh-call 1 "$(wc -l <"$GHLOG")"
-r1="$(git_identity_failure_message cndgrr)"
+r1="$(git_identity_failure_message)"
 case "$r1" in *'GitHub credential used by gh api user failed'*'401'*'Bad credentials'*) r1=credential ;; *) r1=WRONG ;; esac
 t gitid-dead-credential-message-names-credential credential "$r1"
-case "$(git_identity_failure_message cndgrr)" in *'git identity'*) r1=CONFUSED ;; *) r1=separate ;; esac
+case "$(git_identity_failure_message)" in *'git identity'*) r1=CONFUSED ;; *) r1=separate ;; esac
 t gitid-dead-credential-message-does-not-blame-git separate "$r1"
+case "$(cat "$dead_warn")" in *'GitHub credential used by gh api user failed'*'401'*'Bad credentials'*) r1=warned ;; *) r1=SILENT ;; esac
+t gitid-dead-credential-helper-warns-reason warned "$r1"
 
 # A credential that ROTATED between duty.sh resolving $ME and this call must
 # refuse, not converge. Converging would write the NEW account and return 0
@@ -309,9 +312,12 @@ t gitid-rotated-credential-refuses 1 "$?"
 t gitid-rotated-credential-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
   "$(git config --global user.email)"
 t gitid-rotation-is-an-identity-failure identity "$GIT_IDENTITY_FAILURE_KIND"
-r1="$(git_identity_failure_message cndgrr)"
-case "$r1" in *"git identity 'claude-bot-andresmgsl@users.noreply.github.com'"*"GitHub login 'cndgrr'"*) r1=named ;; *) r1=WRONG ;; esac
+t gitid-rotation-carries-observed-login andriujoseba "$GIT_IDENTITY_FAILURE_LOGIN"
+r1="$(git_identity_failure_message)"
+case "$r1" in *"git identity 'claude-bot-andresmgsl@users.noreply.github.com'"*"GitHub login 'andriujoseba'"*) r1=named ;; *) r1=WRONG ;; esac
 t gitid-mismatch-message-names-both-identities named "$r1"
+case "$(git_identity_failure_message)" in *cndgrr*) r1=BOX_LOGIN_LEAKED ;; *) r1=observed-only ;; esac
+t gitid-mismatch-message-does-not-name-box-login observed-only "$r1"
 # The rotation guard is the CALLER's to invoke: install.sh passes no login
 # because it has no $ME, and its whole job is to write whatever gh now says.
 converge_git_identity >/dev/null 2>&1
@@ -329,6 +335,9 @@ converge_git_identity cndgrr >/dev/null 2>&1
 t gitid-non-numeric-id-refuses 1 "$?"
 t gitid-non-numeric-id-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
   "$(git config --global user.email)"
+t gitid-incomplete-response-is-not-git-identity api-response "$GIT_IDENTITY_FAILURE_KIND"
+case "$(git_identity_failure_message)" in *'git identity '*) r1=CONFUSED ;; *'GitHub identity response'*) r1=response ;; *) r1=WRONG ;; esac
+t gitid-incomplete-response-message-names-response response "$r1"
 unset -f gh
 unset GIT_CONFIG_GLOBAL
 
@@ -367,7 +376,7 @@ t gitid-refusal-ends-the-tick exits "$r1"
 # it neither guesses from the box login nor pays for another auth probe.
 # shellcheck disable=SC2016  # matching literal duty.sh source text
 if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
-  'git_identity_failure_message "$ME"'; then r1=carried; else r1=LOST; fi
+  'git_identity_failure_message'; then r1=carried; else r1=LOST; fi
 t gitid-duty-carries-failure-evidence carried "$r1"
 # shellcheck disable=SC2016  # matching literal duty.sh source text
 if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \

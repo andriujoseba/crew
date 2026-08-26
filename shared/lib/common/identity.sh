@@ -248,6 +248,7 @@ converge_git_identity() {
   local err rc=0 reason
   GIT_IDENTITY_FAILURE_KIND=""
   GIT_IDENTITY_FAILURE_EVIDENCE=""
+  GIT_IDENTITY_FAILURE_LOGIN=""
   if [ -n "$want" ] && git_identity_ok "$want"; then
     return 0
   fi
@@ -262,6 +263,7 @@ converge_git_identity() {
     rm -f "$err"
     GIT_IDENTITY_FAILURE_KIND="credential"
     GIT_IDENTITY_FAILURE_EVIDENCE="$reason"
+    warn "$(git_identity_failure_message) — git config left untouched"
     return 1
   fi
   rm -f "$err"
@@ -273,13 +275,14 @@ converge_git_identity() {
   # and is refused below — the malformed case needs no separate branch.
   want="${pair%%$'\t'*}"
   id="${pair#*$'\t'}"
+  GIT_IDENTITY_FAILURE_LOGIN="$want"
   case "$id" in
     ''|*[!0-9]*) id="" ;;
   esac
   if [ -z "$want" ] || [ -z "$id" ]; then
-    GIT_IDENTITY_FAILURE_KIND="identity"
+    GIT_IDENTITY_FAILURE_KIND="api-response"
     GIT_IDENTITY_FAILURE_EVIDENCE="gh api user returned an incomplete login/id response"
-    warn "git identity: $GIT_IDENTITY_FAILURE_EVIDENCE — git config left untouched"
+    warn "$(git_identity_failure_message) — git config left untouched"
     return 1
   fi
   # The caller named a login; gh must still name the SAME one. duty.sh resolved
@@ -293,9 +296,9 @@ converge_git_identity() {
   if [ -n "$expect" ] &&
      [ "$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')" != \
        "$(printf '%s' "$expect" | tr '[:upper:]' '[:lower:]')" ]; then
-    warn "git identity: the gh credential now names '$want', but this tick is running as '$expect' — the credential rotated mid-tick; git config left untouched"
     GIT_IDENTITY_FAILURE_KIND="identity"
-    GIT_IDENTITY_FAILURE_EVIDENCE="gh api user names '$want' while this tick names '$expect'"
+    GIT_IDENTITY_FAILURE_EVIDENCE="gh api user names '$want' after the tick identity was resolved"
+    warn "git identity: the gh credential now names '$want', but differs from the login resolved earlier this tick — the credential rotated mid-tick; git config left untouched"
     return 1
   fi
   # Re-checked against the login gh just reported rather than the caller's:
@@ -337,14 +340,21 @@ converge_git_identity() {
 # while a git mismatch names both the configured author and the login the
 # successful API call returned. It performs no probe of its own.
 git_identity_failure_message() {
-  local login="$1" email
-  if [ "${GIT_IDENTITY_FAILURE_KIND:-identity}" = "credential" ]; then
-    printf 'GitHub credential used by gh api user failed — %s' \
-      "${GIT_IDENTITY_FAILURE_EVIDENCE:-API rejection unavailable}"
-    return 0
-  fi
+  local email
+  case "${GIT_IDENTITY_FAILURE_KIND:-identity}" in
+    credential)
+      printf 'GitHub credential used by gh api user failed — %s' \
+        "${GIT_IDENTITY_FAILURE_EVIDENCE:-API rejection unavailable}"
+      return 0
+      ;;
+    api-response)
+      printf 'GitHub identity response from gh api user failed — %s' \
+        "${GIT_IDENTITY_FAILURE_EVIDENCE:-response evidence unavailable}"
+      return 0
+      ;;
+  esac
   email="$(git config --global user.email 2>/dev/null || true)"
   printf "git identity '%s' does not name GitHub login '%s' — %s" \
-    "${email:-unset}" "$login" \
+    "${email:-unset}" "${GIT_IDENTITY_FAILURE_LOGIN:-unavailable}" \
     "${GIT_IDENTITY_FAILURE_EVIDENCE:-git identity could not be repaired}"
 }
