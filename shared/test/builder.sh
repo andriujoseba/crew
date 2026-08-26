@@ -4539,6 +4539,7 @@ export D479_RECEIPTS="$D479/receipts"
 cat >"$D479/bin/post-once.sh" <<'D479PO'
 #!/usr/bin/env bash
 printf 'post-once %s %s %s\n' "$1" "$2" "$3" >>"$D479_RECEIPTS"
+exit "${D479_PO_RC:-0}"
 D479PO
 chmod +x "$D479/bin/post-once.sh"
 
@@ -4715,6 +4716,22 @@ else
   r1=SILENT
 fi
 t d479-receipt-without-an-issue-says-so said "$r1"
+
+# D2 GOVERNS THE NEW BRANCH TOO, and this one is driven rather than counted.
+# d479-every-failure-branch-warns is scoped to _resume_attach_comments's region,
+# so it cannot see a warn dropped from the escalation — and it did not: deleting
+# this warn survived the whole suite before this case existed. A receipt that
+# does not post is the case where the alert is the ONLY copy, which is precisely
+# when the log line is worth having.
+d479_reset
+export D479_PO_RC=1
+d479_run structural "$(d479_listing "$D479_HEAD" "$D479_BODY")" "$D479/st5.log" >/dev/null
+unset D479_PO_RC
+if grep -Fq 'receipt did not post' "$D479/st5.log"; then r1=warned; else r1=SILENT; fi
+t d479-receipt-failure-warns warned "$r1"
+# ...and the wake still fires. The record failing must not take the alert with
+# it: they are two objects for exactly this reason.
+t d479-receipt-failure-still-alerts 1 "$(d479_alerts)"
 
 # D2 — EVERY failure branch on this path warns, including the fallback that
 # cannot even mark the thread unread. That third branch is not reachable from a
