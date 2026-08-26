@@ -231,8 +231,22 @@ orph_mutant() {
 
 # The three shapes the test plan names, in one log: an orphaned start, a
 # live-held start, and a well-formed pair. Exactly one reconstruction is owed.
+#
+# Interleaved with what a real duty.log is mostly made of — tick markers, a
+# WARN, and a SESSION SKIP. The SKIP is the one that has to be got right on
+# purpose: it names the same kind and key as a start and is not an end, so a
+# scanner reading "a SESSION line mentioning this key" instead of the two
+# verbs would silently answer the orphan with it.
 ORPH1="$TMP/orphan-basic"; orph_fixture "$ORPH1"
+{
+  printf '2026-08-14T03:00:00Z duty run start\n'
+} >>"$ORPH1/duty.log"
 orph_start "$ORPH1" 2026-08-14T03:00:01Z build  o/r#1  "$ORPH_DEAD.$ORPH_BOOT"
+{
+  printf '2026-08-14T03:05:00Z duty run start\n'
+  printf '2026-08-14T03:05:00Z SESSION SKIP kind=build key=o/r#1 reason=budget over=sessions\n'
+  printf '2026-08-14T03:05:00Z WARN: session budget: kind=build reached its ceiling\n'
+} >>"$ORPH1/duty.log"
 orph_start "$ORPH1" 2026-08-14T03:05:01Z review o/r#2  "$$.$ORPH_BOOT"
 orph_start "$ORPH1" 2026-08-14T03:10:00Z triage board  "$ORPH_DEAD.$ORPH_BOOT"
 orph_end   "$ORPH1" 2026-08-14T03:12:00Z triage board
@@ -373,6 +387,30 @@ t orphan-reconciler-runs-before-any-dispatch before \
           /(^|[^[:alnum:]_])duty_[a-z]+/ { if (!disp) disp = NR }
           END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
       "$SHARED/bin/duty.sh")"
+# duty.sh runs under `set -euo pipefail`, and this is called before the boot
+# gate, so a non-zero return anywhere in it does not degrade the tick — it ENDS
+# the tick, and a box whose duty.log has nothing to reconcile is the common
+# case. Driven under the caller's own flags, in each state it can meet.
+# shellcheck disable=SC2317  # alert is reached from inside the library
+orph_strict() (  # orph_strict <dir>
+  set -euo pipefail
+  DUTY_DIR="$1"; LOG_DIR="$1/logs"; DUTY_TICK_ID='tick-strict'
+  # Stubbed even though nothing here reaches the threshold that alerts: the
+  # suite exports the box's real HOME, and the real `alert` reads a Telegram
+  # token out of it. A case must not be one edit away from paging the operator.
+  alert() { :; }
+  session_reconcile_orphans >/dev/null 2>&1
+  printf survived
+)
+ORPH9="$TMP/orphan-strict"; orph_fixture "$ORPH9"
+t orphan-strict-empty-log survived "$(orph_strict "$ORPH9" || printf 'ABORTED(%s)' "$?")"
+printf '2026-08-14T09:00:00Z duty run start\n' >>"$ORPH9/duty.log"
+t orphan-strict-nothing-owed survived "$(orph_strict "$ORPH9" || printf 'ABORTED(%s)' "$?")"
+orph_start "$ORPH9" 2026-08-14T09:00:01Z build o/r#6 "$ORPH_DEAD.$ORPH_BOOT"
+t orphan-strict-with-an-orphan survived "$(orph_strict "$ORPH9" || printf 'ABORTED(%s)' "$?")"
+t orphan-strict-missing-log survived \
+  "$(orph_strict "$TMP/orphan-no-such-dir" || printf 'ABORTED(%s)' "$?")"
+
 # ...and the start it reads has to carry the holder it asks about.
 # shellcheck disable=SC2016  # match the module's literal $(_session_holder)
 if grep -q 'SESSION START .*holder=\$(_session_holder)' "$SHARED/lib/common/session.sh"; then
