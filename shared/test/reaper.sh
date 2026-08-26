@@ -196,6 +196,12 @@ t reaper-noatime-keeps-entry present "$(state "$H7/.cache/stale")"
 t reaper-noatime-warns 1 \
   "$(grep -c 'WARN: reaper: atimes do not advance on .*\.cache' <<<"$OUT7" | tr -d ' ')"
 t reaper-noatime-still-logs-the-class 1 "$(class_line "$OUT7" caches)"
+# ...and it says HELD, not "no entry unused for 30d": the second is a claim
+# about caches this sweep never looked at.
+t reaper-noatime-says-held 1 \
+  "$(grep -c 'caches reclaimed 0 bytes — held on ' <<<"$OUT7" | tr -d ' ')"
+t reaper-noatime-does-not-claim-a-clean-sweep 0 \
+  "$(grep -c 'no entry unused' <<<"$OUT7" | tr -d ' ')"
 OUT7B="$(REAP_ATIME_RC=2 reaper_run "$H7" "$DEAD_CLI")"
 t reaper-unknowable-atime-keeps-entry present "$(state "$H7/.cache/stale")"
 t reaper-unknowable-atime-warns 1 \

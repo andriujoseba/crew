@@ -223,7 +223,7 @@ _reaper_sweep_transcripts() {
 # either keeping it or removing it whole. So an entry is kept unless NOTHING
 # under it has been read inside the retention window.
 _reaper_sweep_caches() {
-  local days root entry count=0 bytes swept=0 held=""
+  local days root entry count=0 bytes swept=0 checked=0 held=""
   local -a dead=()
   _reaper_whole REAPER_CACHE_DAYS \
     "${REAPER_CACHE_DAYS:-$REAPER_CACHE_DAYS_DEFAULT}" \
@@ -236,6 +236,7 @@ _reaper_sweep_caches() {
       held="$held $root"
       continue
     fi
+    checked=$((checked + 1))
     for entry in "$root"/* "$root"/.[!.]*; do
       [ -e "$entry" ] || continue
       # Any FILE read inside the window keeps the whole entry. `-type f` is
@@ -256,6 +257,13 @@ _reaper_sweep_caches() {
   fi
   if [ "$swept" -eq 0 ]; then
     log "reaper: caches reclaimed 0 bytes — no cache root on this box"
+    return 0
+  fi
+  if [ "$checked" -eq 0 ]; then
+    # Every root was held, so the sweep never asked the question. Reporting
+    # "no entry unused" here would be a claim about caches nothing looked at —
+    # the one shape that makes a held reaper read like a working one.
+    log "reaper: caches reclaimed 0 bytes — held on$held"
     return 0
   fi
   if [ "$count" -eq 0 ]; then
