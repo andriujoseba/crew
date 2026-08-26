@@ -120,6 +120,19 @@ session_terminal() {
 SESSION_BUDGET_WINDOW_DEFAULT=86400
 # D6's "tell me before the ceiling, not only at it", as a percentage.
 SESSION_BUDGET_ALERT_PCT_DEFAULT=80
+# The dispatch lanes crew ships, for the REPORT alone. The GATE never reads
+# this list: it resolves BUDGET_*_<KIND> from the kind it was handed, so a lane
+# an operator names in their own conf is enforced whether or not it appears
+# here, and appears in the report as soon as it has a counter.
+#
+# It exists because a conf variable name cannot be folded back into a kind:
+# `ci-red` folds to CI_RED, and CI_RED un-folds to `ci_red`, which is a lane
+# this engine never dispatches. shared/test/common/breaker.sh pins the list
+# against both places it could drift from — the BUDGET_SESSIONS_* in
+# shared/conf/ and the run_session call sites in shared/lib/duty-*.sh — so a
+# lane added without its name here is a red test rather than a silent hole in
+# `crew status`.
+SESSION_BUDGET_KINDS="attention build ci-red hygiene mention rebase resume review triage"
 
 # _session_budget_state KIND — one state file per dispatch lane, beside the
 # terminal breaker's and sanitized the same way, for the same reason: an
@@ -155,6 +168,17 @@ _session_budget_limits() {
   [ "$_BUDGET_SESSIONS" -gt 0 ] || [ "$_BUDGET_MINUTES" -gt 0 ]
 }
 
+# _session_budget_ceiling VALUE — a ceiling as a human should read it: the
+# number when it is armed, `-` when it is not.
+#
+# A lane may run on ONE metric alone (D1), and `0/0 min` in an alert reads as
+# an exhausted minute ceiling to an operator who never set one. Every place
+# that prints a pair — the two alerts, the SESSION SKIP line and the report —
+# goes through here, so the four cannot drift apart.
+_session_budget_ceiling() {
+  if [ "${1:-0}" -gt 0 ]; then printf '%s' "$1"; else printf -- '-'; fi
+}
+
 # _session_budget_load KIND — read the lane's counter, drop everything older
 # than the window, and leave the survivors in _BUDGET_KEPT with their totals.
 #
@@ -174,11 +198,22 @@ _session_budget_load() {
   # No file yet is a fresh lane, not a fault: nothing spent, nothing to read.
   [ -e "$state" ] || return 0
   [ -r "$state" ] || return 1
+  # An EXISTING but empty file is not a fresh lane. The write is atomic —
+  # tmp+mv — so this engine cannot have produced one, which makes an empty
+  # counter something else's truncation and a balance nobody can read. It
+  # fails closed with the rest of D4 rather than repairing itself silently
+  # through the next dispatch.
+  [ -s "$state" ] || return 1
   # One awk, no pipe: an `awk … | head` here would be the SIGPIPE-under-
   # pipefail shape the suite guards against (#449).
   parsed="$(awk -F'\t' -v cutoff="$cutoff" '
     NR == 1 {
       if ($1 != "budget" || NF != 6) { bad = 1; exit }
+      # The window and the two ceilings are validated even though the CONF is
+      # what this engine enforces: a header carrying anything but digits was
+      # not written by _session_budget_save, and a counter this engine did not
+      # write is a balance it cannot vouch for.
+      if ($2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/) { bad = 1; exit }
       if ($5 !~ /^[01]$/ || $6 !~ /^[01]$/) { bad = 1; exit }
       warned = $5; tripped = $6
       next
@@ -196,12 +231,6 @@ _session_budget_load() {
       printf "%d\t%d\t%d\t%d\t%d\n", n, s, warned, tripped, oldest
       printf "%s", kept
     }' "$state")" || return 1
-  # An empty file has no header, so awk saw no NR==1 and produced a summary of
-  # zeroes over no entries. That is indistinguishable from a truncated write,
-  # which is exactly what a crash mid-`mv` cannot produce here — the write is
-  # atomic — so treat a headerless non-empty file as malformed and an empty
-  # one as absent.
-  [ -s "$state" ] || return 0
   summary="${parsed%%$'\n'*}"
   case "$parsed" in
     *$'\n'*) _BUDGET_KEPT="${parsed#*$'\n'}"$'\n' ;;
@@ -254,7 +283,7 @@ _session_budget_refuse() {
 # terminal gate's recovery probe costs a vendor call, and an exhausted budget
 # must not be able to spend one.
 _session_budget_gate() {
-  local kind="$1" key="$2" over=no over_alert=no spent_min ceiling_min
+  local kind="$1" key="$2" over=no over_alert=no spent_min ceiling_min ceiling_sessions
   _session_budget_limits "$kind" || return 0
   if ! _session_budget_load "$kind"; then
     _session_budget_refuse "$kind" "$key" budget-unreadable \
@@ -289,15 +318,34 @@ _session_budget_gate() {
   fi
   [ "$over" != no ] || return 0
   spent_min=$((_BUDGET_SECONDS / 60))
-  ceiling_min="$_BUDGET_MINUTES"
+  # `-`, not the raw 0, for a ceiling nobody armed: this lane may be running on
+  # one metric alone, and a fabricated second number reads as a bound.
+  ceiling_min="$(_session_budget_ceiling "$_BUDGET_MINUTES")"
+  ceiling_sessions="$(_session_budget_ceiling "$_BUDGET_SESSIONS")"
   if [ "$over_alert" = yes ]; then
     warn "session budget: kind=$kind reached its $over ceiling; dispatch stopped until the window rolls"
-    alert "🚨 $(hostname): $kind session dispatch stopped — $over budget reached (${_BUDGET_COUNT}/${_BUDGET_SESSIONS} sessions, ${spent_min}/${ceiling_min} min in ${_BUDGET_WINDOW}s)"
+    alert "🚨 $(hostname): $kind session dispatch stopped — $over budget reached (${_BUDGET_COUNT}/${ceiling_sessions} sessions, ${spent_min}/${ceiling_min} min in ${_BUDGET_WINDOW}s)"
   fi
-  log "SESSION SKIP kind=$kind key=$key reason=budget over=$over sessions=$_BUDGET_COUNT/$_BUDGET_SESSIONS minutes=$spent_min/$ceiling_min window=${_BUDGET_WINDOW}s"
+  log "SESSION SKIP kind=$kind key=$key reason=budget over=$over sessions=$_BUDGET_COUNT/$ceiling_sessions minutes=$spent_min/$ceiling_min window=${_BUDGET_WINDOW}s"
   RUN_SESSION_RC=75
   RUN_SESSION_LOG=""
   return 1
+}
+
+# _session_budget_near COUNT SECONDS PCT — which armed ceiling this balance is
+# past PCT of, or `no`. One function because D6's alert asks the question
+# TWICE of the same lane: once of the pruned balance the roll left behind, to
+# decide whether the latch still stands, and once of the balance this session
+# creates, to decide whether it has just been crossed.
+_session_budget_near() {
+  local count="$1" seconds="$2" pct="$3"
+  if [ "$_BUDGET_SESSIONS" -gt 0 ] && [ $((count * 100)) -ge $((_BUDGET_SESSIONS * pct)) ]; then
+    printf sessions
+  elif [ "$_BUDGET_MINUTES" -gt 0 ] && [ $((seconds * 100)) -ge $((_BUDGET_MINUTES * 60 * pct)) ]; then
+    printf minutes
+  else
+    printf no
+  fi
 }
 
 # _session_budget_record KIND DURATION — one entry per completed session,
@@ -314,89 +362,131 @@ _session_budget_record() {
     warn "session budget: kind=$kind counter unreadable at record time; the next dispatch fails closed"
     return 0
   fi
+  pct="${SESSION_BUDGET_ALERT_PCT:-$SESSION_BUDGET_ALERT_PCT_DEFAULT}"
+  case "$pct" in ''|*[!0-9]*|0) pct=$SESSION_BUDGET_ALERT_PCT_DEFAULT ;; esac
+  # THE LATCH RE-ARMS FROM THE PRUNED, PRE-SESSION BALANCE, and it has to be
+  # this balance rather than the one below. A rolling window carries a lane
+  # back under the threshold with no dispatch at all — the oldest entries age
+  # out — and the next session then crosses the line again, which is a NEW
+  # crossing owed its own alert. Clearing the latch on a POST-session balance
+  # under the line, as this did, asks a question a latched lane crossing back
+  # over never answers `no` to: the lane would fall under 80%, climb over it,
+  # and never say so again.
+  if [ "$(_session_budget_near "$_BUDGET_COUNT" "$_BUDGET_SECONDS" "$pct")" = no ]; then
+    _BUDGET_WARNED=0
+  fi
   _BUDGET_KEPT="${_BUDGET_KEPT}${_BUDGET_NOW}"$'\t'"${dur}"$'\n'
   _BUDGET_COUNT=$((_BUDGET_COUNT + 1))
   _BUDGET_SECONDS=$((_BUDGET_SECONDS + dur))
-  pct="${SESSION_BUDGET_ALERT_PCT:-$SESSION_BUDGET_ALERT_PCT_DEFAULT}"
-  case "$pct" in ''|*[!0-9]*|0) pct=$SESSION_BUDGET_ALERT_PCT_DEFAULT ;; esac
-  if [ "$_BUDGET_SESSIONS" -gt 0 ] && [ $((_BUDGET_COUNT * 100)) -ge $((_BUDGET_SESSIONS * pct)) ]; then
-    near=sessions
-  elif [ "$_BUDGET_MINUTES" -gt 0 ] && [ $((_BUDGET_SECONDS * 100)) -ge $((_BUDGET_MINUTES * 60 * pct)) ]; then
-    near=minutes
-  fi
+  # This session's own balance decides the crossing. It can only be at or above
+  # the pre-session one, so the re-arm above is the only place the latch is
+  # ever cleared.
+  near="$(_session_budget_near "$_BUDGET_COUNT" "$_BUDGET_SECONDS" "$pct")"
   spent_min=$((_BUDGET_SECONDS / 60))
   if [ "$near" != no ] && [ "$_BUDGET_WARNED" != 1 ]; then
     _BUDGET_WARNED=1
     warn "session budget: kind=$kind past ${pct}% of its $near ceiling"
-    alert "⚠️ $(hostname): $kind session budget past ${pct}% — ${_BUDGET_COUNT}/${_BUDGET_SESSIONS} sessions, ${spent_min}/${_BUDGET_MINUTES} min in ${_BUDGET_WINDOW}s"
-  elif [ "$near" = no ]; then
-    _BUDGET_WARNED=0
+    alert "⚠️ $(hostname): $kind session budget past ${pct}% — ${_BUDGET_COUNT}/$(_session_budget_ceiling "$_BUDGET_SESSIONS") sessions, ${spent_min}/$(_session_budget_ceiling "$_BUDGET_MINUTES") min in ${_BUDGET_WINDOW}s"
   fi
   _session_budget_save "$kind" \
     || warn "session budget: kind=$kind could not record this session; the next dispatch fails closed"
 }
 
-# session_budget_report — every armed lane's balance, one finished row per
-# kind, read from the self-describing state files alone (D7).
+# _session_budget_human SECONDS — a duration an operator reads at a glance.
+# `now` for a window that has already passed, so the "ages out" clause reads as
+# a moment rather than as a zero.
+_session_budget_human() {
+  local s="${1:-0}" d h m
+  if [ "$s" -le 0 ]; then printf now; return 0; fi
+  d=$((s / 86400)); h=$(((s % 86400) / 3600)); m=$(((s % 3600) / 60))
+  if [ "$d" -gt 0 ]; then printf '%sd%sh' "$d" "$h"
+  elif [ "$h" -gt 0 ]; then printf '%sh%sm' "$h" "$m"
+  else printf '%sm' "$m"; fi
+}
+
+# _session_budget_lanes — every kind that could own a row, one per line, sorted
+# and de-duplicated: the lanes crew ships, UNIONED with every lane a state file
+# names. The union is what carries a kind an operator configured without crew
+# knowing about it; the sort is so the report's order is a property of the
+# report rather than an accident of a glob.
 #
-# The ROW is rendered here, on the box, and `crew status` prints it verbatim
-# — the same thing it already does with the duty.log tail. Two reasons, and
-# neither is laziness: the ceilings are written into the state file by the
-# gate that enforces them, so a host-side renderer could disagree with the box
-# about what the bound is; and a renderer on the host is a renderer no offline
-# suite can reach, while this one is exercised by shared/test/common/breaker.sh
-# beside the gate whose balance it prints.
+# Naming a lane here is not what arms it. Every candidate is put to
+# _session_budget_limits, and the conf decides.
+_session_budget_lanes() {
+  local state kind
+  {
+    for state in "$DUTY_DIR"/.session-budget.*; do
+      [ -f "$state" ] || continue
+      case "$state" in *.tmp.*) continue ;; esac
+      kind="${state##*/.session-budget.}"
+      printf '%s\n' "$kind"
+    done
+    # shellcheck disable=SC2086  # the lane list is a word list by design
+    printf '%s\n' $SESSION_BUDGET_KINDS
+  } | sort -u
+}
+
+# session_budget_report — one row per CONFIGURED lane (D7), whether or not it
+# has ever dispatched.
 #
-# Prints NOTHING when no lane is armed, which is what lets `crew status` omit
-# the section entirely rather than print an empty heading. The default is off,
-# so on most boxes the honest report is no report.
+# CONFIGURED means the conf says so, and nothing else. An earlier cut of this
+# read the ceilings out of the state file, which the gate writes, and so
+# answered "which lanes have dispatched since being armed" instead: a lane
+# armed an hour ago printed nothing until its first dispatch, a raised ceiling
+# printed the superseded number, and — worst — a lane whose ceilings had been
+# REMOVED kept printing a bound nobody was enforcing. The conf is where the
+# gate reads its ceilings, so it is where the report reads them, and the two
+# cannot now disagree about what is armed or what the bound is.
+#
+# The state file keeps exactly the half it owns: the spend. It is read through
+# _session_budget_load, the gate's own reader, so "unreadable" means here
+# precisely what it means there — including the window it prunes by, which
+# comes from the conf too.
+#
+# The ROW is rendered on the BOX and `crew status` prints it verbatim, the same
+# thing it already does with the duty.log tail. The conf that decides all of
+# this lives on the box; a renderer on the operator's host would have to
+# resolve a role conf it does not have, and no offline suite could reach it,
+# while shared/test/common/breaker.sh drives this one beside the gate whose
+# balance it prints.
+#
+# Prints NOTHING when no lane is configured, which is what lets `crew status`
+# omit the section entirely rather than print an empty heading — and a lane
+# that is off prints nothing even when a stale counter for it survives, because
+# a row for an unenforced ceiling is the one statement this view must not make.
 #
 # Deliberately not telemetry (#327), which owns per-session accounting,
 # outcomes and vendor spend: this is the balance the gate is already keeping,
 # displayed, and nothing else.
 session_budget_report() {
-  local state kind now
-  now="$(date -u +%s)"
-  for state in "$DUTY_DIR"/.session-budget.*; do
-    [ -f "$state" ] || continue
-    case "$state" in *.tmp.*) continue ;; esac
-    kind="${state##*/.session-budget.}"
-    awk -F'\t' -v kind="$kind" -v now="$now" '
-      function human(s,   d, h, m) {
-        if (s <= 0) return "now"
-        d = int(s / 86400); h = int((s % 86400) / 3600); m = int((s % 3600) / 60)
-        if (d > 0) return d "d" h "h"
-        if (h > 0) return h "h" m "m"
-        return m "m"
-      }
-      NR == 1 {
-        if ($1 != "budget" || NF != 6) { bad = 1; exit }
-        window = $2; sessions = $3; minutes = $4
-        next
-      }
-      NF == 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
-        if ($1 + 0 < now - window) next
-        n++; s += $2
-        if (oldest == 0 || $1 + 0 < oldest) oldest = $1 + 0
-      }
-      END {
-        # An unreadable counter is the one state that must not read as a
-        # balance: the gate is refusing every dispatch on this lane right now,
-        # and saying so here is what connects a silent box to its cause.
-        if (bad) {
-          printf "  %-10s unreadable — dispatch is refused until it is repaired or removed\n", kind
-          exit
-        }
-        # A lane may run on ONE metric alone (D1), so an unarmed ceiling
-        # prints `-`: a fabricated second number would read as a bound that
-        # does not exist. "ages out" is when the OLDEST surviving entry drops
-        # out — the moment this lane next gains headroom.
-        rolls = 0
-        if (oldest > 0) { rolls = oldest + window - now; if (rolls < 0) rolls = 0 }
-        printf "  %-10s %d/%s sessions, %d/%s min spent in %s (oldest ages out %s)\n", \
-          kind, n, (sessions + 0 > 0 ? sessions : "-"), \
-          int(s / 60), (minutes + 0 > 0 ? minutes : "-"), \
-          human(window + 0), human(rolls + 0)
-      }' "$state"
-  done
+  local kind rolls ages
+  while read -r kind; do
+    [ -n "$kind" ] || continue
+    # The conf, not the filesystem, decides whether this lane has a row.
+    _session_budget_limits "$kind" || continue
+    if ! _session_budget_load "$kind"; then
+      # The one state that must not read as a balance: the gate is refusing
+      # every dispatch on this lane right now, and saying so here is what
+      # connects a silent box to its cause.
+      printf '  %-10s unreadable — dispatch is refused until it is repaired or removed\n' "$kind"
+      continue
+    fi
+    # "ages out" is when the OLDEST surviving entry drops out — the moment this
+    # lane next gains headroom. A lane with nothing in the window has no such
+    # moment, and says so rather than reporting one that has already passed.
+    if [ "$_BUDGET_OLDEST" -gt 0 ]; then
+      rolls=$((_BUDGET_OLDEST + _BUDGET_WINDOW - _BUDGET_NOW))
+      [ "$rolls" -ge 0 ] || rolls=0
+      ages="oldest ages out $(_session_budget_human "$rolls")"
+    else
+      ages="nothing spent yet"
+    fi
+    printf '  %-10s %s/%s sessions, %s/%s min spent in %s (%s)\n' \
+      "$kind" "$_BUDGET_COUNT" "$(_session_budget_ceiling "$_BUDGET_SESSIONS")" \
+      "$((_BUDGET_SECONDS / 60))" "$(_session_budget_ceiling "$_BUDGET_MINUTES")" \
+      "$(_session_budget_human "$_BUDGET_WINDOW")" "$ages"
+  # A here-string and not a pipe: the loop must run in THIS shell (it calls the
+  # _BUDGET_* readers), and `_session_budget_lanes | while` under pipefail is
+  # the shape #449 exists about.
+  done <<<"$(_session_budget_lanes)"
 }

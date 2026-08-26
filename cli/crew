@@ -1088,7 +1088,6 @@ report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # different and more expensive change than the one D7 asked for.
 STATUS_PROBE_MARK="::crew-budget-end::"
 
-
 # rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and
 # which rig did it (#220). Read BEFORE hiring, which is the whole point — every
 # other column crew has (GH, VENDOR, ENGINE) is derived through the engine, and
@@ -2013,22 +2012,24 @@ cmd_status() {
     # reachability. Extracting it would move the guard's subject out from
     # under it while leaving the property true and unasserted.
     #
-    # The budget half asks the box for FINISHED ROWS rather than for numbers
-    # to render here. The ceilings are written into the state file by the gate
-    # that enforces them, so a renderer on this host could disagree with the
-    # box about what the bound is — and could not be reached by any offline
-    # suite, while shared/test/common/breaker.sh drives the box-side one
-    # beside the gate.
+    # The budget half asks the box for FINISHED ROWS rather than for numbers to
+    # render here, and `load_conf` runs INSIDE that same exec because the
+    # ceilings are a fact of the box's own conf/roles/*.conf: a lane is
+    # configured there whether or not it has ever dispatched, and this host has
+    # no way to resolve a role conf it does not have. Loading it here costs no
+    # round trip — it is one more statement in the exec already being made, and
+    # #221's count of three is unmoved.
     #
     # Silence on every failure path, deliberately. An engine older than the
-    # budget has no session_budget_report, a box with no armed lane prints
+    # budget has no session_budget_report, a box mid-install has no
+    # instance.conf for load_conf to read, a box with no configured lane prints
     # nothing, and a box that answers nothing yields no mark at all — both
     # halves come back empty, so `log` is exactly what it was before this.
     # shellcheck disable=SC2016  # $HOME must expand INSIDE the box
     probe="$(bxn "$b" '
       [ -r "$HOME/duty/lib/common.sh" ] &&
         env DUTY_DIR="$HOME/duty" bash -c \
-          ". \"$HOME/duty/lib/common.sh\"; session_budget_report" 2>/dev/null
+          ". \"$HOME/duty/lib/common.sh\"; load_conf; session_budget_report" 2>/dev/null
       echo "'"$STATUS_PROBE_MARK"'"
       tail -n 5 ~/duty/duty.log 2>/dev/null
     ' 2>/dev/null | tr -d '\r' || true)"
@@ -2041,10 +2042,12 @@ cmd_status() {
     # nobody can read without opening a dotfile is a budget nobody reads, and
     # this is the view an operator opens when a lane has gone quiet.
     #
-    # The SECTION is omitted entirely when no lane is armed, rather than
+    # The SECTION is omitted entirely when no lane is CONFIGURED, rather than
     # printed empty: the default is off, so on most boxes the honest report is
-    # no report. Placed above the duty.log tail because it is the state, and
-    # the tail is the narration.
+    # no report. A configured lane that has not dispatched yet still gets its
+    # row, at zero — the operator who has just set a ceiling is exactly who
+    # opens this view. Placed above the duty.log tail because it is the state,
+    # and the tail is the narration.
     #
     # NOT telemetry (#327), which owns per-session accounting, outcomes and
     # vendor spend. This is one balance per lane and nothing else.
