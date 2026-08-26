@@ -3694,6 +3694,8 @@ cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
 # shellcheck disable=SC2016  # inject the literal fixture environment lookup
 sed -i 's|^INSTALL_TREE=""$|INSTALL_TREE="${AGG_DIR:-.}/source"|' \
   "$AGG/rehearsal-all.sh"
+grep -q 'INSTALL_TREE="${AGG_DIR:-.}/source"' "$AGG/rehearsal-all.sh" ||
+  { echo "fixture setup failed: rehearsal-all tree injection did not apply" >&2; exit 1; }
 cat >"$AGG/rehearsal.sh" <<'AGGSH'
 #!/usr/bin/env bash
 # Stub role drill: writes the verdict the case asked for — the way the leg

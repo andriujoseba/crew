@@ -112,6 +112,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+for role in $ROLES; do
+  case "$role" in
+    triage|builder|reviewer) ;;
+    *) echo "unknown role '$role' (triage, builder or reviewer)"; exit 1 ;;
+  esac
+done
+
 # Resolve the operator-facing branch, tag or commit once for the whole role
 # round. Each role then fetches this exact object from the canonical remote;
 # a branch moving after this point cannot split one record across three trees.
@@ -133,6 +140,13 @@ if [ -z "$INSTALL_TREE" ]; then
     || { echo "phase 0: remote '$INSTALL_REMOTE' ref '$INSTALL_REF' did not resolve to a commit" >&2; rm -rf -- "$resolve_tmp"; exit 1; }
   rm -rf -- "$resolve_tmp"
   PASSTHRU+=(--remote "$INSTALL_REMOTE" --ref "$RESOLVED_REF")
+  SOURCE_RECORD="remote $INSTALL_REMOTE ref $INSTALL_REF"
+else
+  INSTALL_TREE="$(cd "$INSTALL_TREE" 2>/dev/null && pwd)" \
+    || { echo "phase 0: --tree '$INSTALL_TREE' is not a readable directory" >&2; exit 1; }
+  RESOLVED_REF="$(git -C "$INSTALL_TREE" rev-parse --verify HEAD 2>/dev/null)" \
+    || { echo "phase 0: --tree '$INSTALL_TREE' is not a resolved git tree" >&2; exit 1; }
+  SOURCE_RECORD="tree $INSTALL_TREE"
 fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -181,10 +195,6 @@ cleanup_role_hygiene_files() {
 trap cleanup_role_hygiene_files EXIT
 
 for role in $ROLES; do
-  case "$role" in
-    triage|builder|reviewer) ;;
-    *) echo "unknown role '$role' (triage, builder or reviewer)"; exit 1 ;;
-  esac
   echo
   echo "############################################################"
   echo "## $role — box crew-drill-$role"
@@ -380,7 +390,7 @@ if [ "$INSTALL_DRILL" -eq 1 ]; then
     if [ -n "$INSTALL_TREE" ]; then
       INSTALL_ARGS+=(--tree "$INSTALL_TREE")
     else
-      INSTALL_ARGS+=(--remote "$INSTALL_REMOTE" --ref "$INSTALL_REF")
+      INSTALL_ARGS+=(--remote "$INSTALL_REMOTE" --ref "$RESOLVED_REF")
     fi
     "$HERE/install-drill.sh" "${INSTALL_ARGS[@]}"
     rc=$?
@@ -496,7 +506,7 @@ echo
 echo "############################################################"
 echo "## fleet rehearsal summary ($AGENT)"
 if [ -n "$RESOLVED_REF" ]; then
-  echo "## drilled source: $RESOLVED_REF (remote $INSTALL_REMOTE ref $INSTALL_REF)"
+  echo "## drilled source: $RESOLVED_REF ($SOURCE_RECORD)"
 fi
 printf '##   %s\n' "${SUMMARY[@]}"
 echo "############################################################"

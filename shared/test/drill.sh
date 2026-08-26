@@ -47,34 +47,62 @@ cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
   "$HARNESS/"
 cat >"$HARNESS/rehearsal.sh" <<'ROLE'
 #!/usr/bin/env bash
-role="" remote="" ref=""
+role="" remote="" ref="" tree=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --role) role="$2"; shift 2 ;;
     --remote) remote="$2"; shift 2 ;;
     --ref) ref="$2"; shift 2 ;;
+    --tree) tree="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
-case "$ref" in
-  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) shipped="$ref" ;;
-  *) shipped="$(git --git-dir="$DRILL_REMOTE" rev-parse "refs/heads/$ref")" ;;
-esac
+if [ -n "$tree" ]; then
+  shipped="$(git -C "$tree" rev-parse HEAD)"
+elif [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+  shipped="$ref"
+else
+  shipped="$(git --git-dir="$DRILL_REMOTE" rev-parse "refs/heads/$ref")"
+fi
+remote="${remote:--}"
+ref="${ref:--}"
 printf '%s %s %s %s\n' "$role" "$remote" "$ref" "$shipped" >>"$DRILL_ROLE_LOG"
-echo "== phase 0: shipped $shipped from remote $remote ref $ref (creds-free inside box)"
+if [ -n "$tree" ]; then
+  echo "== phase 0: crew at $shipped (tree $tree), static checks"
+else
+  echo "== phase 0: shipped $shipped from remote $remote ref $ref (creds-free inside box)"
+fi
 if [ "$(wc -l <"$DRILL_ROLE_LOG")" -eq 1 ] && [ -n "${DRILL_MOVE_TO:-}" ]; then
   git --git-dir="$DRILL_REMOTE" update-ref refs/heads/main "$DRILL_MOVE_TO"
 fi
 exit 0
 ROLE
 chmod +x "$HARNESS/rehearsal.sh"
+cat >"$HARNESS/install-drill.sh" <<'INSTALL'
+#!/usr/bin/env bash
+remote="" ref="" tree=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --remote) remote="$2"; shift 2 ;;
+    --ref) ref="$2"; shift 2 ;;
+    --tree) tree="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$tree" ]; then shipped="$(git -C "$tree" rev-parse HEAD)"; else shipped="$ref"; fi
+remote="${remote:--}"
+ref="${ref:--}"
+printf 'installer %s %s %s\n' "$remote" "$ref" "$shipped" >>"$DRILL_INSTALL_LOG"
+exit 0
+INSTALL
+chmod +x "$HARNESS/install-drill.sh"
 
 round_run() {  # <script> <roles> <ref>
   local script="$1" roles="$2" ref="$3"
-  DRILL_ROLE_LOG="$ROLE_LOG" DRILL_REMOTE="$REMOTE" \
+  DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_REMOTE="$REMOTE" \
     DRILL_MOVE_TO="${DRILL_MOVE_TO:-}" \
     bash "$script" --remote "$REMOTE" --ref "$ref" --roles "$roles" \
-      --keep --no-app --no-config-drill --no-install-drill \
+      --keep --no-app --no-config-drill \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
       --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1
 }
@@ -82,7 +110,9 @@ round_run() {  # <script> <roles> <ref>
 # Resolve main once, then move it after the first role. Every role still gets
 # and reports FIRST because the mutable name never crosses the orchestrator.
 ROLE_LOG="$TMP/roles.log"
+INSTALL_LOG="$TMP/installer.log"
 : >"$ROLE_LOG"
+: >"$INSTALL_LOG"
 DRILL_MOVE_TO="$SECOND"
 if round_out="$(round_run "$HARNESS/rehearsal-all.sh" \
     'triage builder reviewer' main)"; then round_rc=0; else round_rc=$?; fi
@@ -92,6 +122,10 @@ t drill-one-resolution-one-passed-ref 1 "$(awk '{print $3}' "$ROLE_LOG" | sort -
 t drill-one-resolution-passed-full-sha "$FIRST" "$(awk 'NR == 1 {print $3}' "$ROLE_LOG")"
 t drill-moving-branch-one-shipped-tree 1 "$(awk '{print $4}' "$ROLE_LOG" | sort -u | wc -l | tr -d ' ')"
 t drill-moving-branch-ships-original "$FIRST" "$(awk 'NR == 3 {print $4}' "$ROLE_LOG")"
+t drill-moving-branch-installer-passed-full-sha "$FIRST" "$(awk '{print $3}' "$INSTALL_LOG")"
+t drill-moving-branch-installer-ships-original "$FIRST" "$(awk '{print $4}' "$INSTALL_LOG")"
+t drill-moving-branch-one-tree-across-round 1 \
+  "$(awk '{print $4}' "$ROLE_LOG" "$INSTALL_LOG" | sort -u | wc -l | tr -d ' ')"
 t drill-record-names-resolved-sha 1 \
   "$(grep -cF "## drilled source: $FIRST (remote $REMOTE ref main)" <<<"$round_out")"
 t drill-three-phase-zero-lines 3 "$(grep -cF "phase 0: shipped $FIRST" <<<"$round_out")"
@@ -104,6 +138,7 @@ sed 's/--ref "$RESOLVED_REF"/--ref "$INSTALL_REF"/' \
   "$HARNESS/rehearsal-all.sh" >"$MUTABLE"
 git --git-dir="$REMOTE" update-ref refs/heads/main "$FIRST"
 : >"$ROLE_LOG"
+: >"$INSTALL_LOG"
 DRILL_MOVE_TO="$SECOND"
 round_run "$MUTABLE" 'triage builder reviewer' main >/dev/null || true
 t drill-moving-branch-mutation-diverges 2 \
@@ -111,6 +146,7 @@ t drill-moving-branch-mutation-diverges 2 \
 
 # A commit with no advertised canonical ref remains acquirable by its full ID.
 : >"$ROLE_LOG"
+: >"$INSTALL_LOG"
 DRILL_MOVE_TO=""
 if hidden_out="$(round_run "$HARNESS/rehearsal-all.sh" reviewer "$SECOND")"; then
   hidden_rc=0
@@ -122,10 +158,30 @@ t drill-hidden-commit-from-canonical "$REMOTE $SECOND $SECOND" \
   "$(awk '{print $2, $3, $4}' "$ROLE_LOG")"
 t drill-hidden-commit-recorded 1 \
   "$(grep -cF "## drilled source: $SECOND (remote $REMOTE ref $SECOND)" <<<"$hidden_out")"
+t drill-hidden-commit-installer-ref "$SECOND" "$(awk '{print $3}' "$INSTALL_LOG")"
+
+# Tree mode identifies the actual local checkout and commit in both phase-0
+# role evidence and the paste-ready summary; remote/ref defaults stay silent.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+DRILL_MOVE_TO=""
+if tree_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
+      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then tree_rc=0; else tree_rc=$?; fi
+t drill-tree-round-rc 0 "$tree_rc"
+t drill-tree-role-ships-head "$SECOND" "$(awk '{print $4}' "$ROLE_LOG")"
+t drill-tree-installer-ships-head "$SECOND" "$(awk '{print $4}' "$INSTALL_LOG")"
+t drill-tree-record-names-head 1 \
+  "$(grep -cF "## drilled source: $SECOND (tree $SOURCE)" <<<"$tree_out")"
+t drill-tree-phase-zero-names-head 1 \
+  "$(grep -cF "phase 0: crew at $SECOND (tree $SOURCE), static checks" <<<"$tree_out")"
 
 # Resolution failures belong to phase 0 and name both inputs before a role
 # begins, so the operator can distinguish a bad ref from a role failure.
 : >"$ROLE_LOG"
+: >"$INSTALL_LOG"
 if bad_out="$(round_run "$HARNESS/rehearsal-all.sh" reviewer no-such-ref)"; then
   bad_rc=0
 else
@@ -138,6 +194,17 @@ case "$bad_out" in
 esac
 t drill-unresolved-ref-names-reason named "$bad_named"
 t drill-unresolved-ref-starts-no-role 0 "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
+
+# Invalid local role input is rejected before any remote resolution attempt.
+if role_bad_out="$(round_run "$HARNESS/rehearsal-all.sh" not-a-role no-such-ref)"; then
+  role_bad_rc=0
+else
+  role_bad_rc=$?
+fi
+t drill-invalid-role-rc 1 "$role_bad_rc"
+case "$role_bad_out" in *"unknown role 'not-a-role'"*) role_bad_named=named ;; *) role_bad_named=missing ;; esac
+t drill-invalid-role-named named "$role_bad_named"
+t drill-invalid-role-skips-resolution 0 "$(grep -c 'cannot resolve remote' <<<"$role_bad_out" || true)"
 
 # The record assertion itself must reject a summary that drops the SHA.
 NO_RECORD="$HARNESS/rehearsal-all-no-record.sh"

@@ -218,7 +218,6 @@ trap cleanup_all EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-echo "== phase 0: crew at $REF, static checks"
 ACQUIRE_TMP="$(mktemp -d)"
 if [ -n "$TREE" ]; then
   SOURCE_TREE="$(cd "$TREE" 2>/dev/null && pwd)" \
@@ -259,6 +258,7 @@ for required in shared/install.sh shared/test/run.sh VERSION; do
 done
 SOURCE_SHA="$(git -C "$SOURCE_TREE" rev-parse --verify HEAD 2>/dev/null)" \
   || { echo "phase 0: $SOURCE_DESC is not a resolved git tree"; exit 1; }
+echo "== phase 0: crew at $SOURCE_SHA ($SOURCE_DESC), static checks"
 ENGINE_ARCHIVE="$ACQUIRE_TMP/crew-engine.tgz"
 # BEGIN phase-0 archive selection: shared/test/run.sh verifies this contract.
 if ! git -C "$SOURCE_TREE" archive --format=tar "$SOURCE_SHA" \
