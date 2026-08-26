@@ -296,6 +296,29 @@ JS
 t "card: repository-less queue items cannot become repository targets" \
   'heavy-duty/crew,crew' "$FF_QUEUE_REPO_RESULT"
 
+# Exercise the selector through the live-data adapter, where the collector's
+# empty fallback must stay empty while real queue targets still take priority.
+FF_LIVE_DATA_SOURCE="$(sed -n \
+  -e '/^function kindOf(/p' \
+  -e '/^function queueRepo(/,/^}/p' \
+  -e '/^function emptyData(/p' \
+  -e '/^function liveData(/,/^}/p' \
+  "$FLOOR/src/app.js")"
+FF_LIVE_DATA_RESULT="$(node - "$FF_LIVE_DATA_SOURCE" <<'JS'
+const source = process.argv[2];
+if (!source) process.exit(2);
+eval(source);
+console.log([
+  liveData({room:"builder",box:"offline",queue:[],repo:""}).repo,
+  liveData({room:"builder",box:"idle",queue:[],repo:"heavy-duty/box"}).repo,
+  liveData({room:"builder",box:"aggregate",queue:[{repo:null,key:"4 mentions"}],repo:"crew"}).repo,
+  liveData({room:"builder",box:"mixed",queue:[{repo:null,key:"4 mentions"},{repo:"heavy-duty/crew",key:"3 mentions"}],repo:"crew"}).repo
+].join("|"));
+JS
+)"
+t "card: live data preserves empty, aggregate, and repository targets" \
+  '|heavy-duty/box|crew|heavy-duty/crew' "$FF_LIVE_DATA_RESULT"
+
 # The queue item remains visible, but absence is not a printable repository.
 FF_QUEUE_CHIP_SOURCE="$(sed -n '/^function queueChip(/,/^}/p' "$FLOOR/src/app.js")"
 FF_QUEUE_CHIP_RESULT="$(node - "$FF_QUEUE_CHIP_SOURCE" <<'JS'

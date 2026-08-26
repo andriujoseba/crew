@@ -1694,7 +1694,7 @@ function api(path,opts){return fetch(apiURL(path),opts||{}).then(function(r){
 function liveData(u){
   var d=emptyData(u.room);
   d.box=u.box;d.queue=u.queue||[];d.sessions=u.sessions||[];d.up=u.up||{h:0,m:0};
-  d.repo=queueRepo(d.queue,u.repo||"crew");d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
+  d.repo=queueRepo(d.queue,u.repo||"");d.spark=(u.spark&&u.spark.length?u.spark:[]);d.longest=u.longest||0;
   d.avg=u.avg||0;d.success=u.success||0;d.today=u.today||0;d.cur=u.cur||null;
   d.gh=u.gh;d.vendor=u.vendor;d.engine=u.engine||"";d.cron=u.cron||d.cron;
   /* #159's verdict about that stamp. Defaulted to "" like the fields below,
