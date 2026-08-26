@@ -156,6 +156,186 @@ t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
 t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"
+
+# #528 — the tick-wide mention batch has no repository. Its old line shape
+# satisfied RE_MENTION and invented a repository named `fleet`, which then
+# became the card's repository link. Exercise the parser directly so all four
+# protocol shapes are explicit without teaching stub-box a one-issue scenario.
+ff_queue_case() {
+  FF_SERVER="$FLOOR/server" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_queue
+
+print(json.dumps(derive_queue(sys.argv[1:]), separators=(",", ":"), sort_keys=True))
+PY
+}
+
+FF_AGGREGATE="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z fleet: 4 unread mention(s) — launching one mention session')"
+t "queue: aggregate mention is one repository-less item" \
+  '[{"key":"4 mentions","repo":null}]' "$FF_AGGREGATE"
+
+FF_LEGACY="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z heavy-duty/crew: 3 unread mention(s)')"
+t "queue: legacy repository mention keeps its repository" \
+  '[{"key":"3 mention","repo":"heavy-duty/crew"}]' "$FF_LEGACY"
+
+FF_MIXED="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z fleet: 4 unread mention(s) — launching one mention session' \
+  '2026-08-25T20:00:02Z heavy-duty/crew: 3 unread mention(s)')"
+t "queue: aggregate and repository mentions stay distinct" \
+  '[{"key":"4 mentions","repo":null},{"key":"3 mention","repo":"heavy-duty/crew"}]' "$FF_MIXED"
+
+FF_REAL_FLEET="$(ff_queue_case \
+  '2026-08-25T20:00:00Z duty run start' \
+  '2026-08-25T20:00:01Z fleet: 2 unread mention(s)')"
+t "queue: a real fleet repository is not the aggregate" \
+  '[{"key":"2 mention","repo":"fleet"}]' "$FF_REAL_FLEET"
+
+# Exercise the collector record, not only the page selector: configured repos
+# must not replace crew as the last resort when every queue item lacks a repo.
+FF_AGGREGATE_UNIT="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+probe = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+::repos heavy-duty/ceremony heavy-duty/box
+::logstart
+2026-08-25T20:00:00Z duty run start
+2026-08-25T20:00:01Z fleet: 4 unread mention(s) — launching one mention session
+::logend
+"""
+units.probe_box = lambda unit, agent_conf: (probe, "")
+unit = units.build_unit(
+    {"box": "ff-aggregate", "agent": "claude", "room": "builder"},
+    "running", {}, 1756152002,
+)
+print(json.dumps(
+    {"queue": unit["queue"], "repo": unit["repo"], "repos": unit["repos"]},
+    separators=(",", ":"), sort_keys=True,
+))
+PY
+)"
+t "card: aggregate-only live unit keeps crew fallback with configured repos" \
+  '{"queue":[{"key":"4 mentions","repo":null}],"repo":"crew","repos":["heavy-duty/ceremony","heavy-duty/box"]}' \
+  "$FF_AGGREGATE_UNIT"
+
+# An absent queue is a different state from a repository-less queue item. Keep
+# the established configured-repository target, and keep no target at all when
+# the box advertises no repositories.
+FF_EMPTY_UNITS="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+probe_template = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+{repos}::logstart
+2026-08-25T20:00:00Z duty run start
+::logend
+"""
+
+def build(box, repos):
+    probe = probe_template.format(repos=("::repos %s\n" % repos) if repos else "")
+    units.probe_box = lambda unit, agent_conf: (probe, "")
+    unit = units.build_unit(
+        {"box": box, "agent": "claude", "room": "builder"},
+        "running", {}, 1756152002,
+    )
+    return {"box": box, "queue": unit["queue"], "repo": unit["repo"], "repos": unit["repos"]}
+
+print(json.dumps([
+    build("ff-empty-configured", "heavy-duty/box heavy-duty/ceremony"),
+    build("ff-empty-unconfigured", ""),
+], separators=(",", ":"), sort_keys=True))
+PY
+)"
+t "card: empty queues preserve configured and absent repository fallbacks" \
+  '[{"box":"ff-empty-configured","queue":[],"repo":"heavy-duty/box","repos":["heavy-duty/box","heavy-duty/ceremony"]},{"box":"ff-empty-unconfigured","queue":[],"repo":"","repos":[]}]' \
+  "$FF_EMPTY_UNITS"
+
+# Execute the page's small selector in isolation. This pins what the card
+# opens without coupling the assertion to generated index.html or requiring a
+# browser: a repository-less first item yields the next repository, then crew.
+FF_QUEUE_REPO_SOURCE="$(sed -n '/^function queueRepo(/,/^}/p' "$FLOOR/src/app.js")"
+FF_QUEUE_REPO_RESULT="$(node - "$FF_QUEUE_REPO_SOURCE" <<'JS'
+const source = process.argv[2];
+if (!source) process.exit(2);
+eval(source);
+console.log([
+  queueRepo([{repo:null,key:"4 mentions"},{repo:"heavy-duty/crew",key:"3 mentions"}], "crew"),
+  queueRepo([{repo:null,key:"4 mentions"}], "crew")
+].join(","));
+JS
+)"
+t "card: repository-less queue items cannot become repository targets" \
+  'heavy-duty/crew,crew' "$FF_QUEUE_REPO_RESULT"
+
+# Exercise the selector through the live-data adapter, where the collector's
+# empty fallback must stay empty while real queue targets still take priority.
+FF_LIVE_DATA_SOURCE="$(sed -n \
+  -e '/^function kindOf(/p' \
+  -e '/^function queueRepo(/,/^}/p' \
+  -e '/^function emptyData(/p' \
+  -e '/^function liveData(/,/^}/p' \
+  "$FLOOR/src/app.js")"
+FF_LIVE_DATA_RESULT="$(node - "$FF_LIVE_DATA_SOURCE" <<'JS'
+const source = process.argv[2];
+if (!source) process.exit(2);
+eval(source);
+console.log([
+  liveData({room:"builder",box:"offline",queue:[],repo:""}).repo,
+  liveData({room:"builder",box:"idle",queue:[],repo:"heavy-duty/box"}).repo,
+  liveData({room:"builder",box:"aggregate",queue:[{repo:null,key:"4 mentions"}],repo:"crew"}).repo,
+  liveData({room:"builder",box:"mixed",queue:[{repo:null,key:"4 mentions"},{repo:"heavy-duty/crew",key:"3 mentions"}],repo:"crew"}).repo
+].join("|"));
+JS
+)"
+t "card: live data preserves empty, aggregate, and repository targets" \
+  '|heavy-duty/box|crew|heavy-duty/crew' "$FF_LIVE_DATA_RESULT"
+
+# The queue item remains visible, but absence is not a printable repository.
+FF_QUEUE_CHIP_SOURCE="$(sed -n '/^function queueChip(/,/^}/p' "$FLOOR/src/app.js")"
+FF_QUEUE_CHIP_RESULT="$(node - "$FF_QUEUE_CHIP_SOURCE" <<'JS'
+const source = process.argv[2];
+if (!source) process.exit(2);
+const REPOC = {"heavy-duty/crew":"#123456"};
+function esc(s) { return String(s); }
+eval(source);
+console.log([
+  queueChip({repo:null,key:"4 mentions"}),
+  queueChip({repo:"heavy-duty/crew",key:"3 mentions"})
+].join("\n"));
+JS
+)"
+t "queue chip: repository-less items render their key without null" \
+  $'<span class="qc" style="border-color:#3a4a60">4 mentions</span>\n<span class="qc" style="border-color:#123456">heavy-duty/crew 3 mentions</span>' \
+  "$FF_QUEUE_CHIP_RESULT"
 t "metrics: success%"         100  "$(uf ff-working "u['success']")"
 t "metrics: failing box"      0    "$(uf ff-failing "u['success']")"
 t "spark: always 22 buckets"  22   "$(uf ff-working "len(u['spark'])")"

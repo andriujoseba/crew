@@ -27,7 +27,15 @@ RE_QUEUE = [
 RE_REVIEW_BATCH = re.compile(TS + r" review: (\S+) needs verdicts on: (.+)$")
 RE_BUILD_DUTY = re.compile(TS + r" (\S+): build duty \(ready unclaimed=(\d+), whole rounds owed=(\d+)\)")
 RE_TRIAGE = re.compile(TS + r" (\S+): signals:(\S+) launching triage session")
-RE_MENTION = re.compile(TS + r" (\S+): (\d+) unread mention")
+# The tick-wide batch has no repository. Its trailing "one mention session"
+# clause is the structural discriminator; the leading word is deliberately
+# not treated as a magic repository name because a real repo may be `fleet`.
+RE_MENTION_BATCH = re.compile(
+    TS + r" \S+: (\d+) unread mention\(s\) — launching one mention session$"
+)
+RE_MENTION = re.compile(
+    TS + r" (\S+): (\d+) unread mention(?:\(s\))?(?: — launching mention session)?$"
+)
 RE_RESUME = re.compile(TS + r" (\S+): resume duty")
 
 
@@ -95,6 +103,9 @@ def derive_queue(loglines):
         m = RE_TRIAGE.search(line)
         if m:
             add(m.group(2), m.group(3))
+        m = RE_MENTION_BATCH.search(line)
+        if m:
+            add(None, "%s mentions" % m.group(2))
         m = RE_MENTION.search(line)
         if m:
             add(m.group(2), "%s mention" % m.group(3))
@@ -366,8 +377,10 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     u["sessions"] = [{k: s[k] for k in ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply")}
                      for s in sessions[:11]]
     u["spark"] = spark_24h(sessions, now)
-    u["repo"] = (u["queue"][0]["repo"] if u["queue"]
-                 else (u["repos"][0] if u["repos"] else ""))
+    repo_fallback = ("crew" if u["queue"]
+                     else (u["repos"][0] if u["repos"] else ""))
+    u["repo"] = next((item["repo"] for item in u["queue"] if item["repo"]),
+                     repo_fallback)
 
     if sessions:
         durs = [s["dur"] for s in sessions]
