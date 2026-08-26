@@ -1665,12 +1665,13 @@ _stranded_resume_keys() {
 # costing a gh call per tick and a WARN naming a wake nobody declared.
 #
 # THE PATTERN IS A CONSTANT BECAUSE IT HAS TWO CONSUMERS (#479). The structural
-# escalation below flags `attention` on the PR's authorizing issue and needs the
-# same answer this function derives; a second copy of a regex whose every clause
-# was bought by a named failure is a second thing to keep true, and the drift
-# would be silent — both copies parse, and only one of them is right. It is
-# passed with `--arg` rather than inlined, so each jq program stays
-# single-quoted and the pattern is one string in one place.
+# escalation below names the PR's authorizing issue in its operator alert — the
+# issue a human should flag `attention` on, which the engine does not write
+# itself — and needs the same answer this function derives; a second copy of a
+# regex whose every clause was bought by a named failure is a second thing to
+# keep true, and the drift would be silent — both copies parse, and only one of
+# them is right. It is passed with `--arg` rather than inlined, so each jq
+# program stays single-quoted and the pattern is one string in one place.
 # shellcheck disable=SC2016  # a regex, not a shell expansion
 _RESUME_ISSUE_RE='(^|[^a-z])(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)'
 
