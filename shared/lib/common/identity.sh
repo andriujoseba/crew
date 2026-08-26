@@ -262,11 +262,9 @@ converge_git_identity() {
     rm -f "$err"
     GIT_IDENTITY_FAILURE_KIND="credential"
     GIT_IDENTITY_FAILURE_EVIDENCE="$reason"
-    note_auth_failure gh "$reason"
     return 1
   fi
   rm -f "$err"
-  clear_auth_failure gh
   pair="$(printf '%s\n' "$pair" | head -1)"
   # Split in the shell rather than with `cut`. install.sh's fixture runs this
   # under a curated PATH that is the box's whole world, and every external

@@ -126,6 +126,7 @@ if ! converge_git_identity "$ME"; then
   identity_failure="$(git_identity_failure_message "$ME")"
   warn "$identity_failure — no session this tick"
   if [ "${GIT_IDENTITY_FAILURE_KIND:-identity}" = "credential" ]; then
+    note_auth_failure gh "$GIT_IDENTITY_FAILURE_EVIDENCE"
     log "duty run end"
     exit 0
   fi
