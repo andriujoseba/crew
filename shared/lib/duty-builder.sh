@@ -1114,23 +1114,117 @@ _resume_pr_comments() {
 # _flip_owed_resume_rows, whose whole question is whether a DRAFT carries a
 # valid signal at its head. The cost is one paginated REST read per draft per
 # tick, beside the two _resume_newest_foreign already makes for the same draft.
+# THE THREAD DOES NOT TRAVEL ON ARGV (#479). `--argjson comments "$comments"`
+# made the whole thread ONE argv element, and a single element is bounded by
+# MAX_ARG_STRLEN — 32 pages, 131,072 bytes — not by the ARG_MAX everyone quotes.
+# Past that, `execve` fails with E2BIG, `|| spliced=""` swallowed it, the listing
+# went through unchanged, and the PR reached the predicates with `.comments`
+# ABSENT, which they read as null and skip. A thread never shrinks, so the
+# condition never cleared: the guarantee this file states above — "a missing
+# marker only delays to the next tick, it never stalls forever" — was void above
+# the limit, and every downstream safety net (_green_head_breaker, the #384
+# green-head bypass, _stranded_resume_due's counter) sits BELOW the splice, so
+# nothing reasoning about the stranded set could reach the PR at all. It read as
+# `no resume duty` — a clean board — for 86 minutes.
+#
+# `--slurpfile` from a process substitution is the fix: argv carries `/dev/fd/N`
+# and the payload travels down a pipe, so the bound that applies is the one that
+# scales. A temp file would do the same, and is not used, because allocating one
+# introduces a failure mode of its own — a full `TMPDIR` — on the exact path
+# whose job is to classify failures; the substitution has nothing to allocate.
+#
+# TRANSIENT AND STRUCTURAL ARE NOT THE SAME SKIP, and the discriminator is which
+# half failed. The READ is a network call, so `gh` returning nonzero is the
+# transient class the original swallow was written for: it skips the PR for the
+# tick, forfeits its counter, and is retried unchanged next tick. The SPLICE is a
+# local deterministic fold of two values already in hand — no network, no API, no
+# rate limit — so a splice that fails will fail identically next tick on inputs
+# that only ever grow. That will not clear on its own, and a permanent condition
+# is not a per-tick skip: it sets `attention` on the PR's authorizing issue
+# rather than waiting for a human to notice a board that looks clean.
+#
+# EVERY BRANCH WARNS, including the one that cannot even mark the thread unread.
+# A swallow with no warn is what turned a stall into a clean board, so the
+# absence of a log line is the defect being fixed here and not an omission.
 _resume_attach_comments() {
   local repo="$1" listing="$2" spliced num comments
   RESUME_LISTING=""
   while IFS= read -r num; do
     [ -n "$num" ] || continue
+    spliced=""
     if comments="$(_resume_pr_comments "$repo" "$num")"; then
       spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
-        --argjson comments "$comments" \
-        'map(if .number == $num then . + {comments:$comments} else . end)')" || spliced=""
+        --slurpfile comments <(printf '%s' "$comments") \
+        'map(if .number == $num then . + {comments:$comments[0]} else . end)')" || spliced=""
+      if [ -z "$spliced" ]; then
+        warn "$repo#$num: comment splice failed on a thread that read cleanly; leaving it out of stranded-resume detection this tick (structural)"
+        _resume_structural_attention "$repo" "$num" "$listing"
+      fi
     else
       warn "$repo#$num: comment read failed; leaving it out of stranded-resume detection this tick"
+    fi
+    if [ -z "$spliced" ]; then
+      # The explicit null, for both failures. The predicates skip a null and the
+      # PR leaves the stranded set for this tick, forfeiting its counter — the
+      # safe direction, because an absent field read as an empty thread would
+      # look UNSIGNALLED and accrue toward a resume the evidence does not support.
       spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
-        'map(if .number == $num then . + {comments:null} else . end)')" || spliced=""
+        'map(if .number == $num then . + {comments:null} else . end)')" \
+        || { spliced=""
+             warn "$repo#$num: could not mark the thread unread in the listing either; it reaches the predicates with .comments absent" ; }
     fi
     if [ -n "$spliced" ]; then listing="$spliced"; fi
   done < <(printf '%s' "$listing" | jq -r '.[] | .number' 2>/dev/null)
   RESUME_LISTING="$listing"
+}
+
+# _resume_structural_attention REPO NUM LISTING — escalate a structural splice
+# failure to the board, once per head.
+#
+# `attention` goes on the PR's AUTHORIZING ISSUE, never on the PR: the wake reads
+# `filter=assigned` over issues, and _attention_audit_classify calls a flag
+# anywhere else malformed — "`attention` belongs to the issue that owns the
+# claim". The issue number comes from the body through _RESUME_ISSUE_RE, the one
+# pattern _resume_pr_fingerprints reads, so the two can never disagree about
+# which issue a PR answers.
+#
+# ONCE PER HEAD, on the ci-red scheme (#17): the head goes in the ledger's ID and
+# never in its value, because ledger_filter re-fires when the value sorts
+# greater and a SHA has no order. A new head is an id never seen, so a corrective
+# push re-flags — which is right, the condition being re-asserted against a tree
+# that changed — while an unchanged head does not re-flag every five minutes.
+# That matters more here than for a log line: the session's ack REMOVES the
+# label, and a flag re-set on the same head would re-launch the pickup session
+# the ack just closed. #167's rule, applied to a label: a demand that repeats
+# forever is not a demand. The suppressed report is what keeps the quiet from
+# becoming a silence.
+_resume_structural_attention() {
+  local repo="$1" num="$2" listing="$3" head issue item fresh state
+  head="$(printf '%s' "$listing" | jq -r --argjson num "$num" \
+    'first(.[] | select(.number == $num) | (.headRefOid // "")) // ""' 2>/dev/null)"
+  issue="$(printf '%s' "$listing" | jq -r --argjson num "$num" --arg re "$_RESUME_ISSUE_RE" \
+    'first(.[] | select(.number == $num)
+       | first((.body // "") | capture($re; "i") | .n)) // ""' 2>/dev/null)"
+  if [ -z "$issue" ]; then
+    warn "$repo#$num: structural comment-splice failure and no authorizing issue in the body; cannot set $LABEL_ATTENTION"
+    return 0
+  fi
+  item="$repo#$num@$head structural"
+  fresh="$(printf '%s\n' "$item" | ledger_filter "$DUTY_DIR/.seen-resume-structural")"
+  if [ -n "$fresh" ]; then
+    printf '%s\n' "$fresh" | ledger_commit "$DUTY_DIR/.seen-resume-structural"
+    if gh issue edit "$issue" -R "$repo" --add-label "$LABEL_ATTENTION" >/dev/null 2>&1; then
+      warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — $LABEL_ATTENTION set on $repo#$issue"
+    else
+      warn "$repo#$num: structural comment-splice failure at head ${head:0:12} — could not set $LABEL_ATTENTION on $repo#$issue"
+    fi
+  fi
+  state="$DUTY_DIR/.suppressed-resume-structural.${repo//\//__}.$num"
+  printf '%s\n' "$item" \
+    | ledger_suppressed "$DUTY_DIR/.seen-resume-structural" \
+    | report_suppressed "$state" \
+        "$repo#$num: structural comment-splice failure still standing at head ${head:0:12}" \
+        "already flagged on $repo#$issue at this head"
 }
 
 # --- The check half of the resume evidence (#384) ---------------------------
@@ -1553,13 +1647,22 @@ _stranded_resume_keys() {
 # mention is not the authorizing one. The leading `(^|[^a-z])` is a word
 # boundary: without it `the operator discloses #99 in passing` yields issue 99,
 # costing a gh call per tick and a WARN naming a wake nobody declared.
+#
+# THE PATTERN IS A CONSTANT BECAUSE IT HAS TWO CONSUMERS (#479). The structural
+# escalation below flags `attention` on the PR's authorizing issue and needs the
+# same answer this function derives; a second copy of a regex whose every clause
+# was bought by a named failure is a second thing to keep true, and the drift
+# would be silent — both copies parse, and only one of them is right. It is
+# passed with `--arg` rather than inlined, so each jq program stays
+# single-quoted and the pattern is one string in one place.
+# shellcheck disable=SC2016  # a regex, not a shell expansion
+_RESUME_ISSUE_RE='(^|[^a-z])(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)'
+
 _resume_pr_fingerprints() {
   local repo="$1"
-  jq -r --arg repo "$repo" '
+  jq -r --arg repo "$repo" --arg re "$_RESUME_ISSUE_RE" '
     .[] | select(.isDraft)
-    | ( first( (.body // "")
-               | capture("(^|[^a-z])(closes|refs|fixes|resolves)[ \t]+#(?<n>[0-9]+)"; "i")
-               | .n ) // "" ) as $issue
+    | ( first( (.body // "") | capture($re; "i") | .n ) // "" ) as $issue
     | "\($repo)#\(.number)@\(.headRefOid)\t\($issue)"
   '
 }
