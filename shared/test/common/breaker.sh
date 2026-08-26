@@ -649,19 +649,22 @@ t budget-report-follows-the-conf-not-the-counter 'none|1|1|none|counter-kept' \
 
 # shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
 budget_kinds_match_the_confs() (
-  local conf suffix kind missing="" extra=""
+  local shipped suffix kind folded found missing="" extra=""
   # Every BUDGET_SESSIONS_<SUFFIX> crew ships must fold from a kind in the
   # list. The fold is one-way — `ci-red` gives CI_RED and CI_RED gives back
   # `ci_red`, which is why the list exists at all — so the comparison is made
   # in the direction that works.
-  for suffix in $(grep -rhno '^BUDGET_SESSIONS_[A-Z0-9_]*' "$SHARED/conf/" \
-    | sed 's/.*BUDGET_SESSIONS_//' | sort -u); do
+  shipped="$(grep -rho '^BUDGET_SESSIONS_[A-Z0-9_]*' "$SHARED/conf/" \
+    | sed 's/^BUDGET_SESSIONS_//' | sort -u)"
+  while read -r suffix; do
+    [ -n "$suffix" ] || continue
+    found=no
     for kind in $SESSION_BUDGET_KINDS; do
-      kind="${kind//[^[:alnum:]]/_}"
-      [ "${kind^^}" != "$suffix" ] || { suffix=""; break; }
+      folded="${kind//[^[:alnum:]]/_}"
+      [ "${folded^^}" != "$suffix" ] || { found=yes; break; }
     done
-    [ -z "$suffix" ] || missing="$missing $suffix"
-  done
+    [ "$found" = yes ] || missing="$missing $suffix"
+  done <<<"$shipped"
   # And every kind in the list must be configurable: its own pair in a shipped
   # conf, or it is a row `crew status` can never print.
   for kind in $SESSION_BUDGET_KINDS; do
