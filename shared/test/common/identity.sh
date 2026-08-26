@@ -365,9 +365,11 @@ t gitid-refusal-ends-the-tick exits "$r1"
 
 # The caller uses the classification produced by the SAME failed API call;
 # it neither guesses from the box login nor pays for another auth probe.
+# shellcheck disable=SC2016  # matching literal duty.sh source text
 if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
   'git_identity_failure_message "$ME"'; then r1=carried; else r1=LOST; fi
 t gitid-duty-carries-failure-evidence carried "$r1"
+# shellcheck disable=SC2016  # matching literal duty.sh source text
 if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
   'gh api\|gh auth'; then r1=PROBED; else r1=clean; fi
 t gitid-duty-failure-path-adds-no-network-call clean "$r1"
