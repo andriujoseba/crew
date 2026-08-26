@@ -196,17 +196,25 @@ orph_end() {  # orph_end <dir> <ts> <kind> <key>
     "$2" "$3" "$4" >>"$1/duty.log"
 }
 
-# orph_pass <dir> [mutant] — one reconciler pass, output appended to the log it
-# read. `alert` is captured rather than sent; everything else is the library.
+# orph_pass <dir> [mutant] — one reconciler pass. `alert` is captured rather
+# than sent; everything else is the library.
+#
+# Stdout goes where tick.sh sends duty.sh's — into duty.log — because that is
+# the shape a real tick has, and $ORPH_STDOUT overrides it for the cases that
+# drive a HAND run. The redirect no longer delivers the reconciler's answer:
+# the module appends the reconstructed terminal to the log by path, and what
+# stdout carries here is only the human-facing summary. That is the whole point
+# of the override below — with the answer riding stdout, `orph_pass` was wiring
+# for the function the very contract under test.
 # shellcheck disable=SC2317  # alert is reached from inside the library
 orph_pass() (
-  local dir="$1" mutant="${2:-}" alerts="$1/alerts"
+  local dir="$1" mutant="${2:-}" alerts="$1/alerts" out="${ORPH_STDOUT:-$1/duty.log}"
   DUTY_DIR="$dir"; LOG_DIR="$dir/logs"; DUTY_TICK_ID='tick-orphan'
   SESSION_TERMINAL_THRESHOLD=3
   alert() { printf '%s\n' "$*" >>"$alerts"; }
   # shellcheck disable=SC1090
   [ -z "$mutant" ] || source "$mutant"
-  session_reconcile_orphans >>"$dir/duty.log" 2>&1
+  session_reconcile_orphans >>"$out" 2>&1
 )
 
 orph_lines() { grep -F "outcome=$SESSION_ORPHAN_OUTCOME" "$1/duty.log" || true; }
@@ -314,6 +322,18 @@ ORPH4="$TMP/orphan-holderless"; orph_fixture "$ORPH4"
 orph_start "$ORPH4" 2026-08-14T05:00:00Z operator floor ''
 orph_pass "$ORPH4"
 t orphan-holderless-start-is-never-answered 0 "$(orph_count "$ORPH4")"
+# ...and it is the emptiness check that spares it, not something downstream of
+# a guard that never fired. The record used to be tab-separated, and tab is IFS
+# *whitespace*: `IFS=$'\t' read` collapsed the run of separators, so `log=` bound
+# to `holder`, `holder` was never empty, and what actually spared the line was
+# _session_holder_live's non-numeric-pid fallback (claude-bot, round 1). The
+# outcome was right for a reason the comment did not claim. Assert the FIELD
+# BINDING, so the guard has a case that dies with it.
+ORPH4_REC="$(_session_orphan_scan "$ORPH4/duty.log")"
+IFS=$'\037' read -r o4_kind o4_key o4_holder o4_log o4_started <<<"$ORPH4_REC"
+t orphan-holderless-record-keeps-its-empty-field \
+  "operator|floor||$ORPH4/logs/operator.log|2026-08-14T05:00:00Z" \
+  "$o4_kind|$o4_key|$o4_holder|$o4_log|$o4_started"
 
 # AC4/D3. Three box-kills on one lane over three ticks trip that lane's
 # breaker, through the counter an observed TERMINAL already feeds and no second
@@ -336,6 +356,24 @@ t orphan-breaker-spares-other-kinds absent \
 # threshold measures box-kills and not reconciler passes.
 orph_pass "$ORPH5"
 t orphan-idle-pass-does-not-count 3 "$(cut -f1 <"$ORPH5/.session-terminal.build")"
+
+# ...and that holds for callers who do NOT redirect stdout into duty.log, which
+# is the qualification the case above used to carry silently (claude-bot, round
+# 1). The reconciler reads the log by path and its side effect — the breaker's
+# counter — is written by path too, so the answering line must land by path as
+# well or the two disagree. duty.sh is a supported hand-run target: its own
+# flock and 199 sentinel at duty.sh:24-40 exist for exactly that path, and on
+# it stdout is a terminal. Answering to stdout there would count a single
+# box-kill again on every run and discard D2's evidence line to a tty.
+ORPH_STDOUT=/dev/null
+ORPHU="$TMP/orphan-unredirected"; orph_fixture "$ORPHU"
+orph_start "$ORPHU" 2026-08-14T10:00:00Z build o/r#10 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPHU"
+orph_pass "$ORPHU"
+ORPH_STDOUT=
+t orphan-answers-the-log-not-the-callers-stdout 1 "$(orph_count "$ORPHU")"
+t orphan-unredirected-counts-one-box-kill 1 \
+  "$(cut -f1 <"$ORPHU/.session-terminal.build" 2>/dev/null || echo NONE)"
 
 # --- the three must-fail cases, each run against its own mutation ------------
 #
@@ -370,6 +408,37 @@ orph_start "$ORPH8" 2026-08-14T08:00:00Z build o/r#5 "$ORPH_DEAD.$ORPH_BOOT"
 orph_pass "$ORPH8" "$ORPH_M3"
 orph_pass "$ORPH8" "$ORPH_M3"
 t orphan-mutation-double-reconciles-twice 2 "$(orph_count "$ORPH8")"
+
+# Must fail: the answer written to the caller's stdout instead of to the log
+# the scan read. Round 1's blocking finding, given the same treatment as the
+# other three — the case that pins it is worth nothing unless it reds under the
+# defect it names. Stdout goes to /dev/null, as it effectively does on a hand
+# run of duty.sh, and the two passes below are two separate box-kill counts of
+# one box-kill.
+orph_mutant stdout 's/" >>"\$logfile"$/"/'
+ORPH_M4="$TMP/ledger-mutant-stdout.sh"
+ORPH10="$TMP/orphan-mut-stdout"; orph_fixture "$ORPH10"
+orph_start "$ORPH10" 2026-08-14T11:00:00Z build o/r#11 "$ORPH_DEAD.$ORPH_BOOT"
+ORPH_STDOUT=/dev/null
+orph_pass "$ORPH10" "$ORPH_M4"
+orph_pass "$ORPH10" "$ORPH_M4"
+ORPH_STDOUT=
+t orphan-mutation-stdout-loses-the-answer 0 "$(orph_count "$ORPH10")"
+t orphan-mutation-stdout-recounts-one-box-kill 2 \
+  "$(cut -f1 <"$ORPH10/.session-terminal.build" 2>/dev/null || echo NONE)"
+
+# Must fail: the record separator back to a tab, which is IFS whitespace. Both
+# `037`s go — the scan's OFS and the reader's IFS — because the defect is the
+# two of them agreeing on a separator that collapses. Read the holderless
+# record the way the mutant's own reader would, and watch `log=` bind to
+# `holder`: that is the shift that made the emptiness guard unreachable.
+orph_mutant tab 's/037/t/g'
+ORPH_M5="$TMP/ledger-mutant-tab.sh"
+# shellcheck disable=SC1090
+ORPH4_TAB="$(source "$ORPH_M5" >/dev/null 2>&1; _session_orphan_scan "$ORPH4/duty.log")"
+IFS=$'\t' read -r m4_kind m4_key m4_holder m4_rest <<<"$ORPH4_TAB"
+t orphan-mutation-tab-shifts-log-into-holder \
+  "operator|floor|$ORPH4/logs/operator.log" "$m4_kind|$m4_key|$m4_holder"
 
 # --- the wiring, which no fixture above can reach ---------------------------
 # The reconciler is worth nothing unless a tick calls it, and it must be called
