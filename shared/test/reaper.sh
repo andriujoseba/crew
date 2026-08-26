@@ -168,6 +168,237 @@ REAP_BYTES="$(sed -n 's/.*caches reclaimed \([0-9]*\) bytes.*/\1/p' <<<"$OUT5")"
 if [ -n "$REAP_BYTES" ] && [ "$REAP_BYTES" -ge 2000 ]; then r1=counted; else r1="$REAP_BYTES"; fi
 t reaper-cache-byte-figure-covers-both-entries counted "$r1"
 
+# --- a scan or a removal that did not finish HOLDS (#540, round 1) ---------
+# The blocking defect of round 1: the cache predicate read find's OUTPUT and
+# discarded its STATUS, so "I could not look inside this entry" scored
+# identically to "I looked and nothing has been read", and the unchecked
+# `rm -rf` that followed failed on the same unreadable subtree while the class
+# line reported the reclaim anyway.
+#
+# Driven against a REAL mode-000 subtree rather than a stubbed failure: the
+# suite runs as an ordinary user, so find and rm fail here for exactly the
+# reason they fail on a box, and the case would stop meaning anything if it
+# were the module's own error handling standing in for the filesystem's.
+H10="$(reaper_home h10)"
+mkdir -p "$H10/.cache/blind/sub" "$H10/.cache/locked" "$H10/.cache/stale" \
+  "$H10/.cache/fileless/empty-sub" "$H10/.cache/blind-removable/zz-locked"
+head -c 1000 /dev/zero >"$H10/.cache/blind/sub/blob"
+head -c 1000 /dev/zero >"$H10/.cache/locked/blob"
+head -c 1000 /dev/zero >"$H10/.cache/stale/blob"
+head -c 1000 /dev/zero >"$H10/.cache/blind-removable/blob"
+touch -a -d '60 days ago' "$H10/.cache/blind/sub/blob" "$H10/.cache/locked/blob" \
+  "$H10/.cache/stale/blob" "$H10/.cache/blind-removable/blob"
+# blind: find cannot descend into it. locked: find can (r-x), but rm cannot
+# unlink through a directory it may not write.
+chmod 000 "$H10/.cache/blind/sub"
+chmod 500 "$H10/.cache/locked"
+# blind-removable is the sharp one, and the reason this round is a round.
+# Its aged blob makes the recency scan traverse the WHOLE entry rather than
+# quitting at the first hit, so that scan always reaches an unreadable
+# directory and always fails — while `rm -rf` removes the entry cleanly,
+# because an EMPTY unreadable directory can still be rmdir'd. Permission is
+# what usually makes the failed scan and the failed removal coincide, and
+# that coincidence is what made the round-1 defect look survivable: the entry
+# it wrongly doomed happened to be one rm could not touch. Here they come
+# apart, and the round-1 code deletes a cache it never managed to look at.
+chmod 000 "$H10/.cache/blind-removable/zz-locked"
+OUT10="$(reaper_run "$H10" "$DEAD_CLI" 2>&1)"
+chmod 700 "$H10/.cache/blind/sub" "$H10/.cache/locked" \
+  "$H10/.cache/blind-removable/zz-locked" 2>/dev/null
+t reaper-cache-untraversable-entry-held present "$(state "$H10/.cache/blind")"
+t reaper-cache-untraversable-but-removable-entry-held present \
+  "$(state "$H10/.cache/blind-removable")"
+t reaper-cache-untraversable-entry-warns 1 \
+  "$(grep -c 'WARN: reaper: could not read all of .*/\.cache/blind' <<<"$OUT10" | tr -d ' ')"
+t reaper-cache-failed-removal-survives present "$(state "$H10/.cache/locked/blob")"
+t reaper-cache-failed-removal-warns 1 \
+  "$(grep -c 'WARN: reaper: caches — 1 of 2 could not be removed' <<<"$OUT10" | tr -d ' ')"
+# The entry that really was unused still goes: failing closed must not become
+# failing shut, or the janitor stops being one.
+t reaper-cache-unused-entry-still-reclaimed absent "$(state "$H10/.cache/stale")"
+# nit 2: an entry holding no regular file at all never answered the age
+# question, so "no file read in the window" must not become "no file at all".
+t reaper-cache-entry-with-no-files-kept present "$(state "$H10/.cache/fileless")"
+# The count and the byte figure describe what LEFT THE DISK: one entry, and
+# not the 1000 bytes still sitting in locked/. Under the round-1 code this
+# line read "in 2 entries" (or 3, with blind doomed on a scan that never ran).
+t reaper-cache-counts-only-what-went 1 \
+  "$(grep -c 'caches reclaimed [0-9]* bytes in 1 entries unused for 30d' <<<"$OUT10" | tr -d ' ')"
+REAP_B10="$(sed -n 's/.*caches reclaimed \([0-9]*\) bytes in 1 entries.*/\1/p' <<<"$OUT10")"
+if [ -n "$REAP_B10" ] && [ "$REAP_B10" -ge 1000 ] && [ "$REAP_B10" -lt 2000 ]; then
+  r1=one-entry-only
+else
+  r1="$REAP_B10"
+fi
+t reaper-cache-failed-removal-not-in-byte-figure one-entry-only "$r1"
+# Everything this module tells the operator goes through log or warn. A raw
+# `rm: cannot remove …` in the middle of a tick belongs to no duty and names
+# no cause, so the only line allowed to carry rm's words is the warn.
+t reaper-cache-no-raw-rm-error 0 \
+  "$(grep 'cannot remove' <<<"$OUT10" | grep -vc 'WARN: reaper:' | tr -d ' ')"
+t reaper-cache-holds-still-log-one-class-line 1 "$(class_line "$OUT10" caches)"
+
+# ...and when nothing at all could be removed, the class says that rather
+# than reporting a sweep that reclaimed nothing because there was nothing.
+H10B="$(reaper_home h10b)"
+mkdir -p "$H10B/.cache/locked"
+head -c 1000 /dev/zero >"$H10B/.cache/locked/blob"
+touch -a -d '60 days ago' "$H10B/.cache/locked/blob"
+chmod 500 "$H10B/.cache/locked"
+OUT10B="$(reaper_run "$H10B" "$DEAD_CLI" 2>&1)"
+chmod 700 "$H10B/.cache/locked"
+t reaper-cache-nothing-removable-says-so 1 \
+  "$(grep -c 'caches reclaimed 0 bytes — none of the 1 entries unused for 30d could be removed' <<<"$OUT10B" | tr -d ' ')"
+t reaper-cache-nothing-removable-is-not-a-clean-sweep 0 \
+  "$(grep -c 'no entry unused' <<<"$OUT10B" | tr -d ' ')"
+
+# The transcript class, the same two failures. A scan there is one find over
+# one tree, so a non-zero status makes the whole list unknown-completeness and
+# the class holds — there is no per-file version of that question to ask.
+H11="$(reaper_home h11)"
+mkdir -p "$H11/.claude/projects/blind"
+head -c 100 /dev/zero >"$H11/.claude/projects/blind/aged.jsonl"
+head -c 100 /dev/zero >"$H11/.claude/projects/proj-a/aged.jsonl"
+touch -d '30 days ago' "$H11/.claude/projects/blind/aged.jsonl" \
+  "$H11/.claude/projects/proj-a/aged.jsonl"
+chmod 000 "$H11/.claude/projects/blind"
+OUT11="$(reaper_run "$H11" "$DEAD_CLI" 2>&1)"
+chmod 700 "$H11/.claude/projects/blind"
+t reaper-transcript-unreadable-tree-holds-the-class present \
+  "$(state "$H11/.claude/projects/proj-a/aged.jsonl")"
+t reaper-transcript-unreadable-tree-warns 1 \
+  "$(grep -c 'WARN: reaper: could not read all of .*/\.claude/projects' <<<"$OUT11" | tr -d ' ')"
+t reaper-transcript-unreadable-tree-not-reported-clean 0 \
+  "$(grep -c 'nothing older than' <<<"$OUT11" | tr -d ' ')"
+t reaper-transcript-unreadable-tree-reports-once 1 \
+  "$(grep -c 'transcripts reclaimed' <<<"$OUT11" | tr -d ' ')"
+
+H12="$(reaper_home h12)"
+mkdir -p "$H12/.claude/projects/locked"
+head -c 100 /dev/zero >"$H12/.claude/projects/locked/aged.jsonl"
+head -c 100 /dev/zero >"$H12/.claude/projects/proj-a/aged.jsonl"
+touch -d '30 days ago' "$H12/.claude/projects/locked/aged.jsonl" \
+  "$H12/.claude/projects/proj-a/aged.jsonl"
+chmod 500 "$H12/.claude/projects/locked"
+OUT12="$(reaper_run "$H12" "$DEAD_CLI" 2>&1)"
+chmod 700 "$H12/.claude/projects/locked"
+t reaper-transcript-failed-removal-survives present \
+  "$(state "$H12/.claude/projects/locked/aged.jsonl")"
+t reaper-transcript-removable-file-still-goes absent \
+  "$(state "$H12/.claude/projects/proj-a/aged.jsonl")"
+# 100 bytes and one file — not the 200 and two that were measured before the
+# removal and, until this round, logged whatever the removal did.
+t reaper-transcript-failed-removal-not-reclaimed 1 \
+  "$(grep -c 'transcripts reclaimed 100 bytes in 1 files older than 14d' <<<"$OUT12" | tr -d ' ')"
+t reaper-transcript-failed-removal-warns 1 \
+  "$(grep -c 'WARN: reaper: transcripts — 1 of 2 could not be removed' <<<"$OUT12" | tr -d ' ')"
+t reaper-transcript-no-raw-rm-error 0 \
+  "$(grep 'cannot remove' <<<"$OUT12" | grep -vc 'WARN: reaper:' | tr -d ' ')"
+
+# --- the liveness probe resolves past an `env` prefix (#540 nit 1) ----------
+# kimi.conf ships `BOT_CLI_CMD=(env "KIMI_CODE_HOME=…" kimi --afk -p)` and its
+# own comment says the prefix is deliberate, so every consumer of the array
+# gets one launch shape (#240). `env` execs the command it was given and is
+# never resident, so a probe reading argv[0] looks for a process no box runs
+# and answers "no session" on a box that has one — the answer that deletes.
+t reaper-cli-name-plain claude \
+  "$(_reaper_cli_name /usr/bin/claude --dangerously-skip-permissions -p; printf '%s' "$REAPER_CLI_NAME")"
+t reaper-cli-name-past-env kimi \
+  "$(_reaper_cli_name env "KIMI_CODE_HOME=/tmp/k" /usr/bin/kimi --afk -p; printf '%s' "$REAPER_CLI_NAME")"
+t reaper-cli-name-past-env-options kimi \
+  "$(_reaper_cli_name env -i -u FOO "A=1" kimi -p; printf '%s' "$REAPER_CLI_NAME")"
+# An array that names no command at all is "cannot tell", never a name that
+# happens not to be running.
+if _reaper_cli_name env "A=1"; then r1="resolved($REAPER_CLI_NAME)"; else r1=cannot-tell; fi
+t reaper-cli-name-all-env-is-unknown cannot-tell "$r1"
+
+H14="$(reaper_home h14)"
+head -c 100 /dev/zero >"$H14/.claude/projects/proj-a/aged.jsonl"
+touch -d '30 days ago' "$H14/.claude/projects/proj-a/aged.jsonl"
+ENV_CLI="$TMP/reaper-env-cli"
+cp "$(command -v sleep)" "$ENV_CLI"
+"$ENV_CLI" 30 &
+ENV_PID=$!
+OUT14="$(
+  HOME="$H14"
+  BOT_CLI_CMD=(env "REAPER_PROBE_HOME=$TMP" "$ENV_CLI" --afk -p)
+  # shellcheck disable=SC2317
+  _reaper_atime_advances() { return 0; }
+  duty_reaper
+)"
+kill "$ENV_PID" 2>/dev/null
+wait "$ENV_PID" 2>/dev/null
+t reaper-env-prefixed-cli-is-seen-live present \
+  "$(state "$H14/.claude/projects/proj-a/aged.jsonl")"
+t reaper-env-prefixed-cli-says-live 1 \
+  "$(grep -c 'transcripts reclaimed 0 bytes — held, a session is live' <<<"$OUT14" | tr -d ' ')"
+
+H15="$(reaper_home h15)"
+head -c 100 /dev/zero >"$H15/.claude/projects/proj-a/aged.jsonl"
+touch -d '30 days ago' "$H15/.claude/projects/proj-a/aged.jsonl"
+OUT15="$(
+  HOME="$H15"
+  BOT_CLI_CMD=(env "A=1")
+  # shellcheck disable=SC2317
+  _reaper_atime_advances() { return 0; }
+  duty_reaper
+)"
+t reaper-nameless-cli-holds present "$(state "$H15/.claude/projects/proj-a/aged.jsonl")"
+t reaper-nameless-cli-warns 1 \
+  "$(grep -c 'WARN: reaper: cannot tell whether a session is live' <<<"$OUT15" | tr -d ' ')"
+
+# --- the byte figure does not depend on du's label (#540 nit 3) ------------
+# `du -sc` writes its total on the LAST line, but the word on that line is
+# translated: `$2 == "total"` matches nothing under a non-C LC_MESSAGES, so
+# every reclaim would report 0 bytes while the delete happened anyway. No
+# non-C locale is installed on a box, so the guard is a `du` on PATH that
+# labels its total the way a translated one does. The mutation it kills is
+# keying on the label at all; `LC_ALL=C` in the real call pins du's output
+# shape besides, and is deliberately not what this case rests on.
+STUB_BIN="$TMP/stub-bin"
+mkdir -p "$STUB_BIN"
+cat >"$STUB_BIN/du" <<'STUB'
+#!/usr/bin/env bash
+# Real sizes from the real du, with the total line's label translated.
+/usr/bin/du "$@" | awk '
+  { line[NR] = $0; n = NR }
+  END {
+    for (i = 1; i < n; i++) print line[i]
+    if (n) { split(line[n], f, "\t"); printf "%s\tinsgesamt\n", f[1] }
+  }'
+STUB
+chmod +x "$STUB_BIN/du"
+BYTES_DIR="$TMP/bytes"
+mkdir -p "$BYTES_DIR"
+head -c 4096 /dev/zero >"$BYTES_DIR/blob"
+t reaper-bytes-ignores-a-translated-du-label 4096 \
+  "$(PATH="$STUB_BIN:$PATH"; printf '%s\n' "$BYTES_DIR/blob" | _reaper_bytes)"
+
+# --- duty_reaper called BARE under the engine's own set -euo pipefail ------
+# duty.sh calls it as `duty_reaper && …`, and the `&&` suppresses errexit for
+# everything underneath — so the module was only correct because of how it
+# happened to be invoked (#540 nit 4). Called bare, the first find over an
+# unreadable directory took the whole tick down after "reaper sweep starting"
+# and before either class line. Both classes must report on every path.
+H16="$(reaper_home h16)"
+mkdir -p "$H16/.cache/blind/sub"
+head -c 100 /dev/zero >"$H16/.cache/blind/sub/blob"
+chmod 000 "$H16/.cache/blind/sub"
+ERRX_OUT="$(bash -euo pipefail -c '
+  DUTY_DIR="$4"; XDG_CONFIG_HOME="$5"; export DUTY_DIR XDG_CONFIG_HOME
+  . "$1"
+  . "$2"
+  HOME="$3"
+  BOT_CLI_CMD=("$6")
+  duty_reaper
+' _ "$SHARED/lib/common.sh" "$REAP_MOD" "$H16" "$TMP" "$XDG_CONFIG_HOME" \
+  "$DEAD_CLI" 2>&1)" || true
+chmod 700 "$H16/.cache/blind/sub"
+t reaper-bare-call-under-errexit-completes 1 \
+  "$(grep -c 'transcripts reclaimed' <<<"$ERRX_OUT" | tr -d ' ')"
+t reaper-bare-call-under-errexit-reaches-caches 1 \
+  "$(grep -c 'caches reclaimed' <<<"$ERRX_OUT" | tr -d ' ')"
+
 # --- the empty sweep says so ------------------------------------------------
 # The mutation this case exists for is an early return when there is nothing
 # to reclaim, which is how a broken reaper becomes indistinguishable from a
