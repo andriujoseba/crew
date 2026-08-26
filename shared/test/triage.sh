@@ -323,6 +323,91 @@ for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
   t "triage253-poll-before-decision:$probe" before "$r1"
 done
 
+# --- #468: fast-tick triage receives the enumerated wake set ---------------
+TR468_STAMP='2026-08-26T08:00:00Z'
+tr468_only_family() {  # expected line, forbidden family headings
+  local expected="$1" forbidden="$2"
+  if grep -Fq -- "$expected" "$TR_PROMPT.triage"; then r1=named; else r1=MISSING; fi
+  t "triage468-names:${expected%%:*}" named "$r1"
+  if grep -Eq -- "$forbidden" "$TR_PROMPT.triage"; then r1=EMPTY_HEADING; else r1=omitted; fi
+  t "triage468-omits-empty:${expected%%:*}" omitted "$r1"
+}
+
+# One family at a time proves that the identifiers already used for ledger
+# gating reach the prompt, while absent families render no empty headings.
+tr_fix '[]' '[{"number":101,"updatedAt":"2026-08-26T08:00:00Z"}]' \
+  '[{"number":101,"updatedAt":"2026-08-26T08:00:00Z"}]' '[]' '[]' '[]'
+tr_run 0
+tr468_only_family 'Needs-triage issues: #101' \
+  'Queue-unlabeled issues:|Unresolved discussions without your voice:|Possibly unblockable issues:'
+
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' \
+  '[{"number":102,"labels":[],"updatedAt":"2026-08-26T08:00:00Z"}]'
+tr_run 0
+tr468_only_family 'Queue-unlabeled issues: #102' \
+  'Needs-triage issues:|Unresolved discussions without your voice:|Possibly unblockable issues:'
+
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' '[]' '[]' \
+  "o/r#103 $TR468_STAMP"
+tr_run 0
+tr468_only_family 'Unresolved discussions without your voice: #103' \
+  'Needs-triage issues:|Queue-unlabeled issues:|Possibly unblockable issues:'
+
+tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
+tr_run 0
+tr468_only_family 'Possibly unblockable issues: #244' \
+  'Needs-triage issues:|Queue-unlabeled issues:|Unresolved discussions without your voice:'
+if grep -Fq 'Treat these as leads, not verdicts' "$TR_PROMPT.triage"; then
+  r1=preserved; else r1=MISSING; fi
+t triage468-unblockable-caveat-preserved preserved "$r1"
+if grep -Fq 'every issue or PR named in their "Blocked by" clause must now read CLOSED or MERGED' \
+    "$TR_PROMPT.triage"; then r1=preserved; else r1=MISSING; fi
+t triage468-unblockable-condition-preserved preserved "$r1"
+if grep -q '{{' "$TR_PROMPT.triage"; then r1=RAW_SLOT; else r1=rendered; fi
+t triage468-renders-all-template-slots rendered "$r1"
+
+# A mixed wake is one block with all four families, not four independently
+# rendered fragments. Each family retains its own item identifiers.
+tr_fix '[]' '[{"number":111,"updatedAt":"2026-08-26T08:00:00Z"}]' \
+  '[{"number":111,"updatedAt":"2026-08-26T08:00:00Z"}]' \
+  "$TR_LEAD" "$TR_LEAD" "$TR_LANDED" \
+  '[{"number":112,"labels":[],"updatedAt":"2026-08-26T08:00:00Z"}]' \
+  '[{"number":112,"labels":[],"updatedAt":"2026-08-26T08:00:00Z"}]' \
+  "o/r#113 $TR468_STAMP" "o/r#113 $TR468_STAMP"
+tr_run 0
+for named in 'Needs-triage issues: #111' 'Queue-unlabeled issues: #112' \
+             'Unresolved discussions without your voice: #113' \
+             'Possibly unblockable issues: #244'; do
+  if grep -Fq -- "$named" "$TR_PROMPT.triage"; then r1=named; else r1=MISSING; fi
+  t "triage468-mixed:${named%%:*}" named "$r1"
+done
+t triage468-mixed-one-signal-block 1 \
+  "$(grep -c 'This fast-tick session was launched for the following named work:' "$TR_PROMPT.triage")"
+if grep -q '^Converge the named items first[.] The whole-board sweep runs hourly under ' \
+    "$TR_PROMPT.triage"; then r1=separate; else r1=JOINED; fi
+t triage468-instructions-follow-signal-block-on-new-line separate "$r1"
+
+# Scope changes, not quality changes: the old issue contract, outcome list and
+# label-event rule remain exact substrings, behind the newly named work.
+# shellcheck disable=SC2016  # the backticks are literal prompt prose
+for required in \
+  'The whole-board sweep runs hourly under `hygiene.txt`; this fast-tick session does not enumerate the board for more work.' \
+  'You may act outside the named set when resolving one of its items requires it, but do not enumerate outside the set.' \
+  'For stray issues — anything not minted by you — either normalize them to the issue contract or close them politely, pointing the filer at Discussions: their idea is welcome, the door is over there.' \
+  'For discussions, converge each unresolved one to exactly one outcome — answer, ask, escalate, decline, or accept — and every issue you mint meets the contract.' \
+  "Before asserting label-borne state in prose, re-read the issue's label events (the timeline API), not just its comments — label events govern over stale prose."; do
+  if grep -Fq -- "$required" "$TR_PROMPT.triage"; then r1=present; else r1=MISSING; fi
+  t "triage468-required-prose:${required%% *}" present "$r1"
+done
+
+# The empty-signal path remains the existing early return: no prompt is
+# rendered and no repo session launches.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
+tr_run 0
+t triage468-empty-set-launches-nothing 0 "$(trc '^SESSION triage$')"
+if [ -f "$TR_PROMPT.triage" ]; then r1=RENDERED; else r1=absent; fi
+t triage468-empty-set-renders-no-prompt absent "$r1"
+
 # --- #359: successful triage sessions settle ledgers at their exit state ---
 TR359_T1='2026-08-05T10:00:00Z'
 TR359_T2='2026-08-05T10:05:00Z'
