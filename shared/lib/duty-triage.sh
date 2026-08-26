@@ -55,6 +55,13 @@ _triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUM
   ' <<<"$blocked_json" 2>/dev/null
 }
 
+_triage_signal_numbers() {  # stdin: REPO#NUMBER UPDATED_AT
+  awk 'NF {
+    number=$1; sub(/^.*#/, "#", number)
+    numbers = numbers separator number; separator=", "
+  } END { print numbers }'
+}
+
 duty_triage() {
   local R notification_pages all_mentions repo_json fresh_threads fresh_json fresh_mentions
   local keep_threads keep_json mentions mcount mention_rc
@@ -134,6 +141,7 @@ _triage_repo() {
   local selected_mention_count="${3:-0}"
   local owner="${R%%/*}" name="${R##*/}"
   local signals="" nt stray undisc unblockable="" dir prompt
+  local fresh_nt="" fresh_stray="" fresh_discussions=""
 
   # (a) and (b) are BOARD-STATE signals, and both are enumerated rather than
   # counted so they can be compared against what a previous session already
@@ -167,8 +175,9 @@ _triage_repo() {
     warn "$R: needs-triage parse failed"
     nt_items=""
   else
-    nt="$(printf '%s\n' "$nt_items" \
-      | ledger_filter "$DUTY_DIR/.seen-triage-board" | awk 'NF{c++} END{print c+0}')"
+    fresh_nt="$(printf '%s\n' "$nt_items" \
+      | ledger_filter "$DUTY_DIR/.seen-triage-board")"
+    nt="$(printf '%s\n' "$fresh_nt" | awk 'NF{c++} END{print c+0}')"
     [ "$nt" -gt 0 ] && signals="$signals ${nt}x needs-triage;"
   fi
 
@@ -196,8 +205,9 @@ _triage_repo() {
     warn "$R: stray parse failed"
     stray_items=""
   else
-    stray="$(printf '%s\n' "$stray_items" \
-      | ledger_filter "$DUTY_DIR/.seen-triage-board" | awk 'NF{c++} END{print c+0}')"
+    fresh_stray="$(printf '%s\n' "$stray_items" \
+      | ledger_filter "$DUTY_DIR/.seen-triage-board")"
+    stray="$(printf '%s\n' "$fresh_stray" | awk 'NF{c++} END{print c+0}')"
     [ "$stray" -gt 0 ] && signals="$signals ${stray}x queue-unlabeled;"
   fi
 
@@ -233,8 +243,9 @@ _triage_repo() {
     warn "$R: discussion probe failed (discussions disabled?)"
     uncommented_disc=""
   else
-    undisc="$(printf '%s\n' "$uncommented_disc" \
-      | ledger_filter "$DUTY_DIR/.seen-discussions" | awk 'NF{c++} END{print c+0}')"
+    fresh_discussions="$(printf '%s\n' "$uncommented_disc" \
+      | ledger_filter "$DUTY_DIR/.seen-discussions")"
+    undisc="$(printf '%s\n' "$fresh_discussions" | awk 'NF{c++} END{print c+0}')"
     [ "$undisc" -gt 0 ] && signals="$signals ${undisc}x uncommented discussions;"
   fi
 
@@ -278,11 +289,24 @@ _triage_repo() {
   log "$R: signals:$signals launching triage session"
   dir="$WORK_DIR/${R//\//__}"
   ensure_checkout "$R" "$dir" || return 0
-  local unblock_note=""
-  if [ -n "$unblockable" ]; then
-    unblock_note="$(render_prompt fragment-unblockable.txt NUMS="$unblockable")"
+  local signal_items="" signal_block=""
+  if [ -n "$fresh_nt" ]; then
+    signal_items="- Needs-triage issues: $(printf '%s\n' "$fresh_nt" | _triage_signal_numbers)"
   fi
-  prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" UNBLOCKABLE_NOTE="$unblock_note")"
+  if [ -n "$fresh_stray" ]; then
+    signal_items="${signal_items:+$signal_items
+}- Queue-unlabeled issues: $(printf '%s\n' "$fresh_stray" | _triage_signal_numbers)"
+  fi
+  if [ -n "$fresh_discussions" ]; then
+    signal_items="${signal_items:+$signal_items
+}- Unresolved discussions without your voice: $(printf '%s\n' "$fresh_discussions" | _triage_signal_numbers)"
+  fi
+  if [ -n "$unblockable" ]; then
+    signal_items="${signal_items:+$signal_items
+}- Possibly unblockable issues: #${unblockable//,/, #}. Treat these as leads, not verdicts: re-read each body yourself, confirm the blockers really are the ones named and really did land, then flip to ready per {{DOCTRINE_TRIAGE}}. If a flag is wrong, leave the label alone and say why in your summary — a false lead here is a parser bug worth knowing about."
+  fi
+  signal_block="$(render_prompt fragment-triage-signals.txt SIGNAL_ITEMS="$signal_items")"
+  prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" SIGNAL_BLOCK="$signal_block")"
   RUN_SESSION_RC=1
   run_session triage "$R" "$dir" "$TIMEOUT_TRIAGE" "$prompt"
   # Mark each signal at the state in which the session LEFT it, not the state
