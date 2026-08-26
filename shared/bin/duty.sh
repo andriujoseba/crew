@@ -3,7 +3,8 @@
 # roles enable, in fleet-standard priority order:
 #
 #   attention (all roles) → triage signals → review queue → resume → ci-red →
-#   build → handoff → rebase → worktree hygiene → backlog hygiene (hourly)
+#   build → handoff → rebase → worktree hygiene → backlog hygiene (hourly) →
+#   reaper (daily, every role)
 #
 # ci-red sits between resume and build because a builder repairs its own red
 # PR before claiming another issue (ceremony BUILDER.md, "Your own red head
@@ -173,6 +174,22 @@ if has_role triage; then
     duty_attention_audit
     duty_hygiene && echo "$now" >"$DUTY_DIR/.hygiene-last"
   fi
+fi
+
+# The reaper: EVERY role, self-scheduling on its own stamp file, inside this
+# tick's lock (#457). Not under `has_role triage` and not beside the hygiene
+# clock above: a builder box accretes at least as fast as the triage box the
+# measurements came from, and a second stamp file in that block is where a
+# reaper would break the attention-audit leg's deliberate use of
+# `.hygiene-last`. The module is sourced before the interval test because the
+# cadence default lives with the sweep that honours it; sourcing has no side
+# effect (`reaper-module-standalone`).
+# shellcheck source=../lib/duty-reaper.sh disable=SC1091
+source "$DUTY_DIR/lib/duty-reaper.sh"
+reaper_now="$(date +%s)"
+reaper_last="$(cat "$DUTY_DIR/.reaper-last" 2>/dev/null || echo 0)"
+if [ $((reaper_now - reaper_last)) -ge "$(reaper_interval)" ]; then
+  duty_reaper && echo "$reaper_now" >"$DUTY_DIR/.reaper-last"
 fi
 
 log "duty run end"
