@@ -49,7 +49,7 @@ case "$*" in
   *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
   *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
-  *"--label blocked"*)      cat "$TR_FIX/blocked.$p.json" ;;
+  *"number,body,updatedAt,labels"*) cat "$TR_FIX/board.$p.json" ;;
   *"--state all"*)          cat "$TR_FIX/numstates.json" ;;
   *"number,body,labels,updatedAt"*) cat "$TR_FIX/board.$p.json" ;;
   *"issue list"*)           cat "$TR_FIX/stray.$p.json" ;;
@@ -160,29 +160,28 @@ t triage253-newborn-signal-in-log named "$r1"
 if grep -q 'o/r#999' "$TRD/.seen-triage-board"; then r1=ledgered; else r1=MISSING; fi
 t triage253-newborn-signal-ledgered ledgered "$r1"
 
-# Before any triage session launches, each signal is still polled exactly once.
+# Before any triage session launches, the shared open-board snapshot and each
+# remaining independent signal are still polled exactly once.
 # A successful session deliberately adds the #359 exit-state reads; a quiet
 # tick adds none. These counts distinguish that bounded re-read from polling
 # twice before the launch decision.
 tr_fix "$TR_MENTION" '[]' '[]' '[]' '[]' '[]'
 tr_run 0
 t triage253-reads-notifications-once 1 "$(trc 'api notifications')"
-t triage253-reads-needs-triage-once   1 "$(trc '--label needs-triage')"
-t triage253-reads-strays-once         1 "$(trc 'number,labels,updatedAt')"
+t triage253-reads-open-board-once     1 "$(trc 'number,body,updatedAt,labels')"
 t triage253-reads-discussions-once    1 "$(trc 'api graphql')"
-t triage253-reads-blocked-once        1 "$(trc '--label blocked')"
-t triage253-gh-calls-with-mention     5 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-gh-calls-with-mention     3 "$(grep -vc '^SESSION' "$TR_CALLS")"
 tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
 tr_run 0
-t triage253-gh-calls-without-mention  5 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-gh-calls-without-mention  3 "$(grep -vc '^SESSION' "$TR_CALLS")"
 t triage253-quiet-tick-spends-nothing 0 "$(trc '^SESSION')"
 if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
   r1=said; else r1="$(cat "$TR_LOG")"; fi
 t triage253-quiet-tick-log-unchanged said "$r1"
-# The state-map reads still ride the non-empty blocked list, and nothing else.
+# The state-map reads still ride the non-empty declaration graph, and nothing else.
 tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
 tr_run 0
-t triage253-gh-calls-with-blocked-list 11 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-gh-calls-with-blocked-list 9 "$(grep -vc '^SESSION' "$TR_CALLS")"
 
 # The mention path itself is untouched — the regression that matters, since
 # this change moves code around that block. One session, kind mention, and the
@@ -312,8 +311,7 @@ tr_mention_ln="$(tr_ln 'run_session mention')"
 # shellcheck disable=SC2016  # matching the module's literal source text
 tr_decide_ln="$(tr_ln '[ -z "$signals" ]')"
 # shellcheck disable=SC2016  # ditto
-for probe in '--label "$LABEL_NEEDS_TRIAGE"' 'number,labels,updatedAt' \
-             '_triage_discussion_items "$R"' '--label "$LABEL_BLOCKED"'; do
+for probe in '_triage_discussion_items "$R"' 'number,body,updatedAt,labels'; do
   probe_ln="$(tr_ln "$probe")"
   if [ -n "$probe_ln" ] && [ "$probe_ln" -gt "$tr_mention_ln" ]; then
     r1=after; else r1="BEFORE($probe_ln vs $tr_mention_ln)"; fi
@@ -407,6 +405,132 @@ tr_run 0
 t triage468-empty-set-launches-nothing 0 "$(trc '^SESSION triage$')"
 if [ -f "$TR_PROMPT.triage" ]; then r1=RENDERED; else r1=absent; fi
 t triage468-empty-set-renders-no-prompt absent "$r1"
+
+# --- #471: declared predecessor state changes wake a scoped re-read --------
+tr471_issue() {  # tr471_issue NUMBER BODY
+  jq -nc --argjson n "$1" --arg body "$2" \
+    '[{number:$n,body:$body,labels:[{name:"ready"}],updatedAt:"2026-08-26T09:00:00Z"}]'
+}
+tr471_states() {  # tr471_states NUMBER STATE [NUMBER STATE ...]
+  local rows='[]' number state
+  while [ "$#" -gt 0 ]; do
+    number="$1"; state="$2"; shift 2
+    rows="$(jq -c --argjson n "$number" --arg s "$state" \
+      '. + [{number:$n,state:$s}]' <<<"$rows")"
+  done
+  printf '%s\n' "$rows"
+}
+
+TR471_ONE="$(tr471_issue 471 'Blocked by #900. This discharged declaration remains as prose.')"
+
+# Signals (e) and (f) must recognize exactly the same declaration grammar.
+# The graph parser points back to the canonical corpus-tested jq file; this
+# comparison prevents either byte-identical definition drifting silently.
+tr471_graph_blockers="$(awk '
+  /^    def blockers:/ { on=1 }
+  on { sub(/^    /, ""); print }
+  on && /;$/ { exit }
+' "$SHARED/lib/duty-triage.sh")"
+tr471_unblockable_blockers="$(awk '
+  /^def blockers:/ { on=1 }
+  on { print }
+  on && /;$/ { exit }
+' "$SHARED/lib/jq/blockers.jq")"
+t triage471-signals-e-and-f-share-blocker-parser \
+  "$tr471_unblockable_blockers" "$tr471_graph_blockers"
+
+# A cold edge is work once, including the historical-prose shape where the
+# predecessor landed before this ledger existed. The successful session
+# records the exact edge state, so an unchanged second tick is silent.
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 CLOSED)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_run 0
+t triage471-closed-prose-wakes-once 1 "$(trc '^SESSION triage$')"
+if grep -Fq '#471 depends on #900: UNSEEN -> CLOSED' "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage471-closed-prose-names-transition named "$r1"
+if grep -q '^o/r#471#900 CLOSED$' "$TRD/.seen-graph"; then r1=edge-keyed; else r1=MISSING; fi
+t triage471-ledger-keys-on-edge edge-keyed "$r1"
+tr_tick 0
+t triage471-closed-prose-second-tick-quiet 0 "$(trc '^SESSION triage$')"
+# On this exact ready/prose fixture, origin/main's steady tick spends five
+# calls: notifications, needs-triage, strays, discussions, and blocked issues.
+# The widened graph replaces the three issue-list calls with one shared board
+# read, spending the saved two on the issue/PR state map and preserving five.
+TR471_PRE_CHANGE_PROSE_CALL_FLOOR=5
+t triage471-retained-prose-keeps-pre-change-call-floor \
+  "$TR471_PRE_CHANGE_PROSE_CALL_FLOOR" "$(grep -vc '^SESSION' "$TR_CALLS")"
+
+# The #159 shape: a predecessor moves from OPEN to MERGED while the dependant
+# remains open. The prompt names both ends, the transition, and the bounded
+# body re-read; the engine itself performs no board write.
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 OPEN)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_run 0
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 MERGED)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_tick 0
+t triage471-merged-predecessor-wakes 1 "$(trc '^SESSION triage$')"
+if grep -Fq '#471 depends on #900: OPEN -> MERGED' "$TR_PROMPT.triage" && \
+   grep -Fq "Re-read each dependant's body" "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage471-merged-prompt-names-edge-and-action named "$r1"
+if grep -Eq 'issue (edit|comment)|api .*(POST|PATCH)|--add-label|--remove-label' "$TR_CALLS"; then
+  r1=MUTATED; else r1=read-only; fi
+t triage471-path-writes-no-label-or-comment read-only "$r1"
+t triage471-reads-open-issues-once 1 "$(trc 'number,body,updatedAt,labels')"
+if grep -Fq 'These are leads, not verdicts' "$TR_PROMPT.triage"; then
+  r1=present; else r1=MISSING; fi
+t triage471-lead-not-verdict-caveat present "$r1"
+
+# Reopening is a state change too: comparison is exact, not an assumed
+# one-way ordering of GitHub's state words.
+tr_fix '[]' '[]' '[]' '[]' '[]' "$(tr471_states 900 OPEN)" \
+  "$TR471_ONE" "$TR471_ONE"
+tr_tick 0
+if grep -Fq '#471 depends on #900: MERGED -> OPEN' "$TR_PROMPT.triage"; then
+  r1=named; else r1=MISSING; fi
+t triage471-reopened-predecessor-wakes named "$r1"
+
+# Three edges on one dependant are independent ledger keys. Advancing one per
+# tick must produce one named transition per tick rather than collapsing the
+# whole dependant after the first wake.
+TR471_THREE="$(tr471_issue 472 'Blocked by #901, #902, #903.')"
+tr_fix '[]' '[]' '[]' '[]' '[]' \
+  "$(tr471_states 901 OPEN 902 OPEN 903 OPEN)" "$TR471_THREE" "$TR471_THREE"
+tr_run 0
+t triage471-three-edges-recorded 3 "$(grep -c '^o/r#472#90[123] OPEN$' "$TRD/.seen-graph")"
+for landed in 901 902 903; do
+  s901=OPEN; s902=OPEN; s903=OPEN
+  [ "$landed" -ge 901 ] && s901=MERGED
+  [ "$landed" -ge 902 ] && s902=MERGED
+  [ "$landed" -ge 903 ] && s903=MERGED
+  tr_fix '[]' '[]' '[]' '[]' '[]' \
+    "$(tr471_states 901 "$s901" 902 "$s902" 903 "$s903")" \
+    "$TR471_THREE" "$TR471_THREE"
+  tr_tick 0
+  t "triage471-three-edges-tick-$landed-wakes-once" 1 \
+    "$(grep -c 'depends on' "$TR_PROMPT.triage")"
+done
+
+# Multiple edges advancing in one tick render as multiple prompt lines. This
+# catches both a collapsed edge list and a literal trailing backslash-n.
+TR471_TWO="$(tr471_issue 473 'Blocked by #904, #905.')"
+tr_fix '[]' '[]' '[]' '[]' '[]' \
+  "$(tr471_states 904 MERGED 905 CLOSED)" "$TR471_TWO" "$TR471_TWO"
+tr_run 0
+t triage471-two-same-tick-edges-render-two-lines 2 \
+  "$(grep -c '^  - #473 depends on #90[45]:' "$TR_PROMPT.triage")"
+if grep -Fq '\n' "$TR_PROMPT.triage"; then r1=LITERAL_ESCAPE; else r1=rendered; fi
+t triage471-two-same-tick-edges-have-no-literal-escape rendered "$r1"
+
+# Signal (e) still consumes the blocked subset from the widened read and
+# renders its established lead alongside (f); no existing verdict moved.
+tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
+tr_run 0
+if grep -Fq 'Possibly unblockable issues: #244' "$TR_PROMPT.triage"; then
+  r1=unchanged; else r1=MISSING; fi
+t triage471-signal-e-unblockable-verdict-unchanged unchanged "$r1"
 
 # --- #359: successful triage sessions settle ledgers at their exit state ---
 TR359_T1='2026-08-05T10:00:00Z'
@@ -544,7 +668,7 @@ t triage358-doctrine-set-nonvacuous 6 "$(printf '%s' "$tr358_doctrine_set" | wc 
 # The engine's set, taken from signal (b)'s own --arg list and resolved through
 # the shipped conf. A label added to LABELS.md and not to the engine fails
 # here, and so does one added to the engine and not to LABELS.md.
-tr358_select="$(awk '/elif ! stray_items=/,/stray parse failed/' "$SHARED/lib/duty-triage.sh")"
+tr358_select="$(awk '/if ! stray_items=/,/stray parse failed/' "$SHARED/lib/duty-triage.sh")"
 # shellcheck disable=SC2016  # a grep pattern: the $LABEL_ is the module's text
 tr358_pairs="$(printf '%s\n' "$tr358_select" \
   | grep -o -- '--arg [a-z_]* "\$LABEL_[A-Z_]*"' \
