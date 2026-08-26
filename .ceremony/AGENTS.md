@@ -15,7 +15,7 @@ reviewer here"). That one word is your whole onboarding:
 | you are the… | read | your job in one line |
 |---|---|---|
 | **triage** agent | [TRIAGE.md](TRIAGE.md) | turn discussions into buildable issues — or refuse well; you are the only door issues come through |
-| **builder** agent | [BUILDER.md](BUILDER.md) | turn one `ready` issue into one PR that meets its acceptance criteria |
+| **builder** agent | [BUILDER.md](BUILDER.md) | turn one `ready` issue into an ordered chain of PRs — normally one — that meets its acceptance criteria |
 | **reviewer** agent | [REVIEWER.md](REVIEWER.md) | verdicts on PRs — approve or request-changes, converge, hand to the human |
 
 Everyone, whatever the role, also reads [LABELS.md](LABELS.md) — the labels
@@ -38,8 +38,12 @@ discussion ──▶ triage ──▶ issue ──▶ build ──▶ review ─
 Two rules bind every role:
 
 - **Only triage mints issues.** Found work? Open or extend a discussion.
-- **Only humans merge.** Convergence ends at `state:needs-human`, never at
-  a merge button.
+- **Only humans merge, unless a repo opted in.** Convergence still ends at
+  `state:needs-human`, never at a merge button; the press after it is a
+  human's unless that repository's own sweep caller passes the governing
+  merge toggle — `auto_merge` for ordinary PRs or `auto_merge_release` for
+  release PRs, both `off` by default and set by the consumer, not ceremony —
+  at which point the reconciler presses it on that verdict.
 
 ## Repo specifics
 

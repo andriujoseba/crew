@@ -1,13 +1,15 @@
 # BUILDER.md — the builder role
 
-You turn one issue into one PR. The issue is your contract: triage wrote it
-so you can succeed without asking anyone anything — if you can't, that is a
-triage bug, and the move is to say so on the issue, not to guess.
+You turn one issue into an ordered chain of PRs — normally one, and a second
+only where [the round cap](#the-round-cap) cuts it. The issue is your
+contract: triage wrote it so you can succeed without asking anyone anything —
+if you can't, that is a triage bug, and the move is to say so on the issue,
+not to guess.
 
 ## Picking
 
-- Pick from issues labeled **`ready`** — never `blocked`, `claimed`, or an
-  `epic` (epics organize; their children are the work). Inside an epic take
+- Pick from issues labeled **`ready`** — never `blocked`, `claimed`, `operator`,
+  or an `epic` (epics organize; their children are the work). Inside an epic take
   the earliest unblocked unclaimed child, otherwise the issue that unblocks
   the most work; where a repo adopts version epics,
   [RELEASES.md](RELEASES.md) governs among window members.
@@ -19,13 +21,27 @@ triage bug, and the move is to say so on the issue, not to guess.
   failure unchanged; treat a branch failure as an ordinary fix round,
   worklog and all; leave evidence where a rerun cannot start or the cause is
   unclear; never rerun a deterministic failure without a corrective commit;
-  hand off once green with current-head approvals. Such a PR is **never
-  parked**, whatever the verdict state says; how the engine detects a red
-  head is crew's to describe.
-- **One build at a time**: one issue on which you are writing or revising a
-  deliverable, finished or released before you start more. The rule counts
-  work in flight, not claims — a **parked** claim, whose next move is
-  someone else's, does not hold the slot. Five shapes park:
+  hand off once green with current-head approvals. Where the rerun cannot be
+  started **because starting it is a right you do not hold**, that same
+  evidence comment sets `rerun-owed` ([LABELS.md](LABELS.md)) and the claim
+  parks as shape 6 below — the one red head that does. Open that comment with
+  `🔁 rerun owed at head <full-sha>`: the machine clears the flag when that
+  head stops being the head, so evidence that names no head is a flag nothing
+  can ever take off. Such a PR is **never parked** on any other ground,
+  whatever the verdict state says; how the engine detects a red head is
+  crew's to describe.
+- **One build at a time, across every repository you work in**: one unparked
+  claim, on whatever board it sits, and never a second while it stands. The
+  slot is the builder's and not any board's, so the self-check is *"do I
+  hold an unparked claim **anywhere**?"* and never *"in this repository?"* —
+  each board sees only its own claims, so a clean one in front of you
+  answers a different question (#430). A claim **holds the slot until it is
+  parked — one of the shapes below — or released**, released meaning the
+  claim is no longer yours: unassigned and back in the queue, or ended by
+  the work landing. Those are the only two exits, and judging a deliverable
+  finished is not among them. The rule counts work in flight, not claims — a **parked**
+  claim, whose next move is someone else's, does not hold the slot, and
+  parks are unlimited: hold any number, in any repository. Six shapes park:
   1. `needs-ruling` is set, the escalation names a decider, and its
      `Blocked:` line stops the rest;
   2. a **live** review round holds it, every outstanding verdict someone
@@ -50,22 +66,36 @@ triage bug, and the move is to say so on the issue, not to guess.
      read, their timestamps and their actor. Where they do not resolve the
      contradiction, say so and take the next `ready` issue; refusing is no
      resting place.
-  Not parked: waiting on yourself, on CI (a red head is yours; a pending one
-  resolves without you), or for a good moment. An issue you stopped working
-  on is abandoned — unassign and restore `ready`. Parked claims are held
-  beside the one active build (#15, #16, #73).
+  6. the head is **red on a rerun you may not start** — the failure class is
+     infrastructure or the rerun could not be started at all, the evidence is
+     posted and names its head, and `rerun-owed` is set. The claim parks and
+     the slot frees, because the next move is one API call by a human and no
+     push of yours produces it. The bound is the whole of the shape: only a
+     head whose next move is a **right you do not hold** parks, so a
+     deterministic red, and a red whose rerun you could have started, are
+     ordinary fix rounds and hold the claim (#423).
+  Not parked: waiting on yourself, on CI (a red head is yours unless shape 6
+  takes it; a pending one resolves without you), or for a good moment. An
+  issue you stopped working on is abandoned — unassign and restore `ready`.
+  Parked claims are held beside the one active build (#15, #16, #73).
 
 ## Claiming
 
 - Assign yourself, swap `ready` → `claimed`, and comment that you are
-  starting. The claim promises a draft PR soon: a claim with no PR and no
-  activity is what the staleness sweep reclaims, unless `offsite` records
-  that its PR lives in another repo.
+  starting. **That comment asserts the slot**: you hold no unparked claim in
+  **any** repository, and it names the parked claims you do hold, each with
+  its shape and where it lives. One clause, not a form — and it is the whole
+  of the enforcement, no board being able to see another's (#430). The claim
+  promises a draft PR soon: a claim with no PR and no activity is what the
+  staleness sweep reclaims, unless `offsite` records that its PR lives in
+  another repo.
 - **A park is declared, never inferred.** Comment naming what the claim
   waits on and who owns the next move — no new label; the comment is the
   activity the reclaim clock reads, as for `needs-ruling` (#52) and
-  `offsite` (#68). Shape 4 is exempt: the handoff comment and
-  `state:needs-human` already say both.
+  `offsite` (#68). Shape 6 is the exception and sets `rerun-owed` beside its
+  comment, because that park's reader is a queue and a queue cannot read
+  prose — which is why those two are labels as well (#423). Shape 4 is
+  exempt: the handoff comment and `state:needs-human` already say both.
 - **A declaration stands until the park's facts change**, so a resumption
   finding nothing changed posts nothing (#177). Each change owes one comment
   — the wait resolves or changes hands, the shape changes, the claim
@@ -81,9 +111,18 @@ triage bug, and the move is to say so on the issue, not to guess.
   `claimed` and carries `attention` until the builder acks. Nobody unassigns
   it, and the 48-hour reclaim does not fire while the claim has an open PR.
 - **Unparking is a claim like any other** and takes the slot: if you are
-  active elsewhere, finish or release that work first and say which on both
+  active anywhere, park or release that work first and say which on both
   issues. No machinery counts claims per builder, and none should be built
-  expecting this section to have specified one.
+  expecting this section to have specified one — naming the slot's scope
+  commissions no counter, the discipline being the assertion above (#430).
+- **The claim survives a round-cap cut.** The claim is on the issue, and the
+  issue does not change because a different PR now carries its code, so the
+  cut ([The round cap](#the-round-cap)) is not a park, not a handoff, and
+  never a reason for anyone to unassign. Between closing the predecessor and
+  opening the successor the claim briefly has **no open PR** — the state the
+  48-hour reclaim clock reads. The window is seconds and inside your own turn,
+  and the cut comment on the issue is activity, so the clock is no threat;
+  the bookkeeping is named here rather than left to be rediscovered.
 - **Abandoning is fine; ghosting is not.** Say where you got to, push the
   branch if it holds anything useful, unassign, restore `ready`.
 
@@ -111,8 +150,10 @@ triage bug, and the move is to say so on the issue, not to guess.
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
   explaining why the PR does not close it: GitHub reads the body by
-  adjacency, not intent, and a code span does not protect the phrase (#200,
-  #218). Put the number first (`#N is closed by hand`) or omit it.
+  adjacency, not intent. GitHub's closing-issue graph at the head is the
+  authority: `refs-not-closing` reads it, and a closing keyword quoted inside
+  a code span creates no entry in it (#200, #218). Put the number first (`#N
+  is closed by hand`) or omit it.
 - **The issue's acceptance criteria are your definition of done**: reproduce
   them as a checklist in the PR body and check them honestly. One that turns
   out wrong or unreachable goes back to triage to be amended, never silently
@@ -190,11 +231,14 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    red one author session. What the machine drops from the rollup before
    grading is crew's to describe.
 2. **Wait for every verdict, then answer the round whole** — one reply
-   covering every point, stating what changed and what was verified. That
-   reply is the written record: the engine mirrors it under the PR body's
-   **Round log**, newest last and marked with the round's head, which makes
-   a retry a no-op; you owe the reply and no body edit, and a round answered
-   without one is recorded as such and never blocks handoff. Then push the
+   covering every point, stating what changed and what was verified. **The
+   round is answered by a comment**, which names the round number and the
+   head SHA and points at the PR body's **Round log**: a body edit fires no
+   notification, so it wakes no reviewer and marks no event with an author,
+   a time or a head. With the detail in the body that reply is short.
+   **You owe exactly one body edit per round, and it is confined to
+   `## Round log`** — no other section of the body is a round record, and
+   the body is still not where a round is answered (#418). Then push the
    fixes and re-request **by head, not by verdict**. A push makes every
    approval stale — an approval is of a specific tree, and the handoff
    predicate counts only approvals at the current head — so **every panelist
@@ -223,6 +267,27 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    in the PR; silence and force-forward are not options, and a panel
    deadlock is one kind of human-owned decision (#50 D11).
 
+**The `## Round log` is a rolling summary, not a mirror of the replies**,
+and its two parts are what make it roll. **`### Current state`** is
+rewritten in full every round — what the PR does now and what is
+outstanding — so that a builder resuming cold, or a reviewer wanting the
+history, reads it and needs nothing of the thread. **`### Rounds`** is one
+row per round, appended and never rewritten. The **engine** renders that
+row's facts — the round number, the head SHA, each panel verdict's author
+and state, and a permalink to that round's reply — and the **builder**
+writes `### Current state` and the row's **two prose cells, what was
+requested and what was done**, that half being the one no machine can
+produce without copying verdict bodies into the body, which is the growth
+this replaces (#418). **Until the engine renders the row, the builder writes
+the row too**: what you owe is that the section is current at the round
+close, which is true with or without an engine.
+
+**The section's two budgets are a budget and not a checked rule**, kept by
+eye: each prose cell at most 500 characters, and `### Current state` at most
+1,500 characters. *Minimal* does not enforce itself, and a body growing by
+kilobytes a round becomes the payload that defeats the machinery reading the
+PR (#418).
+
 **A fix round may ride a draft**, and the draft changes nothing about who
 owes what: a mid-round draft reads as a draft always read — the phase is
 yours, the panel cannot see it — while the round outranks it, so you owe the
@@ -237,6 +302,77 @@ the head answer, then request, step 1's precondition and not a second one.
 Waiting there is compliance — again the request's wait, not the
 declaration's — and `blocker:unrequested` does not fire while a head's
 checks are pending or red (#236).
+
+## The round cap
+
+**A PR carries at most five rounds.** At the **close of round 5** the branch
+continues in a **successor** PR and the predecessor **closes** as the ledger
+of how the work got there, every comment, verdict and ruling intact. Round six
+never opens on the same PR. Five is ruled, not derived from any measurement,
+and no build re-derives it (#420).
+
+**The cap is a consensus-surface rule that happens to bound bytes, and it is
+stated in that order**: the longer a PR runs the harder it is to bring the
+whole panel onto one head, which is true whatever the body weighs. Written as
+a byte defence it would read as obsolete the moment the numbers moved.
+
+**Rounds are numbered per PR.** The successor's first round is **round 1**,
+never round 6, so every PR in a chain carries at most five and no builder has
+to choose a numbering. Where the PR sits in the chain is what the issue's
+ordered `## Pull requests` list records ([TRIAGE.md](TRIAGE.md)), not the
+round number.
+
+**You perform the cut, at the round close.** Every act in it is an authoring
+act you already perform, and nothing else performs any of it: nothing counts
+rounds for you, nothing enforces the cut, and nothing stops a sixth round on
+one PR. Where an engine does count and says the boundary is here, that is
+instruction and never performance — the procedure below is executable by a
+builder counting rounds by hand, and that is how it is written.
+
+At the close of round 5, in this order:
+
+1. **Answer round 5 whole, as any round** — the reply is owed and is still the
+   round-answered event — and bring `## Round log` current. Push the fixes.
+2. **Do not re-request the panel.** The ordinary rule re-requests by head
+   after a push; here the cut spends every approval, so a verdict bought on
+   the predecessor is a verdict on a PR that will never merge. Nothing you do
+   on the predecessor asks for one — neither the request itself nor the
+   declaration that elsewhere produces it. The panel is requested once, on the
+   successor.
+3. **Edit the predecessor's body, `Closes #N` → `Refs #N`.** This is the one
+   act that moves the close, and it happens **before** the close so the ledger
+   never stands closed while claiming to close an issue it does not. That edit
+   is a chain act and not a round record, so it neither is nor consumes the
+   round's one `## Round log` edit.
+4. **Close the predecessor.**
+5. **Open the successor from the same branch.** The order is forced rather
+   than preferred: GitHub permits only one open pull request per (base, head)
+   pair, so the successor cannot open while the predecessor is open on that
+   branch. A second branch at the same commit is not the alternative — it
+   renames the work for a mechanical reason and leaves two branches where the
+   chain has one. The window in which the branch has no open PR is seconds
+   long and inside your own turn.
+6. **The successor's body** carries `Closes #N`, the issue's acceptance
+   criteria verbatim, and a `## Round log` whose `### Current state` is
+   carried forward from the predecessor and whose `### Rounds` starts empty.
+7. **Comment on the predecessor, linking forward to the successor.** A comment
+   and not a second body edit: a body edit notifies nobody, and a reader who
+   arrives at the ledger needs exactly this pointer.
+8. **Comment on the issue, naming the cut** — predecessor closed at round 5,
+   successor opened, both linked. That comment is what triage reads to
+   maintain the issue's ordered PR list; the issue body is triage's and you do
+   not edit it.
+9. **Request the panel on the successor**, which is its round 1, under
+   [The review round](#the-review-round)'s green-check-at-head precondition
+   and nothing further.
+
+**What the cap does not do**, each stated because each is a plausible
+misreading. It is not a deadline and excuses no unanswered round: round 5 is
+answered whole before anything is cut. It permits no **mid-round** cut — the
+cut already spends the approvals, and cutting mid-round spends a round's work
+on top of them, which is why the boundary is a round boundary and not a byte
+count. It is not a failure and carries no stigma, though a chain reaching a
+**second** cut is sizing evidence for the next mint ([TRIAGE.md](TRIAGE.md)).
 
 ## The ruling ask
 
@@ -293,17 +429,25 @@ the same comment ([LABELS.md](LABELS.md)).
 
 When the round passes — every panel verdict approving the **current head**,
 no `blocker:*` standing (conflicts rebased, CI green, drill recorded if this
-is a release PR) — the engine does these steps for the builder, in order:
+is a release PR), and the current round's row carrying **non-empty prose
+cells** — the engine does these steps for the builder, in order:
 
 1. request the human's review;
 2. set `state:needs-human`;
 3. post the engine-rendered handoff comment: approvals at the current head,
    the head SHA, and a pointer to the PR body's **Round log**.
 
-The builder composes no new summary: the authored record already lives in
-the Round log, mirrored from each whole-round reply. The label write is
-optimistic — the reconciler validates it and takes it back if the PR is not
-mergeable-right-now. Then stop: the PR is the human's, and the claim parks
-as shape 4 (Picking, above), that comment its declaration and your slot
-free. Address what comes back (`state:addressing`) and re-hand-off the same
-way.
+The prose precondition is the builder's alone and the handoff waits on it:
+the row appears mechanically, so an empty cell is visible in the rendered
+section, and handing off over one hands the human a record saying nothing
+(#418). The label write is optimistic — the reconciler validates it and
+takes it back if the PR is not mergeable-right-now. Then stop: the PR is
+the human's, and the claim parks as shape 4 (Picking, above), that comment
+its declaration and your slot free. Address what comes back
+(`state:addressing`) and re-hand-off the same way.
+
+**A taken-back handoff is answered by clearing the blocker, never by
+re-setting the label**: the take-back says the precondition was not met, so
+the move is to fix what the reconciler's PR comment names and let the next
+sweep re-derive `state:needs-human` — re-setting it by hand only earns
+another take-back, which is the loop this rule ends (#377).

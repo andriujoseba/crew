@@ -1,0 +1,13 @@
+name: ci-rerun
+on:
+  # pull_request_target, not pull_request: a fork PR's pull_request run holds a
+  # read-only token and can neither rerun a run nor remove the label.
+  pull_request_target:
+    types: [labeled]
+permissions:
+  contents: read        # .github/labels.conf and the implementation, never the PR head
+  actions: write        # rerun the failed check a fork PR author cannot start
+  pull-requests: write  # remove rerun-owed and post the outcome
+jobs:
+  ci-rerun:
+    uses: heavy-duty/ceremony/.github/workflows/ci-rerun.yml@0.7.6
