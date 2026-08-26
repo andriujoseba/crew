@@ -34,6 +34,11 @@
 # The variable is MODEL_<KIND>, the kind's non-alphanumerics folded to `_` and
 # upper-cased — the same fold BUDGET_*_<KIND> uses, so `ci-red` reads
 # MODEL_CI_RED in both places and an operator learns the rule once.
+#
+# It is read generically, so a kind whose MODEL_ variable no conf DECLARES is
+# still tierable: an operator who sets it gets it honoured. The shipped
+# declarations sit in conf/roles/, which is where #469 D7 fences them; a kind
+# with no declaration there is not a kind the lever skips.
 _session_cli_cmd() {
   local kind="$1" suffix var tier
   suffix="${kind//[^[:alnum:]]/_}"
@@ -42,7 +47,14 @@ _session_cli_cmd() {
   tier="${!var:-}"
   # The default, and it is the whole of D4: with nothing configured anywhere
   # this function copies the profile's array and names the tier `default`, so
-  # unset is byte-identical to today in the invocation AND in the log.
+  # an engine that is upgraded and not configured INVOKES exactly what it
+  # invoked before — the invocation and the session's behaviour are unchanged.
+  # The log is not: _SESSION_TIER is set unconditionally, so SESSION END gains
+  # `tier=default` on every line, including unconfigured ones. That is D5's
+  # deliberate choice, not a leak — an aggregate cannot tell a duty that got
+  # cheaper from one that got rarer off a field that vanishes whenever the
+  # answer is boring. See the SESSION END comment below for why it is appended
+  # past reply_tail rather than inserted.
   _SESSION_CLI_CMD=("${BOT_CLI_CMD[@]}")
   _SESSION_TIER=default
   [ -n "$tier" ] || return 0
