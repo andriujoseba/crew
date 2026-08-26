@@ -38,6 +38,13 @@ const waitForWarmPortraits = (page) => page.waitForFunction(() => {
   return stats.cacheSize >= window.FLOORDEV.grid().n && stats.buildsLastSec === 0;
 }, undefined, { timeout: 15000 });
 
+// waitForFunction observes the page between animation frames. Let the floor
+// paint twice after that observation so the first sampled frame cannot straddle
+// a late compositor/cache handoff on a loaded runner.
+const waitForPaintedWarmFrame = (page) => page.evaluate(() => new Promise((resolve) => {
+  requestAnimationFrame(() => requestAnimationFrame(resolve));
+}));
+
 (async () => {
   const browser = await chromium.launch({
     executablePath: CHROME, args: ['--no-sandbox', '--disable-dev-shm-usage'],
@@ -166,6 +173,7 @@ const waitForWarmPortraits = (page) => page.waitForFunction(() => {
   // Do not begin comparing frames while a late portrait can still replace its
   // backdrop. Reduced motion pins animation; it does not make cache fills free.
   await waitForWarmPortraits(rpage);
+  await waitForPaintedWarmFrame(rpage);
   // Working tile 0 (bob + beats must be off) and offline tile 6 (the roll
   // and grain must be pinned, not wandering).
   const still = await rpage.evaluate(() => new Promise((res) => {
