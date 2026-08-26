@@ -53,6 +53,7 @@ INSTALL_DRILL=1
 INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
+RESOLVED_REF=""
 RESUME_DRILL=1
 ATTENTION_DRILL=1
 # The board-audit leg is TRIAGE-role, unlike the two above it: the hygiene slot
@@ -86,9 +87,9 @@ while [ $# -gt 0 ]; do
     --tree)
       INSTALL_TREE="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
     --remote)
-      INSTALL_REMOTE="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
+      INSTALL_REMOTE="$2"; shift 2 ;;
     --ref)
-      INSTALL_REF="$2"; PASSTHRU+=("$1" "$2"); shift 2 ;;
+      INSTALL_REF="$2"; shift 2 ;;
     --quick) PASSTHRU+=(--quick); shift ;;
     --reuse) PASSTHRU+=(--reuse); shift ;;
     --keep) KEEP=1; shift ;;
@@ -110,6 +111,29 @@ while [ $# -gt 0 ]; do
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
+
+# Resolve the operator-facing branch, tag or commit once for the whole role
+# round. Each role then fetches this exact object from the canonical remote;
+# a branch moving after this point cannot split one record across three trees.
+# GitHub permits a fork-network commit to be fetched by object ID from the
+# canonical repository, so this also needs no fork URL (#490).
+if [ -z "$INSTALL_TREE" ]; then
+  command -v git >/dev/null \
+    || { echo "phase 0: git not found on the host (source resolution needs it)" >&2; exit 1; }
+  resolve_tmp="$(mktemp -d)"
+  resolve_error="$resolve_tmp/fetch.err"
+  git -C "$resolve_tmp" init -q
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$resolve_tmp" fetch --quiet --depth=1 \
+      "$INSTALL_REMOTE" "$INSTALL_REF" 2>"$resolve_error"; then
+    echo "phase 0: cannot resolve remote '$INSTALL_REMOTE' ref '$INSTALL_REF' to one commit: $(cat "$resolve_error")" >&2
+    rm -rf -- "$resolve_tmp"
+    exit 1
+  fi
+  RESOLVED_REF="$(git -C "$resolve_tmp" rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null)" \
+    || { echo "phase 0: remote '$INSTALL_REMOTE' ref '$INSTALL_REF' did not resolve to a commit" >&2; rm -rf -- "$resolve_tmp"; exit 1; }
+  rm -rf -- "$resolve_tmp"
+  PASSTHRU+=(--remote "$INSTALL_REMOTE" --ref "$RESOLVED_REF")
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=drill/rehearsal-hygiene.sh
@@ -471,6 +495,9 @@ fi
 echo
 echo "############################################################"
 echo "## fleet rehearsal summary ($AGENT)"
+if [ -n "$RESOLVED_REF" ]; then
+  echo "## drilled source: $RESOLVED_REF (remote $INSTALL_REMOTE ref $INSTALL_REF)"
+fi
 printf '##   %s\n' "${SUMMARY[@]}"
 echo "############################################################"
 if [ "$KEEP" -eq 1 ] || [ "$overall" -ne 0 ]; then

@@ -243,8 +243,13 @@ if [ -n "$TREE" ]; then
 else
   SOURCE_TREE="$ACQUIRE_TMP/source"
   SOURCE_DESC="remote $REMOTE ref $REF"
-  if ! GIT_TERMINAL_PROMPT=0 git clone --quiet --branch "$REF" --single-branch "$REMOTE" "$SOURCE_TREE"; then
+  git -C "$ACQUIRE_TMP" init -q source
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$SOURCE_TREE" fetch --quiet --depth=1 "$REMOTE" "$REF"; then
     echo "phase 0: cannot resolve remote '$REMOTE' ref '$REF'; acquisition aborted before checks" >&2
+    exit 1
+  fi
+  if ! git -C "$SOURCE_TREE" checkout --quiet --detach FETCH_HEAD; then
+    echo "phase 0: remote '$REMOTE' ref '$REF' was fetched but could not be checked out; acquisition aborted before checks" >&2
     exit 1
   fi
 fi
