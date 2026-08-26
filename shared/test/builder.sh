@@ -4675,8 +4675,13 @@ t d479-every-failure-branch-warns 3 \
 # NOT close the property the pair is here for. Counting warns catches a warn
 # taken away; it cannot catch one that was never written, since an appended
 # `|| spliced=""` with no warn leaves the count at three and passes. Pinning
-# both numbers is what makes a silent fourth swallow impossible: adding one
-# moves this count, and warning about it moves the other.
+# both numbers closes THIS SWALLOW SPELLING — the `||`-fallback-to-empty the
+# defect was written in: adding one moves this count, and warning about it moves
+# the other. The pair is textual and is not claimed to be more: a block-form
+# swallow (`if ! spliced="$(…)"; then spliced=""; fi`) moves neither counter.
+# That is a known and accepted limit, not an oversight — a region count cannot
+# be made airtight, and every branch this function actually has warns, which is
+# what AC3 asks.
 t d479-no-swallow-goes-unwarned 2 \
   "$(awk '/^_resume_attach_comments\(\) \{$/,/^\}$/' "$BMOD" | grep -c '||.*=""')"
 

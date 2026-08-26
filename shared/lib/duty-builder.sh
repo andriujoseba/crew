@@ -1140,8 +1140,11 @@ _resume_pr_comments() {
 # local deterministic fold of two values already in hand — no network, no API, no
 # rate limit — so a splice that fails will fail identically next tick on inputs
 # that only ever grow. That will not clear on its own, and a permanent condition
-# is not a per-tick skip: it sets `attention` on the PR's authorizing issue
-# rather than waiting for a human to notice a board that looks clean.
+# is not a per-tick skip: it escalates to the operator through `alert`, naming
+# the PR, the head and the issue a human should flag, rather than waiting for
+# someone to notice a board that looks clean. Why that channel and not the
+# `attention` label the issue asks for is _resume_structural_escalate's own
+# header, below.
 #
 # EVERY BRANCH WARNS, including the one that cannot even mark the thread unread.
 # A swallow with no warn is what turned a stall into a clean board, so the
