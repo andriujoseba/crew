@@ -415,6 +415,7 @@ t orphan-mutation-double-reconciles-twice 2 "$(orph_count "$ORPH8")"
 # defect it names. Stdout goes to /dev/null, as it effectively does on a hand
 # run of duty.sh, and the two passes below are two separate box-kill counts of
 # one box-kill.
+# shellcheck disable=SC2016  # the sed matches the module's literal $logfile
 orph_mutant stdout 's/" >>"\$logfile"$/"/'
 ORPH_M4="$TMP/ledger-mutant-stdout.sh"
 ORPH10="$TMP/orphan-mut-stdout"; orph_fixture "$ORPH10"
@@ -436,6 +437,7 @@ orph_mutant tab 's/037/t/g'
 ORPH_M5="$TMP/ledger-mutant-tab.sh"
 # shellcheck disable=SC1090
 ORPH4_TAB="$(source "$ORPH_M5" >/dev/null 2>&1; _session_orphan_scan "$ORPH4/duty.log")"
+# shellcheck disable=SC2034  # m4_rest is the tail the shift produced, not read
 IFS=$'\t' read -r m4_kind m4_key m4_holder m4_rest <<<"$ORPH4_TAB"
 t orphan-mutation-tab-shifts-log-into-holder \
   "operator|floor|$ORPH4/logs/operator.log" "$m4_kind|$m4_key|$m4_holder"
