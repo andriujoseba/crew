@@ -3685,6 +3685,10 @@ t notify-verdict-opt-out-is-an-announced-skip "reviewer skip --no-notify-drill" 
 # The aggregation, executable: a real rehearsal-all.sh with stubbed siblings.
 AGG="$TMP/notify-agg"
 mkdir -p "$AGG/source"
+git -C "$AGG/source" init -q
+git -C "$AGG/source" config user.name fixture
+git -C "$AGG/source" config user.email fixture@example.invalid
+git -C "$AGG/source" commit -qm fixture --allow-empty
 cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
   "$ROOT/drill/rehearsal-verdict.sh" \
   "$ROOT/drill/rehearsal-hygiene.sh" "$ROOT/drill/rehearsal-breaker.sh" "$AGG/"
