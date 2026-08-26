@@ -1,6 +1,7 @@
 # common/identity.sh — note_auth_failure, clear_auth_failure, gh_identity,
 # check_vendor_credential, git_identity_login, git_identity_ok,
-# converge_git_identity — the box's own account, and every carrier of it.
+# converge_git_identity, git_identity_failure_message — the box's own
+# account, and every carrier of it.
 #
 # A module of shared/lib/common.sh, which is the entry point: nothing sources
 # this file directly.
@@ -244,13 +245,29 @@ git_identity_ok() {
 # one request, once.
 converge_git_identity() {
   local want="${1:-}" expect="${1:-}" pair id email had_email had_name
+  local err rc=0 reason
+  GIT_IDENTITY_FAILURE_KIND=""
+  GIT_IDENTITY_FAILURE_EVIDENCE=""
   if [ -n "$want" ] && git_identity_ok "$want"; then
     return 0
   fi
   # One call for both halves: the login names the account and the id builds the
   # address GitHub attributes by. Asking twice could straddle a credential
   # rotation and write a login with another account's id.
-  pair="$(gh api user --jq '[.login, .id] | @tsv' 2>/dev/null | head -1 || true)"
+  err="$(mktemp)"
+  pair="$(gh api user --jq '[.login, .id] | @tsv' 2>"$err")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    reason="$(grep -iE 'message|401|403|error' "$err" | head -1 || true)"
+    reason="${reason:-gh api user exited $rc}"
+    rm -f "$err"
+    GIT_IDENTITY_FAILURE_KIND="credential"
+    GIT_IDENTITY_FAILURE_EVIDENCE="$reason"
+    note_auth_failure gh "$reason"
+    return 1
+  fi
+  rm -f "$err"
+  clear_auth_failure gh
+  pair="$(printf '%s\n' "$pair" | head -1)"
   # Split in the shell rather than with `cut`. install.sh's fixture runs this
   # under a curated PATH that is the box's whole world, and every external
   # this reaches for is one more way a real install degrades into a diagnostic
@@ -262,7 +279,9 @@ converge_git_identity() {
     ''|*[!0-9]*) id="" ;;
   esac
   if [ -z "$want" ] || [ -z "$id" ]; then
-    warn "git identity: cannot resolve this box's own account (gh credential dead?) — git config left untouched"
+    GIT_IDENTITY_FAILURE_KIND="identity"
+    GIT_IDENTITY_FAILURE_EVIDENCE="gh api user returned an incomplete login/id response"
+    warn "git identity: $GIT_IDENTITY_FAILURE_EVIDENCE — git config left untouched"
     return 1
   fi
   # The caller named a login; gh must still name the SAME one. duty.sh resolved
@@ -277,6 +296,8 @@ converge_git_identity() {
      [ "$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')" != \
        "$(printf '%s' "$expect" | tr '[:upper:]' '[:lower:]')" ]; then
     warn "git identity: the gh credential now names '$want', but this tick is running as '$expect' — the credential rotated mid-tick; git config left untouched"
+    GIT_IDENTITY_FAILURE_KIND="identity"
+    GIT_IDENTITY_FAILURE_EVIDENCE="gh api user names '$want' while this tick names '$expect'"
     return 1
   fi
   # Re-checked against the login gh just reported rather than the caller's:
@@ -290,6 +311,8 @@ converge_git_identity() {
   had_email="$(git config --global user.email 2>/dev/null || true)"
   had_name="$(git config --global user.name 2>/dev/null || true)"
   if ! git config --global user.email "$email" || ! git config --global user.name "$want"; then
+    GIT_IDENTITY_FAILURE_KIND="identity"
+    GIT_IDENTITY_FAILURE_EVIDENCE="git config could not replace '${had_email:-unset}' with '$email'"
     warn "git identity: could not write git config — this box would commit as '${had_email:-nobody}'"
     return 1
   fi
@@ -297,6 +320,8 @@ converge_git_identity() {
   # a file some other setting shadows leaves the byline wrong while reporting
   # success, and a silent false green here is the whole bug a second time.
   if ! git_identity_ok "$want"; then
+    GIT_IDENTITY_FAILURE_KIND="identity"
+    GIT_IDENTITY_FAILURE_EVIDENCE="git still reads '$(git config --global user.email 2>/dev/null || true)' after writing '$email'"
     warn "git identity: wrote $email, but git still reads '$(git config --global user.email 2>/dev/null || true)'"
     return 1
   fi
@@ -306,4 +331,22 @@ converge_git_identity() {
   # moment it stops, which is the only moment the fact is actionable.
   alert "🪪 $(hostname): git identity was <${had_email:-unset}> — now <$email> ($want)"
   return 0
+}
+
+# git_identity_failure_message LOGIN — turn converge_git_identity's result
+# into the operator-facing refusal. The helper reports the identity observed
+# at the failing call: a rejected credential is not guessed into a login,
+# while a git mismatch names both the configured author and the login the
+# successful API call returned. It performs no probe of its own.
+git_identity_failure_message() {
+  local login="$1" email
+  if [ "${GIT_IDENTITY_FAILURE_KIND:-identity}" = "credential" ]; then
+    printf 'GitHub credential used by gh api user failed — %s' \
+      "${GIT_IDENTITY_FAILURE_EVIDENCE:-API rejection unavailable}"
+    return 0
+  fi
+  email="$(git config --global user.email 2>/dev/null || true)"
+  printf "git identity '%s' does not name GitHub login '%s' — %s" \
+    "${email:-unset}" "$login" \
+    "${GIT_IDENTITY_FAILURE_EVIDENCE:-git identity could not be repaired}"
 }

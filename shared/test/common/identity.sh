@@ -279,11 +279,21 @@ t gitid-no-argument-converges-from-gh '59120057+cndgrr@users.noreply.github.com'
 # makes duty.sh refuse rather than run a session under a name it cannot verify.
 git config --global user.email 'claude-bot-andresmgsl@users.noreply.github.com'
 # shellcheck disable=SC2317
-gh() { return 1; }
+gh() { echo "$*" >>"$GHLOG"; printf '%s\n' 'gh: HTTP 401: Bad credentials' >&2; return 1; }
+: >"$GHLOG"
 converge_git_identity cndgrr >/dev/null 2>&1
 t gitid-dead-credential-refuses 1 "$?"
 t gitid-dead-credential-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
   "$(git config --global user.email)"
+t gitid-dead-credential-is-classified credential "$GIT_IDENTITY_FAILURE_KIND"
+case "$GIT_IDENTITY_FAILURE_EVIDENCE" in *'401'*'Bad credentials'*) r1=carried ;; *) r1=LOST ;; esac
+t gitid-dead-credential-carries-api-response carried "$r1"
+t gitid-dead-credential-spends-one-gh-call 1 "$(wc -l <"$GHLOG")"
+r1="$(git_identity_failure_message cndgrr)"
+case "$r1" in *'GitHub credential used by gh api user failed'*'401'*'Bad credentials'*) r1=credential ;; *) r1=WRONG ;; esac
+t gitid-dead-credential-message-names-credential credential "$r1"
+case "$(git_identity_failure_message cndgrr)" in *'git identity'*) r1=CONFUSED ;; *) r1=separate ;; esac
+t gitid-dead-credential-message-does-not-blame-git separate "$r1"
 
 # A credential that ROTATED between duty.sh resolving $ME and this call must
 # refuse, not converge. Converging would write the NEW account and return 0
@@ -298,6 +308,10 @@ converge_git_identity cndgrr >/dev/null 2>&1
 t gitid-rotated-credential-refuses 1 "$?"
 t gitid-rotated-credential-writes-nothing 'claude-bot-andresmgsl@users.noreply.github.com' \
   "$(git config --global user.email)"
+t gitid-rotation-is-an-identity-failure identity "$GIT_IDENTITY_FAILURE_KIND"
+r1="$(git_identity_failure_message cndgrr)"
+case "$r1" in *"git identity 'claude-bot-andresmgsl@users.noreply.github.com'"*"GitHub login 'cndgrr'"*) r1=named ;; *) r1=WRONG ;; esac
+t gitid-mismatch-message-names-both-identities named "$r1"
 # The rotation guard is the CALLER's to invoke: install.sh passes no login
 # because it has no $ME, and its whole job is to write whatever gh now says.
 converge_git_identity >/dev/null 2>&1
@@ -348,6 +362,15 @@ else
   r1=CONTINUES
 fi
 t gitid-refusal-ends-the-tick exits "$r1"
+
+# The caller uses the classification produced by the SAME failed API call;
+# it neither guesses from the box login nor pays for another auth probe.
+if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
+  'git_identity_failure_message "$ME"'; then r1=carried; else r1=LOST; fi
+t gitid-duty-carries-failure-evidence carried "$r1"
+if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
+  'gh api\|gh auth'; then r1=PROBED; else r1=clean; fi
+t gitid-duty-failure-path-adds-no-network-call clean "$r1"
 
 # install.sh writes it through the ENGINE, not a private copy of the rule. A
 # second implementation of "which login is this box" is how the panel copy
