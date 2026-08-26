@@ -62,6 +62,14 @@ log "duty run start"
 # shellcheck disable=SC2034  # consumed dynamically by common.sh
 DUTY_TICK_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 
+# A session killed WITH the box never reached its own SESSION END, and this
+# tick is the first thing that runs once the box is back. Reconciled HERE,
+# above every duty and above the boot gate, for two reasons: a tick that the
+# boot gate stops still owes the answer, and running before any dispatch is
+# what makes "unanswered" mean "left by a previous run" and never "started a
+# moment ago by this one" (#478).
+session_reconcile_orphans
+
 # --- Once-per-boot sanity gate. The kernel boot id changes on every reboot;
 # the first tick after a restart probes auth and disk and prunes worktrees
 # left by the crash. The marker is written ONLY when gh and the box CLI both
