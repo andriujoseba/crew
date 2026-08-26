@@ -24,7 +24,8 @@ shared/
   lib/common.sh          the entry point: path constants, then every common/ module
   lib/common/*.sh        one module per subject: logging / conf / checkout / session
                          / breaker / ledger / identity
-  lib/duty-*.sh          one module per duty family: attention / review / builder / triage / hygiene
+  lib/duty-*.sh          one module per duty family: attention / review / builder / triage
+                         / hygiene / reaper
   lib/jq/*.jq            detection predicates as standalone, fixture-tested programs
   conf/fleet.defaults.conf shipped label vocabulary, wire marks and defaults
   conf/agents/<a>.conf   agent profile — the runtime: CLI command, auth probe, PATH
@@ -95,7 +96,9 @@ on #72 alone, not on `.github/labels.conf` or crew#84.
 attention → triage signals → review queue → resume → ci-red → build →
 handoff → rebase → worktree hygiene → backlog hygiene (hourly, self-scheduling
 inside the tick — same lock, so it can never race the triage sweep over shared
-checkouts the way the old separate hygiene cron could).
+checkouts the way the old separate hygiene cron could) → reaper (daily, every
+role, on its own stamp file inside the same lock: it deletes files a session
+could otherwise still be writing).
 
 ci-red runs before build: a failing check at the head of a PR you authored is
 picked up before claiming another issue (crew#17 — ceremony#163 sat with
