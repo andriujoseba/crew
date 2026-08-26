@@ -379,7 +379,7 @@ if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
   'git_identity_failure_message'; then r1=carried; else r1=LOST; fi
 t gitid-duty-carries-failure-evidence carried "$r1"
 # shellcheck disable=SC2016  # matching literal duty.sh source text
-if awk_range_grep_Fq '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
+if awk_range_grep_q '/converge_git_identity "\$ME"/,/^fi$/' "$DUTYSH" \
   'gh api\|gh auth'; then r1=PROBED; else r1=clean; fi
 t gitid-duty-failure-path-adds-no-network-call clean "$r1"
 
