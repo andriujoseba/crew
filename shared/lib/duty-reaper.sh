@@ -55,23 +55,36 @@ _reaper_cache_roots() { printf '%s\n' "$HOME/.cache" "$HOME/.npm"; }
 # HYGIENE_FLOOR, for the same reason: `REAPER_CACHE_DAYS=30d` would otherwise
 # make `find -atime +30d` an argument error that the sweep reports as a clean
 # run over an empty result.
+#
+# THE ANSWER COMES BACK IN A GLOBAL, not on stdout, for the reason
+# _hygiene_gate states about its own: every report here is a `log` line and
+# log writes to stdout, so a function returning its value through the same
+# channel folds its own warning into that value. It is not a hypothetical —
+# `days="$(_reaper_whole …)"` set the retention to the warning text followed
+# by the number, and `find -mtime "+<a whole log line> 14"` swept nothing at
+# all while the sweep reported success.
+REAPER_WHOLE=""
 _reaper_whole() {
   local name="$1" value="$2" default="$3"
+  REAPER_WHOLE="$value"
   case "$value" in
     ''|*[!0-9]*)
+      REAPER_WHOLE="$default"
       warn "reaper: $name is not a whole number ($value); using the $default default this interval (#457)"
-      printf '%s' "$default"
-      return 0
       ;;
   esac
-  printf '%s' "$value"
 }
 
-# reaper_interval — the slot's own cadence, in seconds. Public because
-# bin/duty.sh reads it to decide whether to run the slot at all.
+# reaper_interval — the slot's own cadence, in seconds, left in
+# REAPER_INTERVAL_SECONDS. Public because bin/duty.sh reads it to decide
+# whether to run the slot at all; a global for the reason above.
+# shellcheck disable=SC2034  # bin/duty.sh reads it after calling reaper_interval
+REAPER_INTERVAL_SECONDS=""
 reaper_interval() {
   _reaper_whole REAPER_INTERVAL "${REAPER_INTERVAL:-$REAPER_INTERVAL_DEFAULT}" \
     "$REAPER_INTERVAL_DEFAULT"
+  # shellcheck disable=SC2034  # bin/duty.sh reads this after calling us
+  REAPER_INTERVAL_SECONDS="$REAPER_WHOLE"
 }
 
 # _reaper_bytes — total apparent size, in bytes, of the newline-separated
@@ -165,9 +178,10 @@ _reaper_sweep_transcripts() {
   local root days doomed count bytes path live=0
   local -a dead=()
   root="$(_reaper_transcript_root)"
-  days="$(_reaper_whole REAPER_TRANSCRIPT_DAYS \
+  _reaper_whole REAPER_TRANSCRIPT_DAYS \
     "${REAPER_TRANSCRIPT_DAYS:-$REAPER_TRANSCRIPT_DAYS_DEFAULT}" \
-    "$REAPER_TRANSCRIPT_DAYS_DEFAULT")"
+    "$REAPER_TRANSCRIPT_DAYS_DEFAULT"
+  days="$REAPER_WHOLE"
   if [ ! -d "$root" ]; then
     log "reaper: transcripts reclaimed 0 bytes — no $root on this box"
     return 0
@@ -211,9 +225,10 @@ _reaper_sweep_transcripts() {
 _reaper_sweep_caches() {
   local days root entry count=0 bytes swept=0 held=""
   local -a dead=()
-  days="$(_reaper_whole REAPER_CACHE_DAYS \
+  _reaper_whole REAPER_CACHE_DAYS \
     "${REAPER_CACHE_DAYS:-$REAPER_CACHE_DAYS_DEFAULT}" \
-    "$REAPER_CACHE_DAYS_DEFAULT")"
+    "$REAPER_CACHE_DAYS_DEFAULT"
+  days="$REAPER_WHOLE"
   while IFS= read -r root; do
     [ -d "$root" ] || continue
     swept=1
@@ -223,8 +238,15 @@ _reaper_sweep_caches() {
     fi
     for entry in "$root"/* "$root"/.[!.]*; do
       [ -e "$entry" ] || continue
-      # Anything read inside the window keeps the whole entry.
-      [ -z "$(find "$entry" -atime "-$days" -print -quit 2>/dev/null)" ] || continue
+      # Any FILE read inside the window keeps the whole entry. `-type f` is
+      # not a filter, it is the correctness of the predicate: reading a
+      # directory's entries updates that directory's atime, and this sweep
+      # reads every directory it walks. Counting directory atimes would mean
+      # the first walk warmed every cache root it visited, so nothing was ever
+      # old enough afterwards — a janitor that reaps nothing, forever, and
+      # says so in a log line indistinguishable from a clean box. A file's
+      # atime is only moved by reading its CONTENTS, which `find` never does.
+      [ -z "$(find "$entry" -type f -atime "-$days" -print -quit 2>/dev/null)" ] || continue
       dead+=("$entry")
       count=$((count + 1))
     done

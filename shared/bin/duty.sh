@@ -186,9 +186,10 @@ fi
 # effect (`reaper-module-standalone`).
 # shellcheck source=../lib/duty-reaper.sh disable=SC1091
 source "$DUTY_DIR/lib/duty-reaper.sh"
+reaper_interval
 reaper_now="$(date +%s)"
 reaper_last="$(cat "$DUTY_DIR/.reaper-last" 2>/dev/null || echo 0)"
-if [ $((reaper_now - reaper_last)) -ge "$(reaper_interval)" ]; then
+if [ $((reaper_now - reaper_last)) -ge "$REAPER_INTERVAL_SECONDS" ]; then
   duty_reaper && echo "$reaper_now" >"$DUTY_DIR/.reaper-last"
 fi
 
