@@ -59,5 +59,74 @@ t session-end-outcome-token-unchanged ok \
   "$(printf '%s\n' "$sa_end" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
 unset -f bot_session_acted
 
+# --- budgets off is byte-identical to today (#464) ------------------------
+#
+# This is what makes the change safe to land while the fleet is stopped, so it
+# is asserted as a DIFF of the log output over a fixture run rather than by
+# reading the code: with no budget configured, run_session's behaviour, its
+# log lines and its state files must be exactly what they were.
+#
+# Two arms, because "not configured" has two shapes in the field — a conf that
+# predates the budget and names no BUDGET_* at all, and the conf this change
+# actually ships, which names them and sets them to 0.
+
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2317
+budget_off_run() ( # budget_off_run absent|explicit
+  local bdir="$TMP/budget-off-$1" i
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID="tick-1"
+  if [ "$1" = explicit ]; then
+    BUDGET_SESSIONS_BUILD=0; BUDGET_MINUTES_BUILD=0; BUDGET_WINDOW_BUILD=0
+  fi
+  BOT_CLI_CMD=(bash -c 'printf "exec\nfinal reply\n"')
+  bot_session_acted() { grep -qx exec "$1"; }
+  alert() { printf '%s\n' "$*" >>"$bdir/alerts"; }
+  # Normalised on exactly three tokens, all of which move between any two runs
+  # of anything: the leading UTC stamp, the session log's timestamped path, and
+  # the measured duration. Everything else is compared verbatim, which is where
+  # a stray budget line would show up.
+  for i in 1 2 3; do run_session build "fixture/test$i" "$bdir/work" 5 prompt; done \
+    | sed -e 's/^[0-9-]*T[0-9:]*Z //' \
+          -e 's#log=[^ ]*/[0-9TZ]*-build#log=<slog>-build#' \
+          -e 's/ dur=[0-9]*s / dur=<n>s /'
+  printf 'state-files=%s alerts=%s\n' \
+    "$(find "$bdir" -name '.session-budget.*' | wc -l)" \
+    "$([ -e "$bdir/alerts" ] && wc -l <"$bdir/alerts" || echo 0)"
+)
+t budget-off-log-output-is-byte-identical \
+  "$(budget_off_run absent)" "$(budget_off_run explicit)"
+t budget-off-writes-no-state-and-raises-nothing 'state-files=0 alerts=0' \
+  "$(budget_off_run absent | sed -n '$p')"
+# The gate is silent, not merely harmless: an "off" implementation that logged
+# `reason=budget over=no` every tick would pass the diff above and still change
+# every duty log in the fleet. Case-INSENSITIVE, because `BUDGET` and `Budget`
+# are the same new line in a duty log and only one of the three spellings would
+# have been caught.
+t budget-off-says-nothing-about-budgets 0 \
+  "$(budget_off_run absent | grep -ci budget || true)"
+
+# THE BASELINE, which the diff above is not: two off-shapes of the same build
+# agree with each other even when both are wrong, because a line emitted on the
+# off path appears in BOTH arms and the diff stays clean. This is the log three
+# sessions produce when no budget exists at all, written down — so a line the
+# off path grows, in any spelling the grep above might miss, moves this instead.
+#
+# Nothing in it is budget-specific on purpose. It is what run_session said
+# before #464 and must go on saying after it.
+budget_off_golden() {
+  cat <<'GOLDEN'
+SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log
+SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
+SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log
+SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
+SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log
+SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk=
+GOLDEN
+}
+# The last line is the state-file/alert tally the case above reads; everything
+# before it is the log itself.
+t budget-off-log-output-matches-its-golden "$(budget_off_golden)" \
+  "$(budget_off_run absent | sed '$d')"
+
 
 suite_finish
