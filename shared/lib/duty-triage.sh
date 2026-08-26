@@ -4,6 +4,7 @@
 #   (a) needs-triage issues        (b) queue-unlabeled strays
 #   (c) discussions without my voice
 #   (e) blocked issues whose named blockers all landed (a LEAD, not a verdict)
+#   (f) declared predecessors whose state changed (a LEAD, not a verdict)
 #
 # The board poll follows the mention session because that session can run for
 # TIMEOUT_MENTION (25 minutes) and can itself change the board: polled first,
@@ -53,6 +54,52 @@ _triage_unblockable_items() {  # _triage_unblockable_items REPO BLOCKED_JSON NUM
     | select((.number | tostring) as $number | $due | index($number))
     | "\($repo)#\(.number) \(.updatedAt)"
   ' <<<"$blocked_json" 2>/dev/null
+}
+
+_triage_graph_items() {  # _triage_graph_items REPO ISSUES_JSON NUMSTATES
+  local repo="$1" issues_json="$2" numstates="$3"
+  jq -r --arg repo "$repo" --argjson S "$numstates" '
+    def blockers:
+      [ match("[Bb]locked by([^.]*)"; "g").captures[0].string ] | join(" ")
+      | [ scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0] ];
+    .[] as $issue
+    | (($issue.body // "") | blockers[]) as $predecessor
+    | ($S[$predecessor] // "UNKNOWN") as $state
+    | select($state == "OPEN" or $state == "CLOSED" or $state == "MERGED")
+    | "\($repo)#\($issue.number)#\($predecessor) \($state)"
+  ' <<<"$issues_json" 2>/dev/null
+}
+
+_triage_graph_changes() {  # _triage_graph_changes LEDGER; stdin: EDGE STATE
+  local ledger="$1"
+  awk -v L="$ledger" '
+    BEGIN {
+      while ((getline line < L) > 0) {
+        n=split(line,a," "); if (n>=2) seen[a[1]]=a[2]
+      }
+      close(L)
+    }
+    NF>=2 {
+      before = ($1 in seen) ? seen[$1] : "UNSEEN"
+      if (before != $2) print $1, before, $2
+    }
+  '
+}
+
+_triage_graph_commit() {  # _triage_graph_commit; stdin: EDGE STATE
+  local ledger="$DUTY_DIR/.seen-graph" tmp
+  tmp="$(mktemp "${ledger}.XXXXXX")"
+  awk -v L="$ledger" '
+    BEGIN {
+      while ((getline line < L) > 0) {
+        n=split(line,a," "); if (n>=2) seen[a[1]]=a[2]
+      }
+      close(L)
+    }
+    NF>=2 { seen[$1]=$2 }
+    END { for (edge in seen) print edge, seen[edge] }
+  ' >"$tmp"
+  mv -f "$tmp" "$ledger"
 }
 
 _triage_signal_numbers() {  # stdin: REPO#NUMBER UPDATED_AT
@@ -140,7 +187,7 @@ _triage_repo() {
   local mention_count="${2:-0}"
   local selected_mention_count="${3:-0}"
   local owner="${R%%/*}" name="${R##*/}"
-  local signals="" nt stray undisc unblockable="" dir prompt
+  local signals="" nt stray undisc unblockable="" graph_changes="" dir prompt
   local fresh_nt="" fresh_stray="" fresh_discussions=""
 
   # (a) and (b) are BOARD-STATE signals, and both are enumerated rather than
@@ -253,18 +300,32 @@ _triage_repo() {
   # deliberately narrow (see lib/jq/blockers.jq — corpus-tested); issue and
   # PR numbering is shared, so the state map needs both lists. Fail-safe by
   # construction: an unknown number counts as still-open.
-  local blocked_json numstates unblockable_items="" fresh_unblockable=""
-  blocked_json="$(gh issue list -R "$R" --state open --label "$LABEL_BLOCKED" \
-    --limit 200 --json number,body,updatedAt 2>/dev/null || echo '[]')"
-  if [ "$(jq 'length' <<<"$blocked_json" 2>/dev/null || echo 0)" -gt 0 ]; then
+  local issue_json blocked_json numstates graph_seed="" graph_items=""
+  local unblockable_items="" fresh_unblockable=""
+  issue_json="$(gh issue list -R "$R" --state open --limit 200 \
+    --json number,body,updatedAt,labels 2>/dev/null || echo '[]')"
+  blocked_json="$(jq -c --arg b "$LABEL_BLOCKED" \
+    '[.[] | select([.labels[].name] | index($b))]' <<<"$issue_json" 2>/dev/null || echo '[]')"
+  graph_seed="$(_triage_graph_items "$R" "$issue_json" \
+    "$(jq -c '[.[] | (.body // "") | [scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0]]]
+      | add // [] | unique | map({key:.,value:"OPEN"}) | from_entries' <<<"$issue_json" 2>/dev/null || echo '{}')")"
+  if [ -n "$graph_seed" ]; then
     numstates="$( { gh issue list -R "$R" --state all --limit 500 --json number,state
                     gh pr    list -R "$R" --state all --limit 500 --json number,state; } 2>/dev/null \
       | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo '{}')"
-    if ! unblockable_items="$(_triage_unblockable_items "$R" "$blocked_json" "$numstates")"; then
+    if ! graph_items="$(_triage_graph_items "$R" "$issue_json" "$numstates")"; then
+      warn "$R: dependency graph parse failed"
+      graph_items=""
+    fi
+    if [ "$(jq 'length' <<<"$blocked_json" 2>/dev/null || echo 0)" -gt 0 ] && \
+       ! unblockable_items="$(_triage_unblockable_items "$R" "$blocked_json" "$numstates")"; then
       warn "$R: unblockable parse failed"
       unblockable_items=""
     fi
   fi
+  graph_changes="$(printf '%s\n' "$graph_items" \
+    | _triage_graph_changes "$DUTY_DIR/.seen-graph")"
+  [ -n "$graph_changes" ] && signals="$signals graph-changed;"
   fresh_unblockable="$(printf '%s\n' "$unblockable_items" \
     | ledger_filter "$DUTY_DIR/.seen-unblockable")"
   unblockable="$(printf '%s\n' "$fresh_unblockable" | awk 'NF {
@@ -289,7 +350,7 @@ _triage_repo() {
   log "$R: signals:$signals launching triage session"
   dir="$WORK_DIR/${R//\//__}"
   ensure_checkout "$R" "$dir" || return 0
-  local signal_items="" signal_block="" unblockable_item=""
+  local signal_items="" signal_block="" unblockable_item="" graph_item="" graph_lines=""
   if [ -n "$fresh_nt" ]; then
     signal_items="- Needs-triage issues: $(printf '%s\n' "$fresh_nt" | _triage_signal_numbers)"
   fi
@@ -307,6 +368,15 @@ _triage_repo() {
     signal_items="${signal_items:+$signal_items
 }$unblockable_item"
   fi
+  if [ -n "$graph_changes" ]; then
+    graph_lines="$(printf '%s\n' "$graph_changes" | awk 'NF>=3 {
+      split($1, edge, "#")
+      printf "  - #%s depends on #%s: %s -> %s\\n", edge[2], edge[3], $2, $3
+    }')"
+    graph_item="$(render_prompt fragment-graph-changed.txt EDGES="$graph_lines")"
+    signal_items="${signal_items:+$signal_items
+}$graph_item"
+  fi
   signal_block="$(render_prompt fragment-signals.txt SIGNAL_ITEMS="$signal_items")"
   prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" SIGNAL_BLOCK="$signal_block")"
   RUN_SESSION_RC=1
@@ -323,7 +393,7 @@ _triage_repo() {
   # declined vs never got there — is the whole reason this is safe.
   if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
     local post_board_json post_nt="" post_stray="" post_discussions=""
-    local post_blocked post_numstates post_unblockable=""
+    local post_blocked post_numstates post_unblockable="" post_graph="" post_graph_seed=""
     post_board_json="$(gh issue list -R "$R" --state open --limit 200 \
       --json number,body,labels,updatedAt 2>/dev/null || echo err)"
     if [ "$post_board_json" = err ]; then
@@ -353,15 +423,27 @@ _triage_repo() {
         --arg b "$LABEL_BLOCKED" '[.[] | select([.labels[].name] | index($b))]' 2>/dev/null || echo err)"
       if [ "$post_blocked" = err ]; then
         warn "$R: post-session blocked parse failed"
-      elif [ "$(jq 'length' <<<"$post_blocked" 2>/dev/null || echo 0)" -gt 0 ]; then
+      fi
+      post_graph_seed="$(_triage_graph_items "$R" "$post_board_json" \
+        "$(jq -c '[.[] | (.body // "") | [scan("(?:^|[^A-Za-z0-9/])#([0-9]+)") | .[0]]]
+          | add // [] | unique | map({key:.,value:"OPEN"}) | from_entries' <<<"$post_board_json" 2>/dev/null || echo '{}')")"
+      if [ -n "$post_graph_seed" ]; then
         post_numstates="$( { gh issue list -R "$R" --state all --limit 500 --json number,state
                             gh pr    list -R "$R" --state all --limit 500 --json number,state; } 2>/dev/null \
           | jq -s 'add | map({key:(.number|tostring), value:.state}) | from_entries' || echo err)"
-        if [ "$post_numstates" = err ] || \
-           ! post_unblockable="$(_triage_unblockable_items "$R" "$post_blocked" "$post_numstates")"; then
-          warn "$R: post-session unblockable probe failed; ledger left unchanged"
+        if [ "$post_numstates" = err ] || ! post_graph="$(_triage_graph_items \
+             "$R" "$post_board_json" "$post_numstates")"; then
+          warn "$R: post-session dependency graph probe failed; ledger left unchanged"
         else
-          printf '%s\n' "$post_unblockable" | ledger_commit "$DUTY_DIR/.seen-unblockable"
+          printf '%s\n' "$post_graph" | _triage_graph_commit
+          if [ "$post_blocked" != err ] && \
+             [ "$(jq 'length' <<<"$post_blocked" 2>/dev/null || echo 0)" -gt 0 ]; then
+            if post_unblockable="$(_triage_unblockable_items "$R" "$post_blocked" "$post_numstates")"; then
+              printf '%s\n' "$post_unblockable" | ledger_commit "$DUTY_DIR/.seen-unblockable"
+            else
+              warn "$R: post-session unblockable probe failed; ledger left unchanged"
+            fi
+          fi
         fi
       fi
     fi
