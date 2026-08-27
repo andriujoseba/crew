@@ -666,7 +666,19 @@ t d5-a-failing-session-cannot-abort-the-caller 'reached=yes rc=3' \
 # The `</dev/null` defect, driven rather than trusted: the CLI reads piped
 # stdin to EOF as context, and the caller's stdin here is a while-read work
 # list. Without the redirection the FIRST session swallows the rest of the
-# sweep and the loop runs once. The stub reads stdin exactly as a CLI would.
+# sweep and the loop runs once — the one-iteration-loop the module's comment
+# records. The stub reads stdin exactly as a CLI would.
+#
+# What this asserts is D5's PROPERTY and deliberately not the line, and the
+# distinction is load-bearing here rather than pedantic. Measured while
+# writing this: bash redirects an ASYNC command's stdin from /dev/null of its
+# own accord when job control is off, which is every script — so under
+# `( … ) &` the work list is held by two mechanisms, and deleting the explicit
+# `</dev/null` is not observable from here. Removing it anyway would be wrong
+# (it is what the shape guarantees, not what today's bash happens to do for
+# it), but a case claiming to catch that would be claiming something this
+# suite cannot see, so this one claims what it can: the sweep survives the
+# session, which is the guarantee D5 actually fences.
 d5_items="$(printf 'a\nb\nc\n' | while read -r d5_item; do
   d5_run 10 bash -c 'cat >/dev/null; printf "exec\nfinal reply\n"' >/dev/null 2>&1
   printf '%s' "$d5_item"
