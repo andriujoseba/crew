@@ -216,7 +216,15 @@ duty_attention() {
     dir="$WORK_DIR/$slug"
     if has_role builder; then
       ensure_main_clone "$repo" "$dir" || continue
-      extra="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name") $(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED") $(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
+      # ROUND_CAP is `-` here because this wake does not count rounds, and `-` is
+      # the fragment's word for exactly that rather than for "none are at the
+      # cap" (#502). The census lives on the builder tick, where the authored-PR
+      # listing it enumerates is already fetched; running it again per attention
+      # demand would buy a GraphQL call per open PR on a wake that is about an
+      # issue somebody flagged. The fragment tells the session to count for
+      # itself when it reads a `-`, which is doctrine's own position: nothing
+      # counts rounds for you, and the procedure is executable by hand.
+      extra="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name") $(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED" ROUND_CAP="-") $(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
     else
       ensure_checkout "$repo" "$dir" || continue
       extra=""
