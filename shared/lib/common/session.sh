@@ -1,6 +1,7 @@
 # common/session.sh — run_session, session_acted, session_reply_tail,
-# session_peak_rss — the dispatch that launches the box CLI, and what it
-# reports about the session afterwards.
+# session_peak_rss, session_mem_hit — the dispatch that launches the box CLI,
+# what it reports about the session afterwards, and the memory ceiling it is
+# run under.
 #
 # A module of shared/lib/common.sh, which is the entry point: nothing sources
 # this file directly.
@@ -129,7 +130,15 @@ run_session() {
   # The sameness is asserted as a differential against the old foreground
   # list: the D5 block in `test/common/session.sh` runs both shapes and
   # requires them to agree on where the session's group sits.
-  ( cd "$dir" && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
+  # `_session_oom_arm` runs INSIDE the subshell and before the `env`, which is
+  # the whole of D1 of #474: `oom_score_adj` is a per-process attribute that
+  # survives both fork and exec, so raising it here — in the process that is
+  # about to become `timeout`, which forks the CLI — is what puts the session's
+  # whole tree above the engine, `cron` and `sshd` in the kernel's victim
+  # scoring at the moment the CLI is `exec`'d. It cannot fail the dispatch: it
+  # returns 0 on every path, so the `&&` chain is unbroken on a guest with no
+  # writable procfs.
+  ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
       timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 &
   _SESSION_DISPATCH_PID=$!
   # Started AFTER the dispatch, which is D4 by construction: the session is
@@ -139,21 +148,44 @@ run_session() {
   # session" holds for everything that reads the directory as session logs.
   # The claim is about the SELECTION and not about the suffix: an
   # extension-blind walk here would see two files per running session, so a
-  # reader added later has to say `*.log` to keep this true.
+  # reader added later has to say `*.log` to keep this true. #474's `.mem`
+  # marker is the SECOND such file and rides that same rule: the probe's glob
+  # covers it with no edit, which is what "the glob is also the general
+  # answer" in `fleet-floor/server/probe.sh` was written for.
   _session_peak_rss_start "$slog.peak" "$_SESSION_DISPATCH_PID"
+  # Started after the measurement it reads, and it is a THIRD process rather
+  # than a branch inside the watcher (#474 D2): #473's D4 is that no order of
+  # events lets measuring a session end it, and the guarantee lives in the
+  # shape of `_session_peak_rss_watch`. Teaching that function to kill would
+  # repeal D4 inside the function that exists to hold it, so the ceiling is a
+  # separate actor reading the same figure off the same file.
+  _session_mem_watch_start "$slog.peak" "$slog.mem" "$_SESSION_DISPATCH_PID" "$kind"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
   _session_peak_rss_stop
-  local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss
+  _session_mem_watch_stop "$slog.mem"
+  local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit
+  mem_hit="$(session_mem_hit "$slog.mem")"
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
-  if [ "$verdict" = FAILED ] && session_terminal "$slog"; then
+  # The ceiling OUTRANKS the timeout and the terminal classifier, and it has to
+  # be a branch rather than an extra condition on the one below (D4 of #474).
+  # A session the engine killed reports whatever `timeout` reported for being
+  # signalled — 143, or 124 if the deadline landed in the same instant — and
+  # both of those read as the CLI's own verdict on the line. Worse, the log of
+  # a killed session is a TRUNCATED log, and `session_terminal` classifies
+  # truncated output for a living: routing this through it would let a memory
+  # kill count toward the vendor breaker and stop a lane for a reason the
+  # vendor had nothing to do with.
+  if [ -n "$mem_hit" ]; then
+    verdict="$SESSION_MEM_OUTCOME"
+  elif [ "$verdict" = FAILED ] && session_terminal "$slog"; then
     verdict=TERMINAL
     terminal=yes
   fi
   acted="$(session_acted "$slog")"
   reply_tail="$(session_reply_tail "$slog")"
   peak_rss="$(session_peak_rss "$slog.peak")"
-  rm -f "$slog.peak" 2>/dev/null || true
+  rm -f "$slog.peak" "$slog.mem" 2>/dev/null || true
   # tier= is APPENDED, after reply_tail, and the position is the whole of D5's
   # compatibility (#469). This chain is justified by an aggregate read off
   # these lines, so a field that breaks the measurement would be a poor way to
@@ -381,6 +413,316 @@ _session_peak_rss_stop() {
 # that is not a bare integer is nothing: an absent field says the engine did
 # not measure this session, and a fabricated one would say it measured zero.
 session_peak_rss() {
+  local v=""
+  { read -r v <"$1"; } 2>/dev/null || :
+  case "$v" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  printf '%s' "$v"
+}
+
+# --- the memory ceiling (#474) ----------------------------------------------
+#
+# #473 made the growth VISIBLE; this bounds it. On 2026-08-14 one session
+# reached 3.42 GB on a ~4 GB zero-swap guest and the engine bounded nothing but
+# its clock: the kernel's global victim selection took a process out of the
+# session's tree while its siblings kept allocating, so the box stayed down and
+# the session did not stop. That is the worst of both outcomes, and the two
+# halves below are the two halves of it.
+#
+# D1 — WHO THE KERNEL PICKS. `oom_score_adj` on the dispatch subshell, so that
+# when the kernel does have to choose, it chooses the session over `cron`,
+# `sshd` and the engine. Unconditional and unconfigured in the fleet conf: it
+# has no number an operator needs to pick, and a fleet where it is off is a
+# fleet where the 2026-08-14 outcome is still reachable.
+#
+# D2 — WHETHER THE KERNEL IS ASKED AT ALL. The (c) watchdog, ruled by triage at
+# the past-24h rung on 2026-08-25 over `ulimit -v` (a) and a `systemd` transient
+# scope (b): portable, degrading to a warning, and the only one of the three
+# that can log WHY before it acts.
+#
+# WHAT IT READS, and the constraint that shapes everything below. The figure is
+# `_session_tree_hwm`'s, produced by `_session_peak_rss_watch` and left on the
+# `$slog.peak` scratch file — not a second reader of a different number. And
+# the watchdog is a THIRD process rather than a branch inside that watcher,
+# because #473's D4 is structural: *there is no order of events in which
+# measuring a session refuses, delays or ends it*, and that guarantee is the
+# SHAPE of `_session_peak_rss_watch`, not a promise beside it. This issue's
+# actor must do the one thing that one must never do, so it cannot be that one.
+#
+# Reading the file rather than `/proc` a second time is also what keeps the
+# cost at zero: the honest budget of the walk is two forks per process in the
+# tree per interval (see above), and a second walk would double it on a
+# two-core box. The watchdog's own budget is one `read` of a one-line file.
+#
+# WHY IT CANNOT FIRE EARLY OFF A TORN READ. `_session_peak_rss_watch` writes
+# with `>`, which truncates before it writes, so a reader landing mid-write
+# sees a PREFIX of the new figure and never a splice of two. A prefix of a
+# decimal integer is smaller than the integer, so a torn read can only fail to
+# fire this interval and fire on the next — the safe direction, and the reason
+# `session_peak_rss`'s "anything but digits is nothing" is enough validation
+# for a killing decision.
+
+# The outcome token for a session the ceiling ended (D4). It lives in one place
+# for the reason `SESSION_ORPHAN_OUTCOME` does in common/ledger.sh: it is the
+# only thing distinguishing this shape from an ordinary FAILED, so the writer
+# and every reader have to be looking at the same string. A bare non-zero `rc`
+# is exactly what D4 forbids — `timeout` reports 143 for being signalled, which
+# reads as the CLI's own verdict.
+SESSION_MEM_OUTCOME=MEMORY
+
+# The increment added to the engine's own `oom_score_adj`, and the grace
+# between TERM and KILL. Both are in-module defaults, env-overridable, and
+# deliberately NOT `fleet.defaults.conf` keys — that file's key is D3's
+# ceiling and is this issue's alone, the same fence #473 put around
+# SESSION_PEAK_POLL_S.
+#
+# 500 rather than 1000: the kernel's badness is `oom_score_adj` plus a
+# thousandth-of-total-memory share, so +500 picks the session over any process
+# not using fifty percentage points more of the box than it — decisive for the
+# runaway this exists to catch — while leaving an operator room above it.
+SESSION_OOM_SCORE_ADJ="${SESSION_OOM_SCORE_ADJ:-500}"
+SESSION_MEM_KILL_GRACE_S="${SESSION_MEM_KILL_GRACE_S:-5}"
+
+# _session_oom_arm — raise THIS process's oom_score_adj. Called inside the
+# dispatch subshell, before the CLI is `exec`'d: the attribute survives both
+# fork and exec, so arming the subshell arms `timeout`, the CLI, and every
+# descendant, with no per-process bookkeeping.
+#
+# It returns 0 on every path, and that is a contract rather than tidiness: it
+# sits in the dispatch's own `&&` chain, so a non-zero return here would refuse
+# a session on a guest whose procfs is read-only.
+_session_oom_arm() {
+  local cur=0 inc base want
+  inc="${SESSION_OOM_SCORE_ADJ:-500}"
+  case "$inc" in '' | *[!0-9]*) inc=500 ;; esac
+  { read -r cur </proc/self/oom_score_adj; } 2>/dev/null || cur=0
+  # Anything the kernel would not have written is read as the default, which is
+  # also what a guest with no procfs produces: no reading, no adjustment, and
+  # no complaint.
+  { [ -n "$cur" ] && [ "$cur" -eq "$cur" ]; } 2>/dev/null || cur=0
+  # The floor is the KERNEL default and not the engine's own value. An engine
+  # deliberately protected at a negative adjustment must not drag the session
+  # down with it: the property owed is that the session outranks `cron` and
+  # `sshd` as well, and those run at 0.
+  base="$cur"
+  [ "$base" -gt 0 ] || base=0
+  want=$((base + inc))
+  [ "$want" -le 1000 ] || want=1000
+  # Raising is unprivileged; LOWERING needs CAP_SYS_RESOURCE. So a want at or
+  # below the current value is never attempted — it could only fail, and a
+  # failure here has nothing useful to say.
+  [ "$want" -gt "$cur" ] || return 0
+  printf '%s\n' "$want" >/proc/self/oom_score_adj 2>/dev/null || :
+  return 0
+}
+
+# _session_mem_total_kib — this box's MemTotal in KiB, or nothing. KiB because
+# that is `VmHWM`'s unit, so the ceiling and the figure it bounds are never
+# converted and can never disagree about a factor of 1024.
+_session_mem_total_kib() {
+  local field value
+  {
+    while read -r field value _; do
+      if [ "$field" = "MemTotal:" ]; then
+        case "$value" in '' | *[!0-9]*) break ;; esac
+        printf '%s' "$value"
+        break
+      fi
+    done </proc/meminfo
+  } 2>/dev/null || return 0
+  return 0
+}
+
+# _session_mem_pct — the configured ceiling as a percentage of MemTotal, or
+# nothing when no ceiling is armed (D3).
+#
+# A percentage and not a number of KiB, per the ruling's own reason: a fleet of
+# boxes with different memory sizes needs a RELATIVE bound, and the same conf
+# ships to a 4 GiB triage box and a 16 GiB builder.
+#
+# THE PER-ROLE OVERRIDE WINS OVER THE FLEET VALUE, and where a box carries more
+# than one role — `BOT_ROLES` is a list — the MOST RESTRICTIVE armed override
+# wins. The box is one box and its memory is one resource, so the tighter bound
+# is the one that protects it. 0 and unset both mean "this role names no
+# ceiling" rather than "this role forbids one", which is the same reading `0 is
+# OFF` already has for every BUDGET_* value: a role opting out cannot disarm
+# the bound a sibling role asked for.
+_session_mem_pct() {
+  local role suffix var value best=""
+  # shellcheck disable=SC2086  # BOT_ROLES is a space-separated list by design
+  for role in ${BOT_ROLES:-}; do
+    suffix="${role//[^[:alnum:]]/_}"
+    suffix="${suffix^^}"
+    var="SESSION_MEM_MAX_PCT_${suffix}"
+    value="${!var:-}"
+    case "$value" in '' | *[!0-9]*) continue ;; esac
+    [ "$value" -gt 0 ] || continue
+    if [ -z "$best" ] || [ "$value" -lt "$best" ]; then best="$value"; fi
+  done
+  if [ -z "$best" ]; then
+    best="${SESSION_MEM_MAX_PCT:-0}"
+    case "$best" in '' | *[!0-9]*) best=0 ;; esac
+  fi
+  [ "$best" -gt 0 ] || return 0
+  printf '%s' "$best"
+}
+
+# _session_mem_ceiling_kib — the armed ceiling in KiB, or nothing. Nothing is
+# the shipped state and the whole of "with no ceiling configured, behaviour is
+# exactly today's": the caller then starts no watchdog, writes no file and logs
+# no line.
+_session_mem_ceiling_kib() {
+  local pct total ceil
+  pct="$(_session_mem_pct)"
+  [ -n "$pct" ] || return 0
+  total="$(_session_mem_total_kib)"
+  [ -n "$total" ] || return 0
+  ceil=$((total * pct / 100))
+  [ "$ceil" -gt 0 ] || return 0
+  printf '%s' "$ceil"
+}
+
+# _session_tree_pids ROOT — every live pid in the tree rooted at ROOT, the same
+# bounded walk `_session_tree_hwm` makes and for the same reason: 32
+# generations is far past anything an agent CLI builds, and a walk that cannot
+# terminate must not run inside the engine.
+#
+# The two guards are the test plan's *"must fail: a ceiling that terminates the
+# engine's own process rather than the session tree"*, written into the code
+# rather than left to the walk's shape. The walk descends from ROOT and the
+# engine is ROOT's PARENT, so it is already unreachable — but `$$` is the
+# engine's pid even inside a subshell, so saying it costs one comparison and
+# makes the mutation that would break it visible.
+_session_tree_pids() {
+  local pid kids depth=0 out=""
+  # shellcheck disable=SC2206  # a pid list, split on whitespace by design
+  local -a pids=($1) next
+  while [ "${#pids[@]}" -gt 0 ] && [ "$depth" -lt 32 ]; do
+    next=()
+    for pid in "${pids[@]}"; do
+      case "$pid" in '' | *[!0-9]*) continue ;; esac
+      [ "$pid" -gt 1 ] || continue
+      [ "$pid" != "$$" ] || continue
+      out="$out $pid"
+      kids="$(_session_proc_children "$pid")"
+      # shellcheck disable=SC2206  # a pid list, split on whitespace by design
+      [ -z "$kids" ] || next+=($kids)
+    done
+    pids=("${next[@]}")
+    depth=$((depth + 1))
+  done
+  printf '%s' "$out"
+}
+
+# _session_mem_terminate ROOT — end the session's tree, TERM then KILL.
+#
+# TERM first because a CLI that is given the chance flushes its own transcript,
+# and the session log is the evidence this outcome will be read against. The
+# tree is re-walked after the grace rather than reusing the first list alone:
+# a process that forked during the grace is new, and one that exited is a kill
+# that silently no-ops, so the union is both cheap and complete for anything
+# still reachable from ROOT.
+_session_mem_terminate() {
+  local root="$1" pid
+  local -a first=() second=()
+  # A here-string and `read -a` rather than an unquoted substitution: the same
+  # split, without the SC2207 the per-file shellcheck loop reds on.
+  read -r -a first <<<"$(_session_tree_pids "$root")"
+  [ "${#first[@]}" -gt 0 ] || return 0
+  for pid in "${first[@]}"; do kill -TERM "$pid" 2>/dev/null || :; done
+  sleep "$SESSION_MEM_KILL_GRACE_S" 2>/dev/null || :
+  read -r -a second <<<"$(_session_tree_pids "$root")"
+  for pid in "${first[@]}" ${second[@]+"${second[@]}"}; do
+    kill -KILL "$pid" 2>/dev/null || :
+  done
+  return 0
+}
+
+# _session_mem_watch PEAK MARK ROOT KIND CEILING — the watchdog loop. Polls the
+# figure #473's watcher is already producing and, past CEILING, records why and
+# ends the tree.
+#
+# The MARK is written BEFORE the kill, and the order is what makes the outcome
+# survive: `run_session` classifies this session by that file, and a box that
+# dies between the two would otherwise report a session the engine killed as an
+# ordinary CLI failure.
+#
+# The interval is SESSION_PEAK_POLL_S and not a second knob. The watchdog
+# cannot see a figure sooner than the watcher publishes it, so an independent
+# interval would be a setting with no effect below that one and no meaning
+# above it.
+_session_mem_watch() {
+  local peak="$1" mark="$2" root="$3" kind="$4" ceil="$5" v
+  while kill -0 "$root" 2>/dev/null; do
+    sleep "$SESSION_PEAK_POLL_S" || return 0
+    v="$(session_peak_rss "$peak")"
+    [ -n "$v" ] || continue
+    [ "$v" -gt "$ceil" ] || continue
+    printf '%s\n' "$v" >"$mark" 2>/dev/null || return 0
+    # Logged BEFORE it acts, which is the property (c) was chosen for: an
+    # operator reading duty.log afterwards sees the figure, the ceiling and the
+    # decision, not just a session that stopped. This watcher's stdout is the
+    # duty log on purpose — unlike the peak watcher's, which is silenced
+    # because it has nothing to say that is not a reason to record no figure.
+    warn "session memory: kind=$kind reached $v KiB against a ceiling of $ceil KiB — terminating the session tree"
+    _session_mem_terminate "$root"
+    # After the kill, deliberately: `alert` is a curl with a ten-second
+    # deadline, and a runaway that is already past the ceiling must not be
+    # given ten more seconds of the box to allocate in.
+    alert "🚨 $(hostname): $kind session terminated at $v KiB, past its ${ceil} KiB memory ceiling"
+    return 0
+  done
+}
+
+# _session_mem_watch_start PEAK MARK ROOT KIND — arm the ceiling, into
+# _SESSION_MEM_PID. A no-op when nothing is configured, and that is the whole
+# of "this must not become a mandatory setting": no watchdog, no file, no line.
+_session_mem_watch_start() {
+  local ceil
+  _SESSION_MEM_PID=""
+  rm -f "$2" 2>/dev/null || true
+  ceil="$(_session_mem_ceiling_kib)"
+  [ -n "$ceil" ] || return 0
+  # Armed but unmeasurable — a guest with no procfs, or a session whose
+  # measurement could not start. This is (c)'s documented degradation: the
+  # ceiling reads the figure the watcher produces, so where there is no figure
+  # there is no bound, and the operator is told rather than left with a setting
+  # that silently does nothing.
+  if [ -z "${_SESSION_PEAK_PID:-}" ]; then
+    warn "session memory: kind=$4 ceiling of $ceil KiB is configured but this session is not measurable — no memory bound applied"
+    return 0
+  fi
+  _session_mem_watch "$1" "$2" "$3" "$4" "$ceil" &
+  _SESSION_MEM_PID=$!
+  return 0
+}
+
+# _session_mem_watch_stop MARK — end the watchdog.
+#
+# A watchdog that has FIRED is waited for instead of signalled, and the
+# distinction is load-bearing. Its second half — the KILL after the grace — is
+# what reaps a process deeper in the tree than the root `wait` can see, so
+# killing it there would leave that survivor running for the life of the box:
+# the precise failure 2026-08-14 was, one level down. MARK is how the parent
+# can tell: the watchdog writes it before it signals anything, so a root that
+# has already exited with the file present has been killed by this ceiling.
+_session_mem_watch_stop() {
+  local pid="${_SESSION_MEM_PID:-}"
+  _SESSION_MEM_PID=""
+  [ -n "$pid" ] || return 0
+  if [ -e "$1" ]; then
+    wait "$pid" >/dev/null 2>&1 || true
+  else
+    { kill "$pid" 2>/dev/null; wait "$pid"; } >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+# session_mem_hit FILE — the figure that crossed the ceiling, or nothing.
+# Validated like session_peak_rss and for the same reason: this file decides an
+# outcome, and anything the watchdog did not write is not one.
+session_mem_hit() {
   local v=""
   { read -r v <"$1"; } 2>/dev/null || :
   case "$v" in
