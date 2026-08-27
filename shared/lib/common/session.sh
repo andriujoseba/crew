@@ -622,7 +622,85 @@ _session_tree_pids() {
   printf '%s' "$out"
 }
 
-# _session_mem_terminate ROOT — end the session's tree, TERM then KILL.
+# _session_proc_pgid PID — PID's process group, or nothing.
+#
+# Parsed past the LAST `)` rather than by field number from the start, because
+# field 2 of `/proc/<pid>/stat` is `comm` in parentheses and `comm` may contain
+# both spaces and parentheses — a CLI named `agent (v2)` would shift every
+# field after it. Everything from the last `) ` on is fixed-width by position:
+# state, ppid, pgrp.
+_session_proc_pgid() {
+  local stat rest pgrp
+  { read -r stat </proc/"$1"/stat; } 2>/dev/null || return 0
+  rest="${stat##*') '}"
+  # No `) ` at all is a line this function does not understand. Saying nothing
+  # is the only safe answer: every caller below treats "no group" as "do not
+  # signal a group", and a guessed group is a signal sent somewhere unknown.
+  [ "$rest" != "$stat" ] || return 0
+  read -r _ _ pgrp _ <<<"$rest"
+  case "$pgrp" in '' | *[!0-9]*) return 0 ;; esac
+  printf '%s' "$pgrp"
+}
+
+# _session_mem_groups PIDS… — the distinct process groups those pids sit in,
+# with the engine's own removed. The list is the containment identity the
+# terminator signals, and it exists because the pid walk alone cannot hold one:
+# a descendant that handles TERM by forking a replacement and exiting leaves
+# that replacement reparented to PID 1, where no walk rooted at the session can
+# reach it. It is still in the session's GROUP — `timeout` calls `setpgid(0,0)`
+# absent `--foreground`, so the session has had a group of its own all along
+# (the dispatch comment says so and the D5 block asserts it), and a reparented
+# child that never called `setsid()` never leaves it.
+#
+# THE ENGINE'S OWN GROUP IS REFUSED BY NAME. This is `_session_tree_pids`'s
+# `[ "$pid" != "$$" ]` guard one level up, and it is the more important of the
+# two: a group kill aimed at the wrong group takes the engine, this watchdog
+# and every sibling session with it. `$$` is the engine even inside a subshell,
+# and this watchdog is a background subshell of the engine with job control
+# off, so it shares that group — one refusal covers both.
+#
+# A box that cannot say what the engine's group is gets NO group kill at all.
+# Not knowing which group to spare is exactly the state in which signalling one
+# is unsafe, so the terminator falls back to the pid walk, which is what it had
+# before this and is still correct for everything reachable from ROOT.
+#
+# The groups are collected from the WHOLE snapshot rather than from ROOT alone.
+# ROOT is the dispatch subshell, and whether its own pgid is `timeout`'s new
+# group or still the engine's depends on whether bash exec'd the subshell's
+# last command — an optimisation, not a guarantee (bash 5.2.37 here does take
+# it, so ROOT *is* `timeout` and the two agree). Reading the group off every
+# pid already walked costs one `/proc` read each, no fork, and is correct under
+# either shape. It cannot reach outside the session either: a group is only
+# named here if a member of the session's own tree is sitting in it.
+_session_mem_groups() {
+  local pid grp self out=""
+  self="$(_session_proc_pgid "$$")"
+  [ -n "$self" ] || return 0
+  for pid in "$@"; do
+    grp="$(_session_proc_pgid "$pid")"
+    case "$grp" in '' | *[!0-9]*) continue ;; esac
+    [ "$grp" -gt 1 ] || continue
+    [ "$grp" != "$self" ] || continue
+    case " $out " in *" $grp "*) continue ;; esac
+    out="$out $grp"
+  done
+  printf '%s' "$out"
+}
+
+# _session_mem_kill_grace_s — the TERM→KILL grace, validated. Validated for the
+# reason every other numeric in this module is (`_session_oom_arm`'s `inc`,
+# `_session_mem_pct`, `session_peak_rss`): the value is env-overridable, and a
+# non-numeric one makes `sleep` fail instantly, collapsing the grace to zero
+# and landing TERM and KILL back to back — which defeats the one reason TERM
+# goes first, letting the CLI flush the transcript this outcome is read against.
+_session_mem_kill_grace_s() {
+  local v="${SESSION_MEM_KILL_GRACE_S:-5}"
+  case "$v" in '' | *[!0-9]*) v=5 ;; esac
+  printf '%s' "$v"
+}
+
+# _session_mem_terminate ROOT — end the session's tree, TERM then KILL, over
+# both the pid walk and the session's own process group.
 #
 # TERM first because a CLI that is given the chance flushes its own transcript,
 # and the session log is the evidence this outcome will be read against. The
@@ -630,18 +708,42 @@ _session_tree_pids() {
 # a process that forked during the grace is new, and one that exited is a kill
 # that silently no-ops, so the union is both cheap and complete for anything
 # still reachable from ROOT.
+#
+# BOTH PASSES, and they are not redundant. The walk reaches a process that left
+# the group (`setsid()` beats a group kill); the group reaches a process that
+# left the tree (a TERM handler that forks and exits beats a walk, because the
+# replacement is reparented to PID 1). Neither covers the other, and the
+# session-ends-while-a-descendant-keeps-allocating shape this issue exists to
+# close is the second one.
+#
+# THE GROUPS ARE READ BEFORE THE TERM, off the first snapshot, and that
+# ordering is load-bearing rather than incidental: the group of a process can
+# only be read from a process that still exists, and after the TERM the
+# processes that knew it are the ones that have gone.
+#
+# THE GROUP KILL IS LAST. `KILL` cannot be handled, so nothing can fork a
+# replacement out of it — the escape this function is closing is a TERM handler
+# forking during the grace, and the final group pass is what makes that
+# replacement's death certain rather than likely.
 _session_mem_terminate() {
-  local root="$1" pid
-  local -a first=() second=()
+  local root="$1" pid grp
+  local -a first=() second=() groups=()
   # A here-string and `read -a` rather than an unquoted substitution: the same
   # split, without the SC2207 the per-file shellcheck loop reds on.
   read -r -a first <<<"$(_session_tree_pids "$root")"
   [ "${#first[@]}" -gt 0 ] || return 0
+  read -r -a groups <<<"$(_session_mem_groups "${first[@]}")"
   for pid in "${first[@]}"; do kill -TERM "$pid" 2>/dev/null || :; done
-  sleep "$SESSION_MEM_KILL_GRACE_S" 2>/dev/null || :
+  for grp in ${groups[@]+"${groups[@]}"}; do
+    kill -TERM -- -"$grp" 2>/dev/null || :
+  done
+  sleep "$(_session_mem_kill_grace_s)" 2>/dev/null || :
   read -r -a second <<<"$(_session_tree_pids "$root")"
   for pid in "${first[@]}" ${second[@]+"${second[@]}"}; do
     kill -KILL "$pid" 2>/dev/null || :
+  done
+  for grp in ${groups[@]+"${groups[@]}"}; do
+    kill -KILL -- -"$grp" 2>/dev/null || :
   done
   return 0
 }
@@ -686,18 +788,34 @@ _session_mem_watch() {
 # _SESSION_MEM_PID. A no-op when nothing is configured, and that is the whole
 # of "this must not become a mandatory setting": no watchdog, no file, no line.
 _session_mem_watch_start() {
-  local ceil
+  local ceil pct total reason=""
   _SESSION_MEM_PID=""
   rm -f "$2" 2>/dev/null || true
+  # NOTHING CONFIGURED IS SILENT, and it is tested as an acceptance criterion:
+  # no watchdog, no file, no line. The percentage is read first, and separately
+  # from the ceiling, precisely so that this silence cannot swallow the case
+  # below — an operator who armed a ceiling and did not get one has to be told,
+  # and reading only the resolved ceiling makes "armed but unresolvable"
+  # indistinguishable from "not armed".
+  pct="$(_session_mem_pct)"
+  [ -n "$pct" ] || return 0
+  total="$(_session_mem_total_kib)"
   ceil="$(_session_mem_ceiling_kib)"
-  [ -n "$ceil" ] || return 0
-  # Armed but unmeasurable — a guest with no procfs, or a session whose
-  # measurement could not start. This is (c)'s documented degradation: the
-  # ceiling reads the figure the watcher produces, so where there is no figure
-  # there is no bound, and the operator is told rather than left with a setting
-  # that silently does nothing.
-  if [ -z "${_SESSION_PEAK_PID:-}" ]; then
-    warn "session memory: kind=$4 ceiling of $ceil KiB is configured but this session is not measurable — no memory bound applied"
+  # Armed but no bound applied, in the three shapes that produce it. This is
+  # (c)'s documented degradation: the ceiling is a percentage of a box read
+  # from procfs, of a figure another watcher publishes, so where either is
+  # missing there is no bound — and the operator is told rather than left with
+  # a setting that silently does nothing. One message, and the reason names
+  # which of the three it was, because the operator's next move differs.
+  if [ -z "$total" ]; then
+    reason="this box's MemTotal is unreadable"
+  elif [ -z "$ceil" ]; then
+    reason="${pct}% of ${total} KiB rounds to nothing"
+  elif [ -z "${_SESSION_PEAK_PID:-}" ]; then
+    reason="this session is not measurable"
+  fi
+  if [ -n "$reason" ]; then
+    warn "session memory: kind=$4 a ceiling of ${pct}% is configured but $reason — no memory bound applied"
     return 0
   fi
   _session_mem_watch "$1" "$2" "$3" "$4" "$ceil" &
