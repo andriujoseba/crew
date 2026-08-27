@@ -116,10 +116,19 @@ run_session() {
   # `&` and a `wait`, and that is the whole of the change the measurement asks
   # of this line (#473): the dispatch needs a NAME before it can be measured,
   # and `$!` is the session's own subshell — the root of the process tree the
-  # peak is taken over. Backgrounding costs nothing else here. Job control is
-  # off in a script, so the job stays in this process group and `timeout`'s
-  # signalling is untouched; stdin was already </dev/null; and `wait` reports
-  # the same status the foreground list did, timeout's 124 included.
+  # peak is taken over. Backgrounding costs nothing else here: stdin was
+  # already </dev/null, and `wait` reports the same status the foreground
+  # list did, timeout's 124 included.
+  # The process group is UNCHANGED by the `&`, and is not this shell's —
+  # measured, not reasoned: GNU `timeout` calls setpgid(0,0) absent
+  # --foreground, so it puts ITSELF in a new group and runs the CLI there.
+  # The session has never sat in the engine's group, in this shape or the
+  # foreground one it replaced; job control is off in a script, so `&`
+  # creates no group of its own. Do not read this line as putting the
+  # session under a signal delivered to the engine's group — it never was.
+  # The sameness is asserted as a differential against the old foreground
+  # list: the D5 block in `test/common/session.sh` runs both shapes and
+  # requires them to agree on where the session's group sits.
   ( cd "$dir" && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
       timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 &
   _SESSION_DISPATCH_PID=$!
