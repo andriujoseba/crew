@@ -167,6 +167,28 @@ t "wire: the payload still carries the boxes the page hides" \
 
 
 echo "== sessions, queue, metrics"
+FF_SESSION_EDGES="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+now = datetime(2026, 8, 27, 16, 0, tzinfo=timezone.utc).timestamp()
+_, old = derive_sessions([
+    "2026-08-27T08:00:00Z SESSION START kind=build key=crew#old",
+], now)
+_, paired = derive_sessions([
+    "2026-08-27T14:00:00Z SESSION START kind=build key=crew#crashed",
+    "2026-08-27T15:58:00Z SESSION START kind=review key=crew#done",
+    "2026-08-27T15:59:00Z SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok",
+], now)
+print("old=%s paired=%s" % (old, paired["key"] if paired else None))
+PY
+)"
+t "sessions: orphan older than six hours is not active" \
+  "old=None paired=crew#crashed" "$FF_SESSION_EDGES"
 t "sessions: parsed"          1    "$(uf ff-working "len(u['sessions'])")"
 t "sessions: rc carried"      0    "$(uf ff-working "u['sessions'][0]['rc']")"
 t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"

@@ -461,7 +461,7 @@ cl_pair cli-disarmed '^cli-disarmed .+ stale +stale +disarmed' \
   "crew status: a box that ticked and stopped is still stale"
 # A recent tick still reads `flowing`: the new branch must not swallow the
 # healthy case on its way past.
-cl_pair cli-hired '^cli-hired .+ flowing +flowing +[0-9]{4}-' \
+cl_pair cli-hired '^cli-hired +working .+ flowing +flowing +session active' \
   "crew status: a ticking box still reports flowing"
 # The boundary the new branch could have swallowed. It fires only inside the
 # `nofail` arm, so a box with no VERSION is untouched — keying it on tickage
@@ -494,6 +494,22 @@ cl_pair cli-supp-working '^cli-supp-working +working .+ flowing +flowing +sessio
   "crew status: an active session outranks suppression"
 cl_pair cli-supp-stuck '^cli-supp-stuck +working .+ flowing +flowing +STUCK' \
   "crew status: a stuck run outranks suppression"
+cl_pair cli-hired '^cli-hired +working .+ flowing +flowing +session active' \
+  "crew status: a live session renders consistently without suppression"
+cl_pair cli-stuck '^cli-stuck +working .+ flowing +flowing +STUCK' \
+  "crew status: a stuck run renders consistently without suppression"
+cl_pair cli-supp-notimestamp '^cli-supp-notimestamp +suppressed .+ flowing +flowing +for 13m' \
+  "crew status: an unparseable log does not invent unknown tick age"
+cl_pair cli-supp-old-orphan '^cli-supp-old-orphan +suppressed .+ flowing +flowing +for 13m' \
+  "crew status: a session orphan older than six hours is not active"
+cl_pair cli-supp-paired-crash '^cli-supp-paired-crash +working .+ flowing +flowing +session active' \
+  "crew status: stack pairing retains an earlier unmatched session"
+if grep -q 'integer expression expected' "$CL_TMP/crew-out"; then
+  fail "crew status: invalid tick ages emit no shell diagnostics" \
+    "$(grep 'integer expression expected' "$CL_TMP/crew-out")"
+else
+  ok "crew status: invalid tick ages emit no shell diagnostics"
+fi
 CL_WIDE=""
 for cl_word in flowing waiting stale missing unknown MISSING; do
   [ "${#cl_word}" -le 8 ] || CL_WIDE="$CL_WIDE $cl_word"

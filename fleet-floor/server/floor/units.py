@@ -37,6 +37,7 @@ RE_MENTION = re.compile(
     TS + r" (\S+): (\d+) unread mention(?:\(s\))?(?: — launching mention session)?$"
 )
 RE_RESUME = re.compile(TS + r" (\S+): resume duty")
+_SESSION_ACTIVE_AFTER_S = 21600
 
 
 def parse_ts(s):
@@ -146,7 +147,7 @@ def derive_sessions(loglines, now, clock_offset=0):
         o = opens[-1]
         # A START with no END that predates the silence rule is a crashed or
         # killed session, not a running one — the box would have logged the END.
-        if now - o["ts"] < 6 * 3600:
+        if now - o["ts"] < _SESSION_ACTIVE_AFTER_S:
             cur = {"key": o["key"], "kind": o["kind"], "start": int(o["ts"])}
     return done, cur
 

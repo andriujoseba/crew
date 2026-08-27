@@ -7629,6 +7629,46 @@ CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p
 t silent-rule-floor-derived 600 "$FL_SILENT"
 t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 
+# STUCK is another shared verdict. Both readers accept the same operator
+# override, default it to SILENT, and use the same strict boundary.
+if grep -q '^STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"' "$CREW_CLI"; then
+  r1=shared
+else
+  r1=DRIFTED
+fi
+t stuck-rule-cli-uses-floor-override shared "$r1"
+if grep -q 'STUCK_AFTER_S = int(os.environ.get("CREW_FLOOR_STUCK_AFTER", str(SILENT_AFTER_S)))' "${FLOOR_PY[@]}"; then
+  r1=shared
+else
+  r1=DRIFTED
+fi
+t stuck-rule-floor-uses-shared-override shared "$r1"
+if grep -q '\[ "$lock_age" -gt "$STUCK_AFTER_S" \]' "$CREW_CLI"; then r1=strict; else r1=DRIFTED; fi
+t stuck-rule-cli-boundary strict "$r1"
+if grep -q 'held > STUCK_AFTER_S' "${FLOOR_PY[@]}"; then r1=strict; else r1=DRIFTED; fi
+t stuck-rule-floor-boundary strict "$r1"
+
+# Session activity is derived from the same bounded evidence and crash rule.
+# The floor receives probe.sh's 600-line tail; auth_from_flow must not scan a
+# different history or keep an orphan alive past the floor's six-hour bound.
+FL_SESSION_ACTIVE="$(sed -n 's/^_SESSION_ACTIVE_AFTER_S = \([0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
+CL_SESSION_ACTIVE="$(sed -n 's/^ *\*) \[ \$(( \$(date -u +%s) - session_epoch )) -lt \([0-9]*\) \] .*/\1/p' "$CREW_CLI" | head -1)"
+t session-active-floor-boundary 21600 "$FL_SESSION_ACTIVE"
+t session-active-cli-matches-floor "$FL_SESSION_ACTIVE" "$CL_SESSION_ACTIVE"
+PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
+CL_LOG_LINES="$(sed -n 's/^ *log_tail="$(tail -n \([0-9]*\) .*/\1/p' "$CREW_CLI" | head -1)"
+FL_LOG_LINES="$(sed -n 's/^tail -n \([0-9]*\) .*/\1/p' "$PROBE_SH" | head -1)"
+t session-window-floor-lines 600 "$FL_LOG_LINES"
+t session-window-cli-matches-floor "$FL_LOG_LINES" "$CL_LOG_LINES"
+auth_source="$(sed -n '/^auth_from_flow()/,/^}/p' "$CREW_CLI")"
+if grep -q '/ SESSION END / { if (depth > 0) depth--' <<<"$auth_source" \
+   && grep -q '/ SESSION START / { depth++; started\[depth\]=' <<<"$auth_source"; then
+  r1=stack
+else
+  r1=DRIFTED
+fi
+t session-pairing-cli-uses-stack stack "$r1"
+
 # The never-ticked boundary is the same kind of shared rule and pinned the same
 # way (#265). SILENT_AFTER_S was never the only number the two readers had to
 # agree on — it was only the only one that EXISTED. `waiting` adds a second
@@ -7638,7 +7678,7 @@ t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 # operator, about the same box. Extracted rather than grepped for, so that
 # moving the boundary in one reader fails HERE rather than silently.
 # shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
-CL_NEVER="$(sed -n 's/^ *if \[ "$tickage" -lt \(-*[0-9][0-9]*\) \]; then.*/\1/p' "$CREW_CLI" | head -1)"
+CL_NEVER="$(sed -n 's/^.*\[ "$tickage" -lt \(-*[0-9][0-9]*\) \].*/\1/p' "$CREW_CLI" | head -1)"
 FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
 t nevertick-rule-floor-boundary 0 "$FL_NEVER"
 t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"

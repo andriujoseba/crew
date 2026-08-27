@@ -158,7 +158,7 @@ emit_probe() {
   # and doing nothing. There is no other way to reach the STUCK branch — a
   # real fleet produces this state only by breaking.
   case "$sc" in stuck|suppressed-stuck) printf '::lockheld 2820\n' ;; esac
-  case "$sc" in suppressed|suppressed-silent|suppressed-unknown|suppressed-working|suppressed-stuck)
+  case "$sc" in suppressed|suppressed-silent|suppressed-unknown|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
     printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
     ;;
   *)
@@ -200,6 +200,17 @@ emit_probe() {
       ;;
     missing-tickage|suppressed-unknown)
       echo "$(ago 110) duty run start"
+      ;;
+    suppressed-notimestamp)
+      echo "log exists but carries no parseable timestamp"
+      ;;
+    suppressed-old-orphan)
+      echo "$(ago 28800) SESSION START kind=build key=crew#old timeout=7200s log=/h/duty/logs/old.log"
+      ;;
+    suppressed-paired-crash)
+      echo "$(ago 7200) SESSION START kind=build key=crew#crashed timeout=7200s log=/h/duty/logs/crashed.log"
+      echo "$(ago 120) SESSION START kind=review key=crew#done timeout=2400s log=/h/duty/logs/done.log"
+      echo "$(ago 60) SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok"
       ;;
     firstrun)  # its very first session: an open START, no END anywhere yet
       echo "$(ago 200) duty run start"
@@ -397,8 +408,8 @@ case "${1:-}" in
         case "$sc" in nocron|disarmed|nothired|unconverged|premanifest) _armed=0 ;; esac
         _log=1; _active=0; _lock=-1
         case "$sc" in
-          nothired|unconverged|premanifest|neverticked|suppressed) _log=0 ;;
-          working|suppressed-working|noauth|skew-behind|skew-ahead|invalid-tickage) _active=1 ;;
+          nothired|unconverged|premanifest|neverticked|suppressed-notimestamp) _log=0 ;;
+          working|suppressed-working|suppressed-paired-crash|noauth|skew-behind|skew-ahead|invalid-tickage) _active=1 ;;
           stuck|suppressed-stuck) _lock=2820 ;;
         esac
         case "$sc" in
@@ -410,7 +421,7 @@ case "${1:-}" in
           silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
           suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
           suppressed-unknown) echo "nofail nofail garbage $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
-          suppressed|suppressed-working|suppressed-stuck)
+          suppressed|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
             echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
           *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
         esac ;;
