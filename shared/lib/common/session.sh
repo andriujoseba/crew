@@ -125,8 +125,12 @@ run_session() {
   _SESSION_DISPATCH_PID=$!
   # Started AFTER the dispatch, which is D4 by construction: the session is
   # already running by the time anything about measuring it can go wrong.
-  # `.peak` and not `.log`, so nothing that walks LOG_DIR for session logs
-  # picks the scratch file up.
+  # `.peak` and not `.log`, and LOG_DIR's readers select on that suffix — the
+  # floor probe's `ls` does since #473, and `common.sh`'s "one file per
+  # session" holds for everything that reads the directory as session logs.
+  # The claim is about the SELECTION and not about the suffix: an
+  # extension-blind walk here would see two files per running session, so a
+  # reader added later has to say `*.log` to keep this true.
   _session_peak_rss_start "$slog.peak" "$_SESSION_DISPATCH_PID"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
   _session_peak_rss_stop
@@ -231,9 +235,14 @@ session_reply_tail() {
 # and the per-process peak is what the OOM killer scores — the incident above
 # is one process reaching 3.42 GB, not a tree averaging it.
 #
-# The interval, and the seam the tests drive. Two forks every SESSION_PEAK_
-# POLL_S while a session runs; the walk itself is builtin reads, because a
-# fork per process per interval is a real cost on a two-core box.
+# The interval, and the seam the tests drive. The reads themselves are
+# builtins — no `cat`, no `grep`, no `ps` — but `_session_proc_hwm` and
+# `_session_proc_children` are called in command substitutions, so the honest
+# budget is TWO FORKS PER PROCESS IN THE TREE per SESSION_PEAK_POLL_S, plus
+# the `sleep` and the outer substitution. For an agent CLI tree that is tens
+# of forks an interval, not two. None of them exec, which is what keeps it
+# cheap on a two-core box, and the interval is what keeps it bounded — but
+# the number to budget against when editing this is the per-process one.
 SESSION_PEAK_POLL_S="${SESSION_PEAK_POLL_S:-5}"
 
 # _session_proc_hwm PID — one live process's VmHWM in KiB, or nothing. The

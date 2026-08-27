@@ -396,6 +396,30 @@ printf 'exec\nfinal reply\n'
 STUB
 chmod +x "$PEAK_CLI"
 
+# The SECOND fixture is the first one's opposite, and it exists to pin what
+# the walk cannot see. Its allocating descendant does not sleep: it exits the
+# moment it has given the memory back, so its `mm` — and the `VmHWM` the
+# kernel recorded in it — is torn down long before any read lands. The root
+# then outlives several intervals, so the session IS measured; the figure is
+# just the root's and the spike is not in it.
+#
+# This is the shape codex-bot-andresmgsl drove in round 1, and pinning it is
+# the answer to that finding rather than a mechanism change: the limit was
+# stated in `common/session.sh`'s prose and in the PR body, and prose is the
+# weaker thing this suite keeps converting into an assertion. A ruling that
+# moves the reader to `getrusage(RUSAGE_CHILDREN)` or to a per-session cgroup
+# `memory.peak` — both of which retain an exited descendant — flips this case
+# rather than passing quietly beside it, which is exactly what a limit ought
+# to do when it stops being one.
+PEAK_TRANSIENT_CLI="$TMP/peak-transient-cli.sh"
+cat >"$PEAK_TRANSIENT_CLI" <<'STUB'
+#!/usr/bin/env bash
+python3 -c 'x = bytearray(256 * 1024 * 1024); del x'
+sleep 7
+printf 'exec\nfinal reply\n'
+STUB
+chmod +x "$PEAK_TRANSIENT_CLI"
+
 # peak_run MUTANT|- POLL CMD… — one dispatch under a poll interval, its own
 # log, and a tally of the scratch files it left behind.
 # shellcheck disable=SC2030,SC2031,SC2317
@@ -511,6 +535,20 @@ if command -v python3 >/dev/null 2>&1; then
   peak_mut_flat="$(peak_run "$TMP/session-mutant-no-descend.sh" 1 bash "$PEAK_CLI" 2>&1)"
   t peak-mutation-no-descend-never-sees-the-allocation TOO-SMALL \
     "$(peak_atleast 204800 "$(peak_of "$peak_mut_flat")" | sed 's/(.*//')"
+
+  # THE LIMIT, asserted rather than promised. A five-second interval against a
+  # descendant that lives well under one second is not a race the scheduler
+  # can decide: the allocator is gone before the first read by two orders of
+  # magnitude, so this reports the same thing on a loaded box as on an idle
+  # one. Three claims, and the last two are why this is a limit and not a
+  # defect — the session is still measured and its line is still sound.
+  peak_gone="$(peak_run - 5 bash "$PEAK_TRANSIENT_CLI" 2>&1)"
+  t peak-transient-descendant-is-missed TOO-SMALL \
+    "$(peak_atleast 204800 "$(peak_of "$peak_gone")" | sed 's/(.*//')"
+  t peak-transient-descendant-still-measures-the-root at-least \
+    "$(peak_atleast 1 "$(peak_of "$peak_gone")")"
+  t peak-transient-descendant-line-otherwise-unchanged '0|ok|yes' \
+    "$(peak_rest "$peak_gone")"
 
   # Compatibility, against the two readers that exist rather than by eye —
   # the same pair #469 asserted for tier=, now with the field behind it.
