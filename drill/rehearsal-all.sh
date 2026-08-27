@@ -54,6 +54,11 @@ INSTALL_TREE=""
 INSTALL_REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
 INSTALL_REF="${CREW_DRILL_REF:-main}"
 RESOLVED_REF=""
+# Where this round's findings go, derived below from the operator's own ref —
+# not from RESOLVED_REF, which is a bare commit by construction and names no
+# pull request. Empty means nothing was derivable and the summary says nothing
+# about where to report rather than naming a PR this round never touched (#492).
+REPORT_TARGET=""
 RESUME_DRILL=1
 ATTENTION_DRILL=1
 # The board-audit leg is TRIAGE-role, unlike the two above it: the hygiene slot
@@ -150,6 +155,17 @@ else
 fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=drill/rehearsal-report.sh
+. "$HERE/rehearsal-report.sh"
+# --tree drills a local checkout, so a --ref passed beside it is not what was
+# drilled and derives nothing. Otherwise the role boxes get the target too:
+# they are handed RESOLVED_REF and could not derive it for themselves, and a
+# per-role footer disagreeing with the round's summary is worse than neither.
+if [ -z "$INSTALL_TREE" ]; then
+  REPORT_TARGET="$(rehearsal_report_target "$INSTALL_REMOTE" "$INSTALL_REF")" \
+    || REPORT_TARGET=""
+  [ -z "$REPORT_TARGET" ] || PASSTHRU+=(--source-ref "$INSTALL_REF")
+fi
 # shellcheck source=drill/rehearsal-hygiene.sh
 . "$HERE/rehearsal-hygiene.sh"
 # shellcheck source=drill/rehearsal-breaker.sh
@@ -567,6 +583,10 @@ if [ "$KEEP" -eq 1 ] || [ "$overall" -ne 0 ]; then
 fi
 if [ "$overall" -eq 2 ]; then
   echo "## NOT a pass: at least one role never reached phase 2. Log those boxes"
-  echo "## in and re-run before reporting anything on crew PR #16."
+  if [ -n "$REPORT_TARGET" ]; then
+    echo "## in and re-run before reporting anything on $REPORT_TARGET."
+  else
+    echo "## in and re-run before reporting anything."
+  fi
 fi
 exit "$overall"
