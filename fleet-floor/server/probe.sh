@@ -206,7 +206,9 @@ for supp_file in "$DUTY_DIR"/.builder-suppressed.*; do
   [ -f "$supp_file" ] || continue
   IFS=$'\t' read -r when kind key <"$supp_file" 2>/dev/null || continue
   case "$when" in ''|*[!0-9]*) continue ;; esac
-  [ -n "$kind" ] && [ -n "$key" ] || continue
+  if [ -z "$kind" ] || [ -z "$key" ]; then
+    continue
+  fi
   if [ "$when" -gt "$supp_when" ]; then
     supp_when="$when"; supp_kind="$kind"; supp_key="$key"
   fi
