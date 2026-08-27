@@ -166,6 +166,7 @@ declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
 declare -a ROLE_BREAKER_REASON_FILES=()
+declare -a ROLE_SECTION_STATUS_FILES=()
 overall=0
 hygiene_result=2
 breaker_result=2
@@ -181,6 +182,9 @@ cleanup_role_hygiene_files() {
     rm -f -- "$result_file"
   done
   for result_file in "${ROLE_BREAKER_REASON_FILES[@]}"; do
+    rm -f -- "$result_file"
+  done
+  for result_file in "${ROLE_SECTION_STATUS_FILES[@]}"; do
     rm -f -- "$result_file"
   done
   # The notify leg's verdict file goes here too, and not under a second
@@ -202,11 +206,14 @@ for role in $ROLES; do
   role_hygiene_file="$(mktemp)"
   role_breaker_file="$(mktemp)"
   role_breaker_reason_file="$(mktemp)"
+  role_section_status_file="$(mktemp)"
   ROLE_HYGIENE_FILES+=("$role_hygiene_file")
   ROLE_BREAKER_FILES+=("$role_breaker_file")
   ROLE_BREAKER_REASON_FILES+=("$role_breaker_reason_file")
+  ROLE_SECTION_STATUS_FILES+=("$role_section_status_file")
   printf '2\n' >"$role_hygiene_file"
   printf '2\n' >"$role_breaker_file"
+  : >"$role_section_status_file"
   REHEARSAL_RESUME_DRILL="$RESUME_DRILL" \
   REHEARSAL_RESUME_STATUS="$RESUME_STATUS" \
   REHEARSAL_ATTENTION_DRILL="$ATTENTION_DRILL" \
@@ -220,14 +227,17 @@ for role in $ROLES; do
   REHEARSAL_BREAKER_REASON_FILE="$role_breaker_reason_file" \
   REHEARSAL_NOTIFY_DRILL="$NOTIFY_DRILL" \
   REHEARSAL_NOTIFY_STATUS="$NOTIFY_STATUS" \
+  REHEARSAL_SECTION_STATUS="$role_section_status_file" \
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
+  role_section_status="$(cat "$role_section_status_file" 2>/dev/null || true)"
   role_hygiene_result="$(cat "$role_hygiene_file" 2>/dev/null || printf '2\n')"
   role_breaker_result="$(cat "$role_breaker_file" 2>/dev/null || printf '2\n')"
   role_breaker_reason="$(cat "$role_breaker_reason_file" 2>/dev/null || true)"
   rm -f -- "$role_hygiene_file"
   rm -f -- "$role_breaker_file"
   rm -f -- "$role_breaker_reason_file"
+  rm -f -- "$role_section_status_file"
   case "$role_hygiene_result" in 0|1|2) ;; *) role_hygiene_result=2 ;; esac
   hygiene_result="$(rehearsal_hygiene_combine_result \
     "$hygiene_result" "$role_hygiene_result")"
@@ -237,14 +247,14 @@ for role in $ROLES; do
   if [ -z "$breaker_reason" ] && [ -n "$role_breaker_reason" ]; then
     breaker_reason="$role_breaker_reason"
   fi
-  # Roles whose box the drill actually REACHED, for the app phase below. rc=0
-  # and rc=2 both mean the box was minted and installed (2 is "phase 2 skipped",
-  # not "no box"); rc=1 can be a failure from before the box existed at all.
+  # Roles whose box the drill actually REACHED, for the independent phases
+  # below. A phase-2 failure is still an installed box; the explicit status
+  # keeps it from being confused with an rc=1 before the box existed (#491).
   # Handing the app drill a box that is not there recreates, in miniature, the
   # "NOT CREATED vs offline" non-comparisons this wiring exists to remove — and
   # they would now count as real comparisons under #50's floor.
-  case "$rc" in
-    0|2)
+  case "$rc:$role_section_status" in
+    0:*|2:*|*:installed|*:phase2)
       DRILLED="$DRILLED $role"
       if [ -z "$CONFIG_BOX" ]; then
         CONFIG_BOX="crew-drill-$role"
@@ -259,7 +269,13 @@ for role in $ROLES; do
     0) SUMMARY+=("ok         $role  (phase 2 ran)") ;;
     2) SUMMARY+=("INCOMPLETE $role  (phase 2 skipped — loop UNPROVEN)")
        [ "$overall" -eq 1 ] || overall=2 ;;
-    *) SUMMARY+=("FAIL       $role"); overall=1 ;;
+    *)
+      case "$role_section_status" in
+        phase2) SUMMARY+=("FAIL       $role  (phase 2 failed)") ;;
+        installed) SUMMARY+=("FAIL       $role  (failed after install, before phase 2)") ;;
+        *) SUMMARY+=("FAIL       $role  (failed before an installed box existed)") ;;
+      esac
+      overall=1 ;;
   esac
 done
 
@@ -383,8 +399,8 @@ if [ "$INSTALL_DRILL" -eq 1 ]; then
   echo "############################################################"
   if [ -z "$CONFIG_BOX" ]; then
     echo "## (installer phase: no role reached a box this run — nothing safe to inspect)"
-    SUMMARY+=("FAIL       installer  (no installed drill box)")
-    overall=1
+    SUMMARY+=("SKIPPED    installer  (blocked by role install: no installed drill box)")
+    [ "$overall" -eq 1 ] || overall=2
   else
     INSTALL_ARGS=(--box "$CONFIG_BOX")
     if [ -n "$INSTALL_TREE" ]; then
@@ -399,6 +415,8 @@ if [ "$INSTALL_DRILL" -eq 1 ]; then
       *) SUMMARY+=("FAIL       installer"); overall=1 ;;
     esac
   fi
+else
+  SUMMARY+=("skip       installer  (--no-install-drill)")
 fi
 
 if [ "$CONFIG_DRILL" -eq 1 ]; then
@@ -408,8 +426,8 @@ if [ "$CONFIG_DRILL" -eq 1 ]; then
   echo "############################################################"
   if [ -z "$CONFIG_BOX" ]; then
     echo "## (config phase: no role reached a box this run — nothing safe to mutate)"
-    SUMMARY+=("FAIL       config  (no installed drill box)")
-    overall=1
+    SUMMARY+=("SKIPPED    config  (blocked by role install: no installed drill box)")
+    [ "$overall" -eq 1 ] || overall=2
   else
     "$HERE/rehearsal-config.sh" --box "$CONFIG_BOX" --agent "$AGENT" --role "$CONFIG_ROLE"
     rc=$?
@@ -418,6 +436,8 @@ if [ "$CONFIG_DRILL" -eq 1 ]; then
       *) SUMMARY+=("FAIL       config"); overall=1 ;;
     esac
   fi
+else
+  SUMMARY+=("skip       config  (--no-config-drill)")
 fi
 
 if [ "$APP" -eq 1 ]; then
@@ -445,6 +465,8 @@ if [ "$APP" -eq 1 ]; then
         APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
       else
         echo "## (app phase: no role reached a box this run — nothing to compare against)"
+        SUMMARY+=("SKIPPED    app  (blocked by role install: no installed drill box)")
+        [ "$overall" -eq 1 ] || overall=2
         APP=0
       fi ;;
   esac
@@ -453,6 +475,10 @@ if [ "$APP" -eq 1 ]; then
   if [ "$APP" -eq 1 ] && [ "${DRILLED# }" != "$ROLES" ]; then
     echo "## (app phase covers ${DRILLED# } — roles whose drill never reached a box are excluded)"
   fi
+fi
+
+if [ "$APP" -eq 0 ] && [[ " ${SUMMARY[*]} " != *" app  ("* ]]; then
+  SUMMARY+=("skip       app  (--no-app)")
 fi
 
 if [ "$APP" -eq 1 ]; then
@@ -508,6 +534,17 @@ echo "## fleet rehearsal summary ($AGENT)"
 if [ -n "$RESOLVED_REF" ]; then
   echo "## drilled source: $RESOLVED_REF ($SOURCE_RECORD)"
 fi
+summary_passed=0
+summary_failed=0
+summary_skipped=0
+for summary_row in "${SUMMARY[@]}"; do
+  case "$summary_row" in
+    ok\ *) summary_passed=$((summary_passed + 1)) ;;
+    FAIL\ *) summary_failed=$((summary_failed + 1)) ;;
+    skip\ *|SKIPPED\ *|INCOMPLETE\ *) summary_skipped=$((summary_skipped + 1)) ;;
+  esac
+done
+echo "## section states: $summary_passed passed, $summary_failed failed, $summary_skipped skipped/not-run"
 printf '##   %s\n' "${SUMMARY[@]}"
 echo "############################################################"
 if [ "$KEEP" -eq 1 ] || [ "$overall" -ne 0 ]; then
