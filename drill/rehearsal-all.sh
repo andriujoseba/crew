@@ -440,6 +440,7 @@ else
   SUMMARY+=("skip       config  (--no-config-drill)")
 fi
 
+APP_ROW_EMITTED=0
 if [ "$APP" -eq 1 ]; then
   echo
   echo "############################################################"
@@ -466,6 +467,7 @@ if [ "$APP" -eq 1 ]; then
       else
         echo "## (app phase: no role reached a box this run — nothing to compare against)"
         SUMMARY+=("SKIPPED    app  (blocked by role install: no installed drill box)")
+        APP_ROW_EMITTED=1
         [ "$overall" -eq 1 ] || overall=2
         APP=0
       fi ;;
@@ -477,8 +479,9 @@ if [ "$APP" -eq 1 ]; then
   fi
 fi
 
-if [ "$APP" -eq 0 ] && [[ " ${SUMMARY[*]} " != *" app  ("* ]]; then
+if [ "$APP" -eq 0 ] && [ "$APP_ROW_EMITTED" -eq 0 ]; then
   SUMMARY+=("skip       app  (--no-app)")
+  APP_ROW_EMITTED=1
 fi
 
 if [ "$APP" -eq 1 ]; then
@@ -490,6 +493,7 @@ if [ "$APP" -eq 1 ]; then
     0) SUMMARY+=("ok         app  (collector + page)") ;;
     *) SUMMARY+=("FAIL       app"); overall=1 ;;
   esac
+  APP_ROW_EMITTED=1
 fi
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every
