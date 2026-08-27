@@ -180,7 +180,10 @@ emit_probe() {
     idle)
       echo "$(ago 200) duty run start"
       echo "$(ago 200) heavy-duty/crew: no build duty"
-      echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved"
+      # The one scenario written with #473's field: the newest session per box
+      # is what the page renders it for, and `working` above deliberately
+      # keeps the pre-field line shape so both halves have a fixture.
+      echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved acted=yes reply_tail= tier=default peak_rss=3588324"
       echo "$(ago 190) duty run end"
       ;;
     silent|disarmed)   # newest line is older than two tick boundaries
