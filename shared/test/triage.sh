@@ -763,7 +763,9 @@ else
   r1=MISSING
 fi
 t operator-ready-listing-fetches-labels fetched "$r1"
+# shellcheck disable=SC2016  # source literals, not test-shell expansions
 op461_filter_ln="$(grep -nF '| _ready_issue_lines "$R" "${LABEL_OPERATOR:-}"' "$OP461_BUILD" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # source literal, not command substitution here
 op461_board_ln="$(grep -nF 'ready_board="$(' "$OP461_BUILD" | head -1 | cut -d: -f1)"
 if [ -n "$op461_filter_ln" ] && [ -n "$op461_board_ln" ] &&
    [ "$op461_filter_ln" -lt "$op461_board_ln" ]; then
@@ -786,8 +788,9 @@ t operator-conf-defines-composing-label defined "$r1"
 op461_queue_count="$(sed -n '/^LABEL_READY=/,/^LABEL_NEEDS_TRIAGE=/p' \
   "$SHARED/conf/fleet.defaults.conf" | grep -c '^LABEL_[A-Z_]*=')"
 t operator-queue-set-stays-six 6 "$op461_queue_count"
-if sed -n '/^LABEL_READY=/,/^LABEL_NEEDS_TRIAGE=/p' "$SHARED/conf/fleet.defaults.conf" \
-    | grep -q 'LABEL_OPERATOR'; then
+op461_queue_block="$(sed -n '/^LABEL_READY=/,/^LABEL_NEEDS_TRIAGE=/p' \
+  "$SHARED/conf/fleet.defaults.conf")"
+if grep -q 'LABEL_OPERATOR' <<<"$op461_queue_block"; then
   r1=IN_QUEUE
 else
   r1=outside
@@ -819,6 +822,7 @@ t operator-alone-is-still-a-stray 1 "$(trc '^SESSION triage$')"
 # the engine enforced.
 t operator-empty-prompt-clause-is-byte-empty '' "$(_operator_build_prompt_clause '')"
 OP461_CLAUSE="$(_operator_build_prompt_clause operator)"
+# shellcheck disable=SC2016  # prompt backticks are literal prose
 case "$OP461_CLAUSE" in
   *'`operator`'*'operator-owned work, not work for a builder'*) r1=named ;;
   *) r1=MISSING ;;
@@ -833,6 +837,7 @@ else
 fi
 t operator-unset-prompt-keeps-old-sentence identical "$r1"
 OP461_PROMPT_SET="$(PROMPTS_DIR="$SHARED/prompts" render_prompt build.txt OPERATOR_CLAUSE="$OP461_CLAUSE")"
+# shellcheck disable=SC2016  # prompt backticks are literal prose
 if grep -Fq 'a ready issue carrying `operator` is operator-owned work, not work for a builder; otherwise pick ONE ready unclaimed issue, claim it' <<<"$OP461_PROMPT_SET"; then
   r1=rendered
 else
