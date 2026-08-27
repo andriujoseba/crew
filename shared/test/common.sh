@@ -2744,6 +2744,10 @@ t rehearsal-hygiene-origin-fixture-branch-left-behind-reds red "$r1"
 t rehearsal-hygiene-summary-skipped-phase-incomplete \
   "INCOMPLETE hygiene  (phase 2 skipped)" \
   "$(rehearsal_hygiene_summary 1 ' builder' 2)"
+t rehearsal-hygiene-summary-attempted-phase-is-not-called-skipped \
+  "INCOMPLETE hygiene  (phase 2 ran without a hygiene result)" \
+  "$(rehearsal_hygiene_summary \
+    1 ' builder' 2 'phase 2 ran without a hygiene result')"
 t rehearsal-hygiene-summary-failure-stays-failure \
   "FAIL       hygiene" "$(rehearsal_hygiene_summary 1 ' builder' 1)"
 t rehearsal-hygiene-mixed-fail-then-skip-stays-failure 1 \

@@ -243,7 +243,7 @@ if phase2_retained_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
     DRILL_REMOTE="$REMOTE" DRILL_ROLE_STAGE=phase2 DRILL_ROLE_RC=1 \
     bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
-      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
   phase2_retained_rc=0
 else
   phase2_retained_rc=$?
@@ -251,6 +251,10 @@ fi
 t drill-phase2-retained-stays-red 1 "$phase2_retained_rc"
 t drill-phase2-retained-reports-kept-teardown 1 \
   "$(grep -cF 'kept       teardown  (round not green' <<<"$phase2_retained_out")"
+t drill-phase2-retained-does-not-call-hygiene-skipped 1 \
+  "$(grep -cF \
+    'INCOMPLETE hygiene  (phase 2 ran without a hygiene result)' \
+    <<<"$phase2_retained_out")"
 if summary_count_matches_rows "$phase2_retained_out"; then r1=equal; else r1=MISMATCH; fi
 t drill-phase2-retained-summary-counts-every-row equal "$r1"
 

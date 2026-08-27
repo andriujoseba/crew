@@ -171,6 +171,7 @@ overall=0
 hygiene_result=2
 breaker_result=2
 breaker_reason=""
+phase2_attempted=0
 
 # shellcheck disable=SC2317  # invoked indirectly by the EXIT trap
 cleanup_role_hygiene_files() {
@@ -231,6 +232,7 @@ for role in $ROLES; do
     "$HERE/rehearsal.sh" --role "$role" "${PASSTHRU[@]+"${PASSTHRU[@]}"}"
   rc=$?
   role_section_status="$(cat "$role_section_status_file" 2>/dev/null || true)"
+  [ "$role_section_status" != phase2 ] || phase2_attempted=1
   role_hygiene_result="$(cat "$role_hygiene_file" 2>/dev/null || printf '2\n')"
   role_breaker_result="$(cat "$role_breaker_file" 2>/dev/null || printf '2\n')"
   role_breaker_reason="$(cat "$role_breaker_reason_file" 2>/dev/null || true)"
@@ -279,7 +281,11 @@ for role in $ROLES; do
   esac
 done
 
-SUMMARY+=("$(rehearsal_hygiene_summary "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result")")
+hygiene_incomplete_reason="phase 2 skipped"
+[ "$phase2_attempted" -eq 0 ] \
+  || hygiene_incomplete_reason="phase 2 ran without a hygiene result"
+SUMMARY+=("$(rehearsal_hygiene_summary \
+  "$HYGIENE_DRILL" "$DRILLED" "$hygiene_result" "$hygiene_incomplete_reason")")
 SUMMARY+=("$(rehearsal_breaker_summary \
   "$BREAKER_DRILL" "$DRILLED" "$breaker_result" "$breaker_reason")")
 overall="$(rehearsal_hygiene_round_result "$overall" "$hygiene_result")"
