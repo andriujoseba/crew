@@ -498,11 +498,11 @@ cl_pair cli-hired '^cli-hired +working .+ flowing +flowing +session active' \
   "crew status: a live session renders consistently without suppression"
 cl_pair cli-stuck '^cli-stuck +working .+ flowing +flowing +STUCK' \
   "crew status: a stuck run renders consistently without suppression"
-cl_pair cli-supp-notimestamp '^cli-supp-notimestamp +suppressed .+ flowing +flowing +for 13m' \
+cl_pair cli-supp-nots '^cli-supp-nots +suppressed .+ flowing +flowing +for 13m' \
   "crew status: an unparseable log does not invent unknown tick age"
 cl_pair cli-supp-old-orphan '^cli-supp-old-orphan +suppressed .+ flowing +flowing +for 13m' \
   "crew status: a session orphan older than six hours is not active"
-cl_pair cli-supp-paired-crash '^cli-supp-paired-crash +working .+ flowing +flowing +session active' \
+cl_pair cli-supp-paired '^cli-supp-paired +working .+ flowing +flowing +session active' \
   "crew status: stack pairing retains an earlier unmatched session"
 if grep -q 'integer expression expected' "$CL_TMP/crew-out"; then
   fail "crew status: invalid tick ages emit no shell diagnostics" \

@@ -19,9 +19,9 @@ cli-supp-unknown claude  builder
 cli-supp-working claude  builder
 cli-supp-stuck claude  builder
 cli-stuck      claude  builder
-cli-supp-notimestamp claude builder
+cli-supp-nots claude builder
 cli-supp-old-orphan claude builder
-cli-supp-paired-crash claude builder
+cli-supp-paired claude builder
 cli-silent     codex   builder
 cli-unreachable grok   reviewer
 cli-stopped    codex   builder
