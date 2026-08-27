@@ -1316,7 +1316,7 @@ auth_from_flow() {
       log_present=1
       ts="$(grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" "$HOME/duty/duty.log" | tail -1)"
       [ -n "$ts" ] && age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
-      session_active="$(awk '/SESSION START/{active=1} /SESSION END/{active=0} END{print active+0}' "$HOME/duty/duty.log")"
+      session_active="$(awk "/SESSION START/{active=1} /SESSION END/{active=0} END{print active+0}" "$HOME/duty/duty.log")"
     fi
     if [ -r "$HOME/duty/.duty.lock.since" ]; then
       lock_since="$(cat "$HOME/duty/.duty.lock.since" 2>/dev/null || echo)"
