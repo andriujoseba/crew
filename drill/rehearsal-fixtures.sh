@@ -66,6 +66,21 @@ rehearsal_builder_pr_for_issue_from_json() {
   printf '%s\n' "$pr"
 }
 
+rehearsal_builder_prs_for_issue_from_json() {
+  local issue="$1" pulls_json="$2"
+  jq -r --arg issue "$issue" '
+    .[]
+    | select(
+        (.body // "")
+        | test(
+            "(?im)(^|\\s)(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#"
+            + $issue + "([^0-9]|$)"
+          )
+      )
+    | .number
+  ' <<<"$pulls_json"
+}
+
 rehearsal_builder_open_prs_json() {
   local repo="$1" author="$2"
   # The pulls endpoint reflects a new PR immediately; `gh pr list --author`
@@ -85,6 +100,153 @@ rehearsal_builder_pr_for_issue() {
   local repo="$1" author="$2" issue="$3" pulls_json
   pulls_json="$(rehearsal_builder_open_prs_json "$repo" "$author")" || return
   rehearsal_builder_pr_for_issue_from_json "$issue" "$pulls_json"
+}
+
+rehearsal_fixture_record_issue() {
+  local repo="$1" issue="$2"
+  if [ -n "${REHEARSAL_FIXTURE_REPO:-}" ] \
+      && [ "$REHEARSAL_FIXTURE_REPO" != "$repo" ]; then
+    echo "teardown: refusing to mix fixture repositories: $REHEARSAL_FIXTURE_REPO and $repo" >&2
+    return 1
+  fi
+  REHEARSAL_FIXTURE_REPO="$repo"
+  case " ${REHEARSAL_FIXTURE_ISSUES:-} " in
+    *" $issue "*) ;;
+    *) REHEARSAL_FIXTURE_ISSUES="${REHEARSAL_FIXTURE_ISSUES:+$REHEARSAL_FIXTURE_ISSUES }$issue" ;;
+  esac
+}
+
+rehearsal_fixture_record_pr() {
+  local repo="$1" pr="$2"
+  if [ -n "${REHEARSAL_FIXTURE_REPO:-}" ] \
+      && [ "$REHEARSAL_FIXTURE_REPO" != "$repo" ]; then
+    echo "teardown: refusing to mix fixture repositories: $REHEARSAL_FIXTURE_REPO and $repo" >&2
+    return 1
+  fi
+  REHEARSAL_FIXTURE_REPO="$repo"
+  case " ${REHEARSAL_FIXTURE_PRS:-} " in
+    *" $pr "*) ;;
+    *) REHEARSAL_FIXTURE_PRS="${REHEARSAL_FIXTURE_PRS:+$REHEARSAL_FIXTURE_PRS }$pr" ;;
+  esac
+}
+
+rehearsal_fixture_record_builder_issue() {
+  local repo="$1" author="$2" issue="$3"
+  if [ -n "${REHEARSAL_FIXTURE_BUILDER_AUTHOR:-}" ] \
+      && [ "$REHEARSAL_FIXTURE_BUILDER_AUTHOR" != "$author" ]; then
+    echo "teardown: refusing to mix fixture builder authors: $REHEARSAL_FIXTURE_BUILDER_AUTHOR and $author" >&2
+    return 1
+  fi
+  rehearsal_fixture_record_issue "$repo" "$issue" || return
+  REHEARSAL_FIXTURE_BUILDER_AUTHOR="$author"
+  case " ${REHEARSAL_FIXTURE_BUILDER_ISSUES:-} " in
+    *" $issue "*) ;;
+    *) REHEARSAL_FIXTURE_BUILDER_ISSUES="${REHEARSAL_FIXTURE_BUILDER_ISSUES:+$REHEARSAL_FIXTURE_BUILDER_ISSUES }$issue" ;;
+  esac
+}
+
+rehearsal_fixture_record_branch() {
+  local repo="$1" branch="$2"
+  if [ -n "${REHEARSAL_FIXTURE_REPO:-}" ] \
+      && [ "$REHEARSAL_FIXTURE_REPO" != "$repo" ]; then
+    echo "teardown: refusing to mix fixture repositories: $REHEARSAL_FIXTURE_REPO and $repo" >&2
+    return 1
+  fi
+  REHEARSAL_FIXTURE_REPO="$repo"
+  case " ${REHEARSAL_FIXTURE_BRANCHES:-} " in
+    *" $branch "*) ;;
+    *) REHEARSAL_FIXTURE_BRANCHES="${REHEARSAL_FIXTURE_BRANCHES:+$REHEARSAL_FIXTURE_BRANCHES }$branch" ;;
+  esac
+}
+
+rehearsal_assert_reuse_sandbox_clean() {
+  local reuse="$1" repo="$2" reuse_objects
+  [ "$reuse" -eq 1 ] || return 0
+  if ! reuse_objects="$(rehearsal_open_sandbox_objects "$repo")"; then
+    echo "phase 2: cannot inspect $repo before --reuse" >&2
+    return 1
+  fi
+  if [ -n "$reuse_objects" ]; then
+    echo "phase 2: REFUSING --reuse because $repo is not clean:" >&2
+    printf '  %s\n' "$reuse_objects" >&2
+    echo "close or remove these objects before re-running; this round deletes only fixtures it records itself" >&2
+    return 1
+  fi
+}
+
+rehearsal_open_sandbox_objects() {
+  local repo="$1"
+  gh api "repos/$repo/issues?state=open&per_page=100" --paginate \
+    | jq -sr 'add[] | (if has("pull_request") then "pull" else "issue" end)
+      + " #" + (.number | tostring) + " — " + .title'
+}
+
+rehearsal_cleanup_owned_fixtures() {
+  local repo="${REHEARSAL_FIXTURE_REPO:-}" pr issue branch failed=0
+  local pull_json pulls_json head_repo head_ref
+  [ -n "$repo" ] || return 0
+
+  if [ -n "${REHEARSAL_FIXTURE_BUILDER_ISSUES:-}" ]; then
+    if pulls_json="$(rehearsal_builder_open_prs_json \
+        "$repo" "${REHEARSAL_FIXTURE_BUILDER_AUTHOR:-}")"; then
+      for issue in $REHEARSAL_FIXTURE_BUILDER_ISSUES; do
+        while read -r pr; do
+          [ -n "$pr" ] && rehearsal_fixture_record_pr "$repo" "$pr"
+        done < <(rehearsal_builder_prs_for_issue_from_json "$issue" "$pulls_json")
+      done
+    else
+      echo "teardown: WARNING — could not discover the owned builder fixture PR" >&2
+      failed=1
+    fi
+  fi
+
+  for pr in ${REHEARSAL_FIXTURE_PRS:-}; do
+    [ -n "$pr" ] || continue
+    pull_json="$(gh api "repos/$repo/pulls/$pr")" || {
+      echo "teardown: WARNING — could not inspect owned fixture PR #$pr" >&2
+      failed=1
+      pull_json='{}'
+    }
+    head_repo="$(jq -r '.head.repo.full_name // ""' <<<"$pull_json")"
+    head_ref="$(jq -r '.head.ref // ""' <<<"$pull_json")"
+    if gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null; then
+      echo "teardown: closed owned fixture PR #$pr"
+    else
+      echo "teardown: WARNING — could not close owned fixture PR #$pr" >&2
+      failed=1
+    fi
+    if [ "$head_repo" = "$repo" ] && [ -n "$head_ref" ]; then
+      rehearsal_fixture_record_branch "$repo" "$head_ref"
+    fi
+  done
+  for branch in ${REHEARSAL_FIXTURE_BRANCHES:-}; do
+    [ -n "$branch" ] || continue
+    if gh api -X DELETE "repos/$repo/git/refs/heads/$branch" >/dev/null; then
+      echo "teardown: deleted owned fixture branch $branch"
+    else
+      echo "teardown: WARNING — could not delete owned fixture branch $branch" >&2
+      failed=1
+    fi
+  done
+  for issue in ${REHEARSAL_FIXTURE_ISSUES:-}; do
+    [ -n "$issue" ] || continue
+    if gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed >/dev/null; then
+      echo "teardown: closed owned fixture issue #$issue"
+    else
+      echo "teardown: WARNING — could not close owned fixture issue #$issue" >&2
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -eq 0 ]; then
+    REHEARSAL_FIXTURE_REPO=""
+    REHEARSAL_FIXTURE_PRS=""
+    REHEARSAL_FIXTURE_ISSUES=""
+    REHEARSAL_FIXTURE_BRANCHES=""
+    REHEARSAL_FIXTURE_BUILDER_AUTHOR=""
+    REHEARSAL_FIXTURE_BUILDER_ISSUES=""
+  fi
+  return "$failed"
 }
 
 rehearsal_builder_fixture_panel_content() {
@@ -278,36 +440,4 @@ rehearsal_report_occupied_builder_slot() {
   skip "builder: panel request withheld while head check is pending"
   skip "builder: settled head status established"
   skip "builder: panel request issued after head settles"
-}
-
-rehearsal_close_builder_fixture_prs() {
-  local repo="$1" author="$2" pr prs failed=0
-  if ! prs="$(rehearsal_builder_slot_prs "$repo" "$author")"; then
-    echo "teardown: WARNING — could not list builder fixture PRs" >&2
-    return 1
-  fi
-  while read -r pr; do
-    [ -n "$pr" ] || continue
-    if gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null; then
-      echo "teardown: closed builder fixture PR #$pr"
-    else
-      echo "teardown: WARNING — could not close builder fixture PR #$pr" >&2
-      failed=1
-    fi
-  done <<<"$prs"
-  return "$failed"
-}
-
-rehearsal_close_issue_fixtures() {
-  local repo="$1" issues="$2" issue failed=0
-  for issue in $issues; do
-    [ -n "$issue" ] || continue
-    if gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed >/dev/null; then
-      echo "teardown: closed triage fixture issue #$issue"
-    else
-      echo "teardown: WARNING — could not close triage fixture issue #$issue" >&2
-      failed=1
-    fi
-  done
-  return "$failed"
 }

@@ -4239,10 +4239,14 @@ BOX_TOUCHED=1
 BOX_NAME=""
 ACQUIRE_TMP=""
 REHEARSAL_NOTIFY_FIXTURES=""
-BUILDER_CLEANUP_REPO=""; BUILDER_CLEANUP_AUTHOR=""
-TRIAGE_CLEANUP_REPO=""; TRIAGE_CLEANUP_ISSUES=""
+REHEARSAL_FIXTURE_REPO=""; REHEARSAL_FIXTURE_PRS=""; REHEARSAL_FIXTURE_ISSUES=""
+REHEARSAL_FIXTURE_BRANCHES=""; REHEARSAL_FIXTURE_BUILDER_AUTHOR=""
+REHEARSAL_FIXTURE_BUILDER_ISSUES=""
 bx() { return 0; }
 rehearsal_cleanup() { return "$CLEANUP_RETURNS"; }
+rehearsal_cleanup_owned_fixtures() {
+  [ -z "${CLEANUP_OWNED_CALLED:-}" ] || printf 'called\n' >"$CLEANUP_OWNED_CALLED"
+}
 . "$CLEANUP_ALL_SRC"
 trap cleanup_all EXIT
 exit 0
@@ -4252,6 +4256,13 @@ bash "$CLEANUP_ALL_DRIVER" 1 >/dev/null 2>&1
 t notify-cleanup-verdict-reaches-the-exit-status 1 "$?"
 bash "$CLEANUP_ALL_DRIVER" 0 >/dev/null 2>&1
 t notify-cleanup-clean-teardown-keeps-the-exit-status 0 "$?"
+CLEANUP_OWNED_CALLED="$TMP/cleanup-owned-called"
+export CLEANUP_OWNED_CALLED
+rm -f "$CLEANUP_OWNED_CALLED"
+bash "$CLEANUP_ALL_DRIVER" 0 >/dev/null 2>&1
+t rehearsal-exit-path-runs-owned-fixture-cleanup called \
+  "$(cat "$CLEANUP_OWNED_CALLED" 2>/dev/null || true)"
+unset CLEANUP_OWNED_CALLED
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
@@ -4326,35 +4337,149 @@ t rehearsal-answer-mark-missing-rc 1 "$answer_mark_missing_rc"
 t rehearsal-answer-mark-missing-clears-output '' "$REHEARSAL_MARK_ANSWERED"
 unset -f bx ok fail
 
-REHEARSAL_ISSUE_GH_CALLS="$TMP/rehearsal-issue-gh-calls"
-gh() { printf '%s\n' "$*" >>"$REHEARSAL_ISSUE_GH_CALLS"; }
-if rehearsal_close_issue_fixtures owner/sandbox '41 42' >/dev/null; then
-  issue_cleanup_rc=0
-else
-  issue_cleanup_rc=$?
-fi
-t rehearsal-issue-teardown-success-rc 0 "$issue_cleanup_rc"
-t rehearsal-issue-teardown-success-attempts-both 2 \
-  "$(wc -l <"$REHEARSAL_ISSUE_GH_CALLS")"
+# One registry covers the common attention fixture and every role-specific
+# object. Cleanup addresses only the exact IDs this round recorded; a title or
+# author prefix is never membership (#493).
+REHEARSAL_FIXTURE_REPO=""
+REHEARSAL_FIXTURE_PRS=""
+REHEARSAL_FIXTURE_ISSUES=""
+REHEARSAL_FIXTURE_BRANCHES=""
+REHEARSAL_FIXTURE_BUILDER_AUTHOR=""
+REHEARSAL_FIXTURE_BUILDER_ISSUES=""
+rehearsal_fixture_record_issue owner/sandbox 41
+rehearsal_fixture_record_issue owner/sandbox 42
+rehearsal_fixture_record_pr owner/sandbox 51
+rehearsal_fixture_record_branch owner/sandbox drill-review
+t rehearsal-owned-fixtures-record-repository owner/sandbox "$REHEARSAL_FIXTURE_REPO"
+t rehearsal-owned-fixtures-record-issues '41 42' "$REHEARSAL_FIXTURE_ISSUES"
+t rehearsal-owned-fixtures-record-prs 51 "$REHEARSAL_FIXTURE_PRS"
+t rehearsal-owned-fixtures-record-branches drill-review "$REHEARSAL_FIXTURE_BRANCHES"
 
-: >"$REHEARSAL_ISSUE_GH_CALLS"
+REHEARSAL_OWNED_GH_CALLS="$TMP/rehearsal-owned-gh-calls"
+: >"$REHEARSAL_OWNED_GH_CALLS"
 gh() {
-  printf '%s\n' "$*" >>"$REHEARSAL_ISSUE_GH_CALLS"
-  [[ "$*" != *repos/owner/sandbox/issues/41* ]]
+  printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"
+  case "$*" in
+    'api repos/owner/sandbox/pulls/51')
+      printf '%s\n' '{"head":{"repo":{"full_name":"owner/sandbox"},"ref":"drill-review"}}' ;;
+  esac
 }
-if rehearsal_close_issue_fixtures owner/sandbox '41 42' >/dev/null 2>&1; then
-  issue_cleanup_rc=0
+rehearsal_cleanup_owned_fixtures >/dev/null
+t rehearsal-owned-cleanup-closes-exactly-recorded 4 \
+  "$(grep -cE 'api -X (PATCH|DELETE)' "$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
+t rehearsal-owned-cleanup-closes-recorded-pr 1 \
+  "$(grep -cF 'api -X PATCH repos/owner/sandbox/pulls/51' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-owned-cleanup-deletes-recorded-sandbox-branch 1 \
+  "$(grep -cF 'api -X DELETE repos/owner/sandbox/git/refs/heads/drill-review' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-owned-cleanup-closes-recorded-issues 2 \
+  "$(grep -cF 'repos/owner/sandbox/issues/' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-owned-cleanup-does-not-use-prefix-or-author 0 \
+  "$(grep -cE 'crew-drill|author|pulls\?state=open' "$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
+t rehearsal-owned-cleanup-clears-registry '|||||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
+
+# A failed leg still reaches the same cleanup. A failed close preserves the
+# registry for EXIT/retry; the next successful pass clears it, so a second
+# --reuse round starts without manufactured resumable state.
+rehearsal_fixture_record_issue owner/sandbox 61
+gh() {
+  printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"
+  return 1
+}
+if rehearsal_cleanup_owned_fixtures >/dev/null 2>&1; then
+  owned_failure_rc=0
 else
-  issue_cleanup_rc=$?
+  owned_failure_rc=$?
 fi
-t rehearsal-issue-teardown-partial-failure-rc 1 "$issue_cleanup_rc"
-t rehearsal-issue-teardown-partial-failure-attempts-both 2 \
-  "$(wc -l <"$REHEARSAL_ISSUE_GH_CALLS")"
-t rehearsal-issue-teardown-partial-failure-attempts-first 1 \
-  "$(grep -cF 'repos/owner/sandbox/issues/41' "$REHEARSAL_ISSUE_GH_CALLS")"
-t rehearsal-issue-teardown-partial-failure-attempts-second 1 \
-  "$(grep -cF 'repos/owner/sandbox/issues/42' "$REHEARSAL_ISSUE_GH_CALLS")"
+t rehearsal-failed-leg-cleanup-reports-failure 1 "$owned_failure_rc"
+t rehearsal-failed-leg-keeps-retry-registry 'owner/sandbox||61|||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
+gh() { printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"; }
+rehearsal_cleanup_owned_fixtures >/dev/null
+t rehearsal-second-cleanup-clears-first-round-fixture '|||||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
+
+# The issue is durable before the asynchronous builder starts. Cleanup uses
+# that exact provenance to discover a PR created during the wait, then closes
+# its PR, branch and issue before another --reuse round can begin.
+rehearsal_fixture_record_builder_issue owner/sandbox builder-bot 61
+: >"$REHEARSAL_OWNED_GH_CALLS"
+gh() {
+  printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"
+  case "$*" in
+    'api repos/owner/sandbox/pulls?state=open&per_page=100 --paginate')
+      printf '%s\n' '[{"number":62,"body":"Closes #61","user":{"login":"builder-bot"}}]' ;;
+    'api repos/owner/sandbox/pulls/62')
+      printf '%s\n' '{"head":{"repo":{"full_name":"owner/sandbox"},"ref":"build/61-fixture"}}' ;;
+  esac
+}
+rehearsal_cleanup_owned_fixtures >/dev/null
+t rehearsal-async-builder-pr-is-discovered-from-owned-issue 1 \
+  "$(grep -cF 'api repos/owner/sandbox/pulls?state=open&per_page=100 --paginate' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-async-builder-pr-is-closed-on-failure-exit 1 \
+  "$(grep -cF 'api -X PATCH repos/owner/sandbox/pulls/62' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-async-builder-branch-is-deleted-on-failure-exit 1 \
+  "$(grep -cF 'api -X DELETE repos/owner/sandbox/git/refs/heads/build/61-fixture' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-async-builder-cleanup-clears-reuse-state '|||||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
+
+gh() {
+  printf '%s\n' '[
+    {"number":71,"title":"drill: stranded builder","pull_request":{}},
+    {"number":72,"title":"operator object"}
+  ]'
+}
+t rehearsal-reuse-dirty-sandbox-names-pr-and-issue \
+  'pull #71 — drill: stranded builder|issue #72 — operator object' \
+  "$(rehearsal_open_sandbox_objects owner/sandbox | paste -sd'|' -)"
+if reuse_refusal_out="$(rehearsal_assert_reuse_sandbox_clean 1 owner/sandbox 2>&1)"; then
+  reuse_refusal_rc=0
+else
+  reuse_refusal_rc=$?
+fi
+t rehearsal-reuse-dirty-sandbox-refuses 1 "$reuse_refusal_rc"
+t rehearsal-reuse-dirty-sandbox-refusal-names-objects 2 \
+  "$(grep -Ec '(pull #71|issue #72)' <<<"$reuse_refusal_out")"
+# shellcheck disable=SC2317  # invoked indirectly by the reuse assertion helper
+gh() { printf '%s\n' '[]'; }
+if rehearsal_assert_reuse_sandbox_clean 1 owner/sandbox >/dev/null 2>&1; then
+  reuse_clean_rc=0
+else
+  reuse_clean_rc=$?
+fi
+t rehearsal-reuse-clean-sandbox-proceeds 0 "$reuse_clean_rc"
+# shellcheck disable=SC2317  # must remain unreachable when reuse is disabled
+gh() { return 1; }
+if rehearsal_assert_reuse_sandbox_clean 0 owner/sandbox >/dev/null 2>&1; then
+  fresh_sandbox_rc=0
+else
+  fresh_sandbox_rc=$?
+fi
+t rehearsal-non-reuse-does-not-query-sandbox 0 "$fresh_sandbox_rc"
 unset -f gh
+
+# The executable helper above is also bound to the CLI path. Removing the
+# --reuse refusal call from rehearsal.sh makes this mutation guard fail.
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-reuse-cli-calls-clean-start-assertion 1 \
+  "$(grep -c 'rehearsal_assert_reuse_sandbox_clean "\$REUSE" "\$SANDBOX"' "$ROOT/drill/rehearsal.sh")"
+
+# Every object filer records the returned ID in the caller shell immediately;
+# this is what keeps failure paths from escaping the EXIT registry.
+t rehearsal-common-attention-fixture-is-recorded 1 \
+  "$(grep -A3 'inum=.*gh api' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_issue' | tr -d ' ')"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-triage-fixtures-are-recorded 2 \
+  "$(grep -Ec 'rehearsal_fixture_record_issue "\$SANDBOX" "\$(t|p)num"' "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-builder-fixtures-are-recorded 2 \
+  "$(( $(grep -c 'rehearsal_fixture_record_builder_issue "\$SANDBOX" "\$ME2" "\$bnum"' "$ROOT/drill/rehearsal.sh") + $(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$bpr"' "$ROOT/drill/rehearsal.sh") ))"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-reviewer-fixture-is-recorded 1 \
+  "$(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$pr"' "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-reviewer-branch-is-recorded-at-creation 1 \
+  "$(grep -B1 'refs/heads/\$br' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_branch "\$SANDBOX" "\$br"')"
 
 EMPTY_BUILDER_PRS='[]'
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
@@ -4651,23 +4776,6 @@ t rehearsal-builder-missing-pr-skips-unreachable-checks \
   'builder: initial PR is ready for its fixture panel|builder: host reviewer requested for initial round|builder: installed round-answer mark resolves|builder: host changes-requested review submitted|builder: pending head status established|builder: changes-requested round returns PR to draft|builder: round answer is signalled while head check is pending|builder: fix round kept the fixture head stable|builder: panel request withheld while head check is pending|builder: settled head status established|builder: panel request issued after head settles' \
   "$(sed -n 's/^skip //p' <<<"$MISSING_BUILDER_PR_OUT" | paste -sd'|' -)"
 
-REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
-gh() {
-  case "$1 $2" in
-    "api repos/owner/sandbox/pulls?state=open&per_page=100")
-      jq '[.[] | .user = {login:"builder"}]' <<<"$RIGHT_BUILDER_PRS" ;;
-    "api -X") printf '%s\n' "$*" >>"$REHEARSAL_GH_CALLS" ;;
-    *) return 2 ;;
-  esac
-}
-rehearsal_close_builder_fixture_prs owner/sandbox builder >/dev/null
-t rehearsal-builder-teardown-closes-all-fixture-prs 2 \
-  "$(wc -l <"$REHEARSAL_GH_CALLS")"
-t rehearsal-builder-teardown-closes-first 1 \
-  "$(grep -cF 'repos/owner/sandbox/pulls/6' "$REHEARSAL_GH_CALLS")"
-t rehearsal-builder-teardown-closes-current 1 \
-  "$(grep -cF 'repos/owner/sandbox/pulls/12' "$REHEARSAL_GH_CALLS")"
-unset -f gh
 # --- rehearsal reviewer announce ordering (#192) --------------------------
 # shellcheck source=drill/review-order.sh
 source "$ROOT/drill/review-order.sh"
