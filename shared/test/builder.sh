@@ -4873,25 +4873,27 @@ ln -sfn "$SHARED/lib/jq" "$RC_DUTY/lib/jq"
 # that both panelists voted in; OPEN=1 adds one more round with a single
 # verdict in it (a round that has opened and not closed); PUSHED=1 adds a
 # commit after the last verdict, which is the head the builder's round fixes
-# land on. Commit i is committed at 10:00 and reviewed at 12:00 the same day,
+# land on. The locals are `rc_`-prefixed because shellcheck reads this whole
+# file in one namespace: a local named `full` turns an unrelated `r1=full-budget`
+# five hundred lines up into an arithmetic expression and SC2100. Commit i is committed at 10:00 and reviewed at 12:00 the same day,
 # so no verdict is re-pointed and the partition is the plain one.
 rc_build() {
-  local full="$1" open="${2:-0}" pushed="${3:-0}" i oid ts
+  local rc_full="$1" rc_open="${2:-0}" rc_pushed="${3:-0}" i oid ts
   local commits="" reviews="" head=""
-  for ((i = 1; i <= full + open + pushed; i++)); do
+  for ((i = 1; i <= rc_full + rc_open + rc_pushed; i++)); do
     oid="$(printf 'c%039d' "$i")"
     ts="$(printf '2026-08-%02dT10:00:00Z' "$i")"
     commits="$commits{\"commit\":{\"oid\":\"$oid\",\"committedDate\":\"$ts\"}},"
     head="$oid"
   done
-  for ((i = 1; i <= full; i++)); do
+  for ((i = 1; i <= rc_full; i++)); do
     oid="$(printf 'c%039d' "$i")"
     ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
     reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
     reviews="$reviews{\"author\":{\"login\":\"rev-b\"},\"state\":\"APPROVED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
   done
-  if [ "$open" -eq 1 ]; then
-    i=$((full + 1))
+  if [ "$rc_open" -eq 1 ]; then
+    i=$((rc_full + 1))
     oid="$(printf 'c%039d' "$i")"
     ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
     reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
@@ -4994,8 +4996,11 @@ t roundcap-census-performs-no-act-of-the-cut 0 "$RC_MUTATIONS"
 # are stripped first: duty-builder.sh's resume header names `gh pr create` while
 # describing the SESSION's act, and a guard that cannot tell prose from code
 # would have to be deleted the first time it fired.
-if engine_lib_sources | xargs grep -hEv '^[[:space:]]*#' \
-  | grep -Eq 'gh pr (create|close|reopen)|closePullRequest'; then
+# The match runs off a here-string and never off a pipe: a `| grep -q` takes the
+# pipeline's status from grep under pipefail, and #449's guard reds on writing
+# the shape at all.
+RC_ENGINE_CODE="$(engine_lib_sources | xargs grep -hEv '^[[:space:]]*#')"
+if grep -Eq 'gh pr (create|close|reopen)|closePullRequest' <<<"$RC_ENGINE_CODE"; then
   r1=ENGINE-CUTS
 else
   r1=session-cuts
@@ -5069,6 +5074,7 @@ t roundcap-omitted-census-answer-is-todays-behaviour 'request:rev-a,label' \
 # --- no configurable cap, and no per-role override --------------------------
 # MUST FAIL: any configurable cap. The number is a literal in the predicate and
 # is written once; a conf key or a role override is what D1 forbids by name.
+# shellcheck disable=SC2016  # the jq program's own `$cap` is matched literally
 t roundcap-five-is-declared-once 1 \
   "$(grep -cE '^\| 5 +as \$cap$' "$RC_JQ")"
 if grep -Eqi 'round[_-]?cap|max[_-]?rounds|cap[_-]?rounds' "$SHARED/conf/fleet.defaults.conf"; then
@@ -5133,8 +5139,8 @@ rc_names roundcap-instruction-carries-the-census \
 # onward: the fragment's three hard rules are numbered (1)-(3) above it, and a
 # count over the whole file would pass on six steps plus those three.
 t roundcap-instruction-has-nine-numbered-steps '(1) (2) (3) (4) (5) (6) (7) (8) (9)' \
-  "$(sed 's/.*THE CUT IS NINE STEPS, IN THIS ORDER\.//' <<<"$RC_RENDERED" \
-     | grep -oE '\([1-9]\)' | paste -sd' ')"
+  "$(grep -oE '\([1-9]\)' <<<"${RC_RENDERED##*THE CUT IS NINE STEPS, IN THIS ORDER.}" \
+     | paste -sd' ')"
 
 # --- wiring ------------------------------------------------------------------
 # The census must precede every builder-side prompt render, or the boundary
