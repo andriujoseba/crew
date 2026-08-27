@@ -221,20 +221,42 @@ orph_lines() { grep -F "outcome=$SESSION_ORPHAN_OUTCOME" "$1/duty.log" || true; 
 orph_count() { orph_lines "$1" | n; }
 orph_kv() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$1"; }
 
-# orph_mutant <name> <sed-expr> — write a mutated copy of the module under test
-# to $TMP/ledger-mutant-<name>.sh, and assert the sed BIT. A mutation probe
-# that silently matched nothing would run the production code and report a kill
-# it never made.
+# orph_mutant <name> <sed-expr> [source] — write a mutated source copy to
+# $TMP/ledger-mutant-<name>.sh, and assert the sed BIT. The optional source is
+# what lets the parity probes mutate both SESSION END emitters through the same
+# guarded helper. A probe that silently matched nothing would run production
+# code and report a kill it never made.
 #
 # The path is derived by the caller rather than printed here, and that is not a
 # style choice: `$(orph_mutant …)` would run this in a subshell, where the `t`
 # below increments a FAIL nobody ever reads and prints its diagnosis into the
 # captured path. An inert probe would then be inert AND silent.
 orph_mutant() {
-  local name="$1" expr="$2" out="$TMP/ledger-mutant-$1.sh" applied
-  sed "$expr" "$SHARED/lib/common/ledger.sh" >"$out"
-  if cmp -s "$out" "$SHARED/lib/common/ledger.sh"; then applied=INERT; else applied=applied; fi
+  local name="$1" expr="$2" source="${3:-$SHARED/lib/common/ledger.sh}"
+  local out="$TMP/ledger-mutant-$1.sh" applied
+  sed "$expr" "$source" >"$out"
+  if cmp -s "$out" "$source"; then applied=INERT; else applied=applied; fi
   t "orphan-mutation-$name-applies" applied "$applied"
+}
+
+# Read the field names from an emitter's own SESSION END source line. Neither
+# side is listed here: adding a field to run_session must red until the
+# reconstructed emitter gains it too, including fields nobody anticipated when
+# this guard was written.
+session_end_tokens() {
+  sed -n '/^[[:space:]]*log "SESSION END / {
+    s/^[^"]*"SESSION END //
+    s/".*$//
+    p
+    q
+  }' "$1" \
+    | grep -oE '(^| )[[:alpha:]_][[:alnum:]_]*=' \
+    | tr -d ' =' \
+    | sort -u
+}
+
+session_end_missing() {
+  comm -23 <(session_end_tokens "$1") <(session_end_tokens "$2")
 }
 
 # The three shapes the test plan names, in one log: an orphaned start, a
@@ -281,6 +303,13 @@ t orphan-claims-no-dur '-' "$(orph_kv "$ORPH1_LINE" dur)"
 t orphan-names-the-start-it-answers 2026-08-14T03:00:01Z \
   "$(orph_kv "$ORPH1_LINE" started)"
 t orphan-acted-is-unknown-not-no unknown "$(orph_kv "$ORPH1_LINE" acted)"
+t orphan-tier-is-unknown-not-default unknown "$(orph_kv "$ORPH1_LINE" tier)"
+case "$ORPH1_LINE" in *' started=2026-08-14T03:00:01Z') r1=last ;; *) r1=NOT-LAST ;; esac
+t orphan-started-stays-last last "$r1"
+# D1/D3. Token parity is source-derived on both sides; this is the standing
+# guard that makes the next observed field fail on the PR that adds it.
+t orphan-session-end-token-parity '' \
+  "$(session_end_missing "$SHARED/lib/common/session.sh" "$SHARED/lib/common/ledger.sh")"
 # "Distinguishable by its outcome ALONE" is a claim about the token, not about
 # the rest of the line: no verdict run_session can reach may spell it. Read off
 # session.sh's own assignments so a fourth observed verdict added there without
@@ -441,6 +470,38 @@ ORPH4_TAB="$(source "$ORPH_M5" >/dev/null 2>&1; _session_orphan_scan "$ORPH4/dut
 IFS=$'\t' read -r m4_kind m4_key m4_holder m4_rest <<<"$ORPH4_TAB"
 t orphan-mutation-tab-shifts-log-into-holder \
   "operator|floor|$ORPH4/logs/operator.log" "$m4_kind|$m4_key|$m4_holder"
+
+# Must fail: an observed field added without its reconstructed peer. Mutating
+# session.sh proves the observed token set is read from source, not hard-coded.
+# shellcheck disable=SC2016  # the sed matches the source's literal variable
+orph_mutant observed-field \
+  's/tier=$_SESSION_TIER"/tier=$_SESSION_TIER future=known"/' \
+  "$SHARED/lib/common/session.sh"
+ORPH_M6="$TMP/ledger-mutant-observed-field.sh"
+t orphan-parity-reads-observed-source future \
+  "$(session_end_missing "$ORPH_M6" "$SHARED/lib/common/ledger.sh")"
+
+# Must fail: dropping tier from the reconstructed source. This is the inverse
+# mutation, proving that side is derived too rather than copied from a list in
+# the guard.
+orph_mutant tier-missing 's/ tier=unknown started=/ started=/'
+ORPH_M7="$TMP/ledger-mutant-tier-missing.sh"
+t orphan-parity-reads-reconstructed-source tier \
+  "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M7")"
+ORPH11="$TMP/orphan-mut-tier-missing"; orph_fixture "$ORPH11"
+orph_start "$ORPH11" 2026-08-14T12:00:00Z build o/r#12 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH11" "$ORPH_M7"
+t orphan-mutation-tier-missing-has-no-value '' \
+  "$(orph_kv "$(orph_lines "$ORPH11")" tier)"
+
+# Must fail: `default` claims a measurement the dead session never reported.
+orph_mutant tier-default 's/tier=unknown/tier=default/'
+ORPH_M8="$TMP/ledger-mutant-tier-default.sh"
+ORPH12="$TMP/orphan-mut-tier-default"; orph_fixture "$ORPH12"
+orph_start "$ORPH12" 2026-08-14T13:00:00Z build o/r#13 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH12" "$ORPH_M8"
+t orphan-mutation-tier-default-fabricates-a-measurement default \
+  "$(orph_kv "$(orph_lines "$ORPH12")" tier)"
 
 # --- the wiring, which no fixture above can reach ---------------------------
 # The reconciler is worth nothing unless a tick calls it, and it must be called

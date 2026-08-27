@@ -263,13 +263,13 @@ _session_orphan_scan() {
 # caller's stdout could have them land in different places — see the write
 # below.
 #
-# The reconstructed terminal carries `rc=-` and `dur=-`. It is the one thing
-# this line must not fake: the reconciler knows the session started and knows
-# nobody is running it, and knows nothing whatever about how it exited or how
-# long it took. `-` for a number the engine does not have is this codebase's
-# existing spelling (_session_budget_ceiling), so it needs no new vocabulary,
-# and `started=` names the start being answered because this line's own stamp
-# is the reconcile time and not the death.
+# The reconstructed terminal carries the observed emitter's fields even when
+# it cannot recover their values. Unknown numeric measurements use `-`
+# (`rc=-`, `dur=-`); unknown categorical measurements use `unknown`
+# (`acted=unknown`, `tier=unknown`). The reconciler knows the session started
+# and knows nobody is running it, but knows nothing about how it exited, how
+# long it took, or which model tier it bought. `started=` is its own field and
+# stays last: this line's timestamp is the reconcile time, not the death.
 session_reconcile_orphans() {
   local logfile="$DUTY_DIR/duty.log" records kind key holder slog started closed=0
   [ -s "$logfile" ] || return 0
@@ -298,7 +298,7 @@ session_reconcile_orphans() {
     # makes the start answered, so one box-kill would be counted again on every
     # run and D2's evidence would go to a terminal. Both writers open O_APPEND,
     # so this fd is safe beside the tick's inherited one.
-    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= started=$started" >>"$logfile"
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= tier=unknown started=$started" >>"$logfile"
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.
