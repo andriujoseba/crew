@@ -35,7 +35,7 @@ _ready_issue_lines() {
 _operator_build_prompt_clause() {
   local operator_label="${1:-}"
   [ -n "$operator_label" ] || return 0
-  printf ' not carrying `%s` (that label marks operator-owned work, not work for a builder)' \
+  printf 'a ready issue carrying `%s` is operator-owned work, not work for a builder; ' \
     "$operator_label"
 }
 

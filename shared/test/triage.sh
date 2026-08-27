@@ -696,4 +696,148 @@ if grep -q '^LABEL_POST_MERGE="post-merge"$' "$SHARED/conf/fleet.defaults.conf";
   r1=defined; else r1=MISSING; fi
 t triage358-conf-defines-post-merge defined "$r1"
 
+# --- #461: operator ownership composes with ready, but is not build duty ----
+# Signal (b) stays a six-queue-label question. The builder consumes the same
+# board differently: `ready` says the work is unblocked, while `operator` says
+# it belongs to a human rather than this engine. Drive the production filter
+# directly, then derive the exact board count / ledger count / no-duty branch
+# its call site uses. This keeps an empty ledger from accidentally becoming the
+# implementation and makes the populated-ledger control the same observation.
+# shellcheck disable=SC1091
+source "$SHARED/lib/duty-builder.sh"
+
+OP461_T='2026-08-27T00:00:00Z'
+OP461_OPERATOR="$(jq -cn --arg t "$OP461_T" '[{
+  number: 461, assignees: [], updatedAt: $t,
+  labels: [{name:"ready"},{name:"operator"}]
+}]')"
+OP461_PLAIN="$(jq -cn --arg t "$OP461_T" '[{
+  number: 461, assignees: [], updatedAt: $t,
+  labels: [{name:"ready"}]
+}]')"
+OP461_SEEN_COLD="$TMP/op461-seen-cold"
+OP461_SEEN_HOT="$TMP/op461-seen-hot"
+printf 'o/r#461 %s\n' "$OP461_T" | ledger_commit "$OP461_SEEN_HOT"
+
+op461_signal() {  # JSON OPERATOR_LABEL LEDGER — session-count<TAB>reason
+  local json="$1" operator_label="$2" ledger="$3"
+  local items board count sessions=0 reason=""
+  items="$(printf '%s' "$json" | _ready_issue_lines o/r "$operator_label")"
+  board="$(printf '%s\n' "$items" | awk 'NF{c++} END{print c+0}')"
+  count="$(printf '%s\n' "$items" | ledger_filter "$ledger" | awk 'NF{c++} END{print c+0}')"
+  if [ "$count" -gt 0 ]; then
+    sessions=1
+    reason=build-duty
+  else
+    reason="$(_no_build_duty_reason "$board" 0 '' 1)"
+  fi
+  printf '%s\t%s' "$sessions" "$reason"
+}
+
+OP461_COLD="$(op461_signal "$OP461_OPERATOR" operator "$OP461_SEEN_COLD")"
+OP461_HOT="$(op461_signal "$OP461_OPERATOR" operator "$OP461_SEEN_HOT")"
+t operator-ready-cold-starts-no-session 0 "${OP461_COLD%%$'\t'*}"
+t operator-ready-cold-is-board-empty 'board empty' "${OP461_COLD#*$'\t'}"
+case "$OP461_COLD" in *seen-ledger*) r1=WRONG_NOUN ;; *) r1=absent ;; esac
+t operator-ready-is-not-ledger-held absent "$r1"
+t operator-ready-ledger-independent "$OP461_COLD" "$OP461_HOT"
+
+OP461_PLAIN_SIGNAL="$(op461_signal "$OP461_PLAIN" operator "$OP461_SEEN_COLD")"
+t operator-plain-ready-starts-one-session 1 "${OP461_PLAIN_SIGNAL%%$'\t'*}"
+t operator-plain-ready-is-build-duty build-duty "${OP461_PLAIN_SIGNAL#*$'\t'}"
+
+# Compatibility is fail-open by design: an older/unset config sees exactly the
+# pre-#461 ready set and raises no jq error.
+OP461_UNSET="$(op461_signal "$OP461_OPERATOR" '' "$OP461_SEEN_COLD")"
+t operator-unset-keeps-ready-pickable 1 "${OP461_UNSET%%$'\t'*}"
+t operator-unset-keeps-old-build-signal build-duty "${OP461_UNSET#*$'\t'}"
+
+# Wiring: the one existing ready listing carries labels, the production
+# ready_items assignment calls the filter, and the filtered set is counted
+# afterwards. A prompt-only implementation or an after-ready_board exclusion
+# fails one of these independently of the behavioural helper cases above.
+OP461_BUILD="$SHARED/lib/duty-builder.sh"
+if grep -Fq -- '--json number,assignees,labels,updatedAt' "$OP461_BUILD"; then
+  r1=fetched
+else
+  r1=MISSING
+fi
+t operator-ready-listing-fetches-labels fetched "$r1"
+op461_filter_ln="$(grep -nF '| _ready_issue_lines "$R" "${LABEL_OPERATOR:-}"' "$OP461_BUILD" | head -1 | cut -d: -f1)"
+op461_board_ln="$(grep -nF 'ready_board="$(' "$OP461_BUILD" | head -1 | cut -d: -f1)"
+if [ -n "$op461_filter_ln" ] && [ -n "$op461_board_ln" ] &&
+   [ "$op461_filter_ln" -lt "$op461_board_ln" ]; then
+  r1=before
+else
+  r1=AFTER
+fi
+t operator-filter-precedes-ready-board before "$r1"
+
+# The composing flag is configured beside the other cross-cutting names and
+# never enters either copy of the six-member queue set. The existing #358 set
+# equality above is the behavioural half; these assertions pin the tempting
+# but wrong "seventh queue label" tidy-up.
+if grep -q '^LABEL_OPERATOR="operator"$' "$SHARED/conf/fleet.defaults.conf"; then
+  r1=defined
+else
+  r1=MISSING
+fi
+t operator-conf-defines-composing-label defined "$r1"
+op461_queue_count="$(sed -n '/^LABEL_READY=/,/^LABEL_NEEDS_TRIAGE=/p' \
+  "$SHARED/conf/fleet.defaults.conf" | grep -c '^LABEL_[A-Z_]*=')"
+t operator-queue-set-stays-six 6 "$op461_queue_count"
+if sed -n '/^LABEL_READY=/,/^LABEL_NEEDS_TRIAGE=/p' "$SHARED/conf/fleet.defaults.conf" \
+    | grep -q 'LABEL_OPERATOR'; then
+  r1=IN_QUEUE
+else
+  r1=outside
+fi
+t operator-label-stays-outside-queue-block outside "$r1"
+if grep -q 'LABEL_OPERATOR' "$SHARED/lib/duty-triage.sh"; then
+  r1=TOUCHED
+else
+  r1=untouched
+fi
+t operator-triage-detector-needs-no-new-label untouched "$r1"
+
+# `ready` already satisfies triage signal (b), so composing `operator` must not
+# turn the issue into a stray. Conversely operator alone is not a queue state.
+OP461_STRAY_READY='[{"number":461,"labels":[{"name":"ready"},{"name":"operator"}],"updatedAt":"2026-08-27T00:00:00Z"}]'
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$OP461_STRAY_READY"
+tr_run 0
+t operator-ready-is-not-a-triage-session 0 "$(trc '^SESSION triage$')"
+if grep -q 'queue-unlabeled' "$TR_LOG"; then r1=NAMED; else r1=silent; fi
+t operator-ready-is-not-queue-unlabeled silent "$r1"
+OP461_STRAY_ONLY='[{"number":461,"labels":[{"name":"operator"}],"updatedAt":"2026-08-27T00:00:00Z"}]'
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$OP461_STRAY_ONLY"
+tr_run 0
+t operator-alone-is-still-a-stray 1 "$(trc '^SESSION triage$')"
+
+# The prompt clause uses the configured name and disappears completely when
+# unset. Its empty rendering preserves the old sentence byte-for-byte around
+# the insertion point; the configured rendering tells a session the same rule
+# the engine enforced.
+t operator-empty-prompt-clause-is-byte-empty '' "$(_operator_build_prompt_clause '')"
+OP461_CLAUSE="$(_operator_build_prompt_clause operator)"
+case "$OP461_CLAUSE" in
+  *'`operator`'*'operator-owned work, not work for a builder'*) r1=named ;;
+  *) r1=MISSING ;;
+esac
+t operator-configured-prompt-clause-names-ownership named "$r1"
+OP461_PROMPT_EMPTY="$(PROMPTS_DIR="$SHARED/prompts" render_prompt build.txt OPERATOR_CLAUSE='')"
+if grep -Fq 'otherwise pick ONE ready unclaimed issue, claim it' <<<"$OP461_PROMPT_EMPTY" &&
+   ! grep -q '{{OPERATOR_CLAUSE}}' <<<"$OP461_PROMPT_EMPTY"; then
+  r1=identical
+else
+  r1=CHANGED
+fi
+t operator-unset-prompt-keeps-old-sentence identical "$r1"
+OP461_PROMPT_SET="$(PROMPTS_DIR="$SHARED/prompts" render_prompt build.txt OPERATOR_CLAUSE="$OP461_CLAUSE")"
+if grep -Fq 'a ready issue carrying `operator` is operator-owned work, not work for a builder; otherwise pick ONE ready unclaimed issue, claim it' <<<"$OP461_PROMPT_SET"; then
+  r1=rendered
+else
+  r1=MISSING
+fi
+t operator-configured-prompt-renders-clause rendered "$r1"
+
 suite_finish
