@@ -371,8 +371,12 @@ t drill-report-target-pull-merge 'heavy-duty/crew PR #450' \
   "$(derive "$GH_REMOTE" refs/pull/450/merge)"
 t drill-report-target-pull-unprefixed 'heavy-duty/crew PR #450' \
   "$(derive "$GH_REMOTE" pull/450/head)"
-t drill-report-target-pull-bare 'heavy-duty/crew PR #450' \
-  "$(derive "$GH_REMOTE" pull/450)"
+# The suffix is required. `pull/452` is an ordinary ref shape a branch may
+# occupy, so deriving from it would route findings to a PR the round never
+# drilled — the end-to-end half of this is the collision round below.
+t drill-report-target-pull-bare-none '(none)' "$(derive "$GH_REMOTE" pull/450)"
+t drill-report-target-refs-pull-bare-none '(none)' \
+  "$(derive "$GH_REMOTE" refs/pull/450)"
 t drill-report-target-scp-remote 'heavy-duty/crew PR #7' \
   "$(derive git@github.com:heavy-duty/crew.git refs/pull/7/head)"
 t drill-report-target-ssh-url-remote 'heavy-duty/crew PR #12' \
@@ -397,8 +401,15 @@ TARGET='heavy-duty/crew PR #450'
 footer() { rehearsal_report_footer "$1" "$2" reviewer crew-drill-reviewer; }
 t drill-report-exit-fail-names-target 1 \
   "$(grep -cF "Report findings on $TARGET with" <<<"$(footer fail "$TARGET")")"
-t drill-report-exit-fail-no-target-drops-instruction 1 \
-  "$(grep -cF 'Report findings with' <<<"$(footer fail '')")"
+# The only footer whose instruction and evidence share a sentence: with no
+# target the report instruction goes entirely, rather than surviving as a
+# `Report findings with` that routes nowhere (D2, AC1's "or no instruction at
+# all"). The box line below proves the evidence half is what stayed.
+t drill-report-exit-fail-no-target-drops-instruction 0 \
+  "$(grep -ciF 'report findings' <<<"$(footer fail '')" || true)"
+t drill-report-exit-fail-no-target-still-collects 1 \
+  "$(grep -cF 'Fixtures and box are left in place. Collect' \
+    <<<"$(footer fail '')")"
 t drill-report-exit-incomplete-names-target 1 \
   "$(grep -cF "must not be reported as one on $TARGET." \
     <<<"$(footer incomplete "$TARGET")")"
@@ -492,6 +503,37 @@ t drill-report-branch-round-names-no-pr 0 \
   "$(grep -cE 'PR #[0-9]' <<<"$main_out" || true)"
 t drill-report-branch-round-passes-no-source-ref '-' \
   "$(awk '{print $5}' "$ROLE_LOG")"
+
+# The collision, end to end: an ordinary branch whose name occupies the pull
+# ref shape. `git fetch <remote> pull/452` drills the BRANCH — the round never
+# goes near pull request 452 — so a footer naming it would route findings to a
+# PR this round did not touch, which is this issue's own defect in a new place.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+git --git-dir="$REMOTE" update-ref refs/heads/pull/452 "$FIRST"
+if collide_out="$(DRILL_ROLE_RC=2 round_run "$HARNESS/rehearsal-all.sh" reviewer \
+    pull/452)"; then :; fi
+t drill-report-branch-named-pull-round-resolves "$FIRST" \
+  "$(awk '{print $3}' "$ROLE_LOG")"
+t drill-report-branch-named-pull-round-names-no-pr 0 \
+  "$(grep -cE 'PR #[0-9]' <<<"$collide_out" || true)"
+t drill-report-branch-named-pull-round-passes-no-source-ref '-' \
+  "$(awk '{print $5}' "$ROLE_LOG")"
+
+# The role script's own wiring is stubbed out by the fixture above, so these
+# three pins stand in for it — each one is a mutation that would otherwise
+# leave the whole suite green while the footers named the wrong thing, or
+# nothing.
+role_script="$(cat "$ROOT/drill/rehearsal.sh")"
+t drill-report-role-derives-from-source-ref 1 \
+  "$(grep -cF 'rehearsal_report_target "$REMOTE" "${SOURCE_REF:-$REF}"' \
+    <<<"$role_script")"
+t drill-report-role-derivation-guarded-by-tree 1 \
+  "$(grep -B 2 -F 'rehearsal_report_target "$REMOTE"' <<<"$role_script" \
+    | grep -cF 'if [ -z "$TREE" ]; then')"
+t drill-report-role-exits-pass-the-target 3 \
+  "$(grep -cE '^ *rehearsal_report_footer (fail|incomplete|pass) "\$REPORT_TARGET"' \
+    <<<"$role_script")"
 
 # --tree drills a local checkout, so a ref passed beside it is not what was
 # drilled and derives nothing.

@@ -24,13 +24,20 @@ rehearsal_report_repo_slug() {
 
 # rehearsal_report_pr_number REF
 # Print the pull request number a ref names, and return 0. Return 1 where the
-# ref names no pull request. Only the pull ref forms answer: a branch, a tag
-# and a bare commit each name a tree that any number of pull requests — or
-# none — may carry, and guessing between them is how a footer starts naming
-# the wrong PR.
+# ref names no pull request. Only two shapes answer — `pull/<n>/head` and
+# `pull/<n>/merge`, each optionally `refs/`-prefixed — because only those two
+# are the pull ref namespace and nothing else. A branch, a tag and a bare
+# commit each name a tree that any number of pull requests — or none — may
+# carry, and guessing between them is how a footer starts naming the wrong PR.
+#
+# The suffix is required, not optional: `pull/452` is an ordinary ref shape
+# and `git fetch <remote> pull/452` will happily drill a branch literally
+# named that. Deriving a pull request number from it would route the round's
+# findings to a pull request the round never touched — this issue's own defect
+# in a new place.
 rehearsal_report_pr_number() {
   local ref="${1:-}"
-  [[ "$ref" =~ ^(refs/)?pull/([0-9]+)(/(head|merge))?$ ]] || return 1
+  [[ "$ref" =~ ^(refs/)?pull/([0-9]+)/(head|merge)$ ]] || return 1
   printf '%s\n' "${BASH_REMATCH[2]}"
 }
 
@@ -68,7 +75,16 @@ rehearsal_report_footer() {
   [ -z "$target" ] || on=" on $target"
   case "$kind" in
     fail)
-      printf 'Fixtures and box are left in place. Report findings%s with\n' "$on"
+      # This is the one footer where the instruction and the evidence share a
+      # sentence, so with no target the routing half goes and the collecting
+      # half stays: an operator holding findings still needs the excerpts, but
+      # nothing here tells them to report those findings anywhere (#492 D2).
+      if [ -n "$target" ]; then
+        printf 'Fixtures and box are left in place. Report findings on %s with\n' \
+          "$target"
+      else
+        printf 'Fixtures and box are left in place. Collect\n'
+      fi
       # shellcheck disable=SC2088  # the tilde is prose: the operator types
       # these paths in the BOX's login shell, which is where they resolve
       printf '~/duty/duty.log and ~/duty/logs/* excerpts from: box shell %s\n' "$box"
