@@ -575,6 +575,159 @@ m = ns["RE_END"].search("2026-08-26T00:00:00Z " + os.environ["PEAK_END"])
 print("|".join([m.group(2), m.group(7)]) if m else "NO-MATCH")
 PY
 )"
+
+  # Must fail (test plan, triage 2026-08-27): the field INSERTED ahead of
+  # `acted=` instead of appended. This is the sharpest of the must-fails
+  # because it does not look like a failure: `RE_END` ends in an OPTIONAL
+  # `acted=… reply_tail=…` group, so the line still matches — the group simply
+  # stops participating, and `acted` and `reply_tail` go silently missing from
+  # every line the floor reads, on every box, for as long as nobody notices.
+  # The mutation removes the appended field at the same time, so what is
+  # measured is the POSITION and not the presence of a second token.
+  # shellcheck disable=SC2016  # the sed matches the module's literal variables
+  peak_mutant inserted-field \
+    's/ acted=$acted/ peak_rss=999999 acted=$acted/; s/${peak_rss:+ peak_rss=$peak_rss}//'
+  peak_mut_ins="$(peak_run "$TMP/session-mutant-inserted-field.sh" 30 \
+    bash -c 'printf "exec\nfinal reply\n"' 2>&1)"
+  t peak-mutation-inserted-field-drops-acted-and-reply-tail 'build|None|None' \
+    "$(PEAK_END="$(grep 'SESSION END' <<<"$peak_mut_ins")" \
+       python3 - "$SHARED/../fleet-floor/server/floor/units.py" <<'PY'
+import os, re, sys
+src = open(sys.argv[1]).read()
+ns = {"re": re}
+for name in ("TS", "RE_END"):
+    m = re.search(r"^%s = (.+?)(?=\n[A-Z_#]|\n\n)" % name, src, re.S | re.M)
+    exec("%s = %s" % (name, m.group(1)), ns)
+m = ns["RE_END"].search("2026-08-26T00:00:00Z " + os.environ["PEAK_END"])
+# group(2) is the kind, which still matches; 7 and 8 are acted and reply_tail
+# (units.py reads reply_tail as group(8)), and `None` is the whole finding —
+# the line PARSED and lost two fields, which is why nothing would have caught
+# this at the seam. A non-match would have been the safe failure.
+print("|".join(str(g) for g in (m.group(2), m.group(7), m.group(8))) if m else "NO-MATCH")
+PY
+)"
 fi
+
+# --- D5: naming the session changed no dispatch guarantee (#473) ------------
+#
+# The walk needs a NAME for the session's tree before it can measure one, and
+# `$!` is that name — so the dispatch is `( … ) &` plus a `wait` where it used
+# to be a foreground list. D5 fences that: obtaining the name is in scope,
+# changing what the line guarantees is not. Each case below is one of D5's
+# properties, driven WITH the measurement live, because the claim is about the
+# dispatch under the walk and not about the dispatch in isolation.
+#
+# `set -e` inside the runner is the point of three of them: the engine's ticks
+# run under it, and the failure mode being excluded is a session ending a tick
+# rather than reporting.
+# shellcheck disable=SC2030,SC2031,SC2317
+d5_run() ( # d5_run TMO CMD… — one dispatch, under the caller's `set -e`
+  local tmo="$1"; shift
+  local ddir="$TMP/d5-$RANDOM$RANDOM"
+  mkdir -p "$ddir/logs" "$ddir/work"
+  DUTY_DIR="$ddir"; LOG_DIR="$ddir/logs"; DUTY_TICK_ID="tick-1"
+  BOT_CLI_CMD=("$@")
+  bot_session_acted() { grep -qx exec "$1"; }
+  alert() { :; }
+  SESSION_PEAK_POLL_S=1
+  set -e
+  run_session build fixture/d5 "$ddir/work" "$tmo" theprompt
+  # Reached only if a failing session did not abort its caller — which is the
+  # whole of "RUN_SESSION_RC carries the status and run_session returns 0".
+  printf 'reached=yes rc=%s\n' "$RUN_SESSION_RC"
+)
+d5_verdict() { sed -n 's/.*SESSION END .* rc=\([^ ]*\) dur=[^ ]* outcome=\([^ ]*\).*/\1|\2/p' <<<"$1"; }
+d5_atmost() { # d5_atmost SECONDS OUTPUT — the dur= on the line, bounded
+  local d; d="$(sed -n 's/.*SESSION END .* dur=\([0-9]*\)s .*/\1/p' <<<"$2")"
+  case "$d" in
+    '' | *[!0-9]*) printf 'NO-DURATION(%s)' "$d" ;;
+    *) [ "$d" -le "$1" ] && printf 'at-most' || printf 'TOO-LATE(%s)' "$d" ;;
+  esac
+}
+
+# A fired timeout, beside the walk. Both halves matter: the deadline still
+# fires, and its 124 still reaches the line as TIMEOUT rather than as a
+# FAILED with a strange rc.
+d5_slow="$(d5_run 1 bash -c 'sleep 30' 2>&1)"
+t d5-a-fired-timeout-still-reports-124-and-TIMEOUT '124|TIMEOUT' "$(d5_verdict "$d5_slow")"
+# `timeout -k 60` is a SECOND deadline, and a dispatch that waited it out
+# would report the same rc sixty seconds late. The session's own deadline is
+# the one the engine budgets against, so the bound is on the clock, not the
+# status.
+t d5-the-timeout-is-not-delayed-past-its-own-deadline at-most "$(d5_atmost 10 "$d5_slow")"
+
+# A failing session: its own rc, and no abort. `set -e` is live in d5_run, so
+# `reached=yes` is not decoration — it is the assertion.
+d5_fail="$(d5_run 30 bash -c 'printf "exec\nfinal reply\n"; exit 3' 2>&1)"
+t d5-a-failing-sessions-rc-reaches-the-line '3|FAILED' "$(d5_verdict "$d5_fail")"
+t d5-a-failing-session-cannot-abort-the-caller 'reached=yes rc=3' \
+  "$(grep '^reached=' <<<"$d5_fail" || true)"
+
+# The `</dev/null` defect, driven rather than trusted: the CLI reads piped
+# stdin to EOF as context, and the caller's stdin here is a while-read work
+# list. Without the redirection the FIRST session swallows the rest of the
+# sweep and the loop runs once. The stub reads stdin exactly as a CLI would.
+d5_items="$(printf 'a\nb\nc\n' | while read -r d5_item; do
+  d5_run 10 bash -c 'cat >/dev/null; printf "exec\nfinal reply\n"' >/dev/null 2>&1
+  printf '%s' "$d5_item"
+done)"
+t d5-the-session-does-not-swallow-the-callers-work-list abc "$d5_items"
+
+# The process group, asserted as a DIFFERENTIAL — and the differential is the
+# point, because the flat reading of D5 is false and was false before this
+# issue existed. Measured: GNU `timeout` puts itself in a new process group
+# (`setpgid(0,0)`, absent `--foreground`) and runs the CLI there, so the
+# session has never sat in the engine's own group. Job control is off in a
+# script, so `&` does not create a group and did not change this; `timeout`
+# did, in both shapes.
+#
+# So what D5 fences — "a signal delivered to the engine reaches it exactly as
+# it does today" — is a claim about SAMENESS, and the honest test runs both
+# dispatch shapes against one stub and compares. The old shape is spelled out
+# here rather than referenced, because the thing being compared against is the
+# line as it stood before this change.
+#
+# `/proc` and not `ps`: after `) ` the fields are state, ppid, pgrp, so f3 is
+# the group. The split is on `) ` because comm can contain spaces and
+# parentheses. The GROUP LEADER is identified by name rather than by pid,
+# because the leader's pid is the dispatch's own and the stub has no way to
+# be told it — and `comm=timeout` is the fact the verdict actually rests on.
+# (Not the stub's ppid: the reads run in a pipeline, so a CLI's ppid is its
+# own shell, which says nothing about the group.)
+D5_PG_STUB="$TMP/d5-pg-stub.sh"
+cat >"$D5_PG_STUB" <<'STUB'
+#!/usr/bin/env bash
+# $1 — where to write "<pgrp> <comm of that group's leader>"
+pg="$(sed 's/.*) //' /proc/self/stat | cut -d' ' -f3)"
+printf '%s %s\n' "$pg" "$(cat "/proc/$pg/comm" 2>/dev/null)" >"$1"
+printf 'exec\nfinal reply\n'
+STUB
+chmod +x "$D5_PG_STUB"
+d5_engine_pg="$(sed 's/.*) //' /proc/self/stat | cut -d' ' -f3)"
+d5_pg_verdict() { # d5_pg_verdict "<pgrp> <leader comm>"
+  local pg="${1%% *}" comm="${1##* }"
+  [ -n "$1" ] || { printf 'NO-READING'; return; }
+  [ "$pg" = "$d5_engine_pg" ] && { printf 'engines'; return; }
+  [ "$comm" = timeout ] && printf 'its-own-timeouts' || printf 'SOME-OTHER-GROUP(%s)' "$comm"
+}
+
+d5_pg_new="$TMP/d5-pg-new"; rm -f "$d5_pg_new"
+d5_run 10 bash "$D5_PG_STUB" "$d5_pg_new" >/dev/null 2>&1
+
+# The dispatch exactly as it read before the measurement named it: a
+# FOREGROUND list, same redirections, same `timeout -k`. Spelled out rather
+# than referenced, because the thing under comparison is that old line.
+d5_pg_old="$TMP/d5-pg-old"; rm -f "$d5_pg_old"
+d5_oldwork="$TMP/d5-oldwork"; mkdir -p "$d5_oldwork"
+( cd "$d5_oldwork" && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
+    timeout -k 60 10 bash "$D5_PG_STUB" "$d5_pg_old" ) </dev/null >/dev/null 2>&1
+
+t d5-the-dispatchs-process-group-is-what-it-was-before-the-name \
+  "$(d5_pg_verdict "$(cat "$d5_pg_old" 2>/dev/null)")" \
+  "$(d5_pg_verdict "$(cat "$d5_pg_new" 2>/dev/null)")"
+# …and the shared value is named, so a run where BOTH shapes broke the same
+# way cannot pass as agreement.
+t d5-the-session-runs-in-its-own-timeouts-group its-own-timeouts \
+  "$(d5_pg_verdict "$(cat "$d5_pg_new" 2>/dev/null)")"
 
 suite_finish
