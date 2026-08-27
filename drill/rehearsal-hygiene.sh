@@ -100,6 +100,7 @@ rehearsal_hygiene_round_result() {
 
 rehearsal_hygiene_summary() {
   local enabled="$1" drilled="$2" hygiene_result="$3"
+  local incomplete_reason="${4:-phase 2 skipped}"
   if [ "$enabled" -eq 0 ]; then
     printf '%s\n' "skip       hygiene  (--no-hygiene-drill)"
   elif [ "$hygiene_result" -eq 0 ]; then
@@ -109,7 +110,7 @@ rehearsal_hygiene_summary() {
   elif [ -z "${drilled// /}" ]; then
     printf '%s\n' "INCOMPLETE hygiene  (no role reached a box)"
   elif [ "$hygiene_result" -eq 2 ]; then
-    printf '%s\n' "INCOMPLETE hygiene  (phase 2 skipped)"
+    printf '%s\n' "INCOMPLETE hygiene  ($incomplete_reason)"
   else
     printf '%s\n' "FAIL       hygiene"
   fi

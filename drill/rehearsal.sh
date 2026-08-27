@@ -115,6 +115,14 @@ SKIP=0
 # proved acquisition and install and NOTHING about duty, so it must never
 # be reportable as a pass — see the summary at the bottom.
 PHASE2_RAN=0
+# The orchestrator needs to know whether a non-zero role still left an
+# installed box that independent sections can safely exercise. Exit status
+# alone cannot distinguish that from a failure before the box existed (#491).
+REHEARSAL_SECTION_STATUS="${REHEARSAL_SECTION_STATUS:-}"
+rehearsal_section_status() {
+  [ -z "$REHEARSAL_SECTION_STATUS" ] \
+    || printf '%s\n' "$1" >"$REHEARSAL_SECTION_STATUS"
+}
 declare -a FAILS=()
 ok()   { echo "ok   $1"; PASS=$((PASS + 1)); }
 skip() { echo "skip $1"; SKIP=$((SKIP + 1)); }
@@ -506,6 +514,10 @@ if [ "$QUICK" -eq 0 ]; then
   echo "== scheduled-boundary check omitted: rehearsal ticks are explicit and cron stays disarmed (#26)"
 fi
 
+# Phase 1 produced a usable installation. A later red assertion must not hide
+# Section A, config or app; they are independent of the role's verdict.
+rehearsal_section_status installed
+
 # --- phase 2 -------------------------------------------------------------
 if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/.crew-engine-stage/shared/conf/agents/$AGENT.conf; bot_cli_probe"; then
   echo
@@ -519,6 +531,7 @@ if [ "$GH_AUTHED" -eq 0 ] || ! bx "set -a; . ~/.crew-engine-stage/shared/conf/ag
   echo "   does not name this box's sandbox."
 else
   PHASE2_RAN=1
+  rehearsal_section_status phase2
   ME2="$(bx "gh api user --jq .login" | tr -d '\r\n')"
   HOST_ME="$(gh api user --jq .login)"
   # One sandbox PER ROLE. The three drill boxes may share one identity, but
