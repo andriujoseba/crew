@@ -67,6 +67,8 @@ fi
 remote="${remote:--}"
 ref="${ref:--}"
 printf '%s %s %s %s\n' "$role" "$remote" "$ref" "$shipped" >>"$DRILL_ROLE_LOG"
+[ -z "${REHEARSAL_SECTION_STATUS:-}" ] \
+  || printf '%s\n' "${DRILL_ROLE_STAGE:-phase2}" >"$REHEARSAL_SECTION_STATUS"
 if [ -n "$tree" ]; then
   echo "== phase 0: crew at $shipped (tree $tree), static checks"
 else
@@ -75,7 +77,7 @@ fi
 if [ "$(wc -l <"$DRILL_ROLE_LOG")" -eq 1 ] && [ -n "${DRILL_MOVE_TO:-}" ]; then
   git --git-dir="$DRILL_REMOTE" update-ref refs/heads/main "$DRILL_MOVE_TO"
 fi
-exit 0
+exit "${DRILL_ROLE_RC:-0}"
 ROLE
 chmod +x "$HARNESS/rehearsal.sh"
 cat >"$HARNESS/install-drill.sh" <<'INSTALL'
@@ -96,11 +98,24 @@ printf 'installer %s %s %s\n' "$remote" "$ref" "$shipped" >>"$DRILL_INSTALL_LOG"
 exit 0
 INSTALL
 chmod +x "$HARNESS/install-drill.sh"
+cat >"$HARNESS/rehearsal-config.sh" <<'CONFIG'
+#!/usr/bin/env bash
+printf 'config\n' >>"$DRILL_SECTION_LOG"
+exit 0
+CONFIG
+cat >"$HARNESS/rehearsal-app.sh" <<'APP'
+#!/usr/bin/env bash
+printf 'app\n' >>"$DRILL_SECTION_LOG"
+exit 0
+APP
+chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
 
 round_run() {  # <script> <roles> <ref>
   local script="$1" roles="$2" ref="$3"
   DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_REMOTE="$REMOTE" \
     DRILL_MOVE_TO="${DRILL_MOVE_TO:-}" \
+    DRILL_ROLE_STAGE="${DRILL_ROLE_STAGE:-phase2}" \
+    DRILL_ROLE_RC="${DRILL_ROLE_RC:-0}" \
     bash "$script" --remote "$REMOTE" --ref "$ref" --roles "$roles" \
       --keep --no-app --no-config-drill \
       --no-resume-drill --no-attention-drill --no-attention-audit-drill \
@@ -177,6 +192,54 @@ t drill-tree-record-names-head 1 \
   "$(grep -cF "## drilled source: $SECOND (tree $SOURCE)" <<<"$tree_out")"
 t drill-tree-phase-zero-names-head 1 \
   "$(grep -cF "phase 0: crew at $SECOND (tree $SOURCE), static checks" <<<"$tree_out")"
+
+# A red assertion inside phase 2 must not silently void the independent
+# installer, config and app sections. The explicit stage channel distinguishes
+# this from a role failure before an installed box existed (#491).
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+SECTION_LOG="$TMP/sections.log"
+: >"$SECTION_LOG"
+if phase2_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_SECTION_LOG="$SECTION_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_ROLE_STAGE=phase2 DRILL_ROLE_RC=1 \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
+      --keep --no-resume-drill --no-attention-drill \
+      --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  phase2_rc=0
+else
+  phase2_rc=$?
+fi
+t drill-phase2-failure-stays-red 1 "$phase2_rc"
+t drill-phase2-failure-reports-role 1 \
+  "$(grep -cF 'FAIL       reviewer  (phase 2 failed)' <<<"$phase2_out")"
+t drill-phase2-failure-runs-section-a 1 \
+  "$(grep -cF 'ok         installer  (Section A record emitted)' <<<"$phase2_out")"
+t drill-phase2-failure-runs-config 1 \
+  "$(grep -cF 'ok         config  (operator mode + registry contract)' <<<"$phase2_out")"
+t drill-phase2-failure-runs-app 1 \
+  "$(grep -cF 'ok         app  (collector + page)' <<<"$phase2_out")"
+t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LOG")"
+t drill-phase2-summary-counts-three-passed 1 \
+  "$(grep -cE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+
+required_later_sections() {
+  local record="$1" section
+  for section in installer config app; do
+    grep -Eq "^##   (ok|FAIL|skip|SKIPPED|INCOMPLETE) +$section  " <<<"$record" \
+      || return 1
+  done
+}
+if required_later_sections "$phase2_out"; then r1=complete; else r1=MISSING; fi
+t drill-phase2-record-names-every-later-section complete "$r1"
+phase2_missing_app="$(sed '/^##   ok         app  /d' <<<"$phase2_out")"
+if required_later_sections "$phase2_missing_app"; then r1=FALSE_PASS; else r1=red; fi
+t drill-phase2-absent-section-mutation-reds red "$r1"
+phase2_wrong_count="$(sed 's/3 passed, 1 failed/4 passed, 0 failed/' <<<"$phase2_out")"
+if grep -qE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' \
+    <<<"$phase2_wrong_count"; then r1=FALSE_PASS; else r1=red; fi
+t drill-phase2-summary-count-mutation-reds red "$r1"
 
 # Resolution failures belong to phase 0 and name both inputs before a role
 # begins, so the operator can distinguish a bad ref from a role failure.
