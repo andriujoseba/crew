@@ -1774,12 +1774,12 @@ _resume_newest_foreign() {
 # by; KIND names the lane. An empty KEY means the lane is no longer suppressed
 # (head moved, PR stopped qualifying, or the episode otherwise cleared).
 _builder_suppression_sync() {
-  local marker="$1" kind="$2" key="${3:-}" old_when old_kind old_key tmp
+  local marker="$1" kind="$2" key="${3:-}" old_kind old_key tmp
   if [ -z "$key" ]; then
     rm -f "$marker"
     return 0
   fi
-  if IFS=$'\t' read -r old_when old_kind old_key <"$marker" 2>/dev/null \
+  if IFS=$'\t' read -r _ old_kind old_key <"$marker" 2>/dev/null \
      && [ "$old_kind" = "$kind" ] && [ "$old_key" = "$key" ]; then
     return 0
   fi

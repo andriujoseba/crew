@@ -1650,7 +1650,7 @@ t resume-breaker-push-clears-suppression 311 "$RESUME_DISPATCH_NUMS"
 t resume-breaker-push-resets-count-to-one 1 \
   "$(awk -F'\t' -v k="o/r#311@$RG_HEAD2" '$1 == k {print $2}' "$RG_DUTY/.resume-zero-action.o__r")"
 t resume-breaker-push-clears-box-state 1 \
-  "$([ -e "$RG_DUTY/.builder-suppressed.o__r.draft" ]; echo $?)"
+  "$([ -e "$RG_DUTY/.builder-suppressed.o__r.draft" ] && echo 0 || echo 1)"
 # Closing the last draft also clears the published episode. This path returns
 # before the ledger, so it needs its own lifecycle assertion rather than
 # borrowing the head-movement case above.
@@ -1658,7 +1658,7 @@ printf '1\tdraft\to/r#311@%s\n' "$RG_HEAD" \
   >"$RG_DUTY/.builder-suppressed.o__r.draft"
 rg_tick ""
 t resume-breaker-empty-list-clears-box-state 1 \
-  "$([ -e "$RG_DUTY/.builder-suppressed.o__r.draft" ]; echo $?)"
+  "$([ -e "$RG_DUTY/.builder-suppressed.o__r.draft" ] && echo 0 || echo 1)"
 # A tick the LEDGER held must not reset the count: the breaker bounds
 # consecutive DISPATCHES, and a quiet tick between two of them is not progress.
 rg_reset
