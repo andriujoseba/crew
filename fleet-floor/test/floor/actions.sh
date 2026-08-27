@@ -311,20 +311,17 @@ fi
 # ===========================================================================
 # #487 D2/D4 — `restart` appended its stop result and never read it, so a stop
 # that failed was followed by `box start` on the next line and the box was
-# started anyway. Reached here on the GRACEFUL path, which is the one this
-# fixture can express: the block above left ff-wedged stopped, the ping tier
-# skips a stopped box and REPLACES its map wholesale, so within one round the
-# box has no published heartbeat at all — and unmeasured is not wedged
-# (fleet.wedged), so the collector's verdict is `graceful` and a bare restart
-# agrees with it. stub-box's `down` arm keys on the SCENARIO, so it hangs there
-# exactly as it does on a running wedged guest, which is the failure under
-# test. The force half is driven at branch level in test/concurrent-actions.py,
-# where a force stop can be made to fail at all.
+# started anyway.
 #
-# MUST FAIL: `box start` appearing in the call log. The reply is not where this
-# is asserted — "restart reported a failure" is equally true of a restart that
-# failed, started the box anyway and mentioned the stop afterwards, which is
-# the defect exactly.
+# Two cases, because reading the stop makes the stop's OTHER answer matter
+# too. Round 1, claude-bot: `box down` is not idempotent on the single-box
+# path — heavy-duty/box registers it `incus:stop` and runs `incus stop <inst>`
+# bare, and the `stop:STOPPED -> ""` guard is reached only by `box down all` —
+# so a stopped box answers the verb with an error, and a conditional start
+# swallowed a restart that used to work. "Nothing to stop" and "the stop
+# failed" are ranked apart, and both are asserted here.
+#
+# The block above left ff-wedged stopped, which is the first case exactly.
 # ===========================================================================
 echo "== restart reads its own stop (#487)"
 
@@ -337,6 +334,60 @@ t "stop: the stopped box's heartbeat is dropped, not left stale" None \
 t "stop: ...so the collector's verdict is the graceful path" stopped \
   "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
 
+# --- NOTHING TO STOP IS NOT A FAILED STOP -----------------------------------
+# MUST FAIL: `down` in the call log, or the box still stopped afterwards. The
+# status code is not where this is asserted either way — the pre-#487 code
+# fired a failing `down` here and started the box anyway, so 200 was already
+# true of the behaviour this replaces.
+FS_M=$(fs_mark)
+FS_AR="$(api POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "stop: a restart on a stopped box is not a refusal" 200 \
+  "$(printf '%s' "$FS_AR" | tail -1)"
+if grep -q '^down ff-wedged$' <<<"$FS_SEEN"; then
+  fail "stop: the verb is not fired at a box already stopped" "$FS_SEEN"
+else ok "stop: the verb is not fired at a box already stopped"; fi
+if grep -q '^start ff-wedged$' <<<"$FS_SEEN"; then
+  ok "stop: ...and the box is started, which is what was asked for"
+else fail "stop: ...and the box is started, which is what was asked for" "$FS_SEEN"; fi
+t "stop: ...ending running, as the confirm dialog promised" running \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+# Reported, not silently dropped: both steps are still in the reply, and the
+# stop row says which of its two answers this was.
+t "stop: the reply still records the stop step" down \
+  "$(printf '%s' "$FS_AR" | sed '$d' | jqf "d['results'][0].get('step','')")"
+t "stop: ...as the success that having nothing to do is (#77)" True \
+  "$(printf '%s' "$FS_AR" | sed '$d' | jqf "d['results'][0]['ok']")"
+t "stop: ...naming why it did not run" "already stopped" \
+  "$(printf '%s' "$FS_AR" | sed '$d' | jqf "d['results'][0]['out']")"
+
+# --- ...AND A STOP THAT REALLY FAILED STOPS THE START -----------------------
+# The box is RUNNING now, and a running box whose graceful stop fails is the
+# whole of what is left of this path: a wedged one is stopped by the force
+# branch, and a stopped one no longer reaches the verb at all. So the fixture
+# has to produce a guest whose shutdown does not complete while `box exec`
+# still answers — `stopstuck`, a stub scenario named in the `down` arm and
+# nowhere else, so every other tier reads the box as the healthy one it is.
+# ff-wedged is borrowed for it and put back below, the same borrow this block
+# already makes: test/cli.sh:1885 records why a 27th fixture row is refused.
+#
+# Waited for, not assumed: the collector's verdict has to be `graceful` or a
+# bare restart is refused 409, and that is a claim about the ping tier having
+# measured this box answering. One successful probe is enough — `wedged()` is
+# `not ok and fails >= N`, so it clears on the first one.
+echo stopstuck > "$FLOOR_STATE/ff-wedged.scenario"
+FS_DL=$(( $(date +%s) + 60 ))
+while [ "$(uf ff-wedged 'bool(u["ping"] and u["ping"]["ok"])')" != "True" ] \
+      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
+t "stop: the box answers the ping tier again" True \
+  "$(uf ff-wedged 'bool(u["ping"] and u["ping"]["ok"])')"
+t "stop: ...so the collector's verdict is graceful, not force" False \
+  "$(uf ff-wedged 'u["ping"]["wedged"]')"
+
+# MUST FAIL: `box start` appearing in the call log. The reply is not where this
+# is asserted — "restart reported a failure" is equally true of a restart that
+# failed, started the box anyway and mentioned the stop afterwards, which is
+# the defect exactly.
 FS_M=$(fs_mark)
 FS_RR="$(api POST /api/command '{"action":"restart","box":"ff-wedged"}')"
 FS_SEEN="$(fs_calls_since "$FS_M")"
@@ -348,8 +399,6 @@ else fail "stop: the graceful stop was attempted" "$FS_SEEN"; fi
 if grep -q '^start ff-wedged$' <<<"$FS_SEEN"; then
   fail "stop: a failed stop does not start the box" "$FS_SEEN"
 else ok "stop: a failed stop does not start the box"; fi
-t "stop: ...and the box is left as the failed stop found it" stopped \
-  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
 # The record, not just the outcome: a start that did not run is a third state
 # beside ran-and-worked and ran-and-failed, and the reply says which (#487 D4).
 t "stop: the reply records the start that never ran" start \
@@ -360,11 +409,22 @@ case "$FS_RR" in
   *"not started"*) ok "stop: ...and says so in words the page renders" ;;
   *) fail "stop: ...and says so in words the page renders" "$FS_RR" ;;
 esac
+# AND CLAIMS NOTHING BEYOND IT. This row used to end "so the box was left as it
+# was", which a timed-out graceful stop cannot establish: it has ASKED for a
+# shutdown that may still be in flight, so the guest's state is precisely the
+# unknown here (round 1, codex-bot and claude-bot). Asserted as an absence,
+# because every positive assertion above survives the claim being re-added.
+case "$FS_RR" in
+  *"left as it was"*) fail "stop: ...and claims nothing about the guest" "$FS_RR" ;;
+  *) ok "stop: ...and claims nothing about the guest" ;;
+esac
 
 # Put ff-wedged back the way this suite found it, and prove it is back: the
-# ping tier skips a stopped box, so leaving it down would empty its heartbeat
-# and floor/ping.sh — which waits on exactly that fact — would spend its
-# timeout and then fail for a reason nobody would trace to this block.
+# scenario override first, because the ping tier reads it, and then the box
+# itself. The ping tier skips a stopped box, so leaving it down would empty its
+# heartbeat and floor/ping.sh — which waits on exactly that fact — would spend
+# its timeout and then fail for a reason nobody would trace to this block.
+rm -f "$FLOOR_STATE/ff-wedged.scenario"
 status POST /api/command '{"action":"power-on","box":"ff-wedged"}' >/dev/null
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
@@ -450,12 +510,45 @@ t "wake-silent: leaves a DISARMED box alone" "" "$(cat "$FLOOR_STATE/ff-disarmed
 # anything, blocking the whole ACTION_TIMEOUT_S to report a timeout for a fact
 # the collector had already published as ping.wedged.
 #
-# MUST FAIL: an `exec` at ff-wedged in the call log. Asserted on argv, because
-# a failed row for that box is what the OLD behaviour produced too — the
-# difference is entirely in whether the wake was sent.
-if grep -q '^exec ff-wedged ' <<<"$FS_SEEN"; then
+# MUST FAIL: the wake's own `exec` at ff-wedged in the call log. Asserted on
+# argv, because a failed row for that box is what the OLD behaviour produced
+# too — the difference is entirely in whether the wake was sent.
+#
+# THE WAKE'S OWN, not any exec at that box. $FLOOR_CALLS is shared by every
+# tier: the ping tier probes the same box with `-- sh -c PING_SH` on its own
+# 10s timer (floor/ping.py), and a `^exec ff-wedged ` prefix matches that
+# probe exactly as well as a resume. Round 1, codex-bot: this assertion red on
+# a heartbeat that happened to land inside the window, in a required suite —
+# which makes whether it passes a question about background timing rather than
+# about the code. So the resume is identified by its OWN argv.
+#
+# stub-box logs one invocation per `printf '%s\n' "$*"`, so a resume's entry is
+# the argv line `exec <box> -- bash -lc ` (RESUME_SH opens with a newline, so
+# nothing follows on it) with RESUME_SH's first line beneath it. Both are
+# matched, because the argv line alone is shared with any other bash -lc script
+# that starts with a newline.
+# The needle is a LITERAL: it is a line of RESUME_SH as the stub logged it, so
+# nothing in it may be expanded here.
+# shellcheck disable=SC2016
+RESUME_BODY_HEAD='cron="$(crontab -l 2>/dev/null || true)"'
+ws_resumed() {  # ws_resumed BOX — was RESUME_SH fired into BOX, in $FS_SEEN?
+  awk -v head="exec $1 -- bash -lc " -v body="$RESUME_BODY_HEAD" '
+    $0 == head { armed = 1; next }
+    armed      { armed = 0; if ($0 == body) found = 1 }
+    END        { exit found ? 0 : 1 }
+  ' <<<"$FS_SEEN"
+}
+if ws_resumed ff-wedged; then
   fail "wake-silent: a wedged box is not sent a wake" "$FS_SEEN"
 else ok "wake-silent: a wedged box is not sent a wake"; fi
+# THE POSITIVE, through the same needle, and it is not decoration: a needle
+# that precise rots into a silent PASS if RESUME_SH's opening moves, and the
+# case above would go quiet rather than red. ff-paused is woken by this very
+# call — asserted on its crontab above — so if ws_resumed cannot see that, the
+# needle is stale and this is the assertion that says so.
+if ws_resumed ff-paused; then
+  ok "wake-silent: ...and the needle above can see a wake that WAS sent"
+else fail "wake-silent: ...and the needle above can see a wake that WAS sent" "$FS_SEEN"; fi
 # It is REPORTED, not skipped. A disarmed box drops out of the wake set with no
 # row at all (#189) because nothing is wrong with it; a wedged one is the
 # incident this console exists to surface, so it carries a row that names the

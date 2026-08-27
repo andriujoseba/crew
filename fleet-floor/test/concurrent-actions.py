@@ -290,11 +290,16 @@ class RestartFleet(Fleet):
         return self.unreachable
 
 
-def restart(box, unreachable, mode, refuses=None):
-    """One restart. `refuses` is the argv fragment the host rejects, or None."""
+def restart(box, unreachable, mode, refuses=None, state="running"):
+    """One restart. `refuses` is the argv fragment the host rejects, or None.
+
+    `state` is what `box list` says about the box, because the graceful path
+    now reads it: `box down` is not idempotent, so a box already stopped is one
+    the verb must not be fired at (round 1, claude-bot).
+    """
     calls = []
     floor.read_roster = lambda: [{"box": box, "agent": "claude", "room": "builder"}]
-    floor.box_states = lambda: {box: "running"}
+    floor.box_states = lambda: ({} if state is None else {box: state})
 
     def recording_run(argv, _timeout, _stdin_data=None):
         line = " ".join(argv)
@@ -320,7 +325,13 @@ assert calls == ["box incus wedge-a -- stop --force"], calls
 assert [r["step"] for r in payload["results"]] == ["force-stop", "start"], payload
 assert [r["ok"] for r in payload["results"]] == [False, None], payload
 assert payload["results"][1]["out"] == (
-    "not started: the force-stop step failed, so the box was left as it was"), payload
+    "not started: the force-stop step failed"), payload
+# AND NOTHING MORE THAN THAT. The row used to append "so the box was left as it
+# was", a claim about the guest on the one path where the guest's state is what
+# is unknown — a timed-out stop has asked for a shutdown that may be in flight
+# (round 1, codex-bot and claude-bot). Asserted as an absence, because the
+# equality above is satisfied by any rewording that keeps the claim.
+assert "left as it was" not in payload["results"][1]["out"], payload
 
 # The same path with the stop accepted. Without this pair the assertion above
 # is satisfied by a restart that has stopped starting boxes altogether.
@@ -337,11 +348,42 @@ assert calls == ["box down gentle-c"], calls
 assert [r["step"] for r in payload["results"]] == ["down", "start"], payload
 assert [r["ok"] for r in payload["results"]] == [False, None], payload
 assert payload["results"][1]["out"] == (
-    "not started: the down step failed, so the box was left as it was"), payload
+    "not started: the down step failed"), payload
+assert "left as it was" not in payload["results"][1]["out"], payload
 
 calls, status, payload = restart("gentle-d", False, "graceful")
 assert status == 200, (status, payload)
 assert calls == ["box down gentle-d", "box start gentle-d"], calls
+
+# NOTHING TO STOP IS NOT A FAILED STOP (round 1, claude-bot). `box down` is not
+# idempotent on the single-box path — it is `incus stop <inst>` bare, and box's
+# `stop:STOPPED -> ""` guard is reached only by `box down all` — so a restart
+# against an already-stopped box got a non-zero stop, and the conditional above
+# then swallowed the start that used to run. `ac-restart` is the one ACCESS
+# control state does not dim, so this is reachable from a console that has just
+# promised the operator "it is stopped and started again".
+#
+# The verb is not fired at a box already in the target state. `refuses` is set
+# to the stop anyway, so this asserts the shortcut rather than a host that
+# happened to be forgiving: if `box down` were fired here it would fail, and
+# the start would vanish with it.
+calls, status, payload = restart(
+    "already-e", False, "graceful", refuses="box down", state="stopped")
+assert status == 200, (status, payload)
+assert calls == ["box start already-e"], calls
+assert [r["step"] for r in payload["results"]] == ["down", "start"], payload
+assert [r["ok"] for r in payload["results"]] == [True, True], payload
+# Reported, not silently dropped: the reply still has both steps, and the stop
+# row says which of the two things happened to it.
+assert payload["results"][0]["out"] == "already stopped", payload
+
+# The FORCE path does not acquire the shortcut. A stopped box has no published
+# ping, so `box_unreachable()` is false and the force verdict is unreachable
+# from a stopped box in production — but the two conditions are independent in
+# the code, and a force stop that started skipping boxes on a stale `box list`
+# would be #486's silent-escalation ruling failing open in the other direction.
+calls, status, payload = restart("force-f", True, "force", state="stopped")
+assert calls == ["box incus force-f -- stop --force", "box start force-f"], calls
 
 
 # `wake-silent` against the state it was sending its wake into. All four boxes
@@ -397,6 +439,23 @@ assert [r["step"] for r in payload["results"]] == [
 assert [r["ok"] for r in payload["results"]] == [True, True, False, True], payload
 assert status == 500, (status, payload)
 assert payload["results"][2]["out"].startswith("wedged — not woken"), payload
+
+# A BOX THAT LEFT THE HOST WHILE WEDGED draws no row at all (round 1,
+# claude-bot). `fleet.get()`'s units are a snapshot up to a poll old while
+# `box_states()` is read fresh, so the wedge verdict outlives the box; an
+# `escalate` row here would name a restart lever for a box there is nothing to
+# restart, where before this PR the same box dropped out silently. Same units,
+# same ping, and only the host's inventory differs.
+gone_calls = []
+floor.run = lambda argv, _t, _s=None: (gone_calls.append(" ".join(argv[:3])),
+                                       (0, "done", ""))[1]
+floor.box_states = lambda: {"wake-stopped": "stopped", "wake-unmeasured": "running",
+                            "wake-answering": "running"}   # wake-wedged has gone
+status, payload = floor.do_command(WakeFleet(WAKE_UNITS), {"action": "wake-silent"})
+assert not any("wake-wedged" in call for call in gone_calls), gone_calls
+assert [r["box"] for r in payload["results"]] == [
+    "wake-stopped", "wake-unmeasured", "wake-answering"], payload
+assert status == 200, (status, payload)
 
 # log() is called by those workers. A deliberately slow stream makes
 # overlapping writes deterministic: the old print(message, flush=True) path
