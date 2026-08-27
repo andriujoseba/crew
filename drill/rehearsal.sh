@@ -191,9 +191,6 @@ if [ -z "$TREE" ]; then
   REPORT_TARGET="$(rehearsal_report_target "$REMOTE" "${SOURCE_REF:-$REF}")" \
     || REPORT_TARGET=""
 fi
-# The trailing clause every footer appends, empty when nothing is derivable.
-REPORT_ON=""
-[ -z "$REPORT_TARGET" ] || REPORT_ON=" on $REPORT_TARGET"
 cleanup_all() {
   local rc=$?
   if [ "$BOX_TOUCHED" -eq 1 ]; then
@@ -1021,23 +1018,13 @@ echo "== rehearsal summary [$ROLE]: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed
 [ -n "$REUSE_NOTE" ] && echo "   REUSE: $REUSE_NOTE"
 if [ "${#FAILS[@]}" -gt 0 ]; then
   printf '  FAIL %s\n' "${FAILS[@]}"
-  echo "Fixtures and box are left in place. Report findings$REPORT_ON with"
-  echo "~/duty/duty.log and ~/duty/logs/* excerpts from: box shell $BOX_NAME"
+  rehearsal_report_footer fail "$REPORT_TARGET" "$ROLE" "$BOX_NAME"
   exit 1
 fi
 # Exit 2, not 0: nothing failed, but the $ROLE loop never ran. Reporting this
 # as a pass is how a rehearsal that proved nothing clears a rollout.
 if [ "$PHASE2_RAN" -eq 0 ]; then
-  echo "INCOMPLETE — phase 2 never ran, so the $ROLE loop is UNPROVEN."
-  echo "Everything above is acquisition and install only. This is NOT a pass"
-  echo "and must not be reported as one$REPORT_ON."
+  rehearsal_report_footer incomplete "$REPORT_TARGET" "$ROLE" "$BOX_NAME"
   exit 2
 fi
-# The pass footer's instruction is the whole of its second sentence, so with no
-# target there is nothing left to qualify and the sentence goes rather than
-# printing a bare "Report the pass." that names nowhere (#492 D2).
-if [ -n "$REPORT_TARGET" ]; then
-  echo "All green, phase 2 included — the $ROLE loop ran. Report the pass on $REPORT_TARGET."
-else
-  echo "All green, phase 2 included — the $ROLE loop ran."
-fi
+rehearsal_report_footer pass "$REPORT_TARGET" "$ROLE" "$BOX_NAME"

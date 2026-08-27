@@ -582,11 +582,6 @@ if [ "$KEEP" -eq 1 ] || [ "$overall" -ne 0 ]; then
   echo "## When you are done with them:  $TEARDOWN_HINT"
 fi
 if [ "$overall" -eq 2 ]; then
-  echo "## NOT a pass: at least one role never reached phase 2. Log those boxes"
-  if [ -n "$REPORT_TARGET" ]; then
-    echo "## in and re-run before reporting anything on $REPORT_TARGET."
-  else
-    echo "## in and re-run before reporting anything."
-  fi
+  rehearsal_report_footer round-incomplete "$REPORT_TARGET"
 fi
 exit "$overall"

@@ -52,3 +52,48 @@ rehearsal_report_target() {
     printf 'PR #%s\n' "$number"
   fi
 }
+
+# rehearsal_report_footer KIND TARGET [ROLE] [BOX]
+# Print the exit footer for KIND — `fail`, `incomplete` or `pass` for a role
+# round, `round-incomplete` for the orchestrator's summary — with an empty
+# TARGET meaning no instruction. Return 1 for an unknown KIND.
+#
+# The four live here rather than beside their exits so that a fixture can drive
+# every one of them: the exits themselves are the far end of a round on a real
+# box host, which is exactly why a stale target survived at all of them for as
+# long as it did. Whether the instruction appears is decided in one place, and
+# an exit that gains a footer has to come here to get one.
+rehearsal_report_footer() {
+  local kind="${1:-}" target="${2:-}" role="${3:-}" box="${4:-}" on=""
+  [ -z "$target" ] || on=" on $target"
+  case "$kind" in
+    fail)
+      printf 'Fixtures and box are left in place. Report findings%s with\n' "$on"
+      # shellcheck disable=SC2088  # the tilde is prose: the operator types
+      # these paths in the BOX's login shell, which is where they resolve
+      printf '~/duty/duty.log and ~/duty/logs/* excerpts from: box shell %s\n' "$box"
+      ;;
+    incomplete)
+      printf 'INCOMPLETE — phase 2 never ran, so the %s loop is UNPROVEN.\n' "$role"
+      printf 'Everything above is acquisition and install only. This is NOT a pass\n'
+      printf 'and must not be reported as one%s.\n' "$on"
+      ;;
+    pass)
+      # Unlike the two above, this footer's instruction is its whole second
+      # sentence, so with no target there is nothing left to qualify and the
+      # sentence goes rather than printing a bare "Report the pass." that names
+      # nowhere.
+      if [ -n "$target" ]; then
+        printf 'All green, phase 2 included — the %s loop ran. Report the pass on %s.\n' \
+          "$role" "$target"
+      else
+        printf 'All green, phase 2 included — the %s loop ran.\n' "$role"
+      fi
+      ;;
+    round-incomplete)
+      printf '## NOT a pass: at least one role never reached phase 2. Log those boxes\n'
+      printf '## in and re-run before reporting anything%s.\n' "$on"
+      ;;
+    *) return 1 ;;
+  esac
+}
