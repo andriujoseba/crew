@@ -1386,6 +1386,7 @@ t near-miss-prompt-explains-the-comment explained "$r1"
 RG_HEAD=9ff004ac9ff004ac9ff004ac9ff004ac9ff004ac
 RG_HEAD2=1782445178244517824451782445178244517824
 RG_DUTY="$TMP/resume-gate"; RG_LOG="$TMP/resume-gate.log"
+RG_MARKER="$RG_DUTY/.builder-suppressed.o__r.draft.o__r_311_$RG_HEAD"
 RG_SPEECH="$TMP/resume-speech"
 mkdir -p "$RG_DUTY" "$RG_SPEECH"
 # THE ACTIVITY THE STUBBED API SERVES, one file per PR number, `login<TAB>stamp`
@@ -1446,7 +1447,10 @@ gh() {
 # shellcheck disable=SC2031  # breaker fixtures above intentionally isolate DUTY_DIR in subshells
 RG_SAVED_DUTY="$DUTY_DIR"; RG_SAVED_ME="${ME-}"; RG_ME_WAS_SET="${ME+x}"
 DUTY_DIR="$RG_DUTY"; ME=me
-rg_reset() { rm -f "$RG_DUTY/.seen-resume" "$RG_DUTY/.resume-zero-action.o__r"; }
+rg_reset() {
+  rm -f "$RG_DUTY/.seen-resume" "$RG_DUTY/.resume-zero-action.o__r" \
+    "$RG_DUTY"/.builder-suppressed.o__r.draft*
+}
 rg_tick() {  # rg_tick LISTING [SESSION-RC] — one duty tick, caller side included
   # Cleared, not assumed: against a tree without the gate this keeps `set -u`
   # from taking the whole suite down, so each case below reports its own FAIL
@@ -1616,6 +1620,8 @@ t resume-breaker-quiet-at-two 0 "$(grep -c 'produced no commit, and after this o
 rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T03:00:00Z 'Closes #290')"
 t resume-breaker-third-dispatch 311 "$RESUME_DISPATCH_NUMS"
 t resume-breaker-trips-once 1 "$(grep -c 'produced no commit, and after this one' "$RG_LOG")"
+t resume-breaker-third-dispatch-does-not-record-suppression 1 \
+  "$([ -e "$RG_MARKER" ] && echo 0 || echo 1)"
 # The WHOLE line, not a prefix: the declared wake is the half a human reads to
 # know where the park expects its signal, and a prefix match let a `:+`/`:-`
 # pair that printed the issue number twice through in review.
@@ -1630,14 +1636,64 @@ t resume-breaker-warn-claims-no-unrun-session 0 \
   "$(grep -c '3 consecutive resume dispatches' "$RG_LOG")"
 rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T04:00:00Z 'Closes #290')"
 t resume-breaker-no-fourth-dispatch "" "$RESUME_DISPATCH_NUMS"
+t resume-breaker-suppress-verdict-records-box-state \
+  $'draft\to/r#311@'"$RG_HEAD" \
+  "$(cut -f2- "$RG_MARKER")"
+RG_SUPPRESSED_AT="$(cut -f1 "$RG_MARKER")"
+case "$RG_SUPPRESSED_AT" in ''|*[!0-9]*) r1=INVALID ;; *) r1=epoch ;; esac
+t resume-breaker-state-records-suppression-time epoch "$r1"
+t resume-breaker-first-marker-write-is-quiet 0 \
+  "$(grep -c 'builder-suppressed.*No such file or directory' "$RG_LOG")"
 t resume-breaker-suppression-is-said 1 \
   "$(grep -c "breaker-suppressed at $RG_HEAD after 3 zero-action dispatches" "$RG_LOG")"
+t resume-breaker-state-keeps-original-trip-time "$RG_SUPPRESSED_AT" \
+  "$(cut -f1 "$RG_MARKER")"
 t resume-breaker-warns-only-once 0 "$(grep -c 'produced no commit, and after this one' "$RG_LOG")"
 # A push clears it: a new head is a new key, and the count starts at one.
 rg_tick "$(rg_listing "$RG_HEAD2" T 2026-08-03T05:00:00Z 'Closes #290')"
 t resume-breaker-push-clears-suppression 311 "$RESUME_DISPATCH_NUMS"
 t resume-breaker-push-resets-count-to-one 1 \
   "$(awk -F'\t' -v k="o/r#311@$RG_HEAD2" '$1 == k {print $2}' "$RG_DUTY/.resume-zero-action.o__r")"
+t resume-breaker-push-clears-box-state 1 \
+  "$([ -e "$RG_MARKER" ] && echo 0 || echo 1)"
+# Closing the last draft also clears the published episode. This path returns
+# before the ledger, so it needs its own lifecycle assertion rather than
+# borrowing the head-movement case above.
+printf '1\tdraft\to/r#311@%s\n' "$RG_HEAD" \
+  >"$RG_MARKER"
+rg_tick ""
+t resume-breaker-empty-list-clears-box-state 1 \
+  "$([ -e "$RG_MARKER" ] && echo 0 || echo 1)"
+
+# More than one PR can trip the same lane. Each episode keeps its own original
+# timestamp, and clearing either selected episode must leave the other intact.
+MULTI_DUTY="$TMP/suppression-same-lane"
+mkdir -p "$MULTI_DUTY"
+old_duty="$DUTY_DIR"; DUTY_DIR="$MULTI_DUTY"
+MULTI_STATE="$MULTI_DUTY/.resume-zero-action-stranded.o__r"
+MULTI_PREFIX="$MULTI_DUTY/.builder-suppressed.o__r.stranded"
+MULTI_ONE="$MULTI_PREFIX.o__r_1_aaa"
+MULTI_TWO="$MULTI_PREFIX.o__r_2_bbb"
+printf 'o/r#1@aaa\t3\no/r#2@bbb\t3\n' >"$MULTI_STATE"
+printf '100\tstranded\to/r#1@aaa\n' >"$MULTI_ONE"
+_resume_lane_breaker o/r stranded "$MULTI_STATE" $'o/r#2@bbb\no/r#1@aaa' >/dev/null
+MULTI_TWO_AT="$(cut -f1 "$MULTI_TWO")"
+t suppression-same-lane-keeps-first-trip 100 "$(cut -f1 "$MULTI_ONE")"
+case "$MULTI_TWO_AT" in ''|*[!0-9]*) r1=INVALID ;; *) r1=epoch ;; esac
+t suppression-same-lane-records-second-trip epoch "$r1"
+_resume_lane_breaker o/r stranded "$MULTI_STATE" 'o/r#2@bbb' >/dev/null
+t suppression-same-lane-clears-oldest-only 1 \
+  "$([ ! -e "$MULTI_ONE" ] && [ -e "$MULTI_TWO" ] && echo 1 || echo 0)"
+t suppression-same-lane-survivor-keeps-trip "$MULTI_TWO_AT" "$(cut -f1 "$MULTI_TWO")"
+printf 'o/r#1@aaa\t3\no/r#2@bbb\t3\n' >"$MULTI_STATE"
+printf '100\tstranded\to/r#1@aaa\n' >"$MULTI_ONE"
+_resume_lane_breaker o/r stranded "$MULTI_STATE" $'o/r#2@bbb\no/r#1@aaa' >/dev/null
+_resume_lane_breaker o/r stranded "$MULTI_STATE" 'o/r#1@aaa' >/dev/null
+t suppression-same-lane-clears-younger-only 1 \
+  "$([ -e "$MULTI_ONE" ] && [ ! -e "$MULTI_TWO" ] && echo 1 || echo 0)"
+t suppression-same-lane-older-survivor-keeps-trip 100 "$(cut -f1 "$MULTI_ONE")"
+DUTY_DIR="$old_duty"
+
 # A tick the LEDGER held must not reset the count: the breaker bounds
 # consecutive DISPATCHES, and a quiet tick between two of them is not progress.
 rg_reset
@@ -1687,6 +1743,24 @@ t resume-gate-deep-thread-then-quiet "" "$RESUME_DISPATCH_NUMS"
 for _i in $(seq 1 130); do
   printf 'me\t2026-08-03T00:%02d:00Z\n' "$(( _i % 60 ))" >>"$RG_SPEECH/311.comments"
 done
+
+# Published markers are bounded by the configured repository/lane set too.
+# A removed repo has no caller left to clear its lane, and a renamed lane has
+# the same shape, so the tick-wide prune owns both endings.
+PRUNE_DUTY="$TMP/suppression-prune"
+mkdir -p "$PRUNE_DUTY"
+printf '1\tdraft\to/r#1@aaa\n' >"$PRUNE_DUTY/.builder-suppressed.o__r.draft"
+printf '2\tdraft\told/r#2@bbb\n' >"$PRUNE_DUTY/.builder-suppressed.old__r.draft.old__r_2_bbb"
+printf '3\tretired\to/r#3@ccc\n' >"$PRUNE_DUTY/.builder-suppressed.o__r.retired.o__r_3_ccc"
+old_duty="$DUTY_DIR"; DUTY_DIR="$PRUNE_DUTY"
+_builder_suppression_prune 'o/r'
+DUTY_DIR="$old_duty"
+t suppression-prune-keeps-configured-lane 1 \
+  "$([ -e "$PRUNE_DUTY/.builder-suppressed.o__r.draft" ] && echo 1 || echo 0)"
+t suppression-prune-removes-dropped-repo 1 \
+  "$([ ! -e "$PRUNE_DUTY/.builder-suppressed.old__r.draft.old__r_2_bbb" ] && echo 1 || echo 0)"
+t suppression-prune-removes-retired-lane 1 \
+  "$([ ! -e "$PRUNE_DUTY/.builder-suppressed.o__r.retired.o__r_3_ccc" ] && echo 1 || echo 0)"
 printf 'other\t2026-08-04T09:00:00Z\n' >>"$RG_SPEECH/311.comments"
 rg_say 311 reviews
 RESUME_DISPATCH_NUMS=""; RESUME_COMMIT_LINES=""

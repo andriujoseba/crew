@@ -21,6 +21,19 @@ t "fleet: carries the serving host's exact version string" "$FLOOR_TEST_VERSION"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
 t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"
+t "state: breaker stop -> suppressed" suppressed "$(uf ff-suppressed "u['state']")"
+t "suppressed: carries age and reason" True \
+  "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"
+t "suppressed: remains distinct from idle" False \
+  "$(uf ff-suppressed "u['state'] == 'idle'")"
+t "suppressed overlap: SILENT remains offline" offline \
+  "$(uf ff-supp-silent "u['state']")"
+t "suppressed overlap: unknown tick age remains offline" offline \
+  "$(uf ff-supp-unknown "u['state']")"
+t "suppressed overlap: active session remains working" working \
+  "$(uf ff-supp-working "u['state']")"
+t "suppressed overlap: stuck run remains working" working \
+  "$(uf ff-supp-stuck "u['state']")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
@@ -44,6 +57,10 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 source "$FLOOR/../drill/agreement.sh"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
+t "agreement: matching SILENT readings are compared" silent \
+  "$(agreement_case offline 'ff-silent offline host engine current stale stale SILENT — no tick' 'SILENT — no tick' False)"
+t "agreement: a SILENT mismatch cannot skip" silent-mismatch \
+  "$(agreement_case offline 'ff-silent suppressed host engine current stale stale breaker' 'SILENT — no tick' False)"
 build_unit_source="$(awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor/units.py")"
 if grep -q 'now - last_ts' <<<"$build_unit_source"; then
   fail "clock: unit building never mixes host now with a box timestamp" \
@@ -150,6 +167,28 @@ t "wire: the payload still carries the boxes the page hides" \
 
 
 echo "== sessions, queue, metrics"
+FF_SESSION_EDGES="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+now = datetime(2026, 8, 27, 16, 0, tzinfo=timezone.utc).timestamp()
+_, old = derive_sessions([
+    "2026-08-27T08:00:00Z SESSION START kind=build key=crew#old",
+], now)
+_, paired = derive_sessions([
+    "2026-08-27T14:00:00Z SESSION START kind=build key=crew#crashed",
+    "2026-08-27T15:58:00Z SESSION START kind=review key=crew#done",
+    "2026-08-27T15:59:00Z SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok",
+], now)
+print("old=%s paired=%s" % (old, paired["key"] if paired else None))
+PY
+)"
+t "sessions: orphan older than six hours is not active" \
+  "old=None paired=crew#crashed" "$FF_SESSION_EDGES"
 t "sessions: parsed"          1    "$(uf ff-working "len(u['sessions'])")"
 t "sessions: rc carried"      0    "$(uf ff-working "u['sessions'][0]['rc']")"
 t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"

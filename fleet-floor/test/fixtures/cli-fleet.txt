@@ -15,6 +15,16 @@
 cli-neverticked running  neverticked
 cli-hired      running  working
 cli-idle       running  idle
+cli-suppressed running  suppressed
+cli-supp-silent running suppressed-silent
+cli-supp-unknown running suppressed-unknown
+cli-supp-working running suppressed-working
+cli-supp-stuck running suppressed-stuck
+cli-stuck      running  stuck
+cli-supp-nots running suppressed-notimestamp
+cli-supp-old-orphan running suppressed-old-orphan
+cli-supp-paired running suppressed-paired-crash
+cli-silent     running  silent
 # Present on the host and answering nothing. It must stay distinguishable from
 # the never-ticked box above: both have no duty log, and only one of them is
 # fine (#224 criterion 4, #221 one call site over).

@@ -128,6 +128,10 @@ CREW_REPO="${CREW_REPO:-heavy-duty/crew}"
 # not. Kept here rather than in the in-box script so the number lives on the
 # host, once per reader, and never inside a box that cannot see either.
 SILENT_AFTER_S="${CREW_SILENT_AFTER:-600}"
+# These are shared operator verdicts, not display tuning. The floor accepts the
+# same override for STUCK and treats an unmatched START as live for six hours;
+# shared/test pins both readers so either side moving alone fails loudly.
+STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"
 
 # Two failures, two exit codes — because crew is called from scripts and from
 # `crew up` loops, and "the fleet is broken" and "you typo'd" used to return
@@ -1266,9 +1270,11 @@ vendor_probe() {
 }
 
 # auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
-# observed it, in one exec of pure local file reads. Echoes five fields:
+# observed it, in one exec of pure local file reads. Echoes eleven fields:
 #
 #     <gh-state> <vendor-state> <tick-age-seconds-or--1> <armed> <paused>
+#     <suppression-age-or--1> <lane-or--> <repo#pr@head-or-->
+#     <log-present> <session-active> <lock-age-or--1>
 #
 # `armed` and `paused` are crontab line COUNTS, read with probe.sh's own
 # patterns, so `crew status` and the floor answer "is this box armed?" from
@@ -1309,10 +1315,32 @@ auth_from_flow() {
       elif [ ! -s "$HOME/duty/VERSION" ]; then printf "unknown "
       else printf "nofail "; fi
     done
-    age=-1
+    age=-1; log_timestamped=0; session_active=0; lockage=-1
     if [ -r "$HOME/duty/duty.log" ]; then
-      ts="$(grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" "$HOME/duty/duty.log" | tail -1)"
-      [ -n "$ts" ] && age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
+      log_tail="$(tail -n 600 "$HOME/duty/duty.log")"
+      ts="$(printf "%s\n" "$log_tail" | grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" | tail -1)"
+      if [ -n "$ts" ]; then
+        log_timestamped=1
+        age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
+      fi
+      # Match floor.units.derive_sessions: END pops the newest unmatched START,
+      # and an orphan older than six hours is a crashed session, not live work.
+      session_start="$(printf "%s\n" "$log_tail" | awk "
+        / SESSION END / { if (depth > 0) depth--; next }
+        / SESSION START / { depth++; started[depth]=substr(\$0, 1, 20) }
+        END { if (depth > 0) print started[depth] }
+      ")"
+      if [ -n "$session_start" ]; then
+        session_epoch="$(date -u -d "$session_start" +%s 2>/dev/null || echo 0)"
+        case "$session_epoch" in
+          ""|*[!0-9]*) : ;;
+          *) [ $(( $(date -u +%s) - session_epoch )) -lt 21600 ] && session_active=1 ;;
+        esac
+      fi
+    fi
+    if [ -r "$HOME/duty/.duty.lock.since" ]; then
+      lock_since="$(cat "$HOME/duty/.duty.lock.since" 2>/dev/null || echo)"
+      case "$lock_since" in ""|*[!0-9]*) : ;; *) lockage=$(( $(date +%s) - lock_since )) ;; esac
     fi
     # Live tick.sh crontab lines. The pattern is probe.sh'\''s ::cron pattern
     # CHARACTER FOR CHARACTER, and it has to stay that way: this helper exists
@@ -1335,9 +1363,31 @@ auth_from_flow() {
     # box never had one (crew hire it). Telling an operator to re-hire a box
     # they paused thirty seconds ago is worse than saying nothing.
     paused="$(crontab -l 2>/dev/null | grep -cE "^#[[:space:]]*CREW-FLOOR-PAUSED")"
-    printf "%s %s %s\n" "$age" "$armed" "$paused"
+    sw=0; sk=-; sid=-
+    for sf in "$HOME"/duty/.builder-suppressed.*; do
+      [ -f "$sf" ] || continue
+      IFS="$(printf "\t")" read -r when kind key <"$sf" 2>/dev/null || continue
+      case "$when" in ""|*[!0-9]*) continue ;; esac
+      [ -n "$kind" ] && [ -n "$key" ] || continue
+      if [ "$sw" -eq 0 ] || [ "$when" -lt "$sw" ]; then sw="$when"; sk="$kind"; sid="$key"; fi
+    done
+    if [ "$sw" -gt 0 ]; then sage=$(( $(date +%s) - sw )); else sage=-1; fi
+    printf "%s %s %s %s %s %s %s %s %s\n" \
+      "$age" "$armed" "$paused" "$sage" "$sk" "$sid" \
+      "$log_timestamped" "$session_active" "$lockage"
     printf "\n"
   ' 2>/dev/null | tr -d '\r'
+}
+
+status_duration() {
+  local age="${1:-0}"
+  if [ "$age" -ge 3600 ]; then
+    printf '%dh %02dm\n' "$(( age / 3600 ))" "$(( age % 3600 / 60 ))"
+  elif [ "$age" -ge 60 ]; then
+    printf '%dm\n' "$(( age / 60 ))"
+  else
+    printf '%ds\n' "$age"
+  fi
 }
 
 # production_registry — the repo list THIS checkout would seed into a box.
@@ -2104,11 +2154,12 @@ cmd_status() {
   # ENGINE is skew, INTEGRITY is whether the box is even running the engine it
   # names, and collapsing the two loses the only question `crew status` could
   # not answer before. 10 wide for `unverified`.
-  local fmt='%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n'
+  local fmt='%-20s %-10s %-12s %-15s %-10s %-8s %-8s %s\n'
   local host; host="$(crew_version)"
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
+  local supp_age supp_kind supp_key supp_subject log_timestamped session_active lock_age
   local report estate erecorded edisplay
   local rreport conv convnote
   while read -r name agent role _from; do
@@ -2128,13 +2179,16 @@ cmd_status() {
     estate="$(report_field state "$report")"
     erecorded="$(report_field recorded "$report")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
-    read -r ghs vs tickage armed cpaused <<<"$(auth_from_flow "$name")"
+    read -r ghs vs tickage armed cpaused supp_age supp_kind supp_key \
+      log_timestamped session_active lock_age <<<"$(auth_from_flow "$name")"
     ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
     # An older engine, or a box that answered nothing, reports no counts. Treat
     # that as "armed" rather than inventing an alarm: absence of evidence about
     # cron is not evidence that cron is gone, and the old behaviour (say
     # nothing) is the safe one to fall back to.
     armed="${armed:-1}"; cpaused="${cpaused:-0}"
+    supp_age="${supp_age:--1}"; supp_kind="${supp_kind:--}"; supp_key="${supp_key:--}"
+    log_timestamped="${log_timestamped:-0}"; session_active="${session_active:-0}"; lock_age="${lock_age:--1}"
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
     # it, because two readers with private thresholds is the defect this whole
@@ -2147,9 +2201,9 @@ cmd_status() {
     # falling through to the else called a box hired a minute ago `stale` (#265).
     for _v in ghs vs; do
       if [ "${!_v}" = nofail ]; then
-        if [ "$tickage" -lt 0 ]; then
+        if [[ "$tickage" =~ ^-?[0-9]+$ ]] && [ "$tickage" -lt 0 ]; then
           printf -v "$_v" waiting
-        elif [ "$tickage" -lt "$SILENT_AFTER_S" ]; then
+        elif [[ "$tickage" =~ ^[0-9]+$ ]] && [ "$tickage" -lt "$SILENT_AFTER_S" ]; then
           printf -v "$_v" flowing
         else
           printf -v "$_v" stale
@@ -2212,6 +2266,29 @@ cmd_status() {
       else
         note="disarmed — no cron line; crew hire $name arms it"
       fi
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [ "$log_timestamped" = 1 ] && { ! [[ "$tickage" =~ ^[0-9]+$ ]] \
+           || [ "$tickage" -ge "$SILENT_AFTER_S" ]; }; then
+      state=offline
+      if [[ "$tickage" =~ ^[0-9]+$ ]]; then
+        note="SILENT — no tick for $(status_duration "$tickage")"
+      else
+        note="tick age unknown — waiting for a valid probe"
+      fi
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [[ "$lock_age" =~ ^[0-9]+$ ]] \
+         && [ "$lock_age" -gt "$STUCK_AFTER_S" ]; then
+      state=working
+      note="STUCK — duty run has held the lock for $(status_duration "$lock_age")"
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [ "$session_active" = 1 ]; then
+      state=working
+      note="session active"
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [[ "$supp_age" =~ ^[0-9]+$ ]]; then
+      state=suppressed
+      supp_subject="${supp_key%@*}"
+      note="for $(status_duration "$supp_age") — $supp_kind resume breaker at $supp_subject"
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
       # `|| true` is load-bearing, exactly as it is in box_state, box_agent and
       # box_registry: ~/duty/duty.log does not exist until the first duty run

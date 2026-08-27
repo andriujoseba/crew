@@ -1764,6 +1764,76 @@ _resume_newest_foreign() {
     | sort | tail -1
 }
 
+# _builder_suppression_sync PREFIX KIND KEYS — publish every breaker episode as
+# box state. PREFIX is lane-scoped because each resume lane owns an independent
+# breaker: one lane becoming actionable must not erase another lane's stop.
+#
+# The first field is the trip time, not this tick's observation time. Keeping
+# an unchanged marker byte-for-byte makes the age meaningful while a head
+# remains suppressed. Each active KEY gets its own marker so one lane can retain
+# several independent trip times. KEY carries the repo, PR and head that the
+# breaker counts by; KIND names the lane. An empty KEYS list means the lane is
+# no longer suppressed (heads moved, PRs stopped qualifying, or the episodes
+# otherwise cleared).
+_builder_suppression_sync() {
+  local prefix="$1" kind="$2" keys="${3:-}" key suffix marker old_kind old_key tmp
+  local active marker_key
+  active="$(printf '%s\n' "$keys" | awk 'NF && !seen[$0]++')"
+
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    suffix="${key//\//__}"; suffix="${suffix//#/_}"; suffix="${suffix//@/_}"
+    marker="$prefix.$suffix"
+    if [ -f "$marker" ] \
+       && IFS=$'\t' read -r _ old_kind old_key <"$marker" \
+       && [ "$old_kind" = "$kind" ] && [ "$old_key" = "$key" ]; then
+      continue
+    fi
+    # Preserve a pre-multi-marker episode when upgrading an already suppressed
+    # lane. The legacy marker can represent at most one key, so only an exact
+    # content match is eligible to carry its original trip time forward.
+    if [ -f "$prefix" ] \
+       && IFS=$'\t' read -r _ old_kind old_key <"$prefix" \
+       && [ "$old_kind" = "$kind" ] && [ "$old_key" = "$key" ]; then
+      mv "$prefix" "$marker"
+      continue
+    fi
+    tmp="$marker.tmp.$$"
+    printf '%s\t%s\t%s\n' "$(date +%s)" "$kind" "$key" >"$tmp"
+    mv "$tmp" "$marker"
+  done <<<"$active"
+
+  rm -f "$prefix"
+  for marker in "$prefix".*; do
+    [ -f "$marker" ] || continue
+    marker_key="$(cut -f3- "$marker" 2>/dev/null || true)"
+    grep -qxF "$marker_key" <<<"$active" || rm -f "$marker"
+  done
+}
+
+# Remove records whose repository or lane is no longer part of this engine's
+# configured builder sweep. Without this pass, removing a repo from repos.txt
+# leaves its last breaker verdict visible forever because no lane caller remains
+# to clear it.
+_builder_suppression_prune() {
+  local repos="$1" marker repo lane keep
+  for marker in "$DUTY_DIR"/.builder-suppressed.*; do
+    [ -f "$marker" ] || continue
+    keep=0
+    while IFS= read -r repo; do
+      [ -n "$repo" ] || continue
+      for lane in draft stranded near-miss green-head; do
+        if [[ "$marker" = "$DUTY_DIR/.builder-suppressed.${repo//\//__}.$lane" \
+           || "$marker" = "$DUTY_DIR/.builder-suppressed.${repo//\//__}.$lane."* ]]; then
+          keep=1
+          break 2
+        fi
+      done
+    done <<<"$repos"
+    [ "$keep" -eq 1 ] || rm -f "$marker"
+  done
+}
+
 # _resume_breaker STATE THRESHOLD — the zero-action circuit breaker. stdin is
 # one `<key>\t<fresh|held>` line per draft this tick, `fresh` meaning the ledger
 # would dispatch it; stdout is `<key>\t<dispatch|suppress|hold>\t<count>`.
@@ -1827,9 +1897,13 @@ _resume_breaker() {
 # stale keys.
 _resume_lane_breaker() {
   local repo="$1" lane="$2" state="$3" keys="$4"
-  local key verdict count num head nums="" breaker=3
+  local key verdict count num head nums="" breaker=3 suppressed_keys=""
+  local marker="$DUTY_DIR/.builder-suppressed.${repo//\//__}.$lane"
   RESUME_LANE_DISPATCH_NUMS=""
-  [ -n "${keys//[[:space:]]/}" ] || return 0
+  if [ -z "${keys//[[:space:]]/}" ]; then
+    _builder_suppression_sync "$marker" "$lane" ""
+    return 0
+  fi
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
@@ -1842,12 +1916,14 @@ _resume_lane_breaker() {
         fi
         ;;
       suppress)
+        suppressed_keys="$suppressed_keys$key"$'\n'
         log "no resume duty: $repo#$num $lane lane suppressed at $head after $count zero-action dispatches — only a push clears it (#314)"
         ;;
       *) : ;;
     esac
   done < <(printf '%s\n' "$keys" | awk 'NF { print $0 "\tfresh" }' \
     | _resume_breaker "$state" "$breaker")
+  _builder_suppression_sync "$marker" "$lane" "$suppressed_keys"
   RESUME_LANE_DISPATCH_NUMS="${nums# }"
 }
 
@@ -1905,9 +1981,13 @@ _near_miss_dispatch_desc() {
 # not silently reset it. Stale keys are pruned by the next tick that has rows.
 _green_head_breaker() {
   local repo="$1" slug="$2" rows="$3"
-  local key verdict count num head nums="" breaker=3
+  local key verdict count num head nums="" breaker=3 suppressed_keys=""
+  local marker="$DUTY_DIR/.builder-suppressed.$slug.green-head"
   GREEN_HEAD_DISPATCH_NUMS=""
-  [ -n "${rows//[[:space:]]/}" ] || return 0
+  if [ -z "${rows//[[:space:]]/}" ]; then
+    _builder_suppression_sync "$marker" green-head ""
+    return 0
+  fi
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
@@ -1923,6 +2003,7 @@ _green_head_breaker() {
         fi
         ;;
       suppress)
+        suppressed_keys="$suppressed_keys$key"$'\n'
         log "no resume duty: $repo#$num green-head bypass suppressed at $head after $count zero-action dispatches — only a push clears it (#314); the twelve-tick counter still runs"
         ;;
       *) : ;;
@@ -1936,6 +2017,7 @@ _green_head_breaker() {
         done \
       | _resume_breaker "$DUTY_DIR/.resume-zero-action-green.$slug" "$breaker"
   )
+  _builder_suppression_sync "$marker" green-head "$suppressed_keys"
   GREEN_HEAD_DISPATCH_NUMS="${nums# }"
 }
 
@@ -1956,7 +2038,8 @@ _green_head_breaker() {
 _resume_gate() {
   local repo="$1" slug="$2" listing="$3"
   local key foreign issue issue_ts check_ts lines="" fresh want verdict count num head
-  local dispatch_nums="" breaker=3 wake fingerprints
+  local dispatch_nums="" breaker=3 wake fingerprints suppressed_keys=""
+  local marker="$DUTY_DIR/.builder-suppressed.$slug.draft"
   local -A ts_by_key=() issue_by_key=()
   RESUME_COMMIT_LINES=""
   RESUME_DISPATCH_NUMS=""
@@ -2018,7 +2101,10 @@ _resume_gate() {
     issue_by_key["$key"]="$issue"
     lines="$lines$key $foreign"$'\n'
   done <<<"$fingerprints"
-  [ -n "${lines//[[:space:]]/}" ] || return 0
+  if [ -z "${lines//[[:space:]]/}" ]; then
+    _builder_suppression_sync "$marker" draft ""
+    return 0
+  fi
   fresh="$(printf '%s' "$lines" | ledger_filter "$DUTY_DIR/.seen-resume")"
   # One line per withheld draft, every tick it is withheld — not report_suppressed's
   # speak-on-change. This branch already logs once per tick either way, so naming
@@ -2054,6 +2140,7 @@ _resume_gate() {
         fi
         ;;
       suppress)
+        suppressed_keys="$suppressed_keys$key"$'\n'
         log "no resume duty: $repo#$num breaker-suppressed at $head after $count zero-action dispatches — only a push clears it (#314)"
         ;;
       *) : ;;   # held by the ledger; already named above
@@ -2079,6 +2166,7 @@ _resume_gate() {
     done < <(printf '%s' "$lines" | awk 'NF{print $1}') \
       | _resume_breaker "$DUTY_DIR/.resume-zero-action.$slug" "$breaker"
   )
+  _builder_suppression_sync "$marker" draft "$suppressed_keys"
   RESUME_DISPATCH_NUMS="${dispatch_nums# }"
 }
 
@@ -2104,6 +2192,7 @@ duty_builder() {
   _repair_seen_build_264
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
   _warn_unscoped_authored
+  _builder_suppression_prune "$duty_repos"
 
   while IFS= read -r R; do
     [ -z "$R" ] && continue

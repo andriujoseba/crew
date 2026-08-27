@@ -47,6 +47,7 @@ RE_MENTION = re.compile(
     TS + r" (\S+): (\d+) unread mention(?:\(s\))?(?: — launching mention session)?$"
 )
 RE_RESUME = re.compile(TS + r" (\S+): resume duty")
+_SESSION_ACTIVE_AFTER_S = 21600
 
 
 def parse_ts(s):
@@ -161,7 +162,7 @@ def derive_sessions(loglines, now, clock_offset=0):
         o = opens[-1]
         # A START with no END that predates the silence rule is a crashed or
         # killed session, not a running one — the box would have logged the END.
-        if now - o["ts"] < 6 * 3600:
+        if now - o["ts"] < _SESSION_ACTIVE_AFTER_S:
             cur = {"key": o["key"], "kind": o["kind"], "start": int(o["ts"])}
     return done, cur
 
@@ -201,6 +202,7 @@ def unit_defaults():
         "paused": False, "disarmed": False,
         "cron": {"ok": False, "last": None, "age": None},
         "lock": {"held": None, "stuck": False},
+        "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
         # HIRED — "yes" / "no" / "unknown", and never an inference from the
@@ -335,6 +337,17 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         held = None
     if held is not None and held >= 0:
         u["lock"] = {"held": held, "stuck": held > STUCK_AFTER_S}
+    suppression = meta.get("suppression", "").split()
+    if len(suppression) == 3:
+        try:
+            suppression_age = int(suppression[0])
+        except ValueError:
+            suppression_age = -1
+        if suppression_age >= 0:
+            u["suppression"] = {
+                "active": True, "age": suppression_age,
+                "kind": suppression[1], "key": suppression[2],
+            }
     u["repos"] = [r for r in meta.get("repos", "").split() if r]
     u["logs"] = [f for f in meta.get("sessionlogs", "").split() if f]
     try:
@@ -446,6 +459,13 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         u["note"] = "STUCK — duty run has held the lock for %s" % fmt_dur(u["lock"]["held"])
     elif cur:
         u["state"] = "working"
+    elif u["suppression"]["active"]:
+        subject = u["suppression"]["key"].rsplit("@", 1)[0]
+        u["state"] = "suppressed"
+        u["note"] = "for %s — %s resume breaker at %s" % (
+            fmt_dur(u["suppression"]["age"]),
+            u["suppression"]["kind"], subject,
+        )
     else:
         u["state"] = "idle"
 

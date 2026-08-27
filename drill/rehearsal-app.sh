@@ -388,7 +388,7 @@ print(u[0]['state'] if u else 'MISSING')")"
   # An unusable answer is never a pass: an empty floor_state from a transient
   # API hiccup used to fall through to the "is up" branch and be recorded ok.
   case "$floor_state" in
-    working|idle|offline) ;;
+    working|idle|suppressed|offline) ;;
     *) fail "agree: $name" "floor returned no usable state (got '$floor_state')"; continue ;;
   esac
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
@@ -434,10 +434,22 @@ print(bool(u and u[0].get('disarmed')))")"
           AGREE_N=$((AGREE_N + 1))
           fail "agree: $name is not armed, and both readers say so" \
                "floor reports disarmed; crew status does not: '$cli_line'"
+        elif [ "$agreement" = "silent" ]; then
+          AGREE_N=$((AGREE_N + 1))
+          ok "agree: $name is silent, and both readers say so"
+        elif [ "$agreement" = "silent-mismatch" ]; then
+          AGREE_N=$((AGREE_N + 1))
+          fail "agree: $name is silent, and both readers say so" \
+               "floor reports SILENT; crew status does not: '$cli_line'"
+        elif [ "$agreement" = "not-hired" ]; then
+          AGREE_N=$((AGREE_N + 1))
+          ok "agree: $name is not hired, and both readers say so"
+        elif [ "$agreement" = "not-hired-mismatch" ]; then
+          AGREE_N=$((AGREE_N + 1))
+          fail "agree: $name is not hired, and both readers say so" \
+               "floor reports not hired; crew status does not: '$cli_line'"
         else
           case "$agreement" in
-            skip)
-              skip "agree: $name" "crew status shows it up; floor says offline because: $note" ;;
             up-mismatch)
               AGREE_N=$((AGREE_N + 1))
               fail "agree: $name is up" "crew status shows it up, floor says offline with no reason (note: '${note:-none}')" ;;

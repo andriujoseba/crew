@@ -15,7 +15,16 @@ agreement_case() {
         esac
       else
         case "$note" in
-          *SILENT*|*"not hired"*) printf 'skip\n' ;;
+          *SILENT*)
+            case "$cli_line" in
+              *offline*'SILENT'*) printf 'silent\n' ;;
+              *) printf 'silent-mismatch\n' ;;
+            esac ;;
+          *"not hired"*)
+            case "$cli_line" in
+              *"not hired"*) printf 'not-hired\n' ;;
+              *) printf 'not-hired-mismatch\n' ;;
+            esac ;;
           *) printf 'up-mismatch\n' ;;
         esac
       fi ;;

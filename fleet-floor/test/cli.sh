@@ -354,6 +354,19 @@ else
   fail "crew status: an unarmed box says disarmed and names the fix" \
        "$(grep '^cli-disarmed' "$CL_TMP/crew-out")"
 fi
+if grep -qE '^cli-suppressed +suppressed .*for 13m .*draft resume breaker at heavy-duty/crew#561' "$CL_TMP/crew-out"; then
+  ok "crew status: breaker-suppressed builder carries age and reason"
+else
+  fail "crew status: breaker-suppressed builder carries age and reason" \
+       "$(grep '^cli-suppressed' "$CL_TMP/crew-out")"
+fi
+if grep -qE '^cli-idle +running ' "$CL_TMP/crew-out" \
+   && grep -qE '^cli-unreachable ' "$CL_TMP/crew-out"; then
+  ok "crew status: suppressed, idle, and unreachable remain distinct"
+else
+  fail "crew status: suppressed, idle, and unreachable remain distinct" \
+       "$(grep -E '^cli-(suppressed|idle|unreachable)' "$CL_TMP/crew-out")"
+fi
 # The floor and this CLI must derive credential state from the SAME evidence.
 # `rehearsal-app.sh` asserts they agree about every box on a real host, and
 # that assertion only means anything while neither has a private source: when
@@ -448,7 +461,7 @@ cl_pair cli-disarmed '^cli-disarmed .+ stale +stale +disarmed' \
   "crew status: a box that ticked and stopped is still stale"
 # A recent tick still reads `flowing`: the new branch must not swallow the
 # healthy case on its way past.
-cl_pair cli-hired '^cli-hired .+ flowing +flowing +[0-9]{4}-' \
+cl_pair cli-hired '^cli-hired +working .+ flowing +flowing +session active' \
   "crew status: a ticking box still reports flowing"
 # The boundary the new branch could have swallowed. It fires only inside the
 # `nofail` arm, so a box with no VERSION is untouched — keying it on tickage
@@ -469,7 +482,34 @@ cl_pair cli-noauth '^cli-noauth .+ MISSING +MISSING +' \
 # unchanged; the golden compare means widening it has to be deliberate.
 CL_FMT="$(sed -n "s/^  local fmt='\(.*\)'\$/\1/p" "$CL_CLI" | head -1)"
 t "crew status: the table's column contract is unchanged" \
-  '%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
+  '%-20s %-10s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
+
+cl_pair cli-supp-silent '^cli-supp-silent +offline .+ stale +stale +SILENT' \
+  "crew status: a silent box outranks a stale suppression marker"
+cl_pair cli-supp-unknown '^cli-supp-unknown +offline .+ stale +stale +tick age unknown' \
+  "crew status: an unknown tick age outranks suppression"
+cl_pair cli-silent '^cli-silent +offline .+ stale +stale +SILENT' \
+  "crew status: an armed box that stopped ticking reads SILENT like the floor"
+cl_pair cli-supp-working '^cli-supp-working +working .+ flowing +flowing +session active' \
+  "crew status: an active session outranks suppression"
+cl_pair cli-supp-stuck '^cli-supp-stuck +working .+ flowing +flowing +STUCK' \
+  "crew status: a stuck run outranks suppression"
+cl_pair cli-hired '^cli-hired +working .+ flowing +flowing +session active' \
+  "crew status: a live session renders consistently without suppression"
+cl_pair cli-stuck '^cli-stuck +working .+ flowing +flowing +STUCK' \
+  "crew status: a stuck run renders consistently without suppression"
+cl_pair cli-supp-nots '^cli-supp-nots +suppressed .+ flowing +flowing +for 13m' \
+  "crew status: an unparseable log does not invent unknown tick age"
+cl_pair cli-supp-old-orphan '^cli-supp-old-orphan +suppressed .+ flowing +flowing +for 13m' \
+  "crew status: a session orphan older than six hours is not active"
+cl_pair cli-supp-paired '^cli-supp-paired +working .+ flowing +flowing +session active' \
+  "crew status: stack pairing retains an earlier unmatched session"
+if grep -q 'integer expression expected' "$CL_TMP/crew-out"; then
+  fail "crew status: invalid tick ages emit no shell diagnostics" \
+    "$(grep 'integer expression expected' "$CL_TMP/crew-out")"
+else
+  ok "crew status: invalid tick ages emit no shell diagnostics"
+fi
 CL_WIDE=""
 for cl_word in flowing waiting stale missing unknown MISSING; do
   [ "${#cl_word}" -le 8 ] || CL_WIDE="$CL_WIDE $cl_word"
@@ -1882,9 +1922,9 @@ fi
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
 # Deliberately not added to fixtures/fleet.txt — three assertions under
-# test/floor/ hardcode the fixture's 26 boxes (floor/{roster,fleet,server}.sh)
+# test/floor/ hardcode the fixture's 31 boxes (floor/{roster,fleet,server}.sh)
 # and browser.js's scroll walk has been destabilised by fleet size before
-# (browser.js:246). A 27th row is not worth that risk.
+# (browser.js:246). A 32nd row is not worth that risk.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
 CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"

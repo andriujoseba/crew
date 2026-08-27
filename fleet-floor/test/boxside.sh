@@ -76,7 +76,7 @@ import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 meta, lines = floor.parse_probe(open(sys.argv[1]).read())
-need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "cron", "paused", "repos", "sessionlogs")
+need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs")
 print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
@@ -99,6 +99,22 @@ t "probe.sh: log section delimited" 4 "$(bs_get LOGLINES)"
 t "probe.sh: sessions parse from real output" 1 "$(bs_get SESSIONS)"
 t "probe.sh: session key intact" "rig#12" "$(bs_get SESSKEY)"
 t "probe.sh: queue derived from real output" 1 "$(bs_get QUEUE)"
+
+printf '%s\tdraft\theavy-duty/crew#561@abcdef123456\n' \
+  "$(( $(date +%s) - 780 ))" >"$BS_H/duty/.builder-suppressed.heavy-duty__crew.draft"
+printf '%s\tnear-miss\theavy-duty/box#222@fedcba654321\n' \
+  "$(( $(date +%s) - 120 ))" >"$BS_H/duty/.builder-suppressed.heavy-duty__box.near-miss"
+HOME="$BS_H" DUTY_DIR="$BS_H/duty" \
+  bash "$BS_FLOOR/server/probe.sh" </dev/null >"$BS_TMP/probe-suppressed.out"
+case "$(sed -n 's/^::suppression //p' "$BS_TMP/probe-suppressed.out")" in
+  7[0-9][0-9]' draft heavy-duty/crew#561@abcdef123456') r1=carried ;;
+  *) r1=missing ;;
+esac
+t "probe.sh: suppression carries age, lane, and PR head" carried "$r1"
+t "probe.sh: oldest active suppression episode wins" 1 \
+  "$(grep -c 'draft heavy-duty/crew#561@abcdef123456' "$BS_TMP/probe-suppressed.out")"
+rm -f "$BS_H/duty/.builder-suppressed.heavy-duty__crew.draft" \
+  "$BS_H/duty/.builder-suppressed.heavy-duty__box.near-miss"
 
 # --- engine integrity, end to end (#159, #190) -----------------------------
 #

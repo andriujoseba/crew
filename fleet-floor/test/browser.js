@@ -323,7 +323,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const stateChipWords = await page.locator('.fchip[data-f="state"]').evaluateAll((chips) =>
     chips.map((c) => c.textContent.trim()));
   eq('filter: state chips mirror the tile vocabulary',
-     JSON.stringify(['All', 'Working', 'Idle', 'Disarmed', 'Silent']),
+     JSON.stringify(['All', 'Working', 'Idle', 'Suppressed', 'Disarmed', 'Silent']),
      JSON.stringify(stateChipWords));
 
   if (LIVE && FIXTURE) {
@@ -344,6 +344,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       if (disarmedMatches.includes('ff-paused')) break;
     }
     const silentMatches = await stateMatches('silent');
+    const suppressedMatches = await stateMatches('suppressed');
     const allMatches = await stateMatches('all');
     const trio = ['ff-disarmed', 'ff-paused', 'ff-silent'];
     const amongTrio = (set) => set.filter((box) => trio.includes(box));
@@ -352,6 +353,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        JSON.stringify(amongTrio(disarmedMatches)));
     eq('filter: Silent reserves the alarm for the silent fixture',
        JSON.stringify(['ff-silent']), JSON.stringify(amongTrio(silentMatches)));
+    eq('filter: Suppressed selects the breaker-stopped fixture',
+       JSON.stringify(['ff-suppressed']), JSON.stringify(suppressedMatches));
     eq('filter: All keeps all three offline fixtures reachable',
        JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));
     const stateTiles = await page.locator('#tiles .tile').evaluateAll((tiles) =>
@@ -364,17 +367,22 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        disarmedMatches.length, tileNumber('disarmed'));
     eq('filter: Silent chip and tile count the same boxes',
        silentMatches.length, tileNumber('silent'));
+    eq('filter: Suppressed chip and tile count the same boxes',
+       suppressedMatches.length, tileNumber('suppressed'));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });
   } else if (!LIVE) {
     const disarmedMatches = await stateMatches('disarmed');
     const silentMatches = await stateMatches('silent');
+    const suppressedMatches = await stateMatches('suppressed');
     const allMatches = await stateMatches('all');
     eq('demo: Disarmed selects no preview unit', JSON.stringify([]),
        JSON.stringify(disarmedMatches));
     eq('demo: Silent selects every offline preview unit',
        JSON.stringify(['kimi-reviewer']), JSON.stringify(silentMatches));
+    eq('demo: Suppressed selects no preview unit', JSON.stringify([]),
+       JSON.stringify(suppressedMatches));
     eq('demo: All restores every preview unit', 7, allMatches.length);
   }
   /* ...and the hired tile is the "visible count rather than a silent omission"

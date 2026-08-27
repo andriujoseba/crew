@@ -13,6 +13,16 @@
 cli-neverticked claude builder
 cli-hired      claude  builder
 cli-idle       claude  reviewer
+cli-suppressed claude  builder
+cli-supp-silent claude  builder
+cli-supp-unknown claude  builder
+cli-supp-working claude  builder
+cli-supp-stuck claude  builder
+cli-stuck      claude  builder
+cli-supp-nots claude builder
+cli-supp-old-orphan claude builder
+cli-supp-paired claude builder
+cli-silent     codex   builder
 cli-unreachable grok   reviewer
 cli-stopped    codex   builder
 cli-nothired   grok    reviewer
