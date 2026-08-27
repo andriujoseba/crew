@@ -236,7 +236,7 @@ t drill-phase2-record-names-every-later-section complete "$r1"
 phase2_missing_app="$(sed '/^##   ok         app  /d' <<<"$phase2_out")"
 if required_later_sections "$phase2_missing_app"; then r1=FALSE_PASS; else r1=red; fi
 t drill-phase2-absent-section-mutation-reds red "$r1"
-phase2_wrong_count="$(sed 's/3 passed, 1 failed/4 passed, 0 failed/' <<<"$phase2_out")"
+phase2_wrong_count="${phase2_out/3 passed, 1 failed/4 passed, 0 failed}"
 if grep -qE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' \
     <<<"$phase2_wrong_count"; then r1=FALSE_PASS; else r1=red; fi
 t drill-phase2-summary-count-mutation-reds red "$r1"
