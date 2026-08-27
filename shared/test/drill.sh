@@ -525,12 +525,15 @@ t drill-report-branch-named-pull-round-passes-no-source-ref '-' \
 # leave the whole suite green while the footers named the wrong thing, or
 # nothing.
 role_script="$(cat "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # the needles are production source, not expansions
 t drill-report-role-derives-from-source-ref 1 \
   "$(grep -cF 'rehearsal_report_target "$REMOTE" "${SOURCE_REF:-$REF}"' \
     <<<"$role_script")"
+# shellcheck disable=SC2016  # ditto
 t drill-report-role-derivation-guarded-by-tree 1 \
   "$(grep -B 2 -F 'rehearsal_report_target "$REMOTE"' <<<"$role_script" \
     | grep -cF 'if [ -z "$TREE" ]; then')"
+# shellcheck disable=SC2016  # ditto
 t drill-report-role-exits-pass-the-target 3 \
   "$(grep -cE '^ *rehearsal_report_footer (fail|incomplete|pass) "\$REPORT_TARGET"' \
     <<<"$role_script")"
