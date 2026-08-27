@@ -4398,12 +4398,15 @@ unset -f gh
 # this is what keeps failure paths from escaping the EXIT registry.
 t rehearsal-common-attention-fixture-is-recorded 1 \
   "$(grep -A3 'inum=.*gh api' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_issue' | tr -d ' ')"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-triage-fixtures-are-recorded 2 \
-  "$(grep -E 'rehearsal_fixture_record_issue "\$SANDBOX" "\$(t|p)num"' "$ROOT/drill/rehearsal.sh" | wc -l | tr -d ' ')"
+  "$(grep -Ec 'rehearsal_fixture_record_issue "\$SANDBOX" "\$(t|p)num"' "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-builder-fixtures-are-recorded 2 \
   "$(( $(grep -c 'rehearsal_fixture_record_issue "\$SANDBOX" "\$bnum"' "$ROOT/drill/rehearsal.sh") + $(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$bpr"' "$ROOT/drill/rehearsal.sh") ))"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-reviewer-fixture-is-recorded 1 \
-  "$(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$pr"' "$ROOT/drill/rehearsal.sh" | tr -d ' ')"
+  "$(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$pr"' "$ROOT/drill/rehearsal.sh")"
 
 EMPTY_BUILDER_PRS='[]'
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
