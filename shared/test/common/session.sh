@@ -375,5 +375,168 @@ fi
 t model-no-duty-module-knows-about-models 0 \
   "$(grep -rlE 'MODEL_[A-Z_]+|bot_cli_model_cmd' "$SHARED/lib/duty-"*.sh 2>/dev/null | wc -l)"
 
+# --- the session's peak RSS (#473) -----------------------------------------
+#
+# The fixture allocates in a GRANDCHILD of the dispatch subshell and RELEASES
+# it before exiting, and that shape is what both must-fail cases need: at exit
+# its resident size is small and the kernel's high-water mark is not, and a
+# walk that never descends the tree sees neither. `sleep` after the release,
+# because a process that has already exited has no `/proc` entry to read — the
+# fixture is the runaway that is still alive, which is the case that matters.
+PEAK_CLI="$TMP/peak-cli.sh"
+cat >"$PEAK_CLI" <<'STUB'
+#!/usr/bin/env bash
+python3 -c '
+import time
+x = bytearray(256 * 1024 * 1024)
+del x
+time.sleep(3)
+'
+printf 'exec\nfinal reply\n'
+STUB
+chmod +x "$PEAK_CLI"
+
+# peak_run MUTANT|- POLL CMD… — one dispatch under a poll interval, its own
+# log, and a tally of the scratch files it left behind.
+# shellcheck disable=SC2030,SC2031,SC2317
+peak_run() (
+  local mutant="$1" poll="$2"; shift 2
+  local pdir="$TMP/peak-$RANDOM$RANDOM"
+  mkdir -p "$pdir/logs" "$pdir/work"
+  DUTY_DIR="$pdir"; LOG_DIR="$pdir/logs"; DUTY_TICK_ID="tick-1"
+  BOT_CLI_CMD=("$@")
+  bot_session_acted() { grep -qx exec "$1"; }
+  alert() { :; }
+  # shellcheck disable=SC1090
+  [ "$mutant" = - ] || source "$mutant"
+  SESSION_PEAK_POLL_S="$poll"
+  run_session build fixture/peak "$pdir/work" 30 theprompt
+  # The scratch file is the session's, not the log directory's: it must not
+  # outlive the line it fed.
+  printf 'scratch=%s\n' "$(find "$pdir/logs" -name '*.peak' | wc -l | tr -d ' ')"
+)
+peak_of() { sed -n 's/.* peak_rss=\([^ ]*\).*/\1/p' <<<"$1"; }
+# rc, outcome and acted as one token, for the cases whose claim is that the
+# REST of the line did not move.
+peak_rest() {
+  sed -n 's/.*SESSION END .* rc=\([^ ]*\) dur=[^ ]* outcome=\([^ ]*\) acted=\([^ ]*\).*/\1|\2|\3/p' \
+    <<<"$1"
+}
+peak_atleast() { # peak_atleast KiB VALUE
+  case "$2" in
+    '' | *[!0-9]*) printf 'NOT-A-FIGURE(%s)' "$2" ;;
+    *) [ "$2" -ge "$1" ] && printf 'at-least' || printf 'TOO-SMALL(%s)' "$2" ;;
+  esac
+}
+peak_mutant() { # peak_mutant NAME SED-EXPR — mutate the module under test
+  local out="$TMP/session-mutant-$1.sh"
+  sed "$2" "$SHARED/lib/common/session.sh" >"$out"
+  if cmp -s "$out" "$SHARED/lib/common/session.sh"
+  then t "peak-mutation-$1-applies" applied INERT
+  else t "peak-mutation-$1-applies" applied applied; fi
+}
+
+# The unit reads first, because every case below rests on them: no live
+# process, no figure — which is exactly what a platform with no `VmHWM`
+# produces, and it must never come back as a zero.
+t peak-no-reading-from-a-dead-pid '' "$(_session_proc_hwm 2147483647)"
+t peak-no-reading-from-a-dead-tree '' "$(_session_tree_hwm 2147483647)"
+t peak-reader-refuses-a-missing-file '' "$(session_peak_rss "$TMP/absent.peak")"
+printf 'not-a-number\n' >"$TMP/bad.peak"
+t peak-reader-refuses-a-non-integer '' "$(session_peak_rss "$TMP/bad.peak")"
+printf '4096\n' >"$TMP/good.peak"
+t peak-reader-reads-an-integer 4096 "$(session_peak_rss "$TMP/good.peak")"
+
+# The watcher is the session's and dies with it. A leaked one would poll a pid
+# that no longer exists for as long as the box lives, once per session.
+SESSION_PEAK_POLL_S=30
+( sleep 0.3 ) & peak_root=$!
+_session_peak_rss_start "$TMP/live.peak" "$peak_root"
+peak_watcher="$_SESSION_PEAK_PID"
+wait "$peak_root"
+_session_peak_rss_stop
+if kill -0 "$peak_watcher" 2>/dev/null; then r1=STILL-RUNNING; else r1=reaped; fi
+t peak-watcher-is-reaped-with-the-session reaped "$r1"
+t peak-watcher-pid-is-cleared '' "$_SESSION_PEAK_PID"
+SESSION_PEAK_POLL_S=5
+
+# D2's absence, and the rule that makes it mean one thing: a session that does
+# not outlive one interval is not measured. The rest of the line is untouched
+# — an unmeasured session is not a failed one.
+peak_short="$(peak_run - 30 bash -c 'printf "exec\nfinal reply\n"' 2>&1)"
+t peak-short-session-carries-no-field '' "$(peak_of "$peak_short")"
+t peak-short-session-line-otherwise-unchanged '0|ok|yes' "$(peak_rest "$peak_short")"
+t peak-scratch-file-does-not-outlive-the-session scratch=0 \
+  "$(sed -n 's/^scratch=/scratch=/p' <<<"$peak_short")"
+
+# D4, and the only shape in which measuring could ever have ended a session:
+# an interval an operator mistyped, which kills the watcher on its first
+# sleep. The session still runs, still reports, and the failure says NOTHING —
+# a duty log is evidence, and the watcher shares its stdout.
+peak_broken="$(peak_run - notanumber bash -c 'sleep 1; printf "exec\nfinal reply\n"' 2>&1)"
+t peak-broken-watcher-still-completes-the-session '0|ok|yes' "$(peak_rest "$peak_broken")"
+t peak-broken-watcher-carries-no-field '' "$(peak_of "$peak_broken")"
+t peak-broken-watcher-says-nothing-on-the-log 0 \
+  "$(grep -c 'invalid time interval' <<<"$peak_broken" || true)"
+
+# The measured cases need a process that can allocate on demand and give it
+# back. Guarded rather than assumed, as the floor's RE_END case above is.
+if command -v python3 >/dev/null 2>&1; then
+  peak_ctl="$(peak_run - 1 bash "$PEAK_CLI" 2>&1)"
+  peak_val="$(peak_of "$peak_ctl")"
+  t peak-rss-recorded-on-session-end at-least "$(peak_atleast 204800 "$peak_val")"
+  t peak-measured-session-line-otherwise-unchanged '0|ok|yes' "$(peak_rest "$peak_ctl")"
+  # The token is LAST, past tier=, which is what keeps every reader that
+  # matched the line before this field still matching it.
+  case "$peak_ctl" in
+    *"tier=default peak_rss=$peak_val"*) r1=appended ;;
+    *) r1=NOT-APPENDED ;;
+  esac
+  t peak-field-is-appended-past-tier appended "$r1"
+
+  # Must fail: RSS read at exit instead of the kernel's high-water mark. The
+  # fixture has already given the memory back by the time the first read
+  # lands, so this mutation reports the small figure that hid the incident
+  # this issue is built on.
+  peak_mutant exit-rss 's/VmHWM:/VmRSS:/'
+  peak_mut_rss="$(peak_run "$TMP/session-mutant-exit-rss.sh" 1 bash "$PEAK_CLI" 2>&1)"
+  t peak-mutation-exit-rss-reports-the-freed-figure TOO-SMALL \
+    "$(peak_atleast 204800 "$(peak_of "$peak_mut_rss")" | sed 's/(.*//')"
+
+  # Must fail: a walk that does not descend. The allocation is two generations
+  # below the dispatch subshell, so a reader that measures only the pid it was
+  # given sees `timeout` and nothing else.
+  # shellcheck disable=SC2016  # the sed matches the module's literal variable
+  peak_mutant no-descend 's/kids="\$(_session_proc_children "\$pid")"/kids=""/'
+  peak_mut_flat="$(peak_run "$TMP/session-mutant-no-descend.sh" 1 bash "$PEAK_CLI" 2>&1)"
+  t peak-mutation-no-descend-never-sees-the-allocation TOO-SMALL \
+    "$(peak_atleast 204800 "$(peak_of "$peak_mut_flat")" | sed 's/(.*//')"
+
+  # Compatibility, against the two readers that exist rather than by eye —
+  # the same pair #469 asserted for tier=, now with the field behind it.
+  peak_end_line="$(grep 'SESSION END' <<<"$peak_ctl")"
+  t peak-operator-aggregate-still-parses "build acted=yes tier=default" \
+    "$(awk '/SESSION END/ {
+        for (i = 1; i <= NF; i++) { split($i, kv, "="); f[kv[1]] = kv[2] }
+        printf "%s acted=%s tier=%s", f["kind"], f["acted"], f["tier"]
+      }' <<<"$peak_end_line")"
+  t peak-operator-aggregate-gains-the-column "$peak_val" \
+    "$(awk '/SESSION END/ {
+        for (i = 1; i <= NF; i++) { split($i, kv, "="); f[kv[1]] = kv[2] }
+        printf "%s", f["peak_rss"]
+      }' <<<"$peak_end_line")"
+  t peak-floor-re-end-still-matches 'build|yes' \
+    "$(PEAK_END="$peak_end_line" python3 - "$SHARED/../fleet-floor/server/floor/units.py" <<'PY'
+import os, re, sys
+src = open(sys.argv[1]).read()
+ns = {"re": re}
+for name in ("TS", "RE_END"):
+    m = re.search(r"^%s = (.+?)(?=\n[A-Z_#]|\n\n)" % name, src, re.S | re.M)
+    exec("%s = %s" % (name, m.group(1)), ns)
+m = ns["RE_END"].search("2026-08-26T00:00:00Z " + os.environ["PEAK_END"])
+print("|".join([m.group(2), m.group(7)]) if m else "NO-MATCH")
+PY
+)"
+fi
 
 suite_finish

@@ -315,7 +315,12 @@ _session_tree_hwm() {
 _session_peak_rss_watch() {
   local root="$1" out="$2" hwm=0 v
   while kill -0 "$root" 2>/dev/null; do
-    sleep "$SESSION_PEAK_POLL_S"
+    # `|| return 0` and not a bare `sleep`: an interval this cannot sleep on
+    # ends the watcher instead of spinning the loop hot on /proc for as long
+    # as the session runs. Under the engine's `set -e` a failed sleep would
+    # end it anyway — the explicit exit is what makes that true everywhere,
+    # rather than a property of the caller's shell options.
+    sleep "$SESSION_PEAK_POLL_S" || return 0
     v="$(_session_tree_hwm "$root")"
     if [ -n "$v" ] && [ "$v" -gt "$hwm" ]; then
       hwm="$v"
