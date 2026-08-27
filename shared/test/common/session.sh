@@ -873,6 +873,176 @@ mem_mutant no-self-guard 's/^      \[ "\$pid" != "\$\$" \] || continue$//'
 mem_self_mutant() ( source "$TMP/session-mem-mutant-no-self-guard.sh"; mem_self )
 t mem-mutation-no-self-guard-returns-the-engine 1 "$(mem_self_mutant)"
 
+# --- the containment identity: what the walk alone cannot hold (round 1) ----
+#
+# A pid walk is not a bound. A descendant that handles TERM by forking a
+# replacement and exiting leaves that replacement reparented to PID 1, so it is
+# in neither the pre-TERM snapshot (it did not exist) nor the post-grace re-walk
+# (nothing rooted at the session reaches it) — the session's record says it was
+# bounded while something holding its allocation runs on with no clock and no
+# ceiling over it. That is the 2026-08-14 shape one level down, and it is what
+# the session's own process group closes: `timeout` calls `setpgid(0,0)` absent
+# `--foreground`, and a reparented child that never called `setsid()` never
+# leaves the group it was forked into.
+
+# The group read, first. The parse is past the LAST `)` because `comm` is
+# parenthesised and may itself contain spaces and parentheses — the case below
+# is a real process with a real name that a field-5-from-the-start parse gets
+# wrong, not a synthetic string.
+mem_pgid_naive() { awk '{ print $5 }' "/proc/$1/stat" 2>/dev/null; }
+t mem-pgid-of-a-dead-pid-is-nothing '' "$(_session_proc_pgid 2147483647)"
+sleep 30 & mem_plain_pid=$!
+MEM_PAREN_BIN="$TMP/a (b) c"
+cp "$(command -v sleep)" "$MEM_PAREN_BIN"
+"$MEM_PAREN_BIN" 30 & mem_paren_pid=$!
+# Both are background children of THIS shell, and job control is off in a
+# script, so `&` creates no group: they are both in the suite's own group. That
+# is the oracle — no external `ps` and no second copy of the parse.
+t mem-pgid-agrees-with-a-naive-parse-on-a-plain-comm \
+  "$(mem_pgid_naive "$mem_plain_pid")" "$(_session_proc_pgid "$mem_plain_pid")"
+t mem-pgid-survives-parentheses-in-comm \
+  "$(_session_proc_pgid "$mem_plain_pid")" "$(_session_proc_pgid "$mem_paren_pid")"
+# …and the hazard is real rather than theoretical: the naive parse returns the
+# STATE letter for this process, which is what shifting on the first `)` does.
+mem_paren_naive_verdict() {
+  [ "$(mem_pgid_naive "$mem_paren_pid")" = "$(_session_proc_pgid "$mem_paren_pid")" ] \
+    && printf 'NAIVE-PARSE-WOULD-HAVE-DONE' || printf differs
+}
+t mem-pgid-a-naive-parse-is-what-this-avoids differs "$(mem_paren_naive_verdict)"
+t mem-pgid-of-a-comm-with-parens-is-still-the-suites-group \
+  "$(mem_pgid_naive "$mem_plain_pid")" "$(_session_proc_pgid "$mem_paren_pid")"
+kill -KILL "$mem_plain_pid" "$mem_paren_pid" 2>/dev/null || :
+wait "$mem_plain_pid" "$mem_paren_pid" 2>/dev/null || :
+
+# The refusal, which is `_session_tree_pids`'s `$$` guard one level up and the
+# more important of the two: a group kill aimed at the engine's group takes the
+# engine, this watchdog and every sibling session with it.
+mem_groups_of() { # mem_groups_of PIDS… — the group list, whitespace-normalised
+  local -a g=()
+  read -r -a g <<<"$(_session_mem_groups "$@")"
+  printf '%s' "${g[*]-}"
+}
+t mem-the-groups-never-name-the-engines-own-group '' "$(mem_groups_of "$$")"
+# A group that is NOT the engine's is named — otherwise the case above would
+# pass on a function that always returns nothing. `timeout` puts itself in a
+# group of its own with `setpgid(0,0)`, so the group id is its own pid: an
+# expectation that does not go through the function under test.
+timeout 30 sleep 30 & mem_tmo_pid=$!
+sleep 0.5
+t mem-a-group-outside-the-engines-is-named "$mem_tmo_pid" "$(mem_groups_of "$mem_tmo_pid")"
+t mem-a-group-is-named-once-however-many-pids-sit-in-it "$mem_tmo_pid" \
+  "$(mem_groups_of "$mem_tmo_pid" "$mem_tmo_pid" "$mem_tmo_pid")"
+kill -KILL "$mem_tmo_pid" 2>/dev/null || :
+wait "$mem_tmo_pid" 2>/dev/null || :
+# MUST FAIL: the refusal removed. The mutation is the guard deleted, and under
+# it the engine's own group is returned — the list a group kill is taken from.
+# shellcheck disable=SC2016  # the sed matches the module's literal guard
+mem_mutant no-group-self-guard 's/^    \[ "\$grp" != "\$self" \] || continue$//'
+# shellcheck disable=SC1090,SC1091,SC2317
+mem_group_self_mutant() (
+  source "$TMP/session-mem-mutant-no-group-self-guard.sh"
+  [ -n "$(_session_mem_groups "$$")" ] && printf RETURNS-THE-ENGINES-GROUP || printf refused
+)
+t mem-mutation-no-group-self-guard-returns-the-engines-group \
+  RETURNS-THE-ENGINES-GROUP "$(mem_group_self_mutant)"
+
+# The escape itself, driven end to end against `_session_mem_terminate`.
+#
+# Driven HERE rather than only through a dispatch, and the reason is coverage
+# on every runner: the ceiling's own cases need a fixture that really allocates
+# and so sit behind `python3`, while the defect this closes is about signals
+# and not about memory at all. This case needs neither python3 nor a ceiling.
+MEM_ESCAPE_STUB="$TMP/mem-escape-stub.sh"
+cat >"$MEM_ESCAPE_STUB" <<'STUB'
+#!/usr/bin/env bash
+# $1 — where to record the replacement's pid; $2 — the readiness file.
+# The escape, exactly as both reviewers drove it: handle TERM by forking a
+# replacement and exiting. The replacement is reparented to PID 1 the moment
+# this shell goes, and it never calls setsid(), so the session's GROUP is the
+# only identity that still holds it.
+trap 'sleep 30 & printf "%s\n" "$!" >"$1"; exit 0' TERM
+printf ready >"$2"
+# `wait` and not a bare `sleep`: bash runs a trap when a foreground `wait` is
+# interrupted, which is what makes the handler above reachable at all.
+sleep 30 &
+wait $!
+STUB
+# mem_escape MUTANT|- — start a session-shaped tree, terminate it, and say
+# whether the replacement outlived the terminator. Prints the verdict.
+# shellcheck disable=SC2030,SC2031,SC2317
+mem_escape() (
+  local pidfile="$TMP/escape-$RANDOM$RANDOM.pid" ready="$TMP/escape-$RANDOM$RANDOM.ready"
+  local root rep i
+  rm -f "$pidfile" "$ready"
+  SESSION_MEM_KILL_GRACE_S=1
+  # shellcheck disable=SC1090
+  [ "$1" = - ] || source "$1"
+  # The dispatch's own shape: `timeout` is the root, so the tree's group is the
+  # one `timeout` made for itself — the same identity a real session has.
+  timeout -k 60 30 bash "$MEM_ESCAPE_STUB" "$pidfile" "$ready" >/dev/null 2>&1 &
+  root=$!
+  for i in $(seq 1 100); do [ -s "$ready" ] && break; sleep 0.1; done
+  [ -s "$ready" ] || { printf 'FIXTURE-NEVER-READY'; kill -KILL "$root" 2>/dev/null; return 0; }
+  _session_mem_terminate "$root"
+  wait "$root" 2>/dev/null || :
+  rep="$(cat "$pidfile" 2>/dev/null)"
+  case "$rep" in '' | *[!0-9]*) printf 'NO-REPLACEMENT-FORKED(%s)' "$rep"; return 0 ;; esac
+  if kill -0 "$rep" 2>/dev/null; then
+    kill -KILL "$rep" 2>/dev/null || :
+    printf 'SURVIVED'
+  else
+    printf reaped
+  fi
+)
+t mem-a-term-handler-that-forks-does-not-outlive-the-terminator reaped "$(mem_escape -)"
+# MUST FAIL (round 1): the group pass removed. One line — the collector made to
+# return nothing — which is "forgetting the group" in its smallest form, and
+# under it the very same replacement survives the terminator. This is the case
+# that reds against the head this round was opened on.
+# shellcheck disable=SC2016  # the sed matches the module's literal assignment
+mem_mutant no-group-pass 's/^  self="\$(_session_proc_pgid "\$\$")"$/  return 0/'
+t mem-mutation-no-group-pass-lets-the-replacement-survive SURVIVED \
+  "$(mem_escape "$TMP/session-mem-mutant-no-group-pass.sh")"
+
+# The grace between TERM and KILL is validated like every other numeric in the
+# module. An unvalidated one makes `sleep` fail instantly and collapses the
+# grace to zero, landing TERM and KILL back to back — which defeats the one
+# reason TERM goes first, letting the CLI flush the transcript this outcome is
+# going to be read against.
+mem_grace() ( eval "$1"; _session_mem_kill_grace_s )
+t mem-grace-unset-is-the-default 5 "$(mem_grace 'unset SESSION_MEM_KILL_GRACE_S')"
+t mem-grace-a-configured-value-is-read 2 "$(mem_grace 'SESSION_MEM_KILL_GRACE_S=2')"
+t mem-grace-a-non-numeric-value-is-the-default 5 \
+  "$(mem_grace 'SESSION_MEM_KILL_GRACE_S=soon')"
+t mem-grace-an-empty-value-is-the-default 5 "$(mem_grace 'SESSION_MEM_KILL_GRACE_S=')"
+
+# Armed but no bound applied: the operator is TOLD. The three shapes are
+# separated from the unconfigured SILENCE, which is an acceptance criterion —
+# reading only the resolved ceiling made "armed but unresolvable" and "not
+# armed" the same answer, so the procfs-less guest the comment named was
+# exactly the case that got no warning.
+# shellcheck disable=SC2317
+mem_start_warn() ( # mem_start_warn CONF — the warn line, if any
+  # Measurable by default, so a case that is not about measurability does not
+  # have to say so; CONF is eval'd after, and may take it away.
+  _SESSION_PEAK_PID=1
+  eval "$1"
+  _session_mem_watch_start "$TMP/absent.peak" "$TMP/warn-$RANDOM.mem" 2147483647 build 2>&1 \
+    | sed -n 's/.*\(session memory: .*\)/\1/p'
+)
+t mem-armed-but-no-memtotal-is-warned \
+  'session memory: kind=build a ceiling of 25% is configured but this box'"'"'s MemTotal is unreadable — no memory bound applied' \
+  "$(mem_start_warn 'SESSION_MEM_MAX_PCT=25; _session_mem_total_kib() { :; }')"
+t mem-armed-but-unmeasurable-is-warned 1 \
+  "$(mem_start_warn "SESSION_MEM_MAX_PCT=25; $MEM_STUB_CONF; _SESSION_PEAK_PID=''" \
+     | grep -c 'this session is not measurable' || true)"
+t mem-armed-but-rounding-to-nothing-is-warned 1 \
+  "$(mem_start_warn 'SESSION_MEM_MAX_PCT=1; _session_mem_total_kib() { printf 10; }' \
+     | grep -c 'rounds to nothing' || true)"
+# …and the silence, which is the acceptance criterion the warn must not eat.
+t mem-unconfigured-warns-about-nothing '' \
+  "$(mem_start_warn 'SESSION_MEM_MAX_PCT=0; _session_mem_total_kib() { :; }')"
+
 # --- D1: oom_score_adj, read from inside the CLI ---------------------------
 #
 # The AC is about the process the kernel will score at the moment the CLI is
@@ -994,9 +1164,12 @@ if command -v python3 >/dev/null 2>&1; then
   # MUST FAIL (test plan): an unconfigured ceiling changing any behaviour. The
   # mutation is the one-character version of forgetting the guard — an unarmed
   # ceiling defaulting to a number instead of to nothing — and under it the
-  # very same unconfigured run is killed.
+  # very same unconfigured run is killed. It targets the PERCENTAGE guard since
+  # round 1 split the armed-but-unresolvable warn out of it: that guard is now
+  # the one place "nothing is configured" is decided, so it is the one place
+  # forgetting it can be written.
   # shellcheck disable=SC2016  # the sed matches the module's literal guard
-  mem_mutant unconfigured-arms 's/^  \[ -n "\$ceil" \] || return 0$/  ceil="${ceil:-1}"/'
+  mem_mutant unconfigured-arms 's/^  \[ -n "\$pct" \] || return 0$/  pct="${pct:-1}"/'
   mem_unconf_ctl="$(mem_run - 1 "$MEM_STUB_CONF" bash "$MEM_CLI" 2>&1)"
   mem_unconf_mut="$(mem_run "$TMP/session-mem-mutant-unconfigured-arms.sh" 1 \
     "$MEM_STUB_CONF" bash "$MEM_CLI" 2>&1)"
