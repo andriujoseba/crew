@@ -252,7 +252,9 @@ t drill-armed-roster-runs-two-app-passes 2 \
 t drill-armed-roster-first-pass-is-generated 1 \
   "$(sed -n '1p' "$APP_LOG" | grep -cF -- '--drill-roles reviewer --agent claude')"
 t drill-armed-roster-second-pass-is-named 1 \
-  "$(sed -n '2p' "$APP_LOG" | grep -cF -- "--roster $TMP/armed.roster")"
+  "$(sed -n '2p' "$APP_LOG" | grep -cFx -- "--roster $TMP/armed.roster --no-browser")"
+t drill-armed-roster-second-pass-is-read-only 0 \
+  "$(sed -n '2p' "$APP_LOG" | grep -cE -- '--allow-control|--boxes' || true)"
 t drill-armed-roster-mints-no-extra-role-box 1 \
   "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
 t drill-armed-roster-is-distinct-in-record 1 \

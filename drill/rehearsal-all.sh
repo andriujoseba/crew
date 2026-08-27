@@ -522,15 +522,9 @@ if [ "$APP" -eq 1 ]; then
     echo "############################################################"
     echo "## fleet app — armed roster comparison"
     echo "############################################################"
-    armed_args=()
-    app_arg_i=0
-    while [ "$app_arg_i" -lt "${#APP_ARGS[@]}" ]; do
-      case "${APP_ARGS[$app_arg_i]}" in
-        --drill-roles|--agent) app_arg_i=$((app_arg_i + 2)) ;;
-        *) armed_args+=("${APP_ARGS[$app_arg_i]}"); app_arg_i=$((app_arg_i + 1)) ;;
-      esac
-    done
-    "$HERE/rehearsal-app.sh" "${armed_args[@]}" --roster "$APP_ROSTER"
+    # Comparison-only: repeating browser or control flags would spend a second
+    # walk and could mutate the armed member this pass exists only to read.
+    "$HERE/rehearsal-app.sh" --roster "$APP_ROSTER" --no-browser
     rc=$?
     case "$rc" in
       0) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
