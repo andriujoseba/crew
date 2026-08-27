@@ -58,6 +58,7 @@ read_repo_list() {
 }
 
 # render_prompt FILE NAME=VALUE... — fill {{NAME}} slots in a prompt template.
+# Caller pairs are applied first, so explicit values override doctrine defaults.
 # Pure bash: boxes differ in installed tools (no node on kimi's, no shellcheck
 # either), so the engine depends only on bash+gh+jq+git+flock+timeout.
 render_prompt() {

@@ -899,12 +899,19 @@ else
   r1=MISSING
 fi
 t doctrine-upstream-listed-renders-bounded-duty complete "$r1"
-if grep -Fq $'demand.\n\nWhen the vendored doctrine' <<<"$DOCTRINE463_LISTED"; then
-  r1=standalone
-else
-  r1=GLUED
-fi
+case "$DOCTRINE463_LISTED" in
+  *"demand."$'\n\n'"When the vendored doctrine"*) r1=standalone ;;
+  *) r1=GLUED ;;
+esac
 t doctrine-upstream-listed-duty-is-standalone standalone "$r1"
+DOCTRINE463_ENV_ONLY="$(DOCTRINE_REPO='heavy-duty/ceremony' \
+  PROMPTS_DIR="$SHARED/prompts" render_prompt fragment-doctrine-upstream.txt)"
+if grep -Fq 'heavy-duty/ceremony' <<<"$DOCTRINE463_ENV_ONLY"; then
+  r1=LEAKED
+else
+  r1=contained
+fi
+t doctrine-upstream-address-requires-caller-pair contained "$r1"
 DOCTRINE463_BOARD='[{"number":463,"body":"The vendored doctrine cannot express this case; keep the local workaround until the upstream discussion lands.","labels":[{"name":"ready"}],"updatedAt":"2026-08-27T00:00:00Z"}]'
 printf 'o/r\n' >"$TRD/repos.txt"
 tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$DOCTRINE463_BOARD"
