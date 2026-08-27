@@ -94,6 +94,19 @@ reconciler writes for a session that died with its box carries `peak_rss=-`
 instead, the same convention it uses for `rc=` and `dur=`: a measurement that
 was owed and lost, rather than one never taken.
 
+**What the figure can miss, stated so nobody reads it as a ceiling.**
+`VmHWM` is the kernel's own high-water mark and only ever rises, so a reading
+of it is a peak the kernel recorded and never a sample of usage at the moment
+of asking — a process that allocates 300 MiB and gives it back still reports
+the 300. But the mark lives in the process's `mm`, which is torn down before
+the process is reapable, so the figure is the largest peak among the processes
+that were **alive at a read**. A descendant born and gone between two reads
+takes its high-water mark with it. The long-running growth this line exists to
+show — a session climbing until the OOM killer fires — is exactly what an
+interval cannot lose; a sub-interval spike in a process that then exits is
+what it can. `peak_rss=` is a floor under what the session used, not a ceiling
+over it.
+
 ## One repo, one fleet
 
 Each repository belongs to exactly one fleet: the `repos.txt` registries of
