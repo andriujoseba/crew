@@ -70,6 +70,30 @@ from `prompts/`, under a `timeout`, with its output in its own file under
 in sessions — with one operator-ruled exception (the re-request auto-approve),
 which goes through the same one-shot gate as every verdict.
 
+### What a `SESSION END` line carries
+
+The line is space-delimited `key=value` tokens and **new fields are appended,
+never inserted**: readers match what they know and ignore the rest, so a
+`duty.log` written by an older engine parses everywhere it is read today.
+
+| field | what it says |
+|---|---|
+| `kind=` `key=` | which duty, and on what |
+| `rc=` `dur=` `outcome=` | the exit status, the wall clock, and `ok` / `TIMEOUT` / `FAILED` / `TERMINAL` |
+| `acted=` | whether the session did anything, per the agent profile's own hook |
+| `reply_tail=` | the session's last line, base64 so it stays one token |
+| `tier=` | the model tier the dispatch was bought at, `default` when unconfigured (#469) |
+| `peak_rss=` | the largest `VmHWM` in the session's process tree, in KiB (#473) |
+
+**An absent field is not a zero.** `peak_rss=` is omitted entirely where the
+engine got no reading — a platform with no `VmHWM`, or a session that did not
+outlive one measurement interval — because an aggregate that cannot separate
+"nobody measured this" from "this session used no memory" would report the
+fleet's quietest boxes as its cheapest. The reconstructed terminal the orphan
+reconciler writes for a session that died with its box carries `peak_rss=-`
+instead, the same convention it uses for `rc=` and `dur=`: a measurement that
+was owed and lost, rather than one never taken.
+
 ## One repo, one fleet
 
 Each repository belongs to exactly one fleet: the `repos.txt` registries of

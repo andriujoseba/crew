@@ -107,18 +107,28 @@ run_session() {
   # hours and no clock can tell that from a death (#478, common/ledger.sh).
   log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog holder=$(_session_holder)"
   start=$SECONDS
-  # Started before the dispatch and stopped after it, so the window measured
-  # is exactly the session's (#473). `.peak` and not `.log`: nothing that
-  # walks LOG_DIR for session logs may pick this scratch file up.
-  _session_peak_rss_start "$slog.peak"
   # </dev/null: the CLI reads piped stdin to EOF as context, and stdin here
   # is the caller's while-read work list — without this, the first session
   # of a sweep swallowed every remaining repo (one-iteration loops).
   # env -u: sessions must not inherit the lock/snapshot guards, or a
   # duty.sh/notify.sh invocation from inside a session bypasses the flock.
   # timeout -k: a CLI that ignores TERM still dies 60s later.
+  # `&` and a `wait`, and that is the whole of the change the measurement asks
+  # of this line (#473): the dispatch needs a NAME before it can be measured,
+  # and `$!` is the session's own subshell — the root of the process tree the
+  # peak is taken over. Backgrounding costs nothing else here. Job control is
+  # off in a script, so the job stays in this process group and `timeout`'s
+  # signalling is untouched; stdin was already </dev/null; and `wait` reports
+  # the same status the foreground list did, timeout's 124 included.
   ( cd "$dir" && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
-      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 || rc=$?
+      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 &
+  _SESSION_DISPATCH_PID=$!
+  # Started AFTER the dispatch, which is D4 by construction: the session is
+  # already running by the time anything about measuring it can go wrong.
+  # `.peak` and not `.log`, so nothing that walks LOG_DIR for session logs
+  # picks the scratch file up.
+  _session_peak_rss_start "$slog.peak" "$_SESSION_DISPATCH_PID"
+  wait "$_SESSION_DISPATCH_PID" || rc=$?
   _session_peak_rss_stop
   local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
@@ -259,18 +269,22 @@ _session_proc_children() {
   printf '%s' "$out"
 }
 
-# _session_tree_hwm PIDS SKIP — the largest VmHWM in the trees rooted at PIDS
-# (a whitespace-separated list), in KiB, skipping SKIP and never descending
-# into it: SKIP is the watcher itself, whose own `sleep` would otherwise be
-# measured as part of the session.
+# _session_tree_hwm PIDS — the largest VmHWM in the trees rooted at PIDS (a
+# whitespace-separated list), in KiB. Nothing is printed where no process in
+# the tree reported a figure, which is also what a tree that has just exited
+# looks like.
+#
+# The depth bound is a runaway guard and not a policy: 32 generations below
+# the dispatch subshell is far past anything an agent CLI builds, and a walk
+# that cannot terminate is exactly what must not run every few seconds inside
+# the engine.
 _session_tree_hwm() {
-  local skip="$2" pid kids hwm=0 v depth=0
+  local pid kids hwm=0 v depth=0
   # shellcheck disable=SC2206  # a pid list, split on whitespace by design
   local -a pids=($1) next
   while [ "${#pids[@]}" -gt 0 ] && [ "$depth" -lt 32 ]; do
     next=()
     for pid in "${pids[@]}"; do
-      [ "$pid" != "$skip" ] || continue
       v="$(_session_proc_hwm "$pid")"
       [ -n "$v" ] && [ "$v" -gt "$hwm" ] && hwm="$v"
       kids="$(_session_proc_children "$pid")"
@@ -284,31 +298,25 @@ _session_tree_hwm() {
   printf '%s' "$hwm"
 }
 
-# _session_peak_rss_watch ROOT FILE — hold FILE at the largest VmHWM seen
-# BELOW ROOT for as long as ROOT lives. FILE is written only when the figure
-# rises, so a box that dies under the CLI leaves the last peak on disk rather
-# than nothing.
+# _session_peak_rss_watch ROOT FILE — hold FILE at the largest VmHWM seen in
+# the process tree rooted at ROOT, for as long as ROOT lives. ROOT is the
+# dispatch's own subshell, so what is measured is the session and nothing the
+# engine is doing beside it. FILE is written only when the figure rises, so a
+# box that dies under the CLI leaves the last peak on disk rather than
+# nothing.
 #
 # It sleeps BEFORE its first read, and that is what makes the field's absence
-# mean one thing. Reading first would race the dispatch's own fork: the same
-# session would carry a figure or not depending on which of two processes the
-# scheduler ran first, and a field that appears at random is worse than one
-# that is always missing. Sleeping first states the rule instead — a session
-# that does not outlive one interval is not measured — and the tests assert
-# both sides of it.
-#
-# ROOT itself is walked but never MEASURED (it is passed as the skip on the
-# first turn only through its own exclusion below): ROOT is the engine shell,
-# whose own footprint is not the session's. What is measured is everything the
-# dispatch put underneath it.
+# mean one thing. Reading first would race the tree's own startup: the same
+# session would carry a figure or not depending on which process the scheduler
+# ran first, and a field that appears at random is worse than one that is
+# reliably absent. Sleeping first states the rule instead — a session that
+# does not outlive one interval is not measured — and the tests assert both
+# sides of it.
 _session_peak_rss_watch() {
-  local root="$1" out="$2" self hwm=0 v kids
-  self="$BASHPID"
+  local root="$1" out="$2" hwm=0 v
   while kill -0 "$root" 2>/dev/null; do
     sleep "$SESSION_PEAK_POLL_S"
-    kids="$(_session_proc_children "$root")"
-    [ -n "$kids" ] || continue
-    v="$(_session_tree_hwm "$kids" "$self")"
+    v="$(_session_tree_hwm "$root")"
     if [ -n "$v" ] && [ "$v" -gt "$hwm" ]; then
       hwm="$v"
       printf '%s\n' "$hwm" >"$out" 2>/dev/null || return 0
@@ -316,21 +324,24 @@ _session_peak_rss_watch() {
   done
 }
 
-# _session_peak_rss_start FILE — begin measuring, into _SESSION_PEAK_PID.
+# _session_peak_rss_start FILE ROOT — begin measuring, into _SESSION_PEAK_PID.
 #
-# The watcher is a SIBLING of the dispatch and roots its walk at the engine
-# shell, which is the whole of D4 in the structural sense: the dispatch line
-# below is byte-identical to the one that ran before this field existed, so
-# there is no path by which measuring a session can refuse, delay or end it.
-# During a dispatch the engine's only descendants are that subshell's tree and
-# this watcher, which the walk skips.
+# The watcher is a SIBLING of the dispatch, never its parent, and it starts
+# only once the dispatch is already running. That is D4 structurally rather
+# than by promise: there is no order of events in which measuring a session
+# refuses, delays or ends it, because by the time this runs the session is
+# under way and nothing here is in its path.
 _session_peak_rss_start() {
   _SESSION_PEAK_PID=""
   rm -f "$1" 2>/dev/null || true
   # No procfs, no measurement, and no complaint: SESSION END simply carries no
   # peak_rss= on that platform (D2, D4).
-  [ -r "/proc/$$/status" ] || return 0
-  _session_peak_rss_watch "$$" "$1" &
+  [ -r "/proc/$2/status" ] || return 0
+  # Silenced, deliberately: the watcher shares the engine's stdout and stderr,
+  # and a duty log is evidence. Anything it could have to say — an interval an
+  # operator mistyped, a /proc that vanished mid-walk — is a reason to record
+  # no figure, never a line in the middle of a session's own record.
+  _session_peak_rss_watch "$2" "$1" >/dev/null 2>&1 &
   _SESSION_PEAK_PID=$!
   return 0
 }
