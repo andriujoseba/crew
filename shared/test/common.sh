@@ -9532,7 +9532,8 @@ cp -R "$MDUTY" "$MSROOT/fixture-box/duty"
 # killed cmd_status's loop after the header. #224 fixed that — the fallback
 # renders, the loop survives — so the reason this fixture ticks is now the
 # count above and nothing else.
-printf '2026-07-29T00:00:00Z duty run start\n' >"$MSROOT/fixture-box/duty/duty.log"
+printf '%s duty run start\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+  >"$MSROOT/fixture-box/duty/duty.log"
 
 # #283 — exercise the real upgrade branch and installer, not a reconstruction
 # of its grep. The script capture proves which flags reached install.sh; the

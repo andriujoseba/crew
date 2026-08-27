@@ -17,6 +17,7 @@ cli-suppressed claude  builder
 cli-supp-silent claude  builder
 cli-supp-working claude  builder
 cli-supp-stuck claude  builder
+cli-silent     codex   builder
 cli-unreachable grok   reviewer
 cli-stopped    codex   builder
 cli-nothired   grok    reviewer

@@ -486,6 +486,8 @@ t "crew status: the table's column contract is unchanged" \
 
 cl_pair cli-supp-silent '^cli-supp-silent +offline .+ stale +stale +SILENT' \
   "crew status: a silent box outranks a stale suppression marker"
+cl_pair cli-silent '^cli-silent +offline .+ stale +stale +SILENT' \
+  "crew status: an armed box that stopped ticking reads SILENT like the floor"
 cl_pair cli-supp-working '^cli-supp-working +working .+ flowing +flowing +session active' \
   "crew status: an active session outranks suppression"
 cl_pair cli-supp-stuck '^cli-supp-stuck +working .+ flowing +flowing +STUCK' \

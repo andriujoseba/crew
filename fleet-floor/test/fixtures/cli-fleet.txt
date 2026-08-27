@@ -19,6 +19,7 @@ cli-suppressed running  suppressed
 cli-supp-silent running suppressed-silent
 cli-supp-working running suppressed-working
 cli-supp-stuck running suppressed-stuck
+cli-silent     running  silent
 # Present on the host and answering nothing. It must stay distinguishable from
 # the never-ticked box above: both have no duty log, and only one of them is
 # fine (#224 criterion 4, #221 one call site over).
