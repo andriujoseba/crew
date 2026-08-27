@@ -847,10 +847,10 @@ t operator-configured-prompt-renders-clause rendered "$r1"
 
 # A doctrine-gap duty exists only when the configured upstream is inside the
 # operator's repos.txt containment boundary. Empty preserves today's prompt
-# byte-for-byte; an unlisted value warns and still renders today's prompt.
+# byte-for-byte; an unlisted value renders only the local refusal and warns.
 DOCTRINE463_BASE="$(DOCTRINE_REPO='' PROMPTS_DIR="$SHARED/prompts" render_prompt triage.txt \
   ME=me-bot REPO=o/r SIGNAL_BLOCK='signals')"
-DOCTRINE463_TODAY="$(sed 's/{{ME}}/me-bot/g; s|{{REPO}}|o/r|g; s/{{SIGNAL_BLOCK}}/signals/g; s/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g; s/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g' \
+DOCTRINE463_TODAY="$(sed 's/{{ME}}/me-bot/g; s|{{REPO}}|o/r|g; s/{{SIGNAL_BLOCK}}/signals/g; s/{{DOCTRINE_OUTCOME}}//g; s/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g; s/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g' \
   "$SHARED/prompts/triage.txt")"
 t doctrine-upstream-empty-is-byte-identical "$DOCTRINE463_TODAY" "$DOCTRINE463_BASE"
 if grep -Eq 'DOCTRINE_REPO|owner/repo|upstream duty|consumer guide' <<<"$DOCTRINE463_BASE"; then
@@ -865,7 +865,16 @@ DOCTRINE463_WARN="$TMP/doctrine463-warn"
 DOCTRINE463_UNLISTED="$(DOCTRINE_REPO='heavy-duty/ceremony' REPOS_FILE="$TRD/repos.txt" \
   PROMPTS_DIR="$SHARED/prompts" render_prompt triage.txt \
   ME=me-bot REPO=o/r SIGNAL_BLOCK='signals' 2>"$DOCTRINE463_WARN")"
-t doctrine-upstream-unlisted-renders-no-duty "$DOCTRINE463_BASE" "$DOCTRINE463_UNLISTED"
+if grep -Fq 'do not write to heavy-duty/ceremony' <<<"$DOCTRINE463_UNLISTED" &&
+   grep -Fq 'outside the operator' <<<"$DOCTRINE463_UNLISTED" &&
+   grep -Fq 'log a WARN naming heavy-duty/ceremony and the concrete doctrine finding' <<<"$DOCTRINE463_UNLISTED" &&
+   ! grep -Fq 'open a discussion in heavy-duty/ceremony' <<<"$DOCTRINE463_UNLISTED" &&
+   [ "$DOCTRINE463_UNLISTED" != "$DOCTRINE463_BASE" ]; then
+  r1=refused
+else
+  r1=UNBOUNDED
+fi
+t doctrine-upstream-unlisted-renders-refusal-not-duty refused "$r1"
 if grep -Fq 'heavy-duty/ceremony' "$DOCTRINE463_WARN" &&
    grep -Fq "$TRD/repos.txt" "$DOCTRINE463_WARN"; then
   r1=bounded
@@ -890,6 +899,12 @@ else
   r1=MISSING
 fi
 t doctrine-upstream-listed-renders-bounded-duty complete "$r1"
+if grep -Fq $'demand.\n\nWhen the vendored doctrine' <<<"$DOCTRINE463_LISTED"; then
+  r1=standalone
+else
+  r1=GLUED
+fi
+t doctrine-upstream-listed-duty-is-standalone standalone "$r1"
 DOCTRINE463_BOARD='[{"number":463,"body":"The vendored doctrine cannot express this case; keep the local workaround until the upstream discussion lands.","labels":[{"name":"ready"}],"updatedAt":"2026-08-27T00:00:00Z"}]'
 printf 'o/r\n' >"$TRD/repos.txt"
 tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$DOCTRINE463_BOARD"

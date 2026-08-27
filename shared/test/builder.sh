@@ -1827,6 +1827,7 @@ assert_doctrine_quote "$RG_PROMPT" 'under Claiming:' \
 # governing/acceptance references. fragment-round-rules.txt's two occurrences
 # are bare green-head/panel references. attention.txt, ci-red.txt,
 # fragment-floor-envelope.txt, fragment-oneshot-rules.txt,
+# fragment-doctrine-unlisted.txt, fragment-doctrine-upstream.txt,
 # fragment-graph-changed.txt, fragment-signals.txt, fragment-unblockable.txt,
 # fragment-wt-rules.txt,
 # hygiene.txt, mention.txt,
@@ -1834,6 +1835,7 @@ assert_doctrine_quote "$RG_PROMPT" 'under Claiming:' \
 declare -A doctrine_builder_occurrences=(
   [attention.txt]=0 [build.txt]=2 [ci-red.txt]=0
   [fragment-floor-envelope.txt]=0 [fragment-oneshot-rules.txt]=0
+  [fragment-doctrine-unlisted.txt]=0 [fragment-doctrine-upstream.txt]=0
   [fragment-graph-changed.txt]=0
   [fragment-round-rules.txt]=2 [fragment-signals.txt]=0
   [fragment-unblockable.txt]=0
@@ -3885,6 +3887,8 @@ DOCTRINE_ENTRYPOINT=AGENTS.md DOCTRINE_TRIAGE=TRIAGE.md \
 for prompt_path in "$SHARED"/prompts/*.txt; do
   prompt_name="$(basename "$prompt_path")"
   expected="$(sed \
+    -e 's/{{DOCTRINE_REPO}}//g' \
+    -e 's/{{DOCTRINE_OUTCOME}}//g' \
     -e 's/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g' \
     -e 's/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g' \
     -e 's/{{DOCTRINE_BUILDER}}/BUILDER.md/g' \

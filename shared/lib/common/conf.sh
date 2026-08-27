@@ -61,26 +61,31 @@ read_repo_list() {
 # Pure bash: boxes differ in installed tools (no node on kimi's, no shellcheck
 # either), so the engine depends only on bash+gh+jq+git+flock+timeout.
 render_prompt() {
-  local file="$1" out pair name value doctrine_repo
+  local file="$1" out pair name value doctrine_repo doctrine_outcome
   shift
   out="$(cat "$PROMPTS_DIR/$file")"
   doctrine_repo="${DOCTRINE_REPO:-}"
+  doctrine_outcome=""
   if [ "$file" = triage.txt ] && [ -n "$doctrine_repo" ]; then
     if read_repo_list "$REPOS_FILE" | grep -Fx -- "$doctrine_repo" >/dev/null; then
-      out="$out When the vendored doctrine itself blocks normalization or minting, open a discussion in $doctrine_repo following that repository's consumer guide. Quote the rule at this repository's pin, link the local issue that exposes the gap, and state the workaround and its retirement condition. Cite the upstream discussion, and any issue its triage later mints, from the consumer workaround; keep the upstream request linked back to that consumer. Never mint an upstream issue yourself."
+      doctrine_outcome="$(render_prompt fragment-doctrine-upstream.txt \
+        DOCTRINE_REPO="$doctrine_repo")"
     else
-      # render_prompt is normally captured with $(...), so keep the warning on
-      # the caller's log stream instead of accidentally inserting it in prose.
+      doctrine_outcome="$(render_prompt fragment-doctrine-unlisted.txt \
+        UNLISTED_DOCTRINE_REPO="$doctrine_repo")"
+      # log() writes to stdout, while render_prompt is captured with $(...);
+      # stderr keeps this warning in the duty log instead of in prompt prose.
       warn "doctrine upstream $doctrine_repo is absent from $REPOS_FILE; upstream duty not rendered" >&2
     fi
   fi
   for pair in \
-    "DOCTRINE_REPO=$doctrine_repo" \
+    "$@" \
+    "DOCTRINE_REPO=" \
+    "DOCTRINE_OUTCOME=$doctrine_outcome" \
     "DOCTRINE_ENTRYPOINT=${DOCTRINE_ENTRYPOINT:-AGENTS.md}" \
     "DOCTRINE_TRIAGE=${DOCTRINE_TRIAGE:-TRIAGE.md}" \
     "DOCTRINE_BUILDER=${DOCTRINE_BUILDER:-BUILDER.md}" \
-    "DOCTRINE_REVIEWER=${DOCTRINE_REVIEWER:-REVIEWER.md}" \
-    "$@"; do
+    "DOCTRINE_REVIEWER=${DOCTRINE_REVIEWER:-REVIEWER.md}"; do
     name="${pair%%=*}"
     value="${pair#*=}"
     out="${out//"{{$name}}"/"$value"}"
