@@ -87,6 +87,66 @@ rehearsal_builder_pr_for_issue() {
   rehearsal_builder_pr_for_issue_from_json "$issue" "$pulls_json"
 }
 
+rehearsal_fixture_record_issue() {
+  local repo="$1" issue="$2"
+  if [ -n "${REHEARSAL_FIXTURE_REPO:-}" ] \
+      && [ "$REHEARSAL_FIXTURE_REPO" != "$repo" ]; then
+    echo "teardown: refusing to mix fixture repositories: $REHEARSAL_FIXTURE_REPO and $repo" >&2
+    return 1
+  fi
+  REHEARSAL_FIXTURE_REPO="$repo"
+  REHEARSAL_FIXTURE_ISSUES="${REHEARSAL_FIXTURE_ISSUES:+$REHEARSAL_FIXTURE_ISSUES }$issue"
+}
+
+rehearsal_fixture_record_pr() {
+  local repo="$1" pr="$2"
+  if [ -n "${REHEARSAL_FIXTURE_REPO:-}" ] \
+      && [ "$REHEARSAL_FIXTURE_REPO" != "$repo" ]; then
+    echo "teardown: refusing to mix fixture repositories: $REHEARSAL_FIXTURE_REPO and $repo" >&2
+    return 1
+  fi
+  REHEARSAL_FIXTURE_REPO="$repo"
+  REHEARSAL_FIXTURE_PRS="${REHEARSAL_FIXTURE_PRS:+$REHEARSAL_FIXTURE_PRS }$pr"
+}
+
+rehearsal_open_sandbox_objects() {
+  local repo="$1"
+  gh api "repos/$repo/issues?state=open&per_page=100" --paginate \
+    | jq -sr 'add[] | (if has("pull_request") then "pull" else "issue" end)
+      + " #" + (.number | tostring) + " — " + .title'
+}
+
+rehearsal_cleanup_owned_fixtures() {
+  local repo="${REHEARSAL_FIXTURE_REPO:-}" pr issue failed=0
+  [ -n "$repo" ] || return 0
+
+  for pr in ${REHEARSAL_FIXTURE_PRS:-}; do
+    [ -n "$pr" ] || continue
+    if gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null; then
+      echo "teardown: closed owned fixture PR #$pr"
+    else
+      echo "teardown: WARNING — could not close owned fixture PR #$pr" >&2
+      failed=1
+    fi
+  done
+  for issue in ${REHEARSAL_FIXTURE_ISSUES:-}; do
+    [ -n "$issue" ] || continue
+    if gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed >/dev/null; then
+      echo "teardown: closed owned fixture issue #$issue"
+    else
+      echo "teardown: WARNING — could not close owned fixture issue #$issue" >&2
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -eq 0 ]; then
+    REHEARSAL_FIXTURE_REPO=""
+    REHEARSAL_FIXTURE_PRS=""
+    REHEARSAL_FIXTURE_ISSUES=""
+  fi
+  return "$failed"
+}
+
 rehearsal_builder_fixture_panel_content() {
   local author="$1" reviewer="$2"
   printf 'panel[%s]=%s\n' "$author" "$reviewer"

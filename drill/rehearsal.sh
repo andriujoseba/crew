@@ -161,10 +161,9 @@ bx() { box exec "$BOX_NAME" -- bash -lc "$1"; }
 REPOS_BACKUP=""
 ACQUIRE_TMP=""
 BOX_TOUCHED=0
-BUILDER_CLEANUP_REPO=""
-BUILDER_CLEANUP_AUTHOR=""
-TRIAGE_CLEANUP_REPO=""
-TRIAGE_CLEANUP_ISSUES=""
+REHEARSAL_FIXTURE_REPO=""
+REHEARSAL_FIXTURE_PRS=""
+REHEARSAL_FIXTURE_ISSUES=""
 # shellcheck source=drill/rehearsal-safety.sh
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
@@ -214,14 +213,7 @@ cleanup_all() {
     if declare -F rehearsal_attention_audit_cleanup >/dev/null 2>&1; then
       rehearsal_attention_audit_cleanup || true
     fi
-    if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
-      rehearsal_close_builder_fixture_prs \
-        "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR" || true
-    fi
-    if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
-      rehearsal_close_issue_fixtures \
-        "$TRIAGE_CLEANUP_REPO" "$TRIAGE_CLEANUP_ISSUES" || true
-    fi
+    rehearsal_cleanup_owned_fixtures || true
     # The cleanup's own verdict, not just the run's: it compares both
     # registries against their pre-drill contents and returns non-zero when a
     # restore left the wrong bytes, which is a red round and not a warning
@@ -575,12 +567,17 @@ else
   if ! gh repo view "$SANDBOX" >/dev/null 2>&1; then
     gh repo create "$SANDBOX" --public --add-readme >/dev/null || fail "sandbox create"
   fi
-  if [ "$ROLE" = "builder" ]; then
-    # Any PR by the builder identity in its role-specific sandbox is a drill
-    # fixture. Keep cleanup armed across every exit path, while retaining the
-    # repo, issues and logs for inspection.
-    BUILDER_CLEANUP_REPO="$SANDBOX"
-    BUILDER_CLEANUP_AUTHOR="$ME2"
+  if [ "$REUSE" -eq 1 ]; then
+    if ! reuse_objects="$(rehearsal_open_sandbox_objects "$SANDBOX")"; then
+      echo "phase 2: cannot inspect $SANDBOX before --reuse" >&2
+      exit 1
+    elif [ -n "$reuse_objects" ]; then
+      echo "phase 2: REFUSING --reuse because $SANDBOX is not clean:" >&2
+      printf '  %s\n' "$reuse_objects" >&2
+      echo "close or remove these objects before re-running; this round deletes only fixtures it records itself" >&2
+      exit 1
+    fi
+    ok "reuse: sandbox starts with no open fixture objects"
   fi
   # Create the whole board vocabulary. Triage reads its queue-label set from
   # the installed configuration below, while the builder keys on ready. A
@@ -639,6 +636,7 @@ else
   inum="$(gh api "repos/$SANDBOX/issues" -f title="drill: attention wake $(date -u +%H%M%S)" \
     -f body="Drill demand: reply with exactly one short comment acknowledging this drill, then stop. Do not open PRs." \
     -f "assignees[]=$ME2" -f "labels[]=attention" --jq .number)"
+  rehearsal_fixture_record_issue "$SANDBOX" "$inum"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "attention: 📌 pickup comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$inum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
@@ -658,7 +656,6 @@ else
   if [ "$ROLE" = "triage" ]; then
   # shellcheck source=drill/rehearsal-attention-audit.sh
   . "$ROOT/drill/rehearsal-attention-audit.sh"
-  TRIAGE_CLEANUP_REPO="$SANDBOX"
   if ! rehearsal_load_installed_queue_labels \
       && [ -z "$REHEARSAL_QUEUE_LABELS" ]; then
     echo "triage: installed queue-label set is empty — refusing before the fixture wait" >&2
@@ -674,7 +671,7 @@ else
   tnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage stray $(date -u +%H%M%S)" \
     -f body="Drill fixture: an unlabelled open issue. Rule on it — leave one short ruling comment and put it in exactly one of ready/claimed/blocked (or epic). Do not open PRs." \
     --jq .number)"
-  TRIAGE_CLEANUP_ISSUES="$tnum"
+  rehearsal_fixture_record_issue "$SANDBOX" "$tnum"
   bx "~/duty/bin/tick.sh" || true
   wait_for 900 "triage: stray drew a ruling comment" bash -c \
     "out=\$(gh api 'repos/$SANDBOX/issues/$tnum/comments' --jq '[.[] | select(.user.login == \"$ME2\")] | length'); grep -qE '^[1-9][0-9]*$' <<<\"\$out\""
@@ -694,7 +691,7 @@ else
   pnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: triage post-merge $(date -u +%H%M%S)" \
     -f body="Drill fixture: this issue is already in post-merge. Do not comment on it or change its labels." \
     -f "labels[]=post-merge" --jq .number)"
-  TRIAGE_CLEANUP_ISSUES="$TRIAGE_CLEANUP_ISSUES $pnum"
+  rehearsal_fixture_record_issue "$SANDBOX" "$pnum"
   PCOMMENTS="$(gh api "repos/$SANDBOX/issues/$pnum/comments" --jq 'length')"
   PLABELS="$(gh api "repos/$SANDBOX/issues/$pnum" --jq '[.labels[].name] | sort | join(" ")')"
   DUTY_LOG_LINES="$(bx "wc -l < ~/duty/duty.log")"
@@ -751,6 +748,7 @@ else
     bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
       -f "labels[]=ready" --jq .number)"
+    rehearsal_fixture_record_issue "$SANDBOX" "$bnum"
     check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
       "out=\$(gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length'); grep -qx 0 <<<\"\$out\""
     bx "~/duty/bin/tick.sh" || true
@@ -758,6 +756,7 @@ else
       rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum"
     bpr="$(rehearsal_builder_pr_for_issue "$SANDBOX" "$ME2" "$bnum" 2>/dev/null || echo '')"
     if [ -n "$bpr" ]; then
+      rehearsal_fixture_record_pr "$SANDBOX" "$bpr"
       echo "builder: resolved PR #$bpr for fixture issue #$bnum"
       ok "builder: PR authored by $ME2 for this run's fixture issue"
       check "builder: PR branch is build/*" bash -c \
@@ -867,6 +866,7 @@ else
     -f branch="$br" -f content="$(printf 'drill %s\n' "$br" | base64 -w0)" >/dev/null
   pr="$(gh api "repos/$SANDBOX/pulls" -f title="drill: review round" -f head="$br" -f base=main \
     -f body="Drill PR: review per your role; a one-line verdict body is fine." --jq .number)"
+  rehearsal_fixture_record_pr "$SANDBOX" "$pr"
   gh api "repos/$SANDBOX/pulls/$pr/requested_reviewers" -f "reviewers[]=$ME2" >/dev/null
   head_sha="$(gh api "repos/$SANDBOX/pulls/$pr" --jq .head.sha)"
   bx "~/duty/bin/tick.sh" || true
@@ -982,34 +982,10 @@ if [ "$PHASE2_RAN" -eq 1 ]; then
   fi
 fi
 
-if [ -n "$TRIAGE_CLEANUP_REPO" ] && [ -n "$TRIAGE_CLEANUP_ISSUES" ]; then
-  if rehearsal_close_issue_fixtures \
-      "$TRIAGE_CLEANUP_REPO" "$TRIAGE_CLEANUP_ISSUES"; then
-    ok "teardown: close triage fixtures"
-    TRIAGE_CLEANUP_REPO=""
-    TRIAGE_CLEANUP_ISSUES=""
-  else
-    fail "teardown: close triage fixtures"
-  fi
-fi
-
-if [ -n "$BUILDER_CLEANUP_REPO" ] && [ -n "$BUILDER_CLEANUP_AUTHOR" ]; then
-  if rehearsal_close_builder_fixture_prs \
-      "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR"; then
-    remaining_prs=""
-    if ! remaining_prs="$(rehearsal_builder_slot_prs \
-        "$BUILDER_CLEANUP_REPO" "$BUILDER_CLEANUP_AUTHOR")"; then
-      fail "teardown: verify builder fixture PR cleanup"
-    elif [ -z "$remaining_prs" ]; then
-      ok "teardown: no builder fixture PR occupies the next run"
-      BUILDER_CLEANUP_REPO=""
-      BUILDER_CLEANUP_AUTHOR=""
-    else
-      fail "teardown: no builder fixture PR occupies the next run"
-    fi
-  else
-    fail "teardown: close builder fixture PRs"
-  fi
+if rehearsal_cleanup_owned_fixtures; then
+  ok "teardown: close this leg's owned fixtures"
+else
+  fail "teardown: close this leg's owned fixtures"
 fi
 
 check "teardown: drill remains disarmed" bx "out=\$(crontab -l 2>/dev/null); ! grep -q ~/duty/bin/tick.sh <<<\"\$out\""

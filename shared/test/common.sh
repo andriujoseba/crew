@@ -4239,10 +4239,10 @@ BOX_TOUCHED=1
 BOX_NAME=""
 ACQUIRE_TMP=""
 REHEARSAL_NOTIFY_FIXTURES=""
-BUILDER_CLEANUP_REPO=""; BUILDER_CLEANUP_AUTHOR=""
-TRIAGE_CLEANUP_REPO=""; TRIAGE_CLEANUP_ISSUES=""
+REHEARSAL_FIXTURE_REPO=""; REHEARSAL_FIXTURE_PRS=""; REHEARSAL_FIXTURE_ISSUES=""
 bx() { return 0; }
 rehearsal_cleanup() { return "$CLEANUP_RETURNS"; }
+rehearsal_cleanup_owned_fixtures() { return 0; }
 . "$CLEANUP_ALL_SRC"
 trap cleanup_all EXIT
 exit 0
@@ -4355,6 +4355,77 @@ t rehearsal-issue-teardown-partial-failure-attempts-first 1 \
 t rehearsal-issue-teardown-partial-failure-attempts-second 1 \
   "$(grep -cF 'repos/owner/sandbox/issues/42' "$REHEARSAL_ISSUE_GH_CALLS")"
 unset -f gh
+
+# One registry covers the common attention fixture and every role-specific
+# object. Cleanup addresses only the exact IDs this round recorded; a title or
+# author prefix is never membership (#493).
+REHEARSAL_FIXTURE_REPO=""
+REHEARSAL_FIXTURE_PRS=""
+REHEARSAL_FIXTURE_ISSUES=""
+rehearsal_fixture_record_issue owner/sandbox 41
+rehearsal_fixture_record_issue owner/sandbox 42
+rehearsal_fixture_record_pr owner/sandbox 51
+t rehearsal-owned-fixtures-record-repository owner/sandbox "$REHEARSAL_FIXTURE_REPO"
+t rehearsal-owned-fixtures-record-issues '41 42' "$REHEARSAL_FIXTURE_ISSUES"
+t rehearsal-owned-fixtures-record-prs 51 "$REHEARSAL_FIXTURE_PRS"
+
+REHEARSAL_OWNED_GH_CALLS="$TMP/rehearsal-owned-gh-calls"
+: >"$REHEARSAL_OWNED_GH_CALLS"
+gh() { printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"; }
+rehearsal_cleanup_owned_fixtures >/dev/null
+t rehearsal-owned-cleanup-closes-exactly-recorded 3 \
+  "$(wc -l <"$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
+t rehearsal-owned-cleanup-closes-recorded-pr 1 \
+  "$(grep -cF 'repos/owner/sandbox/pulls/51' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-owned-cleanup-closes-recorded-issues 2 \
+  "$(grep -cF 'repos/owner/sandbox/issues/' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-owned-cleanup-does-not-use-prefix-or-author 0 \
+  "$(grep -cE 'crew-drill|author|pulls\?state=open' "$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
+t rehearsal-owned-cleanup-clears-registry '||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES"
+
+# A failed leg still reaches the same cleanup. A failed close preserves the
+# registry for EXIT/retry; the next successful pass clears it, so a second
+# --reuse round starts without manufactured resumable state.
+rehearsal_fixture_record_issue owner/sandbox 61
+gh() {
+  printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"
+  return 1
+}
+if rehearsal_cleanup_owned_fixtures >/dev/null 2>&1; then
+  owned_failure_rc=0
+else
+  owned_failure_rc=$?
+fi
+t rehearsal-failed-leg-cleanup-reports-failure 1 "$owned_failure_rc"
+t rehearsal-failed-leg-keeps-retry-registry 'owner/sandbox||61' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES"
+gh() { printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"; }
+rehearsal_cleanup_owned_fixtures >/dev/null
+t rehearsal-second-cleanup-clears-first-round-fixture '||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES"
+
+gh() {
+  printf '%s\n' '[
+    {"number":71,"title":"drill: stranded builder","pull_request":{}},
+    {"number":72,"title":"operator object"}
+  ]'
+}
+t rehearsal-reuse-dirty-sandbox-names-pr-and-issue \
+  'pull #71 — drill: stranded builder|issue #72 — operator object' \
+  "$(rehearsal_open_sandbox_objects owner/sandbox | paste -sd'|' -)"
+unset -f gh
+
+# Every object filer records the returned ID in the caller shell immediately;
+# this is what keeps failure paths from escaping the EXIT registry.
+t rehearsal-common-attention-fixture-is-recorded 1 \
+  "$(grep -A3 'inum=.*gh api' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_issue' | tr -d ' ')"
+t rehearsal-triage-fixtures-are-recorded 2 \
+  "$(grep -E 'rehearsal_fixture_record_issue "\$SANDBOX" "\$(t|p)num"' "$ROOT/drill/rehearsal.sh" | wc -l | tr -d ' ')"
+t rehearsal-builder-fixtures-are-recorded 2 \
+  "$(( $(grep -c 'rehearsal_fixture_record_issue "\$SANDBOX" "\$bnum"' "$ROOT/drill/rehearsal.sh") + $(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$bpr"' "$ROOT/drill/rehearsal.sh") ))"
+t rehearsal-reviewer-fixture-is-recorded 1 \
+  "$(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$pr"' "$ROOT/drill/rehearsal.sh" | tr -d ' ')"
 
 EMPTY_BUILDER_PRS='[]'
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'
