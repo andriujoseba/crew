@@ -14,6 +14,31 @@
 
 BUILDER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# _ready_issue_lines REPO OPERATOR_LABEL — enumerate the ready issues this
+# builder can actually claim. `operator` composes with `ready`, so it is
+# excluded here, before the board count or seen-ledger derives a second fact
+# from the set. An empty name is deliberately inert for fleets whose config
+# predates the central label (#461).
+_ready_issue_lines() {
+  local repo="$1" operator_label="${2:-}"
+  jq -r --arg repo "$repo" --arg operator "$operator_label" '
+    .[]
+    | select((.assignees | length) == 0)
+    | select($operator == "" or ((.labels // []) | map(.name) | index($operator) | not))
+    | "\($repo)#\(.number) \(.updatedAt)"
+  '
+}
+
+# The clause is a rendered value rather than unconditional prompt prose: an
+# older fleet with no configured label receives the exact prompt it did before
+# #461, while a configured fleet tells the session what the engine enforced.
+_operator_build_prompt_clause() {
+  local operator_label="${1:-}"
+  [ -n "$operator_label" ] || return 0
+  printf ' not carrying `%s` (that label marks operator-owned work, not work for a builder)' \
+    "$operator_label"
+}
+
 # Mutates the caller's dynamically scoped ready_count/ready_items/slot_prs.
 # Withheld items must disappear from both the prompt and the eventual
 # seen-ledger. slot_prs is the gate's OWN record that it fired: downstream, the
@@ -2090,10 +2115,11 @@ _builder_repo() {
   local R="$1"
   local slug="${R//\//__}" owner="${R%%/*}" name="${R##*/}"
   local dir="$WORK_DIR/$slug"
-  local wt_rules round_rules oneshot_rules panel_json
+  local wt_rules round_rules oneshot_rules panel_json operator_clause
   wt_rules="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name")"
   round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED")"
   oneshot_rules="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
+  operator_clause="$(_operator_build_prompt_clause "${LABEL_OPERATOR:-}")"
 
   # panel_for_repo deliberately falls back to FLEET_BENCH when neither the
   # local clone nor the contents API yields a roster. Resolve this author-aware
@@ -2421,13 +2447,13 @@ _builder_repo() {
   # zero and none of them says which zero this is (#345).
   local ready_board=0 board_read=1 ledgered_rounds=0 slot_prs="" open_pr_ids=""
   ready_json="$(gh issue list -R "$R" --state open --label "$LABEL_READY" \
-    --json number,assignees,updatedAt 2>/dev/null || echo err)"
+    --json number,assignees,labels,updatedAt 2>/dev/null || echo err)"
   if [ "$ready_json" = "err" ]; then
     ready_count=err
     board_read=0
   else
-    ready_items="$(printf '%s' "$ready_json" | jq -r --arg repo "$R" \
-      '.[] | select((.assignees | length) == 0) | "\($repo)#\(.number) \(.updatedAt)"' 2>/dev/null || true)"
+    ready_items="$(printf '%s' "$ready_json" \
+      | _ready_issue_lines "$R" "${LABEL_OPERATOR:-}" 2>/dev/null || true)"
     ready_assigned="$(printf '%s' "$ready_json" \
       | jq '[.[] | select((.assignees | length) > 0)] | length' 2>/dev/null || echo 0)"
     ready_board="$(printf '%s\n' "$ready_items" | awk 'NF{c++} END{print c+0}')"
@@ -2548,6 +2574,7 @@ _builder_repo() {
         CLAIM="$BIN_DIR/claim-issue.sh" \
         POST_ONCE="$BIN_DIR/post-once.sh" \
         DECLINE_MARK="$_DECLINE_MARK" DECLINE_REASONS="$_DECLINE_REASONS" \
+        OPERATOR_CLAUSE="$operator_clause" \
         HEAD_CHECKS="$head_checks" \
         WT_RULES="$wt_rules" ROUND_RULES="$round_rules" ONESHOT_RULES="$oneshot_rules")"
     # Record what this session SAW, at the state it saw it in — but only if the
