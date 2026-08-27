@@ -118,15 +118,31 @@ rehearsal_open_sandbox_objects() {
 
 rehearsal_cleanup_owned_fixtures() {
   local repo="${REHEARSAL_FIXTURE_REPO:-}" pr issue failed=0
+  local pull_json head_repo head_ref
   [ -n "$repo" ] || return 0
 
   for pr in ${REHEARSAL_FIXTURE_PRS:-}; do
     [ -n "$pr" ] || continue
+    pull_json="$(gh api "repos/$repo/pulls/$pr")" || {
+      echo "teardown: WARNING — could not inspect owned fixture PR #$pr" >&2
+      failed=1
+      pull_json='{}'
+    }
+    head_repo="$(jq -r '.head.repo.full_name // ""' <<<"$pull_json")"
+    head_ref="$(jq -r '.head.ref // ""' <<<"$pull_json")"
     if gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null; then
       echo "teardown: closed owned fixture PR #$pr"
     else
       echo "teardown: WARNING — could not close owned fixture PR #$pr" >&2
       failed=1
+    fi
+    if [ "$head_repo" = "$repo" ] && [ -n "$head_ref" ]; then
+      if gh api -X DELETE "repos/$repo/git/refs/heads/$head_ref" >/dev/null; then
+        echo "teardown: deleted owned fixture branch $head_ref"
+      else
+        echo "teardown: WARNING — could not delete owned fixture branch $head_ref" >&2
+        failed=1
+      fi
     fi
   done
   for issue in ${REHEARSAL_FIXTURE_ISSUES:-}; do
@@ -338,36 +354,4 @@ rehearsal_report_occupied_builder_slot() {
   skip "builder: panel request withheld while head check is pending"
   skip "builder: settled head status established"
   skip "builder: panel request issued after head settles"
-}
-
-rehearsal_close_builder_fixture_prs() {
-  local repo="$1" author="$2" pr prs failed=0
-  if ! prs="$(rehearsal_builder_slot_prs "$repo" "$author")"; then
-    echo "teardown: WARNING — could not list builder fixture PRs" >&2
-    return 1
-  fi
-  while read -r pr; do
-    [ -n "$pr" ] || continue
-    if gh api -X PATCH "repos/$repo/pulls/$pr" -f state=closed >/dev/null; then
-      echo "teardown: closed builder fixture PR #$pr"
-    else
-      echo "teardown: WARNING — could not close builder fixture PR #$pr" >&2
-      failed=1
-    fi
-  done <<<"$prs"
-  return "$failed"
-}
-
-rehearsal_close_issue_fixtures() {
-  local repo="$1" issues="$2" issue failed=0
-  for issue in $issues; do
-    [ -n "$issue" ] || continue
-    if gh api -X PATCH "repos/$repo/issues/$issue" -f state=closed >/dev/null; then
-      echo "teardown: closed triage fixture issue #$issue"
-    else
-      echo "teardown: WARNING — could not close triage fixture issue #$issue" >&2
-      failed=1
-    fi
-  done
-  return "$failed"
 }

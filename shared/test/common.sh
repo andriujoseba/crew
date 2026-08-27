@@ -4326,36 +4326,6 @@ t rehearsal-answer-mark-missing-rc 1 "$answer_mark_missing_rc"
 t rehearsal-answer-mark-missing-clears-output '' "$REHEARSAL_MARK_ANSWERED"
 unset -f bx ok fail
 
-REHEARSAL_ISSUE_GH_CALLS="$TMP/rehearsal-issue-gh-calls"
-gh() { printf '%s\n' "$*" >>"$REHEARSAL_ISSUE_GH_CALLS"; }
-if rehearsal_close_issue_fixtures owner/sandbox '41 42' >/dev/null; then
-  issue_cleanup_rc=0
-else
-  issue_cleanup_rc=$?
-fi
-t rehearsal-issue-teardown-success-rc 0 "$issue_cleanup_rc"
-t rehearsal-issue-teardown-success-attempts-both 2 \
-  "$(wc -l <"$REHEARSAL_ISSUE_GH_CALLS")"
-
-: >"$REHEARSAL_ISSUE_GH_CALLS"
-gh() {
-  printf '%s\n' "$*" >>"$REHEARSAL_ISSUE_GH_CALLS"
-  [[ "$*" != *repos/owner/sandbox/issues/41* ]]
-}
-if rehearsal_close_issue_fixtures owner/sandbox '41 42' >/dev/null 2>&1; then
-  issue_cleanup_rc=0
-else
-  issue_cleanup_rc=$?
-fi
-t rehearsal-issue-teardown-partial-failure-rc 1 "$issue_cleanup_rc"
-t rehearsal-issue-teardown-partial-failure-attempts-both 2 \
-  "$(wc -l <"$REHEARSAL_ISSUE_GH_CALLS")"
-t rehearsal-issue-teardown-partial-failure-attempts-first 1 \
-  "$(grep -cF 'repos/owner/sandbox/issues/41' "$REHEARSAL_ISSUE_GH_CALLS")"
-t rehearsal-issue-teardown-partial-failure-attempts-second 1 \
-  "$(grep -cF 'repos/owner/sandbox/issues/42' "$REHEARSAL_ISSUE_GH_CALLS")"
-unset -f gh
-
 # One registry covers the common attention fixture and every role-specific
 # object. Cleanup addresses only the exact IDs this round recorded; a title or
 # author prefix is never membership (#493).
@@ -4371,12 +4341,20 @@ t rehearsal-owned-fixtures-record-prs 51 "$REHEARSAL_FIXTURE_PRS"
 
 REHEARSAL_OWNED_GH_CALLS="$TMP/rehearsal-owned-gh-calls"
 : >"$REHEARSAL_OWNED_GH_CALLS"
-gh() { printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"; }
+gh() {
+  printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"
+  case "$*" in
+    'api repos/owner/sandbox/pulls/51')
+      printf '%s\n' '{"head":{"repo":{"full_name":"owner/sandbox"},"ref":"drill-review"}}' ;;
+  esac
+}
 rehearsal_cleanup_owned_fixtures >/dev/null
-t rehearsal-owned-cleanup-closes-exactly-recorded 3 \
-  "$(wc -l <"$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
+t rehearsal-owned-cleanup-closes-exactly-recorded 4 \
+  "$(grep -cE 'api -X (PATCH|DELETE)' "$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
 t rehearsal-owned-cleanup-closes-recorded-pr 1 \
-  "$(grep -cF 'repos/owner/sandbox/pulls/51' "$REHEARSAL_OWNED_GH_CALLS")"
+  "$(grep -cF 'api -X PATCH repos/owner/sandbox/pulls/51' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-owned-cleanup-deletes-recorded-sandbox-branch 1 \
+  "$(grep -cF 'api -X DELETE repos/owner/sandbox/git/refs/heads/drill-review' "$REHEARSAL_OWNED_GH_CALLS")"
 t rehearsal-owned-cleanup-closes-recorded-issues 2 \
   "$(grep -cF 'repos/owner/sandbox/issues/' "$REHEARSAL_OWNED_GH_CALLS")"
 t rehearsal-owned-cleanup-does-not-use-prefix-or-author 0 \
@@ -4722,23 +4700,6 @@ t rehearsal-builder-missing-pr-skips-unreachable-checks \
   'builder: initial PR is ready for its fixture panel|builder: host reviewer requested for initial round|builder: installed round-answer mark resolves|builder: host changes-requested review submitted|builder: pending head status established|builder: changes-requested round returns PR to draft|builder: round answer is signalled while head check is pending|builder: fix round kept the fixture head stable|builder: panel request withheld while head check is pending|builder: settled head status established|builder: panel request issued after head settles' \
   "$(sed -n 's/^skip //p' <<<"$MISSING_BUILDER_PR_OUT" | paste -sd'|' -)"
 
-REHEARSAL_GH_CALLS="$TMP/rehearsal-gh-calls"
-gh() {
-  case "$1 $2" in
-    "api repos/owner/sandbox/pulls?state=open&per_page=100")
-      jq '[.[] | .user = {login:"builder"}]' <<<"$RIGHT_BUILDER_PRS" ;;
-    "api -X") printf '%s\n' "$*" >>"$REHEARSAL_GH_CALLS" ;;
-    *) return 2 ;;
-  esac
-}
-rehearsal_close_builder_fixture_prs owner/sandbox builder >/dev/null
-t rehearsal-builder-teardown-closes-all-fixture-prs 2 \
-  "$(wc -l <"$REHEARSAL_GH_CALLS")"
-t rehearsal-builder-teardown-closes-first 1 \
-  "$(grep -cF 'repos/owner/sandbox/pulls/6' "$REHEARSAL_GH_CALLS")"
-t rehearsal-builder-teardown-closes-current 1 \
-  "$(grep -cF 'repos/owner/sandbox/pulls/12' "$REHEARSAL_GH_CALLS")"
-unset -f gh
 # --- rehearsal reviewer announce ordering (#192) --------------------------
 # shellcheck source=drill/review-order.sh
 source "$ROOT/drill/review-order.sh"
