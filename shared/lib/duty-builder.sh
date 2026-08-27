@@ -2055,7 +2055,10 @@ _resume_gate() {
     issue_by_key["$key"]="$issue"
     lines="$lines$key $foreign"$'\n'
   done <<<"$fingerprints"
-  [ -n "${lines//[[:space:]]/}" ] || return 0
+  if [ -z "${lines//[[:space:]]/}" ]; then
+    _builder_suppression_sync "$marker" draft ""
+    return 0
+  fi
   fresh="$(printf '%s' "$lines" | ledger_filter "$DUTY_DIR/.seen-resume")"
   # One line per withheld draft, every tick it is withheld — not report_suppressed's
   # speak-on-change. This branch already logs once per tick either way, so naming
