@@ -61,13 +61,13 @@ read_repo_list() {
 # Pure bash: boxes differ in installed tools (no node on kimi's, no shellcheck
 # either), so the engine depends only on bash+gh+jq+git+flock+timeout.
 render_prompt() {
-  local file="$1" out pair name value doctrine_repo doctrine_upstream_clause=""
+  local file="$1" out pair name value doctrine_repo
   shift
   out="$(cat "$PROMPTS_DIR/$file")"
   doctrine_repo="${DOCTRINE_REPO:-}"
-  if [[ "$out" == *'{{DOCTRINE_UPSTREAM_CLAUSE}}'* ]] && [ -n "$doctrine_repo" ]; then
-    if read_repo_list "$REPOS_FILE" | grep -Fxq -- "$doctrine_repo"; then
-      doctrine_upstream_clause=" When the vendored doctrine itself blocks normalization or minting, open a discussion in $doctrine_repo following that repository's consumer guide. Quote the rule at this repository's pin, link the local issue that exposes the gap, state the workaround and its retirement condition, then cite that discussion from the consumer workaround. Never mint an upstream issue yourself."
+  if [ "$file" = triage.txt ] && [ -n "$doctrine_repo" ]; then
+    if read_repo_list "$REPOS_FILE" | grep -Fx -- "$doctrine_repo" >/dev/null; then
+      out="$out When the vendored doctrine itself blocks normalization or minting, open a discussion in $doctrine_repo following that repository's consumer guide. Quote the rule at this repository's pin, link the local issue that exposes the gap, state the workaround and its retirement condition, then cite that discussion from the consumer workaround. Never mint an upstream issue yourself."
     else
       # render_prompt is normally captured with $(...), so keep the warning on
       # the caller's log stream instead of accidentally inserting it in prose.
@@ -80,7 +80,6 @@ render_prompt() {
     "DOCTRINE_TRIAGE=${DOCTRINE_TRIAGE:-TRIAGE.md}" \
     "DOCTRINE_BUILDER=${DOCTRINE_BUILDER:-BUILDER.md}" \
     "DOCTRINE_REVIEWER=${DOCTRINE_REVIEWER:-REVIEWER.md}" \
-    "DOCTRINE_UPSTREAM_CLAUSE=$doctrine_upstream_clause" \
     "$@"; do
     name="${pair%%=*}"
     value="${pair#*=}"

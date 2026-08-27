@@ -850,7 +850,7 @@ t operator-configured-prompt-renders-clause rendered "$r1"
 # byte-for-byte; an unlisted value warns and still renders today's prompt.
 DOCTRINE463_BASE="$(DOCTRINE_REPO='' PROMPTS_DIR="$SHARED/prompts" render_prompt triage.txt \
   ME=me-bot REPO=o/r SIGNAL_BLOCK='signals')"
-DOCTRINE463_TODAY="$(sed 's/{{ME}}/me-bot/g; s|{{REPO}}|o/r|g; s/{{SIGNAL_BLOCK}}/signals/g; s/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g; s/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g; s/{{DOCTRINE_UPSTREAM_CLAUSE}}//g' \
+DOCTRINE463_TODAY="$(sed 's/{{ME}}/me-bot/g; s|{{REPO}}|o/r|g; s/{{SIGNAL_BLOCK}}/signals/g; s/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g; s/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g' \
   "$SHARED/prompts/triage.txt")"
 t doctrine-upstream-empty-is-byte-identical "$DOCTRINE463_TODAY" "$DOCTRINE463_BASE"
 if grep -Eq 'DOCTRINE_REPO|owner/repo|upstream duty|consumer guide' <<<"$DOCTRINE463_BASE"; then
