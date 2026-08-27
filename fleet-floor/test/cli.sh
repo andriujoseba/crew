@@ -482,7 +482,14 @@ cl_pair cli-noauth '^cli-noauth .+ MISSING +MISSING +' \
 # unchanged; the golden compare means widening it has to be deliberate.
 CL_FMT="$(sed -n "s/^  local fmt='\(.*\)'\$/\1/p" "$CL_CLI" | head -1)"
 t "crew status: the table's column contract is unchanged" \
-  '%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
+  '%-20s %-10s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
+
+cl_pair cli-suppressed-silent '^cli-suppressed-silent +offline .+ stale +stale +SILENT' \
+  "crew status: a silent box outranks a stale suppression marker"
+cl_pair cli-suppressed-working '^cli-suppressed-working +working .+ flowing +flowing +session active' \
+  "crew status: an active session outranks suppression"
+cl_pair cli-suppressed-stuck '^cli-suppressed-stuck +working .+ flowing +flowing +STUCK' \
+  "crew status: a stuck run outranks suppression"
 CL_WIDE=""
 for cl_word in flowing waiting stale missing unknown MISSING; do
   [ "${#cl_word}" -le 8 ] || CL_WIDE="$CL_WIDE $cl_word"

@@ -93,4 +93,4 @@ PY_CONC
 t "5 concurrent commands all answered 200" 5 "$CONC"
 t "fleet still served during load" 200 "$(status GET /api/fleet)"
 # The coalescing refresh must not have left a poll wedged behind it.
-t "fleet still complete after load" 27 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet still complete after load" 30 "$(body GET /api/fleet | jqf "len(d['units'])")"

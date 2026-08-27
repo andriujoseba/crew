@@ -440,6 +440,8 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # and the notes it would defer to describe a healthy one.
         u["state"] = "working"
         u["note"] = "STUCK — duty run has held the lock for %s" % fmt_dur(u["lock"]["held"])
+    elif cur:
+        u["state"] = "working"
     elif u["suppression"]["active"]:
         subject = u["suppression"]["key"].rsplit("@", 1)[0]
         u["state"] = "suppressed"
@@ -447,8 +449,6 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
             fmt_dur(u["suppression"]["age"]),
             u["suppression"]["kind"], subject,
         )
-    elif cur:
-        u["state"] = "working"
     else:
         u["state"] = "idle"
 

@@ -14,7 +14,7 @@
 # fixture. It did not move here: it would have dragged the fixture with it,
 # and this split is a relocation (#508 D5).
 
-t "fleet: every roster box present"  27 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "fleet: every roster box present"  30 "$(body GET /api/fleet | jqf "len(d['units'])")"
 
 # ABSENCE MUST BE MEASURED BEFORE IT CAN HIDE A CONSOLE. `box list` failing
 # makes every box read absent — the ambiguity box_states' docstring is about —

@@ -1779,13 +1779,36 @@ _builder_suppression_sync() {
     rm -f "$marker"
     return 0
   fi
-  if IFS=$'\t' read -r _ old_kind old_key <"$marker" 2>/dev/null \
+  if [ -f "$marker" ] \
+     && IFS=$'\t' read -r _ old_kind old_key <"$marker" \
      && [ "$old_kind" = "$kind" ] && [ "$old_key" = "$key" ]; then
     return 0
   fi
   tmp="$marker.tmp.$$"
   printf '%s\t%s\t%s\n' "$(date +%s)" "$kind" "$key" >"$tmp"
   mv "$tmp" "$marker"
+}
+
+# Remove records whose repository or lane is no longer part of this engine's
+# configured builder sweep. Without this pass, removing a repo from repos.txt
+# leaves its last breaker verdict visible forever because no lane caller remains
+# to clear it.
+_builder_suppression_prune() {
+  local repos="$1" marker repo lane keep
+  for marker in "$DUTY_DIR"/.builder-suppressed.*; do
+    [ -f "$marker" ] || continue
+    keep=0
+    while IFS= read -r repo; do
+      [ -n "$repo" ] || continue
+      for lane in draft stranded near-miss green-head; do
+        if [ "$marker" = "$DUTY_DIR/.builder-suppressed.${repo//\//__}.$lane" ]; then
+          keep=1
+          break 2
+        fi
+      done
+    done <<<"$repos"
+    [ "$keep" -eq 1 ] || rm -f "$marker"
+  done
 }
 
 # _resume_breaker STATE THRESHOLD — the zero-action circuit breaker. stdin is
@@ -1860,7 +1883,6 @@ _resume_lane_breaker() {
   fi
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
-    [ "$count" -ge "$breaker" ] && [ -z "$suppressed_key" ] && suppressed_key="$key"
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
     case "$verdict" in
       dispatch)
@@ -1871,6 +1893,7 @@ _resume_lane_breaker() {
         fi
         ;;
       suppress)
+        [ -z "$suppressed_key" ] && suppressed_key="$key"
         log "no resume duty: $repo#$num $lane lane suppressed at $head after $count zero-action dispatches — only a push clears it (#314)"
         ;;
       *) : ;;
@@ -1944,7 +1967,6 @@ _green_head_breaker() {
   fi
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
-    [ "$count" -ge "$breaker" ] && [ -z "$suppressed_key" ] && suppressed_key="$key"
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
     case "$verdict" in
       dispatch)
@@ -1958,6 +1980,7 @@ _green_head_breaker() {
         fi
         ;;
       suppress)
+        [ -z "$suppressed_key" ] && suppressed_key="$key"
         log "no resume duty: $repo#$num green-head bypass suppressed at $head after $count zero-action dispatches — only a push clears it (#314); the twelve-tick counter still runs"
         ;;
       *) : ;;
@@ -2072,7 +2095,6 @@ _resume_gate() {
       done
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
-    [ "$count" -ge "$breaker" ] && [ -z "$suppressed_key" ] && suppressed_key="$key"
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
     case "$verdict" in
       dispatch)
@@ -2095,6 +2117,7 @@ _resume_gate() {
         fi
         ;;
       suppress)
+        [ -z "$suppressed_key" ] && suppressed_key="$key"
         log "no resume duty: $repo#$num breaker-suppressed at $head after $count zero-action dispatches — only a push clears it (#314)"
         ;;
       *) : ;;   # held by the ledger; already named above
@@ -2146,6 +2169,7 @@ duty_builder() {
   _repair_seen_build_264
   duty_repos="$({ read_repo_list "$REPOS_FILE"; _discover_my_pr_repos; } | awk 'NF && !seen[$0]++')"
   _warn_unscoped_authored
+  _builder_suppression_prune "$duty_repos"
 
   while IFS= read -r R; do
     [ -z "$R" ] && continue

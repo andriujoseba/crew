@@ -142,7 +142,7 @@ emit_probe() {
   # boundaries for the ones that have stopped ticking — which is what makes
   # `stale` reachable at all.
   case "$sc" in
-    silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
+    silent|suppressed-silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
     # -1 is "no duty.log to read an age from" — true of a box that was never
     # hired, and equally true of one hired a minute ago that has not ticked.
     invalid-tickage) _tickage=garbage ;;
@@ -157,12 +157,14 @@ emit_probe() {
   # A duty run that started 47 minutes ago and never let go: alive, ticking,
   # and doing nothing. There is no other way to reach the STUCK branch — a
   # real fleet produces this state only by breaking.
-  [ "$sc" = stuck ] && printf '::lockheld 2820\n'
-  if [ "$sc" = suppressed ]; then
+  case "$sc" in stuck|suppressed-stuck) printf '::lockheld 2820\n' ;; esac
+  case "$sc" in suppressed|suppressed-silent|suppressed-working|suppressed-stuck)
     printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
-  else
+    ;;
+  *)
     printf '::suppression \n'
-  fi
+    ;;
+  esac
   printf '::cron %s\n'   "$cron"
   printf '::paused %s\n' "$paused"
   # Full owner/repo, exactly as repos.txt holds them. Bare names here are
@@ -171,7 +173,7 @@ emit_probe() {
   printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
   echo '::logstart'
   case "$sc" in
-    working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
+    working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
       # a closed session, then an open one: state must read WORKING
       echo "$(box_ago "$sc" 900) duty run start"
       echo "$(box_ago "$sc" 900) heavy-duty/crew: build duty (ready unclaimed=2, whole rounds owed=0)"
@@ -188,7 +190,7 @@ emit_probe() {
       echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved"
       echo "$(ago 190) duty run end"
       ;;
-    silent|disarmed)   # newest line is older than two tick boundaries
+    silent|suppressed-silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"
       ;;
@@ -393,15 +395,23 @@ case "${1:-}" in
         _armed=1; _cpaused=0
         [ "$(cron_of "$name")" = "paused" ] && { _armed=0; _cpaused=1; }
         case "$sc" in nocron|disarmed|nothired|unconverged|premanifest) _armed=0 ;; esac
+        _log=1; _active=0; _lock=-1
         case "$sc" in
-          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - -" ;;
-          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - -" ;;
+          nothired|unconverged|premanifest|neverticked|suppressed) _log=0 ;;
+          working|suppressed-working|noauth|skew-behind|skew-ahead|invalid-tickage) _active=1 ;;
+          stuck|suppressed-stuck) _lock=2820 ;;
+        esac
+        case "$sc" in
+          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
           # Hired and armed, nothing recorded against it, and no duty.log to
           # age: the box is healthy and has simply not run yet.
-          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - -" ;;
-          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - -" ;;
-          suppressed)    echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456" ;;
-          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - -" ;;
+          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
+          suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
+          suppressed|suppressed-working|suppressed-stuck)
+            echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
+          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
         esac ;;
       # RESUME_SH, then PAUSE_SH. Since #188 each script states what it DID and
       # a box with nothing to do says so on stdout and exits 0 — so the stub has

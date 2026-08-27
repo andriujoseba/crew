@@ -6,6 +6,9 @@
 ff-working     running  working
 ff-idle        running  idle
 ff-suppressed  running  suppressed
+ff-suppressed-silent running suppressed-silent
+ff-suppressed-working running suppressed-working
+ff-suppressed-stuck running suppressed-stuck
 ff-silent      running  silent
 ff-paused      running  paused
 ff-fresh       running  fresh

@@ -1266,10 +1266,11 @@ vendor_probe() {
 }
 
 # auth_from_flow NAME — the box's credential state as the DUTY ENGINE last
-# observed it, in one exec of pure local file reads. Echoes five fields:
+# observed it, in one exec of pure local file reads. Echoes eleven fields:
 #
 #     <gh-state> <vendor-state> <tick-age-seconds-or--1> <armed> <paused>
 #     <suppression-age-or--1> <lane-or--> <repo#pr@head-or-->
+#     <log-present> <session-active> <lock-age-or--1>
 #
 # `armed` and `paused` are crontab line COUNTS, read with probe.sh's own
 # patterns, so `crew status` and the floor answer "is this box armed?" from
@@ -1310,10 +1311,16 @@ auth_from_flow() {
       elif [ ! -s "$HOME/duty/VERSION" ]; then printf "unknown "
       else printf "nofail "; fi
     done
-    age=-1
+    age=-1; log_present=0; session_active=0; lockage=-1
     if [ -r "$HOME/duty/duty.log" ]; then
+      log_present=1
       ts="$(grep -oE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" "$HOME/duty/duty.log" | tail -1)"
       [ -n "$ts" ] && age=$(( $(date -u +%s) - $(date -u -d "$ts" +%s 2>/dev/null || echo 0) ))
+      session_active="$(awk '/SESSION START/{active=1} /SESSION END/{active=0} END{print active+0}' "$HOME/duty/duty.log")"
+    fi
+    if [ -r "$HOME/duty/.duty.lock.since" ]; then
+      lock_since="$(cat "$HOME/duty/.duty.lock.since" 2>/dev/null || echo)"
+      case "$lock_since" in ""|*[!0-9]*) : ;; *) lockage=$(( $(date +%s) - lock_since )) ;; esac
     fi
     # Live tick.sh crontab lines. The pattern is probe.sh'\''s ::cron pattern
     # CHARACTER FOR CHARACTER, and it has to stay that way: this helper exists
@@ -1342,10 +1349,12 @@ auth_from_flow() {
       IFS="$(printf "\t")" read -r when kind key <"$sf" 2>/dev/null || continue
       case "$when" in ""|*[!0-9]*) continue ;; esac
       [ -n "$kind" ] && [ -n "$key" ] || continue
-      if [ "$when" -gt "$sw" ]; then sw="$when"; sk="$kind"; sid="$key"; fi
+      if [ "$sw" -eq 0 ] || [ "$when" -lt "$sw" ]; then sw="$when"; sk="$kind"; sid="$key"; fi
     done
     if [ "$sw" -gt 0 ]; then sage=$(( $(date +%s) - sw )); else sage=-1; fi
-    printf "%s %s %s %s %s %s\n" "$age" "$armed" "$paused" "$sage" "$sk" "$sid"
+    printf "%s %s %s %s %s %s %s %s %s\n" \
+      "$age" "$armed" "$paused" "$sage" "$sk" "$sid" \
+      "$log_present" "$session_active" "$lockage"
     printf "\n"
   ' 2>/dev/null | tr -d '\r'
 }
@@ -2125,12 +2134,12 @@ cmd_status() {
   # ENGINE is skew, INTEGRITY is whether the box is even running the engine it
   # names, and collapsing the two loses the only question `crew status` could
   # not answer before. 10 wide for `unverified`.
-  local fmt='%-20s %-9s %-12s %-15s %-10s %-8s %-8s %s\n'
+  local fmt='%-20s %-10s %-12s %-15s %-10s %-8s %-8s %s\n'
   local host; host="$(crew_version)"
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
-  local supp_age supp_kind supp_key supp_subject
+  local supp_age supp_kind supp_key supp_subject log_present session_active lock_age
   local report estate erecorded edisplay
   local rreport conv convnote
   while read -r name agent role _from; do
@@ -2150,7 +2159,8 @@ cmd_status() {
     estate="$(report_field state "$report")"
     erecorded="$(report_field recorded "$report")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
-    read -r ghs vs tickage armed cpaused supp_age supp_kind supp_key <<<"$(auth_from_flow "$name")"
+    read -r ghs vs tickage armed cpaused supp_age supp_kind supp_key \
+      log_present session_active lock_age <<<"$(auth_from_flow "$name")"
     ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
     # An older engine, or a box that answered nothing, reports no counts. Treat
     # that as "armed" rather than inventing an alarm: absence of evidence about
@@ -2158,6 +2168,7 @@ cmd_status() {
     # nothing) is the safe one to fall back to.
     armed="${armed:-1}"; cpaused="${cpaused:-0}"
     supp_age="${supp_age:--1}"; supp_kind="${supp_kind:--}"; supp_key="${supp_key:--}"
+    log_present="${log_present:-0}"; session_active="${session_active:-0}"; lock_age="${lock_age:--1}"
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
     # it, because two readers with private thresholds is the defect this whole
@@ -2235,6 +2246,25 @@ cmd_status() {
       else
         note="disarmed — no cron line; crew hire $name arms it"
       fi
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [ "$log_present" = 1 ] && { ! [[ "$tickage" =~ ^[0-9]+$ ]] \
+           || [ "$tickage" -ge "$SILENT_AFTER_S" ]; }; then
+      state=offline
+      if [[ "$tickage" =~ ^[0-9]+$ ]]; then
+        note="SILENT — no tick for $(status_duration "$tickage")"
+      else
+        note="tick age unknown — waiting for a valid probe"
+      fi
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [[ "$supp_age" =~ ^[0-9]+$ ]] \
+         && [ "$lock_age" -ge "$SILENT_AFTER_S" ]; then
+      state=working
+      note="STUCK — duty run has held the lock for $(status_duration "$lock_age")"
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [[ "$supp_age" =~ ^[0-9]+$ ]] \
+         && [ "$session_active" = 1 ]; then
+      state=working
+      note="session active"
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
          && [[ "$supp_age" =~ ^[0-9]+$ ]]; then
       state=suppressed

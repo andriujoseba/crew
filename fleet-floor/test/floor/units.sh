@@ -26,6 +26,12 @@ t "suppressed: carries age and reason" True \
   "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"
 t "suppressed: remains distinct from idle" False \
   "$(uf ff-suppressed "u['state'] == 'idle'")"
+t "suppressed overlap: SILENT remains offline" offline \
+  "$(uf ff-suppressed-silent "u['state']")"
+t "suppressed overlap: active session remains working" working \
+  "$(uf ff-suppressed-working "u['state']")"
+t "suppressed overlap: stuck run remains working" working \
+  "$(uf ff-suppressed-stuck "u['state']")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
@@ -49,6 +55,10 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 source "$FLOOR/../drill/agreement.sh"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
+t "agreement: matching SILENT readings are compared" silent \
+  "$(agreement_case offline 'ff-silent offline host engine current stale stale SILENT — no tick' 'SILENT — no tick' False)"
+t "agreement: a SILENT mismatch cannot skip" silent-mismatch \
+  "$(agreement_case offline 'ff-silent suppressed host engine current stale stale breaker' 'SILENT — no tick' False)"
 build_unit_source="$(awk '/^def build_unit/,/^def fmt_dur/' "$FLOOR/server/floor/units.py")"
 if grep -q 'now - last_ts' <<<"$build_unit_source"; then
   fail "clock: unit building never mixes host now with a box timestamp" \

@@ -197,7 +197,7 @@ if [ -f "$DUTY_DIR/.duty.lock.since" ]; then
   esac
 fi
 
-# The newest active zero-action resume-breaker episode. Each lane owns one
+# The oldest active zero-action resume-breaker episode. Each lane owns one
 # marker so a quiet repository cannot erase another repository's suppression;
 # the marker carries `<trip-epoch> <lane> <repo#pr@head>`. Report its age from
 # the box clock, where the trip was recorded, and carry the reason unchanged.
@@ -209,7 +209,7 @@ for supp_file in "$DUTY_DIR"/.builder-suppressed.*; do
   if [ -z "$kind" ] || [ -z "$key" ]; then
     continue
   fi
-  if [ "$when" -gt "$supp_when" ]; then
+  if [ "$supp_when" -eq 0 ] || [ "$when" -lt "$supp_when" ]; then
     supp_when="$when"; supp_kind="$kind"; supp_key="$key"
   fi
 done
