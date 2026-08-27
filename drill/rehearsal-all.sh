@@ -541,7 +541,8 @@ for summary_row in "${SUMMARY[@]}"; do
   case "$summary_row" in
     ok\ *) summary_passed=$((summary_passed + 1)) ;;
     FAIL\ *) summary_failed=$((summary_failed + 1)) ;;
-    skip\ *|SKIPPED\ *|INCOMPLETE\ *) summary_skipped=$((summary_skipped + 1)) ;;
+    skip\ *|SKIPPED\ *|INCOMPLETE\ *|keep\ *|kept\ *)
+      summary_skipped=$((summary_skipped + 1)) ;;
   esac
 done
 echo "## section states: $summary_passed passed, $summary_failed failed, $summary_skipped skipped/not-run"

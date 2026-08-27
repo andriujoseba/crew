@@ -224,6 +224,36 @@ t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LO
 t drill-phase2-summary-counts-three-passed 1 \
   "$(grep -cE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
 
+summary_count_matches_rows() {
+  local record="$1" headline counted rows
+  headline="$(sed -nE \
+    's/^## section states: ([0-9]+) passed, ([0-9]+) failed, ([0-9]+) skipped\/not-run$/\1 \2 \3/p' \
+    <<<"$record")"
+  read -r passed failed skipped <<<"$headline"
+  counted=$((passed + failed + skipped))
+  rows="$(grep -c '^##   ' <<<"$record")"
+  [ "$counted" -eq "$rows" ]
+}
+
+if summary_count_matches_rows "$phase2_out"; then r1=equal; else r1=MISMATCH; fi
+t drill-phase2-keep-summary-counts-every-row equal "$r1"
+
+if phase2_retained_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_REMOTE="$REMOTE" DRILL_ROLE_STAGE=phase2 DRILL_ROLE_RC=1 \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer \
+      --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+  phase2_retained_rc=0
+else
+  phase2_retained_rc=$?
+fi
+t drill-phase2-retained-stays-red 1 "$phase2_retained_rc"
+t drill-phase2-retained-reports-kept-teardown 1 \
+  "$(grep -cF 'kept       teardown  (round not green' <<<"$phase2_retained_out")"
+if summary_count_matches_rows "$phase2_retained_out"; then r1=equal; else r1=MISMATCH; fi
+t drill-phase2-retained-summary-counts-every-row equal "$r1"
+
 required_later_sections() {
   local record="$1" section
   for section in installer config app; do
