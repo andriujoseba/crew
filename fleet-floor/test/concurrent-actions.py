@@ -329,8 +329,10 @@ assert payload["results"][1]["out"] == (
 # AND NOTHING MORE THAN THAT. The row used to append "so the box was left as it
 # was", a claim about the guest on the one path where the guest's state is what
 # is unknown — a timed-out stop has asked for a shutdown that may be in flight
-# (round 1, codex-bot and claude-bot). Asserted as an absence, because the
-# equality above is satisfied by any rewording that keeps the claim.
+# (round 1, codex-bot and claude-bot). The equality above already excludes it
+# here; this line NAMES it, so the rule survives an equality that is later
+# loosened. Its load-bearing twin is in test/floor/actions.sh, where the
+# matching assertion is a substring and the claim really can come back under it.
 assert "left as it was" not in payload["results"][1]["out"], payload
 
 # The same path with the stop accepted. Without this pair the assertion above
