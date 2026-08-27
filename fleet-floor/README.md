@@ -120,7 +120,8 @@ misses declare a box unreachable; one dropped ping is scheduler noise.
 moves that three, so anything that re-derives "unreachable" from the miss count
 is holding a number the operator may have changed. `fleet.wedged()` decides it
 once — the page paints `UNREACHABLE` from it, restart escalates to a force stop
-on it, and `ping.wedged` carries it to the console beside the evidence. A stale
+on it, `wake-silent` routes that box out of the wake set on it, and
+`ping.wedged` carries it to the console beside the evidence. A stale
 heartbeat is *unmeasured*, not unreachable, and takes the graceful path: the
 cost of being wrong there is a killed session.
 
@@ -196,6 +197,11 @@ minutes before `run_session`'s own timeout resolves it.
   action and never an escalation from a graceful one, and **restart** takes
   that same path *only* where the box has stopped answering the heartbeat, so
   a guest that cannot schedule its own shutdown can still be stopped (#486).
+  **A lever that could not act reports that, and skips the step it cannot
+  reach** — a restart whose stop failed does not go on to start the box, and
+  `wake-silent` sends no resume down a channel that is not answering: it names
+  the wedged box for a restart instead, that escalation being the operator's
+  to fire and not a fleet-wide button's to take (#487).
   A message starts a real one-shot session of that box's own vendor CLI, logged
   to `duty/logs/` and marked in `duty.log` like any other session. The prompt
   travels as **stdin bytes** and is read from a file inside the box, so it never
