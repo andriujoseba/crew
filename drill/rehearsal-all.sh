@@ -36,6 +36,7 @@ KEEP=0
 # drill/rehearsal-app.sh for why the control verbs are opt-in.
 APP=1
 APP_ARGS=()
+APP_ROSTER=""
 # Operator-config convergence is a real-host rehearsal too. One installed box
 # is enough to exercise the registry contract; running the destructive/restore
 # cycle once per role adds risk without adding a distinct code path.
@@ -109,7 +110,7 @@ while [ $# -gt 0 ]; do
     --no-notify-drill) NOTIFY_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
-    --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
+    --app-roster) APP_ROSTER="$2"; shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
        echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-attention-drill] [--no-attention-audit-drill] [--no-hygiene-drill] [--no-notify-drill] [--no-breaker-drill] [--app-boxes \"a b\"] [--app-allow-control]"
@@ -481,19 +482,15 @@ if [ "$APP" -eq 1 ]; then
   # the one wrong file, so their agreement still passes. A generated fact is
   # only safer than a hand-written one if ALL of it is generated from something
   # true; the role came from the drill, the agent silently did not.
-  case " ${APP_ARGS[*]-} " in
-    *" --roster "*) : ;;
-    *)
-      if [ -n "${DRILLED// /}" ]; then
-        APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
-      else
-        echo "## (app phase: no role reached a box this run — nothing to compare against)"
-        SUMMARY+=("SKIPPED    app  (blocked by role install: no installed drill box)")
-        APP_ROW_EMITTED=1
-        [ "$overall" -eq 1 ] || overall=2
-        APP=0
-      fi ;;
-  esac
+  if [ -n "${DRILLED// /}" ]; then
+    APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
+  else
+    echo "## (app phase: no role reached a box this run — nothing to compare against)"
+    SUMMARY+=("SKIPPED    app  (blocked by role install: no installed drill box)")
+    APP_ROW_EMITTED=1
+    [ "$overall" -eq 1 ] || overall=2
+    APP=0
+  fi
   # Say what was left out rather than quietly narrowing: a shorter roster that
   # nobody announced reads as full coverage.
   if [ "$APP" -eq 1 ] && [ "${DRILLED# }" != "$ROLES" ]; then
@@ -516,6 +513,30 @@ if [ "$APP" -eq 1 ]; then
     *) SUMMARY+=("FAIL       app"); overall=1 ;;
   esac
   APP_ROW_EMITTED=1
+
+  # A named roster is an additional reading after the drill-role pass, never
+  # a replacement for it. It points the same app at an already-armed member;
+  # no role drill or box mint happens between the two readings (#494).
+  if [ -n "$APP_ROSTER" ]; then
+    echo
+    echo "############################################################"
+    echo "## fleet app — armed roster comparison"
+    echo "############################################################"
+    armed_args=()
+    app_arg_i=0
+    while [ "$app_arg_i" -lt "${#APP_ARGS[@]}" ]; do
+      case "${APP_ARGS[$app_arg_i]}" in
+        --drill-roles|--agent) app_arg_i=$((app_arg_i + 2)) ;;
+        *) armed_args+=("${APP_ARGS[$app_arg_i]}"); app_arg_i=$((app_arg_i + 1)) ;;
+      esac
+    done
+    "$HERE/rehearsal-app.sh" "${armed_args[@]}" --roster "$APP_ROSTER"
+    rc=$?
+    case "$rc" in
+      0) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+      *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
+    esac
+  fi
 fi
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every

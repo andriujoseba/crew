@@ -110,6 +110,7 @@ CONFIG
 cat >"$HARNESS/rehearsal-app.sh" <<'APP'
 #!/usr/bin/env bash
 printf 'app\n' >>"$DRILL_SECTION_LOG"
+[ -z "${DRILL_APP_LOG:-}" ] || printf '%s\n' "$*" >>"$DRILL_APP_LOG"
 exit 0
 APP
 chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
@@ -227,6 +228,36 @@ t drill-phase2-failure-runs-app 1 \
 t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LOG")"
 t drill-phase2-summary-counts-three-passed 1 \
   "$(grep -cE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+
+# A named app roster adds an armed comparison after the generated drill-role
+# comparison. It does not replace that pass and it does not invoke another
+# role drill (therefore cannot mint another box).
+APP_LOG="$TMP/app-passes.log"
+: >"$APP_LOG"
+: >"$ROLE_LOG"
+if app_roster_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_roster_rc=0
+else
+  app_roster_rc=$?
+fi
+t drill-armed-roster-second-pass-rc 0 "$app_roster_rc"
+t drill-armed-roster-runs-two-app-passes 2 \
+  "$(wc -l <"$APP_LOG" | tr -d ' ')"
+t drill-armed-roster-first-pass-is-generated 1 \
+  "$(sed -n '1p' "$APP_LOG" | grep -cF -- '--drill-roles reviewer --agent claude')"
+t drill-armed-roster-second-pass-is-named 1 \
+  "$(sed -n '2p' "$APP_LOG" | grep -cF -- "--roster $TMP/armed.roster")"
+t drill-armed-roster-mints-no-extra-role-box 1 \
+  "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
+t drill-armed-roster-is-distinct-in-record 1 \
+  "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
+    <<<"$app_roster_out")"
 
 summary_count_matches_rows() {
   local record="$1" headline counted rows

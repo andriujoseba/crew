@@ -364,6 +364,7 @@ while read -r name _agent _role _from; do
 done < <(roster_rows)
 
 AGREE_N=0
+ARMED_AGREE_N=0
 if [ "$ROSTER_N" -gt 0 ] && [ "$CLI_ROWS" -eq 0 ]; then
   # ONE failure, not one per box: the roster is not empty, so this is the CLI
   # being broken, and saying it N times as "skip" is how it stayed invisible.
@@ -403,6 +404,7 @@ print(u[0]['state'] if u else 'MISSING')")"
       skip "agree: $name" "crew status printed no row" ;;
     up)
       AGREE_N=$((AGREE_N + 1))
+      ARMED_AGREE_N=$((ARMED_AGREE_N + 1))
       ok "agree: $name is up" ;;
     *)
       if [ "$floor_state" = "offline" ]; then
@@ -462,11 +464,14 @@ done < <(roster_rows)
 # The block as a whole must have DONE something. Every per-box branch above is
 # individually correct, which is exactly why all three of the first real-host
 # runs landed every box in one of them and still compared nothing.
-if [ "$AGREE_N" -gt 0 ]; then
-  ok "the agreement check ran ($AGREE_N of $ROSTER_N boxes yielded a floor-vs-CLI comparison)"
-else
+if [ "$AGREE_N" -eq 0 ]; then
   fail "the agreement check ran" \
        "0 of $ROSTER_N boxes yielded a floor-vs-CLI comparison — this block asserted nothing"
+elif [ "$(agreement_round_result "$ARMED_AGREE_N")" = "compared" ]; then
+  ok "the agreement check reached an armed, ticking box ($ARMED_AGREE_N of $ROSTER_N boxes)"
+else
+  skip "the agreement check could not compare an armed, ticking box" \
+       "$AGREE_N of $ROSTER_N boxes yielded only non-armed comparisons"
 fi
 
 # ---- evidence actually came from the boxes -------------------------------

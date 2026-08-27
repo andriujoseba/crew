@@ -57,6 +57,10 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 source "$FLOOR/../drill/agreement.sh"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
+t "agreement: an armed skewed comparison makes the round comparable" compared \
+  "$(agreement_round_result 1)"
+t "agreement: a disarmed-only round says it could not compare" could-not-compare \
+  "$(agreement_round_result 0)"
 t "agreement: matching SILENT readings are compared" silent \
   "$(agreement_case offline 'ff-silent offline host engine current stale stale SILENT — no tick' 'SILENT — no tick' False)"
 t "agreement: a SILENT mismatch cannot skip" silent-mismatch \
