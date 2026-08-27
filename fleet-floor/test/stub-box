@@ -145,7 +145,7 @@ emit_probe() {
     silent|suppressed-silent|nocron|disarmed|skew-silent-behind|skew-silent-ahead) _tickage=4000 ;;
     # -1 is "no duty.log to read an age from" — true of a box that was never
     # hired, and equally true of one hired a minute ago that has not ticked.
-    invalid-tickage) _tickage=garbage ;;
+    invalid-tickage|suppressed-unknown) _tickage=garbage ;;
     nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
     skew-behind|skew-ahead) _tickage=110 ;;
     *)             _tickage=30 ;;
@@ -158,7 +158,7 @@ emit_probe() {
   # and doing nothing. There is no other way to reach the STUCK branch — a
   # real fleet produces this state only by breaking.
   case "$sc" in stuck|suppressed-stuck) printf '::lockheld 2820\n' ;; esac
-  case "$sc" in suppressed|suppressed-silent|suppressed-working|suppressed-stuck)
+  case "$sc" in suppressed|suppressed-silent|suppressed-unknown|suppressed-working|suppressed-stuck)
     printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
     ;;
   *)
@@ -198,7 +198,7 @@ emit_probe() {
       echo "$(box_ago "$sc" 4010) duty run start"
       echo "$(box_ago "$sc" 4000) duty run end"
       ;;
-    missing-tickage)
+    missing-tickage|suppressed-unknown)
       echo "$(ago 110) duty run start"
       ;;
     firstrun)  # its very first session: an open START, no END anywhere yet
@@ -409,6 +409,7 @@ case "${1:-}" in
           neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
           silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;
           suppressed-silent) echo "nofail nofail 4000 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
+          suppressed-unknown) echo "nofail nofail garbage $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
           suppressed|suppressed-working|suppressed-stuck)
             echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456 $_log $_active $_lock" ;;
           *)             echo "nofail nofail 30 $_armed $_cpaused -1 - - $_log $_active $_lock" ;;

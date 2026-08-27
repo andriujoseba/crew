@@ -65,9 +65,9 @@ t "cmd: restart ends running" running "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev
 # on `down` the way that guest does, which is why these cases can exist at
 # all: until it did, stopping always worked here.
 #
-# ff-wedged is borrowed and PUT BACK. A 31st fixture row is the tidier shape
+# ff-wedged is borrowed and PUT BACK. A 32nd fixture row is the tidier shape
 # and test/cli.sh records why it is refused — three suites hardcode the
-# fixture's 30 boxes and the browser scroll walk has been destabilised by
+# fixture's 31 boxes and the browser scroll walk has been destabilised by
 # fleet size before. So this block ends by restoring the box AND waiting for
 # the console to call it unreachable again, because floor/ping.sh reads
 # exactly that and reading it is not this suite's to break.

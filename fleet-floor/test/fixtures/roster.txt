@@ -4,6 +4,7 @@ ff-working    claude  builder
 ff-idle       claude  reviewer
 ff-suppressed claude  builder
 ff-supp-silent claude  builder
+ff-supp-unknown claude  builder
 ff-supp-working claude  builder
 ff-supp-stuck claude  builder
 ff-silent     codex   builder

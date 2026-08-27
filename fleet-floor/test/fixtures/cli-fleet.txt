@@ -17,6 +17,7 @@ cli-hired      running  working
 cli-idle       running  idle
 cli-suppressed running  suppressed
 cli-supp-silent running suppressed-silent
+cli-supp-unknown running suppressed-unknown
 cli-supp-working running suppressed-working
 cli-supp-stuck running suppressed-stuck
 cli-silent     running  silent

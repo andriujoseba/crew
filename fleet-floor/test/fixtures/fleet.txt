@@ -7,6 +7,7 @@ ff-working     running  working
 ff-idle        running  idle
 ff-suppressed  running  suppressed
 ff-supp-silent running suppressed-silent
+ff-supp-unknown running suppressed-unknown
 ff-supp-working running suppressed-working
 ff-supp-stuck running suppressed-stuck
 ff-silent      running  silent

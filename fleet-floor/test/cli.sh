@@ -486,6 +486,8 @@ t "crew status: the table's column contract is unchanged" \
 
 cl_pair cli-supp-silent '^cli-supp-silent +offline .+ stale +stale +SILENT' \
   "crew status: a silent box outranks a stale suppression marker"
+cl_pair cli-supp-unknown '^cli-supp-unknown +offline .+ stale +stale +tick age unknown' \
+  "crew status: an unknown tick age outranks suppression"
 cl_pair cli-silent '^cli-silent +offline .+ stale +stale +SILENT' \
   "crew status: an armed box that stopped ticking reads SILENT like the floor"
 cl_pair cli-supp-working '^cli-supp-working +working .+ flowing +flowing +session active' \
@@ -1904,9 +1906,9 @@ fi
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
 # Deliberately not added to fixtures/fleet.txt — three assertions under
-# test/floor/ hardcode the fixture's 30 boxes (floor/{roster,fleet,server}.sh)
+# test/floor/ hardcode the fixture's 31 boxes (floor/{roster,fleet,server}.sh)
 # and browser.js's scroll walk has been destabilised by fleet size before
-# (browser.js:246). A 31st row is not worth that risk.
+# (browser.js:246). A 32nd row is not worth that risk.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
 CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"

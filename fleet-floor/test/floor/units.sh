@@ -28,6 +28,8 @@ t "suppressed: remains distinct from idle" False \
   "$(uf ff-suppressed "u['state'] == 'idle'")"
 t "suppressed overlap: SILENT remains offline" offline \
   "$(uf ff-supp-silent "u['state']")"
+t "suppressed overlap: unknown tick age remains offline" offline \
+  "$(uf ff-supp-unknown "u['state']")"
 t "suppressed overlap: active session remains working" working \
   "$(uf ff-supp-working "u['state']")"
 t "suppressed overlap: stuck run remains working" working \
