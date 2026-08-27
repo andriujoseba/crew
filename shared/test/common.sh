@@ -4440,6 +4440,7 @@ fi
 t rehearsal-reuse-dirty-sandbox-refuses 1 "$reuse_refusal_rc"
 t rehearsal-reuse-dirty-sandbox-refusal-names-objects 2 \
   "$(grep -Ec '(pull #71|issue #72)' <<<"$reuse_refusal_out")"
+# shellcheck disable=SC2317  # invoked indirectly by the reuse assertion helper
 gh() { printf '%s\n' '[]'; }
 if rehearsal_assert_reuse_sandbox_clean 1 owner/sandbox >/dev/null 2>&1; then
   reuse_clean_rc=0
@@ -4447,6 +4448,7 @@ else
   reuse_clean_rc=$?
 fi
 t rehearsal-reuse-clean-sandbox-proceeds 0 "$reuse_clean_rc"
+# shellcheck disable=SC2317  # must remain unreachable when reuse is disabled
 gh() { return 1; }
 if rehearsal_assert_reuse_sandbox_clean 0 owner/sandbox >/dev/null 2>&1; then
   fresh_sandbox_rc=0
