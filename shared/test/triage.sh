@@ -845,4 +845,55 @@ else
 fi
 t operator-configured-prompt-renders-clause rendered "$r1"
 
+# A doctrine-gap duty exists only when the configured upstream is inside the
+# operator's repos.txt containment boundary. Empty preserves today's prompt
+# byte-for-byte; an unlisted value warns and still renders today's prompt.
+DOCTRINE463_BASE="$(DOCTRINE_REPO='' PROMPTS_DIR="$SHARED/prompts" render_prompt triage.txt \
+  ME=me-bot REPO=o/r SIGNAL_BLOCK='signals')"
+DOCTRINE463_TODAY="$(sed 's/{{ME}}/me-bot/g; s|{{REPO}}|o/r|g; s/{{SIGNAL_BLOCK}}/signals/g; s/{{DOCTRINE_ENTRYPOINT}}/AGENTS.md/g; s/{{DOCTRINE_TRIAGE}}/TRIAGE.md/g; s/{{DOCTRINE_UPSTREAM_CLAUSE}}//g' \
+  "$SHARED/prompts/triage.txt")"
+t doctrine-upstream-empty-is-byte-identical "$DOCTRINE463_TODAY" "$DOCTRINE463_BASE"
+if grep -Eq 'DOCTRINE_REPO|owner/repo|upstream duty|consumer guide' <<<"$DOCTRINE463_BASE"; then
+  r1=LEAKED
+else
+  r1=inert
+fi
+t doctrine-upstream-empty-is-inert inert "$r1"
+
+printf 'o/r\n' >"$TRD/repos.txt"
+DOCTRINE463_WARN="$TMP/doctrine463-warn"
+DOCTRINE463_UNLISTED="$(DOCTRINE_REPO='heavy-duty/ceremony' REPOS_FILE="$TRD/repos.txt" \
+  PROMPTS_DIR="$SHARED/prompts" render_prompt triage.txt \
+  ME=me-bot REPO=o/r SIGNAL_BLOCK='signals' 2>"$DOCTRINE463_WARN")"
+t doctrine-upstream-unlisted-renders-no-duty "$DOCTRINE463_BASE" "$DOCTRINE463_UNLISTED"
+if grep -Fq 'heavy-duty/ceremony' "$DOCTRINE463_WARN" &&
+   grep -Fq "$TRD/repos.txt" "$DOCTRINE463_WARN"; then
+  r1=bounded
+else
+  r1=MISSING
+fi
+t doctrine-upstream-unlisted-warns-with-repo-and-registry bounded "$r1"
+
+printf '%s\n' o/r heavy-duty/ceremony >"$TRD/repos.txt"
+DOCTRINE463_LISTED="$(DOCTRINE_REPO='heavy-duty/ceremony' REPOS_FILE="$TRD/repos.txt" \
+  PROMPTS_DIR="$SHARED/prompts" render_prompt triage.txt \
+  ME=me-bot REPO=o/r SIGNAL_BLOCK='signals')"
+if grep -Fq 'discussion in heavy-duty/ceremony' <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq "Quote the rule at this repository's pin" <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq 'link the local issue' <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq 'state the workaround and its retirement condition' <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq 'cite that discussion from the consumer workaround' <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq 'Never mint an upstream issue yourself.' <<<"$DOCTRINE463_LISTED"; then
+  r1=complete
+else
+  r1=MISSING
+fi
+t doctrine-upstream-listed-renders-bounded-duty complete "$r1"
+if git -C "$SHARED/.." diff --quiet origin/main -- shared/lib/duty-triage.sh; then
+  r1=untouched
+else
+  r1=TOUCHED
+fi
+t doctrine-upstream-adds-no-new-triage-signal untouched "$r1"
+
 suite_finish
