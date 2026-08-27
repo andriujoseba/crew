@@ -187,9 +187,9 @@ def do_command(fleet, body):
             row["step"] = step
         return row
 
-    def in_box(name, script, stdin_data=None):
+    def in_box(name, script, stdin_data=None, step=None):
         return one(name, ["box", "exec", name, "--", "bash", "-lc", script],
-                   stdin_data=stdin_data)
+                   stdin_data=stdin_data, step=step)
 
     def agent_conf_for(name):
         return fleet.agent_conf(roster[name]["agent"])
@@ -205,6 +205,17 @@ def do_command(fleet, body):
     def done(result):
         """Make an already-known per-box result fit a concurrent task list."""
         return result
+
+    # `wake-silent` reaches a box three different ways and the reply says which,
+    # in the vocabulary #486 added for restart's two: `start` for a box that is
+    # down, `resume` for one whose crontab can still be restored, `escalate` for
+    # one nothing can be run inside. Named helpers because `concurrently` submits
+    # `fn(*args)` and the step is not one of the caller's arguments.
+    def wake_start(name):
+        return one(name, ["box", "start", name], step="start")
+
+    def wake_resume(name):
+        return in_box(name, RESUME_SH, step="resume")
 
     results = []
 
@@ -297,11 +308,35 @@ def do_command(fleet, body):
                 "verdict": verdict,
                 "error": "%s %s. Nothing was done — confirm again." % (box, became),
             }
-        if verdict == "force":
-            results.append(one(box, force_stop_argv(box), step="force-stop"))
+        stop = (one(box, force_stop_argv(box), step="force-stop") if verdict == "force"
+                else one(box, ["box", "down", box], step="down"))
+        results.append(stop)
+        # READ THE STOP BEFORE STARTING (#487 D2). The stop row was appended and
+        # `box start` fired on the next line, on both of the paths above, with
+        # neither branch looking at `.ok` — so a restart whose stop timed out
+        # against a guest that cannot schedule its own shutdown went on to start
+        # a box it had never stopped, and the reply carried the failed stop as
+        # detail under an action the page had already animated as two steps.
+        #
+        # Starting is not harmless there: the graceful stop returns 124 having
+        # ASKED for a shutdown that may still be in flight, so `box start` races
+        # a guest that is either still up or on its way down. A restart that
+        # could not stop the box has failed at the first of its two steps, and
+        # the second one is not a repair for it.
+        if stop["ok"]:
+            results.append(one(box, ["box", "start", box], step="start"))
         else:
-            results.append(one(box, ["box", "down", box], step="down"))
-        results.append(one(box, ["box", "start", box], step="start"))
+            # `ok: None`, the value #77 gave a row that is named in the detail
+            # and excluded from the verdict. The action is ALREADY failed by the
+            # stop row above, and a second `False` would report two refusals
+            # where one thing went wrong — the page names `bad[0]`, and the
+            # first failure is the one that explains this. What the row carries
+            # is the fact nothing else in the reply states: the start did not
+            # run, so the box was left exactly as the failed stop found it
+            # (#487 D4 — a lever that cannot act says so).
+            results.append({"box": box, "ok": None, "step": "start",
+                            "out": "not started: the %s step failed, so the box "
+                                   "was left as it was" % stop["step"]})
     elif action == "force-stop":
         # ITS OWN ACTION, never an escalation from a graceful one (#486 D1):
         # an operator who fired Power off must not discover it became a kill.
@@ -354,9 +389,42 @@ def do_command(fleet, body):
                 continue
             name = u["box"]
             if states.get(name) == "stopped":
-                tasks.append((one, (name, ["box", "start", name])))
+                # FIRST, and before the wedge question. Starting a stopped box
+                # is a host operation that works whatever the guest was doing
+                # when it went down, and a heartbeat left over from before it
+                # stopped must not talk this action out of the one thing it can
+                # certainly do.
+                tasks.append((wake_start, (name,)))
+            elif (u.get("ping") or {}).get("wedged"):
+                # NOT A WAKE TARGET (#487 D3). RESUME_SH went to every box incus
+                # did not call `stopped`, which includes the one state this tier
+                # exists to name: up, wedged, and unable to execute anything. So
+                # the wake was sent down the channel that is wedged, blocked for
+                # the whole ACTION_TIMEOUT_S, and came back as a timed-out row
+                # whose text described the symptom of a fact the collector had
+                # already published.
+                #
+                # The collector's own verdict, read off the unit rather than
+                # re-derived or re-asked: this box is IN the wake set because
+                # `Fleet.get()` painted it offline on `wedged`, so routing it
+                # out on any other reading of the same rule would be one rule
+                # answered twice inside one action (#486). `ping` is absent for
+                # a box the tier has not measured, and unmeasured is not wedged
+                # — the same asymmetry `wedged()` states for a stale heartbeat.
+                #
+                # It is classified, never escalated in place: the force path
+                # kills whatever the guest is doing, and #486 put that behind an
+                # operator's authorisation — a fleet-wide button that force-
+                # stopped guests on its own would be exactly the silent
+                # escalation that ruling refuses. So the row names the lever and
+                # the operator fires it.
+                tasks.append((done, ({
+                    "box": name, "ok": False, "step": "escalate",
+                    "out": "wedged — not woken: `box exec` is not answering, so "
+                           "there is no channel to resume its crontab through. "
+                           "Restart it; the force path is the way in."},)))
             elif states.get(name) is not None:
-                tasks.append((in_box, (name, RESUME_SH)))
+                tasks.append((wake_resume, (name,)))
         results = concurrently(tasks)
     else:
         return 400, {"ok": False, "error": "unknown action %r" % action}
