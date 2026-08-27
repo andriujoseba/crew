@@ -259,12 +259,14 @@ _session_proc_children() {
   printf '%s' "$out"
 }
 
-# _session_tree_hwm ROOT SKIP — the largest VmHWM under ROOT, in KiB, skipping
-# SKIP and never descending into it: SKIP is the watcher itself, whose own
-# `sleep` would otherwise be measured as part of the session.
+# _session_tree_hwm PIDS SKIP — the largest VmHWM in the trees rooted at PIDS
+# (a whitespace-separated list), in KiB, skipping SKIP and never descending
+# into it: SKIP is the watcher itself, whose own `sleep` would otherwise be
+# measured as part of the session.
 _session_tree_hwm() {
   local skip="$2" pid kids hwm=0 v depth=0
-  local -a pids=("$1") next
+  # shellcheck disable=SC2206  # a pid list, split on whitespace by design
+  local -a pids=($1) next
   while [ "${#pids[@]}" -gt 0 ] && [ "$depth" -lt 32 ]; do
     next=()
     for pid in "${pids[@]}"; do
@@ -283,19 +285,34 @@ _session_tree_hwm() {
 }
 
 # _session_peak_rss_watch ROOT FILE — hold FILE at the largest VmHWM seen
-# under ROOT for as long as ROOT lives. FILE is written only when the figure
+# BELOW ROOT for as long as ROOT lives. FILE is written only when the figure
 # rises, so a box that dies under the CLI leaves the last peak on disk rather
 # than nothing.
+#
+# It sleeps BEFORE its first read, and that is what makes the field's absence
+# mean one thing. Reading first would race the dispatch's own fork: the same
+# session would carry a figure or not depending on which of two processes the
+# scheduler ran first, and a field that appears at random is worse than one
+# that is always missing. Sleeping first states the rule instead — a session
+# that does not outlive one interval is not measured — and the tests assert
+# both sides of it.
+#
+# ROOT itself is walked but never MEASURED (it is passed as the skip on the
+# first turn only through its own exclusion below): ROOT is the engine shell,
+# whose own footprint is not the session's. What is measured is everything the
+# dispatch put underneath it.
 _session_peak_rss_watch() {
-  local root="$1" out="$2" self hwm=0 v
+  local root="$1" out="$2" self hwm=0 v kids
   self="$BASHPID"
   while kill -0 "$root" 2>/dev/null; do
-    v="$(_session_tree_hwm "$root" "$self")"
+    sleep "$SESSION_PEAK_POLL_S"
+    kids="$(_session_proc_children "$root")"
+    [ -n "$kids" ] || continue
+    v="$(_session_tree_hwm "$kids" "$self")"
     if [ -n "$v" ] && [ "$v" -gt "$hwm" ]; then
       hwm="$v"
       printf '%s\n' "$hwm" >"$out" 2>/dev/null || return 0
     fi
-    sleep "$SESSION_PEAK_POLL_S"
   done
 }
 

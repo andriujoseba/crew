@@ -15,6 +15,16 @@ TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
 RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)")
 RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+) dur=(\d+)s outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
+# peak_rss= is read by its own pattern rather than by another optional group on
+# RE_END, and the reason is what RE_END already survived: the engine appends
+# new fields past reply_tail (tier=, and started= on a reconstructed terminal),
+# so a group that assumed a position would break the moment the next one lands.
+# This one matches the token wherever it sits and matches nothing when it is
+# absent — which is every line written before #473, and every session the
+# engine could not measure. `peak_rss=-` is the reconstructed terminal's "owed
+# and lost with the box": it is deliberately not a digit, so it reads as no
+# figure here without a second case.
+RE_PEAK = re.compile(r" peak_rss=(\d+)(?:\s|$)")
 RE_ANY_TS = re.compile("^" + TS + r" ")
 
 # Wake lines the duty modules already write. The queue shown on the floor is
@@ -125,10 +135,15 @@ def derive_sessions(loglines, now, clock_offset=0):
                 reply = base64.b64decode(m.group(8) or "", validate=True).decode("utf-8", "replace")
             except (ValueError, TypeError):
                 reply = ""
+            peak = RE_PEAK.search(line)
             done.append({
                 "ts": parse_ts(m.group(1)) + clock_offset, "kind": m.group(2), "key": m.group(3),
                 "rc": int(m.group(4)), "dur": int(m.group(5)), "out": m.group(6),
                 "acted": m.group(7) or "unknown", "reply": reply,
+                # KiB, or None where the engine recorded no figure — the page
+                # renders the difference rather than showing a zero nobody
+                # measured (#473 D2).
+                "peak": int(peak.group(1)) if peak else None,
             })
             if opens:
                 opens.pop()
@@ -374,7 +389,8 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     sessions, cur = derive_sessions(loglines, now, clock_offset)
     u["queue"] = derive_queue(loglines)
     u["cur"] = cur
-    u["sessions"] = [{k: s[k] for k in ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply")}
+    u["sessions"] = [{k: s[k] for k in
+                      ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply", "peak")}
                      for s in sessions[:11]]
     u["spark"] = spark_24h(sessions, now)
     repo_fallback = ("crew" if u["queue"]

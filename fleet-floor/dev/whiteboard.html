@@ -1384,7 +1384,12 @@ function drawCamCell(t,x,y,w,h,unit){
   var rows=[["UPTIME",(d.up&&(d.up.h||d.up.m))?d.up.h+"h"+pad2(d.up.m)+"m":"—"],
             ["IDLE·24H",idl===null?"—":(idl<60?"0m":fmtDur(idl))],
             ["QUEUE",off?"—":String(d.queue.length)],
-            ["LAST",last?(last.ago>=60?Math.floor(last.ago/60)+"h"+pad2(last.ago%60)+"m ago":last.ago+"m ago"):"—"]];
+            ["LAST",last?(last.ago>=60?Math.floor(last.ago/60)+"h"+pad2(last.ago%60)+"m ago":last.ago+"m ago"):"—"],
+            /* The newest session's peak RSS (#473): the box that thrashed for
+               twelve minutes looked, on this panel, exactly like the box
+               beside it. It sits under LAST because it describes that same
+               session and nothing wider. */
+            ["PEAK",last?fmtKiB(last.peak):"—"]];
   var tpw=118,tph=rows.length*14+22,tpx=x+w-pad-4-tpw,tpy=y+pad+2;
   X.fillStyle="rgba(4,8,14,0.55)";rr(X,tpx,tpy,tpw,tph,4);X.fill();
   X.strokeStyle=hexA(vc,0.30);X.lineWidth=1;rr(X,tpx,tpy,tpw,tph,4);X.stroke();
@@ -1740,8 +1745,13 @@ function queueChip(q){
   return '<span class="qc" style="border-color:'+(REPOC[repo]||"#3a4a60")+'">'+(repo?esc(repo)+' ':"")+(/^\d+$/.test(q.key)?"#":"")+esc(q.key)+'</span>';
 }
 function fmtDur(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
+/* peak_rss= arrives in KiB and is absent whenever the engine did not measure
+   the session (#473). Absent is not zero: `!k` renders the same em dash the
+   other unmeasured rows use, so a box whose kernel reports no VmHWM reads as
+   "no figure" and never as a session that used no memory. */
+function fmtKiB(k){if(!k)return "—";return k>=1048576?(k/1048576).toFixed(1)+"G":k>=1024?Math.round(k/1024)+"M":k+"K";}
 function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k++)q.push({repo:REPONAMES[ri2(0,5)],key:ri2(11,148)});
-  var sess=[],ago=ri2(1,5),cap=kind==="triage"?2400:7200;for(var s=0;s<11;s++){var rc=Math.random()<0.12?1:0;sess.push({ago:ago,kind:kind,rc:rc,dur:ri2(45,cap),out:rc?"aborted (budget)":outcomeFor(kind)});ago+=ri2(4,11);}
+  var sess=[],ago=ri2(1,5),cap=kind==="triage"?2400:7200;for(var s=0;s<11;s++){var rc=Math.random()<0.12?1:0;sess.push({ago:ago,kind:kind,rc:rc,dur:ri2(45,cap),out:rc?"aborted (budget)":outcomeFor(kind),peak:ri2(180000,2600000)});ago+=ri2(4,11);}
   var durs=sess.map(function(x){return x.dur;}),ok=sess.filter(function(x){return !x.rc;}).length;
   var spark=[];for(var sp=0;sp<22;sp++)spark.push(0.14+Math.random()*0.86);
   var nowS=Math.floor(Date.now()/1000),cur={key:(kind==="triage"?"board":REPONAMES[ri2(0,5)]+"#"+ri2(11,148)),start:nowS-ri2(20,Math.min(cap,5200))};
@@ -2174,7 +2184,7 @@ function populateDash(){
     +'<div class="mcell"><div class="mv">'+d.today+'</div><div class="ml">Runs today</div></div>'
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
-  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=s.rc?"cr":s.acted==="no"?"noop":"ok";sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span><span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
+  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=s.rc?"cr":s.acted==="no"?"noop":"ok";sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
   document.getElementById("w-sessions").innerHTML=sh+'</div>';
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
