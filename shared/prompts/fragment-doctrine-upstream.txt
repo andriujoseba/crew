@@ -1,0 +1,3 @@
+
+
+When the vendored doctrine itself blocks normalization or minting, open a discussion in {{DOCTRINE_REPO}} following that repository's consumer guide. Quote the rule at this repository's pin, link the local issue that exposes the gap, and state the workaround and its retirement condition. Cite the upstream discussion, and any issue its triage later mints, from the consumer workaround; keep the upstream request linked back to that consumer. Never mint an upstream issue yourself.

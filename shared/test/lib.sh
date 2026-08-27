@@ -232,7 +232,7 @@ render_site_missing_slots() {  # render_site_missing_slots PROMPTS SOURCE...
       while read -r slot; do
         [ -n "$slot" ] || continue
         case "$slot" in
-          DOCTRINE_ENTRYPOINT|DOCTRINE_TRIAGE|DOCTRINE_BUILDER|DOCTRINE_REVIEWER) continue ;;
+          DOCTRINE_ENTRYPOINT|DOCTRINE_TRIAGE|DOCTRINE_BUILDER|DOCTRINE_REVIEWER|DOCTRINE_OUTCOME) continue ;;
         esac
         if ! grep -qx "$slot" <<<"$supplied"; then
           printf '%s:%s: %s missing %s\n' "$source" "$site" "$prompt" "$slot"

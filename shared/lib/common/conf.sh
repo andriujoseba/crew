@@ -58,18 +58,35 @@ read_repo_list() {
 }
 
 # render_prompt FILE NAME=VALUE... — fill {{NAME}} slots in a prompt template.
+# Caller pairs are applied first, so explicit values override doctrine defaults.
 # Pure bash: boxes differ in installed tools (no node on kimi's, no shellcheck
 # either), so the engine depends only on bash+gh+jq+git+flock+timeout.
 render_prompt() {
-  local file="$1" out pair name value
+  local file="$1" out pair name value doctrine_repo doctrine_outcome
   shift
   out="$(cat "$PROMPTS_DIR/$file")"
+  doctrine_repo="${DOCTRINE_REPO:-}"
+  doctrine_outcome=""
+  if [ "$file" = triage.txt ] && [ -n "$doctrine_repo" ]; then
+    if read_repo_list "$REPOS_FILE" | grep -Fx -- "$doctrine_repo" >/dev/null; then
+      doctrine_outcome="$(render_prompt fragment-doctrine-upstream.txt \
+        DOCTRINE_REPO="$doctrine_repo")"
+    else
+      doctrine_outcome="$(render_prompt fragment-doctrine-unlisted.txt \
+        UNLISTED_DOCTRINE_REPO="$doctrine_repo")"
+      # log() writes to stdout, while render_prompt is captured with $(...);
+      # stderr keeps this warning in the duty log instead of in prompt prose.
+      warn "doctrine upstream $doctrine_repo is absent from $REPOS_FILE; upstream duty not rendered" >&2
+    fi
+  fi
   for pair in \
+    "$@" \
+    "DOCTRINE_REPO=" \
+    "DOCTRINE_OUTCOME=$doctrine_outcome" \
     "DOCTRINE_ENTRYPOINT=${DOCTRINE_ENTRYPOINT:-AGENTS.md}" \
     "DOCTRINE_TRIAGE=${DOCTRINE_TRIAGE:-TRIAGE.md}" \
     "DOCTRINE_BUILDER=${DOCTRINE_BUILDER:-BUILDER.md}" \
-    "DOCTRINE_REVIEWER=${DOCTRINE_REVIEWER:-REVIEWER.md}" \
-    "$@"; do
+    "DOCTRINE_REVIEWER=${DOCTRINE_REVIEWER:-REVIEWER.md}"; do
     name="${pair%%=*}"
     value="${pair#*=}"
     out="${out//"{{$name}}"/"$value"}"
