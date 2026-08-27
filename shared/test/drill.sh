@@ -45,14 +45,16 @@ cp "$ROOT/drill/rehearsal-all.sh" "$ROOT/drill/rehearsal-notify.sh" \
   "$ROOT/drill/rehearsal-verdict.sh" "$ROOT/drill/rehearsal-hygiene.sh" \
   "$ROOT/drill/rehearsal-breaker.sh" "$ROOT/drill/rehearsal-safety.sh" \
   "$HARNESS/"
+cp "$ROOT/drill/rehearsal-report.sh" "$HARNESS/"
 cat >"$HARNESS/rehearsal.sh" <<'ROLE'
 #!/usr/bin/env bash
-role="" remote="" ref="" tree=""
+role="" remote="" ref="" tree="" source_ref=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --role) role="$2"; shift 2 ;;
     --remote) remote="$2"; shift 2 ;;
     --ref) ref="$2"; shift 2 ;;
+    --source-ref) source_ref="$2"; shift 2 ;;
     --tree) tree="$2"; shift 2 ;;
     *) shift ;;
   esac
@@ -66,7 +68,9 @@ else
 fi
 remote="${remote:--}"
 ref="${ref:--}"
-printf '%s %s %s %s\n' "$role" "$remote" "$ref" "$shipped" >>"$DRILL_ROLE_LOG"
+source_ref="${source_ref:--}"
+printf '%s %s %s %s %s\n' "$role" "$remote" "$ref" "$shipped" "$source_ref" \
+  >>"$DRILL_ROLE_LOG"
 [ -z "${REHEARSAL_SECTION_STATUS:-}" ] \
   || printf '%s\n' "${DRILL_ROLE_STAGE:-phase2}" >"$REHEARSAL_SECTION_STATUS"
 if [ -n "$tree" ]; then
@@ -350,5 +354,203 @@ esac
 t drill-role-acquires-exact-object exact "$acquire_shape"
 t drill-role-does-not-clone-branch 0 \
   "$(grep -c 'git clone.*--branch' <<<"$acquire_block" || true)"
+
+# --- #492: the report target is derived from the ref actually drilled ---
+
+# shellcheck source=drill/rehearsal-report.sh
+. "$ROOT/drill/rehearsal-report.sh"
+GH_REMOTE="https://github.com/heavy-duty/crew.git"
+derive() { rehearsal_report_target "$1" "$2" || printf '(none)\n'; }
+
+# Every ref shape that names a pull request, and the ones that only look like
+# they do. A branch, a tag and a bare commit each name a tree any number of
+# pull requests may carry, so none of them derives a target.
+t drill-report-target-pull-head 'heavy-duty/crew PR #450' \
+  "$(derive "$GH_REMOTE" refs/pull/450/head)"
+t drill-report-target-pull-merge 'heavy-duty/crew PR #450' \
+  "$(derive "$GH_REMOTE" refs/pull/450/merge)"
+t drill-report-target-pull-unprefixed 'heavy-duty/crew PR #450' \
+  "$(derive "$GH_REMOTE" pull/450/head)"
+# The suffix is required. `pull/452` is an ordinary ref shape a branch may
+# occupy, so deriving from it would route findings to a PR the round never
+# drilled — the end-to-end half of this is the collision round below.
+t drill-report-target-pull-bare-none '(none)' "$(derive "$GH_REMOTE" pull/450)"
+t drill-report-target-refs-pull-bare-none '(none)' \
+  "$(derive "$GH_REMOTE" refs/pull/450)"
+t drill-report-target-scp-remote 'heavy-duty/crew PR #7' \
+  "$(derive git@github.com:heavy-duty/crew.git refs/pull/7/head)"
+t drill-report-target-ssh-url-remote 'heavy-duty/crew PR #12' \
+  "$(derive ssh://git@github.com/heavy-duty/crew.git pull/12/merge)"
+t drill-report-target-branch-none '(none)' "$(derive "$GH_REMOTE" main)"
+t drill-report-target-tag-none '(none)' "$(derive "$GH_REMOTE" 0.1.2)"
+t drill-report-target-sha-none '(none)' "$(derive "$GH_REMOTE" "$FIRST")"
+t drill-report-target-empty-ref-none '(none)' "$(derive "$GH_REMOTE" '')"
+t drill-report-target-nonnumeric-none '(none)' \
+  "$(derive "$GH_REMOTE" refs/pull/abc/head)"
+t drill-report-target-branch-named-pull-none '(none)' \
+  "$(derive "$GH_REMOTE" refs/heads/pull/450/head)"
+# A remote naming no owner/repo still routes: the number is the routing and the
+# slug only disambiguates it.
+t drill-report-target-local-remote-keeps-number 'PR #450' \
+  "$(derive "$REMOTE" refs/pull/450/head)"
+
+# Each exit, with a target and without one. The four kinds are every footer the
+# drill prints, which is what "every exit path, not just the failure path" asks
+# for.
+TARGET='heavy-duty/crew PR #450'
+footer() { rehearsal_report_footer "$1" "$2" reviewer crew-drill-reviewer; }
+t drill-report-exit-fail-names-target 1 \
+  "$(grep -cF "Report findings on $TARGET with" <<<"$(footer fail "$TARGET")")"
+# The only footer whose instruction and evidence share a sentence: with no
+# target the report instruction goes entirely, rather than surviving as a
+# `Report findings with` that routes nowhere (D2, AC1's "or no instruction at
+# all"). The box line below proves the evidence half is what stayed.
+t drill-report-exit-fail-no-target-drops-instruction 0 \
+  "$(grep -ciF 'report findings' <<<"$(footer fail '')" || true)"
+t drill-report-exit-fail-no-target-still-collects 1 \
+  "$(grep -cF 'Fixtures and box are left in place. Collect' \
+    <<<"$(footer fail '')")"
+t drill-report-exit-incomplete-names-target 1 \
+  "$(grep -cF "must not be reported as one on $TARGET." \
+    <<<"$(footer incomplete "$TARGET")")"
+t drill-report-exit-incomplete-no-target-drops-instruction 1 \
+  "$(grep -cF 'must not be reported as one.' <<<"$(footer incomplete '')")"
+t drill-report-exit-pass-names-target 1 \
+  "$(grep -cF "Report the pass on $TARGET." <<<"$(footer pass "$TARGET")")"
+# The pass footer's instruction is its whole second sentence, so with no target
+# the sentence goes rather than becoming a bare "Report the pass."
+t drill-report-exit-pass-no-target-drops-sentence 1 \
+  "$(grep -cxF 'All green, phase 2 included — the reviewer loop ran.' \
+    <<<"$(footer pass '')")"
+t drill-report-exit-round-incomplete-names-target 1 \
+  "$(grep -cF "before reporting anything on $TARGET." \
+    <<<"$(footer round-incomplete "$TARGET")")"
+t drill-report-exit-round-incomplete-no-target-drops-instruction 1 \
+  "$(grep -cF 'before reporting anything.' <<<"$(footer round-incomplete '')")"
+# The footer that routes to a box keeps the box either way: what is dropped is
+# the target, never the evidence the operator has to collect.
+t drill-report-exit-fail-keeps-box-either-way 2 \
+  "$(grep -cF 'box shell crew-drill-reviewer' \
+    <<<"$(footer fail "$TARGET"; footer fail '')")"
+
+targeted_exits=""
+untargeted_exits=""
+for exit_kind in fail incomplete pass round-incomplete; do
+  targeted_exits+="$(footer "$exit_kind" "$TARGET")"$'\n'
+  untargeted_exits+="$(footer "$exit_kind" '')"$'\n'
+done
+t drill-report-every-exit-names-the-target 4 \
+  "$(grep -cF "$TARGET" <<<"$targeted_exits")"
+t drill-report-no-exit-names-a-pr-without-one 0 \
+  "$(grep -cE 'PR #' <<<"$untargeted_exits" || true)"
+if rehearsal_report_footer not-an-exit "$TARGET" reviewer box >/dev/null 2>&1; then
+  unknown_kind_rc=0
+else
+  unknown_kind_rc=$?
+fi
+t drill-report-unknown-exit-kind-refused 1 "$unknown_kind_rc"
+
+# Mutation: the literal this issue exists to remove. No exit may reach a PR
+# number except through the derivation.
+t drill-report-scripts-hardcode-no-pr-number 0 \
+  "$(cat "$ROOT/drill/rehearsal.sh" "$ROOT/drill/rehearsal-all.sh" \
+    "$ROOT/drill/rehearsal-report.sh" | grep -cE 'PR #[0-9]' || true)"
+
+# Mutation: a stale default standing in where nothing is derivable. The
+# no-target cases above must red on it, or they are asserting nothing.
+STALE_LIB="$TMP/rehearsal-report-stale.sh"
+# shellcheck disable=SC2016  # mutate the literal production guard
+sed 's/\[ -z "\$target" \] || on=" on \$target"/on=" on ${target:-crew PR #16}"/' \
+  "$ROOT/drill/rehearsal-report.sh" >"$STALE_LIB"
+t drill-report-stale-mutation-applied 1 "$(grep -cF 'crew PR #16' "$STALE_LIB")"
+stale_exits="$(bash -c '
+  . "$1"
+  for kind in fail incomplete pass round-incomplete; do
+    rehearsal_report_footer "$kind" "" reviewer crew-drill-reviewer
+  done' _ "$STALE_LIB")"
+if grep -qE 'PR #' <<<"$stale_exits"; then r1=red; else r1=FALSE_PASS; fi
+t drill-report-stale-target-mutation-is-caught red "$r1"
+
+# End to end. The orchestrator resolves the operator's ref to a commit before
+# handing it to a role (#490), so a role could not derive a target from what it
+# receives — the unresolved ref travels beside it as --source-ref, and the
+# resolution invariant is unchanged.
+git --git-dir="$REMOTE" update-ref refs/pull/450/head "$FIRST"
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+DRILL_MOVE_TO=""
+if pull_out="$(DRILL_ROLE_RC=2 round_run "$HARNESS/rehearsal-all.sh" reviewer \
+    refs/pull/450/head)"; then pull_rc=0; else pull_rc=$?; fi
+t drill-report-pull-round-is-incomplete 2 "$pull_rc"
+t drill-report-pull-round-names-target 1 \
+  "$(grep -cF '## in and re-run before reporting anything on PR #450.' \
+    <<<"$pull_out")"
+t drill-report-pull-round-passes-source-ref refs/pull/450/head \
+  "$(awk '{print $5}' "$ROLE_LOG")"
+t drill-report-pull-round-still-resolves-ref "$FIRST" \
+  "$(awk '{print $3}' "$ROLE_LOG")"
+
+# A branch round derives nothing and says nothing, and hands the role no
+# source ref to derive from either.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+git --git-dir="$REMOTE" update-ref refs/heads/main "$FIRST"
+if main_out="$(DRILL_ROLE_RC=2 round_run "$HARNESS/rehearsal-all.sh" reviewer \
+    main)"; then :; fi
+t drill-report-branch-round-drops-instruction 1 \
+  "$(grep -cF '## in and re-run before reporting anything.' <<<"$main_out")"
+t drill-report-branch-round-names-no-pr 0 \
+  "$(grep -cE 'PR #[0-9]' <<<"$main_out" || true)"
+t drill-report-branch-round-passes-no-source-ref '-' \
+  "$(awk '{print $5}' "$ROLE_LOG")"
+
+# The collision, end to end: an ordinary branch whose name occupies the pull
+# ref shape. `git fetch <remote> pull/452` drills the BRANCH — the round never
+# goes near pull request 452 — so a footer naming it would route findings to a
+# PR this round did not touch, which is this issue's own defect in a new place.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+git --git-dir="$REMOTE" update-ref refs/heads/pull/452 "$FIRST"
+if collide_out="$(DRILL_ROLE_RC=2 round_run "$HARNESS/rehearsal-all.sh" reviewer \
+    pull/452)"; then :; fi
+t drill-report-branch-named-pull-round-resolves "$FIRST" \
+  "$(awk '{print $3}' "$ROLE_LOG")"
+t drill-report-branch-named-pull-round-names-no-pr 0 \
+  "$(grep -cE 'PR #[0-9]' <<<"$collide_out" || true)"
+t drill-report-branch-named-pull-round-passes-no-source-ref '-' \
+  "$(awk '{print $5}' "$ROLE_LOG")"
+
+# The role script's own wiring is stubbed out by the fixture above, so these
+# three pins stand in for it — each one is a mutation that would otherwise
+# leave the whole suite green while the footers named the wrong thing, or
+# nothing.
+role_script="$(cat "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # the needles are production source, not expansions
+t drill-report-role-derives-from-source-ref 1 \
+  "$(grep -cF 'rehearsal_report_target "$REMOTE" "${SOURCE_REF:-$REF}"' \
+    <<<"$role_script")"
+# shellcheck disable=SC2016  # ditto
+t drill-report-role-derivation-guarded-by-tree 1 \
+  "$(grep -B 2 -F 'rehearsal_report_target "$REMOTE"' <<<"$role_script" \
+    | grep -cF 'if [ -z "$TREE" ]; then')"
+# shellcheck disable=SC2016  # ditto
+t drill-report-role-exits-pass-the-target 3 \
+  "$(grep -cE '^ *rehearsal_report_footer (fail|incomplete|pass) "\$REPORT_TARGET"' \
+    <<<"$role_script")"
+
+# --tree drills a local checkout, so a ref passed beside it is not what was
+# drilled and derives nothing.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+if tree_report_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" DRILL_ROLE_RC=2 \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --ref refs/pull/450/head \
+      --roles reviewer --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then :; fi
+t drill-report-tree-round-names-no-pr 0 \
+  "$(grep -cE 'PR #[0-9]' <<<"$tree_report_out" || true)"
+t drill-report-tree-round-passes-no-source-ref '-' \
+  "$(awk '{print $5}' "$ROLE_LOG")"
 
 suite_finish

@@ -5,7 +5,12 @@
 #
 #   drill/rehearsal.sh [--agent <name>] [--box <name>]
 #     [--tree <clean-git-checkout>]
-#     [--remote <url>] [--ref <git-ref>] [--sandbox <owner/repo>] [--quick]
+#     [--remote <url>] [--ref <git-ref>] [--source-ref <git-ref>]
+#     [--sandbox <owner/repo>] [--quick]
+#
+# --source-ref is for an orchestrator, not the operator: it records the ref the
+# operator named where --ref carries the commit that ref resolved to, so the
+# exit footer can still say which pull request to report on.
 #
 # Phase 1 (pre-auth) runs unconditionally: install the engine in the drill
 # box as the selected agent (claude by default) in the reviewer role and
@@ -39,6 +44,18 @@ BOX_NAME=""
 # override; --tree is what you want when drilling a clean git checkout.
 REF="${CREW_DRILL_REF:-main}"
 REMOTE="${CREW_DRILL_REMOTE:-https://github.com/heavy-duty/crew.git}"
+# The ref the OPERATOR named, when an orchestrator resolved it before passing
+# it down. rehearsal-all.sh fetches the operator's ref to one commit and hands
+# every role that commit, so that three roles cannot straddle a moving branch
+# (#490) — which also means $REF is a bare SHA by the time this script prints
+# anything, and a SHA names no pull request. --source-ref carries the shape
+# that does. Empty for a standalone run, where $REF is already the operator's.
+SOURCE_REF=""
+# Where this round's findings go, derived below from the source actually
+# drilled. Empty means no target was derivable and the exit footers say
+# nothing about where to report rather than naming a PR this round never
+# touched (#492).
+REPORT_TARGET=""
 TREE=""
 SANDBOX=""
 QUICK=0
@@ -58,7 +75,7 @@ REUSE_NOTE=""
 usage() {
   echo "usage: drill/rehearsal.sh [--agent <name>] [--role triage|builder|reviewer]"
   echo "         [--box <name>] [--tree <clean-git-checkout>] [--remote <url>] [--ref <git-ref>]"
-  echo "         [--sandbox <owner/repo>] [--reuse] [--quick]"
+  echo "         [--source-ref <git-ref>] [--sandbox <owner/repo>] [--reuse] [--quick]"
 }
 
 while [ $# -gt 0 ]; do
@@ -69,6 +86,7 @@ while [ $# -gt 0 ]; do
     --tree)    TREE="$2"; shift 2 ;;
     --remote)  REMOTE="$2"; shift 2 ;;
     --ref)     REF="$2"; shift 2 ;;
+    --source-ref) SOURCE_REF="$2"; shift 2 ;;
     --sandbox) SANDBOX="$2"; shift 2 ;;
     --reuse)   REUSE=1; shift ;;
     --quick)   QUICK=1; shift ;;
@@ -163,6 +181,16 @@ rehearsal_hygiene_record_result 2
 rehearsal_breaker_record_result 2
 # shellcheck source=drill/review-order.sh
 . "$ROOT/drill/review-order.sh"
+# shellcheck source=drill/rehearsal-report.sh
+. "$ROOT/drill/rehearsal-report.sh"
+# Derived once, here, so that every exit below reads one value rather than
+# re-deriving it three ways. --tree drills a local checkout and is deliberately
+# excluded: a --ref passed beside it is not what was drilled, and deriving a
+# target from an ignored ref is the same defect in a new place.
+if [ -z "$TREE" ]; then
+  REPORT_TARGET="$(rehearsal_report_target "$REMOTE" "${SOURCE_REF:-$REF}")" \
+    || REPORT_TARGET=""
+fi
 cleanup_all() {
   local rc=$?
   if [ "$BOX_TOUCHED" -eq 1 ]; then
@@ -990,16 +1018,13 @@ echo "== rehearsal summary [$ROLE]: $PASS ok, $SKIP skipped, ${#FAILS[@]} failed
 [ -n "$REUSE_NOTE" ] && echo "   REUSE: $REUSE_NOTE"
 if [ "${#FAILS[@]}" -gt 0 ]; then
   printf '  FAIL %s\n' "${FAILS[@]}"
-  echo "Fixtures and box are left in place. Report findings on crew PR #16 with"
-  echo "~/duty/duty.log and ~/duty/logs/* excerpts from: box shell $BOX_NAME"
+  rehearsal_report_footer fail "$REPORT_TARGET" "$ROLE" "$BOX_NAME"
   exit 1
 fi
 # Exit 2, not 0: nothing failed, but the $ROLE loop never ran. Reporting this
 # as a pass is how a rehearsal that proved nothing clears a rollout.
 if [ "$PHASE2_RAN" -eq 0 ]; then
-  echo "INCOMPLETE — phase 2 never ran, so the $ROLE loop is UNPROVEN."
-  echo "Everything above is acquisition and install only. This is NOT a pass"
-  echo "and must not be reported as one on crew PR #16."
+  rehearsal_report_footer incomplete "$REPORT_TARGET" "$ROLE" "$BOX_NAME"
   exit 2
 fi
-echo "All green, phase 2 included — the $ROLE loop ran. Report the pass on crew PR #16."
+rehearsal_report_footer pass "$REPORT_TARGET" "$ROLE" "$BOX_NAME"
