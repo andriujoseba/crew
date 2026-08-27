@@ -890,11 +890,16 @@ else
   r1=MISSING
 fi
 t doctrine-upstream-listed-renders-bounded-duty complete "$r1"
-if git -C "$SHARED/.." diff --quiet origin/main -- shared/lib/duty-triage.sh; then
+DOCTRINE463_BOARD='[{"number":463,"body":"The vendored doctrine cannot express this case; keep the local workaround until the upstream discussion lands.","labels":[{"name":"ready"}],"updatedAt":"2026-08-27T00:00:00Z"}]'
+printf 'o/r\n' >"$TRD/repos.txt"
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]' "$DOCTRINE463_BOARD"
+tr_run 0
+t doctrine-upstream-prose-adds-no-triage-signal 0 "$(trc '^SESSION triage$')"
+if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
   r1=untouched
 else
   r1=TOUCHED
 fi
-t doctrine-upstream-adds-no-new-triage-signal untouched "$r1"
+t doctrine-upstream-prose-keeps-quiet-board untouched "$r1"
 
 suite_finish
