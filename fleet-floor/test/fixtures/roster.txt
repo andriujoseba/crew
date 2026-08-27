@@ -3,9 +3,9 @@
 ff-working    claude  builder
 ff-idle       claude  reviewer
 ff-suppressed claude  builder
-ff-suppressed-silent claude  builder
-ff-suppressed-working claude  builder
-ff-suppressed-stuck claude  builder
+ff-supp-silent claude  builder
+ff-supp-working claude  builder
+ff-supp-stuck claude  builder
 ff-silent     codex   builder
 ff-paused     codex   reviewer
 ff-fresh      grok    reviewer

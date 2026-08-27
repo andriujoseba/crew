@@ -484,11 +484,11 @@ CL_FMT="$(sed -n "s/^  local fmt='\(.*\)'\$/\1/p" "$CL_CLI" | head -1)"
 t "crew status: the table's column contract is unchanged" \
   '%-20s %-10s %-12s %-15s %-10s %-8s %-8s %s\n' "$CL_FMT"
 
-cl_pair cli-suppressed-silent '^cli-suppressed-silent +offline .+ stale +stale +SILENT' \
+cl_pair cli-supp-silent '^cli-supp-silent +offline .+ stale +stale +SILENT' \
   "crew status: a silent box outranks a stale suppression marker"
-cl_pair cli-suppressed-working '^cli-suppressed-working +working .+ flowing +flowing +session active' \
+cl_pair cli-supp-working '^cli-supp-working +working .+ flowing +flowing +session active' \
   "crew status: an active session outranks suppression"
-cl_pair cli-suppressed-stuck '^cli-suppressed-stuck +working .+ flowing +flowing +STUCK' \
+cl_pair cli-supp-stuck '^cli-supp-stuck +working .+ flowing +flowing +STUCK' \
   "crew status: a stuck run outranks suppression"
 CL_WIDE=""
 for cl_word in flowing waiting stale missing unknown MISSING; do
@@ -1902,9 +1902,9 @@ fi
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
 # Deliberately not added to fixtures/fleet.txt — three assertions under
-# test/floor/ hardcode the fixture's 26 boxes (floor/{roster,fleet,server}.sh)
+# test/floor/ hardcode the fixture's 30 boxes (floor/{roster,fleet,server}.sh)
 # and browser.js's scroll walk has been destabilised by fleet size before
-# (browser.js:246). A 27th row is not worth that risk.
+# (browser.js:246). A 31st row is not worth that risk.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
 CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"

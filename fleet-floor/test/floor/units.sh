@@ -27,11 +27,11 @@ t "suppressed: carries age and reason" True \
 t "suppressed: remains distinct from idle" False \
   "$(uf ff-suppressed "u['state'] == 'idle'")"
 t "suppressed overlap: SILENT remains offline" offline \
-  "$(uf ff-suppressed-silent "u['state']")"
+  "$(uf ff-supp-silent "u['state']")"
 t "suppressed overlap: active session remains working" working \
-  "$(uf ff-suppressed-working "u['state']")"
+  "$(uf ff-supp-working "u['state']")"
 t "suppressed overlap: stuck run remains working" working \
-  "$(uf ff-suppressed-stuck "u['state']")"
+  "$(uf ff-supp-stuck "u['state']")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
