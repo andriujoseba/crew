@@ -254,6 +254,30 @@ t drill-phase2-retained-reports-kept-teardown 1 \
 if summary_count_matches_rows "$phase2_retained_out"; then r1=equal; else r1=MISMATCH; fi
 t drill-phase2-retained-summary-counts-every-row equal "$r1"
 
+: >"$SECTION_LOG"
+if preinstall_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_REMOTE="$REMOTE" DRILL_ROLE_STAGE=none DRILL_ROLE_RC=1 \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+  preinstall_rc=0
+else
+  preinstall_rc=$?
+fi
+t drill-preinstall-failure-stays-red 1 "$preinstall_rc"
+t drill-preinstall-failure-reports-role 1 \
+  "$(grep -cF 'FAIL       reviewer  (failed before an installed box existed)' <<<"$preinstall_out")"
+for section in installer config app; do
+  t "drill-preinstall-skips-$section-by-role-install" 1 \
+    "$(grep -cF "SKIPPED    $section  (blocked by role install: no installed drill box)" \
+      <<<"$preinstall_out")"
+done
+t drill-preinstall-invokes-no-independent-section 0 \
+  "$(wc -l <"$SECTION_LOG" | tr -d ' ')"
+if summary_count_matches_rows "$preinstall_out"; then r1=equal; else r1=MISMATCH; fi
+t drill-preinstall-summary-counts-every-row equal "$r1"
+
 required_later_sections() {
   local record="$1" section
   for section in installer config app; do
