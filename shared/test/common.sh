@@ -7631,6 +7631,7 @@ t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 
 # STUCK is another shared verdict. Both readers accept the same operator
 # override, default it to SILENT, and use the same strict boundary.
+# shellcheck disable=SC2016  # matching crew's literal parameter expansion
 if grep -q '^STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"' "$CREW_CLI"; then
   r1=shared
 else
@@ -7643,6 +7644,7 @@ else
   r1=DRIFTED
 fi
 t stuck-rule-floor-uses-shared-override shared "$r1"
+# shellcheck disable=SC2016  # matching crew's literal comparison
 if grep -q '\[ "$lock_age" -gt "$STUCK_AFTER_S" \]' "$CREW_CLI"; then r1=strict; else r1=DRIFTED; fi
 t stuck-rule-cli-boundary strict "$r1"
 if grep -q 'held > STUCK_AFTER_S' "${FLOOR_PY[@]}"; then r1=strict; else r1=DRIFTED; fi
@@ -7652,10 +7654,12 @@ t stuck-rule-floor-boundary strict "$r1"
 # The floor receives probe.sh's 600-line tail; auth_from_flow must not scan a
 # different history or keep an orphan alive past the floor's six-hour bound.
 FL_SESSION_ACTIVE="$(sed -n 's/^_SESSION_ACTIVE_AFTER_S = \([0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
+# shellcheck disable=SC2016  # matching crew's literal session-age expression
 CL_SESSION_ACTIVE="$(sed -n 's/^ *\*) \[ \$(( \$(date -u +%s) - session_epoch )) -lt \([0-9]*\) \] .*/\1/p' "$CREW_CLI" | head -1)"
 t session-active-floor-boundary 21600 "$FL_SESSION_ACTIVE"
 t session-active-cli-matches-floor "$FL_SESSION_ACTIVE" "$CL_SESSION_ACTIVE"
 PROBE_SH="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server/probe.sh"
+# shellcheck disable=SC2016  # matching crew's literal log-tail command
 CL_LOG_LINES="$(sed -n 's/^ *log_tail="$(tail -n \([0-9]*\) .*/\1/p' "$CREW_CLI" | head -1)"
 FL_LOG_LINES="$(sed -n 's/^tail -n \([0-9]*\) .*/\1/p' "$PROBE_SH" | head -1)"
 t session-window-floor-lines 600 "$FL_LOG_LINES"
