@@ -583,7 +583,7 @@ _session_mem_ceiling_kib() {
   printf '%s' "$ceil"
 }
 
-# _session_tree_pids ROOT — every live pid in the tree rooted at ROOT, the same
+# _session_tree_pids ROOT — every LIVE pid in the tree rooted at ROOT, the same
 # bounded walk `_session_tree_hwm` makes and for the same reason: 32
 # generations is far past anything an agent CLI builds, and a walk that cannot
 # terminate must not run inside the engine.
@@ -604,6 +604,13 @@ _session_tree_pids() {
       case "$pid" in '' | *[!0-9]*) continue ;; esac
       [ "$pid" -gt 1 ] || continue
       [ "$pid" != "$$" ] || continue
+      # `kill -0` and not a `/proc` test: it is a builtin, so the liveness
+      # check costs no fork, and it answers the question the caller is about
+      # to ask anyway. A dead root must come back EMPTY rather than as a pid
+      # the terminator would then signal into the void — a pid number is
+      # reused, and a list that keeps dead entries is a list that could name
+      # somebody else's process by the time it is used.
+      kill -0 "$pid" 2>/dev/null || continue
       out="$out $pid"
       kids="$(_session_proc_children "$pid")"
       # shellcheck disable=SC2206  # a pid list, split on whitespace by design

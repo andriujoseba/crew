@@ -742,4 +742,301 @@ t d5-the-dispatchs-process-group-is-what-it-was-before-the-name \
 t d5-the-session-runs-in-its-own-timeouts-group its-own-timeouts \
   "$(d5_pg_verdict "$(cat "$d5_pg_new" 2>/dev/null)")"
 
+# --- the memory ceiling (#474) ----------------------------------------------
+#
+# Two halves, and they fail differently. D1 (`oom_score_adj`) is asserted from
+# INSIDE the CLI, because the claim is about the process the kernel will score
+# and nothing the engine can observe from outside says which process that is.
+# D2 (the ceiling) is asserted against a fixture that really allocates, because
+# the failure being excluded is a session that keeps running.
+#
+# MemTotal is STUBBED in every driven case below, and that is the design rather
+# than a shortcut. The ceiling is a percentage of the box, so a case that used
+# the real MemTotal would have to allocate a percentage of whatever box the
+# suite is on — gigabytes on a large runner, and a different figure on each.
+# Stubbing the one function that reads `/proc/meminfo` fixes the ceiling at 64
+# MiB everywhere; the read itself is asserted separately, against `/proc`.
+
+# mem_run MUTANT|- POLL CONF CMD… — one dispatch under a memory ceiling. CONF
+# is shell text eval'd in the runner: the conf keys, and the MemTotal stub.
+# shellcheck disable=SC2030,SC2031,SC2317
+mem_run() (
+  local mutant="$1" poll="$2" conf="$3"; shift 3
+  local mdir="$TMP/mem-$RANDOM$RANDOM"
+  mkdir -p "$mdir/logs" "$mdir/work"
+  DUTY_DIR="$mdir"; LOG_DIR="$mdir/logs"; DUTY_TICK_ID="tick-1"
+  BOT_CLI_CMD=("$@")
+  bot_session_acted() { grep -qx exec "$1"; }
+  alert() { :; }
+  # shellcheck disable=SC1090
+  [ "$mutant" = - ] || source "$mutant"
+  SESSION_PEAK_POLL_S="$poll"
+  SESSION_MEM_KILL_GRACE_S=1
+  eval "$conf"
+  run_session build fixture/mem "$mdir/work" 60 theprompt
+  # `reached=` is the assertion and not decoration: the must-fail this suite
+  # owes is a ceiling that ends the ENGINE rather than the session, and the
+  # engine here is this subshell. A line printed after run_session returned is
+  # the only evidence that survives it.
+  #
+  # `terminal=` is the second: a session the ceiling killed is not a vendor
+  # failure, so it must leave no per-lane terminal-breaker state behind.
+  printf 'reached=yes rc=%s scratch=%s terminal=%s engine-adj=%s\n' \
+    "$RUN_SESSION_RC" \
+    "$(find "$mdir/logs" \( -name '*.peak' -o -name '*.mem' \) | wc -l | tr -d ' ')" \
+    "$(find "$mdir" -name '.session-terminal.*' | wc -l | tr -d ' ')" \
+    "$( { read -r a </proc/self/oom_score_adj; printf '%s' "$a"; } 2>/dev/null )"
+)
+mem_field() { sed -n "s/.*$1=\([^ ]*\).*/\1/p" <<<"$2" | tail -1; }
+mem_outcome() { sed -n 's/.*SESSION END .* outcome=\([^ ]*\).*/\1/p' <<<"$1"; }
+mem_dur() { sed -n 's/.*SESSION END .* dur=\([0-9]*\)s .*/\1/p' <<<"$1"; }
+mem_mutant() { # mem_mutant NAME SED-EXPR — mutate the module under test
+  local out="$TMP/session-mem-mutant-$1.sh"
+  sed "$2" "$SHARED/lib/common/session.sh" >"$out"
+  if cmp -s "$out" "$SHARED/lib/common/session.sh"
+  then t "mem-mutation-$1-applies" applied INERT
+  else t "mem-mutation-$1-applies" applied applied; fi
+}
+# The stub every driven case shares: a 256 MiB box, so 25% is a 64 MiB ceiling
+# and the allocating fixture below is four times over it.
+MEM_STUB_CONF='_session_mem_total_kib() { printf 262144; }'
+
+# --- D3: what the conf resolves to, before anything is dispatched -----------
+#
+# `_session_mem_pct` is the whole of the per-role rule, so it is asserted
+# directly rather than inferred from a session's fate. Each case runs in its
+# own subshell: these are conf variables, and one leaking into the next would
+# make the suite's own order load-bearing.
+mem_pct() ( eval "$1"; _session_mem_pct )
+t mem-pct-unset-is-no-ceiling '' "$(mem_pct 'BOT_ROLES=builder')"
+t mem-pct-zero-is-no-ceiling '' "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=0')"
+t mem-pct-fleet-value-is-read 60 "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=60')"
+# The acceptance criterion, in the direction that actually distinguishes an
+# override from a minimum: the role value wins even when it is LARGER.
+t mem-pct-role-override-wins-downward 20 \
+  "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=60; SESSION_MEM_MAX_PCT_BUILDER=20')"
+t mem-pct-role-override-wins-upward 70 \
+  "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=20; SESSION_MEM_MAX_PCT_BUILDER=70')"
+# A role this box does not carry says nothing about it.
+t mem-pct-other-roles-override-is-not-read 60 \
+  "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=60; SESSION_MEM_MAX_PCT_TRIAGE=20')"
+# BOT_ROLES is a list, and the box is one box: the tighter bound governs.
+t mem-pct-multi-role-takes-the-tightest 30 \
+  "$(mem_pct 'BOT_ROLES="builder reviewer"; SESSION_MEM_MAX_PCT_BUILDER=70; SESSION_MEM_MAX_PCT_REVIEWER=30')"
+# …and 0 means "this role names no ceiling", never "this role forbids one".
+t mem-pct-a-role-at-zero-does-not-disarm-a-sibling 30 \
+  "$(mem_pct 'BOT_ROLES="builder reviewer"; SESSION_MEM_MAX_PCT_BUILDER=0; SESSION_MEM_MAX_PCT_REVIEWER=30')"
+t mem-pct-a-non-numeric-override-is-ignored 60 \
+  "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=60; SESSION_MEM_MAX_PCT_BUILDER=half')"
+t mem-pct-a-non-numeric-fleet-value-is-no-ceiling '' \
+  "$(mem_pct 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=most')"
+
+# The conf file ships the mechanism OFF, which is the last acceptance
+# criterion read at its source rather than through a dispatch.
+t mem-conf-ships-every-value-off 0 \
+  "$(grep -c '^SESSION_MEM_MAX_PCT\(_[A-Z]*\)\?=[^0]' "$SHARED/conf/fleet.defaults.conf" || true)"
+t mem-conf-declares-a-row-per-shipped-role 3 \
+  "$(grep -c '^SESSION_MEM_MAX_PCT_' "$SHARED/conf/fleet.defaults.conf" || true)"
+
+# The MemTotal read, against `/proc` and not against a stub — the one case the
+# stub above would otherwise hide.
+t mem-total-matches-proc-meminfo \
+  "$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo)" "$(_session_mem_total_kib)"
+mem_ceiling() ( eval "$1"; eval "$MEM_STUB_CONF"; _session_mem_ceiling_kib )
+t mem-ceiling-is-a-percentage-of-memtotal 65536 \
+  "$(mem_ceiling 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=25')"
+t mem-ceiling-unconfigured-is-nothing '' "$(mem_ceiling 'BOT_ROLES=builder')"
+# A percentage so small it rounds to nothing is nothing, never a ceiling of 0
+# that every session is instantly over.
+t mem-ceiling-rounding-to-zero-is-no-ceiling '' \
+  "$(mem_ceiling 'BOT_ROLES=builder; SESSION_MEM_MAX_PCT=0')"
+
+# --- the walk, and the process it must never return ------------------------
+t mem-no-pids-from-a-dead-tree '' "$(_session_tree_pids 2147483647)"
+t mem-no-pids-from-pid-one '' "$(_session_tree_pids 1)"
+t mem-reader-refuses-a-missing-mark '' "$(session_mem_hit "$TMP/absent.mem")"
+printf 'not-a-number\n' >"$TMP/bad.mem"
+t mem-reader-refuses-a-non-integer '' "$(session_mem_hit "$TMP/bad.mem")"
+printf '70000\n' >"$TMP/good.mem"
+t mem-reader-reads-an-integer 70000 "$(session_mem_hit "$TMP/good.mem")"
+
+# MUST FAIL (test plan): a ceiling that terminates the engine's own process
+# rather than the session tree. Asserted at the guard that decides it and NOT
+# by driving a mutant kill — a mutation that really signalled `$$` from inside
+# a dispatch would take this suite's own shell down with it, so the case that
+# proves the guard has to be the one that does not need it.
+mem_self() { grep -c "\\b$$\\b" <<<" $(_session_tree_pids "$$") " || true; }
+t mem-the-walk-never-returns-the-engines-own-pid 0 "$(mem_self)"
+# shellcheck disable=SC2016  # the sed matches the module's literal guard
+mem_mutant no-self-guard 's/^      \[ "\$pid" != "\$\$" \] || continue$//'
+# shellcheck disable=SC1090,SC1091,SC2317
+mem_self_mutant() ( source "$TMP/session-mem-mutant-no-self-guard.sh"; mem_self )
+t mem-mutation-no-self-guard-returns-the-engine 1 "$(mem_self_mutant)"
+
+# --- D1: oom_score_adj, read from inside the CLI ---------------------------
+#
+# The AC is about the process the kernel will score at the moment the CLI is
+# `exec`'d, and only that process can say what its own adjustment is. The stub
+# reads its own `/proc/self/oom_score_adj` — after the exec, in the process
+# that will be doing the allocating.
+OOM_STUB="$TMP/oom-stub.sh"
+cat >"$OOM_STUB" <<'STUB'
+#!/usr/bin/env bash
+{ read -r adj </proc/self/oom_score_adj; } 2>/dev/null || adj=UNREADABLE
+printf '%s\n' "$adj" >"$1"
+printf 'exec\nfinal reply\n'
+STUB
+chmod +x "$OOM_STUB"
+mem_oom_out="$TMP/oom-adj"; rm -f "$mem_oom_out"
+mem_oom_run="$(mem_run - 30 '' bash "$OOM_STUB" "$mem_oom_out" 2>&1)"
+mem_cli_adj="$(cat "$mem_oom_out" 2>/dev/null)"
+mem_engine_adj="$(mem_field engine-adj "$mem_oom_run")"
+mem_adj_verdict() { # mem_adj_verdict CLI ENGINE
+  case "$1" in '' | *[!0-9-]*) printf 'NO-READING(%s)' "$1"; return ;; esac
+  case "$2" in '' | *[!0-9-]*) printf 'NO-ENGINE-READING(%s)' "$2"; return ;; esac
+  [ "$1" -gt "$2" ] || { printf 'NOT-ABOVE-ENGINE(%s<=%s)' "$1" "$2"; return; }
+  # `cron` and `sshd` run at the kernel default, so clearing 0 is what the AC's
+  # other two names come to. Read as a value rather than by probing their pids:
+  # neither is guaranteed to be running on a box, and a case that silently
+  # skips itself proves nothing.
+  [ "$1" -gt 0 ] && printf 'above-engine-and-default' \
+    || printf 'NOT-ABOVE-DEFAULT(%s)' "$1"
+}
+t mem-oom-adj-is-raised-on-the-process-that-execs-the-cli above-engine-and-default \
+  "$(mem_adj_verdict "$mem_cli_adj" "$mem_engine_adj")"
+t mem-oom-arming-does-not-disturb-the-session '0|ok|yes' "$(peak_rest "$mem_oom_run")"
+
+# MUST FAIL (test plan): `oom_score_adj` set on the engine instead of on the
+# child. The mutation hoists the arm out of the dispatch subshell, which is the
+# single most plausible way to write this wrong — it still runs before the CLI,
+# it still raises an adjustment the CLI inherits, and the only thing that moves
+# is WHOSE. So the verdict cannot be "is the CLI raised": it is whether the CLI
+# sits ABOVE the engine or merely level with it, which is the difference
+# between the kernel preferring the session and the kernel preferring both.
+# shellcheck disable=SC2016  # the sed matches the module's literal dispatch
+mem_mutant oom-on-the-engine \
+  's/^  ( cd "\$dir" \&\& _session_oom_arm \&\& env /  _session_oom_arm; ( cd "$dir" \&\& env /'
+rm -f "$mem_oom_out"
+mem_oom_mut="$(mem_run "$TMP/session-mem-mutant-oom-on-the-engine.sh" 30 '' \
+  bash "$OOM_STUB" "$mem_oom_out" 2>&1)"
+t mem-mutation-oom-on-the-engine-leaves-the-cli-level-with-it \
+  NOT-ABOVE-ENGINE \
+  "$(mem_adj_verdict "$(cat "$mem_oom_out" 2>/dev/null)" \
+       "$(mem_field engine-adj "$mem_oom_mut")" | sed 's/(.*//')"
+
+# --- D2/D4: the ceiling fires, and what it leaves behind -------------------
+#
+# The fixture HOLDS its allocation rather than releasing it: the case is a
+# runaway that is still growing, which is the only shape a ceiling can act on.
+# Its sleep is long enough that a session reaching the end of it has not been
+# terminated at all — the duration bound below is what turns that into a
+# verdict rather than a slow pass.
+MEM_CLI="$TMP/mem-cli.sh"
+cat >"$MEM_CLI" <<'STUB'
+#!/usr/bin/env bash
+python3 -c '
+import time
+x = bytearray(256 * 1024 * 1024)
+time.sleep(30)
+'
+printf 'exec\nfinal reply\n'
+STUB
+chmod +x "$MEM_CLI"
+
+# A session UNDER the ceiling, with the ceiling armed: the acceptance criterion
+# that the bound is not felt by the sessions it does not bind.
+mem_under="$(mem_run - 1 "SESSION_MEM_MAX_PCT=25; $MEM_STUB_CONF" \
+  bash -c 'sleep 3; printf "exec\nfinal reply\n"' 2>&1)"
+t mem-a-session-under-the-ceiling-is-untouched '0|ok|yes' "$(peak_rest "$mem_under")"
+t mem-a-session-under-the-ceiling-says-nothing 0 \
+  "$(grep -c 'session memory:' <<<"$mem_under" || true)"
+
+if command -v python3 >/dev/null 2>&1; then
+  mem_hit="$(mem_run - 1 "SESSION_MEM_MAX_PCT=25; $MEM_STUB_CONF" bash "$MEM_CLI" 2>&1)"
+  t mem-crossing-the-ceiling-carries-its-own-outcome MEMORY "$(mem_outcome "$mem_hit")"
+  # The kill, and not merely the label: the fixture sleeps 30s, so a session
+  # that ran to its own end would report a duration near it.
+  mem_killed() {
+    local d; d="$(mem_dur "$1")"
+    case "$d" in
+      '' | *[!0-9]*) printf 'NO-DURATION(%s)' "$d" ;;
+      *) [ "$d" -le 20 ] && printf terminated || printf 'RAN-TO-COMPLETION(%ss)' "$d" ;;
+    esac
+  }
+  t mem-crossing-the-ceiling-terminates-the-session terminated "$(mem_killed "$mem_hit")"
+  # The engine survives it, which is the other half of the incident: on
+  # 2026-08-14 the kernel took a process out of the session's tree and the box
+  # stayed down. `reached=yes` is printed after run_session returned.
+  t mem-the-engine-survives-the-kill 'reached=yes' \
+    "$(grep -o 'reached=yes' <<<"$mem_hit" || true)"
+  # (c) logs WHY before it acts — the property it was ruled over (a) and (b)
+  # for. The figure and the ceiling are both on the line.
+  t mem-the-kill-is-logged-with-both-figures 1 \
+    "$(grep -c 'session memory: kind=build reached [0-9]* KiB against a ceiling of 65536 KiB' <<<"$mem_hit" || true)"
+  # The scratch files are the session's, not the log directory's — the `.mem`
+  # marker joins `.peak` under that rule.
+  t mem-scratch-files-do-not-outlive-the-session 0 "$(mem_field scratch "$mem_hit")"
+  # The peak that crossed is still reported: this session is measured like any
+  # other, and the figure on the line is the evidence for the outcome beside it.
+  t mem-the-crossing-figure-is-still-on-the-line at-least \
+    "$(peak_atleast 65536 "$(peak_of "$mem_hit")")"
+
+  # D4's other half: a memory kill is not a VENDOR failure. With a terminal
+  # hook that says yes to everything, the old ordering would have classified
+  # this TERMINAL and fed the per-lane breaker — stopping a lane for a reason
+  # the vendor had nothing to do with.
+  mem_term="$(mem_run - 1 \
+    "SESSION_MEM_MAX_PCT=25; $MEM_STUB_CONF; bot_session_terminal() { return 0; }" \
+    bash "$MEM_CLI" 2>&1)"
+  t mem-a-kill-is-not-a-vendor-terminal MEMORY "$(mem_outcome "$mem_term")"
+  t mem-a-kill-feeds-no-terminal-breaker-state 0 "$(mem_field terminal "$mem_term")"
+
+  # MUST FAIL (test plan): an unconfigured ceiling changing any behaviour. The
+  # mutation is the one-character version of forgetting the guard — an unarmed
+  # ceiling defaulting to a number instead of to nothing — and under it the
+  # very same unconfigured run is killed.
+  # shellcheck disable=SC2016  # the sed matches the module's literal guard
+  mem_mutant unconfigured-arms 's/^  \[ -n "\$ceil" \] || return 0$/  ceil="${ceil:-1}"/'
+  mem_unconf_ctl="$(mem_run - 1 "$MEM_STUB_CONF" bash "$MEM_CLI" 2>&1)"
+  mem_unconf_mut="$(mem_run "$TMP/session-mem-mutant-unconfigured-arms.sh" 1 \
+    "$MEM_STUB_CONF" bash "$MEM_CLI" 2>&1)"
+  t mem-unconfigured-is-exactly-todays-behaviour ok "$(mem_outcome "$mem_unconf_ctl")"
+  t mem-unconfigured-starts-no-watchdog 0 \
+    "$(grep -c 'session memory:' <<<"$mem_unconf_ctl" || true)"
+  t mem-mutation-unconfigured-arms-kills-an-unbounded-session MEMORY \
+    "$(mem_outcome "$mem_unconf_mut")"
+
+  # MUST FAIL (test plan, triage 2026-08-27): a change that lets
+  # `_session_peak_rss_watch` end a session. This is #473's D4 as landed, and
+  # the reason this issue's watchdog is a third process rather than a branch
+  # inside that one. Driven with NO ceiling configured, so what the mutation
+  # demonstrates is the measurement killing on its own account.
+  # shellcheck disable=SC2016  # the sed matches the module's literal assignment
+  mem_mutant measurement-kills 's/^      hwm="\$v"$/      hwm="$v"; kill -TERM "$root"/'
+  mem_meas_mut="$(mem_run "$TMP/session-mem-mutant-measurement-kills.sh" 1 \
+    "$MEM_STUB_CONF" bash "$MEM_CLI" 2>&1)"
+  mem_meas_verdict() {
+    case "$(mem_outcome "$1")" in
+      ok) printf untouched ;;
+      *) printf 'ENDED-BY-THE-MEASUREMENT(%s)' "$(mem_outcome "$1")" ;;
+    esac
+  }
+  t mem-the-measurement-does-not-end-a-session untouched "$(mem_meas_verdict "$mem_unconf_ctl")"
+  t mem-mutation-measurement-kills-ends-the-session ENDED-BY-THE-MEASUREMENT \
+    "$(mem_meas_verdict "$mem_meas_mut" | sed 's/(.*//')"
+fi
+
+# …and the same must-fail read structurally, which holds on a box with no
+# python3 and states the constraint rather than one of its consequences: every
+# `kill` inside the measurement is a liveness probe. `kill -0` is the loop's
+# own condition; anything else in there would be the measurement acting.
+mem_watch_signals() {
+  local body; body="$(declare -f _session_peak_rss_watch)"
+  printf '%s' "$(( $(grep -c 'kill' <<<"$body" || true) \
+                  - $(grep -c 'kill -0' <<<"$body" || true) ))"
+}
+t mem-the-measurement-only-ever-probes-liveness 0 "$(mem_watch_signals)"
+t mem-the-measurement-does-not-reach-the-terminator 0 \
+  "$(declare -f _session_peak_rss_watch | grep -c '_session_mem_terminate' || true)"
+
 suite_finish
