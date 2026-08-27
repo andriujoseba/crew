@@ -4240,9 +4240,13 @@ BOX_NAME=""
 ACQUIRE_TMP=""
 REHEARSAL_NOTIFY_FIXTURES=""
 REHEARSAL_FIXTURE_REPO=""; REHEARSAL_FIXTURE_PRS=""; REHEARSAL_FIXTURE_ISSUES=""
+REHEARSAL_FIXTURE_BRANCHES=""; REHEARSAL_FIXTURE_BUILDER_AUTHOR=""
+REHEARSAL_FIXTURE_BUILDER_ISSUES=""
 bx() { return 0; }
 rehearsal_cleanup() { return "$CLEANUP_RETURNS"; }
-rehearsal_cleanup_owned_fixtures() { return 0; }
+rehearsal_cleanup_owned_fixtures() {
+  [ -z "${CLEANUP_OWNED_CALLED:-}" ] || printf 'called\n' >"$CLEANUP_OWNED_CALLED"
+}
 . "$CLEANUP_ALL_SRC"
 trap cleanup_all EXIT
 exit 0
@@ -4252,6 +4256,13 @@ bash "$CLEANUP_ALL_DRIVER" 1 >/dev/null 2>&1
 t notify-cleanup-verdict-reaches-the-exit-status 1 "$?"
 bash "$CLEANUP_ALL_DRIVER" 0 >/dev/null 2>&1
 t notify-cleanup-clean-teardown-keeps-the-exit-status 0 "$?"
+CLEANUP_OWNED_CALLED="$TMP/cleanup-owned-called"
+export CLEANUP_OWNED_CALLED
+rm -f "$CLEANUP_OWNED_CALLED"
+bash "$CLEANUP_ALL_DRIVER" 0 >/dev/null 2>&1
+t rehearsal-exit-path-runs-owned-fixture-cleanup called \
+  "$(cat "$CLEANUP_OWNED_CALLED" 2>/dev/null || true)"
+unset CLEANUP_OWNED_CALLED
 
 # --- rehearsal triage fixtures: installed queue labels and cleanup (#417) --
 QUEUE_LABEL_SIX_HOME="$TMP/queue-label-six-home"
@@ -4332,12 +4343,17 @@ unset -f bx ok fail
 REHEARSAL_FIXTURE_REPO=""
 REHEARSAL_FIXTURE_PRS=""
 REHEARSAL_FIXTURE_ISSUES=""
+REHEARSAL_FIXTURE_BRANCHES=""
+REHEARSAL_FIXTURE_BUILDER_AUTHOR=""
+REHEARSAL_FIXTURE_BUILDER_ISSUES=""
 rehearsal_fixture_record_issue owner/sandbox 41
 rehearsal_fixture_record_issue owner/sandbox 42
 rehearsal_fixture_record_pr owner/sandbox 51
+rehearsal_fixture_record_branch owner/sandbox drill-review
 t rehearsal-owned-fixtures-record-repository owner/sandbox "$REHEARSAL_FIXTURE_REPO"
 t rehearsal-owned-fixtures-record-issues '41 42' "$REHEARSAL_FIXTURE_ISSUES"
 t rehearsal-owned-fixtures-record-prs 51 "$REHEARSAL_FIXTURE_PRS"
+t rehearsal-owned-fixtures-record-branches drill-review "$REHEARSAL_FIXTURE_BRANCHES"
 
 REHEARSAL_OWNED_GH_CALLS="$TMP/rehearsal-owned-gh-calls"
 : >"$REHEARSAL_OWNED_GH_CALLS"
@@ -4359,8 +4375,8 @@ t rehearsal-owned-cleanup-closes-recorded-issues 2 \
   "$(grep -cF 'repos/owner/sandbox/issues/' "$REHEARSAL_OWNED_GH_CALLS")"
 t rehearsal-owned-cleanup-does-not-use-prefix-or-author 0 \
   "$(grep -cE 'crew-drill|author|pulls\?state=open' "$REHEARSAL_OWNED_GH_CALLS" | tr -d ' ')"
-t rehearsal-owned-cleanup-clears-registry '||' \
-  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES"
+t rehearsal-owned-cleanup-clears-registry '|||||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
 
 # A failed leg still reaches the same cleanup. A failed close preserves the
 # registry for EXIT/retry; the next successful pass clears it, so a second
@@ -4376,12 +4392,36 @@ else
   owned_failure_rc=$?
 fi
 t rehearsal-failed-leg-cleanup-reports-failure 1 "$owned_failure_rc"
-t rehearsal-failed-leg-keeps-retry-registry 'owner/sandbox||61' \
-  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES"
+t rehearsal-failed-leg-keeps-retry-registry 'owner/sandbox||61|||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
 gh() { printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"; }
 rehearsal_cleanup_owned_fixtures >/dev/null
-t rehearsal-second-cleanup-clears-first-round-fixture '||' \
-  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES"
+t rehearsal-second-cleanup-clears-first-round-fixture '|||||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
+
+# The issue is durable before the asynchronous builder starts. Cleanup uses
+# that exact provenance to discover a PR created during the wait, then closes
+# its PR, branch and issue before another --reuse round can begin.
+rehearsal_fixture_record_builder_issue owner/sandbox builder-bot 61
+: >"$REHEARSAL_OWNED_GH_CALLS"
+gh() {
+  printf '%s\n' "$*" >>"$REHEARSAL_OWNED_GH_CALLS"
+  case "$*" in
+    'api repos/owner/sandbox/pulls?state=open&per_page=100 --paginate')
+      printf '%s\n' '[{"number":62,"body":"Closes #61","user":{"login":"builder-bot"}}]' ;;
+    'api repos/owner/sandbox/pulls/62')
+      printf '%s\n' '{"head":{"repo":{"full_name":"owner/sandbox"},"ref":"build/61-fixture"}}' ;;
+  esac
+}
+rehearsal_cleanup_owned_fixtures >/dev/null
+t rehearsal-async-builder-pr-is-discovered-from-owned-issue 1 \
+  "$(grep -cF 'api repos/owner/sandbox/pulls?state=open&per_page=100 --paginate' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-async-builder-pr-is-closed-on-failure-exit 1 \
+  "$(grep -cF 'api -X PATCH repos/owner/sandbox/pulls/62' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-async-builder-branch-is-deleted-on-failure-exit 1 \
+  "$(grep -cF 'api -X DELETE repos/owner/sandbox/git/refs/heads/build/61-fixture' "$REHEARSAL_OWNED_GH_CALLS")"
+t rehearsal-async-builder-cleanup-clears-reuse-state '|||||' \
+  "$REHEARSAL_FIXTURE_REPO|$REHEARSAL_FIXTURE_PRS|$REHEARSAL_FIXTURE_ISSUES|$REHEARSAL_FIXTURE_BRANCHES|$REHEARSAL_FIXTURE_BUILDER_AUTHOR|$REHEARSAL_FIXTURE_BUILDER_ISSUES"
 
 gh() {
   printf '%s\n' '[
@@ -4392,7 +4432,35 @@ gh() {
 t rehearsal-reuse-dirty-sandbox-names-pr-and-issue \
   'pull #71 — drill: stranded builder|issue #72 — operator object' \
   "$(rehearsal_open_sandbox_objects owner/sandbox | paste -sd'|' -)"
+if reuse_refusal_out="$(rehearsal_assert_reuse_sandbox_clean 1 owner/sandbox 2>&1)"; then
+  reuse_refusal_rc=0
+else
+  reuse_refusal_rc=$?
+fi
+t rehearsal-reuse-dirty-sandbox-refuses 1 "$reuse_refusal_rc"
+t rehearsal-reuse-dirty-sandbox-refusal-names-objects 2 \
+  "$(grep -Ec '(pull #71|issue #72)' <<<"$reuse_refusal_out")"
+gh() { printf '%s\n' '[]'; }
+if rehearsal_assert_reuse_sandbox_clean 1 owner/sandbox >/dev/null 2>&1; then
+  reuse_clean_rc=0
+else
+  reuse_clean_rc=$?
+fi
+t rehearsal-reuse-clean-sandbox-proceeds 0 "$reuse_clean_rc"
+gh() { return 1; }
+if rehearsal_assert_reuse_sandbox_clean 0 owner/sandbox >/dev/null 2>&1; then
+  fresh_sandbox_rc=0
+else
+  fresh_sandbox_rc=$?
+fi
+t rehearsal-non-reuse-does-not-query-sandbox 0 "$fresh_sandbox_rc"
 unset -f gh
+
+# The executable helper above is also bound to the CLI path. Removing the
+# --reuse refusal call from rehearsal.sh makes this mutation guard fail.
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-reuse-cli-calls-clean-start-assertion 1 \
+  "$(grep -c 'rehearsal_assert_reuse_sandbox_clean "\$REUSE" "\$SANDBOX"' "$ROOT/drill/rehearsal.sh")"
 
 # Every object filer records the returned ID in the caller shell immediately;
 # this is what keeps failure paths from escaping the EXIT registry.
@@ -4403,10 +4471,13 @@ t rehearsal-triage-fixtures-are-recorded 2 \
   "$(grep -Ec 'rehearsal_fixture_record_issue "\$SANDBOX" "\$(t|p)num"' "$ROOT/drill/rehearsal.sh")"
 # shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-builder-fixtures-are-recorded 2 \
-  "$(( $(grep -c 'rehearsal_fixture_record_issue "\$SANDBOX" "\$bnum"' "$ROOT/drill/rehearsal.sh") + $(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$bpr"' "$ROOT/drill/rehearsal.sh") ))"
+  "$(( $(grep -c 'rehearsal_fixture_record_builder_issue "\$SANDBOX" "\$ME2" "\$bnum"' "$ROOT/drill/rehearsal.sh") + $(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$bpr"' "$ROOT/drill/rehearsal.sh") ))"
 # shellcheck disable=SC2016  # matching literal rehearsal variable references
 t rehearsal-reviewer-fixture-is-recorded 1 \
   "$(grep -c 'rehearsal_fixture_record_pr "\$SANDBOX" "\$pr"' "$ROOT/drill/rehearsal.sh")"
+# shellcheck disable=SC2016  # matching literal rehearsal variable references
+t rehearsal-reviewer-branch-is-recorded-at-creation 1 \
+  "$(grep -B1 'refs/heads/\$br' "$ROOT/drill/rehearsal.sh" | grep -c 'rehearsal_fixture_record_branch "\$SANDBOX" "\$br"')"
 
 EMPTY_BUILDER_PRS='[]'
 STALE_BUILDER_PRS='[{"number":6,"body":"Closes #5"}]'

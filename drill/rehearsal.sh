@@ -164,6 +164,9 @@ BOX_TOUCHED=0
 REHEARSAL_FIXTURE_REPO=""
 REHEARSAL_FIXTURE_PRS=""
 REHEARSAL_FIXTURE_ISSUES=""
+REHEARSAL_FIXTURE_BRANCHES=""
+REHEARSAL_FIXTURE_BUILDER_AUTHOR=""
+REHEARSAL_FIXTURE_BUILDER_ISSUES=""
 # shellcheck source=drill/rehearsal-safety.sh
 . "$ROOT/drill/rehearsal-safety.sh"
 # shellcheck source=drill/rehearsal-fixtures.sh
@@ -567,16 +570,10 @@ else
   if ! gh repo view "$SANDBOX" >/dev/null 2>&1; then
     gh repo create "$SANDBOX" --public --add-readme >/dev/null || fail "sandbox create"
   fi
+  if ! rehearsal_assert_reuse_sandbox_clean "$REUSE" "$SANDBOX"; then
+    exit 1
+  fi
   if [ "$REUSE" -eq 1 ]; then
-    if ! reuse_objects="$(rehearsal_open_sandbox_objects "$SANDBOX")"; then
-      echo "phase 2: cannot inspect $SANDBOX before --reuse" >&2
-      exit 1
-    elif [ -n "$reuse_objects" ]; then
-      echo "phase 2: REFUSING --reuse because $SANDBOX is not clean:" >&2
-      printf '  %s\n' "$reuse_objects" >&2
-      echo "close or remove these objects before re-running; this round deletes only fixtures it records itself" >&2
-      exit 1
-    fi
     ok "reuse: sandbox starts with no open fixture objects"
   fi
   # Create the whole board vocabulary. Triage reads its queue-label set from
@@ -748,7 +745,7 @@ else
     bnum="$(gh api "repos/$SANDBOX/issues" -f title="drill: build me $(date -u +%H%M%S)" \
       -f body="Drill fixture: add a file named drill-build.txt at the repo root containing one line. Open a PR. Keep it to that one change." \
       -f "labels[]=ready" --jq .number)"
-    rehearsal_fixture_record_issue "$SANDBOX" "$bnum"
+    rehearsal_fixture_record_builder_issue "$SANDBOX" "$ME2" "$bnum"
     check "builder fixture is unassigned (ready+assigned is not pickable)" bash -c \
       "out=\$(gh api 'repos/$SANDBOX/issues/$bnum' --jq '.assignees | length'); grep -qx 0 <<<\"\$out\""
     bx "~/duty/bin/tick.sh" || true
@@ -861,6 +858,7 @@ else
   # -- review round through the gates --
   main_sha="$(gh api "repos/$SANDBOX/git/ref/heads/main" --jq .object.sha)"
   br="drill-$(date -u +%H%M%S)"
+  rehearsal_fixture_record_branch "$SANDBOX" "$br"
   gh api "repos/$SANDBOX/git/refs" -f ref="refs/heads/$br" -f sha="$main_sha" >/dev/null
   gh api -X PUT "repos/$SANDBOX/contents/drill.txt" -f message="drill change" \
     -f branch="$br" -f content="$(printf 'drill %s\n' "$br" | base64 -w0)" >/dev/null
