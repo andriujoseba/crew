@@ -21,6 +21,11 @@ t "fleet: carries the serving host's exact version string" "$FLOOR_TEST_VERSION"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
 t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"
+t "state: breaker stop -> suppressed" suppressed "$(uf ff-suppressed "u['state']")"
+t "suppressed: carries age and reason" True \
+  "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"
+t "suppressed: remains distinct from idle" False \
+  "$(uf ff-suppressed "u['state'] == 'idle'")"
 t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"

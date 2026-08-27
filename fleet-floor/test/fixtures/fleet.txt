@@ -5,6 +5,7 @@
 # that matters.
 ff-working     running  working
 ff-idle        running  idle
+ff-suppressed  running  suppressed
 ff-silent      running  silent
 ff-paused      running  paused
 ff-fresh       running  fresh

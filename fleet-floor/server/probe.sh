@@ -197,6 +197,26 @@ if [ -f "$DUTY_DIR/.duty.lock.since" ]; then
   esac
 fi
 
+# The newest active zero-action resume-breaker episode. Each lane owns one
+# marker so a quiet repository cannot erase another repository's suppression;
+# the marker carries `<trip-epoch> <lane> <repo#pr@head>`. Report its age from
+# the box clock, where the trip was recorded, and carry the reason unchanged.
+supp_when=0; supp_kind=""; supp_key=""
+for supp_file in "$DUTY_DIR"/.builder-suppressed.*; do
+  [ -f "$supp_file" ] || continue
+  IFS=$'\t' read -r when kind key <"$supp_file" 2>/dev/null || continue
+  case "$when" in ''|*[!0-9]*) continue ;; esac
+  [ -n "$kind" ] && [ -n "$key" ] || continue
+  if [ "$when" -gt "$supp_when" ]; then
+    supp_when="$when"; supp_kind="$kind"; supp_key="$key"
+  fi
+done
+if [ "$supp_when" -gt 0 ]; then
+  emit suppression "$(( $(date +%s) - supp_when )) $supp_kind $supp_key"
+else
+  emit suppression ""
+fi
+
 # Cron is the liveness contract: tick.sh guarantees one duty.log line per
 # 5-minute boundary, so silence means cron itself is dead (#38's death rule).
 emit cron "$(crontab -l 2>/dev/null | grep -cE '^[^#].*tick\.sh')"

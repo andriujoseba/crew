@@ -354,6 +354,19 @@ else
   fail "crew status: an unarmed box says disarmed and names the fix" \
        "$(grep '^cli-disarmed' "$CL_TMP/crew-out")"
 fi
+if grep -qE '^cli-suppressed +suppressed .*for 13m .*draft resume breaker at heavy-duty/crew#561' "$CL_TMP/crew-out"; then
+  ok "crew status: breaker-suppressed builder carries age and reason"
+else
+  fail "crew status: breaker-suppressed builder carries age and reason" \
+       "$(grep '^cli-suppressed' "$CL_TMP/crew-out")"
+fi
+if grep -qE '^cli-idle +running ' "$CL_TMP/crew-out" \
+   && grep -qE '^cli-unreachable ' "$CL_TMP/crew-out"; then
+  ok "crew status: suppressed, idle, and unreachable remain distinct"
+else
+  fail "crew status: suppressed, idle, and unreachable remain distinct" \
+       "$(grep -E '^cli-(suppressed|idle|unreachable)' "$CL_TMP/crew-out")"
+fi
 # The floor and this CLI must derive credential state from the SAME evidence.
 # `rehearsal-app.sh` asserts they agree about every box on a real host, and
 # that assertion only means anything while neither has a private source: when

@@ -938,7 +938,7 @@ function idle24(d){
    overlay burned into the stream, because that is what an AR readout is:
    the video is the whole card, and the facts sit on top of it. */
 function drawCamCell(t,x,y,w,h,unit){
-  var off=unit.state==="offline", work=unit.state==="working";
+  var off=unit.state==="offline", work=unit.state==="working", suppressed=unit.state==="suppressed";
   var box=UNITID(unit), d=dataOf(box,unit.room), vc=VENDORCOL(unit.agent);
   var bp=strPhase(box);
   X.save();X.textBaseline="alphabetic";X.textAlign="left";
@@ -1044,6 +1044,9 @@ function drawCamCell(t,x,y,w,h,unit){
     }
   }else if(off){
     X.fillStyle="#ff5147";X.fillText("✕ FEED DOWN",sx2-3,sy2+0.5);
+  }else if(suppressed){
+    X.fillStyle="#f28b54";X.beginPath();X.arc(sx2,sy2,3,0,7);X.fill();
+    X.fillStyle="#ffb184";X.fillText("SUPPRESSED",sx2+8,sy2+0.5);
   }else{
     X.fillStyle="#5fce9b";X.beginPath();X.arc(sx2,sy2,3,0,7);X.fill();
     X.fillStyle="#8fe8bc";X.fillText("STANDBY",sx2+8,sy2+0.5);
@@ -1288,6 +1291,7 @@ function stoppedWord(d){
    projection, where those fields do not exist. */
 function fleetState(u){
   if(u.state==="working")return "working";
+  if(u.state==="suppressed")return "suppressed";
   if(u.state!=="offline")return "idle";
   return stoppedWord(dataOf(UNITID(u),u.room))?"disarmed":"silent";
 }
@@ -1303,7 +1307,7 @@ function matchedFloorUnits(){return ROSTER.filter(matchesFloorFilter);}
    that disagreed about what SILENT means would be worse than one that was
    wrong. */
 function fleetCounts(){
-  var c={working:0,idle:0,disarmed:0,silent:0};
+  var c={working:0,idle:0,suppressed:0,disarmed:0,silent:0};
   ROSTER.forEach(function(u){c[fleetState(u)]++;});
   return c;
 }
@@ -1313,6 +1317,7 @@ function fleetCounts(){
 function stageCounts(){
   var c=fleetCounts();
   var stat=[[c.silent+" SILENT","#ff5147"],[c.idle+" IDLE","#5fce9b"],[c.working+" WORKING","#f7bd4e"]];
+  if(c.suppressed)stat.splice(1,0,[c.suppressed+" SUPPRESSED","#f28b54"]);
   /* Only when non-zero, on the ALERT counter's rule below: a permanent
      "0 DISARMED" is furniture. SILENT stays unconditional either way — an
      operator reading a calm fleet is entitled to see the alarm counter sitting
@@ -1480,6 +1485,7 @@ function liveData(u){
      unit built from the error path, must render as "not known" and never as a
      missing-property crash mid-draw. */
   d.ping=u.ping||null;d.lock=u.lock||{held:null,stuck:false};
+  d.suppression=u.suppression||{active:false,age:null,kind:"",key:""};
   d.authfail=u.authfail||[];
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
   /* #189 gave the collector this flag and nothing here read it, so every
@@ -1767,18 +1773,18 @@ function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dat
   var hire=hidden>0?tl(ROSTER.length,"hired","#8aa0b8",false,
     hidden+(hidden===1?" declared box has":" declared boxes have")
     +" no console: not hired — crew hire <box>"):"";
-  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
+  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.suppressed,"suppressed","#f28b54",ct.suppressed>0)+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
      claim a session is running when there is one to count. */
-  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",work=STATE==="working"&&!!(d.cur||!LIVE);
+  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",suppressed=STATE==="suppressed",work=STATE==="working"&&!!(d.cur||!LIVE);
   /* PAUSED, DISARMED or "" — the one thing standing between this console and
      the word SILENT. Every readout below that used to key off `off` alone now
      asks this first; `off` still decides the shape of the panel, this decides
      what it is allowed to shout (#203). */
   var stw=off?stoppedWord(d):"";
-  var sc=stw?"#8aa0b8":off?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
+  var sc=stw?"#8aa0b8":off?"#ff5147":suppressed?"#f28b54":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":suppressed?"SUPPRESSED":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
   document.getElementById("w-id").innerHTML='<div class="idc"><div class="av" style="background:'+hexA(vc,0.16)+';box-shadow:inset 0 0 0 1px '+hexA(vc,0.5)+';color:'+vc+'">'+AGENT[0].toUpperCase()+'</div><div><div class="nm">'+id+'</div><div class="rl">'+AGENT+' · '+ROOM+'</div><span class="pill" style="color:'+sc+';background:'+hexA(sc,0.14)+';box-shadow:inset 0 0 0 1px '+hexA(sc,0.4)+'">● '+sl+'</span></div></div><div class="spark" title="24h activity">'+(off?"":d.spark.map(function(v,i){return '<span style="height:'+Math.round(v*100)+'%;background:'+hexA(vc,i>=d.spark.length-4?0.95:0.42)+'"></span>';}).join(''))+'</div>';
   /* In LIVE mode every value here is what the box reported this poll; the
      DEMO strings it replaces were the placeholders #38 was filed about. */
@@ -1836,6 +1842,7 @@ function populateDash(){
      boundaries. Showing the elapsed timer alone reads as healthy progress.
      No progress bar here either; there is no progress to draw. */
   else if(LIVE&&d.lock&&d.lock.stuck)cs+='<div class="big" id="cur-el" style="color:#ff5147">'+fmtDur(d.lock.held)+'</div><div class="task" id="cur-stuck" style="color:#ff8a7c">STUCK · lock held '+fmtDur(d.lock.held)+(d.cur?' · '+esc(d.kind)+' '+esc(d.cur.key):'')+'</div>';
+  else if(suppressed)cs+='<div class="big" style="color:#f28b54">SUPPRESSED</div><div class="task">'+esc(d.note||"zero-action resume breaker")+'</div>';
   else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+esc(d.kind)+' · '+esc(d.cur.key)+'</div><div class="pbar"><i></i></div>';
   else cs+='<div class="big" style="color:#5fce9b">STANDBY</div><div class="task">idle · awaiting next tick</div>';
   document.getElementById("w-current").innerHTML=cs+'</div>';
@@ -6424,7 +6431,7 @@ pollFleet();setInterval(pollFleet,POLL_MS);
    hook's private habit. VIEW, the roster and the live poll never see it.
    Unused by index.html — it costs one property on window. */
 window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
-  ROOMS:["builder","reviewer","triage"],STATES:["working","idle","offline"],
+  ROOMS:["builder","reviewer","triage"],STATES:["working","idle","suppressed","offline"],
   /* The floor camera (vertical, in px of grid overflow), for the browser
      walk. The camera eases per FRAME, not per second, so a fixed post-wheel
      wait covers almost no easing on a slow machine. The walk polls this

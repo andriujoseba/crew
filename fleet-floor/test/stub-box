@@ -158,6 +158,11 @@ emit_probe() {
   # and doing nothing. There is no other way to reach the STUCK branch — a
   # real fleet produces this state only by breaking.
   [ "$sc" = stuck ] && printf '::lockheld 2820\n'
+  if [ "$sc" = suppressed ]; then
+    printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
+  else
+    printf '::suppression \n'
+  fi
   printf '::cron %s\n'   "$cron"
   printf '::paused %s\n' "$paused"
   # Full owner/repo, exactly as repos.txt holds them. Bare names here are
@@ -389,13 +394,14 @@ case "${1:-}" in
         [ "$(cron_of "$name")" = "paused" ] && { _armed=0; _cpaused=1; }
         case "$sc" in nocron|disarmed|nothired|unconverged|premanifest) _armed=0 ;; esac
         case "$sc" in
-          noauth)        echo "missing missing 30 $_armed $_cpaused" ;;
-          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused" ;;
+          noauth)        echo "missing missing 30 $_armed $_cpaused -1 - -" ;;
+          nothired|unconverged|premanifest) echo "unknown unknown -1 $_armed $_cpaused -1 - -" ;;
           # Hired and armed, nothing recorded against it, and no duty.log to
           # age: the box is healthy and has simply not run yet.
-          neverticked)   echo "nofail nofail -1 $_armed $_cpaused" ;;
-          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused" ;;
-          *)             echo "nofail nofail 30 $_armed $_cpaused" ;;
+          neverticked)   echo "nofail nofail -1 $_armed $_cpaused -1 - -" ;;
+          silent|nocron|disarmed) echo "nofail nofail 4000 $_armed $_cpaused -1 - -" ;;
+          suppressed)    echo "nofail nofail 30 $_armed $_cpaused 780 draft heavy-duty/crew#561@abcdef123456" ;;
+          *)             echo "nofail nofail 30 $_armed $_cpaused -1 - -" ;;
         esac ;;
       # RESUME_SH, then PAUSE_SH. Since #188 each script states what it DID and
       # a box with nothing to do says so on stdout and exits 0 — so the stub has

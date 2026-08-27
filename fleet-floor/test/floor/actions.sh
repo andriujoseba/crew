@@ -67,7 +67,7 @@ t "cmd: restart ends running" running "$(cat "$FLOOR_STATE/ff-idle.state" 2>/dev
 #
 # ff-wedged is borrowed and PUT BACK. A 27th fixture row is the tidier shape
 # and test/cli.sh:1885 records why it is refused — three suites hardcode the
-# fixture's 26 boxes and the browser scroll walk has been destabilised by
+# fixture's 27 boxes and the browser scroll walk has been destabilised by
 # fleet size before. So this block ends by restoring the box AND waiting for
 # the console to call it unreachable again, because floor/ping.sh reads
 # exactly that and reading it is not this suite's to break.

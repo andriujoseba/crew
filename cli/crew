@@ -1269,6 +1269,7 @@ vendor_probe() {
 # observed it, in one exec of pure local file reads. Echoes five fields:
 #
 #     <gh-state> <vendor-state> <tick-age-seconds-or--1> <armed> <paused>
+#     <suppression-age-or--1> <lane-or--> <repo#pr@head-or-->
 #
 # `armed` and `paused` are crontab line COUNTS, read with probe.sh's own
 # patterns, so `crew status` and the floor answer "is this box armed?" from
@@ -1335,9 +1336,29 @@ auth_from_flow() {
     # box never had one (crew hire it). Telling an operator to re-hire a box
     # they paused thirty seconds ago is worse than saying nothing.
     paused="$(crontab -l 2>/dev/null | grep -cE "^#[[:space:]]*CREW-FLOOR-PAUSED")"
-    printf "%s %s %s\n" "$age" "$armed" "$paused"
+    sw=0; sk=-; sid=-
+    for sf in "$HOME"/duty/.builder-suppressed.*; do
+      [ -f "$sf" ] || continue
+      IFS="$(printf "\t")" read -r when kind key <"$sf" 2>/dev/null || continue
+      case "$when" in ""|*[!0-9]*) continue ;; esac
+      [ -n "$kind" ] && [ -n "$key" ] || continue
+      if [ "$when" -gt "$sw" ]; then sw="$when"; sk="$kind"; sid="$key"; fi
+    done
+    if [ "$sw" -gt 0 ]; then sage=$(( $(date +%s) - sw )); else sage=-1; fi
+    printf "%s %s %s %s %s %s\n" "$age" "$armed" "$paused" "$sage" "$sk" "$sid"
     printf "\n"
   ' 2>/dev/null | tr -d '\r'
+}
+
+status_duration() {
+  local age="${1:-0}"
+  if [ "$age" -ge 3600 ]; then
+    printf '%dh %02dm\n' "$(( age / 3600 ))" "$(( age % 3600 / 60 ))"
+  elif [ "$age" -ge 60 ]; then
+    printf '%dm\n' "$(( age / 60 ))"
+  else
+    printf '%ds\n' "$age"
+  fi
 }
 
 # production_registry — the repo list THIS checkout would seed into a box.
@@ -2109,6 +2130,7 @@ cmd_status() {
   # shellcheck disable=SC2059
   printf "$fmt" MEMBER STATE HOST ENGINE INTEGRITY GH VENDOR NOTE
   local name agent role _from state hired ghs vs ghs_d vs_d note last
+  local supp_age supp_kind supp_key supp_subject
   local report estate erecorded edisplay
   local rreport conv convnote
   while read -r name agent role _from; do
@@ -2128,13 +2150,14 @@ cmd_status() {
     estate="$(report_field state "$report")"
     erecorded="$(report_field recorded "$report")"
     # One exec, no network, same evidence the floor reads — see auth_from_flow.
-    read -r ghs vs tickage armed cpaused <<<"$(auth_from_flow "$name")"
+    read -r ghs vs tickage armed cpaused supp_age supp_kind supp_key <<<"$(auth_from_flow "$name")"
     ghs="${ghs:-unknown}"; vs="${vs:-unknown}"; tickage="${tickage:--1}"
     # An older engine, or a box that answered nothing, reports no counts. Treat
     # that as "armed" rather than inventing an alarm: absence of evidence about
     # cron is not evidence that cron is gone, and the old behaviour (say
     # nothing) is the safe one to fall back to.
     armed="${armed:-1}"; cpaused="${cpaused:-0}"
+    supp_age="${supp_age:--1}"; supp_kind="${supp_kind:--}"; supp_key="${supp_key:--}"
     # `nofail` aged into a verdict HERE, on the host, with the same rule the
     # floor applies. SILENT_AFTER_S must equal floor.py's; shared/test asserts
     # it, because two readers with private thresholds is the defect this whole
@@ -2212,6 +2235,11 @@ cmd_status() {
       else
         note="disarmed — no cron line; crew hire $name arms it"
       fi
+    elif [ -n "$hired" ] && [ "$hired" != "not hired" ] \
+         && [[ "$supp_age" =~ ^[0-9]+$ ]]; then
+      state=suppressed
+      supp_subject="${supp_key%@*}"
+      note="for $(status_duration "$supp_age") — $supp_kind resume breaker at $supp_subject"
     elif [ -n "$hired" ] && [ "$hired" != "not hired" ]; then
       # `|| true` is load-bearing, exactly as it is in box_state, box_agent and
       # box_registry: ~/duty/duty.log does not exist until the first duty run

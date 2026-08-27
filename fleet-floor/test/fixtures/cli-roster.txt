@@ -13,6 +13,7 @@
 cli-neverticked claude builder
 cli-hired      claude  builder
 cli-idle       claude  reviewer
+cli-suppressed claude  builder
 cli-unreachable grok   reviewer
 cli-stopped    codex   builder
 cli-nothired   grok    reviewer

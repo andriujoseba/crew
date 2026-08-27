@@ -186,6 +186,7 @@ def unit_defaults():
         "paused": False, "disarmed": False,
         "cron": {"ok": False, "last": None, "age": None},
         "lock": {"held": None, "stuck": False},
+        "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
         # HIRED — "yes" / "no" / "unknown", and never an inference from the
@@ -320,6 +321,17 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         held = None
     if held is not None and held >= 0:
         u["lock"] = {"held": held, "stuck": held > STUCK_AFTER_S}
+    suppression = meta.get("suppression", "").split()
+    if len(suppression) == 3:
+        try:
+            suppression_age = int(suppression[0])
+        except ValueError:
+            suppression_age = -1
+        if suppression_age >= 0:
+            u["suppression"] = {
+                "active": True, "age": suppression_age,
+                "kind": suppression[1], "key": suppression[2],
+            }
     u["repos"] = [r for r in meta.get("repos", "").split() if r]
     u["logs"] = [f for f in meta.get("sessionlogs", "").split() if f]
     try:
@@ -428,6 +440,13 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # and the notes it would defer to describe a healthy one.
         u["state"] = "working"
         u["note"] = "STUCK — duty run has held the lock for %s" % fmt_dur(u["lock"]["held"])
+    elif u["suppression"]["active"]:
+        subject = u["suppression"]["key"].rsplit("@", 1)[0]
+        u["state"] = "suppressed"
+        u["note"] = "for %s — %s resume breaker at %s" % (
+            fmt_dur(u["suppression"]["age"]),
+            u["suppression"]["kind"], subject,
+        )
     elif cur:
         u["state"] = "working"
     else:

@@ -15,6 +15,7 @@
 cli-neverticked running  neverticked
 cli-hired      running  working
 cli-idle       running  idle
+cli-suppressed running  suppressed
 # Present on the host and answering nothing. It must stay distinguishable from
 # the never-ticked box above: both have no duty log, and only one of them is
 # fine (#224 criterion 4, #221 one call site over).
