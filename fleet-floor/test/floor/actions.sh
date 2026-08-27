@@ -308,6 +308,59 @@ else
   ok "force: the stub refuses an incus verb it does not model"
 fi
 
+# ===========================================================================
+# #487 D2/D4 — `restart` appended its stop result and never read it, so a stop
+# that failed was followed by `box start` on the next line and the box was
+# started anyway. Reached here on the GRACEFUL path, which is the one this
+# fixture can express: the block above left ff-wedged stopped, the ping tier
+# skips a stopped box and REPLACES its map wholesale, so within one round the
+# box has no published heartbeat at all — and unmeasured is not wedged
+# (fleet.wedged), so the collector's verdict is `graceful` and a bare restart
+# agrees with it. stub-box's `down` arm keys on the SCENARIO, so it hangs there
+# exactly as it does on a running wedged guest, which is the failure under
+# test. The force half is driven at branch level in test/concurrent-actions.py,
+# where a force stop can be made to fail at all.
+#
+# MUST FAIL: `box start` appearing in the call log. The reply is not where this
+# is asserted — "restart reported a failure" is equally true of a restart that
+# failed, started the box anyway and mentioned the stop afterwards, which is
+# the defect exactly.
+# ===========================================================================
+echo "== restart reads its own stop (#487)"
+
+FS_DL=$(( $(date +%s) + 60 ))
+while [ "$(uf ff-wedged 'u["ping"]')" != "None" ] && [ "$(date +%s)" -lt "$FS_DL" ]; do
+  sleep 1
+done
+t "stop: the stopped box's heartbeat is dropped, not left stale" None \
+  "$(uf ff-wedged 'u["ping"]')"
+t "stop: ...so the collector's verdict is the graceful path" stopped \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+
+FS_M=$(fs_mark)
+FS_RR="$(api POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+FS_SEEN="$(fs_calls_since "$FS_M")"
+t "stop: a restart whose stop failed is reported failed" 500 \
+  "$(printf '%s' "$FS_RR" | tail -1)"
+if grep -q '^down ff-wedged$' <<<"$FS_SEEN"; then
+  ok "stop: the graceful stop was attempted"
+else fail "stop: the graceful stop was attempted" "$FS_SEEN"; fi
+if grep -q '^start ff-wedged$' <<<"$FS_SEEN"; then
+  fail "stop: a failed stop does not start the box" "$FS_SEEN"
+else ok "stop: a failed stop does not start the box"; fi
+t "stop: ...and the box is left as the failed stop found it" stopped \
+  "$(cat "$FLOOR_STATE/ff-wedged.state" 2>/dev/null)"
+# The record, not just the outcome: a start that did not run is a third state
+# beside ran-and-worked and ran-and-failed, and the reply says which (#487 D4).
+t "stop: the reply records the start that never ran" start \
+  "$(printf '%s' "$FS_RR" | sed '$d' | jqf "d['results'][1].get('step','')")"
+t "stop: ...as not-attempted rather than as a second failure" None \
+  "$(printf '%s' "$FS_RR" | sed '$d' | jqf "d['results'][1]['ok']")"
+case "$FS_RR" in
+  *"not started"*) ok "stop: ...and says so in words the page renders" ;;
+  *) fail "stop: ...and says so in words the page renders" "$FS_RR" ;;
+esac
+
 # Put ff-wedged back the way this suite found it, and prove it is back: the
 # ping tier skips a stopped box, so leaving it down would empty its heartbeat
 # and floor/ping.sh — which waits on exactly that fact — would spend its
@@ -384,9 +437,46 @@ for _ in $(seq 1 60); do
   [ "$(uf ff-paused "u['paused']")" = "True" ] && break
   sleep 0.5
 done
-status POST /api/command '{"action":"wake-silent"}' >/dev/null
+FS_M=$(fs_mark)
+WS_T0=$(date +%s)
+WS_R="$(api POST /api/command '{"action":"wake-silent"}')"
+WS_EL=$(( $(date +%s) - WS_T0 ))
+FS_SEEN="$(fs_calls_since "$FS_M")"
 t "wake-silent: resumes a PAUSED box"   resumed "$(cat "$FLOOR_STATE/ff-paused.cron" 2>/dev/null)"
 t "wake-silent: leaves a DISARMED box alone" "" "$(cat "$FLOOR_STATE/ff-disarmed.cron" 2>/dev/null)"
+
+# #487 D3/D4 — the wake went to every box incus did not call `stopped`, which
+# includes the wedged one: RESUME_SH down a channel that cannot execute
+# anything, blocking the whole ACTION_TIMEOUT_S to report a timeout for a fact
+# the collector had already published as ping.wedged.
+#
+# MUST FAIL: an `exec` at ff-wedged in the call log. Asserted on argv, because
+# a failed row for that box is what the OLD behaviour produced too — the
+# difference is entirely in whether the wake was sent.
+if grep -q '^exec ff-wedged ' <<<"$FS_SEEN"; then
+  fail "wake-silent: a wedged box is not sent a wake" "$FS_SEEN"
+else ok "wake-silent: a wedged box is not sent a wake"; fi
+# It is REPORTED, not skipped. A disarmed box drops out of the wake set with no
+# row at all (#189) because nothing is wrong with it; a wedged one is the
+# incident this console exists to surface, so it carries a row that names the
+# lever that can still reach it.
+ws_field() {  # ws_field KEY — one field of ff-wedged's row in the reply above
+  printf '%s' "$WS_R" | sed '$d' | jqf \
+    "[r for r in d['results'] if r['box']=='ff-wedged'][0].get('$1','')"
+}
+t "wake-silent: ...it is escalated rather than dropped" escalate "$(ws_field step)"
+t "wake-silent: ...and a box it could not wake is not a success" False "$(ws_field ok)"
+case "$(ws_field out)" in
+  *"Restart it"*) ok "wake-silent: ...naming the lever that can still reach it" ;;
+  *) fail "wake-silent: ...naming the lever that can still reach it" "$(ws_field out)" ;;
+esac
+# The cost, which is the half an operator feels: two unreachable boxes in this
+# fixture each spent a full action timeout before this change.
+if [ "$WS_EL" -lt "${FLOOR_TEST_ACTION_TIMEOUT:-8}" ]; then
+  ok "wake-silent: a wedged box costs no action timeout"
+else
+  fail "wake-silent: a wedged box costs no action timeout" "${WS_EL}s"
+fi
 
 # ===========================================================================
 # ROUND 11 — codex-bot: two rapid messages to ONE box could interleave, and a

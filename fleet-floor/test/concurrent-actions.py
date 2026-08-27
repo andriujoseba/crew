@@ -268,6 +268,136 @@ assert elapsed < TIMEOUT_S * 3, ("precomputed results serialized behind a hang",
 
 floor.ACTION_TIMEOUT_S = REAL_ACTION_TIMEOUT_S
 
+
+# --- #487: a lever that could not act must not report that it did ------------
+#
+# Driven here as well as through the HTTP suite because the fixture fleet
+# reaches only ONE of restart's two stop paths with a failure: stub-box's
+# `incus <box> -- stop --force` answers, so a FAILED force stop has no fixture
+# at all, and the graceful half needs a box the ping tier has not measured to
+# take the gentle verdict (floor/actions.sh drives exactly that, against #486's
+# hanging `down` arm). What is under test is the same on both paths and is a
+# property of the CODE rather than of any host: the start is conditioned on the
+# stop's own result, and on neither path is it conditioned on anything else.
+class RestartFleet(Fleet):
+    """A fleet whose wedge verdict is fixed, so the path under test is chosen."""
+
+    def __init__(self, unreachable):
+        Fleet.__init__(self)
+        self.unreachable = unreachable
+
+    def box_unreachable(self, _name):
+        return self.unreachable
+
+
+def restart(box, unreachable, mode, refuses=None):
+    """One restart. `refuses` is the argv fragment the host rejects, or None."""
+    calls = []
+    floor.read_roster = lambda: [{"box": box, "agent": "claude", "room": "builder"}]
+    floor.box_states = lambda: {box: "running"}
+
+    def recording_run(argv, _timeout, _stdin_data=None):
+        line = " ".join(argv)
+        calls.append(line)
+        if refuses and refuses in line:
+            # run()'s timeout contract, which is how a graceful stop fails
+            # against a guest that cannot schedule its own shutdown.
+            return 124, "", "timed out after 8s"
+        return 0, "done", ""
+
+    floor.run = recording_run
+    status, payload = floor.do_command(
+        RestartFleet(unreachable), {"action": "restart", "box": box, "mode": mode})
+    return calls, status, payload
+
+
+# The force path with the stop refused. Asserted on the CALL LIST and not on
+# the reply: "it reported a failure" is equally true of a restart that failed,
+# started the box anyway, and said so afterwards — which is the defect.
+calls, status, payload = restart("wedge-a", True, "force", refuses="stop --force")
+assert status == 500, (status, payload)
+assert calls == ["box incus wedge-a -- stop --force"], calls
+assert [r["step"] for r in payload["results"]] == ["force-stop", "start"], payload
+assert [r["ok"] for r in payload["results"]] == [False, None], payload
+assert payload["results"][1]["out"] == (
+    "not started: the force-stop step failed, so the box was left as it was"), payload
+
+# The same path with the stop accepted. Without this pair the assertion above
+# is satisfied by a restart that has stopped starting boxes altogether.
+calls, status, payload = restart("wedge-b", True, "force")
+assert status == 200, (status, payload)
+assert calls == ["box incus wedge-b -- stop --force", "box start wedge-b"], calls
+assert [r["ok"] for r in payload["results"]] == [True, True], payload
+
+# ...and both again on the graceful path, which is the one an operator meets on
+# a box whose heartbeat is merely unmeasured.
+calls, status, payload = restart("gentle-c", False, "graceful", refuses="box down")
+assert status == 500, (status, payload)
+assert calls == ["box down gentle-c"], calls
+assert [r["step"] for r in payload["results"]] == ["down", "start"], payload
+assert [r["ok"] for r in payload["results"]] == [False, None], payload
+assert payload["results"][1]["out"] == (
+    "not started: the down step failed, so the box was left as it was"), payload
+
+calls, status, payload = restart("gentle-d", False, "graceful")
+assert status == 200, (status, payload)
+assert calls == ["box down gentle-d", "box start gentle-d"], calls
+
+
+# `wake-silent` against the state it was sending its wake into. All four boxes
+# are silent and wakeable; they differ only in what the ping tier says about
+# them, which is the whole of the routing under test.
+class WakeFleet(Fleet):
+    def __init__(self, units):
+        Fleet.__init__(self)
+        self.units = units
+
+    def get(self):
+        return {"units": self.units}
+
+
+def silent(box, ping=None):
+    return {"box": box, "state": "offline", "paused": False, "disarmed": False,
+            "ping": ping}
+
+
+WAKE_UNITS = [
+    silent("wake-stopped"),
+    # No heartbeat at all: unmeasured is not wedged, so it is still woken.
+    silent("wake-unmeasured"),
+    silent("wake-wedged", ping={"ok": False, "fails": 3, "wedged": True}),
+    # Answering the ping and silent in the evidence tier — the ordinary wake.
+    silent("wake-answering", ping={"ok": True, "fails": 0, "wedged": False}),
+]
+wake_calls = []
+
+
+def wake_run(argv, _timeout, _stdin_data=None):
+    wake_calls.append(" ".join(argv[:3]))
+    return 0, "done", ""
+
+
+floor.read_roster = lambda: [
+    {"box": u["box"], "agent": "claude", "room": "builder"} for u in WAKE_UNITS
+]
+floor.box_states = lambda: {"wake-stopped": "stopped", "wake-unmeasured": "running",
+                            "wake-wedged": "running", "wake-answering": "running"}
+floor.run = wake_run
+status, payload = floor.do_command(WakeFleet(WAKE_UNITS), {"action": "wake-silent"})
+# The decisive one: nothing at all is fired at the wedged box. A reply that
+# merely NAMES it is what the timed-out row already did.
+assert not any("wake-wedged" in call for call in wake_calls), wake_calls
+assert wake_calls == ["box start wake-stopped", "box exec wake-unmeasured",
+                      "box exec wake-answering"], wake_calls
+assert [r["box"] for r in payload["results"]] == [u["box"] for u in WAKE_UNITS], payload
+assert [r["step"] for r in payload["results"]] == [
+    "start", "resume", "escalate", "resume"], payload
+# A box it could not wake is a refusal, not drift: `ok: None` would report the
+# whole action 200 with the incident in the detail nobody reads (#487 D4).
+assert [r["ok"] for r in payload["results"]] == [True, True, False, True], payload
+assert status == 500, (status, payload)
+assert payload["results"][2]["out"].startswith("wedged — not woken"), payload
+
 # log() is called by those workers. A deliberately slow stream makes
 # overlapping writes deterministic: the old print(message, flush=True) path
 # enters write concurrently and emits the newline as a second write.
