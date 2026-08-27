@@ -308,8 +308,36 @@ def do_command(fleet, body):
                 "verdict": verdict,
                 "error": "%s %s. Nothing was done — confirm again." % (box, became),
             }
-        stop = (one(box, force_stop_argv(box), step="force-stop") if verdict == "force"
-                else one(box, ["box", "down", box], step="down"))
+        if verdict == "force":
+            stop = one(box, force_stop_argv(box), step="force-stop")
+        elif box_states().get(box) == "stopped":
+            # NOTHING TO STOP IS NOT A FAILED STOP, and once the start is
+            # conditional on the stop row the difference is the whole action.
+            # `box down` is not idempotent on the single-box path: it is
+            # `incus:stop` (heavy-duty/box `bin/box:157`) and the single-box
+            # branch runs `incus stop <inst>` bare under `set -euo pipefail`
+            # (:3420), while the guard for this case — `fleet_op`'s
+            # `stop:STOPPED -> ""` (:1187) — is reached only from `run_fleet`,
+            # i.e. only by `box down all`. So `box down <already-stopped>`
+            # exits non-zero. That was inert noise while the row was appended
+            # and ignored; the moment it is read it swallows the start, and
+            # `ac-restart` is the one ACCESS control state does not dim, so an
+            # operator confirming "it is stopped and started again" over a
+            # stopped box got neither half.
+            #
+            # The verb is not fired at a box already in the target state —
+            # `stop-all` above has answered this exact question that way since
+            # #77, and box itself settled it for its own verb with
+            # `restart:STOPPED -> start`, whose comment explains why a single
+            # start is not the stop-then-start composite #486 D1 forbids. Read
+            # from `box_states()` because that is the source `stop-all` reads;
+            # a box that moves between the list and the call lands on the
+            # ordinary path below and the host decides, which is the right
+            # answer and the same TOCTOU box accepts for the same reason.
+            stop = {"box": box, "ok": True, "step": "down", "out": "already stopped"}
+            log("restart %s (down) -> already stopped, not fired" % box)
+        else:
+            stop = one(box, ["box", "down", box], step="down")
         results.append(stop)
         # READ THE STOP BEFORE STARTING (#487 D2). The stop row was appended and
         # `box start` fired on the next line, on both of the paths above, with
@@ -331,12 +359,20 @@ def do_command(fleet, body):
             # stop row above, and a second `False` would report two refusals
             # where one thing went wrong — the page names `bad[0]`, and the
             # first failure is the one that explains this. What the row carries
-            # is the fact nothing else in the reply states: the start did not
-            # run, so the box was left exactly as the failed stop found it
-            # (#487 D4 — a lever that cannot act says so).
+            # is the one fact nothing else in the reply states: the start did
+            # not run (#487 D4 — a lever that cannot act says so).
+            #
+            # AND NOTHING BEYOND IT. This said "so the box was left as it was",
+            # which is a claim about the guest on the one path where the guest's
+            # state is exactly what is unknown: the graceful stop returns 124
+            # having ASKED for a shutdown that may still be in flight, so the
+            # box may well be on its way down. Reporting an outcome it did not
+            # establish is this issue's own D4, one clause over (round 1,
+            # codex-bot and claude-bot). What is left is what the process knows
+            # from its own return codes and nothing else.
             results.append({"box": box, "ok": None, "step": "start",
-                            "out": "not started: the %s step failed, so the box "
-                                   "was left as it was" % stop["step"]})
+                            "out": "not started: the %s step failed"
+                                   % stop["step"]})
     elif action == "force-stop":
         # ITS OWN ACTION, never an escalation from a graceful one (#486 D1):
         # an operator who fired Power off must not discover it became a kill.
@@ -395,6 +431,19 @@ def do_command(fleet, body):
                 # stopped must not talk this action out of the one thing it can
                 # certainly do.
                 tasks.append((wake_start, (name,)))
+            elif states.get(name) is None:
+                # GONE FROM THE HOST, and that answer comes before the wedge
+                # question rather than after it. `fleet.get()`'s units are a
+                # snapshot up to a poll old while `states` is read fresh, so a
+                # box that was wedged when the collector last looked and has
+                # since left the host would otherwise draw an `escalate` row
+                # naming a restart lever for a box there is nothing to restart.
+                # Before this PR it drew no row at all, and no row is still the
+                # right answer: this is inventory drift, not an incident (round
+                # 1, claude-bot). The `stopped` arm stays FIRST — starting a
+                # box the host does have is the one thing this action can
+                # certainly do — and only absence overtakes the wedge.
+                continue
             elif (u.get("ping") or {}).get("wedged"):
                 # NOT A WAKE TARGET (#487 D3). RESUME_SH went to every box incus
                 # did not call `stopped`, which includes the one state this tier
@@ -423,7 +472,10 @@ def do_command(fleet, body):
                     "out": "wedged — not woken: `box exec` is not answering, so "
                            "there is no channel to resume its crontab through. "
                            "Restart it; the force path is the way in."},)))
-            elif states.get(name) is not None:
+            else:
+                # A plain `else`: the absence question is asked once, above,
+                # and asking it again here would leave two places that have to
+                # agree about which boxes this action can reach.
                 tasks.append((wake_resume, (name,)))
         results = concurrently(tasks)
     else:

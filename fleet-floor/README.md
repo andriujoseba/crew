@@ -201,7 +201,10 @@ minutes before `run_session`'s own timeout resolves it.
   reach** — a restart whose stop failed does not go on to start the box, and
   `wake-silent` sends no resume down a channel that is not answering: it names
   the wedged box for a restart instead, that escalation being the operator's
-  to fire and not a fleet-wide button's to take (#487).
+  to fire and not a fleet-wide button's to take (#487). *Nothing to stop* is
+  not a failed stop, so a restart against a box that is already stopped starts
+  it without firing `box down` — which errors on a stopped instance, and would
+  otherwise take the start down with it.
   A message starts a real one-shot session of that box's own vendor CLI, logged
   to `duty/logs/` and marked in `duty.log` like any other session. The prompt
   travels as **stdin bytes** and is read from a file inside the box, so it never

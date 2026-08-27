@@ -568,8 +568,31 @@ case "${1:-}" in
   # one that has stopped being able to run anything cannot run its own
   # shutdown. `sleep 120` rather than a hang forever, so a suite that loses
   # its collector still terminates.
+  #
+  # `down` IS NOT IDEMPOTENT, and this arm used to pretend it was: it wrote
+  # `stopped` and exited 0 whatever state the box was in, which is the one
+  # thing the real CLI will not do. In heavy-duty/box at 518d930, `down` is
+  # registered `incus:stop` (bin/box:157) and the SINGLE-box path runs
+  # `incus $sub "$inst"` bare under `set -euo pipefail` (:3420); the guard for
+  # this case, `fleet_op`'s `stop:STOPPED -> ""` (:1187), is reached only from
+  # `run_fleet`, i.e. only by `box down all`. box's own comment at :1153 names
+  # the fact — Incus errors when an instance is already in the state you asked
+  # for. So a caller that reads its stop result gets a FAILURE here, and a stub
+  # that answered success let a floor which acts on that result pass green.
+  # First, and before the hang: a stopped guest has nothing to schedule, so
+  # Incus refuses at once rather than blocking on a shutdown that never comes.
   down)
-    [ "$(scenario_of "$2")" = "wedged" ] && { sleep 120; exit 1; }
+    [ "$(state_of "$2")" = "stopped" ] && {
+      echo "Error: The instance is already stopped" >&2; exit 1; }
+    # `stopstuck` is a guest whose shutdown does not complete while `box exec`
+    # still answers: the graceful stop blocks to the caller's deadline the way
+    # `wedged` does, but the ping tier measures the box healthy, so the floor's
+    # verdict for it is `graceful` and not `force`. It exists because the
+    # honest `down` above closed the only other route to a failed graceful
+    # stop in this fixture — a wedged box is stopped by the FORCE path, and a
+    # stopped box no longer reaches the verb at all. Named in no other arm, so
+    # every other tier reads it as the ordinary healthy box it is.
+    case "$(scenario_of "$2")" in wedged|stopstuck) sleep 120; exit 1 ;; esac
     echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
   # `box incus <box> -- <argv>` — box's non-interactive passthrough, and the
   # way through to a force stop (#486 D2: the flag belongs to incus, not to a
