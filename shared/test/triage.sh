@@ -882,7 +882,8 @@ if grep -Fq 'discussion in heavy-duty/ceremony' <<<"$DOCTRINE463_LISTED" &&
    grep -Fq "Quote the rule at this repository's pin" <<<"$DOCTRINE463_LISTED" &&
    grep -Fq 'link the local issue' <<<"$DOCTRINE463_LISTED" &&
    grep -Fq 'state the workaround and its retirement condition' <<<"$DOCTRINE463_LISTED" &&
-   grep -Fq 'cite that discussion from the consumer workaround' <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq 'any issue its triage later mints, from the consumer workaround' <<<"$DOCTRINE463_LISTED" &&
+   grep -Fq 'keep the upstream request linked back to that consumer' <<<"$DOCTRINE463_LISTED" &&
    grep -Fq 'Never mint an upstream issue yourself.' <<<"$DOCTRINE463_LISTED"; then
   r1=complete
 else
