@@ -187,9 +187,9 @@ def do_command(fleet, body):
             row["step"] = step
         return row
 
-    def in_box(name, script, stdin_data=None):
+    def in_box(name, script, stdin_data=None, step=None):
         return one(name, ["box", "exec", name, "--", "bash", "-lc", script],
-                   stdin_data=stdin_data)
+                   stdin_data=stdin_data, step=step)
 
     def agent_conf_for(name):
         return fleet.agent_conf(roster[name]["agent"])
@@ -205,6 +205,17 @@ def do_command(fleet, body):
     def done(result):
         """Make an already-known per-box result fit a concurrent task list."""
         return result
+
+    # `wake-silent` reaches a box three different ways and the reply says which,
+    # in the vocabulary #486 added for restart's two: `start` for a box that is
+    # down, `resume` for one whose crontab can still be restored, `escalate` for
+    # one nothing can be run inside. Named helpers because `concurrently` submits
+    # `fn(*args)` and the step is not one of the caller's arguments.
+    def wake_start(name):
+        return one(name, ["box", "start", name], step="start")
+
+    def wake_resume(name):
+        return in_box(name, RESUME_SH, step="resume")
 
     results = []
 
@@ -298,10 +309,70 @@ def do_command(fleet, body):
                 "error": "%s %s. Nothing was done — confirm again." % (box, became),
             }
         if verdict == "force":
-            results.append(one(box, force_stop_argv(box), step="force-stop"))
+            stop = one(box, force_stop_argv(box), step="force-stop")
+        elif box_states().get(box) == "stopped":
+            # NOTHING TO STOP IS NOT A FAILED STOP, and once the start is
+            # conditional on the stop row the difference is the whole action.
+            # `box down` is not idempotent on the single-box path: it is
+            # `incus:stop` (heavy-duty/box `bin/box:157`) and the single-box
+            # branch runs `incus stop <inst>` bare under `set -euo pipefail`
+            # (:3420), while the guard for this case — `fleet_op`'s
+            # `stop:STOPPED -> ""` (:1187) — is reached only from `run_fleet`,
+            # i.e. only by `box down all`. So `box down <already-stopped>`
+            # exits non-zero. That was inert noise while the row was appended
+            # and ignored; the moment it is read it swallows the start, and
+            # `ac-restart` is the one ACCESS control state does not dim, so an
+            # operator confirming "it is stopped and started again" over a
+            # stopped box got neither half.
+            #
+            # The verb is not fired at a box already in the target state —
+            # `stop-all` above has answered this exact question that way since
+            # #77, and box itself settled it for its own verb with
+            # `restart:STOPPED -> start`, whose comment explains why a single
+            # start is not the stop-then-start composite #486 D1 forbids. Read
+            # from `box_states()` because that is the source `stop-all` reads;
+            # a box that moves between the list and the call lands on the
+            # ordinary path below and the host decides, which is the right
+            # answer and the same TOCTOU box accepts for the same reason.
+            stop = {"box": box, "ok": True, "step": "down", "out": "already stopped"}
+            log("restart %s (down) -> already stopped, not fired" % box)
         else:
-            results.append(one(box, ["box", "down", box], step="down"))
-        results.append(one(box, ["box", "start", box], step="start"))
+            stop = one(box, ["box", "down", box], step="down")
+        results.append(stop)
+        # READ THE STOP BEFORE STARTING (#487 D2). The stop row was appended and
+        # `box start` fired on the next line, on both of the paths above, with
+        # neither branch looking at `.ok` — so a restart whose stop timed out
+        # against a guest that cannot schedule its own shutdown went on to start
+        # a box it had never stopped, and the reply carried the failed stop as
+        # detail under an action the page had already animated as two steps.
+        #
+        # Starting is not harmless there: the graceful stop returns 124 having
+        # ASKED for a shutdown that may still be in flight, so `box start` races
+        # a guest that is either still up or on its way down. A restart that
+        # could not stop the box has failed at the first of its two steps, and
+        # the second one is not a repair for it.
+        if stop["ok"]:
+            results.append(one(box, ["box", "start", box], step="start"))
+        else:
+            # `ok: None`, the value #77 gave a row that is named in the detail
+            # and excluded from the verdict. The action is ALREADY failed by the
+            # stop row above, and a second `False` would report two refusals
+            # where one thing went wrong — the page names `bad[0]`, and the
+            # first failure is the one that explains this. What the row carries
+            # is the one fact nothing else in the reply states: the start did
+            # not run (#487 D4 — a lever that cannot act says so).
+            #
+            # AND NOTHING BEYOND IT. This said "so the box was left as it was",
+            # which is a claim about the guest on the one path where the guest's
+            # state is exactly what is unknown: the graceful stop returns 124
+            # having ASKED for a shutdown that may still be in flight, so the
+            # box may well be on its way down. Reporting an outcome it did not
+            # establish is this issue's own D4, one clause over (round 1,
+            # codex-bot and claude-bot). What is left is what the process knows
+            # from its own return codes and nothing else.
+            results.append({"box": box, "ok": None, "step": "start",
+                            "out": "not started: the %s step failed"
+                                   % stop["step"]})
     elif action == "force-stop":
         # ITS OWN ACTION, never an escalation from a graceful one (#486 D1):
         # an operator who fired Power off must not discover it became a kill.
@@ -354,9 +425,58 @@ def do_command(fleet, body):
                 continue
             name = u["box"]
             if states.get(name) == "stopped":
-                tasks.append((one, (name, ["box", "start", name])))
-            elif states.get(name) is not None:
-                tasks.append((in_box, (name, RESUME_SH)))
+                # FIRST, and before the wedge question. Starting a stopped box
+                # is a host operation that works whatever the guest was doing
+                # when it went down, and a heartbeat left over from before it
+                # stopped must not talk this action out of the one thing it can
+                # certainly do.
+                tasks.append((wake_start, (name,)))
+            elif states.get(name) is None:
+                # GONE FROM THE HOST, and that answer comes before the wedge
+                # question rather than after it. `fleet.get()`'s units are a
+                # snapshot up to a poll old while `states` is read fresh, so a
+                # box that was wedged when the collector last looked and has
+                # since left the host would otherwise draw an `escalate` row
+                # naming a restart lever for a box there is nothing to restart.
+                # Before this PR it drew no row at all, and no row is still the
+                # right answer: this is inventory drift, not an incident (round
+                # 1, claude-bot). The `stopped` arm stays FIRST — starting a
+                # box the host does have is the one thing this action can
+                # certainly do — and only absence overtakes the wedge.
+                continue
+            elif (u.get("ping") or {}).get("wedged"):
+                # NOT A WAKE TARGET (#487 D3). RESUME_SH went to every box incus
+                # did not call `stopped`, which includes the one state this tier
+                # exists to name: up, wedged, and unable to execute anything. So
+                # the wake was sent down the channel that is wedged, blocked for
+                # the whole ACTION_TIMEOUT_S, and came back as a timed-out row
+                # whose text described the symptom of a fact the collector had
+                # already published.
+                #
+                # The collector's own verdict, read off the unit rather than
+                # re-derived or re-asked: this box is IN the wake set because
+                # `Fleet.get()` painted it offline on `wedged`, so routing it
+                # out on any other reading of the same rule would be one rule
+                # answered twice inside one action (#486). `ping` is absent for
+                # a box the tier has not measured, and unmeasured is not wedged
+                # — the same asymmetry `wedged()` states for a stale heartbeat.
+                #
+                # It is classified, never escalated in place: the force path
+                # kills whatever the guest is doing, and #486 put that behind an
+                # operator's authorisation — a fleet-wide button that force-
+                # stopped guests on its own would be exactly the silent
+                # escalation that ruling refuses. So the row names the lever and
+                # the operator fires it.
+                tasks.append((done, ({
+                    "box": name, "ok": False, "step": "escalate",
+                    "out": "wedged — not woken: `box exec` is not answering, so "
+                           "there is no channel to resume its crontab through. "
+                           "Restart it; the force path is the way in."},)))
+            else:
+                # A plain `else`: the absence question is asked once, above,
+                # and asking it again here would leave two places that have to
+                # agree about which boxes this action can reach.
+                tasks.append((wake_resume, (name,)))
         results = concurrently(tasks)
     else:
         return 400, {"ok": False, "error": "unknown action %r" % action}
