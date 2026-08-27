@@ -1764,6 +1764,30 @@ _resume_newest_foreign() {
     | sort | tail -1
 }
 
+# _builder_suppression_sync MARKER KIND KEY — publish one breaker episode as
+# box state. MARKER is lane-scoped because each resume lane owns an independent
+# breaker: one lane becoming actionable must not erase another lane's stop.
+#
+# The first field is the trip time, not this tick's observation time. Keeping
+# an unchanged marker byte-for-byte makes the age meaningful while a head
+# remains suppressed. KEY carries the repo, PR and head that the breaker counts
+# by; KIND names the lane. An empty KEY means the lane is no longer suppressed
+# (head moved, PR stopped qualifying, or the episode otherwise cleared).
+_builder_suppression_sync() {
+  local marker="$1" kind="$2" key="${3:-}" old_when old_kind old_key tmp
+  if [ -z "$key" ]; then
+    rm -f "$marker"
+    return 0
+  fi
+  if IFS=$'\t' read -r old_when old_kind old_key <"$marker" 2>/dev/null \
+     && [ "$old_kind" = "$kind" ] && [ "$old_key" = "$key" ]; then
+    return 0
+  fi
+  tmp="$marker.tmp.$$"
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$kind" "$key" >"$tmp"
+  mv "$tmp" "$marker"
+}
+
 # _resume_breaker STATE THRESHOLD — the zero-action circuit breaker. stdin is
 # one `<key>\t<fresh|held>` line per draft this tick, `fresh` meaning the ledger
 # would dispatch it; stdout is `<key>\t<dispatch|suppress|hold>\t<count>`.
@@ -1827,11 +1851,16 @@ _resume_breaker() {
 # stale keys.
 _resume_lane_breaker() {
   local repo="$1" lane="$2" state="$3" keys="$4"
-  local key verdict count num head nums="" breaker=3
+  local key verdict count num head nums="" breaker=3 suppressed_key=""
+  local marker="$DUTY_DIR/.builder-suppressed.${repo//\//__}.$lane"
   RESUME_LANE_DISPATCH_NUMS=""
-  [ -n "${keys//[[:space:]]/}" ] || return 0
+  if [ -z "${keys//[[:space:]]/}" ]; then
+    _builder_suppression_sync "$marker" "$lane" ""
+    return 0
+  fi
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
+    [ "$count" -ge "$breaker" ] && [ -z "$suppressed_key" ] && suppressed_key="$key"
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
     case "$verdict" in
       dispatch)
@@ -1848,6 +1877,7 @@ _resume_lane_breaker() {
     esac
   done < <(printf '%s\n' "$keys" | awk 'NF { print $0 "\tfresh" }' \
     | _resume_breaker "$state" "$breaker")
+  _builder_suppression_sync "$marker" "$lane" "$suppressed_key"
   RESUME_LANE_DISPATCH_NUMS="${nums# }"
 }
 
@@ -1905,11 +1935,16 @@ _near_miss_dispatch_desc() {
 # not silently reset it. Stale keys are pruned by the next tick that has rows.
 _green_head_breaker() {
   local repo="$1" slug="$2" rows="$3"
-  local key verdict count num head nums="" breaker=3
+  local key verdict count num head nums="" breaker=3 suppressed_key=""
+  local marker="$DUTY_DIR/.builder-suppressed.$slug.green-head"
   GREEN_HEAD_DISPATCH_NUMS=""
-  [ -n "${rows//[[:space:]]/}" ] || return 0
+  if [ -z "${rows//[[:space:]]/}" ]; then
+    _builder_suppression_sync "$marker" green-head ""
+    return 0
+  fi
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
+    [ "$count" -ge "$breaker" ] && [ -z "$suppressed_key" ] && suppressed_key="$key"
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
     case "$verdict" in
       dispatch)
@@ -1936,6 +1971,7 @@ _green_head_breaker() {
         done \
       | _resume_breaker "$DUTY_DIR/.resume-zero-action-green.$slug" "$breaker"
   )
+  _builder_suppression_sync "$marker" green-head "$suppressed_key"
   GREEN_HEAD_DISPATCH_NUMS="${nums# }"
 }
 
@@ -1956,7 +1992,8 @@ _green_head_breaker() {
 _resume_gate() {
   local repo="$1" slug="$2" listing="$3"
   local key foreign issue issue_ts check_ts lines="" fresh want verdict count num head
-  local dispatch_nums="" breaker=3 wake fingerprints
+  local dispatch_nums="" breaker=3 wake fingerprints suppressed_key=""
+  local marker="$DUTY_DIR/.builder-suppressed.$slug.draft"
   local -A ts_by_key=() issue_by_key=()
   RESUME_COMMIT_LINES=""
   RESUME_DISPATCH_NUMS=""
@@ -2032,6 +2069,7 @@ _resume_gate() {
       done
   while IFS=$'\t' read -r key verdict count; do
     [ -n "$key" ] || continue
+    [ "$count" -ge "$breaker" ] && [ -z "$suppressed_key" ] && suppressed_key="$key"
     num="${key#*#}"; num="${num%@*}"; head="${key##*@}"
     case "$verdict" in
       dispatch)
@@ -2079,6 +2117,7 @@ _resume_gate() {
     done < <(printf '%s' "$lines" | awk 'NF{print $1}') \
       | _resume_breaker "$DUTY_DIR/.resume-zero-action.$slug" "$breaker"
   )
+  _builder_suppression_sync "$marker" draft "$suppressed_key"
   RESUME_DISPATCH_NUMS="${dispatch_nums# }"
 }
 

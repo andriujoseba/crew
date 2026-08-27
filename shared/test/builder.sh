@@ -1446,7 +1446,10 @@ gh() {
 # shellcheck disable=SC2031  # breaker fixtures above intentionally isolate DUTY_DIR in subshells
 RG_SAVED_DUTY="$DUTY_DIR"; RG_SAVED_ME="${ME-}"; RG_ME_WAS_SET="${ME+x}"
 DUTY_DIR="$RG_DUTY"; ME=me
-rg_reset() { rm -f "$RG_DUTY/.seen-resume" "$RG_DUTY/.resume-zero-action.o__r"; }
+rg_reset() {
+  rm -f "$RG_DUTY/.seen-resume" "$RG_DUTY/.resume-zero-action.o__r" \
+    "$RG_DUTY/.builder-suppressed.o__r.draft"
+}
 rg_tick() {  # rg_tick LISTING [SESSION-RC] — one duty tick, caller side included
   # Cleared, not assumed: against a tree without the gate this keeps `set -u`
   # from taking the whole suite down, so each case below reports its own FAIL
@@ -1616,6 +1619,12 @@ t resume-breaker-quiet-at-two 0 "$(grep -c 'produced no commit, and after this o
 rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T03:00:00Z 'Closes #290')"
 t resume-breaker-third-dispatch 311 "$RESUME_DISPATCH_NUMS"
 t resume-breaker-trips-once 1 "$(grep -c 'produced no commit, and after this one' "$RG_LOG")"
+t resume-breaker-trip-records-box-state \
+  $'draft\to/r#311@'"$RG_HEAD" \
+  "$(cut -f2- "$RG_DUTY/.builder-suppressed.o__r.draft")"
+RG_SUPPRESSED_AT="$(cut -f1 "$RG_DUTY/.builder-suppressed.o__r.draft")"
+case "$RG_SUPPRESSED_AT" in ''|*[!0-9]*) r1=INVALID ;; *) r1=epoch ;; esac
+t resume-breaker-state-records-trip-time epoch "$r1"
 # The WHOLE line, not a prefix: the declared wake is the half a human reads to
 # know where the park expects its signal, and a prefix match let a `:+`/`:-`
 # pair that printed the issue number twice through in review.
@@ -1632,12 +1641,16 @@ rg_tick "$(rg_listing "$RG_HEAD" T 2026-08-03T04:00:00Z 'Closes #290')"
 t resume-breaker-no-fourth-dispatch "" "$RESUME_DISPATCH_NUMS"
 t resume-breaker-suppression-is-said 1 \
   "$(grep -c "breaker-suppressed at $RG_HEAD after 3 zero-action dispatches" "$RG_LOG")"
+t resume-breaker-state-keeps-original-trip-time "$RG_SUPPRESSED_AT" \
+  "$(cut -f1 "$RG_DUTY/.builder-suppressed.o__r.draft")"
 t resume-breaker-warns-only-once 0 "$(grep -c 'produced no commit, and after this one' "$RG_LOG")"
 # A push clears it: a new head is a new key, and the count starts at one.
 rg_tick "$(rg_listing "$RG_HEAD2" T 2026-08-03T05:00:00Z 'Closes #290')"
 t resume-breaker-push-clears-suppression 311 "$RESUME_DISPATCH_NUMS"
 t resume-breaker-push-resets-count-to-one 1 \
   "$(awk -F'\t' -v k="o/r#311@$RG_HEAD2" '$1 == k {print $2}' "$RG_DUTY/.resume-zero-action.o__r")"
+t resume-breaker-push-clears-box-state 1 \
+  "$([ -e "$RG_DUTY/.builder-suppressed.o__r.draft" ]; echo $?)"
 # A tick the LEDGER held must not reset the count: the breaker bounds
 # consecutive DISPATCHES, and a quiet tick between two of them is not progress.
 rg_reset
