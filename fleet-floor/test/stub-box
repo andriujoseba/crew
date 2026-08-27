@@ -569,7 +569,7 @@ case "${1:-}" in
   # shutdown. `sleep 120` rather than a hang forever, so a suite that loses
   # its collector still terminates.
   #
-  # `down` IS NOT IDEMPOTENT, and this arm used to pretend it was: it wrote
+  # And `down` IS NOT IDEMPOTENT, which this arm used to pretend it was: it wrote
   # `stopped` and exited 0 whatever state the box was in, which is the one
   # thing the real CLI will not do. In heavy-duty/box at 518d930, `down` is
   # registered `incus:stop` (bin/box:157) and the SINGLE-box path runs
@@ -581,18 +581,18 @@ case "${1:-}" in
   # that answered success let a floor which acts on that result pass green.
   # First, and before the hang: a stopped guest has nothing to schedule, so
   # Incus refuses at once rather than blocking on a shutdown that never comes.
+  # Two refusals before the hang, both of them Incus's and neither of them
+  # modelled here before: a box the host does not have (the `info` arm above
+  # has always answered this one, and `down` disagreeing with it was a fleet no
+  # host can be in), and one already in the state the verb asks for.
   down)
-    [ "$(state_of "$2")" = "stopped" ] && {
+    _dst="$(state_of "$2")"
+    if [ -z "$_dst" ] || [ "$_dst" = "absent" ]; then
+      echo "Error: Instance not found \"$2\"" >&2; exit 1
+    fi
+    [ "$_dst" = "stopped" ] && {
       echo "Error: The instance is already stopped" >&2; exit 1; }
-    # `stopstuck` is a guest whose shutdown does not complete while `box exec`
-    # still answers: the graceful stop blocks to the caller's deadline the way
-    # `wedged` does, but the ping tier measures the box healthy, so the floor's
-    # verdict for it is `graceful` and not `force`. It exists because the
-    # honest `down` above closed the only other route to a failed graceful
-    # stop in this fixture — a wedged box is stopped by the FORCE path, and a
-    # stopped box no longer reaches the verb at all. Named in no other arm, so
-    # every other tier reads it as the ordinary healthy box it is.
-    case "$(scenario_of "$2")" in wedged|stopstuck) sleep 120; exit 1 ;; esac
+    [ "$(scenario_of "$2")" = "wedged" ] && { sleep 120; exit 1; }
     echo stopped > "$STATEDIR/$2.state"; echo "stopped $2" ;;
   # `box incus <box> -- <argv>` — box's non-interactive passthrough, and the
   # way through to a force stop (#486 D2: the flag belongs to incus, not to a

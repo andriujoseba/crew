@@ -362,43 +362,41 @@ t "stop: ...naming why it did not run" "already stopped" \
   "$(printf '%s' "$FS_AR" | sed '$d' | jqf "d['results'][0]['out']")"
 
 # --- ...AND A STOP THAT REALLY FAILED STOPS THE START -----------------------
-# The box is RUNNING now, and a running box whose graceful stop fails is the
-# whole of what is left of this path: a wedged one is stopped by the force
-# branch, and a stopped one no longer reaches the verb at all. So the fixture
-# has to produce a guest whose shutdown does not complete while `box exec`
-# still answers — `stopstuck`, a stub scenario named in the `down` arm and
-# nowhere else, so every other tier reads the box as the healthy one it is.
-# ff-wedged is borrowed for it and put back below, the same borrow this block
-# already makes: test/cli.sh:1885 records why a 27th fixture row is refused.
+# ff-absent, because that shortcut closed the route this case used to take.
+# It drove the failure through ff-wedged while it was stopped, which is now the
+# case above; and the other two shapes are unreachable here — a wedged box is
+# stopped by the FORCE branch, and every other fixture box stops cleanly.
+# ff-absent is the roster line the host has no instance for, and `box down`
+# against one errors exactly as the stub's `info` arm has always said it does.
+# Nothing about the box changes, which is why this case can sit in a suite
+# whose collector is shared: no state file is written, no heartbeat moves, and
+# the reachability alert ledger the alerts module counts never sees an edge.
 #
-# Waited for, not assumed: the collector's verdict has to be `graceful` or a
-# bare restart is refused 409, and that is a claim about the ping tier having
-# measured this box answering. One successful probe is enough — `wedged()` is
-# `not ok and fails >= N`, so it clears on the first one.
-echo stopstuck > "$FLOOR_STATE/ff-wedged.scenario"
-FS_DL=$(( $(date +%s) + 60 ))
-while [ "$(uf ff-wedged 'bool(u["ping"] and u["ping"]["ok"])')" != "True" ] \
-      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
-t "stop: the box answers the ping tier again" True \
-  "$(uf ff-wedged 'bool(u["ping"] and u["ping"]["ok"])')"
-t "stop: ...so the collector's verdict is graceful, not force" False \
-  "$(uf ff-wedged 'u["ping"]["wedged"]')"
-
+# The CAUSE is not the point and is not asserted — a host that refuses the stop
+# and one that runs out the action timeout produce the same `ok: False`, and
+# test/concurrent-actions.py drives the timeout flavour (rc 124) deterministically
+# on both stop paths. What is under test is that the start is conditioned on
+# that row.
+#
 # MUST FAIL: `box start` appearing in the call log. The reply is not where this
 # is asserted — "restart reported a failure" is equally true of a restart that
 # failed, started the box anyway and mentioned the stop afterwards, which is
 # the defect exactly.
 FS_M=$(fs_mark)
-FS_RR="$(api POST /api/command '{"action":"restart","box":"ff-wedged"}')"
+FS_RR="$(api POST /api/command '{"action":"restart","box":"ff-absent"}')"
 FS_SEEN="$(fs_calls_since "$FS_M")"
 t "stop: a restart whose stop failed is reported failed" 500 \
   "$(printf '%s' "$FS_RR" | tail -1)"
-if grep -q '^down ff-wedged$' <<<"$FS_SEEN"; then
+if grep -q '^down ff-absent$' <<<"$FS_SEEN"; then
   ok "stop: the graceful stop was attempted"
 else fail "stop: the graceful stop was attempted" "$FS_SEEN"; fi
-if grep -q '^start ff-wedged$' <<<"$FS_SEEN"; then
+if grep -q '^start ff-absent$' <<<"$FS_SEEN"; then
   fail "stop: a failed stop does not start the box" "$FS_SEEN"
 else ok "stop: a failed stop does not start the box"; fi
+# The box the host does not have is still the box the host does not have: a
+# lever that could not act left no trace of having acted.
+t "stop: ...and nothing was written for a box the host has not got" "" \
+  "$(cat "$FLOOR_STATE/ff-absent.state" 2>/dev/null)"
 # The record, not just the outcome: a start that did not run is a third state
 # beside ran-and-worked and ran-and-failed, and the reply says which (#487 D4).
 t "stop: the reply records the start that never ran" start \
@@ -419,12 +417,13 @@ case "$FS_RR" in
   *) ok "stop: ...and claims nothing about the guest" ;;
 esac
 
-# Put ff-wedged back the way this suite found it, and prove it is back: the
-# scenario override first, because the ping tier reads it, and then the box
-# itself. The ping tier skips a stopped box, so leaving it down would empty its
-# heartbeat and floor/ping.sh — which waits on exactly that fact — would spend
-# its timeout and then fail for a reason nobody would trace to this block.
-rm -f "$FLOOR_STATE/ff-wedged.scenario"
+# Put ff-wedged back the way this suite found it, and prove it is back. The
+# already-stopped case above started it, so this is now belt and braces rather
+# than the restore it used to be — kept because the block's own restore must
+# not depend on which of its cases last touched the box. The ping tier skips a
+# stopped box, so leaving it down would empty its heartbeat and floor/ping.sh —
+# which waits on exactly that fact — would spend its timeout and then fail for
+# a reason nobody would trace to this block.
 status POST /api/command '{"action":"power-on","box":"ff-wedged"}' >/dev/null
 FS_DL=$(( $(date +%s) + 60 ))
 while [ "$(uf ff-wedged 'u["note"].startswith("UNREACHABLE")')" != "True" ] \
