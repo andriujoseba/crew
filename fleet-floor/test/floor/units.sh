@@ -153,6 +153,15 @@ echo "== sessions, queue, metrics"
 t "sessions: parsed"          1    "$(uf ff-working "len(u['sessions'])")"
 t "sessions: rc carried"      0    "$(uf ff-working "u['sessions'][0]['rc']")"
 t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"
+# #473 — the figure the page renders for the newest session per box, carried
+# end to end through the real collector. ff-idle's newest session is written
+# with the field; ff-working's is written without it, which is every line any
+# box wrote before this and every session the engine could not measure.
+t "sessions: peak_rss carried" 3588324 "$(uf ff-idle "u['sessions'][0]['peak']")"
+t "sessions: a line with no peak_rss is None, never 0" None \
+  "$(uf ff-working "u['sessions'][0]['peak']")"
+t "sessions: a line with no peak_rss keeps every other field" "0|ok|1" \
+  "$(uf ff-working "'%s|%s|%s' % (u['sessions'][0]['rc'], u['sessions'][0]['out'], len(u['sessions']))")"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
 t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"
@@ -198,6 +207,47 @@ FF_REAL_FLEET="$(ff_queue_case \
   '2026-08-25T20:00:01Z fleet: 2 unread mention(s)')"
 t "queue: a real fleet repository is not the aggregate" \
   '[{"key":"2 mention","repo":"fleet"}]' "$FF_REAL_FLEET"
+
+# #473 — every SESSION END shape this parser has ever been handed, exercised
+# directly for the same reason the queue cases above are: the field is
+# optional and its ABSENCE is the assertion, which a fixture box can only
+# carry one of at a time.
+ff_peak_case() {
+  FF_SERVER="$FLOOR/server" python3 - "$@" <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+done, _ = derive_sessions(sys.argv[1:], 2000000000.0)
+print("|".join("%s:%s:%s" % (s["kind"], s["rc"], s["peak"]) for s in done))
+PY
+}
+
+# The pre-#469 line: no acted, no reply_tail, no tier, no peak. Criterion 4 —
+# a duty.log written before any of this parses everywhere it is read.
+t "peak: a pre-change line parses and reports no figure" "build:0:None" \
+  "$(ff_peak_case '2026-08-26T10:00:00Z SESSION END kind=build key=o/r#1 rc=0 dur=90s outcome=ok')"
+t "peak: today's line carries the figure" "build:0:3588324" \
+  "$(ff_peak_case '2026-08-26T10:00:00Z SESSION END kind=build key=o/r#1 rc=0 dur=90s outcome=ok acted=yes reply_tail= tier=default peak_rss=3588324')"
+# The engine omits the field where it got no reading, and the parser must not
+# turn that into a zero: a box whose kernel reports no VmHWM would otherwise
+# read as the cheapest box in the fleet.
+t "peak: an unmeasured session is None, not 0" "build:0:None" \
+  "$(ff_peak_case '2026-08-26T10:00:00Z SESSION END kind=build key=o/r#1 rc=0 dur=90s outcome=ok acted=yes reply_tail= tier=default')"
+# A field that is not a figure is no figure. `peak_rss=-` is what the orphan
+# reconciler writes for a session that died with its box; anything else in
+# that position is a log this parser did not write and must not believe.
+t "peak: a non-numeric field is refused" "build:0:None" \
+  "$(ff_peak_case '2026-08-26T10:00:00Z SESSION END kind=build key=o/r#1 rc=0 dur=90s outcome=ok acted=yes reply_tail= tier=unknown peak_rss=-')"
+t "peak: a garbage field is refused" "build:0:None" \
+  "$(ff_peak_case '2026-08-26T10:00:00Z SESSION END kind=build key=o/r#1 rc=0 dur=90s outcome=ok peak_rss=12x9')"
+# A whole token, never a suffix of one: the next field somebody appends here
+# will be read by a pattern with no position to anchor on, so the name has to
+# be the anchor.
+t "peak: the field is a token, not a suffix of one" "build:0:None" \
+  "$(ff_peak_case '2026-08-26T10:00:00Z SESSION END kind=build key=o/r#1 rc=0 dur=90s outcome=ok acted=yes reply_tail= tier=default parent_peak_rss=999')"
 
 # Exercise the collector record, not only the page selector: configured repos
 # must not replace crew as the last resort when every queue item lacks a repo.

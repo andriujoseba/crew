@@ -473,9 +473,15 @@ t orphan-mutation-tab-shifts-log-into-holder \
 
 # Must fail: an observed field added without its reconstructed peer. Mutating
 # session.sh proves the observed token set is read from source, not hard-coded.
+#
+# It inserts after `tier=` rather than at the end of the line, and that is not
+# cosmetic: #473 appended `peak_rss=` past the tier, so an expression anchored
+# on the closing quote went INERT the moment the field it was written to
+# anticipate actually arrived — a probe that matches nothing asserts nothing,
+# and this pair only says what it claims while both mutations still apply.
 # shellcheck disable=SC2016  # the sed matches the source's literal variable
 orph_mutant observed-field \
-  's/tier=$_SESSION_TIER"/tier=$_SESSION_TIER future=known"/' \
+  's/ tier=$_SESSION_TIER/ tier=$_SESSION_TIER future=known/' \
   "$SHARED/lib/common/session.sh"
 ORPH_M6="$TMP/ledger-mutant-observed-field.sh"
 t orphan-parity-reads-observed-source future \
@@ -484,7 +490,7 @@ t orphan-parity-reads-observed-source future \
 # Must fail: dropping tier from the reconstructed source. This is the inverse
 # mutation, proving that side is derived too rather than copied from a list in
 # the guard.
-orph_mutant tier-missing 's/ tier=unknown started=/ started=/'
+orph_mutant tier-missing 's/ tier=unknown peak_rss=- started=/ peak_rss=- started=/'
 ORPH_M7="$TMP/ledger-mutant-tier-missing.sh"
 t orphan-parity-reads-reconstructed-source tier \
   "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M7")"
@@ -493,6 +499,34 @@ orph_start "$ORPH11" 2026-08-14T12:00:00Z build o/r#12 "$ORPH_DEAD.$ORPH_BOOT"
 orph_pass "$ORPH11" "$ORPH_M7"
 t orphan-mutation-tier-missing-has-no-value '' \
   "$(orph_kv "$(orph_lines "$ORPH11")" tier)"
+
+# The same pair for #473's field, which is the first one to arrive since this
+# guard was written and so the first evidence that it does what it was minted
+# for. `-` and not an absent token: the observed emitter OMITS peak_rss where
+# it got no reading, because there the absence carries information; here every
+# line is unmeasured by construction, so an absence would say nothing and the
+# numeric convention this file already uses for rc and dur says the right
+# thing — owed, and lost with the box.
+t orphan-peak-rss-is-owed-not-absent '-' "$(orph_kv "$ORPH1_LINE" peak_rss)"
+orph_mutant peak-missing 's/ peak_rss=- started=/ started=/'
+ORPH_M9="$TMP/ledger-mutant-peak-missing.sh"
+t orphan-parity-reads-peak-rss peak_rss \
+  "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M9")"
+ORPH13="$TMP/orphan-mut-peak-missing"; orph_fixture "$ORPH13"
+orph_start "$ORPH13" 2026-08-14T14:00:00Z build o/r#14 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH13" "$ORPH_M9"
+t orphan-mutation-peak-missing-has-no-value '' \
+  "$(orph_kv "$(orph_lines "$ORPH13")" peak_rss)"
+
+# Must fail: `0` claims a measurement the dead session never reported — the
+# same fabrication as tier=default, in the units the floor renders.
+orph_mutant peak-zero 's/peak_rss=-/peak_rss=0/'
+ORPH_M10="$TMP/ledger-mutant-peak-zero.sh"
+ORPH14="$TMP/orphan-mut-peak-zero"; orph_fixture "$ORPH14"
+orph_start "$ORPH14" 2026-08-14T15:00:00Z build o/r#15 "$ORPH_DEAD.$ORPH_BOOT"
+orph_pass "$ORPH14" "$ORPH_M10"
+t orphan-mutation-peak-zero-fabricates-a-measurement 0 \
+  "$(orph_kv "$(orph_lines "$ORPH14")" peak_rss)"
 
 # Must fail: `default` claims a measurement the dead session never reported.
 orph_mutant tier-default 's/tier=unknown/tier=default/'

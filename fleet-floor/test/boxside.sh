@@ -56,6 +56,12 @@ BS_NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "$BS_NOW SESSION END kind=build key=rig#12 rc=0 dur=55s outcome=ok"
 } > "$BS_H/duty/duty.log"
 touch "$BS_H/duty/logs/20260726T090000Z-build-rig_12.log"
+# A session that is RUNNING holds a `<slog>.peak` scratch file beside the log
+# it is measuring (#473), and removes it before SESSION END — so LOG_DIR is
+# not session logs alone for exactly as long as a poll might land in. The
+# listing selects on `*.log` so that file never spends one of the forty
+# slots, and this is the fixture that says so against the real probe.sh.
+touch "$BS_H/duty/logs/20260726T090000Z-build-rig_12.log.peak"
 
 HOME="$BS_H" DUTY_DIR="$BS_H/duty" \
   bash "$BS_FLOOR/server/probe.sh" < "$BS_ROOT/shared/conf/agents/claude.conf" \
@@ -75,6 +81,7 @@ print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
 print("REPOS=%d" % len(meta.get("repos", "").split()))
+print("SESSLOGS=%s" % " ".join(meta.get("sessionlogs", "").split()))
 print("LOGLINES=%d" % len(lines))
 sess, cur = floor.derive_sessions(lines, time.time())
 print("SESSIONS=%d" % len(sess))
@@ -86,6 +93,8 @@ t "probe.sh: parser gets every key it reads" "" "$(bs_get MISSING)"
 t "probe.sh: full engine stamp carried through" "crew@0.2.0 (deadbee)" "$(bs_get ENGINE)"
 t "probe.sh: uptime is a number"   True "$(bs_get UPTIME_OK)"
 t "probe.sh: repos.txt comments stripped" 2 "$(bs_get REPOS)"
+t "probe.sh: a running session's .peak scratch file is not a session log" \
+  "20260726T090000Z-build-rig_12.log" "$(bs_get SESSLOGS)"
 t "probe.sh: log section delimited" 4 "$(bs_get LOGLINES)"
 t "probe.sh: sessions parse from real output" 1 "$(bs_get SESSIONS)"
 t "probe.sh: session key intact" "rig#12" "$(bs_get SESSKEY)"

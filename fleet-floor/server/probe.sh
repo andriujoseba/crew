@@ -209,10 +209,34 @@ if [ -f "$DUTY_DIR/repos.txt" ]; then
 fi
 
 # run_session names these itself, from a UTC stamp and a sanitized key
-# (`${key//[\/#]/_}`), so there is nothing here for `ls` to mangle and the
-# lexical order IS the chronological one.
-# shellcheck disable=SC2012
-emit sessionlogs "$(ls -1 "$DUTY_DIR/logs" 2>/dev/null | tail -40 | tr '\n' ' ')"
+# (`${key//[\/#]/_}`), so there is nothing here to mangle and the lexical
+# order IS the chronological one.
+#
+# `*.log` and not everything in the directory: LOG_DIR is not session logs
+# alone while a session is RUNNING. run_session holds a `<slog>.peak` scratch
+# file beside the log it is measuring (#473) and removes it before SESSION
+# END, so a poll landing mid-session used to put a `…-key.log.peak` into this
+# list and spend one of the forty slots on it. Nothing renders `logs`, so the
+# symptom was invisible — which is the reason to fix the selection rather
+# than the symptom. The glob is also the general answer: any file a later
+# change parks in LOG_DIR costs a slot here otherwise.
+#
+# A glob and not `ls`: bash sorts it lexically itself, which is the order the
+# pipe was already relying on, and it costs no fork on a path that runs every
+# poll. `-e` because an unmatched glob comes back as the pattern itself.
+#
+# The last forty by an explicit offset and not `${a[*]: -40}`: a negative
+# offset larger than the array is not a clamp in bash, it is EMPTY — measured
+# — so the slice that reads like `tail -40` would have reported no logs at all
+# on every box with fewer than forty.
+sesslogs=()
+for sesslog in "$DUTY_DIR"/logs/*.log; do
+  [ -e "$sesslog" ] || continue
+  sesslogs+=("${sesslog##*/}")
+done
+sessfrom=0
+[ "${#sesslogs[@]}" -gt 40 ] && sessfrom=$(( ${#sesslogs[@]} - 40 ))
+emit sessionlogs "${sesslogs[*]:sessfrom}"
 
 # 600 lines ≈ several hours of ticks at one run per 5 minutes — enough for the
 # session history and 24h metrics the console shows, small enough to move over
