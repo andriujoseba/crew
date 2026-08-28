@@ -109,12 +109,35 @@ looser than its claim is the claim wearing a green check.
 [`.github/workflows/release-guards.yml`](../.github/workflows/release-guards.yml)
 beside the ceremony gates. It is vacuous on a `-dev` tree, on an rc tree — an
 `rc2` exists precisely *because* something changed, so there is nothing for it
-to assert — and on a final whose window cut no candidate. It reads the tree for
-`drills/X.Y.Z-rcN.md` to learn whether the window had candidates and the tags
-to learn what to compare against, which is why a candidate record whose tag
-cannot be found is a **refusal and never a pass**: "I found nothing" and "I
-could not look" are different answers here for the same reason they are in
-teardown's exit table below. Its contract tests are `.github/stamps-only.test.sh`.
+to assert — and on a final whose window cut no candidate. Its contract tests
+are `.github/stamps-only.test.sh`.
+
+**Which candidate was last is read from two sources, and neither is trusted
+alone.** The anchor is the highest-numbered of the `drills/X.Y.Z-rcN.md`
+records in the shipped tree *and* the `X.Y.Z-rcN` tags reachable from `HEAD`,
+because each source fails open where the other holds:
+
+- The records are **deletable by the diff under examination**. A record lives
+  in `drills/`, a stamp path, so removing it in the final commit is admitted by
+  the stamp set — and a records-only anchor would drop with it, reporting a
+  window that laddered nothing while engine code sat in the diff.
+- The tags **cannot tell a tag never fetched from a tag never cut**, so a
+  tags-only anchor would read a shallow clone as an un-laddered release.
+
+So the guard refuses in both directions. A record whose tag cannot be resolved
+is a **refusal and never a pass** — "I found nothing" and "I could not look"
+are different answers here for the same reason they are in teardown's exit
+table below — and a candidate that is published and in this final's own history
+but carries **no record in the shipped tree** is refused too. Restoring the
+record answers it; so does cutting the next candidate and drilling that. The
+retention matters because the record is the only thing that says *what* was
+drilled: a tag that has lost its record has lost its evidence, and un-publishing
+is not what deleting a file does.
+
+A candidate tagged on a line the final does not descend from is **not** the
+anchor. It drilled a different lineage, and reading it would red a window it
+has nothing to say about — while a candidate the final *does* descend from is
+exactly the one whose record cannot be allowed to vanish.
 
 ## Adapting the drill to the window
 
