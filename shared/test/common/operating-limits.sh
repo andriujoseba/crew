@@ -27,6 +27,31 @@ t operating-limit-table-graphql-window 100 \
 t limit-spool-default-max 200 "$DUTY_LIMIT_SPOOL_MAX"
 t limit-spool-default-ttl 86400 "$DUTY_LIMIT_SPOOL_TTL_S"
 
+conf_value() { sed -n "s/^$1=\([0-9]*\)\$/\1/p" "$SHARED/conf/fleet.defaults.conf"; }
+t limit-spool-module-default-matches-conf-max \
+  "$DUTY_LIMIT_SPOOL_MAX_DEFAULT" "$(conf_value DUTY_LIMIT_SPOOL_MAX)"
+t limit-spool-module-default-matches-conf-ttl \
+  "$DUTY_LIMIT_SPOOL_TTL_S_DEFAULT" "$(conf_value DUTY_LIMIT_SPOOL_TTL_S)"
+t terminal-threshold-conf-defers-to-table '' "$SESSION_TERMINAL_THRESHOLD"
+
+OPERATING_LIMITS[session_terminal_failures]=7
+t terminal-threshold-default-follows-table 7 "$(_session_terminal_threshold)"
+t terminal-threshold-preserves-operator-override 9 \
+  "$(SESSION_TERMINAL_THRESHOLD=9 _session_terminal_threshold)"
+OPERATING_LIMITS[session_terminal_failures]=3
+
+# A new engine can run briefly with a conf that predates the spool keys during
+# install. Under `set -u` that skew must still report and spool the assessment.
+skew_dir="$TMP/skew"
+skew_rc=0
+(
+  unset DUTY_LIMIT_SPOOL_MAX DUTY_LIMIT_SPOOL_TTL_S
+  DUTY_DIR="$skew_dir" operating_limit_assess \
+    github_connection_nodes 110 heavy-duty/crew 482 upgrade-skew >/dev/null
+) || skew_rc=$?
+t limit-spool-unset-conf-keys-preserve-assessment-rc 2 "$skew_rc"
+t limit-spool-unset-conf-keys-still-write 1 "$(wc -l <"$skew_dir/.limit-events")"
+
 limit_case() {
   local measured="$1" out rc=0
   out="$(OPERATING_LIMIT_WARN_PCT=90 operating_limit_assess \

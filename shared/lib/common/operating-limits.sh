@@ -18,13 +18,18 @@ declare -Ag OPERATING_LIMITS=(
   [session_terminal_failures]=3
 )
 
+# Config and engine files are installed by separate atomic renames, so a tick
+# can briefly run this module with a conf that predates the spool settings.
+# Keep module fallbacks here; the mirrored suite pins them to the shipped conf.
+DUTY_LIMIT_SPOOL_MAX_DEFAULT=200
+DUTY_LIMIT_SPOOL_TTL_S_DEFAULT=86400
+
 # Named reads keep call sites legible while the associative table remains the
 # only place a numeric limit is declared.
 OPERATING_LIMIT_GITHUB_CONNECTION_NODES="${OPERATING_LIMITS[github_connection_nodes]}"
 OPERATING_LIMIT_GITHUB_PANEL_NODES="${OPERATING_LIMITS[github_panel_nodes]}"
 OPERATING_LIMIT_GITHUB_REST_PAGE="${OPERATING_LIMITS[github_rest_page]}"
 OPERATING_LIMIT_SESSION_KILL_GRACE_SECONDS="${OPERATING_LIMITS[session_kill_grace_seconds]}"
-OPERATING_LIMIT_SESSION_TERMINAL_FAILURES="${OPERATING_LIMITS[session_terminal_failures]}"
 
 # operating_limit NAME — print one declared limit, refusing unknown names.
 operating_limit() {
@@ -49,7 +54,8 @@ _operating_limit_spool() {
   local repo="$5" pr="$6" cause="$7"
   local spool="$DUTY_DIR/.limit-events" counter="$DUTY_DIR/.limit-events.dropped"
   local now iso subject event_id line tmp counter_tmp cutoff old id event_epoch dropped=0 prior=0
-  local max="${DUTY_LIMIT_SPOOL_MAX}" ttl="${DUTY_LIMIT_SPOOL_TTL_S}"
+  local max="${DUTY_LIMIT_SPOOL_MAX:-$DUTY_LIMIT_SPOOL_MAX_DEFAULT}"
+  local ttl="${DUTY_LIMIT_SPOOL_TTL_S:-$DUTY_LIMIT_SPOOL_TTL_S_DEFAULT}"
   local -a kept=()
 
   now="$(date -u +%s)" || return 0

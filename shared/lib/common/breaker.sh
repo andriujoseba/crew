@@ -58,6 +58,16 @@ _session_terminal_gate() {
   return 1
 }
 
+# _session_terminal_threshold — resolve the optional operator override, with
+# the declared table as the only shipped default.
+_session_terminal_threshold() {
+  local threshold="${SESSION_TERMINAL_THRESHOLD:-}"
+  case "$threshold" in
+    ''|*[!0-9]*|0) threshold="$(operating_limit session_terminal_failures)" ;;
+  esac
+  printf '%s' "$threshold"
+}
+
 # _session_terminal_record KIND TERMINAL ACTED LOG — count consecutive terminal
 # dispatches and alert exactly once, on the transition to the open breaker.
 # Any success, timeout, transient failure, or unclassified failure resets the
@@ -75,10 +85,7 @@ _session_terminal_record() {
   fi
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   count=$((count + 1))
-  threshold="${SESSION_TERMINAL_THRESHOLD:-$OPERATING_LIMIT_SESSION_TERMINAL_FAILURES}"
-  case "$threshold" in
-    ''|*[!0-9]*|0) threshold="$OPERATING_LIMIT_SESSION_TERMINAL_FAILURES" ;;
-  esac
+  threshold="$(_session_terminal_threshold)"
   tick="${DUTY_TICK_ID:-$$}"
   status=closed
   [ "$count" -lt "$threshold" ] || status=tripped
