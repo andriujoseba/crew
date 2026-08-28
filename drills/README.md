@@ -38,6 +38,16 @@ that skipping the drill is a deliberate, reviewable commit rather than a
 silence. **A failed drill is still a valid record**: the gate wants evidence,
 not success.
 
+Every declared leg must appear in the round summary as either executed or not
+executed with a named reason. The declared-leg inventory in
+`drill/rehearsal-all.sh` is checked against the detailed summary at runtime;
+adding a leg without wiring one result, or wiring a result without declaring
+the leg, makes the mismatch a red record row. An operator-requested exclusion
+names its flag, while a discovered blocker names the missing prerequisite. A
+leg must never be absent from the record. The selected triage, builder and
+reviewer rows describe round participants rather than independently runnable
+legs, so they remain in the detailed summary outside this inventory.
+
 ## Adapting the drill to the window
 
 **A release window's drill is adapted to what that window shipped, and the

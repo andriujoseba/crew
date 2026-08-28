@@ -187,6 +187,30 @@ RESUME_STATUS="$(mktemp)"
 ATTENTION_STATUS="$(mktemp)"
 ATTENTION_AUDIT_STATUS="$(mktemp)"
 APP_AGREEMENT_STATUS="$(mktemp)"
+APP_OUTPUT="$(mktemp)"
+# One row per independently runnable leg. The final record is checked against
+# this list before it is printed: adding a leg here without wiring a result is
+# therefore a visible red row, never an absence that looks like coverage.
+declare -a DECLARED_LEGS=(
+  hygiene breaker resume attention attention-audit notify
+  installer config app browser app-armed teardown
+)
+
+leg_is_declared() {
+  local candidate="$1" declared_leg
+  for declared_leg in "${DECLARED_LEGS[@]}"; do
+    [ "$candidate" != "$declared_leg" ] || return 0
+  done
+  return 1
+}
+
+leg_is_selected_role() {
+  case " $ROLES " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -222,6 +246,7 @@ cleanup_role_hygiene_files() {
   [ -z "${ATTENTION_STATUS:-}" ] || rm -f -- "$ATTENTION_STATUS"
   [ -z "${ATTENTION_AUDIT_STATUS:-}" ] || rm -f -- "$ATTENTION_AUDIT_STATUS"
   [ -z "${APP_AGREEMENT_STATUS:-}" ] || rm -f -- "$APP_AGREEMENT_STATUS"
+  [ -z "${APP_OUTPUT:-}" ] || rm -f -- "$APP_OUTPUT"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -498,6 +523,7 @@ if [ "$APP" -eq 1 ]; then
   else
     echo "## (generated app pass: no role reached a box this run — no generated member to compare)"
     SUMMARY+=("SKIPPED    app  (generated pass blocked by role install: no installed drill box)")
+    SUMMARY+=("SKIPPED    browser  (generated pass blocked by role install: no installed drill box)")
     APP_ROW_EMITTED=1
     [ "$overall" -eq 1 ] || overall=2
   fi
@@ -510,24 +536,26 @@ fi
 
 if [ "$APP" -eq 0 ] && [ "$APP_ROW_EMITTED" -eq 0 ]; then
   SUMMARY+=("skip       app  (--no-app)")
+  SUMMARY+=("skip       browser  (--no-app)")
   APP_ROW_EMITTED=1
 fi
 
 if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
   : >"$APP_AGREEMENT_STATUS"
   REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
-    "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
-  # rc on its own line, like the role loop above — this file's own history is
-  # why (crew#30: a bare status read inside a compound).
-  rc=$?
+    "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"} \
+      | tee "$APP_OUTPUT"
+  # PIPESTATUS belongs on its own line for the same reason the role rc does:
+  # the app command's verdict, not tee's, is the round fact (#30).
+  rc="${PIPESTATUS[0]}"
   app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
   case "$rc" in
     0)
       case "$app_agreement:$APP_ROSTER" in
-        compared:*) SUMMARY+=("ok         app  (collector + page)") ;;
-        could-not-compare:?*) SUMMARY+=("ok         app  (collector + page; armed comparison follows)") ;;
+        compared:*) SUMMARY+=("ok         app  (agreement compared; collector + page)") ;;
+        could-not-compare:?*) SUMMARY+=("ok         app  (agreement could-not-compare; armed comparison follows)") ;;
         could-not-compare:)
-          SUMMARY+=("INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)")
+          SUMMARY+=("INCOMPLETE app  (agreement could-not-compare: no armed, ticking, clock-skewed box)")
           [ "$overall" -eq 1 ] || overall=2 ;;
         *) SUMMARY+=("FAIL       app  (agreement verdict missing)"); overall=1 ;;
       esac ;;
@@ -535,6 +563,19 @@ if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
   esac
   APP_ROW_EMITTED=1
 
+  if grep -q '^ok   browser walk against the real fleet (read-only)$' "$APP_OUTPUT"; then
+    SUMMARY+=("ok         browser  (read-only browser walk executed)")
+  elif browser_skip="$(sed -n 's/^skip browser walk[[:space:]]*—[[:space:]]*//p' "$APP_OUTPUT" | head -1)" \
+      && [ -n "$browser_skip" ]; then
+    SUMMARY+=("INCOMPLETE browser  (not executed: $browser_skip)")
+    [ "$overall" -eq 1 ] || overall=2
+  elif grep -q '^FAIL browser walk' "$APP_OUTPUT"; then
+    SUMMARY+=("FAIL       browser  (browser walk executed and failed)")
+    overall=1
+  else
+    SUMMARY+=("INCOMPLETE browser  (app phase emitted no browser verdict)")
+    [ "$overall" -eq 1 ] || overall=2
+  fi
 fi
 
 # A named roster is an additional reading after the drill-role pass, never a
@@ -556,15 +597,38 @@ if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
   case "$rc" in
     0)
       case "$app_agreement" in
-        compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+        compared) SUMMARY+=("ok         app-armed  (agreement compared; named roster, no additional boxes)") ;;
         could-not-compare)
-          SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)")
+          SUMMARY+=("INCOMPLETE app-armed  (agreement could-not-compare: no armed, ticking, clock-skewed box)")
           [ "$overall" -eq 1 ] || overall=2 ;;
         *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
       esac ;;
     *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
   esac
+elif [ "$APP" -eq 1 ]; then
+  SUMMARY+=("skip       app-armed  (not requested: no --app-roster; requires an armed member)")
+else
+  SUMMARY+=("skip       app-armed  (--no-app)")
 fi
+
+# Validate the declaration/result agreement before teardown decides whether a
+# green round may remove its fixtures. Teardown's own row does not exist yet,
+# but its declaration must; every other independently runnable leg must have
+# exactly one result, and every non-role result must name a declared leg.
+for declared_leg in "${DECLARED_LEGS[@]}"; do
+  [ "$declared_leg" = teardown ] && continue
+  leg_result_count=0
+  for summary_row in "${SUMMARY[@]}"; do
+    read -r _state row_leg _detail <<<"$summary_row"
+    [ "$row_leg" != "$declared_leg" ] || leg_result_count=$((leg_result_count + 1))
+  done
+  [ "$leg_result_count" -eq 1 ] || overall=1
+done
+leg_is_declared teardown || overall=1
+for summary_row in "${SUMMARY[@]}"; do
+  read -r _state row_leg _detail <<<"$summary_row"
+  leg_is_declared "$row_leg" || leg_is_selected_role "$row_leg" || overall=1
+done
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every
 # phase and before the summary — and it gets its own summary line, because a
@@ -608,6 +672,52 @@ echo "## fleet rehearsal summary ($AGENT)"
 if [ -n "$RESOLVED_REF" ]; then
   echo "## drilled source: $RESOLVED_REF ($SOURCE_RECORD)"
 fi
+
+# The inventory is the round's declaration-to-result agreement block. It is
+# generated from SUMMARY rather than maintained beside it, so the detailed
+# verdict and the executed/not-executed reading cannot disagree. A missing or
+# duplicate result is itself recorded and reds the round.
+declare -a LEG_RECORD=()
+for declared_leg in "${DECLARED_LEGS[@]}"; do
+  declare -a leg_rows=()
+  for summary_row in "${SUMMARY[@]}"; do
+    read -r _state row_leg _detail <<<"$summary_row"
+    [ "$row_leg" != "$declared_leg" ] || leg_rows+=("$summary_row")
+  done
+  if [ "${#leg_rows[@]}" -ne 1 ]; then
+    LEG_RECORD+=("not-executed $declared_leg  (recorded ${#leg_rows[@]} results; expected exactly one)")
+    overall=1
+    continue
+  fi
+  read -r leg_state _leg_name leg_detail <<<"${leg_rows[0]}"
+  case "${leg_rows[0]}" in
+    ok\ *|FAIL\ *)
+      if [ -z "$leg_detail" ] || [ "$leg_detail" = "()" ]; then
+        LEG_RECORD+=("executed $declared_leg  ($leg_state)")
+      else
+        LEG_RECORD+=("executed $declared_leg  ($leg_state; ${leg_detail#(}")
+      fi
+      ;;
+    *)
+      if [ -z "$leg_detail" ] || [ "$leg_detail" = "()" ]; then
+        LEG_RECORD+=("not-executed $declared_leg  (missing blocker reason)")
+        overall=1
+      else
+        LEG_RECORD+=("not-executed $declared_leg  ($leg_state; ${leg_detail#(}")
+      fi
+      ;;
+  esac
+done
+for summary_row in "${SUMMARY[@]}"; do
+  read -r _state row_leg _detail <<<"$summary_row"
+  if ! leg_is_declared "$row_leg" && ! leg_is_selected_role "$row_leg"; then
+    LEG_RECORD+=("undeclared $row_leg  (summary result has no declaration)")
+    overall=1
+  fi
+done
+
+echo "## declared leg states:"
+printf '## leg %s\n' "${LEG_RECORD[@]}"
 summary_passed=0
 summary_failed=0
 summary_skipped=0

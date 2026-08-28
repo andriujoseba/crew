@@ -121,7 +121,18 @@ printf 'app\n' >>"$DRILL_SECTION_LOG"
     *) printf '%s\n' "${DRILL_APP_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
   esac
 }
-exit 0
+skip() { echo "skip $1${2:+  — $2}"; }
+case " $* " in
+  *" --no-browser "*) ;;
+  *)
+    case "${DRILL_BROWSER_STATUS:-ok}" in
+      ok) echo 'ok   browser walk against the real fleet (read-only)' ;;
+      skip) skip "browser walk" "playwright-core not installed" ;;
+      fail) echo 'FAIL browser walk against the real fleet (read-only)' ;;
+      missing) : ;;
+    esac ;;
+esac
+exit "${DRILL_APP_RC:-0}"
 APP
 chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
 
@@ -207,6 +218,82 @@ t drill-tree-record-names-head 1 \
   "$(grep -cF "## drilled source: $SECOND (tree $SOURCE)" <<<"$tree_out")"
 t drill-tree-phase-zero-names-head 1 \
   "$(grep -cF "phase 0: crew at $SECOND (tree $SOURCE), static checks" <<<"$tree_out")"
+t drill-record-enumerates-all-declared-legs 12 \
+  "$(grep -c '^## leg \(executed\|not-executed\) ' <<<"$tree_out")"
+t drill-record-names-browser-exclusion 1 \
+  "$(grep -c '^## leg not-executed browser  (skip; --no-app)' <<<"$tree_out")"
+t drill-record-names-unrequested-armed-leg-with-app-disabled 1 \
+  "$(grep -c '^## leg not-executed app-armed  (skip; --no-app)' \
+    <<<"$tree_out")"
+
+# The original three zero-execution findings remain visible with their actual
+# states: breaker and notify name the operator exclusions in this fixture, and
+# the browser is positively recorded as executed.
+for excluded_leg in breaker notify; do
+  t "drill-record-names-$excluded_leg-exclusion" 1 \
+    "$(grep -c "^## leg not-executed $excluded_leg  (skip; --no-$excluded_leg-drill)" \
+      <<<"$tree_out")"
+done
+
+# A new declaration with no call site cannot disappear. Mutate only the list:
+# the runtime agreement check must add a named missing-result row and red.
+UNWIRED="$HARNESS/rehearsal-all-unwired.sh"
+sed 's/hygiene breaker resume/hygiene never-wired breaker resume/' \
+  "$HARNESS/rehearsal-all.sh" >"$UNWIRED"
+if unwired_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" bash "$UNWIRED" --tree "$SOURCE" --roles reviewer \
+      --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  unwired_rc=0
+else
+  unwired_rc=$?
+fi
+t drill-unwired-declared-leg-reds 1 "$unwired_rc"
+t drill-unwired-declared-leg-is-visible 1 \
+  "$(grep -c '^## leg not-executed never-wired  (recorded 0 results; expected exactly one)' \
+    <<<"$unwired_out")"
+t drill-unwired-declared-leg-prevents-teardown 1 \
+  "$(grep -cF 'kept       teardown  (round not green — boxes LEFT STANDING to inspect)' \
+    <<<"$unwired_out")"
+
+# Agreement is two-way: a summary result without a declaration must remain
+# visible and red rather than falling outside the generated inventory.
+UNDECLARED="$HARNESS/rehearsal-all-undeclared.sh"
+sed 's/hygiene breaker resume/hygiene resume/' \
+  "$HARNESS/rehearsal-all.sh" >"$UNDECLARED"
+if undeclared_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" bash "$UNDECLARED" --tree "$SOURCE" --roles reviewer \
+      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  undeclared_rc=0
+else
+  undeclared_rc=$?
+fi
+t drill-undeclared-summary-leg-reds 1 "$undeclared_rc"
+t drill-undeclared-summary-leg-is-visible 1 \
+  "$(grep -c '^## leg undeclared breaker  (summary result has no declaration)' \
+    <<<"$undeclared_out")"
+
+# Not-executed is not a sufficient record by itself: the blocker is the fact
+# that makes an exclusion evidence. Remove one reason and require a red row.
+NO_REASON="$HARNESS/rehearsal-all-no-reason.sh"
+sed 's/SUMMARY+=("skip       browser  (--no-app)")/SUMMARY+=("skip       browser")/' \
+  "$HARNESS/rehearsal-all.sh" >"$NO_REASON"
+if no_reason_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" bash "$NO_REASON" --tree "$SOURCE" --roles reviewer \
+      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  no_reason_rc=0
+else
+  no_reason_rc=$?
+fi
+t drill-unrun-leg-without-blocker-reds 1 "$no_reason_rc"
+t drill-unrun-leg-without-blocker-is-visible 1 \
+  "$(grep -c '^## leg not-executed browser  (missing blocker reason)' \
+    <<<"$no_reason_out")"
 
 # A red assertion inside phase 2 must not silently void the independent
 # installer, config and app sections. The explicit stage channel distinguishes
@@ -234,10 +321,33 @@ t drill-phase2-failure-runs-section-a 1 \
 t drill-phase2-failure-runs-config 1 \
   "$(grep -cF 'ok         config  (operator mode + registry contract)' <<<"$phase2_out")"
 t drill-phase2-failure-runs-app 1 \
-  "$(grep -cF 'ok         app  (collector + page)' <<<"$phase2_out")"
+  "$(grep -cF 'ok         app  (agreement compared; collector + page)' <<<"$phase2_out")"
+t drill-phase2-records-browser-executed 1 \
+  "$(grep -c '^## leg executed browser  (ok; read-only browser walk executed)' \
+    <<<"$phase2_out")"
+t drill-phase2-records-app-armed-blocker 1 \
+  "$(grep -c '^## leg not-executed app-armed  (skip; not requested: no --app-roster; requires an armed member)' \
+    <<<"$phase2_out")"
 t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LOG")"
-t drill-phase2-summary-counts-three-passed 1 \
-  "$(grep -cE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+t drill-phase2-summary-counts-four-passed 1 \
+  "$(grep -cE '^## section states: 4 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+
+# The third historical zero-execution leg also records a discovered host
+# blocker rather than disappearing inside app's aggregate result.
+if browser_skip_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_BROWSER_STATUS=skip DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+  browser_skip_rc=0
+else
+  browser_skip_rc=$?
+fi
+t drill-browser-blocker-makes-round-incomplete 2 "$browser_skip_rc"
+t drill-browser-blocker-is-named-in-record 1 \
+  "$(grep -c '^## leg not-executed browser  (INCOMPLETE; not executed: playwright-core not installed)' \
+    <<<"$browser_skip_out")"
 
 # A named app roster adds an armed comparison after the generated drill-role
 # comparison. It does not replace that pass and it does not invoke another
@@ -269,7 +379,7 @@ t drill-armed-roster-second-pass-is-read-only 0 \
 t drill-armed-roster-mints-no-extra-role-box 1 \
   "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
 t drill-armed-roster-is-distinct-in-record 1 \
-  "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
+  "$(grep -cF 'ok         app-armed  (agreement compared; named roster, no additional boxes)' \
     <<<"$app_roster_out")"
 
 # The named pass carries its own honest verdict. Exercise both non-green
@@ -288,7 +398,7 @@ else
 fi
 t drill-armed-roster-noncomparable-is-incomplete 2 "$app_roster_incomplete_rc"
 t drill-armed-roster-noncomparable-recorded 1 \
-  "$(grep -cF 'INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)' \
+  "$(grep -cF 'INCOMPLETE app-armed  (agreement could-not-compare: no armed, ticking, clock-skewed box)' \
     <<<"$app_roster_incomplete_out")"
 
 if app_roster_missing_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
@@ -306,6 +416,21 @@ t drill-armed-roster-missing-verdict-is-red 1 "$app_roster_missing_rc"
 t drill-armed-roster-missing-verdict-recorded 1 \
   "$(grep -cF 'FAIL       app-armed  (agreement verdict missing)' \
     <<<"$app_roster_missing_out")"
+
+if app_failure_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_APP_RC=1 DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_failure_rc=0
+else
+  app_failure_rc=$?
+fi
+t drill-app-failure-is-red 1 "$app_failure_rc"
+t drill-detail-less-failure-record-closes-parenthesis 1 \
+  "$(grep -c '^## leg executed app-armed  (FAIL)$' <<<"$app_failure_out")"
 
 # The named reading is independent of generated-role availability. A failed
 # role still keeps the round red, but it must not erase the armed evidence leg.
@@ -362,7 +487,7 @@ else
 fi
 t drill-disarmed-only-round-is-incomplete 2 "$disarmed_rc"
 t drill-disarmed-only-record-says-could-not-compare 1 \
-  "$(grep -cF 'INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)' \
+  "$(grep -cF 'INCOMPLETE app  (agreement could-not-compare: no armed, ticking, clock-skewed box)' \
     <<<"$disarmed_out")"
 t drill-disarmed-only-record-has-no-green-app-row 0 \
   "$(grep -cE '^##   ok +app  ' <<<"$disarmed_out" || true)"
@@ -440,8 +565,8 @@ t drill-phase2-record-names-every-later-section complete "$r1"
 phase2_missing_app="$(sed '/^##   ok         app  /d' <<<"$phase2_out")"
 if required_later_sections "$phase2_missing_app"; then r1=FALSE_PASS; else r1=red; fi
 t drill-phase2-absent-section-mutation-reds red "$r1"
-phase2_wrong_count="${phase2_out/3 passed, 1 failed/4 passed, 0 failed}"
-if grep -qE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' \
+phase2_wrong_count="${phase2_out/4 passed, 1 failed/5 passed, 0 failed}"
+if grep -qE '^## section states: 4 passed, 1 failed, [0-9]+ skipped/not-run$' \
     <<<"$phase2_wrong_count"; then r1=FALSE_PASS; else r1=red; fi
 t drill-phase2-summary-count-mutation-reds red "$r1"
 
