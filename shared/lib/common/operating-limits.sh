@@ -14,6 +14,7 @@ declare -Ag OPERATING_LIMITS=(
   [github_connection_nodes]=100
   [github_panel_nodes]=50
   [github_rest_page]=100
+  [floor_event_spool_entries]=100
   [session_kill_grace_seconds]=60
   [session_terminal_failures]=3
 )
@@ -23,6 +24,7 @@ declare -Ag OPERATING_LIMITS=(
 OPERATING_LIMIT_GITHUB_CONNECTION_NODES="${OPERATING_LIMITS[github_connection_nodes]}"
 OPERATING_LIMIT_GITHUB_PANEL_NODES="${OPERATING_LIMITS[github_panel_nodes]}"
 OPERATING_LIMIT_GITHUB_REST_PAGE="${OPERATING_LIMITS[github_rest_page]}"
+OPERATING_LIMIT_FLOOR_EVENT_SPOOL_ENTRIES="${OPERATING_LIMITS[floor_event_spool_entries]}"
 OPERATING_LIMIT_SESSION_KILL_GRACE_SECONDS="${OPERATING_LIMITS[session_kill_grace_seconds]}"
 OPERATING_LIMIT_SESSION_TERMINAL_FAILURES="${OPERATING_LIMITS[session_terminal_failures]}"
 
@@ -34,6 +36,40 @@ operating_limit() {
     return 2
   fi
   printf '%s' "${OPERATING_LIMITS[$name]}"
+}
+
+# _operating_limit_spool LEVEL MESSAGE — durably hand one limit event to the
+# host-owned floor process.  The box never sends it: probe.sh carries this
+# bounded spool on the next host poll and the floor alert channel owns egress.
+# Identical events collapse at the writer so a standing near-limit condition
+# cannot turn a five-minute duty cadence into alert spam.
+_operating_limit_spool() {
+  local level="$1" message="$2" spool="$DUTY_DIR/.floor-events"
+  local event_id line tmp count
+  message="${message//$'\t'/ }"
+  message="${message//$'\n'/ }"
+  event_id="$(printf '%s\t%s' "$level" "$message" | sha256sum | awk '{print $1}')" \
+    || return 0
+  line="$event_id"$'\t'"$level: $message"
+  grep -Fqx "$line" "$spool" 2>/dev/null && return 0
+
+  mkdir -p "$DUTY_DIR" 2>/dev/null || return 0
+  if [ -f "$spool" ]; then
+    count="$(wc -l <"$spool")"
+  else
+    count=0
+  fi
+  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  if [ "$count" -ge "$OPERATING_LIMIT_FLOOR_EVENT_SPOOL_ENTRIES" ]; then
+    tmp="$(mktemp "$DUTY_DIR/.floor-events.XXXXXX")" || return 0
+    tail -n "$((OPERATING_LIMIT_FLOOR_EVENT_SPOOL_ENTRIES - 1))" "$spool" \
+      >"$tmp" 2>/dev/null || :
+    printf '%s\n' "$line" >>"$tmp"
+    mv -f "$tmp" "$spool"
+  else
+    printf '%s\n' "$line" >>"$spool" 2>/dev/null || return 0
+  fi
+  return 0
 }
 
 # operating_limit_assess NAME MEASURED REPO PR CAUSE — classify a measurement.
@@ -56,11 +92,15 @@ operating_limit_assess() {
     ;;
   esac
   if [ "$measured" -gt "$limit" ]; then
-    log "ERROR: operating limit: $repo#$pr $name measured=$measured limit=$limit crossed; cause=$cause"
+    local message="operating limit: $repo#$pr $name measured=$measured limit=$limit crossed; cause=$cause"
+    log "ERROR: $message"
+    _operating_limit_spool ERROR "$message"
     return 2
   fi
   if [ $((measured * 100)) -ge $((limit * pct)) ]; then
-    warn "operating limit: $repo#$pr $name measured=$measured limit=$limit; cause=$cause"
+    local message="operating limit: $repo#$pr $name measured=$measured limit=$limit; cause=$cause"
+    warn "$message"
+    _operating_limit_spool WARN "$message"
   fi
   return 0
 }

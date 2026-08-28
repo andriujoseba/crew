@@ -1,4 +1,4 @@
-"""Out-of-band reachability notices emitted by the floor process.
+"""Out-of-band reachability and engine notices emitted by the floor process.
 
 The channel is an operator-configured host command. One UTF-8 message is
 written to its stdin for each reachability edge; an empty command is a silent
@@ -62,6 +62,7 @@ class ReachabilityAlerts:
         self.unreachable = {}                 # box -> first failed ping time
         self.last_ticks = {}                  # box -> last observed tick string
         self.command_error = ""
+        self.sent_events = set()
         try:
             self.command = shlex.split(command) if command else []
         except ValueError as exc:
@@ -71,11 +72,27 @@ class ReachabilityAlerts:
 
     def _send(self, message):
         if not self.command:
-            return
+            return False
         rc, _, err = run(self.command, ALERT_TIMEOUT_S, message + "\n")
         if rc != 0:
             log("alert channel failed (rc=%d): %s" %
                 (rc, err.strip() or "no error text"))
+            return False
+        return True
+
+    def observe_floor_events(self, units):
+        """Deliver each durable box event once during this floor process."""
+        for unit in sorted(units, key=lambda u: u.get("box", "")):
+            for event in unit.get("floor_events", []):
+                event_id = event.get("id", "")
+                event_key = (unit.get("box", ""), event_id)
+                if not event_id or event_key in self.sent_events:
+                    continue
+                message = "crew floor: %s (%s) %s" % (
+                    unit.get("box", "unknown"), unit.get("room", "unknown"),
+                    event.get("message", ""))
+                if self._send(message):
+                    self.sent_events.add(event_key)
 
     def observe(self, pings, roster, units):
         """Consume one complete ping round and emit only state transitions."""

@@ -62,6 +62,10 @@ touch "$BS_H/duty/logs/20260726T090000Z-build-rig_12.log"
 # listing selects on `*.log` so that file never spends one of the forty
 # slots, and this is the fixture that says so against the real probe.sh.
 touch "$BS_H/duty/logs/20260726T090000Z-build-rig_12.log.peak"
+printf '%064d\tWARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=90 limit=100; cause=fixture\n' 1 \
+  >"$BS_H/duty/.floor-events"
+printf '%064d\tERROR: operating limit: heavy-duty/crew#482 github_connection_nodes measured=110 limit=100 crossed; cause=fixture\n' 2 \
+  >>"$BS_H/duty/.floor-events"
 
 HOME="$BS_H" DUTY_DIR="$BS_H/duty" \
   bash "$BS_FLOOR/server/probe.sh" < "$BS_ROOT/shared/conf/agents/claude.conf" \
@@ -76,7 +80,7 @@ import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 meta, lines = floor.parse_probe(open(sys.argv[1]).read())
-need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs")
+need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs", "floor-event")
 print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
@@ -87,6 +91,8 @@ sess, cur = floor.derive_sessions(lines, time.time())
 print("SESSIONS=%d" % len(sess))
 print("SESSKEY=%s" % (sess[0]["key"] if sess else ""))
 print("QUEUE=%d" % len(floor.derive_queue(lines)))
+print("EVENTS=%d" % len(meta.get("floor-event", [])))
+print("EVENT_ERROR=%d" % sum("ERROR: operating limit:" in e for e in meta.get("floor-event", [])))
 PY
 bs_get() { sed -n "s/^$1=//p" "$BS_TMP/probe.parsed"; }
 t "probe.sh: parser gets every key it reads" "" "$(bs_get MISSING)"
@@ -99,6 +105,8 @@ t "probe.sh: log section delimited" 4 "$(bs_get LOGLINES)"
 t "probe.sh: sessions parse from real output" 1 "$(bs_get SESSIONS)"
 t "probe.sh: session key intact" "rig#12" "$(bs_get SESSKEY)"
 t "probe.sh: queue derived from real output" 1 "$(bs_get QUEUE)"
+t "probe.sh: carries every durable floor event" 2 "$(bs_get EVENTS)"
+t "probe.sh: preserves crossed-limit event text" 1 "$(bs_get EVENT_ERROR)"
 
 printf '%s\tdraft\theavy-duty/crew#561@abcdef123456\n' \
   "$(( $(date +%s) - 780 ))" >"$BS_H/duty/.builder-suppressed.heavy-duty__crew.draft"

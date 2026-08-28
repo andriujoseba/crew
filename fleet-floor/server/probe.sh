@@ -242,7 +242,16 @@ done
 if [ "$supp_when" -gt 0 ]; then
   emit suppression "$(( $(date +%s) - supp_when )) $supp_kind $supp_key"
 else
-  emit suppression ""
+emit suppression ""
+fi
+
+# Durable engine events cross the trust boundary as data only.  The box-side
+# probe remains read-only and performs no network call; the host floor owns
+# deduplication and delivery through its configured channel (#482 D4).
+if [ -r "$DUTY_DIR/.floor-events" ]; then
+  while IFS= read -r floor_event; do
+    [ -n "$floor_event" ] && emit floor-event "$floor_event"
+  done <"$DUTY_DIR/.floor-events"
 fi
 
 # Cron is the liveness contract: tick.sh guarantees one duty.log line per

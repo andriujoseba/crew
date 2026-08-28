@@ -22,6 +22,8 @@ t operating-limit-table-terminal-failures 3 \
   "$(operating_limit session_terminal_failures)"
 t operating-limit-table-graphql-window 100 \
   "$(operating_limit github_connection_nodes)"
+t operating-limit-table-floor-spool 100 \
+  "$(operating_limit floor_event_spool_entries)"
 
 limit_case() {
   local measured="$1" out rc=0
@@ -37,6 +39,15 @@ t limit-0.9-warns 1 "$(grep -c 'WARN: operating limit: heavy-duty/crew#482 githu
 t limit-1.0-warns 1 "$(grep -c 'WARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=100 limit=100' <<<"$case_10" || true)"
 t limit-1.1-errors 1 "$(grep -c '2|.*ERROR: operating limit: heavy-duty/crew#482 github_connection_nodes measured=110 limit=100 crossed; cause=fixture-payload' <<<"$case_11" || true)"
 t limit-error-never-says-no-duty 0 "$(grep -c 'no .* duty' <<<"$case_11" || true)"
+t limit-events-spooled 3 "$(wc -l <"$DUTY_DIR/.floor-events")"
+t limit-warning-spool-names-measurement 1 \
+  "$(grep -c $'\tWARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=90 limit=100' \
+      "$DUTY_DIR/.floor-events" || true)"
+t limit-error-spool-names-cause 1 \
+  "$(grep -c $'\tERROR: operating limit: heavy-duty/crew#482 github_connection_nodes measured=110 limit=100 crossed; cause=fixture-payload' \
+      "$DUTY_DIR/.floor-events" || true)"
+limit_case 90 >/dev/null
+t identical-limit-events-collapse 3 "$(wc -l <"$DUTY_DIR/.floor-events")"
 
 bad_pct="$(OPERATING_LIMIT_WARN_PCT=wide operating_limit_assess \
   github_connection_nodes 89 heavy-duty/crew 482 fixture-payload)"

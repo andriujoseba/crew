@@ -87,7 +87,10 @@ def parse_probe(text):
             loglines.append(line)
         elif line.startswith("::"):
             k, _, v = line[2:].partition(" ")
-            meta[k] = v.strip()
+            if k == "floor-event":
+                meta.setdefault(k, []).append(v.strip())
+            else:
+                meta[k] = v.strip()
     return meta, loglines
 
 
@@ -303,6 +306,7 @@ def unit_defaults():
         "clock_uncertainty": None,
         "lock": {"held": None, "stuck": False},
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
+        "floor_events": [],
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
         # The box vitals record (#483), or None where the log carries none —
@@ -461,6 +465,12 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
                 "active": True, "age": suppression_age,
                 "kind": suppression[1], "key": suppression[2],
             }
+    for raw_event in meta.get("floor-event", []):
+        event_id, separator, message = raw_event.partition("\t")
+        if (separator and len(event_id) == 64
+                and all(c in "0123456789abcdef" for c in event_id)
+                and message):
+            u["floor_events"].append({"id": event_id, "message": message})
     u["repos"] = [r for r in meta.get("repos", "").split() if r]
     u["logs"] = [f for f in meta.get("sessionlogs", "").split() if f]
     try:
