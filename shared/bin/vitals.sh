@@ -23,6 +23,11 @@ set -u
 VITALS_ROOT="${VITALS_ROOT:-/}"
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 BOOT_CHECK_LOG="${BOOT_CHECK_LOG:-$DUTY_DIR/boot-check.log}"
+# How many boot readings the disk series carries. See v_disk_series: the field
+# is emitted on every record, so it needs a ceiling or it grows with the box's
+# age. Twelve is the length of the series the issue's baseline measured, which
+# is the shortest window in which that finding is still visible.
+VITALS_SERIES_MAX="${VITALS_SERIES_MAX:-12}"
 
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
@@ -73,6 +78,61 @@ EOF
 v_disk() { # prints "total_kb used_kb pct" for VITALS_ROOT
   df -Pk "$VITALS_ROOT" 2>/dev/null |
     awk 'NR==2 {gsub(/%/,"",$5); print $2, $3, $5; found=1} END {exit !found}'
+}
+
+# --- the disk series (D5) ----------------------------------------------------
+# The boot gate in shared/bin/duty.sh has appended `df -h /` to boot-check.log
+# once per boot since the box was hired, so the disk series has weeks of
+# history behind it before this probe's first tick ever runs. Reading it is
+# what makes the series start where the BOX did rather than where the
+# telemetry did — and on the baseline box the series IS the finding: `/` rose
+# monotonically across twelve readings, 9% → 48%, and no single reading says
+# that.
+#
+# Emitted on EVERY record and not once, because both readers take the newest
+# VITALS line and nothing else. A series stitched across lines would be a
+# second parse, in two languages, over a log that rotates — the first thing
+# the two readers would disagree about, which is the property D1 exists to
+# make impossible.
+#
+# The stamp is carried VERBATIM from the header the boot gate wrote. That is
+# `date -Is`, so it carries the box's own offset; re-normalising an offset
+# this probe did not write is how a series acquires a timezone bug.
+#
+# Prints `<stamp>@<pct>[,<stamp>@<pct>]…`, oldest first. The record's own
+# `disk_pct=` is the LIVE point and is deliberately not appended here: one was
+# measured a moment ago and the others were read out of a log, and a reader
+# that cannot tell them apart cannot say which is which.
+v_disk_series() {
+  [ -r "$BOOT_CHECK_LOG" ] || return 1
+  # Pairing is per BLOCK, not per line: `gh auth status` writes a variable
+  # number of lines between the header and the df line, and on a failed boot
+  # it writes arbitrary text. So each header opens a block and the FIRST df
+  # -shaped line in it closes it.
+  #
+  # The df shape is anchored on the tail of the line, never on the field
+  # count: `df -h` wraps a long device name onto a second line, and `tail -1`
+  # then hands over a five-field row instead of six. Both forms end
+  # `<pct>% /`, and nothing else the boot gate writes does.
+  #
+  # Character classes rather than `{4}`: an awk without --re-interval treats
+  # the interval as literal text and the guard silently matches nothing.
+  awk -v max="$VITALS_SERIES_MAX" '
+    /^== boot check / { stamp = $4; have = 0; next }
+    !have && stamp != "" && NF >= 5 && $NF == "/" && $(NF-1) ~ /^[0-9]+%$/ {
+      if (stamp ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:]/) {
+        pct = $(NF-1); sub(/%/, "", pct)
+        n++; s[n] = stamp "@" pct
+      }
+      have = 1
+    }
+    END {
+      if (n == 0) exit 1
+      from = (n > max) ? n - max + 1 : 1
+      for (i = from; i <= n; i++) out = out (i == from ? "" : ",") s[i]
+      print out
+    }
+  ' "$BOOT_CHECK_LOG" 2>/dev/null
 }
 
 v_platform() { uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]'; }
@@ -127,7 +187,7 @@ emit_vitals() {
   # below is written to avoid (SC2155).
   local out FINDINGS=""
   out="VITALS ts=$(ts)"
-  local cores load mem disk swap_a swap_c plat os
+  local cores load mem disk swap_a swap_c plat os series
   local mem_total mem_shared mem_avail disk_total disk_used disk_pct
 
   cores=$(v_cores) && out="$out cores=$cores"
@@ -149,6 +209,11 @@ emit_vitals() {
     disk_pct=${disk##* }
     out="$out disk_total_mb=$((disk_total / 1024)) disk_used_mb=$((disk_used / 1024)) disk_pct=$disk_pct"
   fi
+
+  # D5. Independent of the live disk read above, deliberately: a box whose
+  # `df` has just failed still has its history, and the series is the half a
+  # reader cannot reconstruct from anywhere else.
+  series=$(v_disk_series) && out="$out disk_series=$series"
 
   plat=$(v_platform) && out="$out platform=$plat"
   os=$(v_os) && out="$out os=$os"

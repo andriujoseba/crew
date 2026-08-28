@@ -154,7 +154,98 @@ has   "degrade-df-keeps-mem"          "$out" "mem_total_mb=3850"
 hasnt "degrade-df-omits-disk"         "$out" "disk_total_mb="
 hasnt "degrade-df-marks-no-finding"   "$out" "disk-profile-mismatch"
 
-# --- 5. the record's shape ---------------------------------------------------
+# --- 5. the disk series is backfilled from boot-check.log (D5) ---------------
+# MUST-FAIL: the disk series starting at the first tick. The boot gate has
+# been writing `df -h /` to boot-check.log once per boot since the box was
+# hired, so a probe that begins its series at its own first record throws away
+# every reading the box already has — which on the baseline box is the entire
+# finding, since `/` rising monotonically is invisible in any one reading.
+#
+# The fixture is written in the boot gate's own shape (shared/bin/duty.sh):
+# a `== boot check <date -Is> ==` header, then `gh auth status` output, then
+# the df line, then the cli probe verdict.
+boot_block() { # boot_block <file> <stamp> <df-line>
+  {
+    echo "== boot check $2 =="
+    echo "github.com"
+    echo "  ✓ Logged in to github.com account cndgrr (/home/claude/.config/gh/hosts.yml)"
+    echo "  - Token scopes: 'read:org', 'repo', 'workflow'"
+    echo "$3"
+    echo "cli probe: ok"
+  } >> "$1"
+}
+
+B="$(mk_box series)"
+BC="$B/boot-check.log"
+boot_block "$BC" "2026-08-01T12:50:01+00:00" "/dev/sda2        58G  2.5G   56G   5% /"
+boot_block "$BC" "2026-08-02T09:00:01+00:00" "/dev/sda2        58G  3.1G   55G   6% /"
+boot_block "$BC" "2026-08-10T21:15:01+00:00" "/dev/sda2        58G   31G   28G  53% /"
+out="$(run_probe "$B" BOX_CPU=2 BOOT_CHECK_LOG="$BC")"
+has "series-is-emitted"        "$out" "disk_series="
+has "series-carries-history"   "$out" "disk_series=2026-08-01T12:50:01+00:00@5,"
+has "series-is-oldest-first"   "$out" \
+  "disk_series=2026-08-01T12:50:01+00:00@5,2026-08-02T09:00:01+00:00@6,2026-08-10T21:15:01+00:00@53 "
+# The series is history; the live reading stays its own field, because one was
+# measured a moment ago and the others were read out of a log.
+has "series-does-not-replace-live-disk" "$out" "disk_pct=48"
+
+# The `gh auth status` lines between the header and the df line are not
+# readings. A block-scoped parse that anchored on "first line after the
+# header" would take the word `github.com` as a series point.
+same "series-has-exactly-three-points" "3" \
+  "$(printf '%s\n' "$out" | tr ' ' '\n' | sed -n 's/^disk_series=//p' | tr ',' '\n' | grep -c '@')"
+
+# A boot the gate could not complete writes a header and no df line. It
+# contributes no point rather than a point with the previous block's number.
+B="$(mk_box series-partial)"
+BC="$B/boot-check.log"
+boot_block "$BC" "2026-08-01T12:50:01+00:00" "/dev/sda2        58G  2.5G   56G   5% /"
+{ echo "== boot check 2026-08-02T09:00:01+00:00 =="
+  echo "You are not logged into any GitHub hosts. To log in, run: gh auth login"
+  echo "cli probe: FAILED"; } >> "$BC"
+out="$(run_probe "$B" BOX_CPU=2 BOOT_CHECK_LOG="$BC")"
+has  "series-partial-keeps-the-good-block" "$out" "disk_series=2026-08-01T12:50:01+00:00@5 "
+hasnt "series-partial-invents-no-point"    "$out" "2026-08-02T09:00:01+00:00@"
+
+# `df -h` wraps a long device name onto a second line, and the boot gate's
+# `tail -1` then hands over a FIVE-field row. Both forms end `<pct>% /`, which
+# is why the shape is anchored on the tail of the line and not on NF.
+B="$(mk_box series-wrapped)"
+BC="$B/boot-check.log"
+boot_block "$BC" "2026-08-01T12:50:01+00:00" "                  58G  2.5G   56G   7% /"
+out="$(run_probe "$B" BOX_CPU=2 BOOT_CHECK_LOG="$BC")"
+has "series-reads-a-wrapped-df-line" "$out" "disk_series=2026-08-01T12:50:01+00:00@7 "
+
+# Bounded, because the field ships on every record and boot-check.log grows
+# with the box's age. The NEWEST readings survive the cap.
+B="$(mk_box series-cap)"
+BC="$B/boot-check.log"
+for i in 1 2 3 4 5; do
+  boot_block "$BC" "2026-08-0${i}T09:00:01+00:00" "/dev/sda2        58G  2.5G   56G   ${i}% /"
+done
+out="$(run_probe "$B" BOX_CPU=2 BOOT_CHECK_LOG="$BC" VITALS_SERIES_MAX=3)"
+has   "series-cap-keeps-the-newest" "$out" \
+  "disk_series=2026-08-03T09:00:01+00:00@3,2026-08-04T09:00:01+00:00@4,2026-08-05T09:00:01+00:00@5 "
+hasnt "series-cap-drops-the-oldest" "$out" "2026-08-01T09:00:01+00:00@1"
+
+# D6 again, on this reader: no boot-check.log at all is an absent field, and
+# the record still emits every other figure.
+B="$(mk_box series-absent)"
+out="$(run_probe "$B" BOX_CPU=2 BOOT_CHECK_LOG="$B/nothing-here.log")"
+has   "series-absent-record-still-emits" "$out" "VITALS ts="
+has   "series-absent-keeps-disk"         "$out" "disk_pct=48"
+hasnt "series-absent-omits-the-field"    "$out" "disk_series="
+
+# A boot-check.log with no df line in it at all — an engine older than the
+# boot gate's df line — is the same case, and must not emit an empty series.
+B="$(mk_box series-empty)"
+BC="$B/boot-check.log"
+{ echo "== boot check 2026-08-01T12:50:01+00:00 =="; echo "cli probe: ok"; } > "$BC"
+out="$(run_probe "$B" BOX_CPU=2 BOOT_CHECK_LOG="$BC")"
+has   "series-empty-record-still-emits" "$out" "VITALS ts="
+hasnt "series-empty-omits-the-field"    "$out" "disk_series="
+
+# --- 6. the record's shape ---------------------------------------------------
 # One line, always: both readers parse it by line, so a probe that wrapped
 # would break `crew status` and the floor at the same time.
 B="$(mk_box shape)"
