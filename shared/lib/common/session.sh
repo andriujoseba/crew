@@ -120,7 +120,7 @@ _session_pool_suffix() {
   [ -n "$pool" ] || return 0
   case "$pool" in
     *[!A-Za-z0-9._:-]*)
-      warn "session accounting: SESSION_CREDENTIAL_POOL must be a safe token — omitting pool identity"
+      warn "session accounting: SESSION_CREDENTIAL_POOL must be a safe token — omitting pool identity" >&2
       return 0
       ;;
   esac
@@ -150,6 +150,10 @@ run_session() {
   if [ "$_SESSION_STRUCTURED" = yes ]; then
     structured_log="$slog.structured"
     cli_log="$structured_log"
+    # SESSION START advertises the prose path, and every reader selects
+    # `*.log`. Keep that path real while the vendor JSON is captured beside
+    # it; completion replaces the empty placeholder with the restored prose.
+    : >"$slog"
   fi
   # holder=: who to ask, at a later tick, whether this session is still
   # running. Nothing below this line runs if the box dies under the CLI, so
@@ -188,6 +192,9 @@ run_session() {
   # scoring at the moment the CLI is `exec`'d. It cannot fail the dispatch: it
   # returns 0 on every path, so the `&&` chain is unbroken on a guest with no
   # writable procfs.
+  # stderr deliberately shares the structured capture: CLI diagnostics must
+  # survive verbatim for failure classification. Chatter therefore makes the
+  # usage block unmeasured and takes the documented legacy-log fallback.
   ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
       timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&1 &
   _SESSION_DISPATCH_PID=$!

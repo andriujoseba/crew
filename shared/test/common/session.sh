@@ -75,13 +75,18 @@ case "${USAGE_SHAPE:-valid}" in
   malformed)
     printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/two","total_cost_usd":0.5,"usage":{"input_tokens":"many","output_tokens":4}}'
     ;;
+  observe-log)
+    find "$USAGE_LIVE_LOG_DIR" -maxdepth 1 -type f -name '*.log' \
+      | wc -l >"$USAGE_LIVE_OBSERVED"
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
+    ;;
 esac
 STUB
 chmod +x "$USAGE_CLI"
 
 # shellcheck disable=SC2030,SC2031,SC2317
-usage_run() ( # usage_run POOL SHAPE — one independent box-shaped dispatch
-  local pool="$1" shape="$2" udir
+usage_run() ( # usage_run POOL SHAPE [TIER] — one independent box-shaped dispatch
+  local pool="$1" shape="$2" tier="${3:-}" udir
   udir="$TMP/usage-$pool-$shape-$RANDOM"
   mkdir -p "$udir/logs" "$udir/work"
   DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID="tick-usage"
@@ -89,13 +94,19 @@ usage_run() ( # usage_run POOL SHAPE — one independent box-shaped dispatch
   source "$SHARED/conf/agents/claude.conf"
   BOT_CLI_CMD=(bash "$USAGE_CLI" -p)
   SESSION_CREDENTIAL_POOL="$pool"
+  export MODEL_BUILD="$tier"
   export USAGE_SHAPE="$shape" USAGE_ARGV="$udir/argv"
+  export USAGE_LIVE_LOG_DIR="$udir/logs" USAGE_LIVE_OBSERVED="$udir/live-log"
   run_session build fixture/usage "$udir/work" 5 theprompt \
-    | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+    2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //'
   printf '%s\n' -- '--prose--'
   cat "$udir"/logs/*.log
   printf '%s\n' -- '--argv--'
   cat "$udir/argv"
+  if [ -f "$udir/live-log" ]; then
+    printf '%s\n' -- '--live-log--'
+    cat "$udir/live-log"
+  fi
 )
 
 usage_valid="$(usage_run shared-a valid)"
@@ -119,6 +130,15 @@ t usage-structured-run-restores-the-prose-log 'I pushed the fix.' \
 t usage-structured-scratch-does-not-survive 0 \
   "$(find "$TMP" -name '*.structured' | wc -l)"
 
+usage_live="$(usage_run shared-a observe-log)"
+t usage-structured-advertised-log-exists-while-running 1 \
+  "$(sed -n '/^--live-log--$/{n;p;}' <<<"$usage_live")"
+
+usage_tier="$(usage_run shared-a valid opus)"
+t usage-tiered-structured-command-keeps-prompt-last \
+  '--model opus --output-format json -p theprompt' \
+  "$(sed -n '/^--argv--$/,$p' <<<"$usage_tier" | tail -n +2 | head -6 | paste -sd ' ' -)"
+
 # Two independent directories stand in for two boxes: pool identity is the
 # operator's declaration, not a session-local or box-local derivative.
 usage_same="$(usage_run shared-a valid)"
@@ -127,6 +147,17 @@ t usage-same-pool-is-stable-across-boxes shared-a \
   "$(grep 'SESSION END' <<<"$usage_same" | sed -n 's/.* pool=\([^ ]*\).*/\1/p')"
 t usage-different-pool-is-distinguishable shared-b \
   "$(grep 'SESSION END' <<<"$usage_other" | sed -n 's/.* pool=\([^ ]*\).*/\1/p')"
+
+usage_unsafe="$(usage_run 'bad pool' valid)"
+usage_unsafe_end="$(grep 'SESSION END' <<<"$usage_unsafe")"
+t usage-unsafe-pool-warns-separately 1 \
+  "$(grep -c '^WARN: session accounting:' <<<"$usage_unsafe" || true)"
+t usage-unsafe-pool-keeps-one-session-end 1 \
+  "$(grep -c '^SESSION END ' <<<"$usage_unsafe" || true)"
+t usage-unsafe-pool-keeps-parseable-session-id session%2Fone \
+  "$(sed -n 's/.* session_id=\([^ ]*\).*/\1/p' <<<"$usage_unsafe_end")"
+t usage-unsafe-pool-is-omitted 0 \
+  "$(grep -c ' pool=' <<<"$usage_unsafe_end" || true)"
 
 # Malformed accounting is absent, while the work's result, rc, outcome and
 # prose survive. This is the failure direction the instrument must never own.
