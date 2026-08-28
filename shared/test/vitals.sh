@@ -13,18 +13,23 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
-PROBE="$ROOT/shared/bin/vitals.sh"
+# shellcheck source=shared/test/lib.sh
+source "$HERE/lib.sh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
+PROBE="$SHARED/bin/vitals.sh"
+WORK="$TMP"
 
-PASS=0 FAIL=0
-ok()   { PASS=$((PASS+1)); printf 'ok   %s\n' "$1"; }
-bad()  { FAIL=$((FAIL+1)); printf 'FAIL %s\n' "$1"; }
-same() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$2' got '$3')"; fi; }
-has()  { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 (missing '$3' in: $2)" ;; esac; }
-hasnt(){ case "$2" in *"$3"*) bad "$1 (unexpected '$3' in: $2)" ;; *) ok "$1" ;; esac; }
-
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# The subject is a text record, so the two predicates are substring presence
+# and absence. Both route through lib.sh's `t` so this suite counts, reports
+# and terminates exactly like every other subject suite — run.sh reads the
+# final `passed N, failed N` and nothing else.
+same() { t "$1" "$2" "$3"; }
+has()  { case "$2" in *"$3"*) t "$1" present present ;; *) t "$1" "present:$3" "absent (in: $2)" ;; esac; }
+hasnt(){ case "$2" in *"$3"*) t "$1" "absent:$3" "present (in: $2)" ;; *) t "$1" absent absent ;; esac; }
 
 # mk_box <name> — a fixture box: a stub dir on PATH plus a fake root for the
 # swapfile probe. Callers overwrite individual stubs to shape the reading.
@@ -158,6 +163,4 @@ same "record-is-one-line" "1" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 same "record-starts-VITALS" "VITALS" "$(printf '%s' "$out" | cut -d' ' -f1)"
 has  "record-timestamp-is-utc-iso8601" "$out" "Z "
 
-echo
-echo "vitals: passed $PASS, failed $FAIL"
-[ "$FAIL" -eq 0 ]
+suite_finish
