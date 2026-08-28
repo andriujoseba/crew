@@ -26,6 +26,20 @@ RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+) dur=(\d+)s
 # figure here without a second case.
 RE_PEAK = re.compile(r" peak_rss=(\d+)(?:\s|$)")
 RE_ANY_TS = re.compile("^" + TS + r" ")
+# #483 D1 — the box vitals record. This page and `crew status` render the SAME
+# line out of the SAME duty.log by the SAME selection rule (the newest line
+# with this prefix); probe.sh carries it here verbatim and cli/crew greps for
+# it directly. Two readers with private probes disagree in front of an
+# operator, which is the defect this console exists to end, so neither of them
+# measures anything — the tick measured it once and both quote it.
+#
+# NOT anchored on a leading timestamp, unlike every pattern above it: tick.sh
+# writes this record with its own `ts=` field and no leading stamp, because it
+# is emitted OUTSIDE the lock and before the dispatch, so it is deliberately
+# not one of the `$JOB tick …` evidence shapes that log's contract is about.
+# The prefix is still required: a `::vitals` carrying anything else is a box
+# answering a question nobody asked, and it renders as nothing.
+RE_VITALS = re.compile(r"^VITALS (ts=\S+.*)$")
 
 # Wake lines the duty modules already write. The queue shown on the floor is
 # derived from these — it is real detected work, not a placeholder list. Each
@@ -167,6 +181,86 @@ def derive_sessions(loglines, now, clock_offset=0):
     return done, cur
 
 
+def _vitals_finding(raw):
+    """`name:k=v,k=v` -> `name: k=v, k=v`.
+
+    The rendered sentence IS the record, and that is deliberate. `crew status`
+    prints this same string from the same token, so the two readers cannot
+    disagree about a finding by wording it differently — the alternative is
+    each reader owning a phrase-book, which is how one console says
+    "swap inactive" and the other says "swap unused" about one line.
+    """
+    name, _, detail = raw.partition(":")
+    if not detail:
+        return name
+    # A plain replace, not a split-and-rejoin that drops empties: cli/crew does
+    # this with `${detail//,/, }` and cannot drop them, and a rule that only
+    # one of the two readers applies is a rule they can disagree under.
+    return "%s: %s" % (name, detail.replace(",", ", "))
+
+
+def _vitals_series(raw):
+    """`<stamp>@<pct>,…` -> the backfilled disk series, oldest first (#483 D5).
+
+    A point whose percentage is not a number is DROPPED rather than coerced:
+    boot-check.log is decades of `gh auth status` output with a df line in it,
+    and a series that guesses at a malformed reading is worse than a shorter
+    one. The stamp is whatever the boot gate wrote — `date -Is`, offset and
+    all — and is not re-normalised here for the same reason the probe does not
+    re-normalise it.
+    """
+    out = []
+    for point in raw.split(","):
+        stamp, sep, pct = point.rpartition("@")
+        if not sep or not stamp or not pct.isdigit():
+            continue
+        out.append({"ts": stamp, "pct": int(pct)})
+    return out
+
+
+def parse_vitals(record):
+    """One box vitals record -> the dict the page renders (#483 D1).
+
+    The line arrives from probe.sh verbatim; nothing is measured here and
+    nothing is re-derived. `crew status` greps the same record out of the same
+    file by the same rule, so the two readers are quoting one emission rather
+    than agreeing by convention.
+
+    Values are carried as the STRINGS the record spelled them with, not
+    coerced to numbers. The probe measured them and this is a transport; a
+    reader that re-formats `load1=0.00` into `0.0` has introduced a way for
+    two consoles to print different things about one measurement. The one
+    exception is the disk series' percentage, which the page draws as a trend
+    and cannot draw from text.
+
+    D6 travels with the record: a field the box could not read is absent from
+    the line and therefore absent from this dict. Callers must ask with `.get`
+    and render nothing — never a zero nobody measured.
+
+    Returns None for an empty, absent or unrecognised record, which is every
+    box running an engine older than the probe.
+    """
+    m = RE_VITALS.match((record or "").strip())
+    if not m:
+        return None
+    fields, findings, series = {}, [], []
+    for token in m.group(1).split():
+        key, sep, val = token.partition("=")
+        # A bare token is not a field. `finding=` with nothing after it is not
+        # a finding either — an empty value is the shape of a field the box
+        # could not read, and D6 says that is an ABSENCE.
+        if not sep or not val:
+            continue
+        if key == "finding":
+            findings.append(_vitals_finding(val))
+        elif key == "disk_series":
+            series = _vitals_series(val)
+        else:
+            fields[key] = val
+    return {"ts": fields.pop("ts", ""), "fields": fields,
+            "series": series, "findings": findings}
+
+
 def spark_24h(sessions, now):
     """22 buckets of session activity, matching the console's sparkline."""
     buckets = [0.0] * 22
@@ -205,6 +299,13 @@ def unit_defaults():
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
+        # The box vitals record (#483), or None where the log carries none —
+        # a box on an engine older than the probe, and every box for the first
+        # tick after it lands. None and not an empty dict, for the reason
+        # every other absence on this record is spelled the way it is: a
+        # renderer must be able to tell "no record" from "a record that
+        # measured nothing", and `{}` collapses them.
+        "vitals": None,
         # HIRED — "yes" / "no" / "unknown", and never an inference from the
         # engine string. The page draws a console for what is DEPLOYED rather
         # than for what the roster DECLARES (#204), and that filter needs a
@@ -401,6 +502,11 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
     sessions, cur = derive_sessions(loglines, now, clock_offset)
     u["queue"] = derive_queue(loglines)
+    # Not measured here and not measured by probe.sh either — the tick
+    # measured it, both readers quote it (#483 D1). None on a box whose engine
+    # predates the probe, and the page then draws no section rather than a
+    # hardware reading nobody took.
+    u["vitals"] = parse_vitals(meta.get("vitals", ""))
     u["cur"] = cur
     u["sessions"] = [{k: s[k] for k in
                       ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply", "peak")}

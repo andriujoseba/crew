@@ -1091,6 +1091,121 @@ report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # fleet-floor/test/cli.sh asserts the number, so a fourth question is a
 # different and more expensive change than the one D7 asked for.
 STATUS_PROBE_MARK="::crew-budget-end::"
+# The second section boundary in that same one exec: the box vitals record
+# (#483) rides between the budget and the duty-log tail. Still THREE round
+# trips — #221's budget is a count of execs, not of questions, and this is one
+# more line in the exec already being made.
+STATUS_VITALS_MARK="::crew-vitals-end::"
+
+# vitals_finding RAW — `name:k=v,k=v` -> `name: k=v, k=v`.
+#
+# Byte-for-byte what floor.units._vitals_finding produces, because the finding
+# an operator reads on the console and the finding they read here have to be
+# one string: a reworded finding is a finding nobody can grep the log for.
+vitals_finding() {
+  local name="${1%%:*}" detail="${1#*:}"
+  if [ "$detail" = "$1" ] || [ -z "$detail" ]; then printf '%s\n' "$name"; return 0; fi
+  printf '%s: %s\n' "$name" "${detail//,/, }"
+}
+
+# vitals_rows RECORD — one box vitals record as `<label><TAB><text>` rows.
+#
+# THIS FUNCTION IS HALF OF A CONTRACT WITH fleet-floor/index.html. #483's
+# acceptance criterion is that `crew status` and the floor render the same
+# record and CANNOT disagree, and two readers in two languages only hold that
+# if the strings are pinned rather than each side owning a phrase-book. So the
+# labels and the text here are exactly what `boxVitalsRows` builds, and
+# fleet-floor/test/cli.sh drives ONE captured record through both and asserts
+# the outputs are identical. Change a word here and that test reds until the
+# page says the same word.
+#
+# Nothing is measured, converted or re-derived: the tick measured it, this
+# quotes it. Figures stay in the MiB the probe wrote — a friendlier `5.8 GiB`
+# on one reader and `5948 MiB` on the other is precisely the disagreement the
+# criterion forbids, wearing a courtesy.
+#
+# A row is emitted only when every field it needs is on the record. D6 is
+# per-field degradation, so a box whose `free` failed has no memory row rather
+# than a row of dashes, which would read as a measurement of nothing.
+vitals_rows() {
+  local record="${1:-}"
+  case "$record" in "VITALS ts="*) : ;; *) return 0 ;; esac
+  local -A f=()
+  local -a parts=() findings=()
+  local series="" tok key val
+  # `read -ra`, never `for tok in $record`: the record is unquoted box output,
+  # and word-splitting it in a for-loop would also GLOB it — one `*` in a
+  # future field and the reader starts listing the working directory.
+  read -ra parts <<<"$record"
+  for tok in "${parts[@]}"; do
+    key="${tok%%=*}"; val="${tok#*=}"
+    if [ "$key" = "$tok" ]; then continue; fi   # a bare token is not a field
+    if [ -z "$val" ]; then continue; fi         # an empty value is an ABSENCE
+    case "$key" in
+      finding) findings+=("$(vitals_finding "$val")") ;;
+      disk_series) series="$val" ;;
+      *) f["$key"]="$val" ;;
+    esac
+  done
+
+  # `${x:+ suffix}` and not a command substitution: an optional half of a row
+  # is a string operation, and buying a subshell per row for it would also put
+  # every one of these behind `set -e` semantics that have nothing to do with
+  # what is being asked.
+  if [ -n "${f[cores]:-}" ]; then
+    printf 'Cores\t%s%s\n' "${f[cores]}" "${f[load1]:+ · load1 ${f[load1]}}"
+  fi
+  if [ -n "${f[mem_total_mb]:-}" ] && [ -n "${f[mem_avail_mb]:-}" ]; then
+    printf 'Memory\t%s of %s MiB available%s\n' "${f[mem_avail_mb]}" "${f[mem_total_mb]}" \
+      "${f[mem_shared_mb]:+ · ${f[mem_shared_mb]} MiB shared}"
+  fi
+  if [ -n "${f[disk_total_mb]:-}" ] && [ -n "${f[disk_used_mb]:-}" ] &&
+     [ -n "${f[disk_pct]:-}" ]; then
+    printf 'Disk\t%s of %s MiB used · %s%%\n' \
+      "${f[disk_used_mb]}" "${f[disk_total_mb]}" "${f[disk_pct]}"
+  fi
+  # Always BOTH numbers, never a derived "swap is fine". The pair IS the
+  # finding: 0 active beside 12288 configured is a swapfile holding a quarter
+  # of the disk and doing nothing, and either number alone looks explicable.
+  if [ -n "${f[swap_active_mb]:-}" ] && [ -n "${f[swap_configured_mb]:-}" ]; then
+    printf 'Swap\t%s MiB active of %s MiB configured\n' \
+      "${f[swap_active_mb]}" "${f[swap_configured_mb]}"
+  fi
+  # D5 — the backfilled series, so the disk history starts where the box did.
+  # Purely historical: the live reading is the Disk row above, and splicing the
+  # two into one arrow would put a figure measured this second on the end of a
+  # series read out of a log.
+  if [ -n "$series" ]; then
+    local -a points=() good=()
+    local p st pc span noun
+    IFS=',' read -ra points <<<"$series"
+    for p in "${points[@]}"; do
+      case "$p" in *@*) ;; *) continue ;; esac
+      st="${p%@*}"; pc="${p##*@}"
+      if [ -z "$st" ]; then continue; fi
+      case "$pc" in ''|*[!0-9]*) continue ;; esac
+      good+=("$st@$pc")
+    done
+    if [ "${#good[@]}" -gt 0 ]; then
+      p="${good[0]}"
+      if [ "${#good[@]}" -gt 1 ]; then
+        span="${p##*@}% → ${good[$(( ${#good[@]} - 1 ))]##*@}%"
+        noun="boot readings"
+      else
+        span="${p##*@}%"
+        noun="boot reading"
+      fi
+      printf 'Disk since\t%s · %s over %s %s\n' "${p%@*}" "$span" "${#good[@]}" "$noun"
+    fi
+  fi
+  if [ -n "${f[platform]:-}" ]; then
+    printf 'Platform\t%s%s\n' "${f[platform]}" "${f[os]:+ · ${f[os]}}"
+  fi
+  local finding
+  for finding in ${findings[@]+"${findings[@]}"}; do
+    printf 'Finding\t%s\n' "$finding"
+  done
+}
 
 # rig_report NAME — ONE exec: did rig's tenant bootstrap converge this box, and
 # which rig did it (#220). Read BEFORE hiring, which is the whole point — every
@@ -2055,7 +2170,7 @@ cmd_status() {
     # empty: `log` is then exactly what it was before this, so the unreachable
     # branch below still rests on the two probes already made and never on
     # this read's exit status.
-    local probe budget log
+    local probe rest budget vitals log vkey vval
     # The read is INLINE and not a helper: fleet-floor/test/cli.sh pins this
     # `tail` inside cmd_status and requires the `|| true` beside it, because
     # the defect it guards is the duty-log read's exit status deciding
@@ -2081,12 +2196,30 @@ cmd_status() {
         env DUTY_DIR="$HOME/duty" bash -c \
           ". \"$HOME/duty/lib/common.sh\"; load_conf; session_budget_report" 2>/dev/null
       echo "'"$STATUS_PROBE_MARK"'"
+      grep "^VITALS " ~/duty/duty.log 2>/dev/null | tail -1
+      echo "'"$STATUS_VITALS_MARK"'"
       tail -n 5 ~/duty/duty.log 2>/dev/null
     ' 2>/dev/null | tr -d '\r' || true)"
+    # #483 rides here as a THIRD section of the same exec, between the budget
+    # and the log tail. Whole-file grep and not `tail -n N | grep`: the newest
+    # record is normally a few lines back, but a long session logs hundreds
+    # inside one tick, and a window that loses the record on exactly the busy
+    # box an operator is looking at is worse than a scan of a file tick.sh
+    # already caps at 5 MB. fleet-floor/server/probe.sh selects it by the same
+    # rule for the floor, which is what makes "the two cannot disagree" a
+    # property of the code rather than a claim about it.
     budget="${probe%%"$STATUS_PROBE_MARK"*}"
-    log="${probe#*"$STATUS_PROBE_MARK"}"
+    rest="${probe#*"$STATUS_PROBE_MARK"}"
     [ "$probe" != "$budget" ] || budget=""   # no mark: nothing answered
+    vitals="${rest%%"$STATUS_VITALS_MARK"*}"
+    log="${rest#*"$STATUS_VITALS_MARK"}"
+    # Same degradation as the budget half, one section along: a box that
+    # answered nothing yields no marks, and `log` must come out as exactly
+    # what it was before either section existed rather than swallowing the
+    # whole capture into `vitals`.
+    if [ "$rest" = "$vitals" ]; then vitals=""; log="$rest"; fi
     budget="${budget%$'\n'}"
+    vitals="${vitals#$'\n'}"; vitals="${vitals%$'\n'}"
     log="${log#$'\n'}"
     # #464 D7 — the balance the gate is already keeping, displayed. A budget
     # nobody can read without opening a dotfile is a budget nobody reads, and
@@ -2101,6 +2234,25 @@ cmd_status() {
     #
     # NOT telemetry (#327), which owns per-session accounting, outcomes and
     # vendor spend. This is one balance per lane and nothing else.
+    # #483 — the box's own vitals, from the record the tick wrote. ABOVE the
+    # budget because it is the more basic state: budget is what the work has
+    # cost, vitals is whether the box can do any, and an operator opening this
+    # view on a box that has gone quiet wants "it is out of disk" before "it
+    # has spent 40% of its lane".
+    #
+    # The SECTION is omitted entirely on a box whose engine predates the probe
+    # — the same rule the budget uses one line down, and for the same reason:
+    # a heading over six em-dashes reads as a box that answered and had
+    # nothing to say, which is the opposite of what happened.
+    #
+    # Rendered from vitals_rows and nothing else, so the words here and the
+    # words on the floor are one string. See the contract on that function.
+    if [ -n "$vitals" ]; then
+      echo "vitals:"
+      while IFS=$'\t' read -r vkey vval; do
+        printf '  %s: %s\n' "$vkey" "$vval"
+      done < <(vitals_rows "$vitals")
+    fi
     if [ -n "$budget" ]; then
       echo "budget:"
       printf '%s\n' "$budget"
