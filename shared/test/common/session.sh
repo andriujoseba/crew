@@ -59,6 +59,227 @@ t session-end-outcome-token-unchanged ok \
   "$(printf '%s\n' "$sa_end" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
 unset -f bot_session_acted
 
+# --- structured usage and credential-pool identity (#475) ----------------
+#
+# The stub is the CLI, not the parser: it receives Claude's profile-built
+# argv and emits the vendor JSON shape. That makes the invocation, prose
+# reconstruction and SESSION END record one behavioral path.
+USAGE_CLI="$TMP/usage-cli.sh"
+cat >"$USAGE_CLI" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$USAGE_ARGV"
+case "${USAGE_SHAPE:-valid}" in
+  valid)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77},"modelUsage":{"claude-sonnet-4-6":{"outputTokens":34}}}'
+    ;;
+  valid-with-warning)
+    printf '%s\n' 'vendor warning' >&2
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77},"modelUsage":{"claude-sonnet-4-6":{"outputTokens":34}}}'
+    ;;
+  no-cost)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"Tokens still count.","session_id":"session/no-cost","usage":{"input_tokens":90,"output_tokens":12},"modelUsage":{"claude-haiku-4-5":{"outputTokens":12}}}'
+    ;;
+  partial-cost)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"Partial cost omitted.","session_id":"session/partial","total_cost_usd":0.5,"hasUnknownModelCost":true,"usage":{"input_tokens":80,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":4},"modelUsage":{"claude-opus-4-1":{"outputTokens":20}}}'
+    ;;
+  unknown-model)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"No model named.","session_id":"session/unknown","usage":{"input_tokens":50,"output_tokens":10}}'
+    ;;
+  two-models)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"Two models ran.","session_id":"session/two-models","usage":{"input_tokens":200,"output_tokens":20},"modelUsage":{"claude-opus-4":{"outputTokens":15},"claude-haiku-4":{"outputTokens":5}}}'
+    ;;
+  malformed)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/two","total_cost_usd":0.5,"usage":{"input_tokens":"many","output_tokens":4}}'
+    ;;
+  observe-log)
+    find "$USAGE_LIVE_LOG_DIR" -maxdepth 1 -type f -name '*.log' \
+      | wc -l >"$USAGE_LIVE_OBSERVED"
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77},"modelUsage":{"claude-sonnet-4-6":{"outputTokens":34}}}'
+    ;;
+esac
+STUB
+chmod +x "$USAGE_CLI"
+
+# shellcheck disable=SC2030,SC2031,SC2317
+usage_run() ( # usage_run POOL SHAPE [TIER] — one independent box-shaped dispatch
+  local pool="$1" shape="$2" tier="${3:-}" udir
+  udir="$TMP/usage-$pool-$shape-$RANDOM"
+  mkdir -p "$udir/logs" "$udir/work"
+  DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID="tick-usage"
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/claude.conf"
+  BOT_CLI_CMD=(bash "$USAGE_CLI" -p)
+  SESSION_CREDENTIAL_POOL="$pool"
+  export MODEL_BUILD="$tier"
+  export USAGE_SHAPE="$shape" USAGE_ARGV="$udir/argv"
+  export USAGE_LIVE_LOG_DIR="$udir/logs" USAGE_LIVE_OBSERVED="$udir/live-log"
+  run_session build fixture/usage "$udir/work" 5 theprompt \
+    2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+  printf '%s\n' -- '--prose--'
+  cat "$udir"/logs/*.log
+  printf '%s\n' -- '--argv--'
+  cat "$udir/argv"
+  if [ -f "$udir/live-log" ]; then
+    printf '%s\n' -- '--live-log--'
+    cat "$udir/live-log"
+  fi
+)
+
+usage_valid="$(usage_run shared-a valid)"
+usage_end="$(grep 'SESSION END' <<<"$usage_valid")"
+t usage-claude-profile-selects-json-output 1 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$usage_valid" | grep -c '^json$' || true)"
+t usage-claude-session-records-input 120 \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-output 34 \
+  "$(sed -n 's/.* output_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-cache-create 5 \
+  "$(sed -n 's/.* cache_creation_input_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-cache-read 77 \
+  "$(sed -n 's/.* cache_read_input_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-cost 0.0125 \
+  "$(sed -n 's/.* cost_usd=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-session-id session%2Fone \
+  "$(sed -n 's/.* session_id=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-actual-model claude-sonnet-4-6 \
+  "$(sed -n 's/.* model=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-single-model-omits-model-count 0 \
+  "$(grep -c ' models=' <<<"$usage_end" || true)"
+t usage-structured-run-restores-the-prose-log 'I pushed the fix.' \
+  "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_valid")"
+t usage-structured-scratch-does-not-survive 0 \
+  "$(find "$TMP" -name '*.structured' | wc -l)"
+
+usage_live="$(usage_run shared-a observe-log)"
+t usage-structured-advertised-log-exists-while-running 1 \
+  "$(sed -n '/^--live-log--$/{n;p;}' <<<"$usage_live")"
+
+usage_tier="$(usage_run shared-a valid opus)"
+t usage-tiered-structured-command-keeps-prompt-last \
+  '--model opus --output-format json -p theprompt' \
+  "$(sed -n '/^--argv--$/,$p' <<<"$usage_tier" | tail -n +2 | head -6 | paste -sd ' ' -)"
+t usage-requested-tier-keeps-own-meaning 'opus|claude-sonnet-4-6' \
+  "$(grep 'SESSION END' <<<"$usage_tier" \
+    | sed -n 's/.* tier=\([^ ]*\).* model=\([^ ]*\).*/\1|\2/p')"
+
+# Tokens are the required measurement. Cost and cache counters are optional
+# enrichment, while actual-model attribution never borrows the requested tier.
+usage_no_cost="$(usage_run shared-a no-cost)"
+usage_no_cost_end="$(grep 'SESSION END' <<<"$usage_no_cost")"
+t usage-token-pair-does-not-require-cost '90|12|claude-haiku-4-5|shared-a' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* model=\([^ ]*\).* pool=\([^ ]*\).*/\1|\2|\3|\4/p' <<<"$usage_no_cost_end")"
+t usage-absent-cost-stays-absent 0 \
+  "$(grep -c ' cost_usd=' <<<"$usage_no_cost_end" || true)"
+t usage-absent-cache-concept-stays-absent 0 \
+  "$(grep -Ec ' cache_(creation|read)_input_tokens=' <<<"$usage_no_cost_end" || true)"
+
+usage_partial="$(usage_run shared-a partial-cost)"
+usage_partial_end="$(grep 'SESSION END' <<<"$usage_partial")"
+t usage-unknown-or-partial-cost-is-omitted '80|0|4|0' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* cache_creation_input_tokens=\([^ ]*\).* cache_read_input_tokens=\([^ ]*\).*/\1|\2|\3/p' <<<"$usage_partial_end")|$(grep -c ' cost_usd=' <<<"$usage_partial_end" || true)"
+
+usage_unknown_model="$(usage_run shared-a unknown-model opus)"
+usage_unknown_model_end="$(grep 'SESSION END' <<<"$usage_unknown_model")"
+t usage-unnamed-model-is-unknown-not-tier 'opus|unknown' \
+  "$(sed -n 's/.* tier=\([^ ]*\).* model=\([^ ]*\).*/\1|\2/p' <<<"$usage_unknown_model_end")"
+
+usage_two_models="$(usage_run shared-a two-models)"
+usage_two_models_end="$(grep 'SESSION END' <<<"$usage_two_models")"
+t usage-two-models-selects-largest-output-and-counts 'claude-opus-4|2' \
+  "$(sed -n 's/.* model=\([^ ]*\).* models=\([^ ]*\).*/\1|\2/p' <<<"$usage_two_models_end")"
+
+# Vendor diagnostics are prose, not structured stdout: both surfaces survive
+# independently, and a harmless warning cannot silently disable accounting.
+usage_noisy="$(usage_run shared-a valid-with-warning)"
+usage_noisy_end="$(grep 'SESSION END' <<<"$usage_noisy")"
+usage_noisy_prose="$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$usage_noisy")"
+t usage-structured-stderr-keeps-accounting '120|shared-a|0|ok' \
+  "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).* input_tokens=\([^ ]*\).* pool=\([^ ]*\).*/\3|\4|\1|\2/p' <<<"$usage_noisy_end")"
+t usage-structured-stderr-keeps-diagnostic 1 \
+  "$(grep -c '^vendor warning$' <<<"$usage_noisy_prose" || true)"
+t usage-structured-stderr-keeps-result-prose 1 \
+  "$(grep -c '^I pushed the fix\.$' <<<"$usage_noisy_prose" || true)"
+t usage-structured-stderr-hides-json-envelope 0 \
+  "$(grep -c '^{"type":"result"' <<<"$usage_noisy_prose" || true)"
+
+# Two independent directories stand in for two boxes: pool identity is the
+# operator's declaration, not a session-local or box-local derivative.
+usage_same="$(usage_run shared-a valid)"
+usage_other="$(usage_run shared-b valid)"
+t usage-same-pool-is-stable-across-boxes shared-a \
+  "$(grep 'SESSION END' <<<"$usage_same" | sed -n 's/.* pool=\([^ ]*\).*/\1/p')"
+t usage-different-pool-is-distinguishable shared-b \
+  "$(grep 'SESSION END' <<<"$usage_other" | sed -n 's/.* pool=\([^ ]*\).*/\1/p')"
+
+usage_unsafe="$(usage_run 'bad pool' valid)"
+usage_unsafe_end="$(grep 'SESSION END' <<<"$usage_unsafe")"
+t usage-unsafe-pool-warns-separately 1 \
+  "$(grep -c '^WARN: session accounting:' <<<"$usage_unsafe" || true)"
+t usage-unsafe-pool-keeps-one-session-end 1 \
+  "$(grep -c '^SESSION END ' <<<"$usage_unsafe" || true)"
+t usage-unsafe-pool-keeps-parseable-session-id session%2Fone \
+  "$(sed -n 's/.* session_id=\([^ ]*\).*/\1/p' <<<"$usage_unsafe_end")"
+t usage-unsafe-pool-is-omitted 0 \
+  "$(grep -c ' pool=' <<<"$usage_unsafe_end" || true)"
+
+# Malformed accounting is absent, while the work's result, rc, outcome and
+# prose survive. This is the failure direction the instrument must never own.
+usage_bad="$(usage_run shared-a malformed)"
+usage_bad_end="$(grep 'SESSION END' <<<"$usage_bad")"
+t usage-malformed-block-does-not-fail-session '0|ok' \
+  "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).*/\1|\2/p' <<<"$usage_bad_end")"
+t usage-malformed-block-claims-no-input-token 0 \
+  "$(grep -c ' input_tokens=' <<<"$usage_bad_end" || true)"
+t usage-malformed-block-claims-no-pool 0 \
+  "$(grep -c ' pool=' <<<"$usage_bad_end" || true)"
+t usage-malformed-block-keeps-prose 'I pushed the fix.' \
+  "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_bad")"
+
+# A usage reporter is not synonymous with structured stdout. This fixture's
+# ordinary command writes an artifact in the session directory; its profile
+# hook selects that artifact from the context run_session supplies.
+usage_artifact_dir="$TMP/usage-artifact"
+mkdir -p "$usage_artifact_dir/logs" "$usage_artifact_dir/work"
+usage_artifact="$({
+  unset -f bot_cli_structured_cmd bot_cli_structured_prose 2>/dev/null || true
+  bot_cli_usage() {
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >"$usage_artifact_dir/context"
+    jq -ce . "$2/usage.json"
+  }
+  DUTY_DIR="$usage_artifact_dir"; LOG_DIR="$usage_artifact_dir/logs"
+  DUTY_TICK_ID="tick-usage-artifact"; SESSION_CREDENTIAL_POOL="shared-a"
+  BOT_CLI_CMD=(bash -c 'printf '\''%s\n'\'' '\''{"input_tokens":7,"output_tokens":3,"session_id":"artifact/one","model":"artifact-model","models":1}'\'' >usage.json; printf '\''exec\nartifact prose\n'\''')
+  run_session build fixture/artifact "$usage_artifact_dir/work" 5 prompt \
+    | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+})"
+usage_artifact_end="$(grep 'SESSION END' <<<"$usage_artifact")"
+t usage-artifact-reporter-needs-no-structured-command \
+  '7|3|artifact-model|shared-a' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* model=\([^ ]*\).* pool=\([^ ]*\).*/\1|\2|\3|\4/p' <<<"$usage_artifact_end")"
+t usage-artifact-reporter-receives-empty-structured-source '' \
+  "$(cut -f1 "$usage_artifact_dir/context")"
+t usage-artifact-reporter-receives-session-directory "$usage_artifact_dir/work" \
+  "$(cut -f2 "$usage_artifact_dir/context")"
+t usage-artifact-reporter-receives-prose-log 1 \
+  "$([ "$(cut -f3 "$usage_artifact_dir/context")" = "$(find "$usage_artifact_dir/logs" -name '*.log')" ] && printf 1 || printf 0)"
+t usage-artifact-command-keeps-legacy-prose 'exec' \
+  "$(sed -n '1p' "$usage_artifact_dir"/logs/*.log)"
+
+# A hookless profile is the exact old command/log/line shape: the existing
+# budget golden below pins the whole line byte-for-byte; this focused case
+# additionally proves no usage/pool field can appear merely because the
+# engine learned the optional protocol.
+usage_legacy="$(
+  unset -f bot_cli_structured_cmd bot_cli_structured_prose bot_cli_usage 2>/dev/null || true
+  SESSION_CREDENTIAL_POOL="configured-but-unmeasured"
+  BOT_CLI_CMD=(bash -c 'printf "exec\nfinal reply\n"')
+  # shellcheck disable=SC2317  # invoked indirectly through session_acted
+  bot_session_acted() { grep -qx exec "$1"; }
+  run_session build fixture/legacy "$SA_WORK" 5 prompt | tail -1
+)"
+t usage-hookless-profile-claims-no-accounting 0 \
+  "$(grep -Ec ' (input_tokens|cost_usd|session_id|pool)=' <<<"$usage_legacy" || true)"
+
 # --- budgets off is byte-identical to today (#464) ------------------------
 #
 # This is what makes the change safe to land while the fleet is stopped, so it

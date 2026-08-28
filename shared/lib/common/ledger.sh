@@ -265,12 +265,13 @@ _session_orphan_scan() {
 #
 # The reconstructed terminal carries the observed emitter's fields even when
 # it cannot recover their values. Unknown numeric measurements use `-`
-# (`rc=-`, `dur=-`, `peak_rss=-`); unknown categorical measurements use
-# `unknown` (`acted=unknown`, `tier=unknown`). The reconciler knows the
-# session started and knows nobody is running it, but knows nothing about how
-# it exited, how long it took, which model tier it bought, or how much memory
-# it took with it. `started=` is its own field and stays last: this line's
-# timestamp is the reconcile time, not the death.
+# (`rc=-`, `dur=-`, `peak_rss=-`, token counts and cost); unknown categorical
+# measurements use `unknown` (`acted=unknown`, `tier=unknown`, session and pool
+# identity). The reconciler knows the session started and knows nobody is
+# running it, but knows nothing about how it exited, how long it took, which
+# model tier or credential pool it bought, or what it cost. `started=` is its
+# own field and stays last: this line's timestamp is the reconcile time, not
+# the death.
 #
 # `peak_rss=-` and not an absent field, which is the one place this line and
 # run_session's differ in kind rather than in value (#473 D2): the observed
@@ -307,7 +308,7 @@ session_reconcile_orphans() {
     # makes the start answered, so one box-kill would be counted again on every
     # run and D2's evidence would go to a terminal. Both writers open O_APPEND,
     # so this fd is safe beside the tick's inherited one.
-    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= tier=unknown peak_rss=- started=$started" >>"$logfile"
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started" >>"$logfile"
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.

@@ -239,24 +239,64 @@ orph_mutant() {
   t "orphan-mutation-$name-applies" applied "$applied"
 }
 
-# Read the field names from an emitter's own SESSION END source line. Neither
-# side is listed here: adding a field to run_session must red until the
-# reconstructed emitter gains it too, including fields nobody anticipated when
-# this guard was written.
+# Read the field names from an emitter's own SESSION END source line. A suffix
+# variable is resolved through the helper assigned to it, so an appender cannot
+# evade parity merely by interpolating a pre-built string (#475). Neither side
+# is listed here: adding a field to run_session must red until the reconstructed
+# emitter gains it too, including fields nobody anticipated when this guard was
+# written.
 session_end_tokens() {
-  sed -n '/^[[:space:]]*log "SESSION END / {
-    s/^[^"]*"SESSION END //
-    s/".*$//
-    p
-    q
-  }' "$1" \
-    | grep -oE '(^| )[[:alpha:]_][[:alnum:]_]*=' \
-    | tr -d ' =' \
-    | sort -u
+  local source="$1" line var helper
+  line="$(sed -n '/^[[:space:]]*log "SESSION END / { p; q; }' "$source")"
+  {
+    printf '%s\n' "$line" \
+      | grep -oE '(^| )[[:alpha:]_][[:alnum:]_]*=' \
+      | tr -d ' ='
+    while IFS= read -r var; do
+      helper="$(awk -v v="$var" '
+        {
+          line = $0
+          sub(/^[[:space:]]*/, "", line)
+          prefix = v "=\"$("
+          if (index(line, prefix) == 1) {
+            line = substr(line, length(prefix) + 1)
+            sub(/[)[:space:]\"].*$/, "", line)
+            print line
+            exit
+          }
+        }
+      ' "$source")"
+      [ -n "$helper" ] || continue
+      awk -v sig="$helper() {" '
+        $0 == sig { body = 1 }
+        body { print }
+        body && /^}/ { exit }
+      ' "$source" \
+        | grep -oE "(^|[\"']) [[:alpha:]_][[:alnum:]_]*=" \
+        | tr -d "\"' ="
+    done < <(printf '%s\n' "$line" \
+      | grep -oE '\$[[:alpha:]_][[:alnum:]_]*' \
+      | tr -d '$' \
+      | awk '!seen[$0]++')
+  } | awk '!seen[$0]++'
 }
 
 session_end_missing() {
-  comm -23 <(session_end_tokens "$1") <(session_end_tokens "$2")
+  comm -23 \
+    <(session_end_tokens "$1" | sort -u) \
+    <(session_end_tokens "$2" | sort -u)
+}
+
+session_end_order_mismatch() {
+  awk '
+    NR == FNR { observed[++n] = $0; wanted[$0] = 1; next }
+    $0 in wanted { reconstructed[++m] = $0 }
+    END {
+      for (i = 1; i <= n; i++) {
+        if (observed[i] != reconstructed[i]) print observed[i]
+      }
+    }
+  ' <(session_end_tokens "$1") <(session_end_tokens "$2")
 }
 
 # The three shapes the test plan names, in one log: an orphaned start, a
@@ -304,12 +344,25 @@ t orphan-names-the-start-it-answers 2026-08-14T03:00:01Z \
   "$(orph_kv "$ORPH1_LINE" started)"
 t orphan-acted-is-unknown-not-no unknown "$(orph_kv "$ORPH1_LINE" acted)"
 t orphan-tier-is-unknown-not-default unknown "$(orph_kv "$ORPH1_LINE" tier)"
+t orphan-input-tokens-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" input_tokens)"
+t orphan-output-tokens-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" output_tokens)"
+t orphan-cache-creation-is-unmeasured '-' \
+  "$(orph_kv "$ORPH1_LINE" cache_creation_input_tokens)"
+t orphan-cache-read-is-unmeasured '-' \
+  "$(orph_kv "$ORPH1_LINE" cache_read_input_tokens)"
+t orphan-cost-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" cost_usd)"
+t orphan-session-id-is-unknown unknown "$(orph_kv "$ORPH1_LINE" session_id)"
+t orphan-model-is-unknown unknown "$(orph_kv "$ORPH1_LINE" model)"
+t orphan-model-count-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" models)"
+t orphan-pool-is-unknown unknown "$(orph_kv "$ORPH1_LINE" pool)"
 case "$ORPH1_LINE" in *' started=2026-08-14T03:00:01Z') r1=last ;; *) r1=NOT-LAST ;; esac
 t orphan-started-stays-last last "$r1"
 # D1/D3. Token parity is source-derived on both sides; this is the standing
 # guard that makes the next observed field fail on the PR that adds it.
 t orphan-session-end-token-parity '' \
   "$(session_end_missing "$SHARED/lib/common/session.sh" "$SHARED/lib/common/ledger.sh")"
+t orphan-session-end-token-order '' \
+  "$(session_end_order_mismatch "$SHARED/lib/common/session.sh" "$SHARED/lib/common/ledger.sh")"
 # "Distinguishable by its outcome ALONE" is a claim about the token, not about
 # the rest of the line: no verdict run_session can reach may spell it. Read off
 # session.sh's own assignments so a fourth observed verdict added there without
@@ -487,10 +540,29 @@ ORPH_M6="$TMP/ledger-mutant-observed-field.sh"
 t orphan-parity-reads-observed-source future \
   "$(session_end_missing "$ORPH_M6" "$SHARED/lib/common/ledger.sh")"
 
+# The observed emitter appends pool through `$pool_suffix`, not as literal text
+# on its SESSION END line. Mutating that helper proves the guard follows the
+# interpolation rather than certifying only fields a grep sees directly.
+orph_mutant indirect-field \
+  "s/printf ' pool=%s'/printf ' indirect=known pool=%s'/" \
+  "$SHARED/lib/common/session.sh"
+ORPH_M11="$TMP/ledger-mutant-indirect-field.sh"
+t orphan-parity-resolves-indirect-observed-source indirect \
+  "$(session_end_missing "$ORPH_M11" "$SHARED/lib/common/ledger.sh")"
+
+# D7's two indirectly appended fields must stay visible to the same guard.
+# Dropping both reconstructed peers proves neither model token is copied into
+# the comparison as a list maintained beside the emitters.
+orph_mutant model-fields-missing \
+  's/ model=unknown models=- pool=unknown/ pool=unknown/'
+ORPH_M13="$TMP/ledger-mutant-model-fields-missing.sh"
+t orphan-parity-reads-indirect-model-fields $'model\nmodels' \
+  "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M13")"
+
 # Must fail: dropping tier from the reconstructed source. This is the inverse
 # mutation, proving that side is derived too rather than copied from a list in
 # the guard.
-orph_mutant tier-missing 's/ tier=unknown peak_rss=- started=/ peak_rss=- started=/'
+orph_mutant tier-missing 's/ tier=unknown peak_rss=-/ peak_rss=-/'
 ORPH_M7="$TMP/ledger-mutant-tier-missing.sh"
 t orphan-parity-reads-reconstructed-source tier \
   "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M7")"
@@ -508,7 +580,7 @@ t orphan-mutation-tier-missing-has-no-value '' \
 # numeric convention this file already uses for rc and dur says the right
 # thing — owed, and lost with the box.
 t orphan-peak-rss-is-owed-not-absent '-' "$(orph_kv "$ORPH1_LINE" peak_rss)"
-orph_mutant peak-missing 's/ peak_rss=- started=/ started=/'
+orph_mutant peak-missing 's/ peak_rss=- input_tokens=-/ input_tokens=-/'
 ORPH_M9="$TMP/ledger-mutant-peak-missing.sh"
 t orphan-parity-reads-peak-rss peak_rss \
   "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M9")"
@@ -517,6 +589,14 @@ orph_start "$ORPH13" 2026-08-14T14:00:00Z build o/r#14 "$ORPH_DEAD.$ORPH_BOOT"
 orph_pass "$ORPH13" "$ORPH_M9"
 t orphan-mutation-peak-missing-has-no-value '' \
   "$(orph_kv "$(orph_lines "$ORPH13")" peak_rss)"
+
+# D1 is order as well as membership. Swap two reconstructed accounting fields
+# and require the source-derived comparison to name both displaced tokens.
+orph_mutant usage-order \
+  's/input_tokens=- output_tokens=-/output_tokens=- input_tokens=-/'
+ORPH_M12="$TMP/ledger-mutant-usage-order.sh"
+t orphan-parity-preserves-observed-order $'input_tokens\noutput_tokens' \
+  "$(session_end_order_mismatch "$SHARED/lib/common/session.sh" "$ORPH_M12")"
 
 # Must fail: `0` claims a measurement the dead session never reported — the
 # same fabrication as tier=default, in the units the floor renders.

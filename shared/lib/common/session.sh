@@ -83,6 +83,58 @@ _session_cli_cmd() {
   _SESSION_TIER="$tier"
 }
 
+# _session_structured_cmd — opt this dispatch into its profile's structured
+# output without assuming a vendor flag. The hook receives the invocation
+# after model-tier resolution, so accounting cannot silently put a tiered
+# session back onto the default model. A missing/refusing hook is the exact
+# legacy path.
+_session_structured_cmd() {
+  _SESSION_STRUCTURED=no
+  declare -F bot_cli_structured_cmd >/dev/null 2>&1 || return 0
+  BOT_CLI_STRUCTURED_CMD=()
+  if bot_cli_structured_cmd "${_SESSION_CLI_CMD[@]}" \
+      && [ "${#BOT_CLI_STRUCTURED_CMD[@]}" -gt 0 ] \
+      && declare -F bot_cli_structured_prose >/dev/null 2>&1; then
+    _SESSION_CLI_CMD=("${BOT_CLI_STRUCTURED_CMD[@]}")
+    _SESSION_STRUCTURED=yes
+  fi
+}
+
+_session_usage_suffix() {
+  local structured dir slog normalized
+  structured="$1"
+  dir="$2"
+  slog="$3"
+  declare -F bot_cli_usage >/dev/null 2>&1 || return 0
+  normalized="$(bot_cli_usage "$structured" "$dir" "$slog")" || return 0
+  jq -er '
+    " input_tokens=\(.input_tokens)" +
+    " output_tokens=\(.output_tokens)" +
+    (if has("cache_creation_input_tokens")
+      then " cache_creation_input_tokens=\(.cache_creation_input_tokens)" else "" end) +
+    (if has("cache_read_input_tokens")
+      then " cache_read_input_tokens=\(.cache_read_input_tokens)" else "" end) +
+    (if has("cost_usd") then " cost_usd=\(.cost_usd)" else "" end) +
+    " session_id=\(.session_id | @uri)" +
+    " model=\(.model | @uri)" +
+    (if (.models // 0) > 1 then " models=\(.models)" else "" end)
+  ' <<<"$normalized" 2>/dev/null || true
+}
+
+_session_pool_suffix() {
+  local pool="${SESSION_CREDENTIAL_POOL:-}"
+  [ -n "$pool" ] || return 0
+  case "$pool" in
+    *[!A-Za-z0-9._:-]*)
+      # warn() writes to stdout, but this helper is captured as line data.
+      # Keep the diagnostic out of the SESSION END suffix.
+      warn "session accounting: SESSION_CREDENTIAL_POOL must be a safe token — omitting pool identity" >&2
+      return 0
+      ;;
+  esac
+  printf ' pool=%s' "$pool"
+}
+
 # run_session KIND KEY DIR TIMEOUT PROMPT — the only way a duty launches the
 # box CLI. Adds what every hand-rolled variant lacked somewhere: a timeout (a
 # hung session used to hold the flock forever, invisibly), captured exit
@@ -90,7 +142,7 @@ _session_cli_cmd() {
 # line in duty.log (the biggest logging gap in three of five metrics files).
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
-  local slog rc=0 start terminal=no
+  local slog cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -99,8 +151,19 @@ run_session() {
   # Both gates passed, so this dispatch is really happening: now, and not
   # before, resolve what it is bought with (#469).
   _session_cli_cmd "$kind"
+  _session_structured_cmd
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
+  cli_log="$slog"
+  if [ "$_SESSION_STRUCTURED" = yes ]; then
+    structured_log="$slog.structured"
+    cli_log="$structured_log"
+    # SESSION START advertises the prose path, and every reader selects
+    # `*.log`. Keep that path real while the vendor JSON is captured beside
+    # it; completion appends restored prose after any diagnostics written here.
+    : >"$slog"
+    exec {cli_stderr_fd}>>"$slog"
+  fi
   # holder=: who to ask, at a later tick, whether this session is still
   # running. Nothing below this line runs if the box dies under the CLI, so
   # the start has to carry the liveness question with it — and it has to be a
@@ -138,9 +201,13 @@ run_session() {
   # scoring at the moment the CLI is `exec`'d. It cannot fail the dispatch: it
   # returns 0 on every path, so the `&&` chain is unbroken on a guest with no
   # writable procfs.
+  # Structured stdout stays parseable beside the advertised prose log, while
+  # diagnostics remain on that prose surface. The restored result is appended
+  # after the CLI exits, so neither accounting nor diagnostics erase the other.
   ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
-      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 &
+      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&"$cli_stderr_fd" &
   _SESSION_DISPATCH_PID=$!
+  [ "$cli_stderr_fd" -eq 1 ] || exec {cli_stderr_fd}>&-
   # Started AFTER the dispatch, which is D4 by construction: the session is
   # already running by the time anything about measuring it can go wrong.
   # `.peak` and not `.log`, and LOG_DIR's readers select on that suffix — the
@@ -163,7 +230,12 @@ run_session() {
   wait "$_SESSION_DISPATCH_PID" || rc=$?
   _session_peak_rss_stop
   _session_mem_watch_stop "$slog.mem"
+  if [ -n "$structured_log" ]; then
+    bot_cli_structured_prose "$structured_log" >>"$slog" 2>/dev/null \
+      || cat "$structured_log" >>"$slog"
+  fi
   local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit
+  local usage_suffix pool_suffix
   mem_hit="$(session_mem_hit "$slog.mem")"
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
@@ -185,7 +257,20 @@ run_session() {
   acted="$(session_acted "$slog")"
   reply_tail="$(session_reply_tail "$slog")"
   peak_rss="$(session_peak_rss "$slog.peak")"
+  # Usage reporting is profile-owned and independent of the capture shape.
+  # Claude reads structured_log; an artifact-backed profile can instead use
+  # the session directory and advertised prose log supplied beside it (#475).
+  usage_suffix="$(_session_usage_suffix "$structured_log" "$dir" "$slog")"
+  # A pool is useful only beside figures it groups. Keeping it off a missing
+  # or malformed usage block also preserves the exact legacy SESSION END line
+  # promised to profiles that cannot report structured output (#475).
+  if [ -n "$usage_suffix" ]; then
+    pool_suffix="$(_session_pool_suffix)"
+  else
+    pool_suffix=""
+  fi
   rm -f "$slog.peak" "$slog.mem" 2>/dev/null || true
+  [ -z "$structured_log" ] || rm -f "$structured_log" 2>/dev/null || true
   # tier= is APPENDED, after reply_tail, and the position is the whole of D5's
   # compatibility (#469). This chain is justified by an aggregate read off
   # these lines, so a field that breaks the measurement would be a poor way to
@@ -211,7 +296,7 @@ run_session() {
   # reconstructed terminal in common/ledger.sh carries the field as `-`, the
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}"
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
