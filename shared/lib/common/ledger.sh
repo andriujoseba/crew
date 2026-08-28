@@ -128,7 +128,7 @@ SESSION_ORPHAN_OUTCOME=ORPHANED
 # fallback stated as a value rather than as an error.
 _session_boot_id() {
   local id
-  id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || id=""
+  id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" || id="" # Decision-path empty fallback: `unknown` below preserves the safe pid-check direction.
   [ -n "$id" ] || id=unknown
   printf '%s' "${id%%-*}"
 }
@@ -283,7 +283,7 @@ _session_orphan_scan() {
 session_reconcile_orphans() {
   local logfile="$DUTY_DIR/duty.log" records kind key holder slog started closed=0
   [ -s "$logfile" ] || return 0
-  records="$(_session_orphan_scan "$logfile")" || records=""
+  records="$(_session_orphan_scan "$logfile")" || records="" # Decision-path empty fallback: an unknown scan reconciles nothing and fabricates no terminal.
   [ -n "$records" ] || return 0
   # A here-string and not a pipe: the loop must run in THIS shell to keep its
   # count, and `scan | while` under pipefail is the shape #449 exists about.

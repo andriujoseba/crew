@@ -45,4 +45,16 @@ unknown="$(operating_limit missing-limit)" || unknown_rc=$?
 t unknown-limit-refuses 2 "$unknown_rc"
 t unknown-limit-names-cause 1 "$(grep -c "ERROR: operating limit: unknown limit 'missing-limit'" <<<"$unknown" || true)"
 
+# Every decision-path `|| name=""` must explain its safe failure direction on
+# the code line itself. Comments that quote the old bug are not candidates.
+unjustified="$(
+  while IFS= read -r source; do
+    awk '/\|\|[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=""/ \
+         && $0 !~ /^[[:space:]]*#/ \
+         && $0 !~ /Decision-path empty fallback:/ \
+         { print FILENAME ":" FNR ":" $0 }' "$source"
+  done < <(engine_lib_sources; find "$SHARED/bin" -type f -name '*.sh' -print | sort)
+)"
+t decision-path-empty-fallbacks-are-justified '' "$unjustified"
+
 suite_finish

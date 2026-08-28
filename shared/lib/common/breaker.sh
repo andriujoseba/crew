@@ -75,8 +75,10 @@ _session_terminal_record() {
   fi
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   count=$((count + 1))
-  threshold="${SESSION_TERMINAL_THRESHOLD:-3}"
-  case "$threshold" in ''|*[!0-9]*|0) threshold=3 ;; esac
+  threshold="${SESSION_TERMINAL_THRESHOLD:-$OPERATING_LIMIT_SESSION_TERMINAL_FAILURES}"
+  case "$threshold" in
+    ''|*[!0-9]*|0) threshold="$OPERATING_LIMIT_SESSION_TERMINAL_FAILURES" ;;
+  esac
   tick="${DUTY_TICK_ID:-$$}"
   status=closed
   [ "$count" -lt "$threshold" ] || status=tripped
