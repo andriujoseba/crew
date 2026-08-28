@@ -121,6 +121,16 @@ printf 'app\n' >>"$DRILL_SECTION_LOG"
     *) printf '%s\n' "${DRILL_APP_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
   esac
 }
+case " $* " in
+  *" --no-browser "*) ;;
+  *)
+    case "${DRILL_BROWSER_STATUS:-ok}" in
+      ok) echo 'ok   browser walk against the real fleet (read-only)' ;;
+      skip) echo 'skip browser walk — playwright-core not installed' ;;
+      fail) echo 'FAIL browser walk against the real fleet (read-only)' ;;
+      missing) : ;;
+    esac ;;
+esac
 exit 0
 APP
 chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
@@ -207,6 +217,41 @@ t drill-tree-record-names-head 1 \
   "$(grep -cF "## drilled source: $SECOND (tree $SOURCE)" <<<"$tree_out")"
 t drill-tree-phase-zero-names-head 1 \
   "$(grep -cF "phase 0: crew at $SECOND (tree $SOURCE), static checks" <<<"$tree_out")"
+t drill-record-enumerates-all-declared-legs 12 \
+  "$(grep -c '^## leg \(executed\|not-executed\) ' <<<"$tree_out")"
+t drill-record-names-browser-exclusion 1 \
+  "$(grep -c '^## leg not-executed browser  (skip; --no-app)' <<<"$tree_out")"
+t drill-record-names-unrequested-armed-leg-with-app-disabled 1 \
+  "$(grep -c '^## leg not-executed app-armed  (skip; --no-app)' \
+    <<<"$tree_out")"
+
+# The original three zero-execution findings remain visible with their actual
+# states: breaker and notify name the operator exclusions in this fixture, and
+# the browser is positively recorded as executed.
+for excluded_leg in breaker notify; do
+  t "drill-record-names-$excluded_leg-exclusion" 1 \
+    "$(grep -c "^## leg not-executed $excluded_leg  (skip; --no-$excluded_leg-drill)" \
+      <<<"$tree_out")"
+done
+
+# A new declaration with no call site cannot disappear. Mutate only the list:
+# the runtime agreement check must add a named missing-result row and red.
+UNWIRED="$HARNESS/rehearsal-all-unwired.sh"
+sed 's/hygiene breaker resume/hygiene never-wired breaker resume/' \
+  "$HARNESS/rehearsal-all.sh" >"$UNWIRED"
+if unwired_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" bash "$UNWIRED" --tree "$SOURCE" --roles reviewer \
+      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  unwired_rc=0
+else
+  unwired_rc=$?
+fi
+t drill-unwired-declared-leg-reds 1 "$unwired_rc"
+t drill-unwired-declared-leg-is-visible 1 \
+  "$(grep -c '^## leg not-executed never-wired  (recorded 0 results; expected exactly one)' \
+    <<<"$unwired_out")"
 
 # A red assertion inside phase 2 must not silently void the independent
 # installer, config and app sections. The explicit stage channel distinguishes
@@ -235,9 +280,15 @@ t drill-phase2-failure-runs-config 1 \
   "$(grep -cF 'ok         config  (operator mode + registry contract)' <<<"$phase2_out")"
 t drill-phase2-failure-runs-app 1 \
   "$(grep -cF 'ok         app  (collector + page)' <<<"$phase2_out")"
+t drill-phase2-records-browser-executed 1 \
+  "$(grep -c '^## leg executed browser  (ok; read-only browser walk executed)' \
+    <<<"$phase2_out")"
+t drill-phase2-records-app-armed-blocker 1 \
+  "$(grep -c '^## leg not-executed app-armed  (skip; not requested: no --app-roster; requires an armed member)' \
+    <<<"$phase2_out")"
 t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LOG")"
-t drill-phase2-summary-counts-three-passed 1 \
-  "$(grep -cE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+t drill-phase2-summary-counts-four-passed 1 \
+  "$(grep -cE '^## section states: 4 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
 
 # A named app roster adds an armed comparison after the generated drill-role
 # comparison. It does not replace that pass and it does not invoke another
@@ -440,8 +491,8 @@ t drill-phase2-record-names-every-later-section complete "$r1"
 phase2_missing_app="$(sed '/^##   ok         app  /d' <<<"$phase2_out")"
 if required_later_sections "$phase2_missing_app"; then r1=FALSE_PASS; else r1=red; fi
 t drill-phase2-absent-section-mutation-reds red "$r1"
-phase2_wrong_count="${phase2_out/3 passed, 1 failed/4 passed, 0 failed}"
-if grep -qE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' \
+phase2_wrong_count="${phase2_out/4 passed, 1 failed/5 passed, 0 failed}"
+if grep -qE '^## section states: 4 passed, 1 failed, [0-9]+ skipped/not-run$' \
     <<<"$phase2_wrong_count"; then r1=FALSE_PASS; else r1=red; fi
 t drill-phase2-summary-count-mutation-reds red "$r1"
 

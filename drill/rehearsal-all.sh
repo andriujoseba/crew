@@ -187,6 +187,14 @@ RESUME_STATUS="$(mktemp)"
 ATTENTION_STATUS="$(mktemp)"
 ATTENTION_AUDIT_STATUS="$(mktemp)"
 APP_AGREEMENT_STATUS="$(mktemp)"
+APP_OUTPUT="$(mktemp)"
+# One row per independently runnable leg. The final record is checked against
+# this list before it is printed: adding a leg here without wiring a result is
+# therefore a visible red row, never an absence that looks like coverage.
+declare -a DECLARED_LEGS=(
+  hygiene breaker resume attention attention-audit notify
+  installer config app browser app-armed teardown
+)
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -222,6 +230,7 @@ cleanup_role_hygiene_files() {
   [ -z "${ATTENTION_STATUS:-}" ] || rm -f -- "$ATTENTION_STATUS"
   [ -z "${ATTENTION_AUDIT_STATUS:-}" ] || rm -f -- "$ATTENTION_AUDIT_STATUS"
   [ -z "${APP_AGREEMENT_STATUS:-}" ] || rm -f -- "$APP_AGREEMENT_STATUS"
+  [ -z "${APP_OUTPUT:-}" ] || rm -f -- "$APP_OUTPUT"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -498,6 +507,7 @@ if [ "$APP" -eq 1 ]; then
   else
     echo "## (generated app pass: no role reached a box this run — no generated member to compare)"
     SUMMARY+=("SKIPPED    app  (generated pass blocked by role install: no installed drill box)")
+    SUMMARY+=("SKIPPED    browser  (generated pass blocked by role install: no installed drill box)")
     APP_ROW_EMITTED=1
     [ "$overall" -eq 1 ] || overall=2
   fi
@@ -510,16 +520,18 @@ fi
 
 if [ "$APP" -eq 0 ] && [ "$APP_ROW_EMITTED" -eq 0 ]; then
   SUMMARY+=("skip       app  (--no-app)")
+  SUMMARY+=("skip       browser  (--no-app)")
   APP_ROW_EMITTED=1
 fi
 
 if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
   : >"$APP_AGREEMENT_STATUS"
   REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
-    "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
-  # rc on its own line, like the role loop above — this file's own history is
-  # why (crew#30: a bare status read inside a compound).
-  rc=$?
+    "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"} \
+      | tee "$APP_OUTPUT"
+  # PIPESTATUS belongs on its own line for the same reason the role rc does:
+  # the app command's verdict, not tee's, is the round fact (#30).
+  rc="${PIPESTATUS[0]}"
   app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
   case "$rc" in
     0)
@@ -535,6 +547,19 @@ if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
   esac
   APP_ROW_EMITTED=1
 
+  if grep -q '^ok   browser walk against the real fleet (read-only)$' "$APP_OUTPUT"; then
+    SUMMARY+=("ok         browser  (read-only browser walk executed)")
+  elif browser_skip="$(sed -n 's/^skip browser walk — //p' "$APP_OUTPUT" | head -1)" \
+      && [ -n "$browser_skip" ]; then
+    SUMMARY+=("INCOMPLETE browser  (not executed: $browser_skip)")
+    [ "$overall" -eq 1 ] || overall=2
+  elif grep -q '^FAIL browser walk' "$APP_OUTPUT"; then
+    SUMMARY+=("FAIL       browser  (browser walk executed and failed)")
+    overall=1
+  else
+    SUMMARY+=("INCOMPLETE browser  (app phase emitted no browser verdict)")
+    [ "$overall" -eq 1 ] || overall=2
+  fi
 fi
 
 # A named roster is an additional reading after the drill-role pass, never a
@@ -564,6 +589,10 @@ if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
       esac ;;
     *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
   esac
+elif [ "$APP" -eq 1 ]; then
+  SUMMARY+=("skip       app-armed  (not requested: no --app-roster; requires an armed member)")
+else
+  SUMMARY+=("skip       app-armed  (--no-app)")
 fi
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every
@@ -608,6 +637,32 @@ echo "## fleet rehearsal summary ($AGENT)"
 if [ -n "$RESOLVED_REF" ]; then
   echo "## drilled source: $RESOLVED_REF ($SOURCE_RECORD)"
 fi
+
+# The inventory is the round's declaration-to-result agreement block. It is
+# generated from SUMMARY rather than maintained beside it, so the detailed
+# verdict and the executed/not-executed reading cannot disagree. A missing or
+# duplicate result is itself recorded and reds the round.
+declare -a LEG_RECORD=()
+for declared_leg in "${DECLARED_LEGS[@]}"; do
+  declare -a leg_rows=()
+  for summary_row in "${SUMMARY[@]}"; do
+    read -r _state row_leg _detail <<<"$summary_row"
+    [ "$row_leg" != "$declared_leg" ] || leg_rows+=("$summary_row")
+  done
+  if [ "${#leg_rows[@]}" -ne 1 ]; then
+    LEG_RECORD+=("not-executed $declared_leg  (recorded ${#leg_rows[@]} results; expected exactly one)")
+    overall=1
+    continue
+  fi
+  read -r leg_state _leg_name leg_detail <<<"${leg_rows[0]}"
+  case "${leg_rows[0]}" in
+    ok\ *|FAIL\ *) LEG_RECORD+=("executed $declared_leg  ($leg_state; ${leg_detail#(}") ;;
+    *) LEG_RECORD+=("not-executed $declared_leg  ($leg_state; ${leg_detail#(}") ;;
+  esac
+done
+
+echo "## declared leg states:"
+printf '## leg %s\n' "${LEG_RECORD[@]}"
 summary_passed=0
 summary_failed=0
 summary_skipped=0
