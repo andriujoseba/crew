@@ -542,28 +542,28 @@ fi
 # drill member: that failure is recorded above and must not silently suppress
 # independent evidence from an already-armed member (#494).
 if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
-    echo
-    echo "############################################################"
-    echo "## fleet app — armed roster comparison"
-    echo "############################################################"
-    # Comparison-only: repeating browser or control flags would spend a second
-    # walk and could mutate the armed member this pass exists only to read.
-    : >"$APP_AGREEMENT_STATUS"
-    REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
-      "$HERE/rehearsal-app.sh" --roster "$APP_ROSTER" --no-browser
-    rc=$?
-    app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
-    case "$rc" in
-      0)
-        case "$app_agreement" in
-          compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
-          could-not-compare)
-            SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)")
-            [ "$overall" -eq 1 ] || overall=2 ;;
-          *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
-        esac ;;
-      *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
-    esac
+  echo
+  echo "############################################################"
+  echo "## fleet app — armed roster comparison"
+  echo "############################################################"
+  # Comparison-only: repeating browser or control flags would spend a second
+  # walk and could mutate the armed member this pass exists only to read.
+  : >"$APP_AGREEMENT_STATUS"
+  REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
+    "$HERE/rehearsal-app.sh" --roster "$APP_ROSTER" --no-browser
+  rc=$?
+  app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
+  case "$rc" in
+    0)
+      case "$app_agreement" in
+        compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+        could-not-compare)
+          SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)")
+          [ "$overall" -eq 1 ] || overall=2 ;;
+        *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
+      esac ;;
+    *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
+  esac
 fi
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every

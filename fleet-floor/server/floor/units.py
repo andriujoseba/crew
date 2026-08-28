@@ -410,19 +410,20 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     elif meta.get("cron", "0") == "0":
         u["note"] = u["note"] or "no cron armed — crew hire %s" % unit["box"]
 
+    # Session timestamps can still be translated from the tick-age evidence
+    # when the box clock is missing or the wall-clock bracket is unusable. In
+    # particular, a host clock step can reverse the bracket; its midpoint is
+    # then not a bound on the guest sample and must never be published as skew
+    # evidence.
+    clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
     guest_now = parse_ts(meta.get("now", ""))
-    if guest_now:
+    if guest_now and probe_finished >= probe_started:
         probe_midpoint = (probe_started + probe_finished) / 2
         clock_offset = probe_midpoint - guest_now
         u["clock_delta"] = round(clock_offset)
         u["clock_uncertainty"] = max(
             1, math.ceil((probe_finished - probe_started) / 2 + 1)
         )
-    else:
-        # Old/malformed evidence cannot publish a skew verdict. Retain the
-        # tick-derived translation only so session ages keep their established
-        # host-timeline behavior while the missing measurement stays explicit.
-        clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
     sessions, cur = derive_sessions(loglines, now, clock_offset)
     u["queue"] = derive_queue(loglines)
     u["cur"] = cur

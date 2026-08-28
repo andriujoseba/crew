@@ -165,17 +165,27 @@ probe = """::engine crew@0.4.1 (deadbee)
 2025-08-25T19:59:30Z duty run start
 ::logend
 """
-samples = iter((guest_now + 3, guest_now - 3))
+samples = iter((guest_now + 100, guest_now + 2))
 units.time.time = lambda: next(samples)
 units.probe_box = lambda unit, agent_conf: (probe, "")
 unit = units.build_unit(
     {"box": "backward-clock", "agent": "claude", "room": "builder"},
     "running", {}, guest_now,
 )
-print(unit["clock_uncertainty"])
+print("%s:%s:%s:%s:%s" % (
+    unit["clock_delta"], unit["clock_uncertainty"],
+    unit["cron"]["ok"], unit["disarmed"], unit["state"],
+))
 PY
 )"
-t "clock: backward host step keeps uncertainty positive" 1 "$FF_BACKWARD_CLOCK"
+IFS=: read -r backward_delta backward_uncertainty backward_tick backward_disarmed backward_state \
+  <<<"$FF_BACKWARD_CLOCK"
+t "clock: backward host step leaves delta unusable" None "$backward_delta"
+t "clock: backward host step leaves uncertainty unusable" None "$backward_uncertainty"
+t "agreement: asymmetric synchronized backstep cannot qualify" does-not-qualify \
+  "$(agreement_armed_skewed \
+      "$(agreement_case "$backward_state" 'backward-clock idle' '' "$backward_disarmed")" \
+      "$backward_disarmed" "$backward_tick" "$backward_delta" "$backward_uncertainty")"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
 t "agreement: armed fresh skew qualifies" qualifies \
@@ -204,10 +214,13 @@ t "agreement: qualifying evidence increments the live count" 1 \
 t "agreement: disarmed evidence leaves the live count unchanged" 0 \
   "$(agreement_armed_count 0 up True True 10800 2)"
 t "agreement: the live loop has one count decision" 1 \
-  "$(grep -cE '^  next_armed_count=.*agreement_armed_count' "$FLOOR/../drill/rehearsal-app.sh")"
-agreement_loop_source="$(sed -n \
-  '/^while read -r name _agent _role _from; do/,/^done < <(roster_rows)$/p' \
-  "$FLOOR/../drill/rehearsal-app.sh")"
+  "$(grep -cE '^[[:space:]]*next_armed_count=.*agreement_armed_count' \
+      "$FLOOR/../drill/rehearsal-app.sh")"
+agreement_loop_source="$(awk '
+  /^  # One unit is one measurement\./ { in_agreement_loop=1 }
+  in_agreement_loop { print }
+  in_agreement_loop && /^done < <\(roster_rows\)$/ { exit }
+' "$FLOOR/../drill/rehearsal-app.sh")"
 t "agreement: each member uses one fleet snapshot" 1 \
   "$(grep -cF 'body GET /api/fleet' <<<"$agreement_loop_source")"
 t "agreement: an armed skewed comparison makes the round comparable" compared \
