@@ -242,8 +242,18 @@ done
 if [ "$supp_when" -gt 0 ]; then
   emit suppression "$(( $(date +%s) - supp_when )) $supp_kind $supp_key"
 else
-  emit suppression ""
+emit suppression ""
 fi
+
+# Durable engine limit events cross as one uninterpreted section. The probe
+# reports the cumulative loss counter, reads the spool verbatim, and writes
+# nothing; parsing and delivery stay on the host floor (#482 D6.4).
+limit_dropped="$(cat "$DUTY_DIR/.limit-events.dropped" 2>/dev/null || echo 0)"
+case "$limit_dropped" in ''|*[!0-9]*) limit_dropped=0 ;; esac
+emit limitdropped "$limit_dropped"
+echo "::limitstart"
+cat "$DUTY_DIR/.limit-events" 2>/dev/null || :
+echo "::limitend"
 
 # Cron is the liveness contract: tick.sh guarantees one duty.log line per
 # 5-minute boundary, so silence means cron itself is dead (#38's death rule).

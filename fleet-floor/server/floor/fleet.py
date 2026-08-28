@@ -169,6 +169,7 @@ class Fleet:
         }
         with self.lock:
             self.snapshot = snap
+        self.alerts.observe_floor_events(snap["units"])
         return snap
 
     # --- the ping tier -----------------------------------------------------

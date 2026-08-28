@@ -19,7 +19,7 @@ ROOT="$(dirname "$SHARED")"
 # that relative path, which is the invariant, not this list's contents: a
 # module added to shared/lib/common/ brings its suite here in the same change.
 # shellcheck disable=SC2034  # consumed by run.sh and suite-level roster guards
-SUITES=(common common/logging common/conf common/checkout common/session
+SUITES=(common common/logging common/operating-limits common/conf common/checkout common/session
         common/breaker common/ledger common/identity
         triage builder hygiene reaper conf drill vitals)
 PASS=0 FAIL=0

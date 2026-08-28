@@ -205,7 +205,8 @@ run_session() {
   # diagnostics remain on that prose surface. The restored result is appended
   # after the CLI exits, so neither accounting nor diagnostics erase the other.
   ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
-      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&"$cli_stderr_fd" &
+      timeout -k "$OPERATING_LIMIT_SESSION_KILL_GRACE_SECONDS" "$tmo" \
+        "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&"$cli_stderr_fd" &
   _SESSION_DISPATCH_PID=$!
   [ "$cli_stderr_fd" -eq 1 ] || exec {cli_stderr_fd}>&-
   # Started AFTER the dispatch, which is D4 by construction: the session is

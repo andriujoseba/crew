@@ -62,7 +62,9 @@ rehearsal_breaker_summary() {
 
 rehearsal_breaker_load_installed_facts() {
   local threshold kind state
-  threshold="$(bx "sed -n 's/^SESSION_TERMINAL_THRESHOLD=\([0-9][0-9]*\)$/\1/p' ~/duty/conf/fleet.defaults.conf | head -1")" \
+  # Read the installed engine's effective value: the shipped conf may defer
+  # the default to OPERATING_LIMITS, and parsing that conf would lose it.
+  threshold="$(bx "set -a; . ~/duty/conf/fleet.defaults.conf; . ~/duty/lib/common.sh; _session_terminal_threshold")" \
     || threshold=""
   kind="$(bx "sed -n 's/^[[:space:]]*run_session \([^ ]*\) .*/\1/p' ~/duty/lib/duty-attention.sh | head -1")" \
     || kind=""

@@ -289,8 +289,8 @@ t engine-request-requires-signal signal-gated "$r1"
 # #286: a predicate can only read what the query asks for, and the handoff query
 # carried neither timestamp — which is why the ordering bug was invisible to
 # every fixture in this file. Pin both fields at the query.
-if grep -q 'comments(last:100){nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}' \
+if grep -q 'comments(last:.*OPERATING_LIMIT_GITHUB_CONNECTION_NODES.*){.*nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'latestOpinionatedReviews(first:.*OPERATING_LIMIT_GITHUB_PANEL_NODES.*){.*nodes{author{login} state submittedAt commit{oid}}}' \
        "$SHARED/lib/duty-builder.sh"; then r1=timestamped; else r1=UNTIMED; fi
 t engine-request-fetches-ordering-evidence timestamped "$r1"
 # The licence crosses into jq as ONE object: request-panel.jq is HANDED the
@@ -1352,7 +1352,7 @@ t near-miss-counter-still-advances "o/r#311@$NM_HEAD	2" "$(cat "$NM_STATE")"
 # classified as unsignalled since. The signal half is read per PR now; these pin
 # the route and the reason it is not the listing's own connection.
 # shellcheck disable=SC2016  # matching shell source literally
-if grep -Fq 'gh api --paginate "repos/$repo/issues/$num/comments?per_page=100"' \
+if grep -Fq 'gh api --paginate "repos/$repo/issues/$num/comments?per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE"' \
      "$SHARED/lib/duty-builder.sh"; then r1=paginated; else r1=CAPPED; fi
 t near-miss-comments-read-is-paginated paginated "$r1"
 # A thread that could not be read is NOT an empty thread: the PR leaves the
@@ -1837,9 +1837,9 @@ t resume-fp-does-not-read-listing-arrays clean "$r1"
 # repo-level `/issues/comments` list — so GitHub ignores them and a `per_page=1`
 # read returns the OLDEST comment. Verified live on heavy-duty/crew#311.
 # shellcheck disable=SC2016  # matching shell source literally
-if grep -Fq -- '--paginate "repos/$repo/issues/$num/comments?per_page=100"' \
+if grep -Fq -- '--paginate "repos/$repo/issues/$num/comments?per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE"' \
      "$SHARED/lib/duty-builder.sh" \
-  && grep -Fq -- '--paginate "repos/$repo/pulls/$num/reviews?per_page=100"' \
+  && grep -Fq -- '--paginate "repos/$repo/pulls/$num/reviews?per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE"' \
      "$SHARED/lib/duty-builder.sh"; then
   r1=paginated
 else

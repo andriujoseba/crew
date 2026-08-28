@@ -1,4 +1,4 @@
-"""Out-of-band reachability notices emitted by the floor process.
+"""Out-of-band reachability and engine notices emitted by the floor process.
 
 The channel is an operator-configured host command. One UTF-8 message is
 written to its stdin for each reachability edge; an empty command is a silent
@@ -62,6 +62,8 @@ class ReachabilityAlerts:
         self.unreachable = {}                 # box -> first failed ping time
         self.last_ticks = {}                  # box -> last observed tick string
         self.command_error = ""
+        self.sent_events = set()
+        self.dropped_events = {}
         try:
             self.command = shlex.split(command) if command else []
         except ValueError as exc:
@@ -71,11 +73,58 @@ class ReachabilityAlerts:
 
     def _send(self, message):
         if not self.command:
-            return
+            return False
         rc, _, err = run(self.command, ALERT_TIMEOUT_S, message + "\n")
         if rc != 0:
             log("alert channel failed (rc=%d): %s" %
                 (rc, err.strip() or "no error text"))
+            return False
+        return True
+
+    def observe_floor_events(self, units):
+        """Deliver each durable box event once during this floor process."""
+        current_events = set()
+        authoritative_boxes = set()
+        for unit in sorted(units, key=lambda u: u.get("box", "")):
+            box = unit.get("box", "")
+            role = unit.get("room", "unknown")
+            dropped = unit.get("limit_dropped")
+            # A successful current probe always carries the cumulative drop
+            # counter, even when both it and the spool are empty. None means
+            # the box did not answer (or predates this wire section), so its
+            # empty event list is not evidence that durable events vanished.
+            if dropped is not None:
+                authoritative_boxes.add(box)
+            previous = self.dropped_events.get(box, 0)
+            if dropped is None:
+                pass
+            elif dropped > previous:
+                message = ("crew floor: %s (%s) lost %d operating-limit event(s); "
+                           "cumulative dropped=%d" %
+                           (box or "unknown", role, dropped - previous, dropped))
+                if not self.command or self._send(message):
+                    self.dropped_events[box] = dropped
+            elif dropped < previous:
+                self.dropped_events[box] = dropped
+            for event in unit.get("floor_events", []):
+                event_id = event.get("id", "")
+                event_key = (box, event_id)
+                current_events.add(event_key)
+                if not event_id or event_key in self.sent_events:
+                    continue
+                message = ("crew floor: %s (%s) %s operating limit %s "
+                           "measured=%s limit=%s subject=%s at %s; cause=%s" % (
+                               box or "unknown", role, event.get("severity", ""),
+                               event.get("name", ""), event.get("measured", ""),
+                               event.get("limit", ""), event.get("subject", ""),
+                               event.get("timestamp", ""), event.get("cause", "")))
+                if self._send(message):
+                    self.sent_events.add(event_key)
+        self.sent_events = {
+            event_key for event_key in self.sent_events
+            if (event_key[0] not in authoritative_boxes
+                or event_key in current_events)
+        }
 
     def observe(self, pings, roster, units):
         """Consume one complete ping round and emit only state transitions."""

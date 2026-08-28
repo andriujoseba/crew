@@ -329,7 +329,7 @@ _discover_my_pr_repos() {
   local SR
   while IFS= read -r SR; do
     [ -n "$SR" ] || continue
-    if gh api "repos/$SR/pulls?state=open&per_page=100" --paginate 2>/dev/null \
+    if gh api "repos/$SR/pulls?state=open&per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE" --paginate 2>/dev/null \
       | jq -se --arg me "$ME" '[add[] | select(.user.login == $me)] | length > 0' >/dev/null; then
       printf '%s\n' "$SR"
     fi
@@ -375,10 +375,10 @@ _redraft_authored_pr() {
       isDraft
       headRefOid
       author{login}
-      labels(first:50){nodes{name}}
-      comments(last:100){nodes{author{login} body createdAt}}
-      reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
-      latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}
+      labels(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{name}}
+      comments(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{author{login} body createdAt}}
+      reviewRequests(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{requestedReviewer{... on User{login}}}}
+      latestOpinionatedReviews(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{author{login} state submittedAt commit{oid}}}
     } }
   }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
     warn "$repo#$num: draft conversion lookup failed; retrying on the author's next tick"
@@ -452,7 +452,7 @@ _mirror_rounds() {
   # FINAL (default false) is true only at the handoff straggler: it finalizes
   # the live last round too. Per-tick mirroring leaves the live round deferred
   # so a still-arriving round is never stamped "no written reply" (round-log.jq).
-  local repo="$1" num="$2" final="${3:-false}" owner name payload newbody
+  local repo="$1" num="$2" final="${3:-false}" owner name payload newbody measured
   owner="${repo%%/*}"; name="${repo##*/}"
   # The assignment's status is tested outside the substitution: GraphQL errors
   # may write a non-empty JSON body to stdout, but their non-zero status still
@@ -461,11 +461,18 @@ _mirror_rounds() {
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
       body
       headRefOid
-      commits(last:100){nodes{commit{oid committedDate}}}
-      reviews(first:100){nodes{author{login} state commit{oid} submittedAt}}
-      comments(first:100){nodes{author{login} body createdAt}}
+      commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
+      reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
+      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} body createdAt}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
     || { warn "$repo#$num: round-log fetch failed; body left as-is (handoff continues)"; return 0; }
+  measured="$(printf '%s' "$payload" | jq -r '
+    [.data.repository.pullRequest.commits.totalCount,
+     .data.repository.pullRequest.reviews.totalCount,
+     .data.repository.pullRequest.comments.totalCount]
+    | map(. // 0) | max' 2>/dev/null)" || measured=invalid
+  operating_limit_assess github_connection_nodes "$measured" "$repo" "$num" \
+    'round-log history exceeds its unpaginated GraphQL window' || return 0
   newbody="$(printf '%s' "$payload" \
     | jq -r --arg me "$ME" --argjson final "$final" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
     || { warn "$repo#$num: round-log render failed; body left as-is"; return 0; }
@@ -485,7 +492,7 @@ _handoff_comment() {
   gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
       headRefOid
-      latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+      latestOpinionatedReviews(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{author{login} state commit{oid}}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null \
   | jq -r --arg mark "$MARK_HANDOFF" '
       .data.repository.pullRequest as $pr
@@ -593,7 +600,7 @@ ROUND_CAP_NAMED="-"
 # PR that has rounds left.
 _round_cap_census() {
   local repo="$1" panel_json="$2" listing="$3"
-  local owner name num payload capjson rounds at_cap named="" items="" fresh
+  local owner name num payload capjson rounds at_cap named="" items="" fresh measured
   ROUND_CAP_PRS=""
   ROUND_CAP_NAMED="-"
   owner="${repo%%/*}"; name="${repo##*/}"
@@ -606,15 +613,23 @@ _round_cap_census() {
     if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
       repository(owner:$owner,name:$name){ pullRequest(number:$num){
         headRefOid
-        commits(last:100){nodes{commit{oid committedDate}}}
-        reviews(first:100){nodes{author{login} state commit{oid} submittedAt}}
+        commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
+        reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
       } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
       warn "$repo#$num: round-cap fetch failed; not counted this tick"
       continue
     fi
+    measured="$(printf '%s' "$payload" | jq -r '
+      [.data.repository.pullRequest.commits.totalCount,
+       .data.repository.pullRequest.reviews.totalCount]
+      | map(. // 0) | max' 2>/dev/null)" || measured=invalid
+    if ! operating_limit_assess github_connection_nodes "$measured" "$repo" "$num" \
+        'round-cap history exceeds its unpaginated GraphQL window'; then
+      continue
+    fi
     capjson="$(printf '%s' "$payload" \
       | jq -c --argjson panel "$panel_json" \
-          -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null)" || capjson=""
+          -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null)" || capjson="" # Decision-path empty fallback: the next branch warns and excludes this PR from the destructive cap decision.
     if [ -z "$capjson" ]; then
       warn "$repo#$num: round-cap eval failed; not counted this tick"
       continue
@@ -926,7 +941,7 @@ _wt_index_tree() { # $1=path -> tree sha, nonzero if the index cannot be read
   [ -f "$real" ] || return 1
   copy="$(mktemp "${TMPDIR:-/tmp}/wt-index.XXXXXX")" || return 1
   if cp "$real" "$copy" 2>/dev/null; then
-    tree="$(GIT_INDEX_FILE="$copy" git -C "$path" write-tree 2>/dev/null)" || tree=""
+    tree="$(GIT_INDEX_FILE="$copy" git -C "$path" write-tree 2>/dev/null)" || tree="" # Decision-path empty fallback: the guard below fails closed and preserves the worktree unchanged.
   fi
   rm -f "$copy"
   [ -n "${tree:-}" ] || return 1
@@ -971,7 +986,7 @@ _wt_preserve() {
   idx="$(mktemp "${TMPDIR:-/tmp}/wt-preserve.XXXXXX")" || return 1
   if GIT_INDEX_FILE="$idx" git -C "$path" read-tree HEAD 2>/dev/null \
     && GIT_INDEX_FILE="$idx" git -C "$path" add -A 2>/dev/null; then
-    tree="$(GIT_INDEX_FILE="$idx" git -C "$path" write-tree 2>/dev/null)" || tree=""
+    tree="$(GIT_INDEX_FILE="$idx" git -C "$path" write-tree 2>/dev/null)" || tree="" # Decision-path empty fallback: the guard below fails closed and grants no push or force.
   fi
   rm -f "$idx"
   [ -n "${tree:-}" ] || return 1
@@ -1230,7 +1245,7 @@ _stranded_resume_due() {
 # the resume side getting the same depth by the route that is available to it.
 _resume_pr_comments() {
   local repo="$1" num="$2" raw
-  raw="$(gh api --paginate "repos/$repo/issues/$num/comments?per_page=100" \
+  raw="$(gh api --paginate "repos/$repo/issues/$num/comments?per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE" \
     --jq '.[] | {author:{login:(.user.login // "")}, body:(.body // ""),
                  createdAt:(.created_at // ""), id:((.id // "") | tostring)}' \
     2>/dev/null)" || return 1
@@ -1311,7 +1326,7 @@ _resume_attach_comments() {
     if comments="$(_resume_pr_comments "$repo" "$num")"; then
       spliced="$(printf '%s' "$listing" | jq -c --argjson num "$num" \
         --slurpfile comments <(printf '%s' "$comments") \
-        'map(if .number == $num then . + {comments:$comments[0]} else . end)')" || spliced=""
+        'map(if .number == $num then . + {comments:$comments[0]} else . end)')" || spliced="" # Decision-path empty fallback: the next branch warns, escalates, and marks the thread unread.
       if [ -z "$spliced" ]; then
         warn "$repo#$num: comment splice failed on a thread that read cleanly; leaving it out of stranded-resume detection this tick (structural)"
         _resume_structural_escalate "$repo" "$num" "$listing"
@@ -1724,9 +1739,9 @@ _flip_owed_resume_rows() {
     if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
       repository(owner:$owner,name:$name){ pullRequest(number:$num){
         headRefOid
-        comments(last:100){nodes{author{login} body createdAt}}
-        reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
-        latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}
+        comments(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{author{login} body createdAt}}
+        reviewRequests(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{requestedReviewer{... on User{login}}}}
+        latestOpinionatedReviews(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{author{login} state submittedAt commit{oid}}}
       } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
       warn "$repo#$num: the verdict lookup failed; leaving this draft out of flip-owed resume detection this tick (#384)"
       continue
@@ -1880,9 +1895,9 @@ _resume_pr_fingerprints() {
 _resume_newest_foreign() {
   local repo="$1" num="$2" me="$3" raw
   raw="$( {
-      gh api --paginate "repos/$repo/issues/$num/comments?per_page=100" \
+      gh api --paginate "repos/$repo/issues/$num/comments?per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE" \
         --jq '.[] | "\(.user.login // "")\t\(.created_at // "")"' \
-      && gh api --paginate "repos/$repo/pulls/$num/reviews?per_page=100" \
+      && gh api --paginate "repos/$repo/pulls/$num/reviews?per_page=$OPERATING_LIMIT_GITHUB_REST_PAGE" \
         --jq '.[] | "\(.user.login // "")\t\(.submitted_at // "")"'
     } 2>/dev/null )" || return 1
   printf '%s\n' "$raw" \
@@ -2545,7 +2560,7 @@ _builder_repo() {
       | jq -r '.[] | select(.isDraft | not) | .number'); do
       pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
-          latestOpinionatedReviews(first:50){nodes{author{login} state commit{oid}}}
+          latestOpinionatedReviews(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{author{login} state commit{oid}}}
         } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null || echo '')"
       if [ -z "$pr_payload" ]; then
         warn "$R#$N: review fetch failed; round reads not-owed this tick (request and handoff fetch later)"
@@ -2902,10 +2917,10 @@ _builder_repo() {
       if ! pr_payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
         repository(owner:$owner,name:$name){ pullRequest(number:$num){
           headRefOid mergeable
-          labels(first:50){nodes{name}}
-          comments(last:100){nodes{author{login} body createdAt}}
-          reviewRequests(first:50){nodes{requestedReviewer{... on User{login}}}}
-          latestOpinionatedReviews(first:50){nodes{author{login} state submittedAt commit{oid}}}
+          labels(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{name}}
+          comments(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{author{login} body createdAt}}
+          reviewRequests(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{requestedReviewer{... on User{login}}}}
+          latestOpinionatedReviews(first:'"$OPERATING_LIMIT_GITHUB_PANEL_NODES"'){nodes{author{login} state submittedAt commit{oid}}}
         } } }' -f owner="$owner" -f name="$name" -F num="$N" 2>/dev/null)"; then
         warn "$R#$N: PR state fetch failed; skipping request and handoff this tick"
         continue

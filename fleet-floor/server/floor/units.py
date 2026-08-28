@@ -75,19 +75,28 @@ def parse_ts(s):
 
 def parse_probe(text):
     """Split the probe's `::key value` record from its delimited log section."""
-    meta, loglines, in_log = {}, [], False
+    meta, loglines, limitlines, in_log, in_limits = {}, [], [], False, False
     for line in text.splitlines():
+        if line == "::limitstart":
+            in_limits = True
+            continue
+        if line == "::limitend":
+            in_limits = False
+            continue
         if line == "::logstart":
             in_log = True
             continue
         if line == "::logend":
             in_log = False
             continue
-        if in_log:
+        if in_limits:
+            limitlines.append(line)
+        elif in_log:
             loglines.append(line)
         elif line.startswith("::"):
             k, _, v = line[2:].partition(" ")
             meta[k] = v.strip()
+    meta["limit-events"] = limitlines
     return meta, loglines
 
 
@@ -303,6 +312,8 @@ def unit_defaults():
         "clock_uncertainty": None,
         "lock": {"held": None, "stuck": False},
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
+        "floor_events": [],
+        "limit_dropped": None,
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
         # The box vitals record (#483), or None where the log carries none —
@@ -461,6 +472,26 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
                 "active": True, "age": suppression_age,
                 "kind": suppression[1], "key": suppression[2],
             }
+    try:
+        u["limit_dropped"] = max(0, int(meta["limitdropped"]))
+    except (KeyError, TypeError, ValueError):
+        u["limit_dropped"] = None
+    for raw_event in meta.get("limit-events", []):
+        fields = raw_event.split("\t", 7)
+        if len(fields) != 8:
+            continue
+        event_id, timestamp, severity, name, measured, limit, subject, cause = fields
+        if (not re.fullmatch(r"\d+-\d+-\d+", event_id)
+                or not parse_ts(timestamp)
+                or severity not in ("warn", "error")
+                or not name or not measured.isdigit() or not limit.isdigit()
+                or not subject or not cause):
+            continue
+        u["floor_events"].append({
+            "id": event_id, "timestamp": timestamp, "severity": severity,
+            "name": name, "measured": int(measured), "limit": int(limit),
+            "subject": subject, "cause": cause,
+        })
     u["repos"] = [r for r in meta.get("repos", "").split() if r]
     u["logs"] = [f for f in meta.get("sessionlogs", "").split() if f]
     try:
