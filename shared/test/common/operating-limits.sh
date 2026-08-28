@@ -40,6 +40,23 @@ t terminal-threshold-preserves-operator-override 9 \
   "$(SESSION_TERMINAL_THRESHOLD=9 _session_terminal_threshold)"
 OPERATING_LIMITS[session_terminal_failures]=3
 
+table_breaker_dir="$TMP/table-breaker"
+table_breaker_state="$(
+  (
+    mkdir -p "$table_breaker_dir"
+    unset SESSION_TERMINAL_THRESHOLD
+    OPERATING_LIMITS[session_terminal_failures]=2
+    warn() { :; }
+    alert() { :; }
+    DUTY_DIR="$table_breaker_dir" \
+      _session_terminal_record table-default yes yes fixture.log
+    DUTY_DIR="$table_breaker_dir" \
+      _session_terminal_record table-default yes yes fixture.log
+    cut -f1,2 "$table_breaker_dir/.session-terminal.table-default"
+  )
+)"
+t terminal-breaker-trips-at-table-derived-default $'2\ttripped' "$table_breaker_state"
+
 # A new engine can run briefly with a conf that predates the spool keys during
 # install. Under `set -u` that skew must still report and spool the assessment.
 skew_dir="$TMP/skew"
