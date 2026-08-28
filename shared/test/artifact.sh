@@ -725,7 +725,14 @@ doctored_dist() {  # <dir> <sed-expr> -> 0 when the mutation actually applied
 }
 
 MEMBERS="$(include_members)"
-if [ -n "$MEMBERS" ] && printf '%s\n' "$MEMBERS" | grep -qx 'cli'; then
+# Read with a loop rather than `printf … | grep -q`: this file sets pipefail, so
+# that shape is the #449 SIGPIPE flake, and common.sh's guard reds on writing it
+# at all.
+declares_cli=""
+while IFS= read -r m; do [ "$m" = cli ] && declares_cli=1; done <<EOF
+$MEMBERS
+EOF
+if [ -n "$MEMBERS" ] && [ -n "$declares_cli" ]; then
   ok "include-set-is-declared"
 else
   bad "include-set-is-declared (read: $(printf '%s' "$MEMBERS" | tr '\n' ' '))"
