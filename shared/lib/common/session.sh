@@ -120,6 +120,8 @@ _session_pool_suffix() {
   [ -n "$pool" ] || return 0
   case "$pool" in
     *[!A-Za-z0-9._:-]*)
+      # warn() writes to stdout, but this helper is captured as line data.
+      # Keep the diagnostic out of the SESSION END suffix.
       warn "session accounting: SESSION_CREDENTIAL_POOL must be a safe token — omitting pool identity" >&2
       return 0
       ;;
@@ -134,7 +136,7 @@ _session_pool_suffix() {
 # line in duty.log (the biggest logging gap in three of five metrics files).
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
-  local slog cli_log structured_log="" rc=0 start terminal=no
+  local slog cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -152,8 +154,9 @@ run_session() {
     cli_log="$structured_log"
     # SESSION START advertises the prose path, and every reader selects
     # `*.log`. Keep that path real while the vendor JSON is captured beside
-    # it; completion replaces the empty placeholder with the restored prose.
+    # it; completion appends restored prose after any diagnostics written here.
     : >"$slog"
+    exec {cli_stderr_fd}>>"$slog"
   fi
   # holder=: who to ask, at a later tick, whether this session is still
   # running. Nothing below this line runs if the box dies under the CLI, so
@@ -192,12 +195,13 @@ run_session() {
   # scoring at the moment the CLI is `exec`'d. It cannot fail the dispatch: it
   # returns 0 on every path, so the `&&` chain is unbroken on a guest with no
   # writable procfs.
-  # stderr deliberately shares the structured capture: CLI diagnostics must
-  # survive verbatim for failure classification. Chatter therefore makes the
-  # usage block unmeasured and takes the documented legacy-log fallback.
+  # Structured stdout stays parseable beside the advertised prose log, while
+  # diagnostics remain on that prose surface. The restored result is appended
+  # after the CLI exits, so neither accounting nor diagnostics erase the other.
   ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
-      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&1 &
+      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&"$cli_stderr_fd" &
   _SESSION_DISPATCH_PID=$!
+  [ "$cli_stderr_fd" -eq 1 ] || exec {cli_stderr_fd}>&-
   # Started AFTER the dispatch, which is D4 by construction: the session is
   # already running by the time anything about measuring it can go wrong.
   # `.peak` and not `.log`, and LOG_DIR's readers select on that suffix — the
@@ -221,8 +225,8 @@ run_session() {
   _session_peak_rss_stop
   _session_mem_watch_stop "$slog.mem"
   if [ -n "$structured_log" ]; then
-    bot_cli_structured_prose "$structured_log" >"$slog" 2>/dev/null \
-      || cp "$structured_log" "$slog"
+    bot_cli_structured_prose "$structured_log" >>"$slog" 2>/dev/null \
+      || cat "$structured_log" >>"$slog"
   fi
   local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit
   local usage_suffix pool_suffix

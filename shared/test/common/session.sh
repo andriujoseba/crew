@@ -72,6 +72,10 @@ case "${USAGE_SHAPE:-valid}" in
   valid)
     printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
     ;;
+  valid-with-warning)
+    printf '%s\n' 'vendor warning' >&2
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
+    ;;
   malformed)
     printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/two","total_cost_usd":0.5,"usage":{"input_tokens":"many","output_tokens":4}}'
     ;;
@@ -138,6 +142,20 @@ usage_tier="$(usage_run shared-a valid opus)"
 t usage-tiered-structured-command-keeps-prompt-last \
   '--model opus --output-format json -p theprompt' \
   "$(sed -n '/^--argv--$/,$p' <<<"$usage_tier" | tail -n +2 | head -6 | paste -sd ' ' -)"
+
+# Vendor diagnostics are prose, not structured stdout: both surfaces survive
+# independently, and a harmless warning cannot silently disable accounting.
+usage_noisy="$(usage_run shared-a valid-with-warning)"
+usage_noisy_end="$(grep 'SESSION END' <<<"$usage_noisy")"
+usage_noisy_prose="$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$usage_noisy")"
+t usage-structured-stderr-keeps-accounting '120|shared-a|0|ok' \
+  "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).* input_tokens=\([^ ]*\).* pool=\([^ ]*\).*/\3|\4|\1|\2/p' <<<"$usage_noisy_end")"
+t usage-structured-stderr-keeps-diagnostic 1 \
+  "$(grep -c '^vendor warning$' <<<"$usage_noisy_prose" || true)"
+t usage-structured-stderr-keeps-result-prose 1 \
+  "$(grep -c '^I pushed the fix\.$' <<<"$usage_noisy_prose" || true)"
+t usage-structured-stderr-hides-json-envelope 0 \
+  "$(grep -c '^{"type":"result"' <<<"$usage_noisy_prose" || true)"
 
 # Two independent directories stand in for two boxes: pool identity is the
 # operator's declaration, not a session-local or box-local derivative.
