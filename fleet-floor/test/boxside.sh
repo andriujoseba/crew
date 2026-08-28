@@ -62,10 +62,12 @@ touch "$BS_H/duty/logs/20260726T090000Z-build-rig_12.log"
 # listing selects on `*.log` so that file never spends one of the forty
 # slots, and this is the fixture that says so against the real probe.sh.
 touch "$BS_H/duty/logs/20260726T090000Z-build-rig_12.log.peak"
-printf '%064d\tWARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=90 limit=100; cause=fixture\n' 1 \
-  >"$BS_H/duty/.floor-events"
-printf '%064d\tERROR: operating limit: heavy-duty/crew#482 github_connection_nodes measured=110 limit=100 crossed; cause=fixture\n' 2 \
-  >>"$BS_H/duty/.floor-events"
+printf '1700000000-11-1\t2026-08-28T09:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tfixture says ::phantom key\n' \
+  >"$BS_H/duty/.limit-events"
+printf '1700000001-11-2\t2026-08-28T09:00:01Z\terror\tgithub_connection_nodes\t110\t100\theavy-duty/crew#482\tfixture crossed\n' \
+  >>"$BS_H/duty/.limit-events"
+printf '4\n' >"$BS_H/duty/.limit-events.dropped"
+BS_PROBE_BEFORE="$(find "$BS_H/duty" -type f -printf '%P\t%m\t' -exec sha256sum {} \; | sort)"
 
 HOME="$BS_H" DUTY_DIR="$BS_H/duty" \
   bash "$BS_FLOOR/server/probe.sh" < "$BS_ROOT/shared/conf/agents/claude.conf" \
@@ -80,7 +82,7 @@ import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 meta, lines = floor.parse_probe(open(sys.argv[1]).read())
-need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs", "floor-event")
+need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs", "limitdropped", "limit-events")
 print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
@@ -91,8 +93,10 @@ sess, cur = floor.derive_sessions(lines, time.time())
 print("SESSIONS=%d" % len(sess))
 print("SESSKEY=%s" % (sess[0]["key"] if sess else ""))
 print("QUEUE=%d" % len(floor.derive_queue(lines)))
-print("EVENTS=%d" % len(meta.get("floor-event", [])))
-print("EVENT_ERROR=%d" % sum("ERROR: operating limit:" in e for e in meta.get("floor-event", [])))
+print("EVENTS=%d" % len(meta.get("limit-events", [])))
+print("EVENT_ERROR=%d" % sum("\terror\t" in e for e in meta.get("limit-events", [])))
+print("DROPPED=%s" % meta.get("limitdropped", ""))
+print("PHANTOM=%s" % meta.get("phantom", "absent"))
 PY
 bs_get() { sed -n "s/^$1=//p" "$BS_TMP/probe.parsed"; }
 t "probe.sh: parser gets every key it reads" "" "$(bs_get MISSING)"
@@ -107,6 +111,10 @@ t "probe.sh: session key intact" "rig#12" "$(bs_get SESSKEY)"
 t "probe.sh: queue derived from real output" 1 "$(bs_get QUEUE)"
 t "probe.sh: carries every durable floor event" 2 "$(bs_get EVENTS)"
 t "probe.sh: preserves crossed-limit event text" 1 "$(bs_get EVENT_ERROR)"
+t "probe.sh: carries the cumulative drop counter" 4 "$(bs_get DROPPED)"
+t "probe.sh: a bare :: word inside the section is not a key" absent "$(bs_get PHANTOM)"
+BS_PROBE_AFTER="$(find "$BS_H/duty" -type f -printf '%P\t%m\t' -exec sha256sum {} \; | sort)"
+t "probe.sh: limit carry leaves DUTY_DIR byte-identical" "$BS_PROBE_BEFORE" "$BS_PROBE_AFTER"
 
 printf '%s\tdraft\theavy-duty/crew#561@abcdef123456\n' \
   "$(( $(date +%s) - 780 ))" >"$BS_H/duty/.builder-suppressed.heavy-duty__crew.draft"

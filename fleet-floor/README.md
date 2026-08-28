@@ -189,7 +189,7 @@ minutes before `run_session`'s own timeout resolves it.
   queue chips are the work the **last tick actually detected**, not a
   placeholder list. A box is **SILENT** when it has not logged a line for two
   tick boundaries — the same death rule the engine uses. Near and crossed
-  engine limits are appended to the box's bounded `.floor-events` spool;
+  engine limits are appended to the box's bounded `.limit-events` spool;
   the read-only probe carries them to the host, where the configured floor
   alert channel delivers each event without box-side network access.
 - **Control** — every action is applied by the host: pause/resume comment and

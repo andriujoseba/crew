@@ -14,7 +14,6 @@ declare -Ag OPERATING_LIMITS=(
   [github_connection_nodes]=100
   [github_panel_nodes]=50
   [github_rest_page]=100
-  [floor_event_spool_entries]=100
   [session_kill_grace_seconds]=60
   [session_terminal_failures]=3
 )
@@ -24,7 +23,6 @@ declare -Ag OPERATING_LIMITS=(
 OPERATING_LIMIT_GITHUB_CONNECTION_NODES="${OPERATING_LIMITS[github_connection_nodes]}"
 OPERATING_LIMIT_GITHUB_PANEL_NODES="${OPERATING_LIMITS[github_panel_nodes]}"
 OPERATING_LIMIT_GITHUB_REST_PAGE="${OPERATING_LIMITS[github_rest_page]}"
-OPERATING_LIMIT_FLOOR_EVENT_SPOOL_ENTRIES="${OPERATING_LIMITS[floor_event_spool_entries]}"
 OPERATING_LIMIT_SESSION_KILL_GRACE_SECONDS="${OPERATING_LIMITS[session_kill_grace_seconds]}"
 OPERATING_LIMIT_SESSION_TERMINAL_FAILURES="${OPERATING_LIMITS[session_terminal_failures]}"
 
@@ -38,36 +36,66 @@ operating_limit() {
   printf '%s' "${OPERATING_LIMITS[$name]}"
 }
 
-# _operating_limit_spool LEVEL MESSAGE — durably hand one limit event to the
-# host-owned floor process.  The box never sends it: probe.sh carries this
-# bounded spool on the next host poll and the floor alert channel owns egress.
-# Identical events collapse at the writer so a standing near-limit condition
-# cannot turn a five-minute duty cadence into alert spam.
-_operating_limit_spool() {
-  local level="$1" message="$2" spool="$DUTY_DIR/.floor-events"
-  local event_id line tmp count
-  message="${message//$'\t'/ }"
-  message="${message//$'\n'/ }"
-  event_id="$(printf '%s\t%s' "$level" "$message" | sha256sum | awk '{print $1}')" \
-    || return 0
-  line="$event_id"$'\t'"$level: $message"
-  grep -Fqx "$line" "$spool" 2>/dev/null && return 0
+# Process-local sequence in D6.2's box-assigned event id. Repeated content is
+# deliberately not deduplicated: two assessments are two events and both are
+# owed to the floor.
+_OPERATING_LIMIT_EVENT_SEQ=0
 
+# _operating_limit_spool SEVERITY NAME MEASURED LIMIT REPO PR CAUSE — durably
+# hand one assessment to the host floor. The writer owns both retention bounds
+# and counts every discarded line; probe.sh remains a read-only carrier.
+_operating_limit_spool() {
+  local severity="$1" name="$2" measured="$3" limit="$4"
+  local repo="$5" pr="$6" cause="$7"
+  local spool="$DUTY_DIR/.limit-events" counter="$DUTY_DIR/.limit-events.dropped"
+  local now iso subject event_id line tmp cutoff old id event_epoch dropped=0 prior=0
+  local max="${DUTY_LIMIT_SPOOL_MAX}" ttl="${DUTY_LIMIT_SPOOL_TTL_S}"
+  local -a kept=()
+
+  now="$(date -u +%s)" || return 0
+  iso="$(date -u -d "@$now" '+%Y-%m-%dT%H:%M:%SZ')" || return 0
+  _OPERATING_LIMIT_EVENT_SEQ=$((_OPERATING_LIMIT_EVENT_SEQ + 1))
+  event_id="$now-$BASHPID-$_OPERATING_LIMIT_EVENT_SEQ"
+  subject="${repo:+$repo#$pr}"
+  [ -n "$subject" ] || subject=-
+  cause="${cause//$'\t'/ }"
+  cause="${cause//$'\n'/ }"
+  line="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+    "$event_id" "$iso" "$severity" "$name" "$measured" "$limit" "$subject" "$cause")"
+
+  case "$max" in ''|*[!0-9]*|0) return 0 ;; esac
+  case "$ttl" in ''|*[!0-9]*|0) return 0 ;; esac
   mkdir -p "$DUTY_DIR" 2>/dev/null || return 0
+  cutoff=$((now - ttl))
   if [ -f "$spool" ]; then
-    count="$(wc -l <"$spool")"
-  else
-    count=0
+    while IFS= read -r old; do
+      id="${old%%$'\t'*}"
+      event_epoch="${id%%-*}"
+      case "$event_epoch" in
+        ''|*[!0-9]*) dropped=$((dropped + 1)); continue ;;
+      esac
+      if [ "$event_epoch" -lt "$cutoff" ]; then
+        dropped=$((dropped + 1))
+      else
+        kept+=("$old")
+      fi
+    done <"$spool"
   fi
-  case "$count" in ''|*[!0-9]*) count=0 ;; esac
-  if [ "$count" -ge "$OPERATING_LIMIT_FLOOR_EVENT_SPOOL_ENTRIES" ]; then
-    tmp="$(mktemp "$DUTY_DIR/.floor-events.XXXXXX")" || return 0
-    tail -n "$((OPERATING_LIMIT_FLOOR_EVENT_SPOOL_ENTRIES - 1))" "$spool" \
-      >"$tmp" 2>/dev/null || :
-    printf '%s\n' "$line" >>"$tmp"
-    mv -f "$tmp" "$spool"
-  else
-    printf '%s\n' "$line" >>"$spool" 2>/dev/null || return 0
+  kept+=("$line")
+  if [ "${#kept[@]}" -gt "$max" ]; then
+    dropped=$((dropped + ${#kept[@]} - max))
+    kept=("${kept[@]:${#kept[@]}-max}")
+  fi
+
+  tmp="$(mktemp "$DUTY_DIR/.limit-events.XXXXXX")" || return 0
+  printf '%s\n' "${kept[@]}" >"$tmp"
+  mv -f "$tmp" "$spool" || return 0
+  if [ "$dropped" -gt 0 ]; then
+    [ ! -f "$counter" ] || prior="$(cat "$counter" 2>/dev/null)"
+    case "$prior" in ''|*[!0-9]*) prior=0 ;; esac
+    tmp="$(mktemp "$DUTY_DIR/.limit-events.dropped.XXXXXX")" || return 0
+    printf '%s\n' "$((prior + dropped))" >"$tmp"
+    mv -f "$tmp" "$counter"
   fi
   return 0
 }
@@ -94,13 +122,13 @@ operating_limit_assess() {
   if [ "$measured" -gt "$limit" ]; then
     local message="operating limit: $repo#$pr $name measured=$measured limit=$limit crossed; cause=$cause"
     log "ERROR: $message"
-    _operating_limit_spool ERROR "$message"
+    _operating_limit_spool error "$name" "$measured" "$limit" "$repo" "$pr" "$cause"
     return 2
   fi
   if [ $((measured * 100)) -ge $((limit * pct)) ]; then
     local message="operating limit: $repo#$pr $name measured=$measured limit=$limit; cause=$cause"
     warn "$message"
-    _operating_limit_spool WARN "$message"
+    _operating_limit_spool warn "$name" "$measured" "$limit" "$repo" "$pr" "$cause"
   fi
   return 0
 }

@@ -245,14 +245,15 @@ else
 emit suppression ""
 fi
 
-# Durable engine events cross the trust boundary as data only.  The box-side
-# probe remains read-only and performs no network call; the host floor owns
-# deduplication and delivery through its configured channel (#482 D4).
-if [ -r "$DUTY_DIR/.floor-events" ]; then
-  while IFS= read -r floor_event; do
-    [ -n "$floor_event" ] && emit floor-event "$floor_event"
-  done <"$DUTY_DIR/.floor-events"
-fi
+# Durable engine limit events cross as one uninterpreted section. The probe
+# reports the cumulative loss counter, reads the spool verbatim, and writes
+# nothing; parsing and delivery stay on the host floor (#482 D6.4).
+limit_dropped="$(cat "$DUTY_DIR/.limit-events.dropped" 2>/dev/null || echo 0)"
+case "$limit_dropped" in ''|*[!0-9]*) limit_dropped=0 ;; esac
+emit limitdropped "$limit_dropped"
+echo "::limitstart"
+cat "$DUTY_DIR/.limit-events" 2>/dev/null || :
+echo "::limitend"
 
 # Cron is the liveness contract: tick.sh guarantees one duty.log line per
 # 5-minute boundary, so silence means cron itself is dead (#38's death rule).

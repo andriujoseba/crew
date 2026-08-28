@@ -15,6 +15,8 @@ export DUTY_DIR="$TMP"
 export HOME="${HOME:-$TMP}"
 # shellcheck source=shared/lib/common.sh
 source "$SHARED/lib/common.sh"
+# shellcheck source=shared/conf/fleet.defaults.conf
+source "$SHARED/conf/fleet.defaults.conf"
 
 t operating-limit-table-session-grace 60 \
   "$(operating_limit session_kill_grace_seconds)"
@@ -22,8 +24,8 @@ t operating-limit-table-terminal-failures 3 \
   "$(operating_limit session_terminal_failures)"
 t operating-limit-table-graphql-window 100 \
   "$(operating_limit github_connection_nodes)"
-t operating-limit-table-floor-spool 100 \
-  "$(operating_limit floor_event_spool_entries)"
+t limit-spool-default-max 200 "$DUTY_LIMIT_SPOOL_MAX"
+t limit-spool-default-ttl 86400 "$DUTY_LIMIT_SPOOL_TTL_S"
 
 limit_case() {
   local measured="$1" out rc=0
@@ -39,15 +41,40 @@ t limit-0.9-warns 1 "$(grep -c 'WARN: operating limit: heavy-duty/crew#482 githu
 t limit-1.0-warns 1 "$(grep -c 'WARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=100 limit=100' <<<"$case_10" || true)"
 t limit-1.1-errors 1 "$(grep -c '2|.*ERROR: operating limit: heavy-duty/crew#482 github_connection_nodes measured=110 limit=100 crossed; cause=fixture-payload' <<<"$case_11" || true)"
 t limit-error-never-says-no-duty 0 "$(grep -c 'no .* duty' <<<"$case_11" || true)"
-t limit-events-spooled 3 "$(wc -l <"$DUTY_DIR/.floor-events")"
+t limit-events-spooled 3 "$(wc -l <"$DUTY_DIR/.limit-events")"
+t limit-spool-has-eight-tab-fields 3 \
+  "$(awk -F '\t' 'NF == 8 {n++} END {print n+0}' "$DUTY_DIR/.limit-events")"
+t limit-spool-box-assigns-event-id 3 \
+  "$(awk -F '\t' '$1 ~ /^[0-9]+-[0-9]+-[0-9]+$/ {n++} END {print n+0}' \
+      "$DUTY_DIR/.limit-events")"
 t limit-warning-spool-names-measurement 1 \
-  "$(grep -c $'\tWARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=90 limit=100' \
-      "$DUTY_DIR/.floor-events" || true)"
+  "$(awk -F '\t' '$3=="warn" && $4=="github_connection_nodes" && $5==90 && $6==100 && $7=="heavy-duty/crew#482" {n++} END {print n+0}' \
+      "$DUTY_DIR/.limit-events")"
 t limit-error-spool-names-cause 1 \
-  "$(grep -c $'\tERROR: operating limit: heavy-duty/crew#482 github_connection_nodes measured=110 limit=100 crossed; cause=fixture-payload' \
-      "$DUTY_DIR/.floor-events" || true)"
-limit_case 90 >/dev/null
-t identical-limit-events-collapse 3 "$(wc -l <"$DUTY_DIR/.floor-events")"
+  "$(awk -F '\t' '$3=="error" && $5==110 && $8=="fixture-payload" {n++} END {print n+0}' \
+      "$DUTY_DIR/.limit-events")"
+
+# Repeated content is two real events, not one content hash. Keep both.
+rm -f "$DUTY_DIR/.limit-events" "$DUTY_DIR/.limit-events.dropped"
+DUTY_LIMIT_SPOOL_MAX=10
+operating_limit_assess github_connection_nodes 90 heavy-duty/crew 482 repeated >/dev/null
+operating_limit_assess github_connection_nodes 90 heavy-duty/crew 482 repeated >/dev/null
+t repeated-limit-events-keep-distinct-ids 2 \
+  "$(cut -f1 "$DUTY_DIR/.limit-events" | sort -u | wc -l)"
+
+# Both bounds discard loudly through one cumulative counter.
+DUTY_LIMIT_SPOOL_MAX=2
+operating_limit_assess github_connection_nodes 91 heavy-duty/crew 482 max-bound >/dev/null
+t max-bound-keeps-newest-events 2 "$(wc -l <"$DUTY_DIR/.limit-events")"
+t max-bound-counts-dropped-event 1 "$(cat "$DUTY_DIR/.limit-events.dropped")"
+old_epoch=$(( $(date -u +%s) - 100 ))
+printf '%s-1-1\t2020-01-01T00:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tttl-bound\n' \
+  "$old_epoch" >"$DUTY_DIR/.limit-events"
+DUTY_LIMIT_SPOOL_MAX=10 DUTY_LIMIT_SPOOL_TTL_S=10 \
+  operating_limit_assess github_connection_nodes 92 heavy-duty/crew 482 ttl-bound >/dev/null
+t ttl-bound-removes-expired-event 1 "$(wc -l <"$DUTY_DIR/.limit-events")"
+t ttl-bound-increments-cumulative-drop-counter 2 \
+  "$(cat "$DUTY_DIR/.limit-events.dropped")"
 
 bad_pct="$(OPERATING_LIMIT_WARN_PCT=wide operating_limit_assess \
   github_connection_nodes 89 heavy-duty/crew 482 fixture-payload)"

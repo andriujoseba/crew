@@ -211,9 +211,12 @@ emit_probe() {
   # what let a broken repo-link URL pass review-clean for two rounds.
   printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
   printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
+  [ "$sc" = idle ] && printf '::limitdropped 2\n' || printf '::limitdropped 0\n'
+  echo '::limitstart'
   if [ "$sc" = idle ]; then
-    printf '::floor-event %064d\tWARN: operating limit: heavy-duty/crew#482 github_connection_nodes measured=90 limit=100; cause=fixture-payload\n' 3
+    printf '1700000000-33-1\t2026-08-28T09:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tfixture-payload says ::not-a-key\n'
   fi
+  echo '::limitend'
   # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
   # ONE source for it, because the CLI half of this stub answers with the same
   # record a few hundred lines down: a stub whose two halves disagreed about
