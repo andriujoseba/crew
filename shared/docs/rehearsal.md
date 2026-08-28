@@ -17,9 +17,11 @@ silently worked around.
 > ok/FAIL per check. This document remains the explainer for what each check
 > means, and the manual path when no host is at hand.
 >
-> *Historical note: the original rollout of this engine was validated on one
-> pull request, and this runbook used to name it. It is merged; a round today
-> is drilled against a ref you choose, and reports where Phase 3 says.*
+> *Provenance, not an instruction: this runbook was written to validate the
+> engine's original rollout on `heavy-duty/crew#16`, which merged long ago. A
+> round today drills a ref you choose and reports where Phase 3 says — nothing
+> in this document routes findings to that pull request or to any other fixed
+> one.*
 
 ## Running a round
 
@@ -66,6 +68,12 @@ readers — the collector (`CREW_FLOOR_ROSTER`), the `crew status` it compares
 against (`CREW_ROSTER`), and its own counts. `rehearsal-all.sh` passes
 `--drill-roles` for the roles whose drill actually reached a box, and announces
 any narrowing rather than quietly covering less.
+
+A round is real infrastructure — boxes and public sandbox repositories on the
+operator's own host and account. What it creates, when reuse is legitimate and
+what reuse costs phase 1, and what teardown will and will not delete, is
+[`drills/README.md`](../../drills/README.md)'s round-lifecycle section; it is
+not repeated here.
 
 Every opt-out below is an **operator-requested exclusion**: the round still
 records the leg, naming the flag as the reason it did not run. A run carrying
@@ -476,9 +484,10 @@ carry a version and a verdict the page drops.
 - **Needs** `playwright-core` *and* a browser — `playwright-core` deliberately
   ships without one. The drill probes the usual Chrome/Chromium paths and skips
   with a named reason if it finds none; `PW_CHROME=/path/to/chrome` overrides.
-  Screenshots land in `.drill-shots/` (`--app-shots <dir>`) and outlive the
-  run. To watch it drive: `FLOOR_TEST_HEADED=1`, optionally with
-  `FLOOR_TEST_SLOWMO=250`.
+  Screenshots land in `.drill-shots/` — `--app-shots <dir>` through
+  `rehearsal-all.sh`, `--shots <dir>` when running `rehearsal-app.sh` directly
+  — and outlive the run. To watch it drive: `FLOOR_TEST_HEADED=1`, optionally
+  with `FLOOR_TEST_SLOWMO=250`.
 - **Produces** the `browser` row: `ok (read-only browser walk executed)`,
   `FAIL (browser walk executed and failed)`, `INCOMPLETE (not executed:
   playwright-core not installed …)` or `INCOMPLETE (not executed: no browser
