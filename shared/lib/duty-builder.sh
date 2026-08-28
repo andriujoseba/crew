@@ -551,7 +551,109 @@ _report_unsignalled_hold() {
         "$repo#$num: no round-answered signal at head ${head:0:12} — not requesting (#133)"
 }
 
-# _request_panel REPO NUM PAYLOAD PANEL_JSON CHECK_STATE HC_HEAD — engine-side
+# --- The round cap: the engine counts, and says the boundary is here (#502) ---
+#
+# Doctrine gives the engine exactly one half of this rule. "You perform the cut,
+# at the round close … nothing counts rounds for you, nothing enforces the cut,
+# and nothing stops a sixth round on one PR. Where an engine does count and says
+# the boundary is here, that is instruction and never performance." So what lives
+# below is a census and a held request. The engine opens no successor, closes no
+# predecessor and edits no body; the nine-step procedure is the session's, and
+# its text is in fragment-round-rules.txt where every builder wake reads it.
+#
+# ROUND_CAP_PRS is the census answer the rest of the tick reads: the `repo#num`
+# of every open authored PR that has reached the cap, space-separated.
+# ROUND_CAP_NAMED is the same set rendered for the prompt slot, or `-`.
+# Globals rather than a return value for the reason _resume_attach_comments
+# states: every report here is a log line, log writes to stdout, and a function
+# returning its data down the same channel would fold its warnings into it.
+ROUND_CAP_PRS=""
+ROUND_CAP_NAMED="-"
+
+# _round_cap_census REPO PANEL_JSON LISTING — count every open authored PR's
+# rounds and record the ones at the cap.
+#
+# DRAFTS ARE COUNTED, and that is the whole reason this is a census of its own
+# rather than a field folded into _redraft_authored_pr's fetch. The cut is
+# performed on a PR the engine has just returned to draft: the round closed
+# without full approval, the author tick drafted it, and the session that answers
+# round 5 and performs the cut is the RESUME session on that draft. A census that
+# skipped drafts would name the boundary on the one tick before it mattered and
+# be silent on every tick after it.
+#
+# It costs one GraphQL call per open authored PR per tick, and there is no
+# cheaper shape: `reviews` is what distinguishes five rounds from one, and it is
+# neither on the `gh pr list` listing nor derivable from
+# `latestOpinionatedReviews`, which carries one verdict per author. The listing
+# is the one this tick already fetched, so the enumeration itself adds no call.
+#
+# A fetch or eval failure counts that PR as not-at-cap for the tick and warns.
+# That is the safe direction: an unnamed boundary costs a tick and the next
+# census re-states it, where a manufactured one would tell a session to close a
+# PR that has rounds left.
+_round_cap_census() {
+  local repo="$1" panel_json="$2" listing="$3"
+  local owner name num payload capjson rounds at_cap named="" items="" fresh
+  ROUND_CAP_PRS=""
+  ROUND_CAP_NAMED="-"
+  owner="${repo%%/*}"; name="${repo##*/}"
+  if [ -z "$listing" ] || [ "$listing" = err ]; then
+    warn "$repo: round-cap census skipped (the authored-PR listing failed); no boundary named this tick"
+    return 0
+  fi
+  while IFS= read -r num; do
+    [ -n "$num" ] || continue
+    if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
+      repository(owner:$owner,name:$name){ pullRequest(number:$num){
+        headRefOid
+        commits(last:100){nodes{commit{oid committedDate}}}
+        reviews(first:100){nodes{author{login} state commit{oid} submittedAt}}
+      } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
+      warn "$repo#$num: round-cap fetch failed; not counted this tick"
+      continue
+    fi
+    capjson="$(printf '%s' "$payload" \
+      | jq -c --argjson panel "$panel_json" \
+          -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null)" || capjson=""
+    if [ -z "$capjson" ]; then
+      warn "$repo#$num: round-cap eval failed; not counted this tick"
+      continue
+    fi
+    rounds="$(printf '%s' "$capjson" | jq -r '.rounds // 0' 2>/dev/null || echo 0)"
+    at_cap="$(printf '%s' "$capjson" | jq -r '.at_cap // false' 2>/dev/null || echo false)"
+    [ "$at_cap" = true ] || continue
+    ROUND_CAP_PRS="${ROUND_CAP_PRS:+$ROUND_CAP_PRS }$repo#$num"
+    named="${named:+$named; }$repo#$num ($rounds rounds)"
+    items="$items$(printf '%s#%s %02d' "$repo" "$num" "$rounds")"$'\n'
+  done < <(printf '%s' "$listing" | jq -r '.[].number' 2>/dev/null)
+  [ -n "$named" ] && ROUND_CAP_NAMED="$named"
+  # Said once per (PR, round count), not once per tick. A PR sits at the cap for
+  # every tick until the builder cuts it, and #167's rule applies: a line that
+  # repeats forever is wallpaper. The count is the ledger's value, zero-padded so
+  # a lexical compare stays a numeric one, so a sixth round opening in spite of
+  # the rule re-states the line instead of being swallowed by the first.
+  #
+  # Committed immediately and not on a session's rc, unlike .seen-build and
+  # .seen-ci-red: this ledger gates a LOG LINE and never a dispatch, so there is
+  # no wake to lose by committing early. The instruction itself is in the prompt
+  # on every tick regardless — silence here buys quiet, never a withheld boundary.
+  fresh="$(printf '%s' "$items" | ledger_filter "$DUTY_DIR/.seen-round-cap")"
+  if [ -n "${fresh//[[:space:]]/}" ]; then
+    log "$repo: round cap reached — $ROUND_CAP_NAMED; the session performs the cut, the engine holds the panel request on the predecessor (#502)"
+    printf '%s' "$fresh" | ledger_commit "$DUTY_DIR/.seen-round-cap"
+  fi
+  return 0
+}
+
+# _at_round_cap REPO NUM — 0 when this tick's census put that PR at the cap.
+_at_round_cap() {
+  case " ${ROUND_CAP_PRS:-} " in
+    *" $1#$2 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _request_panel REPO NUM PAYLOAD PANEL_JSON CHECK_STATE HC_HEAD [AT_CAP] — engine-side
 # panel (re-)request, and state:bots-reviewing beside it (#133). This moves the
 # request off the builder SESSION, where a session that died between its last
 # push and its re-request left a PR that looked finished and was waiting for
@@ -572,7 +674,31 @@ _report_unsignalled_hold() {
 # best-effort and gates nothing — the same rule as _handoff_finalize.
 _request_panel() {
   local repo="$1" num="$2" payload="$3" panel_json="$4" check_state="$5" hc_head="$6"
+  local at_cap="${7:-false}"
   local gql_head signal_json answered_head to_request rvr requested_any=0
+  # THE CUT SPENDS EVERY APPROVAL, SO NOTHING ON THE PREDECESSOR ASKS FOR ONE
+  # (#502 D2a). Doctrine, step 2 of the cut: "Do not re-request the panel. The
+  # ordinary rule re-requests by head after a push; here the cut spends every
+  # approval, so a verdict bought on the predecessor is a verdict on a PR that
+  # will never merge … The panel is requested once, on the successor." Left
+  # alone, this function is exactly what makes that request: the session answers
+  # round 5 whole, signals at a green head, and the ordinary path opens round six
+  # on the PR doctrine says can never carry one.
+  #
+  # Held before the signal gate rather than after it, because the refusal is not
+  # a wait. There is no head at which the predecessor becomes requestable, so
+  # _report_unsignalled_hold's "not requesting yet" reading would be wrong.
+  #
+  # Silent, and the census owns the saying: _round_cap_census logs the boundary
+  # once per (PR, round count), so a line here would repeat that fact on every
+  # tick for as long as the PR stands — the wallpaper #167 rules against, on the
+  # loop whose "nothing to request" case is already silent for the same reason.
+  #
+  # The default is `false`, so a caller that does not pass the census answer gets
+  # exactly today's behaviour, which is also what every PR below the cap gets.
+  # And the successor is a different PR with an empty review history, so its
+  # round 1 arrives here on the ordinary green-gated path with nothing to hold.
+  [ "$at_cap" != true ] || return 0
   gql_head="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.headRefOid // ""' 2>/dev/null)"
   [ -n "$gql_head" ] || { warn "$repo#$num: no head in payload; not requesting"; return 0; }
   # THE SIGNAL GATE. The latest MARK_ANSWERED comment of mine names the head the
@@ -2206,7 +2332,6 @@ _builder_repo() {
   local dir="$WORK_DIR/$slug"
   local wt_rules round_rules oneshot_rules panel_json operator_clause
   wt_rules="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name")"
-  round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED")"
   oneshot_rules="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
   operator_clause="$(_operator_build_prompt_clause "${LABEL_OPERATOR:-}")"
 
@@ -2357,6 +2482,18 @@ _builder_repo() {
       draft_nums="$RESUME_DISPATCH_NUMS"
     fi
   fi
+
+  # --- The round cap, counted before any session is dispatched (#502). Placed
+  # here and not beside the other renders at the top because it reads the
+  # authored-PR listing the resume block just fetched, which is the enumeration
+  # it would otherwise pay a second `gh pr list` for. Every builder-side prompt
+  # below carries `round_rules`, so counting first is what lets the boundary
+  # reach the resume, ci-red and build sessions alike — and the resume one is
+  # the session that actually performs the cut, on the draft the engine made
+  # when round 5 closed against its author. ---
+  _round_cap_census "$R" "$panel_json" "$resume_json"
+  round_rules="$(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED" ROUND_CAP="$ROUND_CAP_NAMED")"
+
   if [ -n "${draft_nums// /}" ] || [ -n "${orphan_nums// /}" ] || [ -n "${stranded_nums// /}" ]; then
     log "$R: resume duty (drafts: ${draft_nums:-none}; orphaned claims:${orphan_nums:-" none"}; unsignalled ready PRs: ${stranded_nums:-none}; of those, signals that missed the wire: ${near_miss_desc:-none}, green heads owed a signal: ${green_head_nums:-none}; drafts owed a flip: ${flip_owed_nums:-none})"
     ensure_main_clone "$R" "$dir" || return 0
@@ -2732,7 +2869,7 @@ _builder_repo() {
   # is the incident #17 was filed from. A converged PR reaching the human with
   # a red check is a human's call to make; a converged PR reaching nobody is
   # the failure this module exists to end. ---
-  local my_open converged handoff_signal handoff_prs=""
+  local my_open converged handoff_signal handoff_prs="" _pr_at_cap=false
   if [ "$mine_json" = "err" ]; then
     warn "$R: handoff detection failed; skipping"
   else
@@ -2782,8 +2919,34 @@ _builder_repo() {
       # (#133). When it requests, converged.jq below returns false on the same
       # payload (not every panelist approves the head), so the two never both
       # fire — no continue needed.
+      #
+      # THE CAP NEVER SUPPRESSES A HANDOFF, and this is the one place where it
+      # could: the suppression below is an early return inside _request_panel,
+      # so execution CONTINUES into the convergence check regardless of it.
+      # That holds unconditionally, whatever the census answered. Written down
+      # because it read the other way on this PR's first head and both
+      # change-requesting reviewers found it (#566).
+      #
+      # WHAT IS *NOT* CLAIMED HERE: that at_cap and converged are never both
+      # true. On the ordinary path they are not — a fifth round that closed with
+      # a full approval still standing at the current head is carved out of
+      # at_cap in round-cap.jq, so a PR the human is about to merge is never
+      # named for the cut. But $approvals_stand is keyed to the CAP round's
+      # head, deliberately (roundcap-later-approval-does-not-lift-the-cap), so a
+      # SIXTH round approving a newer head unanimously leaves at_cap true beside
+      # a true convergence: the PR hands off AND keeps being named in
+      # {{ROUND_CAP}} until a human merges it. Reachable only from outside this
+      # build — round six exists only if someone requested the panel past the
+      # suppression above — and the amended criterion is scoped to "a fifth
+      # round that passes" (#502 D2b), so it does not govern that shape. Named
+      # rather than asserted away, because the comment that asserted it away was
+      # wrong (@claude-bot-andresmgsl, #566 round 2).
+      # The seventh argument is this tick's census answer for THIS PR (#502
+      # D2a). Passed rather than read off the global inside the helper, so the
+      # suppression is visible at the call site and drivable from a fixture.
+      if _at_round_cap "$R" "$N"; then _pr_at_cap=true; else _pr_at_cap=false; fi
       _request_panel "$R" "$N" "$pr_payload" "$panel_json" \
-        "${check_by_num[$N]:-}" "${head_by_num[$N]:-}"
+        "${check_by_num[$N]:-}" "${head_by_num[$N]:-}" "$_pr_at_cap"
       # The SAME licence object _request_panel reads, off the same payload and
       # through the same program (#452). converged.jq spends the human's block
       # with it exactly as request-panel.jq spends a panelist's: one predicate

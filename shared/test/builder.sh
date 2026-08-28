@@ -1898,8 +1898,9 @@ assert_doctrine_quote "$RG_PROMPT" 'under Claiming:' \
 # four occurrences are: bare opening reference; quotation attribution for the
 # declaration/Claiming passage; bare acceptance reference; quotation
 # attribution for the draft-flip passage. build.txt's two occurrences are bare
-# governing/acceptance references. fragment-round-rules.txt's two occurrences
-# are bare green-head/panel references. attention.txt, ci-red.txt,
+# governing/acceptance references. fragment-round-rules.txt's three occurrences
+# are the two bare green-head/panel references and the round cap's section
+# citation (#502). attention.txt, ci-red.txt,
 # fragment-floor-envelope.txt, fragment-oneshot-rules.txt,
 # fragment-doctrine-unlisted.txt, fragment-doctrine-upstream.txt,
 # fragment-graph-changed.txt, fragment-signals.txt, fragment-unblockable.txt,
@@ -1911,7 +1912,7 @@ declare -A doctrine_builder_occurrences=(
   [fragment-floor-envelope.txt]=0 [fragment-oneshot-rules.txt]=0
   [fragment-doctrine-unlisted.txt]=0 [fragment-doctrine-upstream.txt]=0
   [fragment-graph-changed.txt]=0
-  [fragment-round-rules.txt]=2 [fragment-signals.txt]=0
+  [fragment-round-rules.txt]=3 [fragment-signals.txt]=0
   [fragment-unblockable.txt]=0
   [fragment-wt-rules.txt]=0 [hygiene.txt]=0 [mention.txt]=0
   [rebase.txt]=0 [resume.txt]=4 [review.txt]=0 [triage.txt]=0
@@ -4851,5 +4852,497 @@ t d479-issue-ref-hoist-preserves-answers "479 480 - - " "$D479_FP"
 
 PATH="$D479_PATH"
 unset D479_MODE
+
+# --- #502: the round cap the engine counts and never cuts -------------------
+#
+# Doctrine gives the engine one half of the rule and forbids it the other:
+# "nothing counts rounds for you, nothing enforces the cut … Where an engine
+# does count and says the boundary is here, that is instruction and never
+# performance." So these cases pin two things that a later change could quietly
+# swap — that the count is right, and that counting is ALL the engine does.
+RC_JQ="$SHARED/lib/jq/round-cap.jq"
+RC_PANEL='["rev-a","rev-b"]'
+# A DUTY_DIR of its own: the census writes a seen-ledger, and the fixtures that
+# borrow "$SHARED" as DUTY_DIR only ever read jq out of it. The symlink gives
+# the real programs without giving the real tree somewhere to be written to.
+RC_DUTY="$TMP/round-cap-duty"
+mkdir -p "$RC_DUTY/lib"
+ln -sfn "$SHARED/lib/jq" "$RC_DUTY/lib/jq"
+
+# rc_build FULL [OPEN] [PUSHED] [LAST_VERDICT] — a pullRequest payload carrying
+# FULL rounds that both panelists voted in; OPEN=1 adds one more round with a
+# single verdict in it (a round that has opened and not closed); PUSHED=1 adds a
+# commit after the last verdict, which is the head the builder's round fixes
+# land on. The locals are `rc_`-prefixed because shellcheck reads this whole
+# file in one namespace: a local named `full` turns an unrelated `r1=full-budget`
+# five hundred lines up into an arithmetic expression and SC2100. Commit i is committed at 10:00 and reviewed at 12:00 the same day,
+# so no verdict is re-pointed and the partition is the plain one.
+#
+# LAST_VERDICT is rev-a's state in the FULL-th round, defaulting to
+# CHANGES_REQUESTED — rev-b always approves, so the default builds a round that
+# closed WITHOUT full approval. Passing APPROVED builds the terminal shape the
+# round-1 panel found uncovered: a fifth round that closed UNANIMOUSLY, where the
+# cut must not fire. It is a parameter rather than a second builder because every
+# existing case must keep driving the byte-identical payload it drove before.
+rc_build() {
+  local rc_full="$1" rc_open="${2:-0}" rc_pushed="${3:-0}" rc_last="${4:-CHANGES_REQUESTED}"
+  local i oid ts st
+  local commits="" reviews="" head=""
+  for ((i = 1; i <= rc_full + rc_open + rc_pushed; i++)); do
+    oid="$(printf 'c%039d' "$i")"
+    ts="$(printf '2026-08-%02dT10:00:00Z' "$i")"
+    commits="$commits{\"commit\":{\"oid\":\"$oid\",\"committedDate\":\"$ts\"}},"
+    head="$oid"
+  done
+  for ((i = 1; i <= rc_full; i++)); do
+    oid="$(printf 'c%039d' "$i")"
+    ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
+    if [ "$i" -eq "$rc_full" ]; then st="$rc_last"; else st=CHANGES_REQUESTED; fi
+    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"$st\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+    reviews="$reviews{\"author\":{\"login\":\"rev-b\"},\"state\":\"APPROVED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+  done
+  if [ "$rc_open" -eq 1 ]; then
+    i=$((rc_full + 1))
+    oid="$(printf 'c%039d' "$i")"
+    ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
+    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+  fi
+  printf '{"data":{"repository":{"pullRequest":{"headRefOid":"%s","body":"","comments":{"nodes":[]},"commits":{"nodes":[%s]},"reviews":{"nodes":[%s]}}}}}' \
+    "$head" "${commits%,}" "${reviews%,}"
+}
+rc_count() {  # payload [panel] -> "<rounds> <at_cap>"
+  printf '%s' "$1" \
+    | jq -c --argjson panel "${2:-$RC_PANEL}" -f "$RC_JQ" \
+    | jq -r '"\(.rounds) \(.at_cap)"'
+}
+
+t roundcap-no-rounds-is-not-at-cap        '0 false' "$(rc_count "$(rc_build 0)")"
+t roundcap-one-round-is-not-at-cap        '1 false' "$(rc_count "$(rc_build 1)")"
+t roundcap-four-rounds-is-not-at-cap      '4 false' "$(rc_count "$(rc_build 4)")"
+t roundcap-fifth-round-closed-is-at-cap   '5 true'  "$(rc_count "$(rc_build 5)")"
+# MUST FAIL: a mid-round cut. Round 5 has OPENED — one panelist has voted — and
+# doctrine "permits no mid-round cut", so the boundary is not here yet. A bare
+# `rounds >= 5` reads this as at-cap and instructs a cut over two reviewers who
+# are still reading.
+t roundcap-fifth-round-still-open-is-not-at-cap '5 false' "$(rc_count "$(rc_build 4 1)")"
+# The cut survives the round's own fixes. Step 1 answers round 5 whole and
+# pushes, which moves the head off every verdict-bearing commit; the cap is a
+# fact about the PR's history and must not evaporate with that push.
+t roundcap-survives-the-round-fix-push    '5 true'  "$(rc_count "$(rc_build 5 0 1)")"
+# A sixth round that opened in spite of the rule does not un-close the fifth.
+t roundcap-sixth-round-still-at-cap       '6 true'  "$(rc_count "$(rc_build 6)")"
+# MUST FAIL: a successor whose first round is numbered 6. Rounds are counted per
+# PR, so the successor — a different PR with its own review history — arrives
+# here at one round and on the ordinary path.
+t roundcap-successor-first-round-is-round-one '1 false' "$(rc_count "$(rc_build 1)")"
+# MUST FAIL: a cut fired on a fifth round that closed with the panel's UNANIMOUS
+# approval. That is the ordinary way a long PR finally passes: converged.jq is
+# true on the same tick, the engine hands the PR to the human, and the PR then
+# sits in the authored listing until a human merges it — so an at-cap answer here
+# names a handed-off PR for the cut in every builder-side prompt for the whole of
+# that window, beside a step 4 reading "Close the predecessor". Doctrine's cut is
+# written for a round that closed with work still owed: step 1 answers round 5 and
+# pushes fixes there are none of, and step 2's "a verdict bought on the
+# predecessor is a verdict on a PR that will never merge" has its premise
+# inverted. Found by @codex-bot-andresmgsl and @claude-bot-andresmgsl, and named
+# as an unverified path by @kimi-bot-andresmgsl, on PR #566's round 1.
+t roundcap-converged-fifth-round-is-not-at-cap '5 false' \
+  "$(rc_count "$(rc_build 5 0 0 APPROVED)")"
+# ...and the carve-out is exactly as wide as that, no wider. Same unanimous fifth
+# round, but the builder has since pushed: the approvals are spent, converged.jq
+# is false, the panel is re-requested, and the verdicts that land would form ROUND
+# SIX on the same PR. A plain "did the fifth round approve?" test reads this as
+# not-at-cap and opens the hole the cap exists to close.
+t roundcap-stale-full-approval-is-still-at-cap '5 true' \
+  "$(rc_count "$(rc_build 5 0 1 APPROVED)")"
+# A fourth round that closed unanimously is not at the cap for the ordinary
+# reason — four is not five — and reaching the carve-out for it would be reading
+# the wrong round.
+t roundcap-converged-fourth-round-is-not-at-cap '4 false' \
+  "$(rc_count "$(rc_build 4 0 0 APPROVED)")"
+# A sixth round that opened in spite of the rule does not un-close the fifth, and
+# the carve-out reads the FIFTH round's verdicts rather than the newest ones: here
+# round 5 requested changes and round 6 approved unanimously.
+t roundcap-later-approval-does-not-lift-the-cap '6 true' \
+  "$(rc_count "$(rc_build 6 0 0 APPROVED)")"
+# One panelist who requested changes and then APPROVED the same head has released
+# that head, and the latest verdict per reviewer is the one that counts — the same
+# reading latestOpinionatedReviews gives addressing.jq. Counting the stale
+# CHANGES_REQUESTED would hold a PR at the cap the panel had in fact passed.
+RC_REVOTED="$(printf '%s' "$(rc_build 5)" | jq -c \
+  --arg oid "$(printf 'c%039d' 5)" \
+  '.data.repository.pullRequest.reviews.nodes += [{author:{login:"rev-a"},state:"APPROVED",commit:{oid:$oid},submittedAt:"2026-08-05T18:00:00Z"}]')"
+t roundcap-revote-at-the-cap-head-is-the-latest '5 false' "$(rc_count "$RC_REVOTED")"
+# An empty panel never closes a round vacuously, the guard addressing.jq and
+# converged.jq both carry against a bare `panel=` line.
+t roundcap-empty-panel-never-closes-a-round '5 false' "$(rc_count "$(rc_build 5)" '[]')"
+# A bare COMMENTED review is not a verdict and opens no round.
+RC_COMMENTED="$(printf '%s' "$(rc_build 5)" | jq -c \
+  --arg oid "$(printf 'c%039d' 6)" \
+  '.data.repository.pullRequest.reviews.nodes += [{author:{login:"rev-a"},state:"COMMENTED",commit:{oid:$oid},submittedAt:"2026-08-06T12:00:00Z"}]')"
+t roundcap-commented-review-opens-no-round '5 true' "$(rc_count "$RC_COMMENTED")"
+
+# THE PARTITION IS round-log.jq's, AND THIS IS WHAT HOLDS THEM TOGETHER. Two
+# programs splitting one thread into rounds by different rules would disagree
+# about which round a builder is in, and the rendered `## Round log` is where a
+# human reads that answer off. $final=true finalizes the live round too, so the
+# marker count is the whole partition.
+rc_logged_rounds() {
+  printf '%s' "$1" \
+    | jq -r --arg me builder --argjson final true \
+        -f "$SHARED/lib/jq/round-log.jq" \
+    | grep -c '<!-- round:'
+}
+for rc_n in 1 3 5 6; do
+  t "roundcap-agrees-with-round-log-at-$rc_n" \
+    "$rc_n" "$(rc_logged_rounds "$(rc_build "$rc_n")")"
+  t "roundcap-count-agrees-with-round-log-at-$rc_n" \
+    "$rc_n" "$(rc_count "$(rc_build "$rc_n")" | cut -d' ' -f1)"
+done
+
+# --- the census: it counts, and that is the whole of what it does -----------
+# shellcheck disable=SC2034,SC2317  # vars/mocks consumed by the engine helper
+rc_census() (  # payload listing
+  DUTY_DIR="$RC_DUTY" ME=builder
+  RC_PAYLOAD="$1"
+  RC_LOG="$TMP/round-cap-census"; : >"$RC_LOG"
+  log() { printf 'log %s\n' "$*" >>"$RC_LOG"; }
+  warn() { printf 'warn %s\n' "$*" >>"$RC_LOG"; }
+  gh() {
+    printf 'gh %s\n' "$*" >>"$RC_LOG"
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      printf '%s\n' "$RC_PAYLOAD"
+      return 0
+    fi
+    return 3
+  }
+  _round_cap_census owner/repo '["rev-a","rev-b"]' "$2"
+  printf 'prs=[%s] named=[%s]' "$ROUND_CAP_PRS" "$ROUND_CAP_NAMED"
+)
+RC_LISTING='[{"number":7}]'
+rm -f "$RC_DUTY/.seen-round-cap"
+t roundcap-census-names-the-capped-pr \
+  'prs=[owner/repo#7] named=[owner/repo#7 (5 rounds)]' \
+  "$(rc_census "$(rc_build 5)" "$RC_LISTING")"
+rm -f "$RC_DUTY/.seen-round-cap"
+t roundcap-census-leaves-a-below-cap-pr-unnamed \
+  'prs=[] named=[-]' \
+  "$(rc_census "$(rc_build 4)" "$RC_LISTING")"
+# MUST FAIL: an engine that performs any act of the cut. The census is allowed
+# exactly one kind of call — a GraphQL read — and nothing that opens a PR,
+# closes one, or writes a body.
+rm -f "$RC_DUTY/.seen-round-cap"
+rc_census "$(rc_build 5)" "$RC_LISTING" >/dev/null
+RC_CALLS="$(grep -c '^gh ' "$TMP/round-cap-census")"
+RC_MUTATIONS="$(grep -Ec '^gh .*(mutation|pr create|pr close|pr edit|-X PATCH|-X POST|convertPullRequest|requested_reviewers|issue edit)' \
+  "$TMP/round-cap-census" || true)"
+t roundcap-census-reads-once-per-pr 1 "$RC_CALLS"
+t roundcap-census-performs-no-act-of-the-cut 0 "$RC_MUTATIONS"
+# ...and no module of the engine opens or closes a pull request at all, which is
+# the same claim made where a later change would actually make it. Comment lines
+# are stripped first: duty-builder.sh's resume header names `gh pr create` while
+# describing the SESSION's act, and a guard that cannot tell prose from code
+# would have to be deleted the first time it fired.
+# The match runs off a here-string and never off a pipe: a `| grep -q` takes the
+# pipeline's status from grep under pipefail, and #449's guard reds on writing
+# the shape at all.
+RC_ENGINE_CODE="$(engine_lib_sources | xargs grep -hEv '^[[:space:]]*#')"
+if grep -Eq 'gh pr (create|close|reopen)|closePullRequest' <<<"$RC_ENGINE_CODE"; then
+  r1=ENGINE-CUTS
+else
+  r1=session-cuts
+fi
+t roundcap-engine-opens-and-closes-no-pr session-cuts "$r1"
+# Said once per (PR, round count), not once per tick: a PR sits at the cap until
+# the builder cuts it, and #167's rule is that a line repeating forever is
+# wallpaper. The second census over the same state must add no log line.
+rm -f "$RC_DUTY/.seen-round-cap"
+rc_census "$(rc_build 5)" "$RC_LISTING" >/dev/null
+RC_FIRST="$(grep -c '^log ' "$TMP/round-cap-census")"
+rc_census "$(rc_build 5)" "$RC_LISTING" >/dev/null
+RC_SECOND="$(grep -c '^log ' "$TMP/round-cap-census")"
+rc_census "$(rc_build 6)" "$RC_LISTING" >/dev/null
+RC_SIXTH="$(grep -c '^log ' "$TMP/round-cap-census")"
+t roundcap-census-says-the-boundary-once "1 0 1" "$RC_FIRST $RC_SECOND $RC_SIXTH"
+# A listing this tick could not read names no boundary, and warns rather than
+# manufacturing one.
+rm -f "$RC_DUTY/.seen-round-cap"
+t roundcap-census-failed-listing-names-nothing 'prs=[] named=[-]' \
+  "$(rc_census "$(rc_build 5)" err)"
+t roundcap-census-failed-listing-warns 1 \
+  "$(grep -c '^warn .*round-cap census skipped' "$TMP/round-cap-census")"
+
+# --- D2a: the predecessor is never requested, and everything else is today's -
+# shellcheck disable=SC2034,SC2317  # vars/mocks consumed by the engine helper
+rc_request() (  # payload [at_cap]
+  DUTY_DIR="$SHARED" ME=builder MARK_ANSWERED="$RP_MARK"
+  LABEL_BOTS_REVIEWING=state:bots-reviewing
+  RC_LOG="$TMP/round-cap-request"; : >"$RC_LOG"
+  log() { :; }
+  warn() { :; }
+  gh() {
+    local rc_arg
+    if [ "$1" = api ] && [[ "$2" == repos/*/requested_reviewers ]]; then
+      for rc_arg in "$@"; do
+        case "$rc_arg" in
+          reviewers\[\]=*) printf 'request:%s\n' "${rc_arg#*=}" >>"$RC_LOG" ;;
+        esac
+      done
+      return 0
+    fi
+    if [ "$1" = issue ] && [ "$2" = edit ]; then
+      printf 'label\n' >>"$RC_LOG"
+      return 0
+    fi
+    return 3
+  }
+  if [ "$#" -ge 2 ]; then
+    _request_panel owner/repo 7 "$1" '["rev-a","rev-b"]' green "$AR_H" "$2"
+  else
+    _request_panel owner/repo 7 "$1" '["rev-a","rev-b"]' green "$AR_H"
+  fi
+  paste -sd, "$RC_LOG"
+)
+RC_SIGNAL_COMMENTS='[{"author":{"login":"builder"},"body":"'"$RP_MARK"' '"$AR_H"'","createdAt":"'"$AR_T_SIGNAL"'"}]'
+RC_SIGNALLED="$(mk_addressing_payload false '[]' '[]' "$AR_BLOCKED" "$RC_SIGNAL_COMMENTS")"
+# MUST FAIL: a panel request on the predecessor at the cut. Everything the
+# ordinary path needs is present — the round is signalled answered at the
+# current head and the check is green — so only the cap holds it.
+t roundcap-no-panel-request-on-the-predecessor '' "$(rc_request "$RC_SIGNALLED" true)"
+# MUST FAIL: a PR below the cap behaving any differently from today. Same
+# payload, same green head, cap not reached.
+t roundcap-below-cap-requests-as-today 'request:rev-a,label' \
+  "$(rc_request "$RC_SIGNALLED" false)"
+# ...and a caller that passes no census answer at all gets today's behaviour,
+# which is what makes the argument's default the safe one.
+t roundcap-omitted-census-answer-is-todays-behaviour 'request:rev-a,label' \
+  "$(rc_request "$RC_SIGNALLED")"
+
+# --- the whole control-flow outcome, not the predicate alone ----------------
+# Asked for by @codex-bot-andresmgsl on PR #566 round 1, and it is the right
+# ask: the three cases above probe `_request_panel` in isolation, so none of
+# them sees that execution CONTINUES past the cap's early return into the
+# unchanged convergence check. A cut suppressed at the request site while
+# `converged.jq` queues `_handoff_finalize` on the same tick is a defect no
+# predicate probe can reach. This drives census -> _at_round_cap ->
+# _request_panel -> converged.jq over one PR and asserts what the tick actually
+# DOES.
+# shellcheck disable=SC2034,SC2317  # vars/mocks consumed by the engine helpers
+rc_flow() (  # cap-payload pr-payload
+  DUTY_DIR="$RC_DUTY" ME=builder MARK_ANSWERED="$RP_MARK"
+  LABEL_BOTS_REVIEWING=state:bots-reviewing
+  LABEL_NEEDS_HUMAN=state:needs-human
+  RC_PAYLOAD="$1"; RC_PR="$2"
+  local rc_cap rc_signal rc_conv
+  RC_LOG="$TMP/round-cap-flow"; : >"$RC_LOG"
+  log() { :; }
+  warn() { :; }
+  gh() {
+    local rc_arg
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      printf '%s\n' "$RC_PAYLOAD"
+      return 0
+    fi
+    if [ "$1" = api ] && [[ "$2" == repos/*/requested_reviewers ]]; then
+      for rc_arg in "$@"; do
+        case "$rc_arg" in
+          reviewers\[\]=*) printf 'request:%s\n' "${rc_arg#*=}" >>"$RC_LOG" ;;
+        esac
+      done
+      return 0
+    fi
+    if [ "$1" = issue ] && [ "$2" = edit ]; then
+      printf 'label\n' >>"$RC_LOG"
+      return 0
+    fi
+    return 3
+  }
+  rm -f "$RC_DUTY/.seen-round-cap"
+  _round_cap_census owner/repo '["rev-a","rev-b"]' '[{"number":7}]'
+  # The call site's own two lines, copied rather than described, so this drives
+  # the wiring instead of a paraphrase of it.
+  if _at_round_cap owner/repo 7; then rc_cap=true; else rc_cap=false; fi
+  _request_panel owner/repo 7 "$RC_PR" '["rev-a","rev-b"]' green "$AR_H" "$rc_cap"
+  rc_signal="$(printf '%s' "$RC_PR" | jq -c --arg me "$ME" --arg mark "$MARK_ANSWERED" \
+    -f "$RC_DUTY/lib/jq/answered-head.jq")"
+  rc_conv="$(printf '%s' "$RC_PR" | jq -r --argjson panel '["rev-a","rev-b"]' \
+    --arg needs_human "$LABEL_NEEDS_HUMAN" --arg human "" --argjson signal "$rc_signal" \
+    -f "$RC_DUTY/lib/jq/converged.jq")"
+  printf 'named=[%s] at_cap=%s requested=[%s] converged=%s' \
+    "$ROUND_CAP_NAMED" "$rc_cap" "$(paste -sd, "$RC_LOG")" "$rc_conv"
+)
+RC_MERGEABLE='.data.repository.pullRequest.mergeable="MERGEABLE"'
+# Approvals from the whole panel AT the head, and a signal at that head: the
+# terminal shape. `[]` requests and no `state:needs-human` yet, because this is
+# the tick on which the handoff would fire.
+RC_CONVERGED_PR="$(mk_addressing_payload false '[]' '[]' "$AR_APPROVED" "$RC_SIGNAL_COMMENTS" \
+  | jq -c "$RC_MERGEABLE")"
+# THE SHAPE ALL 28 ROUND-1 CASES MISSED. Under the fix the census refuses it, so
+# nothing is named for the cut, the request site is on today's path and finds
+# nobody left to request, and the handoff runs — the PR goes to the human and
+# merges. Restore the at-cap answer here and every cell but the last flips.
+t roundcap-converged-fifth-round-hands-off-and-is-not-cut \
+  'named=[-] at_cap=false requested=[] converged=true' \
+  "$(rc_flow "$(rc_build 5 0 0 APPROVED)" "$RC_CONVERGED_PR")"
+# The shape the cut IS for, driven the same way: round 5 closed with a change
+# request, so the census names it, the request is held on the predecessor, and
+# nothing hands off. This is the row that would go missing if the carve-out were
+# written too wide.
+RC_OWED_PR="$(mk_addressing_payload false '[]' '[]' "$AR_BLOCKED" "$RC_SIGNAL_COMMENTS" \
+  | jq -c "$RC_MERGEABLE")"
+t roundcap-owed-fifth-round-is-cut-and-never-handed-off \
+  'named=[owner/repo#7 (5 rounds)] at_cap=true requested=[] converged=false' \
+  "$(rc_flow "$(rc_build 5)" "$RC_OWED_PR")"
+# ...and the stale-approval shape, where the suppression is doing visible work:
+# the fifth round approved unanimously but the head has moved, so no approval
+# stands, converged.jq is false, and the ordinary path would request BOTH
+# panelists — whose verdicts would be round six on this PR. The cap holds them.
+RC_STALE_REVIEWS="$(printf '%s' "$AR_APPROVED" \
+  | jq -c --arg oid "$(printf 'b%039d' 1)" 'map(.commit.oid = $oid)')"
+RC_STALE_PR="$(mk_addressing_payload false '[]' '[]' "$RC_STALE_REVIEWS" "$RC_SIGNAL_COMMENTS" \
+  | jq -c "$RC_MERGEABLE")"
+t roundcap-stale-approval-holds-the-request-and-never-hands-off \
+  'named=[owner/repo#7 (5 rounds)] at_cap=true requested=[] converged=false' \
+  "$(rc_flow "$(rc_build 5 0 1 APPROVED)" "$RC_STALE_PR")"
+
+# --- no configurable cap, and no per-role override --------------------------
+# MUST FAIL: any configurable cap. The number is a literal in the predicate and
+# is written once; a conf key or a role override is what D1 forbids by name.
+# shellcheck disable=SC2016  # the jq program's own `$cap` is matched literally
+t roundcap-five-is-declared-once 1 \
+  "$(grep -cE '^\| 5 +as \$cap$' "$RC_JQ")"
+if grep -Eqi 'round[_-]?cap|max[_-]?rounds|cap[_-]?rounds' "$SHARED/conf/fleet.defaults.conf"; then
+  r1=CONFIGURABLE
+else
+  r1=untouched
+fi
+t roundcap-fleet-defaults-untouched untouched "$r1"
+if grep -REqi 'ROUND_CAP=[0-9]|MAX_ROUNDS|CREW_ROUND_CAP|ROUND_CAP_DEFAULT|per-role cap' \
+  "$SHARED/lib" "$SHARED/bin" "$SHARED/conf" "$ROOT/cli"; then
+  r1=OVERRIDABLE
+else
+  r1=fixed
+fi
+t roundcap-no-override-anywhere fixed "$r1"
+# The census reads no threshold from anywhere: its only source for the number is
+# the predicate it calls.
+t roundcap-census-reads-no-threshold 0 \
+  "$(awk '/^_round_cap_census\(\) \{$/,/^\}$/' "$BMOD" \
+     | grep -Ec 'conf_get|[A-Z_]*CAP[A-Z_]*=[0-9]')"
+
+# --- the instruction: what it must name (D3, D3a, the nine steps) -----------
+RC_RENDERED="$(PROMPTS_DIR="$SHARED/prompts" render_prompt fragment-round-rules.txt \
+  TRIAGE=fx-triage BENCH='a b' MARK_ADDRESSING='addressing' MARK_ANSWERED='answered' \
+  ROUND_CAP='owner/repo#7 (5 rounds)')"
+rc_names() {  # name phrase...
+  local rc_name="$1" rc_phrase
+  shift
+  r1=named
+  for rc_phrase in "$@"; do
+    grep -Fq -- "$rc_phrase" <<<"$RC_RENDERED" || r1="MISSING: $rc_phrase"
+  done
+  t "$rc_name" named "$r1"
+}
+rc_names roundcap-instruction-states-the-cap \
+  'A PR CARRIES AT MOST FIVE ROUNDS' 'round six never opens on the same PR'
+rc_names roundcap-instruction-numbers-rounds-per-pr \
+  "successor's first round is round 1, never round 6"
+# MUST FAIL: an instruction that lets the engine perform the cut.
+rc_names roundcap-instruction-keeps-the-cut-with-the-builder \
+  'THE ENGINE COUNTS AND SAYS WHERE THE BOUNDARY IS; IT PERFORMS NO ACT OF THE CUT' \
+  'it opens no PR, closes no PR and edits no body' \
+  'YOU PERFORM THE CUT'
+# MUST FAIL: an instruction that omits the Closes -> Refs edit or the
+# `### Current state` carry-forward.
+rc_names roundcap-instruction-names-the-closes-to-refs-edit \
+  "Edit the predecessor's body, 'Closes #N' to 'Refs #N'" \
+  'it happens BEFORE the close'
+rc_names roundcap-instruction-names-the-round-log-split \
+  "'### Current state' is CARRIED FORWARD from the predecessor" \
+  "'### Rounds' STARTS EMPTY"
+rc_names roundcap-instruction-names-the-carried-set \
+  'the branch, the claim, the assignee, the closing link and the queue labels'
+rc_names roundcap-instruction-forbids-the-predecessor-request \
+  'DO NOT SIGNAL AND DO NOT REQUEST THE PANEL on the predecessor' \
+  'The panel is requested once, on the successor'
+rc_names roundcap-instruction-forbids-a-mid-round-cut \
+  'permits NO MID-ROUND CUT' 'excuses no unanswered round'
+rc_names roundcap-instruction-carries-the-census \
+  'owner/repo#7 (5 rounds)'
+# The nine steps, each numbered, in order. Read from the cut's own sentence
+# onward: the fragment's three hard rules are numbered (1)-(3) above it, and a
+# count over the whole file would pass on six steps plus those three.
+t roundcap-instruction-has-nine-numbered-steps '(1) (2) (3) (4) (5) (6) (7) (8) (9)' \
+  "$(grep -oE '\([1-9]\)' <<<"${RC_RENDERED##*THE CUT IS NINE STEPS, IN THIS ORDER.}" \
+     | paste -sd' ')"
+
+# --- wiring ------------------------------------------------------------------
+# The census must precede every builder-side prompt render, or the boundary
+# reaches no session on the tick it is first true.
+# shellcheck disable=SC2016  # grep patterns intentionally contain shell syntax
+RC_CENSUS_LINE="$(grep -n '_round_cap_census "\$R"' "$BMOD" | cut -d: -f1)"
+# shellcheck disable=SC2016
+RC_RENDER_LINE="$(grep -n 'render_prompt fragment-round-rules.txt' "$BMOD" | cut -d: -f1)"
+# shellcheck disable=SC2016
+RC_RESUME_DISPATCH="$(grep -n 'run_session resume' "$BMOD" | cut -d: -f1)"
+if [ -n "$RC_CENSUS_LINE" ] && [ -n "$RC_RENDER_LINE" ] \
+  && [ "$RC_CENSUS_LINE" -lt "$RC_RENDER_LINE" ] \
+  && [ "$RC_RENDER_LINE" -lt "$RC_RESUME_DISPATCH" ]; then
+  r1=ordered
+else
+  r1=WRONG-ORDER
+fi
+t roundcap-census-precedes-every-render ordered "$r1"
+# The request site is handed this tick's answer for that PR, rather than reading
+# the global inside the helper where no fixture could drive it.
+# shellcheck disable=SC2016  # grep patterns intentionally contain shell syntax
+if grep -q '_at_round_cap "\$R" "\$N"' "$BMOD" \
+  && grep -q '"\${head_by_num\[\$N\]:-}" "\$_pr_at_cap"' "$BMOD"; then
+  r1=passed
+else
+  r1=HIDDEN
+fi
+t roundcap-request-site-passes-the-census-answer passed "$r1"
+# Drafts are counted. The census enumerates the resume listing, which carries
+# every open authored PR, and never filters isDraft — the cut is performed on a
+# draft, so a draft-blind census names the boundary only on the tick before it
+# is needed. Driven rather than grepped: this asserted the ABSENCE of the string
+# `isDraft` in the function body until @claude-bot-andresmgsl pointed out on PR
+# #566 that the listing was right there and the claim could be pinned against
+# the code instead of against its spelling.
+rm -f "$RC_DUTY/.seen-round-cap"
+t roundcap-census-counts-drafts \
+  'prs=[owner/repo#7] named=[owner/repo#7 (5 rounds)]' \
+  "$(rc_census "$(rc_build 5)" '[{"number":7,"isDraft":true}]')"
+# The attention wake renders the slot too, with its OWN token: `?` for "did not
+# count at all" against the census's `-` for "counted, none at the cap". One
+# token for both states was readable only by a session that already knew which
+# wake it was on (@claude-bot-andresmgsl, #566). Neither may reach a prompt
+# unexplained.
+if grep -q 'ROUND_CAP="?"' "$ATT_MOD" \
+  && ! grep -q 'ROUND_CAP="-"' "$ATT_MOD" \
+  && grep -Fq "a '-' means it counted and none is at the cap" <<<"$RC_RENDERED" \
+  && grep -Fq "a '?' means this wake did not count at all" <<<"$RC_RENDERED"; then
+  r1=explained
+else
+  r1=UNEXPLAINED
+fi
+t roundcap-attention-slot-explained explained "$r1"
+# The instruction carries the carve-out too, because doctrine's own procedure is
+# executable by a builder counting rounds by hand and a session that counts five
+# rounds itself must not cut a PR the panel has just passed.
+rc_names roundcap-instruction-names-the-converged-carve-out \
+  'THE CUT IS FOR A ROUND THAT CLOSED WITH WORK STILL OWED' \
+  'it converges and goes to the human to merge' \
+  'If the approvals are STALE because you have since pushed, the cut is owed again'
+# The carve-out is crew's reading of a collision between two unconditional
+# doctrine rules, not doctrine's own, and triage ruled that the citation "should
+# ride wherever this reading is stated in the build". This is one of the two
+# places it is stated; round-cap.jq's header is the other. Pinned so an edit
+# cannot drop the one link that says the reading is contingent and where it
+# would be overturned (#566 round 2, @claude-bot-andresmgsl).
+rc_names roundcap-instruction-cites-the-doctrine-collision \
+  "THAT CARVE-OUT IS CREW'S READING AND IT IS CITED" \
+  'heavy-duty/ceremony#517'
 
 suite_finish
