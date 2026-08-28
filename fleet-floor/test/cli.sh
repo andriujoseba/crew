@@ -814,10 +814,19 @@ t "crew status <box>: a record-less detail view still costs three round trips" 3
 # which on the CI runner is everywhere. Skipped LOUDLY otherwise, per this
 # suite's own rule about silently-skipped UI tests.
 CL_XREAD_REC='VITALS ts=2026-08-28T09:00:00Z cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2'
-# A second record with most of the fields missing, because the rows a reader
+# A second record built out of HALF-PRESENT pairs, because the rows a reader
 # OMITS are as much of the contract as the rows it prints: two renderers can
-# agree on a full record and disagree about which absence costs which row.
-CL_XREAD_DEGRADED='VITALS ts=2026-08-28T09:00:00Z cores=2 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9 platform=linux'
+# agree on a full record and disagree about which absence costs which row, and
+# a record that simply lacks both halves of a pair cannot tell them apart —
+# every guard passes it identically whether it asks for one field or two.
+#
+# So: `mem_total_mb` with no `mem_avail_mb`, `swap_active_mb` with no
+# `swap_configured_mb`, `disk_total_mb`/`disk_used_mb` with no `disk_pct`, and
+# `load1`/`os` with the field each is a suffix OF absent. Every one of those
+# rows must be omitted by both readers. Plus a ONE-POINT series, which is the
+# other thing two renderers can quietly disagree about — "1 boot reading" and
+# "1 boot readings" render from the same record.
+CL_XREAD_DEGRADED='VITALS ts=2026-08-28T09:00:00Z load1=0.02 mem_total_mb=3850 swap_active_mb=0 disk_total_mb=29696 disk_used_mb=14254 disk_series=2026-08-01T12:50:01+00:00@9 os=debian-13'
 
 if ! command -v node >/dev/null; then
   skip "crew status <box>: the two readers render the record identically" \
