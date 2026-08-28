@@ -1,75 +1,96 @@
 # Duty-engine rehearsal — runbook for a fresh box and a fresh session
 
-> Automated form: `drill/rehearsal.sh` (run on the box HOST from a crew
-> checkout) executes everything below mechanically — phase 1 always,
-> phase 2 automatically once the operator has logged the drill box in —
-> printing ok/FAIL per check. This document remains the explainer for what
-> each check means, and the manual path when no host is at hand.
-> It accepts `--agent <name>` and defaults to `claude`; available agents are
-> the profiles under `shared/conf/agents/`.
->
-> **One box, one role.** `--role triage|builder|reviewer` (default
-> `reviewer`) selects both the installed role and the box
-> (`crew-drill-<role>`). `drill/rehearsal-all.sh` runs all three in
-> sequence. The fleet deploys single-role boxes (`fleet.roster`) and
-> `duty.sh` gates every module on `has_role`, so a single box carrying all
-> three would exercise a composite path nobody runs — and would hide the
-> class of defect that let a reviewer box quietly run triage sweeps for an
-> entire rehearsal (`heavy-duty/crew#28`).
->
-> The three boxes may share ONE GitHub identity. That is safe **only**
-> because `repos.txt` is now the scope for every module and each role gets
-> its own sandbox: disjoint registries, disjoint work. Under the previous
-> org-wide review sweep all three would have raced for the same verdicts.
->
-> **Which boxes a drill looks at — never `fleet.roster`.** `crew hire`'s
-> registry guard keys on roster *membership*, so a drill box listed in the
-> tracked `fleet.roster` counts as a fleet member to every safety check —
-> which is how three leftover drill boxes came to be armed against the
-> production registry (`heavy-duty/crew#51`). So `drill/rehearsal-app.sh`
-> takes its own:
->
-> ```sh
-> drill/rehearsal-app.sh --drill-roles "triage builder reviewer"  # generated
-> drill/rehearsal-app.sh --roster ~/mine.roster.local             # hand-written
-> ```
->
-> `--drill-roles` builds the list from the `crew-drill-<role>` convention
-> `rehearsal.sh` already owns, so it cannot drift from the boxes the drill
-> actually uses; prefer it. `--roster` is for anything else, and
-> `*.roster.local` is gitignored so such a file has a home. Both feed the
-> SAME path to all three readers — the collector (`CREW_FLOOR_ROSTER`), the
-> `crew status` it compares against (`CREW_ROSTER`), and its own counts.
-> `rehearsal-all.sh` passes `--drill-roles` for the roles it just ran.
->
-> **Operator-config registry drill.** `rehearsal-all.sh` also runs
-> `drill/rehearsal-config.sh` once against the first drill box it installed.
-> The script builds a temporary fleet definition with `crew init`, asserts
-> `CONFIG_IS_OPERATOR=1`, and drives real `crew upgrade` calls through the
-> divergence veto, both no-provenance migration outcomes, ordinary
-> convergence, examples-fallback non-convergence, and incomplete-trio
-> refusal. It backs up both `repos.txt` and its provenance record before the
-> first mutation, restores both on EXIT/INT/TERM, and prints the restoration
-> receipt. `--no-config-drill` is an explicit escape hatch for a role-only
-> run; such a run does not cover the operator registry contract.
->
-> **The browser walk** needs `playwright-core` *and* a browser —
-> `playwright-core` deliberately ships without one. The drill probes the
-> usual Chrome/Chromium paths and skips with a named reason if it finds
-> none; `PW_CHROME=/path/to/chrome` overrides. Screenshots land in
-> `.drill-shots/` (`--shots <dir>`) and outlive the run. To watch it drive:
-> `FLOOR_TEST_HEADED=1`, optionally with `FLOOR_TEST_SLOWMO=250`.
+You are validating the shared duty engine on a real host, on a box that has
+never run it. Read `shared/README.md` first (architecture + provenance), then
+run the phases below IN ORDER. Everything before "Phase 2" needs NO
+credentials — that is the point: the engine must behave correctly, loudly, and
+harmlessly on a creds-free box.
 
-You are validating the shared duty engine (crew PR #16) on a box that has
-never run it. You have no context beyond this repo: read `shared/README.md`
-first (architecture + provenance), then run the phases below IN ORDER.
-Everything before "Phase 2" needs NO credentials — that is the point: the
-engine must behave correctly, loudly, and harmlessly on a creds-free box.
+The engine passes static verification in CI before it ever reaches a box.
+Assume bugs anyway: a rehearsal exists because a real host answers questions no
+fixture can. Anything you find is a finding, reported per Phase 3 — never
+silently worked around.
 
-The engine has passed static verification (shellcheck, 27 fixture tests,
-three adversarial reviews) but before this rehearsal it has NEVER executed
-a real tick. Assume bugs. Anything you find goes to the PR (Phase 3), with
-logs, as a finding — never silently worked around.
+> **Automated form.** `drill/rehearsal.sh` (run on the box HOST from a crew
+> checkout) executes everything below mechanically — phase 1 always, phase 2
+> automatically once the operator has logged the drill box in — printing
+> ok/FAIL per check. This document remains the explainer for what each check
+> means, and the manual path when no host is at hand.
+>
+> *Provenance, not an instruction: this runbook was written to validate the
+> engine's original rollout on `heavy-duty/crew#16`, which merged long ago. A
+> round today drills a ref you choose and reports where Phase 3 says — nothing
+> in this document routes findings to that pull request or to any other fixed
+> one.*
+
+## Running a round
+
+`drill/rehearsal.sh` drills ONE role on ONE box. `drill/rehearsal-all.sh` runs
+all three in sequence and adds the legs that are the round's rather than a
+role's. Prefer the latter for a release round; the former when you are chasing
+one loop.
+
+**One box, one role.** `--role triage|builder|reviewer` (default `reviewer`)
+selects both the installed role and the box (`crew-drill-<role>`). The fleet
+deploys single-role boxes (`fleet.roster`) and `duty.sh` gates every module on
+`has_role`, so a single box carrying all three would exercise a composite path
+nobody runs — and would hide the class of defect that let a reviewer box
+quietly run triage sweeps for an entire rehearsal (`heavy-duty/crew#28`).
+
+The three boxes may share ONE GitHub identity. That is safe **only** because
+`repos.txt` is the scope for every module and each role gets its own sandbox:
+disjoint registries, disjoint work. Under the previous org-wide review sweep
+all three would have raced for the same verdicts.
+
+`--agent <name>` (default `claude`) selects the runtime; the available agents
+are the profiles under `shared/conf/agents/`. Pass it consistently —
+`drill/rehearsal.sh --agent grok` derives the `grok-box` template, installer
+agent, assertions, auth probe, and login hint from the grok profile, and
+`rehearsal-all.sh` passes the same agent to the app phase so both readers probe
+the vendor the boxes were actually installed as.
+
+**Which boxes a drill looks at — never `fleet.roster`.** `crew hire`'s registry
+guard keys on roster *membership*, so a drill box listed in the tracked
+`fleet.roster` counts as a fleet member to every safety check — which is how
+three leftover drill boxes came to be armed against the production registry
+(`heavy-duty/crew#51`). So `drill/rehearsal-app.sh` takes its own:
+
+```sh
+drill/rehearsal-app.sh --drill-roles "triage builder reviewer"  # generated
+drill/rehearsal-app.sh --roster ~/mine.roster.local             # hand-written
+```
+
+`--drill-roles` builds the list from the `crew-drill-<role>` convention
+`rehearsal.sh` already owns, so it cannot drift from the boxes the drill
+actually uses; prefer it. `--roster` is for anything else, and `*.roster.local`
+is gitignored so such a file has a home. Both feed the SAME path to all three
+readers — the collector (`CREW_FLOOR_ROSTER`), the `crew status` it compares
+against (`CREW_ROSTER`), and its own counts. `rehearsal-all.sh` passes
+`--drill-roles` for the roles whose drill actually reached a box, and announces
+any narrowing rather than quietly covering less.
+
+A round is real infrastructure — boxes and public sandbox repositories on the
+operator's own host and account. What it creates, when reuse is legitimate and
+what reuse costs phase 1, and what teardown will and will not delete, is
+[`drills/README.md`](../../drills/README.md)'s round-lifecycle section; it is
+not repeated here.
+
+Every opt-out below is an **operator-requested exclusion**: the round still
+records the leg, naming the flag as the reason it did not run. A run carrying
+any of them does not cover that leg's contract.
+
+| flag | drops |
+|---|---|
+| `--no-app` | the `app`, `browser` and `app-armed` legs |
+| `--no-config-drill` | the operator-registry `config` leg |
+| `--no-install-drill` | Section A, the `installer` leg |
+| `--no-resume-drill` | the builder `resume` leg |
+| `--no-attention-drill` | the builder `attention` leg |
+| `--no-attention-audit-drill` | the triage `attention-audit` leg |
+| `--no-hygiene-drill` | the worktree `hygiene` leg |
+| `--no-breaker-drill` | the terminal-failure `breaker` leg |
+| `--no-notify-drill` | the operator-notification `notify` leg |
+| `--keep` | teardown: boxes and sandboxes are retained deliberately |
 
 ## Phase 0 — acquire the exact tree, then run static checks
 
@@ -91,6 +112,12 @@ needed:
 drill/rehearsal.sh --remote <git-url> --ref <git-ref>
 drill/rehearsal.sh --tree "$PWD"     # bundle this checkout's exact HEAD
 ```
+
+`rehearsal-all.sh` resolves `--ref` to one commit ONCE for the whole round and
+hands that commit to each role, so a branch moving mid-round cannot split one
+record across three trees. The resolved commit is printed with the summary as
+`drilled source:`; a release round should be drilled at a ref that cannot move
+under it.
 
 Phase 0 aborts before any fixture or installer check if the remote/ref cannot
 resolve, if a supplied tree is not a Git checkout, or if `shared/install.sh`
@@ -114,10 +141,6 @@ unauthenticated result, and no session can launch:
 shared/install.sh --agent claude --role reviewer
 ```
 
-To rehearse another supported runtime, pass the same agent consistently:
-`drill/rehearsal.sh --agent grok` derives the `grok-box` template, installer
-agent, assertions, auth probe, and login hint from the grok profile.
-
 Verify, and record the output of each check:
 
 1. `cat ~/duty/VERSION` — `crew@<sha>` matching `git rev-parse --short HEAD`.
@@ -128,9 +151,13 @@ Verify, and record the output of each check:
    `duty run start` → a WARN that the login cannot be resolved →
    `duty run end`. EVERY invoked tick must produce lines; silence after
    invocation is a finding (that is the tick evidence contract).
-5. `~/duty/boot-check.log` — one boot block; `cli probe: FAILED` is
-   CORRECT here; `~/duty/.boot-id` must NOT exist (marker only on
-   verified auth).
+5. `~/duty/boot-check.log` — one boot block, and the drill reads what that
+   block SAID, not merely that it exists: the gate writes `cli probe: ok` or
+   `cli probe: FAILED` from the drilled agent's own probe, and `FAILED` is
+   CORRECT here. `~/duty/.boot-id` must NOT exist (marker only on verified
+   auth). A box that stopped answering and a box with a clean boot log both
+   read as an empty block, so the read's own exit status is checked before its
+   contents.
 6. Lock behavior: run `~/duty/bin/duty.sh` by hand twice —
    idle: it runs; concurrently with itself or a tick: the second prints
    "a tick already holds …" and exits 199.
@@ -202,7 +229,8 @@ just the driver's final line.
    and add the `attention` label. Next tick: pickup session launches
    (`SESSION START kind=attention`), posts `📌 picked up`, REMOVES the
    label, then acts. Verify the session log in `~/duty/logs/`, and that
-   the next tick logs `attention: none`.
+   the next tick logs `attention: none`. What that wake DISPATCHED, rather
+   than merely acknowledged, is the `attention` leg below.
 3. Review drill: a scratch PR in a sandbox repo with a review request to
    the identity. Expect in order: candidate in the sweep log; the
    `🔎 reviewing head <full-sha>` comment posted exactly once (via
@@ -228,11 +256,370 @@ just the driver's final line.
 8. Teardown: `repos.txt` is restored to its pre-drill contents and
    `crontab -l` contains no duty tick.
 
+## The legs
+
+A **leg** is an independently runnable part of a round with its own verdict in
+the summary. `drill/rehearsal-all.sh` declares them in one list, and the round
+checks its own record against that list before printing it: a leg declared
+without a wired result, or a result naming no declared leg, is itself a red
+row. So the record answers "did this leg run?" without anyone diffing the tree
+against it.
+
+The declared legs are: `hygiene`, `breaker`, `resume`, `attention`,
+`attention-audit`, `notify`, `installer`, `config`, `app`, `browser`,
+`app-armed`, `teardown`. Each has an entry below, headed by its row name —
+that heading IS the leg's name, and CI diffs the set of them against the
+harness's own declaration in both directions, so this runbook cannot fall a
+release behind the harness again without a red check.
+
+The `triage`, `builder` and `reviewer` rows beside them are round
+*participants*, not legs: they carry a whole role's phase-2 verdict, and the
+per-role summaries above are where you read them.
+
+Every leg's row is one of exactly three readings, and the round prints the
+reading as well as the detail:
+
+- **executed** — `ok` or `FAIL`. The leg ran and reached a verdict.
+- **not executed, with a named reason** — `skip` (an operator flag),
+  `SKIPPED` (a prerequisite the round itself failed to produce), or
+  `INCOMPLETE` (a blocker discovered on this host). A named exclusion is
+  evidence.
+- **not executed, reason missing** — a defect in the harness, and it reds the
+  round.
+
+Each entry below states what the leg needs, what it produces, and what a
+failure means. None of them is an implementation description; read the script
+named in the heading for that.
+
+### hygiene — `drill/rehearsal-hygiene.sh`
+
+Worktree preservation: a dirty merged worktree is pushed to a remote `wip/`
+ref and recorded upstream BEFORE the janitor's forced removal, and a
+preservation that fails retains the worktree and reports it once.
+
+- **Needs** a box that reached phase 2, and a remote the box can push the
+  preserved ref to. It runs after the role-specific phase-2 block, in every
+  role.
+- **Produces** the `hygiene` row: `ok (preservation + refusal)`, `FAIL`,
+  `INCOMPLETE (no role reached a box)` or `INCOMPLETE (phase 2 skipped)`, or
+  `skip (--no-hygiene-drill)`.
+- **A failure means** the janitor can delete an agent's uncommitted work with
+  no recoverable copy and no upstream record of where it went — the one
+  destructive act the engine performs unattended.
+
+### breaker — `drill/rehearsal-breaker.sh`
+
+The terminal-failure lane breaker: dispatch stays live below the installed
+threshold, the lane trips once at it, following ticks skip the stopped lane,
+exactly one operator alert is emitted while stopped, and a later tick recovers
+without hand intervention.
+
+- **Needs** phase 2, and an agent profile that defines both
+  `bot_session_terminal` and `bot_session_acted`. It reads
+  `SESSION_TERMINAL_THRESHOLD` off the installed config rather than carrying
+  its own number, so an engine change moves the assertion with the engine.
+- **Produces** the `breaker` row: `ok (trip + single alert + recovery)`,
+  `FAIL`, `INCOMPLETE (<agent> profile missing bot_session_terminal)` or
+  another named blocker, or `skip (--no-breaker-drill)`.
+- **A failure means** a vendor outage either burns the whole quota re-launching
+  doomed sessions, or alerts the operator repeatedly, or never recovers.
+
+A profile that declares no terminal classifier is a **skip with a name**, not a
+failed assertion: the breaker has nothing to trip on such a profile, and the
+round says which profile and which hook rather than reporting an absence.
+
+### resume — `drill/rehearsal-resume.sh`
+
+The builder resume lane: a settled check conclusion wakes a parked builder, an
+unrendered round-signal marker warns and wakes on the next tick, and
+consecutive unchanged zero-action attempts stop the lane.
+
+- **Needs** `builder` in `--roles`, and that box's phase 2. It reads the
+  installed zero-action threshold out of the box's own `duty-builder.sh`.
+- **Produces** the `resume` row: `ok (wake + zero-action stop)`, `FAIL`,
+  `INCOMPLETE (builder role omitted)`, `INCOMPLETE (builder phase 2 never
+  reached the leg)`, `INCOMPLETE (leg skipped: <reason>)`, or
+  `skip (--no-resume-drill)`.
+- **A failure means** builder PRs park forever waiting for a wake that never
+  comes, or a builder that can do nothing loops on the same head indefinitely.
+
+The leg writes its own verdict rather than riding the builder role's exit code,
+which also covers every other builder assertion and can classify neither
+outcome of this one.
+
+### attention — `drill/rehearsal-attention.sh`
+
+The attention wake's two behaviours that an acknowledgement cannot show:
+dispatch WITHOUT code — a wake on a claim with no open PR records the next
+build step, unassigns itself and swaps `claimed` to `ready` while creating no
+branch, commit or PR — and the timed-out pickup report, one ⏱️ comment naming a
+stable log link, planted beside the immutable run log, with one operator alert.
+
+- **Needs** `builder` in `--roles` and that box's phase 2. It files its own
+  fixture, whose demand asks for build work; the round's role-level wake
+  fixture forbids opening PRs and so cannot tell a correct dispatch from mere
+  obedience to a prompt.
+- **Produces** the `attention` row: `ok (dispatch without code + timeout
+  report)`, `FAIL`, the same three `INCOMPLETE` shapes as `resume`, or
+  `skip (--no-attention-drill)`.
+- **A failure means** an operator's `attention` either does work it was told
+  not to do, or times out leaving nothing an operator can follow to the log.
+
+### attention-audit — `drill/rehearsal-attention-audit.sh`
+
+The triage-only hygiene-slot board audit: it reports BOTH malformed shapes —
+`attention` on a pull request, and `attention` on an unassigned issue — it
+never repairs them, and it alerts on transition only (🚨 when the malformed set
+becomes non-empty, ✅ when it clears, silence in between).
+
+- **Needs** `triage` in `--roles` and that box's phase 2. Its two fixtures are
+  invisible to the wake's own `filter=assigned` query, by construction: neither
+  can wake a session, so the leg cannot go green on a board the wake was
+  quietly clearing behind it.
+- **Produces** the `attention-audit` row: `ok (both shapes reported, not
+  repaired, alerts on transition)`, `FAIL`, `INCOMPLETE (triage role omitted)`,
+  `INCOMPLETE (triage phase 2 never reached the leg)`, `INCOMPLETE (leg
+  skipped: <reason>)`, or `skip (--no-attention-audit-drill)`.
+- **A failure means** a misplaced `attention` — the incident this audit exists
+  for — is either invisible to the operator, or worse, silently "repaired" by
+  a sweep that is not allowed to move labels.
+
+### notify — `drill/rehearsal-notify.sh`
+
+The operator's watch set is `repos.txt` ∪ `notify-repos.txt`, asserted in BOTH
+directions on one notify run, with the WORK set left untouched: `repos.txt` is
+re-read after `notify-repos.txt` is written and the round aborts if it moved.
+
+- **Needs** a reachable operator channel on the host, and phase 2. It runs
+  inside every role's phase 2, so its verdict is the ROUND's, folded across the
+  roles that wrote one — not any single role's.
+- **Produces** the `notify` row: `ok (repos.txt + notify-repos.txt union)`,
+  `FAIL`, `INCOMPLETE (leg skipped: operator channel unreachable: <channel>
+  — union UNPROVEN)`, `INCOMPLETE (no role reached a box — union UNPROVEN)`,
+  or `skip (--no-notify-drill)`.
+- **A failure means** half the operator's watch set goes silent. The regression
+  this leg exists for is invisible by construction — its only evidence is a
+  notification that did not arrive — and asserting the `notify-repos.txt` half
+  alone passes the exact bug that dropped the work list.
+
+### installer — `drill/install-drill.sh`
+
+Section A: the observations a CI harness cannot make because they need a real
+box — switch skew, hire/skip from a git-less install, no box-side crew
+repository, full-uninstall refusal, and engine survival after the console is
+removed. It also builds a real offline artifact and installs it, measures what
+every tree it installs actually holds (`drill/install-payload.sh`), and proves
+the engine outlives its console across a real cron boundary
+(`drill/install-survival.sh`).
+
+- **Needs** a box the role rehearsal already installed — it borrows one and
+  gives it back unchanged, so its hires are version events and never identity
+  events. The payload measurement needs the real installs and the real unpack
+  this driver performs; it reads both the excluded roots and the size bound out
+  of the tree under drill rather than carrying its own copy of either.
+- **Produces** the `installer` row: `ok (Section A record emitted)`, `FAIL`,
+  `SKIPPED (blocked by role install: no installed drill box)`, or
+  `skip (--no-install-drill)`.
+- **A failure means** either a real-host install path is broken in a way the
+  offline suites cannot see, or the installed tree has grown past its budget —
+  a regression that is silent per box and per `crew upgrade`.
+
+Step 9's survival wait is measured from the moment the console removal
+RETURNED, not from the pre-removal read: a cron boundary striking while the
+uninstall runs writes a line that proves nothing.
+
+### config — `drill/rehearsal-config.sh`
+
+Operator-registry convergence against one REAL box: the fixture is built with
+`crew init`, `CONFIG_IS_OPERATOR=1` is asserted, and real `crew upgrade` calls
+are driven through the divergence veto, both no-provenance migration outcomes,
+ordinary convergence, examples-fallback non-convergence, and incomplete-trio
+refusal.
+
+- **Needs** one installed drill box — the same box Section A used, on purpose,
+  since a leg that named its own role would re-role it and the engine would
+  warn `ROLES CHANGED` and install anyway. It backs up both `repos.txt` and its
+  provenance record before the first mutation.
+- **Produces** the `config` row: `ok (operator mode + registry contract)`,
+  `FAIL`, `SKIPPED (blocked by role install: no installed drill box)`, or
+  `skip (--no-config-drill)`; and a restoration receipt, printed on
+  EXIT/INT/TERM.
+- **A failure means** an operator's registry can diverge, migrate wrongly, or
+  be overwritten by a convergence that should have refused. A `--no-config-drill`
+  run does not cover the operator registry contract at all.
+
+### app — `drill/rehearsal-app.sh`
+
+The fleet console against the real boxes on this host: the collector is started
+against the round's own roster, `crew status` is read against the same list,
+and every box's floor view is classified against its CLI line. The seven
+operator surfaces the `0.1.2` wave shipped are asserted here
+(`drill/rehearsal-app-surfaces.sh`), each taking its subject as an argument so
+the same assertions can be driven red in CI without a host.
+
+- **Needs** at least one role whose drill reached a box, so there is a
+  generated member to compare. Read-only by default; the narrowed control block
+  is opt-in (`--app-allow-control`) and touches only named boxes.
+- **Produces** the `app` row: `ok (agreement compared; collector + page)`,
+  `ok (agreement could-not-compare; armed comparison follows)` when an
+  `--app-roster` pass will supply the reading instead,
+  `INCOMPLETE (agreement could-not-compare: no armed, ticking, clock-skewed
+  box)`, `FAIL`, `SKIPPED (generated pass blocked by role install: no installed
+  drill box)`, or `skip (--no-app)`.
+- **A failure means** the console and the CLI disagree about the same fleet —
+  the surface an operator actually looks at to decide the fleet is healthy is
+  lying to them.
+
+A round's own drill boxes are freshly created and not armed, so the agreement
+reading a drill can reach is bounded by what those boxes are. That is what the
+`app-armed` leg below is for.
+
+### browser — the read-only page walk
+
+The page halves of the console's surfaces, read off a rendered floor
+(`fleet-floor/test/browser.js`, with `drill/rehearsal-page-read.js` reading the
+`0.1.2` page surfaces). An API-only pass is the wrong verdict: the payload can
+carry a version and a verdict the page drops.
+
+- **Needs** `playwright-core` *and* a browser — `playwright-core` deliberately
+  ships without one. The drill probes the usual Chrome/Chromium paths and skips
+  with a named reason if it finds none; `PW_CHROME=/path/to/chrome` overrides.
+  Screenshots land in `.drill-shots/` — `--app-shots <dir>` through
+  `rehearsal-all.sh`, `--shots <dir>` when running `rehearsal-app.sh` directly
+  — and outlive the run. To watch it drive: `FLOOR_TEST_HEADED=1`, optionally
+  with `FLOOR_TEST_SLOWMO=250`.
+- **Produces** the `browser` row: `ok (read-only browser walk executed)`,
+  `FAIL (browser walk executed and failed)`, `INCOMPLETE (not executed:
+  playwright-core not installed …)` or `INCOMPLETE (not executed: no browser
+  found …)`, `SKIPPED (generated pass blocked by role install …)`, or
+  `skip (--no-app)`.
+- **A failure means** the rendered page disagrees with the payload behind it —
+  a surface that reads correct over the API and wrong to the human.
+
+The walk is read-only ALWAYS, even under `--app-allow-control`: it picks its
+targets by screen position and its `wake-silent` click is fleet-wide, so it
+cannot be bound to `--app-boxes` and is never the thing that exercises a
+control.
+
+### app-armed — the named-roster comparison
+
+A second, comparison-only agreement pass over a roster the operator names, and
+never a replacement for the generated pass above. It is the reading that needs
+a box the round did not create: armed, ticking, and far enough along to be
+clock-comparable.
+
+- **Needs** `--app-roster <path>` naming a roster with such a member. It runs
+  `--no-browser`: repeating the walk would spend a second one and could mutate
+  the member this pass exists only to read. It remains readable even when no
+  role reached a generated member, so a role-install failure cannot silently
+  suppress independent evidence.
+- **Produces** the `app-armed` row: `ok (agreement compared; named roster, no
+  additional boxes)`, `INCOMPLETE (agreement could-not-compare: no armed,
+  ticking, clock-skewed box)`, `FAIL`, `skip (not requested: no --app-roster;
+  requires an armed member)`, or `skip (--no-app)`.
+- **A failure means** the console misreads a box that is genuinely working —
+  the case the drill's own fresh boxes cannot present.
+
+### teardown — `drill/teardown.sh`
+
+A green round removes what it created: the `crew-drill-<role>` boxes and the
+`<host-gh-identity>/crew-drill-<role>` sandbox repositories, and nothing else
+on the host, ever. It names every target with its creation date, asks once, and
+is idempotent.
+
+- **Needs** the whole round's verdict, so it runs after every other leg. It
+  needs a `gh` identity, a `box` CLI, and readable `box list --json` to
+  *inspect*; a class it cannot inspect is not a class it can report clean.
+- **Produces** the `teardown` row: `ok (boxes and sandbox repos removed)`,
+  `INCOMPLETE (part of the round could NOT be inspected — it may still stand)`,
+  `FAIL (the round PASSED — this is cleanup, not the drill)`,
+  `kept (round not green — boxes LEFT STANDING to inspect)`, or
+  `keep (--keep: boxes and sandbox repos RETAINED)`.
+- **A failure means** either the host is not clean and nobody knows which half,
+  or — the `FAIL` row — the round itself passed and only the cleanup broke. The
+  two are deliberately different rows.
+
+A round that did not pass keeps its boxes, and so does `INCOMPLETE`: a failed
+leg is exactly the case where you need the box standing to find out why. The
+run prints the teardown command when anything remains. `drills/README.md`
+carries teardown's refusal rules and its exit-status table in full.
+
+## When a leg cannot run
+
+Every declared leg reaches the record in one of the three readings above, and
+a round is expected to carry some not-executed rows — several legs need a
+prerequisite a given host does not have. What is NOT acceptable is a leg
+missing from the record, or one whose absence carries no reason.
+
+Read the round's `## declared leg states:` block first, before the detailed
+verdicts: it is generated from the same rows, so the two cannot disagree, and
+it is where a leg that never ran is visible without anyone comparing the tree
+against the record.
+
+Legs that a round on a bare host commonly cannot reach, and what each is
+waiting for:
+
+| leg | blocker | what supplies it |
+|---|---|---|
+| `notify` | the operator channel is unreachable from the host | operator credentials for the channel; without them the union is UNPROVEN, not passing |
+| `breaker` | the drilled agent profile declares no `bot_session_terminal` | a profile that classifies terminal vendor output; `shared/conf/agents/` says which do |
+| `browser` | `playwright-core` absent, or no browser found | `npm i --no-save playwright-core`, and Chrome/Chromium or `PW_CHROME` |
+| `app-armed` | no `--app-roster`, or no armed, ticking member on it | a roster naming a real armed box — a drill's own fresh boxes are not one |
+| `resume`, `attention` | the builder role was not in `--roles`, or its phase 2 never ran | a builder box that reaches phase 2 |
+| `attention-audit` | the triage role was not in `--roles`, or its phase 2 never ran | a triage box that reaches phase 2 |
+| `installer`, `config`, `app` | no role install produced a box to borrow | a role drill that reaches an installed box |
+
+The record, not this table, is what a release is evidenced on: a round writes
+its own reasons, and `drills/<version>.md` keeps them. If a leg has never
+executed at any head, that is a finding about the harness and belongs on the
+board as its own issue — a leg that has never run is not a harness, it is a
+script that compiles.
+
+### What the `0.1.2` wave added
+
+This runbook was a release behind its harness, and this section is the catch-up
+census. Measured against the tree at the tag rather than from the pull requests
+that landed there:
+
+```sh
+git diff --name-status 0.1.1 0.1.2 -- drill/
+```
+
+Fifteen files arrived under `drill/`. Seven of them are legs with a row of
+their own that did not exist at `0.1.1` — `hygiene`, `breaker`, `resume`,
+`attention`, `attention-audit`, `notify` and `teardown`. Four more are blocks
+inside legs that already existed: the installed-payload measurement and step
+9's survival predicate under `installer`, the seven operator surfaces under
+`app`, and the boot-check assertions in phase 1. The page reader the browser
+walk uses arrived with them. The remaining files are sourced helpers with no
+leg of their own — the verdict recorder, the fixture loaders and the
+review-ordering predicate — and are documented through the legs that call them.
+
+The `browser` and `app-armed` rows are NOT `0.1.2`'s: both were added in the
+`0.1.3` window, when the round's record began enumerating declared legs rather
+than only executed ones. They are documented above as part of the harness this
+runbook now describes, which is the harness after this window's drill repairs
+and not the one the tag shipped.
+
 ## Phase 3 — report
 
-Comment on crew PR #16: which phases ran, every deviation from the
-expectations above (with the duty.log/session-log excerpts), and what you
-changed. Fixes go on the PR branch with the finding as provenance — the
-same standard as everything already in it. If all of Phase 1 and 2 pass,
-say so explicitly: that is the evidence the staged rollout
-(`shared/docs/single-role.md`, migration order) is cleared to start.
+A round's findings go where the round says. `rehearsal-all.sh` and
+`rehearsal.sh` derive the report target from the ref the operator actually
+drilled: a round drilled at a pull ref names that pull request in its exit
+footer, and a round drilled at a branch, a tag, a bare commit or a local tree
+has no pull request to name and prints no routing instruction at all. Where the
+footer names nothing, the surface is yours to choose — the issue the round is
+evidencing, the release issue for a release round, or the discussion the work
+came from. No instruction is better than a wrong one, and a runbook that
+printed a literal number would be the same defect in prose.
+
+Report: which phases ran, every deviation from the expectations above (with the
+`~/duty/duty.log` and session-log excerpts), and what you changed. Fixes carry
+the finding as provenance. If all of Phase 1 and 2 pass, say so explicitly —
+and say which legs did NOT execute and why, because a record that lists no
+failures reads as "nothing broke". The round's own `## declared leg states:`
+block is the list to copy.
+
+For a release round, the record is a file: `drills/<version>.md`, one per
+version, and `drills/README.md` states what it must contain and what the
+`drill-recorded` guard requires of it.

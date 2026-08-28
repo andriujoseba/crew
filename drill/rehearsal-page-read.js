@@ -5,8 +5,10 @@
  * there, and it could never work: CommonJS resolves `require` from the
  * SCRIPT's directory upward, never from the cwd, so `require('playwright-core')`
  * from /tmp had no path to $ROOT/node_modules — where .gitignore:11,
- * fleet-floor/README.md:247 and shared/docs/rehearsal.md:56 all say the module
- * is installed. The drill's own precondition probe could not catch it either,
+ * fleet-floor/README.md:247 and shared/docs/rehearsal.md's `browser` leg all
+ * say the module is installed — named by section rather than by line, because
+ * that runbook was reorganised and a line number does not survive it (#497).
+ * The drill's own precondition probe could not catch it either,
  * because `node -e` DOES resolve from the cwd, which on a drill run is $ROOT.
  * The result was two hard FAILs on every host that installs the module where
  * this repo says to (claude-bot, #428). Living beside fleet-floor/test/
