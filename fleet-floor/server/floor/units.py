@@ -415,7 +415,9 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         probe_midpoint = (probe_started + probe_finished) / 2
         clock_offset = probe_midpoint - guest_now
         u["clock_delta"] = round(clock_offset)
-        u["clock_uncertainty"] = math.ceil((probe_finished - probe_started) / 2 + 1)
+        u["clock_uncertainty"] = max(
+            1, math.ceil((probe_finished - probe_started) / 2 + 1)
+        )
     else:
         # Old/malformed evidence cannot publish a skew verdict. Retain the
         # tick-derived translation only so session ages keep their established

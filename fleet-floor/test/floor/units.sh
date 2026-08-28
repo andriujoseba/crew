@@ -104,6 +104,78 @@ t "agreement: delayed synchronized production probe cannot qualify" does-not-qua
   "$(agreement_armed_skewed \
       "$(agreement_case "$delayed_state" 'delayed-sync idle' '' "$delayed_disarmed")" \
       "$delayed_disarmed" "$delayed_tick" "$delayed_delta" "$delayed_uncertainty")"
+FF_EDGE_SYNC="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+guest_now = 1756152000
+probe = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::now 2025-08-25T20:00:00Z
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+::logstart
+2025-08-25T19:59:30Z duty run start
+::logend
+"""
+samples = iter((guest_now, guest_now + 8))
+units.time.time = lambda: next(samples)
+units.probe_box = lambda unit, agent_conf: (probe, "")
+unit = units.build_unit(
+    {"box": "edge-sync", "agent": "claude", "room": "builder"},
+    "running", {}, guest_now,
+)
+print("%s:%s:%s:%s:%s" % (
+    unit["clock_delta"], unit["clock_uncertainty"],
+    unit["cron"]["ok"], unit["disarmed"], unit["state"],
+))
+PY
+)"
+IFS=: read -r edge_delta edge_uncertainty edge_tick edge_disarmed edge_state \
+  <<<"$FF_EDGE_SYNC"
+t "clock: interval-edge synchronized probe exposes midpoint displacement" 4 "$edge_delta"
+t "clock: interval-edge uncertainty contains that displacement" 5 "$edge_uncertainty"
+t "agreement: measured uncertainty rejects interval-edge synchronized probe" does-not-qualify \
+  "$(agreement_armed_skewed \
+      "$(agreement_case "$edge_state" 'edge-sync idle' '' "$edge_disarmed")" \
+      "$edge_disarmed" "$edge_tick" "$edge_delta" "$edge_uncertainty")"
+FF_BACKWARD_CLOCK="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+guest_now = 1756152000
+probe = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::now 2025-08-25T20:00:00Z
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+::logstart
+2025-08-25T19:59:30Z duty run start
+::logend
+"""
+samples = iter((guest_now + 3, guest_now - 3))
+units.time.time = lambda: next(samples)
+units.probe_box = lambda unit, agent_conf: (probe, "")
+unit = units.build_unit(
+    {"box": "backward-clock", "agent": "claude", "room": "builder"},
+    "running", {}, guest_now,
+)
+print(unit["clock_uncertainty"])
+PY
+)"
+t "clock: backward host step keeps uncertainty positive" 1 "$FF_BACKWARD_CLOCK"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
 t "agreement: armed fresh skew qualifies" qualifies \
@@ -133,6 +205,11 @@ t "agreement: disarmed evidence leaves the live count unchanged" 0 \
   "$(agreement_armed_count 0 up True True 10800 2)"
 t "agreement: the live loop has one count decision" 1 \
   "$(grep -cE '^  next_armed_count=.*agreement_armed_count' "$FLOOR/../drill/rehearsal-app.sh")"
+agreement_loop_source="$(sed -n \
+  '/^while read -r name _agent _role _from; do/,/^done < <(roster_rows)$/p' \
+  "$FLOOR/../drill/rehearsal-app.sh")"
+t "agreement: each member uses one fleet snapshot" 1 \
+  "$(grep -cF 'body GET /api/fleet' <<<"$agreement_loop_source")"
 t "agreement: an armed skewed comparison makes the round comparable" compared \
   "$(agreement_round_result 1)"
 t "agreement: a disarmed-only round says it could not compare" could-not-compare \

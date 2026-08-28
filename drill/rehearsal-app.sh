@@ -378,15 +378,19 @@ fi
 
 while read -r name _agent _role _from; do
   [ -z "$name" ] && continue
-  floor_state="$(body GET /api/fleet | python3 -c "
+  # One unit is one measurement. Fetch it once so clock_delta and its measured
+  # uncertainty cannot straddle collector snapshots when the normal poll
+  # interval is shorter than a rehearsal round.
+  floor_unit="$(body GET /api/fleet | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 u=[x for x in d['units'] if x['box']=='$name']
-print(u[0]['state'] if u else 'MISSING')")"
-  if [ "$floor_state" = "MISSING" ]; then
+print(json.dumps(u[0]) if u else '')")"
+  if [ -z "$floor_unit" ]; then
     fail "floor reports $name" "not in /api/fleet"
     continue
   fi
+  floor_state="$(python3 -c "import json,sys; print(json.load(sys.stdin)['state'])" <<<"$floor_unit")"
   # An unusable answer is never a pass: an empty floor_state from a transient
   # API hiccup used to fall through to the "is up" branch and be recorded ok.
   case "$floor_state" in
@@ -396,26 +400,10 @@ print(u[0]['state'] if u else 'MISSING')")"
   # These are inputs to the narrower armed/ticking/skewed verdict, not facts
   # inferred from `state`. In particular an armed box that has never ticked is
   # legitimately `idle`, and synchronized and skewed boxes are both `up`.
-  dis="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print(bool(u and u[0].get('disarmed')))")"
-  tick_fresh="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print(bool(u and u[0].get('cron', {}).get('ok')))")"
-  clock_delta="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print(u[0].get('clock_delta') if u else None)")"
-  clock_uncertainty="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print(u[0].get('clock_uncertainty') if u else None)")"
+  dis="$(python3 -c "import json,sys; print(bool(json.load(sys.stdin).get('disarmed')))" <<<"$floor_unit")"
+  tick_fresh="$(python3 -c "import json,sys; print(bool(json.load(sys.stdin).get('cron', {}).get('ok')))" <<<"$floor_unit")"
+  clock_delta="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('clock_delta'))" <<<"$floor_unit")"
+  clock_uncertainty="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('clock_uncertainty'))" <<<"$floor_unit")"
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
   agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "$dis")"
   case "$agreement" in
@@ -431,11 +419,7 @@ print(u[0].get('clock_uncertainty') if u else None)")"
       ok "agree: $name is up" ;;
     *)
       if [ "$floor_state" = "offline" ]; then
-        note="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print((u[0].get('note') or '') if u else '')")"
+        note="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('note') or '')" <<<"$floor_unit")"
         # Read the FLAG, not the prose. The note is written for an operator and
         # will be reworded; a check that greps English breaks when it improves.
         agreement="$(agreement_case "$floor_state" "$cli_line" "$note" "$dis")"

@@ -113,7 +113,11 @@ printf 'app\n' >>"$DRILL_SECTION_LOG"
 [ -z "${DRILL_APP_LOG:-}" ] || printf '%s\n' "$*" >>"$DRILL_APP_LOG"
 [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] || {
   case " $* " in
-    *" --roster "*) printf 'compared\n' >"$REHEARSAL_AGREEMENT_STATUS" ;;
+    *" --roster "*)
+      case "${DRILL_APP_ROSTER_STATUS:-compared}" in
+        missing) : ;;
+        *) printf '%s\n' "${DRILL_APP_ROSTER_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
+      esac ;;
     *) printf '%s\n' "${DRILL_APP_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
   esac
 }
@@ -267,6 +271,41 @@ t drill-armed-roster-mints-no-extra-role-box 1 \
 t drill-armed-roster-is-distinct-in-record 1 \
   "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
     <<<"$app_roster_out")"
+
+# The named pass carries its own honest verdict. Exercise both non-green
+# summaries rather than letting a stubbed `compared` make them dead branches.
+if app_roster_incomplete_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_APP_ROSTER_STATUS=could-not-compare \
+    DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_roster_incomplete_rc=0
+else
+  app_roster_incomplete_rc=$?
+fi
+t drill-armed-roster-noncomparable-is-incomplete 2 "$app_roster_incomplete_rc"
+t drill-armed-roster-noncomparable-recorded 1 \
+  "$(grep -cF 'INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)' \
+    <<<"$app_roster_incomplete_out")"
+
+if app_roster_missing_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_APP_ROSTER_STATUS=missing DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_roster_missing_rc=0
+else
+  app_roster_missing_rc=$?
+fi
+t drill-armed-roster-missing-verdict-is-red 1 "$app_roster_missing_rc"
+t drill-armed-roster-missing-verdict-recorded 1 \
+  "$(grep -cF 'FAIL       app-armed  (agreement verdict missing)' \
+    <<<"$app_roster_missing_out")"
 
 # The named reading is independent of generated-role availability. A failed
 # role still keeps the round red, but it must not erase the armed evidence leg.
