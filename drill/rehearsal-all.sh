@@ -3,6 +3,7 @@
 #
 #   drill/rehearsal-all.sh [--agent <name>] [--tree <path>] [--remote <url>]
 #     [--ref <git-ref>] [--roles "triage builder reviewer"] [--quick]
+#     [--app-roster <path>]
 #
 # Three single-role boxes, not one multi-role box: fleet.roster deploys
 # single-role members, and duty.sh gates every module on has_role. A box
@@ -36,6 +37,7 @@ KEEP=0
 # drill/rehearsal-app.sh for why the control verbs are opt-in.
 APP=1
 APP_ARGS=()
+APP_ROSTER=""
 # Operator-config convergence is a real-host rehearsal too. One installed box
 # is enough to exercise the registry contract; running the destructive/restore
 # cycle once per role adds risk without adding a distinct code path.
@@ -109,13 +111,19 @@ while [ $# -gt 0 ]; do
     --no-notify-drill) NOTIFY_DRILL=0; shift ;;
     --app-boxes) APP_ARGS+=(--boxes "$2"); shift 2 ;;
     --app-allow-control) APP_ARGS+=(--allow-control); shift ;;
-    --app-roster) APP_ARGS+=(--roster "$2"); shift 2 ;;
+    --app-roster) APP_ROSTER="$2"; shift 2 ;;
     --app-shots) APP_ARGS+=(--shots "$2"); shift 2 ;;
     *) echo "usage: drill/rehearsal-all.sh [--agent <name>] [--roles \"triage builder reviewer\"] [--tree <path>] [--remote <url>] [--ref <git-ref>] [--quick]"
        echo "         [--reuse] [--keep] [--no-app] [--no-config-drill] [--no-install-drill] [--no-resume-drill] [--no-attention-drill] [--no-attention-audit-drill] [--no-hygiene-drill] [--no-notify-drill] [--no-breaker-drill] [--app-boxes \"a b\"] [--app-allow-control]"
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
+
+# Validate operator input before source acquisition and the role round. The
+# named pass runs last; discovering a typo there would otherwise waste the
+# whole multi-role rehearsal before producing the same error.
+[ -z "$APP_ROSTER" ] || [ -f "$APP_ROSTER" ] \
+  || { echo "drill/rehearsal-all.sh: no app roster at '$APP_ROSTER'" >&2; exit 1; }
 
 for role in $ROLES; do
   case "$role" in
@@ -178,6 +186,7 @@ NOTIFY_STATUS="$(mktemp)"
 RESUME_STATUS="$(mktemp)"
 ATTENTION_STATUS="$(mktemp)"
 ATTENTION_AUDIT_STATUS="$(mktemp)"
+APP_AGREEMENT_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -212,6 +221,7 @@ cleanup_role_hygiene_files() {
   [ -z "${RESUME_STATUS:-}" ] || rm -f -- "$RESUME_STATUS"
   [ -z "${ATTENTION_STATUS:-}" ] || rm -f -- "$ATTENTION_STATUS"
   [ -z "${ATTENTION_AUDIT_STATUS:-}" ] || rm -f -- "$ATTENTION_AUDIT_STATUS"
+  [ -z "${APP_AGREEMENT_STATUS:-}" ] || rm -f -- "$APP_AGREEMENT_STATUS"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -463,6 +473,7 @@ else
 fi
 
 APP_ROW_EMITTED=0
+GENERATED_APP=0
 if [ "$APP" -eq 1 ]; then
   echo
   echo "############################################################"
@@ -481,22 +492,18 @@ if [ "$APP" -eq 1 ]; then
   # the one wrong file, so their agreement still passes. A generated fact is
   # only safer than a hand-written one if ALL of it is generated from something
   # true; the role came from the drill, the agent silently did not.
-  case " ${APP_ARGS[*]-} " in
-    *" --roster "*) : ;;
-    *)
-      if [ -n "${DRILLED// /}" ]; then
-        APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
-      else
-        echo "## (app phase: no role reached a box this run — nothing to compare against)"
-        SUMMARY+=("SKIPPED    app  (blocked by role install: no installed drill box)")
-        APP_ROW_EMITTED=1
-        [ "$overall" -eq 1 ] || overall=2
-        APP=0
-      fi ;;
-  esac
+  if [ -n "${DRILLED// /}" ]; then
+    APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
+    GENERATED_APP=1
+  else
+    echo "## (generated app pass: no role reached a box this run — no generated member to compare)"
+    SUMMARY+=("SKIPPED    app  (generated pass blocked by role install: no installed drill box)")
+    APP_ROW_EMITTED=1
+    [ "$overall" -eq 1 ] || overall=2
+  fi
   # Say what was left out rather than quietly narrowing: a shorter roster that
   # nobody announced reads as full coverage.
-  if [ "$APP" -eq 1 ] && [ "${DRILLED# }" != "$ROLES" ]; then
+  if [ "$APP" -eq 1 ] && [ -n "${DRILLED// /}" ] && [ "${DRILLED# }" != "$ROLES" ]; then
     echo "## (app phase covers ${DRILLED# } — roles whose drill never reached a box are excluded)"
   fi
 fi
@@ -506,16 +513,57 @@ if [ "$APP" -eq 0 ] && [ "$APP_ROW_EMITTED" -eq 0 ]; then
   APP_ROW_EMITTED=1
 fi
 
-if [ "$APP" -eq 1 ]; then
-  "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
+if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
+  : >"$APP_AGREEMENT_STATUS"
+  REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
+    "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
   # rc on its own line, like the role loop above — this file's own history is
   # why (crew#30: a bare status read inside a compound).
   rc=$?
+  app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
   case "$rc" in
-    0) SUMMARY+=("ok         app  (collector + page)") ;;
+    0)
+      case "$app_agreement:$APP_ROSTER" in
+        compared:*) SUMMARY+=("ok         app  (collector + page)") ;;
+        could-not-compare:?*) SUMMARY+=("ok         app  (collector + page; armed comparison follows)") ;;
+        could-not-compare:)
+          SUMMARY+=("INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)")
+          [ "$overall" -eq 1 ] || overall=2 ;;
+        *) SUMMARY+=("FAIL       app  (agreement verdict missing)"); overall=1 ;;
+      esac ;;
     *) SUMMARY+=("FAIL       app"); overall=1 ;;
   esac
   APP_ROW_EMITTED=1
+
+fi
+
+# A named roster is an additional reading after the drill-role pass, never a
+# replacement for it. It also remains readable when no role reached a generated
+# drill member: that failure is recorded above and must not silently suppress
+# independent evidence from an already-armed member (#494).
+if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
+  echo
+  echo "############################################################"
+  echo "## fleet app — armed roster comparison"
+  echo "############################################################"
+  # Comparison-only: repeating browser or control flags would spend a second
+  # walk and could mutate the armed member this pass exists only to read.
+  : >"$APP_AGREEMENT_STATUS"
+  REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
+    "$HERE/rehearsal-app.sh" --roster "$APP_ROSTER" --no-browser
+  rc=$?
+  app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
+  case "$rc" in
+    0)
+      case "$app_agreement" in
+        compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+        could-not-compare)
+          SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)")
+          [ "$overall" -eq 1 ] || overall=2 ;;
+        *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
+      esac ;;
+    *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
+  esac
 fi
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every

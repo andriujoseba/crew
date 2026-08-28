@@ -364,6 +364,8 @@ while read -r name _agent _role _from; do
 done < <(roster_rows)
 
 AGREE_N=0
+ARMED_AGREE_N=0
+ARMED_AGREE_EVIDENCE=""
 if [ "$ROSTER_N" -gt 0 ] && [ "$CLI_ROWS" -eq 0 ]; then
   # ONE failure, not one per box: the roster is not empty, so this is the CLI
   # being broken, and saying it N times as "skip" is how it stayed invisible.
@@ -376,23 +378,34 @@ fi
 
 while read -r name _agent _role _from; do
   [ -z "$name" ] && continue
-  floor_state="$(body GET /api/fleet | python3 -c "
+  # One unit is one measurement. Fetch it once so clock_delta and its measured
+  # uncertainty cannot straddle collector snapshots when the normal poll
+  # interval is shorter than a rehearsal round.
+  floor_unit="$(body GET /api/fleet | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 u=[x for x in d['units'] if x['box']=='$name']
-print(u[0]['state'] if u else 'MISSING')")"
-  if [ "$floor_state" = "MISSING" ]; then
+print(json.dumps(u[0]) if u else '')")"
+  if [ -z "$floor_unit" ]; then
     fail "floor reports $name" "not in /api/fleet"
     continue
   fi
+  floor_state="$(python3 -c "import json,sys; print(json.load(sys.stdin)['state'])" <<<"$floor_unit")"
   # An unusable answer is never a pass: an empty floor_state from a transient
   # API hiccup used to fall through to the "is up" branch and be recorded ok.
   case "$floor_state" in
     working|idle|suppressed|offline) ;;
     *) fail "agree: $name" "floor returned no usable state (got '$floor_state')"; continue ;;
   esac
+  # These are inputs to the narrower armed/ticking/skewed verdict, not facts
+  # inferred from `state`. In particular an armed box that has never ticked is
+  # legitimately `idle`, and synchronized and skewed boxes are both `up`.
+  dis="$(python3 -c "import json,sys; print(bool(json.load(sys.stdin).get('disarmed')))" <<<"$floor_unit")"
+  tick_fresh="$(python3 -c "import json,sys; print(bool(json.load(sys.stdin).get('cron', {}).get('ok')))" <<<"$floor_unit")"
+  clock_delta="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('clock_delta'))" <<<"$floor_unit")"
+  clock_uncertainty="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('clock_uncertainty'))" <<<"$floor_unit")"
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
-  agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "${dis:-False}")"
+  agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "$dis")"
   case "$agreement" in
     down)
       AGREE_N=$((AGREE_N + 1))
@@ -406,18 +419,9 @@ print(u[0]['state'] if u else 'MISSING')")"
       ok "agree: $name is up" ;;
     *)
       if [ "$floor_state" = "offline" ]; then
-        note="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print((u[0].get('note') or '') if u else '')")"
+        note="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('note') or '')" <<<"$floor_unit")"
         # Read the FLAG, not the prose. The note is written for an operator and
         # will be reworded; a check that greps English breaks when it improves.
-        dis="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print(bool(u and u[0].get('disarmed')))")"
         agreement="$(agreement_case "$floor_state" "$cli_line" "$note" "$dis")"
         if [ "$agreement" = "disarmed" ]; then
           # NOT a skip any more (#189). Both readers now answer "is this box
@@ -457,16 +461,35 @@ print(bool(u and u[0].get('disarmed')))")"
         fi
       fi ;;
   esac
+
+  # Every classification reaches this one decision. Keeping the increment out
+  # of individual branches makes both false directions fixtureable: counting
+  # a disarmed/never-ticked/synchronized box, and failing to count a qualifying
+  # one.
+  next_armed_count="$(agreement_armed_count \
+    "$ARMED_AGREE_N" "$agreement" "$dis" "$tick_fresh" "$clock_delta" "$clock_uncertainty")"
+  if [ "$next_armed_count" -gt "$ARMED_AGREE_N" ]; then
+    printf -v signed_delta '%+d' "$clock_delta"
+    ARMED_AGREE_EVIDENCE="${ARMED_AGREE_EVIDENCE}${ARMED_AGREE_EVIDENCE:+, }$name=${signed_delta}s±${clock_uncertainty}s"
+  fi
+  ARMED_AGREE_N="$next_armed_count"
 done < <(roster_rows)
 
 # The block as a whole must have DONE something. Every per-box branch above is
 # individually correct, which is exactly why all three of the first real-host
 # runs landed every box in one of them and still compared nothing.
-if [ "$AGREE_N" -gt 0 ]; then
-  ok "the agreement check ran ($AGREE_N of $ROSTER_N boxes yielded a floor-vs-CLI comparison)"
-else
+if [ "$AGREE_N" -eq 0 ]; then
   fail "the agreement check ran" \
        "0 of $ROSTER_N boxes yielded a floor-vs-CLI comparison — this block asserted nothing"
+elif [ "$(agreement_round_result "$ARMED_AGREE_N")" = "compared" ]; then
+  [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] \
+    || printf 'compared\n' >"$REHEARSAL_AGREEMENT_STATUS"
+  ok "the agreement check reached an armed, ticking, clock-skewed box ($ARMED_AGREE_N of $ROSTER_N boxes; host-minus-box delta: $ARMED_AGREE_EVIDENCE)"
+else
+  [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] \
+    || printf 'could-not-compare\n' >"$REHEARSAL_AGREEMENT_STATUS"
+  skip "the agreement check could not compare an armed, ticking, clock-skewed box" \
+       "$AGREE_N of $ROSTER_N boxes yielded only non-armed comparisons"
 fi
 
 # ---- evidence actually came from the boxes -------------------------------

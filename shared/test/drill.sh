@@ -110,6 +110,17 @@ CONFIG
 cat >"$HARNESS/rehearsal-app.sh" <<'APP'
 #!/usr/bin/env bash
 printf 'app\n' >>"$DRILL_SECTION_LOG"
+[ -z "${DRILL_APP_LOG:-}" ] || printf '%s\n' "$*" >>"$DRILL_APP_LOG"
+[ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] || {
+  case " $* " in
+    *" --roster "*)
+      case "${DRILL_APP_ROSTER_STATUS:-compared}" in
+        missing) : ;;
+        *) printf '%s\n' "${DRILL_APP_ROSTER_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
+      esac ;;
+    *) printf '%s\n' "${DRILL_APP_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
+  esac
+}
 exit 0
 APP
 chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
@@ -228,6 +239,134 @@ t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LO
 t drill-phase2-summary-counts-three-passed 1 \
   "$(grep -cE '^## section states: 3 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
 
+# A named app roster adds an armed comparison after the generated drill-role
+# comparison. It does not replace that pass and it does not invoke another
+# role drill (therefore cannot mint another box).
+APP_LOG="$TMP/app-passes.log"
+: >"$TMP/armed.roster"
+: >"$APP_LOG"
+: >"$ROLE_LOG"
+if app_roster_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_roster_rc=0
+else
+  app_roster_rc=$?
+fi
+t drill-armed-roster-second-pass-rc 0 "$app_roster_rc"
+t drill-armed-roster-runs-two-app-passes 2 \
+  "$(wc -l <"$APP_LOG" | tr -d ' ')"
+t drill-armed-roster-first-pass-is-generated 1 \
+  "$(sed -n '1p' "$APP_LOG" | grep -cF -- '--drill-roles reviewer --agent claude')"
+t drill-armed-roster-second-pass-is-named 1 \
+  "$(sed -n '2p' "$APP_LOG" | grep -cFx -- "--roster $TMP/armed.roster --no-browser")"
+t drill-armed-roster-second-pass-is-read-only 0 \
+  "$(sed -n '2p' "$APP_LOG" | grep -cE -- '--allow-control|--boxes' || true)"
+t drill-armed-roster-mints-no-extra-role-box 1 \
+  "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
+t drill-armed-roster-is-distinct-in-record 1 \
+  "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
+    <<<"$app_roster_out")"
+
+# The named pass carries its own honest verdict. Exercise both non-green
+# summaries rather than letting a stubbed `compared` make them dead branches.
+if app_roster_incomplete_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_APP_ROSTER_STATUS=could-not-compare \
+    DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_roster_incomplete_rc=0
+else
+  app_roster_incomplete_rc=$?
+fi
+t drill-armed-roster-noncomparable-is-incomplete 2 "$app_roster_incomplete_rc"
+t drill-armed-roster-noncomparable-recorded 1 \
+  "$(grep -cF 'INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)' \
+    <<<"$app_roster_incomplete_out")"
+
+if app_roster_missing_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_APP_ROSTER_STATUS=missing DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_roster_missing_rc=0
+else
+  app_roster_missing_rc=$?
+fi
+t drill-armed-roster-missing-verdict-is-red 1 "$app_roster_missing_rc"
+t drill-armed-roster-missing-verdict-recorded 1 \
+  "$(grep -cF 'FAIL       app-armed  (agreement verdict missing)' \
+    <<<"$app_roster_missing_out")"
+
+# The named reading is independent of generated-role availability. A failed
+# role still keeps the round red, but it must not erase the armed evidence leg.
+: >"$APP_LOG"
+: >"$ROLE_LOG"
+if no_generated_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_ROLE_STAGE=none DRILL_ROLE_RC=1 \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  no_generated_rc=0
+else
+  no_generated_rc=$?
+fi
+t drill-armed-roster-without-generated-member-stays-red 1 "$no_generated_rc"
+t drill-armed-roster-without-generated-member-still-runs 1 \
+  "$(grep -cFx -- "--roster $TMP/armed.roster --no-browser" "$APP_LOG")"
+t drill-armed-roster-without-generated-member-records-both-legs 2 \
+  "$(grep -cE '^##   (SKIPPED +app |ok +app-armed )' <<<"$no_generated_out")"
+t drill-armed-roster-without-generated-member-prints-no-empty-scope 0 \
+  "$(grep -cF 'app phase covers  —' <<<"$no_generated_out" || true)"
+
+# Reject a typo before any role or installer work starts.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+if missing_roster_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/missing.roster" 2>&1)"; then
+  missing_roster_rc=0
+else
+  missing_roster_rc=$?
+fi
+t drill-missing-app-roster-fails-early 1 "$missing_roster_rc"
+t drill-missing-app-roster-names-path 1 \
+  "$(grep -cF "no app roster at '$TMP/missing.roster'" <<<"$missing_roster_out")"
+t drill-missing-app-roster-runs-no-role 0 "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
+t drill-missing-app-roster-runs-no-installer 0 "$(wc -l <"$INSTALL_LOG" | tr -d ' ')"
+
+# D1: valid disarmed comparisons are evidence, but not evidence for the armed
+# criterion. With no second roster they make the round incomplete, not green.
+if disarmed_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_STATUS=could-not-compare DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+  disarmed_rc=0
+else
+  disarmed_rc=$?
+fi
+t drill-disarmed-only-round-is-incomplete 2 "$disarmed_rc"
+t drill-disarmed-only-record-says-could-not-compare 1 \
+  "$(grep -cF 'INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)' \
+    <<<"$disarmed_out")"
+t drill-disarmed-only-record-has-no-green-app-row 0 \
+  "$(grep -cE '^##   ok +app  ' <<<"$disarmed_out" || true)"
+
 summary_count_matches_rows() {
   local record="$1" headline counted rows
   headline="$(sed -nE \
@@ -276,11 +415,14 @@ fi
 t drill-preinstall-failure-stays-red 1 "$preinstall_rc"
 t drill-preinstall-failure-reports-role 1 \
   "$(grep -cF 'FAIL       reviewer  (failed before an installed box existed)' <<<"$preinstall_out")"
-for section in installer config app; do
+for section in installer config; do
   t "drill-preinstall-skips-$section-by-role-install" 1 \
     "$(grep -cF "SKIPPED    $section  (blocked by role install: no installed drill box)" \
       <<<"$preinstall_out")"
 done
+t drill-preinstall-skips-app-by-role-install 1 \
+  "$(grep -cF 'SKIPPED    app  (generated pass blocked by role install: no installed drill box)' \
+    <<<"$preinstall_out")"
 t drill-preinstall-invokes-no-independent-section 0 \
   "$(wc -l <"$SECTION_LOG" | tr -d ' ')"
 if summary_count_matches_rows "$preinstall_out"; then r1=equal; else r1=MISMATCH; fi
