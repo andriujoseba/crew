@@ -5118,6 +5118,93 @@ t roundcap-below-cap-requests-as-today 'request:rev-a,label' \
 t roundcap-omitted-census-answer-is-todays-behaviour 'request:rev-a,label' \
   "$(rc_request "$RC_SIGNALLED")"
 
+# --- the whole control-flow outcome, not the predicate alone ----------------
+# Asked for by @codex-bot-andresmgsl on PR #566 round 1, and it is the right
+# ask: the three cases above probe `_request_panel` in isolation, so none of
+# them sees that execution CONTINUES past the cap's early return into the
+# unchanged convergence check. A cut suppressed at the request site while
+# `converged.jq` queues `_handoff_finalize` on the same tick is a defect no
+# predicate probe can reach. This drives census -> _at_round_cap ->
+# _request_panel -> converged.jq over one PR and asserts what the tick actually
+# DOES.
+# shellcheck disable=SC2034,SC2317  # vars/mocks consumed by the engine helpers
+rc_flow() (  # cap-payload pr-payload
+  DUTY_DIR="$RC_DUTY" ME=builder MARK_ANSWERED="$RP_MARK"
+  LABEL_BOTS_REVIEWING=state:bots-reviewing
+  LABEL_NEEDS_HUMAN=state:needs-human
+  RC_PAYLOAD="$1"; RC_PR="$2"
+  local rc_cap rc_signal rc_conv
+  RC_LOG="$TMP/round-cap-flow"; : >"$RC_LOG"
+  log() { :; }
+  warn() { :; }
+  gh() {
+    local rc_arg
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      printf '%s\n' "$RC_PAYLOAD"
+      return 0
+    fi
+    if [ "$1" = api ] && [[ "$2" == repos/*/requested_reviewers ]]; then
+      for rc_arg in "$@"; do
+        case "$rc_arg" in
+          reviewers\[\]=*) printf 'request:%s\n' "${rc_arg#*=}" >>"$RC_LOG" ;;
+        esac
+      done
+      return 0
+    fi
+    if [ "$1" = issue ] && [ "$2" = edit ]; then
+      printf 'label\n' >>"$RC_LOG"
+      return 0
+    fi
+    return 3
+  }
+  rm -f "$RC_DUTY/.seen-round-cap"
+  _round_cap_census owner/repo '["rev-a","rev-b"]' '[{"number":7}]'
+  # The call site's own two lines, copied rather than described, so this drives
+  # the wiring instead of a paraphrase of it.
+  if _at_round_cap owner/repo 7; then rc_cap=true; else rc_cap=false; fi
+  _request_panel owner/repo 7 "$RC_PR" '["rev-a","rev-b"]' green "$AR_H" "$rc_cap"
+  rc_signal="$(printf '%s' "$RC_PR" | jq -c --arg me "$ME" --arg mark "$MARK_ANSWERED" \
+    -f "$RC_DUTY/lib/jq/answered-head.jq")"
+  rc_conv="$(printf '%s' "$RC_PR" | jq -r --argjson panel '["rev-a","rev-b"]' \
+    --arg needs_human "$LABEL_NEEDS_HUMAN" --arg human "" --argjson signal "$rc_signal" \
+    -f "$RC_DUTY/lib/jq/converged.jq")"
+  printf 'named=[%s] at_cap=%s requested=[%s] converged=%s' \
+    "$ROUND_CAP_NAMED" "$rc_cap" "$(paste -sd, "$RC_LOG")" "$rc_conv"
+)
+RC_MERGEABLE='.data.repository.pullRequest.mergeable="MERGEABLE"'
+# Approvals from the whole panel AT the head, and a signal at that head: the
+# terminal shape. `[]` requests and no `state:needs-human` yet, because this is
+# the tick on which the handoff would fire.
+RC_CONVERGED_PR="$(mk_addressing_payload false '[]' '[]' "$AR_APPROVED" "$RC_SIGNAL_COMMENTS" \
+  | jq -c "$RC_MERGEABLE")"
+# THE SHAPE ALL 28 ROUND-1 CASES MISSED. Under the fix the census refuses it, so
+# nothing is named for the cut, the request site is on today's path and finds
+# nobody left to request, and the handoff runs — the PR goes to the human and
+# merges. Restore the at-cap answer here and every cell but the last flips.
+t roundcap-converged-fifth-round-hands-off-and-is-not-cut \
+  'named=[-] at_cap=false requested=[] converged=true' \
+  "$(rc_flow "$(rc_build 5 0 0 APPROVED)" "$RC_CONVERGED_PR")"
+# The shape the cut IS for, driven the same way: round 5 closed with a change
+# request, so the census names it, the request is held on the predecessor, and
+# nothing hands off. This is the row that would go missing if the carve-out were
+# written too wide.
+RC_OWED_PR="$(mk_addressing_payload false '[]' '[]' "$AR_BLOCKED" "$RC_SIGNAL_COMMENTS" \
+  | jq -c "$RC_MERGEABLE")"
+t roundcap-owed-fifth-round-is-cut-and-never-handed-off \
+  'named=[owner/repo#7 (5 rounds)] at_cap=true requested=[] converged=false' \
+  "$(rc_flow "$(rc_build 5)" "$RC_OWED_PR")"
+# ...and the stale-approval shape, where the suppression is doing visible work:
+# the fifth round approved unanimously but the head has moved, so no approval
+# stands, converged.jq is false, and the ordinary path would request BOTH
+# panelists — whose verdicts would be round six on this PR. The cap holds them.
+RC_STALE_REVIEWS="$(printf '%s' "$AR_APPROVED" \
+  | jq -c --arg oid "$(printf 'b%039d' 1)" 'map(.commit.oid = $oid)')"
+RC_STALE_PR="$(mk_addressing_payload false '[]' '[]' "$RC_STALE_REVIEWS" "$RC_SIGNAL_COMMENTS" \
+  | jq -c "$RC_MERGEABLE")"
+t roundcap-stale-approval-holds-the-request-and-never-hands-off \
+  'named=[owner/repo#7 (5 rounds)] at_cap=true requested=[] converged=false' \
+  "$(rc_flow "$(rc_build 5 0 1 APPROVED)" "$RC_STALE_PR")"
+
 # --- no configurable cap, and no per-role override --------------------------
 # MUST FAIL: any configurable cap. The number is a literal in the predicate and
 # is written once; a conf key or a role override is what D1 forbids by name.
@@ -5219,17 +5306,34 @@ t roundcap-request-site-passes-the-census-answer passed "$r1"
 # Drafts are counted. The census enumerates the resume listing, which carries
 # every open authored PR, and never filters isDraft — the cut is performed on a
 # draft, so a draft-blind census names the boundary only on the tick before it
-# is needed.
-t roundcap-census-counts-drafts 0 \
-  "$(awk '/^_round_cap_census\(\) \{$/,/^\}$/' "$BMOD" | grep -c 'isDraft')"
-# The attention wake renders the slot too, so a `-` there is the fragment's
-# "not counted on this wake" and never an unresolved literal in a prompt.
-if grep -q 'ROUND_CAP="-"' "$ATT_MOD" \
-  && grep -Fq 'it counted none on this wake' <<<"$RC_RENDERED"; then
+# is needed. Driven rather than grepped: this asserted the ABSENCE of the string
+# `isDraft` in the function body until @claude-bot-andresmgsl pointed out on PR
+# #566 that the listing was right there and the claim could be pinned against
+# the code instead of against its spelling.
+rm -f "$RC_DUTY/.seen-round-cap"
+t roundcap-census-counts-drafts \
+  'prs=[owner/repo#7] named=[owner/repo#7 (5 rounds)]' \
+  "$(rc_census "$(rc_build 5)" '[{"number":7,"isDraft":true}]')"
+# The attention wake renders the slot too, with its OWN token: `?` for "did not
+# count at all" against the census's `-` for "counted, none at the cap". One
+# token for both states was readable only by a session that already knew which
+# wake it was on (@claude-bot-andresmgsl, #566). Neither may reach a prompt
+# unexplained.
+if grep -q 'ROUND_CAP="?"' "$ATT_MOD" \
+  && ! grep -q 'ROUND_CAP="-"' "$ATT_MOD" \
+  && grep -Fq "a '-' means it counted and none is at the cap" <<<"$RC_RENDERED" \
+  && grep -Fq "a '?' means this wake did not count at all" <<<"$RC_RENDERED"; then
   r1=explained
 else
   r1=UNEXPLAINED
 fi
 t roundcap-attention-slot-explained explained "$r1"
+# The instruction carries the carve-out too, because doctrine's own procedure is
+# executable by a builder counting rounds by hand and a session that counts five
+# rounds itself must not cut a PR the panel has just passed.
+rc_names roundcap-instruction-names-the-converged-carve-out \
+  'THE CUT IS FOR A ROUND THAT CLOSED WITH WORK STILL OWED' \
+  'it converges and goes to the human to merge' \
+  'If the approvals are STALE because you have since pushed, the cut is owed again'
 
 suite_finish

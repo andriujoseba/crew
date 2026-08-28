@@ -216,15 +216,20 @@ duty_attention() {
     dir="$WORK_DIR/$slug"
     if has_role builder; then
       ensure_main_clone "$repo" "$dir" || continue
-      # ROUND_CAP is `-` here because this wake does not count rounds, and `-` is
-      # the fragment's word for exactly that rather than for "none are at the
-      # cap" (#502). The census lives on the builder tick, where the authored-PR
-      # listing it enumerates is already fetched; running it again per attention
-      # demand would buy a GraphQL call per open PR on a wake that is about an
-      # issue somebody flagged. The fragment tells the session to count for
-      # itself when it reads a `-`, which is doctrine's own position: nothing
-      # counts rounds for you, and the procedure is executable by hand.
-      extra="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name") $(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED" ROUND_CAP="-") $(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
+      # ROUND_CAP is `?` here, and `?` is its own token rather than the census's
+      # `-` (#502). The two states are genuinely different — "counted, and none
+      # is at the cap" against "did not count at all" — and one token for both
+      # would be readable only by a session that already knew which wake it was
+      # on. It read `-` until PR #566's round 1, where @claude-bot-andresmgsl
+      # pointed out that the fragment was resolving the ambiguity by telling the
+      # session to work out its own wake; a distinct token removes the question.
+      # The census lives on the builder tick, where the authored-PR listing it
+      # enumerates is already fetched; running it again per attention demand
+      # would buy a GraphQL call per open PR on a wake that is about an issue
+      # somebody flagged. The fragment tells the session to count for itself
+      # when it reads a `?`, which is doctrine's own position: nothing counts
+      # rounds for you, and the procedure is executable by hand.
+      extra="$(render_prompt fragment-wt-rules.txt WT_DIR="$TREES_DIR/$slug" ME="$ME" NAME="$name") $(render_prompt fragment-round-rules.txt TRIAGE="$FLEET_TRIAGE" BENCH="$FLEET_BENCH" MARK_ADDRESSING="$MARK_ADDRESSING" MARK_ANSWERED="$MARK_ANSWERED" ROUND_CAP="?") $(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")"
     else
       ensure_checkout "$repo" "$dir" || continue
       extra=""
