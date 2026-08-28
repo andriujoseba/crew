@@ -201,6 +201,19 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 1 "a-documentation-only-merge-is-refused-too" '*non-stamp: README.md*'
 
+# Paths that merely BEGIN like a stamp. This is the quietest mutation of the
+# four — every real release still passes it, because no release has ever had a
+# `VERSION.md` — so it is the one worth a case of its own.
+D="$(base lookalike)"
+cut_rc "$D" 0.9.0 1
+w "$D" VERSION.md "notes about versions"
+w "$D" changelog.d.old/1.md "an archived fragment"
+ci "$D" "paths that begin like stamps"
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 1 "a-file-that-begins-like-a-stamp-file-is-not-one" '*non-stamp: VERSION.md*'
+t_says 1 "a-directory-that-begins-like-a-stamp-directory-is-not-one" '*non-stamp: changelog.d.old/1.md*'
+
 # A path renamed INTO the stamp set. With rename detection on, the diff reports
 # only the destination — a stamp — and the guard would pass a tree that moved
 # engine code out from under the drill. `--no-renames` is what keeps the source
