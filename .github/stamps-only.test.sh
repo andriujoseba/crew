@@ -241,6 +241,56 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 0 "the-last-candidate-is-the-highest-numbered-not-the-last-sorted" '*over 0.9.0-rc10*'
 
+# --- the record deleted out from under its own tag ----------------------------
+# The bypass this guard shipped with, and the reason discovery reads the tags
+# too (#579). A record lives in `drills/`, so the stamp set ADMITS its deletion;
+# delete it in the final commit and a records-only discovery finds no candidate,
+# reports a window that laddered nothing, and exits 0 over the smuggled work.
+# Both cases below returned 0 against the pre-fix guard.
+
+D="$(base deleted)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+w "$D" shared/lib/duty.sh "#!/bin/sh
+echo work the deleted record would have hidden"
+ci "$D" "work that landed after the candidate was drilled"
+cut_final "$D" 0.9.0
+git -C "$D" rm -q drills/0.9.0-rc1.md
+ci "$D" "delete the candidate's record"
+run_guard "$D"
+t_says 1 "a-deleted-candidate-record-cannot-disarm-the-guard" '*0.9.0-rc1*no drills/0.9.0-rc1.md*'
+t_mute 1 "a-deleted-record-is-never-reported-as-no-candidate" '*cut no candidate*'
+t_says 1 "the-retention-refusal-names-both-ways-forward" '*Restore drills/0.9.0-rc1.md, or cut 0.9.0-rc2 and drill it*'
+
+# And the meaner one: the deletion is the ONLY thing outside the ceremony. A
+# stray path would have been refused by the diff check anyway, so a case that
+# smuggles code cannot tell the two checks apart — this one can, because there
+# is nothing here for the diff check to catch.
+D="$(base deletedonly)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+git -C "$D" rm -q drills/0.9.0-rc1.md
+ci "$D" "delete the candidate's record and nothing else"
+run_guard "$D"
+t_says 1 "the-deletion-alone-is-refused-with-no-stray-path-to-catch" '*no drills/0.9.0-rc1.md*'
+t_mute 1 "the-retention-refusal-is-not-the-stray-path-refusal" '*non-stamp:*'
+
+# A tag on a line the final does not descend from must NOT raise the anchor:
+# it drilled a different lineage, and reading it would red a window it has
+# nothing to say about. Here rc2 is tagged on an abandoned branch while the
+# shipped ladder is rc1, and rc1 is what the final is measured against.
+D="$(base unreachedtag)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+git -C "$D" checkout -q -b abandoned
+cut_rc "$D" 0.9.0 2
+git -C "$D" checkout -q main
+git -C "$D" rm -q drills/0.9.0-rc2.md 2>/dev/null || true
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "an-unreachable-tag-does-not-raise-the-anchor" '*0.9.0 over 0.9.0-rc1*'
+
 # --- could not look -----------------------------------------------------------
 # The record says a candidate was drilled and its tag is unreachable. This is
 # the case the whole design turns on: reading the tags alone would call it a
@@ -273,6 +323,36 @@ else
   bad "a-shallow-clone-cannot-look-and-says-which-tag-it-wanted (clone failed)"
   bad "a-shallow-clone-names-the-fetch-depth-fix (clone failed)"
 fi
+
+# The same clone with no record either. Nothing points at a candidate — but a
+# tag that was never fetched reads exactly like a tag that was never cut, so
+# this is a could-not-look and not the vacuous pass of an un-laddered release.
+D="$(base shallowplain)"
+cut_final "$D" 0.9.0
+if git clone -q --depth 1 --no-tags "file://$D" "$WORK/shallowplain-clone" 2>/dev/null; then
+  run_guard "$WORK/shallowplain-clone"
+  t_says 2 "a-shallow-clone-with-no-record-cannot-look-either" '*clone is SHALLOW*'
+  t_mute 2 "a-shallow-clone-is-never-reported-as-no-candidate" '*cut no candidate*'
+else
+  bad "a-shallow-clone-with-no-record-cannot-look-either (clone failed)"
+  bad "a-shallow-clone-is-never-reported-as-no-candidate (clone failed)"
+fi
+
+# A BRANCH named like a candidate is not a tag. `rev-parse --verify 0.9.0-rc1`
+# resolves it, so a bare anchor would diff against the branch and go quiet on
+# the one thing worth being loud about — that the tags are not here.
+D="$(base branchnottag)"
+cut_rc "$D" 0.9.0 1
+git -C "$D" branch 0.9.0-rc1-asbranch
+git -C "$D" tag -d 0.9.0-rc1 >/dev/null
+git -C "$D" branch -m 0.9.0-rc1-asbranch 0.9.0-rc1
+rearm  "$D" 0.9.0 2
+w "$D" shared/lib/duty.sh "#!/bin/sh
+echo work a branch-shaped anchor would have compared away"
+ci "$D" "work after the candidate"
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 2 "a-branch-named-like-the-candidate-is-not-its-tag" '*0.9.0-rc1*cannot be resolved*'
 
 # --- the anchor is an ancestor, not a lookalike -------------------------------
 # A candidate tagged on a branch the final does not descend from. The trees may
