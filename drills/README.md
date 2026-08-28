@@ -48,6 +48,74 @@ leg must never be absent from the record. The selected triage, builder and
 reviewer rows describe round participants rather than independently runnable
 legs, so they remain in the detailed summary outside this inventory.
 
+## The rc ladder
+
+**A release candidate carries its own drill record.** The ladder is
+[`.ceremony/RELEASES.md`](../.ceremony/RELEASES.md)'s, adopted here and not
+varied from: `X.Y.Z-dev` → `X.Y.Z-rc1` → `X.Y.Z-rc2-dev` → `X.Y.Z-rc2` → … →
+`X.Y.Z`. Each candidate is a tag-only cut whose ceremony PR changes `VERSION`
+to the bare `X.Y.Z-rcN` and adds `drills/X.Y.Z-rcN.md`, leaving `CHANGELOG.md`
+and every fragment untouched; the doors publish it with `--prerelease` and the
+merge door re-arms `main` as `X.Y.Z-rc(N+1)-dev`. One file per version is the
+rule stated at the top of this file, and it is what makes the ladder cost
+nothing to gate: `drills/0.9.0-rc1.md` and `drills/0.9.0.md` are different
+paths, so `drill-recorded` asks the same question of a candidate that it asks
+of a final and needs no rc-specific case.
+
+**What the ladder buys is downstream.** A long window otherwise re-drills at
+every rebase, because the drilled tree moves under the record. Drill the
+candidate once, publish it as a tag, and the final's evidence anchors to an
+immutable published ref instead of to a tree that has since changed.
+
+**What it does not buy, stated so this is not read as more than it is:** the
+first rc round still drills a *mutable* candidate. `drill-recorded` gates the
+rc PR, so `drills/X.Y.Z-rc1.md` must exist before the merge that creates the
+`X.Y.Z-rc1` tag — the record is committed against a tree that is not yet
+tagged. That is heavy-duty/crew#490's problem, and it is unchanged here.
+
+### The stamps-only test
+
+The ladder's claim is that **the drilled tree and the shipped tree differ by no
+executable byte**. That claim is checkable, so it is checked rather than
+asserted: at a final release tree, the diff from the last `X.Y.Z-rcN` tag to
+`HEAD` must touch **stamps only**.
+
+A stamp is release furniture — the four paths a ceremony PR is allowed to move,
+and no others:
+
+| stamp | what moves it |
+| --- | --- |
+| `VERSION` | the rc cut, the re-arm, and the final cut |
+| `CHANGELOG.md` | the final's assembled section |
+| `changelog.d/**` | the fragments that section consumed |
+| `drills/**` | the version's own record |
+
+Anything else in that diff means work landed between the candidate and the
+final, so the tree that ships is not the tree that was drilled and **the ladder
+has not been followed**. Two ways forward, both ordinary: cut `X.Y.Z-rc(N+1)`
+and drill that, or drill the final itself and record it in `drills/X.Y.Z.md`.
+Neither is an exception to the gate — the first satisfies it and the second
+makes it vacuous, since a final that carries no candidate above it has nothing
+to be compared against.
+
+**The test is deliberately stricter than the sentence it enforces.** "No
+executable byte" would let a documentation-only merge through; the stamp set
+refuses it. The asymmetry is the reason: a false red costs one author a
+re-read and is answered by cutting the next candidate, while a false green
+ships a final whose evidence describes a tree nobody ran. A guard that is
+looser than its claim is the claim wearing a green check.
+
+`.github/stamps-only.py` is that guard, run on every PR from
+[`.github/workflows/release-guards.yml`](../.github/workflows/release-guards.yml)
+beside the ceremony gates. It is vacuous on a `-dev` tree, on an rc tree — an
+`rc2` exists precisely *because* something changed, so there is nothing for it
+to assert — and on a final whose window cut no candidate. It reads the tree for
+`drills/X.Y.Z-rcN.md` to learn whether the window had candidates and the tags
+to learn what to compare against, which is why a candidate record whose tag
+cannot be found is a **refusal and never a pass**: "I found nothing" and "I
+could not look" are different answers here for the same reason they are in
+teardown's exit table below. Its contract tests are `.github/stamps-only.test.sh`.
+
 ## Adapting the drill to the window
 
 **A release window's drill is adapted to what that window shipped, and the
