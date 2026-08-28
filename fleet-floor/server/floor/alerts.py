@@ -87,9 +87,11 @@ class ReachabilityAlerts:
         for unit in sorted(units, key=lambda u: u.get("box", "")):
             box = unit.get("box", "")
             role = unit.get("room", "unknown")
-            dropped = unit.get("limit_dropped", 0)
+            dropped = unit.get("limit_dropped")
             previous = self.dropped_events.get(box, 0)
-            if dropped > previous:
+            if dropped is None:
+                pass
+            elif dropped > previous:
                 message = ("crew floor: %s (%s) lost %d operating-limit event(s); "
                            "cumulative dropped=%d" %
                            (box or "unknown", role, dropped - previous, dropped))

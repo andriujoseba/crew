@@ -188,10 +188,7 @@ minutes before `run_session`'s own timeout resolves it.
   uptime, `gh auth status` and the agent profile's own `bot_cli_probe`. The
   queue chips are the work the **last tick actually detected**, not a
   placeholder list. A box is **SILENT** when it has not logged a line for two
-  tick boundaries — the same death rule the engine uses. Near and crossed
-  engine limits are appended to the box's bounded `.limit-events` spool;
-  the read-only probe carries them to the host, where the configured floor
-  alert channel delivers each event without box-side network access.
+  tick boundaries — the same death rule the engine uses.
 - **Control** — every action is applied by the host: pause/resume comment and
   restore the box's crontab line — and a box with no armed `tick.sh` line
   answers **`nothing to pause`** at 200, because an action with nothing to do

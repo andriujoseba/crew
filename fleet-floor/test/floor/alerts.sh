@@ -78,14 +78,16 @@ alerts.observe_floor_events([])
 alerts.observe_floor_events(events)
 events[0]["limit_dropped"] = 5
 alerts.observe_floor_events(events)
+alerts.observe_floor_events([{"box": "ff-limits", "room": "builder",
+                              "limit_dropped": None, "floor_events": []}])
+alerts.observe_floor_events([{"box": "ff-limits", "room": "builder",
+                              "limit_dropped": 5, "floor_events": []}])
 PY
 t "alerts: ten down polls emit one alert" 1 \
   "$(grep -c 'unreachable for' "$FF_ALERT_UNIT_LOG" || true)"
 t "alerts: recovery emits one alert" 1 \
   "$(grep -c 'recovered after' "$FF_ALERT_UNIT_LOG" || true)"
-t "alerts: a durable event is delivered once across unchanged polls" 2 \
-  "$(grep -c 'ff-limits (builder) error operating limit' "$FF_ALERT_UNIT_LOG" || true)"
-t "alerts: ids absent from the current poll are pruned and can deliver again" 2 \
+t "alerts: ten unchanged polls plus one post-prune poll deliver twice" 2 \
   "$(grep -c 'ff-limits (builder) error operating limit' "$FF_ALERT_UNIT_LOG" || true)"
 t "alerts: the same event on a second box is still delivered" 1 \
   "$(grep -c 'ff-limits-peer (reviewer) error operating limit' "$FF_ALERT_UNIT_LOG" || true)"

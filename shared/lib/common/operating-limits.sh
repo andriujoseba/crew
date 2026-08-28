@@ -48,7 +48,7 @@ _operating_limit_spool() {
   local severity="$1" name="$2" measured="$3" limit="$4"
   local repo="$5" pr="$6" cause="$7"
   local spool="$DUTY_DIR/.limit-events" counter="$DUTY_DIR/.limit-events.dropped"
-  local now iso subject event_id line tmp cutoff old id event_epoch dropped=0 prior=0
+  local now iso subject event_id line tmp counter_tmp cutoff old id event_epoch dropped=0 prior=0
   local max="${DUTY_LIMIT_SPOOL_MAX}" ttl="${DUTY_LIMIT_SPOOL_TTL_S}"
   local -a kept=()
 
@@ -56,8 +56,7 @@ _operating_limit_spool() {
   iso="$(date -u -d "@$now" '+%Y-%m-%dT%H:%M:%SZ')" || return 0
   _OPERATING_LIMIT_EVENT_SEQ=$((_OPERATING_LIMIT_EVENT_SEQ + 1))
   event_id="$now-$BASHPID-$_OPERATING_LIMIT_EVENT_SEQ"
-  subject="${repo:+$repo#$pr}"
-  [ -n "$subject" ] || subject=-
+  if [ -n "$repo" ] && [ -n "$pr" ]; then subject="$repo#$pr"; else subject=-; fi
   cause="${cause//$'\t'/ }"
   cause="${cause//$'\n'/ }"
   line="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
@@ -89,14 +88,17 @@ _operating_limit_spool() {
 
   tmp="$(mktemp "$DUTY_DIR/.limit-events.XXXXXX")" || return 0
   printf '%s\n' "${kept[@]}" >"$tmp"
-  mv -f "$tmp" "$spool" || return 0
   if [ "$dropped" -gt 0 ]; then
     [ ! -f "$counter" ] || prior="$(cat "$counter" 2>/dev/null)"
     case "$prior" in ''|*[!0-9]*) prior=0 ;; esac
-    tmp="$(mktemp "$DUTY_DIR/.limit-events.dropped.XXXXXX")" || return 0
-    printf '%s\n' "$((prior + dropped))" >"$tmp"
-    mv -f "$tmp" "$counter"
+    counter_tmp="$(mktemp "$DUTY_DIR/.limit-events.dropped.XXXXXX")" \
+      || { rm -f "$tmp"; return 0; }
+    printf '%s\n' "$((prior + dropped))" >"$counter_tmp"
+    # Counter first is the safe crash direction: an interruption may report a
+    # loss that did not complete, never discard evidence without accounting.
+    mv -f "$counter_tmp" "$counter" || { rm -f "$tmp"; return 0; }
   fi
+  mv -f "$tmp" "$spool" || return 0
   return 0
 }
 

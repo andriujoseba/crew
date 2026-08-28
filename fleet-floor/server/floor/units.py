@@ -313,7 +313,7 @@ def unit_defaults():
         "lock": {"held": None, "stuck": False},
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "floor_events": [],
-        "limit_dropped": 0,
+        "limit_dropped": None,
         "authfail": [], "ping": None,
         "note": "", "agent_actual": "",
         # The box vitals record (#483), or None where the log carries none —
@@ -473,9 +473,9 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
                 "kind": suppression[1], "key": suppression[2],
             }
     try:
-        u["limit_dropped"] = max(0, int(meta.get("limitdropped", "0")))
-    except (TypeError, ValueError):
-        u["limit_dropped"] = 0
+        u["limit_dropped"] = max(0, int(meta["limitdropped"]))
+    except (KeyError, TypeError, ValueError):
+        u["limit_dropped"] = None
     for raw_event in meta.get("limit-events", []):
         fields = raw_event.split("\t", 7)
         if len(fields) != 8:
