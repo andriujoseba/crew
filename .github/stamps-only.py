@@ -23,27 +23,50 @@ author a re-read and is answered by cutting the next candidate, while a false
 green ships a final whose evidence describes a different tree. A guard looser
 than its claim is the claim wearing a green check.
 
-THE ANCHOR IS THE RECORD, NOT THE TAG. Which candidate was last is read from
-`drills/X.Y.Z-rcN.md` in the shipped tree, and the tag is then required to
-exist. Reading the tags alone would make a missing tag look like a window that
-cut no candidate — a silent pass, which is the one answer this guard must never
-give. So a record whose tag cannot be found is a REFUSAL: "I found nothing" and
-"I could not look" are different answers, the distinction `drill/teardown.sh`
-already keeps in its exit table. A tag carrying no record in the shipped tree
-is not evidence and is not anchored to; `drill-recorded` is what makes a record
-exist, and a tag without one never passed it.
+TWO SOURCES NAME THE LAST CANDIDATE, AND NEITHER IS TRUSTED ALONE. Which
+candidate was last is the highest-numbered of the `drills/X.Y.Z-rcN.md` records
+in the shipped tree UNION the `X.Y.Z-rcN` tags reachable from HEAD, and each
+source covers the way the other fails open:
 
-EVERYTHING IS READ FROM HEAD — the version, the records, the diff. What ships
-is what is committed, and one source of truth is why a worktree edit cannot
-move this guard's answer while leaving the published tree alone.
+  - The records alone were the first design, and they are DELETABLE by the very
+    diff under examination. A record lives in `drills/`, which is a stamp path,
+    so removing it in the final commit is admitted by the stamp set — and it
+    lowers the anchor. Delete the only record and the guard reports a window
+    that cut no candidate and exits 0 over a diff full of engine code. The
+    evidence was its own bypass (crew#579, codex-bot-andresmgsl).
+  - The tags alone fail the other way, which is why the first design chose the
+    records: a tag that was never fetched is indistinguishable from a tag that
+    was never cut, so a shallow clone would read as a window that laddered
+    nothing. That is a silent pass, the one answer this guard must never give.
+
+So a record whose tag cannot be found is a REFUSAL — "I found nothing" and "I
+could not look" are different answers, the distinction `drill/teardown.sh`
+already keeps in its exit table. And a reachable published candidate whose
+record is NOT in the shipped tree is a refusal too: `drill-recorded` is what
+makes a record exist, so a tag in this final's own history with no record
+beneath it means the evidence was removed after it published. RETENTION IS
+PROVED RATHER THAN ASSUMED.
+
+REACHABILITY IS THE FILTER ON TAGS, deliberately. A candidate tagged on a line
+this final does not descend from never drilled this lineage, and anchoring to
+it would red a window it has nothing to say about — while a candidate the final
+DOES descend from is exactly the one whose record cannot be allowed to vanish.
+An `X.Y.Z-rcN` tag that is an ancestor but whose tree diverges is caught by the
+ancestry check below, not by discovery.
+
+EVERYTHING ELSE IS READ FROM HEAD — the version, the records, the diff. What
+ships is what is committed, and one source of truth is why a worktree edit
+cannot move this guard's answer while leaving the published tree alone. The
+tags are the one thing HEAD cannot carry, which is the whole reason they are
+read separately and never trusted on their own.
 
 Run it from anywhere:  .github/stamps-only.py [--root DIR]
 
   exit 0  the tree is a stamps-only final, or there is nothing to assert
-  exit 1  refused — the diff leaves the stamp set, or the anchor is not an
-          ancestor of what ships
-  exit 2  could not look — a record's tag is unreachable, or git could not
-          answer at all
+  exit 1  refused — the diff leaves the stamp set, the anchor is not an
+          ancestor of what ships, or its record is not in the shipped tree
+  exit 2  could not look — a record's tag is unreachable, the tags cannot be
+          read at all, or git could not answer
 
 Stdlib only, for `scope-coverage.py`'s reason: a check that needs installing is
 a check that gets skipped.
@@ -145,6 +168,33 @@ def rc_records(root, final):
     return found
 
 
+def rc_tags(root, final):
+    """The candidate numbers PUBLISHED for this version, as tags.
+
+    The `--list` glob is a first pass and the anchored pattern is the real
+    filter: `-rc.1` and `-rc1-dev` both match the glob and neither is a
+    candidate `.ceremony/RELEASES.md` would publish.
+    """
+    listing = git(root, ["tag", "--list", "%s-rc*" % final],
+                  "reading the candidate tags")
+    want = re.compile(r"^%s-rc(\d+)$" % re.escape(final))
+    found = {}
+    for name in listing.split("\n"):
+        m = want.match(name.strip())
+        if m:
+            found[int(m.group(1))] = name.strip()
+    return found
+
+
+def is_ancestor(root, ref):
+    return git_ok(root, ["merge-base", "--is-ancestor", ref, "HEAD"])
+
+
+def is_shallow(root):
+    return git(root, ["rev-parse", "--is-shallow-repository"],
+               "asking whether the clone is shallow").strip() == "true"
+
+
 def changed_paths(root, anchor):
     """Every path that differs between the anchor's tree and HEAD.
 
@@ -186,17 +236,42 @@ def main():
         return 0
 
     records = rc_records(root, final)
-    if not records:
+    tags = rc_tags(root, final)
+    # Only the reachable tags raise the anchor. An unreachable one is not this
+    # final's ladder; an unreachable one that a RECORD claims is a refusal, and
+    # that is decided below rather than here.
+    reachable = set(n for n in tags if is_ancestor(root, "refs/tags/%s" % tags[n]))
+    candidates = set(records) | reachable
+    if not candidates:
+        if is_shallow(root):
+            die("%s carries no drills/%s-rcN.md and the clone is SHALLOW, so "
+                "whether this window cut a candidate cannot be answered from "
+                "here — a tag that was never fetched reads exactly like a tag "
+                "that was never cut. Fetch the tags (actions/checkout with "
+                "fetch-depth: 0)." % (final, final))
         print("stamps-only: %s cut no candidate — no drills/%s-rcN.md in the "
-              "shipped tree, so there is nothing above it to compare against."
-              % (final, final))
+              "shipped tree and no reachable %s-rcN tag, so there is nothing "
+              "above it to compare against." % (final, final, final))
         return 0
 
-    last = max(records)
+    last = max(candidates)
     anchor = "%s-rc%d" % (final, last)
-    if not git_ok(root, ["rev-parse", "--verify", "%s^{commit}" % anchor]):
-        shallow = git(root, ["rev-parse", "--is-shallow-repository"],
-                      "asking whether the clone is shallow").strip() == "true"
+
+    if last not in records:
+        # The tag is in this final's own history and its record is gone. The
+        # deletion is itself inside `drills/`, so the stamp set admits it and
+        # nothing downstream catches it — this is the check that does.
+        refuse("%s is published and is an ancestor of HEAD, but the shipped "
+               "tree carries no %s/%s.md. A candidate's record is the evidence "
+               "that it was drilled, and removing it after the tag published "
+               "does not un-publish the candidate — it only hides which tree "
+               "this final must be measured against. Restore %s/%s.md, or cut "
+               "%s-rc%d and drill it."
+               % (anchor, DRILLS, anchor, DRILLS, anchor, final, last + 1))
+        return 1
+
+    if last not in tags or not git_ok(
+            root, ["rev-parse", "--verify", "refs/tags/%s^{commit}" % anchor]):
         die("the shipped tree carries %s, so %s is this final's anchor — and "
             "that tag cannot be resolved%s. This is not a pass: an unreachable "
             "anchor is the one case where a missing check reads exactly like a "
@@ -204,16 +279,21 @@ def main():
             "or say in %s/%s.md why a record exists for a candidate that never "
             "published."
             % (records[last], anchor,
-               " (the clone is shallow)" if shallow else "",
+               " (the clone is shallow)" if is_shallow(root) else "",
                DRILLS, final))
 
-    if not git_ok(root, ["merge-base", "--is-ancestor", anchor, "HEAD"]):
+    # `refs/tags/` and not the bare name: `rev-parse` resolves a BRANCH of that
+    # name too, so a bare anchor would quietly diff against a branch and mask
+    # the one signal this guard most wants to be loud about — fetch the tags.
+    anchor_ref = "refs/tags/%s" % anchor
+
+    if not is_ancestor(root, anchor_ref):
         refuse("%s is not an ancestor of HEAD. The ladder promises the final "
                "DESCENDS from the candidate that was drilled; a tree that "
                "merely resembles it is not the tree that ran." % anchor)
         return 1
 
-    changed = changed_paths(root, anchor)
+    changed = changed_paths(root, anchor_ref)
     strays = sorted(p for p in changed if not is_stamp(p))
     if strays:
         refuse("%s differs from %s outside the stamp set, so the tree that "
