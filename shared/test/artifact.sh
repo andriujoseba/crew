@@ -94,14 +94,23 @@ fi
 #     at each channel's installed tree, whichever branch it lands on, and the
 #     helper is shared so a fourth channel is one line.
 #
-#     The artifact FILE stays the size of the repository, deliberately: it
-#     packs the whole tree and reimplements no install logic, so the payload
-#     rule applies on the way OUT of the stub, not on the way in.
+#     `dist/make-installer.sh` packs the tree it is handed and reimplements no
+#     install logic, so an artifact built straight from it — as this one is —
+#     is still the size of what it was given, and the payload rule applies on
+#     the way OUT of the stub. What the RELEASE publishes is not that: since
+#     #499 `dist/release-artifact.sh` hands the builder an include set, and
+#     section 12e below is where that is asserted.
+#
+# The repository furniture, named once: assert_payload() checks it is absent
+# from every channel's installed tree, and 12e checks it never entered the
+# release payload in the first place. Two enforcements, one list — re-typing it
+# for the second would let the artifact regress while the installs stayed clean.
+FURNITURE=(.git .gitignore .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d
+           dist drill drills postmortems protocols shared/test
+           fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test)
 assert_payload() {  # <case-prefix> <installed tree, symlink or version dir>
   local prefix="$1" tree="$2" p shipped="" absent="" kb ignored
-  for p in .git .gitignore .github .box .ceremony AGENTS.md CONTRIBUTING.md changelog.d \
-           dist drill drills postmortems protocols shared/test \
-           fleet-floor/dev fleet-floor/src fleet-floor/build.sh fleet-floor/test; do
+  for p in "${FURNITURE[@]}"; do
     [ -e "$tree/$p" ] && shipped="$shipped $p"
   done
   ignored="$(find -L "$tree" -name node_modules -print -quit 2>/dev/null)"
@@ -678,6 +687,256 @@ if grep -q 'gh release upload\|gh release edit' "$RELYML" 2>/dev/null; then
   bad "release-workflow-uploads-nothing-itself"
 else
   ok "release-workflow-uploads-nothing-itself"
+fi
+
+# 12e. THE INCLUDE SET (#499) — what the release publishes is defined by what an
+#      install NEEDS, not by what an exclusion list failed to name. The old
+#      payload was the whole repository: `fleet-floor/dev` alone is 50M of
+#      design-time assets nothing an install reads, so ~97% of every download
+#      was unpacked and thrown away.
+#
+#      Nothing below re-types the set. The members are read out of the script
+#      that declares them, so a member added there is driven here without an
+#      edit, and the "what an install needs" half is proved by INSTALLING rather
+#      than by a second list that could agree with the first while both are
+#      wrong.
+include_members() {  # the include set, as dist/release-artifact.sh declares it
+  awk '/^PAYLOAD_INCLUDED_PATHS=\(/ { f = 1; next } f && /^\)/ { exit } f { print $1 }' "$RA"
+}
+extract_payload() {  # <artifact> <destdir> — the tarball the stub carries
+  local a="$1" d="$2" ml skip
+  ml="$(grep -aFxn -m1 -- '__SELF_INSTALLER_PAYLOAD__' "$a" | cut -d: -f1)" || return 1
+  [ -n "$ml" ] || return 1
+  skip="$(head -n "$ml" "$a" | wc -c | tr -d ' ')"
+  mkdir -p "$d"
+  tail -c +"$((skip + 1))" "$a" | tar -xzf - -C "$d"
+}
+# A doctored dist/, for the must-fail cases: the script takes no injection point
+# (it resolves its builder beside itself), so a mutation is a copy with an edit,
+# exactly as 12b's empty-build stub is. `cmp` is load-bearing — a sed that
+# matched nothing leaves the control, and the case would then pass for the one
+# reason that proves nothing.
+doctored_dist() {  # <dir> <sed-expr> -> 0 when the mutation actually applied
+  local d="$1" expr="$2"
+  mkdir -p "$d"
+  cp "$ROOT/dist/make-installer.sh" "$d/" || return 1
+  sed -E "$expr" "$RA" > "$d/release-artifact.sh" || return 1
+  ! cmp -s "$RA" "$d/release-artifact.sh"
+}
+
+MEMBERS="$(include_members)"
+if [ -n "$MEMBERS" ] && printf '%s\n' "$MEMBERS" | grep -qx 'cli'; then
+  ok "include-set-is-declared"
+else
+  bad "include-set-is-declared (read: $(printf '%s' "$MEMBERS" | tr '\n' ' '))"
+fi
+
+# (i) the payload IS the include set — no repository furniture entered it. This
+#     is the assertion 3c could not make: there the rule was applied on the way
+#     out of the stub, so the tarball's own contents were never in question.
+PT="$WORK/payload-tree"
+if extract_payload "$ADIR/crew-$V.sh" "$PT" >/dev/null 2>&1; then
+  ok "release-payload-extracts"
+else
+  bad "release-payload-extracts"
+fi
+payload_furniture() {  # <tree> -> the furniture it carries, if any
+  local tree="$1" p found=""
+  for p in "${FURNITURE[@]}"; do [ -e "$tree/$p" ] && found="$found $p"; done
+  printf '%s' "$found"
+}
+carried="$(payload_furniture "$PT")"
+if [ -z "$carried" ]; then
+  ok "release-payload-carries-no-repository-furniture"
+else
+  bad "release-payload-carries-no-repository-furniture (carried:$carried)"
+fi
+# Every file in the payload lies under a declared member. The build refuses this
+# itself; this is the assertion that would notice if that refusal were removed.
+uncovered=""
+while IFS= read -r rel; do
+  covered=""
+  while IFS= read -r m; do
+    case "$rel" in "$m"|"$m"/*) covered=1; break ;; esac
+  done <<EOM
+$MEMBERS
+EOM
+  [ -n "$covered" ] || { uncovered="$rel"; break; }
+done <<EOF
+$(cd "$PT" && find . -mindepth 1 \( -type f -o -type l \) -printf '%P\n' | sort)
+EOF
+if [ -z "$uncovered" ]; then
+  ok "release-payload-holds-nothing-outside-the-include-set"
+else
+  bad "release-payload-holds-nothing-outside-the-include-set (found: $uncovered)"
+fi
+
+# (ii) A FULL INSTALL FROM THE ARTIFACT IS THE TREE A SOURCE INSTALL PRODUCES.
+#      This is the criterion the include set has to meet and the reason it needs
+#      no second list to check it against: $DB is test 4's CREW_INSTALL_SOURCE
+#      install of the WHOLE tree, so any path the set omits that an install
+#      keeps shows up as a difference here, and any path it adds that an install
+#      would have pruned shows up as one too.
+DR="$WORK/homeRelease"
+HOME="$DR" CREW_HOME="$DR/share" CREW_BIN="$DR/bin" bash "$ADIR/crew-$V.sh" >/dev/null 2>&1
+rtree="$DR/share/versions/$V"
+if [ -d "$rtree" ]; then ok "release-artifact-installs"; else bad "release-artifact-installs"; fi
+if diff -r --exclude=INSTALLED_FROM "$rtree" "$DB/share/versions/$V" >/dev/null 2>&1; then
+  ok "release-artifact-tree-identical-to-a-source-install"
+else
+  bad "release-artifact-tree-identical-to-a-source-install"
+  diff -rq --exclude=INSTALLED_FROM "$rtree" "$DB/share/versions/$V" | head
+fi
+if ( cd "$WORK" && "$DR/bin/crew" help >/dev/null 2>&1 ); then
+  ok "release-artifact-installed-crew-runs"
+else
+  bad "release-artifact-installed-crew-runs"
+fi
+assert_payload release-artifact-install "$DR/share/current"
+
+# (iii) THE SIZE, which is the whole operator-facing point. A ratio rather than
+#       a fixed ceiling: the bound has to keep meaning something as the product
+#       grows, and what #499 is about is the artifact tracking the REPOSITORY.
+art_bytes="$(wc -c < "$ADIR/crew-$V.sh" | tr -d ' ')"
+src_kb="$(du -sk "$SRC" | cut -f1)"
+art_kb=$(( (art_bytes + 1023) / 1024 ))
+if [ "$src_kb" -gt 0 ] && [ $(( art_kb * 4 )) -lt "$src_kb" ]; then
+  ok "release-artifact-is-a-fraction-of-the-tree ($art_kb KiB vs $src_kb KiB)"
+else
+  bad "release-artifact-is-a-fraction-of-the-tree ($art_kb KiB of a $src_kb KiB tree — the payload is tracking the repository again)"
+fi
+
+# (iv) THE SIZE IS ON THE RECORD (D4). Not merely present: the recorded figure
+#      is compared against the file, so a stale or invented number fails too.
+SUMD="$WORK/summary"; mkdir -p "$SUMD"
+SUMF="$SUMD/step-summary.md"; : > "$SUMF"
+SADIR="$WORK/assets-summary"
+GITHUB_STEP_SUMMARY="$SUMF" env -u RELEASE_ASSETS_DIR \
+  bash "$RA" --version "$V" --root "$SRC" --assets-dir "$SADIR" >/dev/null 2>&1
+sum_bytes="$(wc -c < "$SADIR/crew-$V.sh" 2>/dev/null | tr -d ' ')"
+if [ -s "$SUMF" ] && grep -q "crew-$V.sh" "$SUMF" && grep -q "$sum_bytes bytes" "$SUMF"; then
+  ok "release-hook-records-the-artifact-size"
+else
+  bad "release-hook-records-the-artifact-size (summary: '$(cat "$SUMF" 2>/dev/null)')"
+fi
+# The record has teeth: with the write removed, the assertion above must fail.
+# Without this the case passes on a script that records nothing into a summary
+# file some other line happened to fill.
+MUTS="$WORK/dist-nosummary"
+if doctored_dist "$MUTS" '/GITHUB_STEP_SUMMARY/,+3d'; then
+  SUMF2="$SUMD/mutated.md"; : > "$SUMF2"
+  GITHUB_STEP_SUMMARY="$SUMF2" env -u RELEASE_ASSETS_DIR \
+    bash "$MUTS/release-artifact.sh" --version "$V" --root "$SRC" \
+    --assets-dir "$WORK/assets-nosummary" >/dev/null 2>&1
+  if [ -s "$SUMF2" ]; then
+    bad "unrecorded-size-is-caught (the summary filled anyway)"
+  else
+    ok "unrecorded-size-is-caught"
+  fi
+else
+  bad "unrecorded-size-is-caught (the mutation did not apply)"
+fi
+
+# (v) MUST-FAIL: A PAYLOAD PATH OUTSIDE THE INCLUDE SET. Driven as the
+#     regression it guards against — the pack step reverted to taking the whole
+#     tree while the set stays declared — so the build's own two-directional
+#     validation is exercised rather than assumed.
+MUTO="$WORK/dist-packs-all"
+# The sed expression is literal on purpose — it rewrites the script's own
+# pathspec, on both acquisition branches at once, and must not expand here.
+# shellcheck disable=SC2016
+if doctored_dist "$MUTO" 's/-- "\$\{PAYLOAD_INCLUDED_PATHS\[@\]\}"/-- ./'; then
+  if out_all="$(env -u RELEASE_ASSETS_DIR bash "$MUTO/release-artifact.sh" --version "$V" \
+        --root "$SRC" --assets-dir "$WORK/assets-packs-all" 2>&1)"; then
+    bad "payload-outside-the-include-set-refuses (exit 0 — it would publish the repository)"
+  else
+    case "$out_all" in *"no include-set member covers"*) ok "payload-outside-the-include-set-refuses" ;;
+      *) bad "payload-outside-the-include-set-refuses (wrong reason: '$out_all')" ;; esac
+  fi
+  if [ -e "$WORK/assets-packs-all/crew-$V.sh.sha256" ]; then
+    bad "payload-outside-the-include-set-publishes-nothing"
+  else
+    ok "payload-outside-the-include-set-publishes-nothing"
+  fi
+else
+  bad "payload-outside-the-include-set-refuses (the mutation did not apply)"
+fi
+
+# (vi) MUST-FAIL: A DECLARED MEMBER THE SOURCE DOES NOT CARRY. A source missing
+#      part of the product is not one a release can be cut from, and the build
+#      says so instead of publishing a short tree.
+SHORT="$WORK/src-short"; mkdir -p "$SHORT"
+cp -a "$SRC/." "$SHORT/"; rm -rf "$SHORT/examples"
+if short_out="$(env -u RELEASE_ASSETS_DIR bash "$RA" --version "$V" --root "$SHORT" \
+      --assets-dir "$WORK/assets-short" 2>&1)"; then
+  bad "missing-include-member-refuses (exit 0)"
+else
+  case "$short_out" in *examples*) ok "missing-include-member-refuses" ;;
+    *) bad "missing-include-member-refuses (wrong reason: '$short_out')" ;; esac
+fi
+
+# (vii) MUST-FAIL, THE ACCEPTANCE CRITERION ITSELF: removing ANY member of the
+#       include set fails a test. Driven for EVERY member the script declares,
+#       not a chosen few — the set is read from the declaration, so a member
+#       added later is covered without anyone remembering to add a case. Each
+#       mutation must either stop the build, stop the install, or land a tree
+#       that differs from the reference install; a member whose removal changes
+#       nothing observable is a member that should not be in the set.
+survivors=""
+mutations=0
+while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  mutations=$((mutations + 1))
+  esc="$(printf '%s' "$m" | sed 's|/|\\/|g')"
+  MD="$WORK/dist-drop-$(printf '%s' "$m" | tr '/.' '__')"
+  if ! doctored_dist "$MD" "/^  ${esc}[[:space:]]/d"; then
+    survivors="$survivors $m(no-mutation)"; continue
+  fi
+  MADIR="$WORK/assets-drop-$(printf '%s' "$m" | tr '/.' '__')"
+  if ! env -u RELEASE_ASSETS_DIR bash "$MD/release-artifact.sh" --version "$V" \
+        --root "$SRC" --assets-dir "$MADIR" >/dev/null 2>&1; then
+    continue   # the build refused — caught
+  fi
+  MH="$WORK/home-drop-$(printf '%s' "$m" | tr '/.' '__')"
+  if ! HOME="$MH" CREW_HOME="$MH/share" CREW_BIN="$MH/bin" \
+        bash "$MADIR/crew-$V.sh" >/dev/null 2>&1; then
+    continue   # the install refused — caught
+  fi
+  if diff -r --exclude=INSTALLED_FROM "$MH/share/versions/$V" "$DB/share/versions/$V" >/dev/null 2>&1; then
+    survivors="$survivors $m"   # built, installed, and indistinguishable
+  fi
+done <<EOF
+$MEMBERS
+EOF
+if [ "$mutations" -eq 0 ]; then
+  bad "dropping-any-include-member-is-caught (no members were driven)"
+elif [ -z "$survivors" ]; then
+  ok "dropping-any-include-member-is-caught ($mutations members driven)"
+else
+  bad "dropping-any-include-member-is-caught (survived:$survivors)"
+fi
+
+# (viii) D3 — the checksum and version paths are UNTOUCHED. Asserted against the
+#        assets this section built rather than by reading the diff: the sidecar
+#        still verifies the published file, and --check/--version still identify
+#        it without installing. Tests 12 and 1–2 make the same claims of the
+#        other channels; these make them of the artifact a release now publishes.
+if ( cd "$SADIR" && sha256sum -c "crew-$V.sh.sha256" >/dev/null 2>&1 ); then
+  ok "include-set-artifact-sidecar-still-verifies"
+else
+  bad "include-set-artifact-sidecar-still-verifies"
+fi
+DV="$WORK/dv"
+vout2="$(CREW_HOME="$DV/share" CREW_BIN="$DV/bin" bash "$SADIR/crew-$V.sh" --version 2>&1)"
+case "$vout2" in *"crew $V"*"payload sha256:"*)
+    if [ ! -e "$DV" ]; then ok "include-set-artifact-version-identifies-without-install"
+    else bad "include-set-artifact-version-identifies-without-install (touched dest)"; fi ;;
+  *) bad "include-set-artifact-version-identifies-without-install (got '$vout2')" ;;
+esac
+if CREW_HOME="$DV/share" CREW_BIN="$DV/bin" bash "$SADIR/crew-$V.sh" --check >/dev/null 2>&1; then
+  ok "include-set-artifact-check-passes"
+else
+  bad "include-set-artifact-check-passes"
 fi
 
 echo
