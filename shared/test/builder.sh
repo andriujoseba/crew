@@ -5335,5 +5335,14 @@ rc_names roundcap-instruction-names-the-converged-carve-out \
   'THE CUT IS FOR A ROUND THAT CLOSED WITH WORK STILL OWED' \
   'it converges and goes to the human to merge' \
   'If the approvals are STALE because you have since pushed, the cut is owed again'
+# The carve-out is crew's reading of a collision between two unconditional
+# doctrine rules, not doctrine's own, and triage ruled that the citation "should
+# ride wherever this reading is stated in the build". This is one of the two
+# places it is stated; round-cap.jq's header is the other. Pinned so an edit
+# cannot drop the one link that says the reading is contingent and where it
+# would be overturned (#566 round 2, @claude-bot-andresmgsl).
+rc_names roundcap-instruction-cites-the-doctrine-collision \
+  "THAT CARVE-OUT IS CREW'S READING AND IT IS CITED" \
+  'heavy-duty/ceremony#517'
 
 suite_finish

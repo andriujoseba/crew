@@ -2920,15 +2920,27 @@ _builder_repo() {
       # payload (not every panelist approves the head), so the two never both
       # fire — no continue needed.
       #
-      # THE CAP DOES NOT BREAK THAT INVARIANT, and this is the one place where
-      # it could: the suppression below is an early return inside
-      # _request_panel, so execution CONTINUES into the convergence check
-      # regardless. Held together in round-cap.jq rather than here — a fifth
-      # round that closed with a live full approval is not at the cap, so
-      # at_cap and converged are never both true and the handoff is never
-      # suppressed under a PR the human is about to merge. Written down because
-      # it read the other way on this PR's first head and both change-requesting
-      # reviewers found it (#566).
+      # THE CAP NEVER SUPPRESSES A HANDOFF, and this is the one place where it
+      # could: the suppression below is an early return inside _request_panel,
+      # so execution CONTINUES into the convergence check regardless of it.
+      # That holds unconditionally, whatever the census answered. Written down
+      # because it read the other way on this PR's first head and both
+      # change-requesting reviewers found it (#566).
+      #
+      # WHAT IS *NOT* CLAIMED HERE: that at_cap and converged are never both
+      # true. On the ordinary path they are not — a fifth round that closed with
+      # a full approval still standing at the current head is carved out of
+      # at_cap in round-cap.jq, so a PR the human is about to merge is never
+      # named for the cut. But $approvals_stand is keyed to the CAP round's
+      # head, deliberately (roundcap-later-approval-does-not-lift-the-cap), so a
+      # SIXTH round approving a newer head unanimously leaves at_cap true beside
+      # a true convergence: the PR hands off AND keeps being named in
+      # {{ROUND_CAP}} until a human merges it. Reachable only from outside this
+      # build — round six exists only if someone requested the panel past the
+      # suppression above — and the amended criterion is scoped to "a fifth
+      # round that passes" (#502 D2b), so it does not govern that shape. Named
+      # rather than asserted away, because the comment that asserted it away was
+      # wrong (@claude-bot-andresmgsl, #566 round 2).
       # The seventh argument is this tick's census answer for THIS PR (#502
       # D2a). Passed rather than read off the global inside the helper, so the
       # suppression is visible at the call site and drivable from a fixture.

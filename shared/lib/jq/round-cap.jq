@@ -73,9 +73,23 @@
 # stale full approval stays AT the cap, and only a live one lifts it. A plain
 # "did the fifth round approve?" test would have opened that hole.
 #
-# Under a triage ruling ask (#566): this narrows #502's unconditionally-worded
-# acceptance criterion, and if the ruling goes the other way it is this conjunct
-# that comes back out.
+# RULED, AND ON WHAT. Triage ruled this reading on 2026-08-28 answering the ask
+# on PR #566: the narrowing is written into #502's first acceptance criterion
+# itself, as D2b, in both halves — "where every panel verdict approves the
+# current head, the PR converges, hands off and is never named for the cut.
+# Where that full approval no longer stands at the current head, the PR is at
+# the cap and is named". This program is that criterion and nothing wider.
+#
+# WHAT WOULD RETIRE IT, cited here because the reading is crew's rather than
+# doctrine's: BUILDER.md's `## The round cap` and its `## Handoff` are BOTH
+# unconditional, both antecedents fire on a passing fifth round, and neither
+# carries an exception for the other — "What the cap does not do" enumerates
+# four misreadings without reaching this one. `.ceremony/` is a byte-identical
+# mirror where a hand edit reds CI, so that collision has one legal address:
+# heavy-duty/ceremony discussion #517, filed 2026-08-28 with both rules quoted
+# at crew's pin 0.7.6 and this reading named as the workaround in force. If
+# ceremony rules the other way it is this conjunct that comes back out, and the
+# criterion moves with it.
 #
 # An EMPTY panel never closes a round vacuously, the guard addressing.jq and
 # converged.jq both carry against a bare `panel=` line.
