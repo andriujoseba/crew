@@ -259,9 +259,14 @@ against it.
 
 The declared legs are: `hygiene`, `breaker`, `resume`, `attention`,
 `attention-audit`, `notify`, `installer`, `config`, `app`, `browser`,
-`app-armed`, `teardown`. The `triage`, `builder` and `reviewer` rows beside
-them are round *participants*, not legs: they carry a whole role's phase-2
-verdict, and the per-role summaries above are where you read them.
+`app-armed`, `teardown`. Each has an entry below, headed by its row name —
+that heading IS the leg's name, and CI diffs the set of them against the
+harness's own declaration in both directions, so this runbook cannot fall a
+release behind the harness again without a red check.
+
+The `triage`, `builder` and `reviewer` rows beside them are round
+*participants*, not legs: they carry a whole role's phase-2 verdict, and the
+per-role summaries above are where you read them.
 
 Every leg's row is one of exactly three readings, and the round prints the
 reading as well as the detail:

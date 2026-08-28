@@ -820,4 +820,87 @@ t drill-report-tree-round-names-no-pr 0 \
 t drill-report-tree-round-passes-no-source-ref '-' \
   "$(awk '{print $5}' "$ROLE_LOG")"
 
+# --- the runbook documents exactly the legs the harness declares (#497) ------
+# shared/docs/rehearsal.md is the prose an operator reads before a round, and
+# it went a whole release without describing a single leg that release added.
+# A census catches that once; this diff catches it every time. Both directions
+# are asserted because they are different defects: a leg in the harness and not
+# in the runbook is an operator running something nobody explained, and a leg
+# in the runbook and not in the harness is an operator preparing for a leg that
+# will never appear in the record.
+#
+# Neither side is a list maintained here. The harness's side is its own
+# DECLARED_LEGS array — the same declaration the round checks its record
+# against — and the runbook's side is the headings under `## The legs`, which
+# that section states are the leg names. A third copy in this file would be the
+# thing that drifts.
+RUNBOOK="$ROOT/shared/docs/rehearsal.md"
+
+runbook_harness_legs() {  # the harness's own declaration, one per line
+  sed -n '/^declare -a DECLARED_LEGS=(/,/^)/p' "$ROOT/drill/rehearsal-all.sh" \
+    | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort -u
+}
+
+runbook_documented_legs() {  # the `### <leg>` headings under `## The legs`
+  awk '/^## The legs$/ { inside = 1; next }
+       /^## / { inside = 0 }
+       inside' "$RUNBOOK" \
+    | sed -n 's/^### \([a-z][a-z-]*\)[^a-z-].*$/\1/p' | sort -u
+}
+
+runbook_prose_legs() {  # the enumerating sentence, read to its blank line
+  awk '/^The declared legs are:/ { inside = 1 }
+       inside && /^$/ { exit }
+       inside' "$RUNBOOK" \
+    | grep -oE '`[a-z][a-z-]*`' | tr -d '`' | sort -u
+}
+
+t drill-runbook-harness-declares-legs 12 "$(runbook_harness_legs | n)"
+t drill-runbook-documents-every-declared-leg '' \
+  "$(comm -23 <(runbook_harness_legs) <(runbook_documented_legs) | paste -sd, -)"
+t drill-runbook-documents-no-undeclared-leg '' \
+  "$(comm -13 <(runbook_harness_legs) <(runbook_documented_legs) | paste -sd, -)"
+# The section's own enumerating sentence is a third surface and drifts like any
+# other, so it is held to the same declaration rather than to the headings.
+t drill-runbook-prose-list-matches-declaration '' \
+  "$(comm -3 <(runbook_harness_legs) <(runbook_prose_legs) | tr -d '\t' \
+    | paste -sd, -)"
+
+# Mutation: the leg the harness gained but nobody wrote up — the exact shape of
+# this issue's own finding. Both the census and the runbook go stale silently,
+# so the assertion above has to red on a declaration it has never seen.
+MUTATED_ALL="$TMP/rehearsal-all-extra-leg.sh"
+sed 's/^  installer config app browser app-armed teardown$/  installer config app browser app-armed teardown newleg/' \
+  "$ROOT/drill/rehearsal-all.sh" >"$MUTATED_ALL"
+t drill-runbook-extra-leg-mutation-applied 1 \
+  "$(sed -n '/^declare -a DECLARED_LEGS=(/,/^)/p' "$MUTATED_ALL" \
+    | grep -cw newleg || true)"
+t drill-runbook-extra-leg-is-undocumented newleg \
+  "$(comm -23 \
+      <(sed -n '/^declare -a DECLARED_LEGS=(/,/^)/p' "$MUTATED_ALL" \
+        | sed '1d;$d' | tr ' ' '\n' | sed '/^$/d' | sort -u) \
+      <(runbook_documented_legs) | paste -sd, -)"
+
+# Mutation: a leg described in prose that the harness does not have. An
+# operator prepares a prerequisite for a leg that can never reach the record.
+MUTATED_DOC="$TMP/rehearsal-ghost-leg.md"
+awk '{ print }
+     /^### teardown — / { print ""; print "### ghostleg — a leg the harness does not have" }' \
+  "$RUNBOOK" >"$MUTATED_DOC"
+t drill-runbook-ghost-leg-mutation-applied 1 \
+  "$(grep -cF '### ghostleg — ' "$MUTATED_DOC" || true)"
+t drill-runbook-ghost-leg-is-undeclared ghostleg \
+  "$(comm -13 <(runbook_harness_legs) \
+      <(RUNBOOK="$MUTATED_DOC" runbook_documented_legs) | paste -sd, -)"
+
+# The runbook describes the harness AFTER this window's repairs: the record it
+# sends an operator to is the declared-leg block #495 landed, and the routing
+# it describes is #492's derivation rather than the literal PR number that
+# stood at :63 and :233. A number here is the same defect as a number in the
+# scripts, which the assertion above already forbids.
+t drill-runbook-names-the-declared-leg-record present \
+  "$(grep -qF '## declared leg states:' "$RUNBOOK" && echo present || echo absent)"
+t drill-runbook-hardcodes-no-pr-number 0 \
+  "$(grep -cE 'PR #[0-9]' "$RUNBOOK" || true)"
+
 suite_finish
