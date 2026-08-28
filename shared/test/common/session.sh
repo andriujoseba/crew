@@ -147,6 +147,7 @@ usage_legacy="$(
   unset -f bot_cli_structured_cmd bot_cli_structured_prose bot_cli_usage 2>/dev/null || true
   SESSION_CREDENTIAL_POOL=""
   BOT_CLI_CMD=(bash -c 'printf "exec\nfinal reply\n"')
+  # shellcheck disable=SC2317  # invoked indirectly through session_acted
   bot_session_acted() { grep -qx exec "$1"; }
   run_session build fixture/legacy "$SA_WORK" 5 prompt | tail -1
 )"
