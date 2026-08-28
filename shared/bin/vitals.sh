@@ -122,7 +122,11 @@ mark() { # mark <name> <want> <got>
 
 # --- the record --------------------------------------------------------------
 emit_vitals() {
-  local out="VITALS ts=$(ts)" FINDINGS=""
+  # Declared and assigned separately: `local x=$(cmd)` masks the command's
+  # return value behind local's own, which is exactly the mistake every reader
+  # below is written to avoid (SC2155).
+  local out FINDINGS=""
+  out="VITALS ts=$(ts)"
   local cores load mem disk swap_a swap_c plat os
   local mem_total mem_shared mem_avail disk_total disk_used disk_pct
 
