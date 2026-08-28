@@ -82,7 +82,7 @@ t "agreement: down does not qualify" does-not-qualify \
 # green survive, while deleting the `up` increment made the criterion silently
 # unreachable. Exactly one guarded increment makes both mutations red here.
 t "agreement: the live count has one guarded increment" 1 \
-  "$(grep -cF 'ARMED_AGREE_N=$((ARMED_AGREE_N + 1))' "$FLOOR/../drill/rehearsal-app.sh")"
+  "$(grep -cF "ARMED_AGREE_N=\$((ARMED_AGREE_N + 1))" "$FLOOR/../drill/rehearsal-app.sh")"
 t "agreement: an armed skewed comparison makes the round comparable" compared \
   "$(agreement_round_result 1)"
 t "agreement: a disarmed-only round says it could not compare" could-not-compare \
