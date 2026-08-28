@@ -75,13 +75,16 @@ for _ in range(10):
 alerts.observe_floor_events([{"box": "ff-limits-peer", "room": "reviewer",
                               "limit_dropped": 0, "floor_events": [event]}])
 alerts.observe_floor_events([])
+assert ("ff-limits", event["id"]) in alerts.sent_events
 alerts.observe_floor_events(events)
 events[0]["limit_dropped"] = 5
 alerts.observe_floor_events(events)
 alerts.observe_floor_events([{"box": "ff-limits", "room": "builder",
                               "limit_dropped": None, "floor_events": []}])
+assert ("ff-limits", event["id"]) in alerts.sent_events
 alerts.observe_floor_events([{"box": "ff-limits", "room": "builder",
                               "limit_dropped": 5, "floor_events": []}])
+assert ("ff-limits", event["id"]) not in alerts.sent_events
 PY
 t "alerts: ten down polls emit one alert" 1 \
   "$(grep -c 'unreachable for' "$FF_ALERT_UNIT_LOG" || true)"
