@@ -463,8 +463,12 @@ t "unit repo is a full owner/repo"  True "$(uf ff-working "'/' in u['repo']")"
 # only evidence it was ever there was the line itself. Pin it: a probe record
 # that stops carrying session logs must red here rather than in a browser walk.
 t "session logs reach the card" 2 "$(uf ff-working "len(u['logs'])")"
+# `bool(u['logs']) and …`, not the bare `all(…)`: an empty list satisfies
+# `all()` vacuously, so the deletion this round is about would have left this
+# second assertion GREEN. A pinning check that survives the thing it pins is
+# worse than no check, because it reads as coverage.
 t "session logs are the names the box listed" True \
-  "$(uf ff-working "all(f.endswith('.log') for f in u['logs'])")"
+  "$(uf ff-working "bool(u['logs']) and all(f.endswith('.log') for f in u['logs'])")"
 
 # A box inside its FIRST session: cur is set, sessions is empty. floor.py sets
 # state=working whenever cur exists, so this is ordinary live telemetry — and
