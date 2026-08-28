@@ -202,6 +202,7 @@ emit_probe() {
   # Full owner/repo, exactly as repos.txt holds them. Bare names here are
   # what let a broken repo-link URL pass review-clean for two rounds.
   printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
+  printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
   # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
   # ONE source for it, because the CLI half of this stub answers with the same
   # record a few hundred lines down: a stub whose two halves disagreed about

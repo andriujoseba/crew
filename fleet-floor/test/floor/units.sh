@@ -456,6 +456,16 @@ t "repos are full owner/repo" True "$(uf ff-working "all('/' in r for r in u['re
 t "queue repo is a full owner/repo" True "$(uf ff-working "'/' in u['queue'][0]['repo']")"
 t "unit repo is a full owner/repo"  True "$(uf ff-working "'/' in u['repo']")"
 
+# The same root cause as this round's, one field over: `u["logs"]` is the card's
+# session-log links, and NOTHING in this suite asserted on it — so the stub's
+# `::sessionlogs` line was a fixture nobody read, and #483's first pass deleted
+# it while inserting `::vitals` beside it. The suite stayed green because the
+# only evidence it was ever there was the line itself. Pin it: a probe record
+# that stops carrying session logs must red here rather than in a browser walk.
+t "session logs reach the card" 2 "$(uf ff-working "len(u['logs'])")"
+t "session logs are the names the box listed" True \
+  "$(uf ff-working "all(f.endswith('.log') for f in u['logs'])")"
+
 # A box inside its FIRST session: cur is set, sessions is empty. floor.py sets
 # state=working whenever cur exists, so this is ordinary live telemetry — and
 # it is the state that crashed the room's diagnostic hologram.
