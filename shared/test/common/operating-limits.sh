@@ -60,4 +60,10 @@ unjustified="$(
 )"
 t decision-path-empty-fallbacks-are-justified '' "$unjustified"
 
+t limit-guard-is-wired-to-round-history 2 \
+  "$(grep -c 'operating_limit_assess github_connection_nodes' \
+      "$SHARED/lib/duty-builder.sh")"
+t limit-guard-reads-server-total-counts 5 \
+  "$(grep -c '){totalCount nodes{' "$SHARED/lib/duty-builder.sh")"
+
 suite_finish

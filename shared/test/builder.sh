@@ -289,8 +289,8 @@ t engine-request-requires-signal signal-gated "$r1"
 # #286: a predicate can only read what the query asks for, and the handoff query
 # carried neither timestamp — which is why the ordering bug was invisible to
 # every fixture in this file. Pin both fields at the query.
-if grep -q 'comments(last:.*OPERATING_LIMIT_GITHUB_CONNECTION_NODES.*){nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'latestOpinionatedReviews(first:.*OPERATING_LIMIT_GITHUB_PANEL_NODES.*){nodes{author{login} state submittedAt commit{oid}}}' \
+if grep -q 'comments(last:.*OPERATING_LIMIT_GITHUB_CONNECTION_NODES.*){.*nodes{author{login} body createdAt}}' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'latestOpinionatedReviews(first:.*OPERATING_LIMIT_GITHUB_PANEL_NODES.*){.*nodes{author{login} state submittedAt commit{oid}}}' \
        "$SHARED/lib/duty-builder.sh"; then r1=timestamped; else r1=UNTIMED; fi
 t engine-request-fetches-ordering-evidence timestamped "$r1"
 # The licence crosses into jq as ONE object: request-panel.jq is HANDED the

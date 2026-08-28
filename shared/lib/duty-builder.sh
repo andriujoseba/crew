@@ -452,7 +452,7 @@ _mirror_rounds() {
   # FINAL (default false) is true only at the handoff straggler: it finalizes
   # the live last round too. Per-tick mirroring leaves the live round deferred
   # so a still-arriving round is never stamped "no written reply" (round-log.jq).
-  local repo="$1" num="$2" final="${3:-false}" owner name payload newbody
+  local repo="$1" num="$2" final="${3:-false}" owner name payload newbody measured
   owner="${repo%%/*}"; name="${repo##*/}"
   # The assignment's status is tested outside the substitution: GraphQL errors
   # may write a non-empty JSON body to stdout, but their non-zero status still
@@ -461,11 +461,18 @@ _mirror_rounds() {
     repository(owner:$owner,name:$name){ pullRequest(number:$num){
       body
       headRefOid
-      commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{commit{oid committedDate}}}
-      reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{author{login} state commit{oid} submittedAt}}
-      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{author{login} body createdAt}}
+      commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
+      reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
+      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} body createdAt}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
     || { warn "$repo#$num: round-log fetch failed; body left as-is (handoff continues)"; return 0; }
+  measured="$(printf '%s' "$payload" | jq -r '
+    [.data.repository.pullRequest.commits.totalCount,
+     .data.repository.pullRequest.reviews.totalCount,
+     .data.repository.pullRequest.comments.totalCount]
+    | map(. // 0) | max' 2>/dev/null)" || measured=invalid
+  operating_limit_assess github_connection_nodes "$measured" "$repo" "$num" \
+    'round-log history exceeds its unpaginated GraphQL window' || return 0
   newbody="$(printf '%s' "$payload" \
     | jq -r --arg me "$ME" --argjson final "$final" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
     || { warn "$repo#$num: round-log render failed; body left as-is"; return 0; }
@@ -593,7 +600,7 @@ ROUND_CAP_NAMED="-"
 # PR that has rounds left.
 _round_cap_census() {
   local repo="$1" panel_json="$2" listing="$3"
-  local owner name num payload capjson rounds at_cap named="" items="" fresh
+  local owner name num payload capjson rounds at_cap named="" items="" fresh measured
   ROUND_CAP_PRS=""
   ROUND_CAP_NAMED="-"
   owner="${repo%%/*}"; name="${repo##*/}"
@@ -606,10 +613,18 @@ _round_cap_census() {
     if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
       repository(owner:$owner,name:$name){ pullRequest(number:$num){
         headRefOid
-        commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{commit{oid committedDate}}}
-        reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){nodes{author{login} state commit{oid} submittedAt}}
+        commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
+        reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
       } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
       warn "$repo#$num: round-cap fetch failed; not counted this tick"
+      continue
+    fi
+    measured="$(printf '%s' "$payload" | jq -r '
+      [.data.repository.pullRequest.commits.totalCount,
+       .data.repository.pullRequest.reviews.totalCount]
+      | map(. // 0) | max' 2>/dev/null)" || measured=invalid
+    if ! operating_limit_assess github_connection_nodes "$measured" "$repo" "$num" \
+        'round-cap history exceeds its unpaginated GraphQL window'; then
       continue
     fi
     capjson="$(printf '%s' "$payload" \
