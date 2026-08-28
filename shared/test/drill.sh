@@ -121,17 +121,18 @@ printf 'app\n' >>"$DRILL_SECTION_LOG"
     *) printf '%s\n' "${DRILL_APP_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
   esac
 }
+skip() { echo "skip $1${2:+  — $2}"; }
 case " $* " in
   *" --no-browser "*) ;;
   *)
     case "${DRILL_BROWSER_STATUS:-ok}" in
       ok) echo 'ok   browser walk against the real fleet (read-only)' ;;
-      skip) echo 'skip browser walk — playwright-core not installed' ;;
+      skip) skip "browser walk" "playwright-core not installed" ;;
       fail) echo 'FAIL browser walk against the real fleet (read-only)' ;;
       missing) : ;;
     esac ;;
 esac
-exit 0
+exit "${DRILL_APP_RC:-0}"
 APP
 chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
 
@@ -241,7 +242,7 @@ sed 's/hygiene breaker resume/hygiene never-wired breaker resume/' \
   "$HARNESS/rehearsal-all.sh" >"$UNWIRED"
 if unwired_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
     DRILL_REMOTE="$REMOTE" bash "$UNWIRED" --tree "$SOURCE" --roles reviewer \
-      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-app --no-config-drill --no-resume-drill \
       --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
       --no-breaker-drill --no-notify-drill 2>&1)"; then
   unwired_rc=0
@@ -252,6 +253,28 @@ t drill-unwired-declared-leg-reds 1 "$unwired_rc"
 t drill-unwired-declared-leg-is-visible 1 \
   "$(grep -c '^## leg not-executed never-wired  (recorded 0 results; expected exactly one)' \
     <<<"$unwired_out")"
+t drill-unwired-declared-leg-prevents-teardown 1 \
+  "$(grep -cF 'kept       teardown  (round not green — boxes LEFT STANDING to inspect)' \
+    <<<"$unwired_out")"
+
+# Agreement is two-way: a summary result without a declaration must remain
+# visible and red rather than falling outside the generated inventory.
+UNDECLARED="$HARNESS/rehearsal-all-undeclared.sh"
+sed 's/hygiene breaker resume/hygiene resume/' \
+  "$HARNESS/rehearsal-all.sh" >"$UNDECLARED"
+if undeclared_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" bash "$UNDECLARED" --tree "$SOURCE" --roles reviewer \
+      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  undeclared_rc=0
+else
+  undeclared_rc=$?
+fi
+t drill-undeclared-summary-leg-reds 1 "$undeclared_rc"
+t drill-undeclared-summary-leg-is-visible 1 \
+  "$(grep -c '^## leg undeclared breaker  (summary result has no declaration)' \
+    <<<"$undeclared_out")"
 
 # Not-executed is not a sufficient record by itself: the blocker is the fact
 # that makes an exclusion evidence. Remove one reason and require a red row.
@@ -393,6 +416,21 @@ t drill-armed-roster-missing-verdict-is-red 1 "$app_roster_missing_rc"
 t drill-armed-roster-missing-verdict-recorded 1 \
   "$(grep -cF 'FAIL       app-armed  (agreement verdict missing)' \
     <<<"$app_roster_missing_out")"
+
+if app_failure_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_APP_RC=1 DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  app_failure_rc=0
+else
+  app_failure_rc=$?
+fi
+t drill-app-failure-is-red 1 "$app_failure_rc"
+t drill-detail-less-failure-record-closes-parenthesis 1 \
+  "$(grep -c '^## leg executed app-armed  (FAIL)$' <<<"$app_failure_out")"
 
 # The named reading is independent of generated-role availability. A failed
 # role still keeps the round red, but it must not erase the armed evidence leg.

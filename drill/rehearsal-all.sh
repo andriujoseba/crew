@@ -195,6 +195,22 @@ declare -a DECLARED_LEGS=(
   hygiene breaker resume attention attention-audit notify
   installer config app browser app-armed teardown
 )
+
+leg_is_declared() {
+  local candidate="$1" declared_leg
+  for declared_leg in "${DECLARED_LEGS[@]}"; do
+    [ "$candidate" != "$declared_leg" ] || return 0
+  done
+  return 1
+}
+
+leg_is_selected_role() {
+  case " $ROLES " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -549,7 +565,7 @@ if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
 
   if grep -q '^ok   browser walk against the real fleet (read-only)$' "$APP_OUTPUT"; then
     SUMMARY+=("ok         browser  (read-only browser walk executed)")
-  elif browser_skip="$(sed -n 's/^skip browser walk — //p' "$APP_OUTPUT" | head -1)" \
+  elif browser_skip="$(sed -n 's/^skip browser walk[[:space:]]*—[[:space:]]*//p' "$APP_OUTPUT" | head -1)" \
       && [ -n "$browser_skip" ]; then
     SUMMARY+=("INCOMPLETE browser  (not executed: $browser_skip)")
     [ "$overall" -eq 1 ] || overall=2
@@ -594,6 +610,25 @@ elif [ "$APP" -eq 1 ]; then
 else
   SUMMARY+=("skip       app-armed  (--no-app)")
 fi
+
+# Validate the declaration/result agreement before teardown decides whether a
+# green round may remove its fixtures. Teardown's own row does not exist yet,
+# but its declaration must; every other independently runnable leg must have
+# exactly one result, and every non-role result must name a declared leg.
+for declared_leg in "${DECLARED_LEGS[@]}"; do
+  [ "$declared_leg" = teardown ] && continue
+  leg_result_count=0
+  for summary_row in "${SUMMARY[@]}"; do
+    read -r _state row_leg _detail <<<"$summary_row"
+    [ "$row_leg" != "$declared_leg" ] || leg_result_count=$((leg_result_count + 1))
+  done
+  [ "$leg_result_count" -eq 1 ] || overall=1
+done
+leg_is_declared teardown || overall=1
+for summary_row in "${SUMMARY[@]}"; do
+  read -r _state row_leg _detail <<<"$summary_row"
+  leg_is_declared "$row_leg" || leg_is_selected_role "$row_leg" || overall=1
+done
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every
 # phase and before the summary — and it gets its own summary line, because a
@@ -656,7 +691,13 @@ for declared_leg in "${DECLARED_LEGS[@]}"; do
   fi
   read -r leg_state _leg_name leg_detail <<<"${leg_rows[0]}"
   case "${leg_rows[0]}" in
-    ok\ *|FAIL\ *) LEG_RECORD+=("executed $declared_leg  ($leg_state; ${leg_detail#(}") ;;
+    ok\ *|FAIL\ *)
+      if [ -z "$leg_detail" ] || [ "$leg_detail" = "()" ]; then
+        LEG_RECORD+=("executed $declared_leg  ($leg_state)")
+      else
+        LEG_RECORD+=("executed $declared_leg  ($leg_state; ${leg_detail#(}")
+      fi
+      ;;
     *)
       if [ -z "$leg_detail" ] || [ "$leg_detail" = "()" ]; then
         LEG_RECORD+=("not-executed $declared_leg  (missing blocker reason)")
@@ -666,6 +707,13 @@ for declared_leg in "${DECLARED_LEGS[@]}"; do
       fi
       ;;
   esac
+done
+for summary_row in "${SUMMARY[@]}"; do
+  read -r _state row_leg _detail <<<"$summary_row"
+  if ! leg_is_declared "$row_leg" && ! leg_is_selected_role "$row_leg"; then
+    LEG_RECORD+=("undeclared $row_leg  (summary result has no declaration)")
+    overall=1
+  fi
 done
 
 echo "## declared leg states:"
