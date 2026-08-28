@@ -70,11 +70,23 @@ cat >"$USAGE_CLI" <<'STUB'
 printf '%s\n' "$@" >"$USAGE_ARGV"
 case "${USAGE_SHAPE:-valid}" in
   valid)
-    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77},"modelUsage":{"claude-sonnet-4-6":{"outputTokens":34}}}'
     ;;
   valid-with-warning)
     printf '%s\n' 'vendor warning' >&2
-    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77},"modelUsage":{"claude-sonnet-4-6":{"outputTokens":34}}}'
+    ;;
+  no-cost)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"Tokens still count.","session_id":"session/no-cost","usage":{"input_tokens":90,"output_tokens":12},"modelUsage":{"claude-haiku-4-5":{"outputTokens":12}}}'
+    ;;
+  partial-cost)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"Partial cost omitted.","session_id":"session/partial","total_cost_usd":0.5,"hasUnknownModelCost":true,"usage":{"input_tokens":80,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":4},"modelUsage":{"claude-opus-4-1":{"outputTokens":20}}}'
+    ;;
+  unknown-model)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"No model named.","session_id":"session/unknown","usage":{"input_tokens":50,"output_tokens":10}}'
+    ;;
+  two-models)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"Two models ran.","session_id":"session/two-models","usage":{"input_tokens":200,"output_tokens":20},"modelUsage":{"claude-opus-4":{"outputTokens":15},"claude-haiku-4":{"outputTokens":5}}}'
     ;;
   malformed)
     printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/two","total_cost_usd":0.5,"usage":{"input_tokens":"many","output_tokens":4}}'
@@ -82,7 +94,7 @@ case "${USAGE_SHAPE:-valid}" in
   observe-log)
     find "$USAGE_LIVE_LOG_DIR" -maxdepth 1 -type f -name '*.log' \
       | wc -l >"$USAGE_LIVE_OBSERVED"
-    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77},"modelUsage":{"claude-sonnet-4-6":{"outputTokens":34}}}'
     ;;
 esac
 STUB
@@ -129,6 +141,10 @@ t usage-claude-session-records-cost 0.0125 \
   "$(sed -n 's/.* cost_usd=\([^ ]*\).*/\1/p' <<<"$usage_end")"
 t usage-claude-session-records-session-id session%2Fone \
   "$(sed -n 's/.* session_id=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-actual-model claude-sonnet-4-6 \
+  "$(sed -n 's/.* model=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-single-model-omits-model-count 0 \
+  "$(grep -c ' models=' <<<"$usage_end" || true)"
 t usage-structured-run-restores-the-prose-log 'I pushed the fix.' \
   "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_valid")"
 t usage-structured-scratch-does-not-survive 0 \
@@ -142,6 +158,35 @@ usage_tier="$(usage_run shared-a valid opus)"
 t usage-tiered-structured-command-keeps-prompt-last \
   '--model opus --output-format json -p theprompt' \
   "$(sed -n '/^--argv--$/,$p' <<<"$usage_tier" | tail -n +2 | head -6 | paste -sd ' ' -)"
+t usage-requested-tier-keeps-own-meaning 'opus|claude-sonnet-4-6' \
+  "$(grep 'SESSION END' <<<"$usage_tier" \
+    | sed -n 's/.* tier=\([^ ]*\).* model=\([^ ]*\).*/\1|\2/p')"
+
+# Tokens are the required measurement. Cost and cache counters are optional
+# enrichment, while actual-model attribution never borrows the requested tier.
+usage_no_cost="$(usage_run shared-a no-cost)"
+usage_no_cost_end="$(grep 'SESSION END' <<<"$usage_no_cost")"
+t usage-token-pair-does-not-require-cost '90|12|claude-haiku-4-5|shared-a' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* model=\([^ ]*\).* pool=\([^ ]*\).*/\1|\2|\3|\4/p' <<<"$usage_no_cost_end")"
+t usage-absent-cost-stays-absent 0 \
+  "$(grep -c ' cost_usd=' <<<"$usage_no_cost_end" || true)"
+t usage-absent-cache-concept-stays-absent 0 \
+  "$(grep -Ec ' cache_(creation|read)_input_tokens=' <<<"$usage_no_cost_end" || true)"
+
+usage_partial="$(usage_run shared-a partial-cost)"
+usage_partial_end="$(grep 'SESSION END' <<<"$usage_partial")"
+t usage-unknown-or-partial-cost-is-omitted '80|0|4|0' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* cache_creation_input_tokens=\([^ ]*\).* cache_read_input_tokens=\([^ ]*\).*/\1|\2|\3/p' <<<"$usage_partial_end")|$(grep -c ' cost_usd=' <<<"$usage_partial_end" || true)"
+
+usage_unknown_model="$(usage_run shared-a unknown-model opus)"
+usage_unknown_model_end="$(grep 'SESSION END' <<<"$usage_unknown_model")"
+t usage-unnamed-model-is-unknown-not-tier 'opus|unknown' \
+  "$(sed -n 's/.* tier=\([^ ]*\).* model=\([^ ]*\).*/\1|\2/p' <<<"$usage_unknown_model_end")"
+
+usage_two_models="$(usage_run shared-a two-models)"
+usage_two_models_end="$(grep 'SESSION END' <<<"$usage_two_models")"
+t usage-two-models-selects-largest-output-and-counts 'claude-opus-4|2' \
+  "$(sed -n 's/.* model=\([^ ]*\).* models=\([^ ]*\).*/\1|\2/p' <<<"$usage_two_models_end")"
 
 # Vendor diagnostics are prose, not structured stdout: both surfaces survive
 # independently, and a harmless warning cannot silently disable accounting.
@@ -189,6 +234,36 @@ t usage-malformed-block-claims-no-pool 0 \
   "$(grep -c ' pool=' <<<"$usage_bad_end" || true)"
 t usage-malformed-block-keeps-prose 'I pushed the fix.' \
   "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_bad")"
+
+# A usage reporter is not synonymous with structured stdout. This fixture's
+# ordinary command writes an artifact in the session directory; its profile
+# hook selects that artifact from the context run_session supplies.
+usage_artifact_dir="$TMP/usage-artifact"
+mkdir -p "$usage_artifact_dir/logs" "$usage_artifact_dir/work"
+usage_artifact="$({
+  unset -f bot_cli_structured_cmd bot_cli_structured_prose 2>/dev/null || true
+  bot_cli_usage() {
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >"$usage_artifact_dir/context"
+    jq -ce . "$2/usage.json"
+  }
+  DUTY_DIR="$usage_artifact_dir"; LOG_DIR="$usage_artifact_dir/logs"
+  DUTY_TICK_ID="tick-usage-artifact"; SESSION_CREDENTIAL_POOL="shared-a"
+  BOT_CLI_CMD=(bash -c 'printf '\''%s\n'\'' '\''{"input_tokens":7,"output_tokens":3,"session_id":"artifact/one","model":"artifact-model","models":1}'\'' >usage.json; printf '\''exec\nartifact prose\n'\''')
+  run_session build fixture/artifact "$usage_artifact_dir/work" 5 prompt \
+    | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+})"
+usage_artifact_end="$(grep 'SESSION END' <<<"$usage_artifact")"
+t usage-artifact-reporter-needs-no-structured-command \
+  '7|3|artifact-model|shared-a' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* model=\([^ ]*\).* pool=\([^ ]*\).*/\1|\2|\3|\4/p' <<<"$usage_artifact_end")"
+t usage-artifact-reporter-receives-empty-structured-source '' \
+  "$(cut -f1 "$usage_artifact_dir/context")"
+t usage-artifact-reporter-receives-session-directory "$usage_artifact_dir/work" \
+  "$(cut -f2 "$usage_artifact_dir/context")"
+t usage-artifact-reporter-receives-prose-log 1 \
+  "$([ "$(cut -f3 "$usage_artifact_dir/context")" = "$(find "$usage_artifact_dir/logs" -name '*.log')" ] && printf 1 || printf 0)"
+t usage-artifact-command-keeps-legacy-prose 'exec' \
+  "$(sed -n '1p' "$usage_artifact_dir"/logs/*.log)"
 
 # A hookless profile is the exact old command/log/line shape: the existing
 # budget golden below pins the whole line byte-for-byte; this focused case

@@ -94,24 +94,30 @@ _session_structured_cmd() {
   BOT_CLI_STRUCTURED_CMD=()
   if bot_cli_structured_cmd "${_SESSION_CLI_CMD[@]}" \
       && [ "${#BOT_CLI_STRUCTURED_CMD[@]}" -gt 0 ] \
-      && declare -F bot_cli_structured_prose >/dev/null 2>&1 \
-      && declare -F bot_cli_usage >/dev/null 2>&1; then
+      && declare -F bot_cli_structured_prose >/dev/null 2>&1; then
     _SESSION_CLI_CMD=("${BOT_CLI_STRUCTURED_CMD[@]}")
     _SESSION_STRUCTURED=yes
   fi
 }
 
 _session_usage_suffix() {
-  local structured="$1" normalized
-  [ "${_SESSION_STRUCTURED:-no}" = yes ] || return 0
-  normalized="$(bot_cli_usage "$structured")" || return 0
+  local structured dir slog normalized
+  structured="$1"
+  dir="$2"
+  slog="$3"
+  declare -F bot_cli_usage >/dev/null 2>&1 || return 0
+  normalized="$(bot_cli_usage "$structured" "$dir" "$slog")" || return 0
   jq -er '
     " input_tokens=\(.input_tokens)" +
     " output_tokens=\(.output_tokens)" +
-    " cache_creation_input_tokens=\(.cache_creation_input_tokens)" +
-    " cache_read_input_tokens=\(.cache_read_input_tokens)" +
-    " cost_usd=\(.cost_usd)" +
-    " session_id=\(.session_id | @uri)"
+    (if has("cache_creation_input_tokens")
+      then " cache_creation_input_tokens=\(.cache_creation_input_tokens)" else "" end) +
+    (if has("cache_read_input_tokens")
+      then " cache_read_input_tokens=\(.cache_read_input_tokens)" else "" end) +
+    (if has("cost_usd") then " cost_usd=\(.cost_usd)" else "" end) +
+    " session_id=\(.session_id | @uri)" +
+    " model=\(.model | @uri)" +
+    (if (.models // 0) > 1 then " models=\(.models)" else "" end)
   ' <<<"$normalized" 2>/dev/null || true
 }
 
@@ -251,7 +257,10 @@ run_session() {
   acted="$(session_acted "$slog")"
   reply_tail="$(session_reply_tail "$slog")"
   peak_rss="$(session_peak_rss "$slog.peak")"
-  usage_suffix="$(_session_usage_suffix "$structured_log")"
+  # Usage reporting is profile-owned and independent of the capture shape.
+  # Claude reads structured_log; an artifact-backed profile can instead use
+  # the session directory and advertised prose log supplied beside it (#475).
+  usage_suffix="$(_session_usage_suffix "$structured_log" "$dir" "$slog")"
   # A pool is useful only beside figures it groups. Keeping it off a missing
   # or malformed usage block also preserves the exact legacy SESSION END line
   # promised to profiles that cannot report structured output (#475).

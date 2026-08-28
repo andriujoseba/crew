@@ -352,6 +352,8 @@ t orphan-cache-read-is-unmeasured '-' \
   "$(orph_kv "$ORPH1_LINE" cache_read_input_tokens)"
 t orphan-cost-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" cost_usd)"
 t orphan-session-id-is-unknown unknown "$(orph_kv "$ORPH1_LINE" session_id)"
+t orphan-model-is-unknown unknown "$(orph_kv "$ORPH1_LINE" model)"
+t orphan-model-count-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" models)"
 t orphan-pool-is-unknown unknown "$(orph_kv "$ORPH1_LINE" pool)"
 case "$ORPH1_LINE" in *' started=2026-08-14T03:00:01Z') r1=last ;; *) r1=NOT-LAST ;; esac
 t orphan-started-stays-last last "$r1"
@@ -547,6 +549,15 @@ orph_mutant indirect-field \
 ORPH_M11="$TMP/ledger-mutant-indirect-field.sh"
 t orphan-parity-resolves-indirect-observed-source indirect \
   "$(session_end_missing "$ORPH_M11" "$SHARED/lib/common/ledger.sh")"
+
+# D7's two indirectly appended fields must stay visible to the same guard.
+# Dropping both reconstructed peers proves neither model token is copied into
+# the comparison as a list maintained beside the emitters.
+orph_mutant model-fields-missing \
+  's/ model=unknown models=- pool=unknown/ pool=unknown/'
+ORPH_M13="$TMP/ledger-mutant-model-fields-missing.sh"
+t orphan-parity-reads-indirect-model-fields $'model\nmodels' \
+  "$(session_end_missing "$SHARED/lib/common/session.sh" "$ORPH_M13")"
 
 # Must fail: dropping tier from the reconstructed source. This is the inverse
 # mutation, proving that side is derived too rather than copied from a list in
