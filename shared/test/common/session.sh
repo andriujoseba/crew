@@ -59,6 +59,100 @@ t session-end-outcome-token-unchanged ok \
   "$(printf '%s\n' "$sa_end" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
 unset -f bot_session_acted
 
+# --- structured usage and credential-pool identity (#475) ----------------
+#
+# The stub is the CLI, not the parser: it receives Claude's profile-built
+# argv and emits the vendor JSON shape. That makes the invocation, prose
+# reconstruction and SESSION END record one behavioral path.
+USAGE_CLI="$TMP/usage-cli.sh"
+cat >"$USAGE_CLI" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$USAGE_ARGV"
+case "${USAGE_SHAPE:-valid}" in
+  valid)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/one","total_cost_usd":0.0125,"usage":{"input_tokens":120,"output_tokens":34,"cache_creation_input_tokens":5,"cache_read_input_tokens":77}}'
+    ;;
+  malformed)
+    printf '%s\n' '{"type":"result","subtype":"success","result":"I pushed the fix.","session_id":"session/two","total_cost_usd":0.5,"usage":{"input_tokens":"many","output_tokens":4}}'
+    ;;
+esac
+STUB
+chmod +x "$USAGE_CLI"
+
+# shellcheck disable=SC2030,SC2031,SC2317
+usage_run() ( # usage_run POOL SHAPE — one independent box-shaped dispatch
+  local pool="$1" shape="$2" udir
+  udir="$TMP/usage-$pool-$shape-$RANDOM"
+  mkdir -p "$udir/logs" "$udir/work"
+  DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID="tick-usage"
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/claude.conf"
+  BOT_CLI_CMD=(bash "$USAGE_CLI" -p)
+  SESSION_CREDENTIAL_POOL="$pool"
+  export USAGE_SHAPE="$shape" USAGE_ARGV="$udir/argv"
+  run_session build fixture/usage "$udir/work" 5 theprompt \
+    | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+  printf '%s\n' -- '--prose--'
+  cat "$udir"/logs/*.log
+  printf '%s\n' -- '--argv--'
+  cat "$udir/argv"
+)
+
+usage_valid="$(usage_run shared-a valid)"
+usage_end="$(grep 'SESSION END' <<<"$usage_valid")"
+t usage-claude-profile-selects-json-output 1 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$usage_valid" | grep -c '^json$' || true)"
+t usage-claude-session-records-input 120 \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-output 34 \
+  "$(sed -n 's/.* output_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-cache-create 5 \
+  "$(sed -n 's/.* cache_creation_input_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-cache-read 77 \
+  "$(sed -n 's/.* cache_read_input_tokens=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-cost 0.0125 \
+  "$(sed -n 's/.* cost_usd=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-claude-session-records-session-id session%2Fone \
+  "$(sed -n 's/.* session_id=\([^ ]*\).*/\1/p' <<<"$usage_end")"
+t usage-structured-run-restores-the-prose-log 'I pushed the fix.' \
+  "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_valid")"
+t usage-structured-scratch-does-not-survive 0 \
+  "$(find "$TMP" -name '*.structured' | wc -l)"
+
+# Two independent directories stand in for two boxes: pool identity is the
+# operator's declaration, not a session-local or box-local derivative.
+usage_same="$(usage_run shared-a valid)"
+usage_other="$(usage_run shared-b valid)"
+t usage-same-pool-is-stable-across-boxes shared-a \
+  "$(grep 'SESSION END' <<<"$usage_same" | sed -n 's/.* pool=\([^ ]*\).*/\1/p')"
+t usage-different-pool-is-distinguishable shared-b \
+  "$(grep 'SESSION END' <<<"$usage_other" | sed -n 's/.* pool=\([^ ]*\).*/\1/p')"
+
+# Malformed accounting is absent, while the work's result, rc, outcome and
+# prose survive. This is the failure direction the instrument must never own.
+usage_bad="$(usage_run shared-a malformed)"
+usage_bad_end="$(grep 'SESSION END' <<<"$usage_bad")"
+t usage-malformed-block-does-not-fail-session '0|ok' \
+  "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).*/\1|\2/p' <<<"$usage_bad_end")"
+t usage-malformed-block-claims-no-input-token 0 \
+  "$(grep -c ' input_tokens=' <<<"$usage_bad_end" || true)"
+t usage-malformed-block-keeps-prose 'I pushed the fix.' \
+  "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_bad")"
+
+# A hookless profile is the exact old command/log/line shape: the existing
+# budget golden below pins the whole line byte-for-byte; this focused case
+# additionally proves no usage/pool field can appear merely because the
+# engine learned the optional protocol.
+usage_legacy="$(
+  unset -f bot_cli_structured_cmd bot_cli_structured_prose bot_cli_usage 2>/dev/null || true
+  SESSION_CREDENTIAL_POOL=""
+  BOT_CLI_CMD=(bash -c 'printf "exec\nfinal reply\n"')
+  bot_session_acted() { grep -qx exec "$1"; }
+  run_session build fixture/legacy "$SA_WORK" 5 prompt | tail -1
+)"
+t usage-hookless-profile-claims-no-accounting 0 \
+  "$(grep -Ec ' (input_tokens|cost_usd|session_id|pool)=' <<<"$usage_legacy" || true)"
+
 # --- budgets off is byte-identical to today (#464) ------------------------
 #
 # This is what makes the change safe to land while the fleet is stopped, so it

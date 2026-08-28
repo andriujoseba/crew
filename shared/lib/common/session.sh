@@ -134,7 +134,7 @@ _session_pool_suffix() {
 # line in duty.log (the biggest logging gap in three of five metrics files).
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
-  local slog structured_log="" rc=0 start terminal=no
+  local slog cli_log structured_log="" rc=0 start terminal=no
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -146,6 +146,11 @@ run_session() {
   _session_structured_cmd
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
+  cli_log="$slog"
+  if [ "$_SESSION_STRUCTURED" = yes ]; then
+    structured_log="$slog.structured"
+    cli_log="$structured_log"
+  fi
   # holder=: who to ask, at a later tick, whether this session is still
   # running. Nothing below this line runs if the box dies under the CLI, so
   # the start has to carry the liveness question with it — and it has to be a
@@ -183,15 +188,8 @@ run_session() {
   # scoring at the moment the CLI is `exec`'d. It cannot fail the dispatch: it
   # returns 0 on every path, so the `&&` chain is unbroken on a guest with no
   # writable procfs.
-  if [ "$_SESSION_STRUCTURED" = yes ]; then
-    structured_log="$slog.structured"
-    ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
-        timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) \
-      </dev/null >"$structured_log" 2>&1 &
-  else
-    ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
-        timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$slog" 2>&1 &
-  fi
+  ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
+      timeout -k 60 "$tmo" "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&1 &
   _SESSION_DISPATCH_PID=$!
   # Started AFTER the dispatch, which is D4 by construction: the session is
   # already running by the time anything about measuring it can go wrong.

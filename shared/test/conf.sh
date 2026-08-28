@@ -47,6 +47,21 @@ for profile in "$SHARED"/conf/agents/*.conf; do
   t "agent-conf-$agent-login-hint-literal" literal "$r1"
 done
 
+# Structured session output is profile-owned (#475): Claude declares the
+# vendor shape; profiles whose equivalent is unknown remain absent and use
+# BOT_CLI_CMD exactly as before.
+if bash -c '. "$1"; declare -F bot_cli_structured_cmd >/dev/null; declare -F bot_cli_structured_prose >/dev/null; declare -F bot_cli_usage >/dev/null' \
+    _ "$SHARED/conf/agents/claude.conf"; then r1=declared; else r1=MISSING; fi
+t claude-profile-declares-structured-session-output declared "$r1"
+for agent in codex grok kimi; do
+  if bash -c '. "$1"; declare -F bot_cli_structured_cmd >/dev/null' \
+      _ "$SHARED/conf/agents/$agent.conf"; then r1=UNEXPECTED; else r1=absent; fi
+  t "$agent-profile-does-not-guess-structured-output" absent "$r1"
+done
+t credential-pool-ships-unset '' \
+  "$(bash -c '. "$1"; printf %s "$SESSION_CREDENTIAL_POOL"' \
+      _ "$SHARED/conf/fleet.defaults.conf")"
+
 # --- each agent profile reads its OWN credential store, locally -------------
 # Driven against the real conf files with a fabricated HOME, because the whole
 # claim of bot_cli_present is that it needs nothing but local disk.
