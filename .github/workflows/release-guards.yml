@@ -51,3 +51,31 @@ jobs:
       # docs-sync: the .ceremony/ doctrine mirror is byte-identical to the pin
       # read from release.yml — a hand edit or a half-done pin bump goes red.
       - uses: heavy-duty/ceremony/actions/docs-sync@0.7.6
+      # stamps-only: crew's own gate on the rc ladder — a final release tree
+      # differs from its last candidate by stamps only (#506). Repo-owned
+      # script and not an action, for drills/README.md's reason: what it
+      # asserts is crew's drill meaning, and it reads files in this repository
+      # and nothing else.
+      #
+      # It rides THIS workflow rather than a caller of its own because it needs
+      # exactly what the checkout above already provides — `fetch-depth: 0` is
+      # what puts the candidate tags in the clone — and because it is a release
+      # gate, which is what this workflow is. If that checkout ever loses its
+      # depth, the guard REFUSES with the unresolvable tag named: it cannot
+      # degrade to a pass, which is the property that makes sharing the
+      # checkout safe.
+      - name: bash -n (the suite)
+        run: bash -n .github/stamps-only.test.sh
+      - name: shellcheck (the suite)
+        run: |
+          sudo apt-get install -y shellcheck >/dev/null
+          shellcheck -x .github/stamps-only.test.sh
+      - name: python syntax (the guard)
+        run: python3 -m py_compile .github/stamps-only.py
+      # The suite's first case runs the guard over this checkout, so a red tree
+      # is caught here too; the step below is what NAMES it in the log without
+      # the fixtures around it.
+      - name: guard contract tests (offline — whole ladders, the refusals, the could-not-look)
+        run: .github/stamps-only.test.sh
+      - name: a final release tree differs from its last candidate by stamps only
+        run: .github/stamps-only.py
