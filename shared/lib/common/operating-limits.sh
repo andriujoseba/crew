@@ -5,6 +5,7 @@
 # this file directly.
 #
 # shellcheck shell=bash
+# shellcheck disable=SC2034  # named reads are consumed by sibling modules
 
 # One inspectable table. Values here are the engine's shipped limits; operator
 # configuration chooses how close a measurement may get before it warns, never
