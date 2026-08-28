@@ -849,6 +849,7 @@ runbook_documented_legs() {  # the `### <leg>` headings under `## The legs`
 }
 
 runbook_prose_legs() {  # the enumerating sentence, read to its blank line
+  # shellcheck disable=SC2016  # the backticks are Markdown in the runbook
   awk '/^The declared legs are:/ { inside = 1 }
        inside && /^$/ { exit }
        inside' "$RUNBOOK" \
