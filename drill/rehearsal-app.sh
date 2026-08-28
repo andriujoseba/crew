@@ -468,8 +468,12 @@ if [ "$AGREE_N" -eq 0 ]; then
   fail "the agreement check ran" \
        "0 of $ROSTER_N boxes yielded a floor-vs-CLI comparison — this block asserted nothing"
 elif [ "$(agreement_round_result "$ARMED_AGREE_N")" = "compared" ]; then
+  [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] \
+    || printf 'compared\n' >"$REHEARSAL_AGREEMENT_STATUS"
   ok "the agreement check reached an armed, ticking box ($ARMED_AGREE_N of $ROSTER_N boxes)"
 else
+  [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] \
+    || printf 'could-not-compare\n' >"$REHEARSAL_AGREEMENT_STATUS"
   skip "the agreement check could not compare an armed, ticking box" \
        "$AGREE_N of $ROSTER_N boxes yielded only non-armed comparisons"
 fi

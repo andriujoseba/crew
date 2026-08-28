@@ -111,6 +111,12 @@ cat >"$HARNESS/rehearsal-app.sh" <<'APP'
 #!/usr/bin/env bash
 printf 'app\n' >>"$DRILL_SECTION_LOG"
 [ -z "${DRILL_APP_LOG:-}" ] || printf '%s\n' "$*" >>"$DRILL_APP_LOG"
+[ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] || {
+  case " $* " in
+    *" --roster "*) printf 'compared\n' >"$REHEARSAL_AGREEMENT_STATUS" ;;
+    *) printf '%s\n' "${DRILL_APP_STATUS:-compared}" >"$REHEARSAL_AGREEMENT_STATUS" ;;
+  esac
+}
 exit 0
 APP
 chmod +x "$HARNESS/rehearsal-config.sh" "$HARNESS/rehearsal-app.sh"
@@ -260,6 +266,25 @@ t drill-armed-roster-mints-no-extra-role-box 1 \
 t drill-armed-roster-is-distinct-in-record 1 \
   "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
     <<<"$app_roster_out")"
+
+# D1: valid disarmed comparisons are evidence, but not evidence for the armed
+# criterion. With no second roster they make the round incomplete, not green.
+if disarmed_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_STATUS=could-not-compare DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+  disarmed_rc=0
+else
+  disarmed_rc=$?
+fi
+t drill-disarmed-only-round-is-incomplete 2 "$disarmed_rc"
+t drill-disarmed-only-record-says-could-not-compare 1 \
+  "$(grep -cF 'INCOMPLETE app  (could not compare an armed, ticking box)' \
+    <<<"$disarmed_out")"
+t drill-disarmed-only-record-has-no-green-app-row 0 \
+  "$(grep -cE '^##   ok +app  ' <<<"$disarmed_out" || true)"
 
 summary_count_matches_rows() {
   local record="$1" headline counted rows

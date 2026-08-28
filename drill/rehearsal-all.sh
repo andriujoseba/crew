@@ -179,6 +179,7 @@ NOTIFY_STATUS="$(mktemp)"
 RESUME_STATUS="$(mktemp)"
 ATTENTION_STATUS="$(mktemp)"
 ATTENTION_AUDIT_STATUS="$(mktemp)"
+APP_AGREEMENT_STATUS="$(mktemp)"
 declare -a SUMMARY=()
 declare -a ROLE_HYGIENE_FILES=()
 declare -a ROLE_BREAKER_FILES=()
@@ -213,6 +214,7 @@ cleanup_role_hygiene_files() {
   [ -z "${RESUME_STATUS:-}" ] || rm -f -- "$RESUME_STATUS"
   [ -z "${ATTENTION_STATUS:-}" ] || rm -f -- "$ATTENTION_STATUS"
   [ -z "${ATTENTION_AUDIT_STATUS:-}" ] || rm -f -- "$ATTENTION_AUDIT_STATUS"
+  [ -z "${APP_AGREEMENT_STATUS:-}" ] || rm -f -- "$APP_AGREEMENT_STATUS"
 }
 trap cleanup_role_hygiene_files EXIT
 
@@ -504,12 +506,23 @@ if [ "$APP" -eq 0 ] && [ "$APP_ROW_EMITTED" -eq 0 ]; then
 fi
 
 if [ "$APP" -eq 1 ]; then
-  "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
+  : >"$APP_AGREEMENT_STATUS"
+  REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
+    "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
   # rc on its own line, like the role loop above — this file's own history is
   # why (crew#30: a bare status read inside a compound).
   rc=$?
+  app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
   case "$rc" in
-    0) SUMMARY+=("ok         app  (collector + page)") ;;
+    0)
+      case "$app_agreement:$APP_ROSTER" in
+        compared:*) SUMMARY+=("ok         app  (collector + page)") ;;
+        could-not-compare:?*) SUMMARY+=("ok         app  (collector + page; armed comparison follows)") ;;
+        could-not-compare:)
+          SUMMARY+=("INCOMPLETE app  (could not compare an armed, ticking box)")
+          [ "$overall" -eq 1 ] || overall=2 ;;
+        *) SUMMARY+=("FAIL       app  (agreement verdict missing)"); overall=1 ;;
+      esac ;;
     *) SUMMARY+=("FAIL       app"); overall=1 ;;
   esac
   APP_ROW_EMITTED=1
@@ -524,10 +537,20 @@ if [ "$APP" -eq 1 ]; then
     echo "############################################################"
     # Comparison-only: repeating browser or control flags would spend a second
     # walk and could mutate the armed member this pass exists only to read.
-    "$HERE/rehearsal-app.sh" --roster "$APP_ROSTER" --no-browser
+    : >"$APP_AGREEMENT_STATUS"
+    REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
+      "$HERE/rehearsal-app.sh" --roster "$APP_ROSTER" --no-browser
     rc=$?
+    app_agreement="$(cat "$APP_AGREEMENT_STATUS" 2>/dev/null || true)"
     case "$rc" in
-      0) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+      0)
+        case "$app_agreement" in
+          compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+          could-not-compare)
+            SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking box)")
+            [ "$overall" -eq 1 ] || overall=2 ;;
+          *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
+        esac ;;
       *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
     esac
   fi
