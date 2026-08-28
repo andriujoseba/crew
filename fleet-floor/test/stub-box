@@ -81,6 +81,38 @@ armed_of() {
   return 0
 }
 
+# vitals_record_of SCENARIO — the box vitals record tick.sh would have written
+# into duty.log (#483). ONE reader, for the reason armed_of above is one: BOTH
+# halves of this stub answer with it — probe.sh's `::vitals` for the floor, and
+# the CLI's detail probe for `crew status` — and #483's whole criterion is that
+# those two cannot disagree. A stub that spelled the record twice could hold
+# them apart while the suite stayed green, which is the one failure this fixture
+# must not be able to hide.
+#
+# Three shapes, because neither reader may collapse them:
+#
+#   working  a complete record, both findings, and a backfilled disk series
+#   idle     a DEGRADED record — no `free`, so no memory fields and no swap
+#            pair, and no boot-check.log, so no series. D6 is per-field, and
+#            the rows that survive must still render.
+#   others   no record at all, which is every box on an engine older than the
+#            probe. Both readers draw no section rather than dashes.
+#
+# As with ::integrity the VALUES are fixture data — the stub has no hardware to
+# measure. Their truth is asserted in boxside.sh, which runs the real probe.sh
+# over a real duty.log. What this buys is the two renderings.
+vitals_record_of() {
+  case "$1" in
+    working|suppressed-working)
+      printf 'VITALS ts=%s cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2\n' \
+        "$(now)" ;;
+    idle)
+      printf 'VITALS ts=%s cores=2 load1=0.00 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 platform=linux os=debian-13\n' \
+        "$(now)" ;;
+    *) printf '\n' ;;
+  esac
+}
+
 # emit_probe NAME SCENARIO — the `::key value` record probe.sh would produce.
 emit_probe() {
   local n="$1" sc="$2" paused=0 cron=1
@@ -179,6 +211,12 @@ emit_probe() {
   # what let a broken repo-link URL pass review-clean for two rounds.
   printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
   printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
+  # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
+  # ONE source for it, because the CLI half of this stub answers with the same
+  # record a few hundred lines down: a stub whose two halves disagreed about
+  # one box would let exactly the disagreement these tests exist to catch pass
+  # green — the rule this file already applies to the armed/paused counts.
+  printf '::vitals %s\n' "$(vitals_record_of "$sc")"
   echo '::logstart'
   case "$sc" in
     working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
@@ -582,6 +620,26 @@ case "${1:-}" in
       *'duty/repos.txt'*)                       # crew's box_registry (#51)
         cat "$STATEDIR/$name.repos" 2>/dev/null || {
           echo heavy-duty/ceremony; echo heavy-duty/incubator; echo heavy-duty/rig; } ;;
+      *'::crew-vitals-end::'*)                  # crew's status_probe (detail view)
+        # ABOVE `*tail*`, by this block's ordering rule: the CLI's detail probe
+        # ends in `tail -n 5 ~/duty/duty.log`, so the looser pattern below
+        # would answer it with a two-line stub log and no section marks at all
+        # — which is exactly how the vitals and budget halves would read as
+        # "the box answered nothing" while the box was answering fine.
+        # `::crew-vitals-end::` is the narrowest string unique to this script.
+        #
+        # The three sections in the order cli/crew splits them on. The budget
+        # half stays EMPTY: no lane is configured on a stub box, which is the
+        # default and the honest report, and the budget suite drives that half
+        # elsewhere. What matters here is that the marks are present, because
+        # their absence is what the CLI reads as silence.
+        [ "$sc" = "neverticked" ] && exit 1
+        echo "::crew-budget-end::"
+        # The SAME record probe.sh answers the floor with, from the same
+        # reader. See vitals_record_of.
+        vitals_record_of "$sc"
+        echo "::crew-vitals-end::"
+        echo "$(now) duty run start"; echo "stub log for $name" ;;
       *tail*)
         # A box that has never ticked has NO ~/duty/duty.log, so the real
         # `tail -n 1 ~/duty/duty.log 2>/dev/null` prints nothing and exits 1 —

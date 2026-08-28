@@ -33,6 +33,39 @@ if [ -f "$LOG" ] && [ "$(wc -c <"$LOG")" -gt 5242880 ]; then
   mv "$LOG" "$LOG.1"
 fi
 
+# --- vitals (#483 D2) --------------------------------------------------------
+# One box vitals record per tick, alongside the lines this file already
+# writes and on no new schedule. Emitted HERE, before the dispatch and
+# outside the lock, so it lands on a SKIPPED tick too: a box wedged behind a
+# stuck run is exactly the box whose memory and disk a reader wants, and a
+# probe inside the lock would go quiet at that moment.
+#
+# It does not touch the evidence contract at the top of this file. That
+# contract is about the three `$JOB tick ...` shapes, and a VITALS line
+# matches none of them — the `duty run start` / `skipped` / `FAILED` greps
+# that read this log are unaffected by a fourth, distinctly-prefixed line.
+#
+# Wrapped in a subshell that cannot fail the tick: the probe is telemetry, and
+# telemetry that can break the thing it observes is worse than no telemetry.
+# Its own D6 degradation handles a missing field; this handles a missing or
+# broken probe.
+(
+  VITALS_SH="${VITALS_SH:-$DUTY_DIR/bin/vitals.sh}"
+  [ -r "$VITALS_SH" ] || exit 0
+  # The role profile supplies BOX_CPU/BOX_MEMORY/BOX_DISK for the D3
+  # comparison. Sourced best-effort and per-role: a box with no instance.conf
+  # yet still emits a record, just without the profile findings.
+  CONF_DIR="${CONF_DIR:-$DUTY_DIR/conf}"
+  # shellcheck disable=SC1091
+  [ -r "$CONF_DIR/instance.conf" ] && . "$CONF_DIR/instance.conf"
+  for _role in ${BOT_ROLES:-}; do
+    # shellcheck disable=SC1090
+    [ -r "$CONF_DIR/roles/$_role.conf" ] && . "$CONF_DIR/roles/$_role.conf"
+  done
+  # shellcheck disable=SC1090
+  . "$VITALS_SH" && emit_vitals
+) >>"$LOG" 2>&1 || true
+
 # Sentinel 199 distinguishes lock-busy from a real failure (99 was too
 # plausible as a genuine tool exit under duty.sh's set -e). Each job gets
 # its own guard variable so a leaked guard can never bypass the OTHER

@@ -157,6 +157,76 @@ BS_BARE="$BS_TMP/barehome"
 mkdir -p "$BS_BARE/duty"
 t "probe.sh: a box with no engine reports absent" absent "$(bs_integrity "$BS_BARE/duty")"
 
+# --- the box vitals record, carried verbatim (#483 D1) ---------------------
+#
+# The collector suite drives parse_vitals against a record IT wrote, which
+# proves the parser and nothing about the selection. This runs the real
+# probe.sh over a real duty.log, which is the only place the two halves of
+# "the two readers cannot disagree" meet: the newest record, unchanged.
+bs_vitals() {  # DUTY_DIR -> the ::vitals line this probe emitted
+  HOME="$BS_H" DUTY_DIR="$1" \
+    bash "$BS_FLOOR/server/probe.sh" < "$BS_ROOT/shared/conf/agents/claude.conf" 2>/dev/null \
+    | sed -n 's/^::vitals //p' | head -1
+}
+# Every box on the day this lands, and every box for its first tick: a duty.log
+# with no record in it. EMPTY, and the collector renders no section — never a
+# hardware reading nobody took.
+t "probe.sh: a log with no vitals record carries none" "" "$(bs_vitals "$BS_H/duty")"
+
+BS_VITALS_OLD="VITALS ts=2026-08-27T09:00:00Z cores=2 disk_pct=48 platform=linux"
+BS_VITALS_NEW="VITALS ts=2026-08-28T09:00:00Z cores=2 load1=0.10 mem_total_mb=3850"
+BS_VITALS_NEW="$BS_VITALS_NEW mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0"
+BS_VITALS_NEW="$BS_VITALS_NEW swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254"
+BS_VITALS_NEW="$BS_VITALS_NEW disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@5,2026-08-27T18:35:01+00:00@48"
+BS_VITALS_NEW="$BS_VITALS_NEW platform=linux os=debian-13"
+BS_VITALS_NEW="$BS_VITALS_NEW finding=swap-configured-inactive:configured_mb=8192,active_mb=0"
+{ printf '%s\n' "$BS_VITALS_OLD"
+  echo "$BS_NOW duty run start"
+  printf '%s\n' "$BS_VITALS_NEW"
+  echo "$BS_NOW heavy-duty/rig: build duty (ready unclaimed=1, whole rounds owed=0)"; } \
+  >> "$BS_H/duty/duty.log"
+
+# VERBATIM, and the NEWEST. Byte-for-byte equality is the assertion, not "it
+# contains the fields": a probe that reformatted the line would put the floor
+# one word away from `crew status` and the criterion is that they cannot be.
+t "probe.sh: the newest vitals record is carried verbatim" \
+  "$BS_VITALS_NEW" "$(bs_vitals "$BS_H/duty")"
+
+# The fixture log puts an OLDER record above the newest one and two ordinary
+# lines after it, so neither `tail -1` of the file nor the first match lands on
+# the right line. And one `::vitals` line, never two: parse_probe splits keys
+# on newlines, so a second line would be read as a key of its own and the
+# record would arrive truncated at the collector.
+t "probe.sh: exactly one vitals line reaches the wire" 1 \
+  "$(HOME="$BS_H" DUTY_DIR="$BS_H/duty" bash "$BS_FLOOR/server/probe.sh" \
+     < "$BS_ROOT/shared/conf/agents/claude.conf" 2>/dev/null \
+     | grep -c '^::vitals ')"
+
+# The collector's parser, over what the real probe really emitted — the half
+# the stub can only imitate.
+# The record travels as argv, not on stdin: `python3 - <<PY` is already
+# spending stdin on the script itself, and a `sys.stdin.read()` there comes
+# back empty — which reads exactly like a probe that emitted nothing.
+BS_SERVER="$BS_FLOOR/server" python3 - "$(bs_vitals "$BS_H/duty")" \
+  > "$BS_TMP/vitals.parsed" 2>&1 <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.units import parse_vitals
+v = parse_vitals(sys.argv[1])
+print("TS=%s" % v["ts"])
+print("CORES=%s" % v["fields"].get("cores", ""))
+print("SERIES=%d" % len(v["series"]))
+print("FIRSTPCT=%s" % (v["series"][0]["pct"] if v["series"] else ""))
+print("FINDING=%s" % (v["findings"][0] if v["findings"] else ""))
+PY
+bs_vget() { sed -n "s/^$1=//p" "$BS_TMP/vitals.parsed"; }
+t "probe.sh: the collector parses the real record" "2026-08-28T09:00:00Z" "$(bs_vget TS)"
+t "probe.sh: the carried record keeps its fields" 2 "$(bs_vget CORES)"
+t "probe.sh: the backfilled disk series survives the wire" 2 "$(bs_vget SERIES)"
+t "probe.sh: the series' oldest reading survives the wire" 5 "$(bs_vget FIRSTPCT)"
+t "probe.sh: the finding survives the wire, worded by the record" \
+  "swap-configured-inactive: configured_mb=8192, active_mb=0" "$(bs_vget FINDING)"
+
 # --------------------------------------------------------------------------
 # the message script — the operator prompt must survive as ONE argv element
 # --------------------------------------------------------------------------

@@ -626,6 +626,20 @@ t "repos are full owner/repo" True "$(uf ff-working "all('/' in r for r in u['re
 t "queue repo is a full owner/repo" True "$(uf ff-working "'/' in u['queue'][0]['repo']")"
 t "unit repo is a full owner/repo"  True "$(uf ff-working "'/' in u['repo']")"
 
+# The same root cause as this round's, one field over: `u["logs"]` is the card's
+# session-log links, and NOTHING in this suite asserted on it — so the stub's
+# `::sessionlogs` line was a fixture nobody read, and #483's first pass deleted
+# it while inserting `::vitals` beside it. The suite stayed green because the
+# only evidence it was ever there was the line itself. Pin it: a probe record
+# that stops carrying session logs must red here rather than in a browser walk.
+t "session logs reach the card" 2 "$(uf ff-working "len(u['logs'])")"
+# `bool(u['logs']) and …`, not the bare `all(…)`: an empty list satisfies
+# `all()` vacuously, so the deletion this round is about would have left this
+# second assertion GREEN. A pinning check that survives the thing it pins is
+# worse than no check, because it reads as coverage.
+t "session logs are the names the box listed" True \
+  "$(uf ff-working "bool(u['logs']) and all(f.endswith('.log') for f in u['logs'])")"
+
 # A box inside its FIRST session: cur is set, sessions is empty. floor.py sets
 # state=working whenever cur exists, so this is ordinary live telemetry — and
 # it is the state that crashed the room's diagnostic hologram.
@@ -666,4 +680,115 @@ if grep -qE 'u\["integrity"\] = meta\.get\("integrity"' "$FLOOR/server/floor/uni
 else
   fail "integrity: the collector carries the box's word" \
        "floor.py does not read ::integrity from the probe record"
+fi
+
+# ===========================================================================
+# LOOP 4 — the box vitals record (#483). D1's criterion is that this page and
+# `crew status` render the SAME record and CANNOT disagree, so the assertions
+# here are about the parse and the publication; the equality of the two
+# renderings is asserted where both readers can be run — fleet-floor/test/cli.sh.
+# ===========================================================================
+echo "== box vitals"
+
+ff_vitals_case() {
+  FF_SERVER="$FLOOR/server" python3 - "$@" <<'PY'
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import parse_vitals
+
+print(json.dumps(parse_vitals(sys.argv[1]), separators=(",", ":"), sort_keys=True))
+PY
+}
+
+# Absence, in its four shapes. None every time — the page draws no section, and
+# an empty dict would be indistinguishable from "a record that measured
+# nothing", which is a different and much rarer thing.
+t "vitals: no record is None"        null "$(ff_vitals_case "")"
+t "vitals: a blank record is None"   null "$(ff_vitals_case "   ")"
+t "vitals: an ordinary log line is not a record" null \
+  "$(ff_vitals_case "2026-08-27T09:00:00Z duty run start")"
+# The prefix alone is not enough. A `::vitals` carrying something else is a box
+# answering a question nobody asked, and it renders as nothing rather than as a
+# record with no fields in it.
+t "vitals: the prefix without a stamp is not a record" null \
+  "$(ff_vitals_case "VITALS cores=2")"
+
+t "vitals: fields are carried as the strings the record spelled them" \
+  '{"findings":[],"fields":{"cores":"2","load1":"0.00"},"series":[],"ts":"2026-08-28T09:00:00Z"}' \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z cores=2 load1=0.00" \
+     | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({'findings':d['findings'],'fields':d['fields'],'series':d['series'],'ts':d['ts']},separators=(',',':')))")"
+
+# D6, at the parser. An empty value is the shape of a field the box could not
+# read, and it must be an ABSENCE — never the empty string, which a renderer
+# would happily print as a measurement.
+t "vitals: an empty value is an absent field" "" \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z cores= load1=0.00" \
+     | python3 -c "import json,sys; print(json.load(sys.stdin)['fields'].get('cores',''))")"
+t "vitals: an empty finding is not a finding" 0 \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z finding=" \
+     | python3 -c "import json,sys; print(len(json.load(sys.stdin)['findings']))")"
+t "vitals: a bare token is not a field" 0 \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z junk cores=2" \
+     | python3 -c "import json,sys; print(len([k for k in json.load(sys.stdin)['fields'] if k=='junk']))")"
+
+# Findings are worded by the RECORD. `crew status` builds this same string from
+# the same token, which is what makes the two readers incapable of disagreeing
+# about a finding — the alternative is each side owning a phrase-book.
+t "vitals: a finding is rendered from the record's own tokens" \
+  "swap-configured-inactive: configured_mb=8192, active_mb=0" \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z finding=swap-configured-inactive:configured_mb=8192,active_mb=0" \
+     | python3 -c "import json,sys; print(json.load(sys.stdin)['findings'][0])")"
+t "vitals: every finding on the record survives" 2 \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z finding=a:want=1,got=2 finding=b:x=1" \
+     | python3 -c "import json,sys; print(len(json.load(sys.stdin)['findings']))")"
+t "vitals: a finding with no detail is still a finding" "lonely" \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z finding=lonely" \
+     | python3 -c "import json,sys; print(json.load(sys.stdin)['findings'][0])")"
+
+# D5 — the backfilled series. Oldest first, stamps carried verbatim (offset and
+# all: the boot gate wrote them with `date -Is` and this reader did not).
+t "vitals: the disk series parses oldest-first" \
+  '[{"pct":9,"ts":"2026-08-01T12:50:01+00:00"},{"pct":48,"ts":"2026-08-27T18:35:01+00:00"}]' \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z disk_series=2026-08-01T12:50:01+00:00@9,2026-08-27T18:35:01+00:00@48" \
+     | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['series'],separators=(',',':'),sort_keys=True))")"
+# A malformed point is DROPPED, not coerced: boot-check.log is pages of
+# `gh auth status` with a df line in it, and a series that guesses at a
+# reading is worse than a shorter one.
+t "vitals: a malformed series point is dropped, never coerced" 1 \
+  "$(ff_vitals_case "VITALS ts=2026-08-28T09:00:00Z disk_series=2026-08-01T12:50:01+00:00@9,broken,@7,2026-08-02T09:00:00+00:00@x" \
+     | python3 -c "import json,sys; print(len(json.load(sys.stdin)['series']))")"
+
+# Published on the unit, through the real collector and the real probe path.
+t "vitals: a complete record reaches the unit"  2 "$(uf ff-working "u['vitals']['fields']['cores']")"
+t "vitals: the swap PAIR reaches the unit, not one half of it" "0/8192" \
+  "$(uf ff-working "'%s/%s' % (u['vitals']['fields']['swap_active_mb'], u['vitals']['fields']['swap_configured_mb'])")"
+t "vitals: the backfilled series reaches the unit" 3 "$(uf ff-working "len(u['vitals']['series'])")"
+t "vitals: the series starts before the first tick" "2026-08-01T12:50:01+00:00" \
+  "$(uf ff-working "u['vitals']['series'][0]['ts']")"
+t "vitals: both findings reach the unit" 2 "$(uf ff-working "len(u['vitals']['findings'])")"
+t "vitals: the profile finding names both figures" \
+  "cpu-profile-mismatch: want=4, got=2" "$(uf ff-working "u['vitals']['findings'][1]")"
+# D6 end to end: a box whose `free` failed publishes the fields it HAS and none
+# it does not, and the record still arrives.
+t "vitals: a degraded record still reaches the unit" 48 "$(uf ff-idle "u['vitals']['fields']['disk_pct']")"
+t "vitals: a field the box could not read is absent, not zero" "" \
+  "$(uf ff-idle "u['vitals']['fields'].get('mem_total_mb', '')")"
+t "vitals: no boot-check history is an empty series, not a fake point" 0 \
+  "$(uf ff-idle "len(u['vitals']['series'])")"
+# An engine older than the probe. None, so the page draws no section — the
+# same rule `crew status` applies to the same absence.
+t "vitals: a box with no record publishes None" None "$(uf ff-silent "u['vitals']")"
+t "vitals: an unreachable box publishes None"    None "$(uf ff-unreach "u['vitals']")"
+
+# Pinned at the source, as the integrity rule above is: the behavioural checks
+# can only see the value the collector produced, and a floor that ran its own
+# probe would agree with `crew status` by coincidence until either moved.
+if grep -q '^emit vitals ' "$FLOOR/server/probe.sh"; then
+  ok "vitals: the record is carried off duty.log, not re-measured box-side"
+else
+  fail "vitals: the record is carried off duty.log, not re-measured box-side" \
+       "probe.sh does not emit ::vitals"
 fi

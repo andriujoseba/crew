@@ -727,6 +727,155 @@ else
 fi
 t "crew status <box>: the hired detail view still costs three round trips" 3 "$CL_EXECN"
 
+# --- the box vitals record (#483) ------------------------------------------
+#
+# The detail view renders the record tick.sh wrote, and #483's criterion is
+# that it and the floor CANNOT disagree about it. Two things are asserted:
+# that this reader renders the record at all, and — below — that the strings
+# it renders are byte-for-byte the ones the page renders from the same record.
+#
+# The budget half is empty on a stub box (no lane configured), so this also
+# proves the third section is split off correctly rather than swallowed by
+# either neighbour.
+if grep -qx 'vitals:' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a box carrying a record gets a vitals section"
+else
+  fail "crew status <box>: a box carrying a record gets a vitals section" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+CL_VITALS_OUT="$(sed -n '/^vitals:$/,/^[a-z]/{/^  /p}' "$CL_TMP/crew-out")"
+t "crew status <box>: the record renders every row it has fields for" \
+"  Cores: 2 · load1 0.41
+  Memory: 3128 of 3850 MiB available · 103 MiB shared
+  Disk: 14254 of 29696 MiB used · 48%
+  Swap: 0 MiB active of 8192 MiB configured
+  Disk since: 2026-08-01T12:50:01+00:00 · 9% → 48% over 3 boot readings
+  Platform: linux · debian-13
+  Finding: swap-configured-inactive: configured_mb=8192, active_mb=0
+  Finding: cpu-profile-mismatch: want=4, got=2" "$CL_VITALS_OUT"
+# The pair, and not one half of it. Either number alone looks explicable — an
+# 8 GiB swapfile holding a quarter of the disk reads as used space, and zero
+# active swap reads as a box that never configured any — and the finding only
+# exists because the record carries both.
+if grep -q 'Swap: 0 MiB active of 8192 MiB configured' "$CL_TMP/crew-out" &&
+   grep -q 'Finding: swap-configured-inactive' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: the swap pair renders beside the finding it produces"
+else
+  fail "crew status <box>: the swap pair renders beside the finding it produces" \
+       "$CL_VITALS_OUT"
+fi
+# D5 — the series starts at the box's first BOOT, weeks before this probe's
+# first tick. A reader that began at the first record would show one point.
+if grep -q 'Disk since: 2026-08-01T12:50:01+00:00' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: the disk series carries its boot-check history"
+else
+  fail "crew status <box>: the disk series carries its boot-check history" \
+       "$CL_VITALS_OUT"
+fi
+
+# D6, on this reader: a box whose `free` failed renders the rows it has and
+# omits the ones it does not — never a row of dashes, which would read as a
+# measurement of nothing.
+crew_detail cli-idle
+t "crew status <box>: a degraded record still exits 0" 0 "$CL_RC"
+CL_VITALS_DEGRADED="$(sed -n '/^vitals:$/,/^[a-z]/{/^  /p}' "$CL_TMP/crew-out")"
+t "crew status <box>: an unreadable field costs its row and no other" \
+"  Cores: 2 · load1 0.00
+  Disk: 14254 of 29696 MiB used · 48%
+  Platform: linux · debian-13" "$CL_VITALS_DEGRADED"
+t "crew status <box>: a degraded detail view still costs three round trips" 3 "$CL_EXECN"
+
+# An engine older than the probe writes no record, and the SECTION is omitted
+# rather than drawn empty — the same rule the budget half one line down uses,
+# and the same one the floor applies to the same absence.
+crew_detail cli-silent
+if ! grep -q '^vitals:' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: a box with no record gets no vitals section"
+else
+  fail "crew status <box>: a box with no record gets no vitals section" \
+       "$(cat "$CL_TMP/crew-out")"
+fi
+t "crew status <box>: a record-less detail view still costs three round trips" 3 "$CL_EXECN"
+
+# --- THE criterion: the two readers cannot disagree (#483 D1) --------------
+#
+# `crew status` and the floor render the same record, in two languages, from
+# two files. Everything else in this suite can only assert each side against
+# an expectation written by hand — and two hand-written expectations agree
+# until the day someone updates one of them.
+#
+# So this drives ONE record through BOTH renderers and asserts the outputs are
+# identical. cli/crew's `vitals_rows` and index.html's `boxVitalsRows` are
+# extracted from their real files, not copied here: a contract asserted
+# against a copy is a contract asserted against nothing.
+#
+# node, because the page's renderer is JavaScript. It is not playwright — no
+# browser, no page load, just the function — so this runs wherever node does,
+# which on the CI runner is everywhere. Skipped LOUDLY otherwise, per this
+# suite's own rule about silently-skipped UI tests.
+CL_XREAD_REC='VITALS ts=2026-08-28T09:00:00Z cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2'
+# A second record built out of HALF-PRESENT pairs, because the rows a reader
+# OMITS are as much of the contract as the rows it prints: two renderers can
+# agree on a full record and disagree about which absence costs which row, and
+# a record that simply lacks both halves of a pair cannot tell them apart —
+# every guard passes it identically whether it asks for one field or two.
+#
+# So: `mem_total_mb` with no `mem_avail_mb`, `swap_active_mb` with no
+# `swap_configured_mb`, `disk_total_mb`/`disk_used_mb` with no `disk_pct`, and
+# `load1`/`os` with the field each is a suffix OF absent. Every one of those
+# rows must be omitted by both readers. Plus a ONE-POINT series, which is the
+# other thing two renderers can quietly disagree about — "1 boot reading" and
+# "1 boot readings" render from the same record.
+CL_XREAD_DEGRADED='VITALS ts=2026-08-28T09:00:00Z load1=0.02 mem_total_mb=3850 swap_active_mb=0 disk_total_mb=29696 disk_used_mb=14254 disk_series=2026-08-01T12:50:01+00:00@9 os=debian-13'
+
+if ! command -v node >/dev/null; then
+  skip "crew status <box>: the two readers render the record identically" \
+       "node not installed — the page's renderer cannot be executed"
+  skip "crew status <box>: the two readers agree on which absence costs which row" \
+       "node not installed — the page's renderer cannot be executed"
+else
+  # Extracted from the real files. Both functions are defined at column 0 and
+  # closed by a `}` at column 0, which is the whole extraction rule.
+  awk '/^vitals_finding\(\) \{/,/^\}/' "$CL_CLI"  >"$CL_TMP/vrows.sh"
+  awk '/^vitals_rows\(\) \{/,/^\}/'    "$CL_CLI" >>"$CL_TMP/vrows.sh"
+  # shellcheck disable=SC2016  # $1 is the EXTRACTED script's argument, not ours
+  printf 'vitals_rows "$1"\n'                    >>"$CL_TMP/vrows.sh"
+  awk '/^function boxVitalsRows\(v\)\{/,/^\}/' "$CL_FLOOR/index.html" >"$CL_TMP/vrows.js"
+  cat >>"$CL_TMP/vrows.js" <<'JS'
+// The collector's parse, reproduced only as far as the record's own grammar:
+// the page never sees a raw record, it sees what units.parse_vitals published.
+// Reimplementing the RENDERER here would defeat the test; reimplementing the
+// split on `=` cannot, because the assertion is that both renderers agree.
+var rec = process.argv[2], out = {fields:{}, series:[], findings:[]};
+rec.replace(/^VITALS /, "").split(" ").forEach(function(tok){
+  var i = tok.indexOf("="); if (i < 0) return;
+  var k = tok.slice(0, i), v = tok.slice(i + 1); if (!v) return;
+  if (k === "finding") {
+    var j = v.indexOf(":");
+    out.findings.push(j < 0 ? v : v.slice(0, j) + ": " + v.slice(j + 1).replace(/,/g, ", "));
+  } else if (k === "disk_series") {
+    v.split(",").forEach(function(p){
+      var a = p.lastIndexOf("@"); if (a < 1) return;
+      var pct = p.slice(a + 1); if (!/^[0-9]+$/.test(pct)) return;
+      out.series.push({ts: p.slice(0, a), pct: parseInt(pct, 10)});
+    });
+  } else if (k !== "ts") out.fields[k] = v;
+});
+process.stdout.write(boxVitalsRows(out).map(function(r){return r[0] + "\t" + r[1];}).join("\n") + "\n");
+JS
+  cl_xread() {  # cl_xread RECORD -> "same" or a diff of the two renderings
+    local sh js
+    sh="$(bash "$CL_TMP/vrows.sh" "$1")"
+    js="$(node "$CL_TMP/vrows.js" "$1")"
+    if [ "$sh" = "$js" ]; then printf 'same\n'
+    else printf 'DIFFER\n--- crew status\n%s\n--- floor\n%s\n' "$sh" "$js"; fi
+  }
+  t "crew status <box>: the two readers render the record identically" \
+    same "$(cl_xread "$CL_XREAD_REC")"
+  t "crew status <box>: the two readers agree on which absence costs which row" \
+    same "$(cl_xread "$CL_XREAD_DEGRADED")"
+fi
+
 # A partial answer is not an absent engine: rig_report and the duty-log read
 # can both succeed even when engine_report fails. Reverting the duty-log branch
 # to key on an empty stamp would turn this reachable hired box into "not hired"

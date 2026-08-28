@@ -1756,6 +1756,54 @@ function fmtDur(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.f
    other unmeasured rows use, so a box whose kernel reports no VmHWM reads as
    "no figure" and never as a session that used no memory. */
 function fmtKiB(k){if(!k)return "—";return k>=1048576?(k/1048576).toFixed(1)+"G":k>=1024?Math.round(k/1024)+"M":k+"K";}
+/* #483 D1 — the box vitals record as (label, text) rows.
+
+   THIS FUNCTION IS HALF OF A CONTRACT WITH cli/crew. The acceptance criterion
+   is that this page and `crew status` render the same record and CANNOT
+   disagree, and the only way two readers in two languages hold that is if the
+   strings themselves are pinned rather than each side owning a phrase-book.
+   So the labels and the text are byte-for-byte what cli/crew's
+   `vitals_rows()` emits, and fleet-floor/test/cli.sh drives ONE captured
+   record through both and asserts the outputs are identical. Change a word
+   here and that test reds until the other reader says the same word.
+
+   Figures stay in the MiB the probe measured. A prettier `5.8 GiB` here
+   against `5948 MiB` there would be exactly the disagreement the criterion
+   forbids, dressed as a courtesy.
+
+   A row is emitted only when every field it needs is on the record. D6 is
+   per-field degradation, so a box that could not read `free` is missing the
+   memory row entirely rather than carrying a row of dashes — which reads as a
+   measurement of nothing rather than as an absence. */
+function boxVitalsRows(v){
+  if(!v)return [];
+  var f=v.fields||{},s=v.series||[],rows=[];
+  function has(){for(var i=0;i<arguments.length;i++)if(f[arguments[i]]===undefined)return false;return true;}
+  if(has("cores"))rows.push(["Cores",f.cores+(has("load1")?" · load1 "+f.load1:"")]);
+  if(has("mem_total_mb","mem_avail_mb"))
+    rows.push(["Memory",f.mem_avail_mb+" of "+f.mem_total_mb+" MiB available"
+      +(has("mem_shared_mb")?" · "+f.mem_shared_mb+" MiB shared":"")]);
+  if(has("disk_total_mb","disk_used_mb","disk_pct"))
+    rows.push(["Disk",f.disk_used_mb+" of "+f.disk_total_mb+" MiB used · "+f.disk_pct+"%"]);
+  /* Always both numbers, never a derived "swap is fine". The pair IS the
+     finding: 0 active beside 12288 configured is a swapfile holding a quarter
+     of the disk and doing nothing, and either number alone looks explicable. */
+  if(has("swap_active_mb","swap_configured_mb"))
+    rows.push(["Swap",f.swap_active_mb+" MiB active of "+f.swap_configured_mb+" MiB configured"]);
+  /* D5 — the backfilled series, so the disk history starts where the box did.
+     Purely historical: the live reading is the Disk row directly above, and
+     splicing the two into one arrow would put a figure measured this second
+     at the end of a series read out of a log. */
+  if(s.length)rows.push(["Disk since",s[0].ts+" · "
+    +(s.length>1?s[0].pct+"% → "+s[s.length-1].pct+"%":s[0].pct+"%")
+    +" over "+s.length+" boot reading"+(s.length===1?"":"s")]);
+  if(has("platform"))rows.push(["Platform",f.platform+(has("os")?" · "+f.os:"")]);
+  /* One row each, and the text is the record's own — see units.py's
+     _vitals_finding. A finding this page reworded would be a finding an
+     operator could not grep the log for. */
+  (v.findings||[]).forEach(function(x){rows.push(["Finding",x]);});
+  return rows;
+}
 function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k++)q.push({repo:REPONAMES[ri2(0,5)],key:ri2(11,148)});
   var sess=[],ago=ri2(1,5),cap=kind==="triage"?2400:7200;for(var s=0;s<11;s++){var rc=Math.random()<0.12?1:0;sess.push({ago:ago,kind:kind,rc:rc,dur:ri2(45,cap),out:rc?"aborted (budget)":outcomeFor(kind),peak:ri2(180000,2600000)});ago+=ri2(4,11);}
   var durs=sess.map(function(x){return x.dur;}),ok=sess.filter(function(x){return !x.rc;}).length;
@@ -1765,7 +1813,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[]};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[],vitals:null};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1824,6 +1872,13 @@ function liveData(u){
      unit built from the error path, must render as "not known" and never as a
      missing-property crash mid-draw. */
   d.ping=u.ping||null;d.lock=u.lock||{held:null,stuck:false};
+  /* #483 — the box vitals record, parsed by the collector off the same
+     duty.log line `crew status` reads. `null` on a collector older than the
+     field AND on a box whose engine is older than the probe, which is the
+     same rendering either way: the section is omitted rather than drawn with
+     dashes in it, because a row of em-dashes reads as a box that answered and
+     had nothing to say. */
+  d.vitals=u.vitals||null;
   d.suppression=u.suppression||{active:false,age:null,kind:"",key:""};
   d.authfail=u.authfail||[];
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
@@ -2148,7 +2203,15 @@ function populateDash(){
     +'<span class="k">Cron</span><span class="v" style="color:'+(stw?"#8aa0b8":off?"#ff5147":"#c7d4e4")+'">'+vCron+'</span>'
     +'<span class="k">Repo</span><span class="v">'+esc(d.repo||"—")+'</span>'
     +'<span class="k">Sessions today</span><span class="v">'+d.today+'</span>'
-    +'<span class="k">Last rc</span><span class="v">'+vRc+'</span></div>';
+    +'<span class="k">Last rc</span><span class="v">'+vRc+'</span>'
+    /* #483 — the box's own vitals, below the fleet-shaped rows above it.
+       Omitted entirely on a box whose engine predates the probe: this widget
+       has always drawn what is KNOWN, and six em-dashes claiming to be a
+       hardware reading is the one thing worse than not drawing them. */
+    +boxVitalsRows(d.vitals).map(function(r){
+      return '<span class="k">'+esc(r[0])+'</span><span class="v"'
+        +(r[0]==="Finding"?' style="color:#f7bd4e"':'')+'>'+esc(r[1])+'</span>';
+    }).join('')+'</div>';
   document.getElementById("w-queue").innerHTML='<div class="wt"><span class="dot"></span>WORK QUEUE · q'+d.queue.length+'</div><div class="qchips">'
     /* Live keys are whatever the duty modules logged — an issue number, but
        also "ready 2", "resume", "3 mention". Only number them when they are

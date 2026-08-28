@@ -85,6 +85,32 @@ emit agent "$(sed -n 's/^BOT_AGENT=//p' "$DUTY_DIR/conf/instance.conf" 2>/dev/nu
 emit uptime "$(cut -d. -f1 /proc/uptime 2>/dev/null)"
 emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
+# --- box vitals: the newest record, carried VERBATIM (#483 D1) --------------
+#
+# tick.sh writes one `VITALS …` line into duty.log per tick. This does not
+# re-measure anything and does not interpret the line — it selects the newest
+# one and hands it over unchanged, which is the same split every other read in
+# this file observes: the box side of an exec is the half no offline test can
+# reach, so anything that decides a meaning lives on the collector's side of
+# it (floor.units.parse_vitals) or in `crew status`, where a test can drive it.
+#
+# CARRIED rather than left to the log section below, and that is the whole
+# reason this line exists. `crew status` greps the box's WHOLE duty.log for
+# this record; the log section here is the newest 600 lines, which is a
+# transport budget, not a selection rule. A box that logged 600 lines inside
+# one tick — an ordinary long session — would leave the floor with no record
+# while the CLI had one, and "the two readers render the same record" would be
+# true of the parse and false on screen. Same selection rule on both sides,
+# stated once each.
+#
+# Whole-file and not `tail -n N | grep`: the window that would make this cheap
+# is exactly the window that just went wrong above. duty.log is capped at 5 MB
+# by tick.sh's own rotation, so the scan is bounded by construction.
+#
+# Empty on every box whose engine predates the probe, which is every box for
+# the first tick after it lands. The collector renders that as no section.
+emit vitals "$(grep '^VITALS ' "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
+
 # --- credentials: read, never tested ---------------------------------------
 #
 # This probe used to run `gh auth status` and the agent profile's
