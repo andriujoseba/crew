@@ -139,9 +139,19 @@ has "swapfile-active-zero"        "$out" "swap_active_mb=0"
 has "swapfile-is-a-finding"       "$out" "finding=swap-configured-inactive:configured_mb=8,active_mb=0"
 
 # The inverse, so the finding is not simply always-on: no swapfile, no finding.
+#
+# MUST-FAIL: a measured zero emitted as an absent field. `swapon --show`
+# succeeds here and reports nothing, and there is no swapfile — so the answer
+# is ZERO, and zero is a measurement. D6 reserves absence for a figure the
+# platform could not report, and the cost of confusing the two lands on the
+# PAIR: `swap_active_mb` comes off `free`, which prints a Swap: line on every
+# box, so suppressing the configured half left active=0 standing alone and
+# made a box with no swap look like a box whose swap probe is broken.
 B="$(mk_box noswap)"
 out="$(run_probe "$B" BOX_CPU=2)"
-hasnt "noswap-no-finding" "$out" "swap-configured-inactive"
+hasnt "noswap-no-finding"                   "$out" "swap-configured-inactive"
+has   "noswap-configured-is-a-measured-zero" "$out" "swap_configured_mb=0"
+has   "noswap-pair-stays-together"           "$out" "swap_active_mb=0"
 
 # MUST-FAIL: the ACTIVE swap device counted in the wrong unit. Until this
 # fixture existed no case in this file had active swap at all — every mk_box
@@ -153,10 +163,14 @@ hasnt "noswap-no-finding" "$out" "swap-configured-inactive"
 # It hid behind the finding rather than behind the field: swap-configured-
 # inactive fires only when active is 0, and when active is 0 this branch
 # contributes nothing. So the assertion has to be on the FIGURE.
-mk_active_swap() { # mk_active_swap <box> <bytes> <mb> — an active device
+mk_active_swap() { # mk_active_swap <box> <bytes> <mb> [name] — an active device
+  # NAME as well as SIZE, and SIZE right-aligned into a padded column, which
+  # is what smartcols actually prints. The padding is deliberate: the reader
+  # splits on whitespace runs, and a stub that emitted one bare column would
+  # let a parse that cannot cope with the real output pass.
   cat > "$1/bin/swapon" <<EOF
 #!/bin/sh
-echo "$2"
+printf '%s %12s\n' "${4:-/dev/sda3}" "$2"
 EOF
   cat > "$1/bin/free" <<EOF
 #!/bin/sh
@@ -181,11 +195,69 @@ hasnt "active-swap-is-not-a-finding" "$out" "swap-configured-inactive"
 # the defect actually had: an active device and a swapfile on disk are added
 # together, so they only sum correctly if both arrive in MiB. 2048 + 8.
 B="$(mk_box swapon-active-plus-file)"
-mk_active_swap "$B" 2147483648 2048
+mk_active_swap "$B" 2147483648 2048   # a DISTINCT device, not the swapfile
 dd if=/dev/zero of="$B/root/swapfile" bs=1M count=8 status=none 2>/dev/null ||
   head -c 8388608 /dev/zero > "$B/root/swapfile"
 out="$(run_probe "$B" BOX_CPU=2)"
 has "active-swap-sums-with-swapfile" "$out" "swap_configured_mb=2056"
+
+# MUST-FAIL: ONE resource counted twice. The case above is two DISTINCT
+# resources and so tests the arithmetic; this is the same 8 MiB swapfile
+# reported by `swapon --show` as an active device AND found on disk by the
+# stat loop, which is the ordinary shape on any box that has swap at all —
+# swap is usually a /swapfile, so the aliased case was the COMMON one and the
+# summed case the rare one. Identity is what separates them, which is why the
+# reader carries NAME and not only SIZE.
+B="$(mk_box swapfile-active-alias)"
+dd if=/dev/zero of="$B/root/swapfile" bs=1M count=8 status=none 2>/dev/null ||
+  head -c 8388608 /dev/zero > "$B/root/swapfile"
+mk_active_swap "$B" 8388608 8 "$B/root/swapfile"
+out="$(run_probe "$B" BOX_CPU=2)"
+has   "active-swapfile-counted-once" "$out" "swap_configured_mb=8 "
+hasnt "active-swapfile-not-doubled"  "$out" "swap_configured_mb=16"
+# 8 configured against 8 active agrees, so there is nothing to report. Under
+# the aliasing bug it read 16 against 8 — a gap this finding does NOT fire on
+# (it needs active=0), which is why the assertion is on the figure.
+hasnt "active-swapfile-no-finding"   "$out" "swap-configured-inactive"
+
+# MUST-FAIL: `swapon`'s exit status ignored. It is the sole enumerator of
+# active swap, so when it fails there is no way to total the configured
+# figure and no way to attribute the swapfile on disk — a number here would
+# omit any active partition and could report configured BELOW active, which
+# is a self-contradicting record. Absent is the honest answer, and this is
+# the state that must not be confused with the measured zero above.
+B="$(mk_box swapon-broken)"
+cat > "$B/bin/swapon" <<'EOF'
+#!/bin/sh
+echo "swapon: unrecognized option '--show=NAME,SIZE'" >&2
+exit 2
+EOF
+chmod +x "$B/bin/swapon"
+dd if=/dev/zero of="$B/root/swapfile" bs=1M count=8 status=none 2>/dev/null ||
+  head -c 8388608 /dev/zero > "$B/root/swapfile"
+out="$(run_probe "$B" BOX_CPU=2 2>/dev/null)"
+hasnt "swapon-broken-configured-absent" "$out" "swap_configured_mb"
+hasnt "swapon-broken-is-not-a-zero"     "$out" "swap_configured_mb=0"
+has   "swapon-broken-record-still-emits" "$out" "cores=2"
+has   "swapon-broken-keeps-active"       "$out" "swap_active_mb=0"
+
+# The same distinction from the other side: `swapon` exits 0 but prints
+# something this cannot resolve into name + numeric size. Not a zero, and not
+# arithmetic on a non-number either — before the guard, `total=$((total +
+# sz / 1024 / 1024))` on a non-numeric field aborted the reader under `set -u`
+# and put a bash error line in duty.log.
+B="$(mk_box swapon-garbled)"
+cat > "$B/bin/swapon" <<'EOF'
+#!/bin/sh
+echo "NAME      SIZE"
+echo "/dev/sda3 not-a-number"
+EOF
+chmod +x "$B/bin/swapon"
+out="$(run_probe "$B" BOX_CPU=2)"
+hasnt "swapon-garbled-configured-absent" "$out" "swap_configured_mb"
+has   "swapon-garbled-record-still-emits" "$out" "cores=2"
+err="$(run_probe "$B" BOX_CPU=2 2>&1 >/dev/null)"
+same "swapon-garbled-is-silent-on-stderr" "" "$err"
 
 # --- 4. a platform missing one field -----------------------------------------
 # MUST-FAIL: one absent field suppressing the whole record. D6 is per-field,

@@ -55,29 +55,58 @@ v_swap_active_mb() {
 }
 
 v_swap_configured_mb() {
-  local total=0 found=1 sz
-  # Active swap devices are configured by definition. `--bytes` means BYTES,
-  # so this converts twice — the same two divisions the swapfile branch below
-  # applies to `stat -c %s`. One field, two contributors, and they only add up
-  # if both arrive in MiB; a single division here made an active 2 GiB device
-  # read as 2 TiB configured against 2 GiB active, which is precisely the
-  # configured-vs-active gulf this field exists to make visible.
-  while read -r sz; do
-    [ -n "$sz" ] && { total=$((total + sz / 1024 / 1024)); found=0; }
+  local total=0 sz name extra active="" listed
+  # THREE states, not two, because "no swap" and "cannot tell" are different
+  # answers and only one of them is an absent field. `swapon --show` is the
+  # sole enumerator of active swap, so its exit status decides whether this
+  # field is measurable at all:
+  #
+  #   succeeds, lists nothing  -> a measured ZERO. Emitted as 0.
+  #   fails, missing, garbled  -> unreadable. Absent, per D6.
+  #
+  # Reporting the zero as an absence was the more damaging of the two,
+  # because `swap_active_mb` comes off `free`, which prints a Swap: line on
+  # every box. So a box with no swap emitted active=0 with its PAIR missing,
+  # and D4's whole point is that neither number means anything alone: both
+  # readers drop the swap row, and "no swap configured" becomes
+  # indistinguishable from "the swap probe is broken".
+  listed=$(swapon --show=NAME,SIZE --bytes --noheadings 2>/dev/null) || return 1
+
+  # NAME as well as SIZE. Identity is what stops one resource being counted
+  # twice: an active /swapfile is a device HERE and a file on disk THERE, and
+  # it is the same 8 MiB either way. `--bytes` means BYTES, so the size
+  # converts twice — the same two divisions the swapfile branch below applies
+  # to `stat -c %s`. One field, two contributors, and they only add up if
+  # both arrive in MiB.
+  #
+  # `read` splits on whitespace runs, which absorbs the column padding
+  # smartcols right-aligns SIZE with. A line this cannot resolve into
+  # exactly name + numeric size is not parsed leniently: it returns 1 and the
+  # field goes absent, because a lenient parse here either invents a zero or
+  # loses the identity the dedup below depends on.
+  while read -r name sz extra; do
+    [ -n "$name" ] || continue
+    case "${sz:-}" in ""|*[!0-9]*) return 1 ;; esac
+    [ -z "${extra:-}" ] || return 1
+    total=$((total + sz / 1024 / 1024))
+    active="$active $name"
   done <<EOF
-$(swapon --show=SIZE --bytes --noheadings 2>/dev/null | tr -d ' ')
+$listed
 EOF
+
   # A swapfile present but not swapped on is the finding this exists for. It
   # is counted as configured, which is what makes swap_configured disagree
-  # with swap_active and produces the finding below.
+  # with swap_active and produces the finding below — but only when it is not
+  # ALREADY counted above as an active device. Deduplicated by path and not
+  # by size, because two genuinely distinct 8 MiB resources must still sum.
   for f in "$VITALS_ROOT"swapfile "$VITALS_ROOT"swap.img; do
+    case " $active " in *" $f "*) continue ;; esac
     if [ -f "$f" ]; then
-      sz=$(stat -c %s "$f" 2>/dev/null) && [ -n "$sz" ] && {
-        total=$((total + sz / 1024 / 1024)); found=0
-      }
+      sz=$(stat -c %s "$f" 2>/dev/null) && [ -n "$sz" ] &&
+        total=$((total + sz / 1024 / 1024))
     fi
   done
-  [ "$found" -eq 0 ] && echo "$total"
+  echo "$total"
 }
 
 v_disk() { # prints "total_kb used_kb pct" for VITALS_ROOT
