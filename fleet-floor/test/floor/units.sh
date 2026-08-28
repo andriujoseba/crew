@@ -44,8 +44,10 @@ t "clock: positive host-minus-box delta is published within its measured uncerta
   "$(uf ff-skew-behind "u['clock_delta'] > 0 and abs(u['clock_delta'] - 10800) <= u['clock_uncertainty']")"
 t "clock: skew exceeds measured probe uncertainty" True \
   "$(uf ff-skew-behind "abs(u['clock_delta']) > u['clock_uncertainty'] >= 1")"
-t "clock: session age survives negative skew" 10 "$(uf ff-skew-behind "u['sessions'][0]['ago']")"
-t "clock: session age survives positive skew" 10 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
+t "clock: session age survives negative skew within sampling uncertainty" True \
+  "$(uf ff-skew-behind "abs(u['sessions'][0]['ago'] - 10) <= u['clock_uncertainty']")"
+t "clock: session age survives positive skew within sampling uncertainty" True \
+  "$(uf ff-skew-ahead "abs(u['sessions'][0]['ago'] - 10) <= u['clock_uncertainty']")"
 t "clock: negative-skew session lands in newest spark bucket" 1.0 "$(uf ff-skew-behind "u['spark'][21]")"
 t "clock: positive-skew session lands in newest spark bucket" 1.0 "$(uf ff-skew-ahead "u['spark'][21]")"
 t "clock: displayed last tick is on host timeline" True "$(uf ff-skew-behind "__import__('time').time() - __import__('datetime').datetime.strptime(u['cron']['last'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=__import__('datetime').timezone.utc).timestamp() < 120")"
@@ -122,12 +124,15 @@ t "agreement: not-hired does not qualify" does-not-qualify \
   "$(agreement_armed_skewed not-hired False True 10800 2)"
 t "agreement: down does not qualify" does-not-qualify \
   "$(agreement_armed_skewed down False True 10800 2)"
-# The helper is the only door to the count. These two source mutations were
-# the review-round reproducer: a second increment in `disarmed` made a vacuous
-# green survive, while deleting the `up` increment made the criterion silently
-# unreachable. Exactly one guarded increment makes both mutations red here.
-t "agreement: the live count has one guarded increment" 1 \
-  "$(grep -cF "ARMED_AGREE_N=\$((ARMED_AGREE_N + 1))" "$FLOOR/../drill/rehearsal-app.sh")"
+# Execute the same predicate-to-count transition as the live roster loop. The
+# disarmed false-positive and qualifying false-negative are behavioral facts,
+# while the one-call pin keeps a second private count path from returning.
+t "agreement: qualifying evidence increments the live count" 1 \
+  "$(agreement_armed_count 0 up False True 10800 2)"
+t "agreement: disarmed evidence leaves the live count unchanged" 0 \
+  "$(agreement_armed_count 0 up True True 10800 2)"
+t "agreement: the live loop has one count decision" 1 \
+  "$(grep -cE '^  next_armed_count=.*agreement_armed_count' "$FLOOR/../drill/rehearsal-app.sh")"
 t "agreement: an armed skewed comparison makes the round comparable" compared \
   "$(agreement_round_result 1)"
 t "agreement: a disarmed-only round says it could not compare" could-not-compare \

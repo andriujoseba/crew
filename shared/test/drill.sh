@@ -289,6 +289,8 @@ t drill-armed-roster-without-generated-member-still-runs 1 \
   "$(grep -cFx -- "--roster $TMP/armed.roster --no-browser" "$APP_LOG")"
 t drill-armed-roster-without-generated-member-records-both-legs 2 \
   "$(grep -cE '^##   (SKIPPED +app |ok +app-armed )' <<<"$no_generated_out")"
+t drill-armed-roster-without-generated-member-prints-no-empty-scope 0 \
+  "$(grep -cF 'app phase covers  —' <<<"$no_generated_out" || true)"
 
 # Reject a typo before any role or installer work starts.
 : >"$ROLE_LOG"

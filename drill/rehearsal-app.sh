@@ -482,11 +482,13 @@ print((u[0].get('note') or '') if u else '')")"
   # of individual branches makes both false directions fixtureable: counting
   # a disarmed/never-ticked/synchronized box, and failing to count a qualifying
   # one.
-  if [ "$(agreement_armed_skewed "$agreement" "$dis" "$tick_fresh" "$clock_delta" "$clock_uncertainty")" = "qualifies" ]; then
-    ARMED_AGREE_N=$((ARMED_AGREE_N + 1))
+  next_armed_count="$(agreement_armed_count \
+    "$ARMED_AGREE_N" "$agreement" "$dis" "$tick_fresh" "$clock_delta" "$clock_uncertainty")"
+  if [ "$next_armed_count" -gt "$ARMED_AGREE_N" ]; then
     printf -v signed_delta '%+d' "$clock_delta"
     ARMED_AGREE_EVIDENCE="${ARMED_AGREE_EVIDENCE}${ARMED_AGREE_EVIDENCE:+, }$name=${signed_delta}s±${clock_uncertainty}s"
   fi
+  ARMED_AGREE_N="$next_armed_count"
 done < <(roster_rows)
 
 # The block as a whole must have DONE something. Every per-box branch above is

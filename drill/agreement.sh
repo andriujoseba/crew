@@ -65,6 +65,19 @@ agreement_armed_skewed() {
   fi
 }
 
+# Apply that verdict to the live round's count. Keeping the state transition
+# beside the predicate lets fixtures execute the same behavior as the roster
+# loop, rather than merely pinning the caller's source text.
+agreement_armed_count() {
+  local current="$1"
+  shift
+  if [ "$(agreement_armed_skewed "$@")" = "qualifies" ]; then
+    printf '%s\n' "$((current + 1))"
+  else
+    printf '%s\n' "$current"
+  fi
+}
+
 # A disarmed comparison is still a real reader comparison, but it cannot
 # evidence the armed, ticking, skewed state this drill exists to reach (#494).
 # Keep that distinction out of the caller's prose so fixtures and the live leg
