@@ -365,6 +365,7 @@ done < <(roster_rows)
 
 AGREE_N=0
 ARMED_AGREE_N=0
+ARMED_AGREE_EVIDENCE=""
 if [ "$ROSTER_N" -gt 0 ] && [ "$CLI_ROWS" -eq 0 ]; then
   # ONE failure, not one per box: the roster is not empty, so this is the CLI
   # being broken, and saying it N times as "skip" is how it stayed invisible.
@@ -392,8 +393,26 @@ print(u[0]['state'] if u else 'MISSING')")"
     working|idle|suppressed|offline) ;;
     *) fail "agree: $name" "floor returned no usable state (got '$floor_state')"; continue ;;
   esac
+  # These are inputs to the narrower armed/ticking/skewed verdict, not facts
+  # inferred from `state`. In particular an armed box that has never ticked is
+  # legitimately `idle`, and synchronized and skewed boxes are both `up`.
+  dis="$(body GET /api/fleet | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+u=[x for x in d['units'] if x['box']=='$name']
+print(bool(u and u[0].get('disarmed')))")"
+  tick_fresh="$(body GET /api/fleet | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+u=[x for x in d['units'] if x['box']=='$name']
+print(bool(u and u[0].get('cron', {}).get('ok')))")"
+  clock_delta="$(body GET /api/fleet | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+u=[x for x in d['units'] if x['box']=='$name']
+print(u[0].get('clock_delta') if u else None)")"
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
-  agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "${dis:-False}")"
+  agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "$dis")"
   case "$agreement" in
     down)
       AGREE_N=$((AGREE_N + 1))
@@ -404,7 +423,6 @@ print(u[0]['state'] if u else 'MISSING')")"
       skip "agree: $name" "crew status printed no row" ;;
     up)
       AGREE_N=$((AGREE_N + 1))
-      ARMED_AGREE_N=$((ARMED_AGREE_N + 1))
       ok "agree: $name is up" ;;
     *)
       if [ "$floor_state" = "offline" ]; then
@@ -415,11 +433,6 @@ u=[x for x in d['units'] if x['box']=='$name']
 print((u[0].get('note') or '') if u else '')")"
         # Read the FLAG, not the prose. The note is written for an operator and
         # will be reworded; a check that greps English breaks when it improves.
-        dis="$(body GET /api/fleet | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-u=[x for x in d['units'] if x['box']=='$name']
-print(bool(u and u[0].get('disarmed')))")"
         agreement="$(agreement_case "$floor_state" "$cli_line" "$note" "$dis")"
         if [ "$agreement" = "disarmed" ]; then
           # NOT a skip any more (#189). Both readers now answer "is this box
@@ -459,6 +472,16 @@ print(bool(u and u[0].get('disarmed')))")"
         fi
       fi ;;
   esac
+
+  # Every classification reaches this one decision. Keeping the increment out
+  # of individual branches makes both false directions fixtureable: counting
+  # a disarmed/never-ticked/synchronized box, and failing to count a qualifying
+  # one.
+  if [ "$(agreement_armed_skewed "$agreement" "$dis" "$tick_fresh" "$clock_delta")" = "qualifies" ]; then
+    ARMED_AGREE_N=$((ARMED_AGREE_N + 1))
+    printf -v signed_delta '%+d' "$clock_delta"
+    ARMED_AGREE_EVIDENCE="${ARMED_AGREE_EVIDENCE}${ARMED_AGREE_EVIDENCE:+, }$name=${signed_delta}s"
+  fi
 done < <(roster_rows)
 
 # The block as a whole must have DONE something. Every per-box branch above is
@@ -470,11 +493,11 @@ if [ "$AGREE_N" -eq 0 ]; then
 elif [ "$(agreement_round_result "$ARMED_AGREE_N")" = "compared" ]; then
   [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] \
     || printf 'compared\n' >"$REHEARSAL_AGREEMENT_STATUS"
-  ok "the agreement check reached an armed, ticking box ($ARMED_AGREE_N of $ROSTER_N boxes)"
+  ok "the agreement check reached an armed, ticking, clock-skewed box ($ARMED_AGREE_N of $ROSTER_N boxes; host-minus-box delta: $ARMED_AGREE_EVIDENCE)"
 else
   [ -z "${REHEARSAL_AGREEMENT_STATUS:-}" ] \
     || printf 'could-not-compare\n' >"$REHEARSAL_AGREEMENT_STATUS"
-  skip "the agreement check could not compare an armed, ticking box" \
+  skip "the agreement check could not compare an armed, ticking, clock-skewed box" \
        "$AGREE_N of $ROSTER_N boxes yielded only non-armed comparisons"
 fi
 

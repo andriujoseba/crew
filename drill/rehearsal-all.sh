@@ -3,6 +3,7 @@
 #
 #   drill/rehearsal-all.sh [--agent <name>] [--tree <path>] [--remote <url>]
 #     [--ref <git-ref>] [--roles "triage builder reviewer"] [--quick]
+#     [--app-roster <path>]
 #
 # Three single-role boxes, not one multi-role box: fleet.roster deploys
 # single-role members, and duty.sh gates every module on has_role. A box
@@ -117,6 +118,12 @@ while [ $# -gt 0 ]; do
        echo "         [--app-roster <path>] [--app-shots <dir>]"; exit 1 ;;
   esac
 done
+
+# Validate operator input before source acquisition and the role round. The
+# named pass runs last; discovering a typo there would otherwise waste the
+# whole multi-role rehearsal before producing the same error.
+[ -z "$APP_ROSTER" ] || [ -f "$APP_ROSTER" ] \
+  || { echo "drill/rehearsal-all.sh: no app roster at '$APP_ROSTER'" >&2; exit 1; }
 
 for role in $ROLES; do
   case "$role" in
@@ -466,6 +473,7 @@ else
 fi
 
 APP_ROW_EMITTED=0
+GENERATED_APP=0
 if [ "$APP" -eq 1 ]; then
   echo
   echo "############################################################"
@@ -486,12 +494,12 @@ if [ "$APP" -eq 1 ]; then
   # true; the role came from the drill, the agent silently did not.
   if [ -n "${DRILLED// /}" ]; then
     APP_ARGS+=(--drill-roles "${DRILLED# }" --agent "$AGENT")
+    GENERATED_APP=1
   else
-    echo "## (app phase: no role reached a box this run — nothing to compare against)"
-    SUMMARY+=("SKIPPED    app  (blocked by role install: no installed drill box)")
+    echo "## (generated app pass: no role reached a box this run — no generated member to compare)"
+    SUMMARY+=("SKIPPED    app  (generated pass blocked by role install: no installed drill box)")
     APP_ROW_EMITTED=1
     [ "$overall" -eq 1 ] || overall=2
-    APP=0
   fi
   # Say what was left out rather than quietly narrowing: a shorter roster that
   # nobody announced reads as full coverage.
@@ -505,7 +513,7 @@ if [ "$APP" -eq 0 ] && [ "$APP_ROW_EMITTED" -eq 0 ]; then
   APP_ROW_EMITTED=1
 fi
 
-if [ "$APP" -eq 1 ]; then
+if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
   : >"$APP_AGREEMENT_STATUS"
   REHEARSAL_AGREEMENT_STATUS="$APP_AGREEMENT_STATUS" \
     "$HERE/rehearsal-app.sh" ${APP_ARGS[@]+"${APP_ARGS[@]}"}
@@ -527,10 +535,13 @@ if [ "$APP" -eq 1 ]; then
   esac
   APP_ROW_EMITTED=1
 
-  # A named roster is an additional reading after the drill-role pass, never
-  # a replacement for it. It points the same app at an already-armed member;
-  # no role drill or box mint happens between the two readings (#494).
-  if [ -n "$APP_ROSTER" ]; then
+fi
+
+# A named roster is an additional reading after the drill-role pass, never a
+# replacement for it. It also remains readable when no role reached a generated
+# drill member: that failure is recorded above and must not silently suppress
+# independent evidence from an already-armed member (#494).
+if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
     echo
     echo "############################################################"
     echo "## fleet app — armed roster comparison"
@@ -553,7 +564,6 @@ if [ "$APP" -eq 1 ]; then
         esac ;;
       *) SUMMARY+=("FAIL       app-armed"); overall=1 ;;
     esac
-  fi
 fi
 
 # Teardown is decided by the WHOLE round's verdict, so it runs after every

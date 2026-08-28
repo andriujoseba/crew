@@ -38,6 +38,8 @@ t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
 t "clock: cron age comes from box-side tickage" 110 "$(uf ff-skew-behind "u['cron']['age']")"
+t "clock: negative host-minus-box delta is published" -10800 "$(uf ff-skew-ahead "u['clock_delta']")"
+t "clock: positive host-minus-box delta is published" 10800 "$(uf ff-skew-behind "u['clock_delta']")"
 t "clock: session age survives negative skew" 10 "$(uf ff-skew-behind "u['sessions'][0]['ago']")"
 t "clock: session age survives positive skew" 10 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
 t "clock: negative-skew session lands in newest spark bucket" 1.0 "$(uf ff-skew-behind "u['spark'][21]")"
@@ -57,6 +59,24 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 source "$FLOOR/../drill/agreement.sh"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
+t "agreement: armed fresh skew qualifies" qualifies \
+  "$(agreement_armed_skewed up False True "$(uf ff-skew-behind "u['clock_delta']")")"
+t "agreement: armed but never-ticked does not qualify" does-not-qualify \
+  "$(agreement_armed_skewed \
+      "$(agreement_case "$(uf ff-neverticked "u['state']")" 'ff-neverticked idle' '' False)" \
+      False "$(uf ff-neverticked "u['cron']['ok']")" "$(uf ff-neverticked "u['clock_delta']")")"
+t "agreement: armed fresh but synchronized does not qualify" does-not-qualify \
+  "$(agreement_armed_skewed \
+      "$(agreement_case "$(uf ff-idle "u['state']")" 'ff-idle idle' '' False)" \
+      False "$(uf ff-idle "u['cron']['ok']")" "$(uf ff-idle "u['clock_delta']")")"
+t "agreement: disarmed does not qualify" does-not-qualify \
+  "$(agreement_armed_skewed disarmed True False None)"
+t "agreement: silent does not qualify" does-not-qualify \
+  "$(agreement_armed_skewed silent False False 10800)"
+t "agreement: not-hired does not qualify" does-not-qualify \
+  "$(agreement_armed_skewed not-hired False False None)"
+t "agreement: down does not qualify" does-not-qualify \
+  "$(agreement_armed_skewed down False False None)"
 t "agreement: an armed skewed comparison makes the round comparable" compared \
   "$(agreement_round_result 1)"
 t "agreement: a disarmed-only round says it could not compare" could-not-compare \

@@ -201,6 +201,9 @@ def unit_defaults():
         "longest": 0, "avg": 0, "success": 0, "today": 0,
         "paused": False, "disarmed": False,
         "cron": {"ok": False, "last": None, "age": None},
+        # Signed host-minus-box delta, in seconds. None means there was no tick
+        # timestamp/age pair from which to measure the two clocks.
+        "clock_delta": None,
         "lock": {"held": None, "stuck": False},
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "authfail": [], "ping": None,
@@ -399,6 +402,8 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         u["note"] = u["note"] or "no cron armed — crew hire %s" % unit["box"]
 
     clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
+    if last_ts and tick_age >= 0:
+        u["clock_delta"] = round(clock_offset)
     sessions, cur = derive_sessions(loglines, now, clock_offset)
     u["queue"] = derive_queue(loglines)
     u["cur"] = cur

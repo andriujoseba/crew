@@ -148,6 +148,9 @@ emit_probe() {
     invalid-tickage|suppressed-unknown) _tickage=garbage ;;
     nothired|neverticked|unconverged|premanifest) _tickage=-1 ;;
     skew-behind|skew-ahead) _tickage=110 ;;
+    # The newest idle log line is 190 seconds old. Keep the box-side age on
+    # that same fact so this is the synchronized counterpart to the skew pair.
+    idle)            _tickage=190 ;;
     *)             _tickage=30 ;;
   esac
   [ "$sc" = missing-tickage ] || printf '::tickage %s\n' "$_tickage"

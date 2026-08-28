@@ -239,6 +239,7 @@ t drill-phase2-summary-counts-three-passed 1 \
 # comparison. It does not replace that pass and it does not invoke another
 # role drill (therefore cannot mint another box).
 APP_LOG="$TMP/app-passes.log"
+: >"$TMP/armed.roster"
 : >"$APP_LOG"
 : >"$ROLE_LOG"
 if app_roster_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
@@ -266,6 +267,45 @@ t drill-armed-roster-mints-no-extra-role-box 1 \
 t drill-armed-roster-is-distinct-in-record 1 \
   "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
     <<<"$app_roster_out")"
+
+# The named reading is independent of generated-role availability. A failed
+# role still keeps the round red, but it must not erase the armed evidence leg.
+: >"$APP_LOG"
+: >"$ROLE_LOG"
+if no_generated_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_APP_LOG="$APP_LOG" DRILL_REMOTE="$REMOTE" \
+    DRILL_ROLE_STAGE=none DRILL_ROLE_RC=1 \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/armed.roster" --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  no_generated_rc=0
+else
+  no_generated_rc=$?
+fi
+t drill-armed-roster-without-generated-member-stays-red 1 "$no_generated_rc"
+t drill-armed-roster-without-generated-member-still-runs 1 \
+  "$(grep -cFx -- "--roster $TMP/armed.roster --no-browser" "$APP_LOG")"
+t drill-armed-roster-without-generated-member-records-both-legs 2 \
+  "$(grep -cE '^##   (SKIPPED +app |ok +app-armed )' <<<"$no_generated_out")"
+
+# Reject a typo before any role or installer work starts.
+: >"$ROLE_LOG"
+: >"$INSTALL_LOG"
+if missing_roster_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --app-roster "$TMP/missing.roster" 2>&1)"; then
+  missing_roster_rc=0
+else
+  missing_roster_rc=$?
+fi
+t drill-missing-app-roster-fails-early 1 "$missing_roster_rc"
+t drill-missing-app-roster-names-path 1 \
+  "$(grep -cF "no app roster at '$TMP/missing.roster'" <<<"$missing_roster_out")"
+t drill-missing-app-roster-runs-no-role 0 "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
+t drill-missing-app-roster-runs-no-installer 0 "$(wc -l <"$INSTALL_LOG" | tr -d ' ')"
 
 # D1: valid disarmed comparisons are evidence, but not evidence for the armed
 # criterion. With no second roster they make the round incomplete, not green.
@@ -334,11 +374,14 @@ fi
 t drill-preinstall-failure-stays-red 1 "$preinstall_rc"
 t drill-preinstall-failure-reports-role 1 \
   "$(grep -cF 'FAIL       reviewer  (failed before an installed box existed)' <<<"$preinstall_out")"
-for section in installer config app; do
+for section in installer config; do
   t "drill-preinstall-skips-$section-by-role-install" 1 \
     "$(grep -cF "SKIPPED    $section  (blocked by role install: no installed drill box)" \
       <<<"$preinstall_out")"
 done
+t drill-preinstall-skips-app-by-role-install 1 \
+  "$(grep -cF 'SKIPPED    app  (generated pass blocked by role install: no installed drill box)' \
+    <<<"$preinstall_out")"
 t drill-preinstall-invokes-no-independent-section 0 \
   "$(wc -l <"$SECTION_LOG" | tr -d ' ')"
 if summary_count_matches_rows "$preinstall_out"; then r1=equal; else r1=MISMATCH; fi
