@@ -87,7 +87,7 @@ t "alerts: ten down polls emit one alert" 1 \
   "$(grep -c 'unreachable for' "$FF_ALERT_UNIT_LOG" || true)"
 t "alerts: recovery emits one alert" 1 \
   "$(grep -c 'recovered after' "$FF_ALERT_UNIT_LOG" || true)"
-t "alerts: ten unchanged polls plus one post-prune poll deliver twice" 2 \
+t "alerts: unchanged and transiently unreadable polls deliver once" 1 \
   "$(grep -c 'ff-limits (builder) error operating limit' "$FF_ALERT_UNIT_LOG" || true)"
 t "alerts: the same event on a second box is still delivered" 1 \
   "$(grep -c 'ff-limits-peer (reviewer) error operating limit' "$FF_ALERT_UNIT_LOG" || true)"

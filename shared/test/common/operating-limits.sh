@@ -69,6 +69,25 @@ skew_rc=0
 t limit-spool-unset-conf-keys-preserve-assessment-rc 2 "$skew_rc"
 t limit-spool-unset-conf-keys-still-write 1 "$(wc -l <"$skew_dir/.limit-events")"
 
+# Malformed retention values take the same safe degradation path as an absent
+# key: the assessment keeps its ruled rc and its durable event is not lost.
+for invalid_bound in max ttl; do
+  invalid_dir="$TMP/invalid-$invalid_bound"
+  invalid_rc=0
+  if [ "$invalid_bound" = max ]; then
+    DUTY_LIMIT_SPOOL_MAX=wide DUTY_DIR="$invalid_dir" operating_limit_assess \
+      github_connection_nodes 110 heavy-duty/crew 482 invalid-max >/dev/null \
+      || invalid_rc=$?
+  else
+    DUTY_LIMIT_SPOOL_TTL_S=0 DUTY_DIR="$invalid_dir" operating_limit_assess \
+      github_connection_nodes 110 heavy-duty/crew 482 invalid-ttl >/dev/null \
+      || invalid_rc=$?
+  fi
+  t "limit-spool-invalid-$invalid_bound-preserves-assessment-rc" 2 "$invalid_rc"
+  t "limit-spool-invalid-$invalid_bound-still-writes" 1 \
+    "$(wc -l <"$invalid_dir/.limit-events")"
+done
+
 limit_case() {
   local measured="$1" out rc=0
   out="$(OPERATING_LIMIT_WARN_PCT=90 operating_limit_assess \

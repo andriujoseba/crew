@@ -528,6 +528,25 @@ else
 fi
 t rehearsal-breaker-standing-attention-mutation-reds red "$r1"
 
+# Drive the real installed-facts loader against the shipped conf/library
+# shape. SESSION_TERMINAL_THRESHOLD intentionally defers to the operating
+# table, so a drill that parses the conf instead of the engine loses the leg.
+BREAKER_FACTS_HOME="$TMP/rehearsal-breaker-facts"
+mkdir -p "$BREAKER_FACTS_HOME/duty/conf" "$BREAKER_FACTS_HOME/duty/lib"
+cp "$SHARED/conf/fleet.defaults.conf" "$BREAKER_FACTS_HOME/duty/conf/"
+cp "$SHARED/lib/common.sh" "$SHARED/lib/duty-attention.sh" \
+  "$BREAKER_FACTS_HOME/duty/lib/"
+ln -s "$SHARED/lib/common" "$BREAKER_FACTS_HOME/duty/lib/common"
+AGENT=claude
+bx() { HOME="$BREAKER_FACTS_HOME" bash -c "$1"; }
+ok() { :; }
+fail() { :; }
+if rehearsal_breaker_load_installed_facts; then r1=resolved; else r1=WRONG; fi
+t rehearsal-breaker-shipped-threshold-resolves resolved "$r1"
+t rehearsal-breaker-shipped-threshold-is-numeric 3 \
+  "$REHEARSAL_BREAKER_THRESHOLD"
+unset -f bx ok fail
+
 BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
 mkdir -p "$BREAKER_FIXTURE_HOME/duty/conf/roles"
 printf 'TIMEOUT_REVIEW=1\n' >"$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"

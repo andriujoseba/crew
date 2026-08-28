@@ -84,10 +84,17 @@ class ReachabilityAlerts:
     def observe_floor_events(self, units):
         """Deliver each durable box event once during this floor process."""
         current_events = set()
+        authoritative_boxes = set()
         for unit in sorted(units, key=lambda u: u.get("box", "")):
             box = unit.get("box", "")
             role = unit.get("room", "unknown")
             dropped = unit.get("limit_dropped")
+            # A successful current probe always carries the cumulative drop
+            # counter, even when both it and the spool are empty. None means
+            # the box did not answer (or predates this wire section), so its
+            # empty event list is not evidence that durable events vanished.
+            if dropped is not None:
+                authoritative_boxes.add(box)
             previous = self.dropped_events.get(box, 0)
             if dropped is None:
                 pass
@@ -113,7 +120,11 @@ class ReachabilityAlerts:
                                event.get("timestamp", ""), event.get("cause", "")))
                 if self._send(message):
                     self.sent_events.add(event_key)
-        self.sent_events.intersection_update(current_events)
+        self.sent_events = {
+            event_key for event_key in self.sent_events
+            if (event_key[0] not in authoritative_boxes
+                or event_key in current_events)
+        }
 
     def observe(self, pings, roster, units):
         """Consume one complete ping round and emit only state transitions."""

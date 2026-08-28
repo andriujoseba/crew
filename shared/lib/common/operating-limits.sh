@@ -68,8 +68,11 @@ _operating_limit_spool() {
   line="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
     "$event_id" "$iso" "$severity" "$name" "$measured" "$limit" "$subject" "$cause")"
 
-  case "$max" in ''|*[!0-9]*|0) return 0 ;; esac
-  case "$ttl" in ''|*[!0-9]*|0) return 0 ;; esac
+  # Invalid operator values degrade to the same safe bounds as install skew.
+  # The assessment itself is already logged; never lose its durable handoff
+  # merely because retention configuration is malformed.
+  case "$max" in ''|*[!0-9]*|0) max="$DUTY_LIMIT_SPOOL_MAX_DEFAULT" ;; esac
+  case "$ttl" in ''|*[!0-9]*|0) ttl="$DUTY_LIMIT_SPOOL_TTL_S_DEFAULT" ;; esac
   mkdir -p "$DUTY_DIR" 2>/dev/null || return 0
   cutoff=$((now - ttl))
   if [ -f "$spool" ]; then
