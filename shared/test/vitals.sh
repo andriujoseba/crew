@@ -259,6 +259,58 @@ has   "swapon-garbled-record-still-emits" "$out" "cores=2"
 err="$(run_probe "$B" BOX_CPU=2 2>&1 >/dev/null)"
 same "swapon-garbled-is-silent-on-stderr" "" "$err"
 
+# MUST-FAIL: a PRESENT swapfile whose size cannot be read, counted as nothing.
+# The two cases above pin the enumerator's two failure states; this pins the
+# same two on the field's OTHER contributor, which had neither. `[ -f ]` has
+# already said the file is there, so skipping it does not report "no
+# swapfile" — it reports a total with a known hole in it, and here the hole is
+# the whole of it: `swapon --show` succeeds empty, so the emitted figure was
+# `swap_configured_mb=0` beside `swap_active_mb=0`, a fabricated measurement
+# that also silences swap-configured-inactive, the one finding this field
+# exists to expose. Absent is the honest answer, exactly as for swapon-broken.
+B="$(mk_box swapfile-stat-broken)"
+dd if=/dev/zero of="$B/root/swapfile" bs=1M count=8 status=none 2>/dev/null ||
+  head -c 8388608 /dev/zero > "$B/root/swapfile"
+cat > "$B/bin/stat" <<'EOF'
+#!/bin/sh
+echo "stat: cannot stat '$2': Permission denied" >&2
+exit 2
+EOF
+chmod +x "$B/bin/stat"
+out="$(run_probe "$B" BOX_CPU=2)"
+hasnt "swapfile-stat-broken-configured-absent" "$out" "swap_configured_mb"
+hasnt "swapfile-stat-broken-is-not-a-zero"     "$out" "swap_configured_mb=0"
+# The silenced finding, asserted directly: this is the cost of the fabricated
+# zero, and it is what makes the case blocking rather than cosmetic.
+hasnt "swapfile-stat-broken-invents-no-finding" "$out" "swap-configured-inactive"
+has   "swapfile-stat-broken-record-still-emits" "$out" "cores=2"
+has   "swapfile-stat-broken-keeps-active"       "$out" "swap_active_mb=0"
+# D6 is per-FIELD: the unreadable candidate costs this field and nothing else.
+has   "swapfile-stat-broken-keeps-disk"         "$out" "disk_pct=48"
+err="$(run_probe "$B" BOX_CPU=2 2>&1 >/dev/null)"
+same "swapfile-stat-broken-is-silent-on-stderr" "" "$err"
+
+# The same distinction from the other side, and the half that is invisible in
+# the record: `stat` exits 0 but prints something that is not a number. The
+# field goes absent either way — but without the numeric guard the non-number
+# reaches `total=$((total + sz / 1024 / 1024))` and `set -u` aborts the reader
+# with `vitals.sh: line NNN: not: unbound variable` on stderr. tick.sh runs
+# the probe as `( … ) >>"$LOG" 2>&1`, so that line lands in duty.log, which is
+# why the stderr assertion is the one that matters here.
+B="$(mk_box swapfile-stat-garbled)"
+dd if=/dev/zero of="$B/root/swapfile" bs=1M count=8 status=none 2>/dev/null ||
+  head -c 8388608 /dev/zero > "$B/root/swapfile"
+cat > "$B/bin/stat" <<'EOF'
+#!/bin/sh
+echo "not-a-number"
+EOF
+chmod +x "$B/bin/stat"
+out="$(run_probe "$B" BOX_CPU=2)"
+hasnt "swapfile-stat-garbled-configured-absent" "$out" "swap_configured_mb"
+has   "swapfile-stat-garbled-record-still-emits" "$out" "cores=2"
+err="$(run_probe "$B" BOX_CPU=2 2>&1 >/dev/null)"
+same "swapfile-stat-garbled-is-silent-on-stderr" "" "$err"
+
 # --- 4. a platform missing one field -----------------------------------------
 # MUST-FAIL: one absent field suppressing the whole record. D6 is per-field,
 # so the unreadable figure is absent and the other eight still emit.

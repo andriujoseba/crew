@@ -57,12 +57,16 @@ v_swap_active_mb() {
 v_swap_configured_mb() {
   local total=0 sz name extra active="" listed
   # THREE states, not two, because "no swap" and "cannot tell" are different
-  # answers and only one of them is an absent field. `swapon --show` is the
-  # sole enumerator of active swap, so its exit status decides whether this
-  # field is measurable at all:
+  # answers and only one of them is an absent field:
   #
-  #   succeeds, lists nothing  -> a measured ZERO. Emitted as 0.
-  #   fails, missing, garbled  -> unreadable. Absent, per D6.
+  #   every contributor readable, none found -> a measured ZERO. Emitted as 0.
+  #   any contributor unreadable             -> unreadable. Absent, per D6.
+  #
+  # The field has two contributors — `swapon --show`, the sole enumerator of
+  # ACTIVE swap, and the swapfile candidates on disk — and the rule above is
+  # the same rule for both. Either one failing means the total would be a
+  # figure with a known hole in it, and a total with a hole is not a smaller
+  # total, it is a wrong one.
   #
   # Reporting the zero as an absence was the more damaging of the two,
   # because `swap_active_mb` comes off `free`, which prints a Swap: line on
@@ -99,11 +103,23 @@ EOF
   # with swap_active and produces the finding below — but only when it is not
   # ALREADY counted above as an active device. Deduplicated by path and not
   # by size, because two genuinely distinct 8 MiB resources must still sum.
+  #
+  # A candidate that is PRESENT but whose size cannot be read is the third
+  # state again, on this side of the field: `[ -f ]` has already said the
+  # file is there, so skipping it does not report "no swapfile" — it reports
+  # a total that silently omits one, which is the same fabricated measurement
+  # the `swapon` branch returns 1 for. Both contributors therefore reach one
+  # guard: unreadable or non-numeric fails the FIELD (absent, per D6) rather
+  # than the file. The numeric test is not belt-and-braces either — without
+  # it a `stat` that exits 0 printing a non-number reaches the arithmetic and
+  # `set -u` aborts the reader with a bash error on stderr, which tick.sh
+  # appends straight into duty.log.
   for f in "$VITALS_ROOT"swapfile "$VITALS_ROOT"swap.img; do
     case " $active " in *" $f "*) continue ;; esac
     if [ -f "$f" ]; then
-      sz=$(stat -c %s "$f" 2>/dev/null) && [ -n "$sz" ] &&
-        total=$((total + sz / 1024 / 1024))
+      sz=$(stat -c %s "$f" 2>/dev/null) || return 1
+      case "${sz:-}" in ""|*[!0-9]*) return 1 ;; esac
+      total=$((total + sz / 1024 / 1024))
     fi
   done
   echo "$total"
