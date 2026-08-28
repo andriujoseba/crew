@@ -253,6 +253,25 @@ t drill-unwired-declared-leg-is-visible 1 \
   "$(grep -c '^## leg not-executed never-wired  (recorded 0 results; expected exactly one)' \
     <<<"$unwired_out")"
 
+# Not-executed is not a sufficient record by itself: the blocker is the fact
+# that makes an exclusion evidence. Remove one reason and require a red row.
+NO_REASON="$HARNESS/rehearsal-all-no-reason.sh"
+sed 's/SUMMARY+=("skip       browser  (--no-app)")/SUMMARY+=("skip       browser")/' \
+  "$HARNESS/rehearsal-all.sh" >"$NO_REASON"
+if no_reason_out="$(DRILL_ROLE_LOG="$ROLE_LOG" DRILL_INSTALL_LOG="$INSTALL_LOG" \
+    DRILL_REMOTE="$REMOTE" bash "$NO_REASON" --tree "$SOURCE" --roles reviewer \
+      --keep --no-app --no-config-drill --no-resume-drill \
+      --no-attention-drill --no-attention-audit-drill --no-hygiene-drill \
+      --no-breaker-drill --no-notify-drill 2>&1)"; then
+  no_reason_rc=0
+else
+  no_reason_rc=$?
+fi
+t drill-unrun-leg-without-blocker-reds 1 "$no_reason_rc"
+t drill-unrun-leg-without-blocker-is-visible 1 \
+  "$(grep -c '^## leg not-executed browser  (missing blocker reason)' \
+    <<<"$no_reason_out")"
+
 # A red assertion inside phase 2 must not silently void the independent
 # installer, config and app sections. The explicit stage channel distinguishes
 # this from a role failure before an installed box existed (#491).
@@ -279,7 +298,7 @@ t drill-phase2-failure-runs-section-a 1 \
 t drill-phase2-failure-runs-config 1 \
   "$(grep -cF 'ok         config  (operator mode + registry contract)' <<<"$phase2_out")"
 t drill-phase2-failure-runs-app 1 \
-  "$(grep -cF 'ok         app  (collector + page)' <<<"$phase2_out")"
+  "$(grep -cF 'ok         app  (agreement compared; collector + page)' <<<"$phase2_out")"
 t drill-phase2-records-browser-executed 1 \
   "$(grep -c '^## leg executed browser  (ok; read-only browser walk executed)' \
     <<<"$phase2_out")"
@@ -289,6 +308,23 @@ t drill-phase2-records-app-armed-blocker 1 \
 t drill-phase2-failure-invokes-config-and-app $'config\napp' "$(cat "$SECTION_LOG")"
 t drill-phase2-summary-counts-four-passed 1 \
   "$(grep -cE '^## section states: 4 passed, 1 failed, [0-9]+ skipped/not-run$' <<<"$phase2_out")"
+
+# The third historical zero-execution leg also records a discovered host
+# blocker rather than disappearing inside app's aggregate result.
+if browser_skip_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
+    DRILL_INSTALL_LOG="$INSTALL_LOG" DRILL_SECTION_LOG="$SECTION_LOG" \
+    DRILL_BROWSER_STATUS=skip DRILL_REMOTE="$REMOTE" \
+    bash "$HARNESS/rehearsal-all.sh" --tree "$SOURCE" --roles reviewer --keep \
+      --no-resume-drill --no-attention-drill --no-attention-audit-drill \
+      --no-hygiene-drill --no-breaker-drill --no-notify-drill 2>&1)"; then
+  browser_skip_rc=0
+else
+  browser_skip_rc=$?
+fi
+t drill-browser-blocker-makes-round-incomplete 2 "$browser_skip_rc"
+t drill-browser-blocker-is-named-in-record 1 \
+  "$(grep -c '^## leg not-executed browser  (INCOMPLETE; not executed: playwright-core not installed)' \
+    <<<"$browser_skip_out")"
 
 # A named app roster adds an armed comparison after the generated drill-role
 # comparison. It does not replace that pass and it does not invoke another
@@ -320,7 +356,7 @@ t drill-armed-roster-second-pass-is-read-only 0 \
 t drill-armed-roster-mints-no-extra-role-box 1 \
   "$(wc -l <"$ROLE_LOG" | tr -d ' ')"
 t drill-armed-roster-is-distinct-in-record 1 \
-  "$(grep -cF 'ok         app-armed  (named roster, no additional boxes)' \
+  "$(grep -cF 'ok         app-armed  (agreement compared; named roster, no additional boxes)' \
     <<<"$app_roster_out")"
 
 # The named pass carries its own honest verdict. Exercise both non-green
@@ -339,7 +375,7 @@ else
 fi
 t drill-armed-roster-noncomparable-is-incomplete 2 "$app_roster_incomplete_rc"
 t drill-armed-roster-noncomparable-recorded 1 \
-  "$(grep -cF 'INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)' \
+  "$(grep -cF 'INCOMPLETE app-armed  (agreement could-not-compare: no armed, ticking, clock-skewed box)' \
     <<<"$app_roster_incomplete_out")"
 
 if app_roster_missing_out="$(DRILL_ROLE_LOG="$ROLE_LOG" \
@@ -413,7 +449,7 @@ else
 fi
 t drill-disarmed-only-round-is-incomplete 2 "$disarmed_rc"
 t drill-disarmed-only-record-says-could-not-compare 1 \
-  "$(grep -cF 'INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)' \
+  "$(grep -cF 'INCOMPLETE app  (agreement could-not-compare: no armed, ticking, clock-skewed box)' \
     <<<"$disarmed_out")"
 t drill-disarmed-only-record-has-no-green-app-row 0 \
   "$(grep -cE '^##   ok +app  ' <<<"$disarmed_out" || true)"

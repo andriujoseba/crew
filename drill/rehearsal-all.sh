@@ -536,10 +536,10 @@ if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
   case "$rc" in
     0)
       case "$app_agreement:$APP_ROSTER" in
-        compared:*) SUMMARY+=("ok         app  (collector + page)") ;;
-        could-not-compare:?*) SUMMARY+=("ok         app  (collector + page; armed comparison follows)") ;;
+        compared:*) SUMMARY+=("ok         app  (agreement compared; collector + page)") ;;
+        could-not-compare:?*) SUMMARY+=("ok         app  (agreement could-not-compare; armed comparison follows)") ;;
         could-not-compare:)
-          SUMMARY+=("INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)")
+          SUMMARY+=("INCOMPLETE app  (agreement could-not-compare: no armed, ticking, clock-skewed box)")
           [ "$overall" -eq 1 ] || overall=2 ;;
         *) SUMMARY+=("FAIL       app  (agreement verdict missing)"); overall=1 ;;
       esac ;;
@@ -581,9 +581,9 @@ if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
   case "$rc" in
     0)
       case "$app_agreement" in
-        compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
+        compared) SUMMARY+=("ok         app-armed  (agreement compared; named roster, no additional boxes)") ;;
         could-not-compare)
-          SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)")
+          SUMMARY+=("INCOMPLETE app-armed  (agreement could-not-compare: no armed, ticking, clock-skewed box)")
           [ "$overall" -eq 1 ] || overall=2 ;;
         *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
       esac ;;
@@ -657,7 +657,14 @@ for declared_leg in "${DECLARED_LEGS[@]}"; do
   read -r leg_state _leg_name leg_detail <<<"${leg_rows[0]}"
   case "${leg_rows[0]}" in
     ok\ *|FAIL\ *) LEG_RECORD+=("executed $declared_leg  ($leg_state; ${leg_detail#(}") ;;
-    *) LEG_RECORD+=("not-executed $declared_leg  ($leg_state; ${leg_detail#(}") ;;
+    *)
+      if [ -z "$leg_detail" ] || [ "$leg_detail" = "()" ]; then
+        LEG_RECORD+=("not-executed $declared_leg  (missing blocker reason)")
+        overall=1
+      else
+        LEG_RECORD+=("not-executed $declared_leg  ($leg_state; ${leg_detail#(}")
+      fi
+      ;;
   esac
 done
 
