@@ -447,4 +447,104 @@ same "record-is-one-line" "1" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 same "record-starts-VITALS" "VITALS" "$(printf '%s' "$out" | cut -d' ' -f1)"
 has  "record-timestamp-is-utc-iso8601" "$out" "Z "
 
+# --- 7. the tick call site (AC1) ---------------------------------------------
+# Everything above drives the PROBE. AC1 is about the TICK — "every tick emits
+# a vitals record" — and that lives in shared/bin/tick.sh, which nothing else
+# in shared/test/ or fleet-floor/test/ reaches: delete the block and every
+# other assertion in this file still passes. So these drive the real tick.sh
+# against a fixture DUTY_DIR, and each one pins a claim the call site's own
+# comment makes.
+#
+# The probe runs on the HOST here, not on a stub box: the subject is the call
+# site's wiring — is it called, is the profile in scope, does it survive the
+# lock and its own absence — and the readings themselves are covered above.
+# The profile is therefore declared absurd (BOX_CPU=999) so the D3 comparison
+# is a mismatch on any real host, however many cores it has.
+mk_tick_dir() { # mk_tick_dir <name> — a fixture DUTY_DIR wired like a real box
+  local d="$WORK/$1"
+  mkdir -p "$d/bin" "$d/conf/roles"
+  cp "$SHARED/bin/vitals.sh" "$d/bin/vitals.sh"
+  # The job the tick dispatches: writes the evidence line duty.sh writes, and
+  # nothing else. tick.sh's contract is about that line's presence, so a stub
+  # is the right subject — a real duty.sh would drag the whole engine in.
+  cat > "$d/bin/duty.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') duty run start"
+EOF
+  chmod +x "$d/bin/duty.sh"
+  # instance.conf names the roles; the role file carries the profile. Two
+  # files, because that is how a minted box carries them and the call site
+  # sources them in that order.
+  printf 'BOT_ROLES="builder"\n' > "$d/conf/instance.conf"
+  printf 'BOX_CPU=999\n' > "$d/conf/roles/builder.conf"
+  echo "$d"
+}
+# No VITALS_SH, no CONF_DIR: both default off DUTY_DIR inside tick.sh, and the
+# defaults are part of what is being tested — an installed box passes neither.
+run_tick() { env DUTY_DIR="$1" bash "$SHARED/bin/tick.sh" duty; }
+vitals_lines() { grep -c '^VITALS ' "$1" 2>/dev/null || true; }
+
+D="$(mk_tick_dir tick-plain)"
+run_tick "$D" >/dev/null 2>&1
+tickrc=$?
+LOGF="$D/duty.log"
+log="$(cat "$LOGF" 2>/dev/null || true)"
+same "tick-emits-exactly-one-vitals-line" "1" "$(vitals_lines "$LOGF")"
+has  "tick-vitals-carries-the-fields"     "$log" "cores="
+# The record is FIRST: emitted before the dispatch, so a job that hangs or a
+# lock that is held cannot cost the reading.
+same "tick-vitals-precedes-the-dispatch" "VITALS" \
+  "$(head -1 "$LOGF" 2>/dev/null | cut -d' ' -f1)"
+# The role profile is in scope AT the call site. Nothing above proves this:
+# every other case exports BOX_CPU by hand, so a tick that never sourced
+# conf/ would emit a findingless record and read as healthy.
+has  "tick-sources-the-role-profile" "$log" "finding=cpu-profile-mismatch:want=999,"
+# ...and the evidence contract the top of tick.sh is about is untouched by the
+# fourth line: `duty run start` is still there, and the tick still exits 0.
+has  "tick-keeps-the-evidence-line" "$log" "duty run start"
+same "tick-exits-zero" "0" "$tickrc"
+
+# MUST-FAIL: the probe moved inside the lock. A tick that skips is a box
+# already wedged behind a stuck run — the box whose memory and disk a reader
+# most wants — so the record must land on a SKIPPED tick too. Holding the
+# lock is the only way to express that, and it is the assertion that reds if
+# the call is moved below the flock line.
+D="$(mk_tick_dir tick-locked)"
+flock -n "$D/.duty.lock" -c 'sleep 3' >/dev/null 2>&1 &
+lock_bg=$!
+sleep 1
+run_tick "$D" >/dev/null 2>&1
+wait "$lock_bg" 2>/dev/null || true
+LOGF="$D/duty.log"
+log="$(cat "$LOGF" 2>/dev/null || true)"
+same "tick-skipped-still-emits-vitals" "1" "$(vitals_lines "$LOGF")"
+has  "tick-skipped-says-so"            "$log" "duty tick skipped:"
+hasnt "tick-skipped-ran-no-job"        "$log" "duty run start"
+
+# The probe is telemetry, and telemetry that can break the thing it observes
+# is worse than no telemetry: a missing or unreadable vitals.sh costs the
+# record and nothing else. This is the subshell guard at the call site, and
+# it is what makes the block safe to have added to the only cron target.
+D="$(mk_tick_dir tick-no-probe)"
+rm -f "$D/bin/vitals.sh"
+run_tick "$D" >/dev/null 2>&1
+tickrc=$?
+LOGF="$D/duty.log"
+log="$(cat "$LOGF" 2>/dev/null || true)"
+same "tick-without-probe-exits-zero"   "0" "$tickrc"
+has  "tick-without-probe-still-ticks"  "$log" "duty run start"
+same "tick-without-probe-emits-no-record" "0" "$(vitals_lines "$LOGF")"
+
+# A box with no instance.conf yet — hired but not configured — still gets a
+# record, just without the profile findings. The conf sourcing is best-effort
+# by design, and `[ -r ]` on a missing file must not take the tick with it.
+D="$(mk_tick_dir tick-no-conf)"
+rm -rf "$D/conf"
+run_tick "$D" >/dev/null 2>&1
+LOGF="$D/duty.log"
+log="$(cat "$LOGF" 2>/dev/null || true)"
+same "tick-without-conf-still-emits" "1" "$(vitals_lines "$LOGF")"
+hasnt "tick-without-conf-has-no-profile-finding" "$log" "profile-mismatch"
+has  "tick-without-conf-still-ticks" "$log" "duty run start"
+
 suite_finish
