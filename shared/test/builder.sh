@@ -4869,16 +4869,24 @@ RC_DUTY="$TMP/round-cap-duty"
 mkdir -p "$RC_DUTY/lib"
 ln -sfn "$SHARED/lib/jq" "$RC_DUTY/lib/jq"
 
-# rc_build FULL [OPEN] [PUSHED] — a pullRequest payload carrying FULL rounds
-# that both panelists voted in; OPEN=1 adds one more round with a single
-# verdict in it (a round that has opened and not closed); PUSHED=1 adds a
+# rc_build FULL [OPEN] [PUSHED] [LAST_VERDICT] — a pullRequest payload carrying
+# FULL rounds that both panelists voted in; OPEN=1 adds one more round with a
+# single verdict in it (a round that has opened and not closed); PUSHED=1 adds a
 # commit after the last verdict, which is the head the builder's round fixes
 # land on. The locals are `rc_`-prefixed because shellcheck reads this whole
 # file in one namespace: a local named `full` turns an unrelated `r1=full-budget`
 # five hundred lines up into an arithmetic expression and SC2100. Commit i is committed at 10:00 and reviewed at 12:00 the same day,
 # so no verdict is re-pointed and the partition is the plain one.
+#
+# LAST_VERDICT is rev-a's state in the FULL-th round, defaulting to
+# CHANGES_REQUESTED — rev-b always approves, so the default builds a round that
+# closed WITHOUT full approval. Passing APPROVED builds the terminal shape the
+# round-1 panel found uncovered: a fifth round that closed UNANIMOUSLY, where the
+# cut must not fire. It is a parameter rather than a second builder because every
+# existing case must keep driving the byte-identical payload it drove before.
 rc_build() {
-  local rc_full="$1" rc_open="${2:-0}" rc_pushed="${3:-0}" i oid ts
+  local rc_full="$1" rc_open="${2:-0}" rc_pushed="${3:-0}" rc_last="${4:-CHANGES_REQUESTED}"
+  local i oid ts st
   local commits="" reviews="" head=""
   for ((i = 1; i <= rc_full + rc_open + rc_pushed; i++)); do
     oid="$(printf 'c%039d' "$i")"
@@ -4889,7 +4897,8 @@ rc_build() {
   for ((i = 1; i <= rc_full; i++)); do
     oid="$(printf 'c%039d' "$i")"
     ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
-    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+    if [ "$i" -eq "$rc_full" ]; then st="$rc_last"; else st=CHANGES_REQUESTED; fi
+    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"$st\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
     reviews="$reviews{\"author\":{\"login\":\"rev-b\"},\"state\":\"APPROVED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
   done
   if [ "$rc_open" -eq 1 ]; then
@@ -4926,6 +4935,44 @@ t roundcap-sixth-round-still-at-cap       '6 true'  "$(rc_count "$(rc_build 6)")
 # PR, so the successor — a different PR with its own review history — arrives
 # here at one round and on the ordinary path.
 t roundcap-successor-first-round-is-round-one '1 false' "$(rc_count "$(rc_build 1)")"
+# MUST FAIL: a cut fired on a fifth round that closed with the panel's UNANIMOUS
+# approval. That is the ordinary way a long PR finally passes: converged.jq is
+# true on the same tick, the engine hands the PR to the human, and the PR then
+# sits in the authored listing until a human merges it — so an at-cap answer here
+# names a handed-off PR for the cut in every builder-side prompt for the whole of
+# that window, beside a step 4 reading "Close the predecessor". Doctrine's cut is
+# written for a round that closed with work still owed: step 1 answers round 5 and
+# pushes fixes there are none of, and step 2's "a verdict bought on the
+# predecessor is a verdict on a PR that will never merge" has its premise
+# inverted. Found by @codex-bot-andresmgsl and @claude-bot-andresmgsl, and named
+# as an unverified path by @kimi-bot-andresmgsl, on PR #566's round 1.
+t roundcap-converged-fifth-round-is-not-at-cap '5 false' \
+  "$(rc_count "$(rc_build 5 0 0 APPROVED)")"
+# ...and the carve-out is exactly as wide as that, no wider. Same unanimous fifth
+# round, but the builder has since pushed: the approvals are spent, converged.jq
+# is false, the panel is re-requested, and the verdicts that land would form ROUND
+# SIX on the same PR. A plain "did the fifth round approve?" test reads this as
+# not-at-cap and opens the hole the cap exists to close.
+t roundcap-stale-full-approval-is-still-at-cap '5 true' \
+  "$(rc_count "$(rc_build 5 0 1 APPROVED)")"
+# A fourth round that closed unanimously is not at the cap for the ordinary
+# reason — four is not five — and reaching the carve-out for it would be reading
+# the wrong round.
+t roundcap-converged-fourth-round-is-not-at-cap '4 false' \
+  "$(rc_count "$(rc_build 4 0 0 APPROVED)")"
+# A sixth round that opened in spite of the rule does not un-close the fifth, and
+# the carve-out reads the FIFTH round's verdicts rather than the newest ones: here
+# round 5 requested changes and round 6 approved unanimously.
+t roundcap-later-approval-does-not-lift-the-cap '6 true' \
+  "$(rc_count "$(rc_build 6 0 0 APPROVED)")"
+# One panelist who requested changes and then APPROVED the same head has released
+# that head, and the latest verdict per reviewer is the one that counts — the same
+# reading latestOpinionatedReviews gives addressing.jq. Counting the stale
+# CHANGES_REQUESTED would hold a PR at the cap the panel had in fact passed.
+RC_REVOTED="$(printf '%s' "$(rc_build 5)" | jq -c \
+  --arg oid "$(printf 'c%039d' 5)" \
+  '.data.repository.pullRequest.reviews.nodes += [{author:{login:"rev-a"},state:"APPROVED",commit:{oid:$oid},submittedAt:"2026-08-05T18:00:00Z"}]')"
+t roundcap-revote-at-the-cap-head-is-the-latest '5 false' "$(rc_count "$RC_REVOTED")"
 # An empty panel never closes a round vacuously, the guard addressing.jq and
 # converged.jq both carry against a bare `panel=` line.
 t roundcap-empty-panel-never-closes-a-round '5 false' "$(rc_count "$(rc_build 5)" '[]')"
