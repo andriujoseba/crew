@@ -170,7 +170,30 @@ emit_probe() {
   # Full owner/repo, exactly as repos.txt holds them. Bare names here are
   # what let a broken repo-link URL pass review-clean for two rounds.
   printf '::repos heavy-duty/crew heavy-duty/box heavy-duty/ceremony\n'
-  printf '::sessionlogs 20260726T090000Z-build-crew_40.log 20260726T093000Z-review-box_158.log\n'
+  # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
+  # Three shapes, because the page must not collapse them:
+  #
+  #   working  a complete record, both findings, and a backfilled disk series
+  #   idle     a DEGRADED record — no `free`, so no memory fields and no swap
+  #            pair, and no boot-check.log, so no series. D6 is per-field, and
+  #            the rows that survive must still render.
+  #   others   no record at all, which is every box on an engine older than
+  #            the probe. The collector renders no section rather than dashes.
+  #
+  # As with ::integrity, the VALUES here are fixture data — the stub has no
+  # hardware to measure. Their truth is asserted in boxside.sh, which runs the
+  # real probe.sh over a real duty.log. What this buys is the page walk.
+  case "$sc" in
+    working|suppressed-working)
+      printf '::vitals VITALS ts=%s cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2\n' \
+        "$(now)"
+      ;;
+    idle)
+      printf '::vitals VITALS ts=%s cores=2 load1=0.00 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 platform=linux os=debian-13\n' \
+        "$(now)"
+      ;;
+    *) printf '::vitals \n' ;;
+  esac
   echo '::logstart'
   case "$sc" in
     working|suppressed-working|paused|noauth|skew-behind|skew-ahead|invalid-tickage)
