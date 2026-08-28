@@ -527,7 +527,7 @@ if [ "$APP" -eq 1 ] && [ "$GENERATED_APP" -eq 1 ]; then
         compared:*) SUMMARY+=("ok         app  (collector + page)") ;;
         could-not-compare:?*) SUMMARY+=("ok         app  (collector + page; armed comparison follows)") ;;
         could-not-compare:)
-          SUMMARY+=("INCOMPLETE app  (could not compare an armed, ticking box)")
+          SUMMARY+=("INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)")
           [ "$overall" -eq 1 ] || overall=2 ;;
         *) SUMMARY+=("FAIL       app  (agreement verdict missing)"); overall=1 ;;
       esac ;;
@@ -558,7 +558,7 @@ if [ "$APP" -eq 1 ] && [ -n "$APP_ROSTER" ]; then
         case "$app_agreement" in
           compared) SUMMARY+=("ok         app-armed  (named roster, no additional boxes)") ;;
           could-not-compare)
-            SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking box)")
+            SUMMARY+=("INCOMPLETE app-armed  (could not compare an armed, ticking, clock-skewed box)")
             [ "$overall" -eq 1 ] || overall=2 ;;
           *) SUMMARY+=("FAIL       app-armed  (agreement verdict missing)"); overall=1 ;;
         esac ;;

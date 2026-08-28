@@ -77,6 +77,12 @@ t "agreement: not-hired does not qualify" does-not-qualify \
   "$(agreement_armed_skewed not-hired False False None)"
 t "agreement: down does not qualify" does-not-qualify \
   "$(agreement_armed_skewed down False False None)"
+# The helper is the only door to the count. These two source mutations were
+# the review-round reproducer: a second increment in `disarmed` made a vacuous
+# green survive, while deleting the `up` increment made the criterion silently
+# unreachable. Exactly one guarded increment makes both mutations red here.
+t "agreement: the live count has one guarded increment" 1 \
+  "$(grep -cF 'ARMED_AGREE_N=$((ARMED_AGREE_N + 1))' "$FLOOR/../drill/rehearsal-app.sh")"
 t "agreement: an armed skewed comparison makes the round comparable" compared \
   "$(agreement_round_result 1)"
 t "agreement: a disarmed-only round says it could not compare" could-not-compare \

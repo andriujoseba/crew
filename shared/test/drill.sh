@@ -321,7 +321,7 @@ else
 fi
 t drill-disarmed-only-round-is-incomplete 2 "$disarmed_rc"
 t drill-disarmed-only-record-says-could-not-compare 1 \
-  "$(grep -cF 'INCOMPLETE app  (could not compare an armed, ticking box)' \
+  "$(grep -cF 'INCOMPLETE app  (could not compare an armed, ticking, clock-skewed box)' \
     <<<"$disarmed_out")"
 t drill-disarmed-only-record-has-no-green-app-row 0 \
   "$(grep -cE '^##   ok +app  ' <<<"$disarmed_out" || true)"
