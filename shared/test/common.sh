@@ -7098,7 +7098,7 @@ t roundlog-current-head-finalized-at-handoff finalized "$r1"
 # The live GraphQL query carries the repair inputs and stays at GitHub's
 # connection ceiling.
 if grep -q 'headRefOid' "$SHARED/lib/duty-builder.sh" \
-  && grep -q 'commits(last:100){nodes{commit{oid committedDate}}}' "$SHARED/lib/duty-builder.sh"; then
+  && grep -q 'commits(last:.*OPERATING_LIMIT_GITHUB_CONNECTION_NODES.*){nodes{commit{oid committedDate}}}' "$SHARED/lib/duty-builder.sh"; then
   r1=present
 else
   r1=MISSING
