@@ -62,27 +62,89 @@ assets="$(cd "$assets" && pwd)"
 art="$assets/$NAME-$version.sh"
 sidecar="$art.sha256"
 
-# WHAT GETS PACKED IS THE COMMITTED TREE, not the working directory. At release
-# time the workspace holds more than crew: ceremony checks ITSELF out into
-# `.ceremony-src` inside it, in the same job, before this hook runs. install.sh's
-# payload exclusions name crew's own furniture and nothing a runner leaves
-# beside it, so packing the directory as found would ship ceremony's repository
-# inside crew's installer and install it on every box. `git archive HEAD` is
-# exactly the tree the release commit names, on both doors. A --root that is not
-# a git work tree — the offline test, a hand build from an unpacked tarball — is
-# packed as it is, there being no commit to prefer.
-pack="$root"
+# WHAT GETS PACKED IS AN INCLUDE SET (heavy-duty/crew#499), NOT A TREE MINUS
+# EXCLUSIONS. The artifact used to carry everything the exclusion list did not
+# name, and the exclusion list is install.sh's — written to decide what an
+# INSTALL keeps, applied there on the way out of the stub. So the tarball was
+# the whole repository and ~97% of every download was unpacked and thrown away:
+# `fleet-floor/dev` alone, a design-time asset map read by nothing an install
+# runs, is 50M of the tree's 55M.
+#
+# The two lists answer different questions and both stay. install.sh's asks
+# "what must come OUT of a tree someone handed me", and it cannot become an
+# include set: a checkout, a GitHub tarball and this artifact are all valid
+# sources and only the last is built here. This one asks "what goes IN", which
+# is the question with the safe failure mode — a directory added to the
+# repository ships only when someone names it, where an exclusion list ships it
+# until someone notices.
+#
+# The set is install.sh's keep list, enumerated. That is not a coincidence to be
+# maintained by hand: shared/test/artifact.sh installs from this artifact and
+# from the full tree and diffs the two trees, so a member dropped here, or a
+# path this omits that an install turns out to need, reds there rather than on
+# an operator's upgrade.
+PAYLOAD_INCLUDED_PATHS=(
+  VERSION                # names the version directory the install lands in
+  README.md              # the installed tree's own documentation
+  CHANGELOG.md           # what this version changed, on the box that runs it
+  install.sh             # the entrypoint the stub hands the unpacked tree to
+  cli                    # `cli/crew`, the command the PATH link points at
+  examples               # cli/crew's configuration fallback
+  shared/bin             # the engine `crew upgrade` pushes to every box
+  shared/conf            # role, agent-profile and default configuration
+  shared/crontab.example # the tick schedule an operator installs on a box
+  shared/docs            # the engine's own documentation, shipped beside it
+  shared/install.sh      # the box-side installer `crew upgrade` runs
+  shared/lib             # the engine's libraries
+  shared/prompts         # the duty prompts the engine feeds each session
+  shared/README.md       # the engine's entry documentation
+  fleet-floor/index.html # the pre-built page `crew floor` serves
+  fleet-floor/README.md  # the floor's own documentation
+  fleet-floor/server     # the floor's collector and server
+)
+
+# WHAT IT IS TAKEN FROM IS THE COMMITTED TREE, not the working directory. At
+# release time the workspace holds more than crew: ceremony checks ITSELF out
+# into `.ceremony-src` inside it, in the same job, before this hook runs.
+# `git archive HEAD` is exactly the tree the release commit names, on both
+# doors. A --root that is not a git work tree — the offline test, a hand build
+# from an unpacked tarball — is read as it is, there being no commit to prefer.
+# The include set applies on BOTH branches: it is a property of the payload and
+# not of how the payload's source was acquired, which is the mistake #365 made
+# once already, filtering one acquisition branch and not the other.
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+pack="$work/tree"
+mkdir -p "$pack"
 top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$top" ]; then top="$(cd "$top" && pwd -P)"; fi
 if [ "$top" = "$root" ]; then
-  work="$(mktemp -d)"
-  trap 'rm -rf "$work"' EXIT
-  pack="$work/tree"
-  mkdir -p "$pack"
-  git -C "$root" archive --format=tar HEAD | tar -xf - -C "$pack" \
-    || die "could not export the committed tree at HEAD from '$root'."
+  git -C "$root" archive --format=tar HEAD -- "${PAYLOAD_INCLUDED_PATHS[@]}" | tar -xf - -C "$pack" \
+    || die "could not export the include set at HEAD from '$root' — is every path in it committed?"
   say "packing the committed tree at $(git -C "$root" rev-parse --short HEAD), not the working directory"
+else
+  tar -C "$root" -cf - -- "${PAYLOAD_INCLUDED_PATHS[@]}" | tar -xf - -C "$pack" \
+    || die "could not read the include set from '$root' — is it a crew tree?"
 fi
+
+# THE INCLUDE SET IS VALIDATED, not trusted, and in both directions. A missing
+# member is a source that is not a crew tree, and a path outside the set is the
+# regression this change exists to stop — either one aborts the release here,
+# where the recovery is 'fix and re-tag', rather than on an operator's box.
+for p in "${PAYLOAD_INCLUDED_PATHS[@]}"; do
+  [ -e "$pack/$p" ] || die "the include set names '$p', which '$root' does not carry — refusing to publish a payload missing part of the product."
+done
+outside=''
+while IFS= read -r f; do
+  rel="${f#"$pack"/}"
+  covered=''
+  for p in "${PAYLOAD_INCLUDED_PATHS[@]}"; do
+    case "$rel" in "$p"|"$p"/*) covered=1; break ;; esac
+  done
+  [ -n "$covered" ] || { outside="$rel"; break; }
+done < <(find "$pack" -mindepth 1 \( -type f -o -type l \) -print)
+[ -z "$outside" ] || die "the payload carries '$outside', which no include-set member covers — refusing to publish it."
+unset p f rel covered
 
 say "building $(basename "$art") from $root"
 # A failed build is a stopped release, never an empty asset.
@@ -101,3 +163,27 @@ bash "$art" --check >/dev/null 2>&1 \
 [ -s "$sidecar" ] || die "the checksum sidecar '$sidecar' is empty."
 
 say "wrote $(basename "$art") ($(wc -c < "$art" | tr -d ' ') bytes) and $(basename "$sidecar") in $assets"
+
+# THE SIZE IS ON THE RECORD (heavy-duty/crew#499 D4). An include set decays the
+# way the exclusion list it replaces did — by someone adding a directory to it
+# that nothing an install runs reads — and that decay is invisible in a
+# checksum, invisible in the notes and invisible in a green check. So the figure
+# is written where the cut is read, and it is written HERE rather than in either
+# caller: the hook and the offline test drive one build, so a record only the
+# hook emitted would be a record no test could see.
+#
+# stdout carries it unconditionally, that being the run log every door keeps.
+# `$GITHUB_STEP_SUMMARY` carries it too when the runner offers one; the variable
+# being set is the runner's promise that the file is writable, so a failed
+# append is a broken promise and stops the release rather than losing the
+# record it was the whole point of writing.
+size_bytes="$(wc -c < "$art" | tr -d ' ')"
+payload_files="$(find "$pack" -type f | wc -l | tr -d ' ')"
+payload_kb="$(du -sk "$pack" | cut -f1)"
+size_line="artifact size: $NAME-$version.sh is $size_bytes bytes; payload $payload_files files, $payload_kb KiB unpacked"
+say "$size_line"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  printf '%s\n' "- \`$NAME-$version.sh\` — $size_bytes bytes; payload $payload_files files, $payload_kb KiB unpacked" \
+    >> "$GITHUB_STEP_SUMMARY" \
+    || die "could not record the artifact size in \$GITHUB_STEP_SUMMARY — the size is part of the release record, so it is not published without one."
+fi
