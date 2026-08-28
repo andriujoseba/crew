@@ -30,6 +30,8 @@ REPOS_FILE="$DUTY_DIR/repos.txt"
 _COMMON_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common"
 # shellcheck source=shared/lib/common/logging.sh
 source "$_COMMON_LIB_DIR/logging.sh"
+# shellcheck source=shared/lib/common/operating-limits.sh
+source "$_COMMON_LIB_DIR/operating-limits.sh"
 # shellcheck source=shared/lib/common/conf.sh
 source "$_COMMON_LIB_DIR/conf.sh"
 # shellcheck source=shared/lib/common/checkout.sh
