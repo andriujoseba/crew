@@ -2919,6 +2919,16 @@ _builder_repo() {
       # (#133). When it requests, converged.jq below returns false on the same
       # payload (not every panelist approves the head), so the two never both
       # fire — no continue needed.
+      #
+      # THE CAP DOES NOT BREAK THAT INVARIANT, and this is the one place where
+      # it could: the suppression below is an early return inside
+      # _request_panel, so execution CONTINUES into the convergence check
+      # regardless. Held together in round-cap.jq rather than here — a fifth
+      # round that closed with a live full approval is not at the cap, so
+      # at_cap and converged are never both true and the handoff is never
+      # suppressed under a PR the human is about to merge. Written down because
+      # it read the other way on this PR's first head and both change-requesting
+      # reviewers found it (#566).
       # The seventh argument is this tick's census answer for THIS PR (#502
       # D2a). Passed rather than read off the global inside the helper, so the
       # suppression is visible at the call site and drivable from a fixture.
