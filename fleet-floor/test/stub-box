@@ -26,6 +26,11 @@ mkdir -p "$STATEDIR"
 printf '%s\n' "$*" >> "$CALLS"
 
 now() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+box_now() {
+  local sc="$1" skew=0
+  case "$sc" in skew-behind|skew-silent-behind) skew=-10800 ;; skew-ahead|skew-silent-ahead) skew=10800 ;; esac
+  date -u -d "@$(( $(date +%s) + skew ))" '+%Y-%m-%dT%H:%M:%SZ'
+}
 ago() { date -u -d "@$(( $(date +%s) - ${1:-0} ))" '+%Y-%m-%dT%H:%M:%SZ'; }
 box_ago() {
   local sc="$1" age="$2" skew=0
@@ -119,7 +124,7 @@ emit_probe() {
     *)          printf '::agent %s\n' "$(roster_agent_of "$n")" ;;
   esac
   printf '::uptime %s\n' "$([ "$sc" = fresh ] && echo 61 || echo 91820)"
-  printf '::now %s\n' "$(now)"
+  printf '::now %s\n' "$(box_now "$sc")"
   # `flowing`, not `ok`: the probe no longer TESTS a credential, it reports
   # what the duty flow last observed. Keeping `ok` here would have let the
   # collector be written against a vocabulary probe.sh does not emit — the

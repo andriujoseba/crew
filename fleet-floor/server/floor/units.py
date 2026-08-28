@@ -1,7 +1,9 @@
 """duty.log and one probe -> the record the page renders."""
 
 import base64
+import math
 import re
+import time
 from datetime import datetime, timezone
 
 from floor import SILENT_AFTER_S
@@ -201,9 +203,10 @@ def unit_defaults():
         "longest": 0, "avg": 0, "success": 0, "today": 0,
         "paused": False, "disarmed": False,
         "cron": {"ok": False, "last": None, "age": None},
-        # Signed host-minus-box delta, in seconds. None means there was no tick
-        # timestamp/age pair from which to measure the two clocks.
+        # Signed host-minus-box delta and its conservative sampling uncertainty,
+        # in seconds. None means the probe did not return a usable box clock.
         "clock_delta": None,
+        "clock_uncertainty": None,
         "lock": {"held": None, "stuck": False},
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "authfail": [], "ping": None,
@@ -260,7 +263,13 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         u["note"] = "stopped — crew up starts it"
         return u
 
+    # Bracket this box's own probe. The fleet's batch timestamp predates an
+    # unbounded queue/transport delay and therefore cannot measure clock skew.
+    # `::now` is sampled somewhere inside this interval; its distance from the
+    # midpoint is bounded by half the interval, plus its one-second precision.
+    probe_started = time.time()
     raw, err = probe_box(unit, agent_conf)
+    probe_finished = time.time()
     if raw is None:
         # Also "unknown", and this is the one that matters most: a box that
         # stopped answering is the hired-and-gone-dark case, and dropping its
@@ -401,9 +410,17 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     elif meta.get("cron", "0") == "0":
         u["note"] = u["note"] or "no cron armed — crew hire %s" % unit["box"]
 
-    clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
-    if last_ts and tick_age >= 0:
+    guest_now = parse_ts(meta.get("now", ""))
+    if guest_now:
+        probe_midpoint = (probe_started + probe_finished) / 2
+        clock_offset = probe_midpoint - guest_now
         u["clock_delta"] = round(clock_offset)
+        u["clock_uncertainty"] = math.ceil((probe_finished - probe_started) / 2 + 1)
+    else:
+        # Old/malformed evidence cannot publish a skew verdict. Retain the
+        # tick-derived translation only so session ages keep their established
+        # host-timeline behavior while the missing measurement stays explicit.
+        clock_offset = (now - (last_ts + tick_age)) if last_ts and tick_age >= 0 else 0
     sessions, cur = derive_sessions(loglines, now, clock_offset)
     u["queue"] = derive_queue(loglines)
     u["cur"] = cur

@@ -503,7 +503,7 @@ if [ "$APP" -eq 1 ]; then
   fi
   # Say what was left out rather than quietly narrowing: a shorter roster that
   # nobody announced reads as full coverage.
-  if [ "$APP" -eq 1 ] && [ "${DRILLED# }" != "$ROLES" ]; then
+  if [ "$APP" -eq 1 ] && [ -n "${DRILLED// /}" ] && [ "${DRILLED# }" != "$ROLES" ]; then
     echo "## (app phase covers ${DRILLED# } — roles whose drill never reached a box are excluded)"
   fi
 fi

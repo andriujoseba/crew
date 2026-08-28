@@ -411,6 +411,11 @@ import json,sys
 d=json.load(sys.stdin)
 u=[x for x in d['units'] if x['box']=='$name']
 print(u[0].get('clock_delta') if u else None)")"
+  clock_uncertainty="$(body GET /api/fleet | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+u=[x for x in d['units'] if x['box']=='$name']
+print(u[0].get('clock_uncertainty') if u else None)")"
   cli_line="$(grep -E "^$name " "$TMP/status.txt" | head -1)"
   agreement="$(agreement_case "$floor_state" "$cli_line" "${note:-}" "$dis")"
   case "$agreement" in
@@ -477,10 +482,10 @@ print((u[0].get('note') or '') if u else '')")"
   # of individual branches makes both false directions fixtureable: counting
   # a disarmed/never-ticked/synchronized box, and failing to count a qualifying
   # one.
-  if [ "$(agreement_armed_skewed "$agreement" "$dis" "$tick_fresh" "$clock_delta")" = "qualifies" ]; then
+  if [ "$(agreement_armed_skewed "$agreement" "$dis" "$tick_fresh" "$clock_delta" "$clock_uncertainty")" = "qualifies" ]; then
     ARMED_AGREE_N=$((ARMED_AGREE_N + 1))
     printf -v signed_delta '%+d' "$clock_delta"
-    ARMED_AGREE_EVIDENCE="${ARMED_AGREE_EVIDENCE}${ARMED_AGREE_EVIDENCE:+, }$name=${signed_delta}s"
+    ARMED_AGREE_EVIDENCE="${ARMED_AGREE_EVIDENCE}${ARMED_AGREE_EVIDENCE:+, }$name=${signed_delta}s±${clock_uncertainty}s"
   fi
 done < <(roster_rows)
 

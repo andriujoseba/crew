@@ -37,23 +37,28 @@ agreement_case() {
 # one. The collector publishes the other three measured facts beside state so
 # the live leg and the fixtures make this decision in one place.
 agreement_armed_skewed() {
-  local agreement="$1" disarmed="$2" tick_fresh="$3" clock_delta="$4"
-  local magnitude
+  local agreement="$1" disarmed="$2" tick_fresh="$3" clock_delta="$4" uncertainty="$5"
+  local magnitude uncertainty_magnitude
 
   magnitude="${clock_delta#-}"
-  case "$clock_delta:$magnitude" in
-    -[0-9]*:[0-9]*|[0-9]*:[0-9]*) ;;
+  uncertainty_magnitude="${uncertainty#-}"
+  case "$clock_delta:$magnitude:$uncertainty:$uncertainty_magnitude" in
+    -[0-9]*:[0-9]*:[0-9]*:[0-9]*|[0-9]*:[0-9]*:[0-9]*:[0-9]*) ;;
     *) printf 'does-not-qualify\n'; return ;;
   esac
   case "$magnitude" in
     ""|*[!0-9]*) printf 'does-not-qualify\n'; return ;;
   esac
+  case "$uncertainty_magnitude" in
+    ""|*[!0-9]*) printf 'does-not-qualify\n'; return ;;
+  esac
 
-  # Timestamps have one-second precision and the host/box samples are not
-  # simultaneous. A synchronized pair can therefore measure 0 or 1 second;
-  # two seconds is the smallest delta distinguishable from that uncertainty.
+  # The box clock is sampled inside a measured host interval. Qualification is
+  # deliberately strict: a delta inside that interval's half-width plus the
+  # box timestamp's one-second precision is indistinguishable from latency.
   if [ "$agreement" = "up" ] && [ "$disarmed" = "False" ] \
-      && [ "$tick_fresh" = "True" ] && [ "$magnitude" -ge 2 ]; then
+      && [ "$tick_fresh" = "True" ] \
+      && [ "$magnitude" -gt "$uncertainty_magnitude" ]; then
     printf 'qualifies\n'
   else
     printf 'does-not-qualify\n'

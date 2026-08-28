@@ -38,8 +38,12 @@ t "state: cron silent -> offline"  offline  "$(uf ff-silent  "u['state']")"
 t "clock: three-hours-behind healthy box is not silent" False "$(uf ff-skew-behind "u['state'] == 'offline'")"
 t "clock: three-hours-ahead healthy box is not silent"  False "$(uf ff-skew-ahead  "u['state'] == 'offline'")"
 t "clock: cron age comes from box-side tickage" 110 "$(uf ff-skew-behind "u['cron']['age']")"
-t "clock: negative host-minus-box delta is published" -10800 "$(uf ff-skew-ahead "u['clock_delta']")"
-t "clock: positive host-minus-box delta is published" 10800 "$(uf ff-skew-behind "u['clock_delta']")"
+t "clock: negative host-minus-box delta is published within its measured uncertainty" True \
+  "$(uf ff-skew-ahead "u['clock_delta'] < 0 and abs(u['clock_delta'] + 10800) <= u['clock_uncertainty']")"
+t "clock: positive host-minus-box delta is published within its measured uncertainty" True \
+  "$(uf ff-skew-behind "u['clock_delta'] > 0 and abs(u['clock_delta'] - 10800) <= u['clock_uncertainty']")"
+t "clock: skew exceeds measured probe uncertainty" True \
+  "$(uf ff-skew-behind "abs(u['clock_delta']) > u['clock_uncertainty'] >= 1")"
 t "clock: session age survives negative skew" 10 "$(uf ff-skew-behind "u['sessions'][0]['ago']")"
 t "clock: session age survives positive skew" 10 "$(uf ff-skew-ahead "u['sessions'][0]['ago']")"
 t "clock: negative-skew session lands in newest spark bucket" 1.0 "$(uf ff-skew-behind "u['spark'][21]")"
@@ -57,26 +61,67 @@ case "$(uf ff-missing-age "u['note']")" in *unknown*) ok "clock: missing tickage
 # assertion alone cannot prove that the comparison increments instead of skips.
 # shellcheck source=drill/agreement.sh disable=SC1091
 source "$FLOOR/../drill/agreement.sh"
+FF_DELAYED_SYNC="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor import units
+
+guest_now = 1756152000
+probe = """::engine crew@0.4.1 (deadbee)
+::agent claude
+::now 2025-08-25T20:00:00Z
+::tickage 30
+::gh nofail
+::vendor nofail
+::cron 1
+::paused 0
+::logstart
+2025-08-25T19:59:30Z duty run start
+::logend
+"""
+samples = iter((guest_now - 3, guest_now + 3))
+units.time.time = lambda: next(samples)
+units.probe_box = lambda unit, agent_conf: (probe, "")
+unit = units.build_unit(
+    {"box": "delayed-sync", "agent": "claude", "room": "builder"},
+    "running", {}, guest_now,
+)
+print("%s:%s:%s:%s:%s" % (
+    unit["clock_delta"], unit["clock_uncertainty"],
+    unit["cron"]["ok"], unit["disarmed"], unit["state"],
+))
+PY
+)"
+IFS=: read -r delayed_delta delayed_uncertainty delayed_tick delayed_disarmed delayed_state \
+  <<<"$FF_DELAYED_SYNC"
+t "clock: delayed synchronized probe measures no skew" 0 "$delayed_delta"
+t "clock: delayed probe publishes interval-derived uncertainty" 4 "$delayed_uncertainty"
+t "agreement: delayed synchronized production probe cannot qualify" does-not-qualify \
+  "$(agreement_armed_skewed \
+      "$(agreement_case "$delayed_state" 'delayed-sync idle' '' "$delayed_disarmed")" \
+      "$delayed_disarmed" "$delayed_tick" "$delayed_delta" "$delayed_uncertainty")"
 t "agreement: skewed box reaches the real up-comparison branch" up \
   "$(agreement_case "$(uf ff-skew-behind "u['state']")" 'ff-skew-behind running' '' False)"
 t "agreement: armed fresh skew qualifies" qualifies \
-  "$(agreement_armed_skewed up False True "$(uf ff-skew-behind "u['clock_delta']")")"
+  "$(agreement_armed_skewed up False True \
+      "$(uf ff-skew-behind "u['clock_delta']")" "$(uf ff-skew-behind "u['clock_uncertainty']")")"
 t "agreement: armed but never-ticked does not qualify" does-not-qualify \
-  "$(agreement_armed_skewed \
-      "$(agreement_case "$(uf ff-neverticked "u['state']")" 'ff-neverticked idle' '' False)" \
-      False "$(uf ff-neverticked "u['cron']['ok']")" "$(uf ff-neverticked "u['clock_delta']")")"
+  "$(agreement_armed_skewed up False "$(uf ff-neverticked "u['cron']['ok']")" 10800 2)"
 t "agreement: armed fresh but synchronized does not qualify" does-not-qualify \
   "$(agreement_armed_skewed \
       "$(agreement_case "$(uf ff-idle "u['state']")" 'ff-idle idle' '' False)" \
-      False "$(uf ff-idle "u['cron']['ok']")" "$(uf ff-idle "u['clock_delta']")")"
+      False "$(uf ff-idle "u['cron']['ok']")" \
+      "$(uf ff-idle "u['clock_delta']")" "$(uf ff-idle "u['clock_uncertainty']")")"
 t "agreement: disarmed does not qualify" does-not-qualify \
-  "$(agreement_armed_skewed disarmed True False None)"
+  "$(agreement_armed_skewed up True True 10800 2)"
 t "agreement: silent does not qualify" does-not-qualify \
-  "$(agreement_armed_skewed silent False False 10800)"
+  "$(agreement_armed_skewed silent False True 10800 2)"
 t "agreement: not-hired does not qualify" does-not-qualify \
-  "$(agreement_armed_skewed not-hired False False None)"
+  "$(agreement_armed_skewed not-hired False True 10800 2)"
 t "agreement: down does not qualify" does-not-qualify \
-  "$(agreement_armed_skewed down False False None)"
+  "$(agreement_armed_skewed down False True 10800 2)"
 # The helper is the only door to the count. These two source mutations were
 # the review-round reproducer: a second increment in `disarmed` made a vacuous
 # green survive, while deleting the `up` increment made the criterion silently
