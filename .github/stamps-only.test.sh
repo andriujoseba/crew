@@ -144,6 +144,17 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 0 "an-undeclared-candidate-spelling-is-not-an-anchor" '*cut no candidate*'
 
+# The same rule on the TAG side, now that discovery reads tags too. `-rc.1` is
+# an undeclared spelling and `-rc1-dev` is a re-arm, and both match the `-rc*`
+# glob that finds the candidate tags — the anchored pattern is what refuses
+# them. A tag the release doors would never publish is not an anchor.
+D="$(base oddtags)"
+git -C "$D" tag 0.9.0-rc.1
+git -C "$D" tag 0.9.0-rc1-dev
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "an-undeclared-tag-spelling-is-not-an-anchor-either" '*cut no candidate*'
+
 # --- the ladder, followed -----------------------------------------------------
 
 D="$(base clean)"
