@@ -136,6 +136,8 @@ t usage-malformed-block-does-not-fail-session '0|ok' \
   "$(sed -n 's/.* rc=\([^ ]*\).* outcome=\([^ ]*\).*/\1|\2/p' <<<"$usage_bad_end")"
 t usage-malformed-block-claims-no-input-token 0 \
   "$(grep -c ' input_tokens=' <<<"$usage_bad_end" || true)"
+t usage-malformed-block-claims-no-pool 0 \
+  "$(grep -c ' pool=' <<<"$usage_bad_end" || true)"
 t usage-malformed-block-keeps-prose 'I pushed the fix.' \
   "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_bad")"
 
@@ -145,7 +147,7 @@ t usage-malformed-block-keeps-prose 'I pushed the fix.' \
 # engine learned the optional protocol.
 usage_legacy="$(
   unset -f bot_cli_structured_cmd bot_cli_structured_prose bot_cli_usage 2>/dev/null || true
-  SESSION_CREDENTIAL_POOL=""
+  SESSION_CREDENTIAL_POOL="configured-but-unmeasured"
   BOT_CLI_CMD=(bash -c 'printf "exec\nfinal reply\n"')
   # shellcheck disable=SC2317  # invoked indirectly through session_acted
   bot_session_acted() { grep -qx exec "$1"; }

@@ -241,7 +241,14 @@ run_session() {
   reply_tail="$(session_reply_tail "$slog")"
   peak_rss="$(session_peak_rss "$slog.peak")"
   usage_suffix="$(_session_usage_suffix "$structured_log")"
-  pool_suffix="$(_session_pool_suffix)"
+  # A pool is useful only beside figures it groups. Keeping it off a missing
+  # or malformed usage block also preserves the exact legacy SESSION END line
+  # promised to profiles that cannot report structured output (#475).
+  if [ -n "$usage_suffix" ]; then
+    pool_suffix="$(_session_pool_suffix)"
+  else
+    pool_suffix=""
+  fi
   rm -f "$slog.peak" "$slog.mem" 2>/dev/null || true
   [ -z "$structured_log" ] || rm -f "$structured_log" 2>/dev/null || true
   # tier= is APPENDED, after reply_tail, and the position is the whole of D5's
