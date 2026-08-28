@@ -35,7 +35,7 @@ ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 # Each prints its value and returns 0, or prints nothing and returns 1. A
 # reader NEVER dies: the caller turns a non-zero return into an absent field.
 
-v_cores() { nproc 2>/dev/null | grep -qE '^[0-9]+$' && nproc 2>/dev/null; }
+v_cores() { nproc 2>/dev/null | grep -E '^[0-9]+$'; }
 
 v_load1() { awk '{print $1}' /proc/loadavg 2>/dev/null | grep -E '^[0-9.]+$'; }
 
@@ -56,9 +56,14 @@ v_swap_active_mb() {
 
 v_swap_configured_mb() {
   local total=0 found=1 sz
-  # Active swap devices are configured by definition.
+  # Active swap devices are configured by definition. `--bytes` means BYTES,
+  # so this converts twice — the same two divisions the swapfile branch below
+  # applies to `stat -c %s`. One field, two contributors, and they only add up
+  # if both arrive in MiB; a single division here made an active 2 GiB device
+  # read as 2 TiB configured against 2 GiB active, which is precisely the
+  # configured-vs-active gulf this field exists to make visible.
   while read -r sz; do
-    [ -n "$sz" ] && { total=$((total + sz / 1024)); found=0; }
+    [ -n "$sz" ] && { total=$((total + sz / 1024 / 1024)); found=0; }
   done <<EOF
 $(swapon --show=SIZE --bytes --noheadings 2>/dev/null | tr -d ' ')
 EOF
@@ -141,6 +146,7 @@ v_os() {
   # os-release first, uname -r as the fallback; a box with neither omits the
   # field rather than emitting "unknown", which would read as a measurement.
   if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091  # a runtime file, not an input to the check
     ( . /etc/os-release 2>/dev/null; [ -n "${VERSION_ID:-}" ] &&
       echo "${ID:-linux}-${VERSION_ID}" || echo "${ID:-}" ) | grep -E '.'
   else
@@ -172,6 +178,23 @@ profile_to_mib() {
       *) return 1 ;;
     esac
   }
+}
+
+# The memory and disk bands are TWO-SIDED, and one function owns the rule so
+# the two figures cannot acquire different ones.
+#
+# The low side cannot be equality: reported total is always a little under the
+# provisioned figure (firmware reservation reads 7876 MiB on an 8 GiB box), so
+# an exact compare would mark every healthy box and the finding would be
+# ignored inside a day. That argument is for TOLERANCE, though, and not for
+# one-sidedness — nothing explains a box reading over its profile except the
+# profile never having been applied, which is exactly the provisioning drift
+# D3 exists to catch. AC3 says a reading that DISAGREES is marked, and a box
+# minted from a 4 GiB profile that came up with 8 disagrees as loudly as one
+# that came up with 2. `cores` has always marked drift in both directions;
+# these two now do the same.
+outside_band() { # outside_band <measured_mib> <want_mib>
+  [ "$1" -lt $(( $2 * 9 / 10 )) ] || [ "$1" -gt $(( $2 * 11 / 10 )) ]
 }
 
 # Disagreement is reported with BOTH numbers: a finding that says only
@@ -231,17 +254,13 @@ emit_vitals() {
 
   if [ -n "${mem_total:-}" ] && [ -n "${BOX_MEMORY:-}" ]; then
     local want; want=$(profile_to_mib "$BOX_MEMORY") &&
-      # Reported total is always a little under the provisioned figure
-      # (firmware reservation), so the test is a 10% band, not equality — an
-      # exact compare would mark every healthy box and the finding would be
-      # ignored within a day.
-      [ "$mem_total" -lt $((want * 9 / 10)) ] &&
+      outside_band "$mem_total" "$want" &&
       mark memory-profile-mismatch "${want}MiB" "${mem_total}MiB"
   fi
 
   if [ -n "${disk_total:-}" ] && [ -n "${BOX_DISK:-}" ]; then
     local wantd; wantd=$(profile_to_mib "$BOX_DISK") &&
-      [ $((disk_total / 1024)) -lt $((wantd * 9 / 10)) ] &&
+      outside_band $((disk_total / 1024)) "$wantd" &&
       mark disk-profile-mismatch "${wantd}MiB" "$((disk_total / 1024))MiB"
   fi
 

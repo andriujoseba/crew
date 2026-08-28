@@ -100,6 +100,31 @@ has "drift-cpu-names-both-numbers" "$out" "want=4,got=2"
 # ...and the record is still a record: a finding annotates it, never replaces it.
 has "drift-still-emits-fields" "$out" "cores=2"
 
+# MUST-FAIL: drift marked in ONE direction only. The band exists because a
+# reported total sits a little under the provisioned figure, but that argues
+# for tolerance and not for one-sidedness: a box that came up with more than
+# its profile declares was not minted from that profile either. This fixture
+# reads 3850 MiB / ~29.7 GiB against a profile declaring 1 GiB of each, so it
+# is over on BOTH figures while cores agree exactly — which is what makes it a
+# test of the upper bound and not of the comparison in general. Delete either
+# `-gt` branch from `outside_band` and the matching assertion here reds.
+B="$(mk_box drift-over)"
+out="$(run_probe "$B" BOX_CPU=2 BOX_MEMORY=1GiB BOX_DISK=1GiB)"
+has "drift-over-marks-memory" "$out" "finding=memory-profile-mismatch:want=1024MiB,got=3850MiB"
+has "drift-over-marks-disk"   "$out" "finding=disk-profile-mismatch:want=1024MiB,got=29696MiB"
+# Cores agree, so the record must NOT invent a third finding: this is the
+# control that says the upper bound is a band and not an always-on mismatch.
+hasnt "drift-over-leaves-cpu-clean" "$out" "cpu-profile-mismatch"
+
+# The band's edges, so "10%" is a tested figure and not a comment. 3850 MiB
+# measured: a 4000 MiB profile is 3.75% under and clean; 3400 MiB is 13% over
+# the declared and marked.
+B="$(mk_box band-edge)"
+out="$(run_probe "$B" BOX_MEMORY=4000MiB)"
+hasnt "band-inside-is-clean" "$out" "memory-profile-mismatch"
+out="$(run_probe "$B" BOX_MEMORY=3400MiB)"
+has "band-outside-high-is-marked" "$out" "finding=memory-profile-mismatch:want=3400MiB,got=3850MiB"
+
 # --- 3. swapfile present but not active --------------------------------------
 # MUST-FAIL: the swapfile fixture reading clean. This is the claude-triage
 # state the issue measured — an 8 GiB /swapfile on disk with `swapon --show`
@@ -117,6 +142,50 @@ has "swapfile-is-a-finding"       "$out" "finding=swap-configured-inactive:confi
 B="$(mk_box noswap)"
 out="$(run_probe "$B" BOX_CPU=2)"
 hasnt "noswap-no-finding" "$out" "swap-configured-inactive"
+
+# MUST-FAIL: the ACTIVE swap device counted in the wrong unit. Until this
+# fixture existed no case in this file had active swap at all — every mk_box
+# answered `swapon` with `exit 0` — so the `swapon --show` accumulator was
+# never once executed under test, and it was converting BYTES as if they were
+# KiB. `--bytes` means bytes; one division left the field 1024x high in a
+# field named `_mb`.
+#
+# It hid behind the finding rather than behind the field: swap-configured-
+# inactive fires only when active is 0, and when active is 0 this branch
+# contributes nothing. So the assertion has to be on the FIGURE.
+mk_active_swap() { # mk_active_swap <box> <bytes> <mb> — an active device
+  cat > "$1/bin/swapon" <<EOF
+#!/bin/sh
+echo "$2"
+EOF
+  cat > "$1/bin/free" <<EOF
+#!/bin/sh
+echo "               total        used        free      shared  buff/cache   available"
+echo "Mem:            3850        1200        1500         103        1150        3128"
+echo "Swap:           $3           0        $3"
+EOF
+  chmod +x "$1/bin/swapon" "$1/bin/free"
+}
+
+B="$(mk_box swapon-active)"
+mk_active_swap "$B" 2147483648 2048   # one 2 GiB device, swapped on
+out="$(run_probe "$B" BOX_CPU=2)"
+has "active-swap-configured-in-mib" "$out" "swap_configured_mb=2048"
+has "active-swap-active-in-mib"     "$out" "swap_active_mb=2048"
+# The pair agrees, so there is nothing to report: a box with working swap is
+# not a finding. Under the KiB bug the figures disagree by 1024x and this is
+# still silent — which is why the assertion above is on the number.
+hasnt "active-swap-is-not-a-finding" "$out" "swap-configured-inactive"
+
+# Both contributors to swap_configured_mb in ONE record, which is the shape
+# the defect actually had: an active device and a swapfile on disk are added
+# together, so they only sum correctly if both arrive in MiB. 2048 + 8.
+B="$(mk_box swapon-active-plus-file)"
+mk_active_swap "$B" 2147483648 2048
+dd if=/dev/zero of="$B/root/swapfile" bs=1M count=8 status=none 2>/dev/null ||
+  head -c 8388608 /dev/zero > "$B/root/swapfile"
+out="$(run_probe "$B" BOX_CPU=2)"
+has "active-swap-sums-with-swapfile" "$out" "swap_configured_mb=2056"
 
 # --- 4. a platform missing one field -----------------------------------------
 # MUST-FAIL: one absent field suppressing the whole record. D6 is per-field,
