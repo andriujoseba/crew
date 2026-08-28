@@ -28,8 +28,8 @@ RE_PEAK = re.compile(r" peak_rss=(\d+)(?:\s|$)")
 RE_ANY_TS = re.compile("^" + TS + r" ")
 # #483 D1 — the box vitals record. This page and `crew status` render the SAME
 # line out of the SAME duty.log by the SAME selection rule (the newest line
-# with this prefix); probe.sh carries it here verbatim and cli/crew greps for
-# it directly. Two readers with private probes disagree in front of an
+# with this prefix); probe.sh carries it here verbatim and `crew status` greps
+# for it directly. Two readers with private probes disagree in front of an
 # operator, which is the defect this console exists to end, so neither of them
 # measures anything — the tick measured it once and both quote it.
 #
@@ -193,8 +193,8 @@ def _vitals_finding(raw):
     name, _, detail = raw.partition(":")
     if not detail:
         return name
-    # A plain replace, not a split-and-rejoin that drops empties: cli/crew does
-    # this with `${detail//,/, }` and cannot drop them, and a rule that only
+    # A plain replace, not a split-and-rejoin that drops empties: `crew status`
+    # does this with `${detail//,/, }` and cannot drop them, and a rule that only
     # one of the two readers applies is a rule they can disagree under.
     return "%s: %s" % (name, detail.replace(",", ", "))
 
