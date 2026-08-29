@@ -140,11 +140,29 @@ slog="$DUTY_DIR/logs/$(date -u '+%Y%m%dT%H%M%SZ')-operator-floor-$tok.log"
 printf '%s SESSION START kind=operator key=floor timeout=1800s log=%s\n' "$ts" "$slog" >>"$DUTY_DIR/duty.log"
 nohup setsid bash -c '
   DUTY_DIR="'"$DUTY_DIR"'"; slog="'"$slog"'"; conf="'"$conf"'"
-  start=$SECONDS; rc=0
+  start=$SECONDS; rc=0; session_stamp="${slog##*/}"
   source "$conf"; rm -f "$conf"
   export PATH="${BOT_PATH_PREPEND:-$HOME/.local/bin}:$PATH"
   cd "$HOME"
-  timeout -k 60 1800 "${BOT_CLI_CMD[@]}" "$1" </dev/null >"$slog" 2>&1 || rc=$?
+  env DUTY_SESSION_STAMP="$session_stamp" \
+    timeout -k 60 1800 "${BOT_CLI_CMD[@]}" "$1" </dev/null >"$slog" 2>&1 || rc=$?
+  proc_root="${SESSION_PROC_ROOT:-/proc}"; left=unknown
+  if [ -d "$proc_root" ]; then
+    count=0; scanned=0
+    for environ in "$proc_root"/[0-9]*/environ; do
+      [ -f "$environ" ] || continue
+      if grep -Fzxq -- "DUTY_SESSION_STAMP=$session_stamp" "$environ" 2>/dev/null; then
+        erc=0
+      else
+        erc=$?
+      fi
+      case "$erc" in
+        0) count=$((count + 1)); scanned=$((scanned + 1));;
+        1) scanned=$((scanned + 1));;
+      esac
+    done
+    [ "$scanned" -eq 0 ] || left="$count"
+  fi
   dur=$((SECONDS - start)); v=ok; acted=unknown
   [ "$rc" -eq 124 ] && v=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && v=FAILED
@@ -153,8 +171,10 @@ nohup setsid bash -c '
     case "$arc" in 0) acted=yes;; 1) acted=no;; esac
   fi
   reply_tail="$(awk '\''NF { line=$0 } END { printf "%s", substr(line, 1, 200) }'\'' "$slog" 2>/dev/null | base64 | tr -d '\''\n'\'')"
-  printf "%s SESSION END kind=operator key=floor rc=%s dur=%ss outcome=%s acted=%s reply_tail=%s\n" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$dur" "$v" "$acted" "$reply_tail" >>"$DUTY_DIR/duty.log"
+  log_bytes="$(stat -c %s -- "$slog" 2>/dev/null)" || log_bytes=unknown
+  case "$log_bytes" in ""|*[!0-9]*) log_bytes=unknown;; esac
+  printf "%s SESSION END kind=operator key=floor rc=%s dur=%ss outcome=%s acted=%s reply_tail=%s log=%s left=%s\n" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "$dur" "$v" "$acted" "$reply_tail" "$log_bytes" "$left" >>"$DUTY_DIR/duty.log"
 ' _ "$prompt" </dev/null >/dev/null 2>&1 &
 echo "session started; log $slog"
 """

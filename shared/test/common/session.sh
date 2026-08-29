@@ -74,7 +74,8 @@ session_evidence_run() ( # session_evidence_run KEY TMO PROC_ROOT COMMAND...
   BOT_CLI_CMD=("$@")
   alert() { :; }
   run_session build "fixture/$key" "$edir/work" "$tmo" prompt
-  printf 'returned=yes rc=%s\n' "$RUN_SESSION_RC"
+  local run_rc=$?
+  printf 'returned=%s rc=%s\n' "$run_rc" "$RUN_SESSION_RC"
 )
 
 session_end_value() { # session_end_value FIELD OUTPUT
@@ -112,7 +113,7 @@ t session-evidence-missing-proc-is-unknown unknown \
 t session-evidence-missing-proc-keeps-verdict '3|FAILED' \
   "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\) dur=[^ ]* outcome=\([^ ]*\).*/\1|\2/p' \
     <<<"$evidence_noproc")"
-t session-evidence-missing-proc-cannot-fail-run-session 'returned=yes rc=3' \
+t session-evidence-missing-proc-cannot-fail-run-session 'returned=0 rc=3' \
   "$(grep '^returned=' <<<"$evidence_noproc" || true)"
 
 session_left_source="$(awk '/_session_left\(\) \{/{on=1} on{print} on && /^}/{exit}' \

@@ -264,6 +264,7 @@ cat > "$BS_M/bin/fake-cli" <<'EOF'
 #!/usr/bin/env bash
 printf 'ARGC=%s\n' "$#"
 printf 'LAST=%s\n' "${*: -1}"
+[ -z "${BS_STAMP_FILE:-}" ] || printf '%s\n' "$DUTY_SESSION_STAMP" > "$BS_STAMP_FILE"
 EOF
 chmod +x "$BS_M/bin/fake-cli"
 
@@ -291,6 +292,7 @@ open(os.environ["BS_PROMPT_FILE"], "w").write(prompt)
 PY
 
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  BS_STAMP_FILE="$BS_TMP/message.stamp" \
   bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 t "message: script exits 0" 0 "$?"
 
@@ -310,11 +312,14 @@ fi
 
 # The log name carries the per-request token now (…-operator-floor-<tok>.log),
 # which is what stops two same-second sessions overwriting each other.
-BS_LOG="$(cat "$BS_M"/duty/logs/*operator-floor*.log 2>/dev/null)"
+BS_LOG_FILE="$(find "$BS_M/duty/logs" -name '*operator-floor*.log' -print -quit)"
+BS_LOG="$(cat "$BS_LOG_FILE" 2>/dev/null)"
 t "message: prompt arrives as ONE argv element" "ARGC=3" "$(printf '%s\n' "$BS_LOG" | sed -n 's/^\(ARGC=[0-9]*\)$/\1/p')"
 t "message: envelope precedes operator text byte-identically" \
   "$(cat "$BS_TMP/expected-floor-prompt")" \
   "$(printf '%s\n' "$BS_LOG" | sed '1d; 2s/^LAST=//')"
+t "message: dispatch carries its exact session stamp" "${BS_LOG_FILE##*/}" \
+  "$(cat "$BS_TMP/message.stamp")"
 
 if grep -q 'SESSION START kind=operator key=floor' "$BS_M/duty/duty.log"; then
   ok "message: writes a SESSION START marker"
@@ -326,6 +331,16 @@ if grep -q 'SESSION END kind=operator key=floor rc=0 .* outcome=ok' "$BS_M/duty/
 else
   fail "message: writes a SESSION END marker with rc" "$(cat "$BS_M/duty/duty.log")"
 fi
+BS_END="$(grep 'SESSION END kind=operator' "$BS_M/duty/duty.log")"
+t "message: SESSION END records final log bytes" "$(wc -c < "$BS_LOG_FILE" | tr -d ' ')" \
+  "$(sed -n 's/.* log=\([^ ]*\).*/\1/p' <<<"$BS_END")"
+t "message: SESSION END records no surviving stamped process" 0 \
+  "$(sed -n 's/.* left=\([^ ]*\).*/\1/p' <<<"$BS_END")"
+case "$BS_END" in
+  *' reply_tail='*' log='*' left='*) r1='reply_tail log left' ;;
+  *) r1=WRONG-ORDER ;;
+esac
+t "message: evidence fields follow reply_tail in order" 'reply_tail log left' "$r1"
 
 # An operator session must show up in the console's history like any other, so
 # the markers it writes have to survive the collector's own parser.
