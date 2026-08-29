@@ -62,6 +62,72 @@ t credential-pool-ships-unset '' \
   "$(bash -c '. "$1"; printf %s "$SESSION_CREDENTIAL_POOL"' \
       _ "$SHARED/conf/fleet.defaults.conf")"
 
+# --- optional classifier hooks are loud once per profile per boot (#501) ---
+for agent in claude kimi; do
+  if bash -c '. "$1"; declare -F bot_session_terminal >/dev/null' \
+      _ "$SHARED/conf/agents/$agent.conf"; then r1=declared; else r1=MISSING; fi
+  t "$agent-profile-declares-terminal-classifier" declared "$r1"
+done
+for agent in codex grok; do
+  if bash -c '. "$1"; declare -F bot_session_terminal >/dev/null' \
+      _ "$SHARED/conf/agents/$agent.conf"; then r1=UNEXPECTED; else r1=absent; fi
+  t "$agent-profile-declares-terminal-gap" absent "$r1"
+done
+for profile in "$SHARED"/conf/agents/*.conf; do
+  agent="$(basename "$profile" .conf)"
+  if bash -c '. "$1"; declare -F bot_session_terminal >/dev/null' _ "$profile"; then
+    if bash -c '. "$1"; declare -F bot_session_terminal_fixture >/dev/null' \
+        _ "$profile"; then r1=declared; else r1=MISSING; fi
+    t "$agent-terminal-classifier-carries-drill-fixture" declared "$r1"
+    if grep -q '^# Observed sessions: ' "$profile"; then r1=cited; else r1=MISSING; fi
+    t "$agent-terminal-classifier-cites-observed-sessions" cited "$r1"
+  else
+    if bash -c '. "$1"; declare -F bot_session_terminal_fixture >/dev/null' \
+        _ "$profile"; then r1=UNEXPECTED; else r1=absent; fi
+    t "$agent-terminal-gap-carries-no-drill-fixture" absent "$r1"
+  fi
+done
+
+classifier_report_case() ( # profile boot acted|missing terminal|missing
+  local profile="$1" boot="$2" acted="$3" terminal="$4"
+  BOT_AGENT="$profile"
+  unset -f bot_session_acted bot_session_terminal
+  # shellcheck disable=SC2317  # invoked indirectly by the reporter's declare -F probe
+  [ "$acted" = missing ] || bot_session_acted() { return 1; }
+  # shellcheck disable=SC2317  # invoked indirectly by the reporter's declare -F probe
+  [ "$terminal" = missing ] || bot_session_terminal() { return 1; }
+  report_profile_classifier_gaps "$boot"
+)
+classifier_report="$({
+  classifier_report_case codex boot-a declared missing
+  classifier_report_case codex boot-a declared missing
+  classifier_report_case operator boot-a missing missing
+  classifier_report_case codex boot-b declared missing
+  classifier_report_case claude boot-b declared declared
+} 2>&1)"
+t classifier-gap-once-for-profile-per-boot 2 \
+  "$(grep -c 'agent profile codex missing classifier hook(s): bot_session_terminal' <<<"$classifier_report" || true)"
+t classifier-gap-lists-every-missing-hook 1 \
+  "$(grep -c 'agent profile operator missing classifier hook(s): bot_session_acted, bot_session_terminal' <<<"$classifier_report" || true)"
+t classifier-complete-profile-is-not-named 0 \
+  "$(grep -c 'agent profile claude missing classifier' <<<"$classifier_report" || true)"
+boot_id_line="$(grep -n '^boot_id=' "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal boot-id argument in duty.sh
+classifier_report_line="$(grep -n 'report_profile_classifier_gaps "\$boot_id"' \
+  "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal boot marker read in duty.sh
+boot_gate_line="$(grep -n 'if \[ "\$(cat "\$DUTY_DIR/.boot-id"' \
+  "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+if [ -n "$boot_id_line" ] && [ -n "$classifier_report_line" ] \
+    && [ -n "$boot_gate_line" ] \
+    && [ "$boot_id_line" -lt "$classifier_report_line" ] \
+    && [ "$classifier_report_line" -lt "$boot_gate_line" ]; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t classifier-gap-report-is-wired-on-the-boot-path wired "$r1"
+
 # --- each agent profile reads its OWN credential store, locally -------------
 # Driven against the real conf files with a fabricated HOME, because the whole
 # claim of bot_cli_present is that it needs nothing but local disk.
@@ -228,6 +294,8 @@ done
 PHOME="$TMP/profile-home"
 PDUTY="$PHOME/duty"
 mkdir -p "$PDUTY/.crew-seed-agents"
+printf 'old-boot\n' >"$PDUTY/.boot-id"
+printf 'old classifier report\n' >"$PDUTY/.profile-classifier-hooks"
 cat >"$PDUTY/.crew-seed-agents/vendorx.conf" <<'EOF'
 # vendorx — operator-supplied fixture vendor (never shipped)
 # shellcheck shell=bash disable=SC2034
@@ -253,6 +321,10 @@ fi
 t operator-profile-is-the-operator-copy operator "$r1"
 [ -d "$PDUTY/.crew-seed-agents" ] && r1=lingers || r1=consumed
 t operator-profile-seed-consumed consumed "$r1"
+t install-clears-boot-gate-cache absent \
+  "$([ -e "$PDUTY/.boot-id" ] && printf present || printf absent)"
+t install-clears-classifier-report-cache absent \
+  "$([ -e "$PDUTY/.profile-classifier-hooks" ] && printf present || printf absent)"
 # The shipped set still installs whole beside the operator's addition.
 [ -f "$PDUTY/conf/agents/claude.conf" ] && r1=present || r1=missing
 t operator-profile-shipped-set-intact present "$r1"
@@ -570,8 +642,51 @@ printf 'Execution error' >"$ALOG/fault.log"
 # The vendor's refusal banners. A session that hit the weekly cap or a dead
 # login never reached the model at all — 40 of the 1064 are one of these.
 printf "You've hit your session limit \xc2\xb7 resets 1:20am (UTC)\n" >"$ALOG/quota.log"
+printf "You've hit your weekly limit \xc2\xb7 resets 9am (UTC)\n" >"$ALOG/weekly.log"
 printf "Not logged in \xc2\xb7 Please run /login\n" >"$ALOG/nologin.log"
 : >"$ALOG/empty.log"
+
+terminal_rc() {  # terminal_rc <agent> <log> -> raw rc of the profile hook
+  local rc=0
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; bot_session_terminal "$2" ) \
+    >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+t terminal-claude-observed-session-limit 0 "$(terminal_rc claude "$ALOG/quota.log")"
+t terminal-claude-observed-weekly-limit 0 "$(terminal_rc claude "$ALOG/weekly.log")"
+printf '%s\n' "You've hit your weekly limit · resets 9am (UTC)" \
+  'transient network failure: dial tcp i/o timeout' >"$ALOG/quota-then-transient.log"
+t terminal-claude-quoted-quota-ending-transient 1 \
+  "$(terminal_rc claude "$ALOG/quota-then-transient.log")"
+t terminal-claude-login-failure-is-not-guessed 1 "$(terminal_rc claude "$ALOG/nologin.log")"
+
+profile_breaker_reach() ( # profile terminal-text -> terminal|failed
+  local profile="$1" terminal_text="$2" bdir="$TMP/profile-breaker-$1" output
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=fixture
+  SESSION_TERMINAL_THRESHOLD=1
+  export PROFILE_BREAK_TEXT="$terminal_text"
+  # shellcheck disable=SC1090
+  source "$SHARED/conf/agents/$profile.conf"
+  # shellcheck disable=SC2016  # expanded by the fixture CLI, not this suite
+  BOT_CLI_CMD=(bash -c 'printf "%s\n" "$PROFILE_BREAK_TEXT"; exit 1')
+  alert() { :; }
+  output="$(run_session review fixture/repo "$bdir/work" 5 prompt)"
+  if grep -q 'outcome=TERMINAL' <<<"$output"; then
+    printf terminal
+  else
+    printf failed
+  fi
+)
+t terminal-breaker-reaches-claude terminal \
+  "$(profile_breaker_reach claude "You've hit your weekly limit · resets 9am (UTC)")"
+t terminal-breaker-reaches-kimi terminal \
+  "$(profile_breaker_reach kimi "provider error: {'type': 'access_terminated_error'}")"
+t terminal-breaker-does-not-guess-codex failed \
+  "$(profile_breaker_reach codex "You've hit your weekly limit · resets 9am (UTC)")"
+t terminal-breaker-does-not-guess-grok failed \
+  "$(profile_breaker_reach grok "You've hit your weekly limit · resets 9am (UTC)")"
 
 # The contract, on BOTH profiles, case for case. grok.conf carries the same
 # detector as a second copy because a profile is transported one file at a

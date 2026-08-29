@@ -548,11 +548,20 @@ t rehearsal-breaker-shipped-threshold-is-numeric 3 \
 unset -f bx ok fail
 
 BREAKER_FIXTURE_HOME="$TMP/rehearsal-breaker-fixture"
-mkdir -p "$BREAKER_FIXTURE_HOME/duty/conf/roles"
+mkdir -p "$BREAKER_FIXTURE_HOME/duty/conf/agents" \
+  "$BREAKER_FIXTURE_HOME/duty/conf/roles"
+cp "$SHARED/conf/agents/claude.conf" \
+  "$BREAKER_FIXTURE_HOME/duty/conf/agents/claude.conf"
 printf 'TIMEOUT_REVIEW=1\n' >"$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf"
+AGENT=claude
 bx() { HOME="$BREAKER_FIXTURE_HOME" bash -c "$1"; }
+if rehearsal_breaker_terminal_fixture_is_classified; then r1=classified; else r1=WRONG; fi
+t rehearsal-breaker-profile-fixture-is-classified classified "$r1"
 if rehearsal_breaker_install_fixture reviewer; then r1=installed; else r1=WRONG; fi
 t rehearsal-breaker-cli-fixture-installs installed "$r1"
+t rehearsal-breaker-cli-fixture-uses-active-profile \
+  "You've hit your weekly limit · resets 9am (UTC)" \
+  "$(cat "$BREAKER_FIXTURE_HOME/.crew-breaker-drill/terminal.txt")"
 t rehearsal-breaker-cli-fixture-overrides-command 1 \
   "$(grep -cF '# rehearsal-breaker begin' "$BREAKER_FIXTURE_HOME/duty/conf/roles/reviewer.conf")"
 if rehearsal_breaker_restore_cli_for_recovery; then r1=restored; else r1=WRONG; fi
@@ -625,7 +634,8 @@ breaker_acted_missing_out="$({
     REHEARSAL_BREAKER_STATE=/tmp/breaker-state
   }
   rehearsal_breaker_profile_has_hook() {
-    [ "$1" = bot_session_terminal ]
+    [ "$1" = bot_session_terminal ] \
+      || [ "$1" = bot_session_terminal_fixture ]
   }
   bx() { return 0; }
   ok() { :; }
