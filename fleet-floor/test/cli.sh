@@ -874,6 +874,25 @@ JS
     same "$(cl_xread "$CL_XREAD_REC")"
   t "crew status <box>: the two readers agree on which absence costs which row" \
     same "$(cl_xread "$CL_XREAD_DEGRADED")"
+
+  CL_HEALTH_REPORT=$'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=4 busy=1\nTICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'
+  {
+    awk '/^_tick_health_window\(\)/,/^\}/' "$CL_ROOT/shared/lib/common/tick-health.sh"
+    awk '/^_tick_health_duration\(\)/,/^\}/' "$CL_ROOT/shared/lib/common/tick-health.sh"
+    awk '/^tick_health_rows\(\)/,/^\}/' "$CL_ROOT/shared/lib/common/tick-health.sh"
+    # shellcheck disable=SC2016  # $1 is the extracted script's argument
+    printf 'tick_health_rows "$1"\n'
+  } >"$CL_TMP/hrows.sh"
+  grep '^function tickHealthWindow\|^function tickHealthDuration' "$CL_FLOOR/index.html" >"$CL_TMP/hrows.js"
+  awk '/^function tickHealthRows\(h\)\{/,/^\}/' "$CL_FLOOR/index.html" >>"$CL_TMP/hrows.js"
+  cat >>"$CL_TMP/hrows.js" <<'JS'
+var h={window:86400,last_tick_age:300,ticks:4,busy:1,kinds:[{kind:"build",skips:2,holds:{budget:1,"terminal-breaker":1},outcome:"died-with-box",streak:3}]};
+process.stdout.write(tickHealthRows(h).map(function(r){return r[0]+"\t"+r[1];}).join("\n")+"\n");
+JS
+  CL_HEALTH_SH="$(bash "$CL_TMP/hrows.sh" "$CL_HEALTH_REPORT")"
+  CL_HEALTH_JS="$(node "$CL_TMP/hrows.js")"
+  t "crew status <box>: tick-health figures cannot disagree with the floor" \
+    "$CL_HEALTH_SH" "$CL_HEALTH_JS"
 fi
 
 # A partial answer is not an absent engine: rig_report and the duty-log read

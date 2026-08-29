@@ -1478,10 +1478,11 @@ function boxVitalsRows(v){
   return rows;
 }
 function tickHealthWindow(s){return s%86400===0?(s/86400)+"d":s%3600===0?(s/3600)+"h":s+"s";}
+function tickHealthDuration(s){return s>=86400?Math.floor(s/86400)+"d "+Math.floor((s%86400)/3600)+"h":s>=3600?Math.floor(s/3600)+"h "+Math.floor((s%3600)/60)+"m":s>=60?Math.floor(s/60)+"m":s+"s";}
 function tickHealthRows(h){
   if(!h)return [];
   var w=tickHealthWindow(h.window),rows=[];
-  rows.push(["Last tick ("+w+" window)",h.last_tick_age===null?"unknown":fmtDur(h.last_tick_age)+" ago"]);
+  rows.push(["Last tick ("+w+" window)",h.last_tick_age===null?"unknown":tickHealthDuration(h.last_tick_age)+" ago"]);
   rows.push(["Busy ticks ("+w+" window)",h.ticks?String(h.busy)+"/"+h.ticks+" ("+(100*h.busy/h.ticks).toFixed(1)+"%)":"unknown"]);
   (h.kinds||[]).forEach(function(k){
     var holds=Object.keys(k.holds||{}).map(function(reason){return reason+":"+k.holds[reason];}).join(", ")||"none";
