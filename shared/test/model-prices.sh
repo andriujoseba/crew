@@ -15,6 +15,16 @@ SESSION_MOD="$SHARED/lib/common/session.sh"
 source "$RATE_CONF"
 
 cost() { model_token_cost_usd "$@"; }
+matches_reported() { model_token_cost_matches_reported "$@"; }
+record_value() {
+  local name="$1" record="$2" field
+  for field in $record; do
+    [ "${field%%=*}" = "$name" ] || continue
+    printf '%s' "${field#*=}"
+    return 0
+  done
+  return 1
+}
 outcome() {
   local out rc
   out="$(cost "$@")"; rc=$?
@@ -55,6 +65,19 @@ t model-prices-partial-model-rejects-unpriced-cache '1|' \
   "$(outcome fixture partial-model 'input_tokens=5 output_tokens=1 cache_read_input_tokens=2')"
 t model-prices-partial-model-rejects-explicit-zero-unpriced-cache '1|' \
   "$(outcome fixture partial-model 'input_tokens=5 output_tokens=1 cache_creation_input_tokens=0')"
+
+# This rate-derived envelope proves that Claude's SESSION END field mapping and
+# the comparison harness agree; it deliberately does not prove the shipped
+# rate. #585 checks the rate against a real billed session. One nanodollar is
+# the tolerance because the reader emits USD to nine decimal places: it absorbs
+# only that display precision, not a materially different reported figure.
+claude_record='input_tokens=120 output_tokens=34 cache_creation_input_tokens=5 cache_read_input_tokens=77 cost_usd=0.00091185 session_id=session%2Fone model=claude-sonnet-4-6'
+claude_model="$(record_value model "$claude_record")"
+claude_reported="$(record_value cost_usd "$claude_record")"
+t model-prices-rate-derived-envelope-is-within-tolerance 0 \
+  "$(matches_reported claude "$claude_model" "$claude_record" "$claude_reported" 0.000000001; printf '%s' "$?")"
+t model-prices-out-of-band-envelope-fails 1 \
+  "$(matches_reported claude "$claude_model" "$claude_record" 0.000911852 0.000000001; printf '%s' "$?")"
 
 # Prices are a current view over an immutable record: changing only operator
 # data must re-price the same already-captured token facts.
