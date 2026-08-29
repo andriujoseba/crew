@@ -101,7 +101,15 @@ config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || pri
 # reader of these files defines them: `#` and blank lines are ignored (#488).
 # `|| true` for the same reason box_registry carries it — a file of nothing but
 # comments makes grep exit 1, and under `pipefail` that kills the caller.
-registry_entries() { grep -vE '^[[:space:]]*(#|$)' "$1" 2>/dev/null || true; }
+#
+# On its own lines rather than folded onto one, so that every resolver in this
+# family extracts with the same `/^name() {/,/^}/` range. The floor suite pulls
+# them out of this file one by one to assert against the SHIPPED resolver
+# instead of a copy, and a one-line function silently over-captures to the next
+# closing brace.
+registry_entries() { # FILE
+  grep -vE '^[[:space:]]*(#|$)' "$1" 2>/dev/null || true
+}
 # registry_fleet_file KIND / registry_override_file BOX KIND — the two files
 # behind one box's registry. KIND is `work` or `notify`. The override printer
 # is silent when the box has none, so "" IS the inherit state and every caller

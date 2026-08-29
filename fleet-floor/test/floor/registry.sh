@@ -144,9 +144,30 @@ t "registry: an override for a box off the roster is refused" False \
   "$(reg '{"action":"registry-override","box":"not-a-box","kind":"work","entries":[]}' | jqf "d['ok']")"
 
 # --- the per-box override (D2) -----------------------------------------------
-t "registry: a box takes an override" True \
-  "$(reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["heavy-duty/rig"]}' | jqf "d['ok']")"
-t "registry: ...which wins over the fleet-wide list" "heavy-duty/rig" "$(regbe ff-working work)"
+#
+# CONTAINMENT FIRST, because it bounds everything below it: the operator's
+# direction of 2026-08-29 makes a box's override a SELECTION from the
+# fleet-wide registry, never a free list, so "a box can watch a board the fleet
+# does not" is the shape that must not be reachable. The fleet-wide work list
+# is `heavy-duty/crew,heavy-duty/ceremony` at this point and `heavy-duty/rig`
+# is reachable — the `gh` stub lists it — so a refusal here can only be
+# containment and never the probe.
+FF_REG_OUT="$(reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["heavy-duty/rig"]}')"
+t "registry: a box cannot select a repository the fleet does not watch" False \
+  "$(printf '%s' "$FF_REG_OUT" | jqf "d['ok']")"
+case "$(printf '%s' "$FF_REG_OUT" | jqf "d['error']")" in
+  *"heavy-duty/rig"*"not in the fleet-wide registry"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t "registry: ...naming the entry and the rule" named "$r1"
+t "registry: ...and refusing rather than failing a box" True \
+  "$(printf '%s' "$FF_REG_OUT" | jqf "d['refused']")"
+t "registry: ...leaving the box inheriting" fleet "$(regb ff-working work source)"
+t "registry: ...and writing no override file" 0 \
+  "$(test -f "$FF_REG_DIR/repos.d/ff-working.txt" && echo 1 || echo 0)"
+
+t "registry: a box selects from the fleet-wide list" True \
+  "$(reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["heavy-duty/ceremony"]}' | jqf "d['ok']")"
+t "registry: ...which wins over the fleet-wide list" "heavy-duty/ceremony" "$(regbe ff-working work)"
 t "registry: ...and says so" override "$(regb ff-working work source)"
 # Must fail: an override leaking to a sibling box.
 t "registry: ...for that box only" "heavy-duty/crew,heavy-duty/ceremony" "$(regbe ff-idle work)"
@@ -154,6 +175,28 @@ t "registry: ...leaving the sibling inheriting" fleet "$(regb ff-idle work sourc
 t "registry: ...and the other registry untouched" fleet "$(regb ff-working notify source)"
 t "registry: the override is a file in the fleet definition" 1 \
   "$(test -f "$FF_REG_DIR/repos.d/ff-working.txt" && echo 1 || echo 0)"
+
+# CONTAINMENT IS A READ-TIME INVARIANT, NOT A WRITE-TIME CHECK, and this is the
+# case that tells the two apart. `heavy-duty/ceremony` was legal when the box
+# selected it a few lines up; retiring it fleet-wide must take it off the box
+# too. A build that only validated at the edit passes everything above this
+# line and fails here, having left a droid working a board the fleet no longer
+# knows about — which is exactly the divergence the direction forbids, on a
+# delay. Must fail: the selection outliving its universe.
+reg '{"action":"registry-set","kind":"work","entries":["heavy-duty/crew"]}' >/dev/null
+t "registry: retiring a repository fleet-wide takes it off the boxes that selected it" \
+  "" "$(regbe ff-working work)"
+t "registry: ...without rewriting the box's own selection" "heavy-duty/ceremony" \
+  "$(grep -vE '^[[:space:]]*(#|$)' "$FF_REG_DIR/repos.d/ff-working.txt" | paste -sd, -)"
+t "registry: ...so restoring it fleet-wide restores it on the box" "heavy-duty/ceremony" \
+  "$(reg '{"action":"registry-set","kind":"work","entries":["heavy-duty/crew","heavy-duty/ceremony"]}' >/dev/null; regbe ff-working work)"
+
+# The resolved order is the fleet-wide file's, not the order a click submitted.
+# The console and the operator's own `cat` then read alike, and a selection
+# saved in any order lands the same way twice.
+reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["heavy-duty/ceremony","heavy-duty/crew"]}' >/dev/null
+t "registry: a selection resolves in fleet-wide order" "heavy-duty/crew,heavy-duty/ceremony" \
+  "$(regbe ff-working work)"
 
 # CLEAR IS NOT SET-IDENTICAL, which is the distinction the whole layer rests
 # on. Both leave ff-working reading the same two repositories today; only one
@@ -188,6 +231,27 @@ t "registry: an empty override is a narrowing, not an absence" override \
 t "registry: ...and the box watches nothing" "" "$(regbe ff-idle notify)"
 reg '{"action":"registry-inherit","box":"ff-idle","kind":"notify"}' >/dev/null
 
+# A FLEET-WIDE LIST WITH NOTHING IN IT refuses a selection as itself, rather
+# than as a containment failure per entry: there is no universe to select from,
+# and the operator's next move is a fleet-wide edit and not a narrower box.
+# Driven on `notify` so the work registry's own sequence above is untouched,
+# and restored immediately.
+reg '{"action":"registry-set","kind":"notify","entries":[]}' >/dev/null
+FF_REG_OUT="$(reg '{"action":"registry-override","box":"ff-working","kind":"notify","entries":["heavy-duty/ceremony"]}')"
+t "registry: selecting from an empty fleet-wide list is refused" False \
+  "$(printf '%s' "$FF_REG_OUT" | jqf "d['ok']")"
+case "$(printf '%s' "$FF_REG_OUT" | jqf "d['error']")" in
+  *"names no repositories"*"fleet-wide list first"*) r1=stated ;; *) r1=VAGUE ;;
+esac
+t "registry: ...saying so as itself, not per entry" stated "$r1"
+# Selecting NOTHING from nothing is still legal — it is the box narrowed to no
+# board, which the empty-override case below is about, and refusing it would
+# make an already-empty fleet a state no box could be pointed at.
+t "registry: ...while selecting nothing from it is still allowed" True \
+  "$(reg '{"action":"registry-override","box":"ff-working","kind":"notify","entries":[]}' | jqf "d['ok']")"
+reg '{"action":"registry-inherit","box":"ff-working","kind":"notify"}' >/dev/null
+reg '{"action":"registry-set","kind":"notify","entries":["heavy-duty/ceremony"]}' >/dev/null
+
 # --- the record (D5) ---------------------------------------------------------
 t "registry: every write is journalled" 1 \
   "$(test -f "$FF_REG_JOURNAL" && echo 1 || echo 0)"
@@ -217,26 +281,84 @@ t "registry: a refused write is not journalled" 0 \
 # the override this reads was written a few lines up by the collector — the
 # two halves of D2 asserted against one artifact instead of two fixtures that
 # have to be kept in step by hand.
-reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["heavy-duty/rig"]}' >/dev/null
-# The function is EXTRACTED rather than the file sourced: cli/crew ends in a
+reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["heavy-duty/ceremony"]}' >/dev/null
+# The functions are EXTRACTED rather than the file sourced: cli/crew ends in a
 # dispatch, so sourcing it runs a command. That is the idiom shared/test uses
 # on cmd_floor for the same reason, and it keeps the assertion pointed at the
-# shipped resolver instead of a copy of it.
-ff_reg_seed() { # BOX KIND
+# shipped resolver instead of a copy of it. The whole family comes across
+# together because they call each other; each extracts on the same
+# `/^name() {/,/^}/` range, which is why none of them is folded onto one line.
+FF_REG_FNS="registry_entries registry_fleet_file registry_override_file"
+FF_REG_FNS="$FF_REG_FNS resolved_registry registry_seed registry_seed_discard"
+ff_reg_cli() { # SNIPPET ARGS... — run SNIPPET with the CLI's resolvers in scope
+  local snippet="$1"; shift
   CONFIG_DIR="$FF_REG_DIR" REPOS_SEED="$FF_REG_WORK" \
   NOTIFY_REPOS_SEED="$FF_REG_NOTIFY" FF_REG_CLI="$FLOOR/../cli/crew" \
+  FF_REG_FNS="$FF_REG_FNS" \
   bash -c '
     die() { echo "$*" >&2; exit 1; }
-    eval "$(sed -n "/^registry_seed() {/,/^}/p" "$FF_REG_CLI")"
-    registry_seed "$1" "$2"
-  ' _ "$1" "$2"
+    for fn in $FF_REG_FNS; do
+      eval "$(sed -n "/^$fn() {/,/^}/p" "$FF_REG_CLI")"
+    done
+    eval "$1"
+  ' _ "$snippet" "$@"
 }
-t "registry: the transport stages a box's override" "$FF_REG_DIR/repos.d/ff-working.txt" \
-  "$(ff_reg_seed ff-working work)"
-t "registry: ...and the fleet-wide list for a box without one" "$FF_REG_WORK" \
+# Single quotes throughout the snippets below, and SC2016 is silenced rather
+# than satisfied: NOT expanding here is the point. The snippet is a program for
+# the inner `bash -c` to run against the extracted resolvers, so `$2` and `$3`
+# must reach it as themselves and be its positional parameters, not this
+# shell's.
+# shellcheck disable=SC2016
+ff_reg_seed() { ff_reg_cli 'registry_seed "$2" "$3"' "$1" "$2"; }
+# What the guest would actually receive: the staged file's entries, and the
+# temporary one discarded exactly as stage_fleet_definition discards it.
+# shellcheck disable=SC2016
+ff_reg_staged() { # BOX KIND
+  ff_reg_cli '
+    seed="$(registry_seed "$2" "$3")"
+    registry_entries "$seed" | paste -sd, -
+    registry_seed_discard "$3" "$seed"
+  ' "$1" "$2"
+}
+# THE TRANSPORT RESOLVES THE SAME INTERSECTION THE CONSOLE RENDERS. Two halves
+# reading one override two ways is the failure nobody sees until a tick: the
+# floor would report a narrowing the box does not have, or the reverse.
+t "registry: the transport stages the box's selection" "heavy-duty/ceremony" \
+  "$(ff_reg_staged ff-working work)"
+t "registry: ...which is what the console renders for it" "$(regbe ff-working work)" \
+  "$(ff_reg_staged ff-working work)"
+t "registry: ...and the whole fleet-wide list for a box without one" \
+  "$(regbe ff-idle work)" "$(ff_reg_staged ff-idle work)"
+t "registry: ...per registry, not per box" "heavy-duty/ceremony" \
+  "$(ff_reg_staged ff-working notify)"
+# An inheriting box is staged the fleet-wide FILE ITSELF, not a copy of its
+# entries: `repos.txt` ships 60 lines of doctrine an operator is meant to read
+# on the box, and a resolver that always regenerated would drop every one of
+# them on every box that never had a selection — the common case.
+t "registry: an inheriting box is staged the fleet-wide file itself" "$FF_REG_WORK" \
   "$(ff_reg_seed ff-idle work)"
-t "registry: ...per registry, not per box" "$FF_REG_NOTIFY" \
-  "$(ff_reg_seed ff-working notify)"
+t "registry: ...while a selected box is staged a generated one" not-the-fleet-file \
+  "$(test "$(ff_reg_seed ff-working work)" = "$FF_REG_WORK" && echo THE-FLEET-FILE || echo not-the-fleet-file)"
+# Must fail: the generated seed left behind. stage_fleet_definition pairs every
+# registry_seed with a discard, and a leak there is one temp file per box per
+# upgrade, forever.
+FF_REG_SEEDPATH="$(ff_reg_seed ff-working work)"
+# shellcheck disable=SC2016
+ff_reg_cli 'registry_seed_discard "$2" "$3"' work "$FF_REG_SEEDPATH"
+t "registry: ...which is discarded after staging" 0 \
+  "$(test -e "$FF_REG_SEEDPATH" && echo 1 || echo 0)"
+# shellcheck disable=SC2016
+t "registry: ...and discarding never removes the fleet-wide file" 1 \
+  "$(ff_reg_cli 'registry_seed_discard "$2" "$3"' work "$FF_REG_WORK" >/dev/null 2>&1; \
+     test -f "$FF_REG_WORK" && echo 1 || echo 0)"
+# The transport's own containment: a selection naming a repository that has
+# since left the fleet-wide list must not reach the guest. Written past the
+# validator by hand, because the collector will not write it.
+printf 'heavy-duty/ceremony\nheavy-duty/rig\n' >"$FF_REG_DIR/repos.d/ff-working.txt"
+t "registry: a stale selection cannot smuggle a repository onto a box" \
+  "heavy-duty/ceremony" "$(ff_reg_staged ff-working work)"
+t "registry: ...and the console agrees with it" "$(regbe ff-working work)" \
+  "$(ff_reg_staged ff-working work)"
 reg '{"action":"registry-inherit","box":"ff-working","kind":"work"}' >/dev/null
 
 # --- leave the definition as this suite found it -----------------------------
