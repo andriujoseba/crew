@@ -49,11 +49,11 @@ tick_health_report() { # [duty.log] [now epoch] [window seconds]
           if ($field ~ /^kind=/) { kind=$field; sub(/^kind=/, "", kind) }
           else if ($field ~ /^reason=/) { reason=$field; sub(/^reason=/, "", reason) }
         }
-        if (kind == "") next
+        # The shipped vocabulary requires both fields. A partial lookalike is
+        # not a skip whose hold reason may be guessed by the reader.
+        if (kind == "" || reason == "") next
         remember_kind(kind); skips[kind]++
-        if (reason != "") {
-          remember_reason(kind, reason); holds[kind, reason]++
-        }
+        remember_reason(kind, reason); holds[kind, reason]++
       }
       if ($2 == "SESSION" && $3 == "END") {
         kind=""; outcome=""

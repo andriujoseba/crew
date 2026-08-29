@@ -19,6 +19,7 @@ cat >"$LOG" <<'EOF'
 2026-08-27T01:01:00Z SESSION SKIP kind=old key=o/r#1 reason=budget over=sessions
 2026-08-29T01:00:00Z duty run start
 2026-08-29T01:05:00Z SESSION SKIP kind=build key=o/r#2 reason=terminal-breaker count=3
+2026-08-29T01:06:00Z SESSION SKIP kind=build key=o/r#malformed
 2026-08-29T01:10:00Z SESSION END kind=build key=o/r#2 rc=0 dur=5s outcome=ok acted=no reply_tail=
 2026-08-29T01:15:00Z SESSION END kind=build key=o/r#3 rc=- dur=- outcome=died-with-box acted=unknown reply_tail= tier=unknown started=x
 2026-08-29T01:20:00Z SESSION END kind=build key=o/r#4 rc=- dur=- outcome=died-with-box acted=unknown reply_tail= tier=unknown started=x
