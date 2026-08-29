@@ -84,7 +84,7 @@ from floor.ping import (LOG_LOCK, PING_FAILS_TO_WEDGE,  # noqa: E402,F401
 from floor.units import (RE_ANY_TS, RE_BUILD_DUTY, RE_END,  # noqa: E402,F401
                          RE_MENTION, RE_QUEUE, RE_RESUME, RE_REVIEW_BATCH,
                          RE_START, RE_TRIAGE, TS, build_unit, derive_queue,
-                         derive_sessions, fmt_dur, last_tick_block,
+                         derive_sessions, fmt_dur, last_tick_block, parse_tick_health,
                          parse_probe, parse_ts, spark_24h, unit_defaults)
 from floor.fleet import Fleet  # noqa: E402,F401
 from floor.actions import (ACTION_TIMEOUT_S, ACTION_WORKERS,  # noqa: E402,F401

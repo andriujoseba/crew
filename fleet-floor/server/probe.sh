@@ -111,6 +111,15 @@ emit now "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # the first tick after it lands. The collector renders that as no section.
 emit vitals "$(grep '^VITALS ' "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
 
+# The derivation is computed by the installed shared module, not independently
+# by the floor. Its delimited report is carried verbatim to the collector.
+echo "::tickhealthstart"
+if [ -r "$DUTY_DIR/lib/common.sh" ]; then
+  env DUTY_DIR="$DUTY_DIR" bash -c \
+    '. "$DUTY_DIR/lib/common.sh"; tick_health_report "$DUTY_DIR/duty.log"' 2>/dev/null
+fi
+echo "::tickhealthend"
+
 # --- credentials: read, never tested ---------------------------------------
 #
 # This probe used to run `gh auth status` and the agent profile's

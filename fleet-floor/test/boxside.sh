@@ -46,6 +46,7 @@ echo "== box-side scripts, executed for real"
 # --------------------------------------------------------------------------
 BS_H="$BS_TMP/probehome"
 mkdir -p "$BS_H/duty/logs"
+cp -R "$BS_ROOT/shared/lib" "$BS_H/duty/lib"
 echo "crew@0.2.0 (deadbee)" > "$BS_H/duty/VERSION"
 printf '# comment\nheavy-duty/ceremony\nheavy-duty/rig\n' > "$BS_H/duty/repos.txt"
 BS_NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -82,7 +83,7 @@ import os, sys, time
 sys.path.insert(0, os.environ["BS_SERVER"])
 import floor
 meta, lines = floor.parse_probe(open(sys.argv[1]).read())
-need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs", "limitdropped", "limit-events")
+need = ("engine", "integrity", "uptime", "now", "gh", "vendor", "suppression", "cron", "paused", "repos", "sessionlogs", "limitdropped", "limit-events", "tick-health")
 print("MISSING=%s" % ",".join(k for k in need if k not in meta))
 print("ENGINE=%s" % meta.get("engine", ""))
 print("UPTIME_OK=%s" % str(meta.get("uptime", "").isdigit()))
@@ -97,6 +98,9 @@ print("EVENTS=%d" % len(meta.get("limit-events", [])))
 print("EVENT_ERROR=%d" % sum("\terror\t" in e for e in meta.get("limit-events", [])))
 print("DROPPED=%s" % meta.get("limitdropped", ""))
 print("PHANTOM=%s" % meta.get("phantom", "absent"))
+health = floor.parse_tick_health(meta.get("tick-health", []))
+print("HEALTH=%s" % (health["ticks"] if health else "absent"))
+print("HEALTH_KIND=%s" % (health["kinds"][0]["kind"] if health and health["kinds"] else "absent"))
 PY
 bs_get() { sed -n "s/^$1=//p" "$BS_TMP/probe.parsed"; }
 t "probe.sh: parser gets every key it reads" "" "$(bs_get MISSING)"
@@ -113,6 +117,8 @@ t "probe.sh: carries every durable floor event" 2 "$(bs_get EVENTS)"
 t "probe.sh: preserves crossed-limit event text" 1 "$(bs_get EVENT_ERROR)"
 t "probe.sh: carries the cumulative drop counter" 4 "$(bs_get DROPPED)"
 t "probe.sh: a bare :: word inside the section is not a key" absent "$(bs_get PHANTOM)"
+t "probe.sh: shared tick health crosses the real wire" 1 "$(bs_get HEALTH)"
+t "probe.sh: reconstructed kind data crosses the real wire" build "$(bs_get HEALTH_KIND)"
 BS_PROBE_AFTER="$(find "$BS_H/duty" -type f -printf '%P\t%m\t' -exec sha256sum {} \; | sort)"
 t "probe.sh: limit carry leaves DUTY_DIR byte-identical" "$BS_PROBE_BEFORE" "$BS_PROBE_AFTER"
 
