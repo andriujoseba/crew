@@ -197,6 +197,19 @@ silent in both directions — such a spelling would read as a candidate that was
 never cut, and a stray record under one would out-rank a genuine candidate and
 gate a release that has nothing to do with it.
 
+The same question is asked one step earlier, of the string itself: **`VERSION`
+is consumed the way the doors consume it.** `lib/version.sh` at the pin reads a
+file-backed version with `tr -d '[:space:]'` — every whitespace character
+deleted, not just the ends trimmed — precisely so a stray space cannot make
+`0.7.0` look unlike `0.7.0`. Every gate that decides whether a tree ships goes
+through that one reader, so a `VERSION` of `0. 9.0` is the final `0.9.0` to
+`drill-recorded` and to both release doors. A guard that merely trimmed the ends
+would call the same tree unclassifiable and pass it in silence, whatever its
+diff contained. And the deletion is byte-oriented, as `tr` is: a `VERSION`
+carrying a non-breaking space is *not* normalized at the door, so it is not
+normalized here either. Wider is not safer — it is a second dialect, which is
+the thing this whole section refuses.
+
 **A shallow clone is a "could not look" wherever it touches this guard**, and
 that includes ancestry. A `--depth 1` checkout that *has* fetched the tags can
 resolve `X.Y.Z-rcN` and still answer no to `merge-base --is-ancestor`, because
