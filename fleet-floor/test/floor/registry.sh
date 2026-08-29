@@ -21,8 +21,12 @@
 # leaves the host, and two suites later boxside.sh runs the real probe.sh,
 # which asks the real `gh` about the box's own credential. A stub left on PATH
 # would silently answer that too, so this one is created for these cases and
-# removed at the end of the file. `FF_REG_REACHABLE` names the repositories
-# it is willing to find; everything else 404s exactly as `gh` does.
+# removed at the end of the file. `reachable.txt` beside it names the
+# repositories it is willing to find; everything else 404s exactly as `gh`
+# does. The stub resolves that file from its OWN path rather than an
+# environment variable, because the process that runs it is the collector —
+# spawned by run.sh long before this file is sourced, so it carries run.sh's
+# environment and nothing this suite exports afterwards.
 echo
 echo "== registries (#488)"
 
@@ -31,7 +35,7 @@ FF_REG_WORK="$FF_REG_DIR/repos.txt"
 FF_REG_NOTIFY="$FF_REG_DIR/notify-repos.txt"
 FF_REG_JOURNAL="$FF_REG_DIR/.registry-journal.log"
 FF_REG_GH="$TMP/bin/gh"
-export FF_REG_REACHABLE="$TMP/reachable.txt"
+FF_REG_REACHABLE="$TMP/bin/reachable.txt"
 printf 'heavy-duty/crew\nheavy-duty/box\nheavy-duty/ceremony\nheavy-duty/rig\n' \
   >"$FF_REG_REACHABLE"
 cat >"$FF_REG_GH" <<'GHSTUB'
@@ -42,7 +46,7 @@ cat >"$FF_REG_GH" <<'GHSTUB'
 # credential cannot see.
 if [ "${1:-}" = api ] && [ "${2#repos/}" != "${2:-}" ]; then
   repo="${2#repos/}"
-  if grep -qxF "$repo" "$FF_REG_REACHABLE" 2>/dev/null; then
+  if grep -qxF "$repo" "$(dirname "$0")/reachable.txt" 2>/dev/null; then
     printf '%s\n' "$repo"; exit 0
   fi
   echo "gh: Not Found (HTTP 404)" >&2; exit 1
@@ -236,7 +240,7 @@ t "registry: ...per registry, not per box" "$FF_REG_NOTIFY" \
 reg '{"action":"registry-inherit","box":"ff-working","kind":"work"}' >/dev/null
 
 # --- leave the definition as this suite found it -----------------------------
-rm -f "$FF_REG_GH" "$FF_REG_JOURNAL"
+rm -f "$FF_REG_GH" "$FF_REG_REACHABLE" "$FF_REG_JOURNAL"
 rm -rf "$FF_REG_DIR/repos.d" "$FF_REG_DIR/notify-repos.d"
 printf 'heavy-duty/crew\n' >"$FF_REG_WORK"
 rm -f "$FF_REG_NOTIFY"
