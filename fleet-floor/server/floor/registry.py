@@ -60,7 +60,7 @@ RE_REPO = re.compile(r"^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$")
 
 # The reachability probe. Short, because it runs while an operator waits on a
 # click and there are at most a handful of new entries in one edit.
-PROBE_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_REPO_PROBE_TIMEOUT", "15"))
+REPO_PROBE_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_REPO_PROBE_TIMEOUT", "15"))
 
 # D5's record. A dotfile beside the definition rather than inside it: the
 # journal is evidence about the fleet definition, not part of it, and `crew
@@ -172,7 +172,7 @@ def _probe_reachable(repo):
     whether GitHub said no or nothing asked it.
     """
     rc, out, err = run(["gh", "api", "repos/%s" % repo, "-q", ".full_name"],
-                       PROBE_TIMEOUT_S)
+                       REPO_PROBE_TIMEOUT_S)
     if rc == 0 and out.strip():
         return True, ""
     if rc == 127:
@@ -180,7 +180,7 @@ def _probe_reachable(repo):
                        "installed on this host")
     if rc == 124:
         return False, ("the reachability probe timed out after %ss"
-                       % PROBE_TIMEOUT_S)
+                       % REPO_PROBE_TIMEOUT_S)
     detail = (err or out).strip().splitlines()
     detail = detail[-1][:200] if detail else "rc %d" % rc
     return False, "the fleet cannot reach it: %s" % detail

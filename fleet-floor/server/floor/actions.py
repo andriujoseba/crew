@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from floor import FLOOR_ENVELOPE
 from floor.ping import log, run
+from floor.registry import KINDS, clear_override, set_fleet, set_override
 from floor.roster import box_states, read_roster
 
 ACTION_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_ACTION_TIMEOUT", "120"))
@@ -160,17 +161,73 @@ echo "session started; log $slog"
 """
 
 
-def do_command(fleet, body):
-    """Apply one operator action. Returns (http_status, result dict)."""
+def registry_command(action, box, body, actor):
+    """The three registry writes (#488). Returns (http_status, result dict).
+
+    Split out of `do_command`'s ladder rather than adding three more `elif`
+    arms to it, because these share nothing with the arms around them: no
+    `box exec`, no host verb, no per-box row, and — the reason it matters —
+    NO REFRESH. Every other action changes what the fleet snapshot renders, so
+    it ends by asking for a re-poll; a registry write changes two files on the
+    host's own disk and nothing the snapshot carries, and firing a fleet-wide
+    probe storm after an edit would spend seven `box exec` round-trips to
+    re-learn facts that did not move.
+
+    A refusal here is 400 and not 500: the operator typed something the fleet
+    will not accept, and nothing was written. That is a different thing from a
+    box that was asked to do something and refused, which is what 500 means
+    everywhere else in this module.
+    """
+    kind = str(body.get("kind", ""))
+    if kind not in KINDS:
+        return 400, {"ok": False, "error": "unknown registry %r" % kind}
+
+    if action == "registry-set":
+        result, err = set_fleet(kind, list(body.get("entries") or []), actor)
+    elif action == "registry-override":
+        result, err = set_override(kind, box, list(body.get("entries") or []),
+                                   actor)
+    else:
+        result, err = clear_override(kind, box, actor)
+
+    if err:
+        return 400, {"ok": False, "action": action, "error": err,
+                     # The same flag `restart` raises for its own 409: nothing
+                     # ran, so the page must be able to say "refused" without
+                     # parsing prose, and there are no per-box rows to carry
+                     # the news the way a failed action's do (#486).
+                     "refused": True}
+    return 200, {"ok": True, "action": action, "registry": result,
+                 # An empty `results` is the honest answer — no box was
+                 # touched — and `do_command`'s own rule already reads an empty
+                 # list as success for every action but `message`.
+                 "results": []}
+
+
+def do_command(fleet, body, actor=""):
+    """Apply one operator action. Returns (http_status, result dict).
+
+    `actor` is the authenticated operator, carried only as far as the registry
+    journal (#488 D5). Defaulted so every existing caller — this repo's own
+    suites among them — keeps the signature it had.
+    """
     action = str(body.get("action", ""))
     box = str(body.get("box", ""))
 
     roster = {u["box"]: u for u in read_roster()}
-    fleet_wide = {"start-all", "stop-all", "wake-silent"}
+    fleet_wide = {"start-all", "stop-all", "wake-silent", "registry-set"}
+    registry = {"registry-set", "registry-override", "registry-inherit"}
 
     if action not in fleet_wide:
         if box not in roster:
             return 400, {"ok": False, "error": "unknown box %r" % box}
+
+    # AFTER the roster check and before everything else. The per-box writes
+    # need `box` to name a real roster member — an override file for a box that
+    # is not in the fleet is a file nothing will ever read — and the fleet-wide
+    # write needs no box at all, which is why it joins the set above.
+    if action in registry:
+        return registry_command(action, box, body, actor)
 
     def one(name, argv, timeout=ACTION_TIMEOUT_S, stdin_data=None, step=None):
         rc, out, err = run(argv, timeout, stdin_data)
