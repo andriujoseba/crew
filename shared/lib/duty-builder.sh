@@ -628,7 +628,7 @@ _round_cap_census() {
       continue
     fi
     capjson="$(printf '%s' "$payload" \
-      | jq -c --argjson panel "$panel_json" \
+      | jq -c -L "$DUTY_DIR/lib/jq" --argjson panel "$panel_json" \
           -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null)" || capjson="" # Decision-path empty fallback: the next branch warns and excludes this PR from the destructive cap decision.
     if [ -z "$capjson" ]; then
       warn "$repo#$num: round-cap eval failed; not counted this tick"

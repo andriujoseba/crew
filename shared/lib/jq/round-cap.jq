@@ -26,10 +26,13 @@
 # repaired to the newest payload commit at or before it. Two programs partitioning
 # the same thread into rounds by different rules would disagree about which round
 # a builder is in, and the rendered `## Round log` is what a human reads that
-# answer off. The partition is therefore copied expression for expression and
-# pinned by a sibling fixture — round-cap.jq's count must equal the number of
-# rounds round-log.jq renders for the same payload — which is the same discipline
-# addressing.jq and converged.jq keep against each other (#130).
+# answer off. That partition NOW LIVES IN rounds.jq and is included rather than
+# copied (#503): this header used to say it was "copied expression for expression
+# and pinned by a sibling fixture", which held for two programs and stopped
+# holding when the per-issue round count made a third. The sibling fixture stays
+# — round-cap.jq's count must still equal the number of rounds round-log.jq
+# renders for the same payload, round-log.jq keeping its own copy — which is the
+# same discipline addressing.jq and converged.jq keep against each other (#130).
 #
 # `reviews`, never `latestOpinionatedReviews`: the latter carries one verdict per
 # author, so four of a five-round history are invisible to it.
@@ -93,30 +96,11 @@
 #
 # An EMPTY panel never closes a round vacuously, the guard addressing.jq and
 # converged.jq both carry against a bare `panel=` line.
+include "rounds";
 .data.repository.pullRequest as $pr
 | 5                                                                as $cap
-| [ ($pr.commits.nodes // [])[]
-    | .commit
-    | select(.oid != null and .committedDate != null) ]
-  | sort_by(.committedDate)                                        as $commits
-| [ ($pr.reviews.nodes // [])[]
-    | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED")
-    | select(.commit.oid != null and .submittedAt != null)
-    | . as $review
-    | ([$commits[] | select(.oid == $review.commit.oid)] | first)  as $reported
-    | { oid: (if $reported != null
-                 and $reported.committedDate > $review.submittedAt
-              then ([$commits[]
-                     | select(.committedDate <= $review.submittedAt)]
-                    | last | .oid) // $review.commit.oid
-              else $review.commit.oid
-              end),
-        at: $review.submittedAt,
-        who: ($review.author.login // ""),
-        state: $review.state } ]                                   as $verdicts
-| ( $verdicts | group_by(.oid)
-    | map({ oid: .[0].oid, first: (map(.at) | min) })
-    | sort_by(.first) )                                            as $rounds
+| ($pr | round_verdicts)                                           as $verdicts
+| ($verdicts | round_heads)                                        as $rounds
 | ($rounds | length)                                               as $n
 # The cap-th round, by the order rounds opened. Reading index $cap-1 rather than
 # the last one is what keeps the answer monotone: a sixth round that opened in

@@ -4912,7 +4912,7 @@ rc_build() {
 }
 rc_count() {  # payload [panel] -> "<rounds> <at_cap>"
   printf '%s' "$1" \
-    | jq -c --argjson panel "${2:-$RC_PANEL}" -f "$RC_JQ" \
+    | jq -c -L "$SHARED/lib/jq" --argjson panel "${2:-$RC_PANEL}" -f "$RC_JQ" \
     | jq -r '"\(.rounds) \(.at_cap)"'
 }
 
