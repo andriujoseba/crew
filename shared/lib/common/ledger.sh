@@ -308,7 +308,7 @@ session_reconcile_orphans() {
     # makes the start answered, so one box-kill would be counted again on every
     # run and D2's evidence would go to a terminal. Both writers open O_APPEND,
     # so this fd is safe beside the tick's inherited one.
-    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started" >>"$logfile"
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started" >>"$logfile"
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.

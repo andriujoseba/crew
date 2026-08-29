@@ -135,6 +135,41 @@ _session_pool_suffix() {
   printf ' pool=%s' "$pool"
 }
 
+# _session_left STAMP — count processes that survived this session by the
+# identity exported only into its dispatch environment (#529). Command lines
+# are deliberately irrelevant: an exact NUL-delimited environment entry
+# cannot match this reader or another session by accident. An unreadable
+# procfs means the measurement is unknown, never that nothing survived.
+_session_left() {
+  local stamp="$1" proc_root="${SESSION_PROC_ROOT:-/proc}"
+  local environ rc count=0 scanned=0
+  [ -d "$proc_root" ] || { printf unknown; return 0; }
+  for environ in "$proc_root"/[0-9]*/environ; do
+    [ -f "$environ" ] || continue
+    grep -Fzxq -- "DUTY_SESSION_STAMP=$stamp" "$environ" 2>/dev/null
+    rc=$?
+    case "$rc" in
+      0) count=$((count + 1)); scanned=$((scanned + 1)) ;;
+      1) scanned=$((scanned + 1)) ;;
+    esac
+  done
+  [ "$scanned" -gt 0 ] || { printf unknown; return 0; }
+  printf '%s' "$count"
+}
+
+# _session_log_bytes FILE — the final advertised session log size. SESSION
+# START's log= is a path; SESSION END's log= is a byte count. The record kind
+# gives the shared token its type, and keeping the ruled name avoids a second
+# alias for the same log (#529).
+_session_log_bytes() {
+  local bytes
+  bytes="$(stat -c %s -- "$1" 2>/dev/null)" || bytes=unknown
+  case "$bytes" in
+    '' | *[!0-9]*) printf unknown ;;
+    *) printf '%s' "$bytes" ;;
+  esac
+}
+
 # run_session KIND KEY DIR TIMEOUT PROMPT — the only way a duty launches the
 # box CLI. Adds what every hand-rolled variant lacked somewhere: a timeout (a
 # hung session used to hold the flock forever, invisibly), captured exit
@@ -142,7 +177,7 @@ _session_pool_suffix() {
 # line in duty.log (the biggest logging gap in three of five metrics files).
 run_session() {
   local kind="$1" key="$2" dir="$3" tmo="$4" prompt="$5"
-  local slog cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
+  local slog session_stamp cli_log structured_log="" cli_stderr_fd=1 rc=0 start terminal=no
   # Budget BEFORE the terminal gate, and the order is load-bearing (#464): the
   # terminal gate's recovery path makes a live vendor probe, and a lane that
   # has spent its window must not be able to buy one.
@@ -154,6 +189,7 @@ run_session() {
   _session_structured_cmd
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
+  session_stamp="${slog##*/}"
   cli_log="$slog"
   if [ "$_SESSION_STRUCTURED" = yes ]; then
     structured_log="$slog.structured"
@@ -205,6 +241,7 @@ run_session() {
   # diagnostics remain on that prose surface. The restored result is appended
   # after the CLI exits, so neither accounting nor diagnostics erase the other.
   ( cd "$dir" && _session_oom_arm && env -u DUTY_LOCKED -u NOTIFY_LOCKED -u DUTY_SNAPSHOT \
+      DUTY_SESSION_STAMP="$session_stamp" \
       timeout -k "$OPERATING_LIMIT_SESSION_KILL_GRACE_SECONDS" "$tmo" \
         "${_SESSION_CLI_CMD[@]}" "$prompt" ) </dev/null >"$cli_log" 2>&"$cli_stderr_fd" &
   _SESSION_DISPATCH_PID=$!
@@ -229,13 +266,15 @@ run_session() {
   # separate actor reading the same figure off the same file.
   _session_mem_watch_start "$slog.peak" "$slog.mem" "$_SESSION_DISPATCH_PID" "$kind"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
+  local left
+  left="$(_session_left "$session_stamp")"
   _session_peak_rss_stop
   _session_mem_watch_stop "$slog.mem"
   if [ -n "$structured_log" ]; then
     bot_cli_structured_prose "$structured_log" >>"$slog" 2>/dev/null \
       || cat "$structured_log" >>"$slog"
   fi
-  local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit
+  local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit log_bytes
   local usage_suffix pool_suffix
   mem_hit="$(session_mem_hit "$slog.mem")"
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
@@ -257,6 +296,7 @@ run_session() {
   fi
   acted="$(session_acted "$slog")"
   reply_tail="$(session_reply_tail "$slog")"
+  log_bytes="$(_session_log_bytes "$slog")"
   peak_rss="$(session_peak_rss "$slog.peak")"
   # Usage reporting is profile-owned and independent of the capture shape.
   # Claude reads structured_log; an artifact-backed profile can instead use
@@ -272,6 +312,10 @@ run_session() {
   fi
   rm -f "$slog.peak" "$slog.mem" 2>/dev/null || true
   [ -z "$structured_log" ] || rm -f "$structured_log" 2>/dev/null || true
+  # log= and left= are appended immediately after reply_tail (#529), then the
+  # established suffix continues with tier=. The floor's RE_END is unanchored,
+  # so deployed floors retain acted/reply_tail while ignoring the new tokens.
+  #
   # tier= is APPENDED, after reply_tail, and the position is the whole of D5's
   # compatibility (#469). This chain is justified by an aggregate read off
   # these lines, so a field that breaks the measurement would be a poor way to
@@ -297,7 +341,7 @@ run_session() {
   # reconstructed terminal in common/ledger.sh carries the field as `-`, the
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix"
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$left tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
