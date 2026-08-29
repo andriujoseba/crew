@@ -115,6 +115,7 @@ emit vitals "$(grep '^VITALS ' "$DUTY_DIR/duty.log" 2>/dev/null | tail -1)"
 # by the floor. Its delimited report is carried verbatim to the collector.
 echo "::tickhealthstart"
 if [ -r "$DUTY_DIR/lib/common.sh" ]; then
+  # shellcheck disable=SC2016  # these paths expand inside the child shell
   env DUTY_DIR="$DUTY_DIR" bash -c \
     '. "$DUTY_DIR/lib/common.sh"; tick_health_report "$DUTY_DIR/duty.log"' 2>/dev/null
 fi

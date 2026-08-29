@@ -130,7 +130,7 @@ tick_health_rows() { # REPORT -> <label><TAB><text>
         for tok in $line; do key="${tok%%=*}"; val="${tok#*=}"; case "$key" in
           window_s) window="$val" ;; kind) kind="$val" ;; skips) skips="$val" ;; holds) hold_text="$val" ;; outcome) outcome="$val" ;; streak) streak="$val" ;;
         esac; done
-        [ -n "$window" ] && [ -n "$kind" ] || continue
+        if [ -z "$window" ] || [ -z "$kind" ]; then continue; fi
         if [ "$hold_text" = - ]; then hold_text="none"; else hold_text="${hold_text//,/\, }"; fi
         printf '%s skips/holds (%s window)\t%s skips · %s\n' "$kind" "$(_tick_health_window "$window")" "$skips" "$hold_text"
         if [ "$outcome" = - ]; then outcome="unknown"; else outcome="$outcome ×$streak"; fi
