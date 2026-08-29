@@ -1659,7 +1659,9 @@ function queueChip(q){
   var repo=q.repo;
   return '<span class="qc" style="border-color:'+(REPOC[repo]||"#3a4a60")+'">'+(repo?esc(repo)+' ':"")+(/^\d+$/.test(q.key)?"#":"")+esc(q.key)+'</span>';
 }
-function fmtDur(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
+function fmtDur(s){if(s===null||s===undefined)return "—";s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
+function sessionRc(s){return s.rc===null||s.rc===undefined?"-":s.rc;}
+function sessionClass(s){return s.rc===null||s.rc===undefined||s.rc?"cr":s.acted==="no"?"noop":"ok";}
 /* peak_rss= arrives in KiB and is absent whenever the engine did not measure
    the session (#473). Absent is not zero: `!k` renders the same em dash the
    other unmeasured rows use, so a box whose kernel reports no VmHWM reads as
@@ -1713,6 +1715,20 @@ function boxVitalsRows(v){
   (v.findings||[]).forEach(function(x){rows.push(["Finding",x]);});
   return rows;
 }
+function tickHealthWindow(s){return s%86400===0?(s/86400)+"d":s%3600===0?(s/3600)+"h":s+"s";}
+function tickHealthDuration(s){return s>=86400?Math.floor(s/86400)+"d "+Math.floor((s%86400)/3600)+"h":s>=3600?Math.floor(s/3600)+"h "+Math.floor((s%3600)/60)+"m":s>=60?Math.floor(s/60)+"m":s+"s";}
+function tickHealthRows(h){
+  if(!h)return [];
+  var w=tickHealthWindow(h.window),rows=[];
+  rows.push(["Last tick ("+w+" window)",h.last_tick_age===null?"unknown":tickHealthDuration(h.last_tick_age)+" ago"]);
+  rows.push(["Busy ticks ("+w+" window)",h.ticks?String(h.busy)+"/"+h.ticks+" ("+(100*h.busy/h.ticks).toFixed(1)+"%)":"unknown"]);
+  (h.kinds||[]).forEach(function(k){
+    var holds=Object.keys(k.holds||{}).map(function(reason){return reason+":"+k.holds[reason];}).join(", ")||"none";
+    rows.push([k.kind+" skips/holds ("+w+" window)",k.skips+" skips · "+holds]);
+    rows.push([k.kind+" outcome streak ("+w+" window)",k.outcome?k.outcome+" ×"+k.streak:"unknown"]);
+  });
+  return rows;
+}
 function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k++)q.push({repo:REPONAMES[ri2(0,5)],key:ri2(11,148)});
   var sess=[],ago=ri2(1,5),cap=kind==="triage"?2400:7200;for(var s=0;s<11;s++){var rc=Math.random()<0.12?1:0;sess.push({ago:ago,kind:kind,rc:rc,dur:ri2(45,cap),out:rc?"aborted (budget)":outcomeFor(kind),peak:ri2(180000,2600000)});ago+=ri2(4,11);}
   var durs=sess.map(function(x){return x.dur;}),ok=sess.filter(function(x){return !x.rc;}).length;
@@ -1722,7 +1738,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[],vitals:null};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[],vitals:null,tickHealth:null};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1788,6 +1804,7 @@ function liveData(u){
      dashes in it, because a row of em-dashes reads as a box that answered and
      had nothing to say. */
   d.vitals=u.vitals||null;
+  d.tickHealth=u.tick_health||null;
   d.suppression=u.suppression||{active:false,age:null,kind:"",key:""};
   d.authfail=u.authfail||[];
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
@@ -1895,7 +1912,7 @@ function liveTicker(snap){
       if(seenSess[id]||!primed)return;
       var state=x.acted==="no"?" no-op":"";
       var tail=x.reply?" — "+x.reply:"";
-      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+x.rc+" outcome="+x.out+" acted="+x.acted+state+tail,rc:x.rc,noop:x.acted==="no",ago:x.ago});
+      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+sessionRc(x)+" outcome="+x.out+" acted="+x.acted+state+tail,rc:x.rc,unknown:x.rc===null||x.rc===undefined,noop:x.acted==="no",ago:x.ago});
     });
     if(u.cur){
       var cid=u.box+"|open|"+u.cur.kind+"|"+u.cur.key+"|"+u.cur.start;
@@ -1911,7 +1928,7 @@ function liveTicker(snap){
   fresh.forEach(function(f){
     var el=document.createElement("div");el.className="l";
     var m=esc(f.msg);
-    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="noop">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
+    m=f.rc||f.unknown?m.replace(/rc=(?:\d+|-)/,'<span class="cr">rc='+(f.unknown?'-':f.rc)+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="noop">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
     el.innerHTML='<span class="tt">'+clockStr()+'</span><span class="u" style="color:'+VENDORCOL(f.u.agent)+'">'+esc(f.u.box)+'</span><span class="m">'+m+'</span>';
     s.appendChild(el);
   });
@@ -2117,7 +2134,7 @@ function populateDash(){
        Omitted entirely on a box whose engine predates the probe: this widget
        has always drawn what is KNOWN, and six em-dashes claiming to be a
        hardware reading is the one thing worse than not drawing them. */
-    +boxVitalsRows(d.vitals).map(function(r){
+    +boxVitalsRows(d.vitals).concat(tickHealthRows(d.tickHealth)).map(function(r){
       return '<span class="k">'+esc(r[0])+'</span><span class="v"'
         +(r[0]==="Finding"?' style="color:#f7bd4e"':'')+'>'+esc(r[1])+'</span>';
     }).join('')+'</div>';
@@ -2164,7 +2181,7 @@ function populateDash(){
     +'<div class="mcell"><div class="mv">'+d.today+'</div><div class="ml">Runs today</div></div>'
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
-  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=s.rc?"cr":s.acted==="no"?"noop":"ok";sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
+  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s);sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
   document.getElementById("w-sessions").innerHTML=sh+'</div>';
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";

@@ -44,4 +44,6 @@ source "$_COMMON_LIB_DIR/breaker.sh"
 source "$_COMMON_LIB_DIR/ledger.sh"
 # shellcheck source=shared/lib/common/identity.sh
 source "$_COMMON_LIB_DIR/identity.sh"
+# shellcheck source=shared/lib/common/tick-health.sh
+source "$_COMMON_LIB_DIR/tick-health.sh"
 unset _COMMON_LIB_DIR

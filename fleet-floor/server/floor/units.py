@@ -15,7 +15,7 @@ from floor.ping import STUCK_AFTER_S, probe_box
 
 TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
 RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)")
-RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+) dur=(\d+)s outcome=(\S+)"
+RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
 # peak_rss= is read by its own pattern rather than by another optional group on
 # RE_END, and the reason is what RE_END already survived: the engine appends
@@ -75,7 +75,8 @@ def parse_ts(s):
 
 def parse_probe(text):
     """Split the probe's `::key value` record from its delimited log section."""
-    meta, loglines, limitlines, in_log, in_limits = {}, [], [], False, False
+    meta, loglines, limitlines, healthlines = {}, [], [], []
+    in_log, in_limits, in_health = False, False, False
     for line in text.splitlines():
         if line == "::limitstart":
             in_limits = True
@@ -89,15 +90,70 @@ def parse_probe(text):
         if line == "::logend":
             in_log = False
             continue
+        if line == "::tickhealthstart":
+            in_health = True
+            continue
+        if line == "::tickhealthend":
+            in_health = False
+            continue
         if in_limits:
             limitlines.append(line)
         elif in_log:
             loglines.append(line)
+        elif in_health:
+            healthlines.append(line)
         elif line.startswith("::"):
             k, _, v = line[2:].partition(" ")
             meta[k] = v.strip()
     meta["limit-events"] = limitlines
+    meta["tick-health"] = healthlines
     return meta, loglines
+
+
+def parse_tick_health(lines):
+    """The shared shell derivation's bounded report -> floor JSON."""
+    report = None
+    kinds = []
+    for line in lines or []:
+        parts = line.split()
+        if not parts:
+            continue
+        fields = {}
+        for token in parts[1:]:
+            key, sep, value = token.partition("=")
+            if sep and value:
+                fields[key] = value
+        try:
+            window = int(fields["window_s"])
+            if window <= 0:
+                continue
+            if parts[0] == "TICK_HEALTH":
+                age = fields.get("last_tick_age_s", "-")
+                report = {
+                    "window": window,
+                    "last_tick_age": None if age == "-" else max(0, int(age)),
+                    "ticks": max(0, int(fields["ticks"])),
+                    "busy": max(0, int(fields["busy"])),
+                    "kinds": kinds,
+                }
+            elif parts[0] == "TICK_HEALTH_KIND":
+                holds = {}
+                if fields.get("holds") not in (None, "-"):
+                    for item in fields["holds"].split(","):
+                        reason, sep, count = item.rpartition(":")
+                        if sep and reason:
+                            holds[reason] = max(0, int(count))
+                kinds.append({
+                    "kind": fields["kind"], "window": window,
+                    "skips": max(0, int(fields["skips"])), "holds": holds,
+                    "outcome": None if fields.get("outcome") == "-" else fields.get("outcome"),
+                    "streak": max(0, int(fields.get("streak", "0"))),
+                })
+        except (KeyError, TypeError, ValueError):
+            continue
+    if report is not None:
+        report["kinds"] = [item for item in kinds if item["window"] == report["window"]]
+    return report
 
 
 def last_tick_block(loglines):
@@ -162,9 +218,11 @@ def derive_sessions(loglines, now, clock_offset=0):
             except (ValueError, TypeError):
                 reply = ""
             peak = RE_PEAK.search(line)
+            rc = int(m.group(4)) if m.group(4).isdigit() else None
+            dur = int(m.group(5)[:-1]) if m.group(5).endswith("s") else None
             done.append({
                 "ts": parse_ts(m.group(1)) + clock_offset, "kind": m.group(2), "key": m.group(3),
-                "rc": int(m.group(4)), "dur": int(m.group(5)), "out": m.group(6),
+                "rc": rc, "dur": dur, "out": m.group(6),
                 "acted": m.group(7) or "unknown", "reply": reply,
                 # KiB, or None where the engine recorded no figure — the page
                 # renders the difference rather than showing a zero nobody
@@ -323,6 +381,7 @@ def unit_defaults():
         # renderer must be able to tell "no record" from "a record that
         # measured nothing", and `{}` collapses them.
         "vitals": None,
+        "tick_health": None,
         # HIRED — "yes" / "no" / "unknown", and never an inference from the
         # engine string. The page draws a console for what is DEPLOYED rather
         # than for what the roster DECLARES (#204), and that filter needs a
@@ -563,6 +622,7 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     # predates the probe, and the page then draws no section rather than a
     # hardware reading nobody took.
     u["vitals"] = parse_vitals(meta.get("vitals", ""))
+    u["tick_health"] = parse_tick_health(meta.get("tick-health", []))
     u["cur"] = cur
     u["sessions"] = [{k: s[k] for k in
                       ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply", "peak")}
@@ -574,10 +634,10 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
                      repo_fallback)
 
     if sessions:
-        durs = [s["dur"] for s in sessions]
+        durs = [s["dur"] for s in sessions if s["dur"] is not None]
         ok = sum(1 for s in sessions if s["rc"] == 0)
-        u["longest"] = max(durs)
-        u["avg"] = round(sum(durs) / len(durs))
+        u["longest"] = max(durs) if durs else 0
+        u["avg"] = round(sum(durs) / len(durs)) if durs else 0
         u["success"] = round(100 * ok / len(sessions))
         u["today"] = sum(1 for s in sessions if now - s["ts"] < 86400)
 

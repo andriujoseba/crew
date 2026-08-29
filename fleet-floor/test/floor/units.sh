@@ -371,6 +371,38 @@ t "sessions: a line with no peak_rss is None, never 0" None \
   "$(uf ff-working "u['sessions'][0]['peak']")"
 t "sessions: a line with no peak_rss keeps every other field" "0|ok|1" \
   "$(uf ff-working "'%s|%s|%s' % (u['sessions'][0]['rc'], u['sessions'][0]['out'], len(u['sessions']))")"
+t "sessions: reconstructed terminal is parsed and closes its start" \
+  "1:None:None:died-with-box:None" \
+  "$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+done, cur = derive_sessions([
+    "2026-08-27T15:00:00Z SESSION START kind=review key=crew#lost",
+    "2026-08-27T15:05:00Z SESSION END kind=review key=crew#lost rc=- dur=- outcome=died-with-box acted=unknown reply_tail= tier=unknown peak_rss=- started=2026-08-27T15:00:00Z",
+], 1787843160)
+print("%s:%s:%s:%s:%s" % (len(done), done[0]["rc"], done[0]["dur"], done[0]["out"], cur))
+PY
+)"
+FF_RECONSTRUCTED_RENDER="$(node - "$FLOOR/src/app.js" <<'JS'
+const fs=require('fs');
+const src=fs.readFileSync(process.argv[2],'utf8');
+function one(name){
+  const m=src.match(new RegExp('function '+name+'\\([^}]+\\}'));
+  if(!m)process.exit(2);
+  return eval('('+m[0]+')');
+}
+function pad2(n){return (n<10?'0':'')+n;}
+const fmtDur=one('fmtDur'),sessionRc=one('sessionRc'),sessionClass=one('sessionClass');
+const lost={rc:null,dur:null,acted:'unknown'};
+console.log([sessionRc(lost),fmtDur(lost.dur),sessionClass(lost)].join(':'));
+JS
+)"
+t "sessions: reconstructed unknowns render as unknown failure, never zero success" \
+  "-:—:cr" "$FF_RECONSTRUCTED_RENDER"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
 t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"
@@ -791,4 +823,32 @@ if grep -q '^emit vitals ' "$FLOOR/server/probe.sh"; then
 else
   fail "vitals: the record is carried off duty.log, not re-measured box-side" \
        "probe.sh does not emit ::vitals"
+fi
+
+echo "== tick health"
+ff_health_case() {
+  FF_SERVER="$FLOOR/server" python3 - "$@" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import parse_tick_health
+print(json.dumps(parse_tick_health(sys.argv[1:]), separators=(",", ":"), sort_keys=True))
+PY
+}
+
+t "tick health: no shared report is unknown, not healthy zeroes" null "$(ff_health_case)"
+FF_HEALTH="$(ff_health_case \
+  'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=4 busy=1' \
+  'TICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3')"
+t "tick health: the bounded base figures survive" '86400|300|4|1' \
+  "$(python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s|%s|%s|%s"%(d["window"],d["last_tick_age"],d["ticks"],d["busy"]))' <<<"$FF_HEALTH")"
+t "tick health: skip and hold reasons stay per kind" 'build|2|1|1' \
+  "$(python3 -c 'import json,sys; k=json.load(sys.stdin)["kinds"][0]; print("%s|%s|%s|%s"%(k["kind"],k["skips"],k["holds"]["budget"],k["holds"]["terminal-breaker"]))' <<<"$FF_HEALTH")"
+t "tick health: reconstructed outcome streak survives" 'died-with-box|3' \
+  "$(python3 -c 'import json,sys; k=json.load(sys.stdin)["kinds"][0]; print("%s|%s"%(k["outcome"],k["streak"]))' <<<"$FF_HEALTH")"
+t "tick health: malformed report degrades to unknown" null \
+  "$(ff_health_case 'TICK_HEALTH window_s=nope last_tick_age_s=0 ticks=0 busy=0')"
+if grep -q 'boxVitalsRows(d.vitals).concat(tickHealthRows(d.tickHealth))' "$FLOOR/src/app.js"; then
+  ok "tick health: the floor renders the shared report"
+else
+  fail "tick health: the floor renders the shared report" "tickHealthRows is not on the live unit path"
 fi

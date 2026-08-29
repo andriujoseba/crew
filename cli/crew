@@ -34,6 +34,12 @@ set -euo pipefail
 CREW_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$CREW_ROOT/shared/lib/version-skew.sh"
+# The detail view renders the report computed inside the box. Source only the
+# renderer's leaf module here: common.sh is the guest engine's entry point and
+# brings host-irrelevant state, while duplicating these rows would let the CLI
+# and floor drift (#484).
+# shellcheck disable=SC1091
+source "$CREW_ROOT/shared/lib/common/tick-health.sh"
 ROLES_DIR="$CREW_ROOT/shared/conf/roles"
 AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
 
@@ -1091,6 +1097,8 @@ report_field() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # fleet-floor/test/cli.sh asserts the number, so a fourth question is a
 # different and more expensive change than the one D7 asked for.
 STATUS_PROBE_MARK="::crew-budget-end::"
+# The bounded tick-health report rides in the same detail-view exec (#484).
+STATUS_HEALTH_MARK="::crew-health-end::"
 # The second section boundary in that same one exec: the box vitals record
 # (#483) rides between the budget and the duty-log tail. Still THREE round
 # trips — #221's budget is a count of execs, not of questions, and this is one
@@ -2170,7 +2178,7 @@ cmd_status() {
     # empty: `log` is then exactly what it was before this, so the unreachable
     # branch below still rests on the two probes already made and never on
     # this read's exit status.
-    local probe rest budget vitals log vkey vval
+    local probe rest budget health vitals log vkey vval
     # The read is INLINE and not a helper: fleet-floor/test/cli.sh pins this
     # `tail` inside cmd_status and requires the `|| true` beside it, because
     # the defect it guards is the duty-log read's exit status deciding
@@ -2196,6 +2204,10 @@ cmd_status() {
         env DUTY_DIR="$HOME/duty" bash -c \
           ". \"$HOME/duty/lib/common.sh\"; load_conf; session_budget_report" 2>/dev/null
       echo "'"$STATUS_PROBE_MARK"'"
+      [ -r "$HOME/duty/lib/common.sh" ] &&
+        env DUTY_DIR="$HOME/duty" bash -c \
+          ". \"$HOME/duty/lib/common.sh\"; tick_health_report \"$HOME/duty/duty.log\"" 2>/dev/null
+      echo "'"$STATUS_HEALTH_MARK"'"
       grep "^VITALS " ~/duty/duty.log 2>/dev/null | tail -1
       echo "'"$STATUS_VITALS_MARK"'"
       tail -n 5 ~/duty/duty.log 2>/dev/null
@@ -2211,6 +2223,9 @@ cmd_status() {
     budget="${probe%%"$STATUS_PROBE_MARK"*}"
     rest="${probe#*"$STATUS_PROBE_MARK"}"
     [ "$probe" != "$budget" ] || budget=""   # no mark: nothing answered
+    health="${rest%%"$STATUS_HEALTH_MARK"*}"
+    rest="${rest#*"$STATUS_HEALTH_MARK"}"
+    if [ "$rest" = "$health" ]; then rest="$health"; health=""; fi
     vitals="${rest%%"$STATUS_VITALS_MARK"*}"
     log="${rest#*"$STATUS_VITALS_MARK"}"
     # Same degradation as the budget half, one section along: a box that
@@ -2219,6 +2234,7 @@ cmd_status() {
     # whole capture into `vitals`.
     if [ "$rest" = "$vitals" ]; then vitals=""; log="$rest"; fi
     budget="${budget%$'\n'}"
+    health="${health#$'\n'}"; health="${health%$'\n'}"
     vitals="${vitals#$'\n'}"; vitals="${vitals%$'\n'}"
     log="${log#$'\n'}"
     # #464 D7 — the balance the gate is already keeping, displayed. A budget
@@ -2252,6 +2268,12 @@ cmd_status() {
       while IFS=$'\t' read -r vkey vval; do
         printf '  %s: %s\n' "$vkey" "$vval"
       done < <(vitals_rows "$vitals")
+    fi
+    if [ -n "$health" ]; then
+      echo "tick health:"
+      while IFS=$'\t' read -r vkey vval; do
+        printf '  %s: %s\n' "$vkey" "$vval"
+      done < <(tick_health_rows "$health")
     fi
     if [ -n "$budget" ]; then
       echo "budget:"
