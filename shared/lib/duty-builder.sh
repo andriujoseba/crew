@@ -576,6 +576,14 @@ _report_unsignalled_hold() {
 # returning its data down the same channel would fold its warnings into it.
 ROUND_CAP_PRS=""
 ROUND_CAP_NAMED="-"
+# THERE IS NO THIRD GLOBAL FOR THE ROUND COUNTS (#503, round 1). The census's
+# other answer — every open authored PR's count and the issue it was recorded
+# against, not only the ones at the boundary — is recorded on the
+# `.seen-round-count` ledger and said in the log, and those two ARE the record.
+# A `ROUND_CAP_COUNTS` variable carried the same figures for one revision of
+# this change and no production code ever read it; only a test did, which made
+# the test's subject a channel that carried nothing. The ledger and the log line
+# are what a reader can find later, so they are what the cases assert on.
 
 # _round_cap_census REPO PANEL_JSON LISTING — count every open authored PR's
 # rounds and record the ones at the cap.
@@ -601,6 +609,7 @@ ROUND_CAP_NAMED="-"
 _round_cap_census() {
   local repo="$1" panel_json="$2" listing="$3"
   local owner name num payload capjson rounds at_cap named="" items="" fresh measured
+  local issue record="" record_fresh
   ROUND_CAP_PRS=""
   ROUND_CAP_NAMED="-"
   owner="${repo%%/*}"; name="${repo##*/}"
@@ -612,7 +621,7 @@ _round_cap_census() {
     [ -n "$num" ] || continue
     if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
       repository(owner:$owner,name:$name){ pullRequest(number:$num){
-        headRefOid
+        headRefOid body
         commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
         reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
       } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
@@ -628,7 +637,7 @@ _round_cap_census() {
       continue
     fi
     capjson="$(printf '%s' "$payload" \
-      | jq -c --argjson panel "$panel_json" \
+      | jq -c -L "$DUTY_DIR/lib/jq" --argjson panel "$panel_json" \
           -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null)" || capjson="" # Decision-path empty fallback: the next branch warns and excludes this PR from the destructive cap decision.
     if [ -z "$capjson" ]; then
       warn "$repo#$num: round-cap eval failed; not counted this tick"
@@ -636,11 +645,40 @@ _round_cap_census() {
     fi
     rounds="$(printf '%s' "$capjson" | jq -r '.rounds // 0' 2>/dev/null || echo 0)"
     at_cap="$(printf '%s' "$capjson" | jq -r '.at_cap // false' 2>/dev/null || echo false)"
+    # THE COUNT IS RECORDED AGAINST THE ISSUE, AND FOR EVERY PR (#503 D1, D2).
+    # This is above the at-cap `continue` on purpose: a record only capped PRs
+    # reach is the builder-side counter "that surfaces when a PR stalls", which
+    # is the shape D1 names as insufficient. Every open authored PR's count is
+    # recorded, whether or not it is anywhere near five.
+    #
+    # The issue is read from the PR body with the same pattern the resume
+    # fingerprints use, so `Refs #N` resolves as well as `Closes #N` — which is
+    # what makes a cut predecessor still name the issue it stopped closing.
+    # An unattributed PR records `-`: dropping it would hide a PR whose body
+    # names no issue, which is a board fact worth seeing rather than a gap.
+    issue="$(printf '%s' "$payload" | jq -r --arg re "$_RESUME_ISSUE_RE" \
+      '(.data.repository.pullRequest.body // "")
+       | (first(capture($re; "i") | .n) // "-")' 2>/dev/null)" || issue="-"
+    [ -n "$issue" ] || issue="-"
+    record="$record$(printf '%s#%s %02d@%s' "$repo" "$num" "$rounds" "$issue")"$'\n'
     [ "$at_cap" = true ] || continue
     ROUND_CAP_PRS="${ROUND_CAP_PRS:+$ROUND_CAP_PRS }$repo#$num"
     named="${named:+$named; }$repo#$num ($rounds rounds)"
     items="$items$(printf '%s#%s %02d' "$repo" "$num" "$rounds")"$'\n'
   done < <(printf '%s' "$listing" | jq -r '.[].number' 2>/dev/null)
+  # Said once per (PR, count, issue), on its own ledger. Separate from
+  # .seen-round-cap because the two say different things and clear on different
+  # events: the cap line is an instruction that stands until the builder cuts,
+  # while this is a measurement that changes every time a round closes. Sharing
+  # one ledger would let a PR reaching the cap swallow its own round record.
+  record_fresh="$(printf '%s' "$record" | ledger_filter "$DUTY_DIR/.seen-round-count")"
+  if [ -n "${record_fresh//[[:space:]]/}" ]; then
+    log "$repo: rounds recorded against the issue — $(printf '%s' "$record_fresh" \
+      | awk 'NF { split($2, f, "@"); n = f[1] + 0
+                  printf "%s%s (%d round(s)) -> %s", sep, $1,
+                         n, (f[2] == "-" ? "no issue named" : "#" f[2]); sep = "; " }')"
+    printf '%s' "$record_fresh" | ledger_commit "$DUTY_DIR/.seen-round-count"
+  fi
   [ -n "$named" ] && ROUND_CAP_NAMED="$named"
   # Said once per (PR, round count), not once per tick. A PR sits at the cap for
   # every tick until the builder cuts it, and #167's rule applies: a line that

@@ -1903,15 +1903,18 @@ assert_doctrine_quote "$RG_PROMPT" 'under Claiming:' \
 # citation (#502). attention.txt, ci-red.txt,
 # fragment-floor-envelope.txt, fragment-oneshot-rules.txt,
 # fragment-doctrine-unlisted.txt, fragment-doctrine-upstream.txt,
-# fragment-graph-changed.txt, fragment-signals.txt, fragment-unblockable.txt,
+# fragment-graph-changed.txt, fragment-round-count.txt, fragment-signals.txt,
+# fragment-unblockable.txt,
 # fragment-wt-rules.txt,
 # hygiene.txt, mention.txt,
 # rebase.txt, review.txt, and triage.txt contain no direct occurrence.
+# fragment-round-count.txt is sizing evidence read by TRIAGE, so it cites no
+# builder doctrine slot even though its subject is the builder's round cap.
 declare -A doctrine_builder_occurrences=(
   [attention.txt]=0 [build.txt]=2 [ci-red.txt]=0
   [fragment-floor-envelope.txt]=0 [fragment-oneshot-rules.txt]=0
   [fragment-doctrine-unlisted.txt]=0 [fragment-doctrine-upstream.txt]=0
-  [fragment-graph-changed.txt]=0
+  [fragment-graph-changed.txt]=0 [fragment-round-count.txt]=0
   [fragment-round-rules.txt]=3 [fragment-signals.txt]=0
   [fragment-unblockable.txt]=0
   [fragment-wt-rules.txt]=0 [hygiene.txt]=0 [mention.txt]=0
@@ -4912,7 +4915,7 @@ rc_build() {
 }
 rc_count() {  # payload [panel] -> "<rounds> <at_cap>"
   printf '%s' "$1" \
-    | jq -c --argjson panel "${2:-$RC_PANEL}" -f "$RC_JQ" \
+    | jq -c -L "$SHARED/lib/jq" --argjson panel "${2:-$RC_PANEL}" -f "$RC_JQ" \
     | jq -r '"\(.rounds) \(.at_cap)"'
 }
 
@@ -5056,13 +5059,19 @@ t roundcap-engine-opens-and-closes-no-pr session-cuts "$r1"
 # Said once per (PR, round count), not once per tick: a PR sits at the cap until
 # the builder cuts it, and #167's rule is that a line repeating forever is
 # wallpaper. The second census over the same state must add no log line.
-rm -f "$RC_DUTY/.seen-round-cap"
+#
+# Counted on the BOUNDARY line specifically, not on every log line the census
+# writes. The same census also records each PR's round count against its issue
+# on its own ledger (#503), so a bare '^log ' count stopped being a count of
+# this line the moment that one existed — and would have gone green again by
+# accident on any later change that silenced one of the two.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
 rc_census "$(rc_build 5)" "$RC_LISTING" >/dev/null
-RC_FIRST="$(grep -c '^log ' "$TMP/round-cap-census")"
+RC_FIRST="$(grep -c '^log .*round cap reached' "$TMP/round-cap-census")"
 rc_census "$(rc_build 5)" "$RC_LISTING" >/dev/null
-RC_SECOND="$(grep -c '^log ' "$TMP/round-cap-census")"
+RC_SECOND="$(grep -c '^log .*round cap reached' "$TMP/round-cap-census")"
 rc_census "$(rc_build 6)" "$RC_LISTING" >/dev/null
-RC_SIXTH="$(grep -c '^log ' "$TMP/round-cap-census")"
+RC_SIXTH="$(grep -c '^log .*round cap reached' "$TMP/round-cap-census")"
 t roundcap-census-says-the-boundary-once "1 0 1" "$RC_FIRST $RC_SECOND $RC_SIXTH"
 # A listing this tick could not read names no boundary, and warns rather than
 # manufacturing one.
@@ -5344,5 +5353,210 @@ rc_names roundcap-instruction-names-the-converged-carve-out \
 rc_names roundcap-instruction-cites-the-doctrine-collision \
   "THAT CARVE-OUT IS CREW'S READING AND IT IS CITED" \
   'heavy-duty/ceremony#517'
+
+# --- #503: the same count, read against the issue and as a distribution -----
+#
+# The cap asks a PR whether it has finished. This asks the board what a round
+# count normally is here, which is a question about issues and about history.
+RK_JQ="$SHARED/lib/jq/round-count.jq"
+# The pattern is duty-builder.sh's own constant, read from the module rather
+# than restated: a copy here would pass while the engine's copy drifted, which
+# is the whole failure `_RESUME_ISSUE_RE` was made a constant to prevent (#479).
+RK_RE="$_RESUME_ISSUE_RE"
+# The cap is read from round-cap.jq, the one place the literal lives (#502 D1) —
+# so a suite that hardcoded 5 could not notice the day the two disagreed.
+RK_CAP="$(printf '{}' | jq -L "$SHARED/lib/jq" --argjson panel '[]' \
+  -f "$SHARED/lib/jq/round-cap.jq" | jq -r '.cap')"
+t roundcount-cap-is-round-caps-own-literal 5 "$RK_CAP"
+
+# rk_pr NUM BODY ROUNDS — one pullRequest node carrying ROUNDS closed rounds.
+# Commit i is committed at 10:00 and reviewed at 12:00 the same day, so no
+# verdict is re-pointed and the partition is the plain one, exactly as rc_build
+# builds it above.
+rk_pr() {
+  local rk_num="$1" rk_body="$2" rk_n="$3" i oid ts commits="" reviews=""
+  for ((i = 1; i <= rk_n; i++)); do
+    oid="$(printf 'p%s-c%039d' "$rk_num" "$i")"
+    ts="$(printf '2026-08-%02dT10:00:00Z' "$i")"
+    commits="$commits{\"commit\":{\"oid\":\"$oid\",\"committedDate\":\"$ts\"}},"
+    ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
+    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+  done
+  printf '{"number":%s,"body":%s,"commits":{"nodes":[%s]},"reviews":{"nodes":[%s]}}' \
+    "$rk_num" "$(printf '%s' "$rk_body" | jq -Rs .)" "${commits%,}" "${reviews%,}"
+}
+rk_board() { printf '[%s]' "$(printf '%s,' "$@" | sed 's/,$//')"; }
+rk_count() {  # board-json [filter] -> the evaluated program, or one field of it
+  printf '%s' "$1" \
+    | jq -c -L "$SHARED/lib/jq" --arg re "$RK_RE" --argjson cap "$RK_CAP" -f "$RK_JQ" \
+    | jq -r "${2:-.}"
+}
+
+# Attribution: both forms BUILDER.md writes reach the issue. `Refs #N` matters
+# most — it is what step 3 of the cut leaves on the predecessor.
+t roundcount-closes-attributes-to-the-issue 503 \
+  "$(rk_count "$(rk_board "$(rk_pr 1 'Closes #503' 2)")" '.issues[0].issue')"
+t roundcount-refs-attributes-to-the-issue 503 \
+  "$(rk_count "$(rk_board "$(rk_pr 1 'Refs #503' 2)")" '.issues[0].issue')"
+
+# THE CAPPED CHAIN, which is this issue's hardest criterion. The cut closes a
+# five-round predecessor at `Refs #N` and opens a successor at `Closes #N`; both
+# name the issue, so the issue has taken eight rounds.
+RK_CHAIN="$(rk_board "$(rk_pr 566 'Refs #503' 5)" "$(rk_pr 586 'Closes #503' 3)")"
+t roundcount-cut-chain-is-one-issue 1 "$(rk_count "$RK_CHAIN" '.issues | length')"
+t roundcount-cut-chain-sums-the-rounds 8 "$(rk_count "$RK_CHAIN" '.issues[0].rounds')"
+t roundcount-cut-chain-names-both-prs '566,586' \
+  "$(rk_count "$RK_CHAIN" '.issues[0].prs | join(",")')"
+# MUST FAIL: a capped chain double-counting its rounds. Counted per PR the
+# distribution would carry TWO observations, 5 and 3 — reporting the cap as
+# ordinary and halving the one issue the evidence exists to show. One issue is
+# one observation, and its value is the chain's total.
+t roundcount-cut-chain-enters-the-distribution-once 1 \
+  "$(rk_count "$RK_CHAIN" '.distribution.issues')"
+t roundcount-cut-chain-max-is-the-chain-total 8 \
+  "$(rk_count "$RK_CHAIN" '.distribution.max')"
+# The positive control that keeps the case above from being vacuous: two PRs on
+# two DIFFERENT issues are two observations, so the grouping is doing the work
+# rather than a length that happens to be one.
+t roundcount-two-issues-are-two-observations 2 \
+  "$(rk_count "$(rk_board "$(rk_pr 1 'Closes #10' 5)" "$(rk_pr 2 'Closes #11' 3)")" \
+    '.distribution.issues')"
+
+# The distribution's arithmetic, at both parities.
+RK_ODD="$(rk_board "$(rk_pr 1 'Closes #10' 1)" "$(rk_pr 2 'Closes #11' 3)" \
+  "$(rk_pr 3 'Closes #12' 14)")"
+t roundcount-median-odd '1 3 14' "$(rk_count "$RK_ODD" \
+  '"\(.distribution.min) \(.distribution.median) \(.distribution.max)"')"
+RK_EVEN="$(rk_board "$(rk_pr 1 'Closes #10' 2)" "$(rk_pr 2 'Closes #11' 5)")"
+t roundcount-median-even 3.5 "$(rk_count "$RK_EVEN" '.distribution.median')"
+# D3's own worked example: an outlier is legible only beside the median, which
+# is why the figure reported is a distribution and never a bare number.
+t roundcount-outlier-reads-against-the-median '14 3' \
+  "$(rk_count "$RK_ODD" '"\(.distribution.max) \(.distribution.median)"')"
+t roundcount-at-or-over-cap-counts-against-the-ruled-five 1 \
+  "$(rk_count "$RK_ODD" '.distribution.at_or_over_cap')"
+
+# A PR that has taken no rounds YET is not a zero-round issue. Folding it into
+# the median answers "how far along is the board" instead of "what does an issue
+# cost here"; it is reported rather than dropped, because a filter nobody can
+# see is a filter nobody can check.
+RK_PENDING="$(rk_board "$(rk_pr 1 'Closes #10' 4)" "$(rk_pr 2 'Closes #11' 0)")"
+t roundcount-unreviewed-pr-is-pending-not-zero '1 4 1' \
+  "$(rk_count "$RK_PENDING" \
+    '"\(.distribution.issues) \(.distribution.median) \(.distribution.pending)"')"
+t roundcount-pending-issue-is-still-listed 2 \
+  "$(rk_count "$RK_PENDING" '.issues | length')"
+# A PR whose body names no issue is in no issue's total, and the count says how
+# many rather than letting the coverage gap pass as a complete board.
+t roundcount-unattributed-pr-is-counted '1 1' \
+  "$(rk_count "$(rk_board "$(rk_pr 1 'Closes #10' 2)" "$(rk_pr 2 'no issue here' 9)")" \
+    '"\(.distribution.issues) \(.distribution.unattributed)"')"
+# ...and it is genuinely excluded from the figures, not merely tallied: 9 is the
+# largest count in that board and must not be the max.
+t roundcount-unattributed-pr-is-not-in-the-distribution 2 \
+  "$(rk_count "$(rk_board "$(rk_pr 1 'Closes #10' 2)" "$(rk_pr 2 'no issue here' 9)")" \
+    '.distribution.max')"
+# An empty board reports zeros rather than dividing by none.
+t roundcount-empty-board-is-zeros '0 0 0' \
+  "$(rk_count '[]' '"\(.distribution.issues) \(.distribution.median) \(.distribution.max)"')"
+
+# THE PARTITION IS ONE DEFINITION NOW, AND THIS IS WHAT HOLDS IT TOGETHER.
+# round-cap.jq and round-count.jq both include rounds.jq, so a per-PR count from
+# one must equal the other's for the same history. round-log.jq keeps its own
+# copy and its own pin above; this is the pair that share the module.
+for rk_n in 1 3 5 6; do
+  t "roundcount-agrees-with-round-cap-at-$rk_n" "$rk_n" \
+    "$(rk_count "$(rk_board "$(rk_pr 1 'Closes #10' "$rk_n")")" '.issues[0].rounds')"
+done
+# ...and the module is genuinely shared rather than two files that happen to
+# agree: neither program may carry the partition's own expressions any more.
+if grep -q 'include "rounds";' "$RC_JQ" && grep -q 'include "rounds";' "$RK_JQ" \
+  && ! grep -q 'group_by(.oid)' "$RC_JQ" && ! grep -q 'group_by(.oid)' "$RK_JQ" \
+  && grep -q 'def round_verdicts:' "$SHARED/lib/jq/rounds.jq" \
+  && grep -q 'def round_heads:' "$SHARED/lib/jq/rounds.jq"; then
+  r1=one-definition
+else
+  r1=COPIED
+fi
+t roundcount-partition-is-one-definition one-definition "$r1"
+
+# --- the census records every PR against its issue, not only the capped ones -
+# shellcheck disable=SC2034,SC2317  # vars/mocks consumed by the engine helper
+rk_census() (  # payload listing
+  DUTY_DIR="$RC_DUTY" ME=builder
+  RC_PAYLOAD="$1"
+  RC_LOG="$TMP/round-count-census"; : >"$RC_LOG"
+  log() { printf 'log %s\n' "$*" >>"$RC_LOG"; }
+  warn() { printf 'warn %s\n' "$*" >>"$RC_LOG"; }
+  gh() {
+    printf 'gh %s\n' "$*" >>"$RC_LOG"
+    if [ "$1" = api ] && [ "$2" = graphql ]; then printf '%s\n' "$RC_PAYLOAD"; return 0; fi
+    return 3
+  }
+  _round_cap_census owner/repo '["rev-a","rev-b"]' "$2"
+  # THE SUBJECT IS THE LOG LINE, NOT A VARIABLE. An earlier revision returned a
+  # `ROUND_CAP_COUNTS` global here, and round 1 of #503 pointed out that nothing
+  # in production ever read it — so the cases below were the only consumer of a
+  # channel that carried nothing, and would have stayed green if the record had
+  # never reached the log or the ledger at all. The ledger line and this log line
+  # are the record an engine whose record is its log actually keeps, so they are
+  # what the four cases below read.
+  sed -n 's/^log .*rounds recorded against the issue — //p' "$RC_LOG"
+)
+# rk_body NUM BODY ROUNDS — rc_build's payload with a body written into it, so
+# the census has an issue to resolve.
+rk_payload() { printf '%s' "$(rc_build "$2")" | jq -c --arg b "$1" '.data.repository.pullRequest.body = $b'; }
+
+# THE RECORD IS NOT THE STALL SIGNAL. A four-round PR is nowhere near the cap
+# and is still recorded — D1's whole complaint is a counter "that surfaces when
+# a PR stalls", so a census that recorded only capped PRs would have rebuilt it.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+t roundcount-census-records-a-below-cap-pr 'owner/repo#7 (4 round(s)) -> #503' \
+  "$(rk_census "$(rk_payload 'Closes #503' 4)" "$RC_LISTING")"
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+t roundcount-census-records-a-capped-pr-too 'owner/repo#7 (5 round(s)) -> #503' \
+  "$(rk_census "$(rk_payload 'Closes #503' 5)" "$RC_LISTING")"
+# The cut predecessor still names its issue after step 3 rewrites the keyword.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+t roundcount-census-records-a-refs-predecessor 'owner/repo#7 (5 round(s)) -> #503' \
+  "$(rk_census "$(rk_payload 'Refs #503' 5)" "$RC_LISTING")"
+# A body naming no issue records `-` rather than vanishing from the record.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+t roundcount-census-records-an-unattributed-pr 'owner/repo#7 (4 round(s)) -> no issue named' \
+  "$(rk_census "$(rk_payload 'no issue named here' 4)" "$RC_LISTING")"
+# It costs no extra call: the body rides the payload the cap census already
+# fetched, so the per-PR read stays at one.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+rk_census "$(rk_payload 'Closes #503' 4)" "$RC_LISTING" >/dev/null
+t roundcount-census-adds-no-fetch 1 "$(grep -c '^gh ' "$TMP/round-count-census")"
+# It names the issue in the log, which is what "recorded against the issue"
+# means for an engine whose record is its log — and says it once per
+# (PR, count, issue), on a ledger of its own.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+rk_census "$(rk_payload 'Closes #503' 4)" "$RC_LISTING" >/dev/null
+if grep -q '^log .*rounds recorded against the issue.*owner/repo#7 (4 round(s)) -> #503' \
+    "$TMP/round-count-census"; then r1=named; else r1="$(cat "$TMP/round-count-census")"; fi
+t roundcount-census-log-names-the-issue named "$r1"
+RK_FIRST="$(grep -c '^log .*rounds recorded' "$TMP/round-count-census")"
+rk_census "$(rk_payload 'Closes #503' 4)" "$RC_LISTING" >/dev/null
+RK_SECOND="$(grep -c '^log .*rounds recorded' "$TMP/round-count-census")"
+rk_census "$(rk_payload 'Closes #503' 5)" "$RC_LISTING" >/dev/null
+RK_THIRD="$(grep -c '^log .*rounds recorded' "$TMP/round-count-census")"
+t roundcount-census-records-once-per-count '1 0 1' "$RK_FIRST $RK_SECOND $RK_THIRD"
+# The two ledgers are separate, so a PR reaching the cap cannot swallow its own
+# round record — they clear on different events and say different things.
+if grep -q 'seen-round-count' "$BMOD" && grep -q 'seen-round-cap' "$BMOD" \
+  && [ -f "$RC_DUTY/.seen-round-count" ]; then r1=separate; else r1=SHARED; fi
+t roundcount-census-ledger-is-its-own separate "$r1"
+
+# MUST FAIL: any automatic action on the signal (D4). The census is allowed one
+# kind of call — a GraphQL read — and this evidence adds nothing that labels,
+# splits or blocks. Asserted on the whole call log of a census that recorded a
+# count, so a future write would have to appear here to pass.
+rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
+rk_census "$(rk_payload 'Closes #503' 4)" "$RC_LISTING" >/dev/null
+RK_ACTIONS="$(grep -Ec '^gh .*(mutation|issue edit|pr edit|pr create|pr close|--add-label|--remove-label|-X PATCH|-X POST|-X PUT|-X DELETE)' \
+  "$TMP/round-count-census" || true)"
+t roundcount-census-takes-no-automatic-action 0 "$RK_ACTIONS"
 
 suite_finish

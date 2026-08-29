@@ -24,7 +24,12 @@ source "$SHARED/lib/common.sh"
 # is tested in above.
 TRD="$TMP/tr-duty"; TRS="$TMP/tr-shim"; TRF="$TMP/tr-fix"
 mkdir -p "$TRD/lib/jq" "$TRD/work" "$TRD/conf" "$TRS" "$TRF"
-cp "$SHARED/lib/jq/blockers.jq" "$TRD/lib/jq/"
+# Every program, not just blockers.jq: the round-count census (#503) reads the
+# cap out of round-cap.jq and both it and round-count.jq include the rounds.jq
+# module, so a hand-picked list here is a list that goes stale silently — the
+# census would simply warn and render nothing, and every assertion about the
+# evidence would pass vacuously by being about an absent slot.
+cp "$SHARED"/lib/jq/*.jq "$TRD/lib/jq/"
 cp -r "$SHARED/prompts" "$TRD/prompts"
 # The label vocabulary comes from the SHIPPED conf, not from assignments in
 # this file (#358). The runner calls load_fleet_conf against this copy, so a
@@ -47,6 +52,27 @@ printf '%s\n' "${*//$'\n'/ }" >>"$TR_CALLS"
 p=1; [ -f "$TR_PHASE" ] && p="$(cat "$TR_PHASE")"
 case "$*" in
   *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
+  # The round-count census (#503) is a GraphQL read too, so it must be matched
+  # BEFORE the discussions arm or it would be served discussion rows. Keyed on
+  # `pullRequests(`, which only its query carries. `prs.fail` is how a scenario
+  # makes the fetch itself fail.
+  *"pullRequests(first"*)
+    [ -f "$TR_FIX/prs.fail" ] && exit 1
+    # WHICH page, keyed on the cursor the census actually sent — so the handoff
+    # is checked and not merely counted. The first page carries `after=null`;
+    # the second must carry back the exact endCursor page one handed out. A
+    # request with any OTHER cursor is served a terminal empty page rather than
+    # page one again, so a dropped or mangled cursor surfaces as a missing row
+    # in the rendered evidence instead of as a test that loops forever.
+    # Matched with the flag before and the space after, so the comparison is on
+    # the WHOLE cursor: a bare `*after=CURSOR*` is a substring test, and a
+    # census that prefixed or suffixed the value would still be served page two
+    # by it — which would make the case pass on a cursor it had corrupted.
+    case "$*" in
+      *"-F after=null "*)              cat "$TR_FIX/prs.$p.json" ;;
+      *"-f after=TR-CURSOR-PAGE-2 "*)  cat "$TR_FIX/prs2.$p.json" ;;
+      *)                               cat "$TR_FIX/prs.none.json" ;;
+    esac ;;
   *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
   *"number,body,updatedAt,labels"*) cat "$TR_FIX/board.$p.json" ;;
@@ -64,6 +90,12 @@ cat >"$TMP/tr-run.sh" <<'TRRUN'
 set -uo pipefail
 # shellcheck disable=SC1091
 . "$SHARED_DIR/lib/common.sh"
+# duty-builder.sh, as bin/duty.sh sources it — before any role dispatch and
+# whatever the box's roles are. The triage duty reads `_RESUME_ISSUE_RE` from it
+# (#503), so a runner that sourced only duty-triage.sh would be testing a shape
+# production never runs, and would have reported the evidence as simply absent.
+# shellcheck disable=SC1091
+. "$SHARED_DIR/lib/duty-builder.sh"
 # shellcheck disable=SC1091
 . "$SHARED_DIR/lib/duty-triage.sh"
 load_fleet_conf
@@ -92,6 +124,18 @@ tr_fix() {  # notif nt1 nt2 blocked1 blocked2 numstates [stray1] [stray2] [disc1
   printf '%s' "${8:-${7:-[]}}" >"$TRF/stray.2.json"
   printf '%s' "${9:-}" >"$TRF/disc.1.rows"
   printf '%s' "${10:-${9:-}}" >"$TRF/disc.2.rows"
+  # The round-count board (#503) defaults to empty and to succeeding, so every
+  # scenario written before it keeps its meaning: an empty board yields no
+  # evidence and no prompt slot. A scenario that wants either overwrites these
+  # two files after calling tr_fix.
+  rm -f "$TRF/prs.fail"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs.1.json"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs.2.json"
+  # And the SECOND page defaults to a terminal empty one, so a scenario that
+  # does not paginate is unaffected and a scenario that does must say so.
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs2.1.json"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs2.2.json"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs.none.json"
   for p in 1 2; do
     nt_file="$TRF/nt.$p.json"
     blocked_file="$TRF/blocked.$p.json"
@@ -119,6 +163,42 @@ tr_run() {  # tr_run <run_session rc>, starting with cold ledgers
   tr_tick "$1"
 }
 trc() { grep -c -- "$1" "$TR_CALLS"; }
+# One page, no PRs — the round-count census's empty board.
+TR_PRS_NONE='{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}'
+# tr_pr NUM BODY ROUNDS — one pullRequest node with ROUNDS closed rounds, in the
+# shape the census's own query returns.
+tr_pr() {
+  local num="$1" body="$2" n="$3" i oid ts commits="" reviews=""
+  for ((i = 1; i <= n; i++)); do
+    oid="$(printf 'p%s-c%d' "$num" "$i")"
+    ts="$(printf '2026-08-%02dT10:00:00Z' "$i")"
+    commits="$commits{\"commit\":{\"oid\":\"$oid\",\"committedDate\":\"$ts\"}},"
+    ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
+    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+  done
+  printf '{"number":%s,"body":%s,"commits":{"totalCount":%d,"nodes":[%s]},"reviews":{"totalCount":%d,"nodes":[%s]}}' \
+    "$num" "$(printf '%s' "$body" | jq -Rs .)" "$n" "${commits%,}" "$n" "${reviews%,}"
+}
+tr_prs() {  # tr_prs NODE... -> one page carrying them, and no page after it
+  printf '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}}}}' \
+    "$(printf '%s,' "$@" | sed 's/,$//')"
+}
+# tr_prs_more CURSOR NODE... -> a page that has a next one, handing CURSOR out.
+# The shim serves page two only against this exact value.
+tr_prs_more() {
+  local cur="$1"; shift
+  printf '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":true,"endCursor":"%s"},"nodes":[%s]}}}}' \
+    "$cur" "$(printf '%s,' "$@" | sed 's/,$//')"
+}
+# tr_pr_bulk NUM ISSUE ROUNDS — a node whose body is padded to a realistic
+# size. Crew's own PR bodies run to tens of kilobytes; a page of fifty of them
+# is ~1.10 MB, and the point of padding here is that a page must be able to
+# cross a real byte limit for a case to be able to see one.
+TR503_PAD=""
+tr_pr_bulk() {
+  [ -n "$TR503_PAD" ] || TR503_PAD="$(printf '%*s' 20000 '' | tr ' ' x)"
+  tr_pr "$1" "Closes #$2 — $TR503_PAD" "$3"
+}
 TR_MENTION='[{"id":"t1","reason":"mention","updated_at":"2026-08-01T15:40:00Z",
   "repository":{"full_name":"o/r"},"subject":{"url":"https://api/x"}}]'
 TR_LEAD='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-01T15:30:00Z"}]'
@@ -179,9 +259,14 @@ if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
   r1=said; else r1="$(cat "$TR_LOG")"; fi
 t triage253-quiet-tick-log-unchanged said "$r1"
 # The state-map reads still ride the non-empty declaration graph, and nothing else.
+# Ten rather than nine since #503: this scenario is the first above that LAUNCHES
+# a triage session, and a launching tick also reads the board's round counts once
+# for the prompt. The three counts above are unchanged because none of them
+# launches one — which is the same fact the quiet-tick case below asserts head-on.
 tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
 tr_run 0
-t triage253-gh-calls-with-blocked-list 9 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-gh-calls-with-blocked-list 10 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-blocked-list-reads-rounds-once 1 "$(trc 'pullRequests(first')"
 
 # The mention path itself is untouched — the regression that matters, since
 # this change moves code around that block. One session, kind mention, and the
@@ -923,5 +1008,228 @@ else
   r1=TOUCHED
 fi
 t doctrine-upstream-prose-keeps-quiet-board untouched "$r1"
+
+# --- #503: round count as sizing evidence, in front of triage ---------------
+#
+# Doctrine reads round growth as sizing evidence for the NEXT mint, and the
+# judgement belongs to triage before a builder claims. These drive the real
+# module: the evidence must reach a launching session's prompt, must cost a
+# quiet tick nothing, and must never act.
+TR503_LEAD='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-01T15:30:00Z"}]'
+tr503_wake() {  # tr503_wake <page-json>, a tick whose unblockable lead launches a session
+  tr_fix '[]' '[]' '[]' "$TR503_LEAD" "$TR503_LEAD" "$TR_LANDED"
+  printf '%s' "$1" >"$TRF/prs.1.json"
+  printf '%s' "$1" >"$TRF/prs.2.json"
+  tr_run 0
+}
+
+# The board D3's example is about: one issue at fourteen rounds while the median
+# is three. Both figures must be legible, because the outlier means nothing
+# without the distribution beside it.
+tr503_wake "$(tr_prs "$(tr_pr 1 'Closes #10' 1)" "$(tr_pr 2 'Closes #11' 3)" \
+  "$(tr_pr 3 'Closes #12' 14)")"
+t triage503-launches-a-session 1 "$(trc '^SESSION triage$')"
+if grep -q 'median 3' "$TR_PROMPT.triage" && grep -q 'max 14' "$TR_PROMPT.triage"; then
+  r1=distributed; else r1="$(cat "$TR_PROMPT.triage")"; fi
+t triage503-prompt-carries-the-distribution distributed "$r1"
+if grep -q '#12: 14 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
+t triage503-prompt-carries-the-per-issue-rows rowed "$r1"
+# EVERY issue's count, not only the interesting ones — the criterion is "each
+# issue's PR round count is readable by the triage duty", and the distribution
+# alone cannot answer "how many rounds did #10 take". The one-round issue is the
+# case any bound would drop first, so it is the one asserted.
+if grep -q '#10: 1 round(s)' "$TR_PROMPT.triage" \
+  && grep -q '#11: 3 round(s)' "$TR_PROMPT.triage"; then r1=all; else r1=TRUNCATED; fi
+t triage503-prompt-carries-every-issues-row all "$r1"
+if grep -q 'all 3 of them, most rounds first' "$TR_PROMPT.triage"; then
+  r1=counted; else r1=MISCOUNTED; fi
+t triage503-prompt-row-count-matches-the-rows counted "$r1"
+# Most rounds first, so the outlier reads before the tail.
+TR503_ROW_ORDER="$(grep -o '#1[0-2]: [0-9]* round' "$TR_PROMPT.triage" \
+  | sed 's/:.*//' | paste -sd, -)"
+t triage503-rows-are-sorted-by-count '#12,#11,#10' "$TR503_ROW_ORDER"
+# Read against the ruled five, not a number crew picked — and the cap in the
+# prompt comes from round-cap.jq, so it can never drift from the one the engine
+# holds a request on.
+if grep -q 'the cap it is read against is 5' "$TR_PROMPT.triage" \
+  && grep -q 'at or over the cap of 5' "$TR_PROMPT.triage"; then
+  r1=five; else r1=MISSING; fi
+t triage503-prompt-reads-against-the-ruled-cap five "$r1"
+
+# The capped chain, end to end through the duty rather than through jq alone.
+tr503_wake "$(tr_prs "$(tr_pr 566 'Refs #503' 5)" "$(tr_pr 586 'Closes #503' 3)")"
+if grep -q '#503: 8 round(s) over 2 PR(s)' "$TR_PROMPT.triage"; then
+  r1=one-issue; else r1="$(grep -c '#503' "$TR_PROMPT.triage")"; fi
+t triage503-cut-chain-is-one-row one-issue "$r1"
+# MUST FAIL: a capped chain double-counting. Two observations of 5 and 3 would
+# make the median 4 and the max 5; one observation of 8 makes both 8.
+if grep -q '1 issue(s) with at least one round' "$TR_PROMPT.triage" \
+  && grep -q 'median 8' "$TR_PROMPT.triage"; then r1=counted-once; else r1=DOUBLE; fi
+t triage503-cut-chain-counts-once counted-once "$r1"
+
+# A board whose only PR is still unreviewed has an empty distribution and a row
+# worth rendering. Gating the evidence on the distribution would withhold it from
+# exactly the young board that has the least of it, and would make "each issue's
+# count is readable" false for the issue most likely to be sized right now.
+tr503_wake "$(tr_prs "$(tr_pr 9 'Closes #77' 0)")"
+if grep -q '#77: 0 round(s) over 1 PR(s)' "$TR_PROMPT.triage"; then
+  r1=rowed; else r1=MISSING; fi
+t triage503-unreviewed-issue-still-gets-its-row rowed "$r1"
+if grep -q '0 issue(s) with at least one round' "$TR_PROMPT.triage" \
+  && grep -q '1 issue(s) with a PR but no round yet' "$TR_PROMPT.triage"; then
+  r1=held-out; else r1=COUNTED; fi
+t triage503-unreviewed-issue-is-out-of-the-median held-out "$r1"
+
+# MUST FAIL: a distribution computed from open PRs only. History is what makes
+# the first reading mean anything (D5), and the states are in the query — so
+# this is asserted where the decision actually lives.
+if grep -q 'states:\[OPEN,CLOSED,MERGED\]' "$SHARED/lib/duty-triage.sh"; then
+  r1=history-included; else r1=OPEN-ONLY; fi
+t triage503-distribution-includes-closed-prs history-included "$r1"
+
+# IT IS CONTEXT, NOT A WAKE. A board with round history and no signal launches
+# nothing: a distribution moves whenever any PR gains a round, so as a signal it
+# would re-fire on an unchanged board forever, with nothing for a session to do
+# about it (#59's defect). And a quiet tick must not even pay for the read.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
+printf '%s' "$(tr_prs "$(tr_pr 3 'Closes #12' 14)")" >"$TRF/prs.1.json"
+printf '%s' "$(tr_prs "$(tr_pr 3 'Closes #12' 14)")" >"$TRF/prs.2.json"
+tr_run 0
+t triage503-round-history-is-no-wake 0 "$(trc '^SESSION triage$')"
+t triage503-quiet-tick-reads-no-rounds 0 "$(trc 'pullRequests(first')"
+if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
+  r1=quiet; else r1="$(cat "$TR_LOG")"; fi
+t triage503-quiet-tick-log-unchanged quiet "$r1"
+
+# MUST FAIL: any automatic relabel (D4). The evidence surfaces and stops — no
+# label, split or block follows from it. Asserted over the whole call log of a
+# tick that DID render evidence, so a future write would have to show up here.
+tr503_wake "$(tr_prs "$(tr_pr 3 'Closes #12' 14)")"
+TR503_ACTIONS="$(grep -Ec 'issue edit|pr edit|--add-label|--remove-label|-X PATCH|-X POST|-X PUT|-X DELETE|mutation' \
+  "$TR_CALLS" || true)"
+t triage503-takes-no-automatic-action 0 "$TR503_ACTIONS"
+# ...and the prompt says so too, because the session is the other actor that
+# could act on it and doctrine gives the judgement to a human-grade read.
+if grep -q 'Nothing is labelled, split, blocked or relabelled on account of it' \
+    "$TR_PROMPT.triage"; then r1=said; else r1=SILENT; fi
+t triage503-prompt-forbids-acting-on-it said "$r1"
+
+# A fetch failure costs the evidence and nothing else: the session still runs on
+# the signals that woke it, and no partial distribution is presented as measured.
+tr_fix '[]' '[]' '[]' "$TR503_LEAD" "$TR503_LEAD" "$TR_LANDED"
+: >"$TRF/prs.fail"
+tr_run 0
+t triage503-fetch-failure-still-launches 1 "$(trc '^SESSION triage$')"
+if grep -q 'round-count fetch failed' "$TR_LOG"; then r1=warned; else r1="$(cat "$TR_LOG")"; fi
+t triage503-fetch-failure-warns warned "$r1"
+if grep -q 'Sizing evidence' "$TR_PROMPT.triage"; then r1=PARTIAL; else r1=omitted; fi
+t triage503-fetch-failure-renders-no-evidence omitted "$r1"
+# The unrendered slot leaves no marker behind either — a literal {{ROUND_EVIDENCE}}
+# in a prompt is the shape render_prompt produces for a slot nobody supplied.
+if grep -q 'ROUND_EVIDENCE' "$TR_PROMPT.triage"; then r1=LEAKED; else r1=clean; fi
+t triage503-unrendered-slot-leaves-no-marker clean "$r1"
+
+# The issue pattern is duty-builder.sh's constant, reached across duty modules.
+# bin/duty.sh sources all four before any role dispatch, so it is defined on a
+# triage-only box — pinned here so a later reordering cannot silently empty it
+# and quietly attribute every PR to no issue.
+if grep -q '_RESUME_ISSUE_RE' "$SHARED/lib/duty-triage.sh" \
+  && grep -q '^_RESUME_ISSUE_RE=' "$SHARED/lib/duty-builder.sh"; then
+  r1=shared; else r1=COPIED; fi
+t triage503-issue-pattern-is-the-builders-constant shared "$r1"
+# shellcheck disable=SC2016  # match the literal $DUTY_DIR source lines in duty.sh
+TR503_ORDER="$(grep -n 'source "$DUTY_DIR/lib/duty-\(builder\|triage\)\.sh"' "$SHARED/bin/duty.sh" \
+  | head -2 | sed 's/:.*duty-/ /;s/\.sh"//' | awk '{print $2}' | paste -sd, -)"
+t triage503-builder-module-is-sourced-first builder,triage "$TR503_ORDER"
+# The dispatch call is indented inside `if has_role triage`, so this compares
+# line numbers rather than matching an anchored line.
+# shellcheck disable=SC2016  # match the literal $DUTY_DIR source line in duty.sh
+TR503_SRC_LINE="$(grep -n 'source "$DUTY_DIR/lib/duty-builder.sh"' "$SHARED/bin/duty.sh" \
+  | head -1 | cut -d: -f1)"
+TR503_CALL_LINE="$(grep -n '^[[:space:]]*duty_triage$' "$SHARED/bin/duty.sh" \
+  | head -1 | cut -d: -f1)"
+if [ -n "$TR503_SRC_LINE" ] && [ -n "$TR503_CALL_LINE" ] \
+  && [ "$TR503_SRC_LINE" -lt "$TR503_CALL_LINE" ]; then r1=before; else r1=AFTER; fi
+t triage503-builder-module-sourced-before-dispatch before "$r1"
+
+# --- a real board's worth of pages, at a real board's size (round 1) ---------
+#
+# WHY THIS FIXTURE IS BIG, AND WHY THAT IS THE TEST. Every case above is one
+# page of a few small nodes, and that is exactly how the accumulator shipped a
+# defect past a green suite: it folded the page into the running history with
+# `--argjson`, which makes each JSON value ONE argv element, and a single
+# element is capped at MAX_ARG_STRLEN — 131,072 bytes — whatever ARG_MAX says.
+# Crew's own first page is ~1.10 MB, so `execve` failed with E2BIG on the first
+# page of every real board while every fixture here sailed under the limit. A
+# case that cannot reach the limit cannot see the bug, so this one carries a
+# page that crosses it.
+#
+# AND IT PAGINATES, because the cursor handoff was never exercised either: the
+# fixtures all set hasNextPage:false. The shim serves page two only against the
+# exact endCursor page one handed out.
+#
+# The assertions are on the RENDERED EVIDENCE, not on the call count. A call
+# count would have passed against the broken code too — the fetch is not what
+# failed. Every figure below is chosen so the wrong answer is a DIFFERENT
+# number rather than an absent one: page one alone is 10 issues at min 2,
+# median 2, max 2, and both pages together are 21 at min 2, median 9, max 9.
+TR503_P1=(); TR503_P2=()
+for tr503_i in 1 2 3 4 5 6 7 8 9 10; do
+  TR503_P1+=("$(tr_pr_bulk "$((600 + tr503_i))" "$((600 + tr503_i))" 2)")
+done
+# Page two is unpadded: its job is the cursor and the arithmetic, and page one
+# already carries the bytes.
+for tr503_i in 1 2 3 4 5 6 7 8 9 10 11; do
+  TR503_P2+=("$(tr_pr "$((700 + tr503_i))" "Closes #$((700 + tr503_i))" 9)")
+done
+tr_fix '[]' '[]' '[]' "$TR503_LEAD" "$TR503_LEAD" "$TR_LANDED"
+TR503_PAGE1="$(tr_prs_more TR-CURSOR-PAGE-2 "${TR503_P1[@]}")"
+TR503_PAGE2="$(tr_prs "${TR503_P2[@]}")"
+printf '%s' "$TR503_PAGE1" >"$TRF/prs.1.json"; printf '%s' "$TR503_PAGE1" >"$TRF/prs.2.json"
+printf '%s' "$TR503_PAGE2" >"$TRF/prs2.1.json"; printf '%s' "$TR503_PAGE2" >"$TRF/prs2.2.json"
+
+# The fixture's own size, asserted. Without this a later edit that trims the
+# padding for speed would silently stop testing the bound, and every case below
+# would keep passing while covering nothing — which is the failure this whole
+# block exists to undo.
+TR503_NODE_BYTES="$(printf '%s' "$TR503_PAGE1" \
+  | jq -c '.data.repository.pullRequests.nodes' | wc -c)"
+if [ "$TR503_NODE_BYTES" -gt 131072 ]; then r1=over; else r1="under:$TR503_NODE_BYTES"; fi
+t triage503-page-fixture-crosses-the-argv-bound over "$r1"
+
+tr_run 0
+t triage503-paginated-board-launches-a-session 1 "$(trc '^SESSION triage$')"
+t triage503-paginated-board-reads-both-pages 2 "$(trc 'pullRequests(first')"
+# THE BOUND ITSELF. An accumulator that puts the page on argv never gets here:
+# it warns and returns, and the fragment is absent entirely.
+if grep -q 'round-count accumulate failed' "$TR_LOG"; then r1=E2BIG; else r1=folded; fi
+t triage503-oversized-page-folds folded "$r1"
+if grep -q 'Sizing evidence' "$TR_PROMPT.triage"; then r1=rendered; else r1=ABSENT; fi
+t triage503-oversized-page-reaches-the-prompt rendered "$r1"
+# PAGE ONE reached the rendered rows — the page that crosses the bound.
+if grep -q '#601: 2 round(s)' "$TR_PROMPT.triage" \
+  && grep -q '#610: 2 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
+t triage503-oversized-page-rows-are-rendered rowed "$r1"
+# PAGE TWO reached them too, which is the cursor handoff answered on the output
+# rather than on the call log: #701 and #711 exist on no other page.
+if grep -q '#701: 9 round(s)' "$TR_PROMPT.triage" \
+  && grep -q '#711: 9 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
+t triage503-second-page-rows-are-rendered rowed "$r1"
+# And the DISTRIBUTION is the two-page one. Page one alone would say 10 issues,
+# median 2, max 2 — three different numbers, so a lost page cannot pass this.
+if grep -q '21 issue(s) with at least one round' "$TR_PROMPT.triage" \
+  && grep -q 'min 2, median 9, max 9' "$TR_PROMPT.triage"; then
+  r1=both-pages; else r1="$(grep -o '[0-9]* issue(s) with at least one round.*' "$TR_PROMPT.triage")"; fi
+t triage503-distribution-spans-every-page both-pages "$r1"
+t triage503-paginated-board-still-takes-no-action 0 \
+  "$(grep -Ec 'issue edit|pr edit|--add-label|--remove-label|-X PATCH|-X POST|-X PUT|-X DELETE|mutation' \
+    "$TR_CALLS" || true)"
+
+# The cursor is CHECKED, not just sent: the shim answers page two only against
+# the exact endCursor, so a census that dropped or mangled it would be served a
+# terminal empty page and lose #701-#711. Pinned here so the two assertions
+# above cannot be satisfied by a shim that hands out page two unconditionally.
+if grep -q -e '-f after=TR-CURSOR-PAGE-2 ' "$TR_CALLS"; then r1=carried; else r1=DROPPED; fi
+t triage503-second-page-carries-the-cursor carried "$r1"
 
 suite_finish
