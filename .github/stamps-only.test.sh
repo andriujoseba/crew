@@ -379,6 +379,20 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 0 "a-padded-record-and-an-unpadded-tag-are-one-candidate" '*0.9.0 over 0.9.0-rc1*'
 
+# The TAG's spelling is what gets resolved, because the anchor is a ref; the
+# RECORD's spelling is what gets named on disk, because that is where the file
+# is. A guard holding one spelling for both gets one of the two wrong, and this
+# is the case that says which is which — here the could-not-look must name the
+# padded record, not a `-rc1.md` that was never written.
+D="$(base paddeduntagged)"
+w "$D" VERSION "0.9.0-rc01"
+w "$D" drills/0.9.0-rc01.md "# drill 0.9.0-rc01"
+ci "$D" "cut 0.9.0-rc01 without publishing it"
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 2 "an-unreachable-padded-anchor-names-the-record-that-claims-it" '*drills/0.9.0-rc01.md*0.9.0-rc01 is this final*'
+
 # One number, two spellings, both reachable. There is no way to tell which tree
 # this rung drilled, and picking either would measure against a tree nobody
 # declared — so the guard stops rather than choosing. A dict keyed on the number
