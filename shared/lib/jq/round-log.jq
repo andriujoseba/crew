@@ -102,7 +102,7 @@ def is_administrative_comment:
   or startswith("🔁 rerun owed at head")
   or startswith("✅ unchanged-head rerun passed at")
   or startswith("CI classification at head")
-  or test("^\\{\\{MARK_[A-Z0-9_]+\\}\\}");
+  or startswith("{{");
 
 # Render one row. Only the four leading fact cells are replaced; everything
 # after the fourth separator is the builder's requested/done prose and is
