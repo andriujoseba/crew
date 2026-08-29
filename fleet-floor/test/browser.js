@@ -1242,6 +1242,11 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       // layer above it, so it must not claim one.
       eq('registry: the fleet-wide scope claims no inheritance', 0,
          await page.locator('#regov .regsrc').count());
+      // The fleet-wide scope IS the universe, so it is the one that gets a
+      // free field: there is nothing above it to bound what an operator may
+      // type, and adding a board is typing its name.
+      eq('registry: the fleet-wide scope is a free list', 2,
+         await page.locator('#regov .regta').count());
       await shot('06-registries-fleet');
       await page.keyboard.press('Escape');
       await settle(async () => !(await page.locator('#regov').isVisible().catch(() => false)), 4000);
@@ -1274,6 +1279,29 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
            await page.locator('#regov .regsrc').count());
         eq('registry: ...and offering the inherit action', 2,
            await page.locator('#regov [data-reg="inherit"]').count());
+        /* THE PER-BOX SCOPE IS A SELECTION, NOT A FREE LIST (operator,
+           2026-08-29). A box can never name a repository the fleet-wide
+           registry does not, so the legal values are finite and already on
+           screen; a textarea here would exist only for the collector to refuse
+           what the page had invited. Asserted on the page because that is
+           where the invitation is — the collector's refusal is already
+           covered, and a build with both would still be one an operator could
+           type into. */
+        eq('registry: ...as switches over the fleet-wide list, not a free field', 0,
+           await page.locator('#regov .regta').count());
+        const wsel = '#regov .regblk[data-kind="work"] ';
+        ok('registry: ...one switch per repository the fleet watches',
+           (await page.locator(`${wsel}.regopt`).count()) >= 1,
+           `switches: ${await page.locator(`${wsel}.regopt`).count()}`);
+        // An inheriting box shows every switch ON. Inheriting IS selecting all
+        // of them, and a cell that drew them off would read as a narrowed box
+        // and invite an operator to "fix" one that is not.
+        const wsrc = (await page.locator(`${wsel}.regsrc`).textContent()).trim();
+        if (wsrc === 'inherited') {
+          eq('registry: ...every one of them on for an inheriting box',
+             await page.locator(`${wsel}.regopt input`).count(),
+             await page.locator(`${wsel}.regopt input:checked`).count());
+        }
         await shot('07-registries-box');
         await page.keyboard.press('Escape');
         await settle(async () => !(await page.locator('#regov').isVisible().catch(() => false)), 4000);

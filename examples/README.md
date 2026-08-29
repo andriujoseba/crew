@@ -43,26 +43,35 @@ fleet.roster              box name, agent and role
 fleet.conf                operator fleet values
 repos.txt                 seed for a new box's work registry
 notify-repos.txt          additive cross-repo notification targets for a new triage box
-repos.d/<box>.txt         optional per-box work registry, overriding repos.txt
-notify-repos.d/<box>.txt  optional per-box notify registry, overriding notify-repos.txt
+repos.d/<box>.txt         optional per-box selection from repos.txt
+notify-repos.d/<box>.txt  optional per-box selection from notify-repos.txt
 agents/*.conf             optional operator agent profiles; same name overrides shipped
 doctrine.conf             optional doctrine paths named in rendered prompts
 ```
 
-## Pointing one box somewhere else
+## Narrowing one box
 
-A `.d` file **replaces** the fleet-wide list for the box it names, rather than
-adding to it: the box carries that list and nothing else. The host stages it in
-place of the fleet-wide registry at every hire and upgrade, so re-pointing one
-droid at a different repository is one file, not an edit to a list every other
-box reads too.
+A `.d` file **selects** from the fleet-wide list for the box it names: the box
+carries those repositories and nothing else. The host stages the selection in
+place of the fleet-wide registry at every hire and upgrade, so narrowing one
+droid to a single board is one file, not an edit to a list every other box
+reads too.
 
-**Existence is the whole test.** An *empty* override is a box deliberately
-aimed at no board at all — the narrowing `repos.txt`'s own header describes —
-and not a box that has no override. **Removing** the file is how a box goes
-back to inheriting, and that is a different act from writing the fleet-wide
-list into it: the box that inherits follows a later widening, the box pinned to
-today's copy of it does not.
+**A box can only watch repositories the fleet watches.** The `.d` file names a
+subset of the fleet-wide list and never reaches outside it. That bound is held
+in two places, and it has to be both: an entry the fleet-wide list does not
+name is refused when it is written, and the selection is intersected with the
+fleet-wide list again on every read — so retiring a repository fleet-wide takes
+it off the boxes that had selected it, instead of leaving them working a board
+the fleet no longer knows about. A narrowed box is a box doing what it was
+asked; nothing reads it as diverged.
+
+**Existence is the whole test** for *having* a selection. An *empty* file is a
+box deliberately aimed at no board at all — the narrowing `repos.txt`'s own
+header describes — and not a box that has no selection. **Removing** the file
+is how a box goes back to inheriting, and that is a different act from writing
+today's fleet-wide list into it: the box that inherits follows a later
+widening, the box pinned to a copy of it does not.
 
 Both files are edited by hand, and by `crew floor` — which validates before it
 writes, refuses a repository the fleet cannot reach, and records every write in
