@@ -5,8 +5,9 @@
 #
 # Output: the NEW body when there is something to render, or the empty string
 # when every round is already recorded. Each rendered round is keyed by the
-# legacy-compatible `<!-- round:<head-sha> -->` marker, so retries are no-ops
-# and bodies that already carry verbatim mirrored replies are never rewritten.
+# legacy-compatible `<!-- round:<head-sha> -->` marker in its `done` cell, so
+# retries are no-ops, the Markdown table stays contiguous, and bodies that
+# already carry verbatim mirrored replies are never rewritten.
 #
 # The builder owns `### Current state` and the `requested` / `done` prose cells.
 # The engine owns only the other four cells: round number, head, verdict facts,
@@ -51,14 +52,15 @@ def round_section_scaffold:
 # legacy round markers make those old entries ineligible for rendering again.
 def ensure_fact_table:
   if contains(fact_header) then .
-  elif contains("\n## Round log") then
-    split("\n## ") as $parts
+  elif startswith("## Round log") or contains("\n## Round log") then
+    ("\n" + . | split("\n## ")) as $parts
     | [ $parts[]
         | if startswith("Round log")
           then (. + "\n\n" + round_section_scaffold)
           else .
           end ]
     | join("\n## ")
+    | ltrimstr("\n")
   else . + "\n\n## Round log\n\n" + round_section_scaffold
   end;
 
@@ -89,12 +91,13 @@ def render_round($round):
            | if . == null then null else .prose end) as $prose
         | if $prose == null then
             ($lines[0:$row_i]
-             + [$facts + " — | — |", $round.marker]
+             + [$facts + " — | — " + $round.marker + " |"]
              + $lines[$row_i + 1:]
              | join("\n"))
           else
             ($lines[0:$row_i]
-             + [$facts + $prose, $round.marker]
+             + [$facts + ($prose | sub("\\|[[:space:]]*$";
+                                       " " + $round.marker + " |"))]
              + $lines[$row_i + 1:]
              | join("\n"))
           end
@@ -103,11 +106,10 @@ def render_round($round):
            | select($lines[.] | startswith("## ")) ]
          | first // ($lines | length)) as $section_end
         | ([ range($header_i + 2; $section_end)
-           | select(($lines[.] | startswith("| "))
-                    or ($lines[.] | startswith("<!-- round:"))) ]
+           | select($lines[.] | startswith("| ")) ]
          | last // ($header_i + 1)) as $insert_i
         | ($lines[0:$insert_i + 1]
-           + [$facts + " — | — |", $round.marker]
+           + [$facts + " — | — " + $round.marker + " |"]
            + $lines[$insert_i + 1:]
            | join("\n"))
       end

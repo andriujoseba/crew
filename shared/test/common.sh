@@ -7032,6 +7032,14 @@ t roundlog-preserves-sibling-sections kept "$r1"
 case "$RL_OUT4" in *"older entry"*"round:$RL_O1"*"## Worklog"*) r1=in-section ;; *) r1=no ;; esac
 t roundlog-inserts-into-existing-section in-section "$r1"
 
+# A Round log can legally be the body's first section. The migration must add
+# its fact table there rather than append a duplicate `## Round log` section.
+RL_FIRST="$(mk_rl '## Round log
+
+legacy preamble' "$RL_REVS1" "$RL_COMS" | rl)"
+t roundlog-start-of-body-section-is-not-duplicated 1 \
+  "$(grep -c '^## Round log$' <<<"$RL_FIRST")"
+
 # Round 1 already recorded, round 2 not → only round 2 appended (no dup).
 RL_OUT5="$(mk_rl "has <!-- round:$RL_O1 --> already" "$RL_REVS" "$RL_COMS" | rl)"
 case "$RL_OUT5" in *"round:$RL_O2"*) r1=yes ;; *) r1=no ;; esac
@@ -7046,7 +7054,7 @@ RL_AUTHORED="$(printf 'Intro.\n\n## Round log\n\n### Current state\n\nBuilder st
 RL_AUTHORED_OUT="$(mk_rl "$RL_AUTHORED" "$RL_REVS1" "$RL_COMS" | rl)"
 case "$RL_AUTHORED_OUT" in *"Builder state stays byte-for-byte."*) r1=kept ;; *) r1=LOST ;; esac
 t roundlog-preserves-current-state kept "$r1"
-case "$RL_AUTHORED_OUT" in *"| asked prose exactly | done prose exactly |"*) r1=kept ;; *) r1=LOST ;; esac
+case "$RL_AUTHORED_OUT" in *"| asked prose exactly | done prose exactly "*"round:$RL_O1"*) r1=kept ;; *) r1=LOST ;; esac
 t roundlog-preserves-builder-prose-cells kept "$r1"
 
 # The issue's 9 KB adversary: changing only reply bytes cannot change body
@@ -7111,7 +7119,7 @@ t roundlog-handoff-not-premature-noreply clean "$r1"
 # The terminal no-comment case survives the deferral: a round that genuinely
 # passed with no reply is still recorded at handoff ($final=true).
 RL_TERM="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
-case "$RL_TERM" in *"| — | — | — |"*) r1=yes ;; *) r1=no ;; esac
+case "$RL_TERM" in *"| — | — "*"round:$RL_O1"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-terminal-no-comment-at-handoff yes "$r1"
 
 # #249: GitHub can re-point an existing verdict to a base-merge commit made
