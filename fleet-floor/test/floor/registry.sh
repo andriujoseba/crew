@@ -280,6 +280,7 @@ t "registry: a refused write is not journalled" 0 \
 # with nothing durable saying who made it, which is the failure D5 exists to
 # prevent. Reproduced the way it actually happens on a host: the journal path
 # occupied by something that is not an appendable file.
+FF_REG_BEFORE="$(regf work)"
 mv "$FF_REG_JOURNAL" "$FF_REG_JOURNAL.aside"
 mkdir "$FF_REG_JOURNAL"
 FF_REG_NOJ="$(reg '{"action":"registry-set","kind":"work","entries":["heavy-duty/crew"]}')"
@@ -292,9 +293,10 @@ t "registry: ...naming the journal and saying nothing landed" named "$r1"
 t "registry: ...as a refusal, so the page does not report a change" True \
   "$(printf '%s' "$FF_REG_NOJ" | jqf "d['refused']")"
 # The claim the refusal makes, asserted against the file rather than the reply:
-# the fleet-wide list is exactly what it was, entry for entry.
-t "registry: ...and the registry is untouched" "heavy-duty/crew,heavy-duty/ceremony" \
-  "$(regf work)"
+# the fleet-wide list is exactly what it was, entry for entry. The submission
+# above removes two of the three entries, so a write that landed anyway is
+# visible here and not merely unrecorded.
+t "registry: ...and the registry is untouched" "$FF_REG_BEFORE" "$(regf work)"
 t "registry: ...leaving no half-written temporary beside it" 0 \
   "$(find "$FF_REG_DIR" -maxdepth 1 -name 'repos.txt.crew-floor.*' | wc -l | tr -d ' ')"
 rmdir "$FF_REG_JOURNAL"
@@ -308,6 +310,10 @@ mv "$FF_REG_JOURNAL.aside" "$FF_REG_JOURNAL"
 FF_REG_ALT="$TMP/reg-alt"
 mkdir -p "$FF_REG_ALT"
 printf 'ff-alt claude-builder\n' >"$FF_REG_ALT/fleet.roster"
+# `floor.roster` refuses an incomplete definition at IMPORT, which is the
+# refusal #508 D4 kept, so this one carries the shipped conf files beside the
+# registry it is here to write.
+cp "$FLOOR/../examples/fleet.conf" "$FLOOR/../examples/doctrine.conf" "$FF_REG_ALT/"
 printf '# alt\nheavy-duty/crew\nheavy-duty/box\n' >"$FF_REG_ALT/repos.txt"
 FF_REG_LANDED="$(CREW_CONFIG_DIR="$FF_REG_ALT" PYTHONPATH="$FLOOR/server" python3 -c '
 import floor.registry as r
