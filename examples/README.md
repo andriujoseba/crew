@@ -39,13 +39,35 @@ registry is empty and the fleet stays aimed at nothing until the operator
 names a repository.
 
 ```text
-fleet.roster       box name, agent and role
-fleet.conf         operator fleet values
-repos.txt          seed for a new box's work registry
-notify-repos.txt   additive cross-repo notification targets for a new triage box
-agents/*.conf      optional operator agent profiles; same name overrides shipped
-doctrine.conf      optional doctrine paths named in rendered prompts
+fleet.roster              box name, agent and role
+fleet.conf                operator fleet values
+repos.txt                 seed for a new box's work registry
+notify-repos.txt          additive cross-repo notification targets for a new triage box
+repos.d/<box>.txt         optional per-box work registry, overriding repos.txt
+notify-repos.d/<box>.txt  optional per-box notify registry, overriding notify-repos.txt
+agents/*.conf             optional operator agent profiles; same name overrides shipped
+doctrine.conf             optional doctrine paths named in rendered prompts
 ```
+
+## Pointing one box somewhere else
+
+A `.d` file **replaces** the fleet-wide list for the box it names, rather than
+adding to it: the box carries that list and nothing else. The host stages it in
+place of the fleet-wide registry at every hire and upgrade, so re-pointing one
+droid at a different repository is one file, not an edit to a list every other
+box reads too.
+
+**Existence is the whole test.** An *empty* override is a box deliberately
+aimed at no board at all — the narrowing `repos.txt`'s own header describes —
+and not a box that has no override. **Removing** the file is how a box goes
+back to inheriting, and that is a different act from writing the fleet-wide
+list into it: the box that inherits follows a later widening, the box pinned to
+today's copy of it does not.
+
+Both files are edited by hand, and by `crew floor` — which validates before it
+writes, refuses a repository the fleet cannot reach, and records every write in
+`.registry-journal.log` beside them. Neither reader caches: a hand edit is
+picked up by the next tick and by the console without a restart.
 
 The host atomically replaces `fleet.roster` and `fleet.conf` in a box on every
 hire or upgrade. Registries follow the host only while their box copy remains

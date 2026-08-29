@@ -254,6 +254,12 @@ source "$HERE/floor/ping.sh"
 # test rather than a single-poll happy path.
 # shellcheck source=floor/alerts.sh
 source "$HERE/floor/alerts.sh"
+# registry.sh WRITES the fleet definition this whole file resolves against, so
+# by the read rule above it goes after every suite that reads it — and it puts
+# a `gh` stub on PATH, which boxside.sh below must not inherit. It restores
+# both before it returns; the position is the belt to that file's braces.
+# shellcheck source=floor/registry.sh
+source "$HERE/floor/registry.sh"
 # The two scripts that normally only run inside a box, executed for real —
 # without this the collector assertions above are circular (they validate the
 # parser against stub-box's imitation of probe.sh, not against probe.sh).
