@@ -30,6 +30,18 @@ turn:
       cleared box follows a later widening and the pinned one does not, which
       is the whole reason an override is a layer rather than a copy.
 
+  it is not a free list.  An override SELECTS from the fleet-wide registry and
+      can never reach outside it (operator, 2026-08-29): a droid's watch set is
+      drawn from the host-level list, and a repository in a member that is not
+      at host level is the divergence the layer exists to make unnecessary. The
+      rule is enforced twice on purpose, because once is not enough — refused
+      at the edit by `set_override`, so the operator learns at the click, and
+      applied again at every READ by `effective`, so that removing a repository
+      fleet-wide takes it off the boxes that selected it rather than leaving
+      them working a board the fleet no longer knows about. A write-time check
+      alone would hold the invariant for exactly as long as nobody edited the
+      fleet-wide list.
+
   it is not the transport.  Writing here changes what the next `crew upgrade`
       stages onto a box; nothing in this process reaches into a guest. The
       transport half is `cli/crew`'s `stage_fleet_definition`, which resolves
@@ -105,7 +117,7 @@ def read_entries(path):
 
 
 def effective(kind, box):
-    """(entries, source) for one box: its override if it has one, else the
+    """(entries, source) for one box: its selection if it has one, else the
     fleet-wide list. `source` is `"override"` or `"fleet"`.
 
     Existence is the test, never content. A box whose override file is EMPTY
@@ -113,11 +125,22 @@ def effective(kind, box):
     state the registry header calls a divergence veto — and reading that as
     "nothing set, fall through" would silently widen the one box somebody
     pointed at nothing.
+
+    The selection is INTERSECTED with the fleet-wide list here, and in
+    fleet-wide order, which is the read half of the containment invariant
+    above. Two consequences, both wanted: a repository dropped from the
+    fleet-wide registry leaves every box at once, including the boxes that had
+    selected it, so an operator retiring a board does it in one edit; and the
+    order a box sees is the order the operator maintains upstream, so the two
+    views read alike rather than preserving whatever order a click happened to
+    submit.
     """
     fleet_wide, override = _paths(kind, box)
+    universe = read_entries(fleet_wide)
     if override and os.path.isfile(override):
-        return read_entries(override), "override"
-    return read_entries(fleet_wide), "fleet"
+        chosen = set(read_entries(override))
+        return [e for e in universe if e in chosen], "override"
+    return universe, "fleet"
 
 
 def snapshot(boxes):
@@ -186,7 +209,7 @@ def _probe_reachable(repo):
     return False, "the fleet cannot reach it: %s" % detail
 
 
-def validate(entries, probe=None):
+def validate(entries, probe=None, within=None):
     """(clean, error) — the submitted list, or the first reason to refuse it.
 
     Reachability is asked only of entries this edit ADDS; `probe` is the set
@@ -194,6 +217,15 @@ def validate(entries, probe=None):
     a repository renamed, archived out of view, or moved to another fleet —
     must not block every unrelated edit to the same registry, and above all
     must not block its own REMOVAL, which is the repair for it.
+
+    `within` bounds the submission to a universe, and is how a per-box
+    selection is held inside the fleet-wide registry (operator, 2026-08-29).
+    It is checked BEFORE reachability and instead of it: an entry drawn from
+    the fleet-wide list was probed when it landed there, so asking GitHub again
+    would spend a round trip per repository to re-answer a settled question
+    while the operator waits on a click. The two arguments are therefore
+    alternatives in practice — a fleet-wide write probes because its entries
+    are new to the fleet, a per-box write contains because none of its can be.
     """
     seen = []
     for raw in entries:
@@ -206,6 +238,11 @@ def validate(entries, probe=None):
                           % entry)
         if entry in seen:
             return None, "%s is listed twice" % entry
+        if within is not None and entry not in within:
+            return None, ("%s is not in the fleet-wide registry — a box can "
+                          "only watch repositories the fleet watches, so add "
+                          "it fleet-wide first and then select it here"
+                          % entry)
         seen.append(entry)
     if probe is not None:
         for entry in seen:
@@ -307,23 +344,36 @@ def set_fleet(kind, entries, actor=""):
 
 
 def set_override(kind, box, entries, actor=""):
-    """Write one box's override. Returns (result, error).
+    """Write one box's selection from the fleet-wide registry. (result, error).
 
-    The probe set is the box's CURRENT effective list rather than the override
-    file's: pinning a box to what it already inherits is the ordinary way an
-    override is created, and asking GitHub about every line of a fleet-wide
-    list the operator has not touched would make that click cost a round-trip
-    per repository for no decision.
+    Bounded by the fleet-wide list and not probed: every candidate is already
+    in that list, so the reachability question this edit could ask was answered
+    when the entry landed there (see `validate`). What replaces the probe is
+    containment — an entry the fleet-wide registry does not name is refused
+    here with its reason, which is D3's "refused at the edit" applied to the
+    invariant the operator stated on 2026-08-29.
+
+    A fleet-wide registry that is EMPTY or absent refuses every non-empty
+    selection, and says so as itself rather than as five containment failures
+    in a row: there is nothing to select from, and the operator's next move is
+    a fleet-wide edit and not a narrower box.
     """
-    _, path = _paths(kind, box)
-    current, _source = effective(kind, box)
-    clean, err = validate(entries, probe=set(current))
+    fleet_wide, path = _paths(kind, box)
+    universe = read_entries(fleet_wide)
+    wanted = [str(e).strip() for e in entries if str(e).strip()]
+    if wanted and not universe:
+        return None, ("the fleet-wide %s registry names no repositories, so "
+                      "there is nothing for %s to select — edit the fleet-wide "
+                      "list first" % (kind, box))
+    clean, err = validate(wanted, within=set(universe))
     if err:
         return None, err
     added, removed = _rewrite(path, clean)
     _journal(actor, "set-override:%s" % kind, path, box, added, removed)
+    entries_, source = effective(kind, box)
     return {"kind": kind, "scope": "override", "box": box, "path": path,
-            "entries": clean, "added": added, "removed": removed}, ""
+            "entries": entries_, "source": source,
+            "added": added, "removed": removed}, ""
 
 
 def clear_override(kind, box, actor=""):
