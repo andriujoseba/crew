@@ -365,19 +365,58 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 0 "a-padded-number-still-orders-numerically" '*over 0.9.0-rc02*'
 
-# A padded RECORD against an unpadded TAG. The anchor is a ref, so the tag's
-# spelling is the one that must be resolved; the record's spelling is the one
-# that must be found on disk. A guard holding a single spelling for both gets
-# one of the two wrong.
-D="$(base mixedspelling)"
+# A published candidate's record is spelled exactly as its tag, and this is the
+# pin's rule rather than this guard's taste: `drill-recorded@0.7.6` computes the
+# required path as `drills/$ver.md` from the version being cut, so a cut of
+# `0.9.0-rc1` carrying `drills/0.9.0-rc01.md` could never have passed the rc gate
+# and published. A case asserting THAT tree as a pass defended a bypass instead
+# of a ladder, and it stood here until #579 (codex-bot-andresmgsl).
+#
+# So the real shape is a rename. Publish the candidate correctly, then have the
+# final move its record to another spelling of the same number: the rename is
+# inside `drills/`, the stamp set admits it, and a retention check keyed on the
+# NUMBER sees candidate 1 still recorded and exits 0 over a tree whose published
+# evidence is gone. This case returned 0 against the number-keyed check.
+D="$(base renamedrecord)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+git -C "$D" mv drills/0.9.0-rc1.md drills/0.9.0-rc01.md
+ci "$D" "rename the candidate's record under another spelling"
+run_guard "$D"
+t_says 1 "a-record-renamed-under-another-spelling-is-a-deleted-record" '*0.9.0-rc1 is published*no drills/0.9.0-rc1.md*'
+
+# And it names what IS there. A refusal that reported only an absence would send
+# its reader looking for a deletion that is not in the diff — what is in the diff
+# is a file that looks like the record and is not it.
+t_says 1 "the-rename-refusal-names-the-file-that-stands-in-for-the-record" '*drills/0.9.0-rc01.md, which is candidate 1 under a different spelling*'
+
+# The rung that lost its record here IS the anchor, so the below-the-anchor note
+# must stay silent. `last in records` was true under a rename — the number is
+# there, under the wrong spelling — and would have told the reader the
+# measurement was never in doubt when it is the measurement's own evidence that
+# is gone.
+t_mute 1 "a-renamed-anchor-record-is-not-reported-as-a-rung-below-the-anchor" '*anchor is unchanged*'
+
+# The remedy is a checkout out of the candidate's own tree, so it is only
+# printed when that tree can satisfy it. Here it can: the tag carries the record
+# it published with, which is the whole reason a rename is recoverable.
+t_says 1 "the-rename-refusal-offers-the-checkout-the-tag-can-satisfy" '*git checkout 0.9.0-rc1 -- drills/0.9.0-rc1.md*'
+
+# And the shape where it cannot: a candidate that published with no record in
+# its own tree at all. `drill-recorded` gates the rc PR, so this takes a hand
+# edit to build — but the guard must not answer it with a command that fails
+# `pathspec ... did not match` (#579, claude-bot-andresmgsl).
+D="$(base norecordattag)"
 w "$D" VERSION "0.9.0-rc1"
-w "$D" drills/0.9.0-rc01.md "# drill, recorded with a padded number"
-ci "$D" "cut 0.9.0-rc1 with a padded record"
+ci "$D" "cut 0.9.0-rc1 without recording it"
 git -C "$D" tag 0.9.0-rc1
 rearm  "$D" 0.9.0 2
 cut_final "$D" 0.9.0
 run_guard "$D"
-t_says 0 "a-padded-record-and-an-unpadded-tag-are-one-candidate" '*0.9.0 over 0.9.0-rc1*'
+t_says 1 "a-candidate-published-without-a-record-is-refused-too" '*0.9.0-rc1 is published*no drills/0.9.0-rc1.md*'
+t_mute 1 "the-refusal-does-not-offer-a-checkout-the-tag-cannot-satisfy" '*git checkout*'
+t_says 1 "it-says-the-tag-has-nothing-to-restore-from-and-what-to-do-instead" '*does not carry drills/0.9.0-rc1.md in its own tree either*Write drills/0.9.0-rc1.md*'
 
 # The TAG's spelling is what gets resolved, because the anchor is a ref; the
 # RECORD's spelling is what gets named on disk, because that is where the file
@@ -492,6 +531,28 @@ if git clone -q --depth 1 --no-tags "file://$D" "$WORK/shallowplain-clone" 2>/de
 else
   bad "a-shallow-clone-with-no-record-cannot-look-either (clone failed)"
   bad "a-shallow-clone-is-never-reported-as-no-candidate (clone failed)"
+fi
+
+# A shallow clone that DOES carry the candidate tags. The tag resolves, and
+# `merge-base --is-ancestor` still says no — the join is below the graft, so the
+# no is about the clone and not about the tree. Refusing there prints "a tree
+# that merely resembles it is not the tree that ran", which is false about this
+# clone and is this guard's loudest sentence (#579, claude-bot-andresmgsl). It
+# is a false RED and never a false green, and CI cannot make the shape, but a
+# module that works this hard at keeping "I found nothing" from "I could not
+# look" does not get to keep an exception.
+D="$(base shallowancestrysrc)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+if git clone -q --depth 1 --no-tags "file://$D" "$WORK/shallow-tagged" 2>/dev/null &&
+   git -C "$WORK/shallow-tagged" fetch -q --depth 1 origin 'refs/tags/*:refs/tags/*' 2>/dev/null; then
+  run_guard "$WORK/shallow-tagged"
+  t_says 2 "a-shallow-clone-that-has-the-tags-cannot-answer-ancestry-either" '*cannot be answered in a SHALLOW clone*'
+  t_mute 2 "a-grafted-history-is-never-reported-as-a-lost-lineage" '*not an ancestor of HEAD*'
+else
+  bad "a-shallow-clone-that-has-the-tags-cannot-answer-ancestry-either (clone failed)"
+  bad "a-grafted-history-is-never-reported-as-a-lost-lineage (clone failed)"
 fi
 
 # A BRANCH named like a candidate is not a tag. `rev-parse --verify 0.9.0-rc1`

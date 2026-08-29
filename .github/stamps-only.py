@@ -66,6 +66,19 @@ to keep (crew#579, claude-bot-andresmgsl). The only action that answers this
 refusal is restoring the record, and the refusal says so rather than offering a
 next cut that would leave the same tag recordless.
 
+AND IT IS ASKED OF THE TAG'S OWN SPELLING, NOT OF ITS NUMBER. `drill-recorded`
+at the pin computes the required path as `drills/$ver.md` from the version being
+cut, so a candidate published as `0.9.0-rc1` carries `drills/0.9.0-rc1.md` and
+no other file — the tag's spelling and its record's spelling are one spelling by
+construction. Retention keyed on the NUMBER therefore asks the wrong question:
+`0.9.0-rc1` and `0.9.0-rc01` collapse to candidate 1, and a final that renames
+`drills/0.9.0-rc1.md` to `drills/0.9.0-rc01.md` deletes the published
+candidate's record while the check sees candidate 1 still recorded and exits 0
+(crew#579, codex-bot-andresmgsl). The rename is inside `drills/`, so the stamp
+set admits it: the round-1 deletion bypass, wearing a rename. What is required
+is each reachable tag's EXACT record, and a same-number record under another
+spelling is named as what it is rather than reported as an absence.
+
 THE NUMBER ORDERS THE LADDER AND NEVER NAMES IT. `version_is_rc` at the pin is
 `^X.Y.Z-rc[0-9]+$`, which accepts a ZERO-PADDED number, and `version_next_dev`
 re-arms `0.9.0-rc01` as `0.9.0-rc2-dev` through an explicit base-10 read. So
@@ -76,7 +89,10 @@ perfectly good ladder (crew#579, codex-bot-andresmgsl). The integer is an
 ordering key and nothing else; every ref resolved and every path named is the
 spelling that is actually on disk. Where one number is spelled two ways in one
 ladder, the guard says so and stops, because an arbitrary anchor is a
-measurement against a tree nobody declared.
+measurement against a tree nobody declared. The one place two spellings of a
+number are not ambiguous but simply WRONG is the retention check above: a
+published candidate's record is spelled exactly as its tag, so the other
+spelling is not a second candidate to disambiguate — it is the record renamed.
 
 REACHABILITY IS THE FILTER ON TAGS, deliberately. A candidate tagged on a line
 this final does not descend from never drilled this lineage, and anchoring to
@@ -95,11 +111,11 @@ Run it from anywhere:  .github/stamps-only.py [--root DIR]
 
   exit 0  the tree is a stamps-only final, or there is nothing to assert
   exit 1  refused — the diff leaves the stamp set, the anchor is not an
-          ancestor of what ships, or a reachable candidate's record is not in
-          the shipped tree
+          ancestor of what ships, or a reachable candidate's own record is not
+          in the shipped tree (absent, or renamed under another spelling)
   exit 2  could not look — a record's tag is unreachable, one candidate number
-          is spelled two ways, the tags cannot be read at all, or git could not
-          answer
+          is spelled two ways, the clone is shallow so ancestry cannot be
+          answered, the tags cannot be read at all, or git could not answer
 
 Stdlib only, for `scope-coverage.py`'s reason: a check that needs installing is
 a check that gets skipped.
@@ -276,6 +292,19 @@ def is_ancestor(root, ref):
     return git_ok(root, ["merge-base", "--is-ancestor", ref, "HEAD"])
 
 
+def tag_carries_record(root, tag):
+    """Does the candidate's OWN tree hold the record the refusal offers?
+
+    The retention refusal's remedy is a checkout out of the candidate's tree,
+    and a checkout of a path that tree does not carry fails with `pathspec ...
+    did not match`. A guard that prints a command which cannot run is the same
+    fault as one that names an action which cannot clear it (crew#579,
+    claude-bot-andresmgsl), so the tree is asked rather than assumed.
+    """
+    return git_ok(root, ["cat-file", "-e",
+                         "refs/tags/%s:%s" % (tag, record_path(tag))])
+
+
 def is_shallow(root):
     return git(root, ["rev-parse", "--is-shallow-repository"],
                "asking whether the clone is shallow").strip() == "true"
@@ -349,11 +378,14 @@ def main():
     anchor = reachable.get(last) or (sorted(tags[last])[0] if last in tags
                                      else records[last])
 
-    # EVERY reachable candidate, not only the anchor. A rung below the anchor
-    # cannot move it, so this is not a stamps-only bypass — the deletion is
-    # inside `drills/`, the stamp set admits it, and what leaves with it is the
-    # only description of the tree that rung ran.
-    missing = sorted(n for n in reachable if n not in records)
+    # EVERY reachable candidate, not only the anchor, and by the tag's OWN
+    # SPELLING rather than by its number. A rung below the anchor cannot move
+    # it, so this is not a stamps-only bypass — the deletion is inside
+    # `drills/`, the stamp set admits it, and what leaves with it is the only
+    # description of the tree that rung ran. Keyed on the number, a rename to
+    # another spelling of that number is that same deletion, invisible
+    # (crew#579, codex-bot-andresmgsl).
+    missing = sorted(n for n in reachable if records.get(n) != reachable[n])
     if missing:
         for n in missing:
             tag = reachable[n]
@@ -363,19 +395,52 @@ def main():
                    "published does not un-publish the candidate — it only hides "
                    "which tree that rung of the ladder ran."
                    % (tag, record_path(tag)))
-        # The only action that clears this is the record coming back, and it is
-        # recoverable exactly: it is in the candidate's own tree. Cutting the
-        # next candidate is NOT an alternative — it leaves this tag reachable
-        # and still recordless, so naming it here would be advice that cannot
-        # turn the guard green (crew#579, codex-bot-andresmgsl).
+            if n in records:
+                # The rename. Say what is there, or this refusal reads as an
+                # absence while a file that looks like the record sits in the
+                # diff — and the reader goes looking for a deletion that is
+                # not in it. `drill-recorded` writes the record's path from
+                # VERSION, so the published candidate carried the tag's own
+                # spelling and nothing else can stand in for it.
+                print("stamps-only: what is there is %s, which is candidate %d "
+                      "under a different spelling. %s published carrying %s — "
+                      "drill-recorded writes the record's path from VERSION — "
+                      "so a file of another name is not that candidate's "
+                      "record, whatever it contains."
+                      % (record_path(records[n]), n, tag, record_path(tag)),
+                      file=sys.stderr)
+        # The only action that clears this is the record coming back, and where
+        # the candidate's own tree carries it, it is recoverable EXACTLY.
+        # Cutting the next candidate is NOT an alternative — it leaves this tag
+        # reachable and still recordless, so naming it here would be advice
+        # that cannot turn the guard green (crew#579, codex-bot-andresmgsl).
         for n in missing:
-            print("stamps-only: restore it from the tag that carries it — "
-                  "git checkout %s -- %s"
-                  % (reachable[n], record_path(reachable[n])), file=sys.stderr)
-        if last in records:
+            tag = reachable[n]
+            if tag_carries_record(root, tag):
+                print("stamps-only: restore it from the tag that carries it — "
+                      "git checkout %s -- %s" % (tag, record_path(tag)),
+                      file=sys.stderr)
+            else:
+                # A published candidate with no record in its own tree either.
+                # `drill-recorded` gates the rc PR, so this is a tag the doors
+                # should never have minted — and a checkout of a path that tag
+                # does not carry fails with `pathspec ... did not match`, which
+                # is advice that cannot run (crew#579, claude-bot-andresmgsl).
+                print("stamps-only: %s does not carry %s in its own tree "
+                      "either, so there is nothing to check out — that "
+                      "candidate published without the record drill-recorded "
+                      "asks for. Write %s, saying what that rung ran, or that "
+                      "it was waived; a record written late is still the only "
+                      "description of that tree."
+                      % (tag, record_path(tag), record_path(tag)),
+                      file=sys.stderr)
+        if last not in missing:
             # A rung BELOW the anchor lost its record. Say so, or this refusal
             # reads as a lost anchor and sends its reader looking for a
-            # measurement that was never in doubt.
+            # measurement that was never in doubt. The test is `last not in
+            # missing` and not `last in records`: under a rename the anchor's
+            # number IS in records, under the wrong spelling, and the anchor is
+            # precisely the rung that lost its record.
             print("stamps-only: the anchor is unchanged — %s is still what this "
                   "final would be measured against. A rung below the anchor "
                   "cannot move it; what is gone is the evidence of the tree "
@@ -400,6 +465,19 @@ def main():
     anchor_ref = "refs/tags/%s" % anchor
 
     if not is_ancestor(root, anchor_ref):
+        # In a SHALLOW clone that no is not about this tree. A grafted history
+        # answers `merge-base --is-ancestor` no whenever the join is below the
+        # graft, so the tag resolving and the ancestry failing is exactly what a
+        # `--depth 1` fetch of the tags looks like — and printing "a tree that
+        # merely resembles it" there is a sentence that is false about the
+        # clone rather than about the ladder (crew#579, claude-bot-andresmgsl).
+        # I found nothing and I could not look stay apart here too.
+        if is_shallow(root):
+            die("%s resolves, but whether it is an ancestor of HEAD cannot be "
+                "answered in a SHALLOW clone — a grafted history reports no "
+                "for a reason that has nothing to do with this tree, and that "
+                "no is this guard's loudest refusal. Fetch the full history "
+                "(actions/checkout with fetch-depth: 0)." % anchor)
         refuse("%s is not an ancestor of HEAD. The ladder promises the final "
                "DESCENDS from the candidate that was drilled; a tree that "
                "merely resembles it is not the tree that ran." % anchor)
