@@ -42,6 +42,31 @@ load_conf() {
   export PATH="${BOT_PATH_PREPEND:+$BOT_PATH_PREPEND:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 }
 
+# report_profile_classifier_gaps BOOT_ID — once per profile per kernel boot,
+# say which optional session classifiers the active profile does not provide.
+# A missing hook used to look exactly like a clean signal: session_acted and
+# session_terminal both degrade honestly, but nothing told the operator that
+# their detectors were absent. The state records profiles as well as the boot
+# because an operator can switch the profile without rebooting; switching back
+# must not announce the same gap twice in one boot.
+report_profile_classifier_gaps() {
+  local boot_id="$1" profile="${BOT_AGENT:-unknown}"
+  local state="$DUTY_DIR/.profile-classifier-hooks" tmp hook missing=""
+  if [ "$(sed -n '1p' "$state" 2>/dev/null)" != "$boot_id" ]; then
+    tmp="$state.tmp.$$"
+    printf '%s\n' "$boot_id" >"$tmp"
+    mv -f "$tmp" "$state"
+  fi
+  grep -Fxq "profile=$profile" "$state" 2>/dev/null && return 0
+  for hook in bot_session_acted bot_session_terminal; do
+    declare -F "$hook" >/dev/null 2>&1 || missing="${missing}${missing:+, }$hook"
+  done
+  if [ -n "$missing" ]; then
+    warn "agent profile $profile missing classifier hook(s): $missing — corresponding session detector(s) disabled"
+  fi
+  printf 'profile=%s\n' "$profile" >>"$state"
+}
+
 has_role() {
   case " $BOT_ROLES " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }

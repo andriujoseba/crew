@@ -62,6 +62,40 @@ t credential-pool-ships-unset '' \
   "$(bash -c '. "$1"; printf %s "$SESSION_CREDENTIAL_POOL"' \
       _ "$SHARED/conf/fleet.defaults.conf")"
 
+# --- optional classifier hooks are loud once per profile per boot (#501) ---
+for agent in claude kimi; do
+  if bash -c '. "$1"; declare -F bot_session_terminal >/dev/null' \
+      _ "$SHARED/conf/agents/$agent.conf"; then r1=declared; else r1=MISSING; fi
+  t "$agent-profile-declares-terminal-classifier" declared "$r1"
+done
+for agent in codex grok; do
+  if bash -c '. "$1"; declare -F bot_session_terminal >/dev/null' \
+      _ "$SHARED/conf/agents/$agent.conf"; then r1=UNEXPECTED; else r1=absent; fi
+  t "$agent-profile-declares-terminal-gap" absent "$r1"
+done
+
+classifier_report_case() ( # profile boot acted|missing terminal|missing
+  local profile="$1" boot="$2" acted="$3" terminal="$4"
+  BOT_AGENT="$profile"
+  unset -f bot_session_acted bot_session_terminal
+  [ "$acted" = missing ] || bot_session_acted() { return 1; }
+  [ "$terminal" = missing ] || bot_session_terminal() { return 1; }
+  report_profile_classifier_gaps "$boot"
+)
+classifier_report="$({
+  classifier_report_case codex boot-a declared missing
+  classifier_report_case codex boot-a declared missing
+  classifier_report_case operator boot-a missing missing
+  classifier_report_case codex boot-b declared missing
+  classifier_report_case claude boot-b declared declared
+} 2>&1)"
+t classifier-gap-once-for-profile-per-boot 2 \
+  "$(grep -c 'agent profile codex missing classifier hook(s): bot_session_terminal' <<<"$classifier_report" || true)"
+t classifier-gap-lists-every-missing-hook 1 \
+  "$(grep -c 'agent profile operator missing classifier hook(s): bot_session_acted, bot_session_terminal' <<<"$classifier_report" || true)"
+t classifier-complete-profile-is-not-named 0 \
+  "$(grep -c 'agent profile claude missing classifier' <<<"$classifier_report" || true)"
+
 # --- each agent profile reads its OWN credential store, locally -------------
 # Driven against the real conf files with a fabricated HOME, because the whole
 # claim of bot_cli_present is that it needs nothing but local disk.
@@ -570,8 +604,50 @@ printf 'Execution error' >"$ALOG/fault.log"
 # The vendor's refusal banners. A session that hit the weekly cap or a dead
 # login never reached the model at all — 40 of the 1064 are one of these.
 printf "You've hit your session limit \xc2\xb7 resets 1:20am (UTC)\n" >"$ALOG/quota.log"
+printf "You've hit your weekly limit \xc2\xb7 resets 9am (UTC)\n" >"$ALOG/weekly.log"
 printf "Not logged in \xc2\xb7 Please run /login\n" >"$ALOG/nologin.log"
 : >"$ALOG/empty.log"
+
+terminal_rc() {  # terminal_rc <agent> <log> -> raw rc of the profile hook
+  local rc=0
+  # shellcheck disable=SC1090
+  ( source "$SHARED/conf/agents/$1.conf"; bot_session_terminal "$2" ) \
+    >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+t terminal-claude-observed-session-limit 0 "$(terminal_rc claude "$ALOG/quota.log")"
+t terminal-claude-observed-weekly-limit 0 "$(terminal_rc claude "$ALOG/weekly.log")"
+printf '%s\n' "You've hit your weekly limit \xc2\xb7 resets 9am (UTC)" \
+  'transient network failure: dial tcp i/o timeout' >"$ALOG/quota-then-transient.log"
+t terminal-claude-quoted-quota-ending-transient 1 \
+  "$(terminal_rc claude "$ALOG/quota-then-transient.log")"
+t terminal-claude-login-failure-is-not-guessed 1 "$(terminal_rc claude "$ALOG/nologin.log")"
+
+profile_breaker_reach() ( # profile terminal-text -> terminal|failed
+  local profile="$1" terminal_text="$2" bdir="$TMP/profile-breaker-$1" output
+  mkdir -p "$bdir/logs" "$bdir/work"
+  DUTY_DIR="$bdir"; LOG_DIR="$bdir/logs"; DUTY_TICK_ID=fixture
+  SESSION_TERMINAL_THRESHOLD=1
+  export PROFILE_BREAK_TEXT="$terminal_text"
+  # shellcheck disable=SC1090
+  source "$SHARED/conf/agents/$profile.conf"
+  BOT_CLI_CMD=(bash -c 'printf "%s\n" "$PROFILE_BREAK_TEXT"; exit 1')
+  alert() { :; }
+  output="$(run_session review fixture/repo "$bdir/work" 5 prompt)"
+  if grep -q 'outcome=TERMINAL' <<<"$output"; then
+    printf terminal
+  else
+    printf failed
+  fi
+)
+t terminal-breaker-reaches-claude terminal \
+  "$(profile_breaker_reach claude "You've hit your weekly limit · resets 9am (UTC)")"
+t terminal-breaker-reaches-kimi terminal \
+  "$(profile_breaker_reach kimi "provider error: {'type': 'access_terminated_error'}")"
+t terminal-breaker-does-not-guess-codex failed \
+  "$(profile_breaker_reach codex "You've hit your weekly limit · resets 9am (UTC)")"
+t terminal-breaker-does-not-guess-grok failed \
+  "$(profile_breaker_reach grok "You've hit your weekly limit · resets 9am (UTC)")"
 
 # The contract, on BOTH profiles, case for case. grok.conf carries the same
 # detector as a second copy because a profile is transported one file at a

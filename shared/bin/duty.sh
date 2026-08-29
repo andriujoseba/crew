@@ -78,6 +78,7 @@ session_reconcile_orphans
 # once per boot: the boot gate that only ever wrote to a quieter log was the
 # fleet's silent-starvation mode (the triage box is the minting SPOF). ---
 boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
+report_profile_classifier_gaps "$boot_id"
 if [ "$(cat "$DUTY_DIR/.boot-id" 2>/dev/null)" != "$boot_id" ]; then
   {
     echo "== boot check $(date -Is) =="
