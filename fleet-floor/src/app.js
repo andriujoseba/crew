@@ -6397,7 +6397,7 @@ for(var _sd=0;_sd<6;_sd++)tickerEvent();
    controls stay shown-but-disabled. Serving the page with `crew floor` is what
    turns them on — goLive() clears every .woff below. */
 var CTL_TIP="Open this page with `crew floor` — a served page drives the boxes from the host.";
-if(!LIVE){["g-start","g-stop","g-wake","a-pause","a-restart","c-send"].forEach(function(id){var e=document.getElementById(id);if(e){e.classList.add("woff");e.title=CTL_TIP;}});var cin=document.getElementById("c-in");if(cin){cin.disabled=true;cin.classList.add("woff");cin.placeholder="Messaging needs a served page — run: crew floor";}}
+if(!LIVE){["g-start","g-stop","g-wake","g-reg","a-pause","a-restart","c-send"].forEach(function(id){var e=document.getElementById(id);if(e){e.classList.add("woff");e.title=CTL_TIP;}});var cin=document.getElementById("c-in");if(cin){cin.disabled=true;cin.classList.add("woff");cin.placeholder="Messaging needs a served page — run: crew floor";}}
 /* Fleet-wide actions. "Start/Stop all" are box lifecycle, not a mood: they
    power the roster's boxes up and down. "Wake silent" resumes a paused crontab
    and starts a stopped box — it does NOT start a model session, because a box
