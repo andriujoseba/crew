@@ -88,7 +88,7 @@ _review_check_evidence_from_payload() {
   local row checked_head state entries relation
   row="$(printf '%s' "$snapshot" | jq -c '[.]' 2>/dev/null \
     | jq -r --argjson panel '[]' --arg repo "$repo" --arg human '' \
-        -f "$REVIEW_LIB_DIR/jq/head-checks.jq" 2>/dev/null)" || row=""
+        -f "$REVIEW_LIB_DIR/jq/head-checks.jq" 2>/dev/null)" || row="" # Decision-path empty fallback: the next branch names unavailable evidence and asks the reviewer to verify independently.
   if [ -z "$row" ]; then
     printf -- '- %s#%s: check evidence unavailable; verify it independently.\n' "$repo" "$num"
     return 0
@@ -99,7 +99,7 @@ _review_check_evidence_from_payload() {
   entries="$(printf '%s' "$snapshot" | jq -r '
     [.statusCheckRollup[]?
       | "\(.name // .context // "?")=\(.conclusion // .state // .status // "?")"]
-    | join(", ")' 2>/dev/null)" || entries=""
+    | join(", ")' 2>/dev/null)" || entries="" # Decision-path empty fallback: the rendered row says the rollup is unreadable and grants no conclusion.
   if [ "$checked_head" = "$current_head" ]; then
     relation="this head"
   else
