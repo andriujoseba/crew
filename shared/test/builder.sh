@@ -26,7 +26,8 @@ mkdir -p "$TMP/prompts"
 # --- #530: the rendered reviewer prompt owns bounded long-command waits -----
 D530_RENDERED="$(PROMPTS_DIR="$SHARED/prompts" render_prompt review.txt \
   ME=fixture-reviewer REPO=fx/repo PRS=7 BIN=/duty/bin WT_DIR=/duty/trees \
-  MARK_REVIEWING='reviewing' ONESHOT_RULES='one-shot')"
+  MARK_REVIEWING='reviewing' HEAD_CHECKS='- fx/repo#7: none at this head abc123.' \
+  ONESHOT_RULES='one-shot')"
 if grep -Fq 'never poll on a pattern the polling shell itself carries' <<<"$D530_RENDERED" &&
    grep -Fq 'the waiter can match its own command line forever' <<<"$D530_RENDERED"; then
   r1=named
@@ -65,6 +66,49 @@ else
   r1=ACCEPTABLE
 fi
 t d530-rendered-review-forbids-pgrep-f-wait forbidden "$r1"
+
+# --- #532: reviewer prompts carry same-head CI as evidence, not permission --
+if grep -Fq 'fx/repo#7: none at this head abc123' <<<"$D530_RENDERED"; then r1=rendered; else r1=MISSING; fi
+t d532-rendered-review-carries-check-evidence rendered "$r1"
+if grep -Fq "A green check covers the tree, not the change's intent" <<<"$D530_RENDERED" \
+  && grep -Fq 'changes that suite or harness' <<<"$D530_RENDERED" \
+  && grep -Fq 'paths filter skipped the relevant workflow' <<<"$D530_RENDERED"; then
+  r1=bounded
+else
+  r1=MISSING
+fi
+t d532-rendered-review-bounds-green-evidence bounded "$r1"
+if grep -Fq 'report the conflict in the verdict' <<<"$D530_RENDERED" \
+  && grep -Fq 'the environment where the local result ran' <<<"$D530_RENDERED" \
+  && grep -Fq 'which evidence you rely on' <<<"$D530_RENDERED"; then
+  r1=reported
+else
+  r1=MISSING
+fi
+t d532-rendered-review-reports-local-ci-conflict reported "$r1"
+if grep -Eqi 'green (check|CI).*(may|can|should).*(skip|omit|avoid).*(local|verification)' <<<"$D530_RENDERED"; then
+  r1=PERMITTED
+else
+  r1=forbidden
+fi
+t d532-green-never-permits-skipping-verification forbidden "$r1"
+
+D532_AT_HEAD='{"number":7,"isDraft":false,"reviewRequests":[],"updatedAt":"T1","headRefOid":"abc123","statusCheckRollup":[{"__typename":"CheckRun","name":"ci-shell","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"ci-floor","status":"COMPLETED","conclusion":"SKIPPED"}]}'
+D532_EVIDENCE="$(_review_check_evidence_from_payload fx/repo 7 "$D532_AT_HEAD" abc123)"
+if grep -Fq 'checks at abc123 (this head; aggregate green)' <<<"$D532_EVIDENCE" \
+  && grep -Fq 'ci-shell=SUCCESS' <<<"$D532_EVIDENCE" \
+  && grep -Fq 'ci-floor=SKIPPED' <<<"$D532_EVIDENCE"; then
+  r1=complete
+else
+  r1="$D532_EVIDENCE"
+fi
+t d532-at-head-checks-name-conclusions complete "$r1"
+D532_STALE="$(_review_check_evidence_from_payload fx/repo 7 "$D532_AT_HEAD" def456)"
+case "$D532_STALE" in *'checks at abc123 (older SHA; current head def456;'*) r1=stale ;; *) r1="$D532_STALE" ;; esac
+t d532-older-head-checks-marked-stale stale "$r1"
+D532_NONE='{"number":7,"isDraft":false,"reviewRequests":[],"updatedAt":"T1","headRefOid":"abc123","statusCheckRollup":[]}'
+t d532-no-checks-says-none-at-head '- fx/repo#7: none at this head abc123.' \
+  "$(_review_check_evidence_from_payload fx/repo 7 "$D532_NONE" abc123)"
 
 # shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
