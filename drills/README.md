@@ -185,6 +185,18 @@ retention, just above: a published candidate's record is spelled exactly as its
 tag, so the other spelling is not a second candidate to disambiguate — it is the
 record renamed.
 
+**The digits are ASCII, because the doors' digits are ASCII.** `X.Y.Z-rc[0-9]+`
+above is the literal spelling at the pin — `lib/version.sh`, `lib/tag-classify.sh`
+and `drill/lib/candidate.sh` at `heavy-duty/ceremony@0.7.6` all write it that
+way — and the guard writes it that way too rather than the Unicode-wide `\d` a
+regex reaches for by default. This is the same rule as *one number, one
+spelling*, one level down: a candidate is what the release doors would
+**classify, tag and publish**, so a version or tag they would refuse is not a
+rung of anybody's ladder here either. It is worth stating because the failure is
+silent in both directions — such a spelling would read as a candidate that was
+never cut, and a stray record under one would out-rank a genuine candidate and
+gate a release that has nothing to do with it.
+
 **A shallow clone is a "could not look" wherever it touches this guard**, and
 that includes ancestry. A `--depth 1` checkout that *has* fetched the tags can
 resolve `X.Y.Z-rcN` and still answer no to `merge-base --is-ancestor`, because
