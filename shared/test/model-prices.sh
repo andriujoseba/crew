@@ -66,6 +66,31 @@ t model-prices-partial-model-rejects-unpriced-cache '1|' \
 t model-prices-partial-model-rejects-explicit-zero-unpriced-cache '1|' \
   "$(outcome fixture partial-model 'input_tokens=5 output_tokens=1 cache_creation_input_tokens=0')"
 
+# Required input/output classes are exercised even when their measured count
+# is zero. An operator edit that leaves any exercised rate unusable must never
+# be coerced by awk into a successful zero or partial figure.
+MODEL_TOKEN_RATES+=(
+  'fixture|no-input|-|8|1|0.1'
+  'fixture|no-output|2|-|1|0.1'
+  'fixture|malformed-input|abc|8|1|0.1'
+  'fixture|empty-input||8|1|0.1'
+  'fixture|malformed-cache|2|8|abc|0.1'
+)
+t model-prices-unpriced-input-is-no-figure '1|' \
+  "$(outcome fixture no-input 'input_tokens=5 output_tokens=1')"
+t model-prices-unpriced-output-is-no-figure '1|' \
+  "$(outcome fixture no-output 'input_tokens=5 output_tokens=1')"
+t model-prices-zero-input-still-requires-rate '1|' \
+  "$(outcome fixture no-input 'input_tokens=0 output_tokens=1')"
+t model-prices-zero-output-still-requires-rate '1|' \
+  "$(outcome fixture no-output 'input_tokens=5 output_tokens=0')"
+t model-prices-malformed-input-rate-is-no-figure '1|' \
+  "$(outcome fixture malformed-input 'input_tokens=5 output_tokens=1')"
+t model-prices-empty-input-rate-is-no-figure '1|' \
+  "$(outcome fixture empty-input 'input_tokens=5 output_tokens=1')"
+t model-prices-malformed-cache-rate-is-no-figure '1|' \
+  "$(outcome fixture malformed-cache 'input_tokens=5 output_tokens=1 cache_creation_input_tokens=2')"
+
 # This rate-derived envelope proves that Claude's SESSION END field mapping and
 # the comparison harness agree; it deliberately does not prove the shipped
 # rate. #585 checks the rate against a real billed session. One nanodollar is
