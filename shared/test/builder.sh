@@ -4993,6 +4993,10 @@ t roundcap-commented-review-opens-no-round '5 true' "$(rc_count "$RC_COMMENTED")
 rc_logged_rounds() {
   printf '%s' "$1" \
     | jq -r --arg me builder --argjson final true \
+        --arg mark_answered '📣 round answered at head' \
+        --arg mark_addressing '🔧 addressing round on head' \
+        --arg mark_resume '⟲ resuming from' \
+        --arg mark_handoff '🤝 handed off at head' \
         -f "$SHARED/lib/jq/round-log.jq" \
     | grep -c '<!-- round:'
 }

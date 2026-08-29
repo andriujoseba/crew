@@ -439,19 +439,19 @@ _redraft_authored_rounds() {
   done <<<"$nums"
 }
 
-# _mirror_rounds REPO NUM — mirror each whole-round reply into the PR body's
-# `## Round log` (#91, ceremony#196 option B). The builder owes the reply and
-# nothing else; the engine copies it into the body where the merging human
-# looks. round-log.jq picks the author's comments after each round's newest
-# verdict, keys each by `<!-- round:<head-sha> -->`, and returns the whole new
-# body only when something is un-recorded — so an already-mirrored round makes
-# a retry a no-op. Body writes go through REST: `gh pr edit --body-file` dies
+# _mirror_rounds REPO NUM — render review facts into the PR body's rolling
+# `## Round log` (#504, ceremony#418). The builder owns Current state and each
+# row's requested/done prose; the engine fills the round number, head, verdicts
+# and permalink to the existing reply comment. round-log.jq keys each row by
+# `<!-- round:<head-sha> -->` and returns the whole new body only when something
+# is un-recorded — so an already-rendered (or legacy verbatim-mirrored) round
+# makes a retry a no-op. Body writes go through REST: `gh pr edit --body-file` dies
 # on crew's projects-classic GraphQL and writes nothing. This is best-effort
 # and the handoff NEVER blocks on it (the same rule as the label write).
 _mirror_rounds() {
   # FINAL (default false) is true only at the handoff straggler: it finalizes
   # the live last round too. Per-tick mirroring leaves the live round deferred
-  # so a still-arriving round is never stamped "no written reply" (round-log.jq).
+  # so a still-arriving round is never rendered before its facts settle.
   local repo="$1" num="$2" final="${3:-false}" owner name payload newbody measured
   owner="${repo%%/*}"; name="${repo##*/}"
   # The assignment's status is tested outside the substitution: GraphQL errors
@@ -463,7 +463,7 @@ _mirror_rounds() {
       headRefOid
       commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
       reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
-      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} body createdAt}}
+      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} body url createdAt}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
     || { warn "$repo#$num: round-log fetch failed; body left as-is (handoff continues)"; return 0; }
   measured="$(printf '%s' "$payload" | jq -r '
@@ -474,7 +474,12 @@ _mirror_rounds() {
   operating_limit_assess github_connection_nodes "$measured" "$repo" "$num" \
     'round-log history exceeds its unpaginated GraphQL window' || return 0
   newbody="$(printf '%s' "$payload" \
-    | jq -r --arg me "$ME" --argjson final "$final" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
+    | jq -r --arg me "$ME" --argjson final "$final" \
+        --arg mark_answered "$MARK_ANSWERED" \
+        --arg mark_addressing "$MARK_ADDRESSING" \
+        --arg mark_resume "$MARK_RESUME" \
+        --arg mark_handoff "$MARK_HANDOFF" \
+        -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
     || { warn "$repo#$num: round-log render failed; body left as-is"; return 0; }
   [ -n "$newbody" ] || return 0   # every round already recorded — write nothing
   printf '%s' "$newbody" | jq -Rs '{body:.}' \

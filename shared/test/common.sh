@@ -6976,12 +6976,12 @@ t addressing-never-writes-state-building absent "$r1"
 # shellcheck disable=SC2016,SC2100  # jq literal; r1 is a string result here
 if grep -q 'commit.oid == \$pr.headRefOid' "$SHARED/lib/jq/addressing.jq"; then r1=head-keyed; else r1=CHANGED; fi
 t addressing-keys-on-head head-keyed "$r1"
-# --- round-log.jq: mirror each whole round into the PR body (#91) ------------
+# --- round-log.jq: render bounded round facts into the PR body (#504) --------
 # Input is the GraphQL pullRequest payload; output is the NEW body when a round
-# is un-recorded, or "" when every round is already marked (the crash-retry
-# no-op). A round is a head SHA with an opinionated verdict; its reply is the
-# author's comments after that round's newest verdict and before the next
-# round's first. Each entry is keyed `<!-- round:<sha> -->` for idempotency.
+# is un-recorded, or "" when every round is already marked. A round is a head
+# SHA with an opinionated verdict. The body gets facts and a permalink to the
+# author's existing reply — never the reply bytes. Each row retains the legacy
+# `<!-- round:<sha> -->` idempotency marker, so old verbatim entries are kept.
 RLJQ="$SHARED/lib/jq/round-log.jq"
 RL_ME="me-bot"
 RL_O1="1111111111111111111111111111111111111111"
@@ -6995,31 +6995,41 @@ mk_rl() {  # <body> <reviews-json> <comments-json> [commits-json] [head-oid-json
 }
 RL_REVS="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T03:00:00Z"}]' "$RL_O1" "$RL_O2")"
 RL_REVS1="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]' "$RL_O1")"
-RL_COMS='[{"author":{"login":"me-bot"},"body":"answering round one","createdAt":"2026-01-01T02:00:00Z"},{"author":{"login":"me-bot"},"body":"answering round two","createdAt":"2026-01-01T04:00:00Z"}]'
+RL_COMS='[{"author":{"login":"me-bot"},"body":"answering round one","url":"https://example.test/reply-1","createdAt":"2026-01-01T02:00:00Z"},{"author":{"login":"me-bot"},"body":"answering round two","url":"https://example.test/reply-2","createdAt":"2026-01-01T04:00:00Z"}]'
 # rl = handoff/record-all mode ($final=true): finalize every round including the
 # live last one — the record-all semantics these fixtures assert. rl_live =
 # per-tick mode ($final=false): defer the live round, record only superseded ones.
-rl() { jq -r --arg me "$RL_ME" --argjson final true -f "$RLJQ"; }
-rl_live() { jq -r --arg me "$RL_ME" --argjson final false -f "$RLJQ"; }
+rl_args() {
+  jq -r --arg me "$RL_ME" --argjson final "$1" \
+    --arg mark_answered '📣 round answered at head' \
+    --arg mark_addressing '🔧 addressing round on head' \
+    --arg mark_resume '⟲ resuming from' \
+    --arg mark_handoff '🤝 handed off at head' \
+    -f "$RLJQ"
+}
+rl() { rl_args true; }
+rl_live() { rl_args false; }
 
-# Two rounds, both answered, no markers in body → both mirrored, oldest first.
+# Two rounds, both answered, no markers in body → fixed-shape rows, oldest first.
 RL_OUT="$(mk_rl "Body preamble." "$RL_REVS" "$RL_COMS" | rl)"
 case "$RL_OUT" in *"## Round log"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-appends-section yes "$r1"
 case "$RL_OUT" in *"round:$RL_O1"*"round:$RL_O2"*) r1=ordered ;; *) r1=no ;; esac
 t roundlog-markers-oldest-first ordered "$r1"
-case "$RL_OUT" in *"answering round one"*"answering round two"*) r1=both ;; *) r1=no ;; esac
-t roundlog-both-replies-present both "$r1"
-case "$RL_OUT" in *"Round at 11111111"*) r1=yes ;; *) r1=no ;; esac
-t roundlog-short-sha-heading yes "$r1"
+case "$RL_OUT" in *"[reply](https://example.test/reply-1)"*"[reply](https://example.test/reply-2)"*) r1=both ;; *) r1=no ;; esac
+t roundlog-both-reply-links-present both "$r1"
+case "$RL_OUT" in *"answering round"*) r1=COPIED ;; *) r1=bounded ;; esac
+t roundlog-reply-bytes-are-not-copied bounded "$r1"
+case "$RL_OUT" in *"| 1 | \`$RL_O1\` | @rev-a requested changes |"*) r1=yes ;; *) r1=no ;; esac
+t roundlog-row-carries-head-and-verdicts yes "$r1"
 
 # Both markers already in the body → nothing to add (the retried-tick no-op).
 RL_OUT2="$(mk_rl "preamble <!-- round:$RL_O1 --> and <!-- round:$RL_O2 -->" "$RL_REVS" "$RL_COMS" | rl)"
 t roundlog-idempotent-empty "" "$RL_OUT2"
 
-# A round with a verdict but no author reply is recorded, not skipped.
+# A terminal passing round can have no author reply; its link cell is an em dash.
 RL_OUT3="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
-case "$RL_OUT3" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
+case "$RL_OUT3" in *"| 1 | \`$RL_O1\` | @rev-a requested changes | — |"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-no-reply-recorded yes "$r1"
 
 # An existing `## Round log` section is extended; sibling sections are kept.
@@ -7030,12 +7040,103 @@ t roundlog-preserves-sibling-sections kept "$r1"
 case "$RL_OUT4" in *"older entry"*"round:$RL_O1"*"## Worklog"*) r1=in-section ;; *) r1=no ;; esac
 t roundlog-inserts-into-existing-section in-section "$r1"
 
+# A sibling table after the Round log is not a candidate row. A renderer whose
+# row scan runs to end-of-body rewrites Evidence's first row as round 1.
+RL_SIBLING_TABLE="$(printf '%s\n\n## Evidence\n\n| item | result |\n| --- | --- |\n| sibling bytes | stay here |' "$RL_BODY_SEC")"
+RL_SIBLING_OUT="$(mk_rl "$RL_SIBLING_TABLE" "$RL_REVS1" "$RL_COMS" | rl)"
+case "$RL_SIBLING_OUT" in *"| sibling bytes | stay here |"*) r1=kept ;; *) r1=REWRITTEN ;; esac
+t roundlog-never-treats-a-sibling-table-as-a-round-row kept "$r1"
+case "$RL_SIBLING_OUT" in *"| item | result |"*) r1=kept ;; *) r1=REWRITTEN ;; esac
+t roundlog-never-rewrites-a-sibling-table-header kept "$r1"
+
+# A fact header quoted outside Round log is not evidence that the section owns
+# a fact table. The renderer must still add the scoped table and its row.
+RL_QUOTED_HEADER="$(printf '## Worklog\n\nQuoted shape: %s\n\n## Round log\n\nlegacy entry' '| # | head | verdicts | reply | requested | done |')"
+RL_QUOTED_OUT="$(mk_rl "$RL_QUOTED_HEADER" "$RL_REVS1" "$RL_COMS" | rl)"
+t roundlog-outside-header-does-not-suppress-scoped-table 2 \
+  "$(grep -cF '| # | head | verdicts | reply | requested | done |' <<<"$RL_QUOTED_OUT")"
+case "$RL_QUOTED_OUT" in *"## Round log"*"round:$RL_O1"*) r1=scoped ;; *) r1=MISSING ;; esac
+t roundlog-outside-header-keeps-rendered-row-in-section scoped "$r1"
+
+# A Round log can legally be the body's first section. The migration must add
+# its fact table there rather than append a duplicate `## Round log` section.
+RL_FIRST="$(mk_rl '## Round log
+
+legacy preamble' "$RL_REVS1" "$RL_COMS" | rl)"
+t roundlog-start-of-body-section-is-not-duplicated 1 \
+  "$(grep -c '^## Round log$' <<<"$RL_FIRST")"
+
 # Round 1 already recorded, round 2 not → only round 2 appended (no dup).
 RL_OUT5="$(mk_rl "has <!-- round:$RL_O1 --> already" "$RL_REVS" "$RL_COMS" | rl)"
 case "$RL_OUT5" in *"round:$RL_O2"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-partial-appends-missing yes "$r1"
-case "$RL_OUT5" in *"answering round one"*) r1=DUP ;; *) r1=clean ;; esac
+case "$RL_OUT5" in *"reply-1"*) r1=DUP ;; *) r1=clean ;; esac
 t roundlog-partial-skips-recorded clean "$r1"
+
+# The builder's prose and Current state are owned bytes. Rendering replaces
+# only the first four cells of an existing row and leaves both prose cells and
+# Current state intact.
+RL_AUTHORED="$(printf 'Intro.\n\n## Round log\n\n### Current state\n\nBuilder state stays byte-for-byte.\n\n### Rounds\n\n| # | head | verdicts | reply | requested | done |\n| --- | --- | --- | --- | --- | --- |\n| 1 | — | — | — | asked prose exactly | done prose exactly |')"
+RL_AUTHORED_OUT="$(mk_rl "$RL_AUTHORED" "$RL_REVS1" "$RL_COMS" | rl)"
+case "$RL_AUTHORED_OUT" in *"Builder state stays byte-for-byte."*) r1=kept ;; *) r1=LOST ;; esac
+t roundlog-preserves-current-state kept "$r1"
+case "$RL_AUTHORED_OUT" in *"| asked prose exactly | done prose exactly "*"round:$RL_O1"*) r1=kept ;; *) r1=LOST ;; esac
+t roundlog-preserves-builder-prose-cells kept "$r1"
+
+# Legacy verbatim rounds do not occupy fact-table positions. Match an authored
+# migration row by its leading round-number cell and preserve its prose.
+RL_MIGRATION="$(printf '## Round log\n\nlegacy one <!-- round:%s -->\nlegacy two <!-- round:%s -->\n\n%s\n%s\n| 3 | — | — | — | migration ask | migration done |' \
+  "$RL_O1" "$RL_O2" '| # | head | verdicts | reply | requested | done |' \
+  '| --- | --- | --- | --- | --- | --- |')"
+RL_O3="3333333333333333333333333333333333333333"
+RL_REVS3="$(printf '[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T03:00:00Z"},{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T05:00:00Z"}]' "$RL_O1" "$RL_O2" "$RL_O3")"
+RL_COMS3="$(printf '[{"author":{"login":"me-bot"},"body":"reply three","url":"https://example.test/reply-3","createdAt":"2026-01-01T06:00:00Z"}]')"
+RL_MIGRATION_OUT="$(mk_rl "$RL_MIGRATION" "$RL_REVS3" "$RL_COMS3" | rl)"
+t roundlog-migration-authored-row-is-not-duplicated 1 \
+  "$(grep -c '^| 3 |' <<<"$RL_MIGRATION_OUT")"
+case "$RL_MIGRATION_OUT" in *"| migration ask | migration done "*"round:$RL_O3"*) r1=kept ;; *) r1=LOST ;; esac
+t roundlog-migration-preserves-authored-prose kept "$r1"
+
+# Legal GFM permits omitting the row's trailing pipe. Marker insertion must
+# still key that row so a retry is empty.
+RL_NO_TRAIL="${RL_AUTHORED%|}"
+RL_NO_TRAIL_OUT="$(mk_rl "$RL_NO_TRAIL" "$RL_REVS1" "$RL_COMS" | rl)"
+case "$RL_NO_TRAIL_OUT" in *"done prose exactly "*"round:$RL_O1"*) r1=marked ;; *) r1=MISSING ;; esac
+t roundlog-no-trailing-pipe-row-is-marked marked "$r1"
+t roundlog-no-trailing-pipe-row-retry-is-empty "" \
+  "$(mk_rl "$RL_NO_TRAIL_OUT" "$RL_REVS1" "$RL_COMS" | rl)"
+
+# The ordinary completed-round ordering ends with the signal. Select the
+# preceding whole reply, never pickup/signal/CI administrative comments.
+RL_MARKER_COMS="$(printf '[{"author":{"login":"me-bot"},"body":"🔧 addressing round on head %s","url":"https://example.test/addressing","createdAt":"2026-01-01T01:10:00Z"},{"author":{"login":"me-bot"},"body":"Round 1 whole answer at head %s","url":"https://example.test/whole-reply","createdAt":"2026-01-01T02:00:00Z"},{"author":{"login":"me-bot"},"body":"📣 round answered at head %s","url":"https://example.test/signal-only","createdAt":"2026-01-01T02:10:00Z"}]' "$RL_O1" "$RL_O1" "$RL_O1")"
+RL_MARKER_OUT="$(mk_rl "Body." "$RL_REVS1" "$RL_MARKER_COMS" | rl)"
+case "$RL_MARKER_OUT" in *"[reply](https://example.test/whole-reply)"*) r1=whole ;; *) r1=WRONG ;; esac
+t roundlog-selects-whole-reply-before-signal whole "$r1"
+case "$RL_MARKER_OUT" in *"signal-only"*|*"addressing"*) r1=WRONG ;; *) r1=clean ;; esac
+t roundlog-excludes-administrative-comment-links clean "$r1"
+
+# Inserting a fact table before a following level-two heading leaves a blank
+# line so the raw Markdown remains readable as well as valid GFM.
+case "$RL_OUT4" in *"round:$RL_O1 --> |"$'\n\n'"## Worklog"*) r1=spaced ;; *) r1=CRAMPED ;; esac
+t roundlog-inserted-table-keeps-heading-spacing spaced "$r1"
+
+# The issue's 9 KB adversary: changing only reply bytes cannot change body
+# growth. The URL, facts and fixed-shape row are identical in both outputs.
+RL_LONG_BODY="$(awk 'BEGIN { for (i=0;i<9216;i++) printf "x" }')"
+RL_SHORT_COM="$(jq -nc --arg b short '[{author:{login:"me-bot"},body:$b,url:"https://example.test/reply",createdAt:"2026-01-01T02:00:00Z"}]')"
+RL_LONG_COM="$(jq -nc --arg b "$RL_LONG_BODY" '[{author:{login:"me-bot"},body:$b,url:"https://example.test/reply",createdAt:"2026-01-01T02:00:00Z"}]')"
+RL_SHORT_OUT="$(mk_rl "Body." "$RL_REVS1" "$RL_SHORT_COM" | rl)"
+RL_LONG_OUT="$(mk_rl "Body." "$RL_REVS1" "$RL_LONG_COM" | rl)"
+t roundlog-growth-independent-of-9kb-reply "${#RL_SHORT_OUT}" "${#RL_LONG_OUT}"
+case "$RL_LONG_OUT" in *"$RL_LONG_BODY"*) r1=COPIED ;; *) r1=linked ;; esac
+t roundlog-9kb-reply-is-linked-not-copied linked "$r1"
+
+# MUST FAIL: an existing reply without a permalink. The live query always asks
+# for `url`; if that contract regresses, jq must refuse the render rather than
+# add a row whose full text the merging human cannot reach.
+RL_NOLINK='[{"author":{"login":"me-bot"},"body":"reply","createdAt":"2026-01-01T02:00:00Z"}]'
+if mk_rl "Body." "$RL_REVS1" "$RL_NOLINK" | rl >/dev/null 2>&1; then r1=LINKLESS; else r1=refused; fi
+t roundlog-refuses-a-reply-with-no-permalink refused "$r1"
 
 # --- Live-round deferral (per-tick, $final=false): the regression codex found
 # on the mirror-every-tick change. Because the mirror now runs every tick, a
@@ -7051,7 +7152,7 @@ t roundlog-live-round-no-premature-marker "" "$RL_LIVE1"
 
 # Same live round, now WITH the whole-round reply, still the last round →
 # still deferred per-tick (no next round has closed its window yet).
-RL_ONECOM='[{"author":{"login":"me-bot"},"body":"the whole-round reply","createdAt":"2026-01-01T02:00:00Z"}]'
+RL_ONECOM='[{"author":{"login":"me-bot"},"body":"the whole-round reply","url":"https://example.test/whole-reply","createdAt":"2026-01-01T02:00:00Z"}]'
 RL_LIVE2="$(mk_rl "Body." "$RL_REVS1" "$RL_ONECOM" | rl_live)"
 t roundlog-live-round-with-reply-still-deferred "" "$RL_LIVE2"
 
@@ -7061,11 +7162,11 @@ t roundlog-live-round-with-reply-still-deferred "" "$RL_LIVE2"
 RL_SUP="$(mk_rl "Body." "$RL_REVS" "$RL_COMS" | rl_live)"
 case "$RL_SUP" in *"round:$RL_O1"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-superseded-round-recorded-per-tick yes "$r1"
-case "$RL_SUP" in *"answering round one"*) r1=real ;; *) r1=no ;; esac
+case "$RL_SUP" in *"[reply](https://example.test/reply-1)"*) r1=real ;; *) r1=no ;; esac
 t roundlog-superseded-round-keeps-real-reply real "$r1"
 case "$RL_SUP" in *"round:$RL_O2"*) r1=LEAKED ;; *) r1=deferred ;; esac
 t roundlog-live-round-deferred-when-superseded deferred "$r1"
-case "$RL_SUP" in *"no written reply"*) r1=PREMATURE ;; *) r1=clean ;; esac
+case "$RL_SUP" in *"reply-2"*) r1=PREMATURE ;; *) r1=clean ;; esac
 t roundlog-superseded-no-premature-noreply clean "$r1"
 
 # The sequential two-tick regression codex reproduced: after tick 1 defers the
@@ -7073,15 +7174,15 @@ t roundlog-superseded-no-premature-noreply clean "$r1"
 # replies; the handoff straggler ($final=true) then records the REAL reply —
 # not the premature "no written reply" the old code locked in.
 RL_HANDOFF="$(mk_rl "Body." "$RL_REVS1" "$RL_ONECOM" | rl)"
-case "$RL_HANDOFF" in *"the whole-round reply"*) r1=real ;; *) r1=no ;; esac
-t roundlog-handoff-finalizes-real-reply real "$r1"
-case "$RL_HANDOFF" in *"no written reply"*) r1=PREMATURE ;; *) r1=clean ;; esac
+case "$RL_HANDOFF" in *"[reply](https://example.test/whole-reply)"*) r1=real ;; *) r1=no ;; esac
+t roundlog-handoff-finalizes-real-reply-link real "$r1"
+case "$RL_HANDOFF" in *"the whole-round reply"*) r1=COPIED ;; *) r1=clean ;; esac
 t roundlog-handoff-not-premature-noreply clean "$r1"
 
 # The terminal no-comment case survives the deferral: a round that genuinely
 # passed with no reply is still recorded at handoff ($final=true).
 RL_TERM="$(mk_rl "Body." "$RL_REVS1" '[]' | rl)"
-case "$RL_TERM" in *"_Round passed with no written reply._"*) r1=yes ;; *) r1=no ;; esac
+case "$RL_TERM" in *"| — | — "*"round:$RL_O1"*) r1=yes ;; *) r1=no ;; esac
 t roundlog-terminal-no-comment-at-handoff yes "$r1"
 
 # #249: GitHub can re-point an existing verdict to a base-merge commit made
@@ -7127,6 +7228,7 @@ t roundlog-current-head-finalized-at-handoff finalized "$r1"
 # The live GraphQL query carries the repair inputs and stays at GitHub's
 # connection ceiling.
 if grep -q 'headRefOid' "$SHARED/lib/duty-builder.sh" \
+  && grep -q 'comments(first:.*nodes{author{login} body url createdAt}' "$SHARED/lib/duty-builder.sh" \
   && grep -q 'commits(last:.*OPERATING_LIMIT_GITHUB_CONNECTION_NODES.*){totalCount nodes{commit{oid committedDate}}}' "$SHARED/lib/duty-builder.sh"; then
   r1=present
 else
@@ -7161,7 +7263,7 @@ HF_CALLS="$TMP/hf-calls.log"
 HFP_RL="$TMP/hf-rl-payload.json"; HFP_HC="$TMP/hf-hc-payload.json"
 # Round-log payload: a body with no marker and one answered round → non-empty
 # newbody → the body PATCH fires (exercises _mirror_rounds end to end).
-printf '{"data":{"repository":{"pullRequest":{"body":"Body.","reviews":{"nodes":[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]},"comments":{"nodes":[{"author":{"login":"me-bot"},"body":"my round reply","createdAt":"2026-01-01T02:00:00Z"}]}}}}}' "$RL_O1" >"$HFP_RL"
+printf '{"data":{"repository":{"pullRequest":{"body":"Body.","reviews":{"nodes":[{"author":{"login":"rev-a"},"state":"CHANGES_REQUESTED","commit":{"oid":"%s"},"submittedAt":"2026-01-01T01:00:00Z"}]},"comments":{"nodes":[{"author":{"login":"me-bot"},"url":"https://example.test/reply","createdAt":"2026-01-01T02:00:00Z"}]}}}}}' "$RL_O1" >"$HFP_RL"
 # Handoff-comment payload: both panelists approve the current head.
 printf '{"data":{"repository":{"pullRequest":{"headRefOid":"%s","latestOpinionatedReviews":{"nodes":[{"author":{"login":"rev-a"},"state":"APPROVED","commit":{"oid":"%s"}},{"author":{"login":"rev-b"},"state":"APPROVED","commit":{"oid":"%s"}}]}}}}}' "$RL_O2" "$RL_O2" "$RL_O2" >"$HFP_HC"
 cat >"$HFSHIM/gh" <<'HFGH'
@@ -7206,7 +7308,10 @@ hf_run() {  # <req-fail 0|1>
   : >"$HF_CALLS"
   SHARED_DIR="$SHARED" HF_CALLS="$HF_CALLS" HF_RLPAYLOAD="$HFP_RL" HF_HCPAYLOAD="$HFP_HC" \
   HF_REQ_FAIL="$1" DUTY_DIR="$HFDUTY" ME=me-bot FLEET_HUMAN=the-human \
-  LABEL_NEEDS_HUMAN=state:needs-human MARK_HANDOFF='🤝 handed off at head' \
+  LABEL_NEEDS_HUMAN=state:needs-human \
+  MARK_ANSWERED='📣 round answered at head' \
+  MARK_ADDRESSING='🔧 addressing round on head' \
+  MARK_RESUME='⟲ resuming from' MARK_HANDOFF='🤝 handed off at head' \
   PATH="$HFSHIM:$PATH" bash "$TMP/hf-run.sh" the/repo 7 >/dev/null 2>&1
 }
 hfc() { grep -c "^$1\$" "$HF_CALLS"; }
