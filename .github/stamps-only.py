@@ -149,6 +149,25 @@ FINAL = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 # candidates would anchor a final to a tag `changelog-armed` never accepted.
 RC_SUFFIX = re.compile(r"^-rc([0-9]+)$")
 
+# And the string those two are asked about is ACQUIRED as the doors acquire it.
+# `heavy-duty/ceremony@0.7.6` `lib/version.sh:29` reads a file-backed version
+# with `tr -d '[:space:]'` — every whitespace character DELETED, not merely the
+# ends trimmed — and says why: "a trailing newline or a stray space in VERSION
+# must never make 0.7.0 look unlike 0.7.0 (whole-version matching everywhere)".
+# Python's `.strip()` removes the ends only, so a `VERSION` of `0. 9.0` was
+# `0.9.0` to `drill-recorded`, to the tag door and to the merge door, and
+# `other` here — the branch that prints "not a release tree" and exits 0 over a
+# window full of engine code (#579, codex-bot-andresmgsl, claude-bot-andresmgsl).
+#
+# The class is ASCII for the same reason the digits are, and the mirror image of
+# the same mistake: GNU `tr` is byte-oriented, so `[:space:]` deletes space, tab,
+# newline, vertical tab, form feed and carriage return and NOTHING else — a
+# U+00A0 in `VERSION` survives the pinned reader and leaves the version `other`
+# at the door. Python's `str.split()`, the obvious spelling, has a Unicode-wide
+# whitespace set: it would delete that U+00A0 and read a release tree where the
+# doors read none. Wider here is not safer, it is a second dialect.
+VERSION_SPACE = re.compile(r"[ \t\n\x0b\x0c\r]")
+
 # The four paths a ceremony PR moves. Directories are matched by prefix, files
 # exactly — `VERSION` is the file and never `VERSION.md`, for the reason
 # `scope-coverage.py` refuses a prefix match: the loosest mutation is also the
@@ -208,11 +227,19 @@ def parse_version(raw):
 
 
 def read_version(root):
+    """The version the doors would read, normalized as the doors normalize it.
+
+    What is returned is what gets classified and what gets printed, so the line
+    this guard says about a whitespace-bearing `VERSION` names the string the
+    release doors act on rather than the bytes on disk. That is the point: the
+    two must not be able to disagree.
+    """
     raw = git(root, ["show", "HEAD:%s" % VERSION_FILE],
-              "reading the version that ships").strip()
-    if not raw:
+              "reading the version that ships")
+    ver = VERSION_SPACE.sub("", raw)
+    if not ver:
         die("HEAD:%s is empty — there is no version to classify" % VERSION_FILE)
-    return raw
+    return ver
 
 
 def record_path(spelling):

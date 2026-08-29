@@ -203,6 +203,106 @@ ci "$D" "a version the doors would refuse"
 run_guard "$D"
 t_says 0 "a-unicode-digit-version-is-not-a-release-tree" '*not a release tree*'
 
+# --- and the string that dialect is asked about is ACQUIRED as the doors -------
+# --- acquire it ---------------------------------------------------------------
+# One level up from the digits, and the same question: `lib/version.sh:29` at the
+# pin reads a file-backed version with `tr -d '[:space:]'`, deleting EVERY
+# whitespace character, while this guard used Python's `.strip()`, which trims
+# the ends only. So `0. 9.0` was `0.9.0` to `drill-recorded`, to the tag door and
+# to the merge door — the same reader for all three — and `other` here, the
+# branch that exits 0 saying there is nothing to assert (#579,
+# codex-bot-andresmgsl, claude-bot-andresmgsl). The doors ship the tree; the
+# stamps-only test says nothing about it. That is the one answer this guard must
+# never give, so it is asserted on a window that carries engine code.
+#
+# `.strip()` was wrong in the OTHER direction too, which is why the U+00A0 case
+# below is here: its whitespace set is Unicode-wide, so it deleted a character
+# byte-oriented `tr` keeps, and read a release tree where the doors read none.
+V_WRAPPED="$(printf '0.9\n.0')"          # a write that wrapped
+V_NBSP="0.9.0$(printf '\xc2\xa0')"       # U+00A0, which the pinned reader keeps
+
+# codex's ladder, driven whole: a published candidate, a re-arm, an executable
+# change nobody drilled, and a final whose VERSION carries an internal space.
+D="$(base internalspace)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+w "$D" shared/lib/duty.sh "#!/bin/sh
+echo work landed after the drill"
+ci "$D" "work that landed after the candidate was drilled"
+cut_final "$D" 0.9.0
+w "$D" VERSION "0. 9.0"
+ci "$D" "a version with a space in it"
+run_guard "$D"
+t_says 1 "an-internal-space-in-version-cannot-hide-the-window" '*non-stamp: shared/lib/duty.sh*'
+t_mute 1 "and-the-tree-is-never-called-not-a-release-tree" '*not a release tree*'
+
+# The whitespace is the WHOLE difference: the same tree, spelled cleanly, is
+# refused identically. Before the fix this pair was exit 0 and exit 1.
+w "$D" VERSION "0.9.0"
+ci "$D" "the same version, spelled cleanly"
+run_guard "$D"
+t_says 1 "the-clean-spelling-of-that-same-tree-is-refused-alike" '*non-stamp: shared/lib/duty.sh*'
+
+# The non-adversarial arrival: a wrapped write, not a hand-crafted spelling.
+D="$(base wrappedversion)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+w "$D" shared/lib/duty.sh "#!/bin/sh
+echo work landed after the drill"
+ci "$D" "work that landed after the candidate was drilled"
+cut_final "$D" 0.9.0
+w "$D" VERSION "$V_WRAPPED"
+ci "$D" "a version written across two lines"
+run_guard "$D"
+t_says 1 "a-version-written-across-two-lines-cannot-hide-it-either" '*non-stamp: shared/lib/duty.sh*'
+
+# The candidate branch is normalized too, and not only the final one: the doors
+# read `0.9.0-rc 1` as the candidate `0.9.0-rc1`, so this guard reads it as a
+# candidate and declines to make a stamps-only claim about it — rather than
+# declining because it could not classify the tree at all.
+D="$(base spacedcandidate)"
+w "$D" VERSION "0.9.0-rc 1"
+ci "$D" "a candidate with a space in it"
+run_guard "$D"
+t_says 0 "a-spaced-candidate-is-still-a-candidate" '*VERSION is 0.9.0-rc1*carries no stamps-only claim*'
+
+# The ends were never the question, and normalizing more must not break the case
+# `.strip()` did get right.
+D="$(base raggedends)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+w "$D" VERSION "  0.9.0  "
+ci "$D" "a version with ragged ends"
+run_guard "$D"
+t_says 0 "ragged-ends-are-normalized-as-they-always-were" '*0.9.0 over 0.9.0-rc1*'
+
+# The mirror image of the digits: the pinned reader is BYTE-oriented, so U+00A0
+# survives `tr -d '[:space:]'` and leaves the version unmatchable at the door.
+# Deleting it here — which `.strip()` did, and which `str.split()` would — reads
+# a release tree the doors will not ship, and measures a ladder for it.
+D="$(base nbspversion)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+w "$D" shared/lib/duty.sh "#!/bin/sh
+echo work landed after the drill"
+ci "$D" "work that landed after the candidate was drilled"
+cut_final "$D" 0.9.0
+w "$D" VERSION "$V_NBSP"
+ci "$D" "a version carrying a non-breaking space"
+run_guard "$D"
+t_says 0 "a-unicode-space-is-not-whitespace-the-doors-delete" '*not a release tree*'
+
+# All whitespace is the empty version, and empty is a could-not-look: the pinned
+# reader fails loudly there rather than printing nothing, and a guard that read
+# it as "no version, nothing to assert" would be silent about a tree whose door
+# is going to refuse it for a reason this guard never saw.
+D="$(base blankversion)"
+w "$D" VERSION "   "
+ci "$D" "a version of nothing but whitespace"
+run_guard "$D"
+t_says 2 "a-version-of-only-whitespace-is-a-could-not-look" '*is empty*'
+
 # --- the ladder, followed -----------------------------------------------------
 
 D="$(base clean)"
