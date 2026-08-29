@@ -1,6 +1,7 @@
-<!-- Copied from heavy-duty/ceremony@0.4.0 .github/pull_request_template.md (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
+<!-- Copied from heavy-duty/ceremony@0.7.7 .github/pull_request_template.md (heavy-duty/ceremony#24). Hand-maintained: no guard checks this against ceremony.
 Short on purpose: a template longer than a small PR gets deleted by
-reflex, not read (heavy-duty/ceremony#24). One issue, one PR — draft while building. -->
+reflex, not read (heavy-duty/ceremony#24). One issue, an ordered chain of PRs
+— normally one; draft while building. -->
 
 Closes #
 
@@ -17,5 +18,19 @@ to the issue for triage to amend, not silently unshipped. -->
 
 ## Round log
 
-<!-- The engine appends each whole-round reply here, newest last: what
-changed and what was verified. Builders write the reply, not this section. -->
+<!-- The rolling summary of this PR — what reviewers read, instead of the
+thread. Current state is rewritten in full every round; Rounds gains one row
+per round and its existing rows are never rewritten. The engine renders each
+row's facts; the builder writes the two prose cells and Current state, and
+keeps the section current at the round close (heavy-duty/ceremony#418). -->
+
+### Current state
+
+<!-- What the PR does now, and what is outstanding. Budget: 1,500 chars. -->
+
+### Rounds
+
+<!-- One row per round. Prose cells: 500 chars each. -->
+
+| # | head | verdicts | reply | requested | done |
+| --- | --- | --- | --- | --- | --- |
