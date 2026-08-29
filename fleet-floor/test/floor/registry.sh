@@ -274,6 +274,93 @@ t "registry: ...with the clear recorded apart from the set" named "$r1"
 t "registry: a refused write is not journalled" 0 \
   "$(grep -c 'nosuchrepo' "$FF_REG_JOURNAL")"
 
+# THE RECORD IS A PRECONDITION OF THE WRITE, not a remark about it. A journal
+# that cannot be appended to used to be logged to the floor's stdout while the
+# edit landed and the console answered "saved" — a change to the fleet's scope
+# with nothing durable saying who made it, which is the failure D5 exists to
+# prevent. Reproduced the way it actually happens on a host: the journal path
+# occupied by something that is not an appendable file.
+mv "$FF_REG_JOURNAL" "$FF_REG_JOURNAL.aside"
+mkdir "$FF_REG_JOURNAL"
+FF_REG_NOJ="$(reg '{"action":"registry-set","kind":"work","entries":["heavy-duty/crew"]}')"
+t "registry: a write that cannot be recorded is refused" False \
+  "$(printf '%s' "$FF_REG_NOJ" | jqf "d['ok']")"
+case "$(printf '%s' "$FF_REG_NOJ" | jqf "d['error']")" in
+  *".registry-journal.log"*"nothing was written"*) r1=named ;; *) r1=VAGUE ;;
+esac
+t "registry: ...naming the journal and saying nothing landed" named "$r1"
+t "registry: ...as a refusal, so the page does not report a change" True \
+  "$(printf '%s' "$FF_REG_NOJ" | jqf "d['refused']")"
+# The claim the refusal makes, asserted against the file rather than the reply:
+# the fleet-wide list is exactly what it was, entry for entry.
+t "registry: ...and the registry is untouched" "heavy-duty/crew,heavy-duty/ceremony" \
+  "$(regf work)"
+t "registry: ...leaving no half-written temporary beside it" 0 \
+  "$(find "$FF_REG_DIR" -maxdepth 1 -name 'repos.txt.crew-floor.*' | wc -l | tr -d ' ')"
+rmdir "$FF_REG_JOURNAL"
+mv "$FF_REG_JOURNAL.aside" "$FF_REG_JOURNAL"
+
+# THE ONE WINDOW THE PRECONDITION CANNOT CLOSE — the append failing AFTER the
+# registry has been replaced — has a defined outcome rather than a silence, and
+# it is asserted here because HTTP cannot reach into it: the failure has to be
+# injected between two statements inside one call. Driven against the shipped
+# module in its own fleet definition, so nothing here touches the collector's.
+FF_REG_ALT="$TMP/reg-alt"
+mkdir -p "$FF_REG_ALT"
+printf 'ff-alt claude-builder\n' >"$FF_REG_ALT/fleet.roster"
+printf '# alt\nheavy-duty/crew\nheavy-duty/box\n' >"$FF_REG_ALT/repos.txt"
+FF_REG_LANDED="$(CREW_CONFIG_DIR="$FF_REG_ALT" PYTHONPATH="$FLOOR/server" python3 -c '
+import floor.registry as r
+import floor.actions as a
+# A removal, so the reachability probe is never asked and this case is about
+# the record and nothing else.
+r._journal = lambda *args, **kw: (False, "the edit LANDED and could not be recorded: forced")
+res, err = r.set_fleet("work", ["heavy-duty/crew"], "tester")
+on_disk = r.read_entries(r._paths("work")[0])
+# The mapping the page reads: an error WITH a result is a landed edit, so it is
+# a 500 and not a refusal, and the result travels with it.
+a.set_fleet = lambda *args, **kw: (res, err)
+code, reply = a.registry_command("registry-set", "", {"kind": "work"}, "tester")
+print("|".join(str(x) for x in [
+    res is not None, res["recorded"], "LANDED" in err,
+    ",".join(on_disk), code, reply["refused"], reply["registry"] is not None]))
+' 2>&1 | tail -1)"
+t "registry: a record that fails after the write reports the edit as landed" \
+  "True|False|True|heavy-duty/crew|500|False|True" "$FF_REG_LANDED"
+
+# CONCURRENT WRITES TO ONE REGISTRY, through the real collector rather than a
+# simulation of it: `server.py` is a ThreadingHTTPServer, so these run in
+# genuinely parallel handlers. The temporary file used to be named per PROCESS,
+# so two writes shared one and the second `os.replace` raised on a path the
+# first had already renamed away; the read-modify-write was unserialised too,
+# so a reply and its journal line could describe input another thread had
+# replaced. Twelve writes alternating between two states: whichever wins, the
+# file must be exactly one of them and every write must be recorded once.
+FF_REG_J0="$(wc -l <"$FF_REG_JOURNAL" | tr -d ' ')"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  if [ $((i % 2)) -eq 0 ]; then FF_REG_E='["heavy-duty/crew"]'
+  else FF_REG_E='["heavy-duty/crew","heavy-duty/ceremony"]'; fi
+  reg "{\"action\":\"registry-set\",\"kind\":\"work\",\"entries\":$FF_REG_E}" \
+    >"$TMP/reg-cc.$i" 2>/dev/null &
+done
+wait
+FF_REG_CCOK=0
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  [ "$(jqf "d['ok']" <"$TMP/reg-cc.$i")" = True ] && FF_REG_CCOK=$((FF_REG_CCOK + 1))
+done
+t "registry: twelve concurrent writes to one registry all succeed" 12 "$FF_REG_CCOK"
+case "$(regf work)" in
+  "heavy-duty/crew"|"heavy-duty/crew,heavy-duty/ceremony") r1=one-of-them ;;
+  *) r1="INTERLEAVED: $(regf work)" ;;
+esac
+t "registry: ...leaving the file as exactly one of the submitted states" one-of-them "$r1"
+t "registry: ...with one journal line per write, none lost" 12 \
+  "$(($(wc -l <"$FF_REG_JOURNAL" | tr -d ' ') - FF_REG_J0))"
+t "registry: ...and no temporary file left in the fleet definition" 0 \
+  "$(find "$FF_REG_DIR" -maxdepth 1 -name 'repos.txt.crew-floor.*' | wc -l | tr -d ' ')"
+rm -f "$TMP"/reg-cc.*
+reg '{"action":"registry-set","kind":"work","entries":["heavy-duty/crew","heavy-duty/ceremony"]}' >/dev/null
+
 # --- the transport half: cli/crew resolves the same override -----------------
 #
 # The console's write is inert unless the transport picks it up, and that is
@@ -360,6 +447,60 @@ t "registry: a stale selection cannot smuggle a repository onto a box" \
 t "registry: ...and the console agrees with it" "$(regbe ff-working work)" \
   "$(ff_reg_staged ff-working work)"
 reg '{"action":"registry-inherit","box":"ff-working","kind":"work"}' >/dev/null
+
+# AN INDENTED ENTRY IS THE SAME ENTRY ON BOTH HALVES. The floor has always read
+# `line.strip()`; the CLI's `registry_entries` used to emit the line as written,
+# and `resolved_registry` matches a selection EXACTLY — so a fleet-wide entry
+# somebody indented by hand in vim was a repository the console showed a
+# narrowed box watching and the transport quietly dropped. Written past both
+# writers by hand, because neither of them emits an indented line.
+printf '# hand-edited\nheavy-duty/crew\n  heavy-duty/ceremony\t\n' >"$FF_REG_WORK"
+mkdir -p "$FF_REG_DIR/repos.d"
+printf 'heavy-duty/ceremony\n' >"$FF_REG_DIR/repos.d/ff-working.txt"
+t "registry: an indented fleet-wide entry still reaches a box that selected it" \
+  "heavy-duty/ceremony" "$(ff_reg_staged ff-working work)"
+t "registry: ...and the console agrees with the transport about it" \
+  "$(regbe ff-working work)" "$(ff_reg_staged ff-working work)"
+t "registry: ...and an inheriting box reads it trimmed too" \
+  "heavy-duty/crew,heavy-duty/ceremony" "$(regbe ff-idle work)"
+rm -f "$FF_REG_DIR/repos.d/ff-working.txt"
+printf '# hand-edited\nheavy-duty/crew\nheavy-duty/ceremony\n' >"$FF_REG_WORK"
+
+# A FLEET-WIDE FILE THE DEFINITION DOES NOT HAVE. `notify-repos.txt` is
+# optional in a hand-built definition and `config_file` resolves an absent one
+# to the SHIPPED `examples/` copy, which names nine live repositories the
+# transport stages to every box. A floor that read only the definition
+# directory would render that as an empty notify universe — and an operator
+# filling in an empty list from the console would drop eight sweep targets the
+# fleet was actually working. Must fail: a console that disagrees with what the
+# next upgrade stages.
+rm -f "$FF_REG_NOTIFY"
+FF_REG_SHIPPED="$FLOOR/../examples/notify-repos.txt"
+FF_REG_SHIPPED_CK="$(cksum <"$FF_REG_SHIPPED")"
+t "registry: a fleet-wide file the definition lacks is served from the shipped one" \
+  "$(grep -vE '^[[:space:]]*(#|$)' "$FF_REG_SHIPPED" | paste -sd, -)" "$(regf notify)"
+t "registry: ...said as a fallback and not as the definition's own file" False \
+  "$(body GET /api/registries | jqf "d['fleet']['notify']['present']")"
+t "registry: ...naming the file it is being served from" "$FF_REG_SHIPPED" \
+  "$(body GET /api/registries | jqf "d['fleet']['notify']['served_from']")"
+t "registry: ...so the console and the transport agree with no file at all" \
+  "$(regbe ff-idle notify)" "$(ff_reg_staged ff-idle notify)"
+# THE READ FALLS BACK AND THE WRITE NEVER DOES: a save materialises the
+# operator's own file, carrying the shipped file's comments with it because the
+# edit is a line edit of what they were looking at, and the installed tree is
+# left exactly as it shipped.
+FF_REG_ONE="$(grep -vE '^[[:space:]]*(#|$)' "$FF_REG_SHIPPED" | head -1)"
+reg "{\"action\":\"registry-set\",\"kind\":\"notify\",\"entries\":[\"$FF_REG_ONE\"]}" >/dev/null
+t "registry: saving a fallback list writes the fleet definition's own file" 1 \
+  "$(test -f "$FF_REG_NOTIFY" && echo 1 || echo 0)"
+t "registry: ...with what was saved in it" "$FF_REG_ONE" "$(regf notify)"
+t "registry: ...carrying the shipped file's own comments across" 1 \
+  "$(grep -c '^# notify-repos.txt' "$FF_REG_NOTIFY")"
+t "registry: ...which is now the definition's own list, not a fallback" True \
+  "$(body GET /api/registries | jqf "d['fleet']['notify']['present']")"
+# Must fail: a console write reaching into the installed tree.
+t "registry: ...and the shipped file is untouched" "$FF_REG_SHIPPED_CK" \
+  "$(cksum <"$FF_REG_SHIPPED")"
 
 # --- leave the definition as this suite found it -----------------------------
 rm -f "$FF_REG_GH" "$FF_REG_REACHABLE" "$FF_REG_JOURNAL"

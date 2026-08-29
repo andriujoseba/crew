@@ -6531,6 +6531,20 @@ function openRegistries(box){
          has no file yet, and printing a path nothing has written would read as
          a file the operator could go and open. */
       var path=box?(inherited?r.fleet[kind].path+" (inherited)":cell.path):cell.path;
+      /* THE FLEET-WIDE FILE THE DEFINITION DOES NOT HAVE YET. `notify-repos.txt`
+         is optional in a hand-built definition and crew resolves an absent one
+         to the shipped examples/ file — nine live repositories it stages to
+         every box. Rendering that as an empty list would invite an operator to
+         "fill it in" and silently drop eight sweep targets the fleet was
+         working, so the fallback is said out loud, with the path a save will
+         actually write. */
+      var fk=r.fleet[kind],note="";
+      if(fk.present===false&&fk.served_from){
+        note='<div class="regnote">'+esc(fk.path)+' does not exist in this fleet definition. '
+          +'The '+fk.entries.length+' entr'+(fk.entries.length===1?"y":"ies")+' below '
+          +'come from the shipped '+esc(fk.served_from)+', which is what <code>crew</code> '
+          +'stages to a box too. Saving writes the definition\'s own file, and it wins from then on.</div>';
+      }
       /* The fleet-wide scope is a free list — it IS the universe, so there is
          nothing to bound it by and an operator adding a board types its name.
          A box's scope is a SELECTION from that universe (operator,
@@ -6557,6 +6571,7 @@ function openRegistries(box){
         +(box?'<span class="regsrc '+(inherited?"inherit":"override")+'">'+(inherited?"inherited":"selected")+'</span>':'')
         +'</div>'
         +'<div class="regpath" title="'+esc(k[2])+'">'+esc(path)+'</div>'
+        +note
         +editor
         +'<div class="regacts">'
         +'<button class="lbtn" data-reg="save">'+(box?"Save selection":"Save")+'</button>'

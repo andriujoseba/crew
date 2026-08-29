@@ -175,3 +175,9 @@ input.woff{color:#5a6a80}
 .regopt input{accent-color:#1d5772;margin:0}
 .regopt input:not(:checked)+span{color:#5a6a80;text-decoration:line-through}
 .regempty{font:11px/1.5 var(--mono);color:#7a6a3a;background:#f7bd4e14;border:1px solid #f7bd4e2e;border-radius:7px;padding:8px 10px}
+/* The shipped-fallback note. Informational blue rather than the warning gold
+   above it: a definition without its own `notify-repos.txt` is a normal fleet
+   working the file crew ships, not a fault — what would be a fault is an
+   operator reading those entries as a list they were free to replace. */
+.regnote{font:10.5px/1.5 var(--mono);color:#7f97b0;background:#1d577214;border:1px solid #1d57722e;border-radius:7px;padding:7px 10px;margin-bottom:6px}
+.regnote code{font-family:var(--mono);color:#9fb4cb}
