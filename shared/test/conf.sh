@@ -95,6 +95,20 @@ t classifier-gap-lists-every-missing-hook 1 \
   "$(grep -c 'agent profile operator missing classifier hook(s): bot_session_acted, bot_session_terminal' <<<"$classifier_report" || true)"
 t classifier-complete-profile-is-not-named 0 \
   "$(grep -c 'agent profile claude missing classifier' <<<"$classifier_report" || true)"
+boot_id_line="$(grep -n '^boot_id=' "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+classifier_report_line="$(grep -n 'report_profile_classifier_gaps "\$boot_id"' \
+  "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+boot_gate_line="$(grep -n 'if \[ "\$(cat "\$DUTY_DIR/.boot-id"' \
+  "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+if [ -n "$boot_id_line" ] && [ -n "$classifier_report_line" ] \
+    && [ -n "$boot_gate_line" ] \
+    && [ "$boot_id_line" -lt "$classifier_report_line" ] \
+    && [ "$classifier_report_line" -lt "$boot_gate_line" ]; then
+  r1=wired
+else
+  r1=MISSING
+fi
+t classifier-gap-report-is-wired-on-the-boot-path wired "$r1"
 
 # --- each agent profile reads its OWN credential store, locally -------------
 # Driven against the real conf files with a fabricated HOME, because the whole
