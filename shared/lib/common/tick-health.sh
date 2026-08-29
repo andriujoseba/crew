@@ -8,13 +8,18 @@
 
 TICK_HEALTH_WINDOW_S_DEFAULT=86400
 
-tick_health_report() { # [duty.log] [now epoch] [window seconds]
+tick_health_report() { # [duty.log] [now epoch] [window seconds] [notify.log]
   local log_file="${1:-$DUTY_DIR/duty.log}"
   local now="${2:-$(date -u +%s)}"
   local window="${3:-$TICK_HEALTH_WINDOW_S_DEFAULT}"
+  local notify_log="${4:-${log_file%/*}/notify.log}"
+  local -a log_files=("$log_file")
   case "$now" in ''|*[!0-9]*) return 0 ;; esac
   case "$window" in ''|*[!0-9]*|0) window="$TICK_HEALTH_WINDOW_S_DEFAULT" ;; esac
   [ -r "$log_file" ] || return 0
+  if [ "$notify_log" != "$log_file" ] && [ -r "$notify_log" ]; then
+    log_files+=("$notify_log")
+  fi
 
   local cutoff
   cutoff="$(date -u -d "@$((now - window))" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || return 0
@@ -36,11 +41,27 @@ tick_health_report() { # [duty.log] [now epoch] [window seconds]
       ts=$1
       if (ts !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/ || ts < cutoff) next
 
-      tick=($0 ~ / duty run start$/ || $0 ~ / duty tick skipped: previous run still holds the lock/ || $0 ~ / duty tick FAILED:/)
-      if (tick) {
+      job=$2
+      if ((job == "duty" || job == "notify") && $3 == "run" && $4 == "start") {
         ticks++
-        last_tick=ts
-        if ($0 ~ / duty tick skipped: previous run still holds the lock/) busy++
+        active[job]=1
+        if (ts > last_tick) last_tick=ts
+      } else if ((job == "duty" || job == "notify") && $3 == "run" && $4 == "end") {
+        active[job]=0
+      } else if ((job == "duty" || job == "notify") &&
+                 $3 == "tick" && $4 == "skipped:" &&
+                 $0 ~ /previous run still holds the lock/) {
+        ticks++
+        busy++
+        if (ts > last_tick) last_tick=ts
+      } else if ((job == "duty" || job == "notify") &&
+                 $3 == "tick" && $4 == "FAILED:") {
+        # tick.sh writes FAILED after the job has already written run start.
+        # That pair is one boundary. A bare FAILED still counts because a job
+        # can fail before reaching its own start record.
+        if (!active[job]) ticks++
+        active[job]=0
+        if (ts > last_tick) last_tick=ts
       }
 
       if ($2 == "SESSION" && $3 == "SKIP") {
@@ -83,7 +104,7 @@ tick_health_report() { # [duty.log] [now epoch] [window seconds]
         printf "TICK_HEALTH_KIND window_s=%d kind=%s skips=%d holds=%s outcome=%s streak=%d\n", window, kind, skips[kind]+0, hold_text, outcome, count
       }
     }
-  ' "$log_file"
+  ' "${log_files[@]}"
 }
 
 _tick_health_window() { # seconds -> compact surface label
@@ -121,7 +142,7 @@ tick_health_rows() { # REPORT -> <label><TAB><text>
         if [ "$ticks" -eq 0 ]; then
           printf 'Busy ticks (%s window)\tunknown\n' "$(_tick_health_window "$window")"
         else
-          rate=$((busy * 1000 / ticks))
+          rate=$(((busy * 1000 + ticks / 2) / ticks))
           printf 'Busy ticks (%s window)\t%d/%d (%d.%d%%)\n' "$(_tick_health_window "$window")" "$busy" "$ticks" $((rate / 10)) $((rate % 10))
         fi
         ;;
