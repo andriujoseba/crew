@@ -91,10 +91,17 @@ rehearsal_breaker_profile_has_hook() {
   bx "set -a; . ~/duty/conf/agents/$AGENT.conf; declare -F '$hook' >/dev/null"
 }
 
+rehearsal_breaker_terminal_fixture() {
+  bx "set -a
+    . ~/duty/conf/agents/$AGENT.conf
+    bot_session_terminal_fixture
+  "
+}
+
 rehearsal_breaker_terminal_fixture_is_classified() {
   bx "set -a
     . ~/duty/conf/agents/$AGENT.conf
-    printf '%s\n' \"Server: Error code: 403 - {'error': {'message': \\\"You've reached your usage limit for this billing cycle.\\\", 'type': 'access_terminated_error'}}\" > /tmp/crew-breaker-terminal.log
+    bot_session_terminal_fixture > /tmp/crew-breaker-terminal.log
     rc=0
     bot_session_terminal /tmp/crew-breaker-terminal.log || rc=\$?
     rm -f /tmp/crew-breaker-terminal.log
@@ -103,7 +110,7 @@ rehearsal_breaker_terminal_fixture_is_classified() {
 }
 
 rehearsal_breaker_install_fixture() {
-  local role="$1" encoded box_home fixture_dir role_conf
+  local role="$1" encoded box_home fixture fixture_dir role_conf
   box_home="$(bx 'printf %s "$HOME"')" || return 1
   [ -n "$box_home" ] || return 1
   fixture_dir="$box_home/.crew-breaker-drill"
@@ -113,7 +120,9 @@ rehearsal_breaker_install_fixture() {
   bx "test ! -e '$fixture_dir'" || return 1
   REHEARSAL_BREAKER_DIR="$fixture_dir"
   REHEARSAL_BREAKER_ROLE_CONF="$role_conf"
-  encoded="$(printf '%s\n' "Server: Error code: 403 - {'error': {'message': \"You've reached your usage limit for this billing cycle.\", 'type': 'access_terminated_error'}}" | base64 -w0)"
+  fixture="$(rehearsal_breaker_terminal_fixture)" || return 1
+  [ -n "$fixture" ] || return 1
+  encoded="$(printf '%s\n' "$fixture" | base64 -w0)"
   bx "set -e
     mkdir -p '$REHEARSAL_BREAKER_DIR/bin'
     cp '$REHEARSAL_BREAKER_ROLE_CONF' '$REHEARSAL_BREAKER_DIR/role.conf'
@@ -249,6 +258,11 @@ rehearsal_breaker_drill() {
     rehearsal_breaker_record_reason \
       "$AGENT profile missing bot_session_terminal"
     return 2
+  fi
+  check "breaker: $AGENT profile defines bot_session_terminal_fixture" \
+    rehearsal_breaker_profile_has_hook bot_session_terminal_fixture
+  if ! rehearsal_breaker_profile_has_hook bot_session_terminal_fixture; then
+    return 1
   fi
   check "breaker: $AGENT profile defines bot_session_acted" \
     rehearsal_breaker_profile_has_hook bot_session_acted

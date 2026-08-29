@@ -73,6 +73,20 @@ for agent in codex grok; do
       _ "$SHARED/conf/agents/$agent.conf"; then r1=UNEXPECTED; else r1=absent; fi
   t "$agent-profile-declares-terminal-gap" absent "$r1"
 done
+for profile in "$SHARED"/conf/agents/*.conf; do
+  agent="$(basename "$profile" .conf)"
+  if bash -c '. "$1"; declare -F bot_session_terminal >/dev/null' _ "$profile"; then
+    if bash -c '. "$1"; declare -F bot_session_terminal_fixture >/dev/null' \
+        _ "$profile"; then r1=declared; else r1=MISSING; fi
+    t "$agent-terminal-classifier-carries-drill-fixture" declared "$r1"
+    if grep -q '^# Observed sessions: ' "$profile"; then r1=cited; else r1=MISSING; fi
+    t "$agent-terminal-classifier-cites-observed-sessions" cited "$r1"
+  else
+    if bash -c '. "$1"; declare -F bot_session_terminal_fixture >/dev/null' \
+        _ "$profile"; then r1=UNEXPECTED; else r1=absent; fi
+    t "$agent-terminal-gap-carries-no-drill-fixture" absent "$r1"
+  fi
+done
 
 classifier_report_case() ( # profile boot acted|missing terminal|missing
   local profile="$1" boot="$2" acted="$3" terminal="$4"
@@ -280,6 +294,8 @@ done
 PHOME="$TMP/profile-home"
 PDUTY="$PHOME/duty"
 mkdir -p "$PDUTY/.crew-seed-agents"
+printf 'old-boot\n' >"$PDUTY/.boot-id"
+printf 'old classifier report\n' >"$PDUTY/.profile-classifier-hooks"
 cat >"$PDUTY/.crew-seed-agents/vendorx.conf" <<'EOF'
 # vendorx — operator-supplied fixture vendor (never shipped)
 # shellcheck shell=bash disable=SC2034
@@ -305,6 +321,10 @@ fi
 t operator-profile-is-the-operator-copy operator "$r1"
 [ -d "$PDUTY/.crew-seed-agents" ] && r1=lingers || r1=consumed
 t operator-profile-seed-consumed consumed "$r1"
+t install-clears-boot-gate-cache absent \
+  "$([ -e "$PDUTY/.boot-id" ] && printf present || printf absent)"
+t install-clears-classifier-report-cache absent \
+  "$([ -e "$PDUTY/.profile-classifier-hooks" ] && printf present || printf absent)"
 # The shipped set still installs whole beside the operator's addition.
 [ -f "$PDUTY/conf/agents/claude.conf" ] && r1=present || r1=missing
 t operator-profile-shipped-set-intact present "$r1"

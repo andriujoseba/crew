@@ -545,7 +545,7 @@ fi
 # bot.conf's CLI probe has never run on this box, and waiting for the next
 # reboot to validate it means the first evidence of a wrong probe would be a
 # failed session instead of the gate's loud degraded-mode alert.
-rm -f "$DUTY_DIR/.boot-id"
+rm -f "$DUTY_DIR/.boot-id" "$DUTY_DIR/.profile-classifier-hooks"
 
 # The release version is identity; Git is optional provenance. Installed
 # source trees deliberately have no .git, so a SHA can never be the stable
