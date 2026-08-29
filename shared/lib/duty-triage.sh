@@ -249,7 +249,11 @@ _triage_round_count() {
     warn "$repo: round-count eval failed; no sizing evidence this session"
     return 0
   fi
-  total="$(printf '%s' "$evidence" | jq -r '.distribution.issues // 0' 2>/dev/null || echo 0)"
+  # Gated on there being an ISSUE to report, not on the distribution being
+  # non-empty: a board whose only PRs are still unreviewed has an empty
+  # distribution and rows worth rendering, and gating on the distribution would
+  # withhold the evidence from exactly the young board that has the least of it.
+  total="$(printf '%s' "$evidence" | jq -r '.issues | length' 2>/dev/null || echo 0)"
   [ "$total" -gt 0 ] || return 0
 
   # EVERY ISSUE GETS ITS ROW, and the criterion is why: "each issue's PR round
@@ -259,8 +263,13 @@ _triage_round_count() {
   # #482 take", which is the lookup a sizing judgement actually makes. One short
   # line per issue is what that costs, and the board's own size is its bound.
   # Sorted by count descending so the outlier D3's example is about reads first.
+  # An issue whose PR has taken no rounds yet gets its row too, at 0. It is held
+  # out of the MEDIAN for the reason the program's header gives, and that is a
+  # statement about the arithmetic and not about what triage may see — leaving it
+  # off the list would make "each issue's count is readable" false for exactly
+  # the issues a sizing judgement is most likely to be made about.
   rows="$(printf '%s' "$evidence" | jq -r '
-    .issues[] | select(.rounds > 0)
+    .issues[]
     | "  - #\(.issue): \(.rounds) round(s) over \(.prs | length) PR(s) — "
       + (.prs | map("#\(.)") | join(", "))' 2>/dev/null)"
   shown="$(printf '%s\n' "$rows" | awk 'NF{c++} END{print c+0}')"

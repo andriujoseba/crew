@@ -1006,9 +1006,9 @@ t triage503-prompt-carries-the-per-issue-rows rowed "$r1"
 if grep -q '#10: 1 round(s)' "$TR_PROMPT.triage" \
   && grep -q '#11: 3 round(s)' "$TR_PROMPT.triage"; then r1=all; else r1=TRUNCATED; fi
 t triage503-prompt-carries-every-issues-row all "$r1"
-if grep -q 'All 3 of them, most rounds first' "$TR_PROMPT.triage"; then
+if grep -q 'all 3 of them, most rounds first' "$TR_PROMPT.triage"; then
   r1=counted; else r1=MISCOUNTED; fi
-t triage503-prompt-row-count-matches-the-distribution counted "$r1"
+t triage503-prompt-row-count-matches-the-rows counted "$r1"
 # Most rounds first, so the outlier reads before the tail.
 TR503_ROW_ORDER="$(grep -o '#1[0-2]: [0-9]* round' "$TR_PROMPT.triage" \
   | sed 's/:.*//' | paste -sd, -)"
@@ -1031,6 +1031,19 @@ t triage503-cut-chain-is-one-row one-issue "$r1"
 if grep -q '1 issue(s) with at least one round' "$TR_PROMPT.triage" \
   && grep -q 'median 8' "$TR_PROMPT.triage"; then r1=counted-once; else r1=DOUBLE; fi
 t triage503-cut-chain-counts-once counted-once "$r1"
+
+# A board whose only PR is still unreviewed has an empty distribution and a row
+# worth rendering. Gating the evidence on the distribution would withhold it from
+# exactly the young board that has the least of it, and would make "each issue's
+# count is readable" false for the issue most likely to be sized right now.
+tr503_wake "$(tr_prs "$(tr_pr 9 'Closes #77' 0)")"
+if grep -q '#77: 0 round(s) over 1 PR(s)' "$TR_PROMPT.triage"; then
+  r1=rowed; else r1=MISSING; fi
+t triage503-unreviewed-issue-still-gets-its-row rowed "$r1"
+if grep -q '0 issue(s) with at least one round' "$TR_PROMPT.triage" \
+  && grep -q '1 issue(s) with a PR but no round yet' "$TR_PROMPT.triage"; then
+  r1=held-out; else r1=COUNTED; fi
+t triage503-unreviewed-issue-is-out-of-the-median held-out "$r1"
 
 # MUST FAIL: a distribution computed from open PRs only. History is what makes
 # the first reading mean anything (D5), and the states are in the query — so
