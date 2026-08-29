@@ -387,6 +387,22 @@ done, cur = derive_sessions([
 print("%s:%s:%s:%s:%s" % (len(done), done[0]["rc"], done[0]["dur"], done[0]["out"], cur))
 PY
 )"
+FF_RECONSTRUCTED_RENDER="$(node - "$FLOOR/src/app.js" <<'JS'
+const fs=require('fs');
+const src=fs.readFileSync(process.argv[2],'utf8');
+function one(name){
+  const m=src.match(new RegExp('function '+name+'\\([^}]+\\}'));
+  if(!m)process.exit(2);
+  return eval('('+m[0]+')');
+}
+function pad2(n){return (n<10?'0':'')+n;}
+const fmtDur=one('fmtDur'),sessionRc=one('sessionRc'),sessionClass=one('sessionClass');
+const lost={rc:null,dur:null,acted:'unknown'};
+console.log([sessionRc(lost),fmtDur(lost.dur),sessionClass(lost)].join(':'));
+JS
+)"
+t "sessions: reconstructed unknowns render as unknown failure, never zero success" \
+  "-:—:cr" "$FF_RECONSTRUCTED_RENDER"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
 t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"

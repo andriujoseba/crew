@@ -1421,7 +1421,9 @@ function queueChip(q){
   var repo=q.repo;
   return '<span class="qc" style="border-color:'+(REPOC[repo]||"#3a4a60")+'">'+(repo?esc(repo)+' ':"")+(/^\d+$/.test(q.key)?"#":"")+esc(q.key)+'</span>';
 }
-function fmtDur(s){s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
+function fmtDur(s){if(s===null||s===undefined)return "—";s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
+function sessionRc(s){return s.rc===null||s.rc===undefined?"-":s.rc;}
+function sessionClass(s){return s.rc===null||s.rc===undefined||s.rc?"cr":s.acted==="no"?"noop":"ok";}
 /* peak_rss= arrives in KiB and is absent whenever the engine did not measure
    the session (#473). Absent is not zero: `!k` renders the same em dash the
    other unmeasured rows use, so a box whose kernel reports no VmHWM reads as
@@ -1657,7 +1659,7 @@ function liveTicker(snap){
       if(seenSess[id]||!primed)return;
       var state=x.acted==="no"?" no-op":"";
       var tail=x.reply?" — "+x.reply:"";
-      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+x.rc+" outcome="+x.out+" acted="+x.acted+state+tail,rc:x.rc,noop:x.acted==="no",ago:x.ago});
+      fresh.push({u:u,msg:"SESSION END kind="+x.kind+" key="+x.key+" rc="+sessionRc(x)+" outcome="+x.out+" acted="+x.acted+state+tail,rc:x.rc,unknown:x.rc===null||x.rc===undefined,noop:x.acted==="no",ago:x.ago});
     });
     if(u.cur){
       var cid=u.box+"|open|"+u.cur.kind+"|"+u.cur.key+"|"+u.cur.start;
@@ -1673,7 +1675,7 @@ function liveTicker(snap){
   fresh.forEach(function(f){
     var el=document.createElement("div");el.className="l";
     var m=esc(f.msg);
-    m=f.rc?m.replace(/rc=\d+/,'<span class="cr">rc='+f.rc+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="noop">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
+    m=f.rc||f.unknown?m.replace(/rc=(?:\d+|-)/,'<span class="cr">rc='+(f.unknown?'-':f.rc)+'</span>'):(f.noop?m.replace(/(acted=no no-op)/,'<span class="noop">$1</span>'):m.replace(/(outcome=.*)$/,'<span class="ok">$1</span>'));
     el.innerHTML='<span class="tt">'+clockStr()+'</span><span class="u" style="color:'+VENDORCOL(f.u.agent)+'">'+esc(f.u.box)+'</span><span class="m">'+m+'</span>';
     s.appendChild(el);
   });
@@ -1926,7 +1928,7 @@ function populateDash(){
     +'<div class="mcell"><div class="mv">'+d.today+'</div><div class="ml">Runs today</div></div>'
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
-  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=s.rc?"cr":s.acted==="no"?"noop":"ok";sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
+  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s);sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
   document.getElementById("w-sessions").innerHTML=sh+'</div>';
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
