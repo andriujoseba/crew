@@ -174,6 +174,13 @@ _triage_round_count() {
   ROUND_COUNT_EVIDENCE=""
   owner="${repo%%/*}"; name="${repo##*/}"
 
+  # Refused rather than defaulted. An empty pattern attributes every PR to no
+  # issue, which does not fail — it reports a board where nothing has ever taken
+  # a round, and that reads as a measurement rather than as a missing module.
+  if [ -z "${_RESUME_ISSUE_RE:-}" ]; then
+    warn "$repo: round-count evidence skipped (the issue pattern is unset; is duty-builder.sh sourced?)"
+    return 0
+  fi
   cap="$(printf '{}' \
     | jq -L "$DUTY_DIR/lib/jq" --argjson panel '[]' \
         -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null \

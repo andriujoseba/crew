@@ -24,7 +24,12 @@ source "$SHARED/lib/common.sh"
 # is tested in above.
 TRD="$TMP/tr-duty"; TRS="$TMP/tr-shim"; TRF="$TMP/tr-fix"
 mkdir -p "$TRD/lib/jq" "$TRD/work" "$TRD/conf" "$TRS" "$TRF"
-cp "$SHARED/lib/jq/blockers.jq" "$TRD/lib/jq/"
+# Every program, not just blockers.jq: the round-count census (#503) reads the
+# cap out of round-cap.jq and both it and round-count.jq include the rounds.jq
+# module, so a hand-picked list here is a list that goes stale silently — the
+# census would simply warn and render nothing, and every assertion about the
+# evidence would pass vacuously by being about an absent slot.
+cp "$SHARED"/lib/jq/*.jq "$TRD/lib/jq/"
 cp -r "$SHARED/prompts" "$TRD/prompts"
 # The label vocabulary comes from the SHIPPED conf, not from assignments in
 # this file (#358). The runner calls load_fleet_conf against this copy, so a
@@ -47,6 +52,13 @@ printf '%s\n' "${*//$'\n'/ }" >>"$TR_CALLS"
 p=1; [ -f "$TR_PHASE" ] && p="$(cat "$TR_PHASE")"
 case "$*" in
   *"api notifications"*)    cat "$TR_FIX/notif.json" ;;
+  # The round-count census (#503) is a GraphQL read too, so it must be matched
+  # BEFORE the discussions arm or it would be served discussion rows. Keyed on
+  # `pullRequests(`, which only its query carries. `prs.fail` is how a scenario
+  # makes the fetch itself fail.
+  *"pullRequests(first"*)
+    [ -f "$TR_FIX/prs.fail" ] && exit 1
+    cat "$TR_FIX/prs.$p.json" ;;
   *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
   *"number,body,updatedAt,labels"*) cat "$TR_FIX/board.$p.json" ;;
@@ -64,6 +76,12 @@ cat >"$TMP/tr-run.sh" <<'TRRUN'
 set -uo pipefail
 # shellcheck disable=SC1091
 . "$SHARED_DIR/lib/common.sh"
+# duty-builder.sh, as bin/duty.sh sources it — before any role dispatch and
+# whatever the box's roles are. The triage duty reads `_RESUME_ISSUE_RE` from it
+# (#503), so a runner that sourced only duty-triage.sh would be testing a shape
+# production never runs, and would have reported the evidence as simply absent.
+# shellcheck disable=SC1091
+. "$SHARED_DIR/lib/duty-builder.sh"
 # shellcheck disable=SC1091
 . "$SHARED_DIR/lib/duty-triage.sh"
 load_fleet_conf
@@ -92,6 +110,13 @@ tr_fix() {  # notif nt1 nt2 blocked1 blocked2 numstates [stray1] [stray2] [disc1
   printf '%s' "${8:-${7:-[]}}" >"$TRF/stray.2.json"
   printf '%s' "${9:-}" >"$TRF/disc.1.rows"
   printf '%s' "${10:-${9:-}}" >"$TRF/disc.2.rows"
+  # The round-count board (#503) defaults to empty and to succeeding, so every
+  # scenario written before it keeps its meaning: an empty board yields no
+  # evidence and no prompt slot. A scenario that wants either overwrites these
+  # two files after calling tr_fix.
+  rm -f "$TRF/prs.fail"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs.1.json"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs.2.json"
   for p in 1 2; do
     nt_file="$TRF/nt.$p.json"
     blocked_file="$TRF/blocked.$p.json"
@@ -119,6 +144,26 @@ tr_run() {  # tr_run <run_session rc>, starting with cold ledgers
   tr_tick "$1"
 }
 trc() { grep -c -- "$1" "$TR_CALLS"; }
+# One page, no PRs — the round-count census's empty board.
+TR_PRS_NONE='{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}'
+# tr_pr NUM BODY ROUNDS — one pullRequest node with ROUNDS closed rounds, in the
+# shape the census's own query returns.
+tr_pr() {
+  local num="$1" body="$2" n="$3" i oid ts commits="" reviews=""
+  for ((i = 1; i <= n; i++)); do
+    oid="$(printf 'p%s-c%d' "$num" "$i")"
+    ts="$(printf '2026-08-%02dT10:00:00Z' "$i")"
+    commits="$commits{\"commit\":{\"oid\":\"$oid\",\"committedDate\":\"$ts\"}},"
+    ts="$(printf '2026-08-%02dT12:00:00Z' "$i")"
+    reviews="$reviews{\"author\":{\"login\":\"rev-a\"},\"state\":\"CHANGES_REQUESTED\",\"commit\":{\"oid\":\"$oid\"},\"submittedAt\":\"$ts\"},"
+  done
+  printf '{"number":%s,"body":%s,"commits":{"totalCount":%d,"nodes":[%s]},"reviews":{"totalCount":%d,"nodes":[%s]}}' \
+    "$num" "$(printf '%s' "$body" | jq -Rs .)" "$n" "${commits%,}" "$n" "${reviews%,}"
+}
+tr_prs() {  # tr_prs NODE... -> one page carrying them
+  printf '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}}}}' \
+    "$(printf '%s,' "$@" | sed 's/,$//')"
+}
 TR_MENTION='[{"id":"t1","reason":"mention","updated_at":"2026-08-01T15:40:00Z",
   "repository":{"full_name":"o/r"},"subject":{"url":"https://api/x"}}]'
 TR_LEAD='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-01T15:30:00Z"}]'
@@ -179,9 +224,14 @@ if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
   r1=said; else r1="$(cat "$TR_LOG")"; fi
 t triage253-quiet-tick-log-unchanged said "$r1"
 # The state-map reads still ride the non-empty declaration graph, and nothing else.
+# Ten rather than nine since #503: this scenario is the first above that LAUNCHES
+# a triage session, and a launching tick also reads the board's round counts once
+# for the prompt. The three counts above are unchanged because none of them
+# launches one — which is the same fact the quiet-tick case below asserts head-on.
 tr_fix '[]' '[]' '[]' "$TR_LEAD" "$TR_LEAD" "$TR_LANDED"
 tr_run 0
-t triage253-gh-calls-with-blocked-list 9 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-gh-calls-with-blocked-list 10 "$(grep -vc '^SESSION' "$TR_CALLS")"
+t triage253-blocked-list-reads-rounds-once 1 "$(trc 'pullRequests(first')"
 
 # The mention path itself is untouched — the regression that matters, since
 # this change moves code around that block. One session, kind mention, and the
@@ -923,5 +973,121 @@ else
   r1=TOUCHED
 fi
 t doctrine-upstream-prose-keeps-quiet-board untouched "$r1"
+
+# --- #503: round count as sizing evidence, in front of triage ---------------
+#
+# Doctrine reads round growth as sizing evidence for the NEXT mint, and the
+# judgement belongs to triage before a builder claims. These drive the real
+# module: the evidence must reach a launching session's prompt, must cost a
+# quiet tick nothing, and must never act.
+TR503_LEAD='[{"number":244,"body":"Blocked by #216.","updatedAt":"2026-08-01T15:30:00Z"}]'
+tr503_wake() {  # tr503_wake <page-json>, a tick whose unblockable lead launches a session
+  tr_fix '[]' '[]' '[]' "$TR503_LEAD" "$TR503_LEAD" "$TR_LANDED"
+  printf '%s' "$1" >"$TRF/prs.1.json"
+  printf '%s' "$1" >"$TRF/prs.2.json"
+  tr_run 0
+}
+
+# The board D3's example is about: one issue at fourteen rounds while the median
+# is three. Both figures must be legible, because the outlier means nothing
+# without the distribution beside it.
+tr503_wake "$(tr_prs "$(tr_pr 1 'Closes #10' 1)" "$(tr_pr 2 'Closes #11' 3)" \
+  "$(tr_pr 3 'Closes #12' 14)")"
+t triage503-launches-a-session 1 "$(trc '^SESSION triage$')"
+if grep -q 'median 3' "$TR_PROMPT.triage" && grep -q 'max 14' "$TR_PROMPT.triage"; then
+  r1=distributed; else r1="$(cat "$TR_PROMPT.triage")"; fi
+t triage503-prompt-carries-the-distribution distributed "$r1"
+if grep -q '#12: 14 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
+t triage503-prompt-carries-the-per-issue-rows rowed "$r1"
+# Read against the ruled five, not a number crew picked — and the cap in the
+# prompt comes from round-cap.jq, so it can never drift from the one the engine
+# holds a request on.
+if grep -q 'the cap it is read against is 5' "$TR_PROMPT.triage" \
+  && grep -q 'at or over the cap of 5' "$TR_PROMPT.triage"; then
+  r1=five; else r1=MISSING; fi
+t triage503-prompt-reads-against-the-ruled-cap five "$r1"
+
+# The capped chain, end to end through the duty rather than through jq alone.
+tr503_wake "$(tr_prs "$(tr_pr 566 'Refs #503' 5)" "$(tr_pr 586 'Closes #503' 3)")"
+if grep -q '#503: 8 round(s) over 2 PR(s)' "$TR_PROMPT.triage"; then
+  r1=one-issue; else r1="$(grep -c '#503' "$TR_PROMPT.triage")"; fi
+t triage503-cut-chain-is-one-row one-issue "$r1"
+# MUST FAIL: a capped chain double-counting. Two observations of 5 and 3 would
+# make the median 4 and the max 5; one observation of 8 makes both 8.
+if grep -q '1 issue(s) with at least one round' "$TR_PROMPT.triage" \
+  && grep -q 'median 8' "$TR_PROMPT.triage"; then r1=counted-once; else r1=DOUBLE; fi
+t triage503-cut-chain-counts-once counted-once "$r1"
+
+# MUST FAIL: a distribution computed from open PRs only. History is what makes
+# the first reading mean anything (D5), and the states are in the query — so
+# this is asserted where the decision actually lives.
+if grep -q 'states:\[OPEN,CLOSED,MERGED\]' "$SHARED/lib/duty-triage.sh"; then
+  r1=history-included; else r1=OPEN-ONLY; fi
+t triage503-distribution-includes-closed-prs history-included "$r1"
+
+# IT IS CONTEXT, NOT A WAKE. A board with round history and no signal launches
+# nothing: a distribution moves whenever any PR gains a round, so as a signal it
+# would re-fire on an unchanged board forever, with nothing for a session to do
+# about it (#59's defect). And a quiet tick must not even pay for the read.
+tr_fix '[]' '[]' '[]' '[]' '[]' '[]'
+printf '%s' "$(tr_prs "$(tr_pr 3 'Closes #12' 14)")" >"$TRF/prs.1.json"
+printf '%s' "$(tr_prs "$(tr_pr 3 'Closes #12' 14)")" >"$TRF/prs.2.json"
+tr_run 0
+t triage503-round-history-is-no-wake 0 "$(trc '^SESSION triage$')"
+t triage503-quiet-tick-reads-no-rounds 0 "$(trc 'pullRequests(first')"
+if grep -q 'quiet — no mentions, no triage signals' "$TR_LOG"; then
+  r1=quiet; else r1="$(cat "$TR_LOG")"; fi
+t triage503-quiet-tick-log-unchanged quiet "$r1"
+
+# MUST FAIL: any automatic relabel (D4). The evidence surfaces and stops — no
+# label, split or block follows from it. Asserted over the whole call log of a
+# tick that DID render evidence, so a future write would have to show up here.
+tr503_wake "$(tr_prs "$(tr_pr 3 'Closes #12' 14)")"
+TR503_ACTIONS="$(grep -Ec 'issue edit|pr edit|--add-label|--remove-label|-X PATCH|-X POST|-X PUT|-X DELETE|mutation' \
+  "$TR_CALLS" || true)"
+t triage503-takes-no-automatic-action 0 "$TR503_ACTIONS"
+# ...and the prompt says so too, because the session is the other actor that
+# could act on it and doctrine gives the judgement to a human-grade read.
+if grep -q 'Nothing is labelled, split, blocked or relabelled on account of it' \
+    "$TR_PROMPT.triage"; then r1=said; else r1=SILENT; fi
+t triage503-prompt-forbids-acting-on-it said "$r1"
+
+# A fetch failure costs the evidence and nothing else: the session still runs on
+# the signals that woke it, and no partial distribution is presented as measured.
+tr_fix '[]' '[]' '[]' "$TR503_LEAD" "$TR503_LEAD" "$TR_LANDED"
+: >"$TRF/prs.fail"
+tr_run 0
+t triage503-fetch-failure-still-launches 1 "$(trc '^SESSION triage$')"
+if grep -q 'round-count fetch failed' "$TR_LOG"; then r1=warned; else r1="$(cat "$TR_LOG")"; fi
+t triage503-fetch-failure-warns warned "$r1"
+if grep -q 'Sizing evidence' "$TR_PROMPT.triage"; then r1=PARTIAL; else r1=omitted; fi
+t triage503-fetch-failure-renders-no-evidence omitted "$r1"
+# The unrendered slot leaves no marker behind either — a literal {{ROUND_EVIDENCE}}
+# in a prompt is the shape render_prompt produces for a slot nobody supplied.
+if grep -q 'ROUND_EVIDENCE' "$TR_PROMPT.triage"; then r1=LEAKED; else r1=clean; fi
+t triage503-unrendered-slot-leaves-no-marker clean "$r1"
+
+# The issue pattern is duty-builder.sh's constant, reached across duty modules.
+# bin/duty.sh sources all four before any role dispatch, so it is defined on a
+# triage-only box — pinned here so a later reordering cannot silently empty it
+# and quietly attribute every PR to no issue.
+if grep -q '_RESUME_ISSUE_RE' "$SHARED/lib/duty-triage.sh" \
+  && grep -q '^_RESUME_ISSUE_RE=' "$SHARED/lib/duty-builder.sh"; then
+  r1=shared; else r1=COPIED; fi
+t triage503-issue-pattern-is-the-builders-constant shared "$r1"
+# shellcheck disable=SC2016  # match the literal $DUTY_DIR source lines in duty.sh
+TR503_ORDER="$(grep -n 'source "$DUTY_DIR/lib/duty-\(builder\|triage\)\.sh"' "$SHARED/bin/duty.sh" \
+  | head -2 | sed 's/:.*duty-/ /;s/\.sh"//' | awk '{print $2}' | paste -sd, -)"
+t triage503-builder-module-is-sourced-first builder,triage "$TR503_ORDER"
+# The dispatch call is indented inside `if has_role triage`, so this compares
+# line numbers rather than matching an anchored line.
+# shellcheck disable=SC2016  # match the literal $DUTY_DIR source line in duty.sh
+TR503_SRC_LINE="$(grep -n 'source "$DUTY_DIR/lib/duty-builder.sh"' "$SHARED/bin/duty.sh" \
+  | head -1 | cut -d: -f1)"
+TR503_CALL_LINE="$(grep -n '^[[:space:]]*duty_triage$' "$SHARED/bin/duty.sh" \
+  | head -1 | cut -d: -f1)"
+if [ -n "$TR503_SRC_LINE" ] && [ -n "$TR503_CALL_LINE" ] \
+  && [ "$TR503_SRC_LINE" -lt "$TR503_CALL_LINE" ]; then r1=before; else r1=AFTER; fi
+t triage503-builder-module-sourced-before-dispatch before "$r1"
 
 suite_finish
