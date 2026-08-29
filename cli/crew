@@ -97,6 +97,30 @@ if [ "${CREW_EXPECT_OPERATOR_CONFIG:-0}" = 1 ] && [ "$CONFIG_IS_OPERATOR" -ne 1 
   exit 1
 fi
 config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
+# registry_seed BOX KIND — the registry file THIS box is transported from: its
+# own override in the fleet definition when there is one, else the fleet-wide
+# list (#488). KIND is `work` or `notify`.
+#
+# THIS IS WHAT MAKES THE OVERRIDE A LAYER RATHER THAN A FILE. The floor writes
+# `repos.d/<box>.txt`; without this resolver the transport would keep staging
+# the fleet-wide list over it and the override would be a file nothing reads —
+# which is worse than not having one, because the console would report a
+# narrowing the box does not have.
+#
+# Existence is the whole test, exactly as it is in `effective()` on the console
+# side. An EMPTY override is a box deliberately pointed at no board at all —
+# containment state, the narrowing repos.txt's own header describes — and
+# falling through to the fleet-wide list on emptiness would silently re-widen
+# precisely that box.
+registry_seed() { # BOX KIND
+  local override fallback
+  case "$2" in
+    work)   override="$CONFIG_DIR/repos.d/$1.txt";        fallback="$REPOS_SEED" ;;
+    notify) override="$CONFIG_DIR/notify-repos.d/$1.txt"; fallback="$NOTIFY_REPOS_SEED" ;;
+    *)      die "registry_seed: unknown registry '$2'" ;;
+  esac
+  if [ -f "$override" ]; then printf '%s\n' "$override"; else printf '%s\n' "$fallback"; fi
+}
 # agent_conf NAME — the one resolved profile path every reader uses: an
 # operator `agents/NAME.conf` beside the fleet definition wins over the
 # same-named shipped profile; the shipped set is the fallback (#75). Adding a
@@ -925,8 +949,8 @@ stage_fleet_definition() { # BOX
   } >"$runtime_conf"
   if bxput "$box_name" "$ROSTER" 'duty/fleet.roster' &&
      bxput "$box_name" "$runtime_conf" 'duty/conf/fleet.conf' &&
-     bxput "$box_name" "$REPOS_SEED" 'duty/.crew-seed-repos.txt' &&
-     bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt' &&
+     bxput "$box_name" "$(registry_seed "$box_name" work)" 'duty/.crew-seed-repos.txt' &&
+     bxput "$box_name" "$(registry_seed "$box_name" notify)" 'duty/.crew-seed-notify-repos.txt' &&
      stage_registry_examples "$box_name" &&
      stage_agent_profiles "$box_name"; then
     rm -f "$runtime_conf"
@@ -1521,8 +1545,26 @@ production_registry() {
   # no message at all.
   grep -vE '^[[:space:]]*(#|$)' "$REPOS_SEED" | sort || true
 }
+# fleet_watch_set — every repository the fleet works, fleet-wide list and
+# per-box overrides together, deduplicated (#488).
+#
+# The one-repo-one-fleet check sweeps THIS rather than the fleet-wide list,
+# because an override can name a board the fleet-wide list does not: the whole
+# point of the layer is pointing one droid somewhere else. Sweeping the
+# fleet-wide list alone would leave exactly the newly-aimed board — the one an
+# operator just made a decision about — as the only one nothing checks for a
+# second fleet.
+fleet_watch_set() {
+  local f
+  {
+    production_registry
+    for f in "$CONFIG_DIR"/repos.d/*.txt; do
+      [ -f "$f" ] && { grep -vE '^[[:space:]]*(#|$)' "$f" || true; }
+    done
+  } | sort -u
+}
 # box_registry NAME — the repos.txt the box actually carries, or empty when it
-# has none yet (install.sh seeds the production default in that case).
+# has none yet (install.sh seeds this box's own resolved default in that case).
 box_registry() {
   bxn "$1" 'grep -vE "^[[:space:]]*(#|\$)" ~/duty/repos.txt 2>/dev/null' 2>/dev/null \
     | tr -d '\r' | sort || true
@@ -1599,7 +1641,7 @@ foreign_actor_check() {
     IFS=$'\t' read -r action actor <<<"$finding"
     echo "crew: WARN one-repo-one-fleet: foreign $action by @$actor in registered repo $repo indicates another fleet may also govern it." >&2
     echo "crew: WARN registries LEFT UNCHANGED — the operators must decide which fleet keeps $repo." >&2
-  done < <(production_registry)
+  done < <(fleet_watch_set)
 }
 
 # hire_guard NAME ALLOW_OFFROSTER — refuse to arm an OFF-ROSTER box against the
@@ -1626,8 +1668,12 @@ hire_guard() {
   prod="$(production_registry)"
   reg="$(box_registry "$name")"
   if [ -z "$reg" ]; then
-    echo "  registry: none yet — install.sh will seed the production default"
-    reg="$prod"
+    # The seed this box would actually get, which is its override when it has
+    # one (#488). Reading `$prod` here claimed a box with a narrowing override
+    # was about to be armed against production, and the guard below then
+    # refused an off-roster box on a registry it was never going to carry.
+    reg="$(grep -vE '^[[:space:]]*(#|$)' "$(registry_seed "$name" work)" | sort || true)"
+    echo "  registry: none yet — install.sh will seed $(printf '%s' "$reg" | tr '\n' ' ')"
   else
     echo "  registry: $(printf '%s' "$reg" | tr '\n' ' ')"
   fi
