@@ -463,7 +463,7 @@ _mirror_rounds() {
       headRefOid
       commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
       reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
-      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} url createdAt}}
+      comments(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} body url createdAt}}
     } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)" \
     || { warn "$repo#$num: round-log fetch failed; body left as-is (handoff continues)"; return 0; }
   measured="$(printf '%s' "$payload" | jq -r '
@@ -474,7 +474,12 @@ _mirror_rounds() {
   operating_limit_assess github_connection_nodes "$measured" "$repo" "$num" \
     'round-log history exceeds its unpaginated GraphQL window' || return 0
   newbody="$(printf '%s' "$payload" \
-    | jq -r --arg me "$ME" --argjson final "$final" -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
+    | jq -r --arg me "$ME" --argjson final "$final" \
+        --arg mark_answered "$MARK_ANSWERED" \
+        --arg mark_addressing "$MARK_ADDRESSING" \
+        --arg mark_resume "$MARK_RESUME" \
+        --arg mark_handoff "$MARK_HANDOFF" \
+        -f "$DUTY_DIR/lib/jq/round-log.jq" 2>/dev/null)" \
     || { warn "$repo#$num: round-log render failed; body left as-is"; return 0; }
   [ -n "$newbody" ] || return 0   # every round already recorded — write nothing
   printf '%s' "$newbody" | jq -Rs '{body:.}' \

@@ -68,7 +68,7 @@ def ensure_fact_table:
     ("\n" + . | split("\n## ")) as $parts
     | [ $parts[]
         | if startswith("Round log")
-          then (. + "\n\n" + round_section_scaffold)
+          then (. + "\n\n" + round_section_scaffold + "\n")
           else .
           end ]
     | join("\n## ")
@@ -82,6 +82,27 @@ def row_indices($lines; $header_i):
    // ($lines | length)) as $table_end
   | [ range($header_i + 2; $table_end)
       | select(($lines[.] | startswith("| ---")) | not) ];
+
+def row_round_number($line):
+  ($line
+   | (capture("^\\|[[:space:]]*(?<number>[0-9]+)[[:space:]]*\\|")?
+      // null)) as $match
+  | ($match.number // null)
+  | if . == null then null else tonumber end;
+
+# Administrative comments share the author's identity and the round's time
+# window, but they are not the whole-round reply the merging human needs. The
+# configurable wire markers cover the ordinary pickup/signal/handoff path;
+# the remaining fixed prefixes are the engine's CI evidence records.
+def is_administrative_comment:
+  startswith($mark_answered)
+  or startswith($mark_addressing)
+  or startswith($mark_resume)
+  or startswith($mark_handoff)
+  or startswith("🔁 rerun owed at head")
+  or startswith("✅ unchanged-head rerun passed at")
+  or startswith("CI classification at head")
+  or test("^\\{\\{MARK_[A-Z0-9_]+\\}\\}");
 
 # Render one row. Only the four leading fact cells are replaced; everything
 # after the fourth separator is the builder's requested/done prose and is
@@ -99,14 +120,15 @@ def render_round($round):
     | ([range($round_i + 1; $round_end)
         | select($lines[.] == fact_header)] | last) as $header_i
     | row_indices($lines; $header_i) as $rows
-    | ($round.number - 1) as $row_n
+    | ($rows
+       | map(select(row_round_number($lines[.]) == $round.number))
+       | first) as $row_i
     | ("| " + ($round.number | tostring)
        + " | `" + $round.oid + "`"
        + " | " + $round.verdict_text
        + " | " + $round.reply_text + " |") as $facts
-    | if $row_n < ($rows | length) then
-        ($rows[$row_n]) as $row_i
-        | ($lines[$row_i]
+    | if $row_i != null then
+        ($lines[$row_i]
            | (capture("^\\|[^|]*\\|[^|]*\\|[^|]*\\|[^|]*\\|(?<prose>.*)$")? // null)
            | if . == null then null else .prose end) as $prose
         | if $prose == null then
@@ -116,8 +138,14 @@ def render_round($round):
              | join("\n"))
           else
             ($lines[0:$row_i]
-             + [$facts + ($prose | sub("\\|[[:space:]]*$";
-                                       " " + $round.marker + " |"))]
+             + [$facts + ($prose
+                           | if test("\\|[[:space:]]*$") then
+                               sub("\\|[[:space:]]*$";
+                                   " " + $round.marker + " |")
+                             else
+                               sub("(?<tail>[[:space:]]*)$";
+                                   " " + $round.marker + " |\\(.tail)")
+                             end)]
              + $lines[$row_i + 1:]
              | join("\n"))
           end
@@ -154,7 +182,7 @@ def render_round($round):
 | [ ($pr.comments.nodes // [])[]
     | select(.author.login == $me)
     | select(.createdAt != null)
-    | {url: .url, at: .createdAt} ]
+    | {body: (.body // ""), url: .url, at: .createdAt} ]
   | sort_by(.at)                                                  as $mine
 | ( $verdicts | group_by(.oid)
     | map({ oid: .[0].oid,
@@ -172,7 +200,8 @@ def render_round($round):
                         and $r.oid != ($pr.headRefOid // "")))
     | (if $i + 1 < $n then $rounds[$i + 1].first else null end) as $next
     | ([ $mine[]
-         | select(.at > $r.newest and ($next == null or .at < $next)) ]
+         | select(.at > $r.newest and ($next == null or .at < $next))
+         | select((.body | is_administrative_comment) | not) ]
        | last) as $reply
     | { number: ($i + 1),
         oid: $r.oid,
