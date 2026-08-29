@@ -48,6 +48,184 @@ leg must never be absent from the record. The selected triage, builder and
 reviewer rows describe round participants rather than independently runnable
 legs, so they remain in the detailed summary outside this inventory.
 
+## The rc ladder
+
+**A release candidate carries its own drill record.** The ladder is
+[`.ceremony/RELEASES.md`](../.ceremony/RELEASES.md)'s, adopted here and not
+varied from: `X.Y.Z-dev` → `X.Y.Z-rc1` → `X.Y.Z-rc2-dev` → `X.Y.Z-rc2` → … →
+`X.Y.Z`. Each candidate is a tag-only cut whose ceremony PR changes `VERSION`
+to the bare `X.Y.Z-rcN` and adds `drills/X.Y.Z-rcN.md`, leaving `CHANGELOG.md`
+and every fragment untouched; the doors publish it with `--prerelease` and the
+merge door re-arms `main` as `X.Y.Z-rc(N+1)-dev`. One file per version is the
+rule stated at the top of this file, and it is what makes the ladder cost
+nothing to gate: `drills/0.9.0-rc1.md` and `drills/0.9.0.md` are different
+paths, so `drill-recorded` asks the same question of a candidate that it asks
+of a final and needs no rc-specific case.
+
+**What the ladder buys is downstream.** A long window otherwise re-drills at
+every rebase, because the drilled tree moves under the record. Drill the
+candidate once, publish it as a tag, and the final's evidence anchors to an
+immutable published ref instead of to a tree that has since changed.
+
+**What it does not buy, stated so this is not read as more than it is:** the
+first rc round still drills a *mutable* candidate. `drill-recorded` gates the
+rc PR, so `drills/X.Y.Z-rc1.md` must exist before the merge that creates the
+`X.Y.Z-rc1` tag — the record is committed against a tree that is not yet
+tagged. That is heavy-duty/crew#490's problem, and it is unchanged here.
+
+### The stamps-only test
+
+The ladder's claim is that **the drilled tree and the shipped tree differ by no
+executable byte**. That claim is checkable, so it is checked rather than
+asserted: at a final release tree, the diff from the last `X.Y.Z-rcN` tag to
+`HEAD` must touch **stamps only**.
+
+A stamp is release furniture — the four paths a ceremony PR is allowed to move,
+and no others:
+
+| stamp | what moves it |
+| --- | --- |
+| `VERSION` | the rc cut, the re-arm, and the final cut |
+| `CHANGELOG.md` | the final's assembled section |
+| `changelog.d/**` | the fragments that section consumed |
+| `drills/**` | the version's own record |
+
+Anything else in that diff means work landed between the candidate and the
+final, so the tree that ships is not the tree that was drilled and **the ladder
+has not been followed**. Two ways forward, both ordinary: cut `X.Y.Z-rc(N+1)` at
+the tree that actually ships and drill *that*, so the final rides a candidate it
+does not differ from; or take the non-stamp change back out of this release
+window. Neither is an exception to the gate — the first satisfies it and the
+second removes what it objected to.
+
+**Drilling the final itself is not a third way out of that refusal**, and this
+section said it was. Once a candidate is published and in the final's own
+history it stays the anchor, so writing a fresh `drills/X.Y.Z.md` adds a stamp
+and removes neither the anchor nor the stray path. Drilling only the final is
+what an **un-laddered** window does, and there the guard is vacuous because no
+candidate sits above the final to compare it against — a different shape of
+window, not a remedy for this one. The ladder stays available and never
+required (heavy-duty/crew#506 D5); what is not available is starting it and
+then stepping off it.
+
+**The test is deliberately stricter than the sentence it enforces.** "No
+executable byte" would let a documentation-only merge through; the stamp set
+refuses it. The asymmetry is the reason: a false red costs one author a
+re-read and is answered by cutting the next candidate, while a false green
+ships a final whose evidence describes a tree nobody ran. A guard that is
+looser than its claim is the claim wearing a green check.
+
+`.github/stamps-only.py` is that guard, run on every PR from
+[`.github/workflows/release-guards.yml`](../.github/workflows/release-guards.yml)
+beside the ceremony gates. It is vacuous on a `-dev` tree, on an rc tree — an
+`rc2` exists precisely *because* something changed, so there is nothing for it
+to assert — and on a final whose window cut no candidate. Its contract tests
+are `.github/stamps-only.test.sh`.
+
+**Which candidate was last is read from two sources, and neither is trusted
+alone.** The anchor is the highest-numbered of the `drills/X.Y.Z-rcN.md`
+records in the shipped tree *and* the `X.Y.Z-rcN` tags reachable from `HEAD`,
+because each source fails open where the other holds:
+
+- The records are **deletable by the diff under examination**. A record lives
+  in `drills/`, a stamp path, so removing it in the final commit is admitted by
+  the stamp set — and a records-only anchor would drop with it, reporting a
+  window that laddered nothing while engine code sat in the diff.
+- The tags **cannot tell a tag never fetched from a tag never cut**, so a
+  tags-only anchor would read a shallow clone as an un-laddered release.
+
+So the guard refuses in both directions. A record whose tag cannot be resolved
+is a **refusal and never a pass** — "I found nothing" and "I could not look"
+are different answers here for the same reason they are in teardown's exit
+table below — and a candidate that is published and in this final's own history
+but carries **no record in the shipped tree** is refused too. The retention
+matters because the record is the only thing that says *what* was drilled: a tag
+that has lost its record has lost its evidence, and un-publishing is not what
+deleting a file does.
+
+That check reads **every** reachable candidate and not only the one the final is
+measured against. The ladder is `rc1 → rc2 → … → X.Y.Z`, so a window with more
+than one rung is the ordinary case, and each rung's record is the only
+description of the tree that rung ran. Deleting a record *below* the anchor
+cannot move the anchor — the highest number is unchanged when a lower one leaves
+— so it is not a way past the stamps-only test; what it destroys is the
+evidence, which is the thing the ladder exists to keep. **Restoring the record
+is the only thing that answers this refusal**, and it is recoverable exactly,
+because the record is in the candidate's own tree: `git checkout X.Y.Z-rcN --
+drills/X.Y.Z-rcN.md`. Cutting the next candidate does *not* answer it — that
+tag stays reachable and stays recordless, and the guard refuses again.
+
+The guard asks the candidate's tree for that record before offering the
+checkout, rather than promising it. A candidate that published with **no record
+at all** — which `drill-recorded` gates the rc PR precisely to prevent, so it
+takes a hand edit to reach — has nothing to check out, and there the refusal
+says to *write* `drills/X.Y.Z-rcN.md`: a record written late is still the only
+description of that tree, and the gate takes a waiver honestly stated.
+
+**And what retention asks for is the tag's own spelling, not its number.**
+`drill-recorded` computes the record's path as `drills/$ver.md` from the version
+being cut, so a candidate published as `0.9.0-rc1` carries `drills/0.9.0-rc1.md`
+and nothing else can stand in for it. A final that *renames* that record to
+`drills/0.9.0-rc01.md` has deleted the published evidence — the rename lives
+inside `drills/`, so the stamp set admits it, and a check keyed on the number
+would see candidate 1 still recorded and pass. It is the deletion above wearing
+a rename, and it is refused as one, naming both the record that is required and
+the file that stands in for it.
+
+**One number, one spelling.** `version_is_rc` at the pin is
+`X.Y.Z-rc[0-9]+`, which accepts a zero-padded number, and `version_next_dev`
+re-arms `0.9.0-rc01` as `0.9.0-rc2-dev`. So `0.9.0-rc01` is a candidate the
+release doors publish, and the guard reads the number only to *order* the
+ladder: every tag it resolves and every record it names is the spelling that is
+actually on disk. Where one number is spelled two ways in one ladder — two
+records, or two tags both in the final's history — the guard says so and stops,
+because an arbitrary anchor is a measurement against a tree nobody declared. The
+one place two spellings of a number are not ambiguous but simply wrong is
+retention, just above: a published candidate's record is spelled exactly as its
+tag, so the other spelling is not a second candidate to disambiguate — it is the
+record renamed.
+
+**The digits are ASCII, because the doors' digits are ASCII.** `X.Y.Z-rc[0-9]+`
+above is the literal spelling at the pin — `lib/version.sh`, `lib/tag-classify.sh`
+and `drill/lib/candidate.sh` at `heavy-duty/ceremony@0.7.6` all write it that
+way — and the guard writes it that way too rather than the Unicode-wide `\d` a
+regex reaches for by default. This is the same rule as *one number, one
+spelling*, one level down: a candidate is what the release doors would
+**classify, tag and publish**, so a version or tag they would refuse is not a
+rung of anybody's ladder here either. It is worth stating because the failure is
+silent in both directions — such a spelling would read as a candidate that was
+never cut, and a stray record under one would out-rank a genuine candidate and
+gate a release that has nothing to do with it.
+
+The same question is asked one step earlier, of the string itself: **`VERSION`
+is consumed the way the doors consume it.** `lib/version.sh` at the pin reads a
+file-backed version with `tr -d '[:space:]'` — every whitespace character
+deleted, not just the ends trimmed — precisely so a stray space cannot make
+`0.7.0` look unlike `0.7.0`. Every gate that decides whether a tree ships goes
+through that one reader, so a `VERSION` of `0. 9.0` is the final `0.9.0` to
+`drill-recorded` and to both release doors. A guard that merely trimmed the ends
+would call the same tree unclassifiable and pass it in silence, whatever its
+diff contained. And the deletion is byte-oriented, as `tr` is: a `VERSION`
+carrying a non-breaking space is *not* normalized at the door, so it is not
+normalized here either. Wider is not safer — it is a second dialect, which is
+the thing this whole section refuses.
+
+**A shallow clone is a "could not look" wherever it touches this guard**, and
+that includes ancestry. A `--depth 1` checkout that *has* fetched the tags can
+resolve `X.Y.Z-rcN` and still answer no to `merge-base --is-ancestor`, because
+the join is below the graft: the no is about the clone and not about the tree.
+Refusing there would print the guard's loudest sentence — that what ships only
+resembles what was drilled — over a clone that simply cannot see. So it exits
+`2` and names the fix (`actions/checkout` with `fetch-depth: 0`), which is the
+same answer it gives when a record's tag cannot be resolved at all. CI fetches
+full history, so this is a local-clone corner; keeping the two answers apart is
+the point.
+
+A candidate tagged on a line the final does not descend from is **not** the
+anchor. It drilled a different lineage, and reading it would red a window it
+has nothing to say about — while a candidate the final *does* descend from is
+exactly the one whose record cannot be allowed to vanish.
+
 ## Adapting the drill to the window
 
 **A release window's drill is adapted to what that window shipped, and the

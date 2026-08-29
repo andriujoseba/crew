@@ -85,6 +85,12 @@
           # dist/release-artifact.sh, which scope:installer already owns, and
           # the action says so itself ("THE BUILD ITSELF IS NOT HERE").
           - ".github/actions/release-artifact/**"
+          # The rc ladder's own gate and its suite (#506). They sit beside the
+          # scope guard in .github/ and belong to a different scope for the
+          # reason that one does: the subject is what the row names, and this
+          # pair asserts a release tree.
+          - ".github/stamps-only.py"
+          - ".github/stamps-only.test.sh"
           - "CHANGELOG.md"
           - "changelog.d/**"
           - "VERSION"
