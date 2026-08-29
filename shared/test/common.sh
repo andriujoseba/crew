@@ -7032,6 +7032,13 @@ t roundlog-preserves-sibling-sections kept "$r1"
 case "$RL_OUT4" in *"older entry"*"round:$RL_O1"*"## Worklog"*) r1=in-section ;; *) r1=no ;; esac
 t roundlog-inserts-into-existing-section in-section "$r1"
 
+# A sibling table after the Round log is not a candidate row. A renderer whose
+# row scan runs to end-of-body rewrites Evidence's first row as round 1.
+RL_SIBLING_TABLE="$(printf '%s\n\n## Evidence\n\n| item | result |\n| --- | --- |\n| sibling bytes | stay here |' "$RL_BODY_SEC")"
+RL_SIBLING_OUT="$(mk_rl "$RL_SIBLING_TABLE" "$RL_REVS1" "$RL_COMS" | rl)"
+case "$RL_SIBLING_OUT" in *"| sibling bytes | stay here |"*) r1=kept ;; *) r1=REWRITTEN ;; esac
+t roundlog-never-treats-a-sibling-table-as-a-round-row kept "$r1"
+
 # A Round log can legally be the body's first section. The migration must add
 # its fact table there rather than append a duplicate `## Round log` section.
 RL_FIRST="$(mk_rl '## Round log

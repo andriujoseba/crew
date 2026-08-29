@@ -47,11 +47,23 @@ def round_section_scaffold:
   + "<!-- One row per round. Prose cells: 500 chars each. -->\n\n"
   + fact_header + "\n" + fact_rule;
 
+def has_round_fact_table:
+  split("\n") as $lines
+  | ([range(0; $lines | length)
+      | select($lines[.] == "## Round log")] | first) as $round_i
+  | if $round_i == null then false
+    else
+      ([range($round_i + 1; $lines | length)
+        | select($lines[.] | startswith("## "))] | first
+       // ($lines | length)) as $round_end
+      | any(range($round_i + 1; $round_end); $lines[.] == fact_header)
+    end;
+
 # Add the current doctrine's table without disturbing existing body bytes. A
 # pre-doctrine `### Rounds` subsection may remain above it during migration;
 # legacy round markers make those old entries ineligible for rendering again.
 def ensure_fact_table:
-  if contains(fact_header) then .
+  if has_round_fact_table then .
   elif startswith("## Round log") or contains("\n## Round log") then
     ("\n" + . | split("\n## ")) as $parts
     | [ $parts[]
@@ -65,9 +77,11 @@ def ensure_fact_table:
   end;
 
 def row_indices($lines; $header_i):
-  [ range($header_i + 2; $lines | length)
-    | select($lines[.] | startswith("| "))
-    | select(($lines[.] | startswith("| ---")) | not) ];
+  ([range($header_i + 2; $lines | length)
+    | select(($lines[.] | startswith("| ")) | not)] | first
+   // ($lines | length)) as $table_end
+  | [ range($header_i + 2; $table_end)
+      | select(($lines[.] | startswith("| ---")) | not) ];
 
 # Render one row. Only the four leading fact cells are replaced; everything
 # after the fourth separator is the builder's requested/done prose and is
@@ -77,7 +91,13 @@ def render_round($round):
   else
     ensure_fact_table
     | split("\n") as $lines
-    | ([range(0; $lines | length) | select($lines[.] == fact_header)] | last) as $header_i
+    | ([range(0; $lines | length)
+        | select($lines[.] == "## Round log")] | first) as $round_i
+    | ([range($round_i + 1; $lines | length)
+        | select($lines[.] | startswith("## "))] | first
+       // ($lines | length)) as $round_end
+    | ([range($round_i + 1; $round_end)
+        | select($lines[.] == fact_header)] | last) as $header_i
     | row_indices($lines; $header_i) as $rows
     | ($round.number - 1) as $row_n
     | ("| " + ($round.number | tostring)
@@ -102,12 +122,7 @@ def render_round($round):
              | join("\n"))
           end
       else
-        ([ range($header_i + 1; $lines | length)
-           | select($lines[.] | startswith("## ")) ]
-         | first // ($lines | length)) as $section_end
-        | ([ range($header_i + 2; $section_end)
-           | select($lines[.] | startswith("| ")) ]
-         | last // ($header_i + 1)) as $insert_i
+        (($rows | last) // ($header_i + 1)) as $insert_i
         | ($lines[0:$insert_i + 1]
            + [$facts + " — | — " + $round.marker + " |"]
            + $lines[$insert_i + 1:]
