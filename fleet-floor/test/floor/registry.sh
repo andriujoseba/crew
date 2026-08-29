@@ -342,18 +342,57 @@ t "registry: a record that fails after the write reports the edit as landed" \
 # so a reply and its journal line could describe input another thread had
 # replaced. Twelve writes alternating between two states: whichever wins, the
 # file must be exactly one of them and every write must be recorded once.
+#
+# FIRED FROM PYTHON THREADS, NOT BACKGROUNDED SUBSHELLS, which is the idiom
+# `floor/server.sh` states for its own concurrency case. The reason it gives —
+# a `( ... ) &` inheriting the parent's EXIT trap — is only half of it, and the
+# other half cost this suite a run: a bare `wait` here waits for EVERY child of
+# run.sh, and `SRV`, the collector under test, is one of them. It never exits,
+# so the suite blocks until `timeout` sends TERM; the TERM trap runs cleanup
+# and RETURNS rather than exiting, so `wait` comes back, the script carries on,
+# and the remaining four hundred assertions run against a $TMP that cleanup has
+# just deleted and a collector it has just killed. The cascade reads like a
+# hundred unrelated failures across five suites. Threads have neither hazard:
+# they are joined by name and no shell trap is anywhere near them.
 FF_REG_J0="$(wc -l <"$FF_REG_JOURNAL" | tr -d ' ')"
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  if [ $((i % 2)) -eq 0 ]; then FF_REG_E='["heavy-duty/crew"]'
-  else FF_REG_E='["heavy-duty/crew","heavy-duty/ceremony"]'; fi
-  reg "{\"action\":\"registry-set\",\"kind\":\"work\",\"entries\":$FF_REG_E}" \
-    >"$TMP/reg-cc.$i" 2>/dev/null &
-done
-wait
-FF_REG_CCOK=0
-for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  [ "$(jqf "d['ok']" <"$TMP/reg-cc.$i")" = True ] && FF_REG_CCOK=$((FF_REG_CCOK + 1))
-done
+FF_REG_CCOK="$(FF_REG_PORT="$PORT" FF_REG_USER="$USER" FF_REG_PASSWD="$PASSWD" \
+python3 - <<'PY_REGCC'
+import base64, json, os, threading, urllib.request
+
+port = os.environ["FF_REG_PORT"]
+auth = "Basic " + base64.b64encode(
+    ("%s:%s" % (os.environ["FF_REG_USER"], os.environ["FF_REG_PASSWD"])).encode()
+).decode()
+done, lock = [], threading.Lock()
+
+
+def hit(i):
+    # Alternating between two states, so a write that reports the input another
+    # thread replaced is visible in the file rather than only in the log.
+    entries = (["heavy-duty/crew"] if i % 2 == 0
+               else ["heavy-duty/crew", "heavy-duty/ceremony"])
+    req = urllib.request.Request(
+        "http://127.0.0.1:%s/api/command" % port,
+        data=json.dumps({"action": "registry-set", "kind": "work",
+                         "entries": entries}).encode(), method="POST")
+    req.add_header("Authorization", auth)
+    req.add_header("Content-Type", "application/json")
+    try:
+        good = bool(json.load(urllib.request.urlopen(req, timeout=30)).get("ok"))
+    except Exception:                          # an errored request is a failure
+        good = False
+    with lock:
+        done.append(good)
+
+
+threads = [threading.Thread(target=hit, args=(i,)) for i in range(12)]
+for th in threads:
+    th.start()
+for th in threads:
+    th.join()
+print(sum(1 for x in done if x))
+PY_REGCC
+)"
 t "registry: twelve concurrent writes to one registry all succeed" 12 "$FF_REG_CCOK"
 case "$(regf work)" in
   "heavy-duty/crew"|"heavy-duty/crew,heavy-duty/ceremony") r1=one-of-them ;;
@@ -362,9 +401,13 @@ esac
 t "registry: ...leaving the file as exactly one of the submitted states" one-of-them "$r1"
 t "registry: ...with one journal line per write, none lost" 12 \
   "$(($(wc -l <"$FF_REG_JOURNAL" | tr -d ' ') - FF_REG_J0))"
-t "registry: ...and no temporary file left in the fleet definition" 0 \
-  "$(find "$FF_REG_DIR" -maxdepth 1 -name 'repos.txt.crew-floor.*' | wc -l | tr -d ' ')"
-rm -f "$TMP"/reg-cc.*
+# `find` on a directory that is not there prints nothing and `wc -l` says 0, so
+# this assertion would PASS on a definition the suite had lost. The directory is
+# proved present first, and it is the same reading either way.
+t "registry: ...and no temporary file left in the fleet definition" present-0 \
+  "$([ -d "$FF_REG_DIR" ] && printf 'present-%s' \
+     "$(find "$FF_REG_DIR" -maxdepth 1 -name 'repos.txt.crew-floor.*' | wc -l | tr -d ' ')" \
+     || printf 'DEFINITION-GONE')"
 reg '{"action":"registry-set","kind":"work","entries":["heavy-duty/crew","heavy-duty/ceremony"]}' >/dev/null
 
 # --- the transport half: cli/crew resolves the same override -----------------
