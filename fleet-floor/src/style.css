@@ -157,9 +157,21 @@ input.woff{color:#5a6a80}
 .regta:focus{outline:none;border-color:#1d5772}
 .regacts{display:flex;gap:6px;margin-top:6px}
 .regacts .lbtn{text-align:center;flex:1}
-/* The source chip. `override` is the state an operator has to be able to see
-   without reading the list — a box quietly pinned to a stale registry is the
-   failure this layer can introduce, so it is the loud one. */
+/* The source chip. `selected` is the state an operator has to be able to see
+   without reading the list — a box quietly narrowed to a stale slice of the
+   fleet-wide registry is the failure this layer can introduce, so it is the
+   loud one. Loud is not the same as wrong: a narrowed member is a member doing
+   what somebody asked it to, never a dirty one (operator, 2026-08-29). */
 .regsrc{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;border-radius:4px;padding:2px 6px;margin-left:auto}
 .regsrc.inherit{color:#8aa0b8;background:#8aa0b81f}
 .regsrc.override{color:#f7bd4e;background:#f7bd4e1f}
+/* The per-box selector. Checkboxes over the fleet-wide list rather than a
+   textarea, because a box cannot name a repository the fleet does not watch —
+   so the set of legal values is known, finite and already on screen, and a
+   free-text field would exist only to be refused. */
+.regsel{border:1px solid #142230;border-radius:7px;background:#0a1017;padding:4px;max-height:230px;overflow:auto}
+.regopt{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;font:11px/1.4 var(--mono);color:#b9c8dc}
+.regopt:hover{background:#101a26}
+.regopt input{accent-color:#1d5772;margin:0}
+.regopt input:not(:checked)+span{color:#5a6a80;text-decoration:line-through}
+.regempty{font:11px/1.5 var(--mono);color:#7a6a3a;background:#f7bd4e14;border:1px solid #f7bd4e2e;border-radius:7px;padding:8px 10px}

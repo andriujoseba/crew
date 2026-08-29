@@ -164,12 +164,24 @@ input.woff{color:#5a6a80}
 .regta:focus{outline:none;border-color:#1d5772}
 .regacts{display:flex;gap:6px;margin-top:6px}
 .regacts .lbtn{text-align:center;flex:1}
-/* The source chip. `override` is the state an operator has to be able to see
-   without reading the list — a box quietly pinned to a stale registry is the
-   failure this layer can introduce, so it is the loud one. */
+/* The source chip. `selected` is the state an operator has to be able to see
+   without reading the list — a box quietly narrowed to a stale slice of the
+   fleet-wide registry is the failure this layer can introduce, so it is the
+   loud one. Loud is not the same as wrong: a narrowed member is a member doing
+   what somebody asked it to, never a dirty one (operator, 2026-08-29). */
 .regsrc{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;border-radius:4px;padding:2px 6px;margin-left:auto}
 .regsrc.inherit{color:#8aa0b8;background:#8aa0b81f}
 .regsrc.override{color:#f7bd4e;background:#f7bd4e1f}
+/* The per-box selector. Checkboxes over the fleet-wide list rather than a
+   textarea, because a box cannot name a repository the fleet does not watch —
+   so the set of legal values is known, finite and already on screen, and a
+   free-text field would exist only to be refused. */
+.regsel{border:1px solid #142230;border-radius:7px;background:#0a1017;padding:4px;max-height:230px;overflow:auto}
+.regopt{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;font:11px/1.4 var(--mono);color:#b9c8dc}
+.regopt:hover{background:#101a26}
+.regopt input{accent-color:#1d5772;margin:0}
+.regopt input:not(:checked)+span{color:#5a6a80;text-decoration:line-through}
+.regempty{font:11px/1.5 var(--mono);color:#7a6a3a;background:#f7bd4e14;border:1px solid #f7bd4e2e;border-radius:7px;padding:8px 10px}
 
 </style>
 </head>
@@ -2157,13 +2169,13 @@ function populateDash(){
        Omitted entirely on a box whose engine predates the probe: this widget
        has always drawn what is KNOWN, and six em-dashes claiming to be a
        hardware reading is the one thing worse than not drawing them. */
-    /* #488 — what this box actually watches, and whether that is the
-       fleet-wide list or an override. Empty until /api/registries has
+    /* #488 — what this box actually watches, and whether that is the whole
+       fleet-wide list or a selection from it. Empty until /api/registries has
        answered, and in DEMO mode forever: a placeholder count here would be
        the invented telemetry #38 was filed about. */
     +boxVitalsRows(d.vitals).concat(tickHealthRows(d.tickHealth)).concat(registryRow(BOX)).map(function(r){
       return '<span class="k">'+esc(r[0])+'</span><span class="v"'
-        +(r[0]==="Finding"||(r[0]==="Registry"&&/OVERRIDE/.test(r[1]))?' style="color:#f7bd4e"':'')+'>'+esc(r[1])+'</span>';
+        +(r[0]==="Finding"||(r[0]==="Registry"&&/SELECTED/.test(r[1]))?' style="color:#f7bd4e"':'')+'>'+esc(r[1])+'</span>';
     }).join('')+'</div>';
   document.getElementById("w-queue").innerHTML='<div class="wt"><span class="dot"></span>WORK QUEUE · q'+d.queue.length+'</div><div class="qchips">'
     /* Live keys are whatever the duty modules logged — an issue number, but
@@ -6745,14 +6757,24 @@ function pollRegistries(){
   return api("/api/registries").then(function(r){REGS=r;return r;}).catch(function(){return null;});
 }
 /* The one summary that belongs on the always-visible cell: how many
-   repositories this box watches, and whether that came from the fleet-wide
-   list or from an override. A box quietly pinned to a stale registry is the
-   failure this layer can introduce, so the override is the loud half — an
-   operator scanning the console must not have to open an editor to find it. */
+   repositories this box watches, and whether that is the whole fleet-wide list
+   or a selection from it. A box quietly narrowed to a stale slice is the
+   failure this layer can introduce, so the selection is the loud half — an
+   operator scanning the console must not have to open an editor to find it.
+
+   A narrowed box reads `3/7`, never a bare `3`: the count alone cannot say
+   whether a small number is a small fleet or a box somebody pointed at one
+   board, and those want opposite reactions. SELECTED and not DIRTY, because a
+   narrowed member is a member doing what it was asked (operator, 2026-08-29)
+   — the word here is the same judgement hire_guard makes in the CLI. */
 function registryRow(box){
   if(!REGS||!REGS.boxes||!REGS.boxes[box])return [];
-  var c=REGS.boxes[box],over=!c.work.inherited||!c.notify.inherited;
-  return [["Registry",c.work.entries.length+" work · "+c.notify.entries.length+" notify"+(over?" · OVERRIDE":"")]];
+  var c=REGS.boxes[box],sel=!c.work.inherited||!c.notify.inherited;
+  function part(kind,label){
+    var n=c[kind].entries.length;
+    return (c[kind].inherited?n:n+"/"+REGS.fleet[kind].entries.length)+" "+label;
+  }
+  return [["Registry",part("work","work")+" · "+part("notify","notify")+(sel?" · SELECTED":"")]];
 }
 var REGKINDS=[["work","WORK REGISTRY","the boards this box works: issues, reviews, author-side duties"],
               ["notify","NOTIFY REGISTRY","extra handoff targets the operator notifier sweeps"]];
@@ -6782,14 +6804,35 @@ function openRegistries(box){
          has no file yet, and printing a path nothing has written would read as
          a file the operator could go and open. */
       var path=box?(inherited?r.fleet[kind].path+" (inherited)":cell.path):cell.path;
+      /* The fleet-wide scope is a free list — it IS the universe, so there is
+         nothing to bound it by and an operator adding a board types its name.
+         A box's scope is a SELECTION from that universe (operator,
+         2026-08-29): it can never name a repository the fleet-wide list does
+         not, so the legal values are finite, known and already on screen, and
+         a textarea there would exist only for the collector to refuse. */
+      var editor;
+      if(!box){
+        editor='<textarea class="regta" spellcheck="false">'+esc(cell.entries.join("\n"))+'</textarea>';
+      }else if(!r.fleet[kind].entries.length){
+        /* Said as itself rather than drawn as an empty list of switches: with
+           no universe there is no selection to make, and the operator's next
+           move is a fleet-wide edit and not a narrower box. */
+        editor='<div class="regempty">the fleet-wide list names no repositories — there is nothing for this box to select. Edit the fleet-wide registry first.</div>';
+      }else{
+        var chosen={};cell.entries.forEach(function(e){chosen[e]=1;});
+        editor='<div class="regsel">'+r.fleet[kind].entries.map(function(e){
+          return '<label class="regopt"><input type="checkbox" value="'+esc(e)+'"'
+            +(chosen[e]?' checked':'')+'><span>'+esc(e)+'</span></label>';
+        }).join('')+'</div>';
+      }
       return '<div class="regblk" data-kind="'+kind+'">'
         +'<div class="wt"><span class="dot"></span>'+k[1]
-        +(box?'<span class="regsrc '+(inherited?"inherit":"override")+'">'+(inherited?"inherited":"override")+'</span>':'')
+        +(box?'<span class="regsrc '+(inherited?"inherit":"override")+'">'+(inherited?"inherited":"selected")+'</span>':'')
         +'</div>'
         +'<div class="regpath" title="'+esc(k[2])+'">'+esc(path)+'</div>'
-        +'<textarea class="regta" spellcheck="false">'+esc(cell.entries.join("\n"))+'</textarea>'
+        +editor
         +'<div class="regacts">'
-        +'<button class="lbtn" data-reg="save">'+(box?"Save override":"Save")+'</button>'
+        +'<button class="lbtn" data-reg="save">'+(box?"Save selection":"Save")+'</button>'
         +(box?'<button class="lbtn" data-reg="inherit"'+(inherited?' style="opacity:.5"':'')+'>Inherit the fleet-wide list</button>':'')
         +'</div></div>';
     }).join('');
@@ -6807,10 +6850,19 @@ function onRegistryClick(e){
        a distinct act from writing the fleet-wide list into the override — the
        cleared box follows a later widening and a pinned one does not — so the
        question names the consequence rather than the file. */
-    if(!confirm("Clear "+box+"'s "+kind+" override? It goes back to following the fleet-wide list, including any later widening."))return;
+    if(!confirm("Clear "+box+"'s "+kind+" selection? It goes back to following the fleet-wide list, including any later widening."))return;
     return cmd("registry-inherit",{box:box,kind:kind}).then(function(){openRegistries(box);});
   }
-  var entries=blk.querySelector(".regta").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+  /* Two editors, one submission shape: the switches when this is a box's
+     selection, the free list when it is the fleet-wide registry itself. An
+     empty selection is a real answer — a box deliberately watching nothing —
+     so this never falls back to "nothing checked means everything". */
+  var ta=blk.querySelector(".regta"),entries;
+  if(ta){
+    entries=ta.value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+  }else{
+    entries=[].map.call(blk.querySelectorAll(".regopt input:checked"),function(i){return i.value;});
+  }
   var extra={kind:kind,entries:entries};
   if(box)extra.box=box;
   return cmd(box?"registry-override":"registry-set",extra).then(function(r){
