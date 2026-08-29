@@ -6902,12 +6902,16 @@ function openRegistries(box){
          a file the operator could go and open. */
       var path=box?(inherited?r.fleet[kind].path+" (inherited)":cell.path):cell.path;
       /* THE FLEET-WIDE FILE THE DEFINITION DOES NOT HAVE YET. `notify-repos.txt`
-         is optional in a hand-built definition and crew resolves an absent one
-         to the shipped examples/ file — nine live repositories it stages to
-         every box. Rendering that as an empty list would invite an operator to
-         "fill it in" and silently drop eight sweep targets the fleet was
-         working, so the fallback is said out loud, with the path a save will
-         actually write. */
+         is optional in a hand-built definition and the CLI's config_file
+         resolves an absent one to the shipped examples/ file — nine live
+         repositories it stages to every box. Rendering that as an empty list
+         would invite an operator to "fill it in" and silently drop eight sweep
+         targets the fleet was working, so the fallback is said out loud, with
+         the path a save will actually write.
+         "the CLI" rather than the command's own name on purpose: the console's
+         named-verb roster reads `crew <word>` anywhere in this file as an
+         operator command the page offers, and a sentence about resolution is
+         not one. */
       var fk=r.fleet[kind],note="";
       if(fk.present===false&&fk.served_from){
         note='<div class="regnote">'+esc(fk.path)+' does not exist in this fleet definition. '
