@@ -24,11 +24,12 @@ turn:
       diff the operator could have typed.
 
   it is not a second copy of the fleet-wide list.  A per-box override is its
-      own file and holds that box's whole registry; the box either has one or
-      inherits (D2). Clearing REMOVES the file and is therefore a different act
-      from writing a file that happens to equal the fleet-wide list today: the
-      cleared box follows a later widening and the pinned one does not, which
-      is the whole reason an override is a layer rather than a copy.
+      own file naming that box's selection; the box either has one or inherits
+      (D2). Clearing REMOVES the file and is therefore a different act from
+      writing a file that happens to select everything the fleet-wide list
+      holds today: the cleared box follows a later widening and the pinned one
+      does not, which is the whole reason an override is a layer rather than a
+      copy.
 
   it is not a free list.  An override SELECTS from the fleet-wide registry and
       can never reach outside it (operator, 2026-08-29): a droid's watch set is

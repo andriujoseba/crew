@@ -74,9 +74,13 @@ today's fleet-wide list into it: the box that inherits follows a later
 widening, the box pinned to a copy of it does not.
 
 Both files are edited by hand, and by `crew floor` — which validates before it
-writes, refuses a repository the fleet cannot reach, and records every write in
-`.registry-journal.log` beside them. Neither reader caches: a hand edit is
-picked up by the next tick and by the console without a restart.
+writes and records every write in `.registry-journal.log` beside them. The two
+scopes refuse different things, because they are asked different questions: a
+fleet-wide edit refuses a repository the fleet cannot reach, since its entries
+are new to the fleet, while a `.d` edit refuses one the fleet-wide list does
+not name and asks nothing of GitHub, since none of its entries can be new.
+Neither reader caches: a hand edit is picked up by the next tick and by the
+console without a restart.
 
 The host atomically replaces `fleet.roster` and `fleet.conf` in a box on every
 hire or upgrade. Registries follow the host only while their box copy remains
