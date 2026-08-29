@@ -11,10 +11,20 @@ reads as evidenced — the record just describes a tree nobody ran.
 
 So the sentence is checked. At a final release tree, the diff from the last
 candidate's tag to HEAD must touch STAMPS only: the four paths a ceremony PR is
-allowed to move. Anything else means the ladder was not followed, and the two
-ways forward are ordinary — cut the next candidate and drill it, or drill the
-final itself, which makes this guard vacuous because a final with no candidate
-above it has nothing to be compared against.
+allowed to move. Anything else means the ladder was not followed, and the ways
+forward are the ordinary two: cut the next candidate at the tree that actually
+ships and drill THAT, so the final rides a candidate it does not differ from;
+or take the non-stamp change back out of this release window.
+
+WHAT DOES NOT CLEAR IT IS DRILLING THE FINAL ITSELF, and this module said
+otherwise for a while (crew#579, codex-bot-andresmgsl). The candidate below is
+already published and already in this final's history, so writing a fresh
+`drills/X.Y.Z.md` adds a stamp and removes nothing — the anchor stands and the
+stray path is still in the diff. Drilling the final alone is what an UN-LADDERED
+window does, and there this guard is vacuous because no candidate sits above it
+to be compared against. That is a different shape of window, not a remedy for
+this one, and a guard that reds and then names an action which cannot clear it
+sends its reader in a circle.
 
 STRICTER THAN THE SENTENCE, DELIBERATELY. "No executable byte" would admit a
 documentation-only merge; the stamp set refuses it. The costs are asymmetric in
@@ -47,6 +57,27 @@ makes a record exist, so a tag in this final's own history with no record
 beneath it means the evidence was removed after it published. RETENTION IS
 PROVED RATHER THAN ASSUMED.
 
+That check reads EVERY reachable candidate and not only the anchor. A ladder is
+`rc1 → rc2 → … → X.Y.Z`, so a window with several rungs is the ordinary case,
+and each rung's record is the only description of the tree that rung ran.
+Deleting a NON-maximal record cannot move the anchor, so it is not a stamps-only
+bypass — what it destroys is the evidence, which is the thing the ladder exists
+to keep (crew#579, claude-bot-andresmgsl). The only action that answers this
+refusal is restoring the record, and the refusal says so rather than offering a
+next cut that would leave the same tag recordless.
+
+THE NUMBER ORDERS THE LADDER AND NEVER NAMES IT. `version_is_rc` at the pin is
+`^X.Y.Z-rc[0-9]+$`, which accepts a ZERO-PADDED number, and `version_next_dev`
+re-arms `0.9.0-rc01` as `0.9.0-rc2-dev` through an explicit base-10 read. So
+`0.9.0-rc01` is a candidate the release doors publish, and parsing the suffix to
+an integer and then REBUILDING the name from it would send this guard looking
+for a `0.9.0-rc1` tag nobody ever cut — a could-not-look raised against a
+perfectly good ladder (crew#579, codex-bot-andresmgsl). The integer is an
+ordering key and nothing else; every ref resolved and every path named is the
+spelling that is actually on disk. Where one number is spelled two ways in one
+ladder, the guard says so and stops, because an arbitrary anchor is a
+measurement against a tree nobody declared.
+
 REACHABILITY IS THE FILTER ON TAGS, deliberately. A candidate tagged on a line
 this final does not descend from never drilled this lineage, and anchoring to
 it would red a window it has nothing to say about — while a candidate the final
@@ -64,9 +95,11 @@ Run it from anywhere:  .github/stamps-only.py [--root DIR]
 
   exit 0  the tree is a stamps-only final, or there is nothing to assert
   exit 1  refused — the diff leaves the stamp set, the anchor is not an
-          ancestor of what ships, or its record is not in the shipped tree
-  exit 2  could not look — a record's tag is unreachable, the tags cannot be
-          read at all, or git could not answer
+          ancestor of what ships, or a reachable candidate's record is not in
+          the shipped tree
+  exit 2  could not look — a record's tag is unreachable, one candidate number
+          is spelled two ways, the tags cannot be read at all, or git could not
+          answer
 
 Stdlib only, for `scope-coverage.py`'s reason: a check that needs installing is
 a check that gets skipped.
@@ -155,21 +188,47 @@ def read_version(root):
     return raw
 
 
+def record_path(spelling):
+    """The record a candidate of this spelling is carried in."""
+    return "%s/%s.md" % (DRILLS, spelling)
+
+
 def rc_records(root, final):
-    """The candidate numbers this shipped tree carries a record for."""
+    """{n: '<final>-rcN'} — the SPELLING each record is carried under.
+
+    The number is returned as a key so the ladder can be ordered by it, and the
+    spelling is returned as the value because the spelling is what names a path.
+    `drills/0.9.0-rc01.md` is a record of candidate 1 whose path is not
+    `drills/0.9.0-rc1.md`, and rebuilding the path from the number would name a
+    file that is not there.
+    """
     listing = git(root, ["ls-tree", "-r", "--name-only", "-z", "HEAD", "--", DRILLS],
                   "reading the drill records")
-    want = re.compile(r"^%s/%s-rc(\d+)\.md$" % (re.escape(DRILLS), re.escape(final)))
+    want = re.compile(r"^%s/(%s-rc(\d+))\.md$" % (re.escape(DRILLS), re.escape(final)))
     found = {}
     for path in listing.split("\0"):
         m = want.match(path)
-        if m:
-            found[int(m.group(1))] = path
+        if not m:
+            continue
+        n = int(m.group(2))
+        if n in found and found[n] != m.group(1):
+            die("the shipped tree carries two records for candidate %d — %s and "
+                "%s. They are one rung of the ladder by number and two different "
+                "trees on disk, so which one this final must be measured against "
+                "cannot be answered from here. Keep the record of the candidate "
+                "that actually published and remove the other."
+                % (n, record_path(min(found[n], m.group(1))),
+                   record_path(max(found[n], m.group(1)))))
+        found[n] = m.group(1)
     return found
 
 
 def rc_tags(root, final):
-    """The candidate numbers PUBLISHED for this version, as tags.
+    """{n: ['<final>-rcN', ...]} — every PUBLISHED spelling of each candidate.
+
+    A list and not a single name: `0.9.0-rc1` and `0.9.0-rc01` are one number
+    and two refs, and which of them is an ancestor is the question that decides
+    whether the collision matters at all.
 
     The `--list` glob is a first pass and the anchored pattern is the real
     filter: `-rc.1` and `-rc1-dev` both match the glob and neither is a
@@ -180,10 +239,37 @@ def rc_tags(root, final):
     want = re.compile(r"^%s-rc(\d+)$" % re.escape(final))
     found = {}
     for name in listing.split("\n"):
-        m = want.match(name.strip())
+        name = name.strip()
+        m = want.match(name)
         if m:
-            found[int(m.group(1))] = name.strip()
+            found.setdefault(int(m.group(1)), []).append(name)
     return found
+
+
+def reachable_tags(root, tags):
+    """{n: '<the one reachable spelling>'} — the tags that raise the anchor.
+
+    Reachability is applied BEFORE the collision check on purpose. A stray
+    `0.9.0-rc01` on an abandoned branch has no say over a `0.9.0-rc1` this final
+    descends from, for the same reason an unreachable tag never raises the
+    anchor: it drilled a different lineage. Two spellings BOTH in this final's
+    history is the case that cannot be resolved, and it stops the guard.
+    """
+    live = {}
+    for n in sorted(tags):
+        here = sorted(name for name in tags[n]
+                      if is_ancestor(root, "refs/tags/%s" % name))
+        if not here:
+            continue
+        if len(here) > 1:
+            die("candidate %d is published under %d spellings that are ALL in "
+                "this final's history — %s. One rung of the ladder drilled one "
+                "tree, and there is no way to tell from here which of these "
+                "tags is it, so the measurement would be against a tree nobody "
+                "declared. Delete the tag that was not drilled."
+                % (n, len(here), ", ".join(here)))
+        live[n] = here[0]
+    return live
 
 
 def is_ancestor(root, ref):
@@ -240,8 +326,8 @@ def main():
     # Only the reachable tags raise the anchor. An unreachable one is not this
     # final's ladder; an unreachable one that a RECORD claims is a refusal, and
     # that is decided below rather than here.
-    reachable = set(n for n in tags if is_ancestor(root, "refs/tags/%s" % tags[n]))
-    candidates = set(records) | reachable
+    reachable = reachable_tags(root, tags)
+    candidates = set(records) | set(reachable)
     if not candidates:
         if is_shallow(root):
             die("%s carries no drills/%s-rcN.md and the clone is SHALLOW, so "
@@ -255,19 +341,45 @@ def main():
         return 0
 
     last = max(candidates)
-    anchor = "%s-rc%d" % (final, last)
 
-    if last not in records:
-        # The tag is in this final's own history and its record is gone. The
-        # deletion is itself inside `drills/`, so the stamp set admits it and
-        # nothing downstream catches it — this is the check that does.
-        refuse("%s is published and is an ancestor of HEAD, but the shipped "
-               "tree carries no %s/%s.md. A candidate's record is the evidence "
-               "that it was drilled, and removing it after the tag published "
-               "does not un-publish the candidate — it only hides which tree "
-               "this final must be measured against. Restore %s/%s.md, or cut "
-               "%s-rc%d and drill it."
-               % (anchor, DRILLS, anchor, DRILLS, anchor, final, last + 1))
+    # The anchor's spelling, taken from the tree rather than rebuilt from the
+    # number. Prefer the tag's own spelling where a tag exists: an UNREACHABLE
+    # tag still names the anchor, and it is refused by the ancestry check below
+    # as the wrong lineage rather than as a tag that could not be read.
+    anchor = reachable.get(last) or (sorted(tags[last])[0] if last in tags
+                                     else records[last])
+
+    # EVERY reachable candidate, not only the anchor. A rung below the anchor
+    # cannot move it, so this is not a stamps-only bypass — the deletion is
+    # inside `drills/`, the stamp set admits it, and what leaves with it is the
+    # only description of the tree that rung ran.
+    missing = sorted(n for n in reachable if n not in records)
+    if missing:
+        for n in missing:
+            tag = reachable[n]
+            refuse("%s is published and is an ancestor of HEAD, but the shipped "
+                   "tree carries no %s. A candidate's record is the evidence "
+                   "that it was drilled, and removing it after the tag "
+                   "published does not un-publish the candidate — it only hides "
+                   "which tree that rung of the ladder ran."
+                   % (tag, record_path(tag)))
+        # The only action that clears this is the record coming back, and it is
+        # recoverable exactly: it is in the candidate's own tree. Cutting the
+        # next candidate is NOT an alternative — it leaves this tag reachable
+        # and still recordless, so naming it here would be advice that cannot
+        # turn the guard green (crew#579, codex-bot-andresmgsl).
+        for n in missing:
+            print("stamps-only: restore it from the tag that carries it — "
+                  "git checkout %s -- %s"
+                  % (reachable[n], record_path(reachable[n])), file=sys.stderr)
+        if last in records:
+            # A rung BELOW the anchor lost its record. Say so, or this refusal
+            # reads as a lost anchor and sends its reader looking for a
+            # measurement that was never in doubt.
+            print("stamps-only: the anchor is unchanged — %s is still what this "
+                  "final would be measured against. A rung below the anchor "
+                  "cannot move it; what is gone is the evidence of the tree "
+                  "that rung ran." % anchor, file=sys.stderr)
         return 1
 
     if last not in tags or not git_ok(
@@ -278,7 +390,7 @@ def main():
             "clean one. Fetch the tags (actions/checkout with fetch-depth: 0), "
             "or say in %s/%s.md why a record exists for a candidate that never "
             "published."
-            % (records[last], anchor,
+            % (record_path(records[last]), anchor,
                " (the clone is shallow)" if is_shallow(root) else "",
                DRILLS, final))
 
@@ -300,10 +412,17 @@ def main():
                "ships is not the tree that was drilled:" % (final, anchor))
         for path in strays:
             print("  non-stamp: %s" % path, file=sys.stderr)
-        print("stamps-only: the ladder has not been followed. Cut %s-rc%d and "
-              "drill it, or drill %s itself and record it in %s/%s.md — either "
-              "answers this, and neither is an exception to it."
-              % (final, last + 1, final, DRILLS, final), file=sys.stderr)
+        # Both of these actually clear the refusal, and that is the whole test
+        # of what belongs here. Drilling the final itself does NOT: the anchor
+        # above is published and reachable, so a fresh drills/X.Y.Z.md adds a
+        # stamp and leaves both the anchor and the stray path exactly where they
+        # are (crew#579, codex-bot-andresmgsl).
+        print("stamps-only: the ladder has not been followed. Cut %s-rc%d at "
+              "the tree that ships and drill it, so the final rides a candidate "
+              "it does not differ from — or take the change above back out of "
+              "this release window. Re-drilling %s on top of %s answers "
+              "neither: it adds a stamp and removes nothing."
+              % (final, last + 1, final, anchor), file=sys.stderr)
         return 1
 
     print("stamps-only: %s over %s — %d path%s changed, all stamps."

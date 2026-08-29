@@ -196,10 +196,28 @@ t_says 1 "an-executable-change-after-the-candidate-is-refused" '*non-stamp: shar
 t_mute 1 "the-refusal-does-not-name-the-stamps-it-allowed" '*non-stamp: VERSION*'
 t_mute 1 "the-refusal-does-not-name-the-consumed-fragment" '*non-stamp: changelog.d/*'
 
-# And it names both ways forward, with the next candidate's number computed
-# rather than left for the reader.
-t_says 1 "the-refusal-names-the-next-candidate" '*Cut 0.9.0-rc2 and drill it*'
-t_says 1 "the-refusal-names-drilling-the-final-instead" '*drill 0.9.0 itself*drills/0.9.0.md*'
+# And it names a way forward, with the next candidate's number computed rather
+# than left for the reader.
+t_says 1 "the-refusal-names-the-next-candidate" '*Cut 0.9.0-rc2 at the tree that ships and drill it*'
+
+# What it must NOT name is re-drilling the final. That was here, and it could
+# never clear this refusal: the anchor above is published and reachable, so a
+# fresh drills/0.9.0.md adds a stamp and removes neither the anchor nor the
+# stray path (#579, codex-bot-andresmgsl). Guidance that cannot turn the guard
+# green sends its reader in a circle, so the case that pinned it is now the case
+# that forbids it — and the guard says why rather than going silent.
+t_mute 1 "the-refusal-does-not-offer-a-path-that-cannot-clear-it" '*drill 0.9.0 itself*'
+t_says 1 "the-refusal-says-why-re-drilling-the-final-is-not-an-answer" '*Re-drilling 0.9.0 on top of 0.9.0-rc1 answers neither*'
+
+# The advice is not merely worded differently — it is DRIVEN. This is the same
+# refused tree, taken forward exactly as the guard says to: cut the next
+# candidate at the tree that ships, drill it, re-arm, re-cut the final. The
+# green below is the assertion that the recovery path exists.
+cut_rc "$D" 0.9.0 2
+rearm  "$D" 0.9.0 3
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "following-the-refusals-advice-turns-the-guard-green" '*0.9.0 over 0.9.0-rc2*'
 
 # Deliberately stricter than "no executable byte": a prose-only merge still
 # means the shipped tree is not the drilled tree. Stated in drills/README.md as
@@ -271,7 +289,13 @@ ci "$D" "delete the candidate's record"
 run_guard "$D"
 t_says 1 "a-deleted-candidate-record-cannot-disarm-the-guard" '*0.9.0-rc1*no drills/0.9.0-rc1.md*'
 t_mute 1 "a-deleted-record-is-never-reported-as-no-candidate" '*cut no candidate*'
-t_says 1 "the-retention-refusal-names-both-ways-forward" '*Restore drills/0.9.0-rc1.md, or cut 0.9.0-rc2 and drill it*'
+# The only action that clears a retention refusal is the record coming back,
+# and it is recoverable exactly because it is in the candidate's own tree. This
+# message once offered "or cut 0.9.0-rc2 and drill it" as an alternative, which
+# is false for the same reason the stray-path message's was: the next cut leaves
+# this tag reachable and still recordless, so the refusal fires again.
+t_says 1 "the-retention-refusal-names-the-action-that-clears-it" '*git checkout 0.9.0-rc1 -- drills/0.9.0-rc1.md*'
+t_mute 1 "the-retention-refusal-does-not-offer-a-next-cut-instead" '*[Cc]ut 0.9.0-rc2*'
 
 # And the meaner one: the deletion is the ONLY thing outside the ceremony. A
 # stray path would have been refused by the diff check anyway, so a case that
@@ -286,6 +310,113 @@ ci "$D" "delete the candidate's record and nothing else"
 run_guard "$D"
 t_says 1 "the-deletion-alone-is-refused-with-no-stray-path-to-catch" '*no drills/0.9.0-rc1.md*'
 t_mute 1 "the-retention-refusal-is-not-the-stray-path-refusal" '*non-stamp:*'
+
+# And the rung BELOW the anchor. A ladder is rc1 → rc2 → … → X.Y.Z, so a window
+# with several rungs is the ordinary case rather than a corner. Deleting rc1's
+# record cannot move the anchor — max(records ∪ reachable) is unchanged when a
+# member below the maximum leaves — so this is not a stamps-only bypass and the
+# diff really is stamps only. What it destroys is rc1's evidence, which is what
+# the retention rule is about (#579, claude-bot-andresmgsl). This case returned
+# 0 against the anchor-only check.
+D="$(base deletedlower)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+cut_rc "$D" 0.9.0 2
+rearm  "$D" 0.9.0 3
+cut_final "$D" 0.9.0
+git -C "$D" rm -q drills/0.9.0-rc1.md
+ci "$D" "delete the record of a candidate below the anchor"
+run_guard "$D"
+t_says 1 "a-deleted-record-below-the-anchor-is-refused-too" '*0.9.0-rc1 is published*no drills/0.9.0-rc1.md*'
+
+# It names the rung that lost its record and not the one that kept it — a
+# refusal that named every candidate would leave the reader diffing by hand.
+t_mute 1 "the-retention-refusal-names-only-the-rung-that-lost-its-record" '*0.9.0-rc2 is published*'
+
+# And it says the anchor did not move, so this cannot be misread as a lost
+# anchor: the measurement was never in doubt, only the evidence below it.
+t_says 1 "a-non-maximal-deletion-still-reports-the-anchor-it-measured-against" '*anchor is unchanged*0.9.0-rc2 is still what this final would be measured against*'
+
+# --- the candidate's spelling is the tree's, not the guard's -------------------
+# `version_is_rc` at the pin is X.Y.Z-rc[0-9]+, which accepts a ZERO-PADDED
+# number, and `version_next_dev 0.9.0-rc01` re-arms as 0.9.0-rc2-dev through an
+# explicit base-10 read. So rc01 is a candidate the doors publish. Parsing the
+# suffix to an integer and rebuilding the name from it looked for a 0.9.0-rc1
+# tag nobody cut and exited 2 on a clean ladder (#579, codex-bot-andresmgsl).
+D="$(base padded)"
+cut_rc "$D" 0.9.0 01
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "a-zero-padded-candidate-is-a-candidate" '*0.9.0 over 0.9.0-rc01*'
+
+# The number still ORDERS: rc02 is above rc1 numerically and below it as a
+# string, and the stray change sits between them. A lexical maximum anchors at
+# rc1, sees the change and reds; this green is the assertion that padding
+# changed the spelling and not the comparison.
+D="$(base paddedorder)"
+cut_rc "$D" 0.9.0 1
+w "$D" shared/lib/duty.sh "#!/bin/sh
+echo changed between rc1 and rc02"
+ci "$D" "work between the first and second candidates"
+cut_rc "$D" 0.9.0 02
+rearm  "$D" 0.9.0 3
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "a-padded-number-still-orders-numerically" '*over 0.9.0-rc02*'
+
+# A padded RECORD against an unpadded TAG. The anchor is a ref, so the tag's
+# spelling is the one that must be resolved; the record's spelling is the one
+# that must be found on disk. A guard holding a single spelling for both gets
+# one of the two wrong.
+D="$(base mixedspelling)"
+w "$D" VERSION "0.9.0-rc1"
+w "$D" drills/0.9.0-rc01.md "# drill, recorded with a padded number"
+ci "$D" "cut 0.9.0-rc1 with a padded record"
+git -C "$D" tag 0.9.0-rc1
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "a-padded-record-and-an-unpadded-tag-are-one-candidate" '*0.9.0 over 0.9.0-rc1*'
+
+# One number, two spellings, both reachable. There is no way to tell which tree
+# this rung drilled, and picking either would measure against a tree nobody
+# declared — so the guard stops rather than choosing. A dict keyed on the number
+# alone would have taken whichever git listed last.
+D="$(base twotags)"
+cut_rc "$D" 0.9.0 1
+git -C "$D" tag 0.9.0-rc01
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 2 "one-candidate-number-spelled-two-ways-is-a-could-not-look" '*0.9.0-rc01, 0.9.0-rc1*'
+t_mute 2 "an-ambiguous-candidate-is-never-silently-anchored" '*all stamps*'
+
+# The same collision on the RECORD side, where both spellings are in the shipped
+# tree by construction.
+D="$(base tworecords)"
+cut_rc "$D" 0.9.0 1
+w "$D" drills/0.9.0-rc01.md "# a second record for the same rung"
+ci "$D" "a second spelling of the same candidate's record"
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 2 "two-records-for-one-candidate-number-is-a-could-not-look" '*two records for candidate 1*'
+
+# But reachability is applied FIRST, so an abandoned spelling has no say. This
+# is the same rule that keeps an unreachable tag from raising the anchor: a tag
+# on a line the final does not descend from drilled a different lineage.
+D="$(base twotagsonebranch)"
+cut_rc "$D" 0.9.0 1
+git -C "$D" checkout -q -b abandoned2
+w "$D" VERSION "0.9.0-rc01"
+ci "$D" "an abandoned second spelling"
+git -C "$D" tag 0.9.0-rc01
+git -C "$D" checkout -q main
+rearm  "$D" 0.9.0 2
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "an-unreachable-second-spelling-is-not-a-collision" '*0.9.0 over 0.9.0-rc1*'
 
 # A tag on a line the final does not descend from must NOT raise the anchor:
 # it drilled a different lineage, and reading it would red a window it has
