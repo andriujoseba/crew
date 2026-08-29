@@ -99,7 +99,13 @@ def render_round($round):
              | join("\n"))
           end
       else
-        (($rows | last) // ($header_i + 1)) as $insert_i
+        ([ range($header_i + 1; $lines | length)
+           | select($lines[.] | startswith("## ")) ]
+         | first // ($lines | length)) as $section_end
+        | ([ range($header_i + 2; $section_end)
+           | select(($lines[.] | startswith("| "))
+                    or ($lines[.] | startswith("<!-- round:"))) ]
+         | last // ($header_i + 1)) as $insert_i
         | ($lines[0:$insert_i + 1]
            + [$facts + " — | — |", $round.marker]
            + $lines[$insert_i + 1:]
