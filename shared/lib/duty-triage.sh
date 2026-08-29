@@ -169,7 +169,7 @@ ROUND_COUNT_EVIDENCE=""
 # asking the program that owns the five, on an empty payload.
 _triage_round_count() {
   local repo="$1" owner name cursor="" page nodes measured
-  local all='[]' evidence rows shown total cap
+  local all='[]' evidence rows shown stats total cap
   local -a after=()
   ROUND_COUNT_EVIDENCE=""
   owner="${repo%%/*}"; name="${repo##*/}"
@@ -255,16 +255,19 @@ _triage_round_count() {
     | "  - #\(.issue): \(.rounds) round(s) over \(.prs | length) PR(s) — "
       + (.prs | map("#\(.)") | join(", "))' 2>/dev/null)"
   shown="$(printf '%s\n' "$rows" | awk 'NF{c++} END{print c+0}')"
+  # STATS is built into its own variable rather than inline. render_prompt call
+  # sites are parsed by a suite guard that folds a call to one logical line and
+  # reads to its first `)`, so a nested $(jq …) — whose program is full of them —
+  # hides every slot written after it, and the slot goes unsupplied in
+  # production exactly as invisibly.
+  stats="$(printf '%s' "$evidence" | jq -r --argjson cap "$cap" '
+    .distribution
+    | "\(.issues) issue(s) with at least one round; min \(.min), median \(.median), "
+      + "max \(.max); \(.at_or_over_cap) at or over the cap of \($cap); "
+      + "\(.pending) issue(s) with a PR but no round yet; "
+      + "\(.unattributed) PR(s) naming no issue."' 2>/dev/null)"
   ROUND_COUNT_EVIDENCE="$(render_prompt fragment-round-count.txt \
-    ROWS="$rows" SHOWN="$shown" \
-    STATS="$(printf '%s' "$evidence" | jq -r '
-      .distribution
-      | "\(.issues) issue(s) with at least one round; min \(.min), median \(.median), "
-        + "max \(.max); \(.at_or_over_cap) at or over the cap of \($cap); "
-        + "\(.pending) issue(s) with a PR but no round yet; "
-        + "\(.unattributed) PR(s) naming no issue."' \
-      --argjson cap "$cap" 2>/dev/null)" \
-    CAP="$cap")"
+    ROWS="$rows" SHOWN="$shown" STATS="$stats" CAP="$cap")"
   return 0
 }
 
