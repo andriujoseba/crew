@@ -1735,7 +1735,7 @@ function goLive(){
     b.textContent="◈ LIVE";b.classList.add("live");
     b.title="Live telemetry — every box polled from the operator host over 'box exec'.";
   });
-  ["g-start","g-stop","g-wake","a-pause","a-restart","c-send"].forEach(function(id){
+  ["g-start","g-stop","g-wake","g-reg","a-pause","a-restart","c-send"].forEach(function(id){
     var e=document.getElementById(id);if(e){e.classList.remove("woff");e.title="";}
   });
   var cin=document.getElementById("c-in");
@@ -1896,9 +1896,13 @@ function populateDash(){
        Omitted entirely on a box whose engine predates the probe: this widget
        has always drawn what is KNOWN, and six em-dashes claiming to be a
        hardware reading is the one thing worse than not drawing them. */
-    +boxVitalsRows(d.vitals).concat(tickHealthRows(d.tickHealth)).map(function(r){
+    /* #488 — what this box actually watches, and whether that is the
+       fleet-wide list or an override. Empty until /api/registries has
+       answered, and in DEMO mode forever: a placeholder count here would be
+       the invented telemetry #38 was filed about. */
+    +boxVitalsRows(d.vitals).concat(tickHealthRows(d.tickHealth)).concat(registryRow(BOX)).map(function(r){
       return '<span class="k">'+esc(r[0])+'</span><span class="v"'
-        +(r[0]==="Finding"?' style="color:#f7bd4e"':'')+'>'+esc(r[1])+'</span>';
+        +(r[0]==="Finding"||(r[0]==="Registry"&&/OVERRIDE/.test(r[1]))?' style="color:#f7bd4e"':'')+'>'+esc(r[1])+'</span>';
     }).join('')+'</div>';
   document.getElementById("w-queue").innerHTML='<div class="wt"><span class="dot"></span>WORK QUEUE · q'+d.queue.length+'</div><div class="qchips">'
     /* Live keys are whatever the duty modules logged — an issue number, but
@@ -1908,6 +1912,11 @@ function populateDash(){
     +'<div class="wt" style="margin-top:16px"><span class="dot"></span>ACCESS</div><div class="access">'
     +ab("ac-repo","⎇ &nbsp;Open repo · "+esc(d.repo||"—"))+ab("ac-term","◱ &nbsp;Copy box shell command")
     +ab("ac-logs","▤ &nbsp;Raw session logs")+ab("ac-restart","↻ &nbsp;Restart box")
+    /* #488 — the per-box override, reached from this box's own console and
+       sitting with every other per-box control rather than in the fleet
+       chrome. It edits a host file; nothing here reaches into the guest, so
+       unlike its neighbours it stays lit on an unreachable box. */
+    +ab("ac-reg","⛭ &nbsp;Watch registry")
     +'<div style="display:flex;gap:6px"><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="off"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'opacity:.5':'color:#ff8a7c;border-color:#3a1c1c')+'">⏻ Power off</button><button class="lbtn pw'+(LIVE?'':' woff')+'" data-pw="on"'+(LIVE?'':' title="'+CTL_TIP+'"')+' style="flex:1;text-align:center;'+(off?'color:#5fce9b;border-color:#1c3a2a':'opacity:.5')+'">⭘ Power on</button></div>'
     /* #486 D4 — a DISTINCT control that names its own violence, on its own
        line below the graceful pair rather than inside their row: an operator
@@ -6395,6 +6404,7 @@ if(!LIVE){["g-start","g-stop","g-wake","a-pause","a-restart","c-send"].forEach(f
    whose cron is dead has no evidence anyone asked for one. */
 document.getElementById("g-start").addEventListener("click",function(){if(!LIVE)return;if(confirm("Start every roster box?"))cmd("start-all");});
 document.getElementById("g-stop").addEventListener("click",function(){if(!LIVE)return;if(confirm("Stop every roster box? Running sessions are lost."))cmd("stop-all");});
+document.getElementById("g-reg").addEventListener("click",function(){openRegistries("");});
 document.getElementById("g-wake").addEventListener("click",function(){if(!LIVE)return;cmd("wake-silent");});
 setInterval(tickOps,1000);setInterval(updateCurrent,1000);
 /* The access panel is re-rendered on every poll, so its buttons are handled by
@@ -6423,6 +6433,7 @@ if(_railL)_railL.addEventListener("click",function(e){
     else setStatus(c,false);
   }
   else if(b.id==="ac-logs")openLogs(box,"");
+  else if(b.id==="ac-reg")openRegistries(box);
 });
 /* Raw logs come back as text/plain from the collector, which tails them in the
    box — the page never gets shell access to a path.
@@ -6451,6 +6462,104 @@ function openLogs(box,file){
     .catch(function(e){setStatus("logs failed: "+e.message,true);});
 }
 function closeLogs(){var ov=document.getElementById("logov");if(ov)ov.style.display="none";}
+/* ===================== the watch registries (#488) =====================
+
+   The fleet's scope is two host files — the work registry every duty module
+   is bounded by, and the extra handoff targets the notifier sweeps — and
+   re-pointing one droid at a different repository used to be an ssh and
+   several edits by hand. Both are editable here, fleet-wide and per box.
+
+   AN OVERLAY, NOT A LIVE PANEL, and that is the whole reason this is not
+   rendered into the rail beside VITALS. populateDash() repaints the rails on
+   every poll; a textarea in there would have the operator's half-typed list
+   replaced under their cursor every 15 seconds. An editor is opened, used and
+   closed, so it is opened on demand and painted once.
+
+   It reads /api/registries at OPEN time rather than from the poll cache, so
+   what an operator edits is the file as it is on disk right now — a hand edit
+   made in vim between two clicks is picked up, with no floor restart (D4). */
+var REGS=null;
+function pollRegistries(){
+  if(location.protocol==="file:")return Promise.resolve(null);
+  return api("/api/registries").then(function(r){REGS=r;return r;}).catch(function(){return null;});
+}
+/* The one summary that belongs on the always-visible cell: how many
+   repositories this box watches, and whether that came from the fleet-wide
+   list or from an override. A box quietly pinned to a stale registry is the
+   failure this layer can introduce, so the override is the loud half — an
+   operator scanning the console must not have to open an editor to find it. */
+function registryRow(box){
+  if(!REGS||!REGS.boxes||!REGS.boxes[box])return [];
+  var c=REGS.boxes[box],over=!c.work.inherited||!c.notify.inherited;
+  return [["Registry",c.work.entries.length+" work · "+c.notify.entries.length+" notify"+(over?" · OVERRIDE":"")]];
+}
+var REGKINDS=[["work","WORK REGISTRY","the boards this box works: issues, reviews, author-side duties"],
+              ["notify","NOTIFY REGISTRY","extra handoff targets the operator notifier sweeps"]];
+/* openRegistries(BOX) — BOX "" is the fleet-wide pair, a box name is that
+   box's own layer. One editor for both scopes rather than two: the shapes are
+   identical and the only difference is which buttons a scope can offer, so a
+   second component would be a second place for the two to drift apart. */
+function openRegistries(box){
+  if(!LIVE){setStatus("registries are live-only — run the collector to edit them",true);return;}
+  setStatus("reading registries…",false);
+  pollRegistries().then(function(r){
+    if(!r){setStatus("could not read the registries",true);return;}
+    var ov=document.getElementById("regov");
+    if(!ov){
+      ov=document.createElement("div");ov.id="regov";
+      ov.innerHTML='<div class="logbox"><div class="loghd"><span id="regttl"></span><button id="regx">✕ close</button></div><div class="regbody" id="regbody"></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click",function(e){if(e.target===ov||e.target.id==="regx")closeRegistries();});
+      document.getElementById("regbody").addEventListener("click",onRegistryClick);
+    }
+    ov.dataset.box=box||"";
+    document.getElementById("regttl").textContent=(box?box+" · watch registries":"fleet-wide watch registries")
+      +" · "+r.config_dir;
+    document.getElementById("regbody").innerHTML=REGKINDS.map(function(k){
+      var kind=k[0],cell=box?r.boxes[box][kind]:r.fleet[kind],inherited=box?cell.inherited:false;
+      /* The fleet-wide file's own path when the box is inheriting: an override
+         has no file yet, and printing a path nothing has written would read as
+         a file the operator could go and open. */
+      var path=box?(inherited?r.fleet[kind].path+" (inherited)":cell.path):cell.path;
+      return '<div class="regblk" data-kind="'+kind+'">'
+        +'<div class="wt"><span class="dot"></span>'+k[1]
+        +(box?'<span class="regsrc '+(inherited?"inherit":"override")+'">'+(inherited?"inherited":"override")+'</span>':'')
+        +'</div>'
+        +'<div class="regpath" title="'+esc(k[2])+'">'+esc(path)+'</div>'
+        +'<textarea class="regta" spellcheck="false">'+esc(cell.entries.join("\n"))+'</textarea>'
+        +'<div class="regacts">'
+        +'<button class="lbtn" data-reg="save">'+(box?"Save override":"Save")+'</button>'
+        +(box?'<button class="lbtn" data-reg="inherit"'+(inherited?' style="opacity:.5"':'')+'>Inherit the fleet-wide list</button>':'')
+        +'</div></div>';
+    }).join('');
+    ov.style.display="flex";
+    setStatus("registries: "+(box||"fleet-wide"),false);
+  });
+}
+function closeRegistries(){var ov=document.getElementById("regov");if(ov)ov.style.display="none";}
+function onRegistryClick(e){
+  var b=e.target.closest("[data-reg]");if(!b)return;
+  var blk=b.closest(".regblk"),kind=blk.dataset.kind,box=document.getElementById("regov").dataset.box||"";
+  if(b.dataset.reg==="inherit"){
+    /* Confirmed because it is a DELETION: the override file goes, and with it
+       whatever narrowing somebody applied to this box on purpose. Clearing is
+       a distinct act from writing the fleet-wide list into the override — the
+       cleared box follows a later widening and a pinned one does not — so the
+       question names the consequence rather than the file. */
+    if(!confirm("Clear "+box+"'s "+kind+" override? It goes back to following the fleet-wide list, including any later widening."))return;
+    return cmd("registry-inherit",{box:box,kind:kind}).then(function(){openRegistries(box);});
+  }
+  var entries=blk.querySelector(".regta").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+  var extra={kind:kind,entries:entries};
+  if(box)extra.box=box;
+  return cmd(box?"registry-override":"registry-set",extra).then(function(r){
+    /* Re-open on SUCCESS only. A refusal leaves the operator's text exactly as
+       they typed it, beside the reason the collector gave in the status line —
+       repainting from disk there would throw away the edit they now have to
+       correct, which is the one moment the field's contents matter most. */
+    if(r&&r.ok)openRegistries(box);
+  });
+}
 document.getElementById("filters").addEventListener("click",function(e){var b=e.target.closest(".fchip");if(!b)return;var f=b.dataset.f;floorFilter[f]=b.dataset.v;[].forEach.call(this.querySelectorAll('.fchip[data-f="'+f+'"]'),function(x){x.classList.toggle("on",x===b);});});
 /* Pause/Resume is the box's crontab, not its power: the engine stops being
    woken, the box stays up and reachable. That is the reversible control an
@@ -6499,6 +6608,8 @@ document.addEventListener("keydown",function(e){
   if(e.key!=="Escape")return;
   /* Esc closes the log overlay first — otherwise it dismisses the room behind
      it and leaves the logs floating over the wrong view. */
+  var rv=document.getElementById("regov");
+  if(rv&&rv.style.display==="flex")return closeRegistries();
   var ov=document.getElementById("logov");
   if(ov&&ov.style.display==="flex")return closeLogs();
   if(VIEW==="room")toFloor();
@@ -6508,6 +6619,10 @@ resize();requestAnimationFrame(frame);
 /* Ask for a snapshot immediately, then keep asking. A failure here is the
    normal case for `open index.html` and leaves the page in DEMO mode. */
 pollFleet();setInterval(pollFleet,POLL_MS);
+/* On the fleet poll's clock, and for one row: the VITALS summary. The editor
+   never reads this cache — it re-reads on open — so a stale count here costs
+   a row that is one poll old, never an edit applied to the wrong list. */
+pollRegistries();setInterval(pollRegistries,POLL_MS);
 
 /* ---- dev hook: the room renderer, addressable one unit at a time ----------
    dev/whiteboard.html lays every agent x room x state out as a single image so
