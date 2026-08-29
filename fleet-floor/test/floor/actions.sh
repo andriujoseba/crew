@@ -175,6 +175,14 @@ echo "== restart mode (#486 round 2)"
 
 # 1. A GENTLE confirmation over a box that has gone wedged. The destructive
 #    direction: this is the one that must never authorise a kill.
+# The force-restart case above stops and starts this fixture. A ping round that
+# observed it while stopped legitimately removes its heartbeat, so establish
+# the wedged precondition again here rather than borrowing the earlier wait.
+FS_DL=$(( $(date +%s) + 60 ))
+while [ "$(uf ff-wedged 'u["ping"]["wedged"]')" != "True" ] \
+      && [ "$(date +%s)" -lt "$FS_DL" ]; do sleep 1; done
+t "mode: the fixture is wedged again after force restart" True \
+  "$(uf ff-wedged 'u["ping"]["wedged"]')"
 FS_M=$(fs_mark)
 FS_X="$(api POST /api/command '{"action":"restart","box":"ff-wedged","mode":"graceful"}')"
 FS_SEEN="$(fs_calls_since "$FS_M")"
