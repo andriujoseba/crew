@@ -155,6 +155,54 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 0 "an-undeclared-tag-spelling-is-not-an-anchor-either" '*cut no candidate*'
 
+# --- the dialect is ASCII, because the doors' dialect is ASCII ----------------
+# `heavy-duty/ceremony@0.7.6` spells every version and rc number `[0-9]+`. Python
+# `\d` does not: it matches every Unicode decimal digit, and `int()` converts
+# them, so a spelling the release doors would never classify, tag or publish
+# read here as a rung of the ladder. Both directions are asserted, because the
+# false RED is the one that would strand a real release (#579,
+# codex-bot-andresmgsl).
+RC_UNI="0.9.0-rc$(printf '١')"     # Arabic-Indic one
+RC_UNI2="0.9.0-rc$(printf '٢')"    # Arabic-Indic two
+V_UNI="$(printf '٩.٩.٩')" # ٩.٩.٩
+
+# A whole clean ladder whose only candidate is spelled with a Unicode digit.
+# `\d` accepted this and reported `0.9.0 over 0.9.0-rc١`, so the guard claimed
+# to have measured a ladder the doors could not have cut. It is an UNLADDERED
+# final and nothing else.
+D="$(base unicodeladder)"
+w "$D" VERSION "$RC_UNI"
+w "$D" "drills/$RC_UNI.md" "# drill"
+ci "$D" "cut $RC_UNI"
+git -C "$D" tag "$RC_UNI"
+w "$D" VERSION "$RC_UNI-dev"
+ci "$D" "re-arm"
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "a-unicode-digit-candidate-is-not-a-ceremony-candidate" '*cut no candidate*'
+t_mute 0 "and-is-never-named-as-the-anchor-it-was" "*$RC_UNI*"
+
+# The damaging direction: a real ASCII ladder, and a stray Unicode-digit record
+# in the shipped tree. Under `\d` that record was candidate 2, out-ranked the
+# genuine `0.9.0-rc1`, resolved to no tag, and hard-blocked the release with
+# EXIT 2. It is a file inside `drills/`, which is to say a stamp.
+D="$(base unicodestray)"
+cut_rc "$D" 0.9.0 1
+rearm  "$D" 0.9.0 2
+w "$D" "drills/$RC_UNI2.md" "# a stray somebody left"
+ci "$D" "a stray record"
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 0 "a-unicode-digit-record-does-not-gate-an-ascii-ladder" '*0.9.0 over 0.9.0-rc1*'
+
+# And the `FINAL` matcher, which is the half easy to leave behind: a Unicode
+# version is `other` here exactly as it is at the door.
+D="$(base unicodeversion)"
+w "$D" VERSION "$V_UNI"
+ci "$D" "a version the doors would refuse"
+run_guard "$D"
+t_says 0 "a-unicode-digit-version-is-not-a-release-tree" '*not a release tree*'
+
 # --- the ladder, followed -----------------------------------------------------
 
 D="$(base clean)"

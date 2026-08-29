@@ -130,13 +130,24 @@ import sys
 VERSION_FILE = "VERSION"
 DRILLS = "drills"
 
+# EVERY digit class here is ASCII `[0-9]` and never `\d`, at all four sites.
+# Python's `\d` matches every Unicode decimal digit — `٠١٢`, `०१२`, fullwidth
+# `０１２` — while `heavy-duty/ceremony@0.7.6` (`8ebe4e4`) spells the release
+# dialect `[0-9]+` in `lib/version.sh:81,91,100`, `lib/tag-classify.sh:10`,
+# `drill/lib/candidate.sh:21` and `drill/lib/record.sh:658`. A wider class here
+# is a crew variant of the ladder, which #506 D1 forbids, and it is wrong in
+# both directions: `0.9.0-rc١` reads as a rung the doors would never cut or
+# publish, and a stray `drills/0.9.0-rc٢.md` becomes the anchor of an unrelated
+# ASCII ladder and hard-blocks it (#579, codex-bot-andresmgsl). `[0-9]` rather
+# than `re.ASCII` so the dialect is legible where it is spelled.
+#
 # A final release version: bare `X.Y.Z`, exactly what the release doors tag and
 # what `drill-recorded` treats as a release ceremony tree.
-FINAL = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+FINAL = re.compile(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$")
 # The declared candidate spelling, and only it. `.ceremony/RELEASES.md` rules
 # that `-rc.1`, `-RC1` and `-beta1` are not rc stamps; a guard that read them as
 # candidates would anchor a final to a tag `changelog-armed` never accepted.
-RC_SUFFIX = re.compile(r"^-rc(\d+)$")
+RC_SUFFIX = re.compile(r"^-rc([0-9]+)$")
 
 # The four paths a ceremony PR moves. Directories are matched by prefix, files
 # exactly — `VERSION` is the file and never `VERSION.md`, for the reason
@@ -220,7 +231,7 @@ def rc_records(root, final):
     """
     listing = git(root, ["ls-tree", "-r", "--name-only", "-z", "HEAD", "--", DRILLS],
                   "reading the drill records")
-    want = re.compile(r"^%s/(%s-rc(\d+))\.md$" % (re.escape(DRILLS), re.escape(final)))
+    want = re.compile(r"^%s/(%s-rc([0-9]+))\.md$" % (re.escape(DRILLS), re.escape(final)))
     found = {}
     for path in listing.split("\0"):
         m = want.match(path)
@@ -252,7 +263,7 @@ def rc_tags(root, final):
     """
     listing = git(root, ["tag", "--list", "%s-rc*" % final],
                   "reading the candidate tags")
-    want = re.compile(r"^%s-rc(\d+)$" % re.escape(final))
+    want = re.compile(r"^%s-rc([0-9]+)$" % re.escape(final))
     found = {}
     for name in listing.split("\n"):
         name = name.strip()
