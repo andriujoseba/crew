@@ -78,7 +78,9 @@ classifier_report_case() ( # profile boot acted|missing terminal|missing
   local profile="$1" boot="$2" acted="$3" terminal="$4"
   BOT_AGENT="$profile"
   unset -f bot_session_acted bot_session_terminal
+  # shellcheck disable=SC2317  # invoked indirectly by the reporter's declare -F probe
   [ "$acted" = missing ] || bot_session_acted() { return 1; }
+  # shellcheck disable=SC2317  # invoked indirectly by the reporter's declare -F probe
   [ "$terminal" = missing ] || bot_session_terminal() { return 1; }
   report_profile_classifier_gaps "$boot"
 )
@@ -96,8 +98,10 @@ t classifier-gap-lists-every-missing-hook 1 \
 t classifier-complete-profile-is-not-named 0 \
   "$(grep -c 'agent profile claude missing classifier' <<<"$classifier_report" || true)"
 boot_id_line="$(grep -n '^boot_id=' "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal boot-id argument in duty.sh
 classifier_report_line="$(grep -n 'report_profile_classifier_gaps "\$boot_id"' \
   "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
+# shellcheck disable=SC2016  # match the literal boot marker read in duty.sh
 boot_gate_line="$(grep -n 'if \[ "\$(cat "\$DUTY_DIR/.boot-id"' \
   "$SHARED/bin/duty.sh" | head -1 | cut -d: -f1)"
 if [ -n "$boot_id_line" ] && [ -n "$classifier_report_line" ] \
@@ -631,7 +635,7 @@ terminal_rc() {  # terminal_rc <agent> <log> -> raw rc of the profile hook
 }
 t terminal-claude-observed-session-limit 0 "$(terminal_rc claude "$ALOG/quota.log")"
 t terminal-claude-observed-weekly-limit 0 "$(terminal_rc claude "$ALOG/weekly.log")"
-printf '%s\n' "You've hit your weekly limit \xc2\xb7 resets 9am (UTC)" \
+printf '%s\n' "You've hit your weekly limit · resets 9am (UTC)" \
   'transient network failure: dial tcp i/o timeout' >"$ALOG/quota-then-transient.log"
 t terminal-claude-quoted-quota-ending-transient 1 \
   "$(terminal_rc claude "$ALOG/quota-then-transient.log")"
@@ -645,6 +649,7 @@ profile_breaker_reach() ( # profile terminal-text -> terminal|failed
   export PROFILE_BREAK_TEXT="$terminal_text"
   # shellcheck disable=SC1090
   source "$SHARED/conf/agents/$profile.conf"
+  # shellcheck disable=SC2016  # expanded by the fixture CLI, not this suite
   BOT_CLI_CMD=(bash -c 'printf "%s\n" "$PROFILE_BREAK_TEXT"; exit 1')
   alert() { :; }
   output="$(run_session review fixture/repo "$bdir/work" 5 prompt)"
