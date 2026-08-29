@@ -269,8 +269,8 @@ run_session() {
   # separate actor reading the same figure off the same file.
   _session_mem_watch_start "$slog.peak" "$slog.mem" "$_SESSION_DISPATCH_PID" "$kind"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
-  local left
-  printf -v left '%s' "$(_session_left "$session_stamp")"
+  local survivor_count
+  printf -v survivor_count '%s' "$(_session_left "$session_stamp")"
   _session_peak_rss_stop
   _session_mem_watch_stop "$slog.mem"
   if [ -n "$structured_log" ]; then
@@ -344,7 +344,7 @@ run_session() {
   # reconstructed terminal in common/ledger.sh carries the field as `-`, the
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$left tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix"
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
