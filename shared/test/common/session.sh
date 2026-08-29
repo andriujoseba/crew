@@ -59,6 +59,103 @@ t session-end-outcome-token-unchanged ok \
   "$(printf '%s\n' "$sa_end" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
 unset -f bot_session_acted
 
+# --- completion evidence: log bytes and surviving processes (#529) --------
+#
+# Each case drives run_session, because a helper-only test could pass while the
+# dispatch forgot to export its stamp or the SESSION END emitter misplaced the
+# fields ahead of reply_tail. The two timeout fixtures distinguish the process
+# group timeout owns from one descendant that deliberately escapes with setsid.
+session_evidence_run() ( # session_evidence_run KEY TMO PROC_ROOT COMMAND...
+  local key="$1" tmo="$2" proc_root="$3"; shift 3
+  local edir="$TMP/evidence-$key"
+  mkdir -p "$edir/logs" "$edir/work"
+  DUTY_DIR="$edir"; LOG_DIR="$edir/logs"; DUTY_TICK_ID="tick-evidence"
+  SESSION_PROC_ROOT="$proc_root"
+  BOT_CLI_CMD=("$@")
+  alert() { :; }
+  run_session build "fixture/$key" "$edir/work" "$tmo" prompt
+  printf 'returned=yes rc=%s\n' "$RUN_SESSION_RC"
+)
+
+session_end_value() { # session_end_value FIELD OUTPUT
+  sed -n "/SESSION END /s/.* $1=\([^ ]*\).*/\1/p" <<<"$2"
+}
+
+evidence_empty="$(session_evidence_run empty 5 /proc bash -c : 2>&1)"
+t session-evidence-empty-log-is-zero 0 "$(session_end_value log "$evidence_empty")"
+t session-evidence-ordinary-session-leaves-zero 0 "$(session_end_value left "$evidence_empty")"
+
+evidence_output="$(session_evidence_run output 5 /proc bash -c 'printf 12345' 2>&1)"
+t session-evidence-output-log-has-true-size 5 "$(session_end_value log "$evidence_output")"
+
+evidence_group="$(session_evidence_run group 1 /proc \
+  bash -c 'sleep 30 & wait' 2>&1)"
+t session-evidence-timeout-reaps-in-group-child 0 \
+  "$(session_end_value left "$evidence_group")"
+
+LEFT_PID_FILE="$TMP/session-left-pid"
+export LEFT_PID_FILE
+# shellcheck disable=SC2016  # expanded by the nested fixture shell
+evidence_escape="$(session_evidence_run escape 1 /proc bash -c \
+  'setsid bash -c '\''printf "%s\n" "$$" >"$LEFT_PID_FILE"; exec sleep 30'\'' & wait' \
+  2>&1)"
+t session-evidence-setsid-child-survives 1 \
+  "$(session_end_value left "$evidence_escape")"
+if [ -s "$LEFT_PID_FILE" ]; then
+  kill "$(cat "$LEFT_PID_FILE")" 2>/dev/null || true
+fi
+
+evidence_noproc="$(session_evidence_run no-proc 5 "$TMP/no-such-proc" \
+  bash -c 'exit 3' 2>&1)"
+t session-evidence-missing-proc-is-unknown unknown \
+  "$(session_end_value left "$evidence_noproc")"
+t session-evidence-missing-proc-keeps-verdict '3|FAILED' \
+  "$(sed -n 's/.*SESSION END .* rc=\([^ ]*\) dur=[^ ]* outcome=\([^ ]*\).*/\1|\2/p' \
+    <<<"$evidence_noproc")"
+t session-evidence-missing-proc-cannot-fail-run-session 'returned=yes rc=3' \
+  "$(grep '^returned=' <<<"$evidence_noproc" || true)"
+
+case "$(awk '/_session_left\(\) \{/{on=1} on{print} on && /^}/{exit}' \
+    "$SHARED/lib/common/session.sh")" in
+  *'/environ'* ) r1=environ ;;
+  *) r1=NOT-ENVIRON ;;
+esac
+t session-evidence-count-reads-process-environments environ "$r1"
+if awk '/_session_left\(\) \{/{on=1} on{print} on && /^}/{exit}' \
+    "$SHARED/lib/common/session.sh" | grep -Eq 'pgrep|ps[[:space:]]|/cmdline'; then
+  r1=COMMAND-LINE-MATCH
+else
+  r1=environment-only
+fi
+t session-evidence-count-never-matches-command-lines environment-only "$r1"
+
+# Compatibility is asserted against the shipped floor expression itself. The
+# old line proves the new floor still reads old boxes; the actual new line
+# proves deployed floors retain every pre-existing capture through the suffix.
+evidence_end="$(grep 'SESSION END' <<<"$evidence_output")"
+t session-evidence-floor-parses-old-and-new-identically same \
+  "$(SESSION_EVIDENCE_END="$evidence_end" python3 - \
+      "$SHARED/../fleet-floor/server/floor/units.py" <<'PY'
+import os, re, sys
+src = open(sys.argv[1]).read()
+ns = {"re": re}
+for name in ("TS", "RE_END"):
+    match = re.search(r"^%s = (.+?)(?=\n[A-Z_#]|\n\n)" % name, src, re.S | re.M)
+    exec("%s = %s" % (name, match.group(1)), ns)
+new = "2026-08-29T00:00:00Z " + os.environ["SESSION_EVIDENCE_END"]
+old = re.sub(r" log=\S+ left=\S+", "", new)
+old_groups = ns["RE_END"].search(old).groups()[1:]
+new_groups = ns["RE_END"].search(new).groups()[1:]
+print("same" if new_groups == old_groups else "CHANGED")
+PY
+)"
+
+case "$evidence_end" in
+  *' reply_tail='*' log=5 left=0 tier='*) r1=appended ;;
+  *) r1=NOT-APPENDED ;;
+esac
+t session-evidence-fields-follow-reply-tail appended "$r1"
+
 # --- structured usage and credential-pool identity (#475) ----------------
 #
 # The stub is the CLI, not the parser: it receives Claude's profile-built
@@ -353,11 +450,11 @@ t budget-off-says-nothing-about-budgets 0 \
 budget_off_golden() {
   cat <<'GOLDEN'
 SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log holder=<holder>
-SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= tier=default
+SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default
 SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log holder=<holder>
-SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= tier=default
+SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default
 SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log holder=<holder>
-SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= tier=default
+SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default
 GOLDEN
 }
 # The last line is the state-file/alert tally the case above reads; everything

@@ -146,8 +146,11 @@ _session_left() {
   [ -d "$proc_root" ] || { printf unknown; return 0; }
   for environ in "$proc_root"/[0-9]*/environ; do
     [ -f "$environ" ] || continue
-    grep -Fzxq -- "DUTY_SESSION_STAMP=$stamp" "$environ" 2>/dev/null
-    rc=$?
+    if grep -Fzxq -- "DUTY_SESSION_STAMP=$stamp" "$environ" 2>/dev/null; then
+      rc=0
+    else
+      rc=$?
+    fi
     case "$rc" in
       0) count=$((count + 1)); scanned=$((scanned + 1)) ;;
       1) scanned=$((scanned + 1)) ;;
