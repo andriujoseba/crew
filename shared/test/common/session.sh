@@ -115,14 +115,14 @@ t session-evidence-missing-proc-keeps-verdict '3|FAILED' \
 t session-evidence-missing-proc-cannot-fail-run-session 'returned=yes rc=3' \
   "$(grep '^returned=' <<<"$evidence_noproc" || true)"
 
-case "$(awk '/_session_left\(\) \{/{on=1} on{print} on && /^}/{exit}' \
-    "$SHARED/lib/common/session.sh")" in
+session_left_source="$(awk '/_session_left\(\) \{/{on=1} on{print} on && /^}/{exit}' \
+  "$SHARED/lib/common/session.sh")"
+case "$session_left_source" in
   *'/environ'* ) r1=environ ;;
   *) r1=NOT-ENVIRON ;;
 esac
 t session-evidence-count-reads-process-environments environ "$r1"
-if awk '/_session_left\(\) \{/{on=1} on{print} on && /^}/{exit}' \
-    "$SHARED/lib/common/session.sh" | grep -Eq 'pgrep|ps[[:space:]]|/cmdline'; then
+if grep -Eq 'pgrep|ps[[:space:]]|/cmdline' <<<"$session_left_source"; then
   r1=COMMAND-LINE-MATCH
 else
   r1=environment-only

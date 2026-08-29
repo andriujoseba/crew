@@ -270,7 +270,7 @@ run_session() {
   _session_mem_watch_start "$slog.peak" "$slog.mem" "$_SESSION_DISPATCH_PID" "$kind"
   wait "$_SESSION_DISPATCH_PID" || rc=$?
   local left
-  left="$(_session_left "$session_stamp")"
+  printf -v left '%s' "$(_session_left "$session_stamp")"
   _session_peak_rss_stop
   _session_mem_watch_stop "$slog.mem"
   if [ -n "$structured_log" ]; then
@@ -299,7 +299,7 @@ run_session() {
   fi
   acted="$(session_acted "$slog")"
   reply_tail="$(session_reply_tail "$slog")"
-  log_bytes="$(_session_log_bytes "$slog")"
+  printf -v log_bytes '%s' "$(_session_log_bytes "$slog")"
   peak_rss="$(session_peak_rss "$slog.peak")"
   # Usage reporting is profile-owned and independent of the capture shape.
   # Claude reads structured_log; an artifact-backed profile can instead use
