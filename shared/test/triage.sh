@@ -58,7 +58,17 @@ case "$*" in
   # makes the fetch itself fail.
   *"pullRequests(first"*)
     [ -f "$TR_FIX/prs.fail" ] && exit 1
-    cat "$TR_FIX/prs.$p.json" ;;
+    # WHICH page, keyed on the cursor the census actually sent — so the handoff
+    # is checked and not merely counted. The first page carries `after=null`;
+    # the second must carry back the exact endCursor page one handed out. A
+    # request with any OTHER cursor is served a terminal empty page rather than
+    # page one again, so a dropped or mangled cursor surfaces as a missing row
+    # in the rendered evidence instead of as a test that loops forever.
+    case "$*" in
+      *"after=null"*)               cat "$TR_FIX/prs.$p.json" ;;
+      *"after=TR-CURSOR-PAGE-2"*)   cat "$TR_FIX/prs2.$p.json" ;;
+      *)                            cat "$TR_FIX/prs.none.json" ;;
+    esac ;;
   *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
   *"number,body,updatedAt,labels"*) cat "$TR_FIX/board.$p.json" ;;
@@ -117,6 +127,11 @@ tr_fix() {  # notif nt1 nt2 blocked1 blocked2 numstates [stray1] [stray2] [disc1
   rm -f "$TRF/prs.fail"
   printf '%s' "$TR_PRS_NONE" >"$TRF/prs.1.json"
   printf '%s' "$TR_PRS_NONE" >"$TRF/prs.2.json"
+  # And the SECOND page defaults to a terminal empty one, so a scenario that
+  # does not paginate is unaffected and a scenario that does must say so.
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs2.1.json"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs2.2.json"
+  printf '%s' "$TR_PRS_NONE" >"$TRF/prs.none.json"
   for p in 1 2; do
     nt_file="$TRF/nt.$p.json"
     blocked_file="$TRF/blocked.$p.json"
@@ -160,9 +175,25 @@ tr_pr() {
   printf '{"number":%s,"body":%s,"commits":{"totalCount":%d,"nodes":[%s]},"reviews":{"totalCount":%d,"nodes":[%s]}}' \
     "$num" "$(printf '%s' "$body" | jq -Rs .)" "$n" "${commits%,}" "$n" "${reviews%,}"
 }
-tr_prs() {  # tr_prs NODE... -> one page carrying them
+tr_prs() {  # tr_prs NODE... -> one page carrying them, and no page after it
   printf '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}}}}' \
     "$(printf '%s,' "$@" | sed 's/,$//')"
+}
+# tr_prs_more CURSOR NODE... -> a page that has a next one, handing CURSOR out.
+# The shim serves page two only against this exact value.
+tr_prs_more() {
+  local cur="$1"; shift
+  printf '{"data":{"repository":{"pullRequests":{"pageInfo":{"hasNextPage":true,"endCursor":"%s"},"nodes":[%s]}}}}' \
+    "$cur" "$(printf '%s,' "$@" | sed 's/,$//')"
+}
+# tr_pr_bulk NUM ISSUE ROUNDS — a node whose body is padded to a realistic
+# size. Crew's own PR bodies run to tens of kilobytes; a page of fifty of them
+# is ~1.10 MB, and the point of padding here is that a page must be able to
+# cross a real byte limit for a case to be able to see one.
+TR503_PAD=""
+tr_pr_bulk() {
+  [ -n "$TR503_PAD" ] || TR503_PAD="$(printf '%*s' 20000 '' | tr ' ' x)"
+  tr_pr "$1" "Closes #$2 — $TR503_PAD" "$3"
 }
 TR_MENTION='[{"id":"t1","reason":"mention","updated_at":"2026-08-01T15:40:00Z",
   "repository":{"full_name":"o/r"},"subject":{"url":"https://api/x"}}]'
@@ -1116,5 +1147,85 @@ TR503_CALL_LINE="$(grep -n '^[[:space:]]*duty_triage$' "$SHARED/bin/duty.sh" \
 if [ -n "$TR503_SRC_LINE" ] && [ -n "$TR503_CALL_LINE" ] \
   && [ "$TR503_SRC_LINE" -lt "$TR503_CALL_LINE" ]; then r1=before; else r1=AFTER; fi
 t triage503-builder-module-sourced-before-dispatch before "$r1"
+
+# --- a real board's worth of pages, at a real board's size (round 1) ---------
+#
+# WHY THIS FIXTURE IS BIG, AND WHY THAT IS THE TEST. Every case above is one
+# page of a few small nodes, and that is exactly how the accumulator shipped a
+# defect past a green suite: it folded the page into the running history with
+# `--argjson`, which makes each JSON value ONE argv element, and a single
+# element is capped at MAX_ARG_STRLEN — 131,072 bytes — whatever ARG_MAX says.
+# Crew's own first page is ~1.10 MB, so `execve` failed with E2BIG on the first
+# page of every real board while every fixture here sailed under the limit. A
+# case that cannot reach the limit cannot see the bug, so this one carries a
+# page that crosses it.
+#
+# AND IT PAGINATES, because the cursor handoff was never exercised either: the
+# fixtures all set hasNextPage:false. The shim serves page two only against the
+# exact endCursor page one handed out.
+#
+# The assertions are on the RENDERED EVIDENCE, not on the call count. A call
+# count would have passed against the broken code too — the fetch is not what
+# failed. Every figure below is chosen so the wrong answer is a DIFFERENT
+# number rather than an absent one: page one alone is 10 issues at min 2,
+# median 2, max 2, and both pages together are 21 at min 2, median 9, max 9.
+TR503_P1=(); TR503_P2=()
+for tr503_i in 1 2 3 4 5 6 7 8 9 10; do
+  TR503_P1+=("$(tr_pr_bulk "$((600 + tr503_i))" "$((600 + tr503_i))" 2)")
+done
+# Page two is unpadded: its job is the cursor and the arithmetic, and page one
+# already carries the bytes.
+for tr503_i in 1 2 3 4 5 6 7 8 9 10 11; do
+  TR503_P2+=("$(tr_pr "$((700 + tr503_i))" "Closes #$((700 + tr503_i))" 9)")
+done
+tr_fix '[]' '[]' '[]' "$TR503_LEAD" "$TR503_LEAD" "$TR_LANDED"
+TR503_PAGE1="$(tr_prs_more TR-CURSOR-PAGE-2 "${TR503_P1[@]}")"
+TR503_PAGE2="$(tr_prs "${TR503_P2[@]}")"
+printf '%s' "$TR503_PAGE1" >"$TRF/prs.1.json"; printf '%s' "$TR503_PAGE1" >"$TRF/prs.2.json"
+printf '%s' "$TR503_PAGE2" >"$TRF/prs2.1.json"; printf '%s' "$TR503_PAGE2" >"$TRF/prs2.2.json"
+
+# The fixture's own size, asserted. Without this a later edit that trims the
+# padding for speed would silently stop testing the bound, and every case below
+# would keep passing while covering nothing — which is the failure this whole
+# block exists to undo.
+TR503_NODE_BYTES="$(printf '%s' "$TR503_PAGE1" \
+  | jq -c '.data.repository.pullRequests.nodes' | wc -c)"
+if [ "$TR503_NODE_BYTES" -gt 131072 ]; then r1=over; else r1="under:$TR503_NODE_BYTES"; fi
+t triage503-page-fixture-crosses-the-argv-bound over "$r1"
+
+tr_run 0
+t triage503-paginated-board-launches-a-session 1 "$(trc '^SESSION triage$')"
+t triage503-paginated-board-reads-both-pages 2 "$(trc 'pullRequests(first')"
+# THE BOUND ITSELF. An accumulator that puts the page on argv never gets here:
+# it warns and returns, and the fragment is absent entirely.
+if grep -q 'round-count accumulate failed' "$TR_LOG"; then r1=E2BIG; else r1=folded; fi
+t triage503-oversized-page-folds folded "$r1"
+if grep -q 'Sizing evidence' "$TR_PROMPT.triage"; then r1=rendered; else r1=ABSENT; fi
+t triage503-oversized-page-reaches-the-prompt rendered "$r1"
+# PAGE ONE reached the rendered rows — the page that crosses the bound.
+if grep -q '#601: 2 round(s)' "$TR_PROMPT.triage" \
+  && grep -q '#610: 2 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
+t triage503-oversized-page-rows-are-rendered rowed "$r1"
+# PAGE TWO reached them too, which is the cursor handoff answered on the output
+# rather than on the call log: #701 and #711 exist on no other page.
+if grep -q '#701: 9 round(s)' "$TR_PROMPT.triage" \
+  && grep -q '#711: 9 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
+t triage503-second-page-rows-are-rendered rowed "$r1"
+# And the DISTRIBUTION is the two-page one. Page one alone would say 10 issues,
+# median 2, max 2 — three different numbers, so a lost page cannot pass this.
+if grep -q '21 issue(s) with at least one round' "$TR_PROMPT.triage" \
+  && grep -q 'min 2, median 9, max 9' "$TR_PROMPT.triage"; then
+  r1=both-pages; else r1="$(grep -o '[0-9]* issue(s) with at least one round.*' "$TR_PROMPT.triage")"; fi
+t triage503-distribution-spans-every-page both-pages "$r1"
+t triage503-paginated-board-still-takes-no-action 0 \
+  "$(grep -Ec 'issue edit|pr edit|--add-label|--remove-label|-X PATCH|-X POST|-X PUT|-X DELETE|mutation' \
+    "$TR_CALLS" || true)"
+
+# The cursor is CHECKED, not just sent: the shim answers page two only against
+# the exact endCursor, so a census that dropped or mangled it would be served a
+# terminal empty page and lose #701-#711. Pinned here so the two assertions
+# above cannot be satisfied by a shim that hands out page two unconditionally.
+if grep -q 'after=TR-CURSOR-PAGE-2' "$TR_CALLS"; then r1=carried; else r1=DROPPED; fi
+t triage503-second-page-carries-the-cursor carried "$r1"
 
 suite_finish
