@@ -155,6 +155,23 @@ because the record is in the candidate's own tree: `git checkout X.Y.Z-rcN --
 drills/X.Y.Z-rcN.md`. Cutting the next candidate does *not* answer it — that
 tag stays reachable and stays recordless, and the guard refuses again.
 
+The guard asks the candidate's tree for that record before offering the
+checkout, rather than promising it. A candidate that published with **no record
+at all** — which `drill-recorded` gates the rc PR precisely to prevent, so it
+takes a hand edit to reach — has nothing to check out, and there the refusal
+says to *write* `drills/X.Y.Z-rcN.md`: a record written late is still the only
+description of that tree, and the gate takes a waiver honestly stated.
+
+**And what retention asks for is the tag's own spelling, not its number.**
+`drill-recorded` computes the record's path as `drills/$ver.md` from the version
+being cut, so a candidate published as `0.9.0-rc1` carries `drills/0.9.0-rc1.md`
+and nothing else can stand in for it. A final that *renames* that record to
+`drills/0.9.0-rc01.md` has deleted the published evidence — the rename lives
+inside `drills/`, so the stamp set admits it, and a check keyed on the number
+would see candidate 1 still recorded and pass. It is the deletion above wearing
+a rename, and it is refused as one, naming both the record that is required and
+the file that stands in for it.
+
 **One number, one spelling.** `version_is_rc` at the pin is
 `X.Y.Z-rc[0-9]+`, which accepts a zero-padded number, and `version_next_dev`
 re-arms `0.9.0-rc01` as `0.9.0-rc2-dev`. So `0.9.0-rc01` is a candidate the
@@ -162,7 +179,22 @@ release doors publish, and the guard reads the number only to *order* the
 ladder: every tag it resolves and every record it names is the spelling that is
 actually on disk. Where one number is spelled two ways in one ladder — two
 records, or two tags both in the final's history — the guard says so and stops,
-because an arbitrary anchor is a measurement against a tree nobody declared.
+because an arbitrary anchor is a measurement against a tree nobody declared. The
+one place two spellings of a number are not ambiguous but simply wrong is
+retention, just above: a published candidate's record is spelled exactly as its
+tag, so the other spelling is not a second candidate to disambiguate — it is the
+record renamed.
+
+**A shallow clone is a "could not look" wherever it touches this guard**, and
+that includes ancestry. A `--depth 1` checkout that *has* fetched the tags can
+resolve `X.Y.Z-rcN` and still answer no to `merge-base --is-ancestor`, because
+the join is below the graft: the no is about the clone and not about the tree.
+Refusing there would print the guard's loudest sentence — that what ships only
+resembles what was drilled — over a clone that simply cannot see. So it exits
+`2` and names the fix (`actions/checkout` with `fetch-depth: 0`), which is the
+same answer it gives when a record's tag cannot be resolved at all. CI fetches
+full history, so this is a local-clone corner; keeping the two answers apart is
+the point.
 
 A candidate tagged on a line the final does not descend from is **not** the
 anchor. It drilled a different lineage, and reading it would red a window it
