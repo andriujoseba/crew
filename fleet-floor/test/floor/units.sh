@@ -371,6 +371,22 @@ t "sessions: a line with no peak_rss is None, never 0" None \
   "$(uf ff-working "u['sessions'][0]['peak']")"
 t "sessions: a line with no peak_rss keeps every other field" "0|ok|1" \
   "$(uf ff-working "'%s|%s|%s' % (u['sessions'][0]['rc'], u['sessions'][0]['out'], len(u['sessions']))")"
+t "sessions: reconstructed terminal is parsed and closes its start" \
+  "1:None:None:died-with-box:None" \
+  "$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+done, cur = derive_sessions([
+    "2026-08-27T15:00:00Z SESSION START kind=review key=crew#lost",
+    "2026-08-27T15:05:00Z SESSION END kind=review key=crew#lost rc=- dur=- outcome=died-with-box acted=unknown reply_tail= tier=unknown peak_rss=- started=2026-08-27T15:00:00Z",
+], 1787843160)
+print("%s:%s:%s:%s:%s" % (len(done), done[0]["rc"], done[0]["dur"], done[0]["out"], cur))
+PY
+)"
 t "current: open session key" board "$(uf ff-working "u['cur']['key']")"
 t "queue: from last tick"     1    "$(uf ff-working "len(u['queue'])")"
 t "queue: repo parsed"        heavy-duty/ceremony "$(uf ff-working "u['queue'][0]['repo']")"

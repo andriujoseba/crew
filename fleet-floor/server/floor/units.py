@@ -15,7 +15,7 @@ from floor.ping import STUCK_AFTER_S, probe_box
 
 TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
 RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)")
-RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+) dur=(\d+)s outcome=(\S+)"
+RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
 # peak_rss= is read by its own pattern rather than by another optional group on
 # RE_END, and the reason is what RE_END already survived: the engine appends
@@ -162,9 +162,11 @@ def derive_sessions(loglines, now, clock_offset=0):
             except (ValueError, TypeError):
                 reply = ""
             peak = RE_PEAK.search(line)
+            rc = int(m.group(4)) if m.group(4).isdigit() else None
+            dur = int(m.group(5)[:-1]) if m.group(5).endswith("s") else None
             done.append({
                 "ts": parse_ts(m.group(1)) + clock_offset, "kind": m.group(2), "key": m.group(3),
-                "rc": int(m.group(4)), "dur": int(m.group(5)), "out": m.group(6),
+                "rc": rc, "dur": dur, "out": m.group(6),
                 "acted": m.group(7) or "unknown", "reply": reply,
                 # KiB, or None where the engine recorded no figure — the page
                 # renders the difference rather than showing a zero nobody
@@ -574,10 +576,10 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
                      repo_fallback)
 
     if sessions:
-        durs = [s["dur"] for s in sessions]
+        durs = [s["dur"] for s in sessions if s["dur"] is not None]
         ok = sum(1 for s in sessions if s["rc"] == 0)
-        u["longest"] = max(durs)
-        u["avg"] = round(sum(durs) / len(durs))
+        u["longest"] = max(durs) if durs else 0
+        u["avg"] = round(sum(durs) / len(durs)) if durs else 0
         u["success"] = round(100 * ok / len(sessions))
         u["today"] = sum(1 for s in sessions if now - s["ts"] < 86400)
 
