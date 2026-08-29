@@ -96,7 +96,21 @@ if [ "${CREW_EXPECT_OPERATOR_CONFIG:-0}" = 1 ] && [ "$CONFIG_IS_OPERATOR" -ne 1 
   echo "crew: operator-config mode required, but resolution selected '$CONFIG_DIR' (CONFIG_IS_OPERATOR=0)" >&2
   exit 1
 fi
-config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
+# config_file NAME — the fleet definition's own copy of NAME, or the shipped
+# `examples/` one when the definition has none. This is the fallback the floor
+# resolves too (`floor/registry.py`'s `_fleet_source`), so a definition
+# carrying no `notify-repos.txt` reads identically on both halves (#488).
+#
+# On its own lines rather than folded onto one, for the same reason the
+# registry family below is: the floor suite extracts each of these from THIS
+# file on a `/^name() {/,/^}/` range to assert against the shipped resolver
+# instead of a copy, and a one-line function silently over-captures to the
+# next closing brace. That matters here more than anywhere — a suite proving
+# the two halves agree about a missing file must resolve it the way the
+# transport does, not the way the suite thinks the transport does.
+config_file() { # NAME
+  [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"
+}
 # registry_entries FILE — the repositories one registry file names, as every
 # reader of these files defines them: `#` and blank lines are ignored, and an
 # entry is its line STRIPPED (#488).

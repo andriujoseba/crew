@@ -424,18 +424,29 @@ reg '{"action":"registry-override","box":"ff-working","kind":"work","entries":["
 # shipped resolver instead of a copy of it. The whole family comes across
 # together because they call each other; each extracts on the same
 # `/^name() {/,/^}/` range, which is why none of them is folded onto one line.
-FF_REG_FNS="registry_entries registry_fleet_file registry_override_file"
+FF_REG_FNS="config_file registry_entries registry_fleet_file registry_override_file"
 FF_REG_FNS="$FF_REG_FNS resolved_registry registry_seed registry_seed_discard"
+# THE SEEDS ARE RESOLVED HERE THE WAY cli/crew RESOLVES THEM, through the
+# shipped `config_file`, rather than handed in already-resolved. Setting
+# REPOS_SEED to the definition's path directly is a copy of the resolver that
+# happens to agree with it whenever the file exists — and disagrees in exactly
+# the case #488 added: a definition with no `notify-repos.txt`, where the
+# transport falls back to the shipped `examples/` copy and a pre-resolved
+# variable points at a file that is not there. The two-halves-agree assertion
+# would then be vacuous, which is the one thing it must never be.
+FF_REG_ROOT="$(cd "$FLOOR/.." && pwd)"
 ff_reg_cli() { # SNIPPET ARGS... — run SNIPPET with the CLI's resolvers in scope
   local snippet="$1"; shift
-  CONFIG_DIR="$FF_REG_DIR" REPOS_SEED="$FF_REG_WORK" \
-  NOTIFY_REPOS_SEED="$FF_REG_NOTIFY" FF_REG_CLI="$FLOOR/../cli/crew" \
+  CONFIG_DIR="$FF_REG_DIR" CREW_ROOT="$FF_REG_ROOT" \
+  FF_REG_CLI="$FF_REG_ROOT/cli/crew" \
   FF_REG_FNS="$FF_REG_FNS" \
   bash -c '
     die() { echo "$*" >&2; exit 1; }
     for fn in $FF_REG_FNS; do
       eval "$(sed -n "/^$fn() {/,/^}/p" "$FF_REG_CLI")"
     done
+    REPOS_SEED="$(config_file repos.txt)"
+    NOTIFY_REPOS_SEED="$(config_file notify-repos.txt)"
     eval "$1"
   ' _ "$snippet" "$@"
 }
@@ -524,7 +535,11 @@ printf '# hand-edited\nheavy-duty/crew\nheavy-duty/ceremony\n' >"$FF_REG_WORK"
 # fleet was actually working. Must fail: a console that disagrees with what the
 # next upgrade stages.
 rm -f "$FF_REG_NOTIFY"
-FF_REG_SHIPPED="$FLOOR/../examples/notify-repos.txt"
+# Normalised, because both halves print a normalised root: the floor's
+# CREW_ROOT and the CLI's are each a `cd ... && pwd`, so an expectation carrying
+# a literal `fleet-floor/..` names the same file by a name neither of them ever
+# prints.
+FF_REG_SHIPPED="$FF_REG_ROOT/examples/notify-repos.txt"
 FF_REG_SHIPPED_CK="$(cksum <"$FF_REG_SHIPPED")"
 t "registry: a fleet-wide file the definition lacks is served from the shipped one" \
   "$(grep -vE '^[[:space:]]*(#|$)' "$FF_REG_SHIPPED" | paste -sd, -)" "$(regf notify)"
