@@ -5494,7 +5494,14 @@ rk_census() (  # payload listing
     return 3
   }
   _round_cap_census owner/repo '["rev-a","rev-b"]' "$2"
-  printf '%s' "$ROUND_CAP_COUNTS"
+  # THE SUBJECT IS THE LOG LINE, NOT A VARIABLE. An earlier revision returned a
+  # `ROUND_CAP_COUNTS` global here, and round 1 of #503 pointed out that nothing
+  # in production ever read it — so the cases below were the only consumer of a
+  # channel that carried nothing, and would have stayed green if the record had
+  # never reached the log or the ledger at all. The ledger line and this log line
+  # are the record an engine whose record is its log actually keeps, so they are
+  # what the four cases below read.
+  sed -n 's/^log .*rounds recorded against the issue — //p' "$RC_LOG"
 )
 # rk_body NUM BODY ROUNDS — rc_build's payload with a body written into it, so
 # the census has an issue to resolve.
@@ -5504,18 +5511,18 @@ rk_payload() { printf '%s' "$(rc_build "$2")" | jq -c --arg b "$1" '.data.reposi
 # and is still recorded — D1's whole complaint is a counter "that surfaces when
 # a PR stalls", so a census that recorded only capped PRs would have rebuilt it.
 rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
-t roundcount-census-records-a-below-cap-pr 'owner/repo#7=4@503' \
+t roundcount-census-records-a-below-cap-pr 'owner/repo#7 (4 round(s)) -> #503' \
   "$(rk_census "$(rk_payload 'Closes #503' 4)" "$RC_LISTING")"
 rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
-t roundcount-census-records-a-capped-pr-too 'owner/repo#7=5@503' \
+t roundcount-census-records-a-capped-pr-too 'owner/repo#7 (5 round(s)) -> #503' \
   "$(rk_census "$(rk_payload 'Closes #503' 5)" "$RC_LISTING")"
 # The cut predecessor still names its issue after step 3 rewrites the keyword.
 rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
-t roundcount-census-records-a-refs-predecessor 'owner/repo#7=5@503' \
+t roundcount-census-records-a-refs-predecessor 'owner/repo#7 (5 round(s)) -> #503' \
   "$(rk_census "$(rk_payload 'Refs #503' 5)" "$RC_LISTING")"
 # A body naming no issue records `-` rather than vanishing from the record.
 rm -f "$RC_DUTY/.seen-round-cap" "$RC_DUTY/.seen-round-count"
-t roundcount-census-records-an-unattributed-pr 'owner/repo#7=4@-' \
+t roundcount-census-records-an-unattributed-pr 'owner/repo#7 (4 round(s)) -> no issue named' \
   "$(rk_census "$(rk_payload 'no issue named here' 4)" "$RC_LISTING")"
 # It costs no extra call: the body rides the payload the cap census already
 # fetched, so the per-PR read stays at one.

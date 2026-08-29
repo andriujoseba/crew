@@ -576,13 +576,14 @@ _report_unsignalled_hold() {
 # returning its data down the same channel would fold its warnings into it.
 ROUND_CAP_PRS=""
 ROUND_CAP_NAMED="-"
-# ROUND_CAP_COUNTS is the same census's OTHER answer (#503): every open authored
-# PR's round count and the issue it was recorded against, as
-# `repo#num=<rounds>@<issue>` (issue `-` where the body names none),
-# space-separated. ROUND_CAP_PRS above is the cap's answer and holds only the
-# PRs at it; this one holds them all, because a count that appears only at the
-# boundary is the stall-only signal #503 exists to replace.
-ROUND_CAP_COUNTS=""
+# THERE IS NO THIRD GLOBAL FOR THE ROUND COUNTS (#503, round 1). The census's
+# other answer — every open authored PR's count and the issue it was recorded
+# against, not only the ones at the boundary — is recorded on the
+# `.seen-round-count` ledger and said in the log, and those two ARE the record.
+# A `ROUND_CAP_COUNTS` variable carried the same figures for one revision of
+# this change and no production code ever read it; only a test did, which made
+# the test's subject a channel that carried nothing. The ledger and the log line
+# are what a reader can find later, so they are what the cases assert on.
 
 # _round_cap_census REPO PANEL_JSON LISTING — count every open authored PR's
 # rounds and record the ones at the cap.
@@ -611,7 +612,6 @@ _round_cap_census() {
   local issue record="" record_fresh
   ROUND_CAP_PRS=""
   ROUND_CAP_NAMED="-"
-  ROUND_CAP_COUNTS=""
   owner="${repo%%/*}"; name="${repo##*/}"
   if [ -z "$listing" ] || [ "$listing" = err ]; then
     warn "$repo: round-cap census skipped (the authored-PR listing failed); no boundary named this tick"
@@ -660,7 +660,6 @@ _round_cap_census() {
       '(.data.repository.pullRequest.body // "")
        | (first(capture($re; "i") | .n) // "-")' 2>/dev/null)" || issue="-"
     [ -n "$issue" ] || issue="-"
-    ROUND_CAP_COUNTS="${ROUND_CAP_COUNTS:+$ROUND_CAP_COUNTS }$repo#$num=$rounds@$issue"
     record="$record$(printf '%s#%s %02d@%s' "$repo" "$num" "$rounds" "$issue")"$'\n'
     [ "$at_cap" = true ] || continue
     ROUND_CAP_PRS="${ROUND_CAP_PRS:+$ROUND_CAP_PRS }$repo#$num"

@@ -141,9 +141,22 @@ _triage_signal_numbers() {  # stdin: REPO#NUMBER UPDATED_AT
 # It writes no label, opens and closes nothing, and gates no dispatch. Its only
 # effect on the tick is one prompt slot.
 #
-# COST. One paginated GraphQL call per page of PRs, per triage session — not per
-# tick. Closed PRs are in the query because D5 requires them: "history is
-# included, or the first reading is meaningless".
+# COST, MEASURED RATHER THAN CHARACTERISED. One paginated GraphQL call per page
+# of PRs, per triage SESSION — not per tick; a quiet tick makes no call at all
+# and triage503-quiet-tick-reads-no-rounds pins that. Against heavy-duty/crew in
+# August 2026 that is 5 pages, 3,241,721 bytes, ~16 seconds, and it is re-fetched
+# in full each session with nothing cached between them.
+#
+# THAT FIGURE GROWS WITH BOARD HISTORY AND NOTHING BOUNDS IT, which is stated
+# here rather than hidden because it is a real property of asking for the whole
+# history — and D5 requires the whole history, since "history is included, or the
+# first reading is meaningless". Closed PRs are in the query for that reason. The
+# bulk of the bytes is PR bodies, which the attribution needs and GraphQL cannot
+# truncate, so there is no field to drop; the cheap win available was the fold,
+# which is now one pass rather than one per page (see the loop). If a board ever
+# outgrows GraphQL's query-timeout budget the read fails CLOSED — the evidence is
+# discarded, the session runs on the signals that woke it — which is why this is
+# a documented cost and not a correctness risk.
 #
 # A FETCH FAILURE COSTS THE EVIDENCE AND NOTHING ELSE. Every warn returns with
 # ROUND_COUNT_EVIDENCE empty, the fragment is omitted, and the session runs on
@@ -169,7 +182,7 @@ ROUND_COUNT_EVIDENCE=""
 # asking the program that owns the five, on an empty payload.
 _triage_round_count() {
   local repo="$1" owner name cursor="" page nodes measured
-  local all='[]' evidence rows shown stats total cap
+  local pages="" all evidence rows shown stats total cap
   local -a after=()
   ROUND_COUNT_EVIDENCE=""
   owner="${repo%%/*}"; name="${repo##*/}"
@@ -232,16 +245,46 @@ _triage_round_count() {
         'round-count history exceeds its unpaginated GraphQL window'; then
       return 0
     fi
-    all="$(jq -c -n --argjson a "$all" --argjson b "$nodes" '$a + $b' 2>/dev/null)" || {
-      warn "$repo: round-count accumulate failed; no sizing evidence this session"
-      return 0
-    }
+    # THE PAGES DO NOT TRAVEL ON ARGV (#479, and round 1 of #503). This line
+    # accumulated with `--argjson a "$all" --argjson b "$nodes"`, which makes
+    # each JSON value ONE argv element — and a single element is bounded by
+    # MAX_ARG_STRLEN, 131,072 bytes, not by the ARG_MAX everyone quotes. Crew's
+    # own first page of fifty PRs is ~1.10 MB of `nodes`, eight times the limit,
+    # so `execve` failed with E2BIG on the FIRST page of every real board: the
+    # fetch succeeded, the fold did not, and the branch below warned and
+    # returned with no evidence. It failed the same way every session, on inputs
+    # that only ever grow, and it failed QUIETLY — one warn, the fragment
+    # omitted, the session launching normally. A green suite read as coverage
+    # because every fixture was one small page.
+    #
+    # So the pages are APPENDED, one compact array per line, and folded once
+    # after the loop through a pipe. `printf` is a shell builtin, so the payload
+    # is never a process argument at any size — the same reason the reads below
+    # send `$all` down a pipe rather than passing it. The alternative remedy,
+    # `--slurpfile` from a process substitution (_resume_attach_comments, and
+    # the header at duty-builder.sh:1338 that named it), fixes the same bound;
+    # this shape is preferred here because the fold also stops being quadratic.
+    # The `--argjson` form re-serialised and re-parsed the ENTIRE accumulated
+    # history once per page — five pages of crew is ~10 MB of jq parsing to
+    # build 3.2 MB — where one fold reads each page exactly once.
+    pages="$pages$nodes"$'\n'
     [ "$(printf '%s' "$page" \
       | jq -r '.data.repository.pullRequests.pageInfo.hasNextPage' 2>/dev/null)" = true ] || break
     cursor="$(printf '%s' "$page" \
       | jq -r '.data.repository.pullRequests.pageInfo.endCursor // empty' 2>/dev/null)"
     [ -n "$cursor" ] || break
   done
+
+  # The one fold. It is still a local deterministic operation on values already
+  # in hand, so a failure here is structural rather than transient — but the
+  # answer stays the same as the per-page branch it replaces, and for the reason
+  # this module's header gives: a partial distribution presented as measured is
+  # a worse output than no evidence at all, so the read is discarded whole.
+  all="$(printf '%s' "$pages" | jq -c -s 'add // []' 2>/dev/null)" || all="" # Decision-path empty fallback: the next branch warns and discards the read whole.
+  if [ -z "$all" ]; then
+    warn "$repo: round-count accumulate failed; no sizing evidence this session"
+    return 0
+  fi
 
   if ! evidence="$(printf '%s' "$all" \
       | jq -c -L "$DUTY_DIR/lib/jq" --arg re "$_RESUME_ISSUE_RE" --argjson cap "$cap" \
