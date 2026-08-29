@@ -92,11 +92,21 @@ and no others:
 
 Anything else in that diff means work landed between the candidate and the
 final, so the tree that ships is not the tree that was drilled and **the ladder
-has not been followed**. Two ways forward, both ordinary: cut `X.Y.Z-rc(N+1)`
-and drill that, or drill the final itself and record it in `drills/X.Y.Z.md`.
-Neither is an exception to the gate — the first satisfies it and the second
-makes it vacuous, since a final that carries no candidate above it has nothing
-to be compared against.
+has not been followed**. Two ways forward, both ordinary: cut `X.Y.Z-rc(N+1)` at
+the tree that actually ships and drill *that*, so the final rides a candidate it
+does not differ from; or take the non-stamp change back out of this release
+window. Neither is an exception to the gate — the first satisfies it and the
+second removes what it objected to.
+
+**Drilling the final itself is not a third way out of that refusal**, and this
+section said it was. Once a candidate is published and in the final's own
+history it stays the anchor, so writing a fresh `drills/X.Y.Z.md` adds a stamp
+and removes neither the anchor nor the stray path. Drilling only the final is
+what an **un-laddered** window does, and there the guard is vacuous because no
+candidate sits above the final to compare it against — a different shape of
+window, not a remedy for this one. The ladder stays available and never
+required (heavy-duty/crew#506 D5); what is not available is starting it and
+then stepping off it.
 
 **The test is deliberately stricter than the sentence it enforces.** "No
 executable byte" would let a documentation-only merge through; the stamp set
@@ -128,11 +138,31 @@ So the guard refuses in both directions. A record whose tag cannot be resolved
 is a **refusal and never a pass** — "I found nothing" and "I could not look"
 are different answers here for the same reason they are in teardown's exit
 table below — and a candidate that is published and in this final's own history
-but carries **no record in the shipped tree** is refused too. Restoring the
-record answers it; so does cutting the next candidate and drilling that. The
-retention matters because the record is the only thing that says *what* was
-drilled: a tag that has lost its record has lost its evidence, and un-publishing
-is not what deleting a file does.
+but carries **no record in the shipped tree** is refused too. The retention
+matters because the record is the only thing that says *what* was drilled: a tag
+that has lost its record has lost its evidence, and un-publishing is not what
+deleting a file does.
+
+That check reads **every** reachable candidate and not only the one the final is
+measured against. The ladder is `rc1 → rc2 → … → X.Y.Z`, so a window with more
+than one rung is the ordinary case, and each rung's record is the only
+description of the tree that rung ran. Deleting a record *below* the anchor
+cannot move the anchor — the highest number is unchanged when a lower one leaves
+— so it is not a way past the stamps-only test; what it destroys is the
+evidence, which is the thing the ladder exists to keep. **Restoring the record
+is the only thing that answers this refusal**, and it is recoverable exactly,
+because the record is in the candidate's own tree: `git checkout X.Y.Z-rcN --
+drills/X.Y.Z-rcN.md`. Cutting the next candidate does *not* answer it — that
+tag stays reachable and stays recordless, and the guard refuses again.
+
+**One number, one spelling.** `version_is_rc` at the pin is
+`X.Y.Z-rc[0-9]+`, which accepts a zero-padded number, and `version_next_dev`
+re-arms `0.9.0-rc01` as `0.9.0-rc2-dev`. So `0.9.0-rc01` is a candidate the
+release doors publish, and the guard reads the number only to *order* the
+ladder: every tag it resolves and every record it names is the spelling that is
+actually on disk. Where one number is spelled two ways in one ladder — two
+records, or two tags both in the final's history — the guard says so and stops,
+because an arbitrary anchor is a measurement against a tree nobody declared.
 
 A candidate tagged on a line the final does not descend from is **not** the
 anchor. It drilled a different lineage, and reading it would red a window it
