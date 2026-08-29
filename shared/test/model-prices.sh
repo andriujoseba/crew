@@ -5,7 +5,12 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=shared/test/lib.sh
 source "$HERE/lib.sh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
 RATE_CONF="$SHARED/conf/model-prices.conf"
+SESSION_MOD="$SHARED/lib/common/session.sh"
 # shellcheck source=shared/conf/model-prices.conf
 source "$RATE_CONF"
 
@@ -23,6 +28,8 @@ t model-prices-declares-reader function "$(type -t model_token_cost_usd)"
 t model-prices-citation-is-official 1 \
   "$(grep -c '^  # https://platform.claude.com/docs/en/about-claude/pricing$' "$RATE_CONF")"
 t model-prices-citation-has-read-date 1 "$(grep -c '^  # Anthropic, read 2026-08-29:$' "$RATE_CONF")"
+t model-prices-session-end-has-no-computed-cost-field 0 \
+  "$(grep -c 'computed_cost_usd=' "$SESSION_MOD" || true)"
 
 record='input_tokens=120 output_tokens=34 cache_creation_input_tokens=5 cache_read_input_tokens=77'
 t model-prices-known-model-computes 0.00091185 \
