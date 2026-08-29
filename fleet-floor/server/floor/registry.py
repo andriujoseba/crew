@@ -7,7 +7,15 @@ re-pointing one droid at a different repository was an `ssh`, knowing where the
 definition lives, and several edits by hand — for what is operationally a
 one-line decision made weekly.
 
-FOUR THINGS THIS MODULE IS NOT, each stated because each is the obvious wrong
+A WRITE IS ONE TRANSACTION, and that is the shape the rest of this module
+serves. Three things happen on every edit — the current state is read, the file
+is replaced, the change is recorded — and the console is a threaded server, so
+all three run under one lock per registry and the record is a PRECONDITION of
+the write rather than a remark about it (see `_journal_writable`). A change to
+the fleet's scope that nobody can attribute afterwards is the failure D5 names,
+so a journal that cannot be appended to refuses the edit before anything moves.
+
+FIVE THINGS THIS MODULE IS NOT, each stated because each is the obvious wrong
 turn:
 
   it is not a store.  Every read opens the file. There is no cache to
@@ -51,8 +59,11 @@ turn:
 
 import os
 import re
+import tempfile
+import threading
 import time
 
+from floor import CREW_ROOT
 from floor.ping import log, run
 from floor.roster import CONFIG_DIR
 
@@ -81,14 +92,70 @@ REPO_PROBE_TIMEOUT_S = int(os.environ.get("CREW_FLOOR_REPO_PROBE_TIMEOUT", "15")
 # fleet has one grammar for "what happened and who did it".
 JOURNAL = os.path.join(CONFIG_DIR, ".registry-journal.log")
 
+# ONE LOCK PER REGISTRY KIND, and per kind rather than per file on purpose. The
+# console is a `ThreadingHTTPServer`, so two operators — or one operator and a
+# double-clicked button — can be inside a write at the same moment, and a write
+# is a read-modify-write whose reported and JOURNALLED change describes the
+# state it read. Unserialised, two writes to one registry interleave into a
+# record that describes input the other thread has already replaced.
+#
+# Per KIND because `set_override` reads the fleet-wide list as the universe it
+# validates against: a per-file lock would have to hold two at once, which
+# needs an ordering rule to stay deadlock-free, while one lock per kind is
+# deadlock-free by construction and costs nothing at operator pace. The journal
+# is shared across kinds, so it takes its own lock, always acquired INSIDE a
+# kind lock and never the other way about.
+#
+# READS ARE DELIBERATELY UNLOCKED. `_rewrite` replaces the file with `os.replace`,
+# which is atomic, so a reader sees the whole old file or the whole new one and
+# never a torn one — and a snapshot that read the fleet-wide list just before a
+# write and the override just after still resolves to a contained set, because
+# `effective` intersects. Locking reads would serialise every poll against every
+# edit to buy nothing.
+_LOCKS = {kind: threading.Lock() for kind in KINDS}
+_JOURNAL_LOCK = threading.Lock()
+
 
 def _paths(kind, box=None):
-    """(fleet-wide file, override file or None) for one registry."""
+    """(fleet-wide file, override file or None) for one registry.
+
+    These are the paths this module WRITES, always inside the fleet definition.
+    What a fleet-wide list is READ from can be the shipped example instead —
+    see `_fleet_source`, which is the read half and the only one that falls
+    back.
+    """
     name, overrides = KINDS[kind]
     fleet_wide = os.path.join(CONFIG_DIR, name)
     if box is None:
         return fleet_wide, None
     return fleet_wide, os.path.join(CONFIG_DIR, overrides, "%s.txt" % box)
+
+
+def _fleet_source(kind):
+    """(path the fleet-wide list is read from, is it the definition's own).
+
+    `cli/crew`'s `config_file` resolves a fleet definition file that is absent
+    to the SHIPPED `examples/<name>`, and `notify-repos.txt` is optional in a
+    hand-built definition while `examples/notify-repos.txt` names nine live
+    repositories. A floor that read only `CONFIG_DIR` would therefore render an
+    empty notify universe for a definition whose next `crew upgrade` stages
+    nine — the console-vs-transport drift this module exists to make
+    impossible, and worse than a wrong number: an operator "filling in" that
+    empty list from the floor would drop eight sweep targets the fleet was
+    actually working.
+
+    So the read falls back exactly where the transport falls back, and the
+    WRITE never does: `_paths` stays inside the fleet definition, so the first
+    save materialises the operator's own file — carrying the shipped file's
+    comments with it, since `_rewrite` line-edits from what was being served —
+    and from then on it wins, which is `config_file`'s own rule arriving one
+    edit later. Nothing here can write into the installed tree.
+    """
+    own, _ = _paths(kind)
+    if os.path.isfile(own):
+        return own, True
+    shipped = os.path.join(CREW_ROOT, "examples", KINDS[kind][0])
+    return (shipped, False) if os.path.isfile(shipped) else (own, False)
 
 
 def is_entry(line):
@@ -136,8 +203,9 @@ def effective(kind, box):
     views read alike rather than preserving whatever order a click happened to
     submit.
     """
-    fleet_wide, override = _paths(kind, box)
-    universe = read_entries(fleet_wide)
+    _, override = _paths(kind, box)
+    source, _ = _fleet_source(kind)
+    universe = read_entries(source)
     if override and os.path.isfile(override):
         chosen = set(read_entries(override))
         return [e for e in universe if e in chosen], "override"
@@ -149,14 +217,18 @@ def snapshot(boxes):
     out = {"config_dir": CONFIG_DIR, "fleet": {}, "boxes": {}}
     for kind in KINDS:
         fleet_wide, _ = _paths(kind)
+        source, own = _fleet_source(kind)
         out["fleet"][kind] = {
             "path": fleet_wide,
-            "entries": read_entries(fleet_wide),
+            "entries": read_entries(source),
             # An absent fleet-wide file is worth saying out loud rather than
-            # rendering as an empty list: `repos.txt` is required by both
-            # resolvers, so its absence means this floor is serving a
-            # definition the CLI would refuse.
-            "present": os.path.isfile(fleet_wide),
+            # rendering as an empty list, and it is a state the page RENDERS
+            # rather than a flag nobody reads: what is being served is then the
+            # shipped `examples/` file, which is what the transport stages too,
+            # so an operator who cannot see the difference would read nine
+            # inherited notify targets as a list they were free to replace.
+            "present": own,
+            "served_from": None if own else source,
         }
     for box in boxes:
         cell = {}
@@ -259,7 +331,7 @@ def validate(entries, probe=None, within=None):
 # writing
 # --------------------------------------------------------------------------
 
-def _rewrite(path, wanted):
+def _rewrite(path, wanted, base=None):
     """Apply `wanted` to `path` as a line edit, atomically.
 
     Comments and blanks are carried through untouched and in place; an entry
@@ -268,13 +340,29 @@ def _rewrite(path, wanted):
     entry, or at the end of the file when there is none. Returns
     (added, removed).
 
+    `base` is the file the edit is applied TO when it is not `path` itself —
+    the shipped example a fleet-wide list was being served from before this
+    first save materialised the definition's own copy (`_fleet_source`). The
+    edit is then a line edit of what the operator was actually looking at,
+    comments and all, rather than a bare list dropped where a documented file
+    used to be resolved.
+
     Written through a temporary file in the same directory and renamed, so a
     reader — the CLI staging a box, or the operator's own `cat` — never sees a
     half-written registry, and a crash mid-write leaves the previous file
     intact rather than a truncated one.
+
+    THE TEMPORARY FILE IS UNIQUE PER WRITE, via `mkstemp`. It used to be
+    `<path>.crew-floor.<pid>`, which is one name for the whole process: under
+    the threaded server two writes to one registry then shared a temp file and
+    the second `os.replace` raised `FileNotFoundError` on a path the first had
+    already renamed away. A unique name also settles the case a lock cannot —
+    two floor processes over one definition — where the worst that remains is a
+    lost update and never a corrupt or vanished registry.
     """
+    read_from = base or path
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(read_from, encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
         lines = []
@@ -296,24 +384,79 @@ def _rewrite(path, wanted):
     at = last_entry + 1 if last_entry >= 0 else len(out)
     out[at:at] = added
 
-    tmp = "%s.crew-floor.%d" % (path, os.getpid())
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write("".join("%s\n" % line for line in out))
-    os.replace(tmp, path)
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    # The file's own mode carried onto its replacement, because `mkstemp` makes
+    # 0600 and a registry every other reader on the host opens must not quietly
+    # become private on its first edit from the console. 0644 for a file that
+    # did not exist yet, which is the mode `crew init` scaffolds one with.
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(dir=parent,
+                               prefix="%s.crew-floor." % os.path.basename(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("".join("%s\n" % line for line in out))
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        # A write that failed must not leave its temporary file beside the
+        # registry: the directory is the operator's fleet definition, and a
+        # litter of half-written registries there is the next reader's problem.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return added, [e for e in have if e not in keep]
+
+
+def _journal_writable():
+    """(ok, reason) — can the journal be appended to, right now?
+
+    THE RECORD IS A PRECONDITION OF THE WRITE, not a remark about it. This
+    module used to append best-effort and report success regardless, on the
+    argument that a journal failure must not turn a landed edit into a reported
+    one. That argument is wrong on its own terms: it treats D5 as commentary
+    when D5 makes the record part of what a registry write IS, and what it
+    actually bought was a fleet whose scope could change with nothing durable
+    saying who changed it — a `.registry-journal.log` that is a directory, or a
+    definition gone read-only, and the console answers "saved".
+
+    So the question is asked BEFORE anything moves, and a No refuses the edit
+    while the registry is still untouched. Asked after validation, so a refused
+    edit never creates the journal, and the operator's own mistakes are still
+    reported as their own rather than behind a host fault.
+
+    The append this proves is `O_APPEND` on an existing writable file, which is
+    the same call the write itself will make moments later under the same lock.
+    It is not a proof against a disk that fills in between — that residual
+    window has its own defined outcome in the writers below, and is why
+    `_journal` reports rather than swallows.
+    """
+    try:
+        with open(JOURNAL, "a", encoding="utf-8"):
+            pass
+        return True, ""
+    except OSError as e:
+        return False, (
+            "the write was refused because it could not be recorded: the "
+            "registry journal %s cannot be appended to (%s). Every change to "
+            "the fleet's scope is attributable, so nothing was written — fix "
+            "the journal on the host and make the edit again."
+            % (JOURNAL, e))
 
 
 def _journal(actor, action, path, box, added, removed):
     """D5: one line per write, so a registry change is attributable after it.
 
-    Append-only and best-effort. A definition directory that has gone
-    read-only under the floor is a real failure and the write above would have
-    raised on it first; a journal that could not be appended must not be the
-    thing that turns a landed edit into a reported failure, so it says so in
-    the floor log and the action still reports what it did.
+    Returns (recorded, reason). Append-only, and never silent about failing:
+    the caller has already replaced the registry by the time this runs, so a
+    failure here is a landed edit with no record and the operator has to be
+    told exactly that. `_journal_writable` makes it nearly unreachable; the
+    writers below define what happens when it is reached anyway.
     """
     line = ("%s registry %s file=%s box=%s actor=%s added=%s removed=%s\n" % (
         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -325,23 +468,52 @@ def _journal(actor, action, path, box, added, removed):
         ",".join(removed) or "-",
     ))
     try:
-        with open(JOURNAL, "a", encoding="utf-8") as f:
-            f.write(line)
+        # One `write` of one line, under the journal's own lock: two kinds can
+        # be edited at the same moment and a record split down the middle is
+        # worse than no record, because it reads as two writes that never
+        # happened.
+        with _JOURNAL_LOCK:
+            with open(JOURNAL, "a", encoding="utf-8") as f:
+                f.write(line)
     except OSError as e:
         log("registry journal unwritable (%s): %s" % (e, line.strip()))
+        return False, (
+            "the edit LANDED and could not be recorded: the registry journal "
+            "%s could not be appended to (%s). %s has changed on disk and no "
+            "durable record of it exists — reconcile the journal by hand."
+            % (JOURNAL, e, path))
     log(line.strip())
+    return True, ""
 
 
 def set_fleet(kind, entries, actor=""):
-    """Rewrite one fleet-wide registry. Returns (result, error)."""
+    """Rewrite one fleet-wide registry. Returns (result, error).
+
+    THE THREE OUTCOMES, and the reason each is distinguishable: `(result, "")`
+    is a landed and recorded write; `(None, error)` is a refusal with the
+    registry untouched, whether the operator's entry was bad or the journal was
+    unwritable; `(result, error)` — a result AND an error — is the one narrow
+    case where the file changed and the record did not, and it carries both
+    because "refused" over a file that moved is a lie the console would tell
+    the operator once and never correct.
+
+    Everything from the read of the current list to the record runs under this
+    kind's lock, so the change this reports is the change it made.
+    """
     path, _ = _paths(kind)
-    clean, err = validate(entries, probe=set(read_entries(path)))
-    if err:
-        return None, err
-    added, removed = _rewrite(path, clean)
-    _journal(actor, "set-fleet:%s" % kind, path, None, added, removed)
-    return {"kind": kind, "scope": "fleet", "path": path, "entries": clean,
-            "added": added, "removed": removed}, ""
+    with _LOCKS[kind]:
+        source, own = _fleet_source(kind)
+        clean, err = validate(entries, probe=set(read_entries(source)))
+        if err:
+            return None, err
+        ok, why = _journal_writable()
+        if not ok:
+            return None, why
+        added, removed = _rewrite(path, clean, base=None if own else source)
+        recorded, jerr = _journal(actor, "set-fleet:%s" % kind, path, None,
+                                  added, removed)
+        return {"kind": kind, "scope": "fleet", "path": path, "entries": clean,
+                "added": added, "removed": removed, "recorded": recorded}, jerr
 
 
 def set_override(kind, box, entries, actor=""):
@@ -358,23 +530,34 @@ def set_override(kind, box, entries, actor=""):
     selection, and says so as itself rather than as five containment failures
     in a row: there is nothing to select from, and the operator's next move is
     a fleet-wide edit and not a narrower box.
+
+    The three outcomes are `set_fleet`'s, and the lock is the same one: the
+    universe this validates against is the fleet-wide list, so a selection can
+    never be checked against a list another thread is in the middle of
+    replacing.
     """
-    fleet_wide, path = _paths(kind, box)
-    universe = read_entries(fleet_wide)
-    wanted = [str(e).strip() for e in entries if str(e).strip()]
-    if wanted and not universe:
-        return None, ("the fleet-wide %s registry names no repositories, so "
-                      "there is nothing for %s to select — edit the fleet-wide "
-                      "list first" % (kind, box))
-    clean, err = validate(wanted, within=set(universe))
-    if err:
-        return None, err
-    added, removed = _rewrite(path, clean)
-    _journal(actor, "set-override:%s" % kind, path, box, added, removed)
-    entries_, source = effective(kind, box)
-    return {"kind": kind, "scope": "override", "box": box, "path": path,
-            "entries": entries_, "source": source,
-            "added": added, "removed": removed}, ""
+    _, path = _paths(kind, box)
+    with _LOCKS[kind]:
+        source, _ = _fleet_source(kind)
+        universe = read_entries(source)
+        wanted = [str(e).strip() for e in entries if str(e).strip()]
+        if wanted and not universe:
+            return None, ("the fleet-wide %s registry names no repositories, "
+                          "so there is nothing for %s to select — edit the "
+                          "fleet-wide list first" % (kind, box))
+        clean, err = validate(wanted, within=set(universe))
+        if err:
+            return None, err
+        ok, why = _journal_writable()
+        if not ok:
+            return None, why
+        added, removed = _rewrite(path, clean)
+        recorded, jerr = _journal(actor, "set-override:%s" % kind, path, box,
+                                  added, removed)
+        entries_, esource = effective(kind, box)
+        return {"kind": kind, "scope": "override", "box": box, "path": path,
+                "entries": entries_, "source": esource, "added": added,
+                "removed": removed, "recorded": recorded}, jerr
 
 
 def clear_override(kind, box, actor=""):
@@ -384,16 +567,27 @@ def clear_override(kind, box, actor=""):
     no-op's silence either: it reports `cleared: False` and the box's state,
     which is what a console owes an operator who clicked Inherit on a cell that
     was already inheriting. Only a file that could not be removed fails.
+
+    A clear that has nothing to remove writes nothing, so it asks nothing of
+    the journal either: the record is a precondition of a WRITE, and reporting
+    "already inheriting" is not one.
     """
     _, path = _paths(kind, box)
-    had = os.path.isfile(path)
-    removed = read_entries(path) if had else []
-    if had:
-        try:
-            os.remove(path)
-        except OSError as e:
-            return None, "could not clear the override for %s: %s" % (box, e)
-        _journal(actor, "clear-override:%s" % kind, path, box, [], removed)
-    entries, source = effective(kind, box)
-    return {"kind": kind, "scope": "override", "box": box, "path": path,
-            "cleared": had, "entries": entries, "source": source}, ""
+    with _LOCKS[kind]:
+        had = os.path.isfile(path)
+        removed = read_entries(path) if had else []
+        jerr, recorded = "", True
+        if had:
+            ok, why = _journal_writable()
+            if not ok:
+                return None, why
+            try:
+                os.remove(path)
+            except OSError as e:
+                return None, "could not clear the override for %s: %s" % (box, e)
+            recorded, jerr = _journal(actor, "clear-override:%s" % kind, path,
+                                      box, [], removed)
+        entries, source = effective(kind, box)
+        return {"kind": kind, "scope": "override", "box": box, "path": path,
+                "cleared": had, "entries": entries, "source": source,
+                "recorded": recorded}, jerr

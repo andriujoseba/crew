@@ -177,6 +177,16 @@ def registry_command(action, box, body, actor):
     will not accept, and nothing was written. That is a different thing from a
     box that was asked to do something and refused, which is what 500 means
     everywhere else in this module.
+
+    AND IT IS A DIFFERENT THING AGAIN FROM AN EDIT THAT LANDED WITHOUT ITS
+    RECORD, which is the one failure where the registry moved and the answer is
+    still not "ok". The writers say which by whether they hand back a result
+    alongside the error: no result means nothing was written and the page may
+    say `refused`; a result WITH an error means the file on disk changed and
+    could not be journalled, so it is a 500, `refused` is false, `recorded` is
+    false, and the result travels with it. Reporting that as a refusal would
+    tell the operator their edit did not land while the fleet's scope had
+    already moved — the one wrong answer this endpoint can give.
     """
     kind = str(body.get("kind", ""))
     if kind not in KINDS:
@@ -190,6 +200,10 @@ def registry_command(action, box, body, actor):
     else:
         result, err = clear_override(kind, box, actor)
 
+    if err and result is not None:
+        return 500, {"ok": False, "action": action, "error": err,
+                     "refused": False, "recorded": False,
+                     "registry": result, "results": []}
     if err:
         return 400, {"ok": False, "action": action, "error": err,
                      # The same flag `restart` raises for its own 409: nothing

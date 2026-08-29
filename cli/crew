@@ -98,9 +98,19 @@ if [ "${CREW_EXPECT_OPERATOR_CONFIG:-0}" = 1 ] && [ "$CONFIG_IS_OPERATOR" -ne 1 
 fi
 config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
 # registry_entries FILE — the repositories one registry file names, as every
-# reader of these files defines them: `#` and blank lines are ignored (#488).
-# `|| true` for the same reason box_registry carries it — a file of nothing but
-# comments makes grep exit 1, and under `pipefail` that kills the caller.
+# reader of these files defines them: `#` and blank lines are ignored, and an
+# entry is its line STRIPPED (#488).
+# `|| true` for the same reason box_registry carries it — a file with no entries
+# in it exits non-zero, and under `pipefail` that kills the caller.
+#
+# The strip is what makes this half agree with the floor's `read_entries`,
+# which has always emitted `line.strip()`. Without it a hand-indented entry in
+# the fleet-wide file reaches `resolved_registry`'s exact-match `awk` with its
+# leading spaces and matches no selection, so a box WITH an override silently
+# drops a repository the console shows it watching — the console-vs-transport
+# drift this family exists to make impossible. One `awk` rather than a
+# `grep | sed` pipeline: a pipeline here is one more way to red under
+# `pipefail` and buys nothing.
 #
 # On its own lines rather than folded onto one, so that every resolver in this
 # family extracts with the same `/^name() {/,/^}/` range. The floor suite pulls
@@ -108,7 +118,7 @@ config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || pri
 # instead of a copy, and a one-line function silently over-captures to the next
 # closing brace.
 registry_entries() { # FILE
-  grep -vE '^[[:space:]]*(#|$)' "$1" 2>/dev/null || true
+  awk '{ sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") } $0 != "" && $0 !~ /^#/' "$1" 2>/dev/null || true
 }
 # registry_fleet_file KIND / registry_override_file BOX KIND — the two files
 # behind one box's registry. KIND is `work` or `notify`. The override printer
