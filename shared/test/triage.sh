@@ -64,10 +64,14 @@ case "$*" in
     # request with any OTHER cursor is served a terminal empty page rather than
     # page one again, so a dropped or mangled cursor surfaces as a missing row
     # in the rendered evidence instead of as a test that loops forever.
+    # Matched with the flag before and the space after, so the comparison is on
+    # the WHOLE cursor: a bare `*after=CURSOR*` is a substring test, and a
+    # census that prefixed or suffixed the value would still be served page two
+    # by it — which would make the case pass on a cursor it had corrupted.
     case "$*" in
-      *"after=null"*)               cat "$TR_FIX/prs.$p.json" ;;
-      *"after=TR-CURSOR-PAGE-2"*)   cat "$TR_FIX/prs2.$p.json" ;;
-      *)                            cat "$TR_FIX/prs.none.json" ;;
+      *"-F after=null "*)              cat "$TR_FIX/prs.$p.json" ;;
+      *"-f after=TR-CURSOR-PAGE-2 "*)  cat "$TR_FIX/prs2.$p.json" ;;
+      *)                               cat "$TR_FIX/prs.none.json" ;;
     esac ;;
   *"api graphql"*)          cat "$TR_FIX/disc.$p.rows" ;;  # --jq is already applied
   *"--label needs-triage"*) cat "$TR_FIX/nt.$p.json" ;;
@@ -1225,7 +1229,7 @@ t triage503-paginated-board-still-takes-no-action 0 \
 # the exact endCursor, so a census that dropped or mangled it would be served a
 # terminal empty page and lose #701-#711. Pinned here so the two assertions
 # above cannot be satisfied by a shim that hands out page two unconditionally.
-if grep -q 'after=TR-CURSOR-PAGE-2' "$TR_CALLS"; then r1=carried; else r1=DROPPED; fi
+if grep -q -e '-f after=TR-CURSOR-PAGE-2 ' "$TR_CALLS"; then r1=carried; else r1=DROPPED; fi
 t triage503-second-page-carries-the-cursor carried "$r1"
 
 suite_finish
