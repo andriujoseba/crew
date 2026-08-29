@@ -119,6 +119,155 @@ _triage_signal_numbers() {  # stdin: REPO#NUMBER UPDATED_AT
   } END { print numbers }'
 }
 
+# --- #503: round count as sizing evidence, in front of triage ---------------
+#
+# Doctrine names round growth as evidence for the NEXT mint (`TRIAGE.md`
+# `## Sizing`, ceremony#419), and the cap it is read against is five. The engine
+# already counts rounds, but only in the shape D1 calls insufficient:
+# `_round_cap_census` in duty-builder.sh, per PR, over OPEN authored PRs, and
+# interesting exactly when one stalls. This is the other reading of the same
+# number — per issue, over the whole history, as a distribution — put in front
+# of the agent that makes the sizing judgement.
+#
+# IT IS CONTEXT, NOT A SIGNAL, AND THAT IS THE POINT OF D4. "No automatic
+# action. This surfaces evidence." A wake IS an action: it spends a model
+# session. And a distribution moves whenever any PR anywhere gains a round, so
+# as a wake it would re-fire on an unchanged board every tick forever — #59's
+# defect exactly, on a signal that can never clear itself because there is
+# nothing for a session to DO about it. So this runs only where a triage session
+# is ALREADY launching, below the `signals` early return: a quiet tick pays
+# nothing, and every tick that could act on the evidence carries it.
+#
+# It writes no label, opens and closes nothing, and gates no dispatch. Its only
+# effect on the tick is one prompt slot.
+#
+# COST. One paginated GraphQL call per page of PRs, per triage session — not per
+# tick. Closed PRs are in the query because D5 requires them: "history is
+# included, or the first reading is meaningless".
+#
+# A FETCH FAILURE COSTS THE EVIDENCE AND NOTHING ELSE. Every warn returns with
+# ROUND_COUNT_EVIDENCE empty, the fragment is omitted, and the session runs on
+# the signals that woke it. Sizing evidence is an input to a human-grade
+# judgement, and a partial distribution would be a wrong one presented as
+# measured — so a page that fails discards the read rather than reporting a
+# board that is missing its oldest PRs.
+ROUND_COUNT_EVIDENCE=""
+
+# _triage_round_count REPO — set ROUND_COUNT_EVIDENCE to the rendered fragment.
+#
+# THE ISSUE PATTERN IS duty-builder.sh's `_RESUME_ISSUE_RE`, referenced and not
+# restated. That constant's own header gives the reason: "a second copy of a
+# regex whose every clause was bought by a named failure is a second thing to
+# keep true, and the drift would be silent — both copies parse, and only one of
+# them is right" (#479). Reaching across duty modules for it is deliberate and
+# safe: bin/duty.sh sources all four unconditionally, before any role dispatch,
+# so the constant is defined on a triage-only box too — pinned by a case in
+# shared/test/triage.sh so a later reordering cannot silently empty it.
+#
+# THE CAP IS READ FROM round-cap.jq, never restated here. "THE CAP IS A LITERAL
+# HERE AND NOWHERE ELSE" (#502 D1), so the distribution is read against five by
+# asking the program that owns the five, on an empty payload.
+_triage_round_count() {
+  local repo="$1" owner name cursor="" page nodes measured
+  local all='[]' evidence rows shown total cap
+  local -a after=()
+  ROUND_COUNT_EVIDENCE=""
+  owner="${repo%%/*}"; name="${repo##*/}"
+
+  cap="$(printf '{}' \
+    | jq -L "$DUTY_DIR/lib/jq" --argjson panel '[]' \
+        -f "$DUTY_DIR/lib/jq/round-cap.jq" 2>/dev/null \
+    | jq -r '.cap // empty' 2>/dev/null)"
+  if [ -z "$cap" ]; then
+    warn "$repo: round-count evidence skipped (the round cap could not be read)"
+    return 0
+  fi
+
+  while :; do
+    # `-F after=null` is a JSON null on the first page; `-f` sends a string on
+    # every page after it. An empty STRING is not a cursor, so the two forms are
+    # not interchangeable and the first page cannot use `-f`.
+    if [ -z "$cursor" ]; then after=(-F after=null); else after=(-f after="$cursor"); fi
+    if ! page="$(gh api graphql -f owner="$owner" -f name="$name" "${after[@]}" -f query='
+      query($owner:String!,$name:String!,$after:String){
+        repository(owner:$owner,name:$name){
+          pullRequests(first:'"$OPERATING_LIMIT_GITHUB_PR_PAGE"',
+                       states:[OPEN,CLOSED,MERGED],
+                       orderBy:{field:CREATED_AT,direction:DESC},
+                       after:$after){
+            pageInfo{ hasNextPage endCursor }
+            nodes{
+              number body
+              commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){
+                totalCount nodes{ commit{ oid committedDate } } }
+              reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){
+                totalCount nodes{ author{ login } state commit{ oid } submittedAt } }
+            }
+          }
+        }
+      }' 2>/dev/null)"; then
+      warn "$repo: round-count fetch failed; no sizing evidence this session"
+      return 0
+    fi
+    if ! nodes="$(printf '%s' "$page" \
+        | jq -c '.data.repository.pullRequests.nodes // []' 2>/dev/null)"; then
+      warn "$repo: round-count parse failed; no sizing evidence this session"
+      return 0
+    fi
+    # The same overflow assessment _round_cap_census makes, for the same reason:
+    # a PR whose review or commit history is longer than the unpaginated window
+    # is counted short, and a distribution built on a silently short count is
+    # the misreport this evidence exists to prevent.
+    measured="$(printf '%s' "$nodes" | jq -r '
+      [ .[] | .commits.totalCount, .reviews.totalCount ] | map(. // 0) | max // 0' 2>/dev/null)" \
+      || measured=invalid
+    if ! operating_limit_assess github_connection_nodes "$measured" "$repo" "" \
+        'round-count history exceeds its unpaginated GraphQL window'; then
+      return 0
+    fi
+    all="$(jq -c -n --argjson a "$all" --argjson b "$nodes" '$a + $b' 2>/dev/null)" || {
+      warn "$repo: round-count accumulate failed; no sizing evidence this session"
+      return 0
+    }
+    [ "$(printf '%s' "$page" \
+      | jq -r '.data.repository.pullRequests.pageInfo.hasNextPage' 2>/dev/null)" = true ] || break
+    cursor="$(printf '%s' "$page" \
+      | jq -r '.data.repository.pullRequests.pageInfo.endCursor // empty' 2>/dev/null)"
+    [ -n "$cursor" ] || break
+  done
+
+  if ! evidence="$(printf '%s' "$all" \
+      | jq -c -L "$DUTY_DIR/lib/jq" --arg re "$_RESUME_ISSUE_RE" --argjson cap "$cap" \
+          -f "$DUTY_DIR/lib/jq/round-count.jq" 2>/dev/null)"; then
+    warn "$repo: round-count eval failed; no sizing evidence this session"
+    return 0
+  fi
+  total="$(printf '%s' "$evidence" | jq -r '.distribution.issues // 0' 2>/dev/null || echo 0)"
+  [ "$total" -gt 0 ] || return 0
+
+  # THE ROW LIST IS BOUNDED AND SAYS SO. Sorted by round count descending, so
+  # what a bound drops is the low-round tail — the rows that teach least — and
+  # never the outlier D3's example is about. The dropped rows are still in every
+  # figure of the distribution, and the fragment prints how many there are: a
+  # truncation nobody can see reads as "this is the whole board" when it is not.
+  rows="$(printf '%s' "$evidence" | jq -r --argjson n "$OPERATING_LIMIT_TRIAGE_ROUND_ROWS" '
+    [ .issues[] | select(.rounds > 0) ][:$n][]
+    | "  - #\(.issue): \(.rounds) round(s) over \(.prs | length) PR(s) — "
+      + (.prs | map("#\(.)") | join(", "))' 2>/dev/null)"
+  shown="$(printf '%s\n' "$rows" | awk 'NF{c++} END{print c+0}')"
+  ROUND_COUNT_EVIDENCE="$(render_prompt fragment-round-count.txt \
+    ROWS="$rows" SHOWN="$shown" \
+    STATS="$(printf '%s' "$evidence" | jq -r '
+      .distribution
+      | "\(.issues) issue(s) with at least one round; min \(.min), median \(.median), "
+        + "max \(.max); \(.at_or_over_cap) at or over the cap of \($cap); "
+        + "\(.pending) issue(s) with a PR but no round yet; "
+        + "\(.unattributed) PR(s) naming no issue."' \
+      --argjson cap "$cap" 2>/dev/null)" \
+    CAP="$cap")"
+  return 0
+}
+
 duty_triage() {
   local R notification_pages all_mentions repo_json fresh_threads fresh_json fresh_mentions
   local keep_threads keep_json mentions mcount mention_rc
@@ -384,7 +533,13 @@ _triage_repo() {
 }$graph_item"
   fi
   signal_block="$(render_prompt fragment-signals.txt SIGNAL_ITEMS="$signal_items")"
-  prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" SIGNAL_BLOCK="$signal_block")"
+  # Sizing evidence (#503), gathered HERE and nowhere earlier: the session is
+  # already launching, so this buys context for a session the board paid for
+  # rather than becoming a reason to spend one. It sets no signal, so it cannot
+  # reach the `signals` test above even by accident.
+  _triage_round_count "$R"
+  prompt="$(render_prompt triage.txt ME="$ME" REPO="$R" SIGNAL_BLOCK="$signal_block" \
+    ROUND_EVIDENCE="$ROUND_COUNT_EVIDENCE")"
   RUN_SESSION_RC=1
   run_session triage "$R" "$dir" "$TIMEOUT_TRIAGE" "$prompt"
   # Mark each signal at the state in which the session LEFT it, not the state

@@ -13,9 +13,11 @@
 declare -Ag OPERATING_LIMITS=(
   [github_connection_nodes]=100
   [github_panel_nodes]=50
+  [github_pr_page]=50
   [github_rest_page]=100
   [session_kill_grace_seconds]=60
   [session_terminal_failures]=3
+  [triage_round_rows]=25
 )
 
 # Config and engine files are installed by separate atomic renames, so a tick
@@ -28,8 +30,10 @@ DUTY_LIMIT_SPOOL_TTL_S_DEFAULT=86400
 # only place a numeric limit is declared.
 OPERATING_LIMIT_GITHUB_CONNECTION_NODES="${OPERATING_LIMITS[github_connection_nodes]}"
 OPERATING_LIMIT_GITHUB_PANEL_NODES="${OPERATING_LIMITS[github_panel_nodes]}"
+OPERATING_LIMIT_GITHUB_PR_PAGE="${OPERATING_LIMITS[github_pr_page]}"
 OPERATING_LIMIT_GITHUB_REST_PAGE="${OPERATING_LIMITS[github_rest_page]}"
 OPERATING_LIMIT_SESSION_KILL_GRACE_SECONDS="${OPERATING_LIMITS[session_kill_grace_seconds]}"
+OPERATING_LIMIT_TRIAGE_ROUND_ROWS="${OPERATING_LIMITS[triage_round_rows]}"
 
 # operating_limit NAME — print one declared limit, refusing unknown names.
 operating_limit() {

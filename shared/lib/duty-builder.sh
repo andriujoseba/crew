@@ -576,6 +576,13 @@ _report_unsignalled_hold() {
 # returning its data down the same channel would fold its warnings into it.
 ROUND_CAP_PRS=""
 ROUND_CAP_NAMED="-"
+# ROUND_CAP_COUNTS is the same census's OTHER answer (#503): every open authored
+# PR's round count and the issue it was recorded against, as
+# `repo#num=<rounds>@<issue>` (issue `-` where the body names none),
+# space-separated. ROUND_CAP_PRS above is the cap's answer and holds only the
+# PRs at it; this one holds them all, because a count that appears only at the
+# boundary is the stall-only signal #503 exists to replace.
+ROUND_CAP_COUNTS=""
 
 # _round_cap_census REPO PANEL_JSON LISTING — count every open authored PR's
 # rounds and record the ones at the cap.
@@ -601,8 +608,10 @@ ROUND_CAP_NAMED="-"
 _round_cap_census() {
   local repo="$1" panel_json="$2" listing="$3"
   local owner name num payload capjson rounds at_cap named="" items="" fresh measured
+  local issue record="" record_fresh
   ROUND_CAP_PRS=""
   ROUND_CAP_NAMED="-"
+  ROUND_CAP_COUNTS=""
   owner="${repo%%/*}"; name="${repo##*/}"
   if [ -z "$listing" ] || [ "$listing" = err ]; then
     warn "$repo: round-cap census skipped (the authored-PR listing failed); no boundary named this tick"
@@ -612,7 +621,7 @@ _round_cap_census() {
     [ -n "$num" ] || continue
     if ! payload="$(gh api graphql -f query='query($owner:String!,$name:String!,$num:Int!){
       repository(owner:$owner,name:$name){ pullRequest(number:$num){
-        headRefOid
+        headRefOid body
         commits(last:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{commit{oid committedDate}}}
         reviews(first:'"$OPERATING_LIMIT_GITHUB_CONNECTION_NODES"'){totalCount nodes{author{login} state commit{oid} submittedAt}}
       } } }' -f owner="$owner" -f name="$name" -F num="$num" 2>/dev/null)"; then
@@ -636,11 +645,41 @@ _round_cap_census() {
     fi
     rounds="$(printf '%s' "$capjson" | jq -r '.rounds // 0' 2>/dev/null || echo 0)"
     at_cap="$(printf '%s' "$capjson" | jq -r '.at_cap // false' 2>/dev/null || echo false)"
+    # THE COUNT IS RECORDED AGAINST THE ISSUE, AND FOR EVERY PR (#503 D1, D2).
+    # This is above the at-cap `continue` on purpose: a record only capped PRs
+    # reach is the builder-side counter "that surfaces when a PR stalls", which
+    # is the shape D1 names as insufficient. Every open authored PR's count is
+    # recorded, whether or not it is anywhere near five.
+    #
+    # The issue is read from the PR body with the same pattern the resume
+    # fingerprints use, so `Refs #N` resolves as well as `Closes #N` — which is
+    # what makes a cut predecessor still name the issue it stopped closing.
+    # An unattributed PR records `-`: dropping it would hide a PR whose body
+    # names no issue, which is a board fact worth seeing rather than a gap.
+    issue="$(printf '%s' "$payload" | jq -r --arg re "$_RESUME_ISSUE_RE" \
+      '(.data.repository.pullRequest.body // "")
+       | (first(capture($re; "i") | .n) // "-")' 2>/dev/null)" || issue="-"
+    [ -n "$issue" ] || issue="-"
+    ROUND_CAP_COUNTS="${ROUND_CAP_COUNTS:+$ROUND_CAP_COUNTS }$repo#$num=$rounds@$issue"
+    record="$record$(printf '%s#%s %02d@%s' "$repo" "$num" "$rounds" "$issue")"$'\n'
     [ "$at_cap" = true ] || continue
     ROUND_CAP_PRS="${ROUND_CAP_PRS:+$ROUND_CAP_PRS }$repo#$num"
     named="${named:+$named; }$repo#$num ($rounds rounds)"
     items="$items$(printf '%s#%s %02d' "$repo" "$num" "$rounds")"$'\n'
   done < <(printf '%s' "$listing" | jq -r '.[].number' 2>/dev/null)
+  # Said once per (PR, count, issue), on its own ledger. Separate from
+  # .seen-round-cap because the two say different things and clear on different
+  # events: the cap line is an instruction that stands until the builder cuts,
+  # while this is a measurement that changes every time a round closes. Sharing
+  # one ledger would let a PR reaching the cap swallow its own round record.
+  record_fresh="$(printf '%s' "$record" | ledger_filter "$DUTY_DIR/.seen-round-count")"
+  if [ -n "${record_fresh//[[:space:]]/}" ]; then
+    log "$repo: rounds recorded against the issue — $(printf '%s' "$record_fresh" \
+      | awk 'NF { split($2, f, "@"); n = f[1] + 0
+                  printf "%s%s (%d round(s)) -> %s", sep, $1,
+                         n, (f[2] == "-" ? "no issue named" : "#" f[2]); sep = "; " }')"
+    printf '%s' "$record_fresh" | ledger_commit "$DUTY_DIR/.seen-round-count"
+  fi
   [ -n "$named" ] && ROUND_CAP_NAMED="$named"
   # Said once per (PR, round count), not once per tick. A PR sits at the cap for
   # every tick until the builder cuts it, and #167's rule applies: a line that
