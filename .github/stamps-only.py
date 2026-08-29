@@ -316,6 +316,28 @@ def tag_carries_record(root, tag):
                          "refs/tags/%s:%s" % (tag, record_path(tag))])
 
 
+def unreachable_anchor(last, tags, records):
+    """The name to put in a refusal about a candidate no tag reaches.
+
+    Every spelling here loses the same way — the ancestry check refuses them
+    all — so this decides only what the reader is SENT to look at, and that is
+    worth deciding rather than defaulting. Where the number was published under
+    two spellings and NEITHER is reachable, the lexical first is an arbitrary
+    pick: it can name `0.9.0-rc01` while the shipped tree's own record is
+    `drills/0.9.0-rc1.md`, and a reader who goes looking for the record of the
+    tag named finds nothing (#579, claude-bot-andresmgsl).
+
+    So the tree's own claim wins where it was actually published. The lexical
+    pick survives only for the case nothing else answers: two published
+    spellings and a tree that names neither.
+    """
+    spellings = tags.get(last)
+    if not spellings:
+        return records[last]
+    claimed = records.get(last)
+    return claimed if claimed in spellings else sorted(spellings)[0]
+
+
 def is_shallow(root):
     return git(root, ["rev-parse", "--is-shallow-repository"],
                "asking whether the clone is shallow").strip() == "true"
@@ -386,8 +408,7 @@ def main():
     # number. Prefer the tag's own spelling where a tag exists: an UNREACHABLE
     # tag still names the anchor, and it is refused by the ancestry check below
     # as the wrong lineage rather than as a tag that could not be read.
-    anchor = reachable.get(last) or (sorted(tags[last])[0] if last in tags
-                                     else records[last])
+    anchor = reachable.get(last) or unreachable_anchor(last, tags, records)
 
     # EVERY reachable candidate, not only the anchor, and by the tag's OWN
     # SPELLING rather than by its number. A rung below the anchor cannot move

@@ -519,6 +519,25 @@ cut_final "$D" 0.9.0
 run_guard "$D"
 t_says 0 "an-unreachable-second-spelling-is-not-a-collision" '*0.9.0 over 0.9.0-rc1*'
 
+# When BOTH spellings of the number are unreachable, the refusal is right
+# whichever one it names — but the reader is sent to one of them, so it should
+# be the one the shipped tree's own record claims and not the lexically first.
+# `sorted()[0]` here is `0.9.0-rc01`, whose record is nowhere on this tree
+# (#579, claude-bot-andresmgsl).
+D="$(base bothspellingsunreachable)"
+git -C "$D" checkout -q -b abandoned3
+cut_rc "$D" 0.9.0 1
+w "$D" VERSION "0.9.0-rc01"
+ci "$D" "a second spelling, same abandoned line"
+git -C "$D" tag 0.9.0-rc01
+git -C "$D" checkout -q main
+git -C "$D" checkout -q abandoned3 -- drills/0.9.0-rc1.md
+ci "$D" "carry the rc1 record onto main without its history"
+cut_final "$D" 0.9.0
+run_guard "$D"
+t_says 1 "an-unreachable-anchor-is-named-by-the-record-the-tree-carries" '*0.9.0-rc1 is not an ancestor*'
+t_mute 1 "and-not-by-the-spelling-that-merely-sorts-first" '*0.9.0-rc01*'
+
 # A tag on a line the final does not descend from must NOT raise the anchor:
 # it drilled a different lineage, and reading it would red a window it has
 # nothing to say about. Here rc2 is tagged on an abandoned branch while the
