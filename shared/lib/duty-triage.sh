@@ -252,13 +252,15 @@ _triage_round_count() {
   total="$(printf '%s' "$evidence" | jq -r '.distribution.issues // 0' 2>/dev/null || echo 0)"
   [ "$total" -gt 0 ] || return 0
 
-  # THE ROW LIST IS BOUNDED AND SAYS SO. Sorted by round count descending, so
-  # what a bound drops is the low-round tail — the rows that teach least — and
-  # never the outlier D3's example is about. The dropped rows are still in every
-  # figure of the distribution, and the fragment prints how many there are: a
-  # truncation nobody can see reads as "this is the whole board" when it is not.
-  rows="$(printf '%s' "$evidence" | jq -r --argjson n "$OPERATING_LIMIT_TRIAGE_ROUND_ROWS" '
-    [ .issues[] | select(.rounds > 0) ][:$n][]
+  # EVERY ISSUE GETS ITS ROW, and the criterion is why: "each issue's PR round
+  # count is readable by the triage duty". A bound would have been comfortable —
+  # sorted descending, the tail it dropped would be the low-round issues that
+  # teach least — but the distribution alone cannot answer "how many rounds did
+  # #482 take", which is the lookup a sizing judgement actually makes. One short
+  # line per issue is what that costs, and the board's own size is its bound.
+  # Sorted by count descending so the outlier D3's example is about reads first.
+  rows="$(printf '%s' "$evidence" | jq -r '
+    .issues[] | select(.rounds > 0)
     | "  - #\(.issue): \(.rounds) round(s) over \(.prs | length) PR(s) — "
       + (.prs | map("#\(.)") | join(", "))' 2>/dev/null)"
   shown="$(printf '%s\n' "$rows" | awk 'NF{c++} END{print c+0}')"

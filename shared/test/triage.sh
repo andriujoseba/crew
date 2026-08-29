@@ -999,6 +999,20 @@ if grep -q 'median 3' "$TR_PROMPT.triage" && grep -q 'max 14' "$TR_PROMPT.triage
 t triage503-prompt-carries-the-distribution distributed "$r1"
 if grep -q '#12: 14 round(s)' "$TR_PROMPT.triage"; then r1=rowed; else r1=MISSING; fi
 t triage503-prompt-carries-the-per-issue-rows rowed "$r1"
+# EVERY issue's count, not only the interesting ones — the criterion is "each
+# issue's PR round count is readable by the triage duty", and the distribution
+# alone cannot answer "how many rounds did #10 take". The one-round issue is the
+# case any bound would drop first, so it is the one asserted.
+if grep -q '#10: 1 round(s)' "$TR_PROMPT.triage" \
+  && grep -q '#11: 3 round(s)' "$TR_PROMPT.triage"; then r1=all; else r1=TRUNCATED; fi
+t triage503-prompt-carries-every-issues-row all "$r1"
+if grep -q 'All 3 of them, most rounds first' "$TR_PROMPT.triage"; then
+  r1=counted; else r1=MISCOUNTED; fi
+t triage503-prompt-row-count-matches-the-distribution counted "$r1"
+# Most rounds first, so the outlier reads before the tail.
+TR503_ROW_ORDER="$(grep -o '#1[0-2]: [0-9]* round' "$TR_PROMPT.triage" \
+  | sed 's/:.*//' | paste -sd, -)"
+t triage503-rows-are-sorted-by-count '#12,#11,#10' "$TR503_ROW_ORDER"
 # Read against the ruled five, not a number crew picked — and the cap in the
 # prompt comes from round-cap.jq, so it can never drift from the one the engine
 # holds a request on.

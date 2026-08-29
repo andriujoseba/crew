@@ -1,6 +1,6 @@
 Sizing evidence — round counts per issue, across this board's whole history, closed pull requests included:
 {{STATS}}
-The {{SHOWN}} issue(s) carrying the most rounds:
+All {{SHOWN}} of them, most rounds first:
 {{ROWS}}
-Read a new issue's scope against that distribution, never against any single number: doctrine reads round growth as sizing evidence for the next mint, and the cap it is read against is {{CAP}}. A count belongs to the issue and not to a pull request, so a PR cut at the cap and continued in a successor contributes its chain's total once — one issue's rounds, not two PRs'. Issues below the rows shown are still in every figure above.
+Read a new issue's scope against that distribution, never against any single number: doctrine reads round growth as sizing evidence for the next mint, and the cap it is read against is {{CAP}}. A count belongs to the issue and not to a pull request, so a PR cut at the cap and continued in a successor contributes its chain's total once — one issue's rounds, not two PRs'.
 This is evidence and nothing else. Nothing is labelled, split, blocked or relabelled on account of it, by the engine or by you: the sizing judgement is yours to make at the mint, and a number is not a threshold.
