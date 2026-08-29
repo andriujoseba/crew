@@ -2,7 +2,8 @@
 #
 # This module emits no durable record. It derives one report on demand so
 # `crew status` and the floor consume the same computation (#484).
-# A module of shared/lib/common.sh; nothing sources this file directly.
+# A module of shared/lib/common.sh; cli/crew also sources this leaf directly
+# for the host-side renderer without loading the guest engine entry point.
 #
 # shellcheck shell=bash
 

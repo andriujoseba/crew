@@ -634,13 +634,17 @@ case "${1:-}" in
         # "the box answered nothing" while the box was answering fine.
         # `::crew-vitals-end::` is the narrowest string unique to this script.
         #
-        # The three sections in the order cli/crew splits them on. The budget
+        # The four sections in the order cli/crew splits them on. The budget
         # half stays EMPTY: no lane is configured on a stub box, which is the
         # default and the honest report, and the budget suite drives that half
         # elsewhere. What matters here is that the marks are present, because
         # their absence is what the CLI reads as silence.
         [ "$sc" = "neverticked" ] && exit 1
         echo "::crew-budget-end::"
+        printf '%s\n' \
+          'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=3 busy=2' \
+          'TICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'
+        echo "::crew-health-end::"
         # The SAME record probe.sh answers the floor with, from the same
         # reader. See vitals_record_of.
         vitals_record_of "$sc"

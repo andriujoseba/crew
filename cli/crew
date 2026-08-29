@@ -34,6 +34,12 @@ set -euo pipefail
 CREW_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$CREW_ROOT/shared/lib/version-skew.sh"
+# The detail view renders the report computed inside the box. Source only the
+# renderer's leaf module here: common.sh is the guest engine's entry point and
+# brings host-irrelevant state, while duplicating these rows would let the CLI
+# and floor drift (#484).
+# shellcheck disable=SC1091
+source "$CREW_ROOT/shared/lib/common/tick-health.sh"
 ROLES_DIR="$CREW_ROOT/shared/conf/roles"
 AGENTS_DIR="$CREW_ROOT/shared/conf/agents"
 

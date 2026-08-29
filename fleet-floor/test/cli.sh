@@ -727,6 +727,20 @@ else
 fi
 t "crew status <box>: the hired detail view still costs three round trips" 3 "$CL_EXECN"
 
+# #484 — drive the real detail path with a report between its wire marks. This
+# catches a renderer that exists only in an extraction harness (or is missing
+# from cli/crew entirely), while the parity case below pins its exact strings.
+if grep -qx 'tick health:' "$CL_TMP/crew-out" &&
+   grep -qx '  Last tick (1d window): 5m ago' "$CL_TMP/crew-out" &&
+   grep -qx '  Busy ticks (1d window): 2/3 (66.7%)' "$CL_TMP/crew-out" &&
+   grep -qx '  build skips/holds (1d window): 2 skips · budget:1, terminal-breaker:1' "$CL_TMP/crew-out" &&
+   grep -qx '  build outcome streak (1d window): died-with-box ×3' "$CL_TMP/crew-out"; then
+  ok "crew status <box>: the real detail path renders every tick-health figure"
+else
+  fail "crew status <box>: the real detail path renders every tick-health figure" \
+       "$(sed -n '/^tick health:$/,/^[a-z]/{p}' "$CL_TMP/crew-out")"
+fi
+
 # --- the box vitals record (#483) ------------------------------------------
 #
 # The detail view renders the record tick.sh wrote, and #483's criterion is
@@ -875,7 +889,7 @@ JS
   t "crew status <box>: the two readers agree on which absence costs which row" \
     same "$(cl_xread "$CL_XREAD_DEGRADED")"
 
-  CL_HEALTH_REPORT=$'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=4 busy=1\nTICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'
+  CL_HEALTH_REPORT=$'TICK_HEALTH window_s=86400 last_tick_age_s=300 ticks=3 busy=2\nTICK_HEALTH_KIND window_s=86400 kind=build skips=2 holds=budget:1,terminal-breaker:1 outcome=died-with-box streak=3'
   {
     awk '/^_tick_health_window\(\)/,/^\}/' "$CL_ROOT/shared/lib/common/tick-health.sh"
     awk '/^_tick_health_duration\(\)/,/^\}/' "$CL_ROOT/shared/lib/common/tick-health.sh"
@@ -886,7 +900,7 @@ JS
   grep '^function tickHealthWindow\|^function tickHealthDuration' "$CL_FLOOR/index.html" >"$CL_TMP/hrows.js"
   awk '/^function tickHealthRows\(h\)\{/,/^\}/' "$CL_FLOOR/index.html" >>"$CL_TMP/hrows.js"
   cat >>"$CL_TMP/hrows.js" <<'JS'
-var h={window:86400,last_tick_age:300,ticks:4,busy:1,kinds:[{kind:"build",skips:2,holds:{budget:1,"terminal-breaker":1},outcome:"died-with-box",streak:3}]};
+var h={window:86400,last_tick_age:300,ticks:3,busy:2,kinds:[{kind:"build",skips:2,holds:{budget:1,"terminal-breaker":1},outcome:"died-with-box",streak:3}]};
 process.stdout.write(tickHealthRows(h).map(function(r){return r[0]+"\t"+r[1];}).join("\n")+"\n");
 JS
   CL_HEALTH_SH="$(bash "$CL_TMP/hrows.sh" "$CL_HEALTH_REPORT")"
