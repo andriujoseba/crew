@@ -37,16 +37,51 @@
 REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # reclaim_detached_review_worktrees — remove throwaway worktrees left by a
-# review session that ended before its own cleanup. The tick-wide flock makes
-# every worktree present at tick start a predecessor's: this runs before any
+# review session that ended before its own cleanup. This runs before any
 # dispatch, so it never races a worktree the current tick is creating (#597).
 #
-# Detached HEAD is the ownership boundary. Reviewers use detached worktrees;
-# builders keep a branch checked out and their recovery belongs to the builder
-# hygiene path. Names are deliberately irrelevant because a reviewer may make
-# an auxiliary worktree such as base-<N> while investigating a collision.
+# Detached HEAD is the starting ownership boundary, not sufficient proof that
+# a tree is dead. A parked review deliberately outlives its launching tick, and
+# Git detaches builder worktrees during operations such as rebase and bisect.
+# Names remain deliberately irrelevant because a reviewer may make an
+# auxiliary worktree such as base-<N> while investigating a collision.
+_review_detached_run_active() {
+  local stamp repo pr head digest
+
+  while IFS= read -r -d '' stamp; do
+    repo="$(_detached_field "$stamp" repo)"
+    pr="$(_detached_field "$stamp" pr)"
+    head="$(_detached_field "$stamp" head)"
+    digest="$(_detached_field "$stamp" digest)"
+    detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
+    [ "$DETACHED_RUN_STATE" = running ] && return 0
+  done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
+  return 1
+}
+
+_review_common_dir() {
+  local candidate="$1" common_dir
+  common_dir="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$common_dir" in
+    /*) printf '%s\n' "$common_dir" ;;
+    *) (cd "$candidate/$common_dir" 2>/dev/null && pwd -P) ;;
+  esac
+}
+
+_review_git_operation_in_progress() {
+  local git_dir="$1"
+  [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] \
+    || [ -f "$git_dir/BISECT_LOG" ] || [ -f "$git_dir/MERGE_HEAD" ] \
+    || [ -f "$git_dir/CHERRY_PICK_HEAD" ] || [ -f "$git_dir/REVERT_HEAD" ]
+}
+
 reclaim_detached_review_worktrees() {
-  local candidate top head common_dir
+  local candidate top head git_dir common_dir dirt dirt_summary
+
+  # A detached command inherits its launching session's worktree as cwd, but
+  # its immutable stamp does not record that path. The safe boundary is global:
+  # defer the cheap sweep until no verified detached command is still live.
+  _review_detached_run_active && return 0
 
   while IFS= read -r -d '' candidate; do
     top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
@@ -56,12 +91,21 @@ reclaim_detached_review_worktrees() {
     fi
 
     head="$(git -C "$candidate" rev-parse HEAD 2>/dev/null || true)"
-    common_dir="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)"
-    if [ -z "$head" ] || [ -z "$common_dir" ]; then
+    git_dir="$(git -C "$candidate" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    common_dir="$(_review_common_dir "$candidate" || true)"
+    if [ -z "$head" ] || [ -z "$git_dir" ] || [ -z "$common_dir" ]; then
       continue
     fi
+    _review_git_operation_in_progress "$git_dir" && continue
+    if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
+      continue
+    fi
+    dirt_summary="$(printf '%s\n' "$dirt" | awk '
+      /^\?\?/ { u++; next }
+      NF      { m++ }
+      END     { printf "%d modified, %d untracked", m+0, u+0 }')"
     if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then
-      log "review: reclaimed detached worktree $candidate at $head"
+      log "review: reclaimed detached worktree $candidate at $head ($dirt_summary)"
     else
       warn "review: could not reclaim detached worktree $candidate at $head"
     fi

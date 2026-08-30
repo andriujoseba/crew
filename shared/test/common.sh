@@ -34,6 +34,7 @@ git -C "$RW/work/repo" add seed
 git -C "$RW/work/repo" commit -qm seed
 RW_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD >/dev/null 2>&1
+touch "$RW/trees/repo/base-1/uncommitted"
 # Reproduce the incident's retry collision before the reclaim resolves it.
 if git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD \
     >"$RW/collision.out" 2>&1; then
@@ -56,11 +57,83 @@ TREES_DIR="$RW_OLD_TREES"
 t review-reclaim-removes-detached gone "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
 t review-reclaim-preserves-branch present "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
 t review-reclaim-logs-path-and-head 1 \
-  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD" <<<"$RW_OUT")"
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 1 untracked)" <<<"$RW_OUT")"
 TREES_DIR="$RW/trees"
 RW_QUIET="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
 t review-reclaim-empty-is-quiet "" "$RW_QUIET"
+t review-reclaim-noop-preserves-branch present \
+  "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+
+# A parked review command deliberately outlives its launching tick. Its active
+# stamp defers reclaim; once the command completes, the same tree is litter and
+# is reclaimed on the next pass.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" HEAD >/dev/null 2>&1
+(
+  cd "$RW/trees/repo/review-live" || exit
+  RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_HEAD" -- bash -c 'sleep 1; : > review-finished')"
+  printf '%s' "$RW_LIVE_DIGEST" >"$RW/live.digest"
+)
+TREES_DIR="$RW/trees"
+RW_LIVE_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-active-run-is-quiet "" "$RW_LIVE_OUT"
+t review-reclaim-active-run-preserves-worktree present \
+  "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
+RW_LIVE_DIGEST="$(cat "$RW/live.digest")"
+for _ in 1 2 3 4 5; do
+  detached_run_read fixture/repo 7 "$RW_HEAD" "$RW_LIVE_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 1
+done
+t review-reclaim-fixture-run-completes complete "$DETACHED_RUN_STATE"
+TREES_DIR="$RW/trees"
+reclaim_detached_review_worktrees >/dev/null
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-ended-run-tree-removed gone \
+  "$([ ! -e "$RW/trees/repo/review-live" ] && printf gone || printf PRESENT)"
+
+# Git deliberately detaches a builder worktree during a conflicted rebase.
+# Reclaim must leave both the operation and uncommitted material intact.
+printf 'main\n' >"$RW/work/repo/conflict"
+git -C "$RW/work/repo" add conflict
+git -C "$RW/work/repo" commit -qm main-side
+git -C "$RW/work/repo" worktree add -b build/9 "$RW/trees/repo/build-9" HEAD~1 >/dev/null 2>&1
+printf 'branch\n' >"$RW/trees/repo/build-9/conflict"
+git -C "$RW/trees/repo/build-9" add conflict
+git -C "$RW/trees/repo/build-9" commit -qm branch-side
+touch "$RW/trees/repo/build-9/notes.txt"
+git -C "$RW/trees/repo/build-9" rebase master >/dev/null 2>&1 || true
+t review-reclaim-rebase-fixture-is-detached detached \
+  "$(git -C "$RW/trees/repo/build-9" symbolic-ref -q HEAD >/dev/null 2>&1 && printf BRANCH || printf detached)"
+TREES_DIR="$RW/trees"
+reclaim_detached_review_worktrees >/dev/null
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-preserves-rebase-worktree present \
+  "$([ -d "$RW/trees/repo/build-9" ] && printf present || printf MISSING)"
+t review-reclaim-preserves-rebase-dirt present \
+  "$([ -f "$RW/trees/repo/build-9/notes.txt" ] && printf present || printf MISSING)"
+git -C "$RW/trees/repo/build-9" rebase --abort >/dev/null 2>&1
+
+# Bisect is another detached builder operation. The operation marker itself is
+# the boundary; a synthetic marker keeps this fixture independent of how many
+# commits a particular Git version needs before it resolves a bisect.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/build-bisect" HEAD >/dev/null 2>&1
+RW_BISECT_GIT_DIR="$(git -C "$RW/trees/repo/build-bisect" rev-parse --absolute-git-dir)"
+touch "$RW_BISECT_GIT_DIR/BISECT_LOG"
+TREES_DIR="$RW/trees"
+reclaim_detached_review_worktrees >/dev/null
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-preserves-bisect-worktree present \
+  "$([ -d "$RW/trees/repo/build-bisect" ] && printf present || printf MISSING)"
+rm -f "$RW_BISECT_GIT_DIR/BISECT_LOG"
+
+# A main clone reports `.git` as its common dir. Resolution is rooted at the
+# candidate, never at the duty process cwd.
+mkdir -p "$RW/nested/repo"
+git -C "$RW/nested/repo" init -q
+t review-reclaim-common-dir-is-absolute "$RW/nested/repo/.git" \
+  "$(_review_common_dir "$RW/nested/repo")"
 
 # MUST FAIL: replace detached-HEAD discrimination with a review-* name check.
 # The auxiliary base-* fixture then leaks, which is the incident's exact
