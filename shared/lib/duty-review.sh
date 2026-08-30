@@ -40,7 +40,7 @@ REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # zero extra API cost (claude-bot's cast#143 fix). Consumed by duty-builder.
 REVIEW_MY_PR_REPOS=""
 
-# rereq_decision <mine_oid> <head> <mine_state> <mine_at> <req_at> [auto_on]
+# rereq_decision <mine_oid> <head> <mine_state> <mine_at> <req_at> [auto_on] [park_state]
 # The re-request policy as a PURE function, so every transition is fixture-
 # testable (#114). Emits exactly one of:
 #   queue        — the head moved past my verdict, OR (the #114 fix) a
@@ -51,6 +51,7 @@ REVIEW_MY_PR_REPOS=""
 #   auto-approve — my standing APPROVED covers this head and a newer re-request
 #                  arrived. ceremony#94's operator ruling: a stale approval must
 #                  not sit as a blocker. This narrowing SERVES that intent.
+#   parked       — detached verification is still running for this PR/head.
 #   skip         — my verdict covers this head and no newer re-request exists
 #                  (request mid-clear or stale search index).
 #
@@ -65,6 +66,11 @@ REVIEW_MY_PR_REPOS=""
 # fine differed by configuration, not by engine.
 rereq_decision() {
   local mine_oid="$1" head="$2" mine_state="$3" mine_at="$4" req_at="$5" auto="${6:-1}"
+  local park_state="${7:-none}"
+  case "$park_state" in
+    parked) echo parked; return 0 ;;
+    ready|expired) echo queue; return 0 ;;
+  esac
   if [ "$mine_oid" != "$head" ]; then echo queue; return 0; fi
   if [ "$req_at" != "-" ] && [ "$mine_at" != "-" ] && [[ "$req_at" > "$mine_at" ]]; then
     if [ "$mine_state" = "APPROVED" ] && [ "$auto" = "1" ]; then echo auto-approve; else echo queue; fi
@@ -200,6 +206,7 @@ _mark_addressing() {
 
 duty_review() {
   local candidates="" page SR sweep_complete=1 acted_prs=""
+  local -A candidate_heads=() park_states=() park_results=() park_reasons=()
   # The registry is the scope. Object endpoints only — one authoritative
   # pulls page per carried repo, never the lagging search index.
   while IFS= read -r SR; do
@@ -275,8 +282,13 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     # a re-request over my STANDING verdict must branch on whether that verdict
     # is an APPROVED (auto-approvable) or a live block (a real re-review is owed).
     read -r head mine_oid mine_at mine_state req_at <<<"$fields"
+    candidate_heads["$SR#$N"]="$head"
+    review_park_inspect "$SR" "$N" "$head"
+    park_states["$SR#$N"]="$REVIEW_PARK_STATE"
+    park_results["$SR#$N"]="$REVIEW_PARK_RESULTS"
+    park_reasons["$SR#$N"]="$REVIEW_PARK_REASON"
 
-    decision="$(rereq_decision "$mine_oid" "$head" "$mine_state" "$mine_at" "$req_at" "${AUTO_APPROVE_REREQUEST:-1}")"
+    decision="$(rereq_decision "$mine_oid" "$head" "$mine_state" "$mine_at" "$req_at" "${AUTO_APPROVE_REREQUEST:-1}" "$REVIEW_PARK_STATE")"
     case "$decision" in
       auto-approve)
         # My standing APPROVED covers this head and a newer re-request arrived
@@ -318,6 +330,9 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         fi
         queue=1
         ;;
+      parked)
+        log "review: $SR#$N parked at head ${head:0:12} (${REVIEW_PARK_REASON:-detached verification still running}) — dispatch suppressed"
+        ;;
       skip)
         log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
         ;;
@@ -355,7 +370,8 @@ $key $updated"
 
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
-  local dir slug prompt prs check_evidence
+  local dir slug prompt prs check_evidence expected_heads park_evidence ready_prs
+  local commit_items captured_prs key_pr updated
   for SR in "${repo_order[@]}"; do
     prs="${repo_prs[$SR]% }"
     slug="${SR//\//__}"
@@ -363,18 +379,52 @@ $key $updated"
     dir="$WORK_DIR/$slug-review"
     ensure_checkout "$SR" "$dir" || continue
     check_evidence="$(_review_check_evidence_list "$SR" "$prs")"
+    expected_heads=""; park_evidence=""; ready_prs=""
+    for N in $prs; do
+      expected_heads="$expected_heads $N=${candidate_heads["$SR#$N"]}"
+      if [ "${park_states["$SR#$N"]:-none}" = ready ]; then
+        ready_prs="$ready_prs $N"
+        park_evidence="${park_evidence}${park_evidence:+$'\n'}$SR#$N at ${candidate_heads["$SR#$N"]}: ${park_reasons["$SR#$N"]}\n${park_results["$SR#$N"]}"
+      fi
+    done
+    expected_heads="${expected_heads# }"; ready_prs="${ready_prs# }"
     prompt="$(render_prompt review.txt ME="$ME" REPO="$SR" PRS="$prs" \
-      BIN="$BIN_DIR" WT_DIR="$TREES_DIR/$slug" \
+      BIN="$BIN_DIR" DUTY="$DUTY_DIR" WT_DIR="$TREES_DIR/$slug" \
       MARK_REVIEWING="$MARK_REVIEWING" \
       HEAD_CHECKS="$check_evidence" \
+      PARK_RESULTS="${park_evidence:--}" \
       ONESHOT_RULES="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")")"
     RUN_SESSION_RC=1
+    RUN_SESSION_LOG=""
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
     # Commit exactly the PRs named in this repo's prompt, and only when the
     # session completed. A crash or timeout must retry; a completed session
     # that declined or could not submit must settle until the PR changes.
     if [ "${RUN_SESSION_RC:-1}" -eq 0 ]; then
-      printf '%s\n' "${repo_items[$SR]}" | ledger_commit "$DUTY_DIR/.seen-review"
+      review_park_capture "${RUN_SESSION_LOG:-}" "$SR" "$expected_heads"
+      if [ "$REVIEW_PARK_CAPTURE_INVALID" -eq 1 ]; then
+        warn "review: $SR completed with an invalid PARKED declaration — withholding its seen-ledger commit so the request retries"
+      else
+        captured_prs=" $REVIEW_PARK_CAPTURED "
+        commit_items=""
+        while read -r key updated; do
+          [ -n "${updated:-}" ] || continue
+          key_pr="${key##*#}"
+          if [[ "$captured_prs" != *" $key_pr "* ]]; then
+            commit_items="$commit_items
+$key $updated"
+          fi
+        done <<<"${repo_items[$SR]}"
+        printf '%s\n' "$commit_items" | ledger_commit "$DUTY_DIR/.seen-review"
+        # A ready park is consumed only by a completed follow-up session. If
+        # that session declared another park for the same PR, capture replaced
+        # the record and it remains the next tick's source of truth.
+        for N in $ready_prs; do
+          if [[ "$captured_prs" != *" $N "* ]]; then
+            review_park_clear "$SR" "$N" "${candidate_heads["$SR#$N"]}"
+          fi
+        done
+      fi
     fi
     # These PRs may now carry a verdict this session landed — evaluate each for
     # state:addressing (#130), regardless of rc: a session that submitted a

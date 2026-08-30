@@ -42,6 +42,14 @@ _detached_valid_digest() {
   [[ "$1" =~ ^[0-9a-f]{64}$ ]]
 }
 
+_detached_boot_id() {
+  tr -d '\n' </proc/sys/kernel/random/boot_id 2>/dev/null
+}
+
+_detached_pid_start() {
+  awk '{ print $22 }' "/proc/$1/stat" 2>/dev/null
+}
+
 # run_detached REPO PR HEAD -- COMMAND [ARG...]
 #
 # Launch COMMAND in a fresh session/process group, write its immutable launch
@@ -57,7 +65,7 @@ run_detached() {
   [ "$#" -gt 0 ] || return 2
   _detached_valid_subject "$repo" "$pr" "$head" || return 2
 
-  local command_text digest dir stamp log tmp pid started command_b64 state
+  local command_text digest dir stamp log tmp pid pid_start boot_id started command_b64 state
   printf -v command_text '%q ' "$@"
   command_text="${command_text% }"
   digest="$(printf '%s\0' "$command_text" | sha256sum | awk '{print $1}')"
@@ -67,9 +75,9 @@ run_detached() {
   mkdir -p "$dir" || return 2
 
   if [ -f "$stamp" ]; then
-    state="$(_detached_field "$stamp" state)"
-    if [ "$state" = complete ] \
-      || { [ "$state" = running ] && kill -0 "$(_detached_field "$stamp" pid)" 2>/dev/null; }; then
+    detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
+    state="$DETACHED_RUN_STATE"
+    if [ "$state" = complete ] || [ "$state" = running ]; then
       printf '%s\n' "$digest"
       return 0
     fi
@@ -94,13 +102,27 @@ run_detached() {
     mv -f "$tmp" "$stamp"
   ' _ "$stamp" "$log" "$@" </dev/null >/dev/null 2>&1 &
   pid=$!
+  pid_start="$(_detached_pid_start "$pid")"
+  boot_id="$(_detached_boot_id)"
+  if [[ ! "$pid_start" =~ ^[0-9]+$ ]] || [ -z "$boot_id" ]; then
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    return 2
+  fi
 
-  tmp="$(mktemp "$dir/.launch.XXXXXX")" || return 2
+  tmp="$(mktemp "$dir/.launch.XXXXXX")" || {
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    return 2
+  }
   printf '%s\n' \
     'version=1' "repo=$repo" "pr=$pr" "head=$head" "digest=$digest" \
     "command_b64=$command_b64" "start_time=$started" "pid=$pid" \
+    "pid_start=$pid_start" "boot_id=$boot_id" \
     "log_path=$log" 'state=running' >"$tmp"
-  mv -f "$tmp" "$stamp" || return 2
+  mv -f "$tmp" "$stamp" || {
+    rm -f "$tmp"
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    return 2
+  }
   printf '%s\n' "$digest"
   return 0
 }
@@ -109,7 +131,7 @@ run_detached() {
 # are exposed through DETACHED_RUN_* only on `running` or `complete`.
 detached_run_read() {
   local repo="$1" pr="$2" head="$3" digest="$4"
-  local stamp state pid status finish log command_b64
+  local stamp state pid pid_start boot_id status finish log command_b64
   DETACHED_RUN_STATE=unreadable
   DETACHED_RUN_PID="" DETACHED_RUN_STATUS="" DETACHED_RUN_FINISH=""
   DETACHED_RUN_LOG="" DETACHED_RUN_COMMAND=""
@@ -125,9 +147,12 @@ detached_run_read() {
     || { printf unreadable; return 0; }
   state="$(_detached_field "$stamp" state)"
   pid="$(_detached_field "$stamp" pid)"
+  pid_start="$(_detached_field "$stamp" pid_start)"
+  boot_id="$(_detached_field "$stamp" boot_id)"
   log="$(_detached_field "$stamp" log_path)"
   command_b64="$(_detached_field "$stamp" command_b64)"
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [ -n "$log" ] && [ -n "$command_b64" ] \
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [[ "$pid_start" =~ ^[0-9]+$ ]] \
+    && [ -n "$boot_id" ] && [ -n "$log" ] && [ -n "$command_b64" ] \
     || { printf unreadable; return 0; }
   DETACHED_RUN_PID="$pid"
   DETACHED_RUN_LOG="$log"
@@ -135,7 +160,9 @@ detached_run_read() {
     || { printf unreadable; return 0; }
   case "$state" in
     running)
-      if kill -0 "$pid" 2>/dev/null; then
+      if [ "$boot_id" = "$(_detached_boot_id)" ] \
+        && [ "$pid_start" = "$(_detached_pid_start "$pid")" ] \
+        && kill -0 "$pid" 2>/dev/null; then
         DETACHED_RUN_STATE=running
         printf running
       else
@@ -158,10 +185,15 @@ detached_run_read() {
 }
 
 detached_run_abandon() {
-  local repo="$1" pr="$2" head="$3" digest="$4" stamp pid
+  local repo="$1" pr="$2" head="$3" digest="$4" stamp pid pid_start boot_id state
   stamp="$(_detached_run_stamp "$repo" "$pr" "$head" "$digest")"
   pid="$(_detached_field "$stamp" pid)"
-  if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+  pid_start="$(_detached_field "$stamp" pid_start)"
+  boot_id="$(_detached_field "$stamp" boot_id)"
+  state="$(_detached_field "$stamp" state)"
+  if [ "$state" = running ] && [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
+    && [ "$boot_id" = "$(_detached_boot_id)" ] \
+    && [ "$pid_start" = "$(_detached_pid_start "$pid")" ]; then
     kill -TERM -- "-$pid" 2>/dev/null || true
   fi
   rm -f "$stamp" 2>/dev/null || true
@@ -187,4 +219,146 @@ review_park_write() {
 
 review_park_clear() {
   rm -f "$(_review_park_path "$1" "$2" "$3")" 2>/dev/null || true
+}
+
+_review_park_valid_digests() {
+  local digests="$1" digest
+  [ -n "$digests" ] || return 1
+  IFS=, read -ra _REVIEW_PARK_DIGESTS <<<"$digests"
+  for digest in "${_REVIEW_PARK_DIGESTS[@]}"; do
+    _detached_valid_digest "$digest" || return 1
+  done
+}
+
+# review_park_capture LOG EXPECTED_REPO "PR=HEAD ..." — consume standalone
+# declarations from one completed reviewer session:
+#
+#   PARKED owner/repo#7@<40-hex-head> runs=<digest[,digest]> reason=<base64>
+#
+# The explicit subject prevents prose from one PR in a batched session from
+# parking another. An attempted but malformed declaration makes the caller
+# withhold its seen-ledger commit, so a typo retries instead of going silent.
+review_park_capture() {
+  local log="$1" expected_repo="$2" expected_heads="$3"
+  local line marker subject runs reason extra repo tail pr head digests reason_b64 pair allowed
+  REVIEW_PARK_CAPTURED=""
+  REVIEW_PARK_CAPTURE_INVALID=0
+  [ -f "$log" ] || return 0
+  while IFS= read -r line; do
+    [[ "$line" == PARKED\ * ]] || continue
+    read -r marker subject runs reason extra <<<"$line"
+    if [ "$marker" != PARKED ] || [ -n "${extra:-}" ] \
+      || [[ "$subject" != *#*@* ]] \
+      || [[ "$runs" != runs=* ]] || [[ "$reason" != reason=* ]]; then
+      REVIEW_PARK_CAPTURE_INVALID=1
+      continue
+    fi
+    repo="${subject%%#*}"
+    tail="${subject#*#}"; pr="${tail%%@*}"; head="${tail#*@}"
+    digests="${runs#runs=}"; reason_b64="${reason#reason=}"
+    allowed=0
+    for pair in $expected_heads; do
+      if [ "$pair" = "$pr=$head" ]; then allowed=1; break; fi
+    done
+    if [ "$repo" != "$expected_repo" ] || [ "$allowed" -ne 1 ] \
+      || ! _detached_valid_subject "$repo" "$pr" "$head" \
+      || ! _review_park_valid_digests "$digests" \
+      || ! printf '%s' "$reason_b64" | base64 -d >/dev/null 2>&1; then
+      REVIEW_PARK_CAPTURE_INVALID=1
+      continue
+    fi
+    review_park_write "$repo" "$pr" "$head" "$digests" "$reason_b64" || {
+      REVIEW_PARK_CAPTURE_INVALID=1
+      continue
+    }
+    REVIEW_PARK_CAPTURED="$REVIEW_PARK_CAPTURED $pr"
+  done <"$log"
+  REVIEW_PARK_CAPTURED="${REVIEW_PARK_CAPTURED# }"
+  return 0
+}
+
+_review_park_rewrite_ticks() {
+  local path="$1" ticks="$2" dir tmp
+  dir="${path%/*}"
+  tmp="$(mktemp "$dir/.ticks.XXXXXX")" || return 2
+  awk -F= '$1 != "ticks"' "$path" >"$tmp" 2>/dev/null || { rm -f "$tmp"; return 2; }
+  printf 'ticks=%s\n' "$ticks" >>"$tmp"
+  mv -f "$tmp" "$path"
+}
+
+_review_park_abandon_all() {
+  local repo="$1" pr="$2" head="$3" digests="$4" digest
+  IFS=, read -ra _REVIEW_PARK_DIGESTS <<<"$digests"
+  for digest in "${_REVIEW_PARK_DIGESTS[@]}"; do
+    detached_run_abandon "$repo" "$pr" "$head" "$digest"
+  done
+  review_park_clear "$repo" "$pr" "$head"
+}
+
+# review_park_inspect REPO PR HEAD — set REVIEW_PARK_STATE to none, parked,
+# ready, or expired. A ready result remains recorded until the resumed session
+# completes, so a crash retries with the same evidence instead of re-running.
+review_park_inspect() {
+  local repo="$1" pr="$2" head="$3" path version stored_repo stored_pr stored_head
+  local digests reason_b64 ticks next_ticks digest any_running=0 result="" command_b64
+  REVIEW_PARK_STATE=none
+  REVIEW_PARK_RESULTS=""
+  REVIEW_PARK_REASON=""
+  path="$(_review_park_path "$repo" "$pr" "$head")"
+  [ -f "$path" ] || return 0
+  version="$(_detached_field "$path" version)"
+  stored_repo="$(_detached_field "$path" repo)"
+  stored_pr="$(_detached_field "$path" pr)"
+  stored_head="$(_detached_field "$path" head)"
+  digests="$(_detached_field "$path" digests)"
+  reason_b64="$(_detached_field "$path" reason_b64)"
+  ticks="$(_detached_field "$path" ticks)"
+  if [ "$version" != 1 ] || [ "$stored_repo" != "$repo" ] \
+    || [ "$stored_pr" != "$pr" ] || [ "$stored_head" != "$head" ] \
+    || ! _review_park_valid_digests "$digests" \
+    || [[ ! "$ticks" =~ ^[0-9]+$ ]] \
+    || ! REVIEW_PARK_REASON="$(printf '%s' "$reason_b64" | base64 -d 2>/dev/null)"; then
+    warn "review: $repo#$pr park at ${head:0:12} is unreadable — expiring and re-dispatching"
+    _review_park_abandon_all "$repo" "$pr" "$head" "$digests"
+    REVIEW_PARK_STATE=expired
+    return 0
+  fi
+
+  IFS=, read -ra _REVIEW_PARK_DIGESTS <<<"$digests"
+  for digest in "${_REVIEW_PARK_DIGESTS[@]}"; do
+    detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
+    case "$DETACHED_RUN_STATE" in
+      running) any_running=1 ;;
+      complete)
+        command_b64="$(printf '%s' "$DETACHED_RUN_COMMAND" | base64 | tr -d '\n')"
+        result="${result}${result:+$'\n'}- command_b64=$command_b64 exit=$DETACHED_RUN_STATUS finished=$DETACHED_RUN_FINISH log=$DETACHED_RUN_LOG"
+        ;;
+      *)
+        warn "review: $repo#$pr park at ${head:0:12} lost detached run $digest — expiring and re-dispatching"
+        _review_park_abandon_all "$repo" "$pr" "$head" "$digests"
+        REVIEW_PARK_STATE=expired
+        return 0
+        ;;
+    esac
+  done
+
+  if [ "$any_running" -eq 1 ]; then
+    next_ticks=$((ticks + 1))
+    if [ "$next_ticks" -gt "$REVIEW_PARK_TICK_LIMIT" ]; then
+      warn "review: $repo#$pr park at ${head:0:12} exceeded $REVIEW_PARK_TICK_LIMIT ticks — abandoning and re-dispatching"
+      _review_park_abandon_all "$repo" "$pr" "$head" "$digests"
+      REVIEW_PARK_STATE=expired
+    elif _review_park_rewrite_ticks "$path" "$next_ticks"; then
+      REVIEW_PARK_STATE=parked
+    else
+      warn "review: $repo#$pr could not advance its park tick — expiring and re-dispatching"
+      _review_park_abandon_all "$repo" "$pr" "$head" "$digests"
+      REVIEW_PARK_STATE=expired
+    fi
+    return 0
+  fi
+
+  REVIEW_PARK_RESULTS="$result"
+  REVIEW_PARK_STATE=ready
+  return 0
 }
