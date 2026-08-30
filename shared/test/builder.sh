@@ -26,6 +26,7 @@ mkdir -p "$TMP/prompts"
 # --- #530: the rendered reviewer prompt owns bounded long-command waits -----
 D530_RENDERED="$(PROMPTS_DIR="$SHARED/prompts" render_prompt review.txt \
   ME=fixture-reviewer REPO=fx/repo PRS=7 BIN=/duty/bin WT_DIR=/duty/trees \
+  DUTY=/duty PARK_RESULTS=- \
   MARK_REVIEWING='reviewing' HEAD_CHECKS='- fx/repo#7: none at this head abc123.' \
   ONESHOT_RULES='one-shot')"
 if grep -Fq 'never poll on a pattern the polling shell itself carries' <<<"$D530_RENDERED" &&
@@ -78,6 +79,36 @@ else
   r1=MISSING
 fi
 t d532-rendered-review-bounds-green-evidence bounded "$r1"
+
+# --- #533: reviewer sessions may park on engine-owned detached work --------
+if grep -Fq 'run_detached fx/repo <N> <full-head-sha>' <<<"$D530_RENDERED" \
+  && grep -Fq 'PARKED fx/repo#<N>@<full-head-sha> runs=<digest[,digest]> reason=<base64-reason>' <<<"$D530_RENDERED"; then
+  r1=declared
+else
+  r1=MISSING
+fi
+t d533-rendered-review-declares-detached-park declared "$r1"
+if grep -Fq "post-once.sh fx/repo <N> \"\$park_body\" \"\$park_marker\"" <<<"$D530_RENDERED" \
+  && grep -Fq '<!-- duty:review-park:fx/repo#<N>@<full-head-sha> -->' <<<"$D530_RENDERED"; then
+  r1=idempotent
+else
+  r1=UNKEYED
+fi
+t d533-park-announce-uses-post-once-marker idempotent "$r1"
+# shellcheck disable=SC2016  # backticks and state name are literal prompt prose
+if grep -Fq 'Do not change any PR label or review request' <<<"$D530_RENDERED" \
+  && grep -Fq '`state:bots-reviewing` remains true' <<<"$D530_RENDERED"; then
+  r1=unchanged
+else
+  r1=MUTABLE
+fi
+t d533-prompt-keeps-review-state-unchanged unchanged "$r1"
+if grep -Fq 'DETACHED RESULTS FROM AN EARLIER SESSION: -' <<<"$D530_RENDERED"; then
+  r1=rendered
+else
+  r1=MISSING
+fi
+t d533-park-results-slot-is-rendered rendered "$r1"
 if grep -Fq 'report the conflict in the verdict' <<<"$D530_RENDERED" \
   && grep -Fq 'the environment where the local result ran' <<<"$D530_RENDERED" \
   && grep -Fq 'which evidence you rely on' <<<"$D530_RENDERED"; then
@@ -578,12 +609,13 @@ else
   r1=UNPARTITIONED
 fi
 t review-partitions-before-prompt partitioned "$r1"
-commit_block="$(awk '
-  /if \[ "\$\{RUN_SESSION_RC:-1\}" -eq 0 \]; then/ { inside=1 }
-  inside { print }
-  inside && /^[[:space:]]*fi$/ { exit }
-' "$REVIEW_MOD")"
+# shellcheck disable=SC2016  # source patterns intentionally contain shell syntax
+commit_block="$(sed -n \
+  '/if \[ "${RUN_SESSION_RC:-1}" -eq 0 \]; then/,/# These PRs may now carry/p' \
+  "$REVIEW_MOD")"
+# shellcheck disable=SC2016  # source pattern intentionally contains a variable name
 if grep -Fq "\${repo_items[\$SR]}" <<<"$commit_block" &&
+   grep -Fq 'captured_prs=" $REVIEW_PARK_CAPTURED "' <<<"$commit_block" &&
    grep -Fq "ledger_commit \"\$DUTY_DIR/.seen-review\"" <<<"$commit_block"; then
   r1=exact
 else
@@ -3897,6 +3929,148 @@ t rereq-dismissed-queues                 queue        "$(rereq_decision "$RR_H" 
 t rereq-moved-head-queues                queue        "$(rereq_decision "$RR_OLD" "$RR_H" APPROVED "$RR_T1" "$RR_T2" 1)"
 t rereq-covered-no-newer-request-skips   skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T2" "$RR_T1" 1)"
 t rereq-covered-no-request-at-all-skips  skip         "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T1" - 1)"
+t d533-rereq-running-park-suppresses     parked       "$(rereq_decision - "$RR_H" - - "$RR_T1" 1 parked)"
+t d533-rereq-ready-park-queues           queue        "$(rereq_decision - "$RR_H" - - "$RR_T1" 1 ready)"
+t d533-rereq-expired-park-queues-fresh   queue        "$(rereq_decision "$RR_H" "$RR_H" APPROVED "$RR_T2" "$RR_T1" 1 expired)"
+
+# Drive duty_review, not only rereq_decision: a live park must issue no model
+# dispatch and no label mutation; a completed park dispatches once with its
+# result evidence, clears only after rc=0, and then settles in the seen ledger.
+D533="$TMP/d533"; mkdir -p "$D533/bin" "$D533/work" "$D533/trees" "$D533/prompts"
+printf 'fx/repo\n' >"$D533/repos.txt"
+D533_HEAD=dddddddddddddddddddddddddddddddddddddddd
+D533_NUM=7
+D533_UPDATED=2026-08-30T07:00:00Z
+D533_DISPATCHES="$D533/dispatches"
+D533_GH="$D533/gh"
+D533_PROMPT="$D533/prompt"
+
+d533_tick() (
+  # shellcheck disable=SC2030  # fixture globals are intentionally isolated
+  local DUTY_DIR="$D533" WORK_DIR="$D533/work" TREES_DIR="$D533/trees"
+  # shellcheck disable=SC2030  # fixture globals are intentionally isolated
+  local LOG_DIR="$D533/logs" CONF_DIR="$D533/conf" PROMPTS_DIR="$SHARED/prompts"
+  local BIN_DIR="$D533/bin" REPOS_FILE="$D533/repos.txt"
+  local ME=fixture-reviewer MARK_REVIEWING='reviewing head'
+  local TIMEOUT_REVIEW=30 AUTO_APPROVE_REREQUEST=1 LABEL_ADDRESSING=state:addressing
+  : >"$D533_GH"
+  gh() {
+    printf '%s\n' "$*" >>"$D533_GH"
+    if [ "$1" = api ] && [[ "$2" == repos/fx/repo/pulls\?* ]]; then
+      jq -cn --arg me "$ME" --arg n "$D533_NUM" --arg updated "$D533_UPDATED" \
+        '[{draft:false, requested_reviewers:[{login:$me}],
+           created_at:"2026-08-30T06:00:00Z", updated_at:$updated,
+           number:($n|tonumber), user:{login:"author"}}]'
+      return 0
+    fi
+    if [ "$1" = search ]; then return 0; fi
+    if [ "$1" = api ] && [ "$2" = graphql ]; then
+      printf '%s - - - 2026-08-30T06:30:00Z\n' "$D533_HEAD"
+      return 0
+    fi
+    return 3
+  }
+  ensure_checkout() { mkdir -p "$2/.git"; }
+  _review_check_evidence_list() { printf -- '- %s#%s: fixture evidence.\n' "$1" "$2"; }
+  _mark_addressing() { :; }
+  run_session() {
+    printf '%s\n' "$2" >>"$D533_DISPATCHES"
+    printf '%s' "$5" >"$D533_PROMPT"
+    mkdir -p "$D533/logs"
+    RUN_SESSION_LOG="$D533/logs/review.log"
+    : >"$RUN_SESSION_LOG"
+    [ -z "${D533_PARK_LINE:-}" ] || printf '%s\n' "$D533_PARK_LINE" >"$RUN_SESSION_LOG"
+    RUN_SESSION_RC=0
+  }
+  duty_review
+)
+
+# shellcheck disable=SC2031  # the subshell above cannot change this caller
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+D533_RUNNING="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'sleep 30')"
+D533_REASON="$(printf 'suite still running' | base64 | tr -d '\n')"
+review_park_write fx/repo "$D533_NUM" "$D533_HEAD" "$D533_RUNNING" "$D533_REASON"
+DUTY_DIR="$old_duty"
+rm -f "$D533_DISPATCHES"
+d533_tick
+if [ -f "$D533_DISPATCHES" ]; then r1="$(wc -l <"$D533_DISPATCHES")"; else r1=0; fi
+t d533-running-park-dispatches-no-session 0 "$r1"
+if grep -Eq 'issue edit|add-label|remove-label|requested_reviewers' "$D533_GH"; then r1=MUTATED; else r1=unchanged; fi
+t d533-running-park-mutates-no-label-or-request unchanged "$r1"
+
+# Replace the live park with one whose detached run has completed.
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+detached_run_abandon fx/repo "$D533_NUM" "$D533_HEAD" "$D533_RUNNING"
+D533_DONE="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'printf finished')"
+for _wait in $(seq 1 100); do
+  detached_run_read fx/repo "$D533_NUM" "$D533_HEAD" "$D533_DONE" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 0.02
+done
+review_park_write fx/repo "$D533_NUM" "$D533_HEAD" "$D533_DONE" "$D533_REASON"
+DUTY_DIR="$old_duty"
+d533_tick
+t d533-complete-park-dispatches-once 1 "$(wc -l <"$D533_DISPATCHES")"
+if grep -Fq 'exit=0' "$D533_PROMPT" && grep -Fq "$D533_DONE.log" "$D533_PROMPT"; then r1=handed; else r1=MISSING; fi
+t d533-complete-park-hands-results handed "$r1"
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+if [ -f "$(_review_park_path fx/repo "$D533_NUM" "$D533_HEAD")" ]; then r1=kept; else r1=cleared; fi
+DUTY_DIR="$old_duty"
+t d533-complete-session-clears-park cleared "$r1"
+d533_tick
+t d533-settled-result-does-not-redispatch 1 "$(wc -l <"$D533_DISPATCHES")"
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+if [ -f "$(_detached_run_stamp fx/repo 7 "$D533_HEAD" "$D533_DONE")" ] \
+  || [ -f "$(_detached_run_dir fx/repo 7 "$D533_HEAD")/$D533_DONE.log" ]; then
+  r1=kept
+else
+  r1=collected
+fi
+DUTY_DIR="$old_duty"
+t d533-completed-artifacts-are-collected collected "$r1"
+
+# Drive PARKED capture through the real session-log boundary. The first
+# completed session must withhold this unchanged item from .seen-review; once
+# the run completes, the same updated_at must dispatch exactly one resume.
+D533_NUM=8; D533_HEAD=8888888888888888888888888888888888888888
+D533_UPDATED=2026-08-30T07:30:00Z
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+D533_CAPTURED="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'sleep 0.3; printf captured')"
+DUTY_DIR="$old_duty"
+D533_PARK_LINE="PARKED fx/repo#$D533_NUM@$D533_HEAD runs=$D533_CAPTURED reason=$D533_REASON"
+D533_BEFORE="$(wc -l <"$D533_DISPATCHES")"
+d533_tick
+D533_PARK_LINE=""
+if grep -Fq "fx/repo#$D533_NUM $D533_UPDATED" "$D533/.seen-review"; then r1=committed; else r1=withheld; fi
+t d533-captured-park-withholds-ledger-item withheld "$r1"
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+for _wait in $(seq 1 100); do
+  detached_run_read fx/repo "$D533_NUM" "$D533_HEAD" "$D533_CAPTURED" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 0.02
+done
+DUTY_DIR="$old_duty"
+d533_tick
+t d533-captured-completion-dispatches-once "$((D533_BEFORE + 2))" \
+  "$(wc -l <"$D533_DISPATCHES")"
+
+# At tick 13 the running command is abandoned and the ordinary review path is
+# dispatched in this same tick rather than leaving an unowned gap.
+D533_NUM=9; D533_HEAD=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+D533_EXPIRE="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'sleep 30')"
+review_park_write fx/repo "$D533_NUM" "$D533_HEAD" "$D533_EXPIRE" "$D533_REASON"
+_review_park_rewrite_ticks "$(_review_park_path fx/repo "$D533_NUM" "$D533_HEAD")" "$REVIEW_PARK_TICK_LIMIT"
+DUTY_DIR="$old_duty"
+D533_UPDATED=2026-08-30T08:00:00Z
+D533_EXPIRE_BEFORE="$(wc -l <"$D533_DISPATCHES")"
+d533_tick
+t d533-expired-park-redispatches "$((D533_EXPIRE_BEFORE + 1))" \
+  "$(wc -l <"$D533_DISPATCHES")"
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+if [ -f "$(_review_park_path fx/repo "$D533_NUM" "$D533_HEAD")" ]; then r1=kept; else r1=removed; fi
+DUTY_DIR="$old_duty"
+t d533-expired-park-is-abandoned removed "$r1"
 
 # --- the gate is a whitelist: green or none (danmt's ruling, #64) ------------
 # Codex asked for `$4 == "green"`. The ruling took the pending half of that and
@@ -4027,6 +4201,7 @@ fi
 t handoff-green-gating-called-out called-out "$r1"
 
 # --- configurable doctrine keeps the shipped prompts byte-identical (#76) ---
+# shellcheck disable=SC2031  # d533_tick isolates its PROMPTS_DIR in a subshell
 saved_prompts_dir="$PROMPTS_DIR"
 PROMPTS_DIR="$SHARED/prompts"
 # shellcheck disable=SC2034  # consumed indirectly by sourced render_prompt
@@ -4230,6 +4405,17 @@ d462_uses() {  # d462_uses <function-name> — how many times $BMOD calls it
 d462_reset
 DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
 t d462-decline-lands-on-the-board 1 "$(d462_count)"
+
+# The parked-review prompt uses this same four-argument marker contract. Drive
+# the real helper so a stale three-argument usage assumption cannot rewrite D7.
+d462_reset
+D533_POST_MARK='<!-- duty:review-park:fx/repo#7@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
+D533_POST_BODY="⏸ review parked at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa — suite running
+$D533_POST_MARK"
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D533_POST_BODY" "$D533_POST_MARK" >/dev/null 2>&1
+t d533-park-marker-four-argument-contract 1 "$(d462_count)"
+d462_reset
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
 
 # 2. A SECOND BOX ADDS NOTHING — same conclusion, a body a different model
 # wrote. The marker is the key, so this is one comment.
