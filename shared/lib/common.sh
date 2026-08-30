@@ -38,6 +38,8 @@ source "$_COMMON_LIB_DIR/conf.sh"
 source "$_COMMON_LIB_DIR/checkout.sh"
 # shellcheck source=shared/lib/common/session.sh
 source "$_COMMON_LIB_DIR/session.sh"
+# shellcheck source=shared/lib/common/detached-run.sh
+source "$_COMMON_LIB_DIR/detached-run.sh"
 # shellcheck source=shared/lib/common/breaker.sh
 source "$_COMMON_LIB_DIR/breaker.sh"
 # shellcheck source=shared/lib/common/ledger.sh

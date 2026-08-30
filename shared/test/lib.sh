@@ -20,7 +20,7 @@ ROOT="$(dirname "$SHARED")"
 # module added to shared/lib/common/ brings its suite here in the same change.
 # shellcheck disable=SC2034  # consumed by run.sh and suite-level roster guards
 SUITES=(common common/logging common/operating-limits common/conf common/checkout common/session
-        common/breaker common/ledger common/identity common/tick-health
+        common/detached-run common/breaker common/ledger common/identity common/tick-health
         triage builder hygiene reaper model-prices conf drill vitals)
 PASS=0 FAIL=0
 
