@@ -306,23 +306,44 @@ _session_head() {
 # `(kind, key)` because that pair is what a dispatch resumes: two lanes at the
 # same key are different work, and one lane at two keys is two conversations.
 #
-# The key is folded to a filename alphabet, which can collide where two keys
-# differ only in the characters folded. The collision is not load-bearing:
-# D6.2 compares the recorded head against `$dir`'s, so a stub reached by a
-# colliding key is refused unless it is also at the same commit, and a stub
-# that is refused is discarded rather than resumed.
+# THE PATH IS NOT THE IDENTITY. The key is folded to a filename alphabet, and
+# the fold is lossy: `review foo/bar_baz` and `review foo_bar/baz` both reach
+# `.session-resume.review.foo_bar_baz`. So the identity is carried INSIDE the
+# stub — `_session_resume_record` writes the exact `(kind, key)` and
+# `_session_resume_read` returns nothing for a stub whose pair is not the
+# caller's.
+#
+# Nothing about the head contains this, and an earlier comment here claimed it
+# did (#596 review). Within a lane `$dir` is the repo CLONE, shared by every
+# key in that repo — `run_session review "$SR" "$dir"`, `run_session rebase
+# "$R#$N" "$dir"` — so `_session_head "$dir"` returns the same head for every
+# one of them and D6.2 disambiguates nothing between two keys that alias. What
+# contains it today is only that no pair of live keys aliases, which is a fact
+# about the registry and not a property of this code; the next person widening
+# a key shape would have inherited that comment as a guarantee.
+#
+# A collision therefore costs a LOST resume and never a wrong one: the
+# aliasing dispatch reads the stub, refuses it on the tuple, and — because the
+# stub is consumed on every path, refusal included — deletes it, so both lanes
+# dispatch ordinary fresh sessions. That is D6's failure direction, which the
+# head comparison could not have delivered here.
 _session_resume_state() {
   local kind="$1" key="$2"
   printf '%s/.session-resume.%s.%s' \
     "$DUTY_DIR" "${kind//[^[:alnum:]._-]/_}" "${key//[^[:alnum:]._-]/_}"
 }
 
-# _session_resume_read FILE — the stub's fields, validated, as `k=v` lines; or
-# nothing. NOTHING IS THE ONLY FAILURE MODE, and it is what "a stub that is
-# missing, unreadable, or ambiguous is treated as absent, never as resumable"
-# means in code: a missing file, a short read, a repeated key, a field that is
-# not the shape it has to be, or a line this writer never writes all produce
-# the same empty answer, and the caller then dispatches an ordinary session.
+# _session_resume_read FILE KIND KEY — the stub's fields, validated, as `k=v`
+# lines; or nothing. NOTHING IS THE ONLY FAILURE MODE, and it is what "a stub
+# that is missing, unreadable, or ambiguous is treated as absent, never as
+# resumable" means in code: a missing file, a short read, a repeated key, a
+# field that is not the shape it has to be, a line this writer never writes,
+# OR A STUB WHOSE `(kind, key)` IS NOT THE CALLER'S all produce the same empty
+# answer, and the caller then dispatches an ordinary session.
+#
+# The tuple is a gate and not a datum, so it is checked here and left out of
+# what this prints: `_session_resume_plan` reads the six D6 fields and has the
+# pair in its own arguments already.
 #
 # The read is bounded at 64 lines so a stub that is not one — a log rotated
 # onto the path, a file an operator dropped there — cannot make this loop the
@@ -340,8 +361,8 @@ _session_resume_state() {
 # change never touches. `survivor_count` is also simply the better name: it is
 # what `run_session` already calls this quantity where it emits it.
 _session_resume_read() {
-  local file="$1" line field value lines=0
-  local sid="" head="" wall="" try="" logb="" survivor_count=""
+  local file="$1" want_kind="${2-}" want_key="${3-}" line field value lines=0
+  local kind="" key="" sid="" head="" wall="" try="" logb="" survivor_count=""
   [ -s "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     lines=$((lines + 1))
@@ -352,6 +373,8 @@ _session_resume_read() {
     # is not a field this writer produces, so the stub is not one either.
     [ "$field" != "$line" ] || return 0
     case "$field" in
+      kind) [ -z "$kind" ] || return 0; kind="$value" ;;
+      key)  [ -z "$key" ]  || return 0; key="$value" ;;
       sid)  [ -z "$sid" ]  || return 0; sid="$value" ;;
       head) [ -z "$head" ] || return 0; head="$value" ;;
       wall) [ -z "$wall" ] || return 0; wall="$value" ;;
@@ -361,11 +384,16 @@ _session_resume_read() {
       *) return 0 ;;
     esac
   done <"$file"
-  # Every field is required. A stub carrying five of six is a stub that was
+  # Every field is required. A stub carrying seven of eight is a stub that was
   # half-written when the box died, and the two figures D6 reads are exactly
   # the ones that only exist at the moment of the kill.
-  [ -n "$sid" ] && [ -n "$head" ] && [ -n "$wall" ] \
-    && [ -n "$try" ] && [ -n "$logb" ] && [ -n "$survivor_count" ] || return 0
+  [ -n "$kind" ] && [ -n "$key" ] && [ -n "$sid" ] && [ -n "$head" ] \
+    && [ -n "$wall" ] && [ -n "$try" ] && [ -n "$logb" ] \
+    && [ -n "$survivor_count" ] || return 0
+  # The identity the path could not carry. A stub reached through a colliding
+  # fold names the OTHER lane's pair, and a lane that is not this one is not a
+  # session this dispatch may continue.
+  [ "$kind" = "$want_kind" ] && [ "$key" = "$want_key" ] || return 0
   _session_sid_valid "$sid" || return 0
   { _session_head_valid "$head" || [ "$head" = unknown ]; } || return 0
   case "$wall" in '' | *[!0-9]*) return 0 ;; esac
@@ -410,7 +438,7 @@ _session_resume_plan() {
   _SESSION_RESUMED=no
   _SESSION_TRY=0
   state="$(_session_resume_state "$kind" "$key")"
-  fields="$(_session_resume_read "$state")"
+  fields="$(_session_resume_read "$state" "$kind" "$key")"
   rm -f "$state" 2>/dev/null || true
   [ -n "$fields" ] || return 0
   while IFS='=' read -r field value; do
@@ -497,8 +525,14 @@ _session_identity() {
 # what keeps a stub from outliving the episode that produced it. It returns 0
 # on every path — a recovery mechanism must never be able to fail a session.
 #
-# WHAT IT CARRIES, and why it is six fields rather than D5's four. The `sid`,
-# the head, the wall and the try count are D5's list. `log` and `left` are
+# WHAT IT CARRIES, and why it is eight fields rather than D5's four. The `sid`,
+# the head, the wall and the try count are D5's list. `kind` and `key` are the
+# lane's identity, written because the filename cannot hold it — see
+# `_session_resume_state`, where the fold is lossy — and read back as a gate:
+# a stub whose pair is not the reader's is another lane's and is refused. A
+# key carrying a newline would write a stub its own reader then refuses, which
+# is the same failure direction; no key this engine dispatches has one (`$R`,
+# `$R#$N`, `fleet`). `log` and `left` are
 # D6.3 and D6.4, and they are here because THEY DO NOT EXIST ANYWHERE ELSE AT
 # READ TIME: both are figures #529 takes at the moment the session ends, and a
 # next-tick reader can neither re-stat a log that has been rotated nor ask
@@ -508,7 +542,7 @@ _session_identity() {
 # them, and read by the gate that cannot.
 #
 # The write is not atomic, deliberately. A box that dies mid-write leaves a
-# stub missing fields, and `_session_resume_read` requires all six — so the
+# stub missing fields, and `_session_resume_read` requires all eight — so the
 # truncated stub reads as absent, which is the answer it should get. A rename
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
@@ -524,9 +558,9 @@ _session_resume_record() {
   # whose only possible future is being discarded.
   [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
-  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
-    "$_SESSION_SID" "$(_session_head "$dir")" "$wall" "$_SESSION_TRY" \
-    "$logb" "$survivor_count" >"$state" 2>/dev/null || true
+  printf 'kind=%s\nkey=%s\nsid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
+    "$kind" "$key" "$_SESSION_SID" "$(_session_head "$dir")" "$wall" \
+    "$_SESSION_TRY" "$logb" "$survivor_count" >"$state" 2>/dev/null || true
   return 0
 }
 

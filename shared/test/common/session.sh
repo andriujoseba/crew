@@ -452,7 +452,7 @@ t sid-refuses-a-profile-that-cannot-resume ordinary \
 SID_PLAN_BOX="$(sid_box planonly)"
 sid_plan_verdict() ( # sid_plan_verdict none|both
   local stub="$SID_PLAN_BOX/.session-resume.build.fixture_plan"
-  printf 'sid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\nleft=0\n' \
+  printf 'kind=build\nkey=fixture/plan\nsid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\nleft=0\n' \
     "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work" rev-parse HEAD)" >"$stub"
   DUTY_DIR="$SID_PLAN_BOX"
   unset -f bot_cli_resume_args
@@ -514,6 +514,48 @@ t sid-validator-accepts-the-observed-id ACCEPT \
   "$(sid_valid_says d7d876b7-ae67-47d5-ba46-ce4a32081d20)"
 t sid-unknown-field-stub-is-absent ordinary "$(sid_corrupt_case extra sid_extra_field)"
 t sid-missing-stub-is-absent ordinary "$(sid_corrupt_case removed sid_remove)"
+
+# --- two keys, one filename: the tuple decides, never the path -----------
+#
+# `_session_resume_state` folds the key to a filename alphabet and the fold is
+# lossy, so `fixture/coll_x` and `fixture_coll/x` reach one file. Both
+# dispatches below run in ONE box against ONE work tree, which is the shape a
+# lane actually has — `$dir` is the repo clone, shared by every key in that
+# repo — so the recorded head EQUALS the reading dispatch's head and D6.2
+# cannot be what refuses. Before the tuple was written into the stub, the
+# second lane resumed the first lane's transcript here.
+SID_COLL_A=fixture/coll_x
+SID_COLL_B=fixture_coll/x
+sid_coll_path() ( DUTY_DIR="$TMP/sid-collide"; _session_resume_state build "$1" )
+t sid-two-keys-fold-to-one-stub-path same \
+  "$(sid_same "$(sid_coll_path "$SID_COLL_A")" "$(sid_coll_path "$SID_COLL_B")")"
+
+# The control first, in its own box: this key shape resumes ITSELF. Without it
+# the refusal below would also pass on an engine that had simply stopped
+# resuming keys containing a slash.
+sid_run collctl "$SID_COLL_A" 1 talk-hang both >/dev/null
+sid_coll_ctl_killed="$(sid_of collctl START)"
+t sid-a-colliding-key-shape-still-resumes-its-own-lane same \
+  "$(sid_same \
+    "$(sid_argv_flag "$(sid_run collctl "$SID_COLL_A" 5 reply both)" --resume)" \
+    "$sid_coll_ctl_killed")"
+
+sid_run collide "$SID_COLL_A" 1 talk-hang both >/dev/null
+sid_coll_killed="$(sid_of collide START)"
+SID_COLL_STUB="$(sid_coll_path "$SID_COLL_A")"
+t sid-the-collision-is-at-the-same-head same \
+  "$(sid_same "$(sid_stub_field "$SID_COLL_STUB" head)" \
+    "$(git -C "$TMP/sid-collide/work" rev-parse HEAD)")"
+t sid-the-stub-names-the-lane-that-wrote-it "$SID_COLL_A" \
+  "$(sid_stub_field "$SID_COLL_STUB" key)"
+t sid-a-colliding-key-does-not-resume-the-other-lane ordinary \
+  "$(sid_refusal "$(sid_run collide "$SID_COLL_B" 5 reply both)" collide \
+    "$sid_coll_killed")"
+# The cost of a collision, asserted rather than assumed: a LOST resume. The
+# refusing dispatch consumes the stub it refused, exactly as every other
+# refusal does, so the lane that wrote it dispatches fresh too.
+t sid-a-refused-collision-consumes-the-stub gone \
+  "$([ -e "$SID_COLL_STUB" ] && printf PRESENT || printf gone)"
 
 # --- two consecutive timeouts, exactly one resume (D7) -------------------
 #
