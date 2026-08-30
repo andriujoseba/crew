@@ -36,6 +36,59 @@ t detached-run-command-readable 'bash -c printf\ complete' "$DETACHED_RUN_COMMAN
 t detached-run-carries-own-wall 3600 \
   "$(_detached_field "$(_detached_run_stamp "$REPO" "$PR" "$HEAD" "$DIGEST")" timeout_seconds)"
 
+# A timed-out command can fork descendants that outlive its direct process.
+# Completion with 124 is published only after the detached command group is
+# empty, so the stamp cannot lie about the advertised wall bound.
+old_bound="$DETACHED_RUN_TIMEOUT_SECONDS"
+old_grace="$DETACHED_RUN_KILL_AFTER_SECONDS"
+DETACHED_RUN_TIMEOUT_SECONDS=1
+DETACHED_RUN_KILL_AFTER_SECONDS=1
+TREE_CHILD="$TMP/tree-child.pid"
+# shellcheck disable=SC2016  # fixture program expands these in its child shell
+TREE_DIGEST="$(run_detached "$REPO" 12 3333333333333333333333333333333333333333 \
+  -- bash -c 'sleep 100 & printf "%s\n" "$!" >"$1"; wait' _ "$TREE_CHILD")"
+for _wait in $(seq 1 200); do
+  detached_run_read "$REPO" 12 3333333333333333333333333333333333333333 \
+    "$TREE_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 0.02
+done
+t detached-run-tree-timeout-status 124 "$DETACHED_RUN_STATUS"
+TREE_CHILD_PID="$(cat "$TREE_CHILD")"
+if kill -0 "$TREE_CHILD_PID" 2>/dev/null; then r1=alive; else r1=gone; fi
+t detached-run-tree-gone-before-complete gone "$r1"
+DETACHED_RUN_TIMEOUT_SECONDS="$old_bound"
+DETACHED_RUN_KILL_AFTER_SECONDS="$old_grace"
+
+# If the launcher dies after setsid but before publishing the launch stamp,
+# the detached supervisor's handshake expires instead of spinning forever.
+HANDSHAKE_DUTY="$TMP/handshake-duty"
+# shellcheck disable=SC2016  # fixture program expands these in its child shell
+setsid bash -c '
+  export DUTY_DIR=$1 HOME=$2 XDG_CONFIG_HOME=$3
+  source "$4/lib/common.sh"
+  DETACHED_RUN_HANDSHAKE_SECONDS=1
+  DETACHED_RUN_STAMP_DELAY_SECONDS=30
+  run_detached fixture/repo 13 4444444444444444444444444444444444444444 \
+    -- bash -c "sleep 100"
+' _ "$HANDSHAKE_DUTY" "$HOME" "$XDG_CONFIG_HOME" "$SHARED" &
+HANDSHAKE_LAUNCHER=$!
+HANDSHAKE_SUPERVISOR=""
+for _wait in $(seq 1 100); do
+  HANDSHAKE_SUPERVISOR="$(ps -o pid= --ppid "$HANDSHAKE_LAUNCHER" 2>/dev/null | awk 'NF { print $1; exit }')"
+  [ -n "$HANDSHAKE_SUPERVISOR" ] && break
+  sleep 0.02
+done
+kill -TERM -- "-$HANDSHAKE_LAUNCHER" 2>/dev/null || true
+wait "$HANDSHAKE_LAUNCHER" 2>/dev/null || true
+sleep 1.2
+if [ -n "$HANDSHAKE_SUPERVISOR" ] && kill -0 "$HANDSHAKE_SUPERVISOR" 2>/dev/null; then
+  r1=alive
+else
+  r1=gone
+fi
+t detached-run-handshake-is-bounded gone "$r1"
+
 # The launcher is itself a disposable session/process group. Killing that
 # group must not kill the command run_detached put in a fresh setsid group.
 SURVIVE_DUTY="$TMP/survive-duty"

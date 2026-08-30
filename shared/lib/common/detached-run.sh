@@ -12,9 +12,16 @@
 # spends one fresh review rather than leaving a PR parked forever (#533 D5).
 REVIEW_PARK_TICK_LIMIT=12
 # The process owns the same one-hour ceiling even if its launching session dies
-# before it can emit PARKED. --foreground keeps the command in the setsid group
-# that detached_run_abandon can safely terminate as one unit.
+# before it can emit PARKED. The supervisor and command use separate sessions:
+# that lets the supervisor terminate the command's whole process group and then
+# record completion, while detached_run_abandon signals the supervisor and lets
+# its trap perform the same bounded teardown.
 DETACHED_RUN_TIMEOUT_SECONDS=3600
+DETACHED_RUN_KILL_AFTER_SECONDS=60
+DETACHED_RUN_HANDSHAKE_SECONDS=5
+# Test seam for the otherwise millisecond launch-stamp race. Production keeps
+# this at zero; the mirrored suite delays publication and kills the launcher.
+DETACHED_RUN_STAMP_DELAY_SECONDS=0
 
 _detached_slug() {
   printf '%s' "$1" | tr '/:' '__'
@@ -95,23 +102,76 @@ run_detached() {
   # its pid, and the later launch write erases the completion it raced.
   # shellcheck disable=SC2016  # this program is expanded by the child bash
   setsid bash -c '
-    stamp=$1; log=$2; bound=$3; shift 3
-    while [ ! -f "$stamp" ]; do sleep 0.01; done
+    stamp=$1; log=$2; bound=$3; grace=$4; handshake=$5; shift 5
+    deadline=$((SECONDS + handshake))
+    while [ ! -f "$stamp" ]; do
+      [ "$SECONDS" -lt "$deadline" ] || exit 125
+      sleep 0.01
+    done
+
+    target_pid=
+    stop_target() {
+      [ -n "$target_pid" ] || return 0
+      kill -TERM -- "-$target_pid" 2>/dev/null || return 0
+      stop_deadline=$((SECONDS + grace))
+      while kill -0 -- "-$target_pid" 2>/dev/null \
+        && [ "$SECONDS" -lt "$stop_deadline" ]; do
+        sleep 0.05
+      done
+      kill -KILL -- "-$target_pid" 2>/dev/null || true
+    }
+    interrupted() {
+      trap - TERM HUP INT
+      stop_target
+      exit 143
+    }
+    trap interrupted TERM HUP INT
+
+    setsid "$@" >"$log" 2>&1 &
+    target_pid=$!
+    timed_out="$stamp.timeout.$BASHPID"
+    (
+      sleep "$bound"
+      : >"$timed_out"
+      kill -TERM -- "-$target_pid" 2>/dev/null || true
+      sleep "$grace"
+      kill -KILL -- "-$target_pid" 2>/dev/null || true
+    ) &
+    watchdog=$!
+
     rc=0
-    timeout --foreground -k 60 "$bound" "$@" >"$log" 2>&1 || rc=$?
+    wait "$target_pid" || rc=$?
+    if [ -f "$timed_out" ]; then
+      wait "$watchdog" 2>/dev/null || true
+      rc=124
+    else
+      kill "$watchdog" 2>/dev/null || true
+      wait "$watchdog" 2>/dev/null || true
+      # A command can exit after orphaning descendants in its process group.
+      # Completion is not published until that remainder is gone too.
+      stop_target
+    fi
+    rm -f "$timed_out"
+    trap - TERM HUP INT
     finish=$(date -u "+%Y-%m-%dT%H:%M:%SZ") || finish=unknown
     tmp="$stamp.done.$BASHPID"
     awk -F= '\''$1 != "state" && $1 != "exit_status" && $1 != "finish_time"'\'' \
       "$stamp" >"$tmp" 2>/dev/null || : >"$tmp"
     printf "state=complete\nexit_status=%s\nfinish_time=%s\n" "$rc" "$finish" >>"$tmp"
     mv -f "$tmp" "$stamp"
-  ' _ "$stamp" "$log" "$DETACHED_RUN_TIMEOUT_SECONDS" "$@" </dev/null >/dev/null 2>&1 &
+  ' _ "$stamp" "$log" "$DETACHED_RUN_TIMEOUT_SECONDS" \
+    "$DETACHED_RUN_KILL_AFTER_SECONDS" "$DETACHED_RUN_HANDSHAKE_SECONDS" \
+    "$@" </dev/null >/dev/null 2>&1 &
   pid=$!
   pid_start="$(_detached_pid_start "$pid")"
   boot_id="$(_detached_boot_id)"
   if [[ ! "$pid_start" =~ ^[0-9]+$ ]] || [ -z "$boot_id" ]; then
     kill -TERM -- "-$pid" 2>/dev/null || true
     return 2
+  fi
+
+  if [[ "$DETACHED_RUN_STAMP_DELAY_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    sleep "$DETACHED_RUN_STAMP_DELAY_SECONDS"
   fi
 
   tmp="$(mktemp "$dir/.launch.XXXXXX")" || {
@@ -198,8 +258,11 @@ detached_run_read() {
 }
 
 detached_run_abandon() {
-  local repo="$1" pr="$2" head="$3" digest="$4" stamp pid pid_start boot_id state
+  local repo="$1" pr="$2" head="$3" digest="$4" stamp log pid pid_start boot_id state
+  _detached_valid_subject "$repo" "$pr" "$head" || return 0
+  _detached_valid_digest "$digest" || return 0
   stamp="$(_detached_run_stamp "$repo" "$pr" "$head" "$digest")"
+  log="$(_detached_run_dir "$repo" "$pr" "$head")/$digest.log"
   pid="$(_detached_field "$stamp" pid)"
   pid_start="$(_detached_field "$stamp" pid_start)"
   boot_id="$(_detached_field "$stamp" boot_id)"
@@ -209,7 +272,7 @@ detached_run_abandon() {
     && [ "$pid_start" = "$(_detached_pid_start "$pid")" ]; then
     kill -TERM -- "-$pid" 2>/dev/null || true
   fi
-  rm -f "$stamp" 2>/dev/null || true
+  rm -f "$stamp" "$log" 2>/dev/null || true
   return 0
 }
 
@@ -387,7 +450,7 @@ review_park_inspect() {
     || [[ ! "$ticks" =~ ^[0-9]+$ ]] \
     || ! REVIEW_PARK_REASON="$(printf '%s' "$reason_b64" | base64 -d 2>/dev/null)"; then
     warn "review: $repo#$pr park at ${head:0:12} is unreadable — expiring and re-dispatching"
-    _review_park_abandon_all "$repo" "$pr" "$head" "$digests"
+    _review_park_abandon_file "$path"
     REVIEW_PARK_STATE=expired
     return 0
   fi
