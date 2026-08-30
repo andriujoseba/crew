@@ -20,6 +20,42 @@ BUILDER_MOD="$SHARED/lib/duty-builder.sh"
 # shellcheck source=shared/lib/duty-review.sh
 source "$SHARED/lib/duty-review.sh"
 
+# #597: a killed review never reaches its prompt-owned cleanup, so the next
+# tick reclaims detached worktrees before dispatch. A deliberately misleading
+# base-* name proves detached HEAD — not naming convention — is the boundary;
+# the branch-holding sibling is builder state and must survive.
+RW="$TMP/reclaim-worktrees"
+mkdir -p "$RW/work/repo" "$RW/trees/repo"
+git -C "$RW/work/repo" init -q
+git -C "$RW/work/repo" config user.email fixture@example.com
+git -C "$RW/work/repo" config user.name fixture
+touch "$RW/work/repo/seed"
+git -C "$RW/work/repo" add seed
+git -C "$RW/work/repo" commit -qm seed
+RW_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add -b build/1 "$RW/trees/repo/build-1" HEAD >/dev/null 2>&1
+RW_OLD_TREES="$TREES_DIR"
+TREES_DIR="$RW/trees"
+RW_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-removes-detached gone "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
+t review-reclaim-preserves-branch present "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+t review-reclaim-logs-path-and-head 1 \
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD" <<<"$RW_OUT")"
+TREES_DIR="$RW/trees"
+RW_QUIET="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-empty-is-quiet "" "$RW_QUIET"
+
+# The call itself is the lifecycle guarantee: it precedes every duty dispatch,
+# so a worktree created by this tick cannot be visible to the sweep.
+t review-reclaim-runs-before-any-dispatch before \
+  "$(awk '/^[[:space:]]*reclaim_detached_review_worktrees$/ { rec = NR }
+          /^[[:space:]]*duty_(attention|triage|review|builder)$/ { if (!disp) disp = NR }
+          END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
+      "$SHARED/bin/duty.sh")"
+
 # Shared fixture constructors used by the generic round predicates below.
 RPJQ="$SHARED/lib/jq/request-panel.jq"
 RP_T_VERDICT="2026-08-02T10:32:33Z"

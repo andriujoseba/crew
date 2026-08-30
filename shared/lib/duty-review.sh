@@ -36,6 +36,39 @@
 
 REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# reclaim_detached_review_worktrees — remove throwaway worktrees left by a
+# review session that ended before its own cleanup. The tick-wide flock makes
+# every worktree present at tick start a predecessor's: this runs before any
+# dispatch, so it never races a worktree the current tick is creating (#597).
+#
+# Detached HEAD is the ownership boundary. Reviewers use detached worktrees;
+# builders keep a branch checked out and their recovery belongs to the builder
+# hygiene path. Names are deliberately irrelevant because a reviewer may make
+# an auxiliary worktree such as base-<N> while investigating a collision.
+reclaim_detached_review_worktrees() {
+  local candidate top head common_dir
+
+  while IFS= read -r -d '' candidate; do
+    top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+    [ "$top" = "$candidate" ] || continue
+    if git -C "$candidate" symbolic-ref -q HEAD >/dev/null 2>&1; then
+      continue
+    fi
+
+    head="$(git -C "$candidate" rev-parse HEAD 2>/dev/null || true)"
+    common_dir="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -z "$head" ] || [ -z "$common_dir" ]; then
+      continue
+    fi
+    if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then
+      log "review: reclaimed detached worktree $candidate at $head"
+    else
+      warn "review: could not reclaim detached worktree $candidate at $head"
+    fi
+  done < <(find "$TREES_DIR" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
+  return 0
+}
+
 # Repos where I author an open PR — read off the sweep's own pulls pages at
 # zero extra API cost (claude-bot's cast#143 fix). Consumed by duty-builder.
 REVIEW_MY_PR_REPOS=""
