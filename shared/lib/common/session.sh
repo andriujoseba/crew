@@ -238,15 +238,27 @@ SESSION_RESUME_MAX_TRIES=1
 
 # _session_sid_valid SID — a v4-shaped UUID and nothing else. The shape is
 # checked with a glob and the alphabet with a substitution, so no `[[ =~ ]]`
-# and no fork. Two guards rather than one: the glob fixes the length and the
-# dash positions, the substitution fixes the character set, and neither alone
-# is enough.
+# and no fork. Two guards rather than one, and THE SECOND READS ONLY THE
+# POSITIONS THE FIRST LEFT FREE: the glob fixes the length and pins a dash at
+# 9, 14, 19 and 24; the four dashes are then cut out by position and every one
+# of the remaining thirty-two characters must be hex — dash included in what
+# that refuses.
+#
+# The shape this replaced ran `${1//[0-9a-fA-F-]/}` over the WHOLE string,
+# which strips `-` in every position, so the alphabet guard never constrained
+# where a dash sat and `------------------------------------` passed both
+# guards. A stub carrying it satisfied this reader, reached `bot_cli_resume_args`
+# and burned the episode's one resume on an id no CLI would accept. Failing
+# open is the one direction a validator whose whole job is the failure
+# direction may not fail (#596 review).
 _session_sid_valid() {
-  case "${1:-}" in
+  local sid="${1:-}"
+  case "$sid" in
     ????????-????-????-????-????????????) ;;
     *) return 1 ;;
   esac
-  case "${1//[0-9a-fA-F-]/}" in
+  sid="${sid:0:8}${sid:9:4}${sid:14:4}${sid:19:4}${sid:24:12}"
+  case "${sid//[0-9a-fA-F]/}" in
     '') return 0 ;;
     *) return 1 ;;
   esac

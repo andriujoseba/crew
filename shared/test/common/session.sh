@@ -252,13 +252,29 @@ sid_line() { # sid_line BOX RECORD
 sid_of() { # sid_of BOX RECORD — the sid token, or nothing
   sed -n 's/.* sid=\([^ ]*\).*/\1/p' <<<"$(sid_line "$1" "$2")"
 }
-sid_shape() { # sid_shape VALUE — uuid | unknown | OTHER(<value>)
+# sid_shape VALUE — uuid | unknown | OTHER(<value>). The glob pins the four
+# dashes by position, and the alphabet check then reads ONLY the positions the
+# glob left free. Folding `[0-9a-f-]` over the whole value — what this helper
+# did — calls `------------------------------------` a `uuid`, which is the
+# same classification `_session_sid_valid` was making, so a suite built on this
+# helper could not see the validator's own hole (#596 review).
+sid_shape() {
   case "$1" in
     unknown) printf unknown ;;
     ????????-????-????-????-????????????)
-      case "${1//[0-9a-f-]/}" in '') printf uuid ;; *) printf 'OTHER(%s)' "$1" ;; esac ;;
+      case "${1:0:8}${1:9:4}${1:14:4}${1:19:4}${1:24:12}" in
+        *[!0-9a-f]*) printf 'OTHER(%s)' "$1" ;; *) printf uuid ;;
+      esac ;;
     *) printf 'OTHER(%s)' "$1" ;;
   esac
+}
+# sid_valid_says VALUE — ACCEPT | reject, straight off the shipped validator.
+# The stub cases below read the classification through a whole dispatch, which
+# is the behaviour that matters; this reads the guard itself, so a hole is
+# named where it lives as well as where it is felt.
+sid_valid_says() {
+  _session_sid_valid "$1" && printf ACCEPT || printf reject
+  return 0
 }
 # sid_same A B — same | DIFFERENT | EMPTY. The third answer is the point of the
 # helper: every identity assertion below compares two values that are both
@@ -459,6 +475,17 @@ sid_truncate() { head -3 "$1" >"$1.t" && mv "$1.t" "$1"; }
 sid_garble() { printf 'this is not a stub\n' >"$1"; }
 sid_repeat() { cat "$1" "$1" >"$1.t" && mv "$1.t" "$1"; }
 sid_forge_sid() { sed -i 's/^sid=.*/sid=not-a-uuid/' "$1"; }
+# Two ids that are the RIGHT LENGTH with dashes in the right places and are
+# still not ids. `not-a-uuid` above is refused by the length glob alone, so it
+# says nothing about the alphabet guard; these two are refused by the alphabet
+# guard alone, and both were ACCEPTED before the review — the all-dash value
+# reached `--resume` and spent the episode's one try on an id the CLI rejects.
+sid_forge_all_dashes() {
+  sed -i 's/^sid=.*/sid=------------------------------------/' "$1"
+}
+sid_forge_shifted_dash() {
+  sed -i 's/^sid=.*/sid=-d7d876b-ae67-47d5-ba46-ce4a32081d20/' "$1"
+}
 sid_remove() { rm -f "$1"; }
 # A stub whose six fields are all present and all valid, carrying one field
 # this reader does not know. It is the only corrupt shape here that reaches the
@@ -473,6 +500,18 @@ t sid-truncated-stub-is-absent ordinary "$(sid_corrupt_case truncated sid_trunca
 t sid-unparseable-stub-is-absent ordinary "$(sid_corrupt_case garbled sid_garble)"
 t sid-ambiguous-stub-is-absent ordinary "$(sid_corrupt_case repeated sid_repeat)"
 t sid-malformed-id-is-absent ordinary "$(sid_corrupt_case forged sid_forge_sid)"
+t sid-all-dash-id-is-absent ordinary "$(sid_corrupt_case alldash sid_forge_all_dashes)"
+t sid-shifted-dash-id-is-absent ordinary \
+  "$(sid_corrupt_case shifted sid_forge_shifted_dash)"
+# …and the same two read at the guard rather than through the dispatch, so the
+# classification is pinned where it is made. The third assertion is the control
+# that keeps the pair from passing on a validator that refuses everything.
+t sid-validator-refuses-an-all-dash-id reject \
+  "$(sid_valid_says '------------------------------------')"
+t sid-validator-refuses-a-shifted-dash-id reject \
+  "$(sid_valid_says '-d7d876b-ae67-47d5-ba46-ce4a32081d20')"
+t sid-validator-accepts-the-observed-id ACCEPT \
+  "$(sid_valid_says d7d876b7-ae67-47d5-ba46-ce4a32081d20)"
 t sid-unknown-field-stub-is-absent ordinary "$(sid_corrupt_case extra sid_extra_field)"
 t sid-missing-stub-is-absent ordinary "$(sid_corrupt_case removed sid_remove)"
 
