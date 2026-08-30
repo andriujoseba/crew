@@ -315,9 +315,21 @@ _session_resume_state() {
 # The read is bounded at 64 lines so a stub that is not one — a log rotated
 # onto the path, a file an operator dropped there — cannot make this loop the
 # expensive part of a dispatch.
+#
+# THE `left=` FIELD IS READ INTO `survivor_count`, AND THE MISMATCH IS
+# DELIBERATE — do not "tidy" the local back to `left`. The wire name is fixed
+# by #529 and stays on disk; the local is free, and a local named `left` is
+# not. `[ "$survivor_count" -eq 0 ]` in `_session_resume_plan` is an
+# arithmetic context, which is what tells shellcheck the name is numeric — and
+# ci-shell runs `shellcheck -x`, so every name declared here is visible in
+# every file that reaches this one through a `source`. `shared/test/builder.sh`
+# has an unquoted bare word `r1=left-alone`; with a numeric `left` in scope
+# that reads as `left - alone` and SC2100 fails the whole job, in a file this
+# change never touches. `survivor_count` is also simply the better name: it is
+# what `run_session` already calls this quantity where it emits it.
 _session_resume_read() {
   local file="$1" line field value lines=0
-  local sid="" head="" wall="" try="" logb="" left=""
+  local sid="" head="" wall="" try="" logb="" survivor_count=""
   [ -s "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     lines=$((lines + 1))
@@ -333,7 +345,7 @@ _session_resume_read() {
       wall) [ -z "$wall" ] || return 0; wall="$value" ;;
       try)  [ -z "$try" ]  || return 0; try="$value" ;;
       log)  [ -z "$logb" ] || return 0; logb="$value" ;;
-      left) [ -z "$left" ] || return 0; left="$value" ;;
+      left) [ -z "$survivor_count" ] || return 0; survivor_count="$value" ;;
       *) return 0 ;;
     esac
   done <"$file"
@@ -341,15 +353,15 @@ _session_resume_read() {
   # half-written when the box died, and the two figures D6 reads are exactly
   # the ones that only exist at the moment of the kill.
   [ -n "$sid" ] && [ -n "$head" ] && [ -n "$wall" ] \
-    && [ -n "$try" ] && [ -n "$logb" ] && [ -n "$left" ] || return 0
+    && [ -n "$try" ] && [ -n "$logb" ] && [ -n "$survivor_count" ] || return 0
   _session_sid_valid "$sid" || return 0
   { _session_head_valid "$head" || [ "$head" = unknown ]; } || return 0
   case "$wall" in '' | *[!0-9]*) return 0 ;; esac
   case "$try" in '' | *[!0-9]*) return 0 ;; esac
   case "$logb" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
-  case "$left" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
+  case "$survivor_count" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
   printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
-    "$sid" "$head" "$wall" "$try" "$logb" "$left"
+    "$sid" "$head" "$wall" "$try" "$logb" "$survivor_count"
 }
 
 # _session_resume_plan KIND KEY DIR — decide whether this dispatch continues
@@ -381,7 +393,7 @@ _session_resume_read() {
 # would be the second resume D7 exists to forbid.
 _session_resume_plan() {
   local kind="$1" key="$2" dir="$3" state fields
-  local sid="" head="" try="" logb="" left=""
+  local sid="" head="" try="" logb="" survivor_count=""
   _SESSION_SID=""
   _SESSION_RESUMED=no
   _SESSION_TRY=0
@@ -392,13 +404,13 @@ _session_resume_plan() {
   while IFS='=' read -r field value; do
     case "$field" in
       sid) sid="$value" ;; head) head="$value" ;; try) try="$value" ;;
-      log) logb="$value" ;; left) left="$value" ;;
+      log) logb="$value" ;; left) survivor_count="$value" ;;
     esac
   done <<<"$fields"
   [ "$head" != unknown ] || return 0
   [ "$head" = "$(_session_head "$dir")" ] || return 0
   [ "$logb" != unknown ] && [ "$logb" -gt 0 ] || return 0
-  [ "$left" != unknown ] && [ "$left" -eq 0 ] || return 0
+  [ "$survivor_count" != unknown ] && [ "$survivor_count" -eq 0 ] || return 0
   [ "$try" -lt "$SESSION_RESUME_MAX_TRIES" ] || return 0
   declare -F bot_cli_resume_args >/dev/null 2>&1 || return 0
   _SESSION_SID="$sid"
@@ -488,7 +500,7 @@ _session_identity() {
 # truncated stub reads as absent, which is the answer it should get. A rename
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
-  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" left="$7"
+  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
   local state
   state="$(_session_resume_state "$kind" "$key")"
   if [ "$rc" -ne 124 ]; then
@@ -502,7 +514,7 @@ _session_resume_record() {
   case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
   printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
     "$_SESSION_SID" "$(_session_head "$dir")" "$wall" "$_SESSION_TRY" \
-    "$logb" "$left" >"$state" 2>/dev/null || true
+    "$logb" "$survivor_count" >"$state" 2>/dev/null || true
   return 0
 }
 
