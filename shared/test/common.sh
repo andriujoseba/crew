@@ -75,7 +75,7 @@ git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_
 (
   cd "$RW/work/repo" || exit
   RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_LIVE_HEAD" -- \
-    bash -c 'sleep 1; : > "$1/review-finished"' _ "$RW/trees/repo/review-live")"
+    bash -c "sleep 1; : > \"\$1/review-finished\"" _ "$RW/trees/repo/review-live")"
   printf '%s' "$RW_LIVE_DIGEST" >"$RW/live.digest"
 )
 TREES_DIR="$RW/trees"
@@ -231,7 +231,7 @@ t review-reclaim-below-dispatch-mutation-reds AFTER \
   "$(rw_tick_reclaim_order "$RW_ORDER_MUT")"
 RW_DEAD_MUT="$TMP/duty-reclaim-dead-helper.sh"
 awk '/^reclaim_detached_review_worktrees$/ {
-       print "_dead_reclaim() {"; print "  reclaim_detached_review_worktrees"; print "}"; next
+       print "_dead_reclaim" "() {"; print "  reclaim_detached_review_worktrees"; print "}"; next
      } { print }' "$SHARED/bin/duty.sh" >"$RW_DEAD_MUT"
 t review-reclaim-dead-call-mutation-reds AFTER \
   "$(rw_tick_reclaim_order "$RW_DEAD_MUT")"
