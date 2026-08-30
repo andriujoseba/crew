@@ -269,9 +269,16 @@ _session_orphan_scan() {
 # measurements use `unknown` (`acted=unknown`, `tier=unknown`, session and pool
 # identity). The reconciler knows the session started and knows nobody is
 # running it, but knows nothing about how it exited, how long it took, which
-# model tier or credential pool it bought, or what it cost. `started=` is its
-# own field and stays last: this line's timestamp is the reconcile time, not
-# the death.
+# model tier or credential pool it bought, or what it cost. `started=` is this
+# writer's own field and sits past every observed one: this line's timestamp is
+# the reconcile time, not the death. It no longer sits LAST — `sid=` does, on
+# this line as on `run_session`'s, because #538's first criterion is that every
+# `SESSION END` carries `sid=` as its last token and a criterion that held on
+# one of two emitters would be two rules wearing one sentence (#596 review).
+# Nothing reads either field by position: the floor's `RE_END` stops at
+# `reply_tail` and `RE_PEAK` matches its token wherever it sits
+# (`fleet-floor/server/floor/units.py:16-22`), and #553's order guard walks the
+# OBSERVED token list, which `started` is not in.
 #
 # `peak_rss=-` and not an absent field, which is the one place this line and
 # run_session's differ in kind rather than in value (#473 D2): the observed
@@ -317,10 +324,13 @@ session_reconcile_orphans() {
     # is only ever written by the session that holds the id, so a reconciler
     # that names one here would name a transcript nothing can open.
     #
-    # It sits ahead of `started=`, which `orphan-started-stays-last` pins, and
-    # that costs the order guard nothing: `started` is this writer's alone, so
-    # it is not in the observed token list the comparison walks.
-    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown sid=unknown started=$started" >>"$logfile"
+    # It is the LAST token, past `started=`, so the criterion "`sid=` last on
+    # every `SESSION END`" is true of the whole tree and not of one emitter;
+    # `orphan-sid-stays-last` pins it here and the parity guard pins the order
+    # against `run_session`'s own line. That costs the order guard nothing:
+    # `started` is this writer's alone, so it is not in the observed token list
+    # the comparison walks.
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started sid=unknown" >>"$logfile"
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.
