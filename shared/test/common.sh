@@ -34,6 +34,20 @@ git -C "$RW/work/repo" add seed
 git -C "$RW/work/repo" commit -qm seed
 RW_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD >/dev/null 2>&1
+# Reproduce the incident's retry collision before the reclaim resolves it.
+if git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD \
+    >"$RW/collision.out" 2>&1; then
+  RW_COLLISION_RC=0
+else
+  RW_COLLISION_RC=$?
+fi
+t review-reclaim-fixture-reproduces-collision nonzero \
+  "$([ "$RW_COLLISION_RC" -ne 0 ] && printf nonzero || printf ZERO)"
+case "$(cat "$RW/collision.out")" in
+  *"already exists"*) RW_COLLISION_MSG=named ;;
+  *) RW_COLLISION_MSG=MISSING ;;
+esac
+t review-reclaim-fixture-names-existing-path named "$RW_COLLISION_MSG"
 git -C "$RW/work/repo" worktree add -b build/1 "$RW/trees/repo/build-1" HEAD >/dev/null 2>&1
 RW_OLD_TREES="$TREES_DIR"
 TREES_DIR="$RW/trees"
@@ -48,6 +62,29 @@ RW_QUIET="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
 t review-reclaim-empty-is-quiet "" "$RW_QUIET"
 
+# MUST FAIL: replace detached-HEAD discrimination with a review-* name check.
+# The auxiliary base-* fixture then leaks, which is the incident's exact
+# counterexample to a naming convention repair.
+RW_MUT="$TMP/reclaim-name-mutant.sh"
+sed 's@if git -C "$candidate" symbolic-ref -q HEAD >/dev/null 2>&1; then@if [[ "${candidate##*/}" != review-* ]]; then@' \
+  "$SHARED/lib/duty-review.sh" >"$RW_MUT"
+mkdir -p "$RW/mut-work" "$RW/mut-trees/repo"
+git -C "$RW/mut-work" init -q
+git -C "$RW/mut-work" config user.email fixture@example.com
+git -C "$RW/mut-work" config user.name fixture
+touch "$RW/mut-work/seed"
+git -C "$RW/mut-work" add seed
+git -C "$RW/mut-work" commit -qm seed
+git -C "$RW/mut-work" worktree add --detach "$RW/mut-trees/repo/base-2" HEAD >/dev/null 2>&1
+(
+  # shellcheck disable=SC1090  # deliberate mutation fixture
+  source "$RW_MUT"
+  TREES_DIR="$RW/mut-trees"
+  reclaim_detached_review_worktrees >/dev/null
+)
+t review-reclaim-name-mutation-reds red \
+  "$([ -d "$RW/mut-trees/repo/base-2" ] && printf red || printf FALSE-PASS)"
+
 # The call itself is the lifecycle guarantee: it precedes every duty dispatch,
 # so a worktree created by this tick cannot be visible to the sweep.
 t review-reclaim-runs-before-any-dispatch before \
@@ -55,6 +92,14 @@ t review-reclaim-runs-before-any-dispatch before \
           /^[[:space:]]*duty_(attention|triage|review|builder)$/ { if (!disp) disp = NR }
           END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
       "$SHARED/bin/duty.sh")"
+RW_ORDER_MUT="$TMP/duty-reclaim-below-dispatch.sh"
+sed '/^reclaim_detached_review_worktrees$/d; /^  duty_review$/a reclaim_detached_review_worktrees' \
+  "$SHARED/bin/duty.sh" >"$RW_ORDER_MUT"
+t review-reclaim-below-dispatch-mutation-reds AFTER \
+  "$(awk '/^[[:space:]]*reclaim_detached_review_worktrees$/ { rec = NR }
+          /^[[:space:]]*duty_(attention|triage|review|builder)$/ { if (!disp) disp = NR }
+          END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
+      "$RW_ORDER_MUT")"
 
 # Shared fixture constructors used by the generic round predicates below.
 RPJQ="$SHARED/lib/jq/request-panel.jq"
