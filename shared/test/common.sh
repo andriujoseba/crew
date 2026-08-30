@@ -230,7 +230,7 @@ sed '/^reclaim_detached_review_worktrees$/d; /^  duty_review$/a reclaim_detached
 t review-reclaim-below-dispatch-mutation-reds AFTER \
   "$(rw_tick_reclaim_order "$RW_ORDER_MUT")"
 RW_DEAD_MUT="$TMP/duty-reclaim-dead-helper.sh"
-awk '/^reclaim_detached_review_worktrees$/ {
+env awk '/^reclaim_detached_review_worktrees$/ {
        print "_dead_reclaim" "() {"; print "  reclaim_detached_review_worktrees"; print "}"; next
      } { print }' "$SHARED/bin/duty.sh" >"$RW_DEAD_MUT"
 t review-reclaim-dead-call-mutation-reds AFTER \
