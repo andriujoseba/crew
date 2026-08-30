@@ -127,6 +127,14 @@ D532_MULTI="$({
   _review_check_evidence_list fx/repo '7 8'
 })"
 t d532-multi-pr-evidence-keeps-line-separator $'- fx/repo#7: evidence.\n- fx/repo#8: evidence.' "$D532_MULTI"
+# shellcheck disable=SC2016  # production shell syntax is matched literally
+if grep -Fq 'check_evidence="$(_review_check_evidence_list "$SR" "$prs")"' \
+    "$SHARED/lib/duty-review.sh"; then
+  r1=connected
+else
+  r1=DISCONNECTED
+fi
+t d532-multi-pr-evidence-list-is-used-by-review-render connected "$r1"
 
 # shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
