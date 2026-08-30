@@ -260,6 +260,16 @@ sid_shape() { # sid_shape VALUE — uuid | unknown | OTHER(<value>)
     *) printf 'OTHER(%s)' "$1" ;;
   esac
 }
+# sid_same A B — same | DIFFERENT | EMPTY. The third answer is the point of the
+# helper: every identity assertion below compares two values that are both
+# ABSENT on a tree without this change, and a bare `[ "$a" = "$b" ]` reports
+# `same` for two empty strings. That is a test which passes against the code it
+# was written to require, so emptiness is named rather than compared.
+sid_same() {
+  [ -n "$1" ] || { printf EMPTY; return 0; }
+  [ "$1" = "$2" ] && printf same || printf DIFFERENT
+  return 0
+}
 sid_stub() { printf '%s/.session-resume.build.%s' "$TMP/sid-$1" "$2"; }
 sid_stub_field() { # sid_stub_field FILE KEY
   sed -n "s/^$2=//p" "$1" 2>/dev/null
@@ -272,15 +282,14 @@ sid_argv_flag() { # sid_argv_flag OUTPUT FLAG — the value following FLAG, or n
 sid_pinned="$(sid_run pinned fixture/pin 5 reply both)"
 t sid-start-carries-a-minted-uuid uuid "$(sid_shape "$(sid_of pinned START)")"
 t sid-end-carries-the-same-id-as-start same \
-  "$([ "$(sid_of pinned START)" = "$(sid_of pinned END)" ] && printf same || printf DIFFERENT)"
+  "$(sid_same "$(sid_of pinned START)" "$(sid_of pinned END)")"
 t sid-is-the-last-token-on-start 1 \
   "$(grep -c ' sid=[^ ]*$' <<<"$(sid_line pinned START)" || true)"
 t sid-is-the-last-token-on-end 1 \
   "$(grep -c ' sid=[^ ]*$' <<<"$(sid_line pinned END)" || true)"
 # The pin is on the LAUNCH and not only in the log, which is the whole of D1.
 t sid-the-launch-carries-the-id-the-record-names same \
-  "$([ "$(sid_argv_flag "$sid_pinned" --session-id)" = "$(sid_of pinned START)" ] \
-    && printf same || printf DIFFERENT)"
+  "$(sid_same "$(sid_argv_flag "$sid_pinned" --session-id)" "$(sid_of pinned START)")"
 
 # D2's neutral answer, both halves: no hook, no pin, `sid=unknown`, and a
 # session otherwise unchanged — the argv is the profile's own array.
@@ -304,8 +313,7 @@ SID_TMO_STUB="$(sid_stub timeout fixture_tmo)"
 t sid-timeout-writes-a-stub present \
   "$([ -s "$SID_TMO_STUB" ] && printf present || printf MISSING)"
 t sid-stub-carries-the-killed-session-id same \
-  "$([ "$(sid_stub_field "$SID_TMO_STUB" sid)" = "$(sid_of timeout START)" ] \
-    && printf same || printf DIFFERENT)"
+  "$(sid_same "$(sid_stub_field "$SID_TMO_STUB" sid)" "$(sid_of timeout START)")"
 t sid-stub-carries-the-head-it-worked-at "$(git -C "$TMP/sid-timeout/work" rev-parse HEAD)" \
   "$(sid_stub_field "$SID_TMO_STUB" head)"
 t sid-stub-carries-the-wall-that-was-hit 1 "$(sid_stub_field "$SID_TMO_STUB" wall)"
@@ -330,10 +338,9 @@ sid_run resume fixture/res 1 talk-hang both >/dev/null
 SID_KILLED="$(sid_of resume START)"
 sid_resumed="$(sid_run resume fixture/res 5 reply both)"
 t sid-resume-continues-the-killed-session same \
-  "$([ "$(sid_argv_flag "$sid_resumed" --resume)" = "$SID_KILLED" ] \
-    && printf same || printf 'DIFFERENT')"
+  "$(sid_same "$(sid_argv_flag "$sid_resumed" --resume)" "$SID_KILLED")"
 t sid-resumed-session-reports-the-killed-id same \
-  "$([ "$(sid_of resume START)" = "$SID_KILLED" ] && printf same || printf DIFFERENT)"
+  "$(sid_same "$(sid_of resume START)" "$SID_KILLED")"
 # A resume carries --resume and NOT --session-id: measured on the claude CLI,
 # re-pinning an existing id fails the session at rc=1 (claude.conf, #538 D2).
 t sid-resume-does-not-also-pin-the-id 0 \
@@ -401,7 +408,12 @@ fi
 # path is asserted on its own below.
 sid_run bound fixture/bound 1 talk-hang both >/dev/null
 sid_bound_killed="$(sid_of bound START)"
-sed -i "s/^try=.*/try=$SESSION_RESUME_MAX_TRIES/" "$(sid_stub bound fixture_bound)"
+# The bound is read from the module rather than retyped, so raising it moves
+# this case with it. The `:-1` is reachable only on a tree where the module
+# defines no bound at all — which is what this suite's must-fail run against
+# `main` is — and it keeps that run from aborting under `set -u` before the
+# rest of the section has had its say.
+sed -i "s/^try=.*/try=${SESSION_RESUME_MAX_TRIES:-1}/" "$(sid_stub bound fixture_bound)"
 t sid-refuses-once-the-bound-is-spent ordinary \
   "$(sid_refusal "$(sid_run bound fixture/bound 5 reply both)" bound "$sid_bound_killed")"
 
@@ -442,8 +454,7 @@ sid_run pair fixture/pair 1 talk-hang both >/dev/null
 sid_pair_first="$(sid_of pair START)"
 sid_pair_two="$(sid_run pair fixture/pair 1 talk-hang both)"
 t sid-first-timeout-is-resumed same \
-  "$([ "$(sid_argv_flag "$sid_pair_two" --resume)" = "$sid_pair_first" ] \
-    && printf same || printf NOT-RESUMED)"
+  "$(sid_same "$(sid_argv_flag "$sid_pair_two" --resume)" "$sid_pair_first")"
 t sid-a-resumed-timeout-records-its-spent-try 1 \
   "$(sid_stub_field "$(sid_stub pair fixture_pair)" try)"
 sid_pair_three="$(sid_run pair fixture/pair 5 reply both)"
