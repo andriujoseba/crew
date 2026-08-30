@@ -34,6 +34,8 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2016  # single-quoted GraphQL/jq programs with $vars are intended
 
+REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Repos where I author an open PR — read off the sweep's own pulls pages at
 # zero extra API cost (claude-bot's cast#143 fix). Consumed by duty-builder.
 REVIEW_MY_PR_REPOS=""
@@ -69,6 +71,80 @@ rereq_decision() {
   else
     echo skip
   fi
+}
+
+# _review_check_evidence_from_payload REPO NUM SNAPSHOT CURRENT_HEAD — render
+# the check evidence handed to a reviewer. SNAPSHOT is one `gh pr view` object:
+# its headRefOid and statusCheckRollup are one atomic view, so every conclusion
+# is pinned to the SHA it describes. CURRENT_HEAD is fetched afterwards; a push
+# between the two reads therefore weakens the evidence visibly instead of
+# silently presenting an older run as current (#532).
+#
+# The aggregate grade comes from head-checks.jq, the same reader that gates the
+# builder path. The prose listing only exposes GitHub's own names and
+# conclusions; it does not make a second green/red judgement.
+_review_check_evidence_from_payload() {
+  local repo="$1" num="$2" snapshot="$3" current_head="$4"
+  local row checked_head state entries relation
+  row="$(printf '%s' "$snapshot" | jq -c '[.]' 2>/dev/null \
+    | jq -r --argjson panel '[]' --arg repo "$repo" --arg human '' \
+        -f "$REVIEW_LIB_DIR/jq/head-checks.jq" 2>/dev/null)" || row="" # Decision-path empty fallback: the next branch names unavailable evidence and asks the reviewer to verify independently.
+  if [ -z "$row" ]; then
+    printf -- '- %s#%s: check evidence unavailable; verify it independently.\n' "$repo" "$num"
+    return 0
+  fi
+
+  checked_head="$(cut -f3 <<<"$row")"
+  state="$(cut -f4 <<<"$row")"
+  entries="$(printf '%s' "$snapshot" | jq -r '
+    [(.statusCheckRollup // [])
+      | group_by([
+          (.name // .context // "?"),
+          (.__typename // ""),
+          (.workflowName // "")
+        ])[]
+      | max_by([
+          (.startedAt // .createdAt // ""),
+          (.completedAt // "")
+        ])
+      | "\(.name // .context // "?")=\(.conclusion // .state // .status // "?")"]
+    | join(", ")' 2>/dev/null)" || entries="" # Decision-path empty fallback: the rendered row says the rollup is unreadable and grants no conclusion.
+  if [ "$current_head" = unknown ]; then
+    relation="current head unavailable"
+  elif [ "$checked_head" = "$current_head" ]; then
+    relation="this head"
+  else
+    relation="older SHA; current head $current_head"
+  fi
+
+  if [ "$state" = none ] && [ "$checked_head" = "$current_head" ]; then
+    printf -- '- %s#%s: none at this head %s.\n' "$repo" "$num" "$checked_head"
+  elif [ "$state" = none ]; then
+    printf -- '- %s#%s: none at checked head %s (%s).\n' \
+      "$repo" "$num" "$checked_head" "$relation"
+  else
+    printf -- '- %s#%s: checks at %s (%s; aggregate %s): %s.\n' \
+      "$repo" "$num" "$checked_head" "$relation" "$state" "${entries:-unreadable rollup}"
+  fi
+  return 0
+}
+
+_review_check_evidence() {
+  local repo="$1" num="$2" snapshot current_head
+  if ! snapshot="$(gh pr view "$num" -R "$repo" \
+    --json number,isDraft,reviewRequests,updatedAt,headRefOid,statusCheckRollup 2>/dev/null)"; then
+    printf -- '- %s#%s: check evidence unavailable; verify it independently.\n' "$repo" "$num"
+    return 0
+  fi
+  current_head="$(gh api "repos/$repo/pulls/$num" --jq .head.sha 2>/dev/null || echo unknown)"
+  _review_check_evidence_from_payload "$repo" "$num" "$snapshot" "$current_head"
+}
+
+_review_check_evidence_list() {
+  local repo="$1" prs="$2" evidence_n
+  for evidence_n in $prs; do
+    _review_check_evidence "$repo" "$evidence_n"
+  done
 }
 
 # _mark_addressing REPO NUM — after MY verdict lands, evaluate the
@@ -279,16 +355,18 @@ $key $updated"
 
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
-  local dir slug prompt prs
+  local dir slug prompt prs check_evidence
   for SR in "${repo_order[@]}"; do
     prs="${repo_prs[$SR]% }"
     slug="${SR//\//__}"
     log "review: $SR needs verdicts on: $prs — launching review session"
     dir="$WORK_DIR/$slug-review"
     ensure_checkout "$SR" "$dir" || continue
+    check_evidence="$(_review_check_evidence_list "$SR" "$prs")"
     prompt="$(render_prompt review.txt ME="$ME" REPO="$SR" PRS="$prs" \
       BIN="$BIN_DIR" WT_DIR="$TREES_DIR/$slug" \
       MARK_REVIEWING="$MARK_REVIEWING" \
+      HEAD_CHECKS="$check_evidence" \
       ONESHOT_RULES="$(render_prompt fragment-oneshot-rules.txt BIN="$BIN_DIR")")"
     RUN_SESSION_RC=1
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
