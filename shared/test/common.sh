@@ -66,6 +66,7 @@ t review-reclaim-empty-is-quiet "" "$RW_QUIET"
 # The auxiliary base-* fixture then leaks, which is the incident's exact
 # counterexample to a naming convention repair.
 RW_MUT="$TMP/reclaim-name-mutant.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation expression
 sed 's@if git -C "$candidate" symbolic-ref -q HEAD >/dev/null 2>&1; then@if [[ "${candidate##*/}" != review-* ]]; then@' \
   "$SHARED/lib/duty-review.sh" >"$RW_MUT"
 mkdir -p "$RW/mut-work" "$RW/mut-trees/repo"
