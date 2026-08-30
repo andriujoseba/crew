@@ -16,6 +16,7 @@ from floor.actions import do_command
 from floor.alerts import alert_command_from_config
 from floor.fleet import Fleet
 from floor.ping import PING_INTERVAL_S, log, run
+from floor.registry import snapshot as registry_snapshot
 from floor.roster import CONFIG_DIR, read_roster, require_operator_config
 
 # --------------------------------------------------------------------------
@@ -29,6 +30,11 @@ class Handler(BaseHTTPRequestHandler):
     # Args injected by serve()
     fleet = None
     auth_token = None
+    # WHO, for the registry journal (#488 D5). The floor authenticates one
+    # operator identity, so this is the whole of what the process knows about
+    # the hand behind a write — and naming it beats recording every registry
+    # change against nobody. Set beside the token it is half of.
+    auth_user = ""
 
     def log_message(self, fmt, *args):
         pass                                    # the poller's log() is the log
@@ -86,6 +92,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/fleet":
             return self.send_json(200, self.fleet.get())
+
+        if path == "/api/registries":
+            # Its own endpoint rather than a key on `/api/fleet`, because the
+            # two answer at different costs and on different clocks: the fleet
+            # snapshot is a background thread's 60s probe of every guest, and
+            # this is two small reads off the host's own disk. Folding the
+            # registries into the snapshot would serve them at the poller's
+            # cadence — up to a minute after the operator's own write — and
+            # reading them fresh on every request is what makes a hand edit
+            # visible with no floor restart (#488 D4).
+            return self.send_json(200, registry_snapshot(
+                [u["box"] for u in read_roster()]))
 
         if path == "/api/logs":
             return self.serve_log(qs)
@@ -149,7 +167,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
         except (ValueError, UnicodeDecodeError) as e:
             return self.send_json(400, {"ok": False, "error": "bad JSON: %s" % e})
-        status, result = do_command(self.fleet, body)
+        status, result = do_command(self.fleet, body, actor=self.auth_user)
         return self.send_json(status, result)
 
 
@@ -172,6 +190,7 @@ def serve(bind, port, user, password, interval):
     fleet = Fleet(interval, alert_command)
     Handler.fleet = fleet
     Handler.auth_token = base64.b64encode(("%s:%s" % (user, password)).encode()).decode()
+    Handler.auth_user = user
 
     threading.Thread(target=fleet.loop, daemon=True).start()
     if PING_INTERVAL_S > 0:

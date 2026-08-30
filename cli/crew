@@ -96,7 +96,129 @@ if [ "${CREW_EXPECT_OPERATOR_CONFIG:-0}" = 1 ] && [ "$CONFIG_IS_OPERATOR" -ne 1 
   echo "crew: operator-config mode required, but resolution selected '$CONFIG_DIR' (CONFIG_IS_OPERATOR=0)" >&2
   exit 1
 fi
-config_file() { [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"; }
+# config_file NAME — the fleet definition's own copy of NAME, or the shipped
+# `examples/` one when the definition has none. This is the fallback the floor
+# resolves too (`floor/registry.py`'s `_fleet_source`), so a definition
+# carrying no `notify-repos.txt` reads identically on both halves (#488).
+#
+# On its own lines rather than folded onto one, for the same reason the
+# registry family below is: the floor suite extracts each of these from THIS
+# file on a `/^name() {/,/^}/` range to assert against the shipped resolver
+# instead of a copy, and a one-line function silently over-captures to the
+# next closing brace. That matters here more than anywhere — a suite proving
+# the two halves agree about a missing file must resolve it the way the
+# transport does, not the way the suite thinks the transport does.
+config_file() { # NAME
+  [ -f "$CONFIG_DIR/$1" ] && printf '%s\n' "$CONFIG_DIR/$1" || printf '%s\n' "$CREW_ROOT/examples/$1"
+}
+# registry_entries FILE — the repositories one registry file names, as every
+# reader of these files defines them: `#` and blank lines are ignored, and an
+# entry is its line STRIPPED (#488).
+# `|| true` for the same reason box_registry carries it — a file with no entries
+# in it exits non-zero, and under `pipefail` that kills the caller.
+#
+# The strip is what makes this half agree with the floor's `read_entries`,
+# which has always emitted `line.strip()`. Without it a hand-indented entry in
+# the fleet-wide file reaches `resolved_registry`'s exact-match `awk` with its
+# leading spaces and matches no selection, so a box WITH an override silently
+# drops a repository the console shows it watching — the console-vs-transport
+# drift this family exists to make impossible. One `awk` rather than a
+# `grep | sed` pipeline: a pipeline here is one more way to red under
+# `pipefail` and buys nothing.
+#
+# On its own lines rather than folded onto one, so that every resolver in this
+# family extracts with the same `/^name() {/,/^}/` range. The floor suite pulls
+# them out of this file one by one to assert against the SHIPPED resolver
+# instead of a copy, and a one-line function silently over-captures to the next
+# closing brace.
+registry_entries() { # FILE
+  awk '{ sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, "") } $0 != "" && $0 !~ /^#/' "$1" 2>/dev/null || true
+}
+# registry_fleet_file KIND / registry_override_file BOX KIND — the two files
+# behind one box's registry. KIND is `work` or `notify`. The override printer
+# is silent when the box has none, so "" IS the inherit state and every caller
+# tests it the same way.
+registry_fleet_file() { # KIND
+  case "$1" in
+    work)   printf '%s\n' "$REPOS_SEED" ;;
+    notify) printf '%s\n' "$NOTIFY_REPOS_SEED" ;;
+    *)      die "registry_fleet_file: unknown registry '$1'" ;;
+  esac
+}
+registry_override_file() { # BOX KIND
+  local f
+  case "$2" in
+    work)   f="$CONFIG_DIR/repos.d/$1.txt" ;;
+    notify) f="$CONFIG_DIR/notify-repos.d/$1.txt" ;;
+    *)      die "registry_override_file: unknown registry '$2'" ;;
+  esac
+  [ -f "$f" ] && printf '%s\n' "$f"
+  return 0
+}
+# resolved_registry BOX KIND — the repositories this box actually watches: the
+# fleet-wide list, narrowed to the box's own selection when it has one (#488).
+#
+# THIS IS WHAT MAKES THE OVERRIDE A LAYER RATHER THAN A FILE. The floor writes
+# `repos.d/<box>.txt`; without this resolver the transport would keep staging
+# the fleet-wide list over it and the selection would be a file nothing reads —
+# which is worse than not having one, because the console would report a
+# narrowing the box does not have.
+#
+# The INTERSECTION, and not the override's own contents, is the operator's
+# direction of 2026-08-29 arriving where it actually binds: a droid's watch set
+# is drawn from the host-level list, so a repository the fleet-wide registry no
+# longer names must not reach a guest merely because some box selected it
+# before it was retired. `floor/registry.py`'s `effective()` resolves the same
+# way, and the floor suite asserts the two agree — a drift between what the
+# console renders and what the transport ships is the one failure this layer
+# can introduce that nobody would see until a tick.
+#
+# Fleet-wide order, because that is the order the operator maintains upstream;
+# awk rather than `comm`, which would need both sides sorted and would hand the
+# box a registry ordered by nothing anyone chose.
+#
+# Existence is the whole test for HAVING a selection. An EMPTY override file is
+# a box deliberately pointed at no board at all — containment state, the
+# narrowing repos.txt's own header describes — and falling through to the
+# fleet-wide list on emptiness would silently re-widen precisely that box.
+resolved_registry() { # BOX KIND
+  local fleet override
+  fleet="$(registry_fleet_file "$2")"
+  override="$(registry_override_file "$1" "$2")"
+  if [ -z "$override" ]; then registry_entries "$fleet"; return 0; fi
+  awk 'NR==FNR{sel[$0]=1;next} ($0 in sel)' \
+    <(registry_entries "$override") <(registry_entries "$fleet")
+}
+# registry_seed BOX KIND — a FILE holding what this box should carry, for the
+# transport to put. Prints the fleet-wide file itself when the box inherits, so
+# the 60 lines of doctrine `repos.txt` ships reach the guest verbatim as they
+# always have; a box with a selection gets a generated file instead, headed
+# with what it is and where it came from, because shipping the fleet-wide
+# doctrine header over a narrowed list would describe a scope the box does not
+# have. A generated file is a TEMPORARY one and the caller removes it; the test
+# for "did this generate" is `[ "$seed" != "$(registry_fleet_file KIND)" ]`,
+# a comparison against the one path this can return without generating, rather
+# than a guess about which directory mktemp used.
+registry_seed() { # BOX KIND
+  local override tmp
+  override="$(registry_override_file "$1" "$2")"
+  if [ -z "$override" ]; then registry_fleet_file "$2"; return 0; fi
+  tmp="$(mktemp)"
+  {
+    printf '# %s registry — resolved by crew for box %s (#488).\n' "$2" "$1"
+    printf '# A per-box selection from %s, edited on the floor.\n' "$(registry_fleet_file "$2")"
+    printf '# Edits here are overwritten by the next crew upgrade.\n'
+    resolved_registry "$1" "$2"
+  } >"$tmp"
+  printf '%s\n' "$tmp"
+}
+# registry_seed_discard KIND PATH — remove a seed registry_seed generated, and
+# leave a fleet-wide file it merely pointed at alone. The comparison IS the
+# test, so a caller can pair every registry_seed with this and never has to
+# remember which of the two it got back.
+registry_seed_discard() { # KIND PATH
+  [ "$2" = "$(registry_fleet_file "$1")" ] || rm -f "$2"
+}
 # agent_conf NAME — the one resolved profile path every reader uses: an
 # operator `agents/NAME.conf` beside the fleet definition wins over the
 # same-named shipped profile; the shipped set is the fallback (#75). Adding a
@@ -916,23 +1038,33 @@ stage_registry_examples() { # BOX
 }
 
 stage_fleet_definition() { # BOX
-  local box_name="$1" runtime_conf
+  local box_name="$1" runtime_conf work_seed notify_seed
   runtime_conf="$(mktemp)"
   {
     cat "$FLEET_CONF"
     printf '\n# Resolved from the selected fleet directory doctrine.conf.\n'
     cat "$DOCTRINE_CONF"
   } >"$runtime_conf"
+  # Resolved ONCE and held in a variable, not called inline twice. A box with a
+  # selection gets a generated file (registry_seed, above), so an inline call
+  # in the `bxput` chain would leak one temp file per staging and leave nothing
+  # holding its name to remove — the same reason $runtime_conf is a local.
+  work_seed="$(registry_seed "$box_name" work)"
+  notify_seed="$(registry_seed "$box_name" notify)"
   if bxput "$box_name" "$ROSTER" 'duty/fleet.roster' &&
      bxput "$box_name" "$runtime_conf" 'duty/conf/fleet.conf' &&
-     bxput "$box_name" "$REPOS_SEED" 'duty/.crew-seed-repos.txt' &&
-     bxput "$box_name" "$NOTIFY_REPOS_SEED" 'duty/.crew-seed-notify-repos.txt' &&
+     bxput "$box_name" "$work_seed" 'duty/.crew-seed-repos.txt' &&
+     bxput "$box_name" "$notify_seed" 'duty/.crew-seed-notify-repos.txt' &&
      stage_registry_examples "$box_name" &&
      stage_agent_profiles "$box_name"; then
     rm -f "$runtime_conf"
+    registry_seed_discard work "$work_seed"
+    registry_seed_discard notify "$notify_seed"
     return 0
   fi
   rm -f "$runtime_conf"
+  registry_seed_discard work "$work_seed"
+  registry_seed_discard notify "$notify_seed"
   bxn "$box_name" 'rm -f ~/duty/.crew-seed-repos.txt ~/duty/.crew-seed-notify-repos.txt ~/duty/.crew-example-repos.txt ~/duty/.crew-example-notify-repos.txt; rm -rf ~/duty/.crew-seed-agents' || true
   return 1
 }
@@ -1514,18 +1646,51 @@ status_duration() {
 }
 
 # production_registry — the repo list THIS checkout would seed into a box.
+#
+# THROUGH `registry_entries`, WHICH IS THE POINT (#488). This used to read the
+# fleet-wide file with its own `grep -vE '^[[:space:]]*(#|$)'` — the same
+# entries, but as WRITTEN rather than stripped. That was harmless while
+# hire_guard's inheriting branch assigned `reg="$prod"`, because the comparison
+# below it was then false by construction. It stopped being harmless the moment
+# that branch derived its side from `resolved_registry`, which strips: two
+# readers of one file disagreeing about trailing whitespace, feeding a `!=`
+# whose every difference is read as "this box is narrowed". One trailing space
+# or a CRLF in a hand-edited `repos.txt` and #51's off-roster refusal is gone
+# — while the guard's own line prints the production registry it is letting the
+# box have. A registry file is defined by ONE reader in this CLI, and every
+# comparison against it goes through that reader.
+#
+# `registry_entries` carries the `|| true` this function used to need, and for
+# the same reason: an EMPTY or all-comment registry exits non-zero, pipefail
+# takes that status, and `prod="$(production_registry)"` in hire_guard then
+# dies under set -e with no message at all.
 production_registry() {
-  # `|| true` is load-bearing, as in box_state/box_agent/box_registry: an EMPTY
-  # or all-comment registry makes grep exit 1, pipefail takes that status, and
-  # `prod="$(production_registry)"` in hire_guard then dies under set -e with
-  # no message at all.
-  grep -vE '^[[:space:]]*(#|$)' "$REPOS_SEED" | sort || true
+  registry_entries "$REPOS_SEED" | sort
 }
+# The one-repo-one-fleet sweep below still walks the FLEET-WIDE list and needs
+# no union with the per-box selections (#488). Under the operator's direction
+# of 2026-08-29 a selection can only narrow — every repository any box watches
+# is by construction a repository the fleet-wide registry names — so the
+# fleet-wide list is not merely a good enough sweep set, it is exactly the set.
+# Written down because the opposite is the intuitive reading of a per-box
+# override, and was in fact this branch's first one: a free override CAN aim a
+# droid at a board nobody else watches, and would have left that board — the
+# one an operator just made a decision about — as the only one nothing checked
+# for a second fleet. Containment is what removes the hole, and if containment
+# is ever relaxed this sweep is the second thing that has to move.
 # box_registry NAME — the repos.txt the box actually carries, or empty when it
-# has none yet (install.sh seeds the production default in that case).
+# has none yet (install.sh seeds this box's own resolved default in that case).
+#
+# Through `registry_entries` too, and for `production_registry`'s reason: this
+# is the OTHER side of hire_guard's production comparison, so an entry the box
+# carries with a trailing space compares unequal to the same entry in the
+# fleet's list and arms an off-roster box against production. That half is
+# older than #488 — it is the asymmetry `tr -d '\r'` was added for, stopped one
+# whitespace character short. The `tr` stays: it removes a carriage return
+# anywhere in the line, where the strip only reaches the ends.
 box_registry() {
   bxn "$1" 'grep -vE "^[[:space:]]*(#|\$)" ~/duty/repos.txt 2>/dev/null' 2>/dev/null \
-    | tr -d '\r' | sort || true
+    | tr -d '\r' | registry_entries - | sort || true
 }
 
 # fleet_static_identities — GitHub logins declared by the selected fleet.
@@ -1626,8 +1791,22 @@ hire_guard() {
   prod="$(production_registry)"
   reg="$(box_registry "$name")"
   if [ -z "$reg" ]; then
-    echo "  registry: none yet — install.sh will seed the production default"
-    reg="$prod"
+    # The registry this box would actually get, which is its own selection from
+    # the fleet-wide list when it has one (#488). Reading `$prod` here claimed
+    # a box with a narrowing selection was about to be armed against
+    # production, and the guard below then refused an off-roster box over a
+    # registry it was never going to carry — the "dirty member" reading the
+    # operator ruled out on 2026-08-29. A narrowed member is narrowed, and
+    # `$reg` differing from `$prod` is what lets it through.
+    reg="$(resolved_registry "$name" work | sort)"
+    # A box selected down to NOTHING is a state this layer supports on purpose
+    # — the containment state repos.txt's own header describes — so the line
+    # says so rather than trailing off after "seed " with nothing behind it.
+    if [ -z "$reg" ]; then
+      echo "  registry: none yet — this box selects no repositories, so install.sh will seed an empty one"
+    else
+      echo "  registry: none yet — install.sh will seed $(printf '%s' "$reg" | tr '\n' ' ')"
+    fi
   else
     echo "  registry: $(printf '%s' "$reg" | tr '\n' ' ')"
   fi

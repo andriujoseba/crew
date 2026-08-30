@@ -144,3 +144,40 @@ body.room .rail,body.room .console2{display:flex}
 #logov pre{margin:0;flex:1;overflow:auto;padding:14px;white-space:pre-wrap;word-break:break-word;font:11px/1.5 var(--mono);color:#b9c8dc}
 .woff{opacity:.4;cursor:not-allowed}
 input.woff{color:#5a6a80}
+/* The registry editor (#488). It shares #logov's overlay geometry because it
+   is the same kind of thing — a full-bleed reader over a dimmed floor — and a
+   second set of numbers for it would drift the first time either moved. */
+#regov{display:none;position:fixed;inset:0;z-index:60;background:rgba(2,5,10,.82);align-items:center;justify-content:center;padding:5vh 5vw}
+#regov .logbox{display:flex;flex-direction:column;width:min(880px,92vw);max-height:86vh;background:#080d16;border:1px solid #223148;border-radius:10px;overflow:hidden}
+#regov .regbody{flex:1;overflow:auto;padding:14px}
+.regblk{margin-bottom:16px}
+.regblk:last-child{margin-bottom:0}
+.regpath{font-family:var(--mono);font-size:9.5px;color:#46566a;margin:3px 0 6px;word-break:break-all}
+.regta{width:100%;box-sizing:border-box;min-height:96px;resize:vertical;font:11px/1.55 var(--mono);color:#b9c8dc;background:#0a1017;border:1px solid #142230;border-radius:7px;padding:8px 10px}
+.regta:focus{outline:none;border-color:#1d5772}
+.regacts{display:flex;gap:6px;margin-top:6px}
+.regacts .lbtn{text-align:center;flex:1}
+/* The source chip. `selected` is the state an operator has to be able to see
+   without reading the list — a box quietly narrowed to a stale slice of the
+   fleet-wide registry is the failure this layer can introduce, so it is the
+   loud one. Loud is not the same as wrong: a narrowed member is a member doing
+   what somebody asked it to, never a dirty one (operator, 2026-08-29). */
+.regsrc{font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;text-transform:uppercase;border-radius:4px;padding:2px 6px;margin-left:auto}
+.regsrc.inherit{color:#8aa0b8;background:#8aa0b81f}
+.regsrc.override{color:#f7bd4e;background:#f7bd4e1f}
+/* The per-box selector. Checkboxes over the fleet-wide list rather than a
+   textarea, because a box cannot name a repository the fleet does not watch —
+   so the set of legal values is known, finite and already on screen, and a
+   free-text field would exist only to be refused. */
+.regsel{border:1px solid #142230;border-radius:7px;background:#0a1017;padding:4px;max-height:230px;overflow:auto}
+.regopt{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;font:11px/1.4 var(--mono);color:#b9c8dc}
+.regopt:hover{background:#101a26}
+.regopt input{accent-color:#1d5772;margin:0}
+.regopt input:not(:checked)+span{color:#5a6a80;text-decoration:line-through}
+.regempty{font:11px/1.5 var(--mono);color:#7a6a3a;background:#f7bd4e14;border:1px solid #f7bd4e2e;border-radius:7px;padding:8px 10px}
+/* The shipped-fallback note. Informational blue rather than the warning gold
+   above it: a definition without its own `notify-repos.txt` is a normal fleet
+   working the file crew ships, not a fault — what would be a fault is an
+   operator reading those entries as a list they were free to replace. */
+.regnote{font:10.5px/1.5 var(--mono);color:#7f97b0;background:#1d577214;border:1px solid #1d57722e;border-radius:7px;padding:7px 10px;margin-bottom:6px}
+.regnote code{font-family:var(--mono);color:#9fb4cb}

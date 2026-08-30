@@ -1200,13 +1200,113 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
          && (await page.locator('body.room').count()) === 1);
     } else {
       const woff = await page.evaluate(() =>
-        ['g-start', 'g-stop', 'g-wake', 'a-pause', 'a-restart', 'c-send']
+        ['g-start', 'g-stop', 'g-wake', 'g-reg', 'a-pause', 'a-restart', 'c-send']
           .filter((id) => document.getElementById(id).classList.contains('woff')).length);
-      eq('demo: all 6 controls disabled', 6, woff);
+      // Seven since #488: the registry editor writes host files, so it belongs
+      // in the lockout with every other control that does something.
+      eq('demo: all 7 controls disabled', 7, woff);
       eq('demo: message box disabled', true, await page.locator('#c-in').isDisabled());
       await shot('05-demo-disabled');
     }
     await shot('03-console');
+    await leave();
+  }
+
+  /* ---- #488: the registries are REACHABLE, from both scopes ----------------
+     A collector assertion cannot answer the acceptance criterion here. "The
+     per-box override is reachable from that box's own cell" is a claim about
+     the page, and #203 is the standing reminder of what happens when only the
+     collector is asserted: every server-side row stayed green while the page
+     said the wrong thing.
+
+     READ-ONLY ON PURPOSE. The editor is opened, rendered and closed; nothing
+     is saved. A walk that wrote an override would leave the fixture fleet
+     narrowed for every suite after it, and what is being asserted is that an
+     operator can GET to the editor, which a save adds nothing to. */
+  eq('registry: the ops bar carries the fleet-wide control', 1,
+     await page.locator('#g-reg').count());
+  if (LIVE && visible.length) {
+    await page.click('#g-reg');
+    await settle(async () => await page.locator('#regov').isVisible().catch(() => false), 8000);
+    const fleetOpen = await page.locator('#regov').isVisible().catch(() => false);
+    ok('registry: the fleet-wide editor opens', fleetOpen,
+       (await page.locator('#livestat').textContent()).trim());
+    if (fleetOpen) {
+      // Both registries, not just the work one: the fleet has two and an
+      // editor that silently covered one of them would read as complete.
+      eq('registry: both registries are on the fleet-wide editor', 2,
+         await page.locator('#regov .regblk').count());
+      eq('registry: ...the work list first', 'work',
+         await page.locator('#regov .regblk').first().getAttribute('data-kind'));
+      // A box scope would carry the source chip; the fleet-wide one has no
+      // layer above it, so it must not claim one.
+      eq('registry: the fleet-wide scope claims no inheritance', 0,
+         await page.locator('#regov .regsrc').count());
+      // The fleet-wide scope IS the universe, so it is the one that gets a
+      // free field: there is nothing above it to bound what an operator may
+      // type, and adding a board is typing its name.
+      eq('registry: the fleet-wide scope is a free list', 2,
+         await page.locator('#regov .regta').count());
+      await shot('06-registries-fleet');
+      await page.keyboard.press('Escape');
+      await settle(async () => !(await page.locator('#regov').isVisible().catch(() => false)), 4000);
+      ok('registry: Esc closes the editor',
+         !(await page.locator('#regov').isVisible().catch(() => false)));
+    }
+    // ...and the per-box half, from that box's own console.
+    const r0 = await enterAt(visible[0]);
+    ok('registry: console re-opened for the per-box editor', r0 === visible[0].got,
+       `expected ${visible[0].got}, got ${r0}`);
+    if (r0 === visible[0].got) {
+      // The always-visible summary first: an override must be legible without
+      // opening anything, or a box quietly pinned to a stale registry is
+      // invisible until somebody goes looking for it.
+      const vit = await page.locator('.rail-l #w-vitals').textContent();
+      ok('registry: the box vitals name what it watches', /Registry/.test(vit),
+         vit.replace(/\s+/g, ' ').slice(-90));
+      await page.click('#ac-reg');
+      await settle(async () => await page.locator('#regov').isVisible().catch(() => false), 8000);
+      const boxOpen = await page.locator('#regov').isVisible().catch(() => false);
+      ok('registry: the per-box editor opens from the box console', boxOpen,
+         (await page.locator('#livestat').textContent()).trim());
+      if (boxOpen) {
+        // SCOPED TO THE OPEN BOX. One editor serves both scopes, so the thing
+        // that can go wrong is it opening on the wrong one — the same identity
+        // check `pause` gets above, for the same reason.
+        eq('registry: ...scoped to the box on screen', visible[0].expect,
+           await page.locator('#regov').getAttribute('data-box'));
+        eq('registry: ...saying whether the box inherits or overrides', 2,
+           await page.locator('#regov .regsrc').count());
+        eq('registry: ...and offering the inherit action', 2,
+           await page.locator('#regov [data-reg="inherit"]').count());
+        /* THE PER-BOX SCOPE IS A SELECTION, NOT A FREE LIST (operator,
+           2026-08-29). A box can never name a repository the fleet-wide
+           registry does not, so the legal values are finite and already on
+           screen; a textarea here would exist only for the collector to refuse
+           what the page had invited. Asserted on the page because that is
+           where the invitation is — the collector's refusal is already
+           covered, and a build with both would still be one an operator could
+           type into. */
+        eq('registry: ...as switches over the fleet-wide list, not a free field', 0,
+           await page.locator('#regov .regta').count());
+        const wsel = '#regov .regblk[data-kind="work"] ';
+        ok('registry: ...one switch per repository the fleet watches',
+           (await page.locator(`${wsel}.regopt`).count()) >= 1,
+           `switches: ${await page.locator(`${wsel}.regopt`).count()}`);
+        // An inheriting box shows every switch ON. Inheriting IS selecting all
+        // of them, and a cell that drew them off would read as a narrowed box
+        // and invite an operator to "fix" one that is not.
+        const wsrc = (await page.locator(`${wsel}.regsrc`).textContent()).trim();
+        if (wsrc === 'inherited') {
+          eq('registry: ...every one of them on for an inheriting box',
+             await page.locator(`${wsel}.regopt input`).count(),
+             await page.locator(`${wsel}.regopt input:checked`).count());
+        }
+        await shot('07-registries-box');
+        await page.keyboard.press('Escape');
+        await settle(async () => !(await page.locator('#regov').isVisible().catch(() => false)), 4000);
+      }
+    }
     await leave();
   }
 

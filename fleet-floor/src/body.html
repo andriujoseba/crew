@@ -65,7 +65,11 @@
   <!-- fleet operations bar (floor view) -->
   <div class="opsbar">
     <div class="obox ops">
-      <div class="oh"><span>ACTIVE OPERATIONS <b id="ops-count"></b></span><span class="gacts"><button class="gbtn" id="g-start">▶ Start all</button><button class="gbtn" id="g-stop">⏸ Stop all</button><button class="gbtn" id="g-wake">◈ Wake silent</button></span></div>
+      <div class="oh"><span>ACTIVE OPERATIONS <b id="ops-count"></b></span><span class="gacts"><button class="gbtn" id="g-start">▶ Start all</button><button class="gbtn" id="g-stop">⏸ Stop all</button><button class="gbtn" id="g-wake">◈ Wake silent</button><!--
+        The fleet-wide half of #488. It sits with the other fleet-scope
+        controls rather than in the chrome above, because that is what it is:
+        a change to what the whole fleet watches. The per-box half is in the
+        box's own console, beside every other per-box control. --><button class="gbtn" id="g-reg">⛭ Registries</button></span></div>
       <div class="olist" id="opslist"></div>
     </div>
     <div class="obox met">

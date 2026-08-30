@@ -39,13 +39,48 @@ registry is empty and the fleet stays aimed at nothing until the operator
 names a repository.
 
 ```text
-fleet.roster       box name, agent and role
-fleet.conf         operator fleet values
-repos.txt          seed for a new box's work registry
-notify-repos.txt   additive cross-repo notification targets for a new triage box
-agents/*.conf      optional operator agent profiles; same name overrides shipped
-doctrine.conf      optional doctrine paths named in rendered prompts
+fleet.roster              box name, agent and role
+fleet.conf                operator fleet values
+repos.txt                 seed for a new box's work registry
+notify-repos.txt          additive cross-repo notification targets for a new triage box
+repos.d/<box>.txt         optional per-box selection from repos.txt
+notify-repos.d/<box>.txt  optional per-box selection from notify-repos.txt
+agents/*.conf             optional operator agent profiles; same name overrides shipped
+doctrine.conf             optional doctrine paths named in rendered prompts
 ```
+
+## Narrowing one box
+
+A `.d` file **selects** from the fleet-wide list for the box it names: the box
+carries those repositories and nothing else. The host stages the selection in
+place of the fleet-wide registry at every hire and upgrade, so narrowing one
+droid to a single board is one file, not an edit to a list every other box
+reads too.
+
+**A box can only watch repositories the fleet watches.** The `.d` file names a
+subset of the fleet-wide list and never reaches outside it. That bound is held
+in two places, and it has to be both: an entry the fleet-wide list does not
+name is refused when it is written, and the selection is intersected with the
+fleet-wide list again on every read — so retiring a repository fleet-wide takes
+it off the boxes that had selected it, instead of leaving them working a board
+the fleet no longer knows about. A narrowed box is a box doing what it was
+asked; nothing reads it as diverged.
+
+**Existence is the whole test** for *having* a selection. An *empty* file is a
+box deliberately aimed at no board at all — the narrowing `repos.txt`'s own
+header describes — and not a box that has no selection. **Removing** the file
+is how a box goes back to inheriting, and that is a different act from writing
+today's fleet-wide list into it: the box that inherits follows a later
+widening, the box pinned to a copy of it does not.
+
+Both files are edited by hand, and by `crew floor` — which validates before it
+writes and records every write in `.registry-journal.log` beside them. The two
+scopes refuse different things, because they are asked different questions: a
+fleet-wide edit refuses a repository the fleet cannot reach, since its entries
+are new to the fleet, while a `.d` edit refuses one the fleet-wide list does
+not name and asks nothing of GitHub, since none of its entries can be new.
+Neither reader caches: a hand edit is picked up by the next tick and by the
+console without a restart.
 
 The host atomically replaces `fleet.roster` and `fleet.conf` in a box on every
 hire or upgrade. Registries follow the host only while their box copy remains

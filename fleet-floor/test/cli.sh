@@ -1394,6 +1394,153 @@ else
 fi
 rm -f "$CL_TMP/crew-state/cli-hired.repos"
 
+# --- a box narrowed by SELECTION is narrowed, never dirty (#488) ------------
+#
+# The operator's direction of 2026-08-29: a droid's watch set is drawn from the
+# host-level list and the per-box feature toggles over that list, so `crew
+# status` and its neighbours "should be aware of this and not mark a member as
+# dirty". hire_guard is where that reading bites, and only on the branch where
+# the box has NO ~/duty/repos.txt yet: install.sh is about to seed one, and
+# what it seeds is this box's own selection. Reading the fleet-wide list there
+# called a selected box a production one and refused it over a registry it was
+# never going to carry — a narrowed member read as dirty, exactly.
+#
+# An EMPTY state file is the box with no registry: stub-box `cat`s that file
+# and succeeds, so box_registry comes back empty, which is the branch under
+# test. `rm` would take the stub's hard-coded fallback instead and never reach
+# it.
+#
+# Two entries fleet-wide, because a selection has to be a PROPER subset for the
+# case below to mean anything: with a one-line registry the only subsets are
+# the whole thing and nothing, and "nothing" would pass this guard for the
+# uninteresting reason that an empty string differs from a non-empty one.
+printf 'heavy-duty/crew\nheavy-duty/box\n' >"$CL_CONFIG/repos.txt"
+: >"$CL_TMP/crew-state/cli-hired.repos"
+# THE CONTROL FIRST, or the case under it proves nothing. With no selection the
+# box inherits the whole fleet-wide list, which IS production, and #51's
+# refusal must still stand — a resolver that read every box as narrowed would
+# pass the case below while silently disarming the guard.
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -ne 0 ] && grep -q 'PRODUCTION registry' "$CL_TMP/crew-out"; then
+  ok "crew hire: a box with no registry yet inherits, and production is still refused"
+else
+  fail "crew hire: a box with no registry yet inherits, and production is still refused" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+mkdir -p "$CL_CONFIG/repos.d"
+printf 'heavy-duty/box\n' >"$CL_CONFIG/repos.d/cli-hired.txt"
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -eq 0 ]; then
+  ok "crew hire: ...while a box with a SELECTION is read as narrowed, not as production"
+else
+  fail "crew hire: ...while a box with a SELECTION is read as narrowed, not as production" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# And the line names what install.sh will actually seed. An operator told
+# `heavy-duty/crew heavy-duty/box` here would be reading a claim about a board
+# this box is never going to see — the print half of the same defect, and the
+# half that survives a guard someone later passes --allow-offroster to.
+CL_SEEDLINE="$(grep 'registry: none yet' "$CL_TMP/crew-out" || true)"
+case "$CL_SEEDLINE" in
+  *'heavy-duty/crew'*) CL_R1=WIDENED ;;
+  *'heavy-duty/box'*)  CL_R1=selection ;;
+  *)                   CL_R1=SILENT ;;
+esac
+t "crew hire: ...and names the selection it will be seeded with" selection "$CL_R1"
+# CONTAINMENT REACHES THE GUARD TOO. A selection naming a repository the
+# fleet-wide list no longer holds must not widen what this box is read as
+# carrying — the read-time intersection floor/registry.py's `effective` applies,
+# applied by the same resolver here. Written past any validator by hand,
+# because nothing on the floor will write it.
+printf 'heavy-duty/box\nheavy-duty/retired\n' >"$CL_CONFIG/repos.d/cli-hired.txt"
+crew_off hire cli-hired --role builder --agent claude
+CL_SEEDLINE="$(grep 'registry: none yet' "$CL_TMP/crew-out" || true)"
+case "$CL_SEEDLINE" in
+  *'heavy-duty/retired'*) CL_R1=SMUGGLED ;;
+  *'heavy-duty/box'*)     CL_R1=contained ;;
+  *)                      CL_R1=SILENT ;;
+esac
+t "crew hire: ...with a stale selection intersected, not carried" contained "$CL_R1"
+# A box selected down to NOTHING is a supported state, not a missing one, so
+# the line has to say that rather than end after "seed " with nothing behind
+# it — an operator reading a sentence that trails off cannot tell an empty
+# selection from a print that broke.
+: >"$CL_CONFIG/repos.d/cli-hired.txt"
+crew_off hire cli-hired --role builder --agent claude
+CL_SEEDLINE="$(grep 'registry: none yet' "$CL_TMP/crew-out" || true)"
+case "$CL_SEEDLINE" in
+  *'selects no repositories'*) CL_R1=said ;;
+  *'seed'?)                    CL_R1=TRAILED-OFF ;;
+  *)                           CL_R1="UNEXPECTED: $CL_SEEDLINE" ;;
+esac
+t "crew hire: ...and an empty selection is named as one, not left trailing" said "$CL_R1"
+rm -rf "$CL_CONFIG/repos.d"
+
+# --- ONE READER ON BOTH SIDES OF THE PRODUCTION COMPARISON (#488) ----------
+#
+# `hire_guard` asks `[ "$reg" != "$prod" ]`, and since the block above both
+# sides DERIVE from the fleet-wide file rather than one being assigned from the
+# other: `$reg` through `resolved_registry` → `registry_entries`, which strips
+# each line, and `$prod` through `production_registry`, which used to hand back
+# raw ones. Two readers of one file disagreeing about whitespace, feeding a
+# `!=` whose every difference is read as "narrowed" and returns 0. One trailing
+# space or a CRLF in a hand-edited `repos.txt` and #51's refusal is gone, with
+# the guard's own line still printing the production registry back.
+#
+# Every case above misses it for one reason: they all write
+# `printf 'heavy-duty/crew\nheavy-duty/box\n'`, clean lines on both sides, so
+# the two readers agree by accident. These write the file an operator actually
+# leaves behind — and the branch had already conceded the state is real, by
+# fixing the transport half of it (`an indented fleet-wide entry still reaches
+# a box that selected it`) while leaving the guard half standing.
+printf 'heavy-duty/crew \nheavy-duty/box\n' >"$CL_CONFIG/repos.txt"
+: >"$CL_TMP/crew-state/cli-hired.repos"
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -ne 0 ] && grep -q 'PRODUCTION registry' "$CL_TMP/crew-out"; then
+  ok "crew hire: a trailing space in the fleet-wide list does not disarm the refusal"
+else
+  fail "crew hire: a trailing space in the fleet-wide list does not disarm the refusal" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# CRLF for the same reason `box_registry` has carried `tr -d '\r'` since before
+# this branch: it is a state these files have been repaired for already.
+printf 'heavy-duty/crew\r\nheavy-duty/box\r\n' >"$CL_CONFIG/repos.txt"
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -ne 0 ] && grep -q 'PRODUCTION registry' "$CL_TMP/crew-out"; then
+  ok "crew hire: ...and neither does a CRLF one"
+else
+  fail "crew hire: ...and neither does a CRLF one" "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+# THE CONTROL, or the two above are satisfied by a guard that refuses
+# everything: under the same CRLF list, a box with a real selection is still
+# narrowed and still allowed.
+mkdir -p "$CL_CONFIG/repos.d"
+printf 'heavy-duty/box\n' >"$CL_CONFIG/repos.d/cli-hired.txt"
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -eq 0 ]; then
+  ok "crew hire: ...while a SELECTION under the same list is still narrowed"
+else
+  fail "crew hire: ...while a SELECTION under the same list is still narrowed" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+rm -rf "$CL_CONFIG/repos.d"
+# THE SAME ASYMMETRY FROM THE OTHER SIDE, and this half predates #488:
+# `box_registry` reads the registry the box CARRIES and strips `\r` but never
+# spaces, so a carried production registry with one trailing space compares
+# unequal to the fleet's and the box is armed against production anyway. Same
+# `!=`, same disarm, reached without any selection at all.
+printf 'heavy-duty/crew\nheavy-duty/box\n' >"$CL_CONFIG/repos.txt"
+printf 'heavy-duty/crew \nheavy-duty/box\n' >"$CL_TMP/crew-state/cli-hired.repos"
+crew_off hire cli-hired --role builder --agent claude
+if [ "$CL_RC" -ne 0 ] && grep -q 'PRODUCTION registry' "$CL_TMP/crew-out"; then
+  ok "crew hire: a trailing space in the box's OWN registry does not disarm it either"
+else
+  fail "crew hire: a trailing space in the box's OWN registry does not disarm it either" \
+       "rc=$CL_RC $(cat "$CL_TMP/crew-out")"
+fi
+rm -f "$CL_TMP/crew-state/cli-hired.repos"
+printf 'heavy-duty/crew\n' >"$CL_CONFIG/repos.txt"
+
 # The registry must be PRINTED either way: #51's second bullet. A guard that
 # only speaks up when it refuses leaves the normal path as silent as before.
 crew_cmd hire cli-hired --force
