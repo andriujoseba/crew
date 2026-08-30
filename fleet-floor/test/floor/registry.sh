@@ -493,6 +493,15 @@ FF_REG_CCJ="$(tail -n +"$((FF_REG_J0 + 1))" "$FF_REG_JOURNAL")"
 t "registry: ...each recording the state that write submitted, six and six" "6 6" \
   "$(printf '%s\n' "$FF_REG_CCJ" | grep -cF 'entries=heavy-duty/crew added=' || true) $(
      printf '%s\n' "$FF_REG_CCJ" | grep -cF 'entries=heavy-duty/crew,heavy-duty/ceremony added=' || true)"
+# AND THE DELTAS BESIDE IT STILL DESCRIBE THEIR OWN WRITE. Six threads submit
+# one state and six the other and the lock serialises them, so in that serial
+# order at least one adjacent pair differs and at least one record must carry a
+# real move — whichever way the twelve interleave. This is the assertion that
+# `_journal` handed empty deltas for every write fails: `entries=` alone would
+# leave such a record perfectly accurate about the state it applied while
+# claiming nothing ever moved.
+t "registry: ...and at least one of them records the move it made" moved \
+  "$(printf '%s\n' "$FF_REG_CCJ" | grep -qvF 'added=- removed=-' && echo moved || echo ALL-EMPTY)"
 # `find` on a directory that is not there prints nothing and `wc -l` says 0, so
 # this assertion would PASS on a definition the suite had lost. The directory is
 # proved present first, and it is the same reading either way.
