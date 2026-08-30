@@ -155,6 +155,20 @@ review_park_write "$REPO" "$PR" "$HEAD" "$MISSING_DIGEST" "$REASON"
 review_park_inspect "$REPO" "$PR" "$HEAD"
 t review-park-missing-stamp-expires expired "$REVIEW_PARK_STATE"
 
+# Malformed record text never becomes a path or kill target. The damaged park
+# expires, while a file named by its bogus digest text remains untouched.
+MALFORMED_SENTINEL="$TMP/malformed-sentinel"
+printf keep >"$MALFORMED_SENTINEL"
+MALFORMED_PATH="$(_review_park_path "$REPO" 14 5555555555555555555555555555555555555555)"
+mkdir -p "${MALFORMED_PATH%/*}"
+printf '%s\n' 'version=1' "repo=$REPO" 'pr=14' \
+  'head=5555555555555555555555555555555555555555' \
+  "digests=../../../../..$MALFORMED_SENTINEL" "reason_b64=$REASON" 'ticks=0' \
+  >"$MALFORMED_PATH"
+review_park_inspect "$REPO" 14 5555555555555555555555555555555555555555
+t review-park-malformed-digest-expires expired "$REVIEW_PARK_STATE"
+t review-park-malformed-digest-cannot-delete keep "$(cat "$MALFORMED_SENTINEL")"
+
 # An unfinished run suppresses through the twelfth tick, then the thirteenth
 # observation abandons it and deliberately asks for a fresh review.
 LONG_DIGEST="$(run_detached "$REPO" 9 cccccccccccccccccccccccccccccccccccccccc \

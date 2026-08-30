@@ -206,7 +206,7 @@ _mark_addressing() {
 
 duty_review() {
   local candidates="" page SR sweep_complete=1 acted_prs=""
-  local -A candidate_heads=() park_states=() park_results=() park_reasons=()
+  local -A candidate_heads=() park_states=() park_results=() park_reasons=() park_digests=()
   # The registry is the scope. Object endpoints only — one authoritative
   # pulls page per carried repo, never the lagging search index.
   while IFS= read -r SR; do
@@ -295,6 +295,7 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     park_states["$SR#$N"]="$REVIEW_PARK_STATE"
     park_results["$SR#$N"]="$REVIEW_PARK_RESULTS"
     park_reasons["$SR#$N"]="$REVIEW_PARK_REASON"
+    park_digests["$SR#$N"]="$REVIEW_PARK_DIGESTS"
 
     decision="$(rereq_decision "$mine_oid" "$head" "$mine_state" "$mine_at" "$req_at" "${AUTO_APPROVE_REREQUEST:-1}" "$REVIEW_PARK_STATE")"
     case "$decision" in
@@ -392,7 +393,7 @@ $key $updated"
       expected_heads="$expected_heads $N=${candidate_heads["$SR#$N"]}"
       if [ "${park_states["$SR#$N"]:-none}" = ready ]; then
         ready_prs="$ready_prs $N"
-        park_evidence="${park_evidence}${park_evidence:+$'\n'}$SR#$N at ${candidate_heads["$SR#$N"]}: ${park_reasons["$SR#$N"]}\n${park_results["$SR#$N"]}"
+        park_evidence="${park_evidence}${park_evidence:+$'\n'}$SR#$N at ${candidate_heads["$SR#$N"]}: ${park_reasons["$SR#$N"]}"$'\n'"${park_results["$SR#$N"]}"
       fi
     done
     expected_heads="${expected_heads# }"; ready_prs="${ready_prs# }"
@@ -428,6 +429,8 @@ $key $updated"
         # that session declared another park for the same PR, capture replaced
         # the record and it remains the next tick's source of truth.
         for N in $ready_prs; do
+          _review_park_cleanup_runs "$SR" "$N" "${candidate_heads["$SR#$N"]}" \
+            "${park_digests["$SR#$N"]}"
           if [[ "$captured_prs" != *" $N "* ]]; then
             review_park_clear "$SR" "$N" "${candidate_heads["$SR#$N"]}"
           fi

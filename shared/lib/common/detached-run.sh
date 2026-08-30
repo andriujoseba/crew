@@ -371,6 +371,15 @@ _review_park_abandon_all() {
   review_park_clear "$repo" "$pr" "$head"
 }
 
+_review_park_cleanup_runs() {
+  local repo="$1" pr="$2" head="$3" digests="$4" digest
+  _detached_valid_subject "$repo" "$pr" "$head" || return 0
+  _review_park_valid_digests "$digests" || return 0
+  for digest in "${_REVIEW_PARK_DIGESTS[@]}"; do
+    detached_run_abandon "$repo" "$pr" "$head" "$digest"
+  done
+}
+
 _review_park_abandon_file() {
   local path="$1" repo pr head digests digest stamp
   repo="$(_detached_field "$path" repo)"
@@ -434,6 +443,7 @@ review_park_inspect() {
   REVIEW_PARK_STATE=none
   REVIEW_PARK_RESULTS=""
   REVIEW_PARK_REASON=""
+  REVIEW_PARK_DIGESTS=""
   _review_park_prune_other_heads "$repo" "$pr" "$head"
   path="$(_review_park_path "$repo" "$pr" "$head")"
   [ -f "$path" ] || return 0
@@ -454,6 +464,8 @@ review_park_inspect() {
     REVIEW_PARK_STATE=expired
     return 0
   fi
+
+  REVIEW_PARK_DIGESTS="$digests"
 
   IFS=, read -ra _REVIEW_PARK_DIGESTS <<<"$digests"
   for digest in "${_REVIEW_PARK_DIGESTS[@]}"; do

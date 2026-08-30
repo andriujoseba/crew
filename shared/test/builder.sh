@@ -3979,6 +3979,7 @@ d533_tick() (
     mkdir -p "$D533/logs"
     RUN_SESSION_LOG="$D533/logs/review.log"
     : >"$RUN_SESSION_LOG"
+    [ -z "${D533_PARK_LINE:-}" ] || printf '%s\n' "$D533_PARK_LINE" >"$RUN_SESSION_LOG"
     RUN_SESSION_RC=0
   }
   duty_review
@@ -4018,6 +4019,40 @@ DUTY_DIR="$old_duty"
 t d533-complete-session-clears-park cleared "$r1"
 d533_tick
 t d533-settled-result-does-not-redispatch 1 "$(wc -l <"$D533_DISPATCHES")"
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+if [ -f "$(_detached_run_stamp fx/repo 7 "$D533_HEAD" "$D533_DONE")" ] \
+  || [ -f "$(_detached_run_dir fx/repo 7 "$D533_HEAD")/$D533_DONE.log" ]; then
+  r1=kept
+else
+  r1=collected
+fi
+DUTY_DIR="$old_duty"
+t d533-completed-artifacts-are-collected collected "$r1"
+
+# Drive PARKED capture through the real session-log boundary. The first
+# completed session must withhold this unchanged item from .seen-review; once
+# the run completes, the same updated_at must dispatch exactly one resume.
+D533_NUM=8; D533_HEAD=8888888888888888888888888888888888888888
+D533_UPDATED=2026-08-30T07:30:00Z
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+D533_CAPTURED="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'sleep 0.3; printf captured')"
+DUTY_DIR="$old_duty"
+D533_PARK_LINE="PARKED fx/repo#$D533_NUM@$D533_HEAD runs=$D533_CAPTURED reason=$D533_REASON"
+D533_BEFORE="$(wc -l <"$D533_DISPATCHES")"
+d533_tick
+D533_PARK_LINE=""
+if grep -Fq "fx/repo#$D533_NUM $D533_UPDATED" "$D533/.seen-review"; then r1=committed; else r1=withheld; fi
+t d533-captured-park-withholds-ledger-item withheld "$r1"
+old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
+for _wait in $(seq 1 100); do
+  detached_run_read fx/repo "$D533_NUM" "$D533_HEAD" "$D533_CAPTURED" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 0.02
+done
+DUTY_DIR="$old_duty"
+d533_tick
+t d533-captured-completion-dispatches-once "$((D533_BEFORE + 2))" \
+  "$(wc -l <"$D533_DISPATCHES")"
 
 # At tick 13 the running command is abandoned and the ordinary review path is
 # dispatched in this same tick rather than leaving an unowned gap.
@@ -4028,8 +4063,10 @@ review_park_write fx/repo "$D533_NUM" "$D533_HEAD" "$D533_EXPIRE" "$D533_REASON"
 _review_park_rewrite_ticks "$(_review_park_path fx/repo "$D533_NUM" "$D533_HEAD")" "$REVIEW_PARK_TICK_LIMIT"
 DUTY_DIR="$old_duty"
 D533_UPDATED=2026-08-30T08:00:00Z
+D533_EXPIRE_BEFORE="$(wc -l <"$D533_DISPATCHES")"
 d533_tick
-t d533-expired-park-redispatches 2 "$(wc -l <"$D533_DISPATCHES")"
+t d533-expired-park-redispatches "$((D533_EXPIRE_BEFORE + 1))" \
+  "$(wc -l <"$D533_DISPATCHES")"
 old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
 if [ -f "$(_review_park_path fx/repo "$D533_NUM" "$D533_HEAD")" ]; then r1=kept; else r1=removed; fi
 DUTY_DIR="$old_duty"
@@ -4368,6 +4405,17 @@ d462_uses() {  # d462_uses <function-name> — how many times $BMOD calls it
 d462_reset
 DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
 t d462-decline-lands-on-the-board 1 "$(d462_count)"
+
+# The parked-review prompt uses this same four-argument marker contract. Drive
+# the real helper so a stale three-argument usage assumption cannot rewrite D7.
+d462_reset
+D533_POST_MARK='<!-- duty:review-park:fx/repo#7@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
+D533_POST_BODY="⏸ review parked at head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa — suite running
+$D533_POST_MARK"
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D533_POST_BODY" "$D533_POST_MARK" >/dev/null 2>&1
+t d533-park-marker-four-argument-contract 1 "$(d462_count)"
+d462_reset
+DUTY_DIR="$D462" "$PO" fx/repo 7 "$D462_BODY_A" "$D462_MARK_A" >/dev/null 2>&1
 
 # 2. A SECOND BOX ADDS NOTHING — same conclusion, a body a different model
 # wrote. The marker is the key, so this is one comment.
