@@ -1,7 +1,7 @@
 # common/session.sh — run_session, session_acted, session_reply_tail,
 # session_peak_rss, session_mem_hit — the dispatch that launches the box CLI,
-# what it reports about the session afterwards, and the memory ceiling it is
-# run under.
+# what it reports about the session afterwards, the memory ceiling it is run
+# under, and the session identity that makes its transcript addressable.
 #
 # A module of shared/lib/common.sh, which is the entry point: nothing sources
 # this file directly.
@@ -173,6 +173,318 @@ _session_log_bytes() {
   esac
 }
 
+# --- session identity, and the one resume it buys (#538) --------------------
+#
+# What the engine could not say. `run_session` captures the CLI's stdout and
+# nothing else, while the vendor mints its own session id and keeps the whole
+# transcript under it. So a session killed at its wall leaves its entire
+# context complete and intact on disk, and no record this fleet keeps can name
+# the file. The measured case: an operator session killed at `rc=124 dur=1800s`
+# left a 548 KB, 242-entry transcript whose last write was 69 ms before the
+# kill, and the next tick started from zero. On 2026-08-25 the fleet re-derived
+# the same failing idiom three times in a row on one pull request.
+#
+# D1 — THE ENGINE MINTS THE ID; IT NEVER DISCOVERS IT. Discovery means parsing
+# vendor output for an identifier, which is the failure mode #529 D2 already
+# refuses for `left=`. The id is generated here and pinned on the launch, so
+# the engine knows it before the CLI runs and does not have to be told.
+#
+# D2 — TWO HOOKS, NOT ONE, because pinning an id and resuming one are different
+# vendor capabilities and a CLI may have the first without the second. They are
+# `declare -F`-guarded exactly as `bot_session_acted` is: an absent
+# `bot_cli_session_id_args` means no id is pinned and `sid=` is `unknown`; an
+# absent `bot_cli_resume_args` means this profile never resumes and the lane
+# behaves exactly as it does today. Measured on the `claude` CLI at 2.1.220 and
+# recorded on the PR: `--session-id <uuid>` on a SECOND launch fails outright
+# with `Session ID <uuid> is already in use.` and `rc=1`. So the two fragments
+# are not merely separable — rendering the pin fragment onto a resume would
+# fail the session, which is why nothing here composes them.
+#
+# WHY THERE IS NO `resumed=` TOKEN, and no third record kind. A resumed session
+# carries the KILLED session's `sid` on its own `SESSION START`, so the repeat
+# is the record: an operator reading `duty.log` sees one id twice and a reader
+# comparing the two lines needs nothing else. A `SESSION RESUME` line would be
+# a new record shape for every reader of this log — the floor's units, the
+# orphan reconciler's start/end pairing — bought for a fact the existing shape
+# already carries.
+
+# The resume bound (D7), and it is deliberately NOT env-overridable and not a
+# `fleet.defaults.conf` key. The whole safety argument in `_session_resume_plan`
+# rests on this being small, and a tunable invites raising it in exactly the
+# incident where raising it is worst. A second resume, if it is ever wanted, is
+# a deliberate change with its own evidence — not a config edit.
+SESSION_RESUME_MAX_TRIES=1
+
+# _session_sid_valid SID — a v4-shaped UUID and nothing else. The shape is
+# checked with a glob and the alphabet with a substitution, so no `[[ =~ ]]`
+# and no fork. Two guards rather than one: the glob fixes the length and the
+# dash positions, the substitution fixes the character set, and neither alone
+# is enough.
+_session_sid_valid() {
+  case "${1:-}" in
+    ????????-????-????-????-????????????) ;;
+    *) return 1 ;;
+  esac
+  case "${1//[0-9a-fA-F-]/}" in
+    '') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _session_mint_sid — this dispatch's id, or `unknown`. The kernel's own
+# generator first because it costs a read and no fork; `uuidgen` is the
+# fallback for a guest without that procfs entry. A box that can produce
+# neither gets `unknown`, which pins nothing, stubs nothing and resumes
+# nothing — the failure direction every path here takes.
+_session_mint_sid() {
+  local sid=""
+  { read -r sid </proc/sys/kernel/random/uuid; } 2>/dev/null || sid=""
+  if ! _session_sid_valid "$sid"; then
+    sid="$(uuidgen 2>/dev/null)" || sid=""
+  fi
+  _session_sid_valid "$sid" && printf '%s' "$sid" || printf unknown
+  return 0
+}
+
+# _session_head_valid REF — a commit id this engine will compare. Hex and
+# 7..64 wide, so both object formats are covered and `unknown` is refused by
+# construction rather than by a second case.
+_session_head_valid() {
+  local ref="${1:-}"
+  [ "${#ref}" -ge 7 ] && [ "${#ref}" -le 64 ] || return 1
+  case "${ref//[0-9a-f]/}" in
+    '') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _session_head DIR — the head DIR is sitting at, or `unknown`. Best-effort by
+# D5: a `$dir` that is not a work tree is an ordinary state here, not an error,
+# and the `unknown` it produces is what D6.2 refuses to resume against.
+_session_head() {
+  local head
+  head="$(git -C "$1" rev-parse HEAD 2>/dev/null)" || head=""
+  _session_head_valid "$head" || head=unknown
+  printf '%s' "$head"
+}
+
+# _session_resume_state KIND KEY — the per-lane stub path, beside the terminal
+# breaker's and the budget's state files and named the same way. Keyed by
+# `(kind, key)` because that pair is what a dispatch resumes: two lanes at the
+# same key are different work, and one lane at two keys is two conversations.
+#
+# The key is folded to a filename alphabet, which can collide where two keys
+# differ only in the characters folded. The collision is not load-bearing:
+# D6.2 compares the recorded head against `$dir`'s, so a stub reached by a
+# colliding key is refused unless it is also at the same commit, and a stub
+# that is refused is discarded rather than resumed.
+_session_resume_state() {
+  local kind="$1" key="$2"
+  printf '%s/.session-resume.%s.%s' \
+    "$DUTY_DIR" "${kind//[^[:alnum:]._-]/_}" "${key//[^[:alnum:]._-]/_}"
+}
+
+# _session_resume_read FILE — the stub's fields, validated, as `k=v` lines; or
+# nothing. NOTHING IS THE ONLY FAILURE MODE, and it is what "a stub that is
+# missing, unreadable, or ambiguous is treated as absent, never as resumable"
+# means in code: a missing file, a short read, a repeated key, a field that is
+# not the shape it has to be, or a line this writer never writes all produce
+# the same empty answer, and the caller then dispatches an ordinary session.
+#
+# The read is bounded at 64 lines so a stub that is not one — a log rotated
+# onto the path, a file an operator dropped there — cannot make this loop the
+# expensive part of a dispatch.
+_session_resume_read() {
+  local file="$1" line field value lines=0
+  local sid="" head="" wall="" try="" logb="" left=""
+  [ -s "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    lines=$((lines + 1))
+    [ "$lines" -le 64 ] || return 0
+    field="${line%%=*}"
+    value="${line#*=}"
+    # A line with no `=` leaves field and value equal to the whole line; that
+    # is not a field this writer produces, so the stub is not one either.
+    [ "$field" != "$line" ] || return 0
+    case "$field" in
+      sid)  [ -z "$sid" ]  || return 0; sid="$value" ;;
+      head) [ -z "$head" ] || return 0; head="$value" ;;
+      wall) [ -z "$wall" ] || return 0; wall="$value" ;;
+      try)  [ -z "$try" ]  || return 0; try="$value" ;;
+      log)  [ -z "$logb" ] || return 0; logb="$value" ;;
+      left) [ -z "$left" ] || return 0; left="$value" ;;
+      *) return 0 ;;
+    esac
+  done <"$file"
+  # Every field is required. A stub carrying five of six is a stub that was
+  # half-written when the box died, and the two figures D6 reads are exactly
+  # the ones that only exist at the moment of the kill.
+  [ -n "$sid" ] && [ -n "$head" ] && [ -n "$wall" ] \
+    && [ -n "$try" ] && [ -n "$logb" ] && [ -n "$left" ] || return 0
+  _session_sid_valid "$sid" || return 0
+  { _session_head_valid "$head" || [ "$head" = unknown ]; } || return 0
+  case "$wall" in '' | *[!0-9]*) return 0 ;; esac
+  case "$try" in '' | *[!0-9]*) return 0 ;; esac
+  case "$logb" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
+  case "$left" in unknown) ;; '' | *[!0-9]*) return 0 ;; esac
+  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
+    "$sid" "$head" "$wall" "$try" "$logb" "$left"
+}
+
+# _session_resume_plan KIND KEY DIR — decide whether this dispatch continues
+# the killed session, into _SESSION_SID / _SESSION_RESUMED / _SESSION_TRY.
+#
+# D6, and its governing sentence: THE FAILURE DIRECTION IS NEVER TO RESUME.
+# Every condition below is written so that a fact this engine cannot establish
+# reads as a refusal, and every refusal discards the stub and dispatches an
+# ordinary fresh session.
+#
+#  1  a stub exists for this `(kind, key)` and parses;
+#  2  its head is not `unknown` and equals `$dir`'s head now — a moved head
+#     means the world changed and the carried context is about a tree that is
+#     gone;
+#  3  the killed session's log was non-empty. A `rc=124` with a zero-byte log
+#     is a session that produced nothing at all, and resuming it resumes
+#     whatever wedged it, with the wedge in its context;
+#  4  nothing of that session was still alive — `left=0` on its record. This is
+#     the load-bearing one and the reason #529 is a functional predecessor and
+#     not only a file collision: resuming a lane while a process of the
+#     previous session still runs puts two live sessions on one key, and that
+#     counter is the only thing that can see it. `unknown` is not zero;
+#  5  the try count is below SESSION_RESUME_MAX_TRIES;
+#  6  the profile defines `bot_cli_resume_args`.
+#
+# THE STUB IS CONSUMED ON EVERY PATH, resume and refusal alike. A stub that
+# survived its own refusal would be re-read on the next dispatch against the
+# same facts and refused again forever; a stub that survived its own resume
+# would be the second resume D7 exists to forbid.
+_session_resume_plan() {
+  local kind="$1" key="$2" dir="$3" state fields
+  local sid="" head="" try="" logb="" left=""
+  _SESSION_SID=""
+  _SESSION_RESUMED=no
+  _SESSION_TRY=0
+  state="$(_session_resume_state "$kind" "$key")"
+  fields="$(_session_resume_read "$state")"
+  rm -f "$state" 2>/dev/null || true
+  [ -n "$fields" ] || return 0
+  while IFS='=' read -r field value; do
+    case "$field" in
+      sid) sid="$value" ;; head) head="$value" ;; try) try="$value" ;;
+      log) logb="$value" ;; left) left="$value" ;;
+    esac
+  done <<<"$fields"
+  [ "$head" != unknown ] || return 0
+  [ "$head" = "$(_session_head "$dir")" ] || return 0
+  [ "$logb" != unknown ] && [ "$logb" -gt 0 ] || return 0
+  [ "$left" != unknown ] && [ "$left" -eq 0 ] || return 0
+  [ "$try" -lt "$SESSION_RESUME_MAX_TRIES" ] || return 0
+  declare -F bot_cli_resume_args >/dev/null 2>&1 || return 0
+  _SESSION_SID="$sid"
+  _SESSION_RESUMED=yes
+  _SESSION_TRY=$((try + 1))
+  return 0
+}
+
+# _session_splice_cli_args ARGS… — put ARGS into this dispatch's invocation.
+#
+# Ahead of a trailing `-p`, for the reason `bot_cli_model_cmd` gives: run_session
+# appends the prompt as the final argument, and `claude -p <prompt>` is what
+# makes it the prompt rather than a stray operand. Any other shape an operator
+# overlay might carry takes the fragment on the end.
+_session_splice_cli_args() {
+  [ "$#" -gt 0 ] || return 0
+  local last=$(( ${#_SESSION_CLI_CMD[@]} - 1 ))
+  if [ "$last" -ge 0 ] && [ "${_SESSION_CLI_CMD[last]}" = "-p" ]; then
+    _SESSION_CLI_CMD=("${_SESSION_CLI_CMD[@]:0:last}" "$@" -p)
+  else
+    _SESSION_CLI_CMD=("${_SESSION_CLI_CMD[@]}" "$@")
+  fi
+}
+
+# _session_identity KIND KEY DIR — resolve this dispatch's session id and pin
+# it on the invocation. Runs AFTER `_session_cli_cmd` and `_session_structured_cmd`,
+# so the fragment is spliced into the invocation those two already resolved and
+# neither the model tier nor the structured-output flag can be displaced by it.
+#
+# A hook that refuses, or renders nothing, leaves the invocation byte-identical
+# to what it was — the same contract `bot_cli_structured_cmd` has. On the resume
+# side that refusal costs the resume too: `_SESSION_RESUMED` goes back to `no`,
+# a fresh id is minted, and the session that runs is an ordinary one.
+_session_identity() {
+  local kind="$1" key="$2" dir="$3"
+  _session_resume_plan "$kind" "$key" "$dir"
+  if [ "$_SESSION_RESUMED" = yes ]; then
+    BOT_CLI_RESUME_ARGS=()
+    if bot_cli_resume_args "$_SESSION_SID" \
+        && [ "${#BOT_CLI_RESUME_ARGS[@]}" -gt 0 ]; then
+      _session_splice_cli_args "${BOT_CLI_RESUME_ARGS[@]}"
+      return 0
+    fi
+    _SESSION_SID=""
+    _SESSION_RESUMED=no
+    _SESSION_TRY=0
+  fi
+  _SESSION_SID="$(_session_mint_sid)"
+  [ "$_SESSION_SID" != unknown ] || return 0
+  # No pin hook is not a failure and warns about nothing: it is D2's stated
+  # neutral answer, and the lane's sessions are otherwise unchanged. What the
+  # engine loses is the ability to name the transcript, which is what `sid=`
+  # then says on both lines.
+  if declare -F bot_cli_session_id_args >/dev/null 2>&1; then
+    BOT_CLI_SESSION_ID_ARGS=()
+    if bot_cli_session_id_args "$_SESSION_SID" \
+        && [ "${#BOT_CLI_SESSION_ID_ARGS[@]}" -gt 0 ]; then
+      _session_splice_cli_args "${BOT_CLI_SESSION_ID_ARGS[@]}"
+      return 0
+    fi
+  fi
+  # Minted but not pinned: the CLI will mint its own id and this one names
+  # nothing on disk, so claiming it on the record would be worse than saying
+  # the engine cannot tell.
+  _SESSION_SID=unknown
+  return 0
+}
+
+# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT — the stub, D5.
+#
+# Written on `rc=124` and on nothing else; ANY other end deletes it, which is
+# what keeps a stub from outliving the episode that produced it. It returns 0
+# on every path — a recovery mechanism must never be able to fail a session.
+#
+# WHAT IT CARRIES, and why it is six fields rather than D5's four. The `sid`,
+# the head, the wall and the try count are D5's list. `log` and `left` are
+# D6.3 and D6.4, and they are here because THEY DO NOT EXIST ANYWHERE ELSE AT
+# READ TIME: both are figures #529 takes at the moment the session ends, and a
+# next-tick reader can neither re-stat a log that has been rotated nor ask
+# procfs what survived a session that ended an hour ago. Deriving them by
+# parsing the previous `SESSION END` back out of `duty.log` is the discovery
+# D1 refuses. So the two conditions are recorded by the writer that can see
+# them, and read by the gate that cannot.
+#
+# The write is not atomic, deliberately. A box that dies mid-write leaves a
+# stub missing fields, and `_session_resume_read` requires all six — so the
+# truncated stub reads as absent, which is the answer it should get. A rename
+# dance would buy the same outcome through a second mechanism.
+_session_resume_record() {
+  local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" left="$7"
+  local state
+  state="$(_session_resume_state "$kind" "$key")"
+  if [ "$rc" -ne 124 ]; then
+    rm -f "$state" 2>/dev/null || true
+    return 0
+  fi
+  # An id the engine does not hold names no transcript, so a stub carrying it
+  # could never satisfy D6 anyway. Refuse to write one rather than leave a file
+  # whose only possible future is being discarded.
+  [ "$_SESSION_SID" != unknown ] || { rm -f "$state" 2>/dev/null || true; return 0; }
+  case "$wall" in '' | *[!0-9]*) wall=0 ;; esac
+  printf 'sid=%s\nhead=%s\nwall=%s\ntry=%s\nlog=%s\nleft=%s\n' \
+    "$_SESSION_SID" "$(_session_head "$dir")" "$wall" "$_SESSION_TRY" \
+    "$logb" "$left" >"$state" 2>/dev/null || true
+  return 0
+}
+
 # run_session KIND KEY DIR TIMEOUT PROMPT — the only way a duty launches the
 # box CLI. Adds what every hand-rolled variant lacked somewhere: a timeout (a
 # hung session used to hold the flock forever, invisibly), captured exit
@@ -190,6 +502,13 @@ run_session() {
   # before, resolve what it is bought with (#469).
   _session_cli_cmd "$kind"
   _session_structured_cmd
+  # D4 — THE RESUME DECISION LIVES HERE, NOT IN THE DUTY LANES. Everything it
+  # needs is already an argument to this function: `kind`, `key` and `dir`. So
+  # every lane — build, review, triage, mention, hygiene, attention — gets both
+  # the id and the resume with no per-lane edit, and `duty-builder.sh` and
+  # `duty-review.sh`, the two most contended files on this board, are not
+  # touched at all.
+  _session_identity "$kind" "$key" "$dir"
   mkdir -p "$LOG_DIR"
   slog="$LOG_DIR/$(date -u '+%Y%m%dT%H%M%SZ')-$kind-${key//[\/#]/_}.log"
   session_stamp="${slog##*/}"
@@ -208,7 +527,14 @@ run_session() {
   # the start has to carry the liveness question with it — and it has to be a
   # question about a PROCESS, because a build may legitimately run for two
   # hours and no clock can tell that from a death (#478, common/ledger.sh).
-  log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog holder=$(_session_holder)"
+  # sid= is APPENDED, after every token this line already carries, and the
+  # position is the whole of its compatibility (D3). The floor's RE_START
+  # (fleet-floor/server/floor/units.py) matches `SESSION START kind=(\S+)
+  # key=(\S+)` and is unanchored at the end, so a trailing token is simply
+  # unread and every deployed floor keeps parsing. Inserting anywhere earlier
+  # breaks all of them. This is the same position — and the same reason — as
+  # tier=, log=, left= and peak_rss= on SESSION END below.
+  log "SESSION START kind=$kind key=$key timeout=${tmo}s log=$slog holder=$(_session_holder) sid=$_SESSION_SID"
   start=$SECONDS
   # </dev/null: the CLI reads piped stdin to EOF as context, and stdin here
   # is the caller's while-read work list — without this, the first session
@@ -344,7 +670,17 @@ run_session() {
   # reconstructed terminal in common/ledger.sh carries the field as `-`, the
   # convention that file states for a numeric it cannot recover — #553's
   # parity guard is what makes that a rule rather than a habit.
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix"
+  #
+  # sid= is LAST, past the usage and pool suffixes, and is the fourth field to
+  # take this position after tier=, log=/left= and peak_rss=. The id on this
+  # line and the id on the SESSION START above are the same value by
+  # construction — `_session_identity` resolved it once, before the dispatch —
+  # so the two records of one session point at one transcript (#538 D3).
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix sid=$_SESSION_SID"
+  # Written after the line that reports the session and before the counters
+  # that bill it, reading the two figures that line just published: this stub
+  # and that record can never disagree about what the session left behind.
+  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" "$log_bytes" "$survivor_count"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a
