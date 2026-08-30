@@ -253,9 +253,15 @@ t usage-structured-advertised-log-exists-while-running 1 \
   "$(sed -n '/^--live-log--$/{n;p;}' <<<"$usage_live")"
 
 usage_tier="$(usage_run shared-a valid opus)"
+# The prompt is still the final argument, and the session-id pin sits AHEAD of
+# the `-p` that makes it one — which is the whole reason `_session_splice_cli_args`
+# splices rather than appends (#538). The minted id is normalised because it is
+# random per dispatch; that it is a UUID at all is asserted by the pattern.
 t usage-tiered-structured-command-keeps-prompt-last \
-  '--model opus --output-format json -p theprompt' \
-  "$(sed -n '/^--argv--$/,$p' <<<"$usage_tier" | tail -n +2 | head -6 | paste -sd ' ' -)"
+  '--model opus --output-format json --session-id <uuid> -p theprompt' \
+  "$(sed -n '/^--argv--$/,$p' <<<"$usage_tier" | tail -n +2 | head -8 \
+    | sed -E 's/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/<uuid>/' \
+    | paste -sd ' ' -)"
 t usage-requested-tier-keeps-own-meaning 'opus|claude-sonnet-4-6' \
   "$(grep 'SESSION END' <<<"$usage_tier" \
     | sed -n 's/.* tier=\([^ ]*\).* model=\([^ ]*\).*/\1|\2/p')"
@@ -409,7 +415,7 @@ budget_off_run() ( # budget_off_run absent|explicit
     | sed -e 's/^[0-9-]*T[0-9:]*Z //' \
           -e 's#log=[^ ]*/[0-9TZ]*-build#log=<slog>-build#' \
           -e 's/ dur=[0-9]*s / dur=<n>s /' \
-          -e 's/ holder=[^ ]*$/ holder=<holder>/'
+          -e 's/ holder=[^ ]*/ holder=<holder>/'
   printf 'state-files=%s alerts=%s\n' \
     "$(find "$bdir" -name '.session-budget.*' | wc -l)" \
     "$([ -e "$bdir/alerts" ] && wc -l <"$bdir/alerts" || echo 0)"
@@ -448,14 +454,28 @@ t budget-off-says-nothing-about-budgets 0 \
 # missing whenever the answer is boring. So `tier=default` is what an
 # unconfigured fleet writes, deliberately, and it is written down here for the
 # same reason `holder=` was.
+#
+# It has now moved three times. #538 appended `sid=` to BOTH lines, and the
+# value here is `unknown` on every one of them — which is the golden earning
+# its keep rather than a gap in it. This fixture sets `BOT_CLI_CMD` directly
+# and loads no agent profile, so it defines no `bot_cli_session_id_args`, and
+# D2's stated neutral answer for a profile without that hook is exactly this:
+# no id pinned, `sid=unknown`, and the session otherwise unchanged. The rest of
+# both lines is byte-identical to what it was before, which is the other half
+# of that same clause.
+#
+# The `holder=` normaliser above lost its `$` anchor in the same change. It had
+# one only because `holder=` happened to be the last token on `SESSION START`;
+# `sid=` is now, and an anchored normaliser would have left the real pid in the
+# comparison and reported a mismatch that had nothing to do with what moved.
 budget_off_golden() {
   cat <<'GOLDEN'
-SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log holder=<holder>
-SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default
-SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log holder=<holder>
-SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default
-SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log holder=<holder>
-SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default
+SESSION START kind=build key=fixture/test1 timeout=5s log=<slog>-build-fixture_test1.log holder=<holder> sid=unknown
+SESSION END kind=build key=fixture/test1 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default sid=unknown
+SESSION START kind=build key=fixture/test2 timeout=5s log=<slog>-build-fixture_test2.log holder=<holder> sid=unknown
+SESSION END kind=build key=fixture/test2 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default sid=unknown
+SESSION START kind=build key=fixture/test3 timeout=5s log=<slog>-build-fixture_test3.log holder=<holder> sid=unknown
+SESSION END kind=build key=fixture/test3 rc=0 dur=<n>s outcome=ok acted=yes reply_tail=ZmluYWwgcmVwbHk= log=17 left=0 tier=default sid=unknown
 GOLDEN
 }
 # The last line is the state-file/alert tally the case above reads; everything
