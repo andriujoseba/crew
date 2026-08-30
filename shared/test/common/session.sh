@@ -426,6 +426,27 @@ t sid-refuses-a-profile-that-cannot-resume ordinary \
   "$(sid_refusal "$(sid_run pinonly fixture/pinonly 5 reply pin-only)" \
     pinonly "$sid_pinonly_killed")"
 
+# …and the same condition read at the GATE rather than through the dispatch,
+# because the dispatch enforces it twice. `_session_identity` also falls back
+# to a fresh session when the hook refuses to render, so the case above stays
+# green with D6.6 deleted from `_session_resume_plan` — a guard the suite
+# cannot see is a guard that can be removed. This pair drives the plan
+# directly, with a stub whose other five conditions all hold, so the only
+# thing that differs between the two answers is the hook.
+SID_PLAN_BOX="$(sid_box planonly)"
+sid_plan_verdict() ( # sid_plan_verdict none|both
+  local stub="$SID_PLAN_BOX/.session-resume.build.fixture_plan"
+  printf 'sid=%s\nhead=%s\nwall=1\ntry=0\nlog=14\nleft=0\n' \
+    "$(_session_mint_sid)" "$(git -C "$SID_PLAN_BOX/work" rev-parse HEAD)" >"$stub"
+  DUTY_DIR="$SID_PLAN_BOX"
+  unset -f bot_cli_resume_args
+  [ "$1" = none ] || eval 'bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(--resume "$1"); }'
+  _session_resume_plan build fixture/plan "$SID_PLAN_BOX/work"
+  printf '%s' "$_SESSION_RESUMED"
+)
+t sid-the-gate-itself-refuses-without-the-resume-hook no "$(sid_plan_verdict none)"
+t sid-the-gate-resumes-when-only-the-hook-was-missing yes "$(sid_plan_verdict both)"
+
 # --- a stub that is not one is absent, never resumable -------------------
 sid_corrupt_case() { # sid_corrupt_case BOX MUTATION...
   local box="$1"; shift
