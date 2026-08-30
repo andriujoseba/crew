@@ -308,7 +308,19 @@ session_reconcile_orphans() {
     # makes the start answered, so one box-kill would be counted again on every
     # run and D2's evidence would go to a terminal. Both writers open O_APPEND,
     # so this fd is safe beside the tick's inherited one.
-    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown started=$started" >>"$logfile"
+    # `sid=unknown` and not `-`, and the distinction is the one #473's peak_rss
+    # settled the other way. `-` is this line's word for a MEASUREMENT that was
+    # owed and died with the box; `unknown` is its word for an IDENTIFIER it
+    # never held — which is the same word `session_id=` and `tier=` already use
+    # a few tokens earlier, and the same word `_session_mint_sid` itself emits
+    # on a box that can generate no id. It is also the answer D6 needs: a stub
+    # is only ever written by the session that holds the id, so a reconciler
+    # that names one here would name a transcript nothing can open.
+    #
+    # It sits ahead of `started=`, which `orphan-started-stays-last` pins, and
+    # that costs the order guard nothing: `started` is this writer's alone, so
+    # it is not in the observed token list the comparison walks.
+    log "SESSION END kind=$kind key=$key rc=- dur=- outcome=$SESSION_ORPHAN_OUTCOME acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- input_tokens=- output_tokens=- cache_creation_input_tokens=- cache_read_input_tokens=- cost_usd=- session_id=unknown model=unknown models=- pool=unknown sid=unknown started=$started" >>"$logfile"
     # D3: the same per-kind counter an observed TERMINAL feeds, and no second
     # mechanism. A box that kills itself on every review session has a dead
     # review lane, whether the vendor said so or the kernel did.

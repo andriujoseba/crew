@@ -121,6 +121,27 @@ _session_usage_suffix() {
   ' <<<"$normalized" 2>/dev/null || true
 }
 
+# _session_sid_suffix — ` sid=<id>` for the SESSION END line.
+#
+# A one-field helper looks like ceremony until you read #553's parity guard,
+# which is what requires it. That guard derives each emitter's field ORDER from
+# its source, and it reads every literal token on the `log "SESSION END` line
+# before any token reached through an interpolated suffix. That model is
+# faithful to the wire only while every suffix sits at the tail of the line —
+# true for `$usage_suffix$pool_suffix`, and false the moment a literal ` sid=`
+# is appended PAST them, which is where D3 requires this field to go.
+#
+# Written literally, `sid` therefore sorts beside `peak_rss` in the derived
+# order while sitting last on the wire, and the only way to satisfy the guard
+# would be to emit `sid=` mid-line in the reconstructed terminal — encoding a
+# divergence between the two emitters to satisfy an artifact of how their
+# parity is measured. Reached through a helper instead, the derived order and
+# the wire order are the same list on both sides, and `sid=` stays last on both
+# without the guard being weakened to allow it.
+_session_sid_suffix() {
+  printf ' sid=%s' "$_SESSION_SID"
+}
+
 _session_pool_suffix() {
   local pool="${SESSION_CREDENTIAL_POOL:-}"
   [ -n "$pool" ] || return 0
@@ -238,9 +259,9 @@ _session_sid_valid() {
 # nothing — the failure direction every path here takes.
 _session_mint_sid() {
   local sid=""
-  { read -r sid </proc/sys/kernel/random/uuid; } 2>/dev/null || sid=""
+  { read -r sid </proc/sys/kernel/random/uuid; } 2>/dev/null || sid="" # Decision-path empty fallback: an unread generator falls through to uuidgen, and an id that stays empty mints `unknown`.
   if ! _session_sid_valid "$sid"; then
-    sid="$(uuidgen 2>/dev/null)" || sid=""
+    sid="$(uuidgen 2>/dev/null)" || sid="" # Decision-path empty fallback: `unknown` below pins nothing, stubs nothing and resumes nothing.
   fi
   _session_sid_valid "$sid" && printf '%s' "$sid" || printf unknown
   return 0
@@ -263,7 +284,7 @@ _session_head_valid() {
 # and the `unknown` it produces is what D6.2 refuses to resume against.
 _session_head() {
   local head
-  head="$(git -C "$1" rev-parse HEAD 2>/dev/null)" || head=""
+  head="$(git -C "$1" rev-parse HEAD 2>/dev/null)" || head="" # Decision-path empty fallback: `unknown` below is exactly what D6.2 refuses to resume against.
   _session_head_valid "$head" || head=unknown
   printf '%s' "$head"
 }
@@ -604,7 +625,8 @@ run_session() {
       || cat "$structured_log" >>"$slog"
   fi
   local dur=$((SECONDS - start)) verdict=ok acted reply_tail peak_rss mem_hit log_bytes
-  local usage_suffix pool_suffix
+  local usage_suffix pool_suffix sid_suffix
+  sid_suffix="$(_session_sid_suffix)"
   mem_hit="$(session_mem_hit "$slog.mem")"
   [ "$rc" -eq 124 ] && verdict=TIMEOUT
   [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && verdict=FAILED
@@ -676,7 +698,14 @@ run_session() {
   # line and the id on the SESSION START above are the same value by
   # construction — `_session_identity` resolved it once, before the dispatch —
   # so the two records of one session point at one transcript (#538 D3).
-  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix sid=$_SESSION_SID"
+  #
+  # Through `$sid_suffix` rather than as literal text, for the reason that
+  # helper states: it is what keeps #553's source-derived order guard reading
+  # the wire order rather than an artifact of where the interpolations stop.
+  # Unconditional, unlike the two suffixes ahead of it — a session with no id
+  # emits `sid=unknown`, because D3 asks for the token on EVERY record and
+  # `unknown` is the answer `_session_mint_sid` already gives.
+  log "SESSION END kind=$kind key=$key rc=$rc dur=${dur}s outcome=$verdict acted=$acted reply_tail=$reply_tail log=$log_bytes left=$survivor_count tier=$_SESSION_TIER${peak_rss:+ peak_rss=$peak_rss}$usage_suffix$pool_suffix$sid_suffix"
   # Written after the line that reports the session and before the counters
   # that bill it, reading the two figures that line just published: this stub
   # and that record can never disagree about what the session left behind.

@@ -355,6 +355,13 @@ t orphan-session-id-is-unknown unknown "$(orph_kv "$ORPH1_LINE" session_id)"
 t orphan-model-is-unknown unknown "$(orph_kv "$ORPH1_LINE" model)"
 t orphan-model-count-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" models)"
 t orphan-pool-is-unknown unknown "$(orph_kv "$ORPH1_LINE" pool)"
+# The parity guard below requires the token; only this requires its VALUE, and
+# the two failure directions differ. `-` here would claim the reconciler was
+# owed a transcript id and lost it with the box; `unknown` says it never held
+# one, which is true — a resume stub is written only by the session that minted
+# the id, so a reconstructed line naming one would name a transcript nothing
+# can open. The space-anchored read is what keeps this off `session_id=`.
+t orphan-sid-is-unknown unknown "$(orph_kv "$ORPH1_LINE" sid)"
 case "$ORPH1_LINE" in *' started=2026-08-14T03:00:01Z') r1=last ;; *) r1=NOT-LAST ;; esac
 t orphan-started-stays-last last "$r1"
 # D1/D3. Token parity is source-derived on both sides; this is the standing
