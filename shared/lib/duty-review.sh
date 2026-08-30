@@ -46,20 +46,16 @@ REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Names remain deliberately irrelevant because a reviewer may make an
 # auxiliary worktree such as base-<N> while investigating a collision.
 _review_detached_run_protects() {
-  local candidate="$1" candidate_real stamp repo pr head digest run_cwd
-  candidate_real="$(cd "$candidate" 2>/dev/null && pwd -P)" || return 1
+  local candidate_head="$1" stamp repo pr head digest
 
   while IFS= read -r -d '' stamp; do
     repo="$(_detached_field "$stamp" repo)"
     pr="$(_detached_field "$stamp" pr)"
     head="$(_detached_field "$stamp" head)"
     digest="$(_detached_field "$stamp" digest)"
+    [ "$head" = "$candidate_head" ] || continue
     detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
-    [ "$DETACHED_RUN_STATE" = running ] || continue
-    run_cwd="$(readlink -f "/proc/$DETACHED_RUN_PID/cwd" 2>/dev/null || true)"
-    case "$run_cwd" in
-      "$candidate_real"|"$candidate_real"/*) return 0 ;;
-    esac
+    [ "$DETACHED_RUN_STATE" = running ] && return 0
   done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
   return 1
 }
@@ -97,10 +93,11 @@ reclaim_detached_review_worktrees() {
       continue
     fi
     _review_git_operation_in_progress "$git_dir" && continue
-    # The supervisor retains the launching session's cwd while its detached
-    # command runs. Protect only the candidate that owns that cwd: a global
-    # defer lets unrelated stale review trees collide with later dispatches.
-    if _review_detached_run_protects "$candidate"; then
+    # The run stamp's head is engine-owned identity. The supervisor cwd is
+    # not: reviewer sessions launch in the main clone and may pass a worktree
+    # path to the detached command. Protect candidates at a verified live
+    # head, while unrelated stale heads remain reclaimable.
+    if _review_detached_run_protects "$head"; then
       log "review: preserved detached worktree $candidate for active detached run"
       continue
     fi

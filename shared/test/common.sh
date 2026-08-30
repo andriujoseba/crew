@@ -68,11 +68,14 @@ t review-reclaim-noop-preserves-branch present \
 # A parked review command deliberately outlives its launching tick. Reclaim
 # protects that command's worktree but still removes unrelated stale review
 # trees, so another PR can dispatch without colliding on its path.
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" HEAD >/dev/null 2>&1
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" HEAD >/dev/null 2>&1
+git -C "$RW/work/repo" commit --allow-empty -qm live-head
+RW_LIVE_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" "$RW_LIVE_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_HEAD" >/dev/null 2>&1
 (
-  cd "$RW/trees/repo/review-live" || exit
-  RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_HEAD" -- bash -c 'sleep 1; : > review-finished')"
+  cd "$RW/work/repo" || exit
+  RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_LIVE_HEAD" -- \
+    bash -c 'sleep 1; : > "$1/review-finished"' _ "$RW/trees/repo/review-live")"
   printf '%s' "$RW_LIVE_DIGEST" >"$RW/live.digest"
 )
 TREES_DIR="$RW/trees"
@@ -84,12 +87,12 @@ t review-reclaim-active-run-preserves-worktree present \
   "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
 t review-reclaim-active-run-removes-unrelated-stale gone \
   "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" HEAD >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_HEAD" >/dev/null 2>&1
 t review-reclaim-active-run-clears-next-dispatch-path recreated \
   "$([ -d "$RW/trees/repo/review-stale" ] && printf recreated || printf COLLISION)"
 RW_LIVE_DIGEST="$(cat "$RW/live.digest")"
 for _ in 1 2 3 4 5; do
-  detached_run_read fixture/repo 7 "$RW_HEAD" "$RW_LIVE_DIGEST" >/dev/null
+  detached_run_read fixture/repo 7 "$RW_LIVE_HEAD" "$RW_LIVE_DIGEST" >/dev/null
   [ "$DETACHED_RUN_STATE" = complete ] && break
   sleep 1
 done
@@ -166,21 +169,72 @@ git -C "$RW/mut-work" worktree add --detach "$RW/mut-trees/repo/base-2" HEAD >/d
 t review-reclaim-name-mutation-reds red \
   "$([ -d "$RW/mut-trees/repo/base-2" ] && printf red || printf FALSE-PASS)"
 
-# The call itself is the lifecycle guarantee: it precedes every duty dispatch,
-# so a worktree created by this tick cannot be visible to the sweep.
+# Drive duty.sh with controlled lane stubs. Recording the executed reclaim and
+# first dispatch makes a dead, missing, or moved call fail even when the same
+# source text remains elsewhere in the script.
+RW_TICK_DUTY="$RW/tick-duty"
+RW_TICK_CALLS="$RW/tick-calls"
+mkdir -p "$RW_TICK_DUTY/lib" "$RW_TICK_DUTY/work" \
+  "$RW_TICK_DUTY/trees" "$RW_TICK_DUTY/logs"
+cat >"$RW_TICK_DUTY/lib/common.sh" <<'RWCOMMON'
+WORK_DIR="$DUTY_DIR/work"
+TREES_DIR="$DUTY_DIR/trees"
+LOG_DIR="$DUTY_DIR/logs"
+load_conf() { :; }
+log() { :; }
+warn() { :; }
+alert() { :; }
+report_profile_classifier_gaps() { :; }
+session_reconcile_orphans() { printf 'ORPHAN\n' >>"$RW_TICK_CALLS"; }
+bot_cli_probe() { return 0; }
+gh_identity() { printf 'fixture-bot\n'; }
+check_vendor_credential() { :; }
+converge_git_identity() { return 0; }
+has_role() { [ "$1" = reviewer ]; }
+RWCOMMON
+cat >"$RW_TICK_DUTY/lib/duty-review.sh" <<'RWREVIEW'
+reclaim_detached_review_worktrees() { printf 'RECLAIM\n' >>"$RW_TICK_CALLS"; }
+duty_review() { printf 'REVIEW\n' >>"$RW_TICK_CALLS"; }
+RWREVIEW
+cat >"$RW_TICK_DUTY/lib/duty-attention.sh" <<'RWATTENTION'
+duty_attention() { printf 'ATTENTION\n' >>"$RW_TICK_CALLS"; }
+RWATTENTION
+cat >"$RW_TICK_DUTY/lib/duty-builder.sh" <<'RWBUILDER'
+duty_builder() { printf 'BUILDER\n' >>"$RW_TICK_CALLS"; }
+RWBUILDER
+cat >"$RW_TICK_DUTY/lib/duty-triage.sh" <<'RWTRIAGE'
+duty_triage() { printf 'TRIAGE\n' >>"$RW_TICK_CALLS"; }
+RWTRIAGE
+cat >"$RW_TICK_DUTY/lib/duty-reaper.sh" <<'RWREAPER'
+reaper_interval() { REAPER_INTERVAL_SECONDS=9999999999; }
+duty_reaper() { printf 'REAPER\n' >>"$RW_TICK_CALLS"; }
+RWREAPER
+cat /proc/sys/kernel/random/boot_id >"$RW_TICK_DUTY/.boot-id"
+
+rw_tick_reclaim_order() { # <duty-script>
+  : >"$RW_TICK_CALLS"
+  DUTY_LOCKED=1 DUTY_SNAPSHOT="$RW/tick-snapshot-marker" \
+    DUTY_DIR="$RW_TICK_DUTY" RW_TICK_CALLS="$RW_TICK_CALLS" \
+    bash "$1" >/dev/null 2>&1 || return 1
+  awk '/^RECLAIM$/ { if (!rec) rec = NR }
+       /^(ATTENTION|TRIAGE|REVIEW|BUILDER)$/ { if (!disp) disp = NR }
+       END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
+    "$RW_TICK_CALLS"
+}
+
 t review-reclaim-runs-before-any-dispatch before \
-  "$(awk '/^[[:space:]]*reclaim_detached_review_worktrees$/ { rec = NR }
-          /^[[:space:]]*duty_(attention|triage|review|builder)$/ { if (!disp) disp = NR }
-          END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
-      "$SHARED/bin/duty.sh")"
+  "$(rw_tick_reclaim_order "$SHARED/bin/duty.sh")"
 RW_ORDER_MUT="$TMP/duty-reclaim-below-dispatch.sh"
 sed '/^reclaim_detached_review_worktrees$/d; /^  duty_review$/a reclaim_detached_review_worktrees' \
   "$SHARED/bin/duty.sh" >"$RW_ORDER_MUT"
 t review-reclaim-below-dispatch-mutation-reds AFTER \
-  "$(awk '/^[[:space:]]*reclaim_detached_review_worktrees$/ { rec = NR }
-          /^[[:space:]]*duty_(attention|triage|review|builder)$/ { if (!disp) disp = NR }
-          END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
-      "$RW_ORDER_MUT")"
+  "$(rw_tick_reclaim_order "$RW_ORDER_MUT")"
+RW_DEAD_MUT="$TMP/duty-reclaim-dead-helper.sh"
+awk '/^reclaim_detached_review_worktrees$/ {
+       print "_dead_reclaim() {"; print "  reclaim_detached_review_worktrees"; print "}"; next
+     } { print }' "$SHARED/bin/duty.sh" >"$RW_DEAD_MUT"
+t review-reclaim-dead-call-mutation-reds AFTER \
+  "$(rw_tick_reclaim_order "$RW_DEAD_MUT")"
 
 # Shared fixture constructors used by the generic round predicates below.
 RPJQ="$SHARED/lib/jq/request-panel.jq"
