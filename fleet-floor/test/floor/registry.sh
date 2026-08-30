@@ -500,8 +500,17 @@ t "registry: ...each recording the state that write submitted, six and six" "6 6
 # `_journal` handed empty deltas for every write fails: `entries=` alone would
 # leave such a record perfectly accurate about the state it applied while
 # claiming nothing ever moved.
+#
+# A HERE-STRING AND NOT A PIPE, which #449's guard is about and which
+# `pipefail-grep-q-guard-finds-zero` enforces over this whole tree: `grep -q`
+# exits at its first match, the writer upstream of a pipe takes SIGPIPE for it,
+# and under `set -o pipefail` that becomes the command substitution's status —
+# a red that depends on how fast the two ends of the pipe are scheduled. The
+# counting greps above are outside the class for the reason the guard's
+# population is: `-c` reads its input to the end, so there is no early exit to
+# signal.
 t "registry: ...and at least one of them records the move it made" moved \
-  "$(printf '%s\n' "$FF_REG_CCJ" | grep -qvF 'added=- removed=-' && echo moved || echo ALL-EMPTY)"
+  "$(grep -qvF 'added=- removed=-' <<<"$FF_REG_CCJ" && echo moved || echo ALL-EMPTY)"
 # `find` on a directory that is not there prints nothing and `wc -l` says 0, so
 # this assertion would PASS on a definition the suite had lost. The directory is
 # proved present first, and it is the same reading either way.
