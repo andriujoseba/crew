@@ -97,10 +97,21 @@ _review_check_evidence_from_payload() {
   checked_head="$(cut -f3 <<<"$row")"
   state="$(cut -f4 <<<"$row")"
   entries="$(printf '%s' "$snapshot" | jq -r '
-    [.statusCheckRollup[]?
+    [(.statusCheckRollup // [])
+      | group_by([
+          (.name // .context // "?"),
+          (.__typename // ""),
+          (.workflowName // "")
+        ])[]
+      | max_by([
+          (.startedAt // .createdAt // ""),
+          (.completedAt // "")
+        ])
       | "\(.name // .context // "?")=\(.conclusion // .state // .status // "?")"]
     | join(", ")' 2>/dev/null)" || entries="" # Decision-path empty fallback: the rendered row says the rollup is unreadable and grants no conclusion.
-  if [ "$checked_head" = "$current_head" ]; then
+  if [ "$current_head" = unknown ]; then
+    relation="current head unavailable"
+  elif [ "$checked_head" = "$current_head" ]; then
     relation="this head"
   else
     relation="older SHA; current head $current_head"
@@ -127,6 +138,13 @@ _review_check_evidence() {
   fi
   current_head="$(gh api "repos/$repo/pulls/$num" --jq .head.sha 2>/dev/null || echo unknown)"
   _review_check_evidence_from_payload "$repo" "$num" "$snapshot" "$current_head"
+}
+
+_review_check_evidence_list() {
+  local repo="$1" prs="$2" evidence_n
+  for evidence_n in $prs; do
+    _review_check_evidence "$repo" "$evidence_n"
+  done
 }
 
 # _mark_addressing REPO NUM — after MY verdict lands, evaluate the
@@ -337,17 +355,14 @@ $key $updated"
 
   # One session per repo covering all its pending PRs, oldest first —
   # amortizes checkout and session cost (grok/kimi pattern).
-  local dir slug prompt prs check_evidence evidence_n
+  local dir slug prompt prs check_evidence
   for SR in "${repo_order[@]}"; do
     prs="${repo_prs[$SR]% }"
     slug="${SR//\//__}"
     log "review: $SR needs verdicts on: $prs — launching review session"
     dir="$WORK_DIR/$slug-review"
     ensure_checkout "$SR" "$dir" || continue
-    check_evidence=""
-    for evidence_n in $prs; do
-      check_evidence="$check_evidence$(_review_check_evidence "$SR" "$evidence_n")"
-    done
+    check_evidence="$(_review_check_evidence_list "$SR" "$prs")"
     prompt="$(render_prompt review.txt ME="$ME" REPO="$SR" PRS="$prs" \
       BIN="$BIN_DIR" WT_DIR="$TREES_DIR/$slug" \
       MARK_REVIEWING="$MARK_REVIEWING" \

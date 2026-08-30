@@ -86,18 +86,27 @@ else
   r1=MISSING
 fi
 t d532-rendered-review-reports-local-ci-conflict reported "$r1"
-if grep -Eqi 'green (check|CI).*(may|can|should).*(skip|omit|avoid).*(local|verification)' <<<"$D530_RENDERED"; then
+D532_CI_PERMISSION_RE='(green (check|CI)|(check|CI) is green).*(may|can|should).*(skip|omit|avoid).*(local|verification)'
+if grep -Eqi "$D532_CI_PERMISSION_RE" <<<"$D530_RENDERED"; then
   r1=PERMITTED
 else
   r1=forbidden
 fi
 t d532-green-never-permits-skipping-verification forbidden "$r1"
+if grep -Eqi "$D532_CI_PERMISSION_RE" \
+    <<<'If CI is green, you may skip local verification.'; then
+  r1=detected
+else
+  r1=MISSED
+fi
+t d532-ci-permission-natural-wording-mutation detected "$r1"
 
-D532_AT_HEAD='{"number":7,"isDraft":false,"reviewRequests":[],"updatedAt":"T1","headRefOid":"abc123","statusCheckRollup":[{"__typename":"CheckRun","name":"ci-shell","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"CheckRun","name":"ci-floor","status":"COMPLETED","conclusion":"SKIPPED"}]}'
+D532_AT_HEAD='{"number":7,"isDraft":false,"reviewRequests":[],"updatedAt":"T1","headRefOid":"abc123","statusCheckRollup":[{"__typename":"CheckRun","workflowName":"ci-shell","name":"ci-shell","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-08-29T23:45:26Z","completedAt":"2026-08-29T23:45:26Z"},{"__typename":"CheckRun","workflowName":"ci-shell","name":"ci-shell","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-08-29T23:52:00Z","completedAt":"2026-08-30T00:03:35Z"},{"__typename":"CheckRun","workflowName":"ci-floor","name":"ci-floor","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-08-29T23:52:00Z","completedAt":"2026-08-29T23:52:00Z"}]}'
 D532_EVIDENCE="$(_review_check_evidence_from_payload fx/repo 7 "$D532_AT_HEAD" abc123)"
 if grep -Fq 'checks at abc123 (this head; aggregate green)' <<<"$D532_EVIDENCE" \
   && grep -Fq 'ci-shell=SUCCESS' <<<"$D532_EVIDENCE" \
-  && grep -Fq 'ci-floor=SKIPPED' <<<"$D532_EVIDENCE"; then
+  && grep -Fq 'ci-floor=SKIPPED' <<<"$D532_EVIDENCE" \
+  && ! grep -Fq 'ci-shell=SKIPPED' <<<"$D532_EVIDENCE"; then
   r1=complete
 else
   r1="$D532_EVIDENCE"
@@ -106,9 +115,18 @@ t d532-at-head-checks-name-conclusions complete "$r1"
 D532_STALE="$(_review_check_evidence_from_payload fx/repo 7 "$D532_AT_HEAD" def456)"
 case "$D532_STALE" in *'checks at abc123 (older SHA; current head def456;'*) r1=stale ;; *) r1="$D532_STALE" ;; esac
 t d532-older-head-checks-marked-stale stale "$r1"
+D532_UNKNOWN="$(_review_check_evidence_from_payload fx/repo 7 "$D532_AT_HEAD" unknown)"
+case "$D532_UNKNOWN" in *'checks at abc123 (current head unavailable;'*) r1=unknown ;; *) r1="$D532_UNKNOWN" ;; esac
+t d532-unreadable-current-head-is-not-called-stale unknown "$r1"
 D532_NONE='{"number":7,"isDraft":false,"reviewRequests":[],"updatedAt":"T1","headRefOid":"abc123","statusCheckRollup":[]}'
 t d532-no-checks-says-none-at-head '- fx/repo#7: none at this head abc123.' \
   "$(_review_check_evidence_from_payload fx/repo 7 "$D532_NONE" abc123)"
+
+D532_MULTI="$({
+  _review_check_evidence() { printf -- '- %s#%s: evidence.\n' "$1" "$2"; }
+  _review_check_evidence_list fx/repo '7 8'
+})"
+t d532-multi-pr-evidence-keeps-line-separator $'- fx/repo#7: evidence.\n- fx/repo#8: evidence.' "$D532_MULTI"
 
 # shellcheck disable=SC2016,SC2100  # grep literals intentionally contain shell syntax
 if grep -Fq '_mark_addressing "$SRa" "$Na"' "$SHARED/lib/duty-review.sh" && \
