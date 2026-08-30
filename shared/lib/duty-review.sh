@@ -45,8 +45,9 @@ REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Git detaches builder worktrees during operations such as rebase and bisect.
 # Names remain deliberately irrelevant because a reviewer may make an
 # auxiliary worktree such as base-<N> while investigating a collision.
-_review_detached_run_active() {
-  local stamp repo pr head digest
+_review_detached_run_protects() {
+  local candidate="$1" candidate_real stamp repo pr head digest run_cwd
+  candidate_real="$(cd "$candidate" 2>/dev/null && pwd -P)" || return 1
 
   while IFS= read -r -d '' stamp; do
     repo="$(_detached_field "$stamp" repo)"
@@ -54,7 +55,11 @@ _review_detached_run_active() {
     head="$(_detached_field "$stamp" head)"
     digest="$(_detached_field "$stamp" digest)"
     detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
-    [ "$DETACHED_RUN_STATE" = running ] && return 0
+    [ "$DETACHED_RUN_STATE" = running ] || continue
+    run_cwd="$(readlink -f "/proc/$DETACHED_RUN_PID/cwd" 2>/dev/null || true)"
+    case "$run_cwd" in
+      "$candidate_real"|"$candidate_real"/*) return 0 ;;
+    esac
   done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
   return 1
 }
@@ -78,11 +83,6 @@ _review_git_operation_in_progress() {
 reclaim_detached_review_worktrees() {
   local candidate top head git_dir common_dir dirt dirt_summary
 
-  # A detached command inherits its launching session's worktree as cwd, but
-  # its immutable stamp does not record that path. The safe boundary is global:
-  # defer the cheap sweep until no verified detached command is still live.
-  _review_detached_run_active && return 0
-
   while IFS= read -r -d '' candidate; do
     top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
     [ "$top" = "$candidate" ] || continue
@@ -97,6 +97,13 @@ reclaim_detached_review_worktrees() {
       continue
     fi
     _review_git_operation_in_progress "$git_dir" && continue
+    # The supervisor retains the launching session's cwd while its detached
+    # command runs. Protect only the candidate that owns that cwd: a global
+    # defer lets unrelated stale review trees collide with later dispatches.
+    if _review_detached_run_protects "$candidate"; then
+      log "review: preserved detached worktree $candidate for active detached run"
+      continue
+    fi
     if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
       continue
     fi

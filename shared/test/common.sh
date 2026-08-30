@@ -26,7 +26,7 @@ source "$SHARED/lib/duty-review.sh"
 # the branch-holding sibling is builder state and must survive.
 RW="$TMP/reclaim-worktrees"
 mkdir -p "$RW/work/repo" "$RW/trees/repo"
-git -C "$RW/work/repo" init -q
+git -C "$RW/work/repo" init -q -b main
 git -C "$RW/work/repo" config user.email fixture@example.com
 git -C "$RW/work/repo" config user.name fixture
 touch "$RW/work/repo/seed"
@@ -65,10 +65,11 @@ t review-reclaim-empty-is-quiet "" "$RW_QUIET"
 t review-reclaim-noop-preserves-branch present \
   "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
 
-# A parked review command deliberately outlives its launching tick. Its active
-# stamp defers reclaim; once the command completes, the same tree is litter and
-# is reclaimed on the next pass.
+# A parked review command deliberately outlives its launching tick. Reclaim
+# protects that command's worktree but still removes unrelated stale review
+# trees, so another PR can dispatch without colliding on its path.
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" HEAD >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" HEAD >/dev/null 2>&1
 (
   cd "$RW/trees/repo/review-live" || exit
   RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_HEAD" -- bash -c 'sleep 1; : > review-finished')"
@@ -77,9 +78,15 @@ git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" HEAD >
 TREES_DIR="$RW/trees"
 RW_LIVE_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-active-run-is-quiet "" "$RW_LIVE_OUT"
+t review-reclaim-active-run-logs-preserved-path 1 \
+  "$(grep -cF "review: preserved detached worktree $RW/trees/repo/review-live for active detached run" <<<"$RW_LIVE_OUT")"
 t review-reclaim-active-run-preserves-worktree present \
   "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
+t review-reclaim-active-run-removes-unrelated-stale gone \
+  "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" HEAD >/dev/null 2>&1
+t review-reclaim-active-run-clears-next-dispatch-path recreated \
+  "$([ -d "$RW/trees/repo/review-stale" ] && printf recreated || printf COLLISION)"
 RW_LIVE_DIGEST="$(cat "$RW/live.digest")"
 for _ in 1 2 3 4 5; do
   detached_run_read fixture/repo 7 "$RW_HEAD" "$RW_LIVE_DIGEST" >/dev/null
@@ -103,7 +110,7 @@ printf 'branch\n' >"$RW/trees/repo/build-9/conflict"
 git -C "$RW/trees/repo/build-9" add conflict
 git -C "$RW/trees/repo/build-9" commit -qm branch-side
 touch "$RW/trees/repo/build-9/notes.txt"
-git -C "$RW/trees/repo/build-9" rebase master >/dev/null 2>&1 || true
+git -C "$RW/trees/repo/build-9" rebase main >/dev/null 2>&1 || true
 t review-reclaim-rebase-fixture-is-detached detached \
   "$(git -C "$RW/trees/repo/build-9" symbolic-ref -q HEAD >/dev/null 2>&1 && printf BRANCH || printf detached)"
 TREES_DIR="$RW/trees"
