@@ -157,6 +157,386 @@ case "$evidence_end" in
 esac
 t session-evidence-fields-follow-reply-tail appended "$r1"
 
+# --- session identity, and the one resume it buys (#538) -----------------
+#
+# Every case drives run_session with a stub CLI that records its own argv,
+# because the whole claim is about WHAT WAS INVOKED and with WHICH id. A
+# helper-only test would let an implementation mint an id, log it on both lines
+# and never pin it on the launch — which is the one bug that makes `sid=` a
+# fiction rather than a pointer at a transcript.
+#
+# The stub's shapes are the ones D6 reads: a session that replies, one that
+# hangs having said something (a wall-clock kill with context worth resuming),
+# one that hangs having said nothing (D6.3), and one that leaves a `setsid`
+# escapee behind (D6.4).
+SID_CLI="$TMP/sid-cli.sh"
+cat >"$SID_CLI" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$SID_ARGV"
+case "${SID_SHAPE:-reply}" in
+  reply) printf 'final reply\n' ;;
+  fail) printf 'final reply\n'; exit 3 ;;
+  mute-hang) exec sleep 30 ;;
+  talk-hang) printf 'partial work\n'; exec sleep 30 ;;
+  escape-hang)
+    printf 'partial work\n'
+    setsid bash -c 'printf "%s\n" "$$" >"$SID_ESCAPEE"; exec sleep 30' &
+    wait
+    ;;
+esac
+STUB
+chmod +x "$SID_CLI"
+
+# sid_box BOX — a per-case box directory whose work tree is a real repository,
+# so `_session_head` has a head to read and D6.2 has something to compare.
+sid_box() {
+  local sdir="$TMP/sid-$1"
+  [ -d "$sdir/work/.git" ] && { printf '%s' "$sdir"; return 0; }
+  mkdir -p "$sdir/logs" "$sdir/work"
+  git -C "$sdir/work" init -q 2>/dev/null
+  git -C "$sdir/work" -c user.email=t@example.invalid -c user.name=t \
+    commit -q --allow-empty -m one 2>/dev/null
+  printf '%s' "$sdir"
+}
+
+# sid_commit DIR — move the head, for D6.2's "the world changed" case.
+sid_commit() {
+  git -C "$1" -c user.email=t@example.invalid -c user.name=t \
+    commit -q --allow-empty -m next 2>/dev/null
+}
+
+# sid_run BOX KEY TMO SHAPE [HOOKS] [WORK] — one dispatch into BOX, with the
+# profile hooks D2 lets a CLI carry independently.
+#
+#   both      a profile that can pin and resume — `claude`'s shape
+#   pin-only  a CLI that can pin an id and cannot continue one (D6.6)
+#   none      a profile with neither hook — the pre-#538 lane, unchanged
+#   refusing  hooks that are defined and render nothing, the contract
+#             `bot_cli_structured_cmd` already has
+#
+# A subshell, so each case's hooks, exports and DUTY_DIR die with it; the box
+# directory itself persists across calls, which is what lets a timeout in one
+# call be resumed by the next.
+sid_run() (
+  local box="$1" key="$2" tmo="$3" shape="$4" hooks="${5:-both}" work="${6:-}"
+  local sdir; sdir="$(sid_box "$box")"
+  DUTY_DIR="$sdir"; LOG_DIR="$sdir/logs"; DUTY_TICK_ID="tick-sid"
+  BOT_CLI_CMD=(bash "$SID_CLI" -p)
+  export SID_ARGV="$sdir/argv" SID_SHAPE="$shape" SID_ESCAPEE="$sdir/escapee"
+  alert() { :; }
+  case "$hooks" in
+    both)
+      bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(--session-id "$1"); }
+      bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(--resume "$1"); } ;;
+    pin-only)
+      bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(--session-id "$1"); } ;;
+    refusing)
+      bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(); return 1; }
+      bot_cli_resume_args() { BOT_CLI_RESUME_ARGS=(); return 1; } ;;
+    none) : ;;
+  esac
+  rm -f "$sdir/argv"
+  # `log` writes to stdout, so the box's own record file is where the two lines
+  # accumulate across dispatches — appended, because a resume is only readable
+  # beside the timeout it continues.
+  run_session build "$key" "${work:-$sdir/work}" "$tmo" prompt >>"$sdir/records" 2>&1
+  printf 'returned=%s rc=%s\n' "$?" "$RUN_SESSION_RC"
+  printf -- '--argv--\n'
+  cat "$sdir/argv" 2>/dev/null
+)
+
+# The record the LAST dispatch into this box wrote.
+sid_line() { # sid_line BOX RECORD
+  grep " SESSION $2 " "$TMP/sid-$1/records" 2>/dev/null | tail -1
+}
+sid_of() { # sid_of BOX RECORD — the sid token, or nothing
+  sed -n 's/.* sid=\([^ ]*\).*/\1/p' <<<"$(sid_line "$1" "$2")"
+}
+sid_shape() { # sid_shape VALUE — uuid | unknown | OTHER(<value>)
+  case "$1" in
+    unknown) printf unknown ;;
+    ????????-????-????-????-????????????)
+      case "${1//[0-9a-f-]/}" in '') printf uuid ;; *) printf 'OTHER(%s)' "$1" ;; esac ;;
+    *) printf 'OTHER(%s)' "$1" ;;
+  esac
+}
+sid_stub() { printf '%s/.session-resume.build.%s' "$TMP/sid-$1" "$2"; }
+sid_stub_field() { # sid_stub_field FILE KEY
+  sed -n "s/^$2=//p" "$1" 2>/dev/null
+}
+sid_argv_flag() { # sid_argv_flag OUTPUT FLAG — the value following FLAG, or nothing
+  sed -n "/^--argv--$/,\$p" <<<"$1" | grep -A1 -Fx -- "$2" | tail -1
+}
+
+# --- the id itself: minted, pinned, and the same on both lines ------------
+sid_pinned="$(sid_run pinned fixture/pin 5 reply both)"
+t sid-start-carries-a-minted-uuid uuid "$(sid_shape "$(sid_of pinned START)")"
+t sid-end-carries-the-same-id-as-start same \
+  "$([ "$(sid_of pinned START)" = "$(sid_of pinned END)" ] && printf same || printf DIFFERENT)"
+t sid-is-the-last-token-on-start 1 \
+  "$(grep -c ' sid=[^ ]*$' <<<"$(sid_line pinned START)" || true)"
+t sid-is-the-last-token-on-end 1 \
+  "$(grep -c ' sid=[^ ]*$' <<<"$(sid_line pinned END)" || true)"
+# The pin is on the LAUNCH and not only in the log, which is the whole of D1.
+t sid-the-launch-carries-the-id-the-record-names same \
+  "$([ "$(sid_argv_flag "$sid_pinned" --session-id)" = "$(sid_of pinned START)" ] \
+    && printf same || printf DIFFERENT)"
+
+# D2's neutral answer, both halves: no hook, no pin, `sid=unknown`, and a
+# session otherwise unchanged — the argv is the profile's own array.
+sid_hookless="$(sid_run hookless fixture/hookless 5 reply none)"
+t sid-hookless-profile-reports-unknown unknown "$(sid_shape "$(sid_of hookless START)")"
+t sid-hookless-profile-pins-nothing 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_hookless" | grep -c -- '--session-id' || true)"
+t sid-hookless-profile-keeps-its-invocation prompt \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_hookless" | tail -1)"
+
+# A hook that is defined and renders nothing leaves the invocation alone and
+# says `unknown` rather than claiming an id nothing on disk is keyed by.
+sid_refusing="$(sid_run refusing fixture/refusing 5 reply refusing)"
+t sid-refusing-hook-reports-unknown unknown "$(sid_shape "$(sid_of refusing START)")"
+t sid-refusing-hook-pins-nothing 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_refusing" | grep -c -- '--session-id' || true)"
+
+# --- the stub: written on 124, and on nothing else (D5) ------------------
+sid_run timeout fixture/tmo 1 talk-hang both >/dev/null
+SID_TMO_STUB="$(sid_stub timeout fixture_tmo)"
+t sid-timeout-writes-a-stub present \
+  "$([ -s "$SID_TMO_STUB" ] && printf present || printf MISSING)"
+t sid-stub-carries-the-killed-session-id same \
+  "$([ "$(sid_stub_field "$SID_TMO_STUB" sid)" = "$(sid_of timeout START)" ] \
+    && printf same || printf DIFFERENT)"
+t sid-stub-carries-the-head-it-worked-at "$(git -C "$TMP/sid-timeout/work" rev-parse HEAD)" \
+  "$(sid_stub_field "$SID_TMO_STUB" head)"
+t sid-stub-carries-the-wall-that-was-hit 1 "$(sid_stub_field "$SID_TMO_STUB" wall)"
+t sid-stub-carries-a-try-count 0 "$(sid_stub_field "$SID_TMO_STUB" try)"
+t sid-stub-outcome-is-the-timeout TIMEOUT \
+  "$(sed -n 's/.* outcome=\([^ ]*\).*/\1/p' <<<"$(sid_line timeout END)")"
+
+# An ordinary end writes none, and DELETES the one a previous timeout left —
+# which is what stops a stub outliving the episode that produced it.
+t sid-ok-session-deletes-the-stub gone \
+  "$(sid_run timeout fixture/tmo 5 reply both >/dev/null
+     [ -e "$SID_TMO_STUB" ] && printf PRESENT || printf gone)"
+sid_run plain fixture/plain 5 reply both >/dev/null
+t sid-ok-session-writes-no-stub gone \
+  "$([ -e "$(sid_stub plain fixture_plain)" ] && printf PRESENT || printf gone)"
+sid_run failed fixture/failed 5 fail both >/dev/null
+t sid-failed-session-writes-no-stub gone \
+  "$([ -e "$(sid_stub failed fixture_failed)" ] && printf PRESENT || printf gone)"
+
+# --- the resume, end to end (D6) -----------------------------------------
+sid_run resume fixture/res 1 talk-hang both >/dev/null
+SID_KILLED="$(sid_of resume START)"
+sid_resumed="$(sid_run resume fixture/res 5 reply both)"
+t sid-resume-continues-the-killed-session same \
+  "$([ "$(sid_argv_flag "$sid_resumed" --resume)" = "$SID_KILLED" ] \
+    && printf same || printf 'DIFFERENT')"
+t sid-resumed-session-reports-the-killed-id same \
+  "$([ "$(sid_of resume START)" = "$SID_KILLED" ] && printf same || printf DIFFERENT)"
+# A resume carries --resume and NOT --session-id: measured on the claude CLI,
+# re-pinning an existing id fails the session at rc=1 (claude.conf, #538 D2).
+t sid-resume-does-not-also-pin-the-id 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_resumed" | grep -c -- '--session-id' || true)"
+t sid-resume-consumes-its-stub gone \
+  "$([ -e "$(sid_stub resume fixture_res)" ] && printf PRESENT || printf gone)"
+
+# --- the six refusals, one case each (D6) --------------------------------
+#
+# Each drives a real timeout, changes exactly one of the six facts, and then
+# dispatches again. The assertion is the same every time and is deliberately
+# two-sided: no `--resume` on the launch, and a FRESH id on the record — a
+# refusal that dispatched nothing, or dispatched under the dead session's id,
+# would pass a one-sided check.
+sid_refusal() { # sid_refusal OUTPUT BOX KILLED — ordinary | RESUMED | NOT-FRESH
+  if [ -n "$(sid_argv_flag "$1" --resume)" ]; then printf RESUMED
+  elif [ "$(sid_of "$2" START)" = "$3" ]; then printf NOT-FRESH
+  elif [ "$(sid_shape "$(sid_of "$2" START)")" != uuid ]; then printf NOT-MINTED
+  else printf ordinary
+  fi
+}
+
+# 1 — the head moved: the carried context is about a tree that is gone.
+sid_run moved fixture/moved 1 talk-hang both >/dev/null
+sid_moved_killed="$(sid_of moved START)"
+sid_commit "$TMP/sid-moved/work"
+t sid-refuses-when-the-head-moved ordinary \
+  "$(sid_refusal "$(sid_run moved fixture/moved 5 reply both)" moved "$sid_moved_killed")"
+
+# 2 — no head at all: `$dir` is not a work tree, so the stub records `unknown`,
+# and `unknown` is never equal to anything.
+mkdir -p "$TMP/sid-nogit-work"
+sid_run nohead fixture/nohead 1 talk-hang both "$TMP/sid-nogit-work" >/dev/null
+sid_nohead_killed="$(sid_of nohead START)"
+t sid-stub-records-an-unreadable-head-as-unknown unknown \
+  "$(sid_stub_field "$(sid_stub nohead fixture_nohead)" head)"
+t sid-refuses-when-the-head-is-unknown ordinary \
+  "$(sid_refusal "$(sid_run nohead fixture/nohead 5 reply both "$TMP/sid-nogit-work")" \
+    nohead "$sid_nohead_killed")"
+
+# 3 — the killed session said nothing. A zero-byte log is a session that
+# produced nothing at all, and resuming it resumes whatever wedged it.
+sid_run mute fixture/mute 1 mute-hang both >/dev/null
+sid_mute_killed="$(sid_of mute START)"
+t sid-stub-records-an-empty-log-as-zero 0 \
+  "$(sid_stub_field "$(sid_stub mute fixture_mute)" log)"
+t sid-refuses-an-empty-log-timeout ordinary \
+  "$(sid_refusal "$(sid_run mute fixture/mute 5 reply both)" mute "$sid_mute_killed")"
+
+# 4 — something of that session is still alive. THE LOAD-BEARING ONE: resuming
+# a lane while a process of the previous session still runs puts two live
+# sessions on one key, and #529's counter is the only thing that can see it.
+sid_run escape fixture/esc 1 escape-hang both >/dev/null
+sid_escape_killed="$(sid_of escape START)"
+t sid-stub-records-a-survivor 1 \
+  "$(sid_stub_field "$(sid_stub escape fixture_esc)" left)"
+t sid-refuses-while-something-of-it-is-alive ordinary \
+  "$(sid_refusal "$(sid_run escape fixture/esc 5 reply both)" escape "$sid_escape_killed")"
+if [ -s "$TMP/sid-escape/escapee" ]; then
+  kill "$(cat "$TMP/sid-escape/escapee")" 2>/dev/null || true
+fi
+
+# 5 — the bound is spent. Written by hand at the bound rather than by driving
+# two timeouts, so this case fails for the try count alone; the two-timeout
+# path is asserted on its own below.
+sid_run bound fixture/bound 1 talk-hang both >/dev/null
+sid_bound_killed="$(sid_of bound START)"
+sed -i "s/^try=.*/try=$SESSION_RESUME_MAX_TRIES/" "$(sid_stub bound fixture_bound)"
+t sid-refuses-once-the-bound-is-spent ordinary \
+  "$(sid_refusal "$(sid_run bound fixture/bound 5 reply both)" bound "$sid_bound_killed")"
+
+# 6 — the profile can pin an id and cannot continue one. A CLI may have the
+# first capability without the second, and then this lane behaves exactly as it
+# did before #538.
+sid_run pinonly fixture/pinonly 1 talk-hang pin-only >/dev/null
+sid_pinonly_killed="$(sid_of pinonly START)"
+t sid-refuses-a-profile-that-cannot-resume ordinary \
+  "$(sid_refusal "$(sid_run pinonly fixture/pinonly 5 reply pin-only)" \
+    pinonly "$sid_pinonly_killed")"
+
+# --- a stub that is not one is absent, never resumable -------------------
+sid_corrupt_case() { # sid_corrupt_case BOX MUTATION...
+  local box="$1"; shift
+  sid_run "$box" "fixture/$box" 1 talk-hang both >/dev/null
+  local killed; killed="$(sid_of "$box" START)"
+  "$@" "$(sid_stub "$box" "fixture_$box")"
+  sid_refusal "$(sid_run "$box" "fixture/$box" 5 reply both)" "$box" "$killed"
+}
+sid_truncate() { head -3 "$1" >"$1.t" && mv "$1.t" "$1"; }
+sid_garble() { printf 'this is not a stub\n' >"$1"; }
+sid_repeat() { cat "$1" "$1" >"$1.t" && mv "$1.t" "$1"; }
+sid_forge_sid() { sed -i 's/^sid=.*/sid=not-a-uuid/' "$1"; }
+sid_remove() { rm -f "$1"; }
+t sid-truncated-stub-is-absent ordinary "$(sid_corrupt_case truncated sid_truncate)"
+t sid-unparseable-stub-is-absent ordinary "$(sid_corrupt_case garbled sid_garble)"
+t sid-ambiguous-stub-is-absent ordinary "$(sid_corrupt_case repeated sid_repeat)"
+t sid-malformed-id-is-absent ordinary "$(sid_corrupt_case forged sid_forge_sid)"
+t sid-missing-stub-is-absent ordinary "$(sid_corrupt_case removed sid_remove)"
+
+# --- two consecutive timeouts, exactly one resume (D7) -------------------
+#
+# The bound is one resume per episode, and the shape that proves it is a second
+# timeout on a key that has already spent its resume: the stub the resumed
+# session leaves carries try=1, and the dispatch after it is ordinary.
+sid_run pair fixture/pair 1 talk-hang both >/dev/null
+sid_pair_first="$(sid_of pair START)"
+sid_pair_two="$(sid_run pair fixture/pair 1 talk-hang both)"
+t sid-first-timeout-is-resumed same \
+  "$([ "$(sid_argv_flag "$sid_pair_two" --resume)" = "$sid_pair_first" ] \
+    && printf same || printf NOT-RESUMED)"
+t sid-a-resumed-timeout-records-its-spent-try 1 \
+  "$(sid_stub_field "$(sid_stub pair fixture_pair)" try)"
+sid_pair_three="$(sid_run pair fixture/pair 5 reply both)"
+t sid-second-timeout-is-not-resumed-again 0 \
+  "$(sed -n '/^--argv--$/,$p' <<<"$sid_pair_three" | grep -c -- '--resume' || true)"
+sid_pair_resumes=0
+[ -z "$(sid_argv_flag "$sid_pair_two" --resume)" ] || sid_pair_resumes=$((sid_pair_resumes + 1))
+[ -z "$(sid_argv_flag "$sid_pair_three" --resume)" ] || sid_pair_resumes=$((sid_pair_resumes + 1))
+t sid-two-timeouts-produce-exactly-one-resume 1 "$sid_pair_resumes"
+
+# --- run_session cannot be failed by any of this -------------------------
+#
+# An instrument or a recovery must never be able to fail a session, so every
+# shape above is re-asserted on the one thing every caller reads.
+sid_returns() { sed -n 's/^returned=\([0-9]*\).*/\1/p' <<<"$1"; }
+t sid-run-session-returns-zero-when-pinning 0 "$(sid_returns "$sid_pinned")"
+t sid-run-session-returns-zero-without-hooks 0 "$(sid_returns "$sid_hookless")"
+t sid-run-session-returns-zero-when-a-hook-refuses 0 "$(sid_returns "$sid_refusing")"
+t sid-run-session-returns-zero-on-a-resume 0 "$(sid_returns "$sid_resumed")"
+t sid-run-session-returns-zero-on-a-timeout 'returned=0 rc=124' \
+  "$(grep '^returned=' <<<"$(sid_run rczero fixture/rczero 1 talk-hang both)")"
+
+# --- the shipped floor still reads both lines, both ways ------------------
+#
+# Asserted against the regexes AS SHIPPED — read out of units.py rather than
+# retyped here — because the compatibility claim is about the deployed floor
+# and not about a copy that agrees with this file. Both directions: the line
+# without `sid=` is what every box wrote before this change and must keep
+# parsing, and the line with it must return the SAME fields, the new token
+# simply unread.
+sid_floor_result() { # sid_floor_result START END
+  SID_FLOOR_START="$1" SID_FLOOR_END="$2" python3 - \
+    "$SHARED/../fleet-floor/server/floor/units.py" <<'PY'
+import os, re, sys
+src = open(sys.argv[1]).read()
+ns = {"re": re}
+for name in ("TS", "RE_START", "RE_END"):
+    match = re.search(r"^%s = (.+?)(?=\n[A-Z_#]|\n\n)" % name, src, re.S | re.M)
+    exec("%s = %s" % (name, match.group(1)), ns)
+out = []
+for name, line in (("START", os.environ["SID_FLOOR_START"]),
+                   ("END", os.environ["SID_FLOOR_END"])):
+    new = "2026-08-30T00:00:00Z " + line
+    old = re.sub(r" sid=\S+", "", new)
+    rx = ns["RE_START"] if name == "START" else ns["RE_END"]
+    old_m, new_m = rx.search(old), rx.search(new)
+    if not old_m or not new_m:
+        out.append("%s:UNPARSED" % name)
+    elif old_m.groups()[1:] != new_m.groups()[1:]:
+        out.append("%s:CHANGED" % name)
+    else:
+        out.append("%s:same" % name)
+print(" ".join(out))
+PY
+}
+if command -v python3 >/dev/null 2>&1; then
+  t sid-floor-parses-both-records-identically-with-and-without 'START:same END:same' \
+    "$(sid_floor_result "$(sid_line pinned START)" "$(sid_line pinned END)")"
+fi
+
+# --- the fences, read structurally (D4, D7, D10) -------------------------
+#
+# D4 is the claim that no duty lane changed, and it is asserted as a property
+# of those files rather than of this diff: the resume decision lives in
+# run_session, so a lane that learned to make it would be a regression this
+# suite can see at any later head.
+t sid-resume-decision-is-in-no-duty-lane 0 \
+  "$(grep -lE '_session_identity|_session_resume|bot_cli_resume_args|bot_cli_session_id_args|SESSION_RESUME_MAX_TRIES' \
+      "$SHARED/lib/duty-builder.sh" "$SHARED/lib/duty-review.sh" \
+      "$SHARED/lib/duty-triage.sh" 2>/dev/null | wc -l)"
+
+# D7 — the bound is not a config knob, and that is a property of the source.
+# An env fallback here would be the tunable the decision refuses, so the
+# assertion is that the assignment has none and that no conf file names it.
+t sid-resume-bound-has-no-env-fallback 'SESSION_RESUME_MAX_TRIES=1' \
+  "$(grep -m1 '^SESSION_RESUME_MAX_TRIES=' "$SHARED/lib/common/session.sh")"
+t sid-resume-bound-is-in-no-conf-file 0 \
+  "$(grep -rl 'SESSION_RESUME_MAX_TRIES' "$SHARED/conf" 2>/dev/null | wc -l)"
+
+# The claude profile's two hooks are independently defined and neither renders
+# the other's flag — the separation the CLI's own `already in use` error forces.
+sid_claude_hook() { # sid_claude_hook NAME ARG
+  ( # shellcheck disable=SC1091
+    source "$SHARED/conf/agents/claude.conf"
+    BOT_CLI_SESSION_ID_ARGS=(); BOT_CLI_RESUME_ARGS=()
+    "$1" "$2" >/dev/null 2>&1
+    printf '%s' "${BOT_CLI_SESSION_ID_ARGS[*]}${BOT_CLI_RESUME_ARGS[*]}" )
+}
+t sid-claude-pins-with-session-id '--session-id abc' \
+  "$(sid_claude_hook bot_cli_session_id_args abc)"
+t sid-claude-resumes-with-resume '--resume abc' \
+  "$(sid_claude_hook bot_cli_resume_args abc)"
+
 # --- structured usage and credential-pool identity (#475) ----------------
 #
 # The stub is the CLI, not the parser: it receives Claude's profile-built
