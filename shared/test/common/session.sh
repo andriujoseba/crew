@@ -460,10 +460,20 @@ sid_garble() { printf 'this is not a stub\n' >"$1"; }
 sid_repeat() { cat "$1" "$1" >"$1.t" && mv "$1.t" "$1"; }
 sid_forge_sid() { sed -i 's/^sid=.*/sid=not-a-uuid/' "$1"; }
 sid_remove() { rm -f "$1"; }
+# A stub whose six fields are all present and all valid, carrying one field
+# this reader does not know. It is the only corrupt shape here that reaches the
+# END of the parse with everything D6 asks for in hand, so it is the only one
+# the unknown-field arm alone decides: with that arm removed the stub parses
+# clean and RESUMES, and every other case in this section still passes. It is
+# also the forward-compatible shape rather than a hypothetical one — a later
+# engine writing a seventh field leaves exactly this for an older reader — and
+# refusing it is D6's failure direction, not a gap in it.
+sid_extra_field() { printf 'mode=fast\n' >>"$1"; }
 t sid-truncated-stub-is-absent ordinary "$(sid_corrupt_case truncated sid_truncate)"
 t sid-unparseable-stub-is-absent ordinary "$(sid_corrupt_case garbled sid_garble)"
 t sid-ambiguous-stub-is-absent ordinary "$(sid_corrupt_case repeated sid_repeat)"
 t sid-malformed-id-is-absent ordinary "$(sid_corrupt_case forged sid_forge_sid)"
+t sid-unknown-field-stub-is-absent ordinary "$(sid_corrupt_case extra sid_extra_field)"
 t sid-missing-stub-is-absent ordinary "$(sid_corrupt_case removed sid_remove)"
 
 # --- two consecutive timeouts, exactly one resume (D7) -------------------
