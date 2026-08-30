@@ -239,6 +239,14 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
     warn "review: request(s) outside repos.txt, NOT acted on:$unscoped — add the repo to repos.txt if this box should carry it"
   fi
 
+  # A complete authoritative sweep also owns the ending of a park whose
+  # request disappeared. Under a partial sweep absence proves nothing, so the
+  # process and record are preserved until a complete read can judge them.
+  if [ "$sweep_complete" -eq 1 ]; then
+    review_park_prune_inactive "$(printf '%s\n' "$candidates" \
+      | awk 'NF == 4 && !seen[$3 "#" $4]++ { out=out (out ? " " : "") $3 "#" $4 } END { print out }')"
+  fi
+
   # One candidate per (repo, PR) — first mention wins (the authoritative
   # sweep precedes the backstop), then oldest-first for the acting order.
   candidates="$(printf '%s\n' "$candidates" | awk 'NF==4 && !seen[$3"#"$4]++' | sort)"

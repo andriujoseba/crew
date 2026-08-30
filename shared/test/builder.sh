@@ -95,6 +95,7 @@ else
   r1=UNKEYED
 fi
 t d533-park-announce-uses-post-once-marker idempotent "$r1"
+# shellcheck disable=SC2016  # backticks and state name are literal prompt prose
 if grep -Fq 'Do not change any PR label or review request' <<<"$D530_RENDERED" \
   && grep -Fq '`state:bots-reviewing` remains true' <<<"$D530_RENDERED"; then
   r1=unchanged
@@ -608,9 +609,11 @@ else
   r1=UNPARTITIONED
 fi
 t review-partitions-before-prompt partitioned "$r1"
+# shellcheck disable=SC2016  # source patterns intentionally contain shell syntax
 commit_block="$(sed -n \
   '/if \[ "${RUN_SESSION_RC:-1}" -eq 0 \]; then/,/# These PRs may now carry/p' \
   "$REVIEW_MOD")"
+# shellcheck disable=SC2016  # source pattern intentionally contains a variable name
 if grep -Fq "\${repo_items[\$SR]}" <<<"$commit_block" &&
    grep -Fq 'captured_prs=" $REVIEW_PARK_CAPTURED "' <<<"$commit_block" &&
    grep -Fq "ledger_commit \"\$DUTY_DIR/.seen-review\"" <<<"$commit_block"; then
@@ -3943,11 +3946,13 @@ D533_GH="$D533/gh"
 D533_PROMPT="$D533/prompt"
 
 d533_tick() (
-  DUTY_DIR="$D533" WORK_DIR="$D533/work" TREES_DIR="$D533/trees"
-  LOG_DIR="$D533/logs" CONF_DIR="$D533/conf" PROMPTS_DIR="$SHARED/prompts"
-  BIN_DIR="$D533/bin" REPOS_FILE="$D533/repos.txt"
-  ME=fixture-reviewer MARK_REVIEWING='reviewing head'
-  TIMEOUT_REVIEW=30 AUTO_APPROVE_REREQUEST=1 LABEL_ADDRESSING=state:addressing
+  # shellcheck disable=SC2030  # fixture globals are intentionally isolated
+  local DUTY_DIR="$D533" WORK_DIR="$D533/work" TREES_DIR="$D533/trees"
+  # shellcheck disable=SC2030  # fixture globals are intentionally isolated
+  local LOG_DIR="$D533/logs" CONF_DIR="$D533/conf" PROMPTS_DIR="$SHARED/prompts"
+  local BIN_DIR="$D533/bin" REPOS_FILE="$D533/repos.txt"
+  local ME=fixture-reviewer MARK_REVIEWING='reviewing head'
+  local TIMEOUT_REVIEW=30 AUTO_APPROVE_REREQUEST=1 LABEL_ADDRESSING=state:addressing
   : >"$D533_GH"
   gh() {
     printf '%s\n' "$*" >>"$D533_GH"
@@ -3979,6 +3984,7 @@ d533_tick() (
   duty_review
 )
 
+# shellcheck disable=SC2031  # the subshell above cannot change this caller
 old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
 D533_RUNNING="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'sleep 30')"
 D533_REASON="$(printf 'suite still running' | base64 | tr -d '\n')"
@@ -4158,6 +4164,7 @@ fi
 t handoff-green-gating-called-out called-out "$r1"
 
 # --- configurable doctrine keeps the shipped prompts byte-identical (#76) ---
+# shellcheck disable=SC2031  # d533_tick isolates its PROMPTS_DIR in a subshell
 saved_prompts_dir="$PROMPTS_DIR"
 PROMPTS_DIR="$SHARED/prompts"
 # shellcheck disable=SC2034  # consumed indirectly by sourced render_prompt

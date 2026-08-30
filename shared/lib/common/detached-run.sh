@@ -11,6 +11,10 @@
 # engine safety bound, not an operator tuning surface: expiry deliberately
 # spends one fresh review rather than leaving a PR parked forever (#533 D5).
 REVIEW_PARK_TICK_LIMIT=12
+# The process owns the same one-hour ceiling even if its launching session dies
+# before it can emit PARKED. --foreground keeps the command in the setsid group
+# that detached_run_abandon can safely terminate as one unit.
+DETACHED_RUN_TIMEOUT_SECONDS=3600
 
 _detached_slug() {
   printf '%s' "$1" | tr '/:' '__'
@@ -89,18 +93,19 @@ run_detached() {
   # The detached wrapper waits for the launch stamp before executing. Without
   # that handshake a very short command can finish before the parent records
   # its pid, and the later launch write erases the completion it raced.
+  # shellcheck disable=SC2016  # this program is expanded by the child bash
   setsid bash -c '
-    stamp=$1; log=$2; shift 2
+    stamp=$1; log=$2; bound=$3; shift 3
     while [ ! -f "$stamp" ]; do sleep 0.01; done
     rc=0
-    "$@" >"$log" 2>&1 || rc=$?
+    timeout --foreground -k 60 "$bound" "$@" >"$log" 2>&1 || rc=$?
     finish=$(date -u "+%Y-%m-%dT%H:%M:%SZ") || finish=unknown
     tmp="$stamp.done.$BASHPID"
     awk -F= '\''$1 != "state" && $1 != "exit_status" && $1 != "finish_time"'\'' \
       "$stamp" >"$tmp" 2>/dev/null || : >"$tmp"
     printf "state=complete\nexit_status=%s\nfinish_time=%s\n" "$rc" "$finish" >>"$tmp"
     mv -f "$tmp" "$stamp"
-  ' _ "$stamp" "$log" "$@" </dev/null >/dev/null 2>&1 &
+  ' _ "$stamp" "$log" "$DETACHED_RUN_TIMEOUT_SECONDS" "$@" </dev/null >/dev/null 2>&1 &
   pid=$!
   pid_start="$(_detached_pid_start "$pid")"
   boot_id="$(_detached_boot_id)"
@@ -117,7 +122,8 @@ run_detached() {
     'version=1' "repo=$repo" "pr=$pr" "head=$head" "digest=$digest" \
     "command_b64=$command_b64" "start_time=$started" "pid=$pid" \
     "pid_start=$pid_start" "boot_id=$boot_id" \
-    "log_path=$log" 'state=running' >"$tmp"
+    "timeout_seconds=$DETACHED_RUN_TIMEOUT_SECONDS" "log_path=$log" \
+    'state=running' >"$tmp"
   mv -f "$tmp" "$stamp" || {
     rm -f "$tmp"
     kill -TERM -- "-$pid" 2>/dev/null || true
@@ -139,21 +145,26 @@ detached_run_read() {
   _detached_valid_digest "$digest" || { printf unreadable; return 0; }
   stamp="$(_detached_run_stamp "$repo" "$pr" "$head" "$digest")"
   [ -f "$stamp" ] || { DETACHED_RUN_STATE=missing; printf missing; return 0; }
-  [ "$(_detached_field "$stamp" version)" = 1 ] \
+  if ! { [ "$(_detached_field "$stamp" version)" = 1 ] \
     && [ "$(_detached_field "$stamp" repo)" = "$repo" ] \
     && [ "$(_detached_field "$stamp" pr)" = "$pr" ] \
     && [ "$(_detached_field "$stamp" head)" = "$head" ] \
-    && [ "$(_detached_field "$stamp" digest)" = "$digest" ] \
-    || { printf unreadable; return 0; }
+    && [ "$(_detached_field "$stamp" digest)" = "$digest" ]; }; then
+    printf unreadable
+    return 0
+  fi
   state="$(_detached_field "$stamp" state)"
   pid="$(_detached_field "$stamp" pid)"
   pid_start="$(_detached_field "$stamp" pid_start)"
   boot_id="$(_detached_field "$stamp" boot_id)"
   log="$(_detached_field "$stamp" log_path)"
   command_b64="$(_detached_field "$stamp" command_b64)"
-  [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [[ "$pid_start" =~ ^[0-9]+$ ]] \
+  if ! { [[ "$pid" =~ ^[1-9][0-9]*$ ]] && [[ "$pid_start" =~ ^[0-9]+$ ]] \
     && [ -n "$boot_id" ] && [ -n "$log" ] && [ -n "$command_b64" ] \
-    || { printf unreadable; return 0; }
+    ; }; then
+    printf unreadable
+    return 0
+  fi
   DETACHED_RUN_PID="$pid"
   DETACHED_RUN_LOG="$log"
   DETACHED_RUN_COMMAND="$(printf '%s' "$command_b64" | base64 -d 2>/dev/null)" \
@@ -172,8 +183,10 @@ detached_run_read() {
     complete)
       status="$(_detached_field "$stamp" exit_status)"
       finish="$(_detached_field "$stamp" finish_time)"
-      [[ "$status" =~ ^[0-9]+$ ]] && [ -n "$finish" ] && [ -f "$log" ] \
-        || { printf unreadable; return 0; }
+      if ! { [[ "$status" =~ ^[0-9]+$ ]] && [ -n "$finish" ] && [ -f "$log" ]; }; then
+        printf unreadable
+        return 0
+      fi
       DETACHED_RUN_STATUS="$status"
       DETACHED_RUN_FINISH="$finish"
       DETACHED_RUN_STATE=complete
@@ -295,6 +308,60 @@ _review_park_abandon_all() {
   review_park_clear "$repo" "$pr" "$head"
 }
 
+_review_park_abandon_file() {
+  local path="$1" repo pr head digests digest stamp
+  repo="$(_detached_field "$path" repo)"
+  pr="$(_detached_field "$path" pr)"
+  head="$(_detached_field "$path" head)"
+  digests="$(_detached_field "$path" digests)"
+  if _detached_valid_subject "$repo" "$pr" "$head" \
+    && _review_park_valid_digests "$digests"; then
+    _review_park_abandon_all "$repo" "$pr" "$head" "$digests"
+    return 0
+  fi
+
+  # A damaged park may have lost its digest list while its run stamps remain
+  # readable. Derive only validated digests from the subject directory; never
+  # let malformed record text become a path or a kill target.
+  if _detached_valid_subject "$repo" "$pr" "$head"; then
+    for stamp in "$(_detached_run_dir "$repo" "$pr" "$head")"/*.stamp; do
+      [ -f "$stamp" ] || continue
+      digest="${stamp##*/}"; digest="${digest%.stamp}"
+      _detached_valid_digest "$digest" || continue
+      detached_run_abandon "$repo" "$pr" "$head" "$digest"
+    done
+  fi
+  rm -f "$path" 2>/dev/null || true
+}
+
+_review_park_prune_other_heads() {
+  local repo="$1" pr="$2" current_head="$3" current_path path
+  current_path="$(_review_park_path "$repo" "$pr" "$current_head")"
+  for path in "${current_path%/*}"/*.park; do
+    [ -f "$path" ] || continue
+    [ "$path" = "$current_path" ] && continue
+    warn "review: $repo#$pr head moved past parked verification — abandoning the old detached run"
+    _review_park_abandon_file "$path"
+  done
+}
+
+# review_park_prune_inactive "REPO#PR ..." — after a complete pulls sweep,
+# abandon parks whose review request disappeared. An incomplete sweep never
+# calls this: absence under an API failure is not evidence that a request ended.
+review_park_prune_inactive() {
+  local active=" $1 " path repo pr
+  for path in "$DUTY_DIR"/.review-parks/*/*/*.park; do
+    [ -f "$path" ] || continue
+    repo="$(_detached_field "$path" repo)"
+    pr="$(_detached_field "$path" pr)"
+    if [[ "$active" != *" $repo#$pr "* ]]; then
+      warn "review: $repo#$pr no longer has a live review request — abandoning its detached run"
+      _review_park_abandon_file "$path"
+    fi
+  done
+  return 0
+}
+
 # review_park_inspect REPO PR HEAD — set REVIEW_PARK_STATE to none, parked,
 # ready, or expired. A ready result remains recorded until the resumed session
 # completes, so a crash retries with the same evidence instead of re-running.
@@ -304,6 +371,7 @@ review_park_inspect() {
   REVIEW_PARK_STATE=none
   REVIEW_PARK_RESULTS=""
   REVIEW_PARK_REASON=""
+  _review_park_prune_other_heads "$repo" "$pr" "$head"
   path="$(_review_park_path "$repo" "$pr" "$head")"
   [ -f "$path" ] || return 0
   version="$(_detached_field "$path" version)"

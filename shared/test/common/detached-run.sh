@@ -33,12 +33,15 @@ t detached-run-deduplicates "$DIGEST" \
 t detached-run-finish-recorded 2026 \
   "$(printf '%s' "$DETACHED_RUN_FINISH" | cut -c1-4)"
 t detached-run-command-readable 'bash -c printf\ complete' "$DETACHED_RUN_COMMAND"
+t detached-run-carries-own-wall 3600 \
+  "$(_detached_field "$(_detached_run_stamp "$REPO" "$PR" "$HEAD" "$DIGEST")" timeout_seconds)"
 
 # The launcher is itself a disposable session/process group. Killing that
 # group must not kill the command run_detached put in a fresh setsid group.
 SURVIVE_DUTY="$TMP/survive-duty"
 SURVIVE_DIGEST="$TMP/survive-digest"
 SURVIVE_READY="$TMP/survive-ready"
+# shellcheck disable=SC2016  # this fixture program is expanded by its child bash
 setsid bash -c '
   export DUTY_DIR=$1 HOME=$2 XDG_CONFIG_HOME=$3
   source "$4/lib/common.sh"
@@ -113,5 +116,23 @@ review_park_inspect "$REPO" 9 cccccccccccccccccccccccccccccccccccccccc
 t review-park-bound-expires expired "$REVIEW_PARK_STATE"
 if [ -f "$PARK_PATH" ]; then r1=kept; else r1=removed; fi
 t review-park-expiry-removes-record removed "$r1"
+
+# A moved head and a disappeared review request both end the detached work;
+# otherwise neither record is inspected again and the process loses its bound.
+OLD_HEAD=ffffffffffffffffffffffffffffffffffffffff
+NEW_HEAD=1111111111111111111111111111111111111111
+MOVED_DIGEST="$(run_detached "$REPO" 10 "$OLD_HEAD" -- bash -c 'sleep 30')"
+review_park_write "$REPO" 10 "$OLD_HEAD" "$MOVED_DIGEST" "$REASON"
+review_park_inspect "$REPO" 10 "$NEW_HEAD"
+t review-park-moved-head-is-not-current none "$REVIEW_PARK_STATE"
+if [ -f "$(_review_park_path "$REPO" 10 "$OLD_HEAD")" ]; then r1=kept; else r1=removed; fi
+t review-park-moved-head-pruned removed "$r1"
+
+INACTIVE_HEAD=2222222222222222222222222222222222222222
+INACTIVE_DIGEST="$(run_detached "$REPO" 11 "$INACTIVE_HEAD" -- bash -c 'sleep 30')"
+review_park_write "$REPO" 11 "$INACTIVE_HEAD" "$INACTIVE_DIGEST" "$REASON"
+review_park_prune_inactive "$REPO#99"
+if [ -f "$(_review_park_path "$REPO" 11 "$INACTIVE_HEAD")" ]; then r1=kept; else r1=removed; fi
+t review-park-ended-request-pruned removed "$r1"
 
 suite_finish
