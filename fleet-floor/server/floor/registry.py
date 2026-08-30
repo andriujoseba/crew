@@ -449,7 +449,24 @@ def _journal_writable():
             % (JOURNAL, e))
 
 
-def _journal(actor, action, path, box, added, removed):
+def _rewrite_refusal(path, e):
+    """The sentence a write that could not be made says, rather than a stack.
+
+    `_rewrite` raises `OSError` for the residual the preflight cannot cover: a
+    definition directory gone read-only, or occupied, AFTER `_journal_writable`
+    answered yes. That exception used to travel out through `registry_command`
+    and `do_command` into the handler and drop the connection — the one path in
+    this module where the operator got a dead request instead of a sentence,
+    while every neighbouring failure refuses with its reason. Nothing has
+    landed when this is reached, so it is a refusal like any other and the
+    console reports it as one.
+    """
+    return ("the write was refused: %s could not be replaced (%s). Nothing "
+            "was written — fix the fleet definition on the host and make the "
+            "edit again." % (path, e))
+
+
+def _journal(actor, action, path, box, entries, added, removed):
     """D5: one line per write, so a registry change is attributable after it.
 
     Returns (recorded, reason). Append-only, and never silent about failing:
@@ -457,16 +474,37 @@ def _journal(actor, action, path, box, added, removed):
     failure here is a landed edit with no record and the operator has to be
     told exactly that. `_journal_writable` makes it nearly unreachable; the
     writers below define what happens when it is reached anyway.
+
+    `entries=` IS THE STATE THE WRITE APPLIED, and it is what makes a line
+    self-sufficient. The record used to carry the two deltas and nothing else,
+    which reads like an audit log and is not one: a set to the state the file
+    already held journalled `added=- removed=-`, an entry that stayed appeared
+    in no record anywhere, and the first line in a fresh journal had no earlier
+    line to difference against — so reconstructing what the fleet's scope
+    actually WAS after any given write meant replaying every line before it and
+    hoping none was missing. AC10 asks for a record describing the input that
+    write applied, and a delta over an unrecorded baseline does not describe
+    one. The deltas stay beside it: they are what an operator scanning the log
+    reads, and they are the two fields the console echoes back.
+
+    Two field values are not repositories, and cannot collide with one, because
+    every entry is an `owner/repo`: `-` is the EMPTY state — a registry or a
+    selection deliberately naming nothing — and `inherit` is the absence of a
+    file, which is the state a cleared override leaves its box in. The action
+    already distinguishes a clear from a set; this makes the resulting state
+    readable without knowing that.
     """
-    line = ("%s registry %s file=%s box=%s actor=%s added=%s removed=%s\n" % (
-        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        action,
-        os.path.relpath(path, CONFIG_DIR) if path else "-",
-        box or "-",
-        actor or "-",
-        ",".join(added) or "-",
-        ",".join(removed) or "-",
-    ))
+    line = ("%s registry %s file=%s box=%s actor=%s entries=%s added=%s "
+            "removed=%s\n" % (
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                action,
+                os.path.relpath(path, CONFIG_DIR) if path else "-",
+                box or "-",
+                actor or "-",
+                "inherit" if entries is None else (",".join(entries) or "-"),
+                ",".join(added) or "-",
+                ",".join(removed) or "-",
+            ))
     try:
         # One `write` of one line, under the journal's own lock: two kinds can
         # be edited at the same moment and a record split down the middle is
@@ -509,9 +547,12 @@ def set_fleet(kind, entries, actor=""):
         ok, why = _journal_writable()
         if not ok:
             return None, why
-        added, removed = _rewrite(path, clean, base=None if own else source)
+        try:
+            added, removed = _rewrite(path, clean, base=None if own else source)
+        except OSError as e:
+            return None, _rewrite_refusal(path, e)
         recorded, jerr = _journal(actor, "set-fleet:%s" % kind, path, None,
-                                  added, removed)
+                                  clean, added, removed)
         return {"kind": kind, "scope": "fleet", "path": path, "entries": clean,
                 "added": added, "removed": removed, "recorded": recorded}, jerr
 
@@ -551,9 +592,12 @@ def set_override(kind, box, entries, actor=""):
         ok, why = _journal_writable()
         if not ok:
             return None, why
-        added, removed = _rewrite(path, clean)
+        try:
+            added, removed = _rewrite(path, clean)
+        except OSError as e:
+            return None, _rewrite_refusal(path, e)
         recorded, jerr = _journal(actor, "set-override:%s" % kind, path, box,
-                                  added, removed)
+                                  clean, added, removed)
         entries_, esource = effective(kind, box)
         return {"kind": kind, "scope": "override", "box": box, "path": path,
                 "entries": entries_, "source": esource, "added": added,
@@ -586,7 +630,7 @@ def clear_override(kind, box, actor=""):
             except OSError as e:
                 return None, "could not clear the override for %s: %s" % (box, e)
             recorded, jerr = _journal(actor, "clear-override:%s" % kind, path,
-                                      box, [], removed)
+                                      box, None, [], removed)
         entries, source = effective(kind, box)
         return {"kind": kind, "scope": "override", "box": box, "path": path,
                 "cleared": had, "entries": entries, "source": source,

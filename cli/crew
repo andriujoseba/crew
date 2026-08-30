@@ -1646,12 +1646,26 @@ status_duration() {
 }
 
 # production_registry — the repo list THIS checkout would seed into a box.
+#
+# THROUGH `registry_entries`, WHICH IS THE POINT (#488). This used to read the
+# fleet-wide file with its own `grep -vE '^[[:space:]]*(#|$)'` — the same
+# entries, but as WRITTEN rather than stripped. That was harmless while
+# hire_guard's inheriting branch assigned `reg="$prod"`, because the comparison
+# below it was then false by construction. It stopped being harmless the moment
+# that branch derived its side from `resolved_registry`, which strips: two
+# readers of one file disagreeing about trailing whitespace, feeding a `!=`
+# whose every difference is read as "this box is narrowed". One trailing space
+# or a CRLF in a hand-edited `repos.txt` and #51's off-roster refusal is gone
+# — while the guard's own line prints the production registry it is letting the
+# box have. A registry file is defined by ONE reader in this CLI, and every
+# comparison against it goes through that reader.
+#
+# `registry_entries` carries the `|| true` this function used to need, and for
+# the same reason: an EMPTY or all-comment registry exits non-zero, pipefail
+# takes that status, and `prod="$(production_registry)"` in hire_guard then
+# dies under set -e with no message at all.
 production_registry() {
-  # `|| true` is load-bearing, as in box_state/box_agent/box_registry: an EMPTY
-  # or all-comment registry makes grep exit 1, pipefail takes that status, and
-  # `prod="$(production_registry)"` in hire_guard then dies under set -e with
-  # no message at all.
-  grep -vE '^[[:space:]]*(#|$)' "$REPOS_SEED" | sort || true
+  registry_entries "$REPOS_SEED" | sort
 }
 # The one-repo-one-fleet sweep below still walks the FLEET-WIDE list and needs
 # no union with the per-box selections (#488). Under the operator's direction
@@ -1666,9 +1680,17 @@ production_registry() {
 # is ever relaxed this sweep is the second thing that has to move.
 # box_registry NAME — the repos.txt the box actually carries, or empty when it
 # has none yet (install.sh seeds this box's own resolved default in that case).
+#
+# Through `registry_entries` too, and for `production_registry`'s reason: this
+# is the OTHER side of hire_guard's production comparison, so an entry the box
+# carries with a trailing space compares unequal to the same entry in the
+# fleet's list and arms an off-roster box against production. That half is
+# older than #488 — it is the asymmetry `tr -d '\r'` was added for, stopped one
+# whitespace character short. The `tr` stays: it removes a carriage return
+# anywhere in the line, where the strip only reaches the ends.
 box_registry() {
   bxn "$1" 'grep -vE "^[[:space:]]*(#|\$)" ~/duty/repos.txt 2>/dev/null' 2>/dev/null \
-    | tr -d '\r' | sort || true
+    | tr -d '\r' | registry_entries - | sort || true
 }
 
 # fleet_static_identities — GitHub logins declared by the selected fleet.
@@ -1777,7 +1799,14 @@ hire_guard() {
     # operator ruled out on 2026-08-29. A narrowed member is narrowed, and
     # `$reg` differing from `$prod` is what lets it through.
     reg="$(resolved_registry "$name" work | sort)"
-    echo "  registry: none yet — install.sh will seed $(printf '%s' "$reg" | tr '\n' ' ')"
+    # A box selected down to NOTHING is a state this layer supports on purpose
+    # — the containment state repos.txt's own header describes — so the line
+    # says so rather than trailing off after "seed " with nothing behind it.
+    if [ -z "$reg" ]; then
+      echo "  registry: none yet — this box selects no repositories, so install.sh will seed an empty one"
+    else
+      echo "  registry: none yet — install.sh will seed $(printf '%s' "$reg" | tr '\n' ' ')"
+    fi
   else
     echo "  registry: $(printf '%s' "$reg" | tr '\n' ' ')"
   fi

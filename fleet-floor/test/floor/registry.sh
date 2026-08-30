@@ -271,6 +271,35 @@ case "$(cat "$FF_REG_JOURNAL")" in
   *"clear-override:work file=repos.d/ff-working.txt"*) r1=named ;; *) r1=MISSING ;;
 esac
 t "registry: ...with the clear recorded apart from the set" named "$r1"
+# THE RECORD NAMES THE STATE THE WRITE APPLIED, not only what moved. A delta
+# over a baseline nobody wrote down does not identify the input a write
+# applied, which is what AC10 asks of it: an entry that STAYS appears in no
+# line anywhere, and the first record in a fresh journal has nothing before it
+# to difference against, so reconstructing the fleet's scope after any given
+# write meant replaying every earlier line and trusting none was missing.
+case "$(cat "$FF_REG_JOURNAL")" in
+  *"box=ff-working actor=$USER entries=heavy-duty/crew,heavy-duty/ceremony "*) r1=stated ;;
+  *) r1=DELTA-ONLY ;;
+esac
+t "registry: ...and the state that write applied, not only what moved" stated "$r1"
+# The shape that makes the point on its own: `registry: setting the fleet-wide
+# list as an override reads identically` above submits the set the file already
+# held, in a different order, so BOTH deltas are empty. Under the old record
+# that write said `added=- removed=-` and nothing else — a line that cannot
+# distinguish "set to these two" from "set to anything at all".
+case "$(cat "$FF_REG_JOURNAL")" in
+  *"entries=heavy-duty/crew,heavy-duty/ceremony added=- removed=-"*) r1=stated ;;
+  *) r1=SAYS-NOTHING ;;
+esac
+t "registry: ...including a write whose deltas are both empty" stated "$r1"
+# A CLEAR APPLIES A STATE TOO, and it is not the empty selection: the file is
+# gone and the box inherits. `-` is a list naming nothing; `inherit` is no list
+# at all, and the two are the distinction this whole layer rests on.
+case "$(cat "$FF_REG_JOURNAL")" in
+  *"clear-override:work file=repos.d/ff-working.txt box=ff-working actor=$USER entries=inherit"*) r1=stated ;;
+  *) r1=MISSING ;;
+esac
+t "registry: ...with a clear recording inheritance, not an empty selection" stated "$r1"
 t "registry: a refused write is not journalled" 0 \
   "$(grep -c 'nosuchrepo' "$FF_REG_JOURNAL")"
 
@@ -301,6 +330,45 @@ t "registry: ...leaving no half-written temporary beside it" 0 \
   "$(find "$FF_REG_DIR" -maxdepth 1 -name 'repos.txt.crew-floor.*' | wc -l | tr -d ' ')"
 rmdir "$FF_REG_JOURNAL"
 mv "$FF_REG_JOURNAL.aside" "$FF_REG_JOURNAL"
+
+# THE RESIDUAL THE PRECONDITION CANNOT COVER, on the other side: the JOURNAL is
+# appendable and the REGISTRY cannot be written. `_journal_writable` answers
+# for one file and says nothing about the other, so a fleet definition that
+# goes read-only — or a directory occupied — after it answered leaves `_rewrite`
+# raising `OSError`. That exception used to travel out through
+# `registry_command` and `do_command` into the handler and drop the connection:
+# the one failure in this path where the operator got a dead request instead of
+# the sentence every neighbouring failure gives them. Nothing has landed when
+# it is reached, so it is an ordinary refusal and reads as one.
+#
+# Driven through `registry_command` and not `set_override`, because the escape
+# was never about the writer's return value — it was about what reached the
+# handler. In its own fleet definition, so nothing here touches the
+# collector's, with the override directory occupied by a regular file.
+FF_REG_ESC="$TMP/reg-esc"
+mkdir -p "$FF_REG_ESC"
+printf 'ff-alt claude-builder\n' >"$FF_REG_ESC/fleet.roster"
+cp "$FLOOR/../examples/fleet.conf" "$FLOOR/../examples/doctrine.conf" "$FF_REG_ESC/"
+printf 'heavy-duty/crew\n' >"$FF_REG_ESC/repos.txt"
+: >"$FF_REG_ESC/repos.d"
+FF_REG_ESCR="$(CREW_CONFIG_DIR="$FF_REG_ESC" PYTHONPATH="$FLOOR/server" python3 -c '
+import os
+import floor.actions as a
+import floor.registry as r
+try:
+    code, reply = a.registry_command(
+        "registry-override", "ff-alt",
+        {"kind": "work", "entries": ["heavy-duty/crew"]}, "tester")
+except OSError as e:                     # what the handler used to be handed
+    print("ESCAPED|%s" % type(e).__name__)
+    raise SystemExit(0)
+err = reply.get("error") or ""
+print("|".join(str(x) for x in [
+    code, reply["refused"], "repos.d" in err, "Nothing was written" in err,
+    os.path.getsize(r.JOURNAL)]))
+' 2>&1 | tail -1)"
+t "registry: a write the filesystem refuses is a refusal, not a dropped request" \
+  "400|True|True|True|0" "$FF_REG_ESCR"
 
 # THE ONE WINDOW THE PRECONDITION CANNOT CLOSE — the append failing AFTER the
 # registry has been replaced — has a defined outcome rather than a silence, and
@@ -336,12 +404,20 @@ t "registry: a record that fails after the write reports the edit as landed" \
 
 # CONCURRENT WRITES TO ONE REGISTRY, through the real collector rather than a
 # simulation of it: `server.py` is a ThreadingHTTPServer, so these run in
-# genuinely parallel handlers. The temporary file used to be named per PROCESS,
-# so two writes shared one and the second `os.replace` raised on a path the
-# first had already renamed away; the read-modify-write was unserialised too,
+# genuinely parallel handlers. The read-modify-write used to be unserialised,
 # so a reply and its journal line could describe input another thread had
 # replaced. Twelve writes alternating between two states: whichever wins, the
-# file must be exactly one of them and every write must be recorded once.
+# file must be exactly one of them, and every write must leave one record of
+# the state IT submitted.
+#
+# WHAT THIS CASE PROVES, EXACTLY, because a comment that overclaims is worse
+# than none: the per-kind LOCK, and the record's accuracy under it. It does NOT
+# discriminate `_rewrite`'s unique temporary name — reverting `mkstemp` to the
+# old per-process `<path>.crew-floor.<pid>` leaves all five assertions green,
+# because within one floor process the lock alone keeps two handlers out of the
+# shared name. `mkstemp` is defended in `_rewrite`'s own docstring for the case
+# a lock cannot reach — two floor processes over one definition — and that case
+# has no coverage here and is not staged by this suite.
 #
 # FIRED FROM PYTHON THREADS, NOT BACKGROUNDED SUBSHELLS, which is the idiom
 # `floor/server.sh` states for its own concurrency case. The reason it gives —
@@ -401,6 +477,22 @@ esac
 t "registry: ...leaving the file as exactly one of the submitted states" one-of-them "$r1"
 t "registry: ...with one journal line per write, none lost" 12 \
   "$(($(wc -l <"$FF_REG_JOURNAL" | tr -d ' ') - FF_REG_J0))"
+# AND EACH OF THEM ACCURATE ABOUT ITS OWN WRITE, which is the half a count
+# cannot reach: twelve lines can be twelve lines and say nothing about what any
+# of them applied. Six threads submit one state and six the other, so the
+# twelve new records must split exactly six and six on `entries=` — every
+# submitted write associated with exactly one record describing it.
+#
+# This is the assertion the record's OLD shape could not have: `added=` and
+# `removed=` alone, a write to the state the file already held journalled
+# `added=- removed=-`, and a `_journal` handed empty deltas for every fleet
+# write left the whole suite green. Both halves of that collapse this to `0 0`.
+# Matched with the trailing ` added=` so the narrower state cannot be counted
+# inside the wider one's line.
+FF_REG_CCJ="$(tail -n +"$((FF_REG_J0 + 1))" "$FF_REG_JOURNAL")"
+t "registry: ...each recording the state that write submitted, six and six" "6 6" \
+  "$(printf '%s\n' "$FF_REG_CCJ" | grep -cF 'entries=heavy-duty/crew added=' || true) $(
+     printf '%s\n' "$FF_REG_CCJ" | grep -cF 'entries=heavy-duty/crew,heavy-duty/ceremony added=' || true)"
 # `find` on a directory that is not there prints nothing and `wc -l` says 0, so
 # this assertion would PASS on a definition the suite had lost. The directory is
 # proved present first, and it is the same reading either way.
