@@ -73,22 +73,26 @@ git -C "$RW/work/repo" commit --allow-empty -qm live-head
 RW_LIVE_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" "$RW_LIVE_HEAD" >/dev/null 2>&1
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_LIVE_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-aux" "$RW_HEAD" >/dev/null 2>&1
 (
   cd "$RW/work/repo" || exit
   RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_LIVE_HEAD" -- \
-    bash -c "sleep 1; : > \"\$1/review-finished\"" _ "$RW/trees/repo/review-live")"
+    bash -c "sleep 1; [ -d \"\$1\" ] && [ -d \"\$2\" ] && : > \"\$1/review-finished\"" \
+      _ "$RW/trees/repo/review-live" "$RW/trees/repo/base-aux")"
   printf '%s' "$RW_LIVE_DIGEST" >"$RW/live.digest"
 )
 TREES_DIR="$RW/trees"
 RW_LIVE_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-active-run-logs-protector 2 \
+t review-reclaim-active-run-logs-protector 3 \
   "$(grep -cF "protected by active detached run fixture/repo#7@$RW_LIVE_HEAD" <<<"$RW_LIVE_OUT")"
 t review-reclaim-active-run-preserves-worktree present \
   "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
 t review-reclaim-same-head-stale-conservatively-preserved present \
   "$([ -d "$RW/trees/repo/review-stale" ] && printf present || printf MISSING)"
-if _review_detached_run_blocks_dispatch fixture/repo "$RW_LIVE_HEAD"; then
+t review-reclaim-active-run-preserves-auxiliary-base-head present \
+  "$([ -d "$RW/trees/repo/base-aux" ] && printf present || printf MISSING)"
+if _review_detached_run_blocks_dispatch fixture/repo; then
   RW_SAME_HEAD_DECISION=suppressed
 else
   RW_SAME_HEAD_DECISION=DISPATCHED
@@ -96,6 +100,13 @@ fi
 t review-reclaim-same-head-next-dispatch-suppressed suppressed "$RW_SAME_HEAD_DECISION"
 t review-reclaim-same-head-suppression-names-protector "fixture/repo#7@$RW_LIVE_HEAD" \
   "$REVIEW_DETACHED_RUN_SUBJECT"
+if _review_detached_run_blocks_dispatch fixture/repo; then
+  RW_DIFFERENT_HEAD_DECISION=suppressed
+else
+  RW_DIFFERENT_HEAD_DECISION=DISPATCHED
+fi
+t review-reclaim-different-head-next-dispatch-suppressed suppressed \
+  "$RW_DIFFERENT_HEAD_DECISION"
 RW_LIVE_DIGEST="$(cat "$RW/live.digest")"
 for _ in 1 2 3 4 5; do
   detached_run_read fixture/repo 7 "$RW_LIVE_HEAD" "$RW_LIVE_DIGEST" >/dev/null
@@ -110,6 +121,11 @@ t review-reclaim-ended-run-tree-removed gone \
   "$([ ! -e "$RW/trees/repo/review-live" ] && printf gone || printf PRESENT)"
 t review-reclaim-ended-run-stale-tree-removed gone \
   "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
+t review-reclaim-ended-run-auxiliary-tree-removed gone \
+  "$([ ! -e "$RW/trees/repo/base-aux" ] && printf gone || printf PRESENT)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-aux" "$RW_HEAD" >/dev/null 2>&1
+t review-reclaim-ended-run-clears-auxiliary-path recreated \
+  "$([ -d "$RW/trees/repo/base-aux" ] && printf recreated || printf COLLISION)"
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_LIVE_HEAD" >/dev/null 2>&1
 t review-reclaim-ended-run-clears-next-dispatch-path recreated \
   "$([ -d "$RW/trees/repo/review-stale" ] && printf recreated || printf COLLISION)"

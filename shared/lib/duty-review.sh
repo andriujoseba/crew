@@ -46,7 +46,7 @@ REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Names remain deliberately irrelevant because a reviewer may make an
 # auxiliary worktree such as base-<N> while investigating a collision.
 _review_detached_run_protects() {
-  local candidate="$1" candidate_head="$2"
+  local candidate="$1"
   local stamp repo pr head digest remote
 
   REVIEW_DETACHED_RUN_SUBJECT=""
@@ -57,7 +57,6 @@ _review_detached_run_protects() {
     pr="$(_detached_field "$stamp" pr)"
     head="$(_detached_field "$stamp" head)"
     digest="$(_detached_field "$stamp" digest)"
-    [ "$head" = "$candidate_head" ] || continue
     case "$remote" in
       */"$repo"|*/"$repo".git|*:"$repo"|*:"$repo".git) : ;;
       *) continue ;;
@@ -71,12 +70,13 @@ _review_detached_run_protects() {
   return 1
 }
 
-# A live run does not record the worktree path selected by its model-authored
-# command. Same-repository candidates at the same head must therefore remain
-# conservative, and a second PR at that head must wait rather than dispatch
-# into a path reclaim could not safely distinguish (#597 round 4).
+# A live run does not record the worktree paths selected by its model-authored
+# command. Same-repository candidates must therefore remain conservative even
+# when an auxiliary tree is at the base head, and every review for that
+# repository must wait rather than dispatch into a path reclaim could not
+# safely distinguish (#597 rounds 4-5).
 _review_detached_run_blocks_dispatch() {
-  local wanted_repo="$1" wanted_head="$2" stamp repo pr head digest
+  local wanted_repo="$1" stamp repo pr head digest
 
   REVIEW_DETACHED_RUN_SUBJECT=""
   while IFS= read -r -d '' stamp; do
@@ -84,9 +84,7 @@ _review_detached_run_blocks_dispatch() {
     pr="$(_detached_field "$stamp" pr)"
     head="$(_detached_field "$stamp" head)"
     digest="$(_detached_field "$stamp" digest)"
-    if [ "$repo" != "$wanted_repo" ] || [ "$head" != "$wanted_head" ]; then
-      continue
-    fi
+    [ "$repo" = "$wanted_repo" ] || continue
     detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
     if [ "$DETACHED_RUN_STATE" = running ]; then
       REVIEW_DETACHED_RUN_SUBJECT="$repo#$pr@$head"
@@ -133,8 +131,9 @@ reclaim_detached_review_worktrees() {
     # The run stamp's head is engine-owned identity. The supervisor cwd is
     # not: reviewer sessions launch in the main clone and may pass a worktree
     # path to the detached command. Protect candidates at a verified live
-    # head, while unrelated stale heads remain reclaimable.
-    if _review_detached_run_protects "$candidate" "$head"; then
+    # repository, including auxiliary base-head worktrees. Other repositories
+    # remain reclaimable.
+    if _review_detached_run_protects "$candidate"; then
       log "review: preserved detached worktree $candidate; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
       continue
     fi
@@ -465,8 +464,8 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         ;;
     esac
 
-    if [ "$queue" -eq 1 ] && _review_detached_run_blocks_dispatch "$SR" "$head"; then
-      log "review: $SR#$N dispatch suppressed at ${head:0:12}; active detached run $REVIEW_DETACHED_RUN_SUBJECT makes same-head worktree ownership ambiguous"
+    if [ "$queue" -eq 1 ] && _review_detached_run_blocks_dispatch "$SR"; then
+      log "review: $SR#$N dispatch suppressed at ${head:0:12}; active detached run $REVIEW_DETACHED_RUN_SUBJECT makes same-repository worktree ownership ambiguous"
       queue=0
     fi
 
