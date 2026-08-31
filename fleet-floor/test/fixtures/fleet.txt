@@ -52,3 +52,19 @@ ff-silent-ahead  running skew-silent-ahead
 # either as a verified engine has added a word and no information.
 ff-modified    running  modified
 ff-unverified  running  unverified
+# #610 — STUCK is measured against the ceiling the in-flight session declares,
+# not against a fleet-wide 600s. All three run the SAME evidence: a `build`
+# session in flight saying `timeout=3600s`. They differ only in how long the
+# lock has been held — 40 minutes, the bound exactly (ceiling + the 60s kill
+# grace), and one second past it — so a reader comparing against anything but
+# that line grades at least one of them wrong. The first is @danmt's report:
+# under the old rule it wore the pulsing badge, and the badge hides the
+# running-session panel it should have been showing.
+ff-lane-build  running  lane-build
+ff-lane-edge   running  lane-edge
+ff-lane-over   running  lane-over
+# A session in flight whose START carries no `timeout=` token at all — every
+# line written by an engine older than #538. Nothing on the record to read a
+# ceiling from, so this box falls back to STUCK_AFTER_S and must be graded and
+# worded exactly as it is today.
+ff-lane-legacy running  lane-legacy

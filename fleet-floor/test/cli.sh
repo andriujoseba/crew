@@ -2251,9 +2251,12 @@ fi
 # the line: what matters is that it PARSES instance.conf correctly, and a
 # source-grep would pass just as happily on a filter that emits nothing.
 # Deliberately not added to fixtures/fleet.txt — three assertions under
-# test/floor/ hardcode the fixture's 31 boxes (floor/{roster,fleet,server}.sh)
+# test/floor/ hardcode the fixture's box count (floor/{roster,fleet,server}.sh)
 # and browser.js's scroll walk has been destabilised by fleet size before
-# (browser.js:246). A 32nd row is not worth that risk.
+# (browser.js:246). One more row is not worth that risk for a case a direct
+# probe.sh run already answers. #610 did pay that cost, for four rows it could
+# not answer any other way: its subject IS the collector's reading of a served
+# box, at four lock ages one second apart at the boundary.
 CL_PD="$CL_TMP/probe-duty"; mkdir -p "$CL_PD/conf"
 printf 'BOT_AGENT=codex\nBOT_ROLES="builder"\n' > "$CL_PD/conf/instance.conf"
 CL_PA="$(DUTY_DIR="$CL_PD" bash "$CL_FLOOR/server/probe.sh" </dev/null 2>/dev/null | sed -n 's/^::agent //p')"
