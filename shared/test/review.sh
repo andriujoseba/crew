@@ -63,7 +63,10 @@ t rereq-auto-off-moved-head-queues       queue        "$(rereq_decision "$RR_OLD
 # change-requester still AT the current head once the round is signalled answered
 # (proved by rp-no-push-cr-at-head-requests-cr-er above), and the prompt names
 # that case so the builder knows an argument-only answer still reaches the panel.
-if grep -qi 'pushed nothing' "$SHARED/prompts/fragment-round-rules.txt"; then r1=carved; else r1=MISSING; fi
+REREQUEST_RULES="$(PROMPTS_DIR="$SHARED/prompts" render_prompt fragment-round-rules.txt \
+  MARK_ADDRESSING=addressing MARK_ANSWERED=answered DOCTRINE_BUILDER=BUILDER.md \
+  BENCH='rev-a rev-b' TRIAGE=triage-bot ROUND_CAP=-)"
+if grep -qi 'pushed nothing' <<<"$REREQUEST_RULES"; then r1=carved; else r1=MISSING; fi
 t rerequest-no-push-half-engine-side carved "$r1"
 # --- addressing.jq: round-close predicate, the MIRROR of converged.jq (#130) --
 # Same payload builder (mk_pr), same panel, same head-scoping — the point is
@@ -119,6 +122,7 @@ D601_WARN="$D601/warn"
 D601_HEAD="dddddddddddddddddddddddddddddddddddddddd"
 
 d601_drive() (
+  # shellcheck disable=SC2030  # fixture globals are intentionally isolated
   local DUTY_DIR="$D601" WORK_DIR="$D601/work" TREES_DIR="$D601/trees"
   local LOG_DIR="$D601/logs" CONF_DIR="$D601/conf" PROMPTS_DIR="$SHARED/prompts"
   local BIN_DIR="$D601/bin" REPOS_FILE="$D601/repos.txt"
@@ -177,7 +181,7 @@ fi
 t addressing-wired-after-verdict after-verdict "$r1"
 if [ "$D601_RC" -eq 0 ] \
     && grep -q 'could not set state:addressing (reconciler will)' "$D601_WARN"; then
-  r1=best-effort
+  r1='best-effort'
 else
   r1=GATING
 fi
@@ -216,6 +220,7 @@ case "$(cat "$RW/collision.out")" in
 esac
 t review-reclaim-fixture-names-existing-path named "$RW_COLLISION_MSG"
 git -C "$RW/work/repo" worktree add -b build/1 "$RW/trees/repo/build-1" HEAD >/dev/null 2>&1
+# shellcheck disable=SC2031  # the entrypoint fixture's subshell cannot change this caller
 RW_OLD_TREES="$TREES_DIR"
 TREES_DIR="$RW/trees"
 RW_OUT="$(reclaim_detached_review_worktrees)"
