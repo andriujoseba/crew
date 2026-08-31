@@ -538,11 +538,33 @@ _session_identity() {
   return 0
 }
 
-# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT — the stub, D5.
+# _session_resume_record KIND KEY DIR RC WALL LOG_BYTES LEFT VERDICT — the
+# stub, D5.
 #
-# Written on `rc=124` and on nothing else; ANY other end deletes it, which is
+# Written on a TIMEOUT and on nothing else; ANY other end deletes it, which is
 # what keeps a stub from outliving the episode that produced it. It returns 0
 # on every path — a recovery mechanism must never be able to fail a session.
+#
+# THE GATE IS THE VERDICT AND NOT THE RAW `rc`, and the difference is the
+# memory ceiling. D5's text is written in terms of `rc=124`, and for an
+# ordinary session that is the same predicate — `verdict=TIMEOUT` holds exactly
+# when `timeout` reported 124 and the ceiling did not fire. They part on the
+# case #474 D4 exists for: a session the engine killed for memory reports
+# whatever `timeout` reported for being signalled — 143, or **124 if the
+# deadline landed in the same instant** — and on that overlap an rc-keyed stub
+# is written for a session that was wedged. The next dispatch then resumes it
+# WITH THE WEDGE IN ITS CONTEXT, which is precisely what D6.3 refuses a
+# zero-byte log to prevent. `run_session` already ranks the ceiling above the
+# timeout twenty lines above its call to this, for the same reason; reading
+# `$rc` here would have reinstated underneath that branch the conflation the
+# branch removes above it (#596 review).
+#
+# The decision lives INSIDE this function rather than at the call site, and
+# that placement is load-bearing: the caller cannot simply skip the call on a
+# mem kill, because the delete is here too. Guarding the call would leave a
+# PREVIOUS timeout's stub alive on disk across a memory kill — a wider bug than
+# the narrow one being closed. So every non-TIMEOUT end, the ceiling included,
+# still falls through to the same `rm -f`.
 #
 # WHAT IT CARRIES, and why it is eight fields rather than D5's four. The `sid`,
 # the head, the wall and the try count are D5's list. `kind` and `key` are the
@@ -566,9 +588,12 @@ _session_identity() {
 # dance would buy the same outcome through a second mechanism.
 _session_resume_record() {
   local kind="$1" key="$2" dir="$3" rc="$4" wall="$5" logb="$6" survivor_count="$7"
+  local verdict="$8"
   local state
   state="$(_session_resume_state "$kind" "$key")"
-  if [ "$rc" -ne 124 ]; then
+  # Both halves are asserted rather than one: the verdict is what decides, and
+  # the `rc` check keeps D5's own text true on the face of the code.
+  if [ "$rc" -ne 124 ] || [ "$verdict" != TIMEOUT ]; then
     rm -f "$state" 2>/dev/null || true
     return 0
   fi
@@ -786,7 +811,8 @@ run_session() {
   # Written after the line that reports the session and before the counters
   # that bill it, reading the two figures that line just published: this stub
   # and that record can never disagree about what the session left behind.
-  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" "$log_bytes" "$survivor_count"
+  _session_resume_record "$kind" "$key" "$dir" "$rc" "$tmo" "$log_bytes" \
+    "$survivor_count" "$verdict"
   _session_terminal_record "$kind" "$terminal" "$acted" "$slog"
   # The rolling counter is written alongside the line that carries the same
   # duration, so the budget and the log can never disagree about what a

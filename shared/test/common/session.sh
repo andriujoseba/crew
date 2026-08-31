@@ -527,6 +527,35 @@ t sid-validator-accepts-the-observed-id ACCEPT \
 t sid-unknown-field-stub-is-absent ordinary "$(sid_corrupt_case extra sid_extra_field)"
 t sid-missing-stub-is-absent ordinary "$(sid_corrupt_case removed sid_remove)"
 
+# --- D5's gate is the VERDICT and not the raw rc --------------------------
+#
+# The case that separates them cannot be staged through a dispatch: it needs a
+# memory kill whose signal lands in the same instant as the deadline, so that
+# `timeout` reports 124 for a session the ENGINE killed. So this reads the
+# writer directly, where the classification is made — the treatment the sid
+# validator gets above, for the same reason.
+#
+# The third assertion is the one that would have been lost by guarding the
+# CALL instead of the write: on a memory kill the stub must be DELETED, not
+# merely left unwritten, or a previous timeout's stub outlives it and the next
+# dispatch resumes a session that was wedged (#596 review).
+sid_record_says() ( # sid_record_says RC VERDICT [STALE] — WROTE | deleted
+  DUTY_DIR="$TMP/sid-record"; mkdir -p "$DUTY_DIR"
+  _SESSION_SID=d7d876b7-ae67-47d5-ba46-ce4a32081d20
+  _SESSION_TRY=1
+  state="$(_session_resume_state build fixture/rec)"
+  rm -f "$state"
+  [ -z "${3-}" ] || printf 'kind=build\n' >"$state"
+  _session_resume_record build fixture/rec "$TMP" "$1" 5 100 0 "$2"
+  [ -s "$state" ] && printf WROTE || printf deleted
+  return 0
+)
+t sid-a-timeout-writes-the-stub WROTE "$(sid_record_says 124 TIMEOUT)"
+t sid-a-memory-kill-at-124-writes-no-stub deleted "$(sid_record_says 124 MEMORY)"
+t sid-a-memory-kill-at-124-deletes-a-stale-stub deleted \
+  "$(sid_record_says 124 MEMORY stale)"
+t sid-an-ordinary-end-writes-no-stub deleted "$(sid_record_says 0 ok)"
+
 # --- two keys, one filename: the tuple decides, never the path -----------
 #
 # `_session_resume_state` folds the key to a filename alphabet and the fold is
