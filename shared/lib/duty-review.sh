@@ -46,7 +46,11 @@ REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Names remain deliberately irrelevant because a reviewer may make an
 # auxiliary worktree such as base-<N> while investigating a collision.
 _review_detached_run_protects() {
-  local candidate_head="$1" stamp repo pr head digest
+  local candidate="$1" candidate_head="$2"
+  local stamp repo pr head digest remote
+
+  REVIEW_DETACHED_RUN_SUBJECT=""
+  remote="$(git -C "$candidate" remote get-url origin 2>/dev/null || true)"
 
   while IFS= read -r -d '' stamp; do
     repo="$(_detached_field "$stamp" repo)"
@@ -54,8 +58,40 @@ _review_detached_run_protects() {
     head="$(_detached_field "$stamp" head)"
     digest="$(_detached_field "$stamp" digest)"
     [ "$head" = "$candidate_head" ] || continue
+    case "$remote" in
+      */"$repo"|*/"$repo".git|*:"$repo"|*:"$repo".git) : ;;
+      *) continue ;;
+    esac
     detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
-    [ "$DETACHED_RUN_STATE" = running ] && return 0
+    if [ "$DETACHED_RUN_STATE" = running ]; then
+      REVIEW_DETACHED_RUN_SUBJECT="$repo#$pr@$head"
+      return 0
+    fi
+  done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
+  return 1
+}
+
+# A live run does not record the worktree path selected by its model-authored
+# command. Same-repository candidates at the same head must therefore remain
+# conservative, and a second PR at that head must wait rather than dispatch
+# into a path reclaim could not safely distinguish (#597 round 4).
+_review_detached_run_blocks_dispatch() {
+  local wanted_repo="$1" wanted_head="$2" stamp repo pr head digest
+
+  REVIEW_DETACHED_RUN_SUBJECT=""
+  while IFS= read -r -d '' stamp; do
+    repo="$(_detached_field "$stamp" repo)"
+    pr="$(_detached_field "$stamp" pr)"
+    head="$(_detached_field "$stamp" head)"
+    digest="$(_detached_field "$stamp" digest)"
+    if [ "$repo" != "$wanted_repo" ] || [ "$head" != "$wanted_head" ]; then
+      continue
+    fi
+    detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
+    if [ "$DETACHED_RUN_STATE" = running ]; then
+      REVIEW_DETACHED_RUN_SUBJECT="$repo#$pr@$head"
+      return 0
+    fi
   done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
   return 1
 }
@@ -80,6 +116,7 @@ reclaim_detached_review_worktrees() {
   local candidate top head git_dir common_dir dirt dirt_summary
 
   while IFS= read -r -d '' candidate; do
+    candidate="$(cd "$candidate" 2>/dev/null && pwd -P)" || continue
     top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
     [ "$top" = "$candidate" ] || continue
     if git -C "$candidate" symbolic-ref -q HEAD >/dev/null 2>&1; then
@@ -97,8 +134,8 @@ reclaim_detached_review_worktrees() {
     # not: reviewer sessions launch in the main clone and may pass a worktree
     # path to the detached command. Protect candidates at a verified live
     # head, while unrelated stale heads remain reclaimable.
-    if _review_detached_run_protects "$head"; then
-      log "review: preserved detached worktree $candidate for active detached run"
+    if _review_detached_run_protects "$candidate" "$head"; then
+      log "review: preserved detached worktree $candidate; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
       continue
     fi
     if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
@@ -113,7 +150,7 @@ reclaim_detached_review_worktrees() {
     else
       warn "review: could not reclaim detached worktree $candidate at $head"
     fi
-  done < <(find "$TREES_DIR" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
+  done < <(find -H "$TREES_DIR" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
   return 0
 }
 
@@ -427,6 +464,11 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
         ;;
     esac
+
+    if [ "$queue" -eq 1 ] && _review_detached_run_blocks_dispatch "$SR" "$head"; then
+      log "review: $SR#$N dispatch suppressed at ${head:0:12}; active detached run $REVIEW_DETACHED_RUN_SUBJECT makes same-head worktree ownership ambiguous"
+      queue=0
+    fi
 
     [ "$queue" -eq 1 ] || continue
     item="$SR#$N $updated"

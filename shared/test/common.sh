@@ -29,6 +29,7 @@ mkdir -p "$RW/work/repo" "$RW/trees/repo"
 git -C "$RW/work/repo" init -q -b main
 git -C "$RW/work/repo" config user.email fixture@example.com
 git -C "$RW/work/repo" config user.name fixture
+git -C "$RW/work/repo" remote add origin https://github.com/fixture/repo.git
 touch "$RW/work/repo/seed"
 git -C "$RW/work/repo" add seed
 git -C "$RW/work/repo" commit -qm seed
@@ -71,7 +72,7 @@ t review-reclaim-noop-preserves-branch present \
 git -C "$RW/work/repo" commit --allow-empty -qm live-head
 RW_LIVE_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" "$RW_LIVE_HEAD" >/dev/null 2>&1
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_LIVE_HEAD" >/dev/null 2>&1
 (
   cd "$RW/work/repo" || exit
   RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_LIVE_HEAD" -- \
@@ -81,15 +82,20 @@ git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_
 TREES_DIR="$RW/trees"
 RW_LIVE_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-active-run-logs-preserved-path 1 \
-  "$(grep -cF "review: preserved detached worktree $RW/trees/repo/review-live for active detached run" <<<"$RW_LIVE_OUT")"
+t review-reclaim-active-run-logs-protector 2 \
+  "$(grep -cF "protected by active detached run fixture/repo#7@$RW_LIVE_HEAD" <<<"$RW_LIVE_OUT")"
 t review-reclaim-active-run-preserves-worktree present \
   "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
-t review-reclaim-active-run-removes-unrelated-stale gone \
-  "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_HEAD" >/dev/null 2>&1
-t review-reclaim-active-run-clears-next-dispatch-path recreated \
-  "$([ -d "$RW/trees/repo/review-stale" ] && printf recreated || printf COLLISION)"
+t review-reclaim-same-head-stale-conservatively-preserved present \
+  "$([ -d "$RW/trees/repo/review-stale" ] && printf present || printf MISSING)"
+if _review_detached_run_blocks_dispatch fixture/repo "$RW_LIVE_HEAD"; then
+  RW_SAME_HEAD_DECISION=suppressed
+else
+  RW_SAME_HEAD_DECISION=DISPATCHED
+fi
+t review-reclaim-same-head-next-dispatch-suppressed suppressed "$RW_SAME_HEAD_DECISION"
+t review-reclaim-same-head-suppression-names-protector "fixture/repo#7@$RW_LIVE_HEAD" \
+  "$REVIEW_DETACHED_RUN_SUBJECT"
 RW_LIVE_DIGEST="$(cat "$RW/live.digest")"
 for _ in 1 2 3 4 5; do
   detached_run_read fixture/repo 7 "$RW_LIVE_HEAD" "$RW_LIVE_DIGEST" >/dev/null
@@ -102,6 +108,23 @@ reclaim_detached_review_worktrees >/dev/null
 TREES_DIR="$RW_OLD_TREES"
 t review-reclaim-ended-run-tree-removed gone \
   "$([ ! -e "$RW/trees/repo/review-live" ] && printf gone || printf PRESENT)"
+t review-reclaim-ended-run-stale-tree-removed gone \
+  "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_LIVE_HEAD" >/dev/null 2>&1
+t review-reclaim-ended-run-clears-next-dispatch-path recreated \
+  "$([ -d "$RW/trees/repo/review-stale" ] && printf recreated || printf COLLISION)"
+
+# Logical TREES_DIR paths are normalized before comparing them with Git's
+# physical toplevel. A symlinked trees root must not silently disable reclaim.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/symlinked" "$RW_HEAD" >/dev/null 2>&1
+ln -s "$RW/trees" "$RW/trees-link"
+TREES_DIR="$RW/trees-link"
+RW_SYMLINK_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-symlinked-trees-removes-detached gone \
+  "$([ ! -e "$RW/trees/repo/symlinked" ] && printf gone || printf PRESENT)"
+t review-reclaim-symlinked-trees-logs-physical-path 1 \
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/symlinked at $RW_HEAD" <<<"$RW_SYMLINK_OUT")"
 
 # Git deliberately detaches a builder worktree during a conflicted rebase.
 # Reclaim must leave both the operation and uncommitted material intact.
