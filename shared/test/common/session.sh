@@ -474,6 +474,16 @@ sid_corrupt_case() { # sid_corrupt_case BOX MUTATION...
 sid_truncate() { head -3 "$1" >"$1.t" && mv "$1.t" "$1"; }
 sid_garble() { printf 'this is not a stub\n' >"$1"; }
 sid_repeat() { cat "$1" "$1" >"$1.t" && mv "$1.t" "$1"; }
+# The same ambiguity as `sid_repeat`, in the one shape that guard structurally
+# CANNOT reach: the duplicate's FIRST occurrence is EMPTY. `sid_repeat` copies
+# the whole stub, so every duplicated field arrives at its non-empty value and
+# a reader that marks a field seen by "its value is non-empty" refuses it
+# correctly — which is why that case passed while this one resumed. Here line
+# one stores "", line two is waved through, `kind` ends up valid, and the
+# all-fields check reads FINAL values so it cannot see the ambiguity either.
+# Measured on the unfixed reader: all six resume fields returned and the
+# dispatch carried `--resume` (#596 review, found by two reviewers).
+sid_repeat_empty_first() { printf 'kind=\n' | cat - "$1" >"$1.t" && mv "$1.t" "$1"; }
 sid_forge_sid() { sed -i 's/^sid=.*/sid=not-a-uuid/' "$1"; }
 # Two ids that are the RIGHT LENGTH with dashes in the right places and are
 # still not ids. `not-a-uuid` above is refused by the length glob alone, so it
@@ -499,6 +509,8 @@ sid_extra_field() { printf 'mode=fast\n' >>"$1"; }
 t sid-truncated-stub-is-absent ordinary "$(sid_corrupt_case truncated sid_truncate)"
 t sid-unparseable-stub-is-absent ordinary "$(sid_corrupt_case garbled sid_garble)"
 t sid-ambiguous-stub-is-absent ordinary "$(sid_corrupt_case repeated sid_repeat)"
+t sid-empty-first-duplicate-is-absent ordinary \
+  "$(sid_corrupt_case emptydup sid_repeat_empty_first)"
 t sid-malformed-id-is-absent ordinary "$(sid_corrupt_case forged sid_forge_sid)"
 t sid-all-dash-id-is-absent ordinary "$(sid_corrupt_case alldash sid_forge_all_dashes)"
 t sid-shifted-dash-id-is-absent ordinary \
