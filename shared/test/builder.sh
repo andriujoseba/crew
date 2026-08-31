@@ -81,6 +81,7 @@ fi
 t d532-rendered-review-bounds-green-evidence bounded "$r1"
 
 # --- #598: memory-killed ShellCheck is unavailable and never retried -------
+# shellcheck disable=SC2016  # prompt backticks are matched literally
 if grep -Fq 'an uncapped command exits 137 or reports `Killed` by the kernel' <<<"$D530_RENDERED" \
   && grep -Fq 'the check is unavailable — not failing' <<<"$D530_RENDERED" \
   && grep -Fq 'Never retry a memory-killed command in this session' <<<"$D530_RENDERED"; then
@@ -103,6 +104,7 @@ else
   r1=MISSING
 fi
 t d598-rendered-review-records-unavailable-check recorded "$r1"
+# shellcheck disable=SC2016  # prompt backticks are matched literally
 if grep -Fq 'For repo-wide ShellCheck, rely on a green `ci-shell` check at this same head and name that reliance in the verdict' <<<"$D530_RENDERED" \
   && grep -Fq 'if `ci-shell` is absent or not green, record repo-wide ShellCheck as unverified rather than attempting it locally' <<<"$D530_RENDERED"; then
   r1=routed
