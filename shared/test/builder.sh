@@ -80,6 +80,45 @@ else
 fi
 t d532-rendered-review-bounds-green-evidence bounded "$r1"
 
+# --- #598: memory-killed ShellCheck is unavailable and never retried -------
+# shellcheck disable=SC2016  # prompt backticks are matched literally
+if grep -Fq 'an uncapped command exits 137 or reports `Killed` by the kernel' <<<"$D530_RENDERED" \
+  && grep -Fq 'the check is unavailable — not failing' <<<"$D530_RENDERED" \
+  && grep -Fq 'Never retry a memory-killed command in this session' <<<"$D530_RENDERED"; then
+  r1=classified
+else
+  r1=MISSING
+fi
+t d598-rendered-review-classifies-kernel-kill classified "$r1"
+# shellcheck disable=SC2016  # rendered command syntax is matched literally
+if grep -Fq '`(ulimit -v 2097152; shellcheck -x <files...>)`' <<<"$D530_RENDERED" \
+  && grep -Fq '`shellcheck: out of memory`' <<<"$D530_RENDERED"; then
+  r1=bounded
+else
+  r1=UNBOUNDED
+fi
+t d598-rendered-review-bounds-shellcheck-memory bounded "$r1"
+if grep -Fq 'Record the check as unverified, naming ShellCheck and the memory limit or kernel kill' <<<"$D530_RENDERED"; then
+  r1=recorded
+else
+  r1=MISSING
+fi
+t d598-rendered-review-records-unavailable-check recorded "$r1"
+# shellcheck disable=SC2016  # prompt backticks are matched literally
+if grep -Fq 'For repo-wide ShellCheck, rely on a green `ci-shell` check at this same head and name that reliance in the verdict' <<<"$D530_RENDERED" \
+  && grep -Fq 'if `ci-shell` is absent or not green, record repo-wide ShellCheck as unverified rather than attempting it locally' <<<"$D530_RENDERED"; then
+  r1=routed
+else
+  r1=MISSING
+fi
+t d598-rendered-review-routes-repo-lint-to-head-check routed "$r1"
+if grep -Fq 'Treat this as evidence, not permission to trust CI or skip verification.' <<<"$D530_RENDERED"; then
+  r1=unchanged
+else
+  r1=CHANGED
+fi
+t d598-rendered-review-preserves-evidence-framing unchanged "$r1"
+
 # --- #533: reviewer sessions may park on engine-owned detached work --------
 if grep -Fq 'run_detached fx/repo <N> <full-head-sha>' <<<"$D530_RENDERED" \
   && grep -Fq 'PARKED fx/repo#<N>@<full-head-sha> runs=<digest[,digest]> reason=<base64-reason>' <<<"$D530_RENDERED"; then
