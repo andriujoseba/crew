@@ -311,9 +311,17 @@ def stuck_verdict(held, cur):
     `timeout=` token — every line written by an engine older than #538. An
     un-upgraded box is graded, and worded, exactly as it is today.
     """
-    lock = {"held": held, "stuck": False, "ceiling": None, "bound": None}
+    lock = {"held": None, "stuck": False, "ceiling": None, "bound": None}
     if not isinstance(held, int) or held < 0:
+        # No usable age, and the record says so rather than publishing the
+        # unusable number. The site this replaced guarded with
+        # `held is not None and held >= 0` and left `unit_defaults`' None
+        # standing, so filling the field here would be a change to the served
+        # record that #610 never meant to make — and `rehearsal-app.sh`
+        # truthiness-tests `u['lock']['held']`, which a box with a
+        # future-dated `.duty.lock.since` would newly reach.
         return lock, ""
+    lock["held"] = held
     ceiling = cur.get("timeout") if cur else None
     if isinstance(ceiling, int) and ceiling > 0:
         # The knob is deliberately NOT consulted here. It bounds a run with no

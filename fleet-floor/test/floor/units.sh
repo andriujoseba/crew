@@ -940,15 +940,30 @@ t "stuck: ...and names no ceiling it was never told" None \
 # assertion that matters is not that it is stuck but that it reached the
 # IDENTICAL sentence: two comparisons in two files is how the badge and the
 # note come to disagree, and this file used to hold both.
+#
+# ONE snapshot, three assertions. Every other `uf` in this file re-reads
+# /api/fleet and can afford to: the evidence tier's record is rebuilt from a
+# file and is the same on every read. This overlay is not — it exists only
+# while the box's ping is FRESH, and a ping that goes stale between two reads
+# drops it, falling back to an evidence tier that by design sees no lock on
+# this box. Asserting three properties from three fetches therefore asks for
+# the overlay three times and needs it three times; capturing the snapshot the
+# loop settled on asks once. The wait is for a state to exist, not for a
+# scheduler to be quiet.
 FF_PING_DL=$(( $(date +%s) + 40 ))
-while [ "$(uf ff-lane-ping "u['lock']['stuck']")" != "True" ] \
-      && [ "$(date +%s)" -lt "$FF_PING_DL" ]; do sleep 1; done
+FF_PING_SNAP='{}'
+while :; do
+  FF_PING_SNAP="$(unit ff-lane-ping)"
+  if [ "$(jqf "d['lock']['stuck']" <<<"$FF_PING_SNAP")" = True ]; then break; fi
+  if [ "$(date +%s)" -ge "$FF_PING_DL" ]; then break; fi
+  sleep 1
+done
 t "stuck: the ping tier reaches the verdict the evidence tier could not" True \
-  "$(uf ff-lane-ping "u['lock']['stuck']")"
+  "$(jqf "d['lock']['stuck']" <<<"$FF_PING_SNAP")"
 t "stuck: ...borrowing the ceiling the evidence tier parsed" 3600 \
-  "$(uf ff-lane-ping "u['lock']['ceiling']")"
+  "$(jqf "d['lock']['ceiling']" <<<"$FF_PING_SNAP")"
 t "stuck: ...and spells the note the other tier spells, to the byte" \
-  "$(uf ff-lane-over "u['note']")" "$(uf ff-lane-ping "u['note']")"
+  "$(uf ff-lane-over "u['note']")" "$(jqf "d['note']" <<<"$FF_PING_SNAP")"
 # The same tier, in the direction that used to fire: the ping overlay sees
 # ff-lane-build's 2400s every two seconds and must not escalate it. Under the
 # old rule it was the FIRST thing to call that box stuck, six times a minute.
@@ -963,11 +978,11 @@ ff_stuck_case() {
 import json, os, sys
 sys.path.insert(0, os.environ["FF_SERVER"])
 from floor.units import stuck_verdict
-held = int(sys.argv[1])
+held = None if sys.argv[1] == "-" else int(sys.argv[1])
 cur = None if sys.argv[2] == "-" else {"kind": sys.argv[2],
                                        "timeout": None if sys.argv[3] == "-" else int(sys.argv[3])}
 lock, note = stuck_verdict(held, cur)
-print(json.dumps({"stuck": lock["stuck"], "bound": lock["bound"],
+print(json.dumps({"stuck": lock["stuck"], "bound": lock["bound"], "held": lock["held"],
                   "ceiling": lock["ceiling"], "note": note}, sort_keys=True))
 PY
 }
@@ -990,6 +1005,24 @@ t "knob: ...so a build past its own ceiling is still caught" True \
 # consult it in either direction.
 t "knob: lowering it does not shrink a declared ceiling" False \
   "$(ff_stuck 60 2400 build 3600 stuck)"
+
+# An age the function cannot use is not an age it publishes. The site this
+# replaced guarded with `held is not None and held >= 0` and left the default
+# None in the served record; the verdict must keep doing that, or a box whose
+# clock ran backwards starts serving a negative `lock.held` to every reader of
+# /api/fleet — including `rehearsal-app.sh`, which truthiness-tests the field.
+t "age: a negative lock age publishes no age at all" None \
+  "$(ff_stuck 600 -5 - - held)"
+t "age: ...and reaches no verdict on it" False \
+  "$(ff_stuck 600 -5 - - stuck)"
+t "age: a missing lock age is the same" None \
+  "$(ff_stuck 600 - - - held)"
+t "age: ...and is likewise no verdict" False \
+  "$(ff_stuck 600 - - - stuck)"
+# ...while a usable one is still served, which is the half the guard above
+# must not cost.
+t "age: a usable lock age is served" 300 \
+  "$(ff_stuck 600 300 - - held)"
 
 # The one-function rule, at the source. The end-to-end cases above pass on two
 # implementations that happen to agree today; this is what reds when the next
