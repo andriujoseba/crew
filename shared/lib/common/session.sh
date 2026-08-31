@@ -363,6 +363,7 @@ _session_resume_state() {
 _session_resume_read() {
   local file="$1" want_kind="${2-}" want_key="${3-}" line field value lines=0
   local kind="" key="" sid="" head="" wall="" try="" logb="" survivor_count=""
+  local seen=""
   [ -s "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     lines=$((lines + 1))
@@ -372,15 +373,33 @@ _session_resume_read() {
     # A line with no `=` leaves field and value equal to the whole line; that
     # is not a field this writer produces, so the stub is not one either.
     [ "$field" != "$line" ] || return 0
+    # PRESENCE IS TRACKED SEPARATELY FROM VALUE, and the separation is the
+    # whole of this guard. This was eight copies of `[ -z "$x" ] || return 0`,
+    # which asks "is it empty?" where it means "have I seen it?" — so a stub
+    # whose FIRST `kind=` was empty let a second `kind=build` straight past the
+    # repeated-key refusal, finished with a non-empty `kind`, satisfied the
+    # all-fields check below (which reads FINAL values, so it cannot see the
+    # ambiguity either) and RESUMED. An ambiguous stub that resumes is the one
+    # outcome D6's failure direction forbids, and it contradicted the contract
+    # this function states in its own header (#596 review, found independently
+    # by two reviewers).
+    #
+    # `$field` is unquoted in the pattern below, so one carrying a glob
+    # metacharacter can only match MORE readily — the worst that produces is a
+    # refusal, which is the safe direction; and an unknown field still falls to
+    # the `*)` arm. The eight real names are plain lowercase, so no legitimate
+    # stub can trip it.
+    case " $seen " in *" $field "*) return 0 ;; esac
+    seen="$seen $field"
     case "$field" in
-      kind) [ -z "$kind" ] || return 0; kind="$value" ;;
-      key)  [ -z "$key" ]  || return 0; key="$value" ;;
-      sid)  [ -z "$sid" ]  || return 0; sid="$value" ;;
-      head) [ -z "$head" ] || return 0; head="$value" ;;
-      wall) [ -z "$wall" ] || return 0; wall="$value" ;;
-      try)  [ -z "$try" ]  || return 0; try="$value" ;;
-      log)  [ -z "$logb" ] || return 0; logb="$value" ;;
-      left) [ -z "$survivor_count" ] || return 0; survivor_count="$value" ;;
+      kind) kind="$value" ;;
+      key) key="$value" ;;
+      sid) sid="$value" ;;
+      head) head="$value" ;;
+      wall) wall="$value" ;;
+      try) try="$value" ;;
+      log) logb="$value" ;;
+      left) survivor_count="$value" ;;
       *) return 0 ;;
     esac
   done <"$file"
