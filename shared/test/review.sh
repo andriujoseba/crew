@@ -119,6 +119,7 @@ cp "$SHARED/lib/jq/addressing.jq" "$D601/lib/jq/"
 printf 'fx/repo\n' >"$D601/repos.txt"
 D601_CALLS="$D601/calls"
 D601_WARN="$D601/warn"
+D601_PROMPT="$D601/prompt"
 D601_HEAD="dddddddddddddddddddddddddddddddddddddddd"
 
 d601_drive() (
@@ -130,6 +131,7 @@ d601_drive() (
   local TIMEOUT_REVIEW=30 AUTO_APPROVE_REREQUEST=1 LABEL_ADDRESSING=state:addressing
   : >"$D601_CALLS"
   : >"$D601_WARN"
+  : >"$D601_PROMPT"
   gh() {
     printf '%s\n' "$*" >>"$D601_CALLS"
     if [ "$1" = api ] && [[ "$2" == repos/fx/repo/pulls\?* ]]; then
@@ -161,6 +163,7 @@ d601_drive() (
   panel_for_repo() { printf '["rev-a","rev-b"]\n'; }
   run_session() {
     printf 'SESSION %s %s\n' "$1" "$2" >>"$D601_CALLS"
+    printf '%s' "$5" >"$D601_PROMPT"
     RUN_SESSION_RC=0
     RUN_SESSION_LOG=""
   }
@@ -188,6 +191,52 @@ fi
 t addressing-write-is-best-effort best-effort "$r1"
 if grep -q -- '--add-label state:building' "$D601_CALLS"; then r1=WRITES-IT; else r1=absent; fi
 t addressing-never-writes-state-building absent "$r1"
+
+# #605: repo commands run in the detached checkout, never its worktree parent.
+# Drive the real prompt render above so the engine-to-prompt contract is pinned,
+# then exercise box's repo-wide `bin/* **/*.sh` shape with a mutation sibling.
+D605_PARENT="$D601/trees/fx__repo"
+D605_CHECKOUT="$D605_PARENT/review-7"
+# shellcheck disable=SC2016  # prompt shell variables are matched literally
+if grep -Fq "review_checkout=\"$D605_PARENT/review-<N>\"" "$D601_PROMPT" \
+    && grep -Fq 'Run the whole review from the checkout (`cd "$review_checkout"`)' "$D601_PROMPT" \
+    && grep -Fq "\`$D605_PARENT\` is only the parent" "$D601_PROMPT" \
+    && grep -Fq 'it is not a checkout, and no repository command runs there' "$D601_PROMPT"; then
+  r1=checkout
+else
+  r1=CONTAINER
+fi
+t review-prompt-runs-repo-commands-in-checkout checkout "$r1"
+
+D605="$TMP/repo-command-checkout"
+mkdir -p "$D605/repo/bin" "$D605/repo/scripts" "$D605_PARENT"
+git -C "$D605/repo" init -q -b main
+git -C "$D605/repo" config user.email fixture@example.com
+git -C "$D605/repo" config user.name fixture
+printf '#!/usr/bin/env bash\n' >"$D605/repo/bin/box"
+printf '#!/usr/bin/env bash\n' >"$D605/repo/scripts/check.sh"
+git -C "$D605/repo" add bin/box scripts/check.sh
+git -C "$D605/repo" commit -qm seed
+git -C "$D605/repo" worktree add --detach "$D605_CHECKOUT" HEAD >/dev/null 2>&1
+mkdir -p "$D605_PARENT/mutation-6/bin" "$D605_PARENT/mutation-6/scripts"
+printf '#!/usr/bin/env bash\nexit 99\n' >"$D605_PARENT/mutation-6/bin/box"
+printf '#!/usr/bin/env bash\nexit 99\n' >"$D605_PARENT/mutation-6/scripts/broken.sh"
+D605_GLOB="$({
+  cd "$D605_CHECKOUT" || exit
+  shopt -s globstar dotglob
+  files=(bin/* **/*.sh)
+  printf '%s\n' "${files[@]}" | sort -u
+})"
+D605_CI_SET="$({
+  cd "$D605_CHECKOUT" || exit
+  printf '%s\n' bin/*
+  git ls-files '*.sh'
+} | sort -u)"
+t review-checkout-glob-matches-ci "$D605_CI_SET" "$D605_GLOB"
+if git -C "$D605_CHECKOUT" ls-files >/dev/null 2>&1; then r1=worktree; else r1=NOT-A-REPO; fi
+t review-checkout-git-ls-files-succeeds worktree "$r1"
+if grep -Fq mutation- <<<"$D605_GLOB"; then r1=LEAKED; else r1=excluded; fi
+t review-checkout-glob-excludes-mutation-sibling excluded "$r1"
 
 # #597: a killed review never reaches its prompt-owned cleanup, so the next
 # tick reclaims detached worktrees before dispatch. A deliberately misleading

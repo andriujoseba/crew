@@ -25,7 +25,7 @@ mkdir -p "$TMP/prompts"
 
 # --- #530: the rendered reviewer prompt owns bounded long-command waits -----
 D530_RENDERED="$(PROMPTS_DIR="$SHARED/prompts" render_prompt review.txt \
-  ME=fixture-reviewer REPO=fx/repo PRS=7 BIN=/duty/bin WT_DIR=/duty/trees \
+  ME=fixture-reviewer REPO=fx/repo PRS=7 BIN=/duty/bin REVIEW_WT_PARENT=/duty/trees/fx__repo \
   DUTY=/duty PARK_RESULTS=- \
   MARK_REVIEWING='reviewing' HEAD_CHECKS='- fx/repo#7: none at this head abc123.' \
   ONESHOT_RULES='one-shot')"
