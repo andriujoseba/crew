@@ -520,7 +520,7 @@ $key $updated"
     done
     expected_heads="${expected_heads# }"; ready_prs="${ready_prs# }"
     prompt="$(render_prompt review.txt ME="$ME" REPO="$SR" PRS="$prs" \
-      BIN="$BIN_DIR" DUTY="$DUTY_DIR" WT_DIR="$TREES_DIR/$slug" \
+      BIN="$BIN_DIR" DUTY="$DUTY_DIR" REVIEW_WT_PARENT="$TREES_DIR/$slug" \
       MARK_REVIEWING="$MARK_REVIEWING" \
       HEAD_CHECKS="$check_evidence" \
       PARK_RESULTS="${park_evidence:--}" \
