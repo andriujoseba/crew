@@ -94,6 +94,126 @@ SA="$WORK/src-a"; SB="$WORK/src-b"; SC="$WORK/src-clean"
 mk_src "$SA" "$VA"
 mk_src "$SB" "$VB"
 mk_src "$SC" "$VA"
+
+# Drive a complete install through the root arm without root privileges. The
+# id/getent shims choose the arm and resolve SUDO_USER; CREW_HOME/CREW_BIN keep
+# every write in scratch. The test process remains non-root when it traverses
+# and executes the resulting tree, which is the boundary the global layout is
+# for. Mode assertions inspect the OTHER-user bits rather than relying on this
+# fixture's ownership.
+GLOBAL_HOME="$WORK/global-share" GLOBAL_BIN="$WORK/global-bin"
+ROOT_PERSONA="$WORK/root-persona" OPERATOR_HOME="$WORK/operator-home"
+mkdir -p "$ROOT_PERSONA" "$OPERATOR_HOME/.local/share/crew/current/cli" \
+  "$OPERATOR_HOME/crew/cli" "$OPERATOR_HOME/crew/.git"
+: >"$OPERATOR_HOME/.local/share/crew/current/cli/crew"
+: >"$OPERATOR_HOME/crew/cli/crew"
+cat >"$ID_SHIM/getent" <<SHIM
+#!/usr/bin/env bash
+if [ "\${1:-}" = passwd ] && [ "\${2:-}" = operator ]; then
+  printf 'operator:x:1000:1000:Operator:$OPERATOR_HOME:/bin/bash\\n'
+fi
+SHIM
+chmod +x "$ID_SHIM/getent"
+root_install() {
+  FAKE_UID=0 HOME="$ROOT_PERSONA" SUDO_USER=operator PATH="$ID_SHIM:$PATH" \
+    CREW_HOME="$GLOBAL_HOME" CREW_BIN="$GLOBAL_BIN" CREW_INSTALL_SOURCE="$1" \
+    bash "$INSTALL"
+}
+root_install_out="$(root_install "$SA" 2>&1)"
+case "$root_install_out" in
+  *"PER-USER install"*"$OPERATOR_HOME/.local/share/crew"*"PATH order"*)
+    ok "root-reports-per-user-coexistence" ;;
+  *) bad "root-reports-per-user-coexistence (got '$root_install_out')" ;;
+esac
+case "$root_install_out" in
+  *"crew git checkout"*"$OPERATOR_HOME/crew"*) ok "root-checkout-warning-names-sudo-user-home" ;;
+  *) bad "root-checkout-warning-names-sudo-user-home (got '$root_install_out')" ;;
+esac
+world_bad="$(find "$GLOBAL_HOME" -type d ! -perm -0005 -print -quit; \
+  find "$GLOBAL_HOME" -type f ! -perm -0004 -print -quit)"
+if [ -z "$world_bad" ] && [ -x "$GLOBAL_HOME/current/cli/crew" ] &&
+   HOME="$OPERATOR_HOME" "$GLOBAL_BIN/crew" --version >/dev/null 2>&1; then
+  ok "nonroot-traverses-and-executes-global-tree"
+else
+  bad "nonroot-traverses-and-executes-global-tree (blocked at '${world_bad:-execution}')"
+fi
+
+# The caller's HOME, not the shared tree's installing HOME, selects and creates
+# fleet configuration. Seed a conflicting root roster, initialize the operator
+# normally, and make a read prove it selected the operator definition.
+mkdir -p "$ROOT_PERSONA/.config"
+cp -a "$GLOBAL_HOME/current/examples" "$ROOT_PERSONA/.config/crew"
+printf 'root-only claude builder examples\n' >"$ROOT_PERSONA/.config/crew/fleet.roster"
+if HOME="$OPERATOR_HOME" "$GLOBAL_BIN/crew" init >/dev/null 2>&1 &&
+   [ -f "$OPERATOR_HOME/.config/crew/fleet.roster" ]; then
+  printf 'operator-only claude builder examples\n' >"$OPERATOR_HOME/.config/crew/fleet.roster"
+  if HOME="$OPERATOR_HOME" CREW_EXPECT_OPERATOR_CONFIG=1 \
+     "$GLOBAL_BIN/crew" profiles >/dev/null 2>&1 &&
+     grep -q '^operator-only ' "$OPERATOR_HOME/.config/crew/fleet.roster" &&
+     grep -q '^root-only ' "$ROOT_PERSONA/.config/crew/fleet.roster"; then
+    ok "global-tree-uses-caller-config"
+  else
+    bad "global-tree-uses-caller-config"
+  fi
+else
+  bad "global-tree-uses-caller-config (crew init did not create caller config)"
+fi
+
+# Complete the second global version, then model a root-owned install by
+# removing this non-root fixture owner's write bits. Both writer verbs must
+# refuse at their explicit ownership guard, before mv/rm emits a bare error.
+root_install "$SB" >/dev/null 2>&1
+chmod -R a-w "$GLOBAL_HOME"
+if global_use_out="$(HOME="$OPERATOR_HOME" "$GLOBAL_BIN/crew" use "$VA" 2>&1)"; then
+  bad "nonroot-use-refuses-root-owned-tree"
+elif [[ "$global_use_out" == *"system crew install is root-owned"*"run 'crew use' as root"* ]]; then
+  ok "nonroot-use-refuses-root-owned-tree"
+else
+  bad "nonroot-use-refuses-root-owned-tree (got '$global_use_out')"
+fi
+if global_uninstall_out="$(HOME="$OPERATOR_HOME" "$GLOBAL_BIN/crew" uninstall "$VA" --force 2>&1)"; then
+  bad "nonroot-uninstall-refuses-root-owned-tree"
+elif [[ "$global_uninstall_out" == *"system crew install is root-owned"*"run 'crew uninstall' as root"* ]]; then
+  ok "nonroot-uninstall-refuses-root-owned-tree"
+else
+  bad "nonroot-uninstall-refuses-root-owned-tree (got '$global_uninstall_out')"
+fi
+# Restore fixture ownership modes so the no-root trap can remove its contents.
+chmod -R u+w "$GLOBAL_HOME"
+
+# The other direction uses the real non-root arm. Rewrite only the hard-coded
+# system probe in a copied source so the no-root suite can stand both tiers up
+# in scratch, then require the warning from the actual installer flow.
+NONROOT_SRC="$WORK/nonroot-src"; mk_src "$NONROOT_SRC" 0.0.0-lifecycle-user
+sed -i "s|/opt/crew|$GLOBAL_HOME|g" "$NONROOT_SRC/install.sh"
+NONROOT_HOME="$WORK/nonroot-home"
+nonroot_install_out="$(HOME="$NONROOT_HOME" CREW_HOME="$NONROOT_HOME/share" \
+  CREW_BIN="$NONROOT_HOME/bin" CREW_INSTALL_SOURCE="$NONROOT_SRC" \
+  bash "$NONROOT_SRC/install.sh" 2>&1)"
+case "$nonroot_install_out" in
+  *"GLOBAL install"*"$GLOBAL_HOME"*"PATH order"*) ok "nonroot-reports-global-coexistence" ;;
+  *) bad "nonroot-reports-global-coexistence (got '$nonroot_install_out')" ;;
+esac
+
+# No invocation other than init may create an operator definition. A mutating
+# command on the shipped examples must still refuse and leave HOME untouched.
+FALLBACK_HOME="$WORK/fallback-home" FALLBACK_BIN="$WORK/fallback-bin"
+mkdir -p "$FALLBACK_HOME" "$FALLBACK_BIN"
+cat >"$FALLBACK_BIN/box" <<'SHIM'
+#!/usr/bin/env bash
+[ "${1:-}" = list ] && printf '[]\n'
+exit 0
+SHIM
+chmod +x "$FALLBACK_BIN/box"
+if fallback_out="$(cd "$WORK" && HOME="$FALLBACK_HOME" PATH="$FALLBACK_BIN:$PATH" \
+  "$GLOBAL_BIN/crew" up 2>&1)"; then
+  bad "examples-fallback-mutating-verb-refuses"
+elif [[ "$fallback_out" == *"crew init"* ]] && [ ! -e "$FALLBACK_HOME/.config/crew" ]; then
+  ok "examples-fallback-mutating-verb-refuses"
+else
+  bad "examples-fallback-mutating-verb-refuses (got '$fallback_out')"
+fi
+
 # The builder checkout differs from the clean one only by ignored dependency
 # trees. Both a root dependency and one below a shipped directory exercise the
 # repository-wide rule rather than an anchored root-only tar exclusion.
