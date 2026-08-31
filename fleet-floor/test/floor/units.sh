@@ -852,3 +852,174 @@ if grep -q 'boxVitalsRows(d.vitals).concat(tickHealthRows(d.tickHealth))' "$FLOO
 else
   fail "tick health: the floor renders the shared report" "tickHealthRows is not on the live unit path"
 fi
+
+# ===========================================================================
+# #610 — STUCK is measured against the ceiling the in-flight session declared,
+# not against a fleet-wide 600s.
+#
+# The bug: STUCK_AFTER_S defaults to SILENT_AFTER_S = 2 * TICK_S = 600s and was
+# compared against `.duty.lock.since`, which duty.sh writes at the top of a
+# whole duty RUN. Four of the seven lanes are entitled to more than that
+# (build/resume 3600s, hygiene 3000s, review 2700s), so a healthy build crossed
+# STUCK at minute 10 and wore the pulsing badge — which also REPLACES the
+# running-session panel — for the next fifty minutes.
+#
+# Every case below is driven off the same fixture evidence: a `build` session
+# in flight declaring `timeout=3600s`. Only the lock age differs, so a reader
+# comparing against anything other than that line grades at least one wrong.
+# ===========================================================================
+echo "== stuck: the in-flight session's own ceiling (#610)"
+
+# The ceiling reaches the record at all. Without this the four cases below
+# could all pass on a reader that had simply stopped grading.
+t "stuck: the in-flight session's ceiling is parsed off SESSION START" 3600 \
+  "$(uf ff-lane-build "u['cur']['timeout']")"
+t "stuck: a START with no timeout= carries no ceiling" None \
+  "$(uf ff-lane-legacy "u['cur']['timeout']")"
+
+# @danmt's report, and the regression this exists for: 40 minutes into a build
+# entitled to 60. Under the old rule this box wore the badge for fifty minutes.
+t "stuck: a 40m build inside a 3600s ceiling is not stuck" False \
+  "$(uf ff-lane-build "u['lock']['stuck']")"
+t "stuck: ...and its note is not the STUCK note" False \
+  "$(uf ff-lane-build "u['note'].startswith('STUCK')")"
+# The half of the report that is easy to lose: the badge HIDES the running
+# session, so "not stuck" is only the fix if the session is visible again.
+t "stuck: ...and the running session is still the record drawn" build \
+  "$(uf ff-lane-build "u['cur']['kind']")"
+t "stuck: ...on a box still reported working" working \
+  "$(uf ff-lane-build "u['state']")"
+
+# The boundary, from both sides. 3660 is the ceiling plus the 60s kill grace:
+# a session one second past its ceiling is being killed on schedule, not wedged.
+t "stuck: at the ceiling plus the kill grace exactly, not yet stuck" False \
+  "$(uf ff-lane-edge "u['lock']['stuck']")"
+t "stuck: one second past it, stuck" True \
+  "$(uf ff-lane-over "u['lock']['stuck']")"
+t "stuck: the bound is the ceiling plus the grace, not the ceiling" 3660 \
+  "$(uf ff-lane-over "u['lock']['bound']")"
+
+# Naming the bound is the point of the note. "held 61m" is alarming until you
+# know the lane was entitled to 60, and it is nothing at all until you know it
+# was entitled to 10.
+t "stuck: the note names the ceiling that was exceeded, not only the age" \
+  "STUCK — duty run has held the lock for 1h 01m, past the build session's 1h 00m ceiling" \
+  "$(uf ff-lane-over "u['note']")"
+t "stuck: the ceiling is served, not merely used" 3600 \
+  "$(uf ff-lane-over "u['lock']['ceiling']")"
+
+# The second clause, and it is not the first one's optimisation: a duty run
+# stalled BETWEEN dispatches has no session ceiling to exceed, so only
+# STUCK_AFTER_S can catch it. ff-stuck is 47 minutes with nothing in flight.
+t "stuck: a lock held with nothing in flight is still stuck" True \
+  "$(uf ff-stuck "u['lock']['stuck']")"
+t "stuck: ...at the unchanged STUCK_AFTER_S" 600 \
+  "$(uf ff-stuck "u['lock']['bound']")"
+t "stuck: ...and the note says there is no session to blame" True \
+  "$(uf ff-stuck "u['note'] == 'STUCK — duty run has held the lock for 47m with no session in flight, past 10m'")"
+t "stuck: ...on a box still reported working" working "$(uf ff-stuck "u['state']")"
+
+# An un-upgraded box: a START carrying no `timeout=` token, which is every line
+# written before #538 put one there. Its reading and its WORDING must be what
+# they are today — there is no bound to name that this box has told us about,
+# and inventing one from the host's idea of the lane is the second source of
+# truth this whole change refuses.
+t "stuck: a START with no timeout= falls back to STUCK_AFTER_S" True \
+  "$(uf ff-lane-legacy "u['lock']['stuck']")"
+t "stuck: ...at that bound and no other" 600 \
+  "$(uf ff-lane-legacy "u['lock']['bound']")"
+t "stuck: ...worded exactly as it is today" \
+  "STUCK — duty run has held the lock for 11m" \
+  "$(uf ff-lane-legacy "u['note']")"
+t "stuck: ...and names no ceiling it was never told" None \
+  "$(uf ff-lane-legacy "u['lock']['ceiling']")"
+
+# BOTH ENTRY POINTS, one decision. ff-lane-ping's probe reports no lock at all
+# — the evidence poll had nothing to grade — and only the 10s heartbeat carries
+# an age, so this verdict can only have come through fleet.py's overlay. The
+# assertion that matters is not that it is stuck but that it reached the
+# IDENTICAL sentence: two comparisons in two files is how the badge and the
+# note come to disagree, and this file used to hold both.
+FF_PING_DL=$(( $(date +%s) + 40 ))
+while [ "$(uf ff-lane-ping "u['lock']['stuck']")" != "True" ] \
+      && [ "$(date +%s)" -lt "$FF_PING_DL" ]; do sleep 1; done
+t "stuck: the ping tier reaches the verdict the evidence tier could not" True \
+  "$(uf ff-lane-ping "u['lock']['stuck']")"
+t "stuck: ...borrowing the ceiling the evidence tier parsed" 3600 \
+  "$(uf ff-lane-ping "u['lock']['ceiling']")"
+t "stuck: ...and spells the note the other tier spells, to the byte" \
+  "$(uf ff-lane-over "u['note']")" "$(uf ff-lane-ping "u['note']")"
+# The same tier, in the direction that used to fire: the ping overlay sees
+# ff-lane-build's 2400s every two seconds and must not escalate it. Under the
+# old rule it was the FIRST thing to call that box stuck, six times a minute.
+t "stuck: the ping tier does not escalate a healthy long build" False \
+  "$(uf ff-lane-build "u['lock']['stuck']")"
+
+# The knob keeps meaning what its documentation says. Driven in-process rather
+# than against a second collector: what has to be proved is which clause the
+# override reaches, and that is a property of the function, not of a server.
+ff_stuck_case() {
+  FF_SERVER="$FLOOR/server" CREW_FLOOR_STUCK_AFTER="$1" python3 - "$2" "$3" "$4" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import stuck_verdict
+held = int(sys.argv[1])
+cur = None if sys.argv[2] == "-" else {"kind": sys.argv[2],
+                                       "timeout": None if sys.argv[3] == "-" else int(sys.argv[3])}
+lock, note = stuck_verdict(held, cur)
+print(json.dumps({"stuck": lock["stuck"], "bound": lock["bound"],
+                  "ceiling": lock["ceiling"], "note": note}, sort_keys=True))
+PY
+}
+ff_stuck() { ff_stuck_case "$@" | python3 -c "import json,sys;print(json.load(sys.stdin)['$5'])"; }
+
+t "knob: CREW_FLOOR_STUCK_AFTER still bounds the no-session clause" 5000 \
+  "$(ff_stuck 5000 4000 - - bound)"
+t "knob: ...and a run under the raised bound is not stuck" False \
+  "$(ff_stuck 5000 4000 - - stuck)"
+t "knob: ...and one over it still is" True \
+  "$(ff_stuck 5000 5001 - - stuck)"
+# The failure the knob must not be able to cause: an operator who raised it to
+# quieten the false alarm would, under a min()/max() reading, have silently
+# raised every lane's ceiling with it and blinded the clause that works.
+t "knob: raising it does not re-cap a declared ceiling" 3660 \
+  "$(ff_stuck 99999 3661 build 3600 bound)"
+t "knob: ...so a build past its own ceiling is still caught" True \
+  "$(ff_stuck 99999 3661 build 3600 stuck)"
+# And it cannot LOWER a declared ceiling either — the in-flight clause does not
+# consult it in either direction.
+t "knob: lowering it does not shrink a declared ceiling" False \
+  "$(ff_stuck 60 2400 build 3600 stuck)"
+
+# The one-function rule, at the source. The end-to-end cases above pass on two
+# implementations that happen to agree today; this is what reds when the next
+# edit re-derives the comparison in fleet.py, which is exactly how these two
+# came apart the first time.
+if grep -q 'STUCK_AFTER_S' "$FLOOR/server/floor/fleet.py"; then
+  fail "stuck: fleet.py owns no threshold of its own" \
+       "the ping overlay still names STUCK_AFTER_S"
+else
+  ok "stuck: fleet.py owns no threshold of its own"
+fi
+if grep -q 'stuck_verdict' "$FLOOR/server/floor/fleet.py"; then
+  ok "stuck: the ping overlay calls the one decision function"
+else
+  fail "stuck: the ping overlay calls the one decision function" \
+       "fleet.py does not call stuck_verdict"
+fi
+# The comment that produced the bug. `run_session` has no ceiling of its own —
+# session.sh passes the CALLER's $tmo to `timeout` — and the rule was derived
+# from that one wrong number. It must not survive the fix and outlive it as
+# justification for the next person to restore the constant.
+if grep -q "run_session's own ceiling is 1800s" "$FLOOR/server/floor/ping.py"; then
+  fail "stuck: ping.py no longer claims run_session has an 1800s ceiling" \
+       "the claim that produced this bug is still in the source"
+else
+  ok "stuck: ping.py no longer claims run_session has an 1800s ceiling"
+fi
+if grep -q 'stuckLine(d)' "$FLOOR/src/app.js"; then
+  ok "stuck: the panel names the bound it was judged against"
+else
+  fail "stuck: the panel names the bound it was judged against" \
+       "app.js still renders the age alone"
+fi

@@ -68,3 +68,10 @@ ff-lane-over   running  lane-over
 # ceiling from, so this box falls back to STUCK_AFTER_S and must be graded and
 # worded exactly as it is today.
 ff-lane-legacy running  lane-legacy
+# The same build-in-flight evidence, but the probe reports NO lock: the
+# evidence poll saw nothing to grade, and only the 10s heartbeat has an age
+# (3661s). The one box that drives the verdict through fleet.py's ping-tier
+# overlay rather than through build_unit, which is how #610's "one decision
+# function, asserted from both entry points" is actually proved — the note it
+# reaches must be byte-identical to ff-lane-over's.
+ff-lane-ping   running  lane-ping

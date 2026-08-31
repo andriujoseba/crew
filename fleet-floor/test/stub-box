@@ -111,6 +111,21 @@ lockheld_of() {
   esac
 }
 
+# lockheld_ping_of SCENARIO — what the 10s PING reads. Normally the very same
+# number the 60s probe reads, and defined as such so the 35 other boxes still
+# cannot be held apart. `lane-ping` is the ONE deliberate exception and it is
+# the subject of a case rather than an oversight: the fast tier exists to see a
+# lock the last evidence poll had not seen yet, so on that box the probe
+# reports no lock at all and only the heartbeat has an age. Written as an
+# override of the one reader instead of a second copy of the table, which is
+# the shape that let `working` and `suppressed-stuck` disagree with themselves.
+lockheld_ping_of() {
+  case "$1" in
+    lane-ping) printf 3661 ;;
+    *)         lockheld_of "$1" ;;
+  esac
+}
+
 # vitals_record_of SCENARIO — the box vitals record tick.sh would have written
 # into duty.log (#483). ONE reader, for the reason armed_of above is one: BOTH
 # halves of this stub answer with it — probe.sh's `::vitals` for the floor, and
@@ -297,7 +312,7 @@ emit_probe() {
       echo "$(ago 120) SESSION START kind=review key=crew#done timeout=2400s log=/h/duty/logs/done.log"
       echo "$(ago 60) SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok"
       ;;
-    lane-build|lane-edge|lane-over)
+    lane-build|lane-edge|lane-over|lane-ping)
       # #610 — a `build` session genuinely in flight, declaring on its own
       # record the 3600s ceiling roles/builder.conf gives that lane. The
       # evidence is IDENTICAL across the three scenarios; only lockheld_of
@@ -476,7 +491,7 @@ case "${1:-}" in
         # how a unit mismatch stayed green: the collector was only ever tested
         # against the stub's arithmetic. boxside.sh now runs the real script
         # and asserts the conversion; this stays an age so the two agree.
-        echo "l $(lockheld_of "$sc")" ;;
+        echo "l $(lockheld_ping_of "$sc")" ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       # ABOVE the two CREW-FLOOR-PAUSED cases below, by this block's own
       # ordering rule. Since #189 crew's auth_from_flow counts the PAUSED
