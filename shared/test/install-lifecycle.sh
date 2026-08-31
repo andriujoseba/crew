@@ -20,6 +20,60 @@ same()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$2' got '$3')"; 
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+
+# #615's uid branch is pure path resolution, so drive the exact source block
+# under a shim id instead of requiring root. Fail closed on the extraction:
+# trusting output from the wrong if/else would make every path assertion noise.
+if bash -n "$INSTALL"; then ok "installer-is-valid-bash"; else bad "installer-is-valid-bash"; fi
+ID_SHIM="$WORK/id-shim"; mkdir -p "$ID_SHIM"
+cat >"$ID_SHIM/id" <<'SHIM'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -u) printf '%s\n' "${FAKE_UID:-1000}" ;;
+  *) exit 0 ;;
+esac
+SHIM
+chmod +x "$ID_SHIM/id"
+DEST_BLOCK="$WORK/dest-block.sh"
+awk '/id -u.*-eq 0/{found=1} found{print} found&&/^fi$/{exit}' "$INSTALL" >"$DEST_BLOCK"
+# Expand when the extracted block runs, not while this line writes it.
+# shellcheck disable=SC2016
+printf '\nprintf "DEST=%%s BINDIR=%%s\\n" "$DEST" "$BINDIR"\n' >>"$DEST_BLOCK"
+if grep -qF /opt/crew "$DEST_BLOCK" && bash -n "$DEST_BLOCK"; then
+  ok "dest-block-extracted"
+else
+  bad "dest-block-extracted"
+fi
+resolve_dest() { # <uid> [environment assignments]
+  local uid="$1"; shift
+  env FAKE_UID="$uid" HOME=/home/tester PATH="$ID_SHIM:$PATH" "$@" bash "$DEST_BLOCK"
+}
+same "root-resolves-system-layout" "DEST=/opt/crew BINDIR=/usr/local/bin" "$(resolve_dest 0)"
+same "nonroot-resolves-user-layout" "DEST=/home/tester/.local/share/crew BINDIR=/home/tester/.local/bin" "$(resolve_dest 1000)"
+same "root-CREW_HOME-wins" "DEST=/srv/crew BINDIR=/usr/local/bin" "$(resolve_dest 0 CREW_HOME=/srv/crew)"
+same "root-CREW_BIN-wins" "DEST=/opt/crew BINDIR=/srv/bin" "$(resolve_dest 0 CREW_BIN=/srv/bin)"
+same "nonroot-CREW_HOME-wins" "DEST=/srv/crew BINDIR=/home/tester/.local/bin" "$(resolve_dest 1000 CREW_HOME=/srv/crew)"
+same "nonroot-CREW_BIN-wins" "DEST=/home/tester/.local/share/crew BINDIR=/srv/bin" "$(resolve_dest 1000 CREW_BIN=/srv/bin)"
+
+# The root-only pieces cannot be exercised by this no-root lifecycle suite, so
+# bind their placement structurally: the chmod must sit in its own uid guard,
+# and root's checkout warning must use SUDO_USER's resolved home.
+# The patterns name installer variables literally.
+# shellcheck disable=SC2016
+if grep -qF 'chmod -R a+rX "$DEST"' "$INSTALL" &&
+   grep -B2 'chmod -R a+rX' "$INSTALL" | grep -q 'id -u.*-eq 0'; then
+  ok "global-tree-chmod-is-root-guarded"
+else
+  bad "global-tree-chmod-is-root-guarded"
+fi
+# shellcheck disable=SC2016
+if grep -qF 'checkout_home="$sudo_home"' "$INSTALL" &&
+   grep -qF '$checkout_home/crew/cli/crew' "$INSTALL"; then
+  ok "root-checkout-warning-uses-sudo-user-home"
+else
+  bad "root-checkout-warning-uses-sudo-user-home"
+fi
+
 # Hermetic: consent on, and HOME points into the scratch so the ~/crew
 # checkout-naming probe never sees the runner's real home.
 export CREW_YES=1 HOME="$WORK"
