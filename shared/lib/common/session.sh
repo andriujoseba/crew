@@ -546,8 +546,9 @@ _session_identity() {
 # on every path — a recovery mechanism must never be able to fail a session.
 #
 # THE GATE IS THE VERDICT AND NOT THE RAW `rc`, and the difference is the
-# memory ceiling. D5's text is written in terms of `rc=124`, and for an
-# ordinary session that is the same predicate — `verdict=TIMEOUT` holds exactly
+# memory ceiling. D5 says so as of triage's amendment of 2026-08-31 — it was
+# minted in terms of `rc=124`, with no ceiling qualifier, and for an ordinary
+# session that is the same predicate — `verdict=TIMEOUT` holds exactly
 # when `timeout` reported 124 and the ceiling did not fire. They part on the
 # case #474 D4 exists for: a session the engine killed for memory reports
 # whatever `timeout` reported for being signalled — 143, or **124 if the
@@ -592,7 +593,9 @@ _session_resume_record() {
   local state
   state="$(_session_resume_state "$kind" "$key")"
   # Both halves are asserted rather than one: the verdict is what decides, and
-  # the `rc` check keeps D5's own text true on the face of the code.
+  # the `rc` check is redundant by construction — `verdict=TIMEOUT` is set only
+  # under `rc=124` — so it costs nothing and states the episode this stub is
+  # about on the face of the code.
   if [ "$rc" -ne 124 ] || [ "$verdict" != TIMEOUT ]; then
     rm -f "$state" 2>/dev/null || true
     return 0
