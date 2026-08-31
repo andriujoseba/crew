@@ -3979,7 +3979,15 @@ d533_tick() (
     mkdir -p "$D533/logs"
     RUN_SESSION_LOG="$D533/logs/review.log"
     : >"$RUN_SESSION_LOG"
-    [ -z "${D533_PARK_LINE:-}" ] || printf '%s\n' "$D533_PARK_LINE" >"$RUN_SESSION_LOG"
+    if [ "${D533_START_CAPTURE:-0}" = 1 ]; then
+      D533_SESSION_DIGEST="$(run_detached "$2" "$D533_NUM" "$D533_HEAD" -- \
+        bash -c 'sleep 0.3; printf captured')"
+      printf 'PARKED %s#%s@%s runs=%s reason=%s\n' \
+        "$2" "$D533_NUM" "$D533_HEAD" "$D533_SESSION_DIGEST" "$D533_REASON" \
+        >"$RUN_SESSION_LOG"
+    elif [ -n "${D533_PARK_LINE:-}" ]; then
+      printf '%s\n' "$D533_PARK_LINE" >"$RUN_SESSION_LOG"
+    fi
     RUN_SESSION_RC=0
   }
   duty_review
@@ -4034,13 +4042,13 @@ t d533-completed-artifacts-are-collected collected "$r1"
 # the run completes, the same updated_at must dispatch exactly one resume.
 D533_NUM=8; D533_HEAD=8888888888888888888888888888888888888888
 D533_UPDATED=2026-08-30T07:30:00Z
-old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
-D533_CAPTURED="$(run_detached fx/repo "$D533_NUM" "$D533_HEAD" -- bash -c 'sleep 0.3; printf captured')"
-DUTY_DIR="$old_duty"
-D533_PARK_LINE="PARKED fx/repo#$D533_NUM@$D533_HEAD runs=$D533_CAPTURED reason=$D533_REASON"
+D533_START_CAPTURE=1
 D533_BEFORE="$(wc -l <"$D533_DISPATCHES")"
 d533_tick
-D533_PARK_LINE=""
+D533_START_CAPTURE=0
+D533_CAPTURED="$(basename "$(find "$D533/.detached-runs/fx_repo/$D533_NUM/$D533_HEAD" \
+  -type f -name '*.stamp' -print -quit)")"
+D533_CAPTURED="${D533_CAPTURED%.stamp}"
 if grep -Fq "fx/repo#$D533_NUM $D533_UPDATED" "$D533/.seen-review"; then r1=committed; else r1=withheld; fi
 t d533-captured-park-withholds-ledger-item withheld "$r1"
 old_duty="$DUTY_DIR"; DUTY_DIR="$D533"
