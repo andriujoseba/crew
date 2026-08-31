@@ -787,6 +787,20 @@ t usage-claude-session-records-actual-model claude-sonnet-4-6 \
   "$(sed -n 's/.* model=\([^ ]*\).*/\1/p' <<<"$usage_end")"
 t usage-single-model-omits-model-count 0 \
   "$(grep -c ' models=' <<<"$usage_end" || true)"
+# D1's ordering, pinned where the suffixes `sid=` must follow ACTUALLY EXIST.
+# `sid-is-the-last-token-on-end` runs on a fixture defining no `bot_cli_usage`,
+# so `$usage_suffix` and `$pool_suffix` are both empty there and `sid=` is last
+# wherever the interpolation sits — that assertion is true but weaker than its
+# name reads, and the kill for moving `$sid_suffix` came entirely from the
+# ledger suite's source-derived order guard (#596 review). This box reports
+# usage AND names a credential pool, so both suffixes are non-empty and this is
+# the assertion in THIS suite that fails if `sid=` stops being last. The second
+# line is its control: it keeps the first from going vacuous again if the
+# fixture ever stops reporting usage.
+t usage-sid-is-the-last-token-past-the-usage-block 1 \
+  "$(grep -c ' sid=[^ ]*$' <<<"$usage_end" || true)"
+t usage-end-really-carries-the-suffixes-sid-must-follow 2 \
+  "$(grep -o ' input_tokens=\| pool=' <<<"$usage_end" | wc -l | tr -d ' ')"
 t usage-structured-run-restores-the-prose-log 'I pushed the fix.' \
   "$(sed -n '/^--prose--$/{n;p;}' <<<"$usage_valid")"
 t usage-structured-scratch-does-not-survive 0 \
