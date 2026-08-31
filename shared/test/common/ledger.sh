@@ -355,8 +355,26 @@ t orphan-session-id-is-unknown unknown "$(orph_kv "$ORPH1_LINE" session_id)"
 t orphan-model-is-unknown unknown "$(orph_kv "$ORPH1_LINE" model)"
 t orphan-model-count-is-unmeasured '-' "$(orph_kv "$ORPH1_LINE" models)"
 t orphan-pool-is-unknown unknown "$(orph_kv "$ORPH1_LINE" pool)"
-case "$ORPH1_LINE" in *' started=2026-08-14T03:00:01Z') r1=last ;; *) r1=NOT-LAST ;; esac
-t orphan-started-stays-last last "$r1"
+# The parity guard below requires the token; only this requires its VALUE, and
+# the two failure directions differ. `-` here would claim the reconciler was
+# owed a transcript id and lost it with the box; `unknown` says it never held
+# one, which is true — a resume stub is written only by the session that minted
+# the id, so a reconstructed line naming one would name a transcript nothing
+# can open. The space-anchored read is what keeps this off `session_id=`.
+t orphan-sid-is-unknown unknown "$(orph_kv "$ORPH1_LINE" sid)"
+# `started=` is this writer's own field and sits past every OBSERVED one — that
+# is what this assertion has always been protecting, and it is why it was
+# written as "stays last" while this writer was the only one appending. `sid=`
+# now sits after it, so the two halves are pinned apart: `started=` past the
+# last observed token, and `sid=` last on the line, which is #538's first
+# criterion holding on BOTH emitters rather than on `run_session`'s alone.
+case "$ORPH1_LINE" in
+  *' pool=unknown started=2026-08-14T03:00:01Z'*) r1=past-every-observed ;;
+  *) r1=MOVED ;;
+esac
+t orphan-started-sits-past-every-observed-field past-every-observed "$r1"
+case "$ORPH1_LINE" in *' sid=unknown') r1=last ;; *) r1=NOT-LAST ;; esac
+t orphan-sid-stays-last last "$r1"
 # D1/D3. Token parity is source-derived on both sides; this is the standing
 # guard that makes the next observed field fail on the PR that adds it.
 t orphan-session-end-token-parity '' \
