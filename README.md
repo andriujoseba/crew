@@ -101,12 +101,14 @@ between them.
 <!-- END github-hosted channel (#171) -->
 
 
-`install.sh` installs **per user** — a root install is refused, because crew
-acts on the operator's own boxes and box's restricted tier makes that a real
-boundary. Re-running the same version changes nothing; a new version becomes the
-default and names the hired boxes to converge onto it with `crew upgrade --all`
-(it names them; it does not inspect each box's engine version). `CREW_HOME` /
-`CREW_BIN` relocate the layout; `CREW_YES=1` drives it non-interactively.
+`install.sh` installs per user for a non-root caller and into `/opt/crew` plus
+`/usr/local/bin` for root, so a shared host can carry one system tree. The tree
+does not choose an operator: crew runs as its caller, box resolves that caller's
+tier, and fleet configuration remains in that caller's home. Re-running the same
+version changes nothing; a new version becomes the default and names the hired
+boxes to converge onto it with `crew upgrade --all` (it names them; it does not
+inspect each box's engine version). `CREW_HOME` / `CREW_BIN` override either
+layout; `CREW_YES=1` drives it non-interactively.
 
 See [examples/README.md](examples/README.md) for configuration discovery and
 file ownership, and [shared/README.md](shared/README.md) for engine internals.

@@ -736,6 +736,8 @@ cmd_use() {
     usage_error "not a sane version name: '$version_name' (see 'crew versions')"
   [ -d "$install/versions/$version_name" ] ||
     die "no such version: $version_name (see 'crew versions')"
+  [ -w "$install" ] ||
+    die "cannot write install root $install — a system crew install is root-owned; run 'crew use' as root"
 
   ln -sfn "versions/$version_name" "$install/current.new.$$"
   mv -Tf "$install/current.new.$$" "$install/current"
@@ -792,7 +794,8 @@ cmd_uninstall() {
   done
   install="$(install_root)" ||
     die "this crew runs from a working tree ($CREW_ROOT), not a versioned install — nothing to uninstall."
-  [ -w "$install" ] || die "cannot write install root $install"
+  [ -w "$install" ] ||
+    die "cannot write install root $install — a system crew install is root-owned; run 'crew uninstall' as root"
 
   if [ -n "$version_name" ] && [ "$all" -eq 0 ]; then
     valid_version "$version_name" ||

@@ -17,11 +17,12 @@ set -euo pipefail
 # PORTED FROM box's install.sh (heavy-duty/box#79; rig#35 is the proof the port
 # works), with three crew-specific rules — each a deliberate divergence:
 #
-#   * PER-USER ONLY, root REFUSED. box installs globally as root because OTHER
-#     users execute its tree. crew is run by ONE operator against THEIR OWN
-#     boxes, and box's restricted tier makes "their own" a real boundary — a
-#     root-installed crew would act on ROOT's boxes. So a root install dies
-#     with that reason rather than landing in a system location.
+#   * INSTALL LOCATION DOES NOT CHOOSE THE OPERATOR. Root installs one shared,
+#     read-only tree; non-root remains per-user. crew still acts as whoever
+#     executes it: box resolves the restricted tier from the caller's uid and
+#     groups, while crew keeps fleet configuration under that caller's HOME.
+#     A global tree therefore changes where the CLI lives, not whose boxes or
+#     roster it can reach.
 #
 #   * FLIP, then REPORT the skew — never refuse it. box refuses to move the
 #     default while boxes exist (box#66), because there one version owns the
@@ -41,15 +42,16 @@ set -euo pipefail
 # artifact installs by unpacking and pointing CREW_INSTALL_SOURCE at the
 # result. Network distribution is #98's job, not this file's.
 
-# Non-root installs per-user; root is refused outright (see the header). box's
-# global-install branch is deliberately dropped.
+# Root installs globally so every operator can execute one system tree;
+# non-root installs per-user exactly as before. CREW_HOME/CREW_BIN remain the
+# explicit scripting overrides on both arms.
 if [ "$(id -u)" -eq 0 ]; then
-  printf 'crew-install: ERROR: %s\n' \
-    "refusing a root install. crew acts on the operator's OWN boxes, and box's restricted tier makes that a real boundary — a root-installed crew would act on root's boxes instead. Install it as the operator user (per-user, under \$HOME/.local)." >&2
-  exit 1
+  DEST="${CREW_HOME:-/opt/crew}"
+  BINDIR="${CREW_BIN:-/usr/local/bin}"
+else
+  DEST="${CREW_HOME:-$HOME/.local/share/crew}"
+  BINDIR="${CREW_BIN:-$HOME/.local/bin}"
 fi
-DEST="${CREW_HOME:-$HOME/.local/share/crew}"
-BINDIR="${CREW_BIN:-$HOME/.local/bin}"
 
 log() { printf 'crew-install: %s\n' "$*"; }
 warn() { printf 'crew-install: WARNING: %s\n' "$*" >&2; }
@@ -407,14 +409,39 @@ mkdir -p "$BINDIR"
 ln -sfn "$DEST/current/cli/crew" "$BINDIR/crew"
 log "linked $BINDIR/crew -> $DEST/current/cli/crew"
 
+# A global install is executed by OTHER users. mv preserves root ownership and
+# source archives do not promise world bits on every path, so without this a
+# non-root operator may be unable to traverse the tree at all. Root owns and
+# writes it; everybody reads and traverses it. Guarding this keeps the per-user
+# install's modes byte-identical to before.
+if [ "$(id -u)" -eq 0 ]; then
+  chmod -R a+rX "$DEST"
+fi
+
+# Global and per-user installs coexist by PATH order alone. Name the other
+# tier explicitly instead of letting two versions silently shadow each other.
+sudo_home=""
+if [ "$(id -u)" -ne 0 ]; then
+  if [ -e /opt/crew/current/cli/crew ]; then
+    warn "a GLOBAL install also exists at /opt/crew — PATH order decides which 'crew' you run (check: command -v crew)"
+  fi
+elif [ -n "${SUDO_USER:-}" ]; then
+  sudo_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)" || sudo_home=""
+  if [ -n "$sudo_home" ] && [ -e "$sudo_home/.local/share/crew/current/cli/crew" ]; then
+    warn "a PER-USER install also exists at $sudo_home/.local/share/crew — PATH order decides which 'crew' $SUDO_USER runs"
+  fi
+fi
+
 # --- name an existing ~/crew checkout --------------------------------------
 # Do NOT migrate or delete it (#95): it is the operator's working tree and may
 # hold uncommitted work. Since #99 the host ships shared/+VERSION to the boxes,
 # so ~/crew is no longer what `crew upgrade` pulls into — but it still shadows
 # this installed crew on PATH. Naming beats a clever migration: PATH order
 # decides which `crew` runs, so say so.
-if [ -f "$HOME/crew/cli/crew" ] && [ -d "$HOME/crew/.git" ]; then
-  warn "a crew git checkout also exists at $HOME/crew — its cli/crew and this installed one both answer to the name 'crew'."
+checkout_home="$HOME"
+if [ "$(id -u)" -eq 0 ] && [ -n "$sudo_home" ]; then checkout_home="$sudo_home"; fi
+if [ -f "$checkout_home/crew/cli/crew" ] && [ -d "$checkout_home/crew/.git" ]; then
+  warn "a crew git checkout also exists at $checkout_home/crew — its cli/crew and this installed one both answer to the name 'crew'."
   warn "  PATH order decides which runs (check: command -v crew). This installer left the checkout untouched."
 fi
 
