@@ -1031,7 +1031,13 @@ t "age: a usable lock age is served" 300 \
 # Comments stripped first, and deliberately: the block above the overlay
 # EXPLAINS why the threshold is not read here, and a check that reds on the
 # explanation would be a check against documenting the rule.
-if grep -vE '^[[:space:]]*#' "$FLOOR/server/floor/fleet.py" | grep -q 'STUCK_AFTER_S'; then
+#
+# Stripped into a variable rather than piped into `grep -q`: that shape lets
+# grep close the pipe on its first match and SIGPIPE the producer, which under
+# `set -o pipefail` reds the suite at random (#449). `shared/test`'s guard
+# forbids writing it at all.
+ff_fleet_code="$(grep -vE '^[[:space:]]*#' "$FLOOR/server/floor/fleet.py")"
+if grep -q 'STUCK_AFTER_S' <<<"$ff_fleet_code"; then
   fail "stuck: fleet.py owns no threshold of its own" \
        "the ping overlay still names STUCK_AFTER_S in code"
 else
