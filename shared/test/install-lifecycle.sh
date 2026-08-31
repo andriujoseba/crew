@@ -61,7 +61,7 @@ same "nonroot-CREW_BIN-wins" "DEST=/home/tester/.local/share/crew BINDIR=/srv/bi
 # The patterns name installer variables literally.
 # shellcheck disable=SC2016
 if grep -qF 'chmod -R a+rX "$DEST"' "$INSTALL" &&
-   grep -B2 'chmod -R a+rX' "$INSTALL" | grep -q 'id -u.*-eq 0'; then
+   grep -B2 'chmod -R a+rX' "$INSTALL" | grep 'id -u.*-eq 0' >/dev/null; then
   ok "global-tree-chmod-is-root-guarded"
 else
   bad "global-tree-chmod-is-root-guarded"
