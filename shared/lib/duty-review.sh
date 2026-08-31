@@ -36,6 +36,123 @@
 
 REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# reclaim_detached_review_worktrees — remove throwaway worktrees left by a
+# review session that ended before its own cleanup. This runs before any
+# dispatch, so it never races a worktree the current tick is creating (#597).
+#
+# Detached HEAD is the starting ownership boundary, not sufficient proof that
+# a tree is dead. A parked review deliberately outlives its launching tick, and
+# Git detaches builder worktrees during operations such as rebase and bisect.
+# Names remain deliberately irrelevant because a reviewer may make an
+# auxiliary worktree such as base-<N> while investigating a collision.
+_review_detached_run_protects() {
+  local candidate="$1"
+  local stamp repo pr head digest remote
+
+  REVIEW_DETACHED_RUN_SUBJECT=""
+  remote="$(git -C "$candidate" remote get-url origin 2>/dev/null || true)"
+
+  while IFS= read -r -d '' stamp; do
+    repo="$(_detached_field "$stamp" repo)"
+    pr="$(_detached_field "$stamp" pr)"
+    head="$(_detached_field "$stamp" head)"
+    digest="$(_detached_field "$stamp" digest)"
+    case "$remote" in
+      */"$repo"|*/"$repo".git|*:"$repo"|*:"$repo".git) : ;;
+      *) continue ;;
+    esac
+    detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
+    if [ "$DETACHED_RUN_STATE" = running ]; then
+      REVIEW_DETACHED_RUN_SUBJECT="$repo#$pr@$head"
+      return 0
+    fi
+  done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
+  return 1
+}
+
+# A live run does not record the worktree paths selected by its model-authored
+# command. Same-repository candidates must therefore remain conservative even
+# when an auxiliary tree is at the base head, and every review for that
+# repository must wait rather than dispatch into a path reclaim could not
+# safely distinguish (#597 rounds 4-5).
+_review_detached_run_blocks_dispatch() {
+  local wanted_repo="$1" stamp repo pr head digest
+
+  REVIEW_DETACHED_RUN_SUBJECT=""
+  while IFS= read -r -d '' stamp; do
+    repo="$(_detached_field "$stamp" repo)"
+    pr="$(_detached_field "$stamp" pr)"
+    head="$(_detached_field "$stamp" head)"
+    digest="$(_detached_field "$stamp" digest)"
+    [ "$repo" = "$wanted_repo" ] || continue
+    detached_run_read "$repo" "$pr" "$head" "$digest" >/dev/null
+    if [ "$DETACHED_RUN_STATE" = running ]; then
+      REVIEW_DETACHED_RUN_SUBJECT="$repo#$pr@$head"
+      return 0
+    fi
+  done < <(find "$DUTY_DIR/.detached-runs" -type f -name '*.stamp' -print0 2>/dev/null)
+  return 1
+}
+
+_review_common_dir() {
+  local candidate="$1" common_dir
+  common_dir="$(git -C "$candidate" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  case "$common_dir" in
+    /*) printf '%s\n' "$common_dir" ;;
+    *) (cd "$candidate/$common_dir" 2>/dev/null && pwd -P) ;;
+  esac
+}
+
+_review_git_operation_in_progress() {
+  local git_dir="$1"
+  [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] \
+    || [ -f "$git_dir/BISECT_LOG" ] || [ -f "$git_dir/MERGE_HEAD" ] \
+    || [ -f "$git_dir/CHERRY_PICK_HEAD" ] || [ -f "$git_dir/REVERT_HEAD" ]
+}
+
+reclaim_detached_review_worktrees() {
+  local candidate top head git_dir common_dir dirt dirt_summary
+
+  while IFS= read -r -d '' candidate; do
+    candidate="$(cd "$candidate" 2>/dev/null && pwd -P)" || continue
+    top="$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null || true)"
+    [ "$top" = "$candidate" ] || continue
+    if git -C "$candidate" symbolic-ref -q HEAD >/dev/null 2>&1; then
+      continue
+    fi
+
+    head="$(git -C "$candidate" rev-parse HEAD 2>/dev/null || true)"
+    git_dir="$(git -C "$candidate" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    common_dir="$(_review_common_dir "$candidate" || true)"
+    if [ -z "$head" ] || [ -z "$git_dir" ] || [ -z "$common_dir" ]; then
+      continue
+    fi
+    _review_git_operation_in_progress "$git_dir" && continue
+    # The run stamp's head is engine-owned identity. The supervisor cwd is
+    # not: reviewer sessions launch in the main clone and may pass a worktree
+    # path to the detached command. Protect candidates at a verified live
+    # repository, including auxiliary base-head worktrees. Other repositories
+    # remain reclaimable.
+    if _review_detached_run_protects "$candidate"; then
+      log "review: preserved detached worktree $candidate; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
+      continue
+    fi
+    if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
+      continue
+    fi
+    dirt_summary="$(printf '%s\n' "$dirt" | awk '
+      /^\?\?/ { u++; next }
+      NF      { m++ }
+      END     { printf "%d modified, %d untracked", m+0, u+0 }')"
+    if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then
+      log "review: reclaimed detached worktree $candidate at $head ($dirt_summary)"
+    else
+      warn "review: could not reclaim detached worktree $candidate at $head"
+    fi
+  done < <(find -H "$TREES_DIR" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
+  return 0
+}
+
 # Repos where I author an open PR — read off the sweep's own pulls pages at
 # zero extra API cost (claude-bot's cast#143 fix). Consumed by duty-builder.
 REVIEW_MY_PR_REPOS=""
@@ -346,6 +463,11 @@ $(printf '%s' "$page" | jq -r --arg me "$ME" --arg sr "$SR" \
         log "review: $SR#$N my latest review already covers head ${head:0:12}; skipping (request mid-clear or stale search)"
         ;;
     esac
+
+    if [ "$queue" -eq 1 ] && _review_detached_run_blocks_dispatch "$SR"; then
+      log "review: $SR#$N dispatch suppressed at ${head:0:12}; active detached run $REVIEW_DETACHED_RUN_SUBJECT makes same-repository worktree ownership ambiguous"
+      queue=0
+    fi
 
     [ "$queue" -eq 1 ] || continue
     item="$SR#$N $updated"

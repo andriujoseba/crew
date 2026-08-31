@@ -55,6 +55,8 @@ date +%s >"$DUTY_DIR/.duty.lock.since"
 source "$DUTY_DIR/lib/common.sh"
 load_conf
 mkdir -p "$WORK_DIR" "$TREES_DIR" "$LOG_DIR"
+# shellcheck source=../lib/duty-review.sh disable=SC1091
+source "$DUTY_DIR/lib/duty-review.sh"
 
 log "duty run start"
 # A stable identity for every run_session call in this process. Terminal
@@ -69,6 +71,7 @@ DUTY_TICK_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$$"
 # what makes "unanswered" mean "left by a previous run" and never "started a
 # moment ago by this one" (#478).
 session_reconcile_orphans
+reclaim_detached_review_worktrees
 
 # --- Once-per-boot sanity gate. The kernel boot id changes on every reboot;
 # the first tick after a restart probes auth and disk and prunes worktrees
@@ -154,8 +157,6 @@ fi
 
 # shellcheck source=../lib/duty-attention.sh disable=SC1091
 source "$DUTY_DIR/lib/duty-attention.sh"
-# shellcheck source=../lib/duty-review.sh disable=SC1091
-source "$DUTY_DIR/lib/duty-review.sh"
 # shellcheck source=../lib/duty-builder.sh disable=SC1091
 source "$DUTY_DIR/lib/duty-builder.sh"
 # shellcheck source=../lib/duty-triage.sh disable=SC1091

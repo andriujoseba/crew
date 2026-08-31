@@ -20,6 +20,261 @@ BUILDER_MOD="$SHARED/lib/duty-builder.sh"
 # shellcheck source=shared/lib/duty-review.sh
 source "$SHARED/lib/duty-review.sh"
 
+# #597: a killed review never reaches its prompt-owned cleanup, so the next
+# tick reclaims detached worktrees before dispatch. A deliberately misleading
+# base-* name proves detached HEAD — not naming convention — is the boundary;
+# the branch-holding sibling is builder state and must survive.
+RW="$TMP/reclaim-worktrees"
+mkdir -p "$RW/work/repo" "$RW/trees/repo"
+git -C "$RW/work/repo" init -q -b main
+git -C "$RW/work/repo" config user.email fixture@example.com
+git -C "$RW/work/repo" config user.name fixture
+git -C "$RW/work/repo" remote add origin https://github.com/fixture/repo.git
+touch "$RW/work/repo/seed"
+git -C "$RW/work/repo" add seed
+git -C "$RW/work/repo" commit -qm seed
+RW_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD >/dev/null 2>&1
+touch "$RW/trees/repo/base-1/uncommitted"
+# Reproduce the incident's retry collision before the reclaim resolves it.
+if git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-1" HEAD \
+    >"$RW/collision.out" 2>&1; then
+  RW_COLLISION_RC=0
+else
+  RW_COLLISION_RC=$?
+fi
+t review-reclaim-fixture-reproduces-collision nonzero \
+  "$([ "$RW_COLLISION_RC" -ne 0 ] && printf nonzero || printf ZERO)"
+case "$(cat "$RW/collision.out")" in
+  *"already exists"*) RW_COLLISION_MSG=named ;;
+  *) RW_COLLISION_MSG=MISSING ;;
+esac
+t review-reclaim-fixture-names-existing-path named "$RW_COLLISION_MSG"
+git -C "$RW/work/repo" worktree add -b build/1 "$RW/trees/repo/build-1" HEAD >/dev/null 2>&1
+RW_OLD_TREES="$TREES_DIR"
+TREES_DIR="$RW/trees"
+RW_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-removes-detached gone "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
+t review-reclaim-preserves-branch present "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+t review-reclaim-logs-path-and-head 1 \
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 1 untracked)" <<<"$RW_OUT")"
+TREES_DIR="$RW/trees"
+RW_QUIET="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-empty-is-quiet "" "$RW_QUIET"
+t review-reclaim-noop-preserves-branch present \
+  "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+
+# A parked review command deliberately outlives its launching tick. Reclaim
+# protects that command's worktree but still removes unrelated stale review
+# trees, so another PR can dispatch without colliding on its path.
+git -C "$RW/work/repo" commit --allow-empty -qm live-head
+RW_LIVE_HEAD="$(git -C "$RW/work/repo" rev-parse HEAD)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-live" "$RW_LIVE_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_LIVE_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-aux" "$RW_HEAD" >/dev/null 2>&1
+(
+  cd "$RW/work/repo" || exit
+  RW_LIVE_DIGEST="$(run_detached fixture/repo 7 "$RW_LIVE_HEAD" -- \
+    bash -c "sleep 1; [ -d \"\$1\" ] && [ -d \"\$2\" ] && : > \"\$1/review-finished\"" \
+      _ "$RW/trees/repo/review-live" "$RW/trees/repo/base-aux")"
+  printf '%s' "$RW_LIVE_DIGEST" >"$RW/live.digest"
+)
+TREES_DIR="$RW/trees"
+RW_LIVE_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-active-run-logs-protector 3 \
+  "$(grep -cF "protected by active detached run fixture/repo#7@$RW_LIVE_HEAD" <<<"$RW_LIVE_OUT")"
+t review-reclaim-active-run-preserves-worktree present \
+  "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
+t review-reclaim-same-head-stale-conservatively-preserved present \
+  "$([ -d "$RW/trees/repo/review-stale" ] && printf present || printf MISSING)"
+t review-reclaim-active-run-preserves-auxiliary-base-head present \
+  "$([ -d "$RW/trees/repo/base-aux" ] && printf present || printf MISSING)"
+if _review_detached_run_blocks_dispatch fixture/repo; then
+  RW_SAME_HEAD_DECISION=suppressed
+else
+  RW_SAME_HEAD_DECISION=DISPATCHED
+fi
+t review-reclaim-same-head-next-dispatch-suppressed suppressed "$RW_SAME_HEAD_DECISION"
+t review-reclaim-same-head-suppression-names-protector "fixture/repo#7@$RW_LIVE_HEAD" \
+  "$REVIEW_DETACHED_RUN_SUBJECT"
+if _review_detached_run_blocks_dispatch fixture/repo; then
+  RW_DIFFERENT_HEAD_DECISION=suppressed
+else
+  RW_DIFFERENT_HEAD_DECISION=DISPATCHED
+fi
+t review-reclaim-different-head-next-dispatch-suppressed suppressed \
+  "$RW_DIFFERENT_HEAD_DECISION"
+RW_LIVE_DIGEST="$(cat "$RW/live.digest")"
+for _ in 1 2 3 4 5; do
+  detached_run_read fixture/repo 7 "$RW_LIVE_HEAD" "$RW_LIVE_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 1
+done
+t review-reclaim-fixture-run-completes complete "$DETACHED_RUN_STATE"
+TREES_DIR="$RW/trees"
+reclaim_detached_review_worktrees >/dev/null
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-ended-run-tree-removed gone \
+  "$([ ! -e "$RW/trees/repo/review-live" ] && printf gone || printf PRESENT)"
+t review-reclaim-ended-run-stale-tree-removed gone \
+  "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
+t review-reclaim-ended-run-auxiliary-tree-removed gone \
+  "$([ ! -e "$RW/trees/repo/base-aux" ] && printf gone || printf PRESENT)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-aux" "$RW_HEAD" >/dev/null 2>&1
+t review-reclaim-ended-run-clears-auxiliary-path recreated \
+  "$([ -d "$RW/trees/repo/base-aux" ] && printf recreated || printf COLLISION)"
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-stale" "$RW_LIVE_HEAD" >/dev/null 2>&1
+t review-reclaim-ended-run-clears-next-dispatch-path recreated \
+  "$([ -d "$RW/trees/repo/review-stale" ] && printf recreated || printf COLLISION)"
+
+# Logical TREES_DIR paths are normalized before comparing them with Git's
+# physical toplevel. A symlinked trees root must not silently disable reclaim.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/symlinked" "$RW_HEAD" >/dev/null 2>&1
+ln -s "$RW/trees" "$RW/trees-link"
+TREES_DIR="$RW/trees-link"
+RW_SYMLINK_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-symlinked-trees-removes-detached gone \
+  "$([ ! -e "$RW/trees/repo/symlinked" ] && printf gone || printf PRESENT)"
+t review-reclaim-symlinked-trees-logs-physical-path 1 \
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/symlinked at $RW_HEAD" <<<"$RW_SYMLINK_OUT")"
+
+# Git deliberately detaches a builder worktree during a conflicted rebase.
+# Reclaim must leave both the operation and uncommitted material intact.
+printf 'main\n' >"$RW/work/repo/conflict"
+git -C "$RW/work/repo" add conflict
+git -C "$RW/work/repo" commit -qm main-side
+git -C "$RW/work/repo" worktree add -b build/9 "$RW/trees/repo/build-9" HEAD~1 >/dev/null 2>&1
+printf 'branch\n' >"$RW/trees/repo/build-9/conflict"
+git -C "$RW/trees/repo/build-9" add conflict
+git -C "$RW/trees/repo/build-9" commit -qm branch-side
+touch "$RW/trees/repo/build-9/notes.txt"
+git -C "$RW/trees/repo/build-9" rebase main >/dev/null 2>&1 || true
+t review-reclaim-rebase-fixture-is-detached detached \
+  "$(git -C "$RW/trees/repo/build-9" symbolic-ref -q HEAD >/dev/null 2>&1 && printf BRANCH || printf detached)"
+TREES_DIR="$RW/trees"
+reclaim_detached_review_worktrees >/dev/null
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-preserves-rebase-worktree present \
+  "$([ -d "$RW/trees/repo/build-9" ] && printf present || printf MISSING)"
+t review-reclaim-preserves-rebase-dirt present \
+  "$([ -f "$RW/trees/repo/build-9/notes.txt" ] && printf present || printf MISSING)"
+git -C "$RW/trees/repo/build-9" rebase --abort >/dev/null 2>&1
+
+# Bisect is another detached builder operation. The operation marker itself is
+# the boundary; a synthetic marker keeps this fixture independent of how many
+# commits a particular Git version needs before it resolves a bisect.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/build-bisect" HEAD >/dev/null 2>&1
+RW_BISECT_GIT_DIR="$(git -C "$RW/trees/repo/build-bisect" rev-parse --absolute-git-dir)"
+touch "$RW_BISECT_GIT_DIR/BISECT_LOG"
+TREES_DIR="$RW/trees"
+reclaim_detached_review_worktrees >/dev/null
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-preserves-bisect-worktree present \
+  "$([ -d "$RW/trees/repo/build-bisect" ] && printf present || printf MISSING)"
+rm -f "$RW_BISECT_GIT_DIR/BISECT_LOG"
+
+# A main clone reports `.git` as its common dir. Resolution is rooted at the
+# candidate, never at the duty process cwd.
+mkdir -p "$RW/nested/repo"
+git -C "$RW/nested/repo" init -q
+t review-reclaim-common-dir-is-absolute "$RW/nested/repo/.git" \
+  "$(_review_common_dir "$RW/nested/repo")"
+
+# MUST FAIL: replace detached-HEAD discrimination with a review-* name check.
+# The auxiliary base-* fixture then leaks, which is the incident's exact
+# counterexample to a naming convention repair.
+RW_MUT="$TMP/reclaim-name-mutant.sh"
+# shellcheck disable=SC2016  # deliberate literal mutation expression
+sed 's@if git -C "$candidate" symbolic-ref -q HEAD >/dev/null 2>&1; then@if [[ "${candidate##*/}" != review-* ]]; then@' \
+  "$SHARED/lib/duty-review.sh" >"$RW_MUT"
+mkdir -p "$RW/mut-work" "$RW/mut-trees/repo"
+git -C "$RW/mut-work" init -q
+git -C "$RW/mut-work" config user.email fixture@example.com
+git -C "$RW/mut-work" config user.name fixture
+touch "$RW/mut-work/seed"
+git -C "$RW/mut-work" add seed
+git -C "$RW/mut-work" commit -qm seed
+git -C "$RW/mut-work" worktree add --detach "$RW/mut-trees/repo/base-2" HEAD >/dev/null 2>&1
+(
+  # shellcheck disable=SC1090  # deliberate mutation fixture
+  source "$RW_MUT"
+  TREES_DIR="$RW/mut-trees"
+  reclaim_detached_review_worktrees >/dev/null
+)
+t review-reclaim-name-mutation-reds red \
+  "$([ -d "$RW/mut-trees/repo/base-2" ] && printf red || printf FALSE-PASS)"
+
+# Drive duty.sh with controlled lane stubs. Recording the executed reclaim and
+# first dispatch makes a dead, missing, or moved call fail even when the same
+# source text remains elsewhere in the script.
+RW_TICK_DUTY="$RW/tick-duty"
+RW_TICK_CALLS="$RW/tick-calls"
+mkdir -p "$RW_TICK_DUTY/lib" "$RW_TICK_DUTY/work" \
+  "$RW_TICK_DUTY/trees" "$RW_TICK_DUTY/logs"
+cat >"$RW_TICK_DUTY/lib/common.sh" <<'RWCOMMON'
+WORK_DIR="$DUTY_DIR/work"
+TREES_DIR="$DUTY_DIR/trees"
+LOG_DIR="$DUTY_DIR/logs"
+load_conf() { :; }
+log() { :; }
+warn() { :; }
+alert() { :; }
+report_profile_classifier_gaps() { :; }
+session_reconcile_orphans() { printf 'ORPHAN\n' >>"$RW_TICK_CALLS"; }
+bot_cli_probe() { return 0; }
+gh_identity() { printf 'fixture-bot\n'; }
+check_vendor_credential() { :; }
+converge_git_identity() { return 0; }
+has_role() { [ "$1" = reviewer ]; }
+RWCOMMON
+cat >"$RW_TICK_DUTY/lib/duty-review.sh" <<'RWREVIEW'
+reclaim_detached_review_worktrees() { printf 'RECLAIM\n' >>"$RW_TICK_CALLS"; }
+duty_review() { printf 'REVIEW\n' >>"$RW_TICK_CALLS"; }
+RWREVIEW
+cat >"$RW_TICK_DUTY/lib/duty-attention.sh" <<'RWATTENTION'
+duty_attention() { printf 'ATTENTION\n' >>"$RW_TICK_CALLS"; }
+RWATTENTION
+cat >"$RW_TICK_DUTY/lib/duty-builder.sh" <<'RWBUILDER'
+duty_builder() { printf 'BUILDER\n' >>"$RW_TICK_CALLS"; }
+RWBUILDER
+cat >"$RW_TICK_DUTY/lib/duty-triage.sh" <<'RWTRIAGE'
+duty_triage() { printf 'TRIAGE\n' >>"$RW_TICK_CALLS"; }
+RWTRIAGE
+cat >"$RW_TICK_DUTY/lib/duty-reaper.sh" <<'RWREAPER'
+reaper_interval() { REAPER_INTERVAL_SECONDS=9999999999; }
+duty_reaper() { printf 'REAPER\n' >>"$RW_TICK_CALLS"; }
+RWREAPER
+cat /proc/sys/kernel/random/boot_id >"$RW_TICK_DUTY/.boot-id"
+
+rw_tick_reclaim_order() { # <duty-script>
+  : >"$RW_TICK_CALLS"
+  DUTY_LOCKED=1 DUTY_SNAPSHOT="$RW/tick-snapshot-marker" \
+    DUTY_DIR="$RW_TICK_DUTY" RW_TICK_CALLS="$RW_TICK_CALLS" \
+    bash "$1" >/dev/null 2>&1 || return 1
+  awk '/^RECLAIM$/ { if (!rec) rec = NR }
+       /^(ATTENTION|TRIAGE|REVIEW|BUILDER)$/ { if (!disp) disp = NR }
+       END { print (rec && disp && rec < disp) ? "before" : "AFTER" }' \
+    "$RW_TICK_CALLS"
+}
+
+t review-reclaim-runs-before-any-dispatch before \
+  "$(rw_tick_reclaim_order "$SHARED/bin/duty.sh")"
+RW_ORDER_MUT="$TMP/duty-reclaim-below-dispatch.sh"
+sed '/^reclaim_detached_review_worktrees$/d; /^  duty_review$/a reclaim_detached_review_worktrees' \
+  "$SHARED/bin/duty.sh" >"$RW_ORDER_MUT"
+t review-reclaim-below-dispatch-mutation-reds AFTER \
+  "$(rw_tick_reclaim_order "$RW_ORDER_MUT")"
+RW_DEAD_MUT="$TMP/duty-reclaim-dead-helper.sh"
+env awk '/^reclaim_detached_review_worktrees$/ {
+       print "_dead_reclaim" "() {"; print "  reclaim_detached_review_worktrees"; print "}"; next
+     } { print }' "$SHARED/bin/duty.sh" >"$RW_DEAD_MUT"
+t review-reclaim-dead-call-mutation-reds AFTER \
+  "$(rw_tick_reclaim_order "$RW_DEAD_MUT")"
+
 # Shared fixture constructors used by the generic round predicates below.
 RPJQ="$SHARED/lib/jq/request-panel.jq"
 RP_T_VERDICT="2026-08-02T10:32:33Z"
