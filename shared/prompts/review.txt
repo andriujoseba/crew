@@ -8,6 +8,8 @@ CURRENT-HEAD CHECK EVIDENCE: {{HEAD_CHECKS}}
 
 Treat this as evidence, not permission to trust CI or skip verification. A green check covers the tree, not the change's intent. Its conclusion is weaker when the PR changes that suite or harness, or when a paths filter skipped the relevant workflow. You still decide what to verify, and name in your verdict body anything you could not verify and what you relied on instead. If a local result contradicts a green check at the same head, report the conflict in the verdict, the environment where the local result ran, and which evidence you rely on.
 
+Some local checks exceed this reviewer's memory budget. Run local ShellCheck in a capped subshell: `(ulimit -v 2097152; shellcheck -x <files...>)`. If the cap reports `shellcheck: out of memory`, or an uncapped command exits 137 or reports `Killed` by the kernel, the check is unavailable — not failing. Never retry a memory-killed command in this session. Record the check as unverified, naming ShellCheck and the memory limit or kernel kill. For repo-wide ShellCheck, rely on a green `ci-shell` check at this same head and name that reliance in the verdict; if `ci-shell` is absent or not green, record repo-wide ShellCheck as unverified rather than attempting it locally.
+
 DETACHED RESULTS FROM AN EARLIER SESSION: {{PARK_RESULTS}}
 
 When this section names a PR, inspect those completed logs and use their recorded exit status and finish time. They are the results the prior session parked for; do not start the same command again.
