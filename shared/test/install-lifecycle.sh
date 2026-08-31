@@ -20,6 +20,11 @@ same()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$2' got '$3')"; 
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# Hosted runners may carry an ambient XDG_CONFIG_HOME. Keep one deliberately
+# different from every synthetic caller below: caller-identity assertions must
+# bind both HOME and its higher-precedence XDG config root, or the first init
+# leaks state that makes the later examples-fallback case look configured.
+export XDG_CONFIG_HOME="$WORK/ambient-xdg"
 
 # #615's uid branch is pure path resolution, so drive the exact source block
 # under a shim id instead of requiring root. Fail closed on the extraction:
@@ -144,10 +149,12 @@ fi
 mkdir -p "$ROOT_PERSONA/.config"
 cp -a "$GLOBAL_HOME/current/examples" "$ROOT_PERSONA/.config/crew"
 printf 'root-only claude builder examples\n' >"$ROOT_PERSONA/.config/crew/fleet.roster"
-if HOME="$OPERATOR_HOME" "$GLOBAL_BIN/crew" init >/dev/null 2>&1 &&
+if HOME="$OPERATOR_HOME" XDG_CONFIG_HOME="$OPERATOR_HOME/.config" \
+   "$GLOBAL_BIN/crew" init >/dev/null 2>&1 &&
    [ -f "$OPERATOR_HOME/.config/crew/fleet.roster" ]; then
   printf 'operator-only claude builder examples\n' >"$OPERATOR_HOME/.config/crew/fleet.roster"
-  if HOME="$OPERATOR_HOME" CREW_EXPECT_OPERATOR_CONFIG=1 \
+  if HOME="$OPERATOR_HOME" XDG_CONFIG_HOME="$OPERATOR_HOME/.config" \
+     CREW_EXPECT_OPERATOR_CONFIG=1 \
      "$GLOBAL_BIN/crew" profiles >/dev/null 2>&1 &&
      grep -q '^operator-only ' "$OPERATOR_HOME/.config/crew/fleet.roster" &&
      grep -q '^root-only ' "$ROOT_PERSONA/.config/crew/fleet.roster"; then
@@ -205,7 +212,8 @@ cat >"$FALLBACK_BIN/box" <<'SHIM'
 exit 0
 SHIM
 chmod +x "$FALLBACK_BIN/box"
-if fallback_out="$(cd "$WORK" && HOME="$FALLBACK_HOME" PATH="$FALLBACK_BIN:$PATH" \
+if fallback_out="$(cd "$WORK" && HOME="$FALLBACK_HOME" \
+  XDG_CONFIG_HOME="$FALLBACK_HOME/.config" PATH="$FALLBACK_BIN:$PATH" \
   "$GLOBAL_BIN/crew" up 2>&1)"; then
   bad "examples-fallback-mutating-verb-refuses"
 elif [[ "$fallback_out" == *"crew init"* ]] && [ ! -e "$FALLBACK_HOME/.config/crew" ]; then
