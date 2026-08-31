@@ -995,9 +995,12 @@ t "knob: lowering it does not shrink a declared ceiling" False \
 # implementations that happen to agree today; this is what reds when the next
 # edit re-derives the comparison in fleet.py, which is exactly how these two
 # came apart the first time.
-if grep -q 'STUCK_AFTER_S' "$FLOOR/server/floor/fleet.py"; then
+# Comments stripped first, and deliberately: the block above the overlay
+# EXPLAINS why the threshold is not read here, and a check that reds on the
+# explanation would be a check against documenting the rule.
+if grep -vE '^[[:space:]]*#' "$FLOOR/server/floor/fleet.py" | grep -q 'STUCK_AFTER_S'; then
   fail "stuck: fleet.py owns no threshold of its own" \
-       "the ping overlay still names STUCK_AFTER_S"
+       "the ping overlay still names STUCK_AFTER_S in code"
 else
   ok "stuck: fleet.py owns no threshold of its own"
 fi
