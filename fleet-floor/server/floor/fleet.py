@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from floor.alerts import ReachabilityAlerts
 from floor.ping import (PING_FAILS_TO_WEDGE, PING_INTERVAL_S,
                         PING_STALE_AFTER_S, PING_TIMEOUT_S, PROBE_TIMEOUT_S,
-                        STUCK_AFTER_S, log, ping_box)
+                        log, ping_box)
 from floor.roster import FLOOR_VERSION, agent_conf_path, box_states, read_roster
-from floor.units import build_unit, fmt_dur, unit_defaults
+from floor.units import build_unit, fmt_dur, stuck_verdict, unit_defaults
 
 
 def wedged(ping, now):
@@ -325,13 +325,24 @@ class Fleet:
             # leaves whatever the evidence poll concluded untouched: the
             # passenger may report a wedge sooner, never clear one, and never
             # contradict the tier that reads the file properly.
+            #
+            # The AGE is the ping's and the CEILING is the evidence tier's,
+            # and that split is deliberate. Only the evidence poll reads
+            # duty.log, so only it knows which session is in flight and what
+            # ceiling that session declared; the ping reads one number out of
+            # one file. So the fast tier contributes the fresher age and
+            # borrows `u["cur"]` for what to measure it against — up to 60s
+            # old, and a lane's ceiling does not change inside a session.
+            # `stuck_verdict` is units.py's, called and never re-derived: this
+            # site used to compare `held > STUCK_AFTER_S` itself and spell its
+            # own copy of the sentence, which is exactly how the badge and the
+            # note come to disagree (#610).
             held = p.get("lockheld")
-            if not stale and p["ok"] and isinstance(held, int) and held > STUCK_AFTER_S:
-                if not u["lock"]["stuck"]:
-                    u["lock"] = {"held": held, "stuck": True}
+            if not stale and p["ok"]:
+                lock, stuck_note = stuck_verdict(held, u.get("cur"))
+                if lock["stuck"] and not u["lock"]["stuck"]:
+                    u["lock"] = lock
                     u["state"] = "working"
-                    stuck_note = ("STUCK — duty run has held the lock for %s"
-                                  % fmt_dur(held))
                     # Composed when a credential is already broken: both are
                     # true, they need different fixes, and replacing the note
                     # would hide which login to redo.
