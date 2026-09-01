@@ -83,6 +83,26 @@ reclaim_detached_review_worktrees
 boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)"
 report_profile_classifier_gaps "$boot_id"
 if [ "$(cat "$DUTY_DIR/.boot-id" 2>/dev/null)" != "$boot_id" ]; then
+  # The reboot reaches duty.log and not only boot-check.log (#609). A killed
+  # process tree writes none of tick.sh's three failure shapes — the parent
+  # that writes them dies too — so the tick after a restart is the only place
+  # the fact can still be stated, and it is stated on the line above the
+  # missing SESSION END rather than in a quieter file nobody tails.
+  #
+  # Emitted on the path taken for EVERY boot, above the success/failure branch
+  # below: a box whose gate then fails must report both facts, and the boot a
+  # degraded box just took is the one most worth reporting.
+  #
+  # Two shapes, on the evidence and never on the clock. The restart shape
+  # requires a PREVIOUS boot id to have differed from; with no marker, or an
+  # empty one a truncated write left behind, there is no such id and the box
+  # has no restart on record — so it gets the first-tick shape. Claiming a
+  # restart that did not happen is the same class of defect as saying nothing.
+  if [ -s "$DUTY_DIR/.boot-id" ]; then
+    log "boot gate: new boot id ${boot_id:0:8} — the box restarted since the last tick"
+  else
+    log "boot gate: first tick on this box (boot id ${boot_id:0:8})"
+  fi
   {
     echo "== boot check $(date -Is) =="
     gh auth status || true
