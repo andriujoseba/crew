@@ -260,6 +260,11 @@ SILENT_AFTER_S="${CREW_SILENT_AFTER:-600}"
 # same override for STUCK and treats an unmatched START as live for six hours;
 # shared/test pins both readers so either side moving alone fails loudly.
 STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"
+# Twice the longest shipped role-session ceiling (builder: 3600s). A normal
+# session gets its whole governed budget; a lock held through another whole
+# budget is maintenance-wedge evidence rather than ordinary work (#588 D4).
+RESTART_FORCE_AFTER_HOURS="${CREW_RESTART_FORCE_AFTER_HOURS:-2}"
+RESTART_DRAIN_POLL_S="${CREW_DRAIN_POLL_SECONDS:-10}"
 
 # Two failures, two exit codes — because crew is called from scripts and from
 # `crew up` loops, and "the fleet is broken" and "you typo'd" used to return
@@ -383,7 +388,8 @@ CMDS=(
   "hire^<box> [--role <r> --agent <a>] [--ref <version-or-git-ref>] [--force] [--allow-offroster]^Put a box on duty: engine installed, cron armed. Idempotent^cmd_hire"
   "hire-all^[--ref <version-or-git-ref>]^Hire every created roster box; skips those already at this version^cmd_hire_all"
   "up^[--dry-run]^Converge the fleet: create missing, start stopped, hire, report^cmd_up"
-  "down^^Stop every roster box^cmd_down"
+  "restart^<box>... | --all [--force-after <hours>]^Drain and cycle selected boxes; busy boxes are skipped^cmd_restart"
+  "down^[--force]^Drain and stop every roster box; --force skips the drain^cmd_down"
   "status^[<box>]^Engine version and duty evidence, per box^cmd_status"
   "versions^^List installed host versions and mark the current and running trees^cmd_versions"
   "use^<version>^Switch the default host version; report box engines left behind^cmd_use"
@@ -599,6 +605,24 @@ A box whose engine files no longer match the version they were installed at
 is REFUSED, naming what differs, and nothing is written. Somebody patched
 that box; this is the last moment anyone can be told before the patch is
 overwritten. 'crew status <box>' lists the files. --force overwrites them.
+EOF
+      ;;
+    restart) cat <<EOF
+
+--all means the ROSTER, never every box on the host. A held or unreadable duty
+lock is skipped and makes the command exit 3. After ${RESTART_FORCE_AFTER_HOURS}
+continuous hours (the default, twice the longest shipped session budget), the
+lock is treated as wedged; --force-after changes that threshold for this run.
+
+Each idle target has stale duty snapshots removed, then is stopped, confirmed
+stopped, and started. A stop that does not take is never followed by a start.
+EOF
+      ;;
+    down) cat <<'EOF'
+
+A plain down waits for each held duty lock, announcing every wait with the box
+and lock age. It never escalates. --force performs no drain and calls
+'box down <box> --force'; it requires box 0.10.0 or later.
 EOF
       ;;
     gold) cat <<'EOF'
@@ -2227,21 +2251,195 @@ cmd_up() {
   if [ "$dry" -eq 0 ] && { [ "$failed" -ne 0 ] || [ "$skipped" -ne 0 ]; }; then return 1; fi
 }
 
-cmd_down() {
-  max_args down 0 "$@"
+# drain_probe NAME — print `idle|busy|unreadable AGE_SECONDS`.
+#
+# The probe answers from the lock itself. `.duty.lock.since` only enriches a
+# held result with its continuous age; it never gets to turn an unreadable
+# lock into an idle one. Transport errors and a guest without flock therefore
+# collapse in the safe direction: busy/unreadable, never permission to kill a
+# session (#588 D3).
+drain_probe() {
+  local record
+  record="$(bxn "$1" '
+    lock="$HOME/duty/.duty.lock"
+    since="$HOME/duty/.duty.lock.since"
+    command -v flock >/dev/null 2>&1 || { printf "unreadable -1\n"; exit 0; }
+    rc=0
+    flock -n "$lock" true >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then printf "idle 0\n"; exit 0; fi
+    if [ "$rc" -ne 1 ]; then printf "unreadable -1\n"; exit 0; fi
+    age=-1
+    if [ -r "$since" ]; then
+      started="$(cat "$since" 2>/dev/null || echo)"
+      case "$started" in ""|*[!0-9]*) : ;; *) age=$(( $(date +%s) - started )) ;; esac
+    fi
+    printf "busy %s\n" "$age"
+  ' 2>/dev/null | head -1 | tr -d '\r' || true)"
+  case "$record" in
+    "idle "*|"busy "*|"unreadable "*) printf '%s\n' "$record" ;;
+    *) printf 'unreadable -1\n' ;;
+  esac
+}
+
+box_free_kb() {
+  local free
+  free="$(bxn "$1" 'df -Pk "${TMPDIR:-/tmp}" 2>/dev/null | tail -1 | tr -s " " | cut -d" " -f4' \
+    2>/dev/null | tr -d '\r' | tail -1 || true)"
+  case "$free" in ''|*[!0-9]*) return 1 ;; *) printf '%s\n' "$free" ;; esac
+}
+
+clear_stale_duty_snapshots() {
+  bxn "$1" '
+    tmp="${TMPDIR:-/tmp}"
+    find "$tmp" -maxdepth 1 -type f -name "duty-snapshot.*" -mmin +5 -delete
+  ' >/dev/null 2>&1
+}
+
+cycle_box() {
+  local name="$1" before after delta state
+  before="$(box_free_kb "$name")" || {
+    echo "  restart FAILED on $name — could not read free space before stop"
+    return 1
+  }
+  clear_stale_duty_snapshots "$name" || {
+    echo "  restart FAILED on $name — could not clear stale duty snapshots"
+    return 1
+  }
+  if ! box down "$name" </dev/null; then
+    echo "  restart FAILED on $name — stop command failed"
+    return 1
+  fi
+  state="$(box_state "$name")"
+  if [ "$state" != stopped ]; then
+    echo "  restart FAILED on $name — stop did not take (state: $state); NOT starting"
+    return 1
+  fi
+  if ! box start "$name" </dev/null; then
+    echo "  restart FAILED on $name — start command failed"
+    return 1
+  fi
+  after="$(box_free_kb "$name")" || {
+    echo "  restart FAILED on $name — started, but free space could not be read"
+    return 1
+  }
+  delta=$((after - before))
+  printf '  %s: restarted; /tmp filesystem free %s → %s KiB (delta %+d KiB)\n' \
+    "$name" "$before" "$after" "$delta"
+}
+
+cmd_restart() {
   need_box
+  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" arg name probe state age
+  local restarted=0 skipped=0 failed=0 skipped_names="" failed_names=""
+  local -a named=() targets=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --all) all=1; shift ;;
+      --force-after) need_value "$@"; force_hours="$2"; shift 2 ;;
+      --*) usage_error "unknown argument '$1' (usage: $(synopsis_of restart))" ;;
+      *) named+=("$1"); shift ;;
+    esac
+  done
+  case "$force_hours" in ''|0|*[!0-9]*) usage_error "--force-after requires a positive whole number of hours" ;; esac
+  if [ "$all" -eq 1 ] && [ "${#named[@]}" -ne 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
+  if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
+  [ -f "$ROSTER" ] || die "no roster at $ROSTER"
+  require_operator_config "crew restart"
+  if [ "$all" -eq 1 ]; then mapfile -t targets < <(roster_names); else targets=("${named[@]}"); fi
+  if [ -t 0 ]; then
+    printf 'restart plan (%sh force-after):' "$force_hours"
+    printf ' %s' "${targets[@]}"
+    printf '\n'
+  fi
+  for name in "${targets[@]}"; do
+    if ! box_exists "$name"; then
+      echo "  $name: not present — restart FAILED"
+      failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"
+      continue
+    fi
+    read -r state age <<<"$(drain_probe "$name")"
+    if [ "$state" != idle ]; then
+      if [ "$state" = busy ] && [[ "$age" =~ ^[0-9]+$ ]] \
+         && [ "$age" -ge $((force_hours * 3600)) ]; then
+        echo "  $name: duty lock held for $(status_duration "$age") — force-after reached; restarting"
+      else
+        if [[ "$age" =~ ^[0-9]+$ ]]; then
+          echo "  $name: SKIPPED busy — duty lock held for $(status_duration "$age")"
+        else
+          echo "  $name: SKIPPED busy — duty lock state unreadable"
+        fi
+        skipped=$((skipped + 1)); skipped_names="${skipped_names}${skipped_names:+, }$name"
+        continue
+      fi
+    fi
+    if cycle_box "$name"; then restarted=$((restarted + 1))
+    else failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"; fi
+  done
+  echo
+  echo "restart: $restarted restarted, $skipped skipped-busy, $failed failed"
+  [ -z "$skipped_names" ] || echo "  skipped: $skipped_names"
+  [ -z "$failed_names" ] || echo "  failed: $failed_names"
+  if [ "$failed" -ne 0 ]; then return 1; fi
+  if [ "$skipped" -ne 0 ]; then return 3; fi
+}
+
+box_supports_force_down() {
+  box down --help 2>&1 | grep -q -- '--force'
+}
+
+cmd_down() {
+  need_box
+  local force=0 name _rest probe state age failed=0 stopped=0 absent=0 waited=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      *) usage_error "unknown argument '$1' (usage: $(synopsis_of down))" ;;
+    esac
+  done
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
   require_operator_config "crew down"
-  local name _rest
+  if [ "$force" -eq 1 ] && ! box_supports_force_down; then
+    die "crew down --force requires box 0.10.0 or later (this host's box has no down --force)"
+  fi
   while read -r name _rest; do
-    if box_exists "$name"; then
-      # </dev/null for the same reason as bxn: this loop reads from a FIFO
-      # a stdin-inheriting `box` subcommand would drain (#48).
-      box down "$name" </dev/null || echo "  down FAILED on $name"
-    else
+    if ! box_exists "$name"; then
       echo "  $name: not present, skipping"
+      absent=$((absent + 1))
+      continue
     fi
+    if [ "$force" -eq 0 ]; then
+      local announced=0
+      while :; do
+        read -r state age <<<"$(drain_probe "$name")"
+        [ "$state" = idle ] && break
+        announced=1
+        if [[ "$age" =~ ^[0-9]+$ ]]; then
+          echo "  $name: waiting for duty lock held $(status_duration "$age"); use crew down --force to stop without draining"
+        else
+          echo "  $name: waiting because duty lock state is unreadable; use crew down --force to stop without draining"
+        fi
+        sleep "$RESTART_DRAIN_POLL_S"
+      done
+      waited=$((waited + announced))
+    fi
+    if [ "$force" -eq 1 ]; then
+      box down "$name" --force </dev/null || state=failed
+    else
+      box down "$name" </dev/null || state=failed
+    fi
+    if [ "${state:-}" != failed ]; then state="$(box_state "$name")"; fi
+    if [ "$state" = stopped ]; then
+      echo "  $name: stopped${force:+}"
+      stopped=$((stopped + 1))
+    else
+      echo "  down FAILED on $name${state:+ (state: $state)}"
+      failed=$((failed + 1))
+    fi
+    state=""
   done < <(read_roster)
+  echo
+  echo "down: $stopped stopped, $waited waited, $absent absent, $failed failed"
+  if [ "$failed" -ne 0 ]; then return 1; fi
 }
 
 # crew status — no argument: the whole crew as a table, one roster member
