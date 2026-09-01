@@ -1962,10 +1962,11 @@ function populateDash(){
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
   d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s);sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
   sh+='</div>';
-  if(d.floorEvents.length||d.limitDropped){
+  var floorEvents=d.floorEvents||[],limitDropped=d.limitDropped||0;
+  if(floorEvents.length||limitDropped){
     sh+='<div class="limitfeed"><div>OPERATING LIMIT EVENTS</div>';
-    d.floorEvents.forEach(function(e){sh+='<div class="lev"><span class="sev-'+esc(e.severity)+'">'+esc(e.severity.toUpperCase())+'</span><span>'+esc(e.name)+' '+e.measured+'/'+e.limit+' · '+esc(e.subject)+' · '+esc(e.cause)+'</span></div>';});
-    if(d.limitDropped)sh+='<div class="drop">'+d.limitDropped+' older event'+(d.limitDropped===1?'':'s')+' dropped by retention</div>';
+    floorEvents.forEach(function(e){sh+='<div class="lev"><span class="sev-'+esc(e.severity)+'">'+esc(e.severity.toUpperCase())+'</span><span>'+esc(e.name)+' '+e.measured+'/'+e.limit+' · '+esc(e.subject)+' · '+esc(e.cause)+'</span></div>';});
+    if(limitDropped)sh+='<div class="drop">'+limitDropped+' older event'+(limitDropped===1?'':'s')+' dropped by retention</div>';
     sh+='</div>';
   }
   document.getElementById("w-sessions").innerHTML=sh;
