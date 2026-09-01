@@ -110,6 +110,71 @@ _review_git_operation_in_progress() {
     || [ -f "$git_dir/CHERRY_PICK_HEAD" ] || [ -f "$git_dir/REVERT_HEAD" ]
 }
 
+_review_remote_repo() { # $1=checkout -> owner/repo
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 1
+  url="${url%.git}"
+  case "$url" in
+    https://github.com/*) printf '%s\n' "${url#https://github.com/}" ;;
+    git@github.com:*) printf '%s\n' "${url#git@github.com:}" ;;
+    ssh://git@github.com/*) printf '%s\n' "${url#ssh://git@github.com/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# A numbered review checkout belongs to the PR in its name, but the removal
+# predicate belongs to that PR's HEAD BRANCH: one branch may have several PRs.
+# Read all of them in one joined list. A newer closed PR must never hide an
+# older open one, the same --state all boundary builder hygiene uses (#606).
+_review_worktree_done() { # $1=review checkout -> 0 done, 1 live/unknown
+  local candidate="$1" pr repo branch prs states
+  case "${candidate##*/}" in
+    review-[0-9]*) pr="${candidate##*/review-}" ;;
+    *) return 0 ;;
+  esac
+  [[ "$pr" =~ ^[0-9]+$ ]] || return 0
+  repo="$(_review_remote_repo "$candidate")" || {
+    warn "review: cannot resolve repository for $candidate; leaving it"
+    return 1
+  }
+  branch="$(gh pr view "$pr" -R "$repo" --json headRefName --jq .headRefName 2>/dev/null)" || {
+    warn "review: PR lookup failed for $repo#$pr; leaving $candidate"
+    return 1
+  }
+  [ -n "$branch" ] || return 1
+  prs="$(gh pr list -R "$repo" --head "$branch" --state all \
+    --json state,number 2>/dev/null)" || {
+    warn "review: PR history lookup failed for $repo:$branch; leaving $candidate"
+    return 1
+  }
+  states="$(printf '%s' "$prs" | jq -r '[.[].state] | join(" ")' 2>/dev/null)" || return 1
+  case "$states" in
+    ""|*OPEN*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+review_cleanup_stale_build_outputs() {
+  local clone candidate rel
+  for clone in "$WORK_DIR"/*-review; do
+    [ -d "$clone/.git" ] || continue
+    while IFS= read -r -d '' candidate; do
+      rel="${candidate#"$clone"/}"
+      # -X is the safety boundary: only ignored, reproducible material goes.
+      # Tracked files under a commonly generated directory (for example a
+      # checked-in dist manifest) and ordinary untracked evidence both stay.
+      git -C "$clone" clean -fdX -- "$rel" >/dev/null 2>&1 || {
+        warn "review: could not clear ignored build output $candidate"
+        continue
+      }
+      [ -e "$candidate" ] || log "review: cleared ignored build output $candidate"
+    done < <(find "$clone" -type d \
+      \( -name node_modules -o -name dist -o -name .next -o -name test-results \) \
+      -print0 -prune 2>/dev/null)
+  done
+  return 0
+}
+
 reclaim_detached_review_worktrees() {
   local candidate top head git_dir common_dir dirt dirt_summary
 
@@ -137,6 +202,9 @@ reclaim_detached_review_worktrees() {
       log "review: preserved detached worktree $candidate; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
       continue
     fi
+    if ! _review_worktree_done "$candidate"; then
+      continue
+    fi
     if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
       continue
     fi
@@ -144,12 +212,17 @@ reclaim_detached_review_worktrees() {
       /^\?\?/ { u++; next }
       NF      { m++ }
       END     { printf "%d modified, %d untracked", m+0, u+0 }')"
+    if [[ "${candidate##*/}" == review-* ]] && [ -n "$dirt" ]; then
+      warn "review: dirty review worktree $candidate is done but not removable ($dirt_summary); leaving it for inspection"
+      continue
+    fi
     if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then
       log "review: reclaimed detached worktree $candidate at $head ($dirt_summary)"
     else
       warn "review: could not reclaim detached worktree $candidate at $head"
     fi
   done < <(find -H "$TREES_DIR" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
+  review_cleanup_stale_build_outputs
   return 0
 }
 
