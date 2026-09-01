@@ -2387,7 +2387,9 @@ cmd_restart() {
 }
 
 box_supports_force_down() {
-  box down --help 2>&1 | grep -q -- '--force'
+  local help
+  help="$(box down --help 2>&1 || true)"
+  grep -q -- '--force' <<<"$help"
 }
 
 cmd_down() {

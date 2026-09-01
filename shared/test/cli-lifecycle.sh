@@ -9,6 +9,9 @@ source "$HERE/lib.sh"
 CLI="$ROOT/cli/crew"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+unset CREW_CONFIG_DIR CREW_EXPECT_OPERATOR_CONFIG
+export XDG_CONFIG_HOME="$TMP/xdg-empty"
+mkdir -p "$XDG_CONFIG_HOME"
 CONF="$TMP/conf"
 SHIM="$TMP/shim"
 STATE="$TMP/state"
