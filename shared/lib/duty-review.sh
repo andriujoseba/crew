@@ -153,6 +153,27 @@ reclaim_detached_review_worktrees() {
   return 0
 }
 
+# Mutation probes are disposable copies, not worktrees and not review records.
+# A reviewer may leave one behind when a later step fails, so the engine owns
+# the cleanup boundary: once that repository's review session returns, every
+# mutation-* sibling it could have created is dead scratch (#606). Restrict the
+# walk to direct children of the rendered review-worktree parent; never follow
+# a symlink and never widen an unresolved path into rm's target set.
+review_cleanup_mutation_copies() { # $1=review-worktree parent
+  local parent candidate
+  parent="$1"
+  [ -d "$parent" ] || return 0
+  while IFS= read -r -d '' candidate; do
+    case "$candidate" in
+      "$parent"/mutation-*) : ;;
+      *) continue ;;
+    esac
+    rm -rf -- "$candidate"
+    log "review: removed mutation copy $candidate"
+  done < <(find "$parent" -mindepth 1 -maxdepth 1 -name 'mutation-*' -print0 2>/dev/null)
+  return 0
+}
+
 # Repos where I author an open PR — read off the sweep's own pulls pages at
 # zero extra API cost (claude-bot's cast#143 fix). Consumed by duty-builder.
 REVIEW_MY_PR_REPOS=""
@@ -528,6 +549,7 @@ $key $updated"
     RUN_SESSION_RC=1
     RUN_SESSION_LOG=""
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
+    review_cleanup_mutation_copies "$TREES_DIR/$slug"
     # Commit exactly the PRs named in this repo's prompt, and only when the
     # session completed. A crash or timeout must retry; a completed session
     # that declined or could not submit must settle until the PR changes.

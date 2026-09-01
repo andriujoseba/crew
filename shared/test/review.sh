@@ -238,6 +238,20 @@ t review-checkout-git-ls-files-succeeds worktree "$r1"
 if grep -Fq mutation- <<<"$D605_GLOB"; then r1=LEAKED; else r1=excluded; fi
 t review-checkout-glob-excludes-mutation-sibling excluded "$r1"
 
+# #606: mutation copies are throwaway probe scaffolding. They are removed by
+# the engine as soon as the review session returns; review worktrees and
+# verdict files beside them are records with separate lifecycles.
+mkdir -p "$D605_PARENT/mutation-7/nested" "$D605_PARENT/review-8"
+touch "$D605_PARENT/mutation-7/nested/broken" \
+  "$D605_PARENT/review-8/keep" "$D605_PARENT/verdict-8-deadbeef.md"
+review_cleanup_mutation_copies "$D605_PARENT" >/dev/null
+t review-mutation-copy-removed-at-session-end gone \
+  "$([ ! -e "$D605_PARENT/mutation-6" ] && [ ! -e "$D605_PARENT/mutation-7" ] && printf gone || printf PRESENT)"
+t review-mutation-cleanup-preserves-review-worktree present \
+  "$([ -e "$D605_PARENT/review-8/keep" ] && printf present || printf MISSING)"
+t review-mutation-cleanup-preserves-verdict-file present \
+  "$([ -e "$D605_PARENT/verdict-8-deadbeef.md" ] && printf present || printf MISSING)"
+
 # #597: a killed review never reaches its prompt-owned cleanup, so the next
 # tick reclaims detached worktrees before dispatch. A deliberately misleading
 # base-* name proves detached HEAD — not naming convention — is the boundary;
