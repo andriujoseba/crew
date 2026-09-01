@@ -9219,7 +9219,9 @@ CI_SHELL_PUSH_PATH_LINE="$(ci_paths_line push "$CI_SHELL")"
 t ci-shell-pull-push-paths-are-identical "$CI_SHELL_PUSH_PATH_LINE" "$CI_SHELL_PR_PATH_LINE"
 CI_UNION="$(printf '%s\n%s\n' "$CI_SHELL_PR_PATHS" "$CI_FLOOR_PR_PATHS")"
 t ci-path-union-preserves-coverage "$CI_EXPECTED" "$(printf '%s\n' "$CI_UNION" | sort -u)"
-CI_OVERLAP="$(comm -12 <(printf '%s\n' "$CI_SHELL_PR_PATHS") <(printf '%s\n' "$CI_FLOOR_PR_PATHS"))"
+CI_OVERLAP="$(LC_ALL=C comm -12 \
+  <(printf '%s\n' "$CI_SHELL_PR_PATHS" | LC_ALL=C sort -u) \
+  <(printf '%s\n' "$CI_FLOOR_PR_PATHS" | LC_ALL=C sort -u))"
 t ci-path-overlap-covers-floor-and-its-self-edit \
   $'.github/workflows/ci-floor.yml\nfleet-floor/**' "$CI_OVERLAP"
 case "$CI_SHELL_PR_PATHS" in *'.ceremony/**'*) r1=present ;; *) r1=MISSING ;; esac
