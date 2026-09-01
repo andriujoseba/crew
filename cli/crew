@@ -2260,6 +2260,7 @@ cmd_up() {
 # session (#588 D3).
 drain_probe() {
   local record
+  # shellcheck disable=SC2016  # HOME/lock variables expand inside the box
   record="$(bxn "$1" '
     lock="$HOME/duty/.duty.lock"
     since="$HOME/duty/.duty.lock.since"
@@ -2283,12 +2284,14 @@ drain_probe() {
 
 box_free_kb() {
   local free
+  # shellcheck disable=SC2016  # TMPDIR expands inside the box
   free="$(bxn "$1" 'df -Pk "${TMPDIR:-/tmp}" 2>/dev/null | tail -1 | tr -s " " | cut -d" " -f4' \
     2>/dev/null | tr -d '\r' | tail -1 || true)"
   case "$free" in ''|*[!0-9]*) return 1 ;; *) printf '%s\n' "$free" ;; esac
 }
 
 clear_stale_duty_snapshots() {
+  # shellcheck disable=SC2016  # TMPDIR expands inside the box
   bxn "$1" '
     tmp="${TMPDIR:-/tmp}"
     find "$tmp" -maxdepth 1 -type f -name "duty-snapshot.*" -mmin +5 -delete
@@ -2331,7 +2334,7 @@ cmd_restart() {
   need_box
   local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" arg name probe state age
   local restarted=0 skipped=0 failed=0 skipped_names="" failed_names=""
-  local -a named=() targets=()
+  local -a named=() restart_targets=()
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --all) all=1; shift ;;
@@ -2345,13 +2348,13 @@ cmd_restart() {
   if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
   require_operator_config "crew restart"
-  if [ "$all" -eq 1 ]; then mapfile -t targets < <(roster_names); else targets=("${named[@]}"); fi
+  if [ "$all" -eq 1 ]; then mapfile -t restart_targets < <(roster_names); else restart_targets=("${named[@]}"); fi
   if [ -t 0 ]; then
     printf 'restart plan (%sh force-after):' "$force_hours"
-    printf ' %s' "${targets[@]}"
+    printf ' %s' "${restart_targets[@]}"
     printf '\n'
   fi
-  for name in "${targets[@]}"; do
+  for name in "${restart_targets[@]}"; do
     if ! box_exists "$name"; then
       echo "  $name: not present — restart FAILED"
       failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"
@@ -2429,7 +2432,7 @@ cmd_down() {
     fi
     if [ "${state:-}" != failed ]; then state="$(box_state "$name")"; fi
     if [ "$state" = stopped ]; then
-      echo "  $name: stopped${force:+}"
+      echo "  $name: stopped"
       stopped=$((stopped + 1))
     else
       echo "  down FAILED on $name${state:+ (state: $state)}"
