@@ -844,6 +844,8 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         u["note"] = "LIMITED — %s lane, %s for %s" % (
             limited["lane"], limited["reason"], fmt_dur(limited["age"])
         )
+        if limited.get("reset"):
+            u["note"] += " — %s" % limited["reset"]
     elif u["lock"]["stuck"]:
         # Still "working": the box is alive, cron is ticking, and a session
         # genuinely is running — every one of those is true and none of them is

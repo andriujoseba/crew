@@ -72,7 +72,9 @@ body.floor .hud{display:none}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
 .fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
 .fev .ago{color:#46566a;flex:none;min-width:34px}
-.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .noop{color:#d99a5e}.fev .kd{flex:none}
+.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .terminal{color:#ff5147}.fev .noop{color:#d99a5e}.fev .kd{flex:none}
+.limitfeed{border-top:1px solid #142230;margin-top:8px;padding-top:7px;font-family:var(--mono);font-size:9.5px;color:#7d8ba0}
+.limitfeed .lev{display:flex;gap:7px;margin-top:4px}.limitfeed .sev-error{color:#ff5147}.limitfeed .sev-warn{color:#f7bd4e}.limitfeed .drop{color:#ff8a7c;margin-top:5px}
 .fev.k-build .kd{color:#f7bd4e}.fev.k-review .kd{color:#5cb4ff}.fev.k-triage .kd{color:#c98bff}
 .qchips{display:flex;flex-wrap:wrap;gap:5px}
 .qc{font-family:var(--mono);font-size:9.5px;padding:3px 7px;border-radius:5px;border-left:2px solid;background:#0c1420;color:#9fb2c6}

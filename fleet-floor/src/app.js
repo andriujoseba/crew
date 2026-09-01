@@ -1266,6 +1266,7 @@ function alertOf(u){
   if(d.ping&&d.ping.wedged)return "UNREACHABLE";
   if(d.lock&&d.lock.stuck)return "STUCK";
   if(d.authfail&&d.authfail.length)return "AUTH";
+  if(d.limited)return "LIMITED";
   return "";
 }
 /* stoppedWord DATA — why this box is not ticking, or "" if nobody stopped it.
@@ -1295,6 +1296,7 @@ function stoppedWord(d){
    Keeping dataOf() here also keeps paused/disarmed out of the live ROSTER
    projection, where those fields do not exist. */
 function fleetState(u){
+  if(LIVE&&dataOf(UNITID(u),u.room).limited)return "limited";
   if(u.state==="working")return "working";
   if(u.state==="suppressed")return "suppressed";
   if(u.state!=="offline")return "idle";
@@ -1312,7 +1314,7 @@ function matchedFloorUnits(){return ROSTER.filter(matchesFloorFilter);}
    that disagreed about what SILENT means would be worse than one that was
    wrong. */
 function fleetCounts(){
-  var c={working:0,idle:0,suppressed:0,disarmed:0,silent:0};
+  var c={working:0,idle:0,suppressed:0,limited:0,disarmed:0,silent:0};
   ROSTER.forEach(function(u){c[fleetState(u)]++;});
   return c;
 }
@@ -1323,6 +1325,7 @@ function stageCounts(){
   var c=fleetCounts();
   var stat=[[c.silent+" SILENT","#ff5147"],[c.idle+" IDLE","#5fce9b"],[c.working+" WORKING","#f7bd4e"]];
   if(c.suppressed)stat.splice(1,0,[c.suppressed+" SUPPRESSED","#f28b54"]);
+  if(c.limited)stat.splice(1,0,[c.limited+" LIMITED","#ff5147"]);
   /* Only when non-zero, on the ALERT counter's rule below: a permanent
      "0 DISARMED" is furniture. SILENT stays unconditional either way — an
      operator reading a calm fleet is entitled to see the alarm counter sitting
@@ -1423,7 +1426,7 @@ function queueChip(q){
 }
 function fmtDur(s){if(s===null||s===undefined)return "—";s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
 function sessionRc(s){return s.rc===null||s.rc===undefined?"-":s.rc;}
-function sessionClass(s){return s.rc===null||s.rc===undefined||s.rc?"cr":s.acted==="no"?"noop":"ok";}
+function sessionClass(s){return s.out==="TERMINAL"?"terminal":s.rc===null||s.rc===undefined||s.rc?"cr":s.acted==="no"?"noop":"ok";}
 /* peak_rss= arrives in KiB and is absent whenever the engine did not measure
    the session (#473). Absent is not zero: `!k` renders the same em dash the
    other unmeasured rows use, so a box whose kernel reports no VmHWM reads as
@@ -1500,7 +1503,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false,ceiling:null,bound:null},authfail:[],vitals:null,tickHealth:null};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false,ceiling:null,bound:null},authfail:[],limited:null,floorEvents:[],limitDropped:null,vitals:null,tickHealth:null};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1569,6 +1572,8 @@ function liveData(u){
   d.tickHealth=u.tick_health||null;
   d.suppression=u.suppression||{active:false,age:null,kind:"",key:""};
   d.authfail=u.authfail||[];
+  d.limited=u.limited||null;d.floorEvents=u.floor_events||[];
+  d.limitDropped=u.limit_dropped===undefined?null:u.limit_dropped;
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
   /* #189 gave the collector this flag and nothing here read it, so every
      deliberately-stopped box came through as a bare state:"offline" and got
@@ -1855,7 +1860,8 @@ function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dat
   var hire=hidden>0?tl(ROSTER.length,"hired","#8aa0b8",false,
     hidden+(hidden===1?" declared box has":" declared boxes have")
     +" no console: not hired — crew hire <box>"):"";
-  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.suppressed,"suppressed","#f28b54",ct.suppressed>0)+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
+  var limited=ct.limited?tl(ct.limited,"limited","#ff5147",true):"";
+  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.suppressed,"suppressed","#f28b54",ct.suppressed>0)+limited+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
@@ -1953,7 +1959,14 @@ function populateDash(){
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
   d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s);sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
-  document.getElementById("w-sessions").innerHTML=sh+'</div>';
+  sh+='</div>';
+  if(d.floorEvents.length||d.limitDropped){
+    sh+='<div class="limitfeed"><div>OPERATING LIMIT EVENTS</div>';
+    d.floorEvents.forEach(function(e){sh+='<div class="lev"><span class="sev-'+esc(e.severity)+'">'+esc(e.severity.toUpperCase())+'</span><span>'+esc(e.name)+' '+e.measured+'/'+e.limit+' · '+esc(e.subject)+' · '+esc(e.cause)+'</span></div>';});
+    if(d.limitDropped)sh+='<div class="drop">'+d.limitDropped+' older event'+(d.limitDropped===1?'':'s')+' dropped by retention</div>';
+    sh+='</div>';
+  }
+  document.getElementById("w-sessions").innerHTML=sh;
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
   /* Follows d.paused, not the working state: an idle but unpaused box was
@@ -6733,6 +6746,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      is active. Return the boxes the shipped predicate currently leaves
      matched, not a test-side reconstruction of the classification. */
   matched:function(){return matchedFloorUnits().map(UNITID);},
+  alert:function(box){var u=ROSTER.filter(function(x){return UNITID(x)===box;})[0];return u?alertOf(u):"";},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
   /* The SHIPPED confirm sentence for Restart AND the mode it authorises, over
