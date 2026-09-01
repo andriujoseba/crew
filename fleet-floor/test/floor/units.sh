@@ -21,6 +21,20 @@ t "fleet: carries the serving host's exact version string" "$FLOOR_TEST_VERSION"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
 t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"
+t "limited: terminal session publishes current state" terminal \
+  "$(uf ff-limited-terminal "u['limited']['reason']")"
+t "limited: terminal session carries lane" build \
+  "$(uf ff-limited-terminal "u['limited']['lane']")"
+t "limited: reset banner is display data" "resets at 18:00 UTC" \
+  "$(uf ff-limited-terminal "u['limited']['reset']")"
+t "limited: terminal breaker survives without terminal session" terminal-breaker \
+  "$(uf ff-limited-breaker "u['limited']['reason']")"
+t "limited: budget remains distinguishable" budget \
+  "$(uf ff-limited-budget "u['limited']['reason']")"
+t "limited: newer successful session clears state" False \
+  "$(uf ff-limited-recovered "'limited' in u")"
+t "limited: healthy box carries no compatibility furniture" False \
+  "$(uf ff-working "'limited' in u")"
 t "state: breaker stop -> suppressed" suppressed "$(uf ff-suppressed "u['state']")"
 t "suppressed: carries age and reason" True \
   "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"

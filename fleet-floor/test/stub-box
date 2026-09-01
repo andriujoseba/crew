@@ -290,6 +290,20 @@ emit_probe() {
       echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved acted=yes reply_tail= tier=default peak_rss=3588324"
       echo "$(ago 190) duty run end"
       ;;
+    limited-terminal)
+      echo "$(ago 180) SESSION END kind=build key=crew#611 rc=1 dur=30s outcome=TERMINAL acted=no reply_tail=$(printf 'resets at 18:00 UTC' | base64 -w0)"
+      ;;
+    limited-breaker)
+      echo "$(ago 180) SESSION END kind=review key=crew#610 rc=0 dur=30s outcome=ok"
+      echo "$(ago 120) SESSION SKIP kind=review key=crew#611 reason=terminal-breaker count=3"
+      ;;
+    limited-budget)
+      echo "$(ago 90) SESSION SKIP kind=triage key=board reason=budget count=1"
+      ;;
+    limited-recovered)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=0 dur=30s outcome=ok"
+      ;;
     silent|suppressed-silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"

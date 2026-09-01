@@ -30,6 +30,7 @@ RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)"
                       r"(?:.*? timeout=(\d+)s(?:\s|$))?")
 RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
+RE_SKIP = re.compile(TS + r" SESSION SKIP kind=(\S+) key=(\S+) reason=(\S+)")
 # peak_rss= is read by its own pattern rather than by another optional group on
 # RE_END, and the reason is what RE_END already survived: the engine appends
 # new fields past reply_tail (tier=, and started= on a reconstructed terminal),
@@ -265,6 +266,51 @@ def derive_sessions(loglines, now, clock_offset=0):
             cur = {"key": o["key"], "kind": o["kind"], "start": int(o["ts"]),
                    "timeout": o["timeout"]}
     return done, cur
+
+
+def derive_limited(loglines, floor_events, now, clock_offset=0):
+    """Newest per-lane engine evidence -> the current LIMITED record, if any."""
+    lanes = {}
+    for line in loglines:
+        ended = RE_END.search(line)
+        skipped = RE_SKIP.search(line)
+        if ended:
+            ts = parse_ts(ended.group(1)) + clock_offset
+            lanes[ended.group(2)] = {
+                "ts": ts, "lane": ended.group(2),
+                "reason": "terminal" if ended.group(6) == "TERMINAL" else "",
+                "reset": "",
+            }
+            if ended.group(6) == "TERMINAL":
+                try:
+                    lanes[ended.group(2)]["reset"] = base64.b64decode(
+                        ended.group(8) or "", validate=True
+                    ).decode("utf-8", "replace")
+                except (ValueError, TypeError):
+                    pass
+        elif skipped and skipped.group(4) in ("terminal-breaker", "budget"):
+            lanes[skipped.group(2)] = {
+                "ts": parse_ts(skipped.group(1)) + clock_offset,
+                "lane": skipped.group(2), "reason": skipped.group(4), "reset": "",
+            }
+    candidates = [item for item in lanes.values() if item["reason"]]
+    for event in floor_events:
+        candidates.append({
+            "ts": parse_ts(event["timestamp"]), "lane": "engine",
+            "reason": event["name"], "reset": "", "event": event["id"],
+        })
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda item: item["ts"])
+    result = {
+        "state": "limited", "reason": latest["reason"],
+        "age": max(0, int(now - latest["ts"])), "lane": latest["lane"],
+    }
+    if latest.get("reset"):
+        result["reset"] = latest["reset"]
+    if latest.get("event"):
+        result["event"] = latest["event"]
+    return result
 
 
 # The engine's kill grace, from shared/lib/common/operating-limits.sh:18
@@ -728,6 +774,11 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
             1, math.ceil((probe_finished - probe_started) / 2 + 1)
         )
     sessions, cur = derive_sessions(loglines, now, clock_offset)
+    limited = derive_limited(loglines, u["floor_events"], now, clock_offset)
+    if limited is not None:
+        # Deliberately absent, rather than false, where no current evidence
+        # exists or the box predates these records.
+        u["limited"] = limited
     u["queue"] = derive_queue(loglines)
     # Not measured here and not measured by probe.sh either — the tick
     # measured it, both readers quote it (#483 D1). None on a box whose engine
@@ -788,6 +839,11 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # being inferred from a queue that quietly stopped moving.
         u["state"] = "idle"
         u["note"] = "AUTH BLOCKED — %s" % "; ".join(u["authfail"])
+    elif limited:
+        u["state"] = "idle"
+        u["note"] = "LIMITED — %s lane, %s for %s" % (
+            limited["lane"], limited["reason"], fmt_dur(limited["age"])
+        )
     elif u["lock"]["stuck"]:
         # Still "working": the box is alive, cron is ticking, and a session
         # genuinely is running — every one of those is true and none of them is

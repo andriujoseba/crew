@@ -2,6 +2,10 @@
 # test/run.sh runs, so these tests do not drift when the real roster changes.
 ff-working    claude  builder
 ff-idle       claude  reviewer
+ff-limited-terminal claude builder
+ff-limited-breaker codex reviewer
+ff-limited-budget grok triage
+ff-limited-recovered kimi builder
 ff-suppressed claude  builder
 ff-supp-silent claude  builder
 ff-supp-unknown claude  builder

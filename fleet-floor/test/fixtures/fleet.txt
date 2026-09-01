@@ -5,6 +5,10 @@
 # that matters.
 ff-working     running  working
 ff-idle        running  idle
+ff-limited-terminal running limited-terminal
+ff-limited-breaker running limited-breaker
+ff-limited-budget running limited-budget
+ff-limited-recovered running limited-recovered
 ff-suppressed  running  suppressed
 ff-supp-silent running suppressed-silent
 ff-supp-unknown running suppressed-unknown
