@@ -46,8 +46,11 @@ awk '
 ' "$DUTYSH" >"$GATE"
 t gate-block-extracted found \
   "$(grep -q 'boot check' "$GATE" && echo found || echo MISSING)"
+# A here-string, not `tail | grep -q`: under pipefail that shape reds on the
+# producer's SIGPIPE when grep exits early, and #449's guard reds on writing it
+# at all.
 t gate-block-is-the-whole-branch found \
-  "$(tail -1 "$GATE" | grep -qx 'fi' && echo found || echo MISSING)"
+  "$(grep -qx 'fi' <<<"$(tail -1 "$GATE")" && echo found || echo MISSING)"
 
 # run_gate <dir> <probe-rc> -> the gate's stdout, i.e. what reaches duty.log
 #
