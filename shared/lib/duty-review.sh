@@ -162,7 +162,7 @@ review_cleanup_stale_build_outputs() {
       rel="${candidate#"$clone"/}"
       # -X is the safety boundary: only ignored, reproducible material goes.
       # Tracked files under a commonly generated directory (for example a
-      # checked-in dist manifest) and ordinary untracked evidence both stay.
+      # checked-in dist metadata) and ordinary untracked evidence both stay.
       git -C "$clone" clean -fdX -- "$rel" >/dev/null 2>&1 || {
         warn "review: could not clear ignored build output $candidate"
         continue
