@@ -1260,14 +1260,16 @@ function drawFloor(t){
    2 in this repo's own suite — so the badge and the control that escalates
    on the same fact could disagree, and did (#486). There is deliberately no
    threshold constant left in this file to drift again. */
-function alertOf(u){
-  if(!LIVE)return "";
-  var d=dataOf(UNITID(u),u.room);
+function alertData(d){
   if(d.ping&&d.ping.wedged)return "UNREACHABLE";
   if(d.lock&&d.lock.stuck)return "STUCK";
   if(d.authfail&&d.authfail.length)return "AUTH";
   if(d.limited)return "LIMITED";
   return "";
+}
+function alertOf(u){
+  if(!LIVE)return "";
+  return alertData(dataOf(UNITID(u),u.room));
 }
 /* stoppedWord DATA — why this box is not ticking, or "" if nobody stopped it.
    SILENT is an alarm: "this box should be ticking and is not". #189 taught the
@@ -6747,6 +6749,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      matched, not a test-side reconstruction of the classification. */
   matched:function(){return matchedFloorUnits().map(UNITID);},
   alert:function(box){var u=ROSTER.filter(function(x){return UNITID(x)===box;})[0];return u?alertOf(u):"";},
+  alertData:function(d){return alertData(d);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
   /* The SHIPPED confirm sentence for Restart AND the mode it authorises, over

@@ -268,7 +268,7 @@ def derive_sessions(loglines, now, clock_offset=0):
     return done, cur
 
 
-def derive_limited(loglines, floor_events, now, clock_offset=0):
+def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engine"):
     """Newest per-lane engine evidence -> the current LIMITED record, if any."""
     lanes = {}
     for line in loglines:
@@ -276,27 +276,32 @@ def derive_limited(loglines, floor_events, now, clock_offset=0):
         skipped = RE_SKIP.search(line)
         if ended:
             ts = parse_ts(ended.group(1)) + clock_offset
-            lanes[ended.group(2)] = {
+            item = {
                 "ts": ts, "lane": ended.group(2),
                 "reason": "terminal" if ended.group(6) == "TERMINAL" else "",
                 "reset": "",
             }
             if ended.group(6) == "TERMINAL":
                 try:
-                    lanes[ended.group(2)]["reset"] = base64.b64decode(
+                    item["reset"] = base64.b64decode(
                         ended.group(8) or "", validate=True
                     ).decode("utf-8", "replace")
                 except (ValueError, TypeError):
                     pass
+            if ts >= lanes.get(ended.group(2), {}).get("ts", 0):
+                lanes[ended.group(2)] = item
         elif skipped and skipped.group(4) in ("terminal-breaker", "budget"):
-            lanes[skipped.group(2)] = {
-                "ts": parse_ts(skipped.group(1)) + clock_offset,
+            ts = parse_ts(skipped.group(1)) + clock_offset
+            item = {
+                "ts": ts,
                 "lane": skipped.group(2), "reason": skipped.group(4), "reset": "",
             }
+            if ts >= lanes.get(skipped.group(2), {}).get("ts", 0):
+                lanes[skipped.group(2)] = item
     candidates = [item for item in lanes.values() if item["reason"]]
     for event in floor_events:
         candidates.append({
-            "ts": parse_ts(event["timestamp"]), "lane": "engine",
+            "ts": parse_ts(event["timestamp"]), "lane": event_lane,
             "reason": event["name"], "reset": "", "event": event["id"],
         })
     if not candidates:
@@ -774,7 +779,8 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
             1, math.ceil((probe_finished - probe_started) / 2 + 1)
         )
     sessions, cur = derive_sessions(loglines, now, clock_offset)
-    limited = derive_limited(loglines, u["floor_events"], now, clock_offset)
+    limited = derive_limited(loglines, u["floor_events"], now, clock_offset,
+                             unit.get("room", "engine"))
     if limited is not None:
         # Deliberately absent, rather than false, where no current evidence
         # exists or the box predates these records.

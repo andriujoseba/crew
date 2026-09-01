@@ -323,7 +323,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const stateChipWords = await page.locator('.fchip[data-f="state"]').evaluateAll((chips) =>
     chips.map((c) => c.textContent.trim()));
   eq('filter: state chips mirror the tile vocabulary',
-     JSON.stringify(['All', 'Working', 'Idle', 'Suppressed', 'Disarmed', 'Silent']),
+     JSON.stringify(['All', 'Working', 'Idle', 'Suppressed', 'Limited', 'Disarmed', 'Silent']),
      JSON.stringify(stateChipWords));
 
   if (LIVE && FIXTURE) {
@@ -345,6 +345,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     }
     const silentMatches = await stateMatches('silent');
     const suppressedMatches = await stateMatches('suppressed');
+    const limitedMatches = await stateMatches('limited');
     const allMatches = await stateMatches('all');
     const trio = ['ff-disarmed', 'ff-paused', 'ff-silent'];
     const amongTrio = (set) => set.filter((box) => trio.includes(box));
@@ -355,6 +356,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        JSON.stringify(['ff-silent']), JSON.stringify(amongTrio(silentMatches)));
     eq('filter: Suppressed selects the breaker-stopped fixture',
        JSON.stringify(['ff-suppressed']), JSON.stringify(suppressedMatches));
+    eq('filter: Limited selects every current limit fixture',
+       JSON.stringify(['ff-idle', 'ff-lim-breaker', 'ff-lim-budget', 'ff-lim-terminal']),
+       JSON.stringify(limitedMatches));
     eq('filter: All keeps all three offline fixtures reachable',
        JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));
     const stateTiles = await page.locator('#tiles .tile').evaluateAll((tiles) =>
@@ -369,6 +373,16 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        silentMatches.length, tileNumber('silent'));
     eq('filter: Suppressed chip and tile count the same boxes',
        suppressedMatches.length, tileNumber('suppressed'));
+    eq('filter: Limited chip and tile count the same boxes',
+       limitedMatches.length, tileNumber('limited'));
+    eq('limited: terminal evidence is shouted from the god-view', 'LIMITED',
+       await page.evaluate(() => window.FLOORDEV.alert('ff-lim-terminal')));
+    eq('limited: AUTH outranks LIMITED', 'AUTH', await page.evaluate(() =>
+      window.FLOORDEV.alertData({ping:null,lock:null,authfail:['vendor: rejected'],limited:{}})));
+    eq('limited: STUCK outranks AUTH and LIMITED', 'STUCK', await page.evaluate(() =>
+      window.FLOORDEV.alertData({ping:null,lock:{stuck:true},authfail:['vendor: rejected'],limited:{}})));
+    eq('limited: UNREACHABLE outranks every lower alert', 'UNREACHABLE', await page.evaluate(() =>
+      window.FLOORDEV.alertData({ping:{wedged:true},lock:{stuck:true},authfail:['x'],limited:{}})));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });
@@ -376,6 +390,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const disarmedMatches = await stateMatches('disarmed');
     const silentMatches = await stateMatches('silent');
     const suppressedMatches = await stateMatches('suppressed');
+    const limitedMatches = await stateMatches('limited');
     const allMatches = await stateMatches('all');
     eq('demo: Disarmed selects no preview unit', JSON.stringify([]),
        JSON.stringify(disarmedMatches));
@@ -383,6 +398,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        JSON.stringify(['kimi-reviewer']), JSON.stringify(silentMatches));
     eq('demo: Suppressed selects no preview unit', JSON.stringify([]),
        JSON.stringify(suppressedMatches));
+    eq('demo: Limited selects no preview unit', JSON.stringify([]),
+       JSON.stringify(limitedMatches));
+    ok('demo: no zero LIMITED tile is rendered', !/limited/i.test(tilesText), tilesText);
     eq('demo: All restores every preview unit', 7, allMatches.length);
   }
   /* ...and the hired tile is the "visible count rather than a silent omission"
@@ -742,6 +760,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       // ever see.
       headline: ((await page.locator('#w-id .pill').textContent()) || '').trim(),
       fl: (await page.locator('#fl').textContent()).trim(),
+      sessions: (await page.locator('#w-sessions').textContent()).replace(/\s+/g, ' '),
+      terminalRows: await page.locator('#w-sessions .terminal').count(),
     });
     await leave();
   }
@@ -842,6 +862,16 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     }
   }
   if (LIVE && FIXTURE) {
+    const terminal = allSeen.find((u) => /ff-lim-terminal/.test(u.box));
+    ok('limited: terminal session has its own rendered class',
+       !!terminal && terminal.terminalRows > 0,
+       terminal ? terminal.sessions : 'terminal fixture not reached');
+    const eventUnit = allSeen.find((u) => /ff-idle/.test(u.box));
+    ok('limited: floor events render on the unit console without an alert channel',
+       !!eventUnit && /OPERATING LIMIT EVENTS/.test(eventUnit.sessions)
+         && /github_connection_nodes/.test(eventUnit.sessions)
+         && /fixture-payload/.test(eventUnit.sessions),
+       eventUnit ? eventUnit.sessions : 'event fixture not reached');
     // The exact-constant half of the engine assertion above. The stub stamps
     // `crew@0.4.1 (deadbee)` (test/stub-box:84), so this is the one run where
     // provenance-stripping can be checked against a KNOWN input: the version
