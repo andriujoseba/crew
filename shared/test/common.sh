@@ -9194,6 +9194,16 @@ ci_paths() {
     | tr ',' '\n' | tr -d " '\"" | sed '/^$/d' | sort -u
 }
 
+ci_paths_line() {
+  trigger="$1"
+  workflow="$2"
+  awk -v trigger="$trigger" '
+    $0 == "  " trigger ":" { in_trigger = 1; next }
+    in_trigger && /^  [[:alnum:]_-]+:/ { exit }
+    in_trigger && /^    paths: \[/ { print; exit }
+  ' "$workflow"
+}
+
 # The old filter's product paths survive across the union. Its deleted
 # self-path is replaced by both new workflows' paths. ci-floor.yml also routes
 # to ci-shell so edits to that workflow run the assertions below; it is the one
@@ -9204,6 +9214,9 @@ CI_EXPECTED="$(printf '%s\n' \
   'cli/**' 'dist/**' 'drill/**' 'examples/**' 'fleet-floor/**' 'install.sh' 'shared/**' | sort)"
 CI_SHELL_PR_PATHS="$(ci_paths pull_request "$CI_SHELL")"
 CI_FLOOR_PR_PATHS="$(ci_paths pull_request "$CI_FLOOR")"
+CI_SHELL_PR_PATH_LINE="$(ci_paths_line pull_request "$CI_SHELL")"
+CI_SHELL_PUSH_PATH_LINE="$(ci_paths_line push "$CI_SHELL")"
+t ci-shell-pull-push-paths-are-identical "$CI_SHELL_PUSH_PATH_LINE" "$CI_SHELL_PR_PATH_LINE"
 CI_UNION="$(printf '%s\n%s\n' "$CI_SHELL_PR_PATHS" "$CI_FLOOR_PR_PATHS")"
 t ci-path-union-preserves-coverage "$CI_EXPECTED" "$(printf '%s\n' "$CI_UNION" | sort -u)"
 CI_OVERLAP="$(comm -12 <(printf '%s\n' "$CI_SHELL_PR_PATHS") <(printf '%s\n' "$CI_FLOOR_PR_PATHS"))"
@@ -9222,6 +9235,8 @@ case "$ci_shell_paths" in *'cli/**'*) r1=present ;; *) r1=MISSING ;; esac
 t ci-cli-routes-to-shell present "$r1"
 case "$CI_FLOOR_PR_PATHS" in *'fleet-floor/**'*) r1=floor ;; *) r1=MISSING ;; esac
 t ci-fleet-floor-routes-to-floor floor "$r1"
+case "$CI_SHELL_PR_PATHS" in *'fleet-floor/**'*) r1=whole-tree ;; *) r1=MISSING ;; esac
+t ci-fleet-floor-whole-tree-routes-to-shell whole-tree "$r1"
 if grep -q 'fleet-floor/test/run.sh --no-browser' "$CI_SHELL"; then r1=covered; else r1=DROPPED; fi
 t ci-shell-runs-floor-cli-fixtures covered "$r1"
 if grep -Eq 'paths-filter|filter-changes|changes:' "$CI_SHELL" "$CI_FLOOR"; then r1=BILLED; else r1=native; fi

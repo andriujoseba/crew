@@ -4,9 +4,9 @@ on:
     # Naming types replaces GitHub's defaults; ready_for_review is what makes
     # the draft gate below wake at the head the panel will review.
     types: [opened, synchronize, reopened, ready_for_review]
-    paths: ['shared/**', 'cli/**', 'drill/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/ci-shell.yml', '.github/workflows/ci-floor.yml']
-  # Main keeps the pre-split invariant: both halves run after every relevant
-  # merge, using the former workflow's full filter on each half.
+    paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/ci-shell.yml', '.github/workflows/ci-floor.yml']
+  # Both triggers keep the full pre-split filter: shared/test/run.sh carries
+  # repo-wide and cross-reader guards that police fleet-floor changes too.
   push:
     branches: [main]
     paths: ['shared/**', 'cli/**', 'drill/**', 'fleet-floor/**', 'examples/**', 'install.sh', 'dist/**', '.ceremony/**', '.github/workflows/ci-shell.yml', '.github/workflows/ci-floor.yml']
