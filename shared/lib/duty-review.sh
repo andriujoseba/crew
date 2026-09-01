@@ -241,8 +241,11 @@ review_cleanup_mutation_copies() { # $1=review-worktree parent
       "$parent"/mutation-*) : ;;
       *) continue ;;
     esac
-    rm -rf -- "$candidate"
-    log "review: removed mutation copy $candidate"
+    if rm -rf -- "$candidate"; then
+      log "review: removed mutation copy $candidate"
+    else
+      warn "review: could not remove mutation copy $candidate"
+    fi
   done < <(find "$parent" -mindepth 1 -maxdepth 1 -name 'mutation-*' -print0 2>/dev/null)
   return 0
 }
