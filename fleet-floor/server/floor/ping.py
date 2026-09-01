@@ -65,11 +65,28 @@ PING_FAILS_TO_WEDGE = int(os.environ.get("CREW_FLOOR_PING_FAILS", "3"))
 PING_STALE_AFTER_S = int(os.environ.get(
     "CREW_FLOOR_PING_STALE_AFTER", str(PING_INTERVAL_S * (PING_FAILS_TO_WEDGE + 2))))
 
-# A duty run holding its lock this long is reported as stuck. Two tick
-# boundaries, the same number the SILENT rule uses — past it, tick.sh is
-# logging "previous run still holds the lock" every 5 minutes and the box looks
-# perfectly healthy while doing nothing. run_session's own ceiling is 1800s, so
-# this surfaces the wedge ~20 minutes before the timeout resolves it.
+# The bound for a lock held with NOTHING IN FLIGHT: a duty run stalled between
+# dispatches, which has no session ceiling to exceed. Two tick boundaries, the
+# same number the SILENT rule uses — past it, tick.sh is logging "previous run
+# still holds the lock" every 5 minutes and the box looks perfectly healthy
+# while doing nothing.
+#
+# It is NOT the bound for a run with a session in flight, and the claim that
+# used to stand here is the bug #610 fixes: *"run_session's own ceiling is
+# 1800s, so this surfaces the wedge ~20 minutes before the timeout resolves
+# it."* `run_session` has no ceiling of its own — session.sh passes the
+# CALLER's `$tmo` to `timeout` — and 1800 is merely what three of the seven
+# lanes happen to pass. The four that pass more (`build` and `resume` at
+# 3600s, `hygiene` at 3000s, `review` at 2700s) were being called stuck at
+# minute 10 for spending time they were dispatched to spend, and the badge
+# that fired also HIDES the running-session panel. An alarm that is usually
+# wrong is one an operator learns to scroll past.
+#
+# So the in-flight bound is the ceiling the session itself declares on its
+# `SESSION START`, read off duty.log by `units.stuck_verdict`, which owns the
+# whole decision. This number remains that function's second clause and its
+# fallback for a record carrying no `timeout=` token, which is what
+# `CREW_FLOOR_STUCK_AFTER` still tunes.
 STUCK_AFTER_S = int(os.environ.get("CREW_FLOOR_STUCK_AFTER", str(SILENT_AFTER_S)))
 
 

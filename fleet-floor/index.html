@@ -1779,7 +1779,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false},authfail:[],vitals:null,tickHealth:null};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false,ceiling:null,bound:null},authfail:[],vitals:null,tickHealth:null};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1837,7 +1837,7 @@ function liveData(u){
      than assigned straight through: a collector older than these fields, or a
      unit built from the error path, must render as "not known" and never as a
      missing-property crash mid-draw. */
-  d.ping=u.ping||null;d.lock=u.lock||{held:null,stuck:false};
+  d.ping=u.ping||null;d.lock=u.lock||{held:null,stuck:false,ceiling:null,bound:null};
   /* #483 — the box vitals record, parsed by the collector off the same
      duty.log line `crew status` reads. `null` on a collector older than the
      field AND on a box whose engine is older than the probe, which is the
@@ -2219,7 +2219,7 @@ function populateDash(){
      busy — and it has been holding the same lock for longer than two tick
      boundaries. Showing the elapsed timer alone reads as healthy progress.
      No progress bar here either; there is no progress to draw. */
-  else if(LIVE&&d.lock&&d.lock.stuck)cs+='<div class="big" id="cur-el" style="color:#ff5147">'+fmtDur(d.lock.held)+'</div><div class="task" id="cur-stuck" style="color:#ff8a7c">STUCK · lock held '+fmtDur(d.lock.held)+(d.cur?' · '+esc(d.kind)+' '+esc(d.cur.key):'')+'</div>';
+  else if(LIVE&&d.lock&&d.lock.stuck)cs+='<div class="big" id="cur-el" style="color:#ff5147">'+fmtDur(d.lock.held)+'</div><div class="task" id="cur-stuck" style="color:#ff8a7c">'+stuckLine(d)+'</div>';
   else if(suppressed)cs+='<div class="big" style="color:#f28b54">SUPPRESSED</div><div class="task">'+esc(d.note||"zero-action resume breaker")+'</div>';
   else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+esc(d.kind)+' · '+esc(d.cur.key)+'</div><div class="pbar"><i></i></div>';
   else cs+='<div class="big" style="color:#5fce9b">STANDBY</div><div class="task">idle · awaiting next tick</div>';
@@ -2247,6 +2247,28 @@ function updateCurrent(){if(VIEW!=="room"||STATE!=="working")return;var d=dataOf
      count the thing that is wrong. */
   if(LIVE&&d.lock&&d.lock.stuck){el.textContent=fmtDur(d.lock.held+Math.floor((Date.now()-LASTPOLL)/1000));return;}
   if(!d.cur)return;el.textContent=fmtDur(Math.floor(Date.now()/1000)-d.cur.start);}
+/* The STUCK panel's sub-line, and it NAMES THE BOUND (#610). An age alone
+   cannot tell an operator a wedge from a threshold somebody raised: "held 62m"
+   is alarming until you know the lane was entitled to 60, and it is nothing at
+   all until you know it was entitled to 10. The bound came from the collector
+   with the verdict — `units.stuck_verdict` decided both — so the page spells no
+   threshold of its own here, the rule this file already follows for
+   `ping.wedged`.
+
+   Three shapes, matching the three the collector's own note has, because the
+   note and the panel are read by the same operator about the same box:
+     · a ceiling was declared — name the lane and its ceiling
+     · nothing in flight — say so, and name STUCK_AFTER_S
+     · in flight, ceiling unknown (a box older than the `timeout=` token) —
+       today's sentence unchanged, because there is no bound to name that the
+       box has told us about. */
+function stuckLine(d){
+  var head='STUCK · lock held '+fmtDur(d.lock.held);
+  var tail=d.cur?' · '+esc(d.kind)+' '+esc(d.cur.key):'';
+  if(d.lock.ceiling)return head+' · past the '+esc(d.cur?d.cur.kind:"session")+' ceiling of '+fmtDur(d.lock.ceiling)+tail;
+  if(!d.cur&&d.lock.bound)return head+' · no session in flight, past '+fmtDur(d.lock.bound);
+  return head+tail;
+}
 function mrow(k,v){return '<div class="mrow"><span class="mk">'+k+'</span><span class="mvv">'+v+'</span></div>';}
 /* --- credential + heartbeat rendering -----------------------------------
    THREE credential states, not two. The probe stopped answering `ok` when it

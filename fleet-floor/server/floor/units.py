@@ -14,7 +14,20 @@ from floor.ping import STUCK_AFTER_S, probe_box
 # --------------------------------------------------------------------------
 
 TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
-RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)")
+# The `timeout=` group is what STUCK is measured against (#610): the session
+# states its own ceiling on the record, so the floor never keeps a second copy
+# of the timeout table and never reads the box's role confs from the host.
+#
+# Optional, and it SCANS for the token rather than assuming it follows `key=`,
+# which is the rule session.sh:645-663 states for this line and RE_END's late
+# fields alike: the head of the pattern is anchored and everything after it is
+# read wherever it sits, so a field inserted between two others breaks no
+# deployed floor. `key=(\S+)` therefore still ends the anchored part, exactly
+# as it did before this group existed. Absent — every line written before
+# #538 put `timeout=` on this record — the group matches nothing and the
+# reader falls back to STUCK_AFTER_S, which is what an un-upgraded box gets.
+RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)"
+                      r"(?:.*? timeout=(\d+)s(?:\s|$))?")
 RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
 # peak_rss= is read by its own pattern rather than by another optional group on
@@ -235,7 +248,10 @@ def derive_sessions(loglines, now, clock_offset=0):
         m = RE_START.search(line)
         if m:
             opens.append({"ts": parse_ts(m.group(1)) + clock_offset,
-                          "kind": m.group(2), "key": m.group(3)})
+                          "kind": m.group(2), "key": m.group(3),
+                          # The lane's own ceiling, or None on a line that
+                          # carried no `timeout=` token (#610).
+                          "timeout": int(m.group(4)) if m.group(4) else None})
 
     done.sort(key=lambda s: s["ts"], reverse=True)
     for s in done:
@@ -246,8 +262,95 @@ def derive_sessions(loglines, now, clock_offset=0):
         # A START with no END that predates the silence rule is a crashed or
         # killed session, not a running one — the box would have logged the END.
         if now - o["ts"] < _SESSION_ACTIVE_AFTER_S:
-            cur = {"key": o["key"], "kind": o["kind"], "start": int(o["ts"])}
+            cur = {"key": o["key"], "kind": o["kind"], "start": int(o["ts"]),
+                   "timeout": o["timeout"]}
     return done, cur
+
+
+# The engine's kill grace, from shared/lib/common/operating-limits.sh:18
+# (`session_kill_grace_seconds`). A session at its ceiling has not failed yet:
+# `timeout` sends its signal and waits this long before SIGKILL, so a lock
+# still held one second past the ceiling is a session being killed on
+# schedule, not a wedge.
+#
+# Held here as a constant rather than read off the box, and that is NOT the
+# host-side copy of the timeout table this issue exists to refuse. The
+# difference is what varies: the ceilings are per-lane, per-role and edited in
+# `shared/conf/roles/*.conf` on the box, so a host-side copy drifts on the
+# first role edit — which is why they are read off the wire. This is one
+# engine-wide constant with no per-box value and no field on any record to
+# read it from, so there is nothing here to drift AGAINST. If it ever moves,
+# it moves in one place there and one place here.
+SESSION_KILL_GRACE_S = 60
+
+
+def stuck_verdict(held, cur):
+    """Is this duty run wedged? -> (the `lock` record, the note or "").
+
+    THE one stuck decision (#610). Both tiers call it — the 60s evidence poll
+    in `build_unit` and the 10s ping overlay in `fleet.py` — because two
+    comparisons in two files is how the badge and the note come to disagree,
+    and they already had: `fleet.py` re-compared `held > STUCK_AFTER_S` and
+    spelled its own copy of the sentence.
+
+    Two clauses, and neither is the other's optimisation:
+
+    · PAST THE CEILING — a session is in flight and the lock has outlived the
+      ceiling that session declared on its own `SESSION START`, plus the kill
+      grace. This is the wedge the rule was written for: a `timeout` that
+      should have fired and did not. It is measured against the lane's own
+      number, so a `build` entitled to 3600s is not called stuck at minute 10
+      for doing what it was dispatched to do.
+
+    · NOTHING IN FLIGHT — the lock is held and no session is running at all.
+      A duty run stalled BETWEEN dispatches has no ceiling to exceed, so the
+      first clause can never catch it; STUCK_AFTER_S is its bound, and that
+      is the one meaning of `CREW_FLOOR_STUCK_AFTER` this change keeps intact.
+
+    STUCK_AFTER_S is also the fallback for a `SESSION START` carrying no
+    `timeout=` token — every line written by an engine older than #538. An
+    un-upgraded box is graded, and worded, exactly as it is today.
+    """
+    lock = {"held": None, "stuck": False, "ceiling": None, "bound": None}
+    if not isinstance(held, int) or held < 0:
+        # No usable age, and the record says so rather than publishing the
+        # unusable number. The site this replaced guarded with
+        # `held is not None and held >= 0` and left `unit_defaults`' None
+        # standing, so filling the field here would be a change to the served
+        # record that #610 never meant to make — and `rehearsal-app.sh`
+        # truthiness-tests `u['lock']['held']`, which a box with a
+        # future-dated `.duty.lock.since` would newly reach.
+        return lock, ""
+    lock["held"] = held
+    ceiling = cur.get("timeout") if cur else None
+    if isinstance(ceiling, int) and ceiling > 0:
+        # The knob is deliberately NOT consulted here. It bounds a run with no
+        # session to speak for it; capping a declared ceiling with it would
+        # re-introduce the very false alarm this replaces, silently, on the
+        # boxes whose operator had raised it.
+        lock["ceiling"] = ceiling
+        lock["bound"] = ceiling + SESSION_KILL_GRACE_S
+    else:
+        lock["bound"] = STUCK_AFTER_S
+    if held <= lock["bound"]:
+        return lock, ""
+    lock["stuck"] = True
+    if lock["ceiling"] is not None:
+        # Name the bound, not only the age: an operator who can see 62m and
+        # not the 60m it passed cannot tell a wedge from a raised threshold.
+        note = ("STUCK — duty run has held the lock for %s, past the %s "
+                "session's %s ceiling" % (fmt_dur(held), cur["kind"],
+                                          fmt_dur(ceiling)))
+    elif cur:
+        # In flight, ceiling unknown. Today's sentence to the byte: there is
+        # no bound to name that the box has told us about, and inventing one
+        # from the host's idea of this lane is the second source of truth the
+        # whole change refuses.
+        note = "STUCK — duty run has held the lock for %s" % fmt_dur(held)
+    else:
+        note = ("STUCK — duty run has held the lock for %s with no session in "
+                "flight, past %s" % (fmt_dur(held), fmt_dur(STUCK_AFTER_S)))
+    return lock, note
 
 
 def _vitals_finding(raw):
@@ -368,7 +471,13 @@ def unit_defaults():
         # in seconds. None means the probe did not return a usable box clock.
         "clock_delta": None,
         "clock_uncertainty": None,
-        "lock": {"held": None, "stuck": False},
+        # `ceiling` is the in-flight session's own declared timeout and `bound`
+        # the number `held` was actually compared against — ceiling plus the
+        # kill grace, or STUCK_AFTER_S where no session declared one (#610).
+        # Served, not merely used: the page names the bound it was judged
+        # against, because an age alone cannot distinguish a wedge from a
+        # threshold somebody raised.
+        "lock": {"held": None, "stuck": False, "ceiling": None, "bound": None},
         "suppression": {"active": False, "age": None, "kind": "", "key": ""},
         "floor_events": [],
         "limit_dropped": None,
@@ -514,12 +623,15 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
 
     # A duty run is in flight and has held the lock this long. Absent means no
     # run is in flight — the common case between ticks, and not a fault.
+    #
+    # Only READ here. The verdict is decided below, once the log has been
+    # parsed: what the age has to be measured against is the ceiling of the
+    # session actually running, and nothing knows that until `derive_sessions`
+    # has run (#610).
     try:
         held = int(meta["lockheld"])
     except (KeyError, ValueError, TypeError):
         held = None
-    if held is not None and held >= 0:
-        u["lock"] = {"held": held, "stuck": held > STUCK_AFTER_S}
     suppression = meta.get("suppression", "").split()
     if len(suppression) == 3:
         try:
@@ -624,6 +736,11 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
     u["vitals"] = parse_vitals(meta.get("vitals", ""))
     u["tick_health"] = parse_tick_health(meta.get("tick-health", []))
     u["cur"] = cur
+    # Both facts are in hand at last: the lock's age off the probe, and the
+    # ceiling of the session holding it off duty.log. One function decides
+    # (#610), and `stuck_note` is carried to the state ladder below rather
+    # than written there, so the ping tier publishes the identical sentence.
+    u["lock"], stuck_note = stuck_verdict(held, cur)
     u["sessions"] = [{k: s[k] for k in
                       ("ago", "kind", "key", "rc", "dur", "out", "acted", "reply", "peak")}
                      for s in sessions[:11]]
@@ -675,10 +792,10 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # Still "working": the box is alive, cron is ticking, and a session
         # genuinely is running — every one of those is true and none of them is
         # the point. The note OVERRIDES rather than defers, because a run stuck
-        # past two tick boundaries is the most important thing about this box,
-        # and the notes it would defer to describe a healthy one.
+        # past the bound it was entitled to is the most important thing about
+        # this box, and the notes it would defer to describe a healthy one.
         u["state"] = "working"
-        u["note"] = "STUCK — duty run has held the lock for %s" % fmt_dur(u["lock"]["held"])
+        u["note"] = stuck_note
     elif cur:
         u["state"] = "working"
     elif u["suppression"]["active"]:

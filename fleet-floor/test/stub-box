@@ -81,6 +81,51 @@ armed_of() {
   return 0
 }
 
+# lockheld_of SCENARIO — the age of `.duty.lock.since`, empty for a box holding
+# no lock. ONE reader, for the reason armed_of above is one and vitals_record_of
+# below is: BOTH halves of this stub answer with it — probe.sh's `::lockheld`
+# for the 60s evidence tier, and the ping script's `l` field for the 10s one —
+# and #610's criterion is that those two tiers reach the SAME verdict about one
+# box. A stub that spelled the age twice could hold them apart while the suite
+# stayed green, which is the one failure this fixture must not be able to hide.
+# It could already: `working` had an age on the ping side and none on the probe
+# side, and `suppressed-stuck` had the reverse.
+lockheld_of() {
+  case "$1" in
+    # 47 minutes, and nothing in flight to justify it.
+    stuck|suppressed-stuck) printf 2820 ;;
+    # A run that started moments ago — the case the raw-timestamp bug marked
+    # STUCK for 495881h. It must stay unremarkable.
+    working)                printf 12 ;;
+    # The #610 trio, and they differ ONLY in this number: the same `build`
+    # session declaring the same 3600s ceiling is in flight on all three, so a
+    # reader that graded them alike is reading a fleet-wide constant and not
+    # the ceiling on the record. 40 minutes; ceiling plus the 60s kill grace
+    # exactly; one second past it.
+    lane-build)             printf 2400 ;;
+    lane-edge)              printf 3660 ;;
+    lane-over)              printf 3661 ;;
+    # Past STUCK_AFTER_S with a session in flight that declared no ceiling.
+    lane-legacy)            printf 700 ;;
+    *)                      printf '' ;;
+  esac
+}
+
+# lockheld_ping_of SCENARIO — what the 10s PING reads. Normally the very same
+# number the 60s probe reads, and defined as such so the 35 other boxes still
+# cannot be held apart. `lane-ping` is the ONE deliberate exception and it is
+# the subject of a case rather than an oversight: the fast tier exists to see a
+# lock the last evidence poll had not seen yet, so on that box the probe
+# reports no lock at all and only the heartbeat has an age. Written as an
+# override of the one reader instead of a second copy of the table, which is
+# the shape that let `working` and `suppressed-stuck` disagree with themselves.
+lockheld_ping_of() {
+  case "$1" in
+    lane-ping) printf 3661 ;;
+    *)         lockheld_of "$1" ;;
+  esac
+}
+
 # vitals_record_of SCENARIO — the box vitals record tick.sh would have written
 # into duty.log (#483). ONE reader, for the reason armed_of above is one: BOTH
 # halves of this stub answer with it — probe.sh's `::vitals` for the floor, and
@@ -194,10 +239,10 @@ emit_probe() {
   printf '::gh %s\n'     "$_cred"
   printf '::vendor %s\n' "$_cred"
   [ "$sc" = noauth ] && printf '::authfail-gh 2026-07-27T09:14:02Z 401 Bad credentials\n'
-  # A duty run that started 47 minutes ago and never let go: alive, ticking,
-  # and doing nothing. There is no other way to reach the STUCK branch — a
-  # real fleet produces this state only by breaking.
-  case "$sc" in stuck|suppressed-stuck) printf '::lockheld 2820\n' ;; esac
+  # A duty run holding the lock, and for how long. Absent for a box between
+  # runs, which is the normal state. One reader, shared with the ping arm.
+  _lh="$(lockheld_of "$sc")"
+  [ -n "$_lh" ] && printf '::lockheld %s\n' "$_lh"
   case "$sc" in suppressed|suppressed-silent|suppressed-unknown|suppressed-working|suppressed-stuck|suppressed-notimestamp|suppressed-old-orphan|suppressed-paired-crash)
     printf '::suppression 780 draft heavy-duty/crew#561@abcdef123456\n'
     ;;
@@ -266,6 +311,24 @@ emit_probe() {
       echo "$(ago 7200) SESSION START kind=build key=crew#crashed timeout=7200s log=/h/duty/logs/crashed.log"
       echo "$(ago 120) SESSION START kind=review key=crew#done timeout=2400s log=/h/duty/logs/done.log"
       echo "$(ago 60) SESSION END kind=review key=crew#done rc=0 dur=60s outcome=ok"
+      ;;
+    lane-build|lane-edge|lane-over|lane-ping)
+      # #610 — a `build` session genuinely in flight, declaring on its own
+      # record the 3600s ceiling roles/builder.conf gives that lane. The
+      # evidence is IDENTICAL across the three scenarios; only lockheld_of
+      # differs, which is the whole point: a reader grading them alike is
+      # comparing against a fleet-wide constant rather than against this line.
+      echo "$(ago 3700) duty run start"
+      echo "$(ago 3700) heavy-duty/crew: build duty (ready unclaimed=1, whole rounds owed=0)"
+      echo "$(ago 3690) SESSION START kind=build key=crew#610 timeout=3600s log=/h/duty/logs/g.log holder=tick sid=8f1c0a2e-1d3b-4c5a-9e70-2b6d4f8a1c33"
+      ;;
+    lane-legacy)
+      # An engine older than the `timeout=` token — every line ever written
+      # before #538 put one on this record. There is no ceiling to read, so
+      # the reader must fall back to STUCK_AFTER_S and word it as it does
+      # today. This is the box that must not move at all.
+      echo "$(ago 800) duty run start"
+      echo "$(ago 790) SESSION START kind=build key=crew#77 log=/h/duty/logs/h.log"
       ;;
     firstrun)  # its very first session: an open START, no END anywhere yet
       echo "$(ago 200) duty run start"
@@ -428,13 +491,7 @@ case "${1:-}" in
         # how a unit mismatch stayed green: the collector was only ever tested
         # against the stub's arithmetic. boxside.sh now runs the real script
         # and asserts the conversion; this stays an age so the two agree.
-        case "$sc" in
-          stuck)  echo "l 2820" ;;
-          # A run that started moments ago — the case that was marked STUCK
-          # with a multi-year duration. It must stay unremarkable.
-          working) echo "l 12" ;;
-          *)      echo "l" ;;
-        esac ;;
+        echo "l $(lockheld_ping_of "$sc")" ;;
       *'echo "::logstart"'*)                    emit_probe "$name" "$sc" ;;
       # ABOVE the two CREW-FLOOR-PAUSED cases below, by this block's own
       # ordering rule. Since #189 crew's auth_from_flow counts the PAUSED

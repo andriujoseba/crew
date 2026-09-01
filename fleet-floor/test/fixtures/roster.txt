@@ -31,3 +31,8 @@ ff-silent-behind claude builder
 ff-silent-ahead codex reviewer
 ff-modified   codex   builder
 ff-unverified grok    reviewer
+ff-lane-build claude  builder
+ff-lane-edge  claude  builder
+ff-lane-over  claude  builder
+ff-lane-legacy claude builder
+ff-lane-ping  claude  builder

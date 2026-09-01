@@ -7800,16 +7800,66 @@ CREW_CLI="$(cd "$(dirname "$SHARED")" && pwd)/cli/crew"
 # being pinned the moment its owning section moved into a module.
 FLOOR_SRV="$(cd "$(dirname "$SHARED")" && pwd)/fleet-floor/server"
 FLOOR_PY=("$FLOOR_SRV/floor.py" "$FLOOR_SRV"/floor/*.py)
+# ...and CODE, not the prose describing it. Every floor pin below is a literal
+# match, and a literal match against a whole source file is satisfied by a
+# sentence quoting the rule just as happily as by the rule. #610 is how that
+# was found: it replaced the collector's `held > STUCK_AFTER_S` with a
+# two-clause verdict and — correctly — explained the old expression in a
+# comment and a docstring, at which point `stuck-rule-floor-boundary` was
+# green on two sentences and could never red again. A pin whose subject has
+# been deleted must fail, and it can only do that if it reads what runs.
+#
+# Comments and bare string statements (docstrings) go; string literals inside
+# expressions STAY, because `lock["bound"]` and `u[svc] = "waiting"` are code
+# and these pins name them.
+FLOOR_CODE="$(python3 - "${FLOOR_PY[@]}" <<'PY'
+import ast, io, sys, tokenize
 
-FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
+for path in sys.argv[1:]:
+    src = open(path, encoding="utf-8").read()
+    drop = set()
+    for node in ast.walk(ast.parse(src)):
+        # A string that is a whole statement: module, class and function
+        # docstrings, and the block-comment-in-quotes idiom.
+        if (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            drop.update(range(node.lineno, node.end_lineno + 1))
+    cut = {}
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type == tokenize.COMMENT:
+            row, col = tok.start
+            cut[row] = min(cut.get(row, col), col)
+    for n, line in enumerate(src.splitlines(), 1):
+        if n in drop:
+            continue
+        print(line[:cut[n]] if n in cut else line)
+PY
+)"
+
+FL_TICK="$(sed -n 's/^TICK_S = \([0-9]*\).*/\1/p' <<<"$FLOOR_CODE" | head -1)"
 FL_SILENT=$(( ${FL_TICK:-0} * 2 ))
 # shellcheck disable=SC2016  # matching crew's literal ${CREW_SILENT_AFTER:-600}
 CL_SILENT="$(sed -n 's/^SILENT_AFTER_S="${CREW_SILENT_AFTER:-\([0-9]*\)}".*/\1/p' "$CREW_CLI" | head -1)"
 t silent-rule-floor-derived 600 "$FL_SILENT"
 t silent-rule-cli-matches-floor "$FL_SILENT" "$CL_SILENT"
 
-# STUCK is another shared verdict. Both readers accept the same operator
-# override, default it to SILENT, and use the same strict boundary.
+# STUCK is another shared verdict, but since #610 it is only shared in PART,
+# and this block states the part rather than over-claiming the whole. What
+# still has to agree, and is pinned here:
+#
+#   · the override — same environment variable, same default, both readers;
+#   · the strictness — stuck at one second PAST the bound, never AT it;
+#   · the bound itself WHERE NOTHING DECLARES A CEILING — `STUCK_AFTER_S` in
+#     both, which is every case `crew status` can see and the floor's
+#     no-session and pre-#538 clauses.
+#
+# What deliberately diverges, and is NOT pinned: the floor's in-flight clause
+# measures the lock against the ceiling the running session declared on its own
+# `SESSION START`, and `crew status` has no such clause (#610 is floor-only).
+# So the same box 40 minutes into a build reads healthy on the floor and STUCK
+# in the CLI until the second reader catches up. Pinning that gap would red on
+# the day somebody closes it, which is the opposite of what this block is for
+# — a guard must not defend the drift it exists to detect.
 # shellcheck disable=SC2016  # matching crew's literal parameter expansion
 if grep -q '^STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"' "$CREW_CLI"; then
   r1=shared
@@ -7817,7 +7867,7 @@ else
   r1=DRIFTED
 fi
 t stuck-rule-cli-uses-floor-override shared "$r1"
-if grep -q 'STUCK_AFTER_S = int(os.environ.get("CREW_FLOOR_STUCK_AFTER", str(SILENT_AFTER_S)))' "${FLOOR_PY[@]}"; then
+if grep -q 'STUCK_AFTER_S = int(os.environ.get("CREW_FLOOR_STUCK_AFTER", str(SILENT_AFTER_S)))' <<<"$FLOOR_CODE"; then
   r1=shared
 else
   r1=DRIFTED
@@ -7826,13 +7876,26 @@ t stuck-rule-floor-uses-shared-override shared "$r1"
 # shellcheck disable=SC2016  # matching crew's literal comparison
 if grep -q '\[ "$lock_age" -gt "$STUCK_AFTER_S" \]' "$CREW_CLI"; then r1=strict; else r1=DRIFTED; fi
 t stuck-rule-cli-boundary strict "$r1"
-if grep -q 'held > STUCK_AFTER_S' "${FLOOR_PY[@]}"; then r1=strict; else r1=DRIFTED; fi
+# The collector's half of the same strictness. `held <= bound` is the NOT-stuck
+# return, so this is `held > bound` stated from the other side — the boundary
+# the CLI writes as `-gt`. It reads `bound` and not `STUCK_AFTER_S` because
+# after #610 the number compared against depends on the clause; that the two
+# agree on which number it is where no ceiling was declared is the assertion
+# below this one, and the two together are what the deleted single grep used
+# to say.
+if grep -q 'if held <= lock\["bound"\]:' <<<"$FLOOR_CODE"; then r1=strict; else r1=DRIFTED; fi
 t stuck-rule-floor-boundary strict "$r1"
+# ...and that bound IS `STUCK_AFTER_S` in the case both readers can see: no
+# session in flight, or one whose `SESSION START` declared no ceiling. Delete
+# this fallback and the floor stops grading un-upgraded boxes the way the CLI
+# still does, which is a drift no end-to-end fixture on either side would name.
+if grep -q 'lock\["bound"\] = STUCK_AFTER_S' <<<"$FLOOR_CODE"; then r1=shared; else r1=DRIFTED; fi
+t stuck-rule-floor-fallback-bound shared "$r1"
 
 # Session activity is derived from the same bounded evidence and crash rule.
 # The floor receives probe.sh's 600-line tail; auth_from_flow must not scan a
 # different history or keep an orphan alive past the floor's six-hour bound.
-FL_SESSION_ACTIVE="$(sed -n 's/^_SESSION_ACTIVE_AFTER_S = \([0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
+FL_SESSION_ACTIVE="$(sed -n 's/^_SESSION_ACTIVE_AFTER_S = \([0-9]*\).*/\1/p' <<<"$FLOOR_CODE" | head -1)"
 # shellcheck disable=SC2016  # matching crew's literal session-age expression
 CL_SESSION_ACTIVE="$(sed -n 's/^ *\*) \[ \$(( \$(date -u +%s) - session_epoch )) -lt \([0-9]*\) \] .*/\1/p' "$CREW_CLI" | head -1)"
 t session-active-floor-boundary 21600 "$FL_SESSION_ACTIVE"
@@ -7862,7 +7925,7 @@ t session-pairing-cli-uses-stack stack "$r1"
 # moving the boundary in one reader fails HERE rather than silently.
 # shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
 CL_NEVER="$(sed -n 's/^.*\[ "$tickage" -lt \(-*[0-9][0-9]*\) \].*/\1/p' "$CREW_CLI" | head -1)"
-FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' "${FLOOR_PY[@]}" | head -1)"
+FL_NEVER="$(sed -n 's/^ *never_ticked = tick_age < \(-*[0-9][0-9]*\).*/\1/p' <<<"$FLOOR_CODE" | head -1)"
 t nevertick-rule-floor-boundary 0 "$FL_NEVER"
 t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
 # ...and it must be a verdict BOTH readers can actually produce. The boundary
@@ -7872,7 +7935,7 @@ t nevertick-rule-cli-matches-floor "$FL_NEVER" "$CL_NEVER"
 # shellcheck disable=SC2016  # a literal fragment of cli/crew, not to expand
 if grep -q 'printf -v "$_v" waiting' "$CREW_CLI"; then r1=emitted; else r1=MISSING; fi
 t nevertick-cli-emits-waiting emitted "$r1"
-if grep -q 'u\[svc\] = "waiting"' "${FLOOR_PY[@]}"; then r1=emitted; else r1=MISSING; fi
+if grep -q 'u\[svc\] = "waiting"' <<<"$FLOOR_CODE"; then r1=emitted; else r1=MISSING; fi
 t nevertick-floor-emits-waiting emitted "$r1"
 
 # ...and the box must hold no threshold of its own. Comments and the log-tail
