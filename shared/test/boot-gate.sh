@@ -201,7 +201,43 @@ t boot-check-log-does-not-carry-the-boot-line 0 \
 t boot-check-log-keeps-the-df-line 1 \
   "$(grep -c 'cli probe: ' "$D/boot-check.log" || true)"
 
-# --- 7. wiring: the emission is inside the branch, above everything else -----
+# --- 7. the line reaches the operator with no floor-side change -------------
+# The criterion is that it needs none: probe.sh tails duty.log and `crew status`
+# and the floor's log view read that tail. Asserted by crossing the boundary
+# rather than by reasoning about it, because "it is just a log line" is exactly
+# what would be said about a line that `tr -d '\r'` split or the tail dropped.
+D="$(mk_dir probe-reach)"
+printf 'crew@fixture\n' >"$D/VERSION"
+run_gate "$D" 0 >"$D/duty.log"
+PROBE_OUT="$(DUTY_DIR="$D" bash "$ROOT/fleet-floor/server/probe.sh" </dev/null 2>/dev/null)"
+PROBE_LOG="$(awk '/^::logstart$/ { keep = 1; next } /^::logend$/ { exit } keep' <<<"$PROBE_OUT")"
+t boot-line-survives-the-probe-tail 1 "$(boot_lines "$PROBE_LOG")"
+t boot-line-is-whole-through-the-probe found \
+  "$(grep -q "boot gate: first tick on this box (boot id $BOOT8)" <<<"$PROBE_LOG" \
+    && echo found || echo MISSING)"
+# It must ride the log stream, not become a ::key of its own: probe.sh's
+# contract is one key per emitted field, and a boot line that reached the
+# floor as a phantom key would be a floor-side change by another name.
+t boot-line-adds-no-probe-key 0 \
+  "$(grep -cE '^::boot' <<<"$PROBE_OUT" || true)"
+
+# The 600-line tail is the reach limit the criterion names. One line per boot
+# cannot be pushed out by its own emissions, but it must survive a busy tick's
+# worth of traffic beneath it.
+D="$(mk_dir probe-tail-depth)"
+printf 'crew@fixture\n' >"$D/VERSION"
+run_gate "$D" 0 >"$D/duty.log"
+for _i in $(seq 1 500); do
+  echo "2026-09-01T09:00:00Z duty tick skipped: previous run still holds the lock"
+done >>"$D/duty.log"
+# A here-string again, not `probe.sh | awk`: the awk below exits at ::logend
+# and would SIGPIPE the producer under pipefail — #449's flake, in the shape
+# the guard does not scan for because the early-exiting consumer is awk.
+PROBE_OUT="$(DUTY_DIR="$D" bash "$ROOT/fleet-floor/server/probe.sh" </dev/null 2>/dev/null)"
+PROBE_LOG="$(awk '/^::logstart$/ { keep = 1; next } /^::logend$/ { exit } keep' <<<"$PROBE_OUT")"
+t boot-line-survives-500-lines-of-traffic 1 "$(boot_lines "$PROBE_LOG")"
+
+# --- 8. wiring: the emission is inside the branch, above everything else -----
 # Static, because the behavioural cases above would all still pass if the line
 # were emitted from a second site the gate does not own. These are the
 # assertions that make MOVING the fix red.
