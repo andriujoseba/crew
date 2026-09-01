@@ -512,6 +512,7 @@ EXIT STATUS
   0  ok
   1  it went wrong (no box CLI, no roster, incus said no, a guard refused)
   2  you asked wrong (unknown command, bad or missing flag, unknown profile)
+  3  restart completed partially because one or more busy boxes were skipped
 
 EXAMPLES
   # the whole fleet, converged — the verb you run most
@@ -2331,7 +2332,6 @@ cycle_box() {
 }
 
 cmd_restart() {
-  need_box
   local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" arg name probe state age
   local restarted=0 skipped=0 failed=0 skipped_names="" failed_names=""
   local -a named=() restart_targets=()
@@ -2346,6 +2346,7 @@ cmd_restart() {
   case "$force_hours" in ''|0|*[!0-9]*) usage_error "--force-after requires a positive whole number of hours" ;; esac
   if [ "$all" -eq 1 ] && [ "${#named[@]}" -ne 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
   if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
+  need_box
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
   require_operator_config "crew restart"
   if [ "$all" -eq 1 ]; then mapfile -t restart_targets < <(roster_names); else restart_targets=("${named[@]}"); fi
@@ -2393,7 +2394,6 @@ box_supports_force_down() {
 }
 
 cmd_down() {
-  need_box
   local force=0 name _rest probe state age failed=0 stopped=0 absent=0 waited=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -2401,6 +2401,7 @@ cmd_down() {
       *) usage_error "unknown argument '$1' (usage: $(synopsis_of down))" ;;
     esac
   done
+  need_box
   [ -f "$ROSTER" ] || die "no roster at $ROSTER"
   require_operator_config "crew down"
   if [ "$force" -eq 1 ] && ! box_supports_force_down; then

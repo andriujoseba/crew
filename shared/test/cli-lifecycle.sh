@@ -112,6 +112,9 @@ reset_case
 capture help restart
 case "$OUT" in *'usage: crew restart <box>... | --all [--force-after <hours>]'*'stop that does not take is never followed by a start'*) r1=complete ;; *) r1="$OUT" ;; esac
 t lifecycle-help-renders-table-and-detail complete "$r1"
+capture help
+case "$OUT" in *'3  restart completed partially because one or more busy boxes were skipped'*) r1=documented ;; *) r1="$OUT" ;; esac
+t lifecycle-help-documents-skip-status documented "$r1"
 
 reset_case
 capture restart alpha
