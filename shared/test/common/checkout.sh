@@ -187,10 +187,10 @@ t fork-conventional-remote https://github.com/bot/repo.git \
 t fork-conventional-one-api-call 1 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
 
 FORK_NAMED="$(new_main_clone named)"
-stub_fork_api '' '[{"full_name":"bot/crew-sherpa","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"full_name":"bot/renamed-repo","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
 ensure_main_clone_without_fetch owner/repo "$FORK_NAMED" >/dev/null
 t fork-nonfork-candidate-searches-list 2 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
-t fork-unique-nonconventional-adopted https://github.com/bot/crew-sherpa.git \
+t fork-unique-nonconventional-adopted https://github.com/bot/renamed-repo.git \
   "$(git -C "$FORK_NAMED" remote get-url fork)"
 
 FORK_OTHER_PARENT="$(new_main_clone other-parent)"
@@ -217,9 +217,9 @@ t fork-ambiguous-distinct-report reported "$r1"
 
 FORK_REPAIR="$(new_main_clone repair)"
 git -C "$FORK_REPAIR" remote add fork https://github.com/somebody/repo.git
-stub_fork_api '' '[{"full_name":"bot/crew-sherpa","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"full_name":"bot/renamed-repo","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
 REPAIR_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_REPAIR" 2>&1)"
-t fork-other-owner-repaired https://github.com/bot/crew-sherpa.git \
+t fork-other-owner-repaired https://github.com/bot/renamed-repo.git \
   "$(git -C "$FORK_REPAIR" remote get-url fork)"
 if grep -Fq 'repaired fork remote' <<<"$REPAIR_LOG"; then r1=reported; else r1=MISSING; fi
 t fork-repair-reported reported "$r1"
