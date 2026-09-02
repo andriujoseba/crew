@@ -8,6 +8,7 @@ ff-lim-breaker codex reviewer
 ff-lim-budget grok triage
 ff-lim-recovered kimi builder
 ff-lim-failed grok builder
+ff-lim-restarted claude builder
 ff-suppressed claude  builder
 ff-supp-silent claude  builder
 ff-supp-unknown claude  builder

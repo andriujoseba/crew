@@ -371,9 +371,14 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        JSON.stringify(['ff-silent']), JSON.stringify(amongTrio(silentMatches)));
     eq('filter: Suppressed selects the breaker-stopped fixture',
        JSON.stringify(['ff-suppressed']), JSON.stringify(suppressedMatches));
+    // The recovered fixtures are absent by name, not by omission: ff-lim-failed
+    // (a failed retry), ff-lim-restarted (a newer admitted START) and
+    // ff-lim-recovered (a clean session) all carry limit evidence the engine
+    // has since let go of, and the filter must not offer any of them as a
+    // lane to go and unstick (#611 round 3).
     eq('filter: Limited selects every current limit fixture',
        JSON.stringify(['ff-lim-breaker', 'ff-lim-budget', 'ff-lim-event',
-                       'ff-lim-failed', 'ff-lim-terminal']),
+                       'ff-lim-terminal']),
        JSON.stringify(limitedMatches));
     eq('filter: All keeps all three offline fixtures reachable',
        JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));

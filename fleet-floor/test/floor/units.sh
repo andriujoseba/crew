@@ -41,30 +41,81 @@ t "limited: age is a nonnegative measured duration" True \
   "$(uf ff-lim-budget "isinstance(u['limited']['age'], int) and u['limited']['age'] >= 0")"
 t "limited: newer successful session clears state" False \
   "$(uf ff-lim-recovered "'limited' in u")"
-t "limited: a later failed session is not recovery" terminal \
-  "$(uf ff-lim-failed "u['limited']['reason']")"
-t "limited: a later failed session keeps the stopped lane named" build \
-  "$(uf ff-lim-failed "u['limited']['lane']")"
-# The same rule over BOTH evidence families, run directly: a fixture carries
-# one probe, and the failed END has to be proved against durable-event
-# evidence too — it enters the recovery bound that suppresses an older event,
-# not just the newest-per-lane record. Four calls, one changed token between
-# each pair: rc.
+# ff-lim-recovered's twin: the SAME terminal evidence, retried, differing only
+# in how the retry ended. Both clear, because `_session_terminal_record` runs
+# after every SESSION END and deletes the lane's breaker file on any
+# non-TERMINAL outcome (shared/lib/common/breaker.sh:71-81). A floor that read
+# these two boxes differently would be latching a state the box already let go
+# of, and #611's fourth criterion is exactly that it must not.
+t "limited: a later failed session clears the lane the engine cleared" False \
+  "$(uf ff-lim-failed "'limited' in u")"
+# The START shape, end to end, because it had a second consequence no direct
+# probe reaches: LIMITED sits above the open-session branch in the collector
+# ladder, so a latched box with a build genuinely in flight published `idle`
+# with a LIMITED note — contradicting `state: open session -> working` above.
+t "limited: a restarted lane reads working, not idle" working \
+  "$(uf ff-lim-restarted "u['state']")"
+t "limited: a restarted lane carries no limit furniture" False \
+  "$(uf ff-lim-restarted "'limited' in u")"
+# Every log shape the engine writes when it lets a lane go, run directly
+# against the shipped function: a fixture carries one probe, and this rule has
+# more shapes than a fixture set should grow to hold. Each row changes ONE
+# token from the row that stays limited (#611 round 3):
+#
+#   · a non-TERMINAL END at ANY rc — the breaker file is deleted for a
+#     success, a timeout, a transient failure and an unclassified one alike
+#     (breaker.sh:71-81), so rc is not what decides this;
+#   · `session breaker: kind=… recovered` — the terminal gate spending its one
+#     vendor probe and winning, which is the ONLY recovery a lane gets when
+#     the tick then finds nothing to dispatch (breaker.sh:44-49);
+#   · a newer SESSION START — the budget and terminal gates both run before
+#     that line is written (session.sh:624-663), so the start IS their verdict,
+#     and it clears a budget SKIP for the same reason it clears a breaker one.
+#
+# The last two rows are the boundary: recovery is per-lane and must be NEWER.
+# A `review` start says nothing about `build`, and a SKIP written after a start
+# in the same second is the later record — log order, not the second, is what
+# separates them.
 limited_recovery_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
 from datetime import datetime, timezone
 from floor.units import derive_limited
 now = 1800000000
 stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 terminal = stamp(now - 120) + " SESSION END kind=build key=x rc=1 dur=1s outcome=TERMINAL"
+breaker = stamp(now - 120) + " SESSION SKIP kind=build key=x reason=terminal-breaker count=3"
+budget = stamp(now - 120) + " SESSION SKIP kind=build key=x reason=budget count=1"
+failed = stamp(now - 60) + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
+timedout = stamp(now - 60) + " SESSION END kind=build key=x rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+resumed = stamp(now - 60) + " session breaker: kind=build recovered; dispatch resumed"
+started = stamp(now - 60) + " SESSION START kind=build key=y timeout=7200s log=/h/duty/logs/c.log"
+elsewhere = stamp(now - 60) + " SESSION START kind=review key=z timeout=2400s log=/h/duty/logs/d.log"
+reskipped = stamp(now - 60) + " SESSION SKIP kind=build key=x reason=budget count=1"
+verdict = lambda logs: (derive_limited(logs, [], now, 0, "build") or {}).get("reason", "clear")
+print(" ".join([verdict([terminal, failed]), verdict([terminal, timedout]),
+                verdict([breaker, resumed]), verdict([breaker, started]),
+                verdict([budget, started]), verdict([breaker, elsewhere]),
+                verdict([started, reskipped])]))
+')"
+t "limited: newer engine recovery evidence supersedes older limit evidence" \
+  "clear clear clear clear clear terminal-breaker budget" "$limited_recovery_case"
+# The OTHER family, and it answers recovery differently on purpose. A durable
+# `floor_events` error is not box state and no box line retracts it: it ages
+# out with the guest spool TTL, or a session that RAN THROUGH acknowledges it.
+# A lane that was dispatched and failed proves nothing about the condition the
+# event reported, so the one changed token between these two calls is rc.
+limited_event_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 failed = stamp(now - 60) + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
 passed = stamp(now - 60) + " SESSION END kind=build key=x rc=0 dur=1s outcome=ok"
 event = {"id":"1-1-1", "timestamp":stamp(now - 120), "severity":"error", "name":"event-limit"}
-verdict = lambda logs, events: (derive_limited(logs, events, now, 0, "build") or {}).get("reason", "clear")
-print(" ".join([verdict([terminal, failed], []), verdict([terminal, passed], []),
-                verdict([failed], [event]), verdict([passed], [event])]))
+verdict = lambda logs: (derive_limited(logs, [event], now, 0, "build") or {}).get("reason", "clear")
+print(" ".join([verdict([failed]), verdict([passed])]))
 ')"
-t "limited: only a successful session acknowledges either evidence family" \
-  "terminal clear event-limit clear" "$limited_recovery_case"
+t "limited: only a completed successful session acknowledges a durable event" \
+  "event-limit clear" "$limited_event_case"
 t "limited: STUCK keeps collector state precedence" working \
   "$(uf ff-stuck "u['state']")"
 t "limited: STUCK keeps the collector note" True \

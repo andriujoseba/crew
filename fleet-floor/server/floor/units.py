@@ -31,6 +31,14 @@ RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)"
 RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
 RE_SKIP = re.compile(TS + r" SESSION SKIP kind=(\S+) key=(\S+) reason=(\S+)")
+# The terminal breaker announcing its own recovery. `_session_terminal_gate`
+# spends one vendor probe per tick on a tripped lane, and on success deletes
+# the state file and writes this line (shared/lib/common/breaker.sh:44-49).
+# It is the only recovery evidence a lane gets when the probe succeeds but the
+# tick had nothing left to dispatch — no START and no END follow it — so a
+# reader that watched only sessions would keep a cleared breaker on screen
+# until the next tick found work (#611 round 3).
+RE_BREAKER_OK = re.compile(TS + r" session breaker: kind=(\S+) recovered")
 # peak_rss= is read by its own pattern rather than by another optional group on
 # RE_END, and the reason is what RE_END already survived: the engine appends
 # new fields past reply_tail (tier=, and started= on a reconstructed terminal),
@@ -275,72 +283,111 @@ def derive_sessions(loglines, now, clock_offset=0):
 
 
 def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engine"):
-    """Newest per-lane engine evidence -> the current LIMITED record, if any."""
-    lanes = {}
-    for line in loglines:
+    """Newest per-lane engine evidence -> the current LIMITED record, if any.
+
+    TWO evidence families, and they answer recovery differently because the
+    engine gives them different answers (#611 round 3).
+
+    · THE LOG FAMILY — a TERMINAL end, and a `terminal-breaker`/`budget` SKIP
+      — is state the BOX holds and the box itself clears. `crew` deletes the
+      lane's breaker file on ANY non-TERMINAL end: "any success, timeout,
+      transient failure, or unclassified failure resets the count"
+      (shared/lib/common/breaker.sh:71-81, called unconditionally after every
+      SESSION END at session.sh:819). The gates run BEFORE the start line —
+      budget, then terminal, then `SESSION START` (session.sh:624-663) — so a
+      start newer than a SKIP is the engine saying both gates admitted that
+      lane. And the terminal gate clears on a successful vendor probe and says
+      so out loud: `session breaker: kind=… recovered` (breaker.sh:44-49).
+      Any of those three, newer than the limit evidence on the SAME lane,
+      means the box has already let go of it. Latching past them is the floor
+      keeping a state the engine has cleared, which is the thing #611's fourth
+      criterion forbids.
+
+    · THE EVENT FAMILY — a durable `floor_events` error — is not box state and
+      no box line retracts it. It ages out with the guest spool's TTL, or a
+      COMPLETED SUCCESSFUL session acknowledges it: a lane that was dispatched
+      and failed proves nothing about the condition the event reported. That
+      is round 2's rule and it is kept exactly.
+
+    Newest-per-lane, and ties break on log order rather than on the second,
+    because a SKIP and a START can share a timestamp and only their order
+    says which one the engine wrote last.
+    """
+    limits, recoveries = {}, {}
+    newest_success = 0
+
+    # Newest-per-lane, both of them, where `at` is (timestamp, log order).
+    def note_recovery(lane, at):
+        if at > recoveries.get(lane, (0, -1)):
+            recoveries[lane] = at
+
+    def note_limit(lane, at, reason, reset=""):
+        if at > limits.get(lane, {}).get("at", (0, -1)):
+            limits[lane] = {"at": at, "lane": lane, "reason": reason, "reset": reset}
+
+    for index, line in enumerate(loglines):
+        # One pattern at a time and out on the first hit: these four records
+        # are mutually exclusive, and duty.log is the longest thing this
+        # module reads.
         ended = RE_END.search(line)
-        skipped = RE_SKIP.search(line)
         if ended:
-            terminal = ended.group(6) == "TERMINAL"
-            # ONLY a completed successful session acknowledges a limit. An
-            # ordinary failure proves the lane was dispatched, not that it ran
-            # through: the vendor's clock and the breaker's count are both
-            # exactly where the limit left them, and `crew` retries a failed
-            # lane on the next tick. So a failed END is neither limit evidence
-            # nor recovery — it is dropped here rather than recorded with an
-            # empty reason, because the newest-per-lane rule below would
-            # otherwise let it BOTH overwrite older terminal evidence and
-            # enter `newest_recovery`, reading a still-limited box healthy.
-            if not terminal and ended.group(4) != "0":
+            lane, at = ended.group(2), (parse_ts(ended.group(1)) + clock_offset, index)
+            if ended.group(6) != "TERMINAL":
+                # Recovery for the lane at ANY rc — the breaker file is gone
+                # either way. Only rc=0 acknowledges a durable event, so the
+                # two families read this one line for two different things.
+                note_recovery(lane, at)
+                if ended.group(4) == "0":
+                    newest_success = max(newest_success, at[0])
                 continue
-            ts = parse_ts(ended.group(1)) + clock_offset
-            item = {
-                "ts": ts, "lane": ended.group(2),
-                "reason": "terminal" if terminal else "",
-                "reset": "",
-            }
-            if terminal:
-                try:
-                    item["reset"] = base64.b64decode(
-                        ended.group(8) or "", validate=True
-                    ).decode("utf-8", "replace")
-                except (ValueError, TypeError):
-                    pass
-            if ts >= lanes.get(ended.group(2), {}).get("ts", 0):
-                lanes[ended.group(2)] = item
-        # A SKIP for another reason is not recovery evidence. Only a completed
-        # successful END proves that this lane ran again after a limit stop.
-        elif skipped and skipped.group(4) in ("terminal-breaker", "budget"):
-            ts = parse_ts(skipped.group(1)) + clock_offset
-            item = {
-                "ts": ts,
-                "lane": skipped.group(2), "reason": skipped.group(4), "reset": "",
-            }
-            if ts >= lanes.get(skipped.group(2), {}).get("ts", 0):
-                lanes[skipped.group(2)] = item
-    candidates = [item for item in lanes.values() if item["reason"]]
-    newest_recovery = max(
-        (item["ts"] for item in lanes.values() if not item["reason"]), default=0
-    )
+            reset = ""
+            try:
+                reset = base64.b64decode(
+                    ended.group(8) or "", validate=True
+                ).decode("utf-8", "replace")
+            except (ValueError, TypeError):
+                pass
+            note_limit(lane, at, "terminal", reset)
+            continue
+        started = RE_START.search(line)
+        if started:
+            note_recovery(started.group(2),
+                          (parse_ts(started.group(1)) + clock_offset, index))
+            continue
+        resumed = RE_BREAKER_OK.search(line)
+        if resumed:
+            note_recovery(resumed.group(2),
+                          (parse_ts(resumed.group(1)) + clock_offset, index))
+            continue
+        # A SKIP for any other reason is an ordinary duty decision — nothing
+        # was refused by an operating limit — so it is neither evidence nor
+        # recovery.
+        skipped = RE_SKIP.search(line)
+        if skipped and skipped.group(4) in ("terminal-breaker", "budget"):
+            note_limit(skipped.group(2),
+                       (parse_ts(skipped.group(1)) + clock_offset, index),
+                       skipped.group(4))
+    candidates = [item for lane, item in limits.items()
+                  if recoveries.get(lane, (0, -1)) <= item["at"]]
     for event in floor_events:
         event_ts = parse_ts(event["timestamp"]) + clock_offset
         # Warnings remain durable console evidence, but they do not say a lane
         # stopped. Errors age out with the guest spool's shipped TTL, and a
-        # newer successful END acknowledges the older event on the next poll.
+        # completed successful session acknowledges the older event.
         if (event.get("severity") != "error"
                 or not 0 <= now - event_ts <= _LIMIT_EVENT_TTL_S
-                or newest_recovery > event_ts):
+                or newest_success > event_ts):
             continue
         candidates.append({
-            "ts": event_ts, "lane": event_lane,
+            "at": (event_ts, 0), "lane": event_lane,
             "reason": event["name"], "reset": "", "event": event["id"],
         })
     if not candidates:
         return None
-    latest = max(candidates, key=lambda item: item["ts"])
+    latest = max(candidates, key=lambda item: item["at"][0])
     result = {
         "state": "limited", "reason": latest["reason"],
-        "age": max(0, int(now - latest["ts"])), "lane": latest["lane"],
+        "age": max(0, int(now - latest["at"][0])), "lane": latest["lane"],
     }
     if latest.get("reset"):
         result["reset"] = latest["reset"]
