@@ -1580,6 +1580,11 @@ function stoppedWord(d){
    Keeping dataOf() here also keeps paused/disarmed out of the live ROSTER
    projection, where those fields do not exist. */
 function fleetStateData(u,d){
+  /* applyFleet normalises a working unit with no current-session object to an
+     idle grid cell. A stuck lock is the deliberate exception: the collector
+     and alert ladder both call it working/STUCK, so its older LIMITED evidence
+     must not move the same box into a contradictory counter or filter. */
+  if(LIVE&&d&&d.lock&&d.lock.stuck)return "working";
   if(u.state==="working")return "working";
   if(u.state==="suppressed")return "suppressed";
   if(u.state==="offline")return stoppedWord(d)?"disarmed":"silent";

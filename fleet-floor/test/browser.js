@@ -404,6 +404,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     eq('limited: PAUSED and DISARMED outrank LIMITED in fleet counters and filters', 'disarmed',
        await page.evaluate(() => window.FLOORDEV.fleetStateData(
          {state:'offline'}, {paused:true,disarmed:true,limited:{}})));
+    eq('limited: STUCK outranks LIMITED after grid-state normalisation', 'working',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'idle'}, {lock:{stuck:true},limited:{}})));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });
