@@ -39,6 +39,12 @@ RE_SKIP = re.compile(TS + r" SESSION SKIP kind=(\S+) key=(\S+) reason=(\S+)")
 # reader that watched only sessions would keep a cleared breaker on screen
 # until the next tick found work (#611 round 3).
 RE_BREAKER_OK = re.compile(TS + r" session breaker: kind=(\S+) recovered")
+# `SESSION_ORPHAN_OUTCOME` (shared/lib/common/ledger.sh:118). Held as a word
+# here for the same reason `TERMINAL` is: the BOX states the verdict and the
+# host reads it off `outcome=`. That is the boundary #611 draws — no host-side
+# copy of a vendor's banner, no second classifier — and this is the reading
+# side of it, not a second copy of it.
+_ORPHAN_OUTCOME = "ORPHANED"
 # peak_rss= is read by its own pattern rather than by another optional group on
 # RE_END, and the reason is what RE_END already survived: the engine appends
 # new fields past reply_tail (tier=, and started= on a reconstructed terminal),
@@ -289,11 +295,12 @@ def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engi
     engine gives them different answers (#611 round 3).
 
     · THE LOG FAMILY — a TERMINAL end, and a `terminal-breaker`/`budget` SKIP
-      — is state the BOX holds and the box itself clears. `crew` deletes the
-      lane's breaker file on ANY non-TERMINAL end: "any success, timeout,
-      transient failure, or unclassified failure resets the count"
-      (shared/lib/common/breaker.sh:71-81, called unconditionally after every
-      SESSION END at session.sh:819). The gates run BEFORE the start line —
+      — is state the BOX holds and the box itself clears. `run_session`
+      deletes the lane's breaker file on a non-TERMINAL end: "any success,
+      timeout, transient failure, or unclassified failure resets the count"
+      (shared/lib/common/breaker.sh:71-81, called after every SESSION END at
+      session.sh:819) — with ONE documented exception, `ORPHANED`, handled
+      below. The gates run BEFORE the start line —
       budget, then terminal, then `SESSION START` (session.sh:624-663) — so a
       start newer than a SKIP is the engine saying both gates admitted that
       lane. And the terminal gate clears on a successful vendor probe and says
@@ -332,10 +339,32 @@ def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engi
         ended = RE_END.search(line)
         if ended:
             lane, at = ended.group(2), (parse_ts(ended.group(1)) + clock_offset, index)
-            if ended.group(6) != "TERMINAL":
+            outcome = ended.group(6)
+            if outcome == _ORPHAN_OUTCOME:
+                # THE exception to "a non-TERMINAL end cleared this lane", and
+                # the only one: `run_session` did not write this record.
+                # `session_reconcile_orphans` did, for a session that died with
+                # the box, and it passes `terminal=yes` to the same counter an
+                # observed TERMINAL feeds (ledger.sh:333-339) — "a box that
+                # kills itself on every review session has a dead review lane,
+                # whether the vendor said so or the kernel did". So this line
+                # takes the counting path, never the `rm -f`, and reading it as
+                # recovery clears LIMITED on the one record that TRIPPED the
+                # breaker (#611 round 4).
+                #
+                # Neither evidence nor recovery, which is narrower than "not
+                # recovery" on purpose: `ORPHANED` says the box died, not that
+                # a vendor refused, so whether it should raise LIMITED on its
+                # own is triage's question and not this reader's. Dropped
+                # before `newest_success` too — an orphan acknowledges no
+                # durable event either.
+                continue
+            if outcome != "TERMINAL":
                 # Recovery for the lane at ANY rc — the breaker file is gone
-                # either way. Only rc=0 acknowledges a durable event, so the
-                # two families read this one line for two different things.
+                # either way, including on the MEMORY outcome, where
+                # `run_session` leaves `terminal=no` (session.sh:747-752).
+                # Only rc=0 acknowledges a durable event, so the two families
+                # read this one line for two different things.
                 note_recovery(lane, at)
                 if ended.group(4) == "0":
                     newest_success = max(newest_success, at[0])

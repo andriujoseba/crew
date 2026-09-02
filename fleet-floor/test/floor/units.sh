@@ -72,10 +72,17 @@ t "limited: a restarted lane carries no limit furniture" False \
 #     that line is written (session.sh:624-663), so the start IS their verdict,
 #     and it clears a budget SKIP for the same reason it clears a breaker one.
 #
-# The last two rows are the boundary: recovery is per-lane and must be NEWER.
-# A `review` start says nothing about `build`, and a SKIP written after a start
+# The last four rows are the boundary. Recovery is per-lane and must be NEWER:
+# a `review` start says nothing about `build`, and a SKIP written after a start
 # in the same second is the later record — log order, not the second, is what
-# separates them.
+# separates them. And `ORPHANED` is THE exception to the first bullet, because
+# `run_session` did not write it: `session_reconcile_orphans` did, passing
+# `terminal=yes` to the same counter an observed TERMINAL feeds
+# (ledger.sh:333-339), so that line TRIPS the breaker and must never clear it.
+# Its twin is `MEMORY`, which looks just as violent and is ordinary recovery —
+# `run_session` leaves `terminal=no` there (session.sh:747-752) — so the pair
+# is what makes the exception read as an exception rather than as "anything
+# unusual latches" (#611 round 4).
 limited_recovery_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
 from datetime import datetime, timezone
 from floor.units import derive_limited
@@ -90,14 +97,19 @@ resumed = stamp(now - 60) + " session breaker: kind=build recovered; dispatch re
 started = stamp(now - 60) + " SESSION START kind=build key=y timeout=7200s log=/h/duty/logs/c.log"
 elsewhere = stamp(now - 60) + " SESSION START kind=review key=z timeout=2400s log=/h/duty/logs/d.log"
 reskipped = stamp(now - 60) + " SESSION SKIP kind=build key=x reason=budget count=1"
+orphaned = stamp(now - 60) + " SESSION END kind=build key=x rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- started=" + stamp(now - 300) + " sid=unknown"
+memory = stamp(now - 60) + " SESSION END kind=build key=x rc=137 dur=9s outcome=MEMORY acted=no reply_tail="
 verdict = lambda logs: (derive_limited(logs, [], now, 0, "build") or {}).get("reason", "clear")
 print(" ".join([verdict([terminal, failed]), verdict([terminal, timedout]),
                 verdict([breaker, resumed]), verdict([breaker, started]),
                 verdict([budget, started]), verdict([breaker, elsewhere]),
-                verdict([started, reskipped])]))
+                verdict([started, reskipped]), verdict([terminal, orphaned]),
+                verdict([breaker, orphaned]), verdict([orphaned]),
+                verdict([terminal, memory])]))
 ')"
 t "limited: newer engine recovery evidence supersedes older limit evidence" \
-  "clear clear clear clear clear terminal-breaker budget" "$limited_recovery_case"
+  "clear clear clear clear clear terminal-breaker budget terminal terminal-breaker clear clear" \
+  "$limited_recovery_case"
 # The OTHER family, and it answers recovery differently on purpose. A durable
 # `floor_events` error is not box state and no box line retracts it: it ages
 # out with the guest spool TTL, or a session that RAN THROUGH acknowledges it.
@@ -110,12 +122,13 @@ now = 1800000000
 stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 failed = stamp(now - 60) + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
 passed = stamp(now - 60) + " SESSION END kind=build key=x rc=0 dur=1s outcome=ok"
+orphaned = stamp(now - 60) + " SESSION END kind=build key=x rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= started=" + stamp(now - 300) + " sid=unknown"
 event = {"id":"1-1-1", "timestamp":stamp(now - 120), "severity":"error", "name":"event-limit"}
 verdict = lambda logs: (derive_limited(logs, [event], now, 0, "build") or {}).get("reason", "clear")
-print(" ".join([verdict([failed]), verdict([passed])]))
+print(" ".join([verdict([failed]), verdict([passed]), verdict([orphaned])]))
 ')"
 t "limited: only a completed successful session acknowledges a durable event" \
-  "event-limit clear" "$limited_event_case"
+  "event-limit clear event-limit" "$limited_event_case"
 t "limited: STUCK keeps collector state precedence" working \
   "$(uf ff-stuck "u['state']")"
 t "limited: STUCK keeps the collector note" True \
