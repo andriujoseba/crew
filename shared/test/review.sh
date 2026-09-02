@@ -339,26 +339,36 @@ t review-reclaim-noop-preserves-branch present \
   "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
 
 # Numbered review worktrees follow the builder's whole-branch predicate. The
-# branch with a newer CLOSED PR and an older OPEN PR survives; the all-closed
-# branch is reclaimed. A dirty all-closed checkout is named and retained.
+# exact fork/branch with a newer CLOSED PR and an older OPEN PR survives; the
+# all-closed branch is reclaimed. A same-named branch in another fork cannot
+# keep a closed checkout alive. A dirty all-closed checkout is named and retained.
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-41" "$RW_HEAD" >/dev/null 2>&1
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-42" "$RW_HEAD" >/dev/null 2>&1
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-43" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-44" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-46" "$RW_HEAD" >/dev/null 2>&1
 touch "$RW/trees/repo/review-43/uncommitted"
 RW_GH_CALLS="$RW/gh-calls"
 gh() {
   printf '%s\n' "$*" >>"$RW_GH_CALLS"
-  if [ "$1 $2" = "pr view" ]; then
-    case "$3" in
-      41) printf 'build/shared\n' ;;
-      42|43) printf 'build/closed\n' ;;
+  if [ "$1" = api ] && [[ "$2" == repos/fixture/repo/pulls/* ]]; then
+    case "${2##*/}" in
+      41) printf 'fork-a\tbuild/shared\n' ;;
+      42|43) printf 'fork-a\tbuild/closed\n' ;;
+      44) printf 'fork-a\tfix/shared-name\n' ;;
+      45) printf '\tbuild/no-owner\n' ;;
+      46) printf 'fork-a\tbuild/history-fails\n' ;;
     esac
     return 0
   fi
-  if [ "$1 $2" = "pr list" ]; then
+  if [ "$1 $2 $3" = "api --method GET" ]; then
     case "$*" in
-      *'--head build/shared'*) printf '[{"state":"CLOSED","number":51},{"state":"OPEN","number":41}]\n' ;;
-      *'--head build/closed'*) printf '[{"state":"CLOSED","number":43},{"state":"CLOSED","number":42}]\n' ;;
+      *'-f head=fork-a:build/shared'*) printf 'closed\nopen\n' ;;
+      *'-f head=fork-a:build/closed'*) printf 'closed\nclosed\n' ;;
+      *'-f head=fork-a:fix/shared-name'*) printf 'closed\n' ;;
+      *'-f head=fork-a:build/history-fails'*) return 1 ;;
+      *'-f head=fix/shared-name'*) printf 'CLOSED\nOPEN\n' ;;
     esac
     return 0
   fi
@@ -372,12 +382,26 @@ t review-open-pr-worktree-survives present \
   "$([ -d "$RW/trees/repo/review-41" ] && printf present || printf MISSING)"
 t review-all-closed-worktree-is-removed gone \
   "$([ ! -e "$RW/trees/repo/review-42" ] && printf gone || printf PRESENT)"
+t review-other-fork-same-ref-does-not-preserve gone \
+  "$([ ! -e "$RW/trees/repo/review-44" ] && printf gone || printf PRESENT)"
+t review-missing-head-owner-preserves-worktree present \
+  "$([ -d "$RW/trees/repo/review-45" ] && printf present || printf MISSING)"
+t review-failed-exact-history-preserves-worktree present \
+  "$([ -d "$RW/trees/repo/review-46" ] && printf present || printf MISSING)"
+t review-missing-head-owner-warning-names-pr 1 \
+  "$(grep -cF 'cannot resolve head repository and branch for fixture/repo#45' <<<"$RW_PR_OUT")"
+t review-failed-exact-history-warning-names-identity 1 \
+  "$(grep -cF 'PR history lookup failed for fixture/repo:fork-a:build/history-fails' <<<"$RW_PR_OUT")"
 t review-dirty-closed-worktree-survives present \
   "$([ -e "$RW/trees/repo/review-43/uncommitted" ] && printf present || printf MISSING)"
 t review-dirty-closed-worktree-warning-names-path 1 \
   "$(grep -cF "dirty review worktree $RW/trees/repo/review-43" <<<"$RW_PR_OUT")"
-t review-pr-history-uses-state-all 3 \
-  "$(grep -cF -- '--state all --json state,number' "$RW_GH_CALLS")"
+t review-pr-history-uses-exact-fork-ref 1 \
+  "$(grep -cF -- '-f state=all -f head=fork-a:fix/shared-name -f per_page=100' "$RW_GH_CALLS")"
+t review-pr-history-paginates-all-states 5 \
+  "$(grep -cF -- 'api --method GET --paginate repos/fixture/repo/pulls' "$RW_GH_CALLS")"
+git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-45" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-46" >/dev/null 2>&1
 
 # Ignored build products are reproducible; tracked files, ordinary untracked
 # evidence, and verdict records are not. The porcelain snapshot must therefore

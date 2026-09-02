@@ -123,11 +123,12 @@ _review_remote_repo() { # $1=checkout -> owner/repo
 }
 
 # A numbered review checkout belongs to the PR in its name, but the removal
-# predicate belongs to that PR's HEAD BRANCH: one branch may have several PRs.
-# Read all of them in one joined list. A newer closed PR must never hide an
-# older open one, the same --state all boundary builder hygiene uses (#606).
+# predicate belongs to that PR's HEAD REPOSITORY AND BRANCH: one branch may
+# have several PRs, while unrelated forks may reuse its name. Read the exact
+# fork/ref history in one joined list. A newer closed PR must never hide an
+# older open one, the same state=all boundary builder hygiene uses (#606).
 _review_worktree_done() { # $1=review checkout -> 0 done, 1 live/unknown
-  local candidate="$1" pr repo branch prs states
+  local candidate="$1" pr repo identity owner branch states
   case "${candidate##*/}" in
     review-[0-9]*) pr="${candidate##*/review-}" ;;
     *) return 0 ;;
@@ -137,19 +138,24 @@ _review_worktree_done() { # $1=review checkout -> 0 done, 1 live/unknown
     warn "review: cannot resolve repository for $candidate; leaving it"
     return 1
   }
-  branch="$(gh pr view "$pr" -R "$repo" --json headRefName --jq .headRefName 2>/dev/null)" || {
+  identity="$(gh api "repos/$repo/pulls/$pr" \
+    --jq '[.head.repo.owner.login // "", .head.ref // ""] | @tsv' 2>/dev/null)" || {
     warn "review: PR lookup failed for $repo#$pr; leaving $candidate"
     return 1
   }
-  [ -n "$branch" ] || return 1
-  prs="$(gh pr list -R "$repo" --head "$branch" --state all \
-    --json state,number 2>/dev/null)" || {
-    warn "review: PR history lookup failed for $repo:$branch; leaving $candidate"
+  IFS=$'\t' read -r owner branch <<<"$identity"
+  if [ -z "$owner" ] || [ -z "$branch" ]; then
+    warn "review: cannot resolve head repository and branch for $repo#$pr; leaving $candidate"
+    return 1
+  fi
+  states="$(gh api --method GET --paginate "repos/$repo/pulls" \
+    -f state=all -f head="$owner:$branch" -f per_page=100 \
+    --jq '.[].state' 2>/dev/null)" || {
+    warn "review: PR history lookup failed for $repo:$owner:$branch; leaving $candidate"
     return 1
   }
-  states="$(printf '%s' "$prs" | jq -r '[.[].state] | join(" ")' 2>/dev/null)" || return 1
   case "$states" in
-    ""|*OPEN*) return 1 ;;
+    ""|*OPEN*|*open*) return 1 ;;
     *) return 0 ;;
   esac
 }
