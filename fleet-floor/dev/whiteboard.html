@@ -1670,12 +1670,14 @@ function stoppedWord(d){
    one client-side split both the counter tiles and their filter chips consume.
    Keeping dataOf() here also keeps paused/disarmed out of the live ROSTER
    projection, where those fields do not exist. */
-function fleetState(u){
-  if(LIVE&&dataOf(UNITID(u),u.room).limited)return "limited";
+function fleetStateData(u,d){
   if(u.state==="working")return "working";
   if(u.state==="suppressed")return "suppressed";
-  if(u.state!=="offline")return "idle";
-  return stoppedWord(dataOf(UNITID(u),u.room))?"disarmed":"silent";
+  if(u.state==="offline")return stoppedWord(d)?"disarmed":"silent";
+  return LIVE&&d&&d.limited?"limited":"idle";
+}
+function fleetState(u){
+  return fleetStateData(u,dataOf(UNITID(u),u.room));
 }
 function matchesFloorFilter(u){
   return (floorFilter.state==="all"||fleetState(u)===floorFilter.state)
@@ -2241,13 +2243,13 @@ function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
      claim a session is running when there is one to count. */
-  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",suppressed=STATE==="suppressed",work=STATE==="working"&&!!(d.cur||!LIVE);
+  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",suppressed=STATE==="suppressed",limited=LIVE&&STATE==="idle"&&!(d.authfail&&d.authfail.length)&&!!d.limited,work=STATE==="working"&&!!(d.cur||!LIVE);
   /* PAUSED, DISARMED or "" — the one thing standing between this console and
      the word SILENT. Every readout below that used to key off `off` alone now
      asks this first; `off` still decides the shape of the panel, this decides
      what it is allowed to shout (#203). */
   var stw=off?stoppedWord(d):"";
-  var sc=stw?"#8aa0b8":off?"#ff5147":suppressed?"#f28b54":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":suppressed?"SUPPRESSED":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
+  var sc=stw?"#8aa0b8":off?"#ff5147":suppressed?"#f28b54":limited?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":suppressed?"SUPPRESSED":limited?"LIMITED":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
   document.getElementById("w-id").innerHTML='<div class="idc"><div class="av" style="background:'+hexA(vc,0.16)+';box-shadow:inset 0 0 0 1px '+hexA(vc,0.5)+';color:'+vc+'">'+AGENT[0].toUpperCase()+'</div><div><div class="nm">'+id+'</div><div class="rl">'+AGENT+' · '+ROOM+'</div><span class="pill" style="color:'+sc+';background:'+hexA(sc,0.14)+';box-shadow:inset 0 0 0 1px '+hexA(sc,0.4)+'">● '+sl+'</span></div></div><div class="spark" title="24h activity">'+(off?"":d.spark.map(function(v,i){return '<span style="height:'+Math.round(v*100)+'%;background:'+hexA(vc,i>=d.spark.length-4?0.95:0.42)+'"></span>';}).join(''))+'</div>';
   /* In LIVE mode every value here is what the box reported this poll; the
      DEMO strings it replaces were the placeholders #38 was filed about. */
@@ -2323,6 +2325,7 @@ function populateDash(){
      No progress bar here either; there is no progress to draw. */
   else if(LIVE&&d.lock&&d.lock.stuck)cs+='<div class="big" id="cur-el" style="color:#ff5147">'+fmtDur(d.lock.held)+'</div><div class="task" id="cur-stuck" style="color:#ff8a7c">'+stuckLine(d)+'</div>';
   else if(suppressed)cs+='<div class="big" style="color:#f28b54">SUPPRESSED</div><div class="task">'+esc(d.note||"zero-action resume breaker")+'</div>';
+  else if(limited)cs+='<div class="big" style="color:#ff5147">LIMITED</div><div class="task">'+esc(d.note||"operating limit")+'</div>';
   else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+esc(d.kind)+' · '+esc(d.cur.key)+'</div><div class="pbar"><i></i></div>';
   else cs+='<div class="big" style="color:#5fce9b">STANDBY</div><div class="task">idle · awaiting next tick</div>';
   document.getElementById("w-current").innerHTML=cs+'</div>';
@@ -7124,6 +7127,7 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
   matched:function(){return matchedFloorUnits().map(UNITID);},
   alert:function(box){var u=ROSTER.filter(function(x){return UNITID(x)===box;})[0];return u?alertOf(u):"";},
   alertData:function(d){return alertData(d);},
+  fleetStateData:function(u,d){return fleetStateData(u,d);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
   /* The SHIPPED confirm sentence for Restart AND the mode it authorises, over
