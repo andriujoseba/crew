@@ -129,6 +129,40 @@ print(" ".join([verdict([failed]), verdict([passed]), verdict([orphaned])]))
 ')"
 t "limited: only a completed successful session acknowledges a durable event" \
   "event-limit clear event-limit" "$limited_event_case"
+# THE TIE-BREAK, ACROSS LANES, IN BOTH ORDERS — and both orders is the whole
+# assertion. The per-lane rule and the final cross-lane selection have to
+# compare the SAME thing, and when the final one compared only the timestamp
+# it did not order these at all: `max` kept whichever lane `limits` happened
+# to be keyed first, so a single-order test passes on insertion luck while the
+# reversed pair still reads the earlier record. Two lanes stopped in the same
+# second is what a box hitting a vendor ceiling on two lanes at once looks
+# like, and AC3 is that the two reasons stay distinguishable on the unit.
+#
+# The last two rows are the other family's tie. An event carries no log
+# position, so a same-second log record wins deterministically — that record
+# names a lane and a reason off the engine's own line, where the event's
+# position is not a fact about ordering — while an event that is genuinely
+# newer still wins on time (#611, successor round 1).
+limited_tie_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+budget = stamp(now - 60) + " SESSION SKIP kind=build key=x reason=budget count=1"
+breaker = stamp(now - 60) + " SESSION SKIP kind=review key=y reason=terminal-breaker count=3"
+older = {"id":"1-1-1", "timestamp":stamp(now - 120), "severity":"error", "name":"event-limit"}
+newer = {"id":"1-1-2", "timestamp":stamp(now - 30), "severity":"error", "name":"event-limit"}
+same = {"id":"1-1-3", "timestamp":stamp(now - 60), "severity":"error", "name":"event-limit"}
+def verdict(logs, events):
+    got = derive_limited(logs, events, now, 0, "engine")
+    return "clear" if not got else got["reason"] + "/" + got["lane"]
+print(" ".join([verdict([budget, breaker], []), verdict([breaker, budget], []),
+                verdict([budget], [same]), verdict([budget], [older]),
+                verdict([budget], [newer])]))
+')"
+t "limited: the newest record wins across lanes in the same second" \
+  "terminal-breaker/review budget/build budget/build budget/build event-limit/engine" \
+  "$limited_tie_case"
 t "limited: STUCK keeps collector state precedence" working \
   "$(uf ff-stuck "u['state']")"
 t "limited: STUCK keeps the collector note" True \

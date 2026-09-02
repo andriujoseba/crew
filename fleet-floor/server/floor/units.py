@@ -407,13 +407,27 @@ def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engi
                 or not 0 <= now - event_ts <= _LIMIT_EVENT_TTL_S
                 or newest_success > event_ts):
             continue
+        # `-1` is "no log position", not position zero. A durable event is not
+        # a line in duty.log, so it has no order to compare — and `0` is a
+        # VALID log index, which would let an event tie exactly with the first
+        # line of the file and be settled by insertion luck. The sentinel makes
+        # a same-second log record win deterministically, which is the right
+        # way round: that record names a lane and a reason off the engine's own
+        # line, where the event's position says nothing at all (#611).
         candidates.append({
-            "at": (event_ts, 0), "lane": event_lane,
+            "at": (event_ts, -1), "lane": event_lane,
             "reason": event["name"], "reset": "", "event": event["id"],
         })
     if not candidates:
         return None
-    latest = max(candidates, key=lambda item: item["at"][0])
+    # THE WHOLE TUPLE, and the same one the per-lane rule above compares.
+    # Selecting on `at[0]` alone honoured the log-order tie-break within a lane
+    # and dropped it between lanes, so two lanes stopped in the same second
+    # published whichever `limits` happened to be keyed first — `max` keeps its
+    # first-seen item on a tie — rather than the later record. One rule for
+    # both choices, or the docstring above is not describing this function
+    # (#611, successor round 1).
+    latest = max(candidates, key=lambda item: item["at"])
     result = {
         "state": "limited", "reason": latest["reason"],
         "age": max(0, int(now - latest["at"][0])), "lane": latest["lane"],
