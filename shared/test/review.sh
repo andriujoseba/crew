@@ -449,6 +449,50 @@ t review-kept-tree-no-second-generation absent \
 t review-kept-tree-preserved-where-it-stands 1 \
   "$(grep -cF "dirty detached worktree $RW_KEPT_43 is preserved where it stands" <<<"$RW_KEPT_OUT")"
 
+# Round 1 (codex-bot-andresmgsl, kimi-bot-andresmgsl): a DANGLING SYMLINK at the
+# unsuffixed destination is the input that defeats a `-e`-only suffix loop. `-e`
+# resolves the link and so reads the name as free; the move then fails on a name
+# that is in fact taken, and the fail-safe branch leaves the dirty tree on the
+# fixed review-<N> path — #597 reproduced through the one case the suffix rule
+# exists to survive. Occupied is a property of the entry, not of what it
+# resolves to, so the loop must take the suffix here.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" >/dev/null 2>&1
+printf 'unsaved through a symlink\n' >"$RW/trees/repo/review-45/uncommitted"
+RW_D45_BYTES="$(cat "$RW/trees/repo/review-45/uncommitted")"
+RW_KEPT_45="$RW/trees/repo/kept-review-45-${RW_HEAD:0:7}"
+ln -s "$RW/no-such-target" "$RW_KEPT_45"
+t review-dangling-symlink-fixture-is-dangling dangling \
+  "$([ -L "$RW_KEPT_45" ] && [ ! -e "$RW_KEPT_45" ] && printf dangling || printf NOT-DANGLING)"
+TREES_DIR="$RW/trees"
+RW_LINK_OUT="$(reclaim_detached_review_worktrees 2>&1)"
+TREES_DIR="$RW_OLD_TREES"
+t review-dangling-symlink-target-takes-suffix present \
+  "$([ -e "$RW_KEPT_45-2/uncommitted" ] && printf present || printf MISSING)"
+t review-dangling-symlink-dirt-is-byte-identical "$RW_D45_BYTES" \
+  "$(cat "$RW_KEPT_45-2/uncommitted" 2>/dev/null)"
+t review-dangling-symlink-warning-names-both-paths 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/review-45 preserved as $RW_KEPT_45-2" <<<"$RW_LINK_OUT")"
+# The symlink is somebody else's entry: the walk neither follows it nor removes it.
+t review-dangling-symlink-is-left-untouched dangling \
+  "$([ -L "$RW_KEPT_45" ] && [ ! -e "$RW_KEPT_45" ] && printf dangling || printf DISTURBED)"
+t review-dangling-symlink-no-third-generation absent \
+  "$([ ! -e "$RW_KEPT_45-3" ] && printf absent || printf PRESENT)"
+# The point of all of it: the fixed retry path is free, proved by running the
+# `git worktree add --detach` the prompt tells a retrying review to run.
+if git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" \
+    >"$RW/retry-link.out" 2>&1; then
+  RW_LINK_RETRY=succeeded
+else
+  RW_LINK_RETRY="FAILED: $(cat "$RW/retry-link.out")"
+fi
+t review-dangling-symlink-retry-succeeds succeeded "$RW_LINK_RETRY"
+# Leave the tree as this block found it: the preserved sibling is a real
+# worktree and would otherwise be one more protected candidate in the counts
+# the later live-run fixtures assert.
+git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-45" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree remove --force "$RW_KEPT_45-2" >/dev/null 2>&1
+rm -f "$RW_KEPT_45"
+
 # Ignored build products are reproducible; tracked files, ordinary untracked
 # evidence, and verdict records are not. The porcelain snapshot must therefore
 # be byte-identical before and after cleanup.

@@ -168,7 +168,12 @@ _review_preserve_dirty_worktree() { # $1=candidate $2=common dir $3=head $4=dirt
   stem="$parent/kept-$base-${head:0:7}"
   target="$stem"
   n=2
-  while [ -e "$target" ]; do
+  # Occupied means the NAME is taken, not that it resolves: -e follows the link
+  # and so reads a dangling symlink as free, which would pick a destination the
+  # move then fails on — and a failed move leaves the dirty tree on the fixed
+  # review-<N> path, reproducing #597 through the one input the suffix loop
+  # exists to survive. -L answers about the entry itself.
+  while [ -e "$target" ] || [ -L "$target" ]; do
     target="$stem-$n"
     n=$((n + 1))
   done
