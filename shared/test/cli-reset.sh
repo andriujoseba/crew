@@ -230,6 +230,7 @@ run_crew() {
     RST_SNAPSHOT_FAIL="${RST_SNAPSHOT_FAIL:-}" RST_SNAPDEL_FAIL="${RST_SNAPDEL_FAIL:-}" \
     RST_RESTORE_FAIL="${RST_RESTORE_FAIL:-}" RST_DOWN_FAIL="${RST_DOWN_FAIL:-}" \
     RST_STOP_NOT_TAKE="${RST_STOP_NOT_TAKE:-}" RST_START_FAIL="${RST_START_FAIL:-}" \
+    CREW_RESET_CUT_MAX_USED_PCT="${CREW_RESET_CUT_MAX_USED_PCT-80}" \
     CREW_DRAIN_POLL_SECONDS=0 CREW_RESTART_READY_POLL_SECONDS=0 \
     CREW_RESTART_READY_ATTEMPTS=3 PATH="$SHIM:$PATH" bash "$CLI" "$@"
 }
@@ -331,11 +332,36 @@ t reset-recut-refuses-when-the-old-label-survives 1 "$RC"
 case "$OUT" in *'could not replace the existing armed checkpoint; it is unchanged'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-recut-failure-is-named named "$r1"
 
+# The cut fails with a previous label already deleted: the box really does
+# have no checkpoint, and the message says so.
 reset_case
+arm alpha
 RST_SNAPSHOT_FAIL=alpha capture reset --cut alpha
 t reset-cut-snapshot-failure-is-loud 1 "$RC"
-case "$OUT" in *'this box now has NO checkpoint'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+case "$OUT" in *'previous one was already removed'*'this box now has NO checkpoint'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-cut-snapshot-failure-names-the-repair named "$r1"
+
+# The same failure with NOTHING deleted must not claim the box lost a
+# checkpoint it never had: a false alarm sends an operator to repair a box
+# that is fine, and the reverse is worse.
+reset_case
+RST_SNAPSHOT_FAIL=alpha capture reset --cut alpha
+t reset-cut-first-snapshot-failure-is-a-failure 1 "$RC"
+case "$OUT" in *"checkpoint state is unchanged"*) r1=accurate ;; *) r1="$OUT" ;; esac
+t reset-cut-first-snapshot-failure-claims-no-loss accurate "$r1"
+case "$OUT" in *'now has NO checkpoint'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-cut-first-snapshot-failure-raises-no-false-alarm quiet "$r1"
+
+# An unreadable listing is not "no label to replace": the cut refuses rather
+# than deleting nothing and then failing on an armed that was perfectly good.
+reset_case
+arm alpha
+RST_INFO_BROKEN=alpha capture reset --cut alpha
+t reset-cut-unreadable-listing-refuses 1 "$RC"
+case "$OUT" in *'cannot tell whether armed is there to replace'*'nothing cut and nothing removed'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-unreadable-listing-is-named named "$r1"
+t reset-cut-unreadable-listing-cuts-nothing 0 "$(calls_of 'snapshot')"
+t reset-cut-unreadable-listing-removes-nothing 0 "$(calls_of 'incus')"
 
 # --- D4: box info is the only thing that knows a label exists ---------------
 
@@ -476,6 +502,21 @@ t reset-force-after-zero-mutates-nothing 0 "$(grep -cE '^(snapshot|restore|down)
 reset_case
 capture reset alpha --force-after 99999999999999999999
 t reset-force-after-over-range-refuses 2 "$RC"
+
+# The threshold is an env override, so it is validated like one: a malformed
+# value must refuse UP FRONT, not reach `[ -gt ]` and end a fleet-wide cut
+# halfway through with some boxes checkpointed and no summary.
+reset_case
+CREW_RESET_CUT_MAX_USED_PCT=80% capture reset --cut alpha
+t reset-malformed-threshold-refuses 1 "$RC"
+case "$OUT" in *'CREW_RESET_CUT_MAX_USED_PCT must be a whole percentage'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-malformed-threshold-is-named named "$r1"
+t reset-malformed-threshold-cuts-nothing 0 "$(calls_of 'snapshot')"
+
+reset_case
+CREW_RESET_CUT_MAX_USED_PCT=140 capture reset --cut alpha
+t reset-over-100-threshold-refuses 1 "$RC"
+t reset-over-100-threshold-cuts-nothing 0 "$(calls_of 'snapshot')"
 
 reset_case
 capture reset --all alpha

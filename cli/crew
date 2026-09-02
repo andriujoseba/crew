@@ -2740,7 +2740,7 @@ reset_drain_gate() { # NAME FORCE_SECONDS
 
 # cut_box NAME — D1, D7 and D5's write, for one box. rc 0 cut · 1 refused.
 cut_box() { # NAME
-  local name="$1" pct large stamp ver
+  local name="$1" pct large stamp ver replaced=0
   # D1's two preconditions. A checkpoint of a box that is not logged in, or
   # not hired, is worse than none: the restore that uses it comes back looking
   # like it worked and the box cannot do a minute's work.
@@ -2788,17 +2788,33 @@ cut_box() { # NAME
   # sends anything that is not a box invariant to `box incus` — the `{}`
   # placeholder puts the resolved instance where this call needs it rather
   # than appended at the end.
-  if has_reset_checkpoint "$name"; then
-    if ! box incus "$name" -- snapshot delete "{}" "$RESET_LABEL" </dev/null >/dev/null 2>&1; then
-      echo "  $name: REFUSED — could not replace the existing $RESET_LABEL checkpoint; it is unchanged"
-      return 1
-    fi
-  fi
+  # Three-valued here for the same reason the restore path is: an unreadable
+  # listing is not "there is no label to replace". Read as the latter, the cut
+  # below would fail on an `armed` that is still perfectly good and report it
+  # as a box left with no checkpoint at all — a false alarm about the one
+  # state D4 refuses on.
+  case "$(has_reset_checkpoint "$name"; echo $?)" in
+    2)
+      echo "  $name: REFUSED — could not read its snapshot labels, so a re-cut cannot tell whether $RESET_LABEL is there to replace; nothing cut and nothing removed"
+      return 1 ;;
+    0)
+      if ! box incus "$name" -- snapshot delete "{}" "$RESET_LABEL" </dev/null >/dev/null 2>&1; then
+        echo "  $name: REFUSED — could not replace the existing $RESET_LABEL checkpoint; it is unchanged"
+        return 1
+      fi
+      replaced=1 ;;
+  esac
   if ! box snapshot "$name" "$RESET_LABEL" </dev/null >/dev/null; then
-    # Said loudly: the delete above may already have landed, so this box can
-    # be left with NO checkpoint, and a silent failure here is exactly the
-    # state D4 refuses on weeks later with nobody knowing why.
-    echo "  $name: FAILED — the $RESET_LABEL snapshot was not taken; this box now has NO checkpoint. Repair with: crew reset --cut $name"
+    # Said loudly, and said ACCURATELY. When the delete above landed, this box
+    # is left with no checkpoint at all — exactly the state D4 refuses on weeks
+    # later with nobody knowing why — and when it did not, the old one is still
+    # there. Reporting the first case in the second one would send an operator
+    # to repair a box that does not need it, and the reverse is worse.
+    if [ "$replaced" -eq 1 ]; then
+      echo "  $name: FAILED — the $RESET_LABEL snapshot was not taken and the previous one was already removed; this box now has NO checkpoint. Repair with: crew reset --cut $name"
+    else
+      echo "  $name: FAILED — the $RESET_LABEL snapshot was not taken; the box's checkpoint state is unchanged"
+    fi
     return 1
   fi
   if ! checkpoint_record "$name" "$ver"; then
@@ -2893,6 +2909,16 @@ cmd_reset() {
     usage_error "--force-after is too large (maximum: 2562047788015215 hours)"
   fi
   force_seconds=$((10#$force_hours * 3600))
+  # The threshold is an env override, so it is validated like one and not
+  # trusted. `CREW_RESET_CUT_MAX_USED_PCT=80%` would otherwise reach `[ -gt ]`
+  # as a non-integer, and under `set -e` that ends the whole command in the
+  # middle of a fleet-wide cut — some boxes checkpointed, some not, and no
+  # summary. The reaper's own _reaper_whole exists for this exact failure.
+  case "$RESET_MAX_USED_PCT" in
+    ''|*[!0-9]*) die "CREW_RESET_CUT_MAX_USED_PCT must be a whole percentage, not '$RESET_MAX_USED_PCT'" ;;
+  esac
+  [ "$RESET_MAX_USED_PCT" -le 100 ] \
+    || die "CREW_RESET_CUT_MAX_USED_PCT must be 100 or less, not '$RESET_MAX_USED_PCT'"
   if [ "$all" -eq 1 ] && [ "${#named[@]}" -ne 0 ]; then usage_error "usage: $(synopsis_of reset)"; fi
   if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of reset)"; fi
   need_box
