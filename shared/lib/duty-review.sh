@@ -45,6 +45,27 @@ REVIEW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Git detaches builder worktrees during operations such as rebase and bisect.
 # Names remain deliberately irrelevant because a reviewer may make an
 # auxiliary worktree such as base-<N> while investigating a collision.
+#
+# THE PR'S STATE IS NO PART OF THE PREDICATE (D1, amended by triage
+# 2026-09-02). The builder's "an open PR exists on it" test does not transfer:
+# a builder worktree HOLDS A BRANCH and is durable state across ticks, so an
+# open PR really does mean its owner will return to it. A review worktree is a
+# per-session throwaway — review.txt has one session create it with
+# `git worktree add --detach` and remove it after the verdict, and nothing
+# about it carries across ticks. Three mechanisms already answer "is this in
+# use", and none is the PR's state: duty.sh's box-wide flock means a tree
+# present at tick start belongs to a session that has ended (#597 D2);
+# _review_detached_run_protects holds anything a live detached command may be
+# standing in; and _review_detached_run_blocks_dispatch stops that repository
+# dispatching at all while such a run is live.
+#
+# So on the review side an open PR does not mean "still in use" — it means
+# "this PR will be reviewed again", which is precisely when the fixed path
+# review-<N> has to be free. Gating on it reproduced #597's incident verbatim
+# on the exact population that issue's first criterion was written for: a
+# killed review's own review-<N> is by construction one whose PR is still
+# open, because that is why the tick retries it. This walk therefore makes no
+# `gh` call at all.
 _review_detached_run_protects() {
   local candidate="$1"
   local stamp repo pr head digest remote
@@ -122,42 +143,47 @@ _review_remote_repo() { # $1=checkout -> owner/repo
   esac
 }
 
-# A numbered review checkout belongs to the PR in its name, but the removal
-# predicate belongs to that PR's HEAD REPOSITORY AND BRANCH: one branch may
-# have several PRs, while unrelated forks may reuse its name. Read the exact
-# fork/ref history in one joined list. A newer closed PR must never hide an
-# older open one, the same state=all boundary builder hygiene uses (#606).
-_review_worktree_done() { # $1=review checkout -> 0 done, 1 live/unknown
-  local candidate="$1" pr repo identity owner branch states
-  case "${candidate##*/}" in
-    review-[0-9]*) pr="${candidate##*/review-}" ;;
-    *) return 0 ;;
-  esac
-  [[ "$pr" =~ ^[0-9]+$ ]] || return 0
-  repo="$(_review_remote_repo "$candidate")" || {
-    warn "review: cannot resolve repository for $candidate; leaving it"
-    return 1
-  }
-  identity="$(gh api "repos/$repo/pulls/$pr" \
-    --jq '[.head.repo.owner.login // "", .head.ref // ""] | @tsv' 2>/dev/null)" || {
-    warn "review: PR lookup failed for $repo#$pr; leaving $candidate"
-    return 1
-  }
-  IFS=$'\t' read -r owner branch <<<"$identity"
-  if [ -z "$owner" ] || [ -z "$branch" ]; then
-    warn "review: cannot resolve head repository and branch for $repo#$pr; leaving $candidate"
-    return 1
+# A dirty detached worktree is never deleted, and preserving it must never cost
+# the path (D3, amended by triage 2026-09-02). Leaving it in place preserves the
+# work and keeps #597's collision: the retry meets the tree at the very path the
+# prompt tells it to create. Move it to a sibling instead, so the fixed
+# review-<N> path is free and the work survives byte-identical.
+#
+# The fail-safe direction is always DO NOT DELETE, never delete to free the
+# path: any move failure leaves the tree exactly where it was and says so. A
+# tree already named kept-* is preserved where it stands and is never moved
+# twice; once its dirt is gone the ordinary rule above reclaims it, which is
+# what keeps this bounded rather than a second accumulation.
+_review_preserve_dirty_worktree() { # $1=candidate $2=common dir $3=head $4=dirt
+  local candidate="$1" common_dir="$2" head="$3" dirt_summary="$4"
+  local base parent stem target n
+
+  base="${candidate##*/}"
+  parent="${candidate%/*}"
+  if [[ "$base" == kept-* ]]; then
+    warn "review: dirty detached worktree $candidate is preserved where it stands ($dirt_summary)"
+    return 0
   fi
-  states="$(gh api --method GET --paginate "repos/$repo/pulls" \
-    -f state=all -f head="$owner:$branch" -f per_page=100 \
-    --jq '.[].state' 2>/dev/null)" || {
-    warn "review: PR history lookup failed for $repo:$owner:$branch; leaving $candidate"
-    return 1
-  }
-  case "$states" in
-    ""|*OPEN*|*open*) return 1 ;;
-    *) return 0 ;;
-  esac
+
+  stem="$parent/kept-$base-${head:0:7}"
+  target="$stem"
+  n=2
+  # Occupied means the NAME is taken, not that it resolves: -e follows the link
+  # and so reads a dangling symlink as free, which would pick a destination the
+  # move then fails on — and a failed move leaves the dirty tree on the fixed
+  # review-<N> path, reproducing #597 through the one input the suffix loop
+  # exists to survive. -L answers about the entry itself.
+  while [ -e "$target" ] || [ -L "$target" ]; do
+    target="$stem-$n"
+    n=$((n + 1))
+  done
+
+  if git --git-dir="$common_dir" worktree move "$candidate" "$target" >/dev/null 2>&1; then
+    warn "review: dirty detached worktree $candidate preserved as $target ($dirt_summary)"
+  else
+    warn "review: dirty detached worktree $candidate could not be preserved as $target; left exactly where it is ($dirt_summary)"
+  fi
+  return 0
 }
 
 review_cleanup_stale_build_outputs() {
@@ -216,9 +242,6 @@ reclaim_detached_review_worktrees() {
       log "review: preserved detached worktree $candidate; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
       continue
     fi
-    if ! _review_worktree_done "$candidate"; then
-      continue
-    fi
     if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
       continue
     fi
@@ -227,11 +250,7 @@ reclaim_detached_review_worktrees() {
       NF      { m++ }
       END     { printf "%d modified, %d untracked", m+0, u+0 }')"
     if [ -n "$dirt" ]; then
-      if [[ "${candidate##*/}" == review-* ]]; then
-        warn "review: dirty review worktree $candidate is done but not removable ($dirt_summary); leaving it for inspection"
-      else
-        warn "review: dirty detached worktree $candidate is not removable ($dirt_summary); leaving it for inspection"
-      fi
+      _review_preserve_dirty_worktree "$candidate" "$common_dir" "$head" "$dirt_summary"
       continue
     fi
     if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then

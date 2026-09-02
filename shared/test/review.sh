@@ -318,19 +318,27 @@ RW_OLD_TREES="$TREES_DIR"
 TREES_DIR="$RW/trees"
 RW_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
+# D3 amended (#606): dirty is preserved by MOVING it off the path, never by
+# being left on it. The work survives; the path it was occupying does not.
+RW_KEPT_BASE="$RW/trees/repo/kept-base-1-${RW_HEAD:0:7}"
 t review-reclaim-dirty-auxiliary-survives present \
-  "$([ -e "$RW/trees/repo/base-1/uncommitted" ] && printf present || printf MISSING)"
-t review-reclaim-dirty-auxiliary-warning-names-path 1 \
-  "$(grep -cF "dirty detached worktree $RW/trees/repo/base-1" <<<"$RW_OUT")"
+  "$([ -e "$RW_KEPT_BASE/uncommitted" ] && printf present || printf MISSING)"
+t review-reclaim-dirty-auxiliary-warning-names-both-paths 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/base-1 preserved as $RW_KEPT_BASE" <<<"$RW_OUT")"
+t review-reclaim-dirty-auxiliary-frees-its-path gone \
+  "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
 t review-reclaim-preserves-branch present "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
-rm -f "$RW/trees/repo/base-1/uncommitted"
+# A kept-* tree is an ordinary candidate on the next tick: once its dirt is
+# gone the ordinary rule reclaims it, which is what bounds this instead of
+# making it a second accumulation.
+rm -f "$RW_KEPT_BASE/uncommitted"
 TREES_DIR="$RW/trees"
 RW_CLEAN_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-clean-auxiliary-is-removed gone \
-  "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
+t review-reclaim-clean-kept-tree-is-removed gone \
+  "$([ ! -e "$RW_KEPT_BASE" ] && printf gone || printf PRESENT)"
 t review-reclaim-logs-path-and-head 1 \
-  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 0 untracked)" <<<"$RW_CLEAN_OUT")"
+  "$(grep -cF "review: reclaimed detached worktree $RW_KEPT_BASE at $RW_HEAD (0 modified, 0 untracked)" <<<"$RW_CLEAN_OUT")"
 TREES_DIR="$RW/trees"
 RW_QUIET="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
@@ -338,37 +346,47 @@ t review-reclaim-empty-is-quiet "" "$RW_QUIET"
 t review-reclaim-noop-preserves-branch present \
   "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
 
-# Numbered review worktrees follow the builder's whole-branch predicate. The
-# exact fork/branch with a newer CLOSED PR and an older OPEN PR survives; the
-# all-closed branch is reclaimed. A same-named branch in another fork cannot
-# keep a closed checkout alive. A dirty all-closed checkout is named and retained.
+# D1 amended by triage 2026-09-02 (#606): the PR's state is NO PART of the
+# predicate, so a numbered review worktree is reclaimed on #597's rule alone.
+# The `gh` shim below still answers exactly as the retired gate's queries did —
+# review-41's PR is OPEN, review-42's history is all CLOSED — precisely so that
+# a reinstated gate would preserve review-41 and this fixture would red. Under
+# the amended rule both go, and the shim is never reached at all: an open PR on
+# the review side does not mean "still in use", it means "this PR will be
+# reviewed again", which is exactly when the fixed review-<N> path must be free.
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-41" "$RW_HEAD" >/dev/null 2>&1
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-42" "$RW_HEAD" >/dev/null 2>&1
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-43" "$RW_HEAD" >/dev/null 2>&1
 git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-44" "$RW_HEAD" >/dev/null 2>&1
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" >/dev/null 2>&1
-git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-46" "$RW_HEAD" >/dev/null 2>&1
-touch "$RW/trees/repo/review-43/uncommitted"
+# review-43 carries both kinds of dirt, and its exact bytes are recorded so the
+# move can be proven lossless rather than merely survivable.
+printf 'unsaved analysis\n' >"$RW/trees/repo/review-43/uncommitted"
+printf 'modified seed\n' >"$RW/trees/repo/review-43/seed"
+RW_D43_PORCELAIN="$(git -C "$RW/trees/repo/review-43" status --porcelain --untracked-files=all)"
+RW_D43_BYTES="$(cat "$RW/trees/repo/review-43/uncommitted" "$RW/trees/repo/review-43/seed")"
+# review-44 is dirty AND locked, which is how the move is made to fail for real
+# rather than by stubbing: `git worktree move` refuses a locked working tree.
+printf 'unsaved too\n' >"$RW/trees/repo/review-44/uncommitted"
+git -C "$RW/work/repo" worktree lock "$RW/trees/repo/review-44" >/dev/null 2>&1
+# D4: a verdict file sits beside the trees and is a record, not scratch.
+printf 'verdict\n' >"$RW/trees/repo/verdict-41-deadbeef.md"
 RW_GH_CALLS="$RW/gh-calls"
+: >"$RW_GH_CALLS"
+# The shim is reached only through the library under test, which shellcheck
+# cannot see; under 0.10.0 that reads as dead code and SC2317 is info-level,
+# which ci-shell's unfiltered `shellcheck -x` treats as a failure.
+# shellcheck disable=SC2317
 gh() {
   printf '%s\n' "$*" >>"$RW_GH_CALLS"
   if [ "$1" = api ] && [[ "$2" == repos/fixture/repo/pulls/* ]]; then
     case "${2##*/}" in
-      41) printf 'fork-a\tbuild/shared\n' ;;
-      42|43) printf 'fork-a\tbuild/closed\n' ;;
-      44) printf 'fork-a\tfix/shared-name\n' ;;
-      45) printf '\tbuild/no-owner\n' ;;
-      46) printf 'fork-a\tbuild/history-fails\n' ;;
+      41|42|43|44) printf 'fork-a\tbuild/shared\n' ;;
     esac
     return 0
   fi
   if [ "$1 $2 $3" = "api --method GET" ]; then
     case "$*" in
       *'-f head=fork-a:build/shared'*) printf 'closed\nopen\n' ;;
-      *'-f head=fork-a:build/closed'*) printf 'closed\nclosed\n' ;;
-      *'-f head=fork-a:fix/shared-name'*) printf 'closed\n' ;;
-      *'-f head=fork-a:build/history-fails'*) return 1 ;;
-      *'-f head=fix/shared-name'*) printf 'CLOSED\nOPEN\n' ;;
     esac
     return 0
   fi
@@ -378,30 +396,102 @@ TREES_DIR="$RW/trees"
 RW_PR_OUT="$(reclaim_detached_review_worktrees 2>&1)"
 TREES_DIR="$RW_OLD_TREES"
 unset -f gh
-t review-open-pr-worktree-survives present \
-  "$([ -d "$RW/trees/repo/review-41" ] && printf present || printf MISSING)"
-t review-all-closed-worktree-is-removed gone \
+# The retired criterion's replacement: the reclaim reads no PR history at all.
+t review-reclaim-makes-no-gh-call 0 "$(wc -l <"$RW_GH_CALLS" | tr -d ' ')"
+t review-clean-worktree-on-open-pr-is-removed gone \
+  "$([ ! -e "$RW/trees/repo/review-41" ] && printf gone || printf PRESENT)"
+t review-clean-worktree-on-closed-pr-is-removed gone \
   "$([ ! -e "$RW/trees/repo/review-42" ] && printf gone || printf PRESENT)"
-t review-other-fork-same-ref-does-not-preserve gone \
-  "$([ ! -e "$RW/trees/repo/review-44" ] && printf gone || printf PRESENT)"
-t review-missing-head-owner-preserves-worktree present \
-  "$([ -d "$RW/trees/repo/review-45" ] && printf present || printf MISSING)"
-t review-failed-exact-history-preserves-worktree present \
-  "$([ -d "$RW/trees/repo/review-46" ] && printf present || printf MISSING)"
-t review-missing-head-owner-warning-names-pr 1 \
-  "$(grep -cF 'cannot resolve head repository and branch for fixture/repo#45' <<<"$RW_PR_OUT")"
-t review-failed-exact-history-warning-names-identity 1 \
-  "$(grep -cF 'PR history lookup failed for fixture/repo:fork-a:build/history-fails' <<<"$RW_PR_OUT")"
-t review-dirty-closed-worktree-survives present \
-  "$([ -e "$RW/trees/repo/review-43/uncommitted" ] && printf present || printf MISSING)"
-t review-dirty-closed-worktree-warning-names-path 1 \
-  "$(grep -cF "dirty review worktree $RW/trees/repo/review-43" <<<"$RW_PR_OUT")"
-t review-pr-history-uses-exact-fork-ref 1 \
-  "$(grep -cF -- '-f state=all -f head=fork-a:fix/shared-name -f per_page=100' "$RW_GH_CALLS")"
-t review-pr-history-paginates-all-states 5 \
-  "$(grep -cF -- 'api --method GET --paginate repos/fixture/repo/pulls' "$RW_GH_CALLS")"
+# D3 amended: the dirt survives byte-identical at the sibling path, and the
+# fixed path it was occupying is free.
+RW_KEPT_43="$RW/trees/repo/kept-review-43-${RW_HEAD:0:7}"
+t review-dirty-worktree-preserved-at-sibling present \
+  "$([ -e "$RW_KEPT_43/uncommitted" ] && printf present || printf MISSING)"
+t review-dirty-worktree-dirt-is-byte-identical "$RW_D43_BYTES" \
+  "$(cat "$RW_KEPT_43/uncommitted" "$RW_KEPT_43/seed" 2>/dev/null)"
+t review-dirty-worktree-porcelain-is-unchanged "$RW_D43_PORCELAIN" \
+  "$(git -C "$RW_KEPT_43" status --porcelain --untracked-files=all 2>/dev/null)"
+t review-dirty-worktree-warning-names-both-paths 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/review-43 preserved as $RW_KEPT_43" <<<"$RW_PR_OUT")"
+t review-dirty-worktree-warns-exactly-once 1 \
+  "$(grep -cF "$RW/trees/repo/review-43" <<<"$RW_PR_OUT")"
+# The added criterion (D1 + D3): #597's collision does not reproduce. This is
+# the real `git worktree add --detach` the prompt tells a retrying review to
+# run, not a reasoned claim about the path being free.
+if git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-43" "$RW_HEAD" \
+    >"$RW/retry.out" 2>&1; then
+  RW_RETRY=succeeded
+else
+  RW_RETRY="FAILED: $(cat "$RW/retry.out")"
+fi
+t review-killed-dirty-review-retry-succeeds succeeded "$RW_RETRY"
+git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-43" >/dev/null 2>&1
+# The failed-move path: nothing dirty is deleted there either, the tree stays
+# exactly where it was, and the warning says so.
+t review-dirty-worktree-failed-move-stays-put present \
+  "$([ -e "$RW/trees/repo/review-44/uncommitted" ] && printf present || printf MISSING)"
+t review-dirty-worktree-failed-move-creates-no-sibling absent \
+  "$([ ! -e "$RW/trees/repo/kept-review-44-${RW_HEAD:0:7}" ] && printf absent || printf PRESENT)"
+t review-dirty-worktree-failed-move-warning-says-so 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/review-44 could not be preserved as $RW/trees/repo/kept-review-44-${RW_HEAD:0:7}; left exactly where it is" <<<"$RW_PR_OUT")"
+# D4 on the reclaim path specifically: verdict records are not swept.
+t review-reclaim-preserves-verdict-file present \
+  "$([ -e "$RW/trees/repo/verdict-41-deadbeef.md" ] && printf present || printf MISSING)"
+# A kept-* tree is never moved twice: while dirty it is preserved where it
+# stands, which is what stops the sibling names accreting one per tick.
+TREES_DIR="$RW/trees"
+RW_KEPT_OUT="$(reclaim_detached_review_worktrees 2>&1)"
+TREES_DIR="$RW_OLD_TREES"
+t review-kept-tree-is-not-moved-twice present \
+  "$([ -e "$RW_KEPT_43/uncommitted" ] && printf present || printf MISSING)"
+t review-kept-tree-no-second-generation absent \
+  "$([ -z "$(find "$RW/trees/repo" -maxdepth 1 -name 'kept-kept-*' -print -quit)" ] && printf absent || printf PRESENT)"
+t review-kept-tree-preserved-where-it-stands 1 \
+  "$(grep -cF "dirty detached worktree $RW_KEPT_43 is preserved where it stands" <<<"$RW_KEPT_OUT")"
+
+# Round 1 (codex-bot-andresmgsl, kimi-bot-andresmgsl): a DANGLING SYMLINK at the
+# unsuffixed destination is the input that defeats a `-e`-only suffix loop. `-e`
+# resolves the link and so reads the name as free; the move then fails on a name
+# that is in fact taken, and the fail-safe branch leaves the dirty tree on the
+# fixed review-<N> path — #597 reproduced through the one case the suffix rule
+# exists to survive. Occupied is a property of the entry, not of what it
+# resolves to, so the loop must take the suffix here.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" >/dev/null 2>&1
+printf 'unsaved through a symlink\n' >"$RW/trees/repo/review-45/uncommitted"
+RW_D45_BYTES="$(cat "$RW/trees/repo/review-45/uncommitted")"
+RW_KEPT_45="$RW/trees/repo/kept-review-45-${RW_HEAD:0:7}"
+ln -s "$RW/no-such-target" "$RW_KEPT_45"
+t review-dangling-symlink-fixture-is-dangling dangling \
+  "$([ -L "$RW_KEPT_45" ] && [ ! -e "$RW_KEPT_45" ] && printf dangling || printf NOT-DANGLING)"
+TREES_DIR="$RW/trees"
+RW_LINK_OUT="$(reclaim_detached_review_worktrees 2>&1)"
+TREES_DIR="$RW_OLD_TREES"
+t review-dangling-symlink-target-takes-suffix present \
+  "$([ -e "$RW_KEPT_45-2/uncommitted" ] && printf present || printf MISSING)"
+t review-dangling-symlink-dirt-is-byte-identical "$RW_D45_BYTES" \
+  "$(cat "$RW_KEPT_45-2/uncommitted" 2>/dev/null)"
+t review-dangling-symlink-warning-names-both-paths 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/review-45 preserved as $RW_KEPT_45-2" <<<"$RW_LINK_OUT")"
+# The symlink is somebody else's entry: the walk neither follows it nor removes it.
+t review-dangling-symlink-is-left-untouched dangling \
+  "$([ -L "$RW_KEPT_45" ] && [ ! -e "$RW_KEPT_45" ] && printf dangling || printf DISTURBED)"
+t review-dangling-symlink-no-third-generation absent \
+  "$([ ! -e "$RW_KEPT_45-3" ] && printf absent || printf PRESENT)"
+# The point of all of it: the fixed retry path is free, proved by running the
+# `git worktree add --detach` the prompt tells a retrying review to run.
+if git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" \
+    >"$RW/retry-link.out" 2>&1; then
+  RW_LINK_RETRY=succeeded
+else
+  RW_LINK_RETRY="FAILED: $(cat "$RW/retry-link.out")"
+fi
+t review-dangling-symlink-retry-succeeds succeeded "$RW_LINK_RETRY"
+# Leave the tree as this block found it: the preserved sibling is a real
+# worktree and would otherwise be one more protected candidate in the counts
+# the later live-run fixtures assert.
 git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-45" >/dev/null 2>&1
-git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-46" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree remove --force "$RW_KEPT_45-2" >/dev/null 2>&1
+rm -f "$RW_KEPT_45"
 
 # Ignored build products are reproducible; tracked files, ordinary untracked
 # evidence, and verdict records are not. The porcelain snapshot must therefore
@@ -511,8 +601,13 @@ t review-reclaim-fixture-run-completes complete "$DETACHED_RUN_STATE"
 TREES_DIR="$RW/trees"
 reclaim_detached_review_worktrees >/dev/null
 TREES_DIR="$RW_OLD_TREES"
+# The killed review's own tree is dirty, so it is preserved at the sibling and
+# its fixed path is freed — the whole point of D3's amendment.
+RW_KEPT_LIVE="$RW/trees/repo/kept-review-live-${RW_LIVE_HEAD:0:7}"
 t review-reclaim-ended-run-dirty-tree-preserved present \
-  "$([ -e "$RW/trees/repo/review-live/review-finished" ] && printf present || printf MISSING)"
+  "$([ -e "$RW_KEPT_LIVE/review-finished" ] && printf present || printf MISSING)"
+t review-reclaim-ended-run-dirty-tree-frees-its-path gone \
+  "$([ ! -e "$RW/trees/repo/review-live" ] && printf gone || printf PRESENT)"
 t review-reclaim-ended-run-stale-tree-removed gone \
   "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
 t review-reclaim-ended-run-auxiliary-tree-removed gone \
