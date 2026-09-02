@@ -372,7 +372,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     eq('filter: Suppressed selects the breaker-stopped fixture',
        JSON.stringify(['ff-suppressed']), JSON.stringify(suppressedMatches));
     eq('filter: Limited selects every current limit fixture',
-       JSON.stringify(['ff-idle', 'ff-lim-breaker', 'ff-lim-budget', 'ff-lim-terminal']),
+       JSON.stringify(['ff-lim-breaker', 'ff-lim-budget', 'ff-lim-event', 'ff-lim-terminal']),
        JSON.stringify(limitedMatches));
     eq('filter: All keeps all three offline fixtures reachable',
        JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));
@@ -398,6 +398,12 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       window.FLOORDEV.alertData({ping:null,lock:{stuck:true},authfail:['vendor: rejected'],limited:{}})));
     eq('limited: UNREACHABLE outranks every lower alert', 'UNREACHABLE', await page.evaluate(() =>
       window.FLOORDEV.alertData({ping:{wedged:true},lock:{stuck:true},authfail:['x'],limited:{}})));
+    eq('limited: SILENT outranks LIMITED in fleet counters and filters', 'silent',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:false,disarmed:false,limited:{}})));
+    eq('limited: PAUSED and DISARMED outrank LIMITED in fleet counters and filters', 'disarmed',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:true,disarmed:true,limited:{}})));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });
@@ -881,12 +887,27 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     ok('limited: terminal session has its own rendered class',
        !!terminal && terminal.terminalRows > 0,
        terminal ? terminal.sessions : 'terminal fixture not reached');
+    ok('limited: reset text renders as display-only console detail',
+       !!terminal && /LIMITED/.test(terminal.headline)
+         && /build lane, terminal/.test(terminal.current)
+         && /resets at 18:00 UTC/.test(terminal.current),
+       terminal ? terminal.headline+' | '+terminal.current : 'terminal fixture not reached');
     const eventUnit = allSeen.find((u) => /ff-idle/.test(u.box));
     ok('limited: floor events render on the unit console without an alert channel',
        !!eventUnit && /OPERATING LIMIT EVENTS/.test(eventUnit.sessions)
          && /github_connection_nodes/.test(eventUnit.sessions)
          && /fixture-payload/.test(eventUnit.sessions),
        eventUnit ? eventUnit.sessions : 'event fixture not reached');
+    const breakerUnit = allSeen.find((u) => /ff-lim-breaker/.test(u.box));
+    ok('limited: breaker reason and lane render on the unit console',
+       !!breakerUnit && /LIMITED/.test(breakerUnit.headline)
+         && /review lane, terminal-breaker/.test(breakerUnit.current),
+       breakerUnit ? breakerUnit.headline+' | '+breakerUnit.current : 'breaker fixture not reached');
+    const budgetUnit = allSeen.find((u) => /ff-lim-budget/.test(u.box));
+    ok('limited: budget reason and lane render on the unit console',
+       !!budgetUnit && /LIMITED/.test(budgetUnit.headline)
+         && /triage lane, budget/.test(budgetUnit.current),
+       budgetUnit ? budgetUnit.headline+' | '+budgetUnit.current : 'budget fixture not reached');
     // The exact-constant half of the engine assertion above. The stub stamps
     // `crew@0.4.1 (deadbee)` (test/stub-box:84), so this is the one run where
     // provenance-stripping can be checked against a KNOWN input: the version

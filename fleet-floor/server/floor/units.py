@@ -78,6 +78,12 @@ RE_MENTION = re.compile(
 )
 RE_RESUME = re.compile(TS + r" (\S+): resume duty")
 _SESSION_ACTIVE_AFTER_S = 21600
+# The guest spool's default retention bound. The probe carries event timestamps
+# but not the guest's environment override, so the floor uses the engine's
+# shipped bound and, below, also requires stopping severity and no newer box
+# recovery evidence. An old line left behind in an otherwise quiet spool must
+# never latch LIMITED for the life of the box.
+_LIMIT_EVENT_TTL_S = 86400
 
 
 def parse_ts(s):
@@ -290,6 +296,8 @@ def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engi
                     pass
             if ts >= lanes.get(ended.group(2), {}).get("ts", 0):
                 lanes[ended.group(2)] = item
+        # A SKIP for another reason is not recovery evidence. Only a completed
+        # successful END proves that this lane ran again after a limit stop.
         elif skipped and skipped.group(4) in ("terminal-breaker", "budget"):
             ts = parse_ts(skipped.group(1)) + clock_offset
             item = {
@@ -299,9 +307,20 @@ def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engi
             if ts >= lanes.get(skipped.group(2), {}).get("ts", 0):
                 lanes[skipped.group(2)] = item
     candidates = [item for item in lanes.values() if item["reason"]]
+    newest_recovery = max(
+        (item["ts"] for item in lanes.values() if not item["reason"]), default=0
+    )
     for event in floor_events:
+        event_ts = parse_ts(event["timestamp"]) + clock_offset
+        # Warnings remain durable console evidence, but they do not say a lane
+        # stopped. Errors age out with the guest spool's shipped TTL, and a
+        # newer successful END acknowledges the older event on the next poll.
+        if (event.get("severity") != "error"
+                or not 0 <= now - event_ts <= _LIMIT_EVENT_TTL_S
+                or newest_recovery > event_ts):
+            continue
         candidates.append({
-            "ts": parse_ts(event["timestamp"]), "lane": event_lane,
+            "ts": event_ts, "lane": event_lane,
             "reason": event["name"], "reset": "", "event": event["id"],
         })
     if not candidates:
@@ -845,13 +864,6 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # being inferred from a queue that quietly stopped moving.
         u["state"] = "idle"
         u["note"] = "AUTH BLOCKED — %s" % "; ".join(u["authfail"])
-    elif limited:
-        u["state"] = "idle"
-        u["note"] = "LIMITED — %s lane, %s for %s" % (
-            limited["lane"], limited["reason"], fmt_dur(limited["age"])
-        )
-        if limited.get("reset"):
-            u["note"] += " — %s" % limited["reset"]
     elif u["lock"]["stuck"]:
         # Still "working": the box is alive, cron is ticking, and a session
         # genuinely is running — every one of those is true and none of them is
@@ -860,6 +872,13 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # this box, and the notes it would defer to describe a healthy one.
         u["state"] = "working"
         u["note"] = stuck_note
+    elif limited:
+        u["state"] = "idle"
+        u["note"] = "LIMITED — %s lane, %s for %s" % (
+            limited["lane"], limited["reason"], fmt_dur(limited["age"])
+        )
+        if limited.get("reset"):
+            u["note"] += " — %s" % limited["reset"]
     elif cur:
         u["state"] = "working"
     elif u["suppression"]["active"]:

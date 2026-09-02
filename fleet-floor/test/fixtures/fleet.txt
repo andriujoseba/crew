@@ -5,6 +5,7 @@
 # that matters.
 ff-working     running  working
 ff-idle        running  idle
+ff-lim-event   running  limited-event
 ff-lim-terminal running limited-terminal
 ff-lim-breaker running limited-breaker
 ff-lim-budget running limited-budget

@@ -260,6 +260,12 @@ emit_probe() {
   echo '::limitstart'
   if [ "$sc" = idle ]; then
     printf '1700000000-33-1\t2026-08-28T09:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tfixture-payload says ::not-a-key\n'
+  elif [ "$sc" = limited-event ]; then
+    printf '1700000000-34-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
+  elif [ "$sc" = limited-recovered ]; then
+    printf '1700000000-35-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 180)"
+  elif [ "$sc" = stuck ]; then
+    printf '1700000000-36-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
   fi
   echo '::limitend'
   # The box vitals record (#483), carried by probe.sh verbatim off duty.log.

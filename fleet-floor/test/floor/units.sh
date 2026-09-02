@@ -32,15 +32,33 @@ t "limited: terminal breaker survives without terminal session" terminal-breaker
 t "limited: budget remains distinguishable" budget \
   "$(uf ff-lim-budget "u['limited']['reason']")"
 t "limited: event-backed state carries the unit lane" reviewer \
-  "$(uf ff-idle "u['limited']['lane']")"
+  "$(uf ff-lim-event "u['limited']['lane']")"
+t "limited: warning event remains console evidence, not a stopped lane" False \
+  "$(uf ff-idle "'limited' in u")"
 t "limited: note names reason and lane" True \
   "$(uf ff-lim-breaker "'review lane, terminal-breaker' in u['note']")"
 t "limited: age is a nonnegative measured duration" True \
   "$(uf ff-lim-budget "isinstance(u['limited']['age'], int) and u['limited']['age'] >= 0")"
 t "limited: newer successful session clears state" False \
   "$(uf ff-lim-recovered "'limited' in u")"
+t "limited: STUCK keeps collector state precedence" working \
+  "$(uf ff-stuck "u['state']")"
+t "limited: STUCK keeps the collector note" True \
+  "$(uf ff-stuck "u['note'].startswith('STUCK')")"
 t "limited: healthy box carries no compatibility furniture" False \
   "$(uf ff-working "'limited' in u")"
+limited_clock_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+event = {"id":"1-1-1", "timestamp":stamp(now + 10800 - 120), "severity":"error", "name":"event-limit"}
+logs = [stamp(now + 10800 - 60) + " SESSION END kind=reviewer key=x rc=1 dur=1s outcome=TERMINAL"]
+result = derive_limited(logs, [event], now, -10800, "reviewer")
+print(result["reason"] + ":" + str(result["age"]))
+')"
+t "limited: skewed event and log evidence share the host timeline" terminal:60 \
+  "$limited_clock_case"
 t "state: breaker stop -> suppressed" suppressed "$(uf ff-suppressed "u['state']")"
 t "suppressed: carries age and reason" True \
   "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"
