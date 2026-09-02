@@ -265,6 +265,10 @@ STUCK_AFTER_S="${CREW_FLOOR_STUCK_AFTER:-$SILENT_AFTER_S}"
 # budget is maintenance-wedge evidence rather than ordinary work (#588 D4).
 RESTART_FORCE_AFTER_HOURS="${CREW_RESTART_FORCE_AFTER_HOURS:-2}"
 RESTART_DRAIN_POLL_S="${CREW_DRAIN_POLL_SECONDS:-10}"
+# A cold VM may accept `box start` before its guest agent can serve `box exec`.
+# Keep that readiness wait bounded while allowing tests to collapse the clock.
+RESTART_READY_ATTEMPTS="${CREW_RESTART_READY_ATTEMPTS:-60}"
+RESTART_READY_POLL_S="${CREW_RESTART_READY_POLL_SECONDS:-2}"
 
 # Two failures, two exit codes — because crew is called from scripts and from
 # `crew up` loops, and "the fleet is broken" and "you typo'd" used to return
@@ -512,7 +516,7 @@ EXIT STATUS
   0  ok
   1  it went wrong (no box CLI, no roster, incus said no, a guard refused)
   2  you asked wrong (unknown command, bad or missing flag, unknown profile)
-  3  restart completed partially because one or more busy boxes were skipped
+  3  lifecycle work completed after a busy restart skip or a down drain wait
 
 EXAMPLES
   # the whole fleet, converged — the verb you run most
@@ -611,8 +615,8 @@ EOF
     restart) cat <<EOF
 
 --all means the ROSTER, never every box on the host. A held or unreadable duty
-lock is skipped and makes the command exit 3. After ${RESTART_FORCE_AFTER_HOURS}
-continuous hours (the default, twice the longest shipped session budget), the
+lock is skipped and makes the command exit 3. After ${RESTART_FORCE_AFTER_HOURS} continuous
+hours (the default, twice the longest shipped session budget), the
 lock is treated as wedged; --force-after changes that threshold for this run.
 
 Each idle target has stale duty snapshots removed, then is stopped, confirmed
@@ -2291,6 +2295,19 @@ box_free_kb() {
   case "$free" in ''|*[!0-9]*) return 1 ;; *) printf '%s\n' "$free" ;; esac
 }
 
+wait_box_free_kb() {
+  local name="$1" attempt=1 free
+  while [ "$attempt" -le "$RESTART_READY_ATTEMPTS" ]; do
+    if free="$(box_free_kb "$name")"; then
+      printf '%s\n' "$free"
+      return 0
+    fi
+    [ "$attempt" -eq "$RESTART_READY_ATTEMPTS" ] || sleep "$RESTART_READY_POLL_S"
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 clear_stale_duty_snapshots() {
   # shellcheck disable=SC2016  # TMPDIR expands inside the box
   bxn "$1" '
@@ -2300,39 +2317,46 @@ clear_stale_duty_snapshots() {
 }
 
 cycle_box() {
-  local name="$1" before after delta state
-  before="$(box_free_kb "$name")" || {
-    echo "  restart FAILED on $name — could not read free space before stop"
-    return 1
-  }
-  clear_stale_duty_snapshots "$name" || {
-    echo "  restart FAILED on $name — could not clear stale duty snapshots"
-    return 1
-  }
-  if ! box down "$name" </dev/null; then
-    echo "  restart FAILED on $name — stop command failed"
-    return 1
-  fi
-  state="$(box_state "$name")"
-  if [ "$state" != stopped ]; then
-    echo "  restart FAILED on $name — stop did not take (state: $state); NOT starting"
-    return 1
+  local name="$1" initial_state="$2" before="" after delta state
+  if [ "$initial_state" != stopped ]; then
+    before="$(box_free_kb "$name")" || {
+      echo "  restart FAILED on $name — could not read free space before stop"
+      return 1
+    }
+    clear_stale_duty_snapshots "$name" || {
+      echo "  restart FAILED on $name — could not clear stale duty snapshots"
+      return 1
+    }
+    if ! box down "$name" </dev/null; then
+      echo "  restart FAILED on $name — stop command failed"
+      return 1
+    fi
+    state="$(box_state "$name")"
+    if [ "$state" != stopped ]; then
+      echo "  restart FAILED on $name — stop did not take (state: $state); NOT starting"
+      return 1
+    fi
   fi
   if ! box start "$name" </dev/null; then
     echo "  restart FAILED on $name — start command failed"
     return 1
   fi
-  after="$(box_free_kb "$name")" || {
-    echo "  restart FAILED on $name — started, but free space could not be read"
+  after="$(wait_box_free_kb "$name")" || {
+    echo "  restart FAILED on $name — box started but its guest stayed unreachable after $RESTART_READY_ATTEMPTS probes; inspect with: box shell $name"
     return 1
   }
+  if [ "$initial_state" = stopped ]; then
+    printf '  %s: started from stopped; /tmp filesystem free %s KiB (no pre-stop reading)\n' \
+      "$name" "$after"
+    return 0
+  fi
   delta=$((after - before))
   printf '  %s: restarted; /tmp filesystem free %s → %s KiB (delta %+d KiB)\n' \
     "$name" "$before" "$after" "$delta"
 }
 
 cmd_restart() {
-  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" arg name probe state age
+  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" name state age initial_state
   local restarted=0 skipped=0 failed=0 skipped_names="" failed_names=""
   local -a named=() restart_targets=()
   while [ "$#" -gt 0 ]; do
@@ -2361,8 +2385,13 @@ cmd_restart() {
       failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"
       continue
     fi
-    read -r state age <<<"$(drain_probe "$name")"
-    if [ "$state" != idle ]; then
+    initial_state="$(box_state "$name")"
+    if [ "$initial_state" = stopped ]; then
+      echo "  $name: already stopped; starting"
+    else
+      read -r state age <<<"$(drain_probe "$name")"
+    fi
+    if [ "$initial_state" != stopped ] && [ "$state" != idle ]; then
       if [ "$state" = busy ] && [[ "$age" =~ ^[0-9]+$ ]] \
          && [ "$age" -ge $((force_hours * 3600)) ]; then
         echo "  $name: duty lock held for $(status_duration "$age") — force-after reached; restarting"
@@ -2376,7 +2405,7 @@ cmd_restart() {
         continue
       fi
     fi
-    if cycle_box "$name"; then restarted=$((restarted + 1))
+    if cycle_box "$name" "$initial_state"; then restarted=$((restarted + 1))
     else failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"; fi
   done
   echo
@@ -2394,7 +2423,7 @@ box_supports_force_down() {
 }
 
 cmd_down() {
-  local force=0 name _rest probe state age failed=0 stopped=0 absent=0 waited=0
+  local force=0 name _rest state age failed=0 stopped=0 absent=0 waited=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
@@ -2413,6 +2442,13 @@ cmd_down() {
       absent=$((absent + 1))
       continue
     fi
+    state="$(box_state "$name")"
+    if [ "$state" = stopped ]; then
+      echo "  $name: already stopped"
+      stopped=$((stopped + 1))
+      state=""
+      continue
+    fi
     if [ "$force" -eq 0 ]; then
       local announced=0
       while :; do
@@ -2429,8 +2465,12 @@ cmd_down() {
       waited=$((waited + announced))
     fi
     if [ "$force" -eq 1 ]; then
+      # This roster loop reads through a FIFO; a stdin-inheriting box command
+      # would drain later roster rows (#48).
       box down "$name" --force </dev/null || state=failed
     else
+      # This roster loop reads through a FIFO; a stdin-inheriting box command
+      # would drain later roster rows (#48).
       box down "$name" </dev/null || state=failed
     fi
     if [ "${state:-}" != failed ]; then state="$(box_state "$name")"; fi
@@ -2446,6 +2486,7 @@ cmd_down() {
   echo
   echo "down: $stopped stopped, $waited waited, $absent absent, $failed failed"
   if [ "$failed" -ne 0 ]; then return 1; fi
+  if [ "$waited" -ne 0 ]; then return 3; fi
 }
 
 # crew status — no argument: the whole crew as a table, one roster member

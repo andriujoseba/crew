@@ -15,7 +15,21 @@ mkdir -p "$XDG_CONFIG_HOME"
 CONF="$TMP/conf"
 SHIM="$TMP/shim"
 STATE="$TMP/state"
-mkdir -p "$CONF" "$SHIM" "$STATE"
+PROBE_BIN="$TMP/probe-bin"
+NO_FLOCK_BIN="$TMP/no-flock-bin"
+mkdir -p "$CONF" "$SHIM" "$STATE" "$STATE/guests" "$PROBE_BIN" "$NO_FLOCK_BIN"
+ln -s "$(command -v cat)" "$PROBE_BIN/cat"
+ln -s "$(command -v cat)" "$NO_FLOCK_BIN/cat"
+cat >"$PROBE_BIN/date" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${LIFE_NOW:-10000}"
+EOF
+cp "$PROBE_BIN/date" "$NO_FLOCK_BIN/date"
+cat >"$PROBE_BIN/flock" <<'EOF'
+#!/bin/bash
+exit "${LIFE_FLOCK_RC:-0}"
+EOF
+chmod +x "$PROBE_BIN/date" "$PROBE_BIN/flock" "$NO_FLOCK_BIN/date"
 cp "$ROOT/examples/fleet.conf" "$ROOT/examples/repos.txt" \
   "$ROOT/examples/notify-repos.txt" "$ROOT/examples/doctrine.conf" "$CONF/"
 cat >"$CONF/fleet.roster" <<'EOF'
@@ -40,6 +54,9 @@ case "$cmd" in
   exec)
     name="$1"; shift
     script="${*: -1}"
+    current="running"
+    [ ! -s "$state_dir/state-$name" ] || current="$(cat "$state_dir/state-$name")"
+    [ "$current" != stopped ] || exit 1
     if [[ "$script" == *'flock -n "$lock"'* ]]; then
       probe="$state_dir/probe-$name"
       value="${LIFE_PROBE_DEFAULT:-idle:0}"
@@ -48,12 +65,33 @@ case "$cmd" in
         tail -n +2 "$probe" >"$probe.next"
         mv "$probe.next" "$probe"
       fi
+      guest_home="$state_dir/guests/$name"
+      mkdir -p "$guest_home/duty"
+      rm -f "$guest_home/duty/.duty.lock.since"
       case "$value" in
-        idle:*) printf 'idle 0\n' ;;
-        busy:*) printf 'busy %s\n' "${value#busy:}" ;;
-        *) printf 'unreadable -1\n' ;;
+        idle:*) probe_path="$LIFE_PROBE_BIN"; probe_rc=0 ;;
+        busy:*)
+          probe_path="$LIFE_PROBE_BIN"; probe_rc=1
+          printf '%s\n' "$((10000 - ${value#busy:}))" >"$guest_home/duty/.duty.lock.since"
+          ;;
+        no-flock) probe_path="$LIFE_NO_FLOCK_BIN"; probe_rc=0 ;;
+        flock-error) probe_path="$LIFE_PROBE_BIN"; probe_rc=2 ;;
+        transport|unreadable) exit 1 ;;
+        empty) exit 0 ;;
+        *) exit 2 ;;
       esac
+      env HOME="$guest_home" PATH="$probe_path" LIFE_FLOCK_RC="$probe_rc" LIFE_NOW=10000 \
+        /bin/bash -c "$script"
     elif [[ "$script" == *'df -Pk'* ]]; then
+      printf 'free-probe %s\n' "$name" >>"$calls"
+      ready_file="$state_dir/ready-fails-$name"
+      if [ -f "$state_dir/started-$name" ] && [ -s "$ready_file" ]; then
+        remaining="$(cat "$ready_file")"
+        if [ "$remaining" -gt 0 ]; then
+          printf '%s\n' "$((remaining - 1))" >"$ready_file"
+          exit 1
+        fi
+      fi
       if [ -f "$state_dir/started-$name" ]; then free=1200; else free=1000; fi
       # The stub stands at the box transport boundary, so it returns what the
       # complete remote pipeline prints, not df's intermediate table.
@@ -79,6 +117,7 @@ case "$cmd" in
     printf 'start %s\n' "$name" >>"$calls"
     printf 'running\n' >"$state_dir/state-$name"
     : >"$state_dir/started-$name"
+    printf '%s\n' "${LIFE_READY_FAILS:-0}" >"$state_dir/ready-fails-$name"
     ;;
   info)
     name="$1"
@@ -92,6 +131,7 @@ chmod +x "$SHIM/box"
 
 reset_case() {
   find "$STATE" -mindepth 1 -maxdepth 1 -type f -delete
+  find "$STATE/guests" -mindepth 1 -delete
   : >"$STATE/calls"
 }
 
@@ -101,7 +141,10 @@ run_crew() {
     LIFE_FORCE_HELP="${LIFE_FORCE_HELP:-yes}" \
     LIFE_DOWN_FAIL="${LIFE_DOWN_FAIL:-}" \
     LIFE_STOP_NOT_TAKE="${LIFE_STOP_NOT_TAKE:-}" \
-    CREW_DRAIN_POLL_SECONDS=0 PATH="$SHIM:$PATH" bash "$CLI" "$@"
+    LIFE_READY_FAILS="${LIFE_READY_FAILS:-0}" \
+    LIFE_PROBE_BIN="$PROBE_BIN" LIFE_NO_FLOCK_BIN="$NO_FLOCK_BIN" \
+    CREW_DRAIN_POLL_SECONDS=0 CREW_RESTART_READY_POLL_SECONDS=0 \
+    CREW_RESTART_READY_ATTEMPTS=3 PATH="$SHIM:$PATH" bash "$CLI" "$@"
 }
 
 capture() {
@@ -113,7 +156,7 @@ capture help restart
 case "$OUT" in *'usage: crew restart <box>... | --all [--force-after <hours>]'*'stop that does not take is never followed by a start'*) r1=complete ;; *) r1="$OUT" ;; esac
 t lifecycle-help-renders-table-and-detail complete "$r1"
 capture help
-case "$OUT" in *'3  restart completed partially because one or more busy boxes were skipped'*) r1=documented ;; *) r1="$OUT" ;; esac
+case "$OUT" in *'3  lifecycle work completed after a busy restart skip or a down drain wait'*) r1=documented ;; *) r1="$OUT" ;; esac
 t lifecycle-help-documents-skip-status documented "$r1"
 
 reset_case
@@ -126,6 +169,26 @@ case "$OUT" in *'free 1000 → 1200 KiB (delta +200 KiB)'*) r1=reported ;; *) r1
 t lifecycle-idle-restart-reports-space-delta reported "$r1"
 
 reset_case
+LIFE_READY_FAILS=2 capture restart alpha
+t lifecycle-restart-waits-for-guest-readiness 0 "$RC"
+t lifecycle-restart-retries-post-start-probe 4 "$(grep -c '^free-probe alpha$' "$STATE/calls")"
+unset LIFE_READY_FAILS
+
+reset_case
+LIFE_READY_FAILS=5 capture restart alpha
+t lifecycle-restart-readiness-timeout-is-failure 1 "$RC"
+case "$OUT" in *'guest stayed unreachable after 3 probes'*'box shell alpha'*) r1=actionable ;; *) r1="$OUT" ;; esac
+t lifecycle-restart-readiness-timeout-is-actionable actionable "$r1"
+unset LIFE_READY_FAILS
+
+reset_case
+printf 'stopped\n' >"$STATE/state-alpha"
+capture restart alpha
+t lifecycle-stopped-restart-starts-without-drain 0 "$RC"
+t lifecycle-stopped-restart-does-not-stop-again 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
+t lifecycle-stopped-restart-starts 1 "$(grep -c '^start alpha$' "$STATE/calls")"
+
+reset_case
 printf 'busy:60\n' >"$STATE/probe-alpha"
 capture restart alpha
 t lifecycle-busy-restart-has-skip-status 3 "$RC"
@@ -133,11 +196,13 @@ case "$OUT" in *'alpha: SKIPPED busy'*'skipped: alpha'*) r1=named ;; *) r1="$OUT
 t lifecycle-busy-restart-is-named named "$r1"
 t lifecycle-busy-restart-never-stops 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
 
-reset_case
-printf 'unreadable\n' >"$STATE/probe-alpha"
-capture restart alpha
-t lifecycle-unreadable-is-busy-skip 3 "$RC"
-t lifecycle-unreadable-never-stops 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
+for unreadable_mode in no-flock flock-error transport empty; do
+  reset_case
+  printf '%s\n' "$unreadable_mode" >"$STATE/probe-alpha"
+  capture restart alpha
+  t "lifecycle-$unreadable_mode-is-busy-skip" 3 "$RC"
+  t "lifecycle-$unreadable_mode-never-stops" 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
+done
 
 reset_case
 printf 'busy:3601\n' >"$STATE/probe-alpha"
@@ -162,10 +227,17 @@ t lifecycle-all-leaves-offroster 0 "$(grep -c 'offroster' "$STATE/calls" || true
 reset_case
 printf 'busy:65\nidle:0\n' >"$STATE/probe-alpha"
 capture down
-t lifecycle-down-waits-then-completes 0 "$RC"
+t lifecycle-down-waits-then-completes-with-wait-status 3 "$RC"
 case "$OUT" in *'alpha: waiting for duty lock held 1m'*'crew down --force'*'down: 2 stopped, 1 waited'*) r1=loud ;; *) r1="$OUT" ;; esac
 t lifecycle-down-wait-is-loud loud "$r1"
 t lifecycle-plain-down-never-forces 0 "$(grep -c -- '--force' "$STATE/calls" || true)"
+
+reset_case
+printf 'stopped\n' >"$STATE/state-alpha"
+capture down
+t lifecycle-down-already-stopped-terminates 0 "$RC"
+t lifecycle-down-already-stopped-does-not-call-down 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
+t lifecycle-down-continues-after-stopped-box 1 "$(grep -c '^down beta' "$STATE/calls")"
 
 reset_case
 LIFE_FORCE_HELP=no capture down --force
