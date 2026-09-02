@@ -8709,6 +8709,7 @@ t cli-version-is-0           0 "$(crewrc --version)"
 badval=""
 for spec in "new --role" "new --agent" "new --name" "new --from" \
             "hire b --role" "hire b --agent" "hire b --ref" "hire-all --ref" \
+            "upgrade b --ref" "restart b --force-after" "reset b --force-after" \
             "floor --port" "floor --bind" "floor --user" "floor --pass" \
             "floor --interval" "floor --roster"; do
   # shellcheck disable=SC2086  # splitting the spec into argv is the point

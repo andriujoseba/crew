@@ -1069,8 +1069,35 @@ fi
 
 # `box info --json` returns an array; the filter that read it as an object
 # exited 5 and took the command with it. One helper, one filter to be right.
-CL_RAWINFO="$(cl_code | grep -cE 'box info' || true)"
-t "crew: box info is read only inside box_state" 1 "${CL_RAWINFO:-0}"
+#
+# THE GUARD IS ON THE JSON READ, which is the shape that broke. #589 added a
+# second reader for a DIFFERENT question — the SNAPSHOTS block that box
+# documents as the way to list a box's labels — and it takes the text view, so
+# it cannot reproduce the array-indexing failure this exists to prevent. Both
+# halves are pinned rather than one relaxed: a future `--json` read outside
+# box_state still reds, and a second text reader does too.
+#
+# Counted as an INVOCATION (`box info "`), never the bare words, for the reason
+# cl_box_execs gives about its own: `crew help reset` names 'box info' in prose
+# and a detector that trips on its own documentation is the trap this suite has
+# already been caught by twice.
+CL_INFO_CALLS="$(cl_code | grep -E 'box info "' || true)"
+CL_RAWINFO="$(grep -c -- '--json' <<<"$CL_INFO_CALLS" || true)"
+t "crew: box info --json is read only inside box_state" 1 "${CL_RAWINFO:-0}"
+CL_TEXTINFO="$(grep -vc -- '--json' <<<"$CL_INFO_CALLS" || true)"
+t "crew: the text box info read is the snapshot-label reader alone" 1 "${CL_TEXTINFO:-0}"
+
+# That text reader carries box_state's own discipline: an unreadable listing
+# must DEGRADE to a distinct answer, never to "no labels" — #589 D4 refuses on
+# the difference, so collapsing the two would restore a box on evidence
+# nobody gathered.
+CL_BSL="$(sed -n '/^box_snapshot_labels()/,/^}/p' "$CL_ROOT/cli/crew")"
+if grep -q 'return 1' <<<"$CL_BSL"; then
+  ok "crew: box_snapshot_labels reports an unreadable listing rather than 'none'"
+else
+  fail "crew: box_snapshot_labels reports an unreadable listing rather than 'none'" \
+       "no 'return 1' — an unreadable listing would score as no labels and D4's refusal would restore"
+fi
 
 # ...and that helper must DEGRADE rather than die. `set -euo pipefail` plus a
 # command substitution is what turned a jq error into a dead command, so the
