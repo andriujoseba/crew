@@ -94,7 +94,7 @@ case "$cmd" in
     if [ "$name" = "${RST_SNAPSHOT_FAIL:-}" ]; then exit 1; fi
     # incus refuses a label that already exists; the real thing does too, and
     # the re-cut path is only correct because it deletes first.
-    if snaps_of "$name" | grep -qx -- "$label"; then
+    if grep -qx -- "$label" <<<"$(snaps_of "$name")"; then
       echo "Error: snapshot \"$label\" already exists" >&2; exit 1
     fi
     printf '%s\n' "$label" >>"$state_dir/snaps-$name"
@@ -104,7 +104,7 @@ case "$cmd" in
     name="$1"; label="${2:-}"
     printf 'restore %s %s%s\n' "$name" "$label" "${3:+ $3}" >>"$calls"
     if [ "$name" = "${RST_RESTORE_FAIL:-}" ]; then exit 1; fi
-    snaps_of "$name" | grep -qx -- "$label" || { echo "Error: no snapshot $label" >&2; exit 1; }
+    grep -qx -- "$label" <<<"$(snaps_of "$name")" || { echo "Error: no snapshot $label" >&2; exit 1; }
     ;;
   incus)
     name="$1"; shift
