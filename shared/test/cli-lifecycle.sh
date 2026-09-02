@@ -191,6 +191,9 @@ capture restart alpha
 t lifecycle-stopped-restart-starts-without-drain 0 "$RC"
 t lifecycle-stopped-restart-does-not-stop-again 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
 t lifecycle-stopped-restart-starts 1 "$(grep -c '^start alpha$' "$STATE/calls")"
+t lifecycle-stopped-restart-cleans-after-start 1 "$(grep -c '^cleanup alpha$' "$STATE/calls")"
+case "$OUT" in *'alpha: already stopped; starting'*'started from stopped'*) r1=accurate ;; *) r1="$OUT" ;; esac
+t lifecycle-stopped-restart-pins-precheck-wording accurate "$r1"
 
 reset_case
 printf 'busy:60\n' >"$STATE/probe-alpha"
@@ -214,6 +217,22 @@ capture restart alpha --force-after 1
 t lifecycle-force-after-restarts 0 "$RC"
 case "$OUT" in *'force-after reached; restarting'*) r1=named ;; *) r1="$OUT" ;; esac
 t lifecycle-force-after-is-announced named "$r1"
+
+reset_case
+printf 'busy:3601\n' >"$STATE/probe-alpha"
+capture restart alpha --force-after 08
+t lifecycle-force-after-leading-zero-is-decimal 3 "$RC"
+t lifecycle-force-after-leading-zero-does-not-cycle 0 "$(grep -cE '^(down|start) alpha' "$STATE/calls" || true)"
+
+reset_case
+capture restart alpha --force-after 00
+t lifecycle-force-after-zero-spelling-refuses 2 "$RC"
+t lifecycle-force-after-zero-spelling-mutates-nothing 0 "$(grep -cE '^(down|start) ' "$STATE/calls" || true)"
+
+reset_case
+capture restart alpha --force-after 99999999999999999999
+t lifecycle-force-after-over-range-refuses 2 "$RC"
+t lifecycle-force-after-over-range-mutates-nothing 0 "$(grep -cE '^(down|start) ' "$STATE/calls" || true)"
 
 reset_case
 LIFE_STOP_NOT_TAKE=alpha capture restart alpha
@@ -273,8 +292,10 @@ t lifecycle-force-down-skips-drain 0 "$(grep -c '^cleanup ' "$STATE/calls" || tr
 reset_case
 LIFE_DOWN_FAIL=alpha capture down
 t lifecycle-partial-down-is-nonzero 1 "$RC"
-case "$OUT" in *'down FAILED on alpha'*'down: 1 stopped'*'1 failed'*) r1=named ;; *) r1="$OUT" ;; esac
+case "$OUT" in *'down FAILED on alpha (stop command failed)'*'down: 1 stopped'*'1 failed'*) r1=named ;; *) r1="$OUT" ;; esac
 t lifecycle-partial-down-is-named named "$r1"
+case "$OUT" in *'(state: failed)'*) r1="$OUT" ;; *) r1=hidden ;; esac
+t lifecycle-partial-down-hides-internal-sentinel hidden "$r1"
 unset LIFE_DOWN_FAIL
 
 suite_finish

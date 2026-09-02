@@ -615,9 +615,9 @@ EOF
     restart) cat <<EOF
 
 --all means the ROSTER, never every box on the host. A held or unreadable duty
-lock is skipped and makes the command exit 3. After ${RESTART_FORCE_AFTER_HOURS} continuous
-hours (the default, twice the longest shipped session budget), the
-lock is treated as wedged; --force-after changes that threshold for this run.
+lock is skipped and makes the command exit 3. After the default of
+${RESTART_FORCE_AFTER_HOURS} continuous hours (twice the longest shipped session budget),
+the lock is treated as wedged; --force-after changes that threshold for this run.
 
 Each idle target has stale duty snapshots removed, then is stopped, confirmed
 stopped, and started. A stop that does not take is never followed by a start.
@@ -2346,6 +2346,14 @@ cycle_box() {
     return 1
   }
   if [ "$initial_state" = stopped ]; then
+    clear_stale_duty_snapshots "$name" || {
+      echo "  restart FAILED on $name — started, but could not clear stale duty snapshots"
+      return 1
+    }
+    after="$(box_free_kb "$name")" || {
+      echo "  restart FAILED on $name — started, but could not read free space after cleanup"
+      return 1
+    }
     printf '  %s: started from stopped; /tmp filesystem free %s KiB (no pre-stop reading)\n' \
       "$name" "$after"
     return 0
@@ -2356,7 +2364,7 @@ cycle_box() {
 }
 
 cmd_restart() {
-  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" name state age initial_state refreshed_state
+  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" force_seconds name state age initial_state refreshed_state
   local restarted=0 skipped=0 failed=0 skipped_names="" failed_names=""
   local -a named=() restart_targets=()
   while [ "$#" -gt 0 ]; do
@@ -2367,7 +2375,18 @@ cmd_restart() {
       *) named+=("$1"); shift ;;
     esac
   done
-  case "$force_hours" in ''|0|*[!0-9]*) usage_error "--force-after requires a positive whole number of hours" ;; esac
+  case "$force_hours" in ''|*[!0-9]*) usage_error "--force-after requires a positive whole number of hours" ;; esac
+  while [ "${force_hours#0}" != "$force_hours" ]; do force_hours="${force_hours#0}"; done
+  [ -n "$force_hours" ] || usage_error "--force-after requires a positive whole number of hours"
+  # Bash arithmetic is signed 64-bit on crew's supported hosts. Bound the
+  # decimal string before conversion so neither base parsing nor multiplication
+  # can wrap a safety threshold into permission to stop a live session.
+  # shellcheck disable=SC2071  # equal-width decimal strings compare lexically
+  if [ "${#force_hours}" -gt 16 ] \
+     || { [ "${#force_hours}" -eq 16 ] && [[ "$force_hours" > 2562047788015215 ]]; }; then
+    usage_error "--force-after is too large (maximum: 2562047788015215 hours)"
+  fi
+  force_seconds=$((10#$force_hours * 3600))
   if [ "$all" -eq 1 ] && [ "${#named[@]}" -ne 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
   if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of restart)"; fi
   need_box
@@ -2400,11 +2419,13 @@ cmd_restart() {
     fi
     if [ "$initial_state" != stopped ] && [ "$state" != idle ]; then
       if [ "$state" = busy ] && [[ "$age" =~ ^[0-9]+$ ]] \
-         && [ "$age" -ge $((force_hours * 3600)) ]; then
+         && [ "$age" -ge "$force_seconds" ]; then
         echo "  $name: duty lock held for $(status_duration "$age") — force-after reached; restarting"
       else
         if [[ "$age" =~ ^[0-9]+$ ]]; then
           echo "  $name: SKIPPED busy — duty lock held for $(status_duration "$age")"
+        elif [ "$state" = busy ]; then
+          echo "  $name: SKIPPED busy — duty lock age unavailable"
         else
           echo "  $name: SKIPPED busy — duty lock state unreadable"
         fi
@@ -2430,7 +2451,7 @@ box_supports_force_down() {
 }
 
 cmd_down() {
-  local force=0 name _rest state age failed=0 stopped=0 absent=0 waited=0 already_stopped
+  local force=0 name _rest state age failed=0 stopped=0 absent=0 waited=0 already_stopped stop_failed
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
@@ -2444,6 +2465,7 @@ cmd_down() {
     die "crew down --force requires box 0.10.0 or later (this host's box has no down --force)"
   fi
   while read -r name _rest; do
+    stop_failed=0
     if ! box_exists "$name"; then
       echo "  $name: not present, skipping"
       absent=$((absent + 1))
@@ -2482,18 +2504,22 @@ cmd_down() {
     if [ "$force" -eq 1 ]; then
       # This roster loop reads through a FIFO; a stdin-inheriting box command
       # would drain later roster rows (#48).
-      box down "$name" --force </dev/null || state=failed
+      box down "$name" --force </dev/null || stop_failed=1
     else
       # This roster loop reads through a FIFO; a stdin-inheriting box command
       # would drain later roster rows (#48).
-      box down "$name" </dev/null || state=failed
+      box down "$name" </dev/null || stop_failed=1
     fi
-    if [ "${state:-}" != failed ]; then state="$(box_state "$name")"; fi
+    if [ "$stop_failed" -eq 0 ]; then state="$(box_state "$name")"; else state=""; fi
     if [ "$state" = stopped ]; then
       echo "  $name: stopped"
       stopped=$((stopped + 1))
     else
-      echo "  down FAILED on $name${state:+ (state: $state)}"
+      if [ "$stop_failed" -eq 1 ]; then
+        echo "  down FAILED on $name (stop command failed)"
+      else
+        echo "  down FAILED on $name${state:+ (state: $state)}"
+      fi
       failed=$((failed + 1))
     fi
     state=""
