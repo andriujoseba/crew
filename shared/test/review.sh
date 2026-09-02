@@ -372,6 +372,10 @@ git -C "$RW/work/repo" worktree lock "$RW/trees/repo/review-44" >/dev/null 2>&1
 printf 'verdict\n' >"$RW/trees/repo/verdict-41-deadbeef.md"
 RW_GH_CALLS="$RW/gh-calls"
 : >"$RW_GH_CALLS"
+# The shim is reached only through the library under test, which shellcheck
+# cannot see; under 0.10.0 that reads as dead code and SC2317 is info-level,
+# which ci-shell's unfiltered `shellcheck -x` treats as a failure.
+# shellcheck disable=SC2317
 gh() {
   printf '%s\n' "$*" >>"$RW_GH_CALLS"
   if [ "$1" = api ] && [[ "$2" == repos/fixture/repo/pulls/* ]]; then
