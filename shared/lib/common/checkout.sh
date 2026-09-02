@@ -46,11 +46,15 @@ _checkout_report() { # $1=state-file $2=condition-id $3=message
   printf '%s\n' "$condition" >"$state"
 }
 
-_checkout_recovered() { # $1=state-file $2=dir
-  local state="$1" dir="$2"
+_checkout_recovered() { # $1=state-file $2=dir [$3=message]
+  local state="$1" dir="$2" message="${3:-}"
   [ -f "$state" ] || return 0
   rm -f "$state"
-  log "checkout: $dir can fast-forward again; doctrine checkout recovered"
+  if [ -n "$message" ]; then
+    log "$message"
+  else
+    log "checkout: $dir can fast-forward again; doctrine checkout recovered"
+  fi
 }
 
 ensure_checkout() {
@@ -87,12 +91,91 @@ ensure_checkout() {
 # ensure_main_clone REPO DIR — parked main clone with a `fork` remote at the
 # bot's fork. Builds happen in worktrees, never here (a crashed build
 # corrupted claude-bot's build clone on 2026-07-22).
+_checkout_remote_repo() { # $1=remote URL — print GitHub owner/repository
+  local remote="$1"
+  remote="${remote%.git}"
+  case "$remote" in
+    https://github.com/*) printf '%s\n' "${remote#https://github.com/}" ;;
+    git@github.com:*) printf '%s\n' "${remote#git@github.com:}" ;;
+    *) return 1 ;;
+  esac
+}
+
+_checkout_fork_list() { # $1=upstream — print this identity's matching forks
+  local repo="$1" payload
+  payload="$(gh api --paginate "repos/$repo/forks?per_page=100" 2>/dev/null)" || return 1
+  jq -r --arg owner "$ME" --arg upstream "$repo" '
+    .[]
+    | select(.owner.login == $owner)
+    | select((.parent.full_name // .source.full_name // "") == $upstream)
+    | .full_name
+  ' <<<"$payload"
+}
+
 ensure_main_clone() {
-  local repo="$1" dir="$2"
-  local name="${repo##*/}"
+  local repo="$1" dir="$2" name state
+  local current_url="" current_repo="" cached_upstream="" cached_repo=""
+  local candidate parent="" matches="" count=0 resolved="" old_repo=""
+  name="${repo##*/}"
   ensure_checkout "$repo" "$dir" || return 1
-  git -C "$dir" remote get-url fork >/dev/null 2>&1 \
-    || git -C "$dir" remote add fork "https://github.com/$ME/$name.git"
+  state="$(_checkout_state_file "$dir:fork")"
+  current_url="$(git -C "$dir" remote get-url fork 2>/dev/null || true)"
+  current_repo="$(_checkout_remote_repo "$current_url" 2>/dev/null || true)"
+  cached_upstream="$(git -C "$dir" config --local --get crew.fork-upstream 2>/dev/null || true)"
+  cached_repo="$(git -C "$dir" config --local --get crew.fork-repository 2>/dev/null || true)"
+
+  # The cache is the API validation record. As long as both the upstream and
+  # remote still match it, a transient GitHub failure must not stop a tick.
+  if [ "$cached_upstream" = "$repo" ] && [ -n "$cached_repo" ] \
+    && [ "$current_repo" = "$cached_repo" ] \
+    && [ "${cached_repo%%/*}" = "$ME" ]; then
+    _checkout_recovered "$state" "$dir" \
+      "checkout: $dir has a valid fork remote again; head repository recovered"
+    return 0
+  fi
+
+  candidate="$ME/$name"
+  parent="$(gh api "repos/$candidate" --jq '.parent.full_name // .source.full_name // empty' 2>/dev/null || true)"
+  if [ "$parent" = "$repo" ]; then
+    resolved="$candidate"
+  else
+    if ! matches="$(_checkout_fork_list "$repo")"; then
+      _checkout_report "$state" "fork-api:$repo" \
+        "checkout: cannot resolve a head repository for $repo because the GitHub fork-list API failed; refusing this builder tick"
+      return 1
+    fi
+    count="$(awk 'NF { n++ } END { print n+0 }' <<<"$matches")"
+    case "$count" in
+      0)
+        _checkout_report "$state" "fork-none:$ME:$repo" \
+          "checkout: no fork of $repo owned by $ME exists; refusing this builder tick"
+        return 1
+        ;;
+      1) resolved="$(awk 'NF { print; exit }' <<<"$matches")" ;;
+      *)
+        _checkout_report "$state" "fork-ambiguous:$ME:$repo:$count" \
+          "checkout: $count forks of $repo are owned by $ME; refusing to guess a head repository"
+        return 1
+        ;;
+    esac
+  fi
+
+  old_repo="$current_repo"
+  if [ -n "$current_url" ]; then
+    git -C "$dir" remote set-url fork "https://github.com/$resolved.git" || return 1
+  else
+    git -C "$dir" remote add fork "https://github.com/$resolved.git" || return 1
+  fi
+  git -C "$dir" config --local crew.fork-upstream "$repo" || return 1
+  git -C "$dir" config --local crew.fork-repository "$resolved" || return 1
+
+  if [ -n "$old_repo" ] && [ "$old_repo" != "$resolved" ]; then
+    _checkout_report "$state" "fork-repaired:$old_repo:$resolved" \
+      "checkout: repaired fork remote in $dir from $old_repo to validated head repository $resolved"
+  else
+    _checkout_recovered "$state" "$dir" \
+      "checkout: $dir has a valid fork remote again; head repository recovered"
+  fi
 }
 
 # validate_sha SHA — full 40-hex object id. Short SHAs broke submit gates

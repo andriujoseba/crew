@@ -141,4 +141,109 @@ EMPTY_COMMITTED="$(
 )"
 t checkout-empty-commit-time-is-unknown unknown "$EMPTY_COMMITTED"
 
+# --- ensure_main_clone ----------------------------------------------------
+# The checkout lifecycle is covered above. Fork cases keep its local git
+# fixtures stationary so a synthetic GitHub URL is never fetched.
+ensure_main_clone_without_fetch() {
+  ensure_checkout() { return 0; }
+  ensure_main_clone "$@"
+}
+export ME=bot
+FORK_CALLS="$TMP/fork-calls"
+
+new_main_clone() { # $1=name
+  local clone="$TMP/forks/$1"
+  mkdir -p "$(dirname "$clone")"
+  git clone -q "$UPSTREAM" "$clone"
+  printf '%s\n' "$clone"
+}
+
+stub_fork_api() { # candidate-parent fork-list-json
+  FORK_CANDIDATE_PARENT="$1"
+  FORK_LIST_JSON="$2"
+  FORK_API_FAIL="${3:-no}"
+  : >"$FORK_CALLS"
+  gh() {
+    printf '%s\n' "$*" >>"$FORK_CALLS"
+    case "$*" in
+      'api repos/bot/repo --jq '*)
+        [ "$FORK_API_FAIL" != candidate ] || return 1
+        printf '%s\n' "$FORK_CANDIDATE_PARENT"
+        ;;
+      'api --paginate repos/owner/repo/forks?per_page=100')
+        [ "$FORK_API_FAIL" != list ] || return 1
+        printf '%s\n' "$FORK_LIST_JSON"
+        ;;
+      *) return 97 ;;
+    esac
+  }
+}
+
+FORK_CONVENTIONAL="$(new_main_clone conventional)"
+stub_fork_api owner/repo '[]'
+ensure_main_clone_without_fetch owner/repo "$FORK_CONVENTIONAL" >/dev/null
+t fork-conventional-remote https://github.com/bot/repo.git \
+  "$(git -C "$FORK_CONVENTIONAL" remote get-url fork)"
+t fork-conventional-one-api-call 1 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
+
+FORK_NAMED="$(new_main_clone named)"
+stub_fork_api '' '[{"full_name":"bot/crew-sherpa","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+ensure_main_clone_without_fetch owner/repo "$FORK_NAMED" >/dev/null
+t fork-nonfork-candidate-searches-list 2 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
+t fork-unique-nonconventional-adopted https://github.com/bot/crew-sherpa.git \
+  "$(git -C "$FORK_NAMED" remote get-url fork)"
+
+FORK_OTHER_PARENT="$(new_main_clone other-parent)"
+stub_fork_api somebody/else '[{"full_name":"bot/right-parent","owner":{"login":"bot"},"source":{"full_name":"owner/repo"}}]'
+ensure_main_clone_without_fetch owner/repo "$FORK_OTHER_PARENT" >/dev/null
+t fork-wrong-parent-rejected https://github.com/bot/right-parent.git \
+  "$(git -C "$FORK_OTHER_PARENT" remote get-url fork)"
+
+FORK_NONE="$(new_main_clone none)"
+stub_fork_api '' '[]'
+NONE_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_NONE" 2>&1)" && NONE_RC=0 || NONE_RC=$?
+t fork-zero-match-refuses 1 "$NONE_RC"
+t fork-zero-match-adds-no-remote 2 "$(git -C "$FORK_NONE" remote get-url fork >/dev/null 2>&1; printf '%s' "$?")"
+if grep -Fq 'no fork of owner/repo owned by bot exists' <<<"$NONE_LOG"; then r1=reported; else r1=MISSING; fi
+t fork-zero-match-reported reported "$r1"
+
+FORK_AMBIGUOUS="$(new_main_clone ambiguous)"
+stub_fork_api '' '[{"full_name":"bot/one","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}},{"full_name":"bot/two","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+AMBIGUOUS_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_AMBIGUOUS" 2>&1)" && AMBIGUOUS_RC=0 || AMBIGUOUS_RC=$?
+t fork-ambiguous-refuses 1 "$AMBIGUOUS_RC"
+t fork-ambiguous-adds-no-remote 2 "$(git -C "$FORK_AMBIGUOUS" remote get-url fork >/dev/null 2>&1; printf '%s' "$?")"
+if grep -Fq '2 forks of owner/repo are owned by bot' <<<"$AMBIGUOUS_LOG"; then r1=reported; else r1=MISSING; fi
+t fork-ambiguous-distinct-report reported "$r1"
+
+FORK_REPAIR="$(new_main_clone repair)"
+git -C "$FORK_REPAIR" remote add fork https://github.com/somebody/repo.git
+stub_fork_api '' '[{"full_name":"bot/crew-sherpa","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+REPAIR_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_REPAIR" 2>&1)"
+t fork-other-owner-repaired https://github.com/bot/crew-sherpa.git \
+  "$(git -C "$FORK_REPAIR" remote get-url fork)"
+if grep -Fq 'repaired fork remote' <<<"$REPAIR_LOG"; then r1=reported; else r1=MISSING; fi
+t fork-repair-reported reported "$r1"
+
+FORK_CACHED="$(new_main_clone cached)"
+git -C "$FORK_CACHED" remote add fork https://github.com/bot/custom.git
+stub_fork_api '' '[{"full_name":"bot/custom","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+ensure_main_clone_without_fetch owner/repo "$FORK_CACHED" >/dev/null
+t fork-cache-upstream owner/repo "$(git -C "$FORK_CACHED" config --local --get crew.fork-upstream)"
+t fork-cache-repository bot/custom "$(git -C "$FORK_CACHED" config --local --get crew.fork-repository)"
+
+stub_fork_api '' '[]' candidate
+CACHED_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_CACHED" 2>&1)" && CACHED_RC=0 || CACHED_RC=$?
+t fork-valid-cache-survives-api-outage 0 "$CACHED_RC"
+t fork-valid-cache-makes-no-api-call 0 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
+t fork-valid-existing-stays-byte-identical https://github.com/bot/custom.git \
+  "$(git -C "$FORK_CACHED" remote get-url fork)"
+t fork-valid-second-tick-reports-nothing "" "$CACHED_LOG"
+
+FORK_API_DOWN="$(new_main_clone api-down)"
+stub_fork_api '' '[]' list
+API_DOWN_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_API_DOWN" 2>&1)" && API_DOWN_RC=0 || API_DOWN_RC=$?
+t fork-api-failure-refuses-uncached 1 "$API_DOWN_RC"
+if grep -Fq 'fork-list API failed' <<<"$API_DOWN_LOG"; then r1=reported; else r1=MISSING; fi
+t fork-api-failure-reported reported "$r1"
+
 suite_finish
