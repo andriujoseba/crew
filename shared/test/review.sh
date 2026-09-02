@@ -243,18 +243,44 @@ if grep -Fq mutation- <<<"$D605_GLOB"; then r1=LEAKED; else r1=excluded; fi
 t review-checkout-glob-excludes-mutation-sibling excluded "$r1"
 
 # #606: mutation copies are throwaway probe scaffolding. They are removed by
-# the engine as soon as the review session returns; review worktrees and
-# verdict files beside them are records with separate lifecycles.
+# the engine once no detached command for that review remains live; review
+# worktrees and verdict files beside them are records with separate lifecycles.
 mkdir -p "$D605_PARENT/mutation-7/nested" "$D605_PARENT/review-8"
 touch "$D605_PARENT/mutation-7/nested/broken" \
   "$D605_PARENT/review-8/keep" "$D605_PARENT/verdict-8-deadbeef.md"
-review_cleanup_mutation_copies "$D605_PARENT" >/dev/null
+review_cleanup_mutation_copies "$D605_PARENT" fixture/repo >/dev/null
 t review-mutation-copy-removed-at-session-end gone \
   "$([ ! -e "$D605_PARENT/mutation-6" ] && [ ! -e "$D605_PARENT/mutation-7" ] && printf gone || printf PRESENT)"
 t review-mutation-cleanup-preserves-review-worktree present \
   "$([ -e "$D605_PARENT/review-8/keep" ] && printf present || printf MISSING)"
 t review-mutation-cleanup-preserves-verdict-file present \
   "$([ -e "$D605_PARENT/verdict-8-deadbeef.md" ] && printf present || printf MISSING)"
+
+# A parked mutation probe still owns its copy after the launching session
+# returns. The same helper removes it on the first tick after the run completes.
+D606_LIVE_HEAD="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+mkdir -p "$D605_PARENT/mutation-9"
+touch "$D605_PARENT/mutation-9/broken-copy"
+(
+  cd "$D605_PARENT/mutation-9" || exit
+  run_detached fixture/repo 9 "$D606_LIVE_HEAD" -- \
+    bash -c 'sleep 1; test -f broken-copy'
+) >"$D605_PARENT/mutation-9.digest"
+D606_LIVE_DIGEST="$(cat "$D605_PARENT/mutation-9.digest")"
+D606_LIVE_OUT="$(review_cleanup_mutation_copies "$D605_PARENT" fixture/repo)"
+t review-mutation-live-run-preserves-copy present \
+  "$([ -e "$D605_PARENT/mutation-9/broken-copy" ] && printf present || printf MISSING)"
+t review-mutation-live-run-logs-protector 1 \
+  "$(grep -cF "protected by active detached run fixture/repo#9@$D606_LIVE_HEAD" <<<"$D606_LIVE_OUT")"
+for _ in 1 2 3 4 5; do
+  detached_run_read fixture/repo 9 "$D606_LIVE_HEAD" "$D606_LIVE_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 1
+done
+t review-mutation-live-run-completes complete "$DETACHED_RUN_STATE"
+review_cleanup_mutation_copies "$D605_PARENT" fixture/repo >/dev/null
+t review-mutation-completed-run-removes-copy gone \
+  "$([ ! -e "$D605_PARENT/mutation-9" ] && printf gone || printf PRESENT)"
 
 # #597: a killed review never reaches its prompt-owned cleanup, so the next
 # tick reclaims detached worktrees before dispatch. A deliberately misleading
@@ -292,10 +318,19 @@ RW_OLD_TREES="$TREES_DIR"
 TREES_DIR="$RW/trees"
 RW_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-removes-detached gone "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
+t review-reclaim-dirty-auxiliary-survives present \
+  "$([ -e "$RW/trees/repo/base-1/uncommitted" ] && printf present || printf MISSING)"
+t review-reclaim-dirty-auxiliary-warning-names-path 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/base-1" <<<"$RW_OUT")"
 t review-reclaim-preserves-branch present "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+rm -f "$RW/trees/repo/base-1/uncommitted"
+TREES_DIR="$RW/trees"
+RW_CLEAN_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-clean-auxiliary-is-removed gone \
+  "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
 t review-reclaim-logs-path-and-head 1 \
-  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 1 untracked)" <<<"$RW_OUT")"
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 0 untracked)" <<<"$RW_CLEAN_OUT")"
 TREES_DIR="$RW/trees"
 RW_QUIET="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
@@ -354,6 +389,7 @@ mkdir -p "$RBO_CLONE"
 git -C "$RBO_CLONE" init -q -b main
 git -C "$RBO_CLONE" config user.email fixture@example.com
 git -C "$RBO_CLONE" config user.name fixture
+git -C "$RBO_CLONE" remote add origin https://github.com/fixture/output.git
 mkdir -p "$RBO_CLONE/dist"
 printf 'tracked\n' >"$RBO_CLONE/source.txt"
 printf 'tracked manifest\n' >"$RBO_CLONE/dist/manifest.txt"
@@ -372,6 +408,21 @@ RBO_BEFORE="$(git -C "$RBO_CLONE" status --porcelain)"
 # shellcheck disable=SC2031  # the entrypoint fixture's subshell cannot change this caller
 RBO_OLD_WORK="$WORK_DIR"
 WORK_DIR="$RBO_WORK"
+RBO_HEAD="$(git -C "$RBO_CLONE" rev-parse HEAD)"
+RBO_DIGEST="$(run_detached fixture/output 8 "$RBO_HEAD" -- sleep 1)"
+RBO_LIVE_OUT="$(review_cleanup_stale_build_outputs)"
+t review-build-output-live-run-preserves-ignored-products present \
+  "$([ -e "$RBO_CLONE/node_modules/pkg/index.js" ] \
+      && [ -e "$RBO_CLONE/test-results/run/result" ] \
+      && printf present || printf MISSING)"
+t review-build-output-live-run-logs-protector 1 \
+  "$(grep -cF "protected by active detached run fixture/output#8@$RBO_HEAD" <<<"$RBO_LIVE_OUT")"
+for _ in 1 2 3 4 5; do
+  detached_run_read fixture/output 8 "$RBO_HEAD" "$RBO_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 1
+done
+t review-build-output-live-run-completes complete "$DETACHED_RUN_STATE"
 review_cleanup_stale_build_outputs >/dev/null
 WORK_DIR="$RBO_OLD_WORK"
 RBO_AFTER="$(git -C "$RBO_CLONE" status --porcelain)"

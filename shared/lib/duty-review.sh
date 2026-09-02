@@ -155,9 +155,17 @@ _review_worktree_done() { # $1=review checkout -> 0 done, 1 live/unknown
 }
 
 review_cleanup_stale_build_outputs() {
-  local clone candidate rel
+  local clone candidate rel repo
   for clone in "$WORK_DIR"/*-review; do
     [ -d "$clone/.git" ] || continue
+    repo="$(_review_remote_repo "$clone")" || {
+      warn "review: cannot resolve repository for $clone; leaving its build output"
+      continue
+    }
+    if _review_detached_run_blocks_dispatch "$repo"; then
+      log "review: preserved build output in $clone; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
+      continue
+    fi
     while IFS= read -r -d '' candidate; do
       rel="${candidate#"$clone"/}"
       # -X is the safety boundary: only ignored, reproducible material goes.
@@ -212,8 +220,12 @@ reclaim_detached_review_worktrees() {
       /^\?\?/ { u++; next }
       NF      { m++ }
       END     { printf "%d modified, %d untracked", m+0, u+0 }')"
-    if [[ "${candidate##*/}" == review-* ]] && [ -n "$dirt" ]; then
-      warn "review: dirty review worktree $candidate is done but not removable ($dirt_summary); leaving it for inspection"
+    if [ -n "$dirt" ]; then
+      if [[ "${candidate##*/}" == review-* ]]; then
+        warn "review: dirty review worktree $candidate is done but not removable ($dirt_summary); leaving it for inspection"
+      else
+        warn "review: dirty detached worktree $candidate is not removable ($dirt_summary); leaving it for inspection"
+      fi
       continue
     fi
     if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then
@@ -228,14 +240,17 @@ reclaim_detached_review_worktrees() {
 
 # Mutation probes are disposable copies, not worktrees and not review records.
 # A reviewer may leave one behind when a later step fails, so the engine owns
-# the cleanup boundary: once that repository's review session returns, every
-# mutation-* sibling it could have created is dead scratch (#606). Restrict the
-# walk to direct children of the rendered review-worktree parent; never follow
-# a symlink and never widen an unresolved path into rm's target set.
-review_cleanup_mutation_copies() { # $1=review-worktree parent
-  local parent candidate
-  parent="$1"
+# the cleanup boundary: once that repository has no live detached review run,
+# every mutation-* sibling it could have created is dead scratch (#606).
+# Restrict the walk to direct children of the rendered review-worktree parent;
+# never follow a symlink and never widen an unresolved path into rm's target set.
+review_cleanup_mutation_copies() { # $1=review-worktree parent $2=repo
+  local parent="$1" repo="$2" candidate
   [ -d "$parent" ] || return 0
+  if _review_detached_run_blocks_dispatch "$repo"; then
+    log "review: preserved mutation copies in $parent; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
+    return 0
+  fi
   while IFS= read -r -d '' candidate; do
     case "$candidate" in
       "$parent"/mutation-*) : ;;
@@ -625,7 +640,7 @@ $key $updated"
     RUN_SESSION_RC=1
     RUN_SESSION_LOG=""
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
-    review_cleanup_mutation_copies "$TREES_DIR/$slug"
+    review_cleanup_mutation_copies "$TREES_DIR/$slug" "$SR"
     # Commit exactly the PRs named in this repo's prompt, and only when the
     # session completed. A crash or timeout must retry; a completed session
     # that declined or could not submit must settle until the PR changes.
