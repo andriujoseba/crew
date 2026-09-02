@@ -224,6 +224,18 @@ t fork-other-owner-repaired https://github.com/bot/crew-sherpa.git \
 if grep -Fq 'repaired fork remote' <<<"$REPAIR_LOG"; then r1=reported; else r1=MISSING; fi
 t fork-repair-reported reported "$r1"
 
+FORK_PUSH_REPAIR="$(new_main_clone push-repair)"
+git -C "$FORK_PUSH_REPAIR" remote add fork git@github.com:bot/custom.git
+git -C "$FORK_PUSH_REPAIR" remote set-url --push fork https://github.com/somebody/repo.git
+stub_fork_api '' '[{"full_name":"bot/custom","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+PUSH_REPAIR_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_PUSH_REPAIR" 2>&1)"
+t fork-valid-fetch-url-left-byte-identical git@github.com:bot/custom.git \
+  "$(git -C "$FORK_PUSH_REPAIR" remote get-url fork)"
+t fork-stale-push-url-repaired https://github.com/bot/custom.git \
+  "$(git -C "$FORK_PUSH_REPAIR" remote get-url --push fork)"
+if grep -Fq 'repaired fork remote' <<<"$PUSH_REPAIR_LOG"; then r1=reported; else r1=MISSING; fi
+t fork-push-repair-reported reported "$r1"
+
 FORK_CACHED="$(new_main_clone cached)"
 git -C "$FORK_CACHED" remote add fork https://github.com/bot/custom.git
 stub_fork_api '' '[{"full_name":"bot/custom","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'

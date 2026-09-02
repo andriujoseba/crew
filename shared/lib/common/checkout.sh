@@ -97,6 +97,7 @@ _checkout_remote_repo() { # $1=remote URL — print GitHub owner/repository
   case "$remote" in
     https://github.com/*) printf '%s\n' "${remote#https://github.com/}" ;;
     git@github.com:*) printf '%s\n' "${remote#git@github.com:}" ;;
+    ssh://git@github.com/*) printf '%s\n' "${remote#ssh://git@github.com/}" ;;
     *) return 1 ;;
   esac
 }
@@ -115,12 +116,19 @@ _checkout_fork_list() { # $1=upstream — print this identity's matching forks
 ensure_main_clone() {
   local repo="$1" dir="$2" name state
   local current_url="" current_repo="" cached_upstream="" cached_repo=""
-  local candidate parent="" matches="" count=0 resolved="" old_repo=""
+  local push_url="" push_repo="" candidate parent="" matches="" count=0
+  local resolved="" old_target=""
   name="${repo##*/}"
   ensure_checkout "$repo" "$dir" || return 1
   state="$(_checkout_state_file "$dir:fork")"
   current_url="$(git -C "$dir" remote get-url fork 2>/dev/null || true)"
   current_repo="$(_checkout_remote_repo "$current_url" 2>/dev/null || true)"
+  push_url="$(git -C "$dir" config --local --get remote.fork.pushurl 2>/dev/null || true)"
+  if [ -n "$push_url" ]; then
+    push_repo="$(_checkout_remote_repo "$push_url" 2>/dev/null || true)"
+  else
+    push_repo="$current_repo"
+  fi
   cached_upstream="$(git -C "$dir" config --local --get crew.fork-upstream 2>/dev/null || true)"
   cached_repo="$(git -C "$dir" config --local --get crew.fork-repository 2>/dev/null || true)"
 
@@ -128,6 +136,7 @@ ensure_main_clone() {
   # remote still match it, a transient GitHub failure must not stop a tick.
   if [ "$cached_upstream" = "$repo" ] && [ -n "$cached_repo" ] \
     && [ "$current_repo" = "$cached_repo" ] \
+    && [ "$push_repo" = "$cached_repo" ] \
     && [ "${cached_repo%%/*}" = "$ME" ]; then
     _checkout_recovered "$state" "$dir" \
       "checkout: $dir has a valid fork remote again; head repository recovered"
@@ -160,18 +169,22 @@ ensure_main_clone() {
     esac
   fi
 
-  old_repo="$current_repo"
-  if [ -n "$current_url" ]; then
-    git -C "$dir" remote set-url fork "https://github.com/$resolved.git" || return 1
-  else
+  old_target="${current_repo:-$current_url}"
+  if [ -z "$current_url" ]; then
     git -C "$dir" remote add fork "https://github.com/$resolved.git" || return 1
+  elif [ "$current_repo" != "$resolved" ]; then
+    git -C "$dir" remote set-url fork "https://github.com/$resolved.git" || return 1
+  fi
+  if [ -n "$push_url" ] && [ "$push_repo" != "$resolved" ]; then
+    old_target="$old_target (push: ${push_repo:-$push_url})"
+    git -C "$dir" remote set-url --push fork "https://github.com/$resolved.git" || return 1
   fi
   git -C "$dir" config --local crew.fork-upstream "$repo" || return 1
   git -C "$dir" config --local crew.fork-repository "$resolved" || return 1
 
-  if [ -n "$old_repo" ] && [ "$old_repo" != "$resolved" ]; then
-    _checkout_report "$state" "fork-repaired:$old_repo:$resolved" \
-      "checkout: repaired fork remote in $dir from $old_repo to validated head repository $resolved"
+  if [ -n "$old_target" ] && { [ "$current_repo" != "$resolved" ] || [ "$push_repo" != "$resolved" ]; }; then
+    _checkout_report "$state" "fork-repaired:$old_target:$resolved" \
+      "checkout: repaired fork remote in $dir from $old_target to validated head repository $resolved"
   else
     _checkout_recovered "$state" "$dir" \
       "checkout: $dir has a valid fork remote again; head repository recovered"
