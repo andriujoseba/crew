@@ -164,6 +164,8 @@ d601_drive() (
   run_session() {
     printf 'SESSION %s %s\n' "$1" "$2" >>"$D601_CALLS"
     printf '%s' "$5" >"$D601_PROMPT"
+    mkdir -p "$TREES_DIR/fx__repo/mutation-7"
+    touch "$TREES_DIR/fx__repo/mutation-7/broken-copy"
     RUN_SESSION_RC=0
     RUN_SESSION_LOG=""
   }
@@ -191,6 +193,8 @@ fi
 t addressing-write-is-best-effort best-effort "$r1"
 if grep -q -- '--add-label state:building' "$D601_CALLS"; then r1=WRITES-IT; else r1=absent; fi
 t addressing-never-writes-state-building absent "$r1"
+t review-session-removes-its-mutation-copy gone \
+  "$([ ! -e "$D601/trees/fx__repo/mutation-7" ] && printf gone || printf PRESENT)"
 
 # #605: repo commands run in the detached checkout, never its worktree parent.
 # Drive the real prompt render above so the engine-to-prompt contract is pinned,
@@ -238,6 +242,46 @@ t review-checkout-git-ls-files-succeeds worktree "$r1"
 if grep -Fq mutation- <<<"$D605_GLOB"; then r1=LEAKED; else r1=excluded; fi
 t review-checkout-glob-excludes-mutation-sibling excluded "$r1"
 
+# #606: mutation copies are throwaway probe scaffolding. They are removed by
+# the engine once no detached command for that review remains live; review
+# worktrees and verdict files beside them are records with separate lifecycles.
+mkdir -p "$D605_PARENT/mutation-7/nested" "$D605_PARENT/review-8"
+touch "$D605_PARENT/mutation-7/nested/broken" \
+  "$D605_PARENT/review-8/keep" "$D605_PARENT/verdict-8-deadbeef.md"
+review_cleanup_mutation_copies "$D605_PARENT" fixture/repo >/dev/null
+t review-mutation-copy-removed-at-session-end gone \
+  "$([ ! -e "$D605_PARENT/mutation-6" ] && [ ! -e "$D605_PARENT/mutation-7" ] && printf gone || printf PRESENT)"
+t review-mutation-cleanup-preserves-review-worktree present \
+  "$([ -e "$D605_PARENT/review-8/keep" ] && printf present || printf MISSING)"
+t review-mutation-cleanup-preserves-verdict-file present \
+  "$([ -e "$D605_PARENT/verdict-8-deadbeef.md" ] && printf present || printf MISSING)"
+
+# A parked mutation probe still owns its copy after the launching session
+# returns. The same helper removes it on the first tick after the run completes.
+D606_LIVE_HEAD="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+mkdir -p "$D605_PARENT/mutation-9"
+touch "$D605_PARENT/mutation-9/broken-copy"
+(
+  cd "$D605_PARENT/mutation-9" || exit
+  run_detached fixture/repo 9 "$D606_LIVE_HEAD" -- \
+    bash -c 'sleep 1; test -f broken-copy'
+) >"$D605_PARENT/mutation-9.digest"
+D606_LIVE_DIGEST="$(cat "$D605_PARENT/mutation-9.digest")"
+D606_LIVE_OUT="$(review_cleanup_mutation_copies "$D605_PARENT" fixture/repo)"
+t review-mutation-live-run-preserves-copy present \
+  "$([ -e "$D605_PARENT/mutation-9/broken-copy" ] && printf present || printf MISSING)"
+t review-mutation-live-run-logs-protector 1 \
+  "$(grep -cF "protected by active detached run fixture/repo#9@$D606_LIVE_HEAD" <<<"$D606_LIVE_OUT")"
+for _ in 1 2 3 4 5; do
+  detached_run_read fixture/repo 9 "$D606_LIVE_HEAD" "$D606_LIVE_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 1
+done
+t review-mutation-live-run-completes complete "$DETACHED_RUN_STATE"
+review_cleanup_mutation_copies "$D605_PARENT" fixture/repo >/dev/null
+t review-mutation-completed-run-removes-copy gone \
+  "$([ ! -e "$D605_PARENT/mutation-9" ] && printf gone || printf PRESENT)"
+
 # #597: a killed review never reaches its prompt-owned cleanup, so the next
 # tick reclaims detached worktrees before dispatch. A deliberately misleading
 # base-* name proves detached HEAD — not naming convention — is the boundary;
@@ -274,16 +318,147 @@ RW_OLD_TREES="$TREES_DIR"
 TREES_DIR="$RW/trees"
 RW_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-removes-detached gone "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
+t review-reclaim-dirty-auxiliary-survives present \
+  "$([ -e "$RW/trees/repo/base-1/uncommitted" ] && printf present || printf MISSING)"
+t review-reclaim-dirty-auxiliary-warning-names-path 1 \
+  "$(grep -cF "dirty detached worktree $RW/trees/repo/base-1" <<<"$RW_OUT")"
 t review-reclaim-preserves-branch present "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+rm -f "$RW/trees/repo/base-1/uncommitted"
+TREES_DIR="$RW/trees"
+RW_CLEAN_OUT="$(reclaim_detached_review_worktrees)"
+TREES_DIR="$RW_OLD_TREES"
+t review-reclaim-clean-auxiliary-is-removed gone \
+  "$([ ! -e "$RW/trees/repo/base-1" ] && printf gone || printf PRESENT)"
 t review-reclaim-logs-path-and-head 1 \
-  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 1 untracked)" <<<"$RW_OUT")"
+  "$(grep -cF "review: reclaimed detached worktree $RW/trees/repo/base-1 at $RW_HEAD (0 modified, 0 untracked)" <<<"$RW_CLEAN_OUT")"
 TREES_DIR="$RW/trees"
 RW_QUIET="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
 t review-reclaim-empty-is-quiet "" "$RW_QUIET"
 t review-reclaim-noop-preserves-branch present \
   "$([ -d "$RW/trees/repo/build-1" ] && printf present || printf MISSING)"
+
+# Numbered review worktrees follow the builder's whole-branch predicate. The
+# exact fork/branch with a newer CLOSED PR and an older OPEN PR survives; the
+# all-closed branch is reclaimed. A same-named branch in another fork cannot
+# keep a closed checkout alive. A dirty all-closed checkout is named and retained.
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-41" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-42" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-43" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-44" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-45" "$RW_HEAD" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/review-46" "$RW_HEAD" >/dev/null 2>&1
+touch "$RW/trees/repo/review-43/uncommitted"
+RW_GH_CALLS="$RW/gh-calls"
+gh() {
+  printf '%s\n' "$*" >>"$RW_GH_CALLS"
+  if [ "$1" = api ] && [[ "$2" == repos/fixture/repo/pulls/* ]]; then
+    case "${2##*/}" in
+      41) printf 'fork-a\tbuild/shared\n' ;;
+      42|43) printf 'fork-a\tbuild/closed\n' ;;
+      44) printf 'fork-a\tfix/shared-name\n' ;;
+      45) printf '\tbuild/no-owner\n' ;;
+      46) printf 'fork-a\tbuild/history-fails\n' ;;
+    esac
+    return 0
+  fi
+  if [ "$1 $2 $3" = "api --method GET" ]; then
+    case "$*" in
+      *'-f head=fork-a:build/shared'*) printf 'closed\nopen\n' ;;
+      *'-f head=fork-a:build/closed'*) printf 'closed\nclosed\n' ;;
+      *'-f head=fork-a:fix/shared-name'*) printf 'closed\n' ;;
+      *'-f head=fork-a:build/history-fails'*) return 1 ;;
+      *'-f head=fix/shared-name'*) printf 'CLOSED\nOPEN\n' ;;
+    esac
+    return 0
+  fi
+  return 1
+}
+TREES_DIR="$RW/trees"
+RW_PR_OUT="$(reclaim_detached_review_worktrees 2>&1)"
+TREES_DIR="$RW_OLD_TREES"
+unset -f gh
+t review-open-pr-worktree-survives present \
+  "$([ -d "$RW/trees/repo/review-41" ] && printf present || printf MISSING)"
+t review-all-closed-worktree-is-removed gone \
+  "$([ ! -e "$RW/trees/repo/review-42" ] && printf gone || printf PRESENT)"
+t review-other-fork-same-ref-does-not-preserve gone \
+  "$([ ! -e "$RW/trees/repo/review-44" ] && printf gone || printf PRESENT)"
+t review-missing-head-owner-preserves-worktree present \
+  "$([ -d "$RW/trees/repo/review-45" ] && printf present || printf MISSING)"
+t review-failed-exact-history-preserves-worktree present \
+  "$([ -d "$RW/trees/repo/review-46" ] && printf present || printf MISSING)"
+t review-missing-head-owner-warning-names-pr 1 \
+  "$(grep -cF 'cannot resolve head repository and branch for fixture/repo#45' <<<"$RW_PR_OUT")"
+t review-failed-exact-history-warning-names-identity 1 \
+  "$(grep -cF 'PR history lookup failed for fixture/repo:fork-a:build/history-fails' <<<"$RW_PR_OUT")"
+t review-dirty-closed-worktree-survives present \
+  "$([ -e "$RW/trees/repo/review-43/uncommitted" ] && printf present || printf MISSING)"
+t review-dirty-closed-worktree-warning-names-path 1 \
+  "$(grep -cF "dirty review worktree $RW/trees/repo/review-43" <<<"$RW_PR_OUT")"
+t review-pr-history-uses-exact-fork-ref 1 \
+  "$(grep -cF -- '-f state=all -f head=fork-a:fix/shared-name -f per_page=100' "$RW_GH_CALLS")"
+t review-pr-history-paginates-all-states 5 \
+  "$(grep -cF -- 'api --method GET --paginate repos/fixture/repo/pulls' "$RW_GH_CALLS")"
+git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-45" >/dev/null 2>&1
+git -C "$RW/work/repo" worktree remove --force "$RW/trees/repo/review-46" >/dev/null 2>&1
+
+# Ignored build products are reproducible; tracked files, ordinary untracked
+# evidence, and verdict records are not. The porcelain snapshot must therefore
+# be byte-identical before and after cleanup.
+RBO="$TMP/review-build-output"
+RBO_WORK="$RBO/work"
+RBO_CLONE="$RBO_WORK/fixture__repo-review"
+mkdir -p "$RBO_CLONE"
+git -C "$RBO_CLONE" init -q -b main
+git -C "$RBO_CLONE" config user.email fixture@example.com
+git -C "$RBO_CLONE" config user.name fixture
+git -C "$RBO_CLONE" remote add origin https://github.com/fixture/output.git
+mkdir -p "$RBO_CLONE/dist"
+printf 'tracked\n' >"$RBO_CLONE/source.txt"
+printf 'tracked manifest\n' >"$RBO_CLONE/dist/manifest.txt"
+git -C "$RBO_CLONE" add source.txt dist/manifest.txt
+git -C "$RBO_CLONE" commit -qm seed
+printf 'node_modules/\n.next/\ntest-results/\ndist/generated/\n' >"$RBO_CLONE/.gitignore"
+git -C "$RBO_CLONE" add .gitignore
+git -C "$RBO_CLONE" commit -qm ignores
+mkdir -p "$RBO_CLONE/node_modules/pkg" "$RBO_CLONE/.next/cache" \
+  "$RBO_CLONE/test-results/run" "$RBO_CLONE/dist/generated"
+touch "$RBO_CLONE/node_modules/pkg/index.js" "$RBO_CLONE/.next/cache/data" \
+  "$RBO_CLONE/test-results/run/result" "$RBO_CLONE/dist/generated/app.js" \
+  "$RBO_CLONE/review-188-verdict.md"
+printf 'modified\n' >"$RBO_CLONE/source.txt"
+RBO_BEFORE="$(git -C "$RBO_CLONE" status --porcelain)"
+# shellcheck disable=SC2031  # the entrypoint fixture's subshell cannot change this caller
+RBO_OLD_WORK="$WORK_DIR"
+WORK_DIR="$RBO_WORK"
+RBO_HEAD="$(git -C "$RBO_CLONE" rev-parse HEAD)"
+RBO_DIGEST="$(run_detached fixture/output 8 "$RBO_HEAD" -- sleep 1)"
+RBO_LIVE_OUT="$(review_cleanup_stale_build_outputs)"
+t review-build-output-live-run-preserves-ignored-products present \
+  "$([ -e "$RBO_CLONE/node_modules/pkg/index.js" ] \
+      && [ -e "$RBO_CLONE/test-results/run/result" ] \
+      && printf present || printf MISSING)"
+t review-build-output-live-run-logs-protector 1 \
+  "$(grep -cF "protected by active detached run fixture/output#8@$RBO_HEAD" <<<"$RBO_LIVE_OUT")"
+for _ in 1 2 3 4 5; do
+  detached_run_read fixture/output 8 "$RBO_HEAD" "$RBO_DIGEST" >/dev/null
+  [ "$DETACHED_RUN_STATE" = complete ] && break
+  sleep 1
+done
+t review-build-output-live-run-completes complete "$DETACHED_RUN_STATE"
+review_cleanup_stale_build_outputs >/dev/null
+WORK_DIR="$RBO_OLD_WORK"
+RBO_AFTER="$(git -C "$RBO_CLONE" status --porcelain)"
+t review-build-output-cleanup-preserves-porcelain "$RBO_BEFORE" "$RBO_AFTER"
+t review-build-output-cleanup-removes-ignored-products gone \
+  "$([ ! -e "$RBO_CLONE/node_modules" ] && [ ! -e "$RBO_CLONE/.next" ] \
+      && [ ! -e "$RBO_CLONE/test-results" ] && [ ! -e "$RBO_CLONE/dist/generated" ] \
+      && printf gone || printf PRESENT)"
+t review-build-output-cleanup-preserves-tracked-file present \
+  "$([ -e "$RBO_CLONE/dist/manifest.txt" ] && printf present || printf MISSING)"
+t review-build-output-cleanup-preserves-verdict-file present \
+  "$([ -e "$RBO_CLONE/review-188-verdict.md" ] && printf present || printf MISSING)"
 
 # A parked review command deliberately outlives its launching tick. Reclaim
 # protects that command's worktree but still removes unrelated stale review
@@ -303,7 +478,7 @@ git -C "$RW/work/repo" worktree add --detach "$RW/trees/repo/base-aux" "$RW_HEAD
 TREES_DIR="$RW/trees"
 RW_LIVE_OUT="$(reclaim_detached_review_worktrees)"
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-active-run-logs-protector 3 \
+t review-reclaim-active-run-logs-protector 5 \
   "$(grep -cF "protected by active detached run fixture/repo#7@$RW_LIVE_HEAD" <<<"$RW_LIVE_OUT")"
 t review-reclaim-active-run-preserves-worktree present \
   "$([ -d "$RW/trees/repo/review-live" ] && printf present || printf MISSING)"
@@ -336,8 +511,8 @@ t review-reclaim-fixture-run-completes complete "$DETACHED_RUN_STATE"
 TREES_DIR="$RW/trees"
 reclaim_detached_review_worktrees >/dev/null
 TREES_DIR="$RW_OLD_TREES"
-t review-reclaim-ended-run-tree-removed gone \
-  "$([ ! -e "$RW/trees/repo/review-live" ] && printf gone || printf PRESENT)"
+t review-reclaim-ended-run-dirty-tree-preserved present \
+  "$([ -e "$RW/trees/repo/review-live/review-finished" ] && printf present || printf MISSING)"
 t review-reclaim-ended-run-stale-tree-removed gone \
   "$([ ! -e "$RW/trees/repo/review-stale" ] && printf gone || printf PRESENT)"
 t review-reclaim-ended-run-auxiliary-tree-removed gone \

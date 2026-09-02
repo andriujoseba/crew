@@ -110,6 +110,85 @@ _review_git_operation_in_progress() {
     || [ -f "$git_dir/CHERRY_PICK_HEAD" ] || [ -f "$git_dir/REVERT_HEAD" ]
 }
 
+_review_remote_repo() { # $1=checkout -> owner/repo
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 1
+  url="${url%.git}"
+  case "$url" in
+    https://github.com/*) printf '%s\n' "${url#https://github.com/}" ;;
+    git@github.com:*) printf '%s\n' "${url#git@github.com:}" ;;
+    ssh://git@github.com/*) printf '%s\n' "${url#ssh://git@github.com/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# A numbered review checkout belongs to the PR in its name, but the removal
+# predicate belongs to that PR's HEAD REPOSITORY AND BRANCH: one branch may
+# have several PRs, while unrelated forks may reuse its name. Read the exact
+# fork/ref history in one joined list. A newer closed PR must never hide an
+# older open one, the same state=all boundary builder hygiene uses (#606).
+_review_worktree_done() { # $1=review checkout -> 0 done, 1 live/unknown
+  local candidate="$1" pr repo identity owner branch states
+  case "${candidate##*/}" in
+    review-[0-9]*) pr="${candidate##*/review-}" ;;
+    *) return 0 ;;
+  esac
+  [[ "$pr" =~ ^[0-9]+$ ]] || return 0
+  repo="$(_review_remote_repo "$candidate")" || {
+    warn "review: cannot resolve repository for $candidate; leaving it"
+    return 1
+  }
+  identity="$(gh api "repos/$repo/pulls/$pr" \
+    --jq '[.head.repo.owner.login // "", .head.ref // ""] | @tsv' 2>/dev/null)" || {
+    warn "review: PR lookup failed for $repo#$pr; leaving $candidate"
+    return 1
+  }
+  IFS=$'\t' read -r owner branch <<<"$identity"
+  if [ -z "$owner" ] || [ -z "$branch" ]; then
+    warn "review: cannot resolve head repository and branch for $repo#$pr; leaving $candidate"
+    return 1
+  fi
+  states="$(gh api --method GET --paginate "repos/$repo/pulls" \
+    -f state=all -f head="$owner:$branch" -f per_page=100 \
+    --jq '.[].state' 2>/dev/null)" || {
+    warn "review: PR history lookup failed for $repo:$owner:$branch; leaving $candidate"
+    return 1
+  }
+  case "$states" in
+    ""|*OPEN*|*open*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+review_cleanup_stale_build_outputs() {
+  local clone candidate rel repo
+  for clone in "$WORK_DIR"/*-review; do
+    [ -d "$clone/.git" ] || continue
+    repo="$(_review_remote_repo "$clone")" || {
+      warn "review: cannot resolve repository for $clone; leaving its build output"
+      continue
+    }
+    if _review_detached_run_blocks_dispatch "$repo"; then
+      log "review: preserved build output in $clone; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
+      continue
+    fi
+    while IFS= read -r -d '' candidate; do
+      rel="${candidate#"$clone"/}"
+      # -X is the safety boundary: only ignored, reproducible material goes.
+      # Tracked files under a commonly generated directory (for example a
+      # checked-in dist metadata) and ordinary untracked evidence both stay.
+      git -C "$clone" clean -fdX -- "$rel" >/dev/null 2>&1 || {
+        warn "review: could not clear ignored build output $candidate"
+        continue
+      }
+      [ -e "$candidate" ] || log "review: cleared ignored build output $candidate"
+    done < <(find "$clone" -type d \
+      \( -name node_modules -o -name dist -o -name .next -o -name test-results \) \
+      -print0 -prune 2>/dev/null)
+  done
+  return 0
+}
+
 reclaim_detached_review_worktrees() {
   local candidate top head git_dir common_dir dirt dirt_summary
 
@@ -137,6 +216,9 @@ reclaim_detached_review_worktrees() {
       log "review: preserved detached worktree $candidate; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
       continue
     fi
+    if ! _review_worktree_done "$candidate"; then
+      continue
+    fi
     if ! dirt="$(git -C "$candidate" status --porcelain --untracked-files=all 2>/dev/null)"; then
       continue
     fi
@@ -144,12 +226,48 @@ reclaim_detached_review_worktrees() {
       /^\?\?/ { u++; next }
       NF      { m++ }
       END     { printf "%d modified, %d untracked", m+0, u+0 }')"
+    if [ -n "$dirt" ]; then
+      if [[ "${candidate##*/}" == review-* ]]; then
+        warn "review: dirty review worktree $candidate is done but not removable ($dirt_summary); leaving it for inspection"
+      else
+        warn "review: dirty detached worktree $candidate is not removable ($dirt_summary); leaving it for inspection"
+      fi
+      continue
+    fi
     if git --git-dir="$common_dir" worktree remove --force "$candidate" >/dev/null 2>&1; then
       log "review: reclaimed detached worktree $candidate at $head ($dirt_summary)"
     else
       warn "review: could not reclaim detached worktree $candidate at $head"
     fi
   done < <(find -H "$TREES_DIR" -mindepth 2 -maxdepth 2 -type d -print0 2>/dev/null)
+  review_cleanup_stale_build_outputs
+  return 0
+}
+
+# Mutation probes are disposable copies, not worktrees and not review records.
+# A reviewer may leave one behind when a later step fails, so the engine owns
+# the cleanup boundary: once that repository has no live detached review run,
+# every mutation-* sibling it could have created is dead scratch (#606).
+# Restrict the walk to direct children of the rendered review-worktree parent;
+# never follow a symlink and never widen an unresolved path into rm's target set.
+review_cleanup_mutation_copies() { # $1=review-worktree parent $2=repo
+  local parent="$1" repo="$2" candidate
+  [ -d "$parent" ] || return 0
+  if _review_detached_run_blocks_dispatch "$repo"; then
+    log "review: preserved mutation copies in $parent; protected by active detached run $REVIEW_DETACHED_RUN_SUBJECT"
+    return 0
+  fi
+  while IFS= read -r -d '' candidate; do
+    case "$candidate" in
+      "$parent"/mutation-*) : ;;
+      *) continue ;;
+    esac
+    if rm -rf -- "$candidate"; then
+      log "review: removed mutation copy $candidate"
+    else
+      warn "review: could not remove mutation copy $candidate"
+    fi
+  done < <(find "$parent" -mindepth 1 -maxdepth 1 -name 'mutation-*' -print0 2>/dev/null)
   return 0
 }
 
@@ -528,6 +646,7 @@ $key $updated"
     RUN_SESSION_RC=1
     RUN_SESSION_LOG=""
     run_session review "$SR" "$dir" "$TIMEOUT_REVIEW" "$prompt"
+    review_cleanup_mutation_copies "$TREES_DIR/$slug" "$SR"
     # Commit exactly the PRs named in this repo's prompt, and only when the
     # session completed. A crash or timeout must retry; a completed session
     # that declined or could not submit must settle until the PR changes.
