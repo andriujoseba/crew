@@ -419,6 +419,30 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     eq('limited: AUTH outranks LIMITED after grid-state normalisation', 'idle',
        await page.evaluate(() => window.FLOORDEV.fleetStateData(
          {state:'idle'}, {authfail:['vendor: rejected'],limited:{}})));
+    /* THE ROWS THE TWO ABOVE CANNOT SEE, because both pass `state:'idle'`
+       (#611 round 5). `lock.stuck` and `authfail` are published for every
+       unit, and the collector ranks paused/disarmed/SILENT above both — so an
+       `offline` box carrying either is the ordinary output of its ladder, not
+       a corner. These four pin that neither fact outranks the offline split:
+       a box that went silent while its credential died is still SILENT, and a
+       box that stopped ticking BECAUSE its duty run is wedged is still SILENT,
+       which is the one the alarm exists for. */
+    eq('silent: a dead credential does not spend the SILENT tile', 'silent',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:false,disarmed:false,
+                             authfail:['vendor: rejected'],limited:{}})));
+    eq('silent: a wedged duty run does not spend the SILENT tile', 'silent',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:false,disarmed:false,
+                             lock:{stuck:true},limited:{}})));
+    eq('disarmed: a dead credential does not move a stopped box', 'disarmed',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:true,disarmed:true,
+                             authfail:['vendor: rejected'],limited:{}})));
+    eq('disarmed: a wedged duty run does not move a stopped box', 'disarmed',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:true,disarmed:true,
+                             lock:{stuck:true},limited:{}})));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });

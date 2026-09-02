@@ -1580,20 +1580,29 @@ function stoppedWord(d){
    Keeping dataOf() here also keeps paused/disarmed out of the live ROSTER
    projection, where those fields do not exist. */
 function fleetStateData(u,d){
-  /* applyFleet normalises a working unit with no current-session object to an
-     idle grid cell. A stuck lock is the deliberate exception: the collector
-     and alert ladder both call it working/STUCK, so its older LIMITED evidence
-     must not move the same box into a contradictory counter or filter. */
-  if(LIVE&&d&&d.lock&&d.lock.stuck)return "working";
-  /* AUTH is the same case one rank down: the collector publishes an authfail
-     box as `idle` with the AUTH note, alertData badges it AUTH, and the unit
-     console already refuses to draw LIMITED over it. Without this the tile and
-     the chip were the only readers still calling that box limited (#611). */
-  if(LIVE&&d&&d.authfail&&d.authfail.length)return "idle";
+  /* THE STATE WORD DECIDES FIRST, and nothing below it may outrank the
+     `offline` split (#611 round 5). `lock.stuck` and `authfail` are published
+     unconditionally by the collector — `stuck_verdict` runs for every unit and
+     `authfail` is filled straight off probe meta — while the collector's own
+     ladder ranks paused/disarmed/SILENT ABOVE both. So an `offline` box
+     carrying either fact is not a corner, it is what the elif-chain produces,
+     and a guard that answered before this dispatch counted a wedged SILENT box
+     as `working` and an authfail SILENT box as `idle`. That is #203 from the
+     other side: the tile that exists to notice something stopped went quiet
+     about the box that stopped. Under-spending the alarm costs what
+     over-spending it cost — the word an operator learns not to trust. */
   if(u.state==="working")return "working";
   if(u.state==="suppressed")return "suppressed";
   if(u.state==="offline")return stoppedWord(d)?"disarmed":"silent";
-  return LIVE&&d&&d.limited?"limited":"idle";
+  /* Past the dispatch, this is the `idle` cell `applyFleet` normalised a
+     working unit with no current-session object into — the only path either
+     fact was ever meant to speak on. A stuck lock is the deliberate
+     exception the collector and the alert ladder both call working/STUCK. */
+  if(LIVE&&d&&d.lock&&d.lock.stuck)return "working";
+  /* One sentence for LIMITED, and `populateDash` reads the same one for the
+     console: an AUTH-blocked box is badged AUTH by the alert ladder, so the
+     tile and the chip must not be the last readers still calling it limited. */
+  return LIVE&&d&&d.limited&&!(d.authfail&&d.authfail.length)?"limited":"idle";
 }
 function fleetState(u){
   return fleetStateData(u,dataOf(UNITID(u),u.room));
