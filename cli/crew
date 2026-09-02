@@ -267,6 +267,19 @@ RESTART_FORCE_AFTER_HOURS="${CREW_RESTART_FORCE_AFTER_HOURS:-2}"
 RESTART_DRAIN_POLL_S="${CREW_DRAIN_POLL_SECONDS:-10}"
 # A cold VM may accept `box start` before its guest agent can serve `box exec`.
 # Keep that readiness wait bounded while allowing tests to collapse the clock.
+# The one knob #589 D7 left to the builder, with the measurement in the PR
+# body: how full a box may be and still be worth freezing into a checkpoint.
+# Measured on claude-builder 2026-09-02 — 90% of 58 GiB, of which 45 GiB sits
+# OUTSIDE $HOME and 25 GiB of that is two swapfiles providing no swap
+# (heavy-duty/box#178). Nothing crew can reclaim moves a box in that state, so
+# cutting it would make 90% the floor the fleet restores to every week. 80%
+# sits above a swept box's real working set (a crew box's base plus worktrees
+# is ~50%) and below the point where the image becomes the drift.
+RESET_MAX_USED_PCT="${CREW_RESET_CUT_MAX_USED_PCT:-80}"
+# The checkpoint every reset restores to. One label, fixed by the ruling of
+# 2026-08-29: `bootstrapped` and `pristine` are NOT reset targets, and this is
+# spelled once so no branch can drift into a fallback (#589 D-out).
+RESET_LABEL=armed
 RESTART_READY_ATTEMPTS="${CREW_RESTART_READY_ATTEMPTS:-60}"
 RESTART_READY_POLL_S="${CREW_RESTART_READY_POLL_SECONDS:-2}"
 
@@ -394,6 +407,7 @@ CMDS=(
   "up^[--dry-run]^Converge the fleet: create missing, start stopped, hire, report^cmd_up"
   "restart^<box>... | --all [--force-after <hours>]^Drain and cycle selected boxes; busy boxes are skipped^cmd_restart"
   "down^[--force]^Drain and stop every roster box; --force skips the drain^cmd_down"
+  "reset^[--cut] <box>... | --all [--force-after <hours>]^Restore boxes to their 'armed' checkpoint; --cut takes that checkpoint^cmd_reset"
   "status^[<box>]^Engine version and duty evidence, per box^cmd_status"
   "versions^^List installed host versions and mark the current and running trees^cmd_versions"
   "use^<version>^Switch the default host version; report box engines left behind^cmd_use"
@@ -636,6 +650,40 @@ EOF
 Gold images are the bake cache and must carry ZERO credentials, so they are
 cut BEFORE the box is logged in. A box with live gh credentials is refused
 unless you pass --force, and if you do, treat the result like a credential.
+EOF
+      ;;
+    reset) cat <<EOF
+
+AN 'armed' CHECKPOINT CONTAINS LIVE CREDENTIALS. This is 'crew gold' inverted,
+not bypassed: gold REFUSES a logged-in box, and --cut REQUIRES one, because a
+checkpoint of a half-built box is worse than none — the restore that uses it
+looks like it worked. So the host holding these images IS the trust boundary,
+exactly as it is for a gold cut with --force. No crew verb ever exports an
+'armed' image, and it is refused as a 'crew new --from' source: cloning one
+mints a second box carrying the first box's identity. Ruled and accepted by
+the operator, 2026-08-29.
+
+--cut snapshots each box as '$RESET_LABEL', after checking it is logged in AND hired,
+and records the engine version it was cut at. It reclaims first: the reaper
+runs on demand, and only then is the disk measured, so a box that is merely
+one day of transcripts fat is cut rather than refused. A box still over
+${RESET_MAX_USED_PCT}% after reclaiming is REFUSED, naming what is large — whatever is inside
+the image becomes the floor the fleet returns to forever.
+
+Without --cut, each box is restored to its '$RESET_LABEL' checkpoint and started.
+'box info' is the only thing that knows a label exists, so a box without one
+is refused and NAMED — never skipped, and never rolled back to 'bootstrapped'
+or 'pristine', which would return a creds-free, unhired box.
+
+The interlock: restoring to a checkpoint cut before a 'crew upgrade' silently
+DOWNGRADES that box's engine. So 'crew upgrade' marks the checkpoint stale in
+the same write, and a reset refuses that box naming both versions and naming
+'crew reset --cut <box>' as the repair.
+
+--all means the ROSTER, never every box on the host. A held or unreadable duty
+lock is skipped and makes the command exit 3, on #588's contract and its
+${RESTART_FORCE_AFTER_HOURS}-hour --force-after default: a reset destroys in-flight work exactly
+as a restart does.
 EOF
       ;;
     floor) cat <<'EOF'
@@ -1167,6 +1215,17 @@ validate_profiles() {  # agent role
 create_box() {
   local name="$1" agent="$2" role="$3" from="${4:-}"
   local BOX_CPU="" BOX_MEMORY="" BOX_DISK=""
+  # D2 (#589): an `armed` checkpoint is a CREDENTIAL AT REST, and it is not a
+  # gold image. Cloning one mints a second box carrying the first box's gh
+  # identity, its vendor login and its engine — the fleet's own #294 failure
+  # arrived at from the other side, and it would arrive silently, because the
+  # clone comes up working. Guarded HERE rather than in cmd_new so that every
+  # route to a clone is covered: `crew new --from`, and a roster line whose
+  # fourth column names one, which `create-all` and `up` both read.
+  case "$from" in
+    */"$RESET_LABEL")
+      die "refusing to clone '$from': an $RESET_LABEL checkpoint contains ${from%%/*}'s live credentials and engine, so a box minted from it carries that box's identity. Gold images are the clone source (crew gold <box>)" ;;
+  esac
   # shellcheck disable=SC1090
   source "$ROLES_DIR/$role.conf"
   if [ -z "$BOX_CPU" ] || [ -z "$BOX_MEMORY" ] || [ -z "$BOX_DISK" ]; then
@@ -2548,6 +2607,346 @@ cmd_down() {
   if [ "$waited" -ne 0 ]; then return 3; fi
 }
 
+# --- crew reset: the `armed` checkpoint (#589) -------------------------------
+#
+# THE CHECKPOINT'S VERSION IS RECORDED HOST-SIDE, NOT INFERRED FROM THE IMAGE.
+# `armed` is one fixed label by the ruling, so unlike `crew gold` — which
+# spells the version into `gold-crew-<ver>` — this family has nowhere in the
+# label to put it, and reading it back out of a snapshot would mean starting
+# the box the reset exists to roll back. So `--cut` WRITES what it cut, beside
+# the fleet definition the floor already writes per-box files into.
+#
+# D5 is the sharp edge and this is where it is blunted: the stale mark is set
+# by `crew upgrade` AT UPGRADE TIME, so the refusal fires on a fact somebody
+# recorded rather than on a comparison reconstructed weeks later by whatever
+# the box happens to answer. The live comparison below it is a backstop for
+# the engine moving by some other route (`crew hire --ref`), not the primary.
+checkpoint_dir() { printf '%s\n' "$CONFIG_DIR/checkpoints"; }
+checkpoint_file() { printf '%s\n' "$(checkpoint_dir)/$1.conf"; }
+# Parsed, never sourced: three strings are not worth executing a file for, and
+# this one is written by a verb that runs as the operator (same call the
+# box_agent reader makes about instance.conf).
+checkpoint_field() { # KEY BOX
+  local f; f="$(checkpoint_file "$2")"
+  [ -f "$f" ] || return 0
+  sed -n "s/^$1=//p" "$f" 2>/dev/null | head -1 | tr -d '"'\''\r'
+}
+checkpoint_record() { # BOX VERSION — the cut's own write; clears any stale mark
+  local f; f="$(checkpoint_file "$1")"
+  mkdir -p "$(checkpoint_dir)" || return 1
+  # Written whole to a temporary and moved into place: a reset reading this
+  # file half-written would see no version and refuse a box that has a good
+  # checkpoint, and `mv` within one directory is atomic.
+  {
+    printf '# crew reset checkpoint record for %s (#589 D5). Written by crew.\n' "$1"
+    printf 'CHECKPOINT_VERSION=%s\n' "$2"
+    printf 'CHECKPOINT_CUT_AT=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'CHECKPOINT_STALE=\n'
+  } >"$f.tmp.$$" || return 1
+  mv -f "$f.tmp.$$" "$f"
+}
+# checkpoint_mark_stale BOX VERSION — "this box's engine moved to VERSION after
+# its checkpoint was cut". Called by cmd_upgrade in the same write as the
+# upgrade. A box with NO record gets none: there is no checkpoint to invalidate,
+# and inventing a record here would make `reset` refuse with a version pair it
+# made up instead of refusing for the true reason, which is D4's missing label.
+checkpoint_mark_stale() { # BOX VERSION
+  local f; f="$(checkpoint_file "$1")"
+  [ -f "$f" ] || return 0
+  local body
+  body="$(grep -v '^CHECKPOINT_STALE=' "$f" 2>/dev/null)" || return 0
+  { printf '%s\n' "$body"; printf 'CHECKPOINT_STALE=%s\n' "$2"; } >"$f.tmp.$$" || return 0
+  mv -f "$f.tmp.$$" "$f"
+}
+
+# box_snapshot_labels NAME — the labels `box info` lists, one per line. rc 1
+# when the listing cannot be read at all, which is NOT the same answer as "no
+# labels" and must never collapse into it: D4 exists because a reset path that
+# assumes the snapshot is there fails on exactly the sick boxes it is for.
+#
+# The TEXT view, not `--json`. `box info <box>` is documented as the way to
+# read the labels ("'box info <box>' lists the labels", box:630) and its
+# SNAPSHOTS block is one indented label per line; `box info --json` is a raw
+# `incus list --format json` passthrough whose snapshot entries carry the
+# daemon's own naming, which is a shape crew would be guessing at. box_state
+# uses --json because `status` is a documented top-level key there; this is a
+# different question with a different documented answer.
+box_snapshot_labels() { # NAME
+  local info
+  info="$(box info "$1" 2>/dev/null)" || return 1
+  case "$info" in *SNAPSHOTS*) ;; *) return 1 ;; esac
+  # Stops at the blank line that closes the block, so the "Clone one: box new
+  # --name <new> --from <box>/<label>" footer beneath it can never be read as
+  # a label.
+  printf '%s\n' "$info" | awk '
+    $1 == "SNAPSHOTS" && $2 == "(none)" { exit }
+    $1 == "SNAPSHOTS" && NF == 1 { block = 1; next }
+    block && NF == 0 { exit }
+    block { print $1 }
+  '
+}
+# has_reset_checkpoint NAME — rc 0 present · 1 absent · 2 the listing could not
+# be read. Three-valued for _reaper_entry_state's reason: an unreadable listing
+# scoring the same as a missing label would restore, or refuse, on evidence
+# nobody gathered.
+has_reset_checkpoint() { # NAME
+  local labels
+  labels="$(box_snapshot_labels "$1")" || return 2
+  grep -qx -- "$RESET_LABEL" <<<"$labels"
+}
+
+# box_used_pct NAME — the box's ROOT filesystem, percent used, as a bare
+# integer. Root and not /tmp: cycle_box reads /tmp because a restart's whole
+# subject is the tmpfs it clears, while a checkpoint freezes the root disk,
+# and #589's own 91% measurement is a root-filesystem reading.
+box_used_pct() { # NAME
+  local pct
+  pct="$(bxn "$1" 'df -Pk / 2>/dev/null | tail -1 | tr -s " " | cut -d" " -f5' \
+    2>/dev/null | tr -d '%\r' | tail -1 || true)"
+  case "$pct" in ''|*[!0-9]*) return 1 ;; *) printf '%s\n' "$pct" ;; esac
+}
+# box_large_paths NAME — what is large on this box, biggest first. This is the
+# half of D7's refusal that does the work: a percentage sends the operator to
+# go look, while "13G /swapfile-drill, 13G /swapfile" tells them the answer is
+# box#178 and not a crew problem at all. Read as root over `/`, one depth, so
+# the swapfiles and /var are visible — they are the whole finding on the fleet
+# as measured, and every one of them is outside anything the reaper can reach.
+box_large_paths() { # NAME
+  bxn "$1" 'sudo -n du -shx /* 2>/dev/null | sort -rh | head -4 | tr "\n" ";"' \
+    2>/dev/null | tr -d '\r' | tail -1 || true
+}
+
+# reset_drain_gate NAME FORCE_SECONDS — #588's contract, consumed rather than
+# re-implemented (D6). Prints the human reason on a skip. rc 0 proceed · 1 skip.
+# The `unreadable` arm counts as busy for the reason cmd_restart gives it: a
+# lock state nothing could read is not evidence the box is free.
+reset_drain_gate() { # NAME FORCE_SECONDS
+  local name="$1" force_seconds="$2" state age
+  read -r state age <<<"$(drain_probe "$name")"
+  [ "$state" != idle ] || return 0
+  if [ "$state" = busy ] && [[ "$age" =~ ^[0-9]+$ ]] && [ "$age" -ge "$force_seconds" ]; then
+    echo "  $name: duty lock held for $(status_duration "$age") — force-after reached; proceeding"
+    return 0
+  fi
+  if [[ "$age" =~ ^[0-9]+$ ]]; then
+    echo "  $name: SKIPPED busy — duty lock held for $(status_duration "$age")"
+  elif [ "$state" = busy ]; then
+    echo "  $name: SKIPPED busy — duty lock age unavailable"
+  else
+    echo "  $name: SKIPPED busy — duty lock state unreadable"
+  fi
+  return 1
+}
+
+# cut_box NAME — D1, D7 and D5's write, for one box. rc 0 cut · 1 refused.
+cut_box() { # NAME
+  local name="$1" pct large stamp ver
+  # D1's two preconditions. A checkpoint of a box that is not logged in, or
+  # not hired, is worse than none: the restore that uses it comes back looking
+  # like it worked and the box cannot do a minute's work.
+  if ! bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
+    echo "  $name: REFUSED — not logged in (an $RESET_LABEL checkpoint of a box without credentials restores to a box that cannot work); log it in with: box shell $name"
+    return 1
+  fi
+  stamp="$(hired_at "$name")"
+  if [ -z "$stamp" ]; then
+    echo "  $name: REFUSED — not hired (no engine to checkpoint); hire it with: crew hire $name"
+    return 1
+  fi
+  ver="$(stamp_version "$stamp" 2>/dev/null || echo unknown)"
+  # D7, in its ruled order: reclaim, THEN measure, THEN decide. Measuring
+  # first would refuse boxes the reaper was about to fix, which is the one
+  # thing step 2 names. The sweep's own output is forwarded — it is the
+  # operator's evidence for the figure the next line prints.
+  echo "  $name: reclaiming before measuring (reaper, on demand)"
+  # shellcheck disable=SC2016  # $HOME must expand INSIDE the box, not here
+  if ! bxn "$name" '"$HOME"/duty/bin/reap-now.sh' 2>/dev/null; then
+    echo "  $name: REFUSED — the on-demand reaper did not complete (a duty tick may hold the lock); nothing cut"
+    return 1
+  fi
+  if ! pct="$(box_used_pct "$name")"; then
+    echo "  $name: REFUSED — could not read the root filesystem; a checkpoint is not cut on an unmeasured box"
+    return 1
+  fi
+  if [ "$pct" -gt "$RESET_MAX_USED_PCT" ]; then
+    large="$(box_large_paths "$name")"
+    # THE COMPOSITION, NOT ONLY THE PERCENTAGE (D7 step 3). Whatever is inside
+    # the image becomes the floor the fleet returns to forever, so the operator
+    # is told what to clear rather than told to go look.
+    echo "  $name: REFUSED — root filesystem ${pct}% used after reclaiming, over the ${RESET_MAX_USED_PCT}% ceiling"
+    if [ -n "$large" ]; then
+      echo "      largest: ${large%;}"
+    else
+      echo "      largest: unavailable (no passwordless sudo in the box to read / as root)"
+    fi
+    echo "      whatever is in an $RESET_LABEL image is the floor every later reset returns to; clear it before cutting"
+    return 1
+  fi
+  # A re-cut REPLACES: D5 names `--cut` as the repair after every upgrade, so
+  # it has to work unattended, and `incus snapshot create` refuses a label that
+  # already exists. box has no delete-a-snapshot row, and its own doctrine
+  # sends anything that is not a box invariant to `box incus` — the `{}`
+  # placeholder puts the resolved instance where this call needs it rather
+  # than appended at the end.
+  if has_reset_checkpoint "$name"; then
+    if ! box incus "$name" -- snapshot delete "{}" "$RESET_LABEL" </dev/null >/dev/null 2>&1; then
+      echo "  $name: REFUSED — could not replace the existing $RESET_LABEL checkpoint; it is unchanged"
+      return 1
+    fi
+  fi
+  if ! box snapshot "$name" "$RESET_LABEL" </dev/null >/dev/null; then
+    # Said loudly: the delete above may already have landed, so this box can
+    # be left with NO checkpoint, and a silent failure here is exactly the
+    # state D4 refuses on weeks later with nobody knowing why.
+    echo "  $name: FAILED — the $RESET_LABEL snapshot was not taken; this box now has NO checkpoint. Repair with: crew reset --cut $name"
+    return 1
+  fi
+  if ! checkpoint_record "$name" "$ver"; then
+    echo "  $name: FAILED — $RESET_LABEL was cut but its version could not be recorded at $(checkpoint_file "$name"); re-cut once the path is writable"
+    return 1
+  fi
+  echo "  $name: $RESET_LABEL cut at crew@$ver; root filesystem ${pct}% used"
+}
+
+# restore_box NAME — D4, D5 and D3, for one box. rc 0 restored · 1 refused.
+#
+# Stop, confirm stopped, restore, start — cycle_box's discipline, for its
+# reason: a stop that does not take must never be followed by anything, and
+# here "anything" includes rolling a running box's disk out from under it.
+restore_box() { # NAME
+  local name="$1" recorded stale live state
+  case "$(has_reset_checkpoint "$name"; echo $?)" in
+    2)
+      echo "  $name: REFUSED — could not read its snapshot labels; a reset is not performed on an unverified box"
+      return 1 ;;
+    1)
+      # Never a fallback to `bootstrapped` or `pristine` (D-out): both return a
+      # creds-free, unhired box, which is a bootstrap and not a maintenance.
+      echo "  $name: REFUSED — no $RESET_LABEL checkpoint (crew reset --cut $name takes one); it is NOT rolled back to any other label"
+      return 1 ;;
+  esac
+  recorded="$(checkpoint_field CHECKPOINT_VERSION "$name")"
+  stale="$(checkpoint_field CHECKPOINT_STALE "$name")"
+  if [ -n "$stale" ]; then
+    echo "  $name: REFUSED — its $RESET_LABEL checkpoint was cut at crew@${recorded:-unknown} and the box was upgraded to crew@$stale since; restoring it would silently downgrade the engine. Repair with: crew reset --cut $name"
+    return 1
+  fi
+  # The backstop for an engine that moved by some route that does not mark the
+  # checkpoint (`crew hire --ref`). Only ever consulted when BOTH versions are
+  # actually readable: an unreadable stamp is not evidence of a mismatch.
+  live="$(stamp_version "$(hired_at "$name")" 2>/dev/null || echo)"
+  if [ -n "$recorded" ] && [ -n "$live" ] && [ "$recorded" != "$live" ]; then
+    echo "  $name: REFUSED — its $RESET_LABEL checkpoint was cut at crew@$recorded and the box now runs crew@$live; restoring it would silently downgrade the engine. Repair with: crew reset --cut $name"
+    return 1
+  fi
+  state="$(box_state "$name")"
+  if [ "$state" != stopped ]; then
+    if ! box down "$name" </dev/null; then
+      echo "  $name: FAILED — stop command failed; nothing restored"
+      return 1
+    fi
+    state="$(box_state "$name")"
+    if [ "$state" != stopped ]; then
+      echo "  $name: FAILED — stop did not take (state: $state); NOT restoring"
+      return 1
+    fi
+  fi
+  # --force because there is no terminal here to confirm on: `box restore` is
+  # a confirm row and refuses outright without one.
+  if ! box restore "$name" "$RESET_LABEL" --force </dev/null; then
+    echo "  $name: FAILED — restore failed; the box is stopped and NOT started"
+    return 1
+  fi
+  if ! box start "$name" </dev/null; then
+    echo "  $name: FAILED — restored to $RESET_LABEL but the start failed; start it with: box start $name"
+    return 1
+  fi
+  if ! wait_box_free_kb "$name" >/dev/null; then
+    echo "  $name: FAILED — restored and started, but its guest stayed unreachable after $RESTART_READY_ATTEMPTS probes; inspect with: box shell $name"
+    return 1
+  fi
+  echo "  $name: restored to $RESET_LABEL (crew@${recorded:-unknown}) and started"
+}
+
+cmd_reset() {
+  local all=0 cut=0 force_hours="$RESTART_FORCE_AFTER_HOURS" force_seconds name
+  local done_n=0 skipped=0 failed=0 skipped_names="" failed_names=""
+  local -a named=() reset_targets=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --all) all=1; shift ;;
+      --cut) cut=1; shift ;;
+      --force-after) need_value "$@"; force_hours="$2"; shift 2 ;;
+      --*) usage_error "unknown argument '$1' (usage: $(synopsis_of reset))" ;;
+      *) named+=("$1"); shift ;;
+    esac
+  done
+  # #588's own validation, to the letter: the flag means the same thing here,
+  # so it must refuse the same spellings. A threshold that wrapped through
+  # Bash arithmetic would become permission to roll back a live session's box.
+  case "$force_hours" in ''|*[!0-9]*) usage_error "--force-after requires a positive whole number of hours" ;; esac
+  while [ "${force_hours#0}" != "$force_hours" ]; do force_hours="${force_hours#0}"; done
+  [ -n "$force_hours" ] || usage_error "--force-after requires a positive whole number of hours"
+  # shellcheck disable=SC2071  # equal-width decimal strings compare lexically
+  if [ "${#force_hours}" -gt 16 ] \
+     || { [ "${#force_hours}" -eq 16 ] && [[ "$force_hours" > 2562047788015215 ]]; }; then
+    usage_error "--force-after is too large (maximum: 2562047788015215 hours)"
+  fi
+  force_seconds=$((10#$force_hours * 3600))
+  if [ "$all" -eq 1 ] && [ "${#named[@]}" -ne 0 ]; then usage_error "usage: $(synopsis_of reset)"; fi
+  if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of reset)"; fi
+  need_box
+  [ -f "$ROSTER" ] || die "no roster at $ROSTER"
+  require_operator_config "crew reset"
+  # --all is the ROSTER, not every box on the host — `crew upgrade --all`'s
+  # rule, for its stated reason (#37): a disarmed box carrying a real identity
+  # must not be rolled back by routine maintenance.
+  if [ "$all" -eq 1 ]; then mapfile -t reset_targets < <(roster_names); else reset_targets=("${named[@]}"); fi
+  if [ -t 0 ]; then
+    printf 'reset plan (%s, %sh force-after):' "$([ "$cut" -eq 1 ] && echo "cut $RESET_LABEL" || echo "restore to $RESET_LABEL")" "$force_hours"
+    printf ' %s' "${reset_targets[@]}"
+    printf '\n'
+  fi
+  for name in "${reset_targets[@]}"; do
+    if ! box_exists "$name"; then
+      echo "  $name: not present — reset FAILED"
+      failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"
+      continue
+    fi
+    # A stopped box can be neither probed nor read through, and both paths
+    # need to look inside it — the cut for its login and engine, the restore
+    # for the version it is running now.
+    if [ "$(box_state "$name")" = stopped ]; then
+      echo "  $name: REFUSED — stopped; start it first with: box start $name"
+      failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"
+      continue
+    fi
+    # D6, both paths: a reset destroys in-flight work exactly as a restart
+    # does, and the cut takes the duty lock through the reaper besides.
+    if ! reset_drain_gate "$name" "$force_seconds"; then
+      skipped=$((skipped + 1)); skipped_names="${skipped_names}${skipped_names:+, }$name"
+      continue
+    fi
+    if [ "$cut" -eq 1 ]; then
+      if cut_box "$name"; then done_n=$((done_n + 1))
+      else failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"; fi
+    else
+      if restore_box "$name"; then done_n=$((done_n + 1))
+      else failed=$((failed + 1)); failed_names="${failed_names}${failed_names:+, }$name"; fi
+    fi
+  done
+  echo
+  if [ "$cut" -eq 1 ]; then
+    echo "reset --cut: $done_n cut, $skipped skipped-busy, $failed failed"
+  else
+    echo "reset: $done_n restored, $skipped skipped-busy, $failed failed"
+  fi
+  [ -z "$skipped_names" ] || echo "  skipped: $skipped_names"
+  [ -z "$failed_names" ] || echo "  failed: $failed_names"
+  if [ "$failed" -ne 0 ]; then return 1; fi
+  if [ "$skipped" -ne 0 ]; then return 3; fi
+}
+
 # crew status — no argument: the whole crew as a table, one roster member
 # per row, with auth problems FLAGGED (an unauthenticated member fails
 # loudly in its own duty.log every tick; this is the host-side view of the
@@ -3056,7 +3455,18 @@ cmd_upgrade() {
     if stage_engine "$b" &&
        stage_fleet_definition "$b" &&
        install_staged_engine "$b" "$identity_args $registry_arg $flags $force_arg"; then
-      :
+      # D5, IN THE SAME WRITE AS THE UPGRADE (#589). An `armed` checkpoint cut
+      # before this moment now restores an OLDER engine than the box is hired
+      # at, and an unattended weekly reset would perform that downgrade every
+      # week with nothing red anywhere. Recording it here — not comparing
+      # versions at reset time — is what makes the refusal fire on a fact
+      # somebody observed. `|| true`: a box whose checkpoint mark cannot be
+      # written must not take the upgrade loop down with it, and the reset
+      # path's live version comparison still catches this box.
+      if [ -f "$(checkpoint_file "$b")" ]; then
+        checkpoint_mark_stale "$b" "$want" || true
+        echo "  note: $b's $RESET_LABEL checkpoint is now STALE (cut at crew@$(checkpoint_field CHECKPOINT_VERSION "$b"), box upgraded to crew@$want); re-cut with: crew reset --cut $b"
+      fi
     else
       cleanup_staged_engine "$b"
       echo "  upgrade FAILED on $b"
