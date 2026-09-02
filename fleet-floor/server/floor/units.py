@@ -80,9 +80,9 @@ RE_RESUME = re.compile(TS + r" (\S+): resume duty")
 _SESSION_ACTIVE_AFTER_S = 21600
 # The guest spool's default retention bound. The probe carries event timestamps
 # but not the guest's environment override, so the floor uses the engine's
-# shipped bound and, below, also requires stopping severity and no newer box
-# recovery evidence. An old line left behind in an otherwise quiet spool must
-# never latch LIMITED for the life of the box.
+# shipped bound and, below, also requires stopping severity and no newer
+# SUCCESSFUL box session. An old line left behind in an otherwise quiet spool
+# must never latch LIMITED for the life of the box.
 _LIMIT_EVENT_TTL_S = 86400
 
 
@@ -281,13 +281,25 @@ def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engi
         ended = RE_END.search(line)
         skipped = RE_SKIP.search(line)
         if ended:
+            terminal = ended.group(6) == "TERMINAL"
+            # ONLY a completed successful session acknowledges a limit. An
+            # ordinary failure proves the lane was dispatched, not that it ran
+            # through: the vendor's clock and the breaker's count are both
+            # exactly where the limit left them, and `crew` retries a failed
+            # lane on the next tick. So a failed END is neither limit evidence
+            # nor recovery — it is dropped here rather than recorded with an
+            # empty reason, because the newest-per-lane rule below would
+            # otherwise let it BOTH overwrite older terminal evidence and
+            # enter `newest_recovery`, reading a still-limited box healthy.
+            if not terminal and ended.group(4) != "0":
+                continue
             ts = parse_ts(ended.group(1)) + clock_offset
             item = {
                 "ts": ts, "lane": ended.group(2),
-                "reason": "terminal" if ended.group(6) == "TERMINAL" else "",
+                "reason": "terminal" if terminal else "",
                 "reset": "",
             }
-            if ended.group(6) == "TERMINAL":
+            if terminal:
                 try:
                     item["reset"] = base64.b64decode(
                         ended.group(8) or "", validate=True

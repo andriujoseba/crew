@@ -372,7 +372,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     eq('filter: Suppressed selects the breaker-stopped fixture',
        JSON.stringify(['ff-suppressed']), JSON.stringify(suppressedMatches));
     eq('filter: Limited selects every current limit fixture',
-       JSON.stringify(['ff-lim-breaker', 'ff-lim-budget', 'ff-lim-event', 'ff-lim-terminal']),
+       JSON.stringify(['ff-lim-breaker', 'ff-lim-budget', 'ff-lim-event',
+                       'ff-lim-failed', 'ff-lim-terminal']),
        JSON.stringify(limitedMatches));
     eq('filter: All keeps all three offline fixtures reachable',
        JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));

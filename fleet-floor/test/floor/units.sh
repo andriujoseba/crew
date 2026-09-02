@@ -41,6 +41,30 @@ t "limited: age is a nonnegative measured duration" True \
   "$(uf ff-lim-budget "isinstance(u['limited']['age'], int) and u['limited']['age'] >= 0")"
 t "limited: newer successful session clears state" False \
   "$(uf ff-lim-recovered "'limited' in u")"
+t "limited: a later failed session is not recovery" terminal \
+  "$(uf ff-lim-failed "u['limited']['reason']")"
+t "limited: a later failed session keeps the stopped lane named" build \
+  "$(uf ff-lim-failed "u['limited']['lane']")"
+# The same rule over BOTH evidence families, run directly: a fixture carries
+# one probe, and the failed END has to be proved against durable-event
+# evidence too — it enters the recovery bound that suppresses an older event,
+# not just the newest-per-lane record. Four calls, one changed token between
+# each pair: rc.
+limited_recovery_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+terminal = stamp(now - 120) + " SESSION END kind=build key=x rc=1 dur=1s outcome=TERMINAL"
+failed = stamp(now - 60) + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
+passed = stamp(now - 60) + " SESSION END kind=build key=x rc=0 dur=1s outcome=ok"
+event = {"id":"1-1-1", "timestamp":stamp(now - 120), "severity":"error", "name":"event-limit"}
+verdict = lambda logs, events: (derive_limited(logs, events, now, 0, "build") or {}).get("reason", "clear")
+print(" ".join([verdict([terminal, failed], []), verdict([terminal, passed], []),
+                verdict([failed], [event]), verdict([passed], [event])]))
+')"
+t "limited: only a successful session acknowledges either evidence family" \
+  "terminal clear event-limit clear" "$limited_recovery_case"
 t "limited: STUCK keeps collector state precedence" working \
   "$(uf ff-stuck "u['state']")"
 t "limited: STUCK keeps the collector note" True \

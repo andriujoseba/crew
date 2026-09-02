@@ -310,6 +310,16 @@ emit_probe() {
       echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
       echo "$(ago 60) SESSION END kind=build key=crew#611 rc=0 dur=30s outcome=ok"
       ;;
+    # limited-recovered's twin, and the pair is the point: the SAME terminal
+    # evidence, retried, differing only in how the retry ended. The limit is
+    # cleared by a session that RAN THROUGH, so a later ordinary failure —
+    # the commonest thing a still-limited lane does on its next dispatch —
+    # must leave this box LIMITED. A reader that keys on "a newer END exists"
+    # rather than on rc reads these two boxes identically (#611 round 2).
+    limited-failed)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=1 dur=12s outcome=FAILED acted=no reply_tail="
+      ;;
     silent|suppressed-silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
       echo "$(ago 2990) duty run end"

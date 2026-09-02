@@ -29,7 +29,7 @@ fi
 # box blanks the whole console.
 # ===========================================================================
 echo "== resilience"
-t "wedged box does not stall the fleet" 41 "$(body GET /api/fleet | jqf "len(d['units'])")"
+t "wedged box does not stall the fleet" 42 "$(body GET /api/fleet | jqf "len(d['units'])")"
 t "wedged box -> offline"          offline "$(uf ff-wedged "u['state']")"
 case "$(uf ff-wedged "u['note']")" in *timed\ out*|*unreachable*) ok "wedged box says it timed out" ;;
   *) fail "wedged box says it timed out" "$(uf ff-wedged "u['note']")" ;; esac
