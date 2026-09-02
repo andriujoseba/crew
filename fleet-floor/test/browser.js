@@ -325,6 +325,21 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   eq('filter: state chips mirror the tile vocabulary',
      JSON.stringify(['All', 'Working', 'Idle', 'Suppressed', 'Limited', 'Disarmed', 'Silent']),
      JSON.stringify(stateChipWords));
+  const stateChipBounds = await page.locator('.fchip[data-f="state"]').evaluateAll((chips) =>
+    chips.map((chip) => {
+      const rect = chip.getBoundingClientRect();
+      return { word: chip.textContent.trim(), left: rect.left, right: rect.right,
+        top: rect.top, bottom: rect.bottom, width: window.innerWidth, height: window.innerHeight };
+    }));
+  ok('filter: every state chip stays inside the CI viewport',
+     stateChipBounds.every((rect) => rect.left >= 0 && rect.top >= 0
+       && rect.right <= rect.width && rect.bottom <= rect.height),
+     JSON.stringify(stateChipBounds));
+  for (const state of ['all', 'working', 'idle', 'suppressed', 'limited', 'disarmed', 'silent']) {
+    await stateMatches(state);
+  }
+  await stateMatches('all');
+  ok('filter: every state chip is operable at the CI viewport', true);
 
   if (LIVE && FIXTURE) {
     /* floor/actions.sh proves wake-silent resumes ff-paused. Put that fixture back in
