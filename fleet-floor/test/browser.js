@@ -323,8 +323,23 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   const stateChipWords = await page.locator('.fchip[data-f="state"]').evaluateAll((chips) =>
     chips.map((c) => c.textContent.trim()));
   eq('filter: state chips mirror the tile vocabulary',
-     JSON.stringify(['All', 'Working', 'Idle', 'Suppressed', 'Disarmed', 'Silent']),
+     JSON.stringify(['All', 'Working', 'Idle', 'Suppressed', 'Limited', 'Disarmed', 'Silent']),
      JSON.stringify(stateChipWords));
+  const stateChipBounds = await page.locator('.fchip[data-f="state"]').evaluateAll((chips) =>
+    chips.map((chip) => {
+      const rect = chip.getBoundingClientRect();
+      return { word: chip.textContent.trim(), left: rect.left, right: rect.right,
+        top: rect.top, bottom: rect.bottom, width: window.innerWidth, height: window.innerHeight };
+    }));
+  ok('filter: every state chip stays inside the CI viewport',
+     stateChipBounds.every((rect) => rect.left >= 0 && rect.top >= 0
+       && rect.right <= rect.width && rect.bottom <= rect.height),
+     JSON.stringify(stateChipBounds));
+  for (const state of ['all', 'working', 'idle', 'suppressed', 'limited', 'disarmed', 'silent']) {
+    await stateMatches(state);
+  }
+  await stateMatches('all');
+  ok('filter: every state chip is operable at the CI viewport', true);
 
   if (LIVE && FIXTURE) {
     /* floor/actions.sh proves wake-silent resumes ff-paused. Put that fixture back in
@@ -345,6 +360,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     }
     const silentMatches = await stateMatches('silent');
     const suppressedMatches = await stateMatches('suppressed');
+    const limitedMatches = await stateMatches('limited');
     const allMatches = await stateMatches('all');
     const trio = ['ff-disarmed', 'ff-paused', 'ff-silent'];
     const amongTrio = (set) => set.filter((box) => trio.includes(box));
@@ -355,6 +371,15 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        JSON.stringify(['ff-silent']), JSON.stringify(amongTrio(silentMatches)));
     eq('filter: Suppressed selects the breaker-stopped fixture',
        JSON.stringify(['ff-suppressed']), JSON.stringify(suppressedMatches));
+    // The recovered fixtures are absent by name, not by omission: ff-lim-failed
+    // (a failed retry), ff-lim-restarted (a newer admitted START) and
+    // ff-lim-recovered (a clean session) all carry limit evidence the engine
+    // has since let go of, and the filter must not offer any of them as a
+    // lane to go and unstick (#611 round 3).
+    eq('filter: Limited selects every current limit fixture',
+       JSON.stringify(['ff-lim-breaker', 'ff-lim-budget', 'ff-lim-event',
+                       'ff-lim-terminal']),
+       JSON.stringify(limitedMatches));
     eq('filter: All keeps all three offline fixtures reachable',
        JSON.stringify(trio.slice().sort()), JSON.stringify(amongTrio(allMatches)));
     const stateTiles = await page.locator('#tiles .tile').evaluateAll((tiles) =>
@@ -369,6 +394,55 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        silentMatches.length, tileNumber('silent'));
     eq('filter: Suppressed chip and tile count the same boxes',
        suppressedMatches.length, tileNumber('suppressed'));
+    eq('filter: Limited chip and tile count the same boxes',
+       limitedMatches.length, tileNumber('limited'));
+    eq('limited: terminal evidence is shouted from the god-view', 'LIMITED',
+       await page.evaluate(() => window.FLOORDEV.alert('ff-lim-terminal')));
+    eq('limited: AUTH outranks LIMITED', 'AUTH', await page.evaluate(() =>
+      window.FLOORDEV.alertData({ping:null,lock:null,authfail:['vendor: rejected'],limited:{}})));
+    eq('limited: STUCK outranks AUTH and LIMITED', 'STUCK', await page.evaluate(() =>
+      window.FLOORDEV.alertData({ping:null,lock:{stuck:true},authfail:['vendor: rejected'],limited:{}})));
+    eq('limited: UNREACHABLE outranks every lower alert', 'UNREACHABLE', await page.evaluate(() =>
+      window.FLOORDEV.alertData({ping:{wedged:true},lock:{stuck:true},authfail:['x'],limited:{}})));
+    eq('limited: SILENT outranks LIMITED in fleet counters and filters', 'silent',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:false,disarmed:false,limited:{}})));
+    eq('limited: PAUSED and DISARMED outrank LIMITED in fleet counters and filters', 'disarmed',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:true,disarmed:true,limited:{}})));
+    eq('limited: STUCK outranks LIMITED after grid-state normalisation', 'working',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'idle'}, {lock:{stuck:true},limited:{}})));
+    /* The badge says AUTH for this box (asserted three lines up), the console
+       refuses to draw LIMITED over it, and now the counter and the filter
+       agree with both instead of calling it limited (#611 round 4). */
+    eq('limited: AUTH outranks LIMITED after grid-state normalisation', 'idle',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'idle'}, {authfail:['vendor: rejected'],limited:{}})));
+    /* THE ROWS THE TWO ABOVE CANNOT SEE, because both pass `state:'idle'`
+       (#611 round 5). `lock.stuck` and `authfail` are published for every
+       unit, and the collector ranks paused/disarmed/SILENT above both — so an
+       `offline` box carrying either is the ordinary output of its ladder, not
+       a corner. These four pin that neither fact outranks the offline split:
+       a box that went silent while its credential died is still SILENT, and a
+       box that stopped ticking BECAUSE its duty run is wedged is still SILENT,
+       which is the one the alarm exists for. */
+    eq('silent: a dead credential does not spend the SILENT tile', 'silent',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:false,disarmed:false,
+                             authfail:['vendor: rejected'],limited:{}})));
+    eq('silent: a wedged duty run does not spend the SILENT tile', 'silent',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:false,disarmed:false,
+                             lock:{stuck:true},limited:{}})));
+    eq('disarmed: a dead credential does not move a stopped box', 'disarmed',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:true,disarmed:true,
+                             authfail:['vendor: rejected'],limited:{}})));
+    eq('disarmed: a wedged duty run does not move a stopped box', 'disarmed',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'offline'}, {paused:true,disarmed:true,
+                             lock:{stuck:true},limited:{}})));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });
@@ -376,6 +450,7 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     const disarmedMatches = await stateMatches('disarmed');
     const silentMatches = await stateMatches('silent');
     const suppressedMatches = await stateMatches('suppressed');
+    const limitedMatches = await stateMatches('limited');
     const allMatches = await stateMatches('all');
     eq('demo: Disarmed selects no preview unit', JSON.stringify([]),
        JSON.stringify(disarmedMatches));
@@ -383,6 +458,9 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
        JSON.stringify(['kimi-reviewer']), JSON.stringify(silentMatches));
     eq('demo: Suppressed selects no preview unit', JSON.stringify([]),
        JSON.stringify(suppressedMatches));
+    eq('demo: Limited selects no preview unit', JSON.stringify([]),
+       JSON.stringify(limitedMatches));
+    ok('demo: no zero LIMITED tile is rendered', !/limited/i.test(tilesText), tilesText);
     eq('demo: All restores every preview unit', 7, allMatches.length);
   }
   /* ...and the hired tile is the "visible count rather than a silent omission"
@@ -742,6 +820,8 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
       // ever see.
       headline: ((await page.locator('#w-id .pill').textContent()) || '').trim(),
       fl: (await page.locator('#fl').textContent()).trim(),
+      sessions: (await page.locator('#w-sessions').textContent()).replace(/\s+/g, ' '),
+      terminalRows: await page.locator('#w-sessions .terminal').count(),
     });
     await leave();
   }
@@ -842,6 +922,31 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     }
   }
   if (LIVE && FIXTURE) {
+    const terminal = allSeen.find((u) => /ff-lim-terminal/.test(u.box));
+    ok('limited: terminal session has its own rendered class',
+       !!terminal && terminal.terminalRows > 0,
+       terminal ? terminal.sessions : 'terminal fixture not reached');
+    ok('limited: reset text renders as display-only console detail',
+       !!terminal && /LIMITED/.test(terminal.headline)
+         && /build lane, terminal/.test(terminal.current)
+         && /resets at 18:00 UTC/.test(terminal.current),
+       terminal ? terminal.headline+' | '+terminal.current : 'terminal fixture not reached');
+    const eventUnit = allSeen.find((u) => /ff-idle/.test(u.box));
+    ok('limited: floor events render on the unit console without an alert channel',
+       !!eventUnit && /OPERATING LIMIT EVENTS/.test(eventUnit.sessions)
+         && /github_connection_nodes/.test(eventUnit.sessions)
+         && /fixture-payload/.test(eventUnit.sessions),
+       eventUnit ? eventUnit.sessions : 'event fixture not reached');
+    const breakerUnit = allSeen.find((u) => /ff-lim-breaker/.test(u.box));
+    ok('limited: breaker reason and lane render on the unit console',
+       !!breakerUnit && /LIMITED/.test(breakerUnit.headline)
+         && /review lane, terminal-breaker/.test(breakerUnit.current),
+       breakerUnit ? breakerUnit.headline+' | '+breakerUnit.current : 'breaker fixture not reached');
+    const budgetUnit = allSeen.find((u) => /ff-lim-budget/.test(u.box));
+    ok('limited: budget reason and lane render on the unit console',
+       !!budgetUnit && /LIMITED/.test(budgetUnit.headline)
+         && /triage lane, budget/.test(budgetUnit.current),
+       budgetUnit ? budgetUnit.headline+' | '+budgetUnit.current : 'budget fixture not reached');
     // The exact-constant half of the engine assertion above. The stub stamps
     // `crew@0.4.1 (deadbee)` (test/stub-box:84), so this is the one run where
     // provenance-stripping can be checked against a KNOWN input: the version

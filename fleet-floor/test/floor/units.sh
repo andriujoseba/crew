@@ -21,6 +21,208 @@ t "fleet: carries the serving host's exact version string" "$FLOOR_TEST_VERSION"
 
 t "state: open session -> working" working  "$(uf ff-working "u['state']")"
 t "state: no open session -> idle" idle     "$(uf ff-idle    "u['state']")"
+t "limited: terminal session publishes current state" terminal \
+  "$(uf ff-lim-terminal "u['limited']['reason']")"
+t "limited: terminal session carries lane" build \
+  "$(uf ff-lim-terminal "u['limited']['lane']")"
+t "limited: reset banner is display data" "resets at 18:00 UTC" \
+  "$(uf ff-lim-terminal "u['limited']['reset']")"
+t "limited: terminal breaker survives without terminal session" terminal-breaker \
+  "$(uf ff-lim-breaker "u['limited']['reason']")"
+t "limited: budget remains distinguishable" budget \
+  "$(uf ff-lim-budget "u['limited']['reason']")"
+t "limited: event-backed state carries the unit lane" reviewer \
+  "$(uf ff-lim-event "u['limited']['lane']")"
+t "limited: warning event remains console evidence, not a stopped lane" False \
+  "$(uf ff-idle "'limited' in u")"
+t "limited: note names reason and lane" True \
+  "$(uf ff-lim-breaker "'review lane, terminal-breaker' in u['note']")"
+t "limited: age is a nonnegative measured duration" True \
+  "$(uf ff-lim-budget "isinstance(u['limited']['age'], int) and u['limited']['age'] >= 0")"
+t "limited: newer successful session clears state" False \
+  "$(uf ff-lim-recovered "'limited' in u")"
+# ff-lim-recovered's twin: the SAME terminal evidence, retried, differing only
+# in how the retry ended. Both clear, because `_session_terminal_record` runs
+# after every SESSION END and deletes the lane's breaker file on any
+# non-TERMINAL outcome (shared/lib/common/breaker.sh:71-81). A floor that read
+# these two boxes differently would be latching a state the box already let go
+# of, and #611's fourth criterion is exactly that it must not.
+t "limited: a later failed session clears the lane the engine cleared" False \
+  "$(uf ff-lim-failed "'limited' in u")"
+# The START shape, end to end, because it had a second consequence no direct
+# probe reaches: LIMITED sits above the open-session branch in the collector
+# ladder, so a latched box with a build genuinely in flight published `idle`
+# with a LIMITED note — contradicting `state: open session -> working` above.
+t "limited: a restarted lane reads working, not idle" working \
+  "$(uf ff-lim-restarted "u['state']")"
+t "limited: a restarted lane carries no limit furniture" False \
+  "$(uf ff-lim-restarted "'limited' in u")"
+# Every log shape the engine writes when it lets a lane go, run directly
+# against the shipped function: a fixture carries one probe, and this rule has
+# more shapes than a fixture set should grow to hold. Each row changes ONE
+# token from the row that stays limited (#611 round 3):
+#
+#   · a non-TERMINAL END at ANY rc — the breaker file is deleted for a
+#     success, a timeout, a transient failure and an unclassified one alike
+#     (breaker.sh:71-81), so rc is not what decides this;
+#   · `session breaker: kind=… recovered` — the terminal gate spending its one
+#     vendor probe and winning, which is the ONLY recovery a lane gets when
+#     the tick then finds nothing to dispatch (breaker.sh:44-49);
+#   · a newer SESSION START — the budget and terminal gates both run before
+#     that line is written (session.sh:624-663), so the start IS their verdict,
+#     and it clears a budget SKIP for the same reason it clears a breaker one.
+#
+# The last four rows are the boundary. Recovery is per-lane and must be NEWER:
+# a `review` start says nothing about `build`, and a SKIP written after a start
+# in the same second is the later record — log order, not the second, is what
+# separates them. And `ORPHANED` is THE exception to the first bullet, because
+# `run_session` did not write it: `session_reconcile_orphans` did, passing
+# `terminal=yes` to the same counter an observed TERMINAL feeds
+# (ledger.sh:333-339), so that line TRIPS the breaker and must never clear it.
+# Its twin is `MEMORY`, which looks just as violent and is ordinary recovery —
+# `run_session` leaves `terminal=no` there (session.sh:747-752) — so the pair
+# is what makes the exception read as an exception rather than as "anything
+# unusual latches" (#611 round 4).
+limited_recovery_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+terminal = stamp(now - 120) + " SESSION END kind=build key=x rc=1 dur=1s outcome=TERMINAL"
+breaker = stamp(now - 120) + " SESSION SKIP kind=build key=x reason=terminal-breaker count=3"
+budget = stamp(now - 120) + " SESSION SKIP kind=build key=x reason=budget count=1"
+failed = stamp(now - 60) + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
+timedout = stamp(now - 60) + " SESSION END kind=build key=x rc=124 dur=1s outcome=TIMEOUT acted=no reply_tail="
+resumed = stamp(now - 60) + " session breaker: kind=build recovered; dispatch resumed"
+started = stamp(now - 60) + " SESSION START kind=build key=y timeout=7200s log=/h/duty/logs/c.log"
+elsewhere = stamp(now - 60) + " SESSION START kind=review key=z timeout=2400s log=/h/duty/logs/d.log"
+reskipped = stamp(now - 60) + " SESSION SKIP kind=build key=x reason=budget count=1"
+orphaned = stamp(now - 60) + " SESSION END kind=build key=x rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- started=" + stamp(now - 300) + " sid=unknown"
+memory = stamp(now - 60) + " SESSION END kind=build key=x rc=137 dur=9s outcome=MEMORY acted=no reply_tail="
+verdict = lambda logs: (derive_limited(logs, [], now, 0, "build") or {}).get("reason", "clear")
+print(" ".join([verdict([terminal, failed]), verdict([terminal, timedout]),
+                verdict([breaker, resumed]), verdict([breaker, started]),
+                verdict([budget, started]), verdict([breaker, elsewhere]),
+                verdict([started, reskipped]), verdict([terminal, orphaned]),
+                verdict([breaker, orphaned]), verdict([orphaned]),
+                verdict([terminal, memory])]))
+')"
+t "limited: newer engine recovery evidence supersedes older limit evidence" \
+  "clear clear clear clear clear terminal-breaker budget terminal terminal-breaker clear clear" \
+  "$limited_recovery_case"
+# The OTHER family, and it answers recovery differently on purpose. A durable
+# `floor_events` error is not box state and no box line retracts it: it ages
+# out with the guest spool TTL, or a session that RAN THROUGH acknowledges it.
+# A lane that was dispatched and failed proves nothing about the condition the
+# event reported, so the one changed token between these two calls is rc.
+limited_event_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+failed = stamp(now - 60) + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
+passed = stamp(now - 60) + " SESSION END kind=build key=x rc=0 dur=1s outcome=ok"
+orphaned = stamp(now - 60) + " SESSION END kind=build key=x rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= started=" + stamp(now - 300) + " sid=unknown"
+event = {"id":"1-1-1", "timestamp":stamp(now - 120), "severity":"error", "name":"event-limit"}
+verdict = lambda logs: (derive_limited(logs, [event], now, 0, "build") or {}).get("reason", "clear")
+print(" ".join([verdict([failed]), verdict([passed]), verdict([orphaned])]))
+')"
+t "limited: only a completed successful session acknowledges a durable event" \
+  "event-limit clear event-limit" "$limited_event_case"
+# THE TIE-BREAK, ACROSS LANES, IN BOTH ORDERS — and both orders is the whole
+# assertion. The per-lane rule and the final cross-lane selection have to
+# compare the SAME thing, and when the final one compared only the timestamp
+# it did not order these at all: `max` kept whichever lane `limits` happened
+# to be keyed first, so a single-order test passes on insertion luck while the
+# reversed pair still reads the earlier record. Two lanes stopped in the same
+# second is what a box hitting a vendor ceiling on two lanes at once looks
+# like, and AC3 is that the two reasons stay distinguishable on the unit.
+#
+# The last two rows are the other family's tie. An event carries no log
+# position, so a same-second log record wins deterministically — that record
+# names a lane and a reason off the engine's own line, where the event's
+# position is not a fact about ordering — while an event that is genuinely
+# newer still wins on time (#611, successor round 1).
+limited_tie_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+budget = stamp(now - 60) + " SESSION SKIP kind=build key=x reason=budget count=1"
+breaker = stamp(now - 60) + " SESSION SKIP kind=review key=y reason=terminal-breaker count=3"
+older = {"id":"1-1-1", "timestamp":stamp(now - 120), "severity":"error", "name":"event-limit"}
+newer = {"id":"1-1-2", "timestamp":stamp(now - 30), "severity":"error", "name":"event-limit"}
+same = {"id":"1-1-3", "timestamp":stamp(now - 60), "severity":"error", "name":"event-limit"}
+def verdict(logs, events):
+    got = derive_limited(logs, events, now, 0, "engine")
+    return "clear" if not got else got["reason"] + "/" + got["lane"]
+print(" ".join([verdict([budget, breaker], []), verdict([breaker, budget], []),
+                verdict([budget], [same]), verdict([budget], [older]),
+                verdict([budget], [newer])]))
+')"
+t "limited: the newest record wins across lanes in the same second" \
+  "terminal-breaker/review budget/build budget/build budget/build event-limit/engine" \
+  "$limited_tie_case"
+t "limited: STUCK keeps collector state precedence" working \
+  "$(uf ff-stuck "u['state']")"
+t "limited: STUCK keeps the collector note" True \
+  "$(uf ff-stuck "u['note'].startswith('STUCK')")"
+t "limited: healthy box carries no compatibility furniture" False \
+  "$(uf ff-working "'limited' in u")"
+limited_clock_case="$(PYTHONPATH="$FLOOR/server" python3 -c '
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+event = {"id":"1-1-1", "timestamp":stamp(now + 10800 - 120), "severity":"error", "name":"event-limit"}
+logs = [stamp(now + 10800 - 60) + " SESSION END kind=reviewer key=x rc=1 dur=1s outcome=TERMINAL"]
+result = derive_limited(logs, [event], now, -10800, "reviewer")
+print(result["reason"] + ":" + str(result["age"]))
+')"
+t "limited: skewed event and log evidence share the host timeline" terminal:60 \
+  "$limited_clock_case"
+# #611's "must fail" case, and it can only be pinned at the source: a vendor
+# banner regex on the host is INERT until a vendor edits its banner, so no
+# behavioural assertion can watch one arrive. `bot_session_terminal` is
+# profile-owned and per-vendor (shared/conf/agents/claude.conf:348,
+# kimi.conf:89) — the BOX states the verdict and the host reads the word off
+# `outcome=`. A second copy here is the two-readers-disagreeing defect this
+# console exists to end. Every phrase below is lifted from a shipped
+# profile's own classifier or the fixture beside it.
+FF_VENDOR_BANNER_RE="bot_session_terminal|access_terminated|hit your (session|weekly) limit"
+FF_VENDOR_BANNER_RE="$FF_VENDOR_BANNER_RE|reached your usage limit|billing[- ]cycle"
+FF_VENDOR_BANNER_RE="$FF_VENDOR_BANNER_RE|Error code:[^\"]*403"
+FF_VENDOR_HITS="$(grep -EinH "$FF_VENDOR_BANNER_RE" \
+  "$FLOOR/server/floor/units.py" "$FLOOR/src/app.js" || true)"
+if [ -z "$FF_VENDOR_HITS" ]; then
+  ok "limited: neither host reader carries a vendor banner regex"
+else
+  fail "limited: neither host reader carries a vendor banner regex" "$FF_VENDOR_HITS"
+fi
+# The behavioural half of the same boundary. A banner no profile has ever
+# emitted must still produce LIMITED and reach the record verbatim, and the
+# real claude banner on an ordinary FAILED session must produce nothing: the
+# reset text is display data, and `outcome=` is the only control flow.
+limited_banner_case="$(PYTHONPATH="$FLOOR/server" python3 - <<'PY'
+import base64
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = datetime.fromtimestamp(now - 60, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+tail = lambda text: base64.b64encode(text.encode()).decode()
+unknown = "vendor-nine: paused, back whenever"
+banner = "You've hit your weekly limit \u00b7 resets 9am (UTC)"
+carried = derive_limited(
+    [stamp + " SESSION END kind=build key=x rc=1 dur=1s outcome=TERMINAL acted=no reply_tail="
+     + tail(unknown)], [], now, 0, "build")
+classified = derive_limited(
+    [stamp + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
+     + tail(banner)], [], now, 0, "build")
+print(carried["reset"] + " / " + ("limited" if classified else "clear"))
+PY
+)"
+t "limited: the reset banner is carried, never classified" \
+  "vendor-nine: paused, back whenever / clear" "$limited_banner_case"
 t "state: breaker stop -> suppressed" suppressed "$(uf ff-suppressed "u['state']")"
 t "suppressed: carries age and reason" True \
   "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"

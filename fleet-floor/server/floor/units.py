@@ -30,6 +30,21 @@ RE_START = re.compile(TS + r" SESSION START kind=(\S+) key=(\S+)"
                       r"(?:.*? timeout=(\d+)s(?:\s|$))?")
 RE_END = re.compile(TS + r" SESSION END kind=(\S+) key=(\S+) rc=(\d+|-) dur=(\d+s|-) outcome=(\S+)"
                     r"(?: acted=(yes|no|unknown) reply_tail=(\S*))?")
+RE_SKIP = re.compile(TS + r" SESSION SKIP kind=(\S+) key=(\S+) reason=(\S+)")
+# The terminal breaker announcing its own recovery. `_session_terminal_gate`
+# spends one vendor probe per tick on a tripped lane, and on success deletes
+# the state file and writes this line (shared/lib/common/breaker.sh:44-49).
+# It is the only recovery evidence a lane gets when the probe succeeds but the
+# tick had nothing left to dispatch — no START and no END follow it — so a
+# reader that watched only sessions would keep a cleared breaker on screen
+# until the next tick found work (#611 round 3).
+RE_BREAKER_OK = re.compile(TS + r" session breaker: kind=(\S+) recovered")
+# `SESSION_ORPHAN_OUTCOME` (shared/lib/common/ledger.sh:118). Held as a word
+# here for the same reason `TERMINAL` is: the BOX states the verdict and the
+# host reads it off `outcome=`. That is the boundary #611 draws — no host-side
+# copy of a vendor's banner, no second classifier — and this is the reading
+# side of it, not a second copy of it.
+_ORPHAN_OUTCOME = "ORPHANED"
 # peak_rss= is read by its own pattern rather than by another optional group on
 # RE_END, and the reason is what RE_END already survived: the engine appends
 # new fields past reply_tail (tier=, and started= on a reconstructed terminal),
@@ -77,6 +92,12 @@ RE_MENTION = re.compile(
 )
 RE_RESUME = re.compile(TS + r" (\S+): resume duty")
 _SESSION_ACTIVE_AFTER_S = 21600
+# The guest spool's default retention bound. The probe carries event timestamps
+# but not the guest's environment override, so the floor uses the engine's
+# shipped bound and, below, also requires stopping severity and no newer
+# SUCCESSFUL box session. An old line left behind in an otherwise quiet spool
+# must never latch LIMITED for the life of the box.
+_LIMIT_EVENT_TTL_S = 86400
 
 
 def parse_ts(s):
@@ -265,6 +286,157 @@ def derive_sessions(loglines, now, clock_offset=0):
             cur = {"key": o["key"], "kind": o["kind"], "start": int(o["ts"]),
                    "timeout": o["timeout"]}
     return done, cur
+
+
+def derive_limited(loglines, floor_events, now, clock_offset=0, event_lane="engine"):
+    """Newest per-lane engine evidence -> the current LIMITED record, if any.
+
+    TWO evidence families, and they answer recovery differently because the
+    engine gives them different answers (#611 round 3).
+
+    · THE LOG FAMILY — a TERMINAL end, and a `terminal-breaker`/`budget` SKIP
+      — is state the BOX holds and the box itself clears. `run_session`
+      deletes the lane's breaker file on a non-TERMINAL end: "any success,
+      timeout, transient failure, or unclassified failure resets the count"
+      (shared/lib/common/breaker.sh:71-81, called after every SESSION END at
+      session.sh:819) — with ONE documented exception, `ORPHANED`, handled
+      below. The gates run BEFORE the start line —
+      budget, then terminal, then `SESSION START` (session.sh:624-663) — so a
+      start newer than a SKIP is the engine saying both gates admitted that
+      lane. And the terminal gate clears on a successful vendor probe and says
+      so out loud: `session breaker: kind=… recovered` (breaker.sh:44-49).
+      Any of those three, newer than the limit evidence on the SAME lane,
+      means the box has already let go of it. Latching past them is the floor
+      keeping a state the engine has cleared, which is the thing #611's fourth
+      criterion forbids.
+
+    · THE EVENT FAMILY — a durable `floor_events` error — is not box state and
+      no box line retracts it. It ages out with the guest spool's TTL, or a
+      COMPLETED SUCCESSFUL session acknowledges it: a lane that was dispatched
+      and failed proves nothing about the condition the event reported. That
+      is round 2's rule and it is kept exactly.
+
+    Newest-per-lane, and ties break on log order rather than on the second,
+    because a SKIP and a START can share a timestamp and only their order
+    says which one the engine wrote last.
+    """
+    limits, recoveries = {}, {}
+    newest_success = 0
+
+    # Newest-per-lane, both of them, where `at` is (timestamp, log order).
+    def note_recovery(lane, at):
+        if at > recoveries.get(lane, (0, -1)):
+            recoveries[lane] = at
+
+    def note_limit(lane, at, reason, reset=""):
+        if at > limits.get(lane, {}).get("at", (0, -1)):
+            limits[lane] = {"at": at, "lane": lane, "reason": reason, "reset": reset}
+
+    for index, line in enumerate(loglines):
+        # One pattern at a time and out on the first hit: these four records
+        # are mutually exclusive, and duty.log is the longest thing this
+        # module reads.
+        ended = RE_END.search(line)
+        if ended:
+            lane, at = ended.group(2), (parse_ts(ended.group(1)) + clock_offset, index)
+            outcome = ended.group(6)
+            if outcome == _ORPHAN_OUTCOME:
+                # THE exception to "a non-TERMINAL end cleared this lane", and
+                # the only one: `run_session` did not write this record.
+                # `session_reconcile_orphans` did, for a session that died with
+                # the box, and it passes `terminal=yes` to the same counter an
+                # observed TERMINAL feeds (ledger.sh:333-339) — "a box that
+                # kills itself on every review session has a dead review lane,
+                # whether the vendor said so or the kernel did". So this line
+                # takes the counting path, never the `rm -f`, and reading it as
+                # recovery clears LIMITED on the one record that TRIPPED the
+                # breaker (#611 round 4).
+                #
+                # Neither evidence nor recovery, which is narrower than "not
+                # recovery" on purpose: `ORPHANED` says the box died, not that
+                # a vendor refused, so whether it should raise LIMITED on its
+                # own is triage's question and not this reader's. Dropped
+                # before `newest_success` too — an orphan acknowledges no
+                # durable event either.
+                continue
+            if outcome != "TERMINAL":
+                # Recovery for the lane at ANY rc — the breaker file is gone
+                # either way, including on the MEMORY outcome, where
+                # `run_session` leaves `terminal=no` (session.sh:747-752).
+                # Only rc=0 acknowledges a durable event, so the two families
+                # read this one line for two different things.
+                note_recovery(lane, at)
+                if ended.group(4) == "0":
+                    newest_success = max(newest_success, at[0])
+                continue
+            reset = ""
+            try:
+                reset = base64.b64decode(
+                    ended.group(8) or "", validate=True
+                ).decode("utf-8", "replace")
+            except (ValueError, TypeError):
+                pass
+            note_limit(lane, at, "terminal", reset)
+            continue
+        started = RE_START.search(line)
+        if started:
+            note_recovery(started.group(2),
+                          (parse_ts(started.group(1)) + clock_offset, index))
+            continue
+        resumed = RE_BREAKER_OK.search(line)
+        if resumed:
+            note_recovery(resumed.group(2),
+                          (parse_ts(resumed.group(1)) + clock_offset, index))
+            continue
+        # A SKIP for any other reason is an ordinary duty decision — nothing
+        # was refused by an operating limit — so it is neither evidence nor
+        # recovery.
+        skipped = RE_SKIP.search(line)
+        if skipped and skipped.group(4) in ("terminal-breaker", "budget"):
+            note_limit(skipped.group(2),
+                       (parse_ts(skipped.group(1)) + clock_offset, index),
+                       skipped.group(4))
+    candidates = [item for lane, item in limits.items()
+                  if recoveries.get(lane, (0, -1)) <= item["at"]]
+    for event in floor_events:
+        event_ts = parse_ts(event["timestamp"]) + clock_offset
+        # Warnings remain durable console evidence, but they do not say a lane
+        # stopped. Errors age out with the guest spool's shipped TTL, and a
+        # completed successful session acknowledges the older event.
+        if (event.get("severity") != "error"
+                or not 0 <= now - event_ts <= _LIMIT_EVENT_TTL_S
+                or newest_success > event_ts):
+            continue
+        # `-1` is "no log position", not position zero. A durable event is not
+        # a line in duty.log, so it has no order to compare — and `0` is a
+        # VALID log index, which would let an event tie exactly with the first
+        # line of the file and be settled by insertion luck. The sentinel makes
+        # a same-second log record win deterministically, which is the right
+        # way round: that record names a lane and a reason off the engine's own
+        # line, where the event's position says nothing at all (#611).
+        candidates.append({
+            "at": (event_ts, -1), "lane": event_lane,
+            "reason": event["name"], "reset": "", "event": event["id"],
+        })
+    if not candidates:
+        return None
+    # THE WHOLE TUPLE, and the same one the per-lane rule above compares.
+    # Selecting on `at[0]` alone honoured the log-order tie-break within a lane
+    # and dropped it between lanes, so two lanes stopped in the same second
+    # published whichever `limits` happened to be keyed first — `max` keeps its
+    # first-seen item on a tie — rather than the later record. One rule for
+    # both choices, or the docstring above is not describing this function
+    # (#611, successor round 1).
+    latest = max(candidates, key=lambda item: item["at"])
+    result = {
+        "state": "limited", "reason": latest["reason"],
+        "age": max(0, int(now - latest["at"][0])), "lane": latest["lane"],
+    }
+    if latest.get("reset"):
+        result["reset"] = latest["reset"]
+    if latest.get("event"):
+        result["event"] = latest["event"]
+    return result
 
 
 # The engine's kill grace, from shared/lib/common/operating-limits.sh:18
@@ -728,6 +900,12 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
             1, math.ceil((probe_finished - probe_started) / 2 + 1)
         )
     sessions, cur = derive_sessions(loglines, now, clock_offset)
+    limited = derive_limited(loglines, u["floor_events"], now, clock_offset,
+                             unit.get("room", "engine"))
+    if limited is not None:
+        # Deliberately absent, rather than false, where no current evidence
+        # exists or the box predates these records.
+        u["limited"] = limited
     u["queue"] = derive_queue(loglines)
     # Not measured here and not measured by probe.sh either — the tick
     # measured it, both readers quote it (#483 D1). None on a box whose engine
@@ -796,6 +974,13 @@ def build_unit(unit, state, agent_conf, now, inventory_ok=True):
         # this box, and the notes it would defer to describe a healthy one.
         u["state"] = "working"
         u["note"] = stuck_note
+    elif limited:
+        u["state"] = "idle"
+        u["note"] = "LIMITED — %s lane, %s for %s" % (
+            limited["lane"], limited["reason"], fmt_dur(limited["age"])
+        )
+        if limited.get("reset"):
+            u["note"] += " — %s" % limited["reset"]
     elif cur:
         u["state"] = "working"
     elif u["suppression"]["active"]:

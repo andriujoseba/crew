@@ -31,7 +31,7 @@ body{overflow:hidden;color:#c7d4e4;font-family:var(--mono)}
 body.floor .hud{display:none}
 .foot{display:none}
 /* ===== command-center HUD ===== */
-.fleetbar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;gap:18px;padding:12px 20px;z-index:8;pointer-events:none}
+.fleetbar{position:fixed;top:0;left:0;right:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;padding:12px 20px;z-index:8;pointer-events:none}
 .fleetbar .brand{font-family:var(--mono);font-weight:700;font-size:14px;letter-spacing:.2em;text-transform:uppercase;color:#c7d4e4;white-space:nowrap}
 .fleetbar .brand b{color:var(--cyan)}
 .fleetbar .brand .rp{color:#5fd6ff;font-weight:400;font-size:11px;letter-spacing:.1em;margin-left:8px}
@@ -45,7 +45,7 @@ body.floor .hud{display:none}
 @keyframes tilepulse{0%,100%{box-shadow:0 0 0 0 rgba(255,81,71,0)}50%{box-shadow:0 0 0 3px rgba(255,81,71,.22)}}
 .spark{display:flex;align-items:flex-end;gap:2px;height:22px;margin-top:11px}
 .spark span{flex:1;border-radius:1px;min-height:2px}
-.filters{display:flex;gap:6px;pointer-events:auto;align-items:center}
+.filters{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;pointer-events:auto;align-items:center;margin-left:auto}
 .fchip{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;border-radius:7px;border:1px solid #16202c;background:#070c14bb;color:#65788c;cursor:pointer;transition:.14s}
 .fchip:hover{color:#c7d4e4}
 .fchip.on{color:var(--cyan);border-color:#1d5772;background:#0e2c3f}
@@ -78,7 +78,9 @@ body.floor .hud{display:none}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
 .fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
 .fev .ago{color:#46566a;flex:none;min-width:34px}
-.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .noop{color:#d99a5e}.fev .kd{flex:none}
+.fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .terminal{color:#ff5147}.fev .noop{color:#d99a5e}.fev .kd{flex:none}
+.limitfeed{border-top:1px solid #142230;margin-top:8px;padding-top:7px;font-family:var(--mono);font-size:9.5px;color:#7d8ba0}
+.limitfeed .lev{display:flex;gap:7px;margin-top:4px}.limitfeed .sev-error{color:#ff5147}.limitfeed .sev-warn{color:#f7bd4e}.limitfeed .drop{color:#ff8a7c;margin-top:5px}
 .fev.k-build .kd{color:#f7bd4e}.fev.k-review .kd{color:#5cb4ff}.fev.k-triage .kd{color:#c98bff}
 .qchips{display:flex;flex-wrap:wrap;gap:5px}
 .qc{font-family:var(--mono);font-size:9.5px;padding:3px 7px;border-radius:5px;border-left:2px solid;background:#0c1420;color:#9fb2c6}
@@ -265,6 +267,7 @@ body { margin: 0; background: #05080f; color: #cfe0f2; font-family: var(--mono);
       <button class="fchip" data-f="state" data-v="working">Working</button>
       <button class="fchip" data-f="state" data-v="idle">Idle</button>
       <button class="fchip" data-f="state" data-v="suppressed">Suppressed</button>
+      <button class="fchip" data-f="state" data-v="limited">Limited</button>
       <button class="fchip" data-f="state" data-v="disarmed">Disarmed</button>
       <button class="fchip" data-f="state" data-v="silent">Silent</button>
       <span class="flabel">role</span>
@@ -1630,13 +1633,16 @@ function drawFloor(t){
    2 in this repo's own suite — so the badge and the control that escalates
    on the same fact could disagree, and did (#486). There is deliberately no
    threshold constant left in this file to drift again. */
-function alertOf(u){
-  if(!LIVE)return "";
-  var d=dataOf(UNITID(u),u.room);
+function alertData(d){
   if(d.ping&&d.ping.wedged)return "UNREACHABLE";
   if(d.lock&&d.lock.stuck)return "STUCK";
   if(d.authfail&&d.authfail.length)return "AUTH";
+  if(d.limited)return "LIMITED";
   return "";
+}
+function alertOf(u){
+  if(!LIVE)return "";
+  return alertData(dataOf(UNITID(u),u.room));
 }
 /* stoppedWord DATA — why this box is not ticking, or "" if nobody stopped it.
    SILENT is an alarm: "this box should be ticking and is not". #189 taught the
@@ -1664,11 +1670,33 @@ function stoppedWord(d){
    one client-side split both the counter tiles and their filter chips consume.
    Keeping dataOf() here also keeps paused/disarmed out of the live ROSTER
    projection, where those fields do not exist. */
-function fleetState(u){
+function fleetStateData(u,d){
+  /* THE STATE WORD DECIDES FIRST, and nothing below it may outrank the
+     `offline` split (#611 round 5). `lock.stuck` and `authfail` are published
+     unconditionally by the collector — `stuck_verdict` runs for every unit and
+     `authfail` is filled straight off probe meta — while the collector's own
+     ladder ranks paused/disarmed/SILENT ABOVE both. So an `offline` box
+     carrying either fact is not a corner, it is what the elif-chain produces,
+     and a guard that answered before this dispatch counted a wedged SILENT box
+     as `working` and an authfail SILENT box as `idle`. That is #203 from the
+     other side: the tile that exists to notice something stopped went quiet
+     about the box that stopped. Under-spending the alarm costs what
+     over-spending it cost — the word an operator learns not to trust. */
   if(u.state==="working")return "working";
   if(u.state==="suppressed")return "suppressed";
-  if(u.state!=="offline")return "idle";
-  return stoppedWord(dataOf(UNITID(u),u.room))?"disarmed":"silent";
+  if(u.state==="offline")return stoppedWord(d)?"disarmed":"silent";
+  /* Past the dispatch, this is the `idle` cell `applyFleet` normalised a
+     working unit with no current-session object into — the only path either
+     fact was ever meant to speak on. A stuck lock is the deliberate
+     exception the collector and the alert ladder both call working/STUCK. */
+  if(LIVE&&d&&d.lock&&d.lock.stuck)return "working";
+  /* One sentence for LIMITED, and `populateDash` reads the same one for the
+     console: an AUTH-blocked box is badged AUTH by the alert ladder, so the
+     tile and the chip must not be the last readers still calling it limited. */
+  return LIVE&&d&&d.limited&&!(d.authfail&&d.authfail.length)?"limited":"idle";
+}
+function fleetState(u){
+  return fleetStateData(u,dataOf(UNITID(u),u.room));
 }
 function matchesFloorFilter(u){
   return (floorFilter.state==="all"||fleetState(u)===floorFilter.state)
@@ -1682,7 +1710,7 @@ function matchedFloorUnits(){return ROSTER.filter(matchesFloorFilter);}
    that disagreed about what SILENT means would be worse than one that was
    wrong. */
 function fleetCounts(){
-  var c={working:0,idle:0,suppressed:0,disarmed:0,silent:0};
+  var c={working:0,idle:0,suppressed:0,limited:0,disarmed:0,silent:0};
   ROSTER.forEach(function(u){c[fleetState(u)]++;});
   return c;
 }
@@ -1693,6 +1721,7 @@ function stageCounts(){
   var c=fleetCounts();
   var stat=[[c.silent+" SILENT","#ff5147"],[c.idle+" IDLE","#5fce9b"],[c.working+" WORKING","#f7bd4e"]];
   if(c.suppressed)stat.splice(1,0,[c.suppressed+" SUPPRESSED","#f28b54"]);
+  if(c.limited)stat.splice(1,0,[c.limited+" LIMITED","#ff5147"]);
   /* Only when non-zero, on the ALERT counter's rule below: a permanent
      "0 DISARMED" is furniture. SILENT stays unconditional either way — an
      operator reading a calm fleet is entitled to see the alarm counter sitting
@@ -1793,7 +1822,7 @@ function queueChip(q){
 }
 function fmtDur(s){if(s===null||s===undefined)return "—";s=Math.max(0,Math.floor(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;return h?(h+"h "+pad2(m)+"m"):(m?(m+"m "+pad2(ss)+"s"):(ss+"s"));}
 function sessionRc(s){return s.rc===null||s.rc===undefined?"-":s.rc;}
-function sessionClass(s){return s.rc===null||s.rc===undefined||s.rc?"cr":s.acted==="no"?"noop":"ok";}
+function sessionClass(s){return s.out==="TERMINAL"?"terminal":s.rc===null||s.rc===undefined||s.rc?"cr":s.acted==="no"?"noop":"ok";}
 /* peak_rss= arrives in KiB and is absent whenever the engine did not measure
    the session (#473). Absent is not zero: `!k` renders the same em dash the
    other unmeasured rows use, so a box whose kernel reports no VmHWM reads as
@@ -1870,7 +1899,7 @@ function genData(room){var kind=kindOf(room),qn=ri2(2,6),q=[];for(var k=0;k<qn;k
     longest:Math.max.apply(null,durs),avg:Math.round(durs.reduce(function(a,b){return a+b;},0)/durs.length),success:Math.round(100*ok/sess.length),today:ri2(8,46),cur:cur};}
 function fleetMetric(){var lb=0,lr=0,lt=0,all=[];ROSTER.forEach(function(u){var d=dataOf(UNITID(u),u.room);all=all.concat(d.sessions.map(function(s){return s.dur;}));if(u.room==="builder")lb=Math.max(lb,d.longest);else if(u.room==="reviewer")lr=Math.max(lr,d.longest);else lt=Math.max(lt,d.longest);});return {build:lb,review:lr,triage:lt,avg:all.length?Math.round(all.reduce(function(a,b){return a+b;},0)/all.length):0};}
 function dataOf(box,room){if(!dataCache[box])dataCache[box]=LIVE?emptyData(room||ROOM):genData(room||ROOM);return dataCache[box];}
-function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false,ceiling:null,bound:null},authfail:[],vitals:null,tickHealth:null};}
+function emptyData(room){return {kind:kindOf(room),queue:[],sessions:[],up:{h:0,m:0},repo:"",spark:[],longest:0,avg:0,success:0,today:0,cur:null,live:true,gh:"unknown",vendor:"unknown",engine:"",integrity:"",cron:{ok:false,last:null,age:null},note:"",paused:false,disarmed:false,box:"",logs:[],ping:null,lock:{held:null,stuck:false,ceiling:null,bound:null},authfail:[],limited:null,floorEvents:[],limitDropped:null,vitals:null,tickHealth:null};}
 
 /* ===================== LIVE MODE (collector at /api, see server/floor.py) =====================
    The collector polls every box from the operator host over `box exec` and
@@ -1939,6 +1968,8 @@ function liveData(u){
   d.tickHealth=u.tick_health||null;
   d.suppression=u.suppression||{active:false,age:null,kind:"",key:""};
   d.authfail=u.authfail||[];
+  d.limited=u.limited||null;d.floorEvents=u.floor_events||[];
+  d.limitDropped=u.limit_dropped===undefined?null:u.limit_dropped;
   d.note=u.note||"";d.paused=!!u.paused;d.logs=u.logs||[];d.repos=u.repos||[];
   /* #189 gave the collector this flag and nothing here read it, so every
      deliberately-stopped box came through as a bare state:"offline" and got
@@ -2225,18 +2256,19 @@ function buildTiles(){var ct=fleetCounts(),q=0;ROSTER.forEach(function(u){q+=dat
   var hire=hidden>0?tl(ROSTER.length,"hired","#8aa0b8",false,
     hidden+(hidden===1?" declared box has":" declared boxes have")
     +" no console: not hired — crew hire <box>"):"";
-  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.suppressed,"suppressed","#f28b54",ct.suppressed>0)+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
+  var limited=ct.limited?tl(ct.limited,"limited","#ff5147",true):"";
+  var el=document.getElementById("tiles");if(el)el.innerHTML=tl(declared,"units","#c7d4e4")+hire+tl(ct.working,"working","#f7bd4e")+tl(ct.idle,"idle","#5fce9b")+tl(ct.suppressed,"suppressed","#f28b54",ct.suppressed>0)+limited+tl(ct.disarmed,"disarmed","#8aa0b8")+tl(ct.silent,"silent","#ff5147",ct.silent>0)+tl(q,"queued","#5fd6ff");}
 function populateDash(){
   if(VIEW!=="room")return;
   /* The art-preview toggles can set any STATE; live data may disagree. Only
      claim a session is running when there is one to count. */
-  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",suppressed=STATE==="suppressed",work=STATE==="working"&&!!(d.cur||!LIVE);
+  var d=dataOf(BOX,ROOM),id=UNIT(),vc=VENDORCOL(AGENT),off=STATE==="offline",suppressed=STATE==="suppressed",limited=LIVE&&STATE==="idle"&&!(d.authfail&&d.authfail.length)&&!!d.limited,work=STATE==="working"&&!!(d.cur||!LIVE);
   /* PAUSED, DISARMED or "" — the one thing standing between this console and
      the word SILENT. Every readout below that used to key off `off` alone now
      asks this first; `off` still decides the shape of the panel, this decides
      what it is allowed to shout (#203). */
   var stw=off?stoppedWord(d):"";
-  var sc=stw?"#8aa0b8":off?"#ff5147":suppressed?"#f28b54":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":suppressed?"SUPPRESSED":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
+  var sc=stw?"#8aa0b8":off?"#ff5147":suppressed?"#f28b54":limited?"#ff5147":work?"#f7bd4e":"#5fce9b",sl=stw||(off?"SILENT":suppressed?"SUPPRESSED":limited?"LIMITED":work?(d.kind==="build"?"BUILDING":d.kind==="review"?"REVIEWING":"DISPATCHING"):"STANDBY");
   document.getElementById("w-id").innerHTML='<div class="idc"><div class="av" style="background:'+hexA(vc,0.16)+';box-shadow:inset 0 0 0 1px '+hexA(vc,0.5)+';color:'+vc+'">'+AGENT[0].toUpperCase()+'</div><div><div class="nm">'+id+'</div><div class="rl">'+AGENT+' · '+ROOM+'</div><span class="pill" style="color:'+sc+';background:'+hexA(sc,0.14)+';box-shadow:inset 0 0 0 1px '+hexA(sc,0.4)+'">● '+sl+'</span></div></div><div class="spark" title="24h activity">'+(off?"":d.spark.map(function(v,i){return '<span style="height:'+Math.round(v*100)+'%;background:'+hexA(vc,i>=d.spark.length-4?0.95:0.42)+'"></span>';}).join(''))+'</div>';
   /* In LIVE mode every value here is what the box reported this poll; the
      DEMO strings it replaces were the placeholders #38 was filed about. */
@@ -2312,6 +2344,7 @@ function populateDash(){
      No progress bar here either; there is no progress to draw. */
   else if(LIVE&&d.lock&&d.lock.stuck)cs+='<div class="big" id="cur-el" style="color:#ff5147">'+fmtDur(d.lock.held)+'</div><div class="task" id="cur-stuck" style="color:#ff8a7c">'+stuckLine(d)+'</div>';
   else if(suppressed)cs+='<div class="big" style="color:#f28b54">SUPPRESSED</div><div class="task">'+esc(d.note||"zero-action resume breaker")+'</div>';
+  else if(limited)cs+='<div class="big" style="color:#ff5147">LIMITED</div><div class="task">'+esc(d.note||"operating limit")+'</div>';
   else if(work)cs+='<div class="big" id="cur-el">'+fmtDur(Math.floor(Date.now()/1000)-d.cur.start)+'</div><div class="task">'+esc(d.kind)+' · '+esc(d.cur.key)+'</div><div class="pbar"><i></i></div>';
   else cs+='<div class="big" style="color:#5fce9b">STANDBY</div><div class="task">idle · awaiting next tick</div>';
   document.getElementById("w-current").innerHTML=cs+'</div>';
@@ -2323,7 +2356,15 @@ function populateDash(){
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
   d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s);sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
-  document.getElementById("w-sessions").innerHTML=sh+'</div>';
+  sh+='</div>';
+  var floorEvents=d.floorEvents||[],limitDropped=d.limitDropped||0;
+  if(floorEvents.length||limitDropped){
+    sh+='<div class="limitfeed"><div>OPERATING LIMIT EVENTS</div>';
+    floorEvents.forEach(function(e){sh+='<div class="lev"><span class="sev-'+(e.severity==="error"?"error":"warn")+'">'+esc(e.severity.toUpperCase())+'</span><span>'+esc(e.name)+' '+e.measured+'/'+e.limit+' · '+esc(e.subject)+' · '+esc(e.cause)+'</span></div>';});
+    if(limitDropped)sh+='<div class="drop">'+limitDropped+' older event'+(limitDropped===1?'':'s')+' dropped by retention</div>';
+    sh+='</div>';
+  }
+  document.getElementById("w-sessions").innerHTML=sh;
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
   /* Follows d.paused, not the working state: an idle but unpaused box was
@@ -7103,6 +7144,9 @@ window.FLOORDEV={W:DW,H:DH,AGENTS:["claude","codex","grok","kimi"],
      is active. Return the boxes the shipped predicate currently leaves
      matched, not a test-side reconstruction of the classification. */
   matched:function(){return matchedFloorUnits().map(UNITID);},
+  alert:function(box){var u=ROSTER.filter(function(x){return UNITID(x)===box;})[0];return u?alertOf(u):"";},
+  alertData:function(d){return alertData(d);},
+  fleetStateData:function(u,d){return fleetStateData(u,d);},
   /* The floor header's left-hand labels, exactly as painted. */
   header:function(){return floorHeaderLabels();},
   /* The SHIPPED confirm sentence for Restart AND the mode it authorises, over

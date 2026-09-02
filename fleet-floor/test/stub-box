@@ -97,6 +97,10 @@ lockheld_of() {
     # A run that started moments ago — the case the raw-timestamp bug marked
     # STUCK for 495881h. It must stay unremarkable.
     working)                printf 12 ;;
+    # A build in flight on a box whose previous session ended TERMINAL: the
+    # lock is young, so nothing here is STUCK and the only question the box
+    # asks the floor is whether the restart cleared the limit.
+    limited-restarted)      printf 60 ;;
     # The #610 trio, and they differ ONLY in this number: the same `build`
     # session declaring the same 3600s ceiling is in flight on all three, so a
     # reader that graded them alike is reading a fleet-wide constant and not
@@ -260,6 +264,12 @@ emit_probe() {
   echo '::limitstart'
   if [ "$sc" = idle ]; then
     printf '1700000000-33-1\t2026-08-28T09:00:00Z\twarn\tgithub_connection_nodes\t90\t100\theavy-duty/crew#482\tfixture-payload says ::not-a-key\n'
+  elif [ "$sc" = limited-event ]; then
+    printf '1700000000-34-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
+  elif [ "$sc" = limited-recovered ]; then
+    printf '1700000000-35-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 180)"
+  elif [ "$sc" = stuck ]; then
+    printf '1700000000-36-1\t%s\terror\tgithub_connection_nodes\t100\t100\theavy-duty/crew#611\tlane stopped\n' "$(ago 45)"
   fi
   echo '::limitend'
   # The box vitals record (#483), carried by probe.sh verbatim off duty.log.
@@ -289,6 +299,48 @@ emit_probe() {
       # keeps the pre-field line shape so both halves have a fixture.
       echo "$(ago 195) SESSION END kind=review key=box#158 rc=0 dur=64s outcome=approved acted=yes reply_tail= tier=default peak_rss=3588324"
       echo "$(ago 190) duty run end"
+      ;;
+    limited-terminal)
+      echo "$(ago 180) SESSION END kind=build key=crew#611 rc=1 dur=30s outcome=TERMINAL acted=no reply_tail=$(printf 'resets at 18:00 UTC' | base64 -w0)"
+      ;;
+    limited-breaker)
+      echo "$(ago 180) SESSION END kind=review key=crew#610 rc=0 dur=30s outcome=ok"
+      echo "$(ago 120) SESSION SKIP kind=review key=crew#611 reason=terminal-breaker count=3"
+      ;;
+    limited-budget)
+      echo "$(ago 90) SESSION SKIP kind=triage key=board reason=budget count=1"
+      ;;
+    limited-recovered)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=0 dur=30s outcome=ok"
+      ;;
+    # limited-recovered's twin, and the pair is the point: the SAME terminal
+    # evidence, retried, differing only in how the retry ended — and BOTH read
+    # healthy, because the box already let go of the limit either way.
+    # `_session_terminal_record` runs after every SESSION END and deletes the
+    # lane's breaker file on any non-TERMINAL outcome: "any success, timeout,
+    # transient failure, or unclassified failure resets the count"
+    # (shared/lib/common/breaker.sh:71-81). A floor that kept this box LIMITED
+    # would be latching a state the engine has already cleared, which is
+    # exactly what #611's fourth criterion forbids. What an ordinary failure
+    # still does NOT do is acknowledge a durable operating-limit event —
+    # nothing on the box retracts one of those — and that split is asserted
+    # directly in test/floor/units.sh (#611 round 3).
+    limited-failed)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION END kind=build key=crew#611 rc=1 dur=12s outcome=FAILED acted=no reply_tail="
+      ;;
+    # The recovery evidence that arrives with no END at all: the gates run
+    # BEFORE the start line — budget, then terminal, then SESSION START
+    # (shared/lib/common/session.sh:624-663) — so a START newer than the
+    # terminal evidence is the engine stating that both gates admitted this
+    # lane. It is also the one shape where latching had a second, louder
+    # consequence: LIMITED sits above the open-session branch in the collector
+    # ladder, so a box with a build genuinely in flight published `idle` with
+    # a LIMITED note. This box must read WORKING.
+    limited-restarted)
+      echo "$(ago 180) SESSION END kind=build key=crew#610 rc=1 dur=30s outcome=TERMINAL"
+      echo "$(ago 60) SESSION START kind=build key=crew#611 timeout=7200s log=/h/duty/logs/c.log"
       ;;
     silent|suppressed-silent|disarmed)   # newest line is older than two tick boundaries
       echo "$(ago 3000) duty run start"
