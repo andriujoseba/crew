@@ -88,8 +88,10 @@ case "$cmd" in
         empty) exit 0 ;;
         *) exit 2 ;;
       esac
-      env HOME="$guest_home" PATH="$probe_path" LIFE_FLOCK_RC="$probe_rc" LIFE_NOW=10000 \
-        /bin/bash -c "$script"
+      probe_output="$(env HOME="$guest_home" PATH="$probe_path" LIFE_FLOCK_RC="$probe_rc" LIFE_NOW=10000 \
+        /bin/bash -c "$script")"
+      printf '%s\n' "$probe_output" >"$state_dir/probe-result-$name"
+      printf '%s\n' "$probe_output"
     elif [[ "$script" == *'df -Pk'* ]]; then
       printf 'free-probe %s\n' "$name" >>"$calls"
       ready_file="$state_dir/ready-fails-$name"
@@ -222,13 +224,15 @@ t lifecycle-force-after-restarts 0 "$RC"
 case "$OUT" in *'force-after reached; restarting'*) r1=named ;; *) r1="$OUT" ;; esac
 t lifecycle-force-after-is-announced named "$r1"
 
-for invalid_since in 18446744073709551617 10001; do
+for invalid_since in 18446744073709551617 10002; do
   reset_case
   printf 'since:%s\n' "$invalid_since" >"$STATE/probe-alpha"
   capture restart alpha --force-after 1
   t "lifecycle-invalid-since-$invalid_since-is-busy-skip" 3 "$RC"
   case "$OUT" in *'SKIPPED busy — duty lock age unavailable'*) r1=unavailable ;; *) r1="$OUT" ;; esac
   t "lifecycle-invalid-since-$invalid_since-age-is-unavailable" unavailable "$r1"
+  t "lifecycle-invalid-since-$invalid_since-probe-normalizes-age" 'busy -1' \
+    "$(cat "$STATE/probe-result-alpha")"
   t "lifecycle-invalid-since-$invalid_since-never-cycles" 0 "$(grep -cE '^(down|start) alpha' "$STATE/calls" || true)"
 done
 
