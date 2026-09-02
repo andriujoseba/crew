@@ -413,6 +413,12 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     eq('limited: STUCK outranks LIMITED after grid-state normalisation', 'working',
        await page.evaluate(() => window.FLOORDEV.fleetStateData(
          {state:'idle'}, {lock:{stuck:true},limited:{}})));
+    /* The badge says AUTH for this box (asserted three lines up), the console
+       refuses to draw LIMITED over it, and now the counter and the filter
+       agree with both instead of calling it limited (#611 round 4). */
+    eq('limited: AUTH outranks LIMITED after grid-state normalisation', 'idle',
+       await page.evaluate(() => window.FLOORDEV.fleetStateData(
+         {state:'idle'}, {authfail:['vendor: rejected'],limited:{}})));
     /* The setup command is not part of the later control-target assertion,
        which expects the next recorded command to come from the open room. */
     await page.evaluate(() => { window.__sent = []; });

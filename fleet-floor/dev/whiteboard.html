@@ -1676,6 +1676,11 @@ function fleetStateData(u,d){
      and alert ladder both call it working/STUCK, so its older LIMITED evidence
      must not move the same box into a contradictory counter or filter. */
   if(LIVE&&d&&d.lock&&d.lock.stuck)return "working";
+  /* AUTH is the same case one rank down: the collector publishes an authfail
+     box as `idle` with the AUTH note, alertData badges it AUTH, and the unit
+     console already refuses to draw LIMITED over it. Without this the tile and
+     the chip were the only readers still calling that box limited (#611). */
+  if(LIVE&&d&&d.authfail&&d.authfail.length)return "idle";
   if(u.state==="working")return "working";
   if(u.state==="suppressed")return "suppressed";
   if(u.state==="offline")return stoppedWord(d)?"disarmed":"silent";
