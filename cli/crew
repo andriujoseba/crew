@@ -2356,7 +2356,7 @@ cycle_box() {
 }
 
 cmd_restart() {
-  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" name state age initial_state
+  local all=0 force_hours="$RESTART_FORCE_AFTER_HOURS" name state age initial_state refreshed_state
   local restarted=0 skipped=0 failed=0 skipped_names="" failed_names=""
   local -a named=() restart_targets=()
   while [ "$#" -gt 0 ]; do
@@ -2390,6 +2390,13 @@ cmd_restart() {
       echo "  $name: already stopped; starting"
     else
       read -r state age <<<"$(drain_probe "$name")"
+      if [ "$state" = unreadable ]; then
+        refreshed_state="$(box_state "$name")"
+        if [ "$refreshed_state" = stopped ]; then
+          initial_state=stopped
+          echo "  $name: stopped before the drain completed; starting"
+        fi
+      fi
     fi
     if [ "$initial_state" != stopped ] && [ "$state" != idle ]; then
       if [ "$state" = busy ] && [[ "$age" =~ ^[0-9]+$ ]] \
@@ -2423,7 +2430,7 @@ box_supports_force_down() {
 }
 
 cmd_down() {
-  local force=0 name _rest state age failed=0 stopped=0 absent=0 waited=0
+  local force=0 name _rest state age failed=0 stopped=0 absent=0 waited=0 already_stopped
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
@@ -2451,9 +2458,16 @@ cmd_down() {
     fi
     if [ "$force" -eq 0 ]; then
       local announced=0
+      already_stopped=0
       while :; do
         read -r state age <<<"$(drain_probe "$name")"
         [ "$state" = idle ] && break
+        if [ "$state" = unreadable ] && [ "$(box_state "$name")" = stopped ]; then
+          echo "  $name: stopped while waiting"
+          stopped=$((stopped + 1))
+          already_stopped=1
+          break
+        fi
         announced=1
         if [[ "$age" =~ ^[0-9]+$ ]]; then
           echo "  $name: waiting for duty lock held $(status_duration "$age"); use crew down --force to stop without draining"
@@ -2463,6 +2477,7 @@ cmd_down() {
         sleep "$RESTART_DRAIN_POLL_S"
       done
       waited=$((waited + announced))
+      [ "$already_stopped" -eq 0 ] || { state=""; continue; }
     fi
     if [ "$force" -eq 1 ]; then
       # This roster loop reads through a FIFO; a stdin-inheriting box command

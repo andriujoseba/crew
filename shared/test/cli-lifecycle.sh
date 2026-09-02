@@ -76,6 +76,10 @@ case "$cmd" in
           ;;
         no-flock) probe_path="$LIFE_NO_FLOCK_BIN"; probe_rc=0 ;;
         flock-error) probe_path="$LIFE_PROBE_BIN"; probe_rc=2 ;;
+        stop-during-probe)
+          printf 'stopped\n' >"$state_dir/state-$name"
+          exit 1
+          ;;
         transport|unreadable) exit 1 ;;
         empty) exit 0 ;;
         *) exit 2 ;;
@@ -238,6 +242,19 @@ capture down
 t lifecycle-down-already-stopped-terminates 0 "$RC"
 t lifecycle-down-already-stopped-does-not-call-down 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
 t lifecycle-down-continues-after-stopped-box 1 "$(grep -c '^down beta' "$STATE/calls")"
+
+reset_case
+printf 'stop-during-probe\n' >"$STATE/probe-alpha"
+capture down
+t lifecycle-down-stopped-during-probe-terminates 0 "$RC"
+t lifecycle-down-stopped-during-probe-does-not-call-down 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
+
+reset_case
+printf 'stop-during-probe\n' >"$STATE/probe-alpha"
+capture restart alpha
+t lifecycle-restart-stopped-during-probe-starts 0 "$RC"
+t lifecycle-restart-stopped-during-probe-does-not-stop 0 "$(grep -c '^down alpha' "$STATE/calls" || true)"
+t lifecycle-restart-stopped-during-probe-calls-start 1 "$(grep -c '^start alpha$' "$STATE/calls")"
 
 reset_case
 LIFE_FORCE_HELP=no capture down --force
