@@ -74,6 +74,10 @@ case "$cmd" in
           probe_path="$LIFE_PROBE_BIN"; probe_rc=1
           printf '%s\n' "$((10000 - ${value#busy:}))" >"$guest_home/duty/.duty.lock.since"
           ;;
+        since:*)
+          probe_path="$LIFE_PROBE_BIN"; probe_rc=1
+          printf '%s\n' "${value#since:}" >"$guest_home/duty/.duty.lock.since"
+          ;;
         no-flock) probe_path="$LIFE_NO_FLOCK_BIN"; probe_rc=0 ;;
         flock-error) probe_path="$LIFE_PROBE_BIN"; probe_rc=2 ;;
         stop-during-probe)
@@ -157,7 +161,7 @@ capture() {
 
 reset_case
 capture help restart
-case "$OUT" in *'usage: crew restart <box>... | --all [--force-after <hours>]'*'stop that does not take is never followed by a start'*) r1=complete ;; *) r1="$OUT" ;; esac
+case "$OUT" in *'usage: crew restart <box>... | --all [--force-after <hours>]'*'only when a valid continuous lock age is available'*'stop that does not take is never followed by a start'*) r1=complete ;; *) r1="$OUT" ;; esac
 t lifecycle-help-renders-table-and-detail complete "$r1"
 capture help
 case "$OUT" in *'3  lifecycle work completed after a busy restart skip or a down drain wait'*) r1=documented ;; *) r1="$OUT" ;; esac
@@ -217,6 +221,16 @@ capture restart alpha --force-after 1
 t lifecycle-force-after-restarts 0 "$RC"
 case "$OUT" in *'force-after reached; restarting'*) r1=named ;; *) r1="$OUT" ;; esac
 t lifecycle-force-after-is-announced named "$r1"
+
+for invalid_since in 18446744073709551617 10001; do
+  reset_case
+  printf 'since:%s\n' "$invalid_since" >"$STATE/probe-alpha"
+  capture restart alpha --force-after 1
+  t "lifecycle-invalid-since-$invalid_since-is-busy-skip" 3 "$RC"
+  case "$OUT" in *'SKIPPED busy — duty lock age unavailable'*) r1=unavailable ;; *) r1="$OUT" ;; esac
+  t "lifecycle-invalid-since-$invalid_since-age-is-unavailable" unavailable "$r1"
+  t "lifecycle-invalid-since-$invalid_since-never-cycles" 0 "$(grep -cE '^(down|start) alpha' "$STATE/calls" || true)"
+done
 
 reset_case
 printf 'busy:3601\n' >"$STATE/probe-alpha"

@@ -618,6 +618,7 @@ EOF
 lock is skipped and makes the command exit 3. After the default of
 ${RESTART_FORCE_AFTER_HOURS} continuous hours (twice the longest shipped session budget),
 the lock is treated as wedged; --force-after changes that threshold for this run.
+The override applies only when a valid continuous lock age is available.
 
 Each idle target has stale duty snapshots removed, then is stopped, confirmed
 stopped, and started. A stop that does not take is never followed by a start.
@@ -2277,7 +2278,24 @@ drain_probe() {
     age=-1
     if [ -r "$since" ]; then
       started="$(cat "$since" 2>/dev/null || echo)"
-      case "$started" in ""|*[!0-9]*) : ;; *) age=$(( $(date +%s) - started )) ;; esac
+      now="$(date +%s 2>/dev/null || echo)"
+      case "$started:$now" in
+        *[!0-9:]*|:*) : ;;
+        *)
+          while [ "${started#0}" != "$started" ]; do started="${started#0}"; done
+          while [ "${now#0}" != "$now" ]; do now="${now#0}"; done
+          started="${started:-0}"; now="${now:-0}"
+          # Validate decimal identity and ordering before Bash arithmetic: a
+          # wrapped or future timestamp is no evidence of a continuous hold.
+          if [ "${#started}" -le 19 ] && [ "${#now}" -le 19 ] \
+             && { [ "${#started}" -lt 19 ] || [[ "$started" < 9223372036854775808 ]]; } \
+             && { [ "${#now}" -lt 19 ] || [[ "$now" < 9223372036854775808 ]]; } \
+             && { [ "${#started}" -lt "${#now}" ] \
+                  || { [ "${#started}" -eq "${#now}" ] && [[ "$started" < "$now" || "$started" = "$now" ]]; }; }; then
+            age=$((10#$now - 10#$started))
+          fi
+          ;;
+      esac
     fi
     printf "busy %s\n" "$age"
   ' 2>/dev/null | head -1 | tr -d '\r' || true)"
