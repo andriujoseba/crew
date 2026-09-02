@@ -83,6 +83,48 @@ print(result["reason"] + ":" + str(result["age"]))
 ')"
 t "limited: skewed event and log evidence share the host timeline" terminal:60 \
   "$limited_clock_case"
+# #611's "must fail" case, and it can only be pinned at the source: a vendor
+# banner regex on the host is INERT until a vendor edits its banner, so no
+# behavioural assertion can watch one arrive. `bot_session_terminal` is
+# profile-owned and per-vendor (shared/conf/agents/claude.conf:348,
+# kimi.conf:89) — the BOX states the verdict and the host reads the word off
+# `outcome=`. A second copy here is the two-readers-disagreeing defect this
+# console exists to end. Every phrase below is lifted from a shipped
+# profile's own classifier or the fixture beside it.
+FF_VENDOR_BANNER_RE="bot_session_terminal|access_terminated|hit your (session|weekly) limit"
+FF_VENDOR_BANNER_RE="$FF_VENDOR_BANNER_RE|reached your usage limit|billing[- ]cycle"
+FF_VENDOR_BANNER_RE="$FF_VENDOR_BANNER_RE|Error code:[^\"]*403"
+FF_VENDOR_HITS="$(grep -EinH "$FF_VENDOR_BANNER_RE" \
+  "$FLOOR/server/floor/units.py" "$FLOOR/src/app.js" || true)"
+if [ -z "$FF_VENDOR_HITS" ]; then
+  ok "limited: neither host reader carries a vendor banner regex"
+else
+  fail "limited: neither host reader carries a vendor banner regex" "$FF_VENDOR_HITS"
+fi
+# The behavioural half of the same boundary. A banner no profile has ever
+# emitted must still produce LIMITED and reach the record verbatim, and the
+# real claude banner on an ordinary FAILED session must produce nothing: the
+# reset text is display data, and `outcome=` is the only control flow.
+limited_banner_case="$(PYTHONPATH="$FLOOR/server" python3 - <<'PY'
+import base64
+from datetime import datetime, timezone
+from floor.units import derive_limited
+now = 1800000000
+stamp = datetime.fromtimestamp(now - 60, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+tail = lambda text: base64.b64encode(text.encode()).decode()
+unknown = "vendor-nine: paused, back whenever"
+banner = "You've hit your weekly limit \u00b7 resets 9am (UTC)"
+carried = derive_limited(
+    [stamp + " SESSION END kind=build key=x rc=1 dur=1s outcome=TERMINAL acted=no reply_tail="
+     + tail(unknown)], [], now, 0, "build")
+classified = derive_limited(
+    [stamp + " SESSION END kind=build key=x rc=1 dur=1s outcome=FAILED acted=no reply_tail="
+     + tail(banner)], [], now, 0, "build")
+print(carried["reset"] + " / " + ("limited" if classified else "clear"))
+PY
+)"
+t "limited: the reset banner is carried, never classified" \
+  "vendor-nine: paused, back whenever / clear" "$limited_banner_case"
 t "state: breaker stop -> suppressed" suppressed "$(uf ff-suppressed "u['state']")"
 t "suppressed: carries age and reason" True \
   "$(uf ff-suppressed "u['note'] == 'for 13m — draft resume breaker at heavy-duty/crew#561'")"
