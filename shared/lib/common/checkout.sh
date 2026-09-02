@@ -105,10 +105,11 @@ _checkout_remote_repo() { # $1=remote URL — print GitHub owner/repository
 _checkout_fork_list() { # $1=upstream — print this identity's matching forks
   local repo="$1" payload
   payload="$(gh api --paginate "repos/$repo/forks?per_page=100" 2>/dev/null)" || return 1
-  jq -r --arg owner "$ME" --arg upstream "$repo" '
+  # This endpoint already scopes the payload to direct forks of repo, and its
+  # minimal repository objects do not carry parent/source fields.
+  jq -r --arg owner "$ME" '
     .[]
     | select(.owner.login == $owner)
-    | select((.parent.full_name // .source.full_name // "") == $upstream)
     | .full_name
   ' <<<"$payload"
 }
@@ -185,6 +186,9 @@ ensure_main_clone() {
   if [ -n "$old_target" ] && { [ "$current_repo" != "$resolved" ] || [ "$push_repo" != "$resolved" ]; }; then
     _checkout_report "$state" "fork-repaired:$old_target:$resolved" \
       "checkout: repaired fork remote in $dir from $old_target to validated head repository $resolved"
+    # The repair completed this condition in the same tick. Keeping its state
+    # file would manufacture a recovery notice on the next cached tick.
+    rm -f "$state"
   else
     _checkout_recovered "$state" "$dir" \
       "checkout: $dir has a valid fork remote again; head repository recovered"

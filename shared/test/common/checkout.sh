@@ -187,14 +187,14 @@ t fork-conventional-remote https://github.com/bot/repo.git \
 t fork-conventional-one-api-call 1 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
 
 FORK_NAMED="$(new_main_clone named)"
-stub_fork_api '' '[{"full_name":"bot/renamed-repo","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"id":101,"name":"renamed-repo","full_name":"bot/renamed-repo","owner":{"login":"bot"},"fork":true}]'
 ensure_main_clone_without_fetch owner/repo "$FORK_NAMED" >/dev/null
 t fork-nonfork-candidate-searches-list 2 "$(wc -l <"$FORK_CALLS" | tr -d ' ')"
 t fork-unique-nonconventional-adopted https://github.com/bot/renamed-repo.git \
   "$(git -C "$FORK_NAMED" remote get-url fork)"
 
 FORK_OTHER_PARENT="$(new_main_clone other-parent)"
-stub_fork_api somebody/else '[{"full_name":"bot/right-parent","owner":{"login":"bot"},"source":{"full_name":"owner/repo"}}]'
+stub_fork_api somebody/else '[{"id":102,"name":"right-parent","full_name":"bot/right-parent","owner":{"login":"bot"},"fork":true}]'
 ensure_main_clone_without_fetch owner/repo "$FORK_OTHER_PARENT" >/dev/null
 t fork-wrong-parent-rejected https://github.com/bot/right-parent.git \
   "$(git -C "$FORK_OTHER_PARENT" remote get-url fork)"
@@ -208,7 +208,7 @@ if grep -Fq 'no fork of owner/repo owned by bot exists' <<<"$NONE_LOG"; then r1=
 t fork-zero-match-reported reported "$r1"
 
 FORK_AMBIGUOUS="$(new_main_clone ambiguous)"
-stub_fork_api '' '[{"full_name":"bot/one","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}},{"full_name":"bot/two","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"id":103,"name":"one","full_name":"bot/one","owner":{"login":"bot"},"fork":true},{"id":104,"name":"two","full_name":"bot/two","owner":{"login":"bot"},"fork":true},{"id":105,"name":"other","full_name":"somebody/other","owner":{"login":"somebody"},"fork":true}]'
 AMBIGUOUS_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_AMBIGUOUS" 2>&1)" && AMBIGUOUS_RC=0 || AMBIGUOUS_RC=$?
 t fork-ambiguous-refuses 1 "$AMBIGUOUS_RC"
 t fork-ambiguous-adds-no-remote 2 "$(git -C "$FORK_AMBIGUOUS" remote get-url fork >/dev/null 2>&1; printf '%s' "$?")"
@@ -217,17 +217,19 @@ t fork-ambiguous-distinct-report reported "$r1"
 
 FORK_REPAIR="$(new_main_clone repair)"
 git -C "$FORK_REPAIR" remote add fork https://github.com/somebody/repo.git
-stub_fork_api '' '[{"full_name":"bot/renamed-repo","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"id":106,"name":"renamed-repo","full_name":"bot/renamed-repo","owner":{"login":"bot"},"fork":true}]'
 REPAIR_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_REPAIR" 2>&1)"
 t fork-other-owner-repaired https://github.com/bot/renamed-repo.git \
   "$(git -C "$FORK_REPAIR" remote get-url fork)"
 if grep -Fq 'repaired fork remote' <<<"$REPAIR_LOG"; then r1=reported; else r1=MISSING; fi
 t fork-repair-reported reported "$r1"
+REPAIR_SECOND_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_REPAIR" 2>&1)"
+t fork-repair-next-tick-reports-nothing "" "$REPAIR_SECOND_LOG"
 
 FORK_PUSH_REPAIR="$(new_main_clone push-repair)"
 git -C "$FORK_PUSH_REPAIR" remote add fork git@github.com:bot/custom.git
 git -C "$FORK_PUSH_REPAIR" remote set-url --push fork https://github.com/somebody/repo.git
-stub_fork_api '' '[{"full_name":"bot/custom","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"id":107,"name":"custom","full_name":"bot/custom","owner":{"login":"bot"},"fork":true}]'
 PUSH_REPAIR_LOG="$(ensure_main_clone_without_fetch owner/repo "$FORK_PUSH_REPAIR" 2>&1)"
 t fork-valid-fetch-url-left-byte-identical git@github.com:bot/custom.git \
   "$(git -C "$FORK_PUSH_REPAIR" remote get-url fork)"
@@ -238,7 +240,7 @@ t fork-push-repair-reported reported "$r1"
 
 FORK_CACHED="$(new_main_clone cached)"
 git -C "$FORK_CACHED" remote add fork https://github.com/bot/custom.git
-stub_fork_api '' '[{"full_name":"bot/custom","owner":{"login":"bot"},"parent":{"full_name":"owner/repo"}}]'
+stub_fork_api '' '[{"id":108,"name":"custom","full_name":"bot/custom","owner":{"login":"bot"},"fork":true}]'
 ensure_main_clone_without_fetch owner/repo "$FORK_CACHED" >/dev/null
 t fork-cache-upstream owner/repo "$(git -C "$FORK_CACHED" config --local --get crew.fork-upstream)"
 t fork-cache-repository bot/custom "$(git -C "$FORK_CACHED" config --local --get crew.fork-repository)"
