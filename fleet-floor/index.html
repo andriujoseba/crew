@@ -2255,7 +2255,7 @@ function populateDash(){
   var floorEvents=d.floorEvents||[],limitDropped=d.limitDropped||0;
   if(floorEvents.length||limitDropped){
     sh+='<div class="limitfeed"><div>OPERATING LIMIT EVENTS</div>';
-    floorEvents.forEach(function(e){sh+='<div class="lev"><span class="sev-'+esc(e.severity)+'">'+esc(e.severity.toUpperCase())+'</span><span>'+esc(e.name)+' '+e.measured+'/'+e.limit+' · '+esc(e.subject)+' · '+esc(e.cause)+'</span></div>';});
+    floorEvents.forEach(function(e){sh+='<div class="lev"><span class="sev-'+(e.severity==="error"?"error":"warn")+'">'+esc(e.severity.toUpperCase())+'</span><span>'+esc(e.name)+' '+e.measured+'/'+e.limit+' · '+esc(e.subject)+' · '+esc(e.cause)+'</span></div>';});
     if(limitDropped)sh+='<div class="drop">'+limitDropped+' older event'+(limitDropped===1?'':'s')+' dropped by retention</div>';
     sh+='</div>';
   }
