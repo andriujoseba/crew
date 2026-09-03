@@ -555,12 +555,17 @@ ENVIRONMENT
   CREW_FLOOR_*      PORT, BIND, USER, PASS, INTERVAL, ROSTER — the console's
                     settings, each overridden by the matching flag.
   CREW_SILENT_AFTER Seconds before a box with no tick reads as silent (600).
+  CREW_HOST_STATE_DIR
+                    Where the host maintenance lock and job log live
+                    ($XDG_STATE_HOME/crew).
 
 EXIT STATUS
   0  ok
   1  it went wrong (no box CLI, no roster, incus said no, a guard refused)
   2  you asked wrong (unknown command, bad or missing flag, unknown profile)
   3  lifecycle work completed after a busy restart skip or a down drain wait
+  4  nothing was attempted — restart/reset selected no box, or another host
+     maintenance job held the lock
 
 EXAMPLES
   # the whole fleet, converged — the verb you run most
