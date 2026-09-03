@@ -464,6 +464,34 @@ t reset-cut-records-the-version 'CHECKPOINT_VERSION=0.1.3' \
 t reset-cut-records-no-stale-mark 'CHECKPOINT_STALE=' \
   "$(grep '^CHECKPOINT_STALE=' "$CONF/checkpoints/alpha.conf")"
 
+# The write that cannot land. `armed` IS on the box by then — the snapshot is
+# taken before the record is written — so this is the state D4 and D5 argue
+# about most: a label with no record. The FAILED line has to be crew's own and
+# nothing else's, and the temporary must not survive, matching
+# checkpoint_mark_stale, whose two arms already clean up after themselves.
+#
+# The directory is created and THEN made read-only, so `mkdir -p` succeeds and
+# the failure is the write itself. Made read-only after creation and not by
+# locking `$CONF`, which would have failed one line earlier at the mkdir and
+# tested a different arm.
+reset_case
+mkdir -p "$CONF/checkpoints"
+chmod 500 "$CONF/checkpoints"
+capture reset --cut alpha
+chmod u+w "$CONF/checkpoints"
+t reset-cut-unrecordable-version-fails 1 "$RC"
+case "$OUT" in *'was cut but its version could not be recorded'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-cut-unrecordable-version-is-named named "$r1"
+# The shell's own diagnostic never appears above crew's line: the redirection
+# failure is swallowed the way its sibling's is.
+case "$OUT" in *'bash:'*|*'Permission denied'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-cut-unrecordable-version-prints-no-raw-shell-error quiet "$r1"
+# And no litter. Nothing READS a stray `<box>.conf.tmp.<pid>` — only
+# `<box>.conf` is ever read — so this is the two halves of one store answering
+# a failed write the same way, not a correctness claim.
+t reset-cut-unrecordable-version-leaves-no-temp 0 \
+  "$(find "$CONF" -name 'alpha.conf.tmp.*' 2>/dev/null | wc -l | tr -d ' ')"
+
 reset_case
 arm alpha
 capture reset --cut alpha
@@ -666,9 +694,12 @@ case "$OUT" in *'restored to armed'*) r1="$OUT" ;; *) r1=quiet ;; esac
 t reset-recordless-box-after-upgrade-never-reports-a-restore quiet "$r1"
 t reset-recordless-box-after-upgrade-restores-nothing 0 "$(calls_of 'restore')"
 
-# A record that exists but carries no version — unreadable and malformed land
-# in the same place, because checkpoint_field answers empty for all three and
-# none of them is evidence that the versions agree.
+# A record that exists but carries no version — MALFORMED. The comment here
+# used to say "unreadable and malformed land in the same place" while testing
+# only this one, which is the gap the round-3 review named: a readable file
+# with no key is not a failed read, and only the failed read exercises what
+# `sed` does when it cannot open the file at all. Both are now driven, this
+# one first.
 reset_case
 arm_label_only alpha
 mkdir -p "$CONF/checkpoints"
@@ -676,6 +707,88 @@ printf 'CHECKPOINT_STALE=\n' >"$CONF/checkpoints/alpha.conf"
 capture reset alpha
 t reset-malformed-record-is-refused 1 "$RC"
 t reset-malformed-record-restores-nothing 0 "$(calls_of 'restore')"
+
+# --- AND THE RECORD THAT GENUINELY CANNOT BE READ ---------------------------
+#
+# Mode 000, holding a PERFECTLY GOOD version: the only thing wrong with it is
+# that `sed` cannot open it. The distinction from the malformed case above is
+# the whole point — a readable file with no key exercises the parse, this one
+# exercises the failure of the read, and they were one fixture pretending to
+# be two.
+#
+# What must hold is what holds for every other unreadable thing in this verb:
+# the named per-box refusal, the fleet summary underneath it, nothing
+# restored, and — on the fleet paths — the OTHER boxes carried through. A
+# failed read must not be able to take a fleet verb down between one box and
+# the next.
+#
+# Mode 000 means nothing to uid 0, and these are deliberately NOT guarded on
+# it: under a root runner the file reads fine, the box restores, and the first
+# assertion goes red — loudly, and not vacuously green. That is the same
+# answer the suite's existing permission fixtures give (the `chmod 500`
+# unwritable-mark cases above), so this adds no new convention: this suite
+# wants a non-root runner and says so by failing rather than by skipping.
+reset_case
+arm alpha
+chmod 000 "$CONF/checkpoints/alpha.conf"
+capture reset alpha
+chmod 600 "$CONF/checkpoints/alpha.conf"
+t reset-unreadable-record-is-refused 1 "$RC"
+case "$OUT" in *'records no engine version'*'missing, unreadable or malformed'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-unreadable-record-is-named named "$r1"
+t reset-unreadable-record-restores-nothing 0 "$(calls_of 'restore')"
+t reset-unreadable-record-stops-nothing 0 "$(calls_of 'down')"
+case "$OUT" in *'restored to armed'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-unreadable-record-never-reports-a-restore quiet "$r1"
+# THE SUMMARY IS REACHED. A read that aborted the command instead of
+# answering would take this line with it, and the operator would be left
+# with a verb that stopped rather than a box that refused.
+case "$OUT" in *'reset: 0 restored, 0 skipped-busy, 1 failed'*'failed: alpha'*) r1=summarised ;; *) r1="$OUT" ;; esac
+t reset-unreadable-record-still-reaches-the-summary summarised "$r1"
+
+# The fleet path: alpha refuses, beta restores, both are counted.
+reset_case
+arm alpha
+arm beta
+chmod 000 "$CONF/checkpoints/alpha.conf"
+capture reset --all
+chmod 600 "$CONF/checkpoints/alpha.conf"
+t reset-all-unreadable-record-is-a-failure 1 "$RC"
+case "$OUT" in *'beta: restored to armed (crew@0.1.3) and started'*) r1=restored ;; *) r1="$OUT" ;; esac
+t reset-all-unreadable-record-does-not-take-the-loop-down restored "$r1"
+t reset-all-unreadable-record-restores-exactly-the-other-box 1 "$(calls_of 'restore beta armed')"
+t reset-all-unreadable-record-restores-nothing-for-its-own-box 0 "$(calls_of 'restore alpha')"
+case "$OUT" in *'reset: 1 restored, 0 skipped-busy, 1 failed'*) r1=counted ;; *) r1="$OUT" ;; esac
+t reset-all-unreadable-record-is-counted counted "$r1"
+
+# The pre-install gate reads the same field. Here the refusal comes from
+# checkpoint_mark_stale, one line further on — the field read is what runs
+# FIRST, so an abort there would beat the refusal to it.
+reset_case
+arm alpha
+chmod 000 "$CONF/checkpoints/alpha.conf"
+capture upgrade alpha
+chmod 600 "$CONF/checkpoints/alpha.conf"
+case "$OUT" in *'could NOT be marked stale'*'Nothing was staged and nothing was installed'*) r1=refused ;; *) r1="$OUT" ;; esac
+t reset-unreadable-record-refuses-the-upgrade refused "$r1"
+t reset-unreadable-record-upgrade-installs-nothing 0 "$(calls_of 'install alpha')"
+case "$OUT" in *'checkpoint is now STALE'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-unreadable-record-upgrade-claims-nothing quiet "$r1"
+
+# And the loop the review asked to see pinned: `upgrade --all` refuses the
+# box it cannot read and installs on the next one.
+reset_case
+arm alpha
+arm beta
+chmod 000 "$CONF/checkpoints/alpha.conf"
+capture upgrade --all
+chmod 600 "$CONF/checkpoints/alpha.conf"
+case "$OUT" in *'upgrade REFUSED on alpha'*) r1=refused ;; *) r1="$OUT" ;; esac
+t reset-unreadable-record-upgrade-all-refuses-its-own-box refused "$r1"
+t reset-unreadable-record-upgrade-all-installs-nothing-for-it 0 "$(calls_of 'install alpha')"
+t reset-unreadable-record-upgrade-all-lets-the-next-box-through 1 "$(calls_of 'install beta')"
+case "$OUT" in *"beta's armed checkpoint is now STALE"*) r1=marked ;; *) r1="$OUT" ;; esac
+t reset-unreadable-record-upgrade-all-marks-the-next-box marked "$r1"
 
 # NONEMPTY IS NOT THE SAME QUESTION AS COMPARABLE, and `unknown` is the value
 # that proves it: a `--cut` used to write that string itself out of a stamp it
