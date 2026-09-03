@@ -467,20 +467,53 @@ PY
 # shellcheck disable=SC2016  # These are bytes sourced later under the case HOME.
 BS_BASE_CONF='BOT_PATH_PREPEND="$HOME/bin"
 BOT_CLI_CMD=(fake-cli)'
-bs_operator_timeout_case builder 3600 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_BUILD=3600\nTIMEOUT_RESUME=3600\nTIMEOUT_REBASE=1800\nTIMEOUT_CIRED=1800\nTIMEOUT_OPERATOR=""'
-bs_operator_timeout_case triage 3000 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_TRIAGE=1500\nTIMEOUT_MENTION=1500\nTIMEOUT_HYGIENE=3000\nTIMEOUT_OPERATOR=""'
-bs_operator_timeout_case reviewer 2700 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_REVIEW=2700\nTIMEOUT_OPERATOR=""'
-bs_operator_timeout_case no-role 1800 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=""'
+BS_DEFAULT_CONF="$(cat "$BS_ROOT/shared/conf/fleet.defaults.conf")"
+BS_BUILDER_CONF="$(cat "$BS_ROOT/shared/conf/roles/builder.conf")"
+BS_TRIAGE_CONF="$(cat "$BS_ROOT/shared/conf/roles/triage.conf")"
+BS_REVIEWER_CONF="$(cat "$BS_ROOT/shared/conf/roles/reviewer.conf")"
+bs_operator_timeout_case builder 3600 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"$'\n'"$BS_BUILDER_CONF"
+bs_operator_timeout_case triage 3000 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"$'\n'"$BS_TRIAGE_CONF"
+bs_operator_timeout_case reviewer 2700 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"$'\n'"$BS_REVIEWER_CONF"
+bs_operator_timeout_case no-role 1800 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"
 TIMEOUT_AMBIENT_ONLY=9999 bs_operator_timeout_case ambient-excluded 1800 \
-  "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=""'
-bs_operator_timeout_case fleet-override 4100 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=4100\nTIMEOUT_BUILD=3600'
-bs_operator_timeout_case role-override 4200 "$BS_BASE_CONF"$'\nTIMEOUT_ATTENTION=1800\nTIMEOUT_OPERATOR=4100\nTIMEOUT_BUILD=3600\nTIMEOUT_OPERATOR=4200'
+  "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"
+bs_operator_timeout_case fleet-override 4100 "$BS_DEFAULT_CONF"$'\nTIMEOUT_OPERATOR=4100\n'"$BS_BASE_CONF"$'\n'"$BS_BUILDER_CONF"
+
+# Prove the winning value comes from the role layer, not merely from a later
+# assignment in a synthetic stream: ask Fleet to build the stream from an
+# independent operator definition with fleet=4100 and reviewer=4200.
+BS_LAYERED_DIR="$BS_TMP/operator-timeout-config"
+mkdir -p "$BS_LAYERED_DIR/roles"
+printf 'fixture claude reviewer\n' > "$BS_LAYERED_DIR/fleet.roster"
+printf 'heavy-duty/crew\n' > "$BS_LAYERED_DIR/repos.txt"
+printf 'TIMEOUT_OPERATOR=4100\n' > "$BS_LAYERED_DIR/fleet.conf"
+printf 'TIMEOUT_OPERATOR=4200\nTIMEOUT_REVIEW=2700\n' > "$BS_LAYERED_DIR/roles/reviewer.conf"
+BS_ROLE_OVERRIDE_CONF="$(CREW_CONFIG_DIR="$BS_LAYERED_DIR" BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.fleet import Fleet
+print(Fleet(3600).operator_conf("claude", "reviewer"), end="")
+PY
+)"
+bs_operator_timeout_case role-override 4200 "$BS_ROLE_OVERRIDE_CONF"$'\n'"$BS_BASE_CONF"
+
+# Drive the roster's real comma-joined representation through Fleet and then
+# MESSAGE_SH. Both role profiles must survive the transport, and 3600 wins.
+BS_MULTI_ROLE_CONF="$(BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.fleet import Fleet
+print(Fleet(3600).operator_conf("claude", "builder,reviewer"), end="")
+PY
+)"
+bs_operator_timeout_case multi-role 3600 "$BS_MULTI_ROLE_CONF"$'\n'"$BS_BASE_CONF"
 
 # All TIMEOUT_* variables in the shipped layers are session budgets today.
 # Pin the census so a future non-session variable cannot silently inflate the
 # max; its author must either rename it or deliberately update this contract.
-BS_TIMEOUT_NAMES="$(sed -n 's/^\(TIMEOUT_[A-Z0-9_]*\)=.*/\1/p' \
-  "$BS_ROOT/shared/conf/fleet.defaults.conf" "$BS_ROOT/shared/conf/roles/"*.conf | sort -u | tr '\n' ' ')"
+BS_TIMEOUT_NAMES="$(sed -n 's/^[[:space:]]*\(TIMEOUT_[A-Z0-9_]*\)=.*/\1/p' \
+  "$BS_ROOT/shared/conf/fleet.defaults.conf" "$BS_ROOT/shared/conf/agents/"*.conf \
+  "$BS_ROOT/shared/conf/roles/"*.conf | sort -u | tr '\n' ' ')"
 t "message: TIMEOUT_* census contains session budgets only" \
   "TIMEOUT_ATTENTION TIMEOUT_BUILD TIMEOUT_CIRED TIMEOUT_HYGIENE TIMEOUT_MENTION TIMEOUT_OPERATOR TIMEOUT_REBASE TIMEOUT_RESUME TIMEOUT_REVIEW TIMEOUT_TRIAGE " \
   "$BS_TIMEOUT_NAMES"

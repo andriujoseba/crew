@@ -184,6 +184,24 @@ t "message: a missing role does not invent a role budget" False \
   "$(sed -n 's/^role-budget=//p' <<<"$FF_MISSING_ROLE")"
 t "message: a missing role is logged" True \
   "$(sed -n 's/^logged=//p' <<<"$FF_MISSING_ROLE")"
+FF_MULTI_ROLE="$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["FF_SERVER"])
+import floor.fleet
+seen = []
+floor.fleet.log = seen.append
+conf = floor.fleet.Fleet(3600).operator_conf("claude", "builder,reviewer")
+print("build=%s" % ("TIMEOUT_BUILD=3600" in conf))
+print("review=%s" % ("TIMEOUT_REVIEW=2700" in conf))
+print("logged=%s" % any("role profile" in line and "not resolved" in line for line in seen))
+PY
+)"
+t "message: a comma-joined roster field loads the builder profile" True \
+  "$(sed -n 's/^build=//p' <<<"$FF_MULTI_ROLE")"
+t "message: a comma-joined roster field loads the reviewer profile" True \
+  "$(sed -n 's/^review=//p' <<<"$FF_MULTI_ROLE")"
+t "message: resolved roles do not emit missing-profile logs" False \
+  "$(sed -n 's/^logged=//p' <<<"$FF_MULTI_ROLE")"
 if grep -q 'box_states(strict=True)' "$CS_SRC"; then
   ok "ping: distinguishes a failed box list from an empty fleet"
 else

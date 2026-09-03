@@ -84,31 +84,34 @@ class Fleet:
                 self._confs[agent] = ""
         return self._confs[agent]
 
-    def operator_conf(self, agent, role):
+    def operator_conf(self, agent, roles):
         """Configuration stream for an operator-launched model session.
 
         Keep the box-side shell as the one parser: the host only layers the
         same files `load_conf` would source, in precedence order.
         """
-        key = (agent, role)
+        key = (agent, roles)
         if key in self._operator_confs:
             return self._operator_confs[key]
 
-        paths = [os.path.join(CREW_ROOT, "shared", "conf", "fleet.defaults.conf"),
-                 os.path.join(CONFIG_DIR, "fleet.conf"),
-                 agent_conf_path(agent)]
-        role_path = role_conf_path(role)
-        paths.append(role_path)
+        paths = [(os.path.join(CREW_ROOT, "shared", "conf", "fleet.defaults.conf"), None),
+                 (os.path.join(CONFIG_DIR, "fleet.conf"), None),
+                 (agent_conf_path(agent), None)]
+        # fleet.roster stores a box's roles comma-joined in one column while
+        # load_conf sources every role profile in that declared order.
+        for role in (item.strip() for item in roles.split(",")):
+            if role:
+                paths.append((role_conf_path(role), role))
         chunks = []
-        for path in paths:
+        for path, role in paths:
             try:
                 with open(path) as src:
                     data = src.read()
                     chunks.append(data if data.endswith("\n") else data + "\n")
             except OSError as exc:
-                if path == role_path:
+                if role is not None:
                     log("operator session: role profile %s was not resolved: %s" %
-                        (role_path, exc))
+                        (path, exc))
         self._operator_confs[key] = "".join(chunks)
         return self._operator_confs[key]
 
