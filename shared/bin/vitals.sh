@@ -29,6 +29,14 @@ BOOT_CHECK_LOG="${BOOT_CHECK_LOG:-$DUTY_DIR/boot-check.log}"
 # is the shortest window in which that finding is still visible.
 VITALS_SERIES_MAX="${VITALS_SERIES_MAX:-12}"
 
+# The probe runs before the duty engine, so it cannot inherit common.sh's
+# functions. Source the one table it needs from the installed sibling path;
+# this is the same path in a checkout and in ~/duty.
+VITALS_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib/common" && pwd)"
+# shellcheck source=shared/lib/common/operating-limits.sh
+. "$VITALS_COMMON_DIR/operating-limits.sh"
+unset VITALS_COMMON_DIR
+
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
 # --- field readers -----------------------------------------------------------
@@ -248,6 +256,36 @@ mark() { # mark <name> <want> <got>
   FINDINGS="${FINDINGS} finding=$1:want=$2,got=$3"
 }
 
+# vitals_limit OVERRIDE TABLE_KEY — an explicit fleet.conf value wins. An
+# invalid percentage falls back to the shipped table value rather than making
+# a healthy box look alarming (or suppressing every real finding).
+vitals_limit() {
+  local key="$2" value="${!1:-}"
+  case "$value" in ''|*[!0-9]*|0|1[0-9][0-9]|[2-9][0-9][0-9]*)
+    operating_limit "$key"
+    ;;
+  *) printf '%s' "$value" ;;
+  esac
+}
+
+# The capped boot series is the trend window. It is rising only when the full
+# window is present, no point falls, and the last point is above the first.
+# Plateaus are allowed: a disk that never gives space back is still monotonic.
+disk_series_rising() {
+  local raw="$1" point pct previous="" first="" last="" count=0
+  local -a points=()
+  IFS=, read -ra points <<<"$raw"
+  [ "${#points[@]}" -ge "$VITALS_SERIES_MAX" ] || return 1
+  for point in "${points[@]}"; do
+    pct="${point##*@}"
+    case "$pct" in ''|*[!0-9]*) return 1 ;; esac
+    [ -z "$previous" ] || [ "$pct" -ge "$previous" ] || return 1
+    [ -n "$first" ] || first="$pct"
+    previous="$pct"; last="$pct"; count=$((count + 1))
+  done
+  [ "$count" -ge "$VITALS_SERIES_MAX" ] && [ "$last" -gt "$first" ]
+}
+
 # --- the record --------------------------------------------------------------
 emit_vitals() {
   # Declared and assigned separately: `local x=$(cmd)` masks the command's
@@ -307,6 +345,28 @@ emit_vitals() {
     local wantd; wantd=$(profile_to_mib "$BOX_DISK") &&
       outside_band $((disk_total / 1024)) "$wantd" &&
       mark disk-profile-mismatch "${wantd}MiB" "$((disk_total / 1024))MiB"
+  fi
+
+  # (c) current headroom. Both limits come from the one declared table, with
+  # fleet.conf able to override them. Missing pairs never reach arithmetic.
+  local disk_limit memory_limit memory_pct disk_trend=""
+  disk_limit="$(vitals_limit VITALS_DISK_LOW_PCT vitals_disk_used_pct)"
+  memory_limit="$(vitals_limit VITALS_MEMORY_LOW_PCT vitals_memory_available_pct)"
+
+  [ -n "${series:-}" ] && disk_series_rising "$series" &&
+    disk_trend="-after-${VITALS_SERIES_MAX}-rising-boots"
+  if [ -n "${disk_pct:-}" ] &&
+     { [ "$disk_pct" -ge "$disk_limit" ] || [ -n "$disk_trend" ]; }; then
+    mark disk-low "under-${disk_limit}%" "${disk_pct}%${disk_trend}"
+  fi
+
+  if [ -n "${mem_total:-}" ] && [ -n "${mem_avail:-}" ] &&
+     [ "$mem_total" -gt 0 ]; then
+    memory_pct=$((mem_avail * 100 / mem_total))
+    if [ "$memory_pct" -le "$memory_limit" ]; then
+      mark memory-low "over-${memory_limit}%-available" \
+        "${memory_pct}%-available(${mem_avail}/${mem_total}MiB)"
+    fi
   fi
 
   printf '%s%s\n' "$out" "$FINDINGS"

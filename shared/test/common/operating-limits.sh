@@ -24,6 +24,10 @@ t operating-limit-table-terminal-failures 3 \
   "$(operating_limit session_terminal_failures)"
 t operating-limit-table-graphql-window 100 \
   "$(operating_limit github_connection_nodes)"
+t operating-limit-table-vitals-disk 90 \
+  "$(operating_limit vitals_disk_used_pct)"
+t operating-limit-table-vitals-memory 10 \
+  "$(operating_limit vitals_memory_available_pct)"
 t limit-spool-default-max 200 "$DUTY_LIMIT_SPOOL_MAX"
 t limit-spool-default-ttl 86400 "$DUTY_LIMIT_SPOOL_TTL_S"
 
