@@ -47,17 +47,165 @@ for profile in "$SHARED"/conf/agents/*.conf; do
   t "agent-conf-$agent-login-hint-literal" literal "$r1"
 done
 
-# Structured session output is profile-owned (#475): Claude declares the
-# vendor shape; profiles whose equivalent is unknown remain absent and use
-# BOT_CLI_CMD exactly as before.
-if bash -c '. "$1"; declare -F bot_cli_structured_cmd >/dev/null; declare -F bot_cli_structured_prose >/dev/null; declare -F bot_cli_usage >/dev/null' \
-    _ "$SHARED/conf/agents/claude.conf"; then r1=declared; else r1=MISSING; fi
-t claude-profile-declares-structured-session-output declared "$r1"
-for agent in codex grok kimi; do
+# Structured session output is profile-owned (#475): profiles with an observed
+# vendor shape declare all three hooks; the remaining profiles stay on
+# BOT_CLI_CMD byte-for-byte.
+for agent in claude codex; do
+  if bash -c '. "$1"; declare -F bot_cli_structured_cmd >/dev/null; declare -F bot_cli_structured_prose >/dev/null; declare -F bot_cli_usage >/dev/null' \
+      _ "$SHARED/conf/agents/$agent.conf"; then r1=declared; else r1=MISSING; fi
+  t "$agent-profile-declares-structured-session-output" declared "$r1"
+done
+for agent in grok kimi; do
   if bash -c '. "$1"; declare -F bot_cli_structured_cmd >/dev/null' \
       _ "$SHARED/conf/agents/$agent.conf"; then r1=UNEXPECTED; else r1=absent; fi
   t "$agent-profile-does-not-guess-structured-output" absent "$r1"
 done
+
+# Codex 0.146.0 emits JSONL and writes its final answer separately. The stub
+# reproduces the observed command/message/usage event shapes and plants an
+# earlier usage-shaped object that must not be selected or accumulated. Its
+# guarded file_change event is a defensive vendor-schema fixture, not part of
+# the read-only credentialed observation recorded for #570 D2-D4.
+CODEX_USAGE_CLI="$TMP/codex-usage-cli.sh"
+cat >"$CODEX_USAGE_CLI" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$CODEX_USAGE_ARGV"
+prose=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-last-message)
+      prose="${2:-}"
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+[ -n "$prose" ] || exit 2
+if [ "${CODEX_USAGE_FAIL_BEFORE_PROSE:-0}" = 1 ]; then
+  printf '%s\n' \
+    '{"type":"item.started","item":{"type":"command_execution","command":"/bin/bash -lc false","status":"in_progress"}}' \
+    '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -lc false","aggregated_output":"permission denied\n","exit_code":1,"status":"failed"}}' \
+    '{"type":"error","message":"stream error: unexpected status 401 Unauthorized"}'
+  exit 1
+fi
+printf 'observation complete.\n' >"$prose"
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"thread/one"}' \
+  '{"type":"turn.started"}' \
+  '{"type":"item.completed","item":{"type":"agent_message","text":"checking"},"usage":{"input_tokens":999,"output_tokens":999}}' \
+  '{"type":"item.started","item":{"type":"command_execution","command":"/bin/bash -lc pwd","status":"in_progress"}}' \
+  '{"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -lc pwd","aggregated_output":"/work\n","exit_code":0,"status":"completed"}}' \
+  '{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"shared/example.txt","kind":"update"}],"status":"completed"}}' \
+  '{"type":"item.completed","item":{"type":"agent_message","text":"observation complete."}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":30302,"cached_input_tokens":25088,"cache_write_input_tokens":0,"output_tokens":91,"reasoning_output_tokens":7}}'
+STUB
+chmod +x "$CODEX_USAGE_CLI"
+
+codex_usage_run() (
+  local fail_before_prose="${1:-0}"
+  local udir="$TMP/codex-usage-$RANDOM"
+  mkdir -p "$udir/logs" "$udir/work" "$udir/tmp"
+  DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID=codex-usage
+  # shellcheck disable=SC1091
+  source "$SHARED/conf/agents/codex.conf"
+  BOT_CLI_CMD=(bash "$CODEX_USAGE_CLI")
+  SESSION_CREDENTIAL_POOL=codex-pool
+  TMPDIR="$udir/tmp"
+  CODEX_USAGE_ARGV="$udir/argv"
+  CODEX_USAGE_FAIL_BEFORE_PROSE="$fail_before_prose"
+  export CODEX_USAGE_ARGV CODEX_USAGE_FAIL_BEFORE_PROSE TMPDIR
+  run_session build fixture/codex "$udir/work" 5 'the prompt' \
+    2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+  printf '%s\n' -- '--prose--'
+  cat "$udir"/logs/*.log
+  printf '%s\n' -- '--argv--'
+  sed -E 's#^.*/crew-codex-prose\.[^/ ]+$#<prose-path>#' "$udir/argv"
+  printf '%s\n' -- '--profile-scratch--'
+  find "$udir/tmp" -maxdepth 1 -type f -name 'crew-codex-prose.*' | wc -l
+)
+
+codex_usage="$(codex_usage_run)"
+codex_usage_end="$(grep 'SESSION END' <<<"$codex_usage")"
+t codex-structured-command-selects-json 1 \
+  "$(sed -n '/^--argv--$/,/^--profile-scratch--$/p' <<<"$codex_usage" | grep -c '^--json$' || true)"
+t codex-structured-command-selects-separate-prose '<prose-path>' \
+  "$(sed -n '/^--argv--$/,/^--profile-scratch--$/p' <<<"$codex_usage" | sed -n '/^--output-last-message$/{n;p;}')"
+t codex-structured-command-keeps-prompt-last 'the prompt' \
+  "$(sed -n '/^--output-last-message$/{n;n;p;}' <<<"$codex_usage")"
+t codex-multi-event-stream-selects-completed-turn '5214|91|25088|0' \
+  "$(sed -n 's/.* input_tokens=\([^ ]*\).* output_tokens=\([^ ]*\).* cache_creation_input_tokens=\([^ ]*\).* cache_read_input_tokens=\([^ ]*\).*/\1|\2|\4|\3/p' <<<"$codex_usage_end")"
+t codex-session-records-thread-identity thread%2Fone \
+  "$(sed -n 's/.* session_id=\([^ ]*\).*/\1/p' <<<"$codex_usage_end")"
+t codex-unnamed-model-is-honest unknown \
+  "$(sed -n 's/.* model=\([^ ]*\).*/\1/p' <<<"$codex_usage_end")"
+t codex-costless-session-keeps-cost-absent 0 \
+  "$(grep -c ' cost_usd=' <<<"$codex_usage_end" || true)"
+t codex-structured-run-restores-prose-unchanged 'observation complete.' \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_usage" \
+    | grep -vE '^--(prose|argv)--$|^--$' | tail -n 1)"
+t codex-structured-run-preserves-human-transcript \
+  'checking|exec /bin/bash -lc pwd|/work|command status=completed exit_code=0|apply_patch shared/example.txt|file_change update shared/example.txt' \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_usage" \
+    | grep -E '^(checking|exec |/work$|command status=|apply_patch |file_change )' \
+    | paste -sd '|')"
+t codex-structured-run-reports-acted yes \
+  "$(sed -n 's/.* acted=\([^ ]*\).*/\1/p' <<<"$codex_usage_end")"
+t codex-structured-run-hides-json-envelope 0 \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_usage" | grep -c '^{' || true)"
+t codex-profile-prose-scratch-is-removed 0 \
+  "$(sed -n '/^--profile-scratch--$/{n;p;}' <<<"$codex_usage")"
+
+codex_failed_usage="$(codex_usage_run 1)"
+t codex-empty-prose-preserves-activity-marker 'yes|exec /bin/bash -lc false' \
+  "$(printf '%s|' "$(grep 'SESSION END' <<<"$codex_failed_usage" | sed -n 's/.* acted=\([^ ]*\).*/\1/p')"; \
+     sed -n '/^--prose--$/{n;p;}' <<<"$codex_failed_usage")"
+t codex-empty-prose-preserves-command-result 'permission denied|command status=failed exit_code=1' \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_failed_usage" \
+    | grep -E '^(permission denied|command status=)' | paste -sd '|')"
+t codex-empty-prose-preserves-structured-diagnostic 1 \
+  "$(sed -n '/^--prose--$/,/^--argv--$/p' <<<"$codex_failed_usage" | grep -c '^{"type":"error"' || true)"
+t codex-empty-prose-reports-failed FAILED \
+  "$(grep 'SESSION END' <<<"$codex_failed_usage" | sed -n 's/.* outcome=\([^ ]*\).*/\1/p')"
+t codex-empty-prose-scratch-is-removed 0 \
+  "$(sed -n '/^--profile-scratch--$/{n;p;}' <<<"$codex_failed_usage")"
+
+CODEX_OBSERVED="$TMP/codex-observed.jsonl"
+cat >"$CODEX_OBSERVED" <<'JSONL'
+{"type":"thread.started","thread_id":"thread/one"}
+{"type":"turn.started"}
+{"type":"item.completed","usage":{"input_tokens":999,"output_tokens":999}}
+{"type":"turn.completed","usage":{"input_tokens":30302,"cached_input_tokens":25088,"cache_write_input_tokens":0,"output_tokens":91,"reasoning_output_tokens":7}}
+JSONL
+# shellcheck disable=SC1091
+codex_normalized="$({ source "$SHARED/conf/agents/codex.conf"; bot_cli_usage "$CODEX_OBSERVED"; })"
+t codex-profile-carries-reasoning-separately '91|7' \
+  "$(jq -r '[.output_tokens, .reasoning_output_tokens] | join("|")' <<<"$codex_normalized")"
+t codex-profile-normalized-object-never-invents-cost false \
+  "$(jq -r 'has("cost_usd")' <<<"$codex_normalized")"
+
+CODEX_NO_CACHE="$TMP/codex-no-cache.jsonl"
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"thread/uncached"}' \
+  '{"type":"turn.completed","usage":{"input_tokens":500,"output_tokens":91}}' \
+  >"$CODEX_NO_CACHE"
+# shellcheck disable=SC1091
+codex_no_cache="$({ source "$SHARED/conf/agents/codex.conf"; bot_cli_usage "$CODEX_NO_CACHE"; })"
+t codex-profile-treats-absent-cache-as-zero '500|0' \
+  "$(jq -r '[.input_tokens, .cache_read_input_tokens] | join("|")' <<<"$codex_no_cache")"
+
+CODEX_BAD_CACHE="$TMP/codex-bad-cache.jsonl"
+printf '%s\n' \
+  '{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":"0","output_tokens":91}}' \
+  >"$CODEX_BAD_CACHE"
+# shellcheck disable=SC1091
+t codex-profile-refuses-malformed-cache 0 \
+  "$({ source "$SHARED/conf/agents/codex.conf"; bot_cli_usage "$CODEX_BAD_CACHE"; } | wc -l)"
+
+CODEX_TWO_TURNS="$TMP/codex-two-turns.jsonl"
+cat "$CODEX_OBSERVED" "$CODEX_OBSERVED" >"$CODEX_TWO_TURNS"
+# shellcheck disable=SC1091
+t codex-profile-refuses-more-than-one-completed-turn 0 \
+  "$({ source "$SHARED/conf/agents/codex.conf"; bot_cli_usage "$CODEX_TWO_TURNS"; } | wc -l)"
 t credential-pool-ships-unset '' \
   "$(bash -c '. "$1"; printf %s "$SESSION_CREDENTIAL_POOL"' \
       _ "$SHARED/conf/fleet.defaults.conf")"
