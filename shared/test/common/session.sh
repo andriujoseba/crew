@@ -904,8 +904,13 @@ usage_artifact_dir="$TMP/usage-artifact"
 mkdir -p "$usage_artifact_dir/logs" "$usage_artifact_dir/work"
 usage_artifact="$({
   unset -f bot_cli_structured_cmd bot_cli_structured_prose 2>/dev/null || true
+  # This profile PINS an id, which is what an artifact-backed one must do to
+  # have a transcript to find (#571 D4). Without it the fourth argument below
+  # would be `unknown` on both sides of the comparison and the assertion would
+  # pass while measuring nothing — the failure that named this fixture.
+  bot_cli_session_id_args() { BOT_CLI_SESSION_ID_ARGS=(--session "$1"); }
   bot_cli_usage() {
-    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >"$usage_artifact_dir/context"
+    printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >"$usage_artifact_dir/context"
     jq -ce . "$2/usage.json"
   }
   DUTY_DIR="$usage_artifact_dir"; LOG_DIR="$usage_artifact_dir/logs"
@@ -926,6 +931,44 @@ t usage-artifact-reporter-receives-prose-log 1 \
   "$([ "$(cut -f3 "$usage_artifact_dir/context")" = "$(find "$usage_artifact_dir/logs" -name '*.log')" ] && printf 1 || printf 0)"
 t usage-artifact-command-keeps-legacy-prose 'exec' \
   "$(sed -n '1p' "$usage_artifact_dir"/logs/*.log)"
+# The fourth argument, and the cross-reader pin that holds it (#571 D4). An
+# artifact-backed profile finds its transcript by the session's id, so the id
+# has to reach the hook — and it has to be THIS dispatch's, not a mirror the
+# profile kept, which would go stale exactly when the pin failed. Asserted by
+# EQUALITY WITH THE `sid=` ON THE SAME LINE rather than against a literal: the
+# id is minted per dispatch, and the property that matters is that the figures
+# and the transcript named beside them describe one session.
+t usage-artifact-reporter-receives-dispatch-session-id 1 \
+  "$([ "$(cut -f4 "$usage_artifact_dir/context")" \
+      = "$(sed -n 's/.* sid=\([^ ]*\).*/\1/p' <<<"$usage_artifact_end")" ] \
+    && printf 1 || printf 0)"
+t usage-artifact-reporter-receives-a-real-id-not-unknown 0 \
+  "$(grep -cx 'unknown' <<<"$(cut -f4 "$usage_artifact_dir/context")" || true)"
+
+# The same hook on a profile that pins NOTHING. `unknown` is what the engine
+# puts in `sid=` when no id could be pinned, and it is what the hook is handed
+# — never an empty string that a profile might read as "not supplied" and
+# never a silent fabrication. An artifact profile refuses it, because only the
+# profile knows whether it needed an addressable transcript.
+usage_unpinned_dir="$TMP/usage-unpinned"
+mkdir -p "$usage_unpinned_dir/logs" "$usage_unpinned_dir/work"
+usage_unpinned="$({
+  unset -f bot_cli_structured_cmd bot_cli_structured_prose 2>/dev/null || true
+  unset -f bot_cli_session_id_args bot_cli_resume_args 2>/dev/null || true
+  bot_cli_usage() {
+    printf '%s\n' "$4" >"$usage_unpinned_dir/context"
+    jq -ce . "$2/usage.json"
+  }
+  DUTY_DIR="$usage_unpinned_dir"; LOG_DIR="$usage_unpinned_dir/logs"
+  DUTY_TICK_ID="tick-usage-unpinned"; SESSION_CREDENTIAL_POOL="shared-a"
+  BOT_CLI_CMD=(bash -c 'printf '\''%s\n'\'' '\''{"input_tokens":1,"output_tokens":1,"session_id":"unpinned/one","model":"m","models":1}'\'' >usage.json; printf '\''done\n'\''')
+  run_session build fixture/unpinned "$usage_unpinned_dir/work" 5 prompt \
+    | sed -e 's/^[0-9-]*T[0-9:]*Z //'
+})"
+t usage-unpinned-reporter-receives-unknown unknown \
+  "$(cat "$usage_unpinned_dir/context")"
+t usage-unpinned-reporter-agrees-with-the-record unknown \
+  "$(sed -n 's/.* sid=\([^ ]*\).*/\1/p' <<<"$(grep 'SESSION END' <<<"$usage_unpinned")")"
 
 # A hookless profile is the exact old command/log/line shape: the existing
 # budget golden below pins the whole line byte-for-byte; this focused case

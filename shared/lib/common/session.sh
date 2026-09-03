@@ -100,13 +100,33 @@ _session_structured_cmd() {
   fi
 }
 
+# _session_usage_suffix STRUCTURED_LOG SESSION_DIR PROSE_LOG — the usage
+# fields for the SESSION END line, or nothing.
+#
+# The hook is handed FOUR things and owns which of them it needs: a profile
+# that reports on stdout reads the structured log, and one that reports in a
+# session artifact gets the session dir, the advertised prose log, and this
+# dispatch's session id beside them (#475 D8).
+#
+# The id is the fourth argument and is the newest of them (#571 D4). It is
+# passed rather than left to the profile to mirror for one reason: it is the
+# same value `_session_sid_suffix` puts in `sid=` on the very line these
+# figures land on, so the figures and the transcript named beside them cannot
+# disagree about which session they describe. A profile keeping its own copy
+# could — the copy would go stale exactly when the pin failed, which is the
+# case where the record must be absent rather than approximate. `unknown` is
+# passed through unchanged and means no transcript is addressable; the profile
+# refuses it, because only the profile knows whether it needed one.
+#
+# Nothing kimi-specific reaches this function, and nothing should: the path
+# template, the record shape and the JSONL read all live in the profile.
 _session_usage_suffix() {
   local structured dir slog normalized
   structured="$1"
   dir="$2"
   slog="$3"
   declare -F bot_cli_usage >/dev/null 2>&1 || return 0
-  normalized="$(bot_cli_usage "$structured" "$dir" "$slog")" || return 0
+  normalized="$(bot_cli_usage "$structured" "$dir" "$slog" "$_SESSION_SID")" || return 0
   jq -er '
     " input_tokens=\(.input_tokens)" +
     " output_tokens=\(.output_tokens)" +
