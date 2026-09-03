@@ -942,6 +942,14 @@ t drill-role-script-holds-no-size-literal 0 \
   "$(grep -vE '^[[:space:]]*#' "$ROOT/drill/rehearsal.sh" \
      | grep -cE -- '--(cpu|memory|disk)[= ]+[0-9]' || true)"
 
+# The role conf is a REQUIRED INPUT, declared with the drill's other three, so
+# a source that cannot say how big a $ROLE box is is refused at acquisition and
+# attributed like every other missing input — not later, as a box step that
+# stopped for reasons of its own.
+# shellcheck disable=SC2016  # match literal production shell source
+t drill-role-conf-is-a-required-input 1 \
+  "$(grep -c '^for required in .*shared/conf/roles/\$ROLE\.conf' "$ROOT/drill/rehearsal.sh" || true)"
+
 # A conf that declares no figures is REFUSED, not guessed past: minting at a
 # size the fleet does not use is what this leg exists to stop.
 DRILL_NOSIZE="$TMP/nosize-tree"
