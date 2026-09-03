@@ -2591,6 +2591,17 @@ host_job_ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 # Rotation happens ONCE, before the run's first append — tick.sh's placement
 # and its reason: rotating while an append is in flight lands that run's
 # evidence in the old generation, which reads precisely like "cron is dead".
+#
+# WHICH MAKES IT THE HOLDER'S, AND ONLY THE HOLDER'S. Called before the lock is
+# taken, this defeats its own reason: the caller does not yet know whether it is
+# the invocation that will append, and a contender that renames the log splits
+# the run already in flight across two generations — `tee -a` holds the INODE
+# and keeps writing to `.1`, while host_job_log reopens BY NAME and puts the end
+# boundary in the new file. The reader of one generation then sees a start with
+# no end, which is the one shape D2 reserves for cron itself being dead. So this
+# is called after flock -n succeeds and nowhere else. A contender appends its
+# skip line to whatever generation is current — one line, complete in itself,
+# belonging to no run — and rotates nothing.
 host_job_rotate() {
   if [ -f "$HOST_JOB_LOG" ] &&
      [ "$(wc -c <"$HOST_JOB_LOG" 2>/dev/null || echo 0)" -gt "$HOST_JOB_LOG_MAX" ]; then
@@ -2643,7 +2654,6 @@ host_job() { # VERB RUNNER ARGS...
   need_flock
   mkdir -p "$HOST_STATE_DIR" 2>/dev/null ||
     die "cannot create the host maintenance state directory $HOST_STATE_DIR (the lock and the job log live there)"
-  host_job_rotate
   # An fd rather than `flock <file> <command>`: the lock has to be held across
   # the WHOLE run including its summary line, and an fd is released by the
   # process exiting, so no path out of here — die, a trap, a kill — can leak it
@@ -2662,6 +2672,10 @@ host_job() { # VERB RUNNER ARGS...
     return "$EXIT_NOTHING_TO_DO"
   fi
   printf '%s %s %s\n' "$(date +%s)" "$verb" "$$" >"$HOST_JOB_LOCK.holder" 2>/dev/null || true
+  # The holder's first act, and the only invocation entitled to it: from here
+  # the whole record of this run — start, per-box output, end — is in one
+  # generation, because nothing else can be appending under the lock.
+  host_job_rotate
   host_job_log "$verb run start"
   # A PIPELINE, NOT `exec > >(tee …)`. Process substitution is asynchronous and
   # the shell can exit before tee has flushed, which loses the tail of the

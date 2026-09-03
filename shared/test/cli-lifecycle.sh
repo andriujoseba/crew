@@ -178,6 +178,18 @@ reset_case() {
 
 job_log() { cat "$HOSTLOG" 2>/dev/null || true; }
 
+# A job log already past HOST_JOB_LOG_MAX, carrying one marker line so the
+# generation it ends up in can be named. A REAL oversized file rather than a
+# tuned threshold: 5 MiB is tick.sh's number, hardcoded there and here for the
+# same reason, and a fixture that moved it would be asserting against a knob
+# that does not exist on the host. 6 MiB of one repeated byte costs a second
+# and no correctness.
+big_host_log() { # MARKER
+  printf '%s\n' "$1" >"$HOSTLOG"
+  head -c $((6 * 1024 * 1024)) /dev/zero | tr '\0' 'p' >>"$HOSTLOG"
+  printf '\n' >>"$HOSTLOG"
+}
+
 # Hold the host maintenance lock the way a running job holds it: an open fd
 # with flock on it, released when the fd closes. Not a lock FILE — the file
 # always exists, and a fixture that created one and called that "held" would
@@ -502,6 +514,48 @@ t hostjob-collision-then-release '4 0' "$rc_blocked $RC"
 t hostjob-collision-logs-one-skip 1 "$(grep -c 'run skipped:' "$HOSTLOG" || true)"
 t hostjob-collision-logs-one-start 1 "$(grep -c 'run start' "$HOSTLOG" || true)"
 t hostjob-collision-cycles-the-box-once 1 "$(grep -c '^start alpha$' "$STATE/calls" || true)"
+
+# D2 — ROTATION BELONGS TO THE HOLDER. The evidence contract is that one run's
+# start, output and end are readable together; a contender that rotated the log
+# it does not own would split the run in flight across two generations, because
+# `tee -a` holds the inode and host_job_log reopens by name. A reader of either
+# generation then sees a start with no end — the one shape this log reserves for
+# cron itself being dead.
+#
+# First the holder's side, so "nobody rotates" cannot pass this block: an
+# oversized log IS cut, and the whole of the run that cut it is on the near side
+# of the cut, with the previous generation's marker on the far side.
+reset_case
+big_host_log MARKER-previous-generation
+capture restart alpha
+gen_new="$(job_log)"
+# Read the old generation's head, not the whole 6 MiB of it.
+gen_old="$(head -c 120 "$HOSTLOG.1" 2>/dev/null || true)"
+r1="start=$(grep -c 'run start' <<<"$gen_new" || true)"
+r1="$r1 end=$(grep -c 'run end' <<<"$gen_new" || true)"
+r1="$r1 box=$(grep -c 'alpha: restarted' <<<"$gen_new" || true)"
+r1="$r1 marker=$(grep -c MARKER-previous-generation <<<"$gen_new" || true)"
+t hostjob-rotate-holder-keeps-its-run-in-one-generation \
+  'start=1 end=1 box=1 marker=0' "$r1"
+case "$gen_old" in MARKER-previous-generation*) r1=cut ;; *) r1="${gen_old:0:80}" ;; esac
+t hostjob-rotate-holder-cuts-the-old-generation cut "$r1"
+
+# Then the contender's: the lock is held, the log is oversized, and this
+# invocation is not entitled to rotate it. The marker stands for the holder's
+# in-flight evidence — it must not move — and no generation may be cut at all.
+reset_case
+big_host_log MARKER-in-flight
+hold_host_lock
+printf '%s reset 4242\n' "$(date +%s)" >"$HOSTLOCK.holder"
+capture restart alpha
+rc_blocked=$RC
+release_host_lock
+r1="rc=$rc_blocked"
+r1="$r1 marker=$(grep -c MARKER-in-flight "$HOSTLOG" || true)"
+r1="$r1 rotated=$([ -e "$HOSTLOG.1" ] && echo 1 || echo 0)"
+r1="$r1 skip=$(grep -c 'run skipped:' "$HOSTLOG" || true)"
+t hostjob-rotate-contender-rotates-nothing \
+  'rc=4 marker=1 rotated=0 skip=1' "$r1"
 
 # A lock that cannot be taken is not a lock. Without flock on PATH the verb
 # REFUSES rather than running unlocked — the fail-open here is a weekly reset
