@@ -274,7 +274,11 @@ kimi_usage_run() ( # kimi_usage_run SHAPE [decoy]
   DUTY_DIR="$udir"; LOG_DIR="$udir/logs"; DUTY_TICK_ID=kimi-usage
   # shellcheck disable=SC1091
   source "$SHARED/conf/agents/kimi.conf"
-  BOT_CLI_CMD=(bash "$KIMI_USAGE_CLI")
+  # Ends in `--afk -p`, mirroring the real invocation, because the splice site
+  # is defined by that trailing `-p` — a stub command that did not carry one
+  # would take the pin on the end and make the adjacency assertion below
+  # vacuous, which is exactly how it was first written.
+  BOT_CLI_CMD=(bash "$KIMI_USAGE_CLI" --afk -p)
   SESSION_CREDENTIAL_POOL=kimi-pool
   KIMI_USAGE_ARGV="$udir/argv"
   KIMI_USAGE_SHAPE="$shape"
@@ -335,8 +339,13 @@ t kimi-pool-identity-rides-the-figures kimi-pool \
 t kimi-invocation-pins-the-session-id 1 \
   "$(sed -n '/^--session$/{n;p;}' <<<"$(sed -n '/^--argv--$/,/^--prose--$/p' <<<"$kimi_usage")" \
     | grep -cx "$kimi_sid" || true)"
-t kimi-invocation-keeps-the-prompt-last 'the prompt' \
-  "$(sed -n '/^--argv--$/,/^--prose--$/p' <<<"$kimi_usage" | grep -v '^--' | tail -1)"
+# The prompt must remain `-p`'s OPERAND, not merely the last word on the line.
+# Written as "last argument" first, this assertion was vacuous: run_session
+# appends the prompt after the splice either way, so a pin appended PAST the
+# trailing `-p` leaves the prompt last and the flag pointing at `--session`.
+# What `_session_splice_cli_args` actually promises is this adjacency (#538).
+t kimi-invocation-keeps-the-prompt-as-the-p-operand 'the prompt' \
+  "$(sed -n '/^--argv--$/,/^--prose--$/p' <<<"$kimi_usage" | sed -n '/^-p$/{n;p;}')"
 t kimi-session-prose-log-is-unchanged 'the answer.' \
   "$(sed -n '/^--prose--$/,$p' <<<"$kimi_usage" | sed -n '$p')"
 t kimi-usage-run-does-not-fail-the-session '0|ok' \
