@@ -1362,6 +1362,26 @@ case "$OUT" in
   *) r1="$OUT" ;;
 esac
 t reset-weekly-refusal-names-the-repair named "$r1"
+# THE RUNBOOK QUOTES THIS LINE, AND NOW IT CANNOT DRIFT FROM IT. The sample in
+# shared/docs/host-maintenance.md is what an operator matches Sunday's log
+# against; two arms print a refusal on this path (the stale mark, and the
+# live-read backstop for an engine no crew verb installed) and the runbook
+# documents the first, so a reader comparing it against the second has to
+# compare by eye. Pinned against the SHIPPED OUTPUT rather than the source
+# string, because the output is what the operator sees. The versions and the
+# box name are the two things an illustration is entitled to differ on, so the
+# comparison is over the shape with those folded out; every other word,
+# including the repair command, must be identical.
+refusal_shape() { # BOX  (text on stdin)
+  tr -s '[:space:]' ' ' |
+    sed -e 's/^ //' -e 's/ $//' -e 's/crew@[0-9][0-9A-Za-z.+-]*/crew@V/g' \
+        -e "s/$1/BOX/g"
+}
+doc_refusal="$(awk '/^  claude-builder: REFUSED/,/^```$/' \
+  "$ROOT/shared/docs/host-maintenance.md" | grep -v '^```$')"
+t reset-weekly-refusal-is-the-runbooks-sample \
+  "$(refusal_shape alpha <<<"$(grep 'alpha: REFUSED' <<<"$OUT")")" \
+  "$(refusal_shape claude-builder <<<"$doc_refusal")"
 t reset-weekly-refusal-restores-nothing-for-that-box 0 "$(calls_of 'restore alpha')"
 # NO FALLBACK LABEL. `bootstrapped` and `pristine` both exist on a real box and
 # both would "work"; either would return a creds-free, unhired box and read as
