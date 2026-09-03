@@ -1,0 +1,45 @@
+# The HOST crontab: ONE line per job. All locking, logging and evidence lines
+# live inside the verb — the cron line carries no flock and no redirect, so it
+# can never drift per host again. This is shared/crontab.example's charter,
+# applied to the other side of the fleet, and it is not hypothetical there:
+# five hand-edited variants of the on-box line drifted before that file was
+# written, and a skipped tick that wrote nothing made a wedged bot
+# indistinguishable from a healthy quiet one.
+#
+# What the two lines buy, and why there are two (@danmt, 2026-08-29):
+# the restart is cheap, reversible and DAILY; the reset is heavy, refusable
+# and WEEKLY. The daily cycle is also the fleet's only routine liveness
+# signal — grok-reviewer ran no session at all between 2026-08-19 and
+# 2026-08-28 and nothing on the board or the floor reported it.
+#
+# Install with `crontab -e` on the box HOST (not in a box). $HOME is expanded
+# by cron; the path is the link `install.sh` maintains.
+#
+# Daily — drain and cycle every roster box. A busy box is SKIPPED by name and
+# never forced; the run exits 3 when any box was skipped, and nothing is lost.
+10 4 * * * $HOME/.local/bin/crew restart --all
+#
+# Weekly, Sunday — restore every roster box to its `armed` checkpoint. An hour
+# after the daily line so the two never contend for the host lock in normal
+# operation; when they do contend anyway, the later one writes a skip line
+# naming the holder and exits without touching a box.
+10 5 * * 0 $HOME/.local/bin/crew reset --all
+#
+# THE WEEKLY LINE IS SAFE ONLY BECAUSE THE RESET REFUSES.
+# Restoring to a checkpoint cut before the last `crew upgrade` is a silent
+# engine downgrade of the whole fleet, weekly, with nothing red anywhere. The
+# version interlock refuses exactly that, per box, and a refused box is a
+# CORRECT outcome of this line rather than a failure to tune away. There is no
+# --force here and there must never be one: the repair is a fresh checkpoint,
+# `crew reset --cut <box>`, and the ordering rule that prevents the refusal in
+# the first place is in shared/docs/host-maintenance.md — after any
+# `crew upgrade`, re-cut before the next weekly reset.
+#
+# Read the evidence in the host job log, not in cron mail:
+#   ~/.local/state/crew/host-maintenance.log
+# Every run writes a start line and an end line there, including a run that
+# did nothing and a run that was skipped by the lock — so silence in that log
+# at a boundary means exactly one thing: cron itself is dead.
+#
+# There is no third line. The real-host drill is operator-attended by
+# construction and is deliberately not scheduled here.
