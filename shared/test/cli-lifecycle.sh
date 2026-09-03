@@ -165,6 +165,10 @@ case "$cmd" in
     # LIFE_BOX_RESOURCES is the box that answers about its status and nothing
     # else, which is what #607 D5's note has to survive without inventing a
     # figure.
+    # A box that cannot be read AT ALL is a different answer from one that
+    # answers without resource keys, and it reaches a different line of the
+    # reader — the shell fallback rather than jq's own defaults.
+    [ "${LIFE_BOX_RESOURCES:-}" != unreadable ] || exit 1
     if [ -n "${LIFE_BOX_RESOURCES:-}" ]; then
       IFS='|' read -r r_cpu r_mem r_disk <<<"$LIFE_BOX_RESOURCES"
       printf '[{"status":"%s","expanded_config":{"limits.cpu":"%s","limits.memory":"%s"},"expanded_devices":{"root":{"type":"disk","size":"%s"}}}]\n' \
@@ -688,6 +692,16 @@ t new-clone-unreadable-help-still-reports 1 "$(grep -c '^note: ' <<<"$OUT" || tr
 reset_case
 LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=old capture new delta
 t new-clone-unreadable-resources-are-not-invented 1 \
+  "$(grep -c '? cpu / ? / ?' <<<"$OUT" || true)"
+
+# ...and the same answer when the box cannot be read at all, which is a
+# different line of the reader: jq's defaults answer the first case, the
+# shell's the second, and only one of them runs per case.
+reset_case
+LIFE_CONF="$CONF_NEW" LIFE_CLONE_SIZING=old LIFE_BOX_RESOURCES=unreadable \
+  capture new delta
+t new-clone-unreadable-box-still-reports-one-line 1 "$(grep -c '^note: ' <<<"$OUT" || true)"
+t new-clone-unreadable-box-invents-nothing 1 \
   "$(grep -c '? cpu / ? / ?' <<<"$OUT" || true)"
 
 # The builder is untouched by all of this and mints at its own figures — the
