@@ -1982,7 +1982,7 @@ function populateDash(){
     +'<div class="mcell"><div class="mv">'+d.today+'</div><div class="ml">Runs today</div></div>'
     +'<div class="mcell"><div class="mv" style="color:'+(d.success>85?"#5fce9b":"#f7bd4e")+'">'+d.success+'%</div><div class="ml">Success rc0</div></div></div>';
   var sh='<div class="wt"><span class="dot"></span>SESSION HISTORY</div><div class="feed" id="dfeed">';
-  d.sessions.forEach(function(s){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s);sh+='<div class="fev k-'+s.kind+'"><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span></div>';});
+  d.sessions.forEach(function(s,i){var label=(s.acted==="no"?"no-op":s.out)+(s.reply?" — "+s.reply:"");var cls=sessionClass(s),why=s.log_unavailable==="start-aged-out"?"start aged out":s.log_unavailable==="log-reaped"?"log reaped":"log unavailable";sh+='<div class="fev k-'+s.kind+(s.log?' session-log':' session-log-off')+'"'+(s.log?' role="button" tabindex="0" data-session="'+i+'" title="View transcript · last 500 lines"':' title="Transcript unavailable · '+why+'"')+'><span class="ago">'+s.ago+'m</span><span class="kd">'+s.kind+'</span><span class="'+cls+'" style="flex:1;overflow:hidden;text-overflow:ellipsis">'+esc(label)+'</span>'+(s.peak?'<span style="color:#46566a">'+fmtKiB(s.peak)+'</span>':'')+'<span style="color:#46566a">'+fmtDur(s.dur)+'</span><span class="transcript">'+(s.log?'▤ transcript':'— '+why)+'</span></div>';});
   sh+='</div>';
   var floorEvents=d.floorEvents||[],limitDropped=d.limitDropped||0;
   if(floorEvents.length||limitDropped){
@@ -1992,6 +1992,8 @@ function populateDash(){
     sh+='</div>';
   }
   document.getElementById("w-sessions").innerHTML=sh;
+  document.getElementById("dfeed").addEventListener("click",function(e){var row=e.target.closest("[data-session]");if(row){var s=d.sessions[Number(row.dataset.session)];if(s&&s.log)openLogs(BOX,s.log,s);}});
+  document.getElementById("dfeed").addEventListener("keydown",function(e){if(e.key!=="Enter"&&e.key!==" ")return;var row=e.target.closest("[data-session]");if(row){e.preventDefault();row.click();}});
   document.getElementById("c-target").textContent="▸ MESSAGE "+id;
   var ci=document.getElementById("c-in");if(ci)ci.placeholder="Send a prompt to "+id+"…";
   /* Follows d.paused, not the working state: an idle but unpaused box was
@@ -6501,7 +6503,7 @@ if(_railL)_railL.addEventListener("click",function(e){
    Shown in an in-page overlay, NOT window.open: the window would be opened in
    the fetch's .then(), which browsers no longer treat as user-initiated, so a
    default popup blocker eats it and the button appears to do nothing. */
-function openLogs(box,file){
+function openLogs(box,file,session){
   setStatus("fetching logs…",false);
   fetch(apiURL("/api/logs?box="+encodeURIComponent(box)+(file?"&file="+encodeURIComponent(file):"")))
     .then(function(r){return r.text();})
@@ -6513,7 +6515,9 @@ function openLogs(box,file){
         document.body.appendChild(ov);
         ov.addEventListener("click",function(e){if(e.target===ov||e.target.id==="logx")closeLogs();});
       }
-      document.getElementById("logttl").textContent=box+" · "+(file||"duty.log");
+      document.getElementById("logttl").textContent=session
+        ?box+" · "+session.kind+" "+session.key+" · "+session.out+" · "+fmtDur(session.dur)+" · last 500 lines"
+        :box+" · "+(file||"duty.log");
       document.getElementById("logtx").textContent=txt||"(empty)";
       ov.style.display="flex";
       var tx=document.getElementById("logtx");tx.scrollTop=tx.scrollHeight;

@@ -71,6 +71,11 @@ body.floor .hud{display:none}
 .kv .v .ig{margin-left:7px;font-size:9.5px;letter-spacing:.04em}
 .feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:0}
 .fev{font-family:var(--mono);font-size:10.5px;color:#7d8ba0;display:flex;gap:8px;align-items:baseline}
+.fev.session-log{cursor:pointer;border-radius:4px;padding:2px 3px;margin:-2px -3px}
+.fev.session-log:hover,.fev.session-log:focus{background:#111b2a;outline:1px solid #2a3a52}
+.fev .transcript{color:#5cb4ff;flex:none}
+.fev.session-log-off{cursor:default;opacity:.72}
+.fev.session-log-off .transcript{color:#46566a}
 .fev .ago{color:#46566a;flex:none;min-width:34px}
 .fev .ok{color:#5fce9b}.fev .cr{color:#f7bd4e}.fev .terminal{color:#ff5147}.fev .noop{color:#d99a5e}.fev .kd{flex:none}
 .limitfeed{border-top:1px solid #142230;margin-top:8px;padding-top:7px;font-family:var(--mono);font-size:9.5px;color:#7d8ba0}

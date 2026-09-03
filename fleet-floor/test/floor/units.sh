@@ -564,6 +564,14 @@ t "sessions: orphan older than six hours is not active" \
 t "sessions: parsed"          1    "$(uf ff-working "len(u['sessions'])")"
 t "sessions: rc carried"      0    "$(uf ff-working "u['sessions'][0]['rc']")"
 t "sessions: outcome carried" ok   "$(uf ff-working "u['sessions'][0]['out']")"
+t "sessions: paired START carries its basename" \
+  "20260726T090000Z-build-heavy-duty_crew_601.log" \
+  "$(uf ff-working "u['sessions'][0]['log']")"
+t "sessions: paired basename is one the box still lists" True \
+  "$(uf ff-working "u['sessions'][0]['log'] in u['logs']")"
+t "sessions: END whose START aged out has no transcript door" \
+  "None:start-aged-out" \
+  "$(uf ff-idle "'%s:%s' % (u['sessions'][0]['log'], u['sessions'][0]['log_unavailable'])")"
 # #473 — the figure the page renders for the newest session per box, carried
 # end to end through the real collector. ff-idle's newest session is written
 # with the field; ff-working's is written without it, which is every line any
@@ -574,7 +582,7 @@ t "sessions: a line with no peak_rss is None, never 0" None \
 t "sessions: a line with no peak_rss keeps every other field" "0|ok|1" \
   "$(uf ff-working "'%s|%s|%s' % (u['sessions'][0]['rc'], u['sessions'][0]['out'], len(u['sessions']))")"
 t "sessions: reconstructed terminal is parsed and closes its start" \
-  "1:None:None:died-with-box:None" \
+  "1:None:None:died-with-box:None:None:log-unavailable" \
   "$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
 import os
 import sys
@@ -586,7 +594,40 @@ done, cur = derive_sessions([
     "2026-08-27T15:00:00Z SESSION START kind=review key=crew#lost",
     "2026-08-27T15:05:00Z SESSION END kind=review key=crew#lost rc=- dur=- outcome=died-with-box acted=unknown reply_tail= tier=unknown peak_rss=- started=2026-08-27T15:00:00Z",
 ], 1787843160)
-print("%s:%s:%s:%s:%s" % (len(done), done[0]["rc"], done[0]["dur"], done[0]["out"], cur))
+print("%s:%s:%s:%s:%s:%s:%s" % (len(done), done[0]["rc"], done[0]["dur"],
+                                  done[0]["out"], cur, done[0]["log"],
+                                  done[0]["log_unavailable"]))
+PY
+)"
+t "sessions: orphan-reconciled END with no START stays inert" \
+  "None:start-aged-out" \
+  "$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+done, _ = derive_sessions([
+    "2026-08-27T15:05:00Z SESSION END kind=build key=heavy-duty/crew#601 rc=- dur=- outcome=ORPHANED acted=unknown reply_tail= log=- left=- tier=unknown peak_rss=- started=2026-08-27T15:00:00Z sid=unknown",
+], 1787843160)
+print("%s:%s" % (done[0]["log"], done[0]["log_unavailable"]))
+PY
+)"
+t "sessions: an unlisted basename is disabled before the browser can fetch it" \
+  "None:log-reaped" \
+  "$(FF_SERVER="$FLOOR/server" python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, os.environ["FF_SERVER"])
+from floor.units import derive_sessions
+
+done, _ = derive_sessions([
+    "2026-08-27T15:00:00Z SESSION START kind=build key=heavy-duty/crew#601 timeout=7200s log=/home/codex/duty/logs/20260827T150000Z-build-heavy-duty_crew_601.log",
+    "2026-08-27T15:05:00Z SESSION END kind=build key=heavy-duty/crew#601 rc=0 dur=300s outcome=ok",
+], 1787843160, sessionlogs={"some-other-session.log"})
+print("%s:%s" % (done[0]["log"], done[0]["log_unavailable"]))
 PY
 )"
 FF_RECONSTRUCTED_RENDER="$(node - "$FLOOR/src/app.js" <<'JS'
