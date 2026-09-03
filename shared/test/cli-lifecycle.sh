@@ -17,7 +17,24 @@ SHIM="$TMP/shim"
 STATE="$TMP/state"
 PROBE_BIN="$TMP/probe-bin"
 NO_FLOCK_BIN="$TMP/no-flock-bin"
-mkdir -p "$CONF" "$SHIM" "$STATE" "$STATE/guests" "$PROBE_BIN" "$NO_FLOCK_BIN"
+# #590. The host maintenance lock and job log are HOST state, so they must be
+# pointed somewhere disposable or this suite writes into the machine's real
+# ~/.local/state — and two suites exercising the two scheduled verbs would then
+# contend for one real lock and skip each other's runs.
+HOSTSTATE="$TMP/host-state"
+HOSTLOG="$HOSTSTATE/host-maintenance.log"
+HOSTLOCK="$HOSTSTATE/.host-maintenance.lock"
+# A PATH carrying the box shim and the tools crew reaches before need_flock,
+# and deliberately NOT flock: the refusal to run unlocked is a contract, and a
+# fixture cannot assert it while the real flock is reachable.
+NO_HOST_FLOCK_BIN="$TMP/no-host-flock-bin"
+mkdir -p "$CONF" "$SHIM" "$STATE" "$STATE/guests" "$PROBE_BIN" "$NO_FLOCK_BIN" \
+  "$HOSTSTATE" "$NO_HOST_FLOCK_BIN"
+for host_tool in bash env readlink dirname basename head tail sed awk grep tr cat \
+                 cut sort mkdir wc mv rm date sleep find ln chmod id uname; do
+  host_tool_path="$(command -v "$host_tool" 2>/dev/null)" || continue
+  ln -sf "$host_tool_path" "$NO_HOST_FLOCK_BIN/$host_tool"
+done
 ln -s "$(command -v cat)" "$PROBE_BIN/cat"
 ln -s "$(command -v cat)" "$NO_FLOCK_BIN/cat"
 cat >"$PROBE_BIN/date" <<'EOF'
@@ -35,6 +52,17 @@ cp "$ROOT/examples/fleet.conf" "$ROOT/examples/repos.txt" \
 cat >"$CONF/fleet.roster" <<'EOF'
 alpha claude builder
 beta codex reviewer
+EOF
+
+# A COMPLETE fleet definition whose roster names nobody — the nothing-to-do
+# case (#590 D2), and it has to be a real definition rather than a missing file
+# so that resolution succeeds and the run reaches the job log to say so.
+CONF_EMPTY="$TMP/conf-empty"
+mkdir -p "$CONF_EMPTY"
+cp "$CONF/fleet.conf" "$CONF/repos.txt" "$CONF/notify-repos.txt" \
+  "$CONF/doctrine.conf" "$CONF_EMPTY/"
+cat >"$CONF_EMPTY/fleet.roster" <<'EOF'
+# every row a comment: a roster that names no box
 EOF
 
 cat >"$SHIM/box" <<'EOF'
@@ -143,10 +171,38 @@ reset_case() {
   find "$STATE" -mindepth 1 -maxdepth 1 -type f -delete
   find "$STATE/guests" -mindepth 1 -delete
   : >"$STATE/calls"
+  # The job log is per-case evidence, so it starts empty; the lock file itself
+  # is left alone, because a case that HOLDS it does so across this call.
+  rm -f "$HOSTLOG" "$HOSTLOG.1" "$HOSTLOCK.holder"
 }
 
+job_log() { cat "$HOSTLOG" 2>/dev/null || true; }
+
+# A job log already past HOST_JOB_LOG_MAX, carrying one marker line so the
+# generation it ends up in can be named. A REAL oversized file rather than a
+# tuned threshold: 5 MiB is tick.sh's number, hardcoded there and here for the
+# same reason, and a fixture that moved it would be asserting against a knob
+# that does not exist on the host. 6 MiB of one repeated byte costs a second
+# and no correctness.
+big_host_log() { # MARKER
+  printf '%s\n' "$1" >"$HOSTLOG"
+  head -c $((6 * 1024 * 1024)) /dev/zero | tr '\0' 'p' >>"$HOSTLOG"
+  printf '\n' >>"$HOSTLOG"
+}
+
+# Hold the host maintenance lock the way a running job holds it: an open fd
+# with flock on it, released when the fd closes. Not a lock FILE — the file
+# always exists, and a fixture that created one and called that "held" would
+# pass against a crew that never locked anything.
+hold_host_lock() {
+  exec {HOLDFD}>>"$HOSTLOCK"
+  flock -n "$HOLDFD"
+}
+release_host_lock() { exec {HOLDFD}>&-; }
+
 run_crew() {
-  env CREW_CONFIG_DIR="$CONF" LIFE_STATE="$STATE" \
+  env CREW_CONFIG_DIR="${LIFE_CONF:-$CONF}" CREW_HOST_STATE_DIR="$HOSTSTATE" \
+    LIFE_STATE="$STATE" \
     LIFE_PROBE_DEFAULT="${LIFE_PROBE_DEFAULT:-idle:0}" \
     LIFE_FORCE_HELP="${LIFE_FORCE_HELP:-yes}" \
     LIFE_DOWN_FAIL="${LIFE_DOWN_FAIL:-}" \
@@ -154,7 +210,7 @@ run_crew() {
     LIFE_READY_FAILS="${LIFE_READY_FAILS:-0}" \
     LIFE_PROBE_BIN="$PROBE_BIN" LIFE_NO_FLOCK_BIN="$NO_FLOCK_BIN" \
     CREW_DRAIN_POLL_SECONDS=0 CREW_RESTART_READY_POLL_SECONDS=0 \
-    CREW_RESTART_READY_ATTEMPTS=3 PATH="$SHIM:$PATH" bash "$CLI" "$@"
+    CREW_RESTART_READY_ATTEMPTS=3 PATH="${LIFE_PATH:-$SHIM:$PATH}" bash "$CLI" "$@"
 }
 
 capture() {
@@ -315,5 +371,209 @@ t lifecycle-partial-down-is-named named "$r1"
 case "$OUT" in *'(state: failed)'*) r1="$OUT" ;; *) r1=hidden ;; esac
 t lifecycle-partial-down-hides-internal-sentinel hidden "$r1"
 unset LIFE_DOWN_FAIL
+
+# --- #590: the host schedule, its lock, its log and its exit statuses --------
+#
+# THE SUBJECT IS THE UNATTENDED CALLER. Everything above asserts what the verbs
+# do to boxes; these assert what they leave behind for somebody who was asleep
+# when they ran. They live in THIS suite rather than a third one because it is
+# the suite `crew restart` already has, and the daily line is `crew restart`.
+
+# D1 — the example file. The charter is checkable by reading it, so read it:
+# a cron line that grew its own flock or its own redirect is the exact drift
+# shared/crontab.example was written to end, and it would arrive as a helpful
+# edit rather than as a mistake anybody argued for.
+HOST_CRONTAB="$ROOT/shared/host-crontab.example"
+host_cron_lines="$(grep -vE '^[[:space:]]*(#|$)' "$HOST_CRONTAB" || true)"
+t hostcron-example-exists yes "$([ -f "$HOST_CRONTAB" ] && echo yes || echo no)"
+t hostcron-has-exactly-two-job-lines 2 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -c '[^[:space:]]' || true)"
+t hostcron-no-flock-in-any-line 0 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -c 'flock' || true)"
+t hostcron-no-redirect-in-any-line 0 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -c '[>|]' || true)"
+t hostcron-daily-line-is-restart-all 1 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* \* .*crew restart --all$' || true)"
+t hostcron-weekly-line-is-reset-all 1 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -cE '^[0-9]+ [0-9]+ \* \* [0-6] .*crew reset --all$' || true)"
+# The weekly line inherits #589's refusal and must never be handed a way past
+# it: --force on the scheduled reset is the silent fleet-wide downgrade D4
+# exists to prevent, and it would arrive here as a one-word edit.
+t hostcron-weekly-line-carries-no-force 0 \
+  "$(printf '%s\n' "$host_cron_lines" | grep -c -- '--force' || true)"
+
+capture help
+case "$OUT" in *'4  nothing was attempted'*) r1=documented ;; *) r1="$OUT" ;; esac
+t hostjob-help-documents-nothing-to-do documented "$r1"
+capture help restart
+case "$OUT" in *'host maintenance lock'*) r1=documented ;; *) r1="$OUT" ;; esac
+t hostjob-restart-help-names-the-lock documented "$r1"
+
+# D2 — a run that did nothing still says so, at both boundaries. This is the
+# whole point of the log: silence at a boundary has to mean cron is dead, and
+# it cannot mean that if a quiet run is also silent.
+reset_case
+LIFE_CONF="$CONF_EMPTY" capture restart --all
+t hostjob-empty-roster-is-nothing-to-do 4 "$RC"
+case "$OUT" in *'restart: no box selected — nothing to do'*) r1=said ;; *) r1="$OUT" ;; esac
+t hostjob-empty-roster-says-so said "$r1"
+case "$(job_log)" in
+  *'restart run start'*'restart: no box selected'*'restart run end: nothing to do (exit 4)'*) r1=logged ;;
+  *) r1="$(job_log)" ;;
+esac
+t hostjob-empty-roster-writes-both-boundaries logged "$r1"
+t hostjob-empty-roster-touches-no-box 0 "$(grep -cE '^(down|start|cleanup) ' "$STATE/calls" || true)"
+
+# D2 — a skipped box is NAMED in the log rather than omitted, and the boundary
+# line carries the status a cron mail would have shown.
+reset_case
+printf 'busy:60\n' >"$STATE/probe-alpha"
+capture restart --all
+t hostjob-busy-run-exits-skipped-busy 3 "$RC"
+case "$(job_log)" in
+  *'restart run start'*'alpha: SKIPPED busy'*'skipped: alpha'*'restart run end: some boxes SKIPPED busy (exit 3)'*) r1=complete ;;
+  *) r1="$(job_log)" ;;
+esac
+t hostjob-log-names-the-skipped-box complete "$r1"
+
+# D2 — a failing run reaches the log too, and its boundary line does not claim
+# the run succeeded.
+reset_case
+LIFE_STOP_NOT_TAKE=alpha capture restart alpha
+t hostjob-failed-run-exits-one 1 "$RC"
+case "$(job_log)" in
+  *'restart FAILED on alpha'*'restart run end: a box FAILED or was REFUSED (exit 1)'*) r1=logged ;;
+  *) r1="$(job_log)" ;;
+esac
+t hostjob-log-carries-the-failure logged "$r1"
+unset LIFE_STOP_NOT_TAKE
+
+# D3 — the exit status is what a cron mail is read off, so the four outcomes
+# must be four numbers. Asserted TOGETHER and in one line, because the property
+# is distinctness: three separate assertions all pass on a verb that returns
+# the same code for two different things.
+reset_case; capture restart alpha; rc_ok=$RC
+reset_case; printf 'busy:60\n' >"$STATE/probe-alpha"; capture restart alpha; rc_busy=$RC
+reset_case; LIFE_STOP_NOT_TAKE=alpha capture restart alpha; rc_failed=$RC
+unset LIFE_STOP_NOT_TAKE
+reset_case; LIFE_CONF="$CONF_EMPTY" capture restart --all; rc_none=$RC
+t hostjob-four-outcomes-are-four-statuses '0 3 1 4' \
+  "$rc_ok $rc_busy $rc_failed $rc_none"
+
+# D3 — the host lock. A second job started while the first holds it does not
+# run, and says which job holds it.
+reset_case
+hold_host_lock
+printf '%s reset 4242\n' "$(( $(date +%s) - 42 ))" >"$HOSTLOCK.holder"
+capture restart --all
+release_host_lock
+t hostjob-lock-held-exits-nothing-to-do 4 "$RC"
+# The seconds are not pinned — the age is computed against a real clock at run
+# time, and an exact match would be a flake waiting for a slow runner.
+case "$OUT" in
+  *"SKIPPED — the host maintenance lock is held by 'crew reset' (running "*", pid 4242)"*"no box was touched"*) r1=named ;;
+  *) r1="$OUT" ;;
+esac
+t hostjob-lock-held-names-the-holder named "$r1"
+t hostjob-lock-held-touches-no-box 0 "$(grep -cE '^(down|start|cleanup) ' "$STATE/calls" || true)"
+case "$(job_log)" in
+  *"restart run skipped: the host maintenance lock is held by 'crew reset'"*) r1=logged ;;
+  *) r1="$(job_log)" ;;
+esac
+t hostjob-lock-held-logs-the-skip logged "$r1"
+# A run that never started must not claim it did: `run start` in the log is the
+# line every reader uses to say cron fired AND the job ran.
+case "$(job_log)" in *'run start'*) r1="$(job_log)" ;; *) r1=absent ;; esac
+t hostjob-lock-held-writes-no-start-line absent "$r1"
+
+# D3 — the holder is reported from a record, so an absent or malformed record
+# must read as "I do not know" and never as a name. Sending an operator to look
+# at a job that was not running is worse than saying nothing.
+for holder_record in '' 'not-a-timestamp reset 1'; do
+  reset_case
+  hold_host_lock
+  if [ -n "$holder_record" ]; then printf '%s\n' "$holder_record" >"$HOSTLOCK.holder"; fi
+  capture restart --all
+  release_host_lock
+  t "hostjob-unknown-holder-still-skips-[${holder_record:-empty}]" 4 "$RC"
+  case "$OUT" in *'its holder record is missing or unreadable'*) r1=honest ;; *) r1="$OUT" ;; esac
+  t "hostjob-unknown-holder-does-not-guess-[${holder_record:-empty}]" honest "$r1"
+done
+
+# The green case from the test plan: two jobs colliding produce ONE run and ONE
+# skip line — and the lock is released by the holder going away, not by a
+# timeout, so the fleet is not wedged until somebody notices.
+reset_case
+hold_host_lock
+printf '%s reset 4242\n' "$(date +%s)" >"$HOSTLOCK.holder"
+capture restart alpha
+rc_blocked=$RC
+release_host_lock
+capture restart alpha
+t hostjob-collision-then-release '4 0' "$rc_blocked $RC"
+t hostjob-collision-logs-one-skip 1 "$(grep -c 'run skipped:' "$HOSTLOG" || true)"
+t hostjob-collision-logs-one-start 1 "$(grep -c 'run start' "$HOSTLOG" || true)"
+t hostjob-collision-cycles-the-box-once 1 "$(grep -c '^start alpha$' "$STATE/calls" || true)"
+
+# D2 — ROTATION BELONGS TO THE HOLDER. The evidence contract is that one run's
+# start, output and end are readable together; a contender that rotated the log
+# it does not own would split the run in flight across two generations, because
+# `tee -a` holds the inode and host_job_log reopens by name. A reader of either
+# generation then sees a start with no end — the one shape this log reserves for
+# cron itself being dead.
+#
+# First the holder's side, so "nobody rotates" cannot pass this block: an
+# oversized log IS cut, and the whole of the run that cut it is on the near side
+# of the cut, with the previous generation's marker on the far side.
+reset_case
+big_host_log MARKER-previous-generation
+capture restart alpha
+gen_new="$(job_log)"
+# Read the old generation's head, not the whole 6 MiB of it.
+gen_old="$(head -c 120 "$HOSTLOG.1" 2>/dev/null || true)"
+r1="start=$(grep -c 'run start' <<<"$gen_new" || true)"
+r1="$r1 end=$(grep -c 'run end' <<<"$gen_new" || true)"
+r1="$r1 box=$(grep -c 'alpha: restarted' <<<"$gen_new" || true)"
+r1="$r1 marker=$(grep -c MARKER-previous-generation <<<"$gen_new" || true)"
+t hostjob-rotate-holder-keeps-its-run-in-one-generation \
+  'start=1 end=1 box=1 marker=0' "$r1"
+# 'cut' quoted: bare, shellcheck reads the assignment as the cut(1) command.
+case "$gen_old" in MARKER-previous-generation*) r1='cut' ;; *) r1="${gen_old:0:80}" ;; esac
+t hostjob-rotate-holder-cuts-the-old-generation cut "$r1"
+
+# Then the contender's: the lock is held, the log is oversized, and this
+# invocation is not entitled to rotate it. The marker stands for the holder's
+# in-flight evidence — it must not move — and no generation may be cut at all.
+reset_case
+big_host_log MARKER-in-flight
+hold_host_lock
+printf '%s reset 4242\n' "$(date +%s)" >"$HOSTLOCK.holder"
+capture restart alpha
+rc_blocked=$RC
+release_host_lock
+r1="rc=$rc_blocked"
+r1="$r1 marker=$(grep -c MARKER-in-flight "$HOSTLOG" || true)"
+r1="$r1 rotated=$([ -e "$HOSTLOG.1" ] && echo 1 || echo 0)"
+r1="$r1 skip=$(grep -c 'run skipped:' "$HOSTLOG" || true)"
+t hostjob-rotate-contender-rotates-nothing \
+  'rc=4 marker=1 rotated=0 skip=1' "$r1"
+
+# A lock that cannot be taken is not a lock. Without flock on PATH the verb
+# REFUSES rather than running unlocked — the fail-open here is a weekly reset
+# rolling a fleet back underneath a restart that is mid-cycle.
+reset_case
+LIFE_PATH="$SHIM:$NO_HOST_FLOCK_BIN" capture restart --all
+t hostjob-no-flock-refuses 1 "$RC"
+case "$OUT" in *"needs 'flock'"*'refuses rather than'*) r1=named ;; *) r1="$OUT" ;; esac
+t hostjob-no-flock-names-why named "$r1"
+t hostjob-no-flock-touches-no-box 0 "$(grep -cE '^(down|start|cleanup) ' "$STATE/calls" || true)"
+
+# A rejected invocation takes no fleet-wide lock and writes no boundary line:
+# it is not a run, and a `run start` for a typo'd flag would make the log lie
+# about how often the schedule fired.
+reset_case
+capture restart alpha --force-after 00
+t hostjob-usage-error-still-exits-two 2 "$RC"
+t hostjob-usage-error-writes-no-log '' "$(job_log)"
 
 suite_finish

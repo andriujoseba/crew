@@ -25,7 +25,13 @@ CONF="$TMP/conf"
 SHIM="$TMP/shim"
 STATE="$TMP/state"
 PROBE_BIN="$TMP/probe-bin"
-mkdir -p "$CONF" "$SHIM" "$STATE" "$STATE/guests" "$PROBE_BIN"
+# #590. `crew reset` is the weekly scheduled job, so it now takes a host lock
+# and writes a host job log. Both are pointed at this sandbox — otherwise the
+# suite writes into the machine's real ~/.local/state, and contends over one
+# real lock with any other suite driving `crew restart`.
+HOSTSTATE="$TMP/host-state"
+HOSTLOG="$HOSTSTATE/host-maintenance.log"
+mkdir -p "$CONF" "$SHIM" "$STATE" "$STATE/guests" "$PROBE_BIN" "$HOSTSTATE"
 ln -s "$(command -v cat)" "$PROBE_BIN/cat"
 cat >"$PROBE_BIN/date" <<'EOF'
 #!/bin/bash
@@ -256,7 +262,8 @@ reset_case() {
 }
 
 run_crew() {
-  env CREW_CONFIG_DIR="$CONF" RST_STATE="$STATE" RST_PROBE_BIN="$PROBE_BIN" \
+  env CREW_CONFIG_DIR="$CONF" CREW_HOST_STATE_DIR="$HOSTSTATE" \
+    RST_STATE="$STATE" RST_PROBE_BIN="$PROBE_BIN" \
     RST_PROBE_DEFAULT="${RST_PROBE_DEFAULT:-idle:0}" \
     RST_LOGGED_IN="${RST_LOGGED_IN:-alpha beta}" \
     RST_VENDOR_OUT="${RST_VENDOR_OUT:-}" RST_REAP_RC="${RST_REAP_RC:-199}" \
@@ -1327,5 +1334,88 @@ t reapnow-sweeps-despite-the-stamp swept "$r1"
 # explains why the stamp is neither consulted nor written.
 t reapnow-does-not-read-the-stamp 0 \
   "$(grep -v '^[[:space:]]*#' "$REAPNOW" | grep -c 'reaper-last' | tr -d ' ')"
+
+# --- #590 D4: THE WEEKLY LINE INHERITS THIS REFUSAL AND MUST NOT WEAKEN IT ---
+#
+# Everything above proves the interlock refuses. What the schedule adds is that
+# nobody is watching when it does, so the refusal has to survive into the host
+# job log intact — the word, the two versions, and the repair — and the run has
+# to end there rather than doing something else instead. These cases live in
+# THIS suite and not in cli-lifecycle.sh because the checkpoint rig is here;
+# duplicating it to assert a `crew reset` contract would give the fleet two
+# fixtures of one thing that could drift apart.
+#
+# THE SCHEDULED SHAPE, `reset --all`, deliberately: `--force` does not exist on
+# this path and the weekly line passes no flag that could stand in for one, so
+# the fixture drives exactly what cron will.
+reset_case
+rm -f "$HOSTLOG"
+arm alpha
+arm beta
+: >"$STATE/calls"
+capture upgrade alpha
+: >"$STATE/calls"
+capture reset --all
+t reset-weekly-refusal-is-not-a-restore 1 "$RC"
+case "$OUT" in
+  *'alpha: REFUSED'*'was cut at crew@0.1.3 and the box was upgraded to crew@'*'Repair with: crew reset --cut alpha'*) r1=named ;;
+  *) r1="$OUT" ;;
+esac
+t reset-weekly-refusal-names-the-repair named "$r1"
+# THE RUNBOOK QUOTES THIS LINE, AND NOW IT CANNOT DRIFT FROM IT. The sample in
+# shared/docs/host-maintenance.md is what an operator matches Sunday's log
+# against; two arms print a refusal on this path (the stale mark, and the
+# live-read backstop for an engine no crew verb installed) and the runbook
+# documents the first, so a reader comparing it against the second has to
+# compare by eye. Pinned against the SHIPPED OUTPUT rather than the source
+# string, because the output is what the operator sees. The versions and the
+# box name are the two things an illustration is entitled to differ on, so the
+# comparison is over the shape with those folded out; every other word,
+# including the repair command, must be identical.
+refusal_shape() { # BOX  (text on stdin)
+  tr -s '[:space:]' ' ' |
+    sed -e 's/^ //' -e 's/ $//' -e 's/crew@[0-9][0-9A-Za-z.+-]*/crew@V/g' \
+        -e "s/$1/BOX/g"
+}
+doc_refusal="$(awk '/^  claude-builder: REFUSED/,/^```$/' \
+  "$ROOT/shared/docs/host-maintenance.md" | grep -v '^```$')"
+t reset-weekly-refusal-is-the-runbooks-sample \
+  "$(refusal_shape alpha <<<"$(grep 'alpha: REFUSED' <<<"$OUT")")" \
+  "$(refusal_shape claude-builder <<<"$doc_refusal")"
+t reset-weekly-refusal-restores-nothing-for-that-box 0 "$(calls_of 'restore alpha')"
+# NO FALLBACK LABEL. `bootstrapped` and `pristine` both exist on a real box and
+# both would "work"; either would return a creds-free, unhired box and read as
+# a successful weekly maintenance. The assertion is over every restore call the
+# run made, not over alpha's, because a fallback would arrive as a second call.
+t reset-weekly-refusal-restores-no-other-label 0 \
+  "$(grep -cE '^restore .*(bootstrapped|pristine)' "$STATE/calls" || true)"
+# And it does not simply stop: the sibling box is still maintained, which is
+# what makes the refusal a per-box outcome rather than an aborted run.
+t reset-weekly-refusal-does-not-abort-the-run 1 "$(calls_of 'restore beta armed')"
+
+# THE LOG IS THE OPERATOR'S ONLY SURFACE HERE, because the cron line carries no
+# redirect and nobody read Sunday's mail. The refusal, its repair and the
+# boundary must all be in it.
+case "$(cat "$HOSTLOG" 2>/dev/null || true)" in
+  *'reset run start'*'alpha: REFUSED'*'Repair with: crew reset --cut alpha'*'reset run end: a box FAILED or was REFUSED (exit 1)'*) r1=logged ;;
+  *) r1="$(cat "$HOSTLOG" 2>/dev/null || true)" ;;
+esac
+t reset-weekly-refusal-reaches-the-job-log logged "$r1"
+
+# The repair, driven: a re-cut clears the mark and the next weekly run restores
+# the box it refused. This is the ordering rule shared/docs/host-maintenance.md
+# states, executed rather than asserted in prose.
+: >"$STATE/calls"
+capture reset --cut alpha
+: >"$STATE/calls"
+rm -f "$HOSTLOG"
+capture reset --all
+t reset-weekly-after-recut-proceeds 0 "$RC"
+t reset-weekly-after-recut-restores-the-refused-box 1 "$(calls_of 'restore alpha armed')"
+case "$(cat "$HOSTLOG" 2>/dev/null || true)" in
+  *'reset run end: every selected box acted on (exit 0)'*) r1=logged ;;
+  *) r1="$(cat "$HOSTLOG" 2>/dev/null || true)" ;;
+esac
+t reset-weekly-after-recut-logs-a-clean-boundary logged "$r1"
 
 suite_finish

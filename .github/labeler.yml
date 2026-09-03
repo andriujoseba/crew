@@ -11,7 +11,11 @@
 # a PR that got labelled with nothing (#500).
 "scope:cli":
   - changed-files:
-      - any-glob-to-any-file: ["cli/crew"]
+      # host-crontab.example goes with the engine it schedules, which is the
+      # rule the sibling row below already applies: shared/crontab.example
+      # schedules shared/bin/tick.sh and is scope:duty, and this one schedules
+      # `crew restart` and `crew reset` and is therefore cli's (#590).
+      - any-glob-to-any-file: ["cli/crew", "shared/host-crontab.example"]
 "scope:duty":
   - changed-files:
       # crontab.example is the tick's schedule, not operator scaffolding: it is
