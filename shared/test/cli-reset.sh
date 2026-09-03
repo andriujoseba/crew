@@ -491,6 +491,15 @@ t reset-cut-unrecordable-version-prints-no-raw-shell-error quiet "$r1"
 # a failed write the same way, not a correctness claim.
 t reset-cut-unrecordable-version-leaves-no-temp 0 \
   "$(find "$CONF" -name 'alpha.conf.tmp.*' 2>/dev/null | wc -l | tr -d ' ')"
+#
+# THE `rm -f` HALF OF THAT CLEANUP HAS NO FIXTURE, AND THAT IS REPORTED
+# RATHER THAN PAPERED OVER. A redirection that fails in a read-only directory
+# creates nothing to strand, so this case exercises the message and not the
+# cleanup; only the `mv` arm could leave a temporary, and `mv file dir`
+# SUCCEEDS by moving into it rather than failing, so this harness cannot
+# reach it either. The cleanup stays because its sibling
+# `checkpoint_mark_stale` has it on both arms and one store answering a failed
+# write two ways is the drift worth avoiding — not because it is tested.
 
 reset_case
 arm alpha
