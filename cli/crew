@@ -664,23 +664,34 @@ mints a second box carrying the first box's identity. Ruled and accepted by
 the operator, 2026-08-29.
 
 --cut snapshots each box as '$RESET_LABEL', after checking it is logged in AND hired,
-and records the engine version it was cut at. It reclaims first: the reaper
-runs on demand, and only then is the disk measured, so a box that is merely
-one day of transcripts fat is cut rather than refused. A box still over
-${RESET_MAX_USED_PCT}% after reclaiming is REFUSED, naming what is large — whatever is inside
-the image becomes the floor the fleet returns to forever.
+and records the engine version it was cut at. LOGGED IN IS BOTH HALVES — 'gh
+auth status' and the agent profile's own login probe — because a box that
+cannot reach its model is the half-built box this refuses. A box whose engine
+stamp is not a version at all is refused too: a version that cannot be
+recorded cannot be compared at restore time.
+
+It reclaims first: the reaper runs on demand, and only then is the disk
+measured, so a box that is merely one day of transcripts fat is cut rather
+than refused. A box still over ${RESET_MAX_USED_PCT}% after reclaiming is REFUSED, naming what
+is large — whatever is inside the image becomes the floor the fleet returns to
+forever. CREW_RESET_CUT_MAX_USED_PCT overrides the ceiling, and is read on
+this path only.
 
 Without --cut, each box is restored to its '$RESET_LABEL' checkpoint and started.
 'box info' is the only thing that knows a label exists, so a box without one
 is refused and NAMED — never skipped, and never rolled back to 'bootstrapped'
 or 'pristine', which would return a creds-free, unhired box.
 
-The interlock: restoring to a checkpoint cut before a 'crew upgrade' silently
-DOWNGRADES that box's engine. So 'crew upgrade' marks the checkpoint stale in
-the same write, and a reset refuses that box naming both versions and naming
-'crew reset --cut <box>' as the repair. A checkpoint whose recorded version
-cannot be read at all is refused the same way and for the same reason: an
-unknown version is not a matching one.
+The interlock: restoring to a checkpoint cut before the engine moved silently
+DOWNGRADES that box. So EVERY verb that installs an engine — 'crew hire',
+'crew up', 'crew upgrade' — marks the checkpoint stale BEFORE installing, and
+refuses to install if that mark cannot be written; a reset then refuses the
+box naming both versions and naming 'crew reset --cut <box>' as the repair.
+Marking first is what makes it durable: a mark written afterwards that failed
+would leave a box running a new engine and a checkpoint claiming the old one
+is current. A checkpoint whose recorded version cannot be read, or is not a
+version, is refused the same way and for the same reason: an unknown version
+is not a matching one.
 
 A stopped box is restored where it stands — the restore stops it first anyway
 — but it is REFUSED for a cut, which reads its login, its engine and its disk
@@ -1603,6 +1614,15 @@ convergence_recovery() {
 # status and provenance; comparisons go through stamp_version below.
 hired_at() { report_field stamp "$(engine_report "$1")"; }
 
+# is_engine_version STRING — is this an engine version and not merely a
+# nonempty string? ONE definition, because there are now two readers: the stamp
+# parser below, and `crew reset`'s check that a recorded checkpoint version can
+# be compared with a box's at all. Two copies of this shape would drift, and
+# the direction it would drift in is a version that one side accepts and the
+# other refuses — which is exactly the disagreement #589 D5 is about.
+is_engine_version() { # STRING
+  [[ "${1:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]
+}
 # stamp_version STAMP — print the version from a current-format stamp.
 # SHA-only legacy stamps deliberately fail to parse: they still prove the box
 # is hired, but cannot compare equal to a version and therefore re-bake once.
@@ -1612,7 +1632,7 @@ stamp_version() {
     crew@*) version="${stamp#crew@}"; version="${version%% *}" ;;
     *) return 1 ;;
   esac
-  if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
+  if is_engine_version "$version"; then
     printf '%s\n' "$version"
   else
     return 1
@@ -1999,6 +2019,12 @@ hire_box() {
       return 0
   fi
   echo "hiring $name  (role=$role agent=$agent crew@$want)"
+  # D5's mark, BEFORE the install that invalidates the checkpoint (#589). Here
+  # and not only in cmd_upgrade: this is the route `crew up` takes for every
+  # roster box, and an engine that moves by it is no less past the checkpoint
+  # for having moved by a hire. A refusal here installs nothing, so the box and
+  # its checkpoint stay in agreement.
+  checkpoint_stale_gate "$name" "$want" || return 1
   # --force already meant "re-install even when the version matches"; it now
   # also carries through install.sh's refusal to overwrite a MODIFIED engine
   # (#159). One flag, one meaning: install over what is there regardless.
@@ -2628,10 +2654,13 @@ cmd_down() {
 # the fleet definition the floor already writes per-box files into.
 #
 # D5 is the sharp edge and this is where it is blunted: the stale mark is set
-# by `crew upgrade` AT UPGRADE TIME, so the refusal fires on a fact somebody
-# recorded rather than on a comparison reconstructed weeks later by whatever
-# the box happens to answer. The live comparison below it is a backstop for
-# the engine moving by some other route (`crew hire --ref`), not the primary.
+# BEFORE the engine that invalidates the checkpoint is installed, by every verb
+# that installs one, so the refusal fires on a fact somebody recorded rather
+# than on a comparison reconstructed weeks later by whatever the box happens to
+# answer. The live comparison in restore_box is a backstop for an engine
+# installed by no crew verb at all, not the primary — and it cannot be the
+# primary, because it is read from inside a box that a fleet-wide reset may
+# well find stopped.
 checkpoint_dir() { printf '%s\n' "$CONFIG_DIR/checkpoints"; }
 checkpoint_file() { printf '%s\n' "$(checkpoint_dir)/$1.conf"; }
 # Parsed, never sourced: three strings are not worth executing a file for, and
@@ -2674,8 +2703,57 @@ checkpoint_mark_stale() { # BOX VERSION
   local body
   body="$(grep -v '^CHECKPOINT_STALE=' "$f" 2>/dev/null)" || return 1
   { printf '%s\n' "$body"; printf 'CHECKPOINT_STALE=%s\n' "$2"; } >"$f.tmp.$$" 2>/dev/null \
-    || { rm -f "$f.tmp.$$"; return 1; }
-  mv -f "$f.tmp.$$" "$f" || { rm -f "$f.tmp.$$"; return 1; }
+    || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
+  mv -f "$f.tmp.$$" "$f" || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
+}
+
+# checkpoint_stale_gate BOX VERSION — mark BOX's `armed` checkpoint stale, and
+# say whether the engine change that follows may proceed. rc 0 proceed · 1 do
+# NOT install. Called by EVERY verb that installs an engine, BEFORE it stages
+# anything.
+#
+# THE MARK IS A PRECONDITION TO MOVING THE ENGINE, NOT A NOTE AFTERWARDS, and
+# both halves of that sentence were defects until this round.
+#
+# "Every verb": `cmd_upgrade` was the only caller, and it is not the only route
+# an engine moves by. `hire_box` installs whenever the installed version does
+# not match, unconditionally on a `-dev` tree, and on --force; `cmd_up` calls
+# `hire_box` for every roster box. So a routine `crew up` moved the engine past
+# the checkpoint and marked nothing, leaving only restore_box's live comparison
+# — which is read through `box exec` and therefore answers nothing at all on a
+# stopped box, and a fleet with boxes down is precisely what `crew reset --all`
+# is for. A same-version `-dev` re-bake marks too: the version string cannot
+# detect that move, and the image still holds the older tree.
+#
+# "Before": marking after the install meant a write that failed left the box
+# running a NEW engine and its checkpoint claiming the OLD one is current, with
+# nothing durable saying otherwise — the exact silent downgrade D5 exists to
+# stop, and a warning printed once into an upgrade log is not a durable
+# anything. Marking first inverts the failure: a mark that cannot be written
+# refuses the install, so the box and its checkpoint both stay exactly as they
+# were and nothing drifts.
+#
+# The residual failure is chosen rather than emergent. If the mark lands and
+# the install then fails, the checkpoint reads stale for a move that did not
+# happen: `crew reset` refuses that box until it is re-cut. That is a FALSE
+# REFUSAL, and it is the direction to fail in — the other direction is a silent
+# engine downgrade with nothing red anywhere. The caller's failure arm says so
+# rather than leaving it to be discovered at the next reset.
+#
+# A box with NO record is rc 0 with nothing written: there is no checkpoint to
+# invalidate, and inventing a record here would make `reset` refuse with a
+# version pair crew made up instead of refusing for the true reason, which is
+# D4's missing label.
+checkpoint_stale_gate() { # BOX VERSION
+  local f; f="$(checkpoint_file "$1")"
+  [ -f "$f" ] || return 0
+  local cut_at; cut_at="$(checkpoint_field CHECKPOINT_VERSION "$1")"
+  if checkpoint_mark_stale "$1" "$2"; then
+    echo "  note: $1's $RESET_LABEL checkpoint is now STALE (cut at crew@${cut_at:-unknown}, engine moving to crew@$2); re-cut with: crew reset --cut $1"
+    return 0
+  fi
+  echo "  REFUSED — $1's $RESET_LABEL checkpoint could NOT be marked stale at $f, and an engine is not installed over a checkpoint that would still claim to match it. Nothing was staged and nothing was installed; make that path writable, or remove the record, and run this again."
+  return 1
 }
 
 # box_snapshot_labels NAME — the labels `box info` lists, one per line. rc 1
@@ -2777,12 +2855,12 @@ reset_drain_gate() { # NAME FORCE_SECONDS MODE
 
 # cut_box NAME — D1, D7 and D5's write, for one box. rc 0 cut · 1 refused.
 cut_box() { # NAME
-  local name="$1" pct large stamp ver replaced=0
-  # D1's two preconditions. A checkpoint of a box that is not logged in, or
-  # not hired, is worse than none: the restore that uses it comes back looking
+  local name="$1" pct large stamp ver agent profile rc replaced=0
+  # D1's preconditions. A checkpoint of a box that is not logged in, or not
+  # hired, is worse than none: the restore that uses it comes back looking
   # like it worked and the box cannot do a minute's work.
   if ! bxn "$name" 'gh auth status >/dev/null 2>&1' 2>/dev/null; then
-    echo "  $name: REFUSED — not logged in (an $RESET_LABEL checkpoint of a box without credentials restores to a box that cannot work); log it in with: box shell $name"
+    echo "  $name: REFUSED — not logged in to GitHub (an $RESET_LABEL checkpoint of a box without credentials restores to a box that cannot work); log it in with: box shell $name"
     return 1
   fi
   stamp="$(hired_at "$name")"
@@ -2790,15 +2868,61 @@ cut_box() { # NAME
     echo "  $name: REFUSED — not hired (no engine to checkpoint); hire it with: crew hire $name"
     return 1
   fi
-  ver="$(stamp_version "$stamp" 2>/dev/null || echo unknown)"
+  # LOGGED IN IS BOTH HALVES, and the lifecycle prose in `crew help` says so:
+  # the human login step is `gh auth login` AND the agent profile's own login.
+  # A box with live GitHub credentials and a logged-out vendor CLI is the
+  # half-built box D1 refuses — every session it starts dies at the model, and
+  # the checkpoint would freeze that state as the one the fleet returns to.
+  #
+  # AFTER the hired check, deliberately: the agent is read from the
+  # `instance.conf` the install writes, so an unhired box has no answer here
+  # and must be told it is unhired rather than told its agent is unreadable.
+  # From instance.conf and not the roster line, so a named off-roster box is
+  # covered too, and so the probe is run against the agent the box was ACTUALLY
+  # installed as rather than the one the roster believes it should be.
+  agent="$(box_agent "$name")"
+  if [ -z "$agent" ]; then
+    echo "  $name: REFUSED — hired, but it does not say which agent it was installed as (no BOT_AGENT in its instance.conf), so its vendor login cannot be proved; re-hire it with: crew hire $name"
+    return 1
+  fi
+  profile="$(agent_conf "$agent")"
+  if [ ! -f "$profile" ]; then
+    echo "  $name: REFUSED — installed as agent '$agent', which resolves to no profile at $profile, so its vendor login cannot be proved; 'crew profiles' lists the ones this fleet has"
+    return 1
+  fi
+  if ! vendor_probe "$name" "$agent"; then
+    echo "  $name: REFUSED — its $agent CLI is not logged in (an $RESET_LABEL checkpoint of a box that cannot reach its model restores to a box that cannot work); log it in with: box shell $name"
+    return 1
+  fi
+  # AN UNPARSEABLE STAMP IS NOT A VERSION TO RECORD. This coerced to the
+  # literal `unknown` and wrote it, which put a nonempty non-version into
+  # CHECKPOINT_VERSION by the cut's own hand — and restore_box's emptiness
+  # check sailed straight past it, reconstructing `restored to armed
+  # (crew@unknown)` from a record that looked present. Legacy SHA-only stamps
+  # are a real and supported state, so this is reachable and not theoretical.
+  if ! ver="$(stamp_version "$stamp" 2>/dev/null)"; then
+    echo "  $name: REFUSED — its engine stamp '$stamp' is not a version that can be recorded (a legacy SHA-only stamp, or malformed), and a checkpoint whose version cannot be compared cannot be safely restored; re-hire it with: crew hire $name"
+    return 1
+  fi
   # D7, in its ruled order: reclaim, THEN measure, THEN decide. Measuring
   # first would refuse boxes the reaper was about to fix, which is the one
   # thing step 2 names. The sweep's own output is forwarded — it is the
   # operator's evidence for the figure the next line prints.
   echo "  $name: reclaiming before measuring (reaper, on demand)"
+  rc=0
   # shellcheck disable=SC2016  # $HOME must expand INSIDE the box, not here
-  if ! bxn "$name" '"$HOME"/duty/bin/reap-now.sh' 2>/dev/null; then
-    echo "  $name: REFUSED — the on-demand reaper did not complete (a duty tick may hold the lock); nothing cut"
+  bxn "$name" '"$HOME"/duty/bin/reap-now.sh' 2>/dev/null || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # reap-now.sh documents three, and asserting the first for all of them was
+    # wrong in the one case that is not an edge: 127 is every box still on a
+    # pre-#589 engine, which is the WHOLE FLEET on the first `--cut` anybody
+    # runs. Telling that operator a duty tick holds a lock sends them to look
+    # at the wrong thing entirely.
+    case "$rc" in
+      199) echo "  $name: REFUSED — the on-demand reaper did not complete (a duty tick took the duty lock between the drain probe and now); nothing cut" ;;
+      127) echo "  $name: REFUSED — the on-demand reaper did not complete (this box has no reap-now.sh — its engine predates it); upgrade it first with: crew upgrade $name" ;;
+      *)   echo "  $name: REFUSED — the on-demand reaper did not complete (it exited $rc); nothing cut" ;;
+    esac
     return 1
   fi
   if ! pct="$(box_used_pct "$name")"; then
@@ -2896,16 +3020,30 @@ restore_box() { # NAME
     echo "  $name: REFUSED — its $RESET_LABEL checkpoint records no engine version at $(checkpoint_file "$name") (missing, unreadable or malformed), so restoring it could silently downgrade the engine. Repair with: crew reset --cut $name"
     return 1
   fi
+  # NONEMPTY IS NOT THE SAME QUESTION AS COMPARABLE. `unknown` is the case that
+  # matters, because a `--cut` used to write it itself out of an unparseable
+  # stamp — but any non-version string lands here, and none of them can be
+  # compared with what the box runs. On a stopped box the live side is empty by
+  # construction, so this arm is the only one left to notice.
+  if ! is_engine_version "$recorded"; then
+    echo "  $name: REFUSED — its $RESET_LABEL checkpoint records '$recorded' at $(checkpoint_file "$name"), which is not an engine version and cannot be compared with the box's, so restoring it could silently downgrade the engine. Repair with: crew reset --cut $name"
+    return 1
+  fi
   if [ -n "$stale" ]; then
     echo "  $name: REFUSED — its $RESET_LABEL checkpoint was cut at crew@$recorded and the box was upgraded to crew@$stale since; restoring it would silently downgrade the engine. Repair with: crew reset --cut $name"
     return 1
   fi
-  # The backstop for an engine that moved by some route that does not mark the
-  # checkpoint (`crew hire --ref`), and for a stale mark that could not be
-  # written (cmd_upgrade warns loudly when that happens). A LIVE version that
-  # cannot be read is still not evidence of a mismatch — it is read from
-  # inside the box and a stopped box, which the restore path now accepts, has
-  # nothing to answer with. The recorded side is guaranteed present above.
+  # A BACKSTOP, AND ONLY A BACKSTOP — the comment here used to claim more than
+  # it could deliver, which is how the defect stayed hidden. It is read through
+  # `box exec`, so it answers NOTHING on a stopped box, and the restore path
+  # accepts stopped boxes; a fleet with boxes down is exactly what `--all` is
+  # for. So a live read must never be what D5 rests on, and since this round it
+  # is not: every verb that installs an engine marks the checkpoint stale
+  # first, host-side, where a stopped box cannot switch the answer off. What is
+  # left for this arm is an engine installed by no crew verb at all — a hand
+  # `install.sh`, a restored host config predating the move — and for that it
+  # is worth keeping. A live version that cannot be read is still not evidence
+  # of a mismatch. The recorded side is guaranteed a version above.
   live="$(stamp_version "$(hired_at "$name")" 2>/dev/null || echo)"
   if [ -n "$live" ] && [ "$recorded" != "$live" ]; then
     echo "  $name: REFUSED — its $RESET_LABEL checkpoint was cut at crew@$recorded and the box now runs crew@$live; restoring it would silently downgrade the engine. Repair with: crew reset --cut $name"
@@ -2970,11 +3108,19 @@ cmd_reset() {
   # as a non-integer, and under `set -e` that ends the whole command in the
   # middle of a fleet-wide cut — some boxes checkpointed, some not, and no
   # summary. The reaper's own _reaper_whole exists for this exact failure.
-  case "$RESET_MAX_USED_PCT" in
-    ''|*[!0-9]*) die "CREW_RESET_CUT_MAX_USED_PCT must be a whole percentage, not '$RESET_MAX_USED_PCT'" ;;
-  esac
-  [ "$RESET_MAX_USED_PCT" -le 100 ] \
-    || die "CREW_RESET_CUT_MAX_USED_PCT must be 100 or less, not '$RESET_MAX_USED_PCT'"
+  #
+  # ON THE CUT PATH ONLY, because that is the only path that reads it. Before
+  # the loop still, so a `--cut` fails fast without touching a box — but an
+  # operator with a malformed value exported in their shell was having every
+  # `crew reset` die on a variable the restore never consults, and the
+  # variable's own name says which path it belongs to.
+  if [ "$cut" -eq 1 ]; then
+    case "$RESET_MAX_USED_PCT" in
+      ''|*[!0-9]*) die "CREW_RESET_CUT_MAX_USED_PCT must be a whole percentage, not '$RESET_MAX_USED_PCT'" ;;
+    esac
+    [ "$RESET_MAX_USED_PCT" -le 100 ] \
+      || die "CREW_RESET_CUT_MAX_USED_PCT must be 100 or less, not '$RESET_MAX_USED_PCT'"
+  fi
   if [ "$all" -eq 1 ] && [ "${#named[@]}" -ne 0 ]; then usage_error "usage: $(synopsis_of reset)"; fi
   if [ "$all" -eq 0 ] && [ "${#named[@]}" -eq 0 ]; then usage_error "usage: $(synopsis_of reset)"; fi
   need_box
@@ -3544,31 +3690,28 @@ cmd_upgrade() {
       # An explicitly named off-roster box keeps its existing instance config.
       identity_args=""
     fi
-    if stage_engine "$b" &&
-       stage_fleet_definition "$b" &&
-       install_staged_engine "$b" "$identity_args $registry_arg $flags $force_arg"; then
-      # D5, IN THE SAME WRITE AS THE UPGRADE (#589). An `armed` checkpoint cut
-      # before this moment now restores an OLDER engine than the box is hired
-      # at, and an unattended weekly reset would perform that downgrade every
-      # week with nothing red anywhere. Recording it here — not comparing
-      # versions at reset time — is what makes the refusal fire on a fact
-      # somebody observed. A box whose checkpoint mark cannot be written must
-      # not take the upgrade loop down with it — but it must not be reported
-      # as marked either, which is what an unconditional note did. D5 makes
-      # the mark load-bearing, so the failure is said out loud and named: the
-      # reset path's live-version comparison is a backstop, not a substitute,
-      # and it reads from inside a box that may be stopped by then.
-      if [ -f "$(checkpoint_file "$b")" ]; then
-        local cut_at; cut_at="$(checkpoint_field CHECKPOINT_VERSION "$b")"
-        if checkpoint_mark_stale "$b" "$want"; then
-          echo "  note: $b's $RESET_LABEL checkpoint is now STALE (cut at crew@$cut_at, box upgraded to crew@$want); re-cut with: crew reset --cut $b"
-        else
-          echo "  WARNING: $b's $RESET_LABEL checkpoint could NOT be marked stale at $(checkpoint_file "$b"); it still reads as cut at crew@$cut_at while the box now runs crew@$want. Re-cut it with: crew reset --cut $b"
-        fi
-      fi
-    else
+    # D5's mark, BEFORE the upgrade that invalidates the checkpoint (#589). An
+    # `armed` checkpoint cut before this moment restores an OLDER engine than
+    # the box is hired at, and an unattended weekly reset would perform that
+    # downgrade every week with nothing red anywhere. Marking first is what
+    # makes the fact durable: a mark that could not be written stops the
+    # upgrade instead of leaving a box whose checkpoint lies about it. It can
+    # still not take the loop down — one box refuses, the rest carry on.
+    if ! checkpoint_stale_gate "$b" "$want"; then
+      echo "  upgrade REFUSED on $b — its engine is unchanged"
+      continue
+    fi
+    if ! stage_engine "$b" ||
+       ! stage_fleet_definition "$b" ||
+       ! install_staged_engine "$b" "$identity_args $registry_arg $flags $force_arg"; then
       cleanup_staged_engine "$b"
       echo "  upgrade FAILED on $b"
+      # The chosen residual of marking first: the checkpoint now reads stale
+      # for an engine move that did not happen, so a reset will refuse this
+      # box. Said here rather than left to be met weeks later at the reset.
+      if [ -f "$(checkpoint_file "$b")" ]; then
+        echo "  note: $b's $RESET_LABEL checkpoint was already marked stale for crew@$want and stays marked; a reset REFUSES this box until it is re-cut with: crew reset --cut $b"
+      fi
     fi
     # An `if`, not `[ … ] && echo`: as the loop body's last statement that
     # form returns 1 whenever the box WAS armed, and `set -e` would end the
