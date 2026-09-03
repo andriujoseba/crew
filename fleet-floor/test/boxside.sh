@@ -255,10 +255,16 @@ t "probe.sh: the finding survives the wire, worded by the record" \
 BS_M="$BS_TMP/msghome"
 mkdir -p "$BS_M/duty/logs" "$BS_M/bin"
 cat > "$BS_TMP/agent.conf" <<'EOF'
+TIMEOUT_ATTENTION=1800
 BOT_PATH_PREPEND="$HOME/.local/bin"
 BOT_CLI_CMD=(fake-cli --flag -p)
 bot_cli_probe() { true; }
 bot_session_acted() { return 1; }
+EOF
+cat > "$BS_M/bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$3" > "${BS_TIMEOUT_FILE:?}"
+exec /usr/bin/timeout "$@"
 EOF
 cat > "$BS_M/bin/fake-cli" <<'EOF'
 #!/usr/bin/env bash
@@ -266,7 +272,7 @@ printf 'ARGC=%s\n' "$#"
 printf 'LAST=%s\n' "${*: -1}"
 [ -z "${BS_STAMP_FILE:-}" ] || printf '%s\n' "$DUTY_SESSION_STAMP" > "$BS_STAMP_FILE"
 EOF
-chmod +x "$BS_M/bin/fake-cli"
+chmod +x "$BS_M/bin/fake-cli" "$BS_M/bin/timeout"
 
 # Every metacharacter an operator might type, plus non-ASCII. Single-quoted on
 # purpose: the payload must reach the box LITERAL, so bash must not expand it
@@ -293,6 +299,7 @@ PY
 
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
   BS_STAMP_FILE="$BS_TMP/message.stamp" \
+  BS_TIMEOUT_FILE="$BS_TMP/message.timeout" \
   bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 t "message: script exits 0" 0 "$?"
 
@@ -326,6 +333,10 @@ if grep -q 'SESSION START kind=operator key=floor' "$BS_M/duty/duty.log"; then
 else
   fail "message: writes a SESSION START marker" "$(cat "$BS_M/duty/duty.log")"
 fi
+BS_START="$(grep 'SESSION START kind=operator' "$BS_M/duty/duty.log")"
+t "message: one resolved timeout drives record and wall" \
+  "$(sed -n 's/.* timeout=\([0-9]*\)s .*/\1/p' <<<"$BS_START")" \
+  "$(cat "$BS_TMP/message.timeout")"
 if grep -q 'SESSION END kind=operator key=floor rc=0 .* outcome=ok' "$BS_M/duty/duty.log"; then
   ok "message: writes a SESSION END marker with rc"
 else
@@ -393,6 +404,7 @@ sed '/^bot_session_acted()/d' "$BS_TMP/agent.conf" > "$BS_TMP/agent-hookless.con
 : > "$BS_M/duty/duty.log"
 cp "$BS_TMP/expected-floor-prompt" "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  BS_TIMEOUT_FILE="$BS_TMP/message-hookless.timeout" \
   bash "$BS_SH" < "$BS_TMP/agent-hookless.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
   grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break
@@ -415,6 +427,7 @@ chmod +x "$BS_M/bin/fake-cli"
 # its own — which is the point of the per-request path.
 cp "$BS_TMP/expected-floor-prompt" "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  BS_TIMEOUT_FILE="$BS_TMP/message-failed.timeout" \
   bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
   grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break
@@ -425,6 +438,85 @@ if grep -q 'SESSION END kind=operator key=floor rc=3 .* outcome=FAILED' "$BS_M/d
 else
   fail "message: a failed session is recorded FAILED with its rc" "$(cat "$BS_M/duty/duty.log")"
 fi
+
+# #537 — the empty operator override follows the largest session budget in
+# scope. Drive MESSAGE_SH itself so these rows cover the shell resolution,
+# not a second implementation in the test.
+bs_operator_timeout_case() { # NAME EXPECTED CONFIG
+  local name="$1" expected="$2" config="$3" home="$BS_TMP/timeout-$1" token="timeout$1$$"
+  local script="$BS_TMP/timeout-$1.sh" actual=""
+  mkdir -p "$home/duty/logs" "$home/bin"
+  cp "$BS_M/bin/fake-cli" "$BS_M/bin/timeout" "$home/bin/"
+  BS_SERVER="$BS_FLOOR/server" BS_TOKEN="$token" python3 - "$script" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.actions import MESSAGE_SH
+open(sys.argv[1], "w").write(MESSAGE_SH.replace("__TOK__", os.environ["BS_TOKEN"]))
+PY
+  printf 'operator timeout test\n' > "$home/duty/.floor-prompt.$token"
+  HOME="$home" DUTY_DIR="$home/duty" PATH="$home/bin:$PATH" \
+    BS_TIMEOUT_FILE="$home/wall" bash "$script" <<<"$config" >/dev/null 2>&1
+  for _ in $(seq 1 40); do
+    grep -q 'SESSION END kind=operator' "$home/duty/duty.log" 2>/dev/null && break
+    sleep 0.1
+  done
+  actual="$(sed -n 's/.* timeout=\([0-9]*\)s .*/\1/p' "$home/duty/duty.log" | head -1)|$(cat "$home/wall" 2>/dev/null)"
+  t "message: $name operator timeout" "$expected|$expected" "$actual"
+}
+
+# shellcheck disable=SC2016  # These are bytes sourced later under the case HOME.
+BS_BASE_CONF='BOT_PATH_PREPEND="$HOME/bin"
+BOT_CLI_CMD=(fake-cli)'
+BS_DEFAULT_CONF="$(cat "$BS_ROOT/shared/conf/fleet.defaults.conf")"
+BS_BUILDER_CONF="$(cat "$BS_ROOT/shared/conf/roles/builder.conf")"
+BS_TRIAGE_CONF="$(cat "$BS_ROOT/shared/conf/roles/triage.conf")"
+BS_REVIEWER_CONF="$(cat "$BS_ROOT/shared/conf/roles/reviewer.conf")"
+bs_operator_timeout_case builder 3600 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"$'\n'"$BS_BUILDER_CONF"
+bs_operator_timeout_case triage 3000 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"$'\n'"$BS_TRIAGE_CONF"
+bs_operator_timeout_case reviewer 2700 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"$'\n'"$BS_REVIEWER_CONF"
+bs_operator_timeout_case no-role 1800 "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"
+TIMEOUT_AMBIENT_ONLY=9999 bs_operator_timeout_case ambient-excluded 1800 \
+  "$BS_DEFAULT_CONF"$'\n'"$BS_BASE_CONF"
+bs_operator_timeout_case fleet-override 4100 "$BS_DEFAULT_CONF"$'\nTIMEOUT_OPERATOR=4100\n'"$BS_BASE_CONF"$'\n'"$BS_BUILDER_CONF"
+
+# Prove the winning value comes from the role layer, not merely from a later
+# assignment in a synthetic stream: ask Fleet to build the stream from an
+# independent operator definition with fleet=4100 and reviewer=4200.
+BS_LAYERED_DIR="$BS_TMP/operator-timeout-config"
+mkdir -p "$BS_LAYERED_DIR/roles"
+printf 'fixture claude reviewer\n' > "$BS_LAYERED_DIR/fleet.roster"
+printf 'heavy-duty/crew\n' > "$BS_LAYERED_DIR/repos.txt"
+printf 'TIMEOUT_OPERATOR=4100\n' > "$BS_LAYERED_DIR/fleet.conf"
+printf 'TIMEOUT_OPERATOR=4200\nTIMEOUT_REVIEW=2700\n' > "$BS_LAYERED_DIR/roles/reviewer.conf"
+BS_ROLE_OVERRIDE_CONF="$(CREW_CONFIG_DIR="$BS_LAYERED_DIR" BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.fleet import Fleet
+print(Fleet(3600).operator_conf("claude", "reviewer"), end="")
+PY
+)"
+bs_operator_timeout_case role-override 4200 "$BS_ROLE_OVERRIDE_CONF"$'\n'"$BS_BASE_CONF"
+
+# Drive the roster's real comma-joined representation through Fleet and then
+# MESSAGE_SH. Both role profiles must survive the transport, and 3600 wins.
+BS_MULTI_ROLE_CONF="$(BS_SERVER="$BS_FLOOR/server" python3 - <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["BS_SERVER"])
+from floor.fleet import Fleet
+print(Fleet(3600).operator_conf("claude", "builder,reviewer"), end="")
+PY
+)"
+bs_operator_timeout_case multi-role 3600 "$BS_MULTI_ROLE_CONF"$'\n'"$BS_BASE_CONF"
+
+# All TIMEOUT_* variables in the shipped layers are session budgets today.
+# Pin the census so a future non-session variable cannot silently inflate the
+# max; its author must either rename it or deliberately update this contract.
+BS_TIMEOUT_NAMES="$(sed -n 's/^[[:space:]]*\(TIMEOUT_[A-Z0-9_]*\)=.*/\1/p' \
+  "$BS_ROOT/shared/conf/fleet.defaults.conf" "$BS_ROOT/shared/conf/agents/"*.conf \
+  "$BS_ROOT/shared/conf/roles/"*.conf | sort -u | tr '\n' ' ')"
+t "message: TIMEOUT_* census contains session budgets only" \
+  "TIMEOUT_ATTENTION TIMEOUT_BUILD TIMEOUT_CIRED TIMEOUT_HYGIENE TIMEOUT_MENTION TIMEOUT_OPERATOR TIMEOUT_REBASE TIMEOUT_RESUME TIMEOUT_REVIEW TIMEOUT_TRIAGE " \
+  "$BS_TIMEOUT_NAMES"
 
 # --------------------------------------------------------------------------
 # PAUSE_SH / RESUME_SH — run for real against a real crontab(1) stand-in.

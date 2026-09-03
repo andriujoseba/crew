@@ -628,6 +628,8 @@ case "${1:-}" in
         # files were staged, and would have passed just as happily if every
         # detached session then read the wrong one (codex-bot, eaaff99).
         _home="$STATEDIR/$name.home"
+        _tok="$(printf '%s' "$script" | sed -n 's/^tok="\([^"]*\)"$/\1/p' | head -1)"
+        cp "$stdin_copy" "$STATEDIR/$name.message-conf.${_tok:-notoken}"
         mkdir -p "$_home/duty/logs" "$_home/.local/bin"
         # A stand-in for each vendor CLI, on the PATH the agent profile
         # prepends. It echoes the prompt it was handed; MESSAGE_SH redirects

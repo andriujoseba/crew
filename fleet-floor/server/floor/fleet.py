@@ -1,5 +1,6 @@
 """The telemetry snapshot both tiers publish into."""
 
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -8,7 +9,9 @@ from floor.alerts import ReachabilityAlerts
 from floor.ping import (PING_FAILS_TO_WEDGE, PING_INTERVAL_S,
                         PING_STALE_AFTER_S, PING_TIMEOUT_S, PROBE_TIMEOUT_S,
                         log, ping_box)
-from floor.roster import FLOOR_VERSION, agent_conf_path, box_states, read_roster
+from floor import CREW_ROOT
+from floor.roster import (CONFIG_DIR, FLOOR_VERSION, agent_conf_path, box_states,
+                          read_roster, role_conf_path)
 from floor.units import build_unit, fmt_dur, stuck_verdict, unit_defaults
 
 
@@ -54,6 +57,7 @@ class Fleet:
         self.snapshot = {"live": True, "generated": None, "version": FLOOR_VERSION,
                          "units": [], "polling": True}
         self._confs = {}
+        self._operator_confs = {}
         # A poll is N concurrent `box exec` calls across the whole fleet. Every
         # control action wants a refresh afterwards, so without single-flight a
         # burst of clicks becomes a burst of full-fleet probe storms — and if
@@ -79,6 +83,37 @@ class Fleet:
             except OSError:
                 self._confs[agent] = ""
         return self._confs[agent]
+
+    def operator_conf(self, agent, roles):
+        """Configuration stream for an operator-launched model session.
+
+        Keep the box-side shell as the one parser: the host only layers the
+        same files `load_conf` would source, in precedence order.
+        """
+        key = (agent, roles)
+        if key in self._operator_confs:
+            return self._operator_confs[key]
+
+        paths = [(os.path.join(CREW_ROOT, "shared", "conf", "fleet.defaults.conf"), None),
+                 (os.path.join(CONFIG_DIR, "fleet.conf"), None),
+                 (agent_conf_path(agent), None)]
+        # fleet.roster stores a box's roles comma-joined in one column while
+        # load_conf sources every role profile in that declared order.
+        for role in (item.strip() for item in roles.split(",")):
+            if role:
+                paths.append((role_conf_path(role), role))
+        chunks = []
+        for path, role in paths:
+            try:
+                with open(path) as src:
+                    data = src.read()
+                    chunks.append(data if data.endswith("\n") else data + "\n")
+            except OSError as exc:
+                if role is not None:
+                    log("operator session: role profile %s was not resolved: %s" %
+                        (path, exc))
+        self._operator_confs[key] = "".join(chunks)
+        return self._operator_confs[key]
 
     def box_unreachable(self, name):
         """The control plane's read of the fast tier (#486 D3).

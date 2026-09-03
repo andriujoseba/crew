@@ -15,6 +15,8 @@ import sys
 
 from floor import AGENTS_DIR, CREW_ROOT
 
+ROLES_DIR = os.path.join(CREW_ROOT, "shared", "conf", "roles")
+
 # `from floor.ping import log, run` is NOT here: it sits below the resolution,
 # at the seam between this module's two halves, and that position is asserted.
 # See the note there.
@@ -109,6 +111,15 @@ def agent_conf_path(agent):
         if os.path.isfile(op):
             return op
     return os.path.join(AGENTS_DIR, "%s.conf" % agent)
+
+
+def role_conf_path(role):
+    """Resolve a role profile with the same operator-first rule as agents."""
+    if CONFIG_IS_OPERATOR:
+        op = os.path.join(CONFIG_DIR, "roles", "%s.conf" % role)
+        if os.path.isfile(op):
+            return op
+    return os.path.join(ROLES_DIR, "%s.conf" % role)
 
 
 # CREW_FLOOR_ROSTER stays the explicit override AHEAD of the config-dir

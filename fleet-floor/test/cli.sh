@@ -2649,7 +2649,7 @@ echo
 echo "== operator agent profiles (one config dir, one answer)"
 
 CL_OPCONF="$CL_TMP/opconf"
-mkdir -p "$CL_OPCONF/agents"
+mkdir -p "$CL_OPCONF/agents" "$CL_OPCONF/roles"
 cp "$CL_CREW_ROSTER" "$CL_OPCONF/fleet.roster"
 printf 'FLEET_HUMAN=fixture\n' >"$CL_OPCONF/fleet.conf"
 printf 'heavy-duty/crew\n' >"$CL_OPCONF/repos.txt"
@@ -2657,6 +2657,7 @@ printf '# vendorx — operator-only fixture vendor\nAGENT_LOGIN_HINT="vendorx au
   >"$CL_OPCONF/agents/vendorx.conf"
 printf '# claude — operator override of a shipped name\nAGENT_LOGIN_HINT="operator claude hint"\nbot_cli_probe() { return 0; }\nbot_cli_present() { return 0; }\n' \
   >"$CL_OPCONF/agents/claude.conf"
+printf 'TIMEOUT_BUILD=4321\n' >"$CL_OPCONF/roles/builder.conf"
 
 CL_RC=0
 CREW_CONFIG_DIR="$CL_OPCONF" "$CL_ROOT/cli/crew" profiles >"$CL_TMP/prof-out" 2>&1 || CL_RC=$?
@@ -2753,6 +2754,8 @@ print(roster.ROSTER)
 print(roster.agent_conf_path("vendorx"))
 print(roster.agent_conf_path("claude"))
 print(roster.agent_conf_path("grok"))
+print(roster.role_conf_path("builder"))
+print(roster.role_conf_path("reviewer"))
 PY
 )"
 t "floor: roster resolves from the config dir" \
@@ -2763,6 +2766,10 @@ t "floor: a same-name clash resolves to the operator copy" \
   "$CL_OPCONF/agents/claude.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 3p)"
 t "floor: a shipped-only name falls back to the shipped set" \
   "$CL_ROOT/shared/conf/agents/grok.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 4p)"
+t "floor: an operator role profile wins over the shipped profile" \
+  "$CL_OPCONF/roles/builder.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 5p)"
+t "floor: a shipped-only role falls back to the shipped set" \
+  "$CL_ROOT/shared/conf/roles/reviewer.conf" "$(printf '%s\n' "$CL_FLOOR_ANS" | sed -n 6p)"
 
 # Refusal parity: an explicit but invalid CREW_CONFIG_DIR is an error for the
 # console exactly as it is for the CLI — serving a fleet the CLI refuses is

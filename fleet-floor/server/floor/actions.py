@@ -123,8 +123,25 @@ tok="__TOK__"
 conf="/tmp/.crew-floor-agent.$tok.conf"
 pf="${DUTY_DIR:-$HOME/duty}/.floor-prompt.$tok"
 cat >"$conf"
+timeout_names="$(sed -n 's/^[[:space:]]*\(TIMEOUT_[A-Z0-9_]*\)=.*/\1/p' "$conf")"
 # shellcheck disable=SC1090
 source "$conf"
+operator_timeout="${TIMEOUT_OPERATOR:-}"
+if [ -z "$operator_timeout" ]; then
+  operator_timeout=0
+  while IFS= read -r timeout_name; do
+    [ -n "$timeout_name" ] || continue
+    [ "$timeout_name" = TIMEOUT_OPERATOR ] && continue
+    eval 'timeout_value=${'"$timeout_name"':-}'
+    case "$timeout_value" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    [ "$timeout_value" -le "$operator_timeout" ] || operator_timeout="$timeout_value"
+  done <<<"$timeout_names"
+fi
+case "$operator_timeout" in
+  ''|*[!0-9]*|0) echo "invalid operator timeout: $operator_timeout" >&2; rm -f "$conf"; exit 2 ;;
+esac
 export PATH="${BOT_PATH_PREPEND:-$HOME/.local/bin}:$PATH"
 DUTY_DIR="${DUTY_DIR:-$HOME/duty}"
 mkdir -p "$DUTY_DIR/logs"
@@ -138,15 +155,15 @@ ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 slog="$DUTY_DIR/logs/$(date -u '+%Y%m%dT%H%M%SZ')-operator-floor-$tok.log"
 # One O_APPEND write under 4K is atomic, so this cannot interleave with a
 # tick's own line even though the operator session runs outside the duty flock.
-printf '%s SESSION START kind=operator key=floor timeout=1800s log=%s\n' "$ts" "$slog" >>"$DUTY_DIR/duty.log"
+printf '%s SESSION START kind=operator key=floor timeout=%ss log=%s\n' "$ts" "$operator_timeout" "$slog" >>"$DUTY_DIR/duty.log"
 nohup setsid bash -c '
-  DUTY_DIR="'"$DUTY_DIR"'"; slog="'"$slog"'"; conf="'"$conf"'"
+  DUTY_DIR="'"$DUTY_DIR"'"; slog="'"$slog"'"; conf="'"$conf"'"; operator_timeout="'"$operator_timeout"'"
   start=$SECONDS; rc=0; session_stamp="${slog##*/}"
   source "$conf"; rm -f "$conf"
   export PATH="${BOT_PATH_PREPEND:-$HOME/.local/bin}:$PATH"
   cd "$HOME"
   env DUTY_SESSION_STAMP="$session_stamp" \
-    timeout -k 60 1800 "${BOT_CLI_CMD[@]}" "$1" </dev/null >"$slog" 2>&1 || rc=$?
+    timeout -k 60 "$operator_timeout" "${BOT_CLI_CMD[@]}" "$1" </dev/null >"$slog" 2>&1 || rc=$?
   proc_root="${SESSION_PROC_ROOT:-/proc}"; left=unknown
   if [ -d "$proc_root" ]; then
     count=0; scanned=0
@@ -282,8 +299,9 @@ def do_command(fleet, body, actor=""):
         return one(name, ["box", "exec", name, "--", "bash", "-lc", script],
                    stdin_data=stdin_data, step=step)
 
-    def agent_conf_for(name):
-        return fleet.agent_conf(roster[name]["agent"])
+    def operator_conf_for(name):
+        unit = roster[name]
+        return fleet.operator_conf(unit["agent"], unit["room"])
 
     def concurrently(tasks):
         """Run per-box calls together and return results in submission order."""
@@ -333,7 +351,7 @@ def do_command(fleet, body, actor=""):
             results.append(w)
         else:
             results.append(in_box(box, MESSAGE_SH.replace("__TOK__", token),
-                                  stdin_data=agent_conf_for(box)))
+                                  stdin_data=operator_conf_for(box)))
 
     elif action == "pause":
         results.append(in_box(box, PAUSE_SH))
