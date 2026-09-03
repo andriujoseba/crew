@@ -123,19 +123,21 @@ tok="__TOK__"
 conf="/tmp/.crew-floor-agent.$tok.conf"
 pf="${DUTY_DIR:-$HOME/duty}/.floor-prompt.$tok"
 cat >"$conf"
+timeout_names="$(sed -n 's/^[[:space:]]*\(TIMEOUT_[A-Z0-9_]*\)=.*/\1/p' "$conf")"
 # shellcheck disable=SC1090
 source "$conf"
 operator_timeout="${TIMEOUT_OPERATOR:-}"
 if [ -z "$operator_timeout" ]; then
   operator_timeout=0
   while IFS= read -r timeout_name; do
+    [ -n "$timeout_name" ] || continue
     [ "$timeout_name" = TIMEOUT_OPERATOR ] && continue
     eval 'timeout_value=${'"$timeout_name"':-}'
     case "$timeout_value" in
       ''|*[!0-9]*) continue ;;
     esac
     [ "$timeout_value" -le "$operator_timeout" ] || operator_timeout="$timeout_value"
-  done < <(compgen -A variable TIMEOUT_)
+  done <<<"$timeout_names"
 fi
 case "$operator_timeout" in
   ''|*[!0-9]*|0) echo "invalid operator timeout: $operator_timeout" >&2; rm -f "$conf"; exit 2 ;;
