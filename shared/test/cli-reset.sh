@@ -1062,6 +1062,35 @@ t reset-hire-invents-no-record quiet "$r1"
 t reset-hire-writes-no-record-file absent \
   "$([ -e "$CONF/checkpoints/alpha.conf" ] && echo present || echo absent)"
 
+# THE CHOSEN RESIDUAL, SAID IN THE SAME AMOUNT BY BOTH ROUTES. The mark lands
+# and the install then fails, so the checkpoint reads stale for a move that did
+# not happen and a reset refuses this box until it is re-cut. `cmd_upgrade`
+# named that at its failure from the round it was introduced; `hire_box` — the
+# route `crew up` takes for the whole roster — did not, and two install routes
+# saying different amounts about one state is the drift this gate exists to
+# remove.
+reset_case
+arm alpha
+RST_INSTALL_FAIL=alpha capture hire alpha
+t reset-failed-hire-fails 1 "$RC"
+case "$OUT" in *'hire FAILED'*'stays marked'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-failed-hire-names-the-stale-mark-it-left named "$r1"
+# And the refusal it predicts is the one that actually happens.
+: >"$STATE/calls"
+capture reset alpha
+t reset-after-a-failed-hire-is-refused 1 "$RC"
+t reset-after-a-failed-hire-restores-nothing 0 "$(calls_of 'restore')"
+
+# The other half: a box with NO record is told nothing about a mark that was
+# never written. Guarded on the record for the same reason the gate refuses to
+# invent one — a message about a stale checkpoint on a box that has none sends
+# an operator to re-cut something that does not exist.
+reset_case
+RST_INSTALL_FAIL=alpha capture hire alpha
+t reset-failed-hire-of-an-uncheckpointed-box-fails 1 "$RC"
+case "$OUT" in *'stays marked'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-failed-hire-of-an-uncheckpointed-box-claims-no-mark quiet "$r1"
+
 # --- D6: the drain contract, inherited from #588 ----------------------------
 
 for path in "--cut alpha" "alpha"; do
