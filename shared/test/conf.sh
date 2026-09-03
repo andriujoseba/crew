@@ -290,13 +290,20 @@ kimi_usage_run() ( # kimi_usage_run SHAPE [decoy]
   export KIMI_SHARE_DIR="$udir/share"
   # A decoy: another session's artifact, written LATER and carrying different
   # figures. Selecting by mtime would take this one (#571 D4).
+  # planted twice: once under a DIFFERENT work dir, and once as a sibling in
+  # THIS session's own work-dir directory — the concurrent-lane shape, where
+  # "the newest under my work dir" is the plausible wrong answer.
   if [ "$mode" = decoy ]; then
-    local other="$KIMI_SHARE_DIR/sessions/decoyhash/00000000-0000-4000-8000-000000000000"
-    mkdir -p "$other"
-    printf '%s\n' \
-      '{"type": "metadata", "protocol_version": "1.10"}' \
-      '{"timestamp":1788499999.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":777777,"output":777777,"input_cache_read":0,"input_cache_creation":0}}}}' \
-      >"$other/wire.jsonl"
+    local other
+    for other in \
+        "$KIMI_SHARE_DIR/sessions/decoyhash/00000000-0000-4000-8000-000000000000" \
+        "$KIMI_SHARE_DIR/sessions/8331003854c45d801e9c7516a9cf2092/00000000-0000-4000-8000-000000000001"; do
+      mkdir -p "$other"
+      printf '%s\n' \
+        '{"type": "metadata", "protocol_version": "1.10"}' \
+        '{"timestamp":1788499999.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":777777,"output":777777,"input_cache_read":0,"input_cache_creation":0}}}}' \
+        >"$other/wire.jsonl"
+    done
   fi
   run_session build fixture/kimi "$udir/work" 5 'the prompt' \
     2>&1 | sed -e 's/^[0-9-]*T[0-9:]*Z //'
@@ -432,6 +439,18 @@ t kimi-profile-refuses-a-path-shaped-id 0 \
   "$(kimi_direct '../hash-one/aaaaaaaa-0000-4000-8000-000000000001' | wc -l)"
 t kimi-profile-refuses-an-id-that-matches-nothing 0 \
   "$(kimi_direct bbbbbbbb-0000-4000-8000-000000000002 | wc -l)"
+# Two concurrent sessions under ONE work dir, which is the acceptance
+# criterion D4 is written for: same hash directory, two ids, two answers.
+# Neither figure appears in the other's record.
+mkdir -p "$KIMI_SHARE_FIXTURE/sessions/hash-one/aaaaaaaa-0000-4000-8000-000000000009"
+printf '%s\n' \
+  '{"type": "metadata", "protocol_version": "1.10"}' \
+  '{"timestamp":1788416000.0,"message":{"type":"StatusUpdate","payload":{"token_usage":{"input_other":91,"output":92,"input_cache_read":93,"input_cache_creation":94}}}}' \
+  >"$KIMI_SHARE_FIXTURE/sessions/hash-one/aaaaaaaa-0000-4000-8000-000000000009/wire.jsonl"
+t kimi-concurrent-sessions-one-work-dir-each-carry-their-own '11|22::91|92' \
+  "$(printf '%s::%s' \
+      "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000001 | jq -r '[.input_tokens, .output_tokens] | join("|")')" \
+      "$(kimi_direct aaaaaaaa-0000-4000-8000-000000000009 | jq -r '[.input_tokens, .output_tokens] | join("|")')")"
 # One id under two work-dir hashes: a shape the CLI cannot produce, and if it
 # ever does, either answer would be a measurement attributed to a session
 # nobody identified.
