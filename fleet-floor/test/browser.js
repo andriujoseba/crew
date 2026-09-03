@@ -134,15 +134,18 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
   await page.evaluate(() => {
     window.__sent = [];
     window.__opened = [];
+    window.__fetched = [];
     const _open = window.open;
     window.open = function (u) { window.__opened.push(u); return null; };
     const f = window.fetch;
     window.fetch = function (u, o) {
+      window.__fetched.push(String(u));
       if (o && o.method === 'POST') { try { window.__sent.push(JSON.parse(o.body)); } catch (e) {} }
       return f.apply(this, arguments);
     };
   });
   const sent = () => page.evaluate(() => window.__sent);
+  const fetched = () => page.evaluate(() => window.__fetched);
   const lastSent = async () => (await sent()).slice(-1)[0] || {};
 
   // ---- floor --------------------------------------------------------------
@@ -1283,26 +1286,80 @@ const eq = (name, want, got) => ok(name, String(want) === String(got), `expected
     }
   }
 
-  // ---- log overlay / demo lockout -----------------------------------------
+  // ---- transcript and raw-log overlay / demo lockout ----------------------
   if (visible.length) {
-    const l0 = await enterAt(visible[0]);
-    ok('logs: console re-opened for the overlay check', l0 === visible[0].got,
-       `expected ${visible[0].got}, got ${l0}`);
-    if (LIVE && l0 === visible[0].got) {
+    const logTarget = LIVE && FIXTURE
+      ? visible.find((v) => /ff-working/.test(v.got))
+      : visible[0];
+    const l0 = await enterAt(logTarget);
+    ok('logs: console re-opened for the overlay check', l0 === logTarget.got,
+       `expected ${logTarget.got}, got ${l0}`);
+    if (LIVE && l0 === logTarget.got) {
       eq('room: the HUD shows the serving host version', snapshot.version,
          (await page.locator('#room-version').textContent()).trim());
     }
-    if (LIVE && l0 === visible[0].got) {
+    if (LIVE && l0 === logTarget.got) {
+      if (FIXTURE) {
+        const row = page.locator('#dfeed .session-log').first();
+        eq('transcript: the paired session is the one offered', 1, await row.count());
+        ok('transcript: the row visibly names its affordance',
+           /transcript/.test(await row.textContent()), await row.textContent());
+        const before = (await fetched()).length;
+        await row.click();
+        await settle(async () => await page.locator('#logov').isVisible().catch(() => false), 8000);
+        const calls = (await fetched()).slice(before).filter((u) => /\/api\/logs\?/.test(u));
+        eq('transcript: one request is fired', 1, calls.length);
+        ok('transcript: the request names the paired basename, not duty.log',
+           calls.length === 1
+             && /file=20260726T090000Z-build-heavy-duty_crew_601\.log(?:&|$)/.test(calls[0]),
+           calls.join(' | '));
+        const title = await page.locator('#logttl').textContent();
+        ok('transcript: title identifies the session and the tail bound',
+           /build heavy-duty\/crew#601/.test(title)
+             && /ok/.test(title) && /4m 50s/.test(title) && /last 500 lines/.test(title),
+           title);
+        await page.keyboard.press('Escape');
+        await settle(async () => !(await page.locator('#logov').isVisible().catch(() => false)), 4000);
+        ok('transcript: Esc closes the overlay and keeps the room',
+           !(await page.locator('#logov').isVisible().catch(() => false))
+             && (await page.locator('body.room').count()) === 1);
+      }
+
+      const rawBefore = (await fetched()).length;
       await page.click('#ac-logs');
       await settle(async () => await page.locator('#logov').isVisible().catch(() => false), 8000);
       const shown = await page.locator('#logov').isVisible().catch(() => false);
-      ok('logs: overlay opens (not a popup)', shown, (await page.locator('#livestat').textContent()).trim());
+      ok('logs: raw duty.log still opens in the overlay', shown,
+         (await page.locator('#livestat').textContent()).trim());
+      const rawCalls = (await fetched()).slice(rawBefore).filter((u) => /\/api\/logs\?/.test(u));
+      ok('logs: raw control still sends no file parameter',
+         rawCalls.length === 1 && !/[?&]file=/.test(rawCalls[0]), rawCalls.join(' | '));
       if (shown) await shot('05-log-overlay');
       await page.keyboard.press('Escape');
       await settle(async () => !(await page.locator('#logov').isVisible().catch(() => false)), 4000);
       ok('logs: Esc closes overlay and keeps the room',
          !(await page.locator('#logov').isVisible().catch(() => false))
          && (await page.locator('body.room').count()) === 1);
+
+      if (FIXTURE) {
+        await leave();
+        const unavailable = visible.find((v) => /ff-idle/.test(v.got));
+        const inertOpen = await enterAt(unavailable);
+        ok('transcript: unavailable-session console opens', inertOpen === unavailable.got,
+           `expected ${unavailable.got}, got ${inertOpen}`);
+        if (inertOpen === unavailable.got) {
+          const aged = page.locator('#dfeed .session-log-off').filter({hasText: 'start aged out'}).first();
+          ok('transcript: an aged-out START says why the row is inert',
+             (await aged.count()) === 1, await page.locator('#dfeed').textContent());
+          const inertBefore = (await fetched()).length;
+          await aged.click();
+          await page.waitForTimeout(250);
+          const inertCalls = (await fetched()).slice(inertBefore).filter((u) => /\/api\/logs\?/.test(u));
+          eq('transcript: clicking an inert row fires no request', 0, inertCalls.length);
+          eq('transcript: the orphan-reconciled row is inert too', 1,
+             await page.locator('#dfeed .session-log-off').filter({hasText: 'ORPHANED'}).count());
+        }
+      }
     } else {
       const woff = await page.evaluate(() =>
         ['g-start', 'g-stop', 'g-wake', 'g-reg', 'a-pause', 'a-restart', 'c-send']
