@@ -255,10 +255,16 @@ t "probe.sh: the finding survives the wire, worded by the record" \
 BS_M="$BS_TMP/msghome"
 mkdir -p "$BS_M/duty/logs" "$BS_M/bin"
 cat > "$BS_TMP/agent.conf" <<'EOF'
+TIMEOUT_ATTENTION=1800
 BOT_PATH_PREPEND="$HOME/.local/bin"
 BOT_CLI_CMD=(fake-cli --flag -p)
 bot_cli_probe() { true; }
 bot_session_acted() { return 1; }
+EOF
+cat > "$BS_M/bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$3" > "${BS_TIMEOUT_FILE:?}"
+exec /usr/bin/timeout "$@"
 EOF
 cat > "$BS_M/bin/fake-cli" <<'EOF'
 #!/usr/bin/env bash
@@ -266,7 +272,7 @@ printf 'ARGC=%s\n' "$#"
 printf 'LAST=%s\n' "${*: -1}"
 [ -z "${BS_STAMP_FILE:-}" ] || printf '%s\n' "$DUTY_SESSION_STAMP" > "$BS_STAMP_FILE"
 EOF
-chmod +x "$BS_M/bin/fake-cli"
+chmod +x "$BS_M/bin/fake-cli" "$BS_M/bin/timeout"
 
 # Every metacharacter an operator might type, plus non-ASCII. Single-quoted on
 # purpose: the payload must reach the box LITERAL, so bash must not expand it
@@ -293,6 +299,7 @@ PY
 
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
   BS_STAMP_FILE="$BS_TMP/message.stamp" \
+  BS_TIMEOUT_FILE="$BS_TMP/message.timeout" \
   bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 t "message: script exits 0" 0 "$?"
 
@@ -326,6 +333,10 @@ if grep -q 'SESSION START kind=operator key=floor' "$BS_M/duty/duty.log"; then
 else
   fail "message: writes a SESSION START marker" "$(cat "$BS_M/duty/duty.log")"
 fi
+BS_START="$(grep 'SESSION START kind=operator' "$BS_M/duty/duty.log")"
+t "message: one resolved timeout drives record and wall" \
+  "$(sed -n 's/.* timeout=\([0-9]*\)s .*/\1/p' <<<"$BS_START")" \
+  "$(cat "$BS_TMP/message.timeout")"
 if grep -q 'SESSION END kind=operator key=floor rc=0 .* outcome=ok' "$BS_M/duty/duty.log"; then
   ok "message: writes a SESSION END marker with rc"
 else
@@ -393,6 +404,7 @@ sed '/^bot_session_acted()/d' "$BS_TMP/agent.conf" > "$BS_TMP/agent-hookless.con
 : > "$BS_M/duty/duty.log"
 cp "$BS_TMP/expected-floor-prompt" "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  BS_TIMEOUT_FILE="$BS_TMP/message-hookless.timeout" \
   bash "$BS_SH" < "$BS_TMP/agent-hookless.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
   grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break
@@ -415,6 +427,7 @@ chmod +x "$BS_M/bin/fake-cli"
 # its own — which is the point of the per-request path.
 cp "$BS_TMP/expected-floor-prompt" "$BS_M/duty/.floor-prompt.$BS_TOK"
 HOME="$BS_M" DUTY_DIR="$BS_M/duty" PATH="$BS_M/bin:$PATH" \
+  BS_TIMEOUT_FILE="$BS_TMP/message-failed.timeout" \
   bash "$BS_SH" < "$BS_TMP/agent.conf" >/dev/null 2>&1
 for _ in $(seq 1 40); do
   grep -q 'SESSION END kind=operator' "$BS_M/duty/duty.log" 2>/dev/null && break

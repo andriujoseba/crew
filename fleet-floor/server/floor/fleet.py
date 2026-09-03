@@ -102,7 +102,8 @@ class Fleet:
         for path in paths:
             try:
                 with open(path) as src:
-                    chunks.append(src.read())
+                    data = src.read()
+                    chunks.append(data if data.endswith("\n") else data + "\n")
             except OSError as exc:
                 if path == role_path:
                     log("operator session: role profile %s was not resolved: %s" %
