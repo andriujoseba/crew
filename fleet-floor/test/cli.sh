@@ -1083,7 +1083,26 @@ fi
 # already been caught by twice.
 CL_INFO_CALLS="$(cl_code | grep -E 'box info "' || true)"
 CL_RAWINFO="$(grep -c -- '--json' <<<"$CL_INFO_CALLS" || true)"
-t "crew: box info --json is read only inside box_state" 1 "${CL_RAWINFO:-0}"
+# TWO json readers now, and the second is #607 D5's: box_resources reads the
+# resource keys off the same passthrough so that a clone which could not be
+# sized can name the size it actually carries instead of a figure crew never
+# read. The count stays pinned rather than removed — a third reader should
+# still cost somebody a deliberate decision — but the count was never the
+# property worth having, so the shape that broke is asserted directly below.
+t "crew: box info --json is read only by box_state and box_resources" 2 "${CL_RAWINFO:-0}"
+# EVERY --json reader tolerates the array. This is the actual failure (#47):
+# the filter that read the array as an object exited 5 and, inside a command
+# substitution under `set -euo pipefail`, took the whole command with it —
+# `crew status` printing its header and stopping, which reads like an empty
+# roster rather than a crash. A count alone would have passed a second reader
+# that reproduced it exactly.
+CL_JSON_UNGUARDED="$(grep -- '--json' <<<"$CL_INFO_CALLS" \
+  | grep -vcF 'if type == "array"' || true)"
+t "crew: every box info --json reader tolerates the array" 0 "${CL_JSON_UNGUARDED:-0}"
+if [ "${CL_JSON_UNGUARDED:-0}" -ne 0 ]; then
+  echo "  unguarded:"
+  grep -- '--json' <<<"$CL_INFO_CALLS" | grep -vF 'if type == "array"' | sed 's/^/    /'
+fi
 CL_TEXTINFO="$(grep -vc -- '--json' <<<"$CL_INFO_CALLS" || true)"
 t "crew: the text box info read is the snapshot-label reader alone" 1 "${CL_TEXTINFO:-0}"
 
