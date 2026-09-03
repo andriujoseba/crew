@@ -666,6 +666,11 @@ The override applies only when a valid continuous lock age is available.
 
 Each idle target has stale duty snapshots removed, then is stopped, confirmed
 stopped, and started. A stop that does not take is never followed by a start.
+
+This is a SCHEDULED verb (shared/host-crontab.example runs it daily), so it
+carries the three things an unattended caller needs — see 'crew help reset',
+which shares all of them: the host maintenance lock, the job log at
+$HOST_JOB_LOG, and the exit statuses 0 · 1 · 3 · 4 described there.
 EOF
       ;;
     down) cat <<'EOF'
@@ -736,6 +741,30 @@ as a restart does.
 cut is skipped on a held lock however old, because the on-demand reaper takes
 that same lock and a checkpoint of a box that could not be reclaimed becomes
 the floor every later reset returns to.
+
+SCHEDULED USE. This verb and 'crew restart' are the two the host schedule
+fires (shared/host-crontab.example: restart daily, reset weekly), and both
+carry what a caller with no terminal and nobody watching needs.
+
+They take one HOST MAINTENANCE LOCK between them, non-blocking, so the daily
+and the weekly can never overlap. The later one names the holder, touches no
+box, and exits 4. The lock is taken on every invocation and not only under
+cron: an operator running this by hand during a scheduled run IS the collision
+it prevents. It needs 'flock' on PATH and refuses without it rather than
+running unlocked.
+
+Every run writes its boundary and its whole output to
+  $HOST_JOB_LOG
+because a cron line carries no redirect. A run that did nothing writes there
+too, so silence in that log at a boundary means one thing: cron is dead.
+CREW_HOST_STATE_DIR moves the lock and the log together.
+
+The exit status is what a cron mail is read off:
+  0  every selected box was acted on
+  1  a box FAILED, or was REFUSED (the interlock above is a refusal, and the
+     per-box line says so and names the repair)
+  3  no failure, but a box was SKIPPED busy
+  4  nothing was attempted — no box was selected, or the lock was held
 EOF
       ;;
     floor) cat <<'EOF'
