@@ -85,6 +85,11 @@ fs_calls_since() { tail -n "+$(( $1 + 1 ))" "$FLOOR_CALLS"; }
 # holds. The recognized `tail` probe isolates the recorder without mutating
 # any fixture state, while exercising the real multi-line `box exec` shape.
 echo "== atomic call log (#563)"
+FS_CALLS_ACTUAL="$FLOOR_CALLS"
+FS_STATE_ACTUAL="$FLOOR_STATE"
+FLOOR_CALLS="$TMP/atomic-calls.log"
+FLOOR_STATE="$TMP/atomic-state"
+: > "$FLOOR_CALLS"
 FS_RECORD_M=$(fs_mark)
 "$HERE/stub-box" exec ff-working -- bash -lc \
   $'\ntail -n 1 ~/duty/duty.log\nprintf done\n' >/dev/null
@@ -94,6 +99,8 @@ FS_RECORD="$(fs_calls_since "$FS_RECORD_M")"
 t "calls: a multi-line argv is escaped into one record" \
   'exec ff-working -- bash -lc \ntail -n 1 ~/duty/duty.log\nprintf done\n' \
   "$FS_RECORD"
+FLOOR_CALLS="$FS_CALLS_ACTUAL"
+FLOOR_STATE="$FS_STATE_ACTUAL"
 
 echo "== force stop (#486)"
 
