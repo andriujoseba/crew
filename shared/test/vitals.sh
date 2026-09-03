@@ -626,8 +626,7 @@ ROOT="$(dirname "$SHARED")"
 for host_reader in "$ROOT/cli/crew" "$ROOT/fleet-floor/src/app.js" \
                    "$ROOT/fleet-floor/server/floor/units.py"; do
   if grep -Eq 'disk-low|memory-low|VITALS_(DISK|MEMORY)_LOW_PCT' "$host_reader"; then
-    fail "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" \
-      "host reader contains a headroom threshold or finding name"
+    same "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" clean contaminated
   else
     same "headroom-policy-stays-box-side: ${host_reader#"$ROOT/"}" clean clean
   fi
