@@ -2702,7 +2702,7 @@ checkpoint_mark_stale() { # BOX VERSION
   [ -f "$f" ] || return 0
   local body
   body="$(grep -v '^CHECKPOINT_STALE=' "$f" 2>/dev/null)" || return 1
-  { printf '%s\n' "$body"; printf 'CHECKPOINT_STALE=%s\n' "$2"; } >"$f.tmp.$$" 2>/dev/null \
+  { printf '%s\n' "$body"; printf 'CHECKPOINT_STALE=%s\n' "$2"; } 2>/dev/null >"$f.tmp.$$" \
     || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
   mv -f "$f.tmp.$$" "$f" || { rm -f "$f.tmp.$$" 2>/dev/null; return 1; }
 }

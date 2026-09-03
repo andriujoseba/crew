@@ -175,11 +175,32 @@ case "$cmd" in
       else
         printf 'state=current\nstamp=crew@%s\nrecorded=crew@%s\n' "$stamp" "$stamp"
       fi
+    elif [[ "$script" == *'/etc/rig/role'* ]]; then
+      # rig's convergence marker. Needed because this suite now drives `crew
+      # hire` and `crew up` for real — the stale mark is theirs as much as
+      # `crew upgrade`'s — and the convergence guard runs ahead of everything.
+      printf 'rig-probe %s\n' "$name" >>"$calls"
+      agent_var="RST_AGENT_$name"
+      printf 'probe=ok\nmarker=role=%s-box tenant=yes host=no\n' "${!agent_var:-claude}"
+    elif [[ "$script" == *'instance.conf'* ]]; then
+      # The agent the box was ACTUALLY installed as. D1's vendor half reads it
+      # from here rather than from the roster, so this arm — not the roster
+      # file — is what an off-roster box or a mis-installed one answers with.
+      printf 'agent-probe %s\n' "$name" >>"$calls"
+      agent_var="RST_AGENT_$name"
+      printf '%s\n' "${!agent_var:-}"
+    elif [[ "$script" == *'bot_cli_probe'* ]]; then
+      # D1's vendor login probe. The profile arrives on stdin, so drain it —
+      # a shim that leaves it unread makes the real caller's redirect look
+      # like it worked for a reason that has nothing to do with the probe.
+      cat >/dev/null
+      printf 'vendor-probe %s\n' "$name" >>"$calls"
+      case " ${RST_VENDOR_OUT:-} " in *" $name "*) exit 1 ;; *) exit 0 ;; esac
     elif [[ "$script" == *'reap-now.sh'* ]]; then
       printf 'reap %s\n' "$name" >>"$calls"
       if [ "$name" = "${RST_REAP_FAIL:-}" ]; then
         echo "reap-now.sh: a duty tick holds .duty.lock — nothing run" >&2
-        exit 199
+        exit "${RST_REAP_RC:-199}"
       fi
       : >"$state_dir/reaped-$name"
       echo "reaper: transcripts reclaimed 12345 bytes in 3 files"
@@ -201,10 +222,21 @@ case "$cmd" in
     elif [[ "$script" == *'crontab -l'* ]]; then
       exit 1
     else
-      # The upgrade path's staging and install execs. Logged rather than
-      # matched one by one: this suite's subject is the checkpoint mark the
-      # upgrade leaves behind, not the transport #159 already covers.
+      # The hire and upgrade paths' staging and install execs. Logged rather
+      # than matched one by one: this suite's subject is the checkpoint mark
+      # they leave behind, not the transport #159 already covers. RST_INSTALL_
+      # FAIL breaks the first of them, which is how the "mark landed, install
+      # failed" arm — the chosen residual of marking first — is driven.
+      # The engine install itself gets its own line. `exec` also counts the
+      # registry and identity reads a hire makes BEFORE the gate, so a fixture
+      # asserting "nothing was installed" has to name the install and not the
+      # channel it travels on.
+      # Anchored on install_staged_engine's own retire line, not on the string
+      # `install.sh` — that appears in stage_engine's `test -f` too, and
+      # counting both made a single install look like two.
+      case "$script" in *'retired obsolete box-side engine source'*) printf 'install %s\n' "$name" >>"$calls" ;; esac
       printf 'exec %s\n' "$name" >>"$calls"
+      if [ "$name" = "${RST_INSTALL_FAIL:-}" ]; then exit 1; fi
     fi
     ;;
   *) exit 2 ;;
@@ -215,6 +247,10 @@ chmod +x "$SHIM/box"
 reset_case() {
   find "$STATE" -mindepth 1 -maxdepth 1 -type f -delete
   find "$STATE/guests" -mindepth 1 -delete 2>/dev/null
+  # chmod first: the unwritable-record fixtures leave this directory read-only
+  # on purpose, and an `rm -rf` that silently failed there would carry one
+  # case's record into the next case as a phantom checkpoint.
+  [ ! -d "$CONF/checkpoints" ] || chmod u+w "$CONF/checkpoints"
   rm -rf "$CONF/checkpoints"
   : >"$STATE/calls"
 }
@@ -223,6 +259,10 @@ run_crew() {
   env CREW_CONFIG_DIR="$CONF" RST_STATE="$STATE" RST_PROBE_BIN="$PROBE_BIN" \
     RST_PROBE_DEFAULT="${RST_PROBE_DEFAULT:-idle:0}" \
     RST_LOGGED_IN="${RST_LOGGED_IN:-alpha beta}" \
+    RST_VENDOR_OUT="${RST_VENDOR_OUT:-}" RST_REAP_RC="${RST_REAP_RC:-199}" \
+    RST_INSTALL_FAIL="${RST_INSTALL_FAIL:-}" \
+    RST_AGENT_alpha="${RST_AGENT_alpha-claude}" RST_AGENT_beta="${RST_AGENT_beta-codex}" \
+    RST_AGENT_offroster="${RST_AGENT_offroster-claude}" \
     RST_STAMP_alpha="${RST_STAMP_alpha-0.1.3}" RST_STAMP_beta="${RST_STAMP_beta-0.1.3}" \
     RST_PCT_BEFORE="${RST_PCT_BEFORE:-40}" RST_PCT_AFTER="${RST_PCT_AFTER:-40}" \
     RST_LARGE="${RST_LARGE-13G /swapfile;13G /swapfile-drill;19G /var;6.9G /home;}" \
@@ -549,22 +589,166 @@ capture reset alpha
 t reset-malformed-record-is-refused 1 "$RC"
 t reset-malformed-record-restores-nothing 0 "$(calls_of 'restore')"
 
-# --- D5: a stale mark that could not be written is NOT reported as written --
+# --- D5: THE STALE MARK IS A PRECONDITION TO MOVING THE ENGINE --------------
 #
-# checkpoint_mark_stale returned 0 on every failure path, so `|| true` could
-# never see one and the upgrade printed its STALE note either way. The same
-# malformed record above is the deterministic failure: grep -v selects no
-# lines from it, so the rewrite has nothing to build from.
+# Round 2 found the mark was written AFTER the install, by ONE of the three
+# routes that install an engine. Both halves were wrong, and both are pinned
+# here.
+#
+# The write side first. This is the state the old fixture could not reach: a
+# record carrying a VALID version, and a mark that genuinely cannot be
+# written. The directory is read-only, so the rewrite's temporary cannot be
+# created — the record itself is untouched and perfectly readable, which is
+# precisely why nothing downstream would have noticed. Marking afterwards left
+# the box running a new engine and its checkpoint claiming the old one is
+# current; marking first refuses the install instead, so the two stay in
+# agreement and nothing drifts.
+reset_case
+arm alpha
+chmod 500 "$CONF/checkpoints"
+capture upgrade alpha
+chmod u+w "$CONF/checkpoints"
+t reset-unwritable-stale-mark-refuses-the-upgrade 0 "$RC"
+case "$OUT" in *'could NOT be marked stale'*'Nothing was staged and nothing was installed'*) r1=refused ;; *) r1="$OUT" ;; esac
+t reset-unwritable-stale-mark-is-named refused "$r1"
+case "$OUT" in *'upgrade REFUSED on alpha — its engine is unchanged'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-unwritable-stale-mark-says-the-engine-is-unchanged named "$r1"
+case "$OUT" in *'checkpoint is now STALE'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-unwritable-stale-mark-claims-nothing quiet "$r1"
+# NOTHING WAS INSTALLED. The whole value of a precondition is that the thing
+# it guards did not happen.
+t reset-unwritable-stale-mark-installs-nothing 0 "$(calls_of 'install alpha')"
+t reset-unwritable-stale-mark-leaves-the-record-intact \
+  $'CHECKPOINT_VERSION=0.1.3\nCHECKPOINT_STALE=' \
+  "$(grep -E '^CHECKPOINT_(VERSION|STALE)=' "$CONF/checkpoints/alpha.conf")"
+# And the box is still restorable, correctly: its engine never moved.
+: >"$STATE/calls"
+capture reset alpha
+t reset-after-a-refused-upgrade-still-restores 0 "$RC"
+t reset-after-a-refused-upgrade-restores-once 1 "$(calls_of 'restore alpha armed')"
+
+# One box refusing must not take the loop down: `crew upgrade --all` is what
+# maintenance runs, and a fleet stopping at its first broken config directory
+# is the shape #37 and the reaper's own _reaper_whole both exist to avoid.
+reset_case
+arm_label_only alpha
+mkdir -p "$CONF/checkpoints"
+printf 'CHECKPOINT_STALE=\n' >"$CONF/checkpoints/alpha.conf"
+arm beta
+capture upgrade --all
+case "$OUT" in *'upgrade REFUSED on alpha'*) r1=refused ;; *) r1="$OUT" ;; esac
+t reset-unwritable-stale-mark-refuses-only-its-own-box refused "$r1"
+case "$OUT" in *'upgrade REFUSED on beta'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-unwritable-stale-mark-does-not-take-the-loop-down quiet "$r1"
+t reset-unwritable-stale-mark-lets-the-next-box-through 1 "$(calls_of 'install beta')"
+
+# The read arm of the same failure — a record with nothing for `grep -v` to
+# select — lands in the same place. Two failure modes, one contract.
 reset_case
 arm_label_only alpha
 mkdir -p "$CONF/checkpoints"
 printf 'CHECKPOINT_STALE=\n' >"$CONF/checkpoints/alpha.conf"
 capture upgrade alpha
-t reset-unwritable-stale-mark-does-not-fail-the-upgrade 0 "$RC"
-case "$OUT" in *'could NOT be marked stale'*'crew reset --cut alpha'*) r1=warned ;; *) r1="$OUT" ;; esac
-t reset-unwritable-stale-mark-is-warned warned "$r1"
-case "$OUT" in *'checkpoint is now STALE'*) r1="$OUT" ;; *) r1=quiet ;; esac
-t reset-unwritable-stale-mark-claims-nothing quiet "$r1"
+case "$OUT" in *'could NOT be marked stale'*) r1=refused ;; *) r1="$OUT" ;; esac
+t reset-unreadable-record-also-refuses-the-upgrade refused "$r1"
+t reset-unreadable-record-installs-nothing 0 "$(calls_of 'install alpha')"
+
+# THE CHOSEN RESIDUAL: the mark lands and the install then fails. The
+# checkpoint now reads stale for a move that did not happen, so a reset
+# refuses this box. That is a FALSE refusal and it is the direction to fail
+# in — the other direction is a silent engine downgrade with nothing red
+# anywhere — so it is said at the failure rather than met weeks later.
+reset_case
+arm alpha
+RST_INSTALL_FAIL=alpha capture upgrade alpha
+case "$OUT" in *'upgrade FAILED on alpha'*'stays marked'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-failed-install-names-the-stale-mark-it-left named "$r1"
+: >"$STATE/calls"
+capture reset alpha
+t reset-after-a-failed-install-is-refused 1 "$RC"
+t reset-after-a-failed-install-restores-nothing 0 "$(calls_of 'restore')"
+
+# --- D5: EVERY ROUTE THAT INSTALLS AN ENGINE MARKS THE CHECKPOINT -----------
+#
+# `checkpoint_mark_stale` had one caller, `cmd_upgrade`. But `hire_box`
+# installs whenever the version does not match, unconditionally on a `-dev`
+# tree, and on --force; `cmd_up` calls `hire_box` for every roster box. So a
+# routine `crew up` moved the engine past the checkpoint and marked nothing,
+# and the only thing left holding D5 was restore_box's LIVE comparison — read
+# through `box exec`, which a stopped box cannot answer at all.
+reset_case
+arm alpha
+capture hire alpha
+t reset-hire-succeeds 0 "$RC"
+case "$OUT" in *"alpha's armed checkpoint is now STALE"*'engine moving to crew@'*) r1=marked ;; *) r1="$OUT" ;; esac
+t reset-hire-marks-the-checkpoint-stale marked "$r1"
+: >"$STATE/calls"
+capture reset alpha
+t reset-after-a-hire-is-refused 1 "$RC"
+case "$OUT" in *'REFUSED'*'restoring it would silently downgrade the engine'*) r1=named ;; *) r1="$OUT" ;; esac
+t reset-after-a-hire-names-the-downgrade named "$r1"
+t reset-after-a-hire-restores-nothing 0 "$(calls_of 'restore')"
+
+# THE STOPPED VARIANT — the one that was reachable and silent. `hired_at` is
+# read through `box exec`, so a stopped box answers nothing and the live
+# comparison read that silence as agreement; the transcript was `restored to
+# armed (crew@0.1.3) and started` at exit 0. A fleet with boxes down is
+# exactly the state `crew reset --all` is for.
+reset_case
+arm alpha
+capture hire alpha
+printf 'stopped\n' >"$STATE/state-alpha"
+: >"$STATE/calls"
+RST_STAMP_alpha="" capture reset alpha
+t reset-after-a-hire-of-a-stopped-box-is-refused 1 "$RC"
+case "$OUT" in *'restored to armed'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-stopped-hired-box-never-reports-a-restore quiet "$r1"
+t reset-stopped-hired-box-restores-nothing 0 "$(calls_of 'restore')"
+t reset-stopped-hired-box-is-not-stopped-again 0 "$(calls_of 'down')"
+
+# A same-version `-dev` re-bake marks too. The version string cannot detect
+# that move — both sides read the same — and the image still holds the older
+# tree, so the comparison D5 falls back on could never catch it.
+reset_case
+arm alpha 0.1.3-dev
+RST_STAMP_alpha=0.1.3-dev capture hire alpha
+case "$OUT" in *"alpha's armed checkpoint is now STALE"*) r1=marked ;; *) r1="$OUT" ;; esac
+t reset-same-version-dev-rebake-marks-the-checkpoint marked "$r1"
+: >"$STATE/calls"
+RST_STAMP_alpha=0.1.3-dev capture reset alpha
+t reset-after-a-same-version-rebake-is-refused 1 "$RC"
+t reset-after-a-same-version-rebake-restores-nothing 0 "$(calls_of 'restore')"
+
+# `crew up` is the routine caller, and it marks every roster box it hires.
+reset_case
+arm alpha
+arm beta
+capture up
+t reset-up-marks-every-roster-box $'CHECKPOINT_STALE=0.1.3-dev\nCHECKPOINT_STALE=0.1.3-dev' \
+  "$(grep -h '^CHECKPOINT_STALE=' "$CONF/checkpoints/alpha.conf" "$CONF/checkpoints/beta.conf")"
+
+# A hire whose mark cannot be written installs nothing, exactly as an upgrade
+# does — the gate is one helper and both callers take its answer.
+reset_case
+arm alpha
+chmod 500 "$CONF/checkpoints"
+capture hire alpha
+chmod u+w "$CONF/checkpoints"
+t reset-hire-with-an-unwritable-mark-fails 1 "$RC"
+case "$OUT" in *'could NOT be marked stale'*) r1=refused ;; *) r1="$OUT" ;; esac
+t reset-hire-with-an-unwritable-mark-is-named refused "$r1"
+t reset-hire-with-an-unwritable-mark-installs-nothing 0 "$(calls_of 'install alpha')"
+
+# A box with NO record is still rc 0 with nothing written: there is nothing to
+# invalidate, and inventing a record would make the reset refuse with a
+# version pair crew made up rather than for the true reason.
+reset_case
+capture hire alpha
+t reset-hire-of-an-uncheckpointed-box-succeeds 0 "$RC"
+case "$OUT" in *'STALE'*|*'could NOT be marked'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-hire-invents-no-record quiet "$r1"
+t reset-hire-writes-no-record-file absent \
+  "$([ -e "$CONF/checkpoints/alpha.conf" ] && echo present || echo absent)"
 
 # --- D6: the drain contract, inherited from #588 ----------------------------
 
