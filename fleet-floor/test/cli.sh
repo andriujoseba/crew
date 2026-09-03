@@ -827,7 +827,7 @@ t "crew status <box>: a record-less detail view still costs three round trips" 3
 # browser, no page load, just the function — so this runs wherever node does,
 # which on the CI runner is everywhere. Skipped LOUDLY otherwise, per this
 # suite's own rule about silently-skipped UI tests.
-CL_XREAD_REC='VITALS ts=2026-08-28T09:00:00Z cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2'
+CL_XREAD_REC='VITALS ts=2026-08-28T09:00:00Z cores=2 load1=0.41 mem_total_mb=3850 mem_shared_mb=103 mem_avail_mb=3128 swap_active_mb=0 swap_configured_mb=8192 disk_total_mb=29696 disk_used_mb=14254 disk_pct=48 disk_series=2026-08-01T12:50:01+00:00@9,2026-08-10T21:15:01+00:00@31,2026-08-27T18:35:01+00:00@48 platform=linux os=debian-13 finding=swap-configured-inactive:configured_mb=8192,active_mb=0 finding=cpu-profile-mismatch:want=4,got=2 finding=disk-low:want=under-90%,got=94% finding=memory-low:want=over-10%-available,got=7%-available(300/3850MiB)'
 # A second record built out of HALF-PRESENT pairs, because the rows a reader
 # OMITS are as much of the contract as the rows it prints: two renderers can
 # agree on a full record and disagree about which absence costs which row, and
