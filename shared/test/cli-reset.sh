@@ -491,14 +491,32 @@ t reset-upgrade-without-a-checkpoint-writes-nothing absent \
 # config restored from a backup predating the cut. Restoring it cannot be
 # proved not to downgrade the engine, which is the whole of D5's hazard.
 
+# NO LIVE STAMP EITHER, and that is the point of this first case rather than
+# an incidental. With a readable live version the mismatch arm below would
+# also catch an empty recorded one, so a fixture written that way passes with
+# this refusal deleted — it would be pinning the wrong guard. Here nothing but
+# the record could answer the question, which is the state the old code
+# restored at `crew@unknown`.
 reset_case
 arm_label_only alpha
-capture reset alpha
+RST_STAMP_alpha="" capture reset alpha
 t reset-armed-without-a-record-is-refused 1 "$RC"
 case "$OUT" in *'records no engine version'*'crew reset --cut alpha'*) r1=named ;; *) r1="$OUT" ;; esac
 t reset-recordless-checkpoint-names-the-repair named "$r1"
 t reset-recordless-checkpoint-restores-nothing 0 "$(calls_of 'restore')"
 t reset-recordless-checkpoint-stops-nothing 0 "$(calls_of 'down')"
+case "$OUT" in *'crew@unknown'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-recordless-checkpoint-never-restores-at-unknown quiet "$r1"
+
+# The same absence WITH a readable live version: the recordless refusal is the
+# one that fires, ahead of the mismatch arm, so the operator is told the
+# record is missing rather than shown a version pair with one side blank.
+reset_case
+arm_label_only alpha
+capture reset alpha
+t reset-recordless-with-a-live-stamp-is-refused 1 "$RC"
+case "$OUT" in *'records no engine version'*) r1=recordless ;; *) r1="$OUT" ;; esac
+t reset-recordless-refusal-outranks-the-mismatch-arm recordless "$r1"
 
 # The same box after an upgrade. This is the transcript that must never read
 # `restored to armed (crew@unknown)` again: cmd_upgrade writes no mark on a
@@ -509,6 +527,8 @@ reset_case
 arm_label_only alpha
 capture upgrade alpha
 t reset-recordless-upgrade-succeeds 0 "$RC"
+case "$OUT" in *'checkpoint is now STALE'*|*'could NOT be marked stale'*) r1="$OUT" ;; *) r1=quiet ;; esac
+t reset-recordless-upgrade-invents-no-record quiet "$r1"
 : >"$STATE/calls"
 RST_STAMP_alpha=0.9.9 capture reset alpha
 t reset-after-upgrade-of-a-recordless-box-is-refused 1 "$RC"
